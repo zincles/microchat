@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "providers": [
+    // 本文件由你手写，程序不会隐式改写它；注释随便加。
+    // 界面里的"刷新模型"会去读它，模型列表落在 data/microchat.db。
+    //
+    // 本地 Ollama（无需密钥）：
+    // { "id": "ollama", "base_url": "http://127.0.0.1:11434/v1" },
+    //
+    // OpenRouter（密钥写在 config/secrets.json：{ "openrouter": "sk-or-…" }）：
+    // { "id": "openrouter", "base_url": "https://openrouter.ai/api/v1",
+    //   "headers": { "X-Title": "microchat" } },
+  ]
+}

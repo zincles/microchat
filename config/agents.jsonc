@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "default_agent": "",
+  "agents": [
+    {
+      "id": "ze",
+      "name": "DAZE",
+      "system_prompt": "sadwa",
+      "params": {},
+      "prompt_order": []
+    },
+    {
+      "id": "aadd",
+      "name": "ssa",
+      "system_prompt": "",
+      "params": {},
+      "prompt_order": []
+    }
+  ]
+}
