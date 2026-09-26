@@ -76,7 +76,10 @@ pub fn router(state: AppState) -> Router {
             "/conversations/{id}/messages",
             get(list_messages).post(send_message),
         )
-        .route("/conversations/{id}/messages/{message_id}", patch(edit_message))
+        .route(
+            "/conversations/{id}/messages/{message_id}",
+            patch(edit_message).delete(delete_message),
+        )
         .route(
             "/conversations/{id}/variables",
             get(get_conversation_variables),
@@ -272,6 +275,18 @@ async fn edit_message(
     Ok(Json(
         store.update_message(id, message_id, &req.content, &ops)?,
     ))
+}
+
+/// 删除某一句。跨会话删（`id` 与消息不匹配）给 404——和编辑同一个口径。
+///
+/// 顺序是插入顺序（`rowid`），删中间一句只是少一行；它写下的变量操作会被同一事务清掉，
+/// 后面那些消息的历史不受影响。
+async fn delete_message(
+    State(state): State<AppState>,
+    Path((id, message_id)): Path<(Uuid, Uuid)>,
+) -> Result<StatusCode, ApiError> {
+    state.lock()?.delete_message(id, message_id)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// 把消息正文里的状态块解析成变量操作并落库，返回落了几条。
@@ -1120,6 +1135,58 @@ mod tests {
         assert_eq!(list[0].name, "Dummy（测试用空模型）");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 删中间一句：剩下的顺序不变（靠 rowid），那句写下的状态操作也不再生效。
+    #[tokio::test]
+    async fn deleting_a_message_drops_its_state_ops_and_keeps_order() {
+        let app = app(None);
+        let conv = create(&app, r#"{"provider":"x","model":"y"}"#).await;
+        let uri = format!("/api/v1/conversations/{}/messages", conv.id);
+
+        let (_, body) = send(
+            &app,
+            json_req("POST", &uri, r#"{"content":"<state>set HP = 12</state>开场白"}"#),
+        )
+        .await;
+        let first: ChatTurn = serde_json::from_str(&body).unwrap();
+        send(&app, json_req("POST", &uri, r#"{"content":"继续"}"#)).await;
+
+        let vars_uri = format!("/api/v1/conversations/{}/variables", conv.id);
+        let (_, body) = send(&app, get_req(&vars_uri)).await;
+        let before: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(before["effective"]["HP"], "12", "先确认这条状态确实生效了");
+
+        let del = Request::builder()
+            .method("DELETE")
+            .uri(format!("{uri}/{}", first.user.id))
+            .body(Body::empty())
+            .unwrap();
+        let (status, _) = send(&app, del).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+
+        let (_, body) = send(&app, get_req(&uri)).await;
+        let msgs: Vec<crate::model::Message> = serde_json::from_str(&body).unwrap();
+        assert_eq!(msgs.len(), 3, "4 条删 1 条");
+        // 这个会话的 provider "x" 不在 providers.jsonc 里 → 回的是兜底话术。
+        // 断言它，是为了证明"剩下的第一句"确实是原来第二条（顺序靠 rowid，没被删乱）。
+        assert_eq!(msgs[0].content, "未配置模型", "第一句成了原来的助手回复，顺序没错位");
+
+        let (_, body) = send(&app, get_req(&vars_uri)).await;
+        let after: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert!(
+            after["effective"].get("HP").is_none(),
+            "被删那句写下的 HP 不该再生效：{after}"
+        );
+
+        // 再删一次 → 404（跨会话删也走这条）
+        let again = Request::builder()
+            .method("DELETE")
+            .uri(format!("{uri}/{}", first.user.id))
+            .body(Body::empty())
+            .unwrap();
+        let (status, _) = send(&app, again).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

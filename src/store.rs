@@ -343,6 +343,37 @@ impl Store {
         Ok(updated)
     }
 
+    /// 删掉一条消息：连它当初写下的变量操作一起删（单事务）。
+    ///
+    /// 顺序靠 `rowid`（插入顺序）而不是 `id`，所以删中间一条**不会**动到别人的顺序，
+    /// 也没有"位置空缺"要补——剩下的行照样按 rowid 排。
+    /// 真正要清的是操作日志：它按 `message_id` 挂着（没有外键），不跟着删的话，
+    /// 那句已经不存在的话写下的 `set HP = 12` 会继续影响生效值。
+    pub fn delete_message(&mut self, conversation_id: Uuid, message_id: Uuid) -> Result<()> {
+        let now = now_ms();
+        let conversation = conversation_id.to_string();
+        let message = message_id.to_string();
+        let tx = self.conn.transaction()?;
+
+        let touched = tx.execute(
+            "DELETE FROM messages WHERE id = ?1 AND conversation_id = ?2",
+            params![message, conversation],
+        )?;
+        if touched == 0 {
+            return Err(Error::NotFound);
+        }
+        tx.execute(
+            "DELETE FROM variable_ops WHERE message_id = ?1",
+            params![message],
+        )?;
+        tx.execute(
+            "UPDATE conversations SET updated_at = ?1 WHERE id = ?2",
+            params![now, conversation],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// 某会话要用的全部操作：全局 base + 本会话，按 `seq`（= id）升序。
     pub fn list_variable_ops(&self, conversation_id: Uuid) -> Result<Vec<VarOpRow>> {
         if self.get_conversation(conversation_id)?.is_none() {

@@ -30,6 +30,8 @@ adb install -r /tmp/x.apk && adb logcat -s godot
 4. **编辑消息 = 重写存档**：该消息产生的变量操作整批重算（单事务）；不能跨会话改（404）。
 5. **模型身份 = `(provider, upstream_id)`**；显示名三级回退（用户覆盖 → 上游名 → prettify）在**后端**完成，前端别再实现一遍。
 6. `config/secrets.json` 与 `data/` **永不入库**；`.gitignore` 只放行 Godot 项目的非缓存部分（`.godot/`、`export/` 排除）。
+7. **消息顺序 = 插入顺序（`ORDER BY rowid`），不是 `id`**。`messages.id`（UUIDv7）只是对外句柄（URL 里那句就是它）——`list_messages` 靠 rowid 排序，所以删中间一条不会动到别人的顺序，也没有"位置空缺"要补；同一毫秒插入的"用户＋助手"也不会因 UUID 尾部随机位换位。**别改成 `ORDER BY id`**。
+   变量操作日志同理：`variable_ops` 是 `INTEGER PRIMARY KEY AUTOINCREMENT`（seq = id，空洞无害），但它按 `message_id` 挂着那条消息且**没有外键**——删消息时必须同一事务里把它的 ops 一起删掉，否则那句已经不存在的话写下的 `set HP = 12` 会继续影响生效值（见 `store::delete_message` / `update_message`）。
 
 ## 踩过的坑（都是实测出来的）
 

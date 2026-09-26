@@ -45,6 +45,13 @@ pub enum Command {
         message: uuid::Uuid,
         content: String,
     },
+    /// 删除一条消息。它正文里写下的状态操作，后端会在同一事务里一起清掉。
+    DeleteMessage {
+        base: String,
+        token: Option<String>,
+        conversation: uuid::Uuid,
+        message: uuid::Uuid,
+    },
     CreateConversation {
         base: String,
         token: Option<String>,
@@ -142,6 +149,11 @@ pub enum Event {
     MessageEdited {
         conversation: uuid::Uuid,
         result: Result<microchat::model::Message, String>,
+    },
+    MessageDeleted {
+        conversation: uuid::Uuid,
+        message: uuid::Uuid,
+        result: Result<(), String>,
     },
     ConversationCreated(Result<microchat::model::Conversation, String>),
     ConversationDeleted {
@@ -252,6 +264,15 @@ impl Command {
                 &conversation.to_string()[..8],
                 &message.to_string()[..8]
             ),
+            Self::DeleteMessage {
+                conversation,
+                message,
+                ..
+            } => format!(
+                "DELETE /conversations/{}/messages/{}",
+                &conversation.to_string()[..8],
+                &message.to_string()[..8]
+            ),
             Self::CreateConversation { .. } => "POST /conversations".to_owned(),
             Self::DeleteConversation { conversation, .. } => {
                 format!("DELETE /conversations/{}", &conversation.to_string()[..8])
@@ -291,6 +312,10 @@ fn summarize(event: &Event) -> String {
         },
         Event::Variables { result, .. } => match result {
             Ok(view) => format!("OK {} 个生效变量", view.effective.len()),
+            Err(message) => format!("失败: {message}"),
+        },
+        Event::MessageDeleted { result, .. } => match result {
+            Ok(()) => "OK 已删除".to_owned(),
             Err(message) => format!("失败: {message}"),
         },
         Event::MessageEdited { result, .. } => match result {
@@ -387,6 +412,25 @@ fn handle(http: &reqwest::blocking::Client, command: Command) -> Event {
                 ),
                 token.as_deref(),
                 serde_json::json!({ "content": content }),
+            ),
+        },
+        Command::DeleteMessage {
+            base,
+            token,
+            conversation,
+            message,
+        } => Event::MessageDeleted {
+            conversation,
+            message,
+            result: write(
+                http,
+                reqwest::Method::DELETE,
+                &format!(
+                    "{}/api/v1/conversations/{conversation}/messages/{message}",
+                    base.trim_end_matches('/')
+                ),
+                token.as_deref(),
+                None,
             ),
         },
         Command::CreateConversation { base, token } => {
@@ -836,6 +880,7 @@ mod tests {
             Event::Messages { .. } => "Messages",
             Event::Variables { .. } => "Variables",
             Event::MessageEdited { .. } => "MessageEdited",
+            Event::MessageDeleted { .. } => "MessageDeleted",
             Event::ConversationCreated(_) => "ConversationCreated",
             Event::ConversationDeleted { .. } => "ConversationDeleted",
             Event::Turn { .. } => "Turn",
