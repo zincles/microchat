@@ -103,6 +103,7 @@ cargo build && python3 scripts/api-audit.py     # 改过接口就跑一遍（它
 | PATCH | `/providers/{id}` | `UpdateProviderReq` | `ProviderView` | `api_key`：`None` = 不动，`""` = 清除 |
 | DELETE | `/providers/{id}` | — | 204 | 密钥随记录一起没 |
 | POST | `/providers/{id}/refresh` | — | `ProviderView` | **POST**（会写发现态）：拉 `/models` 并落库 |
+| DELETE | `/providers/{id}/models` | — | `{"deleted": n}` | 清掉这个渠道**已发现的模型**（发现态）：不动 `providers.json`、不动历史会话；上游不可用时也能清干净 |
 | POST | `/models/probe` | `ProbeReq` | `ProbeResult` | 用一次性 url+key 试拉，**不落库**（"先探测再保存"） |
 | GET | `/models` | — | `[ModelListItem]` | 跨 provider 拍平，给"渠道 / 模型"一个下拉用 |
 | GET | `/agents` | — | `AgentsConfig` | 生效列表（含内置默认 agent） |
@@ -164,6 +165,8 @@ cargo build && python3 scripts/api-audit.py     # 改过接口就跑一遍（它
   - **生成中那条回复**是界面按状态**合成**的气泡（库里还没有它）：转圈 + "正在生成… 12.3s" + 「停止」。落库后同 id 的真实消息出现，气泡自然消失。发送按钮在此期间显示"等待…"；界面每 300ms 轮询 `/status`（`App::poll_turn`），收到 `idle` / `error` 才一次性重拉消息、变量、分支与列表。
 - 左栏：正在生成的会话标题后面挂着「 · 生成中…」（状态来自 `GET /conversations` 每项的 `turn`）。
 - 设置分五页（左导航同级）：**连接 / Agent / 模型与渠道 / 前端设置 / 关于**；右下角「保存」按页给出不同提示。
+- 「模型与渠道」每个渠道一行：`获取模型`（POST，成功后在**底栏**说"已获取 N 个模型"）、`删除全部模型`（清发现态，配置与历史会话都不动）、`编辑`。
+- 设置页底栏常驻"**已连接后端 vX**"（`App::connected`），后面跟 `·` 和最近一次动作的结果（`App::note`）——两者互不顶替：连接状态不该被下一条消息挤掉。刷新失败时 `note` 里带着状态码与后端的 `code`。
 - 渠道与模型是**一个下拉**（`渠道 / 模型`，`GET /models` 拍平给的就是这个形状）；provider 的 `name` 缺省回退 `id`。
 
 ## 返回键 / 退出（方案已定，**尚未开工**）
@@ -225,4 +228,6 @@ provider_state(provider, last_refresh_at)
 - **后端代码一变就重启后端和 egui 前端**：先 `cargo build`，再重启 `./target/debug/server`（唯一权威）与 `./target/debug/microchat`（界面）——不然你在界面上验的是旧二进制。
 - **先量再断言**：能实测的就不猜（本项目几乎所有关键结论都来自实测）。
 - 用户可能**同时在编辑器里改 `frontend/`**：改场景前先读最新文件（并留备份），他的未保存改动优先；提交时别把 `frontend/` 的改动卷进来（除非他让你一起提）。
+- **提交由用户指挥**：**不要**每改一点就 `commit` + `push` —— 那样提交记录会碎成一地。做完一段有意义的进度后，先报告，**等用户说"可以提交了"**再提交；推送同理（用户没点名推送就不推）。默认节奏：改代码 → 跑测试 → 实跑验证 → 报告，**停在这里**。
+- 提交时只带用户点名的范围：先 `git diff --cached --name-status` 核对，别把 `frontend/` 那边他自己在改的东西卷进来。
 - 提交前确认没把 `config/`（里面有 `api_key`）、`data/`、大 APK 带进去。

@@ -452,6 +452,12 @@ struct App {
     /// `pending` / `streaming` 期间每 300ms 拉一次 `/status`——非流式下 `pending` 会一直
     /// 持续到整段回复回来，所以"在不在生成"必须由状态说了算，不能看 POST 回没回。
     turn: Option<(Uuid, microchat::turn::TurnStatus)>,
+    /// 正在等「获取模型」回来的 provider：用来在列表刷新回来时说一句"拿到了多少个"
+    /// （列表事件本身看不出是"谁触发的"）。
+    refreshing: Option<String>,
+    /// 底栏常驻那行：连接状态（`已连接后端 v0.1.0`）。和 `note`（一次性动作结果）分开，
+    /// 后者会被下一条消息顶掉，前者不该消失。
+    connected: String,
     /// 下一次轮询的时刻（`turn` 还在跑时才有意义）。
     next_poll: Option<std::time::Instant>,
     /// provider 编辑草稿。
@@ -519,6 +525,8 @@ impl App {
             current: None,
             pending_send: None,
             turn: None,
+            refreshing: None,
+            connected: String::new(),
             next_poll: None,
             editing_provider: None,
             provider_base_url: String::new(),
@@ -845,12 +853,39 @@ impl App {
             match event {
                 Event::Checked(Ok(version)) => {
                     self.backend = Backend::Online;
-                    self.note = format!("已连接后端 v{version}");
+                    // 连接状态常驻底栏；动作结果走 note（会被下一条顶掉）
+                    self.connected = format!("已连接后端 v{version}");
+                    self.note.clear();
                     self.load_server_data();
                 }
                 Event::Checked(Err(message)) => self.backend = Backend::Offline(message),
-                Event::Providers(Ok(list)) => self.providers = Some(list),
-                Event::Providers(Err(message)) => self.note = message,
+                Event::Providers(Ok(list)) => {
+                    // 「获取模型」刚回来：说一声拿到多少个（普通列一遍时这里什么都不说）
+                    if let Some(provider) = self.refreshing.take() {
+                        let count = list
+                            .iter()
+                            .find(|view| view.id == provider)
+                            .map(|view| view.models.len())
+                            .unwrap_or(0);
+                        self.note = format!("已获取 {count} 个模型（{provider}）");
+                    }
+                    self.providers = Some(list);
+                }
+                Event::Providers(Err(message)) => {
+                    // 失败也要说清楚：message 里带着状态码与后端给的 code
+                    self.refreshing = None;
+                    self.note = message;
+                }
+                Event::ProviderModelsCleared { provider, result } => match result {
+                    Ok(value) => {
+                        let count = value["deleted"].as_u64().unwrap_or(0);
+                        self.note = format!("已删除 {count} 个模型（{provider}）");
+                        let (base, token) =
+                            (self.settings.server_address.clone(), self.token.clone());
+                        self.client.send(Command::ListProviders { base, token });
+                    }
+                    Err(message) => self.note = message,
+                },
                 Event::Conversations(Ok(list)) => {
                     self.conversations = list;
                     // 选中项失效（首次连接 / 刚被删）→ 落到第一个
@@ -1502,6 +1537,7 @@ impl App {
             }
             Some(list) => {
                 let mut refresh: Option<String> = None;
+                let mut clear_models: Option<String> = None;
                 let mut edit: Option<(String, String, BTreeMap<String, String>)> = None;
                 for provider in list {
                     ui.horizontal(|ui| {
@@ -1516,6 +1552,19 @@ impl App {
                             .clicked()
                         {
                             refresh = Some(provider.id.clone());
+                        }
+                        if ui
+                            .add_enabled(
+                                !provider.models.is_empty(),
+                                egui::Button::new("删除全部模型"),
+                            )
+                            .on_hover_text(
+                                "清掉这个渠道已发现的模型：不动 providers.json，也不动历史会话；\
+                                 「获取模型」会重新拉一份",
+                            )
+                            .clicked()
+                        {
+                            clear_models = Some(provider.id.clone());
                         }
                         if ui.button("编辑").clicked() {
                             edit = Some((
@@ -1546,7 +1595,17 @@ impl App {
                 }
                 if let Some(provider) = refresh {
                     let (base, token) = (self.settings.server_address.clone(), self.token.clone());
+                    // 记一笔：列表事件回来时才知道这是"获取模型"的结果
+                    self.refreshing = Some(provider.clone());
                     self.client.send(Command::RefreshProvider {
+                        base,
+                        token,
+                        provider,
+                    });
+                }
+                if let Some(provider) = clear_models {
+                    let (base, token) = (self.settings.server_address.clone(), self.token.clone());
+                    self.client.send(Command::ClearProviderModels {
                         base,
                         token,
                         provider,
@@ -3009,7 +3068,12 @@ impl eframe::App for App {
                         ui.add_space(6.0);
                         ui.separator();
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new(&self.note).weak());
+                            // 常驻的连接状态 + 最近一次动作的结果（两者互不顶替）
+                            ui.label(RichText::new(&self.connected).weak());
+                            if !self.note.is_empty() {
+                                ui.label(RichText::new("·").weak());
+                                ui.label(RichText::new(&self.note).weak());
+                            }
                             let dirty = if is_server {
                                 self.server_dirty()
                             } else {

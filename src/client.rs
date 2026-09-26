@@ -81,6 +81,12 @@ pub enum Command {
         token: Option<String>,
         provider: String,
     },
+    /// 清掉某个 provider 已发现的模型（发现态，不动 `providers.json`、不动历史会话）。
+    ClearProviderModels {
+        base: String,
+        token: Option<String>,
+        provider: String,
+    },
     UpdateProvider {
         base: String,
         token: Option<String>,
@@ -181,6 +187,11 @@ pub enum Command {
 pub enum Event {
     /// `Ok` = 后端版本号。
     Checked(Result<String, String>),
+    /// 清空某个 provider 已发现模型的结果：回 `{"deleted": n}`。
+    ProviderModelsCleared {
+        provider: String,
+        result: Result<serde_json::Value, String>,
+    },
     Providers(Result<Vec<ProviderView>, String>),
     Conversations(Result<Vec<microchat::server::ConversationView>, String>),
     Messages {
@@ -359,6 +370,9 @@ impl Command {
             Self::RefreshProvider { provider, .. } => {
                 format!("POST /providers/{provider}/refresh")
             }
+            Self::ClearProviderModels { provider, .. } => {
+                format!("DELETE /providers/{provider}/models")
+            }
             Self::UpdateProvider { id, .. } => format!("PATCH /providers/{id}"),
             Self::CreateProvider { id, .. } => format!("POST /providers ({id})"),
             Self::ListAgents { .. } => "GET /agents".to_owned(),
@@ -394,6 +408,10 @@ fn summarize(event: &Event) -> String {
         Event::Checked(Err(message)) => format!("失败: {message}"),
         Event::Providers(Ok(list)) => format!("OK {} 个 provider", list.len()),
         Event::Providers(Err(message)) => format!("失败: {message}"),
+        Event::ProviderModelsCleared { result, .. } => match result {
+            Ok(value) => format!("OK 清掉 {} 个模型", value["deleted"]),
+            Err(message) => format!("失败: {message}"),
+        },
         Event::Conversations(Ok(list)) => format!("OK {} 个会话", list.len()),
         Event::Conversations(Err(message)) => format!("失败: {message}"),
         Event::Messages { result, .. } => match result {
@@ -753,6 +771,24 @@ fn handle(http: &reqwest::blocking::Client, command: Command) -> Event {
         Command::ListAgents { base, token } => {
             Event::Agents(get(http, &base, token.as_deref(), "/api/v1/agents"))
         }
+        Command::ClearProviderModels {
+            base,
+            token,
+            provider,
+        } => Event::ProviderModelsCleared {
+            provider: provider.clone(),
+            result: write_json(
+                http,
+                reqwest::Method::DELETE,
+                &format!(
+                    "{}/api/v1/providers/{}/models",
+                    base.trim_end_matches('/'),
+                    encode_segment(&provider)
+                ),
+                token.as_deref(),
+                serde_json::json!({}),
+            ),
+        },
         Command::SaveAgent {
             base,
             token,
@@ -1153,6 +1189,7 @@ mod tests {
         match event {
             Event::Checked(_) => "Checked",
             Event::Providers(_) => "Providers",
+            Event::ProviderModelsCleared { .. } => "ProviderModelsCleared",
             Event::Conversations(_) => "Conversations",
             Event::Messages { .. } => "Messages",
             Event::Variables { .. } => "Variables",

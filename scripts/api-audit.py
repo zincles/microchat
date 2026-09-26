@@ -74,9 +74,13 @@ def handler_types(name: str):
     req = '（无请求体）'
     for mm in re.finditer(r'Json\(req\): Json<(\w+)>', args):
         req = mm.group(1)
-    ret = re.sub(r'Result<\(StatusCode, Json<(.+?)\)>, ApiError>', r'\1', ret)
-    ret = re.sub(r'Result<Json<(.+?)>, ApiError>', r'\1', ret)
-    ret = ret.replace('Result<StatusCode, ApiError>', '204 无内容')
+    ret = ret.strip()
+    for pattern, repl in (
+        (r'Result<\(StatusCode, Json<(.+?)>\), ApiError>', r'\1 · 201/202'),
+        (r'Result<Json<(.+?)>, ApiError>', r'\1'),
+        (r'Result<StatusCode, ApiError>', r'204 无内容'),
+    ):
+        ret = re.sub(pattern, repl, ret)
     return req, ret
 
 
@@ -243,7 +247,7 @@ try:
         ('POST', '/conversations/{id}/resend'): 202, ('POST', '/conversations/{id}/stop'): 200,
         ('GET', '/providers'): 200, ('POST', '/providers'): 201,
         ('PATCH', '/providers/{id}'): 200, ('DELETE', '/providers/{id}'): 204,
-        ('POST', '/providers/{id}/refresh'): 200,
+        ('POST', '/providers/{id}/refresh'): 200, ('DELETE', '/providers/{id}/models'): 200,
         ('GET', '/models'): 200, ('POST', '/models/probe'): 200,
         ('GET', '/agents'): 200, ('POST', '/agents'): 201,
         ('PATCH', '/agents/{id}'): 200, ('DELETE', '/agents/{id}'): 204,

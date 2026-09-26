@@ -110,6 +110,7 @@ pub fn router(state: AppState) -> Router {
             patch(update_provider).delete(delete_provider),
         )
         .route("/providers/{id}/refresh", post(refresh_provider))
+        .route("/providers/{id}/models", delete(clear_provider_models))
         .route("/agents", get(list_agents).post(create_agent))
         .route("/agents/{id}", patch(update_agent).delete(delete_agent))
         .route("/debug/state", get(debug_state))
@@ -708,6 +709,23 @@ pub struct ProbeResult {
     pub models: Vec<DiscoveredModel>,
 }
 
+/// 清掉某个 provider **已发现的模型**（发现态，不动 `providers.json`，也不动历史会话——
+/// 模型是软引用，删了只是列表空掉）。
+///
+/// 用途：上游换了/挂了、或想把发现结果推倒重来。「获取模型」成功后会整份替换，
+/// 所以这个按钮的意义是"**上游不可用时**也能把列表清干净"。
+async fn clear_provider_models(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let config = ProvidersConfig::load(&state.paths.providers_json())?;
+    if config.get(&id).is_none() {
+        return Err(ApiError::not_found());
+    }
+    let removed = state.lock()?.forget_provider(&id)?;
+    Ok(Json(serde_json::json!({ "deleted": removed })))
+}
+
 /// 用 **url + apikey** 直接拉模型列表，**不落库**——"先探测，再决定保不保存"。
 async fn probe_models(Json(req): Json<ProbeReq>) -> Result<Json<ProbeResult>, ApiError> {
     if !req.base_url.starts_with("http://") && !req.base_url.starts_with("https://") {
@@ -771,7 +789,7 @@ async fn delete_provider(
     // 删掉不需要再 validate：移除不可能制造重复 id 或空 base_url。
     // 密钥就在这条记录自己身上，跟着一起没了——没有第二处要清。
     config.save(&path)?;
-    state.lock()?.forget_provider(&id)?;
+    let _ = state.lock()?.forget_provider(&id)?;
 
     // `config.json` 里若正拿它当默认 provider，顺手挪到还活着的第一个——
     // 否则新建会话会带着一个幽灵 provider 出门（前端只看得到"未配置模型"）。
@@ -2481,6 +2499,44 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 「删除全部模型」：清掉发现态，provider 本身还在（配置不动、历史会话也不动）。
+    #[tokio::test]
+    async fn clearing_models_empties_the_list_but_keeps_the_provider() {
+        let upstream = fake_upstream(
+            StatusCode::OK,
+            r#"{"data":[{"id":"deepseek/deepseek-v4-flash","name":"DeepSeek V4 Flash"}]}"#,
+        )
+        .await;
+        let (app, dir) = app_with_files(&[(
+            "providers.json",
+            &format!(r#"{{ "providers": [ {{ "id": "local", "base_url": "{upstream}" }} ] }}"#),
+        )]);
+
+        let (status, body) =
+            send(&app, json_req("POST", "/api/v1/providers/local/refresh", "")).await;
+        assert_eq!(status, StatusCode::OK);
+        let view: ProviderView = serde_json::from_str(&body).unwrap();
+        assert_eq!(view.models.len(), 1, "先有一份发现结果");
+
+        let (status, body) =
+            send(&app, json_req("DELETE", "/api/v1/providers/local/models", "")).await;
+        assert_eq!(status, StatusCode::OK);
+        let value: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(value["deleted"], 1);
+
+        let (_, body) = send(&app, get_req("/api/v1/providers")).await;
+        let views: Vec<ProviderView> = serde_json::from_str(&body).unwrap();
+        assert_eq!(views.len(), 1, "provider 本身还在");
+        assert!(views[0].models.is_empty(), "模型清光了");
+        assert!(views[0].last_refresh_at.is_none(), "刷新时间戳一起忘了");
+
+        let (status, _) =
+            send(&app, json_req("DELETE", "/api/v1/providers/nope/models", "")).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "没这个 provider");
 
         let _ = std::fs::remove_dir_all(&dir);
     }
