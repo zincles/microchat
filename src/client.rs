@@ -31,6 +31,44 @@ pub enum Command {
         token: Option<String>,
         conversation: uuid::Uuid,
     },
+    /// 拉某会话的变量：全局 + 本会话操作日志 + 生效值。
+    ListVariables {
+        base: String,
+        token: Option<String>,
+        conversation: uuid::Uuid,
+    },
+    /// 编辑一条消息。正文是存档，后端会按新正文**重算**它产生的变量操作。
+    EditMessage {
+        base: String,
+        token: Option<String>,
+        conversation: uuid::Uuid,
+        message: uuid::Uuid,
+        content: String,
+    },
+    CreateConversation {
+        base: String,
+        token: Option<String>,
+    },
+    DeleteConversation {
+        base: String,
+        token: Option<String>,
+        conversation: uuid::Uuid,
+    },
+    SendMessage {
+        base: String,
+        token: Option<String>,
+        conversation: uuid::Uuid,
+        content: String,
+    },
+    UpdateConversation {
+        base: String,
+        token: Option<String>,
+        conversation: uuid::Uuid,
+        /// 只给要改的字段；`None` = 不动。
+        provider: Option<String>,
+        model: Option<String>,
+        agent_id: Option<String>,
+    },
     RefreshProvider {
         base: String,
         token: Option<String>,
@@ -97,6 +135,24 @@ pub enum Event {
         conversation: uuid::Uuid,
         result: Result<Vec<microchat::model::Message>, String>,
     },
+    Variables {
+        conversation: uuid::Uuid,
+        result: Result<microchat::vars::VariableView, String>,
+    },
+    MessageEdited {
+        conversation: uuid::Uuid,
+        result: Result<microchat::model::Message, String>,
+    },
+    ConversationCreated(Result<microchat::model::Conversation, String>),
+    ConversationDeleted {
+        conversation: uuid::Uuid,
+        result: Result<(), String>,
+    },
+    Turn {
+        conversation: uuid::Uuid,
+        result: Result<microchat::server::ChatTurn, String>,
+    },
+    ConversationUpdated(Result<microchat::model::Conversation, String>),
     Agents(Result<AgentsConfig, String>),
     /// 写操作结果；UI 收到 `Ok` 后重新拉取列表。
     AgentWritten(Result<(), String>),
@@ -184,6 +240,28 @@ impl Command {
             Self::ListMessages { conversation, .. } => {
                 format!("GET /conversations/{}/messages", &conversation.to_string()[..8])
             }
+            Self::ListVariables { conversation, .. } => {
+                format!("GET /conversations/{}/variables", &conversation.to_string()[..8])
+            }
+            Self::EditMessage {
+                conversation,
+                message,
+                ..
+            } => format!(
+                "PATCH /conversations/{}/messages/{}",
+                &conversation.to_string()[..8],
+                &message.to_string()[..8]
+            ),
+            Self::CreateConversation { .. } => "POST /conversations".to_owned(),
+            Self::DeleteConversation { conversation, .. } => {
+                format!("DELETE /conversations/{}", &conversation.to_string()[..8])
+            }
+            Self::SendMessage { conversation, .. } => {
+                format!("POST /conversations/{}/messages", &conversation.to_string()[..8])
+            }
+            Self::UpdateConversation { conversation, .. } => {
+                format!("PATCH /conversations/{}", &conversation.to_string()[..8])
+            }
             Self::RefreshProvider { provider, .. } => {
                 format!("POST /providers/{provider}/refresh")
             }
@@ -211,6 +289,28 @@ fn summarize(event: &Event) -> String {
             Ok(list) => format!("OK {} 条消息", list.len()),
             Err(message) => format!("失败: {message}"),
         },
+        Event::Variables { result, .. } => match result {
+            Ok(view) => format!("OK {} 个生效变量", view.effective.len()),
+            Err(message) => format!("失败: {message}"),
+        },
+        Event::MessageEdited { result, .. } => match result {
+            Ok(_) => "OK".to_owned(),
+            Err(message) => format!("失败: {message}"),
+        },
+        Event::ConversationCreated(Ok(conversation)) => {
+            format!("OK 会话 {}", &conversation.id.to_string()[..8])
+        }
+        Event::ConversationCreated(Err(message)) => format!("失败: {message}"),
+        Event::ConversationDeleted { result, .. } => match result {
+            Ok(()) => "OK".to_owned(),
+            Err(message) => format!("失败: {message}"),
+        },
+        Event::Turn { result, .. } => match result {
+            Ok(turn) => format!("OK 后端 {}", turn.backend),
+            Err(message) => format!("失败: {message}"),
+        },
+        Event::ConversationUpdated(Ok(_)) => "OK".to_owned(),
+        Event::ConversationUpdated(Err(message)) => format!("失败: {message}"),
         Event::Agents(Ok(config)) => format!("OK {} 个 agent", config.agents.len()),
         Event::Agents(Err(message)) => format!("失败: {message}"),
         Event::AgentWritten(Ok(())) => "OK".to_owned(),
@@ -257,6 +357,113 @@ fn handle(http: &reqwest::blocking::Client, command: Command) -> Event {
                 &format!("/api/v1/conversations/{conversation}/messages"),
             ),
         },
+        Command::ListVariables {
+            base,
+            token,
+            conversation,
+        } => Event::Variables {
+            conversation,
+            result: get(
+                http,
+                &base,
+                token.as_deref(),
+                &format!("/api/v1/conversations/{conversation}/variables"),
+            ),
+        },
+        Command::EditMessage {
+            base,
+            token,
+            conversation,
+            message,
+            content,
+        } => Event::MessageEdited {
+            conversation,
+            result: write_json(
+                http,
+                reqwest::Method::PATCH,
+                &format!(
+                    "{}/api/v1/conversations/{conversation}/messages/{message}",
+                    base.trim_end_matches('/')
+                ),
+                token.as_deref(),
+                serde_json::json!({ "content": content }),
+            ),
+        },
+        Command::CreateConversation { base, token } => {
+            // 不带 provider/model：让后端按 config.jsonc 的 defaults 决定（默认落到 dummy）
+            Event::ConversationCreated(write_json(
+                http,
+                reqwest::Method::POST,
+                &format!("{}/api/v1/conversations", base.trim_end_matches('/')),
+                token.as_deref(),
+                serde_json::json!({ "system_prompt": "" }),
+            ))
+        }
+        Command::DeleteConversation {
+            base,
+            token,
+            conversation,
+        } => Event::ConversationDeleted {
+            conversation,
+            result: write(
+                http,
+                reqwest::Method::DELETE,
+                &format!(
+                    "{}/api/v1/conversations/{conversation}",
+                    base.trim_end_matches('/')
+                ),
+                token.as_deref(),
+                None,
+            ),
+        },
+        Command::SendMessage {
+            base,
+            token,
+            conversation,
+            content,
+        } => Event::Turn {
+            conversation,
+            result: write_json(
+                http,
+                reqwest::Method::POST,
+                &format!(
+                    "{}/api/v1/conversations/{conversation}/messages",
+                    base.trim_end_matches('/')
+                ),
+                token.as_deref(),
+                serde_json::json!({ "content": content }),
+            ),
+        },
+        Command::UpdateConversation {
+            base,
+            token,
+            conversation,
+            provider,
+            model,
+            agent_id,
+        } => {
+            // 只把要改的字段放进 body：服务端按 Option 语义处理，没给的不动
+            let mut body = serde_json::Map::new();
+            if let Some(provider) = provider {
+                body.insert("provider".to_owned(), provider.into());
+            }
+            if let Some(model) = model {
+                body.insert("model".to_owned(), model.into());
+            }
+            if let Some(agent_id) = agent_id {
+                body.insert("agent_id".to_owned(), agent_id.into());
+            }
+            Event::ConversationUpdated(write_json(
+                http,
+                reqwest::Method::PATCH,
+                &format!(
+                    "{}/api/v1/conversations/{conversation}",
+                    base.trim_end_matches('/')
+                ),
+                token.as_deref(),
+                serde_json::Value::Object(body),
+            ))
+        }
         Command::RefreshProvider {
             base,
             token,
@@ -392,6 +599,21 @@ fn get<T: serde::de::DeserializeOwned>(
 ) -> Result<T, String> {
     let url = format!("{}{path}", base.trim_end_matches('/'));
     let mut request = http.get(url);
+    if let Some(token) = token {
+        request = request.bearer_auth(token);
+    }
+    decode(request.send())
+}
+
+/// 写操作并解析响应体（用于"创建后拿回对象"这类接口）。
+fn write_json<T: serde::de::DeserializeOwned>(
+    http: &reqwest::blocking::Client,
+    method: reqwest::Method,
+    url: &str,
+    token: Option<&str>,
+    body: serde_json::Value,
+) -> Result<T, String> {
+    let mut request = http.request(method, url).json(&body);
     if let Some(token) = token {
         request = request.bearer_auth(token);
     }
@@ -612,6 +834,12 @@ mod tests {
             Event::Providers(_) => "Providers",
             Event::Conversations(_) => "Conversations",
             Event::Messages { .. } => "Messages",
+            Event::Variables { .. } => "Variables",
+            Event::MessageEdited { .. } => "MessageEdited",
+            Event::ConversationCreated(_) => "ConversationCreated",
+            Event::ConversationDeleted { .. } => "ConversationDeleted",
+            Event::Turn { .. } => "Turn",
+            Event::ConversationUpdated(_) => "ConversationUpdated",
             Event::Agents(_) => "Agents",
             Event::AgentWritten(_) => "AgentWritten",
             Event::ProviderWritten(_) => "ProviderWritten",

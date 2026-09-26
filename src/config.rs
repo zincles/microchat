@@ -110,8 +110,11 @@ impl Default for ServerConfig {
 impl Default for DefaultsConfig {
     fn default() -> Self {
         Self {
-            provider: "openrouter".to_owned(),
-            model: "deepseek/deepseek-v4-flash".to_owned(),
+            // 开箱默认落到 dummy：没有上游，但立刻有回话。
+            // 配好自己的 provider 后改这里（或直接在界面上选模型）。模型选择器落地前，
+            // 新建会话一律用这两个默认值。
+            provider: "dummy".to_owned(),
+            model: crate::chat::DUMMY_MODEL_ID.to_owned(),
             agent: "default".to_owned(),
         }
     }
@@ -272,7 +275,37 @@ impl Default for AgentsConfig {
     }
 }
 
+/// 内置默认 agent：`agents.jsonc` 里没有 `default` 时补上它。
+///
+/// 与 dummy 模型对称：不来自配置文件，但系统**永远**有一个可用身份。
+/// 它只带一段提示词，别的一概没有。
+pub fn builtin_default_agent() -> Agent {
+    Agent {
+        id: crate::model::DEFAULT_AGENT_ID.to_owned(),
+        name: "默认助手".to_owned(),
+        system_prompt: "You are a helpful assistant.".to_owned(),
+        ..Default::default()
+    }
+}
+
 impl AgentsConfig {
+    /// 生效的 agent 列表：文件里的那些；文件里没有 `default` 时，把内置默认插在最前。
+    pub fn effective(&self) -> Vec<Agent> {
+        let mut agents = self.agents.clone();
+        if !agents
+            .iter()
+            .any(|agent| agent.id == crate::model::DEFAULT_AGENT_ID)
+        {
+            agents.insert(0, builtin_default_agent());
+        }
+        agents
+    }
+
+    /// 按 id 解析（含内置默认）。返回克隆：结果可能来自"合成"而不是文件。
+    pub fn resolve(&self, id: &str) -> Option<Agent> {
+        self.effective().into_iter().find(|agent| agent.id == id)
+    }
+
     pub fn load(path: &Path) -> Result<Self> {
         let cfg: Self = load_jsonc(path)?;
         cfg.validate()?;
@@ -502,6 +535,25 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn builtin_agent_fills_in_when_file_lacks_default() {
+        let mut config = AgentsConfig::default();
+        assert_eq!(config.effective().len(), 1);
+        assert_eq!(
+            config.resolve("default").unwrap().system_prompt,
+            "You are a helpful assistant."
+        );
+
+        // 文件里已经有 default → 不重复插入，且以文件为准
+        config.agents.push(super::Agent {
+            id: "default".to_owned(),
+            name: "我的默认".to_owned(),
+            ..Default::default()
+        });
+        assert_eq!(config.effective().len(), 1);
+        assert_eq!(config.resolve("default").unwrap().name, "我的默认");
     }
 
     #[test]

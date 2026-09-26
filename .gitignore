@@ -32,3 +32,5 @@ Thumbs.db
 # 注：Cargo.lock 要提交（这是应用而非库，锁死依赖版本）
 # 注：config/config.jsonc、providers.jsonc、agents.jsonc 默认跟踪——它们是可分享的模板。
 #     若想连个人配置也排除，加一行：/config/*.jsonc（代价是仓库里没了模板）
+
+frontend

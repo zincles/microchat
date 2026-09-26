@@ -28,12 +28,16 @@ use crate::model::{title_from, Conversation, DiscoveredModel, Message, Role};
 use crate::providers;
 use crate::registry::{self, ProviderView};
 use crate::store::{self, Store};
+use crate::vars;
 
 #[derive(Clone)]
 pub struct AppState {
     store: Arc<Mutex<Store>>,
     auth_token: Option<String>,
     title_chars: usize,
+    /// 新建会话的默认 provider / model（来自 `config.jsonc` 的 `defaults`）。
+    default_provider: String,
+    default_model: String,
     /// `providers.jsonc` / `agents.jsonc` / `secrets.json` 的位置：这些文件**每次请求现读**，
     /// 手改了文件立刻生效，无需重启。
     paths: Paths,
@@ -45,6 +49,8 @@ impl AppState {
             store: Arc::new(Mutex::new(store)),
             auth_token: config.server.auth_token.clone(),
             title_chars: config.chat.title_chars,
+            default_provider: config.defaults.provider.clone(),
+            default_model: config.defaults.model.clone(),
             paths,
         }
     }
@@ -64,12 +70,22 @@ pub fn router(state: AppState) -> Router {
         )
         .route(
             "/conversations/{id}",
-            patch(rename_conversation).delete(delete_conversation),
+            patch(update_conversation).delete(delete_conversation),
         )
         .route(
             "/conversations/{id}/messages",
             get(list_messages).post(send_message),
         )
+        .route("/conversations/{id}/messages/{message_id}", patch(edit_message))
+        .route(
+            "/conversations/{id}/variables",
+            get(get_conversation_variables),
+        )
+        .route(
+            "/conversations/{id}/outgoing",
+            get(get_conversation_outgoing),
+        )
+        .route("/variables", get(get_global_variables))
         .route("/health", get(health))
         .route("/providers", get(list_providers).post(create_provider))
         .route("/models/probe", post(probe_models))
@@ -89,15 +105,22 @@ pub fn router(state: AppState) -> Router {
 
 #[derive(Deserialize)]
 pub struct CreateConversationReq {
-    pub provider: String,
-    pub model: String,
+    /// 省略时用 `config.jsonc` 的 `defaults.provider` / `defaults.model`（默认落到 dummy）。
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
     #[serde(default)]
     pub system_prompt: String,
 }
 
 #[derive(Deserialize)]
-pub struct RenameReq {
-    pub title: String,
+pub struct UpdateConversationReq {
+    pub title: Option<String>,
+    /// 换模型：`provider` 与 `model` 一起给（模型是 provider 下的 id）。
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub agent_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -115,19 +138,37 @@ async fn create_conversation(
     State(state): State<AppState>,
     Json(req): Json<CreateConversationReq>,
 ) -> Result<(StatusCode, Json<Conversation>), ApiError> {
+    let provider = req
+        .provider
+        .unwrap_or_else(|| state.default_provider.clone());
+    let model = req.model.unwrap_or_else(|| state.default_model.clone());
     let conv = state
         .lock()?
-        .create_conversation(&req.provider, &req.model, &req.system_prompt)?;
+        .create_conversation(&provider, &model, &req.system_prompt)?;
     Ok((StatusCode::CREATED, Json(conv)))
 }
 
-async fn rename_conversation(
+/// 改会话的标题 / 模型 / Agent。三者都可省略，只改给出来的那些。
+async fn update_conversation(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-    Json(req): Json<RenameReq>,
+    Json(req): Json<UpdateConversationReq>,
 ) -> Result<Json<Conversation>, ApiError> {
     let mut store = state.lock()?;
-    store.update_title(id, &req.title)?;
+
+    if let Some(title) = req.title {
+        store.update_title(id, &title)?;
+    }
+    if req.provider.is_some() || req.model.is_some() {
+        let conversation = store.get_conversation(id)?.ok_or_else(ApiError::not_found)?;
+        let provider = req.provider.unwrap_or(conversation.provider);
+        let model = req.model.unwrap_or(conversation.model);
+        store.set_conversation_model(id, &provider, &model)?;
+    }
+    if let Some(agent_id) = req.agent_id {
+        store.set_conversation_agent(id, &agent_id)?;
+    }
+
     Ok(Json(
         store.get_conversation(id)?.ok_or_else(ApiError::not_found)?,
     ))
@@ -170,14 +211,21 @@ async fn send_message(
     let mut store = state.lock()?;
 
     let user = store.insert_message(id, Role::User, &req.content)?;
+    apply_state_tags(&mut store, id, &user)?;
     let conversation = store.get_conversation(id)?.ok_or_else(ApiError::not_found)?;
     if conversation.title.is_empty() {
         store.update_title(id, &title_from(&req.content, state.title_chars))?;
     }
 
+    // 真正要发出去的东西在这里成型：历史剔除状态块、只注入当前变量表。
+    let messages = store.list_messages(id)?;
+    let effective = vars::VariableView::build(&store.list_variable_ops(id)?).effective;
+    let outgoing = vars::build_outgoing(&conversation, &messages, &effective);
+
     let backend = chat::Backend::select(&conversation, &providers);
-    let reply = backend.reply(&conversation, &req.content)?;
+    let reply = backend.reply(&conversation, &outgoing)?;
     let assistant = store.insert_message(id, Role::Assistant, &reply)?;
+    apply_state_tags(&mut store, id, &assistant)?;
 
     Ok((
         StatusCode::CREATED,
@@ -187,6 +235,80 @@ async fn send_message(
             backend: backend.name().to_owned(),
         }),
     ))
+}
+
+/// 编辑一条消息的请求体。
+#[derive(Deserialize)]
+pub struct EditMessageReq {
+    pub content: String,
+}
+
+/// 编辑一条消息（你和助手的都能改）。
+///
+/// 正文是**存档**：改它等于改写那一回合的记录，所以它产生的变量操作按新正文整体重算
+/// （同一事务里换掉），否则世界状态会和存档自相矛盾。
+async fn edit_message(
+    State(state): State<AppState>,
+    Path((id, message_id)): Path<(Uuid, Uuid)>,
+    Json(req): Json<EditMessageReq>,
+) -> Result<Json<Message>, ApiError> {
+    let mut store = state.lock()?;
+    let ops = vars::parse(&req.content).ops;
+    Ok(Json(
+        store.update_message(id, message_id, &req.content, &ops)?,
+    ))
+}
+
+/// 把消息正文里的状态块解析成变量操作并落库，返回落了几条。
+///
+/// 正文**原样保留**——标签是存档的一部分（它记录了"当时发生了什么"），
+/// 只有 [`vars::build_outgoing`] 把它们从发给模型的历史里剔除。
+fn apply_state_tags(
+    store: &mut Store,
+    conversation: Uuid,
+    message: &Message,
+) -> Result<usize, store::Error> {
+    let parsed = vars::parse(&message.content);
+    store.insert_variable_ops(conversation, message.id, &parsed.ops)
+}
+
+/// 全局变量：所有会话共用的底，不依赖任何会话。
+async fn get_global_variables(
+    State(state): State<AppState>,
+) -> Result<Json<vars::VariableView>, ApiError> {
+    let store = state.lock()?;
+    Ok(Json(vars::VariableView::build(
+        &store.list_global_variable_ops()?,
+    )))
+}
+
+/// 某会话的变量：全局 base + 本会话操作日志 + 生效值。
+async fn get_conversation_variables(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<vars::VariableView>, ApiError> {
+    let store = state.lock()?;
+    Ok(Json(vars::VariableView::build(
+        &store.list_variable_ops(id)?,
+    )))
+}
+
+/// **下次会发出去的东西**：变量表已注入、历史里的状态块已剔除。
+///
+/// 这是"看不见提示词就没法调试"的解药，也是真模型后端接进来之前的验收面。
+async fn get_conversation_outgoing(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<vars::Outgoing>>, ApiError> {
+    let store = state.lock()?;
+    let conversation = store.get_conversation(id)?.ok_or_else(ApiError::not_found)?;
+    let messages = store.list_messages(id)?;
+    let effective = vars::VariableView::build(&store.list_variable_ops(id)?).effective;
+    Ok(Json(vars::build_outgoing(
+        &conversation,
+        &messages,
+        &effective,
+    )))
 }
 
 /// 连通性探针：前端启动时用它判断"后端在不在、口令对不对"。
@@ -388,7 +510,12 @@ pub struct UpdateAgentReq {
 }
 
 async fn list_agents(State(state): State<AppState>) -> Result<Json<AgentsConfig>, ApiError> {
-    Ok(Json(AgentsConfig::load(&state.paths.agents_jsonc())?))
+    let config = AgentsConfig::load(&state.paths.agents_jsonc())?;
+    // 对外给"生效列表"：含内置默认 agent（文件里没有 default 时补上）
+    Ok(Json(AgentsConfig {
+        agents: config.effective(),
+        ..config
+    }))
 }
 
 /// 新建 agent 预设。`agents.jsonc` 是唯一会被程序写入的用户文件，且只在被调用时写。
@@ -426,6 +553,14 @@ async fn update_agent(
 ) -> Result<Json<Agent>, ApiError> {
     let path = state.paths.agents_jsonc();
     let mut config = AgentsConfig::load(&path)?;
+
+    // 内置默认 agent 不在文件里：编辑它 = 先把它落地成文件里的 agent，再改。
+    if config.get(&id).is_none() {
+        if let Some(builtin) = config.resolve(&id) {
+            config.agents.insert(0, builtin);
+        }
+    }
+
     let agent = config
         .agents
         .iter_mut()
@@ -451,6 +586,10 @@ async fn delete_agent(
     let before = config.agents.len();
     config.agents.retain(|agent| agent.id != id);
     if config.agents.len() == before {
+        // 内置默认 agent 不在文件里，删了也会立刻回来——明确拒绝，别让用户以为删掉了
+        if config.resolve(&id).is_some() {
+            return Err(ApiError::bad_request("内置默认 agent 不能删除"));
+        }
         return Err(ApiError::not_found());
     }
     if config.default_agent == id {
@@ -779,7 +918,7 @@ mod tests {
         let turn: ChatTurn = serde_json::from_str(&body).unwrap();
         assert_eq!(turn.user.role, Role::User);
         assert_eq!(turn.user.content, "第一句话");
-        assert_eq!(turn.backend, "dummy", "providers.jsonc 里没有 x，应回落到 dummy");
+        assert_eq!(turn.backend, "fallback", "providers.jsonc 里没有 x，应回落到 fallback");
         assert_eq!(turn.assistant.role, Role::Assistant);
         assert_eq!(turn.assistant.content, "未配置模型");
 
@@ -795,6 +934,156 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         let list: Vec<Conversation> = serde_json::from_str(&body).unwrap();
         assert_eq!(list[0].title, "第一句话");
+    }
+
+    #[tokio::test]
+    async fn create_conversation_uses_config_defaults_when_omitted() {
+        let app = app(None);
+        let conv = create(&app, "{}").await;
+        assert_eq!(conv.provider, "dummy", "省略时默认落到 dummy");
+        assert_eq!(conv.model, crate::chat::DUMMY_MODEL_ID);
+    }
+
+    #[tokio::test]
+    async fn dummy_model_replies_with_the_test_sentence() {
+        let (app, dir) = app_with_files(&[(
+            "providers.jsonc",
+            r#"{ "providers": [ { "id": "dummy", "kind": "dummy" } ] }"#,
+        )]);
+        let conv = create(&app, "{}").await;
+        let uri = format!("/api/v1/conversations/{}/messages", conv.id);
+
+        let (status, body) = send(&app, json_req("POST", &uri, r#"{"content":"在吗"}"#)).await;
+        assert_eq!(status, StatusCode::CREATED);
+        let turn: ChatTurn = serde_json::from_str(&body).unwrap();
+        assert_eq!(turn.backend, "dummy");
+        assert_eq!(turn.assistant.content, "（测试用空模型）");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn state_block_becomes_variables_but_stays_in_the_archive() {
+        let app = app(None);
+        let conv = create(
+            &app,
+            r#"{"provider":"x","model":"y","system_prompt":"你是客栈老板。"}"#,
+        )
+        .await;
+        let uri = format!("/api/v1/conversations/{}/messages", conv.id);
+        let content = "我要住店\n<state>\nset HP = 12\nsetglobal 季节 = 初冬\n</state>";
+        let body = serde_json::json!({ "content": content }).to_string();
+        let (status, _) = send(&app, json_req("POST", &uri, &body)).await;
+        assert_eq!(status, StatusCode::CREATED);
+
+        // 1) 解析成操作：本会话 1 条、全局 1 条
+        let vars_uri = format!("/api/v1/conversations/{}/variables", conv.id);
+        let (status, body) = send(&app, get_req(&vars_uri)).await;
+        assert_eq!(status, StatusCode::OK);
+        let view: crate::vars::VariableView = serde_json::from_str(&body).unwrap();
+        assert_eq!(view.session.len(), 1);
+        assert_eq!(view.global.len(), 1);
+        assert_eq!(view.effective.get("HP").map(String::as_str), Some("12"));
+        assert_eq!(view.effective.get("季节").map(String::as_str), Some("初冬"));
+
+        // 全局端点不需要会话也能看到那条
+        let (status, body) = send(&app, get_req("/api/v1/variables")).await;
+        assert_eq!(status, StatusCode::OK);
+        let global: crate::vars::VariableView = serde_json::from_str(&body).unwrap();
+        assert_eq!(global.effective.get("季节").map(String::as_str), Some("初冬"));
+        assert!(!global.effective.contains_key("HP"), "全局不含别人的会话状态");
+
+        // 2) 存档：消息正文里标签**原样保留**
+        let (_, body) = send(&app, get_req(&uri)).await;
+        let messages: Vec<Message> = serde_json::from_str(&body).unwrap();
+        assert!(
+            messages[0].content.contains("<state>"),
+            "标签是存档的一部分：{}",
+            messages[0].content
+        );
+
+        // 3) 出站：历史剔除标签，系统提示词后面挂当前变量表
+        let outgoing_uri = format!("/api/v1/conversations/{}/outgoing", conv.id);
+        let (status, body) = send(&app, get_req(&outgoing_uri)).await;
+        assert_eq!(status, StatusCode::OK);
+        let outgoing: Vec<crate::vars::Outgoing> = serde_json::from_str(&body).unwrap();
+        assert_eq!(outgoing[0].role, crate::vars::OutgoingRole::System);
+        assert!(outgoing[0].content.starts_with("你是客栈老板。"));
+        assert!(outgoing[0].content.contains("当前变量:"));
+        assert!(outgoing[0].content.contains("HP = 12"));
+        assert_eq!(outgoing[1].content, "我要住店");
+        assert!(
+            !outgoing.iter().any(|item| item.content.contains("<state>")),
+            "任何一条都不该带着标签发出去"
+        );
+    }
+
+    #[tokio::test]
+    async fn variables_endpoint_rejects_unknown_conversation() {
+        let app = app(None);
+        let uri = format!("/api/v1/conversations/{}/variables", Uuid::now_v7());
+        let (status, _) = send(&app, get_req(&uri)).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn editing_a_message_rewrites_its_state_block() {
+        let app = app(None);
+        let conv = create(&app, r#"{"provider":"x","model":"y"}"#).await;
+        let uri = format!("/api/v1/conversations/{}/messages", conv.id);
+        let body = serde_json::json!({ "content": "开始\n<state>\nset HP = 12\n</state>" }).to_string();
+        let (_, response) = send(&app, json_req("POST", &uri, &body)).await;
+        let turn: ChatTurn = serde_json::from_str(&response).unwrap();
+
+        // 改成正 3：旧操作要被**换掉**，不是叠加
+        let edit_uri = format!("/api/v1/conversations/{}/messages/{}", conv.id, turn.user.id);
+        let edited = "改口\n<state>\nset HP = 3\n</state>";
+        let body = serde_json::json!({ "content": edited }).to_string();
+        let (status, response) = send(&app, json_req("PATCH", &edit_uri, &body)).await;
+        assert_eq!(status, StatusCode::OK);
+        let updated: Message = serde_json::from_str(&response).unwrap();
+        assert_eq!(updated.content, edited);
+        assert_eq!(updated.id, turn.user.id);
+
+        let vars_uri = format!("/api/v1/conversations/{}/variables", conv.id);
+        let (_, response) = send(&app, get_req(&vars_uri)).await;
+        let view: crate::vars::VariableView = serde_json::from_str(&response).unwrap();
+        assert_eq!(view.session.len(), 1, "旧操作要被换掉，不是叠加");
+        assert_eq!(view.effective.get("HP").map(String::as_str), Some("3"));
+
+        // 出站用新正文，且标签仍被剔除
+        let outgoing_uri = format!("/api/v1/conversations/{}/outgoing", conv.id);
+        let (_, response) = send(&app, get_req(&outgoing_uri)).await;
+        let outgoing: Vec<crate::vars::Outgoing> = serde_json::from_str(&response).unwrap();
+        assert_eq!(outgoing[1].content, "改口");
+    }
+
+    /// 编造一个不存在/不属于该会话的消息 id → 404，不能跨会话改。
+    #[tokio::test]
+    async fn editing_rejects_foreign_or_unknown_messages() {
+        let app = app(None);
+        let first = create(&app, r#"{"provider":"x","model":"y"}"#).await;
+        let second = create(&app, r#"{"provider":"x","model":"y"}"#).await;
+        let uri = format!("/api/v1/conversations/{}/messages", first.id);
+        let (_, response) = send(&app, json_req("POST", &uri, r#"{"content":"原话"}"#)).await;
+        let turn: ChatTurn = serde_json::from_str(&response).unwrap();
+
+        let body = serde_json::json!({ "content": "被篡改" }).to_string();
+        let foreign = format!(
+            "/api/v1/conversations/{}/messages/{}",
+            second.id, turn.user.id
+        );
+        let (status, _) = send(&app, json_req("PATCH", &foreign, &body)).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let unknown = format!("/api/v1/conversations/{}/messages/{}", first.id, Uuid::now_v7());
+        let (status, _) = send(&app, json_req("PATCH", &unknown, &body)).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        // 原消息没被动过
+        let (_, response) = send(&app, get_req(&uri)).await;
+        let messages: Vec<Message> = serde_json::from_str(&response).unwrap();
+        assert_eq!(messages[0].content, "原话");
     }
 
     #[tokio::test]
@@ -817,6 +1106,80 @@ mod tests {
         let msgs: Vec<Message> = serde_json::from_str(&body).unwrap();
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].content, "你好");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn conversation_model_and_agent_can_be_switched() {
+        let app = app(None);
+        let conv = create(&app, "{}").await;
+        assert_eq!(conv.provider, "dummy");
+        let uri = format!("/api/v1/conversations/{}", conv.id);
+
+        let (status, body) = send(
+            &app,
+            json_req("PATCH", &uri, r#"{"provider":"local","model":"some-model"}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let updated: Conversation = serde_json::from_str(&body).unwrap();
+        assert_eq!(
+            (updated.provider.as_str(), updated.model.as_str()),
+            ("local", "some-model")
+        );
+
+        let (status, body) = send(&app, json_req("PATCH", &uri, r#"{"agent_id":"跑团"}"#)).await;
+        assert_eq!(status, StatusCode::OK);
+        let updated: Conversation = serde_json::from_str(&body).unwrap();
+        assert_eq!(updated.agent_id, "跑团");
+
+        // 省略的字段不该被动
+        let (status, body) = send(&app, json_req("PATCH", &uri, r#"{"title":"改个名"}"#)).await;
+        assert_eq!(status, StatusCode::OK);
+        let updated: Conversation = serde_json::from_str(&body).unwrap();
+        assert_eq!(updated.title, "改个名");
+        assert_eq!(updated.provider, "local");
+        assert_eq!(updated.agent_id, "跑团");
+    }
+
+    #[tokio::test]
+    async fn builtin_default_agent_is_listed_editable_but_not_deletable() {
+        let (app, dir) = app_with_files(&[(
+            "agents.jsonc",
+            r#"{ "default_agent": "default", "agents": [] }"#,
+        )]);
+
+        let (status, body) = send(&app, get_req("/api/v1/agents")).await;
+        assert_eq!(status, StatusCode::OK);
+        let config: AgentsConfig = serde_json::from_str(&body).unwrap();
+        assert_eq!(config.agents.len(), 1, "文件为空时补上内置默认");
+        let builtin = config.get("default").expect("内置默认 agent 应在列表里");
+        assert_eq!(builtin.system_prompt, "You are a helpful assistant.");
+
+        // 内置的删不掉
+        let (status, _) = send(&app, json_req("DELETE", "/api/v1/agents/default", "")).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        // 但能改：改它会把内置"落地"进文件
+        let (status, body) = send(
+            &app,
+            json_req(
+                "PATCH",
+                "/api/v1/agents/default",
+                r#"{"system_prompt":"You are a terse assistant."}"#,
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let updated: Agent = serde_json::from_str(&body).unwrap();
+        assert_eq!(updated.system_prompt, "You are a terse assistant.");
+        let on_disk = std::fs::read_to_string(dir.join("agents.jsonc")).unwrap();
+        assert!(on_disk.contains("You are a terse assistant."), "编辑内置 agent 要落地");
+
+        // 落地之后它已是普通 agent，可以删
+        let (status, _) = send(&app, json_req("DELETE", "/api/v1/agents/default", "")).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

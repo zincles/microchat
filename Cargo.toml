@@ -2,6 +2,9 @@
 name = "microchat"
 version = "0.1.0"
 edition = "2024"
+# AGPL-3.0-only：完整文本见 LICENSE（自 gnu.org 逐字取回）。
+# 将来若想允许衍生作品用更新版本，可改为 "AGPL-3.0-or-later"。
+license = "AGPL-3.0-only"
 
 # 预留 workspace：后续 server / store 若拆 crate，在 members 里加即可，不必重构。
 [workspace]
@@ -19,6 +22,7 @@ eframe = { version = "0.36.2", default-features = false, features = [
 ] }
 egui_graphs = "0.32.0"
 jsonc-parser = { version = "0.33.2", features = ["serde"] }
+petgraph = "0.8.3"
 reqwest = { version = "0.13.5", default-features = false, features = ["blocking", "json", "rustls"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }

@@ -4,15 +4,15 @@
   "agents": [
     {
       "id": "ze",
-      "name": "DAZE",
-      "system_prompt": "sadwa",
+      "name": "测试助手1",
+      "system_prompt": "如果你能回复，不论用户说了啥，你都回复Hello world。",
       "params": {},
       "prompt_order": []
     },
     {
       "id": "aadd",
-      "name": "ssa",
-      "system_prompt": "",
+      "name": "测试2",
+      "system_prompt": "HELLO",
       "params": {},
       "prompt_order": []
     }

@@ -1739,6 +1739,7 @@ dependencies = [
  "egui_graphs",
  "http-body-util",
  "jsonc-parser",
+ "petgraph",
  "reqwest",
  "rusqlite",
  "serde",

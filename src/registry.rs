@@ -49,11 +49,15 @@ pub fn views(
         .iter()
         .map(|provider| {
             let last_refresh_at = store.last_refresh_at(&provider.id)?;
-            let models = store
-                .list_models(&provider.id)?
-                .into_iter()
-                .map(model_view)
-                .collect();
+            // dummy provider 的模型是虚拟的：没有上游，也就没有可发现的东西，不进库。
+            let models = match provider.kind {
+                ProviderKind::Dummy => vec![dummy_model_view()],
+                ProviderKind::OpenAiCompat => store
+                    .list_models(&provider.id)?
+                    .into_iter()
+                    .map(model_view)
+                    .collect(),
+            };
             Ok(ProviderView {
                 id: provider.id.clone(),
                 kind: provider.kind,
@@ -77,6 +81,21 @@ fn model_view(entry: ModelEntry) -> ModelView {
         max_output: entry.max_output,
         params: entry.params_json(),
         upstream_params: entry.upstream_params_json(),
+    }
+}
+
+/// dummy 模型的展示形态：不来自数据库，而是硬编码的虚拟模型。
+/// 显示名直接由回复文案拼出（回复自带全角括号），保持单一来源。
+fn dummy_model_view() -> ModelView {
+    ModelView {
+        upstream_id: crate::chat::DUMMY_MODEL_ID.to_owned(),
+        name: format!("Dummy{}", crate::chat::DUMMY_MODEL_REPLY),
+        upstream_name: None,
+        owned_by: None,
+        context_length: None,
+        max_output: None,
+        params: serde_json::Value::Object(Default::default()),
+        upstream_params: serde_json::Value::Object(Default::default()),
     }
 }
 
@@ -141,6 +160,25 @@ mod tests {
         assert_eq!(view.models[0].name, "Deepseek V4 Flash", "无上游名时回退 prettify");
         assert_eq!(view.models[0].context_length, Some(131072));
         assert_eq!(view.models[0].upstream_params["supported"][0], "temperature");
+    }
+
+    #[test]
+    fn dummy_provider_exposes_the_virtual_model() {
+        let store = Store::open_in_memory().unwrap();
+        let config = ProvidersConfig {
+            providers: vec![ProviderConfig {
+                id: "dummy".to_owned(),
+                kind: ProviderKind::Dummy,
+                base_url: String::new(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let views = views(&store, &config, &BTreeMap::new()).unwrap();
+        assert_eq!(views[0].models.len(), 1, "dummy provider 恰好提供一个虚拟模型");
+        assert_eq!(views[0].models[0].upstream_id, "dummy");
+        assert_eq!(views[0].models[0].name, "Dummy（测试用空模型）");
     }
 
     #[test]

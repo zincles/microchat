@@ -13,8 +13,9 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::model::{Conversation, DiscoveredModel, Message, ModelEntry, Role, DEFAULT_AGENT_ID};
+use crate::vars::{OpKind, Scope, VarOp, VarOpRow};
 
-const MIGRATIONS: [&str; 3] = [r#"
+const MIGRATIONS: [&str; 4] = [r#"
 CREATE TABLE conversations (
   id            TEXT PRIMARY KEY,
   title         TEXT NOT NULL DEFAULT '',
@@ -65,6 +66,25 @@ CREATE TABLE provider_state (
 "#, r#"
 -- 上游声明的参数信息（supported/default），与用户覆盖的 params 分列。
 ALTER TABLE models ADD COLUMN upstream_params TEXT NOT NULL DEFAULT '{}';
+"#, r#"
+-- 变量操作日志：只追加，永不回改。
+-- 生效值 = 从空 fold 到此刻；回溯 = fold 到第 N 条（seq 就是 id）。
+-- 删除写成墓碑行（op='del'），这样"没设置过"与"显式删掉"能区分开——
+-- 否则本会话删掉的键会从全局底下漏回来。
+CREATE TABLE variable_ops (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  scope           TEXT NOT NULL CHECK (scope IN ('session','global')),
+  -- session 作用域必填；global 为 NULL（全局操作不属于任何会话）
+  conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE,
+  -- 来源消息。手工注入/将来的通道可能为空。
+  message_id      TEXT,
+  op              TEXT NOT NULL CHECK (op IN ('set','del')),
+  key             TEXT NOT NULL,
+  value           TEXT,
+  created_at      INTEGER NOT NULL
+);
+
+CREATE INDEX variable_ops_by_conv ON variable_ops(conversation_id, id);
 "#];
 
 #[derive(Debug)]
@@ -255,10 +275,118 @@ impl Store {
         Ok(rows.filter_map(std::result::Result::ok).collect())
     }
 
+    /// 追加一批变量操作（**只插不改**；回放靠 `seq` 顺序，不做反操作）。
+    ///
+    /// `scope=Global` 的操作不绑会话（`conversation_id` 写 NULL）；`session` 必绑，
+    /// 外键保证会话不存在时整体失败——不会留下悬空的操作。
+    pub fn insert_variable_ops(
+        &mut self,
+        conversation_id: Uuid,
+        message_id: Uuid,
+        ops: &[VarOp],
+    ) -> Result<usize> {
+        if ops.is_empty() {
+            return Ok(0);
+        }
+        let now = now_ms();
+        let tx = self.conn.transaction()?;
+        write_variable_ops(
+            &tx,
+            &conversation_id.to_string(),
+            &message_id.to_string(),
+            now,
+            ops,
+        )?;
+        tx.commit()?;
+        Ok(ops.len())
+    }
+
+    /// 编辑一条消息的正文，并**重算**它产生的变量操作，返回更新后的消息。
+    ///
+    /// 编辑等于改存档：那条消息当初写下的状态未必还是它现在说的，所以它的操作整批删掉、
+    /// 按新正文重新落（新操作拿到新的 `seq`——在时间线上它们属于"现在"）。
+    /// 单事务：改正文与换操作要么都成，要么都不成。
+    pub fn update_message(
+        &mut self,
+        conversation_id: Uuid,
+        message_id: Uuid,
+        content: &str,
+        ops: &[VarOp],
+    ) -> Result<Message> {
+        let now = now_ms();
+        let conversation = conversation_id.to_string();
+        let message = message_id.to_string();
+        let tx = self.conn.transaction()?;
+
+        let touched = tx.execute(
+            "UPDATE messages SET content = ?1 WHERE id = ?2 AND conversation_id = ?3",
+            params![content, message, conversation],
+        )?;
+        if touched == 0 {
+            return Err(Error::NotFound);
+        }
+        tx.execute(
+            "DELETE FROM variable_ops WHERE message_id = ?1",
+            params![message],
+        )?;
+        write_variable_ops(&tx, &conversation, &message, now, ops)?;
+        let updated = tx.query_row(
+            "SELECT id, conversation_id, role, content, created_at FROM messages WHERE id = ?1",
+            params![message],
+            row_to_message,
+        )?;
+        tx.execute(
+            "UPDATE conversations SET updated_at = ?1 WHERE id = ?2",
+            params![now, conversation],
+        )?;
+        tx.commit()?;
+        Ok(updated)
+    }
+
+    /// 某会话要用的全部操作：全局 base + 本会话，按 `seq`（= id）升序。
+    pub fn list_variable_ops(&self, conversation_id: Uuid) -> Result<Vec<VarOpRow>> {
+        if self.get_conversation(conversation_id)?.is_none() {
+            return Err(Error::NotFound);
+        }
+        let mut stmt = self.conn.prepare(
+            "SELECT id, scope, op, key, value, message_id, conversation_id, created_at
+             FROM variable_ops
+             WHERE scope = 'global' OR conversation_id = ?1
+             ORDER BY id",
+        )?;
+        let rows = stmt.query_map(params![conversation_id.to_string()], row_to_var_op)?;
+        // 注意：不像 list_messages 那样吞掉行错误——枚举列认不出来说明库被动过，必须报。
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// 只要全局的（"全局变量"面板用，不依赖任何会话）。
+    pub fn list_global_variable_ops(&self) -> Result<Vec<VarOpRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, scope, op, key, value, message_id, conversation_id, created_at
+             FROM variable_ops WHERE scope = 'global' ORDER BY id",
+        )?;
+        let rows = stmt.query_map([], row_to_var_op)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     pub fn set_conversation_agent(&mut self, conversation_id: Uuid, agent_id: &str) -> Result<()> {
         let touched = self.conn.execute(
             "UPDATE conversations SET agent_id = ?1 WHERE id = ?2",
             params![agent_id, conversation_id.to_string()],
+        )?;
+        (touched > 0).then_some(()).ok_or(Error::NotFound)
+    }
+
+    /// 换模型：provider 与 model 一起写（模型是 provider 下的 id）。
+    pub fn set_conversation_model(
+        &mut self,
+        conversation_id: Uuid,
+        provider: &str,
+        model: &str,
+    ) -> Result<()> {
+        let touched = self.conn.execute(
+            "UPDATE conversations SET provider = ?1, model = ?2 WHERE id = ?3",
+            params![provider, model, conversation_id.to_string()],
         )?;
         (touched > 0).then_some(()).ok_or(Error::NotFound)
     }
@@ -444,6 +572,60 @@ fn row_to_conversation(row: &Row<'_>) -> rusqlite::Result<Conversation> {
     })
 }
 
+fn row_to_var_op(row: &Row<'_>) -> rusqlite::Result<VarOpRow> {
+    Ok(VarOpRow {
+        seq: row.get(0)?,
+        scope: parse_enum(row.get::<_, String>(1)?, "scope", Scope::parse)?,
+        kind: parse_enum(row.get::<_, String>(2)?, "op", OpKind::parse)?,
+        key: row.get(3)?,
+        value: row.get(4)?,
+        message_id: row.get::<_, Option<String>>(5)?.map(parse_uuid).transpose()?,
+        conversation_id: row.get::<_, Option<String>>(6)?.map(parse_uuid).transpose()?,
+        created_at: row.get(7)?,
+    })
+}
+
+/// 把一批操作写进 `variable_ops`。调用方负责事务与"先删旧的"。
+fn write_variable_ops(
+    conn: &Connection,
+    conversation_id: &str,
+    message_id: &str,
+    created_at: i64,
+    ops: &[VarOp],
+) -> rusqlite::Result<()> {
+    for op in ops {
+        conn.execute(
+            "INSERT INTO variable_ops
+               (scope, conversation_id, message_id, op, key, value, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                op.scope.as_str(),
+                match op.scope {
+                    Scope::Session => Some(conversation_id),
+                    Scope::Global => None,
+                },
+                message_id,
+                op.kind.as_str(),
+                op.key.as_str(),
+                op.value.as_deref(),
+                created_at,
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+/// 文本列 → 枚举。认不出来的值**报错**而不是跳过：那说明库被别的东西写过。
+fn parse_enum<T>(raw: String, column: &str, parse: fn(&str) -> Option<T>) -> rusqlite::Result<T> {
+    parse(&raw).ok_or_else(|| {
+        rusqlite::Error::FromSqlConversionFailure(
+            0,
+            Type::Text,
+            format!("{column} 列的值不认识: {raw}").into(),
+        )
+    })
+}
+
 fn row_to_message(row: &Row<'_>) -> rusqlite::Result<Message> {
     let role_raw: String = row.get(2)?;
     let role = Role::parse(&role_raw).ok_or_else(|| {
@@ -582,6 +764,123 @@ mod tests {
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
         }
+    }
+
+    #[test]
+    fn variable_ops_append_and_fold_in_order() {
+        let mut s = store();
+        let conv = s.create_conversation("dummy", "dummy", "你是助手").unwrap();
+        let msg = s.insert_message(conv.id, Role::User, "来了").unwrap();
+        let ops = vec![
+            VarOp {
+                scope: Scope::Session,
+                kind: OpKind::Set,
+                key: "HP".to_owned(),
+                value: Some("12".to_owned()),
+            },
+            VarOp {
+                scope: Scope::Global,
+                kind: OpKind::Set,
+                key: "季节".to_owned(),
+                value: Some("初冬".to_owned()),
+            },
+        ];
+        assert_eq!(s.insert_variable_ops(conv.id, msg.id, &ops).unwrap(), 2);
+
+        let view = crate::vars::VariableView::build(&s.list_variable_ops(conv.id).unwrap());
+        assert_eq!(view.effective.get("HP").map(String::as_str), Some("12"));
+        assert_eq!(view.effective.get("季节").map(String::as_str), Some("初冬"));
+        assert_eq!(view.session.len(), 1);
+        assert_eq!(view.global.len(), 1);
+        assert_eq!(s.list_global_variable_ops().unwrap().len(), 1);
+
+        // 全局对所有会话可见；别人的 session 不可见。
+        let other = s.create_conversation("dummy", "dummy", "").unwrap();
+        let view = crate::vars::VariableView::build(&s.list_variable_ops(other.id).unwrap());
+        assert_eq!(view.effective.get("季节").map(String::as_str), Some("初冬"));
+        assert!(!view.effective.contains_key("HP"));
+    }
+
+    #[test]
+    fn session_delete_hides_the_global_value() {
+        let mut s = store();
+        let conv = s.create_conversation("dummy", "dummy", "").unwrap();
+        let msg = s.insert_message(conv.id, Role::User, "x").unwrap();
+        let global = VarOp {
+            scope: Scope::Global,
+            kind: OpKind::Set,
+            key: "世界".to_owned(),
+            value: Some("临安".to_owned()),
+        };
+        let delete = VarOp {
+            scope: Scope::Session,
+            kind: OpKind::Delete,
+            key: "世界".to_owned(),
+            value: None,
+        };
+        s.insert_variable_ops(conv.id, msg.id, &[global]).unwrap();
+        s.insert_variable_ops(conv.id, msg.id, &[delete]).unwrap();
+
+        let view = crate::vars::VariableView::build(&s.list_variable_ops(conv.id).unwrap());
+        assert!(view.effective.is_empty(), "{:?}", view.effective);
+        assert_eq!(view.global_values.get("世界").map(String::as_str), Some("临安"));
+    }
+
+    #[test]
+    fn variable_ops_reject_unknown_conversation() {
+        let mut s = store();
+        let message = Uuid::now_v7();
+        let op = VarOp {
+            scope: Scope::Session,
+            kind: OpKind::Set,
+            key: "HP".to_owned(),
+            value: Some("1".to_owned()),
+        };
+        // 外键在事务里失败 → 一条都不落
+        assert!(matches!(
+            s.insert_variable_ops(Uuid::now_v7(), message, &[op]),
+            Err(Error::Db(_))
+        ));
+        assert!(matches!(
+            s.list_variable_ops(Uuid::now_v7()),
+            Err(Error::NotFound)
+        ));
+    }
+
+    #[test]
+    fn editing_a_message_recomputes_its_variable_ops() {
+        let mut s = store();
+        let conv = s.create_conversation("dummy", "dummy", "").unwrap();
+        let msg = s
+            .insert_message(conv.id, Role::Assistant, "好的\n<state>\nset HP = 12\n</state>")
+            .unwrap();
+        crate::vars::parse(&msg.content);
+        let ops = crate::vars::parse(&msg.content).ops;
+        s.insert_variable_ops(conv.id, msg.id, &ops).unwrap();
+        assert_eq!(
+            crate::vars::VariableView::build(&s.list_variable_ops(conv.id).unwrap())
+                .effective
+                .get("HP")
+                .map(String::as_str),
+            Some("12")
+        );
+
+        // 编辑成另一套状态：旧操作必须整批消失，不能与新正文并存
+        let edited = "算了\n<state>\nset HP = 3\ndel 房号\n</state>";
+        let ops = crate::vars::parse(edited).ops;
+        let updated = s.update_message(conv.id, msg.id, edited, &ops).unwrap();
+        assert_eq!(updated.content, edited);
+
+        let view = crate::vars::VariableView::build(&s.list_variable_ops(conv.id).unwrap());
+        assert_eq!(view.effective.get("HP").map(String::as_str), Some("3"));
+        assert_eq!(view.session.len(), 2, "旧的那条 set 必须被删掉");
+
+        // 别人的消息 / 不存在的消息都不能改
+        let other = s.create_conversation("dummy", "dummy", "").unwrap();
+        assert!(matches!(
+            s.update_message(other.id, msg.id, "x", &[]),
+            Err(Error::NotFound)
+        ));
     }
 
     fn discovered(upstream_id: &str, name: Option<&str>) -> DiscoveredModel {
