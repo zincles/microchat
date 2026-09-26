@@ -76,6 +76,7 @@ pub fn router(state: AppState) -> Router {
             "/conversations/{id}/messages",
             get(list_messages).post(send_message),
         )
+        .route("/conversations/{id}/resend", post(resend_message))
         .route(
             "/conversations/{id}/messages/{message_id}",
             patch(edit_message).delete(delete_message),
@@ -233,37 +234,87 @@ async fn send_message(
     Path(id): Path<Uuid>,
     Json(req): Json<SendReq>,
 ) -> Result<(StatusCode, Json<ChatTurn>), ApiError> {
-    let providers = ProvidersConfig::load(&state.paths.providers_jsonc())?;
-
-    // 先把该写的写完、该组装的组装好，再放掉数据库锁：生成回复要等上游几秒钟，
-    // 攥着锁等会把整个后端一起卡住。
-    let (user, conversation, outgoing) = {
+    // 先把用户消息写进去、标题补上——生成回复可能要几秒，数据库锁不跟着等。
+    let user = {
         let mut store = state.lock()?;
         let user = store.insert_message(id, Role::User, &req.content)?;
         let conversation = store.get_conversation(id)?.ok_or_else(ApiError::not_found)?;
         if conversation.title.is_empty() {
             store.update_title(id, &title_from(&req.content, state.title_chars))?;
         }
+        user
+    };
 
-        // 真正要发出去的东西在这里成型：历史剔除状态块、只注入当前变量表。
+    let (backend, assistant) = reply_to_conversation(&state, id).await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(ChatTurn {
+            user,
+            assistant,
+            backend: backend.name().to_owned(),
+        }),
+    ))
+}
+
+/// 生成一条助手回复并落库（`send_message` 与「重新发送」共用同一条路）。
+///
+/// 组装出站消息用的是**唯一那条路径**：[`vars::build_outgoing`]（历史剔除状态块、
+/// 注入当前变量表）。这里不再另写一份拼装。
+async fn reply_to_conversation(
+    state: &AppState,
+    id: Uuid,
+) -> Result<(chat::Backend, Message), ApiError> {
+    let providers = ProvidersConfig::load(&state.paths.providers_jsonc())?;
+
+    // 取料（会话、历史、出站消息、密钥）都在锁里，**等上游之前把锁放掉**。
+    let (conversation, outgoing, secrets) = {
+        let store = state.lock()?;
+        let conversation = store.get_conversation(id)?.ok_or_else(ApiError::not_found)?;
         let messages = store.list_messages(id)?;
-        let (system_prompt, source) = effective_system_prompt(&state, &conversation)?;
+        let (system_prompt, source) = effective_system_prompt(state, &conversation)?;
         let effective =
             vars::VariableView::from_sources(id, &system_prompt, source, &messages).effective;
         let outgoing = vars::build_outgoing(&system_prompt, &messages, &effective);
-        (user, conversation, outgoing)
+        let secrets = config::load_secrets(&state.paths.secrets_json())?;
+        (conversation, outgoing, secrets)
     };
 
-    let secrets = config::load_secrets(&state.paths.secrets_json())?;
     let backend = chat::Backend::select(&conversation, &providers);
     let reply = chat::complete(&conversation, &outgoing, &providers, &secrets).await?;
+    let assistant = state.lock()?.insert_message(id, Role::Assistant, &reply)?;
+    Ok((backend, assistant))
+}
 
-    let assistant = {
+/// 重新发送：**最后一条是助手就删掉它重来**（对这条回复不满意）；**
+/// 最后一条是用户消息就照着它重发（比如上回上游报错，回复没落下来）。
+///
+/// 两者都走 `reply_to_conversation`——和正常发消息是同一条生成路径，
+/// 所以重发出来的东西与第一次相比没有任何"特殊待遇"。
+async fn resend_message(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<(StatusCode, Json<ChatTurn>), ApiError> {
+    let user = {
         let mut store = state.lock()?;
-        let assistant = store.insert_message(id, Role::Assistant, &reply)?;
-        assistant
+        let messages = store.list_messages(id)?;
+        match messages.last() {
+            None => return Err(ApiError::bad_request("这个会话还没有消息可重发")),
+            Some(last) if last.role == Role::Assistant => {
+                // 顺带把它带来的状态也抹掉——变量是现演的，正文没了就没了。
+                store.delete_message(id, last.id)?;
+                messages
+                    .iter()
+                    .rev()
+                    .nth(1)
+                    .filter(|message| message.role == Role::User)
+                    .cloned()
+                    .ok_or_else(|| ApiError::bad_request("删掉这条回复后，前面没有可以对答的用户消息"))?
+            }
+            Some(last) => last.clone(),
+        }
     };
 
+    let (backend, assistant) = reply_to_conversation(&state, id).await?;
     Ok((
         StatusCode::CREATED,
         Json(ChatTurn {
@@ -1223,6 +1274,54 @@ mod tests {
     }
 
     /// 删中间一句：剩下的顺序不变（靠 rowid），那句写下的状态操作也不再生效。
+    /// 重新发送：尾条是助手就重来（换一条、不加一条），是用户消息就照它重发。
+    #[tokio::test]
+    async fn resend_replaces_the_last_reply_or_answers_a_dangling_user() {
+        let app = app(None);
+        let conv = create(&app, r#"{"provider":"dummy","model":"dummy"}"#).await;
+        let uri = format!("/api/v1/conversations/{}/messages", conv.id);
+        let resend_uri = format!("/api/v1/conversations/{}/resend", conv.id);
+
+        let (_, body) = send(&app, json_req("POST", &uri, r#"{"content":"在吗"}"#)).await;
+        let first: ChatTurn = serde_json::from_str(&body).unwrap();
+
+        // ① 尾条是助手 → 生成一条新的，条数不变
+        let (status, body) = send(&app, json_req("POST", &resend_uri, "")).await;
+        assert_eq!(status, StatusCode::CREATED);
+        let again: ChatTurn = serde_json::from_str(&body).unwrap();
+        assert_eq!(again.user.id, first.user.id, "用户那条不该被动");
+        assert_ne!(again.assistant.id, first.assistant.id, "助手那条要是新的");
+        let (_, body) = send(&app, get_req(&uri)).await;
+        assert_eq!(serde_json::from_str::<Vec<Message>>(&body).unwrap().len(), 2, "换了一条，不是加了一条");
+
+        // ② 尾条是用户消息（上次上游报错，或刚删掉回复）→ 照着它重发
+        let (status, _) = send(
+            &app,
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("{uri}/{}", again.assistant.id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let (status, body) = send(&app, json_req("POST", &resend_uri, "")).await;
+        assert_eq!(status, StatusCode::CREATED);
+        let third: ChatTurn = serde_json::from_str(&body).unwrap();
+        assert_eq!(third.user.id, first.user.id);
+        let (_, body) = send(&app, get_req(&uri)).await;
+        assert_eq!(serde_json::from_str::<Vec<Message>>(&body).unwrap().len(), 2);
+
+        // ③ 一条消息都没有 → 400（没什么可重发）
+        let empty = create(&app, r#"{"provider":"dummy","model":"dummy"}"#).await;
+        let (status, _) = send(
+            &app,
+            json_req("POST", &format!("/api/v1/conversations/{}/resend", empty.id), ""),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
     #[tokio::test]
     async fn deleting_a_message_drops_its_state_ops_and_keeps_order() {
         let app = app(None);

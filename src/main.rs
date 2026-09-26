@@ -468,8 +468,6 @@ struct App {
     menu_selection: Option<SelectionSnapshot>,
     /// 会话列表最上面那块系统提示词是否展开（默认只露几行：它常常是整篇世界观）。
     system_prompt_open: bool,
-    /// 正在等第二次点击确认删除的消息（两下才删，防手滑）。
-    deleting: Option<Uuid>,
 }
 
 impl App {
@@ -526,7 +524,6 @@ impl App {
             deferred: None,
             menu_selection: None,
             system_prompt_open: false,
-            deleting: None,
         };
         app.connect();
         app
@@ -721,8 +718,6 @@ impl App {
 
     /// 切到某个会话：记住选中并拉它的消息（每次拉，保证看到最新）。
     fn open_conversation(&mut self, conversation: Uuid) {
-        // 换会话时把"等确认删除"的状态丢掉：它是属于某一条消息的
-        self.deleting = None;
         self.current = Some(conversation);
         self.focus_pending = true;
         self.view = View::Chat;
@@ -886,6 +881,18 @@ impl App {
                         Err(message) => self.note = message,
                     }
                 }
+                Event::Resent {
+                    conversation,
+                    result,
+                } => match result {
+                    Ok(turn) => {
+                        self.note = format!("已重新生成（{}）", turn.backend);
+                        // 旧回复被换掉了：条数可能变，直接重拉
+                        self.fetch_messages(conversation);
+                        self.fetch_variables(conversation);
+                    }
+                    Err(message) => self.note = message,
+                },
                 Event::Agents(Ok(config)) => {
                     self.agents = Some(config);
                     let still_there = self
@@ -2302,9 +2309,8 @@ impl App {
         // 编辑态先从 self 里取出来：下面闭包要同时可变借用草稿，而 `messages` 正借着 self.messages
         let mut editing = self.editing.take();
         let mut start_edit: Option<(Uuid, String)> = None;
-        let mut arm_delete: Option<Uuid> = None;
-        let mut disarm_delete = false;
-        let mut confirm_delete: Option<Uuid> = None;
+        let mut delete_now: Option<Uuid> = None;
+        let mut resend = false;
         let mut save_edit: Option<(Uuid, String)> = None;
         let mut cancel_edit = false;
         let mut edit_box_id: Option<egui::Id> = None;
@@ -2329,7 +2335,8 @@ impl App {
                             ui.add_space(6.0);
                             ui.label(RichText::new("还没有消息：在下面的输入框里说第一句").weak());
                         }
-                        for message in messages {
+                        let last_index = messages.len().saturating_sub(1);
+                        for (index, message) in messages.iter().enumerate() {
                             // 角色只靠左上角的名字区分：用户是「用户」，助手是**这个 agent 的名字**
                             // （一个会话一个 agent，所以整列助手都写它，而不是"助手"两个字）。
                             let (label, color) = match message.role {
@@ -2361,14 +2368,6 @@ impl App {
                                                 if ui.small_button("取消").clicked() {
                                                     cancel_edit = true;
                                                 }
-                                            } else if self.deleting == Some(message.id) {
-                                                // 两下才删：先「删除」亮出确认，再点「确认删除」。
-                                                if ui.small_button("确认删除").clicked() {
-                                                    confirm_delete = Some(message.id);
-                                                }
-                                                if ui.small_button("取消").clicked() {
-                                                    disarm_delete = true;
-                                                }
                                             } else {
                                                 if ui.small_button("编辑").clicked() {
                                                     start_edit =
@@ -2380,8 +2379,18 @@ impl App {
                                                         o.commands.push(egui::OutputCommand::CopyText(text))
                                                     });
                                                 }
+                                                if index == last_index
+                                                    && ui
+                                                        .small_button("重新发送")
+                                                        .on_hover_text(
+                                                            "尾条是回复就删掉重来；尾条是用户消息就照它重发",
+                                                        )
+                                                        .clicked()
+                                                {
+                                                    resend = true;
+                                                }
                                                 if ui.small_button("删除").clicked() {
-                                                    arm_delete = Some(message.id);
+                                                    delete_now = Some(message.id);
                                                 }
                                             }
                                         });
@@ -2454,20 +2463,21 @@ impl App {
         if toggle_system_prompt {
             self.system_prompt_open = !self.system_prompt_open;
         }
-        if let Some(id) = arm_delete {
-            self.deleting = Some(id);
-        }
-        if disarm_delete {
-            self.deleting = None;
-        }
-        if let Some(id) = confirm_delete {
-            self.deleting = None;
+        if let Some(id) = delete_now {
             let (base, token) = (self.settings.server_address.clone(), self.token.clone());
             self.client.send(Command::DeleteMessage {
                 base,
                 token,
                 conversation: current,
                 message: id,
+            });
+        }
+        if resend {
+            let (base, token) = (self.settings.server_address.clone(), self.token.clone());
+            self.client.send(Command::Resend {
+                base,
+                token,
+                conversation: current,
             });
         }
         self.editing = editing;

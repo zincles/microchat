@@ -110,6 +110,12 @@ pub enum Command {
         name: String,
         system_prompt: String,
     },
+    /// 重新发送：尾条是助手就删掉重来，是用户消息就照它重发。
+    Resend {
+        base: String,
+        token: Option<String>,
+        conversation: uuid::Uuid,
+    },
     /// 把某个 agent 设为 `agents.jsonc` 的 `default_agent`。
     MakeDefaultAgent {
         base: String,
@@ -166,6 +172,11 @@ pub enum Event {
         result: Result<(), String>,
     },
     Turn {
+        conversation: uuid::Uuid,
+        result: Result<microchat::server::ChatTurn, String>,
+    },
+    /// 重新发送的结果：条数可能变（旧回复被换掉），所以界面应当**重新拉一次消息**。
+    Resent {
         conversation: uuid::Uuid,
         result: Result<microchat::server::ChatTurn, String>,
     },
@@ -297,6 +308,9 @@ impl Command {
             Self::SaveAgent { id, .. } => format!("PATCH /agents/{id}"),
             Self::CreateAgent { name, .. } => format!("POST /agents ({name})"),
             Self::MakeDefaultAgent { id, .. } => format!("PATCH /agents/{id} (设为默认)"),
+            Self::Resend { conversation, .. } => {
+                format!("POST /conversations/{}/resend", &conversation.to_string()[..8])
+            }
             Self::DeleteAgent { id, .. } => format!("DELETE /agents/{id}"),
             Self::DebugState { .. } => "GET /debug/state".to_owned(),
             Self::DebugFile { name, .. } => format!("GET /debug/file/{name}"),
@@ -318,6 +332,10 @@ fn summarize(event: &Event) -> String {
         },
         Event::Variables { result, .. } => match result {
             Ok(view) => format!("OK {} 个生效变量", view.effective.len()),
+            Err(message) => format!("失败: {message}"),
+        },
+        Event::Resent { result, .. } => match result {
+            Ok(turn) => format!("OK 重新生成（{}）", turn.backend),
             Err(message) => format!("失败: {message}"),
         },
         Event::MessageDeleted { result, .. } => match result {
@@ -482,6 +500,23 @@ fn handle(http: &reqwest::blocking::Client, command: Command) -> Event {
                 ),
                 token.as_deref(),
                 serde_json::json!({ "content": content }),
+            ),
+        },
+        Command::Resend {
+            base,
+            token,
+            conversation,
+        } => Event::Resent {
+            conversation,
+            result: write_json(
+                http,
+                reqwest::Method::POST,
+                &format!(
+                    "{}/api/v1/conversations/{conversation}/resend",
+                    base.trim_end_matches('/')
+                ),
+                token.as_deref(),
+                serde_json::json!({}),
             ),
         },
         Command::UpdateConversation {
@@ -903,6 +938,7 @@ mod tests {
             Event::ConversationCreated(_) => "ConversationCreated",
             Event::ConversationDeleted { .. } => "ConversationDeleted",
             Event::Turn { .. } => "Turn",
+            Event::Resent { .. } => "Resent",
             Event::ConversationUpdated(_) => "ConversationUpdated",
             Event::Agents(_) => "Agents",
             Event::AgentWritten(_) => "AgentWritten",
