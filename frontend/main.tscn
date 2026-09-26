@@ -1,141 +1,222 @@
-[gd_scene format=3 uid="uid://c7cwxlddijhvi"]
+[gd_scene format=3]
 
-[node name="Main" type="Node" unique_id=1720788750]
+[ext_resource type="PackedScene" path="res://src/ui/会话项.tscn" id="1_conv"]
+[ext_resource type="PackedScene" path="res://src/ui/消息项.tscn" id="2_msg"]
 
-[node name="框架" type="HSplitContainer" parent="." unique_id=160124183]
+[sub_resource type="StyleBoxFlat" id="StyleTopBar"]
+content_margin_left = 12.0
+content_margin_top = 8.0
+content_margin_right = 12.0
+content_margin_bottom = 8.0
+bg_color = Color(1, 1, 1, 0.04)
+border_width_bottom = 1
+border_color = Color(1, 1, 1, 0.06)
+
+[sub_resource type="StyleBoxFlat" id="StyleSidebar"]
+content_margin_left = 8.0
+content_margin_top = 8.0
+content_margin_right = 8.0
+content_margin_bottom = 8.0
+bg_color = Color(1, 1, 1, 0.02)
+
+[sub_resource type="StyleBoxFlat" id="StylePanel"]
+content_margin_left = 12.0
+content_margin_top = 12.0
+content_margin_right = 12.0
+content_margin_bottom = 12.0
+bg_color = Color(1, 1, 1, 0.02)
+border_width_left = 1
+border_color = Color(1, 1, 1, 0.06)
+
+[sub_resource type="StyleBoxFlat" id="StyleComposer"]
+content_margin_left = 12.0
+content_margin_top = 8.0
+content_margin_right = 12.0
+content_margin_bottom = 8.0
+bg_color = Color(1, 1, 1, 0.04)
+border_width_top = 1
+border_color = Color(1, 1, 1, 0.06)
+
+
+[node name="Main" type="Control"]
+layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-split_offsets = PackedInt32Array(128, 1140)
-drag_area_highlight_in_editor = true
-split_offset = 128
 
-[node name="左侧会话栏" type="VBoxContainer" parent="框架" unique_id=2083669210]
-custom_minimum_size = Vector2(128, 0)
+[node name="框架" type="HSplitContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+split_offsets = PackedInt32Array(240)
+split_offset = 240
+
+[node name="左侧会话栏" type="PanelContainer" parent="框架"]
 layout_mode = 2
+custom_minimum_size = Vector2(180, 0)
+theme_override_styles/panel = SubResource("StyleSidebar")
 
-[node name="会话列表" type="PanelContainer" parent="框架/左侧会话栏" unique_id=345548859]
+[node name="侧栏布局" type="VBoxContainer" parent="框架/左侧会话栏"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="新建对话" type="Button" parent="框架/左侧会话栏/侧栏布局"]
+layout_mode = 2
+text = "＋ 新建对话"
+
+[node name="会话列表" type="ScrollContainer" parent="框架/左侧会话栏/侧栏布局"]
 layout_mode = 2
 size_flags_vertical = 3
+horizontal_scroll_mode = 0
 
-[node name="VBoxContainer" type="VBoxContainer" parent="框架/左侧会话栏/会话列表" unique_id=200790063]
+[node name="列表" type="VBoxContainer" parent="框架/左侧会话栏/侧栏布局/会话列表"]
 layout_mode = 2
-size_flags_vertical = 3
+size_flags_horizontal = 3
+theme_override_constants/separation = 2
 
-[node name="Button" type="Button" parent="框架/左侧会话栏/会话列表/VBoxContainer" unique_id=829591877]
-layout_mode = 2
-text = "对话1"
-
-[node name="Button2" type="Button" parent="框架/左侧会话栏/会话列表/VBoxContainer" unique_id=426949370]
-layout_mode = 2
-text = "对话2"
-
-[node name="Button3" type="Button" parent="框架/左侧会话栏/会话列表/VBoxContainer" unique_id=1530662561]
-layout_mode = 2
-text = "对话3"
-
-[node name="底部常驻" type="VBoxContainer" parent="框架/左侧会话栏" unique_id=2055745299]
+[node name="会话项1" parent="框架/左侧会话栏/侧栏布局/会话列表/列表" instance=ExtResource("1_conv")]
 layout_mode = 2
 
-[node name="Button" type="Button" parent="框架/左侧会话栏/底部常驻" unique_id=1987390006]
+[node name="会话项2" parent="框架/左侧会话栏/侧栏布局/会话列表/列表" instance=ExtResource("1_conv")]
+layout_mode = 2
+
+[node name="会话项3" parent="框架/左侧会话栏/侧栏布局/会话列表/列表" instance=ExtResource("1_conv")]
+layout_mode = 2
+
+[node name="底部导航" type="HBoxContainer" parent="框架/左侧会话栏/侧栏布局"]
+layout_mode = 2
+alignment = 1
+theme_override_constants/separation = 4
+
+[node name="账户" type="Button" parent="框架/左侧会话栏/侧栏布局/底部导航"]
+layout_mode = 2
+text = "账户"
+
+[node name="设置" type="Button" parent="框架/左侧会话栏/侧栏布局/底部导航"]
 layout_mode = 2
 text = "设置"
 
-[node name="当前窗口" type="VBoxContainer" parent="框架" unique_id=527647340]
+[node name="调试" type="Button" parent="框架/左侧会话栏/侧栏布局/底部导航"]
 layout_mode = 2
+text = "调试"
 
-[node name="中间聊天栏" type="TabContainer" parent="框架/当前窗口" unique_id=425820968]
+[node name="页面" type="TabContainer" parent="框架"]
 layout_mode = 2
 size_flags_vertical = 3
-current_tab = 0
 tabs_visible = false
 
-[node name="聊天" type="PanelContainer" parent="框架/当前窗口/中间聊天栏" unique_id=1446383810]
+[node name="聊天" type="HSplitContainer" parent="框架/页面"]
 layout_mode = 2
+split_offsets = PackedInt32Array(640)
+split_offset = 640
 metadata/_tab_index = 0
 
-[node name="VBoxContainer" type="VBoxContainer" parent="框架/当前窗口/中间聊天栏/聊天" unique_id=1578363371]
+[node name="聊天布局" type="VBoxContainer" parent="框架/页面/聊天"]
 layout_mode = 2
+theme_override_constants/separation = 0
 
-[node name="顶部模型栏" type="PanelContainer" parent="框架/当前窗口/中间聊天栏/聊天/VBoxContainer" unique_id=175877424]
+[node name="顶部模型栏" type="PanelContainer" parent="框架/页面/聊天/聊天布局"]
 layout_mode = 2
+theme_override_styles/panel = SubResource("StyleTopBar")
 
-[node name="HBoxContainer4" type="HBoxContainer" parent="框架/当前窗口/中间聊天栏/聊天/VBoxContainer/顶部模型栏" unique_id=1392586974]
+[node name="选择器" type="HBoxContainer" parent="框架/页面/聊天/聊天布局/顶部模型栏"]
 layout_mode = 2
+theme_override_constants/separation = 12
 
-[node name="HBoxContainer" type="HBoxContainer" parent="框架/当前窗口/中间聊天栏/聊天/VBoxContainer/顶部模型栏/HBoxContainer4" unique_id=1691071315]
+[node name="模型" type="MenuButton" parent="框架/页面/聊天/聊天布局/顶部模型栏/选择器"]
 layout_mode = 2
-size_flags_horizontal = 3
+text = "模型: commandcode-direct / GPT 5.6 Sol"
 
-[node name="Label" type="Label" parent="框架/当前窗口/中间聊天栏/聊天/VBoxContainer/顶部模型栏/HBoxContainer4/HBoxContainer" unique_id=1089810297]
+[node name="Agent" type="MenuButton" parent="框架/页面/聊天/聊天布局/顶部模型栏/选择器"]
 layout_mode = 2
-text = "Provider"
+text = "Agent: default"
 
-[node name="Button" type="MenuButton" parent="框架/当前窗口/中间聊天栏/聊天/VBoxContainer/顶部模型栏/HBoxContainer4/HBoxContainer" unique_id=819122135]
-layout_mode = 2
-text = "模型1"
-item_count = 2
-popup/item_0/text = "111"
-popup/item_0/id = 0
-popup/item_1/text = "222"
-popup/item_1/id = 1
-
-[node name="HBoxContainer3" type="HBoxContainer" parent="框架/当前窗口/中间聊天栏/聊天/VBoxContainer/顶部模型栏/HBoxContainer4" unique_id=774167597]
-layout_mode = 2
-size_flags_horizontal = 3
-
-[node name="Label" type="Label" parent="框架/当前窗口/中间聊天栏/聊天/VBoxContainer/顶部模型栏/HBoxContainer4/HBoxContainer3" unique_id=2100191460]
-layout_mode = 2
-text = "模型："
-
-[node name="Button" type="MenuButton" parent="框架/当前窗口/中间聊天栏/聊天/VBoxContainer/顶部模型栏/HBoxContainer4/HBoxContainer3" unique_id=302308341]
-layout_mode = 2
-text = "模型1"
-item_count = 2
-popup/item_0/text = "111"
-popup/item_0/id = 0
-popup/item_1/text = "222"
-popup/item_1/id = 1
-
-[node name="HBoxContainer2" type="HBoxContainer" parent="框架/当前窗口/中间聊天栏/聊天/VBoxContainer/顶部模型栏/HBoxContainer4" unique_id=2124744699]
-layout_mode = 2
-size_flags_horizontal = 3
-
-[node name="Label" type="Label" parent="框架/当前窗口/中间聊天栏/聊天/VBoxContainer/顶部模型栏/HBoxContainer4/HBoxContainer2" unique_id=1984518318]
-layout_mode = 2
-text = "Agent:"
-
-[node name="Button" type="MenuButton" parent="框架/当前窗口/中间聊天栏/聊天/VBoxContainer/顶部模型栏/HBoxContainer4/HBoxContainer2" unique_id=865693308]
-layout_mode = 2
-text = "模型1"
-item_count = 2
-popup/item_0/text = "111"
-popup/item_0/id = 0
-popup/item_1/text = "222"
-popup/item_1/id = 1
-
-[node name="中间聊天栏" type="PanelContainer" parent="框架/当前窗口/中间聊天栏/聊天/VBoxContainer" unique_id=1504523734]
+[node name="消息滚动" type="ScrollContainer" parent="框架/页面/聊天/聊天布局"]
 layout_mode = 2
 size_flags_vertical = 3
+horizontal_scroll_mode = 0
 
-[node name="底部输入栏" type="VBoxContainer" parent="框架/当前窗口/中间聊天栏/聊天/VBoxContainer" unique_id=2005290764]
+[node name="消息列表" type="VBoxContainer" parent="框架/页面/聊天/聊天布局/消息滚动"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 12
+
+[node name="消息项1" parent="框架/页面/聊天/聊天布局/消息滚动/消息列表" instance=ExtResource("2_msg")]
 layout_mode = 2
 
-[node name="TextEdit" type="TextEdit" parent="框架/当前窗口/中间聊天栏/聊天/VBoxContainer/底部输入栏" unique_id=2077444990]
+[node name="消息项2" parent="框架/页面/聊天/聊天布局/消息滚动/消息列表" instance=ExtResource("2_msg")]
+layout_mode = 2
+
+[node name="底部输入栏" type="PanelContainer" parent="框架/页面/聊天/聊天布局"]
+layout_mode = 2
+theme_override_styles/panel = SubResource("StyleComposer")
+
+[node name="输入行" type="HBoxContainer" parent="框架/页面/聊天/聊天布局/底部输入栏"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="输入框" type="TextEdit" parent="框架/页面/聊天/聊天布局/底部输入栏/输入行"]
+unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 64)
 layout_mode = 2
-placeholder_text = "输入文本..."
+size_flags_horizontal = 3
+placeholder_text = "输入文本…"
 
-[node name="设置" type="Panel" parent="框架/当前窗口/中间聊天栏" unique_id=311100989]
+[node name="发送" type="Button" parent="框架/页面/聊天/聊天布局/底部输入栏/输入行"]
+custom_minimum_size = Vector2(72, 0)
+layout_mode = 2
+size_flags_vertical = 8
+text = "发送"
+
+[node name="右侧变量栏" type="PanelContainer" parent="框架/页面/聊天"]
+layout_mode = 2
+custom_minimum_size = Vector2(200, 0)
+theme_override_styles/panel = SubResource("StylePanel")
+
+[node name="变量布局" type="VBoxContainer" parent="框架/页面/聊天/右侧变量栏"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="变量标题行" type="HBoxContainer" parent="框架/页面/聊天/右侧变量栏/变量布局"]
+layout_mode = 2
+
+[node name="标题" type="Label" parent="框架/页面/聊天/右侧变量栏/变量布局/变量标题行"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "变量"
+
+[node name="复制协议" type="Button" parent="框架/页面/聊天/右侧变量栏/变量布局/变量标题行"]
+layout_mode = 2
+text = "复制协议"
+
+[node name="变量滚动" type="ScrollContainer" parent="框架/页面/聊天/右侧变量栏/变量布局"]
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="变量列表" type="VBoxContainer" parent="框架/页面/聊天/右侧变量栏/变量布局/变量滚动"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 4
+
+[node name="生效值" type="Label" parent="框架/页面/聊天/右侧变量栏/变量布局/变量滚动/变量列表"]
+layout_mode = 2
+text = "生效值"
+
+[node name="本会话改动" type="Label" parent="框架/页面/聊天/右侧变量栏/变量布局/变量滚动/变量列表"]
+layout_mode = 2
+text = "本会话改动"
+
+[node name="全局变量" type="Label" parent="框架/页面/聊天/右侧变量栏/变量布局/变量滚动/变量列表"]
+layout_mode = 2
+text = "全局变量"
+
+[node name="设置页" type="PanelContainer" parent="框架/页面"]
 visible = false
 layout_mode = 2
 metadata/_tab_index = 1
-
-[node name="右侧变量栏" type="PanelContainer" parent="框架" unique_id=386640691]
-layout_mode = 2
-
-[node name="变量列表" type="Label" parent="框架/右侧变量栏" unique_id=407631873]
-layout_mode = 2
-text = "wwwww"

@@ -1,0 +1,48 @@
+[gd_scene format=3 uid="uid://brijx6o0kk3s8"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBlock"]
+content_margin_left = 10.0
+content_margin_top = 8.0
+content_margin_right = 10.0
+content_margin_bottom = 8.0
+bg_color = Color(1, 1, 1, 0.05)
+corner_radius_top_left = 6
+corner_radius_top_right = 6
+corner_radius_bottom_right = 6
+corner_radius_bottom_left = 6
+
+[node name="消息项" type="PanelContainer" unique_id=1161153657]
+offset_right = 280.0
+offset_bottom = 107.0
+theme_override_styles/panel = SubResource("StyleBlock")
+
+[node name="布局" type="VBoxContainer" parent="." unique_id=1992481543]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="头" type="HBoxContainer" parent="布局" unique_id=1364992410]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="角色" type="Label" parent="布局/头" unique_id=1446528947]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+tooltip_text = "代码里按角色改颜色：你=蓝 助手=绿"
+text = "助手"
+
+[node name="编辑" type="Button" parent="布局/头" unique_id=1658675208]
+layout_mode = 2
+text = "编辑"
+flat = true
+
+[node name="复制" type="Button" parent="布局/头" unique_id=1741059001]
+layout_mode = 2
+text = "复制"
+flat = true
+
+[node name="正文" type="Label" parent="布局" unique_id=235654757]
+unique_name_in_owner = true
+layout_mode = 2
+text = "消息正文……"
+autowrap_mode = 3
