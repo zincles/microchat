@@ -123,7 +123,7 @@ adb install -r /tmp/x.apk && adb logcat -s godot
 
 - `config/config.json` — `{ "version": 1, "server": { "port": 8787, "auth_token": "可选" }, "defaults": { "provider": "dummy", "model": "dummy", "agent": "default" } }`
 - `config/providers.json` — `{ "version": 1, "providers": [ { "id": "dummy", "kind": "dummy" }, { "id": "openrouter", "name": "显示名可选", "base_url": "https://openrouter.ai/api/v1", "headers": { "X-Title": "microchat" } } ] }`
-  **密钥不写这里**：`config/secrets.json` = `{ "openrouter": "sk-or-…" }`（chmod 600）。
+  **密钥就写在这一条里**（`"api_key": "sk-…"`，空串 = 没配）：整个 `config/` 在忽略范围内，所以它不进版本库；接口一律不回显（只回 `has_key`），调试页读这个文件时也会先打码。文件本身写回时权限收紧到 0600。
 - `config/agents.json` — `{ "version": 1, "default_agent": "跑团", "agents": [ { "id": "跑团", "name": "跑团主持人", "system_prompt": "你是跑团主持人。<state>set 季节 = 初冬</state>" } ] }`
   `system_prompt` 里的 `<state>` 块就是**变量底子**（和消息正文同一套语法）；`id` 手写可用可读 id，界面新建则生成 UUIDv7。
 - `~/.config/microchat/frontend.json` — 界面偏好（主题、缩放、服务器地址、回车是否发送……）。
@@ -155,4 +155,4 @@ provider_state(provider, last_refresh_at)
 - **后端代码一变就重启后端和 egui 前端**：先 `cargo build`，再重启 `./target/debug/server`（唯一权威）与 `./target/debug/microchat`（界面）——不然你在界面上验的是旧二进制。
 - **先量再断言**：能实测的就不猜（本项目几乎所有关键结论都来自实测）。
 - 用户可能**同时在编辑器里改 `frontend/`**：改场景前先读最新文件（并留备份），他的未保存改动优先；提交时别把 `frontend/` 的改动卷进来（除非他让你一起提）。
-- 提交前确认没把 `config/`、`secrets.json`、`data/`、大 APK 带进去。
+- 提交前确认没把 `config/`（里面有 `api_key`）、`data/`、大 APK 带进去。

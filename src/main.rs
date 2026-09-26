@@ -1596,7 +1596,7 @@ impl App {
                         TextEdit::singleline(&mut self.new_provider_api_key)
                             .password(true)
                             .desired_width(300.0)
-                            .hint_text("写入后端 config/secrets.json，不回显"),
+                            .hint_text("写进后端 providers.json 的 api_key，不回显"),
                     );
                     if let Some(deferred) = attach_edit_menu(ui, &edit_response, &self.new_provider_api_key, &mut self.menu_selection, false) {
                         self.deferred = Some(deferred);
@@ -1648,7 +1648,7 @@ impl App {
             ui.label(RichText::new(format!("编辑 provider：{id}")).strong());
             ui.label(
                 RichText::new(
-                    "id 不可改（历史会话与密钥都按它引用）。保存会重写 providers.json，注释会丢；密钥写入 config/secrets.json",
+                    "id 不可改（历史会话与默认配置都按它引用）。保存会重写 providers.json；密钥就写在这个文件里的 api_key（整个 config/ 不进版本库）",
                 )
                 .weak(),
             );

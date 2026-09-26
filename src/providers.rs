@@ -45,7 +45,9 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new(provider: &ProviderConfig, api_key: Option<String>) -> Result<Self> {
+    pub fn new(provider: &ProviderConfig) -> Result<Self> {
+        // 密钥和 provider 住在一起：空串 = 没配（探活/无需鉴权的上游都合法）
+        let api_key = (!provider.api_key.is_empty()).then(|| provider.api_key.clone());
         Self::build(
             &provider.base_url,
             api_key,
@@ -275,7 +277,9 @@ mod tests {
 
     #[tokio::test]
     async fn discovers_models_and_skips_idless_entries() {
-        let client = Client::new(&provider(upstream().await), Some("sk-test".to_owned())).unwrap();
+        let mut provider = provider(upstream().await);
+        provider.api_key = "sk-test".to_owned();
+        let client = Client::new(&provider).unwrap();
         let models = client.list_models().await.unwrap();
 
         assert_eq!(models.len(), 2, "缺 id 的条目应被丢弃");
@@ -305,7 +309,8 @@ mod tests {
 
     #[tokio::test]
     async fn missing_api_key_surfaces_upstream_status() {
-        let client = Client::new(&provider(upstream().await), None).unwrap();
+        // 没配密钥（api_key 空）→ 上游会回 401，错误要如实浮上来
+        let client = Client::new(&provider(upstream().await)).unwrap();
         let err = client.list_models().await.unwrap_err();
         assert!(matches!(err, Error::Status(401)), "got {err:?}");
     }

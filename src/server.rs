@@ -42,8 +42,8 @@ pub struct AppState {
     /// 新建会话的默认 provider / model（来自 `config.json` 的 `defaults`）。
     default_provider: String,
     default_model: String,
-    /// `providers.json` / `agents.json` / `secrets.json` 的位置：这些文件**每次请求现读**，
-    /// 手改了文件立刻生效，无需重启。
+    /// `providers.json`（含密钥）/ `agents.json` / `config.json` 的位置：这些文件
+    /// **每次请求现读**，手改了文件立刻生效，无需重启。
     paths: Paths,
 }
 
@@ -389,8 +389,9 @@ async fn start_turn(
 async fn generate(state: &AppState, id: Uuid) -> Result<String, ApiError> {
     let providers = ProvidersConfig::load(&state.paths.providers_json())?;
 
-    // 取料（会话、历史、出站消息、密钥）都在锁里，**等上游之前把锁放掉**。
-    let (conversation, outgoing, secrets) = {
+    // 取料（会话、历史、出站消息）都在锁里，**等上游之前把锁放掉**。
+    // 密钥不用单独取：它就在 provider 自己身上（`providers.json`）。
+    let (conversation, outgoing) = {
         let store = state.lock()?;
         let conversation = store.get_conversation(id)?.ok_or_else(ApiError::not_found)?;
         let messages = store.list_messages(id)?;
@@ -398,11 +399,10 @@ async fn generate(state: &AppState, id: Uuid) -> Result<String, ApiError> {
         let effective =
             vars::VariableView::from_sources(id, &system_prompt, source, &messages).effective;
         let outgoing = vars::build_outgoing(&system_prompt, &messages, &effective);
-        let secrets = config::load_secrets(&state.paths.secrets_json())?;
-        (conversation, outgoing, secrets)
+        (conversation, outgoing)
     };
 
-    let reply = chat::complete(&conversation, &outgoing, &providers, &secrets).await?;
+    let reply = chat::complete(&conversation, &outgoing, &providers).await?;
     Ok(reply)
 }
 
@@ -603,11 +603,8 @@ async fn list_all_models(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<registry::ModelListItem>>, ApiError> {
     let config = ProvidersConfig::load(&state.paths.providers_json())?;
-    let secrets = config::load_secrets(&state.paths.secrets_json())?;
     let store = state.lock()?;
-    Ok(Json(registry::model_list(&registry::views(
-        &store, &config, &secrets,
-    )?)))
+    Ok(Json(registry::model_list(&registry::views(&store, &config)?)))
 }
 
 /// provider × 模型 的合并视图（配置来自 `providers.json`，模型来自数据库）。
@@ -615,17 +612,17 @@ async fn list_providers(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<ProviderView>>, ApiError> {
     let config = ProvidersConfig::load(&state.paths.providers_json())?;
-    let secrets = config::load_secrets(&state.paths.secrets_json())?;
     let store = state.lock()?;
-    Ok(Json(registry::views(&store, &config, &secrets)?))
+    Ok(Json(registry::views(&store, &config)?))
 }
 
 /// 新建 provider。`kind` 决定要哪些字段：`dummy` 不该有 `base_url`，`openai-compat` 必须有。
-/// `api_key` 写进 `secrets.json`，不进 `providers.json`、不回显。
+/// `api_key` 就写在**这个 provider 自己身上**（`providers.json` 本来就是含密钥的文件），
+/// 回给客户端的是**不含密钥**的视图。
 async fn create_provider(
     State(state): State<AppState>,
     Json(req): Json<CreateProviderReq>,
-) -> Result<(StatusCode, Json<ProviderConfig>), ApiError> {
+) -> Result<(StatusCode, Json<ProviderView>), ApiError> {
     let id = req.id.trim().to_owned();
     if id.is_empty() || id.chars().any(char::is_whitespace) {
         return Err(ApiError::bad_request("provider id 不能为空、不能含空白字符"));
@@ -643,32 +640,33 @@ async fn create_provider(
         kind: req.kind,
         base_url: req.base_url.trim().to_owned(),
         headers: req.headers,
+        api_key: req.api_key.unwrap_or_default().trim().to_owned(),
         ..Default::default()
     };
-    config.providers.push(provider.clone());
+    let created = provider.id.clone();
+    config.providers.push(provider);
     if let Err(e) = config.validate() {
         return Err(ApiError::bad_request(&e.to_string()));
     }
 
     config.save(&path)?;
-    write_secret(&state, &provider.id, req.api_key)?;
-    Ok((StatusCode::CREATED, Json(provider)))
+    Ok((
+        StatusCode::CREATED,
+        Json(one_view(&state, &config, &created)?),
+    ))
 }
 
-/// 写 / 删 `secrets.json` 里某个 provider 的密钥；`None` 或空串 = 删除。
-fn write_secret(state: &AppState, provider: &str, api_key: Option<String>) -> Result<(), ApiError> {
-    let path = state.paths.secrets_json();
-    let mut secrets = config::load_secrets(&path)?;
-    match api_key {
-        Some(key) if !key.is_empty() => {
-            secrets.insert(provider.to_owned(), key);
-        }
-        _ => {
-            secrets.remove(provider);
-        }
-    }
-    config::save_secrets(&path, &secrets)?;
-    Ok(())
+/// 某个 provider 的对外视图（**不含密钥**）：写完配置要回话时用它。
+fn one_view(
+    state: &AppState,
+    config: &ProvidersConfig,
+    id: &str,
+) -> Result<ProviderView, ApiError> {
+    let store = state.lock()?;
+    registry::views(&store, config)?
+        .into_iter()
+        .find(|view| view.id == id)
+        .ok_or_else(ApiError::not_found)
 }
 
 /// 去上游拉 `/models` 并落库。HTTP 在**锁外**完成，避免持锁跨 await。
@@ -684,18 +682,15 @@ async fn refresh_provider(
         }
         ProviderKind::OpenAiCompat => {}
     }
-    let secrets = config::load_secrets(&state.paths.secrets_json())?;
-    let client = providers::Client::new(provider, secrets.get(&id).cloned())?;
+    let client = providers::Client::new(provider)?;
     let discovered = client.list_models().await?;
 
     let mut store = state.lock()?;
     store.apply_discovery(&id, &discovered)?;
     drop(discovered);
+    drop(store);
 
-    let refreshed = registry::views(&*store, &config, &secrets)?
-        .into_iter()
-        .find(|view| view.id == id);
-    refreshed.map(Json).ok_or_else(ApiError::not_found)
+    Ok(Json(one_view(&state, &config, &id)?))
 }
 
 #[derive(Deserialize)]
@@ -737,7 +732,7 @@ pub struct CreateProviderReq {
     pub base_url: String,
     #[serde(default)]
     pub headers: BTreeMap<String, String>,
-    /// 一次性传给后端写进 `secrets.json`；不落 `providers.json`、不回显。
+    /// 写进 `providers.json` 里这个 provider 的 `api_key`；接口从此不回显它。
     #[serde(default)]
     pub api_key: Option<String>,
 }
@@ -774,8 +769,8 @@ async fn delete_provider(
         return Err(ApiError::not_found());
     }
     // 删掉不需要再 validate：移除不可能制造重复 id 或空 base_url。
+    // 密钥就在这条记录自己身上，跟着一起没了——没有第二处要清。
     config.save(&path)?;
-    write_secret(&state, &id, None)?;
     state.lock()?.forget_provider(&id)?;
 
     // `config.json` 里若正拿它当默认 provider，顺手挪到还活着的第一个——
@@ -794,13 +789,14 @@ async fn delete_provider(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// 编辑已有 provider 的连接信息。`id` 是主键**不可改**：历史会话、`secrets.json`、
-/// 默认配置都按它引用。校验失败给 400（不是 500）——是调用方输入的问题。
+/// 编辑已有 provider 的连接信息（含密钥：`None` = 不动，`Some("")` = 清掉）。
+/// `id` 是主键**不可改**：历史会话与 `config.json` 的默认值都按它引用。
+/// 校验失败给 400（不是 500）——是调用方输入的问题。
 async fn update_provider(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(req): Json<UpdateProviderReq>,
-) -> Result<Json<ProviderConfig>, ApiError> {
+) -> Result<Json<ProviderView>, ApiError> {
     let path = state.paths.providers_json();
     let mut config = ProvidersConfig::load(&path)?;
 
@@ -818,21 +814,17 @@ async fn update_provider(
     if let Some(name) = req.name {
         provider.name = clean_name(Some(name));
     }
+    if let Some(api_key) = req.api_key {
+        // 三态：没给 = 上面根本没进来（不动）；空串 = 清除；其它 = 设置
+        provider.api_key = api_key.trim().to_owned();
+    }
 
     if let Err(e) = config.validate() {
         return Err(ApiError::bad_request(&e.to_string()));
     }
     config.save(&path)?;
 
-    if let Some(api_key) = req.api_key {
-        write_secret(&state, &id, Some(api_key))?;
-    }
-
-    config
-        .get(&id)
-        .cloned()
-        .map(Json)
-        .ok_or_else(ApiError::not_found)
+    Ok(Json(one_view(&state, &config, &id)?))
 }
 
 #[derive(Deserialize)]
@@ -1008,7 +1000,7 @@ pub struct RawFile {
     pub modified_ms: Option<i64>,
 }
 
-/// 白名单：`secrets.json` **永远**不在其中。
+/// 白名单：只有这三个文件能被调试页读到；`providers.json` 里的密钥在吐出去之前会被打码。
 const DEBUG_FILES: [&str; 3] = ["config.json", "providers.json", "agents.json"];
 
 async fn debug_state(State(state): State<AppState>) -> Result<Json<DebugState>, ApiError> {
@@ -1033,6 +1025,29 @@ async fn debug_state(State(state): State<AppState>) -> Result<Json<DebugState>, 
     }))
 }
 
+/// 调试页读文件：`providers.json` 里的 `api_key` **先抹掉**。
+///
+/// 密钥和 provider 住在一起，而这个接口是"把文件原样吐出来"——不打码就等于把凭据
+/// 递给任何能访问这个后端的人（默认没配鉴权，CORS 又是全开）。
+fn redact_api_keys(text: &str) -> String {
+    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(text) else {
+        // 解析不了（手写写坏了）就整份不打：调试页看不见内容，总比漏出密钥强
+        return "（文件不是合法 JSON，内容已隐去）".to_owned();
+    };
+    if let Some(providers) = value.get_mut("providers").and_then(|v| v.as_array_mut()) {
+        for provider in providers {
+            let has_key = provider
+                .get("api_key")
+                .and_then(|key| key.as_str())
+                .is_some_and(|key| !key.is_empty());
+            if has_key {
+                provider["api_key"] = serde_json::Value::String("***".to_owned());
+            }
+        }
+    }
+    serde_json::to_string_pretty(&value).unwrap_or_else(|_| "（打码失败，内容已隐去）".to_owned())
+}
+
 async fn debug_file(
     State(state): State<AppState>,
     Path(name): Path<String>,
@@ -1043,7 +1058,12 @@ async fn debug_file(
         ));
     }
     let path = state.paths.config_dir.join(&name);
-    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    let raw = std::fs::read_to_string(&path).unwrap_or_default();
+    let text = if name == "providers.json" {
+        redact_api_keys(&raw)
+    } else {
+        raw
+    };
     let modified_ms = std::fs::metadata(&path)
         .and_then(|meta| meta.modified())
         .ok()
@@ -1201,7 +1221,7 @@ mod tests {
         ))
     }
 
-    /// 临时配置目录（内含 providers/agents/secrets 文件）+ 路由。
+    /// 临时配置目录（内含 providers/agents 文件）+ 路由。
     fn app_with_files(files: &[(&str, &str)]) -> (Router, PathBuf) {
         app_with_env(None, files)
     }
@@ -2290,20 +2310,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn providers_view_reads_config_and_never_leaks_secrets() {
-        let (app, dir) = app_with_files(&[
-            (
-                "providers.json",
-                r#"{ "providers": [ { "id": "local", "base_url": "http://127.0.0.1:9/v1" } ] }"#,
-            ),
-            ("secrets.json", r#"{"local":"sk-secret-value"}"#),
-        ]);
+    async fn providers_view_reads_config_and_never_leaks_the_key() {
+        let (app, dir) = app_with_files(&[(
+            "providers.json",
+            r#"{ "providers": [ { "id": "local", "base_url": "http://127.0.0.1:9/v1",
+                 "api_key": "sk-secret-value" } ] }"#,
+        )]);
 
         let (status, body) = send(&app, get_req("/api/v1/providers")).await;
         assert_eq!(status, StatusCode::OK);
         let views: Vec<ProviderView> = serde_json::from_str(&body).unwrap();
         assert_eq!(views.len(), 1);
         assert_eq!(views[0].id, "local");
+        assert!(views[0].has_key, "密钥就在配置里，视图只说配了没有");
         assert!(views[0].models.is_empty(), "未刷新时没有模型");
         assert!(!body.contains("sk-secret-value"), "响应绝不能带出密钥");
 
@@ -2466,8 +2485,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// 密钥和 provider 住在一起（`providers.json`）：写进去、权限收紧、**不回显**，
+    /// 连调试页读那个文件也要先打码。
     #[tokio::test]
-    async fn create_provider_stores_key_separately_and_never_echoes_it() {
+    async fn create_provider_keeps_the_key_with_the_provider_and_never_echoes_it() {
         let (app, dir) = app_with_files(&[]);
 
         let (status, body) = send(
@@ -2480,36 +2501,45 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::CREATED);
-        assert!(!body.contains("sk-secret"), "响应不回显密钥");
-        let created: ProviderConfig = serde_json::from_str(&body).unwrap();
-        assert_eq!(created.kind, ProviderKind::OpenAiCompat);
+        assert!(!body.contains("sk-secret"), "响应不回显密钥：{body}");
+        let created: ProviderView = serde_json::from_str(&body).unwrap();
+        assert_eq!(created.id, "local");
+        assert!(created.has_key, "只说配了没有");
 
-        // providers.json 只有连接信息
-        let providers = std::fs::read_to_string(dir.join("providers.json")).unwrap();
+        // providers.json 里带着密钥（就住这一处），权限收紧到 0600
+        let providers_path = dir.join("providers.json");
+        let providers = std::fs::read_to_string(&providers_path).unwrap();
         assert!(providers.contains("11434"));
-        assert!(!providers.contains("sk-secret"), "密钥不该进 providers.json");
-
-        // secrets.json 有密钥且权限收紧
-        let secrets_path = dir.join("secrets.json");
-        let secrets = std::fs::read_to_string(&secrets_path).unwrap();
-        assert!(secrets.contains("sk-secret"));
+        assert!(providers.contains("sk-secret"), "密钥和 provider 住一起");
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(&secrets_path)
+            let mode = std::fs::metadata(&providers_path)
                 .unwrap()
                 .permissions()
                 .mode()
                 & 0o777;
-            assert_eq!(mode, 0o600, "密钥文件权限应为 0600");
+            assert_eq!(mode, 0o600, "含密钥的文件权限应为 0600");
         }
+        assert!(
+            !dir.join("secrets.json").exists(),
+            "不再有第二个放密钥的文件"
+        );
 
-        // 视图只说"配了没有"
+        // 视图只说"配了没有"，接口不回显
         let (_, body) = send(&app, get_req("/api/v1/providers")).await;
         let views: Vec<ProviderView> = serde_json::from_str(&body).unwrap();
         assert!(views[0].has_key);
         assert_eq!(views[0].kind, ProviderKind::OpenAiCompat);
         assert!(!body.contains("sk-secret"));
+
+        // 调试页能读到这个文件（那是它的用处），但密钥要被打码
+        let (status, body) = send(&app, get_req("/api/v1/debug/file/providers.json")).await;
+        assert_eq!(status, StatusCode::OK);
+        let raw: RawFile = serde_json::from_str(&body).unwrap();
+        assert!(raw.text.contains("11434"), "别的字段照旧看得见");
+        assert!(!raw.text.contains("sk-secret"), "调试页不许漏密钥：{}", raw.text);
+        assert!(raw.text.contains("***"), "打码后要看得见'这儿原本有东西'");
 
         // 重复 id → 409
         let (status, _) = send(
@@ -2627,10 +2657,11 @@ mod tests {
 
     #[tokio::test]
     async fn debug_reports_counts_and_only_whitelisted_files() {
-        let (app, dir) = app_with_files(&[
-            ("providers.json", r#"{ "providers": [] }"#),
-            ("secrets.json", r#"{"x":"sk-secret-value"}"#),
-        ]);
+        let (app, dir) = app_with_files(&[(
+            "providers.json",
+            r#"{ "providers": [ { "id": "local", "base_url": "http://127.0.0.1:9/v1",
+                 "api_key": "sk-secret-value" } ] }"#,
+        )]);
 
         // 计数随数据变化
         create(&app, r#"{"provider":"local","model":"m"}"#).await;
@@ -2639,18 +2670,17 @@ mod tests {
         assert_eq!(v["counts"]["conversations"], 1);
         assert_eq!(v["counts"]["messages"], 0);
 
-        // 白名单内可读
+        // 白名单内可读——但**密钥要打码**（这个接口会把文件原样吐出来）
         let (status, body) = send(&app, get_req("/api/v1/debug/file/providers.json")).await;
         assert_eq!(status, StatusCode::OK);
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-        assert!(v["text"].as_str().unwrap().contains("providers"));
+        let text = v["text"].as_str().unwrap();
+        assert!(text.contains("providers"), "其余内容照旧看得见");
+        assert!(text.contains("***"), "密钥位置留下打码痕迹");
+        assert!(!body.contains("sk-secret-value"), "调试页不许漏密钥：{body}");
         assert!(v["modified_ms"].is_i64());
 
-        // 密钥文件与未知文件一律拒绝，且不回显内容
-        let (status, body) = send(&app, get_req("/api/v1/debug/file/secrets.json")).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert!(!body.contains("sk-secret-value"));
-
+        // 未知文件一律拒绝
         let (status, _) = send(&app, get_req("/api/v1/debug/file/nope.json")).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
 

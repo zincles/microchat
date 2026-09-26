@@ -1,7 +1,7 @@
-//! 注册表合并视图：`providers.jsonc`（用户配置） × `models`（数据库里的发现态） × `secrets.json`。
+//! 注册表合并视图：`providers.json`（用户配置，含密钥）× `models`（数据库里的发现态）。
 //!
-//! - 以 `providers.jsonc` 为准绳——配置里没有的 provider，其库内模型是孤儿，不出现；
-//! - `has_key` 只说"配了没有"，**绝不回显密钥内容**。
+//! - 以 `providers.json` 为准绳——配置里没有的 provider，其库内模型是孤儿，不出现；
+//! - `has_key` 只说"配了没有"，**绝不回显密钥内容**（`api_key` 根本不进这个视图）。
 
 use std::collections::BTreeMap;
 
@@ -36,18 +36,14 @@ pub struct ProviderView {
     pub kind: ProviderKind,
     pub base_url: String,
     pub headers: BTreeMap<String, String>,
-    /// 是否已在 `secrets.json` 里配了密钥（不回显内容）。
+    /// 是否配了密钥（`providers.json` 里的 `api_key` 非空；**不回显内容**）。
     pub has_key: bool,
     /// `None` = 从未刷新过。
     pub last_refresh_at: Option<i64>,
     pub models: Vec<ModelView>,
 }
 
-pub fn views(
-    store: &Store,
-    config: &ProvidersConfig,
-    secrets: &BTreeMap<String, String>,
-) -> Result<Vec<ProviderView>> {
+pub fn views(store: &Store, config: &ProvidersConfig) -> Result<Vec<ProviderView>> {
     config
         .providers
         .iter()
@@ -68,7 +64,7 @@ pub fn views(
                 kind: provider.kind,
                 base_url: provider.base_url.clone(),
                 headers: provider.headers.clone(),
-                has_key: secrets.get(&provider.id).is_some_and(|key| !key.is_empty()),
+                has_key: !provider.api_key.is_empty(),
                 last_refresh_at,
                 models,
             })
@@ -139,8 +135,6 @@ fn dummy_model_view() -> ModelView {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
     use crate::config::{ProviderConfig, ProviderKind, ProvidersConfig};
     use crate::model::DiscoveredModel;
     use crate::store::Store;
@@ -178,7 +172,7 @@ mod tests {
             ..Default::default()
         };
 
-        let list = model_list(&views(&store, &config, &BTreeMap::new()).unwrap());
+        let list = model_list(&views(&store, &config).unwrap());
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].provider, "open");
         assert_eq!(list[0].provider_name.as_deref(), Some("OpenAI"));
@@ -189,7 +183,7 @@ mod tests {
         store
             .set_model_display_name("open", "gpt-5.6-sol", Some("小模型"))
             .unwrap();
-        let list = model_list(&views(&store, &config, &BTreeMap::new()).unwrap());
+        let list = model_list(&views(&store, &config).unwrap());
         assert_eq!(list[0].name, "小模型", "覆盖后 name 跟着变");
         assert_eq!(list[0].display_name.as_deref(), Some("小模型"));
     }
@@ -205,7 +199,7 @@ mod tests {
             }],
             ..Default::default()
         };
-        let list = model_list(&views(&store, &config, &BTreeMap::new()).unwrap());
+        let list = model_list(&views(&store, &config).unwrap());
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].provider, "dummy");
         assert_eq!(list[0].upstream_id, crate::chat::DUMMY_MODEL_ID);
@@ -241,10 +235,10 @@ mod tests {
             providers: vec![provider("open")],
             ..Default::default()
         };
-        let mut secrets = BTreeMap::new();
-        secrets.insert("open".to_owned(), "sk-x".to_owned());
+        let mut config = config;
+        config.providers[0].api_key = "sk-x".to_owned();
 
-        let views = views(&store, &config, &secrets).unwrap();
+        let views = views(&store, &config).unwrap();
         assert_eq!(views.len(), 1, "配置里没有的 provider 不该出现");
 
         let view = &views[0];
@@ -270,7 +264,7 @@ mod tests {
             ..Default::default()
         };
 
-        let views = views(&store, &config, &BTreeMap::new()).unwrap();
+        let views = views(&store, &config).unwrap();
         assert_eq!(views[0].models.len(), 1, "dummy provider 恰好提供一个虚拟模型");
         assert_eq!(views[0].models[0].upstream_id, "dummy");
         assert_eq!(views[0].models[0].name, "Dummy（测试用空模型）");
@@ -302,7 +296,7 @@ mod tests {
             providers: vec![provider("open")],
             ..Default::default()
         };
-        let views = views(&store, &config, &BTreeMap::new()).unwrap();
+        let views = views(&store, &config).unwrap();
 
         let ids: Vec<&str> = views[0]
             .models

@@ -3,7 +3,8 @@
 //! 归属规则：
 //! - `providers.json` / `agents.json` / `config.json` 由用户手写，程序**不隐式改写**
 //!   （显式编辑由 API 提供，届时写回会丢注释，这一点在 UI 上要讲明）；
-//! - `secrets.json` 存放 API 密钥，`{"<provider_id>": "sk-…"}`，结构上与可分享文件隔离；
+//! - `providers.json` 里带着 `api_key`（**只住这里**）：整个 `config/` 都在 `.gitignore`
+//!   范围内，密钥不会进版本库；接口一律**不回显**它，调试页读它也会先打码；
 //! - 发现所得与用户覆盖落数据库（见 `store`），`providers.json` 里没有模型的影子。
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -41,9 +42,6 @@ impl Paths {
     }
     pub fn agents_json(&self) -> PathBuf {
         self.config_dir.join("agents.json")
-    }
-    pub fn secrets_json(&self) -> PathBuf {
-        self.config_dir.join("secrets.json")
     }
     pub fn database(&self) -> PathBuf {
         self.data_dir.join("microchat.db")
@@ -180,6 +178,11 @@ pub struct ProviderConfig {
     pub base_url: String,
     /// 额外 HTTP 头，如 OpenRouter 的 `X-Title`。
     pub headers: BTreeMap<String, String>,
+    /// API 密钥。**和 provider 住在一起**（不另开一个文件）：`config/` 整块在忽略范围内，
+    /// 所以它不会进版本库；接口绝不回显（只回 `has_key`），调试页读它也会先打码。
+    /// 空串 = 没配。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub api_key: String,
     /// 超时可单独覆盖；等于默认值时不写进文件（`providers.json` 保持干净）。
     #[serde(skip_serializing_if = "Timeouts::is_default")]
     pub timeouts: Timeouts,
@@ -196,6 +199,7 @@ impl Default for ProviderConfig {
             kind: ProviderKind::default(),
             base_url: String::new(),
             headers: BTreeMap::new(),
+            api_key: String::new(),
             timeouts: Timeouts::default(),
             extra: BTreeMap::new(),
         }
@@ -230,8 +234,9 @@ impl ProvidersConfig {
     }
 
     /// 显式写回——和 agents 一样：只在 API 被调用时发生，且整体重写（注释会丢）。
+    /// 这个文件里有 `api_key`，所以写完把权限收紧（`write_json_private`）。
     pub fn save(&self, path: &Path) -> Result<()> {
-        write_json_pretty(path, self)
+        write_json_private(path, self)
     }
 
     pub fn validate(&self) -> Result<()> {
@@ -393,14 +398,12 @@ impl AgentsConfig {
     }
 }
 
-/// `secrets.json`：`{"<provider_id>": "sk-…"}`。缺失视为空。
-pub fn load_secrets(path: &Path) -> Result<BTreeMap<String, String>> {
-    load_json(path)
-}
-
-/// 写 `secrets.json`。只在 API 被显式调用时写，写完立刻把权限收紧到 0600。
-pub fn save_secrets(path: &Path, secrets: &BTreeMap<String, String>) -> Result<()> {
-    write_json_pretty(path, secrets)?;
+/// 写 `providers.json` 这类**含密钥**的文件：写完立刻把权限收紧到 0600。
+///
+/// 密钥住在这个文件里，`chmod 600` 只是最低限度的卫生（同一个用户当然读得到），
+/// 真正要紧的是"不回显、不打进版本库、不出现在调试页"。
+fn write_json_private(path: &Path, value: &impl Serialize) -> Result<()> {
+    write_json_pretty(path, value)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

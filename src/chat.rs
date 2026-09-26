@@ -10,8 +10,6 @@
 //!
 //! 将来 anthropic / deepseek 是同一层的兄弟实现；image-gen 之类不是"对话后端"，另走一路。
 
-use std::collections::BTreeMap;
-
 use crate::config::{ProviderKind, ProvidersConfig};
 use crate::providers::{self, WireMessage};
 use crate::model::Conversation;
@@ -78,16 +76,14 @@ pub async fn complete(
     conversation: &Conversation,
     outgoing: &[Outgoing],
     providers: &ProvidersConfig,
-    secrets: &BTreeMap<String, String>,
 ) -> Result<String, Error> {
     match Backend::select(conversation, providers) {
         Backend::Dummy => Ok(DUMMY_MODEL_REPLY.to_owned()),
         Backend::Fallback => Ok(FALLBACK_REPLY.to_owned()),
         Backend::OpenAiCompletion => {
-            // select 已经确认过 provider 存在；这里再取一次是拿配置本体（密钥另存）。
+            // select 已经确认过 provider 存在；这里再取一次是拿配置本体（含密钥）。
             let provider = providers.get(&conversation.provider).ok_or(Error::NoProvider)?;
-            let client = providers::Client::new(provider, secrets.get(&provider.id).cloned())
-                .map_err(Error::Upstream)?;
+            let client = providers::Client::new(provider).map_err(Error::Upstream)?;
             let messages: Vec<WireMessage> = outgoing
                 .iter()
                 .map(|item| WireMessage {
@@ -127,8 +123,6 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 #[cfg(test)]
 mod tests {
     use uuid::Uuid;
-
-    use std::collections::BTreeMap;
 
     use crate::config::{ProviderConfig, ProviderKind, ProvidersConfig};
     use crate::model::Conversation;
@@ -231,7 +225,7 @@ mod tests {
 
         let backend = Backend::select(&conversation, &providers);
         assert_eq!(backend, Backend::Dummy);
-        let reply = complete(&conversation, &[], &providers, &BTreeMap::new())
+        let reply = complete(&conversation, &[], &providers)
             .await
             .unwrap();
         assert_eq!(reply, DUMMY_MODEL_REPLY);
@@ -250,7 +244,7 @@ mod tests {
         let blank = conversation("", "");
         let backend = Backend::select(&blank, &providers);
         assert_eq!(backend, Backend::Fallback);
-        let reply = complete(&blank, &[], &providers, &BTreeMap::new()).await.unwrap();
+        let reply = complete(&blank, &[], &providers).await.unwrap();
         assert_eq!(reply, FALLBACK_REPLY);
         // provider 已被从 providers.json 删掉
         assert_eq!(
@@ -268,9 +262,9 @@ mod tests {
             }),
         )
         .await;
-        let providers = providers_with("stub", &base_url);
-        let mut secrets = BTreeMap::new();
-        secrets.insert("stub".to_owned(), "sk-test".to_owned());
+        let mut providers = providers_with("stub", &base_url);
+        // 密钥和 provider 住在一起（就是 providers.json 里的 api_key）
+        providers.providers[0].api_key = "sk-test".to_owned();
         let outgoing = vec![
             Outgoing { role: OutgoingRole::System, content: "你是助手".to_owned() },
             Outgoing { role: OutgoingRole::User, content: "在吗".to_owned() },
@@ -281,7 +275,7 @@ mod tests {
             Backend::select(&conversation, &providers),
             Backend::OpenAiCompletion
         );
-        let reply = complete(&conversation, &outgoing, &providers, &secrets)
+        let reply = complete(&conversation, &outgoing, &providers)
             .await
             .unwrap();
         assert_eq!(reply, "上游说你好");
@@ -311,7 +305,6 @@ mod tests {
             &conversation("stub", "m"),
             &[],
             &providers,
-            &BTreeMap::new(),
         )
         .await
         .unwrap_err();
@@ -327,7 +320,7 @@ mod tests {
     #[tokio::test]
     async fn unreachable_upstream_is_an_error_not_a_fake_reply() {
         let providers = providers_with("local", "http://127.0.0.1:1/v1");
-        let err = complete(&conversation("local", "m"), &[], &providers, &BTreeMap::new())
+        let err = complete(&conversation("local", "m"), &[], &providers)
             .await
             .unwrap_err();
         assert!(matches!(err, Error::Upstream(crate::providers::Error::Http(_))));
