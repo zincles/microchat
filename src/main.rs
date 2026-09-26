@@ -592,7 +592,11 @@ impl App {
         });
     }
 
-    /// 渠道显示名：id + 类型；未选或已不在配置里时说明白。
+    /// 渠道显示名：配置里的 `name` 优先，缺省用 id。
+    ///
+    /// **不带类型**：`openai-compat` / `dummy` 这类是设置页要关心的事，
+    /// 聊天窗口上方只留"谁家的哪个模型"。
+    /// 未选、或已不在配置里（providers.jsonc 被改过）都说明白。
     fn provider_label(&self, provider: &str) -> String {
         if provider.is_empty() {
             return "未选择（走兜底）".to_owned();
@@ -601,11 +605,19 @@ impl App {
             .providers
             .as_ref()
             .and_then(|list| list.iter().find(|p| p.id == provider))
-            .map(|p| kind_label(p.kind))
         {
-            Some(kind) => format!("{provider} · {kind}"),
+            Some(view) => view.name.clone().unwrap_or_else(|| view.id.clone()),
             None => format!("{provider}（已不在配置里）"),
         }
+    }
+
+    /// 合并后的选择器标题：`渠道 / 模型`（渠道带类型，模型带显示名）。
+    fn model_picker_label(&self, provider: &str, model: &str) -> String {
+        format!(
+            "{} / {}",
+            self.provider_label(provider),
+            self.model_label(provider, model)
+        )
     }
 
     /// 模型显示名：优先取注册表里的显示名（dummy 会显示成「Dummy（测试用空模型）」）。
@@ -640,22 +652,9 @@ impl App {
             .unwrap_or_else(|| agent_id.to_owned())
     }
 
-    /// 换渠道：连带把模型落到新渠道里。同名模型保留，否则取它的第一个；渠道没模型就清空。
-    fn switch_provider(&mut self, conversation: Uuid, provider: String) {
-        let models: Vec<String> = self
-            .providers
-            .as_ref()
-            .and_then(|list| list.iter().find(|p| p.id == provider))
-            .map(|p| p.models.iter().map(|m| m.upstream_id.clone()).collect())
-            .unwrap_or_default();
-        let current_model = self
-            .conversations
-            .iter()
-            .find(|c| c.id == conversation)
-            .map(|c| c.model.clone())
-            .unwrap_or_default();
-        let model = model_after_provider_switch(&models, &current_model);
-
+    /// 一次把渠道与模型都定下来：下拉里选的那一项就是答案，不用替用户猜模型落点。
+    /// 后端本来就同时收这两个字段，所以一条 PATCH 就够。
+    fn switch_model_choice(&mut self, conversation: Uuid, provider: String, model: String) {
         let (base, token) = (self.settings.server_address.clone(), self.token.clone());
         self.client.send(Command::UpdateConversation {
             base,
@@ -667,17 +666,37 @@ impl App {
         });
     }
 
-    /// 换模型：只改模型，渠道保持（模型只在渠道内唯一）。
-    fn switch_model(&mut self, conversation: Uuid, model: String) {
-        let (base, token) = (self.settings.server_address.clone(), self.token.clone());
-        self.client.send(Command::UpdateConversation {
-            base,
-            token,
-            conversation,
-            provider: None,
-            model: Some(model),
-            agent_id: None,
-        });
+    /// 渠道与模型合成一个下拉：每一项是「某个渠道下的某个模型」，选中即同时定下两者。
+    ///
+    /// 原来是"渠道 + 模型"两层联动：先选渠道、模型再按渠道过滤，换渠道时还得替用户
+    /// 猜一个模型落点（同名保留、否则第一个）。上游可能几十上百个模型，所以下拉里
+    /// 自带滚动，别让弹层长到屏幕外。
+    fn model_picker(&mut self, ui: &mut egui::Ui, conversation: Uuid, provider: &str, model: &str) {
+        let mut picked: Option<(String, String)> = None;
+        egui::ComboBox::from_id_salt("chat_model")
+            .selected_text(RichText::new(self.model_picker_label(provider, model)).monospace())
+            .width(360.0)
+            .show_ui(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .max_height(360.0)
+                    .show(ui, |ui| {
+                        let rows = flat_model_rows(self.providers.as_deref().unwrap_or(&[]));
+                        if rows.is_empty() {
+                            ui.label(
+                                RichText::new("还没有模型：去「设置 → 服务器设置」点「获取模型」").weak(),
+                            );
+                        }
+                        for (label, provider_id, model_id) in rows {
+                            let selected = provider_id == provider && model_id == model;
+                            if ui.selectable_label(selected, label).clicked() {
+                                picked = Some((provider_id, model_id));
+                            }
+                        }
+                    });
+            });
+        if let Some((provider, model)) = picked {
+            self.switch_model_choice(conversation, provider, model);
+        }
     }
 
     /// 换 Agent：提示词在请求组装时按 `agent_id` 解析——改 `agents.jsonc` 会影响所有用它的会话。
@@ -2060,73 +2079,8 @@ impl App {
                     None => (String::new(), String::new(), String::new()),
                 };
 
-                ui.label(RichText::new("渠道").weak());
-                let mut picked_provider: Option<String> = None;
-                egui::ComboBox::from_id_salt("chat_provider")
-                    .selected_text(RichText::new(self.provider_label(&provider)).monospace())
-                    .width(150.0)
-                    .show_ui(ui, |ui| {
-                        for provider_view in self.providers.iter().flatten() {
-                            let label = format!(
-                                "{} · {}",
-                                provider_view.id,
-                                kind_label(provider_view.kind)
-                            );
-                            if ui
-                                .selectable_label(provider_view.id == provider, label)
-                                .clicked()
-                            {
-                                picked_provider = Some(provider_view.id.clone());
-                            }
-                        }
-                        if self
-                            .providers
-                            .as_ref()
-                            .is_none_or(|list| list.is_empty())
-                        {
-                            ui.label(
-                                RichText::new("还没有渠道：去「设置 → 服务器设置」新建").weak(),
-                            );
-                        }
-                    });
-                if let Some(provider) = picked_provider {
-                    self.switch_provider(current, provider);
-                }
-
-                ui.separator();
-
                 ui.label(RichText::new("模型").weak());
-                let mut picked_model: Option<String> = None;
-                egui::ComboBox::from_id_salt("chat_model")
-                    .selected_text(RichText::new(self.model_label(&provider, &model)).monospace())
-                    .width(220.0)
-                    .show_ui(ui, |ui| {
-                        // 模型只在渠道内唯一：下拉按当前渠道过滤
-                        let models = self
-                            .providers
-                            .as_ref()
-                            .and_then(|list| list.iter().find(|p| p.id == provider))
-                            .map(|p| p.models.as_slice())
-                            .unwrap_or(&[]);
-                        if provider.is_empty() {
-                            ui.label(RichText::new("先选渠道").weak());
-                        } else if models.is_empty() {
-                            ui.label(
-                                RichText::new("该渠道还没有模型：去设置里点「获取模型」").weak(),
-                            );
-                        }
-                        for model_view in models {
-                            if ui
-                                .selectable_label(model_view.upstream_id == model, &model_view.name)
-                                .clicked()
-                            {
-                                picked_model = Some(model_view.upstream_id.clone());
-                            }
-                        }
-                    });
-                if let Some(model) = picked_model {
-                    self.switch_model(current, model);
-                }
+                self.model_picker(ui, current, &provider, &model);
 
                 ui.separator();
 
@@ -2701,15 +2655,26 @@ fn resolve_system_prompt(conversation_prompt: &str, agent_prompt: Option<&str>) 
         .map(str::to_owned)
 }
 
-/// 换渠道后模型怎么落：
-/// - 新渠道里也有同名模型 → 保持不变（省得白切回一次）
-/// - 否则取新渠道的第一个模型
-/// - 新渠道一个模型都没有 → 清空（此时会话走兜底话术）
-fn model_after_provider_switch(models: &[String], current: &str) -> String {
-    if models.iter().any(|id| id == current) {
-        return current.to_owned();
-    }
-    models.first().cloned().unwrap_or_default()
+/// 一个下拉要列的全部条目：`(显示文案, provider id, 上游模型 id)`，按文案排序。
+///
+/// 文案是「渠道 / 模型」——渠道优先用 `providers.jsonc` 里的 `name`，缺省回退 id；
+/// 模型名直接用后端算好的 `name`（三级回退在后端做，前端不再实现一遍）。
+fn flat_model_rows(providers: &[ProviderView]) -> Vec<(String, String, String)> {
+    let mut rows: Vec<(String, String, String)> = providers
+        .iter()
+        .flat_map(|view| {
+            let provider_name = view.name.clone().unwrap_or_else(|| view.id.clone());
+            view.models.iter().map(move |model| {
+                (
+                    format!("{provider_name} / {}", model.name),
+                    view.id.clone(),
+                    model.upstream_id.clone(),
+                )
+            })
+        })
+        .collect();
+    rows.sort_by(|a, b| a.0.cmp(&b.0));
+    rows
 }
 
 fn kind_label(kind: ProviderKind) -> &'static str {
@@ -2756,7 +2721,7 @@ mod tests {
     use microchat::registry::ProviderView;
 
     use super::{
-        agent_draft_differs, header_lines, model_after_provider_switch, parse_header_lines,
+        agent_draft_differs, flat_model_rows, header_lines, parse_header_lines,
         provider_draft_differs, resolve_system_prompt,
     };
 
@@ -3235,14 +3200,6 @@ mod tests {
     }
 
     #[test]
-    fn provider_switch_picks_a_sane_model() {
-        let models = ["a".to_owned(), "b".to_owned()];
-        assert_eq!(model_after_provider_switch(&models, "b"), "b", "同名模型保留");
-        assert_eq!(model_after_provider_switch(&models, "x"), "a", "否则落到第一个");
-        assert_eq!(model_after_provider_switch(&[], "x"), "", "渠道没模型就清空");
-    }
-
-    #[test]
     fn header_lines_roundtrip_ignores_blank_and_comment_lines() {
         let parsed = parse_header_lines(
             "X-Title: microchat\n\n// 注释\nHTTP-Referer:http://a.example\n坏行没有冒号\n",
@@ -3255,4 +3212,49 @@ mod tests {
             "HTTP-Referer: http://a.example\nX-Title: microchat"
         );
     }
+
+    #[test]
+    fn flat_model_rows_flatten_fall_back_and_sort() {
+        use microchat::registry::{ModelView, ProviderView};
+        use std::collections::BTreeMap;
+
+        let view = |id: &str, name: Option<&str>, models: &[&str]| ProviderView {
+            id: id.to_owned(),
+            name: name.map(str::to_owned),
+            kind: ProviderKind::OpenAiCompat,
+            base_url: "http://a/v1".to_owned(),
+            headers: BTreeMap::new(),
+            has_key: false,
+            last_refresh_at: None,
+            models: models
+                .iter()
+                .map(|m| ModelView {
+                    upstream_id: (*m).to_owned(),
+                    name: (*m).to_owned(),
+                    display_name: None,
+                    upstream_name: None,
+                    owned_by: None,
+                    context_length: None,
+                    max_output: None,
+                    params: serde_json::Value::Null,
+                    upstream_params: serde_json::Value::Null,
+                })
+                .collect(),
+        };
+
+        let rows = flat_model_rows(&[
+            view("z", Some("Z 家"), &["b-model", "a-model"]),
+            view("no-name", None, &["m"]),
+        ]);
+        assert_eq!(rows.len(), 3);
+        // 按文案排序（中文在前、英文在后，就按字节序）
+        assert_eq!(rows[0].0, "Z 家 / a-model");
+        assert_eq!(rows[1].0, "Z 家 / b-model");
+        assert_eq!(rows[2].0, "no-name / m", "没配 name 就用 id");
+        // 每行都得带上能回填的 id
+        assert_eq!(rows[0].1, "z");
+        assert_eq!(rows[0].2, "a-model");
+        assert!(flat_model_rows(&[]).is_empty());
+    }
+
 }
