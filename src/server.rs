@@ -35,10 +35,10 @@ pub struct AppState {
     store: Arc<Mutex<Store>>,
     auth_token: Option<String>,
     title_chars: usize,
-    /// 新建会话的默认 provider / model（来自 `config.jsonc` 的 `defaults`）。
+    /// 新建会话的默认 provider / model（来自 `config.json` 的 `defaults`）。
     default_provider: String,
     default_model: String,
-    /// `providers.jsonc` / `agents.jsonc` / `secrets.json` 的位置：这些文件**每次请求现读**，
+    /// `providers.json` / `agents.json` / `secrets.json` 的位置：这些文件**每次请求现读**，
     /// 手改了文件立刻生效，无需重启。
     paths: Paths,
 }
@@ -117,12 +117,12 @@ pub fn router(state: AppState) -> Router {
 
 #[derive(Deserialize)]
 pub struct CreateConversationReq {
-    /// 省略时用 `config.jsonc` 的 `defaults.provider` / `defaults.model`（默认落到 dummy）。
+    /// 省略时用 `config.json` 的 `defaults.provider` / `defaults.model`（默认落到 dummy）。
     #[serde(default)]
     pub provider: Option<String>,
     #[serde(default)]
     pub model: Option<String>,
-    /// 省略时用 `agents.jsonc` 的 `default_agent`。
+    /// 省略时用 `agents.json` 的 `default_agent`。
     #[serde(default)]
     pub agent_id: Option<String>,
     /// 会话级 system prompt。**留空就是没覆盖**：用 agent 的（变量底子也跟着用它的）。
@@ -163,12 +163,12 @@ async fn create_conversation(
     let mut store = state.lock()?;
     let mut conv = store.create_conversation(&provider, &model, &req.system_prompt)?;
 
-    // agent 缺省 → 取 `agents.jsonc` 的 `default_agent`。
+    // agent 缺省 → 取 `agents.json` 的 `default_agent`。
     // 不这么做的话新会话永远带着内置的 `default`，agent 的提示词与它写的变量底子都用不上。
     let agent_id = match req.agent_id {
         Some(id) if !id.trim().is_empty() => id.trim().to_owned(),
         _ => {
-            let agents: AgentsConfig = crate::config::load_jsonc(&state.paths.agents_jsonc())?;
+            let agents: AgentsConfig = crate::config::load_json(&state.paths.agents_json())?;
             agents
                 .default_agent()
                 .map(|agent| agent.id.clone())
@@ -277,7 +277,7 @@ async fn reply_to_conversation(
     state: &AppState,
     id: Uuid,
 ) -> Result<(chat::Backend, Message), ApiError> {
-    let providers = ProvidersConfig::load(&state.paths.providers_jsonc())?;
+    let providers = ProvidersConfig::load(&state.paths.providers_json())?;
 
     // 取料（会话、历史、出站消息、密钥）都在锁里，**等上游之前把锁放掉**。
     let (conversation, outgoing, secrets) = {
@@ -409,7 +409,7 @@ fn effective_system_prompt(
     if !own.is_empty() {
         return Ok((own.to_owned(), vars::PromptSource::Conversation));
     }
-    let agents: AgentsConfig = crate::config::load_jsonc(&state.paths.agents_jsonc())?;
+    let agents: AgentsConfig = crate::config::load_json(&state.paths.agents_json())?;
     let prompt = agents
         .resolve(&conversation.agent_id)
         .map(|agent| agent.system_prompt)
@@ -476,7 +476,7 @@ async fn health() -> Json<serde_json::Value> {
 async fn list_all_models(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<registry::ModelListItem>>, ApiError> {
-    let config = ProvidersConfig::load(&state.paths.providers_jsonc())?;
+    let config = ProvidersConfig::load(&state.paths.providers_json())?;
     let secrets = config::load_secrets(&state.paths.secrets_json())?;
     let store = state.lock()?;
     Ok(Json(registry::model_list(&registry::views(
@@ -484,18 +484,18 @@ async fn list_all_models(
     )?)))
 }
 
-/// provider × 模型 的合并视图（配置来自 `providers.jsonc`，模型来自数据库）。
+/// provider × 模型 的合并视图（配置来自 `providers.json`，模型来自数据库）。
 async fn list_providers(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<ProviderView>>, ApiError> {
-    let config = ProvidersConfig::load(&state.paths.providers_jsonc())?;
+    let config = ProvidersConfig::load(&state.paths.providers_json())?;
     let secrets = config::load_secrets(&state.paths.secrets_json())?;
     let store = state.lock()?;
     Ok(Json(registry::views(&store, &config, &secrets)?))
 }
 
 /// 新建 provider。`kind` 决定要哪些字段：`dummy` 不该有 `base_url`，`openai-compat` 必须有。
-/// `api_key` 写进 `secrets.json`，不进 `providers.jsonc`、不回显。
+/// `api_key` 写进 `secrets.json`，不进 `providers.json`、不回显。
 async fn create_provider(
     State(state): State<AppState>,
     Json(req): Json<CreateProviderReq>,
@@ -505,7 +505,7 @@ async fn create_provider(
         return Err(ApiError::bad_request("provider id 不能为空、不能含空白字符"));
     }
 
-    let path = state.paths.providers_jsonc();
+    let path = state.paths.providers_json();
     let mut config = ProvidersConfig::load(&path)?;
     if config.get(&id).is_some() {
         return Err(ApiError::conflict("同名 provider 已存在"));
@@ -550,7 +550,7 @@ async fn refresh_provider(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<ProviderView>, ApiError> {
-    let config = ProvidersConfig::load(&state.paths.providers_jsonc())?;
+    let config = ProvidersConfig::load(&state.paths.providers_json())?;
     let provider = config.get(&id).ok_or_else(ApiError::not_found)?;
     match provider.kind {
         ProviderKind::Dummy => {
@@ -611,7 +611,7 @@ pub struct CreateProviderReq {
     pub base_url: String,
     #[serde(default)]
     pub headers: BTreeMap<String, String>,
-    /// 一次性传给后端写进 `secrets.json`；不落 `providers.jsonc`、不回显。
+    /// 一次性传给后端写进 `secrets.json`；不落 `providers.json`、不回显。
     #[serde(default)]
     pub api_key: Option<String>,
 }
@@ -632,7 +632,7 @@ fn clean_name(name: Option<String>) -> Option<String> {
         .filter(|name| !name.is_empty())
 }
 
-/// 删除一个 provider：从 `providers.jsonc` 摘掉、清掉它的密钥、忘掉已发现的模型。
+/// 删除一个 provider：从 `providers.json` 摘掉、清掉它的密钥、忘掉已发现的模型。
 ///
 /// 历史会话里仍留着它的名字——那由 `chat::Backend::select` 兜底成 fallback 话术，
 /// 不是错误，所以这里不做任何"正在被使用"的阻拦。
@@ -640,7 +640,7 @@ async fn delete_provider(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    let path = state.paths.providers_jsonc();
+    let path = state.paths.providers_json();
     let mut config = ProvidersConfig::load(&path)?;
     let before = config.providers.len();
     config.providers.retain(|provider| provider.id != id);
@@ -652,9 +652,9 @@ async fn delete_provider(
     write_secret(&state, &id, None)?;
     state.lock()?.forget_provider(&id)?;
 
-    // `config.jsonc` 里若正拿它当默认 provider，顺手挪到还活着的第一个——
+    // `config.json` 里若正拿它当默认 provider，顺手挪到还活着的第一个——
     // 否则新建会话会带着一个幽灵 provider 出门（前端只看得到"未配置模型"）。
-    let config_path = state.paths.config_jsonc();
+    let config_path = state.paths.config_json();
     let mut app = crate::config::Config::load(&config_path)?;
     if app.defaults.provider == id {
         app.defaults.provider = config
@@ -675,7 +675,7 @@ async fn update_provider(
     Path(id): Path<String>,
     Json(req): Json<UpdateProviderReq>,
 ) -> Result<Json<ProviderConfig>, ApiError> {
-    let path = state.paths.providers_jsonc();
+    let path = state.paths.providers_json();
     let mut config = ProvidersConfig::load(&path)?;
 
     let provider = config
@@ -721,7 +721,7 @@ pub struct CreateAgentReq {
 pub struct UpdateAgentReq {
     pub name: Option<String>,
     pub system_prompt: Option<String>,
-    /// 把它设为 `agents.jsonc` 的 `default_agent`（新建会话默认用它）。
+    /// 把它设为 `agents.json` 的 `default_agent`（新建会话默认用它）。
     #[serde(default)]
     pub make_default: bool,
     /// 改 id = **重命名**：连同 `default_agent` 与所有会话的引用一起搬（空串 = 不改）。
@@ -729,7 +729,7 @@ pub struct UpdateAgentReq {
 }
 
 async fn list_agents(State(state): State<AppState>) -> Result<Json<AgentsConfig>, ApiError> {
-    let config = AgentsConfig::load(&state.paths.agents_jsonc())?;
+    let config = AgentsConfig::load(&state.paths.agents_json())?;
     // 对外给"生效列表"：含内置默认 agent（文件里没有 default 时补上）
     Ok(Json(AgentsConfig {
         agents: config.effective(),
@@ -737,7 +737,7 @@ async fn list_agents(State(state): State<AppState>) -> Result<Json<AgentsConfig>
     }))
 }
 
-/// 新建 agent 预设。`agents.jsonc` 是唯一会被程序写入的用户文件，且只在被调用时写。
+/// 新建 agent 预设。`agents.json` 是唯一会被程序写入的用户文件，且只在被调用时写。
 async fn create_agent(
     State(state): State<AppState>,
     Json(req): Json<CreateAgentReq>,
@@ -748,10 +748,10 @@ async fn create_agent(
         return Err(ApiError::bad_request("agent 名称不能为空"));
     }
 
-    let path = state.paths.agents_jsonc();
+    let path = state.paths.agents_json();
     let mut config = AgentsConfig::load(&path)?;
     // id 由后端生成（UUIDv7，和会话/消息同一套）：不透明、不可变、不会撞车。
-    // 想手写 id 的老路仍然通——直接写进 `agents.jsonc`，加载器照收（历史数据不受影响）。
+    // 想手写 id 的老路仍然通——直接写进 `agents.json`，加载器照收（历史数据不受影响）。
     let agent = Agent {
         id: Uuid::now_v7().to_string(),
         name,
@@ -771,7 +771,7 @@ async fn update_agent(
     Path(id): Path<String>,
     Json(req): Json<UpdateAgentReq>,
 ) -> Result<Json<Agent>, ApiError> {
-    let path = state.paths.agents_jsonc();
+    let path = state.paths.agents_json();
     let mut config = AgentsConfig::load(&path)?;
 
     // 定位：文件里没有这个 id、但能 resolve 出来（内置默认 agent）→ 先把它落地到文件再改。
@@ -835,7 +835,7 @@ async fn delete_agent(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    let path = state.paths.agents_jsonc();
+    let path = state.paths.agents_json();
     let mut config = AgentsConfig::load(&path)?;
     let before = config.agents.len();
     config.agents.retain(|agent| agent.id != id);
@@ -883,12 +883,12 @@ pub struct RawFile {
 }
 
 /// 白名单：`secrets.json` **永远**不在其中。
-const DEBUG_FILES: [&str; 3] = ["config.jsonc", "providers.jsonc", "agents.jsonc"];
+const DEBUG_FILES: [&str; 3] = ["config.json", "providers.json", "agents.json"];
 
 async fn debug_state(State(state): State<AppState>) -> Result<Json<DebugState>, ApiError> {
-    let config = Config::load(&state.paths.config_jsonc())?;
-    let providers = ProvidersConfig::load(&state.paths.providers_jsonc())?;
-    let agents = AgentsConfig::load(&state.paths.agents_jsonc())?;
+    let config = Config::load(&state.paths.config_json())?;
+    let providers = ProvidersConfig::load(&state.paths.providers_json())?;
+    let agents = AgentsConfig::load(&state.paths.agents_json())?;
     let counts = state.lock()?.stats()?;
 
     Ok(Json(DebugState {
@@ -913,7 +913,7 @@ async fn debug_file(
 ) -> Result<Json<RawFile>, ApiError> {
     if !DEBUG_FILES.contains(&name.as_str()) {
         return Err(ApiError::bad_request(
-            "只允许读取 config.jsonc / providers.jsonc / agents.jsonc",
+            "只允许读取 config.json / providers.json / agents.json",
         ));
     }
     let path = state.paths.config_dir.join(&name);
@@ -1167,7 +1167,7 @@ mod tests {
         let turn: ChatTurn = serde_json::from_str(&body).unwrap();
         assert_eq!(turn.user.role, Role::User);
         assert_eq!(turn.user.content, "第一句话");
-        assert_eq!(turn.backend, "fallback", "providers.jsonc 里没有 x，应回落到 fallback");
+        assert_eq!(turn.backend, "fallback", "providers.json 里没有 x，应回落到 fallback");
         assert_eq!(turn.assistant.role, Role::Assistant);
         assert_eq!(turn.assistant.content, "未配置模型");
 
@@ -1196,7 +1196,7 @@ mod tests {
     #[tokio::test]
     async fn dummy_model_replies_with_the_test_sentence() {
         let (app, dir) = app_with_files(&[(
-            "providers.jsonc",
+            "providers.json",
             r#"{ "providers": [ { "id": "dummy", "kind": "dummy" } ] }"#,
         )]);
         let conv = create(&app, "{}").await;
@@ -1218,7 +1218,7 @@ mod tests {
         let (app, dir) = app_with_env(
             None,
             &[(
-                "agents.jsonc",
+                "agents.json",
                 r#"{ "agents": [ { "id": "default", "name": "默认助手",
                      "system_prompt": "你是客栈老板。\n<state>set 季节 = 初冬</state>" } ] }"#,
             )],
@@ -1295,7 +1295,7 @@ mod tests {
         let (app, dir) = app_with_env(
             Some("s3cret"),
             &[(
-                "providers.jsonc",
+                "providers.json",
                 r#"{ "providers": [ { "id": "dummy", "kind": "dummy", "name": "假模型" } ] }"#,
             )],
         );
@@ -1611,11 +1611,11 @@ mod tests {
         assert_eq!(status, StatusCode::NOT_FOUND);
     }
 
-    /// 「设为默认」：写进 `agents.jsonc` 的 `default_agent`，之后新建会话用它。
+    /// 「设为默认」：写进 `agents.json` 的 `default_agent`，之后新建会话用它。
     #[tokio::test]
     async fn an_agent_can_be_made_the_default() {
         let (app, dir) = app_with_files(&[(
-            "agents.jsonc",
+            "agents.json",
             r#"{ "default_agent": "", "agents": [] }"#,
         )]);
         let (_, body) = send(&app, json_req("POST", "/api/v1/agents", r#"{"name":"跑团 GM"}"#)).await;
@@ -1649,7 +1649,7 @@ mod tests {
         let (app, dir) = app_with_env(
             None,
             &[(
-                "agents.jsonc",
+                "agents.json",
                 r#"{ "default_agent": "ze",
                      "agents": [ { "id": "ze", "name": "测试助手", "system_prompt": "旧提示词" } ] }"#,
             )],
@@ -1782,7 +1782,7 @@ mod tests {
         let (app, dir) = app_with_env(
             None,
             &[(
-                "providers.jsonc",
+                "providers.json",
                 r#"{ "providers": [ { "id": "local", "kind": "openai-compat", "base_url": "http://127.0.0.1:1/v1" } ] }"#,
             )],
         );
@@ -1810,7 +1810,7 @@ mod tests {
         const TOKEN: &str = "tok";
         let (app, dir) = app_with_env(
             Some(TOKEN),
-            &[("providers.jsonc", r#"{ "providers": [] }"#)],
+            &[("providers.json", r#"{ "providers": [] }"#)],
         );
         let authed = |method: &str, uri: &str, body: &str| {
             let mut builder = Request::builder()
@@ -1916,7 +1916,7 @@ mod tests {
     #[tokio::test]
     async fn builtin_default_agent_is_listed_editable_but_not_deletable() {
         let (app, dir) = app_with_files(&[(
-            "agents.jsonc",
+            "agents.json",
             r#"{ "default_agent": "default", "agents": [] }"#,
         )]);
 
@@ -1944,7 +1944,7 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         let updated: Agent = serde_json::from_str(&body).unwrap();
         assert_eq!(updated.system_prompt, "You are a terse assistant.");
-        let on_disk = std::fs::read_to_string(dir.join("agents.jsonc")).unwrap();
+        let on_disk = std::fs::read_to_string(dir.join("agents.json")).unwrap();
         assert!(on_disk.contains("You are a terse assistant."), "编辑内置 agent 要落地");
 
         // 落地之后它已是普通 agent，可以删
@@ -2024,11 +2024,8 @@ mod tests {
     async fn providers_view_reads_config_and_never_leaks_secrets() {
         let (app, dir) = app_with_files(&[
             (
-                "providers.jsonc",
-                r#"{
-                    // 注释也要能解析
-                    "providers": [ { "id": "local", "base_url": "http://127.0.0.1:9/v1", } ],
-                }"#,
+                "providers.json",
+                r#"{ "providers": [ { "id": "local", "base_url": "http://127.0.0.1:9/v1" } ] }"#,
             ),
             ("secrets.json", r#"{"local":"sk-secret-value"}"#),
         ]);
@@ -2052,7 +2049,7 @@ mod tests {
         )
         .await;
         let (app, dir) = app_with_files(&[(
-            "providers.jsonc",
+            "providers.json",
             &format!(r#"{{ "providers": [ {{ "id": "local", "base_url": "{upstream}" }} ] }}"#),
         )]);
 
@@ -2076,7 +2073,7 @@ mod tests {
     async fn refresh_reports_upstream_failure_and_unknown_provider() {
         let upstream = fake_upstream(StatusCode::INTERNAL_SERVER_ERROR, "").await;
         let (app, dir) = app_with_files(&[(
-            "providers.jsonc",
+            "providers.json",
             &format!(r#"{{ "providers": [ {{ "id": "local", "base_url": "{upstream}" }} ] }}"#),
         )]);
 
@@ -2095,7 +2092,7 @@ mod tests {
     #[tokio::test]
     async fn agent_crud_roundtrip_writes_config_file() {
         let (app, dir) = app_with_files(&[(
-            "agents.jsonc",
+            "agents.json",
             r#"{ "default_agent": "default", "agents": [] }"#,
         )]);
         // 只给名称：id 由后端生成（UUIDv7）——不再由调用方指定
@@ -2133,7 +2130,7 @@ mod tests {
         assert_eq!(updated.system_prompt, "你是严格的 GM");
         assert_eq!(updated.name, "跑团 GM", "未提供的字段保持不变");
 
-        let on_disk = std::fs::read_to_string(dir.join("agents.jsonc")).unwrap();
+        let on_disk = std::fs::read_to_string(dir.join("agents.json")).unwrap();
         assert!(on_disk.contains("你是严格的 GM"), "改动要落盘");
 
         let (status, _) = send(&app, json_req("DELETE", &uri, "")).await;
@@ -2147,11 +2144,8 @@ mod tests {
     #[tokio::test]
     async fn update_provider_edits_existing_only() {
         let (app, dir) = app_with_files(&[(
-            "providers.jsonc",
-            r#"{
-                // 手写注释
-                "providers": [ { "id": "local", "base_url": "http://127.0.0.1:9/v1" } ],
-            }"#,
+            "providers.json",
+            r#"{ "providers": [ { "id": "local", "base_url": "http://127.0.0.1:9/v1" } ] }"#,
         )]);
 
         let (status, body) = send(
@@ -2168,7 +2162,7 @@ mod tests {
         assert_eq!(updated.base_url, "http://127.0.0.1:11434/v1");
         assert_eq!(updated.headers["X-Title"], "microchat");
 
-        let on_disk = std::fs::read_to_string(dir.join("providers.jsonc")).unwrap();
+        let on_disk = std::fs::read_to_string(dir.join("providers.json")).unwrap();
         assert!(on_disk.contains("11434"), "改动要落盘");
         assert!(on_disk.contains("X-Title"));
 
@@ -2221,10 +2215,10 @@ mod tests {
         let created: ProviderConfig = serde_json::from_str(&body).unwrap();
         assert_eq!(created.kind, ProviderKind::OpenAiCompat);
 
-        // providers.jsonc 只有连接信息
-        let providers = std::fs::read_to_string(dir.join("providers.jsonc")).unwrap();
+        // providers.json 只有连接信息
+        let providers = std::fs::read_to_string(dir.join("providers.json")).unwrap();
         assert!(providers.contains("11434"));
-        assert!(!providers.contains("sk-secret"), "密钥不该进 providers.jsonc");
+        assert!(!providers.contains("sk-secret"), "密钥不该进 providers.json");
 
         // secrets.json 有密钥且权限收紧
         let secrets_path = dir.join("secrets.json");
@@ -2342,7 +2336,7 @@ mod tests {
     async fn debug_state_is_readable_and_hides_secrets() {
         let (app, dir) = app_with_env(
             Some("s3cret"),
-            &[("providers.jsonc", r#"{ "providers": [] }"#)],
+            &[("providers.json", r#"{ "providers": [] }"#)],
         );
 
         let req = Request::builder()
@@ -2365,7 +2359,7 @@ mod tests {
     #[tokio::test]
     async fn debug_reports_counts_and_only_whitelisted_files() {
         let (app, dir) = app_with_files(&[
-            ("providers.jsonc", r#"{ "providers": [] }"#),
+            ("providers.json", r#"{ "providers": [] }"#),
             ("secrets.json", r#"{"x":"sk-secret-value"}"#),
         ]);
 
@@ -2377,7 +2371,7 @@ mod tests {
         assert_eq!(v["counts"]["messages"], 0);
 
         // 白名单内可读
-        let (status, body) = send(&app, get_req("/api/v1/debug/file/providers.jsonc")).await;
+        let (status, body) = send(&app, get_req("/api/v1/debug/file/providers.json")).await;
         assert_eq!(status, StatusCode::OK);
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert!(v["text"].as_str().unwrap().contains("providers"));
@@ -2388,7 +2382,7 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert!(!body.contains("sk-secret-value"));
 
-        let (status, _) = send(&app, get_req("/api/v1/debug/file/nope.jsonc")).await;
+        let (status, _) = send(&app, get_req("/api/v1/debug/file/nope.json")).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
 
         let _ = std::fs::remove_dir_all(&dir);

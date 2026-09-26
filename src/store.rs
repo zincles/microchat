@@ -37,13 +37,13 @@ CREATE TABLE messages (
 
 CREATE INDEX messages_by_conv ON messages(conversation_id, id);
 "#, r#"
--- 词汇与 providers.jsonc 对齐：endpoint → provider。
+-- 词汇与 providers.json 对齐：endpoint → provider。
 ALTER TABLE conversations RENAME COLUMN endpoint TO provider;
 -- agent 来源标记。
 ALTER TABLE conversations ADD COLUMN agent_id TEXT NOT NULL DEFAULT 'default';
 
 -- 发现所得与用户覆盖同表分列：刷新只写发现列，用户列永不被动。
--- provider 用 providers.jsonc 里的 handle，无外键（配置在文件里，库不做约束）。
+-- provider 用 providers.json 里的 handle，无外键（配置在文件里，库不做约束）。
 CREATE TABLE models (
   provider       TEXT NOT NULL,
   upstream_id    TEXT NOT NULL,
@@ -59,7 +59,7 @@ CREATE TABLE models (
   PRIMARY KEY (provider, upstream_id)
 );
 
--- provider 的刷新簿记。放库里而不是 providers.jsonc：那个文件应用只读不写。
+-- provider 的刷新簿记。放库里而不是 providers.json：那个文件应用只读不写。
 CREATE TABLE provider_state (
   provider        TEXT PRIMARY KEY,
   last_refresh_at INTEGER NOT NULL
@@ -89,7 +89,7 @@ CREATE INDEX variable_ops_by_conv ON variable_ops(conversation_id, id);
 "#, r#"
 -- 变量操作日志整张表拆掉：它本来就是从消息正文推出来的东西。
 -- 现在**库里只存正文**，变量表在读取时顺着消息重演（vars::VariableView::from_sources）；
--- 全局变量搬去 system prompt。`config/variables.jsonc` 与 `setglobal` 都已废弃。
+-- 全局变量搬去 system prompt。`config/variables.json` 与 `setglobal` 都已废弃。
 DROP TABLE IF EXISTS variable_ops;
 "#, r#"
 -- 消息从"一条线"变成一棵树：每条记下父亲（自引用、级联），会话记下"当前走到的尾巴"。
@@ -547,7 +547,7 @@ impl Store {
 
     /// 把引用某个 agent 的会话改指到另一个 id（**agent 重命名**时用）。
     ///
-    /// `conversations.agent_id` 是软引用（没有外键）：agent 住在 `agents.jsonc` 里，
+    /// `conversations.agent_id` 是软引用（没有外键）：agent 住在 `agents.json` 里，
     /// 库里管不着。所以重命名必须由 API 一处负责把引用搬过去，否则会话会指向一个
     /// 不存在的 agent——那不会报错，只会**静默**丢掉提示词与变量底子。
     /// 返回搬了多少条会话。

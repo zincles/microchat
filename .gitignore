@@ -10,13 +10,14 @@
 *.db-wal
 *.db-shm
 
-# ── 密钥 ──────────────────────────────────────────────────
-# providers.jsonc 里刻意不含密钥，密钥单独放这里（写入时 chmod 600）。
-# 这一行是安全边界：其余 config/*.jsonc 都是可分享的模板。
-/config/secrets.json
+# ── 配置与密钥：整块不进库 ────────────────────────────────
+# config/ 里是你自己的东西：服务端口与口令、provider 连接信息、agent 预设、
+# 以及 secrets.json（密钥，写入时 chmod 600）。默认值都在代码里（各结构的 Default），
+# 所以这些文件不存在也能跑；仓库不再提供"模板"——格式写在 AGENTS.md。
+/config/
 
 # ── 原子写的临时残留 ──────────────────────────────────────
-# 配置写回用 tmp + rename；进程被强杀时可能留下 *.jsonc.tmp
+# 配置写回用 tmp + rename；进程被强杀时可能留下 *.json.tmp
 *.tmp
 
 # ── 日志与编辑器杂物 ──────────────────────────────────────
@@ -30,8 +31,8 @@
 Thumbs.db
 
 # 注：Cargo.lock 要提交（这是应用而非库，锁死依赖版本）
-# 注：config/config.jsonc、providers.jsonc、agents.jsonc 默认跟踪——它们是可分享的模板。
-#     若想连个人配置也排除，加一行：/config/*.jsonc（代价是仓库里没了模板）
+# 注：配置文件一律**严格 JSON**（不接受注释与尾逗号）——程序会整体重写它们，
+#     注释留不住；格式与示例写在 AGENTS.md 里。
 
 # Godot 前端（frontend/）：只排除编辑器缓存与导出产物，
 # 其余（场景、脚本、.uid、project.godot、export_presets.cfg、*.import）都随仓库走。

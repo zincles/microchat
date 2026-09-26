@@ -1,4 +1,4 @@
-//! 前端设置：只存在本机（`$XDG_CONFIG_HOME/microchat/frontend.jsonc`），不上传后端。
+//! 前端设置：只存在本机（`$XDG_CONFIG_HOME/microchat/frontend.json`），不上传后端。
 //!
 //! 与服务器设置的分工：凡是"后端持有的状态"（providers、模型、agents、生成参数）都归
 //! 服务器设置，经 API 读写；这里只放界面偏好与连接信息。
@@ -68,11 +68,11 @@ impl FrontendSettings {
             .map(PathBuf::from)
             .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
             .unwrap_or_else(|| PathBuf::from("."));
-        base.join("microchat").join("frontend.jsonc")
+        base.join("microchat").join("frontend.json")
     }
 
     pub fn load() -> Self {
-        config::load_jsonc(&Self::path()).unwrap_or_default()
+        config::load_json(&Self::path()).unwrap_or_default()
     }
 
     pub fn save(&self) -> Result<(), String> {

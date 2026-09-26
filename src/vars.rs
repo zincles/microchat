@@ -216,11 +216,11 @@ fn parse_block(body: &str, parsed: &mut Parsed) {
         let kind = match command.to_ascii_lowercase().as_str() {
             "set" => OpKind::Set,
             "del" => OpKind::Delete,
-            // 全局变量不再从消息里写：它住手写的 config/variables.jsonc。
+            // 全局变量不再从消息里写：它住手写的 config/variables.json。
             // 老消息里残留的 setglobal/delglobal 明确报出来——别静默丢掉用户写过的东西。
             "setglobal" | "delglobal" => {
                 parsed.warnings.push(format!(
-                    "`{command}` 不从消息里写全局变量了，请挪到 config/variables.jsonc：{line}"
+                    "`{command}` 不从消息里写全局变量了，请挪到 config/variables.json：{line}"
                 ));
                 continue;
             }
@@ -331,7 +331,7 @@ pub fn render_table(values: &BTreeMap<String, String>) -> Option<String> {
 /// 面板/接口要的一份快照。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VariableView {
-    /// 全局那几张（来自 `config/variables.jsonc`，所有会话共用）。
+    /// 全局那几张（来自 `config/variables.json`，所有会话共用）。
     pub global: Vec<VarOpRow>,
     /// 本会话正文里累积出来的操作（"这一局改了什么"）。
     pub session: Vec<VarOpRow>,
@@ -611,7 +611,7 @@ mod tests {
         assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
     }
 
-    /// `setglobal` / `delglobal` 已废弃（全局变量住手写的 `config/variables.jsonc`）。
+    /// `setglobal` / `delglobal` 已废弃（全局变量住手写的 `config/variables.json`）。
     /// 老消息里残留的写法要**明确报出来**——不能静默丢掉用户写过的东西。
     #[test]
     fn retired_global_commands_warn_instead_of_writing() {
@@ -619,7 +619,7 @@ mod tests {
         assert!(parsed.ops.is_empty(), "不该再产出操作：{:?}", parsed.ops);
         assert_eq!(parsed.warnings.len(), 2, "{:?}", parsed.warnings);
         assert!(
-            parsed.warnings[0].contains("config/variables.jsonc"),
+            parsed.warnings[0].contains("config/variables.json"),
             "要说清该搬去哪：{:?}",
             parsed.warnings
         );

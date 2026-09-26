@@ -145,7 +145,7 @@ horizontal_scroll_mode = 0
 [node name="消息列表" type="VBoxContainer" parent="框架/页面/聊天/聊天布局/消息滚动" unique_id=2128220348]
 layout_mode = 2
 size_flags_horizontal = 3
-theme_override_constants/separation = 12
+theme_override_constants/separation = 4
 
 [node name="消息项1" parent="框架/页面/聊天/聊天布局/消息滚动/消息列表" unique_id=1622856673 instance=ExtResource("2_msg")]
 layout_mode = 2

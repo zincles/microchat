@@ -11,7 +11,7 @@ use microchat::{server, store::Store};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let paths = Paths::default();
-    let config = Config::load(&paths.config_jsonc())?;
+    let config = Config::load(&paths.config_json())?;
 
     let db_path = paths.database();
     if let Some(dir) = db_path.parent() {

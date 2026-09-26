@@ -12,16 +12,18 @@ config_version=5
 
 config/name="Microchat Frontend"
 run/main_scene="res://main.tscn"
-config/features=PackedStringArray("4.8", "GL Compatibility")
-config/icon="res://assets/icon.svg"
-; 安卓返回键交给我们自己处理（多级面板要能一层层退回），引擎不再"按一次就退"。
-; 桌面/Web 的关窗（右上角 ×）保持默认：直接退出——状态在后端，前端没有要抢救的东西。
 config/quit_on_go_back=false
+config/features=PackedStringArray("4.8", "GL Compatibility")
+run/low_processor_mode=true
+config/icon="res://assets/icon.svg"
 
 [display]
 
+window/energy_saving/keep_screen_on=false
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
+window/handheld/orientation=5
+window/vsync/vsync_mode=0
 
 [gui]
 
@@ -43,3 +45,4 @@ renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
 textures/vram_compression/import_etc2_astc=true
 lights_and_shadows/multi_bounce_occlusion/enabled=true
+viewport/hdr_2d=true

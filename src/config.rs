@@ -1,10 +1,10 @@
 //! 配置层：`config/` 目录下的用户手写文件（JSONC 容忍：注释、尾逗号）。
 //!
 //! 归属规则：
-//! - `providers.jsonc` / `agents.jsonc` / `config.jsonc` 由用户手写，程序**不隐式改写**
+//! - `providers.json` / `agents.json` / `config.json` 由用户手写，程序**不隐式改写**
 //!   （显式编辑由 API 提供，届时写回会丢注释，这一点在 UI 上要讲明）；
 //! - `secrets.json` 存放 API 密钥，`{"<provider_id>": "sk-…"}`，结构上与可分享文件隔离；
-//! - 发现所得与用户覆盖落数据库（见 `store`），`providers.jsonc` 里没有模型的影子。
+//! - 发现所得与用户覆盖落数据库（见 `store`），`providers.json` 里没有模型的影子。
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -33,14 +33,14 @@ impl Default for Paths {
 }
 
 impl Paths {
-    pub fn config_jsonc(&self) -> PathBuf {
-        self.config_dir.join("config.jsonc")
+    pub fn config_json(&self) -> PathBuf {
+        self.config_dir.join("config.json")
     }
-    pub fn providers_jsonc(&self) -> PathBuf {
-        self.config_dir.join("providers.jsonc")
+    pub fn providers_json(&self) -> PathBuf {
+        self.config_dir.join("providers.json")
     }
-    pub fn agents_jsonc(&self) -> PathBuf {
-        self.config_dir.join("agents.jsonc")
+    pub fn agents_json(&self) -> PathBuf {
+        self.config_dir.join("agents.json")
     }
     pub fn secrets_json(&self) -> PathBuf {
         self.config_dir.join("secrets.json")
@@ -71,11 +71,11 @@ pub struct ServerConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct DefaultsConfig {
-    /// provider handle（`providers.jsonc` 里的 `id`）。
+    /// provider handle（`providers.json` 里的 `id`）。
     pub provider: String,
     /// 上游裸模型 id，原样使用。
     pub model: String,
-    /// agent handle（`agents.jsonc` 里的 `id`）。
+    /// agent handle（`agents.json` 里的 `id`）。
     pub agent: String,
 }
 
@@ -137,7 +137,7 @@ pub enum ProviderKind {
     Dummy,
 }
 
-/// `providers.jsonc` 里的单个 provider：只有连接信息，没有模型（模型是发现所得，在库里）。
+/// `providers.json` 里的单个 provider：只有连接信息，没有模型（模型是发现所得，在库里）。
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct ProviderConfig {
@@ -186,7 +186,7 @@ impl Default for ProvidersConfig {
 
 impl ProvidersConfig {
     pub fn load(path: &Path) -> Result<Self> {
-        let cfg: Self = load_jsonc(path)?;
+        let cfg: Self = load_json(path)?;
         cfg.validate()?;
         Ok(cfg)
     }
@@ -280,7 +280,7 @@ impl Default for AgentsConfig {
     }
 }
 
-/// 内置默认 agent：`agents.jsonc` 里没有 `default` 时补上它。
+/// 内置默认 agent：`agents.json` 里没有 `default` 时补上它。
 ///
 /// 与 dummy 模型对称：不来自配置文件，但系统**永远**有一个可用身份。
 /// 它只带一段提示词，别的一概没有。
@@ -312,7 +312,7 @@ impl AgentsConfig {
     }
 
     pub fn load(path: &Path) -> Result<Self> {
-        let cfg: Self = load_jsonc(path)?;
+        let cfg: Self = load_json(path)?;
         cfg.validate()?;
         Ok(cfg)
     }
@@ -361,7 +361,7 @@ impl AgentsConfig {
 
 /// `secrets.json`：`{"<provider_id>": "sk-…"}`。缺失视为空。
 pub fn load_secrets(path: &Path) -> Result<BTreeMap<String, String>> {
-    load_jsonc(path)
+    load_json(path)
 }
 
 /// 写 `secrets.json`。只在 API 被显式调用时写，写完立刻把权限收紧到 0600。
@@ -401,9 +401,9 @@ impl std::error::Error for Error {}
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// 读 JSONC；文件不存在 → `T::default()`。前端设置也复用它。
-pub fn load_jsonc<T: DeserializeOwned + Default>(path: &Path) -> Result<T> {
+pub fn load_json<T: DeserializeOwned + Default>(path: &Path) -> Result<T> {
     match std::fs::read_to_string(path) {
-        Ok(text) => jsonc_parser::parse_to_serde_value(&text, &jsonc_parser::ParseOptions::default())
+        Ok(text) => serde_json::from_str(&text)
             .map_err(|e| Error::Parse(e.to_string())),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(T::default()),
         Err(e) => Err(Error::Io(e)),
@@ -428,12 +428,12 @@ pub fn write_json_pretty<T: Serialize>(path: &Path, value: &T) -> Result<()> {
 impl Config {
     /// 读取配置；文件不存在 → 全默认。
     pub fn load(path: &Path) -> Result<Self> {
-        load_jsonc(path)
+        load_json(path)
     }
 
-    /// JSONC 解析。`ParseOptions::default()` 已允许注释与尾逗号。
+    /// 解析一份配置文本（**严格 JSON**：注释与尾逗号会报错）。
     pub fn parse(text: &str) -> Result<Self> {
-        jsonc_parser::parse_to_serde_value(text, &jsonc_parser::ParseOptions::default())
+        serde_json::from_str(text)
             .map_err(|e| Error::Parse(e.to_string()))
     }
 }
@@ -446,26 +446,10 @@ mod tests {
 
     #[test]
     fn missing_file_yields_defaults() {
-        let cfg = Config::load(Path::new("/nonexistent/microchat.jsonc")).unwrap();
+        let cfg = Config::load(Path::new("/nonexistent/microchat.json")).unwrap();
         assert_eq!(cfg.server.port, 8787);
         assert_eq!(cfg.chat.title_chars, 32);
         assert!(cfg.server.auth_token.is_none());
-    }
-
-    #[test]
-    fn jsonc_tolerates_comments_and_trailing_commas() {
-        let cfg = Config::parse(
-            r#"{
-                // 服务端绑定
-                "server": { "port": 9000, "auth_token": "s3cret", },
-                "chat": { "title_chars": 16 },
-            }"#,
-        )
-        .unwrap();
-        assert_eq!(cfg.server.port, 9000);
-        assert_eq!(cfg.server.auth_token.as_deref(), Some("s3cret"));
-        assert_eq!(cfg.chat.title_chars, 16);
-        assert_eq!(cfg.server.host, "127.0.0.1", "未给出的字段应回落默认值");
     }
 
     #[test]
@@ -474,18 +458,16 @@ mod tests {
     }
 
     #[test]
-    fn providers_parse_with_comments_and_default_kind() {
-        let cfg: ProvidersConfig = jsonc_parser::parse_to_serde_value(
+    fn providers_parse_and_kind_defaults_to_openai_compat() {
+        let cfg: ProvidersConfig = serde_json::from_str(
             r#"{
-                // 本地 Ollama
                 "providers": [
                     { "id": "local", "base_url": "http://127.0.0.1:11434/v1" },
                     { "id": "openrouter", "name": "OpenRouter",
                       "base_url": "https://openrouter.ai/api/v1",
-                      "headers": { "X-Title": "microchat" }, },
-                ],
+                      "headers": { "X-Title": "microchat" } }
+                ]
             }"#,
-            &jsonc_parser::ParseOptions::default(),
         )
         .unwrap();
         cfg.validate().unwrap();
@@ -494,13 +476,25 @@ mod tests {
         // 显示名可选：写了读得到，没写就是 None（客户端回退到 id）
         assert_eq!(cfg.get("openrouter").unwrap().name.as_deref(), Some("OpenRouter"));
         assert_eq!(cfg.get("local").unwrap().name, None);
+        // 没写 kind ⇒ 默认 openai-compat
+        assert_eq!(cfg.get("local").unwrap().kind, super::ProviderKind::OpenAiCompat);
+    }
+
+    /// 严格 JSON：注释与尾逗号都不接受——配置文件会被程序整体重写，注释留不住，
+    /// 与其留个"写了也会丢"的假象，不如当场报错。
+    #[test]
+    fn config_rejects_comments_and_trailing_commas() {
+        let parse = |text: &str| serde_json::from_str::<ProvidersConfig>(text);
+        assert!(parse(r#"{ // 注释
+ "providers": [] }"#).is_err());
+        assert!(parse(r#"{ "providers": [], }"#).is_err());
+        assert!(parse(r#"{ "providers": [] }"#).is_ok());
     }
 
     #[test]
     fn default_agent_falls_back_to_the_builtin_not_the_first_file_agent() {
-        let cfg: AgentsConfig = jsonc_parser::parse_to_serde_value(
+        let cfg: AgentsConfig = serde_json::from_str(
             r#"{ "agents": [ { "id": "ze", "name": "测试", "system_prompt": "hi" } ] }"#,
-            &jsonc_parser::ParseOptions::default(),
         )
         .unwrap();
         // 没配 default_agent（默认值 "default"），文件里也没有 default
@@ -548,16 +542,15 @@ mod tests {
     fn provider_write_back_keeps_kind_spelling_and_unknown_fields() {
         let dir = std::env::temp_dir().join(format!("microchat-cfg-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("providers.jsonc");
+        let path = dir.join("providers.json");
 
-        let config: ProvidersConfig = jsonc_parser::parse_to_serde_value(
+        let config: ProvidersConfig = serde_json::from_str(
             r#"{ "providers": [ {
                     "id": "local",
                     "kind": "openai-compat",
                     "base_url": "http://127.0.0.1:9/v1",
                     "note": "我的备注"
                 } ] }"#,
-            &jsonc_parser::ParseOptions::default(),
         )
         .unwrap();
         config.validate().unwrap();
@@ -595,16 +588,15 @@ mod tests {
 
     #[test]
     fn agents_keep_unknown_fields_and_resolve_default() {
-        let cfg: AgentsConfig = jsonc_parser::parse_to_serde_value(
+        let cfg: AgentsConfig = serde_json::from_str(
             r#"{
                 "default_agent": "跑团",
                 "agents": [
                     { "id": "跑团", "name": "跑团 GM", "system_prompt": "你是 GM",
                       "params": { "temperature": 0.9 }, "note": "自定义字段" },
-                    { "id": "写作" },
-                ],
+                    { "id": "写作" }
+                ]
             }"#,
-            &jsonc_parser::ParseOptions::default(),
         )
         .unwrap();
         cfg.validate().unwrap();

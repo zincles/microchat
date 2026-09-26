@@ -138,7 +138,7 @@ pub enum Command {
         token: Option<String>,
         conversation: uuid::Uuid,
     },
-    /// 把某个 agent 设为 `agents.jsonc` 的 `default_agent`。
+    /// 把某个 agent 设为 `agents.json` 的 `default_agent`。
     MakeDefaultAgent {
         base: String,
         token: Option<String>,
@@ -415,7 +415,7 @@ fn summarize(event: &Event) -> String {
             Ok(agent) => format!("OK 已保存（id={}）", agent.id),
             Err(message) => format!("失败: {message}"),
         },
-        Event::AgentWritten(_) => "OK".to_owned(),
+        Event::AgentWritten(Ok(())) => "OK".to_owned(),
         Event::AgentWritten(Err(message)) => format!("失败: {message}"),
         Event::ProviderWritten(Ok(())) => "OK".to_owned(),
         Event::ProviderWritten(Err(message)) => format!("失败: {message}"),
@@ -511,7 +511,7 @@ fn handle(http: &reqwest::blocking::Client, command: Command) -> Event {
             ),
         },
         Command::CreateConversation { base, token } => {
-            // 不带 provider/model：让后端按 config.jsonc 的 defaults 决定（默认落到 dummy）
+            // 不带 provider/model：让后端按 config.json 的 defaults 决定（默认落到 dummy）
             Event::ConversationCreated(write_json(
                 http,
                 reqwest::Method::POST,

@@ -24,14 +24,14 @@ adb install -r /tmp/x.apk && adb logcat -s godot
 
 ## 不变量（破坏了会静默出错）
 
-1. **存储是 SQLite**：`data/microchat.db`。用户手写的 JSONC 只在 `config/`。两者路径都**相对工作目录**，可用 `MICROCHAT_CONFIG_DIR` / `MICROCHAT_DATA_DIR` 覆盖。前端的界面偏好另有一份：`~/.config/microchat/frontend.jsonc`（不同机制，别混）。
+1. **存储是 SQLite**：`data/microchat.db`。用户手写的配置只在 `config/`（**严格 JSON**：不接受注释与尾逗号——程序会整体重写这些文件，注释留不住；格式见文末「配置文件长什么样」）。两者路径都**相对工作目录**，可用 `MICROCHAT_CONFIG_DIR` / `MICROCHAT_DATA_DIR` 覆盖。前端的界面偏好另有一份：`~/.config/microchat/frontend.json`（不同机制，别混）。
 2. **正文与提示词都是存档**：`<state>` 块原样留在消息正文**和 system prompt** 里；**发给模型的文本一律剔除标签**，改注入当前变量表。唯一出口 `vars::build_outgoing()`——不要写第二条拼装路径。
-3. **变量不落库**：库里只有正文/提示词与那几张配置、发现表。变量表**每次现算**：`vars::VariableView::from_sources(会话, 生效的 system prompt, 来源, 消息列表)`——先扫提示词里的 `<state>` 块（**底子**），再按消息顺序（rowid 序）扫正文里的块，最后 fold。每条现演操作都带 `message_id`，"哪句话带来的状态"追得回来；切到前 N 条就是回溯。**没有派生表** ⇒ 编辑/删除消息、改提示词都不需要"重算变量"。别再往库里写操作日志（老表 `variable_ops` 已 DROP；`config/variables.jsonc`、`setglobal`/`delglobal` 都已废弃）。
+3. **变量不落库**：库里只有正文/提示词与那几张配置、发现表。变量表**每次现算**：`vars::VariableView::from_sources(会话, 生效的 system prompt, 来源, 消息列表)`——先扫提示词里的 `<state>` 块（**底子**），再按消息顺序（rowid 序）扫正文里的块，最后 fold。每条现演操作都带 `message_id`，"哪句话带来的状态"追得回来；切到前 N 条就是回溯。**没有派生表** ⇒ 编辑/删除消息、改提示词都不需要"重算变量"。别再往库里写操作日志（老表 `variable_ops` 已 DROP；`config/variables.json`、`setglobal`/`delglobal` 都已废弃）。
    底子的**来源**决定它算哪一层：会话没写自己的提示词 ⇒ 用 agent 的 ⇒ 算**全局**（同一 agent 的会话共享）；会话自己写了 ⇒ 覆盖 agent 的 ⇒ 算**本会话**。会话里的 `del` 写墓碑，挡住全局同名键，不会从底下漏回来。生效的那份提示词由 `server::effective_system_prompt()` 一处解析（会话覆盖优先 → agent 的 → 内置默认兜底）——出站消息、变量底子、界面显示共用它。
 4. **编辑/删除消息只动正文**：改的是存档本身（单事务）；变量不用管——它是现演的。不能跨会话改/删（404）。
-5. **模型身份 = `(provider, upstream_id)`**；显示名三级回退（用户覆盖 → 上游名 → prettify）在**后端**完成，前端别再实现一遍。新建会话的 agent 取 `agents.jsonc` 的 `default_agent`（请求可显式指定 `agent_id`）——否则 agent 的提示词与它写的变量底子对任何新会话都不生效。
-   **agent 的 id 由后端生成（UUIDv7）、不可变**：`POST /agents` 只收 `name` + `system_prompt`（名称是唯一人类句柄，空名给 400）；界面里 id 只读。手写进 `agents.jsonc` 的自定义 id 照收（历史数据不改），要收拾历史 id 就走 `PATCH /agents/{id}` 的 `new_id`——它会把 `default_agent` 与**所有会话的引用**一起搬（`agent_id` 是软引用、无外键，`resolve()` 找不到只会静默回空提示词，所以必须由这一处维护一致性）。
-6. `config/secrets.json` 与 `data/` **永不入库**；`.gitignore` 只放行 Godot 项目的非缓存部分（`.godot/`、`export/` 排除）。
+5. **模型身份 = `(provider, upstream_id)`**；显示名三级回退（用户覆盖 → 上游名 → prettify）在**后端**完成，前端别再实现一遍。新建会话的 agent 取 `agents.json` 的 `default_agent`（请求可显式指定 `agent_id`）——否则 agent 的提示词与它写的变量底子对任何新会话都不生效。
+   **agent 的 id 由后端生成（UUIDv7）、不可变**：`POST /agents` 只收 `name` + `system_prompt`（名称是唯一人类句柄，空名给 400）；界面里 id 只读。手写进 `agents.json` 的自定义 id 照收（历史数据不改），要收拾历史 id 就走 `PATCH /agents/{id}` 的 `new_id`——它会把 `default_agent` 与**所有会话的引用**一起搬（`agent_id` 是软引用、无外键，`resolve()` 找不到只会静默回空提示词，所以必须由这一处维护一致性）。
+6. **`config/` 整块与 `data/` 永不入库**（都是你个人的：端口口令、provider 连接信息、agent 预设、密钥、存档）。默认值全在代码里（各结构的 `Default`），所以这些文件不存在也能跑。`.gitignore` 只放行 Godot 项目的非缓存部分（`.godot/`、`export/` 排除）。
 7. **消息顺序 = 树上的当前路径**：每条消息有 `parent_id`（自引用、`ON DELETE CASCADE`），会话有 `current_leaf`——整条对话 = 从 `current_leaf` 沿 `parent_id` 回溯到根（`store::path_from`）。**兄弟就是分支**：重新发送 = 再长一个兄弟（旧的留着，`‹ 2/3 ›` 切回去），切分支 = 改 `current_leaf`（`PATCH /conversations/{id}` 的 `current_leaf` 会顺着最新的孩子走到末端）。**别再按 rowid 或 id 排消息**。删除只允许删**整棵子树**（`store::delete_message` 返回条数；leaf 若落在被删子树里就退回被删那条的父亲）。变量只按当前路径现演 ⇒ 换分支生效值跟着换。
 
 
@@ -67,6 +67,37 @@ adb install -r /tmp/x.apk && adb logcat -s godot
 3. 安卓"从最近任务划掉" = **进程被杀**，任何开关都拦不到 → 该落盘的东西要在 `NOTIFICATION_APPLICATION_PAUSED` 里落。
 
 **坑**：返回栈接上之前，安卓按返回键**什么都不发生**（不退、也没人处理）。另：4.8.dev5 实测"只关 `auto_accept_quit`、返回键那条路也不退"，与 master 源码（`_main_window_go_back()` 只读 `quit_on_go_back`）不符 → **别依赖这个实现细节**，要拦哪条路就显式关哪条路的开关。
+
+## 配置文件长什么样（都是严格 JSON，没有注释可写）
+
+`config/` 里的文件都由程序**整体重写**，所以格式要求"能来回读写"：
+
+```json
+// config/config.json（缺了就用内置默认：127.0.0.1:8787、无口令）
+{ "version": 1, "server": { "port": 8787, "auth_token": "可选" },
+  "defaults": { "provider": "dummy", "model": "dummy", "agent": "default" } }
+```
+
+```json
+// config/providers.json（缺了就只有代码里的内置 dummy）
+{ "version": 1, "providers": [
+    { "id": "dummy", "kind": "dummy" },
+    { "id": "openrouter", "name": "显示名（可选）",
+      "base_url": "https://openrouter.ai/api/v1",
+      "headers": { "X-Title": "microchat" } } ] }
+// 密钥**不写这里**：config/secrets.json = { "openrouter": "sk-or-…" }（chmod 600）
+```
+
+```json
+// config/agents.json（缺了就只有内置的 default agent）
+{ "version": 1, "default_agent": "跑团",
+  "agents": [ { "id": "跑团", "name": "跑团主持人",
+                "system_prompt": "你是跑团主持人。\n<state>\nset 季节 = 初冬\n</state>" } ] }
+// id 由界面新建时生成（UUIDv7）；手写也可以用可读 id。system_prompt 里的 <state> 块
+// 就是**变量底子**，和消息正文同一套语法。
+```
+
+界面偏好另存一份：`~/.config/microchat/frontend.json`（主题、缩放、服务器地址等）。
 
 ## 本机环境
 

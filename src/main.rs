@@ -408,7 +408,7 @@ enum Backend {
 struct App {
     client: Client,
     backend: Backend,
-    /// 口令（= 后端 `config.jsonc` 的 `server.auth_token`），只存内存。
+    /// 口令（= 后端 `config.json` 的 `server.auth_token`），只存内存。
     token: Option<String>,
     password: String,
     /// 服务器侧数据（服务器设置页用）。
@@ -649,7 +649,7 @@ impl App {
     ///
     /// **不带类型**：`openai-compat` / `dummy` 这类是设置页要关心的事，
     /// 聊天窗口上方只留"谁家的哪个模型"。
-    /// 未选、或已不在配置里（providers.jsonc 被改过）都说明白。
+    /// 未选、或已不在配置里（providers.json 被改过）都说明白。
     fn provider_label(&self, provider: &str) -> String {
         if provider.is_empty() {
             return "未选择（走兜底）".to_owned();
@@ -687,7 +687,7 @@ impl App {
         resolved.unwrap_or_else(|| format!("{provider}/{model}"))
     }
 
-    /// Agent 显示名：优先用 `agents.jsonc` 里的 name，找不到就原样显示 id。
+    /// Agent 显示名：优先用 `agents.json` 里的 name，找不到就原样显示 id。
     fn agent_label(&self, agent_id: &str) -> String {
         if agent_id.is_empty() {
             return "未指定".to_owned();
@@ -752,7 +752,7 @@ impl App {
         }
     }
 
-    /// 换 Agent：提示词在请求组装时按 `agent_id` 解析——改 `agents.jsonc` 会影响所有用它的会话。
+    /// 换 Agent：提示词在请求组装时按 `agent_id` 解析——改 `agents.json` 会影响所有用它的会话。
     fn switch_agent(&mut self, conversation: Uuid, agent_id: String) {
         let (base, token) = (self.settings.server_address.clone(), self.token.clone());
         self.client.send(Command::UpdateConversation {
@@ -1250,7 +1250,7 @@ impl App {
     fn settings_agents(&mut self, ui: &mut egui::Ui) {
         ui.label(RichText::new("Agents（预设）").strong());
         ui.label(
-            RichText::new("改动会写回后端的 config/agents.jsonc；该文件会被整体重写，注释会丢")
+            RichText::new("改动会写回后端的 config/agents.json；该文件会被整体重写，注释会丢")
                 .weak(),
         );
 
@@ -1347,7 +1347,7 @@ impl App {
             ui.horizontal(|ui| {
                 if ui
                     .add_enabled(!is_default, egui::Button::new("设为默认 agent"))
-                    .on_hover_text("新建会话默认用它（写进 agents.jsonc 的 default_agent）")
+                    .on_hover_text("新建会话默认用它（写进 agents.json 的 default_agent）")
                     .clicked()
                 {
                     make_default = Some(self.agent_id.clone());
@@ -1552,7 +1552,7 @@ impl App {
             ui.label(RichText::new(format!("编辑 provider：{id}")).strong());
             ui.label(
                 RichText::new(
-                    "id 不可改（历史会话与密钥都按它引用）。保存会重写 providers.jsonc，注释会丢；密钥写入 config/secrets.json",
+                    "id 不可改（历史会话与密钥都按它引用）。保存会重写 providers.json，注释会丢；密钥写入 config/secrets.json",
                 )
                 .weak(),
             );
@@ -1622,7 +1622,7 @@ impl App {
 
     /// 前端设置：只存本机；**改的是草稿**，点右下角「保存」才应用。
     fn frontend_settings(&mut self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("以下设置只存在本机（frontend.jsonc），不上传后端").weak());
+        ui.label(RichText::new("以下设置只存在本机（frontend.json），不上传后端").weak());
         ui.label(
             RichText::new("改动先落在草稿里，点右下角「保存」才生效——主题与缩放在保存那一刻应用")
                 .weak(),
@@ -1705,7 +1705,7 @@ impl App {
 
     fn fetch_debug(&mut self) {
         if self.debug_file_name.is_empty() {
-            self.debug_file_name = "config.jsonc".to_owned();
+            self.debug_file_name = "config.json".to_owned();
         }
         let (base, token) = (self.settings.server_address.clone(), self.token.clone());
         self.client.send(Command::DebugState { base, token });
@@ -1936,7 +1936,7 @@ impl App {
         );
         let mut pick: Option<&'static str> = None;
         ui.horizontal(|ui| {
-            for name in ["config.jsonc", "providers.jsonc", "agents.jsonc"] {
+            for name in ["config.json", "providers.json", "agents.json"] {
                 if ui
                     .selectable_label(self.debug_file_name == name, name)
                     .clicked()
@@ -2844,7 +2844,7 @@ impl eframe::App for App {
                 let footer = match self.settings_tab {
                     SettingsTab::Agents => Some(("提交 Agent 的改动", true)),
                     SettingsTab::Models => Some(("提交 provider 与模型的改动", true)),
-                    SettingsTab::Frontend => Some(("应用并保存到本机 frontend.jsonc", false)),
+                    SettingsTab::Frontend => Some(("应用并保存到本机 frontend.json", false)),
                     // 连接页只有只读信息与「断开」；关于页没有可保存的东西。
                     SettingsTab::Connection | SettingsTab::About => None,
                 };
@@ -3070,7 +3070,7 @@ fn resolve_system_prompt(conversation_prompt: &str, agent_prompt: Option<&str>) 
 
 /// 一个下拉要列的全部条目：`(显示文案, provider id, 上游模型 id)`，按文案排序。
 ///
-/// 文案是「渠道 / 模型」——渠道优先用 `providers.jsonc` 里的 `name`，缺省回退 id；
+/// 文案是「渠道 / 模型」——渠道优先用 `providers.json` 里的 `name`，缺省回退 id；
 /// 模型名直接用后端算好的 `name`（三级回退在后端做，前端不再实现一遍）。
 fn flat_model_rows(providers: &[ProviderView]) -> Vec<(String, String, String)> {
     let mut rows: Vec<(String, String, String)> = providers

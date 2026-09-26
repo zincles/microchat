@@ -3,9 +3,9 @@
 //! 三个入口，两种话术：
 //! - [`Backend::Dummy`]：会话选了 **dummy 模型**（`dummy` 类型 provider 提供的虚拟模型，
 //!   没有上游），立刻回 [`DUMMY_MODEL_REPLY`]——联调/测试用；
-//! - [`Backend::Fallback`]：什么都没配、或配的 provider 已从 `providers.jsonc` 消失，
+//! - [`Backend::Fallback`]：什么都没配、或配的 provider 已从 `providers.json` 消失，
 //!   回 [`FALLBACK_REPLY`]，保证前端不会对着空气说话；
-//! - [`Backend::OpenAiCompletion`]：真模型，走 `providers.jsonc` 里那个 provider 的
+//! - [`Backend::OpenAiCompletion`]：真模型，走 `providers.json` 里那个 provider 的
 //!   OpenAI 兼容接口（非流式）。要发出去的历史一律来自 [`crate::vars::build_outgoing`]。
 //!
 //! 将来 anthropic / deepseek 是同一层的兄弟实现；image-gen 之类不是"对话后端"，另走一路。
@@ -37,11 +37,11 @@ pub enum Backend {
 
 impl Backend {
     /// 选择规则：
-    /// - provider 不在 `providers.jsonc` 里（没配 / 被删）→ `Fallback`；
+    /// - provider 不在 `providers.json` 里（没配 / 被删）→ `Fallback`；
     /// - provider 是 `dummy` 类型 → `Dummy`（它就是为"显式选中"而存在的）；
     /// - provider 是 `openai-compat`：配了 model → `OpenAiCompletion`，没配 → `Fallback`。
     ///
-    /// 必须检查 provider 是否存在：`providers.jsonc` 是手写文件，删掉一个 provider 后
+    /// 必须检查 provider 是否存在：`providers.json` 是手写文件，删掉一个 provider 后
     /// 历史会话里仍留着它的名字——那种情况该回兜底话术，而不是去打一个不存在的上游。
     pub fn select(conversation: &Conversation, providers: &ProvidersConfig) -> Self {
         let Some(provider) = providers.get(&conversation.provider) else {
@@ -115,7 +115,7 @@ impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Upstream(e) => write!(f, "{e}"),
-            Self::NoProvider => write!(f, "provider 已经不在 providers.jsonc 里了"),
+            Self::NoProvider => write!(f, "provider 已经不在 providers.json 里了"),
         }
     }
 }
@@ -252,7 +252,7 @@ mod tests {
         assert_eq!(backend, Backend::Fallback);
         let reply = complete(&blank, &[], &providers, &BTreeMap::new()).await.unwrap();
         assert_eq!(reply, FALLBACK_REPLY);
-        // provider 已被从 providers.jsonc 删掉
+        // provider 已被从 providers.json 删掉
         assert_eq!(
             Backend::select(&conversation("ghost", "m"), &providers),
             Backend::Fallback
