@@ -30,6 +30,7 @@ adb install -r /tmp/x.apk && adb logcat -s godot
    底子的**来源**决定它算哪一层：会话没写自己的提示词 ⇒ 用 agent 的 ⇒ 算**全局**（同一 agent 的会话共享）；会话自己写了 ⇒ 覆盖 agent 的 ⇒ 算**本会话**。会话里的 `del` 写墓碑，挡住全局同名键，不会从底下漏回来。生效的那份提示词由 `server::effective_system_prompt()` 一处解析（会话覆盖优先 → agent 的 → 内置默认兜底）——出站消息、变量底子、界面显示共用它。
 4. **编辑/删除消息只动正文**：改的是存档本身（单事务）；变量不用管——它是现演的。不能跨会话改/删（404）。
 5. **模型身份 = `(provider, upstream_id)`**；显示名三级回退（用户覆盖 → 上游名 → prettify）在**后端**完成，前端别再实现一遍。新建会话的 agent 取 `agents.jsonc` 的 `default_agent`（请求可显式指定 `agent_id`）——否则 agent 的提示词与它写的变量底子对任何新会话都不生效。
+   **agent 的 id 由后端生成（UUIDv7）、不可变**：`POST /agents` 只收 `name` + `system_prompt`（名称是唯一人类句柄，空名给 400）；界面里 id 只读。手写进 `agents.jsonc` 的自定义 id 照收（历史数据不改），要收拾历史 id 就走 `PATCH /agents/{id}` 的 `new_id`——它会把 `default_agent` 与**所有会话的引用**一起搬（`agent_id` 是软引用、无外键，`resolve()` 找不到只会静默回空提示词，所以必须由这一处维护一致性）。
 6. `config/secrets.json` 与 `data/` **永不入库**；`.gitignore` 只放行 Godot 项目的非缓存部分（`.godot/`、`export/` 排除）。
 7. **消息顺序 = 插入顺序（`ORDER BY rowid`），不是 `id`**。`messages.id`（UUIDv7）只是对外句柄（URL 里那句就是它）——`list_messages` 靠 rowid 排序，所以删中间一条不会动到别人的顺序，也没有"位置空缺"要补；同一毫秒插入的"用户＋助手"也不会因 UUID 尾部随机位换位。**别改成 `ORDER BY id`**。
 

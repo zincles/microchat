@@ -107,15 +107,12 @@ pub enum Command {
         base: String,
         token: Option<String>,
         id: String,
-        /// 换 id（重命名）：后端会把 `default_agent` 与所有会话的引用一起搬。
-        new_id: Option<String>,
         name: String,
         system_prompt: String,
     },
     CreateAgent {
         base: String,
         token: Option<String>,
-        id: String,
         name: String,
         system_prompt: String,
     },
@@ -292,7 +289,7 @@ impl Command {
             Self::CreateProvider { id, .. } => format!("POST /providers ({id})"),
             Self::ListAgents { .. } => "GET /agents".to_owned(),
             Self::SaveAgent { id, .. } => format!("PATCH /agents/{id}"),
-            Self::CreateAgent { id, .. } => format!("POST /agents ({id})"),
+            Self::CreateAgent { name, .. } => format!("POST /agents ({name})"),
             Self::DeleteAgent { id, .. } => format!("DELETE /agents/{id}"),
             Self::DebugState { .. } => "GET /debug/state".to_owned(),
             Self::DebugFile { name, .. } => format!("GET /debug/file/{name}"),
@@ -527,15 +524,10 @@ fn handle(http: &reqwest::blocking::Client, command: Command) -> Event {
             base,
             token,
             id,
-            new_id,
             name,
             system_prompt,
         } => {
-            let body = serde_json::json!({
-                "name": name,
-                "system_prompt": system_prompt,
-                "new_id": new_id,
-            });
+            let body = serde_json::json!({ "name": name, "system_prompt": system_prompt });
             let result = write(
                 http,
                 reqwest::Method::PATCH,
@@ -548,11 +540,10 @@ fn handle(http: &reqwest::blocking::Client, command: Command) -> Event {
         Command::CreateAgent {
             base,
             token,
-            id,
             name,
             system_prompt,
         } => {
-            let body = serde_json::json!({ "id": id, "name": name, "system_prompt": system_prompt });
+            let body = serde_json::json!({ "name": name, "name": name, "system_prompt": system_prompt });
             let result = write(
                 http,
                 reqwest::Method::POST,

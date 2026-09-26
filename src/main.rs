@@ -413,7 +413,6 @@ struct App {
     agent_id: String,
     agent_name: String,
     agent_prompt: String,
-    new_agent_id: String,
     new_agent_name: String,
     note: String,
     /// 调试页数据。
@@ -490,7 +489,6 @@ impl App {
             agent_id: String::new(),
             agent_name: String::new(),
             agent_prompt: String::new(),
-            new_agent_id: String::new(),
             new_agent_name: String::new(),
             note: String::new(),
             debug_state: None,
@@ -965,8 +963,7 @@ impl App {
     fn agent_draft_id(&self) -> Option<String> {
         let id = self.selected_agent.as_ref()?;
         let agent = self.agents.as_ref()?.get(id)?;
-        agent_draft_differs(agent, &self.agent_id, &self.agent_name, &self.agent_prompt)
-            .then(|| id.clone())
+        agent_draft_differs(agent, &self.agent_name, &self.agent_prompt).then(|| id.clone())
     }
 
     /// 有改动的 provider id。密钥只看"有没有填新的"——旧密钥读不回来。
@@ -987,13 +984,10 @@ impl App {
     fn save_server_settings(&mut self) {
         let (base, token) = (self.settings.server_address.clone(), self.token.clone());
         if let Some(id) = self.agent_draft_id() {
-            let renamed = self.agent_id != id;
             self.client.send(Command::SaveAgent {
                 base: base.clone(),
                 token: token.clone(),
                 id,
-                // 只有真改了才带 new_id（不然每次保存都成了"重命名到同名"）
-                new_id: renamed.then(|| self.agent_id.clone()),
                 name: self.agent_name.clone(),
                 system_prompt: self.agent_prompt.clone(),
             });
@@ -1189,17 +1183,9 @@ impl App {
                 .spacing([12.0, 8.0])
                 .show(ui, |ui| {
                     ui.label("id");
-                    let edit_response =
-                        ui.add(TextEdit::singleline(&mut self.agent_id).desired_width(280.0));
-                    if let Some(deferred) = attach_edit_menu(
-                        ui,
-                        &edit_response,
-                        &self.agent_id,
-                        &mut self.menu_selection,
-                        false,
-                    ) {
-                        self.deferred = Some(deferred);
-                    };
+                    // 只读：id 由后端生成、不可变（会话引用与 default_agent 都按它引用）。
+                    // 要改的是「名称」；历史遗留的 id 想收拾可以走 PATCH 的 `new_id`。
+                    ui.label(RichText::new(&self.agent_id).monospace().weak());
                     ui.end_row();
 
                     ui.label("名称");
@@ -1220,12 +1206,6 @@ impl App {
                     };
                     ui.end_row();
                 });
-            ui.label(
-                RichText::new(
-                    "改 id = 重命名：`default_agent` 与所有会话的引用会一起搬（不是只换个名字）",
-                )
-                .weak(),
-            );
             ui.label(RichText::new("改完点右下角「保存」提交").weak());
         }
 
@@ -1233,27 +1213,20 @@ impl App {
         ui.separator();
         ui.label(RichText::new("新建 agent").strong());
         ui.horizontal(|ui| {
-            ui.label("id");
-            let edit_response = ui.add(TextEdit::singleline(&mut self.new_agent_id).desired_width(120.0));
-            if let Some(deferred) = attach_edit_menu(ui, &edit_response, &self.new_agent_id, &mut self.menu_selection, false) {
-                self.deferred = Some(deferred);
-            };
             ui.label("名称");
             let edit_response = ui.add(TextEdit::singleline(&mut self.new_agent_name).desired_width(160.0));
             if let Some(deferred) = attach_edit_menu(ui, &edit_response, &self.new_agent_name, &mut self.menu_selection, false) {
                 self.deferred = Some(deferred);
             };
-            let ready = !self.new_agent_id.trim().is_empty();
+            let ready = !self.new_agent_name.trim().is_empty();
             if ui.add_enabled(ready, egui::Button::new("新建")).clicked() {
                 let (base, token) = (self.settings.server_address.clone(), self.token.clone());
                 self.client.send(Command::CreateAgent {
                     base,
                     token,
-                    id: self.new_agent_id.trim().to_owned(),
                     name: self.new_agent_name.trim().to_owned(),
                     system_prompt: String::new(),
                 });
-                self.new_agent_id.clear();
                 self.new_agent_name.clear();
             }
         });
@@ -2688,8 +2661,8 @@ impl eframe::App for App {
 }
 
 /// agent 草稿与已加载的是否不同。
-fn agent_draft_differs(agent: &Agent, id: &str, name: &str, system_prompt: &str) -> bool {
-    agent.id != id || agent.name != name || agent.system_prompt != system_prompt
+fn agent_draft_differs(agent: &Agent, name: &str, system_prompt: &str) -> bool {
+    agent.name != name || agent.system_prompt != system_prompt
 }
 
 /// provider 草稿与已加载的是否不同；密钥只看"有没有填新的"。
@@ -2924,10 +2897,9 @@ mod tests {
             system_prompt: "提示".to_owned(),
             ..Default::default()
         };
-        assert!(!agent_draft_differs(&agent, "a", "名字", "提示"));
-        assert!(agent_draft_differs(&agent, "改名", "名字", "提示"));
-        assert!(agent_draft_differs(&agent, "a", "名字", "新提示"));
-        assert!(agent_draft_differs(&agent, "另一个", "名字", "提示"), "改 id 也算改动");
+        assert!(!agent_draft_differs(&agent, "名字", "提示"));
+        assert!(agent_draft_differs(&agent, "改名", "提示"));
+        assert!(agent_draft_differs(&agent, "名字", "新提示"));
 
         let provider = ProviderView {
             id: "local".to_owned(),

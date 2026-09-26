@@ -613,8 +613,7 @@ async fn update_provider(
 
 #[derive(Deserialize)]
 pub struct CreateAgentReq {
-    pub id: String,
-    #[serde(default)]
+    /// 名称是**唯一的人类句柄**——id 由后端生成，不接受指定。
     pub name: String,
     #[serde(default)]
     pub system_prompt: String,
@@ -642,18 +641,19 @@ async fn create_agent(
     State(state): State<AppState>,
     Json(req): Json<CreateAgentReq>,
 ) -> Result<(StatusCode, Json<Agent>), ApiError> {
-    if req.id.trim().is_empty() || req.id.chars().any(char::is_whitespace) {
-        return Err(ApiError::bad_request("agent id 不能为空、不能含空白字符"));
+    let name = req.name.trim().to_owned();
+    if name.is_empty() {
+        // id 不可见之后，名称就是它唯一的句柄：没名字的 agent 在界面上没法认。
+        return Err(ApiError::bad_request("agent 名称不能为空"));
     }
 
     let path = state.paths.agents_jsonc();
     let mut config = AgentsConfig::load(&path)?;
-    if config.get(&req.id).is_some() {
-        return Err(ApiError::conflict("同名 agent 已存在"));
-    }
+    // id 由后端生成（UUIDv7，和会话/消息同一套）：不透明、不可变、不会撞车。
+    // 想手写 id 的老路仍然通——直接写进 `agents.jsonc`，加载器照收（历史数据不受影响）。
     let agent = Agent {
-        id: req.id,
-        name: req.name,
+        id: Uuid::now_v7().to_string(),
+        name,
         system_prompt: req.system_prompt,
         ..Default::default()
     };
@@ -1315,18 +1315,20 @@ mod tests {
         assert_eq!(status, StatusCode::NOT_FOUND);
 
         // 改到已存在的 id → 409
-        let (status, _) = send(
+        let (status, body) = send(
             &app,
-            json_req("POST", "/api/v1/agents", r#"{"id":"另一个","name":"另一个"}"#),
+            json_req("POST", "/api/v1/agents", r#"{"name":"另一个"}"#),
         )
         .await;
         assert_eq!(status, StatusCode::CREATED);
+        let other: Agent = serde_json::from_str(&body).unwrap();
+        let body = serde_json::json!({ "new_id": other.id }).to_string();
         let (status, _) = send(
             &app,
-            json_req("PATCH", "/api/v1/agents/跑团", r#"{"new_id":"另一个"}"#),
+            json_req("PATCH", "/api/v1/agents/跑团", &body),
         )
         .await;
-        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(status, StatusCode::CONFLICT, "撞到已存在的 id 要 409");
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1721,28 +1723,34 @@ mod tests {
             "agents.jsonc",
             r#"{ "default_agent": "default", "agents": [] }"#,
         )]);
-        // 「跑团」的 percent-encoding：URI 只允许 ASCII
-        let uri = "/api/v1/agents/%E8%B7%91%E5%9B%A2";
-
+        // 只给名称：id 由后端生成（UUIDv7）——不再由调用方指定
         let (status, body) = send(
             &app,
             json_req(
                 "POST",
                 "/api/v1/agents",
-                r#"{"id":"跑团","name":"跑团 GM","system_prompt":"你是 GM"}"#,
+                r#"{"name":"跑团 GM","system_prompt":"你是 GM"}"#,
             ),
         )
         .await;
         assert_eq!(status, StatusCode::CREATED);
         let agent: Agent = serde_json::from_str(&body).unwrap();
-        assert_eq!(agent.id, "跑团");
+        assert!(
+            uuid::Uuid::parse_str(&agent.id).is_ok(),
+            "id 应当是生成的 UUID：{}",
+            agent.id
+        );
+        assert_eq!(agent.name, "跑团 GM");
 
-        let (status, _) = send(&app, json_req("POST", "/api/v1/agents", r#"{"id":"跑团"}"#)).await;
-        assert_eq!(status, StatusCode::CONFLICT, "重复 id 应 409");
+        // id 不可见之后，名称是唯一句柄：没名字不给建
+        let (status, _) = send(&app, json_req("POST", "/api/v1/agents", r#"{"name":"   "}"#)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        let uri = format!("/api/v1/agents/{}", agent.id);
 
         let (status, body) = send(
             &app,
-            json_req("PATCH", uri, r#"{"system_prompt":"你是严格的 GM"}"#),
+            json_req("PATCH", &uri, r#"{"system_prompt":"你是严格的 GM"}"#),
         )
         .await;
         assert_eq!(status, StatusCode::OK);
@@ -1753,9 +1761,9 @@ mod tests {
         let on_disk = std::fs::read_to_string(dir.join("agents.jsonc")).unwrap();
         assert!(on_disk.contains("你是严格的 GM"), "改动要落盘");
 
-        let (status, _) = send(&app, json_req("DELETE", uri, "")).await;
+        let (status, _) = send(&app, json_req("DELETE", &uri, "")).await;
         assert_eq!(status, StatusCode::NO_CONTENT);
-        let (status, _) = send(&app, json_req("DELETE", uri, "")).await;
+        let (status, _) = send(&app, json_req("DELETE", &uri, "")).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
 
         let _ = std::fs::remove_dir_all(&dir);
