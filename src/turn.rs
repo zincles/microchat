@@ -1,9 +1,8 @@
 //! 会话的「这一轮在不在跑」——**进程内的一次性事实**，不进库。
 //!
-//! 后端一重启，就没有任何生成在跑，状态自然回到 `idle`——这是诚实的。库里会留下的
-//! 只有**占位消息**（生成前先插进去的那条空助手消息，为的是让前端有个可指认的
-//! `message_id`）；进程被杀时它会留着，所以启动时要清一遍
-//! （[`crate::store::Store::drop_empty_assistant_messages`]）。
+//! 后端一重启，就没有任何生成在跑，状态自然回到 `idle`——这是诚实的。**库里不会有
+//! 生成中的痕迹**：一条回复用它受理时就定好的 id 标识（前端拿它指认"正在生成的那条"），
+//! 但要等整段从上游拿到才 INSERT 进库——存档里只放完整的对话。
 //!
 //! 状态按**用户看到什么**分，不按传输方式分（别叫 `get_streaming` 之类——换 SSE /
 //! WebSocket / 轮询时那种名字立刻开始骗人）：
@@ -56,7 +55,8 @@ impl Phase {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TurnStatus {
     pub phase: Phase,
-    /// 正在生成的那条助手消息（生成前先占位插进去，所以一开始就有 id）。
+    /// 正在生成的那条回复的 id：受理时就定好并发给了客户端，**这一刻它还没进库**
+    /// （拿到整段才 INSERT，用的就是这个 id）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message_id: Option<Uuid>,
     /// 这一轮已经等了多久（毫秒）。`error` 态下是上一轮的总耗时。
@@ -196,24 +196,27 @@ impl TurnRegistry {
         Ok(())
     }
 
-    /// 中止这一轮。返回占位消息的 id（调用方负责在它还空着的时候删掉它）。
-    /// `None` = 本来就没在跑（幂等：重复按"停止"不算错）。
-    pub fn stop(&self, conversation: Uuid) -> Option<(Uuid, Option<tokio::task::JoinHandle<()>>)> {
-        let Ok(mut map) = self.inner.lock() else {
-            return None;
-        };
+    /// 中止这一轮。
+    ///
+    /// - `None` = 本来就没在跑（幂等：重复按"停止"不算错）；
+    /// - `Some(handle)` = 原来在跑，`handle` 是要不要 `abort` 的那个后台任务
+    ///   （任务还没挂上来时是 `None`——登记与 spawn 之间有个极窄的窗口）。
+    ///
+    /// **没有要清理的库内痕迹**：生成中的那条回复只在内存里（文本在任务手里），
+    /// 落库发生在拿到整段之后。
+    pub fn stop(
+        &self,
+        conversation: Uuid,
+    ) -> Option<Option<tokio::task::JoinHandle<()>>> {
+        let mut map = self.inner.lock().ok()?;
         let entry = map.get_mut(&conversation)?;
         if !entry.phase.is_busy() {
             return None;
         }
-        let placeholder = entry.message_id?;
         let handle = entry.handle.take();
-        // 留在表里、降级成 idle：这样旧任务回来时令牌对不上，写不进去。
-        entry.phase = Phase::Idle;
-        entry.message_id = None;
-        entry.elapsed_ms = entry.started.elapsed().as_millis() as u64;
+        // 摘掉登记：旧任务回来时令牌对不上，就不会把过期结果写进库。
         map.remove(&conversation);
-        Some((placeholder, handle))
+        Some(handle)
     }
 }
 
@@ -255,8 +258,7 @@ mod tests {
         let id = Uuid::now_v7();
         let placeholder = Uuid::now_v7();
         let token = turns.begin(id, placeholder).unwrap();
-        let stopped = turns.stop(id).expect("在跑，能停");
-        assert_eq!(stopped.0, placeholder, "stop 要把占位消息交出来");
+        assert!(turns.stop(id).is_some(), "在跑，能停");
         assert!(!turns.is_mine(id, token), "旧任务回来时令牌已失效");
         assert!(turns.finish(id, token, Phase::Idle, 999, None).is_err(), "不许再写回状态");
         assert_eq!(turns.status(id).phase, Phase::Idle, "停完就是 idle");

@@ -352,11 +352,8 @@ async fn resend_message(
     ))
 }
 
-/// 开一轮生成：**先插占位消息**（这样立刻就有 `message_id` 可指认），登记状态，
-/// 再把真正的工作丢给后台任务。
-///
-/// 占位消息是一条空正文的助手消息。它确实在历史里躺着——但
-/// [`vars::build_outgoing`] 会把空正文剔掉，所以不会污染发出去的上下文。
+/// 开一轮生成：先把这条回复的 id 定下来（UUIDv7，本地就能算）并登记状态，
+/// 再把真正的工作丢给后台任务。**开跑之前不写库**——库里只放完整的回复。
 async fn start_turn(
     state: &AppState,
     id: Uuid,
@@ -371,22 +368,16 @@ async fn start_turn(
             .to_owned()
     };
 
-    {
-        let mut store = state.lock()?;
-        let placeholder = store.insert_message(id, Role::Assistant, "", Some(parent))?;
-        match state.turns.begin(id, placeholder.id) {
-            Ok(token) => {
-                let handle = tokio::spawn(run_turn(state.clone(), id, placeholder.id, token));
-                state.turns.attach(id, token, handle);
-            }
-            Err(_) => {
-                // 与上面的 busy 检查之间有个极窄的窗口：两个请求同时挤进来时 begin
-                // 只放行一个，另一个把占位消息退回去再报 409。
-                store.delete_message_if_empty(id, placeholder.id)?;
-                return Err(ApiError::conflict("这个会话还在生成中，等它跑完或先按停止"));
-            }
-        }
-    }
+    // id 先发出去（客户端拿它指认"正在生成的那条"），落库时用同一个。
+    let message = Uuid::now_v7();
+    // `begin` 是唯一的闸门：同一会话只放行一轮。上面那个 busy 检查只是为了少写一条
+    // 用户消息，真正的并发防线在这里。
+    let token = state
+        .turns
+        .begin(id, message)
+        .map_err(|_| ApiError::conflict("这个会话还在生成中，等它跑完或先按停止"))?;
+    let handle = tokio::spawn(run_turn(state.clone(), id, parent, message, token));
+    state.turns.attach(id, token, handle);
 
     Ok((backend, state.turns.status(id)))
 }
@@ -415,30 +406,14 @@ async fn generate(state: &AppState, id: Uuid) -> Result<String, ApiError> {
     Ok(reply)
 }
 
-/// 后台那半程：生成完把占位消息填上（失败就收拾掉）。
+/// 后台那半程：生成完**才**把回复插进库（用受理时发出去的那个 id 与当时捕获的上文）。
 ///
-/// 全程**不持锁跨 await**：取料在锁里，等上游在锁外，写回再进锁。
-/// 收尾前先看令牌还是不是自己的——被"停止"顶掉的那一轮，结果直接丢掉。
-async fn run_turn(state: AppState, id: Uuid, placeholder: Uuid, token: u64) {
-    let outcome = generate(&state, id).await;
-    let Ok(mut store) = state.lock() else {
-        eprintln!("生成收尾时拿不到存储锁，这一轮的状态留在原处");
-        return;
-    };
-    match outcome {
-        Ok(reply) => {
-            let written = store.update_message_content(placeholder, &reply).unwrap_or(0);
-            if written == 0 || !state.turns.is_mine(id, token) {
-                // 占位消息被删了，或者这一轮已经被停掉：结果丢掉，别留半条
-                let _ = store.delete_message_if_empty(id, placeholder);
-                let _ = state.turns.finish(id, token, Phase::Idle, 0, None);
-                return;
-            }
-            let chars = reply.chars().count();
-            let _ = state.turns.finish(id, token, Phase::Idle, chars, None);
-        }
+/// 全程**不持锁跨 await**：取料在锁里，等上游在锁外，落库再进锁。
+/// 收尾前核对令牌——被"停止"顶掉的那一轮结果直接丢掉，库里什么痕迹都不会留下。
+async fn run_turn(state: AppState, id: Uuid, parent: Uuid, message: Uuid, token: u64) {
+    let reply = match generate(&state, id).await {
+        Ok(reply) => reply,
         Err(error) => {
-            let _ = store.delete_message_if_empty(id, placeholder);
             if state
                 .turns
                 .finish(id, token, Phase::Error, 0, Some(error.message.clone()))
@@ -447,6 +422,30 @@ async fn run_turn(state: AppState, id: Uuid, placeholder: Uuid, token: u64) {
                 // 已经被停止：错就不必再报给前端了（它是上一轮的事）
                 eprintln!("生成失败（这一轮已被停止）: {}", error.message);
             }
+            return;
+        }
+    };
+
+    if !state.turns.is_mine(id, token) {
+        // 这一轮已经被停掉：库里没有它的痕迹，丢掉就完了
+        return;
+    }
+    let chars = reply.chars().count();
+    let stored = match state.lock() {
+        Ok(mut store) => store
+            .insert_message_with_id(id, message, Role::Assistant, &reply, Some(parent))
+            .map(|_| ())
+            .map_err(ApiError::from),
+        Err(_) => Err(ApiError::internal("存储锁中毒")),
+    };
+    match stored {
+        Ok(()) => {
+            let _ = state.turns.finish(id, token, Phase::Idle, chars, None);
+        }
+        Err(error) => {
+            let _ = state
+                .turns
+                .finish(id, token, Phase::Error, 0, Some(error.message.clone()));
         }
     }
 }
@@ -464,20 +463,18 @@ async fn get_turn_status(
 
 /// 停止这一轮。**幂等**：没在跑也回 200（`stopped: false`）。
 ///
-/// 次序有讲究：先摘登记（旧任务回来时令牌对不上，写不进去）→ 再 `abort`（别让上游
-/// 白跑完）→ 最后删掉**还空着**的占位消息。已经填上正文的留着——"停止"只在结果
-/// 还没落地时才算数。
+/// 摘登记（旧任务回来时令牌对不上，写不进去）→ `abort` 后台任务（别让上游白跑完）。
+/// **库里没有要收拾的东西**：这条回复在拿到整段之前不存在，任务被丢掉就没了。
 async fn stop_turn(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let Some((placeholder, handle)) = state.turns.stop(id) else {
+    let Some(handle) = state.turns.stop(id) else {
         return Ok(Json(serde_json::json!({ "stopped": false })));
     };
     if let Some(handle) = handle {
         handle.abort();
     }
-    state.lock()?.delete_message_if_empty(id, placeholder)?;
     Ok(Json(serde_json::json!({ "stopped": true })))
 }
 
@@ -1322,7 +1319,6 @@ mod tests {
         user: Message,
         assistant: Message,
         backend: String,
-        status: TurnStatus,
     }
 
     /// 发一条（`uri` 给 `/messages` 或 `/resend`）并**等这一轮落定**，把最后两条消息
@@ -1345,7 +1341,6 @@ mod tests {
             user,
             assistant,
             backend: accepted.backend,
-            status,
         }
     }
 
@@ -1715,7 +1710,7 @@ mod tests {
 
         let first = turn(&app, &uri, r#"{"content":"<state>set HP = 12</state>开场"}"#).await;
         // 再来一条兄弟回复：树上现在有 1 条用户 + 2 条回复
-        send(&app, json_req("POST", &resend, "")).await;
+        let _second = turn(&app, &resend, "").await;
 
         let (status, body) = send(
             &app,
@@ -2020,6 +2015,11 @@ mod tests {
         let (_, body) = send(&app, get_req("/api/v1/conversations")).await;
         let list: Vec<ConversationView> = serde_json::from_str(&body).unwrap();
         assert!(list[0].turn.phase.is_busy(), "列表里带着这一轮的状态");
+
+        // 生成期间**库里什么都没有**：这条回复要等整段拿到才落库
+        let mid = messages(&app, conv.id).await;
+        assert_eq!(mid.len(), 1, "只有用户那条，生成中的回复还不在库里");
+        assert_eq!(mid[0].content, "在吗");
 
         let (status, body) = send(&app, json_req("POST", &uri, r#"{"content":"喂"}"#)).await;
         assert_eq!(status, StatusCode::CONFLICT, "忙的时候再发该给 409：{body}");

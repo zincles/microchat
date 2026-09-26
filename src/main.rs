@@ -2605,14 +2605,6 @@ impl App {
                             let is_editing = editing
                                 .as_ref()
                                 .is_some_and(|(id, _)| *id == message.id);
-                            // 正在生成的占位消息（空正文）：显示转圈 + 秒数 + 停止
-                            let generating = turn
-                                .as_ref()
-                                .is_some_and(|(_, status)| status.message_id == Some(message.id));
-                            let elapsed_secs = turn
-                                .as_ref()
-                                .map(|(_, status)| status.elapsed_ms as f64 / 1000.0)
-                                .unwrap_or(0.0);
 
                             // 每条消息是一个块：底色 + 圆角 + 内边距，块与块之间留间距。
                             egui::Frame::NONE
@@ -2677,9 +2669,6 @@ impl App {
                                                 if ui.small_button("取消").clicked() {
                                                     cancel_edit = true;
                                                 }
-                                            } else if generating {
-                                                // 生成中的占位消息没有正文可编辑/复制/重发，
-                                                // 「停止」在正文那块上
                                             } else {
                                                 if ui.small_button("编辑").clicked() {
                                                     start_edit =
@@ -2726,44 +2715,61 @@ impl App {
                                             }
                                         }
                                         _ => {
-                                            if generating {
-                                                // 占位消息：正文还没长出来。别让它显示成空块——
-                                                // 给上转圈、秒数与「停止」，让人知道在等什么。
-                                                ui.horizontal(|ui| {
-                                                    ui.spinner();
-                                                    ui.label(
-                                                        RichText::new(format!(
-                                                            "正在生成… {elapsed_secs:.1}s"
-                                                        ))
-                                                        .weak(),
-                                                    );
-                                                    if ui.small_button("停止").clicked() {
-                                                        stop_turn = true;
-                                                    }
-                                                });
-                                            } else {
-                                                // 只读文本用"绑到不可变 str 的 TextEdit"（egui 官方讨论推荐）：
-                                                // 看起来就是一段文字，但能选中、能 Ctrl+C，也能走同一套右键菜单。
-                                                let mut text = message.content.as_str();
-                                                let response = ui.add(
-                                                    TextEdit::multiline(&mut text)
-                                                        .frame(egui::Frame::NONE)
-                                                        .desired_width(f32::INFINITY),
-                                                );
-                                                if let Some(picked) = attach_edit_menu(
-                                                    ui,
-                                                    &response,
-                                                    &message.content,
-                                                    &mut local_selection,
-                                                    true,
-                                                ) {
-                                                    deferred = Some(picked);
-                                                }
+                                            // 只读文本用"绑到不可变 str 的 TextEdit"（egui 官方讨论推荐）：
+                                            // 看起来就是一段文字，但能选中、能 Ctrl+C，也能走同一套右键菜单。
+                                            let mut text = message.content.as_str();
+                                            let response = ui.add(
+                                                TextEdit::multiline(&mut text)
+                                                    .frame(egui::Frame::NONE)
+                                                    .desired_width(f32::INFINITY),
+                                            );
+                                            if let Some(picked) = attach_edit_menu(
+                                                ui,
+                                                &response,
+                                                &message.content,
+                                                &mut local_selection,
+                                                true,
+                                            ) {
+                                                deferred = Some(picked);
                                             }
                                         }
                                     }
                                 });
                             ui.add_space(12.0);
+                        }
+
+                        // 生成中的那条回复**库里还没有**（拿到整段才 INSERT），所以按状态合成
+                        // 一个气泡挂在末尾。落库后它的 id 会出现在消息列表里（同一个 id），
+                        // 这个气泡自然消失。
+                        if let Some((_, status)) = turn.as_ref().filter(|(_, status)| {
+                            status
+                                .message_id
+                                .is_some_and(|id| messages.iter().all(|message| message.id != id))
+                        }) {
+                            let elapsed = status.elapsed_ms as f64 / 1000.0;
+                            egui::Frame::NONE
+                                .fill(ui.visuals().faint_bg_color)
+                                .corner_radius(egui::CornerRadius::same(6))
+                                .inner_margin(egui::Margin::same(8))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.colored_label(
+                                            Color32::from_rgb(0x2f, 0x9e, 0x44),
+                                            RichText::new(&assistant_label).strong(),
+                                        );
+                                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                            if ui.small_button("停止").clicked() {
+                                                stop_turn = true;
+                                            }
+                                        });
+                                    });
+                                    ui.horizontal(|ui| {
+                                        ui.spinner();
+                                        ui.label(
+                                            RichText::new(format!("正在生成… {elapsed:.1}s")).weak(),
+                                        );
+                                    });
+                                });
                         }
                     });
             });
