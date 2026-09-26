@@ -110,7 +110,20 @@ pub enum Command {
         name: String,
         system_prompt: String,
     },
-    /// 重新发送：尾条是助手就删掉重来，是用户消息就照它重发。
+    /// 切到某条消息所在的分支（落到它，再顺着最新的孩子走到末端）。
+    SetLeaf {
+        base: String,
+        token: Option<String>,
+        conversation: uuid::Uuid,
+        leaf: uuid::Uuid,
+    },
+    /// 每条消息"在同龄兄弟里排第几、一共几条"。
+    ListBranches {
+        base: String,
+        token: Option<String>,
+        conversation: uuid::Uuid,
+    },
+    /// 重新发送：尾条是助手就长出一个兄弟，是用户消息就照它重发。
     Resend {
         base: String,
         token: Option<String>,
@@ -164,7 +177,8 @@ pub enum Event {
     MessageDeleted {
         conversation: uuid::Uuid,
         message: uuid::Uuid,
-        result: Result<(), String>,
+        /// 后端回 `{ "deleted": n }`：删的是整棵子树，条数得让界面说清楚。
+        result: Result<serde_json::Value, String>,
     },
     ConversationCreated(Result<microchat::model::Conversation, String>),
     ConversationDeleted {
@@ -175,10 +189,19 @@ pub enum Event {
         conversation: uuid::Uuid,
         result: Result<microchat::server::ChatTurn, String>,
     },
-    /// 重新发送的结果：条数可能变（旧回复被换掉），所以界面应当**重新拉一次消息**。
+    /// 重新发送的结果：树上多了一条兄弟，界面应当重新拉消息与兄弟信息。
     Resent {
         conversation: uuid::Uuid,
         result: Result<microchat::server::ChatTurn, String>,
+    },
+    /// 切分支的结果：路径变了，界面应当重新拉消息。
+    LeafSwitched {
+        conversation: uuid::Uuid,
+        result: Result<microchat::model::Conversation, String>,
+    },
+    Branches {
+        conversation: uuid::Uuid,
+        result: Result<std::collections::BTreeMap<uuid::Uuid, microchat::store::BranchInfo>, String>,
     },
     ConversationUpdated(Result<microchat::model::Conversation, String>),
     Agents(Result<AgentsConfig, String>),
@@ -308,6 +331,10 @@ impl Command {
             Self::SaveAgent { id, .. } => format!("PATCH /agents/{id}"),
             Self::CreateAgent { name, .. } => format!("POST /agents ({name})"),
             Self::MakeDefaultAgent { id, .. } => format!("PATCH /agents/{id} (设为默认)"),
+            Self::SetLeaf { leaf, .. } => format!("PATCH /conversations (切到 {})", &leaf.to_string()[..8]),
+            Self::ListBranches { conversation, .. } => {
+                format!("GET /conversations/{}/branches", &conversation.to_string()[..8])
+            }
             Self::Resend { conversation, .. } => {
                 format!("POST /conversations/{}/resend", &conversation.to_string()[..8])
             }
@@ -334,12 +361,20 @@ fn summarize(event: &Event) -> String {
             Ok(view) => format!("OK {} 个生效变量", view.effective.len()),
             Err(message) => format!("失败: {message}"),
         },
+        Event::LeafSwitched { result, .. } => match result {
+            Ok(_) => "OK 已切分支".to_owned(),
+            Err(message) => format!("失败: {message}"),
+        },
+        Event::Branches { result, .. } => match result {
+            Ok(map) => format!("OK {} 条消息带分支信息", map.len()),
+            Err(message) => format!("失败: {message}"),
+        },
         Event::Resent { result, .. } => match result {
             Ok(turn) => format!("OK 重新生成（{}）", turn.backend),
             Err(message) => format!("失败: {message}"),
         },
         Event::MessageDeleted { result, .. } => match result {
-            Ok(()) => "OK 已删除".to_owned(),
+            Ok(value) => format!("OK 已删除 {} 条", value["deleted"]),
             Err(message) => format!("失败: {message}"),
         },
         Event::MessageEdited { result, .. } => match result {
@@ -446,7 +481,7 @@ fn handle(http: &reqwest::blocking::Client, command: Command) -> Event {
         } => Event::MessageDeleted {
             conversation,
             message,
-            result: write(
+            result: write_json(
                 http,
                 reqwest::Method::DELETE,
                 &format!(
@@ -454,7 +489,7 @@ fn handle(http: &reqwest::blocking::Client, command: Command) -> Event {
                     base.trim_end_matches('/')
                 ),
                 token.as_deref(),
-                None,
+                serde_json::json!({}),
             ),
         },
         Command::CreateConversation { base, token } => {
@@ -500,6 +535,41 @@ fn handle(http: &reqwest::blocking::Client, command: Command) -> Event {
                 ),
                 token.as_deref(),
                 serde_json::json!({ "content": content }),
+            ),
+        },
+        Command::SetLeaf {
+            base,
+            token,
+            conversation,
+            leaf,
+        } => Event::LeafSwitched {
+            conversation,
+            result: write_json(
+                http,
+                reqwest::Method::PATCH,
+                &format!(
+                    "{}/api/v1/conversations/{conversation}",
+                    base.trim_end_matches('/')
+                ),
+                token.as_deref(),
+                serde_json::json!({ "current_leaf": leaf }),
+            ),
+        },
+        Command::ListBranches {
+            base,
+            token,
+            conversation,
+        } => Event::Branches {
+            conversation,
+            result: write_json(
+                http,
+                reqwest::Method::GET,
+                &format!(
+                    "{}/api/v1/conversations/{conversation}/branches",
+                    base.trim_end_matches('/')
+                ),
+                token.as_deref(),
+                serde_json::json!({}),
             ),
         },
         Command::Resend {
@@ -939,6 +1009,8 @@ mod tests {
             Event::ConversationDeleted { .. } => "ConversationDeleted",
             Event::Turn { .. } => "Turn",
             Event::Resent { .. } => "Resent",
+            Event::LeafSwitched { .. } => "LeafSwitched",
+            Event::Branches { .. } => "Branches",
             Event::ConversationUpdated(_) => "ConversationUpdated",
             Event::Agents(_) => "Agents",
             Event::AgentWritten(_) => "AgentWritten",

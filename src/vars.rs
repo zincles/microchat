@@ -511,6 +511,7 @@ mod tests {
             conversation_id: conversation,
             role: Role::User,
             content: content.to_owned(),
+            parent_id: None,
             created_at,
         };
         let messages = vec![
@@ -583,6 +584,7 @@ mod tests {
             role,
             content: content.to_owned(),
             created_at: 0,
+            parent_id: None,
         }
     }
 

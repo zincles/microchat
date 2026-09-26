@@ -8,13 +8,15 @@
 
 use std::path::Path;
 
+use std::collections::BTreeMap;
+
 use rusqlite::{params, types::Type, Connection, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::model::{Conversation, DiscoveredModel, Message, ModelEntry, Role, DEFAULT_AGENT_ID};
 
-const MIGRATIONS: [&str; 5] = [r#"
+const MIGRATIONS: [&str; 6] = [r#"
 CREATE TABLE conversations (
   id            TEXT PRIMARY KEY,
   title         TEXT NOT NULL DEFAULT '',
@@ -86,9 +88,26 @@ CREATE TABLE variable_ops (
 CREATE INDEX variable_ops_by_conv ON variable_ops(conversation_id, id);
 "#, r#"
 -- 变量操作日志整张表拆掉：它本来就是从消息正文推出来的东西。
--- 现在**库里只存正文**，变量表在读取时顺着消息重演（vars::VariableView::from_messages）；
--- 全局变量搬去手写的 config/variables.jsonc。
+-- 现在**库里只存正文**，变量表在读取时顺着消息重演（vars::VariableView::from_sources）；
+-- 全局变量搬去 system prompt。`config/variables.jsonc` 与 `setglobal` 都已废弃。
 DROP TABLE IF EXISTS variable_ops;
+"#, r#"
+-- 消息从"一条线"变成一棵树：每条记下父亲（自引用、级联），会话记下"当前走到的尾巴"。
+-- 顺序不再靠 rowid 的插入序，而是**从 current_leaf 沿 parent_id 回溯出来的当前路径**。
+ALTER TABLE messages ADD COLUMN parent_id TEXT REFERENCES messages(id) ON DELETE CASCADE;
+ALTER TABLE conversations ADD COLUMN current_leaf TEXT;
+CREATE INDEX messages_by_parent ON messages(parent_id);
+
+-- 老数据本来就串成一条链：按 rowid 补上父亲，再把每条链的尾巴设成 current_leaf。
+UPDATE messages SET parent_id = (
+    SELECT prev.id FROM messages prev
+    WHERE prev.conversation_id = messages.conversation_id AND prev.rowid < messages.rowid
+    ORDER BY prev.rowid DESC LIMIT 1
+);
+UPDATE conversations SET current_leaf = (
+    SELECT m.id FROM messages m
+    WHERE m.conversation_id = conversations.id ORDER BY m.rowid DESC LIMIT 1
+);
 "#];
 
 #[derive(Debug)]
@@ -158,6 +177,7 @@ impl Store {
     ) -> Result<Conversation> {
         let now = now_ms();
         let conv = Conversation {
+            current_leaf: None,
             id: Uuid::now_v7(),
             title: String::new(),
             system_prompt: system_prompt.to_owned(),
@@ -187,11 +207,14 @@ impl Store {
 
     /// 追加一条消息，并把会话的活跃时间推到当前时刻——两步在同一事务内。
     /// 会话不存在则整体回滚并返回 [`Error::NotFound`]。
+    /// 追加一条消息：接在 `parent_id` 下面（`None` = 这条会话的第一条），
+    /// 并把会话的"当前尾巴"移到它身上——发送就是沿当前分支往前走一步。
     pub fn insert_message(
         &mut self,
         conversation_id: Uuid,
         role: Role,
         content: &str,
+        parent_id: Option<Uuid>,
     ) -> Result<Message> {
         let now = now_ms();
         let msg = Message {
@@ -199,6 +222,7 @@ impl Store {
             conversation_id,
             role,
             content: content.to_owned(),
+            parent_id,
             created_at: now,
         };
 
@@ -211,15 +235,21 @@ impl Store {
             return Err(Error::NotFound);
         }
         tx.execute(
-            "INSERT INTO messages (id, conversation_id, role, content, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO messages (id, conversation_id, role, content, parent_id, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 msg.id.to_string(),
                 msg.conversation_id.to_string(),
                 msg.role.as_str(),
                 msg.content,
+                msg.parent_id.map(|id| id.to_string()),
                 msg.created_at
             ],
+        )?;
+        // 新条就是新的尾巴：当前路径到此为止
+        tx.execute(
+            "UPDATE conversations SET current_leaf = ?1 WHERE id = ?2",
+            params![msg.id.to_string(), conversation_id.to_string()],
         )?;
         tx.commit()?;
         Ok(msg)
@@ -228,7 +258,8 @@ impl Store {
     pub fn get_conversation(&self, conversation_id: Uuid) -> Result<Option<Conversation>> {
         self.conn
             .query_row(
-                "SELECT id, title, system_prompt, provider, model, agent_id, created_at, updated_at
+                "SELECT id, title, system_prompt, provider, model, agent_id, current_leaf,
+                        created_at, updated_at
                  FROM conversations WHERE id = ?1",
                 params![conversation_id.to_string()],
                 row_to_conversation,
@@ -256,7 +287,8 @@ impl Store {
     /// 会话列表，最近活跃在前（侧栏排序口径）。
     pub fn list_conversations(&self) -> Result<Vec<Conversation>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, title, system_prompt, provider, model, agent_id, created_at, updated_at
+            "SELECT id, title, system_prompt, provider, model, agent_id, current_leaf,
+                    created_at, updated_at
              FROM conversations ORDER BY updated_at DESC, id DESC",
         )?;
         let rows = stmt.query_map([], row_to_conversation)?;
@@ -267,16 +299,89 @@ impl Store {
     /// 用 `rowid` 而不是 `id`：uuidv7 在同一毫秒内的顺序由随机位决定，不足以表达
     /// "谁先发的"；SQLite 的 rowid 是严格递增的插入序，毫秒内也精确。
     /// 会话不存在 → [`Error::NotFound`]，避免「空列表」把未知会话伪装成空会话。
+    /// 会话的**当前路径**：从 `current_leaf` 沿 `parent_id` 回溯到根，再正过来。
+    ///
+    /// 顺序的来源就是这棵树（不再是 rowid 的插入序）——换分支 = 换一条路径。
     pub fn list_messages(&self, conversation_id: Uuid) -> Result<Vec<Message>> {
+        let conversation = self
+            .get_conversation(conversation_id)?
+            .ok_or(Error::NotFound)?;
+        let all = self.list_all_messages(conversation_id)?;
+        Ok(path_from(&all, conversation.current_leaf))
+    }
+
+    /// 该会话**全部**消息（含各条分支），按 rowid = 生成先后排。
+    pub fn list_all_messages(&self, conversation_id: Uuid) -> Result<Vec<Message>> {
         if self.get_conversation(conversation_id)?.is_none() {
             return Err(Error::NotFound);
         }
         let mut stmt = self.conn.prepare(
-            "SELECT id, conversation_id, role, content, created_at
+            "SELECT id, conversation_id, role, content, parent_id, created_at
              FROM messages WHERE conversation_id = ?1 ORDER BY rowid",
         )?;
         let rows = stmt.query_map(params![conversation_id.to_string()], row_to_message)?;
         Ok(rows.filter_map(std::result::Result::ok).collect())
+    }
+
+    /// 每条消息"在同龄兄弟里排第几、一共几条"，给界面上「< 2/3 >」用。
+    pub fn branch_info(&self, conversation_id: Uuid) -> Result<BTreeMap<Uuid, BranchInfo>> {
+        let all = self.list_all_messages(conversation_id)?;
+        let mut groups: BTreeMap<Option<Uuid>, Vec<Uuid>> = BTreeMap::new();
+        for message in &all {
+            groups.entry(message.parent_id).or_default().push(message.id);
+        }
+        let mut info = BTreeMap::new();
+        for siblings in groups.values() {
+            let total = siblings.len();
+            for (index, id) in siblings.iter().enumerate() {
+                info.insert(
+                    *id,
+                    BranchInfo {
+                        index: index + 1,
+                        total,
+                        siblings: siblings.clone(),
+                    },
+                );
+            }
+        }
+        Ok(info)
+    }
+
+    /// 把"当前尾巴"切到某条消息**所在分支的末端**：先落到它，再顺着最新的孩子一路往下。
+    ///
+    /// 界面上的「‹ 2/3 ›」要的就是这个——点到某一条回复，就该看到那条分支接下来的全部，
+    /// 而不是停在半路。
+    pub fn set_current_leaf_deep(&mut self, conversation_id: Uuid, message_id: Uuid) -> Result<()> {
+        let all = self.list_all_messages(conversation_id)?;
+        let mut cursor = message_id;
+        loop {
+            let next = all
+                .iter()
+                .filter(|message| message.parent_id == Some(cursor))
+                .next_back()
+                .map(|message| message.id);
+            match next {
+                Some(id) if id != message_id => cursor = id,
+                _ => break,
+            }
+        }
+        self.set_current_leaf(conversation_id, cursor)
+    }
+
+    /// 把"当前尾巴"切到某条消息上（换分支），**就停在那儿**。那条必须属于这个会话。
+    pub fn set_current_leaf(&mut self, conversation_id: Uuid, message_id: Uuid) -> Result<()> {
+        let belongs = self
+            .list_all_messages(conversation_id)?
+            .iter()
+            .any(|message| message.id == message_id);
+        if !belongs {
+            return Err(Error::NotFound);
+        }
+        self.conn.execute(
+            "UPDATE conversations SET current_leaf = ?1 WHERE id = ?2",
+            params![message_id.to_string(), conversation_id.to_string()],
+        )?;
+        Ok(())
     }
 
     /// 编辑一条消息的正文，返回更新后的消息。
@@ -302,7 +407,7 @@ impl Store {
             return Err(Error::NotFound);
         }
         let updated = tx.query_row(
-            "SELECT id, conversation_id, role, content, created_at FROM messages WHERE id = ?1",
+            "SELECT id, conversation_id, role, content, parent_id, created_at FROM messages WHERE id = ?1",
             params![message],
             row_to_message,
         )?;
@@ -314,30 +419,51 @@ impl Store {
         Ok(updated)
     }
 
-    /// 删掉一条消息（单事务）。
+    /// 删掉一条消息**连它整棵子树**（调试期的唯一删除语义：树是级联的）。
     ///
-    /// 顺序靠 `rowid`（插入顺序）而不是 `id`，所以删中间一条**不会**动到别人的顺序，
-    /// 也没有"位置空缺"要补——剩下的行照样按 rowid 排。
-    /// 变量也不用清：那句正文没了，重演时它的 `<state>` 自然不在了。
-    pub fn delete_message(&mut self, conversation_id: Uuid, message_id: Uuid) -> Result<()> {
-        let now = now_ms();
-        let conversation = conversation_id.to_string();
-        let message = message_id.to_string();
-        let tx = self.conn.transaction()?;
+    /// 返回删了几条。`current_leaf` 若在被删的子树里，就退到被删那条的**父亲**上
+    /// （父亲一定还在——它不在子树里）。
+    pub fn delete_message(&mut self, conversation_id: Uuid, message_id: Uuid) -> Result<usize> {
+        let all = self.list_all_messages(conversation_id)?;
+        let target = all
+            .iter()
+            .find(|message| message.id == message_id)
+            .ok_or(Error::NotFound)?;
+        let parent = target.parent_id;
 
-        let touched = tx.execute(
-            "DELETE FROM messages WHERE id = ?1 AND conversation_id = ?2",
-            params![message, conversation],
-        )?;
-        if touched == 0 {
-            return Err(Error::NotFound);
+        // 子树 = 自己 + 所有后代（按 rowid 正序往外扩，不会漏）
+        let mut doomed = std::collections::BTreeSet::new();
+        doomed.insert(message_id);
+        for message in &all {
+            if message.parent_id.is_some_and(|parent| doomed.contains(&parent)) {
+                doomed.insert(message.id);
+            }
+        }
+        let count = doomed.len();
+
+        let leaf = self
+            .get_conversation(conversation_id)?
+            .and_then(|conversation| conversation.current_leaf);
+        let now = now_ms();
+        let tx = self.conn.transaction()?;
+        for id in &doomed {
+            tx.execute(
+                "DELETE FROM messages WHERE id = ?1 AND conversation_id = ?2",
+                params![id.to_string(), conversation_id.to_string()],
+            )?;
+        }
+        if leaf.is_some_and(|leaf| doomed.contains(&leaf)) {
+            tx.execute(
+                "UPDATE conversations SET current_leaf = ?1 WHERE id = ?2",
+                params![parent.map(|id| id.to_string()), conversation_id.to_string()],
+            )?;
         }
         tx.execute(
             "UPDATE conversations SET updated_at = ?1 WHERE id = ?2",
-            params![now, conversation],
+            params![now, conversation_id.to_string()],
         )?;
         tx.commit()?;
-        Ok(())
+        Ok(count)
     }
 
     /// 把引用某个 agent 的会话改指到另一个 id（**agent 重命名**时用）。
@@ -549,6 +675,36 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// 从叶子沿 `parent_id` 回溯出的路径（正序）。
+/// 父亲缺失就停在断口；万一库被手改成环，也会在 `all.len()` 步内停下。
+fn path_from(all: &[Message], leaf: Option<Uuid>) -> Vec<Message> {
+    let by_id: BTreeMap<Uuid, &Message> = all.iter().map(|message| (message.id, message)).collect();
+    let mut path = Vec::new();
+    let mut cursor = leaf;
+    while let Some(id) = cursor {
+        let Some(message) = by_id.get(&id) else {
+            break;
+        };
+        path.push((*message).clone());
+        cursor = message.parent_id;
+        if path.len() > all.len() {
+            break;
+        }
+    }
+    path.reverse();
+    path
+}
+
+/// 一条消息在同龄兄弟里的位置（给「< 2/3 >」用）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BranchInfo {
+    /// 第几条（1 起）。
+    pub index: usize,
+    pub total: usize,
+    /// 同龄兄弟，按生成先后。切分支就是把 `current_leaf` 指到其中一个。
+    pub siblings: Vec<Uuid>,
+}
+
 fn parse_uuid(raw: String) -> rusqlite::Result<Uuid> {
     Uuid::parse_str(&raw).map_err(|e| {
         rusqlite::Error::FromSqlConversionFailure(0, Type::Text, Box::new(e))
@@ -563,8 +719,12 @@ fn row_to_conversation(row: &Row<'_>) -> rusqlite::Result<Conversation> {
         provider: row.get(3)?,
         model: row.get(4)?,
         agent_id: row.get(5)?,
-        created_at: row.get(6)?,
-        updated_at: row.get(7)?,
+        current_leaf: row
+            .get::<_, Option<String>>(6)?
+            .map(parse_uuid)
+            .transpose()?,
+        created_at: row.get(7)?,
+        updated_at: row.get(8)?,
     })
 }
 
@@ -578,7 +738,11 @@ fn row_to_message(row: &Row<'_>) -> rusqlite::Result<Message> {
         conversation_id: parse_uuid(row.get(1)?)?,
         role,
         content: row.get(3)?,
-        created_at: row.get(4)?,
+        parent_id: row
+            .get::<_, Option<String>>(4)?
+            .map(parse_uuid)
+            .transpose()?,
+        created_at: row.get(5)?,
     })
 }
 
@@ -626,8 +790,10 @@ mod tests {
         let conv = s
             .create_conversation("openrouter", "deepseek/deepseek-v4-flash", "你是助手")
             .unwrap();
-        let m1 = s.insert_message(conv.id, Role::User, "你好").unwrap();
-        let m2 = s.insert_message(conv.id, Role::Assistant, "你好！").unwrap();
+        let m1 = s.insert_message(conv.id, Role::User, "你好", None).unwrap();
+        let m2 = s
+            .insert_message(conv.id, Role::Assistant, "你好！", Some(m1.id))
+            .unwrap();
 
         let msgs = s.list_messages(conv.id).unwrap();
         assert_eq!(msgs.iter().map(|m| m.id).collect::<Vec<_>>(), vec![m1.id, m2.id]);
@@ -644,7 +810,7 @@ mod tests {
     fn delete_conversation_cascades_messages() {
         let mut s = store();
         let conv = s.create_conversation("x", "y", "").unwrap();
-        s.insert_message(conv.id, Role::User, "a").unwrap();
+        s.insert_message(conv.id, Role::User, "a", None).unwrap();
         s.delete_conversation(conv.id).unwrap();
 
         let remaining: i64 = s
@@ -666,7 +832,7 @@ mod tests {
             )
             .unwrap();
 
-        s.insert_message(conv.id, Role::User, "hi").unwrap();
+        s.insert_message(conv.id, Role::User, "hi", None).unwrap();
 
         let updated_at: i64 = s
             .conn
@@ -683,7 +849,7 @@ mod tests {
     fn insert_message_rejects_unknown_conversation() {
         let mut s = store();
         let err = s
-            .insert_message(Uuid::now_v7(), Role::User, "hi")
+            .insert_message(Uuid::now_v7(), Role::User, "hi", None)
             .unwrap_err();
         assert!(matches!(err, Error::NotFound));
     }
@@ -694,7 +860,7 @@ mod tests {
         let conv_id = {
             let mut s = Store::open(&path).unwrap();
             let conv = s.create_conversation("x", "y", "").unwrap();
-            s.insert_message(conv.id, Role::User, "持久化").unwrap();
+            s.insert_message(conv.id, Role::User, "持久化", None).unwrap();
             conv.id
         };
 
@@ -713,7 +879,7 @@ mod tests {
     fn session_delete_hides_the_global_value() {
         let mut s = store();
         let conv = s.create_conversation("dummy", "dummy", "").unwrap();
-        s.insert_message(conv.id, Role::User, "<state>del 世界</state>我离开了临安")
+        s.insert_message(conv.id, Role::User, "<state>del 世界</state>我离开了临安", None)
             .unwrap();
 
         // 底子由"生效的系统提示词"提供（这里模拟 agent 的提示词里写了 世界=临安）
@@ -834,7 +1000,7 @@ mod tests {
         assert_eq!((empty.conversations, empty.messages, empty.models), (0, 0, 0));
 
         let conv = s.create_conversation("p", "m", "").unwrap();
-        s.insert_message(conv.id, Role::User, "hi").unwrap();
+        s.insert_message(conv.id, Role::User, "hi", None).unwrap();
         s.apply_discovery("p", &[discovered("m1", None)]).unwrap();
 
         let stats = s.stats().unwrap();

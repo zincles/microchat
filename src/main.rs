@@ -428,6 +428,8 @@ struct App {
     /// 会话与消息都来自后端（连上后拉取，不再有本地占位）。
     conversations: Vec<ApiConversation>,
     messages: BTreeMap<Uuid, Vec<ApiMessage>>,
+    /// 每条消息在同龄兄弟里的位置（切分支用）。按会话存。
+    branches: BTreeMap<Uuid, BTreeMap<Uuid, microchat::store::BranchInfo>>,
     /// 当前会话的变量视图（全局 + 本会话操作日志 + 生效值），由后端算好。
     variables: Option<microchat::vars::VariableView>,
     /// 上面那份变量属于哪个会话（切换时先清空，避免串台）。
@@ -523,6 +525,7 @@ impl App {
             composer_id: None,
             deferred: None,
             menu_selection: None,
+            branches: BTreeMap::new(),
             system_prompt_open: false,
         };
         app.connect();
@@ -573,6 +576,16 @@ impl App {
     }
 
     /// 只拉变量（每次回复后单独调一次就够，不必重拉整段历史）。
+    /// 拉"每条消息在同龄兄弟里排第几"（界面上的「‹ 2/3 ›」）。
+    fn fetch_branches(&mut self, conversation: Uuid) {
+        let (base, token) = (self.settings.server_address.clone(), self.token.clone());
+        self.client.send(Command::ListBranches {
+            base,
+            token,
+            conversation,
+        });
+    }
+
     fn fetch_variables(&mut self, conversation: Uuid) {
         let (base, token) = (self.settings.server_address.clone(), self.token.clone());
         self.client.send(Command::ListVariables {
@@ -722,6 +735,7 @@ impl App {
         self.focus_pending = true;
         self.view = View::Chat;
         self.fetch_messages(conversation);
+        self.fetch_branches(conversation);
     }
 
     /// 发送当前草稿。发送期间禁用按钮；失败**保留草稿**，不吞用户打的字。
@@ -844,13 +858,17 @@ impl App {
                     message,
                     result,
                 } => match result {
-                    Ok(()) => {
+                    Ok(value) => {
                         if let Some(list) = self.messages.get_mut(&conversation) {
                             list.retain(|item| item.id != message);
                         }
-                        self.note = "已删除这一句".to_owned();
-                        // 它写下的状态操作被同一事务清掉了 → 变量要重拉
+                        // 删的是整棵子树：条数要说清楚，别只说"成功"
+                        let count = value["deleted"].as_u64().unwrap_or(1);
+                        self.note = format!("已删除 {count} 条");
+                        // 树上少了东西：变量与兄弟信息都要重拉（leaf 也可能退回去了）
+                        self.fetch_messages(conversation);
                         self.fetch_variables(conversation);
+                        self.fetch_branches(conversation);
                     }
                     Err(err) => self.note = err,
                 },
@@ -875,6 +893,7 @@ impl App {
                             self.note = format!("{} 回复", turn.backend);
                             // 回复里可能带状态块 → 变量变了，面板要跟上
                             self.fetch_variables(conversation);
+                            self.fetch_branches(conversation);
                             // 首条消息会生成标题，刷新列表才看得到
                             self.fetch_conversations();
                         }
@@ -887,9 +906,32 @@ impl App {
                 } => match result {
                     Ok(turn) => {
                         self.note = format!("已重新生成（{}）", turn.backend);
-                        // 旧回复被换掉了：条数可能变，直接重拉
+                        // 树上多了一条兄弟：路径与兄弟数都可能变，直接重拉
                         self.fetch_messages(conversation);
                         self.fetch_variables(conversation);
+                        self.fetch_branches(conversation);
+                    }
+                    Err(message) => self.note = message,
+                },
+                Event::LeafSwitched {
+                    conversation,
+                    result,
+                } => match result {
+                    Ok(_) => {
+                        self.note = "已切到那条分支".to_owned();
+                        // 路径换了：消息、变量、兄弟信息全都要重拉
+                        self.fetch_messages(conversation);
+                        self.fetch_variables(conversation);
+                        self.fetch_branches(conversation);
+                    }
+                    Err(message) => self.note = message,
+                },
+                Event::Branches {
+                    conversation,
+                    result,
+                } => match result {
+                    Ok(map) => {
+                        self.branches.insert(conversation, map);
                     }
                     Err(message) => self.note = message,
                 },
@@ -2303,6 +2345,9 @@ impl App {
             .as_ref()
             .and_then(|c| self.effective_system_prompt(c));
         let mut toggle_system_prompt = false;
+        let mut switch_leaf: Option<Uuid> = None;
+        // 闭包只借得到不可变的 self，先取出来
+        let branches = self.branches.get(&current).cloned().unwrap_or_default();
         // 快照与延迟动作在闭包里只能用局部变量：进来取出来，出去再放回去
         let mut local_selection = self.menu_selection.take();
         let mut deferred: Option<DeferredMenu> = None;
@@ -2360,6 +2405,40 @@ impl App {
                                 .show(ui, |ui| {
                                     ui.horizontal(|ui| {
                                         ui.colored_label(color, RichText::new(label).strong());
+                                        // 重新发送过几次就会有兄弟：给一个「‹ 2/3 ›」，
+                                        // 点一下就切到那条分支（连同它后面的一串）。
+                                        if let Some(branch) = branches.get(&message.id) {
+                                            if branch.total > 1 {
+                                                if ui
+                                                    .add_enabled(
+                                                        branch.index > 1,
+                                                        egui::Button::new("‹").small(),
+                                                    )
+                                                    .clicked()
+                                                {
+                                                    switch_leaf =
+                                                        branch.siblings.get(branch.index - 2).copied();
+                                                }
+                                                ui.label(
+                                                    RichText::new(format!(
+                                                        "{}/{}",
+                                                        branch.index, branch.total
+                                                    ))
+                                                    .weak()
+                                                    .small(),
+                                                );
+                                                if ui
+                                                    .add_enabled(
+                                                        branch.index < branch.total,
+                                                        egui::Button::new("›").small(),
+                                                    )
+                                                    .clicked()
+                                                {
+                                                    switch_leaf =
+                                                        branch.siblings.get(branch.index).copied();
+                                                }
+                                            }
+                                        }
                                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                             if is_editing {
                                                 if ui.small_button("保存").clicked() {
@@ -2383,7 +2462,7 @@ impl App {
                                                     && ui
                                                         .small_button("重新发送")
                                                         .on_hover_text(
-                                                            "尾条是回复就删掉重来；尾条是用户消息就照它重发",
+                                                            "再生成一条。旧的那条会留着，用上面的「‹ 2/3 ›」切回去",
                                                         )
                                                         .clicked()
                                                 {
@@ -2478,6 +2557,15 @@ impl App {
                 base,
                 token,
                 conversation: current,
+            });
+        }
+        if let Some(leaf) = switch_leaf {
+            let (base, token) = (self.settings.server_address.clone(), self.token.clone());
+            self.client.send(Command::SetLeaf {
+                base,
+                token,
+                conversation: current,
+                leaf,
             });
         }
         self.editing = editing;

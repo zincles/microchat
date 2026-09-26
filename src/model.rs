@@ -42,6 +42,10 @@ pub struct Conversation {
     pub model: String,
     /// 生成该会话提示词所用的 agent（`agents.jsonc` 的 `id`），仅作来源标记。
     pub agent_id: String,
+    /// **当前走到的那条尾巴**。整条对话 = 从它沿 `parent_id` 回溯出来的路径；
+    /// 换一条分支就是把它指到另一个分支的尾条上。
+    #[serde(default)]
+    pub current_leaf: Option<Uuid>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -55,6 +59,9 @@ pub struct Message {
     pub conversation_id: Uuid,
     pub role: Role,
     pub content: String,
+    /// 上一条（树上的父亲）。根消息为 `None`。
+    #[serde(default)]
+    pub parent_id: Option<Uuid>,
     pub created_at: i64,
 }
 

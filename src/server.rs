@@ -77,6 +77,7 @@ pub fn router(state: AppState) -> Router {
             get(list_messages).post(send_message),
         )
         .route("/conversations/{id}/resend", post(resend_message))
+        .route("/conversations/{id}/branches", get(get_branches))
         .route(
             "/conversations/{id}/messages/{message_id}",
             patch(edit_message).delete(delete_message),
@@ -128,6 +129,8 @@ pub struct CreateConversationReq {
 #[derive(Deserialize)]
 pub struct UpdateConversationReq {
     pub title: Option<String>,
+    /// 把"当前尾巴"切到某条消息上（换分支）。那条必须属于这个会话。
+    pub current_leaf: Option<Uuid>,
     /// 换模型：`provider` 与 `model` 一起给（模型是 provider 下的 id）。
     pub provider: Option<String>,
     pub model: Option<String>,
@@ -195,6 +198,10 @@ async fn update_conversation(
     if let Some(agent_id) = req.agent_id {
         store.set_conversation_agent(id, &agent_id)?;
     }
+    if let Some(leaf) = req.current_leaf {
+        // 界面上点「‹ 2/3 ›」是"切到那条分支"：落到它，再顺着最新的孩子走到末端。
+        store.set_current_leaf_deep(id, leaf)?;
+    }
 
     Ok(Json(
         store.get_conversation(id)?.ok_or_else(ApiError::not_found)?,
@@ -237,8 +244,9 @@ async fn send_message(
     // 先把用户消息写进去、标题补上——生成回复可能要几秒，数据库锁不跟着等。
     let user = {
         let mut store = state.lock()?;
-        let user = store.insert_message(id, Role::User, &req.content)?;
         let conversation = store.get_conversation(id)?.ok_or_else(ApiError::not_found)?;
+        // 接在**当前尾巴**下面；没有尾巴（空会话）就是第一条。
+        let user = store.insert_message(id, Role::User, &req.content, conversation.current_leaf)?;
         if conversation.title.is_empty() {
             store.update_title(id, &title_from(&req.content, state.title_chars))?;
         }
@@ -281,7 +289,14 @@ async fn reply_to_conversation(
 
     let backend = chat::Backend::select(&conversation, &providers);
     let reply = chat::complete(&conversation, &outgoing, &providers, &secrets).await?;
-    let assistant = state.lock()?.insert_message(id, Role::Assistant, &reply)?;
+    let assistant = {
+        let mut store = state.lock()?;
+        // 回复挂在"当前尾巴"下面——正常发送时那就是刚写进去的用户消息
+        let parent = store
+            .get_conversation(id)?
+            .and_then(|conversation| conversation.current_leaf);
+        store.insert_message(id, Role::Assistant, &reply, parent)?
+    };
     Ok((backend, assistant))
 }
 
@@ -294,27 +309,34 @@ async fn resend_message(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<(StatusCode, Json<ChatTurn>), ApiError> {
-    let user = {
+    // 尾条是助手 → 把"当前尾巴"退回它的父亲（那条被回应的用户消息）再重新生成：
+    // 新回复会成为旧回复的**兄弟**，旧的留在树上——不满意随时切回去。
+    // 尾条本来就是用户消息（上回上游报错、或刚删掉回复）→ 直接照着它生成。
+    {
         let mut store = state.lock()?;
         let messages = store.list_messages(id)?;
         match messages.last() {
             None => return Err(ApiError::bad_request("这个会话还没有消息可重发")),
             Some(last) if last.role == Role::Assistant => {
-                // 顺带把它带来的状态也抹掉——变量是现演的，正文没了就没了。
-                store.delete_message(id, last.id)?;
-                messages
-                    .iter()
-                    .rev()
-                    .nth(1)
-                    .filter(|message| message.role == Role::User)
-                    .cloned()
-                    .ok_or_else(|| ApiError::bad_request("删掉这条回复后，前面没有可以对答的用户消息"))?
+                let parent = last
+                    .parent_id
+                    .ok_or_else(|| ApiError::bad_request("这条回复没有上文，没法重发"))?;
+                store.set_current_leaf(id, parent)?;
             }
-            Some(last) => last.clone(),
+            Some(_) => {}
         }
-    };
+    }
 
     let (backend, assistant) = reply_to_conversation(&state, id).await?;
+    let user = {
+        let store = state.lock()?;
+        let path = store.list_messages(id)?;
+        path.iter()
+            .rev()
+            .nth(1)
+            .cloned()
+            .ok_or_else(|| ApiError::internal("回复没挂到上文下面"))?
+    };
     Ok((
         StatusCode::CREATED,
         Json(ChatTurn {
@@ -351,9 +373,11 @@ async fn edit_message(
 async fn delete_message(
     State(state): State<AppState>,
     Path((id, message_id)): Path<(Uuid, Uuid)>,
-) -> Result<StatusCode, ApiError> {
-    state.lock()?.delete_message(id, message_id)?;
-    Ok(StatusCode::NO_CONTENT)
+) -> Result<Json<serde_json::Value>, ApiError> {
+    // 删的是**整棵子树**（中间那条下面有分支时一起没），所以把条数回给前端，
+    // 让界面能说清"删掉了 N 条"，而不是只报一个"成功"。
+    let deleted = state.lock()?.delete_message(id, message_id)?;
+    Ok(Json(serde_json::json!({ "deleted": deleted })))
 }
 
 /// 生效的 system prompt：会话级覆盖优先，否则用 agent 的（内置默认也算）。
@@ -376,6 +400,14 @@ fn effective_system_prompt(
         .map(|agent| agent.system_prompt)
         .unwrap_or_default();
     Ok((prompt, vars::PromptSource::Agent))
+}
+
+/// 每条消息"在同龄兄弟里排第几、一共几条"——界面上的「< 2/3 >」用它。
+async fn get_branches(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<std::collections::BTreeMap<Uuid, crate::store::BranchInfo>>, ApiError> {
+    Ok(Json(state.lock()?.branch_info(id)?))
 }
 
 /// 某会话的变量：全局打底 + 顺着正文重演出来的本会话改动 + 生效值。
@@ -1274,45 +1306,55 @@ mod tests {
     }
 
     /// 删中间一句：剩下的顺序不变（靠 rowid），那句写下的状态操作也不再生效。
-    /// 重新发送：尾条是助手就重来（换一条、不加一条），是用户消息就照它重发。
+    /// 重新发送 = 接一个**兄弟**：旧回复留着，切回去就能看见。
     #[tokio::test]
-    async fn resend_replaces_the_last_reply_or_answers_a_dangling_user() {
+    async fn resend_branches_a_sibling_and_switching_leaf_rewrites_the_path() {
         let app = app(None);
         let conv = create(&app, r#"{"provider":"dummy","model":"dummy"}"#).await;
         let uri = format!("/api/v1/conversations/{}/messages", conv.id);
-        let resend_uri = format!("/api/v1/conversations/{}/resend", conv.id);
+        let resend = format!("/api/v1/conversations/{}/resend", conv.id);
+        let branches = format!("/api/v1/conversations/{}/branches", conv.id);
+        let patches = format!("/api/v1/conversations/{}", conv.id);
 
         let (_, body) = send(&app, json_req("POST", &uri, r#"{"content":"在吗"}"#)).await;
         let first: ChatTurn = serde_json::from_str(&body).unwrap();
 
-        // ① 尾条是助手 → 生成一条新的，条数不变
-        let (status, body) = send(&app, json_req("POST", &resend_uri, "")).await;
+        let (status, body) = send(&app, json_req("POST", &resend, "")).await;
         assert_eq!(status, StatusCode::CREATED);
-        let again: ChatTurn = serde_json::from_str(&body).unwrap();
-        assert_eq!(again.user.id, first.user.id, "用户那条不该被动");
-        assert_ne!(again.assistant.id, first.assistant.id, "助手那条要是新的");
-        let (_, body) = send(&app, get_req(&uri)).await;
-        assert_eq!(serde_json::from_str::<Vec<Message>>(&body).unwrap().len(), 2, "换了一条，不是加了一条");
+        let second: ChatTurn = serde_json::from_str(&body).unwrap();
+        assert_eq!(second.user.id, first.user.id, "用户那条不该被动");
+        assert_ne!(second.assistant.id, first.assistant.id);
+        assert_eq!(
+            second.assistant.parent_id,
+            Some(first.user.id),
+            "新回复挂在同一条用户消息下面 —— 旧回复的兄弟"
+        );
 
-        // ② 尾条是用户消息（上次上游报错，或刚删掉回复）→ 照着它重发
-        let (status, _) = send(
-            &app,
-            Request::builder()
-                .method("DELETE")
-                .uri(format!("{uri}/{}", again.assistant.id))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await;
-        assert_eq!(status, StatusCode::NO_CONTENT);
-        let (status, body) = send(&app, json_req("POST", &resend_uri, "")).await;
-        assert_eq!(status, StatusCode::CREATED);
-        let third: ChatTurn = serde_json::from_str(&body).unwrap();
-        assert_eq!(third.user.id, first.user.id);
+        // 当前路径仍是两条（走的是新那条），但两条回复都在树上
         let (_, body) = send(&app, get_req(&uri)).await;
-        assert_eq!(serde_json::from_str::<Vec<Message>>(&body).unwrap().len(), 2);
+        let path: Vec<Message> = serde_json::from_str(&body).unwrap();
+        assert_eq!(path.len(), 2);
+        assert_eq!(path[1].id, second.assistant.id);
 
-        // ③ 一条消息都没有 → 400（没什么可重发）
+        // 兄弟信息：那条用户消息下面有两条回复，当前走第 2 条
+        let (_, body) = send(&app, get_req(&branches)).await;
+        let info: BTreeMap<Uuid, crate::store::BranchInfo> = serde_json::from_str(&body).unwrap();
+        let branch = &info[&second.assistant.id];
+        assert_eq!((branch.index, branch.total), (2, 2), "当前是第 2/2 条");
+        assert!(branch.siblings.contains(&first.assistant.id), "旧回复还在兄弟里");
+
+        // 切回旧的：路径换成那条旧回复
+        let body = serde_json::json!({ "current_leaf": first.assistant.id }).to_string();
+        let (status, _) = send(&app, json_req("PATCH", &patches, &body)).await;
+        assert_eq!(status, StatusCode::OK);
+        let (_, body) = send(&app, get_req(&uri)).await;
+        let path: Vec<Message> = serde_json::from_str(&body).unwrap();
+        assert_eq!(path[1].id, first.assistant.id, "切回旧回复了");
+        let (_, body) = send(&app, get_req(&branches)).await;
+        let info: BTreeMap<Uuid, crate::store::BranchInfo> = serde_json::from_str(&body).unwrap();
+        assert_eq!(info[&first.assistant.id].index, 1, "现在轮到第 1 条");
+
+        // 空会话重发 → 400
         let empty = create(&app, r#"{"provider":"dummy","model":"dummy"}"#).await;
         let (status, _) = send(
             &app,
@@ -1322,40 +1364,95 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
+    /// 删中间那条 = 连它整棵子树一起没；leaf 退回父亲；变量只按当前路径算。
+    #[tokio::test]
+    async fn deleting_a_subtree_reports_the_count_and_variables_follow_the_path() {
+        let app = app(None);
+        let conv = create(&app, r#"{"provider":"dummy","model":"dummy"}"#).await;
+        let uri = format!("/api/v1/conversations/{}/messages", conv.id);
+        let resend = format!("/api/v1/conversations/{}/resend", conv.id);
+
+        let (_, body) = send(
+            &app,
+            json_req("POST", &uri, r#"{"content":"<state>set HP = 12</state>开场"}"#),
+        )
+        .await;
+        let first: ChatTurn = serde_json::from_str(&body).unwrap();
+        // 再来一条兄弟回复：树上现在有 1 条用户 + 2 条回复
+        send(&app, json_req("POST", &resend, "")).await;
+
+        let (status, body) = send(
+            &app,
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("{uri}/{}", first.user.id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&body).unwrap()["deleted"],
+            3,
+            "1 条用户消息 + 它的 2 条回复，一起走"
+        );
+
+        let (_, body) = send(&app, get_req(&uri)).await;
+        assert!(serde_json::from_str::<Vec<Message>>(&body).unwrap().is_empty());
+
+        // 变量只按当前路径算：那句 <state> 不在了，HP 也跟着没了
+        let (_, body) = send(
+            &app,
+            get_req(&format!("/api/v1/conversations/{}/variables", conv.id)),
+        )
+        .await;
+        let view: crate::vars::VariableView = serde_json::from_str(&body).unwrap();
+        assert!(!view.effective.contains_key("HP"), "{:?}", view.effective);
+    }
+
     #[tokio::test]
     async fn deleting_a_message_drops_its_state_ops_and_keeps_order() {
         let app = app(None);
         let conv = create(&app, r#"{"provider":"x","model":"y"}"#).await;
         let uri = format!("/api/v1/conversations/{}/messages", conv.id);
 
+        // 两句用户话，状态写在**第二句**上：删它只会带走它自己的子树
+        send(&app, json_req("POST", &uri, r#"{"content":"开场白"}"#)).await;
         let (_, body) = send(
             &app,
-            json_req("POST", &uri, r#"{"content":"<state>set HP = 12</state>开场白"}"#),
+            json_req("POST", &uri, r#"{"content":"<state>set HP = 12</state>继续往里走"}"#),
         )
         .await;
-        let first: ChatTurn = serde_json::from_str(&body).unwrap();
-        send(&app, json_req("POST", &uri, r#"{"content":"继续"}"#)).await;
+        let second: ChatTurn = serde_json::from_str(&body).unwrap();
 
         let vars_uri = format!("/api/v1/conversations/{}/variables", conv.id);
         let (_, body) = send(&app, get_req(&vars_uri)).await;
         let before: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(before["effective"]["HP"], "12", "先确认这条状态确实生效了");
 
-        let del = Request::builder()
-            .method("DELETE")
-            .uri(format!("{uri}/{}", first.user.id))
-            .body(Body::empty())
-            .unwrap();
-        let (status, _) = send(&app, del).await;
-        assert_eq!(status, StatusCode::NO_CONTENT);
+        let delete = |message: Uuid| {
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("{uri}/{message}"))
+                .body(Body::empty())
+                .unwrap()
+        };
+        let (status, body) = send(&app, delete(second.user.id)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&body).unwrap()["deleted"],
+            2,
+            "第二句用户消息 + 它的回复，一起走"
+        );
 
+        // 剩下的路径：第一对还在；leaf 退回到被删那条的父亲上
         let (_, body) = send(&app, get_req(&uri)).await;
         let msgs: Vec<crate::model::Message> = serde_json::from_str(&body).unwrap();
-        assert_eq!(msgs.len(), 3, "4 条删 1 条");
-        // 这个会话的 provider "x" 不在 providers.jsonc 里 → 回的是兜底话术。
-        // 断言它，是为了证明"剩下的第一句"确实是原来第二条（顺序靠 rowid，没被删乱）。
-        assert_eq!(msgs[0].content, "未配置模型", "第一句成了原来的助手回复，顺序没错位");
+        assert_eq!(msgs.len(), 2, "前面那对没被牵连");
+        assert_eq!(msgs[0].content, "开场白");
+        assert_eq!(msgs[1].role, crate::model::Role::Assistant);
 
+        // 被删那句写下的状态跟着走（变量只按当前路径算）
         let (_, body) = send(&app, get_req(&vars_uri)).await;
         let after: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert!(
@@ -1364,12 +1461,7 @@ mod tests {
         );
 
         // 再删一次 → 404（跨会话删也走这条）
-        let again = Request::builder()
-            .method("DELETE")
-            .uri(format!("{uri}/{}", first.user.id))
-            .body(Body::empty())
-            .unwrap();
-        let (status, _) = send(&app, again).await;
+        let (status, _) = send(&app, delete(second.user.id)).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
     }
 

@@ -192,6 +192,7 @@ mod tests {
             provider: provider.to_owned(),
             model: model.to_owned(),
             agent_id: crate::model::DEFAULT_AGENT_ID.to_owned(),
+            current_leaf: None,
             created_at: 0,
             updated_at: 0,
         }
