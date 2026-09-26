@@ -33,4 +33,7 @@ Thumbs.db
 # 注：config/config.jsonc、providers.jsonc、agents.jsonc 默认跟踪——它们是可分享的模板。
 #     若想连个人配置也排除，加一行：/config/*.jsonc（代价是仓库里没了模板）
 
-frontend
+# Godot 前端（frontend/）：只排除编辑器缓存与导出产物，
+# 其余（场景、脚本、.uid、project.godot、export_presets.cfg、*.import）都随仓库走。
+frontend/.godot/
+frontend/export/
