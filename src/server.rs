@@ -13,7 +13,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::{get, patch, post},
+    routing::{delete, get, patch, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -81,6 +81,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/conversations/{id}/messages/{message_id}",
             patch(edit_message).delete(delete_message),
+        )
+        .route(
+            "/conversations/{id}/messages/{message_id}/siblings",
+            delete(delete_siblings),
         )
         .route(
             "/conversations/{id}/variables",
@@ -199,8 +203,9 @@ async fn update_conversation(
         store.set_conversation_agent(id, &agent_id)?;
     }
     if let Some(leaf) = req.current_leaf {
-        // 界面上点「‹ 2/3 ›」是"切到那条分支"：落到它，再顺着最新的孩子走到末端。
-        store.set_current_leaf_deep(id, leaf)?;
+        // 界面上点「‹ 2/3 ›」：切到**当前尾巴的兄弟**（那条候选回复），再顺着最新的孩子走到末端。
+        // 不允许切到别的旧消息——那等于把对话倒回去，变量（世界状态）会跟着倒。
+        store.switch_leaf_to_sibling(id, leaf)?;
     }
 
     Ok(Json(
@@ -370,6 +375,16 @@ async fn edit_message(
 ///
 /// 顺序是插入顺序（`rowid`），删中间一句只是少一行。变量表不落库，所以这里也不用清什么：
 /// 正文没了，重演时它的 `<state>` 自然不在了。
+/// 删掉某条消息的**所有兄弟**（连同各自子树）：站在某条回复上点「删除全部」时走这里。
+/// 只留下它们的上文（通常是那句问话），接着就能重新生成。
+async fn delete_siblings(
+    State(state): State<AppState>,
+    Path((id, message_id)): Path<(Uuid, Uuid)>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let deleted = state.lock()?.delete_siblings(id, message_id)?;
+    Ok(Json(serde_json::json!({ "deleted": deleted })))
+}
+
 async fn delete_message(
     State(state): State<AppState>,
     Path((id, message_id)): Path<(Uuid, Uuid)>,
@@ -1362,6 +1377,86 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    /// 只允许在**最新那句**上切分支：切到旧消息 = 把对话倒回去（变量也会倒）。
+    #[tokio::test]
+    async fn switching_leaf_is_only_allowed_between_siblings() {
+        let app = app(None);
+        let conv = create(&app, r#"{"provider":"dummy","model":"dummy"}"#).await;
+        let uri = format!("/api/v1/conversations/{}/messages", conv.id);
+        let resend = format!("/api/v1/conversations/{}/resend", conv.id);
+        let patches = format!("/api/v1/conversations/{}", conv.id);
+
+        let (_, body) = send(&app, json_req("POST", &uri, r#"{"content":"第一句"}"#)).await;
+        let first: ChatTurn = serde_json::from_str(&body).unwrap();
+        let (_, body) = send(&app, json_req("POST", &resend, "")).await;
+        let second: ChatTurn = serde_json::from_str(&body).unwrap();
+        // 再往下说一句，让上面那对回复变成"旧消息"
+        let (_, body) = send(&app, json_req("POST", &uri, r#"{"content":"第二句"}"#)).await;
+        let third: ChatTurn = serde_json::from_str(&body).unwrap();
+        // 尾巴上再重发一次：它和 third.assistant 是兄弟，现在切它俩是允许的
+        let (_, body) = send(&app, json_req("POST", &resend, "")).await;
+        let fourth: ChatTurn = serde_json::from_str(&body).unwrap();
+
+        let switch = |leaf: Uuid| serde_json::json!({ "current_leaf": leaf }).to_string();
+
+        // 尾巴的兄弟 → 允许
+        let (status, _) = send(&app, json_req("PATCH", &patches, &switch(third.assistant.id))).await;
+        assert_eq!(status, StatusCode::OK);
+        let (_, body) = send(&app, get_req(&uri)).await;
+        let path: Vec<Message> = serde_json::from_str(&body).unwrap();
+        assert_eq!(path.last().unwrap().id, third.assistant.id);
+        assert_eq!(path.len(), 4, "路径长度不变（只是换了一条候选）");
+        let _ = fourth;
+
+        // 旧消息（第一句的回复）→ 400
+        let (status, body) = send(&app, json_req("PATCH", &patches, &switch(first.assistant.id))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "旧消息上不给切分支：{body}");
+        let (status, _) = send(&app, json_req("PATCH", &patches, &switch(second.assistant.id))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    /// 「删除全部」：某个上文下的几条回复一次清光（连各自子树），只留下那句问话。
+    #[tokio::test]
+    async fn deleting_all_siblings_leaves_only_the_question() {
+        let app = app(None);
+        let conv = create(&app, r#"{"provider":"dummy","model":"dummy"}"#).await;
+        let uri = format!("/api/v1/conversations/{}/messages", conv.id);
+        let resend = format!("/api/v1/conversations/{}/resend", conv.id);
+
+        let (_, body) = send(&app, json_req("POST", &uri, r#"{"content":"你是谁？"}"#)).await;
+        let first: ChatTurn = serde_json::from_str(&body).unwrap();
+        let (_, body) = send(&app, json_req("POST", &resend, "")).await;
+        let second: ChatTurn = serde_json::from_str(&body).unwrap();
+
+        let (status, body) = send(
+            &app,
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("{uri}/{}/siblings", second.assistant.id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&body).unwrap()["deleted"],
+            2,
+            "两条回复一起清"
+        );
+
+        let (_, body) = send(&app, get_req(&uri)).await;
+        let path: Vec<Message> = serde_json::from_str(&body).unwrap();
+        assert_eq!(path.len(), 1, "只剩那句问话");
+        assert_eq!(path[0].id, first.user.id);
+        assert_eq!(path[0].role, crate::model::Role::User);
+
+        // 清完就能直接重发（leaf 落在问话上）
+        let (status, body) = send(&app, json_req("POST", &resend, "")).await;
+        assert_eq!(status, StatusCode::CREATED);
+        let again: ChatTurn = serde_json::from_str(&body).unwrap();
+        assert_eq!(again.assistant.parent_id, Some(first.user.id));
     }
 
     /// 删掉**当前那条**回复时，路径该退到它**还活着的最新兄弟**上，

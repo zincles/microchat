@@ -953,7 +953,9 @@ impl App {
                 } => match result {
                     Ok(_) => {
                         self.note = "已切到那条分支".to_owned();
-                        // 路径换了：消息、变量、兄弟信息全都要重拉
+                        // 路径换了：消息、变量、兄弟信息全都要重拉。
+                        // 变量表是后端**沿当前路径现演**的（没有派生表），所以这一次重拉
+                        // 就是"重新计算"本身——切到哪条分支，世界状态就是那条分支的样子。
                         self.fetch_messages(conversation);
                         self.fetch_variables(conversation);
                         self.fetch_branches(conversation);
@@ -2401,6 +2403,7 @@ impl App {
         let mut editing = self.editing.take();
         let mut start_edit: Option<(Uuid, String)> = None;
         let mut delete_now: Option<Uuid> = None;
+        let mut delete_siblings: Option<Uuid> = None;
         let mut resend = false;
         let mut save_edit: Option<(Uuid, String)> = None;
         let mut cancel_edit = false;
@@ -2451,9 +2454,13 @@ impl App {
                                 .show(ui, |ui| {
                                     ui.horizontal(|ui| {
                                         ui.colored_label(color, RichText::new(label).strong());
-                                        // 重新发送过几次就会有兄弟：给一个「‹ 2/3 ›」，
-                                        // 点一下就切到那条分支（连同它后面的一串）。
-                                        if let Some(branch) = branches.get(&message.id) {
+                                        // 分支操作只给**当前最新那句**：重新发送过几次就会有兄弟，
+                                        // 给一个「‹ 2/3 ›」切候选，外加「删除全部」一次清光。
+                                        // 旧消息上不出现这些——切到旧分支会把对话倒回去，
+                                        // 而变量是沿当前路径现演的，世界状态会跟着倒退。
+                                        if index != last_index {
+                                            // 不是尾巴：什么都不显示
+                                        } else if let Some(branch) = branches.get(&message.id) {
                                             if branch.total > 1 {
                                                 if ui
                                                     .add_enabled(
@@ -2482,6 +2489,15 @@ impl App {
                                                 {
                                                     switch_leaf =
                                                         branch.siblings.get(branch.index).copied();
+                                                }
+                                                if ui
+                                                    .small_button("删除全部")
+                                                    .on_hover_text(
+                                                        "把这组回复连同它们下面的分支一起删掉，只留下上文",
+                                                    )
+                                                    .clicked()
+                                                {
+                                                    delete_siblings = Some(message.id);
                                                 }
                                             }
                                         }
@@ -2591,6 +2607,15 @@ impl App {
         if let Some(id) = delete_now {
             let (base, token) = (self.settings.server_address.clone(), self.token.clone());
             self.client.send(Command::DeleteMessage {
+                base,
+                token,
+                conversation: current,
+                message: id,
+            });
+        }
+        if let Some(id) = delete_siblings {
+            let (base, token) = (self.settings.server_address.clone(), self.token.clone());
+            self.client.send(Command::DeleteSiblings {
                 base,
                 token,
                 conversation: current,

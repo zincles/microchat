@@ -110,6 +110,13 @@ pub enum Command {
         name: String,
         system_prompt: String,
     },
+    /// 删掉某条消息的**所有兄弟**（连同各自子树）——界面上那个「删除全部」。
+    DeleteSiblings {
+        base: String,
+        token: Option<String>,
+        conversation: uuid::Uuid,
+        message: uuid::Uuid,
+    },
     /// 切到某条消息所在的分支（落到它，再顺着最新的孩子走到末端）。
     SetLeaf {
         base: String,
@@ -331,6 +338,9 @@ impl Command {
             Self::SaveAgent { id, .. } => format!("PATCH /agents/{id}"),
             Self::CreateAgent { name, .. } => format!("POST /agents ({name})"),
             Self::MakeDefaultAgent { id, .. } => format!("PATCH /agents/{id} (设为默认)"),
+            Self::DeleteSiblings { message, .. } => {
+                format!("DELETE /messages/{}/siblings", &message.to_string()[..8])
+            }
             Self::SetLeaf { leaf, .. } => format!("PATCH /conversations (切到 {})", &leaf.to_string()[..8]),
             Self::ListBranches { conversation, .. } => {
                 format!("GET /conversations/{}/branches", &conversation.to_string()[..8])
@@ -535,6 +545,25 @@ fn handle(http: &reqwest::blocking::Client, command: Command) -> Event {
                 ),
                 token.as_deref(),
                 serde_json::json!({ "content": content }),
+            ),
+        },
+        Command::DeleteSiblings {
+            base,
+            token,
+            conversation,
+            message,
+        } => Event::MessageDeleted {
+            conversation,
+            message,
+            result: write_json(
+                http,
+                reqwest::Method::DELETE,
+                &format!(
+                    "{}/api/v1/conversations/{conversation}/messages/{message}/siblings",
+                    base.trim_end_matches('/')
+                ),
+                token.as_deref(),
+                serde_json::json!({}),
             ),
         },
         Command::SetLeaf {

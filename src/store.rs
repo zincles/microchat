@@ -347,6 +347,37 @@ impl Store {
         Ok(info)
     }
 
+    /// 切分支：**只允许切到当前尾巴的兄弟**（同一上文下的另一条候选）——也就是"这几条回复
+    /// 我选哪一条"，路径长度不会缩水。
+    ///
+    /// 别放行"切到任意旧消息"：那是把整条对话倒回去（后面的话都从视野里消失），
+    /// 而变量表是沿当前路径现演的 ⇒ **世界状态也跟着倒退**。那种事必须是一个明确的
+    /// "从这里重新开始"，不该藏在一个分支切换的小箭头里。
+    pub fn switch_leaf_to_sibling(&mut self, conversation_id: Uuid, message_id: Uuid) -> Result<()> {
+        let all = self.list_all_messages(conversation_id)?;
+        let current = self
+            .get_conversation(conversation_id)?
+            .and_then(|conversation| conversation.current_leaf);
+        let parent_of = |id: Uuid| {
+            all.iter()
+                .find(|message| message.id == id)
+                .and_then(|message| message.parent_id)
+        };
+        let Some(current) = current else {
+            return Err(Error::Invalid("这条会话还没有对话，谈不上切分支".to_owned()));
+        };
+        let target = all
+            .iter()
+            .find(|message| message.id == message_id)
+            .ok_or(Error::NotFound)?;
+        if target.parent_id != parent_of(current) {
+            return Err(Error::Invalid(
+                "只能在最新那句上切换分支（切到它的兄弟）".to_owned(),
+            ));
+        }
+        self.set_current_leaf_deep(conversation_id, message_id)
+    }
+
     /// 把"当前尾巴"切到某条消息**所在分支的末端**：先落到它，再顺着最新的孩子一路往下。
     ///
     /// 界面上的「‹ 2/3 ›」要的就是这个——点到某一条回复，就该看到那条分支接下来的全部，
@@ -425,15 +456,54 @@ impl Store {
     /// （父亲一定还在——它不在子树里）。
     pub fn delete_message(&mut self, conversation_id: Uuid, message_id: Uuid) -> Result<usize> {
         let all = self.list_all_messages(conversation_id)?;
-        let target = all
+        let parent = all
             .iter()
             .find(|message| message.id == message_id)
-            .ok_or(Error::NotFound)?;
-        let parent = target.parent_id;
+            .ok_or(Error::NotFound)?
+            .parent_id;
+        self.delete_subtrees(conversation_id, &[message_id], parent)
+    }
 
-        // 子树 = 自己 + 所有后代（按 rowid 正序往外扩，不会漏）
+    /// 删掉某条消息的**所有兄弟**（连同各自的子树）——"这一组我全不要了"。
+    ///
+    /// 通常是站在某条回复上点「删除全部」：几个候选回复一次清光，只留下那句问话，
+    /// 接着就能重新生成。删完 leaf 自然退到它们的父亲（= 那句用户消息）上。
+    pub fn delete_siblings(&mut self, conversation_id: Uuid, message_id: Uuid) -> Result<usize> {
+        let all = self.list_all_messages(conversation_id)?;
+        let parent = all
+            .iter()
+            .find(|message| message.id == message_id)
+            .ok_or(Error::NotFound)?
+            .parent_id;
+        let siblings: Vec<Uuid> = all
+            .iter()
+            .filter(|message| message.parent_id == parent)
+            .map(|message| message.id)
+            .collect();
+        self.delete_subtrees(conversation_id, &siblings, parent)
+    }
+
+    /// 删掉一批消息**连各自整棵子树**（树上的删除只允许这种），并按规则修 `current_leaf`。
+    /// 返回一共删了几条。`parent` 是这批量共同的上文，用来决定 leaf 退到哪儿。
+    fn delete_subtrees(
+        &mut self,
+        conversation_id: Uuid,
+        roots: &[Uuid],
+        parent: Option<Uuid>,
+    ) -> Result<usize> {
+        let all = self.list_all_messages(conversation_id)?;
+        if roots.is_empty() {
+            return Ok(0);
+        }
+
+        // 子树 = 根们 + 所有后代。`all` 按 rowid（父亲一定排在孩子前面）走一遍就够。
         let mut doomed = std::collections::BTreeSet::new();
-        doomed.insert(message_id);
+        for root in roots {
+            if !all.iter().any(|message| message.id == *root) {
+                return Err(Error::NotFound);
+            }
+            doomed.insert(*root);
+        }
         for message in &all {
             if message.parent_id.is_some_and(|parent| doomed.contains(&parent)) {
                 doomed.insert(message.id);
@@ -453,9 +523,9 @@ impl Store {
             )?;
         }
         if leaf.is_some_and(|leaf| doomed.contains(&leaf)) {
-            // 退到哪里：优先"被删那条的父亲下、**还活着的最新一个孩子**"——也就是它的上一条兄弟。
+            // 退到哪里：优先"上文下**还活着的最新一个孩子**"——删单条时就是它的上一条兄弟。
             // 只退到父亲是不够的：那样界面上会看到"整条分支都没了"（其实兄弟都在树上），
-            // 看起来就像一次删除把好几个分支一起删了。实在没有兄弟可退，才退到父亲本身。
+            // 看起来就像一次删除把好几个分支一起删了。实在没有孩子可退，才退到上文本身。
             let fallback = all
                 .iter()
                 .filter(|message| message.parent_id == parent && !doomed.contains(&message.id))
@@ -884,6 +954,59 @@ mod tests {
     }
 
     /// 本会话 `del` 掉的键会被墓碑挡住，不会从全局底下漏回来。
+    /// 切分支 = 换一条路径 ⇒ **变量跟着换**（世界状态回到那次选择的样子）。
+    #[test]
+    fn switching_branch_changes_the_derived_variables() {
+        let mut s = store();
+        let conv = s.create_conversation("dummy", "dummy", "").unwrap();
+        let question = s.insert_message(conv.id, Role::User, "我推开门", None).unwrap();
+        let left = s
+            .insert_message(
+                conv.id,
+                Role::Assistant,
+                "<state>set HP = 1</state>左边那条路",
+                Some(question.id),
+            )
+            .unwrap();
+        let right = s
+            .insert_message(
+                conv.id,
+                Role::Assistant,
+                "<state>set HP = 9</state>右边那条路",
+                Some(question.id),
+            )
+            .unwrap();
+
+        let effective = |s: &Store| {
+            let path = s.list_messages(conv.id).unwrap();
+            crate::vars::VariableView::from_sources(
+                conv.id,
+                "",
+                crate::vars::PromptSource::Agent,
+                &path,
+            )
+            .effective
+        };
+
+        // 现状：尾巴在 right 上
+        assert_eq!(effective(&s)["HP"], "9");
+
+        // 切到左边那条：变量跟着换
+        s.switch_leaf_to_sibling(conv.id, left.id).unwrap();
+        assert_eq!(
+            s.list_messages(conv.id).unwrap().last().unwrap().id,
+            left.id
+        );
+        assert_eq!(effective(&s)["HP"], "1", "换了分支，世界状态跟着换");
+
+        // 再切回去
+        s.switch_leaf_to_sibling(conv.id, right.id).unwrap();
+        assert_eq!(effective(&s)["HP"], "9");
+
+        // 切到不相干的旧消息（上文都对不上）→ 拒绝
+        assert!(s.switch_leaf_to_sibling(conv.id, question.id).is_err());
+    }
+
     #[test]
     fn session_delete_hides_the_global_value() {
         let mut s = store();
