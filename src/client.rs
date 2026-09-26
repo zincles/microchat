@@ -731,12 +731,25 @@ fn handle(http: &reqwest::blocking::Client, command: Command) -> Event {
             base,
             token,
             provider,
-        } => Event::Providers(get(
-            http,
-            &base,
-            token.as_deref(),
-            &format!("/api/v1/providers/{}/refresh", encode_segment(&provider)),
-        )),
+        } => {
+            // 「获取模型」是 **POST**（它改的是后端的发现态），不是 GET——写成 GET 就是 405。
+            // 它回的是**单个** provider 的视图，而界面要的是整张列表，所以紧接着再列一次：
+            // 这样事件类型仍是 `Event::Providers`，和别的 provider 操作走同一条回程。
+            let url = format!(
+                "{}/api/v1/providers/{}/refresh",
+                base.trim_end_matches('/'),
+                encode_segment(&provider)
+            );
+            let result = write(
+                http,
+                reqwest::Method::POST,
+                &url,
+                token.as_deref(),
+                Some(serde_json::json!({})),
+            )
+            .and_then(|()| get(http, &base, token.as_deref(), "/api/v1/providers"));
+            Event::Providers(result)
+        }
         Command::ListAgents { base, token } => {
             Event::Agents(get(http, &base, token.as_deref(), "/api/v1/agents"))
         }
@@ -1015,7 +1028,14 @@ mod tests {
                         }
                     },
                 ),
-            );
+            )
+            // 「获取模型」：**POST** 才认（写成 GET 就该 405，那正是前端踩过的坑）
+            .route(
+                "/api/v1/providers/{id}/refresh",
+                axum::routing::post(|| async { (StatusCode::OK, "{}") }),
+            )
+            // 拉完模型前端会重列一遍
+            .route("/api/v1/providers", get(|| async { (StatusCode::OK, "[]") }));
 
         // 同步测试里不能把阻塞 socket 交给 tokio：在 runtime 内绑定，用 channel 递出地址。
         let (addr_tx, addr_rx) = mpsc::channel();
@@ -1109,6 +1129,23 @@ mod tests {
         match next_event(&client) {
             Event::ProviderWritten(Ok(())) => {}
             other => panic!("期望保存成功，得到 {:?}", describe(&other)),
+        }
+    }
+
+    /// 「获取模型」必须是 POST：写成 GET 后端回 405，用户只看到"方法不对"。
+    /// 这条就是那个 bug 的回归测试——假后端只在 POST 上挂了路由。
+    #[test]
+    fn refreshing_a_provider_posts_and_then_reloads_the_list() {
+        let client = Client::spawn(egui::Context::default());
+        client.send(Command::RefreshProvider {
+            base: fake_backend(None),
+            token: None,
+            provider: "local".to_owned(),
+        });
+
+        match next_event(&client) {
+            Event::Providers(Ok(list)) => assert!(list.is_empty(), "假后端的 /providers 回空列表"),
+            other => panic!("期望拿到 provider 列表，得到 {:?}", describe(&other)),
         }
     }
 
