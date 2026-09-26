@@ -25,10 +25,11 @@ adb install -r /tmp/x.apk && adb logcat -s godot
 ## 不变量（破坏了会静默出错）
 
 1. **存储是 SQLite**：`data/microchat.db`。用户手写的 JSONC 只在 `config/`。两者路径都**相对工作目录**，可用 `MICROCHAT_CONFIG_DIR` / `MICROCHAT_DATA_DIR` 覆盖。前端的界面偏好另有一份：`~/.config/microchat/frontend.jsonc`（不同机制，别混）。
-2. **消息正文是存档**：`<state>` 块原样留在消息里；**发给模型的历史一律剔除**，改注入当前变量表。唯一出口 `vars::build_outgoing()`——不要写第二条拼装路径。
-3. **变量不落库**：库里只有正文（`messages.content`）和那几张配置/发现表。变量表**每次现算**：`vars::VariableView::from_messages(会话, 消息列表, 全局底子)` 按消息顺序扫 `<state>` 块（`vars::parse`）再 fold；每条现演出来的操作都带 `message_id`，所以"哪句话带来的状态"追得回来，切到前 N 条就是回溯。全局底子在手写的 `config/variables.jsonc`（那张表**没有 version 字段**，就是 key→value）。**没有派生表** ⇒ 编辑/删除消息不需要"重算变量"：正文改了，结果自然变。别再往库里写操作日志（老表 `variable_ops` 已在迁移里 DROP）。`setglobal`/`delglobal` 已废弃（只报警告）。
+2. **正文与提示词都是存档**：`<state>` 块原样留在消息正文**和 system prompt** 里；**发给模型的文本一律剔除标签**，改注入当前变量表。唯一出口 `vars::build_outgoing()`——不要写第二条拼装路径。
+3. **变量不落库**：库里只有正文/提示词与那几张配置、发现表。变量表**每次现算**：`vars::VariableView::from_sources(会话, 生效的 system prompt, 来源, 消息列表)`——先扫提示词里的 `<state>` 块（**底子**），再按消息顺序（rowid 序）扫正文里的块，最后 fold。每条现演操作都带 `message_id`，"哪句话带来的状态"追得回来；切到前 N 条就是回溯。**没有派生表** ⇒ 编辑/删除消息、改提示词都不需要"重算变量"。别再往库里写操作日志（老表 `variable_ops` 已 DROP；`config/variables.jsonc`、`setglobal`/`delglobal` 都已废弃）。
+   底子的**来源**决定它算哪一层：会话没写自己的提示词 ⇒ 用 agent 的 ⇒ 算**全局**（同一 agent 的会话共享）；会话自己写了 ⇒ 覆盖 agent 的 ⇒ 算**本会话**。会话里的 `del` 写墓碑，挡住全局同名键，不会从底下漏回来。生效的那份提示词由 `server::effective_system_prompt()` 一处解析（会话覆盖优先 → agent 的 → 内置默认兜底）——出站消息、变量底子、界面显示共用它。
 4. **编辑/删除消息只动正文**：改的是存档本身（单事务）；变量不用管——它是现演的。不能跨会话改/删（404）。
-5. **模型身份 = `(provider, upstream_id)`**；显示名三级回退（用户覆盖 → 上游名 → prettify）在**后端**完成，前端别再实现一遍。
+5. **模型身份 = `(provider, upstream_id)`**；显示名三级回退（用户覆盖 → 上游名 → prettify）在**后端**完成，前端别再实现一遍。新建会话的 agent 取 `agents.jsonc` 的 `default_agent`（请求可显式指定 `agent_id`）——否则 agent 的提示词与它写的变量底子对任何新会话都不生效。
 6. `config/secrets.json` 与 `data/` **永不入库**；`.gitignore` 只放行 Godot 项目的非缓存部分（`.godot/`、`export/` 排除）。
 7. **消息顺序 = 插入顺序（`ORDER BY rowid`），不是 `id`**。`messages.id`（UUIDv7）只是对外句柄（URL 里那句就是它）——`list_messages` 靠 rowid 排序，所以删中间一条不会动到别人的顺序，也没有"位置空缺"要补；同一毫秒插入的"用户＋助手"也不会因 UUID 尾部随机位换位。**别改成 `ORDER BY id`**。
 
