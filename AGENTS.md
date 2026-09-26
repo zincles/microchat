@@ -42,6 +42,28 @@ adb install -r /tmp/x.apk && adb logcat -s godot
 - **egui 的右键菜单**：`TextEdit` 在**右键按下那一帧**就把选区折成光标，菜单只能在**上一帧的快照**上工作（见 `attach_edit_menu`），别现场读选区。
 - **Godot 里没有 `[display] window/stretch`** 时视图坐标 ≠ 设计坐标：无头/手机上会得到 64×64 之类的怪尺寸，界面按 1:1 像素渲染（看起来只有一半大）。键盘换算用比例实现的，不受影响，但观感会变。
 
+## 返回键 / 退出（方案已定，**尚未开工**）
+
+两个开关**各管一扇门、互不代管**（都在 `SceneTree` 上，默认都是 `true`）：
+
+| 开关 | 管哪扇门 | 对应通知 | 对应信号 |
+|---|---|---|---|
+| `auto_accept_quit` | 关窗请求（桌面右上角 ×、Web 关窗） | `NOTIFICATION_WM_CLOSE_REQUEST` = 1006 | `Window.close_requested` |
+| `quit_on_go_back` | 安卓返回键 / 返回手势 | `NOTIFICATION_WM_GO_BACK_REQUEST` = 1007 | `Window.go_back_requested` |
+
+引擎里的顺序（源码级，`scene/main/window.cpp`）：根窗口先 `_propagate_window_notification()` → **全树节点的 `_notification` 先收到** → 再 `emit_signal(...)` → SceneTree 按自己那个开关决定 `_quit`。即"通知一定先到，自动退出是之后才判的"。
+`get_tree().quit()` **不走这条路**（直接 `_quit = true`、不发通知）——想"退出前干点事"别用它。
+
+**当前设定**（`frontend/project.godot`，提交 `f9d04dd`）：`config/quit_on_go_back=false`（返回键留给面板栈），`auto_accept_quit` 保持默认 `true`（桌面/Web 的 × 直接退；状态在后端，前端没有要抢救的东西）。
+
+**还没做（先别顺手做，等排期）**：
+
+1. **返回栈**：`_on_back()` 一处收口——安卓接 `get_window().go_back_requested`，桌面/Web 接 `ui_cancel`（Esc），栈空才真退。
+2. **安卓双击退出**：顶层时第一次按返回键只提示"再按一次退出"（约 2 秒内再来一次才 `quit()`）——防止手滑把应用滑没了。
+3. 安卓"从最近任务划掉" = **进程被杀**，任何开关都拦不到 → 该落盘的东西要在 `NOTIFICATION_APPLICATION_PAUSED` 里落。
+
+**坑**：返回栈接上之前，安卓按返回键**什么都不发生**（不退、也没人处理）。另：4.8.dev5 实测"只关 `auto_accept_quit`、返回键那条路也不退"，与 master 源码（`_main_window_go_back()` 只读 `quit_on_go_back`）不符 → **别依赖这个实现细节**，要拦哪条路就显式关哪条路的开关。
+
 ## 本机环境
 
 - 搜索：`tavily` MCP（`mcp__tavily_*`，配置在 `~/.omp/agent/mcp.json`）——本机直连的几家搜索引擎常被反爬挡掉，优先用它。
