@@ -39,11 +39,6 @@ impl Paths {
     pub fn providers_jsonc(&self) -> PathBuf {
         self.config_dir.join("providers.jsonc")
     }
-    /// 全局变量表（手写；会话正文里的 `<state>` 块只写本会话作用域）。
-    pub fn variables_jsonc(&self) -> PathBuf {
-        self.config_dir.join("variables.jsonc")
-    }
-
     pub fn agents_jsonc(&self) -> PathBuf {
         self.config_dir.join("agents.jsonc")
     }

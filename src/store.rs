@@ -702,10 +702,14 @@ mod tests {
         s.insert_message(conv.id, Role::User, "<state>del 世界</state>我离开了临安")
             .unwrap();
 
-        let mut global = std::collections::BTreeMap::new();
-        global.insert("世界".to_owned(), "临安".to_owned());
+        // 底子由"生效的系统提示词"提供（这里模拟 agent 的提示词里写了 世界=临安）
         let messages = s.list_messages(conv.id).unwrap();
-        let view = crate::vars::VariableView::from_messages(conv.id, &messages, &global);
+        let view = crate::vars::VariableView::from_sources(
+            conv.id,
+            "<state>set 世界 = 临安</state>",
+            crate::vars::PromptSource::Agent,
+            &messages,
+        );
 
         assert!(
             view.effective.is_empty(),

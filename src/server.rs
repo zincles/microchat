@@ -88,7 +88,6 @@ pub fn router(state: AppState) -> Router {
             "/conversations/{id}/outgoing",
             get(get_conversation_outgoing),
         )
-        .route("/variables", get(get_global_variables))
         .route("/health", get(health))
         .route("/providers", get(list_providers).post(create_provider))
         .route("/models", get(list_all_models))
@@ -117,6 +116,10 @@ pub struct CreateConversationReq {
     pub provider: Option<String>,
     #[serde(default)]
     pub model: Option<String>,
+    /// 省略时用 `agents.jsonc` 的 `default_agent`。
+    #[serde(default)]
+    pub agent_id: Option<String>,
+    /// 会话级 system prompt。**留空就是没覆盖**：用 agent 的（变量底子也跟着用它的）。
     #[serde(default)]
     pub system_prompt: String,
 }
@@ -149,9 +152,25 @@ async fn create_conversation(
         .provider
         .unwrap_or_else(|| state.default_provider.clone());
     let model = req.model.unwrap_or_else(|| state.default_model.clone());
-    let conv = state
-        .lock()?
-        .create_conversation(&provider, &model, &req.system_prompt)?;
+    let mut store = state.lock()?;
+    let mut conv = store.create_conversation(&provider, &model, &req.system_prompt)?;
+
+    // agent 缺省 → 取 `agents.jsonc` 的 `default_agent`。
+    // 不这么做的话新会话永远带着内置的 `default`，agent 的提示词与它写的变量底子都用不上。
+    let agent_id = match req.agent_id {
+        Some(id) if !id.trim().is_empty() => id.trim().to_owned(),
+        _ => {
+            let agents: AgentsConfig = crate::config::load_jsonc(&state.paths.agents_jsonc())?;
+            agents
+                .default_agent()
+                .map(|agent| agent.id.clone())
+                .unwrap_or_else(|| crate::model::DEFAULT_AGENT_ID.to_owned())
+        }
+    };
+    if agent_id != conv.agent_id {
+        store.set_conversation_agent(conv.id, &agent_id)?;
+        conv.agent_id = agent_id;
+    }
     Ok((StatusCode::CREATED, Json(conv)))
 }
 
@@ -228,9 +247,10 @@ async fn send_message(
 
         // 真正要发出去的东西在这里成型：历史剔除状态块、只注入当前变量表。
         let messages = store.list_messages(id)?;
+        let (system_prompt, source) = effective_system_prompt(&state, &conversation)?;
         let effective =
-            vars::VariableView::from_messages(id, &messages, &global_variables(&state)?).effective;
-        let outgoing = vars::build_outgoing(&conversation, &messages, &effective);
+            vars::VariableView::from_sources(id, &system_prompt, source, &messages).effective;
+        let outgoing = vars::build_outgoing(&system_prompt, &messages, &effective);
         (user, conversation, outgoing)
     };
 
@@ -285,21 +305,26 @@ async fn delete_message(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// 全局变量表：手写在 `config/variables.jsonc`（文件不在就是空表）。
-/// 它不依赖任何会话——库里只存正文，会话作用于全局的东西一律从正文里现演。
-fn global_variables(state: &AppState) -> Result<BTreeMap<String, String>, ApiError> {
-    Ok(crate::config::load_jsonc(&state.paths.variables_jsonc())?)
-}
-
-/// 全局变量：所有会话共用的底。没有会话 ⇒ 没有 session 行，只回全局那几张。
-async fn get_global_variables(
-    State(state): State<AppState>,
-) -> Result<Json<vars::VariableView>, ApiError> {
-    Ok(Json(vars::VariableView::from_messages(
-        Uuid::nil(),
-        &[],
-        &global_variables(&state)?,
-    )))
+/// 生效的 system prompt：会话级覆盖优先，否则用 agent 的（内置默认也算）。
+///
+/// **这就是真会发给模型的那份**。变量底子、出站消息、界面显示都用它，
+/// 免得"界面上写的提示词"和"实际发出去的"成了两份东西。
+/// 返回值第二项是它的来源：agent 的提示词写的底子所有会话共享（算全局），
+/// 会话自己写的只属于这条会话。
+fn effective_system_prompt(
+    state: &AppState,
+    conversation: &Conversation,
+) -> Result<(String, vars::PromptSource), ApiError> {
+    let own = conversation.system_prompt.trim();
+    if !own.is_empty() {
+        return Ok((own.to_owned(), vars::PromptSource::Conversation));
+    }
+    let agents: AgentsConfig = crate::config::load_jsonc(&state.paths.agents_jsonc())?;
+    let prompt = agents
+        .resolve(&conversation.agent_id)
+        .map(|agent| agent.system_prompt)
+        .unwrap_or_default();
+    Ok((prompt, vars::PromptSource::Agent))
 }
 
 /// 某会话的变量：全局打底 + 顺着正文重演出来的本会话改动 + 生效值。
@@ -308,11 +333,14 @@ async fn get_conversation_variables(
     Path(id): Path<Uuid>,
 ) -> Result<Json<vars::VariableView>, ApiError> {
     let store = state.lock()?;
+    let conversation = store.get_conversation(id)?.ok_or_else(ApiError::not_found)?;
     let messages = store.list_messages(id)?;
-    Ok(Json(vars::VariableView::from_messages(
+    let (system_prompt, source) = effective_system_prompt(&state, &conversation)?;
+    Ok(Json(vars::VariableView::from_sources(
         id,
+        &system_prompt,
+        source,
         &messages,
-        &global_variables(&state)?,
     )))
 }
 
@@ -326,10 +354,11 @@ async fn get_conversation_outgoing(
     let store = state.lock()?;
     let conversation = store.get_conversation(id)?.ok_or_else(ApiError::not_found)?;
     let messages = store.list_messages(id)?;
+    let (system_prompt, source) = effective_system_prompt(&state, &conversation)?;
     let effective =
-        vars::VariableView::from_messages(id, &messages, &global_variables(&state)?).effective;
+        vars::VariableView::from_sources(id, &system_prompt, source, &messages).effective;
     Ok(Json(vars::build_outgoing(
-        &conversation,
+        &system_prompt,
         &messages,
         &effective,
     )))
@@ -1047,12 +1076,18 @@ mod tests {
 
     #[tokio::test]
     async fn state_block_becomes_variables_but_stays_in_the_archive() {
-        let (app, dir) = app_with_env(None, &[("variables.jsonc", r#"{ "季节": "初冬" }"#)]);
-        let conv = create(
-            &app,
-            r#"{"provider":"x","model":"y","system_prompt":"你是客栈老板。"}"#,
-        )
-        .await;
+        // 底子住在 system prompt 里（和正文同一套 `<state>` 语法）。放在 agent 的提示词上，
+        // 用同一 agent 的会话共享它 —— 所以它算"全局"。
+        let (app, dir) = app_with_env(
+            None,
+            &[(
+                "agents.jsonc",
+                r#"{ "agents": [ { "id": "default", "name": "默认助手",
+                     "system_prompt": "你是客栈老板。\n<state>set 季节 = 初冬</state>" } ] }"#,
+            )],
+        );
+        // 不写会话级提示词 → 用 agent 的
+        let conv = create(&app, r#"{"provider":"x","model":"y"}"#).await;
         let uri = format!("/api/v1/conversations/{}/messages", conv.id);
         // 老写法 `setglobal` 仍留在正文里：它现在只报警告，不再往全局写东西。
         let content = "我要住店\n<state>\nset HP = 12\nsetglobal 季节 = 初冬\n</state>";
@@ -1060,23 +1095,33 @@ mod tests {
         let (status, _) = send(&app, json_req("POST", &uri, &body)).await;
         assert_eq!(status, StatusCode::CREATED);
 
-        // 1) 解析成操作：本会话 1 条、全局 1 条
+        // 1) 变量 = 提示词里的底子（全局）+ 正文现演出来的本会话改动
         let vars_uri = format!("/api/v1/conversations/{}/variables", conv.id);
         let (status, body) = send(&app, get_req(&vars_uri)).await;
         assert_eq!(status, StatusCode::OK);
         let view: crate::vars::VariableView = serde_json::from_str(&body).unwrap();
+        assert_eq!(view.global.len(), 1, "底子来自 agent 的提示词");
+        assert_eq!(view.global[0].key, "季节");
+        assert!(view.global[0].message_id.is_none(), "底子不来自某条消息");
         assert_eq!(view.session.len(), 1, "只有 set HP —— setglobal 已废弃");
         assert!(view.session[0].message_id.is_some(), "能追到是哪句写的");
-        assert_eq!(view.global_values.get("季节").map(String::as_str), Some("初冬"));
         assert_eq!(view.effective.get("HP").map(String::as_str), Some("12"));
         assert_eq!(view.effective.get("季节").map(String::as_str), Some("初冬"));
 
-        // 全局端点不需要会话也能看到那条
-        let (status, body) = send(&app, get_req("/api/v1/variables")).await;
-        assert_eq!(status, StatusCode::OK);
-        let global: crate::vars::VariableView = serde_json::from_str(&body).unwrap();
-        assert_eq!(global.effective.get("季节").map(String::as_str), Some("初冬"));
-        assert!(!global.effective.contains_key("HP"), "全局不含别人的会话状态");
+        // 会话自己写了提示词（覆盖 agent 的）→ 底子换成它写的，而且只算本会话
+        let own = create(
+            &app,
+            r#"{"provider":"x","model":"y","system_prompt":"<state>set 季节 = 盛夏</state>你是掌柜。"}"#,
+        )
+        .await;
+        let (_, body) = send(
+            &app,
+            get_req(&format!("/api/v1/conversations/{}/variables", own.id)),
+        )
+        .await;
+        let view: crate::vars::VariableView = serde_json::from_str(&body).unwrap();
+        assert!(view.global.is_empty(), "会话自带的提示词不产生全局行");
+        assert_eq!(view.effective.get("季节").map(String::as_str), Some("盛夏"));
 
         // 2) 存档：消息正文里标签**原样保留**
         let (_, body) = send(&app, get_req(&uri)).await;
@@ -1094,6 +1139,10 @@ mod tests {
         let outgoing: Vec<crate::vars::Outgoing> = serde_json::from_str(&body).unwrap();
         assert_eq!(outgoing[0].role, crate::vars::OutgoingRole::System);
         assert!(outgoing[0].content.starts_with("你是客栈老板。"));
+        assert!(
+            !outgoing[0].content.contains("<state>"),
+            "提示词里的状态块也要剔除，别把标签喂给模型"
+        );
         assert!(outgoing[0].content.contains("当前变量:"));
         assert!(outgoing[0].content.contains("HP = 12"));
         assert_eq!(outgoing[1].content, "我要住店");

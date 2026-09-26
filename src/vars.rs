@@ -21,7 +21,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::model::{Conversation, Message};
+use crate::model::Message;
 
 /// 键的长度上限（字符）。
 pub const KEY_MAX_CHARS: usize = 64;
@@ -341,40 +341,65 @@ pub struct VariableView {
     pub effective: BTreeMap<String, String>,
 }
 
-impl VariableView {
-    /// **现演一份快照**：库里只存正文，变量表是顺着消息重演出来的。
-    ///
-    /// - 顺序 = 消息顺序（`list_messages` 的 rowid 序），块内按出现顺序；
-    /// - 全局底子来自手写的 `config/variables.jsonc`（不是从消息推出来的）；
-    /// - 本会话的 `del` 写墓碑，能把全局同名的键挡住，不会从底下漏回来。
-    ///
-    /// 没有派生表 ⇒ 编辑/删除消息**不需要**"重算变量"：正文改了，重演结果自然就变了。
-    pub fn from_messages(
-        conversation: Uuid,
-        messages: &[Message],
-        global: &BTreeMap<String, String>,
-    ) -> Self {
-        let global_rows: Vec<VarOpRow> = global
-            .iter()
-            .enumerate()
-            .map(|(index, (key, value))| VarOpRow {
-                seq: index as i64,
-                scope: Scope::Global,
-                kind: OpKind::Set,
-                key: key.clone(),
-                value: Some(value.clone()),
-                message_id: None,
-                conversation_id: None,
-                // 手写配置没有"什么时候写的"这回事，用 0 表示"不适用"。
-                created_at: 0,
-            })
-            .collect();
+/// 生效的那份 system prompt 是从哪儿来的——决定它写的 `<state>` 块算"全局底子"
+/// 还是"本会话的起始状态"。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromptSource {
+    /// 会话没写自己的提示词，用的是 agent 的：这份底子所有用同一 agent 的会话共享。
+    Agent,
+    /// 会话自己写了提示词（覆盖了 agent 的）：这份底子只属于这条会话。
+    Conversation,
+}
 
+impl VariableView {
+    /// **现演一份快照**：库里只存正文与提示词，变量表是每次顺着它们重演出来的。
+    ///
+    /// 顺序（也就是 fold 的顺序）：
+    /// 1. 生效的 system prompt 里的 `<state>` 块 —— 这是**底子**，和消息里同一套语法；
+    /// 2. 然后是每条消息正文里的块，按消息顺序（`list_messages` 的 rowid 序）。
+    ///
+    /// ![来源] 底子来自 agent 的提示词时算全局（`Scope::Global`，别的会话共享），
+    /// 来自会话自己的提示词时算本会话（`Scope::Session`）。本会话的 `del` 写墓碑，
+    /// 能把全局同名的键挡住，不会从底下漏回来。
+    ///
+    /// 没有派生表 ⇒ 编辑/删除消息、改提示词**都不需要**"重算变量"：文本改了，现演结果自然变。
+    pub fn from_sources(
+        conversation: Uuid,
+        system_prompt: &str,
+        source: PromptSource,
+        messages: &[Message],
+    ) -> Self {
+        let prompt_scope = match source {
+            PromptSource::Agent => Scope::Global,
+            PromptSource::Conversation => Scope::Session,
+        };
+
+        let mut global_rows: Vec<VarOpRow> = Vec::new();
         let mut session_rows: Vec<VarOpRow> = Vec::new();
+
+        // 1) 底子：系统提示词里的块（没有块就是空底子，很正常）。
+        for op in parse(system_prompt).ops {
+            let row = VarOpRow {
+                seq: 0, // 下面按作用域重排
+                scope: prompt_scope,
+                kind: op.kind,
+                key: op.key,
+                value: op.value,
+                message_id: None,
+                conversation_id: Some(conversation),
+                created_at: 0,
+            };
+            match prompt_scope {
+                Scope::Global => global_rows.push(row),
+                Scope::Session => session_rows.push(row),
+            }
+        }
+
+        // 2) 然后才是消息，按顺序追加。
         for message in messages {
             for op in parse(&message.content).ops {
                 session_rows.push(VarOpRow {
-                    seq: session_rows.len() as i64,
+                    seq: 0,
                     scope: Scope::Session,
                     kind: op.kind,
                     key: op.key,
@@ -386,11 +411,18 @@ impl VariableView {
             }
         }
 
-        let global_dict = fold(&global_rows, Scope::Global);
-        let session_dict = fold(&session_rows, Scope::Session);
+        for (index, row) in global_rows.iter_mut().enumerate() {
+            row.seq = index as i64;
+        }
+        for (index, row) in session_rows.iter_mut().enumerate() {
+            row.seq = index as i64;
+        }
+
+        let global = fold(&global_rows, Scope::Global);
+        let session = fold(&session_rows, Scope::Session);
         Self {
-            global_values: values_of(&global_dict),
-            effective: effective(&global_dict, &session_dict),
+            global_values: values_of(&global),
+            effective: effective(&global, &session),
             global: global_rows,
             session: session_rows,
         }
@@ -435,11 +467,12 @@ pub struct Outgoing {
 /// 这是"剔除标签、只发当前状态"的唯一实现处：真模型后端接进来时直接用它，
 /// 不会有人再写第二条路径。
 pub fn build_outgoing(
-    conversation: &Conversation,
+    system_prompt: &str,
     messages: &[Message],
     values: &BTreeMap<String, String>,
 ) -> Vec<Outgoing> {
-    let mut system = conversation.system_prompt.trim().to_owned();
+    // 提示词里的 `<state>` 块和消息里一个待遇：**原样留在存档里，发出去时剔除**。
+    let mut system = parse(system_prompt).cleaned.trim().to_owned();
     if let Some(table) = render_table(values) {
         if !system.is_empty() {
             system.push_str("\n\n");
@@ -485,24 +518,46 @@ mod tests {
             msg("我继续往前走", 2000),
             msg("<state>del 火把</state>火把烧完了", 3000),
         ];
-        let mut global = BTreeMap::new();
-        global.insert("季节".to_owned(), "初冬".to_owned());
-        global.insert("HP".to_owned(), "99".to_owned());
+        // 底子在**系统提示词**里，和消息同一套语法；来自 agent ⇒ 算全局底子
+        let system_prompt = "你是跑团主持人。\n<state>set 季节 = 初冬\nset HP = 99</state>";
 
-        let view = VariableView::from_messages(conversation, &messages, &global);
-        assert_eq!(view.effective["HP"], "12", "本会话覆写全局同名键");
-        assert_eq!(view.effective["季节"], "初冬", "全局打底还在");
+        let view = VariableView::from_sources(
+            conversation,
+            system_prompt,
+            PromptSource::Agent,
+            &messages,
+        );
+        assert_eq!(view.effective["HP"], "12", "本会话覆写底子里的同名键");
+        assert_eq!(view.effective["季节"], "初冬", "底子还在");
         assert!(!view.effective.contains_key("火把"), "最后一句把它删了（墓碑挡住）");
         assert_eq!(view.global_values.len(), 2);
+        assert_eq!(view.global.len(), 2, "底子那两条算全局");
         assert_eq!(view.session.len(), 3, "三条操作都来自正文");
+        assert!(view.global[0].message_id.is_none(), "底子不来自某条消息");
         assert_eq!(view.session[0].message_id, Some(messages[0].id), "能追到是哪句写的");
         assert_eq!(view.session[0].created_at, 1000);
         assert_eq!(view.session[2].kind, OpKind::Delete);
 
         // 回溯 = 只喂到第 N 条：这就是"从空 fold 到第 N 条"
-        let rewind = VariableView::from_messages(conversation, &messages[..1], &global);
+        let rewind =
+            VariableView::from_sources(conversation, system_prompt, PromptSource::Agent, &messages[..1]);
         assert_eq!(rewind.effective["火把"], "1", "第一句之后火把还在");
         assert_eq!(rewind.session.len(), 2);
+    }
+
+    /// 会话自己写了提示词（覆盖了 agent 的）：它的底子只属于这条会话，不外溢成全局。
+    #[test]
+    fn conversation_prompt_base_is_session_scoped() {
+        let view = VariableView::from_sources(
+            Uuid::now_v7(),
+            "<state>set 地点 = 客栈</state>你是客栈老板。",
+            PromptSource::Conversation,
+            &[],
+        );
+        assert!(view.global.is_empty(), "会话自带的提示词不产生全局行");
+        assert_eq!(view.session.len(), 1);
+        assert_eq!(view.effective["地点"], "客栈");
+        assert_eq!(view.session[0].created_at, 0, "提示词没有时间，0 = 不适用");
     }
 
     use super::*;
@@ -518,19 +573,6 @@ mod tests {
             message_id: None,
             conversation_id: None,
             created_at: 0,
-        }
-    }
-
-    fn conversation(prompt: &str) -> Conversation {
-        Conversation {
-            id: Uuid::now_v7(),
-            title: String::new(),
-            system_prompt: prompt.to_owned(),
-            provider: "dummy".to_owned(),
-            model: "dummy".to_owned(),
-            agent_id: "default".to_owned(),
-            created_at: 0,
-            updated_at: 0,
         }
     }
 
@@ -663,11 +705,13 @@ mod tests {
             Role::User,
             "<state>set HP = 3\ndel 世界</state>我把地图烧了",
         )];
-        let global = BTreeMap::from([
-            ("世界".to_owned(), "临安".to_owned()),
-            ("HP".to_owned(), "10".to_owned()),
-        ]);
-        let view = VariableView::from_messages(Uuid::now_v7(), &messages, &global);
+        // 全局底子由 agent 的提示词提供（会话没有覆盖提示词时就是它）
+        let view = VariableView::from_sources(
+            Uuid::now_v7(),
+            "<state>set 世界 = 临安\nset HP = 10</state>你是说书人。",
+            PromptSource::Agent,
+            &messages,
+        );
 
         assert_eq!(view.global_values.get("HP").map(String::as_str), Some("10"));
         assert_eq!(view.effective.get("HP").map(String::as_str), Some("3"));
@@ -677,7 +721,8 @@ mod tests {
 
     #[test]
     fn outgoing_strips_tags_and_injects_current_table() {
-        let conversation = conversation("你是客栈老板。");
+        // 提示词里也能写 `<state>`（底子），发出去时同样要剔除
+        let system_prompt = "你是客栈老板。\n<state>set 季节 = 初冬</state>";
         let messages = vec![
             message(Role::User, "我要住店"),
             message(
@@ -689,7 +734,7 @@ mod tests {
             ("HP".to_owned(), "12".to_owned()),
             ("房号".to_owned(), "天字三号".to_owned()),
         ]);
-        let outgoing = build_outgoing(&conversation, &messages, &values);
+        let outgoing = build_outgoing(system_prompt, &messages, &values);
 
         assert_eq!(outgoing[0].role, OutgoingRole::System);
         assert_eq!(
@@ -709,18 +754,18 @@ mod tests {
 
     #[test]
     fn outgoing_without_variables_has_no_empty_table() {
-        let conversation = conversation("你是助手。");
+        let system_prompt = "你是助手。";
         let messages = vec![message(Role::User, "在吗")];
-        let outgoing = build_outgoing(&conversation, &messages, &BTreeMap::new());
+        let outgoing = build_outgoing(system_prompt, &messages, &BTreeMap::new());
         assert_eq!(outgoing[0].content, "你是助手。");
         assert_eq!(outgoing.len(), 2);
     }
 
     #[test]
     fn outgoing_without_system_prompt_omits_the_system_message() {
-        let conversation = conversation("   ");
+        let system_prompt = "   ";
         let messages = vec![message(Role::User, "在吗")];
-        let outgoing = build_outgoing(&conversation, &messages, &BTreeMap::new());
+        let outgoing = build_outgoing(system_prompt, &messages, &BTreeMap::new());
         assert_eq!(outgoing.len(), 1);
         assert_eq!(outgoing[0].role, OutgoingRole::User);
     }
