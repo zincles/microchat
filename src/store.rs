@@ -340,6 +340,20 @@ impl Store {
         Ok(())
     }
 
+    /// 把引用某个 agent 的会话改指到另一个 id（**agent 重命名**时用）。
+    ///
+    /// `conversations.agent_id` 是软引用（没有外键）：agent 住在 `agents.jsonc` 里，
+    /// 库里管不着。所以重命名必须由 API 一处负责把引用搬过去，否则会话会指向一个
+    /// 不存在的 agent——那不会报错，只会**静默**丢掉提示词与变量底子。
+    /// 返回搬了多少条会话。
+    pub fn rename_agent_references(&mut self, old: &str, new: &str) -> Result<usize> {
+        let changed = self.conn.execute(
+            "UPDATE conversations SET agent_id = ?1 WHERE agent_id = ?2",
+            params![new, old],
+        )?;
+        Ok(changed)
+    }
+
     pub fn set_conversation_agent(&mut self, conversation_id: Uuid, agent_id: &str) -> Result<()> {
         let touched = self.conn.execute(
             "UPDATE conversations SET agent_id = ?1 WHERE id = ?2",

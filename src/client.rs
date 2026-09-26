@@ -107,6 +107,8 @@ pub enum Command {
         base: String,
         token: Option<String>,
         id: String,
+        /// 换 id（重命名）：后端会把 `default_agent` 与所有会话的引用一起搬。
+        new_id: Option<String>,
         name: String,
         system_prompt: String,
     },
@@ -525,10 +527,15 @@ fn handle(http: &reqwest::blocking::Client, command: Command) -> Event {
             base,
             token,
             id,
+            new_id,
             name,
             system_prompt,
         } => {
-            let body = serde_json::json!({ "name": name, "system_prompt": system_prompt });
+            let body = serde_json::json!({
+                "name": name,
+                "system_prompt": system_prompt,
+                "new_id": new_id,
+            });
             let result = write(
                 http,
                 reqwest::Method::PATCH,

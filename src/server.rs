@@ -624,6 +624,8 @@ pub struct CreateAgentReq {
 pub struct UpdateAgentReq {
     pub name: Option<String>,
     pub system_prompt: Option<String>,
+    /// 改 id = **重命名**：连同 `default_agent` 与所有会话的引用一起搬（空串 = 不改）。
+    pub new_id: Option<String>,
 }
 
 async fn list_agents(State(state): State<AppState>) -> Result<Json<AgentsConfig>, ApiError> {
@@ -671,17 +673,46 @@ async fn update_agent(
     let path = state.paths.agents_jsonc();
     let mut config = AgentsConfig::load(&path)?;
 
-    // 内置默认 agent 不在文件里：编辑它 = 先把它落地成文件里的 agent，再改。
+    // 定位：文件里没有这个 id、但能 resolve 出来（内置默认 agent）→ 先把它落地到文件再改。
     if config.get(&id).is_none() {
         if let Some(builtin) = config.resolve(&id) {
             config.agents.insert(0, builtin);
+        }
+    }
+    if config.get(&id).is_none() {
+        return Err(ApiError::not_found());
+    }
+
+    // 改 id = **重命名**：库里的会话引用先搬，再动文件。
+    //
+    // 顺序是刻意的——库改了、文件写失败，还能再跑一次（那时旧 id 仍在文件里）；
+    // 反过来先把旧 id 从文件里抹掉，就再也找不到它，会话会永久指向一个不存在的 agent
+    // （而 `resolve()` 找不到只是静默回空提示词，不报错——那是最难查的一类问题）。
+    let mut current = id.clone();
+    if let Some(new_id) = req.new_id {
+        let new_id = new_id.trim().to_owned();
+        if !new_id.is_empty() && new_id != current {
+            if config.get(&new_id).is_some() {
+                return Err(ApiError::conflict("已有同名 agent"));
+            }
+            state.lock()?.rename_agent_references(&current, &new_id)?;
+            let agent = config
+                .agents
+                .iter_mut()
+                .find(|agent| agent.id == current)
+                .ok_or_else(ApiError::not_found)?;
+            agent.id = new_id.clone();
+            if config.default_agent == current {
+                config.default_agent = new_id.clone();
+            }
+            current = new_id;
         }
     }
 
     let agent = config
         .agents
         .iter_mut()
-        .find(|agent| agent.id == id)
+        .find(|agent| agent.id == current)
         .ok_or_else(ApiError::not_found)?;
     if let Some(name) = req.name {
         agent.name = name;
@@ -690,9 +721,11 @@ async fn update_agent(
         agent.system_prompt = prompt;
     }
     let updated = agent.clone();
+    config.validate()?;
     config.save(&path)?;
     Ok(Json(updated))
 }
+
 
 async fn delete_agent(
     State(state): State<AppState>,
@@ -1233,6 +1266,69 @@ mod tests {
             .unwrap();
         let (status, _) = send(&app, again).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    /// 改 agent 的 id = 重命名：会话引用和 default_agent 一起搬，冲突要拦住。
+    #[tokio::test]
+    async fn renaming_an_agent_moves_every_reference() {
+        let (app, dir) = app_with_env(
+            None,
+            &[(
+                "agents.jsonc",
+                r#"{ "default_agent": "ze",
+                     "agents": [ { "id": "ze", "name": "测试助手", "system_prompt": "旧提示词" } ] }"#,
+            )],
+        );
+        let conv = create(
+            &app,
+            r#"{"provider":"dummy","model":"dummy","agent_id":"ze"}"#,
+        )
+        .await;
+        assert_eq!(conv.agent_id, "ze");
+
+        let (status, body) = send(
+            &app,
+            json_req("PATCH", "/api/v1/agents/ze", r#"{"new_id":"跑团","name":"跑团主持人"}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let agent: Agent = serde_json::from_str(&body).unwrap();
+        assert_eq!(agent.id, "跑团");
+        assert_eq!(agent.name, "跑团主持人");
+
+        // 会话引用跟着搬（软引用，只能由这一处维护）
+        let (_, body) = send(&app, get_req("/api/v1/conversations")).await;
+        let list: Vec<Conversation> = serde_json::from_str(&body).unwrap();
+        assert_eq!(list[0].agent_id, "跑团", "会话引用要跟着搬");
+
+        // default_agent 跟着搬
+        let (_, body) = send(&app, get_req("/api/v1/agents")).await;
+        let config: AgentsConfig = serde_json::from_str(&body).unwrap();
+        assert_eq!(config.default_agent, "跑团");
+
+        // 旧 id 不存在了
+        let (status, _) = send(
+            &app,
+            json_req("PATCH", "/api/v1/agents/ze", r#"{"name":"x"}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        // 改到已存在的 id → 409
+        let (status, _) = send(
+            &app,
+            json_req("POST", "/api/v1/agents", r#"{"id":"另一个","name":"另一个"}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        let (status, _) = send(
+            &app,
+            json_req("PATCH", "/api/v1/agents/跑团", r#"{"new_id":"另一个"}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]

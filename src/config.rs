@@ -327,9 +327,14 @@ impl AgentsConfig {
         write_json_pretty(path, self)
     }
 
-    /// 默认 agent：`default_agent` 指定的那个，找不到则取第一个。
-    pub fn default_agent(&self) -> Option<&Agent> {
-        self.get(&self.default_agent).or_else(|| self.agents.first())
+    /// 默认 agent：`default_agent` 指定的那个；文件里没有这个 id，就退回**内置默认**
+    /// （`effective()` 里补的那个），最后才考虑文件里的第一个。
+    ///
+    /// 别写成 `get(...).or_else(first)`：那会把"没配 default_agent"变成
+    /// "随便挑一个文件里的 agent"——新建会话可能带着某个测试 agent 的提示词出门。
+    pub fn default_agent(&self) -> Option<Agent> {
+        self.resolve(&self.default_agent)
+            .or_else(|| self.agents.first().cloned())
     }
 
     pub fn validate(&self) -> Result<()> {
@@ -481,6 +486,21 @@ mod tests {
         // 显示名可选：写了读得到，没写就是 None（客户端回退到 id）
         assert_eq!(cfg.get("openrouter").unwrap().name.as_deref(), Some("OpenRouter"));
         assert_eq!(cfg.get("local").unwrap().name, None);
+    }
+
+    #[test]
+    fn default_agent_falls_back_to_the_builtin_not_the_first_file_agent() {
+        let cfg: AgentsConfig = jsonc_parser::parse_to_serde_value(
+            r#"{ "agents": [ { "id": "ze", "name": "测试", "system_prompt": "hi" } ] }"#,
+            &jsonc_parser::ParseOptions::default(),
+        )
+        .unwrap();
+        // 没配 default_agent（默认值 "default"），文件里也没有 default
+        // → 该用**内置默认**，而不是"随便挑第一个"
+        assert_eq!(
+            cfg.default_agent().map(|agent| agent.id),
+            Some(crate::model::DEFAULT_AGENT_ID.to_owned())
+        );
     }
 
     #[test]
