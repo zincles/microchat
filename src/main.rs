@@ -465,6 +465,8 @@ struct App {
     deferred: Option<DeferredMenu>,
     /// 右键菜单要用的选区快照（见 `SelectionSnapshot`）。
     menu_selection: Option<SelectionSnapshot>,
+    /// 会话列表最上面那块系统提示词是否展开（默认只露几行：它常常是整篇世界观）。
+    system_prompt_open: bool,
 }
 
 impl App {
@@ -520,6 +522,7 @@ impl App {
             composer_id: None,
             deferred: None,
             menu_selection: None,
+            system_prompt_open: false,
         };
         app.connect();
         app
@@ -1563,6 +1566,8 @@ impl App {
         let mut max_height = 1.0_f32;
 
         for conversation in &self.conversations {
+            // 助手节点写 agent 的名字（和会话里的消息对齐）
+            let agent_name = self.agent_label(&conversation.agent_id);
             // 一列的块：会话（根）→ 系统提示词 → 用户/助手交替，**自上而下**
             let mut nodes: Vec<(GraphNodeKind, String)> = Vec::new();
             let title = if conversation.title.is_empty() {
@@ -1585,8 +1590,8 @@ impl App {
                 .enumerate()
             {
                 let (kind, who) = match message.role {
-                    ApiRole::User => (GraphNodeKind::User, "你"),
-                    ApiRole::Assistant => (GraphNodeKind::Assistant, "助手"),
+                    ApiRole::User => (GraphNodeKind::User, "用户"),
+                    ApiRole::Assistant => (GraphNodeKind::Assistant, agent_name.as_str()),
                 };
                 let excerpt: String = message.content.chars().take(12).collect();
                 nodes.push((kind, format!("{} {}·{}", index + 1, who, excerpt)));
@@ -2060,6 +2065,64 @@ impl App {
             });
     }
 
+    /// 会话最上面那块：这次对话**真正会用到的系统提示词**（会话级覆盖优先，否则 agent 的）。
+    ///
+    /// 默认只露几行——它常常是整篇世界观，全摊开会把消息挤下去；要看全得按「展开」。
+    /// 取 `&self`：调用点在消息闭包里，那里借不到可变的 self，展开动作走 `toggle` 带出去。
+    fn system_prompt_row(
+        &self,
+        ui: &mut egui::Ui,
+        agent_label: &str,
+        prompt: Option<&str>,
+        toggle: &mut bool,
+    ) {
+        egui::Frame::NONE
+            .fill(ui.visuals().extreme_bg_color)
+            .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
+            .corner_radius(egui::CornerRadius::same(6))
+            .inner_margin(egui::Margin::same(8))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.colored_label(
+                        ui.visuals().weak_text_color(),
+                        RichText::new(format!("系统提示词 · {agent_label}")).strong(),
+                    );
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if ui
+                            .small_button(if self.system_prompt_open { "收起" } else { "展开" })
+                            .clicked()
+                        {
+                            *toggle = true;
+                        }
+                    });
+                });
+                ui.add_space(4.0);
+
+                let Some(prompt) = prompt else {
+                    ui.label(
+                        RichText::new("这条会话没有系统提示词：会话与 agent 都没配，模型收到的只有历史").weak(),
+                    );
+                    return;
+                };
+                if self.system_prompt_open {
+                    ui.label(RichText::new(prompt).weak());
+                    ui.add_space(2.0);
+                    ui.label(RichText::new("发送时还会在后面注入当前变量表").weak().small());
+                } else {
+                    ui.label(RichText::new(summarize_lines(prompt)).weak());
+                    let lines = prompt.lines().count();
+                    if lines > SYSTEM_PROMPT_PREVIEW_LINES {
+                        ui.label(
+                            RichText::new(format!("（共 {lines} 行，点「展开」看全文）"))
+                                .weak()
+                                .small(),
+                        );
+                    }
+                }
+            });
+        ui.add_space(6.0);
+    }
+
     fn chat_view(&mut self, ui: &mut egui::Ui, composing: bool, enter: bool) {
         let Some(current) = self.current else {
             ui.centered_and_justified(|ui| {
@@ -2175,12 +2238,16 @@ impl App {
             .get(&current)
             .map(Vec::as_slice)
             .unwrap_or(&[]);
-        if messages.is_empty() {
-            ui.centered_and_justified(|ui| {
-                ui.label(RichText::new("输入消息开始对话").weak());
-            });
-            return;
-        }
+        // 进闭包前把"要显示的名字与提示词"算好：闭包里只借得到 self 的不可变引用。
+        let conversation = self.conversations.iter().find(|c| c.id == current).cloned();
+        let assistant_label = conversation
+            .as_ref()
+            .map(|c| self.agent_label(&c.agent_id))
+            .unwrap_or_else(|| "助手".to_owned());
+        let system_prompt = conversation
+            .as_ref()
+            .and_then(|c| self.effective_system_prompt(c));
+        let mut toggle_system_prompt = false;
         // 快照与延迟动作在闭包里只能用局部变量：进来取出来，出去再放回去
         let mut local_selection = self.menu_selection.take();
         let mut deferred: Option<DeferredMenu> = None;
@@ -2199,10 +2266,29 @@ impl App {
                 egui::Frame::NONE
                     .inner_margin(egui::Margin::symmetric(16, 6))
                     .show(ui, |ui| {
+                        // 第一句永远是系统提示词：它不在 messages 里（组装出站消息时才注入），
+                        // 所以单独排一块，让人看得见"这次对话到底被交代了什么"。
+                        self.system_prompt_row(
+                            ui,
+                            &assistant_label,
+                            system_prompt.as_deref(),
+                            &mut toggle_system_prompt,
+                        );
+                        if messages.is_empty() {
+                            ui.add_space(6.0);
+                            ui.label(RichText::new("还没有消息：在下面的输入框里说第一句").weak());
+                        }
                         for message in messages {
+                            // 角色只靠左上角的名字区分：用户是「用户」，助手是**这个 agent 的名字**
+                            // （一个会话一个 agent，所以整列助手都写它，而不是"助手"两个字）。
                             let (label, color) = match message.role {
-                                ApiRole::User => ("你", Color32::from_rgb(0x2f, 0x6f, 0xe0)),
-                                ApiRole::Assistant => ("助手", Color32::from_rgb(0x2f, 0x9e, 0x44)),
+                                ApiRole::User => {
+                                    ("用户".to_owned(), Color32::from_rgb(0x2f, 0x6f, 0xe0))
+                                }
+                                ApiRole::Assistant => (
+                                    assistant_label.clone(),
+                                    Color32::from_rgb(0x2f, 0x9e, 0x44),
+                                ),
                             };
                             let is_editing = editing
                                 .as_ref()
@@ -2302,6 +2388,9 @@ impl App {
                 message,
                 content,
             });
+        }
+        if toggle_system_prompt {
+            self.system_prompt_open = !self.system_prompt_open;
         }
         self.editing = editing;
     }
@@ -2644,6 +2733,32 @@ fn column_width(sizes: &[egui::Vec2]) -> f32 {
 }
 
 /// 真正会发给模型的系统提示词：会话级覆盖优先，否则用 agent 的。
+/// 系统提示词默认露几行、多少字符（先到先算）。
+const SYSTEM_PROMPT_PREVIEW_LINES: usize = 4;
+const SYSTEM_PROMPT_PREVIEW_CHARS: usize = 400;
+
+/// 摘要：最多 `LINES` 行、`CHARS` 个字符（按字符数截，不是字节——中文一个字三字节）。
+/// 有省略就在末尾说还剩多少行，别让人以为提示词就这么短。
+fn summarize_lines(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let kept = lines.len().min(SYSTEM_PROMPT_PREVIEW_LINES);
+    let mut out = lines[..kept].join("\n");
+    let chars = out.chars().count();
+    if chars > SYSTEM_PROMPT_PREVIEW_CHARS {
+        out = out.chars().take(SYSTEM_PROMPT_PREVIEW_CHARS).collect();
+        out.push('…');
+    }
+    let dropped = lines.len().saturating_sub(kept);
+    if dropped > 0 {
+        out.push_str(&format!("\n…（还有 {dropped} 行）"));
+    }
+    // 只在真的截过时才补省略号
+    if dropped == 0 && chars <= SYSTEM_PROMPT_PREVIEW_CHARS {
+        return text.to_owned();
+    }
+    out
+}
+
 fn resolve_system_prompt(conversation_prompt: &str, agent_prompt: Option<&str>) -> Option<String> {
     let conversation_prompt = conversation_prompt.trim();
     if !conversation_prompt.is_empty() {
@@ -2714,15 +2829,14 @@ fn header_lines(headers: &BTreeMap<String, String>) -> String {
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::{
-        column_width, slice_chars, stacked_centers, update_selection_snapshot, SelectionSnapshot,
-    };
+    use super::{SelectionSnapshot, column_width, slice_chars, stacked_centers, update_selection_snapshot};
     use microchat::config::{Agent, ProviderKind};
     use microchat::registry::ProviderView;
 
     use super::{
         agent_draft_differs, flat_model_rows, header_lines, parse_header_lines,
-        provider_draft_differs, resolve_system_prompt,
+        provider_draft_differs, resolve_system_prompt, summarize_lines,
+        SYSTEM_PROMPT_PREVIEW_CHARS,
     };
 
     #[test]
@@ -3189,6 +3303,26 @@ mod tests {
 
         // 快照给出的区间正是"要被切掉的那段"（真正的删除由控件自己执行）
         assert_eq!(slice_chars(INITIAL, snapshot.start, snapshot.end), INITIAL);
+    }
+
+    #[test]
+    fn system_prompt_preview_stops_early_and_says_what_is_left() {
+        let short = "第一行\n第二行";
+        assert_eq!(summarize_lines(short), short, "没超就原样给");
+
+        let long: String = (1..=9)
+            .map(|i| format!("第 {i} 行"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let out = summarize_lines(&long);
+        assert!(out.starts_with("第 1 行\n第 2 行"));
+        assert!(!out.contains("第 5 行"), "超过 4 行的不进预览");
+        assert!(out.ends_with("（还有 5 行）"), "要说清还剩多少：{out}");
+
+        let one_long_line = "字".repeat(900);
+        let out = summarize_lines(&one_long_line);
+        assert_eq!(out.chars().filter(|c| *c == '字').count(), SYSTEM_PROMPT_PREVIEW_CHARS);
+        assert!(out.ends_with('…'), "按字符截断，别把中文切坏");
     }
 
     #[test]
