@@ -2774,6 +2774,7 @@ mod tests {
 
         let provider = ProviderView {
             id: "local".to_owned(),
+            name: None,
             kind: ProviderKind::OpenAiCompat,
             base_url: "http://a/v1".to_owned(),
             headers: BTreeMap::new(),

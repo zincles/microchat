@@ -20,6 +20,8 @@ pub struct ModelView {
     pub owned_by: Option<String>,
     pub context_length: Option<i64>,
     pub max_output: Option<i64>,
+    /// 用户覆盖的显示名（未覆盖时是 `None`；`name` 已是三级回退后的结果）。
+    pub display_name: Option<String>,
     /// 用户覆盖的采样参数。
     pub params: serde_json::Value,
     /// 上游声明的参数信息（`{supported, default}`，可能为空对象）。
@@ -29,6 +31,8 @@ pub struct ModelView {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderView {
     pub id: String,
+    /// 配置里的显示名（可选）；客户端缺省时回退到 `id`。
+    pub name: Option<String>,
     pub kind: ProviderKind,
     pub base_url: String,
     pub headers: BTreeMap<String, String>,
@@ -60,12 +64,44 @@ pub fn views(
             };
             Ok(ProviderView {
                 id: provider.id.clone(),
+                name: provider.name.clone(),
                 kind: provider.kind,
                 base_url: provider.base_url.clone(),
                 headers: provider.headers.clone(),
                 has_key: secrets.get(&provider.id).is_some_and(|key| !key.is_empty()),
                 last_refresh_at,
                 models,
+            })
+        })
+        .collect()
+}
+
+/// 扁平化后的模型条目：给"只选一个模型"的下拉用（跨 provider）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelListItem {
+    /// provider 的主键 handle（配置里的 `id`）。
+    pub provider: String,
+    /// provider 的显示名（可选）；缺省时客户端回退到 `provider`。
+    pub provider_name: Option<String>,
+    /// 上游裸模型 id，原样转发给后端用。
+    pub upstream_id: String,
+    /// 模型显示名（用户覆盖 → 上游名 → prettify 三级回退后的结果）。
+    pub name: String,
+    /// 用户覆盖的显示名（未覆盖时 `None`）。
+    pub display_name: Option<String>,
+}
+
+/// 把嵌套的 provider×模型 视图拍平成一维列表；顺序 = provider 顺序 × 各自模型顺序。
+pub fn model_list(views: &[ProviderView]) -> Vec<ModelListItem> {
+    views
+        .iter()
+        .flat_map(|provider| {
+            provider.models.iter().map(|model| ModelListItem {
+                provider: provider.id.clone(),
+                provider_name: provider.name.clone(),
+                upstream_id: model.upstream_id.clone(),
+                name: model.name.clone(),
+                display_name: model.display_name.clone(),
             })
         })
         .collect()
@@ -79,6 +115,7 @@ fn model_view(entry: ModelEntry) -> ModelView {
         owned_by: entry.owned_by.clone(),
         context_length: entry.context_length,
         max_output: entry.max_output,
+        display_name: entry.display_name.clone(),
         params: entry.params_json(),
         upstream_params: entry.upstream_params_json(),
     }
@@ -94,6 +131,7 @@ fn dummy_model_view() -> ModelView {
         owned_by: None,
         context_length: None,
         max_output: None,
+        display_name: None,
         params: serde_json::Value::Object(Default::default()),
         upstream_params: serde_json::Value::Object(Default::default()),
     }
@@ -107,7 +145,7 @@ mod tests {
     use crate::model::DiscoveredModel;
     use crate::store::Store;
 
-    use super::views;
+    use super::{model_list, views};
 
     fn provider(id: &str) -> ProviderConfig {
         ProviderConfig {
@@ -115,6 +153,63 @@ mod tests {
             base_url: format!("http://{id}/v1"),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn flat_model_list_carries_provider_and_both_names() {
+        let mut store = Store::open_in_memory().unwrap();
+        store
+            .apply_discovery(
+                "open",
+                &[DiscoveredModel {
+                    upstream_id: "gpt-5.6-sol".to_owned(),
+                    upstream_name: Some("GPT 5.6 Sol".to_owned()),
+                    ..Default::default()
+                }],
+            )
+            .unwrap();
+        let config = ProvidersConfig {
+            providers: vec![ProviderConfig {
+                id: "open".to_owned(),
+                name: Some("OpenAI".to_owned()),
+                base_url: "http://open/v1".to_owned(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let list = model_list(&views(&store, &config, &BTreeMap::new()).unwrap());
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].provider, "open");
+        assert_eq!(list[0].provider_name.as_deref(), Some("OpenAI"));
+        assert_eq!(list[0].upstream_id, "gpt-5.6-sol");
+        assert_eq!(list[0].name, "GPT 5.6 Sol", "没被覆盖时用上游显示名");
+        assert_eq!(list[0].display_name, None, "用户覆盖单独暴露");
+
+        store
+            .set_model_display_name("open", "gpt-5.6-sol", Some("小模型"))
+            .unwrap();
+        let list = model_list(&views(&store, &config, &BTreeMap::new()).unwrap());
+        assert_eq!(list[0].name, "小模型", "覆盖后 name 跟着变");
+        assert_eq!(list[0].display_name.as_deref(), Some("小模型"));
+    }
+
+    #[test]
+    fn flat_list_includes_the_virtual_dummy_model() {
+        let store = Store::open_in_memory().unwrap();
+        let config = ProvidersConfig {
+            providers: vec![ProviderConfig {
+                id: "dummy".to_owned(),
+                kind: ProviderKind::Dummy,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let list = model_list(&views(&store, &config, &BTreeMap::new()).unwrap());
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].provider, "dummy");
+        assert_eq!(list[0].upstream_id, crate::chat::DUMMY_MODEL_ID);
+        assert_eq!(list[0].provider_name, None, "没配名字时回退由客户端做");
     }
 
     #[test]

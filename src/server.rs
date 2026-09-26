@@ -88,6 +88,7 @@ pub fn router(state: AppState) -> Router {
         .route("/variables", get(get_global_variables))
         .route("/health", get(health))
         .route("/providers", get(list_providers).post(create_provider))
+        .route("/models", get(list_all_models))
         .route("/models/probe", post(probe_models))
         .route("/providers/{id}", patch(update_provider))
         .route("/providers/{id}/refresh", post(refresh_provider))
@@ -318,6 +319,19 @@ async fn health() -> Json<serde_json::Value> {
         "status": "ok",
         "version": env!("CARGO_PKG_VERSION"),
     }))
+}
+
+/// 跨 provider 的**扁平模型列表**：给"只选一个模型"的下拉用。
+/// 每项都带 `provider` 与显示名（provider 名可选，缺省回退到 id 由客户端做）。
+async fn list_all_models(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<registry::ModelListItem>>, ApiError> {
+    let config = ProvidersConfig::load(&state.paths.providers_jsonc())?;
+    let secrets = config::load_secrets(&state.paths.secrets_json())?;
+    let store = state.lock()?;
+    Ok(Json(registry::model_list(&registry::views(
+        &store, &config, &secrets,
+    )?)))
 }
 
 /// provider × 模型 的合并视图（配置来自 `providers.jsonc`，模型来自数据库）。
@@ -1016,6 +1030,36 @@ mod tests {
             !outgoing.iter().any(|item| item.content.contains("<state>")),
             "任何一条都不该带着标签发出去"
         );
+    }
+
+    #[tokio::test]
+    async fn models_endpoint_is_flat_and_respects_auth() {
+        let (app, dir) = app_with_env(
+            Some("s3cret"),
+            &[(
+                "providers.jsonc",
+                r#"{ "providers": [ { "id": "dummy", "kind": "dummy", "name": "假模型" } ] }"#,
+            )],
+        );
+
+        let (status, _) = send(&app, get_req("/api/v1/models")).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "没带口令应当 401");
+
+        let authed = Request::builder()
+            .uri("/api/v1/models")
+            .header("authorization", "Bearer s3cret")
+            .body(Body::empty())
+            .unwrap();
+        let (status, body) = send(&app, authed).await;
+        assert_eq!(status, StatusCode::OK);
+        let list: Vec<crate::registry::ModelListItem> = serde_json::from_str(&body).unwrap();
+        assert_eq!(list.len(), 1, "dummy 的虚拟模型也在扁平列表里");
+        assert_eq!(list[0].provider, "dummy");
+        assert_eq!(list[0].provider_name.as_deref(), Some("假模型"));
+        assert_eq!(list[0].upstream_id, crate::chat::DUMMY_MODEL_ID);
+        assert_eq!(list[0].name, "Dummy（测试用空模型）");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]

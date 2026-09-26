@@ -142,6 +142,10 @@ pub enum ProviderKind {
 #[serde(default)]
 pub struct ProviderConfig {
     pub id: String,
+    /// 显示名（可选）：前端下拉里显示它，缺省时回退到 `id`。
+    /// 不写进文件时保持文件干净（`skip_serializing_if`），用户手写也能被读到。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub kind: ProviderKind,
     pub base_url: String,
     /// 额外 HTTP 头，如 OpenRouter 的 `X-Title`。
@@ -155,6 +159,7 @@ impl Default for ProviderConfig {
     fn default() -> Self {
         Self {
             id: String::new(),
+            name: None,
             kind: ProviderKind::default(),
             base_url: String::new(),
             headers: BTreeMap::new(),
@@ -462,7 +467,8 @@ mod tests {
                 // 本地 Ollama
                 "providers": [
                     { "id": "local", "base_url": "http://127.0.0.1:11434/v1" },
-                    { "id": "openrouter", "base_url": "https://openrouter.ai/api/v1",
+                    { "id": "openrouter", "name": "OpenRouter",
+                      "base_url": "https://openrouter.ai/api/v1",
                       "headers": { "X-Title": "microchat" }, },
                 ],
             }"#,
@@ -472,6 +478,9 @@ mod tests {
         cfg.validate().unwrap();
         assert_eq!(cfg.providers.len(), 2);
         assert_eq!(cfg.get("openrouter").unwrap().headers["X-Title"], "microchat");
+        // 显示名可选：写了读得到，没写就是 None（客户端回退到 id）
+        assert_eq!(cfg.get("openrouter").unwrap().name.as_deref(), Some("OpenRouter"));
+        assert_eq!(cfg.get("local").unwrap().name, None);
     }
 
     #[test]
