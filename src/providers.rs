@@ -46,16 +46,39 @@ pub struct Client {
 
 impl Client {
     pub fn new(provider: &ProviderConfig, api_key: Option<String>) -> Result<Self> {
-        Self::from_parts(&provider.base_url, api_key, provider.headers.clone())
+        Self::build(
+            &provider.base_url,
+            api_key,
+            provider.headers.clone(),
+            provider.timeouts.clone(),
+        )
     }
 
-    /// 从 **url + apikey** 直接构造，不经过 `providers.jsonc`——供"先探测再保存"使用。
+    /// 从 **url + apikey** 直接构造，不经过 `providers.json`——供"先探测再保存"使用。
     pub fn from_parts(
         base_url: &str,
         api_key: Option<String>,
         headers: BTreeMap<String, String>,
     ) -> Result<Self> {
-        let http = reqwest::Client::builder().build().map_err(Error::Http)?;
+        Self::build(
+            base_url,
+            api_key,
+            headers,
+            crate::config::Timeouts::default(),
+        )
+    }
+
+    fn build(
+        base_url: &str,
+        api_key: Option<String>,
+        headers: BTreeMap<String, String>,
+        timeouts: crate::config::Timeouts,
+    ) -> Result<Self> {
+        let http = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(timeouts.connect_secs.max(1)))
+            .timeout(std::time::Duration::from_secs(timeouts.total_secs.max(1)))
+            .build()
+            .map_err(Error::Http)?;
         Ok(Self {
             http,
             base_url: base_url.trim_end_matches('/').to_owned(),

@@ -138,6 +138,18 @@ pub enum Command {
         token: Option<String>,
         conversation: uuid::Uuid,
     },
+    /// 轮询某个会话这一轮的状态（`pending` → `idle` / `error`）。
+    ConversationStatus {
+        base: String,
+        token: Option<String>,
+        conversation: uuid::Uuid,
+    },
+    /// 停止这一轮：摘登记 → abort 后台任务 → 删掉还空着的占位消息。
+    StopTurn {
+        base: String,
+        token: Option<String>,
+        conversation: uuid::Uuid,
+    },
     /// 把某个 agent 设为 `agents.json` 的 `default_agent`。
     MakeDefaultAgent {
         base: String,
@@ -170,7 +182,7 @@ pub enum Event {
     /// `Ok` = 后端版本号。
     Checked(Result<String, String>),
     Providers(Result<Vec<ProviderView>, String>),
-    Conversations(Result<Vec<microchat::model::Conversation>, String>),
+    Conversations(Result<Vec<microchat::server::ConversationView>, String>),
     Messages {
         conversation: uuid::Uuid,
         result: Result<Vec<microchat::model::Message>, String>,
@@ -194,14 +206,25 @@ pub enum Event {
         conversation: uuid::Uuid,
         result: Result<(), String>,
     },
+    /// 发送被受理：`202` + 回执（**不含回复正文**）。回复在后台生成，接着轮询状态。
     Turn {
         conversation: uuid::Uuid,
-        result: Result<microchat::server::ChatTurn, String>,
+        result: Result<microchat::server::TurnAccepted, String>,
     },
-    /// 重新发送的结果：树上多了一条兄弟，界面应当重新拉消息与兄弟信息。
+    /// 重新发送被受理：树上多了一条兄弟，界面应当重新拉消息与兄弟信息。
     Resent {
         conversation: uuid::Uuid,
-        result: Result<microchat::server::ChatTurn, String>,
+        result: Result<microchat::server::TurnAccepted, String>,
+    },
+    /// 轮询到的这一轮状态：`idle` 之外都别让用户再发。
+    TurnStatus {
+        conversation: uuid::Uuid,
+        result: Result<microchat::turn::TurnStatus, String>,
+    },
+    /// 「停止」的结果：`{"stopped": bool}`（没在跑也是 200）。
+    Stopped {
+        conversation: uuid::Uuid,
+        result: Result<serde_json::Value, String>,
     },
     /// 切分支的结果：路径变了，界面应当重新拉消息。
     LeafSwitched {
@@ -352,6 +375,12 @@ impl Command {
             Self::Resend { conversation, .. } => {
                 format!("POST /conversations/{}/resend", &conversation.to_string()[..8])
             }
+            Self::ConversationStatus { conversation, .. } => {
+                format!("GET /conversations/{}/status", &conversation.to_string()[..8])
+            }
+            Self::StopTurn { conversation, .. } => {
+                format!("POST /conversations/{}/stop", &conversation.to_string()[..8])
+            }
             Self::DeleteAgent { id, .. } => format!("DELETE /agents/{id}"),
             Self::DebugState { .. } => "GET /debug/state".to_owned(),
             Self::DebugFile { name, .. } => format!("GET /debug/file/{name}"),
@@ -405,6 +434,14 @@ fn summarize(event: &Event) -> String {
         },
         Event::Turn { result, .. } => match result {
             Ok(turn) => format!("OK 后端 {}", turn.backend),
+            Err(message) => format!("失败: {message}"),
+        },
+        Event::TurnStatus { result, .. } => match result {
+            Ok(status) => format!("OK {:?} {} 字", status.phase, status.chars),
+            Err(message) => format!("失败: {message}"),
+        },
+        Event::Stopped { result, .. } => match result {
+            Ok(value) => format!("OK stopped={}", value["stopped"]),
             Err(message) => format!("失败: {message}"),
         },
         Event::ConversationUpdated(Ok(_)) => "OK".to_owned(),
@@ -620,6 +657,40 @@ fn handle(http: &reqwest::blocking::Client, command: Command) -> Event {
                 reqwest::Method::POST,
                 &format!(
                     "{}/api/v1/conversations/{conversation}/resend",
+                    base.trim_end_matches('/')
+                ),
+                token.as_deref(),
+                serde_json::json!({}),
+            ),
+        },
+        Command::ConversationStatus {
+            base,
+            token,
+            conversation,
+        } => Event::TurnStatus {
+            conversation,
+            result: write_json(
+                http,
+                reqwest::Method::GET,
+                &format!(
+                    "{}/api/v1/conversations/{conversation}/status",
+                    base.trim_end_matches('/')
+                ),
+                token.as_deref(),
+                serde_json::json!({}),
+            ),
+        },
+        Command::StopTurn {
+            base,
+            token,
+            conversation,
+        } => Event::Stopped {
+            conversation,
+            result: write_json(
+                http,
+                reqwest::Method::POST,
+                &format!(
+                    "{}/api/v1/conversations/{conversation}/stop",
                     base.trim_end_matches('/')
                 ),
                 token.as_deref(),
@@ -1054,6 +1125,8 @@ mod tests {
             Event::ConversationDeleted { .. } => "ConversationDeleted",
             Event::Turn { .. } => "Turn",
             Event::Resent { .. } => "Resent",
+            Event::TurnStatus { .. } => "TurnStatus",
+            Event::Stopped { .. } => "Stopped",
             Event::LeafSwitched { .. } => "LeafSwitched",
             Event::Branches { .. } => "Branches",
             Event::ConversationUpdated(_) => "ConversationUpdated",

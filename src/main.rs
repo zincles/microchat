@@ -432,7 +432,8 @@ struct App {
     /// 重建后请求适配一次（每帧 fit 会与手动缩放/拖动打架，所以只做一次）。
     graph_needs_fit: bool,
     /// 会话与消息都来自后端（连上后拉取，不再有本地占位）。
-    conversations: Vec<ApiConversation>,
+    /// 会话带 `turn`：这一轮在不在跑，左栏据此标"生成中"。
+    conversations: Vec<microchat::server::ConversationView>,
     messages: BTreeMap<Uuid, Vec<ApiMessage>>,
     /// 每条消息在同龄兄弟里的位置（切分支用）。按会话存。
     branches: BTreeMap<Uuid, BTreeMap<Uuid, microchat::store::BranchInfo>>,
@@ -445,8 +446,14 @@ struct App {
     /// 每个会话各自的输入草稿：切会话不丢字。
     drafts: BTreeMap<Uuid, String>,
     current: Option<Uuid>,
-    /// 正在发送中的会话（发送期间禁用发送按钮，避免重复提交）。
+    /// 正在发送中的会话（POST 还没回来：这期间按钮也是禁用的）。
     pending_send: Option<Uuid>,
+    /// 这一轮**生成**的状态：`(会话, 状态)`。发送被受理后由轮询驱动，
+    /// `pending` / `streaming` 期间每 300ms 拉一次 `/status`——非流式下 `pending` 会一直
+    /// 持续到整段回复回来，所以"在不在生成"必须由状态说了算，不能看 POST 回没回。
+    turn: Option<(Uuid, microchat::turn::TurnStatus)>,
+    /// 下一次轮询的时刻（`turn` 还在跑时才有意义）。
+    next_poll: Option<std::time::Instant>,
     /// provider 编辑草稿。
     editing_provider: Option<String>,
     provider_base_url: String,
@@ -511,6 +518,8 @@ impl App {
             drafts: BTreeMap::new(),
             current: None,
             pending_send: None,
+            turn: None,
+            next_poll: None,
             editing_provider: None,
             provider_base_url: String::new(),
             provider_headers: String::new(),
@@ -798,6 +807,39 @@ impl App {
         });
     }
 
+    /// 这一轮还在跑就按点轮询它的状态；跑完了交给事件处理去对齐界面。
+    ///
+    /// 非流式下后端会一直停在 `pending`（等整段回复），所以"在生成"这件事只有状态
+    /// 说得清——POST 那个连接在后台线程里挂着，界面看不见它。流式落地后同一段代码
+    /// 会在 `streaming` 期间持续跑，只是那时可以顺带把增量取回来。
+    fn poll_turn(&mut self, ctx: &egui::Context) {
+        const POLL: std::time::Duration = std::time::Duration::from_millis(300);
+        let Some((conversation, status)) = self.turn.clone() else {
+            self.next_poll = None;
+            return;
+        };
+        if !status.phase.is_busy() {
+            self.next_poll = None;
+            return;
+        }
+        let now = std::time::Instant::now();
+        if let Some(at) = self.next_poll {
+            if now < at {
+                // 还没到点：让界面到点自己醒（egui 没有输入就睡）
+                ctx.request_repaint_after(at - now);
+                return;
+            }
+        }
+        self.next_poll = Some(now + POLL);
+        ctx.request_repaint_after(POLL);
+        let (base, token) = (self.settings.server_address.clone(), self.token.clone());
+        self.client.send(Command::ConversationStatus {
+            base,
+            token,
+            conversation,
+        });
+    }
+
     fn pump_events(&mut self) {
         while let Some(event) = self.client.try_recv() {
             match event {
@@ -914,7 +956,8 @@ impl App {
                 },
                 Event::ConversationUpdated(Ok(updated)) => {
                     if let Some(slot) = self.conversations.iter_mut().find(|c| c.id == updated.id) {
-                        *slot = updated;
+                        // 列表里的是 `ConversationView`（会话 + 这一轮的状态），只换会话本体
+                        slot.conversation = updated;
                     }
                     self.note = "会话设置已更新".to_owned();
                 }
@@ -925,31 +968,84 @@ impl App {
                 } => {
                     self.pending_send = None;
                     match result {
-                        Ok(turn) => {
-                            let entry = self.messages.entry(conversation).or_default();
-                            entry.push(turn.user);
-                            entry.push(turn.assistant);
+                        Ok(accepted) => {
                             self.drafts.insert(conversation, String::new());
-                            self.note = format!("{} 回复", turn.backend);
-                            // 回复里可能带状态块 → 变量变了，面板要跟上
-                            self.fetch_variables(conversation);
-                            self.fetch_branches(conversation);
-                            // 首条消息会生成标题，刷新列表才看得到
+                            self.note = format!("{} 生成中…", accepted.backend);
+                            // 回复在后台长出来：把状态接过来，靠轮询等它落地。
+                            // 用户消息与占位消息都已经在树上了，拉一次就齐。
+                            self.turn = Some((conversation, accepted.turn));
+                            self.next_poll = None;
+                            self.fetch_messages(conversation);
                             self.fetch_conversations();
                         }
+                        // 409 = 这个会话还在生成（可能是另一个窗口开的），话得说清楚
                         Err(message) => self.note = message,
                     }
                 }
                 Event::Resent {
                     conversation,
                     result,
+                } => {
+                    self.pending_send = None;
+                    match result {
+                        Ok(accepted) => {
+                            self.note = format!("{} 重新生成中…", accepted.backend);
+                            self.turn = Some((conversation, accepted.turn));
+                            self.next_poll = None;
+                            // 树上多了一条兄弟：路径与兄弟数都可能变，直接重拉
+                            self.fetch_messages(conversation);
+                            self.fetch_branches(conversation);
+                        }
+                        Err(message) => self.note = message,
+                    }
+                }
+                Event::TurnStatus {
+                    conversation,
+                    result,
                 } => match result {
-                    Ok(turn) => {
-                        self.note = format!("已重新生成（{}）", turn.backend);
-                        // 树上多了一条兄弟：路径与兄弟数都可能变，直接重拉
+                    Ok(status) => {
+                        let finished = !status.phase.is_busy();
+                        let phase = status.phase;
+                        let chars = status.chars;
+                        let error = status.error.clone();
+                        self.turn = Some((conversation, status));
+                        if finished {
+                            self.next_poll = None;
+                            // 回复落地（或失败）：正文、变量、兄弟数、列表都变过
+                            self.fetch_messages(conversation);
+                            self.fetch_variables(conversation);
+                            self.fetch_branches(conversation);
+                            self.fetch_conversations();
+                            self.note = match phase {
+                                microchat::turn::Phase::Error => format!(
+                                    "生成失败：{}（点「重新发送」可以再试）",
+                                    error.unwrap_or_else(|| "原因见后端日志".to_owned())
+                                ),
+                                _ => format!("回复完成：{chars} 字"),
+                            };
+                        }
+                    }
+                    Err(message) => {
+                        // 拉不到状态（会话被删、连接断了）：别继续每 300ms 敲一次
+                        self.note = message;
+                        self.turn = None;
+                        self.next_poll = None;
+                    }
+                },
+                Event::Stopped {
+                    conversation,
+                    result,
+                } => match result {
+                    Ok(value) => {
+                        self.note = if value["stopped"].as_bool().unwrap_or(false) {
+                            "已停止生成".to_owned()
+                        } else {
+                            "没有正在生成的回复".to_owned()
+                        };
+                        self.turn = None;
+                        self.next_poll = None;
                         self.fetch_messages(conversation);
-                        self.fetch_variables(conversation);
-                        self.fetch_branches(conversation);
+                        self.fetch_conversations();
                     }
                     Err(message) => self.note = message,
                 },
@@ -2115,9 +2211,15 @@ impl App {
             .show(ui, |ui| {
                 for conversation in &self.conversations {
                     let title = if conversation.title.is_empty() {
-                        NEW_TITLE
+                        NEW_TITLE.to_owned()
                     } else {
-                        conversation.title.as_str()
+                        conversation.title.clone()
+                    };
+                    // 正在生成的会话在列表里标一下：切走了也看得见它还活着
+                    let title = if conversation.turn.phase.is_busy() {
+                        format!("{title} · 生成中…")
+                    } else {
+                        title
                     };
                     ui.horizontal(|ui| {
                         // 会话标题必须**可截断**：不截断的话这一行的最小宽度等于标题全宽，
@@ -2140,12 +2242,12 @@ impl App {
                         // 压在占位矩形上就把点击吃了——整行就点不动了。
                         ui.put(
                             rect.shrink2(egui::vec2(4.0, 0.0)),
-                            egui::Label::new(title).truncate().selectable(false),
+                            egui::Label::new(&title).truncate().selectable(false),
                         );
                         if row.clicked() {
                             switch_to = Some(conversation.id);
                         }
-                        row.on_hover_text(title);
+                        row.on_hover_text(&title);
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             if close_button(ui).clicked() {
                                 delete = Some(conversation.id);
@@ -2322,7 +2424,12 @@ impl App {
             });
             return;
         };
-        let sending = self.pending_send == Some(current);
+        // 两个来源都算"忙"：本地那个（POST 还没回）与后端的状态（生成还在跑）
+        let turn_busy = self
+            .turn
+            .as_ref()
+            .is_some_and(|(conversation, status)| *conversation == current && status.phase.is_busy());
+        let sending = self.pending_send == Some(current) || turn_busy;
 
         // 会话上方一条：当前模型与 Agent，都能直接在下拉里换（换完 PATCH 回后端）。
         egui::Panel::top("chat_header").show(ui, |ui| {
@@ -2452,6 +2559,12 @@ impl App {
         let mut delete_now: Option<Uuid> = None;
         let mut delete_siblings: Option<Uuid> = None;
         let mut resend = false;
+        // 这一轮的状态：生成中那条占位消息要显示秒数与「停止」
+        let turn = self
+            .turn
+            .clone()
+            .filter(|(conversation, _)| *conversation == current);
+        let mut stop_turn = false;
         let mut save_edit: Option<(Uuid, String)> = None;
         let mut cancel_edit = false;
         let mut edit_box_id: Option<egui::Id> = None;
@@ -2492,6 +2605,14 @@ impl App {
                             let is_editing = editing
                                 .as_ref()
                                 .is_some_and(|(id, _)| *id == message.id);
+                            // 正在生成的占位消息（空正文）：显示转圈 + 秒数 + 停止
+                            let generating = turn
+                                .as_ref()
+                                .is_some_and(|(_, status)| status.message_id == Some(message.id));
+                            let elapsed_secs = turn
+                                .as_ref()
+                                .map(|(_, status)| status.elapsed_ms as f64 / 1000.0)
+                                .unwrap_or(0.0);
 
                             // 每条消息是一个块：底色 + 圆角 + 内边距，块与块之间留间距。
                             egui::Frame::NONE
@@ -2556,6 +2677,9 @@ impl App {
                                                 if ui.small_button("取消").clicked() {
                                                     cancel_edit = true;
                                                 }
+                                            } else if generating {
+                                                // 生成中的占位消息没有正文可编辑/复制/重发，
+                                                // 「停止」在正文那块上
                                             } else {
                                                 if ui.small_button("编辑").clicked() {
                                                     start_edit =
@@ -2602,22 +2726,39 @@ impl App {
                                             }
                                         }
                                         _ => {
-                                            // 只读文本用"绑到不可变 str 的 TextEdit"（egui 官方讨论推荐）：
-                                            // 看起来就是一段文字，但能选中、能 Ctrl+C，也能走同一套右键菜单。
-                                            let mut text = message.content.as_str();
-                                            let response = ui.add(
-                                                TextEdit::multiline(&mut text)
-                                                    .frame(egui::Frame::NONE)
-                                                    .desired_width(f32::INFINITY),
-                                            );
-                                            if let Some(picked) = attach_edit_menu(
-                                                ui,
-                                                &response,
-                                                &message.content,
-                                                &mut local_selection,
-                                                true,
-                                            ) {
-                                                deferred = Some(picked);
+                                            if generating {
+                                                // 占位消息：正文还没长出来。别让它显示成空块——
+                                                // 给上转圈、秒数与「停止」，让人知道在等什么。
+                                                ui.horizontal(|ui| {
+                                                    ui.spinner();
+                                                    ui.label(
+                                                        RichText::new(format!(
+                                                            "正在生成… {elapsed_secs:.1}s"
+                                                        ))
+                                                        .weak(),
+                                                    );
+                                                    if ui.small_button("停止").clicked() {
+                                                        stop_turn = true;
+                                                    }
+                                                });
+                                            } else {
+                                                // 只读文本用"绑到不可变 str 的 TextEdit"（egui 官方讨论推荐）：
+                                                // 看起来就是一段文字，但能选中、能 Ctrl+C，也能走同一套右键菜单。
+                                                let mut text = message.content.as_str();
+                                                let response = ui.add(
+                                                    TextEdit::multiline(&mut text)
+                                                        .frame(egui::Frame::NONE)
+                                                        .desired_width(f32::INFINITY),
+                                                );
+                                                if let Some(picked) = attach_edit_menu(
+                                                    ui,
+                                                    &response,
+                                                    &message.content,
+                                                    &mut local_selection,
+                                                    true,
+                                                ) {
+                                                    deferred = Some(picked);
+                                                }
                                             }
                                         }
                                     }
@@ -2677,6 +2818,14 @@ impl App {
                 conversation: current,
             });
         }
+        if stop_turn {
+            let (base, token) = (self.settings.server_address.clone(), self.token.clone());
+            self.client.send(Command::StopTurn {
+                base,
+                token,
+                conversation: current,
+            });
+        }
         if let Some(leaf) = switch_leaf {
             let (base, token) = (self.settings.server_address.clone(), self.token.clone());
             self.client.send(Command::SetLeaf {
@@ -2693,6 +2842,7 @@ impl App {
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.pump_events();
+        self.poll_turn(ui.ctx());
 
         // 右键菜单动作延后一帧执行：注入必须发生在本帧 TextEdit 构建之前。
         //

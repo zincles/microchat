@@ -11,7 +11,7 @@ microchat：轻量 SillyTavern 替代（RPG 向）。三层，边界要清楚：
 ## 常用命令
 
 ```bash
-cargo test                                     # 全量测试（当前 107 项）
+cargo test                                     # 全量测试（当前 117 项）
 ./target/debug/server                          # 后端，默认 127.0.0.1:8787
 ./target/debug/microchat                       # egui 前端（主用界面）
 
@@ -33,6 +33,10 @@ adb install -r /tmp/x.apk && adb logcat -s godot
    - **切分支只允许在最新那句上**（`store::switch_leaf_to_sibling`，目标必须是当前尾巴的兄弟，否则 400）。**别放开"切到任意旧消息"**：那是把对话倒回去，而变量沿路径现演 ⇒ 世界状态会跟着倒退；
    - **删除只允许删整棵子树**（`store::delete_subtrees`，返回条数）。leaf 若落在被删子树里，退到**上文下还活着的最新一个孩子**（= 上一条兄弟），没有才退到上文——只退到上文会让界面看起来"整条分支都没了"；
    - 「删除全部」= 清掉一组兄弟（连同各自子树），只留上文。
+   - **生成中的助手消息是一条"空占位消息"**：开跑前先插进树里（受理回执当场就有
+     `message_id` 可指认），生成完**原地填正文**（id 不变）。它在历史里躺着，但
+     [`vars::build_outgoing`] 会跳过空正文，不会发出去；进程被杀留下的那几条由开服的
+     `Store::drop_empty_assistant_messages()` 清掉（正常回复不可能为空：上游回空算错误）。
    **别再按 rowid 或 id 排消息**；`rowid` 只在"同龄兄弟谁先谁后"里当顺序用。
 5. **模型身份 = `(provider, upstream_id)`**；显示名三级回退（用户覆盖 → 上游名 → prettify）在**后端**完成，前端别再实现一遍。新建会话的 agent 取 `agents.json` 的 `default_agent`（空串/缺失都算没配 ⇒ 用内置默认），否则 agent 的提示词与变量底子对任何新会话都不生效。
    **agent 的 id**：新建时由后端生成 UUIDv7（`POST /agents` 只收 `name` + `system_prompt`，空名 400）；**已存在的可以在编辑器里改**，那走 `PATCH /agents/{id}` 的 `new_id`——一次把 `default_agent` 与**所有会话的引用**搬过去（`agent_id` 是软引用、无外键，`resolve()` 找不到只会静默回空提示词，所以必须由这一处维护一致性）。
@@ -41,11 +45,35 @@ adb install -r /tmp/x.apk && adb logcat -s godot
    - 会话：`GET/POST /conversations`、`PATCH/DELETE /conversations/{id}`（PATCH 也用来切分支）；
    - 消息：`GET/POST /conversations/{id}/messages`、`PATCH/DELETE /conversations/{id}/messages/{mid}`（DELETE 回 `{"deleted": n}`）、`DELETE …/{mid}/siblings`（删除全部）、`POST /conversations/{id}/resend`、`GET …/branches`（每条在同龄兄弟里第几/共几）；
    - 变量与出站：`GET /conversations/{id}/variables`、`GET /conversations/{id}/outgoing`（"下次真会发出去的东西"）；
+   - **生成这一轮**：`GET /conversations/{id}/status`、`POST /conversations/{id}/stop`（幂等）。
+     `POST /messages` 与 `POST /resend` 回的是 **202 + 受理回执**（`TurnAccepted`，**不含回复正文**），
+     同一会话在跑时再来一发是 **409**；`GET /conversations` 的每一项都带 `turn`（左栏靠它标"生成中"）；
    - provider / 模型 / agent：`GET/POST /providers`、`PATCH/DELETE /providers/{id}`、`POST /providers/{id}/refresh`、`GET /models`（跨 provider 拍平，给"渠道/模型"一个下拉用）、`POST /models/probe`、`GET/POST /agents`、`PATCH /agents/{id}`（`new_id` = 重命名）；
    - 运维：`GET /health`、`GET /debug/state`、`GET /debug/file/{name}`。
 
+## 一轮生成的生命周期（202 + 轮询）
+
+发送不再"一次请求等到整段回复"：**受理与生成分开**。因为客户端要答三个问题——"在不在跑""跑了多久""怎么停"——而这三个答案都不该绑死在一次 HTTP 请求上。顺带，非流式与流式由此**共用同一套前端**：流式不过是"同一个消息 id 的正文在变长"。
+
+```text
+  idle ──POST /messages 或 /resend──► pending ──（流式才进）──► streaming
+    ▲                                   │                         │
+    │                                   └──── 成功 ──► idle ◄─────┘
+    │                                             失败 ──► error
+    └── POST /stop ────────────────────────────────────────────┘
+```
+
+- 状态在 `src/turn.rs` 的 `TurnRegistry`（进程内 `HashMap`，**不进库**）：后端一重启就没有生成在跑，回到 `idle` 是诚实的；
+- 每次受理三步：**插空占位消息 → 登记（`begin`：同一会话只放行一个）→ `tokio::spawn` 生成**；
+- 忙时再发/重发 → **409**（不排队：排队会让"按了发送却什么都没发生"难以解释）；
+- 后台任务收尾前核对 `token`（`is_mine`）：被 `stop` 顶掉的旧任务回来时令牌对不上，结果直接丢掉——**不会把过期回复写进库**；
+- `stop` = 摘登记 → `abort` 后台任务（别让上游白跑完）→ 删掉**还空着**的占位消息（结果已经落地的留着）；
+- `turn` 里的 `elapsed_ms` / `chars` / `error` 就是给界面用的：正在生成… 12.3s、失败原因、以及流式落地后的增量游标；
+- 上游超时写在 `providers.json` 的 `timeouts`（默认 connect 15s / total 300s）。**reqwest 默认不设总超时**——不配就是上游卡住、界面转一辈子。
+
 ## 踩过的坑（都是实测出来的）
 
+- **`reqwest` 默认不设总超时**：`Client::builder().build()` 出来的客户端，上游不回应就永远挂着——界面上只有一个转不完的"等待…"。超时现在写在 `providers.json` 的 `timeouts` 里（默认 connect 15s / total 300s）。
 - **删掉"当前那条回复"时，leaf 不能退到上文**：那样路径上一条回复都没有，界面看起来像"整条分支被删了"（其实兄弟都在树上）；再点重新发送又会多出一条，于是"怎么又变三条了"。正解 = 退到上文下**还活着的最新兄弟**。
 - **配置文件里没有注释可写**：程序整体重写这些文件（改一个 provider 就重写整份），JSONC 会给人"写了也会丢"的假象。现在严格 JSON，写坏了报的是 `Expecting property name enclosed in double quotes: line L column C`。
 - **一次失败的 `git commit`（"无文件可提交"）会把此前 staged 的东西留在索引里** → 下一次提交把它们一起卷走（本项目真发生过：用户 Godot 编辑器的改动被带进了一笔无关提交）。**提交前先 `git diff --cached --name-status` 核对范围**，别只看 `git status`。
@@ -65,6 +93,8 @@ adb install -r /tmp/x.apk && adb logcat -s godot
 - 会话视图：顶部**系统提示词那块**（可展开）→ 消息列表（每条：署名 + `编辑 / 复制 / 删除`）→ 底栏输入。
   - 助手署名 = **该会话 agent 的名字**（不是"助手"）；底部输入栏跟着软键盘浮（见 `frontend/main.gd` 的同名脚本）。
   - **分支操作只出现在最后一条消息上**：`‹ 2/3 ›`（切候选回复，只在最新那句允许）、`删除全部`、`重新发送`。
+  - **生成中那条助手消息**显示转圈 + "正在生成… 12.3s" + 「停止」；这期间它的编辑/复制/重发按钮都收起来，发送按钮显示"等待…"。界面每 300ms 轮询 `/status`（`App::poll_turn`），收到 `idle` / `error` 才一次性重拉消息、变量、分支与列表。
+- 左栏：正在生成的会话标题后面挂着「 · 生成中…」（状态来自 `GET /conversations` 每项的 `turn`）。
 - 设置分五页（左导航同级）：**连接 / Agent / 模型与渠道 / 前端设置 / 关于**；右下角「保存」按页给出不同提示。
 - 渠道与模型是**一个下拉**（`渠道 / 模型`，`GET /models` 拍平给的就是这个形状）；provider 的 `name` 缺省回退 `id`。
 

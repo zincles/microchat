@@ -28,6 +28,7 @@ use crate::model::{title_from, Conversation, DiscoveredModel, Message, Role};
 use crate::providers;
 use crate::registry::{self, ProviderView};
 use crate::store::{self, Store};
+use crate::turn::{Phase, TurnRegistry, TurnStatus};
 use crate::vars;
 
 #[derive(Clone)]
@@ -35,6 +36,9 @@ pub struct AppState {
     store: Arc<Mutex<Store>>,
     auth_token: Option<String>,
     title_chars: usize,
+    /// 每个会话"这一轮在不在跑"。**进程内的事实，不进库**——后端一重启就没有生成在跑，
+    /// 状态回到 `idle` 是诚实的；库里只会留下占位消息，启动时清掉。
+    turns: Arc<TurnRegistry>,
     /// 新建会话的默认 provider / model（来自 `config.json` 的 `defaults`）。
     default_provider: String,
     default_model: String,
@@ -49,6 +53,7 @@ impl AppState {
             store: Arc::new(Mutex::new(store)),
             auth_token: config.server.auth_token.clone(),
             title_chars: config.chat.title_chars,
+            turns: Arc::new(TurnRegistry::new()),
             default_provider: config.defaults.provider.clone(),
             default_model: config.defaults.model.clone(),
             paths,
@@ -77,6 +82,8 @@ pub fn router(state: AppState) -> Router {
             get(list_messages).post(send_message),
         )
         .route("/conversations/{id}/resend", post(resend_message))
+        .route("/conversations/{id}/status", get(get_turn_status))
+        .route("/conversations/{id}/stop", post(stop_turn))
         .route("/conversations/{id}/branches", get(get_branches))
         .route(
             "/conversations/{id}/messages/{message_id}",
@@ -148,8 +155,17 @@ pub struct SendReq {
 
 async fn list_conversations(
     State(state): State<AppState>,
-) -> Result<Json<Vec<Conversation>>, ApiError> {
-    Ok(Json(state.lock()?.list_conversations()?))
+) -> Result<Json<Vec<ConversationView>>, ApiError> {
+    let conversations = state.lock()?.list_conversations()?;
+    Ok(Json(
+        conversations
+            .into_iter()
+            .map(|conversation| ConversationView {
+                turn: state.turns.status(conversation.id),
+                conversation,
+            })
+            .collect(),
+    ))
 }
 
 async fn create_conversation(
@@ -228,55 +244,158 @@ async fn list_messages(
     Ok(Json(state.lock()?.list_messages(id)?))
 }
 
-/// 一轮对话的结果：连"是谁回的"一并告诉客户端，省得它猜。
+/// 一条会话的视图：会话本体 + 它当前这一轮的状态。
+///
+/// `#[serde(flatten)]` 是给兼容性留的：老客户端按 `Conversation` 解析会**忽略**多出来的
+/// `turn`（serde 默认忽略未知字段），新客户端多读一个字段——两边不用迁就对方。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChatTurn {
-    pub user: Message,
-    pub assistant: Message,
-    pub backend: String,
+pub struct ConversationView {
+    #[serde(flatten)]
+    pub conversation: Conversation,
+    pub turn: TurnStatus,
 }
 
-/// 一轮对话：落用户消息 → 选对话后端 → 落助手回复。
+impl std::ops::Deref for ConversationView {
+    type Target = Conversation;
+    fn deref(&self) -> &Self::Target {
+        &self.conversation
+    }
+}
+
+/// 「发送」与「重新发送」的受理回执：**不含回复正文**。
 ///
-/// 顺序是刻意的：**用户消息先落库**。若后端失败（例如尚未实现的 `openai-completion`
-/// 回 501），用户的话仍在库里，重发或换模型不会丢上下文。
-/// 流式（SSE）版本随 `openai-completion` 落地时替换本接口的响应形态。
+/// 生成在后台跑（`tokio::spawn`），客户端拿 `turn.message_id` 指认那条正在生成的助手
+/// 消息，再按 `turn.phase` 轮询 `/status` 到 `idle`（或 `error`）。
+/// 这样非流式与流式**共用同一套前端逻辑**：流式不过是"同一个消息 id 的正文在变长"。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TurnAccepted {
+    /// 刚落下的用户消息。重发时**不带**（重发触发的是已有的那条）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user: Option<Message>,
+    /// 选中的对话后端名（`dummy` / `fallback` / `openai-completion`）。
+    pub backend: String,
+    /// 受理那一刻的状态（`pending`）。
+    pub turn: TurnStatus,
+}
+
+/// 一轮对话：落用户消息 → 选对话后端 → **把生成丢给后台**。
+///
+/// 顺序是刻意的：**用户消息先落库**。若后端失败（没配模型、上游挂了），用户的话仍在
+/// 库里，重发或换模型不会丢上下文。
+/// 已经在生成中的会话再发 → 409（**不排队**：排队会让"按了发送却什么都没发生"难以解释）。
 async fn send_message(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
     Json(req): Json<SendReq>,
-) -> Result<(StatusCode, Json<ChatTurn>), ApiError> {
-    // 先把用户消息写进去、标题补上——生成回复可能要几秒，数据库锁不跟着等。
-    let user = {
+) -> Result<(StatusCode, Json<TurnAccepted>), ApiError> {
+    let (user, parent) = {
         let mut store = state.lock()?;
         let conversation = store.get_conversation(id)?.ok_or_else(ApiError::not_found)?;
+        if state.turns.status(id).phase.is_busy() {
+            return Err(ApiError::conflict("这个会话还在生成中，等它跑完或先按停止"));
+        }
         // 接在**当前尾巴**下面；没有尾巴（空会话）就是第一条。
         let user = store.insert_message(id, Role::User, &req.content, conversation.current_leaf)?;
         if conversation.title.is_empty() {
             store.update_title(id, &title_from(&req.content, state.title_chars))?;
         }
-        user
+        (user.clone(), user.id)
     };
 
-    let (backend, assistant) = reply_to_conversation(&state, id).await?;
+    let (backend, turn) = start_turn(&state, id, parent).await?;
     Ok((
-        StatusCode::CREATED,
-        Json(ChatTurn {
-            user,
-            assistant,
-            backend: backend.name().to_owned(),
+        StatusCode::ACCEPTED,
+        Json(TurnAccepted {
+            user: Some(user),
+            backend,
+            turn,
         }),
     ))
 }
 
-/// 生成一条助手回复并落库（`send_message` 与「重新发送」共用同一条路）。
+/// 重新发送：**最后一条是助手就再长一个兄弟**（对这条回复不满意，旧的留在树上）；
+/// **最后一条是用户消息就照着它重发**（比如上回上游报错，回复没落下来）。
 ///
-/// 组装出站消息用的是**唯一那条路径**：[`vars::build_outgoing`]（历史剔除状态块、
-/// 注入当前变量表）。这里不再另写一份拼装。
-async fn reply_to_conversation(
+/// 两条路都走 `start_turn`——和正常发消息是同一条生成路径，所以重发出来的东西
+/// 与第一次相比没有任何"特殊待遇"。
+async fn resend_message(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<(StatusCode, Json<TurnAccepted>), ApiError> {
+    let parent = {
+        let store = state.lock()?;
+        if state.turns.status(id).phase.is_busy() {
+            return Err(ApiError::conflict("这个会话还在生成中，等它跑完或先按停止"));
+        }
+        let messages = store.list_messages(id)?;
+        match messages.last() {
+            None => return Err(ApiError::bad_request("这个会话还没有消息可重发")),
+            // 尾条是助手 → 新回复挂在它的**父亲**下面，两条成为兄弟；旧的留着，
+            // 界面上的「‹ 2/3 ›」能切回去。（以前是先把尾巴退回去，现在由占位消息
+            // 自己把尾巴挪到新位置，路径一步不动。）
+            Some(last) if last.role == Role::Assistant => last
+                .parent_id
+                .ok_or_else(|| ApiError::bad_request("这条回复没有上文，没法重发"))?,
+            // 尾条本来就是用户消息（上回报错、或刚删掉回复）→ 直接照着它生成。
+            Some(last) => last.id,
+        }
+    };
+
+    let (backend, turn) = start_turn(&state, id, parent).await?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(TurnAccepted {
+            user: None,
+            backend,
+            turn,
+        }),
+    ))
+}
+
+/// 开一轮生成：**先插占位消息**（这样立刻就有 `message_id` 可指认），登记状态，
+/// 再把真正的工作丢给后台任务。
+///
+/// 占位消息是一条空正文的助手消息。它确实在历史里躺着——但
+/// [`vars::build_outgoing`] 会把空正文剔掉，所以不会污染发出去的上下文。
+async fn start_turn(
     state: &AppState,
     id: Uuid,
-) -> Result<(chat::Backend, Message), ApiError> {
+    parent: Uuid,
+) -> Result<(String, TurnStatus), ApiError> {
+    let providers = ProvidersConfig::load(&state.paths.providers_json())?;
+    let backend = {
+        let store = state.lock()?;
+        let conversation = store.get_conversation(id)?.ok_or_else(ApiError::not_found)?;
+        chat::Backend::select(&conversation, &providers)
+            .name()
+            .to_owned()
+    };
+
+    {
+        let mut store = state.lock()?;
+        let placeholder = store.insert_message(id, Role::Assistant, "", Some(parent))?;
+        match state.turns.begin(id, placeholder.id) {
+            Ok(token) => {
+                let handle = tokio::spawn(run_turn(state.clone(), id, placeholder.id, token));
+                state.turns.attach(id, token, handle);
+            }
+            Err(_) => {
+                // 与上面的 busy 检查之间有个极窄的窗口：两个请求同时挤进来时 begin
+                // 只放行一个，另一个把占位消息退回去再报 409。
+                store.delete_message_if_empty(id, placeholder.id)?;
+                return Err(ApiError::conflict("这个会话还在生成中，等它跑完或先按停止"));
+            }
+        }
+    }
+
+    Ok((backend, state.turns.status(id)))
+}
+
+/// 真去生成一段回复：取料（锁里）→ 走上游（锁外）→ 返回正文。
+///
+/// 组装出站消息用的是**唯一那条路径**：[`vars::build_outgoing`]（历史剔除状态块、
+/// 注入当前变量表、跳过空正文）。这里不另写一份拼装。
+async fn generate(state: &AppState, id: Uuid) -> Result<String, ApiError> {
     let providers = ProvidersConfig::load(&state.paths.providers_json())?;
 
     // 取料（会话、历史、出站消息、密钥）都在锁里，**等上游之前把锁放掉**。
@@ -292,64 +411,74 @@ async fn reply_to_conversation(
         (conversation, outgoing, secrets)
     };
 
-    let backend = chat::Backend::select(&conversation, &providers);
     let reply = chat::complete(&conversation, &outgoing, &providers, &secrets).await?;
-    let assistant = {
-        let mut store = state.lock()?;
-        // 回复挂在"当前尾巴"下面——正常发送时那就是刚写进去的用户消息
-        let parent = store
-            .get_conversation(id)?
-            .and_then(|conversation| conversation.current_leaf);
-        store.insert_message(id, Role::Assistant, &reply, parent)?
-    };
-    Ok((backend, assistant))
+    Ok(reply)
 }
 
-/// 重新发送：**最后一条是助手就删掉它重来**（对这条回复不满意）；**
-/// 最后一条是用户消息就照着它重发（比如上回上游报错，回复没落下来）。
+/// 后台那半程：生成完把占位消息填上（失败就收拾掉）。
 ///
-/// 两者都走 `reply_to_conversation`——和正常发消息是同一条生成路径，
-/// 所以重发出来的东西与第一次相比没有任何"特殊待遇"。
-async fn resend_message(
-    State(state): State<AppState>,
-    Path(id): Path<Uuid>,
-) -> Result<(StatusCode, Json<ChatTurn>), ApiError> {
-    // 尾条是助手 → 把"当前尾巴"退回它的父亲（那条被回应的用户消息）再重新生成：
-    // 新回复会成为旧回复的**兄弟**，旧的留在树上——不满意随时切回去。
-    // 尾条本来就是用户消息（上回上游报错、或刚删掉回复）→ 直接照着它生成。
-    {
-        let mut store = state.lock()?;
-        let messages = store.list_messages(id)?;
-        match messages.last() {
-            None => return Err(ApiError::bad_request("这个会话还没有消息可重发")),
-            Some(last) if last.role == Role::Assistant => {
-                let parent = last
-                    .parent_id
-                    .ok_or_else(|| ApiError::bad_request("这条回复没有上文，没法重发"))?;
-                store.set_current_leaf(id, parent)?;
+/// 全程**不持锁跨 await**：取料在锁里，等上游在锁外，写回再进锁。
+/// 收尾前先看令牌还是不是自己的——被"停止"顶掉的那一轮，结果直接丢掉。
+async fn run_turn(state: AppState, id: Uuid, placeholder: Uuid, token: u64) {
+    let outcome = generate(&state, id).await;
+    let Ok(mut store) = state.lock() else {
+        eprintln!("生成收尾时拿不到存储锁，这一轮的状态留在原处");
+        return;
+    };
+    match outcome {
+        Ok(reply) => {
+            let written = store.update_message_content(placeholder, &reply).unwrap_or(0);
+            if written == 0 || !state.turns.is_mine(id, token) {
+                // 占位消息被删了，或者这一轮已经被停掉：结果丢掉，别留半条
+                let _ = store.delete_message_if_empty(id, placeholder);
+                let _ = state.turns.finish(id, token, Phase::Idle, 0, None);
+                return;
             }
-            Some(_) => {}
+            let chars = reply.chars().count();
+            let _ = state.turns.finish(id, token, Phase::Idle, chars, None);
+        }
+        Err(error) => {
+            let _ = store.delete_message_if_empty(id, placeholder);
+            if state
+                .turns
+                .finish(id, token, Phase::Error, 0, Some(error.message.clone()))
+                .is_err()
+            {
+                // 已经被停止：错就不必再报给前端了（它是上一轮的事）
+                eprintln!("生成失败（这一轮已被停止）: {}", error.message);
+            }
         }
     }
+}
 
-    let (backend, assistant) = reply_to_conversation(&state, id).await?;
-    let user = {
-        let store = state.lock()?;
-        let path = store.list_messages(id)?;
-        path.iter()
-            .rev()
-            .nth(1)
-            .cloned()
-            .ok_or_else(|| ApiError::internal("回复没挂到上文下面"))?
+/// 这个会话此刻的状态。前端按它转圈/放行：`idle` 之外都别让用户再发。
+async fn get_turn_status(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<TurnStatus>, ApiError> {
+    if state.lock()?.get_conversation(id)?.is_none() {
+        return Err(ApiError::not_found());
+    }
+    Ok(Json(state.turns.status(id)))
+}
+
+/// 停止这一轮。**幂等**：没在跑也回 200（`stopped: false`）。
+///
+/// 次序有讲究：先摘登记（旧任务回来时令牌对不上，写不进去）→ 再 `abort`（别让上游
+/// 白跑完）→ 最后删掉**还空着**的占位消息。已经填上正文的留着——"停止"只在结果
+/// 还没落地时才算数。
+async fn stop_turn(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Some((placeholder, handle)) = state.turns.stop(id) else {
+        return Ok(Json(serde_json::json!({ "stopped": false })));
     };
-    Ok((
-        StatusCode::CREATED,
-        Json(ChatTurn {
-            user,
-            assistant,
-            backend: backend.name().to_owned(),
-        }),
-    ))
+    if let Some(handle) = handle {
+        handle.abort();
+    }
+    state.lock()?.delete_message_if_empty(id, placeholder)?;
+    Ok(Json(serde_json::json!({ "stopped": true })))
 }
 
 /// 编辑一条消息的请求体。
@@ -1112,6 +1241,25 @@ mod tests {
         format!("http://{addr}/v1")
     }
 
+    /// 起一个"会拖一会儿再回答"的假上游——用来观察 `pending`、409 与「停止」。
+    async fn slow_upstream(delay: std::time::Duration, reply: &'static str) -> String {
+        let app = Router::new().route(
+            "/v1/chat/completions",
+            post(move || async move {
+                tokio::time::sleep(delay).await;
+                Json(serde_json::json!({
+                    "choices": [ { "message": { "role": "assistant", "content": reply } } ]
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        format!("http://{addr}/v1")
+    }
+
     async fn send(app: &Router, req: Request<Body>) -> (StatusCode, String) {
         let resp = app.clone().oneshot(req).await.unwrap();
         let status = resp.status();
@@ -1138,6 +1286,69 @@ mod tests {
         serde_json::from_str(&created).unwrap()
     }
 
+    /// 从 `…/conversations/<uuid>/…` 里抠出会话 id。
+    fn conversation_of(uri: &str) -> Uuid {
+        uri.split('/')
+            .find_map(|part| Uuid::parse_str(part).ok())
+            .expect("uri 里该有会话 id")
+    }
+
+    /// 轮询到这一轮不再是 `pending` / `streaming`。dummy 与 fallback 是瞬间回的，
+    /// 真上游才需要等——这里给 10 秒余量。
+    async fn settled(app: &Router, conversation: Uuid) -> TurnStatus {
+        let uri = format!("/api/v1/conversations/{conversation}/status");
+        for _ in 0..1000 {
+            let (status, body) = send(app, get_req(&uri)).await;
+            assert_eq!(status, StatusCode::OK);
+            let turn: TurnStatus = serde_json::from_str(&body).unwrap();
+            if !turn.phase.is_busy() {
+                return turn;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        panic!("这一轮 10 秒还没落地");
+    }
+
+    async fn messages(app: &Router, conversation: Uuid) -> Vec<Message> {
+        let uri = format!("/api/v1/conversations/{conversation}/messages");
+        let (status, body) = send(app, get_req(&uri)).await;
+        assert_eq!(status, StatusCode::OK);
+        serde_json::from_str(&body).unwrap()
+    }
+
+    /// 测试口径的"一轮对话"。
+    #[derive(Debug, Clone)]
+    struct ChatTurn {
+        user: Message,
+        assistant: Message,
+        backend: String,
+        status: TurnStatus,
+    }
+
+    /// 发一条（`uri` 给 `/messages` 或 `/resend`）并**等这一轮落定**，把最后两条消息
+    /// 折算回"一轮对话"的样子。
+    ///
+    /// 接口本身是"202 受理 + 后台生成 + 轮询状态"——回复不再随 POST 一起回来。
+    /// 上游失败会让这里 panic（终态不是 `idle`）；要断言失败就自己用 `settled()`。
+    async fn turn(app: &Router, uri: &str, body: &str) -> ChatTurn {
+        let conversation = conversation_of(uri);
+        let (code, text) = send(app, json_req("POST", uri, body)).await;
+        assert_eq!(code, StatusCode::ACCEPTED, "受理该是 202：{text}");
+        let accepted: TurnAccepted = serde_json::from_str(&text).unwrap();
+        let status = settled(app, conversation).await;
+        assert_eq!(status.phase, Phase::Idle, "这一轮没跑成：{status:?}");
+        let messages = messages(app, conversation).await;
+        assert!(messages.len() >= 2, "至少该有问与答");
+        let assistant = messages.last().cloned().unwrap();
+        let user = messages[messages.len() - 2].clone();
+        ChatTurn {
+            user,
+            assistant,
+            backend: accepted.backend,
+            status,
+        }
+    }
+
     #[tokio::test]
     async fn create_and_list_conversation_roundtrip() {
         let app = app(None);
@@ -1162,9 +1373,7 @@ mod tests {
         let conv = create(&app, r#"{"provider":"x","model":"y"}"#).await;
         let uri = format!("/api/v1/conversations/{}/messages", conv.id);
 
-        let (status, body) = send(&app, json_req("POST", &uri, r#"{"content":"第一句话"}"#)).await;
-        assert_eq!(status, StatusCode::CREATED);
-        let turn: ChatTurn = serde_json::from_str(&body).unwrap();
+        let turn = turn(&app, &uri, r#"{"content":"第一句话"}"#).await;
         assert_eq!(turn.user.role, Role::User);
         assert_eq!(turn.user.content, "第一句话");
         assert_eq!(turn.backend, "fallback", "providers.json 里没有 x，应回落到 fallback");
@@ -1202,9 +1411,7 @@ mod tests {
         let conv = create(&app, "{}").await;
         let uri = format!("/api/v1/conversations/{}/messages", conv.id);
 
-        let (status, body) = send(&app, json_req("POST", &uri, r#"{"content":"在吗"}"#)).await;
-        assert_eq!(status, StatusCode::CREATED);
-        let turn: ChatTurn = serde_json::from_str(&body).unwrap();
+        let turn = turn(&app, &uri, r#"{"content":"在吗"}"#).await;
         assert_eq!(turn.backend, "dummy");
         assert_eq!(turn.assistant.content, "（测试用空模型）");
 
@@ -1230,7 +1437,9 @@ mod tests {
         let content = "我要住店\n<state>\nset HP = 12\nsetglobal 季节 = 初冬\n</state>";
         let body = serde_json::json!({ "content": content }).to_string();
         let (status, _) = send(&app, json_req("POST", &uri, &body)).await;
-        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(status, StatusCode::ACCEPTED, "受理是 202：生成在后台跑");
+        // 等这一轮落定再检查派生物（变量、出站），否则是在跟后台赛跑
+        let _ = settled(&app, conv.id).await;
 
         // 1) 变量 = 提示词里的底子（全局）+ 正文现演出来的本会话改动
         let vars_uri = format!("/api/v1/conversations/{}/variables", conv.id);
@@ -1331,12 +1540,9 @@ mod tests {
         let branches = format!("/api/v1/conversations/{}/branches", conv.id);
         let patches = format!("/api/v1/conversations/{}", conv.id);
 
-        let (_, body) = send(&app, json_req("POST", &uri, r#"{"content":"在吗"}"#)).await;
-        let first: ChatTurn = serde_json::from_str(&body).unwrap();
+        let first = turn(&app, &uri, r#"{"content":"在吗"}"#).await;
 
-        let (status, body) = send(&app, json_req("POST", &resend, "")).await;
-        assert_eq!(status, StatusCode::CREATED);
-        let second: ChatTurn = serde_json::from_str(&body).unwrap();
+        let second = turn(&app, &resend, "").await;
         assert_eq!(second.user.id, first.user.id, "用户那条不该被动");
         assert_ne!(second.assistant.id, first.assistant.id);
         assert_eq!(
@@ -1388,16 +1594,12 @@ mod tests {
         let resend = format!("/api/v1/conversations/{}/resend", conv.id);
         let patches = format!("/api/v1/conversations/{}", conv.id);
 
-        let (_, body) = send(&app, json_req("POST", &uri, r#"{"content":"第一句"}"#)).await;
-        let first: ChatTurn = serde_json::from_str(&body).unwrap();
-        let (_, body) = send(&app, json_req("POST", &resend, "")).await;
-        let second: ChatTurn = serde_json::from_str(&body).unwrap();
+        let first = turn(&app, &uri, r#"{"content":"第一句"}"#).await;
+        let second = turn(&app, &resend, "").await;
         // 再往下说一句，让上面那对回复变成"旧消息"
-        let (_, body) = send(&app, json_req("POST", &uri, r#"{"content":"第二句"}"#)).await;
-        let third: ChatTurn = serde_json::from_str(&body).unwrap();
+        let third = turn(&app, &uri, r#"{"content":"第二句"}"#).await;
         // 尾巴上再重发一次：它和 third.assistant 是兄弟，现在切它俩是允许的
-        let (_, body) = send(&app, json_req("POST", &resend, "")).await;
-        let fourth: ChatTurn = serde_json::from_str(&body).unwrap();
+        let fourth = turn(&app, &resend, "").await;
 
         let switch = |leaf: Uuid| serde_json::json!({ "current_leaf": leaf }).to_string();
 
@@ -1425,10 +1627,8 @@ mod tests {
         let uri = format!("/api/v1/conversations/{}/messages", conv.id);
         let resend = format!("/api/v1/conversations/{}/resend", conv.id);
 
-        let (_, body) = send(&app, json_req("POST", &uri, r#"{"content":"你是谁？"}"#)).await;
-        let first: ChatTurn = serde_json::from_str(&body).unwrap();
-        let (_, body) = send(&app, json_req("POST", &resend, "")).await;
-        let second: ChatTurn = serde_json::from_str(&body).unwrap();
+        let first = turn(&app, &uri, r#"{"content":"你是谁？"}"#).await;
+        let second = turn(&app, &resend, "").await;
 
         let (status, body) = send(
             &app,
@@ -1453,9 +1653,7 @@ mod tests {
         assert_eq!(path[0].role, crate::model::Role::User);
 
         // 清完就能直接重发（leaf 落在问话上）
-        let (status, body) = send(&app, json_req("POST", &resend, "")).await;
-        assert_eq!(status, StatusCode::CREATED);
-        let again: ChatTurn = serde_json::from_str(&body).unwrap();
+        let again = turn(&app, &resend, "").await;
         assert_eq!(again.assistant.parent_id, Some(first.user.id));
     }
 
@@ -1469,13 +1667,10 @@ mod tests {
         let resend = format!("/api/v1/conversations/{}/resend", conv.id);
         let branches = format!("/api/v1/conversations/{}/branches", conv.id);
 
-        let (_, body) = send(&app, json_req("POST", &uri, r#"{"content":"你是谁？"}"#)).await;
-        let first: ChatTurn = serde_json::from_str(&body).unwrap();
+        let first = turn(&app, &uri, r#"{"content":"你是谁？"}"#).await;
         // 再点两次「重新发送」→ 三条兄弟回复 1/2/3
-        let (_, body) = send(&app, json_req("POST", &resend, "")).await;
-        let second: ChatTurn = serde_json::from_str(&body).unwrap();
-        let (_, body) = send(&app, json_req("POST", &resend, "")).await;
-        let third: ChatTurn = serde_json::from_str(&body).unwrap();
+        let second = turn(&app, &resend, "").await;
+        let third = turn(&app, &resend, "").await;
 
         let (_, body) = send(&app, get_req(&branches)).await;
         let info: BTreeMap<Uuid, crate::store::BranchInfo> = serde_json::from_str(&body).unwrap();
@@ -1518,12 +1713,7 @@ mod tests {
         let uri = format!("/api/v1/conversations/{}/messages", conv.id);
         let resend = format!("/api/v1/conversations/{}/resend", conv.id);
 
-        let (_, body) = send(
-            &app,
-            json_req("POST", &uri, r#"{"content":"<state>set HP = 12</state>开场"}"#),
-        )
-        .await;
-        let first: ChatTurn = serde_json::from_str(&body).unwrap();
+        let first = turn(&app, &uri, r#"{"content":"<state>set HP = 12</state>开场"}"#).await;
         // 再来一条兄弟回复：树上现在有 1 条用户 + 2 条回复
         send(&app, json_req("POST", &resend, "")).await;
 
@@ -1563,13 +1753,9 @@ mod tests {
         let uri = format!("/api/v1/conversations/{}/messages", conv.id);
 
         // 两句用户话，状态写在**第二句**上：删它只会带走它自己的子树
-        send(&app, json_req("POST", &uri, r#"{"content":"开场白"}"#)).await;
-        let (_, body) = send(
-            &app,
-            json_req("POST", &uri, r#"{"content":"<state>set HP = 12</state>继续往里走"}"#),
-        )
-        .await;
-        let second: ChatTurn = serde_json::from_str(&body).unwrap();
+        // （第一句也要等它跑完——同一会话不许两轮并行，忙的时候发是 409）
+        let _first = turn(&app, &uri, r#"{"content":"开场白"}"#).await;
+        let second = turn(&app, &uri, r#"{"content":"<state>set HP = 12</state>继续往里走"}"#).await;
 
         let vars_uri = format!("/api/v1/conversations/{}/variables", conv.id);
         let (_, body) = send(&app, get_req(&vars_uri)).await;
@@ -1722,8 +1908,7 @@ mod tests {
         let conv = create(&app, r#"{"provider":"x","model":"y"}"#).await;
         let uri = format!("/api/v1/conversations/{}/messages", conv.id);
         let body = serde_json::json!({ "content": "开始\n<state>\nset HP = 12\n</state>" }).to_string();
-        let (_, response) = send(&app, json_req("POST", &uri, &body)).await;
-        let turn: ChatTurn = serde_json::from_str(&response).unwrap();
+        let turn = turn(&app, &uri, &body).await;
 
         // 改成正 3：旧操作要被**换掉**，不是叠加
         let edit_uri = format!("/api/v1/conversations/{}/messages/{}", conv.id, turn.user.id);
@@ -1755,8 +1940,7 @@ mod tests {
         let first = create(&app, r#"{"provider":"x","model":"y"}"#).await;
         let second = create(&app, r#"{"provider":"x","model":"y"}"#).await;
         let uri = format!("/api/v1/conversations/{}/messages", first.id);
-        let (_, response) = send(&app, json_req("POST", &uri, r#"{"content":"原话"}"#)).await;
-        let turn: ChatTurn = serde_json::from_str(&response).unwrap();
+        let turn = turn(&app, &uri, r#"{"content":"原话"}"#).await;
 
         let body = serde_json::json!({ "content": "被篡改" }).to_string();
         let foreign = format!(
@@ -1776,9 +1960,10 @@ mod tests {
         assert_eq!(messages[0].content, "原话");
     }
 
-    /// 配了真模型但上游连不上：502 + 上游原话。绝不假装有人在说话。
+    /// 配了真模型但上游连不上：**受理是 202，失败落在这一轮的状态里**（原话带着）。
+    /// 绝不假装有人在说话，也不留半条占位空消息。
     #[tokio::test]
-    async fn unreachable_upstream_reports_bad_gateway() {
+    async fn unreachable_upstream_lands_in_the_error_state() {
         let (app, dir) = app_with_env(
             None,
             &[(
@@ -1789,18 +1974,102 @@ mod tests {
         let conv = create(&app, r#"{"provider":"local","model":"m"}"#).await;
         let uri = format!("/api/v1/conversations/{}/messages", conv.id);
 
-        let (status, body) = send(&app, json_req("POST", &uri, r#"{"content":"在吗"}"#)).await;
-        assert_eq!(status, StatusCode::BAD_GATEWAY);
-        let err: serde_json::Value = serde_json::from_str(&body).unwrap();
-        assert_eq!(err["error"]["code"], "upstream");
+        let (status, _) = send(&app, json_req("POST", &uri, r#"{"content":"在吗"}"#)).await;
+        assert_eq!(status, StatusCode::ACCEPTED, "受理先于生成：失败由状态报");
+
+        let turn = settled(&app, conv.id).await;
+        assert_eq!(turn.phase, Phase::Error, "上游连不上 → 这一轮的结局是失败");
+        let message = turn.error.clone().unwrap_or_default();
         assert!(
-            err["error"]["message"].as_str().unwrap().contains("上游"),
-            "要把上游的原因带出来：{body}"
+            message.contains("上游"),
+            "要把上游的原因带出来：{message}"
         );
-        // 助手消息不该落库（没生成成功，就别留半条假消息）
-        let (_, body) = send(&app, get_req(&uri)).await;
-        let msgs: Vec<crate::model::Message> = serde_json::from_str(&body).unwrap();
+        assert_eq!(turn.message_id, None, "失败后不该再指着某条消息");
+
+        // 助手消息（占位那条）不该留下
+        let msgs = messages(&app, conv.id).await;
         assert_eq!(msgs.len(), 1, "只有用户那条");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 生成期间：状态是 `pending`（带 `message_id`），会话列表里也看得见；
+    /// 此时再发 → 409（**不排队**），且不会多留一条用户消息。
+    #[tokio::test]
+    async fn a_running_turn_is_pending_and_blocks_a_second_send() {
+        let base = slow_upstream(std::time::Duration::from_millis(400), "慢回复").await;
+        let providers = format!(
+            r#"{{ "providers": [ {{ "id": "slow", "kind": "openai-compat", "base_url": "{base}" }} ] }}"#
+        );
+        let (app, dir) = app_with_files(&[("providers.json", &providers)]);
+        let conv = create(&app, r#"{"provider":"slow","model":"m"}"#).await;
+        let uri = format!("/api/v1/conversations/{}/messages", conv.id);
+
+        let (status, body) = send(&app, json_req("POST", &uri, r#"{"content":"在吗"}"#)).await;
+        assert_eq!(status, StatusCode::ACCEPTED);
+        let accepted: TurnAccepted = serde_json::from_str(&body).unwrap();
+        assert_eq!(accepted.turn.phase, Phase::Pending, "受理那一刻还没有输出");
+        assert_eq!(accepted.backend, "openai-completion");
+        let placeholder = accepted.turn.message_id.expect("受理时就有占位消息 id");
+
+        let status_uri = format!("/api/v1/conversations/{}/status", conv.id);
+        let (_, body) = send(&app, get_req(&status_uri)).await;
+        let running: TurnStatus = serde_json::from_str(&body).unwrap();
+        assert_eq!(running.phase, Phase::Pending);
+        assert_eq!(running.message_id, Some(placeholder));
+
+        let (_, body) = send(&app, get_req("/api/v1/conversations")).await;
+        let list: Vec<ConversationView> = serde_json::from_str(&body).unwrap();
+        assert!(list[0].turn.phase.is_busy(), "列表里带着这一轮的状态");
+
+        let (status, body) = send(&app, json_req("POST", &uri, r#"{"content":"喂"}"#)).await;
+        assert_eq!(status, StatusCode::CONFLICT, "忙的时候再发该给 409：{body}");
+
+        let turn = settled(&app, conv.id).await;
+        assert_eq!(turn.phase, Phase::Idle);
+        assert_eq!(turn.chars, "慢回复".chars().count());
+        let msgs = messages(&app, conv.id).await;
+        assert_eq!(msgs.len(), 2, "被 409 挡下的那条不许留下");
+        assert_eq!(msgs[1].id, placeholder, "回复填进的就是那条占位消息");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 「停止」：摘登记 + 删掉还空着的占位消息；用户那句留着（接着可以重发）。
+    /// 幂等——没在跑时再按一次也是 200。
+    #[tokio::test]
+    async fn stop_drops_the_placeholder_and_keeps_the_user_message() {
+        let base = slow_upstream(std::time::Duration::from_secs(30), "来不及了").await;
+        let providers = format!(
+            r#"{{ "providers": [ {{ "id": "slow", "kind": "openai-compat", "base_url": "{base}" }} ] }}"#
+        );
+        let (app, dir) = app_with_files(&[("providers.json", &providers)]);
+        let conv = create(&app, r#"{"provider":"slow","model":"m"}"#).await;
+        let uri = format!("/api/v1/conversations/{}/messages", conv.id);
+        let stop_uri = format!("/api/v1/conversations/{}/stop", conv.id);
+
+        let (status, _) = send(&app, json_req("POST", &uri, r#"{"content":"在吗"}"#)).await;
+        assert_eq!(status, StatusCode::ACCEPTED);
+
+        let (status, body) = send(&app, json_req("POST", &stop_uri, "")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&body).unwrap()["stopped"],
+            true
+        );
+
+        let turn = settled(&app, conv.id).await;
+        assert_eq!(turn.phase, Phase::Idle, "停完就是空闲");
+        let msgs = messages(&app, conv.id).await;
+        assert_eq!(msgs.len(), 1, "占位消息被收拾掉，用户那句还在");
+        assert_eq!(msgs[0].content, "在吗");
+
+        let (status, body) = send(&app, json_req("POST", &stop_uri, "")).await;
+        assert_eq!(status, StatusCode::OK, "没在跑也是 200");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&body).unwrap()["stopped"],
+            false
+        );
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 

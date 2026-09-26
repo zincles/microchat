@@ -10,4 +10,5 @@ pub mod providers;
 pub mod registry;
 pub mod server;
 pub mod store;
+pub mod turn;
 pub mod vars;

@@ -255,6 +255,83 @@ impl Store {
         Ok(msg)
     }
 
+    /// 原地改写一条消息的正文（生成完成后把**占位消息**填上）。
+    ///
+    /// 只改正文：不动树、不动 `created_at`、也不推会话的 `updated_at`——发送时插入
+    /// 占位消息那一下已经把会话顶到最新了。变量是现演的，没有需要"重算"的东西。
+    /// 返回 0 表示那条已经不在了（占位消息被停/被删），调用方据此别当成功。
+    pub fn update_message_content(&mut self, message_id: Uuid, content: &str) -> Result<usize> {
+        let touched = self.conn.execute(
+            "UPDATE messages SET content = ?1 WHERE id = ?2",
+            params![content, message_id.to_string()],
+        )?;
+        Ok(touched)
+    }
+
+    /// 删掉一条**还空着**的消息（收尾用：停止生成、上游报错）。
+    ///
+    /// 已经填上正文的就不动——"停止"只在结果还没落地时才算数；结果已经回来就留着。
+    /// 只删无子节点的：万一有东西挂在它下面（正常不会），别把别人带走。
+    /// 尾巴指着它的话退回它的父亲。
+    pub fn delete_message_if_empty(
+        &mut self,
+        conversation_id: Uuid,
+        message_id: Uuid,
+    ) -> Result<usize> {
+        let tx = self.conn.transaction()?;
+        let parent: Option<Option<String>> = tx
+            .query_row(
+                "SELECT parent_id FROM messages
+                  WHERE id = ?1 AND conversation_id = ?2 AND trim(content) = ''
+                    AND NOT EXISTS (SELECT 1 FROM messages child WHERE child.parent_id = messages.id)",
+                params![message_id.to_string(), conversation_id.to_string()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(parent) = parent else {
+            // 没这条、或者已经填上正文了、或者有子节点：什么都不做
+            return Ok(0);
+        };
+        tx.execute(
+            "DELETE FROM messages WHERE id = ?1",
+            params![message_id.to_string()],
+        )?;
+        tx.execute(
+            "UPDATE conversations SET current_leaf = ?1 WHERE id = ?2 AND current_leaf = ?3",
+            params![
+                parent,
+                conversation_id.to_string(),
+                message_id.to_string()
+            ],
+        )?;
+        tx.commit()?;
+        Ok(1)
+    }
+
+    /// 启动时清理：上一个进程被杀时留下的**空占位消息**。
+    ///
+    /// 生成前先占位插入是必须的（前端要有个可指认的 `message_id`），代价就是进程
+    /// 中途死掉会留下一条空的助手消息。正常回复不可能为空——上游回空会被当成错误。
+    pub fn drop_empty_assistant_messages(&mut self) -> Result<usize> {
+        let tx = self.conn.transaction()?;
+        // 尾巴指着它们的，先把尾巴退回父亲，别留下指向不存在的行
+        tx.execute(
+            "UPDATE conversations SET current_leaf = (
+                 SELECT message.parent_id FROM messages message WHERE message.id = conversations.current_leaf)
+              WHERE current_leaf IN (
+                 SELECT id FROM messages WHERE role = 'assistant' AND trim(content) = '')",
+            [],
+        )?;
+        let dropped = tx.execute(
+            "DELETE FROM messages
+              WHERE role = 'assistant' AND trim(content) = ''
+                AND NOT EXISTS (SELECT 1 FROM messages child WHERE child.parent_id = messages.id)",
+            [],
+        )?;
+        tx.commit()?;
+        Ok(dropped)
+    }
+
     pub fn get_conversation(&self, conversation_id: Uuid) -> Result<Option<Conversation>> {
         self.conn
             .query_row(
@@ -898,6 +975,57 @@ mod tests {
             .unwrap();
         assert_eq!(remaining, 0, "ON DELETE CASCADE 未生效");
         assert!(s.list_conversations().unwrap().is_empty());
+    }
+
+    /// 生成前先插一条空的占位消息；进程被杀会把它留在库里——开服的清理要认得出它，
+    /// 而且**只**删它（正常回复不可能是空的：上游回空会被当成错误）。
+    #[test]
+    fn empty_placeholders_are_dropped_and_filled_replies_stay() {
+        let mut s = store();
+        let conv = s.create_conversation("x", "y", "").unwrap();
+        let user = s.insert_message(conv.id, Role::User, "在吗", None).unwrap();
+        let filled = s
+            .insert_message(conv.id, Role::Assistant, "在的", Some(user.id))
+            .unwrap();
+        // 占位消息最后插：这样"当前尾巴"正指着它，顺带验证退回逻辑
+        let placeholder = s
+            .insert_message(conv.id, Role::Assistant, "   ", Some(user.id))
+            .unwrap();
+
+        assert_eq!(s.drop_empty_assistant_messages().unwrap(), 1, "只删空的那条");
+        let left = s.list_all_messages(conv.id).unwrap();
+        assert_eq!(left.len(), 2, "用户那条与填好的回复都留着");
+        assert!(left.iter().all(|m| m.id != placeholder.id));
+        assert!(left.iter().any(|m| m.id == filled.id));
+        assert_eq!(
+            s.get_conversation(conv.id).unwrap().unwrap().current_leaf,
+            Some(user.id),
+            "尾巴指着被删的占位消息时要退回它的父亲，别指向不存在的行"
+        );
+    }
+
+    /// 「停止」收拾占位消息用的就是它：空了才删，已经填上正文的留住。
+    #[test]
+    fn delete_message_if_empty_only_touches_empty_ones() {
+        let mut s = store();
+        let conv = s.create_conversation("x", "y", "").unwrap();
+        let user = s.insert_message(conv.id, Role::User, "在吗", None).unwrap();
+        let placeholder = s
+            .insert_message(conv.id, Role::Assistant, "", Some(user.id))
+            .unwrap();
+
+        assert_eq!(s.delete_message_if_empty(conv.id, placeholder.id).unwrap(), 1);
+        assert_eq!(s.list_messages(conv.id).unwrap().len(), 1);
+        assert_eq!(
+            s.get_conversation(conv.id).unwrap().unwrap().current_leaf,
+            Some(user.id)
+        );
+
+        // 用户那条不是空的 → 一个字都不动
+        assert_eq!(s.delete_message_if_empty(conv.id, user.id).unwrap(), 0);
+        assert_eq!(s.list_messages(conv.id).unwrap().len(), 1);
+        // 已经不在了 → 还是 0（幂等：重复按「停止」不算错）
+        assert_eq!(s.delete_message_if_empty(conv.id, placeholder.id).unwrap(), 0);
     }
 
     #[test]

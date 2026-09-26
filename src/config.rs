@@ -137,6 +137,36 @@ pub enum ProviderKind {
     Dummy,
 }
 
+/// 单次上游请求的超时。
+///
+/// 没有超时的 reqwest 客户端 = 上游卡住就永远挂着，界面上只有一个转不完的"等待…"。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Timeouts {
+    /// 建连超时（秒）。
+    pub connect_secs: u64,
+    /// 一次请求的总超时（秒）——非流式：从发出去到整段回来。
+    /// **流式落地后这个要换成"读超时"**（首字节 + 两次增量之间的间隔），
+    /// 否则长回答会被总时长砍掉。
+    pub total_secs: u64,
+}
+
+impl Default for Timeouts {
+    fn default() -> Self {
+        Self {
+            connect_secs: 15,
+            total_secs: 300,
+        }
+    }
+}
+
+impl Timeouts {
+    /// 全等于默认值时就不写进文件——`providers.json` 保持干净（不塞一堆等于默认值的字段）。
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// `providers.json` 里的单个 provider：只有连接信息，没有模型（模型是发现所得，在库里）。
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
@@ -150,6 +180,9 @@ pub struct ProviderConfig {
     pub base_url: String,
     /// 额外 HTTP 头，如 OpenRouter 的 `X-Title`。
     pub headers: BTreeMap<String, String>,
+    /// 超时可单独覆盖；等于默认值时不写进文件（`providers.json` 保持干净）。
+    #[serde(skip_serializing_if = "Timeouts::is_default")]
+    pub timeouts: Timeouts,
     /// 保留未知字段：API 写回文件时不能丢用户自己加的东西。
     #[serde(flatten)]
     pub extra: BTreeMap<String, serde_json::Value>,
@@ -163,6 +196,7 @@ impl Default for ProviderConfig {
             kind: ProviderKind::default(),
             base_url: String::new(),
             headers: BTreeMap::new(),
+            timeouts: Timeouts::default(),
             extra: BTreeMap::new(),
         }
     }

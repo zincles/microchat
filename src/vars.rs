@@ -487,18 +487,53 @@ pub fn build_outgoing(
             content: system,
         });
     }
-    outgoing.extend(messages.iter().map(|message| Outgoing {
-        role: match message.role {
-            crate::model::Role::User => OutgoingRole::User,
-            crate::model::Role::Assistant => OutgoingRole::Assistant,
-        },
-        content: parse(&message.content).cleaned,
+    // 正文为空的**不发出去**：生成中的占位消息（Assistant、空正文）就在历史里躺着，
+    // 而"空一条、再说一句"对上游是纯噪音；整句都是 `<state>` 块的消息同理（剔除后为空）。
+    outgoing.extend(messages.iter().filter_map(|message| {
+        let content = parse(&message.content).cleaned;
+        if content.trim().is_empty() {
+            return None;
+        }
+        Some(Outgoing {
+            role: match message.role {
+                crate::model::Role::User => OutgoingRole::User,
+                crate::model::Role::Assistant => OutgoingRole::Assistant,
+            },
+            content,
+        })
     }));
     outgoing
 }
 
 #[cfg(test)]
 mod tests {
+
+    /// 正文为空的**不发出去**：生成中的占位消息（空正文）就在历史里躺着，
+    /// 而"空一条、再说一句"对上游是纯噪音；整句只有 `<state>` 块的消息同理。
+    #[test]
+    fn outgoing_skips_empty_bodies() {
+        use crate::model::{Message, Role};
+
+        let conversation = Uuid::now_v7();
+        let msg = |content: &str| Message {
+            id: Uuid::now_v7(),
+            conversation_id: conversation,
+            role: Role::Assistant,
+            content: content.to_owned(),
+            parent_id: None,
+            created_at: 0,
+        };
+        let messages = vec![
+            msg(""),
+            msg("   "),
+            msg("<state>set HP = 1</state>"),
+            msg("真的说了点什么"),
+        ];
+
+        let outgoing = build_outgoing("你是助手", &messages, &BTreeMap::new());
+        assert_eq!(outgoing.len(), 2, "只留系统提示词与那句真的");
+        assert_eq!(outgoing[1].content, "真的说了点什么");
+    }
 
     /// 变量表是**从正文现演**的：顺序 = 消息顺序，能追到哪句写的，切一刀就是回溯。
     #[test]
