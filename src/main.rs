@@ -272,14 +272,20 @@ enum View {
 
 #[derive(Clone, Copy, PartialEq)]
 enum SettingsTab {
-    Server,
+    Connection,
+    Agents,
+    Models,
     Frontend,
     About,
 }
 
 impl SettingsTab {
-    const ALL: [(Self, &'static str); 3] = [
-        (Self::Server, "服务器设置"),
+    /// 各自独立成页：连接、Agent、模型与渠道各管各的，
+    /// 别把三件事塞进同一页——找东西要滚半天，改 A 时也看不见 B 的状态。
+    const ALL: [(Self, &'static str); 5] = [
+        (Self::Connection, "连接"),
+        (Self::Agents, "Agent"),
+        (Self::Models, "模型与渠道"),
         (Self::Frontend, "前端设置"),
         (Self::About, "关于"),
     ];
@@ -518,7 +524,7 @@ impl App {
             settings,
             settings_dirty: false,
             view: View::Chat,
-            settings_tab: SettingsTab::Server,
+            settings_tab: SettingsTab::Connection,
             debug_tab: DebugTab::State,
             preedit_active: false,
             focus_pending: true,
@@ -1195,7 +1201,8 @@ impl App {
     }
 
     /// 服务器设置：连接信息 + agents（可写）+ 模型（可刷新）。
-    fn server_settings(&mut self, ui: &mut egui::Ui) {
+    /// 连接：后端地址、口令状态、断开。
+    fn settings_connection(&mut self, ui: &mut egui::Ui) {
         ui.label(RichText::new("连接").strong());
         ui.horizontal(|ui| {
             ui.label(RichText::new(&self.settings.server_address).monospace());
@@ -1215,7 +1222,10 @@ impl App {
             }
         });
         ui.separator();
+    }
 
+    /// Agent（预设）：列表、编辑、新建、设为默认。保存走页面右下角的「保存」。
+    fn settings_agents(&mut self, ui: &mut egui::Ui) {
         ui.label(RichText::new("Agents（预设）").strong());
         ui.label(
             RichText::new("改动会写回后端的 config/agents.jsonc；该文件会被整体重写，注释会丢")
@@ -1346,6 +1356,10 @@ impl App {
 
         ui.add_space(8.0);
         ui.separator();
+    }
+
+    /// 模型与渠道：provider 清单、刷新模型、编辑连接信息、新建 provider。
+    fn settings_models(&mut self, ui: &mut egui::Ui) {
         ui.label(RichText::new("模型").strong());
         ui.label(
             RichText::new("「获取模型」会从上游拉取可用模型；成功后本 provider 的模型列表＝上游当前那份")
@@ -1572,6 +1586,7 @@ impl App {
             ui.label(RichText::new(&self.note).weak());
         }
     }
+
 
     /// 前端设置：只存本机；**改的是草稿**，点右下角「保存」才应用。
     fn frontend_settings(&mut self, ui: &mut egui::Ui) {
@@ -2795,9 +2810,11 @@ impl eframe::App for App {
                 // 两个设置页都走"手动保存才生效"——前端设置尤其如此：拖动缩放条时若立即应用，
                 // 界面会在手底下变形，滑块根本拖不准。
                 let footer = match self.settings_tab {
-                    SettingsTab::Server => Some(("提交 Agents 与 provider 的改动", true)),
+                    SettingsTab::Agents => Some(("提交 Agent 的改动", true)),
+                    SettingsTab::Models => Some(("提交 provider 与模型的改动", true)),
                     SettingsTab::Frontend => Some(("应用并保存到本机 frontend.jsonc", false)),
-                    SettingsTab::About => None,
+                    // 连接页只有只读信息与「断开」；关于页没有可保存的东西。
+                    SettingsTab::Connection | SettingsTab::About => None,
                 };
                 if let Some((hint, is_server)) = footer {
                     egui::Panel::bottom("settings_footer").show(ui, |ui| {
@@ -2845,7 +2862,9 @@ impl eframe::App for App {
                     .show(ui, |ui| {
                         ui.add_space(6.0);
                         match self.settings_tab {
-                            SettingsTab::Server => self.server_settings(ui),
+                            SettingsTab::Connection => self.settings_connection(ui),
+                            SettingsTab::Agents => self.settings_agents(ui),
+                            SettingsTab::Models => self.settings_models(ui),
                             SettingsTab::Frontend => self.frontend_settings(ui),
                             SettingsTab::About => self.about(ui),
                         }
