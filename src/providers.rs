@@ -16,6 +16,10 @@ pub enum Error {
     Http(reqwest::Error),
     /// 上游返回非 2xx。
     Status(u16),
+    /// 上游返回非 2xx 且带了正文。对话接口专用：只报状态码没法排查（密钥错？模型名错？）。
+    Upstream { status: u16, body: String },
+    /// 上游 200，但 `choices[].message.content` 里一个字都没有。
+    Empty,
 }
 
 impl std::fmt::Display for Error {
@@ -23,6 +27,8 @@ impl std::fmt::Display for Error {
         match self {
             Self::Http(e) => write!(f, "上游请求失败: {e}"),
             Self::Status(code) => write!(f, "上游返回 HTTP {code}"),
+            Self::Upstream { status, body } => write!(f, "上游返回 HTTP {status}：{body}"),
+            Self::Empty => write!(f, "上游没有返回任何内容"),
         }
     }
 }
@@ -75,6 +81,83 @@ impl Client {
         let body: ModelsResponse = resp.json().await.map_err(Error::Http)?;
         Ok(body.data.into_iter().filter_map(WireModel::into_model).collect())
     }
+
+    /// `POST {base_url}/chat/completions`，非流式。返回助手消息的正文。
+    ///
+    /// `messages` 必须来自 [`crate::vars::build_outgoing`]——那是"剔除状态标签、
+    /// 注入当前变量表"的唯一实现处，别在这儿二次拼装。
+    pub async fn chat_completion(&self, model: &str, messages: &[WireMessage]) -> Result<String> {
+        let mut req = self
+            .http
+            .post(format!("{}/chat/completions", self.base_url))
+            .json(&serde_json::json!({
+                "model": model,
+                "messages": messages,
+                "stream": false,
+            }));
+        if let Some(key) = &self.api_key {
+            req = req.bearer_auth(key);
+        }
+        for (name, value) in &self.headers {
+            req = req.header(name, value);
+        }
+
+        let resp = req.send().await.map_err(Error::Http)?;
+        let status = resp.status().as_u16();
+        let text = resp.text().await.map_err(Error::Http)?;
+        if !(200..300).contains(&status) {
+            // 上游的错误正文对排查很关键（密钥、模型名、额度），但要截断：
+            // 别把上游返回的整页 HTML 一路灌到前端。
+            return Err(Error::Upstream {
+                status,
+                body: snippet(&text),
+            });
+        }
+        let parsed: ChatResponse = serde_json::from_str(&text).map_err(|_| Error::Upstream {
+            status,
+            body: snippet(&text),
+        })?;
+        parsed
+            .choices
+            .into_iter()
+            .find_map(|c| c.message.and_then(|m| m.content))
+            .filter(|text| !text.is_empty())
+            .ok_or(Error::Empty)
+    }
+}
+
+/// 正文片段：压掉换行、截到 300 字符，够看清楚原因就行。
+fn snippet(text: &str) -> String {
+    let flat: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= 300 {
+        return flat;
+    }
+    flat.chars().take(300).collect::<String>() + "…"
+}
+
+/// 发往上游的一条消息。`role` 取 OpenAI 的取值：system / user / assistant。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct WireMessage {
+    pub role: &'static str,
+    pub content: String,
+}
+
+#[derive(Deserialize)]
+struct ChatResponse {
+    #[serde(default)]
+    choices: Vec<ChatChoice>,
+}
+
+#[derive(Deserialize)]
+struct ChatChoice {
+    #[serde(default)]
+    message: Option<WireAssistant>,
+}
+
+#[derive(Deserialize)]
+struct WireAssistant {
+    #[serde(default)]
+    content: Option<String>,
 }
 
 #[derive(Deserialize)]

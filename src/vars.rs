@@ -374,6 +374,17 @@ pub enum OutgoingRole {
     Assistant,
 }
 
+impl OutgoingRole {
+    /// 发往 OpenAI 兼容上游时 `messages[].role` 的取值。
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::User => "user",
+            Self::Assistant => "assistant",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Outgoing {
     pub role: OutgoingRole,

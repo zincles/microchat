@@ -12,5 +12,11 @@
     // OpenRouter（密钥写在 config/secrets.json：{ "openrouter": "sk-or-…" }）：
     // { "id": "openrouter", "base_url": "https://openrouter.ai/api/v1",
     //   "headers": { "X-Title": "microchat" } },
-  ]
+
+    // Command Code Studio（OpenAI 兼容）。密钥写在 config/secrets.json：
+    // { "commandcode-direct": "…" }
+    { "id": "commandcode-direct", "name": "Command Code",
+      "base_url": "https://api.commandcode.ai/provider/v1" },
+
+]
 }

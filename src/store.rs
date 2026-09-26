@@ -483,6 +483,17 @@ impl Store {
             .map_err(Into::into)
     }
 
+    /// 忘掉一个 provider 派生出来的全部数据：已发现模型（连用户改的显示名/参数一起）
+    /// 与刷新时间戳。历史会话里仍留着它的名字——那由 `chat::Backend::select` 兜底成
+    /// fallback 话术，不是错误。
+    pub fn forget_provider(&mut self, provider: &str) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        tx.execute("DELETE FROM models WHERE provider = ?1", params![provider])?;
+        tx.execute("DELETE FROM provider_state WHERE provider = ?1", params![provider])?;
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn set_model_display_name(
         &mut self,
         provider: &str,

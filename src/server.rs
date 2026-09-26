@@ -90,7 +90,10 @@ pub fn router(state: AppState) -> Router {
         .route("/providers", get(list_providers).post(create_provider))
         .route("/models", get(list_all_models))
         .route("/models/probe", post(probe_models))
-        .route("/providers/{id}", patch(update_provider))
+        .route(
+            "/providers/{id}",
+            patch(update_provider).delete(delete_provider),
+        )
         .route("/providers/{id}/refresh", post(refresh_provider))
         .route("/agents", get(list_agents).post(create_agent))
         .route("/agents/{id}", patch(update_agent).delete(delete_agent))
@@ -209,24 +212,35 @@ async fn send_message(
     Json(req): Json<SendReq>,
 ) -> Result<(StatusCode, Json<ChatTurn>), ApiError> {
     let providers = ProvidersConfig::load(&state.paths.providers_jsonc())?;
-    let mut store = state.lock()?;
 
-    let user = store.insert_message(id, Role::User, &req.content)?;
-    apply_state_tags(&mut store, id, &user)?;
-    let conversation = store.get_conversation(id)?.ok_or_else(ApiError::not_found)?;
-    if conversation.title.is_empty() {
-        store.update_title(id, &title_from(&req.content, state.title_chars))?;
-    }
+    // 先把该写的写完、该组装的组装好，再放掉数据库锁：生成回复要等上游几秒钟，
+    // 攥着锁等会把整个后端一起卡住。
+    let (user, conversation, outgoing) = {
+        let mut store = state.lock()?;
+        let user = store.insert_message(id, Role::User, &req.content)?;
+        apply_state_tags(&mut store, id, &user)?;
+        let conversation = store.get_conversation(id)?.ok_or_else(ApiError::not_found)?;
+        if conversation.title.is_empty() {
+            store.update_title(id, &title_from(&req.content, state.title_chars))?;
+        }
 
-    // 真正要发出去的东西在这里成型：历史剔除状态块、只注入当前变量表。
-    let messages = store.list_messages(id)?;
-    let effective = vars::VariableView::build(&store.list_variable_ops(id)?).effective;
-    let outgoing = vars::build_outgoing(&conversation, &messages, &effective);
+        // 真正要发出去的东西在这里成型：历史剔除状态块、只注入当前变量表。
+        let messages = store.list_messages(id)?;
+        let effective = vars::VariableView::build(&store.list_variable_ops(id)?).effective;
+        let outgoing = vars::build_outgoing(&conversation, &messages, &effective);
+        (user, conversation, outgoing)
+    };
 
+    let secrets = config::load_secrets(&state.paths.secrets_json())?;
     let backend = chat::Backend::select(&conversation, &providers);
-    let reply = backend.reply(&conversation, &outgoing)?;
-    let assistant = store.insert_message(id, Role::Assistant, &reply)?;
-    apply_state_tags(&mut store, id, &assistant)?;
+    let reply = chat::complete(&conversation, &outgoing, &providers, &secrets).await?;
+
+    let assistant = {
+        let mut store = state.lock()?;
+        let assistant = store.insert_message(id, Role::Assistant, &reply)?;
+        apply_state_tags(&mut store, id, &assistant)?;
+        assistant
+    };
 
     Ok((
         StatusCode::CREATED,
@@ -363,6 +377,7 @@ async fn create_provider(
 
     let provider = ProviderConfig {
         id,
+        name: clean_name(req.name),
         kind: req.kind,
         base_url: req.base_url.trim().to_owned(),
         headers: req.headers,
@@ -451,6 +466,9 @@ async fn probe_models(Json(req): Json<ProbeReq>) -> Result<Json<ProbeResult>, Ap
 #[derive(Deserialize)]
 pub struct CreateProviderReq {
     pub id: String,
+    /// 显示名（可选）：前端下拉里显示它，缺省回退到 `id`。
+    #[serde(default)]
+    pub name: Option<String>,
     #[serde(default)]
     pub kind: ProviderKind,
     #[serde(default)]
@@ -465,9 +483,53 @@ pub struct CreateProviderReq {
 #[derive(Deserialize)]
 pub struct UpdateProviderReq {
     pub base_url: Option<String>,
+    /// `None` = 不动；`Some("")` = 清掉显示名；其它 = 设置。
+    pub name: Option<String>,
     pub headers: Option<BTreeMap<String, String>>,
     /// `None` = 不动；`Some("")` = 删除密钥；其它 = 设置。
     pub api_key: Option<String>,
+}
+
+/// 显示名：空白与空串都当"没配"（`Some("")` 是"清掉"的写法）。
+fn clean_name(name: Option<String>) -> Option<String> {
+    name.map(|name| name.trim().to_owned())
+        .filter(|name| !name.is_empty())
+}
+
+/// 删除一个 provider：从 `providers.jsonc` 摘掉、清掉它的密钥、忘掉已发现的模型。
+///
+/// 历史会话里仍留着它的名字——那由 `chat::Backend::select` 兜底成 fallback 话术，
+/// 不是错误，所以这里不做任何"正在被使用"的阻拦。
+async fn delete_provider(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let path = state.paths.providers_jsonc();
+    let mut config = ProvidersConfig::load(&path)?;
+    let before = config.providers.len();
+    config.providers.retain(|provider| provider.id != id);
+    if config.providers.len() == before {
+        return Err(ApiError::not_found());
+    }
+    // 删掉不需要再 validate：移除不可能制造重复 id 或空 base_url。
+    config.save(&path)?;
+    write_secret(&state, &id, None)?;
+    state.lock()?.forget_provider(&id)?;
+
+    // `config.jsonc` 里若正拿它当默认 provider，顺手挪到还活着的第一个——
+    // 否则新建会话会带着一个幽灵 provider 出门（前端只看得到"未配置模型"）。
+    let config_path = state.paths.config_jsonc();
+    let mut app = crate::config::Config::load(&config_path)?;
+    if app.defaults.provider == id {
+        app.defaults.provider = config
+            .providers
+            .first()
+            .map(|provider| provider.id.clone())
+            .unwrap_or_default();
+        app.defaults.model.clear(); // 换了 provider，旧 model id 未必还存在
+        crate::config::write_json_pretty(&config_path, &app)?;
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// 编辑已有 provider 的连接信息。`id` 是主键**不可改**：历史会话、`secrets.json`、
@@ -490,6 +552,9 @@ async fn update_provider(
     }
     if let Some(headers) = req.headers {
         provider.headers = headers;
+    }
+    if let Some(name) = req.name {
+        provider.name = clean_name(Some(name));
     }
 
     if let Err(e) = config.validate() {
@@ -747,14 +812,6 @@ impl ApiError {
         }
     }
 
-    fn not_implemented(name: &str) -> Self {
-        Self {
-            status: StatusCode::NOT_IMPLEMENTED,
-            code: "not_implemented",
-            message: format!("{name} 对话后端尚未实现"),
-        }
-    }
-
     fn internal(message: &str) -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
@@ -778,9 +835,12 @@ impl From<store::Error> for ApiError {
 }
 
 impl From<chat::Error> for ApiError {
+    /// 502：错在上游，不是调用方。上游的原话要一路带到前端——"上游失败"这种话没用。
     fn from(e: chat::Error) -> Self {
-        match e {
-            chat::Error::NotImplemented(name) => Self::not_implemented(name),
+        Self {
+            status: StatusCode::BAD_GATEWAY,
+            code: "upstream",
+            message: e.to_string(),
         }
     }
 }
@@ -1130,26 +1190,106 @@ mod tests {
         assert_eq!(messages[0].content, "原话");
     }
 
+    /// 配了真模型但上游连不上：502 + 上游原话。绝不假装有人在说话。
     #[tokio::test]
-    async fn configured_model_reports_unimplemented_backend() {
-        let (app, dir) = app_with_files(&[(
-            "providers.jsonc",
-            r#"{ "providers": [ { "id": "local", "base_url": "http://127.0.0.1:9/v1" } ] }"#,
-        )]);
+    async fn unreachable_upstream_reports_bad_gateway() {
+        let (app, dir) = app_with_env(
+            None,
+            &[(
+                "providers.jsonc",
+                r#"{ "providers": [ { "id": "local", "kind": "openai-compat", "base_url": "http://127.0.0.1:1/v1" } ] }"#,
+            )],
+        );
         let conv = create(&app, r#"{"provider":"local","model":"m"}"#).await;
         let uri = format!("/api/v1/conversations/{}/messages", conv.id);
 
-        let (status, body) = send(&app, json_req("POST", &uri, r#"{"content":"你好"}"#)).await;
-        assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
-        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-        assert_eq!(v["error"]["code"], "not_implemented");
-        assert!(v["error"]["message"].as_str().unwrap().contains("openai-completion"));
-
-        // 失败不该吞掉用户的话
+        let (status, body) = send(&app, json_req("POST", &uri, r#"{"content":"在吗"}"#)).await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        let err: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(err["error"]["code"], "upstream");
+        assert!(
+            err["error"]["message"].as_str().unwrap().contains("上游"),
+            "要把上游的原因带出来：{body}"
+        );
+        // 助手消息不该落库（没生成成功，就别留半条假消息）
         let (_, body) = send(&app, get_req(&uri)).await;
-        let msgs: Vec<Message> = serde_json::from_str(&body).unwrap();
-        assert_eq!(msgs.len(), 1);
-        assert_eq!(msgs[0].content, "你好");
+        let msgs: Vec<crate::model::Message> = serde_json::from_str(&body).unwrap();
+        assert_eq!(msgs.len(), 1, "只有用户那条");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// provider 的建、改名、删一条链走通；删的时候密钥与派生数据一起清。
+    #[tokio::test]
+    async fn provider_can_be_created_renamed_and_deleted() {
+        const TOKEN: &str = "tok";
+        let (app, dir) = app_with_env(
+            Some(TOKEN),
+            &[("providers.jsonc", r#"{ "providers": [] }"#)],
+        );
+        let authed = |method: &str, uri: &str, body: &str| {
+            let mut builder = Request::builder()
+                .method(method)
+                .uri(uri)
+                .header("authorization", format!("Bearer {TOKEN}"));
+            if !body.is_empty() {
+                builder = builder.header("content-type", "application/json");
+            }
+            builder.body(Body::from(body.to_owned())).unwrap()
+        };
+
+        let (status, body) = send(
+            &app,
+            authed(
+                "POST",
+                "/api/v1/providers",
+                r#"{"id":"open","kind":"openai-compat","base_url":"http://127.0.0.1:1/v1","name":"我的上游","api_key":"sk-x"}"#,
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&body).unwrap()["name"],
+            "我的上游"
+        );
+
+        // 只改显示名：base_url 不许被顺手清掉
+        let (status, body) = send(
+            &app,
+            authed("PATCH", "/api/v1/providers/open", r#"{"name":"改名了"}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let patched: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(patched["name"], "改名了");
+        assert_eq!(patched["base_url"], "http://127.0.0.1:1/v1");
+
+        let (_, body) = send(&app, authed("GET", "/api/v1/providers", "")).await;
+        let list: Vec<serde_json::Value> = serde_json::from_str(&body).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0]["has_key"], true);
+
+        let (status, _) = send(&app, authed("DELETE", "/api/v1/providers/open", "")).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let (status, _) = send(&app, authed("DELETE", "/api/v1/providers/open", "")).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "再删一次应当 404");
+        let (_, body) = send(&app, authed("GET", "/api/v1/providers", "")).await;
+        let list: Vec<serde_json::Value> = serde_json::from_str(&body).unwrap();
+        assert!(list.is_empty());
+
+        // 密钥确实清了：同名重建不该自带 key
+        send(
+            &app,
+            authed(
+                "POST",
+                "/api/v1/providers",
+                r#"{"id":"open","kind":"openai-compat","base_url":"http://127.0.0.1:1/v1"}"#,
+            ),
+        )
+        .await;
+        let (_, body) = send(&app, authed("GET", "/api/v1/providers", "")).await;
+        let list: Vec<serde_json::Value> = serde_json::from_str(&body).unwrap();
+        assert_eq!(list[0]["has_key"], false, "删 provider 要连密钥一起清掉");
+        assert_eq!(list[0]["name"], serde_json::Value::Null);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

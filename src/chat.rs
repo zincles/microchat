@@ -5,11 +5,15 @@
 //!   没有上游），立刻回 [`DUMMY_MODEL_REPLY`]——联调/测试用；
 //! - [`Backend::Fallback`]：什么都没配、或配的 provider 已从 `providers.jsonc` 消失，
 //!   回 [`FALLBACK_REPLY`]，保证前端不会对着空气说话；
-//! - [`Backend::OpenAiCompletion`]：真模型，占位待实现（选择规则、名字、错误码已定）。
+//! - [`Backend::OpenAiCompletion`]：真模型，走 `providers.jsonc` 里那个 provider 的
+//!   OpenAI 兼容接口（非流式）。要发出去的历史一律来自 [`crate::vars::build_outgoing`]。
 //!
 //! 将来 anthropic / deepseek 是同一层的兄弟实现；image-gen 之类不是"对话后端"，另走一路。
 
+use std::collections::BTreeMap;
+
 use crate::config::{ProviderKind, ProvidersConfig};
+use crate::providers::{self, WireMessage};
 use crate::model::Conversation;
 use crate::vars::Outgoing;
 
@@ -63,30 +67,55 @@ impl Backend {
         }
     }
 
-    /// 生成一条回复。未实现的后端明确报错，绝不假装有人在说话。
-    ///
-    /// `outgoing` 是**真正要发出去的东西**：变量表已注入、历史里的状态标签已剔除，
-    /// 由 [`crate::vars::build_outgoing`] 一次组装。真模型后端接进来时直接用它——
-    /// 不允许再写第二条拼装路径（否则"剔除标签"会漏）。
-    pub fn reply(self, _conversation: &Conversation, _outgoing: &[Outgoing]) -> Result<String, Error> {
-        match self {
-            Self::Dummy => Ok(DUMMY_MODEL_REPLY.to_owned()),
-            Self::Fallback => Ok(FALLBACK_REPLY.to_owned()),
-            Self::OpenAiCompletion => Err(Error::NotImplemented(self.name())),
+}
+
+/// 生成一条回复。dummy / fallback 立即返回，真模型走上游。
+///
+/// `outgoing` 是**真正要发出去的东西**：变量表已注入、历史里的状态标签已剔除，
+/// 由 [`crate::vars::build_outgoing`] 一次组装——真模型直接用它，
+/// **不允许**再写第二条拼装路径（否则"剔除标签"会漏）。
+pub async fn complete(
+    conversation: &Conversation,
+    outgoing: &[Outgoing],
+    providers: &ProvidersConfig,
+    secrets: &BTreeMap<String, String>,
+) -> Result<String, Error> {
+    match Backend::select(conversation, providers) {
+        Backend::Dummy => Ok(DUMMY_MODEL_REPLY.to_owned()),
+        Backend::Fallback => Ok(FALLBACK_REPLY.to_owned()),
+        Backend::OpenAiCompletion => {
+            // select 已经确认过 provider 存在；这里再取一次是拿配置本体（密钥另存）。
+            let provider = providers.get(&conversation.provider).ok_or(Error::NoProvider)?;
+            let client = providers::Client::new(provider, secrets.get(&provider.id).cloned())
+                .map_err(Error::Upstream)?;
+            let messages: Vec<WireMessage> = outgoing
+                .iter()
+                .map(|item| WireMessage {
+                    role: item.role.as_str(),
+                    content: item.content.clone(),
+                })
+                .collect();
+            client
+                .chat_completion(&conversation.model, &messages)
+                .await
+                .map_err(Error::Upstream)
         }
     }
 }
 
 #[derive(Debug)]
 pub enum Error {
-    /// 后端已被选择但尚未实现。
-    NotImplemented(&'static str),
+    /// 调上游失败：连不上、非 2xx、解析不了、回了个空的。
+    Upstream(providers::Error),
+    /// 选择后端时 provider 还在，真要发的时候没了（配置被改过）。
+    NoProvider,
 }
 
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::NotImplemented(name) => write!(f, "{name} 对话后端尚未实现"),
+            Self::Upstream(e) => write!(f, "{e}"),
+            Self::NoProvider => write!(f, "provider 已经不在 providers.jsonc 里了"),
         }
     }
 }
@@ -99,10 +128,61 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 mod tests {
     use uuid::Uuid;
 
+    use std::collections::BTreeMap;
+
     use crate::config::{ProviderConfig, ProviderKind, ProvidersConfig};
     use crate::model::Conversation;
+    use crate::vars::{Outgoing, OutgoingRole};
 
-    use super::{Backend, DUMMY_MODEL_ID, DUMMY_MODEL_REPLY, FALLBACK_REPLY};
+    use super::{complete, Backend, Error, DUMMY_MODEL_ID, DUMMY_MODEL_REPLY, FALLBACK_REPLY};
+
+    /// 起一个本地假上游。返回 (base_url, 已捕获的 (authorization, body), 句柄)。
+    type Captured = std::sync::Arc<std::sync::Mutex<(String, String)>>;
+
+    async fn stub_upstream(
+        status: u16,
+        payload: serde_json::Value,
+    ) -> (String, Captured, tokio::task::JoinHandle<()>) {
+        let captured: Captured = std::sync::Arc::new(std::sync::Mutex::new((String::new(), String::new())));
+        let sink = captured.clone();
+        let stub = axum::Router::new().route(
+            "/v1/chat/completions",
+            axum::routing::post(move |headers: axum::http::HeaderMap, body: String| {
+                let sink = sink.clone();
+                let payload = payload.clone();
+                async move {
+                    let auth = headers
+                        .get("authorization")
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or_default()
+                        .to_owned();
+                    *sink.lock().unwrap() = (auth, body);
+                    (
+                        axum::http::StatusCode::from_u16(status).unwrap(),
+                        axum::Json(payload),
+                    )
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            let _ = axum::serve(listener, stub).await;
+        });
+        (format!("http://{addr}/v1"), captured, handle)
+    }
+
+    fn providers_with(id: &str, base_url: &str) -> ProvidersConfig {
+        ProvidersConfig {
+            providers: vec![ProviderConfig {
+                id: id.to_owned(),
+                kind: ProviderKind::OpenAiCompat,
+                base_url: base_url.to_owned(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        }
+    }
 
     fn conversation(provider: &str, model: &str) -> Conversation {
         Conversation {
@@ -143,19 +223,22 @@ mod tests {
         }
     }
 
-    #[test]
-    fn dummy_model_replies_immediately() {
+    #[tokio::test]
+    async fn dummy_model_replies_immediately() {
         let providers = dummy_providers();
         let conversation = conversation("dummy", DUMMY_MODEL_ID);
 
         let backend = Backend::select(&conversation, &providers);
         assert_eq!(backend, Backend::Dummy);
-        assert_eq!(backend.reply(&conversation, &[]).unwrap(), DUMMY_MODEL_REPLY);
+        let reply = complete(&conversation, &[], &providers, &BTreeMap::new())
+            .await
+            .unwrap();
+        assert_eq!(reply, DUMMY_MODEL_REPLY);
         assert_eq!(DUMMY_MODEL_REPLY, "（测试用空模型）");
     }
 
-    #[test]
-    fn unconfigured_conversation_falls_back() {
+    #[tokio::test]
+    async fn unconfigured_conversation_falls_back() {
         let providers = providers(&["local"]);
         // 没配 model
         assert_eq!(
@@ -166,7 +249,8 @@ mod tests {
         let blank = conversation("", "");
         let backend = Backend::select(&blank, &providers);
         assert_eq!(backend, Backend::Fallback);
-        assert_eq!(backend.reply(&blank, &[]).unwrap(), FALLBACK_REPLY);
+        let reply = complete(&blank, &[], &providers, &BTreeMap::new()).await.unwrap();
+        assert_eq!(reply, FALLBACK_REPLY);
         // provider 已被从 providers.jsonc 删掉
         assert_eq!(
             Backend::select(&conversation("ghost", "m"), &providers),
@@ -174,15 +258,77 @@ mod tests {
         );
     }
 
-    #[test]
-    fn configured_conversation_selects_openai_completion() {
-        let providers = providers(&["local"]);
-        let conversation = conversation("local", "deepseek/deepseek-v4-flash");
-        let backend = Backend::select(&conversation, &providers);
+    #[tokio::test]
+    async fn configured_conversation_talks_to_its_upstream() {
+        let (base_url, captured, upstream) = stub_upstream(
+            200,
+            serde_json::json!({
+                "choices": [{ "message": { "role": "assistant", "content": "上游说你好" } }]
+            }),
+        )
+        .await;
+        let providers = providers_with("stub", &base_url);
+        let mut secrets = BTreeMap::new();
+        secrets.insert("stub".to_owned(), "sk-test".to_owned());
+        let outgoing = vec![
+            Outgoing { role: OutgoingRole::System, content: "你是助手".to_owned() },
+            Outgoing { role: OutgoingRole::User, content: "在吗".to_owned() },
+        ];
 
-        assert_eq!(backend, Backend::OpenAiCompletion);
-        let err = backend.reply(&conversation, &[]).unwrap_err();
-        assert!(matches!(err, super::Error::NotImplemented("openai-completion")));
-        assert!(err.to_string().contains("尚未实现"));
+        let conversation = conversation("stub", "deepseek/deepseek-v4-flash");
+        assert_eq!(
+            Backend::select(&conversation, &providers),
+            Backend::OpenAiCompletion
+        );
+        let reply = complete(&conversation, &outgoing, &providers, &secrets)
+            .await
+            .unwrap();
+        assert_eq!(reply, "上游说你好");
+
+        let (auth, body) = captured.lock().unwrap().clone();
+        assert_eq!(auth, "Bearer sk-test", "密钥要按 Bearer 发出去");
+        let sent: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(sent["model"], "deepseek/deepseek-v4-flash");
+        assert_eq!(sent["stream"], false);
+        assert_eq!(sent["messages"][0]["role"], "system");
+        assert_eq!(sent["messages"][0]["content"], "你是助手");
+        assert_eq!(sent["messages"][1]["role"], "user");
+        assert_eq!(sent["messages"][1]["content"], "在吗");
+        upstream.abort();
+    }
+
+    #[tokio::test]
+    async fn upstream_error_body_is_surfaced() {
+        let (base_url, _captured, upstream) = stub_upstream(
+            401,
+            serde_json::json!({ "error": { "message": "invalid api key" } }),
+        )
+        .await;
+        let providers = providers_with("stub", &base_url);
+
+        let err = complete(
+            &conversation("stub", "m"),
+            &[],
+            &providers,
+            &BTreeMap::new(),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            Error::Upstream(crate::providers::Error::Upstream { status: 401, .. })
+        ));
+        assert!(err.to_string().contains("invalid api key"), "上游原话要带出来：{err}");
+        upstream.abort();
+    }
+
+    /// 连不上就必须报错——绝不能假装有人在说话（这是"未实现"那版的老毛病）。
+    #[tokio::test]
+    async fn unreachable_upstream_is_an_error_not_a_fake_reply() {
+        let providers = providers_with("local", "http://127.0.0.1:1/v1");
+        let err = complete(&conversation("local", "m"), &[], &providers, &BTreeMap::new())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::Upstream(crate::providers::Error::Http(_))));
     }
 }
