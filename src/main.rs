@@ -576,6 +576,36 @@ impl App {
     }
 
     /// 只拉变量（每次回复后单独调一次就够，不必重拉整段历史）。
+    /// 把所有面板要的东西重新从服务器拉一遍。
+    ///
+    /// 服务端就在本机、请求都是毫秒级，所以这里不做增量、也不做节流：点一下就全量对齐，
+    /// 免得界面上出现"某个角落还是旧数据"这种只有刷新才能解释的状态。
+    fn refresh_all(&mut self) {
+        let (base, token) = (self.settings.server_address.clone(), self.token.clone());
+        self.client.send(Command::Check {
+            base: base.clone(),
+            token: token.clone(),
+        });
+        self.client.send(Command::ListProviders {
+            base: base.clone(),
+            token: token.clone(),
+        });
+        self.client.send(Command::ListAgents {
+            base: base.clone(),
+            token: token.clone(),
+        });
+        self.client.send(Command::ListConversations {
+            base,
+            token,
+        });
+        if let Some(conversation) = self.current {
+            self.fetch_messages(conversation);
+            self.fetch_variables(conversation);
+            self.fetch_branches(conversation);
+        }
+        self.note = "已向服务器同步".to_owned();
+    }
+
     /// 拉"每条消息在同龄兄弟里排第几"（界面上的「‹ 2/3 ›」）。
     fn fetch_branches(&mut self, conversation: Uuid) {
         let (base, token) = (self.settings.server_address.clone(), self.token.clone());
@@ -782,7 +812,11 @@ impl App {
                     if !still_there {
                         self.current = self.conversations.first().map(|c| c.id);
                         if let Some(id) = self.current {
+                            // 换了会话就得把这一整套都拉一遍：只拉消息的话，
+                            // 变量面板与「‹ 2/3 ›」会挂着上一个会话的东西。
                             self.fetch_messages(id);
+                            self.fetch_variables(id);
+                            self.fetch_branches(id);
                         }
                     }
                     self.rebuild_graph();
@@ -1986,6 +2020,7 @@ impl App {
         let mut new_conv = false;
 
         let mut open_debug = false;
+        let mut refresh = false;
         egui::Panel::bottom("account_bar").show(ui, |ui| {
             ui.add_space(4.0);
             ui.separator();
@@ -1999,10 +2034,21 @@ impl App {
                     open_debug = view == View::Debug;
                 }
             }
+            ui.separator();
+            if ui
+                .button("⟳ 刷新")
+                .on_hover_text("从服务器重拉一遍：会话、消息、变量、分支、模型、agent")
+                .clicked()
+            {
+                refresh = true;
+            }
             ui.add_space(4.0);
         });
         if open_debug {
             self.fetch_debug();
+        }
+        if refresh {
+            self.refresh_all();
         }
 
         ui.add_space(8.0);
