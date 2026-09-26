@@ -5,38 +5,51 @@ microchat：轻量 SillyTavern 替代（RPG 向）。三层，边界要清楚：
 | 层 | 位置 | 状态 |
 |---|---|---|
 | 后端（唯一权威） | `src/`（Rust + axum + **SQLite**） | 活跃开发 |
-| 新前端（Godot 4.8） | `frontend/` | **由用户设计**——动手前先问，别替他做设计决定 |
-| 旧前端（egui） | `src/main.rs`、`src/client.rs` | 已冻结：保持可用，不加功能 |
+| egui 前端（**当前主用界面**） | `src/main.rs`、`src/client.rs` | 活跃开发：会话树、变量栏、设置页都在这儿 |
+| Godot 4.8 前端 | `frontend/` | **用户自己在编辑器里设计**——动手前先问，别替他做设计决定；还没接真实数据 |
 
 ## 常用命令
 
 ```bash
-cargo test                                     # 全量测试（当前 93 项）
+cargo test                                     # 全量测试（当前 107 项）
 ./target/debug/server                          # 后端，默认 127.0.0.1:8787
-./target/debug/microchat                       # 旧 egui 前端
+./target/debug/microchat                       # egui 前端（主用界面）
 
 cd frontend
 godot --headless --path . --quit-after 3       # 加载并跑几帧（用它当"语法+运行"检查）
-godot --headless --script /tmp/x.gd            # 灌事件跑帧做无头验证（egui/Godot 都适用）
+godot --headless --script /tmp/x.gd            # 灌事件跑帧做无头验证
 ANDROID_HOME=~/Android/Sdk godot --headless --path . --export-debug "Android" /tmp/x.apk
 adb install -r /tmp/x.apk && adb logcat -s godot
 ```
 
 ## 不变量（破坏了会静默出错）
 
-1. **存储是 SQLite**：`data/microchat.db`。用户手写的配置只在 `config/`（**严格 JSON**：不接受注释与尾逗号——程序会整体重写这些文件，注释留不住；格式见文末「配置文件长什么样」）。两者路径都**相对工作目录**，可用 `MICROCHAT_CONFIG_DIR` / `MICROCHAT_DATA_DIR` 覆盖。前端的界面偏好另有一份：`~/.config/microchat/frontend.json`（不同机制，别混）。
+1. **存储是 SQLite**：`data/microchat.db`。用户手写的配置只在 `config/`（**严格 JSON**：注释与尾逗号都报错——程序会整体重写这些文件；格式见文末）。两者路径都**相对工作目录**，可用 `MICROCHAT_CONFIG_DIR` / `MICROCHAT_DATA_DIR` 覆盖。界面偏好另存一份：`~/.config/microchat/frontend.json`（不同机制，别混）。
 2. **正文与提示词都是存档**：`<state>` 块原样留在消息正文**和 system prompt** 里；**发给模型的文本一律剔除标签**，改注入当前变量表。唯一出口 `vars::build_outgoing()`——不要写第二条拼装路径。
-3. **变量不落库**：库里只有正文/提示词与那几张配置、发现表。变量表**每次现算**：`vars::VariableView::from_sources(会话, 生效的 system prompt, 来源, 消息列表)`——先扫提示词里的 `<state>` 块（**底子**），再按消息顺序（rowid 序）扫正文里的块，最后 fold。每条现演操作都带 `message_id`，"哪句话带来的状态"追得回来；切到前 N 条就是回溯。**没有派生表** ⇒ 编辑/删除消息、改提示词都不需要"重算变量"。别再往库里写操作日志（老表 `variable_ops` 已 DROP；`config/variables.json`、`setglobal`/`delglobal` 都已废弃）。
-   底子的**来源**决定它算哪一层：会话没写自己的提示词 ⇒ 用 agent 的 ⇒ 算**全局**（同一 agent 的会话共享）；会话自己写了 ⇒ 覆盖 agent 的 ⇒ 算**本会话**。会话里的 `del` 写墓碑，挡住全局同名键，不会从底下漏回来。生效的那份提示词由 `server::effective_system_prompt()` 一处解析（会话覆盖优先 → agent 的 → 内置默认兜底）——出站消息、变量底子、界面显示共用它。
-4. **编辑/删除消息只动正文**：改的是存档本身（单事务）；变量不用管——它是现演的。不能跨会话改/删（404）。
-5. **模型身份 = `(provider, upstream_id)`**；显示名三级回退（用户覆盖 → 上游名 → prettify）在**后端**完成，前端别再实现一遍。新建会话的 agent 取 `agents.json` 的 `default_agent`（请求可显式指定 `agent_id`）——否则 agent 的提示词与它写的变量底子对任何新会话都不生效。
-   **agent 的 id 由后端生成（UUIDv7）、不可变**：`POST /agents` 只收 `name` + `system_prompt`（名称是唯一人类句柄，空名给 400）；界面里 id 只读。手写进 `agents.json` 的自定义 id 照收（历史数据不改），要收拾历史 id 就走 `PATCH /agents/{id}` 的 `new_id`——它会把 `default_agent` 与**所有会话的引用**一起搬（`agent_id` 是软引用、无外键，`resolve()` 找不到只会静默回空提示词，所以必须由这一处维护一致性）。
-6. **`config/` 整块与 `data/` 永不入库**（都是你个人的：端口口令、provider 连接信息、agent 预设、密钥、存档）。默认值全在代码里（各结构的 `Default`），所以这些文件不存在也能跑。`.gitignore` 只放行 Godot 项目的非缓存部分（`.godot/`、`export/` 排除）。
-7. **消息顺序 = 树上的当前路径**：每条消息有 `parent_id`（自引用、`ON DELETE CASCADE`），会话有 `current_leaf`——整条对话 = 从 `current_leaf` 沿 `parent_id` 回溯到根（`store::path_from`）。**兄弟就是分支**：重新发送 = 再长一个兄弟（旧的留着，`‹ 2/3 ›` 切回去），切分支 = 改 `current_leaf`（`PATCH /conversations/{id}` 的 `current_leaf` 会顺着最新的孩子走到末端）。**别再按 rowid 或 id 排消息**。删除只允许删**整棵子树**（`store::delete_message` 返回条数；leaf 若落在被删子树里就退回被删那条的父亲）。变量只按当前路径现演 ⇒ 换分支生效值跟着换。
-
+3. **变量不落库**：库里只有正文/提示词与那几张配置、发现表。变量表**每次现算**：`vars::VariableView::from_sources(会话, 生效的 system prompt, 来源, 消息列表)`——先扫提示词里的 `<state>` 块（**底子**），再按**当前路径**顺序扫正文里的块，最后 fold。每条现演操作都带 `message_id`，"哪句话带来的状态"追得回来。**没有派生表** ⇒ 编辑/删除消息、改提示词、换分支都不需要"重算变量"（换分支只要重拉 `/conversations/{id}/variables`，那就是重算本身）。
+   底子的**来源**决定它算哪一层：会话没写自己的提示词 ⇒ 用 agent 的 ⇒ 算**全局**（同一 agent 的会话共享）；会话自己写了 ⇒ 覆盖 agent 的 ⇒ 算**本会话**。`del` 写墓碑，挡住全局同名键，不会从底下漏回来。生效提示词由 `server::effective_system_prompt()` 一处解析（会话覆盖优先 → agent 的 → 内置默认兜底），出站消息 / 变量底子 / 界面显示共用它。**别再把操作日志写回库**（老表 `variable_ops` 已 DROP；`config/variables.json`、`setglobal`/`delglobal` 都已废弃）。
+4. **消息是一棵树**：`messages.parent_id`（自引用、`ON DELETE CASCADE`）+ `conversations.current_leaf`。整条对话 = 从 `current_leaf` 沿 `parent_id` 回溯到根（`store::path_from`）。**兄弟就是分支**：
+   - **重新发送 = 再长一个兄弟**（旧的留着，不是覆盖）；尾条是用户消息时照它生成；
+   - **切分支只允许在最新那句上**（`store::switch_leaf_to_sibling`，目标必须是当前尾巴的兄弟，否则 400）。**别放开"切到任意旧消息"**：那是把对话倒回去，而变量沿路径现演 ⇒ 世界状态会跟着倒退；
+   - **删除只允许删整棵子树**（`store::delete_subtrees`，返回条数）。leaf 若落在被删子树里，退到**上文下还活着的最新一个孩子**（= 上一条兄弟），没有才退到上文——只退到上文会让界面看起来"整条分支都没了"；
+   - 「删除全部」= 清掉一组兄弟（连同各自子树），只留上文。
+   **别再按 rowid 或 id 排消息**；`rowid` 只在"同龄兄弟谁先谁后"里当顺序用。
+5. **模型身份 = `(provider, upstream_id)`**；显示名三级回退（用户覆盖 → 上游名 → prettify）在**后端**完成，前端别再实现一遍。新建会话的 agent 取 `agents.json` 的 `default_agent`（空串/缺失都算没配 ⇒ 用内置默认），否则 agent 的提示词与变量底子对任何新会话都不生效。
+   **agent 的 id**：新建时由后端生成 UUIDv7（`POST /agents` 只收 `name` + `system_prompt`，空名 400）；**已存在的可以在编辑器里改**，那走 `PATCH /agents/{id}` 的 `new_id`——一次把 `default_agent` 与**所有会话的引用**搬过去（`agent_id` 是软引用、无外键，`resolve()` 找不到只会静默回空提示词，所以必须由这一处维护一致性）。
+6. **`config/` 整块与 `data/` 永不入库**（都是你个人的：端口口令、provider 连接信息、agent 预设、密钥、存档）。默认值全在代码里（各结构的 `Default` + 内置 dummy provider + 内置 default agent），这些文件不存在也能跑。`.gitignore` 只放行 Godot 项目的非缓存部分（`.godot/`、`export/` 排除）。
+7. **接口速查**（都在 `src/server.rs`，前缀 `/api/v1`）：
+   - 会话：`GET/POST /conversations`、`PATCH/DELETE /conversations/{id}`（PATCH 也用来切分支）；
+   - 消息：`GET/POST /conversations/{id}/messages`、`PATCH/DELETE /conversations/{id}/messages/{mid}`（DELETE 回 `{"deleted": n}`）、`DELETE …/{mid}/siblings`（删除全部）、`POST /conversations/{id}/resend`、`GET …/branches`（每条在同龄兄弟里第几/共几）；
+   - 变量与出站：`GET /conversations/{id}/variables`、`GET /conversations/{id}/outgoing`（"下次真会发出去的东西"）；
+   - provider / 模型 / agent：`GET/POST /providers`、`PATCH/DELETE /providers/{id}`、`POST /providers/{id}/refresh`、`GET /models`（跨 provider 拍平，给"渠道/模型"一个下拉用）、`POST /models/probe`、`GET/POST /agents`、`PATCH /agents/{id}`（`new_id` = 重命名）；
+   - 运维：`GET /health`、`GET /debug/state`、`GET /debug/file/{name}`。
 
 ## 踩过的坑（都是实测出来的）
 
+- **删掉"当前那条回复"时，leaf 不能退到上文**：那样路径上一条回复都没有，界面看起来像"整条分支被删了"（其实兄弟都在树上）；再点重新发送又会多出一条，于是"怎么又变三条了"。正解 = 退到上文下**还活着的最新兄弟**。
+- **配置文件里没有注释可写**：程序整体重写这些文件（改一个 provider 就重写整份），JSONC 会给人"写了也会丢"的假象。现在严格 JSON，写坏了报的是 `Expecting property name enclosed in double quotes: line L column C`。
+- **一次失败的 `git commit`（"无文件可提交"）会把此前 staged 的东西留在索引里** → 下一次提交把它们一起卷走（本项目真发生过：用户 Godot 编辑器的改动被带进了一笔无关提交）。**提交前先 `git diff --cached --name-status` 核对范围**，别只看 `git status`。
+- **批量改代码时逐文件落盘**：把 `write` 放在脚本末尾，中途任何一个断言失败都会让整批改动一起丢掉（改完一个文件就写一个，别攒着）。
 - **Godot `offset_transform_position` 的单位是 ui，不是像素**。Android 的键盘高度是像素 → 必须乘 `视图高/窗口高`；直接填像素会**飞出屏幕**（表上实测 775px×2.22=1722px > 屏高 1600）。
 - 同上的**两个开关默认是反的**：`offset_transform_enabled=false`、`offset_transform_visual_only=true`。只打开 enabled → "看得见、点不到"。
 - **Web 上引擎读不到软键盘**：`virtual_keyboard_get_height()` 是基类桩（返回 0 + 每次告警），而 `has_feature(FEATURE_VIRTUAL_KEYBOARD)` **却是 true**。Web 只能读 `window.visualViewport`（`JavaScriptBridge`，且要用 `Engine.get_singleton` 拿，直接写类名会让桌面构建解析失败）。
@@ -45,6 +58,15 @@ adb install -r /tmp/x.apk && adb logcat -s godot
 - **`--check-only --script` 看不到 autoload / 全局类名**，会误报 `Identifier not found`；要检查就用 `--quit-after 3` 实跑。
 - **egui 的右键菜单**：`TextEdit` 在**右键按下那一帧**就把选区折成光标，菜单只能在**上一帧的快照**上工作（见 `attach_edit_menu`），别现场读选区。
 - **Godot 里没有 `[display] window/stretch`** 时视图坐标 ≠ 设计坐标：无头/手机上会得到 64×64 之类的怪尺寸，界面按 1:1 像素渲染（看起来只有一半大）。键盘换算用比例实现的，不受影响，但观感会变。
+
+## egui 界面的现状（改它之前先看这节）
+
+- 左栏：`＋ 新建对话` + 会话列表 + **底部的 `⟳ 刷新`**（一把把会话/消息/变量/分支/模型/agent 全拉一遍）。
+- 会话视图：顶部**系统提示词那块**（可展开）→ 消息列表（每条：署名 + `编辑 / 复制 / 删除`）→ 底栏输入。
+  - 助手署名 = **该会话 agent 的名字**（不是"助手"）；底部输入栏跟着软键盘浮（见 `frontend/main.gd` 的同名脚本）。
+  - **分支操作只出现在最后一条消息上**：`‹ 2/3 ›`（切候选回复，只在最新那句允许）、`删除全部`、`重新发送`。
+- 设置分五页（左导航同级）：**连接 / Agent / 模型与渠道 / 前端设置 / 关于**；右下角「保存」按页给出不同提示。
+- 渠道与模型是**一个下拉**（`渠道 / 模型`，`GET /models` 拍平给的就是这个形状）；provider 的 `name` 缺省回退 `id`。
 
 ## 返回键 / 退出（方案已定，**尚未开工**）
 
@@ -58,46 +80,38 @@ adb install -r /tmp/x.apk && adb logcat -s godot
 引擎里的顺序（源码级，`scene/main/window.cpp`）：根窗口先 `_propagate_window_notification()` → **全树节点的 `_notification` 先收到** → 再 `emit_signal(...)` → SceneTree 按自己那个开关决定 `_quit`。即"通知一定先到，自动退出是之后才判的"。
 `get_tree().quit()` **不走这条路**（直接 `_quit = true`、不发通知）——想"退出前干点事"别用它。
 
-**当前设定**（`frontend/project.godot`，提交 `f9d04dd`）：`config/quit_on_go_back=false`（返回键留给面板栈），`auto_accept_quit` 保持默认 `true`（桌面/Web 的 × 直接退；状态在后端，前端没有要抢救的东西）。
+**当前设定**（`frontend/project.godot`）：`config/quit_on_go_back=false`（返回键留给面板栈），`auto_accept_quit` 保持默认 `true`（桌面/Web 的 × 直接退）。
 
 **还没做（先别顺手做，等排期）**：
-
 1. **返回栈**：`_on_back()` 一处收口——安卓接 `get_window().go_back_requested`，桌面/Web 接 `ui_cancel`（Esc），栈空才真退。
-2. **安卓双击退出**：顶层时第一次按返回键只提示"再按一次退出"（约 2 秒内再来一次才 `quit()`）——防止手滑把应用滑没了。
-3. 安卓"从最近任务划掉" = **进程被杀**，任何开关都拦不到 → 该落盘的东西要在 `NOTIFICATION_APPLICATION_PAUSED` 里落。
+2. **安卓双击退出**：顶层时第一次按返回键只提示"再按一次退出"（约 2 秒内再来一次才 `quit()`）。
+3. 安卓"从最近任务划掉" = **进程被杀**，任何开关都拦不到 → 该落盘的东西在 `NOTIFICATION_APPLICATION_PAUSED` 里落。
 
-**坑**：返回栈接上之前，安卓按返回键**什么都不发生**（不退、也没人处理）。另：4.8.dev5 实测"只关 `auto_accept_quit`、返回键那条路也不退"，与 master 源码（`_main_window_go_back()` 只读 `quit_on_go_back`）不符 → **别依赖这个实现细节**，要拦哪条路就显式关哪条路的开关。
+**坑**：返回栈接上之前，安卓按返回键**什么都不发生**。另：4.8.dev5 实测"只关 `auto_accept_quit`、返回键那条路也不退"，与 master 源码不符 → **别依赖实现细节**，要拦哪条路就显式关哪条路的开关。
 
-## 配置文件长什么样（都是严格 JSON，没有注释可写）
+## 配置文件长什么样
 
-`config/` 里的文件都由程序**整体重写**，所以格式要求"能来回读写"：
+`config/` 里的文件都是**严格 JSON**（没有注释可写——程序整体重写它们），且都可缺失（缺了用代码里的默认值）。文件名一律 `.json`：
 
-```json
-// config/config.json（缺了就用内置默认：127.0.0.1:8787、无口令）
-{ "version": 1, "server": { "port": 8787, "auth_token": "可选" },
-  "defaults": { "provider": "dummy", "model": "dummy", "agent": "default" } }
+- `config/config.json` — `{ "version": 1, "server": { "port": 8787, "auth_token": "可选" }, "defaults": { "provider": "dummy", "model": "dummy", "agent": "default" } }`
+- `config/providers.json` — `{ "version": 1, "providers": [ { "id": "dummy", "kind": "dummy" }, { "id": "openrouter", "name": "显示名可选", "base_url": "https://openrouter.ai/api/v1", "headers": { "X-Title": "microchat" } } ] }`
+  **密钥不写这里**：`config/secrets.json` = `{ "openrouter": "sk-or-…" }`（chmod 600）。
+- `config/agents.json` — `{ "version": 1, "default_agent": "跑团", "agents": [ { "id": "跑团", "name": "跑团主持人", "system_prompt": "你是跑团主持人。<state>set 季节 = 初冬</state>" } ] }`
+  `system_prompt` 里的 `<state>` 块就是**变量底子**（和消息正文同一套语法）；`id` 手写可用可读 id，界面新建则生成 UUIDv7。
+- `~/.config/microchat/frontend.json` — 界面偏好（主题、缩放、服务器地址、回车是否发送……）。
+
+## 数据模型（`src/store.rs` 的 `MIGRATIONS` 是唯一权威）
+
+```sql
+conversations(id, title, system_prompt, provider, model, agent_id, current_leaf, created_at, updated_at)
+messages(id, conversation_id → conversations ON DELETE CASCADE, role, content, parent_id → messages ON DELETE CASCADE, created_at)
+models(provider, upstream_id, upstream_name, owned_by, context_length, max_output, display_name, params, tokenizer,
+       upstream_params, first_seen_at, last_seen_at)   -- 发现所得与用户覆盖分列；PRIMARY KEY(provider, upstream_id)
+provider_state(provider, last_refresh_at)
 ```
 
-```json
-// config/providers.json（缺了就只有代码里的内置 dummy）
-{ "version": 1, "providers": [
-    { "id": "dummy", "kind": "dummy" },
-    { "id": "openrouter", "name": "显示名（可选）",
-      "base_url": "https://openrouter.ai/api/v1",
-      "headers": { "X-Title": "microchat" } } ] }
-// 密钥**不写这里**：config/secrets.json = { "openrouter": "sk-or-…" }（chmod 600）
-```
-
-```json
-// config/agents.json（缺了就只有内置的 default agent）
-{ "version": 1, "default_agent": "跑团",
-  "agents": [ { "id": "跑团", "name": "跑团主持人",
-                "system_prompt": "你是跑团主持人。\n<state>\nset 季节 = 初冬\n</state>" } ] }
-// id 由界面新建时生成（UUIDv7）；手写也可以用可读 id。system_prompt 里的 <state> 块
-// 就是**变量底子**，和消息正文同一套语法。
-```
-
-界面偏好另存一份：`~/.config/microchat/frontend.json`（主题、缩放、服务器地址等）。
+- 顺序：**树**（见不变量 4）；`messages_by_conv` / `messages_by_parent` 两个索引。
+- 迁移由 `PRAGMA user_version` 驱动，只追加、不改旧的；`foreign_keys=ON`、`journal_mode=WAL`。
 
 ## 本机环境
 
@@ -110,7 +124,7 @@ adb install -r /tmp/x.apk && adb logcat -s godot
 
 - 注释、提交信息用**中文**；提交信息写清"为什么"，别只写"改了什么"。
 - 改完跑 `cargo test`；**UI 改动必须实跑**（真机或灌事件的无头验证），不要只凭代码断言。
-- **后端代码一变就重启后端和 Rust 前端**：先 `cargo build`，再重启 `./target/debug/server`（唯一权威）与 `./target/debug/microchat`（界面）——不然你在界面上验的是旧二进制。
+- **后端代码一变就重启后端和 egui 前端**：先 `cargo build`，再重启 `./target/debug/server`（唯一权威）与 `./target/debug/microchat`（界面）——不然你在界面上验的是旧二进制。
 - **先量再断言**：能实测的就不猜（本项目几乎所有关键结论都来自实测）。
-- 用户可能**同时在编辑器里改 `frontend/`**：改场景前先读最新文件（并留备份），他的未保存改动优先。
-- 提交前确认没把 `secrets.json` / `data/` / 大 APK 带进去。
+- 用户可能**同时在编辑器里改 `frontend/`**：改场景前先读最新文件（并留备份），他的未保存改动优先；提交时别把 `frontend/` 的改动卷进来（除非他让你一起提）。
+- 提交前确认没把 `config/`、`secrets.json`、`data/`、大 APK 带进去。
