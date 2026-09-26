@@ -99,14 +99,14 @@ impl OpKind {
 /// 一条待落库的操作。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VarOp {
-    pub scope: Scope,
     pub kind: OpKind,
     pub key: String,
     /// `Set` 为 `Some`（可以是空串），`Delete` 为 `None`。
     pub value: Option<String>,
 }
 
-/// 已落库的一条操作（`seq` = 全局自增序号，即时间序）。
+/// 一条**现算出来的**操作。`seq` 只在一次重演内部有意义（消息顺序 → 块内顺序），
+/// 库里不保存它——变量表是读的时候从正文推出来的，见 [`VariableView::from_messages`]。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VarOpRow {
     pub seq: i64,
@@ -213,11 +213,17 @@ fn parse_block(body: &str, parsed: &mut Parsed) {
         let (command, rest) = line
             .split_once(char::is_whitespace)
             .unwrap_or((line, ""));
-        let (scope, kind) = match command.to_ascii_lowercase().as_str() {
-            "set" => (Scope::Session, OpKind::Set),
-            "del" => (Scope::Session, OpKind::Delete),
-            "setglobal" => (Scope::Global, OpKind::Set),
-            "delglobal" => (Scope::Global, OpKind::Delete),
+        let kind = match command.to_ascii_lowercase().as_str() {
+            "set" => OpKind::Set,
+            "del" => OpKind::Delete,
+            // 全局变量不再从消息里写：它住手写的 config/variables.jsonc。
+            // 老消息里残留的 setglobal/delglobal 明确报出来——别静默丢掉用户写过的东西。
+            "setglobal" | "delglobal" => {
+                parsed.warnings.push(format!(
+                    "`{command}` 不从消息里写全局变量了，请挪到 config/variables.jsonc：{line}"
+                ));
+                continue;
+            }
             other => {
                 parsed
                     .warnings
@@ -255,7 +261,6 @@ fn parse_block(body: &str, parsed: &mut Parsed) {
         }
 
         parsed.ops.push(VarOp {
-            scope,
             kind,
             key: key.to_owned(),
             value,
@@ -326,9 +331,9 @@ pub fn render_table(values: &BTreeMap<String, String>) -> Option<String> {
 /// 面板/接口要的一份快照。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VariableView {
-    /// 全局操作日志（所有会话共用）。
+    /// 全局那几张（来自 `config/variables.jsonc`，所有会话共用）。
     pub global: Vec<VarOpRow>,
-    /// 本会话的操作日志（"这一局改了什么"）。
+    /// 本会话正文里累积出来的操作（"这一局改了什么"）。
     pub session: Vec<VarOpRow>,
     /// 全局现值。
     pub global_values: BTreeMap<String, String>,
@@ -337,23 +342,57 @@ pub struct VariableView {
 }
 
 impl VariableView {
-    /// `rows` = 全局 + 本会话的混合日志，已按 `seq` 升序。
-    pub fn build(rows: &[VarOpRow]) -> Self {
-        let global = fold(rows, Scope::Global);
-        let session = fold(rows, Scope::Session);
+    /// **现演一份快照**：库里只存正文，变量表是顺着消息重演出来的。
+    ///
+    /// - 顺序 = 消息顺序（`list_messages` 的 rowid 序），块内按出现顺序；
+    /// - 全局底子来自手写的 `config/variables.jsonc`（不是从消息推出来的）；
+    /// - 本会话的 `del` 写墓碑，能把全局同名的键挡住，不会从底下漏回来。
+    ///
+    /// 没有派生表 ⇒ 编辑/删除消息**不需要**"重算变量"：正文改了，重演结果自然就变了。
+    pub fn from_messages(
+        conversation: Uuid,
+        messages: &[Message],
+        global: &BTreeMap<String, String>,
+    ) -> Self {
+        let global_rows: Vec<VarOpRow> = global
+            .iter()
+            .enumerate()
+            .map(|(index, (key, value))| VarOpRow {
+                seq: index as i64,
+                scope: Scope::Global,
+                kind: OpKind::Set,
+                key: key.clone(),
+                value: Some(value.clone()),
+                message_id: None,
+                conversation_id: None,
+                // 手写配置没有"什么时候写的"这回事，用 0 表示"不适用"。
+                created_at: 0,
+            })
+            .collect();
+
+        let mut session_rows: Vec<VarOpRow> = Vec::new();
+        for message in messages {
+            for op in parse(&message.content).ops {
+                session_rows.push(VarOpRow {
+                    seq: session_rows.len() as i64,
+                    scope: Scope::Session,
+                    kind: op.kind,
+                    key: op.key,
+                    value: op.value,
+                    message_id: Some(message.id),
+                    conversation_id: Some(conversation),
+                    created_at: message.created_at,
+                });
+            }
+        }
+
+        let global_dict = fold(&global_rows, Scope::Global);
+        let session_dict = fold(&session_rows, Scope::Session);
         Self {
-            global: rows
-                .iter()
-                .filter(|row| row.scope == Scope::Global)
-                .cloned()
-                .collect(),
-            session: rows
-                .iter()
-                .filter(|row| row.scope == Scope::Session)
-                .cloned()
-                .collect(),
-            global_values: values_of(&global),
-            effective: effective(&global, &session),
+            global_values: values_of(&global_dict),
+            effective: effective(&global_dict, &session_dict),
+            global: global_rows,
+            session: session_rows,
         }
     }
 }
@@ -427,6 +466,45 @@ pub fn build_outgoing(
 
 #[cfg(test)]
 mod tests {
+
+    /// 变量表是**从正文现演**的：顺序 = 消息顺序，能追到哪句写的，切一刀就是回溯。
+    #[test]
+    fn view_is_derived_from_message_bodies_in_order() {
+        use crate::model::{Message, Role};
+
+        let conversation = Uuid::now_v7();
+        let msg = |content: &str, created_at: i64| Message {
+            id: Uuid::now_v7(),
+            conversation_id: conversation,
+            role: Role::User,
+            content: content.to_owned(),
+            created_at,
+        };
+        let messages = vec![
+            msg("<state>set HP = 12\nset 火把 = 1</state>我点亮了火把", 1000),
+            msg("我继续往前走", 2000),
+            msg("<state>del 火把</state>火把烧完了", 3000),
+        ];
+        let mut global = BTreeMap::new();
+        global.insert("季节".to_owned(), "初冬".to_owned());
+        global.insert("HP".to_owned(), "99".to_owned());
+
+        let view = VariableView::from_messages(conversation, &messages, &global);
+        assert_eq!(view.effective["HP"], "12", "本会话覆写全局同名键");
+        assert_eq!(view.effective["季节"], "初冬", "全局打底还在");
+        assert!(!view.effective.contains_key("火把"), "最后一句把它删了（墓碑挡住）");
+        assert_eq!(view.global_values.len(), 2);
+        assert_eq!(view.session.len(), 3, "三条操作都来自正文");
+        assert_eq!(view.session[0].message_id, Some(messages[0].id), "能追到是哪句写的");
+        assert_eq!(view.session[0].created_at, 1000);
+        assert_eq!(view.session[2].kind, OpKind::Delete);
+
+        // 回溯 = 只喂到第 N 条：这就是"从空 fold 到第 N 条"
+        let rewind = VariableView::from_messages(conversation, &messages[..1], &global);
+        assert_eq!(rewind.effective["火把"], "1", "第一句之后火把还在");
+        assert_eq!(rewind.session.len(), 2);
+    }
+
     use super::*;
     use crate::model::Role;
 
@@ -468,33 +546,39 @@ mod tests {
 
     #[test]
     fn parses_block_and_keeps_only_prose() {
-        let text = "雨水顺着屋檐落下。\n\n<state>\nset HP = 12\ndel 火把\nsetglobal 季节 = 初冬\n</state>\n";
+        let text = "雨水顺着屋檐落下。\n\n<state>\nset HP = 12\ndel 火把\n</state>\n";
         let parsed = parse(text);
         assert_eq!(parsed.cleaned, "雨水顺着屋檐落下。");
         assert_eq!(
             parsed.ops,
             vec![
                 VarOp {
-                    scope: Scope::Session,
                     kind: OpKind::Set,
                     key: "HP".to_owned(),
                     value: Some("12".to_owned()),
                 },
                 VarOp {
-                    scope: Scope::Session,
                     kind: OpKind::Delete,
                     key: "火把".to_owned(),
                     value: None,
                 },
-                VarOp {
-                    scope: Scope::Global,
-                    kind: OpKind::Set,
-                    key: "季节".to_owned(),
-                    value: Some("初冬".to_owned()),
-                },
             ]
         );
         assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+    }
+
+    /// `setglobal` / `delglobal` 已废弃（全局变量住手写的 `config/variables.jsonc`）。
+    /// 老消息里残留的写法要**明确报出来**——不能静默丢掉用户写过的东西。
+    #[test]
+    fn retired_global_commands_warn_instead_of_writing() {
+        let parsed = parse("<state>\nsetglobal 季节 = 初冬\ndelglobal 世界\n</state>");
+        assert!(parsed.ops.is_empty(), "不该再产出操作：{:?}", parsed.ops);
+        assert_eq!(parsed.warnings.len(), 2, "{:?}", parsed.warnings);
+        assert!(
+            parsed.warnings[0].contains("config/variables.jsonc"),
+            "要说清该搬去哪：{:?}",
+            parsed.warnings
+        );
     }
 
     #[test]
@@ -575,13 +659,16 @@ mod tests {
 
     #[test]
     fn session_overrides_global_including_deletes() {
-        let rows = vec![
-            row(1, Scope::Global, OpKind::Set, "世界", Some("临安")),
-            row(2, Scope::Global, OpKind::Set, "HP", Some("10")),
-            row(3, Scope::Session, OpKind::Set, "HP", Some("3")),
-            row(4, Scope::Session, OpKind::Delete, "世界", None),
-        ];
-        let view = VariableView::build(&rows);
+        let messages = vec![message(
+            Role::User,
+            "<state>set HP = 3\ndel 世界</state>我把地图烧了",
+        )];
+        let global = BTreeMap::from([
+            ("世界".to_owned(), "临安".to_owned()),
+            ("HP".to_owned(), "10".to_owned()),
+        ]);
+        let view = VariableView::from_messages(Uuid::now_v7(), &messages, &global);
+
         assert_eq!(view.global_values.get("HP").map(String::as_str), Some("10"));
         assert_eq!(view.effective.get("HP").map(String::as_str), Some("3"));
         assert!(!view.effective.contains_key("世界"), "会话删除要连全局一起遮掉");

@@ -221,7 +221,6 @@ async fn send_message(
     let (user, conversation, outgoing) = {
         let mut store = state.lock()?;
         let user = store.insert_message(id, Role::User, &req.content)?;
-        apply_state_tags(&mut store, id, &user)?;
         let conversation = store.get_conversation(id)?.ok_or_else(ApiError::not_found)?;
         if conversation.title.is_empty() {
             store.update_title(id, &title_from(&req.content, state.title_chars))?;
@@ -229,7 +228,8 @@ async fn send_message(
 
         // 真正要发出去的东西在这里成型：历史剔除状态块、只注入当前变量表。
         let messages = store.list_messages(id)?;
-        let effective = vars::VariableView::build(&store.list_variable_ops(id)?).effective;
+        let effective =
+            vars::VariableView::from_messages(id, &messages, &global_variables(&state)?).effective;
         let outgoing = vars::build_outgoing(&conversation, &messages, &effective);
         (user, conversation, outgoing)
     };
@@ -241,7 +241,6 @@ async fn send_message(
     let assistant = {
         let mut store = state.lock()?;
         let assistant = store.insert_message(id, Role::Assistant, &reply)?;
-        apply_state_tags(&mut store, id, &assistant)?;
         assistant
     };
 
@@ -271,16 +270,13 @@ async fn edit_message(
     Json(req): Json<EditMessageReq>,
 ) -> Result<Json<Message>, ApiError> {
     let mut store = state.lock()?;
-    let ops = vars::parse(&req.content).ops;
-    Ok(Json(
-        store.update_message(id, message_id, &req.content, &ops)?,
-    ))
+    Ok(Json(store.update_message(id, message_id, &req.content)?))
 }
 
 /// 删除某一句。跨会话删（`id` 与消息不匹配）给 404——和编辑同一个口径。
 ///
-/// 顺序是插入顺序（`rowid`），删中间一句只是少一行；它写下的变量操作会被同一事务清掉，
-/// 后面那些消息的历史不受影响。
+/// 顺序是插入顺序（`rowid`），删中间一句只是少一行。变量表不落库，所以这里也不用清什么：
+/// 正文没了，重演时它的 `<state>` 自然不在了。
 async fn delete_message(
     State(state): State<AppState>,
     Path((id, message_id)): Path<(Uuid, Uuid)>,
@@ -289,37 +285,34 @@ async fn delete_message(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// 把消息正文里的状态块解析成变量操作并落库，返回落了几条。
-///
-/// 正文**原样保留**——标签是存档的一部分（它记录了"当时发生了什么"），
-/// 只有 [`vars::build_outgoing`] 把它们从发给模型的历史里剔除。
-fn apply_state_tags(
-    store: &mut Store,
-    conversation: Uuid,
-    message: &Message,
-) -> Result<usize, store::Error> {
-    let parsed = vars::parse(&message.content);
-    store.insert_variable_ops(conversation, message.id, &parsed.ops)
+/// 全局变量表：手写在 `config/variables.jsonc`（文件不在就是空表）。
+/// 它不依赖任何会话——库里只存正文，会话作用于全局的东西一律从正文里现演。
+fn global_variables(state: &AppState) -> Result<BTreeMap<String, String>, ApiError> {
+    Ok(crate::config::load_jsonc(&state.paths.variables_jsonc())?)
 }
 
-/// 全局变量：所有会话共用的底，不依赖任何会话。
+/// 全局变量：所有会话共用的底。没有会话 ⇒ 没有 session 行，只回全局那几张。
 async fn get_global_variables(
     State(state): State<AppState>,
 ) -> Result<Json<vars::VariableView>, ApiError> {
-    let store = state.lock()?;
-    Ok(Json(vars::VariableView::build(
-        &store.list_global_variable_ops()?,
+    Ok(Json(vars::VariableView::from_messages(
+        Uuid::nil(),
+        &[],
+        &global_variables(&state)?,
     )))
 }
 
-/// 某会话的变量：全局 base + 本会话操作日志 + 生效值。
+/// 某会话的变量：全局打底 + 顺着正文重演出来的本会话改动 + 生效值。
 async fn get_conversation_variables(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<vars::VariableView>, ApiError> {
     let store = state.lock()?;
-    Ok(Json(vars::VariableView::build(
-        &store.list_variable_ops(id)?,
+    let messages = store.list_messages(id)?;
+    Ok(Json(vars::VariableView::from_messages(
+        id,
+        &messages,
+        &global_variables(&state)?,
     )))
 }
 
@@ -333,7 +326,8 @@ async fn get_conversation_outgoing(
     let store = state.lock()?;
     let conversation = store.get_conversation(id)?.ok_or_else(ApiError::not_found)?;
     let messages = store.list_messages(id)?;
-    let effective = vars::VariableView::build(&store.list_variable_ops(id)?).effective;
+    let effective =
+        vars::VariableView::from_messages(id, &messages, &global_variables(&state)?).effective;
     Ok(Json(vars::build_outgoing(
         &conversation,
         &messages,
@@ -1053,13 +1047,14 @@ mod tests {
 
     #[tokio::test]
     async fn state_block_becomes_variables_but_stays_in_the_archive() {
-        let app = app(None);
+        let (app, dir) = app_with_env(None, &[("variables.jsonc", r#"{ "季节": "初冬" }"#)]);
         let conv = create(
             &app,
             r#"{"provider":"x","model":"y","system_prompt":"你是客栈老板。"}"#,
         )
         .await;
         let uri = format!("/api/v1/conversations/{}/messages", conv.id);
+        // 老写法 `setglobal` 仍留在正文里：它现在只报警告，不再往全局写东西。
         let content = "我要住店\n<state>\nset HP = 12\nsetglobal 季节 = 初冬\n</state>";
         let body = serde_json::json!({ "content": content }).to_string();
         let (status, _) = send(&app, json_req("POST", &uri, &body)).await;
@@ -1070,8 +1065,9 @@ mod tests {
         let (status, body) = send(&app, get_req(&vars_uri)).await;
         assert_eq!(status, StatusCode::OK);
         let view: crate::vars::VariableView = serde_json::from_str(&body).unwrap();
-        assert_eq!(view.session.len(), 1);
-        assert_eq!(view.global.len(), 1);
+        assert_eq!(view.session.len(), 1, "只有 set HP —— setglobal 已废弃");
+        assert!(view.session[0].message_id.is_some(), "能追到是哪句写的");
+        assert_eq!(view.global_values.get("季节").map(String::as_str), Some("初冬"));
         assert_eq!(view.effective.get("HP").map(String::as_str), Some("12"));
         assert_eq!(view.effective.get("季节").map(String::as_str), Some("初冬"));
 
@@ -1105,6 +1101,7 @@ mod tests {
             !outgoing.iter().any(|item| item.content.contains("<state>")),
             "任何一条都不该带着标签发出去"
         );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]
