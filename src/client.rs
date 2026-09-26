@@ -107,6 +107,8 @@ pub enum Command {
         base: String,
         token: Option<String>,
         id: String,
+        /// 换了 id（= 重命名）：后端会把 `default_agent` 与所有会话的引用一起搬。
+        new_id: Option<String>,
         name: String,
         system_prompt: String,
     },
@@ -212,6 +214,8 @@ pub enum Event {
     },
     ConversationUpdated(Result<microchat::model::Conversation, String>),
     Agents(Result<AgentsConfig, String>),
+    /// 保存某个 agent 的结果：回的是保存后的那份（改了 id 的话，界面要跟着选中新的）。
+    AgentSaved(Result<microchat::config::Agent, String>),
     /// 写操作结果；UI 收到 `Ok` 后重新拉取列表。
     AgentWritten(Result<(), String>),
     ProviderWritten(Result<(), String>),
@@ -407,7 +411,11 @@ fn summarize(event: &Event) -> String {
         Event::ConversationUpdated(Err(message)) => format!("失败: {message}"),
         Event::Agents(Ok(config)) => format!("OK {} 个 agent", config.agents.len()),
         Event::Agents(Err(message)) => format!("失败: {message}"),
-        Event::AgentWritten(Ok(())) => "OK".to_owned(),
+        Event::AgentSaved(result) => match result {
+            Ok(agent) => format!("OK 已保存（id={}）", agent.id),
+            Err(message) => format!("失败: {message}"),
+        },
+        Event::AgentWritten(_) => "OK".to_owned(),
         Event::AgentWritten(Err(message)) => format!("失败: {message}"),
         Event::ProviderWritten(Ok(())) => "OK".to_owned(),
         Event::ProviderWritten(Err(message)) => format!("失败: {message}"),
@@ -665,18 +673,26 @@ fn handle(http: &reqwest::blocking::Client, command: Command) -> Event {
             base,
             token,
             id,
+            new_id,
             name,
             system_prompt,
         } => {
-            let body = serde_json::json!({ "name": name, "system_prompt": system_prompt });
-            let result = write(
-                http,
-                reqwest::Method::PATCH,
-                &format!("{}/api/v1/agents/{}", base.trim_end_matches('/'), encode_segment(&id)),
+            let body = serde_json::json!({
+                "name": name,
+                "system_prompt": system_prompt,
+                "new_id": new_id,
+            });
+            Event::AgentSaved(write_json(
+                    http,
+                    reqwest::Method::PATCH,
+                    &format!(
+                        "{}/api/v1/agents/{}",
+                        base.trim_end_matches('/'),
+                        encode_segment(&id)
+                    ),
                 token.as_deref(),
-                Some(body),
-            );
-            Event::AgentWritten(result)
+                body,
+            ))
         }
         Command::MakeDefaultAgent { base, token, id } => {
             let result = write(
@@ -1042,6 +1058,7 @@ mod tests {
             Event::Branches { .. } => "Branches",
             Event::ConversationUpdated(_) => "ConversationUpdated",
             Event::Agents(_) => "Agents",
+            Event::AgentSaved(_) => "AgentSaved",
             Event::AgentWritten(_) => "AgentWritten",
             Event::ProviderWritten(_) => "ProviderWritten",
             Event::DebugState(_) => "DebugState",
