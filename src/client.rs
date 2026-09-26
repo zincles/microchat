@@ -110,6 +110,12 @@ pub enum Command {
         name: String,
         system_prompt: String,
     },
+    /// 把某个 agent 设为 `agents.jsonc` 的 `default_agent`。
+    MakeDefaultAgent {
+        base: String,
+        token: Option<String>,
+        id: String,
+    },
     CreateAgent {
         base: String,
         token: Option<String>,
@@ -290,6 +296,7 @@ impl Command {
             Self::ListAgents { .. } => "GET /agents".to_owned(),
             Self::SaveAgent { id, .. } => format!("PATCH /agents/{id}"),
             Self::CreateAgent { name, .. } => format!("POST /agents ({name})"),
+            Self::MakeDefaultAgent { id, .. } => format!("PATCH /agents/{id} (设为默认)"),
             Self::DeleteAgent { id, .. } => format!("DELETE /agents/{id}"),
             Self::DebugState { .. } => "GET /debug/state".to_owned(),
             Self::DebugFile { name, .. } => format!("GET /debug/file/{name}"),
@@ -537,13 +544,27 @@ fn handle(http: &reqwest::blocking::Client, command: Command) -> Event {
             );
             Event::AgentWritten(result)
         }
+        Command::MakeDefaultAgent { base, token, id } => {
+            let result = write(
+                http,
+                reqwest::Method::PATCH,
+                &format!(
+                    "{}/api/v1/agents/{}",
+                    base.trim_end_matches('/'),
+                    encode_segment(&id)
+                ),
+                token.as_deref(),
+                Some(serde_json::json!({ "make_default": true })),
+            );
+            Event::AgentWritten(result)
+        }
         Command::CreateAgent {
             base,
             token,
             name,
             system_prompt,
         } => {
-            let body = serde_json::json!({ "name": name, "name": name, "system_prompt": system_prompt });
+            let body = serde_json::json!({ "name": name, "system_prompt": system_prompt });
             let result = write(
                 http,
                 reqwest::Method::POST,

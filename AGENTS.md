@@ -79,6 +79,7 @@ adb install -r /tmp/x.apk && adb logcat -s godot
 
 - 注释、提交信息用**中文**；提交信息写清"为什么"，别只写"改了什么"。
 - 改完跑 `cargo test`；**UI 改动必须实跑**（真机或灌事件的无头验证），不要只凭代码断言。
+- **后端代码一变就重启后端和 Rust 前端**：先 `cargo build`，再重启 `./target/debug/server`（唯一权威）与 `./target/debug/microchat`（界面）——不然你在界面上验的是旧二进制。
 - **先量再断言**：能实测的就不猜（本项目几乎所有关键结论都来自实测）。
 - 用户可能**同时在编辑器里改 `frontend/`**：改场景前先读最新文件（并留备份），他的未保存改动优先。
 - 提交前确认没把 `secrets.json` / `data/` / 大 APK 带进去。

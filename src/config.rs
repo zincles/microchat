@@ -333,7 +333,15 @@ impl AgentsConfig {
     /// 别写成 `get(...).or_else(first)`：那会把"没配 default_agent"变成
     /// "随便挑一个文件里的 agent"——新建会话可能带着某个测试 agent 的提示词出门。
     pub fn default_agent(&self) -> Option<Agent> {
-        self.resolve(&self.default_agent)
+        // 空串也算"没配"（文件被整体重写时很容易留下一个空串），否则会掉到
+        // "取文件里第一个"——那可能是某个测试 agent。
+        let named = self.default_agent.trim();
+        if !named.is_empty() {
+            if let Some(agent) = self.resolve(named) {
+                return Some(agent);
+            }
+        }
+        self.resolve(crate::model::DEFAULT_AGENT_ID)
             .or_else(|| self.agents.first().cloned())
     }
 

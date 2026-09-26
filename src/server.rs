@@ -623,6 +623,9 @@ pub struct CreateAgentReq {
 pub struct UpdateAgentReq {
     pub name: Option<String>,
     pub system_prompt: Option<String>,
+    /// 把它设为 `agents.jsonc` 的 `default_agent`（新建会话默认用它）。
+    #[serde(default)]
+    pub make_default: bool,
     /// 改 id = **重命名**：连同 `default_agent` 与所有会话的引用一起搬（空串 = 不改）。
     pub new_id: Option<String>,
 }
@@ -719,6 +722,9 @@ async fn update_agent(
     }
     if let Some(prompt) = req.system_prompt {
         agent.system_prompt = prompt;
+    }
+    if req.make_default {
+        config.default_agent = current.clone();
     }
     let updated = agent.clone();
     config.validate()?;
@@ -1266,6 +1272,38 @@ mod tests {
             .unwrap();
         let (status, _) = send(&app, again).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    /// 「设为默认」：写进 `agents.jsonc` 的 `default_agent`，之后新建会话用它。
+    #[tokio::test]
+    async fn an_agent_can_be_made_the_default() {
+        let (app, dir) = app_with_files(&[(
+            "agents.jsonc",
+            r#"{ "default_agent": "", "agents": [] }"#,
+        )]);
+        let (_, body) = send(&app, json_req("POST", "/api/v1/agents", r#"{"name":"跑团 GM"}"#)).await;
+        let agent: Agent = serde_json::from_str(&body).unwrap();
+
+        let (status, _) = send(
+            &app,
+            json_req(
+                "PATCH",
+                &format!("/api/v1/agents/{}", agent.id),
+                r#"{"make_default":true}"#,
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (_, body) = send(&app, get_req("/api/v1/agents")).await;
+        let config: AgentsConfig = serde_json::from_str(&body).unwrap();
+        assert_eq!(config.default_agent, agent.id, "默认 agent 要落到文件里");
+
+        // 新建会话就跟着用它
+        let conv = create(&app, r#"{"provider":"dummy","model":"dummy"}"#).await;
+        assert_eq!(conv.agent_id, agent.id);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// 改 agent 的 id = 重命名：会话引用和 default_agent 一起搬，冲突要拦住。

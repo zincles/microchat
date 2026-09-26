@@ -1139,6 +1139,7 @@ impl App {
 
         let mut select: Option<String> = None;
         let mut delete: Option<String> = None;
+        let mut make_default: Option<String> = None;
         match &self.agents {
             None => {
                 ui.label(RichText::new("加载中…").weak());
@@ -1147,14 +1148,19 @@ impl App {
                 if config.agents.is_empty() {
                     ui.label(RichText::new("还没有 agent，下面新建一个").weak());
                 }
+                // 谁是"新建会话默认会用的那个"标出来（空 default_agent 时就是内置默认）
+                let default_agent = config.default_agent().map(|agent| agent.id);
                 for agent in &config.agents {
                     ui.horizontal(|ui| {
                         let selected = self.selected_agent.as_deref() == Some(agent.id.as_str());
-                        let label = if agent.name.is_empty() {
+                        let mut label = if agent.name.is_empty() {
                             agent.id.clone()
                         } else {
                             format!("{}（{}）", agent.name, agent.id)
                         };
+                        if default_agent.as_deref() == Some(agent.id.as_str()) {
+                            label.push_str("  ★默认");
+                        }
                         if ui.selectable_label(selected, label).clicked() {
                             select = Some(agent.id.clone());
                         }
@@ -1206,7 +1212,29 @@ impl App {
                     };
                     ui.end_row();
                 });
+            let is_default = self
+                .agents
+                .as_ref()
+                .and_then(|config| config.default_agent())
+                .is_some_and(|agent| agent.id == self.agent_id);
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(!is_default, egui::Button::new("设为默认 agent"))
+                    .on_hover_text("新建会话默认用它（写进 agents.jsonc 的 default_agent）")
+                    .clicked()
+                {
+                    make_default = Some(self.agent_id.clone());
+                }
+                if is_default {
+                    ui.label(RichText::new("当前就是默认").weak());
+                }
+            });
             ui.label(RichText::new("改完点右下角「保存」提交").weak());
+        }
+
+        if let Some(id) = make_default {
+            let (base, token) = (self.settings.server_address.clone(), self.token.clone());
+            self.client.send(Command::MakeDefaultAgent { base, token, id });
         }
 
         ui.add_space(8.0);
