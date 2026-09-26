@@ -38,15 +38,85 @@ adb install -r /tmp/x.apk && adb logcat -s godot
 5. **模型身份 = `(provider, upstream_id)`**；显示名三级回退（用户覆盖 → 上游名 → prettify）在**后端**完成，前端别再实现一遍。新建会话的 agent 取 `agents.json` 的 `default_agent`（空串/缺失都算没配 ⇒ 用内置默认），否则 agent 的提示词与变量底子对任何新会话都不生效。
    **agent 的 id**：新建时由后端生成 UUIDv7（`POST /agents` 只收 `name` + `system_prompt`，空名 400）；**已存在的可以在编辑器里改**，那走 `PATCH /agents/{id}` 的 `new_id`——一次把 `default_agent` 与**所有会话的引用**搬过去（`agent_id` 是软引用、无外键，`resolve()` 找不到只会静默回空提示词，所以必须由这一处维护一致性）。
 6. **`config/` 整块与 `data/` 永不入库**（都是你个人的：端口口令、provider 连接信息、agent 预设、密钥、存档）。默认值全在代码里（各结构的 `Default` + 内置 dummy provider + 内置 default agent），这些文件不存在也能跑。`.gitignore` 只放行 Godot 项目的非缓存部分（`.godot/`、`export/` 排除）。
-7. **接口速查**（都在 `src/server.rs`，前缀 `/api/v1`）：
-   - 会话：`GET/POST /conversations`、`PATCH/DELETE /conversations/{id}`（PATCH 也用来切分支）；
-   - 消息：`GET/POST /conversations/{id}/messages`、`PATCH/DELETE /conversations/{id}/messages/{mid}`（DELETE 回 `{"deleted": n}`）、`DELETE …/{mid}/siblings`（删除全部）、`POST /conversations/{id}/resend`、`GET …/branches`（每条在同龄兄弟里第几/共几）；
-   - 变量与出站：`GET /conversations/{id}/variables`、`GET /conversations/{id}/outgoing`（"下次真会发出去的东西"）；
-   - **生成这一轮**：`GET /conversations/{id}/status`、`POST /conversations/{id}/stop`（幂等）。
-     `POST /messages` 与 `POST /resend` 回的是 **202 + 受理回执**（`TurnAccepted`，**不含回复正文**），
-     同一会话在跑时再来一发是 **409**；`GET /conversations` 的每一项都带 `turn`（左栏靠它标"生成中"）；
-   - provider / 模型 / agent：`GET/POST /providers`、`PATCH/DELETE /providers/{id}`、`POST /providers/{id}/refresh`、`GET /models`（跨 provider 拍平，给"渠道/模型"一个下拉用）、`POST /models/probe`、`GET/POST /agents`、`PATCH /agents/{id}`（`new_id` = 重命名）；
-   - 运维：`GET /health`、`GET /debug/state`、`GET /debug/file/{name}`。
+7. **HTTP API 看「HTTP API（客户端契约）」那一节**：那张表是从 `src/server.rs` 抽出来的，并**逐条发真实请求核过**。改了接口就跑一遍 `cargo build && python3 scripts/api-audit.py`（它自起沙盒，不碰你的 `config/`、`data/`）。
+
+## 与上游（provider）通信：只许用成熟的外部库
+
+硬规矩：**发往上游的流量只走现成的成熟 crate，不自己写传输层、也不自己写协议解析。**
+
+- HTTP 一律 `reqwest`（0.13，rustls）。**不许另开第二个 HTTP 栈**——探活、拉模型列表、对话都走 `providers::Client`；`Client::from_parts` 只服务"先探测再保存"那条路。
+- 数据结构用 `serde` / `serde_json` 映射成 `WireMessage` / `ChatResponse` 这类**纯数据形状**（这是数据映射，不是协议实现）。
+- **流式（下一步）用现成的 SSE crate**（`reqwest-eventsource` / `eventsource-stream` 一类）：别手搓 `data: ` 分帧、断线重连、`[DONE]` 处理。手写协议解析是 bug 温床。
+- 超时别忘：`providers.json` 的 `timeouts`（默认 connect 15s / total 300s）。**reqwest 默认不设总超时**，不配就是上游卡住、界面转一辈子。
+
+## HTTP API（客户端契约）
+
+**唯一权威是 `src/server.rs` 的路由表。** 下表由 `scripts/api-audit.py` 抽取而来，并**逐条发真实请求核过**：静态比对客户端每个调用点的方法/路径；动态对每条路由发正确方法（断言状态码）与错误方法（断言 405）。
+
+现在**唯一在用的消费者是 egui 前端**（`src/client.rs`）；Godot 前端还没接任何接口（它一起来就是这份契约的第二个消费者，所以接口要稳）。
+
+```bash
+cargo build && python3 scripts/api-audit.py     # 改过接口就跑一遍（它自起沙盒）
+```
+
+### 通则
+
+- 全部挂在 **`/api/v1`** 下；请求与响应都是 JSON（`content-type: application/json`）。
+- 配了口令时（`config.json` 的 `server.auth_token`）**所有**接口都要 `Authorization: Bearer <token>`，`/health` 也不例外；缺了或错了回 **401**。
+- 错误体固定 `{"error":{"code","message"}}`，`code` 是稳定枚举（`invalid` / `not_found` / `conflict` / `unauthorized` / `upstream` / `internal`）——客户端按 `code` 分支，别匹配文案。
+- **405 是 axum 自己回的**（路径在、方法不对），不带上面那个体，但带 `allow:` 响应头：该用哪个方法看它。
+- CORS 全开（为将来的 Web / Flutter 客户端）；**默认不设 auth_token**，所以别把端口暴露到公网。
+
+### 会话与消息
+
+| 方法 | 路径 | 请求体 | 响应 | 说明 |
+|---|---|---|---|---|
+| GET | `/conversations` | — | `[ConversationView]` | 每项 = 会话 + `turn`（左栏据此标"生成中"） |
+| POST | `/conversations` | `CreateConversationReq` | `Conversation` · 201 | 省略字段时取 `config.json` 的 `defaults` |
+| PATCH | `/conversations/{id}` | `UpdateConversationReq` | `Conversation` | 改标题 / 换模型 / 换 agent / **切分支**（`current_leaf`） |
+| DELETE | `/conversations/{id}` | — | 204 | 不存在 → 404 |
+| GET | `/conversations/{id}/messages` | — | `[Message]` | **按树上的当前路径**，不是 rowid |
+| POST | `/conversations/{id}/messages` | `SendReq` | `TurnAccepted` · **202** | 落用户消息 + 开工；不含回复正文（见下一节） |
+| PATCH | `/conversations/{id}/messages/{mid}` | `EditMessageReq` | `Message` | 改正文 = 重写存档（变量随之现演） |
+| DELETE | `/conversations/{id}/messages/{mid}` | — | `{"deleted": n}` | 删**整棵子树**；leaf 退到还活着的最新兄弟 |
+| DELETE | `/conversations/{id}/messages/{mid}/siblings` | — | `{"deleted": n}` | 「删除全部」：清掉一组兄弟，只留上文 |
+| POST | `/conversations/{id}/resend` | — | `TurnAccepted` · **202** | 尾条是助手就再长一个兄弟；是用户消息就照它重发 |
+| GET | `/conversations/{id}/branches` | — | `{消息id: BranchInfo}` | 每条在同龄兄弟里第几/共几（`‹ 2/3 ›`） |
+| GET | `/conversations/{id}/variables` | — | `VariableView` | `global` / `session` / `effective`，**每次现算** |
+| GET | `/conversations/{id}/outgoing` | — | `[Outgoing]` | "下次真会发出去的东西"（标签已剔除、变量已注入） |
+
+### 生成这一轮（202 + 轮询）
+
+| 方法 | 路径 | 请求体 | 响应 | 说明 |
+|---|---|---|---|---|
+| GET | `/conversations/{id}/status` | — | `TurnStatus` | `idle` / `pending` / `streaming` / `error` + `message_id` + `elapsed_ms` + `chars` + `error` |
+| POST | `/conversations/{id}/stop` | — | `{"stopped": bool}` | **幂等**：没在跑也 200（`false`） |
+
+同一会话在跑时再来一发 → **409**（`conflict`）。`TurnAccepted` = `{user?, backend, turn}`：`turn.message_id` 是**这条回复的 id**（受理时就定好，但那会儿它还没进库——拿到整段才 `INSERT`）。
+
+### provider / 模型 / agent
+
+| 方法 | 路径 | 请求体 | 响应 | 说明 |
+|---|---|---|---|---|
+| GET | `/providers` | — | `[ProviderView]` | **含 `has_key`，绝不含密钥内容** |
+| POST | `/providers` | `CreateProviderReq` | `ProviderView` · 201 | `api_key` 写进 `providers.json` 那条记录；重名 → 409 |
+| PATCH | `/providers/{id}` | `UpdateProviderReq` | `ProviderView` | `api_key`：`None` = 不动，`""` = 清除 |
+| DELETE | `/providers/{id}` | — | 204 | 密钥随记录一起没 |
+| POST | `/providers/{id}/refresh` | — | `ProviderView` | **POST**（会写发现态）：拉 `/models` 并落库 |
+| POST | `/models/probe` | `ProbeReq` | `ProbeResult` | 用一次性 url+key 试拉，**不落库**（"先探测再保存"） |
+| GET | `/models` | — | `[ModelListItem]` | 跨 provider 拍平，给"渠道 / 模型"一个下拉用 |
+| GET | `/agents` | — | `AgentsConfig` | 生效列表（含内置默认 agent） |
+| POST | `/agents` | `CreateAgentReq` | `Agent` · 201 | 只收 `name` + `system_prompt`；id 由后端生成 |
+| PATCH | `/agents/{id}` | `UpdateAgentReq` | `Agent` | `new_id` = 重命名（把 `default_agent` 与会话引用一起搬） |
+| DELETE | `/agents/{id}` | — | 204 | 内置默认 agent 不可删 |
+
+### 运维
+
+| 方法 | 路径 | 请求体 | 响应 | 说明 |
+|---|---|---|---|---|
+| GET | `/health` | — | `{"status","version"}` | 探针；**也过鉴权**（401 与"连不上"是两种失败） |
+| GET | `/debug/state` | — | `DebugState` | 后端自述（结构上就没有密钥字段） |
+| GET | `/debug/file/{name}` | — | `RawFile` | 白名单只有 `config.json` / `providers.json` / `agents.json`；**`providers.json` 里的 `api_key` 会先打码成 `"***"`** |
 
 ## 一轮生成的生命周期（202 + 轮询）
 
