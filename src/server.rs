@@ -1364,6 +1364,57 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
+    /// 删掉**当前那条**回复时，路径该退到它**还活着的最新兄弟**上，
+    /// 而不是塌回到用户那句话（那样看起来就像"几个分支一起没了"）。
+    #[tokio::test]
+    async fn deleting_the_current_reply_falls_back_to_its_newest_sibling() {
+        let app = app(None);
+        let conv = create(&app, r#"{"provider":"dummy","model":"dummy"}"#).await;
+        let uri = format!("/api/v1/conversations/{}/messages", conv.id);
+        let resend = format!("/api/v1/conversations/{}/resend", conv.id);
+        let branches = format!("/api/v1/conversations/{}/branches", conv.id);
+
+        let (_, body) = send(&app, json_req("POST", &uri, r#"{"content":"你是谁？"}"#)).await;
+        let first: ChatTurn = serde_json::from_str(&body).unwrap();
+        // 再点两次「重新发送」→ 三条兄弟回复 1/2/3
+        let (_, body) = send(&app, json_req("POST", &resend, "")).await;
+        let second: ChatTurn = serde_json::from_str(&body).unwrap();
+        let (_, body) = send(&app, json_req("POST", &resend, "")).await;
+        let third: ChatTurn = serde_json::from_str(&body).unwrap();
+
+        let (_, body) = send(&app, get_req(&branches)).await;
+        let info: BTreeMap<Uuid, crate::store::BranchInfo> = serde_json::from_str(&body).unwrap();
+        assert_eq!((info[&third.assistant.id].index, info[&third.assistant.id].total), (3, 3));
+
+        // 在"我是3"上按删除
+        let (status, body) = send(
+            &app,
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("{uri}/{}", third.assistant.id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&body).unwrap()["deleted"],
+            1,
+            "只该删掉那一条回复"
+        );
+
+        // 路径应当落在"我是2"上；另外两条回复仍在树上
+        let (_, body) = send(&app, get_req(&uri)).await;
+        let path: Vec<Message> = serde_json::from_str(&body).unwrap();
+        assert_eq!(path.len(), 2, "问句 + 还活着的那条回复");
+        assert_eq!(path[1].id, second.assistant.id, "退到最新的兄弟上");
+
+        let (_, body) = send(&app, get_req(&branches)).await;
+        let info: BTreeMap<Uuid, crate::store::BranchInfo> = serde_json::from_str(&body).unwrap();
+        assert_eq!(info[&second.assistant.id].total, 2, "树上是 2/2：1 和 2 都还在");
+        assert!(info[&second.assistant.id].siblings.contains(&first.assistant.id));
+    }
+
     /// 删中间那条 = 连它整棵子树一起没；leaf 退回父亲；变量只按当前路径算。
     #[tokio::test]
     async fn deleting_a_subtree_reports_the_count_and_variables_follow_the_path() {

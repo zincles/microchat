@@ -453,9 +453,18 @@ impl Store {
             )?;
         }
         if leaf.is_some_and(|leaf| doomed.contains(&leaf)) {
+            // 退到哪里：优先"被删那条的父亲下、**还活着的最新一个孩子**"——也就是它的上一条兄弟。
+            // 只退到父亲是不够的：那样界面上会看到"整条分支都没了"（其实兄弟都在树上），
+            // 看起来就像一次删除把好几个分支一起删了。实在没有兄弟可退，才退到父亲本身。
+            let fallback = all
+                .iter()
+                .filter(|message| message.parent_id == parent && !doomed.contains(&message.id))
+                .next_back()
+                .map(|message| message.id)
+                .or(parent);
             tx.execute(
                 "UPDATE conversations SET current_leaf = ?1 WHERE id = ?2",
-                params![parent.map(|id| id.to_string()), conversation_id.to_string()],
+                params![fallback.map(|id| id.to_string()), conversation_id.to_string()],
             )?;
         }
         tx.execute(
