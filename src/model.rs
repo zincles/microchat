@@ -53,6 +53,50 @@ pub struct Conversation {
 /// agent 缺省 handle。
 pub const DEFAULT_AGENT_ID: &str = "default";
 
+/// 一次调用的用量。**在写库之前就归一化**——各家字段名不一样，前端（egui 与将来的
+/// Godot）只管读这几个键，别再各自实现一遍。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Usage {
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub total_tokens: u64,
+    /// 命中**前缀缓存**的输入 tokens（OpenAI 系 `prompt_tokens_details.cached_tokens`，
+    /// DeepSeek 系 `prompt_cache_hit_tokens`）。
+    pub cached_tokens: u64,
+    /// 输出里"思考"占的部分（推理型模型单列；它**按输出计费**）。
+    pub reasoning_tokens: u64,
+    /// 上游原样的 `usage`（留一份备查；**别再往它上面写逻辑**）。
+    #[serde(skip_serializing_if = "serde_json::Value::is_null")]
+    pub raw: serde_json::Value,
+}
+
+impl Usage {
+    /// 从上游的 `usage` 归一化——**只有这一处**认识各家字段名。
+    ///
+    /// 认不出来（连 `prompt_tokens` 都没有）就返回 `None`：宁可不显示，
+    /// 也别显示一排 0 假装有数据。
+    pub fn from_wire(value: &serde_json::Value) -> Option<Self> {
+        let number = |v: &serde_json::Value| v.as_u64();
+        let prompt = number(&value["prompt_tokens"])?;
+        let completion = number(&value["completion_tokens"]).unwrap_or(0);
+        let total = number(&value["total_tokens"]).unwrap_or(prompt + completion);
+        let cached = number(&value["prompt_tokens_details"]["cached_tokens"])
+            .or_else(|| number(&value["prompt_cache_hit_tokens"]))
+            .unwrap_or(0);
+        let reasoning = number(&value["completion_tokens_details"]["reasoning_tokens"])
+            .or_else(|| number(&value["reasoning_tokens"]))
+            .unwrap_or(0);
+        Some(Self {
+            prompt_tokens: prompt,
+            completion_tokens: completion,
+            total_tokens: total,
+            cached_tokens: cached,
+            reasoning_tokens: reasoning,
+            raw: value.clone(),
+        })
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub id: Uuid,
@@ -63,6 +107,15 @@ pub struct Message {
     /// 界面上默认折叠。老消息与普通模型都是 `None`。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<String>,
+    /// 这一轮**思考用时**（毫秒）：从受理到第一段正文到达。没思考过就是 `None`。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_ms: Option<i64>,
+    /// 这一轮**整段生成花了多久**（毫秒）——从受理到落库。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<i64>,
+    /// 这一轮的用量（上行/下行/缓存/思考）。没报用量（dummy、兜底、老消息）就是 `None`。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<Usage>,
     /// 上一条（树上的父亲）。根消息为 `None`。
     #[serde(default)]
     pub parent_id: Option<Uuid>,

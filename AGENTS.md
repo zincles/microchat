@@ -177,7 +177,9 @@ cargo build && python3 scripts/api-audit.py     # 改过接口就跑一遍（它
   - 助手署名 = **该会话 agent 的名字**（不是"助手"）；底部输入栏跟着软键盘浮（见 `frontend/main.gd` 的同名脚本）。
   - **分支操作只出现在最后一条消息上**：`‹ 2/3 ›`（切候选回复，只在最新那句允许）、`删除全部`、`重新发送`。
   - **生成中那条回复**是界面按状态**合成**的气泡（库里还没有它）：转圈 + "正在生成… 12.3s" + 「停止」。落库后同 id 的真实消息出现，气泡自然消失。发送按钮在此期间显示"等待…"；界面每 300ms 轮询 `/status`（`App::poll_turn`），收到 `idle` / `error` 才一次性重拉消息、变量、分支与列表。
-  - **思考**（`messages.reasoning`）默认折叠成「思考（N 字）」✓，点开才看 ✓；流式那会儿是实时展开的 ✓，正文一开始出就交给真消息（真消息里它还是折叠的 ✓）。
+  - **用量在写库前就归一化**：上游的 `usage` 各家字段名不一（缓存就有 `prompt_tokens_details.cached_tokens` 与 `prompt_cache_hit_tokens` 两种写法），归一化只有一处——`model::Usage::from_wire`。前端（egui 与将来的 Godot）只管读 `cached_tokens` 这些键，别各自再认一遍。**成本不在这里**：API 不返回 cost，要算得靠自己的价目表。
+- **卡片脚注**：每条助手消息底部一行 `3.2s · 上行 1654 tok（缓存 1408 tok · 85%）· 下行 62 tok（思考 32 tok，含在内）`——只在有数据时显示（dummy / 兜底 / 老消息都没有）。**单位是 token**（上游 `usage` 报的）；生成中气泡上那个「思考中… N 字」是**字符数**（流式帧里没有 token 数，token 只在末帧 usage 里）——两处别混。另：`reasoning_tokens` 是 `completion_tokens` 的**子集**，不是另加。
+- **思考**（`messages.reasoning`）默认折叠成「思考（2.1s）」——放的是**思考用时**（受理 → 第一段正文），不是字数（API 按 token 计费，"字"没意义）；迁移之前的老消息退回显示字数。点开才看内容 ✓；流式那会儿是实时展开的 ✓，正文一开始出就交给真消息（真消息里它还是折叠的 ✓）。
 - 左栏：正在生成的会话标题后面挂着「 · 生成中…」（状态来自 `GET /conversations` 每项的 `turn`）。
 - 调试页五个标签：**后端状态 / 最近发送载荷 / 原始配置 / 请求日志 / 关系图**。「最近发送载荷」原样显示最近一次发给上游的 `/chat/completions` 请求体（带 provider/模型、时间、字节数、复制按钮）——排查"看着都对、上游却报错"看它。
 - 设置分五页（左导航同级）：**连接 / Agent / 模型与渠道 / 前端设置 / 关于**；右下角「保存」按页给出不同提示。
@@ -222,7 +224,10 @@ cargo build && python3 scripts/api-audit.py     # 改过接口就跑一遍（它
 ```sql
 conversations(id, title, system_prompt, provider, model, agent_id, current_leaf, created_at, updated_at)
 messages(id, conversation_id → conversations ON DELETE CASCADE, role, content, parent_id → messages ON DELETE CASCADE, created_at,
-         reasoning)                                   -- 推理型模型的"思考"：只留档，不进历史、不扫 <state>、不可编辑
+         reasoning,                                  -- 推理型模型的"思考"：只留档，不进历史、不扫 <state>、不可编辑
+         reasoning_ms,                               -- 思考用时（受理 → 第一段正文）；没思考过是 NULL
+         duration_ms,                                -- 这一轮整段生成花了多久（受理 → 落库）
+         usage)                                      -- 用量 JSON：{prompt_tokens, completion_tokens, total_tokens, cached_tokens, reasoning_tokens, raw}
 models(provider, upstream_id, upstream_name, owned_by, context_length, max_output, display_name, params, tokenizer,
        upstream_params, first_seen_at, last_seen_at)   -- 发现所得与用户覆盖分列；PRIMARY KEY(provider, upstream_id)
 provider_state(provider, last_refresh_at)

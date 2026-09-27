@@ -72,13 +72,14 @@ impl Backend {
 /// `outgoing` 是**真正要发出去的东西**：变量表已注入、历史里的状态标签已剔除，
 /// 由 [`crate::vars::build_outgoing`] 一次组装——真模型直接用它，
 /// **不允许**再写第二条拼装路径（否则"剔除标签"会漏）。
-/// 一次生成的结果：正文 + **实际发出去的请求体**。
+/// 一次生成的结果：正文 + **实际发出去的请求体** + 上游报的用量。
 ///
-/// `payload` 只服务调试（调试页要看"到底发了什么"）；一切计算与落库只认 `reply`。
+/// `payload` 与 `usage` 都只服务显示（调试页/卡片脚注）；一切计算与落库只认 `reply`。
 #[derive(Debug, Clone)]
 pub struct Sent {
     pub reply: String,
     pub payload: serde_json::Value,
+    pub usage: Option<crate::model::Usage>,
 }
 
 pub async fn complete(
@@ -106,12 +107,14 @@ pub async fn complete_with(
     match Backend::select(conversation, providers) {
         Backend::Dummy => Ok(Sent {
             reply: DUMMY_MODEL_REPLY.to_owned(),
-            // 没发给任何上游：载荷是空的，调试页据此说"这一轮没发出去"
+            // 没发给任何上游：载荷是空的（调试页据此说"这一轮没发出去"），也没有用量
             payload: serde_json::Value::Null,
+            usage: None,
         }),
         Backend::Fallback => Ok(Sent {
             reply: FALLBACK_REPLY.to_owned(),
             payload: serde_json::Value::Null,
+            usage: None,
         }),
         Backend::OpenAiCompletion => {
             // select 已经确认过 provider 存在；这里再取一次是拿配置本体（含密钥）。
@@ -127,7 +130,7 @@ pub async fn complete_with(
             let streaming = stream && provider.stream;
             // 载荷在这里定稿（客户端内部也走同一个构造函数，不会漂）
             let payload = providers::Client::chat_body(&conversation.model, &messages, streaming);
-            let reply = if streaming {
+            let (reply, usage) = if streaming {
                 client
                     .chat_completion_stream(&conversation.model, &messages, on_chunk)
                     .await
@@ -138,7 +141,11 @@ pub async fn complete_with(
                     .await
                     .map_err(Error::Upstream)?
             };
-            Ok(Sent { reply, payload })
+            Ok(Sent {
+                reply,
+                payload,
+                usage,
+            })
         }
     }
 }

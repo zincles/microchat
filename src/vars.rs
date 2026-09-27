@@ -521,6 +521,9 @@ mod tests {
             role: Role::Assistant,
             content: content.to_owned(),
             reasoning: None,
+            duration_ms: None,
+            reasoning_ms: None,
+            usage: None,
             parent_id: None,
             created_at: 0,
         };
@@ -548,6 +551,9 @@ mod tests {
             role: Role::User,
             content: content.to_owned(),
             reasoning: None,
+            duration_ms: None,
+            reasoning_ms: None,
+            usage: None,
             parent_id: None,
             created_at,
         };
@@ -622,6 +628,9 @@ mod tests {
             content: content.to_owned(),
             created_at: 0,
             reasoning: None,
+            duration_ms: None,
+            reasoning_ms: None,
+            usage: None,
             parent_id: None,
         }
     }

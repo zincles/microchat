@@ -14,9 +14,9 @@ use rusqlite::{params, types::Type, Connection, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::model::{Conversation, DiscoveredModel, Message, ModelEntry, Role, DEFAULT_AGENT_ID};
+use crate::model::{Conversation, DiscoveredModel, Message, ModelEntry, Role, Usage, DEFAULT_AGENT_ID};
 
-const MIGRATIONS: [&str; 7] = [r#"
+const MIGRATIONS: [&str; 9] = [r#"
 CREATE TABLE conversations (
   id            TEXT PRIMARY KEY,
   title         TEXT NOT NULL DEFAULT '',
@@ -112,6 +112,14 @@ UPDATE conversations SET current_leaf = (
 -- 推理型模型的"思考"（reasoning / reasoning_content）：**只留档**。
 -- 它不进历史（不回喂给模型）、不扫 <state>、不可编辑；界面上默认折叠。
 ALTER TABLE messages ADD COLUMN reasoning TEXT;
+"#, r#"
+-- 每条回复的"这一轮花了多久"与用量（上行/下行/缓存/思考）。用量是各家字段归一化之后
+-- 的 JSON（只服务显示，不参与任何计算）；老消息与 dummy 都是 NULL。
+ALTER TABLE messages ADD COLUMN duration_ms INTEGER;
+ALTER TABLE messages ADD COLUMN usage TEXT;
+"#, r#"
+-- 思考用时（受理 → 第一段正文）。界面上显示成「思考（2.1s）」。
+ALTER TABLE messages ADD COLUMN reasoning_ms INTEGER;
 "#];
 
 #[derive(Debug)]
@@ -218,11 +226,23 @@ impl Store {
         content: &str,
         parent_id: Option<Uuid>,
     ) -> Result<Message> {
-        self.insert_message_with_id(conversation_id, Uuid::now_v7(), role, content, parent_id, None)
+        self.insert_message_with_id(
+            conversation_id,
+            Uuid::now_v7(),
+            role,
+            content,
+            parent_id,
+            None,
+            None,
+            None,
+            None,
+        )
     }
 
-    /// 指定 id 追加，其余同 [`Self::insert_message`]。`reasoning` 是推理型模型的"思考"——
-    /// **只留档**：它不进历史、不扫 `<state>`、不可编辑。
+    /// 指定 id 追加，其余同 [`Self::insert_message`]。
+    ///
+    /// `reasoning` 是推理型模型的"思考"（**只留档**）；`duration_ms` / `usage` 是这一轮
+    /// 的花销（整段生成花了多久、上行/下行/缓存各多少 tokens）——都只服务显示。
     ///
     /// 生成**回复**走这条：id 在受理那一刻就算好并回了客户端（前端拿它指认"正在生成的那条"），
     /// 落库时必须是同一个。库里只放**完整回复**——所以这次 INSERT 发生在整段拿到之后，
@@ -235,6 +255,9 @@ impl Store {
         content: &str,
         parent_id: Option<Uuid>,
         reasoning: Option<&str>,
+        reasoning_ms: Option<i64>,
+        duration_ms: Option<i64>,
+        usage: Option<&Usage>,
     ) -> Result<Message> {
         let now = now_ms();
         let msg = Message {
@@ -243,6 +266,9 @@ impl Store {
             role,
             content: content.to_owned(),
             reasoning: reasoning.map(str::to_owned),
+            reasoning_ms,
+            duration_ms,
+            usage: usage.cloned(),
             parent_id,
             created_at: now,
         };
@@ -256,8 +282,9 @@ impl Store {
             return Err(Error::NotFound);
         }
         tx.execute(
-            "INSERT INTO messages (id, conversation_id, role, content, parent_id, created_at, reasoning)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO messages
+               (id, conversation_id, role, content, parent_id, created_at, reasoning, reasoning_ms, duration_ms, usage)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 msg.id.to_string(),
                 msg.conversation_id.to_string(),
@@ -266,6 +293,11 @@ impl Store {
                 msg.parent_id.map(|id| id.to_string()),
                 msg.created_at,
                 msg.reasoning.as_deref(),
+                msg.reasoning_ms,
+                msg.duration_ms,
+                msg.usage
+                    .as_ref()
+                    .and_then(|usage| serde_json::to_string(usage).ok()),
             ],
         )?;
         // 新条就是新的尾巴：当前路径到此为止
@@ -338,7 +370,7 @@ impl Store {
             return Err(Error::NotFound);
         }
         let mut stmt = self.conn.prepare(
-            "SELECT id, conversation_id, role, content, parent_id, created_at, reasoning
+            "SELECT id, conversation_id, role, content, parent_id, created_at, reasoning, reasoning_ms, duration_ms, usage
              FROM messages WHERE conversation_id = ?1 ORDER BY rowid",
         )?;
         let rows = stmt.query_map(params![conversation_id.to_string()], row_to_message)?;
@@ -460,7 +492,7 @@ impl Store {
             return Err(Error::NotFound);
         }
         let updated = tx.query_row(
-            "SELECT id, conversation_id, role, content, parent_id, created_at, reasoning FROM messages WHERE id = ?1",
+            "SELECT id, conversation_id, role, content, parent_id, created_at, reasoning, reasoning_ms, duration_ms, usage FROM messages WHERE id = ?1",
             params![message],
             row_to_message,
         )?;
@@ -840,6 +872,11 @@ fn row_to_message(row: &Row<'_>) -> rusqlite::Result<Message> {
         role,
         content: row.get(3)?,
         reasoning: row.get(6)?,
+        reasoning_ms: row.get(7)?,
+        duration_ms: row.get(8)?,
+        usage: row
+            .get::<_, Option<String>>(9)?
+            .and_then(|text| serde_json::from_str(&text).ok()),
         parent_id: row
             .get::<_, Option<String>>(4)?
             .map(parse_uuid)

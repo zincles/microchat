@@ -116,6 +116,15 @@ fn selection_snapshot(ctx: &egui::Context, id: egui::Id, text: &str) -> Option<S
 /// - **右键松开**（= `secondary_clicked`，菜单同时弹出）那一帧：仍是折着的。
 ///
 /// 因此：**只有非空选区才写入**，且右键交互期间一律不写（那时的"选区"是点出来的，不是用户选的）；
+/// 耗时怎么显示：不到一秒给毫秒，之后给秒，超过一分钟给"1分23秒"。
+fn fmt_duration(ms: i64) -> String {
+    match ms {
+        ms if ms < 1000 => format!("{ms} ms"),
+        ms if ms < 60_000 => format!("{:.1}s", ms as f64 / 1000.0),
+        ms => format!("{}分{}秒", ms / 60_000, (ms % 60_000) / 1000),
+    }
+}
+
 /// 清空要同时满足「有焦点 ＋ 鼠标没按着 ＋ 没在右键 ＋ 菜单没开」。
 fn update_selection_snapshot(
     stored: &mut Option<SelectionSnapshot>,
@@ -2902,13 +2911,17 @@ impl App {
                                         .as_deref()
                                         .filter(|text| !text.trim().is_empty())
                                     {
-                                        egui::CollapsingHeader::new(
-                                            RichText::new(format!(
+                                        // 折叠栏上放**思考用时**（API 按 token 计费，"字"没意义）；
+                                        // 迁移之前的老消息没这个数，退回字数——至少给个量级
+                                        let label = match message.reasoning_ms {
+                                            Some(ms) => format!("思考（{}）", fmt_duration(ms)),
+                                            None => format!(
                                                 "思考（{} 字）",
                                                 reasoning.chars().count()
-                                            ))
-                                            .weak()
-                                            .small(),
+                                            ),
+                                        };
+                                        egui::CollapsingHeader::new(
+                                            RichText::new(label).weak().small(),
                                         )
                                         .id_salt(message.id)
                                         .default_open(false)
@@ -2920,6 +2933,45 @@ impl App {
                                                     .desired_width(f32::INFINITY),
                                             );
                                         });
+                                    }
+
+                                    // 卡片脚注：这一轮花了多久、上下行/缓存各多少 token。
+                                    // 只在有数据时显示——dummy、兜底、老消息都没有，不装作有。
+                                    if !is_editing && message.role == ApiRole::Assistant {
+                                        let mut bits: Vec<String> = Vec::new();
+                                        if let Some(ms) = message.duration_ms {
+                                            bits.push(fmt_duration(ms));
+                                        }
+                                        if let Some(usage) = message.usage.as_ref() {
+                                            // 单位写清楚：这里是 **token**（流式气泡上的"字"是字符数，两码事）
+                                            let cached = if usage.cached_tokens > 0 {
+                                                let percent = usage.cached_tokens * 100
+                                                    / usage.prompt_tokens.max(1);
+                                                format!(
+                                                    "（缓存 {} tok · {}%）",
+                                                    usage.cached_tokens, percent
+                                                )
+                                            } else {
+                                                String::new()
+                                            };
+                                            // 思考是"下行"的**子集**，不是另加
+                                            let reasoning = if usage.reasoning_tokens > 0 {
+                                                format!("（思考 {} tok，含在内）", usage.reasoning_tokens)
+                                            } else {
+                                                String::new()
+                                            };
+                                            bits.push(format!(
+                                                "上行 {} tok{cached}",
+                                                usage.prompt_tokens
+                                            ));
+                                            bits.push(format!(
+                                                "下行 {} tok{reasoning}",
+                                                usage.completion_tokens
+                                            ));
+                                        }
+                                        if !bits.is_empty() {
+                                            ui.label(RichText::new(bits.join(" · ")).weak().small());
+                                        }
                                     }
 
                                     match editing.as_mut() {
@@ -2997,14 +3049,9 @@ impl App {
                                     if !thinking.is_empty() {
                                         // 推理型模型先"想"一段：把它显示出来，
                                         // 否则那十几秒界面看起来像死着（它不进最终消息）。
-                                        ui.label(
-                                            RichText::new(format!(
-                                                "思考中… {} 字",
-                                                thinking.chars().count()
-                                            ))
-                                            .weak()
-                                            .small(),
-                                        );
+                                        // 只报"在想"：秒数上面那行本来就在动，
+                                        // 而"字"既不是计费单位也不是进度（token 要等末帧 usage）。
+                                        ui.label(RichText::new("思考中…").weak().small());
                                         let mut text = thinking.as_str();
                                         ui.add(
                                             TextEdit::multiline(&mut text)

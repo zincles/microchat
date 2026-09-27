@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use serde::Deserialize;
 
 use crate::config::ProviderConfig;
-use crate::model::DiscoveredModel;
+use crate::model::{DiscoveredModel, Usage};
 
 #[derive(Debug)]
 pub enum Error {
@@ -113,7 +113,7 @@ impl Client {
         model: &str,
         messages: &[WireMessage],
         mut on_chunk: impl FnMut(ChunkKind, &str),
-    ) -> Result<String, Error> {
+    ) -> Result<(String, Option<Usage>), Error> {
         use eventsource_stream::Eventsource;
         use futures_util::StreamExt;
 
@@ -141,6 +141,8 @@ impl Client {
 
         let mut stream = resp.bytes_stream().eventsource();
         let mut full = String::new();
+        // 用量在最后一个 chunk 里：一路覆盖，最后那个为准
+        let mut usage = None;
         while let Some(event) = stream.next().await {
             let event = event.map_err(|e| Error::Stream(e.to_string()))?;
             let data = event.data.trim();
@@ -154,6 +156,9 @@ impl Client {
             let Ok(chunk) = serde_json::from_str::<ChatStreamChunk>(data) else {
                 continue;
             };
+            if let Some(raw) = chunk.usage.as_ref() {
+                usage = Usage::from_wire(raw);
+            }
             for choice in chunk.choices {
                 let Some(delta) = choice.delta else {
                     continue;
@@ -172,7 +177,7 @@ impl Client {
         if full.is_empty() {
             return Err(Error::Empty);
         }
-        Ok(full)
+        Ok((full, usage))
     }
 
     /// `GET {base_url}/models`。缺 `id` 的条目被丢弃。
@@ -209,7 +214,11 @@ impl Client {
     ///
     /// `messages` 必须来自 [`crate::vars::build_outgoing`]——那是"剔除状态标签、
     /// 注入当前变量表"的唯一实现处，别在这儿二次拼装。
-    pub async fn chat_completion(&self, model: &str, messages: &[WireMessage]) -> Result<String, Error> {
+    pub async fn chat_completion(
+        &self,
+        model: &str,
+        messages: &[WireMessage],
+    ) -> Result<(String, Option<Usage>), Error> {
         let mut req = self
             .http
             .post(format!("{}/chat/completions", self.base_url))
@@ -236,12 +245,15 @@ impl Client {
             status,
             body: snippet(&text),
         })?;
-        parsed
+        // 先把 usage 取出来（下面会把 choices 移走）
+        let usage = parsed.usage.as_ref().and_then(Usage::from_wire);
+        let reply = parsed
             .choices
             .into_iter()
             .find_map(|c| c.message.and_then(|m| m.content))
             .filter(|text| !text.is_empty())
-            .ok_or(Error::Empty)
+            .ok_or(Error::Empty)?;
+        Ok((reply, usage))
     }
 }
 
@@ -265,6 +277,9 @@ pub struct WireMessage {
 struct ChatResponse {
     #[serde(default)]
     choices: Vec<ChatChoice>,
+    /// 上游报的用量（上行/下行/缓存）。各家字段名不一，归一化在 [`Usage::from_wire`]。
+    #[serde(default)]
+    usage: Option<serde_json::Value>,
 }
 
 /// 流式 chunk：`data: {"choices":[{"delta":{"content":"你"}}]}`。
@@ -275,6 +290,9 @@ struct ChatResponse {
 struct ChatStreamChunk {
     #[serde(default)]
     choices: Vec<StreamChoice>,
+    /// 流式的用量在**最后一个 chunk** 里（实测两家都默认带上，不用 `stream_options`）。
+    #[serde(default)]
+    usage: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -393,8 +411,7 @@ mod tests {
 
         let mut chunks: Vec<String> = Vec::new();
         let mut kinds: Vec<ChunkKind> = Vec::new();
-        let full = client
-            .chat_completion_stream("m", &[], |kind, delta| {
+        let (full, _usage) = client.chat_completion_stream("m", &[], |kind, delta| {
                 kinds.push(kind);
                 chunks.push(delta.to_owned());
             })
@@ -420,8 +437,7 @@ mod tests {
         let client = Client::new(&provider(base)).unwrap();
 
         let mut log: Vec<(ChunkKind, String)> = Vec::new();
-        let full = client
-            .chat_completion_stream("m", &[], |kind, delta| log.push((kind, delta.to_owned())))
+        let (full, _usage) = client.chat_completion_stream("m", &[], |kind, delta| log.push((kind, delta.to_owned())))
             .await
             .unwrap();
 
@@ -441,8 +457,7 @@ mod tests {
     async fn streaming_without_any_content_is_an_error() {
         let base = sse_upstream("data: [DONE]\n\n").await;
         let client = Client::new(&provider(base)).unwrap();
-        let err = client
-            .chat_completion_stream("m", &[], |_, _| {})
+        let err = client.chat_completion_stream("m", &[], |_, _| {})
             .await
             .unwrap_err();
         assert!(matches!(err, Error::Empty), "got {err:?}");

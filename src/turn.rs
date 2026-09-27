@@ -101,6 +101,11 @@ struct Entry {
     thinking: String,
     /// 思考流已收到多少字（游标用）。
     thinking_chars: usize,
+    /// 这一轮**想过没有**（收到过 reasoning 增量）。
+    thinking_seen: bool,
+    /// **思考用时**：从这一轮开始（受理）到**第一段正文到达**的毫秒数。
+    /// 只想着没动笔（或还没动笔就被停）时是到收尾为止。没思考过就是 `None`。
+    thinking_ms: Option<i64>,
     error: Option<String>,
     token: u64,
     handle: Option<tokio::task::JoinHandle<()>>,
@@ -159,6 +164,8 @@ impl TurnRegistry {
                 text: String::new(),
                 thinking: String::new(),
                 thinking_chars: 0,
+                thinking_seen: false,
+                thinking_ms: None,
                 error: None,
                 token,
                 handle: None,
@@ -194,7 +201,12 @@ impl TurnRegistry {
         if reasoning {
             entry.thinking.push_str(delta);
             entry.thinking_chars = entry.thinking.chars().count();
+            entry.thinking_seen = true;
         } else {
+            // 第一段正文到达 = 想完了：这一刻定格"思考用时"
+            if entry.thinking_seen && entry.thinking_ms.is_none() {
+                entry.thinking_ms = Some(entry.started.elapsed().as_millis() as i64);
+            }
             entry.text.push_str(delta);
             entry.chars = entry.text.chars().count();
         }
@@ -287,6 +299,10 @@ impl TurnRegistry {
         entry.chars = chars;
         entry.error = error;
         entry.elapsed_ms = entry.started.elapsed().as_millis() as u64;
+        // 只想着没动笔（或没动笔就被停）：思考用时算到收尾为止
+        if entry.thinking_seen && entry.thinking_ms.is_none() {
+            entry.thinking_ms = Some(entry.elapsed_ms as i64);
+        }
         entry.message_id = if phase.is_busy() { entry.message_id } else { None };
         entry.handle = None;
         Ok(())
@@ -299,6 +315,14 @@ impl TurnRegistry {
             .ok()
             .and_then(|map| map.get(&conversation).map(|entry| entry.thinking.clone()))
             .unwrap_or_default()
+    }
+
+    /// 这一轮的**思考用时**（受理 → 第一段正文）。没思考过就是 `None`。
+    pub fn thinking_ms_of(&self, conversation: Uuid) -> Option<i64> {
+        self.inner
+            .lock()
+            .ok()
+            .and_then(|map| map.get(&conversation).and_then(|entry| entry.thinking_ms))
     }
 
     /// 中止这一轮。
@@ -442,6 +466,47 @@ mod tests {
         let slice = turns.stream_since(id, 0, 0);
         assert_eq!(slice.text, all, "结束后仍能补拉尾巴（界面用它接上最后一个字）");
         assert!(slice.done, "done = 这一轮已结束");
+    }
+
+    /// 思考用时的语义：**从受理到第一段正文**，只定格一次；没动笔就收尾则算到收尾。
+    #[test]
+    fn thinking_ms_is_frozen_at_the_first_content_chunk() {
+        let turns = TurnRegistry::new();
+        let id = Uuid::now_v7();
+        let token = turns.begin(id, Uuid::now_v7()).unwrap();
+        assert!(turns.append_reasoning(id, token, "想"));
+        assert_eq!(turns.thinking_ms_of(id), None, "还在想：这会儿没有用时");
+
+        std::thread::sleep(std::time::Duration::from_millis(15));
+        assert!(turns.append_content(id, token, "答"));
+        let frozen = turns.thinking_ms_of(id).expect("第一段正文到达时定格");
+        assert!(frozen >= 15, "至少包含刚才那段等待：{frozen}");
+
+        std::thread::sleep(std::time::Duration::from_millis(15));
+        assert!(turns.append_content(id, token, "案"));
+        assert_eq!(
+            turns.thinking_ms_of(id),
+            Some(frozen),
+            "只定格一次，后面的正文不会把它改大"
+        );
+
+        // 只想着没动笔（被停/上游断）：收尾时按总耗时算
+        let id2 = Uuid::now_v7();
+        let token2 = turns.begin(id2, Uuid::now_v7()).unwrap();
+        assert!(turns.append_reasoning(id2, token2, "想"));
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        turns.finish(id2, token2, Phase::Idle, 0, None).unwrap();
+        assert!(
+            turns.thinking_ms_of(id2).unwrap_or(0) >= 10,
+            "没动笔就收尾，用时算到收尾为止"
+        );
+
+        // 压根没思考过的（普通模型）：没有用时，别硬编一个
+        let id3 = Uuid::now_v7();
+        let token3 = turns.begin(id3, Uuid::now_v7()).unwrap();
+        assert!(turns.append_content(id3, token3, "答"));
+        turns.finish(id3, token3, Phase::Idle, 1, None).unwrap();
+        assert_eq!(turns.thinking_ms_of(id3), None, "没思考过就没有思考用时");
     }
 
     #[test]

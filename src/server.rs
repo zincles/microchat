@@ -452,7 +452,7 @@ async fn run_turn(state: AppState, id: Uuid, parent: Uuid, message: Uuid, token:
     // 增量全部喂进这一轮的缓冲区（游标读给界面做动画）；失败/被停时它谁也不影响。
     // 思考与正文分开存：前者只服务动画，后者才是最终消息的内容。
     let turns = state.turns.clone();
-    let reply = match generate(&state, id, move |kind, delta| match kind {
+    let (reply, usage) = match generate(&state, id, move |kind, delta| match kind {
         providers::ChunkKind::Content => {
             turns.append_content(id, token, delta);
         }
@@ -465,7 +465,7 @@ async fn run_turn(state: AppState, id: Uuid, parent: Uuid, message: Uuid, token:
         Ok(sent) => {
             // 调试页要看"最近一次到底发了什么"：这里留档（内存里一份，覆盖式）
             state.record_payload(id, sent.payload);
-            sent.reply
+            (sent.reply, sent.usage)
         }
         Err(error) => {
             if state
@@ -492,6 +492,12 @@ async fn run_turn(state: AppState, id: Uuid, parent: Uuid, message: Uuid, token:
         String::new()
     };
     let reasoning = (!reasoning.trim().is_empty()).then_some(reasoning);
+    // 思考用时只在真的留了思考时才跟着留（没留就没有"这个思考"可言）
+    let reasoning_ms = reasoning
+        .as_ref()
+        .and_then(|_| state.turns.thinking_ms_of(id));
+    // "整段生成花了多久"：受理到落库。取的是这一轮的实时耗时（load 之前定格）
+    let duration_ms = Some(state.turns.status(id).elapsed_ms as i64);
     let stored = match state.lock() {
         Ok(mut store) => store
             .insert_message_with_id(
@@ -501,6 +507,9 @@ async fn run_turn(state: AppState, id: Uuid, parent: Uuid, message: Uuid, token:
                 &reply,
                 Some(parent),
                 reasoning.as_deref(),
+                reasoning_ms,
+                duration_ms,
+                usage.as_ref(),
             )
             .map(|_| ())
             .map_err(ApiError::from),
@@ -1471,6 +1480,20 @@ mod tests {
                                 serde_json::to_string(text).unwrap()
                             )
                         })
+                        // 真实的末帧：choices 空、只带 usage；然后是 [DONE]
+                        .chain(std::iter::once(format!(
+                            "data: {}\n\n",
+                            serde_json::json!({
+                                "choices": [],
+                                "usage": {
+                                    "prompt_tokens": 100,
+                                    "completion_tokens": 7,
+                                    "total_tokens": 107,
+                                    "prompt_tokens_details": { "cached_tokens": 64 },
+                                    "completion_tokens_details": { "reasoning_tokens": 3 },
+                                }
+                            })
+                        )))
                         .chain(std::iter::once("data: [DONE]\n\n".to_owned()))
                         .collect();
                     let stream = futures_util::StreamExt::then(
@@ -2308,6 +2331,20 @@ mod tests {
             msgs[1].reasoning.as_deref(),
             Some("先想想"),
             "思考单独留档（默认 store_reasoning = true）"
+        );
+        // 卡片脚注要的两样：这一轮花了多久、上下行/缓存各多少
+        let usage = msgs[1].usage.as_ref().expect("上游报了用量就该留档");
+        assert_eq!(usage.prompt_tokens, 100);
+        assert_eq!(usage.completion_tokens, 7);
+        assert_eq!(usage.cached_tokens, 64, "缓存命中（DeepSeek 与 OpenAI 两种拼法都归一到这个）");
+        assert_eq!(usage.reasoning_tokens, 3);
+        assert!(
+            msgs[1].duration_ms.unwrap_or(0) > 0,
+            "整段生成花了多久也要落库"
+        );
+        assert!(
+            msgs[1].reasoning_ms.unwrap_or(0) > 0,
+            "思考用时（受理 → 第一段正文）也要落库"
         );
         assert_eq!(msgs[1].id, accepted.turn.message_id.unwrap(), "用的还是受理时那个 id");
 
