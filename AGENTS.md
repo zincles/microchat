@@ -84,6 +84,13 @@ cargo build && python3 scripts/api-audit.py     # 改过接口就跑一遍（它
 | GET | `/conversations/{id}/branches` | — | `{消息id: BranchInfo}` | 每条在同龄兄弟里第几/共几（`‹ 2/3 ›`） |
 | GET | `/conversations/{id}/variables` | — | `VariableView` | `global` / `session` / `effective`，**每次现算** |
 | GET | `/conversations/{id}/outgoing` | — | `[Outgoing]` | "下次真会发出去的东西"（标签已剔除、变量已注入） |
+| GET | `/config/chat` | — | `ChatConfig` | 服务端 `config.json` 的 `chat` 段（**不含密钥**——口令不在这一段） |
+| PUT | `/config/chat` | `ChatConfig` | `ChatConfig` | **整段替换** `chat`（其余段原样保留；写回严格 JSON） |
+| PATCH | `/models` | `{provider, upstream_id, context_override}` | `ModelView` | 设置/清除某模型的**上下文覆盖值**（`null` = 清掉）。**用户列**：刷新永不覆盖它 |
+| GET | `/conversations/{id}/export` | — | `ConversationExport` | 自包含导出：会话 + **全部消息（含分支）** + 摘要 + 现演变量 + `current_path`。只读 |
+| POST | `/conversations/{id}/archive` | — | `ArchiveReceipt` · 200 | 写 `data/archive/<会话>-<时间戳>.json`（**剪枝前的必做动作**），回收据 `{path, bytes, messages, summaries}` |
+| POST | `/conversations/{id}/fork` | — | `Conversation` · **201** | 复制出新会话：当前路径 + 尾巴那一层的兄弟（含子树）+ 摘要行（指针按映射改写）。**变量不复制**（现演，逐键相同） |
+| GET | `/conversations/{id}/context` | — | `ContextUsage` | **只有数字**：`used_tokens`（估算）/ `budget_tokens` / `trigger_tokens` / `remaining_tokens`（超了报负数）/ `ctx_len` / `max_output` / `ratio` / `estimated` / `last_prompt_tokens`（上一轮上游实测）/ `over_budget` |
 
 ### 生成这一轮（202 + 轮询）
 
@@ -116,8 +123,6 @@ cargo build && python3 scripts/api-audit.py     # 改过接口就跑一遍（它
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| POST | `/conversations/{id}/fork` | 复制出新会话（真分支用），201 + 新 `Conversation`。一个事务里：① 复制会话行（`provider`/`model`/`agent_id`/`system_prompt` 原样，`title` = `原标题（副本）`，新 id）；② 复制**当前路径 + 尾巴那一层的兄弟**的消息（全 new id、建 `旧→新` 映射，`created_at` 保留原值）；③ 复制 `summaries` 行并按映射改写 `parent_summary_id` 与 `messages.summary_id`（副本不用重新总结）；④ `current_leaf` 指向映射后的新尾巴。**变量不用管**（从复制过来的正文现演，结果逐键相同） |
-| GET | `/conversations/{id}/export` | 自包含 JSON（会话 + 当前路径 + 摘要），供归档与搬运 |
 | GET | `/conversations/{id}/summaries` | 给界面显示/编辑/重摇摘要用（尚未定稿） |
 
 ### 运维
@@ -126,7 +131,7 @@ cargo build && python3 scripts/api-audit.py     # 改过接口就跑一遍（它
 |---|---|---|---|---|
 | GET | `/health` | — | `{"status","version"}` | 探针；**也过鉴权**（401 与"连不上"是两种失败） |
 | GET | `/debug/state` | — | `DebugState` | 后端自述（结构上就没有密钥字段） |
-| GET | `/debug/last-payload` | — | `LastPayload` | **最近一次实际发给上游的请求体**（内存里一份，覆盖式；没发过 = `null`）。与 `/outgoing` 的区别：那是"预计会发什么"，这是"实际发了什么" |
+| GET | `/debug/last-payload` | — | `LastPayload` | **最近一次实际发给上游的请求体**（内存里一份，覆盖式；没发过 = `null`）。**dummy 也会拼一份**"本来会发出去"的（同一个 `chat_body`，形状一致、不联网）；fallback 仍是 `null`。与 `/outgoing` 的区别：那是"预计会发什么"（只有 messages），这是"实际发了什么"（连 model/stream 外壳） |
 | GET | `/debug/file/{name}` | — | `RawFile` | 白名单只有 `config.json` / `providers.json` / `agents.json`；**`providers.json` 里的 `api_key` 会先打码成 `"***"`** |
 
 ## 流式输出：增量只服务动画，落库只认完整正文
@@ -181,7 +186,8 @@ cargo build && python3 scripts/api-audit.py     # 改过接口就跑一遍（它
 ## egui 界面的现状（改它之前先看这节）
 
 - 左栏：`＋ 新建对话` + 会话列表 + **底部的 `⟳ 刷新`**（一把把会话/消息/变量/分支/模型/agent 全拉一遍）。
-- 会话视图：顶部**系统提示词那块**（可展开）→ 消息列表（每条：署名 + `编辑 / 复制 / 删除`）→ 底栏输入。
+- 输入栏上方两个小按钮：`归档`（写 `data/archive/*.json`，剪枝前必做）、`复制会话`（Fork 出新会话并选中它）。
+- 会话视图：顶部一行**上下文占用**（`上下文 12.3k（上轮实测 11.9k）/ 40k`；超 80% 黄、超触发阈值红，悬停有口径）→ 系统提示词那块（可展开）→ 消息列表（每条：署名 + `编辑 / 复制 / 删除`）→ 底栏输入。
   - 助手署名 = **该会话 agent 的名字**（不是"助手"）；底部输入栏跟着软键盘浮（见 `frontend/main.gd` 的同名脚本）。
   - **分支操作只出现在最后一条消息上**：`‹ 2/3 ›`（切候选回复，只在最新那句允许）、`删除全部`、`重新发送`。
   - **生成中那条回复**是界面按状态**合成**的气泡（库里还没有它）：转圈 + "正在生成… 12.3s" + 「停止」。落库后同 id 的真实消息出现，气泡自然消失。发送按钮在此期间显示"等待…"；界面每 300ms 轮询 `/status`（`App::poll_turn`），收到 `idle` / `error` 才一次性重拉消息、变量、分支与列表。
@@ -189,9 +195,12 @@ cargo build && python3 scripts/api-audit.py     # 改过接口就跑一遍（它
 - **卡片脚注**：每条助手消息底部一行 `3.2s · 上行 1654 tok（缓存 1408 tok · 85%）· 下行 62 tok（思考 32 tok，含在内）`——只在有数据时显示（dummy / 兜底 / 老消息都没有）。**单位是 token**（上游 `usage` 报的）；生成中气泡上那个「思考中… N 字」是**字符数**（流式帧里没有 token 数，token 只在末帧 usage 里）——两处别混。另：`reasoning_tokens` 是 `completion_tokens` 的**子集**，不是另加。
 - **思考**（`messages.reasoning`）默认折叠成「思考（2.1s）」——放的是**思考用时**（受理 → 第一段正文），不是字数（API 按 token 计费，"字"没意义）；迁移之前的老消息退回显示字数。点开才看内容 ✓；流式那会儿是实时展开的 ✓，正文一开始出就交给真消息（真消息里它还是折叠的 ✓）。
 - 左栏：正在生成的会话标题后面挂着「 · 生成中…」（状态来自 `GET /conversations` 每项的 `turn`）。
-- 调试页五个标签：**后端状态 / 最近发送载荷 / 原始配置 / 请求日志 / 关系图**。「最近发送载荷」原样显示最近一次发给上游的 `/chat/completions` 请求体（带 provider/模型、时间、字节数、复制按钮）——排查"看着都对、上游却报错"看它。
+- 调试页五个标签：**后端状态 / 最近发送载荷 / 原始配置 / 请求日志 / 关系图**。「最近发送载荷」原样显示最近一次发给上游的 `/chat/completions` 请求体（带 provider/模型、时间、字节数、复制按钮）——排查"看着都对、上游却报错"看它；**dummy 也有一份**（拼而不发，形状一样）。
 - 设置分五页（左导航同级）：**连接 / Agent / 模型与渠道 / 前端设置 / 关于**；右下角「保存」按页给出不同提示。
-- 「模型与渠道」每个渠道一行：`获取模型`（POST，成功后在**底栏**说"已获取 N 个模型"）、`删除全部模型`（清发现态，配置与历史会话都不动）、`编辑`。
+- 「模型与渠道」页顶部是**服务端上下文口径**：`模型上下文`（上游没报时的兜底）+ `摘要触发阈值`（留空 = 预算 × 0.8）+ 保存。
+  每个渠道一行：`获取模型`（POST，成功后在**底栏**说"已获取 N 个模型"）、`删除全部模型`（清发现态，配置与历史会话都不动）、`编辑`。
+  下面**逐个模型列出上下文**：上游给了就写 `上下文 1.0M`，没给就写"上游没报"；右边一个输入框可填**覆盖值**（留空 = 清掉覆盖）。
+  优先顺序：**覆盖 > 上游发现 > 配置里的兜底**（只写在 `vars::resolve_context` 一处）。
 - 设置页底栏常驻"**已连接后端 vX**"（`App::connected`），后面跟 `·` 和最近一次动作的结果（`App::note`）——两者互不顶替：连接状态不该被下一条消息挤掉。刷新失败时 `note` 里带着状态码与后端的 `code`。
 - 渠道与模型是**一个下拉**（`渠道 / 模型`，`GET /models` 拍平给的就是这个形状）；provider 的 `name` 缺省回退 `id`。
 
@@ -349,8 +358,8 @@ cargo build && python3 scripts/api-audit.py     # 改过接口就跑一遍（它
 ### 压缩粒度 = 对话块（细节见 §16）
 
 **在 `assistant → user` 的交界处切块**（`U1 A1 | U2 U3 A3 | U4 A4 A5`）。四条硬规矩：
-① **块绝不被劈开**（章按 token 凑，只在块边界停）；② **最后那个"开着的块"永不压**；
-③ "≥10 个"放宽成"**≥10 个块 或 ≥章预算**"（否则一个超大块会让压缩永远触发不了）；
+① **块绝不被劈开**（章**数块**：凑够 10 个，只在块边界停）；② **最后那个"开着的块"永不压**；
+③ 章 = **凑够 10 个块**（**只数块，不按 token** —— §24）；
 ④ **块是推导出来的，不入库**（不加列/不加表）。**块是压缩单位，不是文本合并** —— `U2 U3` 仍是两条消息两份原文。
 块边界同时是**状态的天然检查点**（§15 的 before/after 状态算在块边界上）。
 
@@ -361,20 +370,26 @@ cargo build && python3 scripts/api-audit.py     # 改过接口就跑一遍（它
 "不要写进梗概"；两个状态都**从原始消息现演**（before = 区间前一条，after = 区间末条，层级多深都一样）；
 这一整段模板属于 `prompt_version`。
 
-### P1 的截断策略（**尚未实现**，细节见 `IMPORTANT_DISCUSSION.md` §19）
+### 只有 Compact，没有"丢"（**铁律**，细节见 `IMPORTANT_DISCUSSION.md` §24）
 
-`build_outgoing` 组装后按预算收：① 系统提示词（含 `<state>`）永远保留；② 保留最近若干块的原文（终保护区，
-默认 10k token）；③ 仍超 ⇒ **从最老的整块开始丢**（**绝不劈块**）；④ 丢过东西就在系统提示词末尾加一行
-**【更早的 N 轮已省略】**；⑤ **丢的是发送内容，不是库 —— 档案永远完整**。
+- **Compact** = 用一条 summary 代表多个 block 里的 message（**唯一的动作**）；
+  **Mask / Forbid** = 已有 summary 代表 ⇒ 原文本轮**不发给** Provider，只发 summary。
+- **没有"丢/丢弃/Drop"这个动作** ✗ —— 不存在"少发一段没人代表的内容"。上一版本文档里那套
+  "超预算就从最老整块开始不发 + 【更早的 N 轮已省略】"是**误加，已作废**。
+- **超预算 ⇒ 先 Compact、再发送**；**真压不动**（模型太小等）⇒ **报错原路返回**，不做静默补救。
+- 触发：**摘要触发阈值**（用户设，例：1M 模型设 500K）；**停手线 = 阈值 × 0.8**。
+- **手动压缩是个功能**：`POST /conversations/{id}/compact`，体 `{ "blocks": N }` ⇒ 202，
+  进度/结果并进 `/status` 的 `compact`；手动**不受阈值限制**。
+- P2 未上线期间若超预算：**照发全量、原样报错**（过渡状态，不是设计动作）。
 
-预算 = `min(ctx_len − max_output, target_context_tokens)`（缺省 40000；`max_output` 缺省 4096；`ctx_len` 为 NULL 就不参与）。
+口径（§19.C）：**模型上下文** = `models.context_length`（发现值优先）⇒ 回落 `chat.model_context_tokens`；
+**预算** = 模型上下文 − 输出预留（`max_output`，缺省 4096）；**触发阈值** = `chat.compact_trigger_tokens`（缺省 预算 × 0.8）。
 **单块自己超预算 ⇒ 照发、标 `over_budget`**（让模型自己报错，比我们瞎切好）。边界只看 **`assistant → user`** 一种交界。
-将来摘要上线后，第 ③ 步的"丢"换成"换成梗概"，顺序与接口都不变。
 
 ### 装配顺序（只在 `build_outgoing` 这一处，仍是唯一拼装路径）
 
 `[系统 + <state>] [粗梗概] [细梗概] [最近原文] [新消息]` ——
-越靠前越稳定，与实测的缓存行为（只丢尾巴）对齐。
+越靠前越稳定，与实测的缓存行为（缓存失效只发生在尾巴）对齐。
 
 ### 摘要是派生数据
 
@@ -403,8 +418,8 @@ cargo build && python3 scripts/api-audit.py     # 改过接口就跑一遍（它
 
 ### 参数（建议默认）
 
-`compact_blocks = 10`（**单位是块，不是消息**）；`compact_tokens = 20000`（章预算）；
-章的关闭条件：走到某个块边界时，凑够 10 个块**或**累计 ≥ 20k token，谁先到算谁；单个超长块独占一章。
+`compact_blocks = 10`（**单位是块，不是消息**；**没有 token 闸** —— §24）；
+章的关闭条件：走到某个块边界时，**凑够 10 个块**。触发：`chat.compact_trigger_tokens`（用户设，默认=预算）；停手线 = 阈值 × 0.8。
 预算 = `min(模型上下文 − 输出预留, 用户期望的上下文长度)`；低水位 = 预算 × 0.8；终保护区 = 最近约 10k token。
 块本身**不建表**（是当前路径上的视图，按 `assistant → user` 交界切）：需要指一个块时用**两端消息 id**，
 块号只用于显示；`summaries` 只加一列 `blocks`（覆盖了几个块）。

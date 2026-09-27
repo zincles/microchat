@@ -454,6 +454,17 @@ struct App {
     variables: Option<microchat::vars::VariableView>,
     /// 上面那份变量属于哪个会话（切换时先清空，避免串台）。
     variables_for: Option<Uuid>,
+    /// 当前会话的上下文占用（估算 + 上一轮上游实测），由后端算好。
+    context_usage: Option<microchat::vars::ContextUsage>,
+    /// 上面那份占用属于哪个会话（切换时先清空，避免串台）。
+    context_usage_for: Option<Uuid>,
+    /// 服务端 `config.json` 的 `chat` 段（模型上下文 / 压缩阈值 / 标题字数）。
+    chat_config: Option<microchat::config::ChatConfig>,
+    /// 上面那段的编辑草稿（保存时才解析；空串 = 清空该项）。
+    chat_model_context: String,
+    chat_trigger: String,
+    /// 每个模型"上下文覆盖值"的编辑草稿，键 = `(provider, upstream_id)`。
+    model_context_drafts: BTreeMap<(String, String), String>,
     /// 正在编辑的消息：`(消息 id, 草稿)`；`None` = 都在只读态。
     editing: Option<(Uuid, String)>,
     /// 每个会话各自的输入草稿：切会话不丢字。
@@ -540,6 +551,12 @@ impl App {
             conversations: Vec::new(),
             messages: BTreeMap::new(),
             variables: None,
+            context_usage: None,
+            context_usage_for: None,
+            chat_config: None,
+            chat_model_context: String::new(),
+            chat_trigger: String::new(),
+            model_context_drafts: BTreeMap::new(),
             variables_for: None,
             editing: None,
             drafts: BTreeMap::new(),
@@ -651,6 +668,9 @@ impl App {
             self.fetch_variables(conversation);
             self.fetch_branches(conversation);
         }
+        // 服务端 `chat` 段（模型上下文 / 压缩阈值）：设置页那两个框的数据源。
+        let (base, token) = (self.settings.server_address.clone(), self.token.clone());
+        self.client.send(Command::GetChatConfig { base, token });
         self.note = "已向服务器同步".to_owned();
     }
 
@@ -667,6 +687,19 @@ impl App {
     fn fetch_variables(&mut self, conversation: Uuid) {
         let (base, token) = (self.settings.server_address.clone(), self.token.clone());
         self.client.send(Command::ListVariables {
+            base,
+            token,
+            conversation,
+        });
+        // 顶栏那行占用与变量栏同一批刷新：两条都是"当前会话的即时状态"，
+        // 而且它们该在同样的时机变（切会话、发送之后、编辑之后）。
+        self.fetch_context(conversation);
+    }
+
+    /// 拉当前会话的上下文占用（`/context`：只有数字，没有正文）。
+    fn fetch_context(&mut self, conversation: Uuid) {
+        let (base, token) = (self.settings.server_address.clone(), self.token.clone());
+        self.client.send(Command::ContextUsage {
             base,
             token,
             conversation,
@@ -988,6 +1021,65 @@ impl App {
                     }
                     Err(message) => self.note = message,
                 },
+                Event::ContextUsage {
+                    conversation,
+                    result,
+                } => match result {
+                    Ok(usage) => {
+                        self.context_usage = Some(usage);
+                        self.context_usage_for = Some(conversation);
+                    }
+                    Err(message) => self.note = message,
+                },
+                Event::ConversationArchived(Ok(receipt)) => {
+                    self.note = format!(
+                        "已归档 {} 条消息 → {}",
+                        receipt["messages"], receipt["path"]
+                    );
+                }
+                Event::ConversationArchived(Err(message)) => self.note = message,
+                Event::ConversationForked(Ok(copy)) => {
+                    self.note = format!("已复制出新会话：{}", copy.title);
+                    // 选中副本并刷新列表（副本是全新的，消息要现拉）
+                    self.current = Some(copy.id);
+                    self.fetch_messages(copy.id);
+                    self.fetch_variables(copy.id);
+                    self.fetch_branches(copy.id);
+                    let (base, token) =
+                        (self.settings.server_address.clone(), self.token.clone());
+                    self.client.send(Command::ListConversations { base, token });
+                }
+                Event::ConversationForked(Err(message)) => self.note = message,
+                Event::ChatConfig(Ok(chat)) => {
+                    self.chat_model_context = chat.model_context_tokens.to_string();
+                    self.chat_trigger = chat
+                        .compact_trigger_tokens
+                        .map(|value| value.to_string())
+                        .unwrap_or_default();
+                    self.chat_config = Some(chat);
+                }
+                Event::ChatConfig(Err(message)) => self.note = message,
+                Event::ModelContextSaved {
+                    provider,
+                    upstream_id,
+                    result,
+                } => match result {
+                    Ok(view) => {
+                        self.model_context_drafts
+                            .remove(&(provider.clone(), upstream_id.clone()));
+                        self.note = match view.context_override {
+                            Some(value) => {
+                                format!("{provider}/{upstream_id} 的上下文覆盖已设为 {value}")
+                            }
+                            None => format!("{provider}/{upstream_id} 的上下文覆盖已清空"),
+                        };
+                        // 列表要跟着更新（那一行显示的正是这个覆盖值）
+                        let (base, token) =
+                            (self.settings.server_address.clone(), self.token.clone());
+                        self.client.send(Command::ListProviders { base, token });
+                    }
+                    Err(message) => self.note = message,
+                },
                 Event::MessageEdited {
                     conversation,
                     result,
@@ -1264,7 +1356,62 @@ impl App {
 
     /// 服务器设置里有没有未保存的改动。
     fn server_dirty(&self) -> bool {
-        self.agent_draft_id().is_some() || self.provider_draft_id().is_some()
+        self.agent_draft_id().is_some()
+            || self.provider_draft_id().is_some()
+            || self.chat_config_dirty()
+            || self.model_context_changes().map_or(true, |changes| !changes.is_empty())
+    }
+
+    /// `chat` 段草稿与已保存值不同吗（模型上下文 / 摘要触发阈值）。
+    ///
+    /// **解析不了也算"有改动"**：让页脚「保存」可点，点了才告诉他错在哪 ——
+    /// 一个填错的框把整页锁死是最烦人的。
+    fn chat_config_dirty(&self) -> bool {
+        let Some(saved) = self.chat_config.as_ref() else {
+            return false; // 还没读回来：别拿空草稿去覆盖服务器
+        };
+        match parse_chat_drafts(&self.chat_model_context, &self.chat_trigger) {
+            Ok((model_context_tokens, compact_trigger_tokens)) => {
+                model_context_tokens != saved.model_context_tokens
+                    || compact_trigger_tokens != saved.compact_trigger_tokens
+            }
+            Err(_) => true,
+        }
+    }
+
+    /// 覆盖草稿里与**已保存值**不同的那些：`(provider, upstream_id, 新值)`。
+    ///
+    /// 框里留空 = 不覆盖（`None`）—— 与"清掉覆盖"是同一件事，不需要额外按钮。
+    /// `Err` = 有填错的（保存时原样报出来，不猜他想填什么）。
+    fn model_context_changes(&self) -> Result<Vec<(String, String, Option<i64>)>, String> {
+        let Some(providers) = self.providers.as_ref() else {
+            return Ok(Vec::new());
+        };
+        let mut changes = Vec::new();
+        for provider in providers {
+            for model in &provider.models {
+                let key = (provider.id.clone(), model.upstream_id.clone());
+                let Some(draft) = self.model_context_drafts.get(&key) else {
+                    continue;
+                };
+                let trimmed = draft.trim();
+                let parsed = if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(
+                        trimmed
+                            .parse::<i64>()
+                            .ok()
+                            .filter(|value| *value > 0)
+                            .ok_or_else(|| format!("{} 的覆盖值要填正数", model.upstream_id))?,
+                    )
+                };
+                if parsed != model.context_override {
+                    changes.push((key.0, key.1, parsed));
+                }
+            }
+        }
+        Ok(changes)
     }
 
     /// 有改动的 agent id（保存与提示共用同一份判定）。
@@ -1292,6 +1439,41 @@ impl App {
     /// 页脚「保存」：把面板里所有待提交的草稿一次写回后端。
     fn save_server_settings(&mut self) {
         let (base, token) = (self.settings.server_address.clone(), self.token.clone());
+        if self.chat_config_dirty() {
+            match parse_chat_drafts(&self.chat_model_context, &self.chat_trigger) {
+                Ok((model_context_tokens, compact_trigger_tokens)) => {
+                    let title_chars = self
+                        .chat_config
+                        .as_ref()
+                        .map(|chat| chat.title_chars)
+                        .unwrap_or(32);
+                    self.client.send(Command::SaveChatConfig {
+                        base: base.clone(),
+                        token: token.clone(),
+                        chat: microchat::config::ChatConfig {
+                            title_chars,
+                            model_context_tokens,
+                            compact_trigger_tokens,
+                        },
+                    });
+                }
+                Err(message) => self.note = message,
+            }
+        }
+        match self.model_context_changes() {
+            Ok(changes) => {
+                for (provider, upstream_id, context_override) in changes {
+                    self.client.send(Command::SetModelContext {
+                        base: base.clone(),
+                        token: token.clone(),
+                        provider,
+                        upstream_id,
+                        context_override,
+                    });
+                }
+            }
+            Err(message) => self.note = message,
+        }
         if let Some(id) = self.agent_draft_id() {
             self.client.send(Command::SaveAgent {
                 base: base.clone(),
@@ -1596,6 +1778,56 @@ impl App {
             RichText::new("「获取模型」会从上游拉取可用模型；成功后本 provider 的模型列表＝上游当前那份")
                 .weak(),
         );
+
+        // ── 服务端上下文口径：模型上下文（兜底）+ 摘要触发阈值 ──
+        // 草稿先取出来：下面那段借用着 `self.providers`，这里不能再可变借用 self。
+        let mut drafts = std::mem::take(&mut self.model_context_drafts);
+        ui.add_space(8.0);
+        ui.label(RichText::new("服务端：上下文口径").strong());
+        egui::Grid::new("chat_config_grid")
+            .num_columns(3)
+            .spacing([14.0, 6.0])
+            .show(ui, |ui| {
+                ui.label("模型上下文");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.chat_model_context)
+                        .desired_width(120.0)
+                        .hint_text("兜底 token 数"),
+                )
+                .on_hover_text("上游没报 context_length 时用这个（例：131072）");
+                ui.label(
+                    RichText::new("上游没报时的兜底；单个模型可在下面那行覆盖")
+                        .weak()
+                        .small(),
+                );
+                ui.end_row();
+
+                ui.label("摘要触发阈值");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.chat_trigger)
+                        .desired_width(120.0)
+                        .hint_text("留空 = 预算 × 0.8"),
+                )
+                .on_hover_text("占用越过它就该 Compact（P2 才动手）");
+                ui.label(
+                    RichText::new("留空即用预算的 80%；到点只提示，不动手")
+                        .weak()
+                        .small(),
+                );
+                ui.end_row();
+
+                ui.label("");
+                ui.label(
+                    RichText::new("改完点右下角「保存」——整页草稿一起提交")
+                        .weak()
+                        .small(),
+                );
+                ui.label("");
+                ui.end_row();
+            });
+        ui.add_space(6.0);
+        ui.separator();
+
         match &self.providers {
             None => {
                 ui.label(RichText::new("加载中…").weak());
@@ -1655,11 +1887,55 @@ impl App {
                             );
                         });
                     }
-                    for model in &provider.models {
-                        ui.label(
-                            RichText::new(format!("· {}   {}", model.name, model.upstream_id)).weak(),
-                        );
-                    }
+                    egui::Grid::new(("models_grid", &provider.id))
+                        .num_columns(5)
+                        .spacing([12.0, 5.0])
+                        .striped(true)
+                        .show(ui, |ui| {
+                            ui.label(RichText::new("模型").weak().small());
+                            ui.label(RichText::new("上游 id").weak().small());
+                            ui.label(RichText::new("上下文").weak().small());
+                            ui.label(RichText::new("覆盖").weak().small());
+                            ui.label("");
+                            ui.end_row();
+
+                            for model in &provider.models {
+                                ui.label(&model.name);
+                                ui.label(RichText::new(&model.upstream_id).weak().monospace().small());
+                                // 上游给了就附注大小；没给就说清"在用兜底"；有覆盖就显覆盖
+                                match (model.context_override, model.context_length) {
+                                    (Some(value), _) => {
+                                        ui.label(
+                                            RichText::new(short_tokens(value))
+                                                .color(egui::Color32::from_rgb(120, 170, 120)),
+                                        )
+                                        .on_hover_text("你填的覆盖值");
+                                    }
+                                    (None, Some(value)) => {
+                                        ui.label(RichText::new(short_tokens(value)).weak())
+                                            .on_hover_text("上游发现所得");
+                                    }
+                                    (None, None) => {
+                                        ui.label(RichText::new("—").weak())
+                                            .on_hover_text("上游没报，用上面的兜底");
+                                    }
+                                }
+                                let key = (provider.id.clone(), model.upstream_id.clone());
+                                let draft = drafts.entry(key.clone()).or_insert_with(|| {
+                                    model
+                                        .context_override
+                                        .map(|value| value.to_string())
+                                        .unwrap_or_default()
+                                });
+                                ui.add(
+                                    egui::TextEdit::singleline(draft)
+                                        .desired_width(96.0)
+                                        .hint_text("改这里"),
+                                );
+                                ui.end_row();
+                            }
+                        });
+                    ui.add_space(10.0);
                 }
                 if let Some(provider) = refresh {
                     let (base, token) = (self.settings.server_address.clone(), self.token.clone());
@@ -1687,6 +1963,7 @@ impl App {
                 }
             }
         }
+        self.model_context_drafts = drafts;
 
         ui.add_space(8.0);
         ui.separator();
@@ -2563,6 +2840,67 @@ impl App {
             });
     }
 
+    /// 会话顶部那行：`上下文 12.3k（上轮实测 11.9k）/ 40k`。
+    ///
+    /// 数字来自 `/context`（**估算**）；括注是上一轮上游真报的 `prompt_tokens` ——
+    /// 两者差多少，一眼就能看出估算漂没漂。超 80% 变黄、越过触发阈值变红。
+    fn context_row(&self, ui: &mut egui::Ui) {
+        if self.context_usage_for != self.current {
+            return;
+        }
+        let Some(usage) = self.context_usage.as_ref() else {
+            return;
+        };
+        let short = |n: usize| short_tokens(n as i64);
+        let ratio = usage.used_tokens as f64 / usage.budget_tokens.max(1) as f64;
+        let color = if usage.used_tokens > usage.trigger_tokens {
+            egui::Color32::from_rgb(220, 90, 90)
+        } else if ratio >= 0.8 {
+            egui::Color32::from_rgb(210, 170, 70)
+        } else {
+            ui.visuals().weak_text_color()
+        };
+        let measured = usage
+            .last_prompt_tokens
+            .map(|tokens| format!("（上轮实测 {}）", short(tokens as usize)))
+            .unwrap_or_default();
+        let mut line = format!(
+            "上下文 {}{measured} / {}",
+            short(usage.used_tokens),
+            short(usage.budget_tokens)
+        );
+        if usage.over_budget {
+            line.push_str(" · 已超出预算");
+        } else if usage.used_tokens > usage.trigger_tokens {
+            line.push_str(" · 已越过摘要触发阈值");
+        }
+        let hover = format!(
+            "估算口径：字符数 ÷ {:.2}（models.tokenizer）\n上下文长度 {}（{}）· 输出预留 {}\n\
+             触发阈值 {}（越过后该 Compact，P2 才动手）\n\
+             这是估算，不是上游计数 —— 括注里的实测值才是。",
+            usage.ratio,
+            usage
+                .ctx_len
+                .unwrap_or(usage.budget_tokens as i64)
+                .to_string(),
+            match usage.ctx_len_source {
+                microchat::vars::CtxLenSource::Override => "你填的覆盖值",
+                microchat::vars::CtxLenSource::Model => "上游发现",
+                microchat::vars::CtxLenSource::Setting => "设置里的兜底",
+            },
+            usage
+                .max_output
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "缺省 4096".to_owned()),
+            usage.trigger_tokens,
+        );
+        ui.horizontal(|ui| {
+            ui.colored_label(color, RichText::new(line).small())
+                .on_hover_text(hover);
+        });
+        ui.add_space(4.0);
+    }
+
     /// 会话最上面那块：这次对话**真正会用到的系统提示词**（会话级覆盖优先，否则 agent 的）。
     ///
     /// 默认只露几行——它常常是整篇世界观，全摊开会把消息挤下去；要看全得按「展开」。
@@ -2675,6 +3013,37 @@ impl App {
         });
 
         egui::Panel::bottom("composer").show(ui, |ui| {
+            // 会话级的两个动作：归档（剪枝前必做）与复制会话（真分支）
+            ui.horizontal(|ui| {
+                let (base, token) = (self.settings.server_address.clone(), self.token.clone());
+                if ui
+                    .small_button("归档")
+                    .on_hover_text("把这条会话（含全部分支）写成 data/archive/*.json —— 剪枝前的必做动作")
+                    .clicked()
+                {
+                    self.client.send(Command::ArchiveConversation {
+                        base: base.clone(),
+                        token: token.clone(),
+                        conversation: current,
+                    });
+                }
+                if ui
+                    .small_button("复制会话")
+                    .on_hover_text("复制出一条新会话（真分支用它；会话内那点分支只为重摇）")
+                    .clicked()
+                {
+                    self.client.send(Command::ForkConversation {
+                        base: base.clone(),
+                        token: token.clone(),
+                        conversation: current,
+                    });
+                }
+                ui.label(
+                    RichText::new("归档留底 · 复制会话开新局")
+                        .weak()
+                        .small(),
+                );
+            });
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 let hint = if self.settings.enter_sends {
@@ -2786,6 +3155,8 @@ impl App {
                     .show(ui, |ui| {
                         // 第一句永远是系统提示词：它不在 messages 里（组装出站消息时才注入），
                         // 所以单独排一块，让人看得见"这次对话到底被交代了什么"。
+                        // 它上面一行是上下文占用（`上下文 12.3k / 40k`）。
+                        self.context_row(ui);
                         self.system_prompt_row(
                             ui,
                             &assistant_label,
@@ -3498,6 +3869,42 @@ const SYSTEM_PROMPT_PREVIEW_CHARS: usize = 400;
 
 /// 摘要：最多 `LINES` 行、`CHARS` 个字符（按字符数截，不是字节——中文一个字三字节）。
 /// 有省略就在末尾说还剩多少行，别让人以为提示词就这么短。
+/// 解析「模型上下文」「摘要触发阈值」两个草稿框（判定与保存共用同一份规则）。
+///
+/// 触发阈值留空 = `None`（用预算 × 0.8）；模型上下文必须填正数。
+fn parse_chat_drafts(model_context: &str, trigger: &str) -> Result<(usize, Option<usize>), String> {
+    let model_context_tokens = model_context
+        .trim()
+        .parse::<usize>()
+        .ok()
+        .filter(|value| *value > 0)
+        .ok_or_else(|| "「模型上下文」要填正数".to_owned())?;
+    let compact_trigger_tokens = if trigger.trim().is_empty() {
+        None
+    } else {
+        Some(
+            trigger
+                .trim()
+                .parse::<usize>()
+                .ok()
+                .filter(|value| *value > 0)
+                .ok_or_else(|| "「摘要触发阈值」要填正数，或留空".to_owned())?,
+        )
+    };
+    Ok((model_context_tokens, compact_trigger_tokens))
+}
+
+/// token 数的缩写：`12.3k` / `1.0M`。**只此一处** —— 顶栏那行与设置页共用。
+fn short_tokens(tokens: i64) -> String {
+    if tokens >= 1_000_000 {
+        format!("{:.1}M", tokens as f64 / 1_000_000.0)
+    } else if tokens >= 1000 {
+        format!("{:.1}k", tokens as f64 / 1000.0)
+    } else {
+        tokens.to_string()
+    }
+}
+
 fn summarize_lines(text: &str) -> String {
     let lines: Vec<&str> = text.lines().collect();
     let kept = lines.len().min(SYSTEM_PROMPT_PREVIEW_LINES);
@@ -4133,6 +4540,7 @@ mod tests {
                     owned_by: None,
                     context_length: None,
                     max_output: None,
+                    context_override: None,
                     params: serde_json::Value::Null,
                     upstream_params: serde_json::Value::Null,
                 })

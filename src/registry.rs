@@ -20,6 +20,8 @@ pub struct ModelView {
     pub owned_by: Option<String>,
     pub context_length: Option<i64>,
     pub max_output: Option<i64>,
+    /// 用户覆盖的"模型上下文"（`None` = 没覆盖；优先于 `context_length`）。
+    pub context_override: Option<i64>,
     /// 用户覆盖的显示名（未覆盖时是 `None`；`name` 已是三级回退后的结果）。
     pub display_name: Option<String>,
     /// 用户覆盖的采样参数。
@@ -103,7 +105,7 @@ pub fn model_list(views: &[ProviderView]) -> Vec<ModelListItem> {
         .collect()
 }
 
-fn model_view(entry: ModelEntry) -> ModelView {
+pub fn model_view(entry: ModelEntry) -> ModelView {
     ModelView {
         upstream_id: entry.upstream_id.clone(),
         name: entry.resolved_name(),
@@ -111,6 +113,7 @@ fn model_view(entry: ModelEntry) -> ModelView {
         owned_by: entry.owned_by.clone(),
         context_length: entry.context_length,
         max_output: entry.max_output,
+        context_override: entry.context_override,
         display_name: entry.display_name.clone(),
         params: entry.params_json(),
         upstream_params: entry.upstream_params_json(),
@@ -127,6 +130,7 @@ fn dummy_model_view() -> ModelView {
         owned_by: None,
         context_length: None,
         max_output: None,
+        context_override: None,
         display_name: None,
         params: serde_json::Value::Object(Default::default()),
         upstream_params: serde_json::Value::Object(Default::default()),

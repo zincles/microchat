@@ -82,6 +82,12 @@ pub struct DefaultsConfig {
 pub struct ChatConfig {
     /// 会话标题取首条用户消息的字符数。
     pub title_chars: usize,
+    /// **模型上下文**：模型"有多能吃"（token）。
+    /// 上游发现到 `context_length` 时**以发现值为准**；这一项是**兜底**
+    /// （你库里 `deepseek` 那两行就是上游没给的情况）。
+    pub model_context_tokens: usize,
+    /// **摘要触发阈值**：占用越过它就 Compact（§24）。`None` ⇒ 预算 × 0.8。
+    pub compact_trigger_tokens: Option<usize>,
 }
 
 impl Default for Config {
@@ -120,7 +126,12 @@ impl Default for DefaultsConfig {
 
 impl Default for ChatConfig {
     fn default() -> Self {
-        Self { title_chars: 32 }
+        Self {
+            title_chars: 32,
+            // 兜底用"现代模型的保守下限"；上游报了就以上游的为准（你这边的模型基本都是 100 万）。
+            model_context_tokens: 131_072,
+            compact_trigger_tokens: None,
+        }
     }
 }
 

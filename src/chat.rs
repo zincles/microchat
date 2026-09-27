@@ -104,13 +104,30 @@ pub async fn complete_with(
     stream: bool,
     on_chunk: impl FnMut(providers::ChunkKind, &str),
 ) -> Result<Sent, Error> {
+    let messages: Vec<WireMessage> = outgoing
+        .iter()
+        .map(|item| WireMessage {
+            role: item.role.as_str(),
+            content: item.content.clone(),
+        })
+        .collect();
+
     match Backend::select(conversation, providers) {
-        Backend::Dummy => Ok(Sent {
-            reply: DUMMY_MODEL_REPLY.to_owned(),
-            // 没发给任何上游：载荷是空的（调试页据此说"这一轮没发出去"），也没有用量
-            payload: serde_json::Value::Null,
-            usage: None,
-        }),
+        Backend::Dummy => {
+            // dummy 没有上游，但**载荷照样拼一份**：用与真模型同一个 `chat_body`，
+            // 形状一模一样，只是不联网。调试页据此显示"本来会发出去的东西" ——
+            // 没有 key 也能把装配（历史剔除、变量注入）验一遍。
+            let streaming = stream
+                && providers
+                    .get(&conversation.provider)
+                    .is_some_and(|provider| provider.stream);
+            Ok(Sent {
+                reply: DUMMY_MODEL_REPLY.to_owned(),
+                payload: providers::Client::chat_body(&conversation.model, &messages, streaming),
+                // 没发给任何上游：没有用量
+                usage: None,
+            })
+        }
         Backend::Fallback => Ok(Sent {
             reply: FALLBACK_REPLY.to_owned(),
             payload: serde_json::Value::Null,
@@ -120,13 +137,6 @@ pub async fn complete_with(
             // select 已经确认过 provider 存在；这里再取一次是拿配置本体（含密钥）。
             let provider = providers.get(&conversation.provider).ok_or(Error::NoProvider)?;
             let client = providers::Client::new(provider).map_err(Error::Upstream)?;
-            let messages: Vec<WireMessage> = outgoing
-                .iter()
-                .map(|item| WireMessage {
-                    role: item.role.as_str(),
-                    content: item.content.clone(),
-                })
-                .collect();
             let streaming = stream && provider.stream;
             // 载荷在这里定稿（客户端内部也走同一个构造函数，不会漂）
             let payload = providers::Client::chat_body(&conversation.model, &messages, streaming);

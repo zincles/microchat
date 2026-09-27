@@ -119,6 +119,71 @@ pub struct Message {
     /// 上一条（树上的父亲）。根消息为 `None`。
     #[serde(default)]
     pub parent_id: Option<Uuid>,
+    /// 收拢它的摘要（可空）。压缩**只写这一格** —— 正文与树一个字节都不动。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary_id: Option<Uuid>,
+    pub created_at: i64,
+}
+
+/// 一条摘要的成员是**消息**还是**摘要**。**同质**：一条摘要的成员不许混。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SummarySourceKind {
+    Message,
+    Summary,
+}
+
+impl SummarySourceKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Message => "message",
+            Self::Summary => "summary",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            "message" => Some(Self::Message),
+            "summary" => Some(Self::Summary),
+            _ => None,
+        }
+    }
+}
+
+/// 一条摘要（compaction 的产出）。
+///
+/// 它是**派生数据**：压缩只往这里插行；`messages` 的正文与树结构一个字节都不动。
+/// 深度 = 指针链（`messages.summary_id` → `parent_summary_id`），**不存 level**；
+/// 覆盖范围**不存**（成员靠反查，范围靠它在当前路径上的位置）；**变量不存**
+/// （状态永远从原文现演 —— 存进摘要就是造第二个真相来源）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Summary {
+    pub id: Uuid,
+    pub conversation_id: Uuid,
+    /// 合并进了哪条更高层的摘要；`None` = 顶层。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_summary_id: Option<Uuid>,
+    pub source_kind: SummarySourceKind,
+    /// 摘要正文（**只写叙事**；混进 `<state>` 会被剔除并记日志）。
+    pub text: String,
+    /// 覆盖了几个**对话块**（显示 + "≥N 块"判定 + 日志）。块本身不入库。
+    #[serde(default)]
+    pub blocks: i64,
+    /// 估算 token（排预算用；口径见 `vars::estimate_tokens`）。
+    #[serde(default)]
+    pub tokens: i64,
+    /// 当时到底吃的是什么（消息 id 或摘要 id），供审计与整批重做。
+    #[serde(default)]
+    pub source_ids: Vec<Uuid>,
+    pub provider: String,
+    pub model: String,
+    /// 摘要模板版本：模板一改 `+1` ⇒ 旧摘要知道自己出自旧版，可整批重做。
+    pub prompt_version: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<Usage>,
+    /// 被覆盖的消息被编辑过 ⇒ `true`；界面显示"已过期 · 重新生成"，**装配时照用不误**。
+    #[serde(default)]
+    pub dirty: bool,
     pub created_at: i64,
 }
 
@@ -148,6 +213,9 @@ pub struct ModelEntry {
     pub owned_by: Option<String>,
     pub context_length: Option<i64>,
     pub max_output: Option<i64>,
+    /// **用户覆盖的"模型上下文"**（token）。与发现列分列：刷新永不碰它。
+    /// 优先顺序：`context_override` > `context_length`（发现） > `chat.model_context_tokens`（兜底）。
+    pub context_override: Option<i64>,
     pub display_name: Option<String>,
     /// 用户覆盖的采样参数（JSON 文本）。
     pub params: String,
@@ -237,6 +305,7 @@ mod tests {
             owned_by: None,
             context_length: None,
             max_output: None,
+            context_override: None,
             display_name: None,
             params: "{}".to_owned(),
             tokenizer: "{}".to_owned(),

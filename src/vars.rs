@@ -505,8 +505,274 @@ pub fn build_outgoing(
     outgoing
 }
 
+/// `models.tokenizer` 里 ratio 的缺省值。
+pub const DEFAULT_TOKENIZER_RATIO: f64 = 1.3;
+
+/// **唯一**的 token 估算处：`tokens = ceil(字符数 / ratio)`，`ratio` = 每个 token 多少字符。
+///
+/// 只用于**排预算与显示占用** —— 绝不参与计费、也绝不参与任何正确性判断。
+/// 单一比率必然粗糙（实测：中文正文 26 字 ≈ 27 token，≈1.0 字/token；思考段 201 字 ≈ 92 token，
+/// ≈2.2 —— BPE 会合并），所以预算要留 25% 余量。别处一律调它，不许再写第二处。
+pub fn estimate_tokens(text: &str, ratio: f64) -> usize {
+    if text.is_empty() {
+        return 0;
+    }
+    let ratio = if ratio.is_finite() && ratio > 0.0 && ratio <= 100.0 {
+        ratio
+    } else {
+        DEFAULT_TOKENIZER_RATIO
+    };
+    ((text.chars().count() as f64 / ratio).ceil() as usize).max(1)
+}
+
+/// 从 `models.tokenizer` 的 JSON 文本里解出比率；解不出（或值离谱）就用缺省 ——
+/// 一个写坏的配置不该把预算算崩。
+pub fn tokenizer_ratio(tokenizer_json: &str) -> f64 {
+    #[derive(serde::Deserialize)]
+    struct Tokenizer {
+        #[serde(default)]
+        ratio: Option<f64>,
+    }
+    serde_json::from_str::<Tokenizer>(tokenizer_json)
+        .ok()
+        .and_then(|tokenizer| tokenizer.ratio)
+        .filter(|ratio| ratio.is_finite() && *ratio > 0.0 && *ratio <= 100.0)
+        .unwrap_or(DEFAULT_TOKENIZER_RATIO)
+}
+
+/// `max_output` 缺席时的输出预留。
+pub const DEFAULT_MAX_OUTPUT: i64 = 4096;
+
+/// 模型能吃多少、这个数凭什么 —— **优先顺序只在这里写一遍**：
+/// 用户覆盖（`models.context_override`）> 上游发现（`models.context_length`）> 设置兜底。
+pub fn resolve_context(
+    overridden: Option<i64>,
+    discovered: Option<i64>,
+) -> (Option<i64>, CtxLenSource) {
+    match (overridden, discovered) {
+        (Some(value), _) => (Some(value), CtxLenSource::Override),
+        (None, Some(value)) => (Some(value), CtxLenSource::Model),
+        (None, None) => (None, CtxLenSource::Setting),
+    }
+}
+
+/// 上下文长度是从哪来的（显示用：让人知道顶栏那个数凭什么）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CtxLenSource {
+    /// 用户为该模型填的覆盖值（`models.context_override`）—— 最优先。
+    Override,
+    /// 上游发现所得（`models.context_length`）。
+    Model,
+    /// 设置里的兜底（`chat.model_context_tokens`）—— 前两者都没有时用。
+    Setting,
+}
+
+/// 预算口径：算"占用 / 触发"要用的全部外部数字，**只在这里算一遍**。
+///
+/// 两个数字，各管一件事（§24）：
+/// - **模型上下文**（发现值优先，设置兜底）＝ 模型能吃多少；
+/// - **压缩阈值** ＝ 吃到多少就该 Compact（没设 ⇒ 预算 × 0.8）。
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Budget {
+    /// 每 token 多少字符（`models.tokenizer`，缺省 1.3）。
+    pub ratio: f64,
+    /// 模型声明的上下文长度（上游常常不给 ⇒ `None` = 用 `model_context` 兜底）。
+    pub ctx_len: Option<i64>,
+    /// 上面那个数是从哪来的（显示用）。
+    pub ctx_source: CtxLenSource,
+    /// 输出预留（`models.max_output`；`None` ⇒ 按 [`DEFAULT_MAX_OUTPUT`] 算）。
+    pub max_output: Option<i64>,
+    /// **模型上下文**（`chat.model_context_tokens`）：上游没报时的兜底。
+    pub model_context: usize,
+    /// **摘要触发阈值**（`chat.compact_trigger_tokens`；`None` ⇒ 预算 × 0.8）。
+    pub trigger: Option<usize>,
+}
+
+impl Budget {
+    /// 真正可用的上下文：**发现值优先**，没有才用设置里的兜底。
+    pub fn ctx_tokens(&self) -> i64 {
+        self.ctx_len.unwrap_or(self.model_context as i64)
+    }
+
+    /// `budget = 可用上下文 − 输出预留`（**没有别的上限** —— 别吃到爆由触发阈值负责）。
+    pub fn budget_tokens(&self) -> usize {
+        let reserve = self.max_output.unwrap_or(DEFAULT_MAX_OUTPUT).max(0);
+        (self.ctx_tokens() - reserve).max(0) as usize
+    }
+
+    /// 触发阈值：用户设了就用用户设的（例：1M 模型设 500K）；没设 ⇒ **预算 × 0.8**。
+    pub fn trigger_tokens(&self) -> usize {
+        self.trigger.unwrap_or(self.budget_tokens() * 8 / 10)
+    }
+}
+
+/// 一次出站的占用数字（`GET /conversations/{id}/context` 的返回）。
+///
+/// **全是估算**，只服务显示与"要不要 Compact"的判断。`last_prompt_tokens` 是唯一
+/// 来自上游的地面真相（上一轮 `usage` 报的）——摆出来是为了让"估算漂没漂"一眼可见。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ContextUsage {
+    /// 下一次出站的全部文本（系统提示词 + 变量表 + 全历史）的估算。
+    pub used_tokens: usize,
+    pub budget_tokens: usize,
+    pub trigger_tokens: usize,
+    /// 相对预算的剩余；**超了就照实报负数**（夹到 0 会把"超了多少"藏起来）。
+    pub remaining_tokens: i64,
+    pub ctx_len: Option<i64>,
+    /// 上面那个上下文长度是从哪来的：模型的发现值，还是设置里的兜底。
+    pub ctx_len_source: CtxLenSource,
+    pub max_output: Option<i64>,
+    pub ratio: f64,
+    /// 恒 `true`：这是估算，不是上游计数。
+    pub estimated: bool,
+    pub last_prompt_tokens: Option<u64>,
+    pub over_budget: bool,
+}
+
+/// 算这一次出站的占用（**纯函数**：外部数字都由 `budget` / `last_prompt_tokens` 带进来）。
+pub fn context_usage(
+    outgoing: &[Outgoing],
+    budget: &Budget,
+    last_prompt_tokens: Option<u64>,
+) -> ContextUsage {
+    let used_tokens = outgoing
+        .iter()
+        .map(|item| estimate_tokens(&item.content, budget.ratio))
+        .sum();
+    let budget_tokens = budget.budget_tokens();
+    ContextUsage {
+        used_tokens,
+        budget_tokens,
+        trigger_tokens: budget.trigger_tokens(),
+        remaining_tokens: budget_tokens as i64 - used_tokens as i64,
+        ctx_len: budget.ctx_len,
+        ctx_len_source: budget.ctx_source,
+        max_output: budget.max_output,
+        ratio: budget.ratio,
+        estimated: true,
+        last_prompt_tokens,
+        over_budget: used_tokens > budget_tokens,
+    }
+}
+
 #[cfg(test)]
 mod tests {
+
+    /// 预算/触发的公式：**模型上下文（发现优先，设置兜底）− 输出预留**；
+    /// 触发阈值缺省 = 预算 × 0.8（§14：自动压缩在 80% 触发）。
+    #[test]
+    fn budget_follows_the_documented_formula() {
+        let base = Budget {
+            ratio: 1.3,
+            ctx_len: Some(1_000_000),
+            ctx_source: CtxLenSource::Model,
+            max_output: Some(8192),
+            model_context: 131_072,
+            trigger: None,
+        };
+        assert_eq!(base.budget_tokens(), 991_808, "100 万 − 8192");
+        assert_eq!(base.trigger_tokens(), 793_446, "没设阈值 ⇒ 预算 × 0.8");
+
+        // 上游没报 ⇒ 用设置里的兜底
+        let fallback = Budget {
+            ctx_len: None,
+            ctx_source: CtxLenSource::Setting,
+            ..base
+        };
+        assert_eq!(fallback.ctx_tokens(), 131_072);
+        assert_eq!(fallback.budget_tokens(), 122_880, "131072 − 8192");
+
+        // 输出预留缺省 4096
+        let no_reserve = Budget {
+            max_output: None,
+            ..base
+        };
+        assert_eq!(no_reserve.budget_tokens(), 995_904, "100 万 − 4096");
+
+        // 用户设了阈值 ⇒ 以用户的为准（例：1M 模型设 500K）
+        let user_trigger = Budget {
+            trigger: Some(500_000),
+            ..base
+        };
+        assert_eq!(user_trigger.trigger_tokens(), 500_000);
+    }
+
+    /// 优先顺序只在一处：用户覆盖 > 上游发现 > 设置兜底。
+    #[test]
+    fn resolve_context_prefers_override_then_discovery() {
+        assert_eq!(
+            resolve_context(Some(2_000_000), Some(1_000_000)),
+            (Some(2_000_000), CtxLenSource::Override)
+        );
+        assert_eq!(
+            resolve_context(None, Some(1_000_000)),
+            (Some(1_000_000), CtxLenSource::Model)
+        );
+        assert_eq!(
+            resolve_context(None, None),
+            (None, CtxLenSource::Setting)
+        );
+    }
+
+    /// 越界要**照实报负数**，不能夹到 0 —— 那会把"超了多少"藏起来。
+    #[test]
+    fn context_usage_reports_over_budget_honestly() {
+        let outgoing = vec![
+            Outgoing {
+                role: OutgoingRole::System,
+                content: "你是助手".to_owned(),
+            },
+            Outgoing {
+                role: OutgoingRole::User,
+                content: "他推开门，屋里只有一盏灯在闪".to_owned(),
+            },
+        ];
+        let budget = Budget {
+            ratio: 1.3,
+            ctx_len: None,
+            ctx_source: CtxLenSource::Setting,
+            max_output: None,
+            model_context: 10,
+            trigger: None,
+        };
+        let usage = context_usage(&outgoing, &budget, Some(7));
+        assert!(usage.used_tokens > 10, "两条加起来该超过 10");
+        assert!(usage.over_budget);
+        assert_eq!(
+            usage.remaining_tokens,
+            usage.budget_tokens as i64 - usage.used_tokens as i64
+        );
+        assert!(usage.remaining_tokens < 0);
+        assert_eq!(usage.last_prompt_tokens, Some(7), "实测值原样带回");
+        assert!(usage.estimated, "再像也是估算");
+    }
+
+    /// 估算只用于排预算/显示。这里钉的是**公式行为**，不是精确 token 数 ——
+    /// 实测偏差（中文正文 ≈1.0 字/token、思考段 ≈2.2）说明单一比率必然 ±2×，
+    /// 正因如此预算要留 25% 余量（§19.A）。
+    #[test]
+    fn estimate_tokens_is_chars_over_ratio() {
+        assert_eq!(estimate_tokens("", 1.3), 0, "空文本 = 0，不是 1");
+        assert_eq!(
+            estimate_tokens("他推开门，屋里只有一盏灯在闪", 1.3),
+            11,
+            "14 字 ÷ 1.3 ⇒ 11"
+        );
+        assert_eq!(estimate_tokens("1234567890", 2.0), 5);
+        assert_eq!(estimate_tokens("a", 1000.0), 1, "离谱的比率换回缺省，且至少算 1");
+        assert_eq!(estimate_tokens("abcdefghij", 0.0), 8, "0 也是离谱值");
+    }
+
+    /// 坏配置不该把预算算崩：解不出来、或值离谱，都回落到缺省比率。
+    #[test]
+    fn tokenizer_ratio_falls_back_on_garbage() {
+        assert_eq!(tokenizer_ratio(r#"{"kind":"approx","ratio":1.3}"#), 1.3);
+        assert_eq!(tokenizer_ratio(r#"{"kind":"approx"}"#), DEFAULT_TOKENIZER_RATIO);
+        assert_eq!(tokenizer_ratio(r#"{"ratio":-1}"#), DEFAULT_TOKENIZER_RATIO);
+        assert_eq!(tokenizer_ratio("{}"), DEFAULT_TOKENIZER_RATIO);
+        assert_eq!(tokenizer_ratio("不是 JSON"), DEFAULT_TOKENIZER_RATIO);
+    }
 
     /// 正文为空的**不发出去**：生成中的占位消息（空正文）就在历史里躺着，
     /// 而"空一条、再说一句"对上游是纯噪音；整句只有 `<state>` 块的消息同理。
@@ -525,6 +791,7 @@ mod tests {
             reasoning_ms: None,
             usage: None,
             parent_id: None,
+            summary_id: None,
             created_at: 0,
         };
         let messages = vec![
@@ -555,6 +822,7 @@ mod tests {
             reasoning_ms: None,
             usage: None,
             parent_id: None,
+            summary_id: None,
             created_at,
         };
         let messages = vec![
@@ -632,6 +900,7 @@ mod tests {
             reasoning_ms: None,
             usage: None,
             parent_id: None,
+            summary_id: None,
         }
     }
 

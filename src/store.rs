@@ -8,15 +8,18 @@
 
 use std::path::Path;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rusqlite::{params, types::Type, Connection, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::model::{Conversation, DiscoveredModel, Message, ModelEntry, Role, Usage, DEFAULT_AGENT_ID};
+use crate::model::{
+    Conversation, DiscoveredModel, Message, ModelEntry, Role, Summary, SummarySourceKind, Usage,
+    DEFAULT_AGENT_ID,
+};
 
-const MIGRATIONS: [&str; 9] = [r#"
+const MIGRATIONS: [&str; 11] = [r#"
 CREATE TABLE conversations (
   id            TEXT PRIMARY KEY,
   title         TEXT NOT NULL DEFAULT '',
@@ -120,6 +123,44 @@ ALTER TABLE messages ADD COLUMN usage TEXT;
 "#, r#"
 -- 思考用时（受理 → 第一段正文）。界面上显示成「思考（2.1s）」。
 ALTER TABLE messages ADD COLUMN reasoning_ms INTEGER;
+"#, r#"
+-- 摘要把多个对话块里的消息收拢成一条叙事梗概（Compact）。
+-- 它是**派生数据**：只往这张表插行，messages 的正文与树结构一个字节都不动。
+-- 深度 = 指针链（messages.summary_id → parent_summary_id），**不存 level**；
+-- 覆盖范围**不存**（成员靠 messages.summary_id 反查，范围靠位置得出；source_ids 只是审计副本）。
+CREATE TABLE summaries (
+  id                TEXT PRIMARY KEY,
+  conversation_id   TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  -- 合并进了哪条更高层的摘要；NULL = 顶层。
+  parent_summary_id TEXT REFERENCES summaries(id),
+  -- 成员是消息还是摘要。**同质**：一条摘要的成员不许混。
+  source_kind       TEXT NOT NULL CHECK (source_kind IN ('message','summary')),
+  text              TEXT NOT NULL,
+  -- 覆盖了几个**对话块**（显示 + "≥N 块"判定 + 日志）。块本身不入库。
+  blocks            INTEGER NOT NULL DEFAULT 0,
+  tokens            INTEGER NOT NULL DEFAULT 0,
+  -- 当时到底吃的是什么（消息 id 或摘要 id 的 JSON 数组）：审计 + 整批重做。
+  source_ids        TEXT NOT NULL DEFAULT '[]',
+  provider          TEXT NOT NULL,
+  model             TEXT NOT NULL,
+  prompt_version    INTEGER NOT NULL,
+  usage             TEXT,
+  -- 被覆盖的消息被编辑过就置 1；界面显示"已过期 · 重新生成"，装配时照用不误。
+  dirty             INTEGER NOT NULL DEFAULT 0,
+  created_at        INTEGER NOT NULL
+);
+
+CREATE INDEX summaries_by_conv ON summaries(conversation_id, id);
+CREATE INDEX summaries_by_parent ON summaries(parent_summary_id);
+
+-- 消息指向收拢它的摘要（压缩**只写这一格**）。
+-- 删摘要时指针自动断开；"孤立摘要"（反查不到成员）是**推导**出来的，不存列。
+ALTER TABLE messages ADD COLUMN summary_id TEXT REFERENCES summaries(id) ON DELETE SET NULL;
+CREATE INDEX messages_by_summary ON messages(summary_id);
+"#, r#"
+-- 用户为"这个模型能吃多少"填的覆盖值（token）。**用户列**：刷新只写发现列，永不碰它。
+-- 优先顺序：context_override > context_length（发现） > config.json 的 chat.model_context_tokens（兜底）。
+ALTER TABLE models ADD COLUMN context_override INTEGER;
 "#];
 
 #[derive(Debug)]
@@ -270,6 +311,7 @@ impl Store {
             duration_ms,
             usage: usage.cloned(),
             parent_id,
+            summary_id: None,
             created_at: now,
         };
 
@@ -370,10 +412,54 @@ impl Store {
             return Err(Error::NotFound);
         }
         let mut stmt = self.conn.prepare(
-            "SELECT id, conversation_id, role, content, parent_id, created_at, reasoning, reasoning_ms, duration_ms, usage
+            "SELECT id, conversation_id, role, content, parent_id, created_at, reasoning, reasoning_ms, duration_ms, usage, summary_id
              FROM messages WHERE conversation_id = ?1 ORDER BY rowid",
         )?;
         let rows = stmt.query_map(params![conversation_id.to_string()], row_to_message)?;
+        Ok(rows.filter_map(std::result::Result::ok).collect())
+    }
+
+    /// 插一条摘要行（压缩的**写动作之一**；单独用一般只为测试，正式路径走 [`Self::record_summary`]）。
+    pub fn insert_summary(&mut self, summary: &Summary) -> Result<()> {
+        insert_summary_in(&self.conn, summary)
+    }
+
+    /// 压缩的落库动作：**同一个事务**里「插摘要行 + 把成员消息指向它」。
+    ///
+    /// 顺序是硬条件（§5）：反过来一旦总结失败就白丢数据。**不做剪枝** —— 那是另一个动作，
+    /// 而且它必须先导出（§23.G）。成员必须属于这条会话，否则整批拒绝 —— 与"编辑消息不能跨会话"
+    /// 同一条规矩，绝不跨会话改。
+    pub fn record_summary(&mut self, summary: &Summary, message_ids: &[Uuid]) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        insert_summary_in(&tx, summary)?;
+        for message_id in message_ids {
+            let touched = tx.execute(
+                "UPDATE messages SET summary_id = ?1 WHERE id = ?2 AND conversation_id = ?3",
+                params![
+                    summary.id.to_string(),
+                    message_id.to_string(),
+                    summary.conversation_id.to_string()
+                ],
+            )?;
+            if touched == 0 {
+                return Err(Error::Invalid(format!(
+                    "消息 {message_id} 不属于会话 {}",
+                    summary.conversation_id
+                )));
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// 这条会话的全部摘要，按生成先后（id 是 UUIDv7 ⇒ 时间序）。
+    pub fn list_summaries(&self, conversation_id: Uuid) -> Result<Vec<Summary>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, conversation_id, parent_summary_id, source_kind, text, blocks, tokens,
+                    source_ids, provider, model, prompt_version, usage, dirty, created_at
+             FROM summaries WHERE conversation_id = ?1 ORDER BY id",
+        )?;
+        let rows = stmt.query_map(params![conversation_id.to_string()], row_to_summary)?;
         Ok(rows.filter_map(std::result::Result::ok).collect())
     }
 
@@ -492,7 +578,7 @@ impl Store {
             return Err(Error::NotFound);
         }
         let updated = tx.query_row(
-            "SELECT id, conversation_id, role, content, parent_id, created_at, reasoning, reasoning_ms, duration_ms, usage FROM messages WHERE id = ?1",
+            "SELECT id, conversation_id, role, content, parent_id, created_at, reasoning, reasoning_ms, duration_ms, usage, summary_id FROM messages WHERE id = ?1",
             params![message],
             row_to_message,
         )?;
@@ -707,7 +793,8 @@ impl Store {
     pub fn list_models(&self, provider: &str) -> Result<Vec<ModelEntry>> {
         let mut stmt = self.conn.prepare(
             "SELECT provider, upstream_id, upstream_name, owned_by, context_length, max_output,
-                    display_name, params, tokenizer, upstream_params, first_seen_at, last_seen_at
+                    display_name, params, tokenizer, upstream_params, first_seen_at, last_seen_at,
+                    context_override
              FROM models WHERE provider = ?1 ORDER BY upstream_id",
         )?;
         let rows = stmt.query_map(params![provider], row_to_model_entry)?;
@@ -718,13 +805,144 @@ impl Store {
         self.conn
             .query_row(
                 "SELECT provider, upstream_id, upstream_name, owned_by, context_length, max_output,
-                        display_name, params, tokenizer, upstream_params, first_seen_at, last_seen_at
+                        display_name, params, tokenizer, upstream_params, first_seen_at, last_seen_at,
+                        context_override
                  FROM models WHERE provider = ?1 AND upstream_id = ?2",
                 params![provider, upstream_id],
                 row_to_model_entry,
             )
             .optional()
             .map_err(Into::into)
+    }
+
+    /// 复制一条会话（Fork）：**一个事务**里复制「当前路径 + 尾巴那一层的兄弟（含各自子树）」
+    /// 与摘要行，并把指针按 `旧 id → 新 id` 改写。
+    ///
+    /// - 消息：`content` / `reasoning` / `usage` 一字不改，**`created_at` 保留原值**；
+    /// - 摘要：行照抄、指针改写 —— 副本**不用重新总结**（纯指针模型的红利）；
+    /// - **变量不复制**：它从正文现演，副本的世界状态与原件逐键相同（有测试守着）。
+    ///
+    /// 尾巴那一层兄弟**连子树一起**复制：那是"重摇/退货"的现场，不带走的话副本就少了一条路。
+    pub fn fork_conversation(&mut self, source_id: Uuid) -> Result<Conversation> {
+        let source = self
+            .get_conversation(source_id)?
+            .ok_or(Error::NotFound)?;
+        let all = self.list_all_messages(source_id)?;
+        let path = path_from(&all, source.current_leaf);
+
+        let mut wanted: BTreeSet<Uuid> = path.iter().map(|message| message.id).collect();
+        if let Some(tail) = path.last() {
+            for sibling in all
+                .iter()
+                .filter(|message| message.parent_id == tail.parent_id)
+            {
+                wanted.extend(subtree_ids(&all, sibling.id));
+            }
+        }
+
+        let summaries = self.list_summaries(source_id)?;
+        let now = now_ms();
+        let new_id = Uuid::now_v7();
+        let tx = self.conn.transaction()?;
+
+        tx.execute(
+            "INSERT INTO conversations
+               (id, title, system_prompt, provider, model, agent_id, current_leaf, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, ?7)",
+            params![
+                new_id.to_string(),
+                format!("{}（副本）", source.title),
+                source.system_prompt,
+                source.provider,
+                source.model,
+                source.agent_id,
+                now
+            ],
+        )?;
+
+        // 旧 id → 新 id（只给要复制的那些）
+        let mut message_map: BTreeMap<Uuid, Uuid> = BTreeMap::new();
+        for message in &all {
+            if wanted.contains(&message.id) {
+                message_map.insert(message.id, Uuid::now_v7());
+            }
+        }
+        let mut summary_map: BTreeMap<Uuid, Uuid> = BTreeMap::new();
+        for summary in &summaries {
+            summary_map.insert(summary.id, Uuid::now_v7());
+        }
+
+        for message in &all {
+            let Some(&fresh) = message_map.get(&message.id) else {
+                continue;
+            };
+            tx.execute(
+                "INSERT INTO messages
+                   (id, conversation_id, role, content, parent_id, created_at,
+                    reasoning, reasoning_ms, duration_ms, usage, summary_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![
+                    fresh.to_string(),
+                    new_id.to_string(),
+                    message.role.as_str(),
+                    message.content,
+                    message
+                        .parent_id
+                        .and_then(|id| message_map.get(&id))
+                        .map(|id| id.to_string()),
+                    message.created_at,
+                    message.reasoning,
+                    message.reasoning_ms,
+                    message.duration_ms,
+                    message
+                        .usage
+                        .as_ref()
+                        .and_then(|usage| serde_json::to_string(usage).ok()),
+                    message
+                        .summary_id
+                        .and_then(|id| summary_map.get(&id))
+                        .map(|id| id.to_string()),
+                ],
+            )?;
+        }
+
+        for summary in &summaries {
+            let copy = Summary {
+                id: summary_map[&summary.id],
+                conversation_id: new_id,
+                parent_summary_id: summary
+                    .parent_summary_id
+                    .and_then(|id| summary_map.get(&id).copied()),
+                source_kind: summary.source_kind,
+                text: summary.text.clone(),
+                blocks: summary.blocks,
+                tokens: summary.tokens,
+                source_ids: summary
+                    .source_ids
+                    .iter()
+                    .filter_map(|id| message_map.get(id).copied())
+                    .collect(),
+                provider: summary.provider.clone(),
+                model: summary.model.clone(),
+                prompt_version: summary.prompt_version,
+                usage: summary.usage.clone(),
+                dirty: summary.dirty,
+                created_at: summary.created_at,
+            };
+            insert_summary_in(&tx, &copy)?;
+        }
+
+        let leaf = source
+            .current_leaf
+            .and_then(|id| message_map.get(&id))
+            .map(|id| id.to_string());
+        tx.execute(
+            "UPDATE conversations SET current_leaf = ?1 WHERE id = ?2",
+            params![leaf, new_id.to_string()],
+        )?;
+        tx.commit()?;
+
+        self.get_conversation(new_id)?.ok_or(Error::NotFound)
     }
 
     /// 忘掉一个 provider 派生出来的全部数据：已发现模型（连用户改的显示名/参数一起）
@@ -747,6 +965,25 @@ impl Store {
         let touched = self.conn.execute(
             "UPDATE models SET display_name = ?1 WHERE provider = ?2 AND upstream_id = ?3",
             params![name, provider, upstream_id],
+        )?;
+        (touched > 0).then_some(()).ok_or(Error::NotFound)
+    }
+
+    /// 设置/清除**用户覆盖的"模型上下文"**（`None` = 清掉，回落到发现值与全局兜底）。
+    pub fn set_model_context_override(
+        &mut self,
+        provider: &str,
+        upstream_id: &str,
+        context: Option<i64>,
+    ) -> Result<()> {
+        if let Some(value) = context {
+            if value <= 0 {
+                return Err(Error::Invalid("模型上下文要正数".to_owned()));
+            }
+        }
+        let touched = self.conn.execute(
+            "UPDATE models SET context_override = ?1 WHERE provider = ?2 AND upstream_id = ?3",
+            params![context, provider, upstream_id],
         )?;
         (touched > 0).then_some(()).ok_or(Error::NotFound)
     }
@@ -806,6 +1043,21 @@ fn now_ms() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+
+/// 从 `root` 起，沿 `parent_id` 收出整棵子树的 id（含 `root` 自己）。
+///
+/// 树上每个节点只有一个父亲 ⇒ 一趟扫描按层推进即可，不用递归。
+fn subtree_ids(all: &[Message], root: Uuid) -> Vec<Uuid> {
+    let mut wanted = vec![root];
+    let mut frontier = vec![root];
+    while let Some(current) = frontier.pop() {
+        for message in all.iter().filter(|m| m.parent_id == Some(current)) {
+            wanted.push(message.id);
+            frontier.push(message.id);
+        }
+    }
+    wanted
 }
 
 /// 从叶子沿 `parent_id` 回溯出的路径（正序）。
@@ -881,7 +1133,80 @@ fn row_to_message(row: &Row<'_>) -> rusqlite::Result<Message> {
             .get::<_, Option<String>>(4)?
             .map(parse_uuid)
             .transpose()?,
+        summary_id: row
+            .get::<_, Option<String>>(10)?
+            .map(parse_uuid)
+            .transpose()?,
         created_at: row.get(5)?,
+    })
+}
+
+/// 摘要行的 INSERT（`record_summary` 要在事务里复用，所以按 `&Connection` 收口）。
+fn insert_summary_in(conn: &Connection, summary: &Summary) -> Result<()> {
+    conn.execute(
+        "INSERT INTO summaries
+           (id, conversation_id, parent_summary_id, source_kind, text, blocks, tokens,
+            source_ids, provider, model, prompt_version, usage, dirty, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+        params![
+            summary.id.to_string(),
+            summary.conversation_id.to_string(),
+            summary.parent_summary_id.map(|id| id.to_string()),
+            summary.source_kind.as_str(),
+            summary.text,
+            summary.blocks,
+            summary.tokens,
+            serde_json::to_string(
+                &summary.source_ids.iter().map(Uuid::to_string).collect::<Vec<_>>()
+            )
+            .unwrap_or_else(|_| "[]".to_owned()),
+            summary.provider,
+            summary.model,
+            summary.prompt_version,
+            summary
+                .usage
+                .as_ref()
+                .and_then(|usage| serde_json::to_string(usage).ok()),
+            summary.dirty as i64,
+            summary.created_at,
+        ],
+    )?;
+    Ok(())
+}
+
+fn row_to_summary(row: &Row<'_>) -> rusqlite::Result<Summary> {
+    let kind_raw: String = row.get(3)?;
+    let source_kind = SummarySourceKind::parse(&kind_raw).ok_or_else(|| {
+        rusqlite::Error::FromSqlConversionFailure(3, Type::Text, "unknown summary kind".into())
+    })?;
+    Ok(Summary {
+        id: parse_uuid(row.get(0)?)?,
+        conversation_id: parse_uuid(row.get(1)?)?,
+        parent_summary_id: row
+            .get::<_, Option<String>>(2)?
+            .map(parse_uuid)
+            .transpose()?,
+        source_kind,
+        text: row.get(4)?,
+        blocks: row.get(5)?,
+        tokens: row.get(6)?,
+        source_ids: row
+            .get::<_, Option<String>>(7)?
+            .and_then(|text| serde_json::from_str::<Vec<String>>(&text).ok())
+            .map(|ids| {
+                ids.into_iter()
+                    .filter_map(|raw| Uuid::parse_str(&raw).ok())
+                    .collect()
+            })
+            .unwrap_or_default(),
+        provider: row.get(8)?,
+        model: row.get(9)?,
+        prompt_version: row.get(10)?,
+        usage: row
+            .get::<_, Option<String>>(11)?
+            .and_then(|text| serde_json::from_str(&text).ok()),
+        dirty: row.get(12)?,
+        created_at: row.get(13)?,
     })
 }
 
@@ -899,6 +1224,7 @@ fn row_to_model_entry(row: &Row<'_>) -> rusqlite::Result<ModelEntry> {
         upstream_params: row.get(9)?,
         first_seen_at: row.get(10)?,
         last_seen_at: row.get(11)?,
+        context_override: row.get(12)?,
     })
 }
 
@@ -943,6 +1269,114 @@ mod tests {
         assert_eq!(convs[0].provider, "openrouter");
         assert_eq!(convs[0].model, "deepseek/deepseek-v4-flash");
         assert_eq!(convs[0].system_prompt, "你是助手");
+    }
+
+    fn summary_stub(conversation_id: Uuid, source_ids: Vec<Uuid>) -> Summary {
+        Summary {
+            id: Uuid::now_v7(),
+            conversation_id,
+            parent_summary_id: None,
+            source_kind: SummarySourceKind::Message,
+            text: "前两句的梗概".to_owned(),
+            blocks: 1,
+            tokens: 8,
+            source_ids,
+            provider: "dummy".to_owned(),
+            model: "dummy".to_owned(),
+            prompt_version: 1,
+            usage: None,
+            dirty: false,
+            created_at: now_ms(),
+        }
+    }
+
+    /// 「压缩只插不改」（§19.E 第一条保险）：插摘要 + 指成员之后，
+    /// **messages 的每一格都不许变** —— 这是整套设计的地基。
+    #[test]
+    fn compaction_only_inserts_and_never_touches_messages() {
+        let mut s = store();
+        let conv = s.create_conversation("dummy", "dummy", "").unwrap();
+        let mut ids = Vec::new();
+        let mut parent = None;
+        for i in 0..4 {
+            let role = if i % 2 == 0 {
+                Role::User
+            } else {
+                Role::Assistant
+            };
+            let message = s
+                .insert_message(conv.id, role, &format!("第 {i} 句"), parent)
+                .unwrap();
+            parent = Some(message.id);
+            ids.push(message.id);
+        }
+        let snapshot = |s: &Store| -> Vec<(String, String, i64)> {
+            s.list_all_messages(conv.id)
+                .unwrap()
+                .into_iter()
+                .map(|m| (m.id.to_string(), m.content, m.created_at))
+                .collect()
+        };
+        let before = snapshot(&s);
+
+        let summary = summary_stub(conv.id, ids[..2].to_vec());
+        s.record_summary(&summary, &ids[..2]).unwrap();
+
+        assert_eq!(snapshot(&s), before, "压缩只许插摘要，不许碰 messages");
+
+        let messages = s.list_all_messages(conv.id).unwrap();
+        assert_eq!(messages[0].summary_id, Some(summary.id));
+        assert_eq!(messages[1].summary_id, Some(summary.id));
+        assert_eq!(messages[2].summary_id, None, "没被覆盖的仍是 NULL");
+
+        let summaries = s.list_summaries(conv.id).unwrap();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].text, "前两句的梗概");
+        assert_eq!(summaries[0].source_ids, ids[..2]);
+        assert_eq!(summaries[0].blocks, 1);
+        assert!(!summaries[0].dirty);
+    }
+
+    /// 成员跨会话 ⇒ 整批拒绝、一行不落（与"编辑消息不能跨会话"同一条规矩）。
+    #[test]
+    fn record_summary_rejects_messages_from_another_conversation() {
+        let mut s = store();
+        let mine = s.create_conversation("dummy", "dummy", "").unwrap();
+        let other = s.create_conversation("dummy", "dummy", "").unwrap();
+        let foreign = s
+            .insert_message(other.id, Role::User, "别处的话", None)
+            .unwrap();
+
+        let summary = summary_stub(mine.id, vec![foreign.id]);
+        let err = s.record_summary(&summary, &[foreign.id]).unwrap_err();
+        assert!(matches!(err, Error::Invalid(_)));
+        assert!(
+            s.list_summaries(mine.id).unwrap().is_empty(),
+            "整批拒绝：摘要行也不许留下"
+        );
+        let untouched = s.list_all_messages(other.id).unwrap();
+        assert_eq!(untouched[0].summary_id, None, "别处那条一个字不许动");
+    }
+
+    /// 删摘要 ⇒ 成员指针自动断开（ON DELETE SET NULL），正文照旧。
+    #[test]
+    fn deleting_summary_only_clears_the_pointer() {
+        let mut s = store();
+        let conv = s.create_conversation("dummy", "dummy", "").unwrap();
+        let message = s.insert_message(conv.id, Role::User, "留下的话", None).unwrap();
+        let summary = summary_stub(conv.id, vec![message.id]);
+        s.record_summary(&summary, &[message.id]).unwrap();
+
+        s.conn
+            .execute(
+                "DELETE FROM summaries WHERE id = ?1",
+                params![summary.id.to_string()],
+            )
+            .unwrap();
+
+        let messages = s.list_all_messages(conv.id).unwrap();
+        assert_eq!(messages[0].summary_id, None, "指针应被 SET NULL");
+        assert_eq!(messages[0].content, "留下的话", "正文不受影响");
     }
 
     #[test]
@@ -1107,6 +1541,8 @@ mod tests {
         s.set_model_display_name("open", "m1", Some("我的名字")).unwrap();
         s.set_model_params("open", "m1", r#"{"temperature":0.3}"#)
             .unwrap();
+        s.set_model_context_override("open", "m1", Some(1_048_576))
+            .unwrap();
         let first_seen = s.get_model("open", "m1").unwrap().unwrap().first_seen_at;
 
         s.apply_discovery("open", &[discovered("m1", Some("M One Renamed"))])
@@ -1116,6 +1552,11 @@ mod tests {
         assert_eq!(model.upstream_name.as_deref(), Some("M One Renamed"), "发现列应更新");
         assert_eq!(model.display_name.as_deref(), Some("我的名字"), "用户列不该被刷新覆盖");
         assert_eq!(model.params_json()["temperature"], 0.3);
+        assert_eq!(
+            model.context_override,
+            Some(1_048_576),
+            "用户填的模型上下文也不该被刷新覆盖"
+        );
         assert_eq!(model.first_seen_at, first_seen, "first_seen 只在首次写入");
         assert!(model.last_seen_at >= first_seen);
     }

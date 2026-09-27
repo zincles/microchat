@@ -37,6 +37,44 @@ pub enum Command {
         token: Option<String>,
         conversation: uuid::Uuid,
     },
+    /// 拉某会话的**上下文占用**（估算 + 上一轮上游实测）：会话顶部那一行用。
+    /// 单开一个端点就为这个：`/outgoing` 会把整份历史都吐出来，只为一行数字不值当。
+    ContextUsage {
+        base: String,
+        token: Option<String>,
+        conversation: uuid::Uuid,
+    },
+    /// 读 `config.json` 的 `chat` 段（模型上下文 / 压缩阈值 / 标题字数）。
+    GetChatConfig {
+        base: String,
+        token: Option<String>,
+    },
+    /// 整段替换 `chat` 段（**只碰这一段**，其余段原样保留）。
+    SaveChatConfig {
+        base: String,
+        token: Option<String>,
+        chat: microchat::config::ChatConfig,
+    },
+    /// 把一条会话归档到服务器（`data/archive/*.json`）—— 剪枝前的必做动作。
+    ArchiveConversation {
+        base: String,
+        token: Option<String>,
+        conversation: uuid::Uuid,
+    },
+    /// 复制出一条新会话（Fork）：真分支用它。
+    ForkConversation {
+        base: String,
+        token: Option<String>,
+        conversation: uuid::Uuid,
+    },
+    /// 设置/清除某个模型的"模型上下文"覆盖值（`None` = 清掉，回落到发现值与全局兜底）。
+    SetModelContext {
+        base: String,
+        token: Option<String>,
+        provider: String,
+        upstream_id: String,
+        context_override: Option<i64>,
+    },
     /// 编辑一条消息。正文是存档，后端会按新正文**重算**它产生的变量操作。
     EditMessage {
         base: String,
@@ -273,8 +311,26 @@ pub enum Event {
     /// 写操作结果；UI 收到 `Ok` 后重新拉取列表。
     AgentWritten(Result<(), String>),
     ProviderWritten(Result<(), String>),
+    /// 上下文占用（`/context`）：顶栏那行 `上下文 12.3k（上轮实测 11.9k）/ 40k`。
+    ContextUsage {
+        conversation: uuid::Uuid,
+        result: Result<microchat::vars::ContextUsage, String>,
+    },
+    /// 归档结果：后端回的是收据（路径 / 字节数 / 条数）。
+    ConversationArchived(Result<serde_json::Value, String>),
+    /// Fork 的结果：新会话原样回来，界面把它选中。
+    ConversationForked(Result<microchat::model::Conversation, String>),
+    /// `chat` 段（读与写的结果都是它）。
+    ChatConfig(Result<microchat::config::ChatConfig, String>),
+    /// 模型上下文覆盖值写回的结果（带 provider/upstream_id，好把草稿清掉）。
+    ModelContextSaved {
+        provider: String,
+        upstream_id: String,
+        result: Result<microchat::registry::ModelView, String>,
+    },
     DebugState(Result<DebugState, String>),
-    /// 最近一次发给上游的载荷：`null` = 还没发过（dummy / fallback 不算）。
+    /// 最近一次发给上游的载荷：`null` = 还没发过（fallback 不算；**dummy 会拼一份
+    /// "本来会发出去"的**，形状一样但不联网）。
     DebugPayload(Result<serde_json::Value, String>),
     DebugFile(Result<RawFile, String>),
 }
@@ -424,6 +480,24 @@ impl Command {
                 format!("POST /conversations/{}/stop", &conversation.to_string()[..8])
             }
             Self::DeleteAgent { id, .. } => format!("DELETE /agents/{id}"),
+            Self::ContextUsage { conversation, .. } => {
+                format!("GET /conversations/{}/context", &conversation.to_string()[..8])
+            }
+            Self::ArchiveConversation { conversation, .. } => format!(
+                "POST /conversations/{}/archive",
+                &conversation.to_string()[..8]
+            ),
+            Self::ForkConversation { conversation, .. } => format!(
+                "POST /conversations/{}/fork",
+                &conversation.to_string()[..8]
+            ),
+            Self::GetChatConfig { .. } => "GET /config/chat".to_owned(),
+            Self::SaveChatConfig { .. } => "PUT /config/chat".to_owned(),
+            Self::SetModelContext {
+                provider,
+                upstream_id,
+                ..
+            } => format!("PATCH /models {provider}/{upstream_id}"),
             Self::DebugState { .. } => "GET /debug/state".to_owned(),
             Self::DebugPayload { .. } => "GET /debug/last-payload".to_owned(),
             Self::DebugFile { name, .. } => format!("GET /debug/file/{name}"),
@@ -445,6 +519,38 @@ fn summarize(event: &Event) -> String {
         Event::Conversations(Err(message)) => format!("失败: {message}"),
         Event::Messages { result, .. } => match result {
             Ok(list) => format!("OK {} 条消息", list.len()),
+            Err(message) => format!("失败: {message}"),
+        },
+        Event::ConversationArchived(Ok(receipt)) => format!(
+            "已归档 {} 条消息 → {}",
+            receipt["messages"], receipt["path"]
+        ),
+        Event::ConversationArchived(Err(message)) => format!("归档失败: {message}"),
+        Event::ConversationForked(Ok(copy)) => format!("已复制出新会话：{}", copy.title),
+        Event::ConversationForked(Err(message)) => format!("复制失败: {message}"),
+        Event::ChatConfig(Ok(chat)) => format!(
+            "OK 模型上下文 {} · 触发 {}",
+            chat.model_context_tokens,
+            chat.compact_trigger_tokens
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "自动（预算 × 0.8）".to_owned())
+        ),
+        Event::ChatConfig(Err(message)) => format!("失败: {message}"),
+        Event::ModelContextSaved {
+            provider,
+            upstream_id,
+            result,
+        } => match result {
+            Ok(view) => format!(
+                "OK {provider}/{upstream_id} 上下文覆盖 = {}",
+                view.context_override
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "已清空".to_owned())
+            ),
+            Err(message) => format!("失败: {message}"),
+        },
+        Event::ContextUsage { result, .. } => match result {
+            Ok(usage) => format!("OK 上下文 {}/{} tok", usage.used_tokens, usage.budget_tokens),
             Err(message) => format!("失败: {message}"),
         },
         Event::Variables { result, .. } => match result {
@@ -570,6 +676,78 @@ fn handle(http: &reqwest::blocking::Client, command: Command) -> Event {
                 &base,
                 token.as_deref(),
                 &format!("/api/v1/conversations/{conversation}/variables"),
+            ),
+        },
+        Command::ContextUsage {
+            base,
+            token,
+            conversation,
+        } => Event::ContextUsage {
+            conversation,
+            result: get(
+                http,
+                &base,
+                token.as_deref(),
+                &format!("/api/v1/conversations/{conversation}/context"),
+            ),
+        },
+        Command::ArchiveConversation {
+            base,
+            token,
+            conversation,
+        } => Event::ConversationArchived(write_json(
+            http,
+            reqwest::Method::POST,
+            &format!(
+                "{}/api/v1/conversations/{conversation}/archive",
+                base.trim_end_matches('/')
+            ),
+            token.as_deref(),
+            serde_json::json!({}),
+        )),
+        Command::ForkConversation {
+            base,
+            token,
+            conversation,
+        } => Event::ConversationForked(write_json(
+            http,
+            reqwest::Method::POST,
+            &format!(
+                "{}/api/v1/conversations/{conversation}/fork",
+                base.trim_end_matches('/')
+            ),
+            token.as_deref(),
+            serde_json::json!({}),
+        )),
+        Command::GetChatConfig { base, token } => {
+            Event::ChatConfig(get(http, &base, token.as_deref(), "/api/v1/config/chat"))
+        }
+        Command::SaveChatConfig { base, token, chat } => Event::ChatConfig(write_json(
+            http,
+            reqwest::Method::PUT,
+            &format!("{}/api/v1/config/chat", base.trim_end_matches('/')),
+            token.as_deref(),
+            serde_json::json!(chat),
+        )),
+        Command::SetModelContext {
+            base,
+            token,
+            provider,
+            upstream_id,
+            context_override,
+        } => Event::ModelContextSaved {
+            provider: provider.clone(),
+            upstream_id: upstream_id.clone(),
+            result: write_json(
+                http,
+                reqwest::Method::PATCH,
+                &format!("{}/api/v1/models", base.trim_end_matches('/')),
+                token.as_deref(),
+                serde_json::json!({
+                    "provider": provider,
+                    "upstream_id": upstream_id,
+                    "context_override": context_override,
+                }),
             ),
         },
         Command::EditMessage {
@@ -1260,6 +1438,11 @@ mod tests {
             Event::Conversations(_) => "Conversations",
             Event::Messages { .. } => "Messages",
             Event::Variables { .. } => "Variables",
+            Event::ContextUsage { .. } => "ContextUsage",
+            Event::ConversationArchived(_) => "ConversationArchived",
+            Event::ConversationForked(_) => "ConversationForked",
+            Event::ChatConfig(_) => "ChatConfig",
+            Event::ModelContextSaved { .. } => "ModelContextSaved",
             Event::MessageEdited { .. } => "MessageEdited",
             Event::MessageDeleted { .. } => "MessageDeleted",
             Event::ConversationCreated(_) => "ConversationCreated",

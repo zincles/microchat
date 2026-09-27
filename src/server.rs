@@ -131,9 +131,20 @@ pub fn router(state: AppState) -> Router {
             "/conversations/{id}/outgoing",
             get(get_conversation_outgoing),
         )
+        .route(
+            "/conversations/{id}/context",
+            get(get_conversation_context),
+        )
+        .route("/conversations/{id}/export", get(export_conversation))
+        .route(
+            "/conversations/{id}/archive",
+            post(archive_conversation),
+        )
+        .route("/conversations/{id}/fork", post(fork_conversation))
         .route("/health", get(health))
         .route("/providers", get(list_providers).post(create_provider))
-        .route("/models", get(list_all_models))
+        .route("/models", get(list_all_models).patch(set_model_context))
+        .route("/config/chat", get(get_chat_config).put(put_chat_config))
         .route("/models/probe", post(probe_models))
         .route(
             "/providers/{id}",
@@ -710,6 +721,204 @@ async fn get_conversation_outgoing(
         &messages,
         &effective,
     )))
+}
+
+/// **这次出站会用掉多少上下文、还剩多少**（`GET /conversations/{id}/context`）。
+///
+/// 给界面顶栏用：只回数字，不必为了一个数去拉整份 `/outgoing`（长战役那是上百 KB）。
+/// 口径见 §19.C/§23.A：`used` 是估算，`last_prompt_tokens` 是上一轮上游真报的数。
+async fn get_conversation_context(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<vars::ContextUsage>, ApiError> {
+    let chat = crate::config::Config::load(&state.paths.config_json())
+        .map(|config| config.chat)
+        .unwrap_or_default();
+    let store = state.lock()?;
+    let conversation = store.get_conversation(id)?.ok_or_else(ApiError::not_found)?;
+    let messages = store.list_messages(id)?;
+    let model = store.get_model(&conversation.provider, &conversation.model)?;
+    let (ctx_len, ctx_source) = vars::resolve_context(
+        model.as_ref().and_then(|entry| entry.context_override),
+        model.as_ref().and_then(|entry| entry.context_length),
+    );
+    let budget = vars::Budget {
+        ratio: model
+            .as_ref()
+            .map(|entry| vars::tokenizer_ratio(&entry.tokenizer))
+            .unwrap_or(vars::DEFAULT_TOKENIZER_RATIO),
+        ctx_len,
+        ctx_source,
+        max_output: model.as_ref().and_then(|entry| entry.max_output),
+        model_context: chat.model_context_tokens,
+        trigger: chat.compact_trigger_tokens,
+    };
+    let (system_prompt, source) = effective_system_prompt(&state, &conversation)?;
+    let effective =
+        vars::VariableView::from_sources(id, &system_prompt, source, &messages).effective;
+    let outgoing = vars::build_outgoing(&system_prompt, &messages, &effective);
+    // 最近一条带用量的消息（通常是上一轮的回复）：唯一来自上游的地面真相。
+    let last_prompt_tokens = messages
+        .iter()
+        .rev()
+        .find_map(|message| message.usage.as_ref())
+        .map(|usage| usage.prompt_tokens);
+    Ok(Json(vars::context_usage(
+        &outgoing,
+        &budget,
+        last_prompt_tokens,
+    )))
+}
+
+/// 一条会话的**自包含**导出：会话 + **全部消息（含各条分支）** + 摘要 + 现演变量 + 当前路径。
+///
+/// 为什么带全部分支：归档是"剪枝"的兜底（§5：**没导出不许剪**）—— 剪掉的正是非当前分支，
+/// 所以导出必须把树上每一条都收进来。**变量不落库**（§14）：这里放的是现演结果，
+/// 供人核对"当时的世界状态是什么"。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConversationExport {
+    /// 导出格式自己的版本（将来加字段时好认）。
+    pub format: u32,
+    pub exported_at: i64,
+    pub conversation: crate::model::Conversation,
+    /// 当前路径（根 → `current_leaf`）的消息 id，按顺序。
+    pub current_path: Vec<Uuid>,
+    /// 树上全部消息，按生成先后。
+    pub messages: Vec<crate::model::Message>,
+    pub summaries: Vec<crate::model::Summary>,
+    /// 现演出来的变量（global / session / effective）—— **派生数据，仅供参考**。
+    pub variables: vars::VariableView,
+}
+
+/// 归档收据（`POST …/archive` 的返回）：不重复吐整份内容，只报"写哪儿了、多大"。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArchiveReceipt {
+    pub path: String,
+    pub bytes: usize,
+    pub messages: usize,
+    pub summaries: usize,
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+fn build_export(
+    store: &Store,
+    state: &AppState,
+    id: Uuid,
+) -> Result<ConversationExport, ApiError> {
+    let conversation = store.get_conversation(id)?.ok_or_else(ApiError::not_found)?;
+    let messages = store.list_all_messages(id)?;
+    let path = store.list_messages(id)?;
+    let summaries = store.list_summaries(id)?;
+    let (system_prompt, source) = effective_system_prompt(state, &conversation)?;
+    // 变量现演按**当前路径**折（`messages` 传路径那份，不是全树）
+    let variables = vars::VariableView::from_sources(id, &system_prompt, source, &path);
+    Ok(ConversationExport {
+        format: 1,
+        exported_at: now_ms(),
+        conversation,
+        current_path: path.iter().map(|message| message.id).collect(),
+        messages,
+        summaries,
+        variables,
+    })
+}
+
+/// 导出成 JSON（**只读**）：供搬运 / 备份 / 人肉查看。
+async fn export_conversation(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<ConversationExport>, ApiError> {
+    let store = state.lock()?;
+    Ok(Json(build_export(&store, &state, id)?))
+}
+
+/// 归档到 `data/archive/<会话>-<时间戳>.json`：**剪枝前的必做动作**（§5 第二条硬条件）。
+///
+/// 与 `GET …/export` 的区别：那个把内容回给调用方，这个**写在服务器这边**——
+/// 剪枝发生在服务器上，兜底文件也得在服务器上，哪怕前端是个手机。
+async fn archive_conversation(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<ArchiveReceipt>, ApiError> {
+    let bundle = {
+        let store = state.lock()?;
+        build_export(&store, &state, id)?
+    };
+    let dir = state.paths.data_dir.join("archive");
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| ApiError::internal(&format!("建不了归档目录 {}: {e}", dir.display())))?;
+    let file = dir.join(format!(
+        "{}-{}.json",
+        bundle.conversation.id, bundle.exported_at
+    ));
+    crate::config::write_json_pretty(&file, &bundle)
+        .map_err(|e| ApiError::internal(&format!("写不了归档 {}: {e}", file.display())))?;
+    Ok(Json(ArchiveReceipt {
+        bytes: std::fs::metadata(&file).map(|m| m.len() as usize).unwrap_or(0),
+        path: file.display().to_string(),
+        messages: bundle.messages.len(),
+        summaries: bundle.summaries.len(),
+    }))
+}
+
+/// 复制出一条新会话（Fork）：真分支用它；会话内那点轻量分支只为重摇（§5）。
+async fn fork_conversation(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<(StatusCode, Json<crate::model::Conversation>), ApiError> {
+    let mut store = state.lock()?;
+    let fresh = store.fork_conversation(id)?;
+    Ok((StatusCode::CREATED, Json(fresh)))
+}
+
+/// 读 `config.json` 的 `chat` 段（**不含密钥** —— `server.auth_token` 根本不在这一段里）。
+async fn get_chat_config(
+    State(state): State<AppState>,
+) -> Result<Json<crate::config::ChatConfig>, ApiError> {
+    let config = crate::config::Config::load(&state.paths.config_json())?;
+    Ok(Json(config.chat))
+}
+
+/// **整段替换** `config.json` 的 `chat` 段（PUT 语义：没给的字段取缺省）。
+/// 其余段（`server` / `defaults`）原样保留；写回的是**严格 JSON**（程序整体重写该文件）。
+async fn put_chat_config(
+    State(state): State<AppState>,
+    Json(chat): Json<crate::config::ChatConfig>,
+) -> Result<Json<crate::config::ChatConfig>, ApiError> {
+    let path = state.paths.config_json();
+    let mut config = crate::config::Config::load(&path)?;
+    config.chat = chat;
+    crate::config::write_json_pretty(&path, &config)?;
+    Ok(Json(config.chat))
+}
+
+/// 设置/清除某个模型的**用户覆盖的"模型上下文"**（`PATCH /models`）。
+///
+/// 它与"发现所得"分列：刷新只写发现列，这一列永不被动。`null` = 清掉覆盖，
+/// 回落到发现值（再没有就回落到 `chat.model_context_tokens`）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetModelContextReq {
+    pub provider: String,
+    pub upstream_id: String,
+    pub context_override: Option<i64>,
+}
+
+async fn set_model_context(
+    State(state): State<AppState>,
+    Json(req): Json<SetModelContextReq>,
+) -> Result<Json<registry::ModelView>, ApiError> {
+    let mut store = state.lock()?;
+    store.set_model_context_override(&req.provider, &req.upstream_id, req.context_override)?;
+    let entry = store
+        .get_model(&req.provider, &req.upstream_id)?
+        .ok_or_else(ApiError::not_found)?;
+    Ok(Json(registry::model_view(entry)))
 }
 
 /// 连通性探针：前端启动时用它判断"后端在不在、口令对不对"。
@@ -1568,6 +1777,18 @@ mod tests {
         panic!("这一轮 10 秒还没落地");
     }
 
+    async fn variables(app: &Router, conversation: Uuid) -> serde_json::Value {
+        let (status, body) = send(
+            app,
+            get_req(&format!(
+                "/api/v1/conversations/{conversation}/variables"
+            )),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        serde_json::from_str(&body).unwrap()
+    }
+
     async fn messages(app: &Router, conversation: Uuid) -> Vec<Message> {
         let uri = format!("/api/v1/conversations/{conversation}/messages");
         let (status, body) = send(app, get_req(&uri)).await;
@@ -2394,6 +2615,256 @@ mod tests {
             "发出去的就是这一轮的内容：{sent}"
         );
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// dummy 也要留一份载荷（"本来会发出去的东西"）：形状与真模型一致，只是不联网 ——
+    /// 这样没有 key 也能把装配（历史剔除、变量注入）在调试页里看全。
+    #[tokio::test]
+    async fn dummy_turn_also_records_a_payload() {
+        // dummy provider 得先存在（缺省列表是空的 ⇒ 否则会落到 fallback，那就不是这个用例了）
+        let providers = r#"{ "providers": [ { "id": "dummy", "kind": "dummy" } ] }"#;
+        let (app, dir) = app_with_files(&[("providers.json", providers)]);
+        let conv = create(&app, r#"{"provider":"dummy","model":"dummy"}"#).await;
+        let uri = format!("/api/v1/conversations/{}/messages", conv.id);
+        let _ = turn(&app, &uri, r#"{"content":"在吗"}"#).await;
+
+        let (status, body) = send(&app, get_req("/api/v1/debug/last-payload")).await;
+        assert_eq!(status, StatusCode::OK);
+        let payload: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(payload["provider"], "dummy");
+        let sent = &payload["body"];
+        assert_eq!(sent["model"], "dummy");
+        assert_eq!(sent["stream"], true, "线上形状：流式就是 stream: true");
+        assert!(
+            sent["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|m| m["role"] == "user" && m["content"] == "在吗"),
+            "dummy 的载荷里也该有这一轮的内容：{sent}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `/context`：只回数字，不吐正文。口径 = 预算公式（config 的 target 参与）+ 实测对照。
+    #[tokio::test]
+    async fn context_reports_usage_budget_and_trigger() {
+        let providers = r#"{ "providers": [ { "id": "dummy", "kind": "dummy" } ] }"#;
+        let app_config = r#"{ "chat": { "model_context_tokens": 12345 } }"#;
+        let (app, dir) = app_with_files(&[
+            ("providers.json", providers),
+            ("config.json", app_config),
+        ]);
+        let conv = create(&app, r#"{"provider":"dummy","model":"dummy"}"#).await;
+        let uri = format!("/api/v1/conversations/{}/context", conv.id);
+
+        let (status, body) = send(&app, get_req(&uri)).await;
+        assert_eq!(status, StatusCode::OK);
+        let usage: crate::vars::ContextUsage = serde_json::from_str(&body).unwrap();
+        assert!(usage.estimated, "估算是诚实的：这个字段恒 true");
+        assert_eq!(
+            usage.budget_tokens,
+            12345 - crate::vars::DEFAULT_MAX_OUTPUT as usize,
+            "上游没报上下文 ⇒ 用设置里的兜底，再减输出预留"
+        );
+        assert_eq!(
+            usage.trigger_tokens,
+            usage.budget_tokens * 8 / 10,
+            "没设阈值 ⇒ 预算 × 0.8"
+        );
+        assert_eq!(usage.remaining_tokens, usage.budget_tokens as i64 - usage.used_tokens as i64);
+        assert!(!usage.over_budget);
+        assert_eq!(usage.last_prompt_tokens, None, "dummy 不报用量");
+
+        let before = usage.used_tokens;
+        let message_uri = format!("/api/v1/conversations/{}/messages", conv.id);
+        let _ = turn(&app, &message_uri, r#"{"content":"在吗"}"#).await;
+        let (_, body) = send(&app, get_req(&uri)).await;
+        let usage: crate::vars::ContextUsage = serde_json::from_str(&body).unwrap();
+        assert!(usage.used_tokens > before, "历史变长，占用该变大");
+
+        let missing = format!("/api/v1/conversations/{}/context", Uuid::now_v7());
+        let (status, _) = send(&app, get_req(&missing)).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `/config/chat` 读写：只碰 `chat` 段，其余段原样保留。
+    #[tokio::test]
+    async fn chat_config_roundtrip_keeps_other_sections() {
+        let app_config = r#"{ "version": 1, "server": { "port": 8787, "auth_token": "秘密口令" },
+                             "defaults": { "provider": "dummy", "model": "dummy", "agent": "default" },
+                             "chat": { "title_chars": 32 } }"#;
+        let (app, dir) = app_with_files(&[("config.json", app_config)]);
+
+        let (status, body) = send(&app, get_req("/api/v1/config/chat")).await;
+        assert_eq!(status, StatusCode::OK);
+        let chat: crate::config::ChatConfig = serde_json::from_str(&body).unwrap();
+        assert_eq!(chat.title_chars, 32);
+        assert_eq!(chat.model_context_tokens, 131_072, "缺省兜底");
+        assert_eq!(chat.compact_trigger_tokens, None, "缺省 = 预算 × 0.8");
+        assert!(!body.contains("秘密口令"), "chat 段里不该出现服务器口令");
+
+        let patch = r#"{"title_chars":32,"model_context_tokens":1048576,"compact_trigger_tokens":500000}"#;
+        let (status, body) = send(&app, json_req("PUT", "/api/v1/config/chat", patch)).await;
+        assert_eq!(status, StatusCode::OK);
+        let chat: crate::config::ChatConfig = serde_json::from_str(&body).unwrap();
+        assert_eq!(chat.model_context_tokens, 1_048_576);
+        assert_eq!(chat.compact_trigger_tokens, Some(500_000));
+
+        let saved = std::fs::read_to_string(dir.join("config.json")).unwrap();
+        assert!(saved.contains("1048576"), "该写回文件：{saved}");
+        assert!(saved.contains("秘密口令"), "其余段必须原样保留");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 模型上下文：用户覆盖优先于发现值，清掉覆盖就回落。
+    #[tokio::test]
+    async fn model_context_override_beats_discovery() {
+        let providers = r#"{ "providers": [ { "id": "dummy", "kind": "dummy" } ] }"#;
+        let (app, dir) = app_with_files(&[("providers.json", providers)]);
+
+        // 库里没有这个模型 ⇒ 404（不是 500）
+        let patch = r#"{"provider":"dummy","upstream_id":"dummy","context_override":2000000}"#;
+        let (status, _) = send(&app, json_req("PATCH", "/api/v1/models", patch)).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Fork：副本的世界状态与原件**逐键相等**（§19.E 第二条保险 —— 它终于不空转了）；
+    /// 消息全换新 id、内容与 `created_at` 一字不改。
+    #[tokio::test]
+    async fn fork_keeps_variables_and_copies_the_tree() {
+        let providers = r#"{ "providers": [ { "id": "dummy", "kind": "dummy" } ] }"#;
+        let (app, dir) = app_with_files(&[("providers.json", providers)]);
+        let conv = create(&app, r#"{"provider":"dummy","model":"dummy"}"#).await;
+        let uri = format!("/api/v1/conversations/{}/messages", conv.id);
+        // 正文里写状态，变量现演才有东西
+        let _ = turn(&app, &uri, r#"{"content":"<state>set HP = 12</state>我要住店"}"#).await;
+        let _ = turn(&app, &uri, r#"{"content":"<state>set 季节 = 初冬</state>再来一间"}"#).await;
+        // 再造一个"退货现场"：给最后那条回复再加一个兄弟
+        let resend = format!("/api/v1/conversations/{}/resend", conv.id);
+        let _ = turn(&app, &resend, "{}").await;
+
+        let before: Vec<Message> = messages(&app, conv.id).await;
+        let original_vars = variables(&app, conv.id).await;
+        // 标题是第一句用户消息到了才起的，所以这时候再读一次
+        let list: Vec<serde_json::Value> =
+            serde_json::from_str(&send(&app, get_req("/api/v1/conversations")).await.1).unwrap();
+        let source_title = list
+            .iter()
+            .find(|item| item["id"] == conv.id.to_string())
+            .unwrap()["title"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        let (status, body) = send(
+            &app,
+            json_req(
+                "POST",
+                &format!("/api/v1/conversations/{}/fork", conv.id),
+                "{}",
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        let copy: Conversation = serde_json::from_str(&body).unwrap();
+        assert_eq!(copy.title, format!("{source_title}（副本）"));
+        assert_eq!(copy.provider, conv.provider);
+        assert_eq!(copy.system_prompt, conv.system_prompt);
+
+        let after: Vec<Message> = messages(&app, copy.id).await;
+        assert_eq!(after.len(), before.len(), "当前路径该一样长");
+        assert_eq!(
+            after.iter().map(|m| m.content.clone()).collect::<Vec<_>>(),
+            before.iter().map(|m| m.content.clone()).collect::<Vec<_>>(),
+            "内容一字不改"
+        );
+        assert_eq!(
+            after.iter().map(|m| m.created_at).collect::<Vec<_>>(),
+            before.iter().map(|m| m.created_at).collect::<Vec<_>>(),
+            "created_at 保留原值"
+        );
+        assert!(
+            after.iter().all(|m| !before.iter().any(|old| old.id == m.id)),
+            "全换新 id"
+        );
+
+        let copy_vars = variables(&app, copy.id).await;
+        assert_eq!(
+            copy_vars["effective"], original_vars["effective"],
+            "副本的世界状态必须与原件逐键相同（变量是从正文现演的）"
+        );
+
+        let (status, _) = send(
+            &app,
+            json_req(
+                "POST",
+                &format!("/api/v1/conversations/{}/fork", Uuid::now_v7()),
+                "{}",
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 导出：**全树（含分支）**都带走 + 当前路径单列；归档写到 data/archive/ 且是合法 JSON。
+    #[tokio::test]
+    async fn export_carries_every_branch_and_archive_writes_a_file() {
+        let providers = r#"{ "providers": [ { "id": "dummy", "kind": "dummy" } ] }"#;
+        let (app, dir) = app_with_files(&[("providers.json", providers)]);
+        let conv = create(&app, r#"{"provider":"dummy","model":"dummy"}"#).await;
+        let uri = format!("/api/v1/conversations/{}/messages", conv.id);
+        let _ = turn(&app, &uri, r#"{"content":"第一句"}"#).await;
+        let resend = format!("/api/v1/conversations/{}/resend", conv.id);
+        let _ = turn(&app, &resend, "{}").await; // 叶子多一个兄弟 ⇒ 树上有分支
+
+        let (status, body) = send(
+            &app,
+            get_req(&format!("/api/v1/conversations/{}/export", conv.id)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let export: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(export["format"], 1);
+        let all = export["messages"].as_array().unwrap();
+        let path = export["current_path"].as_array().unwrap();
+        assert!(all.len() >= 3, "全树该有 3 条以上（问 + 两个兄弟）：{}", all.len());
+        assert!(
+            path.len() < all.len(),
+            "路径短于全树 —— 分支确实被带上了（{}/{}）",
+            path.len(),
+            all.len()
+        );
+        assert!(
+            export["variables"]["effective"].is_object(),
+            "带一份现演变量"
+        );
+
+        let (status, body) = send(
+            &app,
+            json_req(
+                "POST",
+                &format!("/api/v1/conversations/{}/archive", conv.id),
+                "{}",
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let receipt: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let written_path = receipt["path"].as_str().unwrap();
+        assert!(written_path.contains("archive"), "{written_path}");
+        let written = std::fs::read_to_string(written_path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&written).unwrap();
+        assert_eq!(
+            parsed["conversation"]["id"].as_str().unwrap(),
+            conv.id.to_string()
+        );
+        assert_eq!(parsed["messages"].as_array().unwrap().len(), all.len());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
