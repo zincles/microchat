@@ -67,11 +67,15 @@ impl SubAgent {
 /// 人名/地点/承诺/未了结的线/关键因果；收到触发语才动手。
 /// **材料**（前情提要 + 原文 + 两端状态）由调用方拼好，这里只管规则。
 pub const BUILTIN_COMPACT_PROMPT: &str = "\
-你是摘要器。规则：
+你是摘要器。你只做一件事：把「原文」这一段收成一条叙事梗概，让后面的对话能接着往下走。
+
+规则：
 · 只写叙事：发生了什么、谁在场、承诺与未了结的线索、时间地点怎么推进；
+· 必须保留：人名、地点、承诺、未了结的事、关键因果；状态的变化（谁受了伤、欠了谁钱、
+  什么被拿走了）也要写进去 —— 它解释了后面的因果；
+· 不要逐句复述，不要写「用户说 / 助手说」，用第三人称直接讲事；
 · **禁止**输出任何状态/变量字段（`<state>` 之类）—— 出现即被程序剔除并记日志；
-· 必须保留：人名、地点、承诺、未了结的事、关键因果；
-· 中文、第三人称、简洁（≤ 300 字）；
+· 中文、一段话、≤ 300 字，不要小标题、不要清单；
 · 收到 \"NOW Triggers Compaction\" 时，就按本规则压缩「上文这一段」。
 
 【程序·状态（权威，仅供参考，不要写进梗概）】
@@ -179,7 +183,7 @@ pub async fn run(
     providers: &ProvidersConfig,
 ) -> Result<SubAgentRun> {
     let raw = prompt(config, subagent);
-    // 模板变量在这里展开（**只扫一遍**）；版本仍按**替换前**的正文算
+    // 占位符在这里展开（**只扫一遍**）；版本仍按**替换前**的正文算
     let rendered = crate::template::render(&raw, values);
     let template = rendered.text;
     let (provider_id, model) = route(config, subagent, conversation);

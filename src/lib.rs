@@ -13,6 +13,7 @@ pub mod registry;
 pub mod server;
 pub mod store;
 pub mod subagents;
+pub mod task;
 pub mod template;
 pub mod turn;
 pub mod vars;

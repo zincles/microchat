@@ -33,7 +33,7 @@ BASE = f'http://127.0.0.1:{PORT}/api/v1'
 SANDBOX = pathlib.Path('/tmp/microchat-api-audit')
 
 srv = (ROOT / 'src/server.rs').read_text()
-cli = (ROOT / 'src/client.rs').read_text()
+cli = (ROOT / 'src/frontend/client.rs').read_text()
 
 # ── 1) 路由表 + 处理器签名 ────────────────────────────────────────
 routes: dict[str, dict[str, str]] = {}
@@ -261,6 +261,7 @@ try:
         ('POST', '/conversations/{id}/fork'): 201,
         ('GET', '/config/chat'): 200, ('PUT', '/config/chat'): 200,
         ('GET', '/subagents'): 200, ('PUT', '/subagents'): 200,
+        ('GET', '/tasks'): 200,
         # 库里没有这个模型 ⇒ 404：验的是"路由在、参数被解析"，不是"模型存在"
         ('PATCH', '/models'): 404,
         ('GET', '/conversations/{id}/branches'): 200, ('GET', '/conversations/{id}/status'): 200,

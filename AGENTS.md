@@ -8,6 +8,24 @@ microchat：轻量 SillyTavern 替代（RPG 向）。三层，边界要清楚：
 | egui 前端（**当前主用界面**） | `src/main.rs`、`src/client.rs` | 活跃开发：会话树、变量栏、设置页都在这儿 |
 | Godot 4.8 前端 | `frontend/` | **用户自己在编辑器里设计**——动手前先问，别替他做设计决定；还没接真实数据 |
 
+## 代码布局（前端在 `src/frontend/`）
+
+```
+src/
+  lib.rs            共享库 = **后端**（model / store / server / vars / chat / providers /
+                    config / registry / turn / blocks / compact / subagents / template）
+  bin/server.rs     后端的可执行入口
+  main.rs           前端的壳：只声明 `mod frontend;` 并把控制权交给 `frontend::run()`
+  frontend/
+    mod.rs          App 状态 + 帧循环 + 事件泵 + 取数/保存 + 小工具与测试
+    chat.rs         会话视图：消息列表、输入栏、变量栏、占用行、系统提示词块
+    settings.rs     设置六页（连接 / Agent / 内置 Agent / 模型与渠道 / 前端设置 / 关于）
+    debug.rs        调试五页（后端状态 / 载荷 / 原始配置 / 请求日志）—— 关系图那页在 graph.rs
+    graph.rs        关系图：布局、绘制、缩放/适配、块的切分与摆放
+    client.rs       HTTP 客户端（命令/事件）· fonts.rs · graph_node.rs · frontend_settings.rs
+```
+子模块靠 `use super::*;` 拿到父模块的一切；跨模块要用的项标 `pub(super)`。
+
 ## 常用命令
 
 ```bash
@@ -251,6 +269,19 @@ cargo build && python3 scripts/api-audit.py     # 改过接口就跑一遍（它
   `system_prompt` 里的 `<state>` 块就是**变量底子**（和消息正文同一套语法）；`id` 手写可用可读 id，界面新建则生成 UUIDv7。
 - `~/.config/microchat/frontend.json` — 界面偏好（主题、缩放、服务器地址、回车是否发送……）。
 
+## 后台任务（`src/task.rs`）—— "这会儿有哪些活在跑"的唯一登记处
+
+- **Task = 一次后台作业的登记项**（不是线程、不是进程、不是 agent）：前台一轮生成、一次压缩、一次刷新模型都挂号。
+- `TaskKind`（`Turn` / `Compact` / `RefreshModels`……加一种就加一个变体）、`TaskRecord`（谁、何时起、跑了多久、什么结果）、
+  `TaskRegistry`（进程内）、**`TaskGuard`（RAII）**：`let task = tasks.begin(…)` → `task.finish("完成 · 12 块")`；
+  **忘了收或 panic 由 `Drop` 兜底记成"中断"** ⇒ 绝不会留永远 `running` 的僵尸条目。
+- 三份状态各管一段，**不许互为镜像**：
+  `task` = 身份 + 生死；`turn::TurnRegistry` = 流的细节（流了几个字、thinking 字符数、取消）；
+  `turn::CompactStatus` = 压缩自己的细节（压了几块、产出哪条摘要，给点了按钮的客户端轮询）。
+- 接口：`GET /tasks` ⇒ `TaskBoard { running, tasks, now }`（正在跑的在最前，已结束的留最近 60 条）。
+- 界面：左栏底部一行**指示器**（`后台：空闲` / `后台：跑着 N 个`，点一下进「任务」页）+ 与 账户/设置/调试 **同级的「任务」页**；
+  前端每 2 秒问一次 `/tasks`（就这一个端点）。
+
 ## 压缩（`src/compact.rs`）—— 唯一入口，分机制与策略两层
 
 - **机制**：`compact::summarize_span(store, prompt, providers, subagents, conversation_id, Span{begin, end})`
@@ -258,7 +289,7 @@ cargo build && python3 scripts/api-audit.py     # 改过接口就跑一遍（它
   过闸（剔 `<state>`）→ 落库（单事务）。**二次压缩（金字塔）就是"喂 summary id"**，同一个函数。
 - **策略**：`compact::summarize_blocks(…, limit)` —— 从第一条没被覆盖的消息起，取最老的 N 个**已闭合**块
   （手动按钮的语义）。将来的自动触发换个挑法，复用机制那一层。
-- 谁也**不许**绕过这里自己拼摘要请求：材料形状、模板变量、过闸、落库都只在这一处。
+- 谁也**不许**绕过这里自己拼摘要请求：材料形状、占位符、过闸、落库都只在这一处。
 - 它**不该知道** `agents.json` / `providers.json` 长什么样 —— 那些由 `server::do_compaction` 解析成
   `compact::Prompt{text, source}` 传进来。
 - 不持锁跨 await：取料在锁里、调用在锁外、落库再进锁（与 `turn::run_turn` 同一条纪律）。
@@ -277,7 +308,8 @@ cargo build && python3 scripts/api-audit.py     # 改过接口就跑一遍（它
 `subagents::run(config, SubAgent::Compact, material, conversation, providers)` 复用同一个 `providers::Client`（非流式）；
 `prompt_version = subagents::prompt_version(生效模板)`（64 位哈希，改一个字就变 —— 别手写版本号）。
 
-**模板变量**（`src/template.rs`）：内置 Agent 的模板里可以写 `{{name}}`，发请求前替换。**白名单就是枚举**：
+**占位符**（`src/template.rs`）：内置 Agent 的模板里可以写 `{{name}}`，发请求前替换。
+**「变量」这个词只留给世界状态**（`<state>` 那套 / `src/vars.rs`）—— 两者毫无关系，别混。**白名单就是枚举**：
 `{{system_time}}`（UTC）/ `{{state_before}}` / `{{state_after}}` / `{{range}}` / `{{blocks}}`。
 三条规矩：① 不认识的 `{{foo}}` **原样留着**（界面会提示），不报错也不猜；
 ② **只扫一遍** —— 替换进去的值不再当模板扫（否则用户文本里的 `{{` 就能玩坏注入）；
@@ -500,8 +532,21 @@ dummy 下也走全链路（回固定文本 + 拼好 payload，便于无 key 验�
 - **重大设计讨论要留档到 `IMPORTANT_DISCUSSION.md`**：记**对话原文 + 已达成的结论**，**不记推理过程**；AGENTS.md 只留形状与指针。上下文有限，交接就靠这两份。
 - 注释、提交信息用**中文**；提交信息写清"为什么"，别只写"改了什么"。
 - 改完跑 `cargo test`；**UI 改动必须实跑**（真机或灌事件的无头验证），不要只凭代码断言。
-- **后端代码一变就重启后端和 egui 前端**：先 `cargo build`，再重启 `./target/debug/server`（唯一权威，服务名 `microchat-server`）
-  与 `./target/debug/microchat`（界面，服务名 `microchat-gui`）——不然你在界面上验的是旧二进制。
+- **后端代码一变就重启后端和 egui 前端**：先 `cargo build`，再重启后端（`./target/debug/server`，唯一权威）
+  与前端（`./target/debug/microchat`）——不然你在界面上验的是旧二进制。
+- **起它们用 tmux（后台 + 日志落文件）**，别用"受监督进程"那类会一直挂着输出的方式：
+  那样一次工具调用会被进程的输出拖住，CLI 卡死、下一步做不了（用户点名要求过）。
+
+  ```bash
+  tmux new-session -d -s microchat-server -c <repo> \
+      './target/debug/server > /tmp/microchat-server.log 2>&1'
+  tmux new-session -d -s microchat-gui -c <repo> \
+      'DISPLAY=:0 WAYLAND_DISPLAY=wayland-0 XAUTHORITY=/run/user/1000/xauth_UFgDfa \
+       XDG_RUNTIME_DIR=/run/user/1000 ./target/debug/microchat > /tmp/microchat-gui.log 2>&1'
+  ```
+
+  重启 = `tmux kill-session -t <名字>` 再起一次；看日志 = `tail -n 40 /tmp/microchat-*.log`；
+  查活着没 = `pgrep -af "target/debug/(server|microchat)$"`。**tmux 下崩了没有通知** ⇒ 靠 `pgrep` 与日志。
   **注意 `cargo test` 也会重编** ⇒ 只要那次重启之后又跑过 build/test，就该再重启一次。
   自检（精确）：`ls -l /proc/<pid>/exe` —— 路径后面若带 **` (deleted)`**，说明二进制在进程启动后被替换过 ⇒ 跑的是旧货，重启。
   （别拿 `/proc/<pid>/exe` 去 `stat -c %i` 比 inode：那是魔法符号链接，比出来的数没有意义。）

@@ -52,7 +52,7 @@ pub struct FrontendSettings {
 impl Default for FrontendSettings {
     fn default() -> Self {
         Self {
-            server_address: crate::DEFAULT_SERVER.to_owned(),
+            server_address: super::DEFAULT_SERVER.to_owned(),
             username: String::new(),
             theme: Theme::default(),
             zoom: 1.0,

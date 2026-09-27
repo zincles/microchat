@@ -39,6 +39,8 @@ pub struct AppState {
     /// 每个会话"这一轮在不在跑"。**进程内的事实，不进库**——后端一重启就没有生成在跑，
     /// 状态回到 `idle` 是诚实的；库里只会留下占位消息，启动时清掉。
     turns: Arc<TurnRegistry>,
+    /// **后台任务登记表**（`GET /tasks` 的数据源）：谁在跑、跑了多久、什么结果。
+    tasks: crate::task::TaskRegistry,
     /// **压缩任务**的进程内状态（每条会话一份）。既是回报给界面的东西，
     /// 也是"同一会话同时只允许一个压缩任务"的那道闸（`running` 就是闸门）。
     compacts: Arc<Mutex<BTreeMap<Uuid, CompactStatus>>>,
@@ -60,6 +62,7 @@ impl AppState {
             auth_token: config.server.auth_token.clone(),
             title_chars: config.chat.title_chars,
             turns: Arc::new(TurnRegistry::new()),
+            tasks: crate::task::TaskRegistry::new(),
             compacts: Arc::new(Mutex::new(BTreeMap::new())),
             last_payload: Arc::new(Mutex::new(None)),
             default_provider: config.defaults.provider.clone(),
@@ -168,6 +171,7 @@ pub fn router(state: AppState) -> Router {
         .route("/models", get(list_all_models).patch(set_model_context))
         .route("/config/chat", get(get_chat_config).put(put_chat_config))
         .route("/subagents", get(list_tools).put(put_tools))
+        .route("/tasks", get(list_tasks))
         .route("/models/probe", post(probe_models))
         .route(
             "/providers/{id}",
@@ -484,6 +488,13 @@ async fn generate(
 /// 全程**不持锁跨 await**：取料在锁里，等上游在锁外，落库再进锁。
 /// 收尾前核对令牌——被"停止"顶掉的那一轮结果直接丢掉，库里什么痕迹都不会留下。
 async fn run_turn(state: AppState, id: Uuid, parent: Uuid, message: Uuid, token: u64) {
+    // 挂号：前台任务也是任务（面板上看得见"生成中 · 会话 xxx"）。
+    // 正常路径下面的 finish 收尾；panic / 早早 return 由 TaskGuard 的 Drop 记成中断。
+    let task = state.tasks.begin(
+        crate::task::TaskKind::Turn,
+        Some(id),
+        format!("生成 · 会话 {}", &id.to_string()[..8]),
+    );
     // 增量全部喂进这一轮的缓冲区（游标读给界面做动画）；失败/被停时它谁也不影响。
     // 思考与正文分开存：前者只服务动画，后者才是最终消息的内容。
     let turns = state.turns.clone();
@@ -553,11 +564,13 @@ async fn run_turn(state: AppState, id: Uuid, parent: Uuid, message: Uuid, token:
     match stored {
         Ok(()) => {
             let _ = state.turns.finish(id, token, Phase::Idle, chars, None);
+            task.finish(format!("完成 · {chars} 字"));
         }
         Err(error) => {
             let _ = state
                 .turns
                 .finish(id, token, Phase::Error, 0, Some(error.message.clone()));
+            task.finish(format!("失败：{}", error.message));
         }
     }
 }
@@ -946,6 +959,11 @@ async fn compact_conversation(
 
 /// 后台那半程：选块 → 拼材料 → 叫子 Agent → 过闸 → 落库。全程**不持锁跨 await**。
 async fn run_compaction(state: AppState, id: Uuid, limit: usize) {
+    let task = state.tasks.begin(
+        crate::task::TaskKind::Compact,
+        Some(id),
+        format!("压缩 {limit} 块 · 会话 {}", &id.to_string()[..8]),
+    );
     let result = do_compaction(&state, id, limit).await;
     let status = {
         let mut compacts = match state.compacts.lock() {
@@ -971,14 +989,18 @@ async fn run_compaction(state: AppState, id: Uuid, limit: usize) {
         entry.at_ms = now_ms();
         entry.clone()
     };
-    if let Some(error) = &status.error {
-        eprintln!("压缩失败（会话 {id}）: {error}");
+    match (&status.error, status.compacted) {
+        (Some(error), _) => {
+            eprintln!("压缩失败（会话 {id}）: {error}");
+            task.finish(format!("失败:{error}"));
+        }
+        (None, compacted) => task.finish(format!("完成 · {compacted} 块")),
     }
 }
 
 /// 干活的正文：**整个压缩链路都在 `crate::compact` 里**，这里只负责取配置、解析提示词、收尾。
 ///
-/// 为什么这么分：压缩的机制（选段 / 拼材料 / 模板变量 / 过闸 / 落库）与"这一次压哪一段"是两件事，
+/// 为什么这么分：压缩的机制（选段 / 拼材料 / 占位符 / 过闸 / 落库）与"这一次压哪一段"是两件事，
 /// 而且机制**不该知道** `agents.json` / `providers.json` 长什么样 —— 那些由这里解析好传进去。
 async fn do_compaction(state: &AppState, id: Uuid, limit: usize) -> Result<(usize, Uuid), String> {
     let providers = ProvidersConfig::load(&state.paths.providers_json())
@@ -1005,6 +1027,14 @@ async fn do_compaction(state: &AppState, id: Uuid, limit: usize) -> Result<(usiz
     .await
     .map_err(|error| error.to_string())?;
     Ok((summary.blocks as usize, summary.id))
+}
+
+/// **后台任务一屏**：正在跑几个 + 一列任务（正在跑的在最前）。
+///
+/// 数据源是 `crate::task::TaskRegistry`（进程内的事实）：生成、压缩、刷新模型都挂在上面。
+/// 它是"有哪些活在跑"的唯一登记处 —— 流的细节（流到第几个字、取消）仍归 `TurnRegistry`。
+async fn list_tasks(State(state): State<AppState>) -> Json<crate::task::TaskBoard> {
+    Json(state.tasks.board())
 }
 
 /// 一条会话的摘要列表（关系图与摘要面板的数据源）；视图与现算逻辑在 `registry` 里。
@@ -1076,8 +1106,8 @@ pub struct SubAgentView {
     pub model: Option<String>,
     /// 生效模板的版本短号（哈希低 24 位的十六进制）。
     pub prompt_version: String,
-    /// 模板里可以写的变量（白名单，写死在代码里；`src/template.rs`）。
-    pub vars: Vec<TemplateVarView>,
+    /// 模板里可以写的占位符（白名单，写死在代码里；`src/template.rs`）。
+    pub placeholders: Vec<PlaceholderView>,
     /// 现在生效的模板里那些**不认识**的变量（原样没换，界面该提示）。
     pub unknown_vars: Vec<String>,
     /// 它自己声明的一切（目前为空，留着将来放"它吃什么材料"之类的只读说明）。
@@ -1085,7 +1115,7 @@ pub struct SubAgentView {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TemplateVarView {
+pub struct PlaceholderView {
     pub name: String,
     pub about: String,
 }
@@ -1107,15 +1137,15 @@ async fn list_tools(
             // 拿**空**变量表渲染一遍：认识的会被换成空串，剩下的 `{{...}}` 就是"不认识的"
             let unknown_vars =
                 crate::template::render(&template, &std::collections::BTreeMap::new()).unknown;
-            let vars: Vec<TemplateVarView> = crate::template::TemplateVar::ALL
+            let placeholders: Vec<PlaceholderView> = crate::template::Placeholder::ALL
                 .iter()
-                .map(|var| TemplateVarView {
+                .map(|var| PlaceholderView {
                     name: var.name().to_owned(),
                     about: var.about().to_owned(),
                 })
                 .collect();
             SubAgentView {
-                vars,
+                placeholders,
                 unknown_vars,
                 id: tool.id().to_owned(),
                 name: tool.name().to_owned(),
@@ -1247,13 +1277,26 @@ async fn refresh_provider(
         ProviderKind::OpenAiCompat => {}
     }
     let client = providers::Client::new(provider)?;
-    let discovered = client.list_models().await?;
-
+    let task = state.tasks.begin(
+        crate::task::TaskKind::RefreshModels,
+        None,
+        format!("刷新模型 · {id}"),
+    );
+    let discovered = match client.list_models().await {
+        Ok(discovered) => discovered,
+        Err(error) => {
+            task.finish(format!("失败：{error}"));
+            return Err(error.into());
+        }
+    };
+    let count = discovered.len();
     let mut store = state.lock()?;
-    store.apply_discovery(&id, &discovered)?;
-    drop(discovered);
+    if let Err(error) = store.apply_discovery(&id, &discovered) {
+        task.finish(format!("失败：{error}"));
+        return Err(error.into());
+    }
     drop(store);
-
+    task.finish(format!("完成 · {count} 个模型"));
     Ok(Json(one_view(&state, &config, &id)?))
 }
 

@@ -1,8 +1,8 @@
-//! 模板变量：内置 Agent 的提示词里可以写的 `{{name}}`，在**发请求前的预处理**阶段被换掉。
+//! 占位符：内置 Agent 的提示词里可以写的 `{{name}}`，在**发请求前的预处理**阶段被换掉。
 //!
 //! 三条硬边界（§26）：
 //!
-//! 1. **白名单就是枚举** —— 能用的名字写死在 [`TemplateVar`] 里；不认识的 `{{foo}}`
+//! 1. **白名单就是枚举** —— 能用的名字写死在 [`Placeholder`] 里；不认识的 `{{foo}}`
 //!    **原样留着**（不报错、也不猜），但会回报给调用方，界面上提示"这个变量不存在"。
 //! 2. **只扫一遍** —— 替换进去的文本**不再当模板扫**。变量值里写 `{{...}}` 不生效，
 //!    否则一段含 `{{` 的用户文本就能把注入玩坏。
@@ -14,9 +14,9 @@
 
 use std::collections::BTreeMap;
 
-/// 可用的模板变量。**想加一个就得改这里**（和内置 Agent 一样：名单写死在代码里）。
+/// 可用的占位符。**想加一个就得改这里**（和内置 Agent 一样：名单写死在代码里）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TemplateVar {
+pub enum Placeholder {
     /// 当前时间（UTC；值里带 `UTC` 字样，不含糊）。
     SystemTime,
     /// 这段材料**之前**的世界状态（逐键 `键 = 值`）。
@@ -29,13 +29,13 @@ pub enum TemplateVar {
     Blocks,
 }
 
-impl TemplateVar {
-    pub const ALL: [TemplateVar; 5] = [
-        TemplateVar::SystemTime,
-        TemplateVar::StateBefore,
-        TemplateVar::StateAfter,
-        TemplateVar::Range,
-        TemplateVar::Blocks,
+impl Placeholder {
+    pub const ALL: [Placeholder; 5] = [
+        Placeholder::SystemTime,
+        Placeholder::StateBefore,
+        Placeholder::StateAfter,
+        Placeholder::Range,
+        Placeholder::Blocks,
     ];
 
     /// 模板里写的名字（`{{system_time}}` 里的 `system_time`）。
@@ -96,7 +96,7 @@ pub fn render(template: &str, values: &BTreeMap<&'static str, String>) -> Render
         let raw = &template[open + 2..close];
         let name = raw.trim();
 
-        if let Some(var) = TemplateVar::ALL.iter().find(|var| var.name() == name) {
+        if let Some(var) = Placeholder::ALL.iter().find(|var| var.name() == name) {
             if let Some(value) = values.get(var.name()) {
                 text.push_str(value);
             }

@@ -141,13 +141,16 @@ pub fn parse(text: &str) -> Parsed {
         let Some(open) = find_tag(text, cursor, false) else {
             break;
         };
-        let open_end = tag_end(text, open);
+        // `open` 是 find_tag 认下的标签，必然带 '>'；拿不到就当地没有标签
+        let Some(open_end) = tag_end(text, open) else {
+            break;
+        };
         cleaned.push_str(&text[cursor..open]);
 
         match find_tag(text, open_end, true) {
             Some(close) => {
                 parse_block(&text[open_end..close], &mut parsed);
-                cursor = tag_end(text, close);
+                cursor = tag_end(text, close).unwrap_or(text.len());
             }
             None => {
                 // 没闭合：把剩下的都当块内容——绝不能把它当正文发出去。
@@ -172,10 +175,10 @@ fn find_tag(text: &str, from: usize, closing: bool) -> Option<usize> {
     let mut cursor = from;
     while let Some(offset) = text[cursor..].find('<') {
         let start = cursor + offset;
-        let end = tag_end(text, start);
-        if end <= start {
-            return None; // 没有 '>'，后面不会再有完整标签
-        }
+        // 没有 '>' ⇒ 这不是标签（正文里的 `<` 多了去了），后面也不会再有完整标签
+        let Some(end) = tag_end(text, start) else {
+            return None;
+        };
         let name = text[start + 1..end - 1].trim();
         let matched = if closing {
             name.eq_ignore_ascii_case("/state")
@@ -185,16 +188,23 @@ fn find_tag(text: &str, from: usize, closing: bool) -> Option<usize> {
         if matched {
             return Some(start);
         }
-        cursor = end;
+        // 不是标签 ⇒ **只往前挪一个字符**，别跳到这个 `>` 后面：
+        // `a < b <state>…</state>` 里那个假标签的 `>` 可能站在真标签之后，
+        // 一步跳过去就会**把真状态块漏掉**（而标签泄漏进上下文是最不能接受的）。
+        cursor = start + 1;
     }
     None
 }
 
-/// 标签 `<…>` 的结束下标（含 `>`）；没有 `>` 时返回 `text.len()`。
-fn tag_end(text: &str, start: usize) -> usize {
+/// 标签 `<…>` 的结束下标（含 `>`）；**没有 `>` 就返回 `None`** —— 那不是标签。
+///
+/// 早先这里在没找到 `>` 时返回 `text.len()`，于是调用方拿 `len - 1` 去切字符串：
+/// 末字是多字节（中文标点必是）时就 **panic 在 char boundary 上**。正文里的 `<`
+/// 太常见（`a<b`、`<-`、`伤害 < 10`），这条路径随时会被踩到。
+fn tag_end(text: &str, start: usize) -> Option<usize> {
     text[start..]
         .find('>')
-        .map_or(text.len(), |offset| start + offset + 1)
+        .map(|offset| start + offset + 1)
 }
 
 fn parse_block(body: &str, parsed: &mut Parsed) {
@@ -965,7 +975,34 @@ mod tests {
         );
     }
 
-    /// **会话提示词永不展开模板变量**（§26）：那是内置 Agent 的待遇。
+    /// 正文里的孤立 `<` **不是标签**：不许 panic，也不许动它一个字。
+    ///
+    /// 曾经这里会 panic（`end - 1` 落在多字节字符中间）——中文正文里 `<` 太常见了。
+    #[test]
+    fn a_lone_angle_bracket_is_not_a_tag() {
+        for text in [
+            "他去买 3 < 5 的东西",
+            "伤害 < 10 且 > 5",
+            "他看了一眼 <- 那个箭头",
+            "结尾就是一个小于号 <",
+            "只有一个 <",
+        ] {
+            let parsed = parse(text);
+            assert_eq!(parsed.cleaned, text.trim_end(), "{text:?} 应当原样留下");
+            assert!(parsed.ops.is_empty(), "{text:?} 不该解析出操作");
+        }
+    }
+
+    /// 真正的状态块照旧：块被剔除，操作照读。
+    #[test]
+    fn a_real_state_block_still_works_next_to_angle_brackets() {
+        let parsed = parse("他买了 3 < 5 个苹果<state>set 苹果 = 3</state>然后走了");
+        assert_eq!(parsed.cleaned, "他买了 3 < 5 个苹果然后走了");
+        assert_eq!(parsed.ops.len(), 1);
+        assert_eq!(parsed.ops[0].key, "苹果");
+    }
+
+    /// **会话提示词永不展开占位符**（§26）：那是内置 Agent 的待遇。
     ///
     /// 理由：会话提示词在请求的**最前面**，它一变，前缀缓存整条废。
     #[test]

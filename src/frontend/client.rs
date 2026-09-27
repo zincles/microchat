@@ -55,6 +55,11 @@ pub enum Command {
         token: Option<String>,
         chat: microchat::config::ChatConfig,
     },
+    /// 拉后台任务一屏（谁在跑、跑了多久、什么结果）。
+    ListTasks {
+        base: String,
+        token: Option<String>,
+    },
     /// 拉内置工具清单（名字/说明/内置模板来自代码 + 现在生效的覆盖）。
     ListSubAgents {
         base: String,
@@ -340,6 +345,8 @@ pub enum Event {
         conversation: uuid::Uuid,
         result: Result<microchat::vars::ContextUsage, String>,
     },
+    /// 后台任务一屏（`TaskBoard`）。
+    Tasks(Result<microchat::task::TaskBoard, String>),
     /// 工具清单（读与写的结果都是它）。
     SubAgents(Result<Vec<microchat::server::SubAgentView>, String>),
     /// 工具覆盖项写回的结果（**用返回的那份覆盖草稿**，好让界面回到"已保存"状态）。
@@ -521,6 +528,7 @@ impl Command {
             Self::ContextUsage { conversation, .. } => {
                 format!("GET /conversations/{}/context", &conversation.to_string()[..8])
             }
+            Self::ListTasks { .. } => "GET /tasks".to_owned(),
             Self::ListSubAgents { .. } => "GET /subagents".to_owned(),
             Self::SaveSubAgents { .. } => "PUT /subagents".to_owned(),
             Self::Compact {
@@ -573,7 +581,9 @@ fn summarize(event: &Event) -> String {
             Ok(list) => format!("OK {} 条消息", list.len()),
             Err(message) => format!("失败: {message}"),
         },
-        Event::SubAgents(Ok(list)) => format!("OK {} 个内置工具", list.len()),
+        Event::Tasks(Ok(board)) => format!("OK 在跑 {} 个任务", board.running),
+        Event::Tasks(Err(message)) => format!("失败: {message}"),
+        Event::SubAgents(Ok(list)) => format!("OK {} 个内置 Agent", list.len()),
         Event::SubAgents(Err(message)) => format!("失败: {message}"),
         Event::SubAgentsSaved(Ok(list)) => format!("OK 内置 Agent 覆盖已保存（{} 个）", list.len()),
         Event::SubAgentsSaved(Err(message)) => format!("失败: {message}"),
@@ -755,6 +765,9 @@ fn handle(http: &reqwest::blocking::Client, command: Command) -> Event {
                 &format!("/api/v1/conversations/{conversation}/context"),
             ),
         },
+        Command::ListTasks { base, token } => {
+            Event::Tasks(get(http, &base, token.as_deref(), "/api/v1/tasks"))
+        }
         Command::ListSubAgents { base, token } => {
             Event::SubAgents(get(http, &base, token.as_deref(), "/api/v1/subagents"))
         }
@@ -1544,6 +1557,7 @@ mod tests {
             Event::Messages { .. } => "Messages",
             Event::Variables { .. } => "Variables",
             Event::ContextUsage { .. } => "ContextUsage",
+            Event::Tasks(_) => "Tasks",
             Event::SubAgents(_) => "Tools",
             Event::SubAgentsSaved(_) => "SubAgentsSaved",
             Event::CompactionAccepted { .. } => "CompactionAccepted",
