@@ -5,7 +5,8 @@ microchat：轻量 SillyTavern 替代（RPG 向）。三层，边界要清楚：
 | 层 | 位置 | 状态 |
 |---|---|---|
 | 后端（唯一权威） | `src/`（Rust + axum + **SQLite**） | 活跃开发 |
-| egui 前端（**当前主用界面**） | `src/main.rs`、`src/client.rs` | 活跃开发：会话树、变量栏、设置页都在这儿 |
+| egui 前端 | `src/main.rs` + `src/frontend/` | **已冻结**（2026-09-28 起）：只修 bug、**不加功能**。
+新界面一律做在 `frontend/`（Godot，**用户设计**，别替他做设计决定）；调试页暂留 egui |
 | Godot 4.8 前端 | `frontend/` | **用户自己在编辑器里设计**——动手前先问，别替他做设计决定；还没接真实数据 |
 
 ## 代码布局（前端在 `src/frontend/`）
@@ -71,7 +72,8 @@ adb install -r /tmp/x.apk && adb logcat -s godot
 
 **唯一权威是 `src/server.rs` 的路由表。** 下表由 `scripts/api-audit.py` 抽取而来，并**逐条发真实请求核过**：静态比对客户端每个调用点的方法/路径；动态对每条路由发正确方法（断言状态码）与错误方法（断言 405）。
 
-现在**唯一在用的消费者是 egui 前端**（`src/client.rs`）；Godot 前端还没接任何接口（它一起来就是这份契约的第二个消费者，所以接口要稳）。
+现在在用的消费者是 egui 前端（`src/frontend/client.rs`，**已冻结**）；Godot 前端还没接任何接口
+（它一起来就是这份契约的第二个消费者，所以接口要稳——**别为某个前端改接口**）。
 
 ```bash
 cargo build && python3 scripts/api-audit.py     # 改过接口就跑一遍（它自起沙盒）
@@ -209,7 +211,7 @@ cargo build && python3 scripts/api-audit.py     # 改过接口就跑一遍（它
 - **egui 的右键菜单**：`TextEdit` 在**右键按下那一帧**就把选区折成光标，菜单只能在**上一帧的快照**上工作（见 `attach_edit_menu`），别现场读选区。
 - **Godot 里没有 `[display] window/stretch`** 时视图坐标 ≠ 设计坐标：无头/手机上会得到 64×64 之类的怪尺寸，界面按 1:1 像素渲染（看起来只有一半大）。键盘换算用比例实现的，不受影响，但观感会变。
 
-## egui 界面的现状（改它之前先看这节）
+## egui 界面的现状（**已冻结**：改它之前先看这节，但只修 bug、不加功能）
 
 - 左栏：`＋ 新建对话` + 会话列表 + **底部的 `⟳ 刷新`**（一把把会话/消息/变量/分支/模型/agent 全拉一遍）。
 - 输入栏上方一排：`归档`（写 `data/archive/*.json`）、`压缩 [N] 个块` + `开始`（手动 Compact，202 受理，底栏报结果）、`复制会话`（Fork 出新会话并选中它）。
