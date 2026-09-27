@@ -64,6 +64,9 @@ pub struct TurnStatus {
     /// 已经攒了多少字。非流式是"回到 idle 那一刻一次性到位"；
     /// 流式落地后它就是前端的增量游标。
     pub chars: usize,
+    /// **思考**流攒了多少字（推理型模型先吐的那段）。界面用它显示"思考中…"。
+    /// 它只服务动画：不进库、不进最终消息。
+    pub thinking_chars: usize,
     /// 上一轮的结局：失败时的文案。成功、或从没跑过都是 `None`。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -76,6 +79,7 @@ impl Default for TurnStatus {
             message_id: None,
             elapsed_ms: 0,
             chars: 0,
+            thinking_chars: 0,
             error: None,
         }
     }
@@ -88,6 +92,15 @@ struct Entry {
     /// 跑完后定格的耗时（`error` 态还看得见"等了 42 秒才失败"）。
     elapsed_ms: u64,
     chars: usize,
+    /// 这一轮**已收到的正文**。**只服务动画**：客户端按游标读它做逐字效果；它不进库、
+    /// 不参与变量与出站计算——那些只认流结束后完整落库的那条消息。下一轮 `begin`
+    /// 时随 entry 一起被替换，所以它的生命周期就是"一轮"。
+    text: String,
+    /// **思考**流（推理型模型先吐的那一大段）。同样只服务动画——它连最终消息都不进，
+    /// 纯粹是让界面在"想"的时候别看起来死着。
+    thinking: String,
+    /// 思考流已收到多少字（游标用）。
+    thinking_chars: usize,
     error: Option<String>,
     token: u64,
     handle: Option<tokio::task::JoinHandle<()>>,
@@ -122,6 +135,7 @@ impl TurnRegistry {
                 entry.elapsed_ms
             },
             chars: entry.chars,
+            thinking_chars: entry.thinking_chars,
             error: entry.error.clone(),
         }
     }
@@ -142,12 +156,94 @@ impl TurnRegistry {
                 started: Instant::now(),
                 elapsed_ms: 0,
                 chars: 0,
+                text: String::new(),
+                thinking: String::new(),
+                thinking_chars: 0,
                 error: None,
                 token,
                 handle: None,
             },
         );
         Ok(token)
+    }
+
+    /// 收到一段**正文**增量：拼进缓冲区，并把 phase 从 `pending` 抬到 `streaming`（只抬一次）。
+    ///
+    /// 令牌对不上（这一轮已被 `stop` 顶掉）就直接丢弃——**过期任务的字节不许进缓冲区**。
+    /// 返回是否收下了。
+    pub fn append_content(&self, conversation: Uuid, token: u64, delta: &str) -> bool {
+        self.append(conversation, token, delta, false)
+    }
+
+    /// 收到一段**思考**增量（推理型模型先吐的那段）。规则同上，另存一份——
+    /// 它**不进最终消息**，只让界面在"想"的时候别看起来死着。
+    pub fn append_reasoning(&self, conversation: Uuid, token: u64, delta: &str) -> bool {
+        self.append(conversation, token, delta, true)
+    }
+
+    fn append(&self, conversation: Uuid, token: u64, delta: &str, reasoning: bool) -> bool {
+        let Ok(mut map) = self.inner.lock() else {
+            return false;
+        };
+        let Some(entry) = map.get_mut(&conversation) else {
+            return false;
+        };
+        if entry.token != token {
+            return false;
+        }
+        if reasoning {
+            entry.thinking.push_str(delta);
+            entry.thinking_chars = entry.thinking.chars().count();
+        } else {
+            entry.text.push_str(delta);
+            entry.chars = entry.text.chars().count();
+        }
+        if entry.phase == Phase::Pending {
+            entry.phase = Phase::Streaming;
+        }
+        true
+    }
+
+    /// **游标读**（两条流各一条游标）：正文与思考，从各自的 `from` 起各取一段。
+    ///
+    /// 不消费、不清空——所以多个客户端（egui + Godot）与断线重连各拿各的，互不偷。
+    /// 结束后仍可补拉尾巴（`done = true`），界面用它把最后一个字接上。
+    pub fn stream_since(
+        &self,
+        conversation: Uuid,
+        from: usize,
+        think_from: usize,
+    ) -> StreamSlice {
+        let empty = |from: usize, think_from: usize| StreamSlice {
+            text: String::new(),
+            next: from,
+            thinking: String::new(),
+            think_next: think_from,
+            done: true,
+        };
+        let Ok(map) = self.inner.lock() else {
+            return empty(from, think_from);
+        };
+        let Some(entry) = map.get(&conversation) else {
+            return empty(from, think_from);
+        };
+        let done = !entry.phase.is_busy();
+        let slice = |value: &str, total: usize, from: usize| -> (String, usize) {
+            if from >= total {
+                (String::new(), total)
+            } else {
+                (value.chars().skip(from).collect(), total)
+            }
+        };
+        let (text, next) = slice(&entry.text, entry.chars, from);
+        let (thinking, think_next) = slice(&entry.thinking, entry.thinking_chars, think_from);
+        StreamSlice {
+            text,
+            next,
+            thinking,
+            think_next,
+            done,
+        }
     }
 
     /// 把后台任务的句柄挂上（`stop` 时用它 `abort`，别让上游白白跑完）。
@@ -196,6 +292,15 @@ impl TurnRegistry {
         Ok(())
     }
 
+    /// 这一轮已收到的**思考**全文（留档用）。思考与正文一样，只在本轮有效。
+    pub fn thinking_of(&self, conversation: Uuid) -> String {
+        self.inner
+            .lock()
+            .ok()
+            .and_then(|map| map.get(&conversation).map(|entry| entry.thinking.clone()))
+            .unwrap_or_default()
+    }
+
     /// 中止这一轮。
     ///
     /// - `None` = 本来就没在跑（幂等：重复按"停止"不算错）；
@@ -223,6 +328,16 @@ impl TurnRegistry {
 /// `begin` 撞上"还在跑"。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Busy;
+
+/// 一次游标读的结果：正文与思考各一段 + 各自的新游标 + 这一轮是否已结束。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct StreamSlice {
+    pub text: String,
+    pub next: usize,
+    pub thinking: String,
+    pub think_next: usize,
+    pub done: bool,
+}
 
 #[cfg(test)]
 mod tests {
@@ -283,6 +398,50 @@ mod tests {
         assert_eq!(turns.status(id).phase, Phase::Pending);
         assert_eq!(turns.status(id).error, None);
         turns.finish(id, token, Phase::Idle, 1, None).unwrap();
+    }
+
+    /// 增量进缓冲区、phase 抬到 streaming；游标读**不消费**，多个客户端各拿各的。
+    /// 思考与正文分开两条游标，互不干扰。
+    #[test]
+    fn appending_promotes_pending_to_streaming_and_cursor_reads_dont_consume() {
+        let turns = TurnRegistry::new();
+        let id = Uuid::now_v7();
+        let token = turns.begin(id, Uuid::now_v7()).unwrap();
+
+        assert!(turns.append_reasoning(id, token, "先想"));
+        let status = turns.status(id);
+        assert_eq!(status.phase, Phase::Streaming, "首个增量把 pending 抬成 streaming");
+        assert_eq!(status.thinking_chars, 2);
+        assert_eq!(status.chars, 0, "思考不算正文");
+
+        assert!(turns.append_content(id, token, "你好"));
+        assert!(turns.append_content(id, token, "，世界"));
+        assert_eq!(turns.status(id).chars, 5);
+
+        let all = "你好，世界".to_owned();
+        let slice = turns.stream_since(id, 0, 0);
+        assert_eq!(slice.text, all);
+        assert_eq!(slice.next, 5);
+        assert_eq!(slice.thinking, "先想");
+        assert_eq!(slice.think_next, 2);
+        assert!(!slice.done);
+
+        assert_eq!(turns.stream_since(id, 2, 2).text, "，世界");
+        assert_eq!(
+            turns.stream_since(id, 2, 2).text,
+            "，世界",
+            "游标读不消费：第二个客户端还能拿到同一段"
+        );
+        assert_eq!(turns.stream_since(id, 5, 2).text, "");
+        assert_eq!(turns.stream_since(id, 5, 2).think_next, 2);
+
+        assert!(!turns.append_content(id, token + 1, "伪造"), "过期令牌不许写进缓冲区");
+        assert!(!turns.append_reasoning(id, token + 1, "伪造"));
+
+        turns.finish(id, token, Phase::Idle, 5, None).unwrap();
+        let slice = turns.stream_since(id, 0, 0);
+        assert_eq!(slice.text, all, "结束后仍能补拉尾巴（界面用它接上最后一个字）");
+        assert!(slice.done, "done = 这一轮已结束");
     }
 
     #[test]

@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
@@ -39,6 +39,9 @@ pub struct AppState {
     /// 每个会话"这一轮在不在跑"。**进程内的事实，不进库**——后端一重启就没有生成在跑，
     /// 状态回到 `idle` 是诚实的；库里只会留下占位消息，启动时清掉。
     turns: Arc<TurnRegistry>,
+    /// **最近一次实际发给上游的载荷**（调试用，只留一份、覆盖式）。
+    /// 只活在内存里：重启就没了——它本来就是给"刚才那一下怎么不对"用的。
+    last_payload: Arc<Mutex<Option<LastPayload>>>,
     /// 新建会话的默认 provider / model（来自 `config.json` 的 `defaults`）。
     default_provider: String,
     default_model: String,
@@ -54,6 +57,7 @@ impl AppState {
             auth_token: config.server.auth_token.clone(),
             title_chars: config.chat.title_chars,
             turns: Arc::new(TurnRegistry::new()),
+            last_payload: Arc::new(Mutex::new(None)),
             default_provider: config.defaults.provider.clone(),
             default_model: config.defaults.model.clone(),
             paths,
@@ -64,6 +68,31 @@ impl AppState {
         self.store
             .lock()
             .map_err(|_| ApiError::internal("存储锁中毒"))
+    }
+
+    /// 记下这一轮实际发出去的载荷（调试页用）。取不到会话就算了——这是调试信息，
+    /// 不能因为它影响正事。
+    fn record_payload(&self, id: Uuid, body: serde_json::Value) {
+        let conversation = self
+            .lock()
+            .ok()
+            .and_then(|store| store.get_conversation(id).ok().flatten());
+        let Some(conversation) = conversation else {
+            return;
+        };
+        let at_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        let payload = LastPayload {
+            at_ms,
+            provider: conversation.provider,
+            model: conversation.model,
+            body,
+        };
+        if let Ok(mut slot) = self.last_payload.lock() {
+            *slot = Some(payload);
+        }
     }
 }
 
@@ -83,6 +112,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/conversations/{id}/resend", post(resend_message))
         .route("/conversations/{id}/status", get(get_turn_status))
+        .route("/conversations/{id}/turn/text", get(get_turn_text))
         .route("/conversations/{id}/stop", post(stop_turn))
         .route("/conversations/{id}/branches", get(get_branches))
         .route(
@@ -114,6 +144,7 @@ pub fn router(state: AppState) -> Router {
         .route("/agents", get(list_agents).post(create_agent))
         .route("/agents/{id}", patch(update_agent).delete(delete_agent))
         .route("/debug/state", get(debug_state))
+        .route("/debug/last-payload", get(get_last_payload))
         .route("/debug/file/{name}", get(debug_file))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_bearer))
         .with_state(state);
@@ -383,11 +414,16 @@ async fn start_turn(
     Ok((backend, state.turns.status(id)))
 }
 
-/// 真去生成一段回复：取料（锁里）→ 走上游（锁外）→ 返回正文。
+/// 真去生成一段回复：取料（锁里）→ 走上游（锁外）→ 返回完整正文。
 ///
-/// 组装出站消息用的是**唯一那条路径**：[`vars::build_outgoing`]（历史剔除状态块、
-/// 注入当前变量表、跳过空正文）。这里不另写一份拼装。
-async fn generate(state: &AppState, id: Uuid) -> Result<String, ApiError> {
+/// `on_chunk` 收到的是流式增量——它**只服务动画**（`run_turn` 把它喂进 `TurnRegistry`
+/// 的缓冲区，客户端按游标读）。组装出站消息仍然是**唯一那条路径**
+/// [`vars::build_outgoing`]（历史剔除状态块、注入当前变量表、跳过空正文）。
+async fn generate(
+    state: &AppState,
+    id: Uuid,
+    on_chunk: impl FnMut(providers::ChunkKind, &str),
+) -> Result<chat::Sent, ApiError> {
     let providers = ProvidersConfig::load(&state.paths.providers_json())?;
 
     // 取料（会话、历史、出站消息）都在锁里，**等上游之前把锁放掉**。
@@ -403,8 +439,9 @@ async fn generate(state: &AppState, id: Uuid) -> Result<String, ApiError> {
         (conversation, outgoing)
     };
 
-    let reply = chat::complete(&conversation, &outgoing, &providers).await?;
-    Ok(reply)
+    // `true` = 想走流式；provider 自己可以写 `"stream": false` 关掉（纪律在 chat 层）。
+    let sent = chat::complete_with(&conversation, &outgoing, &providers, true, on_chunk).await?;
+    Ok(sent)
 }
 
 /// 后台那半程：生成完**才**把回复插进库（用受理时发出去的那个 id 与当时捕获的上文）。
@@ -412,8 +449,24 @@ async fn generate(state: &AppState, id: Uuid) -> Result<String, ApiError> {
 /// 全程**不持锁跨 await**：取料在锁里，等上游在锁外，落库再进锁。
 /// 收尾前核对令牌——被"停止"顶掉的那一轮结果直接丢掉，库里什么痕迹都不会留下。
 async fn run_turn(state: AppState, id: Uuid, parent: Uuid, message: Uuid, token: u64) {
-    let reply = match generate(&state, id).await {
-        Ok(reply) => reply,
+    // 增量全部喂进这一轮的缓冲区（游标读给界面做动画）；失败/被停时它谁也不影响。
+    // 思考与正文分开存：前者只服务动画，后者才是最终消息的内容。
+    let turns = state.turns.clone();
+    let reply = match generate(&state, id, move |kind, delta| match kind {
+        providers::ChunkKind::Content => {
+            turns.append_content(id, token, delta);
+        }
+        providers::ChunkKind::Reasoning => {
+            turns.append_reasoning(id, token, delta);
+        }
+    })
+    .await
+    {
+        Ok(sent) => {
+            // 调试页要看"最近一次到底发了什么"：这里留档（内存里一份，覆盖式）
+            state.record_payload(id, sent.payload);
+            sent.reply
+        }
         Err(error) => {
             if state
                 .turns
@@ -432,9 +485,23 @@ async fn run_turn(state: AppState, id: Uuid, parent: Uuid, message: Uuid, token:
         return;
     }
     let chars = reply.chars().count();
+    // 落库时把"思考"也带上（provider 可以关掉留档；流式动画不受这个开关影响）
+    let reasoning = if stores_reasoning(&state, id) {
+        state.turns.thinking_of(id)
+    } else {
+        String::new()
+    };
+    let reasoning = (!reasoning.trim().is_empty()).then_some(reasoning);
     let stored = match state.lock() {
         Ok(mut store) => store
-            .insert_message_with_id(id, message, Role::Assistant, &reply, Some(parent))
+            .insert_message_with_id(
+                id,
+                message,
+                Role::Assistant,
+                &reply,
+                Some(parent),
+                reasoning.as_deref(),
+            )
             .map(|_| ())
             .map_err(ApiError::from),
         Err(_) => Err(ApiError::internal("存储锁中毒")),
@@ -451,6 +518,23 @@ async fn run_turn(state: AppState, id: Uuid, parent: Uuid, message: Uuid, token:
     }
 }
 
+/// 这个会话的 provider 要不要把"思考"留档（`providers.json` 的 `store_reasoning`，默认要）。
+///
+/// 配置读不到就按"要"处理：留档是保守选择，丢了才是真丢。
+fn stores_reasoning(state: &AppState, id: Uuid) -> bool {
+    let conversation = state
+        .lock()
+        .ok()
+        .and_then(|store| store.get_conversation(id).ok().flatten());
+    let Some(conversation) = conversation else {
+        return false;
+    };
+    ProvidersConfig::load(&state.paths.providers_json())
+        .ok()
+        .and_then(|config| config.get(&conversation.provider).map(|p| p.store_reasoning))
+        .unwrap_or(true)
+}
+
 /// 这个会话此刻的状态。前端按它转圈/放行：`idle` 之外都别让用户再发。
 async fn get_turn_status(
     State(state): State<AppState>,
@@ -460,6 +544,36 @@ async fn get_turn_status(
         return Err(ApiError::not_found());
     }
     Ok(Json(state.turns.status(id)))
+}
+
+#[derive(Deserialize)]
+pub struct TurnTextQuery {
+    /// 正文游标：第几个**字符**之前已经拿到了。缺省 = 从头。
+    #[serde(default)]
+    pub from: Option<usize>,
+    /// 思考流游标（推理型模型先吐的那段）。
+    #[serde(default)]
+    pub think_from: Option<usize>,
+}
+
+/// 这一轮已生成正文的**增量**（两条游标：正文 + 思考）。**只服务动画**：两者都进不了库，
+/// 思考流连最终消息都不进。
+///
+/// 不消费、不清空——多个客户端（egui + Godot）与断线重连各拿各的，互不偷。
+/// 客户端拿它做逐字动画；**真正的消息**在流结束后完整落库，由 `/messages` 取回。
+async fn get_turn_text(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Query(query): Query<TurnTextQuery>,
+) -> Result<Json<crate::turn::StreamSlice>, ApiError> {
+    if state.lock()?.get_conversation(id)?.is_none() {
+        return Err(ApiError::not_found());
+    }
+    Ok(Json(state.turns.stream_since(
+        id,
+        query.from.unwrap_or(0),
+        query.think_from.unwrap_or(0),
+    )))
 }
 
 /// 停止这一轮。**幂等**：没在跑也回 200（`stopped: false`）。
@@ -1010,6 +1124,37 @@ pub struct DebugState {
     pub agents_configured: usize,
 }
 
+/// **最近一次实际发出去的请求体**（调试页用）。只留一份，覆盖式更新，进程内。
+///
+/// 注意它和 `GET /conversations/{id}/outgoing` 不是一回事：那个是"**预计**会发什么"
+/// （从库里重新拼一遍，给人看变量注入对不对），这个是"**实际**发了什么"
+/// （线上的形状：`role` 取值、`stream` 开关、整个 JSON）——排查"看着都对、上游却报错"用它。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LastPayload {
+    pub at_ms: i64,
+    pub provider: String,
+    pub model: String,
+    /// 原样的请求体。`null` = 这一轮压根没发给上游（dummy / fallback）。
+    pub body: serde_json::Value,
+}
+
+/// 最近一次发给上游的载荷。没发过时回 `null`。
+///
+/// **不含凭据**：密钥走 `Authorization` 头，不在请求体里。
+async fn get_last_payload(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let payload = state
+        .last_payload
+        .lock()
+        .map_err(|_| ApiError::internal("载荷锁中毒"))?
+        .clone();
+    Ok(Json(match payload {
+        Some(payload) => serde_json::to_value(payload).unwrap_or(serde_json::Value::Null),
+        None => serde_json::Value::Null,
+    }))
+}
+
 /// 原始配置文件内容（仅白名单内的几个）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RawFile {
@@ -1276,15 +1421,71 @@ mod tests {
         format!("http://{addr}/v1")
     }
 
-    /// 起一个"会拖一会儿再回答"的假上游——用来观察 `pending`、409 与「停止」。
+    /// 起一个"会拖一会儿再把整段用 **SSE** 吐出来"的假上游——用来观察 `pending` / `streaming`、
+    /// 409 与「停止」。
+    ///
+    /// 必须说 SSE：客户端现在按 `stream: true` 发请求（provider 默认开流），
+    /// 回普通 JSON 会被当成"流里一个字都没有"。
     async fn slow_upstream(delay: std::time::Duration, reply: &'static str) -> String {
         let app = Router::new().route(
             "/v1/chat/completions",
             post(move || async move {
                 tokio::time::sleep(delay).await;
-                Json(serde_json::json!({
-                    "choices": [ { "message": { "role": "assistant", "content": reply } } ]
-                }))
+                let body = format!(
+                    "data: {{\"choices\":[{{\"delta\":{{\"content\":{}}}}}]}}\n\ndata: [DONE]\n\n",
+                    serde_json::to_string(reply).unwrap()
+                );
+                (
+                    StatusCode::OK,
+                    [("content-type", "text/event-stream")],
+                    body,
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        format!("http://{addr}/v1")
+    }
+
+    /// 假上游：把 `chunks`（`(是否思考, 文本)`）一段一段用 SSE 吐出来，段与段之间停 `gap`。
+    ///
+    /// **必须逐帧下发**（`Body::from_stream`）：攒成一个字符串再返回就没有"流"可言了，
+    /// 客户端会一次性拿到全部，`streaming` 那个窗口根本不会出现。
+    async fn sse_upstream(chunks: Vec<(bool, String)>, gap: std::time::Duration) -> String {
+        let app = Router::new().route(
+            "/v1/chat/completions",
+            post(move || {
+                let chunks = chunks.clone();
+                async move {
+                    let frames: Vec<String> = chunks
+                        .iter()
+                        .map(|(reasoning, text)| {
+                            // 思考用 `reasoning` 字段（OpenRouter 系口径），正文用 `content`
+                            let field = if *reasoning { "reasoning" } else { "content" };
+                            format!(
+                                "data: {{\"choices\":[{{\"delta\":{{{}:{}}}}}]}}\n\n",
+                                serde_json::to_string(field).unwrap(),
+                                serde_json::to_string(text).unwrap()
+                            )
+                        })
+                        .chain(std::iter::once("data: [DONE]\n\n".to_owned()))
+                        .collect();
+                    let stream = futures_util::StreamExt::then(
+                        futures_util::stream::iter(frames),
+                        move |frame| async move {
+                            tokio::time::sleep(gap).await;
+                            Ok::<_, std::convert::Infallible>(frame)
+                        },
+                    );
+                    (
+                        StatusCode::OK,
+                        [("content-type", "text/event-stream")],
+                        axum::body::Body::from_stream(stream),
+                    )
+                }
             }),
         );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -2022,6 +2223,175 @@ mod tests {
         // 助手消息（占位那条）不该留下
         let msgs = messages(&app, conv.id).await;
         assert_eq!(msgs.len(), 1, "只有用户那条");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 流式：增量进缓冲区、游标读**不消费**、phase 走 `pending → streaming → idle`；
+    /// 而**增量从不进库**——要等整段回来才落那一条完整回复。
+    #[tokio::test]
+    async fn streaming_chunks_are_read_by_cursor_and_never_touch_the_archive() {
+        let base = sse_upstream(
+            vec![
+                (true, "先".to_owned()),
+                (true, "想想".to_owned()),
+                (false, "你".to_owned()),
+                (false, "好".to_owned()),
+                (false, "，世界".to_owned()),
+            ],
+            std::time::Duration::from_millis(120),
+        )
+        .await;
+        let providers = format!(
+            r#"{{ "providers": [ {{ "id": "slow", "kind": "openai-compat", "base_url": "{base}" }} ] }}"#
+        );
+        let (app, dir) = app_with_files(&[("providers.json", &providers)]);
+        let conv = create(&app, r#"{"provider":"slow","model":"m"}"#).await;
+        let uri = format!("/api/v1/conversations/{}/messages", conv.id);
+        let status_uri = format!("/api/v1/conversations/{}/status", conv.id);
+        let text_uri = |from: usize, think_from: usize| {
+            format!(
+                "/api/v1/conversations/{}/turn/text?from={from}&think_from={think_from}",
+                conv.id
+            )
+        };
+
+        let (status, body) = send(&app, json_req("POST", &uri, r#"{"content":"在吗"}"#)).await;
+        assert_eq!(status, StatusCode::ACCEPTED);
+        let accepted: TurnAccepted = serde_json::from_str(&body).unwrap();
+
+        // 一边轮询一边按游标取：两条流拼起来应当正好是完整内容
+        let mut cursor = 0usize;
+        let mut think_cursor = 0usize;
+        let mut seen = String::new();
+        let mut thought = String::new();
+        let mut saw_streaming = false;
+        for _ in 0..400 {
+            let (_, body) = send(&app, get_req(&status_uri)).await;
+            let turn: TurnStatus = serde_json::from_str(&body).unwrap();
+            if turn.phase == Phase::Streaming {
+                saw_streaming = true;
+            }
+            let (_, body) = send(&app, get_req(&text_uri(cursor, think_cursor))).await;
+            let slice: crate::turn::StreamSlice = serde_json::from_str(&body).unwrap();
+            seen.push_str(&slice.text);
+            thought.push_str(&slice.thinking);
+            cursor = slice.next;
+            think_cursor = slice.think_next;
+            if slice.done {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert!(saw_streaming, "中途应当观察到 streaming");
+        assert_eq!(thought, "先想想", "思考流单独一条游标");
+        assert_eq!(seen, "你好，世界", "正文游标拼起来就是完整正文");
+        assert!(cursor >= 4, "游标只增不减");
+
+        // 换个客户端从头读：**不消费**，照样拿得到整段
+        let (_, body) = send(&app, get_req(&text_uri(0, 0))).await;
+        let all: crate::turn::StreamSlice = serde_json::from_str(&body).unwrap();
+        assert_eq!(all.text, "你好，世界", "游标读不消费：第二个客户端拿得到");
+        assert_eq!(all.thinking, "先想想");
+        assert!(all.done, "这一轮已结束");
+
+        let turn = settled(&app, conv.id).await;
+        assert_eq!(turn.phase, Phase::Idle);
+        assert_eq!(turn.chars, "你好，世界".chars().count());
+        assert_eq!(turn.thinking_chars, 3);
+
+        // 库里只有"用户那句 + 落定的完整回复"：增量（思考与正文）自始至终没进过库
+        let msgs = messages(&app, conv.id).await;
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].content, "在吗");
+        assert_eq!(msgs[1].content, "你好，世界", "思考二字不进最终消息");
+        assert_eq!(
+            msgs[1].reasoning.as_deref(),
+            Some("先想想"),
+            "思考单独留档（默认 store_reasoning = true）"
+        );
+        assert_eq!(msgs[1].id, accepted.turn.message_id.unwrap(), "用的还是受理时那个 id");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 调试页要看"最近一次**实际**发了什么"：载荷原样留着（含线上的形状），且**不含密钥**。
+    #[tokio::test]
+    async fn last_payload_records_what_was_actually_sent() {
+        let base = sse_upstream(
+            vec![(false, "答案".to_owned())],
+            std::time::Duration::ZERO,
+        )
+        .await;
+        let providers = format!(
+            r#"{{ "providers": [ {{ "id": "slow", "kind": "openai-compat", "base_url": "{base}", "api_key": "sk-secret" }} ] }}"#
+        );
+        let (app, dir) = app_with_files(&[("providers.json", &providers)]);
+        let conv = create(&app, r#"{"provider":"slow","model":"m"}"#).await;
+        let uri = format!("/api/v1/conversations/{}/messages", conv.id);
+
+        let (_, body) = send(&app, get_req("/api/v1/debug/last-payload")).await;
+        assert_eq!(body.trim(), "null", "还没发过就是 null");
+
+        let _ = turn(&app, &uri, r#"{"content":"在吗"}"#).await;
+
+        let (status, body) = send(&app, get_req("/api/v1/debug/last-payload")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            !body.contains("sk-secret"),
+            "载荷里不许有密钥（它走 Authorization 头）"
+        );
+        let payload: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(payload["provider"], "slow");
+        assert_eq!(payload["model"], "m");
+        assert!(payload["at_ms"].as_i64().unwrap_or(0) > 0, "带时间戳");
+
+        // 线上的形状：这就是发出去的那个 JSON
+        let sent = &payload["body"];
+        assert_eq!(sent["model"], "m");
+        assert_eq!(sent["stream"], true, "流式在线上就是 stream: true");
+        let messages = sent["messages"].as_array().unwrap();
+        assert!(
+            messages
+                .iter()
+                .any(|m| m["role"] == "user" && m["content"] == "在吗"),
+            "发出去的就是这一轮的内容：{sent}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `store_reasoning: false`：思考照样走动画（流里看得到），但**不落库**。
+    #[tokio::test]
+    async fn store_reasoning_false_keeps_thinking_out_of_the_archive() {
+        let base = sse_upstream(
+            vec![(true, "想想".to_owned()), (false, "答案".to_owned())],
+            std::time::Duration::from_millis(30),
+        )
+        .await;
+        let providers = format!(
+            r#"{{ "providers": [ {{ "id": "slow", "kind": "openai-compat", "base_url": "{base}", "store_reasoning": false }} ] }}"#
+        );
+        let (app, dir) = app_with_files(&[("providers.json", &providers)]);
+        let conv = create(&app, r#"{"provider":"slow","model":"m"}"#).await;
+        let uri = format!("/api/v1/conversations/{}/messages", conv.id);
+
+        let turn = turn(&app, &uri, r#"{"content":"在吗"}"#).await;
+        assert_eq!(turn.assistant.content, "答案");
+        assert_eq!(turn.assistant.reasoning, None, "关掉留档后思考不进库");
+
+        // 但缓冲区里照样有：动画不受这个开关影响（结束后还能补拉）
+        let (_, body) = send(
+            &app,
+            get_req(&format!(
+                "/api/v1/conversations/{}/turn/text?from=0&think_from=0",
+                conv.id
+            )),
+        )
+        .await;
+        let slice: crate::turn::StreamSlice = serde_json::from_str(&body).unwrap();
+        assert_eq!(slice.thinking, "想想", "留档关掉，但流式动画照样有思考");
+        assert_eq!(slice.text, "答案");
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 

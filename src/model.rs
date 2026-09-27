@@ -59,6 +59,10 @@ pub struct Message {
     pub conversation_id: Uuid,
     pub role: Role,
     pub content: String,
+    /// 推理型模型的"思考"（**只留档**）：不进历史、不扫 `<state>`、不可编辑；
+    /// 界面上默认折叠。老消息与普通模型都是 `None`。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<String>,
     /// 上一条（树上的父亲）。根消息为 `None`。
     #[serde(default)]
     pub parent_id: Option<Uuid>,

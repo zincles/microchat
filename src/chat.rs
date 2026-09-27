@@ -72,14 +72,47 @@ impl Backend {
 /// `outgoing` 是**真正要发出去的东西**：变量表已注入、历史里的状态标签已剔除，
 /// 由 [`crate::vars::build_outgoing`] 一次组装——真模型直接用它，
 /// **不允许**再写第二条拼装路径（否则"剔除标签"会漏）。
+/// 一次生成的结果：正文 + **实际发出去的请求体**。
+///
+/// `payload` 只服务调试（调试页要看"到底发了什么"）；一切计算与落库只认 `reply`。
+#[derive(Debug, Clone)]
+pub struct Sent {
+    pub reply: String,
+    pub payload: serde_json::Value,
+}
+
 pub async fn complete(
     conversation: &Conversation,
     outgoing: &[Outgoing],
     providers: &ProvidersConfig,
 ) -> Result<String, Error> {
+    complete_with(conversation, outgoing, providers, false, |_, _| {})
+        .await
+        .map(|sent| sent.reply)
+}
+
+/// 生成一条回复——`complete` 与流式共用这一条路。
+///
+/// `stream = true` **且** provider 没关掉流式时走 SSE：每个增量交给 `on_chunk`
+/// （**只服务动画**：界面拿它把气泡动起来；它不进库、不参与变量与出站计算）。
+/// 返回值**始终是完整正文**，落库与一切计算只认它。
+pub async fn complete_with(
+    conversation: &Conversation,
+    outgoing: &[Outgoing],
+    providers: &ProvidersConfig,
+    stream: bool,
+    on_chunk: impl FnMut(providers::ChunkKind, &str),
+) -> Result<Sent, Error> {
     match Backend::select(conversation, providers) {
-        Backend::Dummy => Ok(DUMMY_MODEL_REPLY.to_owned()),
-        Backend::Fallback => Ok(FALLBACK_REPLY.to_owned()),
+        Backend::Dummy => Ok(Sent {
+            reply: DUMMY_MODEL_REPLY.to_owned(),
+            // 没发给任何上游：载荷是空的，调试页据此说"这一轮没发出去"
+            payload: serde_json::Value::Null,
+        }),
+        Backend::Fallback => Ok(Sent {
+            reply: FALLBACK_REPLY.to_owned(),
+            payload: serde_json::Value::Null,
+        }),
         Backend::OpenAiCompletion => {
             // select 已经确认过 provider 存在；这里再取一次是拿配置本体（含密钥）。
             let provider = providers.get(&conversation.provider).ok_or(Error::NoProvider)?;
@@ -91,10 +124,21 @@ pub async fn complete(
                     content: item.content.clone(),
                 })
                 .collect();
-            client
-                .chat_completion(&conversation.model, &messages)
-                .await
-                .map_err(Error::Upstream)
+            let streaming = stream && provider.stream;
+            // 载荷在这里定稿（客户端内部也走同一个构造函数，不会漂）
+            let payload = providers::Client::chat_body(&conversation.model, &messages, streaming);
+            let reply = if streaming {
+                client
+                    .chat_completion_stream(&conversation.model, &messages, on_chunk)
+                    .await
+                    .map_err(Error::Upstream)?
+            } else {
+                client
+                    .chat_completion(&conversation.model, &messages)
+                    .await
+                    .map_err(Error::Upstream)?
+            };
+            Ok(Sent { reply, payload })
         }
     }
 }

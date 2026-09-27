@@ -89,7 +89,8 @@ cargo build && python3 scripts/api-audit.py     # 改过接口就跑一遍（它
 
 | 方法 | 路径 | 请求体 | 响应 | 说明 |
 |---|---|---|---|---|
-| GET | `/conversations/{id}/status` | — | `TurnStatus` | `idle` / `pending` / `streaming` / `error` + `message_id` + `elapsed_ms` + `chars` + `error` |
+| GET | `/conversations/{id}/status` | — | `TurnStatus` | `idle` / `pending` / `streaming` / `error` + `message_id` + `elapsed_ms` + `chars`（正文）+ `thinking_chars`（思考）+ `error` |
+| GET | `/conversations/{id}/turn/text?from=N&think_from=M` | — | `StreamSlice` | 流式增量的**游标读**（正文与思考各一条游标，`from` = 第几个字符）：**只服务动画**，见下节 |
 | POST | `/conversations/{id}/stop` | — | `{"stopped": bool}` | **幂等**：没在跑也 200（`false`） |
 
 同一会话在跑时再来一发 → **409**（`conflict`）。`TurnAccepted` = `{user?, backend, turn}`：`turn.message_id` 是**这条回复的 id**（受理时就定好，但那会儿它还没进库——拿到整段才 `INSERT`）。
@@ -117,7 +118,20 @@ cargo build && python3 scripts/api-audit.py     # 改过接口就跑一遍（它
 |---|---|---|---|---|
 | GET | `/health` | — | `{"status","version"}` | 探针；**也过鉴权**（401 与"连不上"是两种失败） |
 | GET | `/debug/state` | — | `DebugState` | 后端自述（结构上就没有密钥字段） |
+| GET | `/debug/last-payload` | — | `LastPayload` | **最近一次实际发给上游的请求体**（内存里一份，覆盖式；没发过 = `null`）。与 `/outgoing` 的区别：那是"预计会发什么"，这是"实际发了什么" |
 | GET | `/debug/file/{name}` | — | `RawFile` | 白名单只有 `config.json` / `providers.json` / `agents.json`；**`providers.json` 里的 `api_key` 会先打码成 `"***"`** |
+
+## 流式输出：增量只服务动画，落库只认完整正文
+
+一条铁律：**流式过程中的增量什么都不算**。它不进库、不进树、不参与变量与出站计算——那些只认"流结束后完整落库的那一条消息"。所以流断了、被停了、上游中途报错，档案永远是干净的。
+
+- **上游**：`reqwest-eventsource`（建在同一个 `reqwest` 上）——按既定规矩用成熟库，不手搓 `data: ` 分帧与 `[DONE]`。落在 `providers::Client::chat_completion_stream`；`chat::complete_with(.., stream, on_chunk)` 是唯一入口（`complete` 是它的薄封装）。
+- **服务端**：每个增量 `TurnRegistry::append_*` 进这一轮的缓冲区，顺手把 `pending` 抬成 **`streaming`**；令牌对不上（已被 `stop`）的字节直接丢弃。缓冲区随 entry 存活一轮，下一轮 `begin` 覆盖。
+- **思考流单独一条缓冲**：推理型模型（DeepSeek V4 系等）先一连串吐 `reasoning` / `reasoning_content`，**再**吐 `content`——上游字段名两家不同，两个都认。思考同样只服务动画，**不参与任何计算**：它不进历史（不回喂给模型）、不扫 `<state>`、不可编辑。
+- **思考会留档**：落库时写进 `messages.reasoning`（可空列），界面上默认折叠成「思考（N 字）」。`providers.json` 里给 provider 写 `"store_reasoning": false` 就只走动画、不留档（默认开）。实测它常比正文长十倍上下。
+- **给前端**：`GET /conversations/{id}/turn/text?from=N&think_from=M` 是**游标读，不消费**——两条流各一条游标，多个客户端（egui + Godot）与断线重连各拿各的，互不偷。`done` 表示这一轮已结束，结束后仍可补拉尾巴。
+- **落库时机不变**：流跑完 → 完整正文 → 才用受理时发出去的那个 `id` `INSERT`。界面先拿增量渲染一个**合成气泡**（不在库里），真消息一落库，同一个 id 让它自然接管。
+- **关掉流式**：`providers.json` 里给某个 provider 写 `"stream": false` 就退回非流式（界面只是"不播动画"）。默认开。
 
 ## 一轮生成的生命周期（202 + 轮询）
 
@@ -163,7 +177,9 @@ cargo build && python3 scripts/api-audit.py     # 改过接口就跑一遍（它
   - 助手署名 = **该会话 agent 的名字**（不是"助手"）；底部输入栏跟着软键盘浮（见 `frontend/main.gd` 的同名脚本）。
   - **分支操作只出现在最后一条消息上**：`‹ 2/3 ›`（切候选回复，只在最新那句允许）、`删除全部`、`重新发送`。
   - **生成中那条回复**是界面按状态**合成**的气泡（库里还没有它）：转圈 + "正在生成… 12.3s" + 「停止」。落库后同 id 的真实消息出现，气泡自然消失。发送按钮在此期间显示"等待…"；界面每 300ms 轮询 `/status`（`App::poll_turn`），收到 `idle` / `error` 才一次性重拉消息、变量、分支与列表。
+  - **思考**（`messages.reasoning`）默认折叠成「思考（N 字）」✓，点开才看 ✓；流式那会儿是实时展开的 ✓，正文一开始出就交给真消息（真消息里它还是折叠的 ✓）。
 - 左栏：正在生成的会话标题后面挂着「 · 生成中…」（状态来自 `GET /conversations` 每项的 `turn`）。
+- 调试页五个标签：**后端状态 / 最近发送载荷 / 原始配置 / 请求日志 / 关系图**。「最近发送载荷」原样显示最近一次发给上游的 `/chat/completions` 请求体（带 provider/模型、时间、字节数、复制按钮）——排查"看着都对、上游却报错"看它。
 - 设置分五页（左导航同级）：**连接 / Agent / 模型与渠道 / 前端设置 / 关于**；右下角「保存」按页给出不同提示。
 - 「模型与渠道」每个渠道一行：`获取模型`（POST，成功后在**底栏**说"已获取 N 个模型"）、`删除全部模型`（清发现态，配置与历史会话都不动）、`编辑`。
 - 设置页底栏常驻"**已连接后端 vX**"（`App::connected`），后面跟 `·` 和最近一次动作的结果（`App::note`）——两者互不顶替：连接状态不该被下一条消息挤掉。刷新失败时 `note` 里带着状态码与后端的 `code`。
@@ -205,7 +221,8 @@ cargo build && python3 scripts/api-audit.py     # 改过接口就跑一遍（它
 
 ```sql
 conversations(id, title, system_prompt, provider, model, agent_id, current_leaf, created_at, updated_at)
-messages(id, conversation_id → conversations ON DELETE CASCADE, role, content, parent_id → messages ON DELETE CASCADE, created_at)
+messages(id, conversation_id → conversations ON DELETE CASCADE, role, content, parent_id → messages ON DELETE CASCADE, created_at,
+         reasoning)                                   -- 推理型模型的"思考"：只留档，不进历史、不扫 <state>、不可编辑
 models(provider, upstream_id, upstream_name, owned_by, context_length, max_output, display_name, params, tokenizer,
        upstream_params, first_seen_at, last_seen_at)   -- 发现所得与用户覆盖分列；PRIMARY KEY(provider, upstream_id)
 provider_state(provider, last_refresh_at)

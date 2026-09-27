@@ -165,6 +165,11 @@ impl Timeouts {
     }
 }
 
+/// `skip_serializing_if` 用：`true`（默认值）不写进文件，`false` 才写。
+fn is_true(value: &bool) -> bool {
+    *value
+}
+
 /// `providers.json` 里的单个 provider：只有连接信息，没有模型（模型是发现所得，在库里）。
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
@@ -186,6 +191,15 @@ pub struct ProviderConfig {
     /// 超时可单独覆盖；等于默认值时不写进文件（`providers.json` 保持干净）。
     #[serde(skip_serializing_if = "Timeouts::is_default")]
     pub timeouts: Timeouts,
+    /// 走流式（SSE）。**默认开**：界面能边生成边显示。少数上游不支持、或流式有问题时，
+    /// 在这个 provider 上写 `"stream": false` 退回非流式——行为只是"不播动画"。
+    /// 默认值走结构体的 `Default`（`#[serde(default)]`），不写进文件（写出来只会在默认时显得吵）。
+    #[serde(skip_serializing_if = "is_true")]
+    pub stream: bool,
+    /// 把上游的"思考"也留档（`messages.reasoning`）。**默认开**：事后想看还有。
+    /// 关掉只影响留档——流式动画照样会显示思考（那是另一条缓冲，见 `turn.rs`）。
+    #[serde(skip_serializing_if = "is_true")]
+    pub store_reasoning: bool,
     /// 保留未知字段：API 写回文件时不能丢用户自己加的东西。
     #[serde(flatten)]
     pub extra: BTreeMap<String, serde_json::Value>,
@@ -201,6 +215,8 @@ impl Default for ProviderConfig {
             headers: BTreeMap::new(),
             api_key: String::new(),
             timeouts: Timeouts::default(),
+            stream: true,
+            store_reasoning: true,
             extra: BTreeMap::new(),
         }
     }

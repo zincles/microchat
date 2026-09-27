@@ -520,6 +520,7 @@ mod tests {
             conversation_id: conversation,
             role: Role::Assistant,
             content: content.to_owned(),
+            reasoning: None,
             parent_id: None,
             created_at: 0,
         };
@@ -546,6 +547,7 @@ mod tests {
             conversation_id: conversation,
             role: Role::User,
             content: content.to_owned(),
+            reasoning: None,
             parent_id: None,
             created_at,
         };
@@ -619,6 +621,7 @@ mod tests {
             role,
             content: content.to_owned(),
             created_at: 0,
+            reasoning: None,
             parent_id: None,
         }
     }

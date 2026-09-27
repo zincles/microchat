@@ -156,6 +156,14 @@ pub enum Command {
         token: Option<String>,
         conversation: uuid::Uuid,
     },
+    /// 流式增量：带自己的两条游标（正文 / 思考），只拿新的那一段（**只服务动画**）。
+    TurnText {
+        base: String,
+        token: Option<String>,
+        conversation: uuid::Uuid,
+        from: usize,
+        think_from: usize,
+    },
     /// 把某个 agent 设为 `agents.json` 的 `default_agent`。
     MakeDefaultAgent {
         base: String,
@@ -174,6 +182,11 @@ pub enum Command {
         id: String,
     },
     DebugState {
+        base: String,
+        token: Option<String>,
+    },
+    /// 最近一次实际发给上游的载荷（调试页用）。
+    DebugPayload {
         base: String,
         token: Option<String>,
     },
@@ -232,6 +245,13 @@ pub enum Event {
         conversation: uuid::Uuid,
         result: Result<microchat::turn::TurnStatus, String>,
     },
+    /// 流式增量（游标读）。失败静默即可——动画断了不影响最终那条消息。
+    TurnText {
+        conversation: uuid::Uuid,
+        from: usize,
+        think_from: usize,
+        result: Result<microchat::turn::StreamSlice, String>,
+    },
     /// 「停止」的结果：`{"stopped": bool}`（没在跑也是 200）。
     Stopped {
         conversation: uuid::Uuid,
@@ -254,6 +274,8 @@ pub enum Event {
     AgentWritten(Result<(), String>),
     ProviderWritten(Result<(), String>),
     DebugState(Result<DebugState, String>),
+    /// 最近一次发给上游的载荷：`null` = 还没发过（dummy / fallback 不算）。
+    DebugPayload(Result<serde_json::Value, String>),
     DebugFile(Result<RawFile, String>),
 }
 
@@ -392,11 +414,18 @@ impl Command {
             Self::ConversationStatus { conversation, .. } => {
                 format!("GET /conversations/{}/status", &conversation.to_string()[..8])
             }
+            Self::TurnText { conversation, from, .. } => {
+                format!(
+                    "GET /conversations/{}/turn/text?from={from}",
+                    &conversation.to_string()[..8]
+                )
+            }
             Self::StopTurn { conversation, .. } => {
                 format!("POST /conversations/{}/stop", &conversation.to_string()[..8])
             }
             Self::DeleteAgent { id, .. } => format!("DELETE /agents/{id}"),
             Self::DebugState { .. } => "GET /debug/state".to_owned(),
+            Self::DebugPayload { .. } => "GET /debug/last-payload".to_owned(),
             Self::DebugFile { name, .. } => format!("GET /debug/file/{name}"),
         }
     }
@@ -458,6 +487,14 @@ fn summarize(event: &Event) -> String {
             Ok(status) => format!("OK {:?} {} 字", status.phase, status.chars),
             Err(message) => format!("失败: {message}"),
         },
+        Event::TurnText { result, .. } => match result {
+            Ok(slice) => format!(
+                "OK +{} 字（思考 +{}）",
+                slice.text.chars().count(),
+                slice.thinking.chars().count()
+            ),
+            Err(message) => format!("失败: {message}"),
+        },
         Event::Stopped { result, .. } => match result {
             Ok(value) => format!("OK stopped={}", value["stopped"]),
             Err(message) => format!("失败: {message}"),
@@ -478,6 +515,14 @@ fn summarize(event: &Event) -> String {
             format!("OK 会话 {} 条", state.counts.conversations)
         }
         Event::DebugState(Err(message)) => format!("失败: {message}"),
+        Event::DebugPayload(Ok(value)) => {
+            if value.is_null() {
+                "OK（还没发过）".to_owned()
+            } else {
+                format!("OK（{} 字节）", value.to_string().len())
+            }
+        }
+        Event::DebugPayload(Err(message)) => format!("失败: {message}"),
         Event::DebugFile(Ok(file)) => format!("OK {} 字节", file.text.len()),
         Event::DebugFile(Err(message)) => format!("失败: {message}"),
     }
@@ -698,6 +743,25 @@ fn handle(http: &reqwest::blocking::Client, command: Command) -> Event {
                 serde_json::json!({}),
             ),
         },
+        Command::TurnText {
+            base,
+            token,
+            conversation,
+            from,
+            think_from,
+        } => Event::TurnText {
+            conversation,
+            from,
+            think_from,
+            result: get(
+                http,
+                &base,
+                token.as_deref(),
+                &format!(
+                    "/api/v1/conversations/{conversation}/turn/text?from={from}&think_from={think_from}"
+                ),
+            ),
+        },
         Command::StopTurn {
             base,
             token,
@@ -901,6 +965,9 @@ fn handle(http: &reqwest::blocking::Client, command: Command) -> Event {
                 Some(body),
             );
             Event::ProviderWritten(result)
+        }
+        Command::DebugPayload { base, token } => {
+            Event::DebugPayload(get(http, &base, token.as_deref(), "/api/v1/debug/last-payload"))
         }
         Command::DebugState { base, token } => {
             Event::DebugState(get(http, &base, token.as_deref(), "/api/v1/debug/state"))
@@ -1200,6 +1267,7 @@ mod tests {
             Event::Turn { .. } => "Turn",
             Event::Resent { .. } => "Resent",
             Event::TurnStatus { .. } => "TurnStatus",
+            Event::TurnText { .. } => "TurnText",
             Event::Stopped { .. } => "Stopped",
             Event::LeafSwitched { .. } => "LeafSwitched",
             Event::Branches { .. } => "Branches",
@@ -1209,6 +1277,7 @@ mod tests {
             Event::AgentWritten(_) => "AgentWritten",
             Event::ProviderWritten(_) => "ProviderWritten",
             Event::DebugState(_) => "DebugState",
+            Event::DebugPayload(_) => "DebugPayload",
             Event::DebugFile(_) => "DebugFile",
         }
     }

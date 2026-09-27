@@ -21,8 +21,11 @@ eframe = { version = "0.36.2", default-features = false, features = [
     "wgpu",
 ] }
 egui_graphs = "0.32.0"
+# SSE 解析用现成库（规矩：与上游通信只许用成熟 crate，不手搓 `data: ` 分帧）
+eventsource-stream = "0.2.3"
+futures-util = "0.3.34"
 petgraph = "0.8.3"
-reqwest = { version = "0.13.5", default-features = false, features = ["blocking", "json", "rustls"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["blocking", "json", "rustls", "stream"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"

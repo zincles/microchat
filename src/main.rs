@@ -295,14 +295,16 @@ impl SettingsTab {
 #[derive(Clone, Copy, PartialEq)]
 enum DebugTab {
     State,
+    Payload,
     Config,
     Log,
     Graph,
 }
 
 impl DebugTab {
-    const ALL: [(Self, &'static str); 4] = [
+    const ALL: [(Self, &'static str); 5] = [
         (Self::State, "后端状态"),
+        (Self::Payload, "最近发送载荷"),
         (Self::Config, "原始配置"),
         (Self::Log, "请求日志"),
         (Self::Graph, "关系图"),
@@ -422,6 +424,8 @@ struct App {
     new_agent_name: String,
     note: String,
     /// 调试页数据。
+    /// 调试页「最近发送载荷」：后端内存里那一份（重启就没了）。
+    debug_payload: Option<serde_json::Value>,
     debug_state: Option<DebugState>,
     debug_file: Option<RawFile>,
     debug_file_name: String,
@@ -455,6 +459,13 @@ struct App {
     /// 正在等「获取模型」回来的 provider：用来在列表刷新回来时说一句"拿到了多少个"
     /// （列表事件本身看不出是"谁触发的"）。
     refreshing: Option<String>,
+    /// 这一轮**流式**已经收到的正文（只服务动画）与它的游标。
+    /// 真消息落库后由 `/messages` 接管，这里就清空——它是"假的"，不进树、不参与计算。
+    streamed: String,
+    stream_cursor: usize,
+    /// **思考**流（推理型模型先吐的那段）与它自己的游标。同样只服务动画。
+    thinking: String,
+    think_cursor: usize,
     /// 底栏常驻那行：连接状态（`已连接后端 v0.1.0`）。和 `note`（一次性动作结果）分开，
     /// 后者会被下一条消息顶掉，前者不该消失。
     connected: String,
@@ -511,6 +522,7 @@ impl App {
             new_agent_name: String::new(),
             note: String::new(),
             debug_state: None,
+            debug_payload: None,
             debug_file: None,
             debug_file_name: String::new(),
             graph: None,
@@ -527,6 +539,10 @@ impl App {
             turn: None,
             refreshing: None,
             connected: String::new(),
+            streamed: String::new(),
+            stream_cursor: 0,
+            thinking: String::new(),
+            think_cursor: 0,
             next_poll: None,
             editing_provider: None,
             provider_base_url: String::new(),
@@ -842,10 +858,21 @@ impl App {
         ctx.request_repaint_after(POLL);
         let (base, token) = (self.settings.server_address.clone(), self.token.clone());
         self.client.send(Command::ConversationStatus {
-            base,
-            token,
+            base: base.clone(),
+            token: token.clone(),
             conversation,
         });
+        // 已经在出字了：顺带把新那一段取回来（游标读，不消费）。
+        // `pending` 时跳过——那时候还没有字。
+        if status.phase == microchat::turn::Phase::Streaming {
+            self.client.send(Command::TurnText {
+                base,
+                token,
+                conversation,
+                from: self.stream_cursor,
+                think_from: self.think_cursor,
+            });
+        }
     }
 
     fn pump_events(&mut self) {
@@ -1006,6 +1033,11 @@ impl App {
                         Ok(accepted) => {
                             self.drafts.insert(conversation, String::new());
                             self.note = format!("{} 生成中…", accepted.backend);
+                            // 新的一轮：动画缓冲区清零，游标回到 0
+                            self.streamed.clear();
+                            self.stream_cursor = 0;
+                            self.thinking.clear();
+                            self.think_cursor = 0;
                             // 回复在后台长出来：把状态接过来，靠轮询等它落地。
                             // 用户消息与占位消息都已经在树上了，拉一次就齐。
                             self.turn = Some((conversation, accepted.turn));
@@ -1046,6 +1078,11 @@ impl App {
                         self.turn = Some((conversation, status));
                         if finished {
                             self.next_poll = None;
+                            // 流结束：动画缓冲退场，真消息由 /messages 接管（同一个 id）
+                            self.streamed.clear();
+                            self.stream_cursor = 0;
+                            self.thinking.clear();
+                            self.think_cursor = 0;
                             // 回复落地（或失败）：正文、变量、兄弟数、列表都变过
                             self.fetch_messages(conversation);
                             self.fetch_variables(conversation);
@@ -1067,6 +1104,26 @@ impl App {
                         self.next_poll = None;
                     }
                 },
+                Event::TurnText {
+                    conversation,
+                    from,
+                    think_from,
+                    result,
+                } => {
+                    let _ = conversation;
+                    if let Ok(slice) = result {
+                        // 只收游标对得上的那一段：重复或乱序的丢掉
+                        if from == self.stream_cursor {
+                            self.streamed.push_str(&slice.text);
+                            self.stream_cursor = slice.next;
+                        }
+                        if think_from == self.think_cursor {
+                            self.thinking.push_str(&slice.thinking);
+                            self.think_cursor = slice.think_next;
+                        }
+                    }
+                    // 拉不到不值得打扰用户：最终那条消息由 /messages 接管
+                }
                 Event::Stopped {
                     conversation,
                     result,
@@ -1156,6 +1213,8 @@ impl App {
                 Event::AgentWritten(Err(message)) => self.note = message,
                 Event::DebugState(Ok(state)) => self.debug_state = Some(state),
                 Event::DebugState(Err(message)) => self.note = message,
+                Event::DebugPayload(Ok(payload)) => self.debug_payload = Some(payload),
+                Event::DebugPayload(Err(message)) => self.note = message,
                 Event::DebugFile(Ok(file)) => self.debug_file = Some(file),
                 Event::DebugFile(Err(message)) => self.note = message,
             }
@@ -1865,6 +1924,7 @@ impl App {
         let (base, token) = (self.settings.server_address.clone(), self.token.clone());
         self.client.send(Command::DebugState { base, token });
         self.fetch_debug_file();
+        self.fetch_debug_payload();
         self.fetch_graph();
     }
 
@@ -1872,6 +1932,12 @@ impl App {
         let (base, token) = (self.settings.server_address.clone(), self.token.clone());
         let name = self.debug_file_name.clone();
         self.client.send(Command::DebugFile { base, token, name });
+    }
+
+    /// 拉"最近一次发给上游的载荷"（调试用，只活在内存里）。
+    fn fetch_debug_payload(&mut self) {
+        let (base, token) = (self.settings.server_address.clone(), self.token.clone());
+        self.client.send(Command::DebugPayload { base, token });
     }
 
     fn fetch_debug_state(&mut self) {
@@ -1987,6 +2053,7 @@ impl App {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let refresh = match self.debug_tab {
                     DebugTab::State => Some("刷新状态"),
+                    DebugTab::Payload => Some("重新拉取"),
                     DebugTab::Config => Some("重新读取"),
                     DebugTab::Log => None,
                     DebugTab::Graph => Some("重新拉取"),
@@ -1995,6 +2062,7 @@ impl App {
                     if ui.button(label).clicked() {
                         match self.debug_tab {
                             DebugTab::State => self.fetch_debug_state(),
+                            DebugTab::Payload => self.fetch_debug_payload(),
                             DebugTab::Config => self.fetch_debug_file(),
                             DebugTab::Graph => self.fetch_graph(),
                             DebugTab::Log => {}
@@ -2020,6 +2088,7 @@ impl App {
 
         match self.debug_tab {
             DebugTab::State => self.debug_state_tab(ui),
+            DebugTab::Payload => self.debug_payload_tab(ui),
             DebugTab::Config => self.debug_config_tab(ui),
             DebugTab::Log => self.debug_log_tab(ui),
             DebugTab::Graph => self.debug_graph_tab(ui),
@@ -2143,6 +2212,73 @@ impl App {
                 for line in log {
                     ui.monospace(line);
                 }
+            });
+    }
+
+    /// 「最近发送载荷」：原样看**最近一次实际发给上游**的 `/chat/completions` 请求体。
+    ///
+    /// 与「会话里的 `/outgoing`」不是一回事：那个是"**预计**会发什么"（从库里重拼一遍），
+    /// 这个是"**实际**发了什么"（线上的形状：`role` 取值、`stream` 开关、整个 JSON）——
+    /// 排查"看着都对、上游却报错"就看它。
+    fn debug_payload_tab(&mut self, ui: &mut egui::Ui) {
+        ui.label(
+            RichText::new("最近一次实际发给上游的 /chat/completions 请求体（只在后端内存里，重启即失）")
+                .weak(),
+        );
+        ui.add_space(4.0);
+        let Some(payload) = self.debug_payload.clone() else {
+            ui.label(RichText::new("还没拉到").weak());
+            return;
+        };
+        if payload.is_null() {
+            ui.label(
+                RichText::new(
+                    "后端还没往上游发过东西。（`dummy` 与兜底话术不算——它们压根不出网。）\n\
+                     去会话里用真模型发一条，再点「重新拉取」。",
+                )
+                .weak(),
+            );
+            return;
+        }
+        let provider = payload["provider"].as_str().unwrap_or("");
+        let model = payload["model"].as_str().unwrap_or("");
+        let at_ms = payload["at_ms"].as_i64().unwrap_or(0);
+        let body = payload.get("body").cloned().unwrap_or(serde_json::Value::Null);
+        let text = serde_json::to_string_pretty(&body).unwrap_or_default();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        let age = (now.saturating_sub(at_ms)) as f64 / 1000.0;
+        let when = if age < 90.0 {
+            format!("{age:.0} 秒前")
+        } else {
+            format!("{:.1} 分钟前", age / 60.0)
+        };
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(format!("{provider} / {model}")).strong());
+            ui.label(RichText::new(format!("· {when} · {} 字节", text.len())).weak());
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if ui.button("复制").clicked() {
+                    ui.output_mut(|out| {
+                        out.commands
+                            .push(egui::OutputCommand::CopyText(text.clone()))
+                    });
+                }
+            });
+        });
+        ui.separator();
+        egui::ScrollArea::both()
+            .id_salt("debug_payload")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                let mut readonly = text.as_str();
+                ui.add(
+                    TextEdit::multiline(&mut readonly)
+                        .frame(egui::Frame::NONE)
+                        .desired_width(f32::INFINITY)
+                        .code_editor(),
+                );
             });
     }
 
@@ -2623,6 +2759,9 @@ impl App {
             .turn
             .clone()
             .filter(|(conversation, _)| *conversation == current);
+        // 闭包里只借得到不可变 self，动画缓冲区先克隆出来
+        let streamed = self.streamed.clone();
+        let thinking = self.thinking.clone();
         let mut stop_turn = false;
         let mut save_edit: Option<(Uuid, String)> = None;
         let mut cancel_edit = false;
@@ -2756,6 +2895,33 @@ impl App {
                                         });
                                     });
 
+                                    // 模型的"思考"：**只留档**，默认折叠。
+                                    // 它不参与任何计算——不进历史、不扫 <state>、不可编辑。
+                                    if let Some(reasoning) = message
+                                        .reasoning
+                                        .as_deref()
+                                        .filter(|text| !text.trim().is_empty())
+                                    {
+                                        egui::CollapsingHeader::new(
+                                            RichText::new(format!(
+                                                "思考（{} 字）",
+                                                reasoning.chars().count()
+                                            ))
+                                            .weak()
+                                            .small(),
+                                        )
+                                        .id_salt(message.id)
+                                        .default_open(false)
+                                        .show(ui, |ui| {
+                                            let mut text = reasoning;
+                                            ui.add(
+                                                TextEdit::multiline(&mut text)
+                                                    .frame(egui::Frame::NONE)
+                                                    .desired_width(f32::INFINITY),
+                                            );
+                                        });
+                                    }
+
                                     match editing.as_mut() {
                                         Some((id, draft)) if *id == message.id => {
                                             let box_response = ui.add_sized(
@@ -2828,6 +2994,34 @@ impl App {
                                             RichText::new(format!("正在生成… {elapsed:.1}s")).weak(),
                                         );
                                     });
+                                    if !thinking.is_empty() {
+                                        // 推理型模型先"想"一段：把它显示出来，
+                                        // 否则那十几秒界面看起来像死着（它不进最终消息）。
+                                        ui.label(
+                                            RichText::new(format!(
+                                                "思考中… {} 字",
+                                                thinking.chars().count()
+                                            ))
+                                            .weak()
+                                            .small(),
+                                        );
+                                        let mut text = thinking.as_str();
+                                        ui.add(
+                                            TextEdit::multiline(&mut text)
+                                                .frame(egui::Frame::NONE)
+                                                .desired_width(f32::INFINITY),
+                                        );
+                                    }
+                                    if !streamed.is_empty() {
+                                        // 逐字长出来的正文：**这是动画**。真消息落库后由它接管
+                                        // （同一个 id，气泡自然消失）；它不进树、不参与变量计算。
+                                        let mut text = streamed.as_str();
+                                        ui.add(
+                                            TextEdit::multiline(&mut text)
+                                                .frame(egui::Frame::NONE)
+                                                .desired_width(f32::INFINITY),
+                                        );
+                                    }
                                 });
                         }
                     });

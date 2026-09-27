@@ -129,12 +129,15 @@ class Stub(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
+        # 必须说 **SSE**：provider 默认开流，对话请求会带 `stream: true`，
+        # 回普通 JSON 会被当成"流里一个字都没有"（对账就会在夹具里翻车）。
         self.rfile.read(int(self.headers.get('content-length', 0)))
-        body = json.dumps(
-            {"choices": [{"message": {"role": "assistant", "content": "沙盒回复"}}]}
+        body = (
+            'data: {"choices":[{"delta":{"content":"沙盒回复"}}]}\n\n'
+            'data: [DONE]\n\n'
         ).encode()
         self.send_response(200)
-        self.send_header('content-type', 'application/json')
+        self.send_header('content-type', 'text/event-stream')
         self.send_header('content-length', str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -244,6 +247,7 @@ try:
         ('DELETE', '/conversations/{id}/messages/{message_id}/siblings'): 200,
         ('GET', '/conversations/{id}/outgoing'): 200, ('GET', '/conversations/{id}/variables'): 200,
         ('GET', '/conversations/{id}/branches'): 200, ('GET', '/conversations/{id}/status'): 200,
+        ('GET', '/conversations/{id}/turn/text'): 200,
         ('POST', '/conversations/{id}/resend'): 202, ('POST', '/conversations/{id}/stop'): 200,
         ('GET', '/providers'): 200, ('POST', '/providers'): 201,
         ('PATCH', '/providers/{id}'): 200, ('DELETE', '/providers/{id}'): 204,
@@ -252,6 +256,7 @@ try:
         ('GET', '/agents'): 200, ('POST', '/agents'): 201,
         ('PATCH', '/agents/{id}'): 200, ('DELETE', '/agents/{id}'): 204,
         ('GET', '/debug/state'): 200, ('GET', '/debug/file/{name}'): 200,
+        ('GET', '/debug/last-payload'): 200,
     }
 
     print('\n════ 接口清单（抽取自处理器签名）════')
