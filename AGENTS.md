@@ -112,6 +112,14 @@ cargo build && python3 scripts/api-audit.py     # 改过接口就跑一遍（它
 | PATCH | `/agents/{id}` | `UpdateAgentReq` | `Agent` | `new_id` = 重命名（把 `default_agent` 与会话引用一起搬） |
 | DELETE | `/agents/{id}` | — | 204 | 内置默认 agent 不可删 |
 
+### 计划中的接口（**尚未实现**，形状先钉住）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/conversations/{id}/fork` | 复制出新会话（真分支用），201 + 新 `Conversation`。一个事务里：① 复制会话行（`provider`/`model`/`agent_id`/`system_prompt` 原样，`title` = `原标题（副本）`，新 id）；② 复制**当前路径 + 尾巴那一层的兄弟**的消息（全 new id、建 `旧→新` 映射，`created_at` 保留原值）；③ 复制 `summaries` 行并按映射改写 `parent_summary_id` 与 `messages.summary_id`（副本不用重新总结）；④ `current_leaf` 指向映射后的新尾巴。**变量不用管**（从复制过来的正文现演，结果逐键相同） |
+| GET | `/conversations/{id}/export` | 自包含 JSON（会话 + 当前路径 + 摘要），供归档与搬运 |
+| GET | `/conversations/{id}/summaries` | 给界面显示/编辑/重摇摘要用（尚未定稿） |
+
 ### 运维
 
 | 方法 | 路径 | 请求体 | 响应 | 说明 |
@@ -221,20 +229,192 @@ cargo build && python3 scripts/api-audit.py     # 改过接口就跑一遍（它
 
 ## 数据模型（`src/store.rs` 的 `MIGRATIONS` 是唯一权威）
 
-```sql
-conversations(id, title, system_prompt, provider, model, agent_id, current_leaf, created_at, updated_at)
-messages(id, conversation_id → conversations ON DELETE CASCADE, role, content, parent_id → messages ON DELETE CASCADE, created_at,
-         reasoning,                                  -- 推理型模型的"思考"：只留档，不进历史、不扫 <state>、不可编辑
-         reasoning_ms,                               -- 思考用时（受理 → 第一段正文）；没思考过是 NULL
-         duration_ms,                                -- 这一轮整段生成花了多久（受理 → 落库）
-         usage)                                      -- 用量 JSON：{prompt_tokens, completion_tokens, total_tokens, cached_tokens, reasoning_tokens, raw}
-models(provider, upstream_id, upstream_name, owned_by, context_length, max_output, display_name, params, tokenizer,
-       upstream_params, first_seen_at, last_seen_at)   -- 发现所得与用户覆盖分列；PRIMARY KEY(provider, upstream_id)
-provider_state(provider, last_refresh_at)
-```
+**四张表，全部是 TEXT id（UUIDv7，按时间可排序）+ 毫秒整数时间戳。**
 
-- 顺序：**树**（见不变量 4）；`messages_by_conv` / `messages_by_parent` 两个索引。
-- 迁移由 `PRAGMA user_version` 驱动，只追加、不改旧的；`foreign_keys=ON`、`journal_mode=WAL`。
+### `conversations` —— 一处会话
+
+| 列 | 类型 | 说明 |
+|---|---|---|
+| `id` | TEXT PK | UUIDv7 |
+| `title` | TEXT NOT NULL DEFAULT '' | 首句自动生成；空串 = 还没起名 |
+| `system_prompt` | TEXT NOT NULL DEFAULT '' | **空串 = 没覆盖**（用 agent 的 ⇒ 变量底子算"全局"）；自己写了 ⇒ 算"本会话" |
+| `provider` | TEXT NOT NULL | **软引用**（无外键）→ `providers.json` 的 id；删了就回落兜底话术 |
+| `model` | TEXT NOT NULL | 该渠道下的 `upstream_id`；`(provider, model)` 才是模型身份 |
+| `agent_id` | TEXT NOT NULL DEFAULT 'default' | **软引用** → `agents.json`；找不到静默回空提示词（所以重命名由 PATCH 一处维护） |
+| `current_leaf` | TEXT | **整条对话 = 从它沿 `parent_id` 回溯到根**；无外键，删子树时由代码退回 |
+| `created_at` / `updated_at` | INTEGER NOT NULL | 毫秒；界面按 `updated_at` 排序 |
+
+### `messages` —— 一条消息，**同时是树的一个节点**
+
+| 列 | 类型 | 说明 |
+|---|---|---|
+| `id` | TEXT PK | 生成回复时**受理那一刻就算好**并发给前端，落库用同一个 |
+| `conversation_id` | TEXT NOT NULL，FK → `conversations(id)` **CASCADE** | |
+| `role` | TEXT NOT NULL，`CHECK(role IN ('user','assistant'))` | 只有两种 |
+| `content` | TEXT NOT NULL | **存档本体**：`<state>` 块原样留着（发出前才剔除、改注入当前变量表） |
+| `parent_id` | TEXT，FK → `messages(id)` **CASCADE** | **树就在这一列**：NULL = 根；兄弟 = 分支；删父连子孙一起删 |
+| `created_at` | INTEGER NOT NULL | 毫秒 |
+| `reasoning` | TEXT | 推理型模型的"思考"：**只留档**——不进历史、不扫 `<state>`、不可编辑 |
+| `reasoning_ms` | INTEGER | 思考用时（受理 → 第一段正文）；没思考过 NULL |
+| `duration_ms` | INTEGER | 这一轮整段耗时（受理 → 落库） |
+| `usage` | TEXT（JSON） | 归一化后的 `{prompt_tokens, completion_tokens, total_tokens, cached_tokens, reasoning_tokens, raw}` |
+
+后四列**只服务显示**：出站、变量、分支、编辑一律不看它们。
+
+### `models` —— 发现所得 + 用户覆盖（PRIMARY KEY `(provider, upstream_id)`）
+
+| 列 | 类型 | 说明 |
+|---|---|---|
+| `provider` / `upstream_id` | TEXT NOT NULL | 联合主键；软引用 + 上游原样 id |
+| `upstream_name` / `owned_by` | TEXT | 发现时记下；**用户覆盖 > 上游名 > prettify** |
+| `context_length` / `max_output` | INTEGER | 上游给的（**实测 DeepSeek / commandcode 都不给 context_length** ⇒ 常 NULL） |
+| `display_name` | TEXT | **用户覆盖名**；与发现所得分列，刷新不会抹掉 |
+| `params` | TEXT NOT NULL DEFAULT '{}' | **用户覆盖参数**（JSON） |
+| `upstream_params` | TEXT NOT NULL DEFAULT '{}' | 发现时记下的建议参数 |
+| `tokenizer` | TEXT NOT NULL DEFAULT `{"kind":"approx","ratio":1.3}` | 算预算用；默认"估算 ×1.3" |
+| `first_seen_at` / `last_seen_at` | INTEGER NOT NULL | 每次刷新更新 `last_seen_at`；**这次没见到就删行** ⇒ 列表 = 上游当前那份 |
+
+### `provider_state`
+
+| 列 | 类型 | 说明 |
+|---|---|---|
+| `provider` | TEXT PK | 软引用 |
+| `last_refresh_at` | INTEGER NOT NULL | "上次拉取：N 分钟前"；`forget_provider` 连它一起清 |
+
+### 索引 / 外键 / 运行时
+
+- 索引：`messages_by_conv(conversation_id, id)`（`id` 是 UUIDv7 ⇒ 同龄兄弟按时间分先后）、`messages_by_parent(parent_id)`（级联 + 数孩子）。
+- 外键**只有两条**：`messages.conversation_id → conversations`、`messages.parent_id → messages`，都 CASCADE。`current_leaf` / `agent_id` / `provider` 是**故意不加约束**的软引用。
+- 迁移由 `PRAGMA user_version` 驱动（当前 **9**），只追加、不改旧的；`foreign_keys=ON`、`journal_mode=WAL`；写入由一把 `Mutex<Store>` 串行化。
+
+## 对话段 / 摘要（summary）—— 骨架已定，**尚未实现**
+
+> **过程与依据见 `IMPORTANT_DISCUSSION.md`**（那一份记着讨论过程中的**对话原文**与逐步结论；
+> 本节只是抽出来的**形状**。两处冲突时以那份为准。）
+
+目标：让"故事梗概"的体积**永远**压在预算内（而不是随回合数线性涨），**原文一律保留**。
+
+### 形状：指针链，不是层级数字
+
+- `messages.summary_id`（可空）：这条消息被收拢进了哪条摘要 —— **多条消息指向同一条摘要**；
+- `summaries.parent_summary_id`（可空）：这条摘要又被收拢进了哪条摘要 —— **深度 = 指针链长度**，**不存 `level`**；
+- 摘要**不是树的节点** ✗：不往 `messages` 插行、不改 `parent_id`；`AF, G` 是**装配出来的视图**，不是存储形态；
+- **硬不变量**：压缩**只允许往 `summaries` 插一行**，绝不插/改/删 `messages`。
+
+### 为什么不需要"区间见证"
+
+因为**分叉只允许出现在尾巴上**（切分支只允许在最新那句 —— 现在的代码就是这样，旧消息上根本没有分支按钮），
+而压缩**只吃尾巴之外**（终保护区）⇒ 被压的那段在压缩那一刻**是线性的** ⇒
+永不出现"区间里某条消息不在当前路径上"⇒ **纯指针足够**。
+
+### 压缩 = 定稿 ⇒ 可以剪枝
+
+`compact_prunes_siblings`（默认开）：压缩时对区间内每条被覆盖的消息，**只保留它在当前路径上的那个孩子**，
+其余整棵子树删掉（复用 `store::delete_subtrees`）。三条硬条件：
+
+1. **先落摘要、再剪枝、同一个事务**（反过来：总结失败 = 白丢数据）；
+2. **剪枝前先导出** `data/archive/*.json`（含被剪子树全文）；
+3. 剪完在通知里报"剪掉 N 条旧分支（已导出）"，**不许静默**。
+
+### 变量：摘要里**不存**状态
+
+- 摘要正文**只写叙事**；产出里若混进 `<state>` 块，程序**剔除并记日志**
+  （三条路同一道闸：初次生成 / 手改 / 重摇）；
+- **摘要表上没有状态快照这一列** ✗ —— 状态永远**从原文现演**（`vars::VariableView::from_sources`），
+  递推到哪条消息就是哪条的状态。理由：状态是**端点**的属性，不是**段**的属性；存进摘要 = 制造第二个真相来源
+  （改一条旧消息它就悄悄过期）。而且变量计算比上下文计算便宜几个数量级 ——
+  **现在的实现每一轮都在整条路径上现演一遍**，从来没成为瓶颈；
+- 压缩的提示词里**附一份程序算好的状态**（算到**该区间结束**为止，**无论这层摘要有多少层深** ——
+  L2 覆盖 1–100 就附 1–100 的状态），并标明「**程序事实，仅供参考，不要写进梗概**」；
+- **快照（将来真需要时再上）**要**独立成系统**：`state_snapshots(conversation_id, message_id, values)`，
+  始终**从第一条消息推起**，但能接着上一个快照往后推进（快照₂ = 快照₁ + 往后 100 条）；
+  它覆盖的消息一经编辑即失效。**现在不做** —— 现演的代价足够低。
+
+### 清除原文（P3 才做）
+
+只有"删原文"会碰变量 ⇒ 先在该处放一条「（已归档）」存根，正文里写 `<state>` 块把净效果落回去 ⇒
+再删 ⇒ 用**归档前后 `/variables` 逐键相等**做验收（不需要存快照：删之前现演一遍比对即可）。
+
+清除次序（从最安全最划算开始）：① 清 `reasoning`（实测占**六成字节**，纯展示）→
+② 状态存根 + 删原文 → ③ 整段导出 `data/archive/*.json` 再删。
+
+### 装配时的行走算法（细节见 §20）
+
+从**路径根**逐条往前走：消息有 `summary_id` 就取它；若它还有 `parent_summary_id`（P），
+**往后瞄一眼** —— 紧接着那串消息的 `summary_id` 是否全 ∈ P 的孩子？是 → **用 P** 并跳过整串；
+否 → 用 S 并跳过它覆盖的那串；都没有 → 发原文走一步。
+**"跳过"靠继续读 `summary_id` 判断，不存范围**（这就是不需要"两端见证"的原因）。
+同一条出站里**混着不同层级是正常的**（每处取当前能取到的最粗），各段互不重叠。
+
+### 压缩粒度 = 对话块（细节见 §16）
+
+**在 `assistant → user` 的交界处切块**（`U1 A1 | U2 U3 A3 | U4 A4 A5`）。四条硬规矩：
+① **块绝不被劈开**（章按 token 凑，只在块边界停）；② **最后那个"开着的块"永不压**；
+③ "≥10 个"放宽成"**≥10 个块 或 ≥章预算**"（否则一个超大块会让压缩永远触发不了）；
+④ **块是推导出来的，不入库**（不加列/不加表）。**块是压缩单位，不是文本合并** —— `U2 U3` 仍是两条消息两份原文。
+块边界同时是**状态的天然检查点**（§15 的 before/after 状态算在块边界上）。
+
+### 压缩提示词的形状（细节见 `IMPORTANT_DISCUSSION.md` §15）
+
+`[system 摘要规则] → [【前情提要】上一段摘要正文] → [原文（含当时 <state>，不含思考）] → [NOW Triggers Compaction + 【程序·状态】before/after]`。
+要点：程序注入的块用**与正文不同的标签**（正文本来就有 `<state>`，会撞车）；末尾紧挨着状态再重复一句
+"不要写进梗概"；两个状态都**从原始消息现演**（before = 区间前一条，after = 区间末条，层级多深都一样）；
+这一整段模板属于 `prompt_version`。
+
+### P1 的截断策略（**尚未实现**，细节见 `IMPORTANT_DISCUSSION.md` §19）
+
+`build_outgoing` 组装后按预算收：① 系统提示词（含 `<state>`）永远保留；② 保留最近若干块的原文（终保护区，
+默认 10k token）；③ 仍超 ⇒ **从最老的整块开始丢**（**绝不劈块**）；④ 丢过东西就在系统提示词末尾加一行
+**【更早的 N 轮已省略】**；⑤ **丢的是发送内容，不是库 —— 档案永远完整**。
+
+预算 = `min(ctx_len − max_output, target_context_tokens)`（缺省 40000；`max_output` 缺省 4096；`ctx_len` 为 NULL 就不参与）。
+**单块自己超预算 ⇒ 照发、标 `over_budget`**（让模型自己报错，比我们瞎切好）。边界只看 **`assistant → user`** 一种交界。
+将来摘要上线后，第 ③ 步的"丢"换成"换成梗概"，顺序与接口都不变。
+
+### 装配顺序（只在 `build_outgoing` 这一处，仍是唯一拼装路径）
+
+`[系统 + <state>] [粗梗概] [细梗概] [最近原文] [新消息]` ——
+越靠前越稳定，与实测的缓存行为（只丢尾巴）对齐。
+
+### 摘要是派生数据
+
+失效/坏掉只是"退回原文 + 截断"，**绝不阻塞一轮**；留 `provider` / `model` / `prompt_version` / `source_ids`
+以便整批重做。
+
+计划中的表（**尚未实现**，形状先钉住）：
+
+| 列 | 类型 | 说明 |
+|---|---|---|
+| `id` | TEXT PK | UUIDv7 |
+| `conversation_id` | TEXT NOT NULL，FK → `conversations(id)` CASCADE | |
+| `parent_summary_id` | TEXT（可空），FK → `summaries(id)` | 合并进了哪条更高层的摘要；**深度 = 指针链长度**，不存 level |
+| `source_kind` | TEXT NOT NULL，`CHECK(source_kind IN ('message','summary'))` | 成员是消息还是摘要（**同质**：一条摘要的成员不许混） |
+| `text` | TEXT NOT NULL | 摘要正文（**只写叙事**；混进 `<state>` 会被剔除并记日志） |
+| `tokens` | INTEGER NOT NULL DEFAULT 0 | 估算 token，排预算用 |
+| `source_ids` | TEXT（JSON 数组） | 当时到底吃的是什么（消息 id 或摘要 id），供审计与整批重做 |
+| `provider` / `model` | TEXT NOT NULL | 谁生成的（模型身份按不变量 5 分两列） |
+| `prompt_version` | INTEGER NOT NULL | 模板一改就 +1 ⇒ 能整批重做 |
+| `usage` | TEXT（JSON） | 这次摘要自己的花费（形状同 `messages.usage`） |
+| `dirty` | INTEGER NOT NULL DEFAULT 0 | 被覆盖的消息被编辑过就置 1；界面显示"已过期 · 重新生成"，装配时照用不误 |
+| `created_at` | INTEGER NOT NULL | 毫秒 |
+
+索引：`messages(summary_id)`、`summaries(conversation_id)`、`summaries(parent_summary_id)`。
+**成员与覆盖范围不用存**：成员靠 `messages.summary_id` 反查，范围靠它们在当前路径上的位置得出。
+
+### 参数（建议默认）
+
+`compact_blocks = 10`（**单位是块，不是消息**）；`compact_tokens = 20000`（章预算）；
+章的关闭条件：走到某个块边界时，凑够 10 个块**或**累计 ≥ 20k token，谁先到算谁；单个超长块独占一章。
+预算 = `min(模型上下文 − 输出预留, 用户期望的上下文长度)`；低水位 = 预算 × 0.8；终保护区 = 最近约 10k token。
+块本身**不建表**（是当前路径上的视图，按 `assistant → user` 交界切）：需要指一个块时用**两端消息 id**，
+块号只用于显示；`summaries` 只加一列 `blocks`（覆盖了几个块）。
+
+### 次序
+
+**P1** 预算 + 截断 + 占用显示（**先写两条测试**：压缩只插不改 / 归档前后 `/variables` 逐键相等）
+→ **P1.5** 导出归档 + Fork（**剪枝的前置**）
+→ **P2** 章节摘要 + 剪枝
+→ **P3** 金字塔 + 清原文。
 
 ## 本机环境
 
@@ -245,6 +425,7 @@ provider_state(provider, last_refresh_at)
 
 ## 本项目的协作习惯
 
+- **重大设计讨论要留档到 `IMPORTANT_DISCUSSION.md`**：记**对话原文 + 已达成的结论**，**不记推理过程**；AGENTS.md 只留形状与指针。上下文有限，交接就靠这两份。
 - 注释、提交信息用**中文**；提交信息写清"为什么"，别只写"改了什么"。
 - 改完跑 `cargo test`；**UI 改动必须实跑**（真机或灌事件的无头验证），不要只凭代码断言。
 - **后端代码一变就重启后端和 egui 前端**：先 `cargo build`，再重启 `./target/debug/server`（唯一权威）与 `./target/debug/microchat`（界面）——不然你在界面上验的是旧二进制。
