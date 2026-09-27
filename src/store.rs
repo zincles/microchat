@@ -463,6 +463,38 @@ impl Store {
         Ok(rows.filter_map(std::result::Result::ok).collect())
     }
 
+    /// 写入一条摘要的正文（**手改 / 重摇都走它**）：正文、tokens、dirty 一起改，同一道闸。
+    ///
+    /// `dirty` 由调用方给：重算过覆盖范围就置回 `false`（"这条是新口径了"）。
+    pub fn update_summary_text(
+        &mut self,
+        id: Uuid,
+        text: &str,
+        tokens: i64,
+        dirty: bool,
+    ) -> Result<()> {
+        let touched = self.conn.execute(
+            "UPDATE summaries SET text = ?1, tokens = ?2, dirty = ?3 WHERE id = ?4",
+            params![text, tokens, dirty as i64, id.to_string()],
+        )?;
+        (touched > 0).then_some(()).ok_or(Error::NotFound)
+    }
+
+    /// 把"覆盖了这些消息"的摘要（**以及它的各级祖先**）标为过期。
+    ///
+    /// 编辑或删掉一条被覆盖的消息时调（§18）：祖先也覆盖着它，不一起标就是在撒谎。
+    /// 摘要**照旧参与装配** —— `dirty` 只影响显示（"已过期 · 重新生成"）。
+    /// 返回标了几条。
+    pub fn mark_summaries_dirty_for(&mut self, message_ids: &[Uuid]) -> Result<usize> {
+        let tx = self.conn.transaction()?;
+        let mut marked = 0;
+        for message_id in message_ids {
+            marked += mark_summary_chain_dirty_in(&tx, message_id)?;
+        }
+        tx.commit()?;
+        Ok(marked)
+    }
+
     /// 每条消息"在同龄兄弟里排第几、一共几条"，给界面上「< 2/3 >」用。
     pub fn branch_info(&self, conversation_id: Uuid) -> Result<BTreeMap<Uuid, BranchInfo>> {
         let all = self.list_all_messages(conversation_id)?;
@@ -586,6 +618,8 @@ impl Store {
             "UPDATE conversations SET updated_at = ?1 WHERE id = ?2",
             params![now, conversation],
         )?;
+        // 改的正文可能正被某条摘要覆盖 ⇒ 那条摘要（含祖先）标过期（§18）
+        mark_summary_chain_dirty_in(&tx, &message_id)?;
         tx.commit()?;
         Ok(updated)
     }
@@ -656,6 +690,10 @@ impl Store {
             .and_then(|conversation| conversation.current_leaf);
         let now = now_ms();
         let tx = self.conn.transaction()?;
+        // **先标后删**：删掉消息它指向摘要的指针就没了，那时再想标就找不到人（§18）
+        for id in &doomed {
+            mark_summary_chain_dirty_in(&tx, id)?;
+        }
         for id in &doomed {
             tx.execute(
                 "DELETE FROM messages WHERE id = ?1 AND conversation_id = ?2",
@@ -1141,6 +1179,25 @@ fn row_to_message(row: &Row<'_>) -> rusqlite::Result<Message> {
     })
 }
 
+/// 把"覆盖了这条消息"的摘要**及其各级祖先**标为过期。**在调用方的事务里跑**。
+///
+/// 递归 CTE 一趟上去：`messages.summary_id` → `summaries.parent_summary_id` → …（§17 的指针链）。
+fn mark_summary_chain_dirty_in(conn: &Connection, message_id: &Uuid) -> Result<usize> {
+    let marked = conn.execute(
+        "WITH RECURSIVE chain(id, parent_summary_id) AS (
+             SELECT summaries.id, summaries.parent_summary_id
+             FROM messages JOIN summaries ON summaries.id = messages.summary_id
+             WHERE messages.id = ?1
+             UNION ALL
+             SELECT summaries.id, summaries.parent_summary_id
+             FROM summaries JOIN chain ON summaries.id = chain.parent_summary_id
+         )
+         UPDATE summaries SET dirty = 1 WHERE id IN (SELECT id FROM chain)",
+        params![message_id.to_string()],
+    )?;
+    Ok(marked)
+}
+
 /// 摘要行的 INSERT（`record_summary` 要在事务里复用，所以按 `&Connection` 收口）。
 fn insert_summary_in(conn: &Connection, summary: &Summary) -> Result<()> {
     conn.execute(
@@ -1356,6 +1413,69 @@ mod tests {
         );
         let untouched = s.list_all_messages(other.id).unwrap();
         assert_eq!(untouched[0].summary_id, None, "别处那条一个字不许动");
+    }
+
+    /// 编辑/删除被覆盖的消息 ⇒ 覆盖它的摘要**含各级祖先**标过期；摘要正文一字不动。
+    /// 手改/重摇写入走 `update_summary_text`（同一道闸）。
+    #[test]
+    fn editing_covered_message_marks_summary_chain_dirty() {
+        let mut s = store();
+        let conv = s.create_conversation("dummy", "dummy", "").unwrap();
+        let first = s.insert_message(conv.id, Role::User, "第一句", None).unwrap();
+        let second = s
+            .insert_message(conv.id, Role::Assistant, "第二句", Some(first.id))
+            .unwrap();
+
+        // L1 覆盖两句；L2 覆盖 L1（成员是摘要 ⇒ source_kind 换掉）
+        let l1 = summary_stub(conv.id, vec![first.id, second.id]);
+        s.record_summary(&l1, &[first.id, second.id]).unwrap();
+        let mut l2 = summary_stub(conv.id, vec![]);
+        l2.source_kind = SummarySourceKind::Summary;
+        l2.source_ids = vec![l1.id];
+        s.insert_summary(&l2).unwrap();
+        s.conn
+            .execute(
+                "UPDATE summaries SET parent_summary_id = ?1 WHERE id = ?2",
+                params![l2.id.to_string(), l1.id.to_string()],
+            )
+            .unwrap();
+
+        let marked = s.mark_summaries_dirty_for(&[second.id]).unwrap();
+        assert_eq!(marked, 2, "L1 与它的祖先 L2 都得标");
+        assert!(s.list_summaries(conv.id).unwrap().iter().all(|s| s.dirty));
+
+        // 编辑正文：`update_message` 内部的钩子顺手标
+        s.conn.execute("UPDATE summaries SET dirty = 0", []).unwrap();
+        s.update_message(conv.id, first.id, "改过的第一句").unwrap();
+        assert!(
+            s.list_summaries(conv.id).unwrap().iter().all(|s| s.dirty),
+            "改了被覆盖的正文，摘要该过期"
+        );
+
+        // 删除：**先标后删**（指针还在的时候才找得到）
+        s.conn.execute("UPDATE summaries SET dirty = 0", []).unwrap();
+        s.delete_message(conv.id, second.id).unwrap();
+        assert!(
+            s.list_summaries(conv.id).unwrap().iter().all(|s| s.dirty),
+            "删了被覆盖的消息，摘要该过期"
+        );
+
+        // 手改/重摇写入：正文、tokens、dirty 一起落
+        let l1_id = l1.id;
+        s.update_summary_text(l1_id, "重写过的梗概", 42, false).unwrap();
+        let after = s
+            .list_summaries(conv.id)
+            .unwrap()
+            .into_iter()
+            .find(|summary| summary.id == l1_id)
+            .unwrap();
+        assert_eq!(after.text, "重写过的梗概");
+        assert_eq!(after.tokens, 42);
+        assert!(!after.dirty, "手改过就是新口径");
+        assert!(
+            s.update_summary_text(Uuid::now_v7(), "x", 1, false).is_err(),
+            "不存在的摘要 ⇒ NotFound"
+        );
     }
 
     /// 删摘要 ⇒ 成员指针自动断开（ON DELETE SET NULL），正文照旧。

@@ -105,6 +105,71 @@ pub fn model_list(views: &[ProviderView]) -> Vec<ModelListItem> {
         .collect()
 }
 
+/// 给界面（关系图 / 摘要面板）用的摘要视图。
+///
+/// `first/last_message_id` 与 `members` 由服务端**现算**：成员反查 + 在**当前路径**上的位置，
+/// 不存库（§19.F）。`members == 0` ⇒ **孤立摘要**（成员被剪/删光了），界面该显示成"可清理"。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SummaryView {
+    pub id: uuid::Uuid,
+    pub parent_summary_id: Option<uuid::Uuid>,
+    pub source_kind: crate::model::SummarySourceKind,
+    pub text: String,
+    pub blocks: i64,
+    pub tokens: i64,
+    /// 消息摘要 = 当前路径上指向它的消息数；摘要的摘要 = 指向它的子摘要数。
+    pub members: usize,
+    pub first_message_id: Option<uuid::Uuid>,
+    pub last_message_id: Option<uuid::Uuid>,
+    pub dirty: bool,
+    pub provider: String,
+    pub model: String,
+    pub prompt_version: i64,
+    pub created_at: i64,
+}
+
+/// 一条会话的摘要视图（含现算的成员数与首尾消息）。会话不存在 ⇒ `NotFound`。
+pub fn summary_views(store: &Store, conversation_id: uuid::Uuid) -> Result<Vec<SummaryView>> {
+    store
+        .get_conversation(conversation_id)?
+        .ok_or(crate::store::Error::NotFound)?;
+    let path = store.list_messages(conversation_id)?;
+    let summaries = store.list_summaries(conversation_id)?;
+    Ok(summaries
+        .iter()
+        .map(|summary| {
+            let covered: Vec<uuid::Uuid> = path
+                .iter()
+                .filter(|message| message.summary_id == Some(summary.id))
+                .map(|message| message.id)
+                .collect();
+            let children = summaries
+                .iter()
+                .filter(|child| child.parent_summary_id == Some(summary.id))
+                .count();
+            SummaryView {
+                id: summary.id,
+                parent_summary_id: summary.parent_summary_id,
+                source_kind: summary.source_kind,
+                text: summary.text.clone(),
+                blocks: summary.blocks,
+                tokens: summary.tokens,
+                members: match summary.source_kind {
+                    crate::model::SummarySourceKind::Message => covered.len(),
+                    crate::model::SummarySourceKind::Summary => children,
+                },
+                first_message_id: covered.first().copied(),
+                last_message_id: covered.last().copied(),
+                dirty: summary.dirty,
+                provider: summary.provider.clone(),
+                model: summary.model.clone(),
+                prompt_version: summary.prompt_version,
+                created_at: summary.created_at,
+            }
+        })
+        .collect())
+}
+
 pub fn model_view(entry: ModelEntry) -> ModelView {
     ModelView {
         upstream_id: entry.upstream_id.clone(),
@@ -143,7 +208,7 @@ mod tests {
     use crate::model::DiscoveredModel;
     use crate::store::Store;
 
-    use super::{model_list, views};
+    use super::{model_list, summary_views, views};
 
     fn provider(id: &str) -> ProviderConfig {
         ProviderConfig {
@@ -308,5 +373,75 @@ mod tests {
             .map(|model| model.upstream_id.as_str())
             .collect();
         assert_eq!(ids, ["here"], "视图里应该只剩上游最新给的那份");
+    }
+
+    /// 摘要视图：成员数与首尾**现算**（不是存的）；成员没了 ⇒ members 少（孤立摘要可清理）。
+    #[test]
+    fn summary_views_compute_members_and_bounds() {
+        use crate::model::{Role, Summary, SummarySourceKind};
+        use uuid::Uuid;
+
+        let mut store = Store::open_in_memory().unwrap();
+        let conv = store.create_conversation("dummy", "dummy", "").unwrap();
+        let first = store
+            .insert_message(conv.id, Role::User, "第一句", None)
+            .unwrap();
+        let second = store
+            .insert_message(conv.id, Role::Assistant, "第二句", Some(first.id))
+            .unwrap();
+
+        let summary = |id, kind, text: &str, parent: Option<Uuid>| Summary {
+            id,
+            conversation_id: conv.id,
+            parent_summary_id: parent,
+            source_kind: kind,
+            text: text.to_owned(),
+            blocks: 1,
+            tokens: 12,
+            source_ids: Vec::new(),
+            provider: "dummy".to_owned(),
+            model: "dummy".to_owned(),
+            prompt_version: 7,
+            usage: None,
+            dirty: false,
+            created_at: 0,
+        };
+        // 上层先插，下层的 parent 指着它（指针朝上：`parent_summary_id` = "我归谁管"）
+        let high = summary(
+            Uuid::now_v7(),
+            SummarySourceKind::Summary,
+            "一堆小节收成的大节",
+            None,
+        );
+        store.insert_summary(&high).unwrap();
+        let low_id = Uuid::now_v7();
+        let low = summary(
+            low_id,
+            SummarySourceKind::Message,
+            "两句的梗概",
+            Some(high.id),
+        );
+        store.record_summary(&low, &[first.id, second.id]).unwrap();
+
+        let views = summary_views(&store, conv.id).unwrap();
+        assert_eq!(views.len(), 2);
+        let low_view = views.iter().find(|view| view.id == low_id).unwrap();
+        assert_eq!(low_view.members, 2, "两条消息都指向它");
+        assert_eq!(low_view.first_message_id, Some(first.id));
+        assert_eq!(low_view.last_message_id, Some(second.id));
+        assert_eq!(low_view.prompt_version, 7);
+        let high_view = views.iter().find(|view| view.id == high.id).unwrap();
+        assert_eq!(high_view.members, 1, "摘要的摘要：成员 = 子摘要数");
+        assert_eq!(high_view.first_message_id, None, "它不是贴在消息上的");
+
+        // 删掉一条被覆盖的消息 ⇒ 视图当场变（现算），并且摘要被标过期（§18 那条钩子）
+        store.delete_message(conv.id, second.id).unwrap();
+        let views = summary_views(&store, conv.id).unwrap();
+        let low_view = views.iter().find(|view| view.id == low_id).unwrap();
+        assert_eq!(low_view.members, 1);
+        assert_eq!(low_view.last_message_id, Some(first.id));
+        assert!(low_view.dirty, "删被覆盖的消息 ⇒ 该过期");
+
+        assert!(summary_views(&store, Uuid::now_v7()).is_err(), "会话不存在");
     }
 }

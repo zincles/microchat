@@ -55,6 +55,30 @@ pub enum Command {
         token: Option<String>,
         chat: microchat::config::ChatConfig,
     },
+    /// 拉内置工具清单（名字/说明/内置模板来自代码 + 现在生效的覆盖）。
+    ListSubAgents {
+        base: String,
+        token: Option<String>,
+    },
+    /// 整段替换工具的覆盖项（只认已知工具 id，别的会 400）。
+    SaveSubAgents {
+        base: String,
+        token: Option<String>,
+        config: microchat::config::SubAgentsConfig,
+    },
+    /// **手动压缩**：把最老的 N 个块收成一条摘要（202 受理，进度看 `/status` 的 `compact`）。
+    Compact {
+        base: String,
+        token: Option<String>,
+        conversation: uuid::Uuid,
+        blocks: usize,
+    },
+    /// 拉某会话的摘要列表（关系图与摘要面板用）。
+    ListSummaries {
+        base: String,
+        token: Option<String>,
+        conversation: uuid::Uuid,
+    },
     /// 把一条会话归档到服务器（`data/archive/*.json`）—— 剪枝前的必做动作。
     ArchiveConversation {
         base: String,
@@ -316,6 +340,20 @@ pub enum Event {
         conversation: uuid::Uuid,
         result: Result<microchat::vars::ContextUsage, String>,
     },
+    /// 工具清单（读与写的结果都是它）。
+    SubAgents(Result<Vec<microchat::server::SubAgentView>, String>),
+    /// 工具覆盖项写回的结果（**用返回的那份覆盖草稿**，好让界面回到"已保存"状态）。
+    SubAgentsSaved(Result<Vec<microchat::server::SubAgentView>, String>),
+    /// 压缩受理的结果（`CompactStatus`；真正跑完要看 `/status`）。
+    CompactionAccepted {
+        conversation: uuid::Uuid,
+        result: Result<microchat::turn::CompactStatus, String>,
+    },
+    /// 摘要列表（每条带服务端现算的成员数与首尾消息）。
+    Summaries {
+        conversation: uuid::Uuid,
+        result: Result<Vec<microchat::registry::SummaryView>, String>,
+    },
     /// 归档结果：后端回的是收据（路径 / 字节数 / 条数）。
     ConversationArchived(Result<serde_json::Value, String>),
     /// Fork 的结果：新会话原样回来，界面把它选中。
@@ -483,6 +521,20 @@ impl Command {
             Self::ContextUsage { conversation, .. } => {
                 format!("GET /conversations/{}/context", &conversation.to_string()[..8])
             }
+            Self::ListSubAgents { .. } => "GET /subagents".to_owned(),
+            Self::SaveSubAgents { .. } => "PUT /subagents".to_owned(),
+            Self::Compact {
+                conversation,
+                blocks,
+                ..
+            } => format!(
+                "POST /conversations/{}/compact {blocks} 块",
+                &conversation.to_string()[..8]
+            ),
+            Self::ListSummaries { conversation, .. } => format!(
+                "GET /conversations/{}/summaries",
+                &conversation.to_string()[..8]
+            ),
             Self::ArchiveConversation { conversation, .. } => format!(
                 "POST /conversations/{}/archive",
                 &conversation.to_string()[..8]
@@ -519,6 +571,18 @@ fn summarize(event: &Event) -> String {
         Event::Conversations(Err(message)) => format!("失败: {message}"),
         Event::Messages { result, .. } => match result {
             Ok(list) => format!("OK {} 条消息", list.len()),
+            Err(message) => format!("失败: {message}"),
+        },
+        Event::SubAgents(Ok(list)) => format!("OK {} 个内置工具", list.len()),
+        Event::SubAgents(Err(message)) => format!("失败: {message}"),
+        Event::SubAgentsSaved(Ok(list)) => format!("OK 内置 Agent 覆盖已保存（{} 个）", list.len()),
+        Event::SubAgentsSaved(Err(message)) => format!("失败: {message}"),
+        Event::CompactionAccepted { result, .. } => match result {
+            Ok(status) => format!("受理：压缩 {} 个块", status.blocks),
+            Err(message) => format!("压缩失败: {message}"),
+        },
+        Event::Summaries { result, .. } => match result {
+            Ok(list) => format!("OK {} 条摘要", list.len()),
             Err(message) => format!("失败: {message}"),
         },
         Event::ConversationArchived(Ok(receipt)) => format!(
@@ -689,6 +753,47 @@ fn handle(http: &reqwest::blocking::Client, command: Command) -> Event {
                 &base,
                 token.as_deref(),
                 &format!("/api/v1/conversations/{conversation}/context"),
+            ),
+        },
+        Command::ListSubAgents { base, token } => {
+            Event::SubAgents(get(http, &base, token.as_deref(), "/api/v1/subagents"))
+        }
+        Command::SaveSubAgents { base, token, config } => Event::SubAgentsSaved(write_json(
+            http,
+            reqwest::Method::PUT,
+            &format!("{}/api/v1/subagents", base.trim_end_matches('/')),
+            token.as_deref(),
+            serde_json::json!(config),
+        )),
+        Command::Compact {
+            base,
+            token,
+            conversation,
+            blocks,
+        } => Event::CompactionAccepted {
+            conversation,
+            result: write_json(
+                http,
+                reqwest::Method::POST,
+                &format!(
+                    "{}/api/v1/conversations/{conversation}/compact",
+                    base.trim_end_matches('/')
+                ),
+                token.as_deref(),
+                serde_json::json!({ "blocks": blocks }),
+            ),
+        },
+        Command::ListSummaries {
+            base,
+            token,
+            conversation,
+        } => Event::Summaries {
+            conversation,
+            result: get(
+                http,
+                &base,
+                token.as_deref(),
+                &format!("/api/v1/conversations/{conversation}/summaries"),
             ),
         },
         Command::ArchiveConversation {
@@ -1439,6 +1544,10 @@ mod tests {
             Event::Messages { .. } => "Messages",
             Event::Variables { .. } => "Variables",
             Event::ContextUsage { .. } => "ContextUsage",
+            Event::SubAgents(_) => "Tools",
+            Event::SubAgentsSaved(_) => "SubAgentsSaved",
+            Event::CompactionAccepted { .. } => "CompactionAccepted",
+            Event::Summaries { .. } => "Summaries",
             Event::ConversationArchived(_) => "ConversationArchived",
             Event::ConversationForked(_) => "ConversationForked",
             Event::ChatConfig(_) => "ChatConfig",

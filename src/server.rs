@@ -28,7 +28,7 @@ use crate::model::{title_from, Conversation, DiscoveredModel, Message, Role};
 use crate::providers;
 use crate::registry::{self, ProviderView};
 use crate::store::{self, Store};
-use crate::turn::{Phase, TurnRegistry, TurnStatus};
+use crate::turn::{CompactStatus, Phase, TurnRegistry, TurnStatus};
 use crate::vars;
 
 #[derive(Clone)]
@@ -39,6 +39,9 @@ pub struct AppState {
     /// 每个会话"这一轮在不在跑"。**进程内的事实，不进库**——后端一重启就没有生成在跑，
     /// 状态回到 `idle` 是诚实的；库里只会留下占位消息，启动时清掉。
     turns: Arc<TurnRegistry>,
+    /// **压缩任务**的进程内状态（每条会话一份）。既是回报给界面的东西，
+    /// 也是"同一会话同时只允许一个压缩任务"的那道闸（`running` 就是闸门）。
+    compacts: Arc<Mutex<BTreeMap<Uuid, CompactStatus>>>,
     /// **最近一次实际发给上游的载荷**（调试用，只留一份、覆盖式）。
     /// 只活在内存里：重启就没了——它本来就是给"刚才那一下怎么不对"用的。
     last_payload: Arc<Mutex<Option<LastPayload>>>,
@@ -57,6 +60,7 @@ impl AppState {
             auth_token: config.server.auth_token.clone(),
             title_chars: config.chat.title_chars,
             turns: Arc::new(TurnRegistry::new()),
+            compacts: Arc::new(Mutex::new(BTreeMap::new())),
             last_payload: Arc::new(Mutex::new(None)),
             default_provider: config.defaults.provider.clone(),
             default_model: config.defaults.model.clone(),
@@ -68,6 +72,16 @@ impl AppState {
         self.store
             .lock()
             .map_err(|_| ApiError::internal("存储锁中毒"))
+    }
+
+    /// 存储句柄（`Arc<Mutex<Store>>`）：压缩模块要用它自己掌握锁的进出。
+    fn store_handle(&self) -> &Arc<Mutex<Store>> {
+        &self.store
+    }
+
+    /// 这条会话当前的压缩任务状态（没有就是 `None`）。
+    fn compact_status(&self, id: Uuid) -> Option<CompactStatus> {
+        self.compacts.lock().ok()?.get(&id).cloned()
     }
 
     /// 记下这一轮实际发出去的载荷（调试页用）。取不到会话就算了——这是调试信息，
@@ -135,6 +149,14 @@ pub fn router(state: AppState) -> Router {
             "/conversations/{id}/context",
             get(get_conversation_context),
         )
+        .route(
+            "/conversations/{id}/summaries",
+            get(list_conversation_summaries),
+        )
+        .route(
+            "/conversations/{id}/compact",
+            post(compact_conversation),
+        )
         .route("/conversations/{id}/export", get(export_conversation))
         .route(
             "/conversations/{id}/archive",
@@ -145,6 +167,7 @@ pub fn router(state: AppState) -> Router {
         .route("/providers", get(list_providers).post(create_provider))
         .route("/models", get(list_all_models).patch(set_model_context))
         .route("/config/chat", get(get_chat_config).put(put_chat_config))
+        .route("/subagents", get(list_tools).put(put_tools))
         .route("/models/probe", post(probe_models))
         .route(
             "/providers/{id}",
@@ -443,10 +466,11 @@ async fn generate(
         let store = state.lock()?;
         let conversation = store.get_conversation(id)?.ok_or_else(ApiError::not_found)?;
         let messages = store.list_messages(id)?;
+        let summaries = store.list_summaries(id)?;
         let (system_prompt, source) = effective_system_prompt(state, &conversation)?;
         let effective =
             vars::VariableView::from_sources(id, &system_prompt, source, &messages).effective;
-        let outgoing = vars::build_outgoing(&system_prompt, &messages, &effective);
+        let outgoing = vars::build_outgoing(&system_prompt, &messages, &summaries, &effective);
         (conversation, outgoing)
     };
 
@@ -563,7 +587,9 @@ async fn get_turn_status(
     if state.lock()?.get_conversation(id)?.is_none() {
         return Err(ApiError::not_found());
     }
-    Ok(Json(state.turns.status(id)))
+    let mut status = state.turns.status(id);
+    status.compact = state.compact_status(id);
+    Ok(Json(status))
 }
 
 #[derive(Deserialize)]
@@ -713,12 +739,14 @@ async fn get_conversation_outgoing(
     let store = state.lock()?;
     let conversation = store.get_conversation(id)?.ok_or_else(ApiError::not_found)?;
     let messages = store.list_messages(id)?;
+    let summaries = store.list_summaries(id)?;
     let (system_prompt, source) = effective_system_prompt(&state, &conversation)?;
     let effective =
         vars::VariableView::from_sources(id, &system_prompt, source, &messages).effective;
     Ok(Json(vars::build_outgoing(
         &system_prompt,
         &messages,
+        &summaries,
         &effective,
     )))
 }
@@ -753,10 +781,11 @@ async fn get_conversation_context(
         model_context: chat.model_context_tokens,
         trigger: chat.compact_trigger_tokens,
     };
+    let summaries = store.list_summaries(id)?;
     let (system_prompt, source) = effective_system_prompt(&state, &conversation)?;
     let effective =
         vars::VariableView::from_sources(id, &system_prompt, source, &messages).effective;
-    let outgoing = vars::build_outgoing(&system_prompt, &messages, &effective);
+    let outgoing = vars::build_outgoing(&system_prompt, &messages, &summaries, &effective);
     // 最近一条带用量的消息（通常是上一轮的回复）：唯一来自上游的地面真相。
     let last_prompt_tokens = messages
         .iter()
@@ -877,6 +906,116 @@ async fn fork_conversation(
     Ok((StatusCode::CREATED, Json(fresh)))
 }
 
+/// `POST /conversations/{id}/compact` 的请求体。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompactReq {
+    /// 尝试压缩几个**对话块**（块是压缩单位，不是消息 —— §16）。
+    pub blocks: usize,
+}
+
+/// **手动压缩**：把最老的 N 个块收成一条摘要（§24 的第 6 条）。
+///
+/// 受理走 202、后台干活，进度/结果并进 `GET /status` 的 `compact` 字段 —— 与"一轮生成"
+/// 同一套形状（受理与执行分开）。同一会话同时只允许一个压缩任务。
+async fn compact_conversation(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<CompactReq>,
+) -> Result<(StatusCode, Json<CompactStatus>), ApiError> {
+    if req.blocks == 0 {
+        return Err(ApiError::bad_request("至少要压 1 个块"));
+    }
+    if state.lock()?.get_conversation(id)?.is_none() {
+        return Err(ApiError::not_found());
+    }
+    let started = {
+        let mut compacts = state
+            .compacts
+            .lock()
+            .map_err(|_| ApiError::internal("压缩表锁中毒"))?;
+        if compacts.get(&id).is_some_and(CompactStatus::is_running) {
+            return Err(ApiError::conflict("这条会话正在压缩，等它跑完"));
+        }
+        let status = CompactStatus::running(req.blocks, now_ms());
+        compacts.insert(id, status.clone());
+        status
+    };
+    tokio::spawn(run_compaction(state.clone(), id, req.blocks));
+    Ok((StatusCode::ACCEPTED, Json(started)))
+}
+
+/// 后台那半程：选块 → 拼材料 → 叫子 Agent → 过闸 → 落库。全程**不持锁跨 await**。
+async fn run_compaction(state: AppState, id: Uuid, limit: usize) {
+    let result = do_compaction(&state, id, limit).await;
+    let status = {
+        let mut compacts = match state.compacts.lock() {
+            Ok(compacts) => compacts,
+            Err(_) => return,
+        };
+        let entry = compacts
+            .entry(id)
+            .or_insert_with(|| CompactStatus::running(limit, now_ms()));
+        match result {
+            Ok((compacted, summary_id)) => {
+                entry.state = "done".to_owned();
+                entry.compacted = compacted;
+                entry.summary_id = Some(summary_id);
+                entry.error = None;
+            }
+            Err(error) => {
+                // 压不动不影响任何一轮：原文还在，出站照旧全量（§24）
+                entry.state = "error".to_owned();
+                entry.error = Some(error);
+            }
+        }
+        entry.at_ms = now_ms();
+        entry.clone()
+    };
+    if let Some(error) = &status.error {
+        eprintln!("压缩失败（会话 {id}）: {error}");
+    }
+}
+
+/// 干活的正文：**整个压缩链路都在 `crate::compact` 里**，这里只负责取配置、解析提示词、收尾。
+///
+/// 为什么这么分：压缩的机制（选段 / 拼材料 / 模板变量 / 过闸 / 落库）与"这一次压哪一段"是两件事，
+/// 而且机制**不该知道** `agents.json` / `providers.json` 长什么样 —— 那些由这里解析好传进去。
+async fn do_compaction(state: &AppState, id: Uuid, limit: usize) -> Result<(usize, Uuid), String> {
+    let providers = ProvidersConfig::load(&state.paths.providers_json())
+        .map_err(|error| format!("读 providers.json: {error}"))?;
+    let subagents = crate::config::SubAgentsConfig::load(&state.paths.subagents_json())
+        .map_err(|error| format!("读 subagents.json: {error}"))?;
+    // 会话的**生效系统提示词**：变量底子的前提（出站、变量、压缩三处共用同一份）
+    let (text, source) = {
+        let store = state.lock().map_err(|error| error.message)?;
+        let conversation = store
+            .get_conversation(id)
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| "会话不存在".to_owned())?;
+        effective_system_prompt(state, &conversation).map_err(|error| error.message)?
+    };
+    let summary = crate::compact::summarize_blocks(
+        state.store_handle(),
+        &crate::compact::Prompt { text, source },
+        &providers,
+        &subagents,
+        id,
+        limit,
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    Ok((summary.blocks as usize, summary.id))
+}
+
+/// 一条会话的摘要列表（关系图与摘要面板的数据源）；视图与现算逻辑在 `registry` 里。
+async fn list_conversation_summaries(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<registry::SummaryView>>, ApiError> {
+    let store = state.lock()?;
+    Ok(Json(registry::summary_views(&store, id)?))
+}
+
 /// 读 `config.json` 的 `chat` 段（**不含密钥** —— `server.auth_token` 根本不在这一段里）。
 async fn get_chat_config(
     State(state): State<AppState>,
@@ -919,6 +1058,98 @@ async fn set_model_context(
         .get_model(&req.provider, &req.upstream_id)?
         .ok_or_else(ApiError::not_found)?;
     Ok(Json(registry::model_view(entry)))
+}
+
+/// 一个工具在界面上的样子：**内置的那几样（名字/说明/内置模板）写在代码里**，
+/// 覆盖项（模板、渠道、模型）来自 `subagents.json`，`system_prompt` 与 `prompt_version`
+/// 是**现在生效**的那份（版本 = 哈希的短号，改一个字的模板它就变）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubAgentView {
+    pub id: String,
+    pub name: String,
+    pub about: String,
+    pub builtin_prompt: String,
+    pub system_prompt: String,
+    /// 覆盖里写了模板吗（界面据此显示"已改过 / 恢复内置"）。
+    pub overridden: bool,
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    /// 生效模板的版本短号（哈希低 24 位的十六进制）。
+    pub prompt_version: String,
+    /// 模板里可以写的变量（白名单，写死在代码里；`src/template.rs`）。
+    pub vars: Vec<TemplateVarView>,
+    /// 现在生效的模板里那些**不认识**的变量（原样没换，界面该提示）。
+    pub unknown_vars: Vec<String>,
+    /// 它自己声明的一切（目前为空，留着将来放"它吃什么材料"之类的只读说明）。
+    pub params: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TemplateVarView {
+    pub name: String,
+    pub about: String,
+}
+
+fn tool_version_short(template: &str) -> String {
+    format!("{:06x}", (crate::subagents::prompt_version(template) as u64) & 0xff_ffff)
+}
+
+/// 全部内置工具 + 当前覆盖（界面"工具"页的数据源）。
+async fn list_tools(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<SubAgentView>>, ApiError> {
+    let config = crate::config::SubAgentsConfig::load(&state.paths.subagents_json())?;
+    let views = crate::subagents::SubAgent::ALL
+        .iter()
+        .map(|tool| {
+            let found = config.get(tool.id());
+            let template = crate::subagents::prompt(&config, *tool);
+            // 拿**空**变量表渲染一遍：认识的会被换成空串，剩下的 `{{...}}` 就是"不认识的"
+            let unknown_vars =
+                crate::template::render(&template, &std::collections::BTreeMap::new()).unknown;
+            let vars: Vec<TemplateVarView> = crate::template::TemplateVar::ALL
+                .iter()
+                .map(|var| TemplateVarView {
+                    name: var.name().to_owned(),
+                    about: var.about().to_owned(),
+                })
+                .collect();
+            SubAgentView {
+                vars,
+                unknown_vars,
+                id: tool.id().to_owned(),
+                name: tool.name().to_owned(),
+                about: tool.about().to_owned(),
+                builtin_prompt: tool.builtin_prompt().to_owned(),
+                overridden: found.is_some_and(|found| !found.system_prompt.trim().is_empty()),
+                prompt_version: tool_version_short(&template),
+                system_prompt: template,
+                provider: found.and_then(|found| found.provider.clone()),
+                model: found.and_then(|found| found.model.clone()),
+                params: found
+                    .map(|found| found.params.clone())
+                    .unwrap_or(serde_json::Value::Object(Default::default())),
+            }
+        })
+        .collect();
+    Ok(Json(views))
+}
+
+/// **整段替换** `config/subagents.json`（PUT 语义：没给的键就不写 = 那个工具全用内置）。
+/// 只认已知工具的 id —— 工具的身份在代码里，这里不能凭空造（§25）。
+async fn put_tools(
+    State(state): State<AppState>,
+    Json(config): Json<crate::config::SubAgentsConfig>,
+) -> Result<Json<Vec<SubAgentView>>, ApiError> {
+    for id in config.subagents.keys() {
+        if !crate::subagents::SubAgent::ALL.iter().any(|tool| tool.id() == id) {
+            return Err(ApiError::bad_request(&format!(
+                "没有叫 {id} 的工具（工具写死在代码里，这里的键只能是已知工具）"
+            )));
+        }
+    }
+    config.save(&state.paths.subagents_json())?;
+    list_tools(State(state)).await
 }
 
 /// 连通性探针：前端启动时用它判断"后端在不在、口令对不对"。
@@ -2865,6 +3096,169 @@ mod tests {
             conv.id.to_string()
         );
         assert_eq!(parsed["messages"].as_array().unwrap().len(), all.len());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 手动压缩（dummy 全链路）：压 N 个块 ⇒ 落一条摘要、指针指好、**messages 一字不动**。
+    #[tokio::test]
+    async fn manual_compaction_records_a_summary_and_leaves_messages_alone() {
+        let providers = r#"{ "providers": [ { "id": "dummy", "kind": "dummy" } ] }"#;
+        let (app, dir) = app_with_files(&[("providers.json", providers)]);
+        let conv = create(&app, r#"{"provider":"dummy","model":"dummy"}"#).await;
+        let uri = format!("/api/v1/conversations/{}/messages", conv.id);
+        // 三轮问答 ⇒ 三个块：前两个已闭合（可压），第三个开着（永不压）
+        for line in ["第一句", "第二句", "第三句"] {
+            let _ = turn(&app, &uri, &format!(r#"{{"content":"{line}"}}"#)).await;
+        }
+        let before: Vec<Message> = messages(&app, conv.id).await;
+        assert_eq!(before.len(), 6);
+
+        let compact_uri = format!("/api/v1/conversations/{}/compact", conv.id);
+        let (status, body) = send(&app, json_req("POST", &compact_uri, r#"{"blocks":2}"#)).await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+
+        // 等后台跑完（dummy 瞬时，但仍是另一个任务）
+        let status_uri = format!("/api/v1/conversations/{}/status", conv.id);
+        let mut done = None;
+        for _ in 0..100 {
+            let (_, body) = send(&app, get_req(&status_uri)).await;
+            let status: crate::turn::TurnStatus = serde_json::from_str(&body).unwrap();
+            if let Some(compact) = status.compact
+                && !compact.is_running()
+            {
+                done = Some(compact);
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        let done = done.expect("压缩任务该有结果");
+        assert_eq!(done.state, "done", "出错了：{:?}", done.error);
+        assert_eq!(done.compacted, 2, "两个已闭合的块都该压");
+
+        // 摘要落库、成员指针指好（视图是现算的）
+        let (_, body) = send(
+            &app,
+            get_req(&format!("/api/v1/conversations/{}/summaries", conv.id)),
+        )
+        .await;
+        let views: Vec<crate::registry::SummaryView> = serde_json::from_str(&body).unwrap();
+        assert_eq!(views.len(), 1);
+        assert_eq!(views[0].members, 4, "前两块 = 4 条消息");
+        assert_eq!(views[0].blocks, 2);
+        assert_eq!(views[0].first_message_id, Some(before[0].id));
+        assert_eq!(views[0].last_message_id, Some(before[3].id));
+        assert!(!views[0].dirty);
+        assert!(views[0].prompt_version > 0, "dummy 也带模板版本");
+        assert_eq!(views[0].model, "dummy", "子 Agent 默认跟随会话");
+        assert_eq!(done.summary_id, Some(views[0].id));
+
+        // **出站真的变了**：被覆盖的原文不再发，改发摘要（Mask，§20）
+        let subject = format!("/api/v1/conversations/{}/outgoing", conv.id);
+        let (_, body) = send(&app, get_req(&subject)).await;
+        let outgoing: Vec<crate::vars::Outgoing> = serde_json::from_str(&body).unwrap();
+        let sent: Vec<&str> = outgoing
+            .iter()
+            .map(|item| item.content.as_str())
+            .collect();
+        assert!(
+            sent.iter().any(|text| text.contains("前情提要")),
+            "该发一条摘要：{sent:?}"
+        );
+        assert!(
+            !sent.iter().any(|text| text.contains("第一句") || text.contains("第二句")),
+            "被覆盖的原文必须不再发：{sent:?}"
+        );
+        assert!(
+            sent.iter().any(|text| text.contains("第三句")),
+            "开着的那个块照旧发原文：{sent:?}"
+        );
+
+        // **messages 一字不动**（§19.E 第一条保险，在 API 层再走一遍）
+        let after: Vec<Message> = messages(&app, conv.id).await;
+        assert_eq!(after.len(), before.len());
+        assert_eq!(
+            after.iter().map(|m| m.content.clone()).collect::<Vec<_>>(),
+            before.iter().map(|m| m.content.clone()).collect::<Vec<_>>(),
+            "压缩只许插摘要，不许碰 messages"
+        );
+        assert_eq!(after[0].summary_id, Some(views[0].id));
+        assert_eq!(after[3].summary_id, Some(views[0].id));
+        assert_eq!(after[4].summary_id, None, "开着的那个块没被覆盖");
+
+        // 覆盖过的不再算"未覆盖" ⇒ 只剩那个开着的块 ⇒ 再压一次没有可压的
+        let (status, _) = send(&app, json_req("POST", &compact_uri, r#"{"blocks":5}"#)).await;
+        assert_eq!(status, StatusCode::ACCEPTED);
+        let mut failed = None;
+        for _ in 0..100 {
+            let (_, body) = send(&app, get_req(&status_uri)).await;
+            let status: crate::turn::TurnStatus = serde_json::from_str(&body).unwrap();
+            if let Some(compact) = status.compact
+                && !compact.is_running()
+            {
+                failed = Some(compact);
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        let failed = failed.expect("第二次压缩也该有结果");
+        assert_eq!(failed.state, "error", "只剩开着的块，压不动");
+        assert!(
+            failed.error.unwrap_or_default().contains("没有可压的块"),
+            "错误要说人话"
+        );
+
+        // 参数与不存在
+        let (status, _) = send(&app, json_req("POST", &compact_uri, r#"{"blocks":0}"#)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let missing = format!(
+            "/api/v1/conversations/{}/compact",
+            Uuid::now_v7()
+        );
+        let (status, _) = send(&app, json_req("POST", &missing, r#"{"blocks":1}"#)).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `/subagents`：内置清单（名字/说明/内置模板来自代码）+ 覆盖项读写；未知 id 一律 400。
+    #[tokio::test]
+    async fn tools_endpoint_lists_builtins_and_rejects_unknown_ids() {
+        let (app, dir) = app_with_files(&[]);
+        let (status, body) = send(&app, get_req("/api/v1/subagents")).await;
+        assert_eq!(status, StatusCode::OK);
+        let tools: Vec<SubAgentView> = serde_json::from_str(&body).unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].id, "compact");
+        assert_eq!(tools[0].name, "摘要器");
+        assert!(!tools[0].overridden, "还没覆盖");
+        assert_eq!(tools[0].system_prompt, tools[0].builtin_prompt);
+        assert_eq!(tools[0].prompt_version.len(), 6, "版本短号 6 位十六进制");
+        let builtin_version = tools[0].prompt_version.clone();
+
+        // 覆盖模板 ⇒ 生效值与版本都跟着变
+        let patch = r#"{"version":1,"subagents":{"compact":{"system_prompt":"压就好","model":"small"}}}"#;
+        let (status, body) = send(&app, json_req("PUT", "/api/v1/subagents", patch)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let tools: Vec<SubAgentView> = serde_json::from_str(&body).unwrap();
+        assert!(tools[0].overridden);
+        assert_eq!(tools[0].system_prompt, "压就好");
+        assert_eq!(tools[0].model.as_deref(), Some("small"));
+        assert_ne!(tools[0].prompt_version, builtin_version, "改了模板版本就该变");
+
+        // 未知 id ⇒ 400：工具的身份在代码里，不能凭空造
+        let invented = r#"{"version":1,"subagents":{"自己发明的":{}}}"#;
+        let (status, body) = send(&app, json_req("PUT", "/api/v1/subagents", invented)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+
+        // 清掉覆盖 ⇒ 回落内置
+        let (status, body) = send(
+            &app,
+            json_req("PUT", "/api/v1/subagents", r#"{"version":1,"subagents":{}}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let tools: Vec<SubAgentView> = serde_json::from_str(&body).unwrap();
+        assert_eq!(tools[0].system_prompt, tools[0].builtin_prompt);
+        assert_eq!(tools[0].prompt_version, builtin_version);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

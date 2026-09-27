@@ -3,12 +3,16 @@
 //! 模块名用 `model` 而不是 `core`：`core` 会遮蔽 Rust 内建 crate，日后写
 //! `core::fmt` 之类的路径会莫名解析到自己的模块。
 
+pub mod blocks;
 pub mod chat;
+pub mod compact;
 pub mod config;
 pub mod model;
 pub mod providers;
 pub mod registry;
 pub mod server;
 pub mod store;
+pub mod subagents;
+pub mod template;
 pub mod turn;
 pub mod vars;

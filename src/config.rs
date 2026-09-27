@@ -43,6 +43,11 @@ impl Paths {
     pub fn agents_json(&self) -> PathBuf {
         self.config_dir.join("agents.json")
     }
+    /// **工具**的覆盖项（摘要器之类的一次性后台任务）—— **与 agents.json 分开**：
+    /// 会话 Agent 是有人格的对话者，工具不是，两边的语义各自干净。
+    pub fn subagents_json(&self) -> PathBuf {
+        self.config_dir.join("subagents.json")
+    }
     pub fn database(&self) -> PathBuf {
         self.data_dir.join("microchat.db")
     }
@@ -297,6 +302,57 @@ impl ProvidersConfig {
             }
         }
         Ok(())
+    }
+}
+
+/// **工具**的覆盖项（`config/subagents.json`）。
+///
+/// 工具的身份、显示名、默认模板都在代码里（`crate::subagents::Tool` 的枚举变体）：
+/// **工具一定是专用的，没有复用可言**（§25）——所以这里只能**覆盖**某个已有工具的行为，
+/// 不能凭空造一个新工具（想加工具就得写 Rust）。
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct SubAgentOverride {
+    /// 模板正文。**空 = 用内置模板**；非空时它的哈希就是 `prompt_version`。
+    pub system_prompt: String,
+    /// 留空 = 跟随会话的渠道。
+    pub provider: Option<String>,
+    /// 留空 = 跟随会话的模型。
+    pub model: Option<String>,
+    pub params: serde_json::Value,
+    /// 保留未知字段：写回文件时不丢用户数据。
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct SubAgentsConfig {
+    pub version: u32,
+    /// 键 = `Tool::id()`。**没有这个键 = 该工具全用内置**（文件不存在也能跑）。
+    pub subagents: BTreeMap<String, SubAgentOverride>,
+}
+
+impl Default for SubAgentsConfig {
+    fn default() -> Self {
+        Self {
+            version: 1,
+            subagents: BTreeMap::new(),
+        }
+    }
+}
+
+impl SubAgentsConfig {
+    pub fn load(path: &Path) -> Result<Self> {
+        load_json(path)
+    }
+
+    pub fn save(&self, path: &Path) -> Result<()> {
+        write_json_pretty(path, self)
+    }
+
+    pub fn get(&self, id: &str) -> Option<&SubAgentOverride> {
+        self.subagents.get(id)
     }
 }
 

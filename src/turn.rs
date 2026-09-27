@@ -70,6 +70,44 @@ pub struct TurnStatus {
     /// 上一轮的结局：失败时的文案。成功、或从没跑过都是 `None`。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// **这条会话的压缩任务**（`POST /conversations/{id}/compact` 之后的状态）。
+    /// 与轮次无关，只是搭同一趟车回报给界面（免得再开一个轮询端点）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compact: Option<CompactStatus>,
+}
+
+/// 一次压缩（Compact）任务的对外状态。**进程内的事实，不进库** ——
+/// 后端一重启就回到 `None`，这是诚实的：那个任务本来也就没了。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompactStatus {
+    /// `running` / `done` / `error`。
+    pub state: String,
+    /// 这一次要压几个块（用户点的 N）。
+    pub blocks: usize,
+    /// 实到压了几个块（不够 N 就压到压不动为止）。
+    pub compacted: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary_id: Option<Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub at_ms: i64,
+}
+
+impl CompactStatus {
+    pub fn running(blocks: usize, at_ms: i64) -> Self {
+        Self {
+            state: "running".to_owned(),
+            blocks,
+            compacted: 0,
+            summary_id: None,
+            error: None,
+            at_ms,
+        }
+    }
+
+    pub fn is_running(&self) -> bool {
+        self.state == "running"
+    }
 }
 
 impl Default for TurnStatus {
@@ -81,6 +119,7 @@ impl Default for TurnStatus {
             chars: 0,
             thinking_chars: 0,
             error: None,
+            compact: None,
         }
     }
 }
@@ -142,6 +181,8 @@ impl TurnRegistry {
             chars: entry.chars,
             thinking_chars: entry.thinking_chars,
             error: entry.error.clone(),
+            // 压缩任务不归这里管：由 handler 现填（`state.compact_status`）
+            compact: None,
         }
     }
 

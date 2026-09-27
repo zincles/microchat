@@ -87,6 +87,10 @@ cargo build && python3 scripts/api-audit.py     # 改过接口就跑一遍（它
 | GET | `/config/chat` | — | `ChatConfig` | 服务端 `config.json` 的 `chat` 段（**不含密钥**——口令不在这一段） |
 | PUT | `/config/chat` | `ChatConfig` | `ChatConfig` | **整段替换** `chat`（其余段原样保留；写回严格 JSON） |
 | PATCH | `/models` | `{provider, upstream_id, context_override}` | `ModelView` | 设置/清除某模型的**上下文覆盖值**（`null` = 清掉）。**用户列**：刷新永不覆盖它 |
+| GET | `/subagents` | — | `[SubAgentView]` | 内置 Agent 清单 + 生效模板/渠道/模型 + 版本短号 + 内置模板 |
+| PUT | `/subagents` | `SubAgentsConfig` | `[SubAgentView]` | 整段替换 `subagents.json`；**未知 id ⇒ 400**（身份在代码里） |
+| POST | `/conversations/{id}/compact` | `{blocks: N}` | `CompactStatus` · **202** | **手动压缩**：把最老的 N 个**对话块**收成一条摘要（后台跑，进度看 `GET /status` 的 `compact`）。同一会话同时只允许一个 |
+| GET | `/conversations/{id}/summaries` | — | `[SummaryView]` | 摘要列表（关系图/摘要面板用）：`members`、`first/last_message_id` 都是**现算**的（不存库）；`members == 0` ⇒ 孤立摘要 |
 | GET | `/conversations/{id}/export` | — | `ConversationExport` | 自包含导出：会话 + **全部消息（含分支）** + 摘要 + 现演变量 + `current_path`。只读 |
 | POST | `/conversations/{id}/archive` | — | `ArchiveReceipt` · 200 | 写 `data/archive/<会话>-<时间戳>.json`（**剪枝前的必做动作**），回收据 `{path, bytes, messages, summaries}` |
 | POST | `/conversations/{id}/fork` | — | `Conversation` · **201** | 复制出新会话：当前路径 + 尾巴那一层的兄弟（含子树）+ 摘要行（指针按映射改写）。**变量不复制**（现演，逐键相同） |
@@ -123,7 +127,7 @@ cargo build && python3 scripts/api-audit.py     # 改过接口就跑一遍（它
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/conversations/{id}/summaries` | 给界面显示/编辑/重摇摘要用（尚未定稿） |
+
 
 ### 运维
 
@@ -173,6 +177,10 @@ cargo build && python3 scripts/api-audit.py     # 改过接口就跑一遍（它
 - **删掉"当前那条回复"时，leaf 不能退到上文**：那样路径上一条回复都没有，界面看起来像"整条分支被删了"（其实兄弟都在树上）；再点重新发送又会多出一条，于是"怎么又变三条了"。正解 = 退到上文下**还活着的最新兄弟**。
 - **配置文件里没有注释可写**：程序整体重写这些文件（改一个 provider 就重写整份），JSONC 会给人"写了也会丢"的假象。现在严格 JSON，写坏了报的是 `Expecting property name enclosed in double quotes: line L column C`。
 - **一次失败的 `git commit`（"无文件可提交"）会把此前 staged 的东西留在索引里** → 下一次提交把它们一起卷走（本项目真发生过：用户 Godot 编辑器的改动被带进了一笔无关提交）。**提交前先 `git diff --cached --name-status` 核对范围**，别只看 `git status`。
+- **`git commit` 不带路径 = 提交索引里的一切**：哪怕你刚核对过范围、只要用户那边还有 staged 的东西，一样会被卷走
+  （本项目真发生过两次：一次是用户的 Godot 场景，一次是 `main.tscn`）。要只提自己那几样就给路径：
+  `git commit <文件…>`（它记录这些文件的**工作区**内容，索引里别的东西一律不动）。改错了用
+  `git restore --source=HEAD~1 --staged <文件>` + `git commit --amend` 修 —— **别用 `--worktree`**（那会丢用户的改动）。
 - **批量改代码时逐文件落盘**：把 `write` 放在脚本末尾，中途任何一个断言失败都会让整批改动一起丢掉（改完一个文件就写一个，别攒着）。
 - **Godot `offset_transform_position` 的单位是 ui，不是像素**。Android 的键盘高度是像素 → 必须乘 `视图高/窗口高`；直接填像素会**飞出屏幕**（表上实测 775px×2.22=1722px > 屏高 1600）。
 - 同上的**两个开关默认是反的**：`offset_transform_enabled=false`、`offset_transform_visual_only=true`。只打开 enabled → "看得见、点不到"。
@@ -186,7 +194,7 @@ cargo build && python3 scripts/api-audit.py     # 改过接口就跑一遍（它
 ## egui 界面的现状（改它之前先看这节）
 
 - 左栏：`＋ 新建对话` + 会话列表 + **底部的 `⟳ 刷新`**（一把把会话/消息/变量/分支/模型/agent 全拉一遍）。
-- 输入栏上方两个小按钮：`归档`（写 `data/archive/*.json`，剪枝前必做）、`复制会话`（Fork 出新会话并选中它）。
+- 输入栏上方一排：`归档`（写 `data/archive/*.json`）、`压缩 [N] 个块` + `开始`（手动 Compact，202 受理，底栏报结果）、`复制会话`（Fork 出新会话并选中它）。
 - 会话视图：顶部一行**上下文占用**（`上下文 12.3k（上轮实测 11.9k）/ 40k`；超 80% 黄、超触发阈值红，悬停有口径）→ 系统提示词那块（可展开）→ 消息列表（每条：署名 + `编辑 / 复制 / 删除`）→ 底栏输入。
   - 助手署名 = **该会话 agent 的名字**（不是"助手"）；底部输入栏跟着软键盘浮（见 `frontend/main.gd` 的同名脚本）。
   - **分支操作只出现在最后一条消息上**：`‹ 2/3 ›`（切候选回复，只在最新那句允许）、`删除全部`、`重新发送`。
@@ -195,8 +203,13 @@ cargo build && python3 scripts/api-audit.py     # 改过接口就跑一遍（它
 - **卡片脚注**：每条助手消息底部一行 `3.2s · 上行 1654 tok（缓存 1408 tok · 85%）· 下行 62 tok（思考 32 tok，含在内）`——只在有数据时显示（dummy / 兜底 / 老消息都没有）。**单位是 token**（上游 `usage` 报的）；生成中气泡上那个「思考中… N 字」是**字符数**（流式帧里没有 token 数，token 只在末帧 usage 里）——两处别混。另：`reasoning_tokens` 是 `completion_tokens` 的**子集**，不是另加。
 - **思考**（`messages.reasoning`）默认折叠成「思考（2.1s）」——放的是**思考用时**（受理 → 第一段正文），不是字数（API 按 token 计费，"字"没意义）；迁移之前的老消息退回显示字数。点开才看内容 ✓；流式那会儿是实时展开的 ✓，正文一开始出就交给真消息（真消息里它还是折叠的 ✓）。
 - 左栏：正在生成的会话标题后面挂着「 · 生成中…」（状态来自 `GET /conversations` 每项的 `turn`）。
+- 摘要（`compact` 子 Agent 的产出）就落在 `summaries` 表：**只插行**，`messages` 一个字不动（有测试守着）。
+- 关系图：一列一条会话，列内 `会话 → system → 用户/助手…`；**摘要不在链上**，挂在它覆盖的那一段右侧一条"摘要道"上
+  （越上层越靠右），每条被覆盖的消息各拉一条边过去 —— 金字塔一眼可见；`dirty` 的摘要画成琥珀色。
+- **设置页要的数据只从 `load_server_data()` 一处发**（连上后端时 / 点 ⟳ 时 / 走进某个设置页时都走它）。
+  曾经 `refresh_all` 与它各写一份"要拉哪些"，新加的两样只进了 ⟳ 那条路 ⇒ 设置页永远"加载中…"（真发生过）。
 - 调试页五个标签：**后端状态 / 最近发送载荷 / 原始配置 / 请求日志 / 关系图**。「最近发送载荷」原样显示最近一次发给上游的 `/chat/completions` 请求体（带 provider/模型、时间、字节数、复制按钮）——排查"看着都对、上游却报错"看它；**dummy 也有一份**（拼而不发，形状一样）。
-- 设置分五页（左导航同级）：**连接 / Agent / 模型与渠道 / 前端设置 / 关于**；右下角「保存」按页给出不同提示。
+- 设置分六页（左导航同级）：**连接 / Agent / 内置 Agent / 模型与渠道 / 前端设置 / 关于**；右下角「保存」按页给出不同提示。
 - 「模型与渠道」页顶部是**服务端上下文口径**：`模型上下文`（上游没报时的兜底）+ `摘要触发阈值`（留空 = 预算 × 0.8）+ 保存。
   每个渠道一行：`获取模型`（POST，成功后在**底栏**说"已获取 N 个模型"）、`删除全部模型`（清发现态，配置与历史会话都不动）、`编辑`。
   下面**逐个模型列出上下文**：上游给了就写 `上下文 1.0M`，没给就写"上游没报"；右边一个输入框可填**覆盖值**（留空 = 清掉覆盖）。
@@ -233,8 +246,44 @@ cargo build && python3 scripts/api-audit.py     # 改过接口就跑一遍（它
 - `config/providers.json` — `{ "version": 1, "providers": [ { "id": "dummy", "kind": "dummy" }, { "id": "openrouter", "name": "显示名可选", "base_url": "https://openrouter.ai/api/v1", "headers": { "X-Title": "microchat" } } ] }`
   **密钥就写在这一条里**（`"api_key": "sk-…"`，空串 = 没配）：整个 `config/` 在忽略范围内，所以它不进版本库；接口一律不回显（只回 `has_key`），调试页读这个文件时也会先打码。文件本身写回时权限收紧到 0600。
 - `config/agents.json` — `{ "version": 1, "default_agent": "跑团", "agents": [ { "id": "跑团", "name": "跑团主持人", "system_prompt": "你是跑团主持人。<state>set 季节 = 初冬</state>" } ] }`
+- `config/subagents.json` — **内置 Agent** 的覆盖项（不是对话者）：模板里可用 `{{…}}` 变量（见「内置 Agent」一节）`{ "version": 1, "subagents": { "compact": { "system_prompt": "…（留空=用内置）…", "provider": null, "model": null } } }`。
+  它们的身份/名字/内置模板**写死在代码里**（`crate::subagents::SubAgent` 的枚举变体，目前只有 `compact` 摘要器），这里只能覆盖行为、不能造新的（未知 id 一律 400）。
   `system_prompt` 里的 `<state>` 块就是**变量底子**（和消息正文同一套语法）；`id` 手写可用可读 id，界面新建则生成 UUIDv7。
 - `~/.config/microchat/frontend.json` — 界面偏好（主题、缩放、服务器地址、回车是否发送……）。
+
+## 压缩（`src/compact.rs`）—— 唯一入口，分机制与策略两层
+
+- **机制**：`compact::summarize_span(store, prompt, providers, subagents, conversation_id, Span{begin, end})`
+  —— 给它一段（两端用 id 指，**可以是 message 也可以是 summary**），它拼材料（§15）→ 叫内置 Agent →
+  过闸（剔 `<state>`）→ 落库（单事务）。**二次压缩（金字塔）就是"喂 summary id"**，同一个函数。
+- **策略**：`compact::summarize_blocks(…, limit)` —— 从第一条没被覆盖的消息起，取最老的 N 个**已闭合**块
+  （手动按钮的语义）。将来的自动触发换个挑法，复用机制那一层。
+- 谁也**不许**绕过这里自己拼摘要请求：材料形状、模板变量、过闸、落库都只在这一处。
+- 它**不该知道** `agents.json` / `providers.json` 长什么样 —— 那些由 `server::do_compaction` 解析成
+  `compact::Prompt{text, source}` 传进来。
+- 不持锁跨 await：取料在锁里、调用在锁外、落库再进锁（与 `turn::run_turn` 同一条纪律）。
+- 块的"开/合"要看**整条路径**，不是看切出来的那一段（切到末尾的块看着"开着"，其实只要后面还有消息就已闭合）。
+
+## 内置 Agent（`src/subagents.rs`）—— 写死在代码里的专用后台任务，不是对话者
+
+**内置 Agent 一定是专用的，没有复用可言**（§25）⇒ 身份写死在代码里：`crate::subagents::SubAgent` 的枚举变体
+（目前只有 `SubAgent::Compact` = 摘要器），id / 显示名 / 说明 / 内置模板都在代码里；
+`config/subagents.json` 只能**覆盖**它的模板、渠道、模型，**不能造新的**。
+
+与会话 Agent（`agents.json`，有人格、提示词进会话、能写 `<state>` 底子）的三条硬边界：
+① 产出永不进历史/树/变量（落库由调用方决定：摘要器走 `store::record_summary`）；
+② 提示词永不进会话的系统提示词；③ **失败不阻塞任何一轮**。
+
+`subagents::run(config, SubAgent::Compact, material, conversation, providers)` 复用同一个 `providers::Client`（非流式）；
+`prompt_version = subagents::prompt_version(生效模板)`（64 位哈希，改一个字就变 —— 别手写版本号）。
+
+**模板变量**（`src/template.rs`）：内置 Agent 的模板里可以写 `{{name}}`，发请求前替换。**白名单就是枚举**：
+`{{system_time}}`（UTC）/ `{{state_before}}` / `{{state_after}}` / `{{range}}` / `{{blocks}}`。
+三条规矩：① 不认识的 `{{foo}}` **原样留着**（界面会提示），不报错也不猜；
+② **只扫一遍** —— 替换进去的值不再当模板扫（否则用户文本里的 `{{` 就能玩坏注入）；
+③ **会话 Agent 的提示词永不替换**（它一变，前缀缓存每轮全废 —— `build_outgoing` 里连这个词都不出现，有守卫测试）。
+dummy 下也走全链路（回固定文本 + 拼好 payload，便于无 key 验证）。
+接口：`GET /subagents`（内置清单 + 生效值 + 版本短号）、`PUT /subagents`（整段替换覆盖项、未知 id ⇒ 400）、`POST /conversations/{id}/compact`。
 
 ## 数据模型（`src/store.rs` 的 `MIGRATIONS` 是唯一权威）
 
@@ -386,6 +435,14 @@ cargo build && python3 scripts/api-audit.py     # 改过接口就跑一遍（它
 **预算** = 模型上下文 − 输出预留（`max_output`，缺省 4096）；**触发阈值** = `chat.compact_trigger_tokens`（缺省 预算 × 0.8）。
 **单块自己超预算 ⇒ 照发、标 `over_budget`**（让模型自己报错，比我们瞎切好）。边界只看 **`assistant → user`** 一种交界。
 
+### 装配时的 Mask（**已实现**，细节见 §20）
+
+`build_outgoing` 走一遍**行走算法**：路径上被摘要覆盖的那一段**不发明文**，改发摘要正文
+（前缀 `【前情提要·N 块】`，角色用 user —— 它不是谁说的话，是程序摆给模型的前情）。
+**能取粗的不取精**：一条摘要若有父摘要、且**父的全部孩子就在眼前**，就直接用父、跳过整串；
+不够格（盖不全）就退回用它的孩子 —— **宁可用细的，也不许漏内容**（有测试守着这两种情形）。
+指针悬空（摘要被删/导入过）当没覆盖处理，照发原文。
+
 ### 装配顺序（只在 `build_outgoing` 这一处，仍是唯一拼装路径）
 
 `[系统 + <state>] [粗梗概] [细梗概] [最近原文] [新消息]` ——
@@ -443,7 +500,12 @@ cargo build && python3 scripts/api-audit.py     # 改过接口就跑一遍（它
 - **重大设计讨论要留档到 `IMPORTANT_DISCUSSION.md`**：记**对话原文 + 已达成的结论**，**不记推理过程**；AGENTS.md 只留形状与指针。上下文有限，交接就靠这两份。
 - 注释、提交信息用**中文**；提交信息写清"为什么"，别只写"改了什么"。
 - 改完跑 `cargo test`；**UI 改动必须实跑**（真机或灌事件的无头验证），不要只凭代码断言。
-- **后端代码一变就重启后端和 egui 前端**：先 `cargo build`，再重启 `./target/debug/server`（唯一权威）与 `./target/debug/microchat`（界面）——不然你在界面上验的是旧二进制。
+- **后端代码一变就重启后端和 egui 前端**：先 `cargo build`，再重启 `./target/debug/server`（唯一权威，服务名 `microchat-server`）
+  与 `./target/debug/microchat`（界面，服务名 `microchat-gui`）——不然你在界面上验的是旧二进制。
+  **注意 `cargo test` 也会重编** ⇒ 只要那次重启之后又跑过 build/test，就该再重启一次。
+  自检（精确）：`ls -l /proc/<pid>/exe` —— 路径后面若带 **` (deleted)`**，说明二进制在进程启动后被替换过 ⇒ 跑的是旧货，重启。
+  （别拿 `/proc/<pid>/exe` 去 `stat -c %i` 比 inode：那是魔法符号链接，比出来的数没有意义。）
+  前端要用图形环境起：`DISPLAY=:0 WAYLAND_DISPLAY=wayland-0 XAUTHORITY=/run/user/1000/xauth_UFgDfa XDG_RUNTIME_DIR=/run/user/1000 ./target/debug/microchat`。
 - **先量再断言**：能实测的就不猜（本项目几乎所有关键结论都来自实测）。
 - 用户可能**同时在编辑器里改 `frontend/`**：改场景前先读最新文件（并留备份），他的未保存改动优先；提交时别把 `frontend/` 的改动卷进来（除非他让你一起提）。
 - **提交由用户指挥**：**不要**每改一点就 `commit` + `push` —— 那样提交记录会碎成一地。做完一段有意义的进度后，先报告，**等用户说"可以提交了"**再提交；推送同理（用户没点名推送就不推）。默认节奏：改代码 → 跑测试 → 实跑验证 → 报告，**停在这里**。

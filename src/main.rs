@@ -283,6 +283,9 @@ enum View {
 enum SettingsTab {
     Connection,
     Agents,
+    /// **内置 Agent**：写死在代码里的专用后台任务（目前只有摘要器）。名字与说明来自代码，
+    /// 这里只改它们的模板/渠道/模型 —— 与 Agent 并列、各管各的。
+    SubAgents,
     Models,
     Frontend,
     About,
@@ -291,9 +294,10 @@ enum SettingsTab {
 impl SettingsTab {
     /// 各自独立成页：连接、Agent、模型与渠道各管各的，
     /// 别把三件事塞进同一页——找东西要滚半天，改 A 时也看不见 B 的状态。
-    const ALL: [(Self, &'static str); 5] = [
+    const ALL: [(Self, &'static str); 6] = [
         (Self::Connection, "连接"),
         (Self::Agents, "Agent"),
+        (Self::SubAgents, "内置 Agent"),
         (Self::Models, "模型与渠道"),
         (Self::Frontend, "前端设置"),
         (Self::About, "关于"),
@@ -382,6 +386,9 @@ const GRAPH_ID: &str = "debug_graph";
 /// 同一列里相邻块之间的垂直间隔；会话（列）之间的水平间隔（画布坐标）。
 const STACK_GAP: f32 = 26.0;
 const COLUMN_GAP: f32 = 48.0;
+
+/// 摘要道：挂在列右侧多远处（每上一层再往外一档）。
+const SUMMARY_LANE_GAP: f32 = 150.0;
 /// 滚轮换算成"点"的比例：一行 50 点、一页 400 点（不同后端给的单位不一样）。
 const POINTS_PER_LINE: f32 = 50.0;
 const POINTS_PER_PAGE: f32 = 400.0;
@@ -395,6 +402,8 @@ enum GraphNodeKind {
     System,
     User,
     Assistant,
+    /// 摘要（compaction 的产出）：**不在链上**，挂在它覆盖的那一段右边
+    Summary,
 }
 
 impl GraphNodeKind {
@@ -404,6 +413,7 @@ impl GraphNodeKind {
             Self::System => Color32::from_rgb(0x8a, 0x8a, 0x8a),
             Self::User => Color32::from_rgb(0x2f, 0x6f, 0xe0),
             Self::Assistant => Color32::from_rgb(0x2f, 0x9e, 0x44),
+            Self::Summary => Color32::from_rgb(0x9a, 0x5f, 0xd0),
         }
     }
 }
@@ -454,6 +464,16 @@ struct App {
     variables: Option<microchat::vars::VariableView>,
     /// 上面那份变量属于哪个会话（切换时先清空，避免串台）。
     variables_for: Option<Uuid>,
+    /// 内置 Agent（摘要器…）：名单与说明来自代码，模板/渠道/模型可覆盖。
+    subagents: Option<Vec<microchat::server::SubAgentView>>,
+    /// 内置 Agent 的编辑草稿，键 = 它的 id：`(模板, 渠道, 模型)`。
+    subagent_drafts: BTreeMap<String, (String, String, String)>,
+    /// 「压缩 N 个块」那个输入框的草稿。
+    compact_blocks: String,
+    /// 正在等结果的那条会话（点了压缩之后；轮询 `/status` 直到 `compact` 不再 running）。
+    compact_ask: Option<Uuid>,
+    /// 每条会话的摘要（服务端现算的成员数与首尾），关系图与摘要面板用。
+    summaries: BTreeMap<Uuid, Vec<microchat::registry::SummaryView>>,
     /// 当前会话的上下文占用（估算 + 上一轮上游实测），由后端算好。
     context_usage: Option<microchat::vars::ContextUsage>,
     /// 上面那份占用属于哪个会话（切换时先清空，避免串台）。
@@ -553,6 +573,11 @@ impl App {
             variables: None,
             context_usage: None,
             context_usage_for: None,
+            subagents: None,
+            subagent_drafts: BTreeMap::new(),
+            compact_blocks: "1".to_owned(),
+            compact_ask: None,
+            summaries: BTreeMap::new(),
             chat_config: None,
             chat_model_context: String::new(),
             chat_trigger: String::new(),
@@ -611,6 +636,10 @@ impl App {
         });
     }
 
+    /// **服务端侧数据的唯一取数入口**：连上后端时、点 ⟳ 时、进设置页时都走它。
+    ///
+    /// 别再在别处另写一份"要拉哪些" —— 曾经 `refresh_all` 与它各写一份，结果新加的两样
+    /// （`chat` 段、内置 Agent 清单）只进了 ⟳ 那条路，设置页就一直"加载中…"。
     fn load_server_data(&mut self) {
         let (base, token) = (self.settings.server_address.clone(), self.token.clone());
         self.client.send(Command::ListProviders {
@@ -621,7 +650,28 @@ impl App {
             base: base.clone(),
             token: token.clone(),
         });
-        self.client.send(Command::ListConversations { base, token });
+        self.client.send(Command::ListConversations {
+            base: base.clone(),
+            token: token.clone(),
+        });
+        // 服务端 `chat` 段（模型上下文 / 压缩阈值）：设置页那两个框的数据源
+        self.client.send(Command::GetChatConfig {
+            base: base.clone(),
+            token: token.clone(),
+        });
+        // 内置 Agent 清单（名字/说明来自代码 + 现在生效的覆盖）
+        self.client.send(Command::ListSubAgents { base, token });
+    }
+
+    /// 走进某个设置页时顺手拉一次：设置页要的数据都在这儿，进来就是新的。
+    fn enter_settings_tab(&mut self, tab: SettingsTab) {
+        match tab {
+            SettingsTab::Agents
+            | SettingsTab::SubAgents
+            | SettingsTab::Models
+            | SettingsTab::Connection => self.load_server_data(),
+            SettingsTab::Frontend | SettingsTab::About => {}
+        }
     }
 
     fn fetch_conversations(&mut self) {
@@ -637,7 +687,7 @@ impl App {
             conversation,
         });
         // 变量跟着消息一起拉：消息里的状态块正是变量的来源，两者同时变化。
-        self.fetch_variables(conversation);
+        self.fetch_conversation_state(conversation);
     }
 
     /// 只拉变量（每次回复后单独调一次就够，不必重拉整段历史）。
@@ -651,26 +701,12 @@ impl App {
             base: base.clone(),
             token: token.clone(),
         });
-        self.client.send(Command::ListProviders {
-            base: base.clone(),
-            token: token.clone(),
-        });
-        self.client.send(Command::ListAgents {
-            base: base.clone(),
-            token: token.clone(),
-        });
-        self.client.send(Command::ListConversations {
-            base,
-            token,
-        });
+        self.load_server_data();
         if let Some(conversation) = self.current {
             self.fetch_messages(conversation);
-            self.fetch_variables(conversation);
+            self.fetch_conversation_state(conversation);
             self.fetch_branches(conversation);
         }
-        // 服务端 `chat` 段（模型上下文 / 压缩阈值）：设置页那两个框的数据源。
-        let (base, token) = (self.settings.server_address.clone(), self.token.clone());
-        self.client.send(Command::GetChatConfig { base, token });
         self.note = "已向服务器同步".to_owned();
     }
 
@@ -684,16 +720,28 @@ impl App {
         });
     }
 
-    fn fetch_variables(&mut self, conversation: Uuid) {
+    /// 拉当前会话的一批"即时状态"：变量、上下文占用、**摘要列表**。
+    ///
+    /// 它们该在**同样的时机**变（切会话、发送之后、编辑之后），分批拉只是多几次往返。
+    fn fetch_conversation_state(&mut self, conversation: Uuid) {
         let (base, token) = (self.settings.server_address.clone(), self.token.clone());
         self.client.send(Command::ListVariables {
             base,
             token,
             conversation,
         });
-        // 顶栏那行占用与变量栏同一批刷新：两条都是"当前会话的即时状态"，
-        // 而且它们该在同样的时机变（切会话、发送之后、编辑之后）。
         self.fetch_context(conversation);
+        self.fetch_summaries(conversation);
+    }
+
+    /// 拉某会话的摘要列表（关系图与摘要面板的数据源）。
+    fn fetch_summaries(&mut self, conversation: Uuid) {
+        let (base, token) = (self.settings.server_address.clone(), self.token.clone());
+        self.client.send(Command::ListSummaries {
+            base,
+            token,
+            conversation,
+        });
     }
 
     /// 拉当前会话的上下文占用（`/context`：只有数字，没有正文）。
@@ -884,7 +932,7 @@ impl App {
             self.next_poll = None;
             return;
         };
-        if !status.phase.is_busy() {
+        if !status.phase.is_busy() && self.compact_ask.is_none() {
             self.next_poll = None;
             return;
         }
@@ -967,7 +1015,7 @@ impl App {
                             // 换了会话就得把这一整套都拉一遍：只拉消息的话，
                             // 变量面板与「‹ 2/3 ›」会挂着上一个会话的东西。
                             self.fetch_messages(id);
-                            self.fetch_variables(id);
+                            self.fetch_conversation_state(id);
                             self.fetch_branches(id);
                         }
                     }
@@ -1031,6 +1079,57 @@ impl App {
                     }
                     Err(message) => self.note = message,
                 },
+                Event::SubAgents(Ok(list)) => {
+                    // 草稿只在**第一次**填：别把正在编辑的内容冲掉
+                    for subagent in &list {
+                        self.subagent_drafts.entry(subagent.id.clone()).or_insert_with(|| {
+                            (
+                                subagent.system_prompt.clone(),
+                                subagent.provider.clone().unwrap_or_default(),
+                                subagent.model.clone().unwrap_or_default(),
+                            )
+                        });
+                    }
+                    self.subagents = Some(list);
+                }
+                Event::SubAgents(Err(message)) => self.note = message,
+                Event::SubAgentsSaved(Ok(list)) => {
+                    // 保存回执：草稿跟着回到"已保存"状态（含服务端归一的空模板）
+                    for subagent in &list {
+                        self.subagent_drafts.insert(
+                            subagent.id.clone(),
+                            (
+                                subagent.system_prompt.clone(),
+                                subagent.provider.clone().unwrap_or_default(),
+                                subagent.model.clone().unwrap_or_default(),
+                            ),
+                        );
+                    }
+                    self.note = "内置 Agent 覆盖已保存".to_owned();
+                    self.subagents = Some(list);
+                }
+                Event::SubAgentsSaved(Err(message)) => self.note = message,
+                Event::CompactionAccepted {
+                    conversation,
+                    result,
+                } => match result {
+                    Ok(status) => {
+                        self.note = format!("压缩中…（{} 个块）", status.blocks);
+                        self.compact_ask = Some(conversation);
+                        self.next_poll = None; // 下一帧立刻开始轮询
+                    }
+                    Err(message) => self.note = message,
+                },
+                Event::Summaries {
+                    conversation,
+                    result,
+                } => match result {
+                    Ok(list) => {
+                        self.summaries.insert(conversation, list);
+                        self.rebuild_graph();
+                    }
+                    Err(message) => self.note = message,
+                },
                 Event::ConversationArchived(Ok(receipt)) => {
                     self.note = format!(
                         "已归档 {} 条消息 → {}",
@@ -1043,7 +1142,7 @@ impl App {
                     // 选中副本并刷新列表（副本是全新的，消息要现拉）
                     self.current = Some(copy.id);
                     self.fetch_messages(copy.id);
-                    self.fetch_variables(copy.id);
+                    self.fetch_conversation_state(copy.id);
                     self.fetch_branches(copy.id);
                     let (base, token) =
                         (self.settings.server_address.clone(), self.token.clone());
@@ -1094,7 +1193,7 @@ impl App {
                         }
                         self.note = "消息已更新".to_owned();
                         // 正文里的状态块可能被改过 → 变量要重算（后端已重算，这里重拉）
-                        self.fetch_variables(conversation);
+                        self.fetch_conversation_state(conversation);
                     }
                     Err(message) => self.note = message,
                 },
@@ -1112,7 +1211,7 @@ impl App {
                         self.note = format!("已删除 {count} 条");
                         // 树上少了东西：变量与兄弟信息都要重拉（leaf 也可能退回去了）
                         self.fetch_messages(conversation);
-                        self.fetch_variables(conversation);
+                        self.fetch_conversation_state(conversation);
                         self.fetch_branches(conversation);
                     }
                     Err(err) => self.note = err,
@@ -1176,7 +1275,22 @@ impl App {
                         let phase = status.phase;
                         let chars = status.chars;
                         let error = status.error.clone();
+                        let compact_done = (self.compact_ask == Some(conversation))
+                            .then(|| status.compact.clone())
+                            .flatten()
+                            .filter(|compact| !compact.is_running());
                         self.turn = Some((conversation, status));
+                        if let Some(compact) = compact_done {
+                            self.compact_ask = None;
+                            self.next_poll = None;
+                            // 压缩落地：摘要多了、出站会变、关系图要重画
+                            self.fetch_summaries(conversation);
+                            self.fetch_conversation_state(conversation);
+                            self.note = match compact.error {
+                                Some(error) => format!("压缩失败：{error}"),
+                                None => format!("已把 {} 个块收进一条摘要", compact.compacted),
+                            };
+                        }
                         if finished {
                             self.next_poll = None;
                             // 流结束：动画缓冲退场，真消息由 /messages 接管（同一个 id）
@@ -1186,7 +1300,7 @@ impl App {
                             self.think_cursor = 0;
                             // 回复落地（或失败）：正文、变量、兄弟数、列表都变过
                             self.fetch_messages(conversation);
-                            self.fetch_variables(conversation);
+                            self.fetch_conversation_state(conversation);
                             self.fetch_branches(conversation);
                             self.fetch_conversations();
                             self.note = match phase {
@@ -1252,7 +1366,7 @@ impl App {
                         // 变量表是后端**沿当前路径现演**的（没有派生表），所以这一次重拉
                         // 就是"重新计算"本身——切到哪条分支，世界状态就是那条分支的样子。
                         self.fetch_messages(conversation);
-                        self.fetch_variables(conversation);
+                        self.fetch_conversation_state(conversation);
                         self.fetch_branches(conversation);
                     }
                     Err(message) => self.note = message,
@@ -1358,8 +1472,25 @@ impl App {
     fn server_dirty(&self) -> bool {
         self.agent_draft_id().is_some()
             || self.provider_draft_id().is_some()
+            || self.subagents_dirty()
             || self.chat_config_dirty()
             || self.model_context_changes().map_or(true, |changes| !changes.is_empty())
+    }
+
+    /// 内置 Agent 的草稿与已保存值不同吗（模板 / 渠道 / 模型）。
+    fn subagents_dirty(&self) -> bool {
+        let Some(subagents) = self.subagents.as_ref() else {
+            return false;
+        };
+        subagents.iter().any(|subagent| {
+            self.subagent_drafts
+                .get(&subagent.id)
+                .is_some_and(|(prompt, provider, model)| {
+                    prompt != &subagent.system_prompt
+                        || provider != subagent.provider.as_deref().unwrap_or_default()
+                        || model != subagent.model.as_deref().unwrap_or_default()
+                })
+        })
     }
 
     /// `chat` 段草稿与已保存值不同吗（模型上下文 / 摘要触发阈值）。
@@ -1439,6 +1570,43 @@ impl App {
     /// 页脚「保存」：把面板里所有待提交的草稿一次写回后端。
     fn save_server_settings(&mut self) {
         let (base, token) = (self.settings.server_address.clone(), self.token.clone());
+        if self.subagents_dirty() {
+            let Some(subagents) = self.subagents.as_ref() else {
+                return;
+            };
+            let mut config = microchat::config::SubAgentsConfig::default();
+            for subagent in subagents {
+                let Some((prompt, provider, model)) = self.subagent_drafts.get(&subagent.id) else {
+                    continue;
+                };
+                let (template, provider, model) = (
+                    prompt.trim().to_owned(),
+                    provider.trim().to_owned(),
+                    model.trim().to_owned(),
+                );
+                // 与内置一字不差 ⇒ 写**空模板**（文件干净，"这就是内置"也一目了然）
+                let system_prompt = if template == subagent.builtin_prompt.trim() {
+                    String::new()
+                } else {
+                    template
+                };
+                config.subagents.insert(
+                    subagent.id.clone(),
+                    microchat::config::SubAgentOverride {
+                        system_prompt,
+                        provider: (!provider.is_empty()).then_some(provider),
+                        model: (!model.is_empty()).then_some(model),
+                        params: subagent.params.clone(),
+                        ..Default::default()
+                    },
+                );
+            }
+            self.client.send(Command::SaveSubAgents {
+                base: base.clone(),
+                token: token.clone(),
+                config,
+            });
+        }
         if self.chat_config_dirty() {
             match parse_chat_drafts(&self.chat_model_context, &self.chat_trigger) {
                 Ok((model_context_tokens, compact_trigger_tokens)) => {
@@ -1769,6 +1937,127 @@ impl App {
 
         ui.add_space(8.0);
         ui.separator();
+    }
+
+    /// 内置 Agent：写死在代码里的**专用后台任务**（目前只有摘要器）。
+    ///
+    /// 名字、说明、内置模板都**来自代码**（加工具＝改 Rust）；这一页只改它们的
+    /// 模板 / 渠道 / 模型。清空模板 = 用内置；保存走页脚那个按钮（与 Agent、模型页一致）。
+    fn settings_subagents(&mut self, ui: &mut egui::Ui) {
+        ui.label(RichText::new("内置 Agent").strong());
+        ui.label(
+            RichText::new(
+                "内置 Agent 一定是专用的：身份、名字、内置模板都写死在代码里（想加一个＝改 Rust）。\
+                 这里只**覆盖**它的行为：模板留空 = 用内置；渠道/模型留空 = 跟随会话。",
+            )
+            .weak(),
+        );
+        ui.add_space(8.0);
+
+        let Some(subagents) = self.subagents.clone() else {
+            ui.label(RichText::new("加载中…").weak());
+            return;
+        };
+
+        let mut restore_builtin: Option<String> = None;
+        for subagent in &subagents {
+            let Some((prompt, provider, model)) = self.subagent_drafts.get_mut(&subagent.id) else {
+                continue;
+            };
+            let using_builtin = prompt.trim() == subagent.builtin_prompt.trim();
+            egui::Frame::NONE
+                .fill(ui.visuals().extreme_bg_color)
+                .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
+                .corner_radius(egui::CornerRadius::same(6))
+                .inner_margin(egui::Margin::same(8))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(&subagent.name).strong());
+                        ui.label(RichText::new(format!("（{}）", subagent.id)).weak().small());
+                        ui.label(
+                            RichText::new(if using_builtin { "· 内置模板" } else { "· 已改过" })
+                                .weak()
+                                .small(),
+                        );
+                        ui.label(
+                            RichText::new(format!("版本 {}", subagent.prompt_version))
+                                .weak()
+                                .small(),
+                        )
+                        .on_hover_text("生效模板的哈希短号：改了模板它自己就变，落库时记进摘要");
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if ui
+                                .small_button("恢复内置")
+                                .on_hover_text("把模板恢复成代码里的那份（保存后才生效）")
+                                .clicked()
+                            {
+                                restore_builtin = Some(subagent.id.clone());
+                            }
+                        });
+                    });
+                    ui.label(RichText::new(&subagent.about).weak().small());
+                    // 模板变量白名单（写死在代码里）+ 这个模板里"不认识的变量"
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(RichText::new("可用变量：").weak().small());
+                        for var in &subagent.vars {
+                            ui.label(
+                                RichText::new(format!("{{{{{}}}}}", var.name))
+                                    .weak()
+                                    .small()
+                                    .monospace(),
+                            )
+                            .on_hover_text(&var.about);
+                        }
+                    });
+                    if !subagent.unknown_vars.is_empty() {
+                        let names: Vec<String> = subagent
+                            .unknown_vars
+                            .iter()
+                            .map(|name| format!("{{{{{name}}}}}"))
+                            .collect();
+                        ui.label(
+                            RichText::new(format!(
+                                "⚠ 不认识的变量：{}（原样留着，不会被替换）",
+                                names.join(" ")
+                            ))
+                            .color(egui::Color32::from_rgb(210, 170, 70))
+                            .small(),
+                        );
+                    }
+                    ui.add_space(4.0);
+                    ui.add(
+                        TextEdit::multiline(prompt)
+                            .desired_rows(6)
+                            .code_editor()
+                            .hint_text("留空 = 用内置模板"),
+                    );
+                    ui.horizontal(|ui| {
+                        ui.label("渠道");
+                        ui.add(
+                            egui::TextEdit::singleline(provider)
+                                .desired_width(140.0)
+                                .hint_text("留空 = 跟随会话"),
+                        );
+                        ui.label("模型");
+                        ui.add(
+                            egui::TextEdit::singleline(model)
+                                .desired_width(200.0)
+                                .hint_text("留空 = 跟随会话"),
+                        );
+                        ui.label(
+                            RichText::new("（压缩是体力活，可以挑个便宜的）").weak().small(),
+                        );
+                    });
+                });
+            ui.add_space(10.0);
+        }
+
+        if let Some(id) = restore_builtin
+            && let Some(found) = subagents.iter().find(|subagent| subagent.id == id)
+            && let Some((prompt, _, _)) = self.subagent_drafts.get_mut(&id)
+        {
+            *prompt = found.builtin_prompt.to_owned();
+        }
     }
 
     /// 模型与渠道：provider 清单、刷新模型、编辑连接信息、新建 provider。
@@ -2255,18 +2544,19 @@ impl App {
         for conversation in &self.conversations {
             // 助手节点写 agent 的名字（和会话里的消息对齐）
             let agent_name = self.agent_label(&conversation.agent_id);
-            // 一列的块：会话（根）→ 系统提示词 → 用户/助手交替，**自上而下**
-            let mut nodes: Vec<(GraphNodeKind, String)> = Vec::new();
+            // 一列的块：会话（根）→ 系统提示词 → 用户/助手交替，**自上而下**。
+            // 第三项 = "这条块对应哪条消息"（摘要要拿它连边）；系统/会话块是 None。
+            let mut nodes: Vec<(GraphNodeKind, String, Option<Uuid>)> = Vec::new();
             let title = if conversation.title.is_empty() {
                 format!("会话 {}", &conversation.id.to_string()[..8])
             } else {
                 conversation.title.clone()
             };
-            nodes.push((GraphNodeKind::Conversation, title));
+            nodes.push((GraphNodeKind::Conversation, title, None));
 
             if let Some(prompt) = self.effective_system_prompt(conversation) {
                 let excerpt: String = prompt.chars().take(16).collect();
-                nodes.push((GraphNodeKind::System, format!("system · {excerpt}")));
+                nodes.push((GraphNodeKind::System, format!("system · {excerpt}"), None));
             }
 
             for (index, message) in self
@@ -2281,21 +2571,27 @@ impl App {
                     ApiRole::Assistant => (GraphNodeKind::Assistant, agent_name.as_str()),
                 };
                 let excerpt: String = message.content.chars().take(12).collect();
-                nodes.push((kind, format!("{} {}·{}", index + 1, who, excerpt)));
+                nodes.push((
+                    kind,
+                    format!("{} {}·{}", index + 1, who, excerpt),
+                    Some(message.id),
+                ));
             }
 
             // 列内：块自上而下摞起来；列本身宽度取该列最宽的块，所有块共用一条中心轴
             let sizes: Vec<egui::Vec2> = nodes
                 .iter()
-                .map(|(_, label)| graph_node::block_size(label))
+                .map(|(_, label, _)| graph_node::block_size(label))
                 .collect();
             let width = column_width(&sizes);
             let center_x = column_left + width / 2.0;
             let heights: Vec<f32> = sizes.iter().map(|size| size.y).collect();
             let centers_y = stacked_centers(&heights, STACK_GAP);
 
+            let mut message_nodes: BTreeMap<Uuid, petgraph::graph::NodeIndex> = BTreeMap::new();
+            let mut message_y: BTreeMap<Uuid, f32> = BTreeMap::new();
             let mut previous = None;
-            for ((kind, label), y) in nodes.into_iter().zip(centers_y.iter().copied()) {
+            for ((kind, label, message_id), y) in nodes.into_iter().zip(centers_y.iter().copied()) {
                 let node = graph.add_node_custom((), |node| {
                     node.set_label(label);
                     node.set_color(kind.color());
@@ -2304,13 +2600,129 @@ impl App {
                 if let Some(previous) = previous {
                     graph.add_edge(previous, node, ());
                 }
+                if let Some(message_id) = message_id {
+                    message_nodes.insert(message_id, node);
+                    message_y.insert(message_id, y);
+                }
                 previous = Some(node);
             }
 
             let last_half = sizes.last().map_or(0.0, |size| size.y / 2.0);
             let column_height = centers_y.last().copied().unwrap_or(0.0) + last_half;
-            max_height = max_height.max(column_height);
-            column_left += width + COLUMN_GAP;
+
+            // ── 摘要：**链不动**，挂在它覆盖的那一段右边（金字塔一眼可见）──
+            //
+            // 边：被它覆盖的每条消息 → 它；再往上一层，子摘要 → 父摘要。
+            // 层级 = 沿 parent_summary_id 往上数的深度 ⇒ 越上层越靠右。
+            let summaries = self
+                .summaries
+                .get(&conversation.id)
+                .cloned()
+                .unwrap_or_default();
+            let members_of: BTreeMap<Uuid, Vec<Uuid>> = {
+                let mut map: BTreeMap<Uuid, Vec<Uuid>> = BTreeMap::new();
+                for message in self.messages.get(&conversation.id).into_iter().flatten() {
+                    if let Some(summary_id) = message.summary_id {
+                        map.entry(summary_id).or_default().push(message.id);
+                    }
+                }
+                map
+            };
+            let by_id: BTreeMap<Uuid, usize> = summaries
+                .iter()
+                .enumerate()
+                .map(|(index, summary)| (summary.id, index))
+                .collect();
+            // 先算层级（沿 parent 往上走），再按层级升序摆 —— 孩子先摆，父才找得到它们
+            let mut ordered: Vec<(usize, &microchat::registry::SummaryView)> = summaries
+                .iter()
+                .map(|summary| {
+                    let mut level = 1;
+                    let mut cursor = summary.parent_summary_id;
+                    while let Some(id) = cursor {
+                        level += 1;
+                        cursor = by_id
+                            .get(&id)
+                            .map(|index| summaries[*index].parent_summary_id)
+                            .flatten();
+                    }
+                    (level, summary)
+                })
+                .collect();
+            ordered.sort_by_key(|(level, _)| *level);
+
+            let mut summary_nodes: BTreeMap<Uuid, petgraph::graph::NodeIndex> = BTreeMap::new();
+            let mut summary_y: BTreeMap<Uuid, f32> = BTreeMap::new();
+            let mut widest_lane = 0.0_f32;
+            let mut max_level = 1;
+            for (level, summary) in &ordered {
+                max_level = max_level.max(*level);
+                // 纵向：覆盖消息 ⇒ 取那一段的中点；摘要的摘要 ⇒ 取孩子的中点
+                let y = if let (Some(first), Some(last)) =
+                    (summary.first_message_id, summary.last_message_id)
+                {
+                    match (message_y.get(&first), message_y.get(&last)) {
+                        (Some(first), Some(last)) => (first + last) / 2.0,
+                        _ => column_height - 8.0,
+                    }
+                } else {
+                    let children: Vec<f32> = summaries
+                        .iter()
+                        .filter(|child| child.parent_summary_id == Some(summary.id))
+                        .filter_map(|child| summary_y.get(&child.id).copied())
+                        .collect();
+                    if children.is_empty() {
+                        // 孤立摘要（成员都被剪/删了）：摆在列的尾巴附近，等你去清理
+                        column_height + 18.0
+                    } else {
+                        children.iter().sum::<f32>() / children.len() as f32
+                    }
+                };
+                let excerpt: String = summary.text.chars().take(12).collect();
+                let dirty_mark = if summary.dirty { "（已过期）" } else { "" };
+                let label = format!(
+                    "摘要 {}块·{}tok · {excerpt}{dirty_mark}",
+                    summary.blocks, summary.tokens
+                );
+                let size = graph_node::block_size(&label);
+                widest_lane = widest_lane.max(size.x);
+                let x = center_x + width / 2.0 + SUMMARY_LANE_GAP * (*level as f32);
+                let color = if summary.dirty {
+                    Color32::from_rgb(0xd0, 0x8f, 0x2f)
+                } else {
+                    GraphNodeKind::Summary.color()
+                };
+                let node = graph.add_node_custom((), |node| {
+                    node.set_label(label);
+                    node.set_color(color);
+                    node.set_location(egui::pos2(x, y));
+                });
+                summary_y.insert(summary.id, y);
+
+                for member in members_of.get(&summary.id).into_iter().flatten() {
+                    if let Some(child) = message_nodes.get(member) {
+                        graph.add_edge(*child, node, ());
+                    }
+                }
+                for child in summaries
+                    .iter()
+                    .filter(|child| child.parent_summary_id == Some(summary.id))
+                {
+                    if let Some(child_node) = summary_nodes.get(&child.id) {
+                        graph.add_edge(*child_node, node, ());
+                    }
+                }
+                summary_nodes.insert(summary.id, node);
+            }
+
+            max_height = max_height.max(column_height + if summaries.is_empty() { 0.0 } else { 40.0 });
+            // 这一列的横向占地 = 本列 + 右侧摘要道（别让下一列压上来）
+            let lane = if summaries.is_empty() {
+                0.0
+            } else {
+                SUMMARY_LANE_GAP * (max_level as f32 + 1.0) + widest_lane
+            };
+            column_left += width + COLUMN_GAP + lane;
         }
 
         self.graph_bounds = egui::Rect::from_min_max(
@@ -3027,6 +3439,33 @@ impl App {
                         conversation: current,
                     });
                 }
+                // 手动压缩：调试期用 dummy 跑（不联网），先拿它把整条链路走顺
+                ui.separator();
+                ui.label(RichText::new("压缩").weak());
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.compact_blocks)
+                        .desired_width(40.0),
+                )
+                .on_hover_text("尝试压缩几个【对话块】（一个块 = 一轮问答；最后那个开着的块永不压）");
+                ui.label(RichText::new("个块").weak());
+                if ui
+                    .small_button("开始")
+                    .on_hover_text("把最老的 N 个块收成一条摘要（202 受理，进度看底栏）")
+                    .clicked()
+                {
+                    match self.compact_blocks.trim().parse::<usize>() {
+                        Ok(blocks) if blocks > 0 => {
+                            self.client.send(Command::Compact {
+                                base: base.clone(),
+                                token: token.clone(),
+                                conversation: current,
+                                blocks,
+                            });
+                        }
+                        _ => self.note = "「压缩」要填一个正整数".to_owned(),
+                    }
+                }
+                ui.separator();
                 if ui
                     .small_button("复制会话")
                     .on_hover_text("复制出一条新会话（真分支用它；会话内那点分支只为重摇）")
@@ -3662,7 +4101,12 @@ impl eframe::App for App {
                     .show(ui, |ui| {
                         ui.add_space(6.0);
                         for (tab, label) in SettingsTab::ALL {
-                            ui.selectable_value(&mut self.settings_tab, tab, label);
+                            if ui
+                                .selectable_value(&mut self.settings_tab, tab, label)
+                                .clicked()
+                            {
+                                self.enter_settings_tab(tab);
+                            }
                         }
                     });
                 // 与面板并列的固定页脚：内容多少都一样，它永远在右下角。
@@ -3670,6 +4114,7 @@ impl eframe::App for App {
                 // 界面会在手底下变形，滑块根本拖不准。
                 let footer = match self.settings_tab {
                     SettingsTab::Agents => Some(("提交 Agent 的改动", true)),
+                    SettingsTab::SubAgents => Some(("提交工具的改动", true)),
                     SettingsTab::Models => Some(("提交 provider 与模型的改动", true)),
                     SettingsTab::Frontend => Some(("应用并保存到本机 frontend.json", false)),
                     // 连接页只有只读信息与「断开」；关于页没有可保存的东西。
@@ -3728,6 +4173,7 @@ impl eframe::App for App {
                         match self.settings_tab {
                             SettingsTab::Connection => self.settings_connection(ui),
                             SettingsTab::Agents => self.settings_agents(ui),
+                            SettingsTab::SubAgents => self.settings_subagents(ui),
                             SettingsTab::Models => self.settings_models(ui),
                             SettingsTab::Frontend => self.frontend_settings(ui),
                             SettingsTab::About => self.about(ui),
