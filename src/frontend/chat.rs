@@ -134,7 +134,7 @@ impl App {
 }
 
 impl App {
-    /// 右侧变量面板：生效值 + 本会话改动 + 全局变量。
+    /// 右侧世界状态面板：生效值 + 本会话改动 + 全局层。
     ///
     /// 生效值由后端 fold 出来（前端不重算一遍——重算就有两个真相来源）。
     /// 带 ◆ 的是被本会话覆写过的键：一眼看出"这一局改了什么"。
@@ -149,7 +149,7 @@ impl App {
 
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            ui.label(RichText::new("变量").strong());
+            ui.label(RichText::new("世界状态").strong());
             if let Some(view) = view {
                 ui.label(RichText::new(format!("本会话 {} 处改动", view.session.len())).weak());
             }
@@ -161,7 +161,7 @@ impl App {
                 {
                     ui.output_mut(|out| {
                         out.commands.push(egui::OutputCommand::CopyText(
-                            microchat::vars::PROTOCOL_HINT.to_owned(),
+                            microchat::world::PROTOCOL_HINT.to_owned(),
                         ))
                     });
                 }
@@ -170,7 +170,7 @@ impl App {
         ui.separator();
 
         let Some(view) = view else {
-            ui.label(RichText::new("变量还没拉到").weak());
+            ui.label(RichText::new("世界状态还没拉到").weak());
             return;
         };
 
@@ -202,17 +202,17 @@ impl App {
                 }
                 for row in &view.session {
                     let text = match (&row.kind, &row.value) {
-                        (microchat::vars::OpKind::Set, Some(value)) => {
+                        (microchat::world::OpKind::Set, Some(value)) => {
                             format!("{} = {value}", row.key)
                         }
-                        (microchat::vars::OpKind::Set, None) => format!("{} = （空串）", row.key),
-                        (microchat::vars::OpKind::Delete, _) => format!("del {}", row.key),
+                        (microchat::world::OpKind::Set, None) => format!("{} = （空串）", row.key),
+                        (microchat::world::OpKind::Delete, _) => format!("del {}", row.key),
                     };
                     ui.label(RichText::new(format!("#{} {}", row.seq, text)).monospace());
                 }
 
                 ui.add_space(10.0);
-                ui.label(RichText::new(format!("全局变量（{}）", view.global_values.len())).weak());
+                ui.label(RichText::new(format!("全局层（{}）", view.global_values.len())).weak());
                 for (key, value) in &view.global_values {
                     ui.label(RichText::new(format!("{key} = {value}")).monospace());
                 }
@@ -273,9 +273,9 @@ impl App {
                 .unwrap_or(usage.budget_tokens as i64)
                 .to_string(),
             match usage.ctx_len_source {
-                microchat::vars::CtxLenSource::Override => "你填的覆盖值",
-                microchat::vars::CtxLenSource::Model => "上游发现",
-                microchat::vars::CtxLenSource::Setting => "设置里的兜底",
+                microchat::world::CtxLenSource::Override => "你填的覆盖值",
+                microchat::world::CtxLenSource::Model => "上游发现",
+                microchat::world::CtxLenSource::Setting => "设置里的兜底",
             },
             usage
                 .max_output
@@ -334,7 +334,7 @@ impl App {
                 if self.system_prompt_open {
                     ui.label(RichText::new(prompt).weak());
                     ui.add_space(2.0);
-                    ui.label(RichText::new("发送时还会在后面注入当前变量表").weak().small());
+                    ui.label(RichText::new("发送时还会在后面注入当前世界状态表").weak().small());
                 } else {
                     ui.label(RichText::new(summarize_lines(prompt)).weak());
                     let lines = prompt.lines().count();

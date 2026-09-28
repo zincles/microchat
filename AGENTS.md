@@ -4,28 +4,61 @@ microchat：轻量 SillyTavern 替代（RPG 向）。三层，边界要清楚：
 
 | 层 | 位置 | 状态 |
 |---|---|---|
-| 后端（唯一权威） | `src/`（Rust + axum + **SQLite**） | 活跃开发 |
+| 后端（唯一权威） | `src/`（Rust + axum + **SQLite**） | **正在迁往 Go**：新代码一律写 `backend/`（见下） |
+| 后端（迁移中） | `backend/`（Go + 标准库 + `modernc.org/sqlite`） | **新功能都写这儿**；Rust 版原地留着当参照 |
 | egui 前端 | `src/main.rs` + `src/frontend/` | **已冻结**（2026-09-28 起）：只修 bug、**不加功能**。
 新界面一律做在 `frontend/`（Godot，**用户设计**，别替他做设计决定）；调试页暂留 egui |
 | Godot 4.8 前端 | `frontend/` | **用户自己在编辑器里设计**——动手前先问，别替他做设计决定；还没接真实数据 |
+
+## 术语表（**一个词只指一件事** —— 叙述一律用这里的词；代码内部名与历史对话原文不追）
+
+| 词 | **只**指什么 | 别叫 |
+|---|---|---|
+| **世界状态（state）** | `<state>` 那套：沿当前路径**现演**的键值 + `del` 墓碑 + 三层来源（全局 / 本会话 / 生效） | 别叫"变量"；也别单说"状态"（那会跟任务状态、连接状态、流式状态撞） |
+| **能力（Ability）** | **写死在代码里的一段固定流程**：程序（或将来的 Agent）拼材料、调它、产出回流（摘要器 / 索引 / 判断 / 角色扮演 / **对话本身**） | 别叫"工具"（撞函数调用）、"子 Agent"（暗示从属）、~~"内置 Agent"/"工序"~~（都已废弃） |
+| **Agent** | **一份命名的人格 + 一组能力开关**（`agents.json` 的 `abilities`：谁启用什么）—— 同一个运行时，只是开关不同 | 别拿它指"某个能力" | 
+| **任务（task）** | **一次有始有终的后台作业**：谁在跑、跑了多久、什么结果（`src/task.rs`）。**凡是会调 LLM 的必定是 Task**（反过来不成立：刷新模型不调 LLM，但也是 Task） | — |
+
+词源：这个词改过好几轮（子 Agent → 工具 → 内置 Agent → 工序 → **能力**），根因是**当时没有定义**；
+现在三层咬合、各就各位：**Agent（开关）→ 能力（流程）→ 任务（一次执行）**。
+"能不能自主选下一步"**不再是 Agent 的判据**，而是将来某个能力（如 `plan`）的事。
 
 ## 代码布局（前端在 `src/frontend/`）
 
 ```
 src/
   lib.rs            共享库 = **后端**（model / store / server / vars / chat / providers /
-                    config / registry / turn / blocks / compact / subagents / template）
+                    config / registry / turn / blocks / compact / abilities / template）
   bin/server.rs     后端的可执行入口
   main.rs           前端的壳：只声明 `mod frontend;` 并把控制权交给 `frontend::run()`
   frontend/
     mod.rs          App 状态 + 帧循环 + 事件泵 + 取数/保存 + 小工具与测试
-    chat.rs         会话视图：消息列表、输入栏、变量栏、占用行、系统提示词块
-    settings.rs     设置六页（连接 / Agent / 内置 Agent / 模型与渠道 / 前端设置 / 关于）
+    chat.rs         会话视图：消息列表、输入栏、世界状态栏、占用行、系统提示词块
+    settings.rs     设置六页（连接 / Agent / 能力 / 模型与渠道 / 前端设置 / 关于）
     debug.rs        调试五页（后端状态 / 载荷 / 原始配置 / 请求日志）—— 关系图那页在 graph.rs
     graph.rs        关系图：布局、绘制、缩放/适配、块的切分与摆放
     client.rs       HTTP 客户端（命令/事件）· fonts.rs · graph_node.rs · frontend_settings.rs
 ```
 子模块靠 `use super::*;` 拿到父模块的一切；跨模块要用的项标 `pub(super)`。
+
+## 后端迁移：Rust → Go（2026-09-28 起）
+
+**为什么要迁**：最初的出发点是"出事了我们也能修"，但用户不读 Rust ⇒ 那个前提失效了；
+Go 语法少、读起来像 C（无指针运算）、标准库自带 HTTP/JSON ⇒ 用户（Go 1 年）能自己维护。
+
+**迁移纪律（四条，缺一不可）**
+1. **表结构照搬**：`backend/internal/store/migrations/*.sql` 由 `src/store.rs` 的 `MIGRATIONS` **生成**，
+   **一字不改** —— 两版必须能开同一个 SQLite 文件（`PRAGMA user_version` 同一个机制）；
+2. **接口照搬** `AGENTS.md` 那张表：`python3 scripts/api-audit.py` 全绿 = 接口层转对了；
+3. **行为照搬**：171 条测试搬进 `go test` 全绿 = 行为层转对了；
+4. **Godot 一行不改**：它只认 HTTP（当初"前端无关"的坚持，这天回本）。
+
+**已验**：Go 建的库与 Rust 建的库**表结构逐字一致**；两版读同一份真库副本，账目相同（conversations/messages 一致）。
+
+```bash
+cd backend && go build -o /tmp/microchat-go . && /tmp/microchat-go -addr 127.0.0.1:8787 -data ../data
+# 只用标准库的路由：Go 1.22+ 的 ServeMux 原生支持 "GET /x/{id}" 模式
+```
 
 ## 常用命令
 
@@ -44,9 +77,9 @@ adb install -r /tmp/x.apk && adb logcat -s godot
 ## 不变量（破坏了会静默出错）
 
 1. **存储是 SQLite**：`data/microchat.db`。用户手写的配置只在 `config/`（**严格 JSON**：注释与尾逗号都报错——程序会整体重写这些文件；格式见文末）。两者路径都**相对工作目录**，可用 `MICROCHAT_CONFIG_DIR` / `MICROCHAT_DATA_DIR` 覆盖。界面偏好另存一份：`~/.config/microchat/frontend.json`（不同机制，别混）。
-2. **正文与提示词都是存档**：`<state>` 块原样留在消息正文**和 system prompt** 里；**发给模型的文本一律剔除标签**，改注入当前变量表。唯一出口 `vars::build_outgoing()`——不要写第二条拼装路径。
-3. **变量不落库**：库里只有正文/提示词与那几张配置、发现表。变量表**每次现算**：`vars::VariableView::from_sources(会话, 生效的 system prompt, 来源, 消息列表)`——先扫提示词里的 `<state>` 块（**底子**），再按**当前路径**顺序扫正文里的块，最后 fold。每条现演操作都带 `message_id`，"哪句话带来的状态"追得回来。**没有派生表** ⇒ 编辑/删除消息、改提示词、换分支都不需要"重算变量"（换分支只要重拉 `/conversations/{id}/variables`，那就是重算本身）。
-   底子的**来源**决定它算哪一层：会话没写自己的提示词 ⇒ 用 agent 的 ⇒ 算**全局**（同一 agent 的会话共享）；会话自己写了 ⇒ 覆盖 agent 的 ⇒ 算**本会话**。`del` 写墓碑，挡住全局同名键，不会从底下漏回来。生效提示词由 `server::effective_system_prompt()` 一处解析（会话覆盖优先 → agent 的 → 内置默认兜底），出站消息 / 变量底子 / 界面显示共用它。**别再把操作日志写回库**（老表 `variable_ops` 已 DROP；`config/variables.json`、`setglobal`/`delglobal` 都已废弃）。
+2. **正文与提示词都是存档**：`<state>` 块原样留在消息正文**和 system prompt** 里；**发给模型的文本一律剔除标签**，改注入当前世界状态表。唯一出口 `vars::build_outgoing()`——不要写第二条拼装路径。
+3. **世界状态不落库**：库里只有正文/提示词与那几张配置、发现表。世界状态**每次现算**：`vars::VariableView::from_sources(会话, 生效的 system prompt, 来源, 消息列表)`——先扫提示词里的 `<state>` 块（**底子**），再按**当前路径**顺序扫正文里的块，最后 fold。每条现演操作都带 `message_id`，"哪句话带来的状态"追得回来。**没有派生表** ⇒ 编辑/删除消息、改提示词、换分支都不需要"重算变量"（换分支只要重拉 `/conversations/{id}/state`（即将改名 `/state`），那就是重算本身）。
+   底子的**来源**决定它算哪一层：会话没写自己的提示词 ⇒ 用 agent 的 ⇒ 算**全局**（同一 agent 的会话共享）；会话自己写了 ⇒ 覆盖 agent 的 ⇒ 算**本会话**。`del` 写墓碑，挡住全局同名键，不会从底下漏回来。生效提示词由 `server::effective_system_prompt()` 一处解析（会话覆盖优先 → agent 的 → 内置默认兜底），出站消息 / 世界状态底子 / 界面显示共用它。**别再把操作日志写回库**（老表 `variable_ops` 已 DROP；`config/variables.json`、`setglobal`/`delglobal` 都已废弃）。
 4. **消息是一棵树**：`messages.parent_id`（自引用、`ON DELETE CASCADE`）+ `conversations.current_leaf`。整条对话 = 从 `current_leaf` 沿 `parent_id` 回溯到根（`store::path_from`）。**兄弟就是分支**：
    - **重新发送 = 再长一个兄弟**（旧的留着，不是覆盖）；尾条是用户消息时照它生成；
    - **切分支只允许在最新那句上**（`store::switch_leaf_to_sibling`，目标必须是当前尾巴的兄弟，否则 400）。**别放开"切到任意旧消息"**：那是把对话倒回去，而变量沿路径现演 ⇒ 世界状态会跟着倒退；
@@ -54,7 +87,7 @@ adb install -r /tmp/x.apk && adb logcat -s godot
    - 「删除全部」= 清掉一组兄弟（连同各自子树），只留上文。
    - **生成中的回复不在库里**：受理时先把它的 id 算好（`Uuid::now_v7()`）随回执发给客户端（前端拿它指认"正在生成的那条"），但要等**整段**从上游拿到，才用这个 id 与受理时捕获的上文 `INSERT`（`store::insert_message_with_id`）。存档里只有完整的对话：停止、失败、进程被杀都不会留下半条，因此也**没有任何"清理占位"的机制**要维护。
    **别再按 rowid 或 id 排消息**；`rowid` 只在"同龄兄弟谁先谁后"里当顺序用。
-5. **模型身份 = `(provider, upstream_id)`**；显示名三级回退（用户覆盖 → 上游名 → prettify）在**后端**完成，前端别再实现一遍。新建会话的 agent 取 `agents.json` 的 `default_agent`（空串/缺失都算没配 ⇒ 用内置默认），否则 agent 的提示词与变量底子对任何新会话都不生效。
+5. **模型身份 = `(provider, upstream_id)`**；显示名三级回退（用户覆盖 → 上游名 → prettify）在**后端**完成，前端别再实现一遍。新建会话的 agent 取 `agents.json` 的 `default_agent`（空串/缺失都算没配 ⇒ 用内置默认），否则 agent 的提示词与世界状态底子对任何新会话都不生效。
    **agent 的 id**：新建时由后端生成 UUIDv7（`POST /agents` 只收 `name` + `system_prompt`，空名 400）；**已存在的可以在编辑器里改**，那走 `PATCH /agents/{id}` 的 `new_id`——一次把 `default_agent` 与**所有会话的引用**搬过去（`agent_id` 是软引用、无外键，`resolve()` 找不到只会静默回空提示词，所以必须由这一处维护一致性）。
 6. **`config/` 整块与 `data/` 永不入库**（都是你个人的：端口口令、provider 连接信息、agent 预设、密钥、存档）。默认值全在代码里（各结构的 `Default` + 内置 dummy provider + 内置 default agent），这些文件不存在也能跑。`.gitignore` 只放行 Godot 项目的非缓存部分（`.godot/`、`export/` 排除）。
 7. **HTTP API 看「HTTP API（客户端契约）」那一节**：那张表是从 `src/server.rs` 抽出来的，并**逐条发真实请求核过**。改了接口就跑一遍 `cargo build && python3 scripts/api-audit.py`（它自起沙盒，不碰你的 `config/`、`data/`）。
@@ -97,23 +130,23 @@ cargo build && python3 scripts/api-audit.py     # 改过接口就跑一遍（它
 | DELETE | `/conversations/{id}` | — | 204 | 不存在 → 404 |
 | GET | `/conversations/{id}/messages` | — | `[Message]` | **按树上的当前路径**，不是 rowid |
 | POST | `/conversations/{id}/messages` | `SendReq` | `TurnAccepted` · **202** | 落用户消息 + 开工；不含回复正文（见下一节） |
-| PATCH | `/conversations/{id}/messages/{mid}` | `EditMessageReq` | `Message` | 改正文 = 重写存档（变量随之现演） |
+| PATCH | `/conversations/{id}/messages/{mid}` | `EditMessageReq` | `Message` | 改正文 = 重写存档（世界状态随之现演） |
 | DELETE | `/conversations/{id}/messages/{mid}` | — | `{"deleted": n}` | 删**整棵子树**；leaf 退到还活着的最新兄弟 |
 | DELETE | `/conversations/{id}/messages/{mid}/siblings` | — | `{"deleted": n}` | 「删除全部」：清掉一组兄弟，只留上文 |
 | POST | `/conversations/{id}/resend` | — | `TurnAccepted` · **202** | 尾条是助手就再长一个兄弟；是用户消息就照它重发 |
 | GET | `/conversations/{id}/branches` | — | `{消息id: BranchInfo}` | 每条在同龄兄弟里第几/共几（`‹ 2/3 ›`） |
-| GET | `/conversations/{id}/variables` | — | `VariableView` | `global` / `session` / `effective`，**每次现算** |
-| GET | `/conversations/{id}/outgoing` | — | `[Outgoing]` | "下次真会发出去的东西"（标签已剔除、变量已注入） |
+| GET | `/conversations/{id}/state` | — | `VariableView` | `global` / `session` / `effective`，**每次现算** |
+| GET | `/conversations/{id}/outgoing` | — | `[Outgoing]` | "下次真会发出去的东西"（标签已剔除、世界状态已注入） |
 | GET | `/config/chat` | — | `ChatConfig` | 服务端 `config.json` 的 `chat` 段（**不含密钥**——口令不在这一段） |
 | PUT | `/config/chat` | `ChatConfig` | `ChatConfig` | **整段替换** `chat`（其余段原样保留；写回严格 JSON） |
 | PATCH | `/models` | `{provider, upstream_id, context_override}` | `ModelView` | 设置/清除某模型的**上下文覆盖值**（`null` = 清掉）。**用户列**：刷新永不覆盖它 |
-| GET | `/subagents` | — | `[SubAgentView]` | 内置 Agent 清单 + 生效模板/渠道/模型 + 版本短号 + 内置模板 |
-| PUT | `/subagents` | `SubAgentsConfig` | `[SubAgentView]` | 整段替换 `subagents.json`；**未知 id ⇒ 400**（身份在代码里） |
+| GET | `/abilities` | — | `[AbilityView]` | 能力清单 + 生效模板/渠道/模型 + 版本短号 + 内置模板 |
+| PUT | `/abilities` | `AbilitiesConfig` | `[AbilityView]` | 整段替换 `abilities.json`；**未知 id ⇒ 400**（身份在代码里） |
 | POST | `/conversations/{id}/compact` | `{blocks: N}` | `CompactStatus` · **202** | **手动压缩**：把最老的 N 个**对话块**收成一条摘要（后台跑，进度看 `GET /status` 的 `compact`）。同一会话同时只允许一个 |
 | GET | `/conversations/{id}/summaries` | — | `[SummaryView]` | 摘要列表（关系图/摘要面板用）：`members`、`first/last_message_id` 都是**现算**的（不存库）；`members == 0` ⇒ 孤立摘要 |
-| GET | `/conversations/{id}/export` | — | `ConversationExport` | 自包含导出：会话 + **全部消息（含分支）** + 摘要 + 现演变量 + `current_path`。只读 |
+| GET | `/conversations/{id}/export` | — | `ConversationExport` | 自包含导出：会话 + **全部消息（含分支）** + 摘要 + 现演世界状态 + `current_path`。只读 |
 | POST | `/conversations/{id}/archive` | — | `ArchiveReceipt` · 200 | 写 `data/archive/<会话>-<时间戳>.json`（**剪枝前的必做动作**），回收据 `{path, bytes, messages, summaries}` |
-| POST | `/conversations/{id}/fork` | — | `Conversation` · **201** | 复制出新会话：当前路径 + 尾巴那一层的兄弟（含子树）+ 摘要行（指针按映射改写）。**变量不复制**（现演，逐键相同） |
+| POST | `/conversations/{id}/fork` | — | `Conversation` · **201** | 复制出新会话：当前路径 + 尾巴那一层的兄弟（含子树）+ 摘要行（指针按映射改写）。**世界状态不复制**（现演，逐键相同） |
 | GET | `/conversations/{id}/context` | — | `ContextUsage` | **只有数字**：`used_tokens`（估算）/ `budget_tokens` / `trigger_tokens` / `remaining_tokens`（超了报负数）/ `ctx_len` / `max_output` / `ratio` / `estimated` / `last_prompt_tokens`（上一轮上游实测）/ `over_budget` |
 
 ### 生成这一轮（202 + 轮询）
@@ -160,7 +193,7 @@ cargo build && python3 scripts/api-audit.py     # 改过接口就跑一遍（它
 
 ## 流式输出：增量只服务动画，落库只认完整正文
 
-一条铁律：**流式过程中的增量什么都不算**。它不进库、不进树、不参与变量与出站计算——那些只认"流结束后完整落库的那一条消息"。所以流断了、被停了、上游中途报错，档案永远是干净的。
+一条铁律：**流式过程中的增量什么都不算**。它不进库、不进树、不参与世界状态与出站计算——那些只认"流结束后完整落库的那一条消息"。所以流断了、被停了、上游中途报错，档案永远是干净的。
 
 - **上游**：`reqwest-eventsource`（建在同一个 `reqwest` 上）——按既定规矩用成熟库，不手搓 `data: ` 分帧与 `[DONE]`。落在 `providers::Client::chat_completion_stream`；`chat::complete_with(.., stream, on_chunk)` 是唯一入口（`complete` 是它的薄封装）。
 - **服务端**：每个增量 `TurnRegistry::append_*` 进这一轮的缓冲区，顺手把 `pending` 抬成 **`streaming`**；令牌对不上（已被 `stop`）的字节直接丢弃。缓冲区随 entry 存活一轮，下一轮 `begin` 覆盖。
@@ -229,7 +262,7 @@ cargo build && python3 scripts/api-audit.py     # 改过接口就跑一遍（它
 - **设置页要的数据只从 `load_server_data()` 一处发**（连上后端时 / 点 ⟳ 时 / 走进某个设置页时都走它）。
   曾经 `refresh_all` 与它各写一份"要拉哪些"，新加的两样只进了 ⟳ 那条路 ⇒ 设置页永远"加载中…"（真发生过）。
 - 调试页五个标签：**后端状态 / 最近发送载荷 / 原始配置 / 请求日志 / 关系图**。「最近发送载荷」原样显示最近一次发给上游的 `/chat/completions` 请求体（带 provider/模型、时间、字节数、复制按钮）——排查"看着都对、上游却报错"看它；**dummy 也有一份**（拼而不发，形状一样）。
-- 设置分六页（左导航同级）：**连接 / Agent / 内置 Agent / 模型与渠道 / 前端设置 / 关于**；右下角「保存」按页给出不同提示。
+- 设置分六页（左导航同级）：**连接 / Agent / 能力 / 模型与渠道 / 前端设置 / 关于**；右下角「保存」按页给出不同提示。
 - 「模型与渠道」页顶部是**服务端上下文口径**：`模型上下文`（上游没报时的兜底）+ `摘要触发阈值`（留空 = 预算 × 0.8）+ 保存。
   每个渠道一行：`获取模型`（POST，成功后在**底栏**说"已获取 N 个模型"）、`删除全部模型`（清发现态，配置与历史会话都不动）、`编辑`。
   下面**逐个模型列出上下文**：上游给了就写 `上下文 1.0M`，没给就写"上游没报"；右边一个输入框可填**覆盖值**（留空 = 清掉覆盖）。
@@ -266,8 +299,8 @@ cargo build && python3 scripts/api-audit.py     # 改过接口就跑一遍（它
 - `config/providers.json` — `{ "version": 1, "providers": [ { "id": "dummy", "kind": "dummy" }, { "id": "openrouter", "name": "显示名可选", "base_url": "https://openrouter.ai/api/v1", "headers": { "X-Title": "microchat" } } ] }`
   **密钥就写在这一条里**（`"api_key": "sk-…"`，空串 = 没配）：整个 `config/` 在忽略范围内，所以它不进版本库；接口一律不回显（只回 `has_key`），调试页读这个文件时也会先打码。文件本身写回时权限收紧到 0600。
 - `config/agents.json` — `{ "version": 1, "default_agent": "跑团", "agents": [ { "id": "跑团", "name": "跑团主持人", "system_prompt": "你是跑团主持人。<state>set 季节 = 初冬</state>" } ] }`
-- `config/subagents.json` — **内置 Agent** 的覆盖项（不是对话者）：模板里可用 `{{…}}` 变量（见「内置 Agent」一节）`{ "version": 1, "subagents": { "compact": { "system_prompt": "…（留空=用内置）…", "provider": null, "model": null } } }`。
-  它们的身份/名字/内置模板**写死在代码里**（`crate::subagents::SubAgent` 的枚举变体，目前只有 `compact` 摘要器），这里只能覆盖行为、不能造新的（未知 id 一律 400）。
+- `config/abilities.json` — **能力**的覆盖项：`{ "version": 1, "abilities": { "compact": { "system_prompt": "…（留空=用内置）…", "provider": null, "model": null } } }`。模板里可用 `{{…}}` 占位符（见「能力」一节）。
+  它们的身份/名字/内置模板**写死在代码里**（`crate::abilities::Ability` 的枚举变体，目前只有 `compact` 摘要器），这里只能覆盖行为、不能造新的（未知 id 一律 400）。
   `system_prompt` 里的 `<state>` 块就是**变量底子**（和消息正文同一套语法）；`id` 手写可用可读 id，界面新建则生成 UUIDv7。
 - `~/.config/microchat/frontend.json` — 界面偏好（主题、缩放、服务器地址、回车是否发送……）。
 
@@ -286,8 +319,8 @@ cargo build && python3 scripts/api-audit.py     # 改过接口就跑一遍（它
 
 ## 压缩（`src/compact.rs`）—— 唯一入口，分机制与策略两层
 
-- **机制**：`compact::summarize_span(store, prompt, providers, subagents, conversation_id, Span{begin, end})`
-  —— 给它一段（两端用 id 指，**可以是 message 也可以是 summary**），它拼材料（§15）→ 叫内置 Agent →
+- **机制**：`compact::summarize_span(store, prompt, providers, abilities, conversation_id, Span{begin, end})`
+  —— 给它一段（两端用 id 指，**可以是 message 也可以是 summary**），它拼材料（§15）→ 叫能力 →
   过闸（剔 `<state>`）→ 落库（单事务）。**二次压缩（金字塔）就是"喂 summary id"**，同一个函数。
 - **策略**：`compact::summarize_blocks(…, limit)` —— 从第一条没被覆盖的消息起，取最老的 N 个**已闭合**块
   （手动按钮的语义）。将来的自动触发换个挑法，复用机制那一层。
@@ -297,27 +330,34 @@ cargo build && python3 scripts/api-audit.py     # 改过接口就跑一遍（它
 - 不持锁跨 await：取料在锁里、调用在锁外、落库再进锁（与 `turn::run_turn` 同一条纪律）。
 - 块的"开/合"要看**整条路径**，不是看切出来的那一段（切到末尾的块看着"开着"，其实只要后面还有消息就已闭合）。
 
-## 内置 Agent（`src/subagents.rs`）—— 写死在代码里的专用后台任务，不是对话者
+## 决策模型（JEV 一类）：**不是聊天模型** —— 用法见 `JEV.md`
 
-**内置 Agent 一定是专用的，没有复用可言**（§25）⇒ 身份写死在代码里：`crate::subagents::SubAgent` 的枚举变体
+上游不只"聊天"一种形状：`typesafe/jev` 那类是**决策模型**（状态 + 类型化问题 → 概率，`Choice`/`Noul`/`Score`），
+不生成文本、不能驱动会话、也不在 `GET /models` 的发现列表里（所以"渠道与模型"下拉里找不到它，不是列表过期）。
+要用它得**加第三种 provider kind**（现在是 `dummy` / `openai-compat`）。规划中的用途（判断（能力）/ 意图分类 /
+触发角色心理）与四条规矩（只动尾部 / 失败降级 / 产出不进历史与变量 / 阈值实测校准）都记在 **`JEV.md`**。
+
+## 能力（`src/abilities.rs`）—— 写死在代码里的固定流程
+
+**能力一定是专用的，没有复用可言**（§25）⇒ 身份写死在代码里：`crate::abilities::Ability` 的枚举变体
 （目前只有 `SubAgent::Compact` = 摘要器），id / 显示名 / 说明 / 内置模板都在代码里；
-`config/subagents.json` 只能**覆盖**它的模板、渠道、模型，**不能造新的**。
+`config/abilities.json` 只能**覆盖**它的模板、渠道、模型，**不能造新的**。
 
 与会话 Agent（`agents.json`，有人格、提示词进会话、能写 `<state>` 底子）的三条硬边界：
 ① 产出永不进历史/树/变量（落库由调用方决定：摘要器走 `store::record_summary`）；
 ② 提示词永不进会话的系统提示词；③ **失败不阻塞任何一轮**。
 
-`subagents::run(config, SubAgent::Compact, material, conversation, providers)` 复用同一个 `providers::Client`（非流式）；
-`prompt_version = subagents::prompt_version(生效模板)`（64 位哈希，改一个字就变 —— 别手写版本号）。
+`abilities::run(config, Ability::Compact, material, conversation, providers)` 复用同一个 `providers::Client`（非流式）；
+`prompt_version = abilities::prompt_version(生效模板)`（64 位哈希，改一个字就变 —— 别手写版本号）。
 
-**占位符**（`src/template.rs`）：内置 Agent 的模板里可以写 `{{name}}`，发请求前替换。
+**占位符**（`src/template.rs`）：能力的模板里可以写 `{{name}}`，发请求前替换。
 **「变量」这个词只留给世界状态**（`<state>` 那套 / `src/vars.rs`）—— 两者毫无关系，别混。**白名单就是枚举**：
 `{{system_time}}`（UTC）/ `{{state_before}}` / `{{state_after}}` / `{{range}}` / `{{blocks}}`。
 三条规矩：① 不认识的 `{{foo}}` **原样留着**（界面会提示），不报错也不猜；
 ② **只扫一遍** —— 替换进去的值不再当模板扫（否则用户文本里的 `{{` 就能玩坏注入）；
 ③ **会话 Agent 的提示词永不替换**（它一变，前缀缓存每轮全废 —— `build_outgoing` 里连这个词都不出现，有守卫测试）。
 dummy 下也走全链路（回固定文本 + 拼好 payload，便于无 key 验证）。
-接口：`GET /subagents`（内置清单 + 生效值 + 版本短号）、`PUT /subagents`（整段替换覆盖项、未知 id ⇒ 400）、`POST /conversations/{id}/compact`。
+接口：`GET /abilities`（清单 + 生效值 + 版本短号）、`PUT /abilities`（整段替换覆盖项、未知 id ⇒ 400）、`POST /conversations/{id}/compact`。
 
 ## 数据模型（`src/store.rs` 的 `MIGRATIONS` 是唯一权威）
 
@@ -343,7 +383,7 @@ dummy 下也走全链路（回固定文本 + 拼好 payload，便于无 key 验�
 | `id` | TEXT PK | 生成回复时**受理那一刻就算好**并发给前端，落库用同一个 |
 | `conversation_id` | TEXT NOT NULL，FK → `conversations(id)` **CASCADE** | |
 | `role` | TEXT NOT NULL，`CHECK(role IN ('user','assistant'))` | 只有两种 |
-| `content` | TEXT NOT NULL | **存档本体**：`<state>` 块原样留着（发出前才剔除、改注入当前变量表） |
+| `content` | TEXT NOT NULL | **存档本体**：`<state>` 块原样留着（发出前才剔除、改注入当前世界状态表） |
 | `parent_id` | TEXT，FK → `messages(id)` **CASCADE** | **树就在这一列**：NULL = 根；兄弟 = 分支；删父连子孙一起删 |
 | `created_at` | INTEGER NOT NULL | 毫秒 |
 | `reasoning` | TEXT | 推理型模型的"思考"：**只留档**——不进历史、不扫 `<state>`、不可编辑 |
@@ -478,6 +518,11 @@ dummy 下也走全链路（回固定文本 + 拼好 payload，便于无 key 验�
 指针悬空（摘要被删/导入过）当没覆盖处理，照发原文。
 
 ### 装配顺序（只在 `build_outgoing` 这一处，仍是唯一拼装路径）
+
+**前缀稳定是硬约束**：任何"按内容变化"的东西（意图分类的结果、角色心理、额外的规则块……）**只能出现在尾部** ——
+顺序就是为缓存排的（实测缓存失效只发生在尾巴）；动前缀 = 每轮全价。"只动尾部"这条规矩在 `JEV.md` 里也写着（它是那边的使用前提）。
+
+
 
 `[系统 + <state>] [粗梗概] [细梗概] [最近原文] [新消息]` ——
 越靠前越稳定，与实测的缓存行为（缓存失效只发生在尾巴）对齐。

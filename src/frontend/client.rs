@@ -31,8 +31,8 @@ pub enum Command {
         token: Option<String>,
         conversation: uuid::Uuid,
     },
-    /// 拉某会话的变量：全局 + 本会话操作日志 + 生效值。
-    ListVariables {
+    /// 拉某会话的世界状态：全局层 + 本会话操作日志 + 生效值。
+    ListWorldState {
         base: String,
         token: Option<String>,
         conversation: uuid::Uuid,
@@ -61,15 +61,15 @@ pub enum Command {
         token: Option<String>,
     },
     /// 拉内置工具清单（名字/说明/内置模板来自代码 + 现在生效的覆盖）。
-    ListSubAgents {
+    ListAbilities {
         base: String,
         token: Option<String>,
     },
     /// 整段替换工具的覆盖项（只认已知工具 id，别的会 400）。
-    SaveSubAgents {
+    SaveAbilities {
         base: String,
         token: Option<String>,
-        config: microchat::config::SubAgentsConfig,
+        config: microchat::config::AbilitiesConfig,
     },
     /// **手动压缩**：把最老的 N 个块收成一条摘要（202 受理，进度看 `/status` 的 `compact`）。
     Compact {
@@ -278,9 +278,9 @@ pub enum Event {
         conversation: uuid::Uuid,
         result: Result<Vec<microchat::model::Message>, String>,
     },
-    Variables {
+    WorldState {
         conversation: uuid::Uuid,
-        result: Result<microchat::vars::VariableView, String>,
+        result: Result<microchat::world::WorldStateView, String>,
     },
     MessageEdited {
         conversation: uuid::Uuid,
@@ -343,14 +343,14 @@ pub enum Event {
     /// 上下文占用（`/context`）：顶栏那行 `上下文 12.3k（上轮实测 11.9k）/ 40k`。
     ContextUsage {
         conversation: uuid::Uuid,
-        result: Result<microchat::vars::ContextUsage, String>,
+        result: Result<microchat::world::ContextUsage, String>,
     },
     /// 后台任务一屏（`TaskBoard`）。
     Tasks(Result<microchat::task::TaskBoard, String>),
     /// 工具清单（读与写的结果都是它）。
-    SubAgents(Result<Vec<microchat::server::SubAgentView>, String>),
+    Abilities(Result<Vec<microchat::server::AbilityView>, String>),
     /// 工具覆盖项写回的结果（**用返回的那份覆盖草稿**，好让界面回到"已保存"状态）。
-    SubAgentsSaved(Result<Vec<microchat::server::SubAgentView>, String>),
+    AbilitiesSaved(Result<Vec<microchat::server::AbilityView>, String>),
     /// 压缩受理的结果（`CompactStatus`；真正跑完要看 `/status`）。
     CompactionAccepted {
         conversation: uuid::Uuid,
@@ -459,7 +459,7 @@ impl Command {
             Self::ListMessages { conversation, .. } => {
                 format!("GET /conversations/{}/messages", &conversation.to_string()[..8])
             }
-            Self::ListVariables { conversation, .. } => {
+            Self::ListWorldState { conversation, .. } => {
                 format!("GET /conversations/{}/variables", &conversation.to_string()[..8])
             }
             Self::EditMessage {
@@ -529,8 +529,8 @@ impl Command {
                 format!("GET /conversations/{}/context", &conversation.to_string()[..8])
             }
             Self::ListTasks { .. } => "GET /tasks".to_owned(),
-            Self::ListSubAgents { .. } => "GET /subagents".to_owned(),
-            Self::SaveSubAgents { .. } => "PUT /subagents".to_owned(),
+            Self::ListAbilities { .. } => "GET /abilities".to_owned(),
+            Self::SaveAbilities { .. } => "PUT /abilities".to_owned(),
             Self::Compact {
                 conversation,
                 blocks,
@@ -583,10 +583,10 @@ fn summarize(event: &Event) -> String {
         },
         Event::Tasks(Ok(board)) => format!("OK 在跑 {} 个任务", board.running),
         Event::Tasks(Err(message)) => format!("失败: {message}"),
-        Event::SubAgents(Ok(list)) => format!("OK {} 个内置 Agent", list.len()),
-        Event::SubAgents(Err(message)) => format!("失败: {message}"),
-        Event::SubAgentsSaved(Ok(list)) => format!("OK 内置 Agent 覆盖已保存（{} 个）", list.len()),
-        Event::SubAgentsSaved(Err(message)) => format!("失败: {message}"),
+        Event::Abilities(Ok(list)) => format!("OK {} 个能力", list.len()),
+        Event::Abilities(Err(message)) => format!("失败: {message}"),
+        Event::AbilitiesSaved(Ok(list)) => format!("OK 能力覆盖已保存（{} 个）", list.len()),
+        Event::AbilitiesSaved(Err(message)) => format!("失败: {message}"),
         Event::CompactionAccepted { result, .. } => match result {
             Ok(status) => format!("受理：压缩 {} 个块", status.blocks),
             Err(message) => format!("压缩失败: {message}"),
@@ -627,8 +627,8 @@ fn summarize(event: &Event) -> String {
             Ok(usage) => format!("OK 上下文 {}/{} tok", usage.used_tokens, usage.budget_tokens),
             Err(message) => format!("失败: {message}"),
         },
-        Event::Variables { result, .. } => match result {
-            Ok(view) => format!("OK {} 个生效变量", view.effective.len()),
+        Event::WorldState { result, .. } => match result {
+            Ok(view) => format!("OK {} 个生效键", view.effective.len()),
             Err(message) => format!("失败: {message}"),
         },
         Event::LeafSwitched { result, .. } => match result {
@@ -739,17 +739,17 @@ fn handle(http: &reqwest::blocking::Client, command: Command) -> Event {
                 &format!("/api/v1/conversations/{conversation}/messages"),
             ),
         },
-        Command::ListVariables {
+        Command::ListWorldState {
             base,
             token,
             conversation,
-        } => Event::Variables {
+        } => Event::WorldState {
             conversation,
             result: get(
                 http,
                 &base,
                 token.as_deref(),
-                &format!("/api/v1/conversations/{conversation}/variables"),
+                &format!("/api/v1/conversations/{conversation}/state"),
             ),
         },
         Command::ContextUsage {
@@ -768,13 +768,13 @@ fn handle(http: &reqwest::blocking::Client, command: Command) -> Event {
         Command::ListTasks { base, token } => {
             Event::Tasks(get(http, &base, token.as_deref(), "/api/v1/tasks"))
         }
-        Command::ListSubAgents { base, token } => {
-            Event::SubAgents(get(http, &base, token.as_deref(), "/api/v1/subagents"))
+        Command::ListAbilities { base, token } => {
+            Event::Abilities(get(http, &base, token.as_deref(), "/api/v1/abilities"))
         }
-        Command::SaveSubAgents { base, token, config } => Event::SubAgentsSaved(write_json(
+        Command::SaveAbilities { base, token, config } => Event::AbilitiesSaved(write_json(
             http,
             reqwest::Method::PUT,
-            &format!("{}/api/v1/subagents", base.trim_end_matches('/')),
+            &format!("{}/api/v1/abilities", base.trim_end_matches('/')),
             token.as_deref(),
             serde_json::json!(config),
         )),
@@ -1555,11 +1555,11 @@ mod tests {
             Event::ProviderModelsCleared { .. } => "ProviderModelsCleared",
             Event::Conversations(_) => "Conversations",
             Event::Messages { .. } => "Messages",
-            Event::Variables { .. } => "Variables",
+            Event::WorldState { .. } => "WorldState",
             Event::ContextUsage { .. } => "ContextUsage",
             Event::Tasks(_) => "Tasks",
-            Event::SubAgents(_) => "Tools",
-            Event::SubAgentsSaved(_) => "SubAgentsSaved",
+            Event::Abilities(_) => "Tools",
+            Event::AbilitiesSaved(_) => "AbilitiesSaved",
             Event::CompactionAccepted { .. } => "CompactionAccepted",
             Event::Summaries { .. } => "Summaries",
             Event::ConversationArchived(_) => "ConversationArchived",

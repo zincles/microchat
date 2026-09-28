@@ -1,0 +1,525 @@
+[gd_scene format=3 uid="uid://sr08itvxq3av"]
+
+[node name="设置页" type="TabContainer" unique_id=147299339]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+current_tab = 3
+metadata/_tab_index = 1
+
+[node name="模型" type="PanelContainer" parent="." unique_id=15033796]
+visible = false
+layout_mode = 2
+metadata/_tab_index = 0
+
+[node name="VBoxContainer" type="VBoxContainer" parent="模型" unique_id=922031389]
+layout_mode = 2
+
+[node name="Label2" type="Label" parent="模型/VBoxContainer" unique_id=994715866]
+layout_mode = 2
+text = "Provider列表："
+
+[node name="Label3" type="Label" parent="模型/VBoxContainer" unique_id=1860835755]
+layout_mode = 2
+text = "TODO..."
+
+[node name="HSeparator" type="HSeparator" parent="模型/VBoxContainer" unique_id=773023661]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="模型/VBoxContainer" unique_id=1490012969]
+layout_mode = 2
+text = "已加载模型列表："
+
+[node name="PanelContainer" type="PanelContainer" parent="模型/VBoxContainer" unique_id=970462603]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="ScrollContainer" type="ScrollContainer" parent="模型/VBoxContainer/PanelContainer" unique_id=1027770814]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="VBoxContainer" type="VBoxContainer" parent="模型/VBoxContainer/PanelContainer/ScrollContainer" unique_id=1048669067]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="模型/VBoxContainer/PanelContainer/ScrollContainer/VBoxContainer" unique_id=583936]
+layout_mode = 2
+text = "Dummy"
+
+[node name="Label2" type="Label" parent="模型/VBoxContainer/PanelContainer/ScrollContainer/VBoxContainer" unique_id=536208655]
+layout_mode = 2
+text = "Deepseek / Deepseek V4 Flash"
+
+[node name="Label3" type="Label" parent="模型/VBoxContainer/PanelContainer/ScrollContainer/VBoxContainer" unique_id=128684600]
+layout_mode = 2
+text = "Deepseek / DeepSeek V4.1 Flash"
+
+[node name="Label4" type="Label" parent="模型/VBoxContainer/PanelContainer/ScrollContainer/VBoxContainer" unique_id=1866925655]
+layout_mode = 2
+text = "CommandCode / MiniMax M3"
+
+[node name="Label5" type="Label" parent="模型/VBoxContainer/PanelContainer/ScrollContainer/VBoxContainer" unique_id=1357426800]
+layout_mode = 2
+text = "CommandCode / Gemini 3.5 Flash"
+
+[node name="服务端" type="PanelContainer" parent="." unique_id=548100914]
+visible = false
+layout_mode = 2
+metadata/_tab_index = 1
+
+[node name="边距" type="MarginContainer" parent="服务端" unique_id=216551640]
+layout_mode = 2
+theme_override_constants/margin_left = 16
+theme_override_constants/margin_top = 16
+theme_override_constants/margin_right = 16
+theme_override_constants/margin_bottom = 16
+
+[node name="列" type="VBoxContainer" parent="服务端/边距" unique_id=888017099]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="标题" type="Label" parent="服务端/边距/列" unique_id=1891016772]
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "服务器"
+
+[node name="说明" type="Label" parent="服务端/边距/列" unique_id=1298278792]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.62, 0.62, 0.62, 1)
+theme_override_font_sizes/font_size = 12
+text = "地址与口令是「前端自己」的设置（存在 ~/.config/microchat/frontend.jsonc），不进服务器。"
+
+[node name="表" type="GridContainer" parent="服务端/边距/列" unique_id=595137360]
+layout_mode = 2
+theme_override_constants/h_separation = 12
+theme_override_constants/v_separation = 8
+columns = 2
+
+[node name="地址标签" type="Label" parent="服务端/边距/列/表" unique_id=438467918]
+layout_mode = 2
+text = "服务器地址"
+
+[node name="地址" type="LineEdit" parent="服务端/边距/列/表" unique_id=1520172775]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(320, 0)
+layout_mode = 2
+text = "http://127.0.0.1:8787"
+
+[node name="口令标签" type="Label" parent="服务端/边距/列/表" unique_id=1993403563]
+layout_mode = 2
+text = "口令"
+
+[node name="口令" type="LineEdit" parent="服务端/边距/列/表" unique_id=812026983]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(320, 0)
+layout_mode = 2
+placeholder_text = "留空 = 不带鉴权头"
+secret = true
+
+[node name="按钮行" type="HBoxContainer" parent="服务端/边距/列" unique_id=237530416]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="测试连接" type="Button" parent="服务端/边距/列/按钮行" unique_id=237532053]
+unique_name_in_owner = true
+layout_mode = 2
+text = "测试连接"
+
+[node name="保存连接" type="Button" parent="服务端/边距/列/按钮行" unique_id=557223987]
+unique_name_in_owner = true
+layout_mode = 2
+text = "保存"
+
+[node name="状态" type="Label" parent="服务端/边距/列" unique_id=246246613]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(0.62, 0.62, 0.62, 1)
+theme_override_font_sizes/font_size = 12
+text = "未连接"
+
+[node name="Agent" type="PanelContainer" parent="." unique_id=2147057308]
+visible = false
+layout_mode = 2
+metadata/_tab_index = 2
+
+[node name="边距" type="MarginContainer" parent="Agent" unique_id=852061999]
+layout_mode = 2
+theme_override_constants/margin_left = 16
+theme_override_constants/margin_top = 16
+theme_override_constants/margin_right = 16
+theme_override_constants/margin_bottom = 16
+
+[node name="列" type="VBoxContainer" parent="Agent/边距" unique_id=356068153]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="标题" type="Label" parent="Agent/边距/列" unique_id=1792056392]
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "Agent（有人格的对话者）"
+
+[node name="说明" type="Label" parent="Agent/边距/列" unique_id=1347853050]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.62, 0.62, 0.62, 1)
+theme_override_font_sizes/font_size = 12
+text = "系统提示词里可以写 <state> 底子；改这里会影响所有用这个 Agent 的会话。"
+
+[node name="分栏" type="HSplitContainer" parent="Agent/边距/列" unique_id=1741721578]
+layout_mode = 2
+size_flags_vertical = 3
+split_offsets = PackedInt32Array(220)
+split_offset = 220
+
+[node name="左" type="VBoxContainer" parent="Agent/边距/列/分栏" unique_id=1916131590]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="列表标题" type="Label" parent="Agent/边距/列/分栏/左" unique_id=2097775304]
+layout_mode = 2
+text = "Agent 列表"
+
+[node name="列表滚动" type="ScrollContainer" parent="Agent/边距/列/分栏/左" unique_id=2102167566]
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="列表" type="VBoxContainer" parent="Agent/边距/列/分栏/左/列表滚动" unique_id=1522458146]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 2
+
+[node name="跑团" type="Button" parent="Agent/边距/列/分栏/左/列表滚动/列表" unique_id=770204615]
+layout_mode = 2
+text = "跑团"
+alignment = 0
+
+[node name="客栈老板" type="Button" parent="Agent/边距/列/分栏/左/列表滚动/列表" unique_id=1639755638]
+layout_mode = 2
+text = "客栈老板"
+alignment = 0
+
+[node name="新建" type="Button" parent="Agent/边距/列/分栏/左" unique_id=1717206179]
+unique_name_in_owner = true
+layout_mode = 2
+text = "＋ 新建 Agent"
+
+[node name="右" type="VBoxContainer" parent="Agent/边距/列/分栏" unique_id=1031747168]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 6
+
+[node name="名称行" type="HBoxContainer" parent="Agent/边距/列/分栏/右" unique_id=424688852]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="名称标签" type="Label" parent="Agent/边距/列/分栏/右/名称行" unique_id=1885181033]
+layout_mode = 2
+text = "名称"
+
+[node name="名称" type="LineEdit" parent="Agent/边距/列/分栏/右/名称行" unique_id=1731584310]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+text = "跑团"
+
+[node name="提示词标签" type="Label" parent="Agent/边距/列/分栏/右" unique_id=2006133829]
+layout_mode = 2
+text = "系统提示词"
+
+[node name="提示词" type="TextEdit" parent="Agent/边距/列/分栏/右" unique_id=690482647]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+placeholder_text = "你是跑团主持人。<state>set 季节 = 初冬</state>"
+
+[node name="按钮行" type="HBoxContainer" parent="Agent/边距/列/分栏/右" unique_id=1017510104]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="保存Agent" type="Button" parent="Agent/边距/列/分栏/右/按钮行" unique_id=182972711]
+unique_name_in_owner = true
+layout_mode = 2
+text = "保存"
+
+[node name="删除" type="Button" parent="Agent/边距/列/分栏/右/按钮行" unique_id=1490215763]
+unique_name_in_owner = true
+layout_mode = 2
+text = "删除"
+
+[node name="内置Agent" type="TabContainer" parent="." unique_id=1698803098]
+layout_mode = 2
+current_tab = 2
+metadata/_tab_index = 3
+
+[node name="摘要Agent" type="MarginContainer" parent="内置Agent" unique_id=25520985]
+visible = false
+layout_mode = 2
+theme_override_constants/margin_left = 16
+theme_override_constants/margin_top = 16
+theme_override_constants/margin_right = 16
+theme_override_constants/margin_bottom = 16
+metadata/_tab_index = 0
+
+[node name="列" type="VBoxContainer" parent="内置Agent/摘要Agent" unique_id=1719221072]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="标题" type="Label" parent="内置Agent/摘要Agent/列" unique_id=1519449529]
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "内置 Agent（写死在代码里的专用任务）"
+
+[node name="说明" type="Label" parent="内置Agent/摘要Agent/列" unique_id=233340893]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.62, 0.62, 0.62, 1)
+theme_override_font_sizes/font_size = 12
+text = "身份、名字、内置模板都在代码里（想加一个＝改 Rust）；这里只覆盖它的行为：模板留空＝用内置，渠道/模型留空＝跟随会话。"
+
+[node name="卡片" type="PanelContainer" parent="内置Agent/摘要Agent/列" unique_id=1448619941]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="卡内" type="VBoxContainer" parent="内置Agent/摘要Agent/列/卡片" unique_id=2072355693]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="头" type="HBoxContainer" parent="内置Agent/摘要Agent/列/卡片/卡内" unique_id=293808926]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="名字" type="Label" parent="内置Agent/摘要Agent/列/卡片/卡内/头" unique_id=2038837744]
+layout_mode = 2
+text = "摘要器"
+
+[node name="元信息" type="Label" parent="内置Agent/摘要Agent/列/卡片/卡内/头" unique_id=248942054]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.62, 0.62, 0.62, 1)
+theme_override_font_sizes/font_size = 12
+text = "（compact） · 内置模板 · 版本 dcfa26"
+
+[node name="恢复内置" type="Button" parent="内置Agent/摘要Agent/列/卡片/卡内/头" unique_id=841902578]
+unique_name_in_owner = true
+layout_mode = 2
+tooltip_text = "把模板恢复成代码里的那份（保存后才生效）"
+text = "恢复内置"
+
+[node name="介绍" type="Label" parent="内置Agent/摘要Agent/列/卡片/卡内" unique_id=1696757218]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(0.62, 0.62, 0.62, 1)
+theme_override_font_sizes/font_size = 12
+text = "把最老的 N 个对话块收成一条叙事梗概：只写发生了什么，不写状态字段"
+
+[node name="占位符标题" type="Label" parent="内置Agent/摘要Agent/列/卡片/卡内" unique_id=673947400]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "可用占位符（写死在代码里；发请求前替换）"
+
+[node name="占位符表" type="GridContainer" parent="内置Agent/摘要Agent/列/卡片/卡内" unique_id=2133187610]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/h_separation = 14
+theme_override_constants/v_separation = 2
+columns = 2
+
+[node name="名1" type="Label" parent="内置Agent/摘要Agent/列/卡片/卡内/占位符表" unique_id=1856116563]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "{{system_time}}"
+
+[node name="义1" type="Label" parent="内置Agent/摘要Agent/列/卡片/卡内/占位符表" unique_id=1163344316]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.62, 0.62, 0.62, 1)
+theme_override_font_sizes/font_size = 12
+text = "当前时间（UTC）"
+
+[node name="名2" type="Label" parent="内置Agent/摘要Agent/列/卡片/卡内/占位符表" unique_id=282974360]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "{{state_before}}"
+
+[node name="义2" type="Label" parent="内置Agent/摘要Agent/列/卡片/卡内/占位符表" unique_id=1194346086]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.62, 0.62, 0.62, 1)
+theme_override_font_sizes/font_size = 12
+text = "这段材料之前的世界状态（逐键 键 = 值）"
+
+[node name="名3" type="Label" parent="内置Agent/摘要Agent/列/卡片/卡内/占位符表" unique_id=994748975]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "{{state_after}}"
+
+[node name="义3" type="Label" parent="内置Agent/摘要Agent/列/卡片/卡内/占位符表" unique_id=1684774706]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.62, 0.62, 0.62, 1)
+theme_override_font_sizes/font_size = 12
+text = "这段材料之后的世界状态"
+
+[node name="名4" type="Label" parent="内置Agent/摘要Agent/列/卡片/卡内/占位符表" unique_id=857985221]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "{{range}}"
+
+[node name="义4" type="Label" parent="内置Agent/摘要Agent/列/卡片/卡内/占位符表" unique_id=1900280586]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.62, 0.62, 0.62, 1)
+theme_override_font_sizes/font_size = 12
+text = "覆盖的条目区间，例如「第 1–8 条」"
+
+[node name="名5" type="Label" parent="内置Agent/摘要Agent/列/卡片/卡内/占位符表" unique_id=2023647962]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "{{blocks}}"
+
+[node name="义5" type="Label" parent="内置Agent/摘要Agent/列/卡片/卡内/占位符表" unique_id=1358626513]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.62, 0.62, 0.62, 1)
+theme_override_font_sizes/font_size = 12
+text = "覆盖了几个对话块"
+
+[node name="渠道行" type="HBoxContainer" parent="内置Agent/摘要Agent/列/卡片/卡内" unique_id=449200888]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="渠道标签" type="Label" parent="内置Agent/摘要Agent/列/卡片/卡内/渠道行" unique_id=920210137]
+layout_mode = 2
+text = "渠道与模型"
+
+[node name="渠道模型" type="OptionButton" parent="内置Agent/摘要Agent/列/卡片/卡内/渠道行" unique_id=301028653]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(360, 0)
+layout_mode = 2
+item_count = 1
+popup/item_0/text = "跟随会话（用会话自己的渠道与模型）"
+popup/item_0/id = 0
+
+[node name="渠道提示" type="Label" parent="内置Agent/摘要Agent/列/卡片/卡内/渠道行" unique_id=1002797480]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.62, 0.62, 0.62, 1)
+theme_override_font_sizes/font_size = 12
+text = "压缩是体力活，可以挑个便宜的"
+
+[node name="模板标签" type="Label" parent="内置Agent/摘要Agent/列/卡片/卡内" unique_id=566017135]
+layout_mode = 2
+text = "模板"
+
+[node name="模板" type="TextEdit" parent="内置Agent/摘要Agent/列/卡片/卡内" unique_id=254305261]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+text = "你是摘要器。你只做一件事：把「原文」这一段收成一条叙事梗概，让后面的对话能接着往下走。
+
+【程序·状态（权威，仅供参考，不要写进梗概）】
+  这一段（{{range}}，共 {{blocks}} 个块）之前：{{state_before}}
+  这一段之后：{{state_after}}"
+placeholder_text = "留空 = 用内置模板"
+
+[node name="按钮行" type="HBoxContainer" parent="内置Agent/摘要Agent/列/卡片/卡内" unique_id=2094238514]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="保存工具" type="Button" parent="内置Agent/摘要Agent/列/卡片/卡内/按钮行" unique_id=895857927]
+unique_name_in_owner = true
+layout_mode = 2
+text = "保存"
+
+[node name="未识别提示" type="Label" parent="内置Agent/摘要Agent/列/卡片/卡内/按钮行" unique_id=347258773]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(0.82, 0.67, 0.27, 1)
+theme_override_font_sizes/font_size = 12
+
+[node name="索引Agent" type="PanelContainer" parent="内置Agent" unique_id=1397393750]
+visible = false
+layout_mode = 2
+metadata/_tab_index = 1
+
+[node name="边距" type="MarginContainer" parent="内置Agent/索引Agent" unique_id=123808154]
+layout_mode = 2
+theme_override_constants/margin_left = 16
+theme_override_constants/margin_top = 16
+theme_override_constants/margin_right = 16
+theme_override_constants/margin_bottom = 16
+
+[node name="列" type="VBoxContainer" parent="内置Agent/索引Agent/边距" unique_id=860984415]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="索引_状态" type="Label" parent="内置Agent/索引Agent/边距/列" unique_id=1054872683]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(0.82, 0.67, 0.27, 1)
+theme_override_font_sizes/font_size = 18
+text = "TODO —— 这个内置 Agent 还没实现"
+
+[node name="索引_介绍" type="Label" parent="内置Agent/索引Agent/边距/列" unique_id=912894229]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 14
+text = "（草稿）给长战役做检索索引的内置 Agent。"
+
+[node name="索引_说明" type="Label" parent="内置Agent/索引Agent/边距/列" unique_id=215831803]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_colors/font_color = Color(0.62, 0.62, 0.62, 1)
+theme_override_font_sizes/font_size = 12
+text = "要让它活起来需要三件事：
+1. 后端：crate::subagents::SubAgent 里加一个变体，写好它的内置模板与说明（名字/说明都在代码里）；
+2. 接口：GET /subagents 会把它一并列出来（现在只返回摘要器那一条）；
+3. 界面：照「摘要Agent」那一页把面板挪过来 —— 名字/说明/占位符表/模板/渠道模型/保存，
+   并把这一页所有 unique_name_in_owner 的名字加上「索引_」前缀（整场景唯一，重复会互相顶掉）。"
+autowrap_mode = 2
+metadata/_tab_index = 1
+
+[node name="判断Agent" type="PanelContainer" parent="内置Agent" unique_id=79242930]
+layout_mode = 2
+metadata/_tab_index = 2
+
+[node name="边距" type="MarginContainer" parent="内置Agent/判断Agent" unique_id=1737544547]
+layout_mode = 2
+theme_override_constants/margin_left = 16
+theme_override_constants/margin_top = 16
+theme_override_constants/margin_right = 16
+theme_override_constants/margin_bottom = 16
+
+[node name="列" type="VBoxContainer" parent="内置Agent/判断Agent/边距" unique_id=98979825]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="判断_状态" type="Label" parent="内置Agent/判断Agent/边距/列" unique_id=1787997341]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(0.82, 0.67, 0.27, 1)
+theme_override_font_sizes/font_size = 18
+text = "TODO —— 这个内置 Agent 还没实现"
+
+[node name="判断_介绍" type="Label" parent="内置Agent/判断Agent/边距/列" unique_id=920833274]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 14
+text = "（草稿）做规则裁决 / 世界推进判断的内置 Agent。"
+
+[node name="判断_说明" type="Label" parent="内置Agent/判断Agent/边距/列" unique_id=1807871961]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_colors/font_color = Color(0.62, 0.62, 0.62, 1)
+theme_override_font_sizes/font_size = 12
+text = "Jev模型支持输入文本，和“字段” ， 输出不同字段的概率。
+判断模型并非LLM，它的作用是：
+1. 输入一段文本。
+2. 提供一些key。例如， [yes, no, maybe]
+3. 模型会根据你的文本，判断这些key的概率。例如，你会得到
+{
+ \"yes\": 0.7, \"no\":0.2, \"maybe\":0.1
+}
+
+此模型为所谓“决策模型”，成本极低，且仅有输入成本（输出免费，因为这玩意根本不是传统LLM），延迟也很低。可以快速得到输入词的概率。
+我估计这玩意以后能派上大用途。"
+autowrap_mode = 2
+metadata/_tab_index = 2

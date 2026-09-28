@@ -29,7 +29,7 @@ use crate::providers;
 use crate::registry::{self, ProviderView};
 use crate::store::{self, Store};
 use crate::turn::{CompactStatus, Phase, TurnRegistry, TurnStatus};
-use crate::vars;
+use crate::world;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -141,8 +141,8 @@ pub fn router(state: AppState) -> Router {
             delete(delete_siblings),
         )
         .route(
-            "/conversations/{id}/variables",
-            get(get_conversation_variables),
+            "/conversations/{id}/state",
+            get(get_conversation_state),
         )
         .route(
             "/conversations/{id}/outgoing",
@@ -170,7 +170,7 @@ pub fn router(state: AppState) -> Router {
         .route("/providers", get(list_providers).post(create_provider))
         .route("/models", get(list_all_models).patch(set_model_context))
         .route("/config/chat", get(get_chat_config).put(put_chat_config))
-        .route("/subagents", get(list_tools).put(put_tools))
+        .route("/abilities", get(list_tools).put(put_tools))
         .route("/tasks", get(list_tasks))
         .route("/models/probe", post(probe_models))
         .route(
@@ -456,7 +456,7 @@ async fn start_turn(
 ///
 /// `on_chunk` 收到的是流式增量——它**只服务动画**（`run_turn` 把它喂进 `TurnRegistry`
 /// 的缓冲区，客户端按游标读）。组装出站消息仍然是**唯一那条路径**
-/// [`vars::build_outgoing`]（历史剔除状态块、注入当前变量表、跳过空正文）。
+/// [`world::build_outgoing`]（历史剔除状态块、注入当前变量表、跳过空正文）。
 async fn generate(
     state: &AppState,
     id: Uuid,
@@ -473,8 +473,8 @@ async fn generate(
         let summaries = store.list_summaries(id)?;
         let (system_prompt, source) = effective_system_prompt(state, &conversation)?;
         let effective =
-            vars::VariableView::from_sources(id, &system_prompt, source, &messages).effective;
-        let outgoing = vars::build_outgoing(&system_prompt, &messages, &summaries, &effective);
+            world::WorldStateView::from_sources(id, &system_prompt, source, &messages).effective;
+        let outgoing = world::build_outgoing(&system_prompt, &messages, &summaries, &effective);
         (conversation, outgoing)
     };
 
@@ -704,17 +704,17 @@ async fn delete_message(
 fn effective_system_prompt(
     state: &AppState,
     conversation: &Conversation,
-) -> Result<(String, vars::PromptSource), ApiError> {
+) -> Result<(String, world::PromptSource), ApiError> {
     let own = conversation.system_prompt.trim();
     if !own.is_empty() {
-        return Ok((own.to_owned(), vars::PromptSource::Conversation));
+        return Ok((own.to_owned(), world::PromptSource::Conversation));
     }
     let agents: AgentsConfig = crate::config::load_json(&state.paths.agents_json())?;
     let prompt = agents
         .resolve(&conversation.agent_id)
         .map(|agent| agent.system_prompt)
         .unwrap_or_default();
-    Ok((prompt, vars::PromptSource::Agent))
+    Ok((prompt, world::PromptSource::Agent))
 }
 
 /// 每条消息"在同龄兄弟里排第几、一共几条"——界面上的「< 2/3 >」用它。
@@ -726,15 +726,15 @@ async fn get_branches(
 }
 
 /// 某会话的变量：全局打底 + 顺着正文重演出来的本会话改动 + 生效值。
-async fn get_conversation_variables(
+async fn get_conversation_state(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-) -> Result<Json<vars::VariableView>, ApiError> {
+) -> Result<Json<world::WorldStateView>, ApiError> {
     let store = state.lock()?;
     let conversation = store.get_conversation(id)?.ok_or_else(ApiError::not_found)?;
     let messages = store.list_messages(id)?;
     let (system_prompt, source) = effective_system_prompt(&state, &conversation)?;
-    Ok(Json(vars::VariableView::from_sources(
+    Ok(Json(world::WorldStateView::from_sources(
         id,
         &system_prompt,
         source,
@@ -748,15 +748,15 @@ async fn get_conversation_variables(
 async fn get_conversation_outgoing(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-) -> Result<Json<Vec<vars::Outgoing>>, ApiError> {
+) -> Result<Json<Vec<world::Outgoing>>, ApiError> {
     let store = state.lock()?;
     let conversation = store.get_conversation(id)?.ok_or_else(ApiError::not_found)?;
     let messages = store.list_messages(id)?;
     let summaries = store.list_summaries(id)?;
     let (system_prompt, source) = effective_system_prompt(&state, &conversation)?;
     let effective =
-        vars::VariableView::from_sources(id, &system_prompt, source, &messages).effective;
-    Ok(Json(vars::build_outgoing(
+        world::WorldStateView::from_sources(id, &system_prompt, source, &messages).effective;
+    Ok(Json(world::build_outgoing(
         &system_prompt,
         &messages,
         &summaries,
@@ -771,7 +771,7 @@ async fn get_conversation_outgoing(
 async fn get_conversation_context(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-) -> Result<Json<vars::ContextUsage>, ApiError> {
+) -> Result<Json<world::ContextUsage>, ApiError> {
     let chat = crate::config::Config::load(&state.paths.config_json())
         .map(|config| config.chat)
         .unwrap_or_default();
@@ -779,15 +779,15 @@ async fn get_conversation_context(
     let conversation = store.get_conversation(id)?.ok_or_else(ApiError::not_found)?;
     let messages = store.list_messages(id)?;
     let model = store.get_model(&conversation.provider, &conversation.model)?;
-    let (ctx_len, ctx_source) = vars::resolve_context(
+    let (ctx_len, ctx_source) = world::resolve_context(
         model.as_ref().and_then(|entry| entry.context_override),
         model.as_ref().and_then(|entry| entry.context_length),
     );
-    let budget = vars::Budget {
+    let budget = world::Budget {
         ratio: model
             .as_ref()
-            .map(|entry| vars::tokenizer_ratio(&entry.tokenizer))
-            .unwrap_or(vars::DEFAULT_TOKENIZER_RATIO),
+            .map(|entry| world::tokenizer_ratio(&entry.tokenizer))
+            .unwrap_or(world::DEFAULT_TOKENIZER_RATIO),
         ctx_len,
         ctx_source,
         max_output: model.as_ref().and_then(|entry| entry.max_output),
@@ -797,15 +797,15 @@ async fn get_conversation_context(
     let summaries = store.list_summaries(id)?;
     let (system_prompt, source) = effective_system_prompt(&state, &conversation)?;
     let effective =
-        vars::VariableView::from_sources(id, &system_prompt, source, &messages).effective;
-    let outgoing = vars::build_outgoing(&system_prompt, &messages, &summaries, &effective);
+        world::WorldStateView::from_sources(id, &system_prompt, source, &messages).effective;
+    let outgoing = world::build_outgoing(&system_prompt, &messages, &summaries, &effective);
     // 最近一条带用量的消息（通常是上一轮的回复）：唯一来自上游的地面真相。
     let last_prompt_tokens = messages
         .iter()
         .rev()
         .find_map(|message| message.usage.as_ref())
         .map(|usage| usage.prompt_tokens);
-    Ok(Json(vars::context_usage(
+    Ok(Json(world::context_usage(
         &outgoing,
         &budget,
         last_prompt_tokens,
@@ -829,7 +829,7 @@ pub struct ConversationExport {
     pub messages: Vec<crate::model::Message>,
     pub summaries: Vec<crate::model::Summary>,
     /// 现演出来的变量（global / session / effective）—— **派生数据，仅供参考**。
-    pub variables: vars::VariableView,
+    pub world_state: world::WorldStateView,
 }
 
 /// 归档收据（`POST …/archive` 的返回）：不重复吐整份内容，只报"写哪儿了、多大"。
@@ -859,7 +859,7 @@ fn build_export(
     let summaries = store.list_summaries(id)?;
     let (system_prompt, source) = effective_system_prompt(state, &conversation)?;
     // 变量现演按**当前路径**折（`messages` 传路径那份，不是全树）
-    let variables = vars::VariableView::from_sources(id, &system_prompt, source, &path);
+    let world_state = world::WorldStateView::from_sources(id, &system_prompt, source, &path);
     Ok(ConversationExport {
         format: 1,
         exported_at: now_ms(),
@@ -867,7 +867,7 @@ fn build_export(
         current_path: path.iter().map(|message| message.id).collect(),
         messages,
         summaries,
-        variables,
+        world_state,
     })
 }
 
@@ -1005,8 +1005,8 @@ async fn run_compaction(state: AppState, id: Uuid, limit: usize) {
 async fn do_compaction(state: &AppState, id: Uuid, limit: usize) -> Result<(usize, Uuid), String> {
     let providers = ProvidersConfig::load(&state.paths.providers_json())
         .map_err(|error| format!("读 providers.json: {error}"))?;
-    let subagents = crate::config::SubAgentsConfig::load(&state.paths.subagents_json())
-        .map_err(|error| format!("读 subagents.json: {error}"))?;
+    let abilities = crate::config::AbilitiesConfig::load(&state.paths.abilities_json())
+        .map_err(|error| format!("读 abilities.json: {error}"))?;
     // 会话的**生效系统提示词**：变量底子的前提（出站、变量、压缩三处共用同一份）
     let (text, source) = {
         let store = state.lock().map_err(|error| error.message)?;
@@ -1020,7 +1020,7 @@ async fn do_compaction(state: &AppState, id: Uuid, limit: usize) -> Result<(usiz
         state.store_handle(),
         &crate::compact::Prompt { text, source },
         &providers,
-        &subagents,
+        &abilities,
         id,
         limit,
     )
@@ -1091,10 +1091,10 @@ async fn set_model_context(
 }
 
 /// 一个工具在界面上的样子：**内置的那几样（名字/说明/内置模板）写在代码里**，
-/// 覆盖项（模板、渠道、模型）来自 `subagents.json`，`system_prompt` 与 `prompt_version`
+/// 覆盖项（模板、渠道、模型）来自 `abilities.json`，`system_prompt` 与 `prompt_version`
 /// 是**现在生效**的那份（版本 = 哈希的短号，改一个字的模板它就变）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SubAgentView {
+pub struct AbilityView {
     pub id: String,
     pub name: String,
     pub about: String,
@@ -1121,19 +1121,19 @@ pub struct PlaceholderView {
 }
 
 fn tool_version_short(template: &str) -> String {
-    format!("{:06x}", (crate::subagents::prompt_version(template) as u64) & 0xff_ffff)
+    format!("{:06x}", (crate::abilities::prompt_version(template) as u64) & 0xff_ffff)
 }
 
 /// 全部内置工具 + 当前覆盖（界面"工具"页的数据源）。
 async fn list_tools(
     State(state): State<AppState>,
-) -> Result<Json<Vec<SubAgentView>>, ApiError> {
-    let config = crate::config::SubAgentsConfig::load(&state.paths.subagents_json())?;
-    let views = crate::subagents::SubAgent::ALL
+) -> Result<Json<Vec<AbilityView>>, ApiError> {
+    let config = crate::config::AbilitiesConfig::load(&state.paths.abilities_json())?;
+    let views = crate::abilities::Ability::ALL
         .iter()
         .map(|tool| {
             let found = config.get(tool.id());
-            let template = crate::subagents::prompt(&config, *tool);
+            let template = crate::abilities::prompt(&config, *tool);
             // 拿**空**变量表渲染一遍：认识的会被换成空串，剩下的 `{{...}}` 就是"不认识的"
             let unknown_vars =
                 crate::template::render(&template, &std::collections::BTreeMap::new()).unknown;
@@ -1144,7 +1144,7 @@ async fn list_tools(
                     about: var.about().to_owned(),
                 })
                 .collect();
-            SubAgentView {
+            AbilityView {
                 placeholders,
                 unknown_vars,
                 id: tool.id().to_owned(),
@@ -1165,20 +1165,20 @@ async fn list_tools(
     Ok(Json(views))
 }
 
-/// **整段替换** `config/subagents.json`（PUT 语义：没给的键就不写 = 那个工具全用内置）。
+/// **整段替换** `config/abilities.json`（PUT 语义：没给的键就不写 = 那个工具全用内置）。
 /// 只认已知工具的 id —— 工具的身份在代码里，这里不能凭空造（§25）。
 async fn put_tools(
     State(state): State<AppState>,
-    Json(config): Json<crate::config::SubAgentsConfig>,
-) -> Result<Json<Vec<SubAgentView>>, ApiError> {
-    for id in config.subagents.keys() {
-        if !crate::subagents::SubAgent::ALL.iter().any(|tool| tool.id() == id) {
+    Json(config): Json<crate::config::AbilitiesConfig>,
+) -> Result<Json<Vec<AbilityView>>, ApiError> {
+    for id in config.abilities.keys() {
+        if !crate::abilities::Ability::ALL.iter().any(|tool| tool.id() == id) {
             return Err(ApiError::bad_request(&format!(
                 "没有叫 {id} 的工具（工具写死在代码里，这里的键只能是已知工具）"
             )));
         }
     }
-    config.save(&state.paths.subagents_json())?;
+    config.save(&state.paths.abilities_json())?;
     list_tools(State(state)).await
 }
 
@@ -2051,11 +2051,11 @@ mod tests {
         panic!("这一轮 10 秒还没落地");
     }
 
-    async fn variables(app: &Router, conversation: Uuid) -> serde_json::Value {
+    async fn world_state(app: &Router, conversation: Uuid) -> serde_json::Value {
         let (status, body) = send(
             app,
             get_req(&format!(
-                "/api/v1/conversations/{conversation}/variables"
+                "/api/v1/conversations/{conversation}/state"
             )),
         )
         .await;
@@ -2171,7 +2171,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn state_block_becomes_variables_but_stays_in_the_archive() {
+    async fn state_block_becomes_world_state_but_stays_in_the_archive() {
         // 底子住在 system prompt 里（和正文同一套 `<state>` 语法）。放在 agent 的提示词上，
         // 用同一 agent 的会话共享它 —— 所以它算"全局"。
         let (app, dir) = app_with_env(
@@ -2194,10 +2194,10 @@ mod tests {
         let _ = settled(&app, conv.id).await;
 
         // 1) 变量 = 提示词里的底子（全局）+ 正文现演出来的本会话改动
-        let vars_uri = format!("/api/v1/conversations/{}/variables", conv.id);
+        let vars_uri = format!("/api/v1/conversations/{}/state", conv.id);
         let (status, body) = send(&app, get_req(&vars_uri)).await;
         assert_eq!(status, StatusCode::OK);
-        let view: crate::vars::VariableView = serde_json::from_str(&body).unwrap();
+        let view: crate::world::WorldStateView = serde_json::from_str(&body).unwrap();
         assert_eq!(view.global.len(), 1, "底子来自 agent 的提示词");
         assert_eq!(view.global[0].key, "季节");
         assert!(view.global[0].message_id.is_none(), "底子不来自某条消息");
@@ -2214,10 +2214,10 @@ mod tests {
         .await;
         let (_, body) = send(
             &app,
-            get_req(&format!("/api/v1/conversations/{}/variables", own.id)),
+            get_req(&format!("/api/v1/conversations/{}/state", own.id)),
         )
         .await;
-        let view: crate::vars::VariableView = serde_json::from_str(&body).unwrap();
+        let view: crate::world::WorldStateView = serde_json::from_str(&body).unwrap();
         assert!(view.global.is_empty(), "会话自带的提示词不产生全局行");
         assert_eq!(view.effective.get("季节").map(String::as_str), Some("盛夏"));
 
@@ -2234,8 +2234,8 @@ mod tests {
         let outgoing_uri = format!("/api/v1/conversations/{}/outgoing", conv.id);
         let (status, body) = send(&app, get_req(&outgoing_uri)).await;
         assert_eq!(status, StatusCode::OK);
-        let outgoing: Vec<crate::vars::Outgoing> = serde_json::from_str(&body).unwrap();
-        assert_eq!(outgoing[0].role, crate::vars::OutgoingRole::System);
+        let outgoing: Vec<crate::world::Outgoing> = serde_json::from_str(&body).unwrap();
+        assert_eq!(outgoing[0].role, crate::world::OutgoingRole::System);
         assert!(outgoing[0].content.starts_with("你是客栈老板。"));
         assert!(
             !outgoing[0].content.contains("<state>"),
@@ -2459,7 +2459,7 @@ mod tests {
 
     /// 删中间那条 = 连它整棵子树一起没；leaf 退回父亲；变量只按当前路径算。
     #[tokio::test]
-    async fn deleting_a_subtree_reports_the_count_and_variables_follow_the_path() {
+    async fn deleting_a_subtree_reports_the_count_and_world_state_follows_the_path() {
         let app = app(None);
         let conv = create(&app, r#"{"provider":"dummy","model":"dummy"}"#).await;
         let uri = format!("/api/v1/conversations/{}/messages", conv.id);
@@ -2491,10 +2491,10 @@ mod tests {
         // 变量只按当前路径算：那句 <state> 不在了，HP 也跟着没了
         let (_, body) = send(
             &app,
-            get_req(&format!("/api/v1/conversations/{}/variables", conv.id)),
+            get_req(&format!("/api/v1/conversations/{}/state", conv.id)),
         )
         .await;
-        let view: crate::vars::VariableView = serde_json::from_str(&body).unwrap();
+        let view: crate::world::WorldStateView = serde_json::from_str(&body).unwrap();
         assert!(!view.effective.contains_key("HP"), "{:?}", view.effective);
     }
 
@@ -2509,7 +2509,7 @@ mod tests {
         let _first = turn(&app, &uri, r#"{"content":"开场白"}"#).await;
         let second = turn(&app, &uri, r#"{"content":"<state>set HP = 12</state>继续往里走"}"#).await;
 
-        let vars_uri = format!("/api/v1/conversations/{}/variables", conv.id);
+        let vars_uri = format!("/api/v1/conversations/{}/state", conv.id);
         let (_, body) = send(&app, get_req(&vars_uri)).await;
         let before: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(before["effective"]["HP"], "12", "先确认这条状态确实生效了");
@@ -2647,9 +2647,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn variables_endpoint_rejects_unknown_conversation() {
+    async fn state_endpoint_rejects_unknown_conversation() {
         let app = app(None);
-        let uri = format!("/api/v1/conversations/{}/variables", Uuid::now_v7());
+        let uri = format!("/api/v1/conversations/{}/state", Uuid::now_v7());
         let (status, _) = send(&app, get_req(&uri)).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
     }
@@ -2672,16 +2672,16 @@ mod tests {
         assert_eq!(updated.content, edited);
         assert_eq!(updated.id, turn.user.id);
 
-        let vars_uri = format!("/api/v1/conversations/{}/variables", conv.id);
+        let vars_uri = format!("/api/v1/conversations/{}/state", conv.id);
         let (_, response) = send(&app, get_req(&vars_uri)).await;
-        let view: crate::vars::VariableView = serde_json::from_str(&response).unwrap();
+        let view: crate::world::WorldStateView = serde_json::from_str(&response).unwrap();
         assert_eq!(view.session.len(), 1, "旧操作要被换掉，不是叠加");
         assert_eq!(view.effective.get("HP").map(String::as_str), Some("3"));
 
         // 出站用新正文，且标签仍被剔除
         let outgoing_uri = format!("/api/v1/conversations/{}/outgoing", conv.id);
         let (_, response) = send(&app, get_req(&outgoing_uri)).await;
-        let outgoing: Vec<crate::vars::Outgoing> = serde_json::from_str(&response).unwrap();
+        let outgoing: Vec<crate::world::Outgoing> = serde_json::from_str(&response).unwrap();
         assert_eq!(outgoing[1].content, "改口");
     }
 
@@ -2936,11 +2936,11 @@ mod tests {
 
         let (status, body) = send(&app, get_req(&uri)).await;
         assert_eq!(status, StatusCode::OK);
-        let usage: crate::vars::ContextUsage = serde_json::from_str(&body).unwrap();
+        let usage: crate::world::ContextUsage = serde_json::from_str(&body).unwrap();
         assert!(usage.estimated, "估算是诚实的：这个字段恒 true");
         assert_eq!(
             usage.budget_tokens,
-            12345 - crate::vars::DEFAULT_MAX_OUTPUT as usize,
+            12345 - crate::world::DEFAULT_MAX_OUTPUT as usize,
             "上游没报上下文 ⇒ 用设置里的兜底，再减输出预留"
         );
         assert_eq!(
@@ -2956,7 +2956,7 @@ mod tests {
         let message_uri = format!("/api/v1/conversations/{}/messages", conv.id);
         let _ = turn(&app, &message_uri, r#"{"content":"在吗"}"#).await;
         let (_, body) = send(&app, get_req(&uri)).await;
-        let usage: crate::vars::ContextUsage = serde_json::from_str(&body).unwrap();
+        let usage: crate::world::ContextUsage = serde_json::from_str(&body).unwrap();
         assert!(usage.used_tokens > before, "历史变长，占用该变大");
 
         let missing = format!("/api/v1/conversations/{}/context", Uuid::now_v7());
@@ -3010,7 +3010,7 @@ mod tests {
     /// Fork：副本的世界状态与原件**逐键相等**（§19.E 第二条保险 —— 它终于不空转了）；
     /// 消息全换新 id、内容与 `created_at` 一字不改。
     #[tokio::test]
-    async fn fork_keeps_variables_and_copies_the_tree() {
+    async fn fork_keeps_world_state_and_copies_the_tree() {
         let providers = r#"{ "providers": [ { "id": "dummy", "kind": "dummy" } ] }"#;
         let (app, dir) = app_with_files(&[("providers.json", providers)]);
         let conv = create(&app, r#"{"provider":"dummy","model":"dummy"}"#).await;
@@ -3023,7 +3023,7 @@ mod tests {
         let _ = turn(&app, &resend, "{}").await;
 
         let before: Vec<Message> = messages(&app, conv.id).await;
-        let original_vars = variables(&app, conv.id).await;
+        let original_vars = world_state(&app, conv.id).await;
         // 标题是第一句用户消息到了才起的，所以这时候再读一次
         let list: Vec<serde_json::Value> =
             serde_json::from_str(&send(&app, get_req("/api/v1/conversations")).await.1).unwrap();
@@ -3067,7 +3067,7 @@ mod tests {
             "全换新 id"
         );
 
-        let copy_vars = variables(&app, copy.id).await;
+        let copy_vars = world_state(&app, copy.id).await;
         assert_eq!(
             copy_vars["effective"], original_vars["effective"],
             "副本的世界状态必须与原件逐键相同（变量是从正文现演的）"
@@ -3115,7 +3115,7 @@ mod tests {
             all.len()
         );
         assert!(
-            export["variables"]["effective"].is_object(),
+            export["world_state"]["effective"].is_object(),
             "带一份现演变量"
         );
 
@@ -3198,7 +3198,7 @@ mod tests {
         // **出站真的变了**：被覆盖的原文不再发，改发摘要（Mask，§20）
         let subject = format!("/api/v1/conversations/{}/outgoing", conv.id);
         let (_, body) = send(&app, get_req(&subject)).await;
-        let outgoing: Vec<crate::vars::Outgoing> = serde_json::from_str(&body).unwrap();
+        let outgoing: Vec<crate::world::Outgoing> = serde_json::from_str(&body).unwrap();
         let sent: Vec<&str> = outgoing
             .iter()
             .map(|item| item.content.as_str())
@@ -3262,13 +3262,13 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// `/subagents`：内置清单（名字/说明/内置模板来自代码）+ 覆盖项读写；未知 id 一律 400。
+    /// `/abilities`：内置清单（名字/说明/内置模板来自代码）+ 覆盖项读写；未知 id 一律 400。
     #[tokio::test]
     async fn tools_endpoint_lists_builtins_and_rejects_unknown_ids() {
         let (app, dir) = app_with_files(&[]);
-        let (status, body) = send(&app, get_req("/api/v1/subagents")).await;
+        let (status, body) = send(&app, get_req("/api/v1/abilities")).await;
         assert_eq!(status, StatusCode::OK);
-        let tools: Vec<SubAgentView> = serde_json::from_str(&body).unwrap();
+        let tools: Vec<AbilityView> = serde_json::from_str(&body).unwrap();
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0].id, "compact");
         assert_eq!(tools[0].name, "摘要器");
@@ -3278,28 +3278,28 @@ mod tests {
         let builtin_version = tools[0].prompt_version.clone();
 
         // 覆盖模板 ⇒ 生效值与版本都跟着变
-        let patch = r#"{"version":1,"subagents":{"compact":{"system_prompt":"压就好","model":"small"}}}"#;
-        let (status, body) = send(&app, json_req("PUT", "/api/v1/subagents", patch)).await;
+        let patch = r#"{"version":1,"abilities":{"compact":{"system_prompt":"压就好","model":"small"}}}"#;
+        let (status, body) = send(&app, json_req("PUT", "/api/v1/abilities", patch)).await;
         assert_eq!(status, StatusCode::OK, "{body}");
-        let tools: Vec<SubAgentView> = serde_json::from_str(&body).unwrap();
+        let tools: Vec<AbilityView> = serde_json::from_str(&body).unwrap();
         assert!(tools[0].overridden);
         assert_eq!(tools[0].system_prompt, "压就好");
         assert_eq!(tools[0].model.as_deref(), Some("small"));
         assert_ne!(tools[0].prompt_version, builtin_version, "改了模板版本就该变");
 
         // 未知 id ⇒ 400：工具的身份在代码里，不能凭空造
-        let invented = r#"{"version":1,"subagents":{"自己发明的":{}}}"#;
-        let (status, body) = send(&app, json_req("PUT", "/api/v1/subagents", invented)).await;
+        let invented = r#"{"version":1,"abilities":{"自己发明的":{}}}"#;
+        let (status, body) = send(&app, json_req("PUT", "/api/v1/abilities", invented)).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
 
         // 清掉覆盖 ⇒ 回落内置
         let (status, body) = send(
             &app,
-            json_req("PUT", "/api/v1/subagents", r#"{"version":1,"subagents":{}}"#),
+            json_req("PUT", "/api/v1/abilities", r#"{"version":1,"abilities":{}}"#),
         )
         .await;
         assert_eq!(status, StatusCode::OK);
-        let tools: Vec<SubAgentView> = serde_json::from_str(&body).unwrap();
+        let tools: Vec<AbilityView> = serde_json::from_str(&body).unwrap();
         assert_eq!(tools[0].system_prompt, tools[0].builtin_prompt);
         assert_eq!(tools[0].prompt_version, builtin_version);
         let _ = std::fs::remove_dir_all(&dir);

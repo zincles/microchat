@@ -299,9 +299,9 @@ enum View {
 enum SettingsTab {
     Connection,
     Agents,
-    /// **内置 Agent**：写死在代码里的专用后台任务（目前只有摘要器）。名字与说明来自代码，
+    /// **能力（Ability）**：写死在代码里的固定流程（目前只有摘要器）。名字与说明来自代码，
     /// 这里只改它们的模板/渠道/模型 —— 与 Agent 并列、各管各的。
-    SubAgents,
+    Abilities,
     Models,
     Frontend,
     About,
@@ -313,7 +313,7 @@ impl SettingsTab {
     const ALL: [(Self, &'static str); 6] = [
         (Self::Connection, "连接"),
         (Self::Agents, "Agent"),
-        (Self::SubAgents, "内置 Agent"),
+        (Self::Abilities, "能力"),
         (Self::Models, "模型与渠道"),
         (Self::Frontend, "前端设置"),
         (Self::About, "关于"),
@@ -383,17 +383,17 @@ struct App {
     /// 每条消息在同龄兄弟里的位置（切分支用）。按会话存。
     branches: BTreeMap<Uuid, BTreeMap<Uuid, microchat::store::BranchInfo>>,
     /// 当前会话的变量视图（全局 + 本会话操作日志 + 生效值），由后端算好。
-    variables: Option<microchat::vars::VariableView>,
+    variables: Option<microchat::world::WorldStateView>,
     /// 上面那份变量属于哪个会话（切换时先清空，避免串台）。
     variables_for: Option<Uuid>,
     /// 后台任务一屏（`GET /tasks`）：左栏那行指示器与「任务」页共用这一份。
     task_board: Option<microchat::task::TaskBoard>,
     /// 下一次去问任务表的时间（毫秒时间戳）。
     task_poll_at: Option<i64>,
-    /// 内置 Agent（摘要器…）：名单与说明来自代码，模板/渠道/模型可覆盖。
-    subagents: Option<Vec<microchat::server::SubAgentView>>,
-    /// 内置 Agent 的编辑草稿，键 = 它的 id：`(模板, 渠道, 模型)`。
-    subagent_drafts: BTreeMap<String, (String, String, String)>,
+    /// 能力清单（摘要器…）：名字与说明来自代码（= 能做什么），模板/渠道/模型可覆盖（= 怎么用）。
+    abilities: Option<Vec<microchat::server::AbilityView>>,
+    /// 能力的编辑草稿，键 = 它的 id：`(模板, 渠道, 模型)`。
+    ability_drafts: BTreeMap<String, (String, String, String)>,
     /// 「压缩 N 个块」那个输入框的草稿。
     compact_blocks: String,
     /// 正在等结果的那条会话（点了压缩之后；轮询 `/status` 直到 `compact` 不再 running）。
@@ -401,7 +401,7 @@ struct App {
     /// 每条会话的摘要（服务端现算的成员数与首尾），关系图与摘要面板用。
     summaries: BTreeMap<Uuid, Vec<microchat::registry::SummaryView>>,
     /// 当前会话的上下文占用（估算 + 上一轮上游实测），由后端算好。
-    context_usage: Option<microchat::vars::ContextUsage>,
+    context_usage: Option<microchat::world::ContextUsage>,
     /// 上面那份占用属于哪个会话（切换时先清空，避免串台）。
     context_usage_for: Option<Uuid>,
     /// 服务端 `config.json` 的 `chat` 段（模型上下文 / 压缩阈值 / 标题字数）。
@@ -501,8 +501,8 @@ impl App {
             context_usage_for: None,
             task_board: None,
             task_poll_at: None,
-            subagents: None,
-            subagent_drafts: BTreeMap::new(),
+            abilities: None,
+            ability_drafts: BTreeMap::new(),
             compact_blocks: "1".to_owned(),
             compact_ask: None,
             summaries: BTreeMap::new(),
@@ -571,7 +571,7 @@ impl App {
     /// **服务端侧数据的唯一取数入口**：连上后端时、点 ⟳ 时、进设置页时都走它。
     ///
     /// 别再在别处另写一份"要拉哪些" —— 曾经 `refresh_all` 与它各写一份，结果新加的两样
-    /// （`chat` 段、内置 Agent 清单）只进了 ⟳ 那条路，设置页就一直"加载中…"。
+    /// （`chat` 段、能力清单）只进了 ⟳ 那条路，设置页就一直"加载中…"。
     pub(super) fn load_server_data(&mut self) {
         let (base, token) = (self.settings.server_address.clone(), self.token.clone());
         self.client.send(Command::ListProviders {
@@ -597,8 +597,8 @@ impl App {
             base: base.clone(),
             token: token.clone(),
         });
-        // 内置 Agent 清单（名字/说明来自代码 + 现在生效的覆盖）
-        self.client.send(Command::ListSubAgents { base, token });
+        // 能力清单（名字/说明来自代码 + 现在生效的覆盖）
+        self.client.send(Command::ListAbilities { base, token });
     }
 }
 
@@ -607,7 +607,7 @@ impl App {
     pub(super) fn enter_settings_tab(&mut self, tab: SettingsTab) {
         match tab {
             SettingsTab::Agents
-            | SettingsTab::SubAgents
+            | SettingsTab::Abilities
             | SettingsTab::Models
             | SettingsTab::Connection => self.load_server_data(),
             SettingsTab::Frontend | SettingsTab::About => {}
@@ -675,7 +675,7 @@ impl App {
     /// 它们该在**同样的时机**变（切会话、发送之后、编辑之后），分批拉只是多几次往返。
     pub(super) fn fetch_conversation_state(&mut self, conversation: Uuid) {
         let (base, token) = (self.settings.server_address.clone(), self.token.clone());
-        self.client.send(Command::ListVariables {
+        self.client.send(Command::ListWorldState {
             base,
             token,
             conversation,
@@ -1056,7 +1056,7 @@ impl App {
                     }
                     Err(message) => self.note = message,
                 },
-                Event::Variables {
+                Event::WorldState {
                     conversation,
                     result,
                 } => match result {
@@ -1082,36 +1082,36 @@ impl App {
                     self.task_poll_at = Some(now_ms_now() + 2_000);
                 }
                 Event::Tasks(Err(message)) => self.note = message,
-                Event::SubAgents(Ok(list)) => {
+                Event::Abilities(Ok(list)) => {
                     // 草稿只在**第一次**填：别把正在编辑的内容冲掉
-                    for subagent in &list {
-                        self.subagent_drafts.entry(subagent.id.clone()).or_insert_with(|| {
+                    for ability in &list {
+                        self.ability_drafts.entry(ability.id.clone()).or_insert_with(|| {
                             (
-                                subagent.system_prompt.clone(),
-                                subagent.provider.clone().unwrap_or_default(),
-                                subagent.model.clone().unwrap_or_default(),
+                                ability.system_prompt.clone(),
+                                ability.provider.clone().unwrap_or_default(),
+                                ability.model.clone().unwrap_or_default(),
                             )
                         });
                     }
-                    self.subagents = Some(list);
+                    self.abilities = Some(list);
                 }
-                Event::SubAgents(Err(message)) => self.note = message,
-                Event::SubAgentsSaved(Ok(list)) => {
+                Event::Abilities(Err(message)) => self.note = message,
+                Event::AbilitiesSaved(Ok(list)) => {
                     // 保存回执：草稿跟着回到"已保存"状态（含服务端归一的空模板）
-                    for subagent in &list {
-                        self.subagent_drafts.insert(
-                            subagent.id.clone(),
+                    for ability in &list {
+                        self.ability_drafts.insert(
+                            ability.id.clone(),
                             (
-                                subagent.system_prompt.clone(),
-                                subagent.provider.clone().unwrap_or_default(),
-                                subagent.model.clone().unwrap_or_default(),
+                                ability.system_prompt.clone(),
+                                ability.provider.clone().unwrap_or_default(),
+                                ability.model.clone().unwrap_or_default(),
                             ),
                         );
                     }
-                    self.note = "内置 Agent 覆盖已保存".to_owned();
-                    self.subagents = Some(list);
+                    self.note = "能力覆盖已保存".to_owned();
+                    self.abilities = Some(list);
                 }
-                Event::SubAgentsSaved(Err(message)) => self.note = message,
+                Event::AbilitiesSaved(Err(message)) => self.note = message,
                 Event::CompactionAccepted {
                     conversation,
                     result,
@@ -1483,25 +1483,25 @@ impl App {
     pub(super) fn server_dirty(&self) -> bool {
         self.agent_draft_id().is_some()
             || self.provider_draft_id().is_some()
-            || self.subagents_dirty()
+            || self.abilities_dirty()
             || self.chat_config_dirty()
             || self.model_context_changes().map_or(true, |changes| !changes.is_empty())
     }
 }
 
 impl App {
-    /// 内置 Agent 的草稿与已保存值不同吗（模板 / 渠道 / 模型）。
-    pub(super) fn subagents_dirty(&self) -> bool {
-        let Some(subagents) = self.subagents.as_ref() else {
+    /// 能力的草稿与已保存值不同吗（模板 / 渠道 / 模型）。
+    pub(super) fn abilities_dirty(&self) -> bool {
+        let Some(abilities) = self.abilities.as_ref() else {
             return false;
         };
-        subagents.iter().any(|subagent| {
-            self.subagent_drafts
-                .get(&subagent.id)
+        abilities.iter().any(|ability| {
+            self.ability_drafts
+                .get(&ability.id)
                 .is_some_and(|(prompt, provider, model)| {
-                    prompt != &subagent.system_prompt
-                        || provider != subagent.provider.as_deref().unwrap_or_default()
-                        || model != subagent.model.as_deref().unwrap_or_default()
+                    prompt != &ability.system_prompt
+                        || provider != ability.provider.as_deref().unwrap_or_default()
+                        || model != ability.model.as_deref().unwrap_or_default()
                 })
         })
     }
@@ -1593,13 +1593,13 @@ impl App {
     /// 页脚「保存」：把面板里所有待提交的草稿一次写回后端。
     pub(super) fn save_server_settings(&mut self) {
         let (base, token) = (self.settings.server_address.clone(), self.token.clone());
-        if self.subagents_dirty() {
-            let Some(subagents) = self.subagents.as_ref() else {
+        if self.abilities_dirty() {
+            let Some(abilities) = self.abilities.as_ref() else {
                 return;
             };
-            let mut config = microchat::config::SubAgentsConfig::default();
-            for subagent in subagents {
-                let Some((prompt, provider, model)) = self.subagent_drafts.get(&subagent.id) else {
+            let mut config = microchat::config::AbilitiesConfig::default();
+            for ability in abilities {
+                let Some((prompt, provider, model)) = self.ability_drafts.get(&ability.id) else {
                     continue;
                 };
                 let (template, provider, model) = (
@@ -1608,23 +1608,23 @@ impl App {
                     model.trim().to_owned(),
                 );
                 // 与内置一字不差 ⇒ 写**空模板**（文件干净，"这就是内置"也一目了然）
-                let system_prompt = if template == subagent.builtin_prompt.trim() {
+                let system_prompt = if template == ability.builtin_prompt.trim() {
                     String::new()
                 } else {
                     template
                 };
-                config.subagents.insert(
-                    subagent.id.clone(),
-                    microchat::config::SubAgentOverride {
+                config.abilities.insert(
+                    ability.id.clone(),
+                    microchat::config::AbilityOverride {
                         system_prompt,
                         provider: (!provider.is_empty()).then_some(provider),
                         model: (!model.is_empty()).then_some(model),
-                        params: subagent.params.clone(),
+                        params: ability.params.clone(),
                         ..Default::default()
                     },
                 );
             }
-            self.client.send(Command::SaveSubAgents {
+            self.client.send(Command::SaveAbilities {
                 base: base.clone(),
                 token: token.clone(),
                 config,
@@ -1875,7 +1875,7 @@ impl eframe::App for App {
                 // 界面会在手底下变形，滑块根本拖不准。
                 let footer = match self.settings_tab {
                     SettingsTab::Agents => Some(("提交 Agent 的改动", true)),
-                    SettingsTab::SubAgents => Some(("提交工具的改动", true)),
+                    SettingsTab::Abilities => Some(("提交工具的改动", true)),
                     SettingsTab::Models => Some(("提交 provider 与模型的改动", true)),
                     SettingsTab::Frontend => Some(("应用并保存到本机 frontend.json", false)),
                     // 连接页只有只读信息与「断开」；关于页没有可保存的东西。
@@ -1934,7 +1934,7 @@ impl eframe::App for App {
                         match self.settings_tab {
                             SettingsTab::Connection => self.settings_connection(ui),
                             SettingsTab::Agents => self.settings_agents(ui),
-                            SettingsTab::SubAgents => self.settings_subagents(ui),
+                            SettingsTab::Abilities => self.settings_abilities(ui),
                             SettingsTab::Models => self.settings_models(ui),
                             SettingsTab::Frontend => self.frontend_settings(ui),
                             SettingsTab::About => self.about(ui),

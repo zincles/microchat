@@ -98,7 +98,7 @@ impl OpKind {
 
 /// 一条待落库的操作。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VarOp {
+pub struct WorldStateOp {
     pub kind: OpKind,
     pub key: String,
     /// `Set` 为 `Some`（可以是空串），`Delete` 为 `None`。
@@ -106,9 +106,9 @@ pub struct VarOp {
 }
 
 /// 一条**现算出来的**操作。`seq` 只在一次重演内部有意义（消息顺序 → 块内顺序），
-/// 库里不保存它——变量表是读的时候从正文推出来的，见 [`VariableView::from_messages`]。
+/// 库里不保存它——变量表是读的时候从正文推出来的，见 [`WorldStateView::from_messages`]。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct VarOpRow {
+pub struct WorldStateOpRow {
     pub seq: i64,
     pub scope: Scope,
     pub kind: OpKind,
@@ -125,7 +125,7 @@ pub struct VarOpRow {
 pub struct Parsed {
     /// 剔除状态块后的正文——**这才是发给模型的历史**。
     pub cleaned: String,
-    pub ops: Vec<VarOp>,
+    pub ops: Vec<WorldStateOp>,
     /// 被忽略的行/异常，进调试视图；不影响消息落库。
     pub warnings: Vec<String>,
 }
@@ -270,7 +270,7 @@ fn parse_block(body: &str, parsed: &mut Parsed) {
             }
         }
 
-        parsed.ops.push(VarOp {
+        parsed.ops.push(WorldStateOp {
             kind,
             key: key.to_owned(),
             value,
@@ -299,7 +299,7 @@ fn check_key(key: &str) -> Result<(), String> {
 pub type Dict = BTreeMap<String, Option<String>>;
 
 /// 从空开始按 `seq` 顺序执行操作（`rows` 必须已按 `seq` 升序）。
-pub fn fold(rows: &[VarOpRow], scope: Scope) -> Dict {
+pub fn fold(rows: &[WorldStateOpRow], scope: Scope) -> Dict {
     let mut dict = Dict::new();
     for row in rows.iter().filter(|row| row.scope == scope) {
         match row.kind {
@@ -340,11 +340,11 @@ pub fn render_table(values: &BTreeMap<String, String>) -> Option<String> {
 
 /// 面板/接口要的一份快照。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VariableView {
+pub struct WorldStateView {
     /// 全局那几张（来自 `config/variables.json`，所有会话共用）。
-    pub global: Vec<VarOpRow>,
+    pub global: Vec<WorldStateOpRow>,
     /// 本会话正文里累积出来的操作（"这一局改了什么"）。
-    pub session: Vec<VarOpRow>,
+    pub session: Vec<WorldStateOpRow>,
     /// 全局现值。
     pub global_values: BTreeMap<String, String>,
     /// 生效值（全局 + 本会话）。
@@ -361,7 +361,7 @@ pub enum PromptSource {
     Conversation,
 }
 
-impl VariableView {
+impl WorldStateView {
     /// **现演一份快照**：库里只存正文与提示词，变量表是每次顺着它们重演出来的。
     ///
     /// 顺序（也就是 fold 的顺序）：
@@ -384,12 +384,12 @@ impl VariableView {
             PromptSource::Conversation => Scope::Session,
         };
 
-        let mut global_rows: Vec<VarOpRow> = Vec::new();
-        let mut session_rows: Vec<VarOpRow> = Vec::new();
+        let mut global_rows: Vec<WorldStateOpRow> = Vec::new();
+        let mut session_rows: Vec<WorldStateOpRow> = Vec::new();
 
         // 1) 底子：系统提示词里的块（没有块就是空底子，很正常）。
         for op in parse(system_prompt).ops {
-            let row = VarOpRow {
+            let row = WorldStateOpRow {
                 seq: 0, // 下面按作用域重排
                 scope: prompt_scope,
                 kind: op.kind,
@@ -408,7 +408,7 @@ impl VariableView {
         // 2) 然后才是消息，按顺序追加。
         for message in messages {
             for op in parse(&message.content).ops {
-                session_rows.push(VarOpRow {
+                session_rows.push(WorldStateOpRow {
                     seq: 0,
                     scope: Scope::Session,
                     kind: op.kind,
@@ -1140,7 +1140,7 @@ mod tests {
         // 底子在**系统提示词**里，和消息同一套语法；来自 agent ⇒ 算全局底子
         let system_prompt = "你是跑团主持人。\n<state>set 季节 = 初冬\nset HP = 99</state>";
 
-        let view = VariableView::from_sources(
+        let view = WorldStateView::from_sources(
             conversation,
             system_prompt,
             PromptSource::Agent,
@@ -1159,7 +1159,7 @@ mod tests {
 
         // 回溯 = 只喂到第 N 条：这就是"从空 fold 到第 N 条"
         let rewind =
-            VariableView::from_sources(conversation, system_prompt, PromptSource::Agent, &messages[..1]);
+            WorldStateView::from_sources(conversation, system_prompt, PromptSource::Agent, &messages[..1]);
         assert_eq!(rewind.effective["火把"], "1", "第一句之后火把还在");
         assert_eq!(rewind.session.len(), 2);
     }
@@ -1167,7 +1167,7 @@ mod tests {
     /// 会话自己写了提示词（覆盖了 agent 的）：它的底子只属于这条会话，不外溢成全局。
     #[test]
     fn conversation_prompt_base_is_session_scoped() {
-        let view = VariableView::from_sources(
+        let view = WorldStateView::from_sources(
             Uuid::now_v7(),
             "<state>set 地点 = 客栈</state>你是客栈老板。",
             PromptSource::Conversation,
@@ -1182,8 +1182,8 @@ mod tests {
     use super::*;
     use crate::model::Role;
 
-    fn row(seq: i64, scope: Scope, kind: OpKind, key: &str, value: Option<&str>) -> VarOpRow {
-        VarOpRow {
+    fn row(seq: i64, scope: Scope, kind: OpKind, key: &str, value: Option<&str>) -> WorldStateOpRow {
+        WorldStateOpRow {
             seq,
             scope,
             kind,
@@ -1219,12 +1219,12 @@ mod tests {
         assert_eq!(
             parsed.ops,
             vec![
-                VarOp {
+                WorldStateOp {
                     kind: OpKind::Set,
                     key: "HP".to_owned(),
                     value: Some("12".to_owned()),
                 },
-                VarOp {
+                WorldStateOp {
                     kind: OpKind::Delete,
                     key: "火把".to_owned(),
                     value: None,
@@ -1331,7 +1331,7 @@ mod tests {
             "<state>set HP = 3\ndel 世界</state>我把地图烧了",
         )];
         // 全局底子由 agent 的提示词提供（会话没有覆盖提示词时就是它）
-        let view = VariableView::from_sources(
+        let view = WorldStateView::from_sources(
             Uuid::now_v7(),
             "<state>set 世界 = 临安\nset HP = 10</state>你是说书人。",
             PromptSource::Agent,

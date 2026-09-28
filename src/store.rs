@@ -91,7 +91,7 @@ CREATE TABLE variable_ops (
 CREATE INDEX variable_ops_by_conv ON variable_ops(conversation_id, id);
 "#, r#"
 -- 变量操作日志整张表拆掉：它本来就是从消息正文推出来的东西。
--- 现在**库里只存正文**，变量表在读取时顺着消息重演（vars::VariableView::from_sources）；
+-- 现在**库里只存正文**，变量表在读取时顺着消息重演（world::WorldStateView::from_sources）；
 -- 全局变量搬去 system prompt。`config/variables.json` 与 `setglobal` 都已废弃。
 DROP TABLE IF EXISTS variable_ops;
 "#, r#"
@@ -590,7 +590,7 @@ impl Store {
     /// 编辑一条消息的正文，返回更新后的消息。
     ///
     /// 变量表不落库（它由正文现演出来），所以这里**不需要**重算什么：
-    /// 那句里的 `<state>` 块改了，下次 [`crate::vars::VariableView::from_messages`] 自然不一样。
+    /// 那句里的 `<state>` 块改了，下次 [`crate::world::WorldStateView::from_messages`] 自然不一样。
     pub fn update_message(
         &mut self,
         conversation_id: Uuid,
@@ -1570,7 +1570,7 @@ mod tests {
     /// 本会话 `del` 掉的键会被墓碑挡住，不会从全局底下漏回来。
     /// 切分支 = 换一条路径 ⇒ **变量跟着换**（世界状态回到那次选择的样子）。
     #[test]
-    fn switching_branch_changes_the_derived_variables() {
+    fn switching_branch_changes_the_derived_world_state() {
         let mut s = store();
         let conv = s.create_conversation("dummy", "dummy", "").unwrap();
         let question = s.insert_message(conv.id, Role::User, "我推开门", None).unwrap();
@@ -1593,10 +1593,10 @@ mod tests {
 
         let effective = |s: &Store| {
             let path = s.list_messages(conv.id).unwrap();
-            crate::vars::VariableView::from_sources(
+            crate::world::WorldStateView::from_sources(
                 conv.id,
                 "",
-                crate::vars::PromptSource::Agent,
+                crate::world::PromptSource::Agent,
                 &path,
             )
             .effective
@@ -1630,10 +1630,10 @@ mod tests {
 
         // 底子由"生效的系统提示词"提供（这里模拟 agent 的提示词里写了 世界=临安）
         let messages = s.list_messages(conv.id).unwrap();
-        let view = crate::vars::VariableView::from_sources(
+        let view = crate::world::WorldStateView::from_sources(
             conv.id,
             "<state>set 世界 = 临安</state>",
-            crate::vars::PromptSource::Agent,
+            crate::world::PromptSource::Agent,
             &messages,
         );
 

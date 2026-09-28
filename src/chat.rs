@@ -6,14 +6,14 @@
 //! - [`Backend::Fallback`]：什么都没配、或配的 provider 已从 `providers.json` 消失，
 //!   回 [`FALLBACK_REPLY`]，保证前端不会对着空气说话；
 //! - [`Backend::OpenAiCompletion`]：真模型，走 `providers.json` 里那个 provider 的
-//!   OpenAI 兼容接口（非流式）。要发出去的历史一律来自 [`crate::vars::build_outgoing`]。
+//!   OpenAI 兼容接口（非流式）。要发出去的历史一律来自 [`crate::world::build_outgoing`]。
 //!
 //! 将来 anthropic / deepseek 是同一层的兄弟实现；image-gen 之类不是"对话后端"，另走一路。
 
 use crate::config::{ProviderKind, ProvidersConfig};
 use crate::providers::{self, WireMessage};
 use crate::model::Conversation;
-use crate::vars::Outgoing;
+use crate::world::Outgoing;
 
 /// dummy provider 对外暴露的虚拟模型 id。它不在数据库里——没有上游，也就没有可发现的东西。
 pub const DUMMY_MODEL_ID: &str = "dummy";
@@ -70,7 +70,7 @@ impl Backend {
 /// 生成一条回复。dummy / fallback 立即返回，真模型走上游。
 ///
 /// `outgoing` 是**真正要发出去的东西**：变量表已注入、历史里的状态标签已剔除，
-/// 由 [`crate::vars::build_outgoing`] 一次组装——真模型直接用它，
+/// 由 [`crate::world::build_outgoing`] 一次组装——真模型直接用它，
 /// **不允许**再写第二条拼装路径（否则"剔除标签"会漏）。
 /// 一次生成的结果：正文 + **实际发出去的请求体** + 上游报的用量。
 ///
@@ -187,7 +187,7 @@ mod tests {
 
     use crate::config::{ProviderConfig, ProviderKind, ProvidersConfig};
     use crate::model::Conversation;
-    use crate::vars::{Outgoing, OutgoingRole};
+    use crate::world::{Outgoing, OutgoingRole};
 
     use super::{complete, Backend, Error, DUMMY_MODEL_ID, DUMMY_MODEL_REPLY, FALLBACK_REPLY};
 

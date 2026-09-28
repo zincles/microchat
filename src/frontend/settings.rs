@@ -272,22 +272,22 @@ impl App {
 }
 
 impl App {
-    /// 内置 Agent：写死在代码里的**专用后台任务**（目前只有摘要器）。
+    /// 能力：写死在代码里的**固定流程**（目前只有摘要器）。名字与内置模板来自代码，这里只改怎么用它。
     ///
     /// 名字、说明、内置模板都**来自代码**（加工具＝改 Rust）；这一页只改它们的
     /// 模板 / 渠道 / 模型。清空模板 = 用内置；保存走页脚那个按钮（与 Agent、模型页一致）。
-    pub(super) fn settings_subagents(&mut self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("内置 Agent").strong());
+    pub(super) fn settings_abilities(&mut self, ui: &mut egui::Ui) {
+        ui.label(RichText::new("能力").strong());
         ui.label(
             RichText::new(
-                "内置 Agent 一定是专用的：身份、名字、内置模板都写死在代码里（想加一个＝改 Rust）。\
-                 这里只**覆盖**它的行为：模板留空 = 用内置；渠道/模型留空 = 跟随会话。",
+                "能力（Ability）是写死在代码里的固定流程：名字、说明、内置模板都在代码里（想加一个＝改 Rust）。\
+                 这里只改它**怎么用**：模板留空 = 用内置；渠道/模型留空 = 跟随会话。",
             )
             .weak(),
         );
         ui.add_space(8.0);
 
-        let Some(subagents) = self.subagents.clone() else {
+        let Some(abilities) = self.abilities.clone() else {
             ui.label(RichText::new("加载中…").weak());
             return;
         };
@@ -298,11 +298,11 @@ impl App {
 
         let mut restore_builtin: Option<String> = None;
         let mut picked_route: Option<(String, String, String)> = None; // (id, provider, model)
-        for subagent in &subagents {
-            let Some((prompt, provider, model)) = self.subagent_drafts.get_mut(&subagent.id) else {
+        for ability in &abilities {
+            let Some((prompt, provider, model)) = self.ability_drafts.get_mut(&ability.id) else {
                 continue;
             };
-            let using_builtin = prompt.trim() == subagent.builtin_prompt.trim();
+            let using_builtin = prompt.trim() == ability.builtin_prompt.trim();
             egui::Frame::NONE
                 .fill(ui.visuals().extreme_bg_color)
                 .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
@@ -310,15 +310,15 @@ impl App {
                 .inner_margin(egui::Margin::same(8))
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(&subagent.name).strong());
-                        ui.label(RichText::new(format!("（{}）", subagent.id)).weak().small());
+                        ui.label(RichText::new(&ability.name).strong());
+                        ui.label(RichText::new(format!("（{}）", ability.id)).weak().small());
                         ui.label(
                             RichText::new(if using_builtin { "· 内置模板" } else { "· 已改过" })
                                 .weak()
                                 .small(),
                         );
                         ui.label(
-                            RichText::new(format!("版本 {}", subagent.prompt_version))
+                            RichText::new(format!("版本 {}", ability.prompt_version))
                                 .weak()
                                 .small(),
                         )
@@ -329,11 +329,11 @@ impl App {
                                 .on_hover_text("把模板恢复成代码里的那份（保存后才生效）")
                                 .clicked()
                             {
-                                restore_builtin = Some(subagent.id.clone());
+                                restore_builtin = Some(ability.id.clone());
                             }
                         });
                     });
-                    ui.label(RichText::new(&subagent.about).weak().small());
+                    ui.label(RichText::new(&ability.about).weak().small());
                     // 渠道与模型合成一个下拉（和会话页同一个做法）：跟随会话，或挑一个已知模型
                     ui.horizontal(|ui| {
                         ui.label("渠道与模型");
@@ -346,7 +346,7 @@ impl App {
                                 if model.is_empty() { "跟随会话" } else { model.as_str() }
                             )
                         };
-                        egui::ComboBox::from_id_salt(("subagent_route", &subagent.id))
+                        egui::ComboBox::from_id_salt(("subagent_route", &ability.id))
                             .selected_text(RichText::new(selected_text).monospace())
                             .width(360.0)
                             .show_ui(ui, |ui| {
@@ -357,7 +357,7 @@ impl App {
                                         .clicked()
                                     {
                                         picked_route = Some((
-                                            subagent.id.clone(),
+                                            ability.id.clone(),
                                             String::new(),
                                             String::new(),
                                         ));
@@ -367,7 +367,7 @@ impl App {
                                             provider == provider_id && model == model_id;
                                         if ui.selectable_label(selected, label).clicked() {
                                             picked_route = Some((
-                                                subagent.id.clone(),
+                                                ability.id.clone(),
                                                 provider_id.clone(),
                                                 model_id.clone(),
                                             ));
@@ -387,11 +387,11 @@ impl App {
                     egui::CollapsingHeader::new("可用占位符（写死在代码里）")
                         .default_open(true)
                         .show(ui, |ui| {
-                        egui::Grid::new(("subagent_placeholders", &subagent.id))
+                        egui::Grid::new(("subagent_placeholders", &ability.id))
                             .num_columns(2)
                             .spacing([14.0, 4.0])
                             .show(ui, |ui| {
-                                for placeholder in &subagent.placeholders {
+                                for placeholder in &ability.placeholders {
                                     ui.label(
                                         RichText::new(format!("{{{{{}}}}}", placeholder.name))
                                             .monospace()
@@ -401,8 +401,8 @@ impl App {
                                     ui.end_row();
                                 }
                             });
-                        if !subagent.unknown_vars.is_empty() {
-                            let names: Vec<String> = subagent
+                        if !ability.unknown_vars.is_empty() {
+                            let names: Vec<String> = ability
                                 .unknown_vars
                                 .iter()
                                 .map(|name| format!("{{{{{name}}}}}"))
@@ -429,14 +429,14 @@ impl App {
         }
 
         if let Some((id, provider, model)) = picked_route
-            && let Some((_, draft_provider, draft_model)) = self.subagent_drafts.get_mut(&id)
+            && let Some((_, draft_provider, draft_model)) = self.ability_drafts.get_mut(&id)
         {
             *draft_provider = provider;
             *draft_model = model;
         }
         if let Some(id) = restore_builtin
-            && let Some(found) = subagents.iter().find(|subagent| subagent.id == id)
-            && let Some((prompt, _, _)) = self.subagent_drafts.get_mut(&id)
+            && let Some(found) = abilities.iter().find(|ability| ability.id == id)
+            && let Some((prompt, _, _)) = self.ability_drafts.get_mut(&id)
         {
             *prompt = found.builtin_prompt.to_owned();
         }

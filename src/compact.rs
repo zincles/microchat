@@ -17,10 +17,10 @@ use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
 use crate::blocks::{self, Block};
-use crate::config::{ProvidersConfig, SubAgentsConfig};
+use crate::config::{ProvidersConfig, AbilitiesConfig};
 use crate::model::{Conversation, Message, Summary, SummarySourceKind};
 use crate::store::Store;
-use crate::subagents::{self, SubAgent};
+use crate::abilities::{self, Ability};
 use crate::template;
 
 /// 路径上的一段：用**两端元素的 id** 指。
@@ -38,7 +38,7 @@ pub struct Span {
 /// 压缩模块不该知道 `agents.json` 长什么样。
 pub struct Prompt {
     pub text: String,
-    pub source: crate::vars::PromptSource,
+    pub source: crate::world::PromptSource,
 }
 
 #[derive(Debug)]
@@ -47,7 +47,7 @@ pub enum Error {
     /// 没有可压的东西（全被覆盖了，或只剩那个开着的块）。
     NothingToDo,
     Store(String),
-    SubAgent(String),
+    Ability(String),
     /// 产出过不了闸（空了、或全是状态字段）。
     Rejected(String),
 }
@@ -60,7 +60,7 @@ impl std::fmt::Display for Error {
                 write!(f, "没有可压的块（要么全被覆盖了，要么只剩那个开着的块）")
             }
             Self::Store(message) => write!(f, "存储: {message}"),
-            Self::SubAgent(message) => write!(f, "内置 Agent: {message}"),
+            Self::Ability(message) => write!(f, "内置 Agent: {message}"),
             Self::Rejected(message) => write!(f, "产出不合格: {message}"),
         }
     }
@@ -81,7 +81,7 @@ pub async fn summarize_span(
     store: &Arc<Mutex<Store>>,
     prompt: &Prompt,
     providers: &ProvidersConfig,
-    subagents: &SubAgentsConfig,
+    abilities: &AbilitiesConfig,
     conversation_id: Uuid,
     span: Span,
 ) -> Result<Summary> {
@@ -92,23 +92,23 @@ pub async fn summarize_span(
     let (body, values) = material_for(&material);
 
     // ③ 叫内置 Agent（**锁外**；它可能慢）
-    let run = subagents::run(
-        subagents,
-        SubAgent::Compact,
+    let run = abilities::run(
+        abilities,
+        Ability::Compact,
         &body,
         &values,
         &material.conversation,
         providers,
     )
     .await
-    .map_err(|error| Error::SubAgent(error.to_string()))?;
+    .map_err(|error| Error::Ability(error.to_string()))?;
     if !run.unknown_vars.is_empty() {
         // 不认识的变量原样留在提示词里（不改用户写的东西），但要让人知道
         eprintln!("摘要模板里有不认识的变量（未替换）：{:?}", run.unknown_vars);
     }
 
     // ④ 过闸：状态字段一律剔除（手改 / 重摇也走同一道闸）
-    let parsed = crate::vars::parse(&run.text);
+    let parsed = crate::world::parse(&run.text);
     let text = parsed.cleaned.trim().to_owned();
     if text.is_empty() {
         return Err(Error::Rejected("摘要器回了空文本".to_owned()));
@@ -126,7 +126,7 @@ pub async fn summarize_span(
         source_kind: SummarySourceKind::Message,
         text,
         blocks: material.block_count,
-        tokens: crate::vars::estimate_tokens(&parsed.cleaned, material.ratio) as i64,
+        tokens: crate::world::estimate_tokens(&parsed.cleaned, material.ratio) as i64,
         source_ids: members.clone(),
         provider: run.provider,
         model: run.model,
@@ -151,7 +151,7 @@ pub async fn summarize_blocks(
     store: &Arc<Mutex<Store>>,
     prompt: &Prompt,
     providers: &ProvidersConfig,
-    subagents: &SubAgentsConfig,
+    abilities: &AbilitiesConfig,
     conversation_id: Uuid,
     limit: usize,
 ) -> Result<Summary> {
@@ -169,7 +169,7 @@ pub async fn summarize_blocks(
             end: picked[picked.len() - 1].last,
         }
     };
-    summarize_span(store, prompt, providers, subagents, conversation_id, span).await
+    summarize_span(store, prompt, providers, abilities, conversation_id, span).await
 }
 
 /// 挑出可压的块：从**第一条没被摘要覆盖的消息**起，往后取至多 `limit` 个**已闭合**的块（§18）。
@@ -251,7 +251,7 @@ fn collect(
     // 两端状态现演（§14）：before = 区间之前，after = 区间含末条。
     // 层数多深都一样 —— 状态只认**原始消息**，不爬摘要树。
     let view = |upto: usize| {
-        crate::vars::VariableView::from_sources(
+        crate::world::WorldStateView::from_sources(
             conversation_id,
             &prompt.text,
             prompt.source,
@@ -294,8 +294,8 @@ fn collect(
         .get_model(&conversation.provider, &conversation.model)
         .ok()
         .flatten()
-        .map(|model| crate::vars::tokenizer_ratio(&model.tokenizer))
-        .unwrap_or(crate::vars::DEFAULT_TOKENIZER_RATIO);
+        .map(|model| crate::world::tokenizer_ratio(&model.tokenizer))
+        .unwrap_or(crate::world::DEFAULT_TOKENIZER_RATIO);
 
     Ok(Material {
         conversation,
@@ -401,7 +401,7 @@ mod tests {
     fn prompt() -> Prompt {
         Prompt {
             text: String::new(),
-            source: crate::vars::PromptSource::Agent,
+            source: crate::world::PromptSource::Agent,
         }
     }
 
@@ -427,7 +427,7 @@ mod tests {
             &store,
             &prompt(),
             &providers,
-            &SubAgentsConfig::default(),
+            &AbilitiesConfig::default(),
             conversation_id,
             2,
         )
@@ -466,7 +466,7 @@ mod tests {
             &store,
             &prompt(),
             &providers,
-            &SubAgentsConfig::default(),
+            &AbilitiesConfig::default(),
             conversation_id,
             5,
         )

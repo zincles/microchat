@@ -169,7 +169,7 @@ pub struct Summary {
     /// 覆盖了几个**对话块**（显示 + "≥N 块"判定 + 日志）。块本身不入库。
     #[serde(default)]
     pub blocks: i64,
-    /// 估算 token（排预算用；口径见 `vars::estimate_tokens`）。
+    /// 估算 token（排预算用；口径见 `world::estimate_tokens`）。
     #[serde(default)]
     pub tokens: i64,
     /// 当时到底吃的是什么（消息 id 或摘要 id），供审计与整批重做。

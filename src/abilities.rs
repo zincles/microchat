@@ -1,4 +1,4 @@
-//! 工具（subagent）：**内置的、专用的后台任务**。目前只有一个：`compact`（把 N 个对话块收成一条摘要）。
+//! 工具（ability）：**内置的、专用的后台任务**。目前只有一个：`compact`（把 N 个对话块收成一条摘要）。
 //!
 //! 为什么叫"工具"而不是"子 Agent"：**工具一定是专用的，没有复用可言**（§25）。
 //! 所以它的身份写死在 Rust 里（枚举变体），配置文件只**覆盖**它的行为（模板、渠道、模型），
@@ -14,7 +14,7 @@
 //! 它和会话 Agent 唯一的共同点是"都要打一次上游"：所以这里复用同一个
 //! [`crate::providers::Client`]，不另开 HTTP 栈。
 
-use crate::config::{ProviderKind, ProvidersConfig, SubAgentsConfig};
+use crate::config::{ProviderKind, ProvidersConfig, AbilitiesConfig};
 use crate::model::{Conversation, Usage};
 use crate::providers::{Client, WireMessage};
 
@@ -23,14 +23,14 @@ use crate::providers::{Client, WireMessage};
 /// **一个变体 = 一个工具**：身份、显示名、默认模板都在代码里（专用，不复用）。
 /// 想加工具就在这儿加一个变体，并补上它的默认模板与说明。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SubAgent {
+pub enum Ability {
     /// 把最老的 N 个**对话块**收成一条叙事梗概（§15 的材料 + §18 的选块由调用方拼）。
     Compact,
 }
 
-impl SubAgent {
+impl Ability {
     /// 全部内置工具（界面按这个顺序列）。
-    pub const ALL: [SubAgent; 1] = [SubAgent::Compact];
+    pub const ALL: [Ability; 1] = [Ability::Compact];
 
     /// 配置里的键，也是接口上的 id。
     pub fn id(self) -> &'static str {
@@ -53,7 +53,7 @@ impl SubAgent {
         }
     }
 
-    /// 内置模板（用户没在 `subagents.json` 里覆盖时用它）。
+    /// 内置模板（用户没在 `abilities.json` 里覆盖时用它）。
     pub fn builtin_prompt(self) -> &'static str {
         match self {
             Self::Compact => BUILTIN_COMPACT_PROMPT,
@@ -61,7 +61,7 @@ impl SubAgent {
     }
 }
 
-/// 摘要器的内置模板：用户没在 `subagents.json` 里覆盖时用它。
+/// 摘要器的内置模板：用户没在 `abilities.json` 里覆盖时用它。
 ///
 /// 形状见 `IMPORTANT_DISCUSSION.md` §15：只写叙事、禁止状态字段、必保留
 /// 人名/地点/承诺/未了结的线/关键因果；收到触发语才动手。
@@ -97,18 +97,18 @@ pub fn prompt_version(template: &str) -> i64 {
     (hash & 0x7fff_ffff_ffff_ffff) as i64
 }
 
-/// 生效的模板：`subagents.json` 里覆盖了就用覆盖的，否则用内置的。
-pub fn prompt(config: &SubAgentsConfig, subagent: SubAgent) -> String {
+/// 生效的模板：`abilities.json` 里覆盖了就用覆盖的，否则用内置的。
+pub fn prompt(config: &AbilitiesConfig, ability: Ability) -> String {
     config
-        .get(subagent.id())
+        .get(ability.id())
         .map(|found| found.system_prompt.clone())
         .filter(|text| !text.trim().is_empty())
-        .unwrap_or_else(|| subagent.builtin_prompt().to_owned())
+        .unwrap_or_else(|| ability.builtin_prompt().to_owned())
 }
 
 /// 生效的渠道/模型：覆盖里写了就用，留空 = 跟随会话。
-pub fn route(config: &SubAgentsConfig, subagent: SubAgent, conversation: &Conversation) -> (String, String) {
-    let found = config.get(subagent.id());
+pub fn route(config: &AbilitiesConfig, ability: Ability, conversation: &Conversation) -> (String, String) {
+    let found = config.get(ability.id());
     (
         found
             .and_then(|found| found.provider.clone())
@@ -145,7 +145,7 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 /// `provider` / `model` / `prompt_version` 正是 `summaries` 表上那三列 ——
 /// 调用方原样抄进去，审计与"整批重做"就都有了。
 #[derive(Debug, Clone)]
-pub struct SubAgentRun {
+pub struct AbilityRun {
     pub text: String,
     /// 模板里出现但不在白名单里的 `{{name}}`（原样留着没换；界面/日志该提示）。
     pub unknown_vars: Vec<String>,
@@ -173,20 +173,20 @@ fn wire(system_prompt: &str, material: &str) -> Vec<WireMessage> {
 /// 跑一次工具：`material` 是**程序拼好的材料**（不是历史、不是会话）。
 ///
 /// 非流式：摘要不需要动画，一次拿全反而简单。渠道与模型默认跟随会话
-/// （`subagents.json` 里留空时），可以在配置里换成更便宜的。
+/// （`abilities.json` 里留空时），可以在配置里换成更便宜的。
 pub async fn run(
-    config: &SubAgentsConfig,
-    subagent: SubAgent,
+    config: &AbilitiesConfig,
+    ability: Ability,
     material: &str,
     values: &std::collections::BTreeMap<&'static str, String>,
     conversation: &Conversation,
     providers: &ProvidersConfig,
-) -> Result<SubAgentRun> {
-    let raw = prompt(config, subagent);
+) -> Result<AbilityRun> {
+    let raw = prompt(config, ability);
     // 占位符在这里展开（**只扫一遍**）；版本仍按**替换前**的正文算
     let rendered = crate::template::render(&raw, values);
     let template = rendered.text;
-    let (provider_id, model) = route(config, subagent, conversation);
+    let (provider_id, model) = route(config, ability, conversation);
     let provider = providers
         .get(&provider_id)
         .ok_or(Error::NoProvider)?;
@@ -196,7 +196,7 @@ pub async fn run(
 
     // dummy 没有上游，但照样拼一份载荷：整条链路在没有 key 的环境里也能验（与 chat 那边一个道理）。
     if provider.kind == ProviderKind::Dummy {
-        return Ok(SubAgentRun {
+        return Ok(AbilityRun {
             text: crate::chat::DUMMY_MODEL_REPLY.to_owned(),
             unknown_vars: rendered.unknown,
             provider: provider_id,
@@ -212,7 +212,7 @@ pub async fn run(
         .chat_completion(&model, &messages)
         .await
         .map_err(Error::Upstream)?;
-    Ok(SubAgentRun {
+    Ok(AbilityRun {
         text,
         unknown_vars: rendered.unknown,
         provider: provider_id,
@@ -226,26 +226,26 @@ pub async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{ProviderConfig, ProviderKind as Kind, SubAgentOverride};
+    use crate::config::{ProviderConfig, ProviderKind as Kind, AbilityOverride};
 
     /// 身份、显示名、说明、内置模板都写死在代码里 —— 这就是"专用"的意思。
     #[test]
     fn tools_are_defined_in_code() {
-        assert_eq!(SubAgent::ALL.len(), 1, "目前只有摘要器一个");
-        let subagent = SubAgent::Compact;
-        assert_eq!(subagent.id(), "compact");
-        assert_eq!(subagent.name(), "摘要器");
-        assert!(!subagent.about().is_empty());
-        assert!(subagent.builtin_prompt().contains("摘要器"));
+        assert_eq!(Ability::ALL.len(), 1, "目前只有摘要器一个");
+        let ability = Ability::Compact;
+        assert_eq!(ability.id(), "compact");
+        assert_eq!(ability.name(), "摘要器");
+        assert!(!ability.about().is_empty());
+        assert!(ability.builtin_prompt().contains("摘要器"));
     }
 
     /// 版本号是模板正文的哈希：稳定、可区分、永远非负。
     #[test]
     fn prompt_version_tracks_the_template_text() {
-        let base = prompt_version(SubAgent::Compact.builtin_prompt());
-        assert_eq!(base, prompt_version(SubAgent::Compact.builtin_prompt()), "同一份文本 ⇒ 同一个版本");
+        let base = prompt_version(Ability::Compact.builtin_prompt());
+        assert_eq!(base, prompt_version(Ability::Compact.builtin_prompt()), "同一份文本 ⇒ 同一个版本");
         assert!(base > 0, "掐掉符号位，永远非负");
-        let edited = format!("{}\n· 另外别忘了天气。", SubAgent::Compact.builtin_prompt());
+        let edited = format!("{}\n· 另外别忘了天气。", Ability::Compact.builtin_prompt());
         assert_ne!(base, prompt_version(&edited), "改一个字就该变");
         assert_ne!(prompt_version(""), prompt_version(" "), "空白也算内容");
     }
@@ -254,37 +254,37 @@ mod tests {
     #[test]
     fn overrides_replace_the_builtin_prompt_and_route() {
         let conversation = conversation("别处", "big-model");
-        let empty = SubAgentsConfig::default();
-        assert_eq!(prompt(&empty, SubAgent::Compact), SubAgent::Compact.builtin_prompt());
+        let empty = AbilitiesConfig::default();
+        assert_eq!(prompt(&empty, Ability::Compact), Ability::Compact.builtin_prompt());
         assert_eq!(
-            route(&empty, SubAgent::Compact, &conversation),
+            route(&empty, Ability::Compact, &conversation),
             ("别处".to_owned(), "big-model".to_owned()),
             "没覆盖 ⇒ 跟随会话"
         );
 
-        let mut config = SubAgentsConfig::default();
-        config.subagents.insert(
+        let mut config = AbilitiesConfig::default();
+        config.abilities.insert(
             "compact".to_owned(),
-            SubAgentOverride {
+            AbilityOverride {
                 system_prompt: "压".to_owned(),
                 provider: Some("cheap".to_owned()),
                 model: Some("small".to_owned()),
                 ..Default::default()
             },
         );
-        assert_eq!(prompt(&config, SubAgent::Compact), "压");
+        assert_eq!(prompt(&config, Ability::Compact), "压");
         assert_eq!(
-            route(&config, SubAgent::Compact, &conversation),
+            route(&config, Ability::Compact, &conversation),
             ("cheap".to_owned(), "small".to_owned())
         );
 
         // 模板写空 ⇒ 回落内置（免得手滑删光就得到一个空 system）
-        config.subagents.get_mut("compact").unwrap().system_prompt = "   ".to_owned();
-        assert_eq!(prompt(&config, SubAgent::Compact), SubAgent::Compact.builtin_prompt());
+        config.abilities.get_mut("compact").unwrap().system_prompt = "   ".to_owned();
+        assert_eq!(prompt(&config, Ability::Compact), Ability::Compact.builtin_prompt());
 
         // 不认识的键不影响任何工具
-        config.subagents.insert("没这个工具".to_owned(), SubAgentOverride::default());
-        assert_eq!(prompt(&config, SubAgent::Compact), SubAgent::Compact.builtin_prompt());
+        config.abilities.insert("没这个工具".to_owned(), AbilityOverride::default());
+        assert_eq!(prompt(&config, Ability::Compact), Ability::Compact.builtin_prompt());
     }
 
     fn conversation(provider: &str, model: &str) -> Conversation {
@@ -303,7 +303,7 @@ mod tests {
 
     /// 本地假上游：非流式，回一段固定正文。
     ///
-    /// **不收捕获**：调用方要验的请求体从 `SubAgentRun::payload` 就能拿到（那就是发出去的那一份）。
+    /// **不收捕获**：调用方要验的请求体从 `AbilityRun::payload` 就能拿到（那就是发出去的那一份）。
     async fn stub_upstream(reply: &'static str) -> String {
         let stub = axum::Router::new().route(
             "/v1/chat/completions",
@@ -344,8 +344,8 @@ mod tests {
             std::collections::BTreeMap::new();
         values.insert("range", "第 1–8 条".to_owned());
         let run = run(
-            &SubAgentsConfig::default(),
-            SubAgent::Compact,
+            &AbilitiesConfig::default(),
+            Ability::Compact,
             "【材料】第 1–10 轮",
             &values,
             &conversation,
@@ -359,7 +359,7 @@ mod tests {
         assert_eq!(run.model, "m", "没覆盖 ⇒ 跟随会话");
         assert_eq!(
             run.prompt_version,
-            prompt_version(SubAgent::Compact.builtin_prompt()),
+            prompt_version(Ability::Compact.builtin_prompt()),
             "版本按**替换前**的模板正文算（否则每轮都变）"
         );
         assert!(run.unknown_vars.is_empty());
@@ -383,7 +383,7 @@ mod tests {
         assert_eq!(run.payload["stream"], false, "摘要不流式");
         assert_eq!(run.payload["messages"][0]["role"], "system");
         // 发出去的 system 是**替换后**的那份；模板正文的版本另算（见上）
-        let rendered = crate::template::render(SubAgent::Compact.builtin_prompt(), &values).text;
+        let rendered = crate::template::render(Ability::Compact.builtin_prompt(), &values).text;
         assert_eq!(run.payload["messages"][0]["content"], rendered);
         assert_eq!(run.payload["messages"][1]["role"], "user");
         assert_eq!(run.payload["messages"][1]["content"], "【材料】第 1–10 轮");
@@ -394,10 +394,10 @@ mod tests {
     async fn overrides_can_switch_provider_and_model() {
         let base = stub_upstream("梗概").await;
         let providers = providers_with("cheap", &base);
-        let mut config = SubAgentsConfig::default();
-        config.subagents.insert(
+        let mut config = AbilitiesConfig::default();
+        config.abilities.insert(
             "compact".to_owned(),
-            SubAgentOverride {
+            AbilityOverride {
                 system_prompt: "压".to_owned(),
                 provider: Some("cheap".to_owned()),
                 model: Some("small-model".to_owned()),
@@ -408,7 +408,7 @@ mod tests {
 
         let run = run(
             &config,
-            SubAgent::Compact,
+            Ability::Compact,
             "材料",
             &std::collections::BTreeMap::new(),
             &conversation,
@@ -428,8 +428,8 @@ mod tests {
         let providers = ProvidersConfig::default();
         let conversation = conversation("没配过", "m");
         let err = run(
-            &SubAgentsConfig::default(),
-            SubAgent::Compact,
+            &AbilitiesConfig::default(),
+            Ability::Compact,
             "材料",
             &std::collections::BTreeMap::new(),
             &conversation,

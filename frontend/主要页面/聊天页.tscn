@@ -1,0 +1,149 @@
+[gd_scene format=3 uid="uid://cus2lwahny8g5"]
+
+[ext_resource type="PackedScene" uid="uid://brijx6o0kk3s8" path="res://UI组件/消息项.tscn" id="1_b35e7"]
+[ext_resource type="PackedScene" uid="uid://cgbjdq65ammdw" path="res://UI组件/底部输入栏(键盘浮动).tscn" id="2_nylxq"]
+[ext_resource type="PackedScene" uid="uid://21kl14thn5q4" path="res://UI组件/会话列表.tscn" id="3_convlist"]
+
+[sub_resource type="StyleBoxFlat" id="StyleTopBar"]
+content_margin_left = 12.0
+content_margin_top = 8.0
+content_margin_right = 12.0
+content_margin_bottom = 8.0
+bg_color = Color(1, 1, 1, 0.04)
+border_width_bottom = 1
+border_color = Color(1, 1, 1, 0.06)
+
+[sub_resource type="StyleBoxFlat" id="StylePanel"]
+content_margin_left = 12.0
+content_margin_top = 12.0
+content_margin_right = 12.0
+content_margin_bottom = 12.0
+bg_color = Color(1, 1, 1, 0.02)
+border_width_left = 1
+border_color = Color(1, 1, 1, 0.06)
+
+[node name="聊天" type="HSplitContainer" unique_id=454200130]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+split_offsets = PackedInt32Array(240)
+split_offset = 240
+
+[node name="会话列表" parent="." unique_id=311035433 instance=ExtResource("3_convlist")]
+layout_mode = 2
+
+[node name="聊天区" type="HSplitContainer" parent="." unique_id=2000000001]
+layout_mode = 2
+size_flags_horizontal = 3
+split_offsets = PackedInt32Array(420)
+split_offset = 420
+metadata/_tab_index = 0
+
+[node name="聊天布局" type="VBoxContainer" parent="聊天区" unique_id=588641485]
+layout_mode = 2
+theme_override_constants/separation = 0
+
+[node name="顶部模型栏" type="PanelContainer" parent="聊天区/聊天布局" unique_id=66765960]
+layout_mode = 2
+theme_override_styles/panel = SubResource("StyleTopBar")
+
+[node name="选择器" type="HBoxContainer" parent="聊天区/聊天布局/顶部模型栏" unique_id=1616783494]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="模型" type="MenuButton" parent="聊天区/聊天布局/顶部模型栏/选择器" unique_id=1553241009]
+layout_mode = 2
+text = "模型: commandcode-direct / GPT 5.6 Sol"
+
+[node name="Agent" type="MenuButton" parent="聊天区/聊天布局/顶部模型栏/选择器" unique_id=245606180]
+layout_mode = 2
+text = "Agent: default"
+
+[node name="消息滚动" type="ScrollContainer" parent="聊天区/聊天布局" unique_id=1670654787]
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="消息列表" type="VBoxContainer" parent="聊天区/聊天布局/消息滚动" unique_id=276736199]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 4
+
+[node name="消息项1" parent="聊天区/聊天布局/消息滚动/消息列表" unique_id=789891492 instance=ExtResource("1_b35e7")]
+layout_mode = 2
+
+[node name="消息项2" parent="聊天区/聊天布局/消息滚动/消息列表" unique_id=1117250129 instance=ExtResource("1_b35e7")]
+layout_mode = 2
+
+[node name="底部输入栏(键盘浮动)" parent="聊天区/聊天布局" unique_id=465731407 instance=ExtResource("2_nylxq")]
+layout_mode = 2
+
+[node name="右侧栏" type="TabContainer" parent="聊天区" unique_id=785902229]
+custom_minimum_size = Vector2(200, 0)
+layout_mode = 2
+theme_override_styles/panel = SubResource("StylePanel")
+current_tab = 1
+
+[node name="变量布局" type="VBoxContainer" parent="聊天区/右侧栏" unique_id=301353736]
+visible = false
+layout_mode = 2
+theme_override_constants/separation = 6
+metadata/_tab_index = 0
+
+[node name="变量滚动" type="ScrollContainer" parent="聊天区/右侧栏/变量布局" unique_id=1726144035]
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="变量列表" type="VBoxContainer" parent="聊天区/右侧栏/变量布局/变量滚动" unique_id=1800759623]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 4
+
+[node name="当前会话变量" type="Label" parent="聊天区/右侧栏/变量布局/变量滚动/变量列表" unique_id=1418212546]
+layout_mode = 2
+text = "当前会话变量：
+A=1
+B=2"
+
+[node name="调试栏" type="VBoxContainer" parent="聊天区/右侧栏" unique_id=1723414754]
+layout_mode = 2
+metadata/_tab_index = 1
+
+[node name="_" type="HBoxContainer" parent="聊天区/右侧栏/调试栏" unique_id=154746882]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="聊天区/右侧栏/调试栏/_" unique_id=2063437188]
+layout_mode = 2
+text = "触发上下文压缩： "
+
+[node name="LineEdit" type="LineEdit" parent="聊天区/右侧栏/调试栏/_" unique_id=1658167172]
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "单次压缩Block数量"
+
+[node name="Button" type="Button" parent="聊天区/右侧栏/调试栏/_" unique_id=640061210]
+layout_mode = 2
+text = "压缩"
+
+[node name="HSeparator2" type="HSeparator" parent="聊天区/右侧栏/调试栏" unique_id=1091875058]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="聊天区/右侧栏/调试栏" unique_id=310409790]
+layout_mode = 2
+text = "当前会话：
+Message: 2个
+Summary: XX个
+..."
+
+[node name="HSeparator" type="HSeparator" parent="聊天区/右侧栏/调试栏" unique_id=713985411]
+layout_mode = 2
+
+[node name="Label2" type="Label" parent="聊天区/右侧栏/调试栏" unique_id=1282222144]
+layout_mode = 2
+text = "最近一次会话的JSON载荷：
+{
+    xxxx.....
+}"

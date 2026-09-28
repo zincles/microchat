@@ -1,17 +1,17 @@
 [gd_scene format=3 uid="uid://cndavaby575cq"]
 
-[sub_resource type="StyleBoxEmpty" id="Empty"]
-
-[sub_resource type="StyleBoxFlat" id="Hover"]
+[sub_resource type="StyleBoxFlat" id="StyleRow"]
 content_margin_left = 8.0
 content_margin_top = 4.0
 content_margin_right = 4.0
 content_margin_bottom = 4.0
-bg_color = Color(1, 1, 1, 0.07)
+bg_color = Color(1, 1, 1, 0.02)
 corner_radius_top_left = 4
 corner_radius_top_right = 4
 corner_radius_bottom_right = 4
 corner_radius_bottom_left = 4
+
+[sub_resource type="StyleBoxEmpty" id="Empty"]
 
 [sub_resource type="StyleBoxFlat" id="Pressed"]
 content_margin_left = 8.0
@@ -24,20 +24,21 @@ corner_radius_top_right = 4
 corner_radius_bottom_right = 4
 corner_radius_bottom_left = 4
 
-[sub_resource type="StyleBoxFlat" id="StyleRow"]
+[sub_resource type="StyleBoxFlat" id="Hover"]
 content_margin_left = 8.0
 content_margin_top = 4.0
 content_margin_right = 4.0
 content_margin_bottom = 4.0
-bg_color = Color(1, 1, 1, 0.02)
+bg_color = Color(1, 1, 1, 0.07)
 corner_radius_top_left = 4
 corner_radius_top_right = 4
 corner_radius_bottom_right = 4
 corner_radius_bottom_left = 4
 
-
 [node name="会话项" type="PanelContainer" unique_id=1995974688]
 custom_minimum_size = Vector2(0, 28)
+offset_right = 238.0
+offset_bottom = 30.0
 theme_override_styles/panel = SubResource("StyleRow")
 
 [node name="行" type="HBoxContainer" parent="." unique_id=463753626]
@@ -48,20 +49,20 @@ theme_override_constants/separation = 4
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
-text = "对话标题"
-text_overrun_behavior = 3
-alignment = 0
 theme_override_styles/normal = SubResource("Empty")
-theme_override_styles/hover = SubResource("Hover")
 theme_override_styles/pressed = SubResource("Pressed")
+theme_override_styles/hover = SubResource("Hover")
 theme_override_styles/focus = SubResource("Empty")
+text = "对话标题"
+alignment = 0
+text_overrun_behavior = 3
 
 [node name="关闭" type="Button" parent="行" unique_id=1267220130]
 unique_name_in_owner = true
 layout_mode = 2
 tooltip_text = "删除这个会话"
 theme_override_styles/normal = SubResource("Empty")
-theme_override_styles/hover = SubResource("Hover")
 theme_override_styles/pressed = SubResource("Pressed")
+theme_override_styles/hover = SubResource("Hover")
 theme_override_styles/focus = SubResource("Empty")
 text = "✕"

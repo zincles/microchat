@@ -46,3 +46,4 @@ renderer/rendering_method.mobile="gl_compatibility"
 textures/vram_compression/import_etc2_astc=true
 lights_and_shadows/multi_bounce_occlusion/enabled=true
 viewport/hdr_2d=true
+viewport/transparent_background=true

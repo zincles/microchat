@@ -1,0 +1,126 @@
+[gd_scene format=3 uid="uid://brijx6o0kk3s8"]
+
+[node name="消息项" type="MarginContainer" unique_id=789891492]
+offset_right = 450.0
+offset_bottom = 156.0
+theme_override_constants/margin_left = 4
+theme_override_constants/margin_top = 4
+theme_override_constants/margin_right = 4
+theme_override_constants/margin_bottom = 4
+
+[node name="_" type="PanelContainer" parent="." unique_id=506537980]
+layout_mode = 2
+
+[node name="布局" type="VBoxContainer" parent="_" unique_id=1992481543]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="头" type="HBoxContainer" parent="_/布局" unique_id=1364992410]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="角色" type="Label" parent="_/布局/头" unique_id=1446528947]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+tooltip_text = "代码里按角色改颜色：你=蓝 助手=绿"
+text = "用户/助手/系统"
+
+[node name="编辑" type="Button" parent="_/布局/头" unique_id=1658675208]
+layout_mode = 2
+text = "编辑"
+
+[node name="复制" type="Button" parent="_/布局/头" unique_id=1741059001]
+layout_mode = 2
+text = "复制"
+
+[node name="_" type="Button" parent="_/布局/头" unique_id=34918830]
+layout_mode = 2
+text = "删除"
+
+[node name="_2" type="Button" parent="_/布局/头" unique_id=1432105186]
+layout_mode = 2
+text = "<"
+
+[node name="_3" type="Button" parent="_/布局/头" unique_id=687627919]
+layout_mode = 2
+text = ">"
+
+[node name="思考" type="RichTextLabel" parent="_/布局" unique_id=820943767]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/default_color = Color(0.4452145, 0.4452145, 0.4452144, 1)
+theme_override_font_sizes/normal_font_size = 14
+theme_override_font_sizes/bold_font_size = 14
+theme_override_font_sizes/bold_italics_font_size = 14
+theme_override_font_sizes/italics_font_size = 14
+theme_override_font_sizes/mono_font_size = 14
+bbcode_enabled = true
+text = "嗯，AI读到了这段话。"
+fit_content = true
+
+[node name="正文" type="RichTextLabel" parent="_/布局" unique_id=567884653]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 16)
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_font_sizes/normal_font_size = 14
+theme_override_font_sizes/bold_font_size = 14
+theme_override_font_sizes/bold_italics_font_size = 14
+theme_override_font_sizes/italics_font_size = 14
+theme_override_font_sizes/mono_font_size = 14
+bbcode_enabled = true
+text = "消息正文……"
+fit_content = true
+
+[node name="_" type="Label" parent="_/布局" unique_id=30251043]
+layout_mode = 2
+theme_override_font_sizes/font_size = 8
+text = "耗时：xxx s, Token开销：输入:114514t,(缓存命中:114000t, XX%命中率) 输出:1919810t"
+
+[node name="编辑层" type="CanvasLayer" parent="." unique_id=185011067]
+visible = false
+
+[node name="PanelContainer" type="PanelContainer" parent="编辑层" unique_id=133548394]
+anchors_preset = -1
+anchor_left = 0.24652778
+anchor_top = 0.18364197
+anchor_right = 0.8020833
+anchor_bottom = 0.8240741
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="VBoxContainer" type="VBoxContainer" parent="编辑层/PanelContainer" unique_id=456584218]
+layout_mode = 2
+
+[node name="HBoxContainer2" type="HBoxContainer" parent="编辑层/PanelContainer/VBoxContainer" unique_id=660657352]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="编辑层/PanelContainer/VBoxContainer/HBoxContainer2" unique_id=1057158641]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "编辑文本:"
+
+[node name="Button" type="Button" parent="编辑层/PanelContainer/VBoxContainer/HBoxContainer2" unique_id=1073009019]
+layout_mode = 2
+text = "退出"
+
+[node name="TextEdit" type="TextEdit" parent="编辑层/PanelContainer/VBoxContainer" unique_id=1942280655]
+layout_mode = 2
+size_flags_vertical = 3
+placeholder_text = "待编辑文本...."
+
+[node name="HBoxContainer" type="HBoxContainer" parent="编辑层/PanelContainer/VBoxContainer" unique_id=1117744530]
+layout_mode = 2
+
+[node name="Button" type="Button" parent="编辑层/PanelContainer/VBoxContainer/HBoxContainer" unique_id=2043789395]
+layout_mode = 2
+text = "保存"
+
+[node name="Button3" type="Button" parent="编辑层/PanelContainer/VBoxContainer/HBoxContainer" unique_id=94536247]
+layout_mode = 2
+text = "保存并重新发送"
+
+[node name="Button2" type="Button" parent="编辑层/PanelContainer/VBoxContainer/HBoxContainer" unique_id=1633945917]
+layout_mode = 2
+text = "取消"

@@ -212,7 +212,7 @@ impl Client {
 
     /// `POST {base_url}/chat/completions`，**非流式**。返回助手消息的正文。
     ///
-    /// `messages` 必须来自 [`crate::vars::build_outgoing`]——那是"剔除状态标签、
+    /// `messages` 必须来自 [`crate::world::build_outgoing`]——那是"剔除状态标签、
     /// 注入当前变量表"的唯一实现处，别在这儿二次拼装。
     pub async fn chat_completion(
         &self,
