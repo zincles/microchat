@@ -206,7 +206,7 @@ impl App {
                             format!("{} = {value}", row.key)
                         }
                         (microchat::world::OpKind::Set, None) => format!("{} = （空串）", row.key),
-                        (microchat::world::OpKind::Delete, _) => format!("del {}", row.key),
+                        (microchat::world::OpKind::Delete, _) => format!("delete({})", row.key),
                     };
                     ui.label(RichText::new(format!("#{} {}", row.seq, text)).monospace());
                 }
@@ -220,7 +220,7 @@ impl App {
                 ui.add_space(10.0);
                 ui.label(RichText::new("在消息末尾写：").weak());
                 ui.label(
-                    RichText::new("<state>\nset HP = 12\ndel 火把\n</state>")
+                    RichText::new("<state>\nHP = 12\ndel 火把\n</state>")
                         .monospace()
                         .weak(),
                 );

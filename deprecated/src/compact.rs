@@ -386,7 +386,7 @@ mod tests {
                 .insert_message(
                     conversation.id,
                     Role::User,
-                    &format!("<state>set 回合 = {index}</state>第 {index} 问"),
+                    &format!("<state>回合 = {index}</state>第 {index} 问"),
                     parent,
                 )
                 .unwrap();
@@ -513,7 +513,7 @@ mod tests {
                     id: Uuid::now_v7(),
                     conversation_id: Uuid::now_v7(),
                     role: Role::User,
-                    content: "<state>set HP = 1</state>开门".to_owned(),
+                    content: "<state>HP = 1</state>开门".to_owned(),
                     reasoning: None,
                     reasoning_ms: None,
                     duration_ms: None,
@@ -552,7 +552,7 @@ mod tests {
         let (body, values) = material_for(&material);
         assert!(body.starts_with("【前情提要】\n此前的事"));
         assert!(body.contains("【原文】"));
-        assert!(body.contains("user: <state>set HP = 1</state>开门"), "正文原样，含当时的 <state>");
+        assert!(body.contains("user: <state>HP = 1</state>开门"), "正文原样，含当时的 <state>");
         assert!(!body.contains("不该出现"), "思考不进材料");
         assert!(body.ends_with("NOW Triggers Compaction.\n"));
         assert_eq!(values.get("blocks").unwrap(), "1");

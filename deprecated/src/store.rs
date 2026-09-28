@@ -1570,7 +1570,7 @@ mod tests {
     /// 本会话 `del` 掉的键会被墓碑挡住，不会从全局底下漏回来。
     /// 切分支 = 换一条路径 ⇒ **变量跟着换**（世界状态回到那次选择的样子）。
     #[test]
-    fn switching_branch_changes_the_derived_world_state() {
+    fn switching_branch_changes_the_derived_state() {
         let mut s = store();
         let conv = s.create_conversation("dummy", "dummy", "").unwrap();
         let question = s.insert_message(conv.id, Role::User, "我推开门", None).unwrap();
@@ -1578,7 +1578,7 @@ mod tests {
             .insert_message(
                 conv.id,
                 Role::Assistant,
-                "<state>set HP = 1</state>左边那条路",
+                "<state>HP = 1</state>左边那条路",
                 Some(question.id),
             )
             .unwrap();
@@ -1586,7 +1586,7 @@ mod tests {
             .insert_message(
                 conv.id,
                 Role::Assistant,
-                "<state>set HP = 9</state>右边那条路",
+                "<state>HP = 9</state>右边那条路",
                 Some(question.id),
             )
             .unwrap();
@@ -1622,24 +1622,27 @@ mod tests {
     }
 
     #[test]
-    fn session_delete_hides_the_global_value() {
+    fn session_delete_does_not_erase_the_global_base() {
         let mut s = store();
         let conv = s.create_conversation("dummy", "dummy", "").unwrap();
-        s.insert_message(conv.id, Role::User, "<state>del 世界</state>我离开了临安", None)
+        s.insert_message(conv.id, Role::User, "<state>delete(世界)</state>我离开了临安", None)
             .unwrap();
 
         // 底子由"生效的系统提示词"提供（这里模拟 agent 的提示词里写了 世界=临安）
         let messages = s.list_messages(conv.id).unwrap();
         let view = crate::world::WorldStateView::from_sources(
             conv.id,
-            "<state>set 世界 = 临安</state>",
+            "<state>世界 = 临安</state>",
             crate::world::PromptSource::Agent,
             &messages,
         );
 
-        assert!(
-            view.effective.is_empty(),
-            "删掉的键不该从全局漏回来：{:?}",
+        // §38 无墓碑：**删只作用于本层** ⇒ 底子里有同名键就漏回来。
+        // 变通：不想被删掉的键别写进底子，写进第一条消息（同一层，删得掉）。
+        assert_eq!(
+            view.effective.get("世界").map(String::as_str),
+            Some("临安"),
+            "本层的删除不该影响底子：{:?}",
             view.effective
         );
         assert_eq!(view.global_values.get("世界").map(String::as_str), Some("临安"));

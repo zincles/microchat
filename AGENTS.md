@@ -4,9 +4,9 @@ microchat：轻量 SillyTavern 替代（RPG 向）。三层，边界要清楚：
 
 | 层 | 位置 | 状态 |
 |---|---|---|
-| 后端（唯一权威） | `src/`（Rust + axum + **SQLite**） | **正在迁往 Go**：新代码一律写 `backend/`（见下） |
-| 后端（迁移中） | `backend/`（Go + 标准库 + `modernc.org/sqlite`） | **新功能都写这儿**；Rust 版原地留着当参照 |
-| egui 前端 | `src/main.rs` + `src/frontend/` | **已冻结**（2026-09-28 起）：只修 bug、**不加功能**。
+| 后端（**唯一权威**） | `src/`（Go + 标准库 + `modernc.org/sqlite`） | **新代码一律写这儿**（2026-09-29 起）|
+| 后端（**已废弃**） | `deprecated/`（旧的 Rust + axum 版） | **只读参照**：别再往里加功能；迁移完就删 |
+| egui 前端 | `deprecated/src/main.rs` + `deprecated/src/frontend/` | **已冻结**（2026-09-28 起）：只修 bug、**不加功能**。
 新界面一律做在 `frontend/`（Godot，**用户设计**，别替他做设计决定）；调试页暂留 egui |
 | Godot 4.8 前端 | `frontend/` | **用户自己在编辑器里设计**——动手前先问，别替他做设计决定；还没接真实数据 |
 
@@ -23,31 +23,57 @@ microchat：轻量 SillyTavern 替代（RPG 向）。三层，边界要清楚：
 现在三层咬合、各就各位：**Agent（开关）→ 能力（流程）→ 任务（一次执行）**。
 "能不能自主选下一步"**不再是 Agent 的判据**，而是将来某个能力（如 `plan`）的事。
 
-## 代码布局（前端在 `src/frontend/`）
+## 代码布局
 
 ```
-src/
-  lib.rs            共享库 = **后端**（model / store / server / vars / chat / providers /
-                    config / registry / turn / blocks / compact / abilities / template）
-  bin/server.rs     后端的可执行入口
-  main.rs           前端的壳：只声明 `mod frontend;` 并把控制权交给 `frontend::run()`
-  frontend/
-    mod.rs          App 状态 + 帧循环 + 事件泵 + 取数/保存 + 小工具与测试
-    chat.rs         会话视图：消息列表、输入栏、世界状态栏、占用行、系统提示词块
-    settings.rs     设置六页（连接 / Agent / 能力 / 模型与渠道 / 前端设置 / 关于）
-    debug.rs        调试五页（后端状态 / 载荷 / 原始配置 / 请求日志）—— 关系图那页在 graph.rs
-    graph.rs        关系图：布局、绘制、缩放/适配、块的切分与摆放
-    client.rs       HTTP 客户端（命令/事件）· fonts.rs · graph_node.rs · frontend_settings.rs
+src/                       ← **后端（Go）**：主体代码都在这里
+  go.mod · main.go         可执行入口（起服务、读配置、跑迁移）
+  internal/
+    statelang/             `<state>` 语法的唯一权威（零依赖纯函数 + testdata/ 共享语料）
+    store/                 SQLite：打开/迁移/读写（migrations/*.sql 照搬自旧的 Rust 版）
+    model/ config/ server/ …（逐个从下面那张模块地图搬过来）
+deprecated/                ← 旧的 Rust 版（含 Cargo.toml），**只读参照**
+  src/                     lib.rs / bin/server.rs / main.rs / frontend/（egui，已冻结）
+frontend/                  ← Godot 4.8 前端（用户自己在编辑器里设计）
 ```
-子模块靠 `use super::*;` 拿到父模块的一切；跨模块要用的项标 `pub(super)`。
+
+## 模块地图：一个模块 = 一份唯一权威 + 一条不变量
+
+（按资源与不变量切，不按"谁调谁"切；完整表与理由见 `IMPORTANT_DISCUSSION.md` §35。）
+
+**四条"唯一"，就是四条能写成守卫测试的规矩**：
+
+| 模块 | 唯一权威 | 一句话不变量 |
+|---|---|---|
+| `model` | 纯结构 | 无依赖，谁都能用 |
+| `statelang` | **`<state>` 语法的唯一权威** | 零依赖纯函数；**解析即验证**（没有第二个 Validate）；`Cleaned` 里**永不出现标签**（fuzz 守着）|
+| `store` | **只有它碰 SQL** | 正文/提示词原样存档；变量不落库；树在 `parent_id`；生成中的回复不在库里 |
+| `config` | `config/` 四个文件 | 可缺失；整体重写；密钥不回显 |
+| `registry` | 模型口径 | 身份 `(provider, upstream_id)`；发现与覆盖分列，刷新不动用户列 |
+| `providers` | **只有它碰网络** | 只走成熟 crate；超时必配 |
+| `state` | **只有它拼出站文本** | 发出去的文本剔除标签、改注入世界状态；底子分层由提示词来源决定 |
+| `blocks` | 块切分 | 块是推导的、不入库；不许劈开；开着的那块永不压 |
+| `compact` | 摘要唯一入口 | **只往 summaries 插行** |
+| `abilities` | 能力身份（枚举） | 产出不进历史/树/变量；失败不阻塞一轮 |
+| `template` | `{{…}}` | 白名单 = 枚举；只扫一遍；会话提示词永不替换 |
+| `chat` | 一轮生成怎么跑 | 拿到整段才 INSERT |
+| `turn` | 这一轮的流细节 | 增量什么都不算；游标读不消费 |
+| `task` | 后台作业的身份 + 生死 | Drop 兜底；绝不留下僵尸条目 |
+| `server` | **只有它碰 HTTP** | 错误体固定；只编排不含业务 |
+
+依赖方向单向：`server → chat/compact/abilities → state（含 statelang）/blocks → registry/providers/config → store → model`。
+`turn`/`task` 是横切（谁都能挂号，不被依赖）。**Go 版由编译器强制这张图**（循环依赖编译不过）。
 
 ## 后端迁移：Rust → Go（2026-09-28 起）
 
 **为什么要迁**：最初的出发点是"出事了我们也能修"，但用户不读 Rust ⇒ 那个前提失效了；
 Go 语法少、读起来像 C（无指针运算）、标准库自带 HTTP/JSON ⇒ 用户（Go 1 年）能自己维护。
 
+**迁移状态（2026-09-29）**：Go 版已经进 `src/` 成为主体；Rust 版整体挪进 `deprecated/` 当参照。
+下面四条纪律继续有效 —— 它们现在管的是"Go 版必须与旧版一模一样"。
+
 **迁移纪律（四条，缺一不可）**
-1. **表结构照搬**：`backend/internal/store/migrations/*.sql` 由 `src/store.rs` 的 `MIGRATIONS` **生成**，
+1. **表结构照搬**：`src/internal/store/migrations/*.sql` 由 `deprecated/src/store.rs` 的 `MIGRATIONS` **生成**，
    **一字不改** —— 两版必须能开同一个 SQLite 文件（`PRAGMA user_version` 同一个机制）；
 2. **接口照搬** `AGENTS.md` 那张表：`python3 scripts/api-audit.py` 全绿 = 接口层转对了；
 3. **行为照搬**：171 条测试搬进 `go test` 全绿 = 行为层转对了；
@@ -56,16 +82,19 @@ Go 语法少、读起来像 C（无指针运算）、标准库自带 HTTP/JSON �
 **已验**：Go 建的库与 Rust 建的库**表结构逐字一致**；两版读同一份真库副本，账目相同（conversations/messages 一致）。
 
 ```bash
-cd backend && go build -o /tmp/microchat-go . && /tmp/microchat-go -addr 127.0.0.1:8787 -data ../data
+cd src && go build -o /tmp/microchat-go . && /tmp/microchat-go -addr 127.0.0.1:8787 -data ../data
 # 只用标准库的路由：Go 1.22+ 的 ServeMux 原生支持 "GET /x/{id}" 模式
 ```
 
 ## 常用命令
 
 ```bash
-cargo test                                     # 全量测试（当前 115 项）
-./target/debug/server                          # 后端，默认 127.0.0.1:8787
-./target/debug/microchat                       # egui 前端（主用界面）
+cd src && go test ./...                         # 后端（Go）测试
+cd src && go build -o /tmp/microchat-go . && /tmp/microchat-go -addr 127.0.0.1:8787 -data ../data
+
+cd deprecated && cargo test                     # 旧 Rust 版（参照，别再改）
+./deprecated/target/debug/server               # 旧后端（当前还在跑的就是它）
+./deprecated/target/debug/microchat            # egui 前端（已冻结）
 
 cd frontend
 godot --headless --path . --quit-after 3       # 加载并跑几帧（用它当"语法+运行"检查）
@@ -148,6 +177,12 @@ cargo build && python3 scripts/api-audit.py     # 改过接口就跑一遍（它
 | POST | `/conversations/{id}/archive` | — | `ArchiveReceipt` · 200 | 写 `data/archive/<会话>-<时间戳>.json`（**剪枝前的必做动作**），回收据 `{path, bytes, messages, summaries}` |
 | POST | `/conversations/{id}/fork` | — | `Conversation` · **201** | 复制出新会话：当前路径 + 尾巴那一层的兄弟（含子树）+ 摘要行（指针按映射改写）。**世界状态不复制**（现演，逐键相同） |
 | GET | `/conversations/{id}/context` | — | `ContextUsage` | **只有数字**：`used_tokens`（估算）/ `budget_tokens` / `trigger_tokens` / `remaining_tokens`（超了报负数）/ `ctx_len` / `max_output` / `ratio` / `estimated` / `last_prompt_tokens`（上一轮上游实测）/ `over_budget` |
+
+### statelang（给外部工具）
+
+|方法|路径|请求体|响应|说明|
+|---|---|---|---|---|
+|POST|`/statelang`|`{"text": "任意文本"}`|`{"tables": {表名: {键: 值}}, "statements": [...], "diagnostics": [...]}`|**解析 + 计算**一段文本里的全部 `<state>` 块：不起对话、不落库、纯函数式。`tables` = 算完的值（删除生效、后写覆盖、空表消失；未命名表用**空串**作键）；`statements` = 读出来的操作（按出现顺序，删除未生效）；`diagnostics` 带行号。缺 `text` ⇒ 422，请求体语法错 ⇒ 400|
 
 ### 生成这一轮（202 + 轮询）
 
@@ -290,6 +325,31 @@ cargo build && python3 scripts/api-audit.py     # 改过接口就跑一遍（它
 3. 安卓"从最近任务划掉" = **进程被杀**，任何开关都拦不到 → 该落盘的东西在 `NOTIFICATION_APPLICATION_PAUSED` 里落。
 
 **坑**：返回栈接上之前，安卓按返回键**什么都不发生**。另：4.8.dev5 实测"只关 `auto_accept_quit`、返回键那条路也不退"，与 master 源码不符 → **别依赖实现细节**，要拦哪条路就显式关哪条路的开关。
+
+## `<state>` 的语法（记事板，不是脚本）
+
+```
+<state>
+AA = 123456       # 赋值（值一律字符串）
+B = 234; C = 落石  # `;` 当换行（一行一个变量）
+delete(AA)        # 删除（括号内外留空格也认）
+</state>
+```
+**删除不留痕迹**（2026-09-28 定稿）：`delete(键)` 就是**直接把这个键删掉** —— 不是"记一笔已删除"。
+于是折叠结果只有两态（有值 / 没这个键），Go 里是 `map[string]string`。
+代价：**"删"只作用于它自己那一层** ⇒ 删**提示词底子**里的键，值会从底子**漏回来**。
+变通：不想被删掉的键别写进底子，写进**第一条消息**（同一层，删得掉）。详见 §38。
+
+**空值就是清掉**（2026-09-28 定）：`键 =`（trim 后为空）与 `delete(键)` **效果相同** ⇒ 这门语言里
+**存不下空串**。注意分工：**解析**照实报 `set`（值是空串），动手的是**计算**（`Fold`/`Tables`/`tables_of`）。
+
+**每种写法只有一种规范形态**（砍掉的写法各给一条说得清的报错，不做兼容）：
+赋值 `键 = 值`（`set 键 = 值` 已砍）· 删除 `delete(键)`（`del 键` / `del(键)` / `delete 键` 已砍）。
+理由：LLM 写十次要能十次写对 ⇒ 形态越少越稳；`delete(A)` 是**调用形态**，与 `A = 1` 并列时最像训练数据里的样板代码。
+
+块可出现在**任意位置**；**没有运算、没有变量作右值**（值就是字面量）；值里可以有 `=`（只在第一个处切）、
+**不能有空格**（⇒ `A=1 B=2` 不合法，报错而不是静默删空格）。解析是**行式**的（无文法）；
+不认识的行进 `warnings`，整块仍从正文剔除。定稿理由与实跑证据见 `IMPORTANT_DISCUSSION.md` §36。
 
 ## 配置文件长什么样
 
@@ -586,18 +646,18 @@ dummy 下也走全链路（回固定文本 + 拼好 payload，便于无 key 验�
 
   ```bash
   tmux new-session -d -s microchat-server -c <repo> \
-      './target/debug/server > /tmp/microchat-server.log 2>&1'
+      './deprecated/target/debug/server > /tmp/microchat-server.log 2>&1'
   tmux new-session -d -s microchat-gui -c <repo> \
       'DISPLAY=:0 WAYLAND_DISPLAY=wayland-0 XAUTHORITY=/run/user/1000/xauth_UFgDfa \
-       XDG_RUNTIME_DIR=/run/user/1000 ./target/debug/microchat > /tmp/microchat-gui.log 2>&1'
+       XDG_RUNTIME_DIR=/run/user/1000 ./deprecated/target/debug/microchat > /tmp/microchat-gui.log 2>&1'
   ```
 
   重启 = `tmux kill-session -t <名字>` 再起一次；看日志 = `tail -n 40 /tmp/microchat-*.log`；
-  查活着没 = `pgrep -af "target/debug/(server|microchat)$"`。**tmux 下崩了没有通知** ⇒ 靠 `pgrep` 与日志。
+  查活着没 = `pgrep -af "deprecated/target/debug/(server|microchat)$"`。**tmux 下崩了没有通知** ⇒ 靠 `pgrep` 与日志。
   **注意 `cargo test` 也会重编** ⇒ 只要那次重启之后又跑过 build/test，就该再重启一次。
   自检（精确）：`ls -l /proc/<pid>/exe` —— 路径后面若带 **` (deleted)`**，说明二进制在进程启动后被替换过 ⇒ 跑的是旧货，重启。
   （别拿 `/proc/<pid>/exe` 去 `stat -c %i` 比 inode：那是魔法符号链接，比出来的数没有意义。）
-  前端要用图形环境起：`DISPLAY=:0 WAYLAND_DISPLAY=wayland-0 XAUTHORITY=/run/user/1000/xauth_UFgDfa XDG_RUNTIME_DIR=/run/user/1000 ./target/debug/microchat`。
+  前端要用图形环境起：`DISPLAY=:0 WAYLAND_DISPLAY=wayland-0 XAUTHORITY=/run/user/1000/xauth_UFgDfa XDG_RUNTIME_DIR=/run/user/1000 ./deprecated/target/debug/microchat`。
 - **先量再断言**：能实测的就不猜（本项目几乎所有关键结论都来自实测）。
 - 用户可能**同时在编辑器里改 `frontend/`**：改场景前先读最新文件（并留备份），他的未保存改动优先；提交时别把 `frontend/` 的改动卷进来（除非他让你一起提）。
 - **提交由用户指挥**：**不要**每改一点就 `commit` + `push` —— 那样提交记录会碎成一地。做完一段有意义的进度后，先报告，**等用户说"可以提交了"**再提交；推送同理（用户没点名推送就不推）。默认节奏：改代码 → 跑测试 → 实跑验证 → 报告，**停在这里**。

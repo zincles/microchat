@@ -10,8 +10,8 @@
 //! 标签内容只有两种形态，因为操作只有两种：
 //! ```text
 //! <state>
-//! set HP = 12
-//! del 湿透的火把
+//! HP = 12
+//! delete(湿透的火把)
 //! setglobal 季节 = 初冬
 //! </state>
 //! ```
@@ -36,8 +36,8 @@ pub const PROTOCOL_HINT: &str = "\
 你可以在回复的末尾用一个状态块记录世界状态的变化：
 
 <state>
-set HP = 12
-del 湿透的火把
+HP = 12
+delete(湿透的火把)
 setglobal 季节 = 初冬
 </state>
 
@@ -83,33 +83,54 @@ impl OpKind {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Set => "set",
-            Self::Delete => "del",
+            Self::Delete => "delete",
         }
     }
 
     pub fn parse(raw: &str) -> Option<Self> {
         match raw {
             "set" => Some(Self::Set),
-            "del" => Some(Self::Delete),
+            "delete" => Some(Self::Delete),
             _ => None,
         }
     }
 }
 
 /// 一条待落库的操作。
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// serde 形状与 Go 的 `statelang.Statement` **逐字一致**（接口要逐字节对得上）：
+/// `{"kind":"set","table":"玩家状态","key":"AA","value":"123456"}` —— 表名为空串、值是 `None` 时省略字段。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorldStateOp {
     pub kind: OpKind,
+    /// 哪张表（`<state 玩家状态>` ⇒ `玩家状态`；未命名块 ⇒ 空串）。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub table: String,
     pub key: String,
     /// `Set` 为 `Some`（可以是空串），`Delete` 为 `None`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value: Option<String>,
+}
+
+/// `POST /api/v1/statelang` 的响应：**解析**与**计算**分开给（字段顺序即契约）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatelangView {
+    /// 计算结果：折叠之后的值（删除生效、后写覆盖前写、空表消失；未命名表用空串作键）。
+    pub tables: Tables,
+    /// 解析结果：读出来的操作，按出现顺序（删除还没生效）。
+    pub statements: Vec<WorldStateOp>,
+    /// 坏行与提醒，带行号。
+    pub diagnostics: Vec<Diagnostic>,
 }
 
 /// 一条**现算出来的**操作。`seq` 只在一次重演内部有意义（消息顺序 → 块内顺序），
 /// 库里不保存它——变量表是读的时候从正文推出来的，见 [`WorldStateView::from_messages`]。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WorldStateOpRow {
+pub struct WorldWorldStateOpRow {
     pub seq: i64,
+    /// 哪张表（未命名块 ⇒ 空串）。
+    #[serde(default)]
+    pub table: String,
     pub scope: Scope,
     pub kind: OpKind,
     pub key: String,
@@ -126,8 +147,27 @@ pub struct Parsed {
     /// 剔除状态块后的正文——**这才是发给模型的历史**。
     pub cleaned: String,
     pub ops: Vec<WorldStateOp>,
-    /// 被忽略的行/异常，进调试视图；不影响消息落库。
-    pub warnings: Vec<String>,
+    /// 坏行与提醒：**带行号**（整段文本里的行号，1 起），供界面直接定位。
+    /// 不是致命错误：解析继续，块照旧整块剔除。字段名与 Go 版一致（接口要逐字节对得上）。
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+/// 一条诊断：哪一行出了什么问题。`text` 是**原样**那一行（报错时别再改字）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Diagnostic {
+    pub line: i64,
+    pub text: String,
+    pub message: String,
+}
+
+impl Parsed {
+    fn bad(&mut self, line: i64, text: &str, message: impl Into<String>) {
+        self.diagnostics.push(Diagnostic {
+            line,
+            text: text.to_owned(),
+            message: message.into(),
+        });
+    }
 }
 
 /// 从正文里解析状态块。**无论块里写了什么，块本身一定被剔除**——
@@ -147,17 +187,25 @@ pub fn parse(text: &str) -> Parsed {
         };
         cleaned.push_str(&text[cursor..open]);
 
+        let table = table_name(text, open, open_end);
+        if table.contains([' ', '\t', '\r', '\n', '/', '<', '>', ';', '=']) {
+            parsed.bad(
+                line_of(text, open),
+                "",
+                format!("表名里不该出现空白或 `/` `<` `>` `;` `=`（照收，但多半是笔误）：{table}"),
+            );
+        }
+        let base_line = line_of(text, open_end);
+
         match find_tag(text, open_end, true) {
             Some(close) => {
-                parse_block(&text[open_end..close], &mut parsed);
+                parse_block(&text[open_end..close], base_line, &table, &mut parsed);
                 cursor = tag_end(text, close).unwrap_or(text.len());
             }
             None => {
                 // 没闭合：把剩下的都当块内容——绝不能把它当正文发出去。
-                parsed
-                    .warnings
-                    .push("状态块没有闭合，已按到消息结尾处理".to_owned());
-                parse_block(&text[open_end..], &mut parsed);
+                parsed.bad(line_of(text, open), "", "状态块没有闭合，已按到文本结尾处理");
+                parse_block(&text[open_end..], base_line, &table, &mut parsed);
                 cursor = text.len();
                 break;
             }
@@ -169,8 +217,47 @@ pub fn parse(text: &str) -> Parsed {
     parsed
 }
 
-/// 找下一个 `<state>`（`closing=false`）或 `</state>`（`closing=true`）的起始下标。
-/// 名字大小写不敏感、允许标签内多余空白：`<State >` 也认。
+/// `offset` 处在第几行（1 起）——诊断要指向用户看得见的那一行。
+fn line_of(text: &str, offset: usize) -> i64 {
+    let offset = offset.min(text.len());
+    1 + text[..offset].matches('\n').count() as i64
+}
+
+/// 标签里的表名：`<state 玩家状态>` ⇒ `玩家状态`；`<state>` ⇒ 空串（未命名表）。
+fn table_name(text: &str, open: usize, open_end: usize) -> String {
+    let inner = text[open + 1..open_end - 1].trim();
+    // 同上：多字节标签切不出来就当没有表名，绝不 panic
+    let Some(rest) = inner.get(5..) else {
+        return String::new();
+    };
+    rest.trim().to_owned() // 去掉 `state` 前缀（大小写已在 find_tag 里放行）
+}
+
+/// 标签名是不是我们的块标签 —— `state` 或 `state 表名`（大小写不敏感、允许多余空白）。
+///
+/// 闭合标签里写不写表名都认（`</state>` 与 `</state 玩家状态>` 等价）：模型爱写对称，
+/// 不认的话整块会被当成"没闭合"，把后半段正文一起吞掉。
+fn is_block_tag(raw: &str, closing: bool) -> bool {
+    let mut name = raw.trim();
+    if closing {
+        let Some(rest) = name.strip_prefix('/') else {
+            return false;
+        };
+        name = rest.trim();
+    }
+    // **按字符边界切**：`<状态>` 这种多字节标签会让 `name[..5]` 直接 panic
+    // （这个文件早先就在这上面栽过一次）。`get` 切不出来就是"不是我们的标签"。
+    let Some(head) = name.get(..5) else {
+        return false;
+    };
+    if !head.eq_ignore_ascii_case("state") {
+        return false;
+    }
+    let rest = &name[5..]; // head 已经取到边界 ⇒ 这里必然也在边界上
+    rest.is_empty() || rest.starts_with([' ', '\t'])
+}
+
+/// 找下一个块标签（`closing=false` 找 `<state …>`，`closing=true` 找 `</state …>`）。
 fn find_tag(text: &str, from: usize, closing: bool) -> Option<usize> {
     let mut cursor = from;
     while let Some(offset) = text[cursor..].find('<') {
@@ -179,13 +266,7 @@ fn find_tag(text: &str, from: usize, closing: bool) -> Option<usize> {
         let Some(end) = tag_end(text, start) else {
             return None;
         };
-        let name = text[start + 1..end - 1].trim();
-        let matched = if closing {
-            name.eq_ignore_ascii_case("/state")
-        } else {
-            name.eq_ignore_ascii_case("state")
-        };
-        if matched {
+        if is_block_tag(&text[start + 1..end - 1], closing) {
             return Some(start);
         }
         // 不是标签 ⇒ **只往前挪一个字符**，别跳到这个 `>` 后面：
@@ -207,77 +288,17 @@ fn tag_end(text: &str, start: usize) -> Option<usize> {
         .map(|offset| start + offset + 1)
 }
 
-fn parse_block(body: &str, parsed: &mut Parsed) {
-    for raw in body.lines() {
-        let line = raw.trim();
-        if line.is_empty() {
-            continue;
-        }
-        if parsed.ops.len() >= OPS_PER_MESSAGE_MAX {
-            parsed
-                .warnings
-                .push(format!("操作数超过上限 {OPS_PER_MESSAGE_MAX}，其余已忽略"));
-            return;
-        }
-
-        let (command, rest) = line
-            .split_once(char::is_whitespace)
-            .unwrap_or((line, ""));
-        let kind = match command.to_ascii_lowercase().as_str() {
-            "set" => OpKind::Set,
-            "del" => OpKind::Delete,
-            // 全局变量不再从消息里写：它住手写的 config/variables.json。
-            // 老消息里残留的 setglobal/delglobal 明确报出来——别静默丢掉用户写过的东西。
-            "setglobal" | "delglobal" => {
-                parsed.warnings.push(format!(
-                    "`{command}` 不从消息里写全局变量了，请挪到 config/variables.json：{line}"
-                ));
-                continue;
-            }
-            other => {
-                parsed
-                    .warnings
-                    .push(format!("不认识的操作 `{other}`，已忽略：{line}"));
-                continue;
-            }
-        };
-
-        let (key, value) = match kind {
-            OpKind::Set => match rest.split_once('=') {
-                // 只在**第一个** `=` 处切，值里可以有 `=`
-                Some((key, value)) => (key.trim(), Some(value.trim().to_owned())),
-                None => {
-                    parsed
-                        .warnings
-                        .push(format!("缺少 `=`，已忽略：{line}"));
-                    continue;
-                }
-            },
-            OpKind::Delete => (rest.trim(), None),
-        };
-
-        if let Err(reason) = check_key(key) {
-            parsed.warnings.push(format!("{reason}：{line}"));
-            continue;
-        }
-        if let Some(value) = &value {
-            let chars = value.chars().count();
-            if chars > VALUE_MAX_CHARS {
-                parsed
-                    .warnings
-                    .push(format!("值超过 {VALUE_MAX_CHARS} 字符（{chars}），已忽略：{key}"));
-                continue;
-            }
-        }
-
-        parsed.ops.push(WorldStateOp {
-            kind,
-            key: key.to_owned(),
-            value,
-        });
+/// 认 `delete(键)`（括号内外多几个空格无妨）。认不出返回 `None`。
+fn delete_call(line: &str) -> Option<String> {
+    let open = line.find('(')?;
+    if !line[..open].trim().eq_ignore_ascii_case("delete") {
+        return None;
     }
+    let inner = line[open + 1..].strip_suffix(')')?.trim();
+    Some(inner.to_owned())
 }
 
+/// 键的规矩（一条一个原因 —— 报出来的话要能直接看懂）。
 fn check_key(key: &str) -> Result<(), String> {
     if key.is_empty() {
         return Err("键为空".to_owned());
@@ -285,70 +306,235 @@ fn check_key(key: &str) -> Result<(), String> {
     if key.chars().count() > KEY_MAX_CHARS {
         return Err(format!("键超过 {KEY_MAX_CHARS} 字符"));
     }
-    if key
-        .chars()
-        .any(|c| c.is_whitespace() || matches!(c, '/' | '<' | '>' | '='))
-    {
-        return Err("键不能含空白或 `/` `<` `>` `=`".to_owned());
+    if key.chars().any(char::is_whitespace) {
+        return Err("键不能含空白".to_owned());
+    }
+    if key.chars().any(|ch| matches!(ch, '/' | '<' | '>' | '=')) {
+        return Err("键不能含 `/` `<` `>` `=`".to_owned());
     }
     Ok(())
 }
 
-/// 折叠结果：`None` 是**墓碑**（显式删除），它必须能和"没设置过"区分开，
-/// 否则本会话删掉的键会从全局底下漏回来。
-pub type Dict = BTreeMap<String, Option<String>>;
+fn parse_block(body: &str, base_line: i64, table: &str, parsed: &mut Parsed) {
+    // `;` 当作换行（口径：一行一个变量，`A=1; B=2` 与分两行等价）。
+    // 因此**值里不能出现 `;`** —— 与"值里不能有空格"是同一类规矩：宁可报出来，也别猜。
+    for (index, raw) in body.replace(';', "\n").lines().enumerate() {
+        let line_number = base_line + index as i64;
+        let line = raw.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if parsed.ops.len() >= OPS_PER_MESSAGE_MAX {
+            parsed.bad(
+                line_number,
+                line,
+                format!("操作数超过上限 {OPS_PER_MESSAGE_MAX}，其余已忽略"),
+            );
+            return;
+        }
 
-/// 从空开始按 `seq` 顺序执行操作（`rows` 必须已按 `seq` 升序）。
-pub fn fold(rows: &[WorldStateOpRow], scope: Scope) -> Dict {
-    let mut dict = Dict::new();
-    for row in rows.iter().filter(|row| row.scope == scope) {
-        match row.kind {
-            OpKind::Set => {
-                dict.insert(row.key.clone(), row.value.clone());
+        // **删除**：`delete(键)` —— 唯一的形态（调用形态，与 `键 = 值` 并列，最像样板代码）。
+        // 老写法（`del 键`、`del(A)`、`delete 键`）一律**报错**，不做兼容：
+        // 与 `set` 同一条纪律 —— 语言只有一个规范形态。
+        if let Some(key) = delete_call(line) {
+            if let Err(reason) = check_key(&key) {
+                parsed.bad(line_number, line, reason);
+                continue;
             }
-            OpKind::Delete => {
-                dict.insert(row.key.clone(), None);
+            parsed.ops.push(WorldStateOp {
+                kind: OpKind::Delete,
+                table: table.to_owned(),
+                key,
+                value: None,
+            });
+            continue;
+        }
+
+        // 赋值**只有一种形态**：`键 = 值`（`set` 已砍）。行首那个"词"到空白或 `(` 为止，
+        // 好让 `del(A)` 这种没空格的写法也能落到专门那条报错上。
+        let head = line
+            .split(|ch: char| ch.is_whitespace() || ch == '(')
+            .next()
+            .unwrap_or(line);
+        match head.to_ascii_lowercase().as_str() {
+            "set" => {
+                parsed.bad(line_number, line, "`set` 写法已砍掉，直接写 `键 = 值`");
+                continue;
+            }
+            "del" | "delete" => {
+                parsed.bad(
+                    line_number,
+                    line,
+                    "删除要写成 `delete(键)`（`del 键` / `delete 键` 都不认了）",
+                );
+                continue;
+            }
+            // 全局变量不再从消息里写：它住手写的 config/（别静默丢掉用户写过的东西）。
+            "setglobal" | "delglobal" => {
+                parsed.bad(
+                    line_number,
+                    line,
+                    format!("`{head}` 不从消息里写全局变量了，请挪到 config/ 的全局状态里"),
+                );
+                continue;
+            }
+            _ => {}
+        }
+        if !line.contains('=') {
+            parsed.bad(line_number, line, format!("不认识的操作 `{head}`，已忽略"));
+            continue;
+        }
+
+        // 只在**第一个** `=` 处切 —— 值里可以有 `=`
+        let (key, raw_value) = line.split_once('=').expect("赋值必然带 `=`");
+        let key = key.trim();
+        let value = raw_value.trim().to_owned();
+
+        if let Err(reason) = check_key(key) {
+            parsed.bad(line_number, line, reason);
+            continue;
+        }
+        // **一行只能有一个变量**：值里出现空白 ⇒ 多半是把两条写在一行了（`A=1 B=2`）。
+        // 这里刻意**报错而不是静默删空格** —— 删空格会把 `A = 你好 世界` 悄悄改成 `你好世界`。
+        if value.chars().any(char::is_whitespace) {
+            parsed.bad(
+                line_number,
+                line,
+                "值里不能有空格（一行只能有一个变量，多个变量请用 `;` 或换行分开）",
+            );
+            continue;
+        }
+        let chars = value.chars().count();
+        if chars > VALUE_MAX_CHARS {
+            parsed.bad(
+                line_number,
+                line,
+                format!("值超过 {VALUE_MAX_CHARS} 字符（{chars}），已忽略：{key}"),
+            );
+            continue;
+        }
+
+        parsed.ops.push(WorldStateOp {
+            kind: OpKind::Set,
+            table: table.to_owned(),
+            key: key.to_owned(),
+            value: Some(value),
+        });
+    }
+}
+
+/// 折叠结果：**一层**的状态（键 → 值）。
+///
+/// **没有墓碑**（2026-09-28 用户定稿）：`delete` 就是把这个键从**本层**拿掉，不留痕迹。
+/// 代价与用法见 `IMPORTANT_DISCUSSION.md` §38：删**提示词底子**里的键 = 它会从下面漏回来
+/// （"删"只作用于自己那一层）⇒ 不想被删掉的键，别写进底子，写进第一条消息。
+pub type Tables = BTreeMap<String, BTreeMap<String, String>>;
+
+/// 从空开始按 `seq` 顺序执行操作（`rows` 必须已按 `seq` 升序）。**只折叠这一层**。
+///
+/// 按**表**分开折：不同表里的同名键互不影响。算完为空的表自动消失（§37）。
+pub fn fold(rows: &[WorldWorldStateOpRow], scope: Scope) -> Tables {
+    let mut tables = Tables::new();
+    for row in rows.iter().filter(|row| row.scope == scope) {
+        let table = tables.entry(row.table.clone()).or_default();
+        match row.kind {
+            OpKind::Set if !clears(row.value.as_deref()) => {
+                table.insert(row.key.clone(), row.value.clone().unwrap_or_default());
+            }
+            // `delete(键)` 与"赋成空值"（`键 =`）效果相同（§37）：清掉这个键
+            _ => {
+                table.remove(&row.key);
             }
         }
     }
-    dict
+    tables.retain(|_, table| !table.is_empty());
+    tables
 }
 
-/// 生效值 = 全局打底，本会话覆写（本会话的 `del` 同样覆写全局）。
-pub fn effective(global: &Dict, session: &Dict) -> BTreeMap<String, String> {
+/// 生效值 = 全局打底，本会话覆写，**按表各自合并**。
+/// 本会话删掉的键会从全局漏回来 —— 这就是"无墓碑"的语义（§38）。
+pub fn effective(global: &Tables, session: &Tables) -> Tables {
     let mut merged = global.clone();
-    for (key, value) in session {
-        merged.insert(key.clone(), value.clone());
+    for (name, table) in session {
+        let target = merged.entry(name.clone()).or_default();
+        for (key, value) in table {
+            target.insert(key.clone(), value.clone());
+        }
     }
+    merged.retain(|_, table| !table.is_empty());
     merged
-        .into_iter()
-        .filter_map(|(key, value)| value.map(|value| (key, value)))
-        .collect()
 }
 
-/// 注入给模型的变量表；空表返回 `None`（不注入空块）。
-pub fn render_table(values: &BTreeMap<String, String>) -> Option<String> {
-    if values.is_empty() {
+/// 空值算不算"清掉"：`键 =` 与 `delete(键)` 效果相同（§37）—— 于是这门语言里**存不下空串**。
+fn clears(value: Option<&str>) -> bool {
+    value.is_none_or(str::is_empty)
+}
+
+/// 未命名表（老写法 `<state>…</state>` 的键都住这儿）—— 界面与老接口沿用它的扁平静态。
+pub fn unnamed_table(tables: &Tables) -> BTreeMap<String, String> {
+    tables.get("").cloned().unwrap_or_default()
+}
+
+/// 注入给模型的变量表：**按表分组**；未命名表不写表头（保持老样子）；空 ⇒ `None`。
+pub fn render_table(tables: &Tables) -> Option<String> {
+    if tables.is_empty() {
         return None;
     }
     let mut out = String::from("当前变量:");
-    for (key, value) in values {
-        out.push_str(&format!("\n  {key} = {value}"));
+    for (name, table) in tables {
+        if table.is_empty() {
+            continue;
+        }
+        if name.is_empty() {
+            for (key, value) in table {
+                out.push_str(&format!("\n  {key} = {value}"));
+            }
+            continue;
+        }
+        out.push_str(&format!("\n  〔{name}〕"));
+        for (key, value) in table {
+            out.push_str(&format!("\n    {key} = {value}"));
+        }
     }
     Some(out)
 }
 
-/// 面板/接口要的一份快照。
+/// **解析 + 计算**：一段文本 ⇒ `{表: {键: 值}}`。
+///
+/// 这就是 `POST /api/v1/statelang` 的主体，也是给外部工具的那个函数：
+/// 删除生效、后写覆盖前写、空表消失。要"只解析不计算"就用 `parse(text).ops`。
+pub fn tables_of(text: &str) -> Tables {
+    let mut tables = Tables::new();
+    for op in parse(text).ops {
+        let table = tables.entry(op.table.clone()).or_default();
+        match op.kind {
+            OpKind::Set if !clears(op.value.as_deref()) => {
+                table.insert(op.key.clone(), op.value.clone().unwrap_or_default());
+            }
+            // 空值 = 清掉（§37）。注意解析照实报告 set（值是空串），动手的是**计算**。
+            _ => {
+                table.remove(&op.key);
+            }
+        }
+    }
+    tables.retain(|_, table| !table.is_empty());
+    tables
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorldStateView {
-    /// 全局那几张（来自 `config/variables.json`，所有会话共用）。
-    pub global: Vec<WorldStateOpRow>,
+    /// 全局那几张（来自底子提示词/`config/`，所有会话共用）。
+    pub global: Vec<WorldWorldStateOpRow>,
     /// 本会话正文里累积出来的操作（"这一局改了什么"）。
-    pub session: Vec<WorldStateOpRow>,
+    pub session: Vec<WorldWorldStateOpRow>,
     /// 全局现值。
     pub global_values: BTreeMap<String, String>,
-    /// 生效值（全局 + 本会话）。
+    /// 生效值（全局 + 本会话）—— **未命名表**那一层（老写法与老前端沿用它的扁平静态）。
     pub effective: BTreeMap<String, String>,
+    /// **全部分层之后的表**（表名 → 键 → 值；未命名表用空串作键）。
+    /// 新前端与外部工具用这个 —— `effective` 只是为了兼容老写法。
+    #[serde(default)]
+    pub tables: Tables,
 }
 
 /// 生效的那份 system prompt 是从哪儿来的——决定它写的 `<state>` 块算"全局底子"
@@ -369,8 +555,8 @@ impl WorldStateView {
     /// 2. 然后是每条消息正文里的块，按消息顺序（`list_messages` 的 rowid 序）。
     ///
     /// ![来源] 底子来自 agent 的提示词时算全局（`Scope::Global`，别的会话共享），
-    /// 来自会话自己的提示词时算本会话（`Scope::Session`）。本会话的 `del` 写墓碑，
-    /// 能把全局同名的键挡住，不会从底下漏回来。
+    /// 来自会话自己的提示词时算本会话（`Scope::Session`）。
+    /// **没有墓碑**（§38）：本会话删掉底子里的键，值会从底子漏回来 —— "删"只作用于自己那一层。
     ///
     /// 没有派生表 ⇒ 编辑/删除消息、改提示词**都不需要**"重算变量"：文本改了，现演结果自然变。
     pub fn from_sources(
@@ -384,13 +570,14 @@ impl WorldStateView {
             PromptSource::Conversation => Scope::Session,
         };
 
-        let mut global_rows: Vec<WorldStateOpRow> = Vec::new();
-        let mut session_rows: Vec<WorldStateOpRow> = Vec::new();
+        let mut global_rows: Vec<WorldWorldStateOpRow> = Vec::new();
+        let mut session_rows: Vec<WorldWorldStateOpRow> = Vec::new();
 
         // 1) 底子：系统提示词里的块（没有块就是空底子，很正常）。
         for op in parse(system_prompt).ops {
-            let row = WorldStateOpRow {
+            let row = WorldWorldStateOpRow {
                 seq: 0, // 下面按作用域重排
+                table: op.table.clone(),
                 scope: prompt_scope,
                 kind: op.kind,
                 key: op.key,
@@ -408,8 +595,9 @@ impl WorldStateView {
         // 2) 然后才是消息，按顺序追加。
         for message in messages {
             for op in parse(&message.content).ops {
-                session_rows.push(WorldStateOpRow {
+                session_rows.push(WorldWorldStateOpRow {
                     seq: 0,
+                    table: op.table.clone(),
                     scope: Scope::Session,
                     kind: op.kind,
                     key: op.key,
@@ -430,9 +618,11 @@ impl WorldStateView {
 
         let global = fold(&global_rows, Scope::Global);
         let session = fold(&session_rows, Scope::Session);
+        let merged = effective(&global, &session);
         Self {
-            global_values: values_of(&global),
-            effective: effective(&global, &session),
+            global_values: unnamed_table(&global),
+            effective: unnamed_table(&merged),
+            tables: merged,
             global: global_rows,
             session: session_rows,
         }
@@ -440,11 +630,6 @@ impl WorldStateView {
 }
 
 /// 把折叠结果里的墓碑滤掉，得到"现值"。
-pub fn values_of(dict: &Dict) -> BTreeMap<String, String> {
-    dict.iter()
-        .filter_map(|(key, value)| value.clone().map(|value| (key.clone(), value)))
-        .collect()
-}
 
 /// 发给模型的一条消息。角色含 `System`——系统提示词不落库，但必须出现在请求里。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -560,11 +745,11 @@ pub fn build_outgoing(
     system_prompt: &str,
     messages: &[Message],
     summaries: &[Summary],
-    values: &BTreeMap<String, String>,
+    tables: &Tables,
 ) -> Vec<Outgoing> {
     // 提示词里的 `<state>` 块和消息里一个待遇：**原样留在存档里，发出去时剔除**。
     let mut system = parse(system_prompt).cleaned.trim().to_owned();
-    if let Some(table) = render_table(values) {
+    if let Some(table) = render_table(tables) {
         if !system.is_empty() {
             system.push_str("\n\n");
         }
@@ -996,7 +1181,7 @@ mod tests {
     /// 真正的状态块照旧：块被剔除，操作照读。
     #[test]
     fn a_real_state_block_still_works_next_to_angle_brackets() {
-        let parsed = parse("他买了 3 < 5 个苹果<state>set 苹果 = 3</state>然后走了");
+        let parsed = parse("他买了 3 < 5 个苹果<state>苹果 = 3</state>然后走了");
         assert_eq!(parsed.cleaned, "他买了 3 < 5 个苹果然后走了");
         assert_eq!(parsed.ops.len(), 1);
         assert_eq!(parsed.ops[0].key, "苹果");
@@ -1104,7 +1289,7 @@ mod tests {
         let messages = vec![
             msg(""),
             msg("   "),
-            msg("<state>set HP = 1</state>"),
+            msg("<state>HP = 1</state>"),
             msg("真的说了点什么"),
         ];
 
@@ -1133,12 +1318,12 @@ mod tests {
             created_at,
         };
         let messages = vec![
-            msg("<state>set HP = 12\nset 火把 = 1</state>我点亮了火把", 1000),
+            msg("<state>HP = 12\n火把 = 1</state>我点亮了火把", 1000),
             msg("我继续往前走", 2000),
-            msg("<state>del 火把</state>火把烧完了", 3000),
+            msg("<state>delete(火把)</state>火把烧完了", 3000),
         ];
         // 底子在**系统提示词**里，和消息同一套语法；来自 agent ⇒ 算全局底子
-        let system_prompt = "你是跑团主持人。\n<state>set 季节 = 初冬\nset HP = 99</state>";
+        let system_prompt = "你是跑团主持人。\n<state>季节 = 初冬\nHP = 99</state>";
 
         let view = WorldStateView::from_sources(
             conversation,
@@ -1148,7 +1333,7 @@ mod tests {
         );
         assert_eq!(view.effective["HP"], "12", "本会话覆写底子里的同名键");
         assert_eq!(view.effective["季节"], "初冬", "底子还在");
-        assert!(!view.effective.contains_key("火把"), "最后一句把它删了（墓碑挡住）");
+        assert!(!view.effective.contains_key("火把"), "最后一句把它删了（底子里没有它 ⇒ 不会再出现）");
         assert_eq!(view.global_values.len(), 2);
         assert_eq!(view.global.len(), 2, "底子那两条算全局");
         assert_eq!(view.session.len(), 3, "三条操作都来自正文");
@@ -1169,7 +1354,7 @@ mod tests {
     fn conversation_prompt_base_is_session_scoped() {
         let view = WorldStateView::from_sources(
             Uuid::now_v7(),
-            "<state>set 地点 = 客栈</state>你是客栈老板。",
+            "<state>地点 = 客栈</state>你是客栈老板。",
             PromptSource::Conversation,
             &[],
         );
@@ -1182,9 +1367,10 @@ mod tests {
     use super::*;
     use crate::model::Role;
 
-    fn row(seq: i64, scope: Scope, kind: OpKind, key: &str, value: Option<&str>) -> WorldStateOpRow {
-        WorldStateOpRow {
+    fn row(seq: i64, scope: Scope, kind: OpKind, key: &str, value: Option<&str>) -> WorldWorldStateOpRow {
+        WorldWorldStateOpRow {
             seq,
+            table: String::new(),
             scope,
             kind,
             key: key.to_owned(),
@@ -1213,7 +1399,7 @@ mod tests {
 
     #[test]
     fn parses_block_and_keeps_only_prose() {
-        let text = "雨水顺着屋檐落下。\n\n<state>\nset HP = 12\ndel 火把\n</state>\n";
+        let text = "雨水顺着屋檐落下。\n\n<state>\nHP = 12\ndelete(火把)\n</state>\n";
         let parsed = parse(text);
         assert_eq!(parsed.cleaned, "雨水顺着屋檐落下。");
         assert_eq!(
@@ -1221,44 +1407,244 @@ mod tests {
             vec![
                 WorldStateOp {
                     kind: OpKind::Set,
+                    table: String::new(),
                     key: "HP".to_owned(),
                     value: Some("12".to_owned()),
                 },
                 WorldStateOp {
                     kind: OpKind::Delete,
+                    table: String::new(),
                     key: "火把".to_owned(),
                     value: None,
                 },
             ]
         );
-        assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
     }
 
-    /// `setglobal` / `delglobal` 已废弃（全局变量住手写的 `config/variables.json`）。
+    /// `setglobal` / `delglobal` 已废弃（全局状态住手写的 `config/`）。
     /// 老消息里残留的写法要**明确报出来**——不能静默丢掉用户写过的东西。
     #[test]
     fn retired_global_commands_warn_instead_of_writing() {
         let parsed = parse("<state>\nsetglobal 季节 = 初冬\ndelglobal 世界\n</state>");
         assert!(parsed.ops.is_empty(), "不该再产出操作：{:?}", parsed.ops);
-        assert_eq!(parsed.warnings.len(), 2, "{:?}", parsed.warnings);
+        assert_eq!(parsed.diagnostics.len(), 2, "{:?}", parsed.diagnostics);
         assert!(
-            parsed.warnings[0].contains("config/variables.json"),
+            parsed.diagnostics[0].message.contains("config/"),
             "要说清该搬去哪：{:?}",
-            parsed.warnings
+            parsed.diagnostics
         );
     }
 
+    /// 值里**可以有 `=`**（只在第一个 `=` 处切），但**不能有空格** ——
+    /// 后者是"一行一个变量"那条规矩的代价（§36：宁可报出来，也不静默删空格）。
     #[test]
-    fn value_may_contain_equals_and_spaces() {
-        let parsed = parse("<state>\nset 状态 = 血量 50/100 = 危险\n</state>");
+    fn value_may_contain_equals_but_not_spaces() {
+        let parsed = parse("<state>\n状态 = 血量=50/100=危险\n</state>");
         assert_eq!(parsed.ops.len(), 1);
         assert_eq!(parsed.ops[0].key, "状态");
-        assert_eq!(parsed.ops[0].value.as_deref(), Some("血量 50/100 = 危险"));
+        assert_eq!(parsed.ops[0].value.as_deref(), Some("血量=50/100=危险"));
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+
+        // 带空格 ⇒ 按"一行一个变量"拒绝，并**原样保留**在告警里（没有静默改字）
+        let spacey = parse("<state>\n状态 = 血量 50/100 = 危险\n</state>");
+        assert!(spacey.ops.is_empty());
+        assert!(
+            spacey.diagnostics.iter().any(|d| d.message.contains("一行只能有一个变量")),
+            "{:?}",
+            spacey.diagnostics
+        );
+        assert!(
+            spacey.diagnostics[0].text.contains("血量 50/100 = 危险"),
+            "告警要原样带上那一行（在 text 里）：{:?}",
+            spacey.diagnostics
+        );
+    }
+
+    /// §36/§37 口径：裸赋值 `A = 1`、`delete(AA)`、`;` 当换行；`set`/`del` 已砍（会报错）。
+    #[test]
+    fn accepts_bare_assignment_delete_call_and_semicolons() {
+        let parsed = parse("<state>\nAA = 123456\nB = 234\ndelete(AA)\nC = 3\ndelete(D)\nE=5; F=6\n</state>");
+        let shape: Vec<(OpKind, &str, Option<&str>)> = parsed
+            .ops
+            .iter()
+            .map(|op| (op.kind, op.key.as_str(), op.value.as_deref()))
+            .collect();
+        assert_eq!(
+            shape,
+            vec![
+                (OpKind::Set, "AA", Some("123456")),
+                (OpKind::Set, "B", Some("234")),
+                (OpKind::Delete, "AA", None),
+                (OpKind::Set, "C", Some("3")),
+                (OpKind::Delete, "D", None),
+                (OpKind::Set, "E", Some("5")),
+                (OpKind::Set, "F", Some("6")),
+            ],
+            "告警：{:?}",
+            parsed.diagnostics
+        );
+        assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+    }
+
+    /// 一行塞两个变量 ⇒ **报出来**，不当成"值里有空格"收下。
+    #[test]
+    fn one_variable_per_line_is_enforced() {
+        let parsed = parse("<state>\nA=1 B=2\n</state>");
+        assert!(parsed.ops.is_empty(), "不能收下：{:?}", parsed.ops);
+        assert_eq!(parsed.diagnostics.len(), 1, "{:?}", parsed.diagnostics);
+        assert!(
+            parsed.diagnostics[0].message.contains("一行只能有一个变量"),
+            "{:?}",
+            parsed.diagnostics
+        );
+    }
+
+    /// 砍掉的写法要给**说得清**的报错（不是"键不能含空白"这种莫名其妙的话）。
+    #[test]
+    fn retired_forms_explain_themselves() {
+        for line in ["set A = 1", "del A", "del(A)", "delete A"] {
+            let parsed = parse(&format!("<state>\n{line}\n</state>"));
+            assert!(parsed.ops.is_empty(), "{line} 不该收下：{:?}", parsed.ops);
+            assert_eq!(parsed.diagnostics.len(), 1, "{line} 诊断 = {:?}", parsed.diagnostics);
+            let message = &parsed.diagnostics[0].message;
+            assert!(
+                message.contains("砍掉") || message.contains("delete(键)"),
+                "{line} 的报错说不清：{message}"
+            );
+        }
+        // 括号内外留空格仍然认（同一个形态，不是第二种写法）
+        let parsed = parse("<state>\ndelete ( 想法 )\n</state>");
+        assert_eq!(parsed.ops.len(), 1, "{:?}", parsed.diagnostics);
+        assert_eq!(parsed.ops[0].kind, OpKind::Delete);
+        assert_eq!(parsed.ops[0].key, "想法");
+    }
+
+    /// **共享语料**：同一份 JSON，Go 侧（`src/internal/statelang`）也跑。
+    ///
+    /// 跨语言一致性靠它守着，而不是靠人眼比对两份实现 —— 改语法时两边一起红，才叫对账。
+    #[test]
+    fn shared_corpus_agrees_with_go() {
+        let raw = include_str!("../../src/internal/statelang/testdata/cases.json");
+        let data: serde_json::Value = serde_json::from_str(raw).expect("语料得是合法 JSON");
+        let cases = data["cases"].as_array().expect("cases 得是数组");
+        assert!(!cases.is_empty(), "语料是空的");
+        for case in cases {
+            let name = case["name"].as_str().unwrap();
+            let input = case["input"].as_str().unwrap();
+            let parsed = parse(input);
+            assert_eq!(
+                parsed.cleaned,
+                case["cleaned"].as_str().unwrap(),
+                "「{name}」cleaned 不一致"
+            );
+            let want = case["statements"].as_array().unwrap();
+            assert_eq!(parsed.ops.len(), want.len(), "「{name}」语句条数不一致：{:?}", parsed.ops);
+            for (index, expected) in want.iter().enumerate() {
+                let op = &parsed.ops[index];
+                assert_eq!(
+                    op.kind.as_str(),
+                    expected["kind"].as_str().unwrap(),
+                    "「{name}」第 {index} 条 kind"
+                );
+                assert_eq!(op.key, expected["key"].as_str().unwrap(), "「{name}」第 {index} 条 key");
+                assert_eq!(
+                    op.value.as_deref(),
+                    expected["value"].as_str(),
+                    "「{name}」第 {index} 条 value"
+                );
+                assert_eq!(
+                    op.table,
+                    expected["table"].as_str().unwrap_or(""),
+                    "「{name}」第 {index} 条 table"
+                );
+            }
+            // 计算（折叠）的结果：删除生效、空表消失、未命名表用空串作键
+            if let Some(expected) = case.get("tables") {
+                let got = serde_json::to_value(tables_of(input)).unwrap();
+                assert_eq!(&got, expected, "「{name}」tables 不一致");
+            }
+            assert_eq!(
+                parsed.diagnostics.len() as i64,
+                case["diagnostics"].as_i64().unwrap(),
+                "「{name}」诊断条数不一致：{:?}",
+                parsed.diagnostics
+            );
+        }
+    }
+
+    /// 命名表：同名键在不同表里互不影响；空表自动消失；删除只作用于自己那张表。
+    #[test]
+    fn tables_are_namespaced() {
+        let tables = tables_of(
+            "<state A>K = 1</state><state B>K = 2; delete(K)</state><state 临时>X = 1; delete(X)</state>",
+        );
+        assert_eq!(tables.len(), 1, "只剩 A：{tables:?}");
+        assert_eq!(tables["A"]["K"], "1");
+        assert!(!tables.contains_key("临时"), "算完为空的表要消失");
+    }
+
+    /// 注入给模型的表**按表分组**（未命名表不写表头）—— 模型每轮都看到正确的形状。
+    #[test]
+    fn render_table_groups_by_table() {
+        let tables = Tables::from([
+            (
+                String::new(),
+                BTreeMap::from([("HP".to_owned(), "10".to_owned())]),
+            ),
+            (
+                "玩家状态".to_owned(),
+                BTreeMap::from([("心情".to_owned(), "疲惫".to_owned())]),
+            ),
+        ]);
+        let rendered = render_table(&tables).expect("非空");
+        assert!(rendered.contains("  HP = 10"), "{rendered}");
+        assert!(rendered.contains("〔玩家状态〕"), "{rendered}");
+        assert!(rendered.contains("    心情 = 疲惫"), "{rendered}");
+        assert!(!rendered.contains("〔〕"), "未命名表不该有表头：{rendered}");
+    }
+
+    /// 表名写坏：**照收**（不改归属）但报一条，别静默。
+    #[test]
+    fn bad_table_name_is_reported_but_kept() {
+        let parsed = parse("<state 玩 家>HP = 1</state>");
+        assert_eq!(parsed.ops.len(), 1);
+        assert_eq!(parsed.ops[0].table, "玩 家");
+        assert!(
+            parsed.diagnostics.iter().any(|d| d.message.contains("表名")),
+            "{:?}",
+            parsed.diagnostics
+        );
+    }
+
+    /// 多字节标签**绝不能让解析器 panic**（真栽过：`name[..5]` 切在字符中间）。
+    #[test]
+    fn multibyte_tags_do_not_panic() {
+        for text in ["<状态>HP = 1</状态>", "正文<标签>x</标签>", "<statе>HP = 1</statе>"] {
+            let parsed = parse(text);
+            let _ = parsed.cleaned; // 只要不 panic
+        }
+    }
+
+    /// 空值 = 清掉（§37）：**计算**动手，**解析**照实报告 —— 这条界线就是"解析 ≠ 计算"。
+    #[test]
+    fn empty_value_clears_the_key() {
+        let parsed = parse("<state 玩家状态>想法 = ;HP = 10</state>");
+        assert_eq!(parsed.ops.len(), 2);
+        assert_eq!(parsed.ops[0].kind, OpKind::Set, "解析该如实报告 set");
+        assert_eq!(parsed.ops[0].value.as_deref(), Some(""));
+
+        let tables = tables_of("<state 玩家状态>想法 = ;HP = 10</state>");
+        assert!(!tables["玩家状态"].contains_key("想法"), "{tables:?}");
+        assert_eq!(tables["玩家状态"]["HP"], "10");
+
+        assert!(tables_of("<state>X = </state>").is_empty(), "清空之后的表该消失");
+        assert_eq!(tables_of("<state>HP = 1;HP = ;HP = 9</state>")[""]["HP"], "9");
     }
 
     #[test]
     fn bad_lines_warn_but_block_never_leaks() {
-        let text = "正文\n<state>\n乱写一行\nset 缺等号\nset 坏/键 = 1\nset 长 = ";
+        let text = "正文\n<state>\n乱写一行\n缺等号\n坏/键 = 1\n长 = ";
         let long = "x".repeat(VALUE_MAX_CHARS + 1);
         let text = format!("{text}{long}\n</state>");
         let parsed = parse(&text);
@@ -1266,36 +1652,36 @@ mod tests {
         assert_eq!(parsed.cleaned, "正文", "块必须被整块剔除");
         for warning in [
             "不认识的操作",
-            "缺少 `=`",
-            "键不能含空白",
+            "键不能含",
             "值超过",
         ] {
             assert!(
-                parsed.warnings.iter().any(|line| line.contains(warning)),
+                parsed.diagnostics.iter().any(|d| d.message.contains(warning)),
                 "缺少告警 `{warning}`：{:?}",
-                parsed.warnings
+                parsed.diagnostics
             );
         }
     }
 
     #[test]
     fn unclosed_block_is_swallowed_to_the_end() {
-        let parsed = parse("先说话\n<state>\nset HP = 1");
+        let parsed = parse("先说话\n<state>\nHP = 1");
         assert_eq!(parsed.cleaned, "先说话");
         assert_eq!(parsed.ops.len(), 1);
-        assert_eq!(parsed.warnings.len(), 1);
+        assert_eq!(parsed.diagnostics.len(), 1);
     }
 
     #[test]
     fn tag_lookup_tolerates_case_and_spaces() {
-        let parsed = parse("正文\n<State >\nSET HP = 3\n</STATE>");
+        // 标签大小写与多余空白宽容（语句本身不区分大小写，但 `set` 已经砍了）
+        let parsed = parse("正文\n<State >\nHP = 3\n</STATE>");
         assert_eq!(parsed.cleaned, "正文");
         assert_eq!(parsed.ops[0].value.as_deref(), Some("3"));
     }
 
     #[test]
     fn multiple_blocks_accumulate() {
-        let parsed = parse("A\n<state>\nset a = 1\n</state>\nB\n<state>\nset b = 2\n</state>");
+        let parsed = parse("A\n<state>\na = 1\n</state>\nB\n<state>\nb = 2\n</state>");
         assert_eq!(parsed.cleaned, "A\n\nB");
         assert_eq!(parsed.ops.len(), 2);
     }
@@ -1303,63 +1689,68 @@ mod tests {
     #[test]
     fn ops_are_capped_per_message() {
         let body: String = (0..OPS_PER_MESSAGE_MAX + 5)
-            .map(|index| format!("set k{index} = {index}\n"))
+            .map(|index| format!("k{index} = {index}\n"))
             .collect();
         let parsed = parse(&format!("<state>\n{body}</state>"));
         assert_eq!(parsed.ops.len(), OPS_PER_MESSAGE_MAX);
-        assert!(parsed.warnings.iter().any(|line| line.contains("上限")));
+        assert!(parsed.diagnostics.iter().any(|d| d.message.contains("上限")));
     }
 
     #[test]
-    fn fold_applies_in_order_and_delete_writes_a_tombstone() {
+    fn fold_applies_in_order_and_delete_leaves_no_trace() {
         let rows = vec![
             row(1, Scope::Session, OpKind::Set, "HP", Some("1")),
             row(2, Scope::Session, OpKind::Set, "HP", Some("6")),
             row(3, Scope::Session, OpKind::Set, "位置", Some("客栈")),
             row(4, Scope::Session, OpKind::Delete, "位置", None),
         ];
-        let dict = fold(&rows, Scope::Session);
-        assert_eq!(dict.get("HP"), Some(&Some("6".to_owned())));
-        assert_eq!(dict.get("位置"), Some(&None), "删除要留墓碑");
-        assert_eq!(values_of(&dict).len(), 1);
+        let tables = fold(&rows, Scope::Session);
+        let table = tables.get("").expect("未命名表");
+        assert_eq!(table.get("HP").map(String::as_str), Some("6"), "后写覆盖前写");
+        assert_eq!(table.get("位置"), None, "删除就是直接删掉，不留墓碑");
+        assert_eq!(table.len(), 1);
     }
 
     #[test]
-    fn session_overrides_global_including_deletes() {
+    fn session_overrides_global_but_delete_cannot_erase_the_base() {
         let messages = vec![message(
             Role::User,
-            "<state>set HP = 3\ndel 世界</state>我把地图烧了",
+            "<state>HP = 3\ndelete(世界)</state>我把地图烧了",
         )];
         // 全局底子由 agent 的提示词提供（会话没有覆盖提示词时就是它）
         let view = WorldStateView::from_sources(
             Uuid::now_v7(),
-            "<state>set 世界 = 临安\nset HP = 10</state>你是说书人。",
+            "<state>世界 = 临安\nHP = 10</state>你是说书人。",
             PromptSource::Agent,
             &messages,
         );
 
         assert_eq!(view.global_values.get("HP").map(String::as_str), Some("10"));
         assert_eq!(view.effective.get("HP").map(String::as_str), Some("3"));
-        assert!(!view.effective.contains_key("世界"), "会话删除要连全局一起遮掉");
+        assert_eq!(
+            view.effective["世界"], "临安",
+            "**删只作用于本层**：底子里有同名键 ⇒ 值漏回来（§38 无墓碑的代价）"
+        );
         assert_eq!(view.session.len(), 2);
     }
 
     #[test]
     fn outgoing_strips_tags_and_injects_current_table() {
         // 提示词里也能写 `<state>`（底子），发出去时同样要剔除
-        let system_prompt = "你是客栈老板。\n<state>set 季节 = 初冬</state>";
+        let system_prompt = "你是客栈老板。\n<state>季节 = 初冬</state>";
         let messages = vec![
             message(Role::User, "我要住店"),
             message(
                 Role::Assistant,
-                "客官里面请。\n<state>\nset HP = 12\nset 房号 = 天字三号\n</state>",
+                "客官里面请。\n<state>\nHP = 12\n房号 = 天字三号\n</state>",
             ),
         ];
         let values = BTreeMap::from([
             ("HP".to_owned(), "12".to_owned()),
             ("房号".to_owned(), "天字三号".to_owned()),
         ]);
-        let outgoing = build_outgoing(system_prompt, &messages, &[], &values);
+        let tables = Tables::from([(String::new(), values)]);
+        let outgoing = build_outgoing(system_prompt, &messages, &[], &tables);
 
         assert_eq!(outgoing[0].role, OutgoingRole::System);
         assert_eq!(

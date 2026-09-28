@@ -1,0 +1,453 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "用户的例子：裸赋值 + delete",
+      "input": "<state>\nAA = 123456\nB = 234\ndelete(AA)\n</state>",
+      "cleaned": "",
+      "statements": [
+        {
+          "kind": "set",
+          "key": "AA",
+          "value": "123456"
+        },
+        {
+          "kind": "set",
+          "key": "B",
+          "value": "234"
+        },
+        {
+          "kind": "delete",
+          "key": "AA"
+        }
+      ],
+      "diagnostics": 0
+    },
+    {
+      "name": "分号当换行",
+      "input": "<state>B = 234; C = 落石</state>",
+      "cleaned": "",
+      "statements": [
+        {
+          "kind": "set",
+          "key": "B",
+          "value": "234"
+        },
+        {
+          "kind": "set",
+          "key": "C",
+          "value": "落石"
+        }
+      ],
+      "diagnostics": 0
+    },
+    {
+      "name": "括号内外留空格",
+      "input": "<state>delete ( 想法 )</state>",
+      "cleaned": "",
+      "statements": [
+        {
+          "kind": "delete",
+          "key": "想法"
+        }
+      ],
+      "diagnostics": 0
+    },
+    {
+      "name": "块可以在任意位置",
+      "input": "雨水顺着屋檐落下。\n\n<state>\nHP = 12\n</state>\n我点亮了火把。",
+      "cleaned": "雨水顺着屋檐落下。\n\n\n我点亮了火把。",
+      "statements": [
+        {
+          "kind": "set",
+          "key": "HP",
+          "value": "12"
+        }
+      ],
+      "diagnostics": 0
+    },
+    {
+      "name": "一行一个变量：A=1 B=2 不合法",
+      "input": "<state>\nA=1 B=2\n</state>",
+      "cleaned": "",
+      "statements": [],
+      "diagnostics": 1
+    },
+    {
+      "name": "值里可以有等号（只在第一个处切）",
+      "input": "<state>\n状态 = 血量=50/100=危险\n</state>",
+      "cleaned": "",
+      "statements": [
+        {
+          "kind": "set",
+          "key": "状态",
+          "value": "血量=50/100=危险"
+        }
+      ],
+      "diagnostics": 0
+    },
+    {
+      "name": "set 已砍掉",
+      "input": "<state>\nset A = 1\n</state>",
+      "cleaned": "",
+      "statements": [],
+      "diagnostics": 1
+    },
+    {
+      "name": "del 已砍掉",
+      "input": "<state>\ndel A\n</state>",
+      "cleaned": "",
+      "statements": [],
+      "diagnostics": 1
+    },
+    {
+      "name": "del(A) 已砍掉",
+      "input": "<state>\ndel(A)\n</state>",
+      "cleaned": "",
+      "statements": [],
+      "diagnostics": 1
+    },
+    {
+      "name": "delete 键（不带括号）已砍掉",
+      "input": "<state>\ndelete A\n</state>",
+      "cleaned": "",
+      "statements": [],
+      "diagnostics": 1
+    },
+    {
+      "name": "键不能含空白",
+      "input": "<state>\n坏 键 = 1\n</state>",
+      "cleaned": "",
+      "statements": [],
+      "diagnostics": 1
+    },
+    {
+      "name": "键不能含斜杠",
+      "input": "<state>\n坏/键 = 1\n</state>",
+      "cleaned": "",
+      "statements": [],
+      "diagnostics": 1
+    },
+    {
+      "name": "不认识的命令",
+      "input": "<state>\n乱写一行\n</state>",
+      "cleaned": "",
+      "statements": [],
+      "diagnostics": 1
+    },
+    {
+      "name": "两个块按出现顺序拼接",
+      "input": "<state>A = 1</state>中间<state>\nB = 2\n</state>",
+      "cleaned": "中间",
+      "statements": [
+        {
+          "kind": "set",
+          "key": "A",
+          "value": "1"
+        },
+        {
+          "kind": "set",
+          "key": "B",
+          "value": "2"
+        }
+      ],
+      "diagnostics": 0
+    },
+    {
+      "name": "未闭合的块：按到结尾，绝不泄漏标签",
+      "input": "正文\n<state>\nA = 1\n后面还有字",
+      "cleaned": "正文",
+      "statements": [
+        {
+          "kind": "set",
+          "key": "A",
+          "value": "1"
+        }
+      ],
+      "diagnostics": 2
+    },
+    {
+      "name": "正文里的裸 < 不能挤掉真块",
+      "input": "伤害 < 10 而 <state>HP = 3</state> 之后",
+      "cleaned": "伤害 < 10 而  之后",
+      "statements": [
+        {
+          "kind": "set",
+          "key": "HP",
+          "value": "3"
+        }
+      ],
+      "diagnostics": 0
+    },
+    {
+      "name": "标签大小写与空格宽容",
+      "input": "<State >\nHP = 3\n</STATE>",
+      "cleaned": "",
+      "statements": [
+        {
+          "kind": "set",
+          "key": "HP",
+          "value": "3"
+        }
+      ],
+      "diagnostics": 0
+    },
+    {
+      "name": "空块：没有语句，也不报错",
+      "input": "<state>\n\n</state>",
+      "cleaned": "",
+      "statements": [],
+      "diagnostics": 0
+    },
+    {
+      "name": "命名表：两张表各归各的",
+      "input": "<state 玩家状态>心情=疲惫;状态=正在写代码;delete(想法)</state>",
+      "cleaned": "",
+      "statements": [
+        {
+          "kind": "set",
+          "key": "心情",
+          "value": "疲惫",
+          "table": "玩家状态"
+        },
+        {
+          "kind": "set",
+          "key": "状态",
+          "value": "正在写代码",
+          "table": "玩家状态"
+        },
+        {
+          "kind": "delete",
+          "key": "想法",
+          "table": "玩家状态"
+        }
+      ],
+      "diagnostics": 0,
+      "tables": {
+        "玩家状态": {
+          "心情": "疲惫",
+          "状态": "正在写代码"
+        }
+      }
+    },
+    {
+      "name": "同名键在不同表里互不影响",
+      "input": "<state 世界情况>情况=待处理</state><state 事件>情况=已了结</state>",
+      "cleaned": "",
+      "statements": [
+        {
+          "kind": "set",
+          "key": "情况",
+          "value": "待处理",
+          "table": "世界情况"
+        },
+        {
+          "kind": "set",
+          "key": "情况",
+          "value": "已了结",
+          "table": "事件"
+        }
+      ],
+      "diagnostics": 0,
+      "tables": {
+        "世界情况": {
+          "情况": "待处理"
+        },
+        "事件": {
+          "情况": "已了结"
+        }
+      }
+    },
+    {
+      "name": "未命名表与命名表并存（未命名用空串作键）",
+      "input": "<state>HP = 10</state><state 玩家状态>心情=疲惫</state>",
+      "cleaned": "",
+      "statements": [
+        {
+          "kind": "set",
+          "key": "HP",
+          "value": "10"
+        },
+        {
+          "kind": "set",
+          "key": "心情",
+          "value": "疲惫",
+          "table": "玩家状态"
+        }
+      ],
+      "diagnostics": 0,
+      "tables": {
+        "": {
+          "HP": "10"
+        },
+        "玩家状态": {
+          "心情": "疲惫"
+        }
+      }
+    },
+    {
+      "name": "空值表：算完为空 ⇒ 整张不出现",
+      "input": "<state 临时>X = 1; delete(X)</state>",
+      "cleaned": "",
+      "statements": [
+        {
+          "kind": "set",
+          "key": "X",
+          "value": "1",
+          "table": "临时"
+        },
+        {
+          "kind": "delete",
+          "key": "X",
+          "table": "临时"
+        }
+      ],
+      "diagnostics": 0,
+      "tables": {}
+    },
+    {
+      "name": "删除只作用于自己那张表",
+      "input": "<state A>K = 1</state><state B>K = 2; delete(K)</state>",
+      "cleaned": "",
+      "statements": [
+        {
+          "kind": "set",
+          "key": "K",
+          "value": "1",
+          "table": "A"
+        },
+        {
+          "kind": "set",
+          "key": "K",
+          "value": "2",
+          "table": "B"
+        },
+        {
+          "kind": "delete",
+          "key": "K",
+          "table": "B"
+        }
+      ],
+      "diagnostics": 0,
+      "tables": {
+        "A": {
+          "K": "1"
+        }
+      }
+    },
+    {
+      "name": "后写覆盖前写（同一张表）",
+      "input": "<state 玩家状态>HP = 1</state><state 玩家状态>HP = 9</state>",
+      "cleaned": "",
+      "statements": [
+        {
+          "kind": "set",
+          "key": "HP",
+          "value": "1",
+          "table": "玩家状态"
+        },
+        {
+          "kind": "set",
+          "key": "HP",
+          "value": "9",
+          "table": "玩家状态"
+        }
+      ],
+      "diagnostics": 0,
+      "tables": {
+        "玩家状态": {
+          "HP": "9"
+        }
+      }
+    },
+    {
+      "name": "空值 = 清掉（解析仍如实报告 set）",
+      "input": "<state 玩家状态>想法 = ;HP = 10</state>",
+      "cleaned": "",
+      "statements": [
+        {
+          "kind": "set",
+          "key": "想法",
+          "value": "",
+          "table": "玩家状态"
+        },
+        {
+          "kind": "set",
+          "key": "HP",
+          "value": "10",
+          "table": "玩家状态"
+        }
+      ],
+      "diagnostics": 0,
+      "tables": {
+        "玩家状态": {
+          "HP": "10"
+        }
+      }
+    },
+    {
+      "name": "空值：空格也算（trim 之后为空）",
+      "input": "<state>X =   </state>",
+      "cleaned": "",
+      "statements": [
+        {
+          "kind": "set",
+          "key": "X",
+          "value": ""
+        }
+      ],
+      "diagnostics": 0,
+      "tables": {}
+    },
+    {
+      "name": "空值把整张表清空 ⇒ 表也消失",
+      "input": "<state 临时>A = 1;A = </state>",
+      "cleaned": "",
+      "statements": [
+        {
+          "kind": "set",
+          "key": "A",
+          "value": "1",
+          "table": "临时"
+        },
+        {
+          "kind": "set",
+          "key": "A",
+          "value": "",
+          "table": "临时"
+        }
+      ],
+      "diagnostics": 0,
+      "tables": {}
+    },
+    {
+      "name": "空值清掉之后还能再设回来",
+      "input": "<state>HP = 1;HP = ;HP = 9</state>",
+      "cleaned": "",
+      "statements": [
+        {
+          "kind": "set",
+          "key": "HP",
+          "value": "1"
+        },
+        {
+          "kind": "set",
+          "key": "HP",
+          "value": ""
+        },
+        {
+          "kind": "set",
+          "key": "HP",
+          "value": "9"
+        }
+      ],
+      "diagnostics": 0,
+      "tables": {
+        "": {
+          "HP": "9"
+        }
+      }
+    }
+  ],
+  "note": "statelang 的共享语料：同一份用例，Rust 与 Go 都必须通过（逐项比 cleaned/statements/诊断条数）"
+}

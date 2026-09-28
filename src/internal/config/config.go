@@ -1,0 +1,261 @@
+// Package config：`config/` 下几个文件的读写。
+//
+// 三条从 Rust 版继承的规矩：
+//  1. 文件都可以**缺失**（缺了用代码里的默认值，缺文件也能跑）；
+//  2. 程序**整体重写**这些文件（严格 JSON，没有注释可写）；
+//  3. `config/` 与 `data/` 永不入库 —— 密钥写在这里，接口一律只回 `has_key`。
+package config
+
+import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
+)
+
+// Paths：两个目录都相对工作目录，可用环境变量覆盖（与 Rust 版同名）。
+type Paths struct {
+	ConfigDir string
+	DataDir   string
+}
+
+func LoadPaths() Paths {
+	return Paths{
+		ConfigDir: envOr("MICROCHAT_CONFIG_DIR", "config"),
+		DataDir:   envOr("MICROCHAT_DATA_DIR", "data"),
+	}
+}
+
+func envOr(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func (p Paths) Config(name string) string { return filepath.Join(p.ConfigDir, name) }
+
+// loadJSON：读文件到结构体；文件不存在 ⇒ 保持默认值（**不是错误**）。
+func loadJSON(path string, into any) error {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if len(body) == 0 {
+		return nil
+	}
+	return json.Unmarshal(body, into)
+}
+
+// Config：`config.json` 整体（文件可以不存在 ⇒ 全用默认值）。
+type Config struct {
+	Version  int            `json:"version"`
+	Server   ServerConfig   `json:"server"`
+	Defaults DefaultsConfig `json:"defaults"`
+	Chat     ChatConfig     `json:"chat"`
+}
+
+type ServerConfig struct {
+	Host      string  `json:"host"`
+	Port      uint16  `json:"port"`
+	AuthToken *string `json:"auth_token"`
+}
+
+// DefaultsConfig：新建会话时的缺省（provider / model / agent）。
+type DefaultsConfig struct {
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+	Agent    string `json:"agent"`
+}
+
+// DefaultConfig：与 Rust 版的 Default 逐字相同（开箱落到 dummy：没有上游，但立刻有回话）。
+func DefaultConfig() Config {
+	return Config{
+		Version:  1,
+		Server:   ServerConfig{Host: "127.0.0.1", Port: 8787},
+		Defaults: DefaultsConfig{Provider: "dummy", Model: DummyModelID, Agent: DefaultAgentID},
+		Chat:     DefaultChat(),
+	}
+}
+
+const (
+	DummyModelID   = "dummy" // chat::DUMMY_MODEL_ID
+	DefaultAgentID = "default"
+)
+
+// LoadConfig：读 `config.json`，缺字段用默认值（`#[serde(default)]` 的等价物）。
+func LoadConfig(paths Paths) (Config, error) {
+	config := DefaultConfig()
+	if err := loadJSON(paths.Config("config.json"), &config); err != nil {
+		return config, err
+	}
+	if config.Chat.TitleChars == 0 {
+		config.Chat.TitleChars = 32
+	}
+	if config.Chat.ModelContextTokens == 0 {
+		config.Chat.ModelContextTokens = 131072
+	}
+	if config.Defaults.Provider == "" {
+		config.Defaults.Provider = "dummy"
+	}
+	if config.Defaults.Model == "" {
+		config.Defaults.Model = DummyModelID
+	}
+	if config.Defaults.Agent == "" {
+		config.Defaults.Agent = DefaultAgentID
+	}
+	return config, nil
+}
+
+// ChatConfig：`config.json` 的 chat 段（模型上下文 / 摘要触发阈值 / 标题字数）。
+type ChatConfig struct {
+	TitleChars           int  `json:"title_chars"`
+	ModelContextTokens   int  `json:"model_context_tokens"`
+	CompactTriggerTokens *int `json:"compact_trigger_tokens"`
+}
+
+func DefaultChat() ChatConfig {
+	return ChatConfig{TitleChars: 32, ModelContextTokens: 131072}
+}
+
+// Agent：会话 Agent（一份命名的人格）。
+type Agent struct {
+	ID           string          `json:"id"`
+	Name         string          `json:"name"`
+	SystemPrompt string          `json:"system_prompt"`
+	Params       json.RawMessage `json:"params,omitempty"`
+	PromptOrder  json.RawMessage `json:"prompt_order,omitempty"`
+}
+
+type AgentsConfig struct {
+	Version      int     `json:"version"`
+	DefaultAgent string  `json:"default_agent"`
+	Agents       []Agent `json:"agents"`
+}
+
+func (c AgentsConfig) Get(id string) (Agent, bool) {
+	for _, agent := range c.Agents {
+		if agent.ID == id {
+			return agent, true
+		}
+	}
+	return Agent{}, false
+}
+
+// DefaultAgentID 的内置 agent：`agents.json` 里没有 `default` 时补上它。
+//
+// 名字与提示词**照抄旧版**——它会进"生效的系统提示词"，两版必须一模一样。
+func BuiltinDefaultAgent() Agent {
+	return Agent{ID: "default", Name: "默认助手", SystemPrompt: "You are a helpful assistant."}
+}
+
+// Effective：生效的 agent 列表（文件里的那些；没有 `default` 就把内置的插在最前）。
+func (c AgentsConfig) Effective() []Agent {
+	agents := make([]Agent, 0, len(c.Agents)+1)
+	hasDefault := false
+	for _, agent := range c.Agents {
+		if agent.ID == "default" {
+			hasDefault = true
+		}
+	}
+	if !hasDefault {
+		agents = append(agents, BuiltinDefaultAgent())
+	}
+	return append(agents, c.Agents...)
+}
+
+// Resolve：按 id 解析（含内置默认）。找不到 ⇒ 空提示词（旧版也是静默的）。
+func (c AgentsConfig) Resolve(id string) (Agent, bool) {
+	for _, agent := range c.Effective() {
+		if agent.ID == id {
+			return agent, true
+		}
+	}
+	return Agent{}, false
+}
+
+// Provider：一个渠道（密钥就写在这一条里；接口只回 has_key）。
+type Provider struct {
+	ID             string            `json:"id"`
+	Name           string            `json:"name"`
+	Kind           string            `json:"kind"` // "dummy" | "openai-compat"
+	BaseURL        string            `json:"base_url"`
+	Headers        map[string]string `json:"headers"`
+	APIKey         string            `json:"api_key"`
+	Stream         *bool             `json:"stream"`          // 缺省 = 开
+	StoreReasoning *bool             `json:"store_reasoning"` // 缺省 = 开
+	Timeouts       *Timeouts         `json:"timeouts"`
+}
+
+type Timeouts struct {
+	ConnectSeconds float64 `json:"connect_seconds"`
+	TotalSeconds   float64 `json:"total_seconds"`
+}
+
+type ProvidersConfig struct {
+	Version   int        `json:"version"`
+	Providers []Provider `json:"providers"`
+}
+
+func (c ProvidersConfig) Get(id string) (Provider, bool) {
+	for _, provider := range c.Providers {
+		if provider.ID == id {
+			return provider, true
+		}
+	}
+	return Provider{}, false
+}
+
+// Load 全部读一遍（任何一个文件缺了都照跑）。
+func Load(paths Paths) (chat ChatConfig, agents AgentsConfig, providers ProvidersConfig, err error) {
+	chat = DefaultChat()
+	err = loadJSON(paths.Config("config.json"), &struct {
+		Chat *ChatConfig `json:"chat"`
+	}{})
+	if err != nil {
+		return
+	}
+	// config.json 里 chat 段可能缺字段 ⇒ 缺的用默认
+	var raw struct {
+		Chat *ChatConfig `json:"chat"`
+	}
+	if e := loadJSON(paths.Config("config.json"), &raw); e == nil && raw.Chat != nil {
+		chat = *raw.Chat
+		if chat.TitleChars == 0 {
+			chat.TitleChars = 32
+		}
+		if chat.ModelContextTokens == 0 {
+			chat.ModelContextTokens = 131072
+		}
+	}
+	if err = loadJSON(paths.Config("agents.json"), &agents); err != nil {
+		return
+	}
+	if err = loadJSON(paths.Config("providers.json"), &providers); err != nil {
+		return
+	}
+	return
+}
+
+// SaveJSON：整体写回（0600 —— 文件里有密钥）。
+func SaveJSON(path string, value any) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	var buffer bytes.Buffer
+	encoder := json.NewEncoder(&buffer)
+	encoder.SetIndent("", "  ")
+	encoder.SetEscapeHTML(false) // 与 Rust 版的 serde 一致：文件里别出现 \u003c
+	if err := encoder.Encode(value); err != nil {
+		return err
+	}
+	body := bytes.TrimRight(buffer.Bytes(), "\n")
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, append(body, '\n'), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}

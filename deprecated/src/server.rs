@@ -16,6 +16,7 @@ use axum::{
     routing::{delete, get, patch, post},
     Json, Router,
 };
+use axum::body::Bytes;
 use serde::{Deserialize, Serialize};
 use tower_http::cors::{Any, CorsLayer};
 use uuid::Uuid;
@@ -144,6 +145,7 @@ pub fn router(state: AppState) -> Router {
             "/conversations/{id}/state",
             get(get_conversation_state),
         )
+        .route("/statelang", post(post_statelang))
         .route(
             "/conversations/{id}/outgoing",
             get(get_conversation_outgoing),
@@ -472,9 +474,9 @@ async fn generate(
         let messages = store.list_messages(id)?;
         let summaries = store.list_summaries(id)?;
         let (system_prompt, source) = effective_system_prompt(state, &conversation)?;
-        let effective =
-            world::WorldStateView::from_sources(id, &system_prompt, source, &messages).effective;
-        let outgoing = world::build_outgoing(&system_prompt, &messages, &summaries, &effective);
+        // 注入给模型的是**分层之后的表**（按表分组渲染），不是扁平的那一层
+        let tables = world::WorldStateView::from_sources(id, &system_prompt, source, &messages).tables;
+        let outgoing = world::build_outgoing(&system_prompt, &messages, &summaries, &tables);
         (conversation, outgoing)
     };
 
@@ -754,13 +756,12 @@ async fn get_conversation_outgoing(
     let messages = store.list_messages(id)?;
     let summaries = store.list_summaries(id)?;
     let (system_prompt, source) = effective_system_prompt(&state, &conversation)?;
-    let effective =
-        world::WorldStateView::from_sources(id, &system_prompt, source, &messages).effective;
+    let tables = world::WorldStateView::from_sources(id, &system_prompt, source, &messages).tables;
     Ok(Json(world::build_outgoing(
         &system_prompt,
         &messages,
         &summaries,
-        &effective,
+        &tables,
     )))
 }
 
@@ -796,9 +797,8 @@ async fn get_conversation_context(
     };
     let summaries = store.list_summaries(id)?;
     let (system_prompt, source) = effective_system_prompt(&state, &conversation)?;
-    let effective =
-        world::WorldStateView::from_sources(id, &system_prompt, source, &messages).effective;
-    let outgoing = world::build_outgoing(&system_prompt, &messages, &summaries, &effective);
+    let tables = world::WorldStateView::from_sources(id, &system_prompt, source, &messages).tables;
+    let outgoing = world::build_outgoing(&system_prompt, &messages, &summaries, &tables);
     // 最近一条带用量的消息（通常是上一轮的回复）：唯一来自上游的地面真相。
     let last_prompt_tokens = messages
         .iter()
@@ -829,7 +829,7 @@ pub struct ConversationExport {
     pub messages: Vec<crate::model::Message>,
     pub summaries: Vec<crate::model::Summary>,
     /// 现演出来的变量（global / session / effective）—— **派生数据，仅供参考**。
-    pub world_state: world::WorldStateView,
+    pub state: world::WorldStateView,
 }
 
 /// 归档收据（`POST …/archive` 的返回）：不重复吐整份内容，只报"写哪儿了、多大"。
@@ -859,7 +859,7 @@ fn build_export(
     let summaries = store.list_summaries(id)?;
     let (system_prompt, source) = effective_system_prompt(state, &conversation)?;
     // 变量现演按**当前路径**折（`messages` 传路径那份，不是全树）
-    let world_state = world::WorldStateView::from_sources(id, &system_prompt, source, &path);
+    let state = world::WorldStateView::from_sources(id, &system_prompt, source, &path);
     Ok(ConversationExport {
         format: 1,
         exported_at: now_ms(),
@@ -867,7 +867,7 @@ fn build_export(
         current_path: path.iter().map(|message| message.id).collect(),
         messages,
         summaries,
-        world_state,
+        state,
     })
 }
 
@@ -1749,6 +1749,31 @@ async fn require_bearer(
     next.run(request).await
 }
 
+/// `POST /api/v1/statelang` 的请求体：就是一段**裸文本**。
+#[derive(Deserialize)]
+struct StatelangReq {
+    #[serde(default)]
+    text: Option<String>,
+}
+
+/// **解析 + 计算**一段文本里的全部 `<state>` 块（给外部工具用：不起对话、不落库、纯函数式）。
+///
+/// 收原始字节而不是走 `Json<T>` 提取器：这样"语法错 400 / 缺字段 422"两种错误体都由我们自己
+/// 发（与 Go 版逐字一致），而不是被 axum 换成它的纯文本。
+async fn post_statelang(body: Bytes) -> Result<Json<world::StatelangView>, ApiError> {
+    let req: StatelangReq =
+        serde_json::from_slice(&body).map_err(|_| ApiError::bad_request("请求体不是合法的 JSON"))?;
+    let Some(text) = req.text else {
+        return Err(ApiError::unprocessable("缺 text"));
+    };
+    let parsed = world::parse(&text);
+    Ok(Json(world::StatelangView {
+        tables: world::tables_of(&text),
+        statements: parsed.ops,
+        diagnostics: parsed.diagnostics,
+    }))
+}
+
 pub struct ApiError {
     status: StatusCode,
     code: &'static str,
@@ -1761,6 +1786,15 @@ impl ApiError {
             status: StatusCode::NOT_FOUND,
             code: "not_found",
             message: "会话不存在".to_owned(),
+        }
+    }
+
+    /// 语义错（必填字段缺失之类）：**422** —— 与 axum 的 Json 拒绝、以及 Go 版一致。
+    fn unprocessable(message: &str) -> Self {
+        Self {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            code: "invalid",
+            message: message.to_owned(),
         }
     }
 
@@ -2051,7 +2085,7 @@ mod tests {
         panic!("这一轮 10 秒还没落地");
     }
 
-    async fn world_state(app: &Router, conversation: Uuid) -> serde_json::Value {
+    async fn state(app: &Router, conversation: Uuid) -> serde_json::Value {
         let (status, body) = send(
             app,
             get_req(&format!(
@@ -2171,7 +2205,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn state_block_becomes_world_state_but_stays_in_the_archive() {
+    async fn state_block_becomes_state_but_stays_in_the_archive() {
         // 底子住在 system prompt 里（和正文同一套 `<state>` 语法）。放在 agent 的提示词上，
         // 用同一 agent 的会话共享它 —— 所以它算"全局"。
         let (app, dir) = app_with_env(
@@ -2179,14 +2213,14 @@ mod tests {
             &[(
                 "agents.json",
                 r#"{ "agents": [ { "id": "default", "name": "默认助手",
-                     "system_prompt": "你是客栈老板。\n<state>set 季节 = 初冬</state>" } ] }"#,
+                     "system_prompt": "你是客栈老板。\n<state>季节 = 初冬</state>" } ] }"#,
             )],
         );
         // 不写会话级提示词 → 用 agent 的
         let conv = create(&app, r#"{"provider":"x","model":"y"}"#).await;
         let uri = format!("/api/v1/conversations/{}/messages", conv.id);
         // 老写法 `setglobal` 仍留在正文里：它现在只报警告，不再往全局写东西。
-        let content = "我要住店\n<state>\nset HP = 12\nsetglobal 季节 = 初冬\n</state>";
+        let content = "我要住店\n<state>\nHP = 12\nsetglobal 季节 = 初冬\n</state>";
         let body = serde_json::json!({ "content": content }).to_string();
         let (status, _) = send(&app, json_req("POST", &uri, &body)).await;
         assert_eq!(status, StatusCode::ACCEPTED, "受理是 202：生成在后台跑");
@@ -2209,7 +2243,7 @@ mod tests {
         // 会话自己写了提示词（覆盖 agent 的）→ 底子换成它写的，而且只算本会话
         let own = create(
             &app,
-            r#"{"provider":"x","model":"y","system_prompt":"<state>set 季节 = 盛夏</state>你是掌柜。"}"#,
+            r#"{"provider":"x","model":"y","system_prompt":"<state>季节 = 盛夏</state>你是掌柜。"}"#,
         )
         .await;
         let (_, body) = send(
@@ -2459,13 +2493,13 @@ mod tests {
 
     /// 删中间那条 = 连它整棵子树一起没；leaf 退回父亲；变量只按当前路径算。
     #[tokio::test]
-    async fn deleting_a_subtree_reports_the_count_and_world_state_follows_the_path() {
+    async fn deleting_a_subtree_reports_the_count_and_state_follows_the_path() {
         let app = app(None);
         let conv = create(&app, r#"{"provider":"dummy","model":"dummy"}"#).await;
         let uri = format!("/api/v1/conversations/{}/messages", conv.id);
         let resend = format!("/api/v1/conversations/{}/resend", conv.id);
 
-        let first = turn(&app, &uri, r#"{"content":"<state>set HP = 12</state>开场"}"#).await;
+        let first = turn(&app, &uri, r#"{"content":"<state>HP = 12</state>开场"}"#).await;
         // 再来一条兄弟回复：树上现在有 1 条用户 + 2 条回复
         let _second = turn(&app, &resend, "").await;
 
@@ -2507,7 +2541,7 @@ mod tests {
         // 两句用户话，状态写在**第二句**上：删它只会带走它自己的子树
         // （第一句也要等它跑完——同一会话不许两轮并行，忙的时候发是 409）
         let _first = turn(&app, &uri, r#"{"content":"开场白"}"#).await;
-        let second = turn(&app, &uri, r#"{"content":"<state>set HP = 12</state>继续往里走"}"#).await;
+        let second = turn(&app, &uri, r#"{"content":"<state>HP = 12</state>继续往里走"}"#).await;
 
         let vars_uri = format!("/api/v1/conversations/{}/state", conv.id);
         let (_, body) = send(&app, get_req(&vars_uri)).await;
@@ -2659,12 +2693,12 @@ mod tests {
         let app = app(None);
         let conv = create(&app, r#"{"provider":"x","model":"y"}"#).await;
         let uri = format!("/api/v1/conversations/{}/messages", conv.id);
-        let body = serde_json::json!({ "content": "开始\n<state>\nset HP = 12\n</state>" }).to_string();
+        let body = serde_json::json!({ "content": "开始\n<state>\nHP = 12\n</state>" }).to_string();
         let turn = turn(&app, &uri, &body).await;
 
         // 改成正 3：旧操作要被**换掉**，不是叠加
         let edit_uri = format!("/api/v1/conversations/{}/messages/{}", conv.id, turn.user.id);
-        let edited = "改口\n<state>\nset HP = 3\n</state>";
+        let edited = "改口\n<state>\nHP = 3\n</state>";
         let body = serde_json::json!({ "content": edited }).to_string();
         let (status, response) = send(&app, json_req("PATCH", &edit_uri, &body)).await;
         assert_eq!(status, StatusCode::OK);
@@ -3010,20 +3044,20 @@ mod tests {
     /// Fork：副本的世界状态与原件**逐键相等**（§19.E 第二条保险 —— 它终于不空转了）；
     /// 消息全换新 id、内容与 `created_at` 一字不改。
     #[tokio::test]
-    async fn fork_keeps_world_state_and_copies_the_tree() {
+    async fn fork_keeps_state_and_copies_the_tree() {
         let providers = r#"{ "providers": [ { "id": "dummy", "kind": "dummy" } ] }"#;
         let (app, dir) = app_with_files(&[("providers.json", providers)]);
         let conv = create(&app, r#"{"provider":"dummy","model":"dummy"}"#).await;
         let uri = format!("/api/v1/conversations/{}/messages", conv.id);
         // 正文里写状态，变量现演才有东西
-        let _ = turn(&app, &uri, r#"{"content":"<state>set HP = 12</state>我要住店"}"#).await;
-        let _ = turn(&app, &uri, r#"{"content":"<state>set 季节 = 初冬</state>再来一间"}"#).await;
+        let _ = turn(&app, &uri, r#"{"content":"<state>HP = 12</state>我要住店"}"#).await;
+        let _ = turn(&app, &uri, r#"{"content":"<state>季节 = 初冬</state>再来一间"}"#).await;
         // 再造一个"退货现场"：给最后那条回复再加一个兄弟
         let resend = format!("/api/v1/conversations/{}/resend", conv.id);
         let _ = turn(&app, &resend, "{}").await;
 
         let before: Vec<Message> = messages(&app, conv.id).await;
-        let original_vars = world_state(&app, conv.id).await;
+        let original_vars = state(&app, conv.id).await;
         // 标题是第一句用户消息到了才起的，所以这时候再读一次
         let list: Vec<serde_json::Value> =
             serde_json::from_str(&send(&app, get_req("/api/v1/conversations")).await.1).unwrap();
@@ -3067,7 +3101,7 @@ mod tests {
             "全换新 id"
         );
 
-        let copy_vars = world_state(&app, copy.id).await;
+        let copy_vars = state(&app, copy.id).await;
         assert_eq!(
             copy_vars["effective"], original_vars["effective"],
             "副本的世界状态必须与原件逐键相同（变量是从正文现演的）"
@@ -3115,7 +3149,7 @@ mod tests {
             all.len()
         );
         assert!(
-            export["world_state"]["effective"].is_object(),
+            export["state"]["effective"].is_object(),
             "带一份现演变量"
         );
 

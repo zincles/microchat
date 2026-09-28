@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """客户端 ↔ 服务端 API 全量对账（静态抽取 + 真实请求逐条验证）。
 
-用法（在仓库根目录，先 `cargo build`）：
+**旧时代的闸**（2026-09-29 起）：它读的是 `deprecated/` 里那版 Rust 的路由与 egui 客户端。
+Go 版时代的对应物是 `scripts/go-parity.py`（两版响应逐字节比）+ Go 侧的处理器单测。
+留着的用处：那张路由表是"接口照搬"的参照，搬完最后一批路由之前还有价值。
 
-    python3 scripts/api-audit.py
+用法（在仓库根目录，先 `cd deprecated && cargo build`）：
+
+    python3 scripts/api-audit.py                       # 默认压 Rust 版（唯一权威）
+    python3 scripts/api-audit.py --server <二进制>      # 迁移期间压 Go 版：同一道闸
 
 它会：
 1. 从 `src/server.rs` 抽路由表与处理器签名（方法 / 路径 / 请求体类型 / 响应类型）；
@@ -14,6 +19,7 @@
 
 AGENTS.md 里那张「HTTP API」表就是它核出来的；改了接口就跑一遍。
 """
+import argparse
 import json
 import pathlib
 import re
@@ -32,8 +38,8 @@ PORT = 8791
 BASE = f'http://127.0.0.1:{PORT}/api/v1'
 SANDBOX = pathlib.Path('/tmp/microchat-api-audit')
 
-srv = (ROOT / 'src/server.rs').read_text()
-cli = (ROOT / 'src/frontend/client.rs').read_text()
+srv = (ROOT / 'deprecated/src/server.rs').read_text()
+cli = (ROOT / 'deprecated/src/frontend/client.rs').read_text()
 
 # ── 1) 路由表 + 处理器签名 ────────────────────────────────────────
 routes: dict[str, dict[str, str]] = {}
@@ -186,8 +192,13 @@ stub = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Stub)
 threading.Thread(target=stub.serve_forever, daemon=True).start()
 STUB = f'http://127.0.0.1:{stub.server_address[1]}/v1'
 
+parser = argparse.ArgumentParser()
+parser.add_argument('--server', default=str(ROOT / 'deprecated/target/debug/server'),
+                    help='被测后端二进制（默认 Rust 版；迁移期间可指 Go 版）')
+ARGS = parser.parse_args()
+
 server = subprocess.Popen(
-    [str(ROOT / 'target/debug/server')],
+    [ARGS.server],
     env={
         'PATH': '/usr/bin:/bin',
         'MICROCHAT_CONFIG_DIR': str(SANDBOX / 'config'),
@@ -197,7 +208,11 @@ server = subprocess.Popen(
     stderr=subprocess.DEVNULL,
 )
 try:
-    wait_port(PORT)
+    try:
+        wait_port(PORT)
+    except SystemExit:
+        print(f"✗ 后端没起来：{ARGS.server}")
+        raise
 
     def seed():
         """每条路由都从干净夹具开始——上一条 DELETE 别把下一条的地基拆了。"""
@@ -210,6 +225,12 @@ try:
         api('POST', f"/conversations/{conv['id']}/messages", {"content": "在吗"})
         time.sleep(0.5)
         _, msgs = api('GET', f"/conversations/{conv['id']}/messages")
+        if len(msgs) < 2:
+            print(f"✗ 夹具起不来：POST /conversations/{{id}}/messages 没有产出助手消息"
+                  f"（拿到 {len(msgs)} 条）。\n"
+                  f"  迁移期间很正常：{ARGS.server} 还没实现那条路由。")
+            print("  先跑 `python3 scripts/go-parity.py` 逐条对账，等全部路由就位再用这道闸。")
+            sys.exit(3)
         return {'cid': conv['id'], 'aid': msgs[1]['id'], 'pid': 'stub', 'agent': agent['id']}
 
     def fill(path: str, f) -> str:
@@ -244,10 +265,12 @@ try:
                                "context_override": 123456},
         ('POST', '/models/probe'): {"base_url": STUB},
         ('POST', '/agents'): {"name": "新 agent", "system_prompt": "y"},
+        ('POST', '/statelang'): {"text": "对账用。\n<state 对账>K = 1; delete(K)</state>"},
         ('PATCH', '/agents/{id}'): {"name": "改过的 agent"},
     }
     expect = {
         ('GET', '/health'): 200, ('GET', '/conversations'): 200, ('POST', '/conversations'): 201,
+        ('POST', '/statelang'): 200,
         ('PATCH', '/conversations/{id}'): 200, ('DELETE', '/conversations/{id}'): 204,
         ('GET', '/conversations/{id}/messages'): 200, ('POST', '/conversations/{id}/messages'): 202,
         ('PATCH', '/conversations/{id}/messages/{message_id}'): 200,
