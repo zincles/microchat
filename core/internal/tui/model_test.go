@@ -24,7 +24,7 @@ func fixture() model {
 		},
 		messagesFor: "c1", // 上面这两条属于 c1（isEmptySession 靠它 —— 别拿"还没拉完"当"这条没有消息"）
 		messages: []Message{
-			{ID: "m1", Role: "user", Content: "在吗"},
+			{ID: "m1", Role: "user", Content: "在吗", SummaryID: new("s1")},
 			{ID: "m2", Role: "assistant", Content: "在。\n有什么事？", DurationMS: &version},
 		},
 		models: []ModelListItem{
@@ -330,7 +330,7 @@ func TestPaletteShowsAndFilters(t *testing.T) {
 func TestPaletteNavigationAndRun(t *testing.T) {
 	m := fixture()
 	m = typeText(m, "/")
-	// 下键两次 ⇒ 高亮第 3 条（`/resume`），侧栏选中**不动**
+	// 下键两次 ⇒ 高亮第 3 条（`/cut`），侧栏选中**不动**
 	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	updated, _ = updated.(model).Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	walked := updated.(model)
@@ -340,12 +340,12 @@ func TestPaletteNavigationAndRun(t *testing.T) {
 	if walked.selected != 0 {
 		t.Fatalf("面板开着时方向键不该动侧栏：%d", walked.selected)
 	}
-	if matches := walked.paletteMatches(); matches[walked.paletteIndex].name != "resume" {
-		t.Fatalf("第 3 条该是 resume：%s", matches[walked.paletteIndex].name)
+	if matches := walked.paletteMatches(); matches[walked.paletteIndex].name != "cut" {
+		t.Fatalf("第 3 条该是 cut：%s", matches[walked.paletteIndex].name)
 	}
 	// Tab 补全
 	updated, _ = walked.Update(tea.KeyPressMsg{Code: tea.KeyTab})
-	if filled := updated.(model); filled.input != "/resume " {
+	if filled := updated.(model); filled.input != "/cut " {
 		t.Fatalf("Tab 该补全：%q", filled.input)
 	}
 	// 半截名字 + 回车 ⇒ 跑高亮那条（`/re` ⇒ resume ⇒ 打开挑选项）
@@ -387,14 +387,50 @@ func TestNewIsInvalidOnEmptySession(t *testing.T) {
 	}
 }
 
-// ── /delete：删掉当前会话，**回到空会话** ──
+// ── /delete：删掉当前会话（**先摊开、再点头**），回到空会话 ──
 
-func TestDeleteReturnsToEmptySession(t *testing.T) {
+func TestDeleteAsksBeforeRemovingTheSession(t *testing.T) {
 	m := fixture()
+	// 还没拉全消息 ⇒ 先拉（报不出"会删几条"就不该动手）
+	m.messagesFor = ""
 	if _, cmd := m.runCommand("/delete"); cmd == nil {
-		t.Fatal("/delete 该发删除")
+		t.Fatal("消息还没拉全时该先去拉")
 	}
-	updated, cmd := m.Update(deletedMsg{id: "c1"})
+	// 拉全了：只摊开，**不发删除**
+	m = fixture()
+	updated, cmd := m.runCommand("/delete")
+	armed := updated.(model)
+	if cmd != nil {
+		t.Fatal("点头之前不许发删除")
+	}
+	if armed.confirm == nil || armed.confirm.kind != confirmDeleteSession {
+		t.Fatalf("该等确认：%+v", armed.confirm)
+	}
+	body := armed.View().Content
+	if !strings.Contains(body, "2 条消息") || !strings.Contains(body, "1 份摘要") || !strings.Contains(body, "不可逆") {
+		t.Fatalf("该说清会没掉什么：\n%s", body)
+	}
+	// 不答应 ⇒ 什么都不发生
+	updated, _ = armed.Update(tea.KeyPressMsg{Code: 'n', Text: "n"})
+	if cancelled := updated.(model); cancelled.confirm != nil || cancelled.viewer != nil {
+		t.Fatal("取消该把确认收掉")
+	}
+	if said := updated.(model).lastAction; !strings.Contains(said, "取消") {
+		t.Fatalf("该如实说取消：%q", said)
+	}
+	// 答应（y 或回车）⇒ 才真发删除
+	updated, cmd = armed.Update(tea.KeyPressMsg{Code: 'y', Text: "y"})
+	if cmd == nil {
+		t.Fatal("答应了该发删除")
+	}
+	if after := updated.(model); after.confirm != nil || after.viewer != nil {
+		t.Fatal("答应了该把确认收掉")
+	}
+	updated, cmd = armed.confirmExecute()
+	if cmd == nil {
+		t.Fatal("回车 / y 该发删除")
+	}
+	updated, cmd = m.Update(deletedMsg{id: "c1"})
 	next := updated.(model)
 	if next.selected != -1 || len(next.messages) != 0 {
 		t.Fatalf("删完该回到空会话：selected=%d", next.selected)
@@ -410,6 +446,148 @@ func TestDeleteReturnsToEmptySession(t *testing.T) {
 	updated, _ = m.Update(deletedMsg{err: errTest})
 	if said := updated.(model).lastAction; !strings.Contains(said, "删除失败") {
 		t.Fatalf("失败该如实说：%q", said)
+	}
+}
+
+// ── /cut：删一条消息及其之后的全部（**先预览、再点头**）──
+
+func TestCutPreviewsThenDeletes(t *testing.T) {
+	m := fixture()
+	updated, cmd := m.runCommand("/cut")
+	if cmd == nil {
+		t.Fatal("/cut 该去取预览")
+	}
+	if said := updated.(model).lastAction; !strings.Contains(said, "预览") {
+		t.Fatalf("该说去取预览：%q", said)
+	}
+	// 预览回来了：摊开五组，等点头（**仍然没删**）
+	plan := DeletionPlan{
+		DeletedMessageIDs:    []string{"m2", "m3"},
+		DeletedSummaryIDs:    []string{"s1"},
+		UnlinkedMessageIDs:   []string{"m1"},
+		UnlinkedSummaryIDs:   []string{"s0"},
+		LastDeletedMessageID: "m3",
+	}
+	updated, cmd = m.Update(cutPreviewMsg{sessionID: "c1", messageID: "m2", plan: plan})
+	armied := updated.(model)
+	if cmd != nil {
+		t.Fatal("预览之后还不许删")
+	}
+	if armied.confirm == nil || armied.confirm.kind != confirmCut || armied.confirm.plan.LastDeletedMessageID != "m3" {
+		t.Fatalf("该存下预览等点头：%+v", armied.confirm)
+	}
+	body := armied.View().Content
+	for _, want := range []string{"消息 2 条", "摘要 1 份", "解链的消息 1 条", "回车 / y 执行"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("该摊开 %q：\n%s", want, body)
+		}
+	}
+	// 点头 ⇒ 执行（带回预览里的末尾 id）
+	updated, cmd = armied.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("点头该真删")
+	}
+	if after := updated.(model); after.confirm != nil || after.viewer != nil {
+		t.Fatal("点头后该收掉确认框")
+	}
+	if said := updated.(model).lastAction; !strings.Contains(said, "删除 m2") {
+		t.Fatalf("该说在删哪条：%q", said)
+	}
+	// 删回来了：如实报数并重拉
+	updated, cmd = updated.(model).Update(cutDoneMsg{plan: plan})
+	if cmd == nil {
+		t.Fatal("删完该重拉消息与列表")
+	}
+	if said := updated.(model).lastAction; !strings.Contains(said, "已删 2 条消息") {
+		t.Fatalf("该报数：%q", said)
+	}
+	// 失败要如实说（409 要重新预览）
+	updated, _ = fixture().Update(cutDoneMsg{err: errTest})
+	if said := updated.(model).lastAction; !strings.Contains(said, "删除失败") {
+		t.Fatalf("失败该如实说：%q", said)
+	}
+}
+
+func TestCutGuards(t *testing.T) {
+	// 空会话：没有可删的
+	empty := fixture()
+	empty.selected, empty.messages, empty.messagesFor = -1, nil, ""
+	if _, cmd := empty.runCommand("/cut"); cmd != nil {
+		t.Fatal("空会话上不该发请求")
+	}
+	// 消息还没拉全 ⇒ 先拉
+	m := fixture()
+	m.messagesFor = ""
+	if _, cmd := m.runCommand("/cut"); cmd == nil {
+		t.Fatal("没拉全该先去拉")
+	}
+	// 找不到那条消息 ⇒ 报错，什么都不发
+	m = fixture()
+	updated, cmd := m.runCommand("/cut 查无此消息")
+	if cmd != nil {
+		t.Fatal("找不到就不该发请求")
+	}
+	if said := updated.(model).lastAction; !strings.Contains(said, "找不到") || !strings.Contains(said, "什么都没有发生") {
+		t.Fatalf("该如实说找不到：%q", said)
+	}
+	// 预览失败：如实说，不进确认态
+	updated, _ = m.Update(cutPreviewMsg{sessionID: "c1", messageID: "m2", err: errTest})
+	if failed := updated.(model); failed.confirm != nil {
+		t.Fatal("预览失败不该进确认态")
+	}
+	if said := updated.(model).lastAction; !strings.Contains(said, "预览失败") {
+		t.Fatalf("失败该如实说：%q", said)
+	}
+}
+
+// ── /copy：把当前会话复制成新的一条（线性会话里的"分岔"）──
+
+func TestCopySessionCommand(t *testing.T) {
+	m := fixture()
+	updated, cmd := m.runCommand("/copy")
+	if cmd == nil {
+		t.Fatal("/copy 该发请求")
+	}
+	if said := updated.(model).lastAction; !strings.Contains(said, "复制") {
+		t.Fatalf("该说在复制：%q", said)
+	}
+	// 复制回来：选中新会话（列表刷新回来才选得上），并重拉列表
+	updated, cmd = m.Update(copiedMsg{session: Session{ID: "c9", Title: "副本"}})
+	next := updated.(model)
+	if cmd == nil {
+		t.Fatal("复制完该重拉列表")
+	}
+	if next.pendingSelect != "c9" {
+		t.Fatalf("该盯着新会话：%q", next.pendingSelect)
+	}
+	if said := next.lastAction; !strings.Contains(said, "已复制成") {
+		t.Fatalf("该报新会话：%q", said)
+	}
+	// 空会话：没有可复制的
+	empty := fixture()
+	empty.selected, empty.messages, empty.messagesFor = -1, nil, ""
+	if _, cmd := empty.runCommand("/copy"); cmd != nil {
+		t.Fatal("空会话上不该发请求")
+	}
+	// 失败要如实说
+	updated, _ = fixture().Update(copiedMsg{err: errTest})
+	if said := updated.(model).lastAction; !strings.Contains(said, "复制失败") {
+		t.Fatalf("失败该如实说：%q", said)
+	}
+}
+
+// 确认框开着时，别的键都不该被当成打字或导航（只有"答应 / 不答应"）。
+func TestConfirmBoxSwallowsOtherKeys(t *testing.T) {
+	m := fixture()
+	updated, _ := m.runCommand("/delete")
+	armed := updated.(model)
+	updated, cmd := armed.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	cancelled := updated.(model)
+	if cmd != nil {
+		t.Fatal("取消不该发命令")
+	}
+	if cancelled.input != "" || cancelled.confirm != nil {
+		t.Fatalf("取消该原样收掉确认框：input=%q confirm=%v", cancelled.input, cancelled.confirm)
 	}
 }
 

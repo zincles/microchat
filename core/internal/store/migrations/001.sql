@@ -2,6 +2,9 @@
 --
 -- 命名按 `DEFINE.md`：会话 = `sessions`，消息的归属 = `session_id`。
 -- 改形状的办法就是改**这一个文件**（然后把 data/microchat.db 删掉重来），不再补 002、003……
+--
+-- 会话是**线性的**（2026-09-29 定）：没有 `parent_message_id`、没有 `current_leaf`，
+-- 顺序完全由 `messages.id`（UUIDv7：受理时铸、就地替换不改 id）定 ⇒ "最新一条" = `ORDER BY id DESC LIMIT 1`。
 
 CREATE TABLE sessions (
   id            TEXT PRIMARY KEY,
@@ -11,14 +14,15 @@ CREATE TABLE sessions (
   model         TEXT NOT NULL,
   created_at    INTEGER NOT NULL,
   updated_at    INTEGER NOT NULL
-, agent_id TEXT NOT NULL DEFAULT 'default', current_leaf TEXT);
+, agent_id TEXT NOT NULL DEFAULT 'default');
 CREATE TABLE messages (
   id              TEXT PRIMARY KEY,
   session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   role            TEXT NOT NULL CHECK (role IN ('user','assistant')),
   content         TEXT NOT NULL,
   created_at      INTEGER NOT NULL
-, parent_message_id TEXT REFERENCES messages(id) ON DELETE CASCADE, reasoning TEXT, duration_ms INTEGER, usage TEXT, reasoning_ms INTEGER, summary_id TEXT REFERENCES summaries(id) ON DELETE SET NULL);
+, reasoning TEXT, duration_ms INTEGER, usage TEXT, reasoning_ms INTEGER, summary_id TEXT REFERENCES summaries(id) ON DELETE SET NULL);
+-- (session_id, id) = 这条会话的顺序（线性会话里"整条会话"就等于它）+ 取最新一条走它
 CREATE INDEX messages_by_session ON messages(session_id, id);
 CREATE TABLE models (
   provider       TEXT NOT NULL,
@@ -38,7 +42,6 @@ CREATE TABLE provider_state (
   provider        TEXT PRIMARY KEY,
   last_refresh_at INTEGER NOT NULL
 );
-CREATE INDEX messages_by_parent_message ON messages(parent_message_id);
 CREATE TABLE summaries (
   id                TEXT PRIMARY KEY,
   session_id   TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
@@ -46,6 +49,11 @@ CREATE TABLE summaries (
   parent_summary_id TEXT REFERENCES summaries(id),
   -- 成员是消息还是摘要。**同质**：一条摘要的成员不许混。
   source_kind       TEXT NOT NULL CHECK (source_kind IN ('message','summary')),
+  -- **它盖住哪一段**（线性会话里的起止消息，闭区间）：装配时按它 O(1) 跳过去，
+  -- 不必再"数过去"。可为空（老数据 / 还没定段的）——那时装配退回逐条走。
+  -- 不加外键：删消息的级联由 `deletionPlan` 一份计算负责（见 DEFINE.md）。
+  begin_message_id  TEXT,
+  end_message_id    TEXT,
   text              TEXT NOT NULL,
   -- 覆盖了几个**对话块**（显示 + "≥N 块"判定 + 日志）。块本身不入库。
   blocks            INTEGER NOT NULL DEFAULT 0,

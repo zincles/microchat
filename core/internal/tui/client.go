@@ -50,12 +50,12 @@ type Session struct {
 type SessionView = Session
 
 type Message struct {
-	ID              string  `json:"id"`
-	Role            string  `json:"role"`
-	Content         string  `json:"content"`
-	Reasoning       string  `json:"reasoning,omitempty"`
-	DurationMS      *int64  `json:"duration_ms,omitempty"`
-	ParentMessageID *string `json:"parent_message_id"`
+	ID         string  `json:"id"`
+	Role       string  `json:"role"`
+	Content    string  `json:"content"`
+	Reasoning  string  `json:"reasoning,omitempty"`
+	DurationMS *int64  `json:"duration_ms,omitempty"`
+	SummaryID  *string `json:"summary_id,omitempty"`
 }
 
 type Health struct {
@@ -179,6 +179,41 @@ func (c *Client) UpdateSession(id, provider, model string) (Session, error) {
 
 // DeleteSession：删掉整条会话（`/delete`）。
 func (c *Client) DeleteSession(id string) error { return c.del("/sessions/" + id) }
+
+// CopySession：把一条会话**复制**成新的一条（线性会话里的"分岔"，不叫 fork）。
+// 消息与摘要一并复制（摘要换新 id、消息上的指针重映射）；世界状态不复制（它本来就现演）。
+func (c *Client) CopySession(id string) (Session, error) {
+	var session Session
+	err := c.post("/sessions/"+id+"/copy", nil, &session)
+	return session, err
+}
+
+// DeletionPlan：`GET .../deletion-preview` 与 `DELETE .../messages/{message_id}` 共用的形状。
+// 数量不单列 —— 数组长度就是（两份数字迟早打架）。
+type DeletionPlan struct {
+	DeletedMessageIDs    []string `json:"deleted_message_ids"`
+	DeletedSummaryIDs    []string `json:"deleted_summary_ids"`
+	UnlinkedMessageIDs   []string `json:"unlinked_message_ids"`
+	UnlinkedSummaryIDs   []string `json:"unlinked_summary_ids"`
+	LastDeletedMessageID string   `json:"last_deleted_message_id"`
+}
+
+// DeletionPreview：**只算不动** —— 告诉用户"删下去会没掉什么"，再让他点头。
+func (c *Client) DeletionPreview(sessionID, messageID string) (DeletionPlan, error) {
+	var plan DeletionPlan
+	err := c.get("/sessions/"+sessionID+"/messages/"+messageID+"/deletion-preview", &plan)
+	return plan, err
+}
+
+// DeleteMessagesFrom：删这条消息**及其之后的全部**。
+//
+// `lastDeletedMessageID` = 预览里的那条（后端核对它仍是会话末尾，对不上就 409 ⇒ 重新预览）。
+func (c *Client) DeleteMessagesFrom(sessionID, messageID, lastDeletedMessageID string) (DeletionPlan, error) {
+	var plan DeletionPlan
+	err := c.do(http.MethodDelete, "/sessions/"+sessionID+"/messages/"+messageID,
+		map[string]any{"last_deleted_message_id": lastDeletedMessageID}, &plan)
+	return plan, err
+}
 
 // Outgoing：**下次真会发出去的东西**（标签已剔、状态已注入、压缩已生效）。
 // 每一条自带出处（system / message+message_id / summary+summary_id+blocks）—— 检查压缩效果就靠它。

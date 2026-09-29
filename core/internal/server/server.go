@@ -33,7 +33,8 @@ func New(st *store.Store, cfg config.Config, paths config.Paths) *Server {
 	s.mux.HandleFunc("POST /api/v1/sessions", s.createSession)
 	s.mux.HandleFunc("PATCH /api/v1/sessions/{session_id}", s.updateSession)
 	s.mux.HandleFunc("DELETE /api/v1/sessions/{session_id}", s.deleteSession)
-	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/branches", s.listBranches)
+	// Copy：线性会话里的"分岔"（新 session + 消息与摘要一并复制）
+	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/copy", s.copySession)
 	// provider / 模型 / 渠道（registry 那一层）
 	s.mux.HandleFunc("GET /api/v1/providers", s.listProviders)
 	// 内建预设清单（字面段优先于 {id}，Go 的 ServeMux 自己保证）
@@ -57,7 +58,8 @@ func New(st *store.Store, cfg config.Config, paths config.Paths) *Server {
 	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/outgoing", s.getSessionOutgoing)
 	s.mux.HandleFunc("PATCH /api/v1/sessions/{session_id}/messages/{message_id}", s.editMessage)
 	s.mux.HandleFunc("DELETE /api/v1/sessions/{session_id}/messages/{message_id}", s.deleteMessage)
-	s.mux.HandleFunc("DELETE /api/v1/sessions/{session_id}/messages/{message_id}/siblings", s.deleteSiblings)
+	// 删除预览：**只算不动**（安全 ⇒ GET）；DELETE 照同一份计算干
+	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/messages/{message_id}/deletion-preview", s.deletionPreview)
 	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/messages", s.listMessages)
 	return s
 }
@@ -85,7 +87,7 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, views)
 }
 
-// listMessages：**按树上的当前路径**（不是 rowid，也不是全部）。
+// listMessages：这条会话的**全部消息**，按 id 升序（线性会话 ⇒ 没有当前路径，就是它自己）。
 func (s *Server) listMessages(w http.ResponseWriter, r *http.Request) {
 	messages, err := s.store.ListMessages(r.PathValue("session_id"))
 	if err != nil {
@@ -103,7 +105,7 @@ type CreateSessionReq struct {
 	SystemPrompt string  `json:"system_prompt"`
 }
 
-// UpdateSessionReq：只改给出来的那些。`CurrentLeaf` = 界面上的「‹ 2/3 ›」（切分支）。
+// UpdateSessionReq：只改给出来的那些。
 //
 // `system_prompt` 在 Rust 版里**收了但没用**（会话级提示词只有新建时能写）—— 照抄这个行为，
 // 免得两边表现不一致；补写入路径是另一个决定，不混在移植里。
@@ -112,7 +114,6 @@ type UpdateSessionReq struct {
 	Provider     *string `json:"provider"`
 	Model        *string `json:"model"`
 	AgentID      *string `json:"agent_id"`
-	CurrentLeaf  *string `json:"current_leaf"`
 	SystemPrompt string  `json:"system_prompt"`
 }
 
@@ -211,12 +212,6 @@ func (s *Server) updateSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if req.CurrentLeaf != nil {
-		if err := s.store.SwitchLeafToSibling(id, *req.CurrentLeaf); err != nil {
-			writeStoreError(w, err)
-			return
-		}
-	}
 	session, err := s.store.GetSession(id)
 	if err != nil {
 		writeStoreError(w, err)
@@ -267,14 +262,26 @@ func writeStoreError(w http.ResponseWriter, err error) {
 	}
 }
 
-// listBranches：每条在同龄兄弟里第几/共几（界面上的「‹ 2/3 ›」）。
-func (s *Server) listBranches(w http.ResponseWriter, r *http.Request) {
-	info, err := s.store.BranchInfo(r.PathValue("session_id"))
+// copySession：**Copy 一条会话** —— 线性会话里"分岔"就是它（不叫 fork）。
+//
+// 新 session（新 id）+ 消息与摘要一并复制（摘要新 id、消息的 `summary_id` 重映射）；
+// 标题 / 渠道 / 模型 / agent / 提示词带着；**世界状态不复制**（它本来就现演）。
+func (s *Server) copySession(w http.ResponseWriter, r *http.Request) {
+	copied, err := s.store.CopySession(r.PathValue("session_id"))
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, info)
+	writeJSON(w, http.StatusCreated, copied)
+}
+
+// writeMessageError：消息级路由的 404 文案 —— "会话不存在"会误导（多半是那条消息没了）。
+func writeMessageError(w http.ResponseWriter, err error) {
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "这条会话里没有这条消息")
+		return
+	}
+	writeStoreError(w, err)
 }
 
 // EditMessageReq：`content` 是**必填**（缺了 ⇒ 400，不是"改成空串"）——与 Rust 版一致。
@@ -294,30 +301,60 @@ func (s *Server) editMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	message, err := s.store.UpdateMessage(r.PathValue("session_id"), r.PathValue("message_id"), *req.Content)
 	if err != nil {
-		writeStoreError(w, err)
+		writeMessageError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, message)
 }
 
-// deleteMessage：删**整棵子树**（返回删了几条）。
-func (s *Server) deleteMessage(w http.ResponseWriter, r *http.Request) {
-	deleted, err := s.store.DeleteMessage(r.PathValue("session_id"), r.PathValue("message_id"))
-	if err != nil {
-		writeStoreError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"deleted": deleted})
+// DeleteMessageReq：删消息的请求体 —— 只带回**预览里的最后一条**。
+//
+// 预览之后、执行之前有人往尾巴上追加 ⇒ 照旧计划删会**多删**且静默 ⇒ 核对不符就 409（重新预览）。
+type DeleteMessageReq struct {
+	LastDeletedMessageID *string `json:"last_deleted_message_id"`
 }
 
-// deleteSiblings：「删除全部」——清掉一组兄弟（连同各自子树），只留上文。
-func (s *Server) deleteSiblings(w http.ResponseWriter, r *http.Request) {
-	deleted, err := s.store.DeleteSiblings(r.PathValue("session_id"), r.PathValue("message_id"))
+// deletionPreview：删除预览 —— **只算不动**（安全 ⇒ GET）。
+//
+// 与 DELETE 走**同一段计算**（`store.DeletionPlan`）⇒ 预览不会与真删漂移。
+func (s *Server) deletionPreview(w http.ResponseWriter, r *http.Request) {
+	plan, err := s.store.DeletionPlan(r.PathValue("session_id"), r.PathValue("message_id"))
 	if err != nil {
+		writeMessageError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, plan)
+}
+
+// deleteMessage：删**这条及之后的全部消息**，级联见 DEFINE.md 的"删除的级联规则"：
+// 【目标及其之后的全部消息】+【覆盖区间与之相交的全部摘要】+【这些摘要的全部祖先】，
+// 再把幸存者里指向死摘要的指针置空。
+func (s *Server) deleteMessage(w http.ResponseWriter, r *http.Request) {
+	var req DeleteMessageReq
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.LastDeletedMessageID == nil {
+		missingField(w, "last_deleted_message_id")
+		return
+	}
+	sessionID, messageID := r.PathValue("session_id"), r.PathValue("message_id")
+	plan, err := s.store.DeletionPlan(sessionID, messageID)
+	if err != nil {
+		writeMessageError(w, err)
+		return
+	}
+	if *req.LastDeletedMessageID != plan.LastDeletedMessageID {
+		writeError(w, http.StatusConflict, "conflict",
+			"要删的这一段变了（会话末尾已经不是预览时的那条）：请重新取一次删除预览")
+		return
+	}
+	if err := s.store.ApplyDeletion(plan); err != nil {
 		writeStoreError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"deleted": deleted})
+	// 回的就是刚执行的那份计划（与预览同一个形状：真删了什么，一眼对得上）
+	writeJSON(w, http.StatusOK, plan)
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

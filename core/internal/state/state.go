@@ -1,6 +1,7 @@
 // Package state：**世界状态**那一层 —— 分层现演、注入渲染、以及**唯一**的出站拼装路径。
 //
-// 语法（`<state>` 的解析与折叠）在 `statelang` 里；这一层负责"沿当前路径把各层折出来"：
+// 语法（`<state>` 的解析与折叠）在 `statelang` 里；这一层负责"按会话顺序把各层折出来"
+// （线性会话 ⇒ 顺序就是全部消息的先后，没有"当前路径"这回事）：
 //
 //	底子（生效的系统提示词里的 <state> 块）⇒ 全局 或 本会话（看提示词是谁写的）
 //	消息正文里的块，按顺序 ⇒ 本会话
@@ -334,25 +335,36 @@ type part struct {
 	summary *model.Summary
 }
 
-// walk：装配时的行走算法 —— **能取粗的不取精**（形状与理由见 AGENTS.md 的摘要一节）。
+// walk：装配时的行走算法 —— **能取粗的不取精**。
 //
-// 从路径根逐条往前走：某条消息被摘要覆盖时，若它的父摘要**一个不缺地**盖住了眼前这一串，
-// 就用父（更粗）；否则老实用它自己（宁可用细的，也不许漏内容）。
-// "跳过"靠继续读 summary_id 判断，不存范围 —— 所以不需要"两端见证"。
+// 线性会话 + 摘要记区间（`begin_message_id` / `end_message_id`）⇒ 一次查表就跳一段，
+// O(1)（不再"数过去"）。**也不需要"父的孩子一个不缺"那道闸**：区间就是覆盖范围本身 ——
+// 父盖的必然是一段连着的消息（块不被劈开、压缩只吃连续的段），两端还在就说明这一段没被动过
+// （删消息的级联会把"区间被碰过"的摘要连同父链一起作废，见 `store.DeletionPlan`）。
+//
+// 两次"宁可用细的也不许漏内容"的退让：指针悬空、区间缺失（老数据）或区间与眼前这条对不上
+// ⇒ 这一条照原文发，往前一步。
 func walk(messages []model.Message, summaries []model.Summary) []part {
-	summaryOf := func(id string) *model.Summary {
-		for index := range summaries {
-			if summaries[index].ID == id {
-				return &summaries[index]
-			}
-		}
-		return nil
+	byID := make(map[string]*model.Summary, len(summaries))
+	for index := range summaries {
+		byID[summaries[index].ID] = &summaries[index]
 	}
-	summaryID := func(message *model.Message) string {
-		if message.SummaryID == nil {
-			return ""
+	// 区间两端是**消息 id** ⇒ 先换算成这条会话里的下标，之后每跳一次都是 O(1)
+	indexOf := make(map[string]int, len(messages))
+	for index := range messages {
+		indexOf[messages[index].ID] = index
+	}
+	// span：这条摘要盖住的下标区间（闭区间）。两端缺一、或指不着这条会话里的消息 ⇒ false。
+	span := func(summary *model.Summary) (int, int, bool) {
+		if summary == nil || summary.BeginMessageID == nil || summary.EndMessageID == nil {
+			return 0, 0, false
 		}
-		return *message.SummaryID
+		begin, beginOK := indexOf[*summary.BeginMessageID]
+		end, endOK := indexOf[*summary.EndMessageID]
+		if !beginOK || !endOK || end < begin {
+			return 0, 0, false
+		}
+		return begin, end, true
 	}
 
 	parts := []part{}
@@ -360,72 +372,37 @@ func walk(messages []model.Message, summaries []model.Summary) []part {
 	for index < len(messages) {
 		message := &messages[index]
 
-		// ① 没被覆盖（或指针悬空）⇒ 发原文，往前一步
 		summary := (*model.Summary)(nil)
-		if id := summaryID(message); id != "" {
-			summary = summaryOf(id)
+		if message.SummaryID != nil {
+			summary = byID[*message.SummaryID]
 		}
-		if summary == nil {
+		// 摘要**只在它区间的左端**被用上：区间不从这条起（指针悬空 / 区间缺失 / 数据对不上）
+		// 就照原文发这一条，往前一步 —— 宁可用细的，也不许漏内容。
+		begin, end, ok := span(summary)
+		if !ok || begin != index {
 			parts = append(parts, part{message: message})
 			index++
 			continue
 		}
 
-		// ② 它自己覆盖的那一串（摘要覆盖的总是连续几条 —— 块绝不被劈开）
-		coveredBySelf := runLen(messages, index, func(m *model.Message) bool {
-			return summaryID(m) == summary.ID
-		})
-		if coveredBySelf < 1 {
-			coveredBySelf = 1
-		}
-
-		// ③ 能再上一层吗：往后瞄一眼 —— 父摘要的孩子们覆盖的那一串就在眼前吗？
-		useParent, run := false, 0
-		if summary.ParentSummaryID != nil {
-			if parent := summaryOf(*summary.ParentSummaryID); parent != nil {
-				belongs := func(m *model.Message) bool {
-					id := summaryID(m)
-					if id == "" {
-						return false
-					}
-					own := summaryOf(id)
-					return own != nil && own.ParentSummaryID != nil && *own.ParentSummaryID == parent.ID
-				}
-				run = runLen(messages, index, belongs)
-				total := 0
-				for i := range messages {
-					if belongs(&messages[i]) {
-						total++
-					}
-				}
-				// 关键：**P 的孩子们必须一个不缺地就在眼前** —— 只看 run 会拿一条只盖了一半的
-				// 父摘要去顶，那就会少发东西。
-				useParent = run > 0 && run == total
+		// 能再粗一层吗：祖先与自己的**左端同起点**（金字塔左端对齐）⇒ 用最粗的那个。
+		// 左端不同就不许升 —— 那说明父盖的前半截已经发过了（同一批孩子里的老二）。
+		coarsest := summary
+		for coarsest.ParentSummaryID != nil {
+			parent := byID[*coarsest.ParentSummaryID]
+			parentBegin, parentEnd, ok := span(parent)
+			if !ok || parentBegin != begin || parentEnd < end {
+				break
 			}
+			coarsest = parent
 		}
-		if useParent {
-			if parent := summaryOf(*summary.ParentSummaryID); parent != nil {
-				parts = append(parts, part{summary: parent})
-			}
-			index += run
-			continue
+		if _, coarsestEnd, ok := span(coarsest); ok {
+			end = coarsestEnd
 		}
-		parts = append(parts, part{summary: summary})
-		index += coveredBySelf
+		parts = append(parts, part{summary: coarsest})
+		index = end + 1
 	}
 	return parts
-}
-
-// runLen：从 `from` 起连续满足 `matches` 的条数。
-func runLen(messages []model.Message, from int, matches func(*model.Message) bool) int {
-	count := 0
-	for index := from; index < len(messages); index++ {
-		if !matches(&messages[index]) {
-			break
-		}
-		count++
-	}
-	return count
 }
 
 // DefaultTokenizerRatio：`models.tokenizer` 里 ratio 的缺省值。

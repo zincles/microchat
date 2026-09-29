@@ -7,8 +7,8 @@ import (
 	"microchat/internal/model"
 )
 
-func message(id, content string, parent *string) model.Message {
-	return model.Message{ID: id, Role: model.RoleUser, Content: content, ParentMessageID: parent}
+func message(id, content string) model.Message {
+	return model.Message{ID: id, Role: model.RoleUser, Content: content}
 }
 
 func has(tables Tables, table, key string) (string, bool) {
@@ -18,7 +18,7 @@ func has(tables Tables, table, key string) (string, bool) {
 
 // 底子来自 agent 的提示词 ⇒ 算**全局**；来自会话自己的提示词 ⇒ 算**本会话**（§3 的来源规则）。
 func TestPromptSourceDecidesTheLayer(t *testing.T) {
-	messages := []model.Message{message("m1", "走了。\n<state>\n地点 = 破庙\ndelete(HP)\n</state>", nil)}
+	messages := []model.Message{message("m1", "走了。\n<state>\n地点 = 破庙\ndelete(HP)\n</state>")}
 
 	// agent 的提示词（全局）：删掉的 HP 会从底子漏回来（无墓碑，§38）
 	fromAgent := FromSources("c1", "<state>\nHP = 10\n</state>", PromptFromAgent, messages)
@@ -56,9 +56,9 @@ func TestPromptSourceDecidesTheLayer(t *testing.T) {
 // 空值 = 清掉；删除只作用于自己那张表。
 func TestEmptyValueAndTableNamespacing(t *testing.T) {
 	view := FromSources("c1", "", PromptFromSession, []model.Message{
-		message("m1", "<state 玩家状态>想法 = ;HP = 10</state>", nil),
-		message("m2", "<state 世界情况>情况 = 待处理</state>", nil),
-		message("m3", "<state 玩家状态>HP = </state>", nil),
+		message("m1", "<state 玩家状态>想法 = ;HP = 10</state>"),
+		message("m2", "<state 世界情况>情况 = 待处理</state>"),
+		message("m3", "<state 玩家状态>HP = </state>"),
 	})
 	if _, ok := has(view.Tables, "玩家状态", "想法"); ok {
 		t.Fatalf("空值该把键清掉：%+v", view.Tables)
@@ -123,47 +123,119 @@ func TestBuildOutgoing(t *testing.T) {
 	}
 }
 
-// 行走算法：父摘要盖全 ⇒ 用父（能取粗的不取精）；盖不全 ⇒ 退回细的，不许漏内容。
-func TestWalkPromotesOnlyWhenComplete(t *testing.T) {
-	parentID, childA, childB := "p1", "s1", "s2"
+// span：一条"盖住某段"的摘要（线性会话里区间就是覆盖范围本身）。
+func span(id string, parent *string, begin, end, text string, blocks int64) model.Summary {
+	return model.Summary{
+		ID: id, ParentSummaryID: parent,
+		BeginMessageID: new(begin), EndMessageID: new(end),
+		Text: text, Blocks: blocks,
+	}
+}
+
+// 覆盖：一条被摘要盖住的消息。
+func covered(id, content, summaryID string) model.Message {
+	return model.Message{ID: id, Role: model.RoleUser, Content: content, SummaryID: new(summaryID)}
+}
+
+// 行走算法（**按区间跳**）：两层金字塔里孩子与父左端对齐 ⇒ 一次用最粗的那份、跳过整段；
+// 段外的消息照原文发。
+func TestWalkJumpsBySummarySpan(t *testing.T) {
+	left, right, top := "s1", "s2", "p1"
 	messages := []model.Message{
-		{ID: "m1", Role: model.RoleUser, Content: "一", SummaryID: &childA},
-		{ID: "m2", Role: model.RoleUser, Content: "二", SummaryID: &childA},
-		{ID: "m3", Role: model.RoleUser, Content: "三", SummaryID: &childB},
-		{ID: "m4", Role: model.RoleUser, Content: "四"},
+		covered("m1", "一", left),
+		covered("m2", "二", left),
+		covered("m3", "三", right),
+		covered("m4", "四", right),
+		message("m5", "五"),
 	}
-	full := []model.Summary{
-		{ID: childA, ParentSummaryID: &parentID, Text: "细的 A", Blocks: 1},
-		{ID: childB, ParentSummaryID: &parentID, Text: "细的 B", Blocks: 1},
-		{ID: parentID, Text: "粗的", Blocks: 2},
+	summaries := []model.Summary{
+		span(left, new(top), "m1", "m2", "细的 A", 1),
+		span(right, new(top), "m3", "m4", "细的 B", 1),
+		span(top, nil, "m1", "m4", "粗的", 2),
 	}
-	parts := walk(messages, full)
-	if len(parts) != 2 || parts[0].summary == nil || parts[0].summary.ID != parentID {
-		t.Fatalf("父摘要盖全时该用父：%+v", parts)
+	parts := walk(messages, summaries)
+	if len(parts) != 2 || parts[0].summary == nil || parts[0].summary.ID != top {
+		t.Fatalf("能取粗的就该用父（一次跳 4 条）：%+v", parts)
 	}
-	if parts[1].message == nil || parts[1].message.ID != "m4" {
+	if parts[1].message == nil || parts[1].message.ID != "m5" {
 		t.Fatalf("没被覆盖的那条该发原文：%+v", parts[1])
 	}
 
-	// 真"盖不全"：这一串中间**隔着一条不属于父摘要孩子的**（run 到 2 就断，而眼前共有 3 条它的孩子）
-	// ⇒ 必须退回细的 —— 拿只盖了一半的父摘要去顶，就会少发东西。
-	other := "p9"
-	gapped := []model.Message{
-		messages[0], messages[1],
-		{ID: "m9", Role: model.RoleUser, Content: "九", SummaryID: &other},
-		messages[1],
+	// 父的区间**盖不住自己的孩子**（这两种数据不该出现）：不许升，老实用细的 —— 少发内容才是真错。
+	partial := []model.Summary{
+		span(left, new(top), "m1", "m2", "细的 A", 1),
+		span(right, new(top), "m3", "m4", "细的 B", 1),
+		span(top, nil, "m1", "m1", "半截的粗的", 2),
+	}
+	parts = walk(messages, partial)
+	if len(parts) != 3 || parts[0].summary == nil || parts[0].summary.ID != left {
+		t.Fatalf("父盖不全时该用细的：%+v", parts)
+	}
+	if parts[1].summary == nil || parts[1].summary.ID != right {
+		t.Fatalf("第二段还是它自己的细摘要：%+v", parts[1])
+	}
+	if parts[2].message == nil || parts[2].message.ID != "m5" {
+		t.Fatalf("段外照原文：%+v", parts[2])
+	}
+}
+
+// 摘要在它区间的**左端**才用得上：指针悬空 / 区间缺失（老数据）/ 区间不从这条起
+// ⇒ 这条照原文发（宁可细，不许漏）。
+func TestWalkFallsBackWhenSpanDoesNotFit(t *testing.T) {
+	messages := []model.Message{
+		covered("m1", "一", "missing"),       // 指针悬空
+		covered("m2", "二", "no-span"),       // 区间缺失
+		covered("m3", "三", "starts-before"), // 区间从 m1 起（对不上这条）
+		message("m4", "四"),
 	}
 	summaries := []model.Summary{
-		{ID: childA, ParentSummaryID: &parentID, Text: "细的 A", Blocks: 1},
-		{ID: other, Text: "别的", Blocks: 1},
-		{ID: parentID, Text: "粗的", Blocks: 2},
+		{ID: "no-span", Text: "老数据", Blocks: 1},
+		span("starts-before", nil, "m1", "m2", "别处的", 1),
 	}
-	parts = walk(gapped, summaries)
-	if len(parts) != 3 || parts[0].summary == nil || parts[0].summary.ID != childA {
-		t.Fatalf("父摘要盖不全时该退回细的：%+v", parts)
+	parts := walk(messages, summaries)
+	if len(parts) != 4 {
+		t.Fatalf("认不出区间的那些该逐条发原文：%+v", parts)
 	}
-	if parts[2].summary == nil || parts[2].summary.ID != childA {
-		t.Fatalf("断开之后再来的那串还是细摘要：%+v", parts[2])
+	for index, want := range []string{"m1", "m2", "m3", "m4"} {
+		if parts[index].message == nil || parts[index].message.ID != want {
+			t.Fatalf("第 %d 条该是原文 %s：%+v", index, want, parts[index])
+		}
+	}
+}
+
+// 半路闯进一段区间里**不许升到父**：父盖的前半截已经发出去了（同一批孩子里的老二）。
+func TestWalkDoesNotPromoteMidway(t *testing.T) {
+	left, right, top, solo := "s1", "s2", "p1", "s9"
+	messages := []model.Message{
+		covered("m1", "一", solo), // 这一段不属于父摘要
+		covered("m2", "二", left),
+		covered("m3", "三", right),
+		covered("m4", "四", right),
+	}
+	summaries := []model.Summary{
+		span(solo, nil, "m1", "m1", "单独一段", 1),
+		span(left, new(top), "m1", "m2", "细的 A", 1),
+		span(right, new(top), "m3", "m4", "细的 B", 1),
+		span(top, nil, "m1", "m4", "粗的", 2),
+	}
+	parts := walk(messages, summaries)
+	if len(parts) != 3 || parts[0].summary == nil || parts[0].summary.ID != solo {
+		t.Fatalf("该先用自己那一段：%+v", parts)
+	}
+	if parts[1].message == nil || parts[1].message.ID != "m2" {
+		t.Fatalf("区间对不上的那条该发原文：%+v", parts[1])
+	}
+	if parts[2].summary == nil || parts[2].summary.ID != right {
+		t.Fatalf("左端不同就不许升到父：%+v", parts[2])
+	}
+}
+
+// 完全没有摘要（或一条都没有）：逐条发原文 —— 装配得像没压缩一样。
+func TestWalkWithoutSummaries(t *testing.T) {
+	messages := []model.Message{message("m1", "一"), message("m2", "二")}
+	parts := walk(messages, nil)
+	if len(parts) != 2 || parts[0].message == nil || parts[1].message == nil {
+		t.Fatalf("没有摘要就该逐条发：%+v", parts)
 	}
 }
 

@@ -3,29 +3,29 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"sort"
+	"strconv"
+	"strings"
 
 	"microchat/internal/model"
 )
 
-// messageColumns：与 Rust 版 list_all_messages 的 SELECT 逐字相同。
-const messageColumns = "id, session_id, role, content, parent_message_id, created_at, " +
+// messageColumns：这条会话的消息列（**没有 parent_message_id**：线性会话没有父指针）。
+const messageColumns = "id, session_id, role, content, created_at, " +
 	"reasoning, reasoning_ms, duration_ms, usage, summary_id"
 
 func scanMessage(row scanner) (model.Message, error) {
 	var message model.Message
-	var parentID, reasoning, summaryID sql.NullString
+	var reasoning, summaryID sql.NullString
 	var usage []byte
 	var reasoningMS, durationMS sql.NullInt64
 	err := row.Scan(
 		&message.ID, &message.SessionID, &message.Role, &message.Content,
-		&parentID, &message.CreatedAt,
+		&message.CreatedAt,
 		&reasoning, &reasoningMS, &durationMS, &usage, &summaryID,
 	)
 	if err != nil {
 		return message, err
-	}
-	if parentID.Valid {
-		message.ParentMessageID = &parentID.String
 	}
 	if reasoning.Valid {
 		message.Reasoning = reasoning.String
@@ -46,9 +46,12 @@ func scanMessage(row scanner) (model.Message, error) {
 }
 
 // allMessages：**调用方持锁**（内部版，事务与复合操作要用）。
+//
+// 顺序 = `id`（UUIDv7：受理时铸、就地替换不改 id ⇒ 时间序稳），走 `messages_by_session` 索引。
+// **别按 rowid 排** —— rowid 是 SQLite 的实现细节，复制 / VACUUM 之后没有意义。
 func (s *Store) allMessages(sessionID string) ([]model.Message, error) {
 	rows, err := s.db.Query("SELECT "+messageColumns+
-		" FROM messages WHERE session_id = ?1 ORDER BY rowid", sessionID)
+		" FROM messages WHERE session_id = ?1 ORDER BY id", sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -64,86 +67,20 @@ func (s *Store) allMessages(sessionID string) ([]model.Message, error) {
 	return messages, rows.Err()
 }
 
-// ListMessages：**当前路径**（从 current_leaf 沿 parent_message_id 回溯到根，正序返回）。
-// 注意：不是"最后 N 条"，是树上这一条链 —— 切分支换来换去的都是它。
+// ListMessages：这条会话的**全部消息**，按 id 升序。
+//
+// 线性会话里"整条会话"就是它 —— 没有当前路径、没有兄弟，所以不是一个子集。
+// 会话不存在 ⇒ 空列表（口径与旧版一致：不是 404）。
 func (s *Store) ListMessages(sessionID string) ([]model.Message, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	all, err := s.allMessages(sessionID)
-	if err != nil {
-		return nil, err
-	}
-	session, err := s.session(sessionID)
-	if err != nil {
-		return nil, err
-	}
-	if session == nil {
-		return []model.Message{}, nil // 会话不存在 ⇒ 空列表（Rust 版就是这样，不是 404）
-	}
-	return pathFrom(all, session.CurrentLeaf), nil
-}
-
-// pathFrom：照搬 Rust 版的回溯（含防环保险）。
-func pathFrom(all []model.Message, leaf *string) []model.Message {
-	byID := make(map[string]*model.Message, len(all))
-	for i := range all {
-		byID[all[i].ID] = &all[i]
-	}
-	path := []model.Message{}
-	cursor := leaf
-	for cursor != nil {
-		message, ok := byID[*cursor]
-		if !ok {
-			break // 指针悬空当到根（导入/删过就可能有）
-		}
-		path = append(path, *message)
-		cursor = message.ParentMessageID
-		if len(path) > len(all) {
-			break // 防环
-		}
-	}
-	// 反转 = 从根到叶
-	for i, j := 0, len(path)-1; i < j; i, j = i+1, j-1 {
-		path[i], path[j] = path[j], path[i]
-	}
-	return path
-}
-
-// BranchInfo：每条消息在同龄兄弟里第几/共几（界面上的「‹ 2/3 ›」）。
-// 分组按 parent_message_id（**整棵树**，不只是当前路径），组内顺序 = 生成先后。
-func (s *Store) BranchInfo(sessionID string) (map[string]model.BranchInfo, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	all, err := s.allMessages(sessionID)
-	if err != nil {
-		return nil, err
-	}
-	groups := map[string][]string{}
-	order := []string{}
-	for _, message := range all {
-		key := ""
-		if message.ParentMessageID != nil {
-			key = *message.ParentMessageID
-		}
-		if _, seen := groups[key]; !seen {
-			order = append(order, key)
-		}
-		groups[key] = append(groups[key], message.ID)
-	}
-	info := map[string]model.BranchInfo{}
-	for _, key := range order {
-		siblings := groups[key]
-		for index, id := range siblings {
-			info[id] = model.BranchInfo{Index: index + 1, Total: len(siblings), Siblings: siblings}
-		}
-	}
-	return info, nil
+	return s.allMessages(sessionID)
 }
 
 // UpdateMessage：改正文 = **重写存档**（世界状态随之现演，仓库里没有任何派生表要同步）。
 //
-// 与 PATCH /sessions 不同，这一个**要动 updated_at**（改了一句话 = 这篇对话变了）——
-// 与 Rust 版逐字一致（差这一处，列表的排序就会不一样）。
+// 就地替换 ⇒ `message_id` 不变 ⇒ 摘要的覆盖区间仍然成立（只标 dirty、照用；级联只归删除）。
+// 与 PATCH /sessions 不同，这一个**要动 updated_at**（改了一句话 = 这篇对话变了）。
 func (s *Store) UpdateMessage(sessionID, messageID, content string) (model.Message, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -167,7 +104,7 @@ func (s *Store) UpdateMessage(sessionID, messageID, content string) (model.Messa
 		nowMS(), sessionID); err != nil {
 		return model.Message{}, err
 	}
-	// 改的正文可能正被某条摘要覆盖 ⇒ 那条摘要（含各级祖先）标过期（§18）
+	// 改的正文可能正被某条摘要覆盖 ⇒ 那条摘要（含各级祖先）标过期
 	if err := markSummaryChainDirty(tx, messageID); err != nil {
 		return model.Message{}, err
 	}
@@ -177,148 +114,166 @@ func (s *Store) UpdateMessage(sessionID, messageID, content string) (model.Messa
 	return updated, nil
 }
 
-// DeleteMessage：删一条**连它整棵子树**（树上的删除只允许这一种）。
-func (s *Store) DeleteMessage(sessionID, messageID string) (int, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	all, err := s.allMessages(sessionID)
-	if err != nil {
-		return 0, err
-	}
-	var parent *string
-	found := false
-	for index := range all {
-		if all[index].ID == messageID {
-			parent, found = all[index].ParentMessageID, true
-			break
-		}
-	}
-	if !found {
-		return 0, ErrNotFound
-	}
-	return s.deleteSubtrees(sessionID, []string{messageID}, parent)
-}
-
-// DeleteSiblings：删掉某条消息的**所有兄弟**（连同各自的子树）——「删除全部」。
-// 删完 leaf 自然退到它们的父亲（= 那句用户消息）上，接着就能重新生成。
-func (s *Store) DeleteSiblings(sessionID, messageID string) (int, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	all, err := s.allMessages(sessionID)
-	if err != nil {
-		return 0, err
-	}
-	var parent *string
-	found := false
-	for index := range all {
-		if all[index].ID == messageID {
-			parent, found = all[index].ParentMessageID, true
-			break
-		}
-	}
-	if !found {
-		return 0, ErrNotFound
-	}
-	siblings := []string{}
-	for index := range all {
-		if sameOptional(all[index].ParentMessageID, parent) {
-			siblings = append(siblings, all[index].ID)
-		}
-	}
-	return s.deleteSubtrees(sessionID, siblings, parent)
-}
-
-func sameOptional(a, b *string) bool {
-	if a == nil || b == nil {
-		return a == nil && b == nil
-	}
-	return *a == *b
-}
-
-// deleteSubtrees：删一批消息**连各自整棵子树**，并按规则修 `current_leaf`。**调用方持锁**。
+// DeletionPlan：算出"删这条及之后"会动到什么（**只算不动**）。
 //
-// 返回一共删了几条。`parent` 是这批量共同的上文，用来决定 leaf 退到哪儿。
-func (s *Store) deleteSubtrees(sessionID string, roots []string, parent *string) (int, error) {
-	all, err := s.allMessages(sessionID)
-	if err != nil {
-		return 0, err
-	}
-	if len(roots) == 0 {
-		return 0, nil
-	}
-	doomed := map[string]bool{}
-	for _, root := range roots {
-		exists := false
-		for index := range all {
-			if all[index].ID == root {
-				exists = true
-				break
-			}
-		}
-		if !exists {
-			return 0, ErrNotFound
-		}
-		doomed[root] = true
-	}
-	// 子树 = 根们 + 所有后代。`all` 按 rowid（父亲一定排在孩子前面）走一遍就够。
-	for index := range all {
-		parentID := all[index].ParentMessageID
-		if parentID != nil && doomed[*parentID] {
-			doomed[all[index].ID] = true
-		}
-	}
-	count := len(doomed)
+// **一份计算**：预览（GET）与执行（DELETE）走的是它 —— 分成两条路，预览必然与真删漂移。
+//
+// 语义：删【目标及其之后的全部消息】+【覆盖区间与这些消息**相交**的全部摘要】+【这些摘要的**全部祖先**】，
+// 再把幸存者里指向死摘要的指针收进 `Unlinked*`（执行时置空）。
+// 被删的永远是**后缀**（线性会话 + 按 id 排序）⇒"区间与后缀相交"等价于"区间的右端落在后缀里"。
+func (s *Store) DeletionPlan(sessionID, messageID string) (model.DeletionPlan, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.deletionPlan(sessionID, messageID)
+}
 
-	session, err := s.session(sessionID)
+// deletionPlan：**调用方持锁**（`ApplyDeletion` 的同门；也是"一份计算"的本体）。
+func (s *Store) deletionPlan(sessionID, messageID string) (model.DeletionPlan, error) {
+	messages, err := s.allMessages(sessionID)
 	if err != nil {
-		return 0, err
+		return model.DeletionPlan{}, err
 	}
-	var leaf *string
-	if session != nil {
-		leaf = session.CurrentLeaf
+	cut := -1
+	for index := range messages {
+		if messages[index].ID == messageID {
+			cut = index
+			break
+		}
+	}
+	if cut < 0 {
+		return model.DeletionPlan{}, ErrNotFound
+	}
+	suffix := messages[cut:]
+	doomedMessage := make(map[string]bool, len(suffix))
+	for index := range suffix {
+		doomedMessage[suffix[index].ID] = true
 	}
 
+	summaries, err := s.listSummaries(sessionID)
+	if err != nil {
+		return model.DeletionPlan{}, err
+	}
+	byID := make(map[string]model.Summary, len(summaries))
+	for index := range summaries {
+		byID[summaries[index].ID] = summaries[index]
+	}
+	// ① 右端落在后缀里的摘要（区间相交 ⇔ 右端在后缀里；后缀是"从某条往后的全部"）
+	dead := map[string]bool{}
+	stack := []string{}
+	for index := range summaries {
+		end := summaries[index].EndMessageID
+		if end == nil || !doomedMessage[*end] {
+			continue
+		}
+		dead[summaries[index].ID] = true
+		stack = append(stack, summaries[index].ID)
+	}
+	// ② 它们的**全部祖先**：孩子死了 ⇒ 父覆盖的范围也不再成立
+	for len(stack) > 0 {
+		id := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		parent := byID[id].ParentSummaryID
+		if parent == nil || dead[*parent] {
+			continue // 悬空父指针或已经排过：到此为止
+		}
+		dead[*parent] = true
+		stack = append(stack, *parent)
+	}
+	// ③ 幸存者里指向死摘要的指针（被删的那些不用管：它们的指针下一句就没了）
+	unlinkedMessages := []string{}
+	for index := range messages {
+		if doomedMessage[messages[index].ID] || messages[index].SummaryID == nil {
+			continue
+		}
+		if dead[*messages[index].SummaryID] {
+			unlinkedMessages = append(unlinkedMessages, messages[index].ID)
+		}
+	}
+	unlinkedSummaries := []string{}
+	for index := range summaries {
+		parent := summaries[index].ParentSummaryID
+		if dead[summaries[index].ID] || parent == nil {
+			continue
+		}
+		if dead[*parent] {
+			unlinkedSummaries = append(unlinkedSummaries, summaries[index].ID)
+		}
+	}
+
+	deletedSummaryIDs := make([]string, 0, len(dead))
+	for id := range dead {
+		deletedSummaryIDs = append(deletedSummaryIDs, id)
+	}
+	sort.Strings(deletedSummaryIDs) // 确定性（messages 已经按 id 排好，摘要也照 id 排）
+	deletedMessageIDs := make([]string, 0, len(suffix))
+	for index := range suffix {
+		deletedMessageIDs = append(deletedMessageIDs, suffix[index].ID)
+	}
+	return model.DeletionPlan{
+		SessionID:            sessionID,
+		DeletedMessageIDs:    deletedMessageIDs,
+		DeletedSummaryIDs:    deletedSummaryIDs,
+		UnlinkedMessageIDs:   unlinkedMessages,
+		UnlinkedSummaryIDs:   unlinkedSummaries,
+		LastDeletedMessageID: suffix[len(suffix)-1].ID,
+	}, nil
+}
+
+// ApplyDeletion：照计划动手 —— 一个事务里 ① 清指针 ② 删摘要 ③ 删消息。
+//
+// 顺序是刻意的：先清指针（它们指的行下一句就没了）→ 再删摘要 → 最后删消息；
+// 摘要先没了，就没有"指针指到已经不存在的东西上"的机会。
+func (s *Store) ApplyDeletion(plan model.DeletionPlan) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	tx, err := s.db.Begin()
 	if err != nil {
-		return 0, err
+		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	// **先标后删**：删掉消息它指向摘要的指针就没了，那时再想标就找不到人（§18）
-	for id := range doomed {
-		if err := markSummaryChainDirty(tx, id); err != nil {
-			return 0, err
+	// ① 清指针（幸存者 → 死摘要）
+	for _, id := range plan.UnlinkedMessageIDs {
+		if _, err := tx.Exec("UPDATE messages SET summary_id = NULL WHERE id = ?1 AND session_id = ?2",
+			id, plan.SessionID); err != nil {
+			return err
 		}
 	}
-	for id := range doomed {
-		if _, err := tx.Exec("DELETE FROM messages WHERE id = ?1 AND session_id = ?2",
-			id, sessionID); err != nil {
-			return 0, err
+	for _, id := range plan.UnlinkedSummaryIDs {
+		if _, err := tx.Exec("UPDATE summaries SET parent_summary_id = NULL WHERE id = ?1 AND session_id = ?2",
+			id, plan.SessionID); err != nil {
+			return err
 		}
 	}
-	if leaf != nil && doomed[*leaf] {
-		// 退到哪里：优先"上文下**还活着的最新一个孩子**"——删单条时就是它的上一条兄弟。
-		// 只退到父亲是不够的：界面上会看到"整条分支都没了"（其实兄弟都在树上）。
-		var fallback *string
-		for index := range all {
-			if sameOptional(all[index].ParentMessageID, parent) && !doomed[all[index].ID] {
-				id := all[index].ID
-				fallback = &id // 越靠后越新（all 按 rowid 排）
-			}
-		}
-		if fallback == nil {
-			fallback = parent
-		}
-		if _, err := tx.Exec("UPDATE sessions SET current_leaf = ?1 WHERE id = ?2",
-			fallback, sessionID); err != nil {
-			return 0, err
-		}
+	// ② 删摘要：**一条语句删一整批**（父与子必须同批 —— 自引用外键在**语句末尾**才核；
+	//    逐条删就会出现"父先没了、孩子还指着它" ⇒ FOREIGN KEY constraint failed —— 实测踩过）。
+	if err := deleteBatch(tx, "summaries", plan.SessionID, plan.DeletedSummaryIDs); err != nil {
+		return err
+	}
+	// ③ 删消息（后缀 ⇒ 不留洞 ⇒"最新一条"推得出来，不用额外维护什么）
+	if err := deleteBatch(tx, "messages", plan.SessionID, plan.DeletedMessageIDs); err != nil {
+		return err
 	}
 	if _, err := tx.Exec("UPDATE sessions SET updated_at = ?1 WHERE id = ?2",
-		nowMS(), sessionID); err != nil {
-		return 0, err
+		nowMS(), plan.SessionID); err != nil {
+		return err
 	}
-	if err := tx.Commit(); err != nil {
-		return 0, err
+	return tx.Commit()
+}
+
+// deleteBatch：一条语句删掉一批 id（**一条语句**很关键：同批里的父与子要靠"语句末尾才核外键"
+// 才过得去；也省得为几十条消息开几十条语句）。`table` 只由本包的字面量传进来。
+func deleteBatch(tx *sql.Tx, table, sessionID string, ids []string) error {
+	if len(ids) == 0 {
+		return nil
 	}
-	return count, nil
+	marks := make([]string, len(ids))
+	args := make([]any, 0, len(ids)+1)
+	args = append(args, sessionID)
+	for index, id := range ids {
+		marks[index] = "?" + strconv.Itoa(index+2) // ?1 留给 session_id
+		args = append(args, id)
+	}
+	_, err := tx.Exec("DELETE FROM "+table+" WHERE session_id = ?1 AND id IN ("+
+		strings.Join(marks, ",")+")", args...)
+	return err
 }

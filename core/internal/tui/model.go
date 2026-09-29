@@ -31,6 +31,11 @@ type model struct {
 	// 只读查看器（`/outgoing`）：整屏列东西，任意键关掉
 	viewer      []string
 	viewerTitle string
+	// viewerHint：表头右边那句提示。确认框要写清"按什么才算答应"，不能是"任意键关掉"。
+	viewerHint string
+	// confirm：**不可逆动作**的"先看清楚、再点头"（`/delete` 与 `/cut` 都走它）。
+	// 非空时按键的意义变了：只是"答应 / 不答应"，不再是"关掉查看器"。
+	confirm *confirm
 
 	// 挑选项（`/resume` 与 `/model`）
 	picker      picker
@@ -56,6 +61,21 @@ const (
 	pickerNone picker = iota
 	pickerResume
 	pickerModel
+)
+
+// confirm：等着用户点头的那件事（模型里只存**意图**，命令由 `confirmExecute` 派生）。
+type confirm struct {
+	kind      string     // confirmDeleteSession / confirmCut
+	sessionID string
+	messageID string     // cut 的目标
+	plan      DeletionPlan // cut：后端算好的预览（执行时照它，并把末尾那条带回去核对）
+}
+
+const (
+	// confirmDeleteSession：删整条会话（回到空会话）。
+	confirmDeleteSession = "delete-session"
+	// confirmCut：删一条消息及其之后的全部。
+	confirmCut = "cut"
 )
 
 // ── 消息（tea.Msg）──
@@ -84,6 +104,23 @@ type createdMsg struct {
 type deletedMsg struct {
 	id  string
 	err error
+}
+
+type cutPreviewMsg struct {
+	sessionID string
+	messageID string
+	plan      DeletionPlan
+	err       error
+}
+
+type cutDoneMsg struct {
+	plan DeletionPlan
+	err  error
+}
+
+type copiedMsg struct {
+	session Session
+	err     error
 }
 
 type updatedMsg struct {
@@ -145,6 +182,27 @@ func createSessionCmd(client *Client, provider, model string) tea.Cmd {
 func deleteSessionCmd(client *Client, id string) tea.Cmd {
 	return func() tea.Msg {
 		return deletedMsg{id: id, err: client.DeleteSession(id)}
+	}
+}
+
+func cutPreviewCmd(client *Client, sessionID, messageID string) tea.Cmd {
+	return func() tea.Msg {
+		plan, err := client.DeletionPreview(sessionID, messageID)
+		return cutPreviewMsg{sessionID: sessionID, messageID: messageID, plan: plan, err: err}
+	}
+}
+
+func cutExecuteCmd(client *Client, sessionID, messageID, lastDeletedMessageID string) tea.Cmd {
+	return func() tea.Msg {
+		plan, err := client.DeleteMessagesFrom(sessionID, messageID, lastDeletedMessageID)
+		return cutDoneMsg{plan: plan, err: err}
+	}
+}
+
+func copySessionCmd(client *Client, id string) tea.Cmd {
+	return func() tea.Msg {
+		session, err := client.CopySession(id)
+		return copiedMsg{session: session, err: err}
 	}
 }
 
@@ -249,6 +307,39 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lastAction = "已删除 " + shortID(message.id) + "（现在是空会话）"
 		return m, loadSessions(m.client)
 
+	case cutPreviewMsg:
+		if message.err != nil {
+			m.lastAction = "取删除预览失败：" + message.err.Error()
+			return m, nil
+		}
+		m.confirm = &confirm{
+			kind: confirmCut, sessionID: message.sessionID,
+			messageID: message.messageID, plan: message.plan,
+		}
+		m.viewer, m.viewerTitle = cutPreviewLines(message.plan), "确认删除"
+		m.viewerHint = "回车 / y 执行 · 其他键取消"
+		m.lastAction = "看清了再点头（回车 / y）"
+		return m, nil
+
+	case cutDoneMsg:
+		m.confirm, m.viewer, m.viewerHint = nil, nil, ""
+		if message.err != nil {
+			m.lastAction = "删除失败：" + message.err.Error()
+			return m, m.reloadMessagesCmd()
+		}
+		m.lastAction = fmt.Sprintf("已删 %d 条消息 · %d 份摘要",
+			len(message.plan.DeletedMessageIDs), len(message.plan.DeletedSummaryIDs))
+		return m, tea.Batch(m.reloadMessagesCmd(), loadSessions(m.client))
+
+	case copiedMsg:
+		if message.err != nil {
+			m.lastAction = "复制失败：" + message.err.Error()
+			return m, nil
+		}
+		m.lastAction = "已复制成 " + shortID(message.session.ID) + "（新会话）"
+		m.pendingSelect = message.session.ID // 列表刷新回来才选得上它
+		return m, loadSessions(m.client)
+
 	case updatedMsg:
 		if message.err != nil {
 			m.lastAction = "改渠道 / 模型失败：" + message.err.Error()
@@ -324,6 +415,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			lines = append(lines, "")
 		}
 		m.viewer, m.viewerTitle = lines, fmt.Sprintf("下次真发出去的载荷（%d 条）", len(message.items))
+		m.viewerHint = "任意键关掉"
 		m.lastAction = fmt.Sprintf("载荷 %d 条（Esc 关掉）", len(message.items))
 		return m, nil
 
@@ -333,8 +425,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if message.String() == "ctrl+c" {
 			return m, tea.Quit
 		}
+		if m.confirm != nil { // 等着点头：只有"答应"与"不答应"两种按键
+			switch message.String() {
+			case "enter", "y", "Y":
+				return m.confirmExecute()
+			default:
+				m.confirm, m.viewer, m.viewerTitle, m.viewerHint = nil, nil, "", ""
+				m.lastAction = "已取消（什么都没删）"
+				return m, nil
+			}
+		}
 		if m.viewer != nil { // 查看器开着：任意键关掉（只读，没什么可操作的）
-			m.viewer = nil
+			m.viewer, m.viewerTitle, m.viewerHint = nil, "", ""
 			return m, nil
 		}
 		if m.picker != pickerNone {
@@ -509,7 +611,9 @@ var commands []command
 func init() {
 	commands = []command{
 		{name: "new", help: "新建会话（当前会话为空时无效）", run: commandNew},
-		{name: "delete", help: "删除当前会话，回到空会话", run: commandDelete},
+		{name: "delete", help: "删除当前会话，回到空会话（不可逆，先确认）", run: commandDelete},
+		{name: "cut", args: "[message_id]", help: "删一条消息及它之后的全部（先预览，再确认）", run: commandCut},
+		{name: "copy", help: "把当前会话复制成新的一条（分岔）", run: commandCopy},
 		{name: "resume", args: "[uuid]", help: "挑一条已有会话；带 uuid 直接进", run: commandResume},
 		{name: "model", help: "挑渠道 / 模型（有会话就改它，没有则留给下一条）", run: commandModel},
 		{name: "outgoing", help: "看下次真发出去的载荷（哪几条是压缩出来的）", run: commandOutgoing},
@@ -533,14 +637,136 @@ func commandNew(m model, _ []string) (tea.Model, tea.Cmd) {
 	return m, createSessionCmd(m.client, m.chosenProvider, m.chosenModel)
 }
 
+// commandDelete：删**整条会话**（回到空会话）。
+//
+// 不可逆 ⇒ 先摊开"会没掉什么"（几条消息、几份它挂着的摘要 —— 数字现算），
+// 等用户点头（回车 / y）才真发；点头之前一个字节都不动。
 func commandDelete(m model, _ []string) (tea.Model, tea.Cmd) {
 	session := m.currentSession()
 	if session == nil {
 		m.lastAction = "当前就是空会话，没有可删的"
 		return m, nil
 	}
-	m.lastAction = "删除 " + describeSession(*session) + "…"
-	return m, deleteSessionCmd(m.client, session.ID)
+	if m.messagesFor != session.ID {
+		// 还没拉全就报不出"会删几条" ⇒ 先把消息取回来（同一句话里说清楚）
+		m.lastAction = "先把消息拉全再删（正在取…）"
+		return m, loadMessages(m.client, session.ID)
+	}
+	m.confirm = &confirm{kind: confirmDeleteSession, sessionID: session.ID}
+	m.viewer, m.viewerTitle = deleteSessionLines(m, *session), "确认删除"
+	m.viewerHint = "回车 / y 执行 · 其他键取消"
+	m.lastAction = "看清了再点头（回车 / y）"
+	return m, nil
+}
+
+// commandCut：删**一条消息及其之后的全部**（线性会话里的"从这里重新开始"）。
+//
+// 不给参数 = 最后一条（"把最后这句撤了"）；给了就按完整 id 或唯一前缀找。
+// 会删掉什么由**后端**算（`deletion-preview`），摊开给用户看过才真删 —— 预览与执行同一份计算。
+func commandCut(m model, args []string) (tea.Model, tea.Cmd) {
+	session := m.currentSession()
+	if session == nil {
+		m.lastAction = "当前是空会话，没有可删的消息"
+		return m, nil
+	}
+	if m.messagesFor != session.ID {
+		m.lastAction = "先把消息拉全再删（正在取…）"
+		return m, loadMessages(m.client, session.ID)
+	}
+	if len(m.messages) == 0 {
+		m.lastAction = "这条会话还没有消息"
+		return m, nil
+	}
+	target := m.messages[len(m.messages)-1].ID
+	if len(args) > 0 {
+		if target = m.findMessage(args[0]); target == "" {
+			m.lastAction = "这条会话里找不到消息 " + args[0] + "（什么都没有发生）"
+			return m, nil
+		}
+	}
+	m.lastAction = "取删除预览…"
+	return m, cutPreviewCmd(m.client, session.ID, target)
+}
+
+// commandCopy：把当前会话**复制**成新的一条（线性会话里"分岔"就是这个，不叫 fork）。
+func commandCopy(m model, _ []string) (tea.Model, tea.Cmd) {
+	session := m.currentSession()
+	if session == nil {
+		m.lastAction = "当前是空会话，没有可复制的"
+		return m, nil
+	}
+	m.lastAction = "复制 " + describeSession(*session) + "…"
+	return m, copySessionCmd(m.client, session.ID)
+}
+
+// confirmExecute：用户点头了 —— 按存下来的**意图**派生该发的命令。
+func (m model) confirmExecute() (tea.Model, tea.Cmd) {
+	pending := m.confirm
+	m.confirm, m.viewer, m.viewerTitle, m.viewerHint = nil, nil, "", ""
+	if pending == nil {
+		return m, nil
+	}
+	switch pending.kind {
+	case confirmCut:
+		m.lastAction = "删除 " + shortID(pending.messageID) + " 及其之后…"
+		return m, cutExecuteCmd(m.client, pending.sessionID, pending.messageID, pending.plan.LastDeletedMessageID)
+	case confirmDeleteSession:
+		m.lastAction = "删除会话 " + shortID(pending.sessionID) + "…"
+		return m, deleteSessionCmd(m.client, pending.sessionID)
+	}
+	return m, nil
+}
+
+// deleteSessionLines：摊开"删这条会话会没掉什么"（数字现算 —— 还没拉全的消息不算数，
+// 所以 commandDelete 先确保拉全）。行要短：查看器一行就是一屏宽，长了会被截掉。
+func deleteSessionLines(m model, session Session) []string {
+	summaries := map[string]bool{}
+	for _, message := range m.messages {
+		if message.SummaryID != nil {
+			summaries[*message.SummaryID] = true
+		}
+	}
+	return []string{
+		" 不可逆：删掉整条会话",
+		" 会话 " + describeSession(session),
+		fmt.Sprintf(" 会没掉：%d 条消息 · %d 份摘要", len(m.messages), len(summaries)),
+		" （摘要是消息上挂着的；区间覆盖的随会话级联）",
+		"",
+		" 回车 / y 执行 · 其他键取消",
+	}
+}
+
+// cutPreviewLines：摊开后端算好的那份删除预览（五组各自一行）。
+func cutPreviewLines(plan DeletionPlan) []string {
+	return []string{
+		" 不可逆：删这条及其之后的全部",
+		fmt.Sprintf(" 消息 %d 条：%s", len(plan.DeletedMessageIDs), idsSummary(plan.DeletedMessageIDs)),
+		fmt.Sprintf(" 摘要 %d 份：%s", len(plan.DeletedSummaryIDs), idsSummary(plan.DeletedSummaryIDs)),
+		fmt.Sprintf(" 解链的消息 %d 条：%s", len(plan.UnlinkedMessageIDs), idsSummary(plan.UnlinkedMessageIDs)),
+		fmt.Sprintf(" 解链的摘要 %d 份：%s", len(plan.UnlinkedSummaryIDs), idsSummary(plan.UnlinkedSummaryIDs)),
+		" 末尾核对：" + shortID(plan.LastDeletedMessageID),
+		"",
+		" 回车 / y 执行 · 其他键取消",
+	}
+}
+
+// idsSummary：把一组 id 挤成一行（最多列 3 个，其余只报数）—— 查看器一行就是一屏宽。
+func idsSummary(ids []string) string {
+	if len(ids) == 0 {
+		return "（无）"
+	}
+	shown := make([]string, 0, 3)
+	for index, id := range ids {
+		if index == 3 {
+			break
+		}
+		shown = append(shown, shortID(id))
+	}
+	line := strings.Join(shown, " ")
+	if len(ids) > 3 {
+		line += fmt.Sprintf(" …（共 %d 条）", len(ids))
+	}
+	return line
 }
 
 func commandResume(m model, args []string) (tea.Model, tea.Cmd) {
@@ -642,6 +868,33 @@ func (m model) findSession(id string) int {
 	return -1
 }
 
+// findMessage：在当前会话的消息里按完整 id 或**唯一前缀**找（前缀有歧义 ⇒ 当找不到，别猜）。
+func (m model) findMessage(id string) string {
+	found, hits := "", 0
+	for _, message := range m.messages {
+		if message.ID == id {
+			return message.ID
+		}
+		if strings.HasPrefix(message.ID, id) {
+			found, hits = message.ID, hits+1
+		}
+	}
+	if hits == 1 {
+		return found
+	}
+	return ""
+}
+
+// reloadMessagesCmd：把当前会话的消息重拉一遍（没有选中会话就什么都不做 —— 空 id 会去查
+// 一条不存在的会话，界面上就成了"拉消息失败"）。
+func (m model) reloadMessagesCmd() tea.Cmd {
+	if session := m.currentSession(); session != nil {
+		return loadMessages(m.client, session.ID)
+	}
+	return nil
+}
+
+// indexOfCurrentModel：当前会话用的渠道 / 模型在列表里第几个（挑选项的落点）。
 func (m model) indexOfCurrentModel() int {
 	provider, model := m.chosenProvider, m.chosenModel
 	if session := m.currentSession(); session != nil {
@@ -791,7 +1044,11 @@ func (m model) renderPalette() []string {
 // 要么不出现 —— 从顶部截断会把署名切掉，看起来像"不知道谁说的"（这个 bug 是测试抓出来的）。
 func (m model) renderMessages(height int) []string {
 	if m.viewer != nil {
-		lines := []string{truncate(" "+m.viewerTitle+"   任意键关掉", m.mainWidth()),
+		hint := m.viewerHint
+		if hint == "" {
+			hint = "任意键关掉"
+		}
+		lines := []string{truncate(" "+m.viewerTitle+"   "+hint, m.mainWidth()),
 			truncate(" "+strings.Repeat("-", max(1, m.mainWidth()-2)), m.mainWidth())}
 		for _, line := range m.viewer {
 			if len(lines) >= height {

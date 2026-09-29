@@ -6,101 +6,6 @@ import (
 	"microchat/internal/model"
 )
 
-func pointer(value string) *string { return &value }
-
-// 当前路径 = 从 current_leaf 沿 parent_message_id 回溯到根（正序）。
-// 三种边角都在：正常链、指针悬空、以及**成环**（导入坏数据时可能碰上）。
-func TestPathFrom(t *testing.T) {
-	build := func(id string, parent *string) model.Message {
-		return model.Message{ID: id, ParentMessageID: parent}
-	}
-	all := []model.Message{
-		build("a", nil),
-		build("b", pointer("a")),
-		build("b2", pointer("a")), // b 的兄弟（分支）
-		build("c", pointer("b")),
-	}
-	cases := []struct {
-		name string
-		leaf *string
-		want []string
-	}{
-		{"整条链", pointer("c"), []string{"a", "b", "c"}},
-		{"切到兄弟", pointer("b2"), []string{"a", "b2"}},
-		{"没有尾巴", nil, nil},
-		{"悬空指针当到根", pointer("missing"), nil},
-	}
-	for _, test := range cases {
-		t.Run(test.name, func(t *testing.T) {
-			path := pathFrom(all, test.leaf)
-			ids := make([]string, 0, len(path))
-			for _, message := range path {
-				ids = append(ids, message.ID)
-			}
-			if len(ids) != len(test.want) {
-				t.Fatalf("路径 = %v，想要 %v", ids, test.want)
-			}
-			for index := range test.want {
-				if ids[index] != test.want[index] {
-					t.Fatalf("路径 = %v，想要 %v", ids, test.want)
-				}
-			}
-		})
-	}
-}
-
-// 成环时**必须停**（指针数据坏掉也得打得开会话）。
-//
-// 注意口径：这个闸是**终止**保险，不是去重 —— 与 Rust 版逐字一致
-// （`path.len() > all.len()` 时才 break），所以环上的节点会出现两次、
-// 最多返回 len(all)+1 条。要的是"不会转死"，不是"结果多漂亮"。
-func TestPathFromCycle(t *testing.T) {
-	all := []model.Message{
-		{ID: "a", ParentMessageID: pointer("b")},
-		{ID: "b", ParentMessageID: pointer("a")},
-	}
-	path := pathFrom(all, pointer("a"))
-	if len(path) > len(all)+1 {
-		t.Fatalf("闸没起作用：%d 条（上限 %d）", len(path), len(all)+1)
-	}
-}
-
-// 分支信息：分组按 parent_message_id（整棵树），组内顺序 = 生成先后（rowid）。
-func TestBranchInfo(t *testing.T) {
-	st := openTemp(t)
-	sessionID := "01a00000-0000-7000-8000-000000000000"
-	if _, err := st.db.Exec(
-		`INSERT INTO sessions (id, title, provider, model, agent_id, created_at, updated_at)
-		 VALUES (?1, '', 'dummy', 'dummy', 'default', 1, 1)`, sessionID); err != nil {
-		t.Fatal(err)
-	}
-	insert := func(id string, parent any) {
-		if _, err := st.db.Exec(
-			`INSERT INTO messages (id, session_id, role, content, parent_message_id, created_at)
-			 VALUES (?1, ?2, 'user', 'x', ?3, 1)`, id, sessionID, parent); err != nil {
-			t.Fatal(err)
-		}
-	}
-	insert("m1", nil)
-	insert("m2", "m1")
-	insert("m3", "m1") // 第二条候选回复（分支）
-	insert("m4", "m2")
-
-	info, err := st.BranchInfo(sessionID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := info["m1"]; got.Index != 1 || got.Total != 1 {
-		t.Fatalf("m1 = %+v，想要 1/1", got)
-	}
-	if got := info["m2"]; got.Index != 1 || got.Total != 2 || len(got.Siblings) != 2 {
-		t.Fatalf("m2 = %+v，想要 1/2", got)
-	}
-	if got := info["m3"]; got.Index != 2 || got.Total != 2 {
-		t.Fatalf("m3 = %+v，想要 2/2", got)
-	}
-}
-
 func openTemp(t *testing.T) *Store {
 	t.Helper()
 	st, err := Open(t.TempDir() + "/microchat.db")
@@ -111,95 +16,415 @@ func openTemp(t *testing.T) *Store {
 	return st
 }
 
-// 删除后的 leaf 退位规则（本项目踩过的坑，必须守住）：
-//  1. 退到"上文下**还活着的最新一个孩子**"（删单条时 = 它的上一条兄弟）；
-//  2. 只退到父亲是不够的 —— 界面上会看到"整条分支都没了"，看起来像一次删除删掉了好几个分支；
-//  3. 实在没有孩子可退，才退到上文本身。
-func TestDeleteLeafFallback(t *testing.T) {
-	build := func(t *testing.T, leaf string) (*Store, string) {
-		t.Helper()
-		st := openTemp(t)
-		sessionID := "01a00000-0000-7000-8000-00000000000c"
+// 线性会话的沙盒：一条会话 + 一串消息。
+// id 用 UUIDv7 的形状（时间在前）⇒ 字符串序就是先后（顺序**就是** id 定的）。
+func seedSession(t *testing.T, st *Store, sessionID string, messageIDs ...string) {
+	t.Helper()
+	if _, err := st.db.Exec(
+		`INSERT INTO sessions (id, title, provider, model, agent_id, created_at, updated_at)
+		 VALUES (?1, '', 'dummy', 'dummy', 'default', 1, 1)`, sessionID); err != nil {
+		t.Fatal(err)
+	}
+	for index, id := range messageIDs {
+		role := "user"
+		if index%2 == 1 {
+			role = "assistant"
+		}
 		if _, err := st.db.Exec(
-			`INSERT INTO sessions (id, title, provider, model, agent_id, current_leaf, created_at, updated_at)
-			 VALUES (?1, '', 'dummy', 'dummy', 'default', ?2, 1, 1)`, sessionID, leaf); err != nil {
+			`INSERT INTO messages (id, session_id, role, content, created_at) VALUES (?1, ?2, ?3, ?4, ?5)`,
+			id, sessionID, role, "第 "+id+" 条", int64(index+1)); err != nil {
 			t.Fatal(err)
 		}
-		insert := func(id string, parent any) {
-			if _, err := st.db.Exec(
-				`INSERT INTO messages (id, session_id, role, content, parent_message_id, created_at)
-				 VALUES (?1, ?2, 'user', 'x', ?3, 1)`, id, sessionID, parent); err != nil {
-				t.Fatal(err)
+	}
+}
+
+// 直接落一行摘要（`insertSummary` 是给事务用的生产函数，这里要一个"塞进去就完了"的版本）。
+// 父摘要必须先存在（`parent_summary_id` 是自引用外键）。
+func seedSummary(t *testing.T, st *Store, id, sessionID string, parent *string, begin, end string) {
+	t.Helper()
+	if _, err := st.db.Exec(
+		`INSERT INTO summaries
+		   (id, session_id, parent_summary_id, source_kind, begin_message_id, end_message_id,
+		    text, blocks, tokens, source_ids, provider, model, prompt_version, created_at)
+		 VALUES (?1, ?2, ?3, 'message', ?4, ?5, '梗概', 1, 10, '[]', 'dummy', 'dummy', 1, 1)`,
+		id, sessionID, parent, begin, end); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// attach：把一段消息指向某份摘要（压缩只写这一格）。
+func attach(t *testing.T, st *Store, summaryID string, messageIDs ...string) {
+	t.Helper()
+	for _, id := range messageIDs {
+		if _, err := st.db.Exec("UPDATE messages SET summary_id = ?1 WHERE id = ?2", summaryID, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func messageIDsOf(messages []model.Message) []string {
+	ids := make([]string, 0, len(messages))
+	for _, message := range messages {
+		ids = append(ids, message.ID)
+	}
+	return ids
+}
+
+func sameIDs(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for index := range got {
+		if got[index] != want[index] {
+			return false
+		}
+	}
+	return true
+}
+
+// 线性会话：`ListMessages` = 这条会话的**全部**消息，按 id 升序（没有路径、没有分支）。
+func TestListMessagesIsTheWholeSessionInIDOrder(t *testing.T) {
+	st := openTemp(t)
+	sessionID := "01a00000-0000-7000-8000-000000000000"
+	// 故意**不按插入顺序**写 id（顺序只由 id 定，跟插入先后无关）
+	seedSession(t, st, sessionID, "01a00000-0000-7000-8000-000000000003",
+		"01a00000-0000-7000-8000-000000000001", "01a00000-0000-7000-8000-000000000002")
+	messages, err := st.ListMessages(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"01a00000-0000-7000-8000-000000000001",
+		"01a00000-0000-7000-8000-000000000002",
+		"01a00000-0000-7000-8000-000000000003",
+	}
+	if got := messageIDsOf(messages); !sameIDs(got, want) {
+		t.Fatalf("顺序 = %v，想要 %v", got, want)
+	}
+	// 会话不存在 ⇒ 空列表（不是 404，口径与旧版一致）
+	if messages, err := st.ListMessages("查无此会话"); err != nil || len(messages) != 0 {
+		t.Fatalf("会话不存在该回空列表：%v %v", messages, err)
+	}
+}
+
+// DEFINE.md 里走了一遍的那个例子：路径 A…G，摘要 BD(B,C,D)、EF(E,F)、BF=父(BD+EF)。
+// 删 **F** ⇒ 消息 F、G；摘要 EF 与 BF；E 的 summary_id 置空；BD 升为顶层。
+func TestDeletionPlanFollowsTheCascade(t *testing.T) {
+	st := openTemp(t)
+	sessionID := "01a00000-0000-7000-8000-000000000000"
+	a, b, c, d, e, f, g := "01a00000-0000-7000-8000-000000000001",
+		"01a00000-0000-7000-8000-000000000002", "01a00000-0000-7000-8000-000000000003",
+		"01a00000-0000-7000-8000-000000000004", "01a00000-0000-7000-8000-000000000005",
+		"01a00000-0000-7000-8000-000000000006", "01a00000-0000-7000-8000-000000000007"
+	seedSession(t, st, sessionID, a, b, c, d, e, f, g)
+
+	bd, ef, bf := "01b00000-0000-7000-8000-000000000001",
+		"01b00000-0000-7000-8000-000000000002", "01b00000-0000-7000-8000-000000000003"
+	// BF 是顶（盖 B..F），BD(B..D) 与 EF(E..F) 都是它的孩子（父必须先插）
+	seedSummary(t, st, bf, sessionID, nil, b, f)
+	seedSummary(t, st, bd, sessionID, &bf, b, d)
+	seedSummary(t, st, ef, sessionID, &bf, e, f)
+	attach(t, st, bd, b, c, d)
+	attach(t, st, ef, e, f)
+
+	plan, err := st.DeletionPlan(sessionID, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := plan.DeletedMessageIDs; !sameIDs(got, []string{f, g}) {
+		t.Fatalf("要删的消息 = %v，想要 [F G]", got)
+	}
+	if got := plan.DeletedSummaryIDs; !sameIDs(got, []string{ef, bf}) {
+		t.Fatalf("要删的摘要 = %v，想要 [EF BF]", got)
+	}
+	if got := plan.UnlinkedMessageIDs; !sameIDs(got, []string{e}) {
+		t.Fatalf("要被解链的消息 = %v，想要 [E]（它盖在 EF 上）", got)
+	}
+	if got := plan.UnlinkedSummaryIDs; !sameIDs(got, []string{bd}) {
+		t.Fatalf("要被解链的摘要 = %v，想要 [BD]（它的父 BF 死了）", got)
+	}
+	if plan.LastDeletedMessageID != g {
+		t.Fatalf("最后一条 = %q，想要 G", plan.LastDeletedMessageID)
+	}
+
+	// 执行 = 照同一份计划动手
+	if err := st.ApplyDeletion(plan); err != nil {
+		t.Fatal(err)
+	}
+	messages, err := st.ListMessages(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := messageIDsOf(messages); !sameIDs(got, []string{a, b, c, d, e}) {
+		t.Fatalf("剩下的消息 = %v，想要 [A B C D E]", got)
+	}
+	summaries, err := st.ListSummaries(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) != 1 || summaries[0].ID != bd {
+		t.Fatalf("剩下的摘要 = %+v，想要只剩 BD", summaries)
+	}
+	if summaries[0].ParentSummaryID != nil {
+		t.Fatalf("BD 该升为顶层：%v", *summaries[0].ParentSummaryID)
+	}
+	for _, message := range messages {
+		if message.ID == e && message.SummaryID != nil {
+			t.Fatalf("E 的指针该被置空：%v", *message.SummaryID)
+		}
+		if message.ID == a && message.SummaryID != nil {
+			t.Fatalf("A 本来就没被覆盖，不该有指针：%v", *message.SummaryID)
+		}
+	}
+}
+
+// 边界：删**第一条** ⇒ 消息与摘要全清（会话变回空会话），没有任何"被解链"的幸存者。
+func TestDeletionPlanFromTheFirstMessage(t *testing.T) {
+	st := openTemp(t)
+	sessionID := "01a00000-0000-7000-8000-000000000000"
+	a, b, c := "01a00000-0000-7000-8000-000000000001",
+		"01a00000-0000-7000-8000-000000000002", "01a00000-0000-7000-8000-000000000003"
+	seedSession(t, st, sessionID, a, b, c)
+	child := "01b00000-0000-7000-8000-000000000001"
+	parent := "01b00000-0000-7000-8000-000000000002"
+	seedSummary(t, st, parent, sessionID, nil, a, c)
+	seedSummary(t, st, child, sessionID, &parent, a, b)
+	attach(t, st, child, a, b)
+
+	plan, err := st.DeletionPlan(sessionID, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sameIDs(plan.DeletedMessageIDs, []string{a, b, c}) {
+		t.Fatalf("要删的消息 = %v", plan.DeletedMessageIDs)
+	}
+	if !sameIDs(plan.DeletedSummaryIDs, []string{child, parent}) {
+		t.Fatalf("要删的摘要 = %v（孩子与父一起，按 id 排）", plan.DeletedSummaryIDs)
+	}
+	if len(plan.UnlinkedMessageIDs) != 0 || len(plan.UnlinkedSummaryIDs) != 0 {
+		t.Fatalf("全删了就没有幸存者要解链：%+v", plan)
+	}
+	if plan.LastDeletedMessageID != c {
+		t.Fatalf("最后一条 = %q，想要 C", plan.LastDeletedMessageID)
+	}
+	if err := st.ApplyDeletion(plan); err != nil {
+		t.Fatal(err)
+	}
+	if messages, _ := st.ListMessages(sessionID); len(messages) != 0 {
+		t.Fatalf("该清空：%+v", messages)
+	}
+	if summaries, _ := st.ListSummaries(sessionID); len(summaries) != 0 {
+		t.Fatalf("摘要该清空：%+v", summaries)
+	}
+}
+
+// 区间缺失（老数据）的摘要：**不参与**级联判定（拿不出范围 ⇒ 说不出它盖了谁），但也不该把删除搞崩。
+func TestDeletionPlanIgnoresIntervalLessSummaries(t *testing.T) {
+	st := openTemp(t)
+	sessionID := "01a00000-0000-7000-8000-000000000000"
+	a, b := "01a00000-0000-7000-8000-000000000001", "01a00000-0000-7000-8000-000000000002"
+	seedSession(t, st, sessionID, a, b)
+	legacy := "01b00000-0000-7000-8000-000000000001"
+	if _, err := st.db.Exec(
+		`INSERT INTO summaries (id, session_id, parent_summary_id, source_kind, text, blocks, tokens,
+		 source_ids, provider, model, prompt_version, created_at)
+		 VALUES (?1, ?2, NULL, 'message', '老的', 1, 10, '[]', 'dummy', 'dummy', 1, 1)`,
+		legacy, sessionID); err != nil {
+		t.Fatal(err)
+	}
+	attach(t, st, legacy, a)
+
+	plan, err := st.DeletionPlan(sessionID, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sameIDs(plan.DeletedMessageIDs, []string{b}) {
+		t.Fatalf("要删的消息 = %v", plan.DeletedMessageIDs)
+	}
+	if len(plan.DeletedSummaryIDs) != 0 {
+		t.Fatalf("没有区间的摘要不参与判定：%v", plan.DeletedSummaryIDs)
+	}
+	if err := st.ApplyDeletion(plan); err != nil {
+		t.Fatal(err)
+	}
+	if summaries, _ := st.ListSummaries(sessionID); len(summaries) != 1 {
+		t.Fatalf("它该原样活着：%+v", summaries)
+	}
+}
+
+// **父摘要的 id 排在自己的孩子前面**（父先铸、孩子后铸 —— 人工造的常见形状）：
+// 逐条删摘要会"父先没了、孩子还指着它"⇒ 外键报错（真机上实测踩过，500）。
+// 一批删必须过（自引用外键在**语句末尾**才核）。
+func TestApplyDeletionSurvivesParentBeforeChildren(t *testing.T) {
+	st := openTemp(t)
+	sessionID := "01a00000-0000-7000-8000-000000000000"
+	a, b := "01a00000-0000-7000-8000-000000000001", "01a00000-0000-7000-8000-000000000002"
+	seedSession(t, st, sessionID, a, b)
+	parent := "01b00000-0000-7000-8000-000000000001" // 比孩子小 ⇒ 排序在前
+	child := "01b00000-0000-7000-8000-000000000002"
+	seedSummary(t, st, parent, sessionID, nil, a, b)
+	seedSummary(t, st, child, sessionID, &parent, a, b)
+
+	plan, err := st.DeletionPlan(sessionID, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sameIDs(plan.DeletedSummaryIDs, []string{parent, child}) {
+		t.Fatalf("父与子都该在名单里（按 id 排 ⇒ 父在前）：%v", plan.DeletedSummaryIDs)
+	}
+	if err := st.ApplyDeletion(plan); err != nil {
+		t.Fatalf("父子同批删不该被外键拦住：%v", err)
+	}
+	if summaries, _ := st.ListSummaries(sessionID); len(summaries) != 0 {
+		t.Fatalf("该清空：%+v", summaries)
+	}
+}
+
+// 计划只认这条会话里的消息：给一条别的会话的消息 ⇒ 404（不许跨界删）。
+func TestDeletionPlanRejectsForeignMessage(t *testing.T) {
+	st := openTemp(t)
+	sessionID, otherID := "01a00000-0000-7000-8000-000000000000", "01a00000-0000-7000-8000-00000000000f"
+	a := "01a00000-0000-7000-8000-000000000001"
+	seedSession(t, st, sessionID, a)
+	seedSession(t, st, otherID, "01a00000-0000-7000-8000-0000000000f1")
+	if _, err := st.DeletionPlan(sessionID, "01a00000-0000-7000-8000-0000000000f1"); err != ErrNotFound {
+		t.Fatalf("别的会话的消息该 404：%v", err)
+	}
+	if _, err := st.DeletionPlan(sessionID, "查无此消息"); err != ErrNotFound {
+		t.Fatalf("不存在的消息该 404：%v", err)
+	}
+}
+
+// Copy：新 session + 消息与摘要一并复制；摘要**铸新 id**，消息上的 `summary_id`、摘要的
+// `parent_summary_id`、两端区间 `begin/end_message_id` 全部重映射到新的 id 上。
+func TestCopySessionRemapsSummaryPointers(t *testing.T) {
+	st := openTemp(t)
+	sessionID := "01a00000-0000-7000-8000-000000000000"
+	m := []string{
+		"01a00000-0000-7000-8000-000000000001", "01a00000-0000-7000-8000-000000000002",
+		"01a00000-0000-7000-8000-000000000003", "01a00000-0000-7000-8000-000000000004",
+	}
+	seedSession(t, st, sessionID, m...)
+	if _, err := st.db.Exec("UPDATE sessions SET title = '有名字的会话' WHERE id = ?1", sessionID); err != nil {
+		t.Fatal(err)
+	}
+	top, left, right := "01b00000-0000-7000-8000-000000000001",
+		"01b00000-0000-7000-8000-000000000002", "01b00000-0000-7000-8000-000000000003"
+	seedSummary(t, st, top, sessionID, nil, m[0], m[3])
+	seedSummary(t, st, left, sessionID, &top, m[0], m[1])
+	seedSummary(t, st, right, sessionID, &top, m[2], m[3])
+	attach(t, st, left, m[0], m[1])
+	attach(t, st, right, m[2], m[3])
+	// 顶层吃的是两份摘要（source_kind = summary）⇒ 它的 source_ids 也得换
+	if _, err := st.db.Exec(
+		`UPDATE summaries SET source_kind = 'summary', source_ids = ?1 WHERE id = ?2`,
+		`["`+left+`","`+right+`"]`, top); err != nil {
+		t.Fatal(err)
+	}
+
+	copied, err := st.CopySession(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if copied.ID == sessionID {
+		t.Fatal("Copy 必须换新 session id")
+	}
+	if copied.Title != "有名字的会话" || copied.Provider != "dummy" || copied.AgentID != "default" {
+		t.Fatalf("标题 / 渠道 / agent 该带着：%+v", copied)
+	}
+	messages, err := st.ListMessages(copied.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != len(m) {
+		t.Fatalf("消息条数 = %d，想要 %d", len(messages), len(m))
+	}
+	old := map[string]bool{}
+	for _, id := range m {
+		old[id] = true
+	}
+	for index, message := range messages {
+		if old[message.ID] {
+			t.Fatalf("消息该铸新 id（第 %d 条还是旧的 %s）", index, message.ID)
+		}
+		if message.SessionID != copied.ID {
+			t.Fatalf("消息该挂在新会话上：%+v", message)
+		}
+		if message.Content != "第 "+m[index]+" 条" {
+			t.Fatalf("顺序 / 正文该逐条对上：%+v", message)
+		}
+	}
+	summaries, err := st.ListSummaries(copied.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) != 3 {
+		t.Fatalf("摘要条数 = %d，想要 3", len(summaries))
+	}
+	newIDOf := map[string]string{} // 旧摘要 id → 新摘要 id（按区间端点认）
+	interval := func(summary model.Summary) string {
+		return *summary.BeginMessageID + ".." + *summary.EndMessageID
+	}
+	for _, summary := range summaries {
+		if summary.BeginMessageID == nil || summary.EndMessageID == nil {
+			t.Fatalf("复制出来的摘要该带着（重映射过的）区间：%+v", summary)
+		}
+		switch interval(summary) {
+		case messages[0].ID + ".." + messages[1].ID:
+			newIDOf[left] = summary.ID
+		case messages[2].ID + ".." + messages[3].ID:
+			newIDOf[right] = summary.ID
+		case messages[0].ID + ".." + messages[3].ID:
+			newIDOf[top] = summary.ID
+		default:
+			t.Fatalf("区间指到了原会话的消息上：%+v", summary)
+		}
+	}
+	if len(newIDOf) != 3 {
+		t.Fatalf("三份摘要该各就各位：%v", newIDOf)
+	}
+	for _, summary := range summaries {
+		switch summary.ID {
+		case newIDOf[left], newIDOf[right]:
+			if summary.ParentSummaryID == nil || *summary.ParentSummaryID != newIDOf[top] {
+				t.Fatalf("父指针该指到新的顶层摘要上：%+v", summary)
+			}
+		case newIDOf[top]:
+			if summary.ParentSummaryID != nil {
+				t.Fatalf("顶层摘要在副本里还是顶层：%+v", summary)
+			}
+			if !sameIDs(summary.SourceIDs, []string{newIDOf[left], newIDOf[right]}) {
+				t.Fatalf("source_ids 该换成新摘要 id：%v", summary.SourceIDs)
 			}
 		}
-		// u1 ─┬─ a1
-		//     └─ a2 ── u2 ─┬─ a3
-		//                  └─ a4(leaf)
-		insert("u1", nil)
-		insert("a1", "u1")
-		insert("a2", "u1")
-		insert("u2", "a2")
-		insert("a3", "u2")
-		insert("a4", "u2")
-		return st, sessionID
 	}
-	leafOf := func(t *testing.T, st *Store, sessionID string) string {
-		t.Helper()
-		session, err := st.GetSession(sessionID)
-		if err != nil || session == nil {
-			t.Fatalf("读会话失败: %v", err)
+	for index, want := range []string{left, left, right, right} {
+		if messages[index].SummaryID == nil || *messages[index].SummaryID != newIDOf[want] {
+			t.Fatalf("消息 %d 的 summary_id 该指到新摘要上：%+v", index, messages[index])
 		}
-		if session.CurrentLeaf == nil {
-			return ""
-		}
-		return *session.CurrentLeaf
 	}
-
-	t.Run("删当前尾巴 ⇒ 退到上一条兄弟", func(t *testing.T) {
-		st, sessionID := build(t, "a4")
-		if _, err := st.DeleteMessage(sessionID, "a4"); err != nil {
-			t.Fatal(err)
-		}
-		if got := leafOf(t, st, sessionID); got != "a3" {
-			t.Fatalf("leaf = %q，想要 a3", got)
-		}
-	})
-
-	t.Run("删带子树的那条 ⇒ 退到还活着的兄弟", func(t *testing.T) {
-		st, sessionID := build(t, "a4")
-		deleted, err := st.DeleteMessage(sessionID, "a2") // a2+u2+a3+a4
-		if err != nil {
-			t.Fatal(err)
-		}
-		if deleted != 4 {
-			t.Fatalf("删了 %d 条，想要 4", deleted)
-		}
-		if got := leafOf(t, st, sessionID); got != "a1" {
-			t.Fatalf("leaf = %q，想要 a1", got)
-		}
-	})
-
-	t.Run("删除全部 ⇒ 退到上文", func(t *testing.T) {
-		st, sessionID := build(t, "a4")
-		deleted, err := st.DeleteSiblings(sessionID, "a3") // a3 + a4
-		if err != nil {
-			t.Fatal(err)
-		}
-		if deleted != 2 {
-			t.Fatalf("删了 %d 条，想要 2", deleted)
-		}
-		if got := leafOf(t, st, sessionID); got != "u2" {
-			t.Fatalf("leaf = %q，想要 u2（退到上文）", got)
-		}
-	})
-
-	t.Run("删不是当前尾巴的兄弟 ⇒ leaf 不动", func(t *testing.T) {
-		st, sessionID := build(t, "a4")
-		if _, err := st.DeleteMessage(sessionID, "a1"); err != nil {
-			t.Fatal(err)
-		}
-		if got := leafOf(t, st, sessionID); got != "a4" {
-			t.Fatalf("leaf = %q，想要 a4（不该动）", got)
-		}
-	})
+	// 原来的会话一个字节都没动
+	if original, _ := st.ListSummaries(sessionID); len(original) != 3 {
+		t.Fatalf("原会话的摘要该原样：%+v", original)
+	}
+	if source, _ := st.ListMessages(sessionID); !sameIDs(messageIDsOf(source), m) {
+		t.Fatalf("原会话的消息该原样：%v", messageIDsOf(source))
+	}
+	// Copy 一条空会话也得能用（只是没有消息与摘要）
+	emptyID := "01a00000-0000-7000-8000-00000000000e"
+	seedSession(t, st, emptyID)
+	empty, err := st.CopySession(emptyID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if empty.ID == emptyID {
+		t.Fatal("空会话的 Copy 也要新 id")
+	}
+	if messages, _ := st.ListMessages(empty.ID); len(messages) != 0 {
+		t.Fatalf("副本该是空的：%+v", messages)
+	}
+	// 不存在的会话 ⇒ ErrNotFound
+	if _, err := st.CopySession("查无此会话"); err != ErrNotFound {
+		t.Fatalf("该 404：%v", err)
+	}
 }

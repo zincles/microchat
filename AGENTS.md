@@ -49,7 +49,7 @@ reminder/                  ← 专题参考（`tool-calls.md` 工具调用 / `je
 |---|---|---|
 | `model` | 纯结构 | 无依赖 |
 | `statelang` | `<state>` 语法 | 零依赖纯函数；**解析即验证**；`Cleaned` 里**永不出现标签**（fuzz 守着）|
-| `store` | **只有它碰 SQL** | 正文/提示词原样存档；变量不落库；树在 `parent_message_id`；生成中的回复不在库里 |
+| `store` | **只有它碰 SQL** | 正文/提示词原样存档；变量不落库；会话是**线性**的（顺序在 `id` 上，没有父指针/leaf）；摘要盖的是**一段**（`begin/end`）；生成中的回复不在库里 |
 | `config` | `config/` 四个文件 | 可缺失；整体重写；密钥不回显 |
 | `registry` | 模型口径 | 身份 `(provider, upstream_id)`；发现与覆盖分列，刷新不动用户列 |
 | `providers` | **只有它碰网络** | 只走成熟库；超时必配 |
@@ -74,16 +74,29 @@ reminder/                  ← 专题参考（`tool-calls.md` 工具调用 / `je
 1. **存储是 SQLite**（不选全 JSON：崩溃安全、并发、查询都白拿）：`data/microchat.db`。手写配置只在 `config/`（**严格 JSON**：注释与尾逗号都报错——程序会整体重写）。**配置住数据目录里**（默认 `data/config/`）⇒ 备份 / 搬家只要搬 `data/` 一个目录；
   两者路径**相对工作目录**，可用 `MICROCHAT_CONFIG_DIR` / `MICROCHAT_DATA_DIR` 覆盖。界面偏好另存 `~/.config/microchat/frontend.json`（不同机制，别混）。
 2. **正文与提示词都是存档**：`<state>` 块原样留在消息正文**和 system prompt** 里；**发给模型的文本一律剔除标签**，改注入当前状态表。唯一出口 `state.BuildOutgoing()`——不许写第二条拼装路径。
-3. **世界状态不落库**：世界状态**每次现算**（`state.FromSources`）：先扫生效提示词里的块（**底子**），再按**当前路径**顺序扫正文里的块，然后 fold。每条操作带 `message_id`，"哪句话带来的状态"追得回来。**没有派生表** ⇒ 编辑/删除消息、改提示词、换分支都不需要"重算"（换分支只要重拉 `/sessions/{session_id}/state`）。
+3. **世界状态不落库**：世界状态**每次现算**（`state.FromSources`）：先扫生效提示词里的块（**底子**），再按**会话顺序**扫正文里的块，然后 fold。每条操作带 `message_id`，"哪句话带来的状态"追得回来。**没有派生表** ⇒ 编辑/删除消息、改提示词、Copy 一条会话都不需要"重算"（换个会话看状态就是重拉 `/sessions/{session_id}/state`）。
    底子的**来源**决定它算哪一层：用 agent 的 ⇒ **全局**（同一 agent 的会话共享）；会话自己写了 ⇒ **本会话**。
    **删除不留痕迹**：`delete(键)` 与空值 `键 =` 都只是从**本层**拿掉 ⇒ 删底子里的键，值会从底子漏回来（"删"只作用于自己那一层；不想被删的键别写底子，写进第一条消息）。
    生效提示词由**一处**解析（会话覆盖 → agent 的 → 内置默认），出站 / 底子 / 界面共用它。
-4. **消息是一棵树**（⚠ **已决定改成线性 + Copy，见 `DEFINE.md`** —— 那段实现尚未动 ✓ 现在仍是树 ✓）：`messages.parent_id`（自引用 `CASCADE`）+ `sessions.current_leaf`。整条**当前路径** = 从 `current_leaf` 回溯到根。**兄弟就是分支**：
-   - **重新发送 = 再长一个兄弟**（旧的留着）；尾条是用户消息时照它生成；
-   - **切分支只许切到尾巴的兄弟**（否则世界状态会跟着倒退）；
-   - **删除只允许删整棵子树**；leaf 若落在被删子树里，退到**上文下还活着的最新一个孩子**（不是退到上文——那会让界面像"整条分支都没了"）；「删除全部」= 清掉一组兄弟；
-   - **生成中的回复不在库里**：受理时先把 id 算好发给客户端，等**整段**拿到才用这个 id 与当时捕获的上文 INSERT ⇒ 停止/失败/被杀都不留半条，也没有"清理占位"要维护。
-   **别按 rowid 或 id 排消息**；`rowid` 只当"同龄兄弟谁先谁后"的顺序。
+4. **会话是线性的**（2026-09-29 定：树 → 线性 + Copy + 删除级联，方案见 `DEFINE.md`）：
+   **一条会话 = 一条线**。顺序**只**由 `messages.id` 定（UUIDv7：受理时铸、就地替换不改 id ⇒ 顺序稳）；
+   没有 `parent_message_id`、没有 `sessions.current_leaf`、没有"当前路径"、没有兄弟 —— **别按 rowid 排**。
+   "最新一条" = `ORDER BY id DESC LIMIT 1`（白拿 `messages_by_session(session_id, id)` 索引）。
+   - **分岔靠 Copy**（`POST /sessions/{session_id}/copy`，不叫 fork）：新 session + 消息与摘要一并复制
+     （摘要**新 id** 且消息上的 `summary_id`、摘要的 `parent_summary_id`、两端区间都重映射；
+     标题/渠道/模型/agent/提示词带着）；**世界状态不复制**（它本来就现演）。Copy 时一批 id 铸完要**排序再发**
+     （UUIDv7 只在毫秒上有序 ⇒ 一口气连铸会乱序，而顺序就是 id）。
+   - **摘要盖的是一段**：`summaries.begin_message_id` / `end_message_id`（闭区间，可空）。装配**按区间 O(1) 跳**，
+     没有"父的孩子一个不缺"那道闸（区间就是覆盖范围本身）；指针悬空 / 区间缺失就逐条走原文（宁可细，不许漏）。
+   - **删除 = 删这条及之后全部**（`DELETE /sessions/{session_id}/messages/{message_id}`）：删【目标及其之后的全部消息】
+     +【覆盖区间与之相交的全部摘要】+【这些摘要的全部祖先】，再把幸存者里指向死摘要的指针置空
+     （消息的 `summary_id`、摘要的 `parent_summary_id`），一个事务里按 **①清指针 ②删摘要 ③删消息** 执行。
+     **只删后缀 ⇒ 不留洞 ⇒ 不需要"退 leaf"**。"删这条及之后"判定很便宜：任何 `end_message_id` 落在后缀里的摘要都死。
+   - **预览与执行共用一份计算**（`store.DeletionPlan`）：`GET .../deletion-preview` 只算不动；`DELETE` 照它干，
+     且请求体带回 `last_deleted_message_id` 核对"末尾没变"，不符 ⇒ **409**（重新预览）。
+     **编辑不级联**（就地换正文、id 不变 ⇒ 覆盖范围仍成立 ⇒ 只标 `dirty`、照用）。
+   - **生成中的回复不在库里**：受理时先把 id 算好发给客户端，等**整段**拿到才用这个 id 与当时捕获的上文 INSERT
+     ⇒ 停止/失败/被杀都不留半条，也没有"清理占位"要维护。
 5. **模型身份 = `(provider, upstream_id)`**；显示名三级回退（用户覆盖 → 上游名 → prettify）**只在后端**做。
    新建会话的 agent 取 `agents.json` 的 `default_agent`（空串/缺失都算没配 ⇒ 内置默认）。**agent 的 id** 新建时由后端生成；改名走 `PATCH /agents/{agent_id}` 的 `new_id`——一次把 `default_agent` 与所有会话的引用搬过去（软引用无外键，找不到只会静默回空提示词，所以必须由这一处维护）。
 6. **`data/`（含 `data/config/`）永不入库**（端口口令、连接信息、密钥、存档）。默认值全在代码里，文件缺失也能跑。`.gitignore` 只放行 Godot 项目的非缓存部分。
@@ -149,7 +162,8 @@ delete(AA)           # 删除
 - 无用：`GET /debug/state`、`GET /debug/file/{name}`、`DELETE /providers/{provider_id}/models`、`GET /sessions/{session_id}/export`
   （理由：后端自述会说谎、配置文件原文不该给远程客户端、上游模型列表本就自动清理、导出该由 Agent 卡带承担）
 - 可选（**待重做**，不做兼容）：`GET /tasks`、`POST /models/probe`、`POST /sessions/{session_id}/archive`、
-  `POST /sessions/{session_id}/fork`、`GET /sessions/{session_id}/summaries`、`GET/PUT /abilities`、`POST /sessions/{session_id}/compact`
+  `GET /sessions/{session_id}/summaries`、`GET/PUT /abilities`、`POST /sessions/{session_id}/compact`
+- **`POST /sessions/{session_id}/fork` 已彻底作废** ✗（不是"待重做"）：线性会话里分岔就是 **Copy** ✓（见上表）
 - **不要照旧版补回来** ✗ —— 旧版是参照，不是目标；要加先改这张表。
 
 ### 会话与消息
@@ -158,15 +172,14 @@ delete(AA)           # 删除
 |---|---|---|---|---|
 | GET | `/sessions` | — | `[SessionView]` | 每项 = 会话 + `turn`（左栏据此标"生成中"）|
 | POST | `/sessions` | `CreateSessionReq` | `Session` · 201 | 省略字段时取 `config.json` 的 `defaults` |
-| PATCH | `/sessions/{session_id}` | `UpdateSessionReq` | `Session` | 标题 / 模型 / agent / **切分支**（`current_leaf`）|
+| PATCH | `/sessions/{session_id}` | `UpdateSessionReq` | `Session` | 标题 / 模型 / agent |
 | DELETE | `/sessions/{session_id}` | — | 204 | 不存在 → 404 |
-| GET | `/sessions/{session_id}/messages` | — | `[Message]` | **按树上的当前路径**，不是 rowid |
+| POST | `/sessions/{session_id}/copy` | — | `Session` · 201 | **Copy**（线性会话里的"分岔"）：新 id、消息与摘要一并复制、摘要新 id 且指针重映射；**世界状态不复制** |
+| GET | `/sessions/{session_id}/messages` | — | `[Message]` | **按 `id` 升序的整条会话**（线性 ⇒ 没有"当前路径"）|
 | POST | `/sessions/{session_id}/messages` | `SendReq` | `TurnAccepted` · **202** | 落用户消息 + 开工；不含回复正文 |
-| PATCH | `/sessions/{session_id}/messages/{message_id}` | `EditMessageReq` | `Message` | 改正文 = 重写存档（世界状态随之现演）|
-| DELETE | `/sessions/{session_id}/messages/{message_id}` | — | `{"deleted": n}` | 删**整棵子树**；leaf 退到还活着的最新兄弟 |
-| DELETE | `/sessions/{session_id}/messages/{message_id}/siblings` | — | `{"deleted": n}` | 「删除全部」|
-| POST | `/sessions/{session_id}/resend` | — | `TurnAccepted` · **202** | 尾条是助手 ⇒ 再长一个兄弟；是用户 ⇒ 照它重发 |
-| GET | `/sessions/{session_id}/branches` | — | `{消息id: BranchInfo}` | 每条在同龄兄弟里第几/共几（`‹ 2/3 ›`）|
+| PATCH | `/sessions/{session_id}/messages/{message_id}` | `EditMessageReq` | `Message` | 改正文 = 重写存档（世界状态随之现演；摘要只标 `dirty`、**不级联**）|
+| GET | `/sessions/{session_id}/messages/{message_id}/deletion-preview` | — | `DeletionPlan` | **只算不动**（安全 ⇒ GET）：会删掉哪些消息 / 摘要、哪些指针会被置空 |
+| DELETE | `/sessions/{session_id}/messages/{message_id}` | `{"last_deleted_message_id"}` | `DeletionPlan` | 删**这条及之后的全部**（级联见 `DEFINE.md`）。核对字段不符 ⇒ **409**（重新预览）；缺字段 ⇒ 422 |
 | GET | `/sessions/{session_id}/state` | — | `StateView` | `global` / `session` / `global_values` / `effective` / `tables`，**每次现算** |
 | GET | `/sessions/{session_id}/outgoing` | `[Outgoing]` | "下次真会发出去的东西"（标签已剔、状态已注入、**压缩已生效**）。每条带出处：`source` = `system`/`message`/`summary`（后者另有 `summary_id`、`blocks`）—— **检查压缩效果靠它**，别去猜正文抬头 |
 | GET | `/sessions/{session_id}/context` | — | `ContextUsage` | 只有数字：`used_tokens`（估算）/ `budget_tokens` / `trigger_tokens` / `remaining_tokens` / `ctx_len` / `max_output` / `ratio` / `estimated` / `last_prompt_tokens` / `over_budget` |
@@ -228,7 +241,7 @@ delete(AA)           # 删除
 - 后台任务落库前核对令牌：被 `stop` 顶掉的旧任务回来时令牌对不上，结果直接丢掉；
 - `stop` = 摘登记 + abort 后台任务（别让上游白跑完）。**库里没有要收拾的东西**。
 
-**流式**：增量**什么都不算**（不进库、不进树、不参与世界状态与出站计算）——落库只认流结束后那一整段。所以流断了、被停了、上游中途报错，档案永远干净。
+**流式**：增量**什么都不算**（不进库、不参与世界状态与出站计算）——落库只认流结束后那一整段。所以流断了、被停了、上游中途报错，档案永远干净。
 
 - 上游用现成的 SSE 库，不手搓 `data:` 分帧；
 - 增量进这一轮的缓冲区，顺手把 `pending` 抬成 `streaming`；令牌对不上的字节直接丢；
@@ -258,12 +271,14 @@ delete(AA)           # 删除
 
 ### `sessions`
 
-`id` · `title`（首句自动生成；空串 = 还没起名）· `system_prompt`（**空串 = 没覆盖** ⇒ 底子算全局）· `provider` / `model` / `agent_id`（都是**软引用**，无外键）· `current_leaf` · `created_at` / `updated_at`（界面按 `updated_at` 排序）
+`id` · `title`（首句自动生成；空串 = 还没起名）· `system_prompt`（**空串 = 没覆盖** ⇒ 底子算全局）· `provider` / `model` / `agent_id`（都是**软引用**，无外键）· `created_at` / `updated_at`（界面按 `updated_at` 排序）
 
-### `messages` —— 一条消息，**同时是树的一个节点**
+（**没有 `current_leaf`**：线性会话不需要"停在哪儿"，"最新一条" = `ORDER BY id DESC LIMIT 1`。）
 
-`id`（生成回复时**受理那一刻**就算好）· `session_id`（FK CASCADE）· `role`（`CHECK IN ('user','assistant')`）· `content`（**存档本体**，`<state>` 块原样留着）· `parent_message_id`（FK CASCADE；**树就在这一列**）· `created_at`
-后四列**只服务显示**（出站/状态/分支/编辑一律不看）：`reasoning` · `reasoning_ms`（受理 → 第一段正文）· `duration_ms` · `usage`（归一化后的 JSON）
+### `messages` —— 一条消息，**线性会话里的一格**
+
+`id`（生成回复时**受理那一刻**就算好；**顺序就是它**）· `session_id`（FK CASCADE）· `role`（`CHECK IN ('user','assistant')`）· `content`（**存档本体**，`<state>` 块原样留着）· `created_at`
+后四列**只服务显示**（出站/状态/编辑一律不看）：`reasoning` · `reasoning_ms`（受理 → 第一段正文）· `duration_ms` · `usage`（归一化后的 JSON）
 
 ### `models` —— 发现所得 + 用户覆盖（PK `(provider, upstream_id)`）
 
@@ -272,43 +287,46 @@ delete(AA)           # 删除
 
 ### `summaries` + `provider_state`
 
-`summaries`：`id` · `session_id` · `parent_summary_id`（**深度 = 指针链长度**，不存 level）· `source_kind`（`message`/`summary`，**同质**）· `text`（只写叙事；混进 `<state>` 会被剔除并记日志）· `blocks` · `tokens` · `source_ids`（当时吃的是什么，供审计与重做）· `provider`/`model`/`prompt_version`/`usage` · `dirty`（被覆盖的消息被编辑过 ⇒ 1；界面显示"已过期"，**装配时照用**）· `created_at`
+`summaries`：`id` · `session_id` · `parent_summary_id`（**深度 = 指针链长度**，不存 level）· `source_kind`（`message`/`summary`，**同质**）· `begin_message_id` / `end_message_id`（**它盖住的那一段**，闭区间，可空）· `text`（只写叙事；混进 `<state>` 会被剔除并记日志）· `blocks` · `tokens` · `source_ids`（当时吃的是什么，供审计与重做）· `provider`/`model`/`prompt_version`/`usage` · `dirty`（被覆盖的消息被编辑过 ⇒ 1；界面显示"已过期"，**装配时照用**）· `created_at`
 `provider_state`：`provider` · `last_refresh_at`（"上次拉取：N 分钟前"）
 
-**索引/外键/运行时**：索引 `messages_by_session(session_id, id)`（UUIDv7 ⇒ 同龄兄弟按时间分先后）、`messages_by_parent`、`messages(summary_id)`、`summaries(session_id/parent_summary_id)`。外键**只有两条**（`messages` 的两个），都 CASCADE；`current_leaf`/`agent_id`/`provider` 是故意不加约束的软引用。迁移由 `PRAGMA user_version` 驱动（当前 **只有 001** —— 开发阶段改形状就改它、删库重来，**不许追加** 002）；`foreign_keys=ON`、`journal_mode=WAL`；写入由一把锁串行化。
+**索引/外键/运行时**：索引 `messages_by_session(session_id, id)`（**顺序就是 `id`**，取"最新一条"也走它）、`messages(summary_id)`、`summaries(session_id/parent_summary_id)`。外键**只有两条**（`messages` 的两个）：`session_id` ⇒ CASCADE、`summary_id` ⇒ SET NULL；`begin/end_message_id` 与 `agent_id`/`provider` 是故意不加约束的（`begin/end` 的失效由 `store.DeletionPlan` 一份计算负责）。迁移由 `PRAGMA user_version` 驱动（当前 **只有 001** —— 开发阶段改形状就改它、删库重来，**不许追加** 002）；`foreign_keys=ON`、`journal_mode=WAL`；写入由一把锁串行化。
 
-## 摘要 / 压缩的设计（**设计已定；Go 版尚未实现**：没有 compact 模块、没有路由、summaries 表还没人写）
+## 摘要 / 压缩的设计（**设计已定；压缩本身还没写**：没有 compact 模块、没有路由；`summaries` 表与**区间**已经有人用 —— 装配按区间跳、Copy 复制它、删除级联按它判定）
 
-- **指针链，不是层级数字**：摘要**不是树的节点**（不往 `messages` 插行、不改 `parent_message_id`）；硬不变量：**压缩只往 `summaries` 插一行**，绝不插/改/删 `messages`。
-- **为什么不需要"区间见证"**：分叉只允许出现在尾巴上，而压缩只吃尾巴之外 ⇒ 被压那段在压缩那一刻**是线性的** ⇒ 纯指针足够。
+- **摘要不是"消息的节点"**：不往 `messages` 插行；**压缩只往 `summaries` 插一行**，绝不插/改/删 `messages`（删除那条路是另一回事：级联会删摘要，见不变量 4）。
+- **盖的是哪一段：`begin_message_id` / `end_message_id`**（创建时写一次）⇒ 装配/级联都是 **O(1) 查区间**：不"数过去"，也不需要"父的孩子一个不缺"那道闸（线性会话里区间**就是**覆盖范围本身）。两端可空（老数据）⇒ 那时逐条走原文（宁可细，不许漏）。
+  失效规则只有两条：① 被覆盖的消息**被删** ⇒ 该摘要连同**父链**作废（删除级联干的就是这件事）；② 被覆盖的消息**被改写** ⇒ 只标 `dirty`、**照用**。
 
-  **具体走一遍**（用户的例子）：路径 `A B C D E F G`，压缩出 `BD`(覆盖 BCD)、`EF`(覆盖 EF)，
-  再压出 `BF`(覆盖 BD+EF)。走到 B ⇒ `B.summary_id = BD` ⇒ BD 有父 BF ⇒ **父的孩子 BD、EF 都在路径上** ⇒
-  用 BF、跳过整串 ⇒ 落到 F ⇒ 下一个是 G ⇒ 队列 = `A, BF, G` ✓。
-  **没有"下一条"** ✗：顺序来自**当前路径**（树里同一条消息可以有多个孩子 ⇒ 兄弟就是分支）；
-  **取粗的闸**是"父摘要的全部孩子都在路径上" ✓ —— 少了这道闸，换过分支后会把**另一条分支的内容**塞进提示词 ✗✗。
+  **具体走一遍**（用户的例子）：`A B C D E F G`，压缩出 `BD`(B,C,D)、`EF`(E,F)，再压出 `BF`(盖 `BD`+`EF`，
+  区间 B..F)。走到 B ⇒ `B.summary_id = BD` ⇒ BD 的父是 BF、**左端同起点** ⇒ 用 BF、一次跳到 F ⇒ 下一个是 G
+  ⇒ 队列 = `A, BF, G` ✓。**不需要"父的孩子一个不缺"那道闸** ✓：区间就是覆盖范围本身 ✓ ——
+  孩子必然在父的区间里、且**左端对齐**（压缩只吃连续的段），所以"父的左端 = 这条的左端"就敢用父 ✓。
 
-- **跳过去靠"数" ✗不靠存**：遍历的是**当前路径那个有序数组** ✓，"下一条"就是下一个下标 ✓。
-  两种数法：`coveredBySelf` = 后面**连续**几条的 `summary_id` 还是**同一份** ✓（它自己盖的那串 ✓）；
-  `belongs` = 后面连续几条的摘要的**父**就是这个父摘要 ✓（父盖的那串 ✓）。跳步就是 `index += run` ✓。
-  取父的闸是 **`run == total`** ✓：`run` 是"眼前连续几条" ✓，`total` 是"**整条路径**上有几条" ✓ ——
-  两者相等才敢用父 ✓（否则父盖的兄弟有不在路径上的 ✗：换了分支 ✓，用它要么串味要么漏内容 ✗）。
-  代价：每个摘要处会全量扫一遍算 `total` ✓ ⇒ 现在是 O(路径长 × 摘要数) ✓；几千条时再优化（行走时记账即可 ✓）。
+- **跳过去靠查区间（O(1)），不靠"数"** ✗：先按 `id` 把两端换成下标 ✓，然后 `index = end + 1` ✓。
+  升到更粗的那一层只看一条：**祖先与自己的左端同起点**（左端不同 ⇒ 父盖的前半截已经发过了，那是同一批孩子里的老二）✓。
+  指针悬空 / 区间缺失（老数据）/ 区间不从这条起 ⇒ 这一条**照原文发**、往前一步 ✓（宁可细，不许漏）。
 
-- **不许给摘要加"起止消息"字段** ✗（`begin_message_id` / `end_message_id` 这一类）：覆盖范围**是可推导的** ✓
-  （顺着 `summary_id` 走即知 ✓）；存下来就是**第二个真相来源** ✗ —— 被覆盖的消息一经删除/编辑（摘要只标 `dirty` ✓ 但**照用** ✓），
-  这两端会指向**已经不存在的消息** ✗，而按它"跳到下一条"会**静默**走进未定义行为 ✗。
-  （同一条理由见"世界状态不落库"与"摘要里不存状态"。）
-- **装配时的行走**（`state.BuildOutgoing`）：从路径根逐条往前走 —— 有 `summary_id` 就取它；若有父摘要、且**父的全部孩子就在眼前**（一个不缺）⇒ 用父并跳过整串；否则用细的、跳过它覆盖的那串；都没有 ⇒ 发原文。"跳过"靠继续读 `summary_id` 判断，**不存范围**。**能取粗的不取精，但宁可用细的也不许漏内容**。
+- **摘要**必须**记区间**（`begin_message_id` / `end_message_id`）✓ —— **这就是定案**（2026-09-29 改的）：
+  早先"不许加起止字段"的理由是"可推导"，但**推导的代价是 O(路径长 × 摘要数)**（要"数过去"、还要靠
+  "父的孩子一个不缺"兜底）✗；记一次区间换来装配与**删除级联**都是 O(1) ✓。
+  区间被"撞坏"的两种情形都有出路 ✓：消息**被删** ⇒ 级联把该摘要连同父链作废（同一份计算，见不变量 4）；
+  消息**被改写** ⇒ 只标 `dirty`、**照用** ✓（`id` 不变 ⇒ 区间仍然成立）。两端可空 ⇒ 装配退回逐条走原文 ✓（不会静默错）。
+- **装配时的行走**（`state.BuildOutgoing`）：按 `id` 顺序往前走 —— 这条有 `summary_id`、且它的**区间左端就是这条** ⇒
+  升到最粗的左端对齐的祖先、跳到区间右端之后；否则发原文。"跳过"是查区间，**不再"数过去"**。**能取粗的不取精，但宁可用细的也不许漏内容**。
 - **MASK（术语）**：有摘要覆盖的那一段，装配时**不发明文**、只发摘要的正文 —— 存放处一个字节都不动，被"遮掉"的只是**这一次请求**。
 - **只有 Compact，没有"丢"**（铁律）：不存在"少发一段没人代表的内容"。超预算 ⇒ **先压再发**；真压不动 ⇒ **报错原路返回**，不做静默补救。
 - **粒度 = 对话块**：在 `assistant → user` 交界处切（`U1 A1 | U2 U3 A3 | U4 A4 A5`）。① 块绝不被劈开；② **最后那个开着的块永不压**；③ 章 = 凑够 N 个块（只数块，不按 token）；④ 块是**推导**的、不入库（需要指一个块时用两端消息 id）。
 - **摘要里不存状态**：状态是**端点**的属性，不是段的属性 —— 存进去就是第二个真相来源，改一条旧消息它就过期。提示词里只**附**一份程序算好的状态（算到区间末），标明「程序事实，仅供参考，不要写进梗概」。
 - **真需要快照时它得是独立系统**（`state_snapshots`：从第一条推起、能接着上一个快照往后推进；覆盖的消息一经编辑即失效）。**现在不做** —— 现演的代价足够低。
 - **参数**：`compact_blocks = 10`（单位是块）；预算 = 模型上下文 − 输出预留（缺省 4096）；触发阈值用户设（缺省 = 预算）；停手线 = 阈值 × 0.8；终保护区 = 最近约 10k token。
-- **剪枝**（未做；前置已就绪）：压缩即定稿 ⇒ 只保留当前路径上的那个孩子，其余子树删掉。三条硬条件：① **先落摘要、再剪枝、同一事务**；② **剪枝前先导出** `data/archive/*.json`；③ 报"剪掉 N 条旧分支（已导出）"，**不许静默**。
-- **次序**（✅ = 旧版做到过；**Go 版现在一律 ✗**）：P1 预算 + 占用 ✗ · P1.5 导出/归档/Fork ✗ ·
-  P2 摘要 ✗ · P3 金字塔 ✗ · 清原文 ✗ —— 只有装**配侧的指针链**（走 `summary_id` 取粗的）已经在 Go 里跑 ✓。
+- **剪枝**（未做；**线性 + 区间摘要之后前提变了 ⇒ 要重做设计**）：早先的形态是"压缩即定稿 ⇒ 只留当前路径上的孩子、其余子树删掉"，
+  但**删消息的级联会把盖住它的摘要一起作废** ⇒ "压完就删旧消息"等于把刚落的摘要也删了 ✗。
+  要真做，得先想清"删了之后谁来代表那段"（现在只有 Compact，没有"丢"）⇒ **先当没这回事**。三条旧条件里仍然成立的两条：
+  ① **同一事务**；② **动手前先导出** `data/archive/*.json`；③ 报"剪掉 N 条（已导出）"，**不许静默**。
+- **次序**（✅ = 旧版做到过；**Go 版现在一律 ✗**）：P1 预算 + 占用 ✗ · P1.5 导出/归档 ✗ ·
+  P2 摘要 ✗ · P3 金字塔 ✗ · 清原文 ✗ —— 只有装**配侧按区间跳**（走 `summary_id` + `begin/end`）与
+  **删除 / Copy 时对摘要的处理**已经在 Go 里跑 ✓。
 
 ## 与上游通信
 
@@ -435,7 +453,7 @@ prompt caching**"）。**不要为能力造子 session id**：网关的会话 id
 - **09/05 起，没带 `x-opencode-session` 的请求直接报错**（不是警告）；要求"每会话一个稳定 UUID"；
 - **线上值 = 裸 UUID**（社区实现把 `session-<uuid>` 剥前缀再发；我们的 `sessions.id` 本来就是裸的 ⇒ 零转换）；
 - **生命周期**：跨轮次 / 恢复 / **压缩** / 重试**都不变**；**新会话、fork、子任务**用**新** id
-  ⇒ 对照我们：重发、切分支、编辑 = 同一会话 ⇒ **同一 id**；`/fork` = 新会话 ⇒ 新 id（天然满足）；
+  ⇒ 对照我们：重发、编辑、删消息 = 同一会话 ⇒ **同一 id**；**Copy 出来的新会话** = 新 id（天然满足 ✓）；
 - **辅助调用骑同一个 key**：标题生成、摘要压缩也要带**当前会话**的 id（不是每条请求随机）；
 - 归口：**provider 层按 kind 自动加**（维护者原话："该由 pi-ai 归一化各家的特殊需求"）；
   动态的会话头**压过**静态同名头；`opencode*` 之外不发。
@@ -495,15 +513,18 @@ prompt caching**"）。**不要为能力造子 session id**：网关的会话 id
 
 ## 界面该长什么样（**口径**；Godot 版照此对齐，目前尚未实现）
 
-- 左栏：`＋ 新建会话` + 会话列表 + 底部 `⟳ 刷新`（一把把会话/消息/状态/分支/模型/agent 全拉一遍）。正在生成的会话标题后面挂「 · 生成中…」。
+- 左栏：`＋ 新建会话` + 会话列表 + 底部 `⟳ 刷新`（一把把会话/消息/状态/模型/agent 全拉一遍）。正在生成的会话标题后面挂「 · 生成中…」。
 - 会话视图：顶部一行**上下文占用**（`上下文 12.3k（上轮实测 11.9k）/ 40k`；超 80% 黄、超触发阈值红）→ 系统提示词块（可展开）→ 消息列表（署名 + `编辑 / 复制 / 删除`）→ 底栏输入。
   - 助手署名 = **该会话 agent 的名字**（不是"助手"）；输入栏跟着软键盘浮。
-  - **分支操作只出现在最后一条消息上**：`‹ 2/3 ›`（切候选回复）、`删除全部`、`重新发送`。
+  - **消息级操作只出现在最后一条上**（线性会话里"从这里往后不要了"就是它）：`重摇`（可接受 / 丢弃）、`剪切`（删这条及之后）。
+    消息级删除**必须先看删除预览**（`GET .../deletion-preview`）并让用户确认，再带 `last_deleted_message_id` 发 DELETE。
+  - **分岔 = 复制会话**（`POST /sessions/{session_id}/copy`）：没有"切分支"这回事 ✗（`current_leaf` 已删）。
   - **生成中那条回复**是界面按状态**合成**的气泡（库里还没有它）：转圈 + "正在生成… 12.3s" + 「停止」；落库后同 id 的真实消息出现，气泡自然消失。发送按钮显示"等待…"；每 300ms 轮询 `/status`，收到 `idle`/`error` 才一次性重拉。
 - **卡片脚注**：`3.2s · 上行 1654 tok（缓存 1408 tok · 85%）· 下行 62 tok（思考 32 tok，含在内）`——只在有数据时显示。**单位是 token**（上游 `usage` 报的）；生成中气泡上「思考中… N 字」是**字符数**（流式帧里没有 token 数）——两处别混。`reasoning_tokens` 是 `completion_tokens` 的子集，不是另加。
 - **思考**默认折叠成「思考（2.1s）」——放的是**思考用时**（受理 → 第一段正文），不是字数。
 - 底部一排：`归档`、`压缩 [N] 个块` + `开始`（202 受理，底栏报结果）、`复制会话`。
-  ⚠ **这三样的路由已砍**（见上面「故意砍掉的」）⇒ 按钮**先不要做**，等它们重做完再说。
+  ⚠ `归档` / `压缩` 的路由**已砍**（见上面「故意砍掉的」）⇒ 按钮**先不要做**，等它们重做完再说；
+  **`复制会话` 的路由已经有了** ✓（`POST /sessions/{session_id}/copy`）。
 - 设置六页：**连接 / Agent / 能力 / 模型与渠道 / 前端设置 / 关于**。底栏常驻"**已连接后端 vX**"，后面跟 `·` 和最近一次动作的结果——两者**互不顶替**；刷新失败要带状态码与 `code`。
   「模型与渠道」页：顶部**服务端上下文口径**（`模型上下文` 兜底 + `摘要触发阈值`）；每个渠道一行（`获取模型` / `删除全部模型` / `编辑`）；下面逐个模型列上下文，可填**覆盖值**（留空 = 清掉）。优先顺序：**覆盖 > 上游发现 > 配置兜底**，只许一处解析。
 - 渠道与模型是**一个下拉**（`渠道 / 模型`，`GET /models` 拍平给的就是这个形状）；provider 的 `name` 缺省回退 `id`。
@@ -519,8 +540,11 @@ prompt caching**"）。**不要为能力造子 session id**：网关的会话 id
   · TUI 模式下日志落到 `data/microchat.log`（别糊在界面上）；
   · 退出用 **`/quit` 或 ctrl+c** —— **没有裸 `q`**（会和打字打架）。
 - 跑法：`go -C core run .`（一条命令跑起来；要二进制就 `go -C core build -o ../microchat .`）。**TUI 内的命令**照 Pi：`/command`。**只放已经有路由的命令**，没搬完的在 `/help` 里如实列出来
-  （现在能用的：`/help` `/new` `/delete` `/resume` `/model` `/outgoing` `/state` `/refresh` `/quit`；
-  还没搬的：`/compact` `/fork` `/archive` `/stop` —— `/tasks` `/probe` 那几条**已砍**，不会再有）。
+  （现在能用的：`/help` `/new` `/delete` `/cut` `/copy` `/resume` `/model` `/outgoing` `/state` `/refresh` `/quit`；
+  还没搬的：`/compact` `/archive` `/stop` —— `/fork`／`/tasks`／`/probe` 那几条**已砍**，不会再有
+  （`/fork` 的位置由 `/copy` 接管）。
+  `/delete`（删整条会话）与 `/cut`（删一条及之后）都**不可逆** ⇒ 两个都先摊开、等 `回车 / y` 点头才动手；
+  `/cut` 的摊开内容来自 `GET .../deletion-preview`（后端那份计算），执行时带回 `last_deleted_message_id` 核对）。
 - 要抄 Pi 的**交互决定**（它的 TUI 是手搓的，库选择无参考价值）：CJK 宽度对齐 / kill-ring 编辑 / LaTeX 降级显示 / markdown 渲染。
 - **设置页要的数据只从一处发**（连上 / 点 ⟳ / 进设置页都走它）——曾经两处各写一份，新加的字段只进了一条路 ⇒ 设置页永远"加载中…"（真发生过）。
 
@@ -541,7 +565,8 @@ prompt caching**"）。**不要为能力造子 session id**：网关的会话 id
 ## 踩过的坑（都是实测出来的，改代码前扫一眼）
 
 - **不设总超时 = 上游卡住、界面转一辈子**：超时写在 `providers.json` 的 `timeouts`（缺省 connect 15s / total 300s）。
-- **删掉"当前那条回复"时 leaf 不能退到上文**：那样路径上一条回复都没有，看起来像"整条分支被删了"；再点重新发送又多一条。正解 = 退到上文下**还活着的最新兄弟**。
+- **删消息只删后缀 ⇒ 不留洞**：所以不需要"退 leaf"这套东西（树那会儿要算"退到还活着的最新兄弟"，很绕且踩过）。
+  想保住后面的内容 ⇒ **先 Copy 一条会话**再在原会话上删（线性会话里这是唯一的"从这里重新开始"）。
 - **配置文件里没有注释**：程序整体重写，JSONC 会给人"写了也会丢"的假象。严格 JSON，写坏了报 `Expecting property name…`。
 - **批量改代码时逐文件落盘**：把 `write` 放在脚本末尾，中途任何断言失败都会让整批改动一起丢。
 - **Go 的 `encoding/json` 默认把 `<` `>` `&` 转义成 `\u003c`**（本项目满地 LaTeX）⇒ 关掉 `SetEscapeHTML`；它的 `Encoder.Encode` 还会补一个 `\n`（axum 不补）⇒ 对账要连字节一起比。

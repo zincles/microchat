@@ -18,7 +18,7 @@ const (
 	RoleAssistant Role = "assistant"
 )
 
-// Message：一条消息，**同时是树上的一个节点**。
+// Message：一条消息 —— **线性会话里的一格**（没有父指针：顺序由 `id` 定）。
 //
 // **字段顺序照抄 Rust 版**（serde 按声明顺序输出 ⇒ 顺序不同 = 字节不同 = 前端可能踩坑）。
 type Message struct {
@@ -27,7 +27,7 @@ type Message struct {
 	Role      Role   `json:"role"`
 	Content   string `json:"content"` // 存档本体：<state> 块原样留着
 
-	// 下面四样只服务显示（出站 / 世界状态 / 分支一律不看它们）
+	// 下面四样只服务显示（出站 / 世界状态一律不看它们）
 	Reasoning   string `json:"reasoning,omitempty"`
 	ReasoningMS *int64 `json:"reasoning_ms,omitempty"`
 	DurationMS  *int64 `json:"duration_ms,omitempty"`
@@ -35,9 +35,8 @@ type Message struct {
 	// 用 RawMessage 原样透出（包成 string 就双重编码了 —— 真发生过，diff 抓出来的）。
 	Usage json.RawMessage `json:"usage,omitempty"`
 
-	ParentMessageID *string `json:"parent_message_id"`
-	SummaryID       *string `json:"summary_id,omitempty"` // 收拢它的摘要：压缩只写这一格
-	CreatedAt       int64   `json:"created_at"`
+	SummaryID *string `json:"summary_id,omitempty"` // 收拢它的摘要：压缩只写这一格
+	CreatedAt int64   `json:"created_at"`
 }
 
 // SummarySourceKind：摘要的成员是消息还是摘要（同质，不许混）。
@@ -48,12 +47,17 @@ const (
 	SourceSummaries SummarySourceKind = "summary"
 )
 
-// Summary：一条摘要（Compact 的产出）。派生数据：只插行，绝不碰 messages 的正文与树。
+// Summary：一条摘要（Compact 的产出）。派生数据：只插行，绝不碰 messages 的正文。
+//
+// `BeginMessageID` / `EndMessageID` = 它盖住的那一段（闭区间）：装配时按它 O(1) 跳过去。
+// 都可为空（老数据）——那时装配退回逐条走，不跳。
 type Summary struct {
 	ID              string            `json:"id"`
 	SessionID       string            `json:"session_id"`
 	ParentSummaryID *string           `json:"parent_summary_id,omitempty"`
 	SourceKind      SummarySourceKind `json:"source_kind"`
+	BeginMessageID  *string           `json:"begin_message_id,omitempty"`
+	EndMessageID    *string           `json:"end_message_id,omitempty"`
 	Text            string            `json:"text"`
 	Blocks          int64             `json:"blocks"`
 	Tokens          int64             `json:"tokens"`
@@ -66,17 +70,16 @@ type Summary struct {
 	CreatedAt       int64             `json:"created_at"`
 }
 
-// Session：一处会话。
+// Session：一处会话。**线性**（没有 current_leaf：最新一条 = `ORDER BY id DESC LIMIT 1`）。
 type Session struct {
-	ID           string  `json:"id"`
-	Title        string  `json:"title"`
-	SystemPrompt string  `json:"system_prompt"` // 空串 = 没覆盖（用 agent 的 ⇒ 世界状态底子算全局）
-	Provider     string  `json:"provider"`      // 软引用
-	Model        string  `json:"model"`
-	AgentID      string  `json:"agent_id"` // 软引用
-	CurrentLeaf  *string `json:"current_leaf"`
-	CreatedAt    int64   `json:"created_at"`
-	UpdatedAt    int64   `json:"updated_at"`
+	ID           string `json:"id"`
+	Title        string `json:"title"`
+	SystemPrompt string `json:"system_prompt"` // 空串 = 没覆盖（用 agent 的 ⇒ 世界状态底子算全局）
+	Provider     string `json:"provider"`      // 软引用
+	Model        string `json:"model"`
+	AgentID      string `json:"agent_id"` // 软引用
+	CreatedAt    int64  `json:"created_at"`
+	UpdatedAt    int64  `json:"updated_at"`
 }
 
 // TurnPhase：一轮生成的状态（Rust 版在 turn.rs 的进程内登记表里）。
@@ -105,9 +108,17 @@ type SessionView struct {
 	Turn TurnStatus `json:"turn"`
 }
 
-// BranchInfo：每条消息在同龄兄弟里排第几、共几条（界面上的「‹ 2/3 ›」）。
-type BranchInfo struct {
-	Index    int      `json:"index"`
-	Total    int      `json:"total"`
-	Siblings []string `json:"siblings"`
+// DeletionPlan：一次"删这条及之后全部"的完整后果（`deletionPlan` 一份计算，预览与执行共用）。
+//
+// 数量**不单列** —— 数组长度就是（两份数字迟早打架）。五组 id 的 JSON 名字按 `DEFINE.md`：
+// 预览（GET deletion-preview）与执行（DELETE 的响应）都是这个形状。
+type DeletionPlan struct {
+	// SessionID：执行时用来刷新会话的 updated_at。**不进 JSON** —— 接口形状是定死的五项。
+	SessionID string `json:"-"`
+
+	DeletedMessageIDs    []string `json:"deleted_message_ids"`
+	DeletedSummaryIDs    []string `json:"deleted_summary_ids"`
+	UnlinkedMessageIDs   []string `json:"unlinked_message_ids"`
+	UnlinkedSummaryIDs   []string `json:"unlinked_summary_ids"`
+	LastDeletedMessageID string   `json:"last_deleted_message_id"`
 }

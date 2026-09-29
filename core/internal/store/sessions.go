@@ -2,7 +2,9 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -20,23 +22,19 @@ func (e InvalidError) Error() string { return string(e) }
 
 func nowMS() int64 { return time.Now().UnixMilli() }
 
-// sessionColumns：与 Rust 版 get_session/list_sessions 的 SELECT 逐字相同。
-const sessionColumns = "id, title, system_prompt, provider, model, agent_id, current_leaf, created_at, updated_at"
+// sessionColumns：会话自己的列（**没有 current_leaf**：线性会话不需要"停在哪儿"）。
+const sessionColumns = "id, title, system_prompt, provider, model, agent_id, created_at, updated_at"
 
 // 一个最小的扫描接口：sql.Row 与 sql.Rows 都满足它。
 type scanner interface{ Scan(dest ...any) error }
 
 func scanSession(row scanner) (model.Session, error) {
 	var session model.Session
-	var currentLeaf sql.NullString
 	err := row.Scan(
 		&session.ID, &session.Title, &session.SystemPrompt,
 		&session.Provider, &session.Model, &session.AgentID,
-		&currentLeaf, &session.CreatedAt, &session.UpdatedAt,
+		&session.CreatedAt, &session.UpdatedAt,
 	)
-	if currentLeaf.Valid {
-		session.CurrentLeaf = &currentLeaf.String
-	}
 	return session, err
 }
 
@@ -168,66 +166,203 @@ func (s *Store) DeleteSession(id string) error {
 	return s.execTouch("DELETE FROM sessions WHERE id = ?1", id)
 }
 
-// SwitchLeafToSibling：界面上的「‹ 2/3 ›」—— 切到**当前尾巴的兄弟**，再顺着最新的孩子走到末端。
+// CopySession：**Copy 一条会话** —— 线性会话里"分岔"就是它（不叫 fork）。
 //
-// 只允许切到兄弟：切到别的旧消息 = 把整条对话倒回去，而世界状态是沿当前路径现演的
-// ⇒ 世界状态会跟着倒退。那种事必须是一个明确的"从这里重新开始"，不该藏在分支箭头里。
-func (s *Store) SwitchLeafToSibling(sessionID, messageID string) error {
+// 新 session（新 id；标题 / 渠道 / 模型 / agent / 提示词都带着）+ 消息与摘要一并复制。
+// 摘要有三处必须重映射，否则复制出来的会话会指向**原**会话的 id：
+//   - 摘要自己的新 id ⇒ 消息上的 `summary_id` 与摘要的 `parent_summary_id`；
+//   - 两端区间 `begin_message_id` / `end_message_id`（它们指的是**消息** id）；
+//   - `source_ids`（审计 + 整批重做）—— 按 `source_kind` 指消息或摘要。
+//
+// **世界状态不复制**：它本来就现演，底子与正文都复制了就等于复制了它。
+func (s *Store) CopySession(sessionID string) (model.Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	all, err := s.allMessages(sessionID)
+
+	source, err := s.session(sessionID)
 	if err != nil {
-		return err
+		return model.Session{}, err
 	}
-	session, err := s.session(sessionID)
+	if source == nil {
+		return model.Session{}, ErrNotFound
+	}
+	messages, err := s.allMessages(sessionID)
 	if err != nil {
-		return err
+		return model.Session{}, err
 	}
-	if session == nil || session.CurrentLeaf == nil {
-		return InvalidError("这条会话还没有对话，谈不上切分支")
+	summaries, err := s.listSummaries(sessionID)
+	if err != nil {
+		return model.Session{}, err
 	}
-	find := func(id string) *model.Message {
-		for index := range all {
-			if all[index].ID == id {
-				return &all[index]
-			}
+	newSessionID, err := newID()
+	if err != nil {
+		return model.Session{}, err
+	}
+	messageIDs, err := mintOrderedIDs(len(messages))
+	if err != nil {
+		return model.Session{}, err
+	}
+	summaryIDs, err := mintOrderedIDs(len(summaries))
+	if err != nil {
+		return model.Session{}, err
+	}
+	messageIDOf := make(map[string]string, len(messages))
+	for index := range messages {
+		messageIDOf[messages[index].ID] = messageIDs[index]
+	}
+	summaryIDOf := make(map[string]string, len(summaries))
+	for index := range summaries {
+		summaryIDOf[summaries[index].ID] = summaryIDs[index]
+	}
+
+	now := nowMS()
+	copied := model.Session{
+		ID: newSessionID, Title: source.Title, SystemPrompt: source.SystemPrompt,
+		Provider: source.Provider, Model: source.Model, AgentID: source.AgentID,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return model.Session{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(
+		`INSERT INTO sessions (id, title, system_prompt, provider, model, agent_id, created_at, updated_at)
+		 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
+		copied.ID, copied.Title, copied.SystemPrompt, copied.Provider, copied.Model,
+		copied.AgentID, copied.CreatedAt, copied.UpdatedAt); err != nil {
+		return model.Session{}, err
+	}
+	// 摘要先插（消息的 `summary_id` 外键指着它）；父指针由 `insertSummary` 先留 NULL、插完回填。
+	for index := range summaries {
+		summary := summaries[index]
+		if err := insertSummary(tx, model.Summary{
+			ID: summaryIDs[index], SessionID: copied.ID,
+			SourceKind:      summary.SourceKind,
+			BeginMessageID:  optionalID(summary.BeginMessageID, messageIDOf),
+			EndMessageID:    optionalID(summary.EndMessageID, messageIDOf),
+			Text:            summary.Text,
+			Blocks:          summary.Blocks,
+			Tokens:          summary.Tokens,
+			SourceIDs:       remapSourceIDs(summary, messageIDOf, summaryIDOf),
+			Provider:        summary.Provider,
+			Model:           summary.Model,
+			PromptVersion:   summary.PromptVersion,
+			Usage:           summary.Usage,
+			Dirty:           summary.Dirty,
+			CreatedAt:       summary.CreatedAt,
+		}); err != nil {
+			return model.Session{}, err
 		}
-		return nil
 	}
-	current, target := find(*session.CurrentLeaf), find(messageID)
-	if target == nil {
-		return ErrNotFound
+	for index := range summaries {
+		parent := summaries[index].ParentSummaryID
+		if parent == nil {
+			continue
+		}
+		mapped, ok := summaryIDOf[*parent]
+		if !ok {
+			continue // 悬空父指针：复制出来当顶层（原样保留一个指不着东西的 id 没有意义）
+		}
+		if _, err := tx.Exec("UPDATE summaries SET parent_summary_id = ?1 WHERE id = ?2",
+			mapped, summaryIDs[index]); err != nil {
+			return model.Session{}, err
+		}
 	}
-	sameParent := current.ParentMessageID == nil && target.ParentMessageID == nil
-	if current.ParentMessageID != nil && target.ParentMessageID != nil && *current.ParentMessageID == *target.ParentMessageID {
-		sameParent = true
+	for index := range messages {
+		message := messages[index]
+		if _, err := tx.Exec(
+			`INSERT INTO messages
+			   (id, session_id, role, content, created_at, reasoning, reasoning_ms, duration_ms, usage, summary_id)
+			 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)`,
+			messageIDs[index], copied.ID, string(message.Role), message.Content, message.CreatedAt,
+			message.Reasoning, message.ReasoningMS, message.DurationMS, usageArg(message.Usage),
+			remapID(message.SummaryID, summaryIDOf)); err != nil {
+			return model.Session{}, err
+		}
 	}
-	if !sameParent {
-		return InvalidError("只能在最新那句上切换分支（切到它的兄弟）")
+	if err := tx.Commit(); err != nil {
+		return model.Session{}, err
 	}
-	return s.setCurrentLeafDeep(sessionID, messageID)
+	return copied, nil
 }
 
-// setCurrentLeafDeep：落在那条上，再顺着**最新的孩子**一路往下（rowid 靠后的那个）。
-// **调用方持锁**。
-func (s *Store) setCurrentLeafDeep(sessionID, messageID string) error {
-	all, err := s.allMessages(sessionID)
+// newID：铸一个 UUIDv7（会话 / 消息 / 摘要都用它）。
+func newID() (string, error) {
+	id, err := uuid.NewV7()
 	if err != nil {
-		return err
+		return "", err
 	}
-	cursor := messageID
-	for {
-		next := ""
-		for index := range all {
-			message := all[index]
-			if message.ParentMessageID != nil && *message.ParentMessageID == cursor && message.ID != messageID {
-				next = message.ID // 越靠后越新（all 按 rowid 排）
-			}
+	return id.String(), nil
+}
+
+// mintOrderedIDs：铸 n 个 id，**排序后按顺序发**。
+//
+// UUIDv7 只在**毫秒**上有序（同一毫秒里剩下那 74 位是随机的）⇒ 一口气连铸几十个会乱序；
+// 而线性会话的顺序**就是** id 定的 ⇒ 乱序 = 静默错。铸完排一次序就稳（复制几十条，代价可忽略）。
+func mintOrderedIDs(count int) ([]string, error) {
+	ids := make([]string, count)
+	for index := range ids {
+		id, err := newID()
+		if err != nil {
+			return nil, err
 		}
-		if next == "" {
-			break
-		}
-		cursor = next
+		ids[index] = id
 	}
-	return execTouchLocked(s.db, "UPDATE sessions SET current_leaf = ?1 WHERE id = ?2", cursor, sessionID)
+	sort.Strings(ids)
+	return ids, nil
+}
+
+// optionalID：把可选 id 换成新 id；指不着东西的原样留着（改不改都一样指不着）。
+func optionalID(id *string, table map[string]string) *string {
+	if id == nil {
+		return nil
+	}
+	mapped, ok := table[*id]
+	if !ok {
+		return id
+	}
+	return &mapped
+}
+
+// remapID：同上，但直接给 SQL 的可空列用（nil = NULL）。
+func remapID(id *string, table map[string]string) any {
+	if id == nil {
+		return nil
+	}
+	return *optionalID(id, table)
+}
+
+// remapSourceIDs：`source_ids` 按 `source_kind` 指向消息或摘要 ⇒ 一并换成新 id。
+//
+// 不换也能跑，但复制出来的摘要会一直指着**原会话**的 id（"当时吃的是什么"要追得回来）。
+func remapSourceIDs(summary model.Summary, messageIDOf, summaryIDOf map[string]string) []string {
+	table := summaryIDOf
+	if summary.SourceKind == model.SourceMessages {
+		table = messageIDOf
+	}
+	remapped := make([]string, 0, len(summary.SourceIDs))
+	for _, id := range summary.SourceIDs {
+		if mapped, ok := table[id]; ok {
+			remapped = append(remapped, mapped)
+			continue
+		}
+		remapped = append(remapped, id)
+	}
+	return remapped
+}
+
+// usageArg / dirtyArg：可选列进 SQL 的两种形状（空 JSON 要落 NULL，不是空串）。
+func usageArg(usage json.RawMessage) any {
+	if len(usage) == 0 {
+		return nil
+	}
+	return string(usage)
+}
+
+func dirtyArg(dirty bool) int64 {
+	if dirty {
+		return 1
+	}
+	return 0
 }
