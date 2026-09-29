@@ -45,7 +45,7 @@ func newSandbox(t *testing.T, count int) *sandbox {
 	t.Cleanup(func() { _ = db.Close() })
 
 	box := &sandbox{db: db, sessionID: session.ID}
-	box.server = New(st, config.DefaultConfig(), config.Paths{ConfigDir: dir, DataDir: dir})
+	box.server = newTestServer(st, config.DefaultConfig(), config.Paths{ConfigDir: dir, DataDir: dir})
 	for index := range count {
 		id := messageID(index + 1)
 		role := "user"

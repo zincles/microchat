@@ -19,7 +19,7 @@ func TestStatelangEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = st.Close() }()
-	server := New(st, config.DefaultConfig(), config.Paths{ConfigDir: t.TempDir(), DataDir: t.TempDir()})
+	server := newTestServer(st, config.DefaultConfig(), config.Paths{ConfigDir: t.TempDir(), DataDir: t.TempDir()})
 
 	post := func(body string) *httptest.ResponseRecorder {
 		request := httptest.NewRequest(http.MethodPost, "/api/v1/statelang", strings.NewReader(body))

@@ -151,7 +151,7 @@ func TestUpdateNavigationAndQuit(t *testing.T) {
 	if _, isQuit := quit().(tea.QuitMsg); !isQuit {
 		t.Fatal("ctrl+c 该返回 Quit")
 	}
-	// 打了字再回车：还没搬完的功能就如实说，不假装能发
+	// 打了字再回车：**真发**（不再说"还没实现"）—— 空会话下也一样（sendCmd 顺手建会话）
 	typed := m
 	for _, r := range "你好" {
 		updated, _ = typed.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
@@ -160,9 +160,12 @@ func TestUpdateNavigationAndQuit(t *testing.T) {
 	if typed.input != "你好" {
 		t.Fatalf("打字该进输入行：%q", typed.input)
 	}
-	updated, _ = typed.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	if said := updated.(model).lastAction; !strings.Contains(said, "还没实现") {
-		t.Fatalf("回车该如实说：%q", said)
+	updated, cmd := typed.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("回车该真发出去（给一个 Cmd）")
+	}
+	if said := updated.(model).lastAction; !strings.Contains(said, "发送中") {
+		t.Fatalf("回车之后底栏该说在发：%q", said)
 	}
 	if after := updated.(model); after.input != "" {
 		t.Fatalf("回车之后输入行该清空：%q", after.input)
@@ -704,5 +707,151 @@ func TestInitialModelStartsEmpty(t *testing.T) {
 	// 空会话的界面形状 = **只有底部**（输入行/分隔线/底栏），不铺侧栏与主区
 	if body := updated.(model).View().Content; len(strings.Split(body, "\n")) != 3 || strings.Contains(body, "|") {
 		t.Fatalf("空会话该只留底部：\n%s", body)
+	}
+}
+
+// ── 生成那一轮：合成气泡 + 300ms 轮询 + /stop ──
+
+// liveFixture：一条正在生成的会话（界面按状态**合成**气泡；库里还没有它）。
+func liveFixture() model {
+	m := fixture()
+	m.selected = 0
+	m.turn = &liveTurn{
+		sessionID: "c1", messageID: "m3", phase: "streaming", elapsedMS: 12300,
+		text: "说到一半", thinking: "嗯……",
+	}
+	return m
+}
+
+// 生成中：气泡上有耗时与「/stop」，思考只报字数（token 数流式帧里没有）。
+func TestGeneratingBubbleShowsElapsedAndStop(t *testing.T) {
+	m := liveFixture()
+	view := m.View().Content
+	for _, want := range []string{"生成中", "12.3s", "说到一半", "/stop", "思考中… 3 字"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("生成中的气泡该有 %q：\n%s", want, view)
+		}
+	}
+	// 不是这条会话的轮次 ⇒ 不该在这条会话里画那个气泡（侧栏的"生成中…"是列表口径，另说）
+	other := liveFixture()
+	other.turn.sessionID = "c2"
+	if view := other.View().Content; strings.Contains(view, "生成中… 12.3s") || strings.Contains(view, "/stop") {
+		t.Fatalf("别条会话的轮次不该画在这儿：\n%s", view)
+	}
+}
+
+// 轮询：增量按游标累加，**读不消费**（同一段不会画两遍）；还在跑就接着约下一次。
+func TestTurnPollingAppendsIncrementsAndSchedulesNextTick(t *testing.T) {
+	m := liveFixture()
+	updated, cmd := m.Update(turnPollMsg{
+		sessionID: "c1",
+		status:    TurnStatus{Phase: "streaming", ElapsedMS: 13000, Chars: 9},
+		slice:     StreamSlice{Text: "，然后", Next: 9, Thinking: "……", ThinkNext: 5},
+	})
+	next := updated.(model)
+	if next.turn.text != "说到一半，然后" || next.turn.thinking != "嗯……"+"……" {
+		t.Fatalf("增量该接着画：%+v", next.turn)
+	}
+	if next.turn.from != 9 || next.turn.thinkFrom != 5 {
+		t.Fatalf("游标该跟着走：%+v", next.turn)
+	}
+	if cmd == nil {
+		t.Fatal("还在跑 ⇒ 该约下一次轮询")
+	}
+	// 同一个游标再来一次（后端说 next 还是 9、增量空）= 不重复画
+	repeated, _ := next.Update(turnPollMsg{
+		sessionID: "c1",
+		status:    TurnStatus{Phase: "streaming", ElapsedMS: 13300},
+		slice:     StreamSlice{Next: 9, ThinkNext: 5},
+	})
+	if again := repeated.(model); again.turn.text != "说到一半，然后" {
+		t.Fatalf("空增量不该改画面：%q", again.turn.text)
+	}
+}
+
+// 收到 `idle` ⇒ 气泡消失 + **一次性重拉**消息（真消息取代它）；收到 `error` ⇒ 气泡消失 + 报原因。
+func TestTurnPollingSettlesAndReportsErrors(t *testing.T) {
+	m := liveFixture()
+	done, cmd := m.Update(turnPollMsg{
+		sessionID: "c1", status: TurnStatus{Phase: "idle"}, slice: StreamSlice{Done: true},
+	})
+	if done.(model).turn != nil {
+		t.Fatal("结束之后气泡该消失（库里那条真消息接手）")
+	}
+	if cmd == nil {
+		t.Fatal("收到 idle 该一次性重拉消息列表")
+	}
+	if said := done.(model).lastAction; !strings.Contains(said, "完成") {
+		t.Fatalf("底栏该说完成：%q", said)
+	}
+	failed, _ := m.Update(turnPollMsg{
+		sessionID: "c1", status: TurnStatus{Phase: "error", Error: "上游 429：额度"},
+	})
+	if failed.(model).turn != nil {
+		t.Fatal("失败之后气泡该消失（库里半条都没有）")
+	}
+	if said := failed.(model).lastAction; !strings.Contains(said, "上游 429") {
+		t.Fatalf("底栏该报出失败原因：%q", said)
+	}
+}
+
+// 按停：真发 `/stop`；回 false 就如实说"什么都没发生"（幂等）。
+func TestStopCommand(t *testing.T) {
+	m := liveFixture()
+	updated, cmd := m.runCommand("/stop")
+	if cmd == nil {
+		t.Fatal("/stop 该真去按停")
+	}
+	if said := updated.(model).lastAction; !strings.Contains(said, "停止") {
+		t.Fatalf("底栏该说在停：%q", said)
+	}
+	stopped, _ := updated.(model).Update(stoppedMsg{sessionID: "c1", stopped: true})
+	if after := stopped.(model); after.turn != nil {
+		t.Fatal("停下来了 ⇒ 气泡该消失")
+	}
+	// 没在跑就回 false：底栏要如实说
+	idle := fixture()
+	idle.selected = 0
+	// 空会话（没有任何会话）时连发都不用发
+	if _, cmd := (model{client: NewClient("http://127.0.0.1:1", ""), selected: -1}).runCommand("/stop"); cmd != nil {
+		t.Fatal("没有会话时 /stop 不该发请求")
+	}
+	_ = idle
+}
+
+// 生成中再回车发送：**先说清楚**（后端会 409），不去白跑一次。
+func TestSendWhileGeneratingIsRefusedLocally(t *testing.T) {
+	m := liveFixture()
+	typed := typeText(m, "插队")
+	updated, cmd := typed.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatal("生成中不该再发（后端会 409）")
+	}
+	if said := updated.(model).lastAction; !strings.Contains(said, "还在生成中") {
+		t.Fatalf("该说清楚在生成中：%q", said)
+	}
+}
+
+// 202 回来：进列表（空会话里冒出的新会话）、重置游标、开始看进度；库里的用户那句靠重拉消息拿到。
+func TestSentMsgStartsPolling(t *testing.T) {
+	m := initialModel(NewClient("http://127.0.0.1:8787", ""))
+	created := Session{ID: "c9", Title: "新会话", Provider: "dummy", Model: "dummy", AgentID: "default"}
+	messageID := "m9"
+	updated, cmd := m.Update(sentMsg{
+		sessionID: "c9", created: &created,
+		accepted: TurnAccepted{Backend: "dummy", Turn: TurnStatus{Phase: "pending", MessageID: &messageID}},
+	})
+	next := updated.(model)
+	if next.turn == nil || next.turn.sessionID != "c9" || next.turn.messageID != "m9" {
+		t.Fatalf("该开始盯这一轮：%+v", next.turn)
+	}
+	if next.pendingSelect != "c9" {
+		t.Fatalf("新建的会话该被选中：%q", next.pendingSelect)
+	}
+	if cmd == nil {
+		t.Fatal("该去重拉会话列表与消息、并开始轮询")
+	}
+	if said := next.lastAction; !strings.Contains(said, "dummy") {
+		t.Fatalf("底栏该报是哪条后端答的：%q", said)
 	}
 }

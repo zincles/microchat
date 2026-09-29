@@ -238,19 +238,19 @@ func (s *Store) CopySession(sessionID string) (model.Session, error) {
 		summary := summaries[index]
 		if err := insertSummary(tx, model.Summary{
 			ID: summaryIDs[index], SessionID: copied.ID,
-			SourceKind:      summary.SourceKind,
-			BeginMessageID:  optionalID(summary.BeginMessageID, messageIDOf),
-			EndMessageID:    optionalID(summary.EndMessageID, messageIDOf),
-			Text:            summary.Text,
-			Blocks:          summary.Blocks,
-			Tokens:          summary.Tokens,
-			SourceIDs:       remapSourceIDs(summary, messageIDOf, summaryIDOf),
-			Provider:        summary.Provider,
-			Model:           summary.Model,
-			PromptVersion:   summary.PromptVersion,
-			Usage:           summary.Usage,
-			Dirty:           summary.Dirty,
-			CreatedAt:       summary.CreatedAt,
+			SourceKind:     summary.SourceKind,
+			BeginMessageID: optionalID(summary.BeginMessageID, messageIDOf),
+			EndMessageID:   optionalID(summary.EndMessageID, messageIDOf),
+			Text:           summary.Text,
+			Blocks:         summary.Blocks,
+			Tokens:         summary.Tokens,
+			SourceIDs:      remapSourceIDs(summary, messageIDOf, summaryIDOf),
+			Provider:       summary.Provider,
+			Model:          summary.Model,
+			PromptVersion:  summary.PromptVersion,
+			Usage:          summary.Usage,
+			Dirty:          summary.Dirty,
+			CreatedAt:      summary.CreatedAt,
 		}); err != nil {
 			return model.Session{}, err
 		}
@@ -296,10 +296,14 @@ func newID() (string, error) {
 	return id.String(), nil
 }
 
-// mintOrderedIDs：铸 n 个 id，**排序后按顺序发**。
+// MintOrderedIDs：铸 n 个 id，**排序后按顺序发**。
 //
 // UUIDv7 只在**毫秒**上有序（同一毫秒里剩下那 74 位是随机的）⇒ 一口气连铸几十个会乱序；
 // 而线性会话的顺序**就是** id 定的 ⇒ 乱序 = 静默错。铸完排一次序就稳（复制几十条，代价可忽略）。
+//
+// 生成那一轮也用它：受理时要一口气铸两个（用户消息 + 这条回复），**用户那句必须在前面**。
+func MintOrderedIDs(count int) ([]string, error) { return mintOrderedIDs(count) }
+
 func mintOrderedIDs(count int) ([]string, error) {
 	ids := make([]string, count)
 	for index := range ids {

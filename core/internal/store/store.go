@@ -7,6 +7,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"sync"
 
 	_ "modernc.org/sqlite" // 纯 Go 的 SQLite 驱动（不碰 cgo）
@@ -18,19 +19,24 @@ type Store struct {
 }
 
 // Open 打开（必要时创建）数据库并跑完迁移。
+//
+// 三条连接级 pragma **挂在 DSN 上**（`_pragma=` 每建一条连接就应用一次）：
+// 用 `db.Exec("PRAGMA …")` 只对**当时那一条连接**生效 —— 池子后来新开的连接就漏了
+// （`foreign_keys` 漏掉 = 级联静默失效，最难查的那类）。
+//
+//   - `foreign_keys(1)`：messages 的两条级联全靠它（CASCADE / SET NULL）；
+//   - `journal_mode(WAL)`：与 Rust 版一致（读写不互相挡）；
+//   - `busy_timeout(5000)`：**多进程**时（服务在跑，同时来一个 `-debug`；或两个 `-debug`）
+//     先等一会儿再报 —— SQLite 默认是 0，一撞就回 "database is locked"，
+//     而打开这个库本身（`journal_mode` 要拿一下写锁）就可能撞上别的进程正在写。
 func Open(path string) (*Store, error) {
-	db, err := sql.Open("sqlite", path)
+	// `file:` 是 URI 形状 ⇒ 路径里的 `?` `#` 得先转义（正常路径没有，但别留个坑）
+	escaped := strings.NewReplacer("?", "%3f", "#", "%23").Replace(path)
+	dsn := "file:" + escaped +
+		"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
-	}
-	// 外键与 WAL：与 Rust 版一致（messages 的两条级联全靠它）
-	for _, pragma := range []string{
-		"PRAGMA foreign_keys = ON",
-		"PRAGMA journal_mode = WAL",
-	} {
-		if _, err := db.Exec(pragma); err != nil {
-			return nil, fmt.Errorf("%s: %w", pragma, err)
-		}
 	}
 	st := &Store{db: db}
 	if err := st.migrate(); err != nil {

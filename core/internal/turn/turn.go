@@ -77,6 +77,12 @@ type entry struct {
 type Registry struct {
 	mu      sync.Mutex
 	entries map[string]*entry
+	// nextToken：**全进程单调递增**，绝不回绕。
+	//
+	// 别从"这个会话上一次的令牌 +1"推 —— `Stop` 会把条目**摘掉**，于是下一条从 1 重新开始，
+	// 而**被停掉的旧任务**这时正好回来 ⇒ 令牌"对上了"，它会把结果写进**新一轮**的账上
+	// （库顺序、错误态都会跟着乱）。令牌的作用就是不重复。
+	nextToken uint64
 }
 
 func NewRegistry() *Registry { return &Registry{entries: map[string]*entry{}} }
@@ -111,14 +117,11 @@ func (r *Registry) Begin(sessionID, messageID string) (uint64, error) {
 	if item := r.lookup(sessionID); item != nil && item.phase.IsBusy() {
 		return 0, ErrBusy
 	}
-	next := uint64(1)
-	if item := r.lookup(sessionID); item != nil {
-		next = item.token + 1
-	}
+	r.nextToken++
 	r.entries[sessionID] = &entry{
-		phase: PhasePending, messageID: &messageID, started: time.Now(), token: next,
+		phase: PhasePending, messageID: &messageID, started: time.Now(), token: r.nextToken,
 	}
-	return next, nil
+	return r.nextToken, nil
 }
 
 // BeginCompact：登记一次压缩（同一会话同时只允许一个）。

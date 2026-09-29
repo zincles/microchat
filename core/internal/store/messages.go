@@ -77,6 +77,41 @@ func (s *Store) ListMessages(sessionID string) ([]model.Message, error) {
 	return s.allMessages(sessionID)
 }
 
+// InsertMessage：把**一整条**消息落库（用户那句，或一条已经拿到整段的回复）。
+//
+// 地址由调用方铸好（**受理那一刻**就发给客户端；顺序也由它定）⇒ 这里不自作主张生成 id。
+// 与 copy 的插入同一条路：同一个事务里插消息 + 把会话的 `updated_at` 往前推
+// （改了内容就该在列表最上面）。
+func (s *Store) InsertMessage(message model.Message) (model.Message, error) {
+	if message.CreatedAt == 0 {
+		message.CreatedAt = nowMS()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return model.Message{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(
+		`INSERT INTO messages
+		   (id, session_id, role, content, created_at, reasoning, reasoning_ms, duration_ms, usage, summary_id)
+		 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL)`,
+		message.ID, message.SessionID, string(message.Role), message.Content, message.CreatedAt,
+		message.Reasoning, message.ReasoningMS, message.DurationMS, usageArg(message.Usage)); err != nil {
+		return model.Message{}, err
+	}
+	if err := execTouchLocked(tx, "UPDATE sessions SET updated_at = ?1 WHERE id = ?2",
+		message.CreatedAt, message.SessionID); err != nil {
+		return model.Message{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return model.Message{}, err
+	}
+	return message, nil
+}
+
 // UpdateMessage：改正文 = **重写存档**（世界状态随之现演，仓库里没有任何派生表要同步）。
 //
 // 就地替换 ⇒ `message_id` 不变 ⇒ 摘要的覆盖区间仍然成立（只标 dirty、照用；级联只归删除）。

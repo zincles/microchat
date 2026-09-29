@@ -7,16 +7,10 @@ import (
 	"microchat/internal/state"
 )
 
-// effectiveSystemPrompt：生效的系统提示词 —— 会话级覆盖优先，否则用 agent 的（内置默认也算）。
-//
-// **这就是真会发给模型的那份**：世界状态底子、出站消息、界面显示都用它，
-// 免得"界面上写的提示词"和"实际发出去的"成了两份东西。返回值第二项是它的来源。
+// effectiveSystemPrompt：生效的系统提示词 —— **解析只有一处**（`chat.EffectiveSystemPrompt`：
+// 会话级覆盖优先，否则用 agent 的，内置默认也算）。这里只是转发，免得生出第二份答案。
 func (s *Server) effectiveSystemPrompt(session model.Session) (string, state.PromptSource) {
-	if own := trimSpace(session.SystemPrompt); own != "" {
-		return own, state.PromptFromSession
-	}
-	agent, _ := s.loadAgents().Resolve(session.AgentID)
-	return agent.SystemPrompt, state.PromptFromAgent
+	return s.chat.EffectiveSystemPrompt(session)
 }
 
 // viewOf：现演一份这条会话的状态快照（分层 + 沿路径 fold）。

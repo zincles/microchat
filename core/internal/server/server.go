@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"microchat/internal/chat"
 	"microchat/internal/config"
 	"microchat/internal/model"
 	"microchat/internal/store"
@@ -21,11 +22,14 @@ type Server struct {
 	store  *store.Store
 	config config.Config
 	paths  config.Paths
+	chat   *chat.Service
 	mux    *http.ServeMux
 }
 
-func New(st *store.Store, cfg config.Config, paths config.Paths) *Server {
-	s := &Server{store: st, config: cfg, paths: paths, mux: http.NewServeMux()}
+// New：把"一轮生成"(chat)那一层注进来 —— 状态、发消息、停止这些都在它那儿
+// （server 只编排：解析请求、定错误码、写响应）。
+func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *chat.Service) *Server {
+	s := &Server{store: st, config: cfg, paths: paths, chat: chatService, mux: http.NewServeMux()}
 	// Go 1.22+ 的 ServeMux 原生支持 `GET /x/{id}` 这种模式 —— 连路由库都不需要。
 	s.mux.HandleFunc("GET /api/v1/health", s.health)
 	s.mux.HandleFunc("GET /api/v1/debug/last-payload", s.lastPayload)
@@ -61,6 +65,12 @@ func New(st *store.Store, cfg config.Config, paths config.Paths) *Server {
 	// 删除预览：**只算不动**（安全 ⇒ GET）；DELETE 照同一份计算干
 	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/messages/{message_id}/deletion-preview", s.deletionPreview)
 	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/messages", s.listMessages)
+	// 一轮生成：**受理与生成分开**（202 + 轮询）—— 状态 / 游标读 / 停止 / 上下文占用
+	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/messages", s.sendMessage)
+	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/status", s.turnStatus)
+	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/turn/text", s.turnText)
+	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/stop", s.stopTurn)
+	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/context", s.sessionContext)
 	return s
 }
 
@@ -72,8 +82,9 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "version": "0.1.0"})
 }
 
-// listSessions：列表项 = 会话 + 这一轮的状态（Rust 版从 turn 登记表里取）。
-// TurnRegistry 还没搬 ⇒ 一律 idle —— 与 Rust 版"没登记就是 idle"的口径一致。
+// listSessions：列表项 = 会话 + 这一轮的状态（左栏据此标"生成中"）。
+//
+// 状态是**进程内**的事实：后端一重启就全是 idle —— 那是诚实的（没有生成在跑）。
 func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 	sessions, err := s.store.ListSessions()
 	if err != nil {
@@ -82,7 +93,7 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	views := make([]model.SessionView, 0, len(sessions))
 	for _, session := range sessions {
-		views = append(views, model.SessionView{Session: session, Turn: model.TurnStatus{Phase: model.PhaseIdle}})
+		views = append(views, model.SessionView{Session: session, Turn: s.chat.StatusView(session.ID)})
 	}
 	writeJSON(w, http.StatusOK, views)
 }

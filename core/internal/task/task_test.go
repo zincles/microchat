@@ -4,9 +4,11 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
-// 挂号 ⇒ 面板上看得到；收尾 ⇒ 写结局，且**只生效一次**（重复 Finish 不覆盖）。
+// 挂号 ⇒ 面板上看得到；收尾 ⇒ 写结局，且**只生效一次**（后到的收尾不覆盖先到的）。
 func TestGuardFinishIsOnce(t *testing.T) {
 	registry := NewRegistry()
 	session := "c1"
@@ -21,21 +23,97 @@ func TestGuardFinishIsOnce(t *testing.T) {
 	if board.Tasks[0].Title != "生成 · 会话 c1" || board.Tasks[0].Session == nil {
 		t.Fatalf("那条记录 = %+v", board.Tasks[0])
 	}
-	guard.Finish("完成：42 字")
+	if board.Tasks[0].Outcome != StateRunning {
+		t.Fatalf("挂号时的状态该是「%s」：%+v", StateRunning, board.Tasks[0])
+	}
+	guard.Succeed()
 	if registry.Running() != 0 {
 		t.Fatal("收尾后不该还在跑")
 	}
-	guard.Finish("覆盖？") // 重复调用只生效一次
+	guard.Fail("后到的不算") // 已经收过尾了：只生效一次
 	board = registry.Board()
-	if board.Tasks[0].Outcome != "完成：42 字" || board.Tasks[0].FinishedAt == nil {
-		t.Fatalf("重复 Finish 不该覆盖：%+v", board.Tasks[0])
+	if board.Tasks[0].Outcome != StateSucceeded || board.Tasks[0].FinishedAt == nil {
+		t.Fatalf("重复收尾不该覆盖：%+v", board.Tasks[0])
 	}
-	// panic 路径也是 defer ⇒ 记成"中断"，绝不留僵尸条目
+	// 兜底那条路：忘了收 / panic 时 `defer guard.Interrupted()` 一定会跑到
 	func() {
-		defer guard.Finish("中断：忘了收")
+		defer guard.Interrupted()
 	}()
-	if board.Tasks[0].Outcome == "中断：忘了收" {
-		t.Fatal("已经收过一次的任务不该被改写")
+	board = registry.Board()
+	if board.Tasks[0].Outcome != StateSucceeded {
+		t.Fatalf("已经收过尾的任务不该被兜底改写：%+v", board.Tasks[0])
+	}
+}
+
+// 四个状态各有各的字段：**失败原因单开一个字段**，状态字段里只放那五个词之一。
+func TestFailureKeepsTheReasonInItsOwnField(t *testing.T) {
+	registry := NewRegistry()
+	session := "c1"
+	registry.Begin(KindCompact, &session, "压缩 · 会话 c1").Fail("上游 429（额度）")
+	record := registry.Board().Tasks[0]
+	if record.Outcome != StateFailed || record.Error != "上游 429（额度）" {
+		t.Fatalf("失败 = %+v", record)
+	}
+	if strings.Contains(string(record.Outcome), "429") {
+		t.Fatal("原因不许塞进状态字段（客户端就只能匹配文案了）")
+	}
+	// 中断（没人收尾）与失败**不是一回事**：混在一起，这类 bug 就永远看不见了
+	registry.Begin(KindRefreshModels, nil, "刷新模型").Interrupted()
+	found := false
+	for _, record := range registry.Board().Tasks {
+		if record.Outcome == StateInterrupted {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("没人收尾的活该记成「中断」")
+	}
+}
+
+// TaskID 是 **UUIDv7**（自增小整数重启后计数归零 ⇒ 日志里"task 1"会撞车）；不进库。
+func TestTaskIDsAreUUIDv7(t *testing.T) {
+	registry := NewRegistry()
+	first := registry.Begin(KindRefreshModels, nil, "刷新 a")
+	second := registry.Begin(KindRefreshModels, nil, "刷新 b")
+	if first.id == second.id {
+		t.Fatal("两次挂号的 id 不该相同")
+	}
+	parsed, err := uuid.Parse(first.id)
+	if err != nil {
+		t.Fatalf("id 该是 UUID：%q（%v）", first.id, err)
+	}
+	if version := parsed.Version(); version != 7 {
+		t.Fatalf("id 该是 UUIDv7，得到 v%d：%q", version, first.id)
+	}
+}
+
+// **会调模型的作业必须带会话 id** ⇒ `Begin()` 当场炸（不是等发出去被上游拒）。
+func TestModelCallingTasksMustCarryASession(t *testing.T) {
+	for _, kind := range []Kind{KindTurn, KindCompact} {
+		registry := NewRegistry()
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("%s 缺会话 id 该当场炸", kind)
+				}
+			}()
+			registry.Begin(kind, nil, "缺会话")
+		}()
+		empty := ""
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("%s 的会话 id 是空串也该炸", kind)
+				}
+			}()
+			registry.Begin(kind, &empty, "空会话 id")
+		}()
+	}
+	// 拉模型列表与会话无关 ⇒ 不给会话 id 完全正常
+	registry := NewRegistry()
+	registry.Begin(KindRefreshModels, nil, "刷新模型").Succeed()
+	if registry.Running() != 0 {
+		t.Fatal("不该留下在跑的条目")
 	}
 }
 
@@ -43,9 +121,10 @@ func TestGuardFinishIsOnce(t *testing.T) {
 func TestBoardOrdering(t *testing.T) {
 	registry := NewRegistry()
 	first := registry.Begin(KindRefreshModels, nil, "刷新模型 · 渠道 a")
-	first.Finish("完成：3 个模型")
+	first.Succeed()
 	time.Sleep(2 * time.Millisecond)
-	second := registry.Begin(KindTurn, nil, "生成 · 会话 b")
+	session := "c1"
+	second := registry.Begin(KindTurn, &session, "生成 · 会话 b")
 	board := registry.Board()
 	if board.Running != 1 || len(board.Tasks) != 2 {
 		t.Fatalf("面板 = %+v", board)
@@ -53,7 +132,7 @@ func TestBoardOrdering(t *testing.T) {
 	if !board.Tasks[0].Running() || board.Tasks[0].Kind != KindTurn {
 		t.Fatalf("正在跑的该在最前：%+v", board.Tasks)
 	}
-	second.Finish("完成")
+	second.Succeed()
 	board = registry.Board()
 	if board.Tasks[0].Title != "生成 · 会话 b" {
 		t.Fatalf("都结束之后，最近的在最上面：%+v", board.Tasks)
@@ -66,10 +145,11 @@ func TestBoardOrdering(t *testing.T) {
 // 只留最近 60 条已结束的；**正在跑的永远都在**。
 func TestTrimKeepsRunning(t *testing.T) {
 	registry := NewRegistry()
-	alive := registry.Begin(KindCompact, nil, "压缩 · 一直在跑")
-	for i := 0; i < keepFinished+10; i++ {
+	session := "c1"
+	alive := registry.Begin(KindCompact, &session, "压缩 · 一直在跑")
+	for range keepFinished + 10 {
 		guard := registry.Begin(KindRefreshModels, nil, "刷新")
-		guard.Finish("完成")
+		guard.Succeed()
 	}
 	board := registry.Board()
 	if len(board.Tasks) != keepFinished+1 {

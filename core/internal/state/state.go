@@ -10,6 +10,7 @@
 package state
 
 import (
+	"encoding/json"
 	"math"
 	"sort"
 	"strconv"
@@ -407,6 +408,23 @@ func walk(messages []model.Message, summaries []model.Summary) []part {
 
 // DefaultTokenizerRatio：`models.tokenizer` 里 ratio 的缺省值。
 const DefaultTokenizerRatio = 1.3
+
+// TokenizerRatio：从 `models.tokenizer` 的 JSON 文本里解出比率（每个 token 多少字符）。
+//
+// 解不出（字段缺失 / 不是 JSON / 值离谱）就用缺省 —— 一个写坏的配置不该把预算算崩。
+func TokenizerRatio(tokenizer json.RawMessage) float64 {
+	var parsed struct {
+		Ratio *float64 `json:"ratio"`
+	}
+	if len(tokenizer) == 0 || json.Unmarshal(tokenizer, &parsed) != nil || parsed.Ratio == nil {
+		return DefaultTokenizerRatio
+	}
+	ratio := *parsed.Ratio
+	if !(ratio > 0) || math.IsInf(ratio, 0) || ratio > 100 {
+		return DefaultTokenizerRatio
+	}
+	return ratio
+}
 
 // EstimateTokens：**唯一**的 token 估算处：`tokens = ceil(字符数 / ratio)`。
 //

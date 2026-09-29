@@ -14,15 +14,19 @@ microchat：轻量 SillyTavern 替代（RPG 向）。三层，边界要清楚：
 
 > **会话（Session）与消息（Message）的完整定义、字段、以及"故意不存什么"，见 `DEFINE.md`** ——
 > 那份是词表的唯一权威；这里只列最常用的几个词。
+> **任务（Task）与两族调用（对话型 / 功能型）的完整定义**同样在 `DEFINE.md`（那一节：Task = 一次上游请求的全程）。
 
 | 词 | **只**指什么 | 别叫 |
 |---|---|---|
 | **世界状态（state）** | `<state>` 那套：沿当前路径**现演**的键值（可分组为多张表；删除不留痕迹）+ 三层来源（全局 / 本会话 / 生效） | "变量"；孤立地说"状态" |
-| **能力（Ability）** | **写死在代码里的一段固定流程**（摘要 / 索引 / 判断 / 角色扮演 / **对话本身**） | "工具"（撞函数调用）、"子 Agent" |
+| **能力（Ability）** | **写死在代码里的一段固定流程**（现在只有 `summarize` / `title` 两个）；开关在 Agent 上、流程在代码里。**"对话本身"不是能力** ✗（那是 Agent 存在的方式） | "工具"（撞函数调用）、"子 Agent" |
 | **Agent** | **一份命名的人格 + 一组能力开关**（`agents.json`）：同一个运行时，只是开关不同 | 拿它指"某个能力" |
-| **任务（task）** | **一次有始有终的后台作业**。**凡是会调 LLM 的必定是 Task**（反过来不成立） | — |
+| **任务（Task）** | **一次上游请求的全程**（发起 → 收尾 → 可能被取消）：一轮生成、一次压缩、一次刷新模型都挂号。**会调模型的一定是 Task**（**反之不成立** —— `refresh_models` 也是 Task，但它不调模型）。**TaskID 是 UUIDv7，且不进库** | "后台作业"（不都在后台）；拿它指"某个能力" |
 
-三层咬合：**Agent（开关）→ 能力（流程）→ 任务（一次执行）**。"能不能自主选下一步"**不是** Agent 的判据，将来是某个能力（如 `plan`）的事。
+三层咬合：**Agent（人格 + 能力开关）→ 一次调用（对话型 / 功能型=能力）→ Task（这次上游请求的全程）**。
+**作业 kind ≠ 能力 id** ✓：`compact` 作业发起 `summarize` 能力，`turn` 作业发起的是**对话型调用**（**不算能力**），
+`refresh_models` 发起 0 次 —— 完整口径见 `DEFINE.md`「任务（Task）与两族调用」。
+"能不能自主选下一步"**不是** Agent 的判据，将来是某个能力（如 `plan`）的事。
 
 ## 代码布局
 
@@ -60,7 +64,7 @@ reminder/                  ← 专题参考（`tool-calls.md` 工具调用 / `je
 | `template` | `{{…}}` | 白名单 = 枚举；只扫一遍；会话 Agent 的提示词永不替换 |
 | `chat` | 一轮生成怎么跑 | 拿到整段才 INSERT |
 | `turn` | 这一轮的流细节 | 增量什么都不算；游标读不消费 |
-| `task` | 作业的身份 + 生死 | Drop 兜底；绝不留下僵尸条目 |
+| `task` | 作业的身份 + 生死（= 一次上游请求的全程） | `defer` 兜底（**Go 没有 Drop**）；绝不留下僵尸条目；TaskID 是 UUIDv7、不进库 |
 | `server` | **只有它碰 HTTP** | 错误体固定；只编排不含业务 |
 
 依赖方向单向：`server → chat/compact/abilities → state（含 statelang）/blocks → registry/providers/config → store → model`。
@@ -73,6 +77,7 @@ reminder/                  ← 专题参考（`tool-calls.md` 工具调用 / `je
 
 1. **存储是 SQLite**（不选全 JSON：崩溃安全、并发、查询都白拿）：`data/microchat.db`。手写配置只在 `config/`（**严格 JSON**：注释与尾逗号都报错——程序会整体重写）。**配置住数据目录里**（默认 `data/config/`）⇒ 备份 / 搬家只要搬 `data/` 一个目录；
   两者路径**相对工作目录**，可用 `MICROCHAT_CONFIG_DIR` / `MICROCHAT_DATA_DIR` 覆盖。界面偏好另存 `~/.config/microchat/frontend.json`（不同机制，别混）。
+  **连接级 pragma 挂在 DSN 上**（`?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)`）：`db.Exec("PRAGMA …")` 只管当时那一条连接，池子后来新开的就漏了（踩过，见「踩过的坑」）。
 2. **正文与提示词都是存档**：`<state>` 块原样留在消息正文**和 system prompt** 里；**发给模型的文本一律剔除标签**，改注入当前状态表。唯一出口 `state.BuildOutgoing()`——不许写第二条拼装路径。
 3. **世界状态不落库**：世界状态**每次现算**（`state.FromSources`）：先扫生效提示词里的块（**底子**），再按**会话顺序**扫正文里的块，然后 fold。每条操作带 `message_id`，"哪句话带来的状态"追得回来。**没有派生表** ⇒ 编辑/删除消息、改提示词、Copy 一条会话都不需要"重算"（换个会话看状态就是重拉 `/sessions/{session_id}/state`）。
    底子的**来源**决定它算哪一层：用 agent 的 ⇒ **全局**（同一 agent 的会话共享）；会话自己写了 ⇒ **本会话**。
@@ -111,6 +116,11 @@ go -C core build -o ../microchat .                        # 要二进制就这�
 ./microchat                                               # 起来就既在 8787 服务、又在终端里开 TUI
 go -C core test ./...                                     # 后端测试（`-C core` 是 Go 自带，不用 cd）
 
+./microchat -debug <op> [参数…]                            # ← 直操模式：**同进程**调 internal/*，
+                                                          #   不起服务 / 不发 HTTP / 不开 TUI，打印就退出
+                                                          #   （每行一条 JSON，好接管道；op 一览见 `-debug` 无参数）
+                                                          #   典型：new → send（同步跑完一整轮）→ outgoing / state / status
+                                                          #   与 -config / -data / -addr 共存；给了 -debug 就不监听端口
 
 
 cd frontend
@@ -118,6 +128,15 @@ godot --headless --path . --quit-after 3                   # 语法+运行检查
 godot --headless --script /tmp/x.gd                        # 灌事件跑帧
 ANDROID_HOME=~/Android/Sdk godot --headless --path . --export-debug "Android" /tmp/x.apk
 ```
+
+**直操模式（`-debug`）**：验收 / 排障时**不隔着 TUI 与 HTTP**看后端的一条路（实现在 `core/debug.go`，
+只从 `main.go` 进来）。两条要知道的：
+
+- 它是"一个 op 一个进程" ⇒ `turn` / `task` 登记表当然是空的（**状态是进程内的事实**，这是诚实的事实，不是缺功能）；
+  `tasks` 打的就是这一进程的面板。
+- 于是"并发再发 ⇒ 409"与"另一个进程里 stop"靠一枚 **per-session 的 pid 锁**（`data/debug-turns/*.lock`）：
+  锁活着 ⇒ 后到的那个 409；`stop` 找到活的 pid 就发 SIGTERM，那边的 send 当成本地按停。
+  它**只服务直操模式**（server / TUI 的权威仍是进程内的登记表，它们从不看这个文件）。
 
 ## `<state>` 的语法（记事板，不是脚本）
 
@@ -144,7 +163,7 @@ delete(AA)           # 删除
 - `providers.json` — `{ "providers": [ { "id": "dummy", "kind": "dummy" }, { "id": "openrouter", "base_url": "https://openrouter.ai/api/v1", "headers": {…}, "api_key": "sk-…", "timeouts": { "connect_seconds": 15, "total_seconds": 300 } } ] }`
   **密钥就写在这一条里**（空串 = 没配）：整个 `config/` 在忽略范围内；接口一律不回显（只回 `has_key`），调试页读它时先打码；写回权限收紧到 0600。
 - `agents.json` — `{ "default_agent": "跑团", "agents": [ { "id": "跑团", "name": "跑团主持人", "system_prompt": "你是跑团主持人。<state>季节 = 初冬</state>" } ] }`
-- `abilities.json` — ⚠ **能力那一块已砍待重做**，这个文件暂时是空诺；格式照旧：能力**只能覆盖、不能造**：`{ "abilities": { "compact": { "system_prompt": "…（留空=用内置）…", "provider": null, "model": null } } }`（未知 id ⇒ 400）。
+- `abilities.json` — ⚠ **能力那一块已砍待重做**，这个文件暂时是空诺；而且按 `DEFINE.md` 的口径**最终不要这个文件**（开关并进 `agents.json` 每个 agent 上的 `abilities`）。旧格式留档，但**别拿它当能力 id 的样例** ✗：能力 id 是 `summarize` / `title`，`compact` 是**作业**（Task kind）、不是能力 —— 见 `DEFINE.md`「任务（Task）与两族调用」。
 
 ## HTTP API（客户端契约）
 
@@ -250,16 +269,18 @@ delete(AA)           # 删除
 
 ## 后台任务 / 压缩 / 能力
 
-**任务**：一个登记表 —— 前台一轮生成、一次压缩、一次刷新模型都挂号。`TaskGuard`（RAII）兜底：忘了收或 panic 由 Drop 记成"中断" ⇒ 绝不留僵尸条目。
+**任务（Task）**：**一次上游请求的全程**（形状、五个状态、署名、落库前验证清单见 `DEFINE.md`「任务（Task）与两族调用」）。
+一个登记表 —— 前台一轮生成、一次压缩、一次刷新模型都挂号；**会调模型的 Task 必填会话 id**（`Begin()` 当场断言）；
+兜底靠每个任务 goroutine 第一行的 `defer guard.Finish(...)`：**忘了收或 panic 记成"中断"**（Go 没有 Drop）⇒ 绝不留僵尸条目。
 三份状态**各管一段、不许互为镜像**：`task` = 身份 + 生死；`turn` = 流细节（几个字、取消）；`compact` = 压缩自己的细节。
 
 **压缩**：机制与策略两层。机制 = `summarize_span`（给它一段，两端用 id 指、**可以是 message 也可以是 summary** ⇒ 二次压缩就是喂 summary id）→ 拼材料 → 叫能力 → 过闸（剔 `<state>`）→ 落库（单事务）。策略 = "从第一条没被覆盖的消息起，取最老的 N 个**已闭合块**"（手动按钮的语义）。
 谁也**不许**绕过这里自己拼摘要请求。不持锁跨 await：取料在锁里、调用在锁外、落库再进锁。
 
-**能力**：身份写死在代码里（枚举变体），`abilities.json` 只能**覆盖**模板/渠道/模型，不能造新的。
+**能力**：身份写死在代码里（枚举变体），**开关 + 可选覆盖写在 `agents.json` 每个 agent 的 `abilities` 上**（不另开 `abilities.json`），只能**覆盖**模板/渠道/模型，不能造新的。
 与会话 Agent 的三条硬边界：① 产出永不进历史/树/变量（落库由调用方决定，如摘要走 `record_summary`）；② 提示词永不进会话的系统提示词；③ **失败不阻塞任何一轮**。
 `prompt_version` = 生效模板的 64 位哈希（改一个字就变，别手写版本号）。
-**Agent 的导出导入（卡带）**：导出**默认不带密钥**（`api_key` 置空，要带得显式勾）；**导入不需要「重算世界状态」**—— 变量不落库、每轮现演，换了底子状态自动就是新样子。要打包的就是 `agents.json`（+ 将来的 `abilities.json`）。
+**Agent 的导出导入（卡带）**：导出**默认不带密钥**（`api_key` 置空，要带得显式勾）；**导入不需要「重算世界状态」**—— 变量不落库、每轮现演，换了底子状态自动就是新样子。要打包的就是 `agents.json`（能力开关就在它里面 —— **没有 `abilities.json`** ✗）。
 **占位符**（`{{…}}`）：白名单 = 枚举（`{{system_time}}` / `{{state_before}}` / `{{state_after}}` / `{{range}}` / `{{blocks}}`）；**不认识的 `{{foo}}` 原样留着**；**只扫一遍**（替换进去的值不再当模板扫）；**会话 Agent 的提示词永不替换**（它一变，前缀缓存每轮全废）。
 
 ## 数据模型
@@ -427,7 +448,8 @@ assertValidSessionId(id)  // 只允许 [A-Za-z0-9._-]，首尾必须是字母数
 （`type CacheRetention = "none" | "short" | "long"`）。Pi 的调用点原话："Avoid cache writes for one-off summaries"。
 `"none"` 的实际效果（只在**体**里，且只对该 provider 支持时）：不发 `prompt_cache_key`、不发
 `prompt_cache_retention: "24h"`、Anthropic 格式的 `cache_control` 断点直接不生成。
-**`x-opencode-session` 照发**（头是路由、体是缓存，两回事）；**没有会话上下文时铸一个新的，绝不留空**。
+**`x-opencode-session` 照发**（头是路由、体是缓存，两回事）；但**会话 id 必填** ✓ —— 会调模型的 Task 缺了就在
+`task.Begin()` 当场报错 ✓（**不学 Pi 的"没有上下文就铸一个新的"** ✗ —— 见 `DEFINE.md`「任务（Task）与两族调用」✓）。
 ⇒ 对 OpenCode GO 来说 `"none"` 是 **no-op**（它那几个参数本就只对 api.openai.com / Anthropic 系存在）——
 **别为此发明 header**：Pi 没做，我们也不做。
 
@@ -435,7 +457,8 @@ assertValidSessionId(id)  // 只允许 [A-Za-z0-9._-]，首尾必须是字母数
 
 - **缓存命中与 session id 无关** ✓✓：同一 session 的两次调用 **0 命中**；而**另铸了一个 session** 的第三次反而命中
   **7552** tokens ⇒ 网关的缓存是**按内容前缀**算的，session id 只负责**路由/亲和**。所以"给辅助调用另开会话"
-  对缓存**没有影响**（别为缓存去分子会话）。
+  对缓存**没有影响**（别为缓存去分子会话）。**但会话 id 仍是路由/亲和的硬要求** ✓ ⇒ 结论不变：
+  会调模型的 Task **照样骑同一个会话 id** ✓（见 `DEFINE.md`「任务（Task）与两族调用」✓）。
 - **真实客户端确实会中途另铸会话**：omp 在同一个会话里出现了两个 session id，且两者**同一秒铸造**
   （UUIDv7 前 8 位相同 `01a0ec83`）⇒ 它确实为某些调用开了**侧会话**。**我们仍照 Pi（共用一个）**：
   两种做法网关都收，但"一个会话对网关表现为一个会话"更像人类用法。
@@ -454,6 +477,7 @@ prompt caching**"）。**不要为能力造子 session id**：网关的会话 id
 - **线上值 = 裸 UUID**（社区实现把 `session-<uuid>` 剥前缀再发；我们的 `sessions.id` 本来就是裸的 ⇒ 零转换）；
 - **生命周期**：跨轮次 / 恢复 / **压缩** / 重试**都不变**；**新会话、fork、子任务**用**新** id
   ⇒ 对照我们：重发、编辑、删消息 = 同一会话 ⇒ **同一 id**；**Copy 出来的新会话** = 新 id（天然满足 ✓）；
+  （**我们不做"给子任务另开会话"** ✗：会调模型的 Task 一律骑 `sessions.id` ✓，见下面第 1 条 ✓）；
 - **辅助调用骑同一个 key**：标题生成、摘要压缩也要带**当前会话**的 id（不是每条请求随机）；
 - 归口：**provider 层按 kind 自动加**（维护者原话："该由 pi-ai 归一化各家的特殊需求"）；
   动态的会话头**压过**静态同名头；`opencode*` 之外不发。
@@ -492,14 +516,13 @@ prompt caching**"）。**不要为能力造子 session id**：网关的会话 id
 两条必须记住的：**历史里出现过工具 ⇒ `tools` 参数必须在**（哪怕 `[]`）；**不认识的字段默认不发**（有些上游直接 400）。
 
 **microchat 怎么落**（都属于 providers 那一波）：
-1. 会话 id 的**规则**（用户 2026-09-29 定，一条覆盖所有将来玩法）：
-   **系统提示词一致的，在同一个会话里共用一个 session id** ——
-   `providers.SessionIDFor(会话 id, 本请求的系统提示词, 主提示词)`：
-   与主线同提示词（主聊天、以及任何同提示词的扩展）⇒ 直接用 `sessions.id`（与 Pi 同构）；
-   提示词不同（摘要/标题/判断/将来的子 Agent）⇒ 由 `(会话 id, 提示词)` **确定性派生**一个 UUIDv5。
-   **绝不为"没有会话上下文"随机铸 id**（Pi 在 `compaction.ts:654` 就是这么干的，**我们不学这一步** ✗）：
-   网关拿它做路由/缓存亲和，随机 id 等于放弃亲和，而且一个会话对网关表现成"每次都是新会话"——
-   正是他们滥用监控盯的形状。派生是无状态可重现的（重启、换机、重放同一文本都是同一个 id）；
+1. 会话 id 的**规则**（2026-09-29 定；**Task 那节改定 ⇒ 一个会话对上游就只表现成一个 session** ✓）：
+   **凡是会调模型的调用（主聊天、摘要、标题、判断、将来的子 Agent）一律带 `sessions.id`** ✓ ——
+   **不许按提示词派生第二个 id** ✗（早先 `providers.SessionIDFor(会话 id, 提示词)` 那个 UUIDv5 方案**作废** ✗：
+   "一个会话对网关表现成 N 个 session"正是他们滥用监控盯的形状 ✓；口径见 `DEFINE.md`「任务（Task）与两族调用」✓）。
+   **绝不为"没有会话上下文"随机铸 id** ✗（Pi 在 `compaction.ts:654` 就是这么干的，**我们不学这一步** ✗）：
+   会调模型的 Task **SessionID 必填**，在 `task.Begin()` **当场断言**（缺了就报错 ✓）；
+   只有**不调模型**的 Task（`refresh_models`）才允许没有会话 ✓；
 2. `providers.json` 的 `headers` 支持**占位符**（白名单枚举里加 `{{session_id}}`）⇒ 配置里写
    `"x-session-affinity": "{{session_id}}"` / `"x-opencode-session": "{{session_id}}"` 就把会话头配齐了，**不用新概念**；
    静态头（`x-opencode-client` ✓ `accept` ✓ `user-agent` ✓）直接写死在配置里 ✓。
@@ -565,6 +588,9 @@ prompt caching**"）。**不要为能力造子 session id**：网关的会话 id
 ## 踩过的坑（都是实测出来的，改代码前扫一眼）
 
 - **不设总超时 = 上游卡住、界面转一辈子**：超时写在 `providers.json` 的 `timeouts`（缺省 connect 15s / total 300s）。
+- **`db.Exec("PRAGMA …")` 只管当时那一条连接** ✗：连接池后来新开的连接就漏了 —— `foreign_keys` 漏掉 = 级联**静默失效**（`ON DELETE CASCADE` 不生效，还回 204）；
+  另外 SQLite 的 `busy_timeout` 默认是 **0** ⇒ 两个进程同时开同一个库（服务在跑 + 一个 `./microchat -debug <op>`）会当场回
+  `database is locked (5) (SQLITE_BUSY)`，而"打开库"这一步就要拿一下写锁。两条都挂到 DSN 上（`?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)`）——**每建一条连接生效一次**，池子怎么开都带得上。
 - **删消息只删后缀 ⇒ 不留洞**：所以不需要"退 leaf"这套东西（树那会儿要算"退到还活着的最新兄弟"，很绕且踩过）。
   想保住后面的内容 ⇒ **先 Copy 一条会话**再在原会话上删（线性会话里这是唯一的"从这里重新开始"）。
 - **配置文件里没有注释**：程序整体重写，JSONC 会给人"写了也会丢"的假象。严格 JSON，写坏了报 `Expecting property name…`。

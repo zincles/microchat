@@ -24,7 +24,7 @@ func newProvidersServer(t *testing.T, providersJSON string) (*Server, *store.Sto
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	server := New(st, config.DefaultConfig(), config.Paths{ConfigDir: dir, DataDir: dir})
+	server := newTestServer(st, config.DefaultConfig(), config.Paths{ConfigDir: dir, DataDir: dir})
 	return server, st
 }
 

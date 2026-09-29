@@ -6,7 +6,10 @@
 //   - 时间是毫秒整数。
 package model
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // DefaultAgentID：内置默认 agent 的 id（Rust: model::DEFAULT_AGENT_ID）。
 func DefaultAgentID() string { return "default" }
@@ -37,6 +40,21 @@ type Message struct {
 
 	SummaryID *string `json:"summary_id,omitempty"` // 收拢它的摘要：压缩只写这一格
 	CreatedAt int64   `json:"created_at"`
+}
+
+// TitleFrom：首句临时标题 —— 换行压成空格、trim、按**字符**截断（不是字节：中文按字节截会切出残字）。
+//
+// 标题只是给人看的句柄（空串 = 还没起名）；真正的权威是这个会话的消息。
+func TitleFrom(text string, chars int) string {
+	flat := strings.TrimSpace(strings.NewReplacer("\n", " ", "\r", " ").Replace(text))
+	if chars <= 0 {
+		return flat
+	}
+	runes := []rune(flat)
+	if len(runes) <= chars {
+		return flat
+	}
+	return string(runes[:chars])
 }
 
 // SummarySourceKind：摘要的成员是消息还是摘要（同质，不许混）。

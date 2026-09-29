@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/mattn/go-runewidth"
@@ -52,8 +53,35 @@ type model struct {
 	// 界面
 	width, height int
 	ready         bool
-	input         string // 底下那行输入（命令与将来的消息都从这儿走）
+	input         string // 底下那行输入（命令与消息都从这儿走）
+
+	// 正在生成的这一轮（界面按状态**合成**的气泡；库里还没有它）
+	turn *liveTurn
 }
+
+// liveTurn：这一轮生成在界面上的样子。
+//
+// 库里的那条回复要**整段拿到才落库** ⇒ 生成中这条气泡是**界面合成的**：
+// 转圈 + 耗时 + 「/stop 停止」。`messageID` 就是它将来落库的那个 id
+// （受理回执里给的）⇒ 气泡消失、真消息出现是无缝的。
+type liveTurn struct {
+	sessionID string
+	messageID string
+	phase     string
+	elapsedMS int64
+	text      string // 已经画出来的正文（增量累加）
+	thinking  string // 思考流（只服务动画）
+	from      int    // 正文游标
+	thinkFrom int    // 思考游标
+}
+
+// Busy：还在跑（`error` 不算 —— 它是上一轮的结局）。
+func (t *liveTurn) Busy() bool {
+	return t != nil && (t.phase == "pending" || t.phase == "streaming")
+}
+
+// turnPollInterval：生成中每 300ms 看一眼（口径见 AGENTS.md）。
+const turnPollInterval = 300 * time.Millisecond
 
 type picker int
 
@@ -65,9 +93,9 @@ const (
 
 // confirm：等着用户点头的那件事（模型里只存**意图**，命令由 `confirmExecute` 派生）。
 type confirm struct {
-	kind      string     // confirmDeleteSession / confirmCut
+	kind      string // confirmDeleteSession / confirmCut
 	sessionID string
-	messageID string     // cut 的目标
+	messageID string       // cut 的目标
 	plan      DeletionPlan // cut：后端算好的预览（执行时照它，并把末尾那条带回去核对）
 }
 
@@ -141,6 +169,32 @@ type outgoingMsg struct {
 type stateMsg struct {
 	state State
 	err   error
+}
+
+// sentMsg：一句话发出去了（202 回来了）。`created` 只在"空会话里冒出新会话"时非空。
+type sentMsg struct {
+	sessionID string
+	created   *Session
+	accepted  TurnAccepted
+	err       error
+}
+
+// turnTickMsg：轮询的节拍（把"每 300ms 看一眼"做成 tick，而不是在 Cmd 里 sleep）。
+type turnTickMsg struct{ sessionID string }
+
+// turnPollMsg：一次轮询的结果（状态 + 这一段的增量）。两次请求在同一个 Cmd 里先后发 ——
+// 状态是"这轮什么样"、增量是"这轮说了什么"，客户端要的就是这一对。
+type turnPollMsg struct {
+	sessionID string
+	status    TurnStatus
+	slice     StreamSlice
+	err       error
+}
+
+type stoppedMsg struct {
+	sessionID string
+	stopped   bool
+	err       error
 }
 
 func initialModel(client *Client) model {
@@ -231,6 +285,56 @@ func loadState(client *Client, sessionID string) tea.Cmd {
 	return func() tea.Msg {
 		state, err := client.State(sessionID)
 		return stateMsg{state: state, err: err}
+	}
+}
+
+// sendCmd：把一句话真发出去。
+//
+// **空会话**（`selected == -1`，界面一进来的那个"待输入的输入框"）时顺手新建一条会话 ——
+// 那条输入框的意义正是"第一句话"（`/new` 在空会话上是无效的，见 commandNew）。
+func sendCmd(client *Client, session *Session, provider, model, content string) tea.Cmd {
+	return func() tea.Msg {
+		created := (*Session)(nil)
+		target := session
+		if target == nil {
+			fresh, err := client.CreateSession(provider, model)
+			if err != nil {
+				return sentMsg{err: err}
+			}
+			created, target = &fresh, &fresh
+		}
+		accepted, err := client.SendMessage(target.ID, content)
+		if err != nil {
+			return sentMsg{sessionID: target.ID, created: created, err: err}
+		}
+		return sentMsg{sessionID: target.ID, created: created, accepted: accepted}
+	}
+}
+
+// turnTickCmd：下一次轮询的节拍。
+func turnTickCmd(sessionID string) tea.Cmd {
+	return tea.Tick(turnPollInterval, func(time.Time) tea.Msg { return turnTickMsg{sessionID: sessionID} })
+}
+
+// pollTurnCmd：看一眼状态 + 拉这一段的增量（两条游标各拿各的）。
+func pollTurnCmd(client *Client, sessionID string, from, thinkFrom int) tea.Cmd {
+	return func() tea.Msg {
+		status, err := client.TurnStatus(sessionID)
+		if err != nil {
+			return turnPollMsg{sessionID: sessionID, err: err}
+		}
+		slice, err := client.TurnText(sessionID, from, thinkFrom)
+		if err != nil {
+			return turnPollMsg{sessionID: sessionID, status: status, err: err}
+		}
+		return turnPollMsg{sessionID: sessionID, status: status, slice: slice}
+	}
+}
+
+func stopTurnCmd(client *Client, sessionID string) tea.Cmd {
+	return func() tea.Msg {
+		stopped, err := client.StopTurn(sessionID)
+		return stoppedMsg{sessionID: sessionID, stopped: stopped, err: err}
 	}
 }
 
@@ -419,6 +523,75 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lastAction = fmt.Sprintf("载荷 %d 条（Esc 关掉）", len(message.items))
 		return m, nil
 
+	case sentMsg:
+		if message.err != nil {
+			m.lastAction = "发送失败：" + message.err.Error()
+			return m, nil
+		}
+		if message.created != nil { // 空会话里冒出来的新会话：进列表并选中（刷新回来才落到位）
+			m.sessions = append(m.sessions, *message.created)
+			m.pendingSelect = message.created.ID
+		}
+		m.turn = &liveTurn{
+			sessionID: message.sessionID,
+			messageID: derefID(message.accepted.Turn.MessageID),
+			phase:     message.accepted.Turn.Phase,
+		}
+		m.lastAction = "已发出（" + message.accepted.Backend + "）· 生成中…"
+		// 用户那句已经在库里了 ⇒ 消息列表要重拉；同时开始每 300ms 看一次进度
+		return m, tea.Batch(
+			loadSessions(m.client),
+			loadMessages(m.client, message.sessionID),
+			turnTickCmd(message.sessionID),
+		)
+
+	case turnTickMsg:
+		if !m.turn.Busy() || m.turn.sessionID != message.sessionID {
+			return m, nil
+		}
+		return m, pollTurnCmd(m.client, m.turn.sessionID, m.turn.from, m.turn.thinkFrom)
+
+	case turnPollMsg:
+		// 属于旧的一轮 / 已经没有在生成的轮次 ⇒ 丢掉（界面只认当前这一轮）
+		if m.turn == nil || m.turn.sessionID != message.sessionID {
+			return m, nil
+		}
+		if message.err != nil {
+			m = m.settleTurn(message.sessionID)
+			m.lastAction = "取生成进度失败：" + message.err.Error()
+			return m, nil
+		}
+		m.turn.phase, m.turn.elapsedMS = message.status.Phase, message.status.ElapsedMS
+		m.turn.text += message.slice.Text
+		m.turn.thinking += message.slice.Thinking
+		m.turn.from, m.turn.thinkFrom = message.slice.Next, message.slice.ThinkNext
+		switch message.status.Phase {
+		case "error":
+			// 失败：库里**半条都没有**（气泡直接消失），原因摆在底栏
+			m = m.settleTurn(message.sessionID)
+			m.lastAction = "生成失败：" + message.status.Error
+			return m, nil
+		case "idle":
+			// 收到 idle ⇒ 整段已经落库 ⇒ **一次性重拉**（气泡被真消息取代）
+			m = m.settleTurn(message.sessionID)
+			m.lastAction = "生成完成"
+			return m, loadMessages(m.client, message.sessionID)
+		}
+		return m, turnTickCmd(message.sessionID)
+
+	case stoppedMsg:
+		if message.err != nil {
+			m.lastAction = "停止失败：" + message.err.Error()
+			return m, nil
+		}
+		if !message.stopped {
+			m.lastAction = "现在没有在生成（/stop 是幂等的，什么都没发生）"
+			return m, nil
+		}
+		m = m.settleTurn(message.sessionID)
+		m.lastAction = "已停止这一轮（这条回复没有落库）"
+		return m, nil
+
 	case tea.KeyPressMsg:
 		// 先认输入相关的键（打字优先），再认导航键。
 		// 注意：**没有裸 `q` 退出了** —— 那会和打字打架（Pi 也是 /quit 与 ctrl+c）。
@@ -557,7 +730,7 @@ func (m model) pickerChoose() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// submit：回车了 —— 是命令就派发，不是就如实说"发送还没实现"。
+// submit：回车了 —— 是命令就派发，不是就**真发**。
 func (m model) submit() (tea.Model, tea.Cmd) {
 	text := strings.TrimSpace(m.input)
 	// 面板补全要在**清空输入之前**算候选（先清空再算 ⇒ 候选恒为空，补全永远扑空 —— 测试抓到的）
@@ -573,11 +746,22 @@ func (m model) submit() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if !strings.HasPrefix(text, "/") {
-		// 发送还没搬完（③ chat 那一波）—— 如实说，不假装能发。
-		m.lastAction = "发送还没实现（后端还没有 POST /messages）"
-		return m, nil
+		return m.send(text)
 	}
 	return m.runCommand(text)
+}
+
+// send：把这句话发出去（**输入行非命令 ⇒ 真发**）。
+//
+// 空会话（还没建过会话）也能发：`sendCmd` 会顺手建一条。
+// 已经在生成中就**不必发**（后端会 409）—— 这里先说清楚，省一次白跑。
+func (m model) send(text string) (tea.Model, tea.Cmd) {
+	if m.turn.Busy() {
+		m.lastAction = "这个会话还在生成中（/stop 可以打断它），等它跑完再发"
+		return m, nil
+	}
+	m.lastAction = "发送中…"
+	return m, sendCmd(m.client, m.currentSession(), m.chosenProvider, m.chosenModel, text)
 }
 
 // runCommand：按**命令表**派发（面板、/help、这里读的是同一份表）。
@@ -618,6 +802,7 @@ func init() {
 		{name: "model", help: "挑渠道 / 模型（有会话就改它，没有则留给下一条）", run: commandModel},
 		{name: "outgoing", help: "看下次真发出去的载荷（哪几条是压缩出来的）", run: commandOutgoing},
 		{name: "state", help: "看当前会话的世界状态", run: commandState},
+		{name: "stop", help: "打断正在生成的那一轮（幂等）", run: commandStop},
 		{name: "refresh", help: "重新拉会话列表", run: commandRefresh},
 		{name: "help", help: "列命令（含还没搬完的）", run: commandHelp},
 		{name: "quit", help: "退出", run: commandQuit},
@@ -625,7 +810,7 @@ func init() {
 }
 
 // pendingCommands：路由还没搬完的（如实列着，不假装支持）。
-var pendingCommands = []string{"/compact", "/fork", "/archive", "/stop", "/tasks"}
+var pendingCommands = []string{"/compact", "/archive"}
 
 func commandNew(m model, _ []string) (tea.Model, tea.Cmd) {
 	// 规矩：**当前会话为空时 /new 无效**（空会话已经是新的了，再建就是造垃圾行）
@@ -827,6 +1012,48 @@ func commandState(m model, _ []string) (tea.Model, tea.Cmd) {
 func commandRefresh(m model, _ []string) (tea.Model, tea.Cmd) {
 	m.lastAction = "刷新中…"
 	return m, loadSessions(m.client)
+}
+
+// commandStop：打断正在生成的那一轮（**幂等** —— 没在跑也 200，界面照实说"什么都没发生"）。
+//
+// 问的是**后端**（权威在那儿）：界面这一份 `m.turn` 只是"我知道的那一轮"，
+// 别的客户端起的生成、或界面重启前起的那一轮，它并不知情。
+func commandStop(m model, _ []string) (tea.Model, tea.Cmd) {
+	target := ""
+	if m.turn != nil {
+		target = m.turn.sessionID
+	} else if session := m.currentSession(); session != nil {
+		target = session.ID
+	}
+	if target == "" {
+		m.lastAction = "没有会话在生成，没什么可停的"
+		return m, nil
+	}
+	m.lastAction = "停止…"
+	return m, stopTurnCmd(m.client, target)
+}
+
+// settleTurn：这一轮在**本地**收干 —— 气泡消失，左栏那条会话的"生成中"也跟着落回 idle。
+//
+// 为什么**不重拉会话列表**：那会让底栏刚刚写上的「已停止 / 已完成 / 生成失败」立刻被
+// "会话 N 条"顶掉（两个 Cmd 谁先回来还不一定）。这里改的是**已经确定的事实**（这一轮结束了），
+// 下一次刷新（`/refresh` 或别的动作）自然与后端对账。
+func (m model) settleTurn(sessionID string) model {
+	m.turn = nil
+	for index := range m.sessions {
+		if m.sessions[index].ID == sessionID && m.sessions[index].Turn.Phase != "idle" {
+			m.sessions[index].Turn = TurnStatus{Phase: "idle"}
+		}
+	}
+	return m
+}
+
+// derefID：可空 id 的可读形式（没有就空串）。
+func derefID(id *string) string {
+	if id == nil {
+		return ""
+	}
+	return *id
 }
 
 func commandHelp(m model, _ []string) (tea.Model, tea.Cmd) {
@@ -1103,6 +1330,10 @@ func (m model) renderMessages(height int) []string {
 		block = append(block, "")
 		blocks = append(blocks, block)
 	}
+	// 生成中那条回复：库里还没有它 ⇒ 界面**合成**一个气泡（落库后同 id 的真消息自然取代它）
+	if m.turn.Busy() && m.turn.sessionID == session.ID {
+		blocks = append(blocks, m.liveBlock())
+	}
 	budget := height - len(head)
 	taken := len(blocks)
 	used := 0
@@ -1131,6 +1362,23 @@ func (m model) renderMessages(height int) []string {
 		lines = append(lines, "")
 	}
 	return lines[:height]
+}
+
+// liveBlock：**生成中那一刻**的气泡（库里还没有那条回复）。
+//
+// 口径照 AGENTS.md：转圈 + "正在生成… 12.3s" + 「停止」；思考只报**字数**
+// （token 数流式帧里没有 —— 卡片脚注那儿的 token 是另一回事，别混）。
+func (m model) liveBlock() []string {
+	block := []string{truncate(fmt.Sprintf(" 助手（生成中… %.1fs）：", float64(m.turn.elapsedMS)/1000), m.mainWidth())}
+	if m.turn.thinking != "" {
+		block = append(block, truncate(
+			fmt.Sprintf("   [思考中… %d 字]", len([]rune(m.turn.thinking))), m.mainWidth()))
+	}
+	for _, line := range strings.Split(m.turn.text, "\n") {
+		block = append(block, truncate("   "+line, m.mainWidth()))
+	}
+	block = append(block, truncate("   （/stop 停止）", m.mainWidth()))
+	return append(block, "")
 }
 
 func (m model) renderResumePicker(height int) []string {

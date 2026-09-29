@@ -30,11 +30,35 @@ func NewClient(baseURL, token string) *Client {
 
 // ── 后端返回的形状（与 AGENTS.md 的契约一致；只取这个界面要用的字段）──
 
+// TurnStatus：这一轮生成的状态（`GET .../status`）。
+//
+// `idle` 之外都别让用户再发（同一会话在跑时再发，后端会 409）。
 type TurnStatus struct {
-	Phase     string `json:"phase"`
-	ElapsedMS int64  `json:"elapsed_ms"`
-	Chars     int    `json:"chars"`
-	Error     string `json:"error,omitempty"`
+	Phase string `json:"phase"`
+	// MessageID：这条**正在生成的回复**的 id（受理时定好，那会儿还没进库）。
+	MessageID     *string `json:"message_id,omitempty"`
+	ElapsedMS     int64   `json:"elapsed_ms"`
+	Chars         int     `json:"chars"`
+	ThinkingChars int     `json:"thinking_chars"`
+	Error         string  `json:"error,omitempty"`
+}
+
+func (t TurnStatus) Busy() bool { return t.Phase == "pending" || t.Phase == "streaming" }
+
+// TurnAccepted：发送的受理回执（**202**）—— 不含回复正文。
+type TurnAccepted struct {
+	User    *Message   `json:"user,omitempty"`
+	Backend string     `json:"backend"`
+	Turn    TurnStatus `json:"turn"`
+}
+
+// StreamSlice：游标读的结果（正文与思考**各一条**游标，`done` 表示这轮结束）。
+type StreamSlice struct {
+	Text      string `json:"text"`
+	Next      int    `json:"next"`
+	Thinking  string `json:"thinking"`
+	ThinkNext int    `json:"think_next"`
+	Done      bool   `json:"done"`
 }
 
 type Session struct {
@@ -126,7 +150,7 @@ func (c *Client) do(method, path string, body any, into any) error {
 		return err
 	}
 	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusCreated &&
-		response.StatusCode != http.StatusNoContent {
+		response.StatusCode != http.StatusAccepted && response.StatusCode != http.StatusNoContent {
 		// 错误体固定 {"error":{"code","message"}} —— 客户端按 code 分支，别匹配文案
 		var failure struct {
 			Error struct {
@@ -255,6 +279,40 @@ func (c *Client) Messages(sessionID string) ([]Message, error) {
 	var messages []Message
 	err := c.get("/sessions/"+sessionID+"/messages", &messages)
 	return messages, err
+}
+
+// SendMessage：把一句话发出去 —— **受理与生成分开**：立刻回 202 回执（不含回复正文），
+// 生成在后台跑；`accepted.Turn.MessageID` 就是那条正在生成的回复的 id。
+//
+// 同一会话在跑时再发 ⇒ 409（错误体里是 conflict）。
+func (c *Client) SendMessage(sessionID, content string) (TurnAccepted, error) {
+	var accepted TurnAccepted
+	err := c.post("/sessions/"+sessionID+"/messages", map[string]any{"content": content}, &accepted)
+	return accepted, err
+}
+
+// TurnStatus：这一轮现在处在哪一档（`idle` / `pending` / `streaming` / `error`）。
+func (c *Client) TurnStatus(sessionID string) (TurnStatus, error) {
+	var status TurnStatus
+	err := c.get("/sessions/"+sessionID+"/status", &status)
+	return status, err
+}
+
+// TurnText：游标读增量（正文与思考各一条游标）—— 只服务动画，读不消费。
+func (c *Client) TurnText(sessionID string, from, thinkFrom int) (StreamSlice, error) {
+	var slice StreamSlice
+	path := fmt.Sprintf("/sessions/%s/turn/text?from=%d&think_from=%d", sessionID, from, thinkFrom)
+	err := c.get(path, &slice)
+	return slice, err
+}
+
+// StopTurn：按停这一轮。**幂等**：没在跑也 200（回 false）。
+func (c *Client) StopTurn(sessionID string) (bool, error) {
+	var result struct {
+		Stopped bool `json:"stopped"`
+	}
+	err := c.post("/sessions/"+sessionID+"/stop", nil, &result)
+	return result.Stopped, err
 }
 
 // State：世界状态的快照（调试面板要看它）。

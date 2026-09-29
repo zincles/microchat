@@ -18,10 +18,13 @@ import (
 
 	"golang.org/x/term"
 
+	"microchat/internal/chat"
 	"microchat/internal/config"
 	"microchat/internal/server"
 	"microchat/internal/store"
+	"microchat/internal/task"
 	"microchat/internal/tui"
+	"microchat/internal/turn"
 )
 
 func main() {
@@ -30,11 +33,19 @@ func main() {
 	flag.StringVar(&paths.ConfigDir, "config", paths.ConfigDir, "配置目录（含 agents.json 等）")
 	flag.StringVar(&paths.DataDir, "data", paths.DataDir, "数据目录（含 microchat.db）")
 	addr := flag.String("addr", "", "监听地址（留空 = 用 config.json 的 server.host:port）")
+	// 直操模式：**同进程**调 internal/*（不起服务、不发 HTTP、不开 TUI），打印结果就退出。
+	// 用 bool 而不是"`-debug` 吃掉下一个参数"：Go 的 flag 在第一个非 flag 参数处停下，
+	// 于是 `-debug new --title X` 里的 `--title X` 会原样落进 flag.Args()，由 debug.go 自己解析。
+	debugMode := flag.Bool("debug", false, "直操模式：-debug <op> [参数…]（同进程调 internal/*，不起服务）")
 	flag.Parse()
 
 	cfg, err := config.LoadConfig(paths)
 	if err != nil {
 		fatal("读配置失败: %v", err)
+	}
+	// 给了 -debug 就**只干这一件事**：在监听端口之前就退出（也别进 TUI）。
+	if *debugMode {
+		os.Exit(runDebug(paths, cfg, flag.Args()))
 	}
 	if *addr == "" {
 		*addr = fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
@@ -52,6 +63,12 @@ func main() {
 	defer st.Close()
 
 	version, _ := st.UserVersion()
+
+	// 三份状态各管一段：`task` = 身份与生死，`turn` = 流细节，`chat` = 一轮怎么跑。
+	// 都是**进程内**的（不进库）：重启后"没有生成在跑"是诚实的事实。
+	turns := turn.NewRegistry()
+	tasks := task.NewRegistry()
+	chatService := chat.New(st, paths, turns, tasks)
 
 	// **先真听上端口，再切日志到文件**：端口被占这类启动失败必须留在**终端**上看得见 ——
 	// 不然 TUI 模式下日志去了 data/microchat.log，终端里只剩一句 "exit status 1"（真发生过）。
@@ -71,7 +88,7 @@ func main() {
 	log.Printf("microchat 起在 http://%s（数据 %s，配置 %s，user_version=%d，TUI=%v）",
 		*addr, paths.DataDir, paths.ConfigDir, version, interactive)
 	go func() {
-		if err := http.Serve(listener, server.New(st, cfg, paths).Handler()); err != nil {
+		if err := http.Serve(listener, server.New(st, cfg, paths, chatService).Handler()); err != nil {
 			log.Printf("服务退出: %v", err)
 		}
 	}()

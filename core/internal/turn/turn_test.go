@@ -112,6 +112,33 @@ func TestFinishKeepsElapsedForError(t *testing.T) {
 	}
 }
 
+// 令牌**绝不重复**：被停掉的旧任务回来时不许"撞上"新一轮的令牌。
+//
+// 踩过的形状：令牌若从"这个会话上一次的 +1"推，`Stop` 摘掉条目后就又从 1 重新开始 ——
+// 而旧任务这时正好回来 ⇒ 令牌对上了 ⇒ 它会把自己的结果写进**新一轮**的账上。
+func TestTokensNeverRepeatAcrossTurns(t *testing.T) {
+	turns := NewRegistry()
+	stale, _ := turns.Begin("c1", "m1")
+	turns.Stop("c1")
+	fresh, _ := turns.Begin("c1", "m2")
+	if stale == fresh {
+		t.Fatalf("新旧令牌撞了：%d", stale)
+	}
+	if turns.IsMine("c1", stale) {
+		t.Fatal("旧令牌必须失效（否则旧任务会写进新一轮）")
+	}
+	if !turns.IsMine("c1", fresh) {
+		t.Fatal("新一轮自己的令牌该有效")
+	}
+	// `Finish` / 增量也要照同一把尺子挡住过期的那个
+	if turns.Finish("c1", stale, "别人的失败"); turns.Status("c1").Error != "" {
+		t.Fatal("旧令牌不许改状态")
+	}
+	if turns.AppendContent("c1", stale, "偷来的字") {
+		t.Fatal("旧令牌不许写进缓冲区")
+	}
+}
+
 // stop：**幂等**（没在跑也回 false）、摘登记、abort 后台任务、清缓冲。
 func TestStopIsIdempotent(t *testing.T) {
 	turns := NewRegistry()

@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 )
 
 // ModelRow：`models` 表一行。**发现列**与**用户列**分得很清（刷新永不动用户列）。
@@ -204,6 +205,23 @@ func (s *Store) ListModels(provider string) ([]ModelRow, error) {
 		models = append(models, model)
 	}
 	return models, rows.Err()
+}
+
+// GetModel：取一个模型（发现列 + 用户列）；**没有这条 ⇒ nil，不是错误**
+// （上游没发现过它、或用户手写了会话的渠道/模型，都很正常 —— 上下文口径自然退到配置兜底）。
+func (s *Store) GetModel(provider, upstreamID string) (*ModelRow, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	row := s.db.QueryRow("SELECT "+modelColumns+" FROM models WHERE provider = ?1 AND upstream_id = ?2",
+		provider, upstreamID)
+	model, err := scanModel(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &model, nil
 }
 
 // SetModelOverride：用户列（显示名 / 上下文覆盖 / 采样参数）—— **只有这里能改**（刷新永不动它）。
