@@ -326,3 +326,20 @@ func (c *Client) State(sessionID string) (State, error) {
 	err := c.get("/sessions/"+sessionID+"/state", &state)
 	return state, err
 }
+
+// ContextUsage：`GET /sessions/{session_id}/context` —— **只有数字**（状态行那一档用它）。
+//
+// ⚠ 只取界面要画的三个：占用 / 预算 / 是否超预算。其余字段本界面不画 ⇒ 不取（要用再加，别先摆着）。
+// ⚠ **`ratio` 不是"用了百分之几"** ✗ —— 契约里那个 `ratio` 是**分词器标定比**
+// （`state.TokenizerRatio`，用来把字数估成 token 数）；占用比例自己按 `used_tokens / budget_tokens` 算。
+type ContextUsage struct {
+	UsedTokens   int  `json:"used_tokens"`
+	BudgetTokens int  `json:"budget_tokens"`
+	OverBudget   bool `json:"over_budget"`
+}
+
+func (c *Client) Context(sessionID string) (ContextUsage, error) {
+	var usage ContextUsage
+	err := c.get("/sessions/"+sessionID+"/context", &usage)
+	return usage, err
+}

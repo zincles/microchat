@@ -99,8 +99,8 @@ func TestLayoutSinceNoSidebar(t *testing.T) {
 	if input < 1 {
 		t.Fatalf("该有输入行：\n%s", m.View().Content)
 	}
-	if lines[input+1] != strings.Repeat("-", m.width) {
-		t.Fatalf("输入行下面该是一条 ASCII 分隔线：%q", lines[input+1])
+	if lines[input+1] != rule(m.width, m.width) {
+		t.Fatalf("输入行下面该是一条满线（宽屏 `─` / 窄屏 `-`）：%q", lines[input+1])
 	}
 	// 状态行在分隔线下面（1-2 行，别超过两行）
 	status := lines[input+2:]
@@ -1010,5 +1010,241 @@ func TestSelectionSurvivesListResorting(t *testing.T) {
 	updated, _ = next.Update(sessionsMsg{sessions: []Session{{ID: "c1", Title: "只剩这条"}}})
 	if after := updated.(model); after.selectedID != "" || !strings.Contains(after.lastAction, "别处删的") {
 		t.Fatalf("选中的会话没了就该回空会话：selectedID=%q lastAction=%q", after.selectedID, after.lastAction)
+	}
+}
+
+// ── 满线 / 着色（2026-09-30：升到"现代终端"观感；规矩见 AGENTS.md）──
+
+// stripANSI：去掉转义序列 —— 它是**零宽**的，宽度账与逐字节断言都只看去掉之后的文本。
+func stripANSI(text string) string {
+	var builder strings.Builder
+	escaping := false
+	for _, r := range text {
+		switch {
+		case escaping:
+			escaping = r != 'm' // 我们只发 SGR，都以 m 收尾
+		case r == 0x1b:
+			escaping = true
+		default:
+			builder.WriteRune(r)
+		}
+	}
+	return builder.String()
+}
+
+// colored：同一个 model，只是把着色打开（**布局必须一字不差** —— 颜色是最后一步，零宽）。
+func colored(m model) model {
+	m.style = styler{enabled: true}
+	return m
+}
+
+// **先排版、后上色**：着色版剥掉转义之后，必须与纯文本版**逐字节相同**。
+// 差一个字就说明"先上色再截断"了（转义序列零宽，会多算格 ⇒ 行超宽 / 块被劈开）。
+func TestColorsDoNotChangeLayout(t *testing.T) {
+	withContext := fixture()
+	withContext.context = &ContextUsage{UsedTokens: 12300, BudgetTokens: 131000}
+	withContext.contextFor = "c1"
+	overBudget := fixture()
+	overBudget.context = &ContextUsage{UsedTokens: 140000, BudgetTokens: 131000, OverBudget: true}
+	overBudget.contextFor = "c1"
+	withViewer := fixture()
+	withViewer.viewer, withViewer.viewerTitle, withViewer.viewerHint = []string{" 一行", " 两行"}, "确认删除", "回车 / y 执行 · 其他键取消"
+	withPicker := fixture()
+	withPicker.picker, withPicker.pickerIndex = pickerResume, 1
+
+	cases := map[string]model{
+		"三块": fixture(), "生成中": liveFixture(), "空会话": emptyFixture(), "窄屏": narrowFixture(),
+		"上下文占用": withContext, "超预算": overBudget, "查看器": withViewer, "挑选项": withPicker,
+	}
+	for name, plain := range cases {
+		if strings.Contains(plain.View().Content, "\x1b[") {
+			t.Fatalf("%s：零值 styler = 关 ⇒ 测试路径必须是纯文本", name)
+		}
+		if got := stripANSI(colored(plain).View().Content); got != plain.View().Content {
+			t.Fatalf("%s：着色不该改排版\n--- 纯文本 ---\n%s\n--- 去色后 ---\n%s", name, plain.View().Content, got)
+		}
+	}
+	// 真开着色时要真的有颜色（上面那些断言别成了"两边都纯文本"的假绿）
+	if !strings.Contains(colored(fixture()).View().Content, "\x1b[") {
+		t.Fatal("开着色时该真的有颜色")
+	}
+}
+
+// 满线：宽屏用 `─`，**窄屏退回 ASCII `-`**（`─` 是模糊宽度字符，CJK 终端可能按两格排 ⇒ 窄屏会溢出换行）。
+func TestRuleFallsBackToASCIIOnNarrowScreens(t *testing.T) {
+	if got := rule(10, ruleMinWidth-1); got != strings.Repeat("-", 10) {
+		t.Fatalf("窄屏该退回 ASCII：%q", got)
+	}
+	if got := rule(10, ruleMinWidth); got != strings.Repeat("─", 10) {
+		t.Fatalf("宽屏该用满线：%q", got)
+	}
+	// 整屏：46 列的屏上一个 `─` 都不许有；100 列的有
+	for _, line := range viewLines(narrowFixture()) {
+		if strings.Contains(line, "─") {
+			t.Fatalf("窄屏不该出现模糊宽度的满线：%q", line)
+		}
+	}
+	if !strings.Contains(strings.Join(viewLines(fixture()), "\n"), "─") {
+		t.Fatal("宽屏该画满线")
+	}
+}
+
+// token 缩写（照 Pi 的形状 `12.3k/131k (9.4%)`）：整千不带小数点，千以下原样。
+func TestFormatTokens(t *testing.T) {
+	for want, given := range map[string]int{"0": 0, "999": 999, "1k": 1000, "12.3k": 12300, "131k": 131000} {
+		if got := formatTokens(given); got != want {
+			t.Fatalf("formatTokens(%d) = %q，该是 %q", given, got, want)
+		}
+	}
+}
+
+// 状态行那一档"上下文占用"：会话名之后、在不在跑之前；**换会话时旧的那份不许拿来画**。
+func TestStatusLineShowsContextUsage(t *testing.T) {
+	m := fixture()
+	m.context = &ContextUsage{UsedTokens: 12300, BudgetTokens: 131000}
+	m.contextFor = "c1"
+	status := strings.Join(viewLines(m)[inputLineIndex(viewLines(m))+2:], "\n")
+	if !strings.Contains(status, "12.3k/131k (9.4%)") {
+		t.Fatalf("状态行该报上下文占用：%q", status)
+	}
+	if !strings.Contains(status, "opencode-go/deepseek-v4-flash") || !strings.Contains(status, "空闲") {
+		t.Fatalf("占用该夹在渠道/模型与在不在跑之间：%q", status)
+	}
+	// 换一条会话：那份还旧着 ⇒ 不许显示
+	m.selectedID = "c2"
+	if strings.Contains(m.View().Content, "12.3k") {
+		t.Fatal("换会话之后不许拿旧会话的占用画")
+	}
+	// 没拉到（没进过这个接口）就不显示这一档 —— 界面不许编数
+	if fresh := fixture(); strings.Contains(fresh.View().Content, "%") {
+		t.Fatalf("没拉到时不该编一个占用出来：\n%s", fresh.View().Content)
+	}
+	// 预算为 0（上游没报上下文）⇒ 照实报 0.0%，别算出 NaN/Inf
+	m.selectedID, m.context = "c1", &ContextUsage{UsedTokens: 35, BudgetTokens: 0}
+	if !strings.Contains(m.View().Content, "35/0 (0.0%)") {
+		t.Fatalf("预算为 0 该照实报 0：\n%s", m.View().Content)
+	}
+}
+
+// 超预算 ⇒ 那一段**红**（别的档照旧）；比例是**自己算的** `used/budget`（契约里的 `ratio` 不是这个）。
+func TestContextOverBudgetIsRed(t *testing.T) {
+	m := colored(fixture())
+	m.context = &ContextUsage{UsedTokens: 140000, BudgetTokens: 131000, OverBudget: true}
+	m.contextFor = "c1"
+	if !strings.Contains(m.View().Content, "\x1b[31m140k/131k (106.9%)\x1b[0m") {
+		t.Fatalf("超预算该整段标红（且照实报 >100%%）：\n%q", m.View().Content)
+	}
+	// 没超就不红
+	m.context.OverBudget, m.context.UsedTokens = false, 12300
+	if strings.Contains(m.View().Content, "\x1b[31m12.3k/131k") {
+		t.Fatal("没超预算不该红")
+	}
+}
+
+// 拉取时机：**进会话时**一次、**一轮结束后**一次 —— 不是每 300ms 都拉（占用只在整段落库后才变）。
+func TestContextIsFetchedOnEnterAndAfterTurn(t *testing.T) {
+	m := fixture()
+	if _, cmd := m.Update(messagesMsg{sessionID: "c1", messages: m.messages}); cmd == nil {
+		t.Fatal("进会话（拿到消息）该顺手量一次上下文占用")
+	}
+	// 同一条会话已经量过 ⇒ 不再重复拉
+	loaded := m
+	loaded.context, loaded.contextFor = &ContextUsage{UsedTokens: 1}, "c1"
+	if _, cmd := loaded.Update(messagesMsg{sessionID: "c1", messages: loaded.messages}); cmd != nil {
+		t.Fatal("同一条会话不必每拉一次消息就重量一次占用")
+	}
+	// 一轮结束（idle）⇒ 重拉消息 + 重量占用（同一个 Batch 里）
+	live := liveFixture()
+	done, cmd := live.Update(turnPollMsg{sessionID: "c1", status: TurnStatus{Phase: "idle"}, slice: StreamSlice{Done: true}})
+	if done.(model).turn != nil || cmd == nil {
+		t.Fatal("收到 idle 该收干这一轮并重拉")
+	}
+	// 量回来的数落在状态行上（拉失败就先不显示这一档，且**别去打扰底栏**）
+	updated, _ := loaded.Update(contextMsg{sessionID: "c1", usage: ContextUsage{UsedTokens: 12300, BudgetTokens: 131000}})
+	if !strings.Contains(updated.(model).View().Content, "12.3k/131k (9.4%)") {
+		t.Fatalf("量回来的占用该显示出来：\n%s", updated.(model).View().Content)
+	}
+	before := updated.(model).lastAction
+	failed, _ := updated.(model).Update(contextMsg{sessionID: "c1", err: errTest})
+	if strings.Contains(failed.(model).View().Content, "k/") {
+		t.Fatal("拉不到就不显示这一档（界面不许编数）")
+	}
+	if failed.(model).lastAction != before {
+		t.Fatalf("量占用失败不该顶掉底栏那句话：%q → %q", before, failed.(model).lastAction)
+	}
+}
+
+// 失败标红：**只有那句原话还摆在底栏时**才红 —— 别的动作一改底栏，红自己就退了。
+func TestFailureIsRedOnlyWhileItIsTheLastAction(t *testing.T) {
+	m := colored(fixture())
+	m = m.fail("删除失败：404 not_found")
+	if !strings.Contains(m.View().Content, "\x1b[31m删除失败：404 not_found\x1b[0m") {
+		t.Fatalf("失败该标红：\n%q", m.View().Content)
+	}
+	m.lastAction = "消息 2 条" // 后来又发生了一件正常的事
+	if strings.Contains(m.View().Content, "\x1b[31m") {
+		t.Fatalf("红该跟着那句话一起退掉：\n%q", m.View().Content)
+	}
+}
+
+// 降级三档：`NO_COLOR` / `TERM=dumb` / 非 TTY ⇒ 一律纯文本。
+func TestColorDegradesToPlainText(t *testing.T) {
+	env := func(values map[string]string) func(string) string {
+		return func(key string) string { return values[key] }
+	}
+	if !colorEnabled(env(map[string]string{"TERM": "xterm-256color"}), true) {
+		t.Fatal("普通终端该上色")
+	}
+	if colorEnabled(env(map[string]string{"NO_COLOR": "1", "TERM": "xterm-256color"}), true) {
+		t.Fatal("NO_COLOR 该关掉颜色")
+	}
+	if colorEnabled(env(map[string]string{"TERM": "dumb"}), true) {
+		t.Fatal("TERM=dumb 该关掉颜色")
+	}
+	if colorEnabled(env(map[string]string{"TERM": "xterm-256color"}), false) {
+		t.Fatal("非 TTY 该纯文本")
+	}
+}
+
+// 挑选项：**选中的那条粗体 + 青**（未选中保持默认）—— 挑东西得看出来高亮在哪。
+func TestPickerHighlightIsBoldCyan(t *testing.T) {
+	m := colored(fixture())
+	m.picker, m.pickerIndex = pickerResume, 0
+	body := m.View().Content
+	if !strings.Contains(body, "\x1b[1;36m> ") {
+		t.Fatalf("选中的那条该是粗体 + 青：\n%q", body)
+	}
+	if strings.Contains(body, "\x1b[1;36m  第二段对话") {
+		t.Fatal("未选中的那条不该被高亮")
+	}
+	// 命令面板一样
+	full := colored(typeText(fixture(), "/"))
+	if !strings.Contains(full.View().Content, "\x1b[1;36m> /new") {
+		t.Fatalf("命令面板该高亮当前那条：\n%q", full.View().Content)
+	}
+}
+
+// `/outgoing` 查看器：**摘要是压缩过的 ⇒ 黄**、系统提示词 ⇒ 暗、原样消息 ⇒ 默认色。
+func TestOutgoingViewerColorsBySource(t *testing.T) {
+	m := colored(fixture())
+	blocks := int64(4)
+	summaryID, messageID := "s1", "m9"
+	updated, _ := m.Update(outgoingMsg{items: []Outgoing{
+		{Role: "system", Content: "你是主持人", Source: "system"},
+		{Role: "assistant", Content: "压缩摘要", Source: "summary", SummaryID: &summaryID, Blocks: &blocks},
+		{Role: "user", Content: "原样那句", Source: "message", MessageID: &messageID},
+	}})
+	body := updated.(model).View().Content
+	if !strings.Contains(body, "\x1b[33m摘要 "+shortID(summaryID)) {
+		t.Fatalf("摘要那条该是黄：\n%q", body)
+	}
+	if !strings.Contains(body, "\x1b[2m系统提示词") {
+		t.Fatalf("系统提示词该是暗色：\n%q", body)
+	}
+	if !strings.Contains(body, "消息 "+shortID(messageID)) {
+		t.Fatalf("消息那条该列出来：\n%q", body)
+	}
+	if strings.Contains(body, "\x1b[33m消息 ") || strings.Contains(body, "\x1b[2m消息 ") {
+		t.Fatal("原样消息保持默认色（别和压缩出来的混）")
 	}
 }

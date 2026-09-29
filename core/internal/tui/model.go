@@ -55,6 +55,17 @@ type model struct {
 	width, height int
 	ready         bool
 	input         string // 底下那行输入（命令与消息都从这儿走）
+	// style：着色开关（**只有前景色**）。零值 = 关 ⇒ 测试拿到的 View() 是纯文本
+	// （逐字节断言靠这个；生产路径的开关在 detectStyler，见「降级三档」）。
+	style styler
+	// lastFailure：**最近一次失败**的原话。状态行里只有它此刻仍与 lastAction 逐字相同
+	// （= 那句话还摆在那儿）才标红 —— 别的分支一改底栏，红自己就退了，
+	// 不需要每个非失败分支都记得清标志（漏一处 = 红留在成功消息上，更难查）。
+	lastFailure string
+
+	// context / contextFor：上下文占用，以及它**属于哪条会话**（换会话时那份还旧着 ⇒ 不许拿去画）。
+	context    *ContextUsage
+	contextFor string
 
 	// 正在生成的这一轮（界面按状态**合成**的气泡；库里还没有它）
 	turn *liveTurn
@@ -122,6 +133,14 @@ type sessionsMsg struct {
 type messagesMsg struct {
 	sessionID string
 	messages  []Message
+	err       error
+}
+
+// contextMsg：这一次出站会用掉多少上下文（**只有数字**，见 `GET .../context`）。
+// 拉它的时机只有两个：**进会话时**、**一轮结束后**（不是每 300ms 一次 —— 占用只在整段落库后才变）。
+type contextMsg struct {
+	sessionID string
+	usage     ContextUsage
 	err       error
 }
 
@@ -224,6 +243,14 @@ func loadMessages(client *Client, sessionID string) tea.Cmd {
 	return func() tea.Msg {
 		messages, err := client.Messages(sessionID)
 		return messagesMsg{sessionID: sessionID, messages: messages, err: err}
+	}
+}
+
+// loadContext：量一次上下文占用（**只有数字** —— 不必为一个数去拉整份 `/outgoing`）。
+func loadContext(client *Client, sessionID string) tea.Cmd {
+	return func() tea.Msg {
+		usage, err := client.Context(sessionID)
+		return contextMsg{sessionID: sessionID, usage: usage, err: err}
 	}
 }
 
@@ -339,6 +366,13 @@ func stopTurnCmd(client *Client, sessionID string) tea.Cmd {
 	}
 }
 
+// fail：把一次失败摆到底栏，并**记下这句原话** —— 状态行靠"lastAction 与它逐字相同"判定
+// 该不该标红（见 model.lastFailure 的注释：别的分支一改底栏，红就自己退了）。
+func (m model) fail(text string) model {
+	m.lastAction, m.lastFailure = text, text
+	return m
+}
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch message := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -348,8 +382,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case healthMsg:
 		if message.err != nil {
 			m.version = "" // 连不上 ⇒ 如实"未连接"，别留着上一次的版本号（界面口径：两半互不顶替）
-			m.lastAction = "连不上后端：" + message.err.Error()
-			return m, nil
+			return m.fail("连不上后端：" + message.err.Error()), nil
 		}
 		m.version = message.health.Version
 		m.lastAction = "已连接 " + m.client.BaseURL
@@ -357,7 +390,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case sessionsMsg:
 		if message.err != nil {
-			m.lastAction = "拉会话失败：" + message.err.Error()
+			m = m.fail("拉会话失败：" + message.err.Error())
 			return m, nil
 		}
 		// 取数成功说明连上了 ⇒ 版本号还空着就补一次（初次连接失败后刷新成功时会发生）
@@ -371,15 +404,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// id 没了（别处把这条会话删了）⇒ 老实回到空会话，别赖在别人身上。
 		if m.selectedID != "" && m.findSession(m.selectedID) < 0 {
 			m.selectedID, m.messages, m.messagesFor = "", nil, ""
-			m.lastAction = "那条会话没了（别处删的）—— 现在是空会话"
-			return m, tea.Batch(also...)
+			return m.fail("那条会话没了（别处删的）—— 现在是空会话"), tea.Batch(also...)
 		}
 		m.lastAction = fmt.Sprintf("会话 %d 条", len(m.sessions))
 		return m, tea.Batch(also...)
 
 	case messagesMsg:
 		if message.err != nil {
-			m.lastAction = "拉消息失败：" + message.err.Error()
+			m = m.fail("拉消息失败：" + message.err.Error())
 			return m, nil
 		}
 		session := m.currentSession()
@@ -387,12 +419,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.messages = message.messages
 			m.messagesFor = message.sessionID
 			m.lastAction = fmt.Sprintf("消息 %d 条", len(m.messages))
+			// **进会话时**顺手量一次上下文占用（这份属于哪条会话记在 contextFor ⇒ 换会话会重新拉）
+			if m.contextFor != session.ID {
+				return m, loadContext(m.client, session.ID)
+			}
 		}
+		return m, nil
+
+	case contextMsg:
+		// 拉不到就先不显示这一档 —— **别去打扰底栏**（那不是用户刚做的动作，红了反而是噪音）
+		if message.err != nil {
+			m.context, m.contextFor = nil, ""
+			return m, nil
+		}
+		m.context, m.contextFor = &message.usage, message.sessionID
 		return m, nil
 
 	case createdMsg:
 		if message.err != nil {
-			m.lastAction = "新建失败：" + message.err.Error()
+			m = m.fail("新建失败：" + message.err.Error())
 			return m, nil
 		}
 		m.lastAction = "已新建会话 " + shortID(message.session.ID)
@@ -401,7 +446,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case deletedMsg:
 		if message.err != nil {
-			m.lastAction = "删除失败：" + message.err.Error()
+			m = m.fail("删除失败：" + message.err.Error())
 			return m, nil
 		}
 		// 删完**回到空会话**（不自动跳去别的旧会话 —— 用户要的是"进入新会话"）
@@ -411,14 +456,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case cutPreviewMsg:
 		if message.err != nil {
-			m.lastAction = "取删除预览失败：" + message.err.Error()
+			m = m.fail("取删除预览失败：" + message.err.Error())
 			return m, nil
 		}
 		m.confirm = &confirm{
 			kind: confirmCut, sessionID: message.sessionID,
 			messageID: message.messageID, plan: message.plan,
 		}
-		m.viewer, m.viewerTitle = cutPreviewLines(message.plan), "确认删除"
+		m.viewer, m.viewerTitle = m.cutPreviewLines(message.plan), "确认删除"
 		m.viewerHint = "回车 / y 执行 · 其他键取消"
 		m.lastAction = "看清了再点头（回车 / y）"
 		return m, nil
@@ -426,7 +471,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case cutDoneMsg:
 		m.confirm, m.viewer, m.viewerHint = nil, nil, ""
 		if message.err != nil {
-			m.lastAction = "删除失败：" + message.err.Error()
+			m = m.fail("删除失败：" + message.err.Error())
 			return m, m.reloadMessagesCmd()
 		}
 		m.lastAction = fmt.Sprintf("已删 %d 条消息 · %d 份摘要",
@@ -435,7 +480,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case copiedMsg:
 		if message.err != nil {
-			m.lastAction = "复制失败：" + message.err.Error()
+			m = m.fail("复制失败：" + message.err.Error())
 			return m, nil
 		}
 		m.lastAction = "已复制成 " + shortID(message.session.ID) + "（新会话）"
@@ -444,7 +489,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case updatedMsg:
 		if message.err != nil {
-			m.lastAction = "改渠道 / 模型失败：" + message.err.Error()
+			m = m.fail("改渠道 / 模型失败：" + message.err.Error())
 			return m, nil
 		}
 		for index := range m.sessions {
@@ -458,7 +503,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case modelsMsg:
 		if message.err != nil {
 			m.picker = pickerNone
-			m.lastAction = "拉模型失败：" + message.err.Error()
+			m = m.fail("拉模型失败：" + message.err.Error())
 			return m, nil
 		}
 		m.models = message.models
@@ -467,7 +512,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case stateMsg:
 		if message.err != nil {
-			m.lastAction = "取状态失败：" + message.err.Error()
+			m = m.fail("取状态失败：" + message.err.Error())
 			return m, nil
 		}
 		parts := make([]string, 0, len(message.state.Effective))
@@ -484,15 +529,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case outgoingMsg:
 		if message.err != nil {
-			m.lastAction = "拉载荷失败：" + message.err.Error()
+			m = m.fail("拉载荷失败：" + message.err.Error())
 			return m, nil
 		}
 		lines := make([]string, 0, len(message.items)*3+2)
 		for index, item := range message.items {
-			who := "消息"
+			// 出处一眼看出来（口径见 AGENTS.md）：**摘要是压缩过的 ⇒ 黄**、系统提示词 ⇒ 暗、
+			// 原样消息 ⇒ 默认色。正文一律默认色（内容才是主角）。
+			who, kind := "消息", stylePlain
 			switch item.Source {
 			case "system":
-				who = "系统提示词"
+				who, kind = "系统提示词", styleDim
 			case "summary":
 				blocks := int64(0)
 				if item.Blocks != nil {
@@ -502,15 +549,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if item.SummaryID != nil {
 					id = shortID(*item.SummaryID)
 				}
-				who = "摘要 " + id + "（覆盖 " + strconv.FormatInt(blocks, 10) + " 块）"
+				who, kind = "摘要 "+id+"（覆盖 "+strconv.FormatInt(blocks, 10)+" 块）", styleYellow
 			default:
 				if item.MessageID != nil {
 					who = "消息 " + shortID(*item.MessageID)
 				}
 			}
-			role := item.Role
-			head := fmt.Sprintf("%2d %-9s %-8s", index+1, role, "")
-			lines = append(lines, truncate(head+who, max(1, m.width)))
+			head := fmt.Sprintf("%2d %-9s %-8s", index+1, item.Role, "")
+			line, _ := m.style.concat([]segment{{head, stylePlain}, {who, kind}}, max(1, m.width), "")
+			lines = append(lines, line)
 			for _, line := range strings.Split(item.Content, "\n") {
 				lines = append(lines, truncate("     "+line, max(1, m.width)))
 			}
@@ -523,7 +570,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case sentMsg:
 		if message.err != nil {
-			m.lastAction = "发送失败：" + message.err.Error()
+			m = m.fail("发送失败：" + message.err.Error())
 			return m, nil
 		}
 		if message.created != nil { // 空会话里冒出来的新会话：进列表并**立刻认它当当前会话**
@@ -556,7 +603,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if message.err != nil {
 			m = m.settleTurn(message.sessionID)
-			m.lastAction = "取生成进度失败：" + message.err.Error()
+			m = m.fail("取生成进度失败：" + message.err.Error())
 			return m, nil
 		}
 		m.turn.phase, m.turn.elapsedMS = message.status.Phase, message.status.ElapsedMS
@@ -567,19 +614,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "error":
 			// 失败：库里**半条都没有**（气泡直接消失），原因摆在底栏
 			m = m.settleTurn(message.sessionID)
-			m.lastAction = "生成失败：" + message.status.Error
+			m = m.fail("生成失败：" + message.status.Error)
 			return m, nil
 		case "idle":
-			// 收到 idle ⇒ 整段已经落库 ⇒ **一次性重拉**（气泡被真消息取代）
+			// 收到 idle ⇒ 整段已经落库 ⇒ **一次性重拉**（气泡被真消息取代），并量一次**新的占用**
+			// （一轮只量一次：占用只在整段落库后才变，别跟着 300ms 的轮询一起拉）
 			m = m.settleTurn(message.sessionID)
 			m.lastAction = "生成完成"
-			return m, loadMessages(m.client, message.sessionID)
+			return m, tea.Batch(
+				loadMessages(m.client, message.sessionID),
+				loadContext(m.client, message.sessionID),
+			)
 		}
 		return m, turnTickCmd(message.sessionID)
 
 	case stoppedMsg:
 		if message.err != nil {
-			m.lastAction = "停止失败：" + message.err.Error()
+			m = m.fail("停止失败：" + message.err.Error())
 			return m, nil
 		}
 		if !message.stopped {
@@ -763,8 +814,7 @@ func (m model) runCommand(text string) (tea.Model, tea.Cmd) {
 			return candidate.run(m, fields[1:])
 		}
 	}
-	m.lastAction = "不认识这个命令：" + text + "（打 `/` 看能用哪些）"
-	return m, nil
+	return m.fail("不认识这个命令：" + text + "（打 `/` 看能用哪些）"), nil
 }
 
 // ── 命令表：**唯一一份** —— 面板、/help、派发都读它（各写一份必然漂移）──
@@ -826,7 +876,7 @@ func commandDelete(m model, _ []string) (tea.Model, tea.Cmd) {
 		return m, loadMessages(m.client, session.ID)
 	}
 	m.confirm = &confirm{kind: confirmDeleteSession, sessionID: session.ID}
-	m.viewer, m.viewerTitle = deleteSessionLines(m, *session), "确认删除"
+	m.viewer, m.viewerTitle = m.deleteSessionLines(*session), "确认删除"
 	m.viewerHint = "回车 / y 执行 · 其他键取消"
 	m.lastAction = "看清了再点头（回车 / y）"
 	return m, nil
@@ -853,8 +903,7 @@ func commandCut(m model, args []string) (tea.Model, tea.Cmd) {
 	target := m.messages[len(m.messages)-1].ID
 	if len(args) > 0 {
 		if target = m.findMessage(args[0]); target == "" {
-			m.lastAction = "这条会话里找不到消息 " + args[0] + "（什么都没有发生）"
-			return m, nil
+			return m.fail("这条会话里找不到消息 " + args[0] + "（什么都没有发生）"), nil
 		}
 	}
 	m.lastAction = "取删除预览…"
@@ -892,7 +941,7 @@ func (m model) confirmExecute() (tea.Model, tea.Cmd) {
 
 // deleteSessionLines：摊开"删这条会话会没掉什么"（数字现算 —— 还没拉全的消息不算数，
 // 所以 commandDelete 先确保拉全）。行要短：查看器一行就是一屏宽，长了会被截掉。
-func deleteSessionLines(m model, session Session) []string {
+func (m model) deleteSessionLines(session Session) []string {
 	summaries := map[string]bool{}
 	for _, message := range m.messages {
 		if message.SummaryID != nil {
@@ -900,7 +949,7 @@ func deleteSessionLines(m model, session Session) []string {
 		}
 	}
 	return []string{
-		" 不可逆：删掉整条会话",
+		m.style.red(" 不可逆") + "：删掉整条会话",
 		" 会话 " + describeSession(session),
 		fmt.Sprintf(" 会没掉：%d 条消息 · %d 份摘要", len(m.messages), len(summaries)),
 		" （摘要是消息上挂着的；区间覆盖的随会话级联）",
@@ -910,9 +959,9 @@ func deleteSessionLines(m model, session Session) []string {
 }
 
 // cutPreviewLines：摊开后端算好的那份删除预览（五组各自一行）。
-func cutPreviewLines(plan DeletionPlan) []string {
+func (m model) cutPreviewLines(plan DeletionPlan) []string {
 	return []string{
-		" 不可逆：删这条及其之后的全部",
+		m.style.red(" 不可逆") + "：删这条及其之后的全部",
 		fmt.Sprintf(" 消息 %d 条：%s", len(plan.DeletedMessageIDs), idsSummary(plan.DeletedMessageIDs)),
 		fmt.Sprintf(" 摘要 %d 份：%s", len(plan.DeletedSummaryIDs), idsSummary(plan.DeletedSummaryIDs)),
 		fmt.Sprintf(" 解链的消息 %d 条：%s", len(plan.UnlinkedMessageIDs), idsSummary(plan.UnlinkedMessageIDs)),
@@ -948,8 +997,7 @@ func commandResume(m model, args []string) (tea.Model, tea.Cmd) {
 		index := m.findSession(id)
 		if index < 0 {
 			// 要的东西不存在 ⇒ **报错，什么都不发生**（口径：不许偷偷跳到别的会话）
-			m.lastAction = "找不到会话 " + id + "（打 /resume 看列表）—— 什么都没有发生"
-			return m, nil
+			return m.fail("找不到会话 " + id + "（打 /resume 看列表）—— 什么都没有发生"), nil
 		}
 		session := m.sessions[index]
 		m.selectedID = session.ID
@@ -1204,8 +1252,8 @@ func (m model) render() string {
 	}
 	lines := m.renderMessages(bodyHeight, width)
 	lines = append(lines, palette...)
-	lines = append(lines, truncate("> "+m.input, width)) // 输入行（命令与消息都从这儿走）
-	lines = append(lines, strings.Repeat("-", width))    // ASCII：`─` 是**模糊宽度**字符
+	lines = append(lines, truncate("> "+m.input, width))     // 输入行（命令与消息都从这儿走）
+	lines = append(lines, m.style.dim(rule(width, m.width))) // 满线（暗色）：窄屏退回 ASCII `-`
 	lines = append(lines, status...)
 	if len(lines) > height { // 屏幕实在太矮（< 4 行）：宁可切掉上面的消息，也别把输入行挤没
 		lines = lines[len(lines)-height:]
@@ -1248,7 +1296,7 @@ func (m model) renderPalette(width int) []string {
 		if candidate.args != "" {
 			label += " " + candidate.args
 		}
-		lines = append(lines, truncate(cursor+label+"  "+candidate.help, width))
+		lines = append(lines, m.style.selected(truncate(cursor+label+"  "+candidate.help, width), index == current))
 	}
 	return lines
 }
@@ -1264,8 +1312,10 @@ func (m model) renderMessages(height, width int) []string {
 		if hint == "" {
 			hint = "任意键关掉"
 		}
-		lines := []string{truncate(" "+m.viewerTitle+"   "+hint, width),
-			truncate(" "+strings.Repeat("-", max(1, width-2)), width)}
+		lines := []string{
+			m.style.joined([]segment{{" " + m.viewerTitle, styleBold}, {hint, styleDim}}, width, "   "),
+			m.style.dim(truncate(" "+rule(max(1, width-2), m.width), width)),
+		}
 		for _, line := range m.viewer {
 			if len(lines) >= height {
 				break
@@ -1293,7 +1343,7 @@ func (m model) renderMessages(height, width int) []string {
 	}
 	blocks := make([][]string, 0, len(m.messages)+1)
 	for _, message := range m.messages {
-		blocks = append(blocks, messageBlock(message, width))
+		blocks = append(blocks, m.messageBlock(message, width))
 	}
 	if busy { // 生成中那条回复：库里还没有它 ⇒ 界面**合成**一个气泡（落库后同 id 的真消息自然取代它）
 		blocks = append(blocks, m.liveBlock(width))
@@ -1302,16 +1352,28 @@ func (m model) renderMessages(height, width int) []string {
 }
 
 // messageBlock：一条消息在界面上的样子（署名 + 正文 + 一个空行）—— **整块**是它的最小单位。
-func messageBlock(message Message, width int) []string {
+//
+// 署名上色（口径见 AGENTS.md）：你自己 = 青，助手 = 洋红（**耗时数字用暗色** —— 它是次要信息）。
+// 正文保持默认色（内容才是主角）。
+func (m model) messageBlock(message Message, width int) []string {
 	label := "你"
+	kind := styleCyan
 	if message.Role == "assistant" {
 		label = "助手" // TODO：等 /agents 搬完，改用该会话 agent 的名字（界面口径见 AGENTS.md）
+		kind = styleMagenta
 	}
 	detail := ""
 	if message.DurationMS != nil {
-		detail = fmt.Sprintf(" %.1fs", float64(*message.DurationMS)/1000)
+		detail = fmt.Sprintf("%.1fs", float64(*message.DurationMS)/1000)
 	}
-	block := []string{truncate(" "+label+detail+"：", width)}
+	signature := []segment{{" " + label, kind}}
+	if detail != "" { // `助手 2.1s：` —— 耗时**暗色**，署名与冒号还是本色
+		signature = append(signature,
+			segment{" ", stylePlain}, segment{detail, styleDim}, segment{"：", kind})
+	} else {
+		signature = append(signature, segment{"：", kind})
+	}
+	block := []string{m.style.joined(signature, width, "")}
 	for _, line := range strings.Split(message.Content, "\n") {
 		block = append(block, truncate("   "+line, width))
 	}
@@ -1368,22 +1430,30 @@ func fillLines(lines []string, height int) []string {
 // 口径照 AGENTS.md：转圈 + "生成中… 12.3s" + 「/stop」；思考只报**字数**
 // （token 数流式帧里没有 —— 卡片脚注那儿的 token 是另一回事，别混）。
 func (m model) liveBlock(width int) []string {
-	block := []string{truncate(fmt.Sprintf(" 助手（生成中… %.1fs）：", float64(m.turn.elapsedMS)/1000), width)}
+	// 口径：`生成中…` 那段**黄**（含下面的「/stop 停止」）；署名还是助手本色；思考是次要信息 ⇒ 暗色。
+	block := []string{m.style.joined([]segment{
+		{" 助手（", styleMagenta},
+		{fmt.Sprintf("生成中… %.1fs", float64(m.turn.elapsedMS)/1000), styleYellow},
+		{"）：", styleMagenta},
+	}, width, "")}
 	if m.turn.thinking != "" {
-		block = append(block, truncate(
-			fmt.Sprintf("   [思考中… %d 字]", len([]rune(m.turn.thinking))), width))
+		block = append(block, m.style.dim(truncate(
+			fmt.Sprintf("   [思考中… %d 字]", len([]rune(m.turn.thinking))), width)))
 	}
 	for _, line := range strings.Split(m.turn.text, "\n") {
 		block = append(block, truncate("   "+line, width))
 	}
-	block = append(block, truncate("   （/stop 停止）", width))
+	block = append(block, m.style.yellow(truncate("   （/stop 停止）", width)))
 	return append(block, "")
 }
 
 func (m model) renderResumePicker(height, width int) []string {
 	lines := []string{
-		truncate(" 挑一条已有会话   上/下 选 · 回车进 · Esc 取消", width),
-		truncate(" "+strings.Repeat("-", max(1, width-2)), width),
+		m.style.joined([]segment{
+			{" 挑一条已有会话", styleBold},
+			{"上/下 选 · 回车进 · Esc 取消", styleDim},
+		}, width, "   "),
+		m.style.dim(truncate(" "+rule(max(1, width-2), m.width), width)),
 	}
 	for index, session := range m.sessions {
 		if len(lines) >= height {
@@ -1393,8 +1463,15 @@ func (m model) renderResumePicker(height, width int) []string {
 		if index == m.pickerIndex {
 			cursor = "> "
 		}
-		label := describeSession(session) + "    " + session.Provider + " / " + session.Model
-		lines = append(lines, truncate(cursor+label, width))
+		title := strings.TrimSpace(session.Title)
+		if title == "" {
+			title = "（还没起名）"
+		}
+		lines = append(lines, m.pickerLine([]segment{
+			{cursor + shortID(session.ID) + " ", styleDim}, // 短 id：次要信息 ⇒ 暗色
+			{title, stylePlain},
+			{"    " + session.Provider + " / " + session.Model, styleDim},
+		}, width, index == m.pickerIndex))
 	}
 	return fillLines(lines, height)
 }
@@ -1402,8 +1479,11 @@ func (m model) renderResumePicker(height, width int) []string {
 // renderModelPicker：**按 provider 排列**（用户 2026-09-29 的口径：先不分能力，按渠道分组）。
 func (m model) renderModelPicker(height, width int) []string {
 	lines := []string{
-		truncate(" 挑渠道 / 模型   上/下 选 · 回车定 · Esc 取消", width),
-		truncate(" "+strings.Repeat("-", max(1, width-2)), width),
+		m.style.joined([]segment{
+			{" 挑渠道 / 模型", styleBold},
+			{"上/下 选 · 回车定 · Esc 取消", styleDim},
+		}, width, "   "),
+		m.style.dim(truncate(" "+rule(max(1, width-2), m.width), width)),
 	}
 	if len(m.models) == 0 {
 		lines = append(lines, truncate(" （还没有发现任何模型 —— 设置里给渠道点一次「获取模型」）", width))
@@ -1415,7 +1495,7 @@ func (m model) renderModelPicker(height, width int) []string {
 		}
 		if item.Provider != currentProvider {
 			currentProvider = item.Provider
-			lines = append(lines, truncate(" -- "+item.ProviderLabel()+" --", width))
+			lines = append(lines, m.style.bold(truncate(" -- "+item.ProviderLabel()+" --", width)))
 			if len(lines) >= height {
 				break
 			}
@@ -1424,13 +1504,26 @@ func (m model) renderModelPicker(height, width int) []string {
 		if index == m.pickerIndex {
 			cursor = "> "
 		}
-		label := item.Label()
+		current := ""
 		if item.Provider == m.chosenProvider && item.UpstreamID == m.chosenModel {
-			label += "（当前）"
+			current = "（当前）"
 		}
-		lines = append(lines, truncate(cursor+label, width))
+		lines = append(lines, m.pickerLine([]segment{
+			{cursor + item.Label(), stylePlain},
+			{current, styleDim},
+		}, width, index == m.pickerIndex))
 	}
 	return fillLines(lines, height)
+}
+
+// pickerLine：挑选项里的一行 —— 选中的那条**粗体 + 青**（其余保持默认）。
+//
+// 选中时**不再叠暗色** ✗：套两层转义会在行中间插一个复位，把后半行打回默认色（看出来像掉色）。
+func (m model) pickerLine(segments []segment, width int, selected bool) string {
+	if selected {
+		return m.style.boldCyan(truncate(plainOf(segments, ""), width))
+	}
+	return m.style.joined(segments, width, "")
 }
 
 // currentSession：当前会话 —— **按 id 找**（不按下标：列表随时会重排，见 selectedID）。
@@ -1447,11 +1540,11 @@ func (m model) currentSession() *Session {
 
 // renderStatus：底下的**会话状态行**（口径见 AGENTS.md「界面该长什么样」）。
 //
-// 两半**互不顶替**（旧口径就这么定的）：会话那半（名字 | 短 id | 渠道/模型 | 在不在跑）与
-// "已连接 vX | 最近一次动作"。一行放得下就一行，放不下就折成两行 —— **最多两行**。
+// 两半**互不顶替**（旧口径就这么定的）：会话那半（名字 | 短 id | 渠道/模型 | 上下文占用 | 在不在跑）
+// 与"已连接 vX | 最近一次动作"。一行放得下就一行，放不下就折成两行 —— **最多两行**。
 func (m model) renderStatus(width int) []string {
 	session := m.currentSession()
-	head := []string{"空会话"}
+	head := []segment{{"空会话", styleDim}}
 	if session != nil {
 		title := strings.TrimSpace(session.Title)
 		if title == "" {
@@ -1461,26 +1554,80 @@ func (m model) renderStatus(width int) []string {
 		if session.Provider == "" || session.Model == "" {
 			where = "（还没选模型）"
 		}
-		head = []string{title, shortID(session.ID), where}
+		head = []segment{
+			{title, styleBold},              // 会话名：粗体（拉层级，不上色）
+			{shortID(session.ID), styleDim}, // 短 id / 渠道·模型都是次要信息 ⇒ 暗色
+			{where, styleDim},
+		}
+		if usage := m.contextUsage(session); usage != nil {
+			kind := styleDim
+			if usage.OverBudget {
+				kind = styleRed // **超预算 ⇒ 这一段用红**
+			}
+			head = append(head, segment{contextLabel(*usage), kind})
+		}
 	}
+	// 在不在跑**比名字重要**（用户口径）⇒ 先给它留位置，再把前面那几档按余量截断
 	state := m.turnLabel(session)
-	// 在不在跑**比名字重要**（用户口径）⇒ 先给它留位置，再把前面那截按宽度截掉
-	room := width - runewidth.StringWidth(state) - len(" | ")
-	sessionInfo := truncate(strings.Join(head, " | "), max(room, 1)) + " | " + state
-	if runewidth.StringWidth(sessionInfo) > width {
-		sessionInfo = truncate(state, width) // 屏幕太窄：只留"在不在跑"
+	stateKind := styleDim
+	if strings.HasPrefix(state, "生成中") {
+		stateKind = styleYellow // 生成中 ⇒ 黄（含耗时）
 	}
-	tail := "未连接"
+	room := width - runewidth.StringWidth(state) - len(" | ")
+	sessionInfo, infoWidth := m.style.concat(head, max(room, 0), " | ")
+	if room < 1 { // 屏幕太窄：只留"在不在跑"
+		state = truncate(state, width)
+		sessionInfo, infoWidth = m.style.paint(stateKind, state), runewidth.StringWidth(state)
+	} else {
+		sessionInfo += " | " + m.style.paint(stateKind, state)
+		infoWidth += len(" | ") + runewidth.StringWidth(state)
+	}
+	tail := []segment{{"未连接", styleDim}}
 	if m.version != "" {
-		tail = "已连接 v" + m.version
+		tail = []segment{{"已连接 v" + m.version, styleDim}}
 	}
 	if m.lastAction != "" {
-		tail += " | " + m.lastAction
+		kind := stylePlain
+		if m.lastAction == m.lastFailure { // 还摆着的那句失败 ⇒ 红（见 model.lastFailure）
+			kind = styleRed
+		}
+		tail = append(tail, segment{m.lastAction, kind})
 	}
-	if runewidth.StringWidth(sessionInfo+" | "+tail) <= width {
-		return []string{sessionInfo + " | " + tail}
+	tailPlain := plainOf(tail, " | ")
+	if infoWidth+len(" | ")+runewidth.StringWidth(tailPlain) <= width {
+		return []string{sessionInfo + " | " + m.style.joined(tail, width, " | ")}
 	}
-	return []string{sessionInfo, truncate(tail, width)}
+	return []string{sessionInfo, m.style.joined(tail, width, " | ")}
+}
+
+// contextUsage：当前会话的上下文占用 —— 拉回来的那份**必须属于这条会话**才用
+// （换会话时那份还旧着 ⇒ 拿它画就是撒谎）。
+func (m model) contextUsage(session *Session) *ContextUsage {
+	if m.context == nil || session == nil || m.contextFor != session.ID {
+		return nil
+	}
+	return m.context
+}
+
+// contextLabel：状态行里那一档（照 Pi 的形状）：`12.3k/131k (9.4%)`。
+//
+// 百分比 = `used / budget`（**自己算** ✗ 别拿契约里的 `ratio` —— 那是分词器标定比，不是占用比例，见 client.go）。
+// 超预算就照实报 >100%（夹到 100% 会把"超了多少"藏起来）。
+func contextLabel(usage ContextUsage) string {
+	percent := 0.0
+	if usage.BudgetTokens > 0 {
+		percent = float64(usage.UsedTokens) / float64(usage.BudgetTokens) * 100
+	}
+	return fmt.Sprintf("%s/%s (%.1f%%)",
+		formatTokens(usage.UsedTokens), formatTokens(usage.BudgetTokens), percent)
+}
+
+// formatTokens：token 数缩写（≥1000 用 k，整千不带小数点）：`12.3k` / `131k`。
+func formatTokens(tokens int) string {
+	if tokens < 1000 {
+		return strconv.Itoa(tokens)
+	}
+	return strings.Replace(fmt.Sprintf("%.1fk", float64(tokens)/1000), ".0k", "k", 1)
 }
 
 // turnLabel：这一轮在不在跑（"生成中 + 耗时" / "空闲"）。
@@ -1501,19 +1648,22 @@ func (m model) turnLabel(session *Session) string {
 
 // ── 小工具（宽度一律按**显示宽度**算：中文占两格，所以必须用 runewidth）──
 
-// truncate：按**显示宽度**截断，并**填满到 width**（中文占两格 ⇒ 不能按字符数截）。
+// truncate：按**显示宽度**截断到 width 格以内（中文占两格 ⇒ 不能按字符数截）；短了不补空格。
 //
 // 两个坑：
-//  1. 不用 `runewidth.Truncate`：它把省略号算进宽度而**少填一格**（"abcdefghij",5 ⇒ "abc…" ✗）；
-//  2. 省略号用 **ASCII `...`**：`…` 是**模糊宽度**字符（East Asian Ambiguous），
-//     runewidth 当两格 ⇒ 我们的宽度账与实际差一格。**结构性字符一律 ASCII** 是唯一稳妥的做法
-//     （`─` `·` `…` 都栽过 —— 见 model_test.go 里的宽度断言）。
+//  1. 不用 `runewidth.Truncate`：它把省略号算进宽度却**少填一格**（"abcdefghij",5 ⇒ "abc…" ✗）；
+//  2. 省略号用 **ASCII `...`** ✗ 不用 `…`：`…` 是**模糊宽度**字符（East Asian Ambiguous），
+//     runewidth 当一格、CJK 终端可能当两格 ⇒ 宽度账与实际差一格。满线 `─` 是同一个坑
+//     （所以它只在**宽屏**上用，窄屏退回 ASCII —— 见 rule），结构性字符（提示符 / 竖线）则一律 ASCII。
 func truncate(text string, width int) string {
 	if width <= 0 {
 		return ""
 	}
 	if runewidth.StringWidth(text) <= width {
 		return text
+	}
+	if width <= len(ellipsis) { // 连省略号都放不下 ⇒ 只给三点里放得下的那几格（ASCII ⇒ 一格一个）
+		return ellipsis[:width]
 	}
 	budget := width - len(ellipsis)
 	var builder strings.Builder
@@ -1532,9 +1682,156 @@ func truncate(text string, width int) string {
 // ellipsis：ASCII 三点的省略号（见 truncate 的注释：模糊宽度字符会算错一格）。
 const ellipsis = "..."
 
-// 结构性字符一律 ASCII；但**用户内容**里什么字符都可能有 ⇒ 让宽度账与终端自洽：
-// 模糊宽度（East Asian Ambiguous，如 `│` `▶` `·` `…` `─`）**按一格**算 ——
+// ── 画线：**重复**，不是"填充" ──
+
+// ruleMinWidth：满线用 `─` 的最小屏幕宽度。`─` 是**模糊宽度**字符（East Asian Ambiguous）：
+// 宽度账上按一格算（见 init），但 CJK 终端可能按两格排 ⇒ 窄屏上会溢出换行。
+// 所以窄屏退回 ASCII `-`（横线是界面骨架，骨架歪了整屏都歪）。
+const ruleMinWidth = 60
+
+// rule：画一条 `cells` 格的满线。**绝不用模糊宽度字符去"填充"对齐** —— 只用重复（`strings.Repeat`）。
+func rule(cells, screen int) string {
+	cells = max(1, cells)
+	if screen < ruleMinWidth {
+		return strings.Repeat("-", cells)
+	}
+	return strings.Repeat("─", cells)
+}
+
+// ── 着色：**只有前景色**，绝不给背景上色（用户明确要求）──
+
+// styler：极小的着色器。三条硬规矩（见 AGENTS.md「踩过的坑」）：
+//
+//  1. **只前景**：16 色基础 ANSI（30–37 / 90–97）+ 粗体 / 暗色；不用 256 色 / truecolor，不用背景色；
+//  2. **先排版、后上色**：转义序列零宽，而 truncate / 对齐是按格算的 ⇒
+//     截断一律作用在**未着色**的原文上（落点是 concat / plainOf），颜色最后才包上去；
+//  3. **可关**：零值 = 关 ⇒ 测试拿到的 View() 是纯文本（逐字节断言靠这个）。
+//
+// 生产路径的开关在 detectStyler（`NO_COLOR` / `TERM=dumb` / 非 TTY 三档降级）。
+type styler struct{ enabled bool }
+
+// styleKind：要包哪一层前景色（零值 = 不上色）。
+type styleKind int
+
+const (
+	stylePlain styleKind = iota
+	styleBold
+	styleDim
+	styleCyan
+	styleMagenta
+	styleYellow
+	styleRed
+	styleBoldCyan
+)
+
+func (s styler) paint(kind styleKind, text string) string {
+	if !s.enabled || text == "" {
+		return text
+	}
+	code := ""
+	switch kind {
+	case styleBold:
+		code = "1"
+	case styleDim:
+		code = "2"
+	case styleCyan:
+		code = "36"
+	case styleMagenta:
+		code = "35"
+	case styleYellow:
+		code = "33"
+	case styleRed:
+		code = "31"
+	case styleBoldCyan:
+		code = "1;36"
+	default:
+		return text
+	}
+	return "\x1b[" + code + "m" + text + "\x1b[0m"
+}
+
+func (s styler) bold(text string) string     { return s.paint(styleBold, text) }
+func (s styler) dim(text string) string      { return s.paint(styleDim, text) }
+func (s styler) yellow(text string) string   { return s.paint(styleYellow, text) }
+func (s styler) red(text string) string      { return s.paint(styleRed, text) }
+func (s styler) boldCyan(text string) string { return s.paint(styleBoldCyan, text) }
+
+// selected：挑选项里**选中**的那一行 —— 粗体 + 青（没选中就原样）。
+func (s styler) selected(text string, on bool) string {
+	if !on {
+		return text
+	}
+	return s.boldCyan(text)
+}
+
+// segment：一段"先排版、后上色"的文本：text 是**未着色**的原文（宽度账只算它），kind 决定包什么色。
+//
+// ⚠ 别在同一段里嵌套两种颜色：行中间那个复位会把后半段打回默认色（宁可分两段）。
+type segment struct {
+	text string
+	kind styleKind
+}
+
+// concat：把若干段按 sep 拼进 limit 格，返回拼好的字符串与它**未着色**的宽度。
+//
+// 装不下的段**整段丢掉**（含它前面的分隔符）；最后那一段太长就**截断**（带省略号）后收工 ——
+// 截断发生在 paint 之前，所以宽度账与终端实际排出来的格数一致（**先排版、后上色**）。
+func (s styler) concat(segments []segment, limit int, sep string) (string, int) {
+	var builder strings.Builder
+	used := 0
+	for _, seg := range segments {
+		if seg.text == "" {
+			continue
+		}
+		gap := 0
+		if used > 0 {
+			gap = runewidth.StringWidth(sep)
+		}
+		room := limit - used - gap
+		if room <= 0 {
+			break
+		}
+		text := seg.text
+		clipped := runewidth.StringWidth(text) > room
+		if clipped {
+			if room <= len(ellipsis) { // 连省略号都放不下 ⇒ 这一段不显示（宁可空着，也不超宽）
+				break
+			}
+			text = truncate(text, room)
+		}
+		if used > 0 {
+			builder.WriteString(sep)
+		}
+		builder.WriteString(s.paint(seg.kind, text))
+		used += gap + runewidth.StringWidth(text)
+		if clipped {
+			break
+		}
+	}
+	return builder.String(), used
+}
+
+// joined：只要拼好的字符串（不关心它占了几格）。
+func (s styler) joined(segments []segment, limit int, sep string) string {
+	text, _ := s.concat(segments, limit, sep)
+	return text
+}
+
+// plainOf：把几段按 sep 拼成**未着色**的原文 —— 宽度账与"一行放不放得下"都只算它。
+func plainOf(segments []segment, sep string) string {
+	parts := make([]string, 0, len(segments))
+	for _, seg := range segments {
+		if seg.text != "" {
+			parts = append(parts, seg.text)
+		}
+	}
+	return strings.Join(parts, sep)
+}
+
+// 宽度账与终端自洽：模糊宽度（East Asian Ambiguous，如 `│` `▶` `·` `…`）**按一格**算 ——
 // CJK 宽字（`你` 这类 Wide）不受影响，仍是两格 ✓。
+// **结构性字符**（提示符、竖线、省略号）一律 ASCII ✗ 例外只有一个：满线 `─` 在**宽屏**上用
+// （窄屏退回 ASCII，见 rule —— 模糊宽度字符在 CJK 终端可能按两格排）。
 func init() { runewidth.DefaultCondition.EastAsianWidth = false }
 
 func max(a, b int) int {
