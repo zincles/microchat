@@ -8,11 +8,11 @@ import (
 
 func pointer(value string) *string { return &value }
 
-// 当前路径 = 从 current_leaf 沿 parent_id 回溯到根（正序）。
+// 当前路径 = 从 current_leaf 沿 parent_message_id 回溯到根（正序）。
 // 三种边角都在：正常链、指针悬空、以及**成环**（导入坏数据时可能碰上）。
 func TestPathFrom(t *testing.T) {
 	build := func(id string, parent *string) model.Message {
-		return model.Message{ID: id, ParentID: parent}
+		return model.Message{ID: id, ParentMessageID: parent}
 	}
 	all := []model.Message{
 		build("a", nil),
@@ -56,8 +56,8 @@ func TestPathFrom(t *testing.T) {
 // 最多返回 len(all)+1 条。要的是"不会转死"，不是"结果多漂亮"。
 func TestPathFromCycle(t *testing.T) {
 	all := []model.Message{
-		{ID: "a", ParentID: pointer("b")},
-		{ID: "b", ParentID: pointer("a")},
+		{ID: "a", ParentMessageID: pointer("b")},
+		{ID: "b", ParentMessageID: pointer("a")},
 	}
 	path := pathFrom(all, pointer("a"))
 	if len(path) > len(all)+1 {
@@ -65,7 +65,7 @@ func TestPathFromCycle(t *testing.T) {
 	}
 }
 
-// 分支信息：分组按 parent_id（整棵树），组内顺序 = 生成先后（rowid）。
+// 分支信息：分组按 parent_message_id（整棵树），组内顺序 = 生成先后（rowid）。
 func TestBranchInfo(t *testing.T) {
 	st := openTemp(t)
 	sessionID := "01a00000-0000-7000-8000-000000000000"
@@ -76,7 +76,7 @@ func TestBranchInfo(t *testing.T) {
 	}
 	insert := func(id string, parent any) {
 		if _, err := st.db.Exec(
-			`INSERT INTO messages (id, session_id, role, content, parent_id, created_at)
+			`INSERT INTO messages (id, session_id, role, content, parent_message_id, created_at)
 			 VALUES (?1, ?2, 'user', 'x', ?3, 1)`, id, sessionID, parent); err != nil {
 			t.Fatal(err)
 		}
@@ -127,7 +127,7 @@ func TestDeleteLeafFallback(t *testing.T) {
 		}
 		insert := func(id string, parent any) {
 			if _, err := st.db.Exec(
-				`INSERT INTO messages (id, session_id, role, content, parent_id, created_at)
+				`INSERT INTO messages (id, session_id, role, content, parent_message_id, created_at)
 				 VALUES (?1, ?2, 'user', 'x', ?3, 1)`, id, sessionID, parent); err != nil {
 				t.Fatal(err)
 			}

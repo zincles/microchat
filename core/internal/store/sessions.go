@@ -198,8 +198,8 @@ func (s *Store) SwitchLeafToSibling(sessionID, messageID string) error {
 	if target == nil {
 		return ErrNotFound
 	}
-	sameParent := current.ParentID == nil && target.ParentID == nil
-	if current.ParentID != nil && target.ParentID != nil && *current.ParentID == *target.ParentID {
+	sameParent := current.ParentMessageID == nil && target.ParentMessageID == nil
+	if current.ParentMessageID != nil && target.ParentMessageID != nil && *current.ParentMessageID == *target.ParentMessageID {
 		sameParent = true
 	}
 	if !sameParent {
@@ -220,7 +220,7 @@ func (s *Store) setCurrentLeafDeep(sessionID, messageID string) error {
 		next := ""
 		for index := range all {
 			message := all[index]
-			if message.ParentID != nil && *message.ParentID == cursor && message.ID != messageID {
+			if message.ParentMessageID != nil && *message.ParentMessageID == cursor && message.ID != messageID {
 				next = message.ID // 越靠后越新（all 按 rowid 排）
 			}
 		}

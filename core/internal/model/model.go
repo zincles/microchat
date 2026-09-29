@@ -35,9 +35,9 @@ type Message struct {
 	// 用 RawMessage 原样透出（包成 string 就双重编码了 —— 真发生过，diff 抓出来的）。
 	Usage json.RawMessage `json:"usage,omitempty"`
 
-	ParentID  *string `json:"parent_id"`
-	SummaryID *string `json:"summary_id,omitempty"` // 收拢它的摘要：压缩只写这一格
-	CreatedAt int64   `json:"created_at"`
+	ParentMessageID *string `json:"parent_message_id"`
+	SummaryID       *string `json:"summary_id,omitempty"` // 收拢它的摘要：压缩只写这一格
+	CreatedAt       int64   `json:"created_at"`
 }
 
 // SummarySourceKind：摘要的成员是消息还是摘要（同质，不许混）。

@@ -50,12 +50,12 @@ type Session struct {
 type SessionView = Session
 
 type Message struct {
-	ID         string  `json:"id"`
-	Role       string  `json:"role"`
-	Content    string  `json:"content"`
-	Reasoning  string  `json:"reasoning,omitempty"`
-	DurationMS *int64  `json:"duration_ms,omitempty"`
-	ParentID   *string `json:"parent_id"`
+	ID              string  `json:"id"`
+	Role            string  `json:"role"`
+	Content         string  `json:"content"`
+	Reasoning       string  `json:"reasoning,omitempty"`
+	DurationMS      *int64  `json:"duration_ms,omitempty"`
+	ParentMessageID *string `json:"parent_message_id"`
 }
 
 type Health struct {

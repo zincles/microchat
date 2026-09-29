@@ -8,7 +8,7 @@ import (
 )
 
 // messageColumns：与 Rust 版 list_all_messages 的 SELECT 逐字相同。
-const messageColumns = "id, session_id, role, content, parent_id, created_at, " +
+const messageColumns = "id, session_id, role, content, parent_message_id, created_at, " +
 	"reasoning, reasoning_ms, duration_ms, usage, summary_id"
 
 func scanMessage(row scanner) (model.Message, error) {
@@ -25,7 +25,7 @@ func scanMessage(row scanner) (model.Message, error) {
 		return message, err
 	}
 	if parentID.Valid {
-		message.ParentID = &parentID.String
+		message.ParentMessageID = &parentID.String
 	}
 	if reasoning.Valid {
 		message.Reasoning = reasoning.String
@@ -64,7 +64,7 @@ func (s *Store) allMessages(sessionID string) ([]model.Message, error) {
 	return messages, rows.Err()
 }
 
-// ListMessages：**当前路径**（从 current_leaf 沿 parent_id 回溯到根，正序返回）。
+// ListMessages：**当前路径**（从 current_leaf 沿 parent_message_id 回溯到根，正序返回）。
 // 注意：不是"最后 N 条"，是树上这一条链 —— 切分支换来换去的都是它。
 func (s *Store) ListMessages(sessionID string) ([]model.Message, error) {
 	s.mu.Lock()
@@ -97,7 +97,7 @@ func pathFrom(all []model.Message, leaf *string) []model.Message {
 			break // 指针悬空当到根（导入/删过就可能有）
 		}
 		path = append(path, *message)
-		cursor = message.ParentID
+		cursor = message.ParentMessageID
 		if len(path) > len(all) {
 			break // 防环
 		}
@@ -110,7 +110,7 @@ func pathFrom(all []model.Message, leaf *string) []model.Message {
 }
 
 // BranchInfo：每条消息在同龄兄弟里第几/共几（界面上的「‹ 2/3 ›」）。
-// 分组按 parent_id（**整棵树**，不只是当前路径），组内顺序 = 生成先后。
+// 分组按 parent_message_id（**整棵树**，不只是当前路径），组内顺序 = 生成先后。
 func (s *Store) BranchInfo(sessionID string) (map[string]model.BranchInfo, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -122,8 +122,8 @@ func (s *Store) BranchInfo(sessionID string) (map[string]model.BranchInfo, error
 	order := []string{}
 	for _, message := range all {
 		key := ""
-		if message.ParentID != nil {
-			key = *message.ParentID
+		if message.ParentMessageID != nil {
+			key = *message.ParentMessageID
 		}
 		if _, seen := groups[key]; !seen {
 			order = append(order, key)
@@ -189,7 +189,7 @@ func (s *Store) DeleteMessage(sessionID, messageID string) (int, error) {
 	found := false
 	for index := range all {
 		if all[index].ID == messageID {
-			parent, found = all[index].ParentID, true
+			parent, found = all[index].ParentMessageID, true
 			break
 		}
 	}
@@ -212,7 +212,7 @@ func (s *Store) DeleteSiblings(sessionID, messageID string) (int, error) {
 	found := false
 	for index := range all {
 		if all[index].ID == messageID {
-			parent, found = all[index].ParentID, true
+			parent, found = all[index].ParentMessageID, true
 			break
 		}
 	}
@@ -221,7 +221,7 @@ func (s *Store) DeleteSiblings(sessionID, messageID string) (int, error) {
 	}
 	siblings := []string{}
 	for index := range all {
-		if sameOptional(all[index].ParentID, parent) {
+		if sameOptional(all[index].ParentMessageID, parent) {
 			siblings = append(siblings, all[index].ID)
 		}
 	}
@@ -262,7 +262,7 @@ func (s *Store) deleteSubtrees(sessionID string, roots []string, parent *string)
 	}
 	// 子树 = 根们 + 所有后代。`all` 按 rowid（父亲一定排在孩子前面）走一遍就够。
 	for index := range all {
-		parentID := all[index].ParentID
+		parentID := all[index].ParentMessageID
 		if parentID != nil && doomed[*parentID] {
 			doomed[all[index].ID] = true
 		}
@@ -300,7 +300,7 @@ func (s *Store) deleteSubtrees(sessionID string, roots []string, parent *string)
 		// 只退到父亲是不够的：界面上会看到"整条分支都没了"（其实兄弟都在树上）。
 		var fallback *string
 		for index := range all {
-			if sameOptional(all[index].ParentID, parent) && !doomed[all[index].ID] {
+			if sameOptional(all[index].ParentMessageID, parent) && !doomed[all[index].ID] {
 				id := all[index].ID
 				fallback = &id // 越靠后越新（all 按 rowid 排）
 			}

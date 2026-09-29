@@ -49,7 +49,7 @@ reminder/                  ← 专题参考（`tool-calls.md` 工具调用 / `je
 |---|---|---|
 | `model` | 纯结构 | 无依赖 |
 | `statelang` | `<state>` 语法 | 零依赖纯函数；**解析即验证**；`Cleaned` 里**永不出现标签**（fuzz 守着）|
-| `store` | **只有它碰 SQL** | 正文/提示词原样存档；变量不落库；树在 `parent_id`；生成中的回复不在库里 |
+| `store` | **只有它碰 SQL** | 正文/提示词原样存档；变量不落库；树在 `parent_message_id`；生成中的回复不在库里 |
 | `config` | `config/` 四个文件 | 可缺失；整体重写；密钥不回显 |
 | `registry` | 模型口径 | 身份 `(provider, upstream_id)`；发现与覆盖分列，刷新不动用户列 |
 | `providers` | **只有它碰网络** | 只走成熟库；超时必配 |
@@ -74,7 +74,7 @@ reminder/                  ← 专题参考（`tool-calls.md` 工具调用 / `je
 1. **存储是 SQLite**（不选全 JSON：崩溃安全、并发、查询都白拿）：`data/microchat.db`。手写配置只在 `config/`（**严格 JSON**：注释与尾逗号都报错——程序会整体重写）。**配置住数据目录里**（默认 `data/config/`）⇒ 备份 / 搬家只要搬 `data/` 一个目录；
   两者路径**相对工作目录**，可用 `MICROCHAT_CONFIG_DIR` / `MICROCHAT_DATA_DIR` 覆盖。界面偏好另存 `~/.config/microchat/frontend.json`（不同机制，别混）。
 2. **正文与提示词都是存档**：`<state>` 块原样留在消息正文**和 system prompt** 里；**发给模型的文本一律剔除标签**，改注入当前状态表。唯一出口 `state.BuildOutgoing()`——不许写第二条拼装路径。
-3. **世界状态不落库**：世界状态**每次现算**（`state.FromSources`）：先扫生效提示词里的块（**底子**），再按**当前路径**顺序扫正文里的块，然后 fold。每条操作带 `message_id`，"哪句话带来的状态"追得回来。**没有派生表** ⇒ 编辑/删除消息、改提示词、换分支都不需要"重算"（换分支只要重拉 `/sessions/{id}/state`）。
+3. **世界状态不落库**：世界状态**每次现算**（`state.FromSources`）：先扫生效提示词里的块（**底子**），再按**当前路径**顺序扫正文里的块，然后 fold。每条操作带 `message_id`，"哪句话带来的状态"追得回来。**没有派生表** ⇒ 编辑/删除消息、改提示词、换分支都不需要"重算"（换分支只要重拉 `/sessions/{session_id}/state`）。
    底子的**来源**决定它算哪一层：用 agent 的 ⇒ **全局**（同一 agent 的会话共享）；会话自己写了 ⇒ **本会话**。
    **删除不留痕迹**：`delete(键)` 与空值 `键 =` 都只是从**本层**拿掉 ⇒ 删底子里的键，值会从底子漏回来（"删"只作用于自己那一层；不想被删的键别写底子，写进第一条消息）。
    生效提示词由**一处**解析（会话覆盖 → agent 的 → 内置默认），出站 / 底子 / 界面共用它。
@@ -85,7 +85,7 @@ reminder/                  ← 专题参考（`tool-calls.md` 工具调用 / `je
    - **生成中的回复不在库里**：受理时先把 id 算好发给客户端，等**整段**拿到才用这个 id 与当时捕获的上文 INSERT ⇒ 停止/失败/被杀都不留半条，也没有"清理占位"要维护。
    **别按 rowid 或 id 排消息**；`rowid` 只当"同龄兄弟谁先谁后"的顺序。
 5. **模型身份 = `(provider, upstream_id)`**；显示名三级回退（用户覆盖 → 上游名 → prettify）**只在后端**做。
-   新建会话的 agent 取 `agents.json` 的 `default_agent`（空串/缺失都算没配 ⇒ 内置默认）。**agent 的 id** 新建时由后端生成；改名走 `PATCH /agents/{id}` 的 `new_id`——一次把 `default_agent` 与所有会话的引用搬过去（软引用无外键，找不到只会静默回空提示词，所以必须由这一处维护）。
+   新建会话的 agent 取 `agents.json` 的 `default_agent`（空串/缺失都算没配 ⇒ 内置默认）。**agent 的 id** 新建时由后端生成；改名走 `PATCH /agents/{agent_id}` 的 `new_id`——一次把 `default_agent` 与所有会话的引用搬过去（软引用无外键，找不到只会静默回空提示词，所以必须由这一处维护）。
 6. **`data/`（含 `data/config/`）永不入库**（端口口令、连接信息、密钥、存档）。默认值全在代码里，文件缺失也能跑。`.gitignore` 只放行 Godot 项目的非缓存部分。
 7. **HTTP API 看下面那节**（**唯一权威是路由表**）。改了接口就跑 `go -C core test ./...`。
    （旧版 Rust 已删 —— 对账工具跟着一起没了 ✓ 现在只有这一份实现 ✓）
@@ -146,10 +146,10 @@ delete(AA)           # 删除
 
 这一轮把"无用"与"可选"两类路由从契约里**删掉**了（不是没搬 —— 是**不要**）：
 
-- 无用：`GET /debug/state`、`GET /debug/file/{name}`、`DELETE /providers/{id}/models`、`GET /sessions/{id}/export`
+- 无用：`GET /debug/state`、`GET /debug/file/{name}`、`DELETE /providers/{provider_id}/models`、`GET /sessions/{session_id}/export`
   （理由：后端自述会说谎、配置文件原文不该给远程客户端、上游模型列表本就自动清理、导出该由 Agent 卡带承担）
-- 可选（**待重做**，不做兼容）：`GET /tasks`、`POST /models/probe`、`POST /sessions/{id}/archive`、
-  `POST /sessions/{id}/fork`、`GET /sessions/{id}/summaries`、`GET/PUT /abilities`、`POST /sessions/{id}/compact`
+- 可选（**待重做**，不做兼容）：`GET /tasks`、`POST /models/probe`、`POST /sessions/{session_id}/archive`、
+  `POST /sessions/{session_id}/fork`、`GET /sessions/{session_id}/summaries`、`GET/PUT /abilities`、`POST /sessions/{session_id}/compact`
 - **不要照旧版补回来** ✗ —— 旧版是参照，不是目标；要加先改这张表。
 
 ### 会话与消息
@@ -158,21 +158,21 @@ delete(AA)           # 删除
 |---|---|---|---|---|
 | GET | `/sessions` | — | `[SessionView]` | 每项 = 会话 + `turn`（左栏据此标"生成中"）|
 | POST | `/sessions` | `CreateSessionReq` | `Session` · 201 | 省略字段时取 `config.json` 的 `defaults` |
-| PATCH | `/sessions/{id}` | `UpdateSessionReq` | `Session` | 标题 / 模型 / agent / **切分支**（`current_leaf`）|
-| DELETE | `/sessions/{id}` | — | 204 | 不存在 → 404 |
-| GET | `/sessions/{id}/messages` | — | `[Message]` | **按树上的当前路径**，不是 rowid |
-| POST | `/sessions/{id}/messages` | `SendReq` | `TurnAccepted` · **202** | 落用户消息 + 开工；不含回复正文 |
-| PATCH | `/sessions/{id}/messages/{mid}` | `EditMessageReq` | `Message` | 改正文 = 重写存档（世界状态随之现演）|
-| DELETE | `/sessions/{id}/messages/{mid}` | — | `{"deleted": n}` | 删**整棵子树**；leaf 退到还活着的最新兄弟 |
-| DELETE | `/sessions/{id}/messages/{mid}/siblings` | — | `{"deleted": n}` | 「删除全部」|
-| POST | `/sessions/{id}/resend` | — | `TurnAccepted` · **202** | 尾条是助手 ⇒ 再长一个兄弟；是用户 ⇒ 照它重发 |
-| GET | `/sessions/{id}/branches` | — | `{消息id: BranchInfo}` | 每条在同龄兄弟里第几/共几（`‹ 2/3 ›`）|
-| GET | `/sessions/{id}/state` | — | `StateView` | `global` / `session` / `global_values` / `effective` / `tables`，**每次现算** |
-| GET | `/sessions/{id}/outgoing` | — | `[Outgoing]` | "下次真会发出去的东西"（标签已剔除、状态已注入）|
-| GET | `/sessions/{id}/context` | — | `ContextUsage` | 只有数字：`used_tokens`（估算）/ `budget_tokens` / `trigger_tokens` / `remaining_tokens` / `ctx_len` / `max_output` / `ratio` / `estimated` / `last_prompt_tokens` / `over_budget` |
-| GET | `/sessions/{id}/status` | — | `TurnStatus` | `idle`/`pending`/`streaming`/`error` + `message_id` + `elapsed_ms` + `chars` + `thinking_chars` + `error` |
-| GET | `/sessions/{id}/turn/text?from=N&think_from=M` | — | `StreamSlice` | 流式增量的**游标读**（正文与思考各一条游标，`from` = 第几个字符）：只服务动画 |
-| POST | `/sessions/{id}/stop` | — | `{"stopped": bool}` | **幂等**：没在跑也 200（`false`）|
+| PATCH | `/sessions/{session_id}` | `UpdateSessionReq` | `Session` | 标题 / 模型 / agent / **切分支**（`current_leaf`）|
+| DELETE | `/sessions/{session_id}` | — | 204 | 不存在 → 404 |
+| GET | `/sessions/{session_id}/messages` | — | `[Message]` | **按树上的当前路径**，不是 rowid |
+| POST | `/sessions/{session_id}/messages` | `SendReq` | `TurnAccepted` · **202** | 落用户消息 + 开工；不含回复正文 |
+| PATCH | `/sessions/{session_id}/messages/{message_id}` | `EditMessageReq` | `Message` | 改正文 = 重写存档（世界状态随之现演）|
+| DELETE | `/sessions/{session_id}/messages/{message_id}` | — | `{"deleted": n}` | 删**整棵子树**；leaf 退到还活着的最新兄弟 |
+| DELETE | `/sessions/{session_id}/messages/{message_id}/siblings` | — | `{"deleted": n}` | 「删除全部」|
+| POST | `/sessions/{session_id}/resend` | — | `TurnAccepted` · **202** | 尾条是助手 ⇒ 再长一个兄弟；是用户 ⇒ 照它重发 |
+| GET | `/sessions/{session_id}/branches` | — | `{消息id: BranchInfo}` | 每条在同龄兄弟里第几/共几（`‹ 2/3 ›`）|
+| GET | `/sessions/{session_id}/state` | — | `StateView` | `global` / `session` / `global_values` / `effective` / `tables`，**每次现算** |
+| GET | `/sessions/{session_id}/outgoing` | — | `[Outgoing]` | "下次真会发出去的东西"（标签已剔除、状态已注入）|
+| GET | `/sessions/{session_id}/context` | — | `ContextUsage` | 只有数字：`used_tokens`（估算）/ `budget_tokens` / `trigger_tokens` / `remaining_tokens` / `ctx_len` / `max_output` / `ratio` / `estimated` / `last_prompt_tokens` / `over_budget` |
+| GET | `/sessions/{session_id}/status` | — | `TurnStatus` | `idle`/`pending`/`streaming`/`error` + `message_id` + `elapsed_ms` + `chars` + `thinking_chars` + `error` |
+| GET | `/sessions/{session_id}/turn/text?from=N&think_from=M` | — | `StreamSlice` | 流式增量的**游标读**（正文与思考各一条游标，`from` = 第几个字符）：只服务动画 |
+| POST | `/sessions/{session_id}/stop` | — | `{"stopped": bool}` | **幂等**：没在跑也 200（`false`）|
 
 同一会话在跑时再发 → **409**。`TurnAccepted` = `{user?, backend, turn}`：`turn.message_id` 是**这条回复的 id**（受理时定好，那会儿还没进库）。
 
@@ -189,15 +189,15 @@ delete(AA)           # 删除
 | GET | `/providers` | — | `[ProviderView]` | **含 `has_key`，绝不含密钥内容**；`base_url` 回**生效值**（只配 `kind` 时由预设供给）|
 | GET | `/providers/presets` | — | `[PresetInfo]` | **内建预设清单**（kind / 端点 / 密钥环境变量 / 会话头 / 可选身份）—— 界面靠它生成"选一个内置 provider"的下拉 |
 | POST | `/providers` | `CreateProviderReq` | `ProviderView` · 201 | `api_key` 写进 `providers.json`；重名 → 409 |
-| PATCH | `/providers/{id}` | `UpdateProviderReq` | `ProviderView` | `api_key`：`None` = 不动，`""` = 清除 |
-| DELETE | `/providers/{id}` | — | 204 | 密钥随记录一起没 |
-| POST | `/providers/{id}/refresh` | — | `ProviderView` | **POST**（会写发现态）：拉 `/models` 并落库 |
+| PATCH | `/providers/{provider_id}` | `UpdateProviderReq` | `ProviderView` | `api_key`：`None` = 不动，`""` = 清除 |
+| DELETE | `/providers/{provider_id}` | — | 204 | 密钥随记录一起没 |
+| POST | `/providers/{provider_id}/refresh` | — | `ProviderView` | **POST**（会写发现态）：拉 `/models` 并落库 |
 | GET | `/models` | — | `[ModelListItem]` | 跨 provider 拍平（"渠道 / 模型"下拉用）|
 | PATCH | `/models` | `{provider, upstream_id, context_override}` | `ModelView` | 设/清上下文覆盖（`null` = 清）。**刷新永不覆盖用户列** |
 | GET | `/agents` | — | `AgentsConfig` | 生效列表（含内置默认 agent）|
 | POST | `/agents` | `CreateAgentReq` | `Agent` · 201 | 只收 `name` + `system_prompt`；id 由后端生成 |
-| PATCH | `/agents/{id}` | `UpdateAgentReq` | `Agent` | `new_id` = 重命名（搬 `default_agent` 与会话引用）|
-| DELETE | `/agents/{id}` | — | 204 | 内置默认 agent 不可删 |
+| PATCH | `/agents/{agent_id}` | `UpdateAgentReq` | `Agent` | `new_id` = 重命名（搬 `default_agent` 与会话引用）|
+| DELETE | `/agents/{agent_id}` | — | 204 | 内置默认 agent 不可删 |
 | GET | `/config/chat` | — | `ChatConfig` | `config.json` 的 chat 段（不含密钥）|
 | PUT | `/config/chat` | `ChatConfig` | `ChatConfig` | **整段替换** chat（其余段原样保留）|
 
@@ -262,7 +262,7 @@ delete(AA)           # 删除
 
 ### `messages` —— 一条消息，**同时是树的一个节点**
 
-`id`（生成回复时**受理那一刻**就算好）· `session_id`（FK CASCADE）· `role`（`CHECK IN ('user','assistant')`）· `content`（**存档本体**，`<state>` 块原样留着）· `parent_id`（FK CASCADE；**树就在这一列**）· `created_at`
+`id`（生成回复时**受理那一刻**就算好）· `session_id`（FK CASCADE）· `role`（`CHECK IN ('user','assistant')`）· `content`（**存档本体**，`<state>` 块原样留着）· `parent_message_id`（FK CASCADE；**树就在这一列**）· `created_at`
 后四列**只服务显示**（出站/状态/分支/编辑一律不看）：`reasoning` · `reasoning_ms`（受理 → 第一段正文）· `duration_ms` · `usage`（归一化后的 JSON）
 
 ### `models` —— 发现所得 + 用户覆盖（PK `(provider, upstream_id)`）
@@ -279,7 +279,7 @@ delete(AA)           # 删除
 
 ## 摘要 / 压缩的设计（**设计已定；Go 版尚未实现**：没有 compact 模块、没有路由、summaries 表还没人写）
 
-- **指针链，不是层级数字**：摘要**不是树的节点**（不往 `messages` 插行、不改 `parent_id`）；硬不变量：**压缩只往 `summaries` 插一行**，绝不插/改/删 `messages`。
+- **指针链，不是层级数字**：摘要**不是树的节点**（不往 `messages` 插行、不改 `parent_message_id`）；硬不变量：**压缩只往 `summaries` 插一行**，绝不插/改/删 `messages`。
 - **为什么不需要"区间见证"**：分叉只允许出现在尾巴上，而压缩只吃尾巴之外 ⇒ 被压那段在压缩那一刻**是线性的** ⇒ 纯指针足够。
 - **装配时的行走**（`state.BuildOutgoing`）：从路径根逐条往前走 —— 有 `summary_id` 就取它；若有父摘要、且**父的全部孩子就在眼前**（一个不缺）⇒ 用父并跳过整串；否则用细的、跳过它覆盖的那串；都没有 ⇒ 发原文。"跳过"靠继续读 `summary_id` 判断，**不存范围**。**能取粗的不取精，但宁可用细的也不许漏内容**。
 - **MASK（术语）**：有摘要覆盖的那一段，装配时**不发明文**、只发摘要的正文 —— 存放处一个字节都不动，被"遮掉"的只是**这一次请求**。
@@ -530,6 +530,9 @@ prompt caching**"）。**不要为能力造子 session id**：网关的会话 id
 - **纯结构之间手搓转换 = 字段静默丢失**：`config.Provider` → `providers.Provider` 字段名一样、类型不同，
   各处手搓字面量时漏一个字段就是静默失效（真发生过：`identity` 声明了却从没被转过去 ⇒ 配置里写 `"identity":"pi"` 被无声忽略）。
   **规矩**：这种转换只许有**一个**函数（`providers.FromConfig`），并配一条"每个字段都要活到请求上"的回归测试。
+- **`r.PathValue("x")` 名字不匹配是静默空串** ✗：改了路由里的通配名（`{id}` → `{session_id}`）而忘了改 handler ✓，
+  会**编译过、测试过、还回 200** ✓ 只是拿着空 id 去查（→ 404 或**串到别的会话** ✗✗）。改完**必须逐条真发请求** ✓；
+  自检脚本要**按位置**比 handler 里的读取顺序与路由里的通配符顺序 ✓（"名字在不在里面"这种核对漏过两段通配的路由 ✗）。
 - **Go 的包名会被参数名遮蔽**（`func f(model string)` 里的 `model` 盖住 `model` 包）；**`sync.Mutex` 不可重入**（持锁的方法里别再调公开方法）。
 - **正则改源码要小心字面量 `\n`**：源码里 `\n` 是两个字符，`\b`/lookbehind 都会失灵，贪吃匹配会把整行切坏。
 - **Godot `offset_transform_position` 的单位是 ui，不是像素**：安卓键盘高度是像素 ⇒ 必须乘 `视图高/窗口高`（实测 775px×2.22=1722px > 屏高 1600，直接飞出屏幕）。**两个开关默认是反的**：`offset_transform_enabled=false`、`offset_transform_visual_only=true`；只打开 enabled ⇒ "看得见、点不到"。

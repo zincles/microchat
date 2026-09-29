@@ -71,7 +71,7 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
+	id := r.PathValue("agent_id")
 	var req UpdateAgentReq
 	if !decodeJSON(w, r, &req) {
 		return
@@ -150,7 +150,7 @@ func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteAgent(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
+	id := r.PathValue("agent_id")
 	agents := s.loadAgents()
 	kept := make([]config.Agent, 0, len(agents.Agents))
 	for _, agent := range agents.Agents {

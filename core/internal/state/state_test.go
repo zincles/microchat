@@ -8,7 +8,7 @@ import (
 )
 
 func message(id, content string, parent *string) model.Message {
-	return model.Message{ID: id, Role: model.RoleUser, Content: content, ParentID: parent}
+	return model.Message{ID: id, Role: model.RoleUser, Content: content, ParentMessageID: parent}
 }
 
 func has(tables Tables, table, key string) (string, bool) {

@@ -147,7 +147,7 @@ func (s *Server) createProvider(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateProvider(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
+	id := r.PathValue("provider_id")
 	var req UpdateProviderReq
 	if !decodeJSON(w, r, &req) {
 		return
@@ -186,7 +186,7 @@ func (s *Server) updateProvider(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteProvider(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
+	id := r.PathValue("provider_id")
 	configs := s.loadProviders()
 	kept := make([]config.Provider, 0, len(configs.Providers))
 	found := false
@@ -211,7 +211,7 @@ func (s *Server) deleteProvider(w http.ResponseWriter, r *http.Request) {
 
 // refreshProvider：拉 `/models` 并落库（**发现列**）；这次没见到的删行。
 func (s *Server) refreshProvider(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
+	id := r.PathValue("provider_id")
 	provider, found := s.providerByID(id)
 	if !found {
 		writeError(w, http.StatusNotFound, "not_found", "渠道不存在")

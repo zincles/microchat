@@ -66,7 +66,7 @@ func (s *Server) getSessionOutgoing(w http.ResponseWriter, r *http.Request) {
 
 // requireSession：取会话；不存在 ⇒ 404（顺带把"会话不见了"收在一处）。
 func (s *Server) requireSession(w http.ResponseWriter, r *http.Request) (*model.Session, bool) {
-	session, err := s.store.GetSession(r.PathValue("id"))
+	session, err := s.store.GetSession(r.PathValue("session_id"))
 	if err != nil {
 		writeStoreError(w, err)
 		return nil, false

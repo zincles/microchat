@@ -18,7 +18,7 @@ CREATE TABLE messages (
   role            TEXT NOT NULL CHECK (role IN ('user','assistant')),
   content         TEXT NOT NULL,
   created_at      INTEGER NOT NULL
-, parent_id TEXT REFERENCES messages(id) ON DELETE CASCADE, reasoning TEXT, duration_ms INTEGER, usage TEXT, reasoning_ms INTEGER, summary_id TEXT REFERENCES summaries(id) ON DELETE SET NULL);
+, parent_message_id TEXT REFERENCES messages(id) ON DELETE CASCADE, reasoning TEXT, duration_ms INTEGER, usage TEXT, reasoning_ms INTEGER, summary_id TEXT REFERENCES summaries(id) ON DELETE SET NULL);
 CREATE INDEX messages_by_session ON messages(session_id, id);
 CREATE TABLE models (
   provider       TEXT NOT NULL,
@@ -38,7 +38,7 @@ CREATE TABLE provider_state (
   provider        TEXT PRIMARY KEY,
   last_refresh_at INTEGER NOT NULL
 );
-CREATE INDEX messages_by_parent ON messages(parent_id);
+CREATE INDEX messages_by_parent_message ON messages(parent_message_id);
 CREATE TABLE summaries (
   id                TEXT PRIMARY KEY,
   session_id   TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,

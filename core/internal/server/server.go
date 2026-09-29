@@ -31,21 +31,21 @@ func New(st *store.Store, cfg config.Config, paths config.Paths) *Server {
 	s.mux.HandleFunc("GET /api/v1/debug/last-payload", s.lastPayload)
 	s.mux.HandleFunc("GET /api/v1/sessions", s.listSessions)
 	s.mux.HandleFunc("POST /api/v1/sessions", s.createSession)
-	s.mux.HandleFunc("PATCH /api/v1/sessions/{id}", s.updateSession)
-	s.mux.HandleFunc("DELETE /api/v1/sessions/{id}", s.deleteSession)
-	s.mux.HandleFunc("GET /api/v1/sessions/{id}/branches", s.listBranches)
+	s.mux.HandleFunc("PATCH /api/v1/sessions/{session_id}", s.updateSession)
+	s.mux.HandleFunc("DELETE /api/v1/sessions/{session_id}", s.deleteSession)
+	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/branches", s.listBranches)
 	// provider / 模型 / 渠道（registry 那一层）
 	s.mux.HandleFunc("GET /api/v1/providers", s.listProviders)
 	// 内建预设清单（字面段优先于 {id}，Go 的 ServeMux 自己保证）
 	s.mux.HandleFunc("GET /api/v1/providers/presets", s.listProviderPresets)
 	s.mux.HandleFunc("POST /api/v1/providers", s.createProvider)
-	s.mux.HandleFunc("PATCH /api/v1/providers/{id}", s.updateProvider)
-	s.mux.HandleFunc("DELETE /api/v1/providers/{id}", s.deleteProvider)
-	s.mux.HandleFunc("POST /api/v1/providers/{id}/refresh", s.refreshProvider)
+	s.mux.HandleFunc("PATCH /api/v1/providers/{provider_id}", s.updateProvider)
+	s.mux.HandleFunc("DELETE /api/v1/providers/{provider_id}", s.deleteProvider)
+	s.mux.HandleFunc("POST /api/v1/providers/{provider_id}/refresh", s.refreshProvider)
 	s.mux.HandleFunc("GET /api/v1/agents", s.listAgents)
 	s.mux.HandleFunc("POST /api/v1/agents", s.createAgent)
-	s.mux.HandleFunc("PATCH /api/v1/agents/{id}", s.updateAgent)
-	s.mux.HandleFunc("DELETE /api/v1/agents/{id}", s.deleteAgent)
+	s.mux.HandleFunc("PATCH /api/v1/agents/{agent_id}", s.updateAgent)
+	s.mux.HandleFunc("DELETE /api/v1/agents/{agent_id}", s.deleteAgent)
 	s.mux.HandleFunc("GET /api/v1/config/chat", s.getChatConfig)
 	s.mux.HandleFunc("PUT /api/v1/config/chat", s.putChatConfig)
 	s.mux.HandleFunc("GET /api/v1/models", s.listModels)
@@ -53,12 +53,12 @@ func New(st *store.Store, cfg config.Config, paths config.Paths) *Server {
 
 	// statelang：解析 + 计算（给外部工具用；不涉及会话、不落库）
 	s.mux.HandleFunc("POST /api/v1/statelang", s.statelangParse)
-	s.mux.HandleFunc("GET /api/v1/sessions/{id}/state", s.getSessionState)
-	s.mux.HandleFunc("GET /api/v1/sessions/{id}/outgoing", s.getSessionOutgoing)
-	s.mux.HandleFunc("PATCH /api/v1/sessions/{id}/messages/{messageId}", s.editMessage)
-	s.mux.HandleFunc("DELETE /api/v1/sessions/{id}/messages/{messageId}", s.deleteMessage)
-	s.mux.HandleFunc("DELETE /api/v1/sessions/{id}/messages/{messageId}/siblings", s.deleteSiblings)
-	s.mux.HandleFunc("GET /api/v1/sessions/{id}/messages", s.listMessages)
+	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/state", s.getSessionState)
+	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/outgoing", s.getSessionOutgoing)
+	s.mux.HandleFunc("PATCH /api/v1/sessions/{session_id}/messages/{message_id}", s.editMessage)
+	s.mux.HandleFunc("DELETE /api/v1/sessions/{session_id}/messages/{message_id}", s.deleteMessage)
+	s.mux.HandleFunc("DELETE /api/v1/sessions/{session_id}/messages/{message_id}/siblings", s.deleteSiblings)
+	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/messages", s.listMessages)
 	return s
 }
 
@@ -87,7 +87,7 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 
 // listMessages：**按树上的当前路径**（不是 rowid，也不是全部）。
 func (s *Server) listMessages(w http.ResponseWriter, r *http.Request) {
-	messages, err := s.store.ListMessages(r.PathValue("id"))
+	messages, err := s.store.ListMessages(r.PathValue("session_id"))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
@@ -176,7 +176,7 @@ func (s *Server) updateSession(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	id := r.PathValue("id")
+	id := r.PathValue("session_id")
 	if req.Title != nil {
 		if err := s.store.UpdateTitle(id, *req.Title); err != nil {
 			writeStoreError(w, err)
@@ -230,7 +230,7 @@ func (s *Server) updateSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
-	if err := s.store.DeleteSession(r.PathValue("id")); err != nil {
+	if err := s.store.DeleteSession(r.PathValue("session_id")); err != nil {
 		writeStoreError(w, err)
 		return
 	}
@@ -269,7 +269,7 @@ func writeStoreError(w http.ResponseWriter, err error) {
 
 // listBranches：每条在同龄兄弟里第几/共几（界面上的「‹ 2/3 ›」）。
 func (s *Server) listBranches(w http.ResponseWriter, r *http.Request) {
-	info, err := s.store.BranchInfo(r.PathValue("id"))
+	info, err := s.store.BranchInfo(r.PathValue("session_id"))
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -292,7 +292,7 @@ func (s *Server) editMessage(w http.ResponseWriter, r *http.Request) {
 		missingField(w, "content")
 		return
 	}
-	message, err := s.store.UpdateMessage(r.PathValue("id"), r.PathValue("messageId"), *req.Content)
+	message, err := s.store.UpdateMessage(r.PathValue("session_id"), r.PathValue("message_id"), *req.Content)
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -302,7 +302,7 @@ func (s *Server) editMessage(w http.ResponseWriter, r *http.Request) {
 
 // deleteMessage：删**整棵子树**（返回删了几条）。
 func (s *Server) deleteMessage(w http.ResponseWriter, r *http.Request) {
-	deleted, err := s.store.DeleteMessage(r.PathValue("id"), r.PathValue("messageId"))
+	deleted, err := s.store.DeleteMessage(r.PathValue("session_id"), r.PathValue("message_id"))
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -312,7 +312,7 @@ func (s *Server) deleteMessage(w http.ResponseWriter, r *http.Request) {
 
 // deleteSiblings：「删除全部」——清掉一组兄弟（连同各自子树），只留上文。
 func (s *Server) deleteSiblings(w http.ResponseWriter, r *http.Request) {
-	deleted, err := s.store.DeleteSiblings(r.PathValue("id"), r.PathValue("messageId"))
+	deleted, err := s.store.DeleteSiblings(r.PathValue("session_id"), r.PathValue("message_id"))
 	if err != nil {
 		writeStoreError(w, err)
 		return
