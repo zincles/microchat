@@ -1,9 +1,5 @@
 # ── 构建产物 ──────────────────────────────────────────────
-/target
-deprecated/target
-**/*.rs.bk
-
-# Go 的构建产物：`make` 产出仓库根下的 ./microchat（一个二进制，服务 + TUI 都是它）
+# Go 的构建产物：`go -C core build -o ../microchat .` 产出仓库根下的 ./microchat（服务 + TUI 都是它）
 /microchat
 
 # ── 用户数据 ──────────────────────────────────────────────
@@ -16,12 +12,8 @@ deprecated/target
 *.db-shm
 
 # ── 配置与密钥：整块不进库 ────────────────────────────────
-# 配置现在住 **data/config/**（= /data 已覆盖）：服务端口与口令、provider 连接信息、
-# agent 预设。默认值都在代码里，文件不存在也能跑；格式写在 AGENTS.md。
-#
-# /config/ 这条留着是**防漏**：deprecated/ 那版 Rust 默认还读根上的 config/，
-# 哪天临时起它，密钥别被提交进去。（`MICROCHAT_CONFIG_DIR` 可覆盖两边。）
-/config/
+# 配置住 data/config/（= /data 已覆盖）：端口与口令、渠道连接信息、agent 预设。
+# 默认值都在代码里，文件不存在也能跑；格式写在 AGENTS.md。
 
 # ── 原子写的临时残留 ──────────────────────────────────────
 # 配置写回用 tmp + rename；进程被强杀时可能留下 *.json.tmp
@@ -37,7 +29,6 @@ deprecated/target
 .DS_Store
 Thumbs.db
 
-# 注：Cargo.lock 要提交（这是应用而非库，锁死依赖版本）
 # 注：配置文件一律**严格 JSON**（不接受注释与尾逗号）——程序会整体重写它们，
 #     注释留不住；格式与示例写在 AGENTS.md 里。
 
