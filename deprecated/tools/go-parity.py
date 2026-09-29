@@ -3,9 +3,9 @@
 
 迁移期间的卡关工具：接口层转对了没有，这条比"看着像"硬。
 用法：
-    python3 scripts/go-parity.py                    # 默认比 /health + 全部会话的 messages
-    python3 scripts/go-parity.py --rust URL --go URL
-    python3 scripts/go-parity.py --path /providers --path /agents
+    python3 deprecated/tools/go-parity.py                    # 默认比 /health + 全部会话的 messages
+    python3 deprecated/tools/go-parity.py --rust URL --go URL
+    python3 deprecated/tools/go-parity.py --path /providers --path /agents
 两边必须读**同一份数据**（一般：把 data/ 拷一份给 Go 版跑）。
 """
 import argparse, json, sys, urllib.request

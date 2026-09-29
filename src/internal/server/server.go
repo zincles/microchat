@@ -34,6 +34,19 @@ func New(st *store.Store, cfg config.Config, paths config.Paths) *Server {
 	s.mux.HandleFunc("PATCH /api/v1/conversations/{id}", s.updateConversation)
 	s.mux.HandleFunc("DELETE /api/v1/conversations/{id}", s.deleteConversation)
 	s.mux.HandleFunc("GET /api/v1/conversations/{id}/branches", s.listBranches)
+	// provider / 模型 / 渠道（registry 那一层）
+	s.mux.HandleFunc("GET /api/v1/providers", s.listProviders)
+	// 内建预设清单（字面段优先于 {id}，Go 的 ServeMux 自己保证）
+	s.mux.HandleFunc("GET /api/v1/providers/presets", s.listProviderPresets)
+	s.mux.HandleFunc("POST /api/v1/providers", s.createProvider)
+	s.mux.HandleFunc("PATCH /api/v1/providers/{id}", s.updateProvider)
+	s.mux.HandleFunc("DELETE /api/v1/providers/{id}", s.deleteProvider)
+	s.mux.HandleFunc("POST /api/v1/providers/{id}/refresh", s.refreshProvider)
+	s.mux.HandleFunc("DELETE /api/v1/providers/{id}/models", s.deleteProviderModels)
+	s.mux.HandleFunc("POST /api/v1/models/probe", s.probeProvider)
+	s.mux.HandleFunc("GET /api/v1/models", s.listModels)
+	s.mux.HandleFunc("PATCH /api/v1/models", s.setModelOverride)
+
 	// statelang：解析 + 计算（给外部工具用；不涉及会话、不落库）
 	s.mux.HandleFunc("POST /api/v1/statelang", s.statelangParse)
 	s.mux.HandleFunc("GET /api/v1/conversations/{id}/state", s.getConversationState)

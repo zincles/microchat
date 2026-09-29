@@ -3,21 +3,24 @@
 deprecated/target
 **/*.rs.bk
 
-# Go 的构建产物（临时二进制一律放 /tmp，别落这儿）
-/src/server
+# Go 的构建产物：`make` 产出仓库根下的 ./microchat（一个二进制，服务 + TUI 都是它）
+/microchat
 
 # ── 用户数据 ──────────────────────────────────────────────
-# 会话与消息（SQLite）。战役存档是私人数据，不进版本库；
-# 备份 = 抄 data/ 目录；导出/分享走应用自己的接口，不靠 git。
+# 会话与消息（SQLite）+ **全部配置**。战役存档是私人数据，不进版本库；
+# 备份 / 搬家 = 抄 data/ 一个目录（配置即 data/config/，工具在 deprecated/tools/）；
+# 导出/分享走应用自己的接口，不靠 git。
 /data
 *.db
 *.db-wal
 *.db-shm
 
 # ── 配置与密钥：整块不进库 ────────────────────────────────
-# config/ 里是你自己的东西：服务端口与口令、provider 连接信息、agent 预设、
-# 以及 secrets.json（密钥，写入时 chmod 600）。默认值都在代码里（各结构的 Default），
-# 所以这些文件不存在也能跑；仓库不再提供"模板"——格式写在 AGENTS.md。
+# 配置现在住 **data/config/**（= /data 已覆盖）：服务端口与口令、provider 连接信息、
+# agent 预设。默认值都在代码里，文件不存在也能跑；格式写在 AGENTS.md。
+#
+# /config/ 这条留着是**防漏**：deprecated/ 那版 Rust 默认还读根上的 config/，
+# 哪天临时起它，密钥别被提交进去。（`MICROCHAT_CONFIG_DIR` 可覆盖两边。）
 /config/
 
 # ── 原子写的临时残留 ──────────────────────────────────────

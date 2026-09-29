@@ -32,8 +32,10 @@ src/                       ← 后端（Go）
     store/                 SQLite：打开/迁移/读写（migrations/*.sql）
     server/                HTTP：路由、错误体、鉴权（只编排，不含业务）
     model/ config/         纯结构 / `config/` 读写
-deprecated/                ← 旧 Rust 版（含 Cargo.toml）；只读参照
+deprecated/                ← 旧 Rust 版（含 Cargo.toml）；只读参照（对账工具在 deprecated/tools/）
 frontend/                  ← Godot 4.8
+reminder/                  ← 专题参考（`tool-calls.md` 工具调用 / `jev.md` 决策模型）；
+                             `AGENTS.md` 只留形状与指针，细节住这儿
 ```
 
 ## 模块地图：一个模块 = 一份唯一权威 + 一条不变量
@@ -63,7 +65,8 @@ frontend/                  ← Godot 4.8
 
 ## 不变量（破坏了会静默出错）
 
-1. **存储是 SQLite**（不选全 JSON：崩溃安全、并发、查询都白拿）：`data/microchat.db`。手写配置只在 `config/`（**严格 JSON**：注释与尾逗号都报错——程序会整体重写）。两者路径**相对工作目录**，可用 `MICROCHAT_CONFIG_DIR` / `MICROCHAT_DATA_DIR` 覆盖。界面偏好另存 `~/.config/microchat/frontend.json`（不同机制，别混）。
+1. **存储是 SQLite**（不选全 JSON：崩溃安全、并发、查询都白拿）：`data/microchat.db`。手写配置只在 `config/`（**严格 JSON**：注释与尾逗号都报错——程序会整体重写）。**配置住数据目录里**（默认 `data/config/`）⇒ 备份 / 搬家只要搬 `data/` 一个目录；
+  两者路径**相对工作目录**，可用 `MICROCHAT_CONFIG_DIR` / `MICROCHAT_DATA_DIR` 覆盖。界面偏好另存 `~/.config/microchat/frontend.json`（不同机制，别混）。
 2. **正文与提示词都是存档**：`<state>` 块原样留在消息正文**和 system prompt** 里；**发给模型的文本一律剔除标签**，改注入当前状态表。唯一出口 `state.BuildOutgoing()`——不许写第二条拼装路径。
 3. **世界状态不落库**：世界状态**每次现算**（`state.FromSources`）：先扫生效提示词里的块（**底子**），再按**当前路径**顺序扫正文里的块，然后 fold。每条操作带 `message_id`，"哪句话带来的状态"追得回来。**没有派生表** ⇒ 编辑/删除消息、改提示词、换分支都不需要"重算"（换分支只要重拉 `/conversations/{id}/state`）。
    底子的**来源**决定它算哪一层：用 agent 的 ⇒ **全局**（同一 agent 的会话共享）；会话自己写了 ⇒ **本会话**。
@@ -77,14 +80,16 @@ frontend/                  ← Godot 4.8
    **别按 rowid 或 id 排消息**；`rowid` 只当"同龄兄弟谁先谁后"的顺序。
 5. **模型身份 = `(provider, upstream_id)`**；显示名三级回退（用户覆盖 → 上游名 → prettify）**只在后端**做。
    新建会话的 agent 取 `agents.json` 的 `default_agent`（空串/缺失都算没配 ⇒ 内置默认）。**agent 的 id** 新建时由后端生成；改名走 `PATCH /agents/{id}` 的 `new_id`——一次把 `default_agent` 与所有会话的引用搬过去（软引用无外键，找不到只会静默回空提示词，所以必须由这一处维护）。
-6. **`config/` 与 `data/` 永不入库**（端口口令、连接信息、密钥、存档）。默认值全在代码里，文件缺失也能跑。`.gitignore` 只放行 Godot 项目的非缓存部分。
-7. **HTTP API 看下面那节**。改了接口就跑 `cd src && go test ./...` + `python3 scripts/go-parity.py`（与旧版逐字节比）。`scripts/api-audit.py` 是**旧时代的闸**，搬完最后一批路由前还有参照价值。
+6. **`data/`（含 `data/config/`）永不入库**（端口口令、连接信息、密钥、存档）。默认值全在代码里，文件缺失也能跑。`.gitignore` 只放行 Godot 项目的非缓存部分。
+7. **HTTP API 看下面那节**。改了接口就跑 `make test`；**还在搬**的时候加跑 `python3 deprecated/tools/go-parity.py`（与旧版逐字节比）。
+   `deprecated/tools/` 里那两个脚本是**旧时代的闸**（读 Rust 源码 / 压两版对比）⇒ **随 `deprecated/` 一起生灭**，搬完就删。
 
 ## 常用命令
 
 ```bash
-cd src && go test ./...                                   # 后端测试
-cd src && go build -o /tmp/microchat-go . && /tmp/microchat-go -addr 127.0.0.1:8787 -data ../data
+make                                                     # 构建 ./microchat（服务 + TUI 一个二进制）
+./microchat                                               # 起来就既在 8787 服务、又在终端里开 TUI
+make test                                                # = cd src && go test ./...
 
 cd deprecated && cargo test                               # 旧版（参照，别再改）
 cd deprecated && ./target/debug/server                    # 旧后端（只在对账时临时起）
@@ -114,7 +119,7 @@ delete(AA)           # 删除
 
 ## 配置文件长什么样
 
-`config/` 里是**严格 JSON**（程序整体重写），都可缺失。文件名一律 `.json`：
+**`data/config/`** 里是**严格 JSON**（程序整体重写），都可缺失。文件名一律 `.json`：
 
 - `config.json` — `{ "server": { "port": 8787, "auth_token": "可选" }, "defaults": { "provider": "dummy", "model": "dummy", "agent": "default" }, "chat": { "model_context_tokens": 131072, "compact_trigger_tokens": null } }`
 - `providers.json` — `{ "providers": [ { "id": "dummy", "kind": "dummy" }, { "id": "openrouter", "base_url": "https://openrouter.ai/api/v1", "headers": {…}, "api_key": "sk-…", "timeouts": { "connect_seconds": 15, "total_seconds": 300 } } ] }`
@@ -170,7 +175,8 @@ delete(AA)           # 删除
 
 | 方法 | 路径 | 请求体 | 响应 | 说明 |
 |---|---|---|---|---|
-| GET | `/providers` | — | `[ProviderView]` | **含 `has_key`，绝不含密钥内容** |
+| GET | `/providers` | — | `[ProviderView]` | **含 `has_key`，绝不含密钥内容**；`base_url` 回**生效值**（只配 `kind` 时由预设供给）|
+| GET | `/providers/presets` | — | `[PresetInfo]` | **内建预设清单**（kind / 端点 / 密钥环境变量 / 会话头 / 可选身份）—— 界面靠它生成"选一个内置 provider"的下拉 |
 | POST | `/providers` | `CreateProviderReq` | `ProviderView` · 201 | `api_key` 写进 `providers.json`；重名 → 409 |
 | PATCH | `/providers/{id}` | `UpdateProviderReq` | `ProviderView` | `api_key`：`None` = 不动，`""` = 清除 |
 | DELETE | `/providers/{id}` | — | 204 | 密钥随记录一起没 |
@@ -283,9 +289,182 @@ delete(AA)           # 删除
 超时别忘：`providers.json` 的 `timeouts`（缺省 connect 15s / total 300s）。**不设总超时 = 上游卡住、界面转一辈子**。
 `usage` 各家的字段名不一（缓存就有 `prompt_tokens_details.cached_tokens` 与 `prompt_cache_hit_tokens` 两种），**归一化只有一处**；前端只管读 `cached_tokens` 这些键。成本算不了：API 不返回 cost。
 
+## 怎么"像编码 Agent"：实测出来的请求形状
+
+有些网关（订阅型的 provider）会按**客户端指纹**放行。以下是从 `deepseek-ai/deepseek-harness` 与 `badlogic/pi-mono`
+的源码里**读出来的**（两家共用同一套请求层：dsh 的 `llm-pi-ai` 就是 Pi 的 `@earendil-works/pi-ai`）—— 不是猜的。
+
+**实测（OpenCode GO 的网关日志，2026-09-29）** —— 同一台机器，两个请求：
+
+| | 被**拒** ✗ | 被**允许** ✓ |
+|---|---|---|
+| `user-agent` | `node-fetch` | `pi (linux 7.1.8+deb13-amd64; x64)` |
+| `accept` | `*/*` | `application/json` |
+| `x-opencode-client` | （无）| `pi` |
+| `x-opencode-session` | （无）| `01a0e965-4156-741d-a8bd-5e16f28eb90d`（**UUIDv7** —— 和我们的 `conversations.id` 同构 ✓）|
+| `content-type` | `application/json` | `application/json` |
+
+⇒ 网关按**客户端身份**放行：`user-agent` + 它自家的两个 `x-opencode-*` 头；`accept` 也要像那么回事。
+
+**但 2026-09-29 拿真 key 打过之后，结论收窄了** —— **硬闸只有一个：`x-opencode-session`**：
+
+| 变体 | 结果 |
+|---|---|
+microchat 默认头（`user-agent: microchat/0.1.0` + `x-opencode-client: microchat` + 会话头）| **200** ✓ |
+逐字装 Pi（`pi (linux …; x64)` + `x-opencode-client: pi` + 会话头）| 200 ✓ |
+**裸库名**（`user-agent: Go-http-client/1.1` + 会话头）| **200** ✓ ← 库名实测**没被拦** |
+只留 `user-agent` + 会话头（不带 `x-opencode-client`）| 200 ✓ |
+**缺 `x-opencode-session`** | **400 `MissingSessionID`**：*"Request is missing x-opencode-session and cannot be routed efficiently"* |
+
+⇒ 官方文档那句"别用通用库名"目前是**要求而非强制**（我们仍照做 —— 迟早会真拦）；
+`x-opencode-client` 也不是必需。**`/models` 与 `/chat/completions` 都验过（真回话 + 真 usage）**。
+usage 的真实形状：`{prompt_tokens, completion_tokens, total_tokens, prompt_tokens_details:{}}`（无缓存命中时该对象为空）。
+**会话 id 每会话一个**（就是 UUIDv7 ✓ 我们现成有 ✓）。
+`user-agent` 里那段 `(linux <release>; x64)` 是客户端自报的运行环境 —— 我们**写死**即可（不必忠实反映本机）。
+
+**源码里的形状**（`deepseek-ai/deepseek-harness` 与 `badlogic/pi-mono`，两家共用同一套请求层）——作为背景：
+
+| 发什么 | 值 / 条件（源码出处）|
+|---|---|
+| `User-Agent` | `product/version (+url)`，如 `deepseek-harness/0.1.0 (+https://github.com/deepseek-ai/deepseek-harness)`。注释明说**不许放密钥/路径/会话 id/提示词**（`llm/src/attribution.ts`）|
+| `session_id` / `x-client-request-id` / `x-session-affinity` | 都有值 = 同一个**会话 id**；前一个只在 `sessionAffinityFormat === "openai"` 时发（`api/openai-completions.ts:772`）|
+| `x-session-id` | OpenRouter 那种格式只发这一个（同上）|
+| 体：`stream: true` | 一直是流式 ✓ |
+| 体：`stream_options: {include_usage: true}` | 除非该 provider 明确不支持（默认发）—— 流式下要 `usage` 就得要它 |
+| 体：`prompt_cache_key` | **只在 `api.openai.com`（或长缓存场景）**发 —— 乱发可能被别的网关拒 |
+| 体：`store: false` / `prompt_cache_retention: "24h"` | 看 provider 能力，能支持才发 |
+| SDK 指纹 | 它们用官方 `openai` JS SDK ⇒ 线上还有 `x-stainless-*` 那套。**我们复现不了**（版本漂移），要查就抓一次包 |
+
+### 内建 provider 预设（照 Pi 的源码抄，2026-09-29）
+
+| kind | base_url | 密钥从哪来 | 每请求必带的头 |
+|---|---|---|---|
+| `opencode-go` | `https://opencode.ai/zen/go/v1`（官方 discussion 里有人实测这条路 200）| `OPENCODE_API_KEY` | **`x-opencode-session: {{conversation_id}}`（网关必需** —— 注释原话"required per-conversation routing header"）+ `x-opencode-client: pi` + `user-agent: pi (linux <release>; x64)` + `accept: application/json` |
+| `opencode` | `https://opencode.ai/zen` | 同上 | 同上 |
+| `openrouter` | `https://openrouter.ai/api/v1` | `OPENROUTER_API_KEY` | `HTTP-Referer: https://pi.dev` / `X-OpenRouter-Title: pi` / `X-OpenRouter-Categories: cli-agent`（**可选**，归属用 —— Pi 那边还跟着"安装遥测开关"一起关） |
+
+- **不需要搬它们的模型目录** ✓：模型列表是**发现**来的（`GET /models` ⇒ `registry`）；内建预设只提供
+  **端点 + 头 + 认证从哪取**，每家十几行。
+- **主选三种**（新建渠道时只该看到这三个）：`dummy` / **`openai-compat`（标准）** / **`opencode-go`**；
+  `openrouter`/`opencode`/`openai`/`ollama`/`lmstudio` 是便利预设（`Presets()` 里 `primary` 标出来 ✓）。
+- **身份开关（服务器级）**：`config.json` 的 `server.identity` ——
+  `""`（默认）= **`pi`**（用户 2026-09-29 定：默认就照 Pi 的形状）/ `"microchat"` / `"bare"` = 什么都不装。
+  `providers.json` 里单个渠道的 `identity` **覆盖**它（没写就跟随服务器）✓。视图回**生效值** ✓。
+  （诚实标注：文档建议用「自己的 UA」—— 默认选 `pi` 是用户的决定；`microchat` 一行配置可切回。）
+- **渠道级三个覆写选项**（`providers.json` 每条上写；都是「空 = 跟随默认」的三态）：
+
+  | 字段 | 三态 | 作用 |
+  |---|---|---|
+  | `client_ua_override` | 空 = 不用；有值 = **逐字用它** | 覆写 UA，**优先级最高**（高过 `identity` 与服务器默认）|
+  | `session_header` | `nil` = 按 kind（opencode 系 ⇒ `x-opencode-session`）；`""` = **明确不发**；有值 = 用这个名字 | 会话 id 透传成哪个头 |
+  | `reasoning_field` | `nil` = 按 kind（opencode 系 ⇒ `reasoning_content`）；`""` = **不回传**；有值 = 用这个名字 | 回传思考用哪个字段名 |
+- **Pi 的 UA 里没有版本号** ✓ —— 那截 `<release>` 是**本机内核**（`pi (linux 7.1.13+deb13-amd64; x64)` ✓）：
+  `providers` 里读 `/proc/sys/kernel/osrelease` ✓ 天然逐字一致 ✓。
+
+**客户端的身份规则（OpenCode 官方文档原话）**：
+
+- **用自己的 user agent 标识**（例：`my-coding-agent/1.0`）——**不能是通用 SDK 或 HTTP 库的名字**
+  （`node-fetch` / `Go 的默认 Go-http-client/1.1` 都属于被拒那类）。
+  ⇒ **我们默认报 `pi` 的形状**（用户定）；`microchat/<版本>` 也可选（文档更推荐那种做法）。
+- `x-opencode-session` = **每会话稳定 id**（官方唯一硬要求）；官方已验证的客户端有 Hermes / Claude Code /
+  Codex / ZCode / **Pi** / jcode / Kilo Code CLI。
+
+**Pi 的会话 id 模式（照它对齐，2026-09-29 读源码得到）**：
+
+```ts
+function createSessionId(): string { return uuidv7(); }   // 裸 UUIDv7，无前缀
+assertValidSessionId(id)  // 只允许 [A-Za-z0-9._-]，首尾必须是字母数字
+```
+载入会话时沿用文件头里的 id（跨恢复不变）；**fork / 建分支时铸新 id**。
+⇒ **我们的 `conversations.id` 与它逐字节同形（裸 UUIDv7）—— 已经对齐，不用改。**
+
+**"子调用拒绝缓存"的确切做法**（照 Pi，2026-09-29 读源码）：**不是 header**，是请求选项 **`cacheRetention: "none"`**
+（`type CacheRetention = "none" | "short" | "long"`）。Pi 的调用点原话："Avoid cache writes for one-off summaries"。
+`"none"` 的实际效果（只在**体**里，且只对该 provider 支持时）：不发 `prompt_cache_key`、不发
+`prompt_cache_retention: "24h"`、Anthropic 格式的 `cache_control` 断点直接不生成。
+**`x-opencode-session` 照发**（头是路由、体是缓存，两回事）；**没有会话上下文时铸一个新的，绝不留空**。
+⇒ 对 OpenCode GO 来说 `"none"` 是 **no-op**（它那几个参数本就只对 api.openai.com / Anthropic 系存在）——
+**别为此发明 header**：Pi 没做，我们也不做。
+
+**2026-09-29 实测补充（omp 17:30–17:36 的真日志）**：
+
+- **缓存命中与 session id 无关** ✓✓：同一 session 的两次调用 **0 命中**；而**另铸了一个 session** 的第三次反而命中
+  **7552** tokens ⇒ 网关的缓存是**按内容前缀**算的，session id 只负责**路由/亲和**。所以"给辅助调用另开会话"
+  对缓存**没有影响**（别为缓存去分子会话）。
+- **真实客户端确实会中途另铸会话**：omp 在同一个会话里出现了两个 session id，且两者**同一秒铸造**
+  （UUIDv7 前 8 位相同 `01a0ec83`）⇒ 它确实为某些调用开了**侧会话**。**我们仍照 Pi（共用一个）**：
+  两种做法网关都收，但"一个会话对网关表现为一个会话"更像人类用法。
+- **`reasoning_effort` 的下限是 `low`**：设 "off" 也只到 low，而且 low 下仍花 46–198 reasoning tokens
+  ⇒ 这个模型**关不掉思考**。我们暴露 low/medium/high/max 即可，别假装能关。
+- usage 的真实三段：`Input`（非缓存部分）+ `Cache read`（prompt 的**子集**）+ `Output`（含 `Reasoning`，**子集**）
+  ⇒ 归一化与卡片脚注都按这个口径显示。
+
+**辅助调用（标题/摘要/压缩）用同一个会话 id**（Pi 原话：routing session ID "forwarded **without enabling
+prompt caching**"）。**不要为能力造子 session id**：网关的会话 id 是**路由/亲和键**，不是缓存键
+（缓存按**前缀**算）⇒ 同一个 id 不会污染缓存；反过来"一个会话对网关表现为 N 个 session"才像异常流量。
+
+**会话头由 provider 层自动加，不是配置项**（`deepseek-harness` discussion #5495 定死了口径）：
+
+- **09/05 起，没带 `x-opencode-session` 的请求直接报错**（不是警告）；要求"每会话一个稳定 UUID"；
+- **线上值 = 裸 UUID**（社区实现把 `session-<uuid>` 剥前缀再发；我们的 `conversations.id` 本来就是裸的 ⇒ 零转换）；
+- **生命周期**：跨轮次 / 恢复 / **压缩** / 重试**都不变**；**新会话、fork、子任务**用**新** id
+  ⇒ 对照我们：重发、切分支、编辑 = 同一会话 ⇒ **同一 id**；`/fork` = 新会话 ⇒ 新 id（天然满足）；
+- **辅助调用骑同一个 key**：标题生成、摘要压缩也要带**当前会话**的 id（不是每条请求随机）；
+- 归口：**provider 层按 kind 自动加**（维护者原话："该由 pi-ai 归一化各家的特殊需求"）；
+  动态的会话头**压过**静态同名头；`opencode*` 之外不发。
+- 出处：`github.com/deepseek-ai/deepseek-harness/discussions/5495`（OpenCode 员工开的，含 09/05 硬期限）。
+- 会话 id 见上面那条规则（`SessionIDFor`）；`user-agent` 里那截
+  `<platform> <release>; <arch>`（如 `linux 7.1.8+deb13-amd64`）**写死**即可。
+- **一个真实分歧**：OpenCode GO 上有的模型走 **Anthropic messages** 协议（不是 OpenAI 兼容）——
+  我们只做 OpenAI 兼容的话那些模型用不了；真要用得在 `providers` 里再加一种协议适配。
+- Pi 的 UA 出处：`packages/ai/src/utils/pi-user-agent.ts:18`；会话头包装：`providers/opencode-headers.ts`；
+  归因头：`coding-agent/src/core/provider-attribution.ts`；会话 id：`agent/src/harness/session/session.ts:237`。
+
+**思考（reasoning）两面都要做**（照 Pi；OpenCode GO 上已实测字段名 ✓）：
+
+- **往下（给前端）**：思考走**独立增量**（`turn.AppendReasoning` ⇒ 「思考中…」动画），落档进 `messages.reasoning` ✓；
+- **往上（回传上游）**：assistant 消息要带着**当时的思考**一起回传 —— Pi 原话：`reasoning_details` 是
+  *replay metadata*（不这么做，多轮推理就断了）。字段名认三种（`reasoning` / `reasoning_content` / `reasoning_text`）；
+  **OpenCode GO 实测用 `reasoning_content`** ✓（非流式的 `message` 里有 ✓、流式 delta 里的键也是它 ×35 ✓、
+  而且**历史里带它网关照收** ✓ ⇒ 回传安全）。
+  预设里用 `reasoningField` 表达（openai-compat 系为 `""` = 不回传 ✓）。
+
+**DeepSeek 那条"字段必须在"的规矩，OpenCode GO 上实测不强制** ✓（2026-09-29 拿真 key 打的）：
+
+| 场景（assistant 带 `tool_calls`）| 结果 |
+|---|---|
+不回传 `reasoning_content` | **200** ✓ |
+回传 | 200 ✓ |
+回传**空字符串**（Pi 的保险）| 200 ✓ |
+
+⇒ DeepSeek 官方 API 的硬要求（带工具调用时必须回传思维链）**在这个网关上没有被强制**。
+但**保险照做**（Pi 就是这么防的）：**模型名含 `deepseek` 时**，assistant 消息若没有思考就补一个
+**空字符串**（`reasoning_content: ""`）；非 deepseek 系**一个字段都不塞**（有些上游见到不认识的字段会 400）。
+整块关掉的办法：渠道配置里 `reasoning_field: ""` ✓。
+
+**工具（Tools）**：**不在提示词里** —— 是请求体顶层的 `tools` 数组；模型的回话是助手消息里的 `tool_calls`，
+结果以 `{role:"tool", tool_call_id}` 回填。细节（形状 / 开关 / 与 Pi 的对照 / 实测记录）见 **`reminder/tool-calls.md`**。
+两条必须记住的：**历史里出现过工具 ⇒ `tools` 参数必须在**（哪怕 `[]`）；**不认识的字段默认不发**（有些上游直接 400）。
+
+**microchat 怎么落**（都属于 providers 那一波）：
+1. 会话 id 的**规则**（用户 2026-09-29 定，一条覆盖所有将来玩法）：
+   **系统提示词一致的，在同一个会话里共用一个 session id** ——
+   `providers.SessionIDFor(会话 id, 本请求的系统提示词, 主提示词)`：
+   与主线同提示词（主聊天、以及任何同提示词的扩展）⇒ 直接用 `conversations.id`（与 Pi 同构）；
+   提示词不同（摘要/标题/判断/将来的子 Agent）⇒ 由 `(会话 id, 提示词)` **确定性派生**一个 UUIDv5。
+   **绝不为"没有会话上下文"随机铸 id**（Pi 在 `compaction.ts:654` 就是这么干的，**我们不学这一步** ✗）：
+   网关拿它做路由/缓存亲和，随机 id 等于放弃亲和，而且一个会话对网关表现成"每次都是新会话"——
+   正是他们滥用监控盯的形状。派生是无状态可重现的（重启、换机、重放同一文本都是同一个 id）；
+2. `providers.json` 的 `headers` 支持**占位符**（白名单枚举里加 `{{conversation_id}}`）⇒ 配置里写
+   `"x-session-affinity": "{{conversation_id}}"` / `"x-opencode-session": "{{conversation_id}}"` 就把会话头配齐了，**不用新概念**；
+   静态头（`x-opencode-client` ✓ `accept` ✓ `user-agent` ✓）直接写死在配置里 ✓。
+   **注意**：Go 里不设 `User-Agent` 就是 `Go-http-client/1.1` ✗ —— 和 `node-fetch` 同属"被拒"的那类；必须显式设上；`Accept` 也一样（Go 默认不发）。
+3. 体里那几样做成 `providers.json` 的 `body_extras`（原样并进请求体）+ `stream_options.include_usage` 默认开；
+4. **`/debug/last-payload` 必须连请求头一起回显**（打码）—— 不然"为什么 403"只能靠猜。
+
 ## 决策模型（JEV 一类）：**不是聊天模型**
 
-`typesafe/jev` 那类是**决策模型**（状态 + 类型化问题 → 概率），不生成文本、不能驱动会话、也不在 `GET /models` 的发现列表里（下拉里找不到它**不是**列表过期）。要用得加第三种 provider kind。规划中的用途与四条规矩（只动尾部 / 失败降级 / 产出不进历史与变量 / 阈值实测校准）见 **`JEV.md`**。
+`typesafe/jev` 那类是**决策模型**（状态 + 类型化问题 → 概率），不生成文本、不能驱动会话、也不在 `GET /models` 的发现列表里（下拉里找不到它**不是**列表过期）。要用得加第三种 provider kind。规划中的用途与四条规矩（只动尾部 / 失败降级 / 产出不进历史与变量 / 阈值实测校准）见 **`reminder/jev.md`**。
 
 ## 界面该长什么样（**口径**；Godot 版照此对齐，目前尚未实现）
 
@@ -300,6 +479,20 @@ delete(AA)           # 删除
 - 设置六页：**连接 / Agent / 能力 / 模型与渠道 / 前端设置 / 关于**。底栏常驻"**已连接后端 vX**"，后面跟 `·` 和最近一次动作的结果——两者**互不顶替**；刷新失败要带状态码与 `code`。
   「模型与渠道」页：顶部**服务端上下文口径**（`模型上下文` 兜底 + `摘要触发阈值`）；每个渠道一行（`获取模型` / `删除全部模型` / `编辑`）；下面逐个模型列上下文，可填**覆盖值**（留空 = 清掉）。优先顺序：**覆盖 > 上游发现 > 配置兜底**，只许一处解析。
 - 渠道与模型是**一个下拉**（`渠道 / 模型`，`GET /models` 拍平给的就是这个形状）；provider 的 `name` 缺省回退 `id`。
+- **界面的将来：TUI**（2026-09-29 定；**ImGui 方案已否决并删除** ✗ —— 依赖重、要图形环境、调试还得跟图形栈纠缠）。
+- 选型：**Bubble Tea v2**（`charm.land/bubbletea/v2`）+ Lip Gloss / Bubbles / Glamour ——
+  理由：`View()` 是**纯函数**（`model → string`），**屏幕不持有应用状态**（对比保留式控件树那种"控件自己带可变状态"），
+  而且渲染结果能直接做**黄金测试**（与本项目"逐字节比"的脾气一致）。
+- **落地形状（2026-09-29 用户定稿）：一个二进制、一种模式** —— 起来就**既对外服务、又在终端里直接聊**
+  （`./microchat` ⇒ 监听端口 + 开 TUI）。**没有 `--headless` / `--remote` 这些开关** ✗，别复杂化。
+  代码住 `src/internal/tui/`（**同一个模块**，不是独立模块）；TUI 与别的客户端走**同一条 HTTP 契约**
+  （回环到自己那个端口）⇒ 接口天天被主力界面跑着，不会烂。
+  · 唯一自动处理的情形：**没有 TTY**（丢进 tmux 重定向到日志那种）⇒ 不进 TUI，只服务；
+  · TUI 模式下日志落到 `data/microchat.log`（别糊在界面上）；
+  · 退出用 **`/quit` 或 ctrl+c** —— **没有裸 `q`**（会和打字打架）。
+- 跑法就是根目录那一个：`make && ./microchat`。**TUI 内的命令**照 Pi：`/command`。**只放已经有路由的命令**，没搬完的在 `/help` 里如实列出来
+  （现在能用的：`/help` `/new` `/refresh` `/state` `/quit`；待搬的：`/compact` `/fork` `/archive` `/stop` `/tasks` `/model`）。
+- 要抄 Pi 的**交互决定**（它的 TUI 是手搓的，库选择无参考价值）：CJK 宽度对齐 / kill-ring 编辑 / LaTeX 降级显示 / markdown 渲染。
 - **设置页要的数据只从一处发**（连上 / 点 ⟳ / 进设置页都走它）——曾经两处各写一份，新加的字段只进了一条路 ⇒ 设置页永远"加载中…"（真发生过）。
 
 ## 返回键 / 退出（方案已定，尚未开工）
@@ -323,6 +516,9 @@ delete(AA)           # 删除
 - **配置文件里没有注释**：程序整体重写，JSONC 会给人"写了也会丢"的假象。严格 JSON，写坏了报 `Expecting property name…`。
 - **批量改代码时逐文件落盘**：把 `write` 放在脚本末尾，中途任何断言失败都会让整批改动一起丢。
 - **Go 的 `encoding/json` 默认把 `<` `>` `&` 转义成 `\u003c`**（本项目满地 LaTeX）⇒ 关掉 `SetEscapeHTML`；它的 `Encoder.Encode` 还会补一个 `\n`（axum 不补）⇒ 对账要连字节一起比。
+- **纯结构之间手搓转换 = 字段静默丢失**：`config.Provider` → `providers.Provider` 字段名一样、类型不同，
+  各处手搓字面量时漏一个字段就是静默失效（真发生过：`identity` 声明了却从没被转过去 ⇒ 配置里写 `"identity":"pi"` 被无声忽略）。
+  **规矩**：这种转换只许有**一个**函数（`providers.FromConfig`），并配一条"每个字段都要活到请求上"的回归测试。
 - **Go 的包名会被参数名遮蔽**（`func f(model string)` 里的 `model` 盖住 `model` 包）；**`sync.Mutex` 不可重入**（持锁的方法里别再调公开方法）。
 - **正则改源码要小心字面量 `\n`**：源码里 `\n` 是两个字符，`\b`/lookbehind 都会失灵，贪吃匹配会把整行切坏。
 - **Godot `offset_transform_position` 的单位是 ui，不是像素**：安卓键盘高度是像素 ⇒ 必须乘 `视图高/窗口高`（实测 775px×2.22=1722px > 屏高 1600，直接飞出屏幕）。**两个开关默认是反的**：`offset_transform_enabled=false`、`offset_transform_visual_only=true`；只打开 enabled ⇒ "看得见、点不到"。
@@ -344,7 +540,7 @@ delete(AA)           # 删除
 - **提交由用户指挥**：做完一段有意义的进度 → 跑测试 → 实跑验证 → 报告，**停在这儿**等他说"可以提交了"。推送同理。
 - 提交时只带用户点名的范围；**别把 `frontend/`**（用户自己在编辑器里改的）**卷进无关提交**；别把 `config/`、`data/`、大 APK 带进去。
 - 注释、提交信息用**中文**；提交信息写清"**为什么**"，别只写"改了什么"。
-- 改完跑 `cd src && go test ./...`；**UI 改动必须实跑**（真机或灌事件的无头验证），不要只凭代码断言。搬 Go 期间每搬一条路由就跑 `scripts/go-parity.py`（同数据、逐字节比）。
+- 改完跑 `cd src && go test ./...`；**UI 改动必须实跑**（真机或灌事件的无头验证），不要只凭代码断言。搬 Go 期间每搬一条路由就跑 `python3 deprecated/tools/go-parity.py`（同数据、逐字节比）。
 - **后端代码一变就重启后端**：先 `cd src && go build -o /tmp/microchat-go .`，再重启它（`tmux kill-session -t microchat-server` 后重起）——不然你验的是旧二进制。自检：`ls -l /proc/<pid>/exe` 带 ` (deleted)` = 跑的是旧货。
 - **起服务用 tmux（后台 + 日志落文件）**，别用"受监督进程"那类会一直挂着输出的方式（那样一次工具调用会被进程输出拖住，CLI 卡死）：
 

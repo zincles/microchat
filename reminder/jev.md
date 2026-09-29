@@ -1,7 +1,7 @@
-# JEV.md —— `typesafe/jev` 是什么，以及我们打算怎么用
+# 决策模型（`typesafe/jev`）—— 是什么，以及我们打算怎么用
 
 > 这份单独拆出来，是因为它讲的是**一类新东西**（决策模型），而不是 microchat 自己的架构。
-> 工程规矩与设计取舍在 `AGENTS.md`。
+> 工程规矩与设计取舍在 `AGENTS.md`；工具调用另见 `reminder/tool-calls.md`。
 
 ## 一、它是什么
 

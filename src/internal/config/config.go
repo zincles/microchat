@@ -19,10 +19,13 @@ type Paths struct {
 	DataDir   string
 }
 
+// LoadPaths：目录布局。**配置住数据目录里**（`data/config/`）——
+// 备份 / 搬家只要搬 `data/` 一个目录；`MICROCHAT_CONFIG_DIR` 仍可单独把配置挪走。
 func LoadPaths() Paths {
+	dataDir := envOr("MICROCHAT_DATA_DIR", "data")
 	return Paths{
-		ConfigDir: envOr("MICROCHAT_CONFIG_DIR", "config"),
-		DataDir:   envOr("MICROCHAT_DATA_DIR", "data"),
+		DataDir:   dataDir,
+		ConfigDir: envOr("MICROCHAT_CONFIG_DIR", filepath.Join(dataDir, "config")),
 	}
 }
 
@@ -62,6 +65,9 @@ type ServerConfig struct {
 	Host      string  `json:"host"`
 	Port      uint16  `json:"port"`
 	AuthToken *string `json:"auth_token"`
+	// Identity：**服务器级默认特征**（以什么身份自报家门）："" = **pi**（默认）/ "microchat" / "bare" = 什么都不装。
+	// 单个渠道可以用 `providers.json` 里的 `identity` 覆盖它。
+	Identity string `json:"identity"`
 }
 
 // DefaultsConfig：新建会话时的缺省（provider / model / agent）。
@@ -179,15 +185,28 @@ func (c AgentsConfig) Resolve(id string) (Agent, bool) {
 
 // Provider：一个渠道（密钥就写在这一条里；接口只回 has_key）。
 type Provider struct {
-	ID             string            `json:"id"`
-	Name           string            `json:"name"`
-	Kind           string            `json:"kind"` // "dummy" | "openai-compat"
-	BaseURL        string            `json:"base_url"`
-	Headers        map[string]string `json:"headers"`
-	APIKey         string            `json:"api_key"`
-	Stream         *bool             `json:"stream"`          // 缺省 = 开
-	StoreReasoning *bool             `json:"store_reasoning"` // 缺省 = 开
-	Timeouts       *Timeouts         `json:"timeouts"`
+	ID      string            `json:"id"`
+	Name    string            `json:"name"`
+	Kind    string            `json:"kind"` // dummy | openai | openrouter | opencode-go | opencode | ollama | lmstudio
+	BaseURL string            `json:"base_url"`
+	Headers map[string]string `json:"headers"`
+	APIKey  string            `json:"api_key"`
+	// Identity：空 = 跟随服务器默认（最终默认是 pi）。
+	Identity string `json:"identity"`
+	// ClientUAOverride：直接覆写 UA 字符串（默认空）。**优先级最高** —— 高过身份与服务器默认。
+	ClientUAOverride string `json:"client_ua_override"`
+	// SessionHeader：会话 id 透传成哪个头。nil = 按 kind 默认（opencode 系 = `x-opencode-session`）；
+	// "" = 明确不发；其它 = 用这个名字。
+	SessionHeader *string `json:"session_header"`
+	// ReasoningField：回传思考用哪个字段名。nil = 按 kind 默认；"" = 不回传。
+	ReasoningField *string `json:"reasoning_field"`
+	// AllowTools：允许工具透传（默认关）。开了才把 tools / tool_calls 原样发给上游。
+	AllowTools *bool `json:"allow_tools"`
+	// ToolResultName：工具结果消息里带不带函数名（对应 Pi 的 requiresToolResultName）。
+	ToolResultName *bool     `json:"tool_result_name"`
+	Stream         *bool     `json:"stream"`          // 缺省 = 开
+	StoreReasoning *bool     `json:"store_reasoning"` // 缺省 = 开
+	Timeouts       *Timeouts `json:"timeouts"`
 }
 
 type Timeouts struct {

@@ -2,13 +2,13 @@
 """客户端 ↔ 服务端 API 全量对账（静态抽取 + 真实请求逐条验证）。
 
 **旧时代的闸**（2026-09-29 起）：它读的是 `deprecated/` 里那版 Rust 的路由与 egui 客户端。
-Go 版时代的对应物是 `scripts/go-parity.py`（两版响应逐字节比）+ Go 侧的处理器单测。
+Go 版时代的对应物是 `deprecated/tools/go-parity.py`（两版响应逐字节比）+ Go 侧的处理器单测。
 留着的用处：那张路由表是"接口照搬"的参照，搬完最后一批路由之前还有价值。
 
 用法（在仓库根目录，先 `cd deprecated && cargo build`）：
 
-    python3 scripts/api-audit.py                       # 默认压 Rust 版（唯一权威）
-    python3 scripts/api-audit.py --server <二进制>      # 迁移期间压 Go 版：同一道闸
+    python3 deprecated/tools/api-audit.py                       # 默认压 Rust 版（唯一权威）
+    python3 deprecated/tools/api-audit.py --server <二进制>      # 迁移期间压 Go 版：同一道闸
 
 它会：
 1. 从 `src/server.rs` 抽路由表与处理器签名（方法 / 路径 / 请求体类型 / 响应类型）；
@@ -33,7 +33,7 @@ import http.server
 import urllib.error
 import urllib.request
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
+ROOT = pathlib.Path(__file__).resolve().parent.parent.parent  # 仓库根（本文件在 deprecated/tools/ 下）
 PORT = 8791
 BASE = f'http://127.0.0.1:{PORT}/api/v1'
 SANDBOX = pathlib.Path('/tmp/microchat-api-audit')
@@ -229,7 +229,7 @@ try:
             print(f"✗ 夹具起不来：POST /conversations/{{id}}/messages 没有产出助手消息"
                   f"（拿到 {len(msgs)} 条）。\n"
                   f"  迁移期间很正常：{ARGS.server} 还没实现那条路由。")
-            print("  先跑 `python3 scripts/go-parity.py` 逐条对账，等全部路由就位再用这道闸。")
+            print("  先跑 `python3 deprecated/tools/go-parity.py` 逐条对账，等全部路由就位再用这道闸。")
             sys.exit(3)
         return {'cid': conv['id'], 'aid': msgs[1]['id'], 'pid': 'stub', 'agent': agent['id']}
 
