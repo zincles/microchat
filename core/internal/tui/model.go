@@ -24,7 +24,11 @@ type model struct {
 	sessions    []Session
 	messages    []Message
 	messagesFor string // m.messages 属于哪条会话 —— 别拿"还没拉完"当"这条没有消息"
-	selected    int    // **-1 = 空会话**：刚打开 TUI 就是这个（相当于 Pi 那个待输入的输入框）
+	// selectedID：当前会话 —— **认 id，不认位置**。`GET /sessions` 按 `updated_at` 排 ⇒
+	// 发一句话就会把那条会话顶到最前 ⇒ 存下标的话，下一次刷新就指到**别人**身上
+	// （用户实跑抓到的"发一句话后消息区一片空白"就是这个：消息回来时对不上号，被丢掉）。
+	// 空串 = **空会话**：刚打开 TUI 就是这个（相当于 Pi 那个待输入的输入框）。
+	selectedID string
 
 	// 命令面板（输入以 `/` 开头时出现）
 	paletteIndex int
@@ -46,9 +50,6 @@ type model struct {
 	// 选中的渠道 / 模型：有会话就写进会话；没有就留给**下一条新会话**
 	chosenProvider string
 	chosenModel    string
-
-	// 新建之后要选中的那条（列表刷新回来才知道它在第几个）
-	pendingSelect string
 
 	// 界面
 	width, height int
@@ -198,9 +199,9 @@ type stoppedMsg struct {
 }
 
 func initialModel(client *Client) model {
-	// **一进来就是空会话**（`selected: -1`）：不建库里的行、也不自动跳进旧会话 ——
+	// **一进来就是空会话**（`selectedID: ""`）：不建库里的行、也不自动跳进旧会话 ——
 	// 界面停在一个待输入的输入框上（用户 2026-09-29 定的口径）。
-	return model{client: client, selected: -1, width: 80, height: 24}
+	return model{client: client, width: 80, height: 24}
 }
 
 func (m model) Init() tea.Cmd { return loadHealth(m.client) }
@@ -365,16 +366,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			also = append(also, loadHealth(m.client))
 		}
 		m.sessions = message.sessions
-		if m.pendingSelect != "" {
-			if index := m.findSession(m.pendingSelect); index >= 0 {
-				m.selected = index
-				m.pendingSelect = ""
-				also = append(also, loadMessages(m.client, m.sessions[index].ID))
-			}
-		}
-		// 列表变短了要兜住；`-1`（空会话）是**合法状态**，不许被"修正"成第 0 条
-		if m.selected >= len(m.sessions) {
-			m.selected = -1
+		// **认 id 不认位置**：列表按 `updated_at` 排，随时会重排（发一句话就重排一次）。
+		// id 还在 ⇒ 什么都不用做（位置变了与"选中的是哪条"无关）；
+		// id 没了（别处把这条会话删了）⇒ 老实回到空会话，别赖在别人身上。
+		if m.selectedID != "" && m.findSession(m.selectedID) < 0 {
+			m.selectedID, m.messages, m.messagesFor = "", nil, ""
+			m.lastAction = "那条会话没了（别处删的）—— 现在是空会话"
+			return m, tea.Batch(also...)
 		}
 		m.lastAction = fmt.Sprintf("会话 %d 条", len(m.sessions))
 		return m, tea.Batch(also...)
@@ -398,8 +396,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.lastAction = "已新建会话 " + shortID(message.session.ID)
-		m.pendingSelect = message.session.ID // 列表刷新回来才选得上它
-		return m, loadSessions(m.client)
+		m.selectedID, m.messages, m.messagesFor = message.session.ID, nil, ""
+		return m, tea.Batch(loadSessions(m.client), loadMessages(m.client, message.session.ID))
 
 	case deletedMsg:
 		if message.err != nil {
@@ -407,7 +405,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		// 删完**回到空会话**（不自动跳去别的旧会话 —— 用户要的是"进入新会话"）
-		m.selected, m.messages, m.messagesFor, m.pendingSelect = -1, nil, "", ""
+		m.selectedID, m.messages, m.messagesFor = "", nil, ""
 		m.lastAction = "已删除 " + shortID(message.id) + "（现在是空会话）"
 		return m, loadSessions(m.client)
 
@@ -441,8 +439,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.lastAction = "已复制成 " + shortID(message.session.ID) + "（新会话）"
-		m.pendingSelect = message.session.ID // 列表刷新回来才选得上它
-		return m, loadSessions(m.client)
+		m.selectedID, m.messages, m.messagesFor = message.session.ID, nil, ""
+		return m, tea.Batch(loadSessions(m.client), loadMessages(m.client, message.session.ID))
 
 	case updatedMsg:
 		if message.err != nil {
@@ -512,9 +510,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			role := item.Role
 			head := fmt.Sprintf("%2d %-9s %-8s", index+1, role, "")
-			lines = append(lines, truncate(head+who, m.mainWidth()))
+			lines = append(lines, truncate(head+who, max(1, m.width)))
 			for _, line := range strings.Split(item.Content, "\n") {
-				lines = append(lines, truncate("     "+line, m.mainWidth()))
+				lines = append(lines, truncate("     "+line, max(1, m.width)))
 			}
 			lines = append(lines, "")
 		}
@@ -528,9 +526,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.lastAction = "发送失败：" + message.err.Error()
 			return m, nil
 		}
-		if message.created != nil { // 空会话里冒出来的新会话：进列表并选中（刷新回来才落到位）
+		if message.created != nil { // 空会话里冒出来的新会话：进列表并**立刻认它当当前会话**
 			m.sessions = append(m.sessions, *message.created)
-			m.pendingSelect = message.created.ID
+			m.selectedID, m.messages, m.messagesFor = message.created.ID, nil, ""
 		}
 		m.turn = &liveTurn{
 			sessionID: message.sessionID,
@@ -636,24 +634,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "up", "down":
+			// 方向键只服务**命令面板**（输入以 `/` 开头时）；会话选择只走 `/resume`
+			// —— 输入框上方没有会话列表可走（用户 2026-09-30 定的口径）。
 			if matches := m.paletteMatches(); len(matches) > 0 {
-				// 面板开着时，方向键在面板里走（不给侧栏）
 				step := 1
 				if message.String() == "up" {
 					step = -1
 				}
 				m.paletteIndex = (m.clampPalette() + step + len(matches)) % len(matches)
-				return m, nil
-			}
-			if m.input == "" { // 输入框空着时，方向键才当导航用（有字的时候留给将来的历史）
-				if message.String() == "up" && m.selected > 0 {
-					m.selected--
-					return m, loadMessages(m.client, m.sessions[m.selected].ID)
-				}
-				if message.String() == "down" && m.selected < len(m.sessions)-1 {
-					m.selected++
-					return m, loadMessages(m.client, m.sessions[m.selected].ID)
-				}
 			}
 			return m, nil
 		}
@@ -707,7 +695,7 @@ func (m model) pickerChoose() (tea.Model, tea.Cmd) {
 		}
 		session := m.sessions[m.pickerIndex]
 		m.picker = pickerNone
-		m.selected = m.pickerIndex
+		m.selectedID = session.ID
 		m.messages, m.messagesFor = nil, ""
 		m.lastAction = "进入 " + describeSession(session)
 		return m, loadMessages(m.client, session.ID)
@@ -964,7 +952,7 @@ func commandResume(m model, args []string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		session := m.sessions[index]
-		m.selected = index
+		m.selectedID = session.ID
 		m.messages, m.messagesFor = nil, ""
 		m.lastAction = "进入 " + describeSession(session)
 		return m, loadMessages(m.client, session.ID)
@@ -974,7 +962,7 @@ func commandResume(m model, args []string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.picker = pickerResume
-	m.pickerIndex = max(m.selected, 0)
+	m.pickerIndex = max(m.findSession(m.selectedID), 0)
 	return m, nil
 }
 
@@ -1033,7 +1021,7 @@ func commandStop(m model, _ []string) (tea.Model, tea.Cmd) {
 	return m, stopTurnCmd(m.client, target)
 }
 
-// settleTurn：这一轮在**本地**收干 —— 气泡消失，左栏那条会话的"生成中"也跟着落回 idle。
+// settleTurn：这一轮在**本地**收干 —— 气泡消失，界面这一份状态也跟着落回 idle。
 //
 // 为什么**不重拉会话列表**：那会让底栏刚刚写上的「已停止 / 已完成 / 生成失败」立刻被
 // "会话 N 条"顶掉（两个 Cmd 谁先回来还不一定）。这里改的是**已经确定的事实**（这一轮结束了），
@@ -1079,7 +1067,11 @@ func (m model) isEmptySession() bool {
 }
 
 // findSession：按完整 id 或**唯一前缀**找（前缀有歧义 ⇒ 当找不到，别猜）。
+// 空 id = **空会话**，不是"前缀匹配所有" ⇒ 直接回 -1。
 func (m model) findSession(id string) int {
+	if id == "" {
+		return -1
+	}
 	found, hits := -1, 0
 	for index, session := range m.sessions {
 		if session.ID == id {
@@ -1180,8 +1172,15 @@ func describeSession(session Session) string {
 }
 
 // ── 渲染 ──
-
-const sidebarWidth = 28
+//
+// 一屏就三块（用户 2026-09-30 定的口径，见 AGENTS.md「界面该长什么样」）：
+//
+//	消息区：**只显示当前会话的对话**（最近的贴着输入框，从下往上排）
+//	> 输入行（命令与消息都从这儿走）
+//	------ （ASCII 分隔线：`─` 是模糊宽度字符，算两格 ⇒ 会超宽）
+//	会话状态行（1-2 行：会话名 | 短 id | 渠道/模型 | 在不在跑 | 已连接 vX | 最近动作）
+//
+// **没有左栏**：会话选择只走 `/resume`（挑选项与查看器照旧**铺满消息区**）。
 
 // View：**纯函数**（同样的 model ⇒ 同样的字符串）。
 func (m model) View() tea.View {
@@ -1189,62 +1188,51 @@ func (m model) View() tea.View {
 }
 
 func (m model) render() string {
-	palette := m.renderPalette()
-	// **空会话只留底部**（用户 2026-09-29 定的）：还没进任何会话时，左侧列表与右边空白
-	// 全是噪音 —— 要看列表打 /resume，要挑渠道 /模型。进了会话（或挑选项开着）才铺开整个界面。
-	if m.currentSession() == nil && m.picker == pickerNone && m.viewer == nil {
-		lines := append([]string{}, palette...)
-		lines = append(lines, truncate("> "+m.input, max(1, m.width)))
-		lines = append(lines, strings.Repeat("-", max(1, m.width)))
-		lines = append(lines, m.renderFooter())
-		return strings.Join(lines, "\n")
+	width, height := max(1, m.width), m.height
+	if height < 1 {
+		height = 24 // 还没收到 WindowSizeMsg 时的兜底（免得算出 0 行画面）
 	}
-	bodyHeight := m.height - 3 - len(palette) // 输入行 + 分隔线 + 底栏（面板开着再占几行）
-	if bodyHeight < 3 {
-		bodyHeight = 3
+	status := m.renderStatus(width) // 1-2 行
+	palette := m.renderPalette(width)
+	// 面板弹在输入行上方：屏幕再矮也要留一行消息区 ⇒ 装不下就只显示高亮那条附近的一段
+	if room := height - 2 - len(status) - 1; len(palette) > room {
+		palette = paletteWindow(palette, m.clampPalette(), max(room, 0))
 	}
-	sidebar := m.renderSidebar(bodyHeight)
-	main := m.renderMessages(bodyHeight)
-	lines := make([]string, 0, bodyHeight+len(palette)+3)
-	for index := range bodyHeight {
-		lines = append(lines, pad(sidebar[index], sidebarWidth)+"|"+main[index])
+	bodyHeight := height - 2 - len(status) - len(palette) // 输入行 + 分隔线 + 状态行
+	if bodyHeight < 1 {
+		bodyHeight = 1
 	}
+	lines := m.renderMessages(bodyHeight, width)
 	lines = append(lines, palette...)
-	lines = append(lines, truncate("> "+m.input, max(1, m.width))) // 输入行（命令与将来的消息都从这儿走）
-	lines = append(lines, strings.Repeat("-", max(1, m.width)))    // ASCII：`─` 是模糊宽度字符，算两格 ⇒ 会超宽
-	lines = append(lines, m.renderFooter())
+	lines = append(lines, truncate("> "+m.input, width)) // 输入行（命令与消息都从这儿走）
+	lines = append(lines, strings.Repeat("-", width))    // ASCII：`─` 是**模糊宽度**字符
+	lines = append(lines, status...)
+	if len(lines) > height { // 屏幕实在太矮（< 4 行）：宁可切掉上面的消息，也别把输入行挤没
+		lines = lines[len(lines)-height:]
+	}
 	return strings.Join(lines, "\n")
 }
 
-func (m model) renderSidebar(height int) []string {
-	lines := make([]string, 0, height)
-	lines = append(lines, "＋ 新建对话")
-	lines = append(lines, strings.Repeat("-", sidebarWidth-2)) // 分隔线用 ASCII：`·` 是**模糊宽度**字符，终端里对不齐
-	for index, session := range m.sessions {
-		title := session.Title
-		if strings.TrimSpace(title) == "" {
-			title = "（还没起名）"
-		}
-		cursor := "  "
-		if index == m.selected {
-			cursor = "> "
-		}
-		busy := ""
-		if session.Turn.Phase == "pending" || session.Turn.Phase == "streaming" {
-			busy = " · 生成中…"
-		}
-		// **先给标记留位置**：标题再长也不能把「生成中」挤掉（那才是要看的信息）
-		budget := sidebarWidth - 1 - runewidth.StringWidth(cursor) - runewidth.StringWidth(busy)
-		lines = append(lines, cursor+truncate(title, budget)+busy)
+// paletteWindow：面板装不下时只显示**高亮那条**附近的一段（不加行，也不让高亮跑出屏幕）。
+func paletteWindow(lines []string, current, room int) []string {
+	if room >= len(lines) {
+		return lines
 	}
-	for len(lines) < height {
-		lines = append(lines, "")
+	if room <= 0 {
+		return nil
 	}
-	return lines[:height]
+	start := current - room/2
+	if start < 0 {
+		start = 0
+	}
+	if start+room > len(lines) {
+		start = len(lines) - room
+	}
+	return lines[start : start+room]
 }
 
 // renderPalette：命令面板（输入以 `/` 开头时**推导**出来的 —— 不是又一个状态）。
-func (m model) renderPalette() []string {
+func (m model) renderPalette(width int) []string {
 	matches := m.paletteMatches()
 	if len(matches) == 0 {
 		return nil
@@ -1260,131 +1248,142 @@ func (m model) renderPalette() []string {
 		if candidate.args != "" {
 			label += " " + candidate.args
 		}
-		lines = append(lines, truncate(cursor+pad(label+"  "+candidate.help, max(1, m.width-2)), max(1, m.width)))
+		lines = append(lines, truncate(cursor+label+"  "+candidate.help, width))
 	}
 	return lines
 }
 
-// renderMessages：挑选项开着就显示挑选项；表头**钉在顶部**；消息**从底部往上**整块排。
+// renderMessages：**只画当前会话的对话**（没有左栏、也没有会话列表）。
 //
-// 为什么要从底部排：聊天记录里**最新的在下面**；而且一块消息（署名 + 正文）要么整块出现、
-// 要么不出现 —— 从顶部截断会把署名切掉，看起来像"不知道谁说的"（这个 bug 是测试抓出来的）。
-func (m model) renderMessages(height int) []string {
+// 为什么从底部往上整块排：聊天记录里**最新的在下面**（贴着输入行）；而且一块消息
+// （署名 + 正文）要么整块出现、要么不出现 —— 从顶部截断会把署名切掉，
+// 看起来像"不知道谁说的"（这个 bug 是测试抓出来的）。装不下的在顶部如实报数。
+func (m model) renderMessages(height, width int) []string {
 	if m.viewer != nil {
 		hint := m.viewerHint
 		if hint == "" {
 			hint = "任意键关掉"
 		}
-		lines := []string{truncate(" "+m.viewerTitle+"   "+hint, m.mainWidth()),
-			truncate(" "+strings.Repeat("-", max(1, m.mainWidth()-2)), m.mainWidth())}
+		lines := []string{truncate(" "+m.viewerTitle+"   "+hint, width),
+			truncate(" "+strings.Repeat("-", max(1, width-2)), width)}
 		for _, line := range m.viewer {
 			if len(lines) >= height {
 				break
 			}
 			lines = append(lines, line)
 		}
-		for len(lines) < height {
-			lines = append(lines, "")
-		}
-		return lines[:height]
+		return fillLines(lines, height)
 	}
 	switch m.picker {
 	case pickerResume:
-		return m.renderResumePicker(height)
+		return m.renderResumePicker(height, width)
 	case pickerModel:
-		return m.renderModelPicker(height)
+		return m.renderModelPicker(height, width)
 	}
 	session := m.currentSession()
 	if session == nil {
-		// 空会话：老实说清楚现在是什么状态、能做什么
-		lines := []string{
-			truncate(" 空会话（还没有内容）", m.mainWidth()),
-			truncate(" 打 / 看命令 · /resume 挑一条旧的 · /model 选渠道", m.mainWidth()),
-		}
-		for len(lines) < height {
-			lines = append(lines, "")
-		}
-		return lines[:height]
+		// 空会话：老实说清现在是什么、能做什么（**不是**会话列表）
+		return fillLines([]string{
+			truncate(" 空会话 —— /resume 挑一条旧会话，或直接在下面输入开始聊", width),
+		}, height)
 	}
-	header := " " + session.Provider + " / " + session.Model + " · agent " + session.AgentID
-	head := []string{truncate(header, m.mainWidth())}
-	if height <= len(head) {
-		return head[:height]
+	busy := m.turn.Busy() && m.turn.sessionID == session.ID
+	if m.messagesFor == session.ID && len(m.messages) == 0 && !busy {
+		return fillLines([]string{truncate(" 这条会话还没有消息 —— 在下面输入就开始了", width)}, height)
 	}
-
-	// 从最后一块往前攒，攒到装不下为止
-	blocks := make([][]string, 0, len(m.messages))
+	blocks := make([][]string, 0, len(m.messages)+1)
 	for _, message := range m.messages {
-		label := "你"
-		if message.Role == "assistant" {
-			label = "助手" // TODO：等 /agents 搬完，改用该会话 agent 的名字（界面口径见 AGENTS.md）
-		}
-		detail := ""
-		if message.DurationMS != nil {
-			detail = fmt.Sprintf(" %.1fs", float64(*message.DurationMS)/1000)
-		}
-		block := []string{truncate(" "+label+detail+"：", m.mainWidth())}
-		for _, line := range strings.Split(message.Content, "\n") {
-			block = append(block, truncate("   "+line, m.mainWidth()))
-		}
-		block = append(block, "")
-		blocks = append(blocks, block)
+		blocks = append(blocks, messageBlock(message, width))
 	}
-	// 生成中那条回复：库里还没有它 ⇒ 界面**合成**一个气泡（落库后同 id 的真消息自然取代它）
-	if m.turn.Busy() && m.turn.sessionID == session.ID {
-		blocks = append(blocks, m.liveBlock())
+	if busy { // 生成中那条回复：库里还没有它 ⇒ 界面**合成**一个气泡（落库后同 id 的真消息自然取代它）
+		blocks = append(blocks, m.liveBlock(width))
 	}
-	budget := height - len(head)
-	taken := len(blocks)
-	used := 0
+	return fitBlocks(blocks, height, width)
+}
+
+// messageBlock：一条消息在界面上的样子（署名 + 正文 + 一个空行）—— **整块**是它的最小单位。
+func messageBlock(message Message, width int) []string {
+	label := "你"
+	if message.Role == "assistant" {
+		label = "助手" // TODO：等 /agents 搬完，改用该会话 agent 的名字（界面口径见 AGENTS.md）
+	}
+	detail := ""
+	if message.DurationMS != nil {
+		detail = fmt.Sprintf(" %.1fs", float64(*message.DurationMS)/1000)
+	}
+	block := []string{truncate(" "+label+detail+"：", width)}
+	for _, line := range strings.Split(message.Content, "\n") {
+		block = append(block, truncate("   "+line, width))
+	}
+	return append(block, "")
+}
+
+// fitBlocks：从**最新**那块往上装（整块装、装不下就整块不显示）；
+// 顶上被挤掉了几条就如实写一行"（上面还有 N 条）"。
+func fitBlocks(blocks [][]string, height, width int) []string {
+	taken, used := fitFromBottom(blocks, height)
+	if taken > 0 { // 顶上那行提示自己也要占一格 ⇒ 少一格再量一次
+		taken, used = fitFromBottom(blocks, height-1)
+	}
+	lines := make([]string, 0, height)
+	if taken > 0 {
+		lines = append(lines, truncate(fmt.Sprintf(" （上面还有 %d 条）", taken), width))
+	}
+	for len(lines)+used < height { // 消息贴着输入行 ⇒ 空行全留在上面
+		lines = append(lines, "")
+	}
+	for _, block := range blocks[taken:] {
+		lines = append(lines, block...)
+	}
+	return fillLines(lines, height)
+}
+
+// fitFromBottom：从最新那块往上量，返回"最上面从第几块开始显示"与"一共用了几行"。
+func fitFromBottom(blocks [][]string, height int) (taken, used int) {
+	taken = len(blocks)
 	for taken > 0 {
 		size := len(blocks[taken-1])
-		if used+size > budget {
+		if used+size > height {
 			break
 		}
 		used += size
 		taken--
 	}
-	dropped := taken // 上面还有几条没显示
-	lines := append([]string{}, head...)
-	lines = append(lines, "")
-	used = height - len(head) - 1
-	for _, block := range blocks[taken:] {
-		lines = append(lines, block...)
-		used -= len(block)
-	}
-	_ = used
-	if dropped > 0 {
-		// 挤掉了几条就如实说一句（别让界面骗人）
-		lines[1] = truncate(fmt.Sprintf(" （上面还有 %d 条）", dropped), m.mainWidth())
-	}
+	return taken, used
+}
+
+// fillLines：补空行到 height 行（多了就砍尾巴 —— 每块自己已经按宽度截过了）。
+func fillLines(lines []string, height int) []string {
 	for len(lines) < height {
 		lines = append(lines, "")
 	}
-	return lines[:height]
+	if len(lines) > height {
+		lines = lines[:height]
+	}
+	return lines
 }
 
 // liveBlock：**生成中那一刻**的气泡（库里还没有那条回复）。
 //
-// 口径照 AGENTS.md：转圈 + "正在生成… 12.3s" + 「停止」；思考只报**字数**
+// 口径照 AGENTS.md：转圈 + "生成中… 12.3s" + 「/stop」；思考只报**字数**
 // （token 数流式帧里没有 —— 卡片脚注那儿的 token 是另一回事，别混）。
-func (m model) liveBlock() []string {
-	block := []string{truncate(fmt.Sprintf(" 助手（生成中… %.1fs）：", float64(m.turn.elapsedMS)/1000), m.mainWidth())}
+func (m model) liveBlock(width int) []string {
+	block := []string{truncate(fmt.Sprintf(" 助手（生成中… %.1fs）：", float64(m.turn.elapsedMS)/1000), width)}
 	if m.turn.thinking != "" {
 		block = append(block, truncate(
-			fmt.Sprintf("   [思考中… %d 字]", len([]rune(m.turn.thinking))), m.mainWidth()))
+			fmt.Sprintf("   [思考中… %d 字]", len([]rune(m.turn.thinking))), width))
 	}
 	for _, line := range strings.Split(m.turn.text, "\n") {
-		block = append(block, truncate("   "+line, m.mainWidth()))
+		block = append(block, truncate("   "+line, width))
 	}
-	block = append(block, truncate("   （/stop 停止）", m.mainWidth()))
+	block = append(block, truncate("   （/stop 停止）", width))
 	return append(block, "")
 }
 
-func (m model) renderResumePicker(height int) []string {
+func (m model) renderResumePicker(height, width int) []string {
 	lines := []string{
-		truncate(" 挑一条已有会话   上/下 选 · 回车进 · Esc 取消", m.mainWidth()),
-		truncate(" "+strings.Repeat("-", max(1, m.mainWidth()-2)), m.mainWidth()),
+		truncate(" 挑一条已有会话   上/下 选 · 回车进 · Esc 取消", width),
+		truncate(" "+strings.Repeat("-", max(1, width-2)), width),
 	}
 	for index, session := range m.sessions {
 		if len(lines) >= height {
@@ -1395,22 +1394,19 @@ func (m model) renderResumePicker(height int) []string {
 			cursor = "> "
 		}
 		label := describeSession(session) + "    " + session.Provider + " / " + session.Model
-		lines = append(lines, truncate(cursor+label, m.mainWidth()))
+		lines = append(lines, truncate(cursor+label, width))
 	}
-	for len(lines) < height {
-		lines = append(lines, "")
-	}
-	return lines[:height]
+	return fillLines(lines, height)
 }
 
 // renderModelPicker：**按 provider 排列**（用户 2026-09-29 的口径：先不分能力，按渠道分组）。
-func (m model) renderModelPicker(height int) []string {
+func (m model) renderModelPicker(height, width int) []string {
 	lines := []string{
-		truncate(" 挑渠道 / 模型   上/下 选 · 回车定 · Esc 取消", m.mainWidth()),
-		truncate(" "+strings.Repeat("-", max(1, m.mainWidth()-2)), m.mainWidth()),
+		truncate(" 挑渠道 / 模型   上/下 选 · 回车定 · Esc 取消", width),
+		truncate(" "+strings.Repeat("-", max(1, width-2)), width),
 	}
 	if len(m.models) == 0 {
-		lines = append(lines, truncate(" （还没有发现任何模型 —— 设置里给渠道点一次「获取模型」）", m.mainWidth()))
+		lines = append(lines, truncate(" （还没有发现任何模型 —— 设置里给渠道点一次「获取模型」）", width))
 	}
 	currentProvider := ""
 	for index, item := range m.models {
@@ -1419,7 +1415,7 @@ func (m model) renderModelPicker(height int) []string {
 		}
 		if item.Provider != currentProvider {
 			currentProvider = item.Provider
-			lines = append(lines, truncate(" -- "+item.ProviderLabel()+" --", m.mainWidth()))
+			lines = append(lines, truncate(" -- "+item.ProviderLabel()+" --", width))
 			if len(lines) >= height {
 				break
 			}
@@ -1432,30 +1428,75 @@ func (m model) renderModelPicker(height int) []string {
 		if item.Provider == m.chosenProvider && item.UpstreamID == m.chosenModel {
 			label += "（当前）"
 		}
-		lines = append(lines, truncate(cursor+label, m.mainWidth()))
+		lines = append(lines, truncate(cursor+label, width))
 	}
-	for len(lines) < height {
-		lines = append(lines, "")
-	}
-	return lines[:height]
+	return fillLines(lines, height)
 }
 
+// currentSession：当前会话 —— **按 id 找**（不按下标：列表随时会重排，见 selectedID）。
 func (m model) currentSession() *Session {
-	if m.selected < 0 || m.selected >= len(m.sessions) {
+	if m.selectedID == "" {
 		return nil
 	}
-	return &m.sessions[m.selected]
+	index := m.findSession(m.selectedID)
+	if index < 0 {
+		return nil
+	}
+	return &m.sessions[index]
 }
 
-func (m model) mainWidth() int { return max(1, m.width-sidebarWidth-1) }
-
-func (m model) renderFooter() string {
-	left := "已连接 v" + m.version
-	if m.version == "" {
-		left = "未连接"
+// renderStatus：底下的**会话状态行**（口径见 AGENTS.md「界面该长什么样」）。
+//
+// 两半**互不顶替**（旧口径就这么定的）：会话那半（名字 | 短 id | 渠道/模型 | 在不在跑）与
+// "已连接 vX | 最近一次动作"。一行放得下就一行，放不下就折成两行 —— **最多两行**。
+func (m model) renderStatus(width int) []string {
+	session := m.currentSession()
+	head := []string{"空会话"}
+	if session != nil {
+		title := strings.TrimSpace(session.Title)
+		if title == "" {
+			title = "（还没起名）"
+		}
+		where := session.Provider + "/" + session.Model
+		if session.Provider == "" || session.Model == "" {
+			where = "（还没选模型）"
+		}
+		head = []string{title, shortID(session.ID), where}
 	}
-	line := left + " · " + m.lastAction
-	return truncate(line, m.width)
+	state := m.turnLabel(session)
+	// 在不在跑**比名字重要**（用户口径）⇒ 先给它留位置，再把前面那截按宽度截掉
+	room := width - runewidth.StringWidth(state) - len(" | ")
+	sessionInfo := truncate(strings.Join(head, " | "), max(room, 1)) + " | " + state
+	if runewidth.StringWidth(sessionInfo) > width {
+		sessionInfo = truncate(state, width) // 屏幕太窄：只留"在不在跑"
+	}
+	tail := "未连接"
+	if m.version != "" {
+		tail = "已连接 v" + m.version
+	}
+	if m.lastAction != "" {
+		tail += " | " + m.lastAction
+	}
+	if runewidth.StringWidth(sessionInfo+" | "+tail) <= width {
+		return []string{sessionInfo + " | " + tail}
+	}
+	return []string{sessionInfo, truncate(tail, width)}
+}
+
+// turnLabel：这一轮在不在跑（"生成中 + 耗时" / "空闲"）。
+//
+// 界面自己那份（`m.turn`）优先：它比会话列表里那份新（列表是上一次刷新时的样子）。
+func (m model) turnLabel(session *Session) string {
+	if session == nil {
+		return "空闲"
+	}
+	if m.turn.Busy() && m.turn.sessionID == session.ID {
+		return fmt.Sprintf("生成中 %.1fs", float64(m.turn.elapsedMS)/1000)
+	}
+	if session.Turn.Busy() {
+		return fmt.Sprintf("生成中 %.1fs", float64(session.Turn.ElapsedMS)/1000)
+	}
+	return "空闲"
 }
 
 // ── 小工具（宽度一律按**显示宽度**算：中文占两格，所以必须用 runewidth）──
@@ -1495,14 +1536,6 @@ const ellipsis = "..."
 // 模糊宽度（East Asian Ambiguous，如 `│` `▶` `·` `…` `─`）**按一格**算 ——
 // CJK 宽字（`你` 这类 Wide）不受影响，仍是两格 ✓。
 func init() { runewidth.DefaultCondition.EastAsianWidth = false }
-
-func pad(text string, width int) string {
-	text = truncate(text, width)
-	if missing := width - runewidth.StringWidth(text); missing > 0 {
-		return text + strings.Repeat(" ", missing)
-	}
-	return text
-}
 
 func max(a, b int) int {
 	if a > b {

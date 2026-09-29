@@ -15,13 +15,14 @@ func fixture() model {
 	return model{
 		client:     NewClient("http://127.0.0.1:8787", ""), // 测试不执行 Cmd，所以不会真发请求
 		version:    "0.1.0",
-		lastAction: "消息 3 条",
-		width:      60, height: 14, ready: true,
+		lastAction: "消息 2 条",
+		width:      100, height: 24, ready: true,
 		sessions: []Session{
 			{ID: "c1", Title: "逆序数该怎么写", Provider: "opencode-go", Model: "deepseek-v4-flash", AgentID: "跑团",
-				Turn: TurnStatus{Phase: "streaming", ElapsedMS: 1200, Chars: 8}},
+				Turn: TurnStatus{Phase: "idle"}},
 			{ID: "c2", Title: "第二段对话", Provider: "dummy", Model: "dummy", AgentID: "default"},
 		},
+		selectedID:  "c1",
 		messagesFor: "c1", // 上面这两条属于 c1（isEmptySession 靠它 —— 别拿"还没拉完"当"这条没有消息"）
 		messages: []Message{
 			{ID: "m1", Role: "user", Content: "在吗", SummaryID: new("s1")},
@@ -35,6 +36,31 @@ func fixture() model {
 	}
 }
 
+// viewLines：把 View() 切成行 —— 布局测试都从这儿数行（免得每处都 Split 一遍）。
+func viewLines(m model) []string { return strings.Split(m.View().Content, "\n") }
+
+// inputLineIndex：输入行（`>` 提示符那行）在第几行 —— 它下面那行是分隔线，再下面是会话状态行。
+func inputLineIndex(lines []string) int {
+	for index := len(lines) - 1; index >= 0; index-- {
+		if strings.HasPrefix(lines[index], ">") {
+			return index
+		}
+	}
+	return -1
+}
+
+// emptyFixture：刚打开 TUI 的样子（**空会话**，还没连上后端）。
+func emptyFixture() model {
+	return model{client: NewClient("http://127.0.0.1:8787", ""), width: 60, height: 12, ready: true}
+}
+
+// narrowFixture：窄屏 —— 状态行装不下一行就该折成两行（**最多两行**）。
+func narrowFixture() model {
+	m := fixture()
+	m.width, m.height = 46, 12
+	return m
+}
+
 // View() 是纯函数：同样的 model ⇒ 同样的字符串（这是选它的全部理由）。
 func TestViewIsPure(t *testing.T) {
 	m := fixture()
@@ -46,66 +72,164 @@ func TestViewIsPure(t *testing.T) {
 	}
 }
 
-// **CJK 对齐**：中文占两格 —— 侧栏那条竖线必须落在第 28 **列**（不是第 28 个字符）。
-func TestLayoutAlignsByDisplayWidth(t *testing.T) {
-	m := fixture()
-	for _, line := range strings.Split(m.View().Content, "\n") {
-		if runewidth.StringWidth(line) > m.width {
-			t.Fatalf("这一行超出宽度：%q（宽 %d）", line, runewidth.StringWidth(line))
-		}
-		if index := strings.Index(line, "|"); index >= 0 {
-			if got := runewidth.StringWidth(line[:index]); got != sidebarWidth {
-				t.Fatalf("竖线该在第 %d 列，落在第 %d 列：%q", sidebarWidth, got, line)
+// **宽度账**：每行都不许超宽（中文占两格 ⇒ 只能按显示宽度算）。
+// 新口径**没有竖线、没有左栏** —— 原来那条"竖线该落在第 28 列"的断言随左栏一起删了。
+func TestEveryLineFitsWidth(t *testing.T) {
+	for _, m := range []model{fixture(), liveFixture(), emptyFixture(), narrowFixture()} {
+		for _, line := range viewLines(m) {
+			if got := runewidth.StringWidth(line); got > m.width {
+				t.Fatalf("这一行超出宽度（%d > %d）：%q", got, m.width, line)
 			}
 		}
+		if got := len(viewLines(m)); got != m.height {
+			t.Fatalf("该正好 %d 行，得到 %d 行", m.height, got)
+		}
 	}
 }
 
-// 生成中的会话在后面挂「 · 生成中…」（界面口径）；选中的那条有游标。
-func TestMarksGeneratingAndSelection(t *testing.T) {
+// 新的三块：**消息区**（只画当前会话的对话）→ 输入行 → ASCII 分隔线 → 会话状态行。
+// 左栏（会话列表）不该再出现（用户 2026-09-30 定的：会话选择只走 /resume）。
+func TestLayoutSinceNoSidebar(t *testing.T) {
+	m := fixture()
+	lines := viewLines(m)
+	if strings.Contains(m.View().Content, "＋ 新建对话") {
+		t.Fatalf("不该再有左侧会话列表：\n%s", m.View().Content)
+	}
+	input := inputLineIndex(lines)
+	if input < 1 {
+		t.Fatalf("该有输入行：\n%s", m.View().Content)
+	}
+	if lines[input+1] != strings.Repeat("-", m.width) {
+		t.Fatalf("输入行下面该是一条 ASCII 分隔线：%q", lines[input+1])
+	}
+	// 状态行在分隔线下面（1-2 行，别超过两行）
+	status := lines[input+2:]
+	if len(status) < 1 || len(status) > 2 {
+		t.Fatalf("会话状态行该在 1-2 行之间：%v", status)
+	}
+	if !strings.Contains(strings.Join(status, "\n"), "空闲") {
+		t.Fatalf("状态行该说在不在跑：%v", status)
+	}
+}
+
+// 消息区**最新的贴着输入框**：最后一块就在输入行上面（整块排、不劈开）。
+func TestMessagesSitAboveInputLine(t *testing.T) {
+	m := fixture()
+	lines := viewLines(m)
+	input := inputLineIndex(lines)
+	// 最后一块带一个空行 ⇒ 输入行上面那行是空行，再上面是助手那条的内容
+	if lines[input-1] != "" {
+		t.Fatalf("块尾该留一个空行：%q", lines[input-1])
+	}
+	if !strings.Contains(lines[input-2], "有什么事？") {
+		t.Fatalf("最新那条该贴在输入行上面：%q", lines[input-2])
+	}
+	// 顺序没反：用户那句在上面
+	body := strings.Join(lines[:input], "\n")
+	if strings.Index(body, "在吗") > strings.Index(body, "有什么事？") {
+		t.Fatalf("消息该按顺序排（老的在上面）：\n%s", body)
+	}
+}
+
+// 空会话也别只剩输入行：消息区还得在（说话、提示都行），状态行照旧。
+func TestEmptySessionStillHasMessageArea(t *testing.T) {
+	m := emptyFixture()
+	lines := viewLines(m)
+	if len(lines) != m.height {
+		t.Fatalf("该正好 %d 行：%d", m.height, len(lines))
+	}
+	input := inputLineIndex(lines)
+	if body := strings.Join(lines[:input], "\n"); !strings.Contains(body, "空会话") {
+		t.Fatalf("空会话的消息区该有话说：\n%s", m.View().Content)
+	}
+	if !strings.Contains(strings.Join(lines[input+2:], "\n"), "未连接") {
+		t.Fatalf("状态行该如实说没连上：\n%s", m.View().Content)
+	}
+	// 空会话**不是**会话列表
+	if strings.Contains(m.View().Content, "挑一条已有会话") {
+		t.Fatalf("空会话不该铺开挑选项：\n%s", m.View().Content)
+	}
+}
+
+// 消息块该带署名与耗时（有数据才显示耗时）。
+func TestMessageBlocksShowWhoAndElapsed(t *testing.T) {
 	m := fixture()
 	body := m.View().Content
-	if !strings.Contains(body, "生成中…") {
-		t.Fatalf("生成中该有标记：\n%s", body)
-	}
-	// 标题会被截断以**保住标记**（标记比标题尾巴重要 —— 这是刻意的），所以只断言前缀
-	if !strings.Contains(body, "> 逆序数该怎") {
-		t.Fatalf("选中的那条该有游标：\n%s", body)
-	}
-	// 选中那行的「生成中…」必须完整活着（不被截断吃掉）。
-	// 只判**侧栏**那一格（竖线之前）—— 底下那行输入也以 "> " 开头，别把它算进来。
-	for _, line := range strings.Split(body, "\n") {
-		bar := strings.Index(line, "|")
-		if bar < 0 {
-			continue
-		}
-		sidebar := line[:bar]
-		if strings.Contains(sidebar, "> ") && !strings.Contains(sidebar, "生成中…") {
-			t.Fatalf("选中的那条带着生成中，标记不该被截掉：%q", line)
-		}
-	}
-	if strings.Contains(body, "> 第二段对话") {
-		t.Fatal("没选中的不该有游标")
-	}
-	// 助手署名与耗时都该在
-	if !strings.Contains(body, "你：") || !strings.Contains(body, "助手") {
-		t.Fatalf("消息该带署名：\n%s", body)
-	}
-	if !strings.Contains(body, "2.1s") {
-		t.Fatalf("有耗时数据时该显示：\n%s", body)
+	if !strings.Contains(body, "你：") || !strings.Contains(body, "助手 2.1s：") {
+		t.Fatalf("消息该带署名（助手那条还有耗时）：\n%s", body)
 	}
 }
 
-// 底栏：连接状态与"最近一次动作"**互不顶替**（界面口径）。
-func TestFooterShowsBothHalves(t *testing.T) {
+// 会话状态行：会话名 | 短 id | 渠道/模型 | 在不在跑 —— **只属于当前会话**。
+func TestStatusLineShowsSession(t *testing.T) {
 	m := fixture()
-	footer := strings.Split(m.View().Content, "\n")[m.height-1]
-	if !strings.Contains(footer, "已连接 v0.1.0") || !strings.Contains(footer, "消息 3 条") {
-		t.Fatalf("底栏 = %q", footer)
+	status := strings.Join(viewLines(m)[inputLineIndex(viewLines(m))+2:], "\n")
+	for _, want := range []string{"逆序数该怎么写", shortID("c1"), "opencode-go/deepseek-v4-flash", "空闲"} {
+		if !strings.Contains(status, want) {
+			t.Fatalf("会话状态行缺 %q：%q", want, status)
+		}
 	}
+	// 换一条会话 ⇒ 状态行跟着换（它认的是**当前会话**）
+	m.selectedID = "c2"
+	status = strings.Join(viewLines(m)[inputLineIndex(viewLines(m))+2:], "\n")
+	if !strings.Contains(status, "第二段对话") || strings.Contains(status, "逆序数该怎么写") {
+		t.Fatalf("状态行该换成当前会话：%q", status)
+	}
+	if !strings.Contains(status, "dummy/dummy") {
+		t.Fatalf("状态行该报渠道 / 模型：%q", status)
+	}
+}
+
+// 状态行两半**互不顶替**（旧口径定的）：连接状态与"最近一次动作"各说各的。
+// 一行放不下就折成两行 —— 但**最多两行**。
+func TestStatusLineKeepsBothHalves(t *testing.T) {
+	m := fixture()
+	lines := viewLines(m)
+	status := strings.Join(lines[inputLineIndex(lines)+2:], "\n")
+	if !strings.Contains(status, "已连接 v0.1.0") || !strings.Contains(status, "消息 2 条") {
+		t.Fatalf("会话状态行 = %q", status)
+	}
+	// 窄屏：折成两行，两半都还在，且不超宽
+	narrow := narrowFixture()
+	lines = viewLines(narrow)
+	statusLines := lines[inputLineIndex(lines)+2:]
+	if len(statusLines) != 2 {
+		t.Fatalf("窄屏该折成两行：%v", statusLines)
+	}
+	joined := strings.Join(statusLines, "\n")
+	if !strings.Contains(joined, "已连接 v0.1.0") || !strings.Contains(joined, "消息 2 条") {
+		t.Fatalf("折行也不许丢掉后一半：%v", statusLines)
+	}
+	// 没连上要如实说（版本号清掉就是没连上）
 	m.version = ""
 	if !strings.Contains(m.View().Content, "未连接") {
 		t.Fatal("没连上时要如实说")
+	}
+}
+
+// 生成中：**状态行**说"生成中 + 耗时"，消息区那条合成气泡说"生成中… 耗时"与「/stop」。
+func TestGeneratingShowsElapsedInStatusAndBubble(t *testing.T) {
+	m := liveFixture()
+	view := m.View().Content
+	lines := viewLines(m)
+	status := strings.Join(lines[inputLineIndex(lines)+2:], "\n")
+	if !strings.Contains(status, "生成中 12.3s") {
+		t.Fatalf("状态行该说在生成：%q", status)
+	}
+	for _, want := range []string{"生成中… 12.3s", "说到一半", "/stop", "思考中… 3 字"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("生成中的气泡该有 %q：\n%s", want, view)
+		}
+	}
+	// 别条会话的轮次：状态行说空闲，气泡也不该画在这儿
+	other := liveFixture()
+	other.turn.sessionID = "c2"
+	view = other.View().Content
+	if strings.Contains(view, "生成中… 12.3s") || strings.Contains(view, "/stop") {
+		t.Fatalf("别条会话的轮次不该画在这儿：\n%s", view)
+	}
+	if status := strings.Join(viewLines(other)[inputLineIndex(viewLines(other))+2:], "\n"); !strings.Contains(status, "空闲") {
+		t.Fatalf("当前会话没在跑就该说空闲：%q", status)
 	}
 }
 
@@ -125,22 +249,17 @@ func TestTruncateUsesDisplayWidth(t *testing.T) {
 	}
 }
 
-// Update 也能直接测（不必起终端）：上下键换选中、q 退出。
-func TestUpdateNavigationAndQuit(t *testing.T) {
+// Update 也能直接测（不必起终端）：方向键不再换会话（没有左栏了）、ctrl+c 退出、回车真发。
+func TestUpdateKeysAndQuit(t *testing.T) {
 	m := fixture()
-	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
-	next := updated.(model)
-	if next.selected != 1 {
-		t.Fatalf("下键该换到第二条，得到 %d", next.selected)
+	// 上下键**不再**在会话列表里走（用户 2026-09-30 定的：会话选择只走 /resume）
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	if cmd != nil || updated.(model).selectedID != "c1" {
+		t.Fatalf("方向键不该换会话：selectedID=%q", updated.(model).selectedID)
 	}
-	updated, _ = next.Update(tea.KeyPressMsg{Code: tea.KeyUp})
-	if back := updated.(model); back.selected != 0 {
-		t.Fatalf("上键该回到第一条，得到 %d", back.selected)
-	}
-	// 到底了再按不该越界
 	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
-	if edge := updated.(model); edge.selected != 0 {
-		t.Fatalf("已在第一条，上键不该越界：%d", edge.selected)
+	if after := updated.(model); after.selectedID != "c1" {
+		t.Fatalf("方向键不该换会话：selectedID=%q", after.selectedID)
 	}
 	// 退出走 /quit 与 ctrl+c —— **没有裸 q**（那会和打字打架；Pi 也是这么做的）
 	ctrlC := tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl} // v2 没有 KeyCtrlC 常量，用修饰键构造
@@ -160,7 +279,7 @@ func TestUpdateNavigationAndQuit(t *testing.T) {
 	if typed.input != "你好" {
 		t.Fatalf("打字该进输入行：%q", typed.input)
 	}
-	updated, cmd := typed.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	updated, cmd = typed.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("回车该真发出去（给一个 Cmd）")
 	}
@@ -220,39 +339,61 @@ func TestInputLineAndCommands(t *testing.T) {
 
 // 离线/空数据时也要有像样的画面（**不 panic**、有话可说）。
 func TestEmptyState(t *testing.T) {
-	// 空会话（还没进任何会话）⇒ **只留底部**：输入行 + 分隔线 + 底栏。
-	// 不显示左侧列表与右边空白（那是噪音；列表走 /resume）。
+	// 空会话（还没进任何会话）：**消息区照旧在**（有话可说）+ 输入行 + 分隔线 + 状态行。
+	// 没有左栏（会话列表走 /resume），也不该出现会话列表。
 	m := model{width: 40, height: 6, ready: true}
 	body := m.View().Content
-	if strings.Contains(body, "＋ 新建对话") || strings.Contains(body, "|") {
-		t.Fatalf("空会话不该铺开侧栏与主区：\n%s", body)
+	if strings.Contains(body, "＋ 新建对话") {
+		t.Fatalf("不该有左栏：\n%s", body)
 	}
 	lines := strings.Split(body, "\n")
-	if len(lines) != 3 || !strings.HasPrefix(lines[0], "> ") {
-		t.Fatalf("该只有三行（输入行/分隔线/底栏）：\n%s", body)
+	if len(lines) != m.height {
+		t.Fatalf("该正好 %d 行：\n%s", m.height, body)
+	}
+	input := inputLineIndex(lines)
+	if input < 1 || !strings.HasPrefix(lines[input], ">") {
+		t.Fatalf("该有输入行：\n%s", body)
+	}
+	if !strings.HasPrefix(strings.Join(lines[:input], "\n"), " 空会话") {
+		t.Fatalf("消息区该给一句空会话的话：\n%s", body)
 	}
 	if !strings.Contains(body, "未连接") {
 		t.Fatal("没连上后端要如实说")
 	}
-	// 挑选项开着（/resume）就铺开界面 —— 那时确实有东西要看
+	// 挑选项开着（/resume）就铺满消息区 —— 那时确实有东西要看
 	picking := model{width: 40, height: 6, ready: true, picker: pickerResume}
 	if !strings.Contains(picking.View().Content, "挑一条") { // 窄宽度下标题会被截断，断言前缀
 		t.Fatalf("挑选项要看得见：\n%s", picking.View().Content)
 	}
 }
 
-// 装不下的消息**整块**不显示，并在表头下如实说"上面还有几条"（别让界面骗人）。
+// 装不下的消息**整块**不显示，并在消息区顶部如实说"上面还有几条"（别让界面骗人）。
 func TestDroppedMessagesAreAnnounced(t *testing.T) {
 	m := fixture()
-	m.height = 7 // 故意很小
-	body := m.View().Content
-	if !strings.Contains(body, "上面还有") {
+	m.height = 8 // 只装得下最新那一块（署名 + 两行正文 + 空行）加顶部那行提示
+	lines := viewLines(m)
+	body := strings.Join(lines, "\n")
+	if !strings.Contains(body, "（上面还有 1 条）") {
 		t.Fatalf("挤掉了就该说：\n%s", body)
 	}
-	// 显示出来的消息块必须**完整**（有署名，不是半截）
-	for _, line := range strings.Split(body, "\n") {
-		if strings.Contains(line, "在吗") && !strings.Contains(body, "你") {
-			t.Fatalf("消息块该带署名：\n%s", body)
+	// 装不下的那条**整块**不显示（不许露半截 —— 半截看起来像"不知道谁说的"）
+	if strings.Contains(body, "在吗") {
+		t.Fatalf("装不下的块不该露出来：\n%s", body)
+	}
+	// 留下来的那条**整块**都在：署名 + 正文
+	area := strings.Join(lines[:inputLineIndex(lines)], "\n")
+	for _, want := range []string{"助手 2.1s：", "在。", "有什么事？"} {
+		if !strings.Contains(area, want) {
+			t.Fatalf("留下的块该是完整的（缺 %q）：\n%s", want, body)
+		}
+	}
+	// 署名与正文必须同时出现：署名行后面空着 ⇒ 那一块被劈开了
+	for index, line := range lines {
+		if !strings.HasSuffix(strings.TrimSpace(line), "：") {
+			continue
+		}
+		if index+1 >= len(lines) || strings.TrimSpace(lines[index+1]) == "" {
+			t.Fatalf("署名后面没有正文 ⇒ 块被劈开了：%q\n%s", line, body)
 		}
 	}
 }
@@ -329,19 +470,19 @@ func TestPaletteShowsAndFilters(t *testing.T) {
 	}
 }
 
-// 方向键在面板里走（不给侧栏）；Tab 补全；回车跑**高亮**那条。
+// 方向键在面板里走（面板没开就什么都不做）；Tab 补全；回车跑**高亮**那条。
 func TestPaletteNavigationAndRun(t *testing.T) {
 	m := fixture()
 	m = typeText(m, "/")
-	// 下键两次 ⇒ 高亮第 3 条（`/cut`），侧栏选中**不动**
+	// 下键两次 ⇒ 高亮第 3 条（`/cut`），当前会话**不动**
 	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	updated, _ = updated.(model).Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	walked := updated.(model)
 	if walked.paletteIndex != 2 {
 		t.Fatalf("下键该走面板：%d", walked.paletteIndex)
 	}
-	if walked.selected != 0 {
-		t.Fatalf("面板开着时方向键不该动侧栏：%d", walked.selected)
+	if walked.selectedID != "c1" {
+		t.Fatalf("面板开着时方向键不该换会话：%q", walked.selectedID)
 	}
 	if matches := walked.paletteMatches(); matches[walked.paletteIndex].name != "cut" {
 		t.Fatalf("第 3 条该是 cut：%s", matches[walked.paletteIndex].name)
@@ -368,7 +509,7 @@ func TestPaletteNavigationAndRun(t *testing.T) {
 
 func TestNewIsInvalidOnEmptySession(t *testing.T) {
 	empty := fixture()
-	empty.selected, empty.messages, empty.messagesFor = -1, nil, ""
+	empty.selectedID, empty.messages, empty.messagesFor = "", nil, ""
 	updated, cmd := empty.runCommand("/new")
 	if cmd != nil {
 		t.Fatal("空会话上 /new 不该发请求")
@@ -435,8 +576,8 @@ func TestDeleteAsksBeforeRemovingTheSession(t *testing.T) {
 	}
 	updated, cmd = m.Update(deletedMsg{id: "c1"})
 	next := updated.(model)
-	if next.selected != -1 || len(next.messages) != 0 {
-		t.Fatalf("删完该回到空会话：selected=%d", next.selected)
+	if next.selectedID != "" || len(next.messages) != 0 {
+		t.Fatalf("删完该回到空会话：selectedID=%q", next.selectedID)
 	}
 	if cmd == nil {
 		t.Fatal("删完该重拉列表")
@@ -514,7 +655,7 @@ func TestCutPreviewsThenDeletes(t *testing.T) {
 func TestCutGuards(t *testing.T) {
 	// 空会话：没有可删的
 	empty := fixture()
-	empty.selected, empty.messages, empty.messagesFor = -1, nil, ""
+	empty.selectedID, empty.messages, empty.messagesFor = "", nil, ""
 	if _, cmd := empty.runCommand("/cut"); cmd != nil {
 		t.Fatal("空会话上不该发请求")
 	}
@@ -554,21 +695,21 @@ func TestCopySessionCommand(t *testing.T) {
 	if said := updated.(model).lastAction; !strings.Contains(said, "复制") {
 		t.Fatalf("该说在复制：%q", said)
 	}
-	// 复制回来：选中新会话（列表刷新回来才选得上），并重拉列表
+	// 复制回来：**立刻**认新会话当当前会话（认 id，不用等列表刷新），并重拉列表与消息
 	updated, cmd = m.Update(copiedMsg{session: Session{ID: "c9", Title: "副本"}})
 	next := updated.(model)
 	if cmd == nil {
 		t.Fatal("复制完该重拉列表")
 	}
-	if next.pendingSelect != "c9" {
-		t.Fatalf("该盯着新会话：%q", next.pendingSelect)
+	if next.selectedID != "c9" {
+		t.Fatalf("该盯上新会话：%q", next.selectedID)
 	}
 	if said := next.lastAction; !strings.Contains(said, "已复制成") {
 		t.Fatalf("该报新会话：%q", said)
 	}
 	// 空会话：没有可复制的
 	empty := fixture()
-	empty.selected, empty.messages, empty.messagesFor = -1, nil, ""
+	empty.selectedID, empty.messages, empty.messagesFor = "", nil, ""
 	if _, cmd := empty.runCommand("/copy"); cmd != nil {
 		t.Fatal("空会话上不该发请求")
 	}
@@ -600,15 +741,16 @@ func TestResumeWithUUID(t *testing.T) {
 	m := fixture()
 	// 完整 id
 	updated, cmd := m.runCommand("/resume c2")
-	if cmd == nil || updated.(model).selected != 1 {
-		t.Fatalf("给 uuid 该直接进：selected=%d", updated.(model).selected)
+	if cmd == nil || updated.(model).selectedID != "c2" {
+		t.Fatalf("给 uuid 该直接进：selectedID=%q", updated.(model).selectedID)
 	}
 	// 找不到 ⇒ 报错，**什么都不发生**
-	before, beforeMessages := m.selected, len(m.messages)
+	before := m.selectedID
+	beforeMessages := len(m.messages)
 	updated, cmd = m.runCommand("/resume 00000000-0000-0000-0000-000000000000")
 	after := updated.(model)
-	if cmd != nil || after.selected != before || len(after.messages) != beforeMessages || after.picker != pickerNone {
-		t.Fatalf("找不到就不许动：selected=%d cmd=%v picker=%d", after.selected, cmd != nil, after.picker)
+	if cmd != nil || after.selectedID != before || len(after.messages) != beforeMessages || after.picker != pickerNone {
+		t.Fatalf("找不到就不许动：selectedID=%q cmd=%v picker=%d", after.selectedID, cmd != nil, after.picker)
 	}
 	if said := after.lastAction; !strings.Contains(said, "找不到") {
 		t.Fatalf("该说找不到：%q", said)
@@ -622,21 +764,23 @@ func TestResumePicker(t *testing.T) {
 	if cmd != nil || opened.picker != pickerResume {
 		t.Fatalf("不给 uuid 该开挑选项：picker=%d", opened.picker)
 	}
-	body := m.View().Content
-	_ = body
 	if !strings.Contains(opened.View().Content, "挑一条已有会话") {
 		t.Fatalf("挑选项该有标题：\n%s", opened.View().Content)
+	}
+	// 挑选项**铺满消息区**（不是挤在输入行上面一小块）
+	if !strings.Contains(opened.View().Content, "第二段对话") {
+		t.Fatalf("挑选项该列出会话：\n%s", opened.View().Content)
 	}
 	// 下键 + 回车 ⇒ 进第二条
 	updated, _ = opened.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	updated, cmd = updated.(model).Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	next := updated.(model)
-	if next.picker != pickerNone || next.selected != 1 || cmd == nil {
-		t.Fatalf("回车该进第二条：picker=%d selected=%d", next.picker, next.selected)
+	if next.picker != pickerNone || next.selectedID != "c2" || cmd == nil {
+		t.Fatalf("回车该进第二条：picker=%d selectedID=%q", next.picker, next.selectedID)
 	}
 	// Esc 取消
 	updated, _ = opened.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
-	if cancelled := updated.(model); cancelled.picker != pickerNone || cancelled.selected != m.selected {
+	if cancelled := updated.(model); cancelled.picker != pickerNone || cancelled.selectedID != m.selectedID {
 		t.Fatal("Esc 该原样取消")
 	}
 	// 没有会话时 /resume 说清楚
@@ -677,7 +821,7 @@ func TestModelPickerGroupsByProvider(t *testing.T) {
 	}
 	// 空会话时 ⇒ 只记下来，不发请求
 	empty := fixture()
-	empty.selected, empty.messages, empty.messagesFor = -1, nil, ""
+	empty.selectedID, empty.messages, empty.messagesFor = "", nil, ""
 	empty.models, empty.picker, empty.pickerIndex = m.models, pickerModel, 0
 	updated, cmd = empty.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd != nil {
@@ -696,48 +840,28 @@ func TestModelPickerGroupsByProvider(t *testing.T) {
 // 打开 TUI 就是**空会话**（不建库里的行、也不自动跳进旧会话）。
 func TestInitialModelStartsEmpty(t *testing.T) {
 	m := initialModel(NewClient("http://127.0.0.1:8787", ""))
-	if m.selected != -1 {
-		t.Fatalf("该停在空会话：selected=%d", m.selected)
+	if m.selectedID != "" {
+		t.Fatalf("该停在空会话：selectedID=%q", m.selectedID)
 	}
 	// 拿到会话列表也不自动选（用户没点就不动）
 	updated, _ := m.Update(sessionsMsg{sessions: fixture().sessions})
-	if after := updated.(model); after.selected != -1 {
-		t.Fatalf("列表回来也不该自动选：selected=%d", after.selected)
+	if after := updated.(model); after.selectedID != "" {
+		t.Fatalf("列表回来也不该自动选：selectedID=%q", after.selectedID)
 	}
-	// 空会话的界面形状 = **只有底部**（输入行/分隔线/底栏），不铺侧栏与主区
-	if body := updated.(model).View().Content; len(strings.Split(body, "\n")) != 3 || strings.Contains(body, "|") {
-		t.Fatalf("空会话该只留底部：\n%s", body)
+	// 空会话的界面形状：**消息区还在**（有话说），只是没有会话列表
+	if body := updated.(model).View().Content; !strings.Contains(body, "空会话") || strings.Contains(body, "＋ 新建对话") {
+		t.Fatalf("空会话该是消息区 + 底部，不是会话列表：\n%s", body)
 	}
 }
-
-// ── 生成那一轮：合成气泡 + 300ms 轮询 + /stop ──
 
 // liveFixture：一条正在生成的会话（界面按状态**合成**气泡；库里还没有它）。
 func liveFixture() model {
 	m := fixture()
-	m.selected = 0
 	m.turn = &liveTurn{
 		sessionID: "c1", messageID: "m3", phase: "streaming", elapsedMS: 12300,
 		text: "说到一半", thinking: "嗯……",
 	}
 	return m
-}
-
-// 生成中：气泡上有耗时与「/stop」，思考只报字数（token 数流式帧里没有）。
-func TestGeneratingBubbleShowsElapsedAndStop(t *testing.T) {
-	m := liveFixture()
-	view := m.View().Content
-	for _, want := range []string{"生成中", "12.3s", "说到一半", "/stop", "思考中… 3 字"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("生成中的气泡该有 %q：\n%s", want, view)
-		}
-	}
-	// 不是这条会话的轮次 ⇒ 不该在这条会话里画那个气泡（侧栏的"生成中…"是列表口径，另说）
-	other := liveFixture()
-	other.turn.sessionID = "c2"
-	if view := other.View().Content; strings.Contains(view, "生成中… 12.3s") || strings.Contains(view, "/stop") {
-		t.Fatalf("别条会话的轮次不该画在这儿：\n%s", view)
-	}
 }
 
 // 轮询：增量按游标累加，**读不消费**（同一段不会画两遍）；还在跑就接着约下一次。
@@ -811,9 +935,8 @@ func TestStopCommand(t *testing.T) {
 	}
 	// 没在跑就回 false：底栏要如实说
 	idle := fixture()
-	idle.selected = 0
 	// 空会话（没有任何会话）时连发都不用发
-	if _, cmd := (model{client: NewClient("http://127.0.0.1:1", ""), selected: -1}).runCommand("/stop"); cmd != nil {
+	if _, cmd := (model{client: NewClient("http://127.0.0.1:1", ""), selectedID: ""}).runCommand("/stop"); cmd != nil {
 		t.Fatal("没有会话时 /stop 不该发请求")
 	}
 	_ = idle
@@ -832,7 +955,8 @@ func TestSendWhileGeneratingIsRefusedLocally(t *testing.T) {
 	}
 }
 
-// 202 回来：进列表（空会话里冒出的新会话）、重置游标、开始看进度；库里的用户那句靠重拉消息拿到。
+// 202 回来：进列表（空会话里冒出的新会话）、**立刻认它当当前会话**、开始看进度；
+// 库里的用户那句靠重拉消息拿到。
 func TestSentMsgStartsPolling(t *testing.T) {
 	m := initialModel(NewClient("http://127.0.0.1:8787", ""))
 	created := Session{ID: "c9", Title: "新会话", Provider: "dummy", Model: "dummy", AgentID: "default"}
@@ -845,13 +969,46 @@ func TestSentMsgStartsPolling(t *testing.T) {
 	if next.turn == nil || next.turn.sessionID != "c9" || next.turn.messageID != "m9" {
 		t.Fatalf("该开始盯这一轮：%+v", next.turn)
 	}
-	if next.pendingSelect != "c9" {
-		t.Fatalf("新建的会话该被选中：%q", next.pendingSelect)
+	if next.selectedID != "c9" {
+		t.Fatalf("新建的会话该当上当前会话：%q", next.selectedID)
 	}
 	if cmd == nil {
 		t.Fatal("该去重拉会话列表与消息、并开始轮询")
 	}
 	if said := next.lastAction; !strings.Contains(said, "dummy") {
 		t.Fatalf("底栏该报是哪条后端答的：%q", said)
+	}
+}
+
+// ── 用户实跑抓到的 bug：**发一句话后消息区一片空白** ──
+
+// 根因：当前会话以前存的是**下标**，而 `GET /sessions` 按 `updated_at` 排序 ——
+// 发一句话就把那条会话顶到最前 ⇒ 下标指到了**别人**身上 ⇒ 消息回来时
+// `message.sessionID != currentSession().ID` ⇒ 被丢掉 ⇒ 消息区一片空白。
+// 现在认 **id**：列表怎么重排都不影响"选中的是哪条"。
+func TestSelectionSurvivesListResorting(t *testing.T) {
+	m := fixture()
+	m.selectedID = "c2" // 选中第二条（发送前它排在后面）
+	m.messagesFor, m.messages = "c2", nil
+	// 后端把刚发过话的 c2 排到最前（顺序变了 —— 以前这一下就把选中甩到别人身上）
+	updated, _ := m.Update(sessionsMsg{sessions: []Session{
+		{ID: "c2", Title: "第二段对话", Provider: "dummy", Model: "dummy"},
+		{ID: "c1", Title: "逆序数该怎么写", Provider: "opencode-go", Model: "deepseek-v4-flash"},
+	}})
+	next := updated.(model)
+	if next.currentSession() == nil || next.currentSession().ID != "c2" {
+		t.Fatalf("列表重排后仍该盯着 c2：%+v", next.currentSession())
+	}
+	// 用户那句回来了 ⇒ 必须收下（以前会因对不上号被丢掉 ⇒ 空白）
+	updated, _ = next.Update(messagesMsg{sessionID: "c2", messages: []Message{
+		{ID: "m8", Role: "user", Content: "发出去的那句话"},
+	}})
+	if body := updated.(model).View().Content; !strings.Contains(body, "发出去的那句话") {
+		t.Fatalf("发出去的那句该出现在消息区：\n%s", body)
+	}
+	// 选中的会话被别处删了：老实回到空会话（不许赖在别人身上）
+	updated, _ = next.Update(sessionsMsg{sessions: []Session{{ID: "c1", Title: "只剩这条"}}})
+	if after := updated.(model); after.selectedID != "" || !strings.Contains(after.lastAction, "别处删的") {
+		t.Fatalf("选中的会话没了就该回空会话：selectedID=%q lastAction=%q", after.selectedID, after.lastAction)
 	}
 }
