@@ -14,6 +14,7 @@ microchat：轻量 SillyTavern 替代（RPG 向）。三层，边界要清楚：
 
 > **会话（Session）与消息（Message）的完整定义、字段、以及"故意不存什么"，见 `DEFINE.md`** ——
 > 那份是词表的唯一权威；这里只列最常用的几个词。
+> **下一步做什么看 `TODO.md`** —— 那里只列"还没动"的；设计口径看 `DEFINE.md`。
 > **任务（Task）与两族调用（对话型 / 功能型）的完整定义**同样在 `DEFINE.md`（那一节：Task = 一次上游请求的全程）。
 
 | 词 | **只**指什么 | 别叫 |
@@ -70,7 +71,7 @@ reminder/                  ← 专题参考（`tool-calls.md` 工具调用 / `je
 依赖方向单向：`server → chat/compact/abilities → state（含 statelang）/blocks → registry/providers/config → store → model`。
 `turn`/`task` 是横切（谁都能挂号，不被依赖）。**Go 用编译器强制这张图**。
 
-⚠ **表里这几个模块 Go 版还没建**：`chat` / `compact` / `blocks` / `template` / `abilities`
+⚠ **表里这几个模块 Go 版还没建**：`compact` / `blocks` / `template` / `abilities`（`chat` 已建 ✓）
 （其余都在 ✓）—— 所以要"强制这张图"目前只对已达成的部分成立 ✓，别拿这张地图当现有代码读。
 
 ## 不变量（破坏了会静默出错）
@@ -172,7 +173,8 @@ delete(AA)           # 删除
 - 配了口令时（`config.json` 的 `server.auth_token`）**所有**接口都要 `Authorization: Bearer <token>`（`/health` 也不例外）。
 - 错误体固定 `{"error":{"code","message"}}`，`code` ∈ `invalid` / `not_found` / `conflict` / `unauthorized` / `upstream` / `internal`——客户端按 `code` 分支，别匹配文案。
 - **405 由框架自己回**（路径在、方法不对），不带上面的体，但带 `allow:` 头。
-- CORS 全开；**默认不设 auth_token**，所以别把端口暴露到公网。
+- ⚠ **CORS / OPTIONS 预检现在没有**（这条是**待做**，别读成现状 ✗ —— 没有它 Web 版一个请求都发不出去）；
+  **默认不设 auth_token**，所以别把端口暴露到公网。
 
 ### 故意砍掉的（2026-09-29 定：**先简化，再往深走**）
 
@@ -242,8 +244,7 @@ delete(AA)           # 删除
 
 ## 一轮生成（202 + 轮询）
 
-⚠ **Go 版尚未实现**（`POST /messages` 那五条还没搬；下面写的是**要做的形状** ✓）。
-`turn` 登记表本身已在 `core/internal/turn` ✓，只是还没被 handler 接上。
+**已实现** ✓（`core/internal/chat` + `server/turn_api.go` + `providers/stream.go`）：
 
 发送不再"一次请求等到整段回复"：**受理与生成分开**——客户端要答"在不在跑""跑了多久""怎么停"，这三个答案都不该绑死在一次请求上。
 
@@ -579,7 +580,7 @@ prompt caching**"）。**不要为能力造子 session id**：网关的会话 id
 - **卡片脚注**：`3.2s · 上行 1654 tok（缓存 1408 tok · 85%）· 下行 62 tok（思考 32 tok，含在内）`——只在有数据时显示。**单位是 token**（上游 `usage` 报的）；生成中气泡上「思考中… N 字」是**字符数**（流式帧里没有 token 数）——两处别混。`reasoning_tokens` 是 `completion_tokens` 的子集，不是另加。
 - **思考**默认折叠成「思考（2.1s）」——放的是**思考用时**（受理 → 第一段正文），不是字数。
 - 底部一排：`归档`、`压缩 [N] 个块` + `开始`（202 受理，底栏报结果）、`复制会话`。
-  ⚠ `归档` / `压缩` 的路由**已砍**（见上面「故意砍掉的」）⇒ 按钮**先不要做**，等它们重做完再说；
+  ⚠ `归档`（剪枝前置）与 `压缩` **还没做** ⇒ 那两个按钮先不要做；**`复制会话`（Copy）已经能用** ✓；
   **`复制会话` 的路由已经有了** ✓（`POST /sessions/{session_id}/copy`）。
 - 设置六页：**连接 / Agent / 能力 / 模型与渠道 / 前端设置 / 关于**。底栏常驻"**已连接后端 vX**"，后面跟 `·` 和最近一次动作的结果——两者**互不顶替**；刷新失败要带状态码与 `code`。
   「模型与渠道」页：顶部**服务端上下文口径**（`模型上下文` 兜底 + `摘要触发阈值`）；每个渠道一行（`获取模型` / `删除全部模型` / `编辑`）；下面逐个模型列上下文，可填**覆盖值**（留空 = 清掉）。优先顺序：**覆盖 > 上游发现 > 配置兜底**，只许一处解析。
@@ -597,7 +598,7 @@ prompt caching**"）。**不要为能力造子 session id**：网关的会话 id
   · 退出用 **`/quit` 或 ctrl+c** —— **没有裸 `q`**（会和打字打架）。
 - 跑法：`go -C core run .`（一条命令跑起来；要二进制就 `go -C core build -o ../microchat .`）。**TUI 内的命令**照 Pi：`/command`。**只放已经有路由的命令**，没搬完的在 `/help` 里如实列出来
   （现在能用的：`/help` `/new` `/delete` `/cut` `/copy` `/resume` `/model` `/outgoing` `/state` `/refresh` `/quit`；
-  还没搬的：`/compact` `/archive` `/stop` —— `/fork`／`/tasks`／`/probe` 那几条**已砍**，不会再有
+  还没做的：`/compact` `/archive` —— `/fork`／`/tasks`／`/probe` 那几条**已砍**，不会再有
   （`/fork` 的位置由 `/copy` 接管）。
   `/delete`（删整条会话）与 `/cut`（删一条及之后）都**不可逆** ⇒ 两个都先摊开、等 `回车 / y` 点头才动手；
   `/cut` 的摊开内容来自 `GET .../deletion-preview`（后端那份计算），执行时带回 `last_deleted_message_id` 核对）。
