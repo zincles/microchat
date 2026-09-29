@@ -257,9 +257,17 @@ const (
 )
 
 // Outgoing：发给模型的一条消息。角色含 system —— 系统提示词不落库，但必须出现在请求里。
+//
+// `Source` 那一组是**给自己看的出处**（不发给上游）：检查"压缩后到底发了什么"只能靠它，
+// 否则界面只能靠正文里的抬头去猜（猜法一改就散 ✗）。
 type Outgoing struct {
 	Role    OutgoingRole `json:"role"`
 	Content string       `json:"content"`
+
+	Source    string  `json:"source"`               // system | message | summary
+	MessageID *string `json:"message_id,omitempty"` // source=message
+	SummaryID *string `json:"summary_id,omitempty"` // source=summary
+	Blocks    *int64  `json:"blocks,omitempty"`     // source=summary：它覆盖几个块
 }
 
 // BuildOutgoing：组装**真正要发出去的东西** —— 系统提示词（+ 当前变量表）+ 历史
@@ -279,7 +287,7 @@ func BuildOutgoing(systemPrompt string, messages []model.Message, summaries []mo
 
 	outgoing := []Outgoing{}
 	if system != "" {
-		outgoing = append(outgoing, Outgoing{Role: RoleSystem, Content: system})
+		outgoing = append(outgoing, Outgoing{Role: RoleSystem, Content: system, Source: "system"})
 	}
 	for _, part := range walk(messages, summaries) {
 		if part.message != nil {
@@ -293,7 +301,10 @@ func BuildOutgoing(systemPrompt string, messages []model.Message, summaries []mo
 			if part.message.Role == model.RoleUser {
 				role = RoleUser
 			}
-			outgoing = append(outgoing, Outgoing{Role: role, Content: content})
+			id := part.message.ID
+			outgoing = append(outgoing, Outgoing{
+				Role: role, Content: content, Source: "message", MessageID: &id,
+			})
 			continue
 		}
 		// 摘要：不是谁说的话，是**程序摆给模型的前情** ⇒ 用 user 角色 + 明写的抬头，
@@ -306,9 +317,13 @@ func BuildOutgoing(systemPrompt string, messages []model.Message, summaries []mo
 		if blocks < 1 {
 			blocks = 1
 		}
+		id, count := part.summary.ID, blocks
 		outgoing = append(outgoing, Outgoing{
-			Role:    RoleUser,
-			Content: "【前情提要·" + strconv.FormatInt(blocks, 10) + " 块】\n" + text,
+			Role:      RoleUser,
+			Content:   "【前情提要·" + strconv.FormatInt(blocks, 10) + " 块】\n" + text,
+			Source:    "summary",
+			SummaryID: &id,
+			Blocks:    &count,
 		})
 	}
 	return outgoing

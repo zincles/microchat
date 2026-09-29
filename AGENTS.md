@@ -78,7 +78,7 @@ reminder/                  ← 专题参考（`tool-calls.md` 工具调用 / `je
    底子的**来源**决定它算哪一层：用 agent 的 ⇒ **全局**（同一 agent 的会话共享）；会话自己写了 ⇒ **本会话**。
    **删除不留痕迹**：`delete(键)` 与空值 `键 =` 都只是从**本层**拿掉 ⇒ 删底子里的键，值会从底子漏回来（"删"只作用于自己那一层；不想被删的键别写底子，写进第一条消息）。
    生效提示词由**一处**解析（会话覆盖 → agent 的 → 内置默认），出站 / 底子 / 界面共用它。
-4. **消息是一棵树**：`messages.parent_id`（自引用 `CASCADE`）+ `sessions.current_leaf`。整条**当前路径** = 从 `current_leaf` 回溯到根。**兄弟就是分支**：
+4. **消息是一棵树**（⚠ **已决定改成线性 + Copy，见 `DEFINE.md`** —— 那段实现尚未动 ✓ 现在仍是树 ✓）：`messages.parent_id`（自引用 `CASCADE`）+ `sessions.current_leaf`。整条**当前路径** = 从 `current_leaf` 回溯到根。**兄弟就是分支**：
    - **重新发送 = 再长一个兄弟**（旧的留着）；尾条是用户消息时照它生成；
    - **切分支只许切到尾巴的兄弟**（否则世界状态会跟着倒退）；
    - **删除只允许删整棵子树**；leaf 若落在被删子树里，退到**上文下还活着的最新一个孩子**（不是退到上文——那会让界面像"整条分支都没了"）；「删除全部」= 清掉一组兄弟；
@@ -168,7 +168,7 @@ delete(AA)           # 删除
 | POST | `/sessions/{session_id}/resend` | — | `TurnAccepted` · **202** | 尾条是助手 ⇒ 再长一个兄弟；是用户 ⇒ 照它重发 |
 | GET | `/sessions/{session_id}/branches` | — | `{消息id: BranchInfo}` | 每条在同龄兄弟里第几/共几（`‹ 2/3 ›`）|
 | GET | `/sessions/{session_id}/state` | — | `StateView` | `global` / `session` / `global_values` / `effective` / `tables`，**每次现算** |
-| GET | `/sessions/{session_id}/outgoing` | — | `[Outgoing]` | "下次真会发出去的东西"（标签已剔除、状态已注入）|
+| GET | `/sessions/{session_id}/outgoing` | `[Outgoing]` | "下次真会发出去的东西"（标签已剔、状态已注入、**压缩已生效**）。每条带出处：`source` = `system`/`message`/`summary`（后者另有 `summary_id`、`blocks`）—— **检查压缩效果靠它**，别去猜正文抬头 |
 | GET | `/sessions/{session_id}/context` | — | `ContextUsage` | 只有数字：`used_tokens`（估算）/ `budget_tokens` / `trigger_tokens` / `remaining_tokens` / `ctx_len` / `max_output` / `ratio` / `estimated` / `last_prompt_tokens` / `over_budget` |
 | GET | `/sessions/{session_id}/status` | — | `TurnStatus` | `idle`/`pending`/`streaming`/`error` + `message_id` + `elapsed_ms` + `chars` + `thinking_chars` + `error` |
 | GET | `/sessions/{session_id}/turn/text?from=N&think_from=M` | — | `StreamSlice` | 流式增量的**游标读**（正文与思考各一条游标，`from` = 第几个字符）：只服务动画 |
@@ -281,6 +281,24 @@ delete(AA)           # 删除
 
 - **指针链，不是层级数字**：摘要**不是树的节点**（不往 `messages` 插行、不改 `parent_message_id`）；硬不变量：**压缩只往 `summaries` 插一行**，绝不插/改/删 `messages`。
 - **为什么不需要"区间见证"**：分叉只允许出现在尾巴上，而压缩只吃尾巴之外 ⇒ 被压那段在压缩那一刻**是线性的** ⇒ 纯指针足够。
+
+  **具体走一遍**（用户的例子）：路径 `A B C D E F G`，压缩出 `BD`(覆盖 BCD)、`EF`(覆盖 EF)，
+  再压出 `BF`(覆盖 BD+EF)。走到 B ⇒ `B.summary_id = BD` ⇒ BD 有父 BF ⇒ **父的孩子 BD、EF 都在路径上** ⇒
+  用 BF、跳过整串 ⇒ 落到 F ⇒ 下一个是 G ⇒ 队列 = `A, BF, G` ✓。
+  **没有"下一条"** ✗：顺序来自**当前路径**（树里同一条消息可以有多个孩子 ⇒ 兄弟就是分支）；
+  **取粗的闸**是"父摘要的全部孩子都在路径上" ✓ —— 少了这道闸，换过分支后会把**另一条分支的内容**塞进提示词 ✗✗。
+
+- **跳过去靠"数" ✗不靠存**：遍历的是**当前路径那个有序数组** ✓，"下一条"就是下一个下标 ✓。
+  两种数法：`coveredBySelf` = 后面**连续**几条的 `summary_id` 还是**同一份** ✓（它自己盖的那串 ✓）；
+  `belongs` = 后面连续几条的摘要的**父**就是这个父摘要 ✓（父盖的那串 ✓）。跳步就是 `index += run` ✓。
+  取父的闸是 **`run == total`** ✓：`run` 是"眼前连续几条" ✓，`total` 是"**整条路径**上有几条" ✓ ——
+  两者相等才敢用父 ✓（否则父盖的兄弟有不在路径上的 ✗：换了分支 ✓，用它要么串味要么漏内容 ✗）。
+  代价：每个摘要处会全量扫一遍算 `total` ✓ ⇒ 现在是 O(路径长 × 摘要数) ✓；几千条时再优化（行走时记账即可 ✓）。
+
+- **不许给摘要加"起止消息"字段** ✗（`begin_message_id` / `end_message_id` 这一类）：覆盖范围**是可推导的** ✓
+  （顺着 `summary_id` 走即知 ✓）；存下来就是**第二个真相来源** ✗ —— 被覆盖的消息一经删除/编辑（摘要只标 `dirty` ✓ 但**照用** ✓），
+  这两端会指向**已经不存在的消息** ✗，而按它"跳到下一条"会**静默**走进未定义行为 ✗。
+  （同一条理由见"世界状态不落库"与"摘要里不存状态"。）
 - **装配时的行走**（`state.BuildOutgoing`）：从路径根逐条往前走 —— 有 `summary_id` 就取它；若有父摘要、且**父的全部孩子就在眼前**（一个不缺）⇒ 用父并跳过整串；否则用细的、跳过它覆盖的那串；都没有 ⇒ 发原文。"跳过"靠继续读 `summary_id` 判断，**不存范围**。**能取粗的不取精，但宁可用细的也不许漏内容**。
 - **MASK（术语）**：有摘要覆盖的那一段，装配时**不发明文**、只发摘要的正文 —— 存放处一个字节都不动，被"遮掉"的只是**这一次请求**。
 - **只有 Compact，没有"丢"**（铁律）：不存在"少发一段没人代表的内容"。超预算 ⇒ **先压再发**；真压不动 ⇒ **报错原路返回**，不做静默补救。
@@ -501,7 +519,7 @@ prompt caching**"）。**不要为能力造子 session id**：网关的会话 id
   · TUI 模式下日志落到 `data/microchat.log`（别糊在界面上）；
   · 退出用 **`/quit` 或 ctrl+c** —— **没有裸 `q`**（会和打字打架）。
 - 跑法：`go -C core run .`（一条命令跑起来；要二进制就 `go -C core build -o ../microchat .`）。**TUI 内的命令**照 Pi：`/command`。**只放已经有路由的命令**，没搬完的在 `/help` 里如实列出来
-  （现在能用的：`/help` `/new` `/delete` `/resume` `/model` `/state` `/refresh` `/quit`；
+  （现在能用的：`/help` `/new` `/delete` `/resume` `/model` `/outgoing` `/state` `/refresh` `/quit`；
   还没搬的：`/compact` `/fork` `/archive` `/stop` —— `/tasks` `/probe` 那几条**已砍**，不会再有）。
 - 要抄 Pi 的**交互决定**（它的 TUI 是手搓的，库选择无参考价值）：CJK 宽度对齐 / kill-ring 编辑 / LaTeX 降级显示 / markdown 渲染。
 - **设置页要的数据只从一处发**（连上 / 点 ⟳ / 进设置页都走它）——曾经两处各写一份，新加的字段只进了一条路 ⇒ 设置页永远"加载中…"（真发生过）。

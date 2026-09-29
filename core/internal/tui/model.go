@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -26,6 +27,10 @@ type model struct {
 
 	// 命令面板（输入以 `/` 开头时出现）
 	paletteIndex int
+
+	// 只读查看器（`/outgoing`）：整屏列东西，任意键关掉
+	viewer      []string
+	viewerTitle string
 
 	// 挑选项（`/resume` 与 `/model`）
 	picker      picker
@@ -91,6 +96,11 @@ type modelsMsg struct {
 	err    error
 }
 
+type outgoingMsg struct {
+	items []Outgoing
+	err   error
+}
+
 type stateMsg struct {
 	state State
 	err   error
@@ -149,6 +159,13 @@ func loadModelsCmd(client *Client) tea.Cmd {
 	return func() tea.Msg {
 		models, err := client.Models()
 		return modelsMsg{models: models, err: err}
+	}
+}
+
+func loadOutgoingCmd(client *Client, sessionID string) tea.Cmd {
+	return func() tea.Msg {
+		items, err := client.Outgoing(sessionID)
+		return outgoingMsg{items: items, err: err}
 	}
 }
 
@@ -272,11 +289,53 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lastAction = "状态：" + strings.Join(parts, " · ")
 		return m, nil
 
+	case outgoingMsg:
+		if message.err != nil {
+			m.lastAction = "拉载荷失败：" + message.err.Error()
+			return m, nil
+		}
+		lines := make([]string, 0, len(message.items)*3+2)
+		for index, item := range message.items {
+			who := "消息"
+			switch item.Source {
+			case "system":
+				who = "系统提示词"
+			case "summary":
+				blocks := int64(0)
+				if item.Blocks != nil {
+					blocks = *item.Blocks
+				}
+				id := ""
+				if item.SummaryID != nil {
+					id = shortID(*item.SummaryID)
+				}
+				who = "摘要 " + id + "（覆盖 " + strconv.FormatInt(blocks, 10) + " 块）"
+			default:
+				if item.MessageID != nil {
+					who = "消息 " + shortID(*item.MessageID)
+				}
+			}
+			role := item.Role
+			head := fmt.Sprintf("%2d %-9s %-8s", index+1, role, "")
+			lines = append(lines, truncate(head+who, m.mainWidth()))
+			for _, line := range strings.Split(item.Content, "\n") {
+				lines = append(lines, truncate("     "+line, m.mainWidth()))
+			}
+			lines = append(lines, "")
+		}
+		m.viewer, m.viewerTitle = lines, fmt.Sprintf("下次真发出去的载荷（%d 条）", len(message.items))
+		m.lastAction = fmt.Sprintf("载荷 %d 条（Esc 关掉）", len(message.items))
+		return m, nil
+
 	case tea.KeyPressMsg:
 		// 先认输入相关的键（打字优先），再认导航键。
 		// 注意：**没有裸 `q` 退出了** —— 那会和打字打架（Pi 也是 /quit 与 ctrl+c）。
 		if message.String() == "ctrl+c" {
 			return m, tea.Quit
+		}
+		if m.viewer != nil { // 查看器开着：任意键关掉（只读，没什么可操作的）
+			m.viewer = nil
+			return m, nil
 		}
 		if m.picker != pickerNone {
 			return m.pickerKey(message)
@@ -453,6 +512,7 @@ func init() {
 		{name: "delete", help: "删除当前会话，回到空会话", run: commandDelete},
 		{name: "resume", args: "[uuid]", help: "挑一条已有会话；带 uuid 直接进", run: commandResume},
 		{name: "model", help: "挑渠道 / 模型（有会话就改它，没有则留给下一条）", run: commandModel},
+		{name: "outgoing", help: "看下次真发出去的载荷（哪几条是压缩出来的）", run: commandOutgoing},
 		{name: "state", help: "看当前会话的世界状态", run: commandState},
 		{name: "refresh", help: "重新拉会话列表", run: commandRefresh},
 		{name: "help", help: "列命令（含还没搬完的）", run: commandHelp},
@@ -512,6 +572,16 @@ func commandModel(m model, _ []string) (tea.Model, tea.Cmd) {
 	m.pickerIndex = m.indexOfCurrentModel()
 	m.lastAction = "拉模型列表…"
 	return m, loadModelsCmd(m.client)
+}
+
+func commandOutgoing(m model, _ []string) (tea.Model, tea.Cmd) {
+	session := m.currentSession()
+	if session == nil {
+		m.lastAction = "当前是空会话，没有载荷可看"
+		return m, nil
+	}
+	m.lastAction = "拉载荷…"
+	return m, loadOutgoingCmd(m.client, session.ID)
 }
 
 func commandState(m model, _ []string) (tea.Model, tea.Cmd) {
@@ -642,7 +712,7 @@ func (m model) render() string {
 	palette := m.renderPalette()
 	// **空会话只留底部**（用户 2026-09-29 定的）：还没进任何会话时，左侧列表与右边空白
 	// 全是噪音 —— 要看列表打 /resume，要挑渠道 /模型。进了会话（或挑选项开着）才铺开整个界面。
-	if m.currentSession() == nil && m.picker == pickerNone {
+	if m.currentSession() == nil && m.picker == pickerNone && m.viewer == nil {
 		lines := append([]string{}, palette...)
 		lines = append(lines, truncate("> "+m.input, max(1, m.width)))
 		lines = append(lines, strings.Repeat("-", max(1, m.width)))
@@ -720,6 +790,20 @@ func (m model) renderPalette() []string {
 // 为什么要从底部排：聊天记录里**最新的在下面**；而且一块消息（署名 + 正文）要么整块出现、
 // 要么不出现 —— 从顶部截断会把署名切掉，看起来像"不知道谁说的"（这个 bug 是测试抓出来的）。
 func (m model) renderMessages(height int) []string {
+	if m.viewer != nil {
+		lines := []string{truncate(" "+m.viewerTitle+"   任意键关掉", m.mainWidth()),
+			truncate(" "+strings.Repeat("-", max(1, m.mainWidth()-2)), m.mainWidth())}
+		for _, line := range m.viewer {
+			if len(lines) >= height {
+				break
+			}
+			lines = append(lines, line)
+		}
+		for len(lines) < height {
+			lines = append(lines, "")
+		}
+		return lines[:height]
+	}
 	switch m.picker {
 	case pickerResume:
 		return m.renderResumePicker(height)

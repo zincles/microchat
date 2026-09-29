@@ -180,6 +180,23 @@ func (c *Client) UpdateSession(id, provider, model string) (Session, error) {
 // DeleteSession：删掉整条会话（`/delete`）。
 func (c *Client) DeleteSession(id string) error { return c.del("/sessions/" + id) }
 
+// Outgoing：**下次真会发出去的东西**（标签已剔、状态已注入、压缩已生效）。
+// 每一条自带出处（system / message+message_id / summary+summary_id+blocks）—— 检查压缩效果就靠它。
+type Outgoing struct {
+	Role      string  `json:"role"`
+	Content   string  `json:"content"`
+	Source    string  `json:"source"`
+	MessageID *string `json:"message_id"`
+	SummaryID *string `json:"summary_id"`
+	Blocks    *int64  `json:"blocks"`
+}
+
+func (c *Client) Outgoing(sessionID string) ([]Outgoing, error) {
+	var items []Outgoing
+	err := c.get("/sessions/"+sessionID+"/outgoing", &items)
+	return items, err
+}
+
 // Models：跨 provider 的全部模型（`/model` 的面板按 provider 分组显示）。
 func (c *Client) Models() ([]ModelListItem, error) {
 	var items []ModelListItem
