@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"microchat/internal/abilities"
 	"microchat/internal/config"
 )
 
@@ -18,11 +19,16 @@ type CreateAgentReq struct {
 	// 名称是**唯一的人类句柄** —— id 由后端生成，不接受指定。
 	Name         string `json:"name"`
 	SystemPrompt string `json:"system_prompt"`
+	// Abilities：能力开关（键 = 能力 id）。**缺省 = 默认全开**；未知的 id ⇒ 400。
+	Abilities map[string]config.AbilityToggle `json:"abilities,omitempty"`
 }
 
 type UpdateAgentReq struct {
 	Name         *string `json:"name"`
 	SystemPrompt *string `json:"system_prompt"`
+	// Abilities：给了就**整段替换**这张映射（与 `system_prompt` 一个语义；nil = 不动）。
+	// 未知的能力 id ⇒ 400（写了不生效是最难查的一类问题，不许静默忽略）。
+	Abilities map[string]config.AbilityToggle `json:"abilities,omitempty"`
 	// 把它设为 `agents.json` 的 `default_agent`（新建会话默认用它）。
 	MakeDefault bool `json:"make_default"`
 	// 改 id = **重命名**：连同 `default_agent` 与所有会话的引用一起搬（空串 = 不改）。
@@ -61,6 +67,12 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		ID:           uuid.Must(uuid.NewV7()).String(),
 		Name:         name,
 		SystemPrompt: req.SystemPrompt,
+		Abilities:    req.Abilities,
+	}
+	// 未知的能力 id 写进去只会"配了不生效" ⇒ 当场拒（口径见 `internal/abilities`）
+	if err := abilities.Validate(config.AgentsConfig{Agents: []config.Agent{agent}}); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid", err.Error())
+		return
 	}
 	agents.Agents = append(agents.Agents, agent)
 	if err := s.saveAgents(agents); err != nil {
@@ -139,6 +151,14 @@ func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request) {
 	if req.SystemPrompt != nil {
 		agents.Agents[index].SystemPrompt = *req.SystemPrompt
 	}
+	if req.Abilities != nil {
+		agents.Agents[index].Abilities = req.Abilities
+	}
+	// 未知的能力 id 一律在场拒（`POST` 与 `PATCH` 同一个口径）
+	if err := abilities.Validate(config.AgentsConfig{Agents: []config.Agent{agents.Agents[index]}}); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid", err.Error())
+		return
+	}
 	if req.MakeDefault {
 		agents.DefaultAgent = current
 	}
@@ -205,6 +225,10 @@ func (s *Server) putChatConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg.Chat = chat
+	// 与 `LoadConfig` 同一个兜底：0 会被读成默认值 ⇒ 落盘时就写默认值（免得文件与接口两套数）
+	if cfg.Chat.CompactBlocks == 0 {
+		cfg.Chat.CompactBlocks = config.DefaultCompactBlocks
+	}
 	if err := config.SaveJSON(s.paths.Config("config.json"), cfg); err != nil {
 		writeStoreError(w, err)
 		return

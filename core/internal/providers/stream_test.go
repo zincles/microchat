@@ -198,14 +198,15 @@ func TestEmptyStreamIsAnError(t *testing.T) {
 	}
 }
 
-// 配了 `stream: false` 的渠道：**明说**不支持，别静默按流式发（那会让人对着"时好时坏"猜）。
+// 配了 `stream: false` 的渠道：一轮生成**明说**发不出去，别静默按流式发
+// （那会让人对着"时好时坏"猜）。"整段拿结果"的辅助调用走的是 `Complete`（那一发本来就不流式）。
 func TestNonStreamingIsRefusedExplicitly(t *testing.T) {
 	off := false
 	provider := Provider{ID: "stub", Kind: KindOpenAICompat, BaseURL: "http://127.0.0.1:1/v1", Stream: &off}
 	_, err := NewClient(provider).Chat(context.Background(), provider, Request{
 		Model: "m", SessionID: "s1",
 	}, "", nil)
-	if err == nil || !strings.Contains(err.Error(), "非流式") {
-		t.Fatalf("该明说非流式还没实现：%v", err)
+	if err == nil || !strings.Contains(err.Error(), "stream:false") {
+		t.Fatalf("该明说这家渠道不能用来聊天：%v", err)
 	}
 }

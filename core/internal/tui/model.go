@@ -217,6 +217,12 @@ type stoppedMsg struct {
 	err       error
 }
 
+// compactMsg：一次压缩的**受理**回执（202）—— "压缩中"这件事由后端说了算。
+type compactMsg struct {
+	status CompactStatus
+	err    error
+}
+
 func initialModel(client *Client) model {
 	// **一进来就是空会话**（`selectedID: ""`）：不建库里的行、也不自动跳进旧会话 ——
 	// 界面停在一个待输入的输入框上（用户 2026-09-29 定的口径）。
@@ -363,6 +369,14 @@ func stopTurnCmd(client *Client, sessionID string) tea.Cmd {
 	return func() tea.Msg {
 		stopped, err := client.StopTurn(sessionID)
 		return stoppedMsg{sessionID: sessionID, stopped: stopped, err: err}
+	}
+}
+
+// compactCmd：受理一次压缩（202）。`blocks` = 0 ⇒ 用后端的默认值。
+func compactCmd(client *Client, sessionID string, blocks int) tea.Cmd {
+	return func() tea.Msg {
+		status, err := client.Compact(sessionID, blocks)
+		return compactMsg{status: status, err: err}
 	}
 }
 
@@ -628,6 +642,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, turnTickCmd(message.sessionID)
 
+	case compactMsg:
+		// 压缩是**后台**跑的（受理即回 202）：这里只说"受理了"，跑完的结局在后端的压缩状态里
+		// （`/status` 的 compact 那一档 —— 界面这一份不另存，两处状态必然打架）。
+		if message.err != nil {
+			m = m.fail("压缩没有受理：" + message.err.Error())
+			return m, nil
+		}
+		m.lastAction = fmt.Sprintf("压缩已受理：%d 个块（跑完发一轮或看 /outgoing 就知道效果）", message.status.Blocks)
+		return m, nil
+
 	case stoppedMsg:
 		if message.err != nil {
 			m = m.fail("停止失败：" + message.err.Error())
@@ -840,6 +864,7 @@ func init() {
 		{name: "model", help: "挑渠道 / 模型（有会话就改它，没有则留给下一条）", run: commandModel},
 		{name: "outgoing", help: "看下次真发出去的载荷（哪几条是压缩出来的）", run: commandOutgoing},
 		{name: "state", help: "看当前会话的世界状态", run: commandState},
+		{name: "compact", args: "[N]", help: "把最老的 N 个已闭合块压成摘要（不给 N 用默认值）", run: commandCompact},
 		{name: "stop", help: "打断正在生成的那一轮（幂等）", run: commandStop},
 		{name: "refresh", help: "重新拉会话列表", run: commandRefresh},
 		{name: "help", help: "列命令（含还没搬完的）", run: commandHelp},
@@ -848,7 +873,7 @@ func init() {
 }
 
 // pendingCommands：路由还没搬完的（如实列着，不假装支持）。
-var pendingCommands = []string{"/compact", "/archive"}
+var pendingCommands = []string{"/archive"}
 
 func commandNew(m model, _ []string) (tea.Model, tea.Cmd) {
 	// 规矩：**当前会话为空时 /new 无效**（空会话已经是新的了，再建就是造垃圾行）
@@ -1048,6 +1073,33 @@ func commandState(m model, _ []string) (tea.Model, tea.Cmd) {
 func commandRefresh(m model, _ []string) (tea.Model, tea.Cmd) {
 	m.lastAction = "刷新中…"
 	return m, loadSessions(m.client)
+}
+
+// commandCompact：把最老的 N 个已闭合块压成摘要（**手工按钮的语义**）。
+//
+// 走路由 ⇒ **202 受理**（压缩真调一次上游 + 落库，不在这一趟里等）；底栏报受理结果。
+// 不给 N ⇒ 用后端的默认值（`config.json` 的 `compact_blocks`）。
+// 正在生成时先别压：这一轮的上文已经定稿了，压了也影响不到它（白花一次上游调用）。
+func commandCompact(m model, args []string) (tea.Model, tea.Cmd) {
+	session := m.currentSession()
+	if session == nil {
+		m.lastAction = "当前是空会话，没有可压的"
+		return m, nil
+	}
+	blocks := 0
+	if len(args) > 0 {
+		count, err := strconv.Atoi(args[0])
+		if err != nil || count <= 0 {
+			return m.fail("压缩块数要正整数：" + args[0] + "（不给就按后端的默认值压）"), nil
+		}
+		blocks = count
+	}
+	if m.turn.Busy() && m.turn.sessionID == session.ID {
+		m.lastAction = "这个会话还在生成中：等这一轮跑完再压（这一轮的上文已经定稿了）"
+		return m, nil
+	}
+	m.lastAction = "受理压缩…"
+	return m, compactCmd(m.client, session.ID, blocks)
 }
 
 // commandStop：打断正在生成的那一轮（**幂等** —— 没在跑也 200，界面照实说"什么都没发生"）。

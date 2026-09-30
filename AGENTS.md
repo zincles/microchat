@@ -20,13 +20,13 @@ microchat：轻量 SillyTavern 替代（RPG 向）。三层，边界要清楚：
 | 词 | **只**指什么 | 别叫 |
 |---|---|---|
 | **世界状态（state）** | `<state>` 那套：沿当前路径**现演**的键值（可分组为多张表；删除不留痕迹）+ 三层来源（全局 / 本会话 / 生效） | "变量"；孤立地说"状态" |
-| **能力（Ability）** | **写死在代码里的一段固定流程**（现在只有 `summarize` / `title` 两个）；开关在 Agent 上、流程在代码里。**"对话本身"不是能力** ✗（那是 Agent 存在的方式） | "工具"（撞函数调用）、"子 Agent" |
+| **能力（Ability）** | **写死在代码里的一段固定流程**（**会调模型的 Task 种类**：现在 `title` / `compact` / `judge` 三个）；开关在 Agent 上、流程在代码里。**"对话本身"不是能力** ✗（那是 Agent 存在的方式） | "工具"（撞函数调用）、"子 Agent" |
 | **Agent** | **一份命名的人格 + 一组能力开关**（`agents.json`）：同一个运行时，只是开关不同 | 拿它指"某个能力" |
 | **任务（Task）** | **一次上游请求的全程**（发起 → 收尾 → 可能被取消）：一轮生成、一次压缩、一次刷新模型都挂号。**会调模型的一定是 Task**（**反之不成立** —— `refresh_models` 也是 Task，但它不调模型）。**TaskID 是 UUIDv7，且不进库** | "后台作业"（不都在后台）；拿它指"某个能力" |
 
 三层咬合：**Agent（人格 + 能力开关）→ 一次调用（对话型 / 功能型=能力）→ Task（这次上游请求的全程）**。
-**作业 kind ≠ 能力 id** ✓：`compact` 作业发起 `summarize` 能力，`turn` 作业发起的是**对话型调用**（**不算能力**），
-`refresh_models` 发起 0 次 —— 完整口径见 `DEFINE.md`「任务（Task）与两族调用」。
+**Task 的种类 ≡ 能力 id** ✓（2026-09-30 定，别再分两层）：`title` / `compact` / `judge` 既是能力也是 Task 种类，
+而 `turn` 作业发起的是**对话型调用**（**不算能力**）、`refresh_models` 发起 0 次 —— 完整口径见 `DEFINE.md`「任务（Task）与两族调用」。
 "能不能自主选下一步"**不是** Agent 的判据，将来是某个能力（如 `plan`）的事。
 
 ## 代码布局
@@ -57,11 +57,11 @@ reminder/                  ← 专题参考（`tool-calls.md` 工具调用 / `je
 | `store` | **只有它碰 SQL** | 正文/提示词原样存档；变量不落库；会话是**线性**的（顺序在 `id` 上，没有父指针/leaf）；摘要盖的是**一段**（`begin/end`）；生成中的回复不在库里 |
 | `config` | `config/` 四个文件 | 可缺失；整体重写；密钥不回显 |
 | `registry` | 模型口径 | 身份 `(provider, upstream_id)`；发现与覆盖分列，刷新不动用户列 |
-| `providers` | **只有它碰网络** | 只走成熟库；超时必配 |
+| `providers` | **只有它碰网络** | 只走成熟库；超时必配；**选后端**（哪条渠道来答）也只有这一处 |
 | `state` | **只有它拼出站文本** | 发出去的剔除标签、改注入当前状态；底子分层由提示词来源决定 |
 | `blocks` | 块切分 | 块是推导的、不入库；不许劈开；开着的那块永不压 |
-| `compact` | 摘要唯一入口 | **只往 summaries 插行** |
-| `abilities` | 能力身份（枚举） | 产出不进历史/树/变量；失败不阻塞一轮 ⚠ Go 版尚未建 |
+| `compact` | 摘要唯一入口 | **只往 summaries 插行**；不许覆盖已压缩的区间；失败不阻塞一轮 |
+| `abilities` | 能力身份（枚举） | 产出不进历史/树/变量；失败不阻塞一轮；**缺条目 = 默认全开** |
 | `template` | `{{…}}` | 白名单 = 枚举；只扫一遍；会话 Agent 的提示词永不替换 |
 | `chat` | 一轮生成怎么跑 | 拿到整段才 INSERT |
 | `turn` | 这一轮的流细节 | 增量什么都不算；游标读不消费 |
@@ -69,9 +69,10 @@ reminder/                  ← 专题参考（`tool-calls.md` 工具调用 / `je
 | `server` | **只有它碰 HTTP** | 错误体固定；只编排不含业务 |
 
 依赖方向单向：`server → chat/compact/abilities → state（含 statelang）/blocks → registry/providers/config → store → model`。
+（`compact` 另要 `abilities` 与 `providers` —— 校验能力开关、借同一套真发；`blocks` 只依赖 `model`。）
 `turn`/`task` 是横切（谁都能挂号，不被依赖）。**Go 用编译器强制这张图**。
 
-⚠ **表里这几个模块 Go 版还没建**：`compact` / `blocks` / `template` / `abilities`（`chat` 已建 ✓）
+⚠ **表里还没建的只剩 `template`**（`{{…}}` 那套）：`compact` / `blocks` / `abilities` 都已落地 ✓（`chat` 早就有了 ✓）。
 （其余都在 ✓）—— 所以要"强制这张图"目前只对已达成的部分成立 ✓，别拿这张地图当现有代码读。
 
 ## 不变量（破坏了会静默出错）
@@ -160,11 +161,15 @@ delete(AA)           # 删除
 
 **`data/config/`** 里是**严格 JSON**（程序整体重写），都可缺失。文件名一律 `.json`：
 
-- `config.json` — `{ "server": { "port": 8787, "auth_token": "可选" }, "defaults": { "provider": "dummy", "model": "dummy", "agent": "default" }, "chat": { "model_context_tokens": 131072, "compact_trigger_tokens": null } }`
+- `config.json` — `{ "server": { "port": 8787, "auth_token": "可选" }, "defaults": { "provider": "dummy", "model": "dummy", "agent": "default" }, "chat": { "model_context_tokens": 131072, "compact_trigger_tokens": null, "compact_blocks": 10 } }`（`compact_blocks` = 压缩不给块数时压几个**对话块**）
 - `providers.json` — `{ "providers": [ { "id": "dummy", "kind": "dummy" }, { "id": "openrouter", "base_url": "https://openrouter.ai/api/v1", "headers": {…}, "api_key": "sk-…", "timeouts": { "connect_seconds": 15, "total_seconds": 300 } } ] }`
   **密钥就写在这一条里**（空串 = 没配）：整个 `config/` 在忽略范围内；接口一律不回显（只回 `has_key`），调试页读它时先打码；写回权限收紧到 0600。
 - `agents.json` — `{ "default_agent": "跑团", "agents": [ { "id": "跑团", "name": "跑团主持人", "system_prompt": "你是跑团主持人。<state>季节 = 初冬</state>" } ] }`
-- `abilities.json` — ⚠ **能力那一块已砍待重做**，这个文件暂时是空诺；而且按 `DEFINE.md` 的口径**最终不要这个文件**（开关并进 `agents.json` 每个 agent 上的 `abilities`）。旧格式留档，但**别拿它当能力 id 的样例** ✗：能力 id 是 `summarize` / `title`，`compact` 是**作业**（Task kind）、不是能力 —— 见 `DEFINE.md`「任务（Task）与两族调用」。
+  每个 agent 上可以带**能力开关** `abilities`（键 = 能力 id：`title` / `compact` / `judge`；**未知的 id 在写入与启动读取时都报错**，不静默忽略）：
+  `"abilities": { "compact": { "enabled": false, "provider": "deepseek", "model": "deepseek-chat", "prompt": "…" } }`
+  —— **缺字段 = 默认全开** ✓（不带 `abilities` 的 agent 三个能力都是开着的，现有文件一个字都不用改）；
+  `provider` / `model` 留空 = 用**会话自己的**；`prompt` 留空 = 用代码里的默认模板；`enabled: false` ⇒ 调用方**明确拒绝**执行那一次（不是静默降级）。
+  **没有 `abilities.json`** ✗（口子就在 agent 上 —— 于是"能力只能覆盖、不能造"自然成立）。
 
 ## HTTP API（客户端契约）
 
@@ -183,7 +188,8 @@ delete(AA)           # 删除
 - 无用：`GET /debug/state`、`GET /debug/file/{name}`、`DELETE /providers/{provider_id}/models`、`GET /sessions/{session_id}/export`
   （理由：后端自述会说谎、配置文件原文不该给远程客户端、上游模型列表本就自动清理、导出该由 Agent 卡带承担）
 - 可选（**待重做**，不做兼容）：`GET /tasks`、`POST /models/probe`、`POST /sessions/{session_id}/archive`、
-  `GET /sessions/{session_id}/summaries`、`GET/PUT /abilities`、`POST /sessions/{session_id}/compact`
+  `GET /sessions/{session_id}/summaries`、`GET/PUT /abilities`
+  （`POST /sessions/{session_id}/compact` **已经重做落地** ✓ —— 见下面的路由表）
 - **`POST /sessions/{session_id}/fork` 已彻底作废** ✗（不是"待重做"）：线性会话里分岔就是 **Copy** ✓（见上表）
 - **不要照旧版补回来** ✗ —— 旧版是参照，不是目标；要加先改这张表。
 
@@ -207,6 +213,7 @@ delete(AA)           # 删除
 | GET | `/sessions/{session_id}/status` | — | `TurnStatus` | `idle`/`pending`/`streaming`/`error` + `message_id` + `elapsed_ms` + `chars` + `thinking_chars` + `error` |
 | GET | `/sessions/{session_id}/turn/text?from=N&think_from=M` | — | `StreamSlice` | 流式增量的**游标读**（正文与思考各一条游标，`from` = 第几个字符）：只服务动画 |
 | POST | `/sessions/{session_id}/stop` | — | `{"stopped": bool}` | **幂等**：没在跑也 200（`false`）|
+| POST | `/sessions/{session_id}/compact` | `CompactReq` | `CompactStatus` · **202** | **压缩**：`{"blocks": N}` 或 `{"begin_message_id":…,"end_message_id":…}`（两个都给 ⇒ 400；都不给 ⇒ 用 `chat.compact_blocks`）⇒ 后台跑完一次压缩；**同一个会话同时只允许一次**（在跑 ⇒ 409）。跑完的结局在 `GET .../status` 的 `compact` 那一档（`running`/`done`/`error` + 原因）|
 
 同一会话在跑时再发 → **409**。`TurnAccepted` = `{user?, backend, turn}`：`turn.message_id` 是**这条回复的 id**（受理时定好，那会儿还没进库）。
 
@@ -272,17 +279,25 @@ delete(AA)           # 删除
 
 **任务（Task）**：**一次上游请求的全程**（形状、五个状态、署名、落库前验证清单见 `DEFINE.md`「任务（Task）与两族调用」）。
 一个登记表 —— 前台一轮生成、一次压缩、一次刷新模型都挂号；**会调模型的 Task 必填会话 id**（`Begin()` 当场断言）；
-兜底靠每个任务 goroutine 第一行的 `defer guard.Finish(...)`：**忘了收或 panic 记成"中断"**（Go 没有 Drop）⇒ 绝不留僵尸条目。
-三份状态**各管一段、不许互为镜像**：`task` = 身份 + 生死；`turn` = 流细节（几个字、取消）；`compact` = 压缩自己的细节。
+兜底靠每个任务 goroutine 第一行的 `defer guard.Interrupted()`：**忘了收或 panic 记成"中断"**（Go 没有 Drop）⇒ 绝不留僵尸条目。
+三份状态**各管一段、不许互为镜像**：`task` = 身份 + 生死；`turn` = 流细节（几个字、取消）+ 压缩那一档；`compact` = 压缩自己的细节。
 
-**压缩**：机制与策略两层。机制 = `summarize_span`（给它一段，两端用 id 指、**可以是 message 也可以是 summary** ⇒ 二次压缩就是喂 summary id）→ 拼材料 → 叫能力 → 过闸（剔 `<state>`）→ 落库（单事务）。策略 = "从第一条没被覆盖的消息起，取最老的 N 个**已闭合块**"（手动按钮的语义）。
-谁也**不许**绕过这里自己拼摘要请求。不持锁跨 await：取料在锁里、调用在锁外、落库再进锁。
+**压缩**（`internal/compact`，已落地 ✓；路由 `POST /sessions/{session_id}/compact` ⇒ **202**）：机制与策略两层。
+- **机制** = 给它一段（两端用 **message id** 指）→ 拼材料（每一步正文过 `statelang.Scan(...).Cleaned`，`<state>` 块剔掉）→ 叫 `compact` 能力（**非流式**一次调用，骑本会话 id、`cache_retention: none`）→ 过五条验证 → 单事务落库。
+  五条验证：① 剔 `<state>`；② 非空（剔完是空的 ⇒ **不写**，宁可什么都没有）；③ 区间自洽（两端在本会话、begin ≤ end、两端都还在）；④ **不许覆盖已压缩的区间**（`store.RecordSummary` 在事务里再核一遍）；⑤ 落库一并写 `prompt_version` 与 `usage`。
+- **策略** = "从第一条没被覆盖的消息起，取最老的 N 个**已闭合块**"（手动按钮的语义）；**最后那个开着的块永不压**；块是推导的、不入库（`internal/blocks`）。
+- **区间入口**（直接给 `begin_message_id` + `end_message_id`）要**整块对齐**（块不被劈开），且区间里含已压缩的文本 ⇒ **报错**。
+- 落库 = `INSERT INTO summaries`（带区间 / `source_ids` / `blocks` / `tokens` / `provider` / `model` / `prompt_version` / `usage` / `dirty=0`）+ 把这一段消息的 `summary_id` 指过去，**同一事务**；**绝不插/改/删 `messages` 的其它列**（正文是存档）。
+- 谁也**不许**绕过这里自己拼摘要请求。不持锁跨 await：取料在锁里、调用在锁外、落库再进锁。
+- **失败不阻塞**：失败就把这一次报失败（带原因），会话一个字节都不动；**重试由调用方决定**，这里绝不重试。
+- **还没做** ✗：二次压缩（金字塔：喂 summary id、写 `parent_summary_id`）、自动触发（`compact_trigger_tokens` 只算了不算）、按范围的路由（`GET .../summaries`）。
 
-**能力**：身份写死在代码里（枚举变体），**开关 + 可选覆盖写在 `agents.json` 每个 agent 的 `abilities` 上**（不另开 `abilities.json`），只能**覆盖**模板/渠道/模型，不能造新的。
-与会话 Agent 的三条硬边界：① 产出永不进历史/树/变量（落库由调用方决定，如摘要走 `record_summary`）；② 提示词永不进会话的系统提示词；③ **失败不阻塞任何一轮**。
-`prompt_version` = 生效模板的 64 位哈希（改一个字就变，别手写版本号）。
-**Agent 的导出导入（卡带）**：导出**默认不带密钥**（`api_key` 置空，要带得显式勾）；**导入不需要「重算世界状态」**—— 变量不落库、每轮现演，换了底子状态自动就是新样子。要打包的就是 `agents.json`（能力开关就在它里面 —— **没有 `abilities.json`** ✗）。
-**占位符**（`{{…}}`）：白名单 = 枚举（`{{system_time}}` / `{{state_before}}` / `{{state_after}}` / `{{range}}` / `{{blocks}}`）；**不认识的 `{{foo}}` 原样留着**；**只扫一遍**（替换进去的值不再当模板扫）；**会话 Agent 的提示词永不替换**（它一变，前缀缓存每轮全废）。
+**能力**（`internal/abilities`）：身份写死在代码里（`title` / `compact` / `judge` —— **枚举就是全部**），**开关 + 可选覆盖写在 `agents.json` 每个 agent 的 `abilities` 上**（不另开 `abilities.json`），只能**覆盖**模板/渠道/模型，不能造新的；**未知的 id 在写入与启动读取时都报错**。
+- `abilities.Resolve(agent, id)` 是**唯一**解析处：缺条目 = **默认全开**；`provider`/`model` 空 = 用会话的；`enabled: false` ⇒ 调用方**明确拒绝**（不静默降级）。
+- 与会话 Agent 的三条硬边界：① 产出永不进历史/树/变量（落库由调用方决定，如摘要走 `store.RecordSummary`）；② 提示词永不进会话的系统提示词；③ **失败不阻塞任何一轮**。
+- `prompt_version` = `sha256(生效模板)` 十六进制前 8 位（改一个字就变，别手写版本号；列是 INTEGER ⇒ 取 32 位那一截）。
+- **Agent 的导出导入（卡带）**：导出**默认不带密钥**（`api_key` 置空，要带得显式勾）；**导入不需要「重算世界状态」**—— 变量不落库、每轮现演，换了底子状态自动就是新样子。要打包的就是 `agents.json`（能力开关就在它里面 —— **没有 `abilities.json`** ✗）。
+- **占位符**（`{{…}}`）：白名单 = 枚举（`{{system_time}}` / `{{state_before}}` / `{{state_after}}` / `{{range}}` / `{{blocks}}`）；**不认识的 `{{foo}}` 原样留着**；**只扫一遍**（替换进去的值不再当模板扫）；**会话 Agent 的提示词永不替换**（它一变，前缀缓存每轮全废）。（`template` 模块本身还没建 ✗。）
 
 ## 数据模型
 
@@ -314,7 +329,7 @@ delete(AA)           # 删除
 
 **索引/外键/运行时**：索引 `messages_by_session(session_id, id)`（**顺序就是 `id`**，取"最新一条"也走它）、`messages(summary_id)`、`summaries(session_id/parent_summary_id)`。外键**只有两条**（`messages` 的两个）：`session_id` ⇒ CASCADE、`summary_id` ⇒ SET NULL；`begin/end_message_id` 与 `agent_id`/`provider` 是故意不加约束的（`begin/end` 的失效由 `store.DeletionPlan` 一份计算负责）。迁移由 `PRAGMA user_version` 驱动（当前 **只有 001** —— 开发阶段改形状就改它、删库重来，**不许追加** 002）；`foreign_keys=ON`、`journal_mode=WAL`；写入由一把锁串行化。
 
-## 摘要 / 压缩的设计（**设计已定；压缩本身还没写**：没有 compact 模块、没有路由；`summaries` 表与**区间**已经有人用 —— 装配按区间跳、Copy 复制它、删除级联按它判定）
+## 摘要 / 压缩的设计（**压缩已落地** ✓：`internal/compact` + `internal/blocks` + `POST /sessions/{session_id}/compact`；`summaries` 表与**区间**早就在用 —— 装配按区间跳、Copy 复制它、删除级联按它判定）
 
 - **摘要不是"消息的节点"**：不往 `messages` 插行；**压缩只往 `summaries` 插一行**，绝不插/改/删 `messages`（删除那条路是另一回事：级联会删摘要，见不变量 4）。
 - **盖的是哪一段：`begin_message_id` / `end_message_id`**（创建时写一次）⇒ 装配/级联都是 **O(1) 查区间**：不"数过去"，也不需要"父的孩子一个不缺"那道闸（线性会话里区间**就是**覆盖范围本身）。两端可空（老数据）⇒ 那时逐条走原文（宁可细，不许漏）。
@@ -339,16 +354,16 @@ delete(AA)           # 删除
 - **MASK（术语）**：有摘要覆盖的那一段，装配时**不发明文**、只发摘要的正文 —— 存放处一个字节都不动，被"遮掉"的只是**这一次请求**。
 - **只有 Compact，没有"丢"**（铁律）：不存在"少发一段没人代表的内容"。超预算 ⇒ **先压再发**；真压不动 ⇒ **报错原路返回**，不做静默补救。
 - **粒度 = 对话块**：在 `assistant → user` 交界处切（`U1 A1 | U2 U3 A3 | U4 A4 A5`）。① 块绝不被劈开；② **最后那个开着的块永不压**；③ 章 = 凑够 N 个块（只数块，不按 token）；④ 块是**推导**的、不入库（需要指一个块时用两端消息 id）。
-- **摘要里不存状态**：状态是**端点**的属性，不是段的属性 —— 存进去就是第二个真相来源，改一条旧消息它就过期。提示词里只**附**一份程序算好的状态（算到区间末），标明「程序事实，仅供参考，不要写进梗概」。
+- **摘要里不存状态**：状态是**端点**的属性，不是段的属性 —— 存进去就是第二个真相来源，改一条旧消息它就过期。压缩的模板里也就写死这一句：「不要把世界状态写进梗概」（`DefaultTemplate`）；上游万一还是写了 `<state>`，落库前会被 `statelang.Scan(...).Cleaned` **剔掉**。
 - **真需要快照时它得是独立系统**（`state_snapshots`：从第一条推起、能接着上一个快照往后推进；覆盖的消息一经编辑即失效）。**现在不做** —— 现演的代价足够低。
-- **参数**：`compact_blocks = 10`（单位是块）；预算 = 模型上下文 − 输出预留（缺省 4096）；触发阈值用户设（缺省 = 预算）；停手线 = 阈值 × 0.8；终保护区 = 最近约 10k token。
+- **参数**：`compact_blocks = 10`（单位是块；`config.json` 的 `chat.compact_blocks`，不给块数时用它）；预算 = 模型上下文 − 输出预留（缺省 4096）；触发阈值用户设（缺省 = 预算）；停手线 = 阈值 × 0.8；终保护区 = 最近约 10k token。
 - **剪枝**（未做；**线性 + 区间摘要之后前提变了 ⇒ 要重做设计**）：早先的形态是"压缩即定稿 ⇒ 只留当前路径上的孩子、其余子树删掉"，
   但**删消息的级联会把盖住它的摘要一起作废** ⇒ "压完就删旧消息"等于把刚落的摘要也删了 ✗。
   要真做，得先想清"删了之后谁来代表那段"（现在只有 Compact，没有"丢"）⇒ **先当没这回事**。三条旧条件里仍然成立的两条：
   ① **同一事务**；② **动手前先导出** `data/archive/*.json`；③ 报"剪掉 N 条（已导出）"，**不许静默**。
-- **次序**（✅ = 旧版做到过；**Go 版现在一律 ✗**）：P1 预算 + 占用 ✗ · P1.5 导出/归档 ✗ ·
-  P2 摘要 ✗ · P3 金字塔 ✗ · 清原文 ✗ —— 只有装**配侧按区间跳**（走 `summary_id` + `begin/end`）与
-  **删除 / Copy 时对摘要的处理**已经在 Go 里跑 ✓。
+- **次序**（✅ = 已经做到；**其余一律 ✗**）：P1 预算 + 占用 ✓ · P1.5 导出/归档 ✗ ·
+  P2 摘要 ✓（压缩：手动、按块；**自动触发还 ✗**）· P3 金字塔 ✗（二次压缩还 ✗ —— 区间入口现在要求不含已压缩文本）· 清原文 ✗；
+  另外**装配侧按区间跳** ✓ 与**删除 / Copy 时对摘要的处理** ✓ 早就在跑。
 
 ## 与上游通信
 
@@ -580,8 +595,8 @@ prompt caching**"）。**不要为能力造子 session id**：网关的会话 id
 - **卡片脚注**：`3.2s · 上行 1654 tok（缓存 1408 tok · 85%）· 下行 62 tok（思考 32 tok，含在内）`——只在有数据时显示。**单位是 token**（上游 `usage` 报的）；生成中气泡上「思考中… N 字」是**字符数**（流式帧里没有 token 数）——两处别混。`reasoning_tokens` 是 `completion_tokens` 的子集，不是另加。
 - **思考**默认折叠成「思考（2.1s）」——放的是**思考用时**（受理 → 第一段正文），不是字数。
 - 底部一排：`归档`、`压缩 [N] 个块` + `开始`（202 受理，底栏报结果）、`复制会话`。
-  ⚠ `归档`（剪枝前置）与 `压缩` **还没做** ⇒ 那两个按钮先不要做；**`复制会话`（Copy）已经能用** ✓；
-  **`复制会话` 的路由已经有了** ✓（`POST /sessions/{session_id}/copy`）。
+  路由都在了 ✓（压缩 = `POST /sessions/{session_id}/compact`；复制会话 = `.../copy`）；⚠ **`归档`（剪枝前置）还没做** ⇒ 那个按钮先不要做。
+  TUI 里对应的命令是 `/compact [N]`（不给 N 用 `chat.compact_blocks`）、`/copy`。
 - 设置六页：**连接 / Agent / 能力 / 模型与渠道 / 前端设置 / 关于**。底栏常驻"**已连接后端 vX**"，后面跟 `·` 和最近一次动作的结果——两者**互不顶替**；刷新失败要带状态码与 `code`。
   「模型与渠道」页：顶部**服务端上下文口径**（`模型上下文` 兜底 + `摘要触发阈值`）；每个渠道一行（`获取模型` / `删除全部模型` / `编辑`）；下面逐个模型列上下文，可填**覆盖值**（留空 = 清掉）。优先顺序：**覆盖 > 上游发现 > 配置兜底**，只许一处解析。
 - 渠道与模型是**一个下拉**（`渠道 / 模型`，`GET /models` 拍平给的就是这个形状）；provider 的 `name` 缺省回退 `id`。
@@ -597,8 +612,8 @@ prompt caching**"）。**不要为能力造子 session id**：网关的会话 id
   · TUI 模式下日志落到 `data/microchat.log`（别糊在界面上）；
   · 退出用 **`/quit` 或 ctrl+c** —— **没有裸 `q`**（会和打字打架）。
 - 跑法：`go -C core run .`（一条命令跑起来；要二进制就 `go -C core build -o ../microchat .`）。**TUI 内的命令**照 Pi：`/command`。**只放已经有路由的命令**，没搬完的在 `/help` 里如实列出来
-  （现在能用的：`/help` `/new` `/delete` `/cut` `/copy` `/resume` `/model` `/outgoing` `/state` `/refresh` `/quit`；
-  还没做的：`/compact` `/archive` —— `/fork`／`/tasks`／`/probe` 那几条**已砍**，不会再有
+  （现在能用的：`/help` `/new` `/delete` `/cut` `/copy` `/resume` `/model` `/outgoing` `/state` `/compact` `/stop` `/refresh` `/quit`；
+  还没做的：`/archive` —— `/fork`／`/tasks`／`/probe` 那几条**已砍**，不会再有
   （`/fork` 的位置由 `/copy` 接管）。
   `/delete`（删整条会话）与 `/cut`（删一条及之后）都**不可逆** ⇒ 两个都先摊开、等 `回车 / y` 点头才动手；
   `/cut` 的摊开内容来自 `GET .../deletion-preview`（后端那份计算），执行时带回 `last_deleted_message_id` 核对）。
@@ -635,6 +650,8 @@ prompt caching**"）。**不要为能力造子 session id**：网关的会话 id
 - **删消息只删后缀 ⇒ 不留洞**：所以不需要"退 leaf"这套东西（树那会儿要算"退到还活着的最新兄弟"，很绕且踩过）。
   想保住后面的内容 ⇒ **先 Copy 一条会话**再在原会话上删（线性会话里这是唯一的"从这里重新开始"）。
 - **配置文件里没有注释**：程序整体重写，JSONC 会给人"写了也会丢"的假象。严格 JSON，写坏了报 `Expecting property name…`。
+- **手写配置里 `bool` 的零值会撒谎**：`abilities` 的 `enabled` 若声明成 `bool`，"只填了 `provider`、没写 `enabled`"会**静默变成"关掉"**（Go 的零值就是 `false`）——
+  而这一格的口径是"**缺字段 = 默认全开**" ⇒ 类型必须是 `*bool`（`nil` = 没写）。同一个坑在"三态"字段上一再出现（`session_header` / `reasoning_field` 也是 `*string`：空串与"没写"是两件事）。
 - **批量改代码时逐文件落盘**：把 `write` 放在脚本末尾，中途任何断言失败都会让整批改动一起丢。
 - **Go 的 `encoding/json` 默认把 `<` `>` `&` 转义成 `\u003c`**（本项目满地 LaTeX）⇒ 关掉 `SetEscapeHTML`；它的 `Encoder.Encode` 还会补一个 `\n`（axum 不补）⇒ 对账要连字节一起比。
 - **纯结构之间手搓转换 = 字段静默丢失**：`config.Provider` → `providers.Provider` 字段名一样、类型不同，

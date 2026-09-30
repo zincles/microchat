@@ -3,9 +3,120 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"strconv"
+	"strings"
 
 	"microchat/internal/model"
 )
+
+// RecordSummary：**压缩的落库口** —— 一个事务里做两件事：
+//
+//	① 插一行摘要（`insertSummary`）；
+//	② 把**这一段消息**的 `summary_id` 指过去（`messages` 上唯一允许被压缩改的那一格）。
+//
+// **绝不插 / 改 / 删 `messages` 的其它列** —— 正文是存档（`AGENTS.md` 的第一条不变量）。
+//
+// 两处重核（调用上游那段时间里别人可能动过库）：
+//   - `messageIDs` 必须**一条不少地**属于这条会话（少一条 = 那段被删/改了，区间不再自洽）；
+//   - 那些消息必须**都还没被覆盖**（`summary_id IS NULL`）⇒ 谁先到谁算，后到的**报错**
+//     （"不许覆盖已压缩的区间"这条闸在这里落地，不在调用点）。
+//
+// 顺序：先插摘要（`messages.summary_id` 的外键指着它），再更新指针。
+//
+// `sessions.updated_at` **不动**：压的是派生数据，对话本身没变（列表排序该按"最后一次说话"）。
+func (s *Store) RecordSummary(summary model.Summary, messageIDs []string) error {
+	if len(messageIDs) == 0 {
+		return InvalidError("压缩要盖住至少一条消息（空区间不落库）")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	covered, err := coveredCount(tx, summary.SessionID, messageIDs)
+	if err != nil {
+		return err
+	}
+	if covered != len(messageIDs) {
+		return InvalidError("这段区间里的消息已经不是原来那几条了（被删过 / 换过会话）：重新取一次")
+	}
+	already, err := alreadyCovered(tx, summary.SessionID, messageIDs)
+	if err != nil {
+		return err
+	}
+	if already != 0 {
+		return InvalidError("这段区间里已经有消息被摘要盖住了：压缩不许覆盖已压缩的区间")
+	}
+	if err := insertSummary(tx, summary); err != nil {
+		return err
+	}
+	updated, err := updateMessageSummary(tx, summary.SessionID, summary.ID, messageIDs)
+	if err != nil {
+		return err
+	}
+	if updated != len(messageIDs) {
+		return InvalidError("这段区间里的消息已经不是原来那几条了（被删过 / 换过会话）：重新取一次")
+	}
+	return tx.Commit()
+}
+
+// coveredCount：这批 id 里**属于这条会话**的有几条（少一条都说明区间变了）。
+// **调用方持事务**。
+func coveredCount(tx *sql.Tx, sessionID string, messageIDs []string) (int, error) {
+	query, args := idBatchQuery("SELECT COUNT(*) FROM messages WHERE session_id = ?1 AND id IN (",
+		sessionID, messageIDs)
+	var count int
+	if err := tx.QueryRow(query, args...).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// alreadyCovered：这批 id 里**已经被摘要盖住**的有几条（一个都不许有）。**调用方持事务**。
+func alreadyCovered(tx *sql.Tx, sessionID string, messageIDs []string) (int, error) {
+	query, args := idBatchQuery(
+		"SELECT COUNT(*) FROM messages WHERE session_id = ?1 AND summary_id IS NOT NULL AND id IN (",
+		sessionID, messageIDs)
+	var count int
+	if err := tx.QueryRow(query, args...).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// updateMessageSummary：把这一段消息的 `summary_id` 指过去。**调用方持事务**。
+func updateMessageSummary(tx *sql.Tx, sessionID, summaryID string, messageIDs []string) (int, error) {
+	marks := make([]string, len(messageIDs))
+	args := make([]any, 0, len(messageIDs)+2)
+	args = append(args, summaryID, sessionID) // ?1 = summary_id，?2 = session_id
+	for index, id := range messageIDs {
+		marks[index] = "?" + strconv.Itoa(index+3)
+		args = append(args, id)
+	}
+	result, err := tx.Exec("UPDATE messages SET summary_id = ?1 WHERE session_id = ?2 AND id IN ("+
+		strings.Join(marks, ",")+")", args...)
+	if err != nil {
+		return 0, err
+	}
+	affected, err := result.RowsAffected()
+	return int(affected), err
+}
+
+// idBatchQuery：拼一条 `… IN (?2, ?3, …)` 的查询（`?1` 留给调用方第一个参数）。
+func idBatchQuery(prefix, sessionID string, ids []string) (string, []any) {
+	marks := make([]string, len(ids))
+	args := make([]any, 0, len(ids)+1)
+	args = append(args, sessionID)
+	for index, id := range ids {
+		marks[index] = "?" + strconv.Itoa(index+2)
+		args = append(args, id)
+	}
+	return prefix + strings.Join(marks, ",") + ")", args
+}
 
 // markSummaryChainDirty：把"覆盖了这条消息"的摘要**及其各级祖先**标为过期。
 // **在调用方的事务里跑**（递归 CTE 一趟上去：messages.summary_id → summaries.parent_summary_id → …）。

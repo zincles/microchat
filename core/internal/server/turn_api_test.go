@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"microchat/internal/chat"
+	"microchat/internal/compact"
 	"microchat/internal/config"
 	"microchat/internal/model"
 	"microchat/internal/store"
@@ -14,9 +15,10 @@ import (
 	"microchat/internal/turn"
 )
 
-// newTestServer：一台测试用服务（进程内的 turn / task 登记表各一份，走真的 chat 那一层）。
+// newTestServer：一台测试用服务（进程内的 turn / task 登记表各一份，走真的 chat / compact 两层）。
 func newTestServer(st *store.Store, cfg config.Config, paths config.Paths) *Server {
-	return New(st, cfg, paths, chat.New(st, paths, turn.NewRegistry(), task.NewRegistry()))
+	turns, tasks := turn.NewRegistry(), task.NewRegistry()
+	return New(st, cfg, paths, chat.New(st, paths, turns, tasks), compact.New(st, paths, turns, tasks))
 }
 
 // dummySandbox：一条会话 + dummy 渠道（**确定性、不联网** —— 验收与测试都靠它）。

@@ -315,6 +315,30 @@ func (c *Client) StopTurn(sessionID string) (bool, error) {
 	return result.Stopped, err
 }
 
+// CompactStatus：一次压缩的对外状态（`POST .../compact` 的 **202** 回执；
+// 跑完的结局落在 `/status` 的 `compact` 那一档里，同一个形状）。
+type CompactStatus struct {
+	State     string  `json:"state"` // running / done / error
+	Blocks    int     `json:"blocks"`
+	Compacted int     `json:"compacted"`
+	SummaryID *string `json:"summary_id,omitempty"`
+	Error     string  `json:"error,omitempty"`
+	AtMS      int64   `json:"at_ms"`
+}
+
+// Compact：受理一次压缩（202）。**不给 N 就用后端的默认值**（`config.json` 的 `compact_blocks`）。
+//
+// 它只回"受理了"——压缩在后台跑（调一次上游 + 落库）。跑完的结局在 `/status` 的压缩那一档。
+func (c *Client) Compact(sessionID string, blocks int) (CompactStatus, error) {
+	body := map[string]any{}
+	if blocks > 0 {
+		body["blocks"] = blocks
+	}
+	var status CompactStatus
+	err := c.post("/sessions/"+sessionID+"/compact", body, &status)
+	return status, err
+}
+
 // State：世界状态的快照（调试面板要看它）。
 type State struct {
 	Effective map[string]string            `json:"effective"`

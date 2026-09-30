@@ -13,23 +13,25 @@ import (
 	"strings"
 
 	"microchat/internal/chat"
+	"microchat/internal/compact"
 	"microchat/internal/config"
 	"microchat/internal/model"
 	"microchat/internal/store"
 )
 
 type Server struct {
-	store  *store.Store
-	config config.Config
-	paths  config.Paths
-	chat   *chat.Service
-	mux    *http.ServeMux
+	store   *store.Store
+	config  config.Config
+	paths   config.Paths
+	chat    *chat.Service
+	compact *compact.Service
+	mux     *http.ServeMux
 }
 
-// New：把"一轮生成"(chat)那一层注进来 —— 状态、发消息、停止这些都在它那儿
+// New：把"一轮生成"(chat) 与"压缩"(compact) 两层注进来 —— 状态、发消息、停止、压缩都在它们那儿
 // （server 只编排：解析请求、定错误码、写响应）。
-func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *chat.Service) *Server {
-	s := &Server{store: st, config: cfg, paths: paths, chat: chatService, mux: http.NewServeMux()}
+func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *chat.Service, compactService *compact.Service) *Server {
+	s := &Server{store: st, config: cfg, paths: paths, chat: chatService, compact: compactService, mux: http.NewServeMux()}
 	// Go 1.22+ 的 ServeMux 原生支持 `GET /x/{id}` 这种模式 —— 连路由库都不需要。
 	s.mux.HandleFunc("GET /api/v1/health", s.health)
 	s.mux.HandleFunc("GET /api/v1/debug/last-payload", s.lastPayload)
@@ -71,6 +73,8 @@ func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *ch
 	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/turn/text", s.turnText)
 	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/stop", s.stopTurn)
 	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/context", s.sessionContext)
+	// 压缩：把最老的 N 个已闭合块收成一条摘要（**202** 受理；跑完的结局在 /status 的 compact 那一档）
+	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/compact", s.compactSession)
 	return s
 }
 

@@ -44,42 +44,18 @@ const (
 	fallbackReply = "未配置模型"
 )
 
-// backend：这一轮由谁来答。
-type backend struct {
-	// Name：回执里那个 `backend`（`dummy` / `fallback` / 渠道的 kind）。
-	Name     string
-	Provider config.Provider
-	// Local：本地假上游要吐的那句话（非空 ⇒ 不联网）。
-	Local string
-}
-
-// storesReasoning：这个渠道要不要把"思考"留档（`providers.json` 的 `store_reasoning`，缺省要）。
+// localReply：这一发要不要走本地假上游、吐哪句话（非空 ⇒ 不联网）。
 //
-// 默认为"要"：留档是保守选择，丢了才是真丢。
-func (b backend) storesReasoning() bool {
-	return b.Provider.StoreReasoning == nil || *b.Provider.StoreReasoning
-}
-
-// selectBackend：选后端 —— **规则只有这一处**（照旧版）：
-//
-//  1. provider 不在 `providers.json` 里（没配 / 被删）⇒ `fallback`（回一句"未配置模型"）；
-//  2. provider 是 `dummy` 类型 ⇒ `dummy`（它就是为"显式选中"而存在的）；
-//  3. 模型名为空 ⇒ `fallback`；否则真上游（`Name` 用渠道的 kind）。
-//
-// 必须检查 provider 是否存在：`providers.json` 是手写文件，删掉一个渠道后历史会话里仍留着它的名字
-// —— 那种情况该回兜底话术，而不是去打一个不存在的上游。
-func selectBackend(session model.Session, providersConfig config.ProvidersConfig) backend {
-	provider, found := providersConfig.Get(session.Provider)
-	if !found {
-		return backend{Name: "fallback", Local: fallbackReply}
+// 选后端（哪条渠道来答）**规则只有一处**：`providers.SelectBackend`；这里只把它的结论
+// 翻成本地话术 —— 真上游的 `Name` 是渠道的 kind，翻不出话术（回空串 = 真发）。
+func localReply(chosen providers.Backend) string {
+	switch chosen.Name {
+	case providers.BackendDummy:
+		return dummyReply
+	case providers.BackendFallback:
+		return fallbackReply
 	}
-	if providers.Kind(provider.Kind) == providers.KindDummy {
-		return backend{Name: "dummy", Provider: provider, Local: dummyReply}
-	}
-	if strings.TrimSpace(session.Model) == "" {
-		return backend{Name: "fallback", Local: fallbackReply}
-	}
-	return backend{Name: provider.Kind, Provider: provider}
+	return ""
 }
 
 // Accepted：受理回执（`POST /sessions/{session_id}/messages` 的 **202** 体）。
@@ -130,7 +106,7 @@ func (s *Service) Accept(session model.Session, content string) (Accepted, error
 		s.Turns.Stop(session.ID)
 		return Accepted{}, err
 	}
-	chosen := selectBackend(session, providersConfig)
+	chosen := providers.SelectBackend(session.Provider, session.Model, providersConfig)
 	go s.run(session, replyID, token, chosen, outgoing, reasoningByID, time.Now())
 	return Accepted{
 		User:    &user,
@@ -140,7 +116,7 @@ func (s *Service) Accept(session model.Session, content string) (Accepted, error
 }
 
 // run：后台那半程 —— **整段拿到才 INSERT**（用受理时定好的 id）。
-func (s *Service) run(session model.Session, replyID string, token uint64, chosen backend,
+func (s *Service) run(session model.Session, replyID string, token uint64, chosen providers.Backend,
 	outgoing []state.Outgoing, reasoningByID map[string]string, started time.Time) {
 	sessionID := session.ID
 	// 挂号：前台这一轮也是任务（会调模型的作业必带会话 id ⇒ Begin 自己会断言）
@@ -158,7 +134,7 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 		Model:     session.Model,
 		Messages:  wireMessages(outgoing, reasoningByID),
 		SessionID: sessionID,
-	}, chosen.Local, func(delta providers.Delta) {
+	}, localReply(chosen), func(delta providers.Delta) {
 		if delta.Text != "" {
 			if firstTextAt.IsZero() {
 				firstTextAt = time.Now()
@@ -198,14 +174,14 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 //
 // 思考**留不留档**由渠道的 `store_reasoning` 决定：它只服务动画与回看，不参与任何计算；
 // 关掉它时连 `reasoning_ms` 一起不写（没有"这个思考"可言）。
-func (s *Service) assistantMessage(session model.Session, replyID string, token uint64, chosen backend,
+func (s *Service) assistantMessage(session model.Session, replyID string, token uint64, chosen providers.Backend,
 	result providers.Result, firstTextAt time.Time, started time.Time) model.Message {
 	durationMS := time.Since(started).Milliseconds()
 	message := model.Message{
 		ID: replyID, SessionID: session.ID, Role: model.RoleAssistant,
 		Content: result.Text, DurationMS: &durationMS, Usage: result.Usage,
 	}
-	if chosen.storesReasoning() {
+	if chosen.StoresReasoning() {
 		if reasoning := s.Turns.ThinkingOf(session.ID); strings.TrimSpace(reasoning) != "" {
 			message.Reasoning = reasoning
 			// 思考用时 = 受理 → 第一段正文（没有正文就没有"思考用时"可言）

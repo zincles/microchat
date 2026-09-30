@@ -18,7 +18,9 @@ import (
 
 	"golang.org/x/term"
 
+	"microchat/internal/abilities"
 	"microchat/internal/chat"
+	"microchat/internal/compact"
 	"microchat/internal/config"
 	"microchat/internal/server"
 	"microchat/internal/store"
@@ -42,6 +44,13 @@ func main() {
 	cfg, err := config.LoadConfig(paths)
 	if err != nil {
 		fatal("读配置失败: %v", err)
+	}
+	// `agents.json` 里的能力开关：未知的能力 id **在启动时就报清楚** ——
+	// 写了不生效（比如把 `abilities` 拼错、或写了个不存在的 id）是最难查的一类问题。
+	if _, agents, _, err := config.Load(paths); err != nil {
+		fatal("读 agents.json 失败: %v", err)
+	} else if err := abilities.Validate(agents); err != nil {
+		fatal("agents.json 的能力开关不合法: %v", err)
 	}
 	// 给了 -debug 就**只干这一件事**：在监听端口之前就退出（也别进 TUI）。
 	if *debugMode {
@@ -69,6 +78,7 @@ func main() {
 	turns := turn.NewRegistry()
 	tasks := task.NewRegistry()
 	chatService := chat.New(st, paths, turns, tasks)
+	compactService := compact.New(st, paths, turns, tasks)
 
 	// **先真听上端口，再切日志到文件**：端口被占这类启动失败必须留在**终端**上看得见 ——
 	// 不然 TUI 模式下日志去了 data/microchat.log，终端里只剩一句 "exit status 1"（真发生过）。
@@ -88,7 +98,7 @@ func main() {
 	log.Printf("microchat 起在 http://%s（数据 %s，配置 %s，user_version=%d，TUI=%v）",
 		*addr, paths.DataDir, paths.ConfigDir, version, interactive)
 	go func() {
-		if err := http.Serve(listener, server.New(st, cfg, paths, chatService).Handler()); err != nil {
+		if err := http.Serve(listener, server.New(st, cfg, paths, chatService, compactService).Handler()); err != nil {
 			log.Printf("服务退出: %v", err)
 		}
 	}()

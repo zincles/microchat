@@ -64,9 +64,11 @@ const maxEventSize = 1 << 20
 //
 // `onDelta` 只服务动画（可以为 nil）；返回的整段才是落库与一切计算的依据。
 func (c *Client) Chat(ctx context.Context, p Provider, r Request, localReply string, onDelta func(Delta)) (Result, error) {
-	// 非流式的处理还没实现：**明说**，别静默按流式发（那会让配了 stream:false 的人对着"时好时坏"猜）
+	// 一轮生成**只走流式**（界面要动画）；这家渠道要是配了 `stream:false` ⇒ **明说**，
+	// 别静默按流式发（那会让配了 stream:false 的人对着"时好时坏"猜）。
+	// （"整段拿结果"的辅助调用不走这里 —— 它们走 `Complete`，那一发才是非流式的。）
 	if p.Stream != nil && !*p.Stream {
-		return Result{}, errors.New("providers: 这家渠道配了 stream:false，而非流式调用还没实现（先删掉这个字段）")
+		return Result{}, errors.New("providers: 这家渠道配了 stream:false，而一轮生成只走流式（这家的模型用来聊天得支持流式）")
 	}
 	r.Stream = true
 	if localReply != "" {
@@ -91,6 +93,81 @@ func (c *Client) Chat(ctx context.Context, p Provider, r Request, localReply str
 	}
 	return c.streamUpstream(ctx, request, onDelta)
 }
+
+// completionResponse：**非流式**那一发的响应形状（OpenAI 兼容的正常形状）。
+//
+// 复用 `streamDelta`：它认的那几个字段名（正文 + 三种思考字段）与非流式的 `message` 逐字一样。
+type completionResponse struct {
+	Choices []struct {
+		Message streamDelta `json:"message"`
+	} `json:"choices"`
+	Usage json.RawMessage `json:"usage"`
+	Error *struct {
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+// Complete：一次**非流式**调用 —— 摘要 / 标题这类"整段拿结果"的辅助调用用它。
+//
+// 与 `Chat` 共用同一套东西：`Build` 拼请求、`Snapshot` + `RecordLastPayload` 留档、
+// `NormalizeUsage` 归口用量、上游报错原样返回（**不重试、不吞错**）。
+//
+// 为什么辅助调用不流式：没人看它一个字一个字往外蹦（增量只服务动画）；整段一次拿到反而干净。
+// `localReply` 非空 ⇒ 走本地假上游（不联网），**并且立刻返回**（没有 `streamLocal` 那套节奏 ——
+// 那是给"看得到 pending/streaming"的一轮生成用的）。
+func (c *Client) Complete(ctx context.Context, p Provider, r Request, localReply string) (Result, error) {
+	r.Stream = false
+	if localReply != "" {
+		// 有渠道就把"本来会发出去什么"留档（dummy 的意义就在这儿：没有 key 也能把装配验一遍）
+		if p.Kind == KindDummy {
+			if request, err := Build(p, r); err == nil {
+				if payload, err := Snapshot(request, time.Now()); err == nil {
+					RecordLastPayload(payload)
+				}
+			}
+		}
+		return Result{Text: localReply}, nil
+	}
+	request, err := Build(p, r)
+	if err != nil {
+		return Result{}, err
+	}
+	// **发之前**留档：与流式那条路同一个口径（`/debug/last-payload` 要看的正是它）
+	if payload, err := Snapshot(request, time.Now()); err == nil {
+		RecordLastPayload(payload)
+	}
+	response, err := c.Do(request.WithContext(ctx))
+	if err != nil {
+		return Result{}, err // 连不上 / 超时 / 被取消：原样返回（不重试、不吞）
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxCompletionBytes))
+	if err != nil {
+		return Result{}, err
+	}
+	if response.StatusCode < 200 || response.StatusCode > 299 {
+		return Result{}, &UpstreamError{Status: response.StatusCode, Body: snippet(string(body))}
+	}
+	var parsed completionResponse
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return Result{}, fmt.Errorf("providers: 解析响应失败：%w", err)
+	}
+	if parsed.Error != nil {
+		return Result{}, &UpstreamError{Status: response.StatusCode, Body: snippet(parsed.Error.Message)}
+	}
+	result := Result{Usage: NormalizeUsage(parsed.Usage)}
+	for _, choice := range parsed.Choices {
+		result.Text += choice.Message.Content
+		result.Reasoning += choice.Message.thinking()
+	}
+	if strings.TrimSpace(result.Text) == "" {
+		return Result{}, ErrEmpty
+	}
+	return result, nil
+}
+
+// maxCompletionBytes：非流式响应体的上限（一段摘要不该有几十 MB；防的是"上游回了一整页 HTML"）。
+const maxCompletionBytes = 1 << 22
 
 // streamUpstream：真发一次并把响应读完。
 func (c *Client) streamUpstream(ctx context.Context, request *http.Request, onDelta func(Delta)) (Result, error) {

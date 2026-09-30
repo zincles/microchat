@@ -104,6 +104,9 @@ func LoadConfig(paths Paths) (Config, error) {
 	if config.Chat.ModelContextTokens == 0 {
 		config.Chat.ModelContextTokens = 131072
 	}
+	if config.Chat.CompactBlocks == 0 {
+		config.Chat.CompactBlocks = DefaultCompactBlocks
+	}
 	if config.Defaults.Provider == "" {
 		config.Defaults.Provider = "dummy"
 	}
@@ -116,24 +119,48 @@ func LoadConfig(paths Paths) (Config, error) {
 	return config, nil
 }
 
-// ChatConfig：`config.json` 的 chat 段（模型上下文 / 摘要触发阈值 / 标题字数）。
+// ChatConfig：`config.json` 的 chat 段（模型上下文 / 摘要触发阈值 / 标题字数 / 默认压几块）。
 type ChatConfig struct {
 	TitleChars           int  `json:"title_chars"`
 	ModelContextTokens   int  `json:"model_context_tokens"`
 	CompactTriggerTokens *int `json:"compact_trigger_tokens"`
+	// CompactBlocks：压缩不给块数时压几个**对话块**（`compact_blocks`）。单位是块，不是 token。
+	CompactBlocks int `json:"compact_blocks"`
 }
+
+// DefaultCompactBlocks：`compact_blocks` 的缺省（照 `AGENTS.md` 的参数那一节）。
+const DefaultCompactBlocks = 10
 
 func DefaultChat() ChatConfig {
-	return ChatConfig{TitleChars: 32, ModelContextTokens: 131072}
+	return ChatConfig{TitleChars: 32, ModelContextTokens: 131072, CompactBlocks: DefaultCompactBlocks}
 }
 
-// Agent：会话 Agent（一份命名的人格）。
+// AbilityToggle：**一个能力在这份人格上的开关 + 可选覆盖**（挂 `agents.json` 每个 agent 上）。
+//
+// 三条口径（见 `AGENTS.md`「后台任务 / 压缩 / 能力」）：
+//   - **缺字段 = 默认全开** ⇒ `Enabled` 必须是 `*bool`：`bool` 的零值是 `false`，
+//     那样"只写了 provider 没写 enabled"会**静默变成关掉**（这是最容易被写错的一格）；
+//   - `provider` / `model` 留空 = 用**会话自己的**（辅助调用本来就要骑同一个会话）；
+//   - `prompt` 留空 = 用**代码里的默认模板**（能力只能覆盖，不能新增流程）。
+type AbilityToggle struct {
+	Enabled  *bool   `json:"enabled,omitempty"`
+	Provider *string `json:"provider,omitempty"`
+	Model    *string `json:"model,omitempty"`
+	// Prompt：这个能力的提示词模板（流程在代码里，模板可换）。空 = 用代码里的默认。
+	Prompt *string `json:"prompt,omitempty"`
+}
+
+// Agent：会话 Agent（一份命名的人格 + 一组能力开关）。
+//
+// `Abilities` 的键 = 能力 id（**枚举，写在代码里**，见 `internal/abilities`）；
+// 未知的键在写入与启动读取时都**报清楚**（不静默忽略 —— 写了不生效最难查）。
 type Agent struct {
-	ID           string          `json:"id"`
-	Name         string          `json:"name"`
-	SystemPrompt string          `json:"system_prompt"`
-	Params       json.RawMessage `json:"params,omitempty"`
-	PromptOrder  json.RawMessage `json:"prompt_order,omitempty"`
+	ID           string                   `json:"id"`
+	Name         string                   `json:"name"`
+	SystemPrompt string                   `json:"system_prompt"`
+	Abilities    map[string]AbilityToggle `json:"abilities,omitempty"`
+	Params       json.RawMessage          `json:"params,omitempty"`
+	PromptOrder  json.RawMessage          `json:"prompt_order,omitempty"`
 }
 
 type AgentsConfig struct {
@@ -248,6 +275,9 @@ func Load(paths Paths) (chat ChatConfig, agents AgentsConfig, providers Provider
 		}
 		if chat.ModelContextTokens == 0 {
 			chat.ModelContextTokens = 131072
+		}
+		if chat.CompactBlocks == 0 {
+			chat.CompactBlocks = DefaultCompactBlocks
 		}
 	}
 	if err = loadJSON(paths.Config("agents.json"), &agents); err != nil {

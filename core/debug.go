@@ -17,17 +17,21 @@ package main
 // op 一览与用法在 `debugUsage` 里。
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
+	"microchat/internal/abilities"
 	"microchat/internal/chat"
+	"microchat/internal/compact"
 	"microchat/internal/config"
 	"microchat/internal/model"
 	"microchat/internal/state"
@@ -53,6 +57,9 @@ op：
                                                     执行删除（末尾核对不符 ⇒ 409）
   copy <session_id>                                 复制会话
   state <session_id>                                世界状态（effective / tables）
+  compact <session_id> [--blocks N | --begin <id> --end <id>]
+                                                    压缩：同步跑完一次并打印区间 / 块数 / 摘要
+  abilities <session_id>                            这个会话的 agent 在三个能力上的解析结果
   tasks                                             任务面板
 
 输出：每行一条 JSON；错误体固定 {"error":{"code","message"}}（与 HTTP 契约同一个形状）。
@@ -83,7 +90,8 @@ func runDebug(paths config.Paths, cfg config.Config, args []string) int {
 	turns, tasks := turn.NewRegistry(), task.NewRegistry()
 	env := &debugEnv{
 		store: st, cfg: cfg, paths: paths, turns: turns, tasks: tasks,
-		chat: chat.New(st, paths, turns, tasks),
+		chat:    chat.New(st, paths, turns, tasks),
+		compact: compact.New(st, paths, turns, tasks),
 	}
 
 	switch op := args[0]; op {
@@ -107,6 +115,10 @@ func runDebug(paths config.Paths, cfg config.Config, args []string) int {
 		return env.copySession(args[1:])
 	case "state":
 		return env.stateOf(args[1:])
+	case "compact":
+		return env.compactSession(args[1:])
+	case "abilities":
+		return env.abilitiesOf(args[1:])
 	case "tasks":
 		return env.board()
 	default:
@@ -118,12 +130,13 @@ func runDebug(paths config.Paths, cfg config.Config, args []string) int {
 
 // debugEnv：直操模式手里的那一套（一个进程一副）。
 type debugEnv struct {
-	store *store.Store
-	chat  *chat.Service
-	turns *turn.Registry
-	tasks *task.Registry
-	cfg   config.Config
-	paths config.Paths
+	store   *store.Store
+	chat    *chat.Service
+	compact *compact.Service
+	turns   *turn.Registry
+	tasks   *task.Registry
+	cfg     config.Config
+	paths   config.Paths
 }
 
 // ── 输出与错误（**只有这两条出口**）────────────────────────────────────────
@@ -603,6 +616,109 @@ func (e *debugEnv) deleteMessage(args []string) int {
 func (e *debugEnv) board() int {
 	emit(e.tasks.Board())
 	return 0
+}
+
+// compactLine：一次压缩的结果 —— "区间 / 块数 / 摘要前几十字 / 写了没 / prompt_version"。
+type compactLine struct {
+	Event          string          `json:"event"`
+	SessionID      string          `json:"session_id"`
+	BeginMessageID string          `json:"begin_message_id"`
+	EndMessageID   string          `json:"end_message_id"`
+	Blocks         int             `json:"blocks"`
+	Messages       int             `json:"messages"`
+	SummaryID      string          `json:"summary_id"`
+	PromptVersion  int64           `json:"prompt_version"`
+	Preview        string          `json:"preview"`
+	TextChars      int             `json:"text_chars"`
+	Provider       string          `json:"provider"`
+	Model          string          `json:"model"`
+	Usage          json.RawMessage `json:"usage"`
+}
+
+// compactSession：压缩 —— **同步跑完**（校验 → 调上游 → 落库 → 收尾全在这一趟里）。
+//
+// 两种给法二选一：`--blocks N` 或 `--begin <id> --end <id>`；都不给 ⇒ 用 `config.json` 的
+// `chat.compact_blocks`。失败就照实回错误体（**带 code**）—— 会话一个字节都不动。
+func (e *debugEnv) compactSession(args []string) int {
+	if len(args) == 0 {
+		return report(errf("invalid", "用法：-debug compact <session_id> [--blocks N | --begin <id> --end <id>]"))
+	}
+	session, ok := e.session(args[0])
+	if !ok {
+		return 1
+	}
+	values, err := parseNamedFlags(args[1:], "blocks", "begin", "end")
+	if err != nil {
+		return report(err)
+	}
+	request := compact.Request{Begin: values["begin"], End: values["end"]}
+	if raw, given := values["blocks"]; given {
+		blocks, err := strconv.Atoi(raw)
+		if err != nil {
+			return report(errf("invalid", "--blocks 要是整数：%s", raw))
+		}
+		request.Blocks = blocks
+	}
+	result, err := e.compact.Compact(context.Background(), *session, request)
+	if err != nil {
+		return report(compactError(err))
+	}
+	emit(compactLine{
+		Event: "compact", SessionID: result.SessionID,
+		BeginMessageID: result.BeginMessageID, EndMessageID: result.EndMessageID,
+		Blocks: result.Blocks, Messages: result.Messages, SummaryID: result.SummaryID,
+		PromptVersion: result.PromptVersion,
+		Preview:       preview(result.Text, 40), TextChars: len([]rune(result.Text)),
+		Provider: result.Provider, Model: result.Model, Usage: result.Usage,
+	})
+	return 0
+}
+
+// abilityLine：`-debug abilities` 的一行（一个能力一行：这份人格在它上面怎么配）。
+type abilityLine struct {
+	Event     string `json:"event"`
+	SessionID string `json:"session_id"`
+	AgentID   string `json:"agent_id"`
+	AgentName string `json:"agent_name,omitempty"`
+	Ability   string `json:"ability"`
+	Enabled   bool   `json:"enabled"`
+	// Provider / Model：**覆盖**（空 = 用会话自己的渠道 / 模型）。
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+}
+
+// abilitiesOf：这个会话的 agent 在三个能力上的解析结果（`abilities.Resolve` 那一处的原话）。
+//
+// 三个能力都**照实**打（含 `judge` —— 它的流程还没写，但它是能力，开关认得它）。
+func (e *debugEnv) abilitiesOf(args []string) int {
+	session, ok := e.session(argAt(args, 0))
+	if !ok {
+		return 1
+	}
+	_, agents, _, err := config.Load(e.paths)
+	if err != nil {
+		return report(errf("internal", "读配置失败：%s", err.Error()))
+	}
+	agent, _ := agents.Resolve(session.AgentID)
+	for _, id := range abilities.IDs() {
+		setting := abilities.Resolve(agent, id)
+		emit(abilityLine{
+			Event: "ability", SessionID: session.ID,
+			AgentID: session.AgentID, AgentName: agent.Name,
+			Ability: id, Enabled: setting.Enabled,
+			Provider: setting.Provider, Model: setting.Model,
+		})
+	}
+	return 0
+}
+
+// compactError：压缩那一路的错误 → 直操模式的错误体（`code` 就是压缩给的那个）。
+func compactError(err error) error {
+	var coded *compact.Error
+	if errors.As(err, &coded) {
+		return errf(coded.ErrorCode(), "%s", coded.Message)
+	}
+	return err
 }
 
 // ── 参数 ─────────────────────────────────────────────────────────────────
