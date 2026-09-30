@@ -2,6 +2,7 @@ package statelang
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -180,25 +181,86 @@ func TestDefaultTableIsGlobalAndAlwaysPresent(t *testing.T) {
 	}
 }
 
-// 格式器契约：解析器认得的语句 ⇒ Format 出来的文本解析回**同一批语句**；再格式化不变。
+// 格式器契约：解析器认得的语句 ⇒ Format 出来的文本**再解析回同一批语句**（含表名）；再格式化不变。
+//
+// 表名是这一条的要害：`Format` 写回时**必须写表名**（命名表 ⇒ `<state 表名>`；`global` ⇒ 不写）。
+// 不写表名的话，序列化一张命名表会**悄悄**落回 `global` —— 不报错、结果不一样，最难查。
 func TestFormatRoundtripAndIdempotent(t *testing.T) {
 	origin := []Statement{set("AA", "123456"), set("状态", "血量=50/100=危险"), remove("AA"), set("C", "3")}
 	text := Format(origin)
-	parsed, diagnostics := ParseStatements(text)
-	if len(diagnostics) != 0 {
-		t.Fatalf("格式化出的文本解析有诊断：%+v", diagnostics)
+	if !strings.HasPrefix(text, "<state>") || !strings.HasSuffix(text, "</state>") {
+		t.Fatalf("不写表名的块该是 `<state>`：\n%s", text)
 	}
-	if !statementsEqual(parsed, origin) {
-		t.Fatalf("往返不一致：\n得到 %+v\n想要 %+v", parsed, origin)
+	document := Scan(text)
+	if len(document.Diagnostics) != 0 {
+		t.Fatalf("格式化出的文本解析有诊断：%+v", document.Diagnostics)
 	}
-	if second := Format(parsed); second != text {
+	if !statementsEqual(document.Statements, origin) {
+		t.Fatalf("往返不一致：\n得到 %+v\n想要 %+v", document.Statements, origin)
+	}
+	if second := Format(document.Statements); second != text {
 		t.Fatalf("不幂等：\n%q\n%q", text, second)
 	}
-	if block := FormatBlock(origin); !strings.HasPrefix(block, "<state>") || !strings.HasSuffix(block, "</state>") {
-		t.Fatalf("整块形状不对：%q", block)
+}
+
+// **命名表 round-trip（parse → Format → parse）：表名不丢** —— 这一条守着那个静默陷阱。
+func TestFormatKeepsTableNameRoundTrip(t *testing.T) {
+	source := "<state 玩家状态>\nAA = 123456\ndelete(BB)\n</state>\n" +
+		"正文里夹一句话\n<state>HP = 10</state>\n<state 玩家状态>C = 落石</state>"
+	first := Scan(source)
+	if len(first.Diagnostics) != 0 {
+		t.Fatalf("语料有问题：%+v", first.Diagnostics)
 	}
-	if statements, _ := ParseStatements(FormatBlock(origin)); !statementsEqual(statements, origin) {
-		t.Fatalf("带标签往返也不一致：%+v", statements)
+	text := Format(first.Statements)
+	t.Logf("写回文本（`-v` 看得到前后对照）：\n%s", text)
+	// 命名表写表名、global 不写；同一张表的连续语句合成一块，换表就另起一块
+	want := "<state 玩家状态>\nAA = 123456\ndelete(BB)\n</state>\n" +
+		"<state>\nHP = 10\n</state>\n" +
+		"<state 玩家状态>\nC = 落石\n</state>"
+	if text != want {
+		t.Fatalf("写回的表名不对：\n得到\n%s\n想要\n%s", text, want)
+	}
+	second := Scan(text)
+	if len(second.Diagnostics) != 0 {
+		t.Fatalf("写回的文本解析有诊断：%+v", second.Diagnostics)
+	}
+	if !statementsWithTableEqual(second.Statements, first.Statements) {
+		t.Fatalf("表名没往返回来：\n得到 %+v\n想要 %+v", second.Statements, first.Statements)
+	}
+	if again := Format(second.Statements); again != text {
+		t.Fatalf("不幂等：\n%q\n%q", text, again)
+	}
+	// 折叠结果也跟着一致（表名错了这里就会分家）
+	if got, want := Tables(text), Tables(source); !tablesEqual(got, want) {
+		t.Fatalf("折叠结果不一致：%+v / %+v", got, want)
+	}
+}
+
+// 长表：一块最多 `StatementsMaxBlock` 条 —— 超了就分块，**不是**被上限截断（那样往返就丢了尾巴）。
+func TestFormatSplitsLongTablesByBlockLimit(t *testing.T) {
+	statements := make([]Statement, 0, StatementsMaxBlock+1)
+	for index := 0; index <= StatementsMaxBlock; index++ {
+		statements = append(statements, Statement{
+			Kind: KindSet, Table: "玩家状态", Key: fmt.Sprintf("K%d", index), Value: String("v"),
+		})
+	}
+	text := Format(statements)
+	if blocks := strings.Count(text, "<state 玩家状态>"); blocks != 2 {
+		t.Fatalf("该切成两块（一块最多 %d 条）：%d 块\n%s", StatementsMaxBlock, blocks, text)
+	}
+	document := Scan(text)
+	if len(document.Diagnostics) != 0 {
+		t.Fatalf("写回的文本解析有诊断：%+v", document.Diagnostics)
+	}
+	if !statementsWithTableEqual(document.Statements, statements) {
+		t.Fatalf("往返丢了尾巴：%d 条 / 想要 %d 条", len(document.Statements), len(statements))
+	}
+}
+
+// 空列表 ⇒ 空串（不是"一个空块"）。
+func TestFormatEmptyIsEmpty(t *testing.T) {
+	if got := Format(nil); got != "" {
+		t.Fatalf("空列表该写空串：%q", got)
 	}
 }
 
@@ -262,6 +324,45 @@ func statementsEqual(a, b []Statement) bool {
 		}
 		if a[index].Value != nil && *a[index].Value != *b[index].Value {
 			return false
+		}
+	}
+	return true
+}
+
+// statementsWithTableEqual：连**表名**一起比（`statementsEqual` 刻意不看它 —— 那条只比语句内容）。
+// 空串与 `global` 视作同一张表（不写表名的块本来就归 `global`）。
+func statementsWithTableEqual(a, b []Statement) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for index := range a {
+		if tableOf(a[index]) != tableOf(b[index]) {
+			return false
+		}
+	}
+	return statementsEqual(a, b)
+}
+
+func tableOf(statement Statement) string {
+	if statement.Table == "" {
+		return DefaultTable
+	}
+	return statement.Table
+}
+
+func tablesEqual(a, b map[string]map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for table, values := range a {
+		other, ok := b[table]
+		if !ok || len(other) != len(values) {
+			return false
+		}
+		for key, value := range values {
+			if other[key] != value {
+				return false
+			}
 		}
 	}
 	return true

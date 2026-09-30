@@ -40,7 +40,7 @@ func newHarness(t *testing.T, providersConfig config.ProvidersConfig, sessionPro
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	session, err := st.CreateSession(sessionProvider, sessionModel, "")
+	session, err := st.CreateSession(sessionProvider, sessionModel, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

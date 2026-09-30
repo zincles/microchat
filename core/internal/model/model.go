@@ -130,10 +130,14 @@ type TurnStatus struct {
 	Error         string    `json:"error,omitempty"`
 }
 
-// SessionView：列表项 = 会话 + 这一轮的状态。
+// SessionView：列表项 = 会话 + 这一轮的状态 + **这条会话有几条消息**。
+//
+// `messages` 是**条数**（不是内容）：客户端的启动编排靠它一眼判定"空会话"，
+// 不必为每一条无标题会话再发一次 `GET /sessions/{id}/messages`（会话一多就是 N 次请求）。
 type SessionView struct {
 	Session
-	Turn TurnStatus `json:"turn"`
+	Messages int        `json:"messages"`
+	Turn     TurnStatus `json:"turn"`
 }
 
 // DeletionPlan：一次"删这条及之后全部"的完整后果（`deletionPlan` 一份计算，预览与执行共用）。

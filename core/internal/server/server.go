@@ -169,7 +169,8 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "version": "0.1.0"})
 }
 
-// listSessions：列表项 = 会话 + 这一轮的状态（左栏据此标"生成中"）。
+// listSessions：列表项 = 会话 + 这一轮的状态 + **这条会话有几条消息**（左栏据此标"生成中"，
+// 客户端的启动编排据此一眼认出"空会话" —— 不必逐条会话再拉一次消息）。
 //
 // 状态是**进程内**的事实：后端一重启就全是 idle —— 那是诚实的（没有生成在跑）。
 func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
@@ -178,9 +179,16 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
+	counts, err := s.store.MessageCounts()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
 	views := make([]model.SessionView, 0, len(sessions))
 	for _, session := range sessions {
-		views = append(views, model.SessionView{Session: session, Turn: s.chat.StatusView(session.ID)})
+		views = append(views, model.SessionView{
+			Session: session, Messages: counts[session.ID], Turn: s.chat.StatusView(session.ID),
+		})
 	}
 	writeJSON(w, http.StatusOK, views)
 }
@@ -254,7 +262,13 @@ func queryIndex(w http.ResponseWriter, query url.Values, name string) (value int
 }
 
 // CreateSessionReq：Rust 版的 `#[serde(default)]` ⇒ 全都可以省略。
+//
+// `title` **真生效**（写进 `sessions.title`）—— 它是个合理的契约字段：建一条**已命名**的会话
+// （如"重建后的新库"）不必再多发一次 `PATCH`。省略 / `""` ⇒ 标题空着（等首条用户消息自动起名）。
+// ⚠ 在补上这一格之前，`{"title": …}` 是**被静默丢掉**的（`decodeJSON` 不认未知字段）——
+// 静默忽略比报错难查得多（这条踩过）。
 type CreateSessionReq struct {
+	Title        *string `json:"title"`
 	Provider     *string `json:"provider"`
 	Model        *string `json:"model"`
 	AgentID      *string `json:"agent_id"`
@@ -294,7 +308,11 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	if req.Model != nil {
 		modelID = *req.Model
 	}
-	session, err := s.store.CreateSession(provider, modelID, req.SystemPrompt)
+	title := ""
+	if req.Title != nil {
+		title = *req.Title
+	}
+	session, err := s.store.CreateSession(provider, modelID, req.SystemPrompt, title)
 	if err != nil {
 		writeStoreError(w, err)
 		return

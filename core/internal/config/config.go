@@ -180,8 +180,6 @@ type Agent struct {
 	Name         string                   `json:"name"`
 	SystemPrompt string                   `json:"system_prompt"`
 	Abilities    map[string]AbilityToggle `json:"abilities,omitempty"`
-	Params       json.RawMessage          `json:"params,omitempty"`
-	PromptOrder  json.RawMessage          `json:"prompt_order,omitempty"`
 }
 
 type AgentsConfig struct {

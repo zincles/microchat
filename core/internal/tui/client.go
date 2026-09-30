@@ -67,6 +67,9 @@ type Session struct {
 	Provider string     `json:"provider"`
 	Model    string     `json:"model"`
 	AgentID  string     `json:"agent_id"`
+	// Messages：这条会话**有几条消息**（列表项就带 —— 启动编排据此判定"空会话"，
+	// 不必为每条无标题会话再发一次 `GET /sessions/{id}/messages`）。
+	Messages int        `json:"messages"`
 	Turn     TurnStatus `json:"turn"`
 }
 

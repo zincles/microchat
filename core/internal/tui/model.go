@@ -72,8 +72,13 @@ type model struct {
 	// 拿 rune 下标当列用，遇 CJK 光标就指到字中间（已立为纪律，见 AGENTS.md「踩过的坑」）。
 	inputCursor int
 	// style：着色开关（**只有前景色**）。零值 = 关 ⇒ 测试拿到的 View() 是纯文本
-	// （逐字节断言靠这个；生产路径的开关在 detectStyler，见「降级三档」）。
+	// （逐字节断言靠这个；生产路径的开关在 detectTerminal，见「降级两档」）。
 	style styler
+	// ascii：**字符集降级** —— `TERM=dumb` / 非 TTY 时满线退回 ASCII `-`（零值 = 用 `─`）。
+	//
+	// 与 style 同一个来源（`detectTerminal` 一次读清）：`NO_COLOR` 只关颜色，**不动字符集** ✗
+	// （那是"别给我上色"，不是"这台终端不认识 Unicode"）。
+	ascii bool
 	// lastFailure：**最近一次失败**的原话。状态行里只有它此刻仍与 lastAction 逐字相同
 	// （= 那句话还摆在那儿）才标红 —— 别的分支一改底栏，红自己就退了，
 	// 不需要每个非失败分支都记得清标志（漏一处 = 红留在成功消息上，更难查）。
@@ -413,9 +418,11 @@ func deleteSessionCmd(client *Client, id string) tea.Cmd {
 
 // bootstrapAPI：启动编排要用的那几个后端动作 —— **窄接口**，只为把假客户端塞进来测编排
 // （"先删后建"这种顺序断言，真 `*Client` 走 HTTP 是测不出来的；`*Client` 天然满足它）。
+//
+// ⚠ 这里**没有** Messages：清空会话的判据（0 条消息）由 `GET /sessions` 的 `messages` 自带
+// ⇒ 编排**只看列表**，不再对每条无标题会话发一次 `GET /messages`（会话一多就是 N 次请求）。
 type bootstrapAPI interface {
 	Sessions() ([]Session, error)
-	Messages(sessionID string) ([]Message, error)
 	DeleteSession(id string) error
 	CreateSession(provider, model string) (Session, error)
 }
@@ -425,8 +432,8 @@ type bootstrapAPI interface {
 //
 // **顺序不能反** ✗：先建后清的话，刚建的那条（0 消息、无标题）正好满足"该清"的判据 ⇒ 当场被删掉。
 //
-// 判据只有两条：**0 条消息** 且 **标题为空**。带标题的空会话是用户 `/rename` 改过名的，**留着**
-// （删了就把命名丢了）。消息条数问 `GET /sessions/{id}/messages` —— 不为这个去改后端 schema。
+// 判据只有两条：**0 条消息** 且 **标题为空**（两条都在 `GET /sessions` 的列表项里 ⇒ 一次请求就够）。
+// 带标题的空会话是用户 `/rename` 改过名的，**留着**（删了就把命名丢了）。
 func bootstrapCmd(api bootstrapAPI, provider, model string) tea.Cmd {
 	return func() tea.Msg {
 		sessions, err := api.Sessions()
@@ -436,7 +443,7 @@ func bootstrapCmd(api bootstrapAPI, provider, model string) tea.Cmd {
 		var failed []string
 		kept := make([]Session, 0, len(sessions))
 		for _, session := range sessions {
-			if strings.TrimSpace(session.Title) != "" || !hasNoMessages(api, session.ID) {
+			if strings.TrimSpace(session.Title) != "" || session.Messages > 0 {
 				kept = append(kept, session)
 				continue
 			}
@@ -453,12 +460,6 @@ func bootstrapCmd(api bootstrapAPI, provider, model string) tea.Cmd {
 		kept = append([]Session{created}, kept...)
 		return bootMsg{sessions: kept, created: &created, failed: failed}
 	}
-}
-
-// hasNoMessages：这条会话是不是一条消息都没有。**拉不到就回 false** —— 拿不准就当它有内容，宁可不删。
-func hasNoMessages(api bootstrapAPI, sessionID string) bool {
-	messages, err := api.Messages(sessionID)
-	return err == nil && len(messages) == 0
 }
 
 // noSession：**没有可用会话**时的兵灾兼底文案（正常路径走不到 —— 进 TUI 就会建一条真的）。
@@ -2047,7 +2048,7 @@ func (m model) render() (string, *tea.Cursor) {
 	lines = append(lines, palette...)
 	inputLine := len(lines)                                  // 输入行在 `lines` 里的下标（消息区 + 面板之后）
 	lines = append(lines, truncate("> "+m.input, width))     // 输入行（命令与消息都从这儿走）
-	lines = append(lines, m.style.dim(rule(width, m.width))) // 满线（暗色）：窄屏退回 ASCII `-`
+	lines = append(lines, m.style.dim(rule(width, m.width, m.ascii))) // 满线（暗色）：窄屏退回 ASCII `-`
 	lines = append(lines, status...)
 	if len(lines) > height { // 屏幕实在太矮（< 4 行）：宁可切掉上面的消息，也别把输入行挤没
 		shift := len(lines) - height
@@ -2144,7 +2145,7 @@ func (m model) renderMessages(height, width int) []string {
 		}
 		lines := []string{
 			m.style.joined([]segment{{" " + m.viewerTitle, styleBold}, {hint, styleDim}}, width, "   "),
-			m.style.dim(truncate(" "+rule(max(1, width-2), m.width), width)),
+			m.style.dim(truncate(" "+rule(max(1, width-2), m.width, m.ascii), width)),
 		}
 		for _, line := range m.viewer {
 			if len(lines) >= height {
@@ -2366,7 +2367,7 @@ func (m model) renderResumePicker(height, width int) []string {
 			{" 挑一条已有会话", styleBold},
 			{"上/下 选 · 回车进 · Esc 取消", styleDim},
 		}, width, "   "),
-		m.style.dim(truncate(" "+rule(max(1, width-2), m.width), width)),
+		m.style.dim(truncate(" "+rule(max(1, width-2), m.width, m.ascii), width)),
 	}
 	for index, session := range m.sessions {
 		if len(lines) >= height {
@@ -2384,6 +2385,9 @@ func (m model) renderResumePicker(height, width int) []string {
 			{cursor + shortID(session.ID) + " ", styleDim}, // 短 id：次要信息 ⇒ 暗色
 			{title, stylePlain},
 			{"    " + session.Provider + " / " + session.Model, styleDim},
+			// 条数来自 `GET /sessions`（列表项自带）：它可能比"此刻"旧一步（发完一句话要等翻 idle 才刷列表），
+			// 当"这条大概多大"够了 ✓ —— 要精确的是启动编排那两条判据，那儿列表刚拉回来 ✓。
+			{fmt.Sprintf("  %d 条", session.Messages), styleDim},
 		}, width, index == m.pickerIndex))
 	}
 	return fillLines(lines, height)
@@ -2396,7 +2400,7 @@ func (m model) renderModelPicker(height, width int) []string {
 			{" 挑渠道 / 模型", styleBold},
 			{"上/下 选 · 回车定 · Esc 取消", styleDim},
 		}, width, "   "),
-		m.style.dim(truncate(" "+rule(max(1, width-2), m.width), width)),
+		m.style.dim(truncate(" "+rule(max(1, width-2), m.width, m.ascii), width)),
 	}
 	if len(m.models) == 0 {
 		lines = append(lines, truncate(" （还没有发现任何模型 —— 设置里给渠道点一次「获取模型」）", width))
@@ -2542,10 +2546,14 @@ func (m model) rerollRunning() bool {
 // rerollMarker：尾条旁边那个位次标记 —— `‹ 2/3 ›`（**只在重摇模式里**、只给它说的那条尾巴）。
 //
 // 「位次不是身份」：分母是现在共几版、分子是**当前 apply 的那一版**（当前这版高亮 —— 与挑选项同一条口径）。
+// `TERM=dumb` / 非 TTY ⇒ 退回 ASCII `< 2/3 >`（`‹ ›` 也是这台终端不认识的那类字符）。
 func (m model) rerollMarker(messageID string) (string, bool) {
 	state := m.rerollState()
 	if state == nil || state.TargetMessageID != messageID || state.Count < 1 || state.CurrentIdx < 1 {
 		return "", false
+	}
+	if m.ascii {
+		return fmt.Sprintf("< %d/%d >", state.CurrentIdx, state.Count), true
 	}
 	return fmt.Sprintf("‹ %d/%d ›", state.CurrentIdx, state.Count), true
 }
@@ -2635,9 +2643,12 @@ const ellipsis = "..."
 const ruleMinWidth = 60
 
 // rule：画一条 `cells` 格的满线。**绝不用模糊宽度字符去"填充"对齐** —— 只用重复（`strings.Repeat`）。
-func rule(cells, screen int) string {
+//
+// 两个条件任一成立就退回 ASCII `-`：**屏幕太窄**（见 ruleMinWidth）或**这台终端不认 Unicode**
+// （`ascii` = `TERM=dumb` / 非 TTY，见「降级两档」）。
+func rule(cells, screen int, ascii bool) string {
 	cells = max(1, cells)
-	if screen < ruleMinWidth {
+	if ascii || screen < ruleMinWidth {
 		return strings.Repeat("-", cells)
 	}
 	return strings.Repeat("─", cells)
@@ -2652,7 +2663,7 @@ func rule(cells, screen int) string {
 //     截断一律作用在**未着色**的原文上（落点是 concat / plainOf），颜色最后才包上去；
 //  3. **可关**：零值 = 关 ⇒ 测试拿到的 View() 是纯文本（逐字节断言靠这个）。
 //
-// 生产路径的开关在 detectStyler（`NO_COLOR` / `TERM=dumb` / 非 TTY 三档降级）。
+// 生产路径的开关在 detectTerminal（`NO_COLOR` / `TERM=dumb` / 非 TTY 三档降级）。
 type styler struct{ enabled bool }
 
 // styleKind：要包哪一层前景色（零值 = 不上色）。

@@ -258,7 +258,7 @@ func (e *debugEnv) newSession(args []string) int {
 	if value, ok := values["model"]; ok {
 		modelID = value
 	}
-	session, err := e.store.CreateSession(provider, modelID, "")
+	session, err := e.store.CreateSession(provider, modelID, "", values["title"])
 	if err != nil {
 		return report(err)
 	}
@@ -268,12 +268,6 @@ func (e *debugEnv) newSession(args []string) int {
 			return report(err)
 		}
 		session.AgentID = agentID
-	}
-	if title, ok := values["title"]; ok && title != "" {
-		if err := e.store.UpdateTitle(session.ID, title); err != nil {
-			return report(err)
-		}
-		session.Title = title
 	}
 	emit(session)
 	return 0

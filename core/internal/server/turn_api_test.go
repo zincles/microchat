@@ -49,7 +49,7 @@ func newDummySandbox(t *testing.T) *dummySandbox {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	session, err := st.CreateSession("dummy", "dummy", "")
+	session, err := st.CreateSession("dummy", "dummy", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

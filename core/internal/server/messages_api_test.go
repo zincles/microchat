@@ -35,7 +35,7 @@ func newSandbox(t *testing.T, count int) *sandbox {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	session, err := st.CreateSession("dummy", "dummy", "")
+	session, err := st.CreateSession("dummy", "dummy", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

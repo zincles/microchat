@@ -73,7 +73,7 @@ func newHarness(t *testing.T) *harness {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	session, err := st.CreateSession("fake", "fake-model", "")
+	session, err := st.CreateSession("fake", "fake-model", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -78,10 +78,11 @@ func (s *Store) ListSessions() ([]model.Session, error) {
 	return sessions, rows.Err()
 }
 
-// CreateSession：新会话。title 一律空串（首条用户消息落库时才起名），
-// agent 先落内置默认 —— 调用方（server）再按 `agents.json` 的 default_agent 覆盖。
+// CreateSession：新会话。`title` 由调用方给（`POST /sessions` 的 `title`；不给 ⇒ 空串 ⇒
+// 首条用户消息落库时才自动起名），`agent` 先落内置默认 —— 调用方（server）再按
+// `agents.json` 的 default_agent 覆盖。
 // 注意参数名不叫 model —— 那会遮蔽 model **包**（Go 会把它当成 string 用）。
-func (s *Store) CreateSession(provider, modelID, systemPrompt string) (model.Session, error) {
+func (s *Store) CreateSession(provider, modelID, systemPrompt, title string) (model.Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	id, err := uuid.NewV7()
@@ -90,7 +91,7 @@ func (s *Store) CreateSession(provider, modelID, systemPrompt string) (model.Ses
 	}
 	now := nowMS()
 	session := model.Session{
-		ID: id.String(), Title: "", SystemPrompt: systemPrompt,
+		ID: id.String(), Title: title, SystemPrompt: systemPrompt,
 		Provider: provider, Model: modelID, AgentID: "default", // 内置默认，server 再按 agents.json 覆盖
 		CreatedAt: now, UpdatedAt: now,
 	}

@@ -26,8 +26,8 @@ func fixture() model {
 		width:      100, height: 24, ready: true,
 		sessions: []Session{
 			{ID: "c1", Title: "逆序数该怎么写", Provider: "opencode-go", Model: "deepseek-v4-flash", AgentID: "跑团",
-				Turn: TurnStatus{Phase: "idle"}},
-			{ID: "c2", Title: "第二段对话", Provider: "dummy", Model: "dummy", AgentID: "default"},
+				Messages: 2, Turn: TurnStatus{Phase: "idle"}},
+			{ID: "c2", Title: "第二段对话", Provider: "dummy", Model: "dummy", AgentID: "default", Messages: 7},
 		},
 		selectedID:  "c1",
 		messagesFor: "c1", // 上面这两条属于 c1（isEmptySession 靠它 —— 别拿"还没拉完"当"这条没有消息"）
@@ -106,7 +106,7 @@ func TestLayoutSinceNoSidebar(t *testing.T) {
 	if input < 1 {
 		t.Fatalf("该有输入行：\n%s", m.View().Content)
 	}
-	if lines[input+1] != rule(m.width, m.width) {
+	if lines[input+1] != rule(m.width, m.width, m.ascii) {
 		t.Fatalf("输入行下面该是一条满线（宽屏 `─` / 窄屏 `-`）：%q", lines[input+1])
 	}
 	// 状态行在分隔线下面（1-2 行，别超过两行）
@@ -1106,10 +1106,9 @@ func TestInitialModelAwaitsStartupBootstrap(t *testing.T) {
 }
 
 // fakeBootstrap：**假客户端** —— 只记调用顺序（真 `Client` 走 HTTP，"先删后建"这种顺序断言测不出来）。
+// 列表项自带 `Messages`（条数）⇒ 编排**只发一次 `GET /sessions`**（见 bootstrapAPI）。
 type fakeBootstrap struct {
 	sessions  []Session
-	messages  map[string][]Message
-	msgErr    map[string]error
 	delErr    map[string]error
 	create    Session
 	createErr error
@@ -1123,14 +1122,6 @@ func (f *fakeBootstrap) Sessions() ([]Session, error) {
 		return nil, f.listErr
 	}
 	return f.sessions, nil
-}
-
-func (f *fakeBootstrap) Messages(sessionID string) ([]Message, error) {
-	f.calls = append(f.calls, "messages:"+sessionID)
-	if err := f.msgErr[sessionID]; err != nil {
-		return nil, err
-	}
-	return f.messages[sessionID], nil
 }
 
 func (f *fakeBootstrap) DeleteSession(id string) error {
@@ -1150,16 +1141,16 @@ func (f *fakeBootstrap) CreateSession(provider, model string) (Session, error) {
 
 // 该清的只有【0 条消息 且 标题为空】那些；**带标题的空会话留着**（用户 /rename 过）；
 // 有消息的留着；**两次删除都排在创建之前**（顺序反过来这条断言就该红）。
+//
+// ★ 而且**一次 `GET /messages` 都不发**：条数由 `GET /sessions` 的列表项自带
+// （以前是每条无标题会话问一次 ⇒ 会话一多就是 N 次请求）。
 func TestStartupCleansEmptySessionsThenCreatesOne(t *testing.T) {
 	fake := &fakeBootstrap{
 		sessions: []Session{
 			{ID: "空1", Title: ""},
 			{ID: "空2", Title: "   "}, // 只有空白 ⇒ 等于没起名
 			{ID: "有名字", Title: "我改过名"},
-			{ID: "有消息", Title: ""},
-		},
-		messages: map[string][]Message{
-			"有消息": {{ID: "m1", Role: "user", Content: "在吗"}},
+			{ID: "有消息", Title: "", Messages: 1},
 		},
 		create: Session{ID: "新会话", Provider: "dummy", Model: "dummy", AgentID: "default"},
 	}
@@ -1167,16 +1158,20 @@ func TestStartupCleansEmptySessionsThenCreatesOne(t *testing.T) {
 	if !ok {
 		t.Fatal("该回 bootMsg")
 	}
-	// ★ 调用顺序：**删（该清的）都在建之前**；带标题的连消息都不用问
+	// ★ 调用顺序：**删（该清的）都在建之前**；只发一次列表请求，不看任何会话的消息
 	want := []string{
 		"sessions",
-		"messages:空1", "delete:空1",
-		"messages:空2", "delete:空2",
-		"messages:有消息",
+		"delete:空1",
+		"delete:空2",
 		"create:dummy|dummy",
 	}
 	if got := strings.Join(fake.calls, " "); got != strings.Join(want, " ") {
 		t.Fatalf("编排的调用顺序不对：\n得到 %s\n该是 %s", got, strings.Join(want, " "))
+	}
+	for _, call := range fake.calls {
+		if strings.HasPrefix(call, "messages:") {
+			t.Fatalf("编排不该逐条去拉消息（条数就在列表里）：%v", fake.calls)
+		}
 	}
 	if msg.err != nil || msg.created == nil || msg.created.ID != "新会话" {
 		t.Fatalf("该建出那一条：%+v（err=%v）", msg.created, msg.err)
@@ -1207,20 +1202,17 @@ func TestStartupCleansEmptySessionsThenCreatesOne(t *testing.T) {
 	}
 }
 
-// 标题为空、但**消息拉不到**的会话**不删**（拿不准就当它有内容，宁可不删）。
-func TestStartupKeepsSessionsWhoseMessagesCannotBeRead(t *testing.T) {
+// 标题空、但**列表里报着有消息**的会话**不删**（判据完全来自 `GET /sessions` 的 `messages`）。
+func TestStartupKeepsUnnamedSessionsThatHaveMessages(t *testing.T) {
 	fake := &fakeBootstrap{
-		sessions: []Session{{ID: "拉不到"}},
-		msgErr:   map[string]error{"拉不到": errTest},
+		sessions: []Session{{ID: "没名字但有内容", Messages: 3}},
 		create:   Session{ID: "新会话"},
 	}
 	msg := bootstrapCmd(fake, "", "")().(bootMsg)
-	for _, call := range fake.calls {
-		if call == "delete:拉不到" {
-			t.Fatalf("消息拉不到就别删它：%v", fake.calls)
-		}
+	if got := strings.Join(fake.calls, " "); got != "sessions create:|" {
+		t.Fatalf("只该发列表 + 创建：%v", fake.calls)
 	}
-	if len(msg.sessions) != 2 || msg.sessions[1].ID != "拉不到" {
+	if len(msg.sessions) != 2 || msg.sessions[1].ID != "没名字但有内容" {
 		t.Fatalf("那条该留着：%+v", msg.sessions)
 	}
 }
@@ -1664,10 +1656,10 @@ func TestColorsDoNotChangeLayout(t *testing.T) {
 
 // 满线：宽屏用 `─`，**窄屏退回 ASCII `-`**（`─` 是模糊宽度字符，CJK 终端可能按两格排 ⇒ 窄屏会溢出换行）。
 func TestRuleFallsBackToASCIIOnNarrowScreens(t *testing.T) {
-	if got := rule(10, ruleMinWidth-1); got != strings.Repeat("-", 10) {
+	if got := rule(10, ruleMinWidth-1, false); got != strings.Repeat("-", 10) {
 		t.Fatalf("窄屏该退回 ASCII：%q", got)
 	}
-	if got := rule(10, ruleMinWidth); got != strings.Repeat("─", 10) {
+	if got := rule(10, ruleMinWidth, false); got != strings.Repeat("─", 10) {
 		t.Fatalf("宽屏该用满线：%q", got)
 	}
 	// 整屏：46 列的屏上一个 `─` 都不许有；100 列的有
@@ -1678,6 +1670,55 @@ func TestRuleFallsBackToASCIIOnNarrowScreens(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(viewLines(fixture()), "\n"), "─") {
 		t.Fatal("宽屏该画满线")
+	}
+}
+
+// 字符集降级：`TERM=dumb` / 非 TTY ⇒ **跟窄屏同一档**（满线 ASCII、位次标记 ASCII），
+// 而且**与屏幕多宽无关**（判定与宽度是两件事：一个说终端不认 Unicode，一个说放不下）。
+func TestDumbTerminalFallsBackToASCII(t *testing.T) {
+	env := func(values map[string]string) func(string) string {
+		return func(key string) string { return values[key] }
+	}
+	ascii := asciiEnabled
+	if !ascii(env(map[string]string{"TERM": "dumb"}), true) {
+		t.Fatal("TERM=dumb 该退 ASCII")
+	}
+	if !ascii(env(map[string]string{"TERM": "xterm-256color"}), false) {
+		t.Fatal("非 TTY 该退 ASCII")
+	}
+	if ascii(env(map[string]string{"TERM": "xterm-256color"}), true) {
+		t.Fatal("正常终端不该退")
+	}
+	// NO_COLOR 只关颜色，**不动字符集**（"别上色" ≠ "不认 Unicode"）
+	if colorEnabled(env(map[string]string{"NO_COLOR": "1"}), true) {
+		t.Fatal("NO_COLOR 该关颜色")
+	}
+	if ascii(env(map[string]string{"NO_COLOR": "1", "TERM": "xterm-256color"}), true) {
+		t.Fatal("NO_COLOR 不该影响字符集降级")
+	}
+
+	// 整屏：宽屏 + 退 ASCII ⇒ 一个 `─` 都不许有（不是窄屏，是终端不认）
+	dumb := fixture()
+	dumb.ascii = true
+	for _, line := range viewLines(dumb) {
+		if strings.Contains(line, "─") {
+			t.Fatalf("TERM=dumb 下不该出现 `─`：%q", line)
+		}
+	}
+	if !strings.Contains(strings.Join(viewLines(dumb), "\n"), strings.Repeat("-", dumb.width)) {
+		t.Fatal("TERM=dumb 下该画 ASCII 满线")
+	}
+
+	// 位次标记也退：`‹ 2/3 ›` → `< 2/3 >`
+	reroll := fixture()
+	reroll.reroll = &RerollState{Active: true, TargetMessageID: "m2", Count: 3, CurrentIdx: 2}
+	reroll.rerollFor = "c1"
+	if marker, ok := reroll.rerollMarker("m2"); !ok || marker != "‹ 2/3 ›" {
+		t.Fatalf("宽屏该用 `‹ 2/3 ›`：%q（%v）", marker, ok)
+	}
+	reroll.ascii = true
+	if marker, ok := reroll.rerollMarker("m2"); !ok || marker != "< 2/3 >" {
+		t.Fatalf("退 ASCII 该用 `< 2/3 >`：%q（%v）", marker, ok)
 	}
 }
 

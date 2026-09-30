@@ -97,6 +97,30 @@ func (s *Store) ListMessages(sessionID string) ([]model.Message, error) {
 	return s.allMessages(sessionID)
 }
 
+// MessageCounts：每条会话有几条消息（**一条 SQL，不是 N 次查询**）。
+//
+// `GET /sessions` 的列表项靠它带上 `messages` ⇒ 客户端判定"空会话"不必逐条去拉消息
+// （会话一多就是 N 次请求）。没有消息的会话**不出现在 map 里**（读出来是 0，正是要的）。
+func (s *Store) MessageCounts() (map[string]int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rows, err := s.db.Query("SELECT session_id, COUNT(*) FROM messages GROUP BY session_id")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	counts := map[string]int{}
+	for rows.Next() {
+		var sessionID string
+		var count int
+		if err := rows.Scan(&sessionID, &count); err != nil {
+			return nil, err
+		}
+		counts[sessionID] = count
+	}
+	return counts, rows.Err()
+}
+
 // LastMessageID：这条会话**最后一条消息**的 id（"最新一条" = `ORDER BY id DESC LIMIT 1`，白拿索引）。
 //
 // 空会话 ⇒ 空串（不是错误）。重摇用它核对"候选说的那条尾巴还是不是那条"
