@@ -178,3 +178,95 @@ func TestOutgoingWithPendingDoesNotWrite(t *testing.T) {
 		t.Fatalf("(c) 只算不写：消息条数该还是 %d，成了 %d", count, got)
 	}
 }
+
+// ── 出站每一项的 `idx` ────────────────────────────────────────────────────
+//
+// `system` ⇒ **0**（合成项：它不是消息，消息从 1 起）；`message` ⇒ 它自己那条的序号
+// （与 `/messages` 里的 `idx` 同一个号）；`summary` ⇒ 它**替代的**那段范围（from_idx/to_idx）。
+
+// 三档 source 各自的 `idx`（含合成项的 0），以及 (c) 那条待发项 = **下一条**（现有最大 + 1）。
+func TestOutgoingCarriesIndexes(t *testing.T) {
+	box := newDummySandbox(t)
+	box.seedTurn(t, "第一句") // 消息 1、2
+	box.seedTurn(t, "第二句") // 消息 3、4
+	box.seedTurn(t, "第三句") // 消息 5、6
+
+	items := box.outgoingOf(t, "GET", "")
+	if len(items) == 0 || items[0].Source != "system" {
+		t.Fatalf("第一条该是 system：%+v", items)
+	}
+	// 合成项：0（它不是消息）
+	if items[0].Idx == nil || *items[0].Idx != 0 {
+		t.Fatalf("系统提示词那项该是 idx 0（合成的）：%+v", items[0])
+	}
+	if items[0].FromIdx != nil || items[0].ToIdx != nil {
+		t.Fatalf("system 不是摘要 ⇒ 不该带范围：%+v", items[0])
+	}
+
+	// message 项：序号与 `/messages` 里同一条的 `idx` **逐条对得上**
+	indexOf := map[string]int{}
+	for _, message := range box.messages(t) {
+		indexOf[message.ID] = message.Idx
+	}
+	seen := 0
+	for _, item := range items {
+		if item.Source != "message" {
+			continue
+		}
+		seen++
+		if item.MessageID == nil || item.Idx == nil {
+			t.Fatalf("message 项该带 message_id 与 idx：%+v", item)
+		}
+		if want := indexOf[*item.MessageID]; want != *item.Idx {
+			t.Fatalf("消息 %s 在 /messages 里是 idx %d，在 /outgoing 里成了 %d", *item.MessageID, want, *item.Idx)
+		}
+	}
+	if seen != len(indexOf) {
+		t.Fatalf("六条消息都该在装配里：%d ≠ %d", seen, len(indexOf))
+	}
+
+	// (c)：待发那条 = **下一条**（现有最大 + 1），与它的 `pending: true` 一致
+	next := len(indexOf) + 1
+	after := box.outgoingOf(t, "POST", "第四句")
+	last := after[len(after)-1]
+	if !last.Pending || last.Idx == nil || *last.Idx != next {
+		t.Fatalf("待发那条该是 idx %d 且 pending：%+v", next, last)
+	}
+	// (b) 里没有这个号（它还没进库）
+	for _, item := range items {
+		if item.Idx != nil && *item.Idx == next {
+			t.Fatalf("(b) 里不该有第 %d 条的号：(b) 是已定历史：%+v", next, item)
+		}
+	}
+}
+
+// 摘要那一项报的是**它替代的范围**（不是它自己的号）：压掉前两块 ⇒ `from_idx`/`to_idx` = 1..4。
+func TestOutgoingSummaryReportsItsSpan(t *testing.T) {
+	box := newDummySandbox(t)
+	box.seedTurn(t, "第一句")
+	box.seedTurn(t, "第二句")
+	box.seedTurn(t, "第三句")
+
+	if recorder := call(box.server, "POST", box.path+"/compact", `{"blocks":2}`); recorder.Code != http.StatusAccepted {
+		t.Fatalf("受理压缩该 202，得到 %d：%s", recorder.Code, recorder.Body.String())
+	}
+	box.waitCompact(t)
+
+	summaries := []state.Outgoing{}
+	for _, item := range box.outgoingOf(t, "GET", "") {
+		if item.Source == "summary" {
+			summaries = append(summaries, item)
+		}
+	}
+	if len(summaries) != 1 {
+		t.Fatalf("该正好一条摘要：%+v", summaries)
+	}
+	item := summaries[0]
+	if item.FromIdx == nil || item.ToIdx == nil || *item.FromIdx != 1 || *item.ToIdx != 4 {
+		t.Fatalf("摘要该报它替代的那一段（1..4）：%+v", item)
+	}
+	// 摘要**不是消息** ⇒ 它没有自己的 idx（有的话就说不清是"第几条"了）
+	if item.Idx != nil {
+		t.Fatalf("摘要不该有自己的 idx：%+v", item)
+	}
+}

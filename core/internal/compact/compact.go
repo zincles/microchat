@@ -41,6 +41,13 @@ import (
 // materialHeader：材料那一段的抬头（让模型一眼知道下面是什么）。
 const materialHeader = "【要压缩的这段对话】\n"
 
+// stateHeader：材料后面附的那份状态的抬头 —— **口气定死**：程序事实、仅供参考、不要写进梗概。
+//
+// 它是 `at_idx` 那条链算出来的（**当前的**生效提示词打底 + 正文 fold 到区间末 ⇒ **不是快照**）：
+// 摘要本身**不存状态**（状态是端点的属性，存进去就是第二个真相来源），但"这一段结束时是什么样"
+// 对写梗概有用 ⇒ 作为**程序事实**摆在材料里，并明说别抄进梗概。
+const stateHeader = "【程序·状态（截至这段末尾；程序事实，仅供参考，不要写进梗概）】\n"
+
 // dummyReply：本地假上游（`kind: dummy`）吐的那句摘要 —— 确定性、不联网，一眼认得出是假的。
 const dummyReply = "（测试用假摘要）"
 
@@ -178,6 +185,9 @@ type prepared struct {
 	// local：本地假上游要吐的那句（非空 ⇒ 不联网，dummy 渠道走它）。
 	local string
 	span  span
+	// stateSection：材料里附的那份"算到区间末的状态"（渲染好的文本；空 = 一个变量都没有 ⇒ 不附）。
+	// 取料时就算好（那时手里有消息快照与生效提示词），调用期间不再碰库。
+	stateSection string
 	// requested：面板上"请求压几个块"（区间入口 = 区间里实际几个块）。
 	requested int
 }
@@ -233,11 +243,29 @@ func (s *Service) prepare(session model.Session, req Request) (*prepared, error)
 	return &prepared{
 		session: session, channel: backend.Provider, model: modelID,
 		// 生效模板只有一处算式（abilities.Template）：agent 覆盖 ?: 代码里的默认
-		template:  abilities.Template(setting, abilities.Compact),
-		local:     local,
-		span:      resolved,
-		requested: requestedBlocks(req, resolved, chatConfig.CompactBlocks),
+		template: abilities.Template(setting, abilities.Compact),
+		local:    local,
+		span:     resolved,
+		// 材料里附的那份状态：**at_idx 那条链**（`state.StateAt`）—— 底子是**当前**的生效提示词、
+		// 正文 fold 到区间末（`End` 是下标 ⇒ 序号 = End+1）。取料在锁里，所以在这儿算。
+		stateSection: stateSectionAt(session, agents, messages, resolved.End+1),
+		requested:    requestedBlocks(req, resolved, chatConfig.CompactBlocks),
 	}, nil
+}
+
+// stateSectionAt：材料里那份状态的文本（**算到 `at` 条为止**）—— 没有变量可报就回空串。
+//
+// 拿的是 `at_idx` 同一条链（`state.StateAt` ⇒ `FromSources`），渲染也走唯一的 `state.RenderTable`
+// ⇒ 与出站注入的那张表长得一模一样。空（一个变量都没有）⇒ 不附：材料里多一段空话纯属噪音。
+func stateSectionAt(session model.Session, agents config.AgentsConfig, messages []model.Message, at int) string {
+	// 底子用**当前**的生效提示词（三级解析只有一处：`state.ResolveSystemPrompt`）
+	systemPrompt, source := state.ResolveSystemPrompt(session, agents)
+	tables := state.StateAt(session.ID, systemPrompt, source, messages, at).Tables
+	rendered, ok := state.RenderTable(tables)
+	if !ok {
+		return ""
+	}
+	return rendered
 }
 
 // requestedBlocks：面板上那个"压 N 个块"（区间入口就是区间里实际几块）。
@@ -418,7 +446,8 @@ func (s *Service) execute(ctx context.Context, p *prepared) (Result, error) {
 func (s *Service) call(ctx context.Context, p *prepared) (Result, error) {
 	material := materialOf(p.span.Messages)
 	if strings.TrimSpace(material) == "" {
-		// ②之前的半步：**材料是空的就别发**（整段都是 `<state>` 块时就是这样）
+		// ②之前的半步：**材料是空的就别发**（整段都是 `<state>` 块时就是这样）。
+		// 注意判的是**对话正文**（不含下面附的那份状态）—— 状态不是"可压的内容"。
 		return Result{}, invalid("这一段剔掉 <state> 之后没有正文可压（整段都是状态块）")
 	}
 	wire := providers.FromConfig(p.channel)
@@ -426,7 +455,7 @@ func (s *Service) call(ctx context.Context, p *prepared) (Result, error) {
 		Model: p.model,
 		Messages: []providers.ChatMessage{
 			{Role: "system", Content: p.template},
-			{Role: "user", Content: materialHeader + material},
+			{Role: "user", Content: materialHeader + withStateSection(material, p.stateSection)},
 		},
 		// 骑**同一个会话 id**（网关按它路由、缓存按前缀算；缺了会被上游拒）
 		SessionID: p.session.ID,
@@ -508,6 +537,17 @@ func materialOf(messages []model.Message) string {
 		builder.WriteString("\n\n")
 	}
 	return strings.TrimSpace(builder.String())
+}
+
+// withStateSection：把那份状态附在材料后面（`section` 为空 ⇒ 原样返回）。
+//
+// 抬头由 `stateHeader` 说清口气（程序事实、仅供参考、不要写进梗概）—— 梗概里不存状态这条规矩不变：
+// 状态只是"写梗概时看得见的事实"，不进摘要、不进库。
+func withStateSection(material, section string) string {
+	if strings.TrimSpace(section) == "" {
+		return material
+	}
+	return material + "\n\n" + stateHeader + section
 }
 
 // estimateTokens：这条摘要正文的估算 token 数（口径只有一处：`state.EstimateTokens`）。

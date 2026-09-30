@@ -214,6 +214,9 @@ func (s *Service) assemble(session model.Session, pending []model.Message) ([]st
 		return nil, nil, err
 	}
 	messages = append(messages, pending...)
+	// 待发那句也要有个号：它就是"**下一条**"（现有最大 + 1）。序号只有一处算（`store.IndexMessages`）
+	// ⇒ 这里整段重编一遍（对已编过号的那些是幂等的），而不是在别处再写一遍"下一个是多少"。
+	store.IndexMessages(messages)
 	summaries, err := s.Store.ListSummaries(session.ID)
 	if err != nil {
 		return nil, nil, err

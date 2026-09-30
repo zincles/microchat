@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -50,6 +51,8 @@ func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *ch
 	s.mux.HandleFunc("PATCH /api/v1/providers/{provider_id}", s.updateProvider)
 	s.mux.HandleFunc("DELETE /api/v1/providers/{provider_id}", s.deleteProvider)
 	s.mux.HandleFunc("POST /api/v1/providers/{provider_id}/refresh", s.refreshProvider)
+	// 套餐余量（只读）：**只对 kind=opencode-go 有义**，别的 kind 400 说清楚（见 usage_api.go）
+	s.mux.HandleFunc("GET /api/v1/providers/{provider_id}/usage", s.providerUsage)
 	s.mux.HandleFunc("GET /api/v1/agents", s.listAgents)
 	s.mux.HandleFunc("POST /api/v1/agents", s.createAgent)
 	s.mux.HandleFunc("PATCH /api/v1/agents/{agent_id}", s.updateAgent)
@@ -172,14 +175,72 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, views)
 }
 
-// listMessages：这条会话的**全部消息**，按 id 升序（线性会话 ⇒ 没有当前路径，就是它自己）。
+// listMessages：这条会话的消息，**按 id 升序**（线性会话 ⇒ 就是整条会话）。
+//
+// 三个查询参数（**都不给 = 全部**，语义不变）：
+//
+//	?from_idx=5&to_idx=10   闭区间（**含两端**）；缺的那端补默认（起点 ⇒ 1、终点 ⇒ 末尾）
+//	?last=20                取**尾部** 20 条
+//
+// **参数错 ⇒ 400**：`last` 与 `from_idx`/`to_idx` 混用、非正整数、区间反了（`from_idx > to_idx`）。
+// **越界不是错**：要 5..99 而只有 3 条 ⇒ 给现有的那几条（分页的常见语义）；起点在末尾之后 ⇒ 空数组。
+// 响应**仍是数组**（没换成对象）—— 免得破坏现有客户端 ✗。
+//
+// 每条都带序号 `idx`（**派生**、不落库；`0` 是合成的系统提示词那一格，消息从 1 起）——
+// 见 `model.Message.Idx` 与 `DEFINE.md` 的「各种 id」。
 func (s *Server) listMessages(w http.ResponseWriter, r *http.Request) {
-	messages, err := s.store.ListMessages(r.PathValue("session_id"))
+	window, ok := messageWindow(w, r)
+	if !ok {
+		return
+	}
+	messages, err := s.store.ListMessagesWindow(r.PathValue("session_id"), window)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, messages)
+}
+
+// messageWindow：把三个查询参数解析 + 校验成窗口（**参数层的错一律 400**，错误体固定）。
+//
+// `last` 与 `from_idx`/`to_idx` **不许混用**：一个说"取尾部几条"、一个说"取第几条到第几条"，
+// 同时给就是调用方没想清（宁可说清，也不猜谁赢）。
+func messageWindow(w http.ResponseWriter, r *http.Request) (store.MessageWindow, bool) {
+	query := r.URL.Query()
+	last, hasLast, ok := queryIndex(w, query, "last")
+	if !ok {
+		return store.MessageWindow{}, false
+	}
+	from, hasFrom, ok := queryIndex(w, query, "from_idx")
+	if !ok {
+		return store.MessageWindow{}, false
+	}
+	to, hasTo, ok := queryIndex(w, query, "to_idx")
+	if !ok {
+		return store.MessageWindow{}, false
+	}
+	if hasLast && (hasFrom || hasTo) {
+		writeError(w, http.StatusBadRequest, "invalid", "last 不能与 from_idx/to_idx 混用")
+		return store.MessageWindow{}, false
+	}
+	if hasFrom && hasTo && from > to {
+		writeError(w, http.StatusBadRequest, "invalid", "from_idx 不能大于 to_idx")
+		return store.MessageWindow{}, false
+	}
+	return store.MessageWindow{Last: last, FromIdx: from, ToIdx: to}, true
+}
+
+// queryIndex：读一个**序号型**查询参数：没给 ⇒ (0, false, true)；给了但不是正整数 ⇒ 400。
+func queryIndex(w http.ResponseWriter, query url.Values, name string) (value int, given bool, ok bool) {
+	if !query.Has(name) {
+		return 0, false, true
+	}
+	parsed, err := strconv.Atoi(trimSpace(query.Get(name)))
+	if err != nil || parsed <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid", name+" 要是正整数")
+		return 0, false, false
+	}
+	return parsed, true, true
 }
 
 // CreateSessionReq：Rust 版的 `#[serde(default)]` ⇒ 全都可以省略。

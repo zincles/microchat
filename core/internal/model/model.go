@@ -40,6 +40,16 @@ type Message struct {
 
 	SummaryID *string `json:"summary_id,omitempty"` // 收拢它的摘要：压缩只写这一格
 	CreatedAt int64   `json:"created_at"`
+	// UpdatedAt：**修改时**（毫秒）。插入时 = created_at ⇒ 没改过的两者相等；
+	// 改正文（PATCH / 重摇接受）刷新成当前毫秒。摘要的 dirty 判定用它比 created_at 便宜也准。
+	UpdatedAt int64 `json:"updated_at"`
+
+	// Idx：这条消息在**它那条会话里的序号**（1-based）—— **派生字段，不落库、永不改变**。
+	// 位置 = 按 `id` 排序后的下标（算式只有一处：`store.IndexMessages`）。线性会话只删后缀、
+	// 不往中间插、编辑/重摇不改 id ⇒ 分配了就变不了（见 DEFINE.md 的「各种 id」）。
+	// `0` 留给**合成的系统提示词**（它不是消息 ⇒ 消息列表里永远是 1..N）。
+	// 由 store 编好 ⇒ 经手 SQL 拿到的消息都带它；手搭出来的消息没有（`omitempty` ⇒ 不带这一格）。
+	Idx int `json:"idx,omitempty"`
 }
 
 // TitleFrom：首句临时标题 —— 换行压成空格、trim、按**字符**截断（不是字节：中文按字节截会切出残字）。

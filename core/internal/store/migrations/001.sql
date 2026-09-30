@@ -20,7 +20,9 @@ CREATE TABLE messages (
   session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   role            TEXT NOT NULL CHECK (role IN ('user','assistant')),
   content         TEXT NOT NULL,
-  created_at      INTEGER NOT NULL
+  created_at      INTEGER NOT NULL,
+  -- 修改时（毫秒）：新建时 = created_at；改正文时刷成当前毫秒。
+  updated_at      INTEGER NOT NULL
 , reasoning TEXT, duration_ms INTEGER, usage TEXT, reasoning_ms INTEGER, summary_id TEXT REFERENCES summaries(id) ON DELETE SET NULL);
 -- (session_id, id) = 这条会话的顺序（线性会话里"整条会话"就等于它）+ 取最新一条走它
 CREATE INDEX messages_by_session ON messages(session_id, id);

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"microchat/internal/config"
+	"microchat/internal/statelang"
 	"microchat/internal/store"
 )
 
@@ -38,8 +39,8 @@ func TestStatelangEndpoint(t *testing.T) {
 		if err := json.Unmarshal(recorder.Body.Bytes(), &view); err != nil {
 			t.Fatal(err)
 		}
-		// 计算：未命名表用空串作键；删掉的 想法 不出现
-		if view.Tables["玩家状态"]["心情"] != "疲惫" || view.Tables[""]["HP"] != "10" {
+		// 计算：不写表名的块进 `global`；删掉的 想法 不出现
+		if view.Tables["玩家状态"]["心情"] != "疲惫" || view.Tables["global"]["HP"] != "10" {
 			t.Fatalf("tables = %+v", view.Tables)
 		}
 		if _, exists := view.Tables["玩家状态"]["想法"]; exists {
@@ -51,7 +52,7 @@ func TestStatelangEndpoint(t *testing.T) {
 		}
 		if view.Statements[0].Kind != "set" || view.Statements[0].Table != "玩家状态" ||
 			view.Statements[1].Kind != "delete" || view.Statements[1].Key != "想法" ||
-			view.Statements[2].Kind != "set" || view.Statements[2].Table != "" {
+			view.Statements[2].Kind != "set" || view.Statements[2].Table != statelang.DefaultTable {
 			t.Fatalf("顺序/归属不对：%+v", view.Statements)
 		}
 		// 正文里的块被整块剔除
@@ -62,11 +63,34 @@ func TestStatelangEndpoint(t *testing.T) {
 
 	t.Run("字段顺序是契约（两版逐字节一致的形状）", func(t *testing.T) {
 		recorder := post(`{"text":"<state 玩家状态>心情=疲惫</state>"}`)
-		want := `{"tables":{"玩家状态":{"心情":"疲惫"}},` +
+		// `global` 恒在 ⇒ 即使这段文本里一个不写表名的块都没有，`tables` 里也有它（回空表）
+		want := `{"tables":{"global":{},"玩家状态":{"心情":"疲惫"}},` +
 			`"statements":[{"kind":"set","table":"玩家状态","key":"心情","value":"疲惫"}],` +
 			`"diagnostics":[]}`
 		if got := recorder.Body.String(); got != want {
 			t.Fatalf("响应形状变了：\n得到 %s\n想要 %s", got, want)
+		}
+	})
+
+	t.Run("不写表名与 global 是同一张表；一个变量都没有也回 global", func(t *testing.T) {
+		recorder := post(`{"text":"<state>A = 1</state><state global>B = 2</state><state global>A = 3</state>"}`)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("状态码 = %d，body = %s", recorder.Code, recorder.Body.String())
+		}
+		var view StatelangView
+		if err := json.Unmarshal(recorder.Body.Bytes(), &view); err != nil {
+			t.Fatal(err)
+		}
+		if len(view.Tables) != 1 {
+			t.Fatalf("两种写法该落到**同一张**表：%+v", view.Tables)
+		}
+		if view.Tables["global"]["A"] != "3" || view.Tables["global"]["B"] != "2" {
+			t.Fatalf("后写该覆盖先写：%+v", view.Tables)
+		}
+		// 一个 `<state>` 块都没有 ⇒ 也是 `{"global": {}}`（客户端少判一层）
+		recorder = post(`{"text":"这里没有块"}`)
+		if got := recorder.Body.String(); !strings.HasPrefix(got, `{"tables":{"global":{}}`) {
+			t.Fatalf("空状态该回 {\"global\": {}}：%s", got)
 		}
 	})
 

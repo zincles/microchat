@@ -64,7 +64,7 @@ func TestSharedCorpus(t *testing.T) {
 					t.Fatalf("第 %d 条的 table = %q，语料说 %q", index, document.Statements[index].Table, want.Table)
 				}
 			}
-			// 计算（折叠）的结果：删除生效、空表消失、未命名表用空串作键
+			// 计算（折叠）的结果：删除生效、空表消失（`global` 是那条例外：它恒在）、不写表名 ⇒ global
 			if item.Tables != nil {
 				got := Tables(item.Input)
 				if !sameTables(got, item.Tables) {

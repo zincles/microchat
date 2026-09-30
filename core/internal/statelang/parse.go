@@ -163,18 +163,21 @@ func parseStatements(body string, baseLine int) ([]Statement, []Diagnostic) {
 	return statements, diagnostics
 }
 
-// tableName：标签里的表名 —— `<state 玩家状态>` ⇒ `玩家状态`；`<state>` ⇒ 空串（未命名表）。
+// tableName：标签里的表名 —— `<state 玩家状态>` ⇒ `玩家状态`；**不写表名 ⇒ `global`**（`DefaultTable`）。
+//
+// 于是 `<state>…</state>` 与 `<state global>…</state>` 落到**同一张表**（后写覆盖先写）——
+// 这正是"未标表名的默认视作 global"那句话的落点。
 //
 // 名字**照收**（trim 之后是什么就是什么），只对明显写坏的名字报一条诊断：
 // 名字里出现空白或 `/ < > = ;` 时，多半是笔误 —— 但**不静默丢弃**，也不改它的归属。
 func tableName(text string, open, openEnd int) string {
 	inner := trimSpace(text[open+1 : openEnd-1]) // `<state 玩家状态>` → `state 玩家状态`
 	if len(inner) < len(BlockTag) {
-		return ""
+		return DefaultTable
 	}
 	name := trimSpace(inner[len(BlockTag):]) // 去掉 `state` 前缀（大小写不敏感）
 	if name == "" {
-		return ""
+		return DefaultTable
 	}
 	if strings.ContainsAny(name, " \t\r\n/<>;=") {
 		return name // 归属不改；调用方另出诊断（Scan 里）

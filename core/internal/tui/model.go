@@ -112,6 +112,8 @@ type liveTurn struct {
 	thinking  string // 思考流（只服务动画）
 	from      int    // 正文游标
 	thinkFrom int    // 思考游标
+	// thinkMS：**受理 → 第一段正文**（第一段正文到的那一刻记下），落档后就是 `reasoning_ms`。
+	thinkMS *int64
 }
 
 // Busy：还在跑（`error` 不算 —— 它是上一轮的结局）。
@@ -248,6 +250,13 @@ type outgoingMsg struct {
 type stateMsg struct {
 	state State
 	err   error
+}
+
+// usageMsg：一次套餐余量查询（`GET /providers/{provider_id}/usage`）。
+type usageMsg struct {
+	providerID string
+	usage      PlanUsage
+	err        error
 }
 
 // sentMsg：一句话发出去了（202 回来了）。`created` 只在"兵灾态里顺手新建了一条会话"时非空。
@@ -479,6 +488,15 @@ func loadState(client *Client, sessionID string) tea.Cmd {
 	return func() tea.Msg {
 		state, err := client.State(sessionID)
 		return stateMsg{state: state, err: err}
+	}
+}
+
+// loadUsage：问一条渠道的套餐余量（只读）。渠道不是 opencode-go / 没配 key 时后端回 400，
+// `err` 里带着那条消息 —— 界面照实说一句（不吞、不假装有数）。
+func loadUsage(client *Client, providerID string) tea.Cmd {
+	return func() tea.Msg {
+		usage, err := client.ProviderUsage(providerID)
+		return usageMsg{providerID: providerID, usage: usage, err: err}
 	}
 }
 
@@ -781,10 +799,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for index, item := range message.items {
 			// 出处一眼看出来（口径见 AGENTS.md）：**摘要是压缩过的 ⇒ 黄**、系统提示词 ⇒ 暗、
 			// 原样消息 ⇒ 默认色。正文一律默认色（内容才是主角）。
+			// 顺带把序号打出来（`#3`）—— **只有这个查看器用它**（它本来就是调试用的）：
+			// 于是"第 5–10 条被压成了哪一条"不用去数。
 			who, kind := "消息", stylePlain
 			switch item.Source {
 			case "system":
-				who, kind = "系统提示词", styleDim
+				who, kind = "系统提示词"+indexSuffix(item.Idx), styleDim
 			case "summary":
 				blocks := int64(0)
 				if item.Blocks != nil {
@@ -794,10 +814,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if item.SummaryID != nil {
 					id = shortID(*item.SummaryID)
 				}
-				who, kind = "摘要 "+id+"（覆盖 "+strconv.FormatInt(blocks, 10)+" 块）", styleYellow
+				who, kind = "摘要 "+id+"（覆盖 "+strconv.FormatInt(blocks, 10)+" 块"+spanSuffix(item.FromIdx, item.ToIdx)+"）", styleYellow
 			default:
 				if item.MessageID != nil {
-					who = "消息 " + shortID(*item.MessageID)
+					who = "消息 " + shortID(*item.MessageID) + indexSuffix(item.Idx)
 				}
 			}
 			head := fmt.Sprintf("%2d %-9s %-8s", index+1, item.Role, "")
@@ -811,6 +831,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewer, m.viewerTitle = lines, fmt.Sprintf("当前已定历史的载荷（%d 条）", len(message.items))
 		m.viewerHint = "任意键关掉"
 		m.lastAction = fmt.Sprintf("载荷 %d 条（Esc 关掉）", len(message.items))
+		return m, nil
+
+	case usageMsg:
+		if message.err != nil {
+			// 400（不是 opencode-go / 没配 key）与上游错都从这儿出来 —— 照实说一句，不假装有数
+			m = m.fail("查余量失败：" + message.err.Error())
+			return m, nil
+		}
+		m.viewer, m.viewerTitle = m.usageLines(message.usage), "套餐余量（"+message.providerID+"）"
+		m.viewerHint = "任意键关掉"
+		m.lastAction = "套餐余量（Esc 关掉）"
 		return m, nil
 
 	case sentMsg:
@@ -852,6 +883,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.turn.phase, m.turn.elapsedMS = message.status.Phase, message.status.ElapsedMS
+		if m.turn.text == "" && message.slice.Text != "" && m.turn.thinkMS == nil {
+			// 第一段正文到了 ⇒ 思考阶段结束，把"受理 → 第一段正文"的用时钉下来
+			// （落档后就是 `reasoning_ms`，折叠行「思考（2.1s）」用的正是它）
+			ms := message.status.ElapsedMS
+			m.turn.thinkMS = &ms
+		}
 		m.turn.text += message.slice.Text
 		m.turn.thinking += message.slice.Thinking
 		m.turn.from, m.turn.thinkFrom = message.slice.Next, message.slice.ThinkNext
@@ -1137,6 +1174,8 @@ func init() {
 		{name: "model", help: "挑渠道 / 模型（有会话就改它，没有则留给下一条）", run: commandModel},
 		{name: "outgoing", help: "看当前已定历史的载荷（哪几条是压缩出来的；不含还没发的那句）", run: commandOutgoing},
 		{name: "state", help: "看当前会话的世界状态", run: commandState},
+		{name: "usage", help: "看当前渠道的套餐余量（OpenCode GO 套餐；别的渠道会如实说不支持）", run: commandUsage},
+		{name: "think", help: "展开当前会话的思考全文（默认折叠在消息上方，想读全文才用）", run: commandThink},
 		{name: "system", help: "显示 / 隐藏消息区顶部的系统提示词（调试用，开关记在 ~/.config/microchat/tui.json）", run: commandSystem},
 		{name: "compact", args: "[N]", help: "把最老的 N 个已闭合块压成摘要（不给 N 用默认值）", run: commandCompact},
 		{name: "stop", help: "打断正在生成的那一轮（幂等）", run: commandStop},
@@ -1392,6 +1431,87 @@ func commandState(m model, _ []string) (tea.Model, tea.Cmd) {
 	return m, loadState(m.client, session.ID)
 }
 
+// commandThink：展开当前会话的**思考全文**（默认折叠在每条消息上方那一行）。
+//
+// 走**现有查看器**（铺满消息区、任意键关掉）；没有思考就如实说一句。
+func commandThink(m model, _ []string) (tea.Model, tea.Cmd) {
+	session := m.currentSession()
+	if session == nil {
+		return m.fail("没有可看的思考：" + noSession), nil
+	}
+	if m.messagesFor != session.ID {
+		m.lastAction = "先把消息拉全再看思考（正在取…）"
+		return m, loadMessages(m.client, session.ID)
+	}
+	lines := m.thinkingLines()
+	if len(lines) == 0 {
+		m.lastAction = "这条会话里没有思考内容（渠道没存思考，或这几条回复本来就没有思考）"
+		return m, nil
+	}
+	m.viewer, m.viewerTitle = lines, "思考全文"
+	m.viewerHint = "任意键关掉"
+	m.lastAction = "思考全文（任意键关掉）"
+	return m, nil
+}
+
+// thinkingLines：当前会话里**每一条带思考的消息**的全文（暗色表头 + 正文）。
+func (m model) thinkingLines() []string {
+	lines := []string{}
+	for _, message := range m.messages {
+		if strings.TrimSpace(message.Reasoning) == "" {
+			continue
+		}
+		lines = append(lines, m.style.dim(truncate(
+			fmt.Sprintf(" %s · %s", shortID(message.ID), thinkingLabel(message)), max(1, m.width))))
+		for _, line := range strings.Split(message.Reasoning, "\n") {
+			lines = append(lines, truncate("   "+line, max(1, m.width)))
+		}
+		lines = append(lines, "")
+	}
+	return lines
+}
+
+// commandUsage：看当前会话那条渠道的**套餐余量**（OpenCode GO）。
+//
+// 只读；渠道不是 opencode-go（或没配 key）时后端 400，界面照实说一句 —— 不假装有数。
+func commandUsage(m model, _ []string) (tea.Model, tea.Cmd) {
+	session := m.currentSession()
+	if session == nil {
+		return m.fail("没有可用渠道可查：" + noSession), nil
+	}
+	if session.Provider == "" {
+		return m.fail("这条会话没有渠道（先用 /model 选一个）"), nil
+	}
+	m.lastAction = "查余量…"
+	return m, loadUsage(m.client, session.Provider)
+}
+
+// usageLines：套餐余量摊成查看器的行 —— 每个窗口一行：
+// `Rolling (5h)  6% · 重置 2026-09-30T13:47Z`（标签暗色；百分比超 80% 黄、到 100% 红）。
+func (m model) usageLines(usage PlanUsage) []string {
+	lines := []string{}
+	if usage.Plan != "" {
+		lines = append(lines, m.style.dim(truncate(
+			" 套餐："+usage.Plan+" · 渠道 "+usage.ProviderID, max(1, m.width))))
+	}
+	for _, window := range usage.Windows {
+		kind := stylePlain
+		switch {
+		case window.Percent >= 100:
+			kind = styleRed
+		case window.Percent > 80:
+			kind = styleYellow
+		}
+		reset := window.ResetsAt.UTC().Format("2006-01-02T15:04Z")
+		lines = append(lines, m.style.joined([]segment{
+			{" " + window.Label + "  ", styleDim},
+			{fmt.Sprintf("%.0f%%", window.Percent), kind},
+			{" · 重置 " + reset, styleDim},
+		}, max(1, m.width), ""))
+	}
+	return lines
+}
+
 func commandRefresh(m model, _ []string) (tea.Model, tea.Cmd) {
 	m.lastAction = "刷新中…"
 	return m, loadSessions(m.client)
@@ -1617,6 +1737,23 @@ func shortID(id string) string {
 		return id[:8]
 	}
 	return id
+}
+
+// indexSuffix：序号那点后缀（`#3`）—— 没带上序号（老数据 / 手搭的项）就什么都不加。
+// **只给 `/outgoing` 查看器用**：消息区与消息列表不显示序号（那儿本来就按顺序摆着）。
+func indexSuffix(idx *int) string {
+	if idx == nil {
+		return ""
+	}
+	return " #" + strconv.Itoa(*idx)
+}
+
+// spanSuffix：摘要覆盖的**序号范围**（`，第 3-5 条`）—— 缺一端就不显示（老数据没有区间）。
+func spanSuffix(from, to *int) string {
+	if from == nil || to == nil {
+		return ""
+	}
+	return "，第 " + strconv.Itoa(*from) + "-" + strconv.Itoa(*to) + " 条"
 }
 
 func describeSession(session Session) string {
@@ -1871,10 +2008,23 @@ func (m model) messageBlock(message Message, width int) []string {
 		signature = append(signature, segment{"：", kind})
 	}
 	block := []string{m.style.joined(signature, width, "")}
+	// 落库后那条消息：正文**上方**一行**折叠**的「思考（2.1s）」（暗色、不上背景）。
+	// 想读全文用 `/think`（查看器铺满消息区）。没有思考的消息不出现这一行。
+	if strings.TrimSpace(message.Reasoning) != "" {
+		block = append(block, m.style.dim(truncate("   "+thinkingLabel(message), width)))
+	}
 	for _, line := range strings.Split(message.Content, "\n") {
 		block = append(block, truncate("   "+line, width))
 	}
 	return append(block, "")
+}
+
+// thinkingLabel：折叠行的文案 —— 有 `reasoning_ms` 就报「思考（2.1s）」，没有就只说「思考」。
+func thinkingLabel(message Message) string {
+	if message.ReasoningMS != nil {
+		return fmt.Sprintf("思考（%.1fs）", float64(*message.ReasoningMS)/1000)
+	}
+	return "思考"
 }
 
 // fitBlocks：从**最新**那块往上装（整块装、装不下就整块不显示）；
@@ -1934,8 +2084,11 @@ func (m model) liveBlock(width int) []string {
 		{"）：", styleMagenta},
 	}, width, "")}
 	if m.turn.thinking != "" {
-		block = append(block, m.style.dim(truncate(
-			fmt.Sprintf("   [思考中… %d 字]", len([]rune(m.turn.thinking))), width)))
+		line := fmt.Sprintf("   [思考中… %d 字]", len([]rune(m.turn.thinking)))
+		if m.turn.thinkMS != nil { // 有"受理 → 第一段正文"的用时 ⇒ 一并报出来（口径同落档后的 reasoning_ms）
+			line = fmt.Sprintf("   [思考中… %d 字 · %.1fs]", len([]rune(m.turn.thinking)), float64(*m.turn.thinkMS)/1000)
+		}
+		block = append(block, m.style.dim(truncate(line, width)))
 	}
 	for _, line := range strings.Split(m.turn.text, "\n") {
 		block = append(block, truncate("   "+line, width))

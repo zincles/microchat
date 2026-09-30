@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -289,8 +290,14 @@ func TestMaterialStripsStateAndSendsTemplate(t *testing.T) {
 		t.Fatal(err)
 	}
 	sent := string(body)
-	if strings.Contains(sent, "<state>") || strings.Contains(sent, "第几轮") {
+	if strings.Contains(sent, "<state>") {
 		t.Fatalf("材料里的 <state> 块该被剔掉：%s", sent)
+	}
+	// 对话那一段（附状态之前）里不许留下状态键的原文 —— 状态只以"程序事实"那一段的渲染形式出现
+	// （抬头里那个换行在 JSON 里被转义了 ⇒ 拿不带换行的那段去切）
+	dialogue, _, _ := strings.Cut(sent, strings.TrimSpace(stateHeader))
+	if strings.Contains(dialogue, "第几轮") {
+		t.Fatalf("对话材料里不该留状态键：%s", dialogue)
 	}
 	if !strings.Contains(sent, "第一句") || !strings.Contains(sent, "助手：收到：第一句") {
 		t.Fatalf("材料该是这一段正文：%s", sent)
@@ -326,6 +333,64 @@ func TestMaterialStripsStateAndSendsTemplate(t *testing.T) {
 	sent = string(body)
 	if !strings.Contains(sent, "另一套模板") || strings.Contains(sent, "前情提要") {
 		t.Fatalf("覆盖后的模板该进 system、默认的不该再出现：%s", sent)
+	}
+}
+
+// 材料里附的那份状态：**算到区间末**（`at_idx` = 区间最后一条），而不是"整个会话此刻的样子"。
+//
+// 证伪点：把"算到区间末"换成"算到会话最后一条"，第二轮之后写的变量就会出现在**第一段**的材料里 ⇒ 这里红。
+// 顺带钉住口气：抬头写清"程序事实，仅供参考，不要写进梗概"。
+func TestMaterialCarriesTheStateAtTheRangeEnd(t *testing.T) {
+	var body []byte
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"一段前情提要"}}]}`))
+	}))
+	defer stub.Close()
+
+	h := newHarness(t, config.AgentsConfig{})
+	if err := config.SaveJSON(h.paths.Config("providers.json"), mustJSON(t,
+		`{"providers":[{"id":"stub","kind":"openai-compat","base_url":"`+stub.URL+`","identity":"bare"}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	h.session.Provider, h.session.Model = "stub", "m"
+	// 三轮，每轮改写同一个键（`轮次`）—— 材料里看到几，就说明"算到了第几条"
+	//（不借 harness.turn：它那个值是消息 id 的前 4 位，同一毫秒铸出来的会一模一样，证伪不了）
+	for round := 1; round <= 3; round++ {
+		ids, err := store.MintOrderedIDs(2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, message := range []model.Message{
+			{ID: ids[0], SessionID: h.sessionID, Role: model.RoleUser,
+				Content: "第" + strconv.Itoa(round) + "句\n<state>轮次 = " + strconv.Itoa(round) + "</state>"},
+			{ID: ids[1], SessionID: h.sessionID, Role: model.RoleAssistant, Content: "收到：" + strconv.Itoa(round)},
+		} {
+			if _, err := h.store.InsertMessage(message); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	// 压最老的一块（第 1、2 条）⇒ 区间末是第 2 条：材料里该是 `轮次 = 1`
+	if _, err := h.service.Compact(context.Background(), h.session, Request{Blocks: 1}); err != nil {
+		t.Fatal(err)
+	}
+	sent := string(body)
+	if !strings.Contains(sent, "不要写进梗概") || !strings.Contains(sent, "仅供参考") {
+		t.Fatalf("材料里那份状态的抬头该写清口气：%s", sent)
+	}
+	if !strings.Contains(sent, "当前变量:") || !strings.Contains(sent, "轮次 = 1") {
+		t.Fatalf("材料里该附上「算到区间末」的那张变量表：%s", sent)
+	}
+	for _, later := range []string{"轮次 = 2", "轮次 = 3"} {
+		if strings.Contains(sent, later) {
+			t.Fatalf("区间**之后**才写的变量不该跑进这一段的材料（%s）：%s", later, sent)
+		}
+	}
+	if !strings.Contains(sent, "第1句") || strings.Contains(sent, "第3句") {
+		t.Fatalf("该压的是第 1 条那一段（且只有它）：%s", sent)
 	}
 }
 

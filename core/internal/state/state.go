@@ -85,17 +85,22 @@ type OpRow struct {
 
 // View：面板与接口要的一份快照。
 //
-// `global_values` / `effective` 是**未命名表**那一层（老写法 `<state>…</state>` 的键住那儿），
-// 留着是为了别把现存的界面弄坏；`tables` 才是全貌（表名 → 键 → 值）。
+// 三层来源各一行：`baseline`（底子：生效提示词里的块）、`session`（正文里的块 + 会话自己写的提示词里的块）。
+// 两份"默认表"的值：`baseline_values`（底子那层算完的）、`effective`（合并之后算完的，
+// 与 `tables[global]` 是同一份）；`tables` 才是全貌（表名 → 键 → 值）。
+//
+// ⚠ **层名是 `baseline`，不是 `global`**（2026-09-30 改）：`global` 现在是**表名**（不写表名的块落到它），
+// 同一个 JSON 里不许两义。名字里的 `global` 一律指那张表，`baseline` 一律指"底子"这一层。
 type View struct {
-	Global       []OpRow                      `json:"global"`
-	Session      []OpRow                      `json:"session"`
-	GlobalValues map[string]string            `json:"global_values"`
-	Effective    map[string]string            `json:"effective"`
-	Tables       map[string]map[string]string `json:"tables"`
+	Baseline       []OpRow                      `json:"baseline"`
+	Session        []OpRow                      `json:"session"`
+	BaselineValues map[string]string            `json:"baseline_values"`
+	Effective      map[string]string            `json:"effective"`
+	Tables         map[string]map[string]string `json:"tables"`
 }
 
-// Tables：表名 → 键 → 值。空串表名 = 未命名表（老写法 `<state>`）。
+// Tables：表名 → 键 → 值。不写表名的块进 `global` 表（`statelang.DefaultTable`）——
+// **`global` 恒在**（算完是空的也回 `{}`，见 `statelang.EnsureDefaultTable`）。
 type Tables = map[string]map[string]string
 
 // FromSources：**现演一份快照**（顺序就是 fold 的顺序）。
@@ -153,20 +158,48 @@ func FromSources(sessionID, systemPrompt string, source PromptSource, messages [
 
 	global := fold(globalRows, ScopeGlobal)
 	session := fold(sessionRows, ScopeSession)
-	merged := merge(global, session)
+	merged := statelang.EnsureDefaultTable(merge(global, session))
 	return View{
-		Global:       globalRows,
-		Session:      sessionRows,
-		GlobalValues: unnamedTable(global),
-		Effective:    unnamedTable(merged),
-		Tables:       merged,
+		Baseline:       globalRows,
+		Session:        sessionRows,
+		BaselineValues: defaultTable(global),
+		Effective:      defaultTable(merged),
+		Tables:         merged,
 	}
+}
+
+// StateAt：**`at_idx` 的那条链** —— "用**当前**的底子 + 正文只 fold 到第 N 条（含）"算出来的状态。
+//
+// ⚠ **它不是真快照**（这是刻意的，2026-09-30 定）：底子永远是**当前**的生效提示词
+// （不追究历史）⇒ 改了提示词，同一个 `at` 的答案立刻跟着变。它回答的是
+// "**用今天的底子** + 到那一条为止的正文，算出来是什么"，不是"那会儿到底是什么"。
+//
+// `at` 是**序号**：`0` ⇒ 只有底子（一条消息都不 fold）；`1..N` ⇒ 前 N 条；
+// 越界（超过现有条数）当作"到最后一条" —— 与 `/messages` 的区间查询一个口吻（越界不是错）。
+// 参数层的错（负数 / 非整数）由调用方拦（HTTP 层回 400），这里只做防御：负数当 0。
+func StateAt(sessionID, systemPrompt string, source PromptSource, messages []model.Message, at int) View {
+	return FromSources(sessionID, systemPrompt, source, MessagesUpTo(messages, at))
+}
+
+// MessagesUpTo：`at_idx` 的**唯一**一处落地 —— 取"要 fold 的那一段正文"。
+//
+// 序号 `idx` 是**派生**的（`store.IndexMessages`：按 `id` 排第几条，`0` = 合成的系统提示词）
+// ⇒ 前 `at` 条就是 `messages[:at]`（不重算、不落库）。越界 ⇒ 全部；负数 ⇒ 空（防御，参数层已拦过）。
+func MessagesUpTo(messages []model.Message, at int) []model.Message {
+	if at < 0 {
+		at = 0
+	}
+	if at > len(messages) {
+		at = len(messages)
+	}
+	return messages[:at]
 }
 
 // Fold：从空开始按出现顺序折叠，得到**一层**的 `{表: {键: 值}}`。
 //
 // 删除（`delete(键)` 或赋空值）就是把这个键**直接删掉**，不留痕迹（§38）；
-// 算完为空的表自动消失（§37）。
+// 算完为空的表自动消失（§37）—— **`global` 是那条例外**，但它由往外给的那一层补
+// （`FromSources` 过 `statelang.EnsureDefaultTable`；本函数只管一层，保持干净）。
 func Fold(statements []statelang.Statement) Tables {
 	rows := make([]statelang.Statement, 0, len(statements))
 	rows = append(rows, statements...)
@@ -239,42 +272,43 @@ func merge(global, session Tables) Tables {
 	return merged
 }
 
-// unnamedTable：未命名表（老写法 `<state>…</state>` 的键都住这儿）。
-func unnamedTable(tables Tables) map[string]string {
-	table := tables[""]
+// defaultTable：那层里 `global` 表的值（不写表名的块都住那儿）—— 空就回空 map，**永不给 nil**。
+func defaultTable(tables Tables) map[string]string {
+	table := tables[statelang.DefaultTable]
 	if table == nil {
 		return map[string]string{}
 	}
 	return table
 }
 
-// RenderTable：注入给模型的变量表 —— **按表分组**渲染；未命名表不写表头；空 ⇒ false。
+// RenderTable：注入给模型的变量表 —— **按表分组**渲染；`global` 那张不写表头；空 ⇒ false。
 //
 // 这是"告诉模型现在是什么值"的唯一渲染处；标签（`<state>`）**永远不出现**在里面。
+// ⚠ `global` 恒在（算完为空也留着，见 `statelang.EnsureDefaultTable`）⇒ 这里**必须**把空表跳过，
+// 否则"一个变量都没有"也会给提示词添一句空的"当前变量:"（那会改变出站内容的语义）。
 func RenderTable(tables Tables) (string, bool) {
-	if len(tables) == 0 {
-		return "", false
-	}
-	var builder strings.Builder
-	builder.WriteString("当前变量:")
-	names := sortedKeys(tables)
-	for _, name := range names {
+	var body strings.Builder
+	for _, name := range sortedKeys(tables) {
 		table := tables[name]
 		if len(table) == 0 {
 			continue
 		}
-		if name == "" {
+		if name == statelang.DefaultTable {
 			for _, key := range sortedKeys(table) {
-				builder.WriteString("\n  " + key + " = " + table[key])
+				body.WriteString("\n  " + key + " = " + table[key])
 			}
 			continue
 		}
-		builder.WriteString("\n  〔" + name + "〕")
+		body.WriteString("\n  〔" + name + "〕")
 		for _, key := range sortedKeys(table) {
-			builder.WriteString("\n    " + key + " = " + table[key])
+			body.WriteString("\n    " + key + " = " + table[key])
 		}
 	}
-	return builder.String(), true
+	rendered := body.String()
+	if rendered == "" {
+		return "", false
+	}
+	return "当前变量:" + rendered, true
 }
 
 // OutgoingRole：发往上游时 `messages[].role` 的取值。
@@ -298,6 +332,14 @@ type Outgoing struct {
 	MessageID *string `json:"message_id,omitempty"` // source=message
 	SummaryID *string `json:"summary_id,omitempty"` // source=summary
 	Blocks    *int64  `json:"blocks,omitempty"`     // source=summary：它覆盖几个块
+	// Idx：这一项对应**第几条消息**（派生字段，同 `model.Message.Idx`）。
+	// `source=system` ⇒ **0**（合成的系统提示词，它不是消息）；`source=message` ⇒ 它自己那条的序号。
+	Idx *int `json:"idx,omitempty"`
+	// FromIdx / ToIdx：`source=summary` 时它**替代了**第几条到第几条（闭区间）。
+	// 摘要不是谁说的话（它没自己的 idx）；有这两个数 ⇒ "第 5–10 条被压成了哪一条"一眼可见。
+	// 区间缺失（老数据 / 指针悬空）⇒ 不带这一对。
+	FromIdx *int `json:"from_idx,omitempty"`
+	ToIdx   *int `json:"to_idx,omitempty"`
 	// Pending：这一项**还没进库**（只有 (c) 里那条"待发的 user"会带）。
 	// 它的 `message_id` 是**预测值** —— 给出去只为让这一项与别的 message 项同形状（逐字段可比），
 	// 别拿它去查消息（真发那一刻会另铸一个 id，库里永远没有这个）。
@@ -321,7 +363,17 @@ func BuildOutgoing(systemPrompt string, messages []model.Message, summaries []mo
 
 	outgoing := []Outgoing{}
 	if system != "" {
-		outgoing = append(outgoing, Outgoing{Role: RoleSystem, Content: system, Source: "system"})
+		// 合成项：`idx = 0`（**它不是消息** —— 消息从 1 起）。与 `/outgoing` 第一条天然对齐。
+		zero := 0
+		outgoing = append(outgoing, Outgoing{Role: RoleSystem, Content: system, Source: "system", Idx: &zero})
+	}
+	// 序号是**派生**的（`store.IndexMessages` 按排序编好）⇒ 这里只查表，不重算。
+	// 摘要不是消息、没有自己的 idx ⇒ 它只带"替代了第几条到第几条"。
+	idxByID := make(map[string]int, len(messages))
+	for index := range messages {
+		if messages[index].Idx > 0 {
+			idxByID[messages[index].ID] = messages[index].Idx
+		}
 	}
 	for _, part := range walk(messages, summaries) {
 		if part.message != nil {
@@ -336,9 +388,12 @@ func BuildOutgoing(systemPrompt string, messages []model.Message, summaries []mo
 				role = RoleUser
 			}
 			id := part.message.ID
-			outgoing = append(outgoing, Outgoing{
-				Role: role, Content: content, Source: "message", MessageID: &id,
-			})
+			item := Outgoing{Role: role, Content: content, Source: "message", MessageID: &id}
+			if part.message.Idx > 0 { // 手搭出来的消息没编过号 ⇒ 就不带这一格（0 是系统提示词的）
+				index := part.message.Idx
+				item.Idx = &index
+			}
+			outgoing = append(outgoing, item)
 			continue
 		}
 		// 摘要：不是谁说的话，是**程序摆给模型的前情** ⇒ 用 user 角色 + 明写的抬头，
@@ -352,15 +407,34 @@ func BuildOutgoing(systemPrompt string, messages []model.Message, summaries []mo
 			blocks = 1
 		}
 		id, count := part.summary.ID, blocks
-		outgoing = append(outgoing, Outgoing{
+		item := Outgoing{
 			Role:      RoleUser,
 			Content:   "【前情提要·" + strconv.FormatInt(blocks, 10) + " 块】\n" + text,
 			Source:    "summary",
 			SummaryID: &id,
 			Blocks:    &count,
-		})
+		}
+		// 它**替代了**第几条到第几条（闭区间）—— 于是"第 5–10 条被压成了哪一条"一眼可见。
+		if from, to, ok := spanIndexes(part.summary, idxByID); ok {
+			item.FromIdx, item.ToIdx = &from, &to
+		}
+		outgoing = append(outgoing, item)
 	}
 	return outgoing
+}
+
+// spanIndexes：这条摘要盖住的消息**序号**区间（闭区间）—— 摘要没有自己的 idx，只有覆盖范围。
+// 两端缺一、或指不着（悬空指针 / 老数据没有区间）⇒ false：那一项就不带范围（宁可不说，不许瞎说）。
+func spanIndexes(summary *model.Summary, idxByID map[string]int) (int, int, bool) {
+	if summary == nil || summary.BeginMessageID == nil || summary.EndMessageID == nil {
+		return 0, 0, false
+	}
+	begin, beginOK := idxByID[*summary.BeginMessageID]
+	end, endOK := idxByID[*summary.EndMessageID]
+	if !beginOK || !endOK || end < begin {
+		return 0, 0, false
+	}
+	return begin, end, true
 }
 
 type part struct {

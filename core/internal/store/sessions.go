@@ -300,9 +300,9 @@ func (s *Store) CopySession(sessionID string) (model.Session, error) {
 		message := messages[index]
 		if _, err := tx.Exec(
 			`INSERT INTO messages
-			   (id, session_id, role, content, created_at, reasoning, reasoning_ms, duration_ms, usage, summary_id)
-			 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)`,
-			messageIDs[index], copied.ID, string(message.Role), message.Content, message.CreatedAt,
+			   (id, session_id, role, content, created_at, updated_at, reasoning, reasoning_ms, duration_ms, usage, summary_id)
+			 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`,
+			messageIDs[index], copied.ID, string(message.Role), message.Content, message.CreatedAt, message.UpdatedAt,
 			message.Reasoning, message.ReasoningMS, message.DurationMS, usageArg(message.Usage),
 			remapID(message.SummaryID, summaryIDOf)); err != nil {
 			return model.Session{}, err

@@ -8,16 +8,19 @@
       "statements": [
         {
           "kind": "set",
+          "table": "global",
           "key": "AA",
           "value": "123456"
         },
         {
           "kind": "set",
+          "table": "global",
           "key": "B",
           "value": "234"
         },
         {
           "kind": "delete",
+          "table": "global",
           "key": "AA"
         }
       ],
@@ -30,11 +33,13 @@
       "statements": [
         {
           "kind": "set",
+          "table": "global",
           "key": "B",
           "value": "234"
         },
         {
           "kind": "set",
+          "table": "global",
           "key": "C",
           "value": "落石"
         }
@@ -48,6 +53,7 @@
       "statements": [
         {
           "kind": "delete",
+          "table": "global",
           "key": "想法"
         }
       ],
@@ -60,6 +66,7 @@
       "statements": [
         {
           "kind": "set",
+          "table": "global",
           "key": "HP",
           "value": "12"
         }
@@ -80,6 +87,7 @@
       "statements": [
         {
           "kind": "set",
+          "table": "global",
           "key": "状态",
           "value": "血量=50/100=危险"
         }
@@ -142,11 +150,13 @@
       "statements": [
         {
           "kind": "set",
+          "table": "global",
           "key": "A",
           "value": "1"
         },
         {
           "kind": "set",
+          "table": "global",
           "key": "B",
           "value": "2"
         }
@@ -160,6 +170,7 @@
       "statements": [
         {
           "kind": "set",
+          "table": "global",
           "key": "A",
           "value": "1"
         }
@@ -173,6 +184,7 @@
       "statements": [
         {
           "kind": "set",
+          "table": "global",
           "key": "HP",
           "value": "3"
         }
@@ -186,6 +198,7 @@
       "statements": [
         {
           "kind": "set",
+          "table": "global",
           "key": "HP",
           "value": "3"
         }
@@ -224,6 +237,7 @@
       ],
       "diagnostics": 0,
       "tables": {
+        "global": {},
         "玩家状态": {
           "心情": "疲惫",
           "状态": "正在写代码"
@@ -250,6 +264,7 @@
       ],
       "diagnostics": 0,
       "tables": {
+        "global": {},
         "世界情况": {
           "情况": "待处理"
         },
@@ -259,12 +274,13 @@
       }
     },
     {
-      "name": "未命名表与命名表并存（未命名用空串作键）",
+      "name": "不写表名的块与命名表并存（不写表名 ⇒ global）",
       "input": "<state>HP = 10</state><state 玩家状态>心情=疲惫</state>",
       "cleaned": "",
       "statements": [
         {
           "kind": "set",
+          "table": "global",
           "key": "HP",
           "value": "10"
         },
@@ -277,7 +293,7 @@
       ],
       "diagnostics": 0,
       "tables": {
-        "": {
+        "global": {
           "HP": "10"
         },
         "玩家状态": {
@@ -286,7 +302,7 @@
       }
     },
     {
-      "name": "空值表：算完为空 ⇒ 整张不出现",
+      "name": "空值表：算完为空 ⇒ 整张不出现（global 是例外，它恒在）",
       "input": "<state 临时>X = 1; delete(X)</state>",
       "cleaned": "",
       "statements": [
@@ -303,7 +319,9 @@
         }
       ],
       "diagnostics": 0,
-      "tables": {}
+      "tables": {
+        "global": {}
+      }
     },
     {
       "name": "删除只作用于自己那张表",
@@ -330,6 +348,7 @@
       ],
       "diagnostics": 0,
       "tables": {
+        "global": {},
         "A": {
           "K": "1"
         }
@@ -355,6 +374,7 @@
       ],
       "diagnostics": 0,
       "tables": {
+        "global": {},
         "玩家状态": {
           "HP": "9"
         }
@@ -380,6 +400,7 @@
       ],
       "diagnostics": 0,
       "tables": {
+        "global": {},
         "玩家状态": {
           "HP": "10"
         }
@@ -392,15 +413,18 @@
       "statements": [
         {
           "kind": "set",
+          "table": "global",
           "key": "X",
           "value": ""
         }
       ],
       "diagnostics": 0,
-      "tables": {}
+      "tables": {
+        "global": {}
+      }
     },
     {
-      "name": "空值把整张表清空 ⇒ 表也消失",
+      "name": "空值把整张表清空 ⇒ 表也消失（global 还是留着）",
       "input": "<state 临时>A = 1;A = </state>",
       "cleaned": "",
       "statements": [
@@ -418,7 +442,9 @@
         }
       ],
       "diagnostics": 0,
-      "tables": {}
+      "tables": {
+        "global": {}
+      }
     },
     {
       "name": "空值清掉之后还能再设回来",
@@ -427,25 +453,63 @@
       "statements": [
         {
           "kind": "set",
+          "table": "global",
           "key": "HP",
           "value": "1"
         },
         {
           "kind": "set",
+          "table": "global",
           "key": "HP",
           "value": ""
         },
         {
           "kind": "set",
+          "table": "global",
           "key": "HP",
           "value": "9"
         }
       ],
       "diagnostics": 0,
       "tables": {
-        "": {
+        "global": {
           "HP": "9"
         }
+      }
+    },
+    {
+      "name": "不写表名与 <state global> 是同一张表（后写覆盖先写）",
+      "input": "<state>HP = 1</state><state global>HP = 9</state>",
+      "cleaned": "",
+      "statements": [
+        {
+          "kind": "set",
+          "table": "global",
+          "key": "HP",
+          "value": "1"
+        },
+        {
+          "kind": "set",
+          "table": "global",
+          "key": "HP",
+          "value": "9"
+        }
+      ],
+      "diagnostics": 0,
+      "tables": {
+        "global": {
+          "HP": "9"
+        }
+      }
+    },
+    {
+      "name": "一个变量都没有：global 恒在（回空表，不是整份空）",
+      "input": "这里没有状态块",
+      "cleaned": "这里没有状态块",
+      "statements": [],
+      "diagnostics": 0,
+      "tables": {
+        "global": {}
       }
     }
   ],

@@ -138,12 +138,45 @@ func TestEmptyValueClearsTheKey(t *testing.T) {
 	if tables["玩家状态"]["HP"] != "10" {
 		t.Fatalf("tables = %+v", tables)
 	}
-	if len(Tables("<state>X = </state>")) != 0 {
-		t.Fatalf("清空之后的表该消失：%+v", Tables("<state>X = </state>"))
+	if len(Tables("<state>X = </state>")) != 1 {
+		t.Fatalf("清空之后 `global` 恒在（回空表）：%+v", Tables("<state>X = </state>"))
+	}
+	if table := Tables("<state>X = </state>")[DefaultTable]; table == nil || len(table) != 0 {
+		t.Fatalf("`global` 该在、且是空的：%+v", Tables("<state>X = </state>"))
 	}
 	// 折叠本身（单层）也守同一条规则
 	if len(Fold(document.Statements)) != 1 {
 		t.Fatalf("Fold = %+v", Fold(document.Statements))
+	}
+}
+
+// 不写表名的块进 `global`（`<state>` 与 `<state global>` 是同一张表），
+// 而"算完为空的表自动消失"里 `global` 是**唯一例外**（它恒在）。
+func TestDefaultTableIsGlobalAndAlwaysPresent(t *testing.T) {
+	// 两种写法落到**同一张表**：后写覆盖先写
+	tables := Tables("<state>HP = 1</state><state global>HP = 9</state>")
+	if len(tables) != 1 || tables[DefaultTable]["HP"] != "9" {
+		t.Fatalf("`<state>` 与 `<state global>` 该是同一张表：%+v", tables)
+	}
+	if len(tables[""]) != 0 {
+		t.Fatalf("空串不再是任何表的键（未命名 ⇒ global）：%+v", tables)
+	}
+	// 解析那一侧也一样：语句的 `table` 恒是 `global`
+	document := Scan("<state>A = 1</state>")
+	if len(document.Statements) != 1 || document.Statements[0].Table != DefaultTable {
+		t.Fatalf("不写表名的语句该归 global：%+v", document.Statements)
+	}
+	// 一个块都没有 ⇒ 还是 `{"global": {}}`（"恒在"这条就是为了让客户端少判一层）
+	if tables := Tables("什么都没有"); len(tables) != 1 || tables[DefaultTable] == nil {
+		t.Fatalf("没有变量时该回 {\"global\": {}}：%+v", tables)
+	}
+	// 例外**只**给 `global`：命名表算完为空照旧整张消失
+	tables = Tables("<state 临时>A = 1;delete(A)</state><state 全局>在 = 1</state>")
+	if _, ok := tables["临时"]; ok {
+		t.Fatalf("算完为空的命名表该消失：%+v", tables)
+	}
+	if tables["全局"]["在"] != "1" {
+		t.Fatalf("别的命名表照旧在：%+v", tables)
 	}
 }
 
@@ -193,7 +226,8 @@ func TestGoldenJSONShape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"statements":[{"kind":"set","key":"AA","value":"123456"},{"kind":"delete","key":"AA"}],` +
+	want := `{"statements":[{"kind":"set","table":"global","key":"AA","value":"123456"},` +
+		`{"kind":"delete","table":"global","key":"AA"}],` +
 		`"diagnostics":[{"line":4,"text":"A=1 B=2","message":"值里不能有空格（一行只能有一个变量，多个变量请用 ` + "`;`" + ` 或换行分开）"}],` +
 		`"blocks":1}`
 	if string(raw) != want {

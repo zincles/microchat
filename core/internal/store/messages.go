@@ -11,7 +11,7 @@ import (
 )
 
 // messageColumns：这条会话的消息列（**没有 parent_message_id**：线性会话没有父指针）。
-const messageColumns = "id, session_id, role, content, created_at, " +
+const messageColumns = "id, session_id, role, content, created_at, updated_at, " +
 	"reasoning, reasoning_ms, duration_ms, usage, summary_id"
 
 func scanMessage(row scanner) (model.Message, error) {
@@ -21,7 +21,7 @@ func scanMessage(row scanner) (model.Message, error) {
 	var reasoningMS, durationMS sql.NullInt64
 	err := row.Scan(
 		&message.ID, &message.SessionID, &message.Role, &message.Content,
-		&message.CreatedAt,
+		&message.CreatedAt, &message.UpdatedAt,
 		&reasoning, &reasoningMS, &durationMS, &usage, &summaryID,
 	)
 	if err != nil {
@@ -45,6 +45,21 @@ func scanMessage(row scanner) (model.Message, error) {
 	return message, nil
 }
 
+// IndexMessages：给一条会话的消息**按顺序**编上序号（1-based）—— **这是 `idx` 唯一算处**。
+//
+// 位置 = 按 `id` 排序后的下标（`allMessages` 的 `ORDER BY id` 保证顺序 ⇒ `messages_by_session` 索引白拿）。
+// 线性会话**只删后缀**（不留洞）、不往中间插、编辑/重摇不改 id ⇒ **一旦分配就永不改变**。
+// `idx` **不落库** ✗：没有那一列，也没有迁移（存它 = 第二个真相来源，迟早与顺序打架）；
+// `0` 留给**合成的系统提示词**（它不是消息）。
+//
+// 幂等：对已经编过号的一段再编一遍，值一模一样（`chat.assemble` 把"待发那句"追在末尾后就再走一遍，
+// 于是那条拿到的正是"下一条"的号 —— **下一个序号也仍然只有这一处算**）。
+func IndexMessages(messages []model.Message) {
+	for index := range messages {
+		messages[index].Idx = index + 1
+	}
+}
+
 // allMessages：**调用方持锁**（内部版，事务与复合操作要用）。
 //
 // 顺序 = `id`（UUIDv7：受理时铸、就地替换不改 id ⇒ 时间序稳），走 `messages_by_session` 索引。
@@ -64,7 +79,11 @@ func (s *Store) allMessages(sessionID string) ([]model.Message, error) {
 		}
 		messages = append(messages, message)
 	}
-	return messages, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	IndexMessages(messages)
+	return messages, nil
 }
 
 // ListMessages：这条会话的**全部消息**，按 id 升序。
@@ -77,6 +96,52 @@ func (s *Store) ListMessages(sessionID string) ([]model.Message, error) {
 	return s.allMessages(sessionID)
 }
 
+// MessageWindow：`GET /sessions/{session_id}/messages` 的三个查询参数（**在这里收口**）。
+//
+// 零值 = 没给。**参数的合法性在 server 判**（那是参数层的事，400 也在那儿）；这里只管语义。
+type MessageWindow struct {
+	Last    int // >0 ⇒ 取**尾部** N 条
+	FromIdx int // >0 ⇒ 区间起点（含）；0 ⇒ 从头
+	ToIdx   int // >0 ⇒ 区间终点（含）；0 ⇒ 到末尾
+}
+
+// ListMessagesWindow：按序号窗口取消息（**仍按 id 升序** —— 切一段出来，不重排）。
+//
+// 区间的两端缺一就补默认（起点 ⇒ 1、终点 ⇒ 末尾）："只看第 5 条往后"说得出口。
+// **越界不算错**（分页的常见语义）：要 5..99 而只有 3 条 ⇒ 给现有的那几条；
+// 起点落在末尾之后 ⇒ **空列表**（不是 404：会话没有"第几页不存在"这回事）。
+func (s *Store) ListMessagesWindow(sessionID string, window MessageWindow) ([]model.Message, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	messages, err := s.allMessages(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	return windowSlice(messages, window), nil
+}
+
+// windowSlice：**唯一一处**按窗口切消息 —— 切出来的仍是 id 升序、仍是同一条会话里的 `idx`。
+func windowSlice(messages []model.Message, window MessageWindow) []model.Message {
+	if window.Last > 0 {
+		if window.Last >= len(messages) {
+			return messages
+		}
+		return messages[len(messages)-window.Last:]
+	}
+	if window.FromIdx <= 0 && window.ToIdx <= 0 {
+		return messages // 一个都没给 = 全部（语义不变）
+	}
+	begin := max(window.FromIdx, 1)
+	end := window.ToIdx
+	if end <= 0 || end > len(messages) {
+		end = len(messages) // 越界 ⇒ 给现有的那几条
+	}
+	if begin > end {
+		return []model.Message{} // 起点在末尾之后 ⇒ 空（仍是数组，不是 null）
+	}
+	return messages[begin-1 : end]
+}
+
 // InsertMessage：把**一整条**消息落库（用户那句，或一条已经拿到整段的回复）。
 //
 // 地址由调用方铸好（**受理那一刻**就发给客户端；顺序也由它定）⇒ 这里不自作主张生成 id。
@@ -86,6 +151,8 @@ func (s *Store) InsertMessage(message model.Message) (model.Message, error) {
 	if message.CreatedAt == 0 {
 		message.CreatedAt = nowMS()
 	}
+	// 新建时 updated_at = created_at（没改过的两者相等）。
+	message.UpdatedAt = message.CreatedAt
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -96,8 +163,8 @@ func (s *Store) InsertMessage(message model.Message) (model.Message, error) {
 	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.Exec(
 		`INSERT INTO messages
-		   (id, session_id, role, content, created_at, reasoning, reasoning_ms, duration_ms, usage, summary_id)
-		 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL)`,
+		   (id, session_id, role, content, created_at, updated_at, reasoning, reasoning_ms, duration_ms, usage, summary_id)
+		 VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6, ?7, ?8, ?9, NULL)`,
 		message.ID, message.SessionID, string(message.Role), message.Content, message.CreatedAt,
 		message.Reasoning, message.ReasoningMS, message.DurationMS, usageArg(message.Usage)); err != nil {
 		return model.Message{}, err
@@ -126,9 +193,10 @@ func (s *Store) UpdateMessage(sessionID, messageID, content string) (model.Messa
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	now := nowMS()
 	if err := execTouchLocked(tx,
-		"UPDATE messages SET content = ?1 WHERE id = ?2 AND session_id = ?3",
-		content, messageID, sessionID); err != nil {
+		"UPDATE messages SET content = ?1, updated_at = ?2 WHERE id = ?3 AND session_id = ?4",
+		content, now, messageID, sessionID); err != nil {
 		return model.Message{}, err
 	}
 	updated, err := scanMessage(tx.QueryRow("SELECT "+messageColumns+" FROM messages WHERE id = ?1", messageID))
@@ -136,7 +204,7 @@ func (s *Store) UpdateMessage(sessionID, messageID, content string) (model.Messa
 		return model.Message{}, err
 	}
 	if _, err := tx.Exec("UPDATE sessions SET updated_at = ?1 WHERE id = ?2",
-		nowMS(), sessionID); err != nil {
+		now, sessionID); err != nil {
 		return model.Message{}, err
 	}
 	// 改的正文可能正被某条摘要覆盖 ⇒ 那条摘要（含各级祖先）标过期

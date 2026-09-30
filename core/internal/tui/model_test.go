@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/mattn/go-runewidth"
@@ -1816,25 +1817,30 @@ func TestPickerHighlightIsBoldCyan(t *testing.T) {
 	}
 }
 
-// `/outgoing` 查看器：**摘要是压缩过的 ⇒ 黄**、系统提示词 ⇒ 暗、原样消息 ⇒ 默认色。
+// `/outgoing` 查看器：**摘要是压缩过的 ⇒ 黄**、系统提示词 ⇒ 暗、原样消息 ⇒ 默认色；
+// 顺带把序号（`#3`）打出来 —— 只有这个查看器用它。
 func TestOutgoingViewerColorsBySource(t *testing.T) {
 	m := colored(fixture())
 	blocks := int64(4)
 	summaryID, messageID := "s1", "m9"
+	zero, nine, from, to := 0, 9, 3, 5
 	updated, _ := m.Update(outgoingMsg{items: []Outgoing{
-		{Role: "system", Content: "你是主持人", Source: "system"},
-		{Role: "assistant", Content: "压缩摘要", Source: "summary", SummaryID: &summaryID, Blocks: &blocks},
-		{Role: "user", Content: "原样那句", Source: "message", MessageID: &messageID},
+		{Role: "system", Content: "你是主持人", Source: "system", Idx: &zero},
+		{Role: "assistant", Content: "压缩摘要", Source: "summary", SummaryID: &summaryID, Blocks: &blocks, FromIdx: &from, ToIdx: &to},
+		{Role: "user", Content: "原样那句", Source: "message", MessageID: &messageID, Idx: &nine},
 	}})
 	body := updated.(model).View().Content
 	if !strings.Contains(body, "\x1b[33m摘要 "+shortID(summaryID)) {
 		t.Fatalf("摘要那条该是黄：\n%q", body)
 	}
-	if !strings.Contains(body, "\x1b[2m系统提示词") {
-		t.Fatalf("系统提示词该是暗色：\n%q", body)
+	if !strings.Contains(body, "\x1b[2m系统提示词 #0") {
+		t.Fatalf("系统提示词该是暗色、并显示合成项的 0：\n%q", body)
 	}
-	if !strings.Contains(body, "消息 "+shortID(messageID)) {
-		t.Fatalf("消息那条该列出来：\n%q", body)
+	if !strings.Contains(body, "消息 "+shortID(messageID)+" #9") {
+		t.Fatalf("消息那条该列出来、带自己的序号：\n%q", body)
+	}
+	if !strings.Contains(body, "第 3-5 条") {
+		t.Fatalf("摘要该报它替代的序号范围：\n%q", body)
 	}
 	if strings.Contains(body, "\x1b[33m消息 ") || strings.Contains(body, "\x1b[2m消息 ") {
 		t.Fatal("原样消息保持默认色（别和压缩出来的混）")
@@ -2123,5 +2129,112 @@ func TestSystemOnFetchesWhenMissing(t *testing.T) {
 	m.prompt, m.promptFor = &SystemPrompt{Text: "底子"}, "c1"
 	if _, again := m.runCommand("/system"); again == nil {
 		t.Fatal("写偏好那一下总要有")
+	}
+}
+
+// 思考流的呈现口径：有 `reasoning` 的消息默认只显示**折叠行**「思考（2.1s）」；
+// `/think` ⇒ 查看器里展开全文；没思考的消息不出现折叠行。
+func TestThinkingFoldsThenThinkExpands(t *testing.T) {
+	ms := int64(2100)
+	m := fixture()
+	m.messages = []Message{
+		{ID: "m1", Role: "user", Content: "在吗"},
+		{ID: "m2", Role: "assistant", Content: "在。", Reasoning: "先想一下\n再回答", ReasoningMS: &ms},
+	}
+	view := m.View().Content
+	if !strings.Contains(view, "思考（2.1s）") {
+		t.Fatalf("有思考的消息该有一行折叠的「思考（2.1s）」：\n%s", view)
+	}
+	if strings.Contains(view, "先想一下") {
+		t.Fatalf("默认（折叠）不该显示思考全文：\n%s", view)
+	}
+
+	next, _ := m.runCommand("/think")
+	after, ok := next.(model)
+	if !ok || after.viewer == nil {
+		t.Fatalf("/think 该打开查看器：%#v", next)
+	}
+	joined := strings.Join(after.viewer, "\n")
+	if !strings.Contains(joined, "先想一下") || !strings.Contains(joined, "再回答") {
+		t.Fatalf("/think 该展开思考全文：%q", joined)
+	}
+
+	// 没有思考的消息 ⇒ 不该出现折叠行；/think 如实说一句
+	plain := fixture()
+	plain.messages = []Message{{ID: "m1", Role: "user", Content: "在吗"}}
+	if strings.Contains(plain.View().Content, "思考（") {
+		t.Fatalf("没思考的消息不该有折叠行：\n%s", plain.View().Content)
+	}
+	next, _ = plain.runCommand("/think")
+	plainAfter := next.(model)
+	if plainAfter.viewer != nil {
+		t.Fatal("没有思考时 /think 不该打开查看器")
+	}
+	if !strings.Contains(plainAfter.lastAction, "没有思考") {
+		t.Fatalf("该如实说没有思考：%q", plainAfter.lastAction)
+	}
+}
+
+// 生成中若已拿到"受理 → 第一段正文"的用时，思考行一并报出来（口径同落档后的 `reasoning_ms`）。
+func TestLiveThinkingShowsElapsed(t *testing.T) {
+	ms := int64(2100)
+	m := liveFixture()
+	m.turn.thinkMS = &ms
+	if !strings.Contains(m.View().Content, "思考中… 3 字 · 2.1s") {
+		t.Fatalf("生成中的思考行该带上用时：\n%s", m.View().Content)
+	}
+}
+
+// `/usage`：进命令表；查回来用查看器逐窗口渲染（标签、百分比、重置时刻）。
+func TestUsageCommandRendersWindows(t *testing.T) {
+	found := false
+	for _, cmd := range commands {
+		if cmd.name == "usage" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("/usage 该在命令表里")
+	}
+
+	m := fixture() // 当前会话 c1 的 provider = opencode-go
+	next, run := m.runCommand("/usage")
+	if run == nil {
+		t.Fatal("/usage 该发起一次查询")
+	}
+	if !strings.Contains(next.(model).lastAction, "查余量") {
+		t.Fatalf("底部该说在查：%q", next.(model).lastAction)
+	}
+
+	updated, _ := m.Update(usageMsg{
+		providerID: "opencode-go",
+		usage: PlanUsage{
+			ProviderID: "opencode-go", Plan: "OpenCode Go",
+			Windows: []PlanWindow{
+				{ID: "rolling-5h", Label: "Rolling (5h)", Percent: 6, Status: "ok",
+					ResetsAt: time.Date(2026, 9, 30, 13, 47, 1, 0, time.UTC)},
+				{ID: "weekly", Label: "Weekly", Percent: 100, Status: "rate-limited",
+					ResetsAt: time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC)},
+			},
+		},
+	})
+	after := updated.(model)
+	if after.viewer == nil {
+		t.Fatal("/usage 该打开查看器")
+	}
+	joined := strings.Join(after.viewer, "\n")
+	for _, want := range []string{"Rolling (5h)", "6%", "重置 2026-09-30T13:47Z", "Weekly", "100%"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("查看器缺 %q：\n%s", want, joined)
+		}
+	}
+
+	// 渠道不是 opencode-go ⇒ 如实说一句（后端 400 的消息透出来）
+	bad, _ := m.Update(usageMsg{providerID: "dummy", err: errors.New("invalid（400）：渠道 dummy 不是 opencode-go")})
+	if bad.(model).viewer != nil {
+		t.Fatal("出错时不该打开查看器")
+	}
+	if !strings.Contains(bad.(model).lastAction, "查余量失败") {
+		t.Fatalf("该如实报错：%q", bad.(model).lastAction)
 	}
 }

@@ -37,6 +37,24 @@ const (
 // BlockTag：块的标签名。**不可改** —— 它已经在存档与文档里了。
 const BlockTag = "state"
 
+// DefaultTable：**不写表名的块落到这张表**（`<state>` 与 `<state global>` 是同一张表）。
+//
+// 它同时也是"算完为空的表自动消失"的**唯一例外**：`global` 恒在 —— 一个变量都没有时
+// 也回 `{}`（客户端不必先判"有没有这张表"）。
+// 折叠本身**不加**这条（`Fold` 与内部的折叠照旧让空表消失）；由**往外给的那一层**补上：
+// `Tables`（`POST /statelang`）与 `state.FromSources`（`GET /state`）各过一眼 `EnsureDefaultTable`。
+const DefaultTable = "global"
+
+// EnsureDefaultTable：补上那条例外 —— `DefaultTable`（`global`）恒在，空着也留着（回 `{}`）。
+//
+// 就地改 `tables`（调用方刚建出来的那份），返回同一个 map 便于链式调用。
+func EnsureDefaultTable(tables map[string]map[string]string) map[string]map[string]string {
+	if tables[DefaultTable] == nil {
+		tables[DefaultTable] = map[string]string{}
+	}
+	return tables
+}
+
 // Kind：语句的种类。
 type Kind string
 
@@ -48,7 +66,8 @@ const (
 // Statement：一条语句。
 //
 // JSON 形状（**稳定**，黄金测试按它写）：`{"kind":"set","table":"玩家状态","key":"AA","value":"123456"}`
-// —— 删除语句没有 `value` 字段；未命名表的 `table` 是空串（省略不写）。
+// —— 删除语句没有 `value` 字段；**不写表名的块进 `global` 表**（于是 `table` 恒非空：
+// `<state>` 与 `<state global>` 一模一样）。
 type Statement struct {
 	Kind  Kind    `json:"kind"`
 	Table string  `json:"table,omitempty"`
@@ -99,7 +118,8 @@ func clears(statement Statement) bool {
 }
 
 // Tables：**解析 + 计算** —— 读一段文本里的所有 `<state>` 块，按顺序折叠，得到
-// `{表名: {键: 值}}`。删除过的键不出现；算完为空的表整张不出现；未命名表用空串作键。
+// `{表名: {键: 值}}`。删除过的键不出现；算完为空的表整张不出现（**`global` 除外**：它恒在，空着回 `{}`）；
+// 不写表名的块进 `DefaultTable`（`global`）。
 //
 // 这就是给外部工具用的那个形状（也是 `POST /api/v1/statelang` 的主体）。
 // 想只要"发生了什么"（不计算）就用 `Scan(text).Statements`。
@@ -123,7 +143,8 @@ func Tables(text string) map[string]map[string]string {
 			delete(tables, name) // 空的表自动消失
 		}
 	}
-	return tables
+	// ……`global` 是那条例外：它恒在（于是"一个变量都没有"也是 `{"global": {}}`）。
+	return EnsureDefaultTable(tables)
 }
 
 // Fold：从空开始按顺序执行语句，得到**一层**的状态（键 → 值）。

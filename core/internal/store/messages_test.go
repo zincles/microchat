@@ -2,6 +2,7 @@ package store
 
 import (
 	"testing"
+	"time"
 
 	"microchat/internal/model"
 )
@@ -31,7 +32,7 @@ func seedSession(t *testing.T, st *Store, sessionID string, messageIDs ...string
 			role = "assistant"
 		}
 		if _, err := st.db.Exec(
-			`INSERT INTO messages (id, session_id, role, content, created_at) VALUES (?1, ?2, ?3, ?4, ?5)`,
+			`INSERT INTO messages (id, session_id, role, content, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)`,
 			id, sessionID, role, "第 "+id+" 条", int64(index+1)); err != nil {
 			t.Fatal(err)
 		}
@@ -426,5 +427,41 @@ func TestCopySessionRemapsSummaryPointers(t *testing.T) {
 	// 不存在的会话 ⇒ ErrNotFound
 	if _, err := st.CopySession("查无此会话"); err != ErrNotFound {
 		t.Fatalf("该 404：%v", err)
+	}
+}
+
+// 消息的 `updated_at`：新建时 = `created_at`；改正文后变大。
+func TestMessageUpdatedAt(t *testing.T) {
+	st := openTemp(t)
+	const sessionID = "01a00000-0000-7000-8000-0000000000f1"
+	seedSession(t, st, sessionID)
+
+	inserted, err := st.InsertMessage(model.Message{
+		ID: "01a00000-0000-7000-8000-0000000000f2", SessionID: sessionID, Role: model.RoleUser, Content: "原始",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inserted.UpdatedAt != inserted.CreatedAt {
+		t.Fatalf("新建时 updated_at 该等于 created_at：%+v", inserted)
+	}
+	listed, err := st.ListMessages(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if listed[0].UpdatedAt != listed[0].CreatedAt {
+		t.Fatalf("没改过的消息两者该相等：%+v", listed[0])
+	}
+
+	time.Sleep(3 * time.Millisecond) // 毫秒粒度：睡一会儿才能观察到变大
+	edited, err := st.UpdateMessage(sessionID, inserted.ID, "改过了")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if edited.UpdatedAt <= edited.CreatedAt {
+		t.Fatalf("改过之后 updated_at 该 > created_at：%+v", edited)
+	}
+	if edited.CreatedAt != inserted.CreatedAt {
+		t.Fatalf("改正文不该动 created_at：%+v", edited)
 	}
 }

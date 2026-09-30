@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"strconv"
 
 	"microchat/internal/model"
 	"microchat/internal/state"
@@ -24,18 +25,54 @@ func (s *Server) viewOf(session model.Session) (state.View, error) {
 	return state.FromSources(session.ID, systemPrompt, source, messages), nil
 }
 
-// getSessionState：某会话的世界状态：全局打底 + 顺着正文重演出来的本会话改动 + 生效值。
+// getSessionState：某会话的世界状态：底子（生效提示词里的块）+ 顺着正文重演出来的本会话改动 + 生效值。
+//
+// 查询参数 `at_idx=N`（**同一条路由加参数**，不开新路）⇒ **截至第 N 条的现演**：
+//
+//   - **底子永远用当前的生效提示词** ✗（不追究历史）⇒ 它是"用**今天**的底子 + 到那一条为止的正文
+//     算出来的"，**不是真快照**（换提示词，同一个 N 的答案立刻跟着变）；
+//   - 正文只 fold **到第 N 条（含）**；`at_idx=0` ⇒ 只有底子；
+//   - `N` 超过现有条数 ⇒ 当作"到最后一条"（与 `/messages` 的区间查询一个口吻：**越界不是错**）；
+//   - 不给参数 ⇒ **当前状态**（现状一字不改）；给了但不是非负整数（`-1` / `abc` / 空）⇒ **400**。
+//
+// 响应仍是同一个 `StateView`（`baseline` / `session` / `baseline_values` / `effective` / `tables`）。
 func (s *Server) getSessionState(w http.ResponseWriter, r *http.Request) {
 	session, ok := s.requireSession(w, r)
 	if !ok {
 		return
 	}
-	view, err := s.viewOf(*session)
+	at, given, ok := atIdx(w, r)
+	if !ok {
+		return
+	}
+	messages, err := s.store.ListMessages(session.ID)
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, view)
+	systemPrompt, source := s.effectiveSystemPrompt(*session)
+	if !given {
+		// 不给参数 = 当前状态：走**原来那条**（一条消息都不截）
+		writeJSON(w, http.StatusOK, state.FromSources(session.ID, systemPrompt, source, messages))
+		return
+	}
+	writeJSON(w, http.StatusOK, state.StateAt(session.ID, systemPrompt, source, messages, at))
+}
+
+// atIdx：读 `at_idx`：不给 ⇒ (0, false, true)；给了就要非负整数（`0` 合法 —— 只有底子）⇒ 否则 400。
+//
+// **`0` 与"不给"是两件事**（前者 = 只有底子，后者 = 当前状态）⇒ 判定用 `Has` 而不是"空串当没给"。
+func atIdx(w http.ResponseWriter, r *http.Request) (int, bool, bool) {
+	query := r.URL.Query()
+	if !query.Has("at_idx") {
+		return 0, false, true
+	}
+	value, err := strconv.Atoi(trimSpace(query.Get("at_idx")))
+	if err != nil || value < 0 {
+		writeError(w, http.StatusBadRequest, "invalid", "at_idx 要是非负整数（0 = 只有底子；不给 = 当前状态）")
+		return 0, false, false
+	}
+	return value, true, true
 }
 
 // getSessionOutgoing：**(b) 当前已定历史的载荷** —— 标签已剔除、世界状态已注入、按摘要收拢。

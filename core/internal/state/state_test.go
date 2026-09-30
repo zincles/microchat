@@ -1,6 +1,7 @@
 package state
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -23,15 +24,15 @@ func TestPromptSourceDecidesTheLayer(t *testing.T) {
 
 	// agent 的提示词（全局）：删掉的 HP 会从底子漏回来（无墓碑，§38）
 	fromAgent := FromSources("c1", "<state>\nHP = 10\n</state>", PromptFromAgent, messages)
-	if value, ok := has(fromAgent.Tables, "", "HP"); !ok || value != "10" {
+	if value, ok := has(fromAgent.Tables, "global", "HP"); !ok || value != "10" {
 		t.Fatalf("本会话删不掉底子里的键（值该漏回来）：%+v", fromAgent.Tables)
 	}
-	if value, ok := has(fromAgent.Tables, "", "地点"); !ok || value != "破庙" {
+	if value, ok := has(fromAgent.Tables, "global", "地点"); !ok || value != "破庙" {
 		t.Fatalf("消息里的赋值该生效：%+v", fromAgent.Tables)
 	}
-	// 全局那层只装底子；本会话那层装消息
-	if len(fromAgent.Global) != 1 || fromAgent.Global[0].Key != "HP" || fromAgent.Global[0].Scope != ScopeGlobal {
-		t.Fatalf("global = %+v", fromAgent.Global)
+	// 底子那层只装提示词里的块；本会话那层装消息
+	if len(fromAgent.Baseline) != 1 || fromAgent.Baseline[0].Key != "HP" || fromAgent.Baseline[0].Scope != ScopeGlobal {
+		t.Fatalf("baseline = %+v", fromAgent.Baseline)
 	}
 	if len(fromAgent.Session) != 2 || fromAgent.Session[1].Kind != "delete" {
 		t.Fatalf("session = %+v", fromAgent.Session)
@@ -46,11 +47,112 @@ func TestPromptSourceDecidesTheLayer(t *testing.T) {
 
 	// 会话自己的提示词（本会话）：底子与消息同一层 ⇒ 删得掉
 	fromSession := FromSources("c1", "<state>\nHP = 10\n</state>", PromptFromSession, messages)
-	if _, ok := has(fromSession.Tables, "", "HP"); ok {
+	if _, ok := has(fromSession.Tables, "global", "HP"); ok {
 		t.Fatalf("同一层里删除该真的删掉：%+v", fromSession.Tables)
 	}
-	if len(fromSession.Global) != 0 {
-		t.Fatalf("会话自己的提示词不算全局：%+v", fromSession.Global)
+	if len(fromSession.Baseline) != 0 {
+		t.Fatalf("会话自己的提示词不算底子（它算本会话那层）：%+v", fromSession.Baseline)
+	}
+}
+
+// 不写表名与 `<state global>` 混在一条会话里 ⇒ **同一张表**，后写覆盖先写。
+//
+// （这是"未标表名默认视作 global"在现演那一层的落点；解析层的同一条在 `statelang` 里钉着。）
+func TestUnnamedAndGlobalTableAreTheSame(t *testing.T) {
+	view := FromSources("c1", "<state>HP = 10</state>", PromptFromSession, []model.Message{
+		message("m1", "<state>HP = 12</state>"),
+		message("m2", "<state global>HP = 15</state>"),
+		message("m3", "<state>弹药 = 3</state>"),
+	})
+	if value, ok := has(view.Tables, "global", "HP"); !ok || value != "15" {
+		t.Fatalf("两种写法该落到同一张表、后写覆盖先写：%+v", view.Tables)
+	}
+	if value, ok := has(view.Tables, "global", "弹药"); !ok || value != "3" {
+		t.Fatalf("不写表名的键也在 global 里：%+v", view.Tables)
+	}
+	if len(view.Tables) != 1 {
+		t.Fatalf("只该有 global 这一张表：%+v", view.Tables)
+	}
+}
+
+// `global` 恒在：**一个变量都没有也回 `{"global": {}}`**；算完为空的**命名**表照旧消失。
+func TestGlobalTableIsAlwaysPresent(t *testing.T) {
+	empty := FromSources("c1", "", PromptFromAgent, []model.Message{message("m1", "走吧。")})
+	if table, ok := empty.Tables["global"]; !ok || table == nil || len(table) != 0 {
+		t.Fatalf("空状态该回 {\"global\": {}}：%+v", empty.Tables)
+	}
+	if empty.Effective == nil || len(empty.Effective) != 0 {
+		t.Fatalf("`effective` 永不给 nil（它是默认表那份）：%+v", empty.Effective)
+	}
+	// 渲染那一层**不**因为"global 恒在"就多写一句空的"当前变量:"（出站内容的语义不许变）
+	if rendered, ok := RenderTable(empty.Tables); ok || rendered != "" {
+		t.Fatalf("空的那张 global 不该渲染出东西：%q", rendered)
+	}
+
+	// 命名表算完为空 ⇒ 整张消失（例外只给 global）
+	named := FromSources("c1", "", PromptFromSession, []model.Message{
+		message("m1", "<state 临时>X = 1</state>"),
+		message("m2", "<state 临时>X = </state>"),
+	})
+	if _, ok := named.Tables["临时"]; ok {
+		t.Fatalf("算完为空的命名表该消失：%+v", named.Tables)
+	}
+	if _, ok := named.Tables["global"]; !ok {
+		t.Fatalf("global 该还在：%+v", named.Tables)
+	}
+}
+
+// `at_idx` 那条链（`StateAt`）：**底子永远是当前的提示词**，正文只 fold 到第 N 条（含）。
+//
+// 三档：`at=2` 只看得到前两条带来的东西、`at=6`（= 全部）与不给参数一回事、`at=0` ⇒ 只有底子。
+func TestStateAtFoldsOnlyUpToTheIndex(t *testing.T) {
+	system := "<state 底子>种子 = 1</state>"
+	messages := []model.Message{
+		message("m1", "<state>第一 = 有</state>"),
+		message("m2", "<state>第二 = 有</state>"),
+		message("m3", "<state>第三 = 有</state>"),
+		message("m4", "<state>第四 = 有</state>"),
+		message("m5", "<state>第五 = 有</state>"),
+		message("m6", "<state>第六 = 有</state>"),
+	}
+	at := func(index int) View { return StateAt("c1", system, PromptFromAgent, messages, index) }
+
+	two := at(2)
+	if two.Tables["global"]["第二"] != "有" {
+		t.Fatalf("第 2 条带来的变量在 at=2 该看得见：%+v", two.Tables)
+	}
+	if _, ok := two.Tables["global"]["第三"]; ok {
+		t.Fatalf("第 3 条带来的变量在 at=2 不该看得见：%+v", two.Tables)
+	}
+	if len(two.Session) != 2 {
+		t.Fatalf("只该 fold 前两条的操作：%+v", two.Session)
+	}
+	// 底子与 at 无关：它是**当前**的生效提示词（不是历史快照）
+	if len(two.Baseline) != 1 || len(at(0).Baseline) != 1 {
+		t.Fatalf("底子该一直都在：%+v / %+v", two.Baseline, at(0).Baseline)
+	}
+
+	// at=0 ⇒ 只有底子
+	zero := at(0)
+	if len(zero.Session) != 0 || len(zero.Tables["global"]) != 0 {
+		t.Fatalf("at=0 该只有底子：%+v", zero)
+	}
+	if zero.Tables["底子"]["种子"] != "1" {
+		t.Fatalf("底子该算进来：%+v", zero.Tables)
+	}
+
+	// at=6 与"不给参数"（全量）一致；越界也当作"到最后一条"
+	all := FromSources("c1", system, PromptFromAgent, messages)
+	for _, view := range []View{at(6), at(99)} {
+		if len(view.Session) != len(all.Session) || len(view.Tables["global"]) != len(all.Tables["global"]) {
+			t.Fatalf("at=6/越界该等于全量：%+v vs %+v", view.Session, all.Session)
+		}
+	}
+
+	// 底子**用当前的提示词**：换个提示词，同一个 at 的答案立刻跟着变（⇒ 它不是"那时候的快照"）
+	changed := StateAt("c1", "<state 底子>种子 = 2</state>", PromptFromAgent, messages, 2)
+	if changed.Tables["底子"]["种子"] != "2" {
+		t.Fatalf("底子看的是**当前**的提示词：%+v", changed.Tables)
 	}
 }
 
@@ -72,11 +174,11 @@ func TestEmptyValueAndTableNamespacing(t *testing.T) {
 	}
 }
 
-// 注入渲染：按表分组；未命名表不写表头；标签永远不出现。
+// 注入渲染：按表分组；`global` 那张不写表头；标签永远不出现；空 ⇒ false（含"global 恒在"的情形）。
 func TestRenderTableGroupsByTable(t *testing.T) {
 	rendered, ok := RenderTable(Tables{
-		"":     {"HP": "10"},
-		"玩家状态": {"心情": "疲惫"},
+		"global": {"HP": "10"},
+		"玩家状态":   {"心情": "疲惫"},
 	})
 	if !ok {
 		t.Fatal("非空表该渲染出东西")
@@ -87,10 +189,54 @@ func TestRenderTableGroupsByTable(t *testing.T) {
 		}
 	}
 	if strings.Contains(rendered, "〔〕") || strings.Contains(rendered, "<state>") {
-		t.Fatalf("未命名表不该有表头，标签永远不许出现：\n%s", rendered)
+		t.Fatalf("默认表不该有表头，标签永远不许出现：\n%s", rendered)
 	}
 	if _, ok := RenderTable(Tables{}); ok {
 		t.Fatal("空表不该渲染出东西")
+	}
+	// `global` 恒在 ⇒ 只有一张空 global 时也必须"什么都不渲染"（否则提示词会多一句空的"当前变量:"）
+	if rendered, ok := RenderTable(Tables{"global": {}}); ok || rendered != "" {
+		t.Fatalf("空 global 不该渲染出东西：%q", rendered)
+	}
+	// 别的表空、global 有值 ⇒ 只渲染 global 那份
+	rendered, ok = RenderTable(Tables{"global": {"HP": "10"}, "临时": {}})
+	if !ok || strings.Contains(rendered, "临时") {
+		t.Fatalf("空表照旧跳过：%q", rendered)
+	}
+}
+
+// `StateView` 的层名是 `baseline`（**不是** `global`）—— 2026-09-30 的改名，靠这条钉住。
+//
+// 为什么必须改：`global` 现在是**表名**（不写表名的块落到它）⇒ 同一份 JSON 里不许两义。
+// 这条测试红了，多半是有人把层名写回了 `global`（那会和 `tables` 里那张表撞车）。
+func TestStateViewLayerNamesAreStable(t *testing.T) {
+	view := FromSources("c1", "<state>HP = 1</state>", PromptFromSession, []model.Message{message("m1", "<state>HP = 2</state>")})
+	raw, err := json.Marshal(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"baseline", "session", "baseline_values", "effective", "tables"}
+	if len(fields) != len(want) {
+		t.Fatalf("StateView 的字段该正好这几个：%s", raw)
+	}
+	for _, name := range want {
+		if _, ok := fields[name]; !ok {
+			t.Fatalf("缺字段 %q：%s", name, raw)
+		}
+	}
+	if _, ok := fields["global"]; ok {
+		t.Fatalf("`global` 只许是**表名**（住在 tables 里），不许再当层名：%s", raw)
+	}
+	if _, ok := fields["global_values"]; ok {
+		t.Fatalf("`global_values` 已改名成 `baseline_values`：%s", raw)
+	}
+	// 顺带钉住：`tables` 里那张表就叫 `global`
+	if _, ok := view.Tables["global"]; !ok {
+		t.Fatalf("默认表该叫 global：%+v", view.Tables)
 	}
 }
 
@@ -102,7 +248,7 @@ func TestBuildOutgoing(t *testing.T) {
 		{ID: "m2", Role: model.RoleAssistant, Content: "<state>HP = 12</state>"}, // 整句都是块 ⇒ 剔除后为空
 		{ID: "m3", Role: model.RoleAssistant, Content: "你把火把点着了。"},
 	}
-	outgoing := BuildOutgoing(system, messages, nil, Tables{"": {"HP": "12", "季节": "初冬"}})
+	outgoing := BuildOutgoing(system, messages, nil, Tables{"global": {"HP": "12", "季节": "初冬"}})
 	if len(outgoing) != 3 {
 		t.Fatalf("出站 = %+v", outgoing)
 	}
@@ -121,6 +267,43 @@ func TestBuildOutgoing(t *testing.T) {
 	// 没有系统提示词、也没有变量 ⇒ 不发明 system
 	if got := BuildOutgoing("", []model.Message{{ID: "m1", Role: model.RoleUser, Content: "在吗"}}, nil, Tables{}); len(got) != 1 || got[0].Role != RoleUser {
 		t.Fatalf("空提示词不该发 system：%+v", got)
+	}
+}
+
+// 出站每一项的序号：`system` ⇒ 0（合成项）、`message` ⇒ 自己那条、`summary` ⇒ 它替代的**范围**。
+//
+// 序号**只有一处算**（`store.IndexMessages`：按 id 排序后的位置）⇒ 这里只是把编好的号带出来，不重算；
+// 手搭出来、没编过号的消息**不带**这一格（0 是留给系统提示词的，不能拿它冒充"第 0 条消息"）。
+func TestBuildOutgoingCarriesIndexes(t *testing.T) {
+	messages := []model.Message{
+		{ID: "m1", Idx: 1, Role: model.RoleUser, Content: "一", SummaryID: new("s1")},
+		{ID: "m2", Idx: 2, Role: model.RoleAssistant, Content: "二", SummaryID: new("s1")},
+		{ID: "m3", Idx: 3, Role: model.RoleUser, Content: "三"},
+	}
+	summaries := []model.Summary{span("s1", nil, "m1", "m2", "前情", 1)}
+	outgoing := BuildOutgoing("你是主持人", messages, summaries, Tables{})
+	if len(outgoing) != 3 {
+		t.Fatalf("出站 = %+v", outgoing)
+	}
+	if outgoing[0].Idx == nil || *outgoing[0].Idx != 0 {
+		t.Fatalf("system 该是 idx 0（合成的，不是消息）：%+v", outgoing[0])
+	}
+	item := outgoing[1]
+	if item.Source != "summary" || item.FromIdx == nil || item.ToIdx == nil || *item.FromIdx != 1 || *item.ToIdx != 2 {
+		t.Fatalf("摘要该报它替代的范围（1..2）：%+v", item)
+	}
+	if item.Idx != nil {
+		t.Fatalf("摘要不该有自己的 idx：%+v", item)
+	}
+	last := outgoing[2]
+	if last.Source != "message" || last.Idx == nil || *last.Idx != 3 || last.MessageID == nil || *last.MessageID != "m3" {
+		t.Fatalf("消息项该带它自己的序号：%+v", last)
+	}
+
+	// 手搭的（没编过号的）消息 ⇒ 不带这一格
+	raw := BuildOutgoing("", []model.Message{{ID: "x", Role: model.RoleUser, Content: "在吗"}}, nil, Tables{})
+	if len(raw) != 1 || raw[0].Idx != nil {
+		t.Fatalf("没编过号的消息不该硬编一个：%+v", raw)
 	}
 }
 

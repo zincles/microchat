@@ -19,7 +19,7 @@ microchat：轻量 SillyTavern 替代（RPG 向）。三层，边界要清楚：
 
 | 词 | **只**指什么 | 别叫 |
 |---|---|---|
-| **世界状态（state）** | `<state>` 那套：沿当前路径**现演**的键值（可分组为多张表；删除不留痕迹）+ 三层来源（全局 / 本会话 / 生效） | "变量"；孤立地说"状态" |
+| **世界状态（state）** | `<state>` 那套：沿当前路径**现演**的键值 —— 词汇只有两种：**变量**（键 → 值）与**表**（命名空间，不写表名就落到 `global` 表）；删除不留痕迹。+ 三层来源（底子 / 本会话 / 生效） | 孤立地说"状态"（得说清是世界状态、turn 状态还是 Task 状态） |
 | **能力（Ability）** | **写死在代码里的一段固定流程**（**会调模型的 Task 种类**：现在 `title` / `compact` / `judge` 三个）；开关在 Agent 上、流程在代码里。**"对话本身"不是能力** ✗（那是 Agent 存在的方式） | "工具"（撞函数调用）、"子 Agent" |
 | **Agent** | **一份命名的人格 + 一组能力开关**（`agents.json`）：同一个运行时，只是开关不同 | 拿它指"某个能力" |
 | **任务（Task）** | **一次上游请求的全程**（发起 → 收尾 → 可能被取消）：一轮生成、一次压缩、一次刷新模型都挂号。**会调模型的一定是 Task**（**反之不成立** —— `refresh_models` 也是 Task，但它不调模型）。**TaskID 是 UUIDv7，且不进库** | "后台作业"（不都在后台）；拿它指"某个能力" |
@@ -54,7 +54,7 @@ reminder/                  ← 专题参考（`tool-calls.md` 工具调用 / `je
 |---|---|---|
 | `model` | 纯结构 | 无依赖 |
 | `statelang` | `<state>` 语法 | 零依赖纯函数；**解析即验证**；`Cleaned` 里**永不出现标签**（fuzz 守着）|
-| `store` | **只有它碰 SQL** | 正文/提示词原样存档；变量不落库；会话是**线性**的（顺序在 `id` 上，没有父指针/leaf）；摘要盖的是**一段**（`begin/end`）；生成中的回复不在库里 |
+| `store` | **只有它碰 SQL** | 正文/提示词原样存档；变量不落库；会话是**线性**的（顺序在 `id` 上，没有父指针/leaf）；摘要盖的是**一段**（`begin/end`）；生成中的回复不在库里；消息序号 `idx` **派生**（按 `id` 排第几条，不落库）|
 | `config` | `config/` 四个文件 | 可缺失；整体重写；密钥不回显 |
 | `registry` | 模型口径 | 身份 `(provider, upstream_id)`；发现与覆盖分列，刷新不动用户列 |
 | `providers` | **只有它碰网络** | 只走成熟库；超时必配；**选后端**（哪条渠道来答）也只有这一处 |
@@ -89,6 +89,10 @@ reminder/                  ← 专题参考（`tool-calls.md` 工具调用 / `je
    **一条会话 = 一条线**。顺序**只**由 `messages.id` 定（UUIDv7：受理时铸、就地替换不改 id ⇒ 顺序稳）；
    没有 `parent_message_id`、没有 `sessions.current_leaf`、没有"当前路径"、没有兄弟 —— **别按 rowid 排**。
    "最新一条" = `ORDER BY id DESC LIMIT 1`（白拿 `messages_by_session(session_id, id)` 索引）。
+   - **序号 `idx` 是派生的**（2026-09-30 补）：= 这条消息在会话里"按 `id` 排第几条"（1-based），
+     **不落库**（没有那一列、也没有迁移）、**永不改变** —— 只删后缀（不留洞 ✓）、不往中间插 ✓、
+     编辑/重摇不改 `id` ✓ ⇒ 分配了就变不了。`0` 留给**合成的系统提示词**（它不是消息 ✗）。
+     算式**只有一处**（`store.IndexMessages`：`allMessages` 排完就编），别处只读这个号（`/messages` 与 `/outgoing` 共用它）。
    - **分岔靠 Copy**（`POST /sessions/{session_id}/copy`，不叫 fork）：新 session + 消息与摘要一并复制
      （摘要**新 id** 且消息上的 `summary_id`、摘要的 `parent_summary_id`、两端区间都重映射；
      标题/渠道/模型/agent/提示词带着）；**世界状态不复制**（它本来就现演）。Copy 时一批 id 铸完要**排序再发**
@@ -143,19 +147,30 @@ ANDROID_HOME=~/Android/Sdk godot --headless --path . --export-debug "Android" /t
 ## `<state>` 的语法（记事板，不是脚本）
 
 ```
-<state 玩家状态>      # 可选的表名；不写就是未命名表
+<state 玩家状态>      # 可选的表名（命名空间）；不写就落到 global 表
 AA = 123456          # 赋值（值一律字符串）
 B = 234; C = 落石     # `;` 当换行（一行一个变量）
 delete(AA)           # 删除
 </state>
 ```
 
+- **词汇只有两种** ✓（2026-09-30 定）：**变量**（一格键 → 值）与**表**（命名空间，把变量分组）。
+  `<state>…</state>` = 不写表名 ⇒ 落到 **`global` 表**；`<state global>…</state>` 写的就是那张表 ⇒
+  **两种写法是同一张表**（同一份 JSON 里不许两义），混着写也照常「后写覆盖先写」。
+  解析结果里 `table` **恒非空**（`statelang.DefaultTable = "global"`），空串不再是任何表的键。
+- **算完为空的表照旧自动消失**，**`global` 是唯一例外：它恒在** ✓ ——
+  一个变量都没有也回 `{"global": {}}`（`statelang.EnsureDefaultTable`；`Fold` 本身不加这条，
+  由往外给的那一层补：`POST /statelang` 的 `tables` 与 `GET /state` 的 `tables`）。
+  空着的那张 `global` **不渲染**（`state.RenderTable` 跳过空表）⇒ 出站内容不会平白多一句空的"当前变量:"。
 - **每种写法只有一种规范形态**：赋值 `键 = 值`（`set` 已砍）· 删除 `delete(键)`（`del …` 全砍）。砍掉的写法各给一条说得清的报错，不做兼容——LLM 写十次要能十次写对。
 - **空值就是清掉**：`键 =`（trim 后为空）与 `delete(键)` 同效 ⇒ **存不下空串**。解析照实报 `set`（值是空串），动手的是**计算**。
 - 块可在**任意位置**；无运算、无变量作右值；值里可以有 `=`（只在第一个处切）、**不能有空格**（⇒ `A=1 B=2` 报错，而不是静默删空格）。
 - 解析是**行式**的（无文法）；坏行进诊断（带行号，整体按行号升序），整块仍从正文剔除。
-- 未命名的键与命名的键分属不同的表；**算完为空的表自动消失**；没有「表级删除」。
+- 表之间互不影响（同名键分属各自的表）；没有「表级删除」。
 - **账本 ≠ 墓碑**：接口里的操作流水仍留删除那一行（「哪句话改了什么」要追得回来），但算当前值时它不留痕迹。
+- **截至第 N 条的现演**（`GET /state?at_idx=N`，2026-09-30）：底子**永远用当前的生效提示词**（不追究历史 ⇒
+  **不是真快照**），正文只 fold 到第 N 条（含）——`0` ⇒ 只有底子、越界 ⇒ 当作到最后一条。
+  口径与实现见 `AGENTS.md` 的 API 表与 `DEFINE.md` 的「世界状态」。
 
 ## 配置文件长什么样
 
@@ -207,14 +222,14 @@ delete(AA)           # 删除
 | PATCH | `/sessions/{session_id}` | `UpdateSessionReq` | `Session` | 标题 / 模型 / agent / **提示词**（`system_prompt` 是**指针** ⇒ 没给或 `null` = 不动、`""` = **清掉会话级覆盖** ⇒ 回落 agent 的、非空 = 写进 `sessions.system_prompt`）|
 | DELETE | `/sessions/{session_id}` | — | 204 | 不存在 → 404 |
 | POST | `/sessions/{session_id}/copy` | — | `Session` · 201 | **Copy**（线性会话里的"分岔"）：新 id、消息与摘要一并复制、摘要新 id 且指针重映射；**世界状态不复制** |
-| GET | `/sessions/{session_id}/messages` | — | `[Message]` | **按 `id` 升序的整条会话**（线性 ⇒ 没有"当前路径"）|
+| GET | `/sessions/{session_id}/messages` | — | `[Message]` | **按 `id` 升序的整条会话**（线性 ⇒ 没有"当前路径"）。三条查询参数（**都不给 = 全部**，语义不变）：`?from_idx=5&to_idx=10` **闭区间**（含两端；缺一端补默认：起点 1 / 终点末尾）、`?last=20` **取尾**。**参数错 ⇒ 400**（`last` 与区间混用、非正整数、区间反了）；**越界不是错** ⇒ 给现有的那几条（起点在末尾之后 ⇒ 空数组）。响应仍是**数组** ✗（不换成对象）。每条带 `idx`：**0 = 合成的系统提示词；1..N = 真消息** —— 它是**派生的**（= 按 `id` 排第几条）、**不落库**、**永不改变**（只删后缀 ⇒ 不留洞；不往中间插；编辑/重摇不改 `id`）|
 | POST | `/sessions/{session_id}/messages` | `SendReq` | `TurnAccepted` · **202** | 落用户消息 + 开工；不含回复正文 |
 | PATCH | `/sessions/{session_id}/messages/{message_id}` | `EditMessageReq` | `Message` | 改正文 = 重写存档（世界状态随之现演；摘要只标 `dirty`、**不级联**）|
 | GET | `/sessions/{session_id}/messages/{message_id}/deletion-preview` | — | `DeletionPlan` | **只算不动**（安全 ⇒ GET）：会删掉哪些消息 / 摘要、哪些指针会被置空 |
 | DELETE | `/sessions/{session_id}/messages/{message_id}` | `{"last_deleted_message_id"}` | `DeletionPlan` | 删**这条及之后的全部**（级联见 `DEFINE.md`）。核对字段不符 ⇒ **409**（重新预览）；缺字段 ⇒ 422 |
-| GET | `/sessions/{session_id}/state` | — | `StateView` | `global` / `session` / `global_values` / `effective` / `tables`，**每次现算** |
-| GET | `/sessions/{session_id}/outgoing` | — | `[Outgoing]` | **(b) 当前已定历史的载荷**：把**已入库的东西**装配一遍 —— **不含还没发出去的那一句** ✗（标签已剔、状态已注入、**压缩已生效**）。每条带出处：`source` = `system`/`message`/`summary`（后者另有 `summary_id`、`blocks`）—— **检查压缩效果靠它**，别去猜正文抬头 |
-| POST | `/sessions/{session_id}/outgoing` | `{"content":"…"}` | `[Outgoing]` | **(c) 把这条 content 当成即将追加的那句用户消息之后**，真会发出去的东西（与 (b) **逐项同字段**、只**多**那条 user 项 —— **只有**那一项带 **`pending: true`**（`omitempty` ⇒ 其余各项不带这个键）：它的 `message_id` 是**预测值**，真发那一刻另铸一个 ⇒ **别拿它去查消息**）。**只算不写**：不落库、不改任何状态。待发那句若带 `<state>` 块 ⇒ **状态表跟着变** ⇒ 必须重走一遍现演与装配（不是"(b) + 一条消息"）。缺 / 空白 `content` ⇒ **400** |
+| GET | `/sessions/{session_id}/state` | — | `StateView` | `baseline` / `session` / `baseline_values` / `effective` / `tables`，**每次现算**。层名是 **`baseline`**（底子）、**不是** `global` ✗ —— `global` 现在是 **`tables` 里那张表**（不写表名的块落到它，且它**恒在**：空也回 `{}`）。查询参数 `?at_idx=N` ⇒ **截至第 N 条的现演**：底子**永远用当前的生效提示词**（不追究历史 ⇒ **不是真快照**）、正文只 fold 到第 N 条（含）、`0` ⇒ 只有底子、越界 ⇒ 当作到最后一条（与 `/messages` 一个口径）、不给 ⇒ 当前状态；负 / 非整数 ⇒ **400** |
+| GET | `/sessions/{session_id}/outgoing` | — | `[Outgoing]` | **(b) 当前已定历史的载荷**：把**已入库的东西**装配一遍 —— **不含还没发出去的那一句** ✗（标签已剔、状态已注入、**压缩已生效**）。每条带出处：`source` = `system`/`message`/`summary`（后者另有 `summary_id`、`blocks`）—— **检查压缩效果靠它**，别去猜正文抬头。每条还带序号：`source=system` ⇒ **`idx: 0`**（合成的、不是消息）、`source=message` ⇒ 它自己那条的 `idx`、`source=summary` ⇒ 它**替代的**范围 `from_idx`/`to_idx`（于是"第 5–10 条被压成了哪一条"一眼可见；摘要**没有**自己的 `idx` ✗）|
+| POST | `/sessions/{session_id}/outgoing` | `{"content":"…"}` | `[Outgoing]` | **(c) 把这条 content 当成即将追加的那句用户消息之后**，真会发出去的东西（与 (b) **逐项同字段**、只**多**那条 user 项 —— **只有**那一项带 **`pending: true`**（`omitempty` ⇒ 其余各项不带这个键）：它的 `message_id` 是**预测值**，真发那一刻另铸一个 ⇒ **别拿它去查消息**；它的 `idx` = **下一条**（现有最大 + 1 ✓））。**只算不写**：不落库、不改任何状态。待发那句若带 `<state>` 块 ⇒ **状态表跟着变** ⇒ 必须重走一遍现演与装配（不是"(b) + 一条消息"）。缺 / 空白 `content` ⇒ **400** |
 | GET | `/sessions/{session_id}/context` | — | `ContextUsage` | 只有数字：`used_tokens`（估算）/ `budget_tokens` / `trigger_tokens` / `remaining_tokens` / `ctx_len` / `max_output` / `ratio` / `estimated` / `last_prompt_tokens` / `over_budget` |
 | GET | `/sessions/{session_id}/prompt` | — | `{"text","source"}` | **生效的系统提示词**（三级解析的**结果**，与出站拼装读同一处）：`source` = `conversation`（会话自己写了 `sessions.system_prompt`）/ `agent`（`agents.json` 里那个 agent 的）/ `builtin`（两级都没有 ⇒ 代码里的内置默认）。**永不给空**：解析全落空（典型：会话的 `agent_id` 软引用**悬空**）也退内置那句、`source` 报 `builtin`。将来做了可拼接的提示词，这里回**运算后**的结果（形状不变）|
 | GET | `/sessions/{session_id}/status` | — | `TurnStatus` | `idle`/`pending`/`streaming`/`error` + `message_id` + `elapsed_ms` + `chars` + `thinking_chars` + `error` |
@@ -234,6 +249,11 @@ delete(AA)           # 删除
 
 **(c) 为什么客户端拼不出来** ✗：待发那句里若带 `<state>` 块 ⇒ **注入系统提示词的状态表会跟着变** ⇒ (c) 不是"(b) + 一条消息" ✗，必须重走一遍状态现演与装配。
 
+**序号 `idx`** ✓（2026-09-30 补）：(b) 与 (c) 的每一项都带它 —— `system` ⇒ **0**（合成的，不是消息）、
+`message` ⇒ 自己那条 ✓、`summary` ⇒ 它**替代的**范围 `from_idx`/`to_idx` ✓（"第 5–10 条被压成了哪一条"一眼可见）；
+(c) 里那条待发的 user 项拿的是**下一条**的号（= 现有最大 + 1 ✓，与它的 `pending: true` 一致）。
+它是**派生的**（= 按 `id` 排第几条）、**不落库**、**永不改变** —— 见「不变量」第 4 条与 `DEFINE.md` 的「各种 id」。
+
 **真发的那一轮装配的就是 (c) 的前身** ✓：受理时先把用户消息落库，再走**同一段装配**
 （`chat.outgoingFor` ⇒ `assemble` ⇒ `state.FromSources` + `state.BuildOutgoing`）——
 唯一的差别只是"那句已经进了库、`ListMessages` 里有它" ⇒ **预演与真发不出第二份答案** ✓（`POST /outgoing` 走的正是同一个 `assemble`）。
@@ -242,7 +262,7 @@ delete(AA)           # 删除
 
 | 方法 | 路径 | 请求体 | 响应 | 说明 |
 |---|---|---|---|---|
-| POST | `/statelang` | `{"text": "任意文本"}` | `{"tables": {表名: {键: 值}}, "statements": [...], "diagnostics": [...]}` | **解析 + 计算**一段文本里的全部 `<state>` 块：不起对话、不落库。`tables` = 算完的值（删除生效、后写覆盖、空表消失；未命名表用**空串**作键）；`statements` = 读出来的操作（按出现顺序，删除未生效）；`diagnostics` 带行号。缺 `text` ⇒ 422 |
+| POST | `/statelang` | `{"text": "任意文本"}` | `{"tables": {表名: {键: 值}}, "statements": [...], "diagnostics": [...]}` | **解析 + 计算**一段文本里的全部 `<state>` 块：不起对话、不落库。`tables` = 算完的值（删除生效、后写覆盖、空表消失；不写表名的块进 **`global` 表**，而 `global` **恒在** —— 空也回 `{}`）；`statements` = 读出来的操作（按出现顺序，删除未生效）；`diagnostics` 带行号。缺 `text` ⇒ 422 |
 
 ### provider / 模型 / agent
 
@@ -254,6 +274,7 @@ delete(AA)           # 删除
 | PATCH | `/providers/{provider_id}` | `UpdateProviderReq` | `ProviderView` | `api_key`：`None` = 不动，`""` = 清除 |
 | DELETE | `/providers/{provider_id}` | — | 204 | 密钥随记录一起没 |
 | POST | `/providers/{provider_id}/refresh` | — | `ProviderView` | **POST**（会写发现态）：拉 `/models` 并落库 |
+| GET | `/providers/{provider_id}/usage` | — | `ProviderUsageView` | **套餐余量**（只读）：**只对 `kind = opencode-go` 的渠道有义** ⇒ 别的 kind **400**（`invalid`）、没配 key 也 **400**；上游错原样传（`upstream`）。形状 = `plan` / `windows[].label/percent/resets_at` + `provider_id`。TUI 里 `/usage` 就是它 |
 | GET | `/models` | — | `[ModelListItem]` | 跨 provider 拍平（"渠道 / 模型"下拉用）|
 | PATCH | `/models` | `{provider, upstream_id, context_override}` | `ModelView` | 设/清上下文覆盖（`null` = 清）。**刷新永不覆盖用户列** |
 | GET | `/agents` | — | `AgentsConfig` | 生效列表（含内置默认 agent）|
@@ -304,8 +325,12 @@ delete(AA)           # 删除
 三份状态**各管一段、不许互为镜像**：`task` = 身份 + 生死；`turn` = 流细节（几个字、取消）+ 压缩那一档；`compact` = 压缩自己的细节。
 
 **压缩**（`internal/compact`，已落地 ✓；路由 `POST /sessions/{session_id}/compact` ⇒ **202**）：机制与策略两层。
-- **机制** = 给它一段（两端用 **message id** 指）→ 拼材料（每一步正文过 `statelang.Scan(...).Cleaned`，`<state>` 块剔掉）→ 叫 `compact` 能力（**非流式**一次调用，骑本会话 id、`cache_retention: none`）→ 过五条验证 → 单事务落库。
+- **机制** = 给它一段（两端用 **message id** 指）→ 拼材料（每一步正文过 `statelang.Scan(...).Cleaned`，`<state>` 块剔掉，末尾附上下面那份状态）→ 叫 `compact` 能力（**非流式**一次调用，骑本会话 id、`cache_retention: none`）→ 过五条验证 → **只往 `summaries` 插一行**。
   五条验证：① 剔 `<state>`；② 非空（剔完是空的 ⇒ **不写**，宁可什么都没有）；③ 区间自洽（两端在本会话、begin ≤ end、两端都还在）；④ **不许覆盖已压缩的区间**（`store.RecordSummary` 在事务里再核一遍）；⑤ 落库一并写 `prompt_version` 与 `usage`。
+- **材料里附一份"算到区间末的状态"** ✓（2026-09-30 落地）：拿区间的 `to_idx` 去问 `at_idx` 那条链（`state.StateAt`：**当前的**生效提示词打底 + 正文只 fold 到区间末），
+  用**同一个** `state.RenderTable` 渲染，抬头写死口气「【程序·状态（截至这段末尾；程序事实，仅供参考，不要写进梗概）】」。
+  ⇒ 模型写梗概时**看得见**这一段结束时的变量，但**抄不进摘要**（摘要照旧不存状态）；一个变量都没有 ⇒ 不附（不塞空话）。
+  **只此一处** ✗ —— 起标题那条链不许跟着加（`title` 不碰状态）。
 - **策略** = "从第一条没被覆盖的消息起，取最老的 N 个**已闭合块**"（手动按钮的语义）；**最后那个开着的块永不压**；块是推导的、不入库（`internal/blocks`）。
 - **区间入口**（直接给 `begin_message_id` + `end_message_id`）要**整块对齐**（块不被劈开），且区间里含已压缩的文本 ⇒ **报错**。
 - 落库 = `INSERT INTO summaries`（带区间 / `source_ids` / `blocks` / `tokens` / `provider` / `model` / `prompt_version` / `usage` / `dirty=0`）+ 把这一段消息的 `summary_id` 指过去，**同一事务**；**绝不插/改/删 `messages` 的其它列**（正文是存档）。

@@ -78,8 +78,10 @@ type Message struct {
 	Role       string  `json:"role"`
 	Content    string  `json:"content"`
 	Reasoning  string  `json:"reasoning,omitempty"`
-	DurationMS *int64  `json:"duration_ms,omitempty"`
-	SummaryID  *string `json:"summary_id,omitempty"`
+	// ReasoningMS：思考用时（受理 → 第一段正文）—— 折叠行「思考（2.1s）」用它。
+	ReasoningMS *int64  `json:"reasoning_ms,omitempty"`
+	DurationMS  *int64  `json:"duration_ms,omitempty"`
+	SummaryID   *string `json:"summary_id,omitempty"`
 }
 
 type Health struct {
@@ -113,6 +115,23 @@ func (item ModelListItem) ProviderLabel() string {
 		return *item.ProviderName
 	}
 	return item.Provider
+}
+
+// PlanUsage：`GET /providers/{provider_id}/usage` 回的形状（套餐余量）。
+// **只对 kind=opencode-go 的渠道有义** —— 别的渠道后端回 400（这里照实把消息透出去）。
+type PlanUsage struct {
+	ProviderID string       `json:"provider_id"`
+	Plan       string       `json:"plan"`
+	Windows    []PlanWindow `json:"windows"`
+}
+
+// PlanWindow：一个配额窗口（5 小时 / 每周 / 每月）。`ResetsAt` 是 RFC3339。
+type PlanWindow struct {
+	ID       string    `json:"id"`
+	Label    string    `json:"label"`
+	Percent  float64   `json:"percent"`
+	Status   string    `json:"status"`
+	ResetsAt time.Time `json:"resets_at"`
 }
 
 // get：只读。
@@ -256,6 +275,11 @@ type Outgoing struct {
 	MessageID *string `json:"message_id"`
 	SummaryID *string `json:"summary_id"`
 	Blocks    *int64  `json:"blocks"`
+	// Idx：这一项是**第几条消息**（system ⇒ 0，它是合成的、不是消息）；摘要在 FromIdx/ToIdx 里
+	// 报"它替代了第几条到第几条"。**只服务调试**（`/outgoing` 查看器），界面别的地儿不用它。
+	Idx     *int `json:"idx,omitempty"`
+	FromIdx *int `json:"from_idx,omitempty"`
+	ToIdx   *int `json:"to_idx,omitempty"`
 }
 
 func (c *Client) Outgoing(sessionID string) ([]Outgoing, error) {
@@ -275,6 +299,14 @@ func (c *Client) Health() (Health, error) {
 	var health Health
 	err := c.get("/health", &health)
 	return health, err
+}
+
+// ProviderUsage：问一条渠道的套餐余量（只读）。渠道不是 opencode-go / 没配 key ⇒ 后端 400，
+// 这里把那条消息原样透出去（界面照实说一句）。
+func (c *Client) ProviderUsage(providerID string) (PlanUsage, error) {
+	var usage PlanUsage
+	err := c.get("/providers/"+providerID+"/usage", &usage)
+	return usage, err
 }
 
 func (c *Client) Sessions() ([]Session, error) {

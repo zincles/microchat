@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"microchat/internal/config"
+	"microchat/internal/model"
 	"microchat/internal/store"
 
 	_ "modernc.org/sqlite"
@@ -53,7 +54,7 @@ func newSandbox(t *testing.T, count int) *sandbox {
 			role = "assistant"
 		}
 		if _, err := db.Exec(
-			`INSERT INTO messages (id, session_id, role, content, created_at) VALUES (?1, ?2, ?3, ?4, ?5)`,
+			`INSERT INTO messages (id, session_id, role, content, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)`,
 			id, session.ID, role, fmt.Sprintf("第 %d 条", index+1), int64(index+1)); err != nil {
 			t.Fatal(err)
 		}
@@ -247,4 +248,158 @@ func containsAll(body string, needles ...string) bool {
 		}
 	}
 	return true
+}
+
+// ── 序号 `idx`（**派生**、不落库）与三个查询参数 ──────────────────────────
+//
+// `idx` = 这条会话里"按 `id` 排第几条"（1-based；`0` 是合成的系统提示词，不是消息）。
+// 它**不进库**：没有那一列、也没有迁移 —— 存它就是第二个真相来源。
+
+// messagesPath：这条会话的消息路由（带查询串）。
+func (b *sandbox) messagesPath(query string) string {
+	return "/api/v1/sessions/" + b.sessionID + "/messages" + query
+}
+
+// list：拉一次消息列表（GET，必须 200）。
+func (b *sandbox) list(t *testing.T, query string) []model.Message {
+	t.Helper()
+	recorder := call(b.server, "GET", b.messagesPath(query), "")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("GET messages%s 该 200，得到 %d：%s", query, recorder.Code, recorder.Body.String())
+	}
+	var messages []model.Message
+	if err := json.Unmarshal(recorder.Body.Bytes(), &messages); err != nil {
+		t.Fatal(err)
+	}
+	return messages
+}
+
+// appendMessage：往尾巴上直接落一条（沙盒的 id 是 UUIDv7 的形状 ⇒ 字符串序 = 先后）。
+func (b *sandbox) appendMessage(t *testing.T, n int) {
+	t.Helper()
+	if _, err := b.db.Exec(
+		`INSERT INTO messages (id, session_id, role, content, created_at, updated_at) VALUES (?1, ?2, 'user', ?3, ?4, ?4)`,
+		messageID(n), b.sessionID, fmt.Sprintf("第 %d 条", n), int64(n)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// assertIndexes：核一次结果：条数对、每条的 `idx` 就是期望的那个数，**且 idx 与 id 配得上**
+// （序号 = "按 id 数第几条" ⇒ 沙盒里 id 是 `messageID(n)` ⇒ 两者必须一致；窗口切错 / 重排都会露馅）。
+func assertIndexes(t *testing.T, messages []model.Message, want ...int) {
+	t.Helper()
+	if len(messages) != len(want) {
+		t.Fatalf("该 %d 条，得到 %d：%+v", len(want), len(messages), messages)
+	}
+	for index := range messages {
+		if messages[index].Idx != want[index] {
+			t.Fatalf("第 %d 项该是 idx %d，得到 %d", index+1, want[index], messages[index].Idx)
+		}
+		if messages[index].ID != messageID(want[index]) {
+			t.Fatalf("idx %d 该指的是 %s，得到 %s（序号与顺序脱节了）",
+				want[index], messageID(want[index]), messages[index].ID)
+		}
+	}
+}
+
+// 序号是**派生**的：1..N；**编辑不改**、**删尾部也不重排**（只删后缀 ⇒ 不留洞 ⇒ 号永不改变）。
+func TestMessageIndexIsDerivedAndSurvivesEditsAndDeletions(t *testing.T) {
+	box := newSandbox(t, 4)
+	// 每条都带 `idx`，而且它**真的出现在 JSON 里**（`omitempty` ⇒ 0 就不带这一格）
+	body := call(box.server, "GET", box.messagesPath(""), "").Body.String()
+	if !strings.Contains(body, `"idx":1`) || !strings.Contains(body, `"idx":4`) {
+		t.Fatalf("消息该带 idx（序号）：%s", body)
+	}
+	assertIndexes(t, box.list(t, ""), 1, 2, 3, 4)
+
+	// 编辑一条：就地换正文、id 不变 ⇒ 序号一个都不动
+	recorder := call(box.server, "PATCH", box.messagesPath("")+"/"+box.messages[1], `{"content":"改过了"}`)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("编辑该 200，得到 %d：%s", recorder.Code, recorder.Body.String())
+	}
+	assertIndexes(t, box.list(t, ""), 1, 2, 3, 4)
+
+	// 删掉**尾部两条**（既有删除路由）⇒ 剩下的两条**仍然是 1、2**（没有重排 —— 最关键的一条）
+	path := box.messagesPath("") + "/" + box.messages[2]
+	done := call(box.server, "DELETE", path,
+		`{"last_deleted_message_id":"`+box.messages[3]+`"}`)
+	if done.Code != http.StatusOK {
+		t.Fatalf("删除该 200，得到 %d：%s", done.Code, done.Body.String())
+	}
+	assertIndexes(t, box.list(t, ""), 1, 2)
+
+	// 再往尾巴上追加 ⇒ 它是**第 3 条**：号是"位置"，不是 id 里的那个数（新条铸的是新 id）
+	box.appendMessage(t, 5)
+	appended := box.list(t, "")
+	assertIndexes(t, appended[:2], 1, 2)
+	if len(appended) != 3 || appended[2].Idx != 3 || appended[2].ID != messageID(5) {
+		t.Fatalf("新条该是第 3 条：%+v", appended)
+	}
+}
+
+// 序号跟着 **id** 走，不是插入顺序（也不是 rowid）：乱序插进去，`idx` 仍按 id 数。
+// （把 `allMessages` 的 `ORDER BY id` 拿掉、改成按 rowid 出来，这条就该红。）
+func TestMessageIndexFollowsIDOrderNotInsertOrder(t *testing.T) {
+	box := newSandbox(t, 0)
+	for _, n := range []int{3, 1, 4, 2} { // 插入顺序与 id 的顺序**故意不一样**
+		box.appendMessage(t, n)
+	}
+	messages := box.list(t, "")
+	if len(messages) != 4 {
+		t.Fatalf("该 4 条，得到 %d", len(messages))
+	}
+	for index, n := range []int{1, 2, 3, 4} {
+		if messages[index].ID != messageID(n) || messages[index].Idx != n {
+			t.Fatalf("id 排第 %d 的那个该是 messageID(%d)/idx %d，得到 %s/idx %d",
+				index+1, n, n, messages[index].ID, messages[index].Idx)
+		}
+	}
+}
+
+// 三个查询参数：闭区间（含两端）/ 取尾 / 缺一端补默认 / 越界给现有的（**不算错**）/ 参数错 ⇒ 400。
+func TestMessageWindowQueries(t *testing.T) {
+	box := newSandbox(t, 6)
+
+	// 不给参数 = 全部（语义不变）
+	assertIndexes(t, box.list(t, ""), 1, 2, 3, 4, 5, 6)
+
+	// 区间：闭区间 ⇒ 3、4、5
+	assertIndexes(t, box.list(t, "?from_idx=3&to_idx=5"), 3, 4, 5)
+	// 取尾 2 条 ⇒ 5、6
+	assertIndexes(t, box.list(t, "?last=2"), 5, 6)
+	// 只给一端 ⇒ 另一端补默认（起点 1 / 末尾）：说得出口的"第 5 条往后"与"前 3 条"
+	assertIndexes(t, box.list(t, "?from_idx=5"), 5, 6)
+	assertIndexes(t, box.list(t, "?to_idx=3"), 1, 2, 3)
+
+	// 越界**不算错**：给现有的那几条（分页的常见语义）
+	assertIndexes(t, box.list(t, "?from_idx=4&to_idx=99"), 4, 5, 6)
+	assertIndexes(t, box.list(t, "?last=99"), 1, 2, 3, 4, 5, 6)
+	// 起点落在末尾之后 ⇒ **空数组**（不是 404、也不是 null）
+	if body := call(box.server, "GET", box.messagesPath("?from_idx=99"), "").Body.String(); body != "[]" {
+		t.Fatalf("起点越界该回空数组：%s", body)
+	}
+	// 响应仍是**数组**（没换成对象 —— 免得破坏现有客户端）
+	if body := call(box.server, "GET", box.messagesPath("?last=1"), "").Body.String(); !strings.HasPrefix(body, "[") {
+		t.Fatalf("响应该是数组：%s", body)
+	}
+
+	// 参数错一律 400（错误体固定：`code = invalid`）
+	for _, query := range []string{
+		"?last=2&from_idx=1", // 混用
+		"?last=2&to_idx=3",   // 混用
+		"?from_idx=0",        // 非正数
+		"?to_idx=-1",         // 非正数
+		"?last=0",            // 非正数
+		"?from_idx=5&to_idx=3", // 反了
+		"?last=abc",            // 不是整数
+		"?from_idx=x",
+	} {
+		recorder := call(box.server, "GET", box.messagesPath(query), "")
+		if recorder.Code != http.StatusBadRequest {
+			t.Fatalf("%s 该 400，得到 %d：%s", query, recorder.Code, recorder.Body.String())
+		}
+		if !strings.Contains(recorder.Body.String(), `"code":"invalid"`) {
+			t.Fatalf("%s 的错误体不合契约：%s", query, recorder.Body.String())
+		}
+	}
 }
