@@ -55,6 +55,12 @@ type model struct {
 	width, height int
 	ready         bool
 	input         string // 底下那行输入（命令与消息都从这儿走）
+	// inputCursor：输入行里光标的位置 —— **rune 下标**（不是字节下标，也不是"第几格"）。
+	//
+	// 为什么是 rune 下标：增删要能精确落在"第几个字"上（中文一个字 = 一个 rune）；
+	// **显示列**则由 `runewidth` 现算（一个字可能占两格，见 inputCursorColumn）——
+	// 拿 rune 下标当列用，遇 CJK 光标就指到字中间（已立为纪律，见 AGENTS.md「踩过的坑」）。
+	inputCursor int
 	// style：着色开关（**只有前景色**）。零值 = 关 ⇒ 测试拿到的 View() 是纯文本
 	// （逐字节断言靠这个；生产路径的开关在 detectStyler，见「降级三档」）。
 	style styler
@@ -691,26 +697,55 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch message.String() {
 		case "esc":
 			// 关面板 / 清输入（命令面板是**推导**出来的：清了输入它自然就没了）
-			m.input, m.paletteIndex = "", 0
+			m.input, m.inputCursor, m.paletteIndex = "", 0, 0
 			return m, nil
 		case "enter":
 			return m.submit()
 		case "tab":
-			// 把高亮那条补全（面板的意义就在这儿）
+			// 把高亮那条补全（面板的意义就在这儿）；光标跟到末尾（接着打参数）
 			if matches := m.paletteMatches(); len(matches) > 0 {
 				m.input = "/" + matches[m.clampPalette()].name + " "
+				m.inputCursor = len([]rune(m.input))
 			}
 			return m, nil
+		case "left":
+			if m.inputCursor > 0 {
+				m.inputCursor--
+			}
+			return m, nil
+		case "right":
+			if m.inputCursor < len([]rune(m.input)) {
+				m.inputCursor++
+			}
+			return m, nil
+		case "home", "ctrl+a":
+			m.inputCursor = 0
+			return m, nil
+		case "end", "ctrl+e":
+			m.inputCursor = len([]rune(m.input))
+			return m, nil
 		case "backspace":
-			if m.input != "" {
-				runes := []rune(m.input)
-				m.input = string(runes[:len(runes)-1])
+			// 删**光标前**那个 rune（行首无事发生）
+			runes := []rune(m.input)
+			if at := clampCursor(m.inputCursor, len(runes)); at > 0 {
+				m.input = string(runes[:at-1]) + string(runes[at:])
+				m.inputCursor = at - 1
+				m.paletteIndex = 0
+			}
+			return m, nil
+		case "delete":
+			// 删**光标处**那个 rune（行尾无事发生）—— 与退格成对：一个删左一个删右
+			runes := []rune(m.input)
+			if at := clampCursor(m.inputCursor, len(runes)); at < len(runes) {
+				m.input = string(runes[:at]) + string(runes[at+1:])
+				m.inputCursor = at
 				m.paletteIndex = 0
 			}
 			return m, nil
 		case "up", "down":
 			// 方向键只服务**命令面板**（输入以 `/` 开头时）；会话选择只走 `/resume`
 			// —— 输入框上方没有会话列表可走（用户 2026-09-30 定的口径）。
+			// （↑/↓ 管面板、←/→ 管光标，两者不冲突。）
 			if matches := m.paletteMatches(); len(matches) > 0 {
 				step := 1
 				if message.String() == "up" {
@@ -720,8 +755,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		if message.Text != "" { // 可打印字符（含中文、粘贴）
-			m.input += message.Text
+		if message.Text != "" { // 可打印字符（含中文）—— 插在**光标处**，光标跟着往右挪
+			// （括号粘贴走另一条路 `tea.PasteMsg`，本界面还没接 ✗ —— 与光标无关，另议。）
+			runes := []rune(m.input)
+			at := clampCursor(m.inputCursor, len(runes))
+			m.input = string(runes[:at]) + message.Text + string(runes[at:])
+			m.inputCursor = at + len([]rune(message.Text))
 			m.paletteIndex = 0
 		}
 	}
@@ -804,7 +843,7 @@ func (m model) submit() (tea.Model, tea.Cmd) {
 			}
 		}
 	}
-	m.input, m.paletteIndex = "", 0
+	m.input, m.inputCursor, m.paletteIndex = "", 0, 0
 	if text == "" {
 		return m, nil
 	}
@@ -1283,11 +1322,23 @@ func describeSession(session Session) string {
 // **没有左栏**：会话选择只走 `/resume`（挑选项与查看器照旧**铺满消息区**）。
 
 // View：**纯函数**（同样的 model ⇒ 同样的字符串）。
+//
+// 光标**不是画进正文的字符**：它是**真终端光标**（`View.Cursor`，Bubble Tea v2 的字段）⇒
+// `Content` 一个字节都不变（现有那些逐字节断言一个字都不用改）。
+// 位置由 render 一并算出来 —— 与正文同一份布局，不会各算各的而漂掉。
 func (m model) View() tea.View {
-	return tea.NewView(m.render())
+	content, cursor := m.render()
+	view := tea.NewView(content)
+	view.Cursor = cursor
+	return view
 }
 
-func (m model) render() string {
+// render：**纯函数**（同样的 model ⇒ 同样的字符串）；顺带给出光标该摆在第几行第几列。
+//
+// 返回的 cursor 为 nil = **藏起来**：挑选项（`/resume` `/model`）与查看器（`/outgoing`、
+// 确认框）铺满消息区时，输入行不是当前活动面 —— 别让光标留在屏幕上乱闪。
+// **生成中照旧显示** ✓（输入行仍然可用，只是提交会被后端 409 顶回来）。
+func (m model) render() (string, *tea.Cursor) {
 	width, height := max(1, m.width), m.height
 	if height < 1 {
 		height = 24 // 还没收到 WindowSizeMsg 时的兜底（免得算出 0 行画面）
@@ -1304,13 +1355,50 @@ func (m model) render() string {
 	}
 	lines := m.renderMessages(bodyHeight, width)
 	lines = append(lines, palette...)
+	inputLine := len(lines)                                  // 输入行在 `lines` 里的下标（消息区 + 面板之后）
 	lines = append(lines, truncate("> "+m.input, width))     // 输入行（命令与消息都从这儿走）
 	lines = append(lines, m.style.dim(rule(width, m.width))) // 满线（暗色）：窄屏退回 ASCII `-`
 	lines = append(lines, status...)
 	if len(lines) > height { // 屏幕实在太矮（< 4 行）：宁可切掉上面的消息，也别把输入行挤没
-		lines = lines[len(lines)-height:]
+		shift := len(lines) - height
+		lines, inputLine = lines[shift:], inputLine-shift
 	}
-	return strings.Join(lines, "\n")
+	var cursor *tea.Cursor
+	if m.picker == pickerNone && m.viewer == nil && inputLine >= 0 && inputLine < len(lines) {
+		// 列 = 前缀 2 格 + 光标**前**那段的**显示宽度**（CJK 一个字两格）；
+		// 输入太长被截断时夹到最后一格（终端也就只能摆到那儿）。
+		column := m.inputCursorColumn()
+		if column > width-1 {
+			column = width - 1
+		}
+		cursor = tea.NewCursor(max(column, 0), inputLine)
+	}
+	return strings.Join(lines, "\n"), cursor
+}
+
+// ── 输入行的光标：两个身份别混 ──
+//
+// **rune 下标**（model 里存的、增删要用的）≠ **显示列**（摆到终端上的）。
+// 一个 rune 可能占**两格**（CJK）⇒ 列只能由 runewidth 现算（见 inputCursorColumn）。
+
+// clampCursor：把光标夹回 [0, rune 数] —— 改动输入之后都过它一次，别让光标停到输入外面。
+func clampCursor(cursor, runes int) int {
+	if cursor < 0 {
+		return 0
+	}
+	if cursor > runes {
+		return runes
+	}
+	return cursor
+}
+
+// inputCursorColumn：光标在输入行里**第几格**（含 `> ` 前缀那两格）—— 按**显示宽度**算。
+//
+// 这是"光标指到字中间"的唯一防线：`你好|` 的列是 2+4=6 ✗ 不是 2+2=4（那是 rune 数）；
+// `a你|` 是 2+1+2=5。
+func (m model) inputCursorColumn() int {
+	runes := []rune(m.input)
+	return 2 + runewidth.StringWidth(string(runes[:clampCursor(m.inputCursor, len(runes))]))
 }
 
 // paletteWindow：面板装不下时只显示**高亮那条**附近的一段（不加行，也不让高亮跑出屏幕）。

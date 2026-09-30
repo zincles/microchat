@@ -24,6 +24,7 @@ type Kind string
 const (
 	KindTurn          Kind = "turn"           // 前台：某个会话的一轮生成
 	KindCompact       Kind = "compact"        // 后台：把最老的 N 个对话块收成一条摘要
+	KindTitle         Kind = "title"          // 后台：给一条会话起标题（首次拿到回复之后自动一次）
 	KindRefreshModels Kind = "refresh_models" // 后台：从上游拉某个渠道的模型列表
 )
 
@@ -33,7 +34,7 @@ const (
 // 前缀缓存也认它）⇒ 缺了要么被上游 400、要么把请求甩进"另一个会话"。
 // **在 `Begin()` 当场断言** = 让错误在挂号那一刻就炸，而不是等发出去被上游拒。
 func needsSession(kind Kind) bool {
-	return kind == KindTurn || kind == KindCompact
+	return kind == KindTurn || kind == KindCompact || kind == KindTitle
 }
 
 // State：Task 的五个状态（**这套词只属于 Task** —— `idle`/`pending` 那套是 turn 的，别混）。
@@ -54,6 +55,8 @@ func (k Kind) Label() string {
 		return "生成"
 	case KindCompact:
 		return "压缩"
+	case KindTitle:
+		return "起标题"
 	case KindRefreshModels:
 		return "刷新模型"
 	default:

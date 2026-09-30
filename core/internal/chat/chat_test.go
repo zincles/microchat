@@ -13,6 +13,7 @@ import (
 	"microchat/internal/model"
 	"microchat/internal/store"
 	"microchat/internal/task"
+	"microchat/internal/title"
 	"microchat/internal/turn"
 )
 
@@ -121,13 +122,14 @@ func TestAcceptRoundTripWithDummy(t *testing.T) {
 	if accepted.User.ID >= *replyID {
 		t.Fatalf("用户消息该排在回复前面：%s / %s", accepted.User.ID, *replyID)
 	}
-	// 首句临时标题：换行压成空格
+	// 起标题**不在这儿**了：它是 title 能力的事（拿到回复之后由 title.Service 起）——
+	// 这里只落用户那句（这套 harness 没接 title.Service，所以标题保持空着）
 	reloaded, err := h.store.GetSession(h.session.ID)
 	if err != nil || reloaded == nil {
 		t.Fatalf("取会话失败：%v", err)
 	}
-	if reloaded.Title != "开个头 第二行不该进标题" {
-		t.Fatalf("标题 = %q", reloaded.Title)
+	if reloaded.Title != "" {
+		t.Fatalf("起标题归 title 能力管，这里不该动：%q", reloaded.Title)
 	}
 	// 生成中：库里**只有**用户那一句（回复整段拿到才 INSERT）
 	if messages, _ := h.store.ListMessages(h.session.ID); len(messages) != 1 {
@@ -148,6 +150,26 @@ func TestAcceptRoundTripWithDummy(t *testing.T) {
 	}
 	if record := h.turnTask(t); record.Outcome != task.StateSucceeded {
 		t.Fatalf("task 该是「成功」：%+v", record)
+	}
+}
+
+// 接上 title 能力之后：**拿到回复之后**自动起一次（标题从此有名字）——
+// 这是"能力挂在谁身上"那条线：chat 只负责调用，起名的事全在 title 包里。
+func TestTurnTriggersAutoTitle(t *testing.T) {
+	h := newHarness(t, dummyProviders(), "dummy", "dummy")
+	h.service.Titles = title.New(h.store, config.Paths{ConfigDir: h.configDir, DataDir: h.configDir},
+		h.tasks)
+	if _, err := h.service.Accept(h.session, "帮我起个名字"); err != nil {
+		t.Fatal(err)
+	}
+	h.settle(t)
+	reloaded, err := h.store.GetSession(h.session.ID)
+	if err != nil || reloaded == nil {
+		t.Fatalf("取会话失败：%v", err)
+	}
+	// dummy 渠道吐的那句假标题（真渠道时就是模型给的那句话）
+	if reloaded.Title != "（测试用假标题）" {
+		t.Fatalf("拿到回复之后该自动起一次标题：%q", reloaded.Title)
 	}
 }
 

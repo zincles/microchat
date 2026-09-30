@@ -337,6 +337,186 @@ func TestInputLineAndCommands(t *testing.T) {
 	}
 }
 
+// ── 输入行的光标（可见 + 可移动）──
+//
+// 两条纪律在这儿交汇：光标位置是 **rune 下标**（model），摆到终端上是**显示列**（runewidth）；
+// 而它**不画进正文** ✗ —— 走的是 Bubble Tea v2 的 `View.Cursor`（真终端光标）。
+
+// press：喂一个特殊键（←/→/Home/End/Delete/… 没有 Text，只靠 Code 认）。
+func press(m model, key tea.KeyPressMsg) model {
+	updated, _ := m.Update(key)
+	return updated.(model)
+}
+
+// **光标列必须按显示宽度算**（本任务最容易歪的地方）：`> ` 前缀两格 + 光标**前**那段的显示宽度。
+// 按 rune 数算，`你好|` 会算成 4 格而实际该是 6 ⇒ 光标指到字中间。
+func TestInputCursorColumnUsesDisplayWidth(t *testing.T) {
+	cases := []struct {
+		name   string
+		input  string
+		cursor int
+	}{
+		{name: "全 ASCII 中间", input: "abcd", cursor: 2},  // 2 + 2 = 4（按 rune 数也一样 —— 这种行看不出歪）
+		{name: "CJK 行首", input: "你好", cursor: 0},        // 2 + 0 = 2
+		{name: "CJK 行尾", input: "你好", cursor: 2},        // 2 + 4 = 6
+		{name: "CJK 中间", input: "你好", cursor: 1},        // 2 + 2 = 4（与行尾不同 ⇒ 证明是按字宽走的）
+		{name: "ASCII 接 CJK", input: "a你", cursor: 2},   // 2 + 1 + 2 = 5
+		{name: "CJK 尾接 ASCII", input: "你好a", cursor: 3}, // 2 + 4 + 1 = 7
+	}
+	for _, c := range cases {
+		m := fixture()
+		m.input, m.inputCursor = c.input, c.cursor
+		want := 2 + runewidth.StringWidth(string([]rune(c.input)[:c.cursor]))
+		cursor := m.View().Cursor
+		if cursor == nil {
+			t.Fatalf("%s：普通界面上该看得见光标", c.name)
+		}
+		if cursor.X != want {
+			t.Fatalf("%s：光标列 = %d，该是 %d（2 格前缀 + %q 的显示宽度）", c.name, cursor.X, want, string([]rune(c.input)[:c.cursor]))
+		}
+		// 行也得对：就是输入行那一行（`> ` 提示符那行）
+		if want := inputLineIndex(viewLines(m)); cursor.Y != want {
+			t.Fatalf("%s：光标行 = %d，该在输入行第 %d 行", c.name, cursor.Y, want)
+		}
+	}
+
+	// 中文这条必须**真的**与"按 rune 数算"不同（否则上面那几条断言等于没测）
+	m := fixture()
+	m.input, m.inputCursor = "你好", 2
+	if m.inputCursorColumn() == 2+m.inputCursor {
+		t.Fatal("CJK 下光标列不该等于 2+rune 数 —— 那正是「指到字中间」的算法")
+	}
+}
+
+// 编辑键：插入在**光标处**、退格删**光标前**一个 rune、Delete 删**光标处**那个 rune，光标跟着走。
+func TestInputCursorEditingKeys(t *testing.T) {
+	left := tea.KeyPressMsg{Code: tea.KeyLeft}
+	right := tea.KeyPressMsg{Code: tea.KeyRight}
+	home := tea.KeyPressMsg{Code: tea.KeyHome}
+	end := tea.KeyPressMsg{Code: tea.KeyEnd}
+	ctrlA := tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl}
+	ctrlE := tea.KeyPressMsg{Code: 'e', Mod: tea.ModCtrl}
+	check := func(m model, input string, cursor int, what string) model {
+		if m.input != input || m.inputCursor != cursor {
+			t.Fatalf("%s：input=%q cursor=%d，该是 %q / %d", what, m.input, m.inputCursor, input, cursor)
+		}
+		return m
+	}
+
+	m := check(typeText(fixture(), "abcd"), "abcd", 4, "打字落在末尾")
+	m = check(press(press(m, left), left), "abcd", 2, "← 一次一格")
+	m = check(typeText(m, "X"), "abXcd", 3, "插在**光标处**（不是追加）")
+	m = check(press(m, tea.KeyPressMsg{Code: tea.KeyDelete}), "abXd", 3, "Delete 删光标处那个")
+	m = check(press(m, tea.KeyPressMsg{Code: tea.KeyBackspace}), "abd", 2, "退格删光标前那个")
+	m = check(press(m, right), "abd", 3, "→ 一次一格")
+	m = check(press(m, right), "abd", 3, "末尾再 → 不动")
+	m = check(press(m, tea.KeyPressMsg{Code: tea.KeyDelete}), "abd", 3, "末尾 Delete 不动")
+	m = check(press(m, home), "abd", 0, "Home 到首")
+	m = check(press(m, left), "abd", 0, "行首再 ← 不动")
+	m = check(press(m, tea.KeyPressMsg{Code: tea.KeyBackspace}), "abd", 0, "行首退格不动")
+	m = check(typeText(m, "Z"), "Zabd", 1, "行首打字插在最前")
+	m = check(press(press(m, end), end), "Zabd", 4, "End 到尾")
+	m = check(typeText(m, "!"), "Zabd!", 5, "尾部追加")
+	m = check(press(m, ctrlA), "Zabd!", 0, "Ctrl+A = 到首")
+	m = check(press(m, ctrlE), "Zabd!", 5, "Ctrl+E = 到尾")
+
+	// CJK 也要按 **rune** 走（一个汉字一次删掉，不劈成半个字节）
+	cjk := fixture()
+	cjk.input, cjk.inputCursor = "你好", 1
+	cjk = check(press(cjk, tea.KeyPressMsg{Code: tea.KeyBackspace}), "好", 0, "中文退格删一个 rune")
+	cjk = check(press(cjk, tea.KeyPressMsg{Code: tea.KeyDelete}), "", 0, "中文 Delete 删一个 rune")
+	cjk = check(typeText(cjk, "你好"), "你好", 2, "中文按 rune 计数")
+	cjk = check(press(press(cjk, left), left), "你好", 0, "中文 ← 一次一格（列走两格）")
+
+	// Esc 清输入 ⇒ 光标归零；回车提交后也归零（且输入行清空）
+	check(press(cjk, tea.KeyPressMsg{Code: tea.KeyEscape}), "", 0, "Esc 清输入")
+	// （回车会派生一个"真发"的 Cmd，测试不执行它 —— 这里只验光标与输入行）
+	check(press(typeText(fixture(), "在吗"), tea.KeyPressMsg{Code: tea.KeyEnter}), "", 0, "回车后输入行清空、光标归零")
+
+	// 面板开着时：←/→ 仍是移光标（↑/↓ 才管面板 —— 两者不冲突）
+	panel := typeText(fixture(), "/resu")
+	if len(panel.paletteMatches()) == 0 {
+		t.Fatal("`/resu` 该弹出面板")
+	}
+	panel = check(press(panel, left), "/resu", 4, "面板开着时 ← 仍移光标")
+	if len(panel.paletteMatches()) == 0 {
+		t.Fatal("移光标不该把面板弄没（面板是**推导**出来的，与光标无关）")
+	}
+	panel = check(press(panel, tea.KeyPressMsg{Code: tea.KeyUp}), "/resu", 4, "↑ 只管面板，不动光标")
+	panel = check(press(panel, tea.KeyPressMsg{Code: tea.KeyTab}), "/resume ", 8, "Tab 补全后光标跟到末尾")
+}
+
+// 光标走的是**终端光标**（`View.Cursor`），不是画进正文的字符 ⇒ 正文一个字节都不该变。
+// （现有那些逐字节断言一个字都不改，靠的就是这条。）
+func TestCursorDoesNotTouchContent(t *testing.T) {
+	m := fixture()
+	m.input = "你好ab"
+	head, tail := m, m
+	head.inputCursor, tail.inputCursor = 0, len([]rune(m.input))
+	if head.View().Content != tail.View().Content {
+		t.Fatalf("光标位置不该改正文（改了就是把它画进正文了）：\n--- 行首 ---\n%s\n--- 行尾 ---\n%s", head.View().Content, tail.View().Content)
+	}
+	if strings.Contains(head.View().Content, "\x1b[7m") {
+		t.Fatal("光标不该是画出来的反色方块")
+	}
+	// 着色打开也一样：正文里不该多出任何东西（颜色是最后一步，零宽）
+	if colored(head).View().Content != colored(tail).View().Content {
+		t.Fatal("着色版里光标位置同样不该改正文")
+	}
+	// 而且输入行本身就长这样（`> ` + 原文）—— 正文里不该有别的光标痕迹
+	if !strings.Contains(tail.View().Content, "> 你好ab") {
+		t.Fatalf("输入行该是 `> ` + 原文：\n%s", tail.View().Content)
+	}
+}
+
+// 输入行不是当前活动面时（挑选项 / 查看器 / 确认框铺满消息区）⇒ 把光标**藏掉**（别在屏幕上乱闪）；
+// 生成中**照旧显示**（输入行仍然可用，只是提交会被后端 409 顶回来）。
+func TestCursorHiddenWhenInputLineIsNotActive(t *testing.T) {
+	if fixture().View().Cursor == nil {
+		t.Fatal("普通界面上该看得见光标")
+	}
+	picking := fixture()
+	picking.picker, picking.pickerIndex = pickerResume, 0
+	if picking.View().Cursor != nil {
+		t.Fatal("挑选项（/resume）开着时该把光标藏掉")
+	}
+	modeling := fixture()
+	modeling.picker = pickerModel
+	if modeling.View().Cursor != nil {
+		t.Fatal("挑选项（/model）开着时该把光标藏掉")
+	}
+	viewing := fixture()
+	viewing.viewer, viewing.viewerTitle = []string{" system", " 消息"}, "/outgoing"
+	if viewing.View().Cursor != nil {
+		t.Fatal("查看器（/outgoing）开着时该把光标藏掉")
+	}
+	confirming := fixture()
+	confirming.viewer, confirming.viewerTitle, confirming.viewerHint = []string{" 会删掉 2 条"}, "确认删除", "回车 / y 执行"
+	confirming.confirm = &confirm{kind: "confirmDeleteSession", sessionID: "c1"}
+	if confirming.View().Cursor != nil {
+		t.Fatal("确认框（要先看清楚再点头）里也不该有光标")
+	}
+	if liveFixture().View().Cursor == nil {
+		t.Fatal("生成中也该留着光标（输入行还能用）")
+	}
+}
+
+// 面板弹在输入行**上方** ⇒ 输入行被顶下去，光标的行也得跟着走（否则光标会落在面板上）。
+func TestCursorRowFollowsInputLine(t *testing.T) {
+	m := typeText(fixture(), "/res")
+	m.inputCursor = 0
+	if len(m.paletteMatches()) == 0 {
+		t.Fatal("`/res` 该弹出面板")
+	}
+	cursor := m.View().Cursor
+	if cursor == nil {
+		t.Fatal("面板开着（命令面板不是挑选项）时该有光标")
+	}
+	if want := inputLineIndex(viewLines(m)); cursor.Y != want {
+		t.Fatalf("面板把输入行顶下去了：光标行 = %d，该是 %d", cursor.Y, want)
+	}
+}
+
 // 离线/空数据时也要有像样的画面（**不 panic**、有话可说）。
 func TestEmptyState(t *testing.T) {
 	// 空会话（还没进任何会话）：**消息区照旧在**（有话可说）+ 输入行 + 分隔线 + 状态行。

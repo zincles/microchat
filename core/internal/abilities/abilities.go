@@ -1,13 +1,15 @@
-// Package abilities：**能力身份（枚举）** —— 能力的 id 写死在代码里，开关与覆盖写在
-// `agents.json` 每个 agent 的 `abilities` 上。
+// Package abilities：**能力身份 + 代码侧定义** —— id、默认模板、以及它在 `task` 里算哪种作业
+// 都写死在这里（**只此一处**）；开关与覆盖写在 `agents.json` 每个 agent 的 `abilities` 上。
 //
-// 三条口径（见 `DEFINE.md`「能力（Ability）」与 `AGENTS.md`「后台任务 / 压缩 / 能力」）：
+// 四条口径（见 `DEFINE.md`「能力（Ability）」与 `AGENTS.md`「后台任务 / 压缩 / 能力」）：
 //
 //  1. **流程在代码里，开关在 Agent 上**："能力"= 会调模型的那种作业（`title` / `compact` / `judge`），
 //     能覆盖的只有模板 / 渠道 / 模型 —— **不能造新的**（表里没有的 id 写了也不认，报错）；
 //  2. **缺字段 = 默认全开**（现有 `agents.json` 一个字都不用改）；`enabled: false` ⇒
 //     调用方**明确拒绝**执行那一次，**不是静默降级**；
-//  3. **一个函数搞定**：`Resolve(agent, id)` 是"这份人格在这个能力上怎么配"的**唯一**解析处 ——
+//  3. **模板只有一份**：默认模板住这张表（`Definition.Template`）；生效模板 = agent 覆盖 ?: 默认，
+//     `Template(setting, id)` 是**唯一**的算式，`PromptVersion` 由**生效模板**算（改一个字就变）；
+//  4. **一个函数搞定**：`Resolve(agent, id)` 是"这份人格在这个能力上怎么配"的**唯一**解析处 ——
 //     别在调用点各读一遍 map（那会让"默认全开"这条口径散成好几份）。
 //
 // `turn` **不是能力** ⇒ 不在这个枚举里（它是 Agent 存在的方式，关掉就没得聊了）；
@@ -15,18 +17,21 @@
 package abilities
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"sort"
 	"strings"
 
 	"microchat/internal/config"
+	"microchat/internal/task"
 )
 
 // ID：能力 id。**只此三个** —— 加一个 = 同时加一段流程（在代码里），不是加一个配置项。
 type ID = string
 
 const (
-	// Title：给会话起标题（一段 → `sessions.title`）。
+	// Title：给会话起标题（一段 → `sessions.title`，落库由调用方）。
 	Title ID = "title"
 	// Compact：把一段压成摘要（一段 → `summaries` 一行，落库由调用方单事务负责）。
 	Compact ID = "compact"
@@ -34,17 +39,113 @@ const (
 	Judge ID = "judge"
 )
 
-// IDs：全部能力 id（顺序固定 ⇒ 界面与 `-debug abilities` 的输出稳定）。
-func IDs() []ID { return []ID{Title, Compact, Judge} }
+// titleTemplate / compactTemplate：**代码里的默认模板**（能力只能覆盖，不能新增流程）。
+//
+// 它们进 `prompt_version`（改一个字就变），所以**模板就是这一份**，别在别处再抄一段。
+const (
+	titleTemplate = `你是一名起标题助手。给下面这段对话起一个标题。
+
+规矩：
+- 只回一行标题本身：不要引号、不要句号、不要"标题："这类前缀。
+- 概括这一段在聊什么（人物 / 事件 / 话题），别写成流水账，也别只抄第一句。
+- 用与对话相同的语言；中文不超过 16 个字，英文不超过 8 个词。`
+
+	compactTemplate = `你是一名对话压缩助手。把下面这段对话收成一段"前情提要"，供后续对话直接接着聊。
+
+规矩：
+- 只写叙事：人物、事件、约定、因果、语气、以及还没解决的线索 —— 该记住的都要写上。
+- **不要把世界状态写进梗概**：变量由程序单独维护、每轮现算，写进梗概只会变成过期的第二份事实。
+- 不要写"用户说了…助手回答了…"这种过程话，直接把内容收拢成一段话。
+- 不要加标题、不要分小节、不要复述原文、不要提"这段对话"。
+- 用与对话相同的语言，篇幅三四段以内。`
+)
+
+// Definition：一个能力的**代码侧定义** —— id、面板上的中文名、它在 `task` 里算哪种作业、默认模板。
+//
+// 这张表就是"流程在代码里"的落点：加一个能力 = 往这儿加一行（同时写下它那段流程）。
+// `Template` 空 = 还没有模板（流程还没写，比如 `judge`）；`TaskKind` 空 = 登记表里还没有这一种。
+type Definition struct {
+	ID       ID
+	Label    string
+	TaskKind task.Kind
+	Template string
+}
+
+// definitions：全部能力（顺序固定 ⇒ 界面与 `-debug abilities` 的输出稳定）。
+var definitions = []Definition{
+	{ID: Title, Label: "起标题", TaskKind: task.KindTitle, Template: titleTemplate},
+	{ID: Compact, Label: "压缩", TaskKind: task.KindCompact, Template: compactTemplate},
+	// judge：流程还没写 ⇒ **不占位**（没有模板、登记表里也没有它这一种）
+	{ID: Judge, Label: "判断"},
+}
+
+// IDs：全部能力 id（顺序 = `definitions` 的顺序）。
+func IDs() []ID {
+	ids := make([]ID, 0, len(definitions))
+	for _, definition := range definitions {
+		ids = append(ids, definition.ID)
+	}
+	return ids
+}
+
+// Definitions：全部能力的代码侧定义（拷贝 ⇒ 调用方改不动这张表）。
+func Definitions() []Definition {
+	return append([]Definition(nil), definitions...)
+}
+
+// DefinitionOf：这个 id 的定义；不认识 ⇒ false（认不认识是 `Valid` / `Validate` 的事）。
+func DefinitionOf(id ID) (Definition, bool) {
+	for _, definition := range definitions {
+		if definition.ID == id {
+			return definition, true
+		}
+	}
+	return Definition{}, false
+}
+
+// DefaultTemplate：代码里的默认模板（没有 ⇒ 空串）。
+func DefaultTemplate(id ID) string {
+	definition, ok := DefinitionOf(id)
+	if !ok {
+		return ""
+	}
+	return definition.Template
+}
+
+// Template：**生效模板** —— agent 上覆盖了就用它，否则用代码里的默认。**只此一处**。
+func Template(setting Setting, id ID) string {
+	if strings.TrimSpace(setting.Prompt) != "" {
+		return setting.Prompt
+	}
+	return DefaultTemplate(id)
+}
+
+// PromptVersion：生效模板的指纹（`sha256(模板)` 十六进制前 8 位）。
+//
+// 列是 INTEGER（int64）⇒ 取 32 位那一截：**改一个字就变**（要的就是这个），还永不溢出。
+// 别手写版本号 —— 手写的那个迟早与模板本身对不上。
+func PromptVersion(template string) int64 {
+	sum := sha256.Sum256([]byte(template))
+	digits := hex.EncodeToString(sum[:])[:8]
+	var version int64
+	for index := range len(digits) {
+		version = version*16 + int64(digitValue(digits[index]))
+	}
+	return version
+}
+
+// digitValue：一个十六进制字符的值（`hex.EncodeToString` 只吐小写）。
+func digitValue(char byte) int {
+	if char >= '0' && char <= '9' {
+		return int(char - '0')
+	}
+	return int(char-'a') + 10
+}
 
 // Valid：这是个认识的能力 id 吗。
 func Valid(id string) bool {
-	for _, known := range IDs() {
-		if known == id {
-			return true
-		}
-	}
-	return false
+	_, ok := DefinitionOf(id)
+	return ok
 }
 
 // Setting：一个能力在这份人格上的**生效**配置（覆盖为空 = 用调用方自己的）。

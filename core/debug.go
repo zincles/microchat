@@ -34,9 +34,11 @@ import (
 	"microchat/internal/compact"
 	"microchat/internal/config"
 	"microchat/internal/model"
+	"microchat/internal/providers"
 	"microchat/internal/state"
 	"microchat/internal/store"
 	"microchat/internal/task"
+	"microchat/internal/title"
 	"microchat/internal/turn"
 )
 
@@ -59,8 +61,10 @@ op：
   state <session_id>                                世界状态（effective / tables）
   compact <session_id> [--blocks N | --begin <id> --end <id>]
                                                     压缩：同步跑完一次并打印区间 / 块数 / 摘要
+  title <session_id>                                手动起一次标题（不管现有没有；产物落 sessions.title）
   abilities <session_id>                            这个会话的 agent 在三个能力上的解析结果
   tasks                                             任务面板
+  usage [provider_id]                               OpenCode GO 的套餐余量（只读 GET；不给 id 就用第一个 opencode-go 渠道）
 
 输出：每行一条 JSON；错误体固定 {"error":{"code","message"}}（与 HTTP 契约同一个形状）。
 退出码：0 成功；1 失败（看那行错误体 / stored=false）；2 用法错。
@@ -92,7 +96,10 @@ func runDebug(paths config.Paths, cfg config.Config, args []string) int {
 		store: st, cfg: cfg, paths: paths, turns: turns, tasks: tasks,
 		chat:    chat.New(st, paths, turns, tasks),
 		compact: compact.New(st, paths, turns, tasks),
+		titles:  title.New(st, paths, tasks),
 	}
+	// 起标题挂在一轮生成上（拿到回复之后自动一次）—— 与 main.go 同一条口径
+	env.chat.Titles = env.titles
 
 	switch op := args[0]; op {
 	case "sessions":
@@ -117,10 +124,14 @@ func runDebug(paths config.Paths, cfg config.Config, args []string) int {
 		return env.stateOf(args[1:])
 	case "compact":
 		return env.compactSession(args[1:])
+	case "title":
+		return env.titleOp(args[1:])
 	case "abilities":
 		return env.abilitiesOf(args[1:])
 	case "tasks":
 		return env.board()
+	case "usage":
+		return env.usageOf(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "直操模式：不认识这个 op：%s\n\n", op)
 		fmt.Fprint(os.Stderr, debugUsage)
@@ -133,6 +144,7 @@ type debugEnv struct {
 	store   *store.Store
 	chat    *chat.Service
 	compact *compact.Service
+	titles  *title.Service
 	turns   *turn.Registry
 	tasks   *task.Registry
 	cfg     config.Config
@@ -618,6 +630,63 @@ func (e *debugEnv) board() int {
 	return 0
 }
 
+// usageOf：某个渠道的**套餐余量** —— 只读 GET（不碰会话、不调模型、不发消息）。
+//
+// 不给参数 ⇒ 取 `providers.json` 里第一个 `opencode-go` 渠道；给了就按 id 找。
+// 打出来的是**归一化 + 脱敏**的形状（plan / endpoint / 三个窗口），**没有 key**。
+// 目前只有 OpenCode GO 有这接口（别的 kind 没有 ⇒ 报"没有这个渠道"，不瞎猜别家的路径）。
+//
+// 找不到渠道时，错误信息要**说清是哪一种找不到**，并把**真读的配置目录**报出来 ——
+// "没有渠道"这句话本身会把人引错地方（见 usageChannel 的注释）。
+func (e *debugEnv) usageOf(args []string) int {
+	_, _, providerConfig, err := config.Load(e.paths)
+	if err != nil {
+		return report(errf("internal", "读配置失败：%s", err.Error()))
+	}
+	channel, err := usageChannel(providerConfig, argAt(args, 0))
+	if err != nil {
+		return report(errf("invalid", "%s（用法：-debug usage [provider_id]；配置目录：%s）", err.Error(), e.paths.ConfigDir))
+	}
+	usage, err := providers.OpencodeUsageAt(context.Background(), channel.BaseURL, channel.APIKey)
+	if err != nil {
+		return fail("upstream", err.Error())
+	}
+	emit(usage)
+	return 0
+}
+
+// usageChannel：挑这次要问的渠道 —— 只在 `opencode-go` 里找（用量接口目前只它有）。
+// 走 `FromConfig` + `ApplyPreset`（与真发那条路同一套转换，别手搓）。
+//
+// 三种"没有"要分得开（都真发生过）：
+//
+//	① 一个渠道都没读到 —— 多半是**配置目录没给对**（`-config` 默认是 `<data>/config`，
+//	   **`-data` 不会连带改它**；而 `go -C core run .` 的 cwd 是 `core/`，相对路径会错位）；
+//	② 有渠道但没这个 id；
+//	③ 有这个 id，但它不是 `opencode-go`（那就没有用量接口可问）。
+func usageChannel(configs config.ProvidersConfig, id string) (providers.Provider, error) {
+	if len(configs.Providers) == 0 {
+		return providers.Provider{}, errors.New("一个渠道都没读到：检查 -config 指向的目录里有没有 providers.json")
+	}
+	if id != "" {
+		channel, found := configs.Get(id)
+		if !found {
+			return providers.Provider{}, fmt.Errorf("providers.json 里没有 id=%s 这个渠道", id)
+		}
+		applied := providers.ApplyPreset(providers.FromConfig(channel))
+		if applied.Kind != providers.KindOpenCodeGo {
+			return providers.Provider{}, fmt.Errorf("渠道 %s 的 kind 是 %q，不是 opencode-go（用量接口目前只 OpenCode GO 有）", id, applied.Kind)
+		}
+		return applied, nil
+	}
+	for _, channel := range configs.Providers {
+		if applied := providers.ApplyPreset(providers.FromConfig(channel)); applied.Kind == providers.KindOpenCodeGo {
+			return applied, nil
+		}
+	}
+	return providers.Provider{}, errors.New("providers.json 里的渠道没有一个是 opencode-go（不给 id 时就用第一个这样的渠道）")
+}
+
 // compactLine：一次压缩的结果 —— "区间 / 块数 / 摘要前几十字 / 写了没 / prompt_version"。
 type compactLine struct {
 	Event          string          `json:"event"`
@@ -672,6 +741,35 @@ func (e *debugEnv) compactSession(args []string) int {
 		Provider: result.Provider, Model: result.Model, Usage: result.Usage,
 	})
 	return 0
+}
+
+// titleOp：**手动**起一次标题（`title.Service.Generate`）—— 不管标题现有没有，直接起一次。
+//
+// 手动就是手动：产物**由这里落库**（`sessions.title`，一次 UPDATE，**不带"还空着"的条件** ——
+// 人点了按钮就是要换名）。自动那条路（`Auto`）才带条件（见 `DEFINE.md`「Title 什么时候起」）。
+func (e *debugEnv) titleOp(args []string) int {
+	session, ok := e.session(argAt(args, 0))
+	if !ok {
+		return 1
+	}
+	result, err := e.titles.Generate(context.Background(), *session)
+	if err != nil {
+		return report(titleError(err))
+	}
+	if err := e.store.UpdateTitle(result.SessionID, result.Title); err != nil {
+		return report(err)
+	}
+	emit(result)
+	return 0
+}
+
+// titleError：能力层的错误映射 —— 与 `compactError` 一个口径（client 按 code 分支）。
+func titleError(err error) error {
+	var coded *title.Error
+	if errors.As(err, &coded) {
+		return errf(coded.Code, "%s", coded.Message)
+	}
+	return err
 }
 
 // abilityLine：`-debug abilities` 的一行（一个能力一行：这份人格在它上面怎么配）。

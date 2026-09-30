@@ -19,8 +19,6 @@ package compact
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -39,18 +37,6 @@ import (
 	"microchat/internal/task"
 	"microchat/internal/turn"
 )
-
-// DefaultTemplate：默认的压缩模板（代码里的那一段 —— 能力只能覆盖，不能新增流程）。
-//
-// 它进 `prompt_version`（改一个字就变），所以**模板就是这一份**，别在别处再抄一段。
-const DefaultTemplate = `你是一名对话压缩助手。把下面这段对话收成一段"前情提要"，供后续对话直接接着聊。
-
-规矩：
-- 只写叙事：人物、事件、约定、因果、语气、以及还没解决的线索 —— 该记住的都要写上。
-- **不要把世界状态写进梗概**：变量由程序单独维护、每轮现算，写进梗概只会变成过期的第二份事实。
-- 不要写"用户说了…助手回答了…"这种过程话，直接把内容收拢成一段话。
-- 不要加标题、不要分小节、不要复述原文、不要提"这段对话"。
-- 用与对话相同的语言，篇幅三四段以内。`
 
 // materialHeader：材料那一段的抬头（让模型一眼知道下面是什么）。
 const materialHeader = "【要压缩的这段对话】\n"
@@ -233,7 +219,9 @@ func (s *Service) prepare(session model.Session, req Request) (*prepared, error)
 	}
 	return &prepared{
 		session: session, channel: backend.Provider, model: modelID,
-		template: Template(setting), local: local,
+		// 生效模板只有一处算式（abilities.Template）：agent 覆盖 ?: 代码里的默认
+		template:  abilities.Template(setting, abilities.Compact),
+		local:     local,
 		span:      resolved,
 		requested: requestedBlocks(req, resolved, chatConfig.CompactBlocks),
 	}, nil
@@ -248,36 +236,6 @@ func requestedBlocks(req Request, resolved span, defaultBlocks int) int {
 		return req.Blocks
 	}
 	return defaultBlocks
-}
-
-// Template：生效模板 —— agent 上覆盖了就用它，否则代码里的默认。
-func Template(setting abilities.Setting) string {
-	if strings.TrimSpace(setting.Prompt) != "" {
-		return setting.Prompt
-	}
-	return DefaultTemplate
-}
-
-// PromptVersion：生效模板的指纹（`sha256(模板)` 十六进制前 8 位）。
-//
-// 列是 INTEGER（int64）⇒ 取 32 位那一截：**改一个字就变**（要的就是这个），还永不溢出。
-// 别手写版本号 —— 手写的那个迟早与模板本身对不上。
-func PromptVersion(template string) int64 {
-	sum := sha256.Sum256([]byte(template))
-	digits := hex.EncodeToString(sum[:])[:8]
-	var version int64
-	for index := range len(digits) {
-		version = version*16 + int64(digitValue(digits[index]))
-	}
-	return version
-}
-
-// digitValue：一个十六进制字符的值（`hex.EncodeToString` 只吐小写）。
-func digitValue(char byte) int {
-	if char >= '0' && char <= '9' {
-		return int(char - '0')
-	}
-	return int(char-'a') + 10
 }
 
 // ── 区间：两种给法 → 同一份 span ───────────────────────────────────────────
@@ -499,8 +457,8 @@ func (s *Service) call(ctx context.Context, p *prepared) (Result, error) {
 		Tokens:    int64(s.estimateTokens(p, text)),
 		SourceIDs: ids,
 		Provider:  p.channel.ID, Model: p.model,
-		// ⑤ 落库一并写 prompt_version（生效模板的指纹）与 usage
-		PromptVersion: PromptVersion(p.template),
+		// ⑤ 落库一并写 prompt_version（**生效模板**的指纹）与 usage
+		PromptVersion: abilities.PromptVersion(p.template),
 		Usage:         result.Usage,
 		Dirty:         false, // 刚压出来就是干净的
 		CreatedAt:     time.Now().UnixMilli(),

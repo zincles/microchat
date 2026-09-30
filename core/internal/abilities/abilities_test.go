@@ -76,3 +76,36 @@ func TestValidateRejectsUnknownIDs(t *testing.T) {
 		t.Fatal("能力 id 就是 title / compact / judge 三个（turn 不是开关）")
 	}
 }
+
+// 生效模板 = agent 覆盖 ?: 代码里的默认；**prompt_version 由生效模板算**（改一个字就变）。
+//
+// 这也是"能力卡带"那条口径的落点：默认模板只有一份（住这张表），覆盖只写在 agent 上。
+func TestEffectiveTemplateAndPromptVersion(t *testing.T) {
+	for _, id := range []ID{Title, Compact} {
+		if DefaultTemplate(id) == "" {
+			t.Fatalf("%s 该有默认模板（流程实现了就得有它那一段提示词）", id)
+		}
+	}
+	if DefaultTemplate(Judge) != "" || DefaultTemplate("没有这个能力") != "" {
+		t.Fatal("没实现的 / 不认识的：没有模板")
+	}
+	// 没覆盖 ⇒ 默认那句；覆盖了 ⇒ 覆盖那句
+	bare := Resolve(config.Agent{ID: "a"}, Compact)
+	if Template(bare, Compact) != DefaultTemplate(Compact) {
+		t.Fatal("没写 prompt 就该用默认模板")
+	}
+	agent := config.Agent{ID: "a", Abilities: map[string]config.AbilityToggle{
+		Compact: {Prompt: new("只写叙事，别写流水账。")},
+	}}
+	overridden := Resolve(agent, Compact)
+	if Template(overridden, Compact) != "只写叙事，别写流水账。" {
+		t.Fatalf("覆盖了就该用覆盖的那句：%q", Template(overridden, Compact))
+	}
+	if PromptVersion(Template(overridden, Compact)) == PromptVersion(Template(bare, Compact)) {
+		t.Fatal("换了模板，指纹必须跟着变")
+	}
+	// 未知 id 也照这套规则解析（能不能用是调用点的事）；模板为空 ⇒ 空串
+	if Template(Resolve(config.Agent{ID: "a"}, "没有这个能力"), "没有这个能力") != "" {
+		t.Fatal("不认识的 id 没有默认模板")
+	}
+}

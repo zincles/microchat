@@ -25,6 +25,7 @@ import (
 	"microchat/internal/server"
 	"microchat/internal/store"
 	"microchat/internal/task"
+	"microchat/internal/title"
 	"microchat/internal/tui"
 	"microchat/internal/turn"
 )
@@ -79,6 +80,8 @@ func main() {
 	tasks := task.NewRegistry()
 	chatService := chat.New(st, paths, turns, tasks)
 	compactService := compact.New(st, paths, turns, tasks)
+	// 起标题挂在一轮生成上（拿到回复之后自动一次）—— 与压缩同一条口径：能力的事归能力
+	chatService.Titles = title.New(st, paths, tasks)
 
 	// **先真听上端口，再切日志到文件**：端口被占这类启动失败必须留在**终端**上看得见 ——
 	// 不然 TUI 模式下日志去了 data/microchat.log，终端里只剩一句 "exit status 1"（真发生过）。

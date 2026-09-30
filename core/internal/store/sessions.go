@@ -111,6 +111,26 @@ func (s *Store) UpdateTitle(id, title string) error {
 	return s.execTouch("UPDATE sessions SET title = ?1 WHERE id = ?2", title, id)
 }
 
+// SetTitleIfEmpty：**只有当标题还空着**时才写（一次 UPDATE，条件在 SQL 里）。返回是否真写了。
+//
+// 为什么条件在 SQL 里、而不是"先读再写"：自动起名在后台发生，期间用户完全可能刚手动改过名 ——
+// 先读后写会把人的选择覆盖掉（口径：**用户改过名 ⇒ 标题非空 ⇒ 永不再自动覆盖**）。
+// 一次 UPDATE 也就**没有跨语句的竞争**可言。
+func (s *Store) SetTitleIfEmpty(id, title string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	result, err := s.db.Exec(
+		"UPDATE sessions SET title = ?1 WHERE id = ?2 AND TRIM(title) = ''", title, id)
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return affected > 0, nil
+}
+
 func (s *Store) SetSessionModel(id, provider, model string) error {
 	return s.execTouch("UPDATE sessions SET provider = ?1, model = ?2 WHERE id = ?3", provider, model, id)
 }

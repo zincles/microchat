@@ -5,6 +5,7 @@ package server
 
 import (
 	"bytes"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -78,7 +79,72 @@ func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *ch
 	return s
 }
 
-func (s *Server) Handler() http.Handler { return s.mux }
+// Handler：路由外面**套两层**，顺序至关重要 ——
+//
+//	CORS( 鉴权( mux ) )
+//
+// **CORS 必须是最外层**：浏览器发带 JSON 的 POST 前先发预检 `OPTIONS`，而预检**不带** `Authorization`
+// ⇒ 要是先撞鉴权就是 401、预检失败、正式请求根本发不出去。所以 OPTIONS 在 CORS 这一层就被接管，
+// 永远进不到鉴权，也进不到路由（405 那条口径不受影响：只有 `OPTIONS` 被我们截下）。
+// 反过来 CORS 头要盖住**每一个**响应（200 / 401 / 404 / 405 / 错误体）⇒ CORS 必须在最外层。
+func (s *Server) Handler() http.Handler { return withCORS(s.auth(s.mux)) }
+
+// withCORS：给每个响应加 CORS 头，并把预检 `OPTIONS` 就地回成 204（无响应体）。
+//
+// `Access-Control-Allow-Origin` 有 `Origin` 就**回显**它、否则 `*`；回显时依赖请求头 ⇒ 一并加 `Vary: Origin`。
+// `Access-Control-Expose-Headers: Allow`：405 的 `allow:` 头不在 CORS 安全名单里，不回显浏览器读不到。
+func withCORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		header := w.Header()
+		if origin := r.Header.Get("Origin"); origin != "" {
+			header.Set("Access-Control-Allow-Origin", origin)
+		} else {
+			header.Set("Access-Control-Allow-Origin", "*")
+		}
+		header.Add("Vary", "Origin")
+		header.Set("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS")
+		if requested := r.Header.Get("Access-Control-Request-Headers"); requested != "" {
+			header.Set("Access-Control-Allow-Headers", requested)
+		} else {
+			header.Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+		}
+		header.Set("Access-Control-Max-Age", "600")
+		header.Set("Access-Control-Expose-Headers", "Allow")
+		// 预检在这里终结：204、无体，绝不落到鉴权/路由。
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// auth：配了口令（`config.json` 的 `server.auth_token`）时，**所有**接口都要
+// `Authorization: Bearer <token>`（`/health` 也不例外）—— 见 AGENTS.md 的接口契约。
+// 没配（nil / 空串）就整体放行（默认不设口令）。预检 OPTIONS 已在 CORS 那层截住，到不了这里。
+func (s *Server) auth(next http.Handler) http.Handler {
+	token := ""
+	if s.config.Server.AuthToken != nil {
+		token = *s.config.Server.AuthToken
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if token != "" && !bearerMatches(r.Header.Get("Authorization"), token) {
+			writeError(w, http.StatusUnauthorized, "unauthorized", "缺少或错误的 Authorization")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// bearerMatches：`Authorization: Bearer <token>` 里那条 token 是否就是口令。
+// 用**定长比较**（crypto/subtle）免得按字符早退泄漏口令形状。
+func bearerMatches(header, token string) bool {
+	const prefix = "Bearer "
+	if !strings.HasPrefix(header, prefix) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(header[len(prefix):]), []byte(token)) == 1
+}
 
 // health：探针（Rust 版回 {"status","version"}）。
 // health：版本号与 Rust 版**刻意对齐** —— 这个端口要取代它，形状必须一模一样。

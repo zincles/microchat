@@ -2,8 +2,8 @@
 //
 // 形状（照 `AGENTS.md` 的「一轮生成（202 + 轮询）」）：
 //
-//	受理（同步）：铸 id → 登记 turn（**唯一的并发闸门**）→ 落用户消息 → 首句临时标题 → 出站定稿
-//	生成（后台）：调 `providers` → 增量喂 `turn`（只服务动画）→ **整段拿到才 INSERT**
+//	受理（同步）：铸 id → 登记 turn（**唯一的并发闸门**）→ 落用户消息 → 出站定稿
+//	生成（后台）：调 `providers` → 增量喂 `turn`（只服务动画）→ **整段拿到才 INSERT** → 起标题
 //
 // 一条铁律：**整段拿到才 INSERT** —— 停止 / 失败 / 被杀都不留半条，也没有"清理占位"要维护；
 // 落库用的 id 是**受理那一刻**就算好、并发给客户端的那个。
@@ -23,6 +23,7 @@ import (
 	"microchat/internal/state"
 	"microchat/internal/store"
 	"microchat/internal/task"
+	"microchat/internal/title"
 	"microchat/internal/turn"
 )
 
@@ -32,6 +33,9 @@ type Service struct {
 	Turns *turn.Registry
 	Tasks *task.Registry
 	Paths config.Paths
+	// Titles：起标题（**只在标题还空着时**自动一次）—— 由 main / 直操模式接上；
+	// 没接（比如只跑一轮生成的单测）就只是"没人起名"，不影响这一轮。
+	Titles *title.Service
 }
 
 func New(st *store.Store, paths config.Paths, turns *turn.Registry, tasks *task.Registry) *Service {
@@ -73,7 +77,7 @@ type Accepted struct {
 // 顺序是刻意的：**登记（并发闸门）在写用户消息之前**（挤不进来就 409，且一个字节都还没写）；
 // 用户消息在后端失败时也留在库里（用户的话不该丢，换个模型接着聊）。
 func (s *Service) Accept(session model.Session, content string) (Accepted, error) {
-	chatConfig, _, providersConfig := s.files()
+	_, _, providersConfig := s.files()
 	// 两个 id 一口气铸完**排序后**发：用户那句必须在回复前面（线性会话的顺序就是 id）
 	ids, err := store.MintOrderedIDs(2)
 	if err != nil {
@@ -94,12 +98,8 @@ func (s *Service) Accept(session model.Session, content string) (Accepted, error
 		s.Turns.Stop(session.ID) // 登记了却写不进去 ⇒ 摘掉，别留下一个假的"在跑"
 		return Accepted{}, err
 	}
-	// 首句临时标题（还没起名才起；起标题失败**不挡这一轮** —— 下次再来）
-	if strings.TrimSpace(session.Title) == "" {
-		if title := model.TitleFrom(content, chatConfig.TitleChars); title != "" {
-			_ = s.Store.UpdateTitle(session.ID, title)
-		}
-	}
+	// 起标题**不在这儿**：它是 title 能力的事（`title.Service.Auto`，在拿到回复之后起）——
+	// 这里只落用户那句（用户的话不该丢，换个模型接着聊）。
 	// 出站**此刻定稿**（受理时捕获的上文）：后台不再重算，期间别人改了库也不影响这一轮
 	outgoing, reasoningByID, err := s.outgoingFor(session)
 	if err != nil {
@@ -165,6 +165,12 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 		s.Turns.Finish(sessionID, token, err.Error())
 		guard.Fail(err.Error())
 		return
+	}
+	// **拿到回复之后**：起标题（只在标题还空着时一次）。放在 `Finish` **之前**是刻意的 ——
+	// 客户端看到 `idle`（据此重拉列表）时名字已经落库，一次刷新就拿到；直操模式同理。
+	// 失败 / 关掉只影响名字（`Auto` 自己退回首句截断兜底并记日志），**不改这一轮的结果**。
+	if s.Titles != nil {
+		s.Titles.Auto(session)
 	}
 	s.Turns.Finish(sessionID, token, "") // 成功 ⇒ idle（客户端据此一次性重拉消息）
 	guard.Succeed()

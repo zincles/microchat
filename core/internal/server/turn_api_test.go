@@ -12,13 +12,17 @@ import (
 	"microchat/internal/model"
 	"microchat/internal/store"
 	"microchat/internal/task"
+	"microchat/internal/title"
 	"microchat/internal/turn"
 )
 
-// newTestServer：一台测试用服务（进程内的 turn / task 登记表各一份，走真的 chat / compact 两层）。
+// newTestServer：一台测试用服务（进程内的 turn / task 登记表各一份，走真的 chat / compact / title 三层）。
 func newTestServer(st *store.Store, cfg config.Config, paths config.Paths) *Server {
 	turns, tasks := turn.NewRegistry(), task.NewRegistry()
-	return New(st, cfg, paths, chat.New(st, paths, turns, tasks), compact.New(st, paths, turns, tasks))
+	chatService := chat.New(st, paths, turns, tasks)
+	// 与 main.go 同一条接线：起标题挂在一轮生成上（这里也接上，测的才是真跑的那条路）
+	chatService.Titles = title.New(st, paths, tasks)
+	return New(st, cfg, paths, chatService, compact.New(st, paths, turns, tasks))
 }
 
 // dummySandbox：一条会话 + dummy 渠道（**确定性、不联网** —— 验收与测试都靠它）。
@@ -136,9 +140,9 @@ func TestSendMessageRoundTrip(t *testing.T) {
 	if messages := box.messages(t); len(messages) != 1 || messages[0].Role != model.RoleUser {
 		t.Fatalf("受理后该只有用户那一句：%+v", messages)
 	}
-	// 首句临时标题（config.chat.title_chars 截断）
-	if session := box.serverSession(t); session.Title != "第一句话，顺便起个标题" {
-		t.Fatalf("该用首句起个临时标题：%q", session.Title)
+	// 受理那一刻**还不起名**：起标题是"拿到回复之后"的事（title 能力，`chat` 的后台半程）
+	if session := box.serverSession(t); session.Title != "" {
+		t.Fatalf("受理时不该已经有标题：%q", session.Title)
 	}
 
 	// 生成中：状态会走到 pending / streaming，游标读能看到增量
@@ -179,6 +183,10 @@ func TestSendMessageRoundTrip(t *testing.T) {
 	// 顺序就是 id：用户那句在前
 	if messages[0].ID >= messages[1].ID {
 		t.Fatalf("线性会话的顺序就是 id，用户那句必须在前面：%s / %s", messages[0].ID, messages[1].ID)
+	}
+	// **拿到回复之后**自动起过一次标题（dummy 渠道吐的那句假标题 ⇒ 确定性）
+	if session := box.serverSession(t); session.Title != "（测试用假标题）" {
+		t.Fatalf("拿到回复之后该自动起一次标题：%q", session.Title)
 	}
 	// 结束后仍可补拉尾巴（游标读不消费，`done` 表示这轮结束）
 	recorder := call(box.server, "GET", box.path+"/turn/text?from=0&think_from=0", "")

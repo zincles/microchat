@@ -137,7 +137,7 @@ func TestCompactWritesOneSummaryAndPointsTheSpan(t *testing.T) {
 		t.Fatalf("区间 = %s..%s，想要 %s..%s", result.BeginMessageID, result.EndMessageID,
 			messages[0].ID, messages[3].ID)
 	}
-	if result.PromptVersion != PromptVersion(DefaultTemplate) || result.PromptVersion == 0 {
+	if result.PromptVersion != abilities.PromptVersion(abilities.DefaultTemplate(abilities.Compact)) || result.PromptVersion == 0 {
 		t.Fatalf("prompt_version = %d（想要默认模板的指纹）", result.PromptVersion)
 	}
 	if !strings.Contains(result.Text, dummyReply) {
@@ -304,7 +304,7 @@ func TestMaterialStripsStateAndSendsTemplate(t *testing.T) {
 	if len(rows) != 1 || !strings.Contains(string(rows[0].Usage), `"completion_tokens":8`) {
 		t.Fatalf("usage 该落进摘要那一行：%+v", rows)
 	}
-	if result.PromptVersion != PromptVersion(DefaultTemplate) {
+	if result.PromptVersion != abilities.PromptVersion(abilities.DefaultTemplate(abilities.Compact)) {
 		t.Fatalf("prompt_version = %d", result.PromptVersion)
 	}
 	// 换个模板 ⇒ 指纹就变（"改一个字就变"）
@@ -319,8 +319,13 @@ func TestMaterialStripsStateAndSendsTemplate(t *testing.T) {
 		t.Fatal(err)
 	}
 	rows = h.summaries(t)
-	if rows[1].PromptVersion == rows[0].PromptVersion || rows[1].PromptVersion != PromptVersion("另一套模板") {
+	if rows[1].PromptVersion == rows[0].PromptVersion || rows[1].PromptVersion != abilities.PromptVersion("另一套模板") {
 		t.Fatalf("换模板该换指纹：%d vs %d", rows[0].PromptVersion, rows[1].PromptVersion)
+	}
+	// **agent 上覆盖的 prompt 就是发出去的那一段**（不是默认模板）—— 覆盖真的生效，不是摆设
+	sent = string(body)
+	if !strings.Contains(sent, "另一套模板") || strings.Contains(sent, "前情提要") {
+		t.Fatalf("覆盖后的模板该进 system、默认的不该再出现：%s", sent)
 	}
 }
 
