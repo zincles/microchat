@@ -201,6 +201,14 @@ func (c *Client) UpdateSession(id, provider, model string) (Session, error) {
 	return session, err
 }
 
+// RenameSession：改会话标题（`/rename`）—— 复用 `PATCH /sessions/{session_id}` 的 `title` 那一格，
+// **不新增路由**。改完即"用户改过名" ⇒ 后端的自动起标题**永不再覆盖**（这条不变量在后端，客户端不多事）。
+func (c *Client) RenameSession(id, title string) (Session, error) {
+	var session Session
+	err := c.patch("/sessions/"+id, map[string]any{"title": title}, &session)
+	return session, err
+}
+
 // DeleteSession：删掉整条会话（`/delete`）。
 func (c *Client) DeleteSession(id string) error { return c.del("/sessions/" + id) }
 
@@ -366,4 +374,19 @@ func (c *Client) Context(sessionID string) (ContextUsage, error) {
 	var usage ContextUsage
 	err := c.get("/sessions/"+sessionID+"/context", &usage)
 	return usage, err
+}
+
+// SystemPrompt：**生效的系统提示词**（`GET /sessions/{session_id}/prompt`）—— 三级解析后的结果。
+//
+// `text` 就是真会发给模型的那份；`source` ∈ conversation / agent / builtin（会话覆盖 / agent 的 / 内置默认）。
+// 调试用：界面把它当成一条 `role=system` 的消息摆在消息区最上方。
+type SystemPrompt struct {
+	Text   string `json:"text"`
+	Source string `json:"source"`
+}
+
+func (c *Client) SystemPrompt(sessionID string) (SystemPrompt, error) {
+	var prompt SystemPrompt
+	err := c.get("/sessions/"+sessionID+"/prompt", &prompt)
+	return prompt, err
 }

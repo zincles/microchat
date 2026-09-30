@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
-	"time"
 
 	"microchat/internal/config"
 	"microchat/internal/providers"
@@ -96,7 +95,7 @@ func (s *Server) listProviders(w http.ResponseWriter, r *http.Request) {
 	}
 	views := make([]ProviderView, 0, len(configs.Providers))
 	for _, provider := range configs.Providers {
-		provider = s.withIdentity(provider)
+		provider = s.config.WithIdentity(provider)
 		lastRefresh, _ := s.store.LastRefreshAt(provider.ID)
 		items := []ModelView{}
 		for _, model := range models {
@@ -210,6 +209,10 @@ func (s *Server) deleteProvider(w http.ResponseWriter, r *http.Request) {
 }
 
 // refreshProvider：拉 `/models` 并落库（**发现列**）；这次没见到的删行。
+//
+// **怎么刷只有一份**（`registry.RefreshOne`）：启动时的自动刷新、`-debug refresh-models`
+// 走的都是它 —— 别在这儿再写一份"拉 + 落库"。这里只管 HTTP 那一层（找渠道、定错误码、回视图）。
+// 与自动那条路的区别：**这条是人明确点的**，所以不套 `registry.Skip`（dummy 照旧 400，没配 key 也真发）。
 func (s *Server) refreshProvider(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("provider_id")
 	provider, found := s.providerByID(id)
@@ -221,30 +224,12 @@ func (s *Server) refreshProvider(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid", "dummy 渠道没有上游可拉")
 		return
 	}
-	probe, err := s.probeModels(provider)
-	if err != nil {
+	if _, err := registry.RefreshOne(provider, s.store); err != nil {
 		writeError(w, http.StatusBadGateway, "upstream", err.Error())
-		return
-	}
-	if _, _, _, err := s.store.RefreshDiscovered(id, probe.Models, time.Now().UnixMilli()); err != nil {
-		writeStoreError(w, err)
 		return
 	}
 	updated, _ := s.providerByID(id)
 	writeJSON(w, http.StatusOK, providerView(updated))
-}
-
-// probeModels：一次性拉 `/models`（不落库）。
-func (s *Server) probeModels(provider config.Provider) (registry.ProbeResult, error) {
-	wire := providers.FromConfig(provider) // 唯一转换处（手搓会漏字段 ⇒ 静默失效）
-	// 上游 `/models` 的形状是 **`{"data": [...]}`**（OpenAI 的，OpenRouter 同形多给几个字段）。
-	// 早先这里解进了 `{"models": [...]}` ✗ —— 发现会静默拿到 0 个模型。
-	var parsed registry.ModelsResponse
-	client := providers.NewClient(providers.ApplyPreset(wire))
-	if err := client.GetJSON(providers.ApplyPreset(wire), "/models", &parsed); err != nil {
-		return registry.ProbeResult{}, err
-	}
-	return registry.ProbeResult{Models: parsed.Data}, nil
 }
 
 // listProviderPresets：内建预设清单 —— 界面拿它生成"选一个内置 provider"的下拉。
@@ -358,17 +343,8 @@ func (s *Server) saveProviders(configs config.ProvidersConfig) error {
 func (s *Server) providerByID(id string) (config.Provider, bool) {
 	for _, provider := range s.loadProviders().Providers {
 		if provider.ID == id {
-			return s.withIdentity(provider), true
+			return s.config.WithIdentity(provider), true
 		}
 	}
 	return config.Provider{}, false
-}
-
-// withIdentity：**服务器级默认特征**（`config.json` 的 `server.identity`）—— 渠道自己没写就用它。
-// 这就是"切换客户端特征"那个开关：一处改，所有没写 identity 的渠道都跟着变。
-func (s *Server) withIdentity(provider config.Provider) config.Provider {
-	if provider.Identity == "" {
-		provider.Identity = s.config.Server.Identity
-	}
-	return provider
 }

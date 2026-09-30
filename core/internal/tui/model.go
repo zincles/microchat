@@ -73,6 +73,17 @@ type model struct {
 	context    *ContextUsage
 	contextFor string
 
+	// prompt / promptFor：**生效的系统提示词**（三级解析的结果 + 来源），以及它属于哪条会话。
+	// 与上下文占用同一条规矩：换会话时那份还旧着 ⇒ 不许拿去画（靠 promptFor 对上号）。
+	prompt    *SystemPrompt
+	promptFor string
+	// showSystemPrompt：消息区顶部那条"系统提示词"要不要显示（调试用）。**默认开** ⇒
+	// 读 `~/.config/microchat/tui.json` 的 `show_system_prompt`（`uiPath` 是它住哪儿；
+	// **不进**后端的 `config/` 与 `data/`，也**不动** Godot 那份 `frontend.json`）。
+	showSystemPrompt bool
+	// uiPath：界面偏好文件的位置（`initialModel` 填默认位置；测试填临时文件）。
+	uiPath string
+
 	// 正在生成的这一轮（界面按状态**合成**的气泡；库里还没有它）
 	turn *liveTurn
 }
@@ -131,8 +142,11 @@ type healthMsg struct {
 	err    error
 }
 
+// sessionsMsg：一次会话列表取数。`quiet` = **静默**那一趟（一轮结束时去接自动起的标题）：
+// 列表照更新，但**不动底栏那句话**（见下面那个 case 里的理由）。
 type sessionsMsg struct {
 	sessions []Session
+	quiet    bool
 	err      error
 }
 
@@ -149,6 +163,23 @@ type contextMsg struct {
 	usage     ContextUsage
 	err       error
 }
+
+// promptMsg：进会话（或会话切换）时拉回来的**生效系统提示词**（三级解析的结果 + 来源）。
+type promptMsg struct {
+	sessionID string
+	prompt    SystemPrompt
+	err       error
+}
+
+// renamedMsg：改名的回执（`PATCH /sessions/{session_id}` 回来的那条会话）——
+// 列表与状态行里的会话名**立刻**跟着变（不许等下一次刷新）。
+type renamedMsg struct {
+	session Session
+	err     error
+}
+
+// uiPrefMsg：界面偏好落盘的结果 —— 写失败要说出来，不然"已记住"是句假话。
+type uiPrefMsg struct{ err error }
 
 type createdMsg struct {
 	session Session
@@ -232,7 +263,11 @@ type compactMsg struct {
 func initialModel(client *Client) model {
 	// **一进来就是空会话**（`selectedID: ""`）：不建库里的行、也不自动跳进旧会话 ——
 	// 界面停在一个待输入的输入框上（用户 2026-09-29 定的口径）。
-	return model{client: client, width: 80, height: 24}
+	m := model{client: client, width: 80, height: 24}
+	// 界面偏好（`~/.config/microchat/tui.json`）：读不到 / 没写这一格 ⇒ **默认开**。
+	m.uiPath = defaultUIStatePath()
+	m.showSystemPrompt = loadShowSystemPrompt(m.uiPath)
+	return m
 }
 
 func (m model) Init() tea.Cmd { return loadHealth(m.client) }
@@ -251,6 +286,23 @@ func loadSessions(client *Client) tea.Cmd {
 	}
 }
 
+// loadSessionsQuiet：**静默**重拉会话列表 —— 一轮跑完（idle）时用这一趟。
+//
+// 为什么需要它：**自动起的标题**是后端在翻 idle **之前**写进去的（`title.Auto` 在 `chat.run`
+// 的 `Finish` 之前 —— 客户端看到 idle 再拉列表时名字已经在了，一次刷新就拿到）。
+// 而发消息那一刻拉的那一份列表里标题**还是空的** ⇒ 不补这一趟的话，左栏与状态行会一直停在
+// 「（还没起名）」，要等下一次列表刷新（比如再发一句）才补上 —— 用户实跑抓到的
+// "第一条消息之后标题不出现、发第二条才出现"就是这个。
+//
+// 走**静默**那一档（不动底栏）：底栏刚写上的「生成完成」不该被"会话 N 条"顶掉
+// （两个 Cmd 谁先回来还不一定，见 settleTurn 的注释）。
+func loadSessionsQuiet(client *Client) tea.Cmd {
+	return func() tea.Msg {
+		sessions, err := client.Sessions()
+		return sessionsMsg{sessions: sessions, quiet: true, err: err}
+	}
+}
+
 func loadMessages(client *Client, sessionID string) tea.Cmd {
 	return func() tea.Msg {
 		messages, err := client.Messages(sessionID)
@@ -264,6 +316,27 @@ func loadContext(client *Client, sessionID string) tea.Cmd {
 		usage, err := client.Context(sessionID)
 		return contextMsg{sessionID: sessionID, usage: usage, err: err}
 	}
+}
+
+// loadSystemPrompt：拉一次**生效的系统提示词**（进会话 / 会话切换时一次，与上下文占用同一个时机）。
+func loadSystemPrompt(client *Client, sessionID string) tea.Cmd {
+	return func() tea.Msg {
+		prompt, err := client.SystemPrompt(sessionID)
+		return promptMsg{sessionID: sessionID, prompt: prompt, err: err}
+	}
+}
+
+// renameSessionCmd：改名（`/rename`）—— 走已有的 `PATCH /sessions/{session_id}`，**不新增路由**。
+func renameSessionCmd(client *Client, sessionID, title string) tea.Cmd {
+	return func() tea.Msg {
+		session, err := client.RenameSession(sessionID, title)
+		return renamedMsg{session: session, err: err}
+	}
+}
+
+// saveUIPrefCmd：把界面偏好写下去（`/system` 的"记住"就靠它）。
+func saveUIPrefCmd(path string, show bool) tea.Cmd {
+	return func() tea.Msg { return uiPrefMsg{err: saveShowSystemPrompt(path, show)} }
 }
 
 func createSessionCmd(client *Client, provider, model string) tea.Cmd {
@@ -410,6 +483,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case sessionsMsg:
 		if message.err != nil {
+			if message.quiet {
+				// 静默那一趟只是去接一个标题：拉不到就**当没发生** ——
+				// 别用"拉会话失败"顶掉底栏刚写上的那句结局（见 loadSessionsQuiet）
+				return m, nil
+			}
 			m = m.fail("拉会话失败：" + message.err.Error())
 			return m, nil
 		}
@@ -426,7 +504,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.selectedID, m.messages, m.messagesFor = "", nil, ""
 			return m.fail("那条会话没了（别处删的）—— 现在是空会话"), tea.Batch(also...)
 		}
-		m.lastAction = fmt.Sprintf("会话 %d 条", len(m.sessions))
+		if !message.quiet {
+			m.lastAction = fmt.Sprintf("会话 %d 条", len(m.sessions))
+		}
 		return m, tea.Batch(also...)
 
 	case messagesMsg:
@@ -439,10 +519,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.messages = message.messages
 			m.messagesFor = message.sessionID
 			m.lastAction = fmt.Sprintf("消息 %d 条", len(m.messages))
-			// **进会话时**顺手量一次上下文占用（这份属于哪条会话记在 contextFor ⇒ 换会话会重新拉）
+			// **进会话时**顺手量一次上下文占用 / 拉一次系统提示词
+			// （两份都记着"属于哪条会话" ⇒ 换会话会重新拉）
+			var also []tea.Cmd
 			if m.contextFor != session.ID {
-				return m, loadContext(m.client, session.ID)
+				also = append(also, loadContext(m.client, session.ID))
 			}
+			if m.promptFor != session.ID {
+				also = append(also, loadSystemPrompt(m.client, session.ID))
+			}
+			return m, tea.Batch(also...)
 		}
 		return m, nil
 
@@ -453,6 +539,36 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.context, m.contextFor = &message.usage, message.sessionID
+		return m, nil
+
+	case promptMsg:
+		// 同上：拉不到就只是不显示那条系统提示词 —— **别去打扰底栏**
+		if message.err != nil {
+			m.prompt, m.promptFor = nil, ""
+			return m, nil
+		}
+		m.prompt, m.promptFor = &message.prompt, message.sessionID
+		return m, nil
+
+	case renamedMsg:
+		if message.err != nil {
+			m = m.fail("改名失败：" + message.err.Error())
+			return m, nil
+		}
+		// **本地立刻跟上**：状态行里的会话名读的就是 m.sessions ⇒ 就地换掉那份，
+		// 不等下一次刷新（刷新只是对账，不是显示的前提）。
+		for index := range m.sessions {
+			if m.sessions[index].ID == message.session.ID {
+				m.sessions[index] = message.session
+			}
+		}
+		m.lastAction = "已改名：" + message.session.Title
+		return m, nil
+
+	case uiPrefMsg:
+		if message.err != nil {
+			m = m.fail("界面偏好没写下去：" + message.err.Error())
+		}
 		return m, nil
 
 	case createdMsg:
@@ -639,11 +755,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "idle":
 			// 收到 idle ⇒ 整段已经落库 ⇒ **一次性重拉**（气泡被真消息取代），并量一次**新的占用**
 			// （一轮只量一次：占用只在整段落库后才变，别跟着 300ms 的轮询一起拉）
+			// 会话列表也要拉一趟（**静默**）：自动起的标题是后端在翻 idle **之前**写好的
+			// （`title.Auto` 在 `Finish` 之前）—— 发消息那一刻那份列表里标题还是空的，
+			// 不补这一趟，左栏与状态行就停在「（还没起名）」，要等下次刷新才补上
+			// （用户实跑抓到的"第一条消息之后标题不出现、发第二条才出现"）。
 			m = m.settleTurn(message.sessionID)
 			m.lastAction = "生成完成"
 			return m, tea.Batch(
 				loadMessages(m.client, message.sessionID),
 				loadContext(m.client, message.sessionID),
+				loadSessionsQuiet(m.client),
 			)
 		}
 		return m, turnTickCmd(message.sessionID)
@@ -899,10 +1020,12 @@ func init() {
 		{name: "delete", help: "删除当前会话，回到空会话（不可逆，先确认）", run: commandDelete},
 		{name: "cut", args: "[message_id]", help: "删一条消息及它之后的全部（先预览，再确认）", run: commandCut},
 		{name: "copy", help: "把当前会话复制成新的一条（分岔）", run: commandCopy},
+		{name: "rename", args: "<新名字>", help: "给当前会话改名（名字里可以有空格；改过名后自动起标题不再覆盖）", run: commandRename},
 		{name: "resume", args: "[uuid]", help: "挑一条已有会话；带 uuid 直接进", run: commandResume},
 		{name: "model", help: "挑渠道 / 模型（有会话就改它，没有则留给下一条）", run: commandModel},
 		{name: "outgoing", help: "看下次真发出去的载荷（哪几条是压缩出来的）", run: commandOutgoing},
 		{name: "state", help: "看当前会话的世界状态", run: commandState},
+		{name: "system", help: "显示 / 隐藏消息区顶部的系统提示词（调试用，开关记在 ~/.config/microchat/tui.json）", run: commandSystem},
 		{name: "compact", args: "[N]", help: "把最老的 N 个已闭合块压成摘要（不给 N 用默认值）", run: commandCompact},
 		{name: "stop", help: "打断正在生成的那一轮（幂等）", run: commandStop},
 		{name: "refresh", help: "重新拉会话列表", run: commandRefresh},
@@ -983,6 +1106,59 @@ func commandCopy(m model, _ []string) (tea.Model, tea.Cmd) {
 	}
 	m.lastAction = "复制 " + describeSession(*session) + "…"
 	return m, copySessionCmd(m.client, session.ID)
+}
+
+// commandRename：给当前会话改名（`/rename <新名字>`）。
+//
+// 走**已有的** `PATCH /sessions/{session_id}`（`{"title": …}`）—— **不新增路由**。
+// 改过名就是"用户改过名" ⇒ 后端的自动起标题**永不再覆盖**（那条不变量在后端，客户端不多事）。
+// 名字里可以有空格（用引号括起来也行）；**空名字 ⇒ 拒绝**（那会变成"还没起名"，把它退回去了）。
+func commandRename(m model, args []string) (tea.Model, tea.Cmd) {
+	session := m.currentSession()
+	if session == nil {
+		m.lastAction = "当前是空会话，没有可改名的会话"
+		return m, nil
+	}
+	title := renameArg(args)
+	if title == "" {
+		m.lastAction = "用法：/rename <新名字>（名字里可以有空格；引号可省）—— 空名字不行"
+		return m, nil
+	}
+	m.lastAction = "改名中…"
+	return m, renameSessionCmd(m.client, session.ID, title)
+}
+
+// renameArg：把 `/rename` 后面那串参数拼回**一个名字**。
+//
+// 命令是按空白切开的 ⇒ 名字里有空格时要么整串拼回来（`/rename 我的 新名字`），
+// 要么用引号括起来（`/rename "我的 新名字"`，两头那对引号剥掉）。空串 = 没给名字。
+func renameArg(args []string) string {
+	title := strings.TrimSpace(strings.Join(args, " "))
+	if len(title) >= 2 {
+		first, last := title[0], title[len(title)-1]
+		if (first == '"' && last == '"') || (first == '\'' && last == '\'') {
+			title = strings.TrimSpace(title[1 : len(title)-1])
+		}
+	}
+	return title
+}
+
+// commandSystem：切换消息区顶部那条"系统提示词"（调试用）—— 顺手把开关**记到本地**。
+//
+// 界面偏好住 `~/.config/microchat/tui.json`（**不进**后端 `config/` 与 `data/`，也**不动** Godot 那份 `frontend.json`）。
+func commandSystem(m model, _ []string) (tea.Model, tea.Cmd) {
+	m.showSystemPrompt = !m.showSystemPrompt
+	if m.showSystemPrompt {
+		m.lastAction = "系统提示词：显示在消息区最上面（已记住）"
+	} else {
+		m.lastAction = "系统提示词：不再显示（已记住）"
+	}
+	cmds := []tea.Cmd{saveUIPrefCmd(m.uiPath, m.showSystemPrompt)}
+	// 打开时顺手把这份拉回来（关着的时候可能从没拉过 / 是上一条会话的）
+	if session := m.currentSession(); m.showSystemPrompt && session != nil && m.promptFor != session.ID {
+		cmds = append(cmds, loadSystemPrompt(m.client, session.ID))
+	}
+	return m, tea.Batch(cmds...)
 }
 
 // confirmExecute：用户点头了 —— 按存下来的**意图**派生该发的命令。
@@ -1162,9 +1338,11 @@ func commandStop(m model, _ []string) (tea.Model, tea.Cmd) {
 
 // settleTurn：这一轮在**本地**收干 —— 气泡消失，界面这一份状态也跟着落回 idle。
 //
-// 为什么**不重拉会话列表**：那会让底栏刚刚写上的「已停止 / 已完成 / 生成失败」立刻被
+// 它自己**不动会话列表**：那会让底栏刚刚写上的「已停止 / 已完成 / 生成失败」立刻被
 // "会话 N 条"顶掉（两个 Cmd 谁先回来还不一定）。这里改的是**已经确定的事实**（这一轮结束了），
 // 下一次刷新（`/refresh` 或别的动作）自然与后端对账。
+// 唯一"非刷不可"的是跑完收到 idle 那一刻（自动起的标题刚落库）—— 那一处另走**静默**那一趟
+// （`loadSessionsQuiet`：更新列表但不碰底栏）。
 func (m model) settleTurn(sessionID string) model {
 	m.turn = nil
 	for index := range m.sessions {
@@ -1478,10 +1656,21 @@ func (m model) renderMessages(height, width int) []string {
 		}, height)
 	}
 	busy := m.turn.Busy() && m.turn.sessionID == session.ID
+	systemPrompt := m.visibleSystemPrompt(session)
 	if m.messagesFor == session.ID && len(m.messages) == 0 && !busy {
-		return fillLines([]string{truncate(" 这条会话还没有消息 —— 在下面输入就开始了", width)}, height)
+		lines := []string{}
+		if systemPrompt != nil { // 还没说话也照样能看底子（调试用）
+			lines = append(lines, m.systemBlock(*systemPrompt, width)...)
+		}
+		lines = append(lines, truncate(" 这条会话还没有消息 —— 在下面输入就开始了", width))
+		return fillLines(lines, height)
 	}
-	blocks := make([][]string, 0, len(m.messages)+1)
+	blocks := make([][]string, 0, len(m.messages)+2)
+	// **系统提示词摆在最上面**（它就是"这轮带的底子"）：当成一条 role=system 的消息，
+	// 与别的块同一条规矩 —— 块不劈开、装不下就从**顶部**挤掉（fitBlocks 从最新那块往上量）。
+	if systemPrompt != nil {
+		blocks = append(blocks, m.systemBlock(*systemPrompt, width))
+	}
 	for _, message := range m.messages {
 		blocks = append(blocks, m.messageBlock(message, width))
 	}
@@ -1489,6 +1678,35 @@ func (m model) renderMessages(height, width int) []string {
 		blocks = append(blocks, m.liveBlock(width))
 	}
 	return fitBlocks(blocks, height, width)
+}
+
+// visibleSystemPrompt：这条会话**现在该画**的那份生效系统提示词（不画就回 nil）。
+//
+// 三个条件缺一不可（与上下文占用那条 `contextFor` 同一条规矩）：
+//   - 开关开着（`/system`，默认开）；
+//   - 已经拉到了（进会话时拉一次）；
+//   - 拉回来那份**就是这条会话的**（换会话时旧的还摆着 ⇒ 拿它画就是撒谎）。
+func (m model) visibleSystemPrompt(session *Session) *SystemPrompt {
+	if !m.showSystemPrompt || session == nil || m.prompt == nil || m.promptFor != session.ID {
+		return nil
+	}
+	return m.prompt
+}
+
+// systemBlock：消息区**最上面**那条"系统提示词"（调试用：这轮到底带了什么底子）。
+//
+// 口径：标签「系统提示词」用调色板里的 `system` 那档 = **暗色**（与 `/outgoing` 里 `source=system` 同一档）；
+// 正文保持默认色（内容才是主角，与别的消息一致）。**先排版、后上色**（截断作用在未着色的原文上）。
+func (m model) systemBlock(prompt SystemPrompt, width int) []string {
+	block := []string{m.style.joined([]segment{{" 系统提示词：", styleDim}}, width, "")}
+	text := prompt.Text
+	if strings.TrimSpace(text) == "" {
+		text = "（空）" // 两级都没写 ⇒ 真会发出去的就是空的，照实说（与 /state 的空态同一个写法）
+	}
+	for _, line := range strings.Split(text, "\n") {
+		block = append(block, truncate("   "+line, width))
+	}
+	return append(block, "")
 }
 
 // messageBlock：一条消息在界面上的样子（署名 + 正文 + 一个空行）—— **整块**是它的最小单位。

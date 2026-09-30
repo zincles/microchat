@@ -1,7 +1,13 @@
 package tui
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -637,10 +643,10 @@ func TestPaletteShowsAndFilters(t *testing.T) {
 	if got := len(m.paletteMatches()); got != 1 {
 		t.Fatalf("`/res` 该命中 1 条：%d", got)
 	}
-	// 退一格 ⇒ `/re`：resume 与 refresh 都算
+	// 退一格 ⇒ `/re`：比 `/res` 松、比 `/` 紧（**别钉死条数** —— 命令表会加东西，条数是它的影子）
 	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
-	if back := updated.(model); len(back.paletteMatches()) != 2 {
-		t.Fatalf("`/re` 该命中 2 条：%d", len(back.paletteMatches()))
+	if back := updated.(model); len(back.paletteMatches()) <= 1 || len(back.paletteMatches()) >= len(commands) {
+		t.Fatalf("`/re` 该比 `/res` 松、又比 `/` 紧：%d", len(back.paletteMatches()))
 	}
 	// 一路删到 `/` ⇒ 恢复全部
 	updated, _ = updated.(model).Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
@@ -672,11 +678,11 @@ func TestPaletteNavigationAndRun(t *testing.T) {
 	if filled := updated.(model); filled.input != "/cut " {
 		t.Fatalf("Tab 该补全：%q", filled.input)
 	}
-	// 半截名字 + 回车 ⇒ 跑高亮那条（`/re` ⇒ resume ⇒ 打开挑选项）
-	half := typeText(fixture(), "/re")
+	// 半截名字 + 回车 ⇒ 跑高亮那条（`/resu` ⇒ resume ⇒ 打开挑选项）
+	half := typeText(fixture(), "/resu")
 	updated, _ = half.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if opened := updated.(model); opened.picker != pickerResume {
-		t.Fatalf("`/re` 回车该跑 /resume（打开挑选项），得到 picker=%d", opened.picker)
+		t.Fatalf("`/resu` 回车该跑 /resume（打开挑选项），得到 picker=%d", opened.picker)
 	}
 	// Esc 清输入（面板是推导出来的，输入空了面板自然没了）
 	updated, _ = typeText(fixture(), "/re").Update(tea.KeyPressMsg{Code: tea.KeyEscape})
@@ -1099,6 +1105,108 @@ func TestTurnPollingSettlesAndReportsErrors(t *testing.T) {
 	}
 }
 
+// runCmds：替测试跑一趟 Cmd（界面测试平时不跑 Cmd —— 这一条专门要看"那一批请求回来说了什么"）。
+//
+// 只跑**一层**：Batch 里那几个 Cmd 各执行一次，回来的消息喂回 model；
+// 喂完又派生的 Cmd（比如"进会话顺手量占用"）**不追**（免得绕进网络重试）。
+// 一律配 `httptest` 的假后端 —— 别拿真端口（真发请求就成了"测试打真服务"）。
+func runCmds(t *testing.T, m model, cmd tea.Cmd) model {
+	t.Helper()
+	if cmd == nil {
+		return m
+	}
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok { // 一批（只有一条时 Batch 会直接给那一条）
+		for _, sub := range batch {
+			m = runCmds(t, m, sub)
+		}
+		return m
+	}
+	if msg == nil {
+		return m
+	}
+	updated, _ := m.Update(msg)
+	return updated.(model)
+}
+
+// ── 用户实跑抓到的 bug：**第一条消息之后标题不出现，发第二条才出现** ──
+//
+// 后端**是对的**（先复现确认过）：标题在翻 idle **之前**就落库了 ——
+// `chat.run` 里 `Titles.Auto` 排在 `Finish` 之前，`title.Auto` 只挑空标题、写完就走
+// （直操模式 `-debug send` 跑完一轮 `sessions.title` 就有名字，HTTP 也一样）。
+//
+// 错在界面这一路：收到 idle 只重拉消息与占用，**不重拉会话列表**；而发消息那一刻
+// （`sentMsg`）拉的那份列表里标题还是空的 ⇒ 左栏与状态行一直停在「（还没起名）」，
+// 要等下一次列表刷新（再发一句就有一次）才补上 —— 看着就像"第二条才起标题"。
+func TestAutoTitleLandsAfterFirstTurn(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/sessions":
+			// 后端那侧的事实：这一轮跑完（idle）时标题已经在了
+			_ = json.NewEncoder(w).Encode([]Session{
+				{ID: "c1", Title: "逆序数该怎么写", Provider: "dummy", Model: "dummy"},
+			})
+		case "/api/v1/sessions/c1/messages":
+			_ = json.NewEncoder(w).Encode([]Message{{ID: "m2", Role: "assistant", Content: "这样写。"}})
+		case "/api/v1/sessions/c1/context":
+			_ = json.NewEncoder(w).Encode(ContextUsage{UsedTokens: 100, BudgetTokens: 1000})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer backend.Close()
+
+	m := fixture()
+	m.client = NewClient(backend.URL, "")
+	// 起跑线：刚发完第一句话，列表里这条会话**还没有名字**（发消息那一刻后端确实还没起）
+	m.sessions = []Session{{ID: "c1", Title: "", Provider: "dummy", Model: "dummy", Turn: TurnStatus{Phase: "streaming"}}}
+	m.selectedID, m.messagesFor, m.messages = "c1", "c1", nil
+	m.turn = &liveTurn{sessionID: "c1", messageID: "m2", phase: "streaming"}
+	if body := m.View().Content; !strings.Contains(body, "（还没起名）") {
+		t.Fatalf("起跑线该是「还没起名」：\n%s", body)
+	}
+
+	updated, cmd := m.Update(turnPollMsg{sessionID: "c1", status: TurnStatus{Phase: "idle"}, slice: StreamSlice{Done: true}})
+	next := runCmds(t, updated.(model), cmd)
+	if next.turn != nil {
+		t.Fatal("收到 idle 该收干这一轮（气泡消失，真消息接手）")
+	}
+	if body := next.View().Content; !strings.Contains(body, "逆序数该怎么写") {
+		t.Fatalf("第一条消息跑完，标题就该显示出来（不许等到第二条）：\n%s", body)
+	}
+	if body := next.View().Content; strings.Contains(body, "（还没起名）") {
+		t.Fatalf("名字已经有了，就不该再显示「还没起名」：\n%s", body)
+	}
+}
+
+// 静默那一趟（跑完去接标题）**不碰底栏** —— 底栏那句话是这一轮的结局，
+// 不能被"会话 N 条"顶掉（`settleTurn` 的那条口径）；拉不到也当没发生。
+func TestQuietSessionReloadKeepsTheBottomLine(t *testing.T) {
+	m := fixture()
+	m.lastAction = "生成完成" // 跑完那一刻底栏上摆着的就是它
+	fresh := []Session{{ID: "c1", Title: "新起的名字", Provider: "opencode-go", Model: "deepseek-v4-flash"}}
+
+	quiet, _ := m.Update(sessionsMsg{sessions: fresh, quiet: true})
+	next := quiet.(model)
+	if said := next.lastAction; said != "生成完成" {
+		t.Fatalf("静默重拉不该动底栏：%q", said)
+	}
+	if next.sessions[0].Title != "新起的名字" {
+		t.Fatalf("但列表要真更新：%+v", next.sessions[0])
+	}
+	// 拉不到（后端一时抽风）⇒ 一个字都不动，也别把失败摆到底栏
+	failed, _ := next.Update(sessionsMsg{quiet: true, err: errTest})
+	if after := failed.(model); after.lastAction != "生成完成" || after.sessions[0].Title != "新起的名字" {
+		t.Fatalf("静默重拉失败该当没发生：%q %+v", after.lastAction, after.sessions[0])
+	}
+	// 正常那一趟（`/refresh`、发消息…）照旧要说话
+	loud, _ := next.Update(sessionsMsg{sessions: fresh})
+	if said := loud.(model).lastAction; !strings.Contains(said, "会话 1 条") {
+		t.Fatalf("非静默重拉该照旧报数：%q", said)
+	}
+}
+
 // 按停：真发 `/stop`；回 false 就如实说"什么都没发生"（幂等）。
 func TestStopCommand(t *testing.T) {
 	m := liveFixture()
@@ -1327,11 +1435,12 @@ func TestContextIsFetchedOnEnterAndAfterTurn(t *testing.T) {
 	if _, cmd := m.Update(messagesMsg{sessionID: "c1", messages: m.messages}); cmd == nil {
 		t.Fatal("进会话（拿到消息）该顺手量一次上下文占用")
 	}
-	// 同一条会话已经量过 ⇒ 不再重复拉
+	// 同一条会话已经量过 / 已经拉过 ⇒ 不再重复拉
 	loaded := m
 	loaded.context, loaded.contextFor = &ContextUsage{UsedTokens: 1}, "c1"
+	loaded.prompt, loaded.promptFor = &SystemPrompt{Text: "底子"}, "c1"
 	if _, cmd := loaded.Update(messagesMsg{sessionID: "c1", messages: loaded.messages}); cmd != nil {
-		t.Fatal("同一条会话不必每拉一次消息就重量一次占用")
+		t.Fatal("同一条会话不必每拉一次消息就重量一次占用 / 重拉一次提示词")
 	}
 	// 一轮结束（idle）⇒ 重拉消息 + 重量占用（同一个 Batch 里）
 	live := liveFixture()
@@ -1426,5 +1535,290 @@ func TestOutgoingViewerColorsBySource(t *testing.T) {
 	}
 	if strings.Contains(body, "\x1b[33m消息 ") || strings.Contains(body, "\x1b[2m消息 ") {
 		t.Fatal("原样消息保持默认色（别和压缩出来的混）")
+	}
+}
+
+// ── `/rename`：给当前会话改名（复用已有的 PATCH 路由，**不新增路由**）──
+
+// 名字里的空格：整串拼回来（`/rename 我的 新名字`）；带引号就剥掉那对引号；空名字 ⇒ 拒绝。
+func TestRenameArgParsing(t *testing.T) {
+	for _, probe := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"单个词", []string{"标题"}, "标题"},
+		{"整串拼回", []string{"我的", "新名字"}, "我的 新名字"},
+		{"双引号", []string{`"我的`, `新名字"`}, "我的 新名字"},
+		{"单引号", []string{`'我的`, `新名字'`}, "我的 新名字"},
+		{"只有空白", []string{"   "}, ""},
+		{"引号里是空的", []string{`""`}, ""},
+		{"没给", nil, ""},
+		{"只开了半个引号", []string{`"半截`}, `"半截`},
+	} {
+		if got := renameArg(probe.args); got != probe.want {
+			t.Fatalf("%s：renameArg(%q) = %q，该是 %q", probe.name, probe.args, got, probe.want)
+		}
+	}
+}
+
+func TestRenameCommandNeedsAName(t *testing.T) {
+	m := fixture()
+	// 不给参数 ⇒ 只说用法，**不发请求**
+	updated, cmd := m.runCommand("/rename")
+	if cmd != nil {
+		t.Fatal("没给名字不该发请求")
+	}
+	if said := updated.(model).lastAction; !strings.Contains(said, "用法") || !strings.Contains(said, "空名字不行") {
+		t.Fatalf("该说清用法：%q", said)
+	}
+	// 名字是空的（引号里空的）⇒ 一样拒绝
+	if _, cmd := m.runCommand(`/rename ""`); cmd != nil {
+		t.Fatal("空名字该拒绝")
+	}
+	// 空会话 ⇒ 没有可改名的
+	empty := fixture()
+	empty.selectedID, empty.messages, empty.messagesFor = "", nil, ""
+	if _, cmd := empty.runCommand("/rename 名字"); cmd != nil {
+		t.Fatal("空会话不该发请求")
+	}
+	// 给了名字 ⇒ 真发一条 PATCH
+	updated, cmd = m.runCommand("/rename 我的 新名字")
+	if cmd == nil {
+		t.Fatal("给了名字该发请求")
+	}
+	if said := updated.(model).lastAction; !strings.Contains(said, "改名中") {
+		t.Fatalf("底栏该说在改：%q", said)
+	}
+}
+
+// 改名回来 ⇒ 列表/状态行里的会话名**立刻**跟上（不许等下一次刷新）。
+func TestRenameUpdatesSessionLocally(t *testing.T) {
+	m := fixture()
+	renamed := Session{
+		ID: "c1", Title: "我的 新名字", Provider: "opencode-go", Model: "deepseek-v4-flash", AgentID: "跑团",
+	}
+	updated, _ := m.Update(renamedMsg{session: renamed})
+	done := updated.(model)
+	if got := done.currentSession(); got == nil || got.Title != "我的 新名字" {
+		t.Fatalf("列表里那条该就地换掉：%+v", got)
+	}
+	if !strings.Contains(done.View().Content, "我的 新名字") {
+		t.Fatalf("状态行该立刻显示新名字：\n%s", done.View().Content)
+	}
+	if !strings.Contains(done.lastAction, "已改名") {
+		t.Fatalf("底栏该报成功：%q", done.lastAction)
+	}
+	// 失败 ⇒ 红着说清原因（不改本地那份）
+	failed, _ := m.Update(renamedMsg{err: errors.New("404 not_found")})
+	if !strings.Contains(failed.(model).lastAction, "改名失败") {
+		t.Fatalf("失败该说话：%q", failed.(model).lastAction)
+	}
+}
+
+// ── `/system`：消息区顶部那条"系统提示词"（调试用；开关记在本地）──
+
+// systemFixture：进了一条会话、拉到了它的系统提示词、开关是开的。
+func systemFixture() model {
+	m := fixture()
+	m.showSystemPrompt = true
+	m.prompt = &SystemPrompt{Text: "你是跑团主持人。", Source: "agent"}
+	m.promptFor = "c1"
+	return m
+}
+
+// messageArea：只看**消息区**（输入行往上）—— 底栏那句话里也有"系统提示词"这几个字，
+// 拿整屏断言会把"底栏报了一句"读成"那条还画着"。
+func messageArea(m model) string {
+	lines := viewLines(m)
+	return strings.Join(lines[:inputLineIndex(lines)], "\n")
+}
+
+// drainCmd：把一个 Cmd 真跑到底（`/system` 回的是 `tea.Batch` ⇒ 里面的子命令要挨个跑），
+// 返回它散出来的消息。
+func drainCmd(cmd tea.Cmd) []tea.Msg {
+	msgs := []tea.Msg{}
+	var walk func(c tea.Cmd)
+	walk = func(c tea.Cmd) {
+		if c == nil {
+			return
+		}
+		if batch, ok := c().(tea.BatchMsg); ok {
+			for _, sub := range batch {
+				walk(sub)
+			}
+			return
+		}
+		msgs = append(msgs, c())
+	}
+	walk(cmd)
+	return msgs
+}
+
+// 开着 ⇒ 那条画在**消息区最上面**（暗色标签 + 正文）；关掉 ⇒ 它没了（消息照旧）。
+func TestSystemPromptShowsAtTopAndHides(t *testing.T) {
+	m := systemFixture()
+	area := messageArea(m)
+	if !strings.Contains(area, "系统提示词：") || !strings.Contains(area, "你是跑团主持人。") {
+		t.Fatalf("该画出系统提示词：\n%s", area)
+	}
+	if strings.Index(area, "系统提示词") > strings.Index(area, "在吗") {
+		t.Fatalf("该在最上面（第一条消息之前）：\n%s", area)
+	}
+	// 标签是**暗色**（调色板里 system 那一档）
+	if !strings.Contains(messageArea(colored(m)), "\x1b[2m 系统提示词：\x1b[0m") {
+		t.Fatalf("标签该是暗色：\n%q", messageArea(colored(m)))
+	}
+
+	// `/system` ⇒ 关掉（那条消失，消息照旧）
+	updated, cmd := m.runCommand("/system")
+	off := updated.(model)
+	if cmd == nil {
+		t.Fatal("/system 该把开关写下去")
+	}
+	if off.showSystemPrompt {
+		t.Fatal("该关掉")
+	}
+	offArea := messageArea(off)
+	if strings.Contains(offArea, "系统提示词") || strings.Contains(offArea, "你是跑团主持人。") {
+		t.Fatalf("关掉后那条不该再画：\n%s", offArea)
+	}
+	if !strings.Contains(offArea, "在吗") || !strings.Contains(offArea, "有什么事？") {
+		t.Fatalf("消息照旧：\n%s", offArea)
+	}
+	// 再切一次 ⇒ 又回来
+	again, _ := off.runCommand("/system")
+	if on := again.(model); !on.showSystemPrompt || !strings.Contains(messageArea(on), "系统提示词") {
+		t.Fatalf("再开该回来：\n%s", messageArea(on))
+	}
+}
+
+// 换会话时那份还旧着 ⇒ **不许拿来画**（与上下文占用同一条规矩）。
+func TestSystemPromptIsNotDrawnForAnotherSession(t *testing.T) {
+	m := systemFixture()
+	m.promptFor = "c2"
+	if strings.Contains(m.View().Content, "系统提示词") {
+		t.Fatalf("不是这条会话的提示词不该画：\n%s", m.View().Content)
+	}
+}
+
+// 进会话（拿到消息）时顺手拉一次 —— 与上下文占用同一个时机（`/system` 打开时也会补拉）。
+func TestSystemPromptIsFetchedOnEnteringSession(t *testing.T) {
+	m := fixture()
+	m.contextFor = "c1" // 上下文已经量过了 ⇒ 这一趟该剩下的只有"拉系统提示词"
+	if _, cmd := m.Update(messagesMsg{sessionID: "c1", messages: m.messages}); cmd == nil {
+		t.Fatal("进会话该顺手拉一次生效的系统提示词")
+	}
+	// 回执存进 model，并记住它属于哪条会话
+	updated, _ := m.Update(promptMsg{sessionID: "c1", prompt: SystemPrompt{Text: "底子", Source: "builtin"}})
+	stored := updated.(model)
+	if stored.prompt == nil || stored.prompt.Text != "底子" || stored.promptFor != "c1" {
+		t.Fatalf("该把结果记下来：%+v（for=%q）", stored.prompt, stored.promptFor)
+	}
+	// 拉不到就只是不画 —— 不许去打扰底栏
+	quiet, _ := m.Update(promptMsg{sessionID: "c1", err: errors.New("500 internal")})
+	if quiet.(model).prompt != nil || quiet.(model).lastAction != m.lastAction {
+		t.Fatalf("拉不到该静默：%+v / %q", quiet.(model).prompt, quiet.(model).lastAction)
+	}
+}
+
+// 装不下就按现有规矩：**块不劈开、从顶部挤掉**（这条摆在最上面 ⇒ 最先被挤掉）。
+func TestSystemPromptBlockIsPushedOffTheTop(t *testing.T) {
+	m := systemFixture()
+	m.height = 8 // 只装得下最新那一块加顶部那行提示（同 TestDroppedMessagesAreAnnounced）
+	lines := viewLines(m)
+	if len(lines) != m.height {
+		t.Fatalf("该正好 %d 行：%d", m.height, len(lines))
+	}
+	body := strings.Join(lines, "\n")
+	if strings.Contains(body, "你是跑团主持人。") {
+		t.Fatalf("装不下就不画（整块挤掉）：\n%s", body)
+	}
+	if !strings.Contains(body, "上面还有") {
+		t.Fatalf("挤掉了要如实报数：\n%s", body)
+	}
+}
+
+// wroteUIPref：这批消息里有没有一次**成功**的偏好落盘。
+func wroteUIPref(msgs []tea.Msg) bool {
+	for _, msg := range msgs {
+		if pref, ok := msg.(uiPrefMsg); ok && pref.err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// 开关记在 `~/.config/microchat/tui.json`（**不进**后端 config/ 与 data/）—— 重启 TUI 要读得回来。
+func TestSystemTogglePersistsToTuiJSON(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "microchat", "tui.json")
+	m := fixture()
+	m.uiPath = path
+	m.showSystemPrompt = true
+
+	updated, cmd := m.runCommand("/system")
+	if cmd == nil {
+		t.Fatal("/system 该写一次偏好")
+	}
+	msgs := drainCmd(cmd)
+	if !wroteUIPref(msgs) {
+		t.Fatalf("该把偏好写下去：%#v", msgs)
+	}
+	if loadShowSystemPrompt(path) {
+		t.Fatal("关掉的开关该记得住")
+	}
+	// 文件里那一格是**明确写着 false** 的（`*bool` ⇒ "没写"与"写了 false"是两件事）
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `"show_system_prompt": false`) {
+		t.Fatalf("文件里该明确写着 false：%s", body)
+	}
+	// 再切一次 ⇒ 写回 true
+	updated, cmd = updated.(model).runCommand("/system")
+	if cmd == nil {
+		t.Fatal("再切该再写一次")
+	}
+	if !wroteUIPref(drainCmd(cmd)) {
+		t.Fatal("再切也该写下去")
+	}
+	if !loadShowSystemPrompt(path) {
+		t.Fatal("该记住开着")
+	}
+	// 文件缺失 / 读坏 / 没写这一格 ⇒ **默认开**
+	if !loadShowSystemPrompt(filepath.Join(t.TempDir(), "没有这个文件.json")) {
+		t.Fatal("没有文件该按默认（开）")
+	}
+	broken := filepath.Join(t.TempDir(), "tui.json")
+	if err := os.WriteFile(broken, []byte("{坏"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !loadShowSystemPrompt(broken) {
+		t.Fatal("读坏了该按默认（开）")
+	}
+	empty := filepath.Join(t.TempDir(), "tui.json")
+	if err := os.WriteFile(empty, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !loadShowSystemPrompt(empty) {
+		t.Fatal("没写那一格该按默认（开）")
+	}
+}
+
+// 打开时顺手补拉一次（关着的时候可能从没拉过 / 手里那份是上一条会话的）。
+func TestSystemOnFetchesWhenMissing(t *testing.T) {
+	m := fixture() // 开关默认关（零值），也还没拉过
+	updated, cmd := m.runCommand("/system")
+	if !updated.(model).showSystemPrompt {
+		t.Fatal("该打开")
+	}
+	if cmd == nil {
+		t.Fatal("打开时该顺手拉一次（并写偏好）")
+	}
+	// 已经拉过这条会话的 ⇒ 不必再拉（只写偏好）
+	m.prompt, m.promptFor = &SystemPrompt{Text: "底子"}, "c1"
+	if _, again := m.runCommand("/system"); again == nil {
+		t.Fatal("写偏好那一下总要有")
 	}
 }

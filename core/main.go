@@ -22,6 +22,7 @@ import (
 	"microchat/internal/chat"
 	"microchat/internal/compact"
 	"microchat/internal/config"
+	"microchat/internal/registry"
 	"microchat/internal/server"
 	"microchat/internal/store"
 	"microchat/internal/task"
@@ -48,9 +49,12 @@ func main() {
 	}
 	// `agents.json` 里的能力开关：未知的能力 id **在启动时就报清楚** ——
 	// 写了不生效（比如把 `abilities` 拼错、或写了个不存在的 id）是最难查的一类问题。
-	if _, agents, _, err := config.Load(paths); err != nil {
+	// 顺带把 `providers.json` 读进来：**一启动就要对每个渠道问一次模型列表**（见下面那段）。
+	_, agents, providerConfig, err := config.Load(paths)
+	if err != nil {
 		fatal("读 agents.json 失败: %v", err)
-	} else if err := abilities.Validate(agents); err != nil {
+	}
+	if err := abilities.Validate(agents); err != nil {
 		fatal("agents.json 的能力开关不合法: %v", err)
 	}
 	// 给了 -debug 就**只干这一件事**：在监听端口之前就退出（也别进 TUI）。
@@ -106,6 +110,14 @@ func main() {
 		}
 	}()
 
+	// **一启动就去问每个渠道有哪些模型**（用户 2026-09-30 定）：会话里绑的是模型的**字符串 id**
+	// （`provider` + `upstream_id`，不是 UUID）⇒ 列表随时可以重建，每次打开软件重建一遍最省事。
+	// 三条口径：整批放**后台**（绝不阻塞启动与界面）、逐渠道各自挂号 `refresh_models` 的 Task、
+	// **失败只 log**（不弹错、不退出）。关掉它：`config.json` 的 `server.refresh_models_on_start`（默认 true）。
+	if cfg.RefreshModelsOnStart() {
+		go refreshModelsOnStart(st, tasks, cfg, providerConfig.Providers)
+	}
+
 	if !interactive {
 		select {} // 没有终端：就是一台服务，跑到被杀
 	}
@@ -115,6 +127,55 @@ func main() {
 	}
 	log.Printf("TUI 退出，服务继续在 %s 上跑（Ctrl-C 停）", *addr)
 	select {}
+}
+
+// refreshModelsOnStart：**启动时的自动刷新**（跑在后台 goroutine 里；见 main 里那段注释）。
+//
+// 这里只"记账"：每个渠道的结果落一行日志 —— **失败只 log**（不弹错、不退出、不挡界面）。
+// 真正的编排（跳过谁 / 顺序 / 失败不响）在 `refreshModels` 与 `registry.RefreshAll`。
+func refreshModelsOnStart(st *store.Store, tasks *task.Registry, cfg config.Config, list []config.Provider) {
+	outcomes := refreshModels(st, tasks, cfg, list)
+	if len(outcomes) == 0 {
+		return // 一个渠道都没配：什么都不说
+	}
+	failed := 0
+	for _, outcome := range outcomes {
+		switch {
+		case outcome.Error != "":
+			failed++
+			log.Printf("启动刷新模型：渠道 %s 失败（%s）", outcome.Provider, outcome.Error)
+		case outcome.Skipped != "":
+			log.Printf("启动刷新模型：跳过渠道 %s（%s）", outcome.Provider, outcome.Skipped)
+		default:
+			log.Printf("启动刷新模型：渠道 %s 拉到 %d 个模型（没见到的删了 %d 条）",
+				outcome.Provider, outcome.Models, outcome.Removed)
+		}
+	}
+	log.Printf("启动刷新模型：%d 个渠道，失败 %d 个", len(outcomes), failed)
+}
+
+// refreshModels：**启动与 `-debug refresh-models` 共用的那一段** —— 逐渠道（**串行**）刷一遍。
+//
+// 注入给 `registry.RefreshAll` 的就是"挂号 + 刷 + 收尾"这一下：每个渠道**各自一个
+// `refresh_models` 的 Task**（后台活都要挂号），失败记在 Task 上、也记进 `Outcome.Error`。
+// 编排（跳过谁、顺序、失败不影响别的）只有一份，在 registry 那边（那一份好单测）。
+func refreshModels(st *store.Store, tasks *task.Registry, cfg config.Config, list []config.Provider) []registry.Outcome {
+	applied := make([]config.Provider, 0, len(list))
+	for _, provider := range list {
+		applied = append(applied, cfg.WithIdentity(provider)) // 服务器级默认特征（与 HTTP 那条路同一处规则）
+	}
+	return registry.RefreshAll(applied, func(provider config.Provider) registry.Outcome {
+		guard := tasks.Begin(task.KindRefreshModels, nil, "刷新模型 · "+provider.ID)
+		defer guard.Interrupted() // Go 没有 Drop：兜底那一行必须在（忘了收就记成"中断"）
+		outcome, err := registry.RefreshOne(provider, st)
+		if err != nil {
+			guard.Fail(err.Error())
+			outcome.Error = err.Error()
+			return outcome
+		}
+		guard.Succeed()
+		return outcome
+	})
 }
 
 // fatal：启动 / 运行中的致命错 —— **一律 stderr + 日志双写**。

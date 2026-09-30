@@ -35,6 +35,7 @@ import (
 	"microchat/internal/config"
 	"microchat/internal/model"
 	"microchat/internal/providers"
+	"microchat/internal/registry"
 	"microchat/internal/state"
 	"microchat/internal/store"
 	"microchat/internal/task"
@@ -63,6 +64,9 @@ op：
                                                     压缩：同步跑完一次并打印区间 / 块数 / 摘要
   title <session_id>                                手动起一次标题（不管现有没有；产物落 sessions.title）
   abilities <session_id>                            这个会话的 agent 在三个能力上的解析结果
+  refresh-models [provider_id]                      **启动时那条路**：每个渠道各拉一次 /models 并落库
+                                                    （同步跑完；跳过 dummy / 要去外网又没配 key 的；
+                                                     每行一个渠道：拉了几个模型 / 跳过原因 / 失败原因）
   tasks                                             任务面板
   usage [provider_id]                               OpenCode GO 的套餐余量（只读 GET；不给 id 就用第一个 opencode-go 渠道）
 
@@ -128,6 +132,8 @@ func runDebug(paths config.Paths, cfg config.Config, args []string) int {
 		return env.titleOp(args[1:])
 	case "abilities":
 		return env.abilitiesOf(args[1:])
+	case "refresh-models":
+		return env.refreshModelsOp(args[1:])
 	case "tasks":
 		return env.board()
 	case "usage":
@@ -806,6 +812,51 @@ func (e *debugEnv) abilitiesOf(args []string) int {
 			Ability: id, Enabled: setting.Enabled,
 			Provider: setting.Provider, Model: setting.Model,
 		})
+	}
+	return 0
+}
+
+// refreshLine：`-debug refresh-models` 的一行 —— 一个渠道这一趟的结果。
+//
+// 这是"启动即刷"的**主要验收工具**（用户 2026-09-30 定）：`models` 说清拉了几个、
+// `skipped` 说清为什么没刷、`error` 说清为什么失败。`-debug` 的输出永远不带色、每行一条 JSON。
+type refreshLine struct {
+	Event string `json:"event"`
+	registry.Outcome
+}
+
+// refreshModelsOp：**同步**把每个渠道刷一遍 —— 走的是启动那条路**同一段编排**（`refreshModels`：
+// 串行、逐渠道挂号 Task、跳过规则一份）。给了 provider_id 就只刷那一个。
+//
+// 有失败 ⇒ **退出码 1**（但每个渠道的结果都照打：一个失败不影响别的，这点与启动那条路一致）。
+func (e *debugEnv) refreshModelsOp(args []string) int {
+	if len(args) > 1 {
+		return report(errf("invalid", "用法：-debug refresh-models [provider_id]"))
+	}
+	_, _, providerConfig, err := config.Load(e.paths)
+	if err != nil {
+		return report(errf("internal", "读配置失败：%s", err.Error()))
+	}
+	list := providerConfig.Providers
+	if id := argAt(args, 0); id != "" {
+		provider, found := providerConfig.Get(id)
+		if !found {
+			return report(errf("not_found", "providers.json 里没有 id=%s 这个渠道", id))
+		}
+		list = []config.Provider{provider}
+	} else if len(list) == 0 {
+		// 一个渠道都没读到 ⇒ 空跑一趟最容易让人以为"功能没生效"，说清多半是**配置目录没给对**
+		return report(errf("not_found", "一个渠道都没读到：检查配置目录 %s 里的 providers.json", e.paths.ConfigDir))
+	}
+	failed := 0
+	for _, outcome := range refreshModels(e.store, e.tasks, e.cfg, list) {
+		if outcome.Error != "" {
+			failed++
+		}
+		emit(refreshLine{Event: "refresh", Outcome: outcome})
+	}
+	if failed > 0 {
+		return 1
 	}
 	return 0
 }

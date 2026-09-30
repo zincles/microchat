@@ -68,6 +68,27 @@ type ServerConfig struct {
 	// Identity：**服务器级默认特征**（以什么身份自报家门）："" = **pi**（默认）/ "microchat" / "bare" = 什么都不装。
 	// 单个渠道可以用 `providers.json` 里的 `identity` 覆盖它。
 	Identity string `json:"identity"`
+	// RefreshModelsOnStart：**一启动就去问每个渠道有哪些模型**（默认开）。nil = 没写 = 开。
+	//
+	// 为什么是 `*bool`：`bool` 的零值是 `false` ⇒ "文件里没写"会**静默变成关掉**
+	// （这个坑在 `abilities.enabled` 上踩过，见 AGENTS.md 的「踩过的坑」）。
+	RefreshModelsOnStart *bool `json:"refresh_models_on_start"`
+}
+
+// RefreshModelsOnStart：启动时要不要自动刷一遍模型列表（`server.refresh_models_on_start`，**默认 true**）。
+func (c Config) RefreshModelsOnStart() bool {
+	return c.Server.RefreshModelsOnStart == nil || *c.Server.RefreshModelsOnStart
+}
+
+// WithIdentity：**服务器级默认特征**（`server.identity`）—— 渠道自己没写就跟随服务器。
+//
+// 一处改、所有没写 `identity` 的渠道都跟着变 ⇒ 这条规则只许有一份实现：
+// HTTP 视图（`GET /providers` / 刷新那条路）、启动时的自动刷新、直操模式全都走它。
+func (c Config) WithIdentity(provider Provider) Provider {
+	if provider.Identity == "" {
+		provider.Identity = c.Server.Identity
+	}
+	return provider
 }
 
 // DefaultsConfig：新建会话时的缺省（provider / model / agent）。

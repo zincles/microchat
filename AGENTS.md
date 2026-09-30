@@ -161,7 +161,7 @@ delete(AA)           # 删除
 
 **`data/config/`** 里是**严格 JSON**（程序整体重写），都可缺失。文件名一律 `.json`：
 
-- `config.json` — `{ "server": { "port": 8787, "auth_token": "可选" }, "defaults": { "provider": "dummy", "model": "dummy", "agent": "default" }, "chat": { "model_context_tokens": 131072, "compact_trigger_tokens": null, "compact_blocks": 10 } }`（`compact_blocks` = 压缩不给块数时压几个**对话块**）
+- `config.json` — `{ "server": { "port": 8787, "auth_token": "可选", "refresh_models_on_start": true }, "defaults": { "provider": "dummy", "model": "dummy", "agent": "default" }, "chat": { "model_context_tokens": 131072, "compact_trigger_tokens": null, "compact_blocks": 10 } }`（`compact_blocks` = 压缩不给块数时压几个**对话块**；`refresh_models_on_start` = 启动时要不要自动去问每个渠道有哪些模型，**默认 true**，类型是 `*bool` ⇒ 没写就是开）
 - `providers.json` — `{ "providers": [ { "id": "dummy", "kind": "dummy" }, { "id": "openrouter", "base_url": "https://openrouter.ai/api/v1", "headers": {…}, "api_key": "sk-…", "timeouts": { "connect_seconds": 15, "total_seconds": 300 } } ] }`
   **密钥就写在这一条里**（空串 = 没配）：整个 `config/` 在忽略范围内；接口一律不回显（只回 `has_key`），调试页读它时先打码；写回权限收紧到 0600。
 - `agents.json` — `{ "default_agent": "跑团", "agents": [ { "id": "跑团", "name": "跑团主持人", "system_prompt": "你是跑团主持人。<state>季节 = 初冬</state>" } ] }`
@@ -215,6 +215,7 @@ delete(AA)           # 删除
 | GET | `/sessions/{session_id}/state` | — | `StateView` | `global` / `session` / `global_values` / `effective` / `tables`，**每次现算** |
 | GET | `/sessions/{session_id}/outgoing` | `[Outgoing]` | "下次真会发出去的东西"（标签已剔、状态已注入、**压缩已生效**）。每条带出处：`source` = `system`/`message`/`summary`（后者另有 `summary_id`、`blocks`）—— **检查压缩效果靠它**，别去猜正文抬头 |
 | GET | `/sessions/{session_id}/context` | — | `ContextUsage` | 只有数字：`used_tokens`（估算）/ `budget_tokens` / `trigger_tokens` / `remaining_tokens` / `ctx_len` / `max_output` / `ratio` / `estimated` / `last_prompt_tokens` / `over_budget` |
+| GET | `/sessions/{session_id}/prompt` | — | `{"text","source"}` | **生效的系统提示词**（三级解析的**结果**，与出站拼装读同一处）：`source` = `conversation`（会话自己写了 `sessions.system_prompt`）/ `agent`（`agents.json` 里那个 agent 的）/ `builtin`（两级都没有 ⇒ 代码里的内置默认）。将来做了可拼接的提示词，这里回**运算后**的结果（形状不变）|
 | GET | `/sessions/{session_id}/status` | — | `TurnStatus` | `idle`/`pending`/`streaming`/`error` + `message_id` + `elapsed_ms` + `chars` + `thinking_chars` + `error` |
 | GET | `/sessions/{session_id}/turn/text?from=N&think_from=M` | — | `StreamSlice` | 流式增量的**游标读**（正文与思考各一条游标，`from` = 第几个字符）：只服务动画 |
 | POST | `/sessions/{session_id}/stop` | — | `{"stopped": bool}` | **幂等**：没在跑也 200（`false`）|
@@ -448,6 +449,25 @@ usage 的真实形状：`{prompt_tokens, completion_tokens, total_tokens, prompt
 - **Pi 的 UA 里没有版本号** ✓ —— 那截 `<release>` 是**本机内核**（`pi (linux 7.1.13+deb13-amd64; x64)` ✓）：
   `providers` 里读 `/proc/sys/kernel/osrelease` ✓ 天然逐字一致 ✓。
 
+### 模型列表：**一启动就重建一遍**（2026-09-30 定）
+
+"每当我们打开软件，软件就会试图向每个 provider 询问有哪些模型可用" —— 会话里绑的是模型的
+**字符串 id**（`provider` + `upstream_id`，例如 `opencode-go` / `deepseek-v4.1-flash`），**不是 UUID** ✓
+⇒ 列表**随时可以重建**，重建不会碰到已有会话 ✓。
+
+- **怎么刷只有一份**：`registry.RefreshOne`（拉 `/models` ⇒ `store.RefreshDiscovered`，**只写发现列**）。
+  三处共用它：HTTP 的 `POST /providers/{id}/refresh`、**启动时的自动刷新**、`-debug refresh-models`。
+  **别写第二份** ✗ —— 第二份几乎必然漏掉"不动用户列"或"这次没见到的删行"，而漏了都是**静默**的。
+- **启动那条路**（`main.go`）：起了服务之后**后台**逐个渠道**串行**刷（整批放后台 ⇒ **绝不阻塞启动与界面**），
+  每个渠道**各自挂号**一个 `refresh_models` 的 Task，**失败只 log**（不弹错、不退出、不影响别的渠道）。
+  关掉它：`config.json` 的 `server.refresh_models_on_start`（**默认 true**）。
+- **自动跳过两种**（`registry.Skip`；只有自动那条路跳过，HTTP 那条是人明确点的、照发）：
+  ① `kind: dummy`（不联网，问了也没答案）；② **要去外网又没配密钥**（别拿一屏 401 刷屏）——
+  **本机 / 内网端点不算**（ollama、LM Studio、本地假上游本来就可能不要密钥，照刷 ✓）。
+  密钥也可能来自环境变量（`OPENCODE_API_KEY` 那类，`ApplyPreset` 会去找）⇒ 判定在它**之后**做。
+- 验收 / 排障：`-debug refresh-models [provider_id]` —— **同步**跑完，每行一个渠道
+  （`models` 拉了几个 / `skipped` 跳过原因 / `error` 失败原因；有失败 ⇒ 退出码 1）。
+
 **客户端的身份规则（OpenCode 官方文档原话）**：
 
 - **用自己的 user agent 标识**（例：`my-coding-agent/1.0`）——**不能是通用 SDK 或 HTTP 库的名字**
@@ -575,6 +595,8 @@ prompt caching**"）。**不要为能力造子 session id**：网关的会话 id
   - 挪的是**真终端光标**（Bubble Tea v2 的 `View.Cursor`）✗ **不是**画进正文的反色方块 ⇒ `View().Content` 一个字节都不变（逐字节断言因此一个字都不用改）。
   - **列 = `2 + runewidth(光标前那段输入)`**（`> ` 前缀两格；CJK 一个字两格 —— 按 rune 数算会指到字中间，见「踩过的坑」）；输入太长被截断时夹到最后一格。
   - 挑选项（`/resume` `/model`）与查看器（`/outgoing`、确认框）铺满消息区时**把光标藏掉** ✗（输入行那时不是活动面）；**生成中照旧显示** ✓（输入行还能用，只是提交会被 409 顶回来）。
+- **消息区最上面那条「系统提示词」**（调试用，2026-09-30 定）：进会话 / 会话切换时拉一次 `GET /sessions/{session_id}/prompt`，把它当成一条 `role=system` 的消息摆在**消息区最上面**（标签「系统提示词」用 `system` 那档 = **暗色**，正文保持默认色）；与别的块同一条规矩 —— **块不劈开、装不下就从顶部挤掉**。`/system` 切换显示，开关**持久化**在 `~/.config/microchat/tui.json` 的 `{"show_system_prompt": true}`（**默认开**；`*bool` ⇒ "没写"≠"写了 false"）——界面偏好**不进**后端 `config/` 与 `data/`，也**不动** Godot 那份 `frontend.json`。
+- **`/rename <新名字>`**：给当前会话改名 —— 走**已有的** `PATCH /sessions/{session_id}`（`{"title": …}`），**不新增路由**；名字里可以有空格（`/rename 我的 新名字` 整串拼回、带引号则剥掉那对引号），**空名字 ⇒ 拒绝**（会退回"还没起名"，说不通）。改完就是"用户改过名" ⇒ 后端的自动起标题**永不再覆盖**（不变量在后端，客户端不多事）；回执那条会话**就地换掉本地列表** ⇒ 状态行里的会话名**立刻**跟上（不等下一次刷新）。
 - **上下文占用那一档**（`12.3k/131k (9.4%)`，照 Pi 的形状）夹在 `渠道/模型` 与 `生成中 / 空闲` **之间**，数据来自 `GET /sessions/{session_id}/context`（**只取数字**，别为一个数去拉整份 `/outgoing`）。
   **拉取时机只有两个**：**进会话时**、**一轮结束后**（占用只在整段落库后才变 ⇒ 别跟着 300ms 的轮询一起拉）。
   **`over_budget` ⇒ 这一段用红**；没拉到就先不显示这一档（**不许编数**，也别去打扰底栏）。
@@ -624,7 +646,7 @@ prompt caching**"）。**不要为能力造子 session id**：网关的会话 id
   · TUI 模式下日志落到 `data/microchat.log`（别糊在界面上）；
   · 退出用 **`/quit` 或 ctrl+c** —— **没有裸 `q`**（会和打字打架）。
 - 跑法：`go -C core run .`（一条命令跑起来；要二进制就 `go -C core build -o ../microchat .`）。**TUI 内的命令**照 Pi：`/command`。**只放已经有路由的命令**，没搬完的在 `/help` 里如实列出来
-  （现在能用的：`/help` `/new` `/delete` `/cut` `/copy` `/resume` `/model` `/outgoing` `/state` `/compact` `/stop` `/refresh` `/quit`；
+  （现在能用的：`/help` `/new` `/delete` `/cut` `/copy` `/rename` `/resume` `/model` `/outgoing` `/state` `/system` `/compact` `/stop` `/refresh` `/quit`；
   还没做的：`/archive` —— `/fork`／`/tasks`／`/probe` 那几条**已砍**，不会再有
   （`/fork` 的位置由 `/copy` 接管）。
   `/delete`（删整条会话）与 `/cut`（删一条及之后）都**不可逆** ⇒ 两个都先摊开、等 `回车 / y` 点头才动手；
@@ -659,6 +681,10 @@ prompt caching**"）。**不要为能力造子 session id**：网关的会话 id
   同族的两条：**emoji 只许出现在行首** ✗（宽度最不可靠，混进列里整列歪）；
   **模糊宽度字符（`─` `·` `…` `│`）只许"重复"，不许"填充"** ✗ —— `strings.Repeat` ✓、拿它 pad 对齐 ✗
   （宽度账按一格算、CJK 终端可能按两格排 ⇒ 满线在**窄屏**退回 ASCII `-`，见 `rule`）。
+- **启动时刷模型列表：只许有一份实现、且必须放后台** ✗：HTTP / 启动 / `-debug` 三处走的都是
+  `registry.RefreshOne`；启动那条路整批塞进一个 goroutine（**别**在 `main` 里同步跑 —— 上游慢一秒，
+  界面就晚一秒可用），逐渠道**各自挂号** Task、**失败只 log**。刷新**只写发现列**
+  （`display_name` / `params` / `context_override` / `tokenizer` 一个字都不许动）。
 - **不设总超时 = 上游卡住、界面转一辈子**：超时写在 `providers.json` 的 `timeouts`（缺省 connect 15s / total 300s）。
 - **`db.Exec("PRAGMA …")` 只管当时那一条连接** ✗：连接池后来新开的连接就漏了 —— `foreign_keys` 漏掉 = 级联**静默失效**（`ON DELETE CASCADE` 不生效，还回 204）；
   另外 SQLite 的 `busy_timeout` 默认是 **0** ⇒ 两个进程同时开同一个库（服务在跑 + 一个 `./microchat -debug <op>`）会当场回

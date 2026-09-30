@@ -5,10 +5,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"microchat/internal/abilities"
 	"microchat/internal/config"
 	"microchat/internal/model"
 	"microchat/internal/store"
@@ -170,6 +172,72 @@ func TestTurnTriggersAutoTitle(t *testing.T) {
 	// dummy 渠道吐的那句假标题（真渠道时就是模型给的那句话）
 	if reloaded.Title != "（测试用假标题）" {
 		t.Fatalf("拿到回复之后该自动起一次标题：%q", reloaded.Title)
+	}
+}
+
+// 标题在**翻 idle 之前**就落库了 —— 客户端（TUI）只在收到 idle 时补拉一趟会话列表，
+// 所以它看到 idle 的那一刻，名字必须已经拿得到。
+//
+// 为什么值得钉住这条顺序：这是**界面那一侧的前提**（`tui.loadSessionsQuiet` 那一趟只在 idle 跑）。
+// 谁把 `Titles.Auto` 挪到 `Finish` 之后，这条就会红 —— 否则界面又会回到"第一条消息之后标题不出现、
+// 发第二条才出现"（用户实跑抓到的那个 bug 的后端半边）。
+func TestTitleLandsBeforeTheTurnGoesIdle(t *testing.T) {
+	h := newHarness(t, dummyProviders(), "dummy", "dummy")
+	// 标题那一次调用卡在假上游里：它没放行之前，这一轮不许说 idle
+	arrived, release := make(chan struct{}, 1), make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		arrived <- struct{}{}
+		<-release
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"慢标题"}}],"usage":{"total_tokens":1}}`))
+	}))
+	defer upstream.Close()
+	// **先放行、再收摊**（defer 是后进先出）：上游收摊会等这一发请求跑完，
+	// 而它正卡在 `<-release` 上 —— 顺序颠倒就是把自己锁死（中途 Fatal 也一样）。
+	letGo := sync.OnceFunc(func() { close(release) })
+	defer letGo()
+
+	// 标题能力被 agent 覆盖到那条慢渠道（对话那一轮仍走本地的 dummy，不联网）
+	if err := config.SaveJSON(h.configDir+"/providers.json", config.ProvidersConfig{
+		Providers: []config.Provider{
+			{ID: "dummy", Kind: "dummy"},
+			{ID: "slow", Kind: "openai-compat", BaseURL: upstream.URL, Identity: "bare"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SaveJSON(h.configDir+"/agents.json", config.AgentsConfig{
+		Agents: []config.Agent{{ID: "慢标题", Abilities: map[string]config.AbilityToggle{
+			abilities.Title: {Provider: new("slow"), Model: new("m")},
+		}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.SetSessionAgent(h.session.ID, "慢标题"); err != nil {
+		t.Fatal(err)
+	}
+	h.service.Titles = title.New(h.store, h.service.Paths, h.tasks)
+
+	if _, err := h.service.Accept(h.session, "帮我起个名字"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-arrived:
+	case <-time.After(10 * time.Second):
+		t.Fatal("标题那一次调用一直没发出来（对话那一轮该早跑完了）")
+	}
+	// 标题还在路上 ⇒ 这一轮**还没**翻 idle（客户端此刻去拉列表是拿不到名字的）
+	if phase := h.turns.Status(h.session.ID).Phase; phase == turn.PhaseIdle {
+		t.Fatalf("标题还没落库就翻 idle 了：%v", phase)
+	}
+	letGo()
+	h.waitPhase(t, turn.PhaseIdle, turn.PhaseError)
+	reloaded, err := h.store.GetSession(h.session.ID)
+	if err != nil || reloaded == nil {
+		t.Fatalf("取会话失败：%v", err)
+	}
+	if reloaded.Title != "慢标题" {
+		t.Fatalf("翻 idle 那一刻标题就该落库了（客户端一次刷新就拿到）：%q", reloaded.Title)
 	}
 }
 
