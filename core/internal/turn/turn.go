@@ -40,6 +40,21 @@ type CompactStatus struct {
 
 func (c *CompactStatus) IsRunning() bool { return c != nil && c.State == "running" }
 
+// RerollStatus：一次重摇的对外状态（与轮次无关 —— 与压缩同一套：**搭同一趟车回报给界面**）。
+//
+// 界面据此画「重摇中… 1.2s」：`elapsed_ms` 是活算的（受理那一刻到 now），跑完就定格。
+// `state` 只有三个词：`running` / `done` / `error`（`error` 时原因在 `error` 那一格）。
+//
+// **只放"这一趟跑得怎么样"这档事** ✗：候选有几版 / 当前第几版 / 每版说的什么，那是 `reroll` 的事
+// （`GET /sessions/{session_id}/reroll`）—— 两处各存一份必然打架。
+type RerollStatus struct {
+	State     string `json:"state"` // running / done / error
+	ElapsedMS int64  `json:"elapsed_ms"`
+	Error     string `json:"error,omitempty"`
+}
+
+func (s *RerollStatus) IsRunning() bool { return s != nil && s.State == "running" }
+
 // Status：`GET /sessions/{id}/status` 的响应（字段顺序即契约）。
 type Status struct {
 	Phase         Phase          `json:"phase"`
@@ -49,6 +64,7 @@ type Status struct {
 	ThinkingChars int            `json:"thinking_chars"`
 	Error         string         `json:"error,omitempty"`
 	Compact       *CompactStatus `json:"compact,omitempty"`
+	Reroll        *RerollStatus  `json:"reroll,omitempty"`
 }
 
 // StreamSlice：一次**游标读**的结果（正文与思考各一段 + 各自的新游标 + 这轮是否结束）。
@@ -69,8 +85,11 @@ type entry struct {
 	thinking  strings.Builder
 	err       string
 	compact   *CompactStatus
-	token     uint64
-	cancel    context.CancelFunc
+	// reroll：这个会话此刻有没有在摇（**与轮次共用同一把闸**：一方在跑，另一方就进不来）。
+	reroll        *RerollStatus
+	rerollStarted time.Time
+	token         uint64
+	cancel        context.CancelFunc
 }
 
 // Registry：一个进程一份。
@@ -107,21 +126,83 @@ func (r *Registry) Status(sessionID string) Status {
 	} else {
 		status.ElapsedMS = item.elapsed.Milliseconds()
 	}
+	// 重摇的耗时**活算**（受理那一刻 → now）；跑完由 `FinishReroll` 定格。
+	// **读的时候拷一份**：读状态不该改到登记表里的那个对象。
+	if item.reroll != nil {
+		reroll := *item.reroll
+		if reroll.IsRunning() {
+			reroll.ElapsedMS = time.Since(item.rerollStarted).Milliseconds()
+		}
+		status.Reroll = &reroll
+	}
 	return status
 }
 
 // Begin：**唯一的并发闸门** —— 已经在跑就直接拒绝（不排队；排队会让"按了发送却什么都没发生"难以解释）。
+//
+// 闸门管两件事：这一轮生成、以及一次重摇 —— **两边共用它**（重摇也是一次对话型调用：
+// 两个上游请求同时改同一段历史，谁也说不清谁先谁后）⇒ 重摇在跑时再发消息 = 409。
 func (r *Registry) Begin(sessionID, messageID string) (uint64, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if item := r.lookup(sessionID); item != nil && item.phase.IsBusy() {
+	item := r.lookup(sessionID)
+	if item != nil && item.phase.IsBusy() {
 		return 0, ErrBusy
+	}
+	if item != nil && item.reroll.IsRunning() {
+		return 0, ErrRerollBusy
 	}
 	r.nextToken++
 	r.entries[sessionID] = &entry{
 		phase: PhasePending, messageID: &messageID, started: time.Now(), token: r.nextToken,
 	}
 	return r.nextToken, nil
+}
+
+// BeginReroll：登记一次重摇 —— **与一轮生成共用同一把闸**（另一方在跑就 409）。
+//
+// 与 `Begin` 同一条理由（不排队），只是这一趟的产出**先当候选**（不进历史）⇒ 流缓冲用不上：
+// 它的进度只有「在不在摇 + 耗时」（`RerollStatus`），界面靠它画「重摇中…」。
+func (r *Registry) BeginReroll(sessionID string) (uint64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	item := r.lookup(sessionID)
+	if item != nil && item.phase.IsBusy() {
+		return 0, ErrBusy
+	}
+	if item != nil && item.reroll.IsRunning() {
+		return 0, ErrBusy
+	}
+	r.nextToken++
+	if item == nil {
+		item = &entry{phase: PhaseIdle}
+		r.entries[sessionID] = item
+	}
+	item.reroll = &RerollStatus{State: "running"}
+	item.rerollStarted = time.Now()
+	item.token = r.nextToken
+	return r.nextToken, nil
+}
+
+// FinishReroll：收尾一次重摇（`failure` 非空 ⇒ `error` 态，原因摆在 `error` 那一格）。
+//
+// 与 `Finish` 同一条规矩：**令牌对不上就不许改**（被 stop 顶掉、或已被新的一轮顶掉）。
+func (r *Registry) FinishReroll(sessionID string, token uint64, failure string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	item := r.lookup(sessionID)
+	if item == nil || item.token != token || item.reroll == nil {
+		return
+	}
+	item.reroll.ElapsedMS = time.Since(item.rerollStarted).Milliseconds()
+	item.cancel = nil
+	if failure == "" {
+		item.reroll.State = "done"
+		item.reroll.Error = ""
+		return
+	}
+	item.reroll.State = "error"
+	item.reroll.Error = failure
 }
 
 // BeginCompact：登记一次压缩（同一会话同时只允许一个）。
@@ -163,7 +244,16 @@ type errBusy struct{}
 
 func (errBusy) Error() string { return "这一轮还在跑" }
 
-// Attach：把取消函数挂上（`stop` 用它 abort 后台任务）。
+// ErrRerollBusy：这个会话正在重摇 —— 与 `ErrBusy` 分开，是为了让调用方**说得出是哪一件在跑**
+// （"还在生成中"与"重摇还没摇完"对用户是两件事，别糊成一句话）。
+var ErrRerollBusy = errRerollBusy{}
+
+type errRerollBusy struct{}
+
+func (errRerollBusy) Error() string { return "这个会话正在重摇" }
+
+// Attach：把取消函数挂上（`stop` 用它 abort 后台任务）—— 一轮生成与一次重摇都走它
+// （令牌一样是那枚令牌：谁挂上来的，回来时就得对得上）。
 func (r *Registry) Attach(sessionID string, token uint64, cancel context.CancelFunc) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -259,12 +349,37 @@ func (r *Registry) Finish(sessionID string, token uint64, failure string) {
 	item.err = failure
 }
 
+// StopReroll：**只按停"重摇"那一趟**（不碰一轮生成）。
+//
+// 为什么不能拿 `Stop` 顶上：两者共用一条登记，而 `Stop` 停的是"这个会话此刻在跑的那一件"。
+// 退出重摇模式、或新消息一到要清候选时，被按停的**只能是重摇**（那时生成可能刚刚受理
+// —— 拿 `Stop` 去按，会把刚受理的那一轮当场掐掉）。
+//
+// 幂等：没在摇也回 false。
+func (r *Registry) StopReroll(sessionID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	item := r.lookup(sessionID)
+	if item == nil || !item.reroll.IsRunning() {
+		return false
+	}
+	if item.cancel != nil {
+		item.cancel()
+	}
+	// 两件同时在跑不可能（同一把闸），所以摘掉整条登记：正在摇的那一趟回来时令牌对不上 ⇒ 结果丢掉。
+	delete(r.entries, sessionID)
+	return true
+}
+
 // Stop：摘登记 + abort 后台任务（别让上游白跑完）。**幂等**：没在跑也回 false。
+//
+// 管的是"这个会话此刻在跑的那一件" —— 一轮生成**或**一次重摇（两者共用这把闸）。
+// 重摇被按停 ⇒ 那一版不落位（候选项由 `reroll` 自己摘掉），message 还是当前这版。
 func (r *Registry) Stop(sessionID string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	item := r.lookup(sessionID)
-	if item == nil || !item.phase.IsBusy() {
+	if item == nil || (!item.phase.IsBusy() && !item.reroll.IsRunning()) {
 		return false
 	}
 	if item.cancel != nil {

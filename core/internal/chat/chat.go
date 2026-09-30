@@ -14,6 +14,7 @@ package chat
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -36,6 +37,18 @@ type Service struct {
 	// Titles：起标题（**只在标题还空着时**自动一次）—— 由 main / 直操模式接上；
 	// 没接（比如只跑一轮生成的单测）就只是"没人起名"，不影响这一轮。
 	Titles *title.Service
+	// Candidates：重摇模式的候选列表（`reroll.Service` 实现它）。**新消息一到就清空** ——
+	// 候选说的只是"当前路径尾条"的替代版本，一旦往下走了，它们就不再指向那条尾巴了
+	// （message 保留当前这版 ✓，候选全删 ✓）。
+	//
+	// 类型是接口（在下面定义）：`chat` 与 `reroll` 于是**互不依赖** —— 装配与候选各归各的包，
+	// 只在这一处点一下。没接（单测 / 直操模式）就是"没人维护候选"，不影响这一轮。
+	Candidates CandidateOwner
+}
+
+// CandidateOwner：候选列表的持有者（唯一实现是 `reroll.Service`）。
+type CandidateOwner interface {
+	Clear(sessionID string)
 }
 
 func New(st *store.Store, paths config.Paths, turns *turn.Registry, tasks *task.Registry) *Service {
@@ -97,6 +110,11 @@ func (s *Service) Accept(session model.Session, content string) (Accepted, error
 	if err != nil {
 		s.Turns.Stop(session.ID) // 登记了却写不进去 ⇒ 摘掉，别留下一个假的"在跑"
 		return Accepted{}, err
+	}
+	// **一发出新消息 ⇒ 重摇的候选全删**（用户口径：候选只属于"当前这条尾巴"）——
+	// message 保留当前这版（候选从没进过库，删掉它们一个字节都不用回退）。
+	if s.Candidates != nil {
+		s.Candidates.Clear(session.ID)
 	}
 	// 起标题**不在这儿**：它是 title 能力的事（`title.Service.Auto`，在拿到回复之后起）——
 	// 这里只落用户那句（用户的话不该丢，换个模型接着聊）。
@@ -214,8 +232,14 @@ func (s *Service) assemble(session model.Session, pending []model.Message) ([]st
 		return nil, nil, err
 	}
 	messages = append(messages, pending...)
-	// 待发那句也要有个号：它就是"**下一条**"（现有最大 + 1）。序号只有一处算（`store.IndexMessages`）
-	// ⇒ 这里整段重编一遍（对已编过号的那些是幂等的），而不是在别处再写一遍"下一个是多少"。
+	return s.assembleMessages(session, messages)
+}
+
+// assembleMessages：**装配的唯一实现**（历史已经是最终那份清单）—— 状态现演 + 出站拼装。
+//
+// 序号在这儿整段重编一遍（`store.IndexMessages`：对已编过号的那些是幂等的）——
+// **"下一个序号是多少"也只有这一处算**，别在别处再写一遍。
+func (s *Service) assembleMessages(session model.Session, messages []model.Message) ([]state.Outgoing, []model.Message, error) {
 	store.IndexMessages(messages)
 	summaries, err := s.Store.ListSummaries(session.ID)
 	if err != nil {
@@ -224,6 +248,37 @@ func (s *Service) assemble(session model.Session, pending []model.Message) ([]st
 	prompt, source := s.EffectiveSystemPrompt(session)
 	tables := state.FromSources(session.ID, prompt, source, messages).Tables
 	return state.BuildOutgoing(prompt, messages, summaries, tables), messages, nil
+}
+
+// RerollMessages：**重摇那一趟**要发给上游的消息 —— 把最后那条 assistant 回复**摘掉**之后，
+// 与一轮对话**同一份装配**（`assembleMessages`）。
+//
+// 为什么不另写一份拼装：重摇不是另一个功能，它就是"把最后那条回复重来一遍"——
+// 世界状态现演（`FromSources`）与出站拼装（`BuildOutgoing`）一个字都不该不同。
+// 唯一的差别是**那条回复不在历史里**（它正文里的 `<state>` 块当然也跟着不算数 ——
+// 世界状态本来就跟着候选变，这正是想要的效果）。
+//
+// 摘掉的**永远是最后一条**（重摇只针对"当前路径上的最后一条 assistant 消息"）；
+// 尾条不是 assistant ⇒ 报错（那是"重发"，不是重摇）。
+func (s *Service) RerollMessages(session model.Session) ([]providers.ChatMessage, error) {
+	messages, err := s.Store.ListMessages(session.ID)
+	if err != nil {
+		return nil, err
+	}
+	if len(messages) == 0 || messages[len(messages)-1].Role != model.RoleAssistant {
+		return nil, errors.New("这条会话的最后一条不是 assistant 回复，没有什么可重摇的")
+	}
+	outgoing, kept, err := s.assembleMessages(session, messages[:len(messages)-1])
+	if err != nil {
+		return nil, err
+	}
+	reasoningByID := map[string]string{}
+	for _, message := range kept {
+		if message.Reasoning != "" {
+			reasoningByID[message.ID] = message.Reasoning
+		}
+	}
+	return wireMessages(outgoing, reasoningByID), nil
 }
 
 // outgoingFor：受理那一刻把"真会发出去的东西"定稿。

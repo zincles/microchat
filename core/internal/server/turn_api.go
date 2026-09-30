@@ -34,6 +34,10 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	accepted, err := s.chat.Accept(*session, *req.Content)
 	switch {
+	case errors.Is(err, turn.ErrRerollBusy):
+		// 与生成共用同一把闸：重摇还没摇完时发消息 = 409（说清是哪一件在跑）
+		writeError(w, http.StatusConflict, "conflict",
+			"这个会话正在重摇（尾条那条回复还没定版）：先 `/reroll switch <n>` 选一版，或 `/reroll off` 退出")
 	case errors.Is(err, turn.ErrBusy):
 		writeError(w, http.StatusConflict, "conflict", "这个会话还在生成中，等它跑完或先按停止")
 	case err != nil:

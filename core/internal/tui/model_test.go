@@ -1743,8 +1743,15 @@ func TestContextIsFetchedOnEnterAndAfterTurn(t *testing.T) {
 	loaded := m
 	loaded.context, loaded.contextFor = &ContextUsage{UsedTokens: 1}, "c1"
 	loaded.prompt, loaded.promptFor = &SystemPrompt{Text: "底子"}, "c1"
+	// 重摇那一份同理：候选只在内存里 ⇒ 进会话时问一次，之后不重复问
+	loaded.reroll, loaded.rerollFor = &RerollState{Active: true, Count: 2, CurrentIdx: 1}, "c1"
 	if _, cmd := loaded.Update(messagesMsg{sessionID: "c1", messages: loaded.messages}); cmd != nil {
 		t.Fatal("同一条会话不必每拉一次消息就重量一次占用 / 重拉一次提示词")
+	}
+	// 进会话（还没问过重摇）⇒ 顺手问一次这条会话在不在重摇模式里
+	asked := fixture()
+	if _, cmd := asked.Update(messagesMsg{sessionID: "c1", messages: asked.messages}); cmd == nil {
+		t.Fatal("进会话该顺手问一次重摇状态（候选只在内存里，换会话/重启后要重新问）")
 	}
 	// 一轮结束（idle）⇒ 重拉消息 + 重量占用（同一个 Batch 里）
 	live := liveFixture()
@@ -2236,5 +2243,223 @@ func TestUsageCommandRendersWindows(t *testing.T) {
 	}
 	if !strings.Contains(bad.(model).lastAction, "查余量失败") {
 		t.Fatalf("该如实报错：%q", bad.(model).lastAction)
+	}
+}
+
+// ── 重摇模式：位次标记 / 「重摇中…」 / 那几条命令 ──────────────────────────
+
+// followOnce：喂一条消息、**再追一层**它派生的 Cmd（`runCmds` 只跑一层）。
+//
+// 重摇那两条指令会派生出"重拉消息"（切换是**写库**的：那条消息的正文与附带信息都换了）
+// —— 测试要看的就是"追完之后界面上是什么"，所以这一层得自己追。
+func followOnce(t *testing.T, m model, cmd tea.Cmd) model {
+	t.Helper()
+	if cmd == nil {
+		return m
+	}
+	msg := cmd()
+	updated, follow := m.Update(msg)
+	return runCmds(t, updated.(model), follow)
+}
+
+// rerollFixture：重摇模式内的样子（尾条 m2 旁边该出现 `‹ 2/3 ›`）。
+func rerollFixture() model {
+	m := fixture()
+	m.reroll = &RerollState{
+		Active: true, TargetMessageID: "m2", Count: 3, CurrentIdx: 2,
+		Items: []RerollItem{
+			{Idx: 1, Preview: "在。有什么事？"},
+			{Idx: 2, Preview: "在的，说说看。", Current: true},
+			{Idx: 3, Preview: "在。", Pending: true},
+		},
+	}
+	m.rerollFor = "c1"
+	return m
+}
+
+// 位次标记：**只在重摇模式里**、只画给那条被摇的尾条；分子是当前 apply 的那一版。
+func TestRerollMarkerRendersOnTargetOnly(t *testing.T) {
+	m := rerollFixture()
+	view := m.View().Content
+	if !strings.Contains(view, "‹ 2/3 ›") {
+		t.Fatalf("模式内该在尾条旁画位次：\n%s", view)
+	}
+	// 标记挂在**助手那条**的署名行上（不在用户那条上）
+	for _, line := range viewLines(m) {
+		if strings.Contains(line, "‹") && !strings.Contains(line, "助手") {
+			t.Fatalf("位次标记该跟着助手那条的署名：%q", line)
+		}
+	}
+	// 当前那版高亮（粗体 + 青）—— 与挑选项的选中口径同一条
+	coloredView := colored(m).View().Content
+	if !strings.Contains(coloredView, "\x1b[1;36m ‹ 2/3 ›\x1b[0m") {
+		t.Fatalf("当前那版的标记该高亮：\n%q", coloredView)
+	}
+
+	// 退出模式 ⇒ 标记消失
+	off := m
+	off.reroll = &RerollState{Active: false}
+	if strings.Contains(off.View().Content, "‹") {
+		t.Fatal("不在模式里就不该有标记")
+	}
+	// 换会话 ⇒ 那一份属于别人，不许画
+	elsewhere := m
+	elsewhere.selectedID = "c2"
+	if strings.Contains(elsewhere.View().Content, "‹") {
+		t.Fatal("换会话之后不许拿旧会话的位次画")
+	}
+}
+
+// 「重摇中…」：状态行那一档 + 消息区那个合成块（**都是在摇时的真话**）；此时不许再发消息。
+func TestRerollRunningIsVisibleAndBlocksSend(t *testing.T) {
+	m := rerollFixture()
+	m.reroll.Running, m.reroll.ElapsedMS = true, 1200
+	view := m.View().Content
+	if !strings.Contains(view, "重摇中 1.2s") {
+		t.Fatalf("状态行该报重摇中与耗时：\n%s", view)
+	}
+	if !strings.Contains(view, "重摇中… 1.2s") {
+		t.Fatalf("消息区该有那个合成块（别假装正文在往外蹦）：\n%s", view)
+	}
+	// 摇完了：不再说"重摇中"，但位次还在
+	done := m
+	done.reroll = &RerollState{Active: true, TargetMessageID: "m2", Count: 2, CurrentIdx: 2}
+	if got := done.View().Content; strings.Contains(got, "重摇中") || !strings.Contains(got, "‹ 2/2 ›") {
+		t.Fatalf("摇完该只剩位次：\n%s", got)
+	}
+	// 在摇时发消息：**本地就拦下**（后端也会 409 —— 两边说的是同一件事）
+	blocked, cmd := m.send("插队的一句")
+	if cmd != nil {
+		t.Fatal("重摇在跑时不该真发出去")
+	}
+	if !strings.Contains(blocked.(model).lastAction, "正在重摇") {
+		t.Fatalf("该说清是重摇在跑：%q", blocked.(model).lastAction)
+	}
+}
+
+// `/reroll` 的命令解析：用法错当场说清；`off` 走退出；`list` 摊开每一版。
+func TestCommandRerollUsageAndList(t *testing.T) {
+	m := rerollFixture()
+	// 用法错
+	if bad, _ := commandReroll(m, []string{"switch"}); !strings.Contains(bad.(model).lastAction, "用法") {
+		t.Fatalf("缺位次该说清用法：%q", bad.(model).lastAction)
+	}
+	if bad, _ := commandReroll(m, []string{"switch", "0"}); !strings.Contains(bad.(model).lastAction, "正整数") {
+		t.Fatalf("位次非正该拒绝：%q", bad.(model).lastAction)
+	}
+	if bad, _ := commandReroll(m, []string{"乱来"}); !strings.Contains(bad.(model).lastAction, "不认识的用法") {
+		t.Fatalf("不认识的用法该说清：%q", bad.(model).lastAction)
+	}
+	// `list`：铺满消息区的查看器，当前那版标出来、在摇的那版标出来
+	listed, _ := commandReroll(m, []string{"list"})
+	if listed.(model).viewer == nil {
+		t.Fatal("/reroll list 该打开查看器")
+	}
+	joined := strings.Join(listed.(model).viewer, "\n")
+	for _, want := range []string{"第 1 版", "第 2 版", "（当前）", "第 3 版", "（还在摇…）", "在的，说说看。"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("查看器缺 %q：\n%s", want, joined)
+		}
+	}
+	// 没在模式里就如实说
+	if plain, _ := commandReroll(fixture(), []string{"list"}); !strings.Contains(plain.(model).lastAction, "没在重摇模式里") {
+		t.Fatalf("没进模式该说清：%q", plain.(model).lastAction)
+	}
+	// `off`：真发那一条 DELETE（204 就算成功）
+	hits := 0
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/api/v1/sessions/c1/reroll" {
+			http.NotFound(w, r)
+			return
+		}
+		hits++
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer backend.Close()
+	off := rerollFixture()
+	off.client = NewClient(backend.URL, "")
+	_, cmd := commandReroll(off, []string{"off"})
+	after := runCmds(t, off, cmd)
+	if hits != 1 {
+		t.Fatalf("该真发一次 DELETE /reroll，实际 %d 次", hits)
+	}
+	if after.reroll != nil || !strings.Contains(after.lastAction, "已退出重摇模式") {
+		t.Fatalf("退出之后本地那一份该清掉：%+v / %q", after.reroll, after.lastAction)
+	}
+}
+
+// 进模式 / 切换 / 删除：命令真打后端，回什么写什么（位次、底栏、切换后重拉消息）。
+func TestCommandRerollRoundTrip(t *testing.T) {
+	var switchIdx int
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/c1/reroll":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(RerollAccepted{
+				TargetMessageID: "m2", TaskID: "t1",
+				State: RerollState{Active: true, TargetMessageID: "m2", Count: 2, CurrentIdx: 1, Running: true,
+					Items: []RerollItem{{Idx: 1, Preview: "在。", Current: true}, {Idx: 2, Pending: true}}},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/c1/reroll":
+			_ = json.NewEncoder(w).Encode(RerollState{
+				Active: true, TargetMessageID: "m2", Count: 2, CurrentIdx: 1,
+				Items: []RerollItem{{Idx: 1, Preview: "在。", Current: true}, {Idx: 2, Preview: "在的。"}}})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/c1/reroll/switch":
+			var body struct {
+				Idx int `json:"idx"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			switchIdx = body.Idx
+			_ = json.NewEncoder(w).Encode(RerollState{
+				Active: true, TargetMessageID: "m2", Count: 2, CurrentIdx: 2,
+				Items: []RerollItem{{Idx: 1, Preview: "在。"}, {Idx: 2, Preview: "在的。", Current: true}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/c1/messages":
+			_ = json.NewEncoder(w).Encode([]Message{
+				{ID: "m1", Role: "user", Content: "在吗"},
+				{ID: "m2", Role: "assistant", Content: "在的。"},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer backend.Close()
+
+	m := fixture()
+	m.client = NewClient(backend.URL, "")
+	m.messagesFor = "c1"
+
+	// `/reroll` ⇒ 202 那一刻就该有两条（原文 + 正在摇的那版），并约下一次轮询
+	_, cmd := commandReroll(m, nil)
+	entered := runCmds(t, m, cmd)
+	if entered.reroll == nil || entered.reroll.Count != 2 || !entered.reroll.Running {
+		t.Fatalf("进模式该拿到两条、且还在摇：%+v", entered.reroll)
+	}
+	if !strings.Contains(entered.View().Content, "‹ 1/2 ›") {
+		t.Fatalf("进模式那一刻该画位次：\n%s", entered.View().Content)
+	}
+	// 轮询那一跳：摇完 ⇒ 位次变两条实打实、合成分块退场，底栏也从「重摇中…」换成结果
+	polled := runCmds(t, entered, pollRerollCmd(entered.client, "c1"))
+	if polled.rerollRunning() || polled.reroll.Items[1].Preview == "" {
+		t.Fatalf("轮询回来该看到摇完的那一版：%+v", polled.reroll)
+	}
+	if strings.Contains(polled.lastAction, "还在摇") {
+		t.Fatalf("摇完了底栏不该还停在「重摇中」上：%q", polled.lastAction)
+	}
+
+	// `/reroll switch 2` ⇒ 后端收到 idx=2；切完重拉消息（正文换成选中那一版）
+	_, cmd = commandReroll(polled, []string{"switch", "2"})
+	switched := followOnce(t, polled, cmd)
+	if switchIdx != 2 {
+		t.Fatalf("该把位次发给后端，收到 %d", switchIdx)
+	}
+	if switched.reroll == nil || switched.reroll.CurrentIdx != 2 {
+		t.Fatalf("切完当前那版该是第 2 版：%+v", switched.reroll)
+	}
+	if got := switched.messages; len(got) == 0 || got[len(got)-1].Content != "在的。" {
+		t.Fatalf("切完该重拉消息（正文就是选中那一版）：%+v", got)
+	}
+	if !strings.Contains(switched.View().Content, "‹ 2/2 ›") {
+		t.Fatalf("位次该跟着变：\n%s", switched.View().Content)
 	}
 }

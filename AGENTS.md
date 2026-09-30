@@ -66,11 +66,16 @@ reminder/                  ← 专题参考（`tool-calls.md` 工具调用 / `je
 | `chat` | 一轮生成怎么跑 | 拿到整段才 INSERT |
 | `turn` | 这一轮的流细节 | 增量什么都不算；游标读不消费 |
 | `task` | 作业的身份 + 生死（= 一次上游请求的全程） | `defer` 兜底（**Go 没有 Drop**）；绝不留下僵尸条目；TaskID 是 UUIDv7、不进库 |
+| `reroll` | 重摇的**候选列表**（进程内、会话级） | 候选**只在内存里**（不建表、不写库、Copy 不带走）；只重摇**尾条 assistant**；切换 = 就地换正文（**UUID 不变**）；与生成**共用同一把闸**；**装配不另写一份** |
 | `server` | **只有它碰 HTTP** | 错误体固定；只编排不含业务 |
 
 依赖方向单向：`server → chat/compact/abilities → state（含 statelang）/blocks → registry/providers/config → store → model`。
 （`compact` 另要 `abilities` 与 `providers` —— 校验能力开关、借同一套真发；`blocks` 只依赖 `model`。）
-`turn`/`task` 是横切（谁都能挂号，不被依赖）。**Go 用编译器强制这张图**。
+`turn`/`task` 是横切（谁都能挂号，不被依赖）。
+`reroll` **谁也不依赖、也不被谁依赖** ✓：它借 `chat` 的**装配**（`chat.Service.RerollMessages`）与 `turn` 的**闸门**，
+靠两个**接口**接上（`reroll.Assembler` / `chat.CandidateOwner`，都在消费方那一侧定义）——
+于是"重摇的装配就是一轮对话的装配"这条不变量成立，而两个包不会互相 import（Go 也就不会报环）。
+**Go 用编译器强制这张图**。
 
 ⚠ **表里还没建的只剩 `template`**（`{{…}}` 那套）：`compact` / `blocks` / `abilities` 都已落地 ✓（`chat` 早就有了 ✓）。
 （其余都在 ✓）—— 所以要"强制这张图"目前只对已达成的部分成立 ✓，别拿这张地图当现有代码读。
@@ -232,10 +237,15 @@ delete(AA)           # 删除
 | POST | `/sessions/{session_id}/outgoing` | `{"content":"…"}` | `[Outgoing]` | **(c) 把这条 content 当成即将追加的那句用户消息之后**，真会发出去的东西（与 (b) **逐项同字段**、只**多**那条 user 项 —— **只有**那一项带 **`pending: true`**（`omitempty` ⇒ 其余各项不带这个键）：它的 `message_id` 是**预测值**，真发那一刻另铸一个 ⇒ **别拿它去查消息**；它的 `idx` = **下一条**（现有最大 + 1 ✓））。**只算不写**：不落库、不改任何状态。待发那句若带 `<state>` 块 ⇒ **状态表跟着变** ⇒ 必须重走一遍现演与装配（不是"(b) + 一条消息"）。缺 / 空白 `content` ⇒ **400** |
 | GET | `/sessions/{session_id}/context` | — | `ContextUsage` | 只有数字：`used_tokens`（估算）/ `budget_tokens` / `trigger_tokens` / `remaining_tokens` / `ctx_len` / `max_output` / `ratio` / `estimated` / `last_prompt_tokens` / `over_budget` |
 | GET | `/sessions/{session_id}/prompt` | — | `{"text","source"}` | **生效的系统提示词**（三级解析的**结果**，与出站拼装读同一处）：`source` = `conversation`（会话自己写了 `sessions.system_prompt`）/ `agent`（`agents.json` 里那个 agent 的）/ `builtin`（两级都没有 ⇒ 代码里的内置默认）。**永不给空**：解析全落空（典型：会话的 `agent_id` 软引用**悬空**）也退内置那句、`source` 报 `builtin`。将来做了可拼接的提示词，这里回**运算后**的结果（形状不变）|
-| GET | `/sessions/{session_id}/status` | — | `TurnStatus` | `idle`/`pending`/`streaming`/`error` + `message_id` + `elapsed_ms` + `chars` + `thinking_chars` + `error` |
+| GET | `/sessions/{session_id}/status` | — | `TurnStatus` | `idle`/`pending`/`streaming`/`error` + `message_id` + `elapsed_ms` + `chars` + `thinking_chars` + `error`。另搭两档**与轮次无关**的活状态：`compact`（压缩 / 压好了 / 失败）与 `reroll`（`running`/`done`/`error` + `elapsed_ms`）|
 | GET | `/sessions/{session_id}/turn/text?from=N&think_from=M` | — | `StreamSlice` | 流式增量的**游标读**（正文与思考各一条游标，`from` = 第几个字符）：只服务动画 |
 | POST | `/sessions/{session_id}/stop` | — | `{"stopped": bool}` | **幂等**：没在跑也 200（`false`）|
 | POST | `/sessions/{session_id}/compact` | `CompactReq` | `CompactStatus` · **202** | **压缩**：`{"blocks": N}` 或 `{"begin_message_id":…,"end_message_id":…}`（两个都给 ⇒ 400；都不给 ⇒ 用 `chat.compact_blocks`）⇒ 后台跑完一次压缩；**同一个会话同时只允许一次**（在跑 ⇒ 409）。跑完的结局在 `GET .../status` 的 `compact` 那一档（`running`/`done`/`error` + 原因）|
+| POST | `/sessions/{session_id}/reroll` | — | `{target_message_id, task_id, state}` · **202** | **重摇**：进模式并**立刻摇一次**（已在模式里 ⇒ 再摇一版）。候选（`RerolledMessage`）**只在内存里**、**不进历史** —— 选中才 apply 回那条 Message。尾条必须是 assistant（不是 ⇒ 400 说清那是"重发"）；与生成**共用同一把闸**（在跑 ⇒ 409）|
+| GET | `/sessions/{session_id}/reroll` | — | `{active, target_message_id, count, current_idx, running, elapsed_ms, error, items:[{idx, preview, at, pending, current}]}` | 重摇状态（**不吐全文**，预览几十字）：界面靠它画位次标记与「重摇中… 耗时」。没进模式 ⇒ `active: false`（**不是 404**）|
+| POST | `/sessions/{session_id}/reroll/switch` | `{"idx": n}` | 同上 | 选中第 `n` 版 ⇒ **就地重建**那条 Message（**UUID 不变**；正文与 usage / 耗时 / 思考一起换；摘要照旧标 `dirty`）|
+| DELETE | `/sessions/{session_id}/reroll/{idx}` | — | 同上 | 删掉第 `idx` 版（**位次不是身份**：后方统一 -1，再 apply 到 clamp 后的位置）；**删到只剩一条 ⇒ 退出模式 + 清列表**（**不 apply**：message 保留当前这版）|
+| DELETE | `/sessions/{session_id}/reroll` | — | 204 | **显式退出**重摇模式（清列表；message 保留当前这版）。错误：`idx` 越界 ⇒ 400；没进模式 ⇒ 404；切/删"还在摇的那一版" ⇒ 409 |
 
 同一会话在跑时再发 → **409**。`TurnAccepted` = `{user?, backend, turn}`：`turn.message_id` 是**这条回复的 id**（受理时定好，那会儿还没进库）。
 
@@ -682,6 +692,13 @@ prompt caching**"）。**不要为能力造子 session id**：网关的会话 id
 - 会话视图（Godot 版）：消息列表（署名 = **该会话 agent 的名字**，不是"助手"）；上方一行**上下文占用**（`上下文 12.3k（上轮实测 11.9k）/ 40k`；超 80% 黄、超触发阈值红）**待做**。
 - **消息级操作只出现在最后一条上**（线性会话里"从这里往后不要了"就是它）：`重摇`（可接受 / 丢弃）、`剪切`（删这条及之后）。
   消息级删除**必须先看删除预览**（`GET .../deletion-preview`）并让用户确认，再带 `last_deleted_message_id` 发 DELETE。
+- **重摇的位次与退出** ✓（2026-09-30 落地）：进重摇模式后，**被摇的那条消息旁**给一个位次标记
+  `‹ 2/3 ›`（**只在模式内**、当前那版高亮 = 粗体 + 青，与挑选项同一条口径），状态行报「重摇中… 耗时」（拿 `/status`
+  的 `reroll` 那一档或 `GET .../reroll`），消息区另起一块**合成**气泡（**不假装**正文在往外蹦：那一趟是非流式的）；
+  命令 `/reroll`（进模式并摇一次；已在模式里 ⇒ 再摇一版）、`/reroll switch <n>`、`/reroll delete <n>`、
+  `/reroll list`（摊开每一版的预览，只读查看器）、**`/reroll off` = 显式退出**（清单，message 保留当前那版）。
+  **候选只在内存里** ⇒ 一发出新消息 / 删那条消息 / 切会话 / 重启后端 ⇒ 自然消失（界面靠 `rerollFor` 认会话，与
+  `contextFor` / `promptFor` 同一条规矩）。
 - **分岔 = 复制会话**（`POST /sessions/{session_id}/copy`）：没有"切分支"这回事 ✗（`current_leaf` 已删）。
 - **卡片脚注**：`3.2s · 上行 1654 tok（缓存 1408 tok · 85%）· 下行 62 tok（思考 32 tok，含在内）`——只在有数据时显示。**单位是 token**（上游 `usage` 报的）；生成中气泡上「思考中… N 字」是**字符数**（流式帧里没有 token 数）——两处别混。`reasoning_tokens` 是 `completion_tokens` 的子集，不是另加。
 - **思考**默认折叠成「思考（2.1s）」——放的是**思考用时**（受理 → 第一段正文），不是字数。
@@ -703,7 +720,7 @@ prompt caching**"）。**不要为能力造子 session id**：网关的会话 id
   · TUI 模式下日志落到 `data/microchat.log`（别糊在界面上）；
   · 退出用 **`/quit` 或 ctrl+c** —— **没有裸 `q`**（会和打字打架）。
 - 跑法：`go -C core run .`（一条命令跑起来；要二进制就 `go -C core build -o ../microchat .`）。**TUI 内的命令**照 Pi：`/command`。**只放已经有路由的命令**，没搬完的在 `/help` 里如实列出来
-  （现在能用的：`/help` `/new` `/delete` `/cut` `/copy` `/rename` `/resume` `/model` `/outgoing` `/state` `/system` `/compact` `/stop` `/refresh` `/quit`；
+  （现在能用的：`/help` `/new` `/delete` `/cut` `/copy` `/rename` `/resume` `/model` `/outgoing` `/state` `/system` `/compact` `/reroll` `/stop` `/refresh` `/quit`；
   还没做的：`/archive` —— `/fork`／`/tasks`／`/probe` 那几条**已砍**，不会再有
   （`/fork` 的位置由 `/copy` 接管）。
   `/delete`（删整条会话 —— **删完立刻再建一条并进去**）与 `/cut`（删一条及之后）都**不可逆** ⇒ 两个都先摊开、等 `回车 / y` 点头才动手；

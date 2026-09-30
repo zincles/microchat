@@ -23,6 +23,7 @@ type Kind string
 
 const (
 	KindTurn          Kind = "turn"           // 前台：某个会话的一轮生成
+	KindReroll        Kind = "reroll"         // 前台：把最后那条 assistant 回复重摇一版（**对话型调用**，不是能力）
 	KindCompact       Kind = "compact"        // 后台：把最老的 N 个对话块收成一条摘要
 	KindTitle         Kind = "title"          // 后台：给一条会话起标题（首次拿到回复之后自动一次）
 	KindRefreshModels Kind = "refresh_models" // 后台：从上游拉某个渠道的模型列表
@@ -33,8 +34,10 @@ const (
 // 理由不是记账好看：辅助调用要**骑同一个会话 id**（`x-opencode-session` 那类头，网关按它路由、
 // 前缀缓存也认它）⇒ 缺了要么被上游 400、要么把请求甩进"另一个会话"。
 // **在 `Begin()` 当场断言** = 让错误在挂号那一刻就炸，而不是等发出去被上游拒。
+//
+// `reroll` 也在这里：它是**对话型调用**（与 `turn` 同类，只是产出先当候选）⇒ 一样骑本会话 id。
 func needsSession(kind Kind) bool {
-	return kind == KindTurn || kind == KindCompact || kind == KindTitle
+	return kind == KindTurn || kind == KindReroll || kind == KindCompact || kind == KindTitle
 }
 
 // State：Task 的五个状态（**这套词只属于 Task** —— `idle`/`pending` 那套是 turn 的，别混）。
@@ -53,6 +56,8 @@ func (k Kind) Label() string {
 	switch k {
 	case KindTurn:
 		return "生成"
+	case KindReroll:
+		return "重摇"
 	case KindCompact:
 		return "压缩"
 	case KindTitle:
@@ -132,6 +137,16 @@ func (r *Registry) Begin(kind Kind, sessionID *string, title string) *Guard {
 	}
 	r.order = append(r.order, id)
 	return &Guard{registry: r, id: id}
+}
+
+// ID：这次 Task 的 id（UUIDv7，进程内、不进库）。
+//
+// 给"受理回执"用：客户端拿到它就能在日志/面板里对上这一次上游请求（`POST .../reroll` 的 202 带它）。
+func (g *Guard) ID() string {
+	if g == nil {
+		return ""
+	}
+	return g.id
 }
 
 // Succeed：干完了。

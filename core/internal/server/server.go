@@ -18,6 +18,7 @@ import (
 	"microchat/internal/compact"
 	"microchat/internal/config"
 	"microchat/internal/model"
+	"microchat/internal/reroll"
 	"microchat/internal/store"
 )
 
@@ -27,13 +28,16 @@ type Server struct {
 	paths   config.Paths
 	chat    *chat.Service
 	compact *compact.Service
+	rerolls *reroll.Service
 	mux     *http.ServeMux
 }
 
-// New：把"一轮生成"(chat) 与"压缩"(compact) 两层注进来 —— 状态、发消息、停止、压缩都在它们那儿
+// New：把"一轮生成"(chat)、"压缩"(compact) 与"重摇"(reroll) 三层注进来 —— 它们才是干活的那层
 // （server 只编排：解析请求、定错误码、写响应）。
-func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *chat.Service, compactService *compact.Service) *Server {
-	s := &Server{store: st, config: cfg, paths: paths, chat: chatService, compact: compactService, mux: http.NewServeMux()}
+func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *chat.Service,
+	compactService *compact.Service, rerollService *reroll.Service) *Server {
+	s := &Server{store: st, config: cfg, paths: paths, chat: chatService, compact: compactService,
+		rerolls: rerollService, mux: http.NewServeMux()}
 	// Go 1.22+ 的 ServeMux 原生支持 `GET /x/{id}` 这种模式 —— 连路由库都不需要。
 	s.mux.HandleFunc("GET /api/v1/health", s.health)
 	s.mux.HandleFunc("GET /api/v1/debug/last-payload", s.lastPayload)
@@ -83,6 +87,12 @@ func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *ch
 	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/context", s.sessionContext)
 	// 压缩：把最老的 N 个已闭合块收成一条摘要（**202** 受理；跑完的结局在 /status 的 compact 那一档）
 	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/compact", s.compactSession)
+	// 重摇：把尾条那条 assistant 回复重新摇几版，挑一版定下来（候选只在内存里；见 reroll_api.go）
+	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/reroll", s.rerollEnter)
+	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/reroll", s.rerollState)
+	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/reroll/switch", s.rerollSwitch)
+	s.mux.HandleFunc("DELETE /api/v1/sessions/{session_id}/reroll/{idx}", s.rerollDelete)
+	s.mux.HandleFunc("DELETE /api/v1/sessions/{session_id}/reroll", s.rerollClear)
 	return s
 }
 

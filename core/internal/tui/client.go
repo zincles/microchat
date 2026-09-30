@@ -422,3 +422,67 @@ func (c *Client) SystemPrompt(sessionID string) (SystemPrompt, error) {
 	err := c.get("/sessions/"+sessionID+"/prompt", &prompt)
 	return prompt, err
 }
+
+// RerollItem：重摇里的一版（**位次不是身份** —— 它没有自己的 UUID）。
+//
+// `preview` 是后端截好的几十个字（不吐全文）；`pending` = 这一版还在摇；`current` = 它就是
+// 库里那条 Message 现在的正文（状态行与消息块上的位次标记都照这两个标）。
+type RerollItem struct {
+	Idx     int    `json:"idx"`
+	Preview string `json:"preview"`
+	At      int64  `json:"at"`
+	Pending bool   `json:"pending"`
+	Current bool   `json:"current"`
+}
+
+// RerollState：`GET /sessions/{session_id}/reroll` 的形状（界面靠它画位次与「重摇中…」）。
+type RerollState struct {
+	Active          bool         `json:"active"`
+	TargetMessageID string       `json:"target_message_id,omitempty"`
+	Count           int          `json:"count"`
+	CurrentIdx      int          `json:"current_idx"`
+	Running         bool         `json:"running"`
+	ElapsedMS       int64        `json:"elapsed_ms"`
+	Error           string       `json:"error,omitempty"`
+	Items           []RerollItem `json:"items"`
+}
+
+// Accepted：`POST .../reroll` 的 202 回执（受理那一刻：原文 + 正在摇的那一版）。
+type RerollAccepted struct {
+	TargetMessageID string      `json:"target_message_id"`
+	TaskID          string      `json:"task_id,omitempty"`
+	State           RerollState `json:"state"`
+}
+
+// Reroll：进重摇模式并**立刻摇一次**（已在模式里 ⇒ 再摇一版）。
+func (c *Client) Reroll(sessionID string) (RerollAccepted, error) {
+	var accepted RerollAccepted
+	err := c.post("/sessions/"+sessionID+"/reroll", nil, &accepted)
+	return accepted, err
+}
+
+// RerollState：这一条会话的重摇状态（没进模式 ⇒ `active: false`）。
+func (c *Client) RerollStatus(sessionID string) (RerollState, error) {
+	var state RerollState
+	err := c.get("/sessions/"+sessionID+"/reroll", &state)
+	return state, err
+}
+
+// RerollSwitch：选中第 N 版（后端**就地重建**那条 Message：UUID 不变，正文与附带信息一起换）。
+func (c *Client) RerollSwitch(sessionID string, idx int) (RerollState, error) {
+	var state RerollState
+	err := c.post("/sessions/"+sessionID+"/reroll/switch", map[string]any{"idx": idx}, &state)
+	return state, err
+}
+
+// RerollDelete：删掉第 N 版（后方位次统一 -1；只剩一版时后端退出模式并清列表）。
+func (c *Client) RerollDelete(sessionID string, idx int) (RerollState, error) {
+	var state RerollState
+	err := c.do(http.MethodDelete, fmt.Sprintf("/sessions/%s/reroll/%d", sessionID, idx), nil, &state)
+	return state, err
+}
+
+// RerollClear：**退出重摇模式**（清列表；库里那条 Message 保留当前这版）。
+func (c *Client) RerollClear(sessionID string) error {
+	return c.del("/sessions/" + sessionID + "/reroll")
+}

@@ -23,6 +23,7 @@ import (
 	"microchat/internal/compact"
 	"microchat/internal/config"
 	"microchat/internal/registry"
+	"microchat/internal/reroll"
 	"microchat/internal/server"
 	"microchat/internal/store"
 	"microchat/internal/task"
@@ -84,6 +85,11 @@ func main() {
 	tasks := task.NewRegistry()
 	chatService := chat.New(st, paths, turns, tasks)
 	compactService := compact.New(st, paths, turns, tasks)
+	// 重摇：**把"最后那条 assistant 回复"重摇几版、挑一版定下来**（候选只在内存里）。
+	// 装配借的就是 `chat`（`RerollMessages`）—— 重摇与一轮对话共用同一份拼装，没有第二份。
+	rerollService := reroll.New(st, paths, turns, tasks, chatService)
+	// 反向也点一下：**新消息一到 ⇒ 候选全清**（候选只属于"当前那条尾巴"）。
+	chatService.Candidates = rerollService
 	// 起标题挂在一轮生成上（拿到回复之后自动一次）—— 与压缩同一条口径：能力的事归能力
 	chatService.Titles = title.New(st, paths, tasks)
 
@@ -105,7 +111,7 @@ func main() {
 	log.Printf("microchat 起在 http://%s（数据 %s，配置 %s，user_version=%d，TUI=%v）",
 		*addr, paths.DataDir, paths.ConfigDir, version, interactive)
 	go func() {
-		if err := http.Serve(listener, server.New(st, cfg, paths, chatService, compactService).Handler()); err != nil {
+		if err := http.Serve(listener, server.New(st, cfg, paths, chatService, compactService, rerollService).Handler()); err != nil {
 			log.Printf("服务退出: %v", err)
 		}
 	}()

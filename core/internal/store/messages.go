@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"sort"
 	"strconv"
 	"strings"
@@ -96,6 +97,25 @@ func (s *Store) ListMessages(sessionID string) ([]model.Message, error) {
 	return s.allMessages(sessionID)
 }
 
+// LastMessageID：这条会话**最后一条消息**的 id（"最新一条" = `ORDER BY id DESC LIMIT 1`，白拿索引）。
+//
+// 空会话 ⇒ 空串（不是错误）。重摇用它核对"候选说的那条尾巴还是不是那条"
+// —— 被 `/cut` 删掉、或已经换了尾巴 ⇒ 候选自然消失（口径见 `DEFINE.md`）。
+func (s *Store) LastMessageID(sessionID string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var id string
+	err := s.db.QueryRow("SELECT id FROM messages WHERE session_id = ?1 ORDER BY id DESC LIMIT 1",
+		sessionID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
 // MessageWindow：`GET /sessions/{session_id}/messages` 的三个查询参数（**在这里收口**）。
 //
 // 零值 = 没给。**参数的合法性在 server 判**（那是参数层的事，400 也在那儿）；这里只管语义。
@@ -186,7 +206,36 @@ func (s *Store) InsertMessage(message model.Message) (model.Message, error) {
 func (s *Store) UpdateMessage(sessionID, messageID, content string) (model.Message, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.writeMessageLocked(sessionID, messageID, content, nil)
+}
 
+// MessageMeta：一条消息上那组**只服务显示**的附带信息（usage / 耗时 / 思考）。
+//
+// 单拎出来是因为"改正文"有两种：只换正文（编辑 ⇒ 附带信息原样留着），
+// 以及**连同附带信息一起换**（重摇接受 = 你选中的那一版连它的用量/思考一起生效）。
+type MessageMeta struct {
+	Reasoning   string
+	ReasoningMS *int64
+	DurationMS  *int64
+	Usage       json.RawMessage
+}
+
+// ReplaceMessage：**连同附带信息一起换**（重摇接受走它）。
+//
+// 与 `UpdateMessage` 共用同一处写入（`writeMessageLocked`）⇒ 两条路不会漂移：
+// `message_id` **不变**（⇒ 摘要的覆盖区间仍然成立、只标 `dirty`；级联只归删除）、
+// `updated_at` 刷成当前、会话的 `updated_at` 跟着往前推。
+func (s *Store) ReplaceMessage(sessionID, messageID, content string, meta MessageMeta) (model.Message, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.writeMessageLocked(sessionID, messageID, content, &meta)
+}
+
+// writeMessageLocked：**改一条消息的唯一落点**（编辑 / 重摇接受共用它）。
+//
+// `meta == nil` ⇒ 只换正文（附带信息一个字都不动：改一句话不该把用量抹掉——
+// 那组字段只服务显示，与"这句话说了什么"不是一回事）；非 nil ⇒ 连那四列一起换。
+func (s *Store) writeMessageLocked(sessionID, messageID, content string, meta *MessageMeta) (model.Message, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return model.Message{}, err
@@ -194,9 +243,18 @@ func (s *Store) UpdateMessage(sessionID, messageID, content string) (model.Messa
 	defer func() { _ = tx.Rollback() }()
 
 	now := nowMS()
-	if err := execTouchLocked(tx,
-		"UPDATE messages SET content = ?1, updated_at = ?2 WHERE id = ?3 AND session_id = ?4",
-		content, now, messageID, sessionID); err != nil {
+	if meta == nil {
+		err = execTouchLocked(tx,
+			"UPDATE messages SET content = ?1, updated_at = ?2 WHERE id = ?3 AND session_id = ?4",
+			content, now, messageID, sessionID)
+	} else {
+		err = execTouchLocked(tx,
+			"UPDATE messages SET content = ?1, updated_at = ?2, reasoning = ?3, reasoning_ms = ?4, "+
+				"duration_ms = ?5, usage = ?6 WHERE id = ?7 AND session_id = ?8",
+			content, now, meta.Reasoning, meta.ReasoningMS, meta.DurationMS, usageArg(meta.Usage),
+			messageID, sessionID)
+	}
+	if err != nil {
 		return model.Message{}, err
 	}
 	updated, err := scanMessage(tx.QueryRow("SELECT "+messageColumns+" FROM messages WHERE id = ?1", messageID))

@@ -10,19 +10,23 @@ import (
 	"microchat/internal/compact"
 	"microchat/internal/config"
 	"microchat/internal/model"
+	"microchat/internal/reroll"
 	"microchat/internal/store"
 	"microchat/internal/task"
 	"microchat/internal/title"
 	"microchat/internal/turn"
 )
 
-// newTestServer：一台测试用服务（进程内的 turn / task 登记表各一份，走真的 chat / compact / title 三层）。
+// newTestServer：一台测试用服务（进程内的 turn / task 登记表各一份，走真的 chat / compact / title / reroll 四层）。
 func newTestServer(st *store.Store, cfg config.Config, paths config.Paths) *Server {
 	turns, tasks := turn.NewRegistry(), task.NewRegistry()
 	chatService := chat.New(st, paths, turns, tasks)
 	// 与 main.go 同一条接线：起标题挂在一轮生成上（这里也接上，测的才是真跑的那条路）
 	chatService.Titles = title.New(st, paths, tasks)
-	return New(st, cfg, paths, chatService, compact.New(st, paths, turns, tasks))
+	// 重摇那两条线也照着 main.go 接：装配借 chat、新消息一到清候选
+	rerollService := reroll.New(st, paths, turns, tasks, chatService)
+	chatService.Candidates = rerollService
+	return New(st, cfg, paths, chatService, compact.New(st, paths, turns, tasks), rerollService)
 }
 
 // dummySandbox：一条会话 + dummy 渠道（**确定性、不联网** —— 验收与测试都靠它）。
