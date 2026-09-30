@@ -164,8 +164,8 @@ func TestRefreshAllSkipsAndIsolatesFailures(t *testing.T) {
 	clearKeyEnv(t)
 	list := []config.Provider{
 		{ID: "dummy", Kind: "dummy"},
-		{ID: "cloud", Kind: "opencode-go"},                  // 没配 key ⇒ 跳过
-		{ID: "local", Kind: "openai", BaseURL: "http://127.0.0.1:1/v1"}, // 本机 ⇒ 刷
+		{ID: "cloud", Kind: "opencode-go"},                                     // 没配 key ⇒ 跳过
+		{ID: "local", Kind: "openai", BaseURL: "http://127.0.0.1:1/v1"},        // 本机 ⇒ 刷
 		{ID: "broken", Kind: "openai-compat", BaseURL: "http://10.0.0.2:1/v1"}, // 内网 ⇒ 刷（这趟失败）
 	}
 	called := []string{}

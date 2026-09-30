@@ -200,29 +200,76 @@ func (s *Service) assistantMessage(session model.Session, replyID string, token 
 	return message
 }
 
-// outgoingFor：受理那一刻把"真会发出去的东西"定稿。
+// assemble：历史（+ 可选的"还没进库的那一句"）→ 真会发出去的东西。
 //
-// 拼装**只有一条路**（`state.BuildOutgoing`）；这里额外做的是把 assistant 消息当时的**思考**
-// 按 id 收成一张表 —— 那是回传上游用的 replay metadata（Pi 的原话：不回传，多轮推理就断了），
-// 正文一个字都不动。
-func (s *Service) outgoingFor(session model.Session) ([]state.Outgoing, map[string]string, error) {
+// **真发（`outgoingFor`）与预演（`OutgoingWithPending`）共用这一处** —— 各写一遍必然漂移，
+// 而漂移之后预演说的就不再是"真发会发什么"（接口存在的全部理由就是这句话）。
+// 装配本身仍只有一条路：世界状态现演（`state.FromSources`）+ 出站拼装（`state.BuildOutgoing`）。
+//
+// `pending` 那一项**追加在历史末尾**，就是真发时"用户那句刚落库、`ListMessages` 里排在最后"的位置。
+// 它缺 `created_at`：那个字段只进 `/state` 的操作流水（"哪句话带来的状态"），不参与出站装配。
+func (s *Service) assemble(session model.Session, pending []model.Message) ([]state.Outgoing, []model.Message, error) {
 	messages, err := s.Store.ListMessages(session.ID)
 	if err != nil {
 		return nil, nil, err
 	}
+	messages = append(messages, pending...)
 	summaries, err := s.Store.ListSummaries(session.ID)
 	if err != nil {
 		return nil, nil, err
 	}
 	prompt, source := s.EffectiveSystemPrompt(session)
 	tables := state.FromSources(session.ID, prompt, source, messages).Tables
+	return state.BuildOutgoing(prompt, messages, summaries, tables), messages, nil
+}
+
+// outgoingFor：受理那一刻把"真会发出去的东西"定稿。
+//
+// 拼装**只有一条路**（`state.BuildOutgoing`，经 `assemble`）；这里额外做的是把 assistant 消息当时的
+// **思考**按 id 收成一张表 —— 那是回传上游用的 replay metadata（Pi 的原话：不回传，多轮推理就断了），
+// 正文一个字都不动。
+func (s *Service) outgoingFor(session model.Session) ([]state.Outgoing, map[string]string, error) {
+	outgoing, messages, err := s.assemble(session, nil)
+	if err != nil {
+		return nil, nil, err
+	}
 	reasoningByID := map[string]string{}
 	for _, message := range messages {
 		if message.Reasoning != "" {
 			reasoningByID[message.ID] = message.Reasoning
 		}
 	}
-	return state.BuildOutgoing(prompt, messages, summaries, tables), reasoningByID, nil
+	return outgoing, reasoningByID, nil
+}
+
+// OutgoingWithPending：**把待发的那一句追加进去之后**，真会发出去的东西（`POST /outgoing`）。
+//
+// **只算不写**：不落库、不动任何状态。与真发那一轮（`outgoingFor`）共用同一段装配（`assemble`）——
+// 真发时是"先 INSERT 再 ListMessages（那句就在里面）"，这里是"ListMessages 之后把那句追在末尾"，
+// 落到 `FromSources` / `BuildOutgoing` 眼里是**同一回事** ✓（拼法没有第二种）。
+//
+// 为什么必须重新走一遍装配（而不是"(b) + 一条消息"）：待发那句里可能带 `<state>` 块 ⇒
+// 它会改变**注入系统提示词的那张状态表** ⇒ 连第一条 system 都不一样。
+//
+// 那条 `pending` 消息的 id 是**预测值**（真发时另铸一个）：给出去只为让这一项与 (b) 里那些
+// message 项**逐字段同形状**；它不指向库里的任何东西，别拿它去查消息 —— 所以那一项**带 `pending: true`**，
+// 客户端一眼看得出"这条还没进库"（同形状，但不会被误会成能查的 id）。
+func (s *Service) OutgoingWithPending(session model.Session, content string) ([]state.Outgoing, error) {
+	ids, err := store.MintOrderedIDs(1)
+	if err != nil {
+		return nil, err
+	}
+	pending := model.Message{ID: ids[0], SessionID: session.ID, Role: model.RoleUser, Content: content}
+	outgoing, _, err := s.assemble(session, []model.Message{pending})
+	if err != nil {
+		return nil, err
+	}
+	for index := range outgoing {
+		if outgoing[index].MessageID != nil && *outgoing[index].MessageID == pending.ID {
+			outgoing[index].Pending = true
+		}
+	}
+	return outgoing, nil
 }
 
 // wireMessages：出站消息 → 上游形状（正文照抄，只把思考贴回 assistant 那几条）。
@@ -238,17 +285,15 @@ func wireMessages(outgoing []state.Outgoing, reasoningByID map[string]string) []
 	return messages
 }
 
-// EffectiveSystemPrompt：生效的系统提示词 —— 会话级覆盖优先，否则用 agent 的（内置默认也算）。
+// EffectiveSystemPrompt：生效的系统提示词 —— 会话级覆盖优先，否则用 agent 的，再不然用内置默认那句。
 //
 // **这就是真会发给模型的那份**：世界状态底子、出站消息、界面显示都用它 ——
 // "生效提示词由一处解析"那条规矩的落点就是这里（第二项是它的来源：底子算哪一层由它决定）。
+// 解析本身在 `state.ResolveSystemPrompt`（唯一实现，**永不返回空串**）；这里只是把现读的
+// agent 配置喂给它，没有第二份算法。
 func (s *Service) EffectiveSystemPrompt(session model.Session) (string, state.PromptSource) {
-	if own := strings.TrimSpace(session.SystemPrompt); own != "" {
-		return own, state.PromptFromSession
-	}
 	_, agents, _ := s.files()
-	agent, _ := agents.Resolve(session.AgentID)
-	return agent.SystemPrompt, state.PromptFromAgent
+	return state.ResolveSystemPrompt(session, agents)
 }
 
 // Status：这一轮现在的状态（进程内的事实；没登记过就是 `idle`）。

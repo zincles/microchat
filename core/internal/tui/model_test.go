@@ -55,7 +55,7 @@ func inputLineIndex(lines []string) int {
 	return -1
 }
 
-// emptyFixture：刚打开 TUI 的样子（**空会话**，还没连上后端）。
+// emptyFixture：**还没有可用会话**的样子（兵灾态：启动编排"建那一条"还没回来 / 失败了）。
 func emptyFixture() model {
 	return model{client: NewClient("http://127.0.0.1:8787", ""), width: 60, height: 12, ready: true}
 }
@@ -137,23 +137,23 @@ func TestMessagesSitAboveInputLine(t *testing.T) {
 	}
 }
 
-// 空会话也别只剩输入行：消息区还得在（说话、提示都行），状态行照旧。
-func TestEmptySessionStillHasMessageArea(t *testing.T) {
+// **没有可用会话**（兵灾态）也别只剩输入行：消息区还得在（如实提示 + /new 是出路），状态行照旧。
+func TestNoSessionStillHasMessageArea(t *testing.T) {
 	m := emptyFixture()
 	lines := viewLines(m)
 	if len(lines) != m.height {
 		t.Fatalf("该正好 %d 行：%d", m.height, len(lines))
 	}
 	input := inputLineIndex(lines)
-	if body := strings.Join(lines[:input], "\n"); !strings.Contains(body, "空会话") {
-		t.Fatalf("空会话的消息区该有话说：\n%s", m.View().Content)
+	if body := strings.Join(lines[:input], "\n"); !strings.Contains(body, "没有可用会话") {
+		t.Fatalf("没有会话时消息区该有话说：\n%s", m.View().Content)
 	}
 	if !strings.Contains(strings.Join(lines[input+2:], "\n"), "未连接") {
 		t.Fatalf("状态行该如实说没连上：\n%s", m.View().Content)
 	}
-	// 空会话**不是**会话列表
+	// 兵灾态**不是**会话列表
 	if strings.Contains(m.View().Content, "挑一条已有会话") {
-		t.Fatalf("空会话不该铺开挑选项：\n%s", m.View().Content)
+		t.Fatalf("没有会话时不该铺开挑选项：\n%s", m.View().Content)
 	}
 }
 
@@ -525,7 +525,7 @@ func TestCursorRowFollowsInputLine(t *testing.T) {
 
 // 离线/空数据时也要有像样的画面（**不 panic**、有话可说）。
 func TestEmptyState(t *testing.T) {
-	// 空会话（还没进任何会话）：**消息区照旧在**（有话可说）+ 输入行 + 分隔线 + 状态行。
+	// 还没有可用会话（连后端都没连上）：**消息区照旧在**（有话可说）+ 输入行 + 分隔线 + 状态行。
 	// 没有左栏（会话列表走 /resume），也不该出现会话列表。
 	m := model{width: 40, height: 6, ready: true}
 	body := m.View().Content
@@ -540,8 +540,8 @@ func TestEmptyState(t *testing.T) {
 	if input < 1 || !strings.HasPrefix(lines[input], ">") {
 		t.Fatalf("该有输入行：\n%s", body)
 	}
-	if !strings.HasPrefix(strings.Join(lines[:input], "\n"), " 空会话") {
-		t.Fatalf("消息区该给一句空会话的话：\n%s", body)
+	if !strings.HasPrefix(strings.Join(lines[:input], "\n"), " 现在没有可用会话") {
+		t.Fatalf("消息区该给一句「没有可用会话」的话：\n%s", body)
 	}
 	if !strings.Contains(body, "未连接") {
 		t.Fatal("没连上后端要如实说")
@@ -691,23 +691,24 @@ func TestPaletteNavigationAndRun(t *testing.T) {
 	}
 }
 
-// ── /new：当前会话为空时**无效**（空会话已经是新的了）──
+// ── /new：当前会话**还没有消息**时无效（你已经在一条新会话里了）──
 
 func TestNewIsInvalidOnEmptySession(t *testing.T) {
-	empty := fixture()
-	empty.selectedID, empty.messages, empty.messagesFor = "", nil, ""
-	updated, cmd := empty.runCommand("/new")
+	// 选中的会话确实没有消息（拉过了）⇒ 那就是"新会话"，/new 无效
+	messageless := fixture()
+	messageless.messages, messageless.messagesFor = nil, "c1"
+	updated, cmd := messageless.runCommand("/new")
 	if cmd != nil {
-		t.Fatal("空会话上 /new 不该发请求")
+		t.Fatal("没有消息的会话上 /new 不该发请求")
 	}
 	if said := updated.(model).lastAction; !strings.Contains(said, "无效") {
 		t.Fatalf("该如实说无效：%q", said)
 	}
-	// 选中的会话确实没有消息（拉过了）⇒ 也算空会话
-	messageless := fixture()
-	messageless.messages, messageless.messagesFor = nil, "c1"
-	if _, cmd := messageless.runCommand("/new"); cmd != nil {
-		t.Fatal("没有消息的会话上 /new 也不该发请求")
+	// **没有会话**（启动编排建失败了那种兵灾态）**不算空** ⇒ /new 正是出路，真建一条
+	noSession := fixture()
+	noSession.selectedID, noSession.messages, noSession.messagesFor = "", nil, ""
+	if _, cmd := noSession.runCommand("/new"); cmd == nil {
+		t.Fatal("没有会话时 /new 该真建一条（那是出路）")
 	}
 	// 有消息 ⇒ 真建（并且把 /model 选的渠道 / 模型带上）
 	busy := fixture()
@@ -762,20 +763,70 @@ func TestDeleteAsksBeforeRemovingTheSession(t *testing.T) {
 	}
 	updated, cmd = m.Update(deletedMsg{id: "c1"})
 	next := updated.(model)
-	if next.selectedID != "" || len(next.messages) != 0 {
-		t.Fatalf("删完该回到空会话：selectedID=%q", next.selectedID)
+	if next.findSession("c1") >= 0 {
+		t.Fatalf("删掉的会话该立刻从列表里拿掉：%+v", next.sessions)
+	}
+	if next.selectedID != "" {
+		t.Fatalf("等新建那条回来之前先落回没有会话：selectedID=%q", next.selectedID)
 	}
 	if cmd == nil {
-		t.Fatal("删完该重拉列表")
+		t.Fatal("删完该**立刻再建一条**（没有'没有会话'这个状态）")
 	}
-	// 空会话上再删：什么都不发生
-	if _, again := next.runCommand("/delete"); again != nil {
-		t.Fatal("空会话上没有可删的")
+	// 新建那条回来 ⇒ 认它当当前会话，并拉它的消息
+	updated, cmd = next.Update(createdMsg{session: Session{ID: "c9", Provider: "dummy", Model: "dummy"}})
+	after := updated.(model)
+	if after.selectedID != "c9" {
+		t.Fatalf("删完该立刻进那条新建的会话：selectedID=%q", after.selectedID)
+	}
+	if cmd == nil {
+		t.Fatal("新会话该重拉列表与消息")
 	}
 	// 失败要如实说
 	updated, _ = m.Update(deletedMsg{err: errTest})
 	if said := updated.(model).lastAction; !strings.Contains(said, "删除失败") {
 		t.Fatalf("失败该如实说：%q", said)
+	}
+	// 新建失败也要如实说（并给出路）—— 那才是"没有会话"这个兵灾态
+	updated, _ = next.Update(createdMsg{err: errTest})
+	if said := updated.(model).lastAction; !strings.Contains(said, "新建失败") || !strings.Contains(said, "/new") {
+		t.Fatalf("新建失败该如实说并给出路：%q", said)
+	}
+}
+
+// `/delete` 删完**立刻**真发一次 `POST /sessions`（建那条新的）—— 真跑一次请求来证。
+func TestDeleteImmediatelyCreatesAFreshSession(t *testing.T) {
+	created := 0
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions":
+			created++
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(Session{ID: "c9", Provider: "dummy", Model: "dummy", AgentID: "default"})
+		case r.URL.Path == "/api/v1/sessions":
+			_ = json.NewEncoder(w).Encode([]Session{{ID: "c9", Provider: "dummy", Model: "dummy"}})
+		case r.URL.Path == "/api/v1/sessions/c9/messages":
+			_ = json.NewEncoder(w).Encode([]Message{})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer backend.Close()
+
+	m := fixture()
+	m.client = NewClient(backend.URL, "")
+	updated, cmd := m.Update(deletedMsg{id: "c1"})
+	if cmd == nil {
+		t.Fatal("删完该立刻建一条新的")
+	}
+	// 把新命令真跑一次（它会 POST /sessions）⇒ 界面随即进那条新会话
+	updated, _ = updated.(model).Update(cmd())
+	after := updated.(model)
+	if created != 1 {
+		t.Fatalf("该真发一次 POST /sessions，实际 %d 次", created)
+	}
+	if after.selectedID != "c9" {
+		t.Fatalf("该立刻进新建那条：selectedID=%q", after.selectedID)
 	}
 }
 
@@ -839,11 +890,11 @@ func TestCutPreviewsThenDeletes(t *testing.T) {
 }
 
 func TestCutGuards(t *testing.T) {
-	// 空会话：没有可删的
+	// 没有可用会话（兵灾态）：没有可删的
 	empty := fixture()
 	empty.selectedID, empty.messages, empty.messagesFor = "", nil, ""
 	if _, cmd := empty.runCommand("/cut"); cmd != nil {
-		t.Fatal("空会话上不该发请求")
+		t.Fatal("没有会话时不该发请求")
 	}
 	// 消息还没拉全 ⇒ 先拉
 	m := fixture()
@@ -893,11 +944,11 @@ func TestCopySessionCommand(t *testing.T) {
 	if said := next.lastAction; !strings.Contains(said, "已复制成") {
 		t.Fatalf("该报新会话：%q", said)
 	}
-	// 空会话：没有可复制的
+	// 没有可用会话（兵灾态）：没有可复制的
 	empty := fixture()
 	empty.selectedID, empty.messages, empty.messagesFor = "", nil, ""
 	if _, cmd := empty.runCommand("/copy"); cmd != nil {
-		t.Fatal("空会话上不该发请求")
+		t.Fatal("没有会话时不该发请求")
 	}
 	// 失败要如实说
 	updated, _ = fixture().Update(copiedMsg{err: errTest})
@@ -1005,7 +1056,7 @@ func TestModelPickerGroupsByProvider(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("有会话时该发 PATCH")
 	}
-	// 空会话时 ⇒ 只记下来，不发请求
+	// 没有会话时 ⇒ 只记下来，不发请求（留给下一条新建的会话）
 	empty := fixture()
 	empty.selectedID, empty.messages, empty.messagesFor = "", nil, ""
 	empty.models, empty.picker, empty.pickerIndex = m.models, pickerModel, 0
@@ -1023,20 +1074,223 @@ func TestModelPickerGroupsByProvider(t *testing.T) {
 	}
 }
 
-// 打开 TUI 就是**空会话**（不建库里的行、也不自动跳进旧会话）。
-func TestInitialModelStartsEmpty(t *testing.T) {
+// 打开 TUI 先做**启动编排**（先清空会话、再建一条真会话，顺序不能反）——
+// `initialModel` 只置位"还没编排过"，真正动手在连上后端那一下（`healthMsg`）。
+func TestInitialModelAwaitsStartupBootstrap(t *testing.T) {
 	m := initialModel(NewClient("http://127.0.0.1:8787", ""))
+	if !m.startup {
+		t.Fatal("刚打开该等着做启动编排")
+	}
 	if m.selectedID != "" {
-		t.Fatalf("该停在空会话：selectedID=%q", m.selectedID)
+		t.Fatalf("还没连上后端时不该自己选中谁：selectedID=%q", m.selectedID)
 	}
-	// 拿到会话列表也不自动选（用户没点就不动）
-	updated, _ := m.Update(sessionsMsg{sessions: fixture().sessions})
-	if after := updated.(model); after.selectedID != "" {
-		t.Fatalf("列表回来也不该自动选：selectedID=%q", after.selectedID)
+	// 连上 ⇒ 交出去编排，而且只编排一次
+	updated, cmd := m.Update(healthMsg{health: Health{Status: "ok", Version: "0.1.0"}})
+	next := updated.(model)
+	if cmd == nil {
+		t.Fatal("连上该去清空会话 / 建一条真会话")
 	}
-	// 空会话的界面形状：**消息区还在**（有话说），只是没有会话列表
-	if body := updated.(model).View().Content; !strings.Contains(body, "空会话") || strings.Contains(body, "＋ 新建对话") {
-		t.Fatalf("空会话该是消息区 + 底部，不是会话列表：\n%s", body)
+	if next.startup {
+		t.Fatal("编排只该发起一次")
+	}
+	// 编排结果回来之前，列表就算先到了也不自动选（等 bootMsg 说了算）
+	listed, _ := next.Update(sessionsMsg{sessions: fixture().sessions})
+	if after := listed.(model); after.selectedID != "" {
+		t.Fatalf("编排结果回来之前不该自动选：selectedID=%q", after.selectedID)
+	}
+	// 界面照旧像样（消息区在，只是没有会话列表）
+	if body := listed.(model).View().Content; !strings.Contains(body, "没有可用会话") || strings.Contains(body, "＋ 新建对话") {
+		t.Fatalf("没有会话该是消息区 + 底部，不是会话列表：\n%s", body)
+	}
+}
+
+// fakeBootstrap：**假客户端** —— 只记调用顺序（真 `Client` 走 HTTP，"先删后建"这种顺序断言测不出来）。
+type fakeBootstrap struct {
+	sessions  []Session
+	messages  map[string][]Message
+	msgErr    map[string]error
+	delErr    map[string]error
+	create    Session
+	createErr error
+	listErr   error
+	calls     []string
+}
+
+func (f *fakeBootstrap) Sessions() ([]Session, error) {
+	f.calls = append(f.calls, "sessions")
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	return f.sessions, nil
+}
+
+func (f *fakeBootstrap) Messages(sessionID string) ([]Message, error) {
+	f.calls = append(f.calls, "messages:"+sessionID)
+	if err := f.msgErr[sessionID]; err != nil {
+		return nil, err
+	}
+	return f.messages[sessionID], nil
+}
+
+func (f *fakeBootstrap) DeleteSession(id string) error {
+	f.calls = append(f.calls, "delete:"+id)
+	return f.delErr[id]
+}
+
+func (f *fakeBootstrap) CreateSession(provider, model string) (Session, error) {
+	f.calls = append(f.calls, "create:"+provider+"|"+model)
+	if f.createErr != nil {
+		return Session{}, f.createErr
+	}
+	return f.create, nil
+}
+
+// ── 启动编排：**先清空会话、再建一条真会话**（顺序不能反）──
+
+// 该清的只有【0 条消息 且 标题为空】那些；**带标题的空会话留着**（用户 /rename 过）；
+// 有消息的留着；**两次删除都排在创建之前**（顺序反过来这条断言就该红）。
+func TestStartupCleansEmptySessionsThenCreatesOne(t *testing.T) {
+	fake := &fakeBootstrap{
+		sessions: []Session{
+			{ID: "空1", Title: ""},
+			{ID: "空2", Title: "   "}, // 只有空白 ⇒ 等于没起名
+			{ID: "有名字", Title: "我改过名"},
+			{ID: "有消息", Title: ""},
+		},
+		messages: map[string][]Message{
+			"有消息": {{ID: "m1", Role: "user", Content: "在吗"}},
+		},
+		create: Session{ID: "新会话", Provider: "dummy", Model: "dummy", AgentID: "default"},
+	}
+	msg, ok := bootstrapCmd(fake, "dummy", "dummy")().(bootMsg)
+	if !ok {
+		t.Fatal("该回 bootMsg")
+	}
+	// ★ 调用顺序：**删（该清的）都在建之前**；带标题的连消息都不用问
+	want := []string{
+		"sessions",
+		"messages:空1", "delete:空1",
+		"messages:空2", "delete:空2",
+		"messages:有消息",
+		"create:dummy|dummy",
+	}
+	if got := strings.Join(fake.calls, " "); got != strings.Join(want, " ") {
+		t.Fatalf("编排的调用顺序不对：\n得到 %s\n该是 %s", got, strings.Join(want, " "))
+	}
+	if msg.err != nil || msg.created == nil || msg.created.ID != "新会话" {
+		t.Fatalf("该建出那一条：%+v（err=%v）", msg.created, msg.err)
+	}
+	// 列表 = 新建的那条（最前）+ 留下的两条
+	ids := make([]string, 0, len(msg.sessions))
+	for _, session := range msg.sessions {
+		ids = append(ids, session.ID)
+	}
+	if got := strings.Join(ids, ","); got != "新会话,有名字,有消息" {
+		t.Fatalf("清理后的列表不对：%s", got)
+	}
+	// 界面：认新建那条当当前会话，并去拉它的消息
+	m := fixture()
+	updated, cmd := m.Update(msg)
+	after := updated.(model)
+	if after.selectedID != "新会话" {
+		t.Fatalf("该选中新建那条：selectedID=%q", after.selectedID)
+	}
+	if cmd == nil {
+		t.Fatal("该去拉新会话的消息")
+	}
+	if after.findSession("空1") >= 0 || after.findSession("空2") >= 0 {
+		t.Fatalf("该清的空会话没清掉：%+v", after.sessions)
+	}
+	if !strings.Contains(after.lastAction, "已新建会话") {
+		t.Fatalf("底栏该报新建了哪条：%q", after.lastAction)
+	}
+}
+
+// 标题为空、但**消息拉不到**的会话**不删**（拿不准就当它有内容，宁可不删）。
+func TestStartupKeepsSessionsWhoseMessagesCannotBeRead(t *testing.T) {
+	fake := &fakeBootstrap{
+		sessions: []Session{{ID: "拉不到"}},
+		msgErr:   map[string]error{"拉不到": errTest},
+		create:   Session{ID: "新会话"},
+	}
+	msg := bootstrapCmd(fake, "", "")().(bootMsg)
+	for _, call := range fake.calls {
+		if call == "delete:拉不到" {
+			t.Fatalf("消息拉不到就别删它：%v", fake.calls)
+		}
+	}
+	if len(msg.sessions) != 2 || msg.sessions[1].ID != "拉不到" {
+		t.Fatalf("那条该留着：%+v", msg.sessions)
+	}
+}
+
+// 没清掉（DELETE 失败）⇒ 如实说一句，但**别把编排整个算失败**（新会话照建）。
+func TestStartupReportsUndeletedSessions(t *testing.T) {
+	fake := &fakeBootstrap{
+		sessions: []Session{{ID: "删不掉"}},
+		delErr:   map[string]error{"删不掉": errTest},
+		create:   Session{ID: "新会话"},
+	}
+	msg := bootstrapCmd(fake, "", "")().(bootMsg)
+	if msg.created == nil || msg.created.ID != "新会话" {
+		t.Fatalf("新会话照建（没清掉不该拖着它一起失败）：%+v", msg.created)
+	}
+	if len(msg.failed) != 1 || msg.failed[0] != shortID("删不掉") {
+		t.Fatalf("该如实报没清掉的：%+v", msg.failed)
+	}
+	m := fixture()
+	updated, _ := m.Update(msg)
+	after := updated.(model)
+	if after.selectedID != "新会话" {
+		t.Fatalf("该照样进新会话：%q", after.selectedID)
+	}
+	if said := after.lastAction; !strings.Contains(said, "没清掉") {
+		t.Fatalf("底栏该报一句：%q", said)
+	}
+}
+
+// 建那条失败 ⇒ **如实说 + 给出路**（那才是"没有会话"这个兵灾态），别 panic、也别假装建好了。
+func TestStartupReportsCreateFailure(t *testing.T) {
+	fake := &fakeBootstrap{sessions: []Session{{ID: "空1"}}, createErr: errTest}
+	msg := bootstrapCmd(fake, "", "")().(bootMsg)
+	if msg.created != nil {
+		t.Fatal("建失败不该假装建好了")
+	}
+	if msg.err == nil {
+		t.Fatal("建失败该把原因带回来")
+	}
+	m := fixture()
+	updated, _ := m.Update(msg)
+	after := updated.(model)
+	if after.selectedID != "" {
+		t.Fatalf("建失败该落回没有会话：selectedID=%q", after.selectedID)
+	}
+	if said := after.lastAction; !strings.Contains(said, "没有可用会话") || !strings.Contains(said, "/new") {
+		t.Fatalf("该如实说并给出路：%q", said)
+	}
+	// 那种状态下命令照旧不 panic、如实提示
+	if _, cmd := after.runCommand("/outgoing"); cmd != nil {
+		t.Fatal("没有会话时 /outgoing 不该发请求")
+	}
+	if said := after.lastAction; !strings.Contains(said, "没有可用会话") {
+		t.Fatalf("/outgoing 该如实说：%q", said)
+	}
+}
+
+// 列表都拉不到（后端没起）⇒ 如实说，**别建一条假的**。
+func TestStartupReportsListFailure(t *testing.T) {
+	fake := &fakeBootstrap{listErr: errTest}
+	msg := bootstrapCmd(fake, "", "")().(bootMsg)
+	if msg.err == nil || msg.created != nil {
+		t.Fatalf("列表都拉不到就不该往下走：%+v", msg)
+	}
+	if strings.Contains(strings.Join(fake.calls, " "), "create:") {
+		t.Fatalf("拉不到列表时不该去建会话：%v", fake.calls)
+	}
+	m := fixture()
+	updated, _ := m.Update(msg)
+	if said := updated.(model).lastAction; !strings.Contains(said, "没有可用会话") {
+		t.Fatalf("该如实说：%q", said)
 	}
 }
 
@@ -1625,11 +1879,11 @@ func TestRenameCommandNeedsAName(t *testing.T) {
 	if _, cmd := m.runCommand(`/rename ""`); cmd != nil {
 		t.Fatal("空名字该拒绝")
 	}
-	// 空会话 ⇒ 没有可改名的
+	// 没有可用会话（兵灾态）⇒ 没有可改名的
 	empty := fixture()
 	empty.selectedID, empty.messages, empty.messagesFor = "", nil, ""
 	if _, cmd := empty.runCommand("/rename 名字"); cmd != nil {
-		t.Fatal("空会话不该发请求")
+		t.Fatal("没有会话时不该发请求")
 	}
 	// 给了名字 ⇒ 真发一条 PATCH
 	updated, cmd = m.runCommand("/rename 我的 新名字")

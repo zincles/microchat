@@ -105,7 +105,8 @@ func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request) {
 	//
 	// 顺序是刻意的 —— 库改了、文件写失败，还能再跑一次（那时旧 id 仍在文件里）；
 	// 反过来先把旧 id 从文件里抹掉，就再也找不到它，会话会永久指向一个不存在的 agent
-	// （而 `Resolve()` 找不到只是静默回空提示词，不报错 —— 那是最难查的一类问题）。
+	// （而 `Resolve()` 找不到不会报错 —— 会话的生效提示词只是回落成内置默认那句，
+	//   人设悄悄换掉，仍是最难查的一类问题）。
 	current := id
 	if req.NewID != nil {
 		newID := strings.TrimSpace(*req.NewID)

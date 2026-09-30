@@ -27,8 +27,18 @@ type model struct {
 	// selectedID：当前会话 —— **认 id，不认位置**。`GET /sessions` 按 `updated_at` 排 ⇒
 	// 发一句话就会把那条会话顶到最前 ⇒ 存下标的话，下一次刷新就指到**别人**身上
 	// （用户实跑抓到的"发一句话后消息区一片空白"就是这个：消息回来时对不上号，被丢掉）。
-	// 空串 = **空会话**：刚打开 TUI 就是这个（相当于 Pi 那个待输入的输入框）。
+	// 空串 = **还没有可用会话**：那是个**兵灾态**（进 TUI 时"建一条真会话"那一步失败了、
+	// 或列表暂时拉不到）—— 正常路径下**永远非空**（见 startup）。命令遇到它会如实提示，`/new` 是出路。
 	selectedID string
+
+	// startup：还没做过"启动编排"（**先清空会话、再建一条真会话** —— 顺序不能反）。
+	// initialModel 置住它，连上后端那一下（healthMsg）交出去跑一次，之后就一直是 false。
+	//
+	// 为什么要编排（用户 2026-09-30 定）：不建那条真会话，"空会话"就是一个**只存在于客户端**的
+	// 状态（库里没有那一行）⇒ /outgoing `/rename` `/system` `/cut` 每一处都得先判"没有会话"
+	// （用户实跑撞上的"当前是空会话，没有载荷可看"就是那里漏出来的），而 `-debug` 那条路拿的是
+	// **真 id** ⇒ 两条路行为不一致。先建一条真的 ⇒ 那一整类补丁全可以删掉。
+	startup bool
 
 	// 命令面板（输入以 `/` 开头时出现）
 	paletteIndex int
@@ -129,7 +139,7 @@ type confirm struct {
 }
 
 const (
-	// confirmDeleteSession：删整条会话（回到空会话）。
+	// confirmDeleteSession：删整条会话（删完**立刻再建一条并进去** —— 没有"没有会话"这个状态）。
 	confirmDeleteSession = "delete-session"
 	// confirmCut：删一条消息及其之后的全部。
 	confirmCut = "cut"
@@ -186,6 +196,18 @@ type createdMsg struct {
 	err     error
 }
 
+// bootMsg：**启动编排**（先清空会话、再建一条真会话 —— 顺序不能反）的结果。
+//
+// `sessions` = 清理之后的列表（**已含**新建那条）；`created` = 新建的那条 ⇒ 界面认它当当前会话；
+// `failed` = 没清掉的（短 id，如实说一句）；`err` = "建那一条"失败的原因 —— 那时列表照旧可用，
+// 只是退回了"还没有可用会话"这个兵灾态（命令如实提示，`/new` 是出路）。
+type bootMsg struct {
+	sessions []Session
+	created  *Session
+	failed   []string
+	err      error
+}
+
 type deletedMsg struct {
 	id  string
 	err error
@@ -228,7 +250,7 @@ type stateMsg struct {
 	err   error
 }
 
-// sentMsg：一句话发出去了（202 回来了）。`created` 只在"空会话里冒出新会话"时非空。
+// sentMsg：一句话发出去了（202 回来了）。`created` 只在"兵灾态里顺手新建了一条会话"时非空。
 type sentMsg struct {
 	sessionID string
 	created   *Session
@@ -261,9 +283,10 @@ type compactMsg struct {
 }
 
 func initialModel(client *Client) model {
-	// **一进来就是空会话**（`selectedID: ""`）：不建库里的行、也不自动跳进旧会话 ——
-	// 界面停在一个待输入的输入框上（用户 2026-09-29 定的口径）。
-	m := model{client: client, width: 80, height: 24}
+	// **进 TUI 先做一次启动编排**（连上后端那一下发起，见 `bootstrapCmd`）：
+	// ① 清掉【0 条消息 且 无标题】的会话；② 建一条真的空会话（默认 Agent + 默认模型）并进去
+	// ⇒ 从此**永远活在一个真会话里**。在那之前 selectedID 还是空串（还没连上，不知道该进哪条）。
+	m := model{client: client, width: 80, height: 24, startup: true}
 	// 界面偏好（`~/.config/microchat/tui.json`）：读不到 / 没写这一格 ⇒ **默认开**。
 	m.uiPath = defaultUIStatePath()
 	m.showSystemPrompt = loadShowSystemPrompt(m.uiPath)
@@ -352,6 +375,64 @@ func deleteSessionCmd(client *Client, id string) tea.Cmd {
 	}
 }
 
+// ── 启动编排：**先清空会话、再建一条真会话**（顺序不能反）──
+
+// bootstrapAPI：启动编排要用的那几个后端动作 —— **窄接口**，只为把假客户端塞进来测编排
+// （"先删后建"这种顺序断言，真 `*Client` 走 HTTP 是测不出来的；`*Client` 天然满足它）。
+type bootstrapAPI interface {
+	Sessions() ([]Session, error)
+	Messages(sessionID string) ([]Message, error)
+	DeleteSession(id string) error
+	CreateSession(provider, model string) (Session, error)
+}
+
+// bootstrapCmd：进 TUI 的那一步 —— ① 把该清的空会话删掉；② 建一条真的空会话（默认 Agent +
+// 默认模型）并进去 ⇒ **永远活在一个真会话里**（口径与理由见 model.startup）。
+//
+// **顺序不能反** ✗：先建后清的话，刚建的那条（0 消息、无标题）正好满足"该清"的判据 ⇒ 当场被删掉。
+//
+// 判据只有两条：**0 条消息** 且 **标题为空**。带标题的空会话是用户 `/rename` 改过名的，**留着**
+// （删了就把命名丢了）。消息条数问 `GET /sessions/{id}/messages` —— 不为这个去改后端 schema。
+func bootstrapCmd(api bootstrapAPI, provider, model string) tea.Cmd {
+	return func() tea.Msg {
+		sessions, err := api.Sessions()
+		if err != nil {
+			return bootMsg{err: err}
+		}
+		var failed []string
+		kept := make([]Session, 0, len(sessions))
+		for _, session := range sessions {
+			if strings.TrimSpace(session.Title) != "" || !hasNoMessages(api, session.ID) {
+				kept = append(kept, session)
+				continue
+			}
+			if err := api.DeleteSession(session.ID); err != nil {
+				failed = append(failed, shortID(session.ID))
+				kept = append(kept, session) // 没删掉 ⇒ 它还在
+			}
+		}
+		created, err := api.CreateSession(provider, model)
+		if err != nil {
+			return bootMsg{sessions: kept, failed: failed, err: err}
+		}
+		// 新的这条排**最前**（列表按 `updated_at` 倒序，它刚铸出来 ⇒ 最新）
+		kept = append([]Session{created}, kept...)
+		return bootMsg{sessions: kept, created: &created, failed: failed}
+	}
+}
+
+// hasNoMessages：这条会话是不是一条消息都没有。**拉不到就回 false** —— 拿不准就当它有内容，宁可不删。
+func hasNoMessages(api bootstrapAPI, sessionID string) bool {
+	messages, err := api.Messages(sessionID)
+	return err == nil && len(messages) == 0
+}
+
+// noSession：**没有可用会话**时的兵灾兼底文案（正常路径走不到 —— 进 TUI 就会建一条真的）。
+//
+// 只有两种情况会没有会话：启动时"建那一条"失败了，或列表暂时拉不到 ⇒ **如实提示，别 panic**，
+// 也别假装在会话里。`/new` 是出路。
+const noSession = "现在没有可用会话（进 TUI 时会建一条；刚才没建成？）—— /new 再试一次"
+
 func cutPreviewCmd(client *Client, sessionID, messageID string) tea.Cmd {
 	return func() tea.Msg {
 		plan, err := client.DeletionPreview(sessionID, messageID)
@@ -403,8 +484,8 @@ func loadState(client *Client, sessionID string) tea.Cmd {
 
 // sendCmd：把一句话真发出去。
 //
-// **空会话**（`selected == -1`，界面一进来的那个"待输入的输入框"）时顺手新建一条会话 ——
-// 那条输入框的意义正是"第一句话"（`/new` 在空会话上是无效的，见 commandNew）。
+// **没有会话**（启动编排"建那一条"失败了那种兵灾态）时顺手新建一条 —— 让用户还能说上话；
+// 正常路径下 `session` 永远非 nil（进去就是一条真会话）。
 func sendCmd(client *Client, session *Session, provider, model, content string) tea.Cmd {
 	return func() tea.Msg {
 		created := (*Session)(nil)
@@ -479,6 +560,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.version = message.health.Version
 		m.lastAction = "已连接 " + m.client.BaseURL
+		// 连上之后先做**启动编排**（先清空会话、再建一条真会话）—— 只做一次：
+		// 之后再有 healthMsg（连接失败后补拉）就只是补版本号，照旧去拉列表。
+		if m.startup {
+			m.startup = false
+			m.lastAction = "已连接 " + m.client.BaseURL + " · 清理空会话、建一条新会话…"
+			return m, bootstrapCmd(m.client, m.chosenProvider, m.chosenModel)
+		}
 		return m, loadSessions(m.client)
 
 	case sessionsMsg:
@@ -499,10 +587,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sessions = message.sessions
 		// **认 id 不认位置**：列表按 `updated_at` 排，随时会重排（发一句话就重排一次）。
 		// id 还在 ⇒ 什么都不用做（位置变了与"选中的是哪条"无关）；
-		// id 没了（别处把这条会话删了）⇒ 老实回到空会话，别赖在别人身上。
+		// id 没了（别处把这条会话删了）⇒ 老实落回"没有会话"，别赖在别人身上（`/new` 是出路）。
 		if m.selectedID != "" && m.findSession(m.selectedID) < 0 {
 			m.selectedID, m.messages, m.messagesFor = "", nil, ""
-			return m.fail("那条会话没了（别处删的）—— 现在是空会话"), tea.Batch(also...)
+			return m.fail("那条会话没了（别处删的）——" + noSession), tea.Batch(also...)
 		}
 		if !message.quiet {
 			m.lastAction = fmt.Sprintf("会话 %d 条", len(m.sessions))
@@ -571,12 +659,31 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case bootMsg:
+		m.sessions = message.sessions
+		if message.err != nil || message.created == nil {
+			reason := "创建新会话没成功"
+			if message.err != nil {
+				reason = message.err.Error()
+			}
+			m.selectedID, m.messages, m.messagesFor = "", nil, ""
+			return m.fail("启动时没能建一条新会话（" + reason + "）——" + noSession), nil
+		}
+		m.selectedID, m.messages, m.messagesFor = message.created.ID, nil, ""
+		m.lastAction = "已新建会话 " + shortID(message.created.ID) + "（" + whereOf(*message.created) + "）"
+		if len(message.failed) > 0 {
+			m.lastAction += " · 有几条空会话没清掉：" + strings.Join(message.failed, " ")
+		}
+		return m, loadMessages(m.client, message.created.ID)
+
 	case createdMsg:
 		if message.err != nil {
-			m = m.fail("新建失败：" + message.err.Error())
+			m = m.fail("新建失败：" + message.err.Error() + " —— " + noSession)
 			return m, nil
 		}
-		m.lastAction = "已新建会话 " + shortID(message.session.ID)
+		m.lastAction = "已新建会话 " + shortID(message.session.ID) + "（" + whereOf(message.session) + "）"
+		// 就地放进列表（别等下一次刷新）—— 状态行认 id，晚一步就会短暂显示"没有会话"
+		m.sessions = withSession(m.sessions, message.session)
 		m.selectedID, m.messages, m.messagesFor = message.session.ID, nil, ""
 		return m, tea.Batch(loadSessions(m.client), loadMessages(m.client, message.session.ID))
 
@@ -585,10 +692,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m = m.fail("删除失败：" + message.err.Error())
 			return m, nil
 		}
-		// 删完**回到空会话**（不自动跳去别的旧会话 —— 用户要的是"进入新会话"）
+		// 删完**立刻再建一条并进去**：没有"没有会话"这个状态（口径见 model.startup 与 bootstrapCmd）。
+		// 先把这条从本地列表里拿掉（刷新只是对账），再让 createdMsg 认新那条当当前会话。
+		m.sessions = withoutSession(m.sessions, message.id)
 		m.selectedID, m.messages, m.messagesFor = "", nil, ""
-		m.lastAction = "已删除 " + shortID(message.id) + "（现在是空会话）"
-		return m, loadSessions(m.client)
+		m.lastAction = "已删除 " + shortID(message.id) + " —— 正在建一条新的空会话…"
+		return m, createSessionCmd(m.client, m.chosenProvider, m.chosenModel)
 
 	case cutPreviewMsg:
 		if message.err != nil {
@@ -699,7 +808,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			lines = append(lines, "")
 		}
-		m.viewer, m.viewerTitle = lines, fmt.Sprintf("下次真发出去的载荷（%d 条）", len(message.items))
+		m.viewer, m.viewerTitle = lines, fmt.Sprintf("当前已定历史的载荷（%d 条）", len(message.items))
 		m.viewerHint = "任意键关掉"
 		m.lastAction = fmt.Sprintf("载荷 %d 条（Esc 关掉）", len(message.items))
 		return m, nil
@@ -709,8 +818,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m = m.fail("发送失败：" + message.err.Error())
 			return m, nil
 		}
-		if message.created != nil { // 空会话里冒出来的新会话：进列表并**立刻认它当当前会话**
-			m.sessions = append(m.sessions, *message.created)
+		if message.created != nil { // 兵灾态里顺手新建出来的会话：进列表并**立刻认它当当前会话**
+			m.sessions = withSession(m.sessions, *message.created)
 			m.selectedID, m.messages, m.messagesFor = message.created.ID, nil, ""
 		}
 		m.turn = &liveTurn{
@@ -979,7 +1088,7 @@ func (m model) submit() (tea.Model, tea.Cmd) {
 
 // send：把这句话发出去（**输入行非命令 ⇒ 真发**）。
 //
-// 空会话（还没建过会话）也能发：`sendCmd` 会顺手建一条。
+// 没有会话（启动编排"建那一条"失败了）也能发：`sendCmd` 会顺手建一条（兵灾兼底）。
 // 已经在生成中就**不必发**（后端会 409）—— 这里先说清楚，省一次白跑。
 func (m model) send(text string) (tea.Model, tea.Cmd) {
 	if m.turn.Busy() {
@@ -1019,14 +1128,14 @@ var commands []command
 
 func init() {
 	commands = []command{
-		{name: "new", help: "新建会话（当前会话为空时无效）", run: commandNew},
-		{name: "delete", help: "删除当前会话，回到空会话（不可逆，先确认）", run: commandDelete},
+		{name: "new", help: "新建会话（当前会话还没有消息时无效 —— 你已经在一条新会话里了）", run: commandNew},
+		{name: "delete", help: "删除当前会话（删完立刻再建一条并进去；不可逆，先确认）", run: commandDelete},
 		{name: "cut", args: "[message_id]", help: "删一条消息及它之后的全部（先预览，再确认）", run: commandCut},
 		{name: "copy", help: "把当前会话复制成新的一条（分岔）", run: commandCopy},
 		{name: "rename", args: "<新名字>", help: "给当前会话改名（名字里可以有空格；改过名后自动起标题不再覆盖）", run: commandRename},
 		{name: "resume", args: "[uuid]", help: "挑一条已有会话；带 uuid 直接进", run: commandResume},
 		{name: "model", help: "挑渠道 / 模型（有会话就改它，没有则留给下一条）", run: commandModel},
-		{name: "outgoing", help: "看下次真发出去的载荷（哪几条是压缩出来的）", run: commandOutgoing},
+		{name: "outgoing", help: "看当前已定历史的载荷（哪几条是压缩出来的；不含还没发的那句）", run: commandOutgoing},
 		{name: "state", help: "看当前会话的世界状态", run: commandState},
 		{name: "system", help: "显示 / 隐藏消息区顶部的系统提示词（调试用，开关记在 ~/.config/microchat/tui.json）", run: commandSystem},
 		{name: "compact", args: "[N]", help: "把最老的 N 个已闭合块压成摘要（不给 N 用默认值）", run: commandCompact},
@@ -1041,24 +1150,24 @@ func init() {
 var pendingCommands = []string{"/archive"}
 
 func commandNew(m model, _ []string) (tea.Model, tea.Cmd) {
-	// 规矩：**当前会话为空时 /new 无效**（空会话已经是新的了，再建就是造垃圾行）
+	// 规矩：**当前会话还没有消息时 /new 无效**（你已经在一条新会话里了 —— 再建就是造垃圾行）。
+	// 注意"没有会话"（兵灾态）**不算空**：那时 /new 正是出路，真建一条。
 	if m.isEmptySession() {
-		m.lastAction = "当前会话是空的 —— /new 无效（/resume 挑一条旧的）"
+		m.lastAction = "当前会话还没有消息 —— 你已经在一条新会话里了，/new 无效（/resume 挑一条旧的）"
 		return m, nil
 	}
 	m.lastAction = "新建会话…"
 	return m, createSessionCmd(m.client, m.chosenProvider, m.chosenModel)
 }
 
-// commandDelete：删**整条会话**（回到空会话）。
+// commandDelete：删**整条会话**（删完**立刻再建一条并进去** —— 没有"没有会话"这个状态）。
 //
 // 不可逆 ⇒ 先摊开"会没掉什么"（几条消息、几份它挂着的摘要 —— 数字现算），
 // 等用户点头（回车 / y）才真发；点头之前一个字节都不动。
 func commandDelete(m model, _ []string) (tea.Model, tea.Cmd) {
 	session := m.currentSession()
 	if session == nil {
-		m.lastAction = "当前就是空会话，没有可删的"
-		return m, nil
+		return m.fail("没有可删的会话：" + noSession), nil
 	}
 	if m.messagesFor != session.ID {
 		// 还没拉全就报不出"会删几条" ⇒ 先把消息取回来（同一句话里说清楚）
@@ -1079,8 +1188,7 @@ func commandDelete(m model, _ []string) (tea.Model, tea.Cmd) {
 func commandCut(m model, args []string) (tea.Model, tea.Cmd) {
 	session := m.currentSession()
 	if session == nil {
-		m.lastAction = "当前是空会话，没有可删的消息"
-		return m, nil
+		return m.fail("没有可删的消息：" + noSession), nil
 	}
 	if m.messagesFor != session.ID {
 		m.lastAction = "先把消息拉全再删（正在取…）"
@@ -1104,8 +1212,7 @@ func commandCut(m model, args []string) (tea.Model, tea.Cmd) {
 func commandCopy(m model, _ []string) (tea.Model, tea.Cmd) {
 	session := m.currentSession()
 	if session == nil {
-		m.lastAction = "当前是空会话，没有可复制的"
-		return m, nil
+		return m.fail("没有可复制的会话：" + noSession), nil
 	}
 	m.lastAction = "复制 " + describeSession(*session) + "…"
 	return m, copySessionCmd(m.client, session.ID)
@@ -1119,8 +1226,7 @@ func commandCopy(m model, _ []string) (tea.Model, tea.Cmd) {
 func commandRename(m model, args []string) (tea.Model, tea.Cmd) {
 	session := m.currentSession()
 	if session == nil {
-		m.lastAction = "当前是空会话，没有可改名的会话"
-		return m, nil
+		return m.fail("没有可改名的会话：" + noSession), nil
 	}
 	title := renameArg(args)
 	if title == "" {
@@ -1267,8 +1373,7 @@ func commandModel(m model, _ []string) (tea.Model, tea.Cmd) {
 func commandOutgoing(m model, _ []string) (tea.Model, tea.Cmd) {
 	session := m.currentSession()
 	if session == nil {
-		m.lastAction = "当前是空会话，没有载荷可看"
-		return m, nil
+		return m.fail("没有载荷可看：" + noSession), nil
 	}
 	m.lastAction = "拉载荷…"
 	return m, loadOutgoingCmd(m.client, session.ID)
@@ -1277,8 +1382,7 @@ func commandOutgoing(m model, _ []string) (tea.Model, tea.Cmd) {
 func commandState(m model, _ []string) (tea.Model, tea.Cmd) {
 	session := m.currentSession()
 	if session == nil {
-		m.lastAction = "当前是空会话，没有状态可看"
-		return m, nil
+		return m.fail("没有状态可看：" + noSession), nil
 	}
 	if len(m.messages) == 0 {
 		m.lastAction = "这条会话还没有消息，状态是空的"
@@ -1301,8 +1405,7 @@ func commandRefresh(m model, _ []string) (tea.Model, tea.Cmd) {
 func commandCompact(m model, args []string) (tea.Model, tea.Cmd) {
 	session := m.currentSession()
 	if session == nil {
-		m.lastAction = "当前是空会话，没有可压的"
-		return m, nil
+		return m.fail("没有可压的会话：" + noSession), nil
 	}
 	blocks := 0
 	if len(args) > 0 {
@@ -1332,8 +1435,7 @@ func commandStop(m model, _ []string) (tea.Model, tea.Cmd) {
 		target = session.ID
 	}
 	if target == "" {
-		m.lastAction = "没有会话在生成，没什么可停的"
-		return m, nil
+		return m.fail("没有可停的：" + noSession), nil
 	}
 	m.lastAction = "停止…"
 	return m, stopTurnCmd(m.client, target)
@@ -1377,17 +1479,51 @@ func commandQuit(m model, _ []string) (tea.Model, tea.Cmd) { return m, tea.Quit 
 
 // ── 小查询（都住在 model 上，免得散落各处算同一件事）──
 
-// isEmptySession：当前是不是"空会话" —— 要么没有选中任何会话，要么选中的那条**确实**没有消息
-// （还没拉完不算：拿"还没拉完"当"没有消息"会误判）。
+// isEmptySession：当前会话是不是**还没有消息**（`/new` 的判据）。
+//
+// 口径（2026-09-30 改）：进 TUI 时就会建一条真会话 ⇒ 正常总是有当前会话；这里的"空"指的是
+// **这条会话还没有消息** —— 那它已经就是"新会话"了，再 `/new` 就是造垃圾行。
+// **没有会话不算空**（那是个兵灾态）：那时 `/new` 正是出路，真建一条。
 func (m model) isEmptySession() bool {
-	if m.currentSession() == nil {
-		return true
+	session := m.currentSession()
+	if session == nil {
+		return false
 	}
-	return m.messagesFor == m.currentSession().ID && len(m.messages) == 0
+	return m.messagesFor == session.ID && len(m.messages) == 0
+}
+
+// withSession：把一条会话放进本地列表（在就换掉，不在就放**最前**）—— 别等下一次刷新才有它。
+func withSession(sessions []Session, session Session) []Session {
+	for index := range sessions {
+		if sessions[index].ID == session.ID {
+			sessions[index] = session
+			return sessions
+		}
+	}
+	return append([]Session{session}, sessions...)
+}
+
+// withoutSession：把一条会话从本地列表里拿掉（删除成功后**立刻**生效，刷新只是对账）。
+func withoutSession(sessions []Session, id string) []Session {
+	kept := make([]Session, 0, len(sessions))
+	for _, session := range sessions {
+		if session.ID != id {
+			kept = append(kept, session)
+		}
+	}
+	return kept
+}
+
+// whereOf：会话绑的渠道 / 模型（给底栏那句话用；还没选模型时照实说）。
+func whereOf(session Session) string {
+	if session.Provider == "" || session.Model == "" {
+		return "还没选模型"
+	}
+	return session.Provider + " / " + session.Model
 }
 
 // findSession：按完整 id 或**唯一前缀**找（前缀有歧义 ⇒ 当找不到，别猜）。
-// 空 id = **空会话**，不是"前缀匹配所有" ⇒ 直接回 -1。
+// 空 id = **没有当前会话**（兵灾态），不是"前缀匹配所有" ⇒ 直接回 -1。
 func (m model) findSession(id string) int {
 	if id == "" {
 		return -1
@@ -1653,9 +1789,9 @@ func (m model) renderMessages(height, width int) []string {
 	}
 	session := m.currentSession()
 	if session == nil {
-		// 空会话：老实说清现在是什么、能做什么（**不是**会话列表）
+		// **没有可用会话**（正常走不到：进 TUI 就会建一条真的）—— 如实说，别假装在会话里
 		return fillLines([]string{
-			truncate(" 空会话 —— /resume 挑一条旧会话，或直接在下面输入开始聊", width),
+			truncate(" 现在没有可用会话 —— /new 建一条，或 /refresh 重拉会话列表", width),
 		}, height)
 	}
 	busy := m.turn.Busy() && m.turn.sessionID == session.ID
@@ -1665,7 +1801,7 @@ func (m model) renderMessages(height, width int) []string {
 		if systemPrompt != nil { // 还没说话也照样能看底子（调试用）
 			lines = append(lines, m.systemBlock(*systemPrompt, width)...)
 		}
-		lines = append(lines, truncate(" 这条会话还没有消息 —— 在下面输入就开始了", width))
+		lines = append(lines, truncate(" 这条新会话还没有消息 —— 在下面输入就开始了", width))
 		return fillLines(lines, height)
 	}
 	blocks := make([][]string, 0, len(m.messages)+2)
@@ -1905,7 +2041,7 @@ func (m model) currentSession() *Session {
 // 与"已连接 vX | 最近一次动作"。一行放得下就一行，放不下就折成两行 —— **最多两行**。
 func (m model) renderStatus(width int) []string {
 	session := m.currentSession()
-	head := []segment{{"空会话", styleDim}}
+	head := []segment{{"没有会话", styleDim}}
 	if session != nil {
 		title := strings.TrimSpace(session.Title)
 		if title == "" {

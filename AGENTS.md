@@ -105,7 +105,7 @@ reminder/                  ← 专题参考（`tool-calls.md` 工具调用 / `je
    - **生成中的回复不在库里**：受理时先把 id 算好发给客户端，等**整段**拿到才用这个 id 与当时捕获的上文 INSERT
      ⇒ 停止/失败/被杀都不留半条，也没有"清理占位"要维护。
 5. **模型身份 = `(provider, upstream_id)`**；显示名三级回退（用户覆盖 → 上游名 → prettify）**只在后端**做。
-   新建会话的 agent 取 `agents.json` 的 `default_agent`（空串/缺失都算没配 ⇒ 内置默认）。**agent 的 id** 新建时由后端生成；改名走 `PATCH /agents/{agent_id}` 的 `new_id`——一次把 `default_agent` 与所有会话的引用搬过去（软引用无外键，找不到只会静默回空提示词，所以必须由这一处维护）。
+   新建会话的 agent 取 `agents.json` 的 `default_agent`（空串/缺失都算没配 ⇒ 内置默认）。**agent 的 id** 新建时由后端生成；改名走 `PATCH /agents/{agent_id}` 的 `new_id`——一次把 `default_agent` 与所有会话的引用搬过去（软引用无外键，找不到就回落**内置默认那句**而不是回空，所以人设会悄悄换掉 —— 仍必须由这一处维护）。
 6. **`data/`（含 `data/config/`）永不入库**（端口口令、连接信息、密钥、存档）。默认值全在代码里，文件缺失也能跑。`.gitignore` 只放行 Godot 项目的非缓存部分。
 7. **HTTP API 看下面那节**（**唯一权威是路由表**）。改了接口就跑 `go -C core test ./...`。
    （旧版 Rust 已删 —— 对账工具跟着一起没了 ✓ 现在只有这一份实现 ✓）
@@ -213,7 +213,8 @@ delete(AA)           # 删除
 | GET | `/sessions/{session_id}/messages/{message_id}/deletion-preview` | — | `DeletionPlan` | **只算不动**（安全 ⇒ GET）：会删掉哪些消息 / 摘要、哪些指针会被置空 |
 | DELETE | `/sessions/{session_id}/messages/{message_id}` | `{"last_deleted_message_id"}` | `DeletionPlan` | 删**这条及之后的全部**（级联见 `DEFINE.md`）。核对字段不符 ⇒ **409**（重新预览）；缺字段 ⇒ 422 |
 | GET | `/sessions/{session_id}/state` | — | `StateView` | `global` / `session` / `global_values` / `effective` / `tables`，**每次现算** |
-| GET | `/sessions/{session_id}/outgoing` | `[Outgoing]` | "下次真会发出去的东西"（标签已剔、状态已注入、**压缩已生效**）。每条带出处：`source` = `system`/`message`/`summary`（后者另有 `summary_id`、`blocks`）—— **检查压缩效果靠它**，别去猜正文抬头 |
+| GET | `/sessions/{session_id}/outgoing` | — | `[Outgoing]` | **(b) 当前已定历史的载荷**：把**已入库的东西**装配一遍 —— **不含还没发出去的那一句** ✗（标签已剔、状态已注入、**压缩已生效**）。每条带出处：`source` = `system`/`message`/`summary`（后者另有 `summary_id`、`blocks`）—— **检查压缩效果靠它**，别去猜正文抬头 |
+| POST | `/sessions/{session_id}/outgoing` | `{"content":"…"}` | `[Outgoing]` | **(c) 把这条 content 当成即将追加的那句用户消息之后**，真会发出去的东西（与 (b) **逐项同字段**、只**多**那条 user 项 —— **只有**那一项带 **`pending: true`**（`omitempty` ⇒ 其余各项不带这个键）：它的 `message_id` 是**预测值**，真发那一刻另铸一个 ⇒ **别拿它去查消息**）。**只算不写**：不落库、不改任何状态。待发那句若带 `<state>` 块 ⇒ **状态表跟着变** ⇒ 必须重走一遍现演与装配（不是"(b) + 一条消息"）。缺 / 空白 `content` ⇒ **400** |
 | GET | `/sessions/{session_id}/context` | — | `ContextUsage` | 只有数字：`used_tokens`（估算）/ `budget_tokens` / `trigger_tokens` / `remaining_tokens` / `ctx_len` / `max_output` / `ratio` / `estimated` / `last_prompt_tokens` / `over_budget` |
 | GET | `/sessions/{session_id}/prompt` | — | `{"text","source"}` | **生效的系统提示词**（三级解析的**结果**，与出站拼装读同一处）：`source` = `conversation`（会话自己写了 `sessions.system_prompt`）/ `agent`（`agents.json` 里那个 agent 的）/ `builtin`（两级都没有 ⇒ 代码里的内置默认）。**永不给空**：解析全落空（典型：会话的 `agent_id` 软引用**悬空**）也退内置那句、`source` 报 `builtin`。将来做了可拼接的提示词，这里回**运算后**的结果（形状不变）|
 | GET | `/sessions/{session_id}/status` | — | `TurnStatus` | `idle`/`pending`/`streaming`/`error` + `message_id` + `elapsed_ms` + `chars` + `thinking_chars` + `error` |
@@ -222,6 +223,20 @@ delete(AA)           # 删除
 | POST | `/sessions/{session_id}/compact` | `CompactReq` | `CompactStatus` · **202** | **压缩**：`{"blocks": N}` 或 `{"begin_message_id":…,"end_message_id":…}`（两个都给 ⇒ 400；都不给 ⇒ 用 `chat.compact_blocks`）⇒ 后台跑完一次压缩；**同一个会话同时只允许一次**（在跑 ⇒ 409）。跑完的结局在 `GET .../status` 的 `compact` 那一档（`running`/`done`/`error` + 原因）|
 
 同一会话在跑时再发 → **409**。`TurnAccepted` = `{user?, backend, turn}`：`turn.message_id` 是**这条回复的 id**（受理时定好，那会儿还没进库）。
+
+**出站载荷有三件事 —— 别用一个词糊过去** ✗（各有名字、各有入口）：
+
+| | 是什么 | 入口 | 能否重算 |
+|---|---|---|---|
+| **(a) 上一次真发出去的那一发** | 那一刻请求的**快照**（**含请求头**、覆盖式：只留最近一发） | `GET /debug/last-payload` | **不能** ✗ —— 历史事实：改一条旧消息就回不去了 |
+| **(b) 当前已定历史的载荷** | 把**已入库的东西**装配一遍（**不含还没发的那句** ✗） | `GET /sessions/{session_id}/outgoing` | 能 ✓ —— 改旧消息 / 换 agent / 世界状态变了，它立刻不同 |
+| **(c) 把待发那句追加进去之后** | (b) **+ 那条 prompt**（**只有**那条待发项带 `pending: true`；`omitempty` ⇒ 其余各项不带这个键。它的 `message_id` 是**预测值**，别拿它去查消息） | `POST /sessions/{session_id}/outgoing` | 能 ✓，但**只有服务端算得出来** |
+
+**(c) 为什么客户端拼不出来** ✗：待发那句里若带 `<state>` 块 ⇒ **注入系统提示词的状态表会跟着变** ⇒ (c) 不是"(b) + 一条消息" ✗，必须重走一遍状态现演与装配。
+
+**真发的那一轮装配的就是 (c) 的前身** ✓：受理时先把用户消息落库，再走**同一段装配**
+（`chat.outgoingFor` ⇒ `assemble` ⇒ `state.FromSources` + `state.BuildOutgoing`）——
+唯一的差别只是"那句已经进了库、`ListMessages` 里有它" ⇒ **预演与真发不出第二份答案** ✓（`POST /outgoing` 走的正是同一个 `assemble`）。
 
 ### statelang（给外部工具）
 
@@ -253,7 +268,7 @@ delete(AA)           # 删除
 | 方法 | 路径 | 响应 | 说明 |
 |---|---|---|---|
 | GET | `/health` | `{"status","version"}` | 探针；**也过鉴权** |
-| GET | `/debug/last-payload` | `LastPayload` | **最近一次真正发给上游的请求**（method / url / **头** / 体；内存一份，覆盖式；没发过 = `null`）。头也要回显且打码 —— 网关拒的往往是头不是体 |
+| GET | `/debug/last-payload` | `LastPayload` | **(a) 上一次真发出去的那一发**：那一刻请求的**快照**（method / url / **头** / 体；内存一份，覆盖式；没发过 = `null`）。**不可重算** ✗ —— 历史事实（改一条旧消息也回不去），且**含请求头**：用来回答"我上一发到底发了什么 / 为什么被拒"（网关拒的往往是头不是体）。头也回显且打码 |
 
 ## 一轮生成（202 + 轮询）
 
@@ -582,11 +597,26 @@ prompt caching**"）。**不要为能力造子 session id**：网关的会话 id
 
 ```
 消息区：**只显示当前会话的对话**（最近的贴着输入框，从下往上排；装不下的**整块**不显示，
-        顶部如实提示「（上面还有 N 条）」；空会话给一句话）
+        顶部如实提示「（上面还有 N 条）」；会话还没有消息时给一句话）
 > 输入行（命令与消息都从这儿走）
 ────────────────────────────────────── （满线 `─`；**窄屏（< 60 列）退回 ASCII `-`**）
 会话名 | 短id | 渠道/模型 | 12.3k/131k (9.4%) | 生成中 2.4s / 空闲 | 已连接 v0.1.0 | 最近一次动作
 ```
+
+- **进 TUI 先做一次"启动编排"：先清空会话、再建一条真会话 —— 顺序不能反** ✓（2026-09-30 用户定）：
+  ① 把【**0 条消息** 且 **标题为空**】的会话 `DELETE` 掉（**带标题的空会话留着** ✗ —— 那是用户 `/rename`
+  改过名的，删了就把命名丢了；判据就这两条，消息条数问 `GET /sessions/{id}/messages`，**不为这个改后端 schema**）；
+  ② `POST /sessions`（空体 ✓ ⇒ 后端套 `config.json` 的 `defaults`：默认 Agent、默认 provider/model）
+  建一条**真的**空会话并**进去**（选中它、拉它的消息 / 占用 / 提示词）。
+  ⇒ 从此**永远活在一个真会话里**；"没有会话"只是**兵灾态**（建那一条失败了 / 列表暂时拉不到 ⇒ 命令**如实提示**，
+  `/new` 是出路，**别 panic、也别假装在会话里**）。
+  **为什么要这样**（这是这条规矩存在的全部理由）：不建那条真的，"空会话"就是一个**只存在于客户端**的状态
+  （库里没有那一行）⇒ `/outgoing` `/rename` `/system` `/cut` 每一处都得先判"没有会话"
+  （用户实跑撞上的"当前是空会话，没有载荷可看"就是那里漏出来的），而 `-debug` 那条路拿的是**真 id**
+  ⇒ 两条路行为不一致。先建一条真的 ⇒ **那一整类补丁全可以删掉**，复杂度不再膨胀。
+  **顺序反了会怎样**：先建后清 ⇒ 刚建的那条（0 消息、无标题）正好满足"该清"的判据，当场被删掉。
+- `/delete` 删完**立刻再建一条并进去** ✓（没有"删掉之后回到空会话"这回事）；`/new` 仍是
+  "当前会话**还没有消息** ⇒ 无效" ✓（语义变成"你已经在一条新会话里了"）。
 
 - **会话状态行**（底下 1-2 行，**最多两行**）：前五个字段是**当前会话**的；后两半（`已连接 vX` 与"最近一次动作"）**互不顶替**（旧口径也这么定的）。一行放不下就折两行。
 - **输入行有光标**（2026-09-30 加 ✓ —— 早先是"只会在末尾追加"，`←`/`→` 移不动、也看不见光标）：
@@ -651,7 +681,7 @@ prompt caching**"）。**不要为能力造子 session id**：网关的会话 id
   （现在能用的：`/help` `/new` `/delete` `/cut` `/copy` `/rename` `/resume` `/model` `/outgoing` `/state` `/system` `/compact` `/stop` `/refresh` `/quit`；
   还没做的：`/archive` —— `/fork`／`/tasks`／`/probe` 那几条**已砍**，不会再有
   （`/fork` 的位置由 `/copy` 接管）。
-  `/delete`（删整条会话）与 `/cut`（删一条及之后）都**不可逆** ⇒ 两个都先摊开、等 `回车 / y` 点头才动手；
+  `/delete`（删整条会话 —— **删完立刻再建一条并进去**）与 `/cut`（删一条及之后）都**不可逆** ⇒ 两个都先摊开、等 `回车 / y` 点头才动手；
   `/cut` 的摊开内容来自 `GET .../deletion-preview`（后端那份计算），执行时带回 `last_deleted_message_id` 核对）。
 - 要抄 Pi 的**交互决定**（它的 TUI 是手搓的，库选择无参考价值）：CJK 宽度对齐 / kill-ring 编辑 / LaTeX 降级显示 / markdown 渲染。
 - **设置页要的数据只从一处发**（连上 / 点 ⟳ / 进设置页都走它）——曾经两处各写一份，新加的字段只进了一条路 ⇒ 设置页永远"加载中…"（真发生过）。

@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 
+	"microchat/internal/config"
 	"microchat/internal/model"
 	"microchat/internal/statelang"
 )
@@ -24,7 +25,7 @@ import (
 type Scope string
 
 const (
-	// ScopeGlobal：底子来自 agent 的提示词 ⇒ 用同一个 agent 的会话共享。
+	// ScopeGlobal：底子来自 agent 的提示词（或内置默认那句）⇒ 用同一个 agent 的会话共享。
 	ScopeGlobal Scope = "global"
 	// ScopeSession：底子来自会话自己的提示词，或来自消息正文 ⇒ 只属于这条会话。
 	ScopeSession Scope = "session"
@@ -38,7 +39,34 @@ const (
 	PromptFromAgent PromptSource = "agent"
 	// PromptFromSession：会话自己写了（覆盖了 agent 的）⇒ 底子算本会话。
 	PromptFromSession PromptSource = "session"
+	// PromptFromBuiltin：会话没写、会话的 agent 也没给出提示词（agent 悬空 / 没写 / 只写了空白）
+	// ⇒ 用内置默认 agent 的那句 ⇒ 底子算全局。
+	PromptFromBuiltin PromptSource = "builtin"
 )
+
+// ResolveSystemPrompt：**生效的系统提示词** —— 全仓**唯一一处**解析（会话覆盖 → agent 的 → 内置默认）。
+//
+// 三级自上而下，落空就往上弹，**永不返回空串**：
+//
+//	会话自己写了（去空白后非空）⇒ 它的，来源 PromptFromSession
+//	会话的 agent（`agents.json` 里真有这一条）写了非空提示词 ⇒ agent 的，来源 PromptFromAgent
+//	其余（agent 悬空 / 没写 / 只写了空白）⇒ `config.BuiltinDefaultAgent().SystemPrompt`，来源 PromptFromBuiltin
+//
+// "只写了空白" 与 "没写" 同待遇 —— 与 `<state>` 的"空值就是清掉"一个口径。
+// 出站拼装、世界状态底子、`GET /prompt` 都读这一处，免得三处口径打架（悬空 agent 曾让出站那条链发出空底子）。
+func ResolveSystemPrompt(session model.Session, agents config.AgentsConfig) (string, PromptSource) {
+	if own := strings.TrimSpace(session.SystemPrompt); own != "" {
+		return own, PromptFromSession
+	}
+	// 只用文件里**真有**的那条：`Resolve` 会把内置默认补进来，
+	// 那会把 builtin 那一级伪装成 agent 的（来源就报错了）⇒ 这里用 `Get`。
+	if agent, ok := agents.Get(session.AgentID); ok {
+		if prompt := strings.TrimSpace(agent.SystemPrompt); prompt != "" {
+			return agent.SystemPrompt, PromptFromAgent
+		}
+	}
+	return config.BuiltinDefaultAgent().SystemPrompt, PromptFromBuiltin
+}
 
 // OpRow：一条"可现演的操作"—— 带上它来自哪条消息，于是"哪句话带来的状态"追得回来。
 //
@@ -270,6 +298,10 @@ type Outgoing struct {
 	MessageID *string `json:"message_id,omitempty"` // source=message
 	SummaryID *string `json:"summary_id,omitempty"` // source=summary
 	Blocks    *int64  `json:"blocks,omitempty"`     // source=summary：它覆盖几个块
+	// Pending：这一项**还没进库**（只有 (c) 里那条"待发的 user"会带）。
+	// 它的 `message_id` 是**预测值** —— 给出去只为让这一项与别的 message 项同形状（逐字段可比），
+	// 别拿它去查消息（真发那一刻会另铸一个 id，库里永远没有这个）。
+	Pending bool `json:"pending,omitempty"`
 }
 
 // BuildOutgoing：组装**真正要发出去的东西** —— 系统提示词（+ 当前变量表）+ 历史

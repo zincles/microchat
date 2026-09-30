@@ -63,6 +63,8 @@ func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *ch
 	s.mux.HandleFunc("POST /api/v1/statelang", s.statelangParse)
 	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/state", s.getSessionState)
 	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/outgoing", s.getSessionOutgoing)
+	// (c) 预演：把待发那句追加进去之后真会发出去的东西 —— **只算不写**（同一个装配，重算状态）
+	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/outgoing", s.postSessionOutgoing)
 	// 生效的系统提示词（三级解析的**结果** + 来源）—— 调试用：客户端摆在消息区最上方
 	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/prompt", s.getSessionPrompt)
 	s.mux.HandleFunc("PATCH /api/v1/sessions/{session_id}/messages/{message_id}", s.editMessage)

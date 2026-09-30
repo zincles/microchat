@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"microchat/internal/config"
 	"microchat/internal/model"
 )
 
@@ -252,5 +253,40 @@ func TestEstimateTokens(t *testing.T) {
 	}
 	if got := EstimateTokens("x", 0); got != 1 {
 		t.Fatalf("ratio 乱给该用缺省值：%d", got)
+	}
+}
+
+// 生效提示词的**唯一一处**解析：会话覆盖 → agent 的 → 内置默认；落空就往上弹，**永不返回空串**。
+//
+// 悬空 agent（软引用找不到）与"只写了空白"都当"没这一级"—— 底子曾因此发成空串。
+func TestResolveSystemPromptNeverEmpty(t *testing.T) {
+	agents := config.AgentsConfig{Agents: []config.Agent{
+		{ID: "跑团", Name: "跑团主持人", SystemPrompt: "你是跑团主持人。"},
+		{ID: "沉默", Name: "沉默", SystemPrompt: "   \n  "},
+	}}
+	builtin := config.BuiltinDefaultAgent().SystemPrompt
+
+	cases := []struct {
+		name       string
+		session    model.Session
+		wantText   string
+		wantSource PromptSource
+	}{
+		{"会话覆盖优先", model.Session{SystemPrompt: "你是临时改的。", AgentID: "跑团"}, "你是临时改的。", PromptFromSession},
+		{"回落到 agent", model.Session{AgentID: "跑团"}, "你是跑团主持人。", PromptFromAgent},
+		{"agent 悬空 ⇒ 内置默认", model.Session{AgentID: "早就删掉的 agent"}, builtin, PromptFromBuiltin},
+		{"agent 只写了空白 ⇒ 内置默认", model.Session{AgentID: "沉默"}, builtin, PromptFromBuiltin},
+		{"会话只写了空白 ⇒ 不算写，回落 agent", model.Session{SystemPrompt: "  \n ", AgentID: "跑团"}, "你是跑团主持人。", PromptFromAgent},
+		{"内置 default（文件里没有这条）⇒ builtin", model.Session{AgentID: "default"}, builtin, PromptFromBuiltin},
+		{"什么都没有 ⇒ builtin", model.Session{}, builtin, PromptFromBuiltin},
+	}
+	for _, c := range cases {
+		text, source := ResolveSystemPrompt(c.session, agents)
+		if text != c.wantText || source != c.wantSource {
+			t.Fatalf("%s：得到 (%q, %q)，要 (%q, %q)", c.name, text, source, c.wantText, c.wantSource)
+		}
+		if strings.TrimSpace(text) == "" {
+			t.Fatalf("%s：生效提示词**永不给空**", c.name)
+		}
 	}
 }

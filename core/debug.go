@@ -471,8 +471,9 @@ type outgoingLine struct {
 	ContentChars   int    `json:"content_chars"`
 }
 
-// outgoing：「下次真会发出去的东西」—— 与 `GET /sessions/{id}/outgoing` 同一条计算
-// （标签已剔、状态已注入、按摘要收拢），逐条一行。
+// outgoing：**(b) 当前已定历史的载荷**（不含还没发出去的那句 ✗）—— 与 `GET /sessions/{id}/outgoing`
+// 同一条计算（标签已剔、状态已注入、按摘要收拢），逐条一行。
+// （真发那一刻的真载荷是 (a)：`GET /debug/last-payload` 那份快照；(c)「把待发那句追加进去之后」只有服务端算得出来。）
 //
 // **检查压缩效果靠 `source` / `summary_id` / `blocks`**，别去猜正文抬头。
 func (e *debugEnv) outgoing(args []string) int {

@@ -247,7 +247,7 @@ func (c *Client) DeleteMessagesFrom(sessionID, messageID, lastDeletedMessageID s
 	return plan, err
 }
 
-// Outgoing：**下次真会发出去的东西**（标签已剔、状态已注入、压缩已生效）。
+// Outgoing：**(b) 当前已定历史的载荷**（标签已剔、状态已注入、压缩已生效）—— **不含还没发出去的那句**。
 // 每一条自带出处（system / message+message_id / summary+summary_id+blocks）—— 检查压缩效果就靠它。
 type Outgoing struct {
 	Role      string  `json:"role"`

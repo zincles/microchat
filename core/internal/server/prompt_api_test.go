@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"microchat/internal/config"
+	"microchat/internal/state"
 	"microchat/internal/store"
 )
 
@@ -190,5 +191,49 @@ func TestPromptRouteOnMissingSessionIs404(t *testing.T) {
 	}
 	if body.Error.Code != "not_found" {
 		t.Fatalf("错误体该是 not_found：%s", recorder.Body.String())
+	}
+}
+
+// 出站那条链（`GET /outgoing` = 真会发出去的东西）也必须带上生效提示词那条 system ——
+// 与 `/prompt` **同一处解析**，两处口径一致。悬空 agent 曾经让这里的第一条直接是 user（系统的整个丢了），
+// 拿掉修复就该红。
+func TestOutgoingKeepsSystemForAllThreeLevels(t *testing.T) {
+	box := newPromptSandbox(t, `{"default_agent":"跑团","agents":[{"id":"跑团","name":"跑团主持人","system_prompt":"你是跑团主持人。"}]}`)
+	builtin := config.BuiltinDefaultAgent().SystemPrompt
+
+	levels := []struct {
+		name         string
+		systemPrompt string
+		agentID      string
+		want         string
+	}{
+		{"会话覆盖", "你是自定义的提示词。", "跑团", "你是自定义的提示词。"},
+		{"agent", "", "跑团", "你是跑团主持人。"},
+		{"悬空 agent ⇒ 内置默认", "", "早就删掉的agent", builtin},
+	}
+	for _, level := range levels {
+		id := box.session(t, level.systemPrompt, level.agentID)
+		_, view := box.prompt(t, id)
+
+		recorder := call(box.server, "GET", "/api/v1/sessions/"+id+"/outgoing", "")
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("%s：/outgoing 该 200，得到 %d：%s", level.name, recorder.Code, recorder.Body.String())
+		}
+		var outgoing []state.Outgoing
+		if err := json.Unmarshal(recorder.Body.Bytes(), &outgoing); err != nil {
+			t.Fatal(err)
+		}
+		if len(outgoing) == 0 || outgoing[0].Role != state.RoleSystem {
+			t.Fatalf("%s：出站第一条该是 role=system：%+v", level.name, outgoing)
+		}
+		if outgoing[0].Content != level.want {
+			t.Fatalf("%s：出站 system = %q，要 %q", level.name, outgoing[0].Content, level.want)
+		}
+		if view.Text != level.want {
+			t.Fatalf("%s：/prompt = %q，要 %q", level.name, view.Text, level.want)
+		}
+		if view.Text != outgoing[0].Content {
+			t.Fatalf("%s：/prompt 与 /outgoing[0] 口径不一致：%q vs %q", level.name, view.Text, outgoing[0].Content)
+		}
 	}
 }
