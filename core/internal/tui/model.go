@@ -790,7 +790,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m = m.settleTurn(message.sessionID)
 		m.lastAction = "已停止这一轮（这条回复没有落库）"
-		return m, nil
+		// 与收到 idle 那一趟**同一类时差**：生成中按停时，后端那半程可能刚好把标题写好
+		// （`title.Auto`）⇒ 这里补一趟**静默**刷列表（`loadSessionsQuiet`）把左栏/状态行接上。
+		// 走静默那一档 ⇒ **不动底栏**，刚写上的「已停止」不会被"会话 N 条"顶掉。
+		return m, loadSessionsQuiet(m.client)
 
 	case tea.KeyPressMsg:
 		// 先认输入相关的键（打字优先），再认导航键。

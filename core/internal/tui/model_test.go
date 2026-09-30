@@ -1207,6 +1207,55 @@ func TestQuietSessionReloadKeepsTheBottomLine(t *testing.T) {
 	}
 }
 
+// 生成中按停那趟也要**静默刷一次列表**：与"第一条消息之后标题不出现"是**同一类时差** ——
+//
+//	按停时后端那半程可能**刚好**把标题写好（`title.Auto`）⇒ 不补这一趟，左栏/状态行就停在
+//	「（还没起名）」，要等下一次列表刷新才补上。
+//
+// 走**静默**那一档（`loadSessionsQuiet`）⇒ 更新列表但**不动底栏**，刚写上的「已停止」不被顶掉。
+func TestStopAlsoQuietlyReloadsSessions(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/sessions" {
+			http.NotFound(w, r)
+			return
+		}
+		// 后端那侧的事实：按停那一刻标题已经写好了（或者压根没有，这一趟都是"对账"）
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]Session{
+			{ID: "c1", Title: "刚起好的名字", Provider: "dummy", Model: "dummy"},
+		})
+	}))
+	defer backend.Close()
+
+	m := liveFixture()
+	m.client = NewClient(backend.URL, "")
+	m.sessions = []Session{{ID: "c1", Title: "", Provider: "dummy", Model: "dummy",
+		Turn: TurnStatus{Phase: "streaming"}}}
+	m.selectedID, m.messagesFor = "c1", "c1"
+	m.turn = &liveTurn{sessionID: "c1", messageID: "m3", phase: "streaming"}
+	m.lastAction = "停止…"
+
+	updated, cmd := m.Update(stoppedMsg{sessionID: "c1", stopped: true})
+	next := updated.(model)
+	if next.turn != nil {
+		t.Fatal("停下来了 ⇒ 气泡该消失")
+	}
+	if cmd == nil {
+		t.Fatal("按停那趟该补一次**静默**刷列表（标题可能刚写好）")
+	}
+	if said := next.lastAction; said != "已停止这一轮（这条回复没有落库）" {
+		t.Fatalf("按停该在底栏留下「已停止」那句：%q", said)
+	}
+	// 真把那趟 Cmd 跑一趟（假后端接住）⇒ 列表更新了，而底栏那句**一个字都没被顶掉**
+	after := runCmds(t, next, cmd)
+	if after.sessions[0].Title != "刚起好的名字" {
+		t.Fatalf("静默那一趟该把列表接上：%+v", after.sessions[0])
+	}
+	if said := after.lastAction; said != "已停止这一轮（这条回复没有落库）" {
+		t.Fatalf("静默刷列表**不许**动底栏那句「已停止」：%q", said)
+	}
+}
+
 // 按停：真发 `/stop`；回 false 就如实说"什么都没发生"（幂等）。
 func TestStopCommand(t *testing.T) {
 	m := liveFixture()

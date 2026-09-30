@@ -190,14 +190,19 @@ type CreateSessionReq struct {
 
 // UpdateSessionReq：只改给出来的那些。
 //
-// `system_prompt` 在 Rust 版里**收了但没用**（会话级提示词只有新建时能写）—— 照抄这个行为，
-// 免得两边表现不一致；补写入路径是另一个决定，不混在移植里。
+// `system_prompt` 与其它字段**同一个语义**（2026-09-30 改）：指针 ⇒ 分得出"没给"与"给了空串"。
+//   - `nil`（没这个键 / `null`）= **不动**；
+//   - `""` = **清掉会话级覆盖**（空串 = 没覆盖 ⇒ 底子算全局，回落到 agent 的）；
+//   - 非空 = 写进 `sessions.system_prompt`。
+//
+// ⚠ 它**不是**收下不用的字段：`GET /sessions/{session_id}/prompt` 的 `source` 与
+// `/outgoing` 里第一条 system 都会跟着变（由 `chat.EffectiveSystemPrompt` 一处解析）。
 type UpdateSessionReq struct {
 	Title        *string `json:"title"`
 	Provider     *string `json:"provider"`
 	Model        *string `json:"model"`
 	AgentID      *string `json:"agent_id"`
-	SystemPrompt string  `json:"system_prompt"`
+	SystemPrompt *string `json:"system_prompt"`
 }
 
 // createSession：省略字段时取 config.json 的 defaults；
@@ -291,6 +296,13 @@ func (s *Server) updateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.AgentID != nil {
 		if err := s.store.SetSessionAgent(id, *req.AgentID); err != nil {
+			writeStoreError(w, err)
+			return
+		}
+	}
+	if req.SystemPrompt != nil {
+		// 空串 = 清掉覆盖（落库就是空串 ⇒ 解析时回落到 agent 的 ⇒ 底子算全局）
+		if err := s.store.SetSessionSystemPrompt(id, *req.SystemPrompt); err != nil {
 			writeStoreError(w, err)
 			return
 		}

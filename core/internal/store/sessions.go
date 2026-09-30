@@ -139,6 +139,13 @@ func (s *Store) SetSessionAgent(id, agentID string) error {
 	return s.execTouch("UPDATE sessions SET agent_id = ?1 WHERE id = ?2", agentID, id)
 }
 
+// SetSessionSystemPrompt：写会话级提示词覆盖（空串 = **清掉覆盖** ⇒ 解析回落到 agent 的）。
+//
+// 与其它几个 UPDATE 一样**不碰 updated_at**（改提示词不该让会话跳到列表最上面）。
+func (s *Store) SetSessionSystemPrompt(id, systemPrompt string) error {
+	return s.execTouch("UPDATE sessions SET system_prompt = ?1 WHERE id = ?2", systemPrompt, id)
+}
+
 // RenameAgentReferences：把**所有会话**对 agent 的软引用从 old 搬到 new。
 //
 // 改名时**先搬库、再写文件**（这个顺序是刻意的，理由见 server.updateAgent 的注释）。

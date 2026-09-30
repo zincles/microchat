@@ -44,6 +44,16 @@ const materialHeader = "【要压缩的这段对话】\n"
 // dummyReply：本地假上游（`kind: dummy`）吐的那句摘要 —— 确定性、不联网，一眼认得出是假的。
 const dummyReply = "（测试用假摘要）"
 
+// compactTimeout：**压缩这一趟子调用的上限** —— 60 秒。
+//
+// 与 title 的 10s 是同一个理由，只是压缩的材料大、给得宽些：渠道的 `timeouts.total_seconds`
+// 缺省 300s，上游"接了不回"时这一趟会一直挂着，`turn` 的压缩状态就一直是 `running`
+// （界面转圈停不下来）。到点即撤 ⇒ 这一次报失败（带原因）、会话一个字节都不动（失败不阻塞）。
+//
+// 取 60s 而不是沿用渠道默认：压缩是**后台**作业，卡住的是"这一趟"而不是某一轮的可见性；
+// 但后台作业也不该无限期占着 `turn` 的那一档状态。**只加给辅助调用**（compact / title）。
+const compactTimeout = 60 * time.Second
+
 // 压不动 / 压不了时的口径：**明说**，不静默降级（口径见 `AGENTS.md`：只有 Compact，没有"丢"）。
 
 // Request：一次压缩要压哪儿 —— **两种给法二选一**。
@@ -118,7 +128,10 @@ func (s *Service) Start(session model.Session, req Request) (turn.CompactStatus,
 		return turn.CompactStatus{}, busy()
 	}
 	go func() {
-		_, runErr := s.execute(context.Background(), prepared)
+		// 辅助调用只给这一趟短超时（理由见 `compactTimeout`）：到点即撤 ⇒ 这一次报失败、会话不动。
+		ctx, cancel := context.WithTimeout(context.Background(), compactTimeout)
+		defer cancel()
+		_, runErr := s.execute(ctx, prepared)
 		s.finish(session.ID, runErr)
 	}()
 	return *status, nil

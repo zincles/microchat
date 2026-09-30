@@ -2,7 +2,9 @@ package server
 
 import (
 	"net/http"
+	"strings"
 
+	"microchat/internal/config"
 	"microchat/internal/model"
 	"microchat/internal/state"
 )
@@ -46,6 +48,14 @@ func (s *Server) getSessionPrompt(w http.ResponseWriter, r *http.Request) {
 	level := "conversation"
 	if source == state.PromptFromAgent {
 		level = s.promptSourceLevel(*session)
+	}
+	// **永不给空**：三级解析全落空时（典型是会话的 `agent_id` 指向一个**已不存在**的 agent
+	// —— 软引用悬空）就用内置默认 agent 的那句兜底。标着 `builtin` 却回空文本是误导：
+	// 界面会把它画成一条空的 system 消息，而出站那边真发出去的也是这句兜底。
+	// ⚠ 只补在这一处（`/prompt` 的出口）；`chat` / `state` 里的解析有自己的一套口径，不动它们。
+	if strings.TrimSpace(text) == "" {
+		text = config.BuiltinDefaultAgent().SystemPrompt
+		level = "builtin"
 	}
 	writeJSON(w, http.StatusOK, promptView{Text: text, Source: level})
 }

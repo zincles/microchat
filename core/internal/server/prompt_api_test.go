@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"microchat/internal/config"
@@ -100,6 +101,74 @@ func TestPromptRouteReportsAllThreeLevels(t *testing.T) {
 	if code, view := box.prompt(t, builtin); code != http.StatusOK ||
 		view.Source != "builtin" || view.Text != config.BuiltinDefaultAgent().SystemPrompt {
 		t.Fatalf("内置默认那一级：%d %+v", code, view)
+	}
+}
+
+// 会话的 `agent_id` 指向一个**已不存在**的 agent（软引用悬空）⇒ 三级解析全落空。
+//
+// 这时**不许**回空文本（标着 `builtin` 却是空 = 误导）：用内置默认那句兜底，`source` 仍报 `builtin`。
+func TestPromptRouteFallsBackToBuiltinWhenAgentIsDangling(t *testing.T) {
+	box := newPromptSandbox(t, `{"default_agent":"跑团","agents":[{"id":"跑团","name":"跑团主持人","system_prompt":"你是跑团主持人。"}]}`)
+	dangling := box.session(t, "", "早就删掉的agent")
+
+	code, view := box.prompt(t, dangling)
+	if code != http.StatusOK {
+		t.Fatalf("该 200，得到 %d", code)
+	}
+	if view.Source != "builtin" || view.Text != config.BuiltinDefaultAgent().SystemPrompt {
+		t.Fatalf("悬空 agent 该退回内置默认那句、且标 builtin：%+v", view)
+	}
+	if strings.TrimSpace(view.Text) == "" {
+		t.Fatal("`/prompt` **永不给空文本**")
+	}
+}
+
+// `PATCH /sessions/{session_id}` 的 `system_prompt` **真生效**（不是收下不用）：
+//
+//	没给（或 `null`）= 不动；`""` = 清掉覆盖（回落 agent 的）；非空 = 写进 `sessions.system_prompt`。
+func TestPatchSessionSystemPromptTakesEffect(t *testing.T) {
+	box := newPromptSandbox(t, `{"default_agent":"跑团","agents":[{"id":"跑团","name":"跑团主持人","system_prompt":"你是跑团主持人。"}]}`)
+	id := box.session(t, "", "跑团")
+
+	// 非空 ⇒ 真写进库，`/prompt` 跟着变 conversation
+	recorder := call(box.server, "PATCH", "/api/v1/sessions/"+id, `{"system_prompt":"你是临时改的。"}`)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("PATCH 该 200，得到 %d：%s", recorder.Code, recorder.Body.String())
+	}
+	session, err := box.store.GetSession(id)
+	if err != nil || session == nil {
+		t.Fatalf("读会话失败：%v", err)
+	}
+	if session.SystemPrompt != "你是临时改的。" {
+		t.Fatalf("该真写进库：%q", session.SystemPrompt)
+	}
+	if _, view := box.prompt(t, id); view.Source != "conversation" || view.Text != "你是临时改的。" {
+		t.Fatalf("写完之后 `/prompt` 该报 conversation：%+v", view)
+	}
+
+	// 空串 ⇒ 清掉覆盖（回落到 agent 的）
+	if recorder := call(box.server, "PATCH", "/api/v1/sessions/"+id, `{"system_prompt":""}`); recorder.Code != http.StatusOK {
+		t.Fatalf("PATCH 空串该 200，得到 %d：%s", recorder.Code, recorder.Body.String())
+	}
+	if _, view := box.prompt(t, id); view.Source != "agent" || view.Text != "你是跑团主持人。" {
+		t.Fatalf("清掉覆盖该回落 agent：%+v", view)
+	}
+
+	// 没给这个键 ⇒ 一个字都不动（`null` 同理 —— 指针为 nil）
+	before, _ := box.store.GetSession(id)
+	if recorder := call(box.server, "PATCH", "/api/v1/sessions/"+id, `{"title":"新名字"}`); recorder.Code != http.StatusOK {
+		t.Fatalf("PATCH 该 200，得到 %d", recorder.Code)
+	}
+	after, _ := box.store.GetSession(id)
+	if after.Title != "新名字" || after.SystemPrompt != before.SystemPrompt {
+		t.Fatalf("没给 system_prompt ⇒ 不许动它：%q", after.SystemPrompt)
+	}
+	if recorder := call(box.server, "PATCH", "/api/v1/sessions/"+id, `{"system_prompt":null}`); recorder.Code != http.StatusOK {
+		t.Fatalf("PATCH null 该 200，得到 %d", recorder.Code)
+	}
+	nulled, _ := box.store.GetSession(id)
+	if nulled.SystemPrompt != before.SystemPrompt {
+		t.Fatalf("null 该当「不动」：%q", nulled.SystemPrompt)
 	}
 }
 

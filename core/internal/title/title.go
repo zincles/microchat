@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"microchat/internal/abilities"
 	"microchat/internal/config"
@@ -51,6 +52,16 @@ const (
 
 // dummyReply：本地假上游（`kind: dummy`）吐的那句标题 —— 确定性、不联网，一眼认得出是假的。
 const dummyReply = "（测试用假标题）"
+
+// autoTimeout：**自动起标题这一趟子调用的上限** —— 10 秒。
+//
+// 为什么必须给：渠道的 `timeouts.total_seconds` 缺省 300s，上游"接了不回"时这趟会一直挂着；
+// 而 `Auto` 排在 `chat.run` 的 `Finish`（翻 idle）**之前** ⇒ 那一轮就一直不翻 idle（界面像卡死）。
+// 10s 到点即撤：`Generate` 原样报错 ⇒ `Auto` 记日志 + 退**首句截断**兜底，会话不受影响。
+//
+// **只加给辅助调用**（title —— compact 另有它自己的 60s，见 `compact.compactTimeout`）；
+// 前台那一轮的取消由 `turn` 登记表管，不在这里。
+const autoTimeout = 10 * time.Second
 
 // Result：一次起标题的结局（`-debug title` 直接打它）。
 type Result struct {
@@ -114,7 +125,10 @@ func (s *Service) Auto(session model.Session) {
 	if current == nil || strings.TrimSpace(current.Title) != "" {
 		return // 已经有名字（人起的或上次自动起的）⇒ 永不再自动覆盖
 	}
-	result, generateErr := s.Generate(context.Background(), *current)
+	// 辅助调用只给这一趟短超时（理由见 `autoTimeout`）：到点即撤 ⇒ 这一轮照常翻 idle。
+	ctx, cancel := context.WithTimeout(context.Background(), autoTimeout)
+	defer cancel()
+	result, generateErr := s.Generate(ctx, *current)
 	if generateErr != nil {
 		log.Printf("起标题：会话 %s 没起成，退回首句截断兜底（这一轮照常）：%v", shortID(current.ID), generateErr)
 		s.fallback(*current)
