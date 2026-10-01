@@ -11,7 +11,7 @@ import (
 
 // RecordSummary：**压缩的落库口** —— 一个事务里插一行摘要，再把**它的成员**指过去。
 //
-// 成员是谁由 `summary.SourceKind` 定（**同质**：一条摘要的成员不许混）：
+// 成员是谁由 `summary.Type` 定（**同质**：一条摘要的成员不许混）：
 //
 //	message ⇒ 回填那一段消息的 `summary_id`（`messages` 上唯一允许被压缩改的那一格）；
 //	summary ⇒ 回填那批子摘要的 `parent_summary_id`（合并级）。
@@ -30,10 +30,10 @@ import (
 //
 // `sessions.updated_at` **不动**：压的是派生数据，对话本身没变（列表排序该按"最后一次说话"）。
 func (s *Store) RecordSummary(summary model.Summary, sourceIDs []string) error {
-	switch summary.SourceKind {
-	case model.SourceMessages, model.SourceSummaries:
+	switch summary.Type {
+	case model.TypeMessages, model.TypeSummaries:
 	default:
-		return InvalidError("摘要的成员只能是消息或摘要（source_kind 不认识：" + string(summary.SourceKind) + "）")
+		return InvalidError("摘要的成员只能是消息或摘要（type 不认识：" + string(summary.Type) + "）")
 	}
 	if len(sourceIDs) == 0 {
 		return InvalidError("压缩要盖住至少一条（空区间不落库）")
@@ -47,7 +47,7 @@ func (s *Store) RecordSummary(summary model.Summary, sourceIDs []string) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if summary.SourceKind == model.SourceSummaries {
+	if summary.Type == model.TypeSummaries {
 		if err := insertSummary(tx, summary); err != nil {
 			return err
 		}
@@ -215,7 +215,7 @@ func scanSummary(row scanner) (model.Summary, error) {
 	var parent, begin, end, sourceIDs, usage sql.NullString
 	var dirty int64
 	err := row.Scan(
-		&summary.ID, &summary.SessionID, &parent, &summary.SourceKind, &begin, &end,
+		&summary.ID, &summary.SessionID, &parent, &summary.Type, &begin, &end,
 		&summary.Text, &summary.Blocks, &summary.Tokens, &sourceIDs,
 		&summary.Provider, &summary.Model, &summary.PromptVersion, &usage, &dirty, &summary.CreatedAt,
 	)
@@ -284,7 +284,7 @@ func insertSummary(tx *sql.Tx, summary model.Summary) error {
 		   (id, session_id, parent_summary_id, source_kind, begin_message_id, end_message_id,
 		    text, blocks, tokens, source_ids, provider, model, prompt_version, usage, dirty, created_at)
 		 VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)`,
-		summary.ID, summary.SessionID, string(summary.SourceKind),
+		summary.ID, summary.SessionID, string(summary.Type),
 		summary.BeginMessageID, summary.EndMessageID, summary.Text, summary.Blocks, summary.Tokens,
 		string(encoded), summary.Provider, summary.Model, summary.PromptVersion,
 		usageArg(summary.Usage), dirtyArg(summary.Dirty), summary.CreatedAt)

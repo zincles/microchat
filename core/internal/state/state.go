@@ -322,20 +322,20 @@ const (
 
 // Outgoing：发给模型的一条消息。角色含 system —— 系统提示词不落库，但必须出现在请求里。
 //
-// `Source` 那一组是**给自己看的出处**（不发给上游）：检查"压缩后到底发了什么"只能靠它，
+// `Type` 那一组是**给自己看的出处**（不发给上游）：检查"压缩后到底发了什么"只能靠它，
 // 否则界面只能靠正文里的抬头去猜（猜法一改就散 ✗）。
 type Outgoing struct {
 	Role    OutgoingRole `json:"role"`
 	Content string       `json:"content"`
 
-	Source    string  `json:"source"`               // system | message | summary
-	MessageID *string `json:"message_id,omitempty"` // source=message
-	SummaryID *string `json:"summary_id,omitempty"` // source=summary
-	Blocks    *int64  `json:"blocks,omitempty"`     // source=summary：它覆盖几个块
+	Type      string  `json:"type"`                 // system | message | summary
+	MessageID *string `json:"message_id,omitempty"` // type=message
+	SummaryID *string `json:"summary_id,omitempty"` // type=summary
+	Blocks    *int64  `json:"blocks,omitempty"`     // type=summary：它覆盖几个块
 	// Idx：这一项对应**第几条消息**（派生字段，同 `model.Message.Idx`）。
-	// `source=system` ⇒ **0**（合成的系统提示词，它不是消息）；`source=message` ⇒ 它自己那条的序号。
+	// `type=system` ⇒ **0**（合成的系统提示词，它不是消息）；`type=message` ⇒ 它自己那条的序号。
 	Idx *int `json:"idx,omitempty"`
-	// FromIdx / ToIdx：`source=summary` 时它**替代了**第几条到第几条（闭区间）。
+	// FromIdx / ToIdx：`type=summary` 时它**替代了**第几条到第几条（闭区间）。
 	// 摘要不是谁说的话（它没自己的 idx）；有这两个数 ⇒ "第 5–10 条被压成了哪一条"一眼可见。
 	// 区间缺失（老数据 / 指针悬空）⇒ 不带这一对。
 	FromIdx *int `json:"from_idx,omitempty"`
@@ -344,6 +344,9 @@ type Outgoing struct {
 	// 它的 `message_id` 是**预测值** —— 给出去只为让这一项与别的 message 项同形状（逐字段可比），
 	// 别拿它去查消息（真发那一刻会另铸一个 id，库里永远没有这个）。
 	Pending bool `json:"pending,omitempty"`
+	// Children：只在 GET/POST /outgoing 里填（`ExpandChildren` 现算一层）—— 真发那一发保持扁平。
+	// 摘要的成员是哪些 id（消息 child 只给 id+idx，不给正文；摘要 child 再带它自己的范围）。
+	Children []Outgoing `json:"children,omitempty"`
 }
 
 // BuildOutgoing：组装**真正要发出去的东西** —— 系统提示词（+ 当前变量表）+ 历史
@@ -365,7 +368,7 @@ func BuildOutgoing(systemPrompt string, messages []model.Message, summaries []mo
 	if system != "" {
 		// 合成项：`idx = 0`（**它不是消息** —— 消息从 1 起）。与 `/outgoing` 第一条天然对齐。
 		zero := 0
-		outgoing = append(outgoing, Outgoing{Role: RoleSystem, Content: system, Source: "system", Idx: &zero})
+		outgoing = append(outgoing, Outgoing{Role: RoleSystem, Content: system, Type: "system", Idx: &zero})
 	}
 	// 序号是**派生**的（`store.IndexMessages` 按排序编好）⇒ 这里只查表，不重算。
 	// 摘要不是消息、没有自己的 idx ⇒ 它只带"替代了第几条到第几条"。
@@ -388,7 +391,7 @@ func BuildOutgoing(systemPrompt string, messages []model.Message, summaries []mo
 				role = RoleUser
 			}
 			id := part.message.ID
-			item := Outgoing{Role: role, Content: content, Source: "message", MessageID: &id}
+		item := Outgoing{Role: role, Content: content, Type: "message", MessageID: &id}
 			if part.message.Idx > 0 { // 手搭出来的消息没编过号 ⇒ 就不带这一格（0 是系统提示词的）
 				index := part.message.Idx
 				item.Idx = &index
@@ -411,7 +414,7 @@ func BuildOutgoing(systemPrompt string, messages []model.Message, summaries []mo
 		item := Outgoing{
 			Role:      RoleAssistant,
 			Content:   "【前情提要·" + strconv.FormatInt(blocks, 10) + " 块】\n" + text,
-			Source:    "summary",
+			Type:      "summary",
 			SummaryID: &id,
 			Blocks:    &count,
 		}
@@ -422,6 +425,71 @@ func BuildOutgoing(systemPrompt string, messages []model.Message, summaries []mo
 		outgoing = append(outgoing, item)
 	}
 	return outgoing
+}
+
+// ExpandChildren：给 `GET/POST /outgoing` 的那一层装配后处理 —— 把每个 type=summary 的项
+// 按它 `SourceIDs` 的顺序展开**一层**孩子（孙辈不展开：孩子的 Children 保持空）。
+//
+// 纯函数：只读 items/messages/summaries，不碰库。`BuildOutgoing` 本体**不调它**
+// （真发那一发保持扁平）；调它的只有出站查询路由。
+//
+// 孩子只给 id+idx，不给正文（Content 空串）：
+//   - 孩子是摘要 ⇒ {Type:summary, SummaryID, Blocks, FromIdx/ToIdx（spanIndexes 现算）}；
+//   - 孩子是消息 ⇒ {Type:message, MessageID, Idx}（Role 按那条消息的角色照填）；
+//   - 叶子（SourceIDs 空 / 一个都指不着）⇒ Children 置空数组（omitempty 下不序列化）。
+// system/message 项与 pending 项原样过（pending 那条无摘要可展）。
+func ExpandChildren(items []Outgoing, messages []model.Message, summaries []model.Summary) []Outgoing {
+	idxByID := make(map[string]int, len(messages))
+	roleByID := make(map[string]model.Role, len(messages))
+	for index := range messages {
+		if messages[index].Idx > 0 {
+			idxByID[messages[index].ID] = messages[index].Idx
+		}
+		roleByID[messages[index].ID] = messages[index].Role
+	}
+	bySummaryID := make(map[string]*model.Summary, len(summaries))
+	for index := range summaries {
+		bySummaryID[summaries[index].ID] = &summaries[index]
+	}
+	out := make([]Outgoing, len(items))
+	copy(out, items)
+	for index := range out {
+		item := &out[index]
+		if item.Type != "summary" || item.SummaryID == nil {
+			continue
+		}
+		summary, ok := bySummaryID[*item.SummaryID]
+		if !ok || len(summary.SourceIDs) == 0 {
+			item.Children = []Outgoing{}
+			continue
+		}
+		children := []Outgoing{}
+		for _, sourceID := range summary.SourceIDs {
+			if child, ok := bySummaryID[sourceID]; ok {
+				blocks := child.Blocks
+				if blocks < 1 {
+					blocks = 1
+				}
+				id, count := child.ID, blocks
+				entry := Outgoing{Role: RoleAssistant, Type: "summary", SummaryID: &id, Blocks: &count}
+				if from, to, ok := spanIndexes(child, idxByID); ok {
+					entry.FromIdx, entry.ToIdx = &from, &to
+				}
+				children = append(children, entry)
+				continue
+			}
+			if idx, ok := idxByID[sourceID]; ok {
+				id, at := sourceID, idx
+				role := RoleAssistant
+				if roleByID[sourceID] == model.RoleUser {
+					role = RoleUser
+				}
+				children = append(children, Outgoing{Role: role, Type: "message", MessageID: &id, Idx: &at})
+			}
+		}
+		item.Children = children
+	}
+	return out
 }
 
 // spanIndexes：这条摘要盖住的消息**序号**区间（闭区间）—— 摘要没有自己的 idx，只有覆盖范围。

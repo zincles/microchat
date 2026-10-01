@@ -67,12 +67,12 @@ func TitleFrom(text string, chars int) string {
 	return string(runes[:chars])
 }
 
-// SummarySourceKind：摘要的成员是消息还是摘要（同质，不许混）。
-type SummarySourceKind string
+// SummaryType：摘要的成员是消息还是摘要（同质，不许混）。
+type SummaryType string
 
 const (
-	SourceMessages  SummarySourceKind = "message"
-	SourceSummaries SummarySourceKind = "summary"
+	TypeMessages SummaryType = "message"
+	TypeSummaries SummaryType = "summary"
 )
 
 // Summary：一条摘要（Compact 的产出）。派生数据：只插行，绝不碰 messages 的正文。
@@ -83,7 +83,7 @@ type Summary struct {
 	ID              string            `json:"id"`
 	SessionID       string            `json:"session_id"`
 	ParentSummaryID *string           `json:"parent_summary_id,omitempty"`
-	SourceKind      SummarySourceKind `json:"source_kind"`
+	Type           SummaryType `json:"type"` // DB 列名是历史（`source_kind`），值与 JSON 名一致
 	BeginMessageID  *string           `json:"begin_message_id,omitempty"`
 	EndMessageID    *string           `json:"end_message_id,omitempty"`
 	Text            string            `json:"text"`

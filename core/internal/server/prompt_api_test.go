@@ -87,20 +87,20 @@ func TestPromptRouteReportsAllThreeLevels(t *testing.T) {
 
 	// ① 会话自己写了 ⇒ conversation（**覆盖** agent 的那份）
 	own := box.session(t, "你是自定义的提示词。", "跑团")
-	if code, view := box.prompt(t, own); code != http.StatusOK || view.Source != "conversation" || view.Text != "你是自定义的提示词。" {
+	if code, view := box.prompt(t, own); code != http.StatusOK || view.Type != "conversation" || view.Text != "你是自定义的提示词。" {
 		t.Fatalf("会话覆盖那一级：%d %+v", code, view)
 	}
 
 	// ② 会话没写、agent 在 `agents.json` 里 ⇒ agent
 	fromAgent := box.session(t, "", "跑团")
-	if code, view := box.prompt(t, fromAgent); code != http.StatusOK || view.Source != "agent" || view.Text != "你是跑团主持人。" {
+	if code, view := box.prompt(t, fromAgent); code != http.StatusOK || view.Type != "agent" || view.Text != "你是跑团主持人。" {
 		t.Fatalf("agent 那一级：%d %+v", code, view)
 	}
 
 	// ③ 两级都没有（agent 是内置的 `default`，`agents.json` 里根本没有这一条）⇒ builtin
 	builtin := box.session(t, "", "default")
 	if code, view := box.prompt(t, builtin); code != http.StatusOK ||
-		view.Source != "builtin" || view.Text != config.BuiltinDefaultAgent().SystemPrompt {
+		view.Type != "builtin" || view.Text != config.BuiltinDefaultAgent().SystemPrompt {
 		t.Fatalf("内置默认那一级：%d %+v", code, view)
 	}
 }
@@ -116,7 +116,7 @@ func TestPromptRouteFallsBackToBuiltinWhenAgentIsDangling(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("该 200，得到 %d", code)
 	}
-	if view.Source != "builtin" || view.Text != config.BuiltinDefaultAgent().SystemPrompt {
+	if view.Type != "builtin" || view.Text != config.BuiltinDefaultAgent().SystemPrompt {
 		t.Fatalf("悬空 agent 该退回内置默认那句、且标 builtin：%+v", view)
 	}
 	if strings.TrimSpace(view.Text) == "" {
@@ -143,7 +143,7 @@ func TestPatchSessionSystemPromptTakesEffect(t *testing.T) {
 	if session.SystemPrompt != "你是临时改的。" {
 		t.Fatalf("该真写进库：%q", session.SystemPrompt)
 	}
-	if _, view := box.prompt(t, id); view.Source != "conversation" || view.Text != "你是临时改的。" {
+	if _, view := box.prompt(t, id); view.Type != "conversation" || view.Text != "你是临时改的。" {
 		t.Fatalf("写完之后 `/prompt` 该报 conversation：%+v", view)
 	}
 
@@ -151,7 +151,7 @@ func TestPatchSessionSystemPromptTakesEffect(t *testing.T) {
 	if recorder := call(box.server, "PATCH", "/api/v1/sessions/"+id, `{"system_prompt":""}`); recorder.Code != http.StatusOK {
 		t.Fatalf("PATCH 空串该 200，得到 %d：%s", recorder.Code, recorder.Body.String())
 	}
-	if _, view := box.prompt(t, id); view.Source != "agent" || view.Text != "你是跑团主持人。" {
+	if _, view := box.prompt(t, id); view.Type != "agent" || view.Text != "你是跑团主持人。" {
 		t.Fatalf("清掉覆盖该回落 agent：%+v", view)
 	}
 

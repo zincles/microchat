@@ -521,21 +521,21 @@ func (h *harness) pyramid(t *testing.T) []model.Message {
 	if len(messages) != 4 {
 		t.Fatalf("金字塔要四条消息，拿到 %d 条", len(messages))
 	}
-	record := func(id string, kind model.SummarySourceKind, begin, end, text string, sourceIDs []string) {
+	record := func(id string, kind model.SummaryType, begin, end, text string, sourceIDs []string) {
 		t.Helper()
 		if err := h.store.RecordSummary(model.Summary{
-			ID: id, SessionID: h.sessionID, SourceKind: kind,
+			ID: id, SessionID: h.sessionID, Type: kind,
 			BeginMessageID: &begin, EndMessageID: &end, Text: text, Tokens: 50,
 			Provider: "fake", Model: "fake-model", PromptVersion: 1, CreatedAt: 1,
 		}, sourceIDs); err != nil {
 			t.Fatalf("落摘要 %s 失败：%v", id, err)
 		}
 	}
-	record("s1", model.SourceMessages, messages[0].ID, messages[1].ID, "摘要一",
+	record("s1", model.TypeMessages, messages[0].ID, messages[1].ID, "摘要一",
 		[]string{messages[0].ID, messages[1].ID})
-	record("s2", model.SourceMessages, messages[2].ID, messages[3].ID, "摘要二",
+	record("s2", model.TypeMessages, messages[2].ID, messages[3].ID, "摘要二",
 		[]string{messages[2].ID, messages[3].ID})
-	record("s3", model.SourceSummaries, messages[0].ID, messages[3].ID, "摘要根", []string{"s1", "s2"})
+	record("s3", model.TypeSummaries, messages[0].ID, messages[3].ID, "摘要根", []string{"s1", "s2"})
 	return messages
 }
 
@@ -652,7 +652,7 @@ func TestSummaryEnterRefusals(t *testing.T) {
 	// 只盖住第 1 条：第 2 条于是"还没被摘要盖住"
 	begin, end := messages[0].ID, messages[0].ID
 	if err := h.store.RecordSummary(model.Summary{
-		ID: "only1", SessionID: h.sessionID, SourceKind: model.SourceMessages,
+		ID: "only1", SessionID: h.sessionID, Type: model.TypeMessages,
 		BeginMessageID: &begin, EndMessageID: &end, Text: "只盖住第一条", Tokens: 5,
 		Provider: "fake", Model: "fake-model", PromptVersion: 1, CreatedAt: 1,
 	}, []string{messages[0].ID}); err != nil {
@@ -690,7 +690,7 @@ func TestSummaryTargetMergedAwayGoesInactive(t *testing.T) {
 	// 把 s3 并到一个新的父下面（它不再是根 ⇒ 没有可重摇的摘要了）
 	s3 := h.summary(t, "s3")
 	if err := h.store.RecordSummary(model.Summary{
-		ID: "s4", SessionID: h.sessionID, SourceKind: model.SourceSummaries,
+		ID: "s4", SessionID: h.sessionID, Type: model.TypeSummaries,
 		BeginMessageID: s3.BeginMessageID, EndMessageID: s3.EndMessageID, Text: "更高的根", Tokens: 50,
 		Provider: "fake", Model: "fake-model", PromptVersion: 1, CreatedAt: 1,
 	}, []string{"s3"}); err != nil {
@@ -714,7 +714,7 @@ func TestSummarySwitchTargetAndBusy(t *testing.T) {
 	record := func(id string, begin, end string) {
 		t.Helper()
 		if err := h.store.RecordSummary(model.Summary{
-			ID: id, SessionID: h.sessionID, SourceKind: model.SourceMessages,
+			ID: id, SessionID: h.sessionID, Type: model.TypeMessages,
 			BeginMessageID: &begin, EndMessageID: &end, Text: "摘要 " + id, Tokens: 50,
 			Provider: "fake", Model: "fake-model", PromptVersion: 1, CreatedAt: 1,
 		}, []string{begin, end}); err != nil {

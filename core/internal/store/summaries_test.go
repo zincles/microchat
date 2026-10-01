@@ -27,7 +27,7 @@ func TestRecordSummaryPointsTheSpanAndRefusesOverlap(t *testing.T) {
 	}
 
 	summary := model.Summary{
-		ID: "sum1", SessionID: "s1", SourceKind: model.SourceMessages,
+		ID: "sum1", SessionID: "s1", Type: model.TypeMessages,
 		BeginMessageID: new("m1"), EndMessageID: new("m2"),
 		Text: "前情提要", Blocks: 1, Tokens: 5, SourceIDs: []string{"m1", "m2"},
 		Provider: "dummy", Model: "dummy", PromptVersion: 42, CreatedAt: 10,
@@ -92,7 +92,7 @@ func TestRecordSummaryMergesChildSummaries(t *testing.T) {
 	seedSession(t, st, "s1", "m1", "m2", "m3", "m4")
 	messageSummary := func(id, begin, end, text string) model.Summary {
 		return model.Summary{
-			ID: id, SessionID: "s1", SourceKind: model.SourceMessages,
+			ID: id, SessionID: "s1", Type: model.TypeMessages,
 			BeginMessageID: new(begin), EndMessageID: new(end),
 			Text: text, Blocks: 1, Tokens: 3, SourceIDs: []string{begin, end},
 			Provider: "dummy", Model: "dummy", PromptVersion: 1, CreatedAt: 1,
@@ -106,7 +106,7 @@ func TestRecordSummaryMergesChildSummaries(t *testing.T) {
 	}
 
 	parent := model.Summary{
-		ID: "p1", SessionID: "s1", SourceKind: model.SourceSummaries,
+		ID: "p1", SessionID: "s1", Type: model.TypeSummaries,
 		BeginMessageID: new("m1"), EndMessageID: new("m4"),
 		Text: "并起来", Blocks: 2, Tokens: 6, SourceIDs: []string{"c1", "c2"},
 		Provider: "dummy", Model: "dummy", PromptVersion: 1, CreatedAt: 2,
@@ -116,7 +116,7 @@ func TestRecordSummaryMergesChildSummaries(t *testing.T) {
 	}
 
 	byID := summariesByID(t, st, "s1")
-	if got := byID["p1"]; got.SourceKind != model.SourceSummaries || got.ParentSummaryID != nil {
+	if got := byID["p1"]; got.Type != model.TypeSummaries || got.ParentSummaryID != nil {
 		t.Fatalf("父那一行该是顶层 summary：%+v", got)
 	}
 	for _, child := range []string{"c1", "c2"} {
@@ -142,7 +142,7 @@ func TestRecordSummaryMergeRefusesPoachedOrStrayChildren(t *testing.T) {
 	seedSession(t, st, "s2", "m5", "m6")
 	messageSummary := func(sessionID, id, begin, end string) model.Summary {
 		return model.Summary{
-			ID: id, SessionID: sessionID, SourceKind: model.SourceMessages,
+			ID: id, SessionID: sessionID, Type: model.TypeMessages,
 			BeginMessageID: new(begin), EndMessageID: new(end),
 			Text: id, Blocks: 1, SourceIDs: []string{begin, end}, CreatedAt: 1,
 		}
@@ -158,7 +158,7 @@ func TestRecordSummaryMergeRefusesPoachedOrStrayChildren(t *testing.T) {
 	}
 	parent := func(id string, children ...string) model.Summary {
 		return model.Summary{
-			ID: id, SessionID: "s1", SourceKind: model.SourceSummaries,
+			ID: id, SessionID: "s1", Type: model.TypeSummaries,
 			BeginMessageID: new("m1"), EndMessageID: new("m4"),
 			Text: id, Blocks: 2, SourceIDs: children, CreatedAt: 2,
 		}
@@ -227,7 +227,7 @@ func TestReplaceSummaryTextSwapsTextAndKeepsTheFrame(t *testing.T) {
 	st := openTemp(t)
 	seedSession(t, st, "s1", "m1", "m2", "m3", "m4")
 	original := model.Summary{
-		ID: "sum1", SessionID: "s1", SourceKind: model.SourceMessages,
+		ID: "sum1", SessionID: "s1", Type: model.TypeMessages,
 		BeginMessageID: new("m1"), EndMessageID: new("m2"),
 		Text: "旧正文", Blocks: 1, Tokens: 5, SourceIDs: []string{"m1", "m2"},
 		Provider: "dummy", Model: "dummy", PromptVersion: 42, CreatedAt: 10,
@@ -239,7 +239,7 @@ func TestReplaceSummaryTextSwapsTextAndKeepsTheFrame(t *testing.T) {
 	updated := model.Summary{
 		ID: "sum1", SessionID: "s1",
 		// 下面这几格是"不许动"的，故意都给成别的值来验守卫
-		SourceKind: model.SourceSummaries, Blocks: 77, SourceIDs: []string{"别的"},
+		Type: model.TypeSummaries, Blocks: 77, SourceIDs: []string{"别的"},
 		BeginMessageID: new("m3"), EndMessageID: new("m4"), CreatedAt: 999,
 		// 这几格才是该换的
 		Text: "新正文", Tokens: 999, Provider: "other", Model: "other-model",
@@ -258,7 +258,7 @@ func TestReplaceSummaryTextSwapsTextAndKeepsTheFrame(t *testing.T) {
 		t.Fatalf("usage 该跟着换：%s", got.Usage)
 	}
 	// 不该动的（含故意给错的值）
-	if got.ID != "sum1" || got.SessionID != "s1" || got.SourceKind != model.SourceMessages {
+	if got.ID != "sum1" || got.SessionID != "s1" || got.Type != model.TypeMessages {
 		t.Fatalf("地址 / 成员种类被动了：%+v", got)
 	}
 	if got.Blocks != 1 || got.CreatedAt != 10 {
@@ -293,7 +293,7 @@ func TestReplaceSummaryTextRefusesNonTopLevelAndStray(t *testing.T) {
 	seedSession(t, st, "s2", "m5", "m6")
 	messageSummary := func(sessionID, id, begin, end string) model.Summary {
 		return model.Summary{
-			ID: id, SessionID: sessionID, SourceKind: model.SourceMessages,
+			ID: id, SessionID: sessionID, Type: model.TypeMessages,
 			BeginMessageID: new(begin), EndMessageID: new(end),
 			Text: id, Blocks: 1, Tokens: 3, SourceIDs: []string{begin, end},
 			Provider: "dummy", Model: "dummy", PromptVersion: 1, CreatedAt: 1,
@@ -310,7 +310,7 @@ func TestReplaceSummaryTextRefusesNonTopLevelAndStray(t *testing.T) {
 	}
 	// c1 被并走 ⇒ 不再是顶层
 	parent := model.Summary{
-		ID: "p1", SessionID: "s1", SourceKind: model.SourceSummaries,
+		ID: "p1", SessionID: "s1", Type: model.TypeSummaries,
 		BeginMessageID: new("m1"), EndMessageID: new("m4"),
 		Text: "并起来", Blocks: 2, Tokens: 6, SourceIDs: []string{"c1", "c2"}, CreatedAt: 2,
 	}

@@ -58,6 +58,45 @@ func (s *Server) compactSession(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusAccepted, status)
 }
+// compactPreview：`POST /sessions/{session_id}/compact/preview` —— **只算不动**。
+//
+// 调同一套 `resolveSpan`（按块数那条路）：回"压哪段（from/to）、怎么压（merged）、
+// 吃哪几坨（source_ids）+ 人话一句"。区间入口自己就是答案，不走这里（给了就 400）。
+// 落库、调上游、挂号一概不碰 —— 与 deletion-preview 同一条规矩。
+func (s *Server) compactPreview(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	var req CompactReq
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.BeginIdx != nil || req.EndIdx != nil {
+		writeError(w, http.StatusBadRequest, "invalid", "预览只走按块数那条路（区间入口自己就是答案）")
+		return
+	}
+	blocks := 0
+	if req.Blocks != nil {
+		blocks = *req.Blocks
+	}
+	messages, err := s.store.ListMessages(session.ID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	summaries, err := s.store.ListSummaries(session.ID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	result, err := compact.Preview(messages, summaries, blocks, s.config.Chat.CompactBlocks)
+	if err != nil {
+		writeCompactError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
 
 // writeCompactError：压缩那一路的失败 → 固定的错误体（客户端按 `code` 分支）。
 func writeCompactError(w http.ResponseWriter, err error) {

@@ -99,7 +99,7 @@ func TestCompactRouteAcceptsAndMarksTheSpan(t *testing.T) {
 		t.Fatalf("%d：%s", recorder.Code, recorder.Body.String())
 	}
 	var outgoing []struct {
-		Source    string  `json:"source"`
+		Type      string  `json:"type"`
 		SummaryID *string `json:"summary_id"`
 		Blocks    *int64  `json:"blocks"`
 	}
@@ -108,7 +108,7 @@ func TestCompactRouteAcceptsAndMarksTheSpan(t *testing.T) {
 	}
 	summaries := []int{}
 	for index, item := range outgoing {
-		if item.Source == "summary" {
+		if item.Type == "summary" {
 			summaries = append(summaries, index)
 		}
 	}
@@ -135,6 +135,43 @@ func TestCompactRouteAcceptsAndMarksTheSpan(t *testing.T) {
 	recorder = call(box.server, "POST", box.path+"/compact", `{"begin_idx":1,"end_idx":4}`)
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("覆盖已压缩的区间该 400，得到 %d：%s", recorder.Code, recorder.Body.String())
+	}
+}
+// 预览：`POST .../compact/preview {"blocks":2}` —— 只算不动（库里不落行），回压哪段+人话。
+func TestCompactPreviewComputesWithoutWriting(t *testing.T) {
+	box := newDummySandbox(t)
+	box.seedTurn(t, "第一句")
+	box.seedTurn(t, "第二句")
+	box.seedTurn(t, "第三句")
+	recorder := call(box.server, "POST", box.path+"/compact/preview", `{"blocks":2}`)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("预览该 200，得到 %d：%s", recorder.Code, recorder.Body.String())
+	}
+	var preview struct {
+		FromIdx int    `json:"from_idx"`
+		ToIdx   int    `json:"to_idx"`
+		Merged  bool   `json:"merged"`
+		Blocks  int    `json:"blocks"`
+		Action  string `json:"action"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &preview); err != nil {
+		t.Fatal(err)
+	}
+	if preview.FromIdx != 1 || preview.ToIdx != 4 || preview.Merged || preview.Blocks != 2 || preview.Action == "" {
+		t.Fatalf("预览 = %+v", preview)
+	}
+	// 只算不动：摘要一行都没落
+	rows, err := box.store.ListSummaries(box.sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("预览不许落库：%d 行", len(rows))
+	}
+	// 区间入口不走预览
+	recorder = call(box.server, "POST", box.path+"/compact/preview", `{"begin_idx":1,"end_idx":2}`)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("区间入口该 400，得到 %d", recorder.Code)
 	}
 }
 

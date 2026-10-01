@@ -295,7 +295,7 @@ func (b *dummySandbox) seedRootSummary(t *testing.T, beginIdx, endIdx int, text 
 		sourceIDs = append(sourceIDs, message.ID)
 	}
 	summary := model.Summary{
-		ID: ids[0], SessionID: b.sessionID, SourceKind: model.SourceMessages,
+		ID: ids[0], SessionID: b.sessionID, Type: model.TypeMessages,
 		BeginMessageID: new(messages[beginIdx-1].ID), EndMessageID: new(messages[endIdx-1].ID),
 		Text: text, Blocks: 1, Tokens: int64(len([]rune(text))), SourceIDs: sourceIDs,
 		Provider: "dummy", Model: "dummy", PromptVersion: 1, CreatedAt: 1,

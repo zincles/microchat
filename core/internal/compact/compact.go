@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -198,8 +199,8 @@ type Generated struct {
 
 // RegenerateSummary：按一条既有【顶层】摘要的**原始材料**重跑一次压缩（**不落库**）—— 摘要重摇用。
 //
-// 材料与当初那次压缩**同源**：`source_kind=message` ⇒ 那段消息的**当前**正文；
-// `source_kind=summary` ⇒ 它的孩子摘要（按区间排序）。目标必须：在本会话、`parent_summary_id IS NULL`、
+// 材料与当初那次压缩**同源**：`type=message`（DB 列名是历史：`source_kind`）⇒ 那段消息的**当前**正文；
+// `type=summary` ⇒ 它的孩子摘要（按区间排序）。目标必须：在本会话、`parent_summary_id IS NULL`、
 // 区间两端都在（口径见 `TODO.md` 第 8 条）。
 //
 // 生效渠道 / 模型 / 模板 / 本地假上游与 `prepare` 同一套；产出过同一套验证（剔 `<state>`、非空），
@@ -280,7 +281,7 @@ func regenerateSpan(target model.Summary, messages []model.Message, summaries []
 	if beginID == "" || endID == "" || !okBegin || !okEnd || begin > end {
 		return span{}, invalid("摘要 %s 的区间对不上眼前这条会话（被删过 / 老数据）：重新取一次", shortID(target.ID))
 	}
-	if target.SourceKind != model.SourceSummaries {
+	if target.Type != model.TypeSummaries {
 		return makeSpan(messages, begin, end, int(target.Blocks)), nil
 	}
 	// 合并级：孩子摘要按区间排序（`SourceIDs` 记的本来就是这个序，这里现排一遍求稳）
@@ -490,6 +491,45 @@ func resolveSpan(messages []model.Message, summaries []model.Summary, req Reques
 		return rangeSpan(messages, summaries, all, req)
 	}
 	return strategySpan(messages, summaries, all, req.Blocks, defaultBlocks)
+}
+
+// PreviewResult：压缩预览的结果 —— "压哪段、怎么压"（只算不动，不落库、不调上游、不挂号）。
+type PreviewResult struct {
+	FromIdx   int      `json:"from_idx"`
+	ToIdx     int      `json:"to_idx"`
+	Merged    bool     `json:"merged"`
+	Blocks    int      `json:"blocks"`
+	SourceIDs []string `json:"source_ids"`
+	Action    string   `json:"action"`
+}
+
+// Preview：**只算不动**的压缩预览 —— 调同一套 `resolveSpan`，算完"压哪段、怎么压"。
+//
+// 只走"按块数"那条路（`Request.Blocks`；区间入口自己就是答案，不需要预览）：
+// 落库、调上游、挂号一概不碰 —— 与 deletion-preview 同一条"只算不动"规矩。
+func Preview(messages []model.Message, summaries []model.Summary, blocks int, defaultBlocks int) (PreviewResult, error) {
+	resolved, err := resolveSpan(messages, summaries, Request{Blocks: blocks}, defaultBlocks)
+	if err != nil {
+		return PreviewResult{}, err
+	}
+	from, to := resolved.Begin+1, resolved.End+1
+	result := PreviewResult{
+		FromIdx: from, ToIdx: to,
+		Merged: len(resolved.Sources) > 0, Blocks: resolved.Blocks,
+	}
+	if result.Merged {
+		ids := make([]string, 0, len(resolved.Sources))
+		for _, source := range resolved.Sources {
+			ids = append(ids, source.ID)
+		}
+		result.SourceIDs = ids
+		result.Action = "并第" + strconv.Itoa(from) + "–" + strconv.Itoa(to) + "条那" +
+			strconv.Itoa(len(ids)) + "坨"
+	} else {
+		result.Action = "压第" + strconv.Itoa(from) + "–" + strconv.Itoa(to) +
+			"条（" + strconv.Itoa(resolved.Blocks) + "块）"
+	}
+	return result, nil
 }
 
 // strategySpan：策略 —— 按块数 N 入口，两层找。
@@ -938,7 +978,7 @@ func (s *Service) call(ctx context.Context, p *prepared) (Result, error) {
 	// 材料来源 → 落库那一份（成员是消息还是摘要）。
 	sourceIDs := make([]string, 0, len(p.span.Messages))
 	beginID, endID := "", ""
-	sourceKind := model.SourceMessages
+	summaryType := model.TypeMessages
 	dirty := false
 	if merge {
 		for _, source := range p.span.Sources {
@@ -948,7 +988,7 @@ func (s *Service) call(ctx context.Context, p *prepared) (Result, error) {
 		// 并集两端 = 第一条孩子的 begin、最后一条孩子的 end（孩子已按区间排序）
 		beginID = *p.span.Sources[0].BeginMessageID
 		endID = *p.span.Sources[len(p.span.Sources)-1].EndMessageID
-		sourceKind = model.SourceSummaries
+		summaryType = model.TypeSummaries
 	} else {
 		for _, message := range p.span.Messages {
 			sourceIDs = append(sourceIDs, message.ID)
@@ -965,7 +1005,7 @@ func (s *Service) call(ctx context.Context, p *prepared) (Result, error) {
 	}
 	summary := model.Summary{
 		ID: summaryID, SessionID: p.session.ID,
-		SourceKind:     sourceKind,
+		Type:           summaryType,
 		BeginMessageID: &beginID, EndMessageID: &endID,
 		Text: text,
 		// blocks = 覆盖了几个对话块（显示 + "≥N 块"判定；块本身不入库）；合并级 = 子和

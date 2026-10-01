@@ -150,7 +150,7 @@ func TestCompactWritesOneSummaryAndPointsTheSpan(t *testing.T) {
 		t.Fatalf("该只插一行摘要：%+v", rows)
 	}
 	row := rows[0]
-	if row.SourceKind != model.SourceMessages || row.Blocks != 2 || row.Dirty {
+	if row.Type != model.TypeMessages || row.Blocks != 2 || row.Dirty {
 		t.Fatalf("摘要那一行 = %+v", row)
 	}
 	if row.BeginMessageID == nil || *row.BeginMessageID != messages[0].ID ||
@@ -178,7 +178,7 @@ func TestCompactWritesOneSummaryAndPointsTheSpan(t *testing.T) {
 	outgoing := state.BuildOutgoing("", after, rows, nil)
 	summaries := 0
 	for _, item := range outgoing {
-		if item.Source == "summary" {
+		if item.Type == "summary" {
 			summaries++
 			if item.SummaryID == nil || *item.SummaryID != row.ID || item.Blocks == nil || *item.Blocks != 2 {
 				t.Fatalf("装配出来的摘要那条 = %+v", item)
@@ -505,7 +505,7 @@ func findSummary(t *testing.T, rows []model.Summary, id string) model.Summary {
 
 // 合并级：三块会话先按块压出**两条同层摘要**，再用 idx 区间并成一条父。
 //
-// 钉住：父的 SourceKind=summary、自己无父、Blocks=子和、两个孩子都指向它、Dirty 传播、
+// 钉住：父的 Type=summary、自己无父、Blocks=子和、两个孩子都指向它、Dirty 传播、
 // Begin/End=并集两端；且**消息指针保持指孩子**（升格是装配侧的事，合并绝不改 messages）。
 func TestCompactMergesSameLevelSummaries(t *testing.T) {
 	h := newHarness(t, config.AgentsConfig{})
@@ -547,8 +547,8 @@ func TestCompactMergesSameLevelSummaries(t *testing.T) {
 	}
 	rows := h.summaries(t)
 	parent := findSummary(t, rows, merged.SummaryID)
-	if parent.SourceKind != model.SourceSummaries {
-		t.Fatalf("父的 source_kind 该是 summary：%+v", parent)
+	if parent.Type != model.TypeSummaries {
+		t.Fatalf("父的 type 该是 summary：%+v", parent)
 	}
 	if parent.ParentSummaryID != nil {
 		t.Fatalf("父自己该是顶层：%+v", parent.ParentSummaryID)
@@ -583,7 +583,7 @@ func TestCompactMergesSameLevelSummaries(t *testing.T) {
 	outgoing := state.BuildOutgoing("", after, rows, nil)
 	summaries := 0
 	for _, item := range outgoing {
-		if item.Source != "summary" {
+		if item.Type != "summary" {
 			continue
 		}
 		summaries++
@@ -681,7 +681,7 @@ func TestRegenerateSummaryRefusals(t *testing.T) {
 	before := len(h.summaries(t))
 	staleID := "00000000-0000-7000-8000-0000000000ff"
 	if err := h.store.RecordSummary(model.Summary{
-		ID: staleID, SessionID: h.sessionID, SourceKind: model.SourceMessages, Text: "老数据",
+		ID: staleID, SessionID: h.sessionID, Type: model.TypeMessages, Text: "老数据",
 	}, []string{open[0].ID, open[1].ID}); err != nil {
 		t.Fatal(err)
 	}

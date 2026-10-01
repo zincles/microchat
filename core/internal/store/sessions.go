@@ -200,7 +200,7 @@ func (s *Store) DeleteSession(id string) error {
 // 摘要有三处必须重映射，否则复制出来的会话会指向**原**会话的 id：
 //   - 摘要自己的新 id ⇒ 消息上的 `summary_id` 与摘要的 `parent_summary_id`；
 //   - 两端区间 `begin_message_id` / `end_message_id`（它们指的是**消息** id）；
-//   - `source_ids`（审计 + 整批重做）—— 按 `source_kind` 指消息或摘要。
+//   - `source_ids`（审计 + 整批重做）—— 按 `type` 指消息或摘要（DB 列名是历史：`source_kind`）。
 //
 // **世界状态不复制**：它本来就现演，底子与正文都复制了就等于复制了它。
 func (s *Store) CopySession(sessionID string) (model.Session, error) {
@@ -266,7 +266,7 @@ func (s *Store) CopySession(sessionID string) (model.Session, error) {
 		summary := summaries[index]
 		if err := insertSummary(tx, model.Summary{
 			ID: summaryIDs[index], SessionID: copied.ID,
-			SourceKind:     summary.SourceKind,
+			Type:           summary.Type,
 			BeginMessageID: optionalID(summary.BeginMessageID, messageIDOf),
 			EndMessageID:   optionalID(summary.EndMessageID, messageIDOf),
 			Text:           summary.Text,
@@ -365,12 +365,12 @@ func remapID(id *string, table map[string]string) any {
 	return *optionalID(id, table)
 }
 
-// remapSourceIDs：`source_ids` 按 `source_kind` 指向消息或摘要 ⇒ 一并换成新 id。
+// remapSourceIDs：`source_ids` 按 `type` 指向消息或摘要 ⇒ 一并换成新 id（DB 列名是历史：`source_kind`）。
 //
 // 不换也能跑，但复制出来的摘要会一直指着**原会话**的 id（"当时吃的是什么"要追得回来）。
 func remapSourceIDs(summary model.Summary, messageIDOf, summaryIDOf map[string]string) []string {
 	table := summaryIDOf
-	if summary.SourceKind == model.SourceMessages {
+	if summary.Type == model.TypeMessages {
 		table = messageIDOf
 	}
 	remapped := make([]string, 0, len(summary.SourceIDs))

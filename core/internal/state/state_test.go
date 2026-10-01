@@ -289,7 +289,7 @@ func TestBuildOutgoingCarriesIndexes(t *testing.T) {
 		t.Fatalf("system 该是 idx 0（合成的，不是消息）：%+v", outgoing[0])
 	}
 	item := outgoing[1]
-	if item.Source != "summary" || item.FromIdx == nil || item.ToIdx == nil || *item.FromIdx != 1 || *item.ToIdx != 2 {
+	if item.Type != "summary" || item.FromIdx == nil || item.ToIdx == nil || *item.FromIdx != 1 || *item.ToIdx != 2 {
 		t.Fatalf("摘要该报它替代的范围（1..2）：%+v", item)
 	}
 	if item.Idx != nil {
@@ -299,7 +299,7 @@ func TestBuildOutgoingCarriesIndexes(t *testing.T) {
 		t.Fatalf("摘要是 AI 生成的前情 ⇒ 该标 assistant（保住交替）：%+v", item)
 	}
 	last := outgoing[2]
-	if last.Source != "message" || last.Idx == nil || *last.Idx != 3 || last.MessageID == nil || *last.MessageID != "m3" {
+	if last.Type != "message" || last.Idx == nil || *last.Idx != 3 || last.MessageID == nil || *last.MessageID != "m3" {
 		t.Fatalf("消息项该带它自己的序号：%+v", last)
 	}
 
@@ -316,6 +316,58 @@ func span(id string, parent *string, begin, end, text string, blocks int64) mode
 		ID: id, ParentSummaryID: parent,
 		BeginMessageID: new(begin), EndMessageID: new(end),
 		Text: text, Blocks: blocks,
+	}
+}
+
+// ExpandChildren：一父两子（消息+摘要）+ 叶子 + pending 过。
+func TestExpandChildren(t *testing.T) {
+	messages := []model.Message{
+		{ID: "m1", Idx: 1, Role: model.RoleUser, Content: "一"},
+		{ID: "m2", Idx: 2, Role: model.RoleAssistant, Content: "二"},
+		{ID: "m3", Idx: 3, Role: model.RoleUser, Content: "三"},
+	}
+	child := model.Summary{ID: "c1", BeginMessageID: new("m1"), EndMessageID: new("m2"), Text: "子", Blocks: 1, SourceIDs: []string{"m1", "m2"}}
+	parent := model.Summary{ID: "p1", BeginMessageID: new("m1"), EndMessageID: new("m3"), Text: "父", Blocks: 2, SourceIDs: []string{"c1", "m3"}}
+	leaf := model.Summary{ID: "leaf", BeginMessageID: new("m3"), EndMessageID: new("m3"), Text: "叶", Blocks: 1}
+	summaries := []model.Summary{child, parent, leaf}
+	pendingID := "pending-x"
+	next := 4
+	items := []Outgoing{
+		{Role: RoleAssistant, Content: "父正文", Type: "summary", SummaryID: new("p1")},
+		{Role: RoleAssistant, Content: "叶正文", Type: "summary", SummaryID: new("leaf")},
+		{Role: RoleUser, Content: "待发", Type: "message", MessageID: &pendingID, Idx: &next, Pending: true},
+	}
+	out := ExpandChildren(items, messages, summaries)
+	if len(out) != 3 {
+		t.Fatalf("条数该不变：%+v", out)
+	}
+	kids := out[0].Children
+	if len(kids) != 2 {
+		t.Fatalf("一父两子：%+v", out[0])
+	}
+	if kids[0].Type != "summary" || kids[0].SummaryID == nil || *kids[0].SummaryID != "c1" {
+		t.Fatalf("第一个孩子该是摘要 c1：%+v", kids[0])
+	}
+	if kids[0].FromIdx == nil || *kids[0].FromIdx != 1 || kids[0].ToIdx == nil || *kids[0].ToIdx != 2 {
+		t.Fatalf("摘要孩子该带范围 1..2：%+v", kids[0])
+	}
+	if len(kids[0].Children) != 0 {
+		t.Fatalf("只展一层，孙辈不展：%+v", kids[0])
+	}
+	if kids[0].Content != "" {
+		t.Fatalf("孩子只给 id+idx，不给正文：%+v", kids[0])
+	}
+	if kids[1].Type != "message" || kids[1].MessageID == nil || *kids[1].MessageID != "m3" || kids[1].Idx == nil || *kids[1].Idx != 3 {
+		t.Fatalf("第二个孩子该是消息 m3：%+v", kids[1])
+	}
+	if kids[1].Content != "" {
+		t.Fatalf("消息孩子不给正文：%+v", kids[1])
+	}
+	if out[1].Children == nil || len(out[1].Children) != 0 {
+		t.Fatalf("叶子该是空数组：%+v", out[1])
+	}
+	if len(out[2].Children) != 0 || out[2].Type != "message" || !out[2].Pending {
+		t.Fatalf("pending 项原样过：%+v", out[2])
 	}
 }
 

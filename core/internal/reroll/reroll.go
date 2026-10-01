@@ -887,8 +887,8 @@ func (s *Service) apply(item RerolledMessage) error {
 // applySummary：把摘要模式的第 `idx` 版**换回库里那条摘要** —— `store.ReplaceSummaryText`（就地换正文），
 // id / 覆盖区间 / parent / children 一概不动。
 //
-// `Dirty`：目标 `source_kind=message` ⇒ `false`（刚重摇出来就是干净的）；
-// `source_kind=summary` ⇒ **任一孩子脏**（用 `ListSummaries` 现算 —— 父盖着被改过的内容）。
+// `Dirty`：目标 `type=message`（DB 列名是历史：`source_kind`）⇒ `false`（刚重摇出来就是干净的）；
+// `type=summary` ⇒ **任一孩子脏**（用 `ListSummaries` 现算 —— 父盖着被改过的内容）。
 //
 // store 报 `ErrNotFound`（那条摘要没了 / 已经被并走了 ⇒ 守卫不符）⇒ 转成 reroll 的 not_found。
 func (s *Service) applySummary(entry *list, idx int) error {
@@ -902,7 +902,7 @@ func (s *Service) applySummary(entry *list, idx int) error {
 		if summary.ID != entry.summaryID {
 			continue
 		}
-		if summary.SourceKind == model.SourceSummaries {
+		if summary.Type == model.TypeSummaries {
 			for _, child := range summaries {
 				if child.ParentSummaryID != nil && *child.ParentSummaryID == summary.ID && child.Dirty {
 					dirty = true

@@ -1875,9 +1875,9 @@ func TestOutgoingViewerColorsBySource(t *testing.T) {
 	summaryID, messageID := "s1", "m9"
 	zero, nine, from, to := 0, 9, 3, 5
 	updated, _ := m.Update(outgoingMsg{items: []Outgoing{
-		{Role: "system", Content: "你是主持人", Source: "system", Idx: &zero},
-		{Role: "assistant", Content: "压缩摘要", Source: "summary", SummaryID: &summaryID, Blocks: &blocks, FromIdx: &from, ToIdx: &to},
-		{Role: "user", Content: "原样那句", Source: "message", MessageID: &messageID, Idx: &nine},
+		{Role: "system", Content: "你是主持人", Type: "system", Idx: &zero},
+		{Role: "assistant", Content: "压缩摘要", Type: "summary", SummaryID: &summaryID, Blocks: &blocks, FromIdx: &from, ToIdx: &to},
+		{Role: "user", Content: "原样那句", Type: "message", MessageID: &messageID, Idx: &nine},
 	}})
 	body := updated.(model).View().Content
 	lines := viewLines(updated.(model))
@@ -1991,7 +1991,7 @@ func TestRenameUpdatesSessionLocally(t *testing.T) {
 func systemFixture() model {
 	m := fixture()
 	m.showSystemPrompt = true
-	m.prompt = &SystemPrompt{Text: "你是跑团主持人。", Source: "agent"}
+	m.prompt = &SystemPrompt{Text: "你是跑团主持人。", Type: "agent"}
 	m.promptFor = "c1"
 	return m
 }
@@ -2079,7 +2079,7 @@ func TestSystemPromptIsFetchedOnEnteringSession(t *testing.T) {
 		t.Fatal("进会话该顺手拉一次生效的系统提示词")
 	}
 	// 回执存进 model，并记住它属于哪条会话
-	updated, _ := m.Update(promptMsg{sessionID: "c1", prompt: SystemPrompt{Text: "底子", Source: "builtin"}})
+	updated, _ := m.Update(promptMsg{sessionID: "c1", prompt: SystemPrompt{Text: "底子", Type: "builtin"}})
 	stored := updated.(model)
 	if stored.prompt == nil || stored.prompt.Text != "底子" || stored.promptFor != "c1" {
 		t.Fatalf("该把结果记下来：%+v（for=%q）", stored.prompt, stored.promptFor)

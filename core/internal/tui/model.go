@@ -1069,7 +1069,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// 左列是**压缩前的消息序号**（摘要写它涵盖的区间）—— 与 `/messages`、
 			// `/state?at_idx` 同一套"第几条"的词汇：于是"第 5–10 条被压成了哪一条"不用去数。
 			label, who, kind := "-", "消息", stylePlain
-			switch item.Source {
+			switch item.Type {
 			case "system":
 				who, kind = "系统提示词", styleDim
 				if item.Idx != nil {
@@ -1638,7 +1638,7 @@ func init() {
 		{name: "provider-del", args: "<id>", help: "删一条渠道（不可逆，先确认）", run: commandProviderDel},
 		{name: "think", help: "展开当前会话的思考全文（默认折叠在消息上方，想读全文才用）", run: commandThink},
 		{name: "system", help: "显示 / 隐藏消息区顶部的系统提示词（调试用，开关记在 ~/.config/microchat/tui.json）", run: commandSystem},
-		{name: "compact", args: "[N]", help: "把最老的 N 个已闭合块压成摘要（不给 N 用默认值）", run: commandCompact},
+		{name: "compact", args: "[N]", help: "按块压 N 个块成摘要（块=assistant→user交界，一块≥2条；底层不够就抬头并摘要；不给N用默认值）", run: commandCompact},
 		{name: "reroll", args: "[switch <n> | delete <n> | off | list]",
 			help: "重摇尾条那条回复（不带参数 = 进模式并摇一次；候选只在内存里）", run: commandReroll},
 		{name: "reroll-summary", args: "<idx> | switch <n> | delete <n> | off | list",
@@ -2164,7 +2164,8 @@ func commandRefresh(m model, _ []string) (tea.Model, tea.Cmd) {
 	return m, loadSessions(m.client)
 }
 
-// commandCompact：把最老的 N 个已闭合块压成摘要（**手工按钮的语义**）。
+// commandCompact：把最老的 N 个已闭合**块**压成摘要（**按块，不按条** —— 块在 assistant→user 交界处切，
+// 一块 ≥2 条；`/compact 1` 不是压 1 条，是压 1 块。底层凑不够就抬头并摘要，见 compact 策略）。
 //
 // 走路由 ⇒ **202 受理**（压缩真调一次上游 + 落库，不在这一趟里等）；底栏报受理结果。
 // 不给 N ⇒ 用后端的默认值（`config.json` 的 `compact_blocks`）。

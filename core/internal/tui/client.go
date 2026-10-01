@@ -271,11 +271,11 @@ func (c *Client) DeleteMessagesFrom(sessionID, messageID, lastDeletedMessageID s
 }
 
 // Outgoing：**(b) 当前已定历史的载荷**（标签已剔、状态已注入、压缩已生效）—— **不含还没发出去的那句**。
-// 每一条自带出处（system / message+message_id / summary+summary_id+blocks）—— 检查压缩效果就靠它。
+// 每一条自带类型（system / message+message_id / summary+summary_id+blocks+children）—— 检查压缩效果就靠它。
 type Outgoing struct {
 	Role      string  `json:"role"`
 	Content   string  `json:"content"`
-	Source    string  `json:"source"`
+	Type      string  `json:"type"`
 	MessageID *string `json:"message_id"`
 	SummaryID *string `json:"summary_id"`
 	Blocks    *int64  `json:"blocks"`
@@ -284,6 +284,8 @@ type Outgoing struct {
 	Idx     *int `json:"idx,omitempty"`
 	FromIdx *int `json:"from_idx,omitempty"`
 	ToIdx   *int `json:"to_idx,omitempty"`
+	// Children：summary 项往下展开的一层（叶子只给 id+idx，不给正文）。
+	Children []Outgoing `json:"children,omitempty"`
 }
 
 func (c *Client) Outgoing(sessionID string) ([]Outgoing, error) {
@@ -514,11 +516,11 @@ func (c *Client) Context(sessionID string) (ContextUsage, error) {
 
 // SystemPrompt：**生效的系统提示词**（`GET /sessions/{session_id}/prompt`）—— 三级解析后的结果。
 //
-// `text` 就是真会发给模型的那份；`source` ∈ conversation / agent / builtin（会话覆盖 / agent 的 / 内置默认）。
+// `text` 就是真会发给模型的那份；`type` ∈ conversation / agent / builtin（会话覆盖 / agent 的 / 内置默认）。
 // 调试用：界面把它当成一条 `role=system` 的消息摆在消息区最上方。
 type SystemPrompt struct {
-	Text   string `json:"text"`
-	Source string `json:"source"`
+	Text string `json:"text"`
+	Type string `json:"type"`
 }
 
 func (c *Client) SystemPrompt(sessionID string) (SystemPrompt, error) {

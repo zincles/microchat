@@ -6,6 +6,7 @@ import (
 
 	"microchat/internal/model"
 	"microchat/internal/state"
+	"microchat/internal/store"
 )
 
 // effectiveSystemPrompt：生效的系统提示词 —— **解析只有一处**（`state.ResolveSystemPrompt`：
@@ -90,6 +91,7 @@ func (s *Server) getSessionOutgoing(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
+	store.IndexMessages(messages)
 	summaries, err := s.store.ListSummaries(session.ID)
 	if err != nil {
 		writeStoreError(w, err)
@@ -97,7 +99,8 @@ func (s *Server) getSessionOutgoing(w http.ResponseWriter, r *http.Request) {
 	}
 	systemPrompt, source := s.effectiveSystemPrompt(*session)
 	view := state.FromSources(session.ID, systemPrompt, source, messages)
-	writeJSON(w, http.StatusOK, state.BuildOutgoing(systemPrompt, messages, summaries, view.Tables))
+	outgoing := state.BuildOutgoing(systemPrompt, messages, summaries, view.Tables)
+	writeJSON(w, http.StatusOK, state.ExpandChildren(outgoing, messages, summaries))
 }
 
 // OutgoingReq：`POST /sessions/{session_id}/outgoing` 的请求体 —— 待发的那一句。
@@ -131,7 +134,20 @@ func (s *Server) postSessionOutgoing(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, outgoing)
+	// children 只在查询路由里展：真发（chat.assemble 那条路）保持扁平。
+	// pending 项无摘要可展，原样过；重取一次已定历史只为给孩子算 id+idx。
+	messages, err := s.store.ListMessages(session.ID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	store.IndexMessages(messages)
+	summaries, err := s.store.ListSummaries(session.ID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, state.ExpandChildren(outgoing, messages, summaries))
 }
 
 // requireSession：取会话；不存在 ⇒ 404（顺带把"会话不见了"收在一处）。

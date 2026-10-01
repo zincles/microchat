@@ -87,6 +87,8 @@ func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *ch
 	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/context", s.sessionContext)
 	// 压缩：把最老的 N 个已闭合块收成一条摘要（**202** 受理；跑完的结局在 /status 的 compact 那一档）
 	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/compact", s.compactSession)
+	// 压缩预览：**只算不动**（调同一套 strategySpan；算完压哪段、压完树长什么样）
+	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/compact/preview", s.compactPreview)
 	// 重摇：**两个平行家族**（候选只在内存里；见 reroll_api.go）
 	// 消息级：把尾条那条 assistant 回复重新摇几版，挑一版定下来
 	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/reroll-message", s.rerollMessageEnter)

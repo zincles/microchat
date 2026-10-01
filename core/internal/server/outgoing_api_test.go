@@ -62,7 +62,7 @@ func TestOutgoingWithPendingAppendsUserMessage(t *testing.T) {
 		t.Fatalf("(c) 的前 %d 条该与 (b) 逐字段一致：\n%s\n%s", len(before), beforeJSON, afterHeadJSON)
 	}
 	last := after[len(after)-1]
-	if last.Role != state.RoleUser || last.Content != "你好" || last.Source != "message" {
+	if last.Role != state.RoleUser || last.Content != "你好" || last.Type != "message" {
 		t.Fatalf("末尾该是那条待发的 user 消息：%+v", last)
 	}
 	// 同字段（不是"少几个字段的另一种形状"）
@@ -74,7 +74,7 @@ func TestOutgoingWithPendingAppendsUserMessage(t *testing.T) {
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"role", "content", "source", "message_id"} {
+	for _, name := range []string{"role", "content", "type", "message_id"} {
 		if _, ok := fields[name]; !ok {
 			t.Fatalf("末尾那条缺字段 %q：%s", name, raw)
 		}
@@ -192,7 +192,7 @@ func TestOutgoingCarriesIndexes(t *testing.T) {
 	box.seedTurn(t, "第三句") // 消息 5、6
 
 	items := box.outgoingOf(t, "GET", "")
-	if len(items) == 0 || items[0].Source != "system" {
+	if len(items) == 0 || items[0].Type != "system" {
 		t.Fatalf("第一条该是 system：%+v", items)
 	}
 	// 合成项：0（它不是消息）
@@ -210,7 +210,7 @@ func TestOutgoingCarriesIndexes(t *testing.T) {
 	}
 	seen := 0
 	for _, item := range items {
-		if item.Source != "message" {
+		if item.Type != "message" {
 			continue
 		}
 		seen++
@@ -254,7 +254,7 @@ func TestOutgoingSummaryReportsItsSpan(t *testing.T) {
 
 	summaries := []state.Outgoing{}
 	for _, item := range box.outgoingOf(t, "GET", "") {
-		if item.Source == "summary" {
+		if item.Type == "summary" {
 			summaries = append(summaries, item)
 		}
 	}
@@ -268,5 +268,49 @@ func TestOutgoingSummaryReportsItsSpan(t *testing.T) {
 	// 摘要**不是消息** ⇒ 它没有自己的 idx（有的话就说不清是"第几条"了）
 	if item.Idx != nil {
 		t.Fatalf("摘要不该有自己的 idx：%+v", item)
+	}
+}
+
+// children：一父两子只展一层（只 id+idx，不给正文）；叶子是空数组；pending 原样过。
+func TestOutgoingSummaryHasChildren(t *testing.T) {
+	box := newDummySandbox(t)
+	box.seedTurn(t, "第一句")
+	box.seedTurn(t, "第二句")
+	box.seedTurn(t, "第三句")
+
+	if recorder := call(box.server, "POST", box.path+"/compact", `{"blocks":2}`); recorder.Code != http.StatusAccepted {
+		t.Fatalf("受理压缩该 202，得到 %d：%s", recorder.Code, recorder.Body.String())
+	}
+	box.waitCompact(t)
+
+	var found *state.Outgoing
+	for _, item := range box.outgoingOf(t, "GET", "") {
+		if item.Type == "summary" {
+			cp := item
+			found = &cp
+		}
+	}
+	if found == nil {
+		t.Fatal("该正好一条摘要")
+	}
+	if found.Children == nil || len(found.Children) == 0 {
+		t.Fatalf("摘要该带 children：%+v", found)
+	}
+	for _, child := range found.Children {
+		if child.Content != "" {
+			t.Fatalf("孩子只给 id+idx，不给正文：%+v", child)
+		}
+		if child.Type == "message" && (child.MessageID == nil || child.Idx == nil) {
+			t.Fatalf("消息孩子该带 id+idx：%+v", child)
+		}
+		if len(child.Children) != 0 {
+			t.Fatalf("只展一层：%+v", child)
+		}
+	}
+	// pending 原样过（无摘要可展，就多一条 pending，不展坏别的）
+	after := box.outgoingOf(t, "POST", "第四句")
+	last := after[len(after)-1]
+	if !last.Pending || len(last.Children) != 0 {
+		t.Fatalf("pending 项原样过：%+v", last)
 	}
 }
