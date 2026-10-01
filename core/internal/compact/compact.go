@@ -97,6 +97,11 @@ type Result struct {
 	Provider       string          `json:"provider"`
 	Model          string          `json:"model"`
 	Usage          json.RawMessage `json:"usage"`
+	// FromIdx/ToIdx：这一段的 1-based 消息序号区间（含）；Merged：是不是合并级
+	//（Sources 非空 ⇒ 并的是摘要而不是消息）。
+	FromIdx int  `json:"from_idx"`
+	ToIdx   int  `json:"to_idx"`
+	Merged  bool `json:"merged"`
 }
 
 // Error：带 code 的失败 —— `code` 与 HTTP 错误体同一套词（client 按 code 分支，别匹配文案）。
@@ -171,7 +176,7 @@ func (s *Service) finish(sessionID string, runErr error) {
 	if runErr == nil {
 		return // 成功那条路由 `execute` 自己收（它手里有 summary_id 与块数）
 	}
-	s.Turns.FinishCompact(sessionID, "error", "", runErr.Error(), 0)
+	s.Turns.FinishCompact(sessionID, "error", "", runErr.Error(), 0, 0, 0, false)
 }
 
 // busy：同一个会话已经有一次压缩在跑（**不排队**：排队会让"点了按钮却什么都没发生"难以解释）。
@@ -474,7 +479,7 @@ func requestedBlocks(req Request, resolved span, defaultBlocks int) int {
 
 // resolveSpan：把两种给法归一成一段（**闸都在这里**）。
 //
-// 按块数 ⇒ 策略（消息级）；按区间 ⇒ 看区间里的**覆盖情况**分派：
+// 按块数 ⇒ 策略（先底层块、再顶层摘要）；按区间 ⇒ 看区间里的**覆盖情况**分派：
 // 全未覆盖 ⇒ 消息级；全被**同一批同层顶层摘要**盖住 ⇒ 合并级；混合（有洞）⇒ 报错。
 func resolveSpan(messages []model.Message, summaries []model.Summary, req Request, defaultBlocks int) (span, error) {
 	if len(messages) == 0 {
@@ -484,11 +489,15 @@ func resolveSpan(messages []model.Message, summaries []model.Summary, req Reques
 	if req.ByRange() {
 		return rangeSpan(messages, summaries, all, req)
 	}
-	return strategySpan(messages, blocks.Closed(all), req.Blocks, defaultBlocks)
+	return strategySpan(messages, summaries, all, req.Blocks, defaultBlocks)
 }
 
-// strategySpan：策略 —— "从第一条没被覆盖的消息起，取最老的 N 个已闭合块"。
-func strategySpan(messages []model.Message, closed []blocks.Block, requested, defaultBlocks int) (span, error) {
+// strategySpan：策略 —— 按块数 N 入口，两层找。
+//
+// 先今天的行为：从 firstUncovered 起取 N 个已闭合未覆盖块 → 有就走（消息级，
+// Sources 为空）；没有 → 摘要层（`strategyMergeSpan`）：顶层摘要里从最老起取
+// 连续 N 个同层相邻的 → 并。
+func strategySpan(messages []model.Message, summaries []model.Summary, all []blocks.Block, requested, defaultBlocks int) (span, error) {
 	if requested < 0 {
 		return span{}, invalid("blocks 要正整数（不给我就用配置的 compact_blocks 默认值）")
 	}
@@ -499,31 +508,100 @@ func strategySpan(messages []model.Message, closed []blocks.Block, requested, de
 	if count <= 0 {
 		return span{}, invalid("要压几个块得说得出来（配置里的 compact_blocks 也是 0）")
 	}
-	if len(closed) == 0 {
-		// 最后那个开着的块永不压 ⇒ 刚聊了一轮时一块都压不了
-		return span{}, invalid("还没有已闭合的块可压（最后那个开着的块永不压：再聊一轮）")
-	}
-	start := firstUncovered(messages)
-	if start < 0 {
-		return span{}, invalid("整条会话都已经被摘要盖住了：没有可压的")
-	}
-	taken := make([]blocks.Block, 0, count)
-	for _, block := range closed {
-		if block.End < start {
-			continue // 早就压过的那几块（在第一条没被覆盖的消息之前）
+	if start := firstUncovered(messages); start >= 0 {
+		taken := make([]blocks.Block, 0, count)
+		for _, block := range blocks.Closed(all) {
+			if block.End < start {
+				continue // 早就压过的那几块（在第一条没被覆盖的消息之前）
+			}
+			if firstCovered(messages, block.Begin, block.End) >= 0 {
+				continue // 碎的覆盖：跳过 —— 不许覆盖已压缩的区间
+			}
+			taken = append(taken, block)
+			if len(taken) == count {
+				break
+			}
 		}
-		if firstCovered(messages, block.Begin, block.End) >= 0 {
-			continue // 碎的覆盖：跳过 —— 不许覆盖已压缩的区间
-		}
-		taken = append(taken, block)
-		if len(taken) == count {
-			break
+		if len(taken) > 0 {
+			return makeSpan(messages, taken[0].Begin, taken[len(taken)-1].End, len(taken)), nil
 		}
 	}
-	if len(taken) == 0 {
-		return span{}, invalid("没有可压的已闭合块（剩下的要么是开着的那块，要么已经被摘要盖住了）")
+	// 底层没有整块可压（要么全被盖住，要么只剩开着的那块）⇒ 往摘要层找
+	return strategyMergeSpan(messages, summaries, all, count)
+}
+
+// strategyMergeSpan：策略的第二层 —— 顶层摘要里从最老起取连续 N 个同层相邻的，拼成合并级 span。
+//
+// "现成的"只有顶层（parent 为空；有爹的不算）；N 条必须在同一层找齐（跨层不凑），
+// 区间首尾相接无洞，且不碰最后那个开着的块 —— 任一孩子区间碰到开块起点 ⇒ 跳过整组、往后找。
+// 找齐就把那 N 条的并集区间交给 `mergeSpan`（四条闸与装配原样再过一遍，不自己重拼）；
+// 找不齐 ⇒ 报"无可压缩"。
+func strategyMergeSpan(messages []model.Message, summaries []model.Summary, all []blocks.Block, count int) (span, error) {
+	none := func() (span, error) {
+		return span{}, invalid("无可压缩：顶层摘要里凑不齐 %d 条同层相邻的"+
+			"（要么不够 N 坨，要么跨层，要么会碰到最后那个开着的块）", count)
 	}
-	return makeSpan(messages, taken[0].Begin, taken[len(taken)-1].End, len(taken)), nil
+	if count < 2 {
+		return none() // 并至少要两坨（`mergeSpan` 第二条闸）：一条"并"不出东西
+	}
+	positions := make(map[string]int, len(messages))
+	for index := range messages {
+		positions[messages[index].ID] = index
+	}
+	type topSpan struct {
+		summary model.Summary
+		begin   int
+		end     int
+	}
+	tops := make([]topSpan, 0, len(summaries))
+	for _, summary := range summaries {
+		if summary.ParentSummaryID != nil {
+			continue // 有爹的不算"现成的"
+		}
+		begin, end, ok := childRange(summary, positions)
+		if !ok {
+			continue // 区间对不上眼前这条会话（被删过 / 老数据）：这坨没法排，跳过
+		}
+		tops = append(tops, topSpan{summary: summary, begin: begin, end: end})
+	}
+	sort.Slice(tops, func(i, j int) bool { return tops[i].begin < tops[j].begin })
+	if len(tops) < count {
+		return none()
+	}
+	childrenOf := make(map[string][]string, len(summaries))
+	for index := range summaries {
+		if parent := summaries[index].ParentSummaryID; parent != nil {
+			childrenOf[*parent] = append(childrenOf[*parent], summaries[index].ID)
+		}
+	}
+	memo := make(map[string]int, len(summaries))
+	openBegin := -1
+	if len(all) > 0 {
+		openBegin = all[len(all)-1].Begin
+	}
+	for first := 0; first+count <= len(tops); first++ {
+		window := tops[first : first+count]
+		level := summaryLevel(window[0].summary.ID, childrenOf, memo)
+		ok := true
+		for index := 1; index < len(window); index++ {
+			if window[index].begin != window[index-1].end+1 {
+				ok = false // 有洞 / 没首尾相接
+				break
+			}
+			if summaryLevel(window[index].summary.ID, childrenOf, memo) != level {
+				ok = false // 跨层不凑
+				break
+			}
+		}
+		if ok && openBegin >= 0 && window[len(window)-1].end >= openBegin {
+			ok = false // 碰到最后那个开着的块
+		}
+		if !ok {
+			continue // 跳过整组、往后找
+		}
+		return mergeSpan(messages, summaries, all, window[0].begin, window[len(window)-1].end)
+	}
+	return none()
 }
 
 // rangeSpan：另一条入口 —— 直接点名一段区间（**1-based 的消息序号**，闭区间）。
@@ -783,7 +861,8 @@ func (s *Service) execute(ctx context.Context, p *prepared) (Result, error) {
 		return Result{}, err
 	}
 	guard.Succeed()
-	s.Turns.FinishCompact(sessionID, "done", result.SummaryID, "", result.Blocks)
+	s.Turns.FinishCompact(sessionID, "done", result.SummaryID, "", result.Blocks,
+		result.FromIdx, result.ToIdx, result.Merged)
 	return result, nil
 }
 
@@ -910,6 +989,7 @@ func (s *Service) call(ctx context.Context, p *prepared) (Result, error) {
 		Blocks: p.span.Blocks, Messages: len(p.span.Messages), SummaryID: summaryID,
 		PromptVersion: summary.PromptVersion, Text: text,
 		Provider: summary.Provider, Model: summary.Model, Usage: summary.Usage,
+		FromIdx: p.span.Begin + 1, ToIdx: p.span.End + 1, Merged: merge,
 	}, nil
 }
 

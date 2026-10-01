@@ -36,6 +36,11 @@ type CompactStatus struct {
 	SummaryID *string `json:"summary_id,omitempty"`
 	Error     string  `json:"error,omitempty"`
 	AtMS      int64   `json:"at_ms"`
+	// FromIdx/ToIdx：这一段的 1-based 消息序号区间（含）；Merged：是不是合并级。
+	// **不加 omitempty**：from/to 恒>0（0 = 没填），merged 的 false 是有效值。
+	FromIdx int  `json:"from_idx"`
+	ToIdx   int  `json:"to_idx"`
+	Merged  bool `json:"merged"`
 }
 
 func (c *CompactStatus) IsRunning() bool { return c != nil && c.State == "running" }
@@ -222,7 +227,7 @@ func (r *Registry) BeginCompact(sessionID string, blocks int, atMS int64) (*Comp
 }
 
 // FinishCompact：收尾一次压缩。
-func (r *Registry) FinishCompact(sessionID, state, summaryID, message string, compacted int) {
+func (r *Registry) FinishCompact(sessionID, state, summaryID, message string, compacted, fromIdx, toIdx int, merged bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	item := r.lookup(sessionID)
@@ -231,6 +236,9 @@ func (r *Registry) FinishCompact(sessionID, state, summaryID, message string, co
 	}
 	item.compact.State = state
 	item.compact.Compacted = compacted
+	item.compact.FromIdx = fromIdx
+	item.compact.ToIdx = toIdx
+	item.compact.Merged = merged
 	if summaryID != "" {
 		item.compact.SummaryID = &summaryID
 	}

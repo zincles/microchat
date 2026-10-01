@@ -2960,3 +2960,52 @@ func TestProviderDelConfirmsThenDeletes(t *testing.T) {
 		t.Fatalf("删完该报数：%q", said)
 	}
 }
+
+// 压缩受理后沿 turnTick 同一趟节拍轮询：done 报区间（消息级/合并级两套文案），error 如实说。
+func TestCompactPollReportsDoneRangeAndMerged(t *testing.T) {
+	m := fixture()
+	accepted, _ := m.Update(compactMsg{sessionID: "c1", status: CompactStatus{State: "running", Blocks: 2}})
+	next := accepted.(model)
+	if next.compact == nil || next.compactFor != "c1" {
+		t.Fatalf("受理该记下这一次：%+v", next.compact)
+	}
+	if said := next.lastAction; !strings.Contains(said, "已受理") {
+		t.Fatalf("受理该说话：%q", said)
+	}
+	ticked, cmd := next.Update(turnTickMsg{sessionID: "c1"})
+	if cmd == nil {
+		t.Fatal("受理后该沿 turnTick 同一趟约下一次压缩轮询")
+	}
+	_ = ticked
+	// 消息级 done
+	done, _ := next.Update(compactPollMsg{sessionID: "c1",
+		status: &CompactStatus{State: "done", FromIdx: 1, ToIdx: 4, Compacted: 2}})
+	if said := done.(model).lastAction; !strings.Contains(said, "压好第 1–4 条") || !strings.Contains(said, "2 块") {
+		t.Fatalf("消息级 done 该报区间与块数：%q", said)
+	}
+	if after := done.(model); after.compact != nil {
+		t.Fatal("done 之后不该还记着这一次")
+	}
+	// 合并级 done：换文案
+	running, _ := m.Update(compactMsg{sessionID: "c1", status: CompactStatus{State: "running", Blocks: 2}})
+	merged, _ := running.(model).Update(compactPollMsg{sessionID: "c1",
+		status: &CompactStatus{State: "done", FromIdx: 1, ToIdx: 8, Compacted: 2, Merged: true}})
+	if said := merged.(model).lastAction; !strings.Contains(said, "并好第 1–8 条") || !strings.Contains(said, "2 坨") {
+		t.Fatalf("合并级 done 该换文案：%q", said)
+	}
+	// 还在跑 ⇒ 继续约下一次；error ⇒ 如实说并清掉
+	again, _ := m.Update(compactMsg{sessionID: "c1", status: CompactStatus{State: "running", Blocks: 2}})
+	waiting, cmd := again.(model).Update(compactPollMsg{sessionID: "c1",
+		status: &CompactStatus{State: "running"}})
+	if cmd == nil {
+		t.Fatal("还在跑 ⇒ 该约下一次")
+	}
+	failed, _ := waiting.(model).Update(compactPollMsg{sessionID: "c1",
+		status: &CompactStatus{State: "error", Error: "上游 500"}})
+	if said := failed.(model).lastAction; !strings.Contains(said, "压缩失败") || !strings.Contains(said, "上游 500") {
+		t.Fatalf("error 该报原因：%q", said)
+	}
+	if after := failed.(model); after.compact != nil {
+		t.Fatal("error 之后不该还记着这一次")
+	}
+}

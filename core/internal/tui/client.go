@@ -36,11 +36,12 @@ func NewClient(baseURL, token string) *Client {
 type TurnStatus struct {
 	Phase string `json:"phase"`
 	// MessageID：这条**正在生成的回复**的 id（受理时定好，那会儿还没进库）。
-	MessageID     *string `json:"message_id,omitempty"`
-	ElapsedMS     int64   `json:"elapsed_ms"`
-	Chars         int     `json:"chars"`
-	ThinkingChars int     `json:"thinking_chars"`
-	Error         string  `json:"error,omitempty"`
+	MessageID     *string        `json:"message_id,omitempty"`
+	ElapsedMS     int64          `json:"elapsed_ms"`
+	Chars         int            `json:"chars"`
+	ThinkingChars int            `json:"thinking_chars"`
+	Error         string         `json:"error,omitempty"`
+	Compact       *CompactStatus `json:"compact,omitempty"`
 }
 
 func (t TurnStatus) Busy() bool { return t.Phase == "pending" || t.Phase == "streaming" }
@@ -464,6 +465,9 @@ type CompactStatus struct {
 	SummaryID *string `json:"summary_id,omitempty"`
 	Error     string  `json:"error,omitempty"`
 	AtMS      int64   `json:"at_ms"`
+	FromIdx   int     `json:"from_idx"`
+	ToIdx     int     `json:"to_idx"`
+	Merged    bool    `json:"merged"`
 }
 
 // Compact：受理一次压缩（202）。**不给 N 就用后端的默认值**（`config.json` 的 `compact_blocks`）。

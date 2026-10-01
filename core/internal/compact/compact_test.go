@@ -131,12 +131,12 @@ func TestCompactWritesOneSummaryAndPointsTheSpan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Blocks != 2 || result.Messages != 4 {
-		t.Fatalf("压的该是最老的两块（4 条消息）：%+v", result)
-	}
 	if result.BeginMessageID != messages[0].ID || result.EndMessageID != messages[3].ID {
 		t.Fatalf("区间 = %s..%s，想要 %s..%s", result.BeginMessageID, result.EndMessageID,
 			messages[0].ID, messages[3].ID)
+	}
+	if result.FromIdx != 1 || result.ToIdx != 4 || result.Merged {
+		t.Fatalf("结局该带区间 1–4 且不是合并：%+v", result)
 	}
 	if result.PromptVersion != abilities.PromptVersion(abilities.DefaultTemplate(abilities.Compact)) || result.PromptVersion == 0 {
 		t.Fatalf("prompt_version = %d（想要默认模板的指纹）", result.PromptVersion)
@@ -207,10 +207,10 @@ func TestCompactRefusesToCoverACompactedRange(t *testing.T) {
 	if err == nil {
 		t.Fatal("这一段已经全被一条摘要盖住：并不了（至少要两条同层）")
 	}
-	// 按块数来（最老的 N 块）⇒ 从第一条没被覆盖的起算，压的是**第三块**（开着的）⇒ 没得压
-	_, err = h.service.Compact(context.Background(), h.session, Request{Blocks: 1})
-	if err == nil {
-		t.Fatal("只剩一个开着的块时该报错")
+	// 按块数来：底层只剩开着的那块 ⇒ 摘要层只有一条顶层 ⇒ 凑不齐 2 坨 ⇒ 无可压缩
+	_, err = h.service.Compact(context.Background(), h.session, Request{Blocks: 2})
+	if err == nil || !strings.Contains(err.Error(), "无可压缩") {
+		t.Fatalf("顶层只有一条时该报无可压缩：%v", err)
 	}
 	if len(h.summaries(t)) != 1 {
 		t.Fatal("失败的那两次不许留下任何摘要行")
@@ -542,6 +542,9 @@ func TestCompactMergesSameLevelSummaries(t *testing.T) {
 	if merged.SummaryID == first.SummaryID || merged.SummaryID == second.SummaryID {
 		t.Fatal("合并该另铸一条父摘要")
 	}
+	if merged.FromIdx != 1 || merged.ToIdx != 4 || !merged.Merged {
+		t.Fatalf("合并的结局该带区间 1–4 且标合并：%+v", merged)
+	}
 	rows := h.summaries(t)
 	parent := findSummary(t, rows, merged.SummaryID)
 	if parent.SourceKind != model.SourceSummaries {
@@ -806,5 +809,86 @@ func TestRegenerateSummaryMergeRootKeepsChildHeaders(t *testing.T) {
 	// 不落库：行数不变
 	if after := h.summaries(t); len(after) != len(rows) {
 		t.Fatalf("重摇不落库：%d → %d 行", len(rows), len(after))
+	}
+}
+
+// 策略抬头两跳：A B C D E F G 压成 AB/CD/EF+G → 再压 2 块 ⇒ 并 AB+CD（AD）；
+// 再压 ⇒ EF 是一坨、G 不是坨 ⇒ 凑不齐 2 坨 ⇒ 报无可压缩。
+func TestStrategyMergesTopLevelSummariesPyramid(t *testing.T) {
+	h := newHarness(t, config.AgentsConfig{})
+	for _, text := range []string{"A", "B", "C", "D", "E", "F", "G"} {
+		h.turn(t, text)
+	}
+	ctx := context.Background()
+	// 七块：已闭合 [1,2]…[11,12]，开着 [13,14]。先压成 AB/CD/EF+G。
+	ab, err := h.service.Compact(ctx, h.session, Request{Blocks: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cd, err := h.service.Compact(ctx, h.session, Request{Blocks: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ef, err := h.service.Compact(ctx, h.session, Request{Blocks: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ab.FromIdx != 1 || ab.ToIdx != 4 || ab.Merged {
+		t.Fatalf("AB 该是消息级 1–4：%+v", ab)
+	}
+	if ef.FromIdx != 9 || ef.ToIdx != 12 || ef.Merged {
+		t.Fatalf("EF 该是消息级 9–12：%+v", ef)
+	}
+	messages := h.messages(t)
+	tops := map[string]bool{}
+	for _, row := range h.summaries(t) {
+		if row.ParentSummaryID == nil {
+			tops[row.ID] = true
+		}
+	}
+	for _, id := range []string{ab.SummaryID, cd.SummaryID, ef.SummaryID} {
+		if !tops[id] {
+			t.Fatalf("孩子 %s 该是顶层：%v", id, tops)
+		}
+	}
+
+	// 第一跳：底层只剩开着的那块 ⇒ 并最老的连续两坨 AB+CD
+	ad, err := h.service.Compact(ctx, h.session, Request{Blocks: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ad.FromIdx != 1 || ad.ToIdx != 8 || !ad.Merged {
+		t.Fatalf("AD 该是合并级 1–8：%+v", ad)
+	}
+	rows := h.summaries(t)
+	parent := findSummary(t, rows, ad.SummaryID)
+	if len(parent.SourceIDs) != 2 || parent.SourceIDs[0] != ab.SummaryID || parent.SourceIDs[1] != cd.SummaryID {
+		t.Fatalf("AD 的 source_ids 该是 AB+CD：%+v", parent.SourceIDs)
+	}
+	if parent.BeginMessageID == nil || *parent.BeginMessageID != messages[0].ID ||
+		parent.EndMessageID == nil || *parent.EndMessageID != messages[7].ID {
+		t.Fatalf("AD 的两端该是第 1 条 → 第 8 条：%+v", parent)
+	}
+	for _, childID := range []string{ab.SummaryID, cd.SummaryID} {
+		child := findSummary(t, rows, childID)
+		if child.ParentSummaryID == nil || *child.ParentSummaryID != ad.SummaryID {
+			t.Fatalf("孩子 %s 该指向 AD：%+v", childID, child.ParentSummaryID)
+		}
+	}
+	got := h.turns.Status(h.sessionID).Compact
+	if got == nil || got.State != "done" || got.FromIdx != 1 || got.ToIdx != 8 || !got.Merged || got.Compacted != int(parent.Blocks) {
+		t.Fatalf("turn 收尾该带区间 1–8 与合并位：%+v", got)
+	}
+
+	// 第二跳：底层只剩开着的那块（G 在上面，不整块可压）⇒ 看摘要层。
+	// 顶层剩下 AD（1–8）+ EF（9–12）：相邻但跨层（AD 是 level-2、EF 是 level-1）⇒ 不凑；
+	// G 只是开着块上的一条单消息、不是坨 ⇒ 凑不齐 2 坨 ⇒ 无可压缩。
+	before := len(h.summaries(t))
+	if _, err := h.service.Compact(ctx, h.session, Request{Blocks: 2}); err == nil ||
+		!strings.Contains(err.Error(), "无可压缩") {
+		t.Fatalf("跨层 + G 不是坨 ⇒ 该报无可压缩：%v", err)
+	}
+	if after := len(h.summaries(t)); after != before {
+		t.Fatalf("失败不许落库：%d → %d", before, after)
 	}
 }

@@ -180,9 +180,12 @@ func TestCompactStatusRidesAlong(t *testing.T) {
 	if _, err := turns.BeginCompact("c1", 5, 2000); err == nil {
 		t.Fatal("同一会话同时只允许一个压缩")
 	}
-	turns.FinishCompact("c1", "done", "sum-1", "", 8)
+	turns.FinishCompact("c1", "done", "sum-1", "", 8, 1, 4, false)
 	status = turns.Status("c1")
 	if status.Compact.State != "done" || status.Compact.Compacted != 8 || *status.Compact.SummaryID != "sum-1" {
 		t.Fatalf("收尾后 = %+v", status.Compact)
+	}
+	if status.Compact.FromIdx != 1 || status.Compact.ToIdx != 4 || status.Compact.Merged {
+		t.Fatalf("收尾该带区间与合并位：%+v", status.Compact)
 	}
 }

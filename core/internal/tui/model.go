@@ -113,6 +113,10 @@ type model struct {
 
 	// 正在生成的这一轮（界面按状态**合成**的气泡；库里还没有它）
 	turn *liveTurn
+	// compact/compactFor：在跑的那次压缩（受理后由 `compactMsg` 记下；done/error 搭 turnTick
+	// 那一趟轮询（`turnPollMsg.status.Compact`），由 `reportCompact` 报到底栏）。
+	compact    *CompactStatus
+	compactFor string
 }
 
 // liveTurn：这一轮生成在界面上的样子。
@@ -315,8 +319,9 @@ type stoppedMsg struct {
 
 // compactMsg：一次压缩的**受理**回执（202）—— "压缩中"这件事由后端说了算。
 type compactMsg struct {
-	status CompactStatus
-	err    error
+	sessionID string
+	status    CompactStatus
+	err       error
 }
 
 // rerollMsg：一次重摇指令的结果（进模式 / 切换 / 删除 —— 后两条回的都是新状态）。
@@ -651,7 +656,26 @@ func stopTurnCmd(client *Client, sessionID string) tea.Cmd {
 func compactCmd(client *Client, sessionID string, blocks int) tea.Cmd {
 	return func() tea.Msg {
 		status, err := client.Compact(sessionID, blocks)
-		return compactMsg{status: status, err: err}
+		return compactMsg{sessionID: sessionID, status: status, err: err}
+	}
+}
+
+// compactPollMsg：一次压缩轮询的结果（只取 `/status` 里 compact 那一档 ——
+// 搭 turnTick 同一趟节拍，别另起轮询：节拍只有 `turnTickCmd` 这一处）。
+type compactPollMsg struct {
+	sessionID string
+	status    *CompactStatus
+	err       error
+}
+
+// pollCompactCmd：看一眼压缩跑完没有（`/status` 的 compact 那一档）。
+func pollCompactCmd(client *Client, sessionID string) tea.Cmd {
+	return func() tea.Msg {
+		status, err := client.TurnStatus(sessionID)
+		if err != nil {
+			return compactPollMsg{sessionID: sessionID, err: err}
+		}
+		return compactPollMsg{sessionID: sessionID, status: status.Compact}
 	}
 }
 
@@ -1163,11 +1187,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		)
 
 	case turnTickMsg:
-		if !m.turn.Busy() || m.turn.sessionID != message.sessionID {
-			return m, nil
+		var cmds []tea.Cmd
+		if m.turn.Busy() && m.turn.sessionID == message.sessionID {
+			cmds = append(cmds, pollTurnCmd(m.client, m.turn.sessionID, m.turn.from, m.turn.thinkFrom))
 		}
-		return m, pollTurnCmd(m.client, m.turn.sessionID, m.turn.from, m.turn.thinkFrom)
-
+		if m.compact != nil && m.compactFor == message.sessionID {
+			cmds = append(cmds, pollCompactCmd(m.client, message.sessionID))
+		}
+		switch len(cmds) {
+		case 0:
+			return m, nil
+		case 1:
+			return m, cmds[0]
+		default:
+			return m, tea.Batch(cmds...)
+		}
 	case turnPollMsg:
 		// 属于旧的一轮 / 已经没有在生成的轮次 ⇒ 丢掉（界面只认当前这一轮）
 		if m.turn == nil || m.turn.sessionID != message.sessionID {
@@ -1203,23 +1237,65 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// （用户实跑抓到的"第一条消息之后标题不出现、发第二条才出现"）。
 			m = m.settleTurn(message.sessionID)
 			m.lastAction = "生成完成"
-			return m, tea.Batch(
+			cmds := []tea.Cmd{
 				loadMessages(m.client, message.sessionID),
 				loadContext(m.client, message.sessionID),
 				loadSessionsQuiet(m.client),
-			)
+			}
+			if m.compact != nil && m.compactFor == message.sessionID {
+				cmds = append(cmds, pollCompactCmd(m.client, message.sessionID), turnTickCmd(message.sessionID))
+			}
+			return m, tea.Batch(cmds...)
+		}
+		if m.compact != nil && m.compactFor == message.sessionID {
+			return m, tea.Batch(pollCompactCmd(m.client, message.sessionID), turnTickCmd(message.sessionID))
 		}
 		return m, turnTickCmd(message.sessionID)
 
 	case compactMsg:
-		// 压缩是**后台**跑的（受理即回 202）：这里只说"受理了"，跑完的结局在后端的压缩状态里
-		// （`/status` 的 compact 那一档 —— 界面这一份不另存，两处状态必然打架）。
+		// 压缩是**后台**跑的（受理即回 202）：记下这一份，搭 turnTick 同一趟节拍
+		// （`/status` 的 compact 那一档）；跑完的结局在 `compactPollMsg` 里报到底栏。
 		if message.err != nil {
 			m = m.fail("压缩没有受理：" + message.err.Error())
 			return m, nil
 		}
 		m.lastAction = fmt.Sprintf("压缩已受理：%d 个块（跑完发一轮或看 /outgoing 就知道效果）", message.status.Blocks)
-		return m, nil
+		status := message.status
+		m.compact, m.compactFor = &status, message.sessionID
+		return m, turnTickCmd(message.sessionID)
+
+	case compactPollMsg:
+		if m.compact == nil || m.compactFor != message.sessionID {
+			return m, nil
+		}
+		if message.err != nil {
+			m.compact, m.compactFor = nil, ""
+			m = m.fail("取压缩进度失败：" + message.err.Error())
+			return m, nil
+		}
+		if message.status == nil {
+			return m, turnTickCmd(message.sessionID)
+		}
+		m.compact = message.status
+		switch message.status.State {
+		case "done":
+			m.compact, m.compactFor = nil, ""
+			if message.status.FromIdx > 0 && message.status.ToIdx > 0 {
+				if message.status.Merged {
+					m.lastAction = fmt.Sprintf("并好第 %d–%d 条那 %d 坨", message.status.FromIdx, message.status.ToIdx, message.status.Compacted)
+				} else {
+					m.lastAction = fmt.Sprintf("压好第 %d–%d 条（%d 块）", message.status.FromIdx, message.status.ToIdx, message.status.Compacted)
+				}
+			} else {
+				m.lastAction = "压缩完成"
+			}
+			return m, nil
+		case "error":
+			m.compact, m.compactFor = nil, ""
+			m = m.fail("压缩失败：" + message.status.Error)
+			return m, nil
+		}
+		return m, turnTickCmd(message.sessionID)
 
 	case rerollMsg:
 		if message.err != nil {

@@ -694,6 +694,9 @@ type compactLine struct {
 	SessionID      string          `json:"session_id"`
 	BeginMessageID string          `json:"begin_message_id"`
 	EndMessageID   string          `json:"end_message_id"`
+	FromIdx        int             `json:"from_idx"`
+	ToIdx          int             `json:"to_idx"`
+	Merged         bool            `json:"merged"`
 	Blocks         int             `json:"blocks"`
 	Messages       int             `json:"messages"`
 	SummaryID      string          `json:"summary_id"`
@@ -746,6 +749,7 @@ func (e *debugEnv) compactSession(args []string) int {
 	emit(compactLine{
 		Event: "compact", SessionID: result.SessionID,
 		BeginMessageID: result.BeginMessageID, EndMessageID: result.EndMessageID,
+		FromIdx: result.FromIdx, ToIdx: result.ToIdx, Merged: result.Merged,
 		Blocks: result.Blocks, Messages: result.Messages, SummaryID: result.SummaryID,
 		PromptVersion: result.PromptVersion,
 		Preview:       preview(result.Text, 40), TextChars: len([]rune(result.Text)),
