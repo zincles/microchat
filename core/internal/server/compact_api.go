@@ -58,6 +58,7 @@ func (s *Server) compactSession(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusAccepted, status)
 }
+
 // compactPreview：`POST /sessions/{session_id}/compact/preview` —— **只算不动**。
 //
 // 调同一套 `resolveSpan`（按块数那条路）：回"压哪段（from/to）、怎么压（merged）、

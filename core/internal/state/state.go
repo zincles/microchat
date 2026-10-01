@@ -391,7 +391,7 @@ func BuildOutgoing(systemPrompt string, messages []model.Message, summaries []mo
 				role = RoleUser
 			}
 			id := part.message.ID
-		item := Outgoing{Role: role, Content: content, Type: "message", MessageID: &id}
+			item := Outgoing{Role: role, Content: content, Type: "message", MessageID: &id}
 			if part.message.Idx > 0 { // 手搭出来的消息没编过号 ⇒ 就不带这一格（0 是系统提示词的）
 				index := part.message.Idx
 				item.Idx = &index
@@ -437,6 +437,7 @@ func BuildOutgoing(systemPrompt string, messages []model.Message, summaries []mo
 //   - 孩子是摘要 ⇒ {Type:summary, SummaryID, Blocks, FromIdx/ToIdx（spanIndexes 现算）}；
 //   - 孩子是消息 ⇒ {Type:message, MessageID, Idx}（Role 按那条消息的角色照填）；
 //   - 叶子（SourceIDs 空 / 一个都指不着）⇒ Children 置空数组（omitempty 下不序列化）。
+//
 // system/message 项与 pending 项原样过（pending 那条无摘要可展）。
 func ExpandChildren(items []Outgoing, messages []model.Message, summaries []model.Summary) []Outgoing {
 	idxByID := make(map[string]int, len(messages))

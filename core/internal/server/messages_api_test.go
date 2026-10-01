@@ -385,11 +385,11 @@ func TestMessageWindowQueries(t *testing.T) {
 
 	// 参数错一律 400（错误体固定：`code = invalid`）
 	for _, query := range []string{
-		"?last=2&from_idx=1", // 混用
-		"?last=2&to_idx=3",   // 混用
-		"?from_idx=0",        // 非正数
-		"?to_idx=-1",         // 非正数
-		"?last=0",            // 非正数
+		"?last=2&from_idx=1",   // 混用
+		"?last=2&to_idx=3",     // 混用
+		"?from_idx=0",          // 非正数
+		"?to_idx=-1",           // 非正数
+		"?last=0",              // 非正数
 		"?from_idx=5&to_idx=3", // 反了
 		"?last=abc",            // 不是整数
 		"?from_idx=x",

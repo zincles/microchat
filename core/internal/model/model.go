@@ -71,7 +71,7 @@ func TitleFrom(text string, chars int) string {
 type SummaryType string
 
 const (
-	TypeMessages SummaryType = "message"
+	TypeMessages  SummaryType = "message"
 	TypeSummaries SummaryType = "summary"
 )
 
@@ -80,22 +80,22 @@ const (
 // `BeginMessageID` / `EndMessageID` = 它盖住的那一段（闭区间）：装配时按它 O(1) 跳过去。
 // 都可为空（老数据）——那时装配退回逐条走，不跳。
 type Summary struct {
-	ID              string            `json:"id"`
-	SessionID       string            `json:"session_id"`
-	ParentSummaryID *string           `json:"parent_summary_id,omitempty"`
-	Type           SummaryType `json:"type"` // DB 列名是历史（`source_kind`），值与 JSON 名一致
-	BeginMessageID  *string           `json:"begin_message_id,omitempty"`
-	EndMessageID    *string           `json:"end_message_id,omitempty"`
-	Text            string            `json:"text"`
-	Blocks          int64             `json:"blocks"`
-	Tokens          int64             `json:"tokens"`
-	SourceIDs       []string          `json:"source_ids"`
-	Provider        string            `json:"provider"`
-	Model           string            `json:"model"`
-	PromptVersion   int64             `json:"prompt_version"`
-	Usage           json.RawMessage   `json:"usage,omitempty"`
-	Dirty           bool              `json:"dirty"`
-	CreatedAt       int64             `json:"created_at"`
+	ID              string          `json:"id"`
+	SessionID       string          `json:"session_id"`
+	ParentSummaryID *string         `json:"parent_summary_id,omitempty"`
+	Type            SummaryType     `json:"type"` // DB 列名是历史（`source_kind`），值与 JSON 名一致
+	BeginMessageID  *string         `json:"begin_message_id,omitempty"`
+	EndMessageID    *string         `json:"end_message_id,omitempty"`
+	Text            string          `json:"text"`
+	Blocks          int64           `json:"blocks"`
+	Tokens          int64           `json:"tokens"`
+	SourceIDs       []string        `json:"source_ids"`
+	Provider        string          `json:"provider"`
+	Model           string          `json:"model"`
+	PromptVersion   int64           `json:"prompt_version"`
+	Usage           json.RawMessage `json:"usage,omitempty"`
+	Dirty           bool            `json:"dirty"`
+	CreatedAt       int64           `json:"created_at"`
 }
 
 // Session：一处会话。**线性**（没有 current_leaf：最新一条 = `ORDER BY id DESC LIMIT 1`）。

@@ -137,6 +137,7 @@ func TestCompactRouteAcceptsAndMarksTheSpan(t *testing.T) {
 		t.Fatalf("覆盖已压缩的区间该 400，得到 %d：%s", recorder.Code, recorder.Body.String())
 	}
 }
+
 // 预览：`POST .../compact/preview {"blocks":2}` —— 只算不动（库里不落行），回压哪段+人话。
 func TestCompactPreviewComputesWithoutWriting(t *testing.T) {
 	box := newDummySandbox(t)

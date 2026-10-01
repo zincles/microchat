@@ -505,7 +505,7 @@ type PreviewResult struct {
 
 // Preview：**只算不动**的压缩预览 —— 调同一套 `resolveSpan`，算完"压哪段、怎么压"。
 //
-// 只走"按块数"那条路（`Request.Blocks`；区间入口自己就是答案，不需要预览）：
+// 只走"按块数"那条路（`blocks` 参数，块 = assistant→user 交界，一块 ≥2 条；区间入口自己就是答案，不需要预览）：
 // 落库、调上游、挂号一概不碰 —— 与 deletion-preview 同一条"只算不动"规矩。
 func Preview(messages []model.Message, summaries []model.Summary, blocks int, defaultBlocks int) (PreviewResult, error) {
 	resolved, err := resolveSpan(messages, summaries, Request{Blocks: blocks}, defaultBlocks)
@@ -532,11 +532,12 @@ func Preview(messages []model.Message, summaries []model.Summary, blocks int, de
 	return result, nil
 }
 
-// strategySpan：策略 —— 按块数 N 入口，两层找。
+// strategySpan：策略 —— 按**块数** N 入口（块 = assistant→user 交界，一块 ≥2 条；
+// `/compact 1` 是压 1 块不是 1 条），两层找。
 //
-// 先今天的行为：从 firstUncovered 起取 N 个已闭合未覆盖块 → 有就走（消息级，
-// Sources 为空）；没有 → 摘要层（`strategyMergeSpan`）：顶层摘要里从最老起取
-// 连续 N 个同层相邻的 → 并。
+// 先从 firstUncovered 起取 N 个已闭合未覆盖块 → 有就走（消息级，Sources 为空）；
+// 没有（底层凑不够整块 / 全被盖住 / 只剩开着的那块）→ 摘要层（`strategyMergeSpan`）：
+// 顶层摘要里从最老起取连续 N 个同层相邻的 → 并。
 func strategySpan(messages []model.Message, summaries []model.Summary, all []blocks.Block, requested, defaultBlocks int) (span, error) {
 	if requested < 0 {
 		return span{}, invalid("blocks 要正整数（不给我就用配置的 compact_blocks 默认值）")
