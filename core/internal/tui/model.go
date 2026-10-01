@@ -104,6 +104,13 @@ type model struct {
 	reroll    *RerollState
 	rerollFor string
 
+	// provider 向导（`/provider-add`）：四问的状态机。输入行就是问卷 —— 答案走 submit 进来；
+	// 与会话无关（换会话 / 新消息不丢）；Esc 取消（沿用清输入那条分支，不新增按键）；
+	// `/provider-add` 重进覆盖旧草稿。
+	addStep    int
+	addDraft   providerDraft
+	addPresets []PresetItem
+
 	// 正在生成的这一轮（界面按状态**合成**的气泡；库里还没有它）
 	turn *liveTurn
 }
@@ -144,10 +151,11 @@ const (
 
 // confirm：等着用户点头的那件事（模型里只存**意图**，命令由 `confirmExecute` 派生）。
 type confirm struct {
-	kind      string // confirmDeleteSession / confirmCut
+	kind      string // confirmDeleteSession / confirmCut / confirmDeleteProvider
 	sessionID string
 	messageID string       // cut 的目标
 	plan      DeletionPlan // cut：后端算好的预览（执行时照它，并把末尾那条带回去核对）
+	provider  string       // provider-del 的目标渠道
 }
 
 const (
@@ -155,7 +163,17 @@ const (
 	confirmDeleteSession = "delete-session"
 	// confirmCut：删一条消息及其之后的全部。
 	confirmCut = "cut"
+	// confirmDeleteProvider：删一条渠道。
+	confirmDeleteProvider = "delete-provider"
 )
+
+// providerDraft：`/provider-add` 四问攒下来的草稿（`addStep` 指到第几问）。
+type providerDraft struct {
+	id       string
+	vendor   string
+	protocol string
+	apiKey   string
+}
 
 // ── 消息（tea.Msg）──
 
@@ -527,6 +545,55 @@ func loadUsage(client *Client, providerID string) tea.Cmd {
 	return func() tea.Msg {
 		usage, err := client.ProviderUsage(providerID)
 		return usageMsg{providerID: providerID, usage: usage, err: err}
+	}
+}
+
+// providersMsg：一次渠道列表取数（渠道 + 预设两份一起回来才开查看器 —— 少一份就说少了哪份）。
+type providersMsg struct {
+	providers []ProviderInfo
+	presets   []PresetItem
+	err       error
+}
+
+// createdProviderMsg：建渠道的回执（成功报"已添加"；409/422/矩阵错原样说）。
+type createdProviderMsg struct {
+	info ProviderInfo
+	err  error
+}
+
+// deletedProviderMsg：删渠道的回执（204 没有体 —— 只报 id + 成败）。
+type deletedProviderMsg struct {
+	id  string
+	err error
+}
+
+// loadProvidersCmd：查两份（渠道 + 预设）—— `/providers` 只读查看器要的就是这一对。
+func loadProvidersCmd(client *Client) tea.Cmd {
+	return func() tea.Msg {
+		providers, err := client.Providers()
+		if err != nil {
+			return providersMsg{err: err}
+		}
+		presets, err := client.Presets()
+		if err != nil {
+			return providersMsg{err: err}
+		}
+		return providersMsg{providers: providers, presets: presets}
+	}
+}
+
+// createProviderCmd：建一条渠道（`/provider-add` 第四问答完就发这一次）。
+func createProviderCmd(client *Client, draft providerDraft) tea.Cmd {
+	return func() tea.Msg {
+		info, err := client.CreateProvider(draft.id, draft.vendor, draft.protocol, "", draft.apiKey)
+		return createdProviderMsg{info: info, err: err}
+	}
+}
+
+// deleteProviderCmd：删一条渠道（204）。
+func deleteProviderCmd(client *Client, id string) tea.Cmd {
+	return func() tea.Msg {
+		return deletedProviderMsg{id: id, err: client.DeleteProvider(id)}
 	}
 }
 
@@ -1028,6 +1095,50 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewerHint = "任意键关掉"
 		m.lastAction = "套餐余量（Esc 关掉）"
 		return m, nil
+	case providersMsg:
+		if message.err != nil {
+			m = m.fail("看渠道失败：" + message.err.Error())
+			return m, nil
+		}
+		m.viewer, m.viewerTitle = m.providerLines(message.providers, message.presets), "渠道"
+		m.viewerHint = "任意键关掉"
+		m.lastAction = fmt.Sprintf("渠道 %d 条（Esc 关掉）", len(message.providers))
+		return m, nil
+
+	case createdProviderMsg:
+		// 向导收工：不管成败都清掉草稿（成了不用再留，败了重进覆盖 —— 留着只会让人误会还能续上）。
+		m.addStep, m.addDraft, m.addPresets = 0, providerDraft{}, nil
+		if message.err != nil {
+			m = m.fail("添加渠道失败：" + message.err.Error())
+			return m, nil
+		}
+		protocol := message.info.Protocol
+		if protocol == "" {
+			protocol = "openai-chat-completion" // 后端缺省 —— 报出来，别让人以为没协议
+		}
+		m.lastAction = fmt.Sprintf("已添加 %s（%s/%s）", message.info.ID, message.info.Vendor, protocol)
+		return m, nil
+
+	case deletedProviderMsg:
+		if message.err != nil {
+			m = m.fail("删除渠道失败：" + message.err.Error())
+			return m, nil
+		}
+		m.lastAction = "已删除渠道 " + message.id
+		return m, nil
+	case presetsMsg:
+		// 向导进行中才存（/providers 那条路不走这里 —— 别把两份名单混了）。
+		if m.addStep > 0 {
+			if message.err != nil {
+				m.lastAction = "预设名单没拿到（" + message.err.Error() + "）—— vendor 照名字填；Esc 取消"
+				return m, nil
+			}
+			m.addPresets = message.presets
+			if m.addStep == 2 {
+				m.lastAction = "vendor？（" + presetNamesOf(m.addPresets) + "；Esc 取消）"
+			}
+		}
+		return m, nil
 
 	case sentMsg:
 		if message.err != nil {
@@ -1215,8 +1326,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch message.String() {
 		case "esc":
-			// 关面板 / 清输入（命令面板是**推导**出来的：清了输入它自然就没了）
+			// 关面板 / 清输入（命令面板是**推导**出来的：清了输入它自然就没了）；
+			// 向导进行中 ⇒ 顺手把草稿也清了（Esc 取消 —— 沿用这条分支，不新增按键）。
 			m.input, m.inputCursor, m.paletteIndex = "", 0, 0
+			if m.addStep > 0 {
+				m.addStep, m.addDraft, m.addPresets = 0, providerDraft{}, nil
+				m.lastAction = "已取消添加渠道（什么都没建）"
+			}
 			return m, nil
 		case "enter":
 			return m.submit()
@@ -1354,6 +1470,12 @@ func (m model) pickerChoose() (tea.Model, tea.Cmd) {
 // submit：回车了 —— 是命令就派发，不是就**真发**。
 func (m model) submit() (tea.Model, tea.Cmd) {
 	text := strings.TrimSpace(m.input)
+	// 向导进行中时输入行就是问卷 —— 别先按"空输入直接返回"丢掉（第四问 key 可空，
+	// 空回答也是答案，要进 answerWizard 落到 finishWizard 发 Create）。
+	if m.addStep > 0 && !strings.HasPrefix(text, "/") {
+		m.input, m.inputCursor, m.paletteIndex = "", 0, 0
+		return m.answerWizard(text)
+	}
 	// 面板补全要在**清空输入之前**算候选（先清空再算 ⇒ 候选恒为空，补全永远扑空 —— 测试抓到的）
 	if strings.HasPrefix(text, "/") && !strings.Contains(text, " ") {
 		if matches := m.paletteMatches(); len(matches) > 0 {
@@ -1435,6 +1557,9 @@ func init() {
 		{name: "outgoing", help: "看当前已定历史的载荷（哪几条是压缩出来的；不含还没发的那句）", run: commandOutgoing},
 		{name: "state", help: "看当前会话的世界状态", run: commandState},
 		{name: "usage", help: "看当前渠道的套餐余量（OpenCode GO 套餐；别的渠道会如实说不支持）", run: commandUsage},
+		{name: "providers", help: "看全部渠道（每条一行：渠道、协议、有无密钥、几个模型；附预设名单）", run: commandProviders},
+		{name: "provider-add", help: "加一条渠道（四问：编号、预设 vendor、协议、密钥；dummy 跳过密钥）", run: commandProviderAdd},
+		{name: "provider-del", args: "<id>", help: "删一条渠道（不可逆，先确认）", run: commandProviderDel},
 		{name: "think", help: "展开当前会话的思考全文（默认折叠在消息上方，想读全文才用）", run: commandThink},
 		{name: "system", help: "显示 / 隐藏消息区顶部的系统提示词（调试用，开关记在 ~/.config/microchat/tui.json）", run: commandSystem},
 		{name: "compact", args: "[N]", help: "把最老的 N 个已闭合块压成摘要（不给 N 用默认值）", run: commandCompact},
@@ -1587,6 +1712,9 @@ func (m model) confirmExecute() (tea.Model, tea.Cmd) {
 	case confirmDeleteSession:
 		m.lastAction = "删除会话 " + shortID(pending.sessionID) + "…"
 		return m, deleteSessionCmd(m.client, pending.sessionID)
+	case confirmDeleteProvider:
+		m.lastAction = "删除渠道 " + pending.provider + "…"
+		return m, deleteProviderCmd(m.client, pending.provider)
 	}
 	return m, nil
 }
@@ -1774,6 +1902,185 @@ func (m model) usageLines(usage PlanUsage) []string {
 		}, max(1, m.width), ""))
 	}
 	return lines
+}
+
+// commandProviders：看全部渠道（只读查看器 —— 复用 viewer，任意键关掉）。
+//
+// 查两份（渠道 + 预设）：每条渠道一行 `id · vendor/protocol · 有无 key · N 个模型`；
+// 下面一行 `presets: a, b, c` 列预设 vendor 名。失败照实说。
+func commandProviders(m model, _ []string) (tea.Model, tea.Cmd) {
+	m.lastAction = "拉渠道…"
+	return m, loadProvidersCmd(m.client)
+}
+
+// providerLines：渠道查看器的行（渠道行 + 预设名单行 —— 后者只有一行，别摊开）。
+func (m model) providerLines(providers []ProviderInfo, presets []PresetItem) []string {
+	lines := []string{}
+	for _, provider := range providers {
+		key := "无 key"
+		if provider.HasKey {
+			key = "有 key"
+		}
+		lines = append(lines, truncate(
+			fmt.Sprintf(" %s · %s/%s · %s · %d 个模型",
+				provider.ID, provider.Vendor, provider.Protocol, key, len(provider.Models)),
+			max(1, m.width)))
+	}
+	names := make([]string, 0, len(presets))
+	for _, preset := range presets {
+		names = append(names, preset.Vendor)
+	}
+	lines = append(lines, truncate(" presets: "+strings.Join(names, ", "), max(1, m.width)))
+	return lines
+}
+
+// commandProviderAdd：加一条渠道（四问向导，不开 picker —— 输入行就是问卷）。
+//
+// `id?` → `vendor?`（打 presets 名单）→ `protocol?`（缺省 chat；只接受该 vendor 名单里的）
+// → `key?`（可空；dummy 直接跳过）→ 一次 Create。重进覆盖旧草稿。
+func commandProviderAdd(m model, _ []string) (tea.Model, tea.Cmd) {
+	m.addStep, m.addDraft, m.addPresets = 1, providerDraft{}, nil
+	m.lastAction = "新渠道 id？（输入编号，回车继续；Esc 取消）"
+	return m, loadPresetsCmd(m.client)
+}
+
+// loadPresetsCmd：向导第二问要打 presets 名单 —— 先拿回来存着（拿不到就向导里如实说）。
+func loadPresetsCmd(client *Client) tea.Cmd {
+	return func() tea.Msg {
+		presets, err := client.Presets()
+		return presetsMsg{presets: presets, err: err}
+	}
+}
+
+// presetsMsg：向导用的预设名单（失败也回来 —— 向导里如实说，不卡死）。
+type presetsMsg struct {
+	presets []PresetItem
+	err     error
+}
+
+// presetByVendor：在名单里按 vendor 找（大小写不敏感 —— 用户手打的，别为大小写拦人）。
+func presetByVendor(presets []PresetItem, vendor string) *PresetItem {
+	for index := range presets {
+		if strings.EqualFold(presets[index].Vendor, vendor) {
+			return &presets[index]
+		}
+	}
+	return nil
+}
+
+// answerWizard：向导的一问答完了（输入行非 `/` 开头的那句就是答案）。
+func (m model) answerWizard(text string) (tea.Model, tea.Cmd) {
+	answer := strings.TrimSpace(text)
+	switch m.addStep {
+	case 1: // id?
+		if answer == "" {
+			m.lastAction = "编号不能为空（再输一次；Esc 取消）"
+			return m, nil
+		}
+		m.addDraft.id = answer
+		m.addStep = 2
+		m.lastAction = "vendor？（" + presetNamesOf(m.addPresets) + "；Esc 取消）"
+		return m, nil
+	case 2: // vendor?（打 presets 名单）
+		if answer == "" {
+			m.lastAction = "vendor 不能为空（" + presetNamesOf(m.addPresets) + "；Esc 取消）"
+			return m, nil
+		}
+		// 名单没拿到时不拦（别为一次网络抖动卡死向导 —— 后端建时还会过矩阵）。
+		if preset := presetByVendor(m.addPresets, answer); preset != nil {
+			m.addDraft.vendor = preset.Vendor
+			m.addStep = 3
+			m.lastAction = "protocol？（缺省 chat；可选 " + strings.Join(preset.Protocols, ", ") + "；Esc 取消）"
+			return m, nil
+		} else if len(m.addPresets) > 0 {
+			m.lastAction = "没见过 vendor " + answer + "（可选：" + presetNamesOf(m.addPresets) + "；Esc 取消）"
+			return m, nil
+		}
+		m.addDraft.vendor = answer
+		m.addStep = 3
+		m.lastAction = "protocol？（缺省 chat；Esc 取消）"
+		return m, nil
+	case 3: // protocol?（缺省 chat；只接受该 vendor 名单里的）
+		preset := presetByVendor(m.addPresets, m.addDraft.vendor)
+		protocol := ""
+		if answer != "" {
+			protocol = normalizeProtocol(answer)
+			if preset != nil && !protocolAllowed(preset.Protocols, protocol) {
+				m.lastAction = "vendor " + m.addDraft.vendor + " 不支持 protocol " + answer +
+					"（可选 " + strings.Join(preset.Protocols, ", ") + "；Esc 取消）"
+				return m, nil
+			}
+		}
+		// 空 = 缺省 chat：draft 里留空，Create 时不发 protocol 这个键（后端兜底）。
+		m.addDraft.protocol = protocol
+		m.addStep = 4
+		if strings.EqualFold(m.addDraft.vendor, "dummy") {
+			return m.finishWizard()
+		}
+		m.lastAction = "key？（可空，直接回车跳过；Esc 取消）"
+		return m, nil
+	case 4: // key?（可空；dummy 直接跳过）
+		m.addDraft.apiKey = answer
+		return m.finishWizard()
+	}
+	return m, nil
+}
+
+// finishWizard：第四问答完（dummy 在第三问答完）—— 发一次 Create。
+func (m model) finishWizard() (tea.Model, tea.Cmd) {
+	draft := m.addDraft
+	m.lastAction = "建渠道 " + draft.id + "…"
+	return m, createProviderCmd(m.client, draft)
+}
+
+// presetNamesOf：向导第二问括号里的名单（拿不到名单时照实说没拿到 —— 别空着让人猜）。
+func presetNamesOf(presets []PresetItem) string {
+	if len(presets) == 0 {
+		return "预设名单没拿到，先照 vendor 名填"
+	}
+	names := make([]string, 0, len(presets))
+	for _, preset := range presets {
+		names = append(names, preset.Vendor)
+	}
+	return strings.Join(names, ", ")
+}
+
+// normalizeProtocol：用户手打的协议名收敛一下（`chat` 是缺省的别名 —— 后端认全名）。
+func normalizeProtocol(protocol string) string {
+	lowered := strings.ToLower(strings.TrimSpace(protocol))
+	if lowered == "chat" {
+		return "openai-chat-completion"
+	}
+	return lowered
+}
+
+// protocolAllowed：这个 protocol 在该 vendor 名单里吗（空名单 = 名单没拿到 —— 别拦）。
+func protocolAllowed(protocols []string, protocol string) bool {
+	if len(protocols) == 0 {
+		return true
+	}
+	for _, candidate := range protocols {
+		if strings.EqualFold(candidate, protocol) || (normalizeProtocol(candidate) == protocol) {
+			return true
+		}
+	}
+	return false
+}
+
+// commandProviderDel：删一条渠道（不可逆 ⇒ 走现有 confirm，先摊开再点头）。
+func commandProviderDel(m model, args []string) (tea.Model, tea.Cmd) {
+	if len(args) == 0 {
+		return m.fail("用法：/provider-del <id>（先用 /providers 看编号）"), nil
+	}
+	m.confirm = &confirm{kind: confirmDeleteProvider, provider: args[0]}
+	m.viewer, m.viewerTitle = []string{
+		m.style.red(" 不可逆") + "：删掉渠道 " + args[0],
+		"",
+		" 回车 / y 执行 · 其他键取消",
+	}, "确认删除"
+	m.viewerHint = "回车 / y 执行 · 其他键取消"
+	m.lastAction = "看清了再点头（回车 / y）"
+	return m, nil
 }
 
 func commandRefresh(m model, _ []string) (tea.Model, tea.Cmd) {
@@ -2189,8 +2496,8 @@ func (m model) render() (string, *tea.Cursor) {
 	}
 	lines := m.renderMessages(bodyHeight, width)
 	lines = append(lines, palette...)
-	inputLine := len(lines)                                  // 输入行在 `lines` 里的下标（消息区 + 面板之后）
-	lines = append(lines, truncate("> "+m.input, width))     // 输入行（命令与消息都从这儿走）
+	inputLine := len(lines)                                           // 输入行在 `lines` 里的下标（消息区 + 面板之后）
+	lines = append(lines, truncate("> "+m.input, width))              // 输入行（命令与消息都从这儿走）
 	lines = append(lines, m.style.dim(rule(width, m.width, m.ascii))) // 满线（暗色）：窄屏退回 ASCII `-`
 	lines = append(lines, status...)
 	if len(lines) > height { // 屏幕实在太矮（< 4 行）：宁可切掉上面的消息，也别把输入行挤没

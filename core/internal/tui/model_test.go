@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -622,6 +623,7 @@ func typeText(m model, text string) model {
 
 func TestPaletteShowsAndFilters(t *testing.T) {
 	m := fixture()
+	m.height = len(commands) + 8 // 命令多了面板就长 —— 给够高度再验"列出全部"（面板装不下会开窗，只看高亮附近一段）
 	// 一打 `/` 就出面板，且列出全部命令
 	m = typeText(m, "/")
 	body := m.View().Content
@@ -2745,5 +2747,216 @@ func TestPollRerollDispatchesByKind(t *testing.T) {
 	}
 	if discovered.reroll == nil || !discovered.reroll.Active || discovered.reroll.TargetKind != RerollKindSummary {
 		t.Fatalf("该捡起活着的摘要那一档：%+v", discovered.reroll)
+	}
+}
+
+// ── /providers · /provider-add · /provider-del ──
+
+// providerTestBackend：渠道的假后端 —— 记下 POST /providers 的请求体，按需回 422/409。
+type providerTestBackend struct {
+	body    map[string]any
+	raw     []byte
+	created ProviderInfo
+	status  int
+	reply   string
+}
+
+func newProviderTestBackend(status int, reply string) (*httptest.Server, *providerTestBackend) {
+	captured := &providerTestBackend{status: status, reply: reply}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/providers":
+			_ = json.NewEncoder(w).Encode([]map[string]any{
+				{"id": "ocgo", "vendor": "opencode-go", "protocol": "openai-chat-completion", "base_url": "https://x", "has_key": true},
+				{"id": "local", "vendor": "dummy", "protocol": "openai-chat-completion", "base_url": "", "has_key": false},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/models":
+			_ = json.NewEncoder(w).Encode([]ModelListItem{
+				{Provider: "ocgo", UpstreamID: "m1", Name: "M1"},
+				{Provider: "ocgo", UpstreamID: "m2", Name: "M2"},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/providers/presets":
+			_ = json.NewEncoder(w).Encode([]PresetItem{
+				{Vendor: "dummy", Name: "本地假上游", Protocols: []string{"openai-chat-completion"}},
+				{Vendor: "deepseek", Name: "DeepSeek 官方", Protocols: []string{"openai-chat-completion"}},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/providers":
+			raw, _ := io.ReadAll(r.Body)
+			captured.raw = raw
+			_ = json.Unmarshal(raw, &captured.body)
+			if captured.status != 0 {
+				w.WriteHeader(captured.status)
+				_, _ = w.Write([]byte(captured.reply))
+				return
+			}
+			captured.created = ProviderInfo{ID: "x", Vendor: "deepseek", Protocol: "openai-chat-completion"}
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(captured.created)
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/providers/"):
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	return server, captured
+}
+
+// answerWizardText：往向导里喂一句答案（输入行非 / 开头 ⇒ submit 走 answerWizard）。
+func answerWizardText(m model, text string) (model, tea.Cmd) {
+	m.input, m.inputCursor = text, len([]rune(text))
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	return updated.(model), cmd
+}
+
+// 四问拼出正确 POST 体（含 key 为空不发、缺省 protocol 不发）。
+func TestProviderAddWizardBuildsCorrectBody(t *testing.T) {
+	backend, captured := newProviderTestBackend(0, "")
+	defer backend.Close()
+	m := fixture()
+	m.client = NewClient(backend.URL, "")
+
+	updated, _ := m.runCommand("/provider-add")
+	m = updated.(model)
+	if m.addStep != 1 {
+		t.Fatalf("重进该从第一问开始：%d", m.addStep)
+	}
+	// presets 名单先回来（不然第二问认不出 vendor）
+	updated, _ = m.Update(presetsMsg{presets: []PresetItem{
+		{Vendor: "dummy", Protocols: []string{"openai-chat-completion"}},
+		{Vendor: "deepseek", Protocols: []string{"openai-chat-completion"}},
+	}})
+	m = updated.(model)
+	m, _ = answerWizardText(m, "x")
+	m, _ = answerWizardText(m, "deepseek")
+	// protocol 空 = 缺省（draft 留空，Create 不发 protocol）
+	m, _ = answerWizardText(m, "")
+	if m.addDraft.protocol != "" {
+		t.Fatalf("缺省 protocol 该留空（Create 不发）：%q", m.addDraft.protocol)
+	}
+	// key 空 ⇒ 发 Create（key 为空不发这个键）
+	m, cmd := answerWizardText(m, "")
+	if cmd == nil {
+		t.Fatal("第四问答完该发 Create")
+	}
+	m = runCmds(t, m, cmd)
+	if !strings.Contains(m.lastAction, "已添加 x（deepseek/openai-chat-completion）") {
+		t.Fatalf("成功该报已添加：%q", m.lastAction)
+	}
+	if _, ok := captured.body["api_key"]; ok {
+		t.Fatalf("key 为空不该发 api_key：%s", string(captured.raw))
+	}
+	if _, ok := captured.body["protocol"]; ok {
+		t.Fatalf("缺省 protocol 不该发 protocol：%s", string(captured.raw))
+	}
+	if captured.body["id"] != "x" || captured.body["vendor"] != "deepseek" {
+		t.Fatalf("POST 体不对：%s", string(captured.raw))
+	}
+}
+
+// 422 原样说（错配矩阵也在这一条里出来）。
+func TestProviderAddReports422Verbatim(t *testing.T) {
+	backend, _ := newProviderTestBackend(http.StatusUnprocessableEntity,
+		`{"error":{"code":"invalid","message":"providers: vendor \"deepseek\" 不支持 protocol \"systemone\""}}`)
+	defer backend.Close()
+	m := fixture()
+	m.client = NewClient(backend.URL, "")
+	presets := []PresetItem{
+		{Vendor: "dummy", Protocols: []string{"openai-chat-completion"}},
+		{Vendor: "deepseek", Protocols: []string{"openai-chat-completion"}},
+	}
+	updated, _ := m.runCommand("/provider-add")
+	m = updated.(model)
+	updated, _ = m.Update(presetsMsg{presets: presets})
+	m = updated.(model)
+	// protocol 问里 deepseek 只认 chat —— systemone 在向导就被拦下，不发请求
+	m2 := fixture()
+	m2.client = NewClient(backend.URL, "")
+	updated, _ = m2.runCommand("/provider-add")
+	m2 = updated.(model)
+	updated, _ = m2.Update(presetsMsg{presets: presets})
+	m2 = updated.(model)
+	m2, _ = answerWizardText(m2, "bad")
+	m2, _ = answerWizardText(m2, "deepseek")
+	m2, cmd := answerWizardText(m2, "systemone")
+	if cmd != nil {
+		t.Fatal("错配 protocol 在向导就该拦下，不发请求")
+	}
+	if !strings.Contains(m2.lastAction, "不支持 protocol") {
+		t.Fatalf("该说清错配：%q", m2.lastAction)
+	}
+	// 后端 422 也原样透出来（create 回来的错）
+	m3 := fixture()
+	m3.client = NewClient(backend.URL, "")
+	updated, _ = m3.Update(createdProviderMsg{err: errTest})
+	if said := updated.(model).lastAction; !strings.Contains(said, "添加渠道失败") {
+		t.Fatalf("失败该如实说：%q", said)
+	}
+}
+
+// Esc 取消（输入框以 / 开头时 Esc 清输入即取消 —— 沿用现有行为）。
+func TestProviderAddEscCancels(t *testing.T) {
+	m := fixture()
+	updated, _ := m.runCommand("/provider-add")
+	m = updated.(model)
+	m, _ = answerWizardText(m, "x")
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if cancelled := updated.(model); cancelled.addStep != 0 || cancelled.input != "" {
+		t.Fatalf("Esc 该清草稿与输入：step=%d input=%q", cancelled.addStep, cancelled.input)
+	}
+	if said := updated.(model).lastAction; !strings.Contains(said, "已取消") {
+		t.Fatalf("该说已取消：%q", said)
+	}
+}
+
+// /providers 查看器行（渠道行 + 预设名单行）。
+func TestProvidersViewerLines(t *testing.T) {
+	backend, _ := newProviderTestBackend(0, "")
+	defer backend.Close()
+	m := fixture()
+	m.client = NewClient(backend.URL, "")
+	updated, cmd := m.runCommand("/providers")
+	if cmd == nil {
+		t.Fatal("/providers 该去拉两份")
+	}
+	updated = runCmds(t, updated.(model), cmd)
+	after := updated.(model)
+	if after.viewer == nil {
+		t.Fatalf("该打开查看器：%q", after.lastAction)
+	}
+	body := strings.Join(after.viewer, "\n")
+	for _, want := range []string{"ocgo · opencode-go/openai-chat-completion · 有 key · 2 个模型", "local · dummy/openai-chat-completion · 无 key · 0 个模型", "presets: dummy, deepseek"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("缺 %q：\n%s", want, body)
+		}
+	}
+	// 失败照实说
+	failed, _ := fixture().Update(providersMsg{err: errTest})
+	if said := failed.(model).lastAction; !strings.Contains(said, "看渠道失败") {
+		t.Fatalf("失败该如实说：%q", said)
+	}
+}
+
+// /provider-del 走 confirm（点头真删 204，取消什么都不发生）。
+func TestProviderDelConfirmsThenDeletes(t *testing.T) {
+	backend, _ := newProviderTestBackend(0, "")
+	defer backend.Close()
+	m := fixture()
+	m.client = NewClient(backend.URL, "")
+	updated, cmd := m.runCommand("/provider-del ocgo")
+	if cmd != nil {
+		t.Fatal("确认前不许发请求")
+	}
+	armed := updated.(model)
+	if armed.confirm == nil || armed.confirm.kind != confirmDeleteProvider || armed.confirm.provider != "ocgo" {
+		t.Fatalf("该存下删渠道意图：%+v", armed.confirm)
+	}
+	updated, cmd = armed.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("点头该真删")
+	}
+	updated = runCmds(t, updated.(model), cmd)
+	if said := updated.(model).lastAction; !strings.Contains(said, "已删除渠道 ocgo") {
+		t.Fatalf("删完该报数：%q", said)
 	}
 }

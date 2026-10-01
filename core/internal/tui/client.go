@@ -62,11 +62,11 @@ type StreamSlice struct {
 }
 
 type Session struct {
-	ID       string     `json:"id"`
-	Title    string     `json:"title"`
-	Provider string     `json:"provider"`
-	Model    string     `json:"model"`
-	AgentID  string     `json:"agent_id"`
+	ID       string `json:"id"`
+	Title    string `json:"title"`
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+	AgentID  string `json:"agent_id"`
 	// Messages：这条会话**有几条消息**（列表项就带 —— 启动编排据此判定"空会话"，
 	// 不必为每条无标题会话再发一次 `GET /sessions/{id}/messages`）。
 	Messages int        `json:"messages"`
@@ -77,10 +77,10 @@ type Session struct {
 type SessionView = Session
 
 type Message struct {
-	ID         string  `json:"id"`
-	Role       string  `json:"role"`
-	Content    string  `json:"content"`
-	Reasoning  string  `json:"reasoning,omitempty"`
+	ID        string `json:"id"`
+	Role      string `json:"role"`
+	Content   string `json:"content"`
+	Reasoning string `json:"reasoning,omitempty"`
 	// ReasoningMS：思考用时（受理 → 第一段正文）—— 折叠行「思考（2.1s）」用它。
 	ReasoningMS *int64  `json:"reasoning_ms,omitempty"`
 	DurationMS  *int64  `json:"duration_ms,omitempty"`
@@ -297,11 +297,108 @@ func (c *Client) Models() ([]ModelListItem, error) {
 	err := c.get("/models", &items)
 	return items, err
 }
-
 func (c *Client) Health() (Health, error) {
 	var health Health
 	err := c.get("/health", &health)
 	return health, err
+}
+
+// ProviderInfo：`GET /providers` 的一项（`models` 不是后端原样回的 —— `GET /models`
+// 拍平里 `provider == id` 的那些，就地拼进来）。
+type ProviderInfo struct {
+	ID       string          `json:"id"`
+	Name     *string         `json:"name"`
+	Vendor   string          `json:"vendor"`
+	Protocol string          `json:"protocol"`
+	BaseURL  string          `json:"base_url"`
+	HasKey   bool            `json:"has_key"`
+	Models   []ModelListItem `json:"models"`
+}
+
+// providerRaw：`GET /providers` 的原始一项（`models` 那一格是后端的全貌形状，
+// 这里不要 —— 要的是 `/models` 拍平里按 provider 拼出来的，见 Providers）。
+type providerRaw struct {
+	ID       string  `json:"id"`
+	Name     *string `json:"name"`
+	Vendor   string  `json:"vendor"`
+	Protocol string  `json:"protocol"`
+	BaseURL  string  `json:"base_url"`
+	HasKey   bool    `json:"has_key"`
+}
+
+// PresetItem：`GET /providers/presets` 的一项（界面拿它生成选内置 provider 的向导）。
+type PresetItem struct {
+	Vendor    string   `json:"vendor"`
+	Name      string   `json:"name"`
+	BaseURL   string   `json:"base_url"`
+	NeedsKey  bool     `json:"needs_key"`
+	KeyEnv    string   `json:"key_env"`
+	Protocols []string `json:"protocols"`
+	Primary   bool     `json:"primary"`
+}
+
+// Providers：全部渠道（models 就地拼好 —— 别再去读 `/providers` 自带的那一格，
+// 那是全貌形状，不是下拉要的拍平形状）。
+func (c *Client) Providers() ([]ProviderInfo, error) {
+	var raw []providerRaw
+	if err := c.get("/providers", &raw); err != nil {
+		return nil, err
+	}
+	models, err := c.Models()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ProviderInfo, 0, len(raw))
+	for _, item := range raw {
+		info := ProviderInfo{
+			ID: item.ID, Name: item.Name, Vendor: item.Vendor,
+			Protocol: item.Protocol, BaseURL: item.BaseURL, HasKey: item.HasKey,
+			Models: []ModelListItem{},
+		}
+		for _, model := range models {
+			if model.Provider == item.ID {
+				info.Models = append(info.Models, model)
+			}
+		}
+		out = append(out, info)
+	}
+	return out, nil
+}
+
+// Presets：内建预设清单（`/provider-add` 第二问的名单就打这一份）。
+func (c *Client) Presets() ([]PresetItem, error) {
+	var items []PresetItem
+	err := c.get("/providers/presets", &items)
+	return items, err
+}
+
+// CreateProvider：建一条渠道。protocol 空 = 缺省 chat（不发这个键，后端兜底）；
+// baseURL / apiKey 空串 = 不发这个键（前者走预设端点，后者走环境变量或没配）。
+func (c *Client) CreateProvider(id, vendor, protocol, baseURL, apiKey string) (ProviderInfo, error) {
+	body := map[string]any{"id": id, "vendor": vendor}
+	if protocol != "" {
+		body["protocol"] = protocol
+	}
+	if baseURL != "" {
+		body["base_url"] = baseURL
+	}
+	if apiKey != "" {
+		body["api_key"] = apiKey
+	}
+	var info ProviderInfo
+	err := c.post("/providers", body, &info)
+	return info, err
+}
+
+// DeleteProvider：删掉一条渠道（204，没有响应体）。
+func (c *Client) DeleteProvider(id string) error { return c.del("/providers/" + id) }
+
+// RefreshProvider：拉一次上游模型并落库（发现列）。只给 chat 协议的渠道用 ——
+// dummy 没有上游可拉（后端 400），systemone 不走这条发现（各走各的，别混）。
+func (c *Client) RefreshProvider(id string) (ProviderInfo, error) {
+	var info ProviderInfo
+	err := c.post("/providers/"+id+"/refresh", nil, &info)
+	return info, err
 }
 
 // ProviderUsage：问一条渠道的套餐余量（只读）。渠道不是 opencode-go / 没配 key ⇒ 后端 400，
