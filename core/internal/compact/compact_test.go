@@ -197,15 +197,15 @@ func TestCompactRefusesToCoverACompactedRange(t *testing.T) {
 	h.turn(t, "第二句")
 	h.turn(t, "第三句")
 
-	first, err := h.service.Compact(context.Background(), h.session, Request{Blocks: 2})
+	_, err := h.service.Compact(context.Background(), h.session, Request{Blocks: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 按区间来（同一段）⇒ 报错
+	// 按区间来（同一段，现在整段被那一条摘要盖住）⇒ 合并级但只有一条孩子 ⇒ 报错
 	_, err = h.service.Compact(context.Background(), h.session,
-		Request{Begin: first.BeginMessageID, End: first.EndMessageID})
-	if err == nil || !strings.Contains(err.Error(), "已压缩") {
-		t.Fatalf("覆盖已压缩的区间该报错：%v", err)
+		Request{BeginIdx: 1, EndIdx: 4})
+	if err == nil {
+		t.Fatal("这一段已经全被一条摘要盖住：并不了（至少要两条同层）")
 	}
 	// 按块数来（最老的 N 块）⇒ 从第一条没被覆盖的起算，压的是**第三块**（开着的）⇒ 没得压
 	_, err = h.service.Compact(context.Background(), h.session, Request{Blocks: 1})
@@ -222,12 +222,11 @@ func TestCompactRangeMustBeSelfConsistent(t *testing.T) {
 	h := newHarness(t, config.AgentsConfig{})
 	h.turn(t, "第一句")
 	h.turn(t, "第二句")
-	messages := h.messages(t)
 
 	cases := map[string]Request{
-		"一端不在本会话":        {Begin: messages[0].ID, End: "01a00000-0000-7000-8000-000000000000"},
-		"begin 在 end 之后": {Begin: messages[2].ID, End: messages[0].ID},
-		"只给一端":           {Begin: messages[0].ID},
+		"越界":             {BeginIdx: 1, EndIdx: 99},
+		"begin 在 end 之后": {BeginIdx: 3, EndIdx: 1},
+		"只给一端":           {BeginIdx: 1},
 	}
 	for name, request := range cases {
 		if _, err := h.service.Compact(context.Background(), h.session, request); err == nil {
@@ -245,22 +244,21 @@ func TestCompactRangeMustAlignToWholeBlocks(t *testing.T) {
 	h.turn(t, "第一句")
 	h.turn(t, "第二句")
 	h.turn(t, "第三句")
-	messages := h.messages(t)
 
 	// 从中间那条起（不是块首）⇒ 报错
 	if _, err := h.service.Compact(context.Background(), h.session,
-		Request{Begin: messages[1].ID, End: messages[3].ID}); err == nil ||
+		Request{BeginIdx: 2, EndIdx: 4}); err == nil ||
 		!strings.Contains(err.Error(), "块") {
 		t.Fatalf("劈开块该报错：%v", err)
 	}
 	// 一直盖到最后那条（开着的块）⇒ 报错
 	if _, err := h.service.Compact(context.Background(), h.session,
-		Request{Begin: messages[0].ID, End: messages[len(messages)-1].ID}); err == nil {
+		Request{BeginIdx: 1, EndIdx: 6}); err == nil {
 		t.Fatal("开着的块永不压")
 	}
 	// 整块对齐 ⇒ 通过
 	if _, err := h.service.Compact(context.Background(), h.session,
-		Request{Begin: messages[0].ID, End: messages[1].ID}); err != nil {
+		Request{BeginIdx: 1, EndIdx: 2}); err != nil {
 		t.Fatalf("整块对齐该通过：%v", err)
 	}
 }
@@ -491,4 +489,152 @@ func TestStartReturnsRunningAndFinishesWithDone(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal("等不到压缩跑完")
+}
+
+// findSummary：按 id 在这一串摘要里找（断言用）。
+func findSummary(t *testing.T, rows []model.Summary, id string) model.Summary {
+	t.Helper()
+	for _, row := range rows {
+		if row.ID == id {
+			return row
+		}
+	}
+	t.Fatalf("摘要 %s 不在：%+v", id, rows)
+	return model.Summary{}
+}
+
+// 合并级：三块会话先按块压出**两条同层摘要**，再用 idx 区间并成一条父。
+//
+// 钉住：父的 SourceKind=summary、自己无父、Blocks=子和、两个孩子都指向它、Dirty 传播、
+// Begin/End=并集两端；且**消息指针保持指孩子**（升格是装配侧的事，合并绝不改 messages）。
+func TestCompactMergesSameLevelSummaries(t *testing.T) {
+	h := newHarness(t, config.AgentsConfig{})
+	h.turn(t, "第一句")
+	h.turn(t, "第二句")
+	h.turn(t, "第三句") // 最后一块开着（永不压）
+
+	first, err := h.service.Compact(context.Background(), h.session, Request{Blocks: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := h.service.Compact(context.Background(), h.session, Request{Blocks: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	messages := h.messages(t)
+	if first.BeginMessageID != messages[0].ID || first.EndMessageID != messages[1].ID ||
+		second.BeginMessageID != messages[2].ID || second.EndMessageID != messages[3].ID {
+		t.Fatalf("两条孩子该各盖一块（第 1–2、3–4 条）：%+v / %+v", first, second)
+	}
+
+	// 改一条孩子覆盖的消息 ⇒ 那条摘要（含祖先）标 dirty；并出来后父该跟着脏（传播）
+	if _, err := h.store.UpdateMessage(h.sessionID, messages[0].ID, "第一句（改过）"); err != nil {
+		t.Fatal(err)
+	}
+	if !findSummary(t, h.summaries(t), first.SummaryID).Dirty {
+		t.Fatal("改被覆盖的消息该把那条摘要标脏")
+	}
+
+	merged, err := h.service.Compact(context.Background(), h.session, Request{BeginIdx: 1, EndIdx: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if merged.SummaryID == first.SummaryID || merged.SummaryID == second.SummaryID {
+		t.Fatal("合并该另铸一条父摘要")
+	}
+	rows := h.summaries(t)
+	parent := findSummary(t, rows, merged.SummaryID)
+	if parent.SourceKind != model.SourceSummaries {
+		t.Fatalf("父的 source_kind 该是 summary：%+v", parent)
+	}
+	if parent.ParentSummaryID != nil {
+		t.Fatalf("父自己该是顶层：%+v", parent.ParentSummaryID)
+	}
+	if parent.Blocks != 2 { // 两条各 1 块 ⇒ 子和
+		t.Fatalf("父的 blocks 该是子和（1+1）：%d", parent.Blocks)
+	}
+	if !parent.Dirty {
+		t.Fatal("孩子脏了 ⇒ 父该脏（dirty 传播）")
+	}
+	if parent.BeginMessageID == nil || *parent.BeginMessageID != messages[0].ID ||
+		parent.EndMessageID == nil || *parent.EndMessageID != messages[3].ID {
+		t.Fatalf("父的两端该是并集（第 1 条 → 第 4 条）：%+v", parent)
+	}
+	if len(parent.SourceIDs) != 2 || parent.SourceIDs[0] != first.SummaryID || parent.SourceIDs[1] != second.SummaryID {
+		t.Fatalf("父的 source_ids 该是按区间排序的孩子：%+v", parent.SourceIDs)
+	}
+	for _, childID := range []string{first.SummaryID, second.SummaryID} {
+		child := findSummary(t, rows, childID)
+		if child.ParentSummaryID == nil || *child.ParentSummaryID != merged.SummaryID {
+			t.Fatalf("孩子 %s 该指向父：%+v", childID, child.ParentSummaryID)
+		}
+	}
+	// 消息指针保持指孩子（合并绝不改 messages）
+	after := h.messages(t)
+	if after[0].SummaryID == nil || *after[0].SummaryID != first.SummaryID ||
+		after[2].SummaryID == nil || *after[2].SummaryID != second.SummaryID {
+		t.Fatal("合并级不许动 messages.summary_id")
+	}
+
+	// 装配：这一段变成**一条更粗的**（父），末块照旧逐条
+	outgoing := state.BuildOutgoing("", after, rows, nil)
+	summaries := 0
+	for _, item := range outgoing {
+		if item.Source != "summary" {
+			continue
+		}
+		summaries++
+		if item.SummaryID == nil || *item.SummaryID != merged.SummaryID {
+			t.Fatalf("装配该取最粗的父：%+v", item)
+		}
+	}
+	if summaries != 1 {
+		t.Fatalf("装配里该正好一条摘要：%+v", outgoing)
+	}
+}
+
+// 合并级的四条负例：混合（洞）/ 只盖一条摘要 / 不同层 / 最后开着块 —— 都该报错、都不落库。
+func TestCompactMergeRefusals(t *testing.T) {
+	h := newHarness(t, config.AgentsConfig{})
+	for _, text := range []string{"第一句", "第二句", "第三句", "第四句"} {
+		h.turn(t, text)
+	}
+	// 四块：已闭合 [1,2][3,4][5,6]，开着 [7,8]
+	if _, err := h.service.Compact(context.Background(), h.session, Request{Blocks: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.service.Compact(context.Background(), h.session, Request{Blocks: 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	refuse := func(name string, request Request, want string) {
+		t.Helper()
+		_, err := h.service.Compact(context.Background(), h.session, request)
+		if err == nil {
+			t.Fatalf("%s：该报错", name)
+		}
+		if want != "" && !strings.Contains(err.Error(), want) {
+			t.Fatalf("%s：错误里该说清 %q：%v", name, want, err)
+		}
+	}
+	// 混合（洞）：第 5 条还是新消息
+	refuse("混合", Request{BeginIdx: 1, EndIdx: 5}, "洞")
+	// 只盖一条摘要
+	refuse("只盖一条", Request{BeginIdx: 1, EndIdx: 2}, "两条同层")
+	// 最后那个开着的块
+	refuse("开着块", Request{BeginIdx: 7, EndIdx: 8}, "开着的块")
+
+	// 先并出一条 level-2 的父（第 1–4 条），再压出一条 level-1 的兄弟（第 5–6 条）
+	if _, err := h.service.Compact(context.Background(), h.session, Request{BeginIdx: 1, EndIdx: 4}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.service.Compact(context.Background(), h.session, Request{Blocks: 1}); err != nil {
+		t.Fatal(err)
+	}
+	// 不同层：level-2 的父 + level-1 的弟 并在一起
+	refuse("不同层", Request{BeginIdx: 1, EndIdx: 6}, "同一层")
+
+	if rows := h.summaries(t); len(rows) != 4 { // 两条 level-1 + 一条 level-2 + 一条 level-1，失败的都没落
+		t.Fatalf("失败不许落库：%+v", rows)
+	}
 }

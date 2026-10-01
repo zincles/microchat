@@ -60,7 +60,7 @@ op：
                                                     执行删除（末尾核对不符 ⇒ 409）
   copy <session_id>                                 复制会话
   state <session_id>                                世界状态（effective / tables）
-  compact <session_id> [--blocks N | --begin <id> --end <id>]
+  compact <session_id> [--blocks N | --begin-idx N --end-idx M]
                                                     压缩：同步跑完一次并打印区间 / 块数 / 摘要
   title <session_id>                                手动起一次标题（不管现有没有；产物落 sessions.title）
   abilities <session_id>                            这个会话的 agent 在三个能力上的解析结果
@@ -707,27 +707,37 @@ type compactLine struct {
 
 // compactSession：压缩 —— **同步跑完**（校验 → 调上游 → 落库 → 收尾全在这一趟里）。
 //
-// 两种给法二选一：`--blocks N` 或 `--begin <id> --end <id>`；都不给 ⇒ 用 `config.json` 的
-// `chat.compact_blocks`。失败就照实回错误体（**带 code**）—— 会话一个字节都不动。
+// 两种给法二选一：`--blocks N` 或 `--begin-idx N --end-idx M`（idx 是 1-based 消息序号）；
+// 都不给 ⇒ 用 `config.json` 的 `chat.compact_blocks`。失败就照实回错误体（**带 code**）——
+// 会话一个字节都不动。
 func (e *debugEnv) compactSession(args []string) int {
 	if len(args) == 0 {
-		return report(errf("invalid", "用法：-debug compact <session_id> [--blocks N | --begin <id> --end <id>]"))
+		return report(errf("invalid", "用法：-debug compact <session_id> [--blocks N | --begin-idx N --end-idx M]"))
 	}
 	session, ok := e.session(args[0])
 	if !ok {
 		return 1
 	}
-	values, err := parseNamedFlags(args[1:], "blocks", "begin", "end")
+	values, err := parseNamedFlags(args[1:], "blocks", "begin-idx", "end-idx")
 	if err != nil {
 		return report(err)
 	}
-	request := compact.Request{Begin: values["begin"], End: values["end"]}
-	if raw, given := values["blocks"]; given {
-		blocks, err := strconv.Atoi(raw)
-		if err != nil {
-			return report(errf("invalid", "--blocks 要是整数：%s", raw))
+	request := compact.Request{}
+	for _, flag := range []struct {
+		name   string
+		target *int
+	}{
+		{"blocks", &request.Blocks},
+		{"begin-idx", &request.BeginIdx},
+		{"end-idx", &request.EndIdx},
+	} {
+		if raw, given := values[flag.name]; given {
+			number, err := strconv.Atoi(raw)
+			if err != nil {
+				return report(errf("invalid", "--%s 要是整数：%s", flag.name, raw))
+			}
+			*flag.target = number
 		}
-		request.Blocks = blocks
 	}
 	result, err := e.compact.Compact(context.Background(), *session, request)
 	if err != nil {

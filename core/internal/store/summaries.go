@@ -9,24 +9,34 @@ import (
 	"microchat/internal/model"
 )
 
-// RecordSummary：**压缩的落库口** —— 一个事务里做两件事：
+// RecordSummary：**压缩的落库口** —— 一个事务里插一行摘要，再把**它的成员**指过去。
 //
-//	① 插一行摘要（`insertSummary`）；
-//	② 把**这一段消息**的 `summary_id` 指过去（`messages` 上唯一允许被压缩改的那一格）。
+// 成员是谁由 `summary.SourceKind` 定（**同质**：一条摘要的成员不许混）：
+//
+//	message ⇒ 回填那一段消息的 `summary_id`（`messages` 上唯一允许被压缩改的那一格）；
+//	summary ⇒ 回填那批子摘要的 `parent_summary_id`（合并级）。
 //
 // **绝不插 / 改 / 删 `messages` 的其它列** —— 正文是存档（`AGENTS.md` 的第一条不变量）。
 //
-// 两处重核（调用上游那段时间里别人可能动过库）：
-//   - `messageIDs` 必须**一条不少地**属于这条会话（少一条 = 那段被删/改了，区间不再自洽）；
+// 顺序：先插摘要（外键指着它），再更新指针。
+//
+// 消息级的两处重核（调用上游那段时间里别人可能动过库）：
+//   - `sourceIDs` 必须**一条不少地**属于这条会话（少一条 = 那段被删/改了，区间不再自洽）；
 //   - 那些消息必须**都还没被覆盖**（`summary_id IS NULL`）⇒ 谁先到谁算，后到的**报错**
 //     （"不许覆盖已压缩的区间"这条闸在这里落地，不在调用点）。
 //
-// 顺序：先插摘要（`messages.summary_id` 的外键指着它），再更新指针。
+// 合并级**不加 SELECT 预检**：那条 `parent_summary_id IS NULL` 的守卫 UPDATE 就是复核
+// （摘要 append-only、删消息级联整链 ⇒ "行数对不上"已经足够说明别人抢过 / 区间变了）。
 //
 // `sessions.updated_at` **不动**：压的是派生数据，对话本身没变（列表排序该按"最后一次说话"）。
-func (s *Store) RecordSummary(summary model.Summary, messageIDs []string) error {
-	if len(messageIDs) == 0 {
-		return InvalidError("压缩要盖住至少一条消息（空区间不落库）")
+func (s *Store) RecordSummary(summary model.Summary, sourceIDs []string) error {
+	switch summary.SourceKind {
+	case model.SourceMessages, model.SourceSummaries:
+	default:
+		return InvalidError("摘要的成员只能是消息或摘要（source_kind 不认识：" + string(summary.SourceKind) + "）")
+	}
+	if len(sourceIDs) == 0 {
+		return InvalidError("压缩要盖住至少一条（空区间不落库）")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -37,14 +47,28 @@ func (s *Store) RecordSummary(summary model.Summary, messageIDs []string) error 
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	covered, err := coveredCount(tx, summary.SessionID, messageIDs)
+	if summary.SourceKind == model.SourceSummaries {
+		if err := insertSummary(tx, summary); err != nil {
+			return err
+		}
+		updated, err := updateSummaryParent(tx, summary.SessionID, summary.ID, sourceIDs)
+		if err != nil {
+			return err
+		}
+		if updated != len(sourceIDs) {
+			return InvalidError("要并的这几条已经不是原来那几条顶层摘要了（被抢过 / 被删过）：重新取一次")
+		}
+		return tx.Commit()
+	}
+
+	covered, err := coveredCount(tx, summary.SessionID, sourceIDs)
 	if err != nil {
 		return err
 	}
-	if covered != len(messageIDs) {
+	if covered != len(sourceIDs) {
 		return InvalidError("这段区间里的消息已经不是原来那几条了（被删过 / 换过会话）：重新取一次")
 	}
-	already, err := alreadyCovered(tx, summary.SessionID, messageIDs)
+	already, err := alreadyCovered(tx, summary.SessionID, sourceIDs)
 	if err != nil {
 		return err
 	}
@@ -54,11 +78,11 @@ func (s *Store) RecordSummary(summary model.Summary, messageIDs []string) error 
 	if err := insertSummary(tx, summary); err != nil {
 		return err
 	}
-	updated, err := updateMessageSummary(tx, summary.SessionID, summary.ID, messageIDs)
+	updated, err := updateMessageSummary(tx, summary.SessionID, summary.ID, sourceIDs)
 	if err != nil {
 		return err
 	}
-	if updated != len(messageIDs) {
+	if updated != len(sourceIDs) {
 		return InvalidError("这段区间里的消息已经不是原来那几条了（被删过 / 换过会话）：重新取一次")
 	}
 	return tx.Commit()
@@ -98,6 +122,28 @@ func updateMessageSummary(tx *sql.Tx, sessionID, summaryID string, messageIDs []
 		args = append(args, id)
 	}
 	result, err := tx.Exec("UPDATE messages SET summary_id = ?1 WHERE session_id = ?2 AND id IN ("+
+		strings.Join(marks, ",")+")", args...)
+	if err != nil {
+		return 0, err
+	}
+	affected, err := result.RowsAffected()
+	return int(affected), err
+}
+
+// updateSummaryParent：把这一段**子摘要**的 `parent_summary_id` 指过去。**调用方持事务**。
+//
+// 条件 `parent_summary_id IS NULL` 就是合并级那条复核：只认**还没爹**的（仍顶层），
+// 谁先到谁算；`session_id` 保证不跨会话乱认爹。行数对不上 ⇒ 调用方报错并整笔回滚。
+func updateSummaryParent(tx *sql.Tx, sessionID, summaryID string, childIDs []string) (int, error) {
+	marks := make([]string, len(childIDs))
+	args := make([]any, 0, len(childIDs)+2)
+	args = append(args, summaryID, sessionID) // ?1 = parent_summary_id，?2 = session_id
+	for index, id := range childIDs {
+		marks[index] = "?" + strconv.Itoa(index+3)
+		args = append(args, id)
+	}
+	result, err := tx.Exec("UPDATE summaries SET parent_summary_id = ?1 "+
+		"WHERE session_id = ?2 AND parent_summary_id IS NULL AND id IN ("+
 		strings.Join(marks, ",")+")", args...)
 	if err != nil {
 		return 0, err

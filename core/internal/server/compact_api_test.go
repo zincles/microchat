@@ -132,8 +132,7 @@ func TestCompactRouteAcceptsAndMarksTheSpan(t *testing.T) {
 	}
 
 	// 区间自洽：再压同一段 ⇒ 400（不许覆盖已压缩的区间）
-	recorder = call(box.server, "POST", box.path+"/compact",
-		`{"begin_message_id":"`+messages[0].ID+`","end_message_id":"`+messages[3].ID+`"}`)
+	recorder = call(box.server, "POST", box.path+"/compact", `{"begin_idx":1,"end_idx":4}`)
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("覆盖已压缩的区间该 400，得到 %d：%s", recorder.Code, recorder.Body.String())
 	}
@@ -144,11 +143,11 @@ func TestCompactRouteValidatesItsBody(t *testing.T) {
 	box := newDummySandbox(t)
 	box.seedTurn(t, "第一句")
 	box.seedTurn(t, "第二句")
-	messages := box.messages(t)
 
 	for name, body := range map[string]string{
-		"两种给法都给了": `{"blocks":1,"begin_message_id":"` + messages[0].ID + `","end_message_id":"` + messages[1].ID + `"}`,
-		"区间只给一端":  `{"begin_message_id":"` + messages[0].ID + `"}`,
+		"两种给法都给了": `{"blocks":1,"begin_idx":1,"end_idx":2}`,
+		"区间只给首端":  `{"begin_idx":1}`,
+		"区间只给尾端":  `{"end_idx":2}`,
 	} {
 		if recorder := call(box.server, "POST", box.path+"/compact", body); recorder.Code != http.StatusBadRequest {
 			t.Fatalf("%s 该 400，得到 %d：%s", name, recorder.Code, recorder.Body.String())

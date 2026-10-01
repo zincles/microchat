@@ -60,7 +60,7 @@ reminder/                  ← 专题参考（`tool-calls.md` 工具调用 / `je
 | `providers` | **只有它碰网络** | 只走成熟库；超时必配；**选后端**（哪条渠道来答）也只有这一处 |
 | `state` | **只有它拼出站文本** | 发出去的剔除标签、改注入当前状态；底子分层由提示词来源决定 |
 | `blocks` | 块切分 | 块是推导的、不入库；不许劈开；开着的那块永不压 |
-| `compact` | 摘要唯一入口 | **只往 summaries 插行**；不许覆盖已压缩的区间；失败不阻塞一轮 |
+| `compact` | 摘要唯一入口 | **只往 summaries 插行**；消息级不许覆盖已压缩的区间（**合并级相反**：只吃同层顶层摘要）；失败不阻塞一轮 |
 | `abilities` | 能力身份（枚举） | 产出不进历史/树/变量；失败不阻塞一轮；**缺条目 = 默认全开** |
 | `template` | `{{…}}` | 白名单 = 枚举；只扫一遍；会话 Agent 的提示词永不替换 |
 | `chat` | 一轮生成怎么跑 | 拿到整段才 INSERT |
@@ -247,7 +247,7 @@ delete(AA)           # 删除
 | GET | `/sessions/{session_id}/status` | — | `TurnStatus` | `idle`/`pending`/`streaming`/`error` + `message_id` + `elapsed_ms` + `chars` + `thinking_chars` + `error`。另搭两档**与轮次无关**的活状态：`compact`（压缩 / 压好了 / 失败）与 `reroll`（`running`/`done`/`error` + `elapsed_ms`）|
 | GET | `/sessions/{session_id}/turn/text?from=N&think_from=M` | — | `StreamSlice` | 流式增量的**游标读**（正文与思考各一条游标，`from` = 第几个字符）：只服务动画 |
 | POST | `/sessions/{session_id}/stop` | — | `{"stopped": bool}` | **幂等**：没在跑也 200（`false`）|
-| POST | `/sessions/{session_id}/compact` | `CompactReq` | `CompactStatus` · **202** | **压缩**：`{"blocks": N}` 或 `{"begin_message_id":…,"end_message_id":…}`（两个都给 ⇒ 400；都不给 ⇒ 用 `chat.compact_blocks`）⇒ 后台跑完一次压缩；**同一个会话同时只允许一次**（在跑 ⇒ 409）。跑完的结局在 `GET .../status` 的 `compact` 那一档（`running`/`done`/`error` + 原因）|
+| POST | `/sessions/{session_id}/compact` | `CompactReq` | `CompactStatus` · **202** | **压缩**：`{"blocks": N}` 或 `{"begin_idx": i, "end_idx": j}`（1-based 消息序号，与 `/messages?from_idx=&to_idx=` 同一套词；两种给法互斥、区间两端都得给；都不给 ⇒ 用 `chat.compact_blocks`）。区间入口按覆盖情况分派：全未覆盖 ⇒ 消息级；**同层顶层摘要恰好铺满** ⇒ 合并（金字塔）；其余 ⇒ 400 ⇒ 后台跑完一次压缩；**同一个会话同时只允许一次**（在跑 ⇒ 409）。跑完的结局在 `GET .../status` 的 `compact` 那一档（`running`/`done`/`error` + 原因）|
 | POST | `/sessions/{session_id}/reroll` | — | `{target_message_id, task_id, state}` · **202** | **重摇**：进模式并**立刻摇一次**（已在模式里 ⇒ 再摇一版）。候选（`RerolledMessage`）**只在内存里**、**不进历史** —— 选中才 apply 回那条 Message。尾条必须是 assistant（不是 ⇒ 400 说清那是"重发"）；与生成**共用同一把闸**（在跑 ⇒ 409）|
 | GET | `/sessions/{session_id}/reroll` | — | `{active, target_message_id, count, current_idx, running, elapsed_ms, error, items:[{idx, preview, at, pending, current}]}` | 重摇状态（**不吐全文**，预览几十字）：界面靠它画位次标记与「重摇中… 耗时」。没进模式 ⇒ `active: false`（**不是 404**）|
 | POST | `/sessions/{session_id}/reroll/switch` | `{"idx": n}` | 同上 | 选中第 `n` 版 ⇒ **就地重建**那条 Message（**UUID 不变**；正文与 usage / 耗时 / 思考一起换；摘要照旧标 `dirty`）|
@@ -342,18 +342,20 @@ delete(AA)           # 删除
 三份状态**各管一段、不许互为镜像**：`task` = 身份 + 生死；`turn` = 流细节（几个字、取消）+ 压缩那一档；`compact` = 压缩自己的细节。
 
 **压缩**（`internal/compact`，已落地 ✓；路由 `POST /sessions/{session_id}/compact` ⇒ **202**）：机制与策略两层。
-- **机制** = 给它一段（两端用 **message id** 指）→ 拼材料（每一步正文过 `statelang.Scan(...).Cleaned`，`<state>` 块剔掉，末尾附上下面那份状态）→ 叫 `compact` 能力（**非流式**一次调用，骑本会话 id、`cache_retention: none`）→ 过五条验证 → **只往 `summaries` 插一行**。
-  五条验证：① 剔 `<state>`；② 非空（剔完是空的 ⇒ **不写**，宁可什么都没有）；③ 区间自洽（两端在本会话、begin ≤ end、两端都还在）；④ **不许覆盖已压缩的区间**（`store.RecordSummary` 在事务里再核一遍）；⑤ 落库一并写 `prompt_version` 与 `usage`。
+- **机制** = 给它一段（两端用 **message id** 指；**成员可以是消息，也可以是同一层的顶层摘要** —— 后者就是金字塔合并）→ 拼材料（每一步正文过 `statelang.Scan(...).Cleaned`，`<state>` 块剔掉，末尾附上下面那份状态）→ 叫 `compact` 能力（**非流式**一次调用，骑本会话 id、`cache_retention: none`）→ 过五条验证 → **只往 `summaries` 插一行**。
+  五条验证：① 剔 `<state>`；② 非空（剔完是空的 ⇒ **不写**，宁可什么都没有）；③ 区间自洽（两端在本会话、begin ≤ end、两端都还在）；④ **不许覆盖已压缩的区间**（消息级；`store.RecordSummary` 在事务里再核一遍 —— **合并级相反**：它吃的就是已压缩的那一层，复核 = 一条守卫 UPDATE「只认还顶层的孩子」）；⑤ 落库一并写 `prompt_version` 与 `usage`。
 - **材料里附一份"算到区间末的状态"** ✓（2026-09-30 落地）：拿区间的 `to_idx` 去问 `at_idx` 那条链（`state.StateAt`：**当前的**生效提示词打底 + 正文只 fold 到区间末），
   用**同一个** `state.RenderTable` 渲染，抬头写死口气「【程序·状态（截至这段末尾；程序事实，仅供参考，不要写进梗概）】」。
   ⇒ 模型写梗概时**看得见**这一段结束时的变量，但**抄不进摘要**（摘要照旧不存状态）；一个变量都没有 ⇒ 不附（不塞空话）。
   **只此一处** ✗ —— 起标题那条链不许跟着加（`title` 不碰状态）。
 - **策略** = "从第一条没被覆盖的消息起，取最老的 N 个**已闭合块**"（手动按钮的语义）；**最后那个开着的块永不压**；块是推导的、不入库（`internal/blocks`）。
-- **区间入口**（直接给 `begin_message_id` + `end_message_id`）要**整块对齐**（块不被劈开），且区间里含已压缩的文本 ⇒ **报错**。
-- 落库 = `INSERT INTO summaries`（带区间 / `source_ids` / `blocks` / `tokens` / `provider` / `model` / `prompt_version` / `usage` / `dirty=0`）+ 把这一段消息的 `summary_id` 指过去，**同一事务**；**绝不插/改/删 `messages` 的其它列**（正文是存档）。
+- **区间入口**（`begin_idx` + `end_idx`，1-based 消息序号）—— 按覆盖情况分派：全未覆盖 ⇒ 消息级（**两端要整块对齐**）；全被**同一层的顶层摘要**恰好铺满 ⇒ **合并**（写孩子的 `parent_summary_id`）；混合（有洞）⇒ **400**。
+  - **合并的闸**：孩子全是顶层、≥2 条、恰好铺满区间（⊆ 且无洞、不劈开某条）、**同层**（level = 1 + max(孩子 level)，现算不入库）、不碰最后那个开着的块；不平 ⇒ 400 按 idx 说清。**一次压缩只吃同一层**（消息 = 第 0 层）—— 深处的节点已压过多次，混层就多丢一道（保真度）。
+  - 装配侧零改动：消息的 `summary_id` **保持指孩子**，升格靠 walk 的左端对齐；父的 `blocks` = 子和、`dirty` = 任一孩子脏。
+- 落库 = **单入口 `store.RecordSummary`**（按 `source_kind` 分岔）+ 守卫 UPDATE，**同一事务**：消息级把这一段消息的 `summary_id` 指过去；合并级把孩子的 `parent_summary_id` 回填（只认还顶层的）。**绝不插/改/删 `messages` 的其它列**（正文是存档）。
 - 谁也**不许**绕过这里自己拼摘要请求。不持锁跨 await：取料在锁里、调用在锁外、落库再进锁。
 - **失败不阻塞**：失败就把这一次报失败（带原因），会话一个字节都不动；**重试由调用方决定**，这里绝不重试。
-- **还没做** ✗：二次压缩（金字塔：喂 summary id、写 `parent_summary_id`）、自动触发（`compact_trigger_tokens` 只算了不算）、按范围的路由（`GET .../summaries`）。
+- **还没做** ✗：自动触发（`compact_trigger_tokens` 只算了不算）、按范围的路由（`GET .../summaries`）。
 
 **能力**（`internal/abilities`）：身份写死在代码里（`title` / `compact` / `judge` —— **枚举就是全部**），**开关 + 可选覆盖写在 `agents.json` 每个 agent 的 `abilities` 上**（不另开 `abilities.json`），只能**覆盖**模板/渠道/模型，不能造新的；**未知的 id 在写入与启动读取时都报错**。
 - `abilities.Resolve(agent, id)` 是**唯一**解析处：缺条目 = **默认全开**；`provider`/`model` 空 = 用会话的；`enabled: false` ⇒ 调用方**明确拒绝**（不静默降级）。
@@ -392,7 +394,7 @@ delete(AA)           # 删除
 
 **索引/外键/运行时**：索引 `messages_by_session(session_id, id)`（**顺序就是 `id`**，取"最新一条"也走它）、`messages(summary_id)`、`summaries(session_id/parent_summary_id)`。外键**只有两条**（`messages` 的两个）：`session_id` ⇒ CASCADE、`summary_id` ⇒ SET NULL；`begin/end_message_id` 与 `agent_id`/`provider` 是故意不加约束的（`begin/end` 的失效由 `store.DeletionPlan` 一份计算负责）。迁移由 `PRAGMA user_version` 驱动（当前 **只有 001** —— 开发阶段改形状就改它、删库重来，**不许追加** 002）；`foreign_keys=ON`、`journal_mode=WAL`；写入由一把锁串行化。
 
-## 摘要 / 压缩的设计（**压缩已落地** ✓：`internal/compact` + `internal/blocks` + `POST /sessions/{session_id}/compact`；`summaries` 表与**区间**早就在用 —— 装配按区间跳、Copy 复制它、删除级联按它判定）
+## 摘要 / 压缩的设计（**压缩 + 金字塔合并已落地** ✓：`internal/compact` + `internal/blocks` + `POST /sessions/{session_id}/compact`；`summaries` 表与**区间**早就在用 —— 装配按区间跳、Copy 复制它、删除级联按它判定）
 
 - **摘要不是"消息的节点"**：不往 `messages` 插行；**压缩只往 `summaries` 插一行**，绝不插/改/删 `messages`（删除那条路是另一回事：级联会删摘要，见不变量 4）。
 - **盖的是哪一段：`begin_message_id` / `end_message_id`**（创建时写一次）⇒ 装配/级联都是 **O(1) 查区间**：不"数过去"，也不需要"父的孩子一个不缺"那道闸（线性会话里区间**就是**覆盖范围本身）。两端可空（老数据）⇒ 那时逐条走原文（宁可细，不许漏）。
@@ -416,7 +418,9 @@ delete(AA)           # 删除
   升到最粗的左端对齐的祖先、跳到区间右端之后；否则发原文。"跳过"是查区间，**不再"数过去"**。**能取粗的不取精，但宁可用细的也不许漏内容**。
 - **MASK（术语）**：有摘要覆盖的那一段，装配时**不发明文**、只发摘要的正文 —— 存放处一个字节都不动，被"遮掉"的只是**这一次请求**。
 - **只有 Compact，没有"丢"**（铁律）：不存在"少发一段没人代表的内容"。超预算 ⇒ **先压再发**；真压不动 ⇒ **报错原路返回**，不做静默补救。
-- **粒度 = 对话块**：在 `assistant → user` 交界处切（`U1 A1 | U2 U3 A3 | U4 A4 A5`）。① 块绝不被劈开；② **最后那个开着的块永不压**；③ 章 = 凑够 N 个块（只数块，不按 token）；④ 块是**推导**的、不入库（需要指一个块时用两端消息 id）。
+- **粒度：用户态按块，算法层是 Message**（2026-10-01 定）：块在 `assistant → user` 交界处切（`U1 A1 | U2 U3 A3 | U4 A4 A5`）。
+  ① **手动入口（用户态）只收整块对齐**的区间，`{"blocks": N}` 也只数块；② **最后那个开着的块永不压**；③ 章 = 凑够 N 个块（只数块，不按 token）；④ 块是**推导**的、不入库（需要指一个块时用两端消息 id）。
+  ⇒ **细粒度能力留在算法层**：摘要的区间两端就是 message id，单条 Message 的摘要**合法**（存 / 装配 / 显示都支持）——"按块"是**入口**的约束，**不是数据层的约束** ✗。
 - **摘要里不存状态**：状态是**端点**的属性，不是段的属性 —— 存进去就是第二个真相来源，改一条旧消息它就过期。压缩的模板里也就写死这一句：「不要把世界状态写进梗概」（`DefaultTemplate`）；上游万一还是写了 `<state>`，落库前会被 `statelang.Scan(...).Cleaned` **剔掉**。
 - **真需要快照时它得是独立系统**（`state_snapshots`：从第一条推起、能接着上一个快照往后推进；覆盖的消息一经编辑即失效）。**现在不做** —— 现演的代价足够低。
 - **参数**：`compact_blocks = 10`（单位是块；`config.json` 的 `chat.compact_blocks`，不给块数时用它）；预算 = 模型上下文 − 输出预留（缺省 4096）；触发阈值用户设（缺省 = 预算）；停手线 = 阈值 × 0.8；终保护区 = 最近约 10k token。
@@ -425,7 +429,7 @@ delete(AA)           # 删除
   要真做，得先想清"删了之后谁来代表那段"（现在只有 Compact，没有"丢"）⇒ **先当没这回事**。三条旧条件里仍然成立的两条：
   ① **同一事务**；② **动手前先导出** `data/archive/*.json`；③ 报"剪掉 N 条（已导出）"，**不许静默**。
 - **次序**（✅ = 已经做到；**其余一律 ✗**）：P1 预算 + 占用 ✓ · P1.5 导出/归档 ✗ ·
-  P2 摘要 ✓（压缩：手动、按块；**自动触发还 ✗**）· P3 金字塔 ✗（二次压缩还 ✗ —— 区间入口现在要求不含已压缩文本）· 清原文 ✗；
+  P2 摘要 ✓（压缩：手动、按块；**自动触发还 ✗**）· P3 金字塔 ✓（合并写侧 2026-10-01 落地：同层顶层摘要并成父）· 清原文 ✗；
   另外**装配侧按区间跳** ✓ 与**删除 / Copy 时对摘要的处理** ✓ 早就在跑。
 
 ## 与上游通信

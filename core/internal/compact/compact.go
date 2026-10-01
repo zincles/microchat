@@ -2,14 +2,16 @@
 //
 // 机制与策略两层（口径见 `AGENTS.md`「摘要 / 压缩的设计」与「后台任务 / 压缩 / 能力」）：
 //
-//	机制 = 给它一段（两端用 message id 指）→ 拼材料 → 叫 compact 能力 → 过五条验证 → 单事务落库；
+//	机制 = 给它一段（**1-based 的消息序号区间**）→ 按覆盖情况分派（全未覆盖 ⇒ 消息级；全被同一批
+//	        同层顶层摘要盖住 ⇒ 合并级）→ 拼材料 → 叫 compact 能力 → 过五条验证 → 单事务落库；
 //	策略 = "从第一条没被覆盖的消息起，取最老的 N 个**已闭合块**"（手动按钮的语义）。
 //
 // 四条纪律：
 //
 //  1. **只往 `summaries` 插行**：`messages` 上唯一允许被压缩改的是那一段的 `summary_id`
 //     —— 绝不插 / 改 / 删正文（正文是存档）；
-//  2. **不许覆盖已压缩的区间**：区间里有消息已经挂在摘要上 ⇒ 报错（不在老区间上盖第二层）；
+//  2. **消息级不许覆盖已压缩的区间**：区间里只要有一条消息已经挂在摘要上，就不再走消息级
+//     （要么整段都是同批同层摘要 ⇒ 合并级，要么有洞 ⇒ 报错，不在老区间上盖第二层）；
 //  3. **取料在锁里、调用在锁外、落库再进锁**：绝不跨网络调用持锁（`store` 那把锁是全局的）；
 //  4. **失败不阻塞**：失败就把这一次报失败（带原因），会话一个字节都不动；**重试由调用方决定**，
 //     这里自己绝不重试。
@@ -23,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 	"time"
 
@@ -40,6 +43,9 @@ import (
 
 // materialHeader：材料那一段的抬头（让模型一眼知道下面是什么）。
 const materialHeader = "【要压缩的这段对话】\n"
+
+// mergeHeader：合并级材料的抬头 —— 一句话说清"下面是各段梗概、不是对话原文"。
+const mergeHeader = "【下面是各段已有梗概（不是对话原文）—— 请把它们并成一段更粗的前情提要】\n\n"
 
 // stateHeader：材料后面附的那份状态的抬头 —— **口气定死**：程序事实、仅供参考、不要写进梗概。
 //
@@ -66,15 +72,17 @@ const compactTimeout = 60 * time.Second
 // Request：一次压缩要压哪儿 —— **两种给法二选一**。
 //
 //	Blocks：按策略取最老的 N 个已闭合块（0 = 用 `config.json` 的 `compact_blocks`）；
-//	Begin/End：直接点名一段区间（两端都是 **message id**）。
+//	BeginIdx/EndIdx：直接点名一段区间（**1-based 的消息序号**，与 `/messages?from_idx=&to_idx=`、
+//	  `/state?at_idx=` 同一套词；`0` = 没给）。序号指的是消息 —— 这一段的成员是消息还是摘要，
+//	  由覆盖情况在后端分派（全未覆盖 ⇒ 消息级；全被同一批同层顶层摘要盖住 ⇒ 合并级）。
 type Request struct {
-	Blocks int
-	Begin  string
-	End    string
+	Blocks   int
+	BeginIdx int
+	EndIdx   int
 }
 
 // ByRange：这次是按区间来的（不是按块数）。
-func (r Request) ByRange() bool { return r.Begin != "" || r.End != "" }
+func (r Request) ByRange() bool { return r.BeginIdx > 0 || r.EndIdx > 0 }
 
 // Result：一次压缩的结局（`-debug compact` 直接打它）。
 type Result struct {
@@ -193,11 +201,15 @@ type prepared struct {
 }
 
 // span：这一次压的区间 —— 下标（含）+ 块数 + 那一批消息的快照。
+//
+// Sources 非空 ⇒ 这一趟是**合并级**（成员是那批同层顶层摘要，不是消息）：材料与落库都走它，
+// Messages 只是这段区间的快照（供"区间末状态"用）。
 type span struct {
 	Begin    int
 	End      int
 	Blocks   int
 	Messages []model.Message
+	Sources  []model.Summary
 }
 
 func (s *Service) prepare(session model.Session, req Request) (*prepared, error) {
@@ -218,7 +230,13 @@ func (s *Service) prepare(session model.Session, req Request) (*prepared, error)
 	if err != nil {
 		return nil, err
 	}
-	resolved, err := resolveSpan(messages, req, chatConfig.CompactBlocks)
+	// 摘要**无条件加载**（合并级要拿它算顶层祖先与层级；消息级用不上也照拿 —— 让 `resolveSpan`
+	// 的签名只有一份，省得两条入口各带一半上下文）
+	summaries, err := s.Store.ListSummaries(session.ID)
+	if err != nil {
+		return nil, err
+	}
+	resolved, err := resolveSpan(messages, summaries, req, chatConfig.CompactBlocks)
 	if err != nil {
 		return nil, err
 	}
@@ -281,14 +299,17 @@ func requestedBlocks(req Request, resolved span, defaultBlocks int) int {
 
 // ── 区间：两种给法 → 同一份 span ───────────────────────────────────────────
 
-// resolveSpan：把两种给法归一成一段（**闸都在这里**：区间自洽 + 不许覆盖已压缩的区间）。
-func resolveSpan(messages []model.Message, req Request, defaultBlocks int) (span, error) {
+// resolveSpan：把两种给法归一成一段（**闸都在这里**）。
+//
+// 按块数 ⇒ 策略（消息级）；按区间 ⇒ 看区间里的**覆盖情况**分派：
+// 全未覆盖 ⇒ 消息级；全被**同一批同层顶层摘要**盖住 ⇒ 合并级；混合（有洞）⇒ 报错。
+func resolveSpan(messages []model.Message, summaries []model.Summary, req Request, defaultBlocks int) (span, error) {
 	if len(messages) == 0 {
 		return span{}, invalid("这条会话还没有消息，没有可压的")
 	}
 	all := blocks.Split(messages)
 	if req.ByRange() {
-		return rangeSpan(messages, all, req)
+		return rangeSpan(messages, summaries, all, req)
 	}
 	return strategySpan(messages, blocks.Closed(all), req.Blocks, defaultBlocks)
 }
@@ -332,25 +353,46 @@ func strategySpan(messages []model.Message, closed []blocks.Block, requested, de
 	return makeSpan(messages, taken[0].Begin, taken[len(taken)-1].End, len(taken)), nil
 }
 
-// rangeSpan：另一条入口 —— 直接点名一段区间（两端都是 message id）。
+// rangeSpan：另一条入口 —— 直接点名一段区间（**1-based 的消息序号**，闭区间）。
 //
-// 三条闸：两端都在这条会话里、begin ≤ end、**块不被劈开**（两端正好落在块的边界上）。
-// 再加一条"最后那个开着的块永不压"与"区间里不许含已压缩的文本"。
-func rangeSpan(messages []model.Message, all []blocks.Block, req Request) (span, error) {
-	if req.Begin == "" || req.End == "" {
-		return span{}, invalid("按区间压要两端都给：begin_message_id + end_message_id")
+// 四条闸：两端都给正数序号、都不越界、begin ≤ end；然后按覆盖情况分派：
+//
+//	全未覆盖（区间里没有消息带 summary_id）⇒ 消息级；
+//	全被覆盖 ⇒ 合并级（是不是"同一批同层顶层摘要恰好铺满"由 `mergeSpan` 判）；
+//	混合（有洞）⇒ 400（跨层不吃：一段已覆盖 + 一段新消息就是这种）。
+func rangeSpan(messages []model.Message, summaries []model.Summary, all []blocks.Block, req Request) (span, error) {
+	if req.BeginIdx <= 0 || req.EndIdx <= 0 {
+		return span{}, invalid("按区间压要两端都给正数序号：begin_idx + end_idx（1-based，0 = 没给）")
 	}
-	begin, end := indexOf(messages, req.Begin), indexOf(messages, req.End)
-	if begin < 0 || end < 0 {
-		missing := req.Begin
-		if begin >= 0 {
-			missing = req.End
+	if req.BeginIdx > len(messages) || req.EndIdx > len(messages) {
+		return span{}, invalid("区间越界：这条会话只有 %d 条（begin_idx=%d, end_idx=%d）",
+			len(messages), req.BeginIdx, req.EndIdx)
+	}
+	if req.BeginIdx > req.EndIdx {
+		return span{}, invalid("区间反了：begin_idx（%d）在 end_idx（%d）之后", req.BeginIdx, req.EndIdx)
+	}
+	begin, end := req.BeginIdx-1, req.EndIdx-1
+	covered := 0
+	for index := begin; index <= end; index++ {
+		if messages[index].SummaryID != nil {
+			covered++
 		}
-		return span{}, invalid("这个区间的一端不在这条会话里：%s", missing)
 	}
-	if begin > end {
-		return span{}, invalid("区间反了：begin 在 end 之后")
+	switch {
+	case covered == 0:
+		return messageRangeSpan(messages, all, begin, end)
+	case covered == end-begin+1:
+		return mergeSpan(messages, summaries, all, begin, end)
+	default:
+		return span{}, invalid("区间里有洞：第 %d–%d 条里只有 %d 条已经被摘要盖住（另一半还是新消息）"+
+			"—— 压缩只吃同一层，别把已覆盖的和新消息混在一段里",
+			req.BeginIdx, req.EndIdx, covered)
 	}
+}
+
+// messageRangeSpan：**消息级**的区间入口 —— 两端必须正好落在块的边界上（块不被劈开），
+// 且不许碰最后那个开着的块。**路数一个字都不变，只把"两端 message id"换成"区间下标"。**
+func messageRangeSpan(messages []model.Message, all []blocks.Block, begin, end int) (span, error) {
 	first, last := -1, -1
 	for index, block := range all {
 		if block.Begin == begin {
@@ -373,6 +415,146 @@ func rangeSpan(messages []model.Message, all []blocks.Block, req Request) (span,
 		return span{}, err
 	}
 	return makeSpan(messages, begin, end, last-first+1), nil
+}
+
+// mergeSpan：**合并级** —— 区间里每条消息都被盖住，且盖住它的**顶层摘要**恰好是一批
+// 同层的兄弟、按位置首尾相接铺满整个区间。
+//
+// 四条闸（正确性，一条都不能省）：
+//  1. 孩子全是**顶层**（沿 parent_summary_id 上溯到顶；单亲指针不能有两个爹）；
+//  2. 至少两条；
+//  3. 孩子区间恰好铺满区间（⊆ 且无洞、不劈开某条）；
+//  4. 同层（level 现算，不入库）。
+//
+// 外加"不碰最后那个开着的块"（沿用消息级那条规矩与文案）。
+func mergeSpan(messages []model.Message, summaries []model.Summary, all []blocks.Block, begin, end int) (span, error) {
+	if len(all) > 0 && end >= all[len(all)-1].Begin {
+		return span{}, invalid("最后那个开着的块永不压（对话还在往下长）：等它接上下一轮")
+	}
+	byID := make(map[string]*model.Summary, len(summaries))
+	for index := range summaries {
+		byID[summaries[index].ID] = &summaries[index]
+	}
+	// ① 收集区间里每个消息的**最顶层祖先**，按出现顺序去重
+	seen := make(map[string]bool, 2)
+	children := make([]model.Summary, 0, 2)
+	for index := begin; index <= end; index++ {
+		if messages[index].SummaryID == nil {
+			return span{}, invalid("第 %d 条没被摘要盖住（这段不是清一色的摘要）", index+1)
+		}
+		top, ok := topAncestor(*messages[index].SummaryID, byID)
+		if !ok {
+			return span{}, invalid("第 %d 条挂的摘要在会话里找不着了：重新取一次", index+1)
+		}
+		if !seen[top.ID] {
+			seen[top.ID] = true
+			children = append(children, *top)
+		}
+	}
+	if len(children) < 2 {
+		return span{}, invalid("合并至少要两条同层摘要（这一段只盖着 %d 条）：拿不到就按消息级压", len(children))
+	}
+	// ③ 孩子区间 ⊆ 区间、按位置首尾相接恰好铺满（无洞、不劈开某条）
+	positions := make(map[string]int, len(messages))
+	for index := range messages {
+		positions[messages[index].ID] = index
+	}
+	type childSpan struct {
+		summary model.Summary
+		begin   int
+		end     int
+	}
+	spans := make([]childSpan, 0, len(children))
+	for _, child := range children {
+		childBegin, childEnd, ok := childRange(child, positions)
+		if !ok {
+			return span{}, invalid("子摘要 %s 的区间对不上眼前这条会话（被删过 / 老数据）：重新取一次", shortID(child.ID))
+		}
+		spans = append(spans, childSpan{summary: child, begin: childBegin, end: childEnd})
+	}
+	sort.Slice(spans, func(i, j int) bool { return spans[i].begin < spans[j].begin })
+	cursor := begin
+	for _, child := range spans {
+		if child.begin != cursor {
+			return span{}, invalid("这一段没有被同层摘要恰好铺满（第 %d 条那儿空着 / 被劈开了）：按 idx 说清要并哪几条",
+				cursor+1)
+		}
+		if child.end > end {
+			return span{}, invalid("子摘要 %s 的范围超出了这个区间（不许劈开一条摘要）：把整段并进来", shortID(child.summary.ID))
+		}
+		cursor = child.end + 1
+	}
+	if cursor != end+1 {
+		return span{}, invalid("这一段没有被同层摘要恰好铺满（第 %d 条那儿空着）：按 idx 说清要并哪几条", cursor+1)
+	}
+	// ④ 同层：level = 1 + max(孩子的 level)，无孩子 = 1（用这条会话的全部摘要现算）
+	childrenOf := make(map[string][]string, len(summaries))
+	for index := range summaries {
+		if parent := summaries[index].ParentSummaryID; parent != nil {
+			childrenOf[*parent] = append(childrenOf[*parent], summaries[index].ID)
+		}
+	}
+	memo := make(map[string]int, len(summaries))
+	level := summaryLevel(spans[0].summary.ID, childrenOf, memo)
+	for _, child := range spans[1:] {
+		if got := summaryLevel(child.summary.ID, childrenOf, memo); got != level {
+			return span{}, invalid("要并的这几条不在同一层（合并只吃同层兄弟）：别把不同深度的并在一起")
+		}
+	}
+	sources := make([]model.Summary, len(spans))
+	totalBlocks := 0
+	for index, child := range spans {
+		sources[index] = child.summary
+		totalBlocks += int(child.summary.Blocks)
+	}
+	snapshot := make([]model.Message, end-begin+1)
+	copy(snapshot, messages[begin:end+1])
+	return span{Begin: begin, End: end, Blocks: totalBlocks, Messages: snapshot, Sources: sources}, nil
+}
+
+// topAncestor：沿 `parent_summary_id` 上溯到**最顶层**（自己也可能是顶）。指不着 ⇒ false。
+func topAncestor(summaryID string, byID map[string]*model.Summary) (*model.Summary, bool) {
+	summary, ok := byID[summaryID]
+	if !ok {
+		return nil, false
+	}
+	for summary.ParentSummaryID != nil {
+		parent, ok := byID[*summary.ParentSummaryID]
+		if !ok {
+			return nil, false
+		}
+		summary = parent
+	}
+	return summary, true
+}
+
+// childRange：这条摘要盖住的消息下标区间（闭区间）。两端缺一 / 指不着 ⇒ false。
+func childRange(summary model.Summary, positions map[string]int) (int, int, bool) {
+	if summary.BeginMessageID == nil || summary.EndMessageID == nil {
+		return 0, 0, false
+	}
+	begin, okBegin := positions[*summary.BeginMessageID]
+	end, okEnd := positions[*summary.EndMessageID]
+	if !okBegin || !okEnd || begin > end {
+		return 0, 0, false
+	}
+	return begin, end, true
+}
+
+// summaryLevel：摘要的层级 —— 叶子（没有孩子摘要）= 1，否则 1 + 孩子的最大层级。
+// **现算、不入库**（层级是派生的：存它 = 第二个真相来源）。
+func summaryLevel(summaryID string, childrenOf map[string][]string, memo map[string]int) int {
+	if level, ok := memo[summaryID]; ok {
+		return level
+	}
+	level := 1
+	for _, childID := range childrenOf[summaryID] {
+		if child := summaryLevel(childID, childrenOf, memo) + 1; child > level {
+			level = child
+		}
+	}
+	memo[summaryID] = level
+	return level
 }
 
 // makeSpan：切出这一段（**消息是快照** —— 调用期间别人改库不影响这一趟的判断）。
@@ -411,16 +593,6 @@ func ensureUncovered(messages []model.Message, begin, end int) error {
 	return nil
 }
 
-// indexOf：按**完整 id** 找下标（找不到 ⇒ -1 —— 区间两端必须是精确的 message id）。
-func indexOf(messages []model.Message, id string) int {
-	for index := range messages {
-		if messages[index].ID == id {
-			return index
-		}
-	}
-	return -1
-}
-
 // ── 调用 + 五条验证 + 落库 ─────────────────────────────────────────────────
 
 // execute：后台/同步那半程 —— 挂号 → 拼材料 → 调上游 → 过闸 → 单事务落库 → 收尾。
@@ -444,10 +616,19 @@ func (s *Service) execute(ctx context.Context, p *prepared) (Result, error) {
 
 // call：真调一次 + 过五条验证 + 落库。
 func (s *Service) call(ctx context.Context, p *prepared) (Result, error) {
-	material := materialOf(p.span.Messages)
+	merge := len(p.span.Sources) > 0
+	// 材料：消息级 = 这段对话正文；合并级 = 各段已有梗概（带轻抬头），外面套一句"这不是对话"。
+	material := ""
+	header := materialHeader
+	if merge {
+		material = mergeMaterial(p.span.Sources, messageIdxs(p.span.Messages))
+		header = mergeHeader
+	} else {
+		material = materialOf(p.span.Messages)
+	}
 	if strings.TrimSpace(material) == "" {
 		// ②之前的半步：**材料是空的就别发**（整段都是 `<state>` 块时就是这样）。
-		// 注意判的是**对话正文**（不含下面附的那份状态）—— 状态不是"可压的内容"。
+		// 注意判的是**正文**（不含下面附的那份状态）—— 状态不是"可压的内容"。
 		return Result{}, invalid("这一段剔掉 <state> 之后没有正文可压（整段都是状态块）")
 	}
 	wire := providers.FromConfig(p.channel)
@@ -455,7 +636,7 @@ func (s *Service) call(ctx context.Context, p *prepared) (Result, error) {
 		Model: p.model,
 		Messages: []providers.ChatMessage{
 			{Role: "system", Content: p.template},
-			{Role: "user", Content: materialHeader + withStateSection(material, p.stateSection)},
+			{Role: "user", Content: header + withStateSection(material, p.stateSection)},
 		},
 		// 骑**同一个会话 id**（网关按它路由、缓存按前缀算；缺了会被上游拒）
 		SessionID: p.session.ID,
@@ -478,42 +659,110 @@ func (s *Service) call(ctx context.Context, p *prepared) (Result, error) {
 			Message: "上游回来的那段剔掉 <state> 之后是空的：这一份不落库"}
 	}
 
-	// ③ 区间自洽 + ④ 不许覆盖已压缩的区间：落库时在**同一个事务里**再核一遍
-	//    （调用上游那段时间里别人可能动过库 —— `RecordSummary` 两处重核就是干这个的）
-	ids := make([]string, 0, len(p.span.Messages))
-	for _, message := range p.span.Messages {
-		ids = append(ids, message.ID)
+	// 材料来源 → 落库那一份（成员是消息还是摘要）。
+	sourceIDs := make([]string, 0, len(p.span.Messages))
+	beginID, endID := "", ""
+	sourceKind := model.SourceMessages
+	dirty := false
+	if merge {
+		for _, source := range p.span.Sources {
+			sourceIDs = append(sourceIDs, source.ID)
+			dirty = dirty || source.Dirty
+		}
+		// 并集两端 = 第一条孩子的 begin、最后一条孩子的 end（孩子已按区间排序）
+		beginID = *p.span.Sources[0].BeginMessageID
+		endID = *p.span.Sources[len(p.span.Sources)-1].EndMessageID
+		sourceKind = model.SourceSummaries
+	} else {
+		for _, message := range p.span.Messages {
+			sourceIDs = append(sourceIDs, message.ID)
+		}
+		beginID = sourceIDs[0]
+		endID = sourceIDs[len(sourceIDs)-1]
 	}
+
+	// ③ 区间自洽 + ④ 不许覆盖已压缩的区间：落库时在**同一个事务里**再核一遍
+	//    （调用上游那段时间里别人可能动过库 —— `RecordSummary` 的守卫 UPDATE 就是干这个的）
 	summaryID, err := mintSummaryID()
 	if err != nil {
 		return Result{}, err
 	}
 	summary := model.Summary{
 		ID: summaryID, SessionID: p.session.ID,
-		SourceKind:     model.SourceMessages,
-		BeginMessageID: &ids[0], EndMessageID: &ids[len(ids)-1],
+		SourceKind:     sourceKind,
+		BeginMessageID: &beginID, EndMessageID: &endID,
 		Text: text,
-		// blocks = 覆盖了几个对话块（显示 + "≥N 块"判定；块本身不入库）
+		// blocks = 覆盖了几个对话块（显示 + "≥N 块"判定；块本身不入库）；合并级 = 子和
 		Blocks: int64(p.span.Blocks),
 		// tokens = 这条摘要正文的**估算**（上游 usage 可能没有；估算的位置与预算算法同一个口径）
 		Tokens:    int64(s.estimateTokens(p, text)),
-		SourceIDs: ids,
+		SourceIDs: sourceIDs,
 		Provider:  p.channel.ID, Model: p.model,
 		// ⑤ 落库一并写 prompt_version（**生效模板**的指纹）与 usage
 		PromptVersion: abilities.PromptVersion(p.template),
 		Usage:         result.Usage,
-		Dirty:         false, // 刚压出来就是干净的
-		CreatedAt:     time.Now().UnixMilli(),
+		// 刚压出来就是干净的；合并级**传播**孩子的脏（父盖着被改过的内容）
+		Dirty:     dirty,
+		CreatedAt: time.Now().UnixMilli(),
 	}
-	if err := s.Store.RecordSummary(summary, ids); err != nil {
+	if err := s.Store.RecordSummary(summary, sourceIDs); err != nil {
 		return Result{}, storeError(err)
 	}
 	return Result{
-		SessionID: p.session.ID, BeginMessageID: ids[0], EndMessageID: ids[len(ids)-1],
-		Blocks: p.span.Blocks, Messages: len(ids), SummaryID: summaryID,
+		SessionID: p.session.ID, BeginMessageID: beginID, EndMessageID: endID,
+		Blocks: p.span.Blocks, Messages: len(p.span.Messages), SummaryID: summaryID,
 		PromptVersion: summary.PromptVersion, Text: text,
 		Provider: summary.Provider, Model: summary.Model, Usage: summary.Usage,
 	}, nil
+}
+
+// messageIdxs：这段快照里 message id → 1-based 序号（摘要抬头里的"第 a–b 条"按它写）。
+func messageIdxs(messages []model.Message) map[string]int {
+	idxByID := make(map[string]int, len(messages))
+	for _, message := range messages {
+		if message.Idx > 0 {
+			idxByID[message.ID] = message.Idx
+		}
+	}
+	return idxByID
+}
+
+// mergeMaterial：合并级的材料 —— 每条子摘要正文前加一行轻抬头 `【第 a–b 条（N 块）】`，
+// 段落间空行。a/b 用消息序号（缺了就不带抬头，别瞎说），N 用该孩子的块数。
+func mergeMaterial(sources []model.Summary, idxByID map[string]int) string {
+	var builder strings.Builder
+	for _, source := range sources {
+		text := strings.TrimSpace(source.Text)
+		if text == "" {
+			continue
+		}
+		builder.WriteString(mergeSourceHeader(source, idxByID))
+		builder.WriteString(text)
+		builder.WriteString("\n\n")
+	}
+	return strings.TrimSpace(builder.String())
+}
+
+// mergeSourceHeader：一条子摘要的轻抬头（区间序号缺了 ⇒ 只写块数，宁可不说也不瞎说）。
+func mergeSourceHeader(source model.Summary, idxByID map[string]int) string {
+	blocks := source.Blocks
+	if blocks < 1 {
+		blocks = 1
+	}
+	begin, beginOK := idxByID[deref(source.BeginMessageID)]
+	end, endOK := idxByID[deref(source.EndMessageID)]
+	if beginOK && endOK {
+		return fmt.Sprintf("【第 %d–%d 条（%d 块）】\n", begin, end, blocks)
+	}
+	return fmt.Sprintf("【（%d 块）】\n", blocks)
+}
+
+// deref：可空 string 指针取值（nil ⇒ 空串，查表必然查不着）。
+func deref(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 // materialOf：把这一段正文拼成材料 —— **每条消息都过 `statelang.Scan(...).Cleaned`**
