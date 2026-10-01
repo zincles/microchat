@@ -1866,7 +1866,7 @@ func TestPickerHighlightIsBoldCyan(t *testing.T) {
 }
 
 // `/outgoing` 查看器：**摘要是压缩过的 ⇒ 黄**、系统提示词 ⇒ 暗、原样消息 ⇒ 默认色；
-// 顺带把序号（`#3`）打出来 —— 只有这个查看器用它。
+// 左列是**压缩前的消息序号**（摘要写它涵盖的区间）。
 func TestOutgoingViewerColorsBySource(t *testing.T) {
 	m := colored(fixture())
 	blocks := int64(4)
@@ -1878,17 +1878,27 @@ func TestOutgoingViewerColorsBySource(t *testing.T) {
 		{Role: "user", Content: "原样那句", Source: "message", MessageID: &messageID, Idx: &nine},
 	}})
 	body := updated.(model).View().Content
-	if !strings.Contains(body, "\x1b[33m摘要 "+shortID(summaryID)) {
-		t.Fatalf("摘要那条该是黄：\n%q", body)
+	lines := viewLines(updated.(model))
+	// 按行比对：左列标签 + 角色 + 着色后的说明（行内不再有 `#9` / `第 3-5 条` 那种冗余后缀）
+	want := []string{
+		fmt.Sprintf("%-7s %-9s %-8s", "0", "system", "") + "\x1b[2m系统提示词\x1b[0m",
+		fmt.Sprintf("%-7s %-9s %-8s", "3-5", "assistant", "") + "\x1b[33m摘要 " + shortID(summaryID) + "（覆盖 4 块）\x1b[0m",
+		fmt.Sprintf("%-7s %-9s %-8s", "9", "user", "") + "消息 " + shortID(messageID),
 	}
-	if !strings.Contains(body, "\x1b[2m系统提示词 #0") {
-		t.Fatalf("系统提示词该是暗色、并显示合成项的 0：\n%q", body)
+	for _, line := range want {
+		found := false
+		for _, got := range lines {
+			if got == line {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("该有这一行：\n%q\n整屏：\n%q", line, body)
+		}
 	}
-	if !strings.Contains(body, "消息 "+shortID(messageID)+" #9") {
-		t.Fatalf("消息那条该列出来、带自己的序号：\n%q", body)
-	}
-	if !strings.Contains(body, "第 3-5 条") {
-		t.Fatalf("摘要该报它替代的序号范围：\n%q", body)
+	if strings.Contains(body, "第 3-5 条") || strings.Contains(body, "#9") || strings.Contains(body, "#0") {
+		t.Fatalf("行内冗余后缀该删干净：\n%q", body)
 	}
 	if strings.Contains(body, "\x1b[33m消息 ") || strings.Contains(body, "\x1b[2m消息 ") {
 		t.Fatal("原样消息保持默认色（别和压缩出来的混）")

@@ -396,8 +396,9 @@ func BuildOutgoing(systemPrompt string, messages []model.Message, summaries []mo
 			outgoing = append(outgoing, item)
 			continue
 		}
-		// 摘要：不是谁说的话，是**程序摆给模型的前情** ⇒ 用 user 角色 + 明写的抬头，
-		// 免得模型把它当成"用户刚说的一句"。
+		// 摘要：它是 AI 生成的前情提要（compact 那一发的产出）⇒ 用 assistant 角色；
+		// 且块以 assistant 收尾、下一条通常是 user ⇒ 标 assistant 才不破坏 user/assistant 交替。
+		// 抬头照旧保留，标明它是**程序摆的**前情，不是谁说的话。
 		text := strings.TrimSpace(part.summary.Text)
 		if text == "" {
 			continue
@@ -408,7 +409,7 @@ func BuildOutgoing(systemPrompt string, messages []model.Message, summaries []mo
 		}
 		id, count := part.summary.ID, blocks
 		item := Outgoing{
-			Role:      RoleUser,
+			Role:      RoleAssistant,
 			Content:   "【前情提要·" + strconv.FormatInt(blocks, 10) + " 块】\n" + text,
 			Source:    "summary",
 			SummaryID: &id,

@@ -295,6 +295,9 @@ func TestBuildOutgoingCarriesIndexes(t *testing.T) {
 	if item.Idx != nil {
 		t.Fatalf("摘要不该有自己的 idx：%+v", item)
 	}
+	if item.Role != RoleAssistant {
+		t.Fatalf("摘要是 AI 生成的前情 ⇒ 该标 assistant（保住交替）：%+v", item)
+	}
 	last := outgoing[2]
 	if last.Source != "message" || last.Idx == nil || *last.Idx != 3 || last.MessageID == nil || *last.MessageID != "m3" {
 		t.Fatalf("消息项该带它自己的序号：%+v", last)

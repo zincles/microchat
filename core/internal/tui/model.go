@@ -887,15 +887,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		lines := make([]string, 0, len(message.items)*3+2)
-		for index, item := range message.items {
+		for _, item := range message.items {
 			// 出处一眼看出来（口径见 AGENTS.md）：**摘要是压缩过的 ⇒ 黄**、系统提示词 ⇒ 暗、
 			// 原样消息 ⇒ 默认色。正文一律默认色（内容才是主角）。
-			// 顺带把序号打出来（`#3`）—— **只有这个查看器用它**（它本来就是调试用的）：
-			// 于是"第 5–10 条被压成了哪一条"不用去数。
-			who, kind := "消息", stylePlain
+			// 左列是**压缩前的消息序号**（摘要写它涵盖的区间）—— 与 `/messages`、
+			// `/state?at_idx` 同一套"第几条"的词汇：于是"第 5–10 条被压成了哪一条"不用去数。
+			label, who, kind := "-", "消息", stylePlain
 			switch item.Source {
 			case "system":
-				who, kind = "系统提示词"+indexSuffix(item.Idx), styleDim
+				who, kind = "系统提示词", styleDim
+				if item.Idx != nil {
+					label = strconv.Itoa(*item.Idx)
+				}
 			case "summary":
 				blocks := int64(0)
 				if item.Blocks != nil {
@@ -905,13 +908,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if item.SummaryID != nil {
 					id = shortID(*item.SummaryID)
 				}
-				who, kind = "摘要 "+id+"（覆盖 "+strconv.FormatInt(blocks, 10)+" 块"+spanSuffix(item.FromIdx, item.ToIdx)+"）", styleYellow
+				who, kind = "摘要 "+id+"（覆盖 "+strconv.FormatInt(blocks, 10)+" 块）", styleYellow
+				if item.FromIdx != nil && item.ToIdx != nil {
+					label = strconv.Itoa(*item.FromIdx) + "-" + strconv.Itoa(*item.ToIdx)
+				}
 			default:
 				if item.MessageID != nil {
-					who = "消息 " + shortID(*item.MessageID) + indexSuffix(item.Idx)
+					who = "消息 " + shortID(*item.MessageID)
+				}
+				if item.Idx != nil {
+					label = strconv.Itoa(*item.Idx)
 				}
 			}
-			head := fmt.Sprintf("%2d %-9s %-8s", index+1, item.Role, "")
+			head := fmt.Sprintf("%-7s %-9s %-8s", label, item.Role, "")
 			line, _ := m.style.concat([]segment{{head, stylePlain}, {who, kind}}, max(1, m.width), "")
 			lines = append(lines, line)
 			for _, line := range strings.Split(item.Content, "\n") {
@@ -1974,23 +1983,6 @@ func shortID(id string) string {
 		return id[:8]
 	}
 	return id
-}
-
-// indexSuffix：序号那点后缀（`#3`）—— 没带上序号（老数据 / 手搭的项）就什么都不加。
-// **只给 `/outgoing` 查看器用**：消息区与消息列表不显示序号（那儿本来就按顺序摆着）。
-func indexSuffix(idx *int) string {
-	if idx == nil {
-		return ""
-	}
-	return " #" + strconv.Itoa(*idx)
-}
-
-// spanSuffix：摘要覆盖的**序号范围**（`，第 3-5 条`）—— 缺一端就不显示（老数据没有区间）。
-func spanSuffix(from, to *int) string {
-	if from == nil || to == nil {
-		return ""
-	}
-	return "，第 " + strconv.Itoa(*from) + "-" + strconv.Itoa(*to) + " 条"
 }
 
 func describeSession(session Session) string {
