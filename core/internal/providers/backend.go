@@ -41,8 +41,11 @@ func SelectBackend(provider, model string, providersConfig config.ProvidersConfi
 		return Backend{Name: BackendFallback}
 	}
 	// vendor 字符串与原来逐字相同（`openai-compat` 这种遗留值也原样回 Name）；
-	// dummy 只按 EffectiveVendor 判（`dummy` 两种写法都收敛到它）。
-	vendor := Vendor(found.Kind)
+	// dummy 按 Vendor 优先、Kind 别名兜底判（`vendor: dummy` 与 `kind: dummy` 都收敛到它）。
+	vendor := Vendor(found.Vendor)
+	if vendor == "" {
+		vendor = Vendor(found.Kind)
+	}
 	if (Provider{Vendor: vendor}).EffectiveVendor() == VendorDummy {
 		return Backend{Name: BackendDummy, Provider: found}
 	}
