@@ -100,11 +100,11 @@ func OpencodeUsageAt(ctx context.Context, baseURL, apiKey string) (PlanUsage, er
 	}
 	request.Header.Set("Accept", "application/json")
 	// 自报身份照本仓口径（默认 = Pi 的形状）：实测这里**不挑**，但"用库名"迟早被拦，不占这个便宜。
-	request.Header.Set("User-Agent", userAgent(Provider{Kind: KindOpenCodeGo}))
+	request.Header.Set("User-Agent", userAgent(Provider{Vendor: VendorOpenCodeGo}))
 	request.Header.Set("Authorization", "Bearer "+apiKey)
 
 	client := NewClient(Provider{
-		Kind:     KindOpenCodeGo,
+		Vendor:   VendorOpenCodeGo,
 		Timeouts: &Timeouts{ConnectSeconds: 10, TotalSeconds: OpencodeUsageTimeout.Seconds()},
 	})
 	response, err := client.Do(request)

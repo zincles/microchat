@@ -29,20 +29,56 @@ import (
 	"microchat/internal/config"
 )
 
-// Kind：渠道类型。它决定 base_url、必需头、以及几家特有的兼容开关。
+// Vendor：渠道背后是**找谁**（哪家上游）。它决定 base_url、必需头、以及几家特有的兼容开关。
+type Vendor string
+
+const (
+	// VendorOpenAICompat：**旧命名**（Rust 时代）—— 端点全靠配置给，仍按 OpenAI 兼容对待。
+	// 留它是为了**不静默改变老配置的行为**（少了它，老配置会掉进"未知 vendor" ⇒ 不发 stream_options）。
+	VendorOpenAICompat Vendor = "openai-compat"
+	VendorDummy        Vendor = "dummy"       // 不联网：请求照拼（调试页看得到），但不发
+	VendorOpenAI       Vendor = "openai"      // 官方 OpenAI（api.openai.com）
+	VendorOpenRouter   Vendor = "openrouter"  // OpenRouter
+	VendorDeepseek     Vendor = "deepseek"    // DeepSeek 官方（api.deepseek.com，OpenAI 兼容）
+	VendorOpenCodeGo   Vendor = "opencode-go" // OpenCode Go（网关按客户端身份放行）
+	VendorOpenCode     Vendor = "opencode"    // OpenCode（同上，非 Go 套餐）
+	VendorOllama       Vendor = "ollama"      // 本地
+	VendorLMStudio     Vendor = "lmstudio"    // 本地
+	VendorTypesafe     Vendor = "typesafe"    // Typesafe（SystemOne 协议）
+	VendorCustom       Vendor = "custom"      // 自定义端点：端点全靠配置给，按 OpenAI 兼容对待
+)
+
+// Kind：deprecated —— `Vendor` 的读入别名（值与 Vendor 常量逐字相同）。新代码一律用 Vendor。
 type Kind string
 
 const (
-	// KindOpenAICompat：**旧命名**（Rust 时代）—— 端点全靠配置给，仍按 OpenAI 兼容对待。
-	// 留它是为了**不静默改变老配置的行为**（少了它，老配置会掉进"未知 kind" ⇒ 不发 stream_options）。
 	KindOpenAICompat Kind = "openai-compat"
-	KindDummy        Kind = "dummy"       // 不联网：请求照拼（调试页看得到），但不发
-	KindOpenAI       Kind = "openai"      // 官方 OpenAI（api.openai.com）
-	KindOpenRouter   Kind = "openrouter"  // OpenRouter
-	KindOpenCodeGo   Kind = "opencode-go" // OpenCode Go（网关按客户端身份放行）
-	KindOpenCode     Kind = "opencode"    // OpenCode（同上，非 Go 套餐）
-	KindOllama       Kind = "ollama"      // 本地
-	KindLMStudio     Kind = "lmstudio"    // 本地
+	KindDummy        Kind = "dummy"
+	KindOpenAI       Kind = "openai"
+	KindOpenRouter   Kind = "openrouter"
+	KindDeepseek     Kind = "deepseek"
+	KindOpenCodeGo   Kind = "opencode-go"
+	KindOpenCode     Kind = "opencode"
+	KindOllama       Kind = "ollama"
+	KindLMStudio     Kind = "lmstudio"
+	KindTypesafe     Kind = "typesafe"
+	KindCustom       Kind = "custom"
+)
+
+// Protocol：渠道**说什么话**（线协议）。与 Vendor 正交，由 Validate 做兼容矩阵检查。
+type Protocol string
+
+const (
+	// ProtocolChatCompletion：OpenAI Chat Completion（`/chat/completions`）—— 缺省。
+	ProtocolChatCompletion Protocol = "openai-chat-completion"
+	// ProtocolOpenAIResponse：占位 —— 暂不支持。
+	ProtocolOpenAIResponse Protocol = "openai-response"
+	// ProtocolAnthropicMessages：占位 —— 暂不支持。
+	ProtocolAnthropicMessages Protocol = "anthropic-messages"
+	// ProtocolGeminiGenerateContent：占位 —— 暂不支持。
+	ProtocolGeminiGenerateContent Protocol = "gemini-generate-content"
+	// ProtocolSystemOne：JEV SystemOne（BaseURL verbatim 即整条 URL）。
+	ProtocolSystemOne Protocol = "systemone"
 )
 
 // Identity：以什么身份自报家门。OpenCode 官方要求"用自己的标识，别用库名"（`node-fetch` 就是被拒那类）。
@@ -73,13 +109,18 @@ const (
 const Version = "0.1.0"
 
 // Provider：一个渠道（`config/providers.json` 里的一条）。
+//
+// `Vendor`（找谁）× `Protocol`（说什么话）：新代码只填这两个；`Kind` 是废弃的读入别名
+// （老配置/旧字面量照常编译，`EffectiveVendor` 收敛；`Vendor` 非空时 `Kind` 被忽略）。
 type Provider struct {
-	ID      string            `json:"id"`
-	Name    string            `json:"name"`
-	Kind    Kind              `json:"kind"`
-	BaseURL string            `json:"base_url"`
-	Headers map[string]string `json:"headers"`
-	APIKey  string            `json:"api_key"`
+	ID       string            `json:"id"`
+	Name     string            `json:"name"`
+	Vendor   Vendor            `json:"vendor"`
+	Kind     Kind              `json:"kind,omitempty"` // deprecated：只读入；Vendor 非空时忽略
+	Protocol Protocol          `json:"protocol"`
+	BaseURL  string            `json:"base_url"`
+	Headers  map[string]string `json:"headers"`
+	APIKey   string            `json:"api_key"`
 	// Identity：空 = 跟随服务器默认（服务器也没写 ⇒ **pi**）。以什么身份自报家门。
 	Identity Identity `json:"identity"`
 	// ClientUAOverride：**直接覆写 UA**（默认空）。优先级**高于**身份与服务器默认。
@@ -155,10 +196,10 @@ type Request struct {
 	Stream     bool
 }
 
-// presets：kind 的内建定义。**只放端点和兼容开关，不搬模型目录**（模型是发现来的）。
+// presets：vendor 的内建定义。**只放端点和兼容开关，不搬模型目录**（模型是发现来的）。
 type preset struct {
 	baseURL       string
-	apiKeyEnv     string
+	apiKeyEnvs    []string
 	supportsUsage bool // stream_options.include_usage
 	supportsStore bool // store: false
 	longCache     bool // prompt_cache_retention: "24h"
@@ -170,26 +211,103 @@ type preset struct {
 	reasoningField string
 }
 
-var presets = map[Kind]preset{
-	// 旧名：端点由配置供给（可能是任何 OpenAI 兼容服务），但语义与 openai 一致的那部分照给
-	KindOpenAICompat: {supportsUsage: true, supportsStore: true},
-	KindOpenAI:       {baseURL: "https://api.openai.com/v1", apiKeyEnv: "OPENAI_API_KEY", supportsUsage: true, supportsStore: true, longCache: true},
-	KindOpenRouter:   {baseURL: "https://openrouter.ai/api/v1", apiKeyEnv: "OPENROUTER_API_KEY", supportsUsage: true},
-	KindOpenCodeGo:   {baseURL: "https://opencode.ai/zen/go/v1", apiKeyEnv: "OPENCODE_API_KEY", supportsUsage: true, sessionHeader: "x-opencode-session", reasoningField: "reasoning_content"},
-	KindOpenCode:     {baseURL: "https://opencode.ai/zen/v1", apiKeyEnv: "OPENCODE_API_KEY", supportsUsage: true, sessionHeader: "x-opencode-session", reasoningField: "reasoning_content"},
-	KindOllama:       {baseURL: "http://127.0.0.1:11434/v1", supportsUsage: false},
-	KindLMStudio:     {baseURL: "http://127.0.0.1:1234/v1", supportsUsage: false},
-	KindDummy:        {},
+var presets = map[Vendor]preset{
+	// 旧名：端点由配置供给（可能是任何 OpenAI 兼容服务），但语义与 custom 一致的那部分照给
+	VendorOpenAICompat: {supportsUsage: true, supportsStore: true},
+	VendorCustom:       {supportsUsage: true, supportsStore: true},
+	VendorOpenAI:       {baseURL: "https://api.openai.com/v1", apiKeyEnvs: []string{"OPENAI_API_KEY"}, supportsUsage: true, supportsStore: true, longCache: true},
+	VendorOpenRouter:   {baseURL: "https://openrouter.ai/api/v1", apiKeyEnvs: []string{"OPENROUTER_API_KEY"}, supportsUsage: true},
+	// DeepSeek 官方：OpenAI 兼容（`/chat/completions` + `/models` 同形）；思考字段用官方的 `reasoning_content`
+	//（接收侧三种全认，发送侧用它 —— 也是 `wireMessages` 里"deepseek vendor 字段必须在"那条规则的落点）。
+	VendorDeepseek:   {baseURL: "https://api.deepseek.com", apiKeyEnvs: []string{"DEEPSEEK_API_KEY"}, supportsUsage: true, reasoningField: "reasoning_content"},
+	VendorOpenCodeGo: {baseURL: "https://opencode.ai/zen/go/v1", apiKeyEnvs: []string{"OPENCODE_API_KEY"}, supportsUsage: true, sessionHeader: "x-opencode-session", reasoningField: "reasoning_content"},
+	VendorOpenCode:   {baseURL: "https://opencode.ai/zen/v1", apiKeyEnvs: []string{"OPENCODE_API_KEY"}, supportsUsage: true, sessionHeader: "x-opencode-session", reasoningField: "reasoning_content"},
+	VendorOllama:     {baseURL: "http://127.0.0.1:11434/v1", supportsUsage: false},
+	VendorLMStudio:   {baseURL: "http://127.0.0.1:1234/v1", supportsUsage: false},
+	VendorTypesafe:   {baseURL: "https://api.typesafe.ai/v1/systemone", apiKeyEnvs: []string{"TYPESAFE_API_KEY", "JEV_API_KEY"}},
+	VendorDummy:      {},
 }
 
-// ApplyPreset：把 kind 的默认值补进 provider（用户显式填了的不动）。
+// EffectiveVendor：Vendor 非空用它；否则 Kind 映射（openai-compat→custom，其余逐字）；都空→custom。
+func (p Provider) EffectiveVendor() Vendor {
+	if p.Vendor != "" {
+		return p.Vendor
+	}
+	if p.Kind != "" {
+		if p.Kind == KindOpenAICompat {
+			return VendorCustom
+		}
+		return Vendor(p.Kind)
+	}
+	return VendorCustom
+}
+
+// EffectiveProtocol：空→openai-chat-completion（缺省）。
+func (p Provider) EffectiveProtocol() Protocol {
+	if p.Protocol != "" {
+		return p.Protocol
+	}
+	return ProtocolChatCompletion
+}
+
+// Normalize：把 Kind 别名与空 Protocol 收敛成 Vendor×Protocol（Vendor 非空时 Kind 被忽略）。
+func (p Provider) Normalize() Provider {
+	p.Vendor = p.EffectiveVendor()
+	p.Protocol = p.EffectiveProtocol()
+	return p
+}
+
+// Validate：vendor×protocol 兼容矩阵（错配 loud error）。
+//
+//   - chat-completion ← openai-compat、dummy、openai、openrouter、deepseek、opencode-go、
+//     opencode、ollama、lmstudio、custom；custom 必须有 base_url（端点全靠配置给）。
+//   - systemone ← typesafe、openrouter、custom；base_url 非空（verbatim 整条 URL）。
+//   - 其余 protocol（openai-response、anthropic-messages、gemini-generate-content）是占位，永远报错"暂不支持"。
+func (p Provider) Validate() error {
+	vendor := p.EffectiveVendor()
+	protocol := p.EffectiveProtocol()
+	switch protocol {
+	case ProtocolOpenAIResponse, ProtocolAnthropicMessages, ProtocolGeminiGenerateContent:
+		return fmt.Errorf("providers: protocol %q 暂不支持", protocol)
+	case ProtocolSystemOne:
+		switch vendor {
+		case VendorTypesafe, VendorOpenRouter, VendorCustom:
+		default:
+			return fmt.Errorf("providers: vendor %q 不支持 protocol %q", vendor, protocol)
+		}
+		if strings.TrimSpace(p.BaseURL) == "" {
+			return fmt.Errorf("providers: systemone 缺少 base_url（verbatim 整条 URL）")
+		}
+		return nil
+	case ProtocolChatCompletion:
+		switch vendor {
+		case VendorOpenAICompat, VendorDummy, VendorOpenAI, VendorOpenRouter, VendorDeepseek,
+			VendorOpenCodeGo, VendorOpenCode, VendorOllama, VendorLMStudio, VendorCustom:
+		default:
+			return fmt.Errorf("providers: vendor %q 不支持 protocol %q", vendor, protocol)
+		}
+		if vendor == VendorCustom && strings.TrimSpace(p.BaseURL) == "" {
+			return fmt.Errorf("providers: custom 缺少 base_url（端点全靠配置给）")
+		}
+		return nil
+	default:
+		return fmt.Errorf("providers: 未知 protocol %q", protocol)
+	}
+}
+
+// ApplyPreset：把 vendor 的默认值补进 provider（用户显式填了的不动）。
 func ApplyPreset(p Provider) Provider {
-	preset := presets[p.Kind]
+	preset := presets[p.EffectiveVendor()]
 	if p.BaseURL == "" {
 		p.BaseURL = preset.baseURL
 	}
-	if p.APIKey == "" && preset.apiKeyEnv != "" {
-		p.APIKey = os.Getenv(preset.apiKeyEnv)
+	if p.APIKey == "" {
+		for _, env := range preset.apiKeyEnvs {
+			if value := os.Getenv(env); value != "" {
+				p.APIKey = value
+				break
+			}
+		}
 	}
 	// identity 不在这里兜底：它可能来自"服务器级默认特征"（见 config 的 server.identity），
 	// 所以空值要**留着**给上层填；`userAgent` 最后兜到 **pi**。
@@ -232,20 +350,33 @@ func goArchToNode(arch string) string {
 	}
 }
 
-// sessionHeaderFor：这个渠道发不发会话头、发成什么名字（nil = 按 kind 默认；"" = 不发）。
+// sessionHeaderFor：这个渠道发不发会话头、发成什么名字（nil = 按 vendor 默认；"" = 不发）。
 func sessionHeaderFor(p Provider) string {
 	if p.SessionHeader != nil {
 		return *p.SessionHeader
 	}
-	return presets[p.Kind].sessionHeader
+	return presets[p.EffectiveVendor()].sessionHeader
 }
 
-// reasoningFieldFor：这个渠道回传思考用哪个字段名（nil = 按 kind 默认；"" = 不回传）。
+// reasoningFieldFor：这个渠道回传思考用哪个字段名（nil = 按 vendor 默认；"" = 不回传）。
 func reasoningFieldFor(p Provider) string {
 	if p.ReasoningField != nil {
 		return *p.ReasoningField
 	}
-	return presets[p.Kind].reasoningField
+	return presets[p.EffectiveVendor()].reasoningField
+}
+
+// reasoningFieldForModel：同上，但 custom/openai-compat 保留旧的模型名启发式 ——
+// 模型名含 `deepseek` 时按 DeepSeek 官方字段回传（否则那一路上启发式永远落空）。
+func reasoningFieldForModel(p Provider, model string) string {
+	if p.ReasoningField != nil {
+		return *p.ReasoningField
+	}
+	vendor := p.EffectiveVendor()
+	if (vendor == VendorCustom || vendor == VendorOpenAICompat) && isDeepSeekFamily(model) {
+		return "reasoning_content"
+	}
+	return presets[vendor].reasoningField
 }
 
 // toolsAllowed：这个渠道允许工具透传吗（默认**关** —— 宁可少发，也别让上游因为不认识的字段 400）。
@@ -254,17 +385,18 @@ func toolsAllowed(p Provider) bool { return p.AllowTools != nil && *p.AllowTools
 // toolResultNameFor：工具结果消息带不带函数名（默认不带）。
 func toolResultNameFor(p Provider) bool { return p.ToolResultName != nil && *p.ToolResultName }
 
-// headersFor：**头的唯一拼装处** —— kind 预设 → identity → 会话头 → 用户 headers（最后，永远能覆盖）。
+// headersFor：**头的唯一拼装处** —— vendor 预设 → identity → 会话头 → 用户 headers（最后，永远能覆盖）。
 func headersFor(p Provider, r Request) map[string]string {
+	vendor := p.EffectiveVendor()
 	sessionHeader := sessionHeaderFor(p)
 	headers := map[string]string{}
 
-	// kind 的内建头
-	switch p.Kind {
-	case KindOpenAI, KindOpenRouter:
+	// vendor 的内建头
+	switch vendor {
+	case VendorOpenAI, VendorOpenRouter:
 		// 会话亲和（Pi：openai 发三条，openrouter 只发 x-session-id）
 		if sessionHeader == "" && r.SessionID != "" {
-			if p.Kind == KindOpenRouter {
+			if vendor == VendorOpenRouter {
 				headers["x-session-id"] = r.SessionID
 			} else {
 				headers["session_id"] = r.SessionID
@@ -273,7 +405,7 @@ func headersFor(p Provider, r Request) map[string]string {
 			}
 		}
 	}
-	if p.Kind == KindOpenRouter {
+	if vendor == VendorOpenRouter {
 		// 归属（Pi 那三样；用户 headers 仍可覆盖）
 		headers["HTTP-Referer"] = "https://github.com/zincles/microchat"
 		headers["X-OpenRouter-Title"] = "microchat"
@@ -293,7 +425,7 @@ func headersFor(p Provider, r Request) map[string]string {
 	if ua := userAgent(p); ua != "" {
 		headers["User-Agent"] = ua
 	}
-	if p.Kind == KindOpenCodeGo || p.Kind == KindOpenCode {
+	if vendor == VendorOpenCodeGo || vendor == VendorOpenCode {
 		if identity == IdentityPi {
 			headers["x-opencode-client"] = "pi"
 		} else if identity == IdentityMicrochat {
@@ -317,10 +449,11 @@ func headersFor(p Provider, r Request) map[string]string {
 
 // bodyFor：**体的唯一拼装处**（照 Pi 的 `openai-completions` 逐项对齐）。
 func bodyFor(p Provider, r Request) map[string]any {
-	preset := presets[p.Kind]
+	preset := presets[p.EffectiveVendor()]
+	reasoningField := reasoningFieldForModel(p, r.Model)
 	body := map[string]any{
 		"model":    r.Model,
-		"messages": wireMessages(r.Messages, reasoningFieldFor(p), r.Model, toolResultNameFor(p)),
+		"messages": wireMessages(r.Messages, reasoningField, p.EffectiveVendor(), r.Model, toolResultNameFor(p)),
 		"stream":   r.Stream,
 	}
 	retention := r.CacheRetention
@@ -377,11 +510,19 @@ func bodyFor(p Provider, r Request) map[string]any {
 //
 // 两件特殊处理（都照 Pi）：
 //  1. assistant 消息带着**当时的思考** ⇒ 补回同一个消息里（字段名随 provider：`reasoning_content` 等）；
-//  2. **DeepSeek 系**要求这个字段**必须存在**（尤其是带 tool_calls 的 assistant 消息）——Pi 的做法是
-//     没有思考时补一个**空字符串**（`openai-completions.ts:1379`，由 `isDeepSeek` 检测触发）。
-//     照做：识别方式是**模型名里含 `deepseek`**（与 Pi 一样的启发式；想整块关掉就把 `reasoning_field` 设成 ""）。
-func wireMessages(messages []ChatMessage, reasoningField, model string, toolResultName bool) []map[string]any {
-	requirePresence := reasoningField != "" && isDeepSeekFamily(model)
+//  2. 思考字段**必须存在**的规则按 vendor 走（Pi 的 `openai-completions.ts:1379` 那条）：
+//     vendor==deepseek ⇒ 没有思考也补空字符串；vendor 为 custom/openai-compat ⇒ 保留旧的
+//     模型名启发式（含 `deepseek` 才补）；其余 vendor 不补。想整块关掉就把 `reasoning_field` 设成 ""。
+func wireMessages(messages []ChatMessage, reasoningField string, vendor Vendor, model string, toolResultName bool) []map[string]any {
+	requirePresence := false
+	if reasoningField != "" {
+		switch vendor {
+		case VendorDeepseek:
+			requirePresence = true
+		case VendorCustom, VendorOpenAICompat:
+			requirePresence = isDeepSeekFamily(model)
+		}
+	}
 	out := make([]map[string]any, 0, len(messages))
 	for _, message := range messages {
 		item := map[string]any{"role": message.Role, "content": message.Content}
@@ -437,14 +578,22 @@ func clampPromptCacheKey(key string) string {
 }
 
 // Build：拼出要发的那一发（**纯函数**，好测）。**不发**（dummy 也走它 —— 调试页看到的就是它）。
+//
+// 只走 chat 协议：入口先 Normalize＋Validate，protocol 非 chat 直接报错（systemone 走 BuildSystemOne）。
 func Build(p Provider, r Request) (*http.Request, error) {
-	p = ApplyPreset(p)
+	p = ApplyPreset(p.Normalize())
+	if err := p.Validate(); err != nil {
+		return nil, err
+	}
+	if p.EffectiveProtocol() != ProtocolChatCompletion {
+		return nil, fmt.Errorf("providers: protocol %q 不走 Build（chat 请用空 protocol，systemone 走 BuildSystemOne）", p.Protocol)
+	}
 	if strings.TrimSpace(r.SessionID) == "" {
 		// 会话 id 是**路由键**：本会话的每一轮、每个辅助调用都必须带上同一个。
 		// 忘了传 ⇒ 在这里就报，别让它变成"上游看来时好时坏"的静默 bug。
 		return nil, errors.New("providers: SessionID 必填（每会话一个稳定 id —— 路由与提示词缓存都要它）")
 	}
-	if p.Kind != KindDummy && p.BaseURL == "" {
+	if p.EffectiveVendor() != VendorDummy && p.BaseURL == "" {
 		return nil, fmt.Errorf("providers: %s 缺少 base_url", p.ID)
 	}
 	body, err := json.Marshal(bodyFor(p, r))
@@ -462,6 +611,46 @@ func Build(p Provider, r Request) (*http.Request, error) {
 	request.Header.Set("Content-Type", "application/json")
 	if p.APIKey != "" {
 		request.Header.Set("Authorization", "Bearer "+p.APIKey)
+	}
+	return request, nil
+}
+
+// BuildSystemOne：拼出打 SystemOne（JEV）协议的那一发（**纯函数**，好测）。**不发**。
+//
+// 与 Build 的区别：URL = BaseURL **原样**（不拼路径 —— 它本身就是整条 URL）；
+// 头只有 Content-Type + Accept: application/json + Authorization（有 key 才发），用户 headers 最后覆盖；
+// 体只有 `{"model","state","questions"}`；SessionID 不进头（state 自带上下文）。
+func BuildSystemOne(p Provider, model string, state any, questions map[string]any) (*http.Request, error) {
+	p = ApplyPreset(p.Normalize())
+	if err := p.Validate(); err != nil {
+		return nil, err
+	}
+	if p.EffectiveProtocol() != ProtocolSystemOne {
+		return nil, fmt.Errorf("providers: protocol %q 不走 BuildSystemOne（systemone 才走这里）", p.Protocol)
+	}
+	if strings.TrimSpace(p.BaseURL) == "" {
+		return nil, fmt.Errorf("providers: %s 缺少 base_url（verbatim 整条 URL）", p.ID)
+	}
+	body, err := json.Marshal(map[string]any{
+		"model":     model,
+		"state":     state,
+		"questions": questions,
+	})
+	if err != nil {
+		return nil, err
+	}
+	request, err := http.NewRequest(http.MethodPost, p.BaseURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json")
+	if p.APIKey != "" {
+		request.Header.Set("Authorization", "Bearer "+p.APIKey)
+	}
+	// 用户显式配置最后合并 ⇒ 永远是最后一句话
+	for name, value := range p.Headers {
+		request.Header.Set(name, value)
 	}
 	return request, nil
 }
@@ -512,7 +701,8 @@ func Snapshot(request *http.Request, at time.Time) (LastPayload, error) {
 // 已经真发生过（`identity` 声明了却从没被转过去 ⇒ 配置里写 `"identity":"pi"` 被无声忽略）。
 func FromConfig(c config.Provider) Provider {
 	return Provider{
-		ID: c.ID, Name: c.Name, Kind: Kind(c.Kind), BaseURL: c.BaseURL,
+		ID: c.ID, Name: c.Name, Vendor: Vendor(c.Vendor), Kind: Kind(c.Kind),
+		Protocol: Protocol(c.Protocol), BaseURL: c.BaseURL,
 		Headers: c.Headers, APIKey: c.APIKey, Identity: Identity(c.Identity),
 		ClientUAOverride: c.ClientUAOverride, SessionHeader: c.SessionHeader, ReasoningField: c.ReasoningField,
 		AllowTools: c.AllowTools, ToolResultName: c.ToolResultName,
@@ -529,54 +719,76 @@ func configTimeouts(t *config.Timeouts) *Timeouts {
 	return &Timeouts{ConnectSeconds: t.ConnectSeconds, TotalSeconds: t.TotalSeconds}
 }
 
-// PresetInfo：一个内建 kind 的自述（给界面/客户端列出"可选的预设 provider"用）。
+// PresetInfo：一个内建 vendor 的自述（给界面/客户端列出"可选的预设 provider"用）。
 type PresetInfo struct {
-	Kind          Kind   `json:"kind"`
-	Name          string `json:"name"`
-	BaseURL       string `json:"base_url"`
-	NeedsKey      bool   `json:"needs_key"`
-	KeyEnv        string `json:"key_env"`
-	SessionHeader string `json:"session_header,omitempty"`
+	Vendor        Vendor     `json:"vendor"`
+	Kind          Kind       `json:"kind"` // deprecated：值与 Vendor 逐字相同（老界面照常用）
+	Name          string     `json:"name"`
+	BaseURL       string     `json:"base_url"`
+	NeedsKey      bool       `json:"needs_key"`
+	KeyEnv        string     `json:"key_env"`
+	SessionHeader string     `json:"session_header,omitempty"`
+	Protocols     []Protocol `json:"protocols"`
 	// Primary：界面上的"主选"三种（Dummy / 标准 OpenAI 兼容 / OpenCode GO）；其余是便利预设。
 	Primary    bool     `json:"primary"`
 	Identities []string `json:"identities"`
 }
 
-// primaryKinds：**主选**的三种（新建渠道时只该看到这三个 —— 其余是便利预设）。
-var primaryKinds = []Kind{KindDummy, KindOpenAICompat, KindOpenCodeGo}
+// primaryKinds：**主选**的三种（新建渠道时只该看到这三个 —— 其余是便利预设）。按 vendor。
+var primaryKinds = []Vendor{VendorDummy, VendorOpenAICompat, VendorOpenCodeGo}
 
-func isPrimary(kind Kind) bool {
+func isPrimary(vendor Vendor) bool {
 	for _, candidate := range primaryKinds {
-		if candidate == kind {
+		if candidate == vendor {
 			return true
 		}
 	}
 	return false
 }
 
-var presetNames = map[Kind]string{
-	KindOpenAICompat: "标准（OpenAI 兼容）",
-	KindDummy:        "本地假上游（不联网）",
-	KindOpenAI:       "OpenAI 官方",
-	KindOpenRouter:   "OpenRouter",
-	KindOpenCodeGo:   "OpenCode Go",
-	KindOpenCode:     "OpenCode (Zen)",
-	KindOllama:       "Ollama（本地）",
-	KindLMStudio:     "LM Studio（本地）",
+// vendorProtocols：这个 vendor 支持哪些 protocol（Validate 兼容矩阵的另一面：给界面列"这家能说什么话"用）。
+func vendorProtocols(vendor Vendor) []Protocol {
+	switch vendor {
+	case VendorTypesafe:
+		return []Protocol{ProtocolSystemOne}
+	case VendorOpenRouter, VendorCustom:
+		return []Protocol{ProtocolChatCompletion, ProtocolSystemOne}
+	default:
+		return []Protocol{ProtocolChatCompletion}
+	}
+}
+
+var presetNames = map[Vendor]string{
+	VendorOpenAICompat: "标准（OpenAI 兼容）",
+	VendorCustom:       "自定义（OpenAI 兼容）",
+	VendorDummy:        "本地假上游（不联网）",
+	VendorOpenAI:       "OpenAI 官方",
+	VendorOpenRouter:   "OpenRouter",
+	VendorDeepseek:     "DeepSeek 官方",
+	VendorOpenCodeGo:   "OpenCode Go",
+	VendorOpenCode:     "OpenCode (Zen)",
+	VendorOllama:       "Ollama（本地）",
+	VendorLMStudio:     "LM Studio（本地）",
+	VendorTypesafe:     "Typesafe (SystemOne)",
 }
 
 // Presets：全部内建预设（顺序固定 ⇒ 界面上的下拉稳定）。
 func Presets() []PresetInfo {
 	// 三种主选在前，其余便利预设殿后
-	order := []Kind{KindDummy, KindOpenAICompat, KindOpenCodeGo, KindOpenRouter, KindOpenCode, KindOpenAI, KindOllama, KindLMStudio}
+	order := []Vendor{VendorDummy, VendorOpenAICompat, VendorOpenCodeGo, VendorOpenRouter, VendorDeepseek, VendorOpenCode, VendorOpenAI, VendorOllama, VendorLMStudio, VendorTypesafe, VendorCustom}
 	list := make([]PresetInfo, 0, len(order))
-	for _, kind := range order {
-		preset := presets[kind]
+	for _, vendor := range order {
+		preset := presets[vendor]
+		keyEnv := ""
+		if len(preset.apiKeyEnvs) > 0 {
+			keyEnv = preset.apiKeyEnvs[0]
+		}
 		list = append(list, PresetInfo{
-			Kind: kind, Name: presetNames[kind], BaseURL: preset.baseURL,
-			NeedsKey: preset.apiKeyEnv != "" && kind != KindDummy, KeyEnv: preset.apiKeyEnv,
+			Vendor: vendor, Kind: Kind(vendor), Name: presetNames[vendor], BaseURL: preset.baseURL,
+			NeedsKey: len(preset.apiKeyEnvs) > 0 && vendor != VendorDummy, KeyEnv: keyEnv,
 			SessionHeader: preset.sessionHeader,
-			Primary:       isPrimary(kind),
+			Protocols:     vendorProtocols(vendor),
+			Primary:       isPrimary(vendor),
 			Identities:    []string{string(IdentityMicrochat), string(IdentityPi), string(IdentityBare)},
 		})
 	}

@@ -493,18 +493,24 @@ usage 的真实形状：`{prompt_tokens, completion_tokens, total_tokens, prompt
 | 体：`store: false` / `prompt_cache_retention: "24h"` | 看 provider 能力，能支持才发 |
 | SDK 指纹 | 它们用官方 `openai` JS SDK ⇒ 线上还有 `x-stainless-*` 那套。**我们复现不了**（版本漂移），要查就抓一次包 |
 
-### 内建 provider 预设（照 Pi 的源码抄，2026-09-29）
+### 内建 provider 预设（2026-10-01 起按 `vendor` × `protocol` 两轴；`kind` 只剩废弃读入）
 
-| kind | base_url | 密钥从哪来 | 每请求必带的头 |
+| vendor | base_url（缺省，可覆写） | 密钥从哪来 | 每请求必带的头 |
 |---|---|---|---|
 | `opencode-go` | `https://opencode.ai/zen/go/v1`（官方 discussion 里有人实测这条路 200）| `OPENCODE_API_KEY` | **`x-opencode-session: {{session_id}}`（网关必需** —— 注释原话"required per-conversation routing header"）+ `x-opencode-client: pi` + `user-agent: pi (linux <release>; x64)` + `accept: application/json` |
 | `opencode` | `https://opencode.ai/zen` | 同上 | 同上 |
 | `openrouter` | `https://openrouter.ai/api/v1` | `OPENROUTER_API_KEY` | `HTTP-Referer: https://pi.dev` / `X-OpenRouter-Title: pi` / `X-OpenRouter-Categories: cli-agent`（**可选**，归属用 —— Pi 那边还跟着"安装遥测开关"一起关） |
-
+| `deepseek` | `https://api.deepseek.com` | `DEEPSEEK_API_KEY` | 无（直连官方：标准 UA + `stream_options.include_usage`；思考回传用官方的 `reasoning_content` —— OpenAI 兼容，不会话头、不归属头） |
+| `typesafe`（JEV 决策） | `https://api.typesafe.ai/v1/systemone`（**verbatim 整条 URL，原样 POST，不拼路径**） | `TYPESAFE_API_KEY`（备 `JEV_API_KEY`） | 只有 `Content-Type` + `Accept: application/json` + `Authorization`（无会话头：上下文在 state 里自带） |
+- **两轴**：`vendor` = 找谁（端点预设 + key env + 内建头）；`protocol` = 说什么话（`openai-chat-completion` 缺省 / `systemone` / 占位中的 `openai-response` 等）。
+  渐进式配置：先选 `protocol`（干什么），再按兼容矩阵选 `vendor`（找谁），有预设的只输 `api_key`，只有 `custom` 才要 `base_url`。
+- **兼容矩阵即校验表**（`Provider.Validate`，错配 loud error）：chat-completion ← 除 typesafe 外全部 vendor；systemone ← `typesafe` / `openrouter` / `custom`；
+  其余 protocol（`openai-response` / `anthropic-messages` / `gemini-generate-content`）是占位，选了就报"暂不支持"。
 - **不需要搬它们的模型目录** ✓：模型列表是**发现**来的（`GET /models` ⇒ `registry`）；内建预设只提供
-  **端点 + 头 + 认证从哪取**，每家十几行。
-- **主选三种**（新建渠道时只该看到这三个）：`dummy` / **`openai-compat`（标准）** / **`opencode-go`**；
-  `openrouter`/`opencode`/`openai`/`ollama`/`lmstudio` 是便利预设（`Presets()` 里 `primary` 标出来 ✓）。
+  **端点 + 头 + 认证从哪取**，每家十几行。**systemone 例外**：JEV 没有统一 `/models` 口径 ⇒ `refresh` 直接跳过（不算错）。
+- **单载体多协议 = 写多条** ✓（2026-10-01 OpenRouter 真测）：一个 vendor 挂多个 protocol 时（如 OpenRouter 同时有 chat / decisions / images），
+  **每个 protocol 写一条渠道**（`base_url` 各自 verbatim，key 共用；模型归属照抄 `provider`/`model` 两格）。会话绑的是"渠道+模型"两格，
+  跨载体没有统一发现口径本来就是现状 —— **结构不用动**。
 - **身份开关（服务器级）**：`config.json` 的 `server.identity` ——
   `""`（默认）= **`pi`**（用户 2026-09-29 定：默认就照 Pi 的形状）/ `"microchat"` / `"bare"` = 什么都不装。
   `providers.json` 里单个渠道的 `identity` **覆盖**它（没写就跟随服务器）✓。视图回**生效值** ✓。
@@ -641,9 +647,12 @@ prompt caching**"）。**不要为能力造子 session id**：网关的会话 id
 3. 体里那几样做成 `providers.json` 的 `body_extras`（原样并进请求体）+ `stream_options.include_usage` 默认开；
 4. **`/debug/last-payload` 必须连请求头一起回显**（打码）—— 不然"为什么 403"只能靠猜。
 
-## 决策模型（JEV 一类）：**不是聊天模型**
+## 决策模型（JEV）：**不是聊天模型** —— 已落地 ✓（2026-10-01：`protocol: systemone` + `task.KindJudgement` + `internal/judge` 裸调用）
 
-`typesafe/jev` 那类是**决策模型**（状态 + 类型化问题 → 概率），不生成文本、不能驱动会话、也不在 `GET /models` 的发现列表里（下拉里找不到它**不是**列表过期）。要用得加第三种 provider kind。规划中的用途与四条规矩（只动尾部 / 失败降级 / 产出不进历史与变量 / 阈值实测校准）见 **`reminder/jev.md`**。
+`typesafe/jev` 那类是**决策模型**（状态 + 类型化问题 → 概率），不生成文本、不能驱动会话、不走 `refresh`（没有统一 `/models` 口径 ⇒ 跳过不算错）。
+落点：`vendor: typesafe`（或承载它的 openrouter / custom）× `protocol: systemone`（verbatim 整条 URL 原样 POST `{model,state,questions}`）；
+`judge` 能力的 Task 面就是 `task.KindJudgement`（"判断"，要会话 id —— 调外部模型就要归属可查）；裸调用在 `internal/judge`（10s 超时、不重试、失败原路返回）。
+规划中的用途与四条规矩（只动尾部 / 失败降级 / 产出不进历史与变量 / 阈值实测校准）见 **`reminder/jev.md`**。**裁决（阈值/NPC 动作集）还没做** —— 那是第二刀。
 
 ## 界面该长什么样（**口径**；Godot 版照此对齐，目前尚未实现）
 

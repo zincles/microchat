@@ -168,7 +168,7 @@ func TestTrimKeepsRunning(t *testing.T) {
 
 // 标签是给面板看的（中文，别在别处硬编码）。
 func TestKindLabels(t *testing.T) {
-	cases := map[Kind]string{KindTurn: "生成", KindCompact: "压缩", KindRefreshModels: "刷新模型"}
+	cases := map[Kind]string{KindTurn: "生成", KindCompact: "压缩", KindRefreshModels: "刷新模型", KindJudgement: "判断"}
 	for kind, want := range cases {
 		if got := kind.Label(); got != want {
 			t.Fatalf("%s 的标签 = %q，想要 %q", kind, got, want)

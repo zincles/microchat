@@ -223,7 +223,7 @@ func TestCompactRouteConflictsWhileRunning(t *testing.T) {
 	box.seedTurn(t, "第二句")
 	box.seedTurn(t, "第三句")
 	if recorder := call(box.server, "POST", "/api/v1/providers",
-		`{"id":"slow","kind":"openai-compat","base_url":"`+stub.URL+`"}`); recorder.Code != http.StatusCreated {
+		`{"id":"slow","vendor":"openai-compat","base_url":"`+stub.URL+`"}`); recorder.Code != http.StatusCreated {
 		t.Fatalf("建渠道该 201：%d %s", recorder.Code, recorder.Body.String())
 	}
 	if recorder := call(box.server, "PATCH", "/api/v1/sessions/"+box.sessionID,

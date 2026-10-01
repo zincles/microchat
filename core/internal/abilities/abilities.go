@@ -63,7 +63,7 @@ const (
 // Definition：一个能力的**代码侧定义** —— id、面板上的中文名、它在 `task` 里算哪种作业、默认模板。
 //
 // 这张表就是"流程在代码里"的落点：加一个能力 = 往这儿加一行（同时写下它那段流程）。
-// `Template` 空 = 还没有模板（流程还没写，比如 `judge`）；`TaskKind` 空 = 登记表里还没有这一种。
+// `Template` 空 = 还没有模板（judge 的 state+questions 由调用方拼，不走模板）。
 type Definition struct {
 	ID       ID
 	Label    string
@@ -75,8 +75,8 @@ type Definition struct {
 var definitions = []Definition{
 	{ID: Title, Label: "起标题", TaskKind: task.KindTitle, Template: titleTemplate},
 	{ID: Compact, Label: "压缩", TaskKind: task.KindCompact, Template: compactTemplate},
-	// judge：流程还没写 ⇒ **不占位**（没有模板、登记表里也没有它这一种）
-	{ID: Judge, Label: "判断"},
+	// judge：还没有提示词模板（state+questions 由调用方拼），但登记表里已有它这一种
+	{ID: Judge, Label: "判断", TaskKind: task.KindJudgement},
 }
 
 // IDs：全部能力 id（顺序 = `definitions` 的顺序）。

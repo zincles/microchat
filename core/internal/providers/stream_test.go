@@ -71,18 +71,18 @@ func TestChatStreamsAndSplitsReasoning(t *testing.T) {
 		t.Fatalf("整段正文 = %q", result.Text)
 	}
 	if result.Reasoning != "先想一下…" {
-		t.Fatalf("整段思考 = %q（三种字段名都该认）", result.Reasoning)
+		t.Fatalf("整段思考 = %q（三种字段名都该认）", result.Text)
 	}
 	want := []Delta{
 		{Reasoning: "先想"}, {Reasoning: "一下"}, {Reasoning: "…"},
 		{Text: "你好"}, {Text: "，世界"},
 	}
 	if len(deltas) != len(want) {
-		t.Fatalf("增量 = %+v", deltas)
+		t.Fatalf("增量 = %+v（想要 %+v）", deltas, want)
 	}
-	for index := range want {
-		if deltas[index] != want[index] {
-			t.Fatalf("第 %d 个增量 = %+v，想要 %+v", index, deltas[index], want[index])
+	for index, delta := range deltas {
+		if delta != want[index] {
+			t.Fatalf("第 %d 个增量 = %+v（想要 %+v）", index, delta, want[index])
 		}
 	}
 	// usage 归一化（缓存命中那几种字段名都认）
@@ -96,6 +96,31 @@ func TestChatStreamsAndSplitsReasoning(t *testing.T) {
 	}
 	if len(usage.Raw) == 0 {
 		t.Fatal("上游原样那份该留着备查")
+	}
+}
+
+// 量只附在最后一段（`choices: []` + `usage`）也该认 —— 这就是"打完字才报数"的形状。
+func TestTrailingUsageOnlyChunkIsAccepted(t *testing.T) {
+	stub := newStubUpstream(t, 200, "text/event-stream",
+		"data: {\"choices\":[{\"delta\":{\"content\":\"在\"}}]}\n\n"+
+			"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":8,\"completion_tokens\":2,\"total_tokens\":10}}\n\n"+
+			"data: [DONE]\n\n")
+	provider := Provider{ID: "stub", Kind: KindDeepseek, BaseURL: stub.baseURL()}
+	result, err := NewClient(provider).Chat(context.Background(), provider, Request{
+		Model: "deepseek-chat", SessionID: "s", Messages: []ChatMessage{{Role: "user", Content: "在吗"}},
+	}, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Text != "在" {
+		t.Fatalf("正文 = %q", result.Text)
+	}
+	var usage Usage
+	if err := json.Unmarshal(result.Usage, &usage); err != nil {
+		t.Fatalf("用量解不出来：%v（%s）", err, result.Usage)
+	}
+	if usage.PromptTokens != 8 || usage.TotalTokens != 10 {
+		t.Fatalf("尾段的量该认：%+v", usage)
 	}
 }
 

@@ -70,9 +70,10 @@ func Probe(provider config.Provider) (ProbeResult, error) {
 
 // Skip：这个渠道**该不该**自动去问模型列表。返回非空 = 跳过（值就是给人看的原因）。
 //
-// 两条（2026-09-30 定，用户要的边界）：
+// 三条：
 //  1. **`dummy` 不联网** ⇒ 问了也没答案；
-//  2. **要去外网、又没配密钥** ⇒ 刷出来只会是一屏 401（启动时尤其吵）；
+//  2. **systemone 协议没有统一的 `/models` 口径**（JEV 没有模型可发现）⇒ 直接跳过；
+//  3. **要去外网、又没配密钥** ⇒ 刷出来只会是一屏 401（启动时尤其吵）；
 //     **本机 / 内网端点不算**：ollama、LM Studio、本地假上游（httptest 那种）本来就可能不要密钥，照刷 ✓。
 //
 // 注意它只服务**自动**那条路（启动与 `-debug`）：HTTP 的 `POST /providers/{id}/refresh`
@@ -80,8 +81,11 @@ func Probe(provider config.Provider) (ProbeResult, error) {
 func Skip(provider config.Provider) string {
 	// 密钥可能来自环境变量（`ApplyPreset` 会去 `OPENCODE_API_KEY` 那种地方找）⇒ 判定要在它之后
 	wire := providers.ApplyPreset(providers.FromConfig(provider))
-	if wire.Kind == providers.KindDummy {
+	if wire.EffectiveVendor() == providers.VendorDummy {
 		return "dummy（不联网）"
+	}
+	if wire.EffectiveProtocol() == providers.ProtocolSystemOne {
+		return "systemone（判断协议，无模型可发现）"
 	}
 	if wire.APIKey != "" || localEndpoint(wire.BaseURL) {
 		return ""

@@ -26,6 +26,7 @@ const (
 	KindReroll        Kind = "reroll"         // 前台：把最后那条 assistant 回复重摇一版（**对话型调用**，不是能力）
 	KindCompact       Kind = "compact"        // 后台：把最老的 N 个对话块收成一条摘要
 	KindTitle         Kind = "title"          // 后台：给一条会话起标题（首次拿到回复之后自动一次）
+	KindJudgement     Kind = "judgement"      // 后台：JEV 决策（一段上游调用，骑会话 id）
 	KindRefreshModels Kind = "refresh_models" // 后台：从上游拉某个渠道的模型列表
 )
 
@@ -37,7 +38,7 @@ const (
 //
 // `reroll` 也在这里：它是**对话型调用**（与 `turn` 同类，只是产出先当候选）⇒ 一样骑本会话 id。
 func needsSession(kind Kind) bool {
-	return kind == KindTurn || kind == KindReroll || kind == KindCompact || kind == KindTitle
+	return kind == KindTurn || kind == KindReroll || kind == KindCompact || kind == KindTitle || kind == KindJudgement
 }
 
 // State：Task 的五个状态（**这套词只属于 Task** —— `idle`/`pending` 那套是 turn 的，别混）。
@@ -62,6 +63,8 @@ func (k Kind) Label() string {
 		return "压缩"
 	case KindTitle:
 		return "起标题"
+	case KindJudgement:
+		return "判断"
 	case KindRefreshModels:
 		return "刷新模型"
 	default:

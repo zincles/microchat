@@ -40,13 +40,16 @@ func SelectBackend(provider, model string, providersConfig config.ProvidersConfi
 	if !ok {
 		return Backend{Name: BackendFallback}
 	}
-	if Kind(found.Kind) == KindDummy {
+	// vendor 字符串与原来逐字相同（`openai-compat` 这种遗留值也原样回 Name）；
+	// dummy 只按 EffectiveVendor 判（`dummy` 两种写法都收敛到它）。
+	vendor := Vendor(found.Kind)
+	if (Provider{Vendor: vendor}).EffectiveVendor() == VendorDummy {
 		return Backend{Name: BackendDummy, Provider: found}
 	}
 	if strings.TrimSpace(model) == "" {
 		return Backend{Name: BackendFallback}
 	}
-	return Backend{Name: found.Kind, Provider: found}
+	return Backend{Name: string(vendor), Provider: found}
 }
 
 // StoresReasoning：这个渠道要不要把"思考"留档（`providers.json` 的 `store_reasoning`，缺省要）。

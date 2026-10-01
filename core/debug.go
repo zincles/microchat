@@ -675,13 +675,13 @@ func usageChannel(configs config.ProvidersConfig, id string) (providers.Provider
 			return providers.Provider{}, fmt.Errorf("providers.json 里没有 id=%s 这个渠道", id)
 		}
 		applied := providers.ApplyPreset(providers.FromConfig(channel))
-		if applied.Kind != providers.KindOpenCodeGo {
-			return providers.Provider{}, fmt.Errorf("渠道 %s 的 kind 是 %q，不是 opencode-go（用量接口目前只 OpenCode GO 有）", id, applied.Kind)
+		if applied.EffectiveVendor() != providers.VendorOpenCodeGo {
+			return providers.Provider{}, fmt.Errorf("渠道 %s 的 kind 是 %q，不是 opencode-go（用量接口目前只 OpenCode GO 有）", id, applied.EffectiveVendor())
 		}
 		return applied, nil
 	}
 	for _, channel := range configs.Providers {
-		if applied := providers.ApplyPreset(providers.FromConfig(channel)); applied.Kind == providers.KindOpenCodeGo {
+		if applied := providers.ApplyPreset(providers.FromConfig(channel)); applied.EffectiveVendor() == providers.VendorOpenCodeGo {
 			return applied, nil
 		}
 	}

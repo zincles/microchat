@@ -68,16 +68,16 @@ func TestProvidersNeverEchoSecrets(t *testing.T) {
 func TestProviderViewShape(t *testing.T) {
 	server, _ := newProvidersServer(t, `{"providers":[{"id":"ocgo","kind":"opencode-go","base_url":"https://opencode.ai/zen/go/v1","headers":{"X-Extra":"1"}}]}`)
 	recorder := call(server, "GET", "/api/v1/providers", "")
-	want := `[{"id":"ocgo","name":null,"kind":"opencode-go","base_url":"https://opencode.ai/zen/go/v1","headers":{"X-Extra":"1"},"has_key":false,"identity":"pi","last_refresh_at":null,"models":[]}]`
+	want := `[{"id":"ocgo","name":null,"kind":"opencode-go","vendor":"opencode-go","protocol":"openai-chat-completion","base_url":"https://opencode.ai/zen/go/v1","headers":{"X-Extra":"1"},"has_key":false,"identity":"pi","last_refresh_at":null,"models":[]}]`
 	if got := recorder.Body.String(); got != want {
 		t.Fatalf("形状变了：\n得到 %s\n想要 %s", got, want)
 	}
 }
 
-// POST：201；重名 ⇒ 409。
+// POST：201；重名 ⇒ 409；缺 vendor ⇒ 422；错配（矩阵）⇒ 422。
 func TestCreateProvider(t *testing.T) {
 	server, _ := newProvidersServer(t, `{"providers":[]}`)
-	recorder := call(server, "POST", "/api/v1/providers", `{"id":"x","kind":"openai"}`)
+	recorder := call(server, "POST", "/api/v1/providers", `{"id":"x","vendor":"openai"}`)
 	if recorder.Code != 201 {
 		t.Fatalf("%d：%s", recorder.Code, recorder.Body.String())
 	}
@@ -89,11 +89,31 @@ func TestCreateProvider(t *testing.T) {
 	if recorder.Code != 422 {
 		t.Fatalf("缺 id 该 422：%d", recorder.Code)
 	}
+	// vendor 是唯一必填：只给 kind 不算数
+	recorder = call(server, "POST", "/api/v1/providers", `{"id":"novendor","kind":"openai"}`)
+	if recorder.Code != 422 {
+		t.Fatalf("缺 vendor 该 422：%d %s", recorder.Code, recorder.Body.String())
+	}
+	// protocol 缺省 = chat：deepseek 不给 protocol 照建
+	recorder = call(server, "POST", "/api/v1/providers", `{"id":"ds","vendor":"deepseek","api_key":"sk-x"}`)
+	if recorder.Code != 201 {
+		t.Fatalf("缺省 protocol 该 201：%d %s", recorder.Code, recorder.Body.String())
+	}
+	// 错配：deepseek + systemone 落不了地
+	recorder = call(server, "POST", "/api/v1/providers", `{"id":"bad","vendor":"deepseek","protocol":"systemone","base_url":"http://127.0.0.1:1/x"}`)
+	if recorder.Code != 422 {
+		t.Fatalf("错配该 422：%d %s", recorder.Code, recorder.Body.String())
+	}
+	// custom 没端点也落不了地
+	recorder = call(server, "POST", "/api/v1/providers", `{"id":"bad2","vendor":"custom"}`)
+	if recorder.Code != 422 {
+		t.Fatalf("custom 缺端点该 422：%d %s", recorder.Code, recorder.Body.String())
+	}
 }
 
 // PATCH：api_key 的 None/"" 语义（None = 不动 ✓ "" = 删除 ✓）。
 func TestUpdateProviderKeySemantics(t *testing.T) {
-	server, _ := newProvidersServer(t, `{"providers":[{"id":"x","kind":"openai","api_key":"old"}]}`)
+	server, _ := newProvidersServer(t, `{"providers":[{"id":"x","vendor":"openai","api_key":"old"}]}`)
 	call(server, "PATCH", "/api/v1/providers/x", `{"name":"新名"}`)
 	var views []ProviderView
 	_ = json.Unmarshal(call(server, "GET", "/api/v1/providers", "").Body.Bytes(), &views)
@@ -114,7 +134,7 @@ func TestUpdateProviderKeySemantics(t *testing.T) {
 
 // 刷新：发现列整轮更新，**用户列一个字不动**；这次没见到的删行。
 func TestRefreshTouchesOnlyDiscoveryColumns(t *testing.T) {
-	_, st := newProvidersServer(t, `{"providers":[{"id":"x","kind":"openai","base_url":"http://127.0.0.1:0"}]}`)
+	_, st := newProvidersServer(t, `{"providers":[{"id":"x","vendor":"openai","base_url":"http://127.0.0.1:0"}]}`)
 	if _, _, _, err := st.RefreshDiscovered("x", []store.Discovered{
 		{UpstreamID: "a"}, {UpstreamID: "b"},
 	}, 1); err != nil {
@@ -161,7 +181,7 @@ func TestRefreshDiscoversModels(t *testing.T) {
 	server, st := newProvidersServer(t, `{"providers":[]}`)
 	// 先建渠道（指到假上游）
 	recorder := call(server, "POST", "/api/v1/providers",
-		`{"id":"x","kind":"openai","base_url":"`+upstream.URL+`"}`)
+		`{"id":"x","vendor":"openai","base_url":"`+upstream.URL+`"}`)
 	if recorder.Code != 201 {
 		t.Fatalf("%d：%s", recorder.Code, recorder.Body.String())
 	}

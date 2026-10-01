@@ -230,13 +230,18 @@ func (c AgentsConfig) Resolve(id string) (Agent, bool) {
 }
 
 // Provider：一个渠道（密钥就写在这一条里；接口只回 has_key）。
+//
+// `Vendor`（找谁）× `Protocol`（说什么话）优先；`Kind` 是废弃的只读入别名
+// （老配置/旧字面量照常读，包内 `EffectiveVendor` 收敛；`Vendor` 非空时 `Kind` 被忽略）。
 type Provider struct {
-	ID      string            `json:"id"`
-	Name    string            `json:"name"`
-	Kind    string            `json:"kind"` // dummy | openai | openrouter | opencode-go | opencode | ollama | lmstudio
-	BaseURL string            `json:"base_url"`
-	Headers map[string]string `json:"headers"`
-	APIKey  string            `json:"api_key"`
+	ID       string            `json:"id"`
+	Name     string            `json:"name"`
+	Kind     string            `json:"kind"`     // deprecated：只读入；Vendor 非空时忽略
+	Vendor   string            `json:"vendor"`   // 新口径：找谁（空 = 看 Kind）
+	Protocol string            `json:"protocol"` // 新口径：说什么话（空 = 缺省 chat）
+	BaseURL  string            `json:"base_url"`
+	Headers  map[string]string `json:"headers"`
+	APIKey   string            `json:"api_key"`
 	// Identity：空 = 跟随服务器默认（最终默认是 pi）。
 	Identity string `json:"identity"`
 	// ClientUAOverride：直接覆写 UA 字符串（默认空）。**优先级最高** —— 高过身份与服务器默认。

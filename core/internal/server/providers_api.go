@@ -13,12 +13,14 @@ import (
 
 // ProviderView：`GET /providers` 的一项。**绝不含密钥内容**（只回 `has_key`）。
 type ProviderView struct {
-	ID      string            `json:"id"`
-	Name    *string           `json:"name"`
-	Kind    string            `json:"kind"`
-	BaseURL string            `json:"base_url"`
-	Headers map[string]string `json:"headers"`
-	HasKey  bool              `json:"has_key"`
+	ID       string            `json:"id"`
+	Name     *string           `json:"name"`
+	Kind     string            `json:"kind"`
+	Vendor   string            `json:"vendor"`
+	Protocol string            `json:"protocol"`
+	BaseURL  string            `json:"base_url"`
+	Headers  map[string]string `json:"headers"`
+	HasKey   bool              `json:"has_key"`
 	// Identity：生效的身份（渠道自己的，或服务器级默认）。
 	Identity      string      `json:"identity"`
 	LastRefreshAt *int64      `json:"last_refresh_at"`
@@ -49,19 +51,23 @@ type ModelListItem struct {
 }
 
 type CreateProviderReq struct {
-	ID      string            `json:"id"`
-	Name    *string           `json:"name"`
-	Kind    *string           `json:"kind"`
-	BaseURL *string           `json:"base_url"`
-	Headers map[string]string `json:"headers"`
-	APIKey  *string           `json:"api_key"`
+	ID       string            `json:"id"`
+	Name     *string           `json:"name"`
+	Kind     *string           `json:"kind"`
+	Vendor   *string           `json:"vendor"`
+	Protocol *string           `json:"protocol"`
+	BaseURL  *string           `json:"base_url"`
+	Headers  map[string]string `json:"headers"`
+	APIKey   *string           `json:"api_key"`
 }
 
 type UpdateProviderReq struct {
-	BaseURL *string           `json:"base_url"`
-	Name    *string           `json:"name"` // None = 不动；"" = 清显示名
-	Headers map[string]string `json:"headers"`
-	APIKey  *string           `json:"api_key"` // None = 不动；"" = 删除密钥
+	Vendor   *string           `json:"vendor"`   // None = 不动；"" = 清（回落到 Kind 别名）
+	Protocol *string           `json:"protocol"` // None = 不动；"" = 清（回落到缺省 chat）
+	BaseURL  *string           `json:"base_url"`
+	Name     *string           `json:"name"` // None = 不动；"" = 清显示名
+	Headers  map[string]string `json:"headers"`
+	APIKey   *string           `json:"api_key"` // None = 不动；"" = 删除密钥
 }
 
 func modelView(row store.ModelRow) ModelView {
@@ -134,8 +140,23 @@ func (s *Server) createProvider(w http.ResponseWriter, r *http.Request) {
 	if req.Kind != nil {
 		provider.Kind = *req.Kind
 	}
+	// vendor 是**唯一必填**（kind 只剩废弃读入）：缺了 ⇒ 422（别名 kind 不算数 ——
+	// "写了 kind 没写 vendor"是旧习惯，必须 loud，否则新种类（typesafe）永远建不出来。
+	if req.Vendor == nil || *req.Vendor == "" {
+		missingField(w, "vendor")
+		return
+	}
+	provider.Vendor = *req.Vendor
+	if req.Protocol != nil {
+		provider.Protocol = *req.Protocol
+	}
 	if req.BaseURL != nil {
 		provider.BaseURL = *req.BaseURL
+	}
+	// 错配在**写入时**就拦（兼容矩阵即校验表）：custom 没端点、deepseek+systemone 这类不落地。
+	if err := providers.FromConfig(provider).Normalize().Validate(); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "invalid", err.Error())
+		return
 	}
 	configs.Providers = append(configs.Providers, provider)
 	if err := s.saveProviders(configs); err != nil {
@@ -164,6 +185,12 @@ func (s *Server) updateProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	provider := configs.Providers[index]
+	if req.Vendor != nil { // None = 不动；"" = 清（回落到 Kind 别名）
+		provider.Vendor = *req.Vendor
+	}
+	if req.Protocol != nil { // None = 不动；"" = 清（回落到缺省 chat）
+		provider.Protocol = *req.Protocol
+	}
 	if req.BaseURL != nil {
 		provider.BaseURL = *req.BaseURL
 	}
@@ -175,6 +202,11 @@ func (s *Server) updateProvider(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.APIKey != nil { // None = 不动；"" = 删除密钥
 		provider.APIKey = *req.APIKey
+	}
+	// 改完也要过矩阵（vendor/protocol/base_url 任一动了都可能错配）
+	if err := providers.FromConfig(provider).Normalize().Validate(); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "invalid", err.Error())
+		return
 	}
 	configs.Providers[index] = provider
 	if err := s.saveProviders(configs); err != nil {
@@ -220,7 +252,7 @@ func (s *Server) refreshProvider(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "渠道不存在")
 		return
 	}
-	if provider.Kind == "dummy" {
+	if providers.FromConfig(provider).EffectiveVendor() == providers.VendorDummy {
 		writeError(w, http.StatusBadRequest, "invalid", "dummy 渠道没有上游可拉")
 		return
 	}
@@ -314,6 +346,7 @@ func providerView(provider config.Provider) ProviderView {
 	}
 	return ProviderView{
 		ID: provider.ID, Name: name, Kind: provider.Kind,
+		Vendor: string(effective.EffectiveVendor()), Protocol: string(effective.EffectiveProtocol()),
 		BaseURL: effective.BaseURL, Headers: provider.Headers,
 		HasKey: provider.APIKey != "", Identity: string(effective.Identity), Models: []ModelView{},
 	}

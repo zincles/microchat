@@ -359,6 +359,63 @@ func TestPresets(t *testing.T) {
 	if dummy := byKind[KindDummy]; dummy.NeedsKey {
 		t.Fatal("dummy 不需要密钥")
 	}
+	// DeepSeek 官方：端点 + 密钥 env + 官方思考字段（`reasoning_content`）
+	deepseek, ok := byKind[KindDeepseek]
+	if !ok {
+		t.Fatal("必须有 deepseek")
+	}
+	if deepseek.BaseURL != "https://api.deepseek.com" {
+		t.Fatalf("端点 = %q", deepseek.BaseURL)
+	}
+	if !deepseek.NeedsKey || deepseek.KeyEnv != "DEEPSEEK_API_KEY" {
+		t.Fatalf("密钥口径 = %+v", deepseek)
+	}
+	if deepseek.SessionHeader != "" {
+		t.Fatalf("DeepSeek 官方不发会话头：%q", deepseek.SessionHeader)
+	}
+}
+
+// DeepSeek 官方：拼出来的那一发（端点、stream_options、思考回传字段）。
+func TestDeepseekBuild(t *testing.T) {
+	messages := []ChatMessage{
+		{Role: "user", Content: "在吗"},
+		{Role: "assistant", Content: "在。", Reasoning: "他大概想问路。"},
+	}
+	request, err := Build(Provider{ID: "ds", Kind: KindDeepseek}, Request{
+		Model: "deepseek-chat", SessionID: "s", Stream: true, Messages: messages})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.URL.String() != "https://api.deepseek.com/chat/completions" {
+		t.Fatalf("端点 = %q", request.URL.String())
+	}
+	body, err := io.ReadAll(request.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed struct {
+		Messages      []map[string]any `json:"messages"`
+		Stream        bool             `json:"stream"`
+		StreamOptions map[string]any   `json:"stream_options"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if !parsed.Stream || parsed.StreamOptions["include_usage"] != true {
+		t.Fatalf("流式该带 stream_options.include_usage：%s", body)
+	}
+	if got := parsed.Messages[1]["reasoning_content"]; got != "他大概想问路。" {
+		t.Fatalf("assistant 该用官方字段名回传思考：%+v", parsed.Messages[1])
+	}
+	// 密钥来自环境变量（没配 key 也能用 `DEEPSEEK_API_KEY` 顶上）
+	t.Setenv("DEEPSEEK_API_KEY", "sk-test")
+	wire := ApplyPreset(Provider{ID: "ds", Kind: KindDeepseek})
+	if wire.APIKey != "sk-test" {
+		t.Fatalf("密钥该从环境变量来：%q", wire.APIKey)
+	}
+	if wire.BaseURL != "https://api.deepseek.com" {
+		t.Fatalf("端点该从预设来：%q", wire.BaseURL)
+	}
 }
 
 // 旧命名（`openai-compat`）必须仍按 OpenAI 兼容对待 —— 否则老配置会静默失去 stream_options。
@@ -566,12 +623,13 @@ func TestProviderLevelOverrides(t *testing.T) {
 	})
 }
 
-// DeepSeek 系要求 `reasoning_content` **必须存在**（Pi 的解法：没有思考就补空字符串）。
+// `reasoning_content` **必须存在**的规则按 vendor 走：vendor==deepseek 必补空串；
+// custom/openai-compat 保留旧的模型名启发式；其余 vendor 不补（Pi 的解法：`openai-completions.ts:1379`）。
 func TestReasoningFieldPresenceForDeepSeek(t *testing.T) {
 	assistant := ChatMessage{Role: "assistant", Content: "苹果。"} // 这条**没有**思考
-	decode := func(t *testing.T, model string) map[string]any {
+	decode := func(t *testing.T, provider Provider, model string) map[string]any {
 		t.Helper()
-		request, err := Build(opencodeProvider(), Request{
+		request, err := Build(provider, Request{
 			Model: model, SessionID: "s", Stream: true,
 			Messages: []ChatMessage{{Role: "user", Content: "在吗"}, assistant},
 		})
@@ -588,25 +646,40 @@ func TestReasoningFieldPresenceForDeepSeek(t *testing.T) {
 		return parsed.Messages[1]
 	}
 
-	// deepseek 系：字段必须在（哪怕空着）
-	item := decode(t, "deepseek-v4-flash")
+	deepseek := Provider{ID: "ds", Vendor: VendorDeepseek}
+	// vendor==deepseek：字段必须在（哪怕空着，模型名无关）
+	item := decode(t, deepseek, "whatever-model")
 	value, exists := item["reasoning_content"]
 	if !exists {
-		t.Fatalf("deepseek 系该补上这个字段：%+v", item)
+		t.Fatalf("deepseek vendor 该补上这个字段：%+v", item)
 	}
 	if value != "" {
 		t.Fatalf("没有思考时该是空串：%+v", item)
 	}
-	// 别的模型：不带就是不带（别乱塞字段 —— 有些上游见到不认识的字段会 400）
-	item = decode(t, "claude-sonnet-5")
+	// 其余 vendor：不带就是不带（别乱塞字段 —— 有些上游见到不认识的字段会 400）
+	item = decode(t, opencodeProvider(), "deepseek-v4-flash")
 	if _, exists := item["reasoning_content"]; exists {
-		t.Fatalf("非 deepseek 系不该塞这个字段：%+v", item)
+		t.Fatalf("opencode-go vendor 不该按模型名塞这个字段：%+v", item)
+	}
+	item = decode(t, deepseek, "deepseek-chat")
+	if _, exists := item["reasoning_content"]; !exists {
+		t.Fatalf("deepseek vendor 该有这个字段：%+v", item)
+	}
+	// custom/openai-compat 保留旧的模型名启发式
+	legacy := Provider{ID: "c", Vendor: VendorCustom, BaseURL: "https://x.invalid/v1"}
+	item = decode(t, legacy, "deepseek-v4-flash")
+	if _, exists := item["reasoning_content"]; !exists {
+		t.Fatalf("custom + deepseek 模型名该补上这个字段：%+v", item)
+	}
+	item = decode(t, legacy, "claude-sonnet-5")
+	if _, exists := item["reasoning_content"]; exists {
+		t.Fatalf("custom + 非 deepseek 模型名不该塞这个字段：%+v", item)
 	}
 	// 整块关掉：reasoning_field = "" ⇒ 什么都不做
 	off := ""
-	provider := opencodeProvider()
+	provider := Provider{ID: "ds", Vendor: VendorDeepseek}
 	provider.ReasoningField = &off
-	request, err := Build(provider, Request{Model: "deepseek-v4-flash", SessionID: "s",
+	request, err := Build(provider, Request{Model: "deepseek-chat", SessionID: "s",
 		Messages: []ChatMessage{{Role: "user", Content: "在吗"}, assistant}})
 	if err != nil {
 		t.Fatal(err)
@@ -614,6 +687,154 @@ func TestReasoningFieldPresenceForDeepSeek(t *testing.T) {
 	body, _ := io.ReadAll(request.Body)
 	if strings.Contains(string(body), "reasoning_content") {
 		t.Fatalf("关掉之后一个字都不该发：%s", body)
+	}
+}
+
+// Validate：vendor×protocol 兼容矩阵（错配 loud error；占位 protocol 永远"暂不支持"）。
+func TestValidateVendorProtocolMatrix(t *testing.T) {
+	chatOK := []Vendor{VendorOpenAICompat, VendorDummy, VendorOpenAI, VendorOpenRouter, VendorDeepseek,
+		VendorOpenCodeGo, VendorOpenCode, VendorOllama, VendorLMStudio, VendorCustom}
+	for _, vendor := range chatOK {
+		provider := Provider{ID: "p", Vendor: vendor, BaseURL: "https://x.invalid/v1"}
+		if err := provider.Validate(); err != nil {
+			t.Fatalf("vendor %q × chat 该过：%v", vendor, err)
+		}
+	}
+	// custom 必须有 base_url
+	if err := (Provider{ID: "c", Vendor: VendorCustom}).Validate(); err == nil {
+		t.Fatal("custom 没给 base_url 该报错")
+	}
+	// systemone 只收 typesafe/openrouter/custom，且 base_url 非空
+	for _, vendor := range []Vendor{VendorTypesafe, VendorOpenRouter, VendorCustom} {
+		provider := Provider{ID: "p", Vendor: vendor, Protocol: ProtocolSystemOne, BaseURL: "https://x.invalid/systemone"}
+		if err := provider.Validate(); err != nil {
+			t.Fatalf("vendor %q × systemone 该过：%v", vendor, err)
+		}
+	}
+	for _, vendor := range []Vendor{VendorDummy, VendorOpenAI, VendorDeepseek, VendorOpenCodeGo, VendorOllama} {
+		provider := Provider{ID: "p", Vendor: vendor, Protocol: ProtocolSystemOne, BaseURL: "https://x.invalid/s"}
+		if err := provider.Validate(); err == nil {
+			t.Fatalf("vendor %q × systemone 该错配报错", vendor)
+		}
+	}
+	// dummy + systemone 报错
+	if err := (Provider{ID: "d", Vendor: VendorDummy, Protocol: ProtocolSystemOne}).Validate(); err == nil {
+		t.Fatal("dummy + systemone 该报错")
+	}
+	// systemone 要求 base_url 非空
+	if err := (Provider{ID: "t", Vendor: VendorTypesafe, Protocol: ProtocolSystemOne}).Validate(); err == nil {
+		t.Fatal("systemone 没给 base_url 该报错")
+	}
+	// 占位 protocol 永远"暂不支持"
+	for _, protocol := range []Protocol{ProtocolOpenAIResponse, ProtocolAnthropicMessages, ProtocolGeminiGenerateContent} {
+		err := (Provider{ID: "p", Vendor: VendorOpenAI, Protocol: protocol, BaseURL: "https://x.invalid/v1"}).Validate()
+		if err == nil || !strings.Contains(err.Error(), "暂不支持") {
+			t.Fatalf("protocol %q 该报暂不支持：%v", protocol, err)
+		}
+	}
+	// Build 入口先 Normalize＋Validate：protocol 非 chat 直接报错
+	systemone := Provider{ID: "t", Vendor: VendorTypesafe, Protocol: ProtocolSystemOne, BaseURL: "https://x.invalid/s"}
+	if _, err := Build(systemone, Request{Model: "m", SessionID: "s"}); err == nil {
+		t.Fatal("systemone 走 Build 该报错")
+	}
+	// 别名读入：Kind 照常编译且收敛（openai-compat→custom）
+	legacy := Provider{ID: "old", Kind: KindOpenAICompat, BaseURL: "https://x.invalid/v1"}
+	if legacy.EffectiveVendor() != VendorCustom {
+		t.Fatalf("openai-compat 该映射到 custom：%q", legacy.EffectiveVendor())
+	}
+	if err := legacy.Validate(); err != nil {
+		t.Fatalf("别名输入该能过 Validate：%v", err)
+	}
+	// 都空→custom
+	if (Provider{ID: "e"}).EffectiveVendor() != VendorCustom {
+		t.Fatal("都空该兜到 custom")
+	}
+	if (Provider{ID: "e"}).EffectiveProtocol() != ProtocolChatCompletion {
+		t.Fatal("空 protocol 该缺省 chat")
+	}
+}
+
+// BuildSystemOne：verbatim URL、头体形状、错配报错。
+func TestBuildSystemOne(t *testing.T) {
+	state := map[string]any{"turn": 1}
+	questions := map[string]any{"q1": "在吗"}
+	provider := Provider{ID: "t", Vendor: VendorTypesafe, Protocol: ProtocolSystemOne,
+		BaseURL: "https://api.typesafe.ai/v1/systemone?token=abc", APIKey: "sk-x",
+		Headers: map[string]string{"X-Extra": "1"}}
+	request, err := BuildSystemOne(provider, "m", state, questions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// URL 原样（不拼路径）
+	if request.URL.String() != "https://api.typesafe.ai/v1/systemone?token=abc" {
+		t.Fatalf("URL 该 verbatim：%q", request.URL.String())
+	}
+	// 头：只有 Content-Type + Accept + Authorization + 用户覆盖（SessionID 不进头）
+	if got := request.Header.Get("Content-Type"); got != "application/json" {
+		t.Fatalf("Content-Type = %q", got)
+	}
+	if got := request.Header.Get("Accept"); got != "application/json" {
+		t.Fatalf("Accept = %q", got)
+	}
+	if got := request.Header.Get("Authorization"); got != "Bearer sk-x" {
+		t.Fatalf("Authorization = %q", got)
+	}
+	if got := request.Header.Get("X-Extra"); got != "1" {
+		t.Fatalf("用户 headers 该覆盖：%q", got)
+	}
+	if request.Header.Get("X-Opencode-Session") != "" || request.Header.Get("User-Agent") != "" {
+		t.Fatal("systemone 不发会话头与 UA")
+	}
+	// 体：只有 model/state/questions
+	body, _ := io.ReadAll(request.Body)
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if parsed["model"] != "m" {
+		t.Fatalf("model = %v", parsed["model"])
+	}
+	if _, ok := parsed["state"]; !ok {
+		t.Fatal("state 该在")
+	}
+	if _, ok := parsed["questions"]; !ok {
+		t.Fatal("questions 该在")
+	}
+	if len(parsed) != 3 {
+		t.Fatalf("体该只有三个键：%v", parsed)
+	}
+	// 没 key 就不发 Authorization
+	bare, err := BuildSystemOne(Provider{ID: "t", Vendor: VendorTypesafe, Protocol: ProtocolSystemOne,
+		BaseURL: "https://x.invalid/s"}, "m", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bare.Header.Get("Authorization") != "" {
+		t.Fatal("没 key 就不该发 Authorization")
+	}
+	// 错配报错：dummy + systemone、chat 走 BuildSystemOne
+	if _, err := BuildSystemOne(Provider{ID: "d", Vendor: VendorDummy, Protocol: ProtocolSystemOne},
+		"m", nil, nil); err == nil {
+		t.Fatal("dummy + systemone 该报错")
+	}
+	if _, err := BuildSystemOne(Provider{ID: "c", Vendor: VendorCustom, BaseURL: "https://x.invalid/v1"},
+		"m", nil, nil); err == nil {
+		t.Fatal("chat protocol 走 BuildSystemOne 该报错")
+	}
+	// typesafe 预设：端点 + key env 回退（TYPESAFE_API_KEY 优先，JEV_API_KEY 兜底）
+	t.Setenv("TYPESAFE_API_KEY", "")
+	t.Setenv("JEV_API_KEY", "sk-jev")
+	wire := ApplyPreset(Provider{ID: "t", Vendor: VendorTypesafe})
+	if wire.BaseURL != "https://api.typesafe.ai/v1/systemone" {
+		t.Fatalf("typesafe 端点 = %q", wire.BaseURL)
+	}
+	if wire.APIKey != "sk-jev" {
+		t.Fatalf("JEV_API_KEY 该兜底：%q", wire.APIKey)
+	}
+	t.Setenv("TYPESAFE_API_KEY", "sk-typesafe")
+	wire = ApplyPreset(Provider{ID: "t", Vendor: VendorTypesafe})
+	if wire.APIKey != "sk-typesafe" {
+		t.Fatalf("TYPESAFE_API_KEY 优先：%q", wire.APIKey)
 	}
 }
 

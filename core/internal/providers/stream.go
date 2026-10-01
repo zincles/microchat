@@ -74,7 +74,7 @@ func (c *Client) Chat(ctx context.Context, p Provider, r Request, localReply str
 	if localReply != "" {
 		// 本地假上游：**有渠道就把"本来会发出去什么"留档**（dummy 的意义就在这儿 ——
 		// 没有 key 也能把装配验一遍）；没配渠道（fallback）就没有可留的。
-		if p.Kind == KindDummy {
+		if p.EffectiveVendor() == VendorDummy {
 			if request, err := Build(p, r); err == nil {
 				if payload, err := Snapshot(request, time.Now()); err == nil {
 					RecordLastPayload(payload)
@@ -119,7 +119,7 @@ func (c *Client) Complete(ctx context.Context, p Provider, r Request, localReply
 	r.Stream = false
 	if localReply != "" {
 		// 有渠道就把"本来会发出去什么"留档（dummy 的意义就在这儿：没有 key 也能把装配验一遍）
-		if p.Kind == KindDummy {
+		if p.EffectiveVendor() == VendorDummy {
 			if request, err := Build(p, r); err == nil {
 				if payload, err := Snapshot(request, time.Now()); err == nil {
 					RecordLastPayload(payload)
@@ -266,23 +266,30 @@ func readStream(status int, body io.Reader, onDelta func(Delta)) (Result, error)
 // ── 本地假上游（dummy / fallback）──
 
 // 本地假上游的节奏：**先停一下**（`pending` 才看得见），再**一个字一个字**吐（`streaming` 与
-// "耗时"才看得见）。旧版的 dummy 是瞬时的 —— 那样这两个状态与界面动画根本观察不到，
-// 联调与验收都没法做（用户 2026-09-29 的验收要求就是"能看到 pending/streaming/idle"）。
+// "耗时"才看得见）。快节奏（0.2s 首字 + 全文约 0.8s）：足够看清三个状态，又不碍事。
 const (
-	localFirstDelay = 400 * time.Millisecond
-	localChunkDelay = 250 * time.Millisecond
+	localFirstDelay = 200 * time.Millisecond
+	// localChunkTotal：正文分片阶段的总时长预算 —— 按字数均摊，约 0.8s 说完。
+	localChunkTotal = 800 * time.Millisecond
 )
 
 // streamLocal：不联网的假上游 —— 把这句确定性的话分片吐出来。
 //
+// 分片阶段的总时长固定（`localChunkTotal`）：长话短话都约 0.8s 说完 ——
+// 真上游的节奏本来就与字数无关（吐得快慢看 tokens/s），固定每字延时会让短话快、长话慢。
 // 被取消（用户按停 / 这一轮被顶掉）就在下一个停顿处退出，返回 ctx 的错（调用方据它判定"取消"）。
 func streamLocal(ctx context.Context, reply string, onDelta func(Delta)) (Result, error) {
 	if err := sleep(ctx, localFirstDelay); err != nil {
 		return Result{}, err
 	}
+	runes := []rune(reply)
+	chunkDelay := time.Duration(0)
+	if len(runes) > 0 {
+		chunkDelay = localChunkTotal / time.Duration(len(runes))
+	}
 	var text strings.Builder
-	for _, r := range reply {
-		if err := sleep(ctx, localChunkDelay); err != nil {
+	for _, r := range runes {
+		if err := sleep(ctx, chunkDelay); err != nil {
 			return Result{}, err
 		}
 		chunk := string(r)

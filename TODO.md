@@ -86,10 +86,11 @@
 ① **何时压**（`compact_trigger_tokens` 只是其一 ✓ 要不要留缓冲 ✓）；② **压多少**（`compact_blocks` ✓ 压不动怎么办 ✓）；
 ③ **失败怎么办**（**不许静默** ✗ —— 报错还是降级 ✓ 降级也是一种骗 ✓）。它**会花额度** ✗。
 
-### D. JEV 判断模型
-· **前置已经齐了** ✓：`at_idx` 给的正是"那段文本**当时**的状态表" ✓、(c) 给的正是载荷长什么样 ✓。
-· 要做的三件：① **第三种 provider kind**（它**不是** chat 协议 ✗）② **只动尾部** ③ **失败降级** + 产出**不进历史/变量** ✓。
-· 阈值要**实测校准** ✓（别拍脑袋 ✗）。
+### D. JEV 判断模型（地基层已落地 ✓ 2026-10-01；剩的是"裁决"第二刀）
+· 落了：`vendor` × `protocol` 两轴（`kind` 只剩废弃读入）+ `protocol: systemone`（verbatim URL）+ `task.KindJudgement`（"判断"，进 needsSession）
+  + `internal/judge` 裸调用（10s 超时、不重试）—— 假上游实测往返 ✓（choice 0.7/confidence 0.62 原样回来）。
+· 还没做：① **裁决**（阈值/NPC 动作集/意图分类 —— 阈值必须实测校准，别拍脑袋）；② **只动尾部**的调用点；③ 真 key 打一次。
+· `refresh` 跳过 systemone（无统一 `/models` 口径，不算错）✓。
 
 ### E. 归档 / 剪枝 / 清原文（大件；两条铁律已写好在 AGENTS.md ✓）
 剪枝前**必须先导出** ✓；剪枝与落摘要**同一事务** ✓；报"剪掉 N 条旧分支（已导出）"**不许静默** ✓。
@@ -98,7 +99,8 @@
 
 11. **归档 / 剪枝 / 清原文** —— `AGENTS.md` 的「摘要 / 压缩的设计」里有两条铁律：
     剪枝前**必须先导出**、剪枝与落摘要**同一事务**。
-12. **JEV 决策模型**（第三种 provider kind；只动尾部 / 失败降级 / 产出不进历史与变量）—— 见 `reminder/jev.md`。
+12. **JEV 决策模型**（地基层已落地 ✓：`vendor`×`protocol` / `protocol: systemone` / `task.KindJudgement` / `internal/judge` 裸调用；
+   剩"裁决"第二刀：阈值实测校准 + 只动尾部的调用点 + 产出不进历史/变量）—— 见 `reminder/jev.md`。
 13. **Godot 前端接真实数据**（`frontend/` 由用户在编辑器里自己设计）。
 14. **Telegram Bot**（用户点名的"特色"，2026-09-30 定：**要做** ✓ —— Bot 优先，Mini App 暂不做 ✗ 因为我们不打算做 H5 ✗）。
     · 为什么合：TUI 那一套 `/命令` 与 Telegram 的 `/` 菜单**天然对齐** ✓（`/new` `/resume` `/rename` `/compact` `/cut` `/outgoing` `/usage` `/state` ✓）；
