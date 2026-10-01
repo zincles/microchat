@@ -37,9 +37,10 @@ type Service struct {
 	// Titles：起标题（**只在标题还空着时**自动一次）—— 由 main / 直操模式接上；
 	// 没接（比如只跑一轮生成的单测）就只是"没人起名"，不影响这一轮。
 	Titles *title.Service
-	// Candidates：重摇模式的候选列表（`reroll.Service` 实现它）。**新消息一到就清空** ——
+	// Candidates：重摇模式的候选列表（`reroll.Service` 实现它）。**新消息一到就清空消息重摇的候选** ——
 	// 候选说的只是"当前路径尾条"的替代版本，一旦往下走了，它们就不再指向那条尾巴了
-	// （message 保留当前这版 ✓，候选全删 ✓）。
+	// （message 保留当前这版 ✓，候选全删 ✓）。**摘要重摇的候选不受影响** —— 摘要盖的区间已经定了，
+	// 再往下说一句也不改变"那条根摘要"（`ClearMessages` 只清消息那一类）。
 	//
 	// 类型是接口（在下面定义）：`chat` 与 `reroll` 于是**互不依赖** —— 装配与候选各归各的包，
 	// 只在这一处点一下。没接（单测 / 直操模式）就是"没人维护候选"，不影响这一轮。
@@ -48,7 +49,7 @@ type Service struct {
 
 // CandidateOwner：候选列表的持有者（唯一实现是 `reroll.Service`）。
 type CandidateOwner interface {
-	Clear(sessionID string)
+	ClearMessages(sessionID string)
 }
 
 func New(st *store.Store, paths config.Paths, turns *turn.Registry, tasks *task.Registry) *Service {
@@ -111,10 +112,10 @@ func (s *Service) Accept(session model.Session, content string) (Accepted, error
 		s.Turns.Stop(session.ID) // 登记了却写不进去 ⇒ 摘掉，别留下一个假的"在跑"
 		return Accepted{}, err
 	}
-	// **一发出新消息 ⇒ 重摇的候选全删**（用户口径：候选只属于"当前这条尾巴"）——
-	// message 保留当前这版（候选从没进过库，删掉它们一个字节都不用回退）。
+	// **一发出新消息 ⇒ 消息重摇的候选全删**（用户口径：候选只属于"当前这条尾巴"）——
+	// message 保留当前这版（候选从没进过库，删掉它们一个字节都不用回退）；摘要重摇的候选不受影响。
 	if s.Candidates != nil {
-		s.Candidates.Clear(session.ID)
+		s.Candidates.ClearMessages(session.ID)
 	}
 	// 起标题**不在这儿**：它是 title 能力的事（`title.Service.Auto`，在拿到回复之后起）——
 	// 这里只落用户那句（用户的话不该丢，换个模型接着聊）。

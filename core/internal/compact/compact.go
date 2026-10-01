@@ -179,6 +179,155 @@ func busy() error {
 	return &Error{Code: "conflict", Message: "这个会话已经有一次压缩在跑了，等它跑完"}
 }
 
+// ── 重摇：按既有顶层摘要的原始材料重跑一次（**只生成、不落库**）────────────────
+
+// Generated：一次"只生成、不落库"的压缩产出（摘要重摇用）。
+type Generated struct {
+	Text          string
+	Tokens        int
+	Provider      string
+	Model         string
+	PromptVersion int64
+	Usage         json.RawMessage
+}
+
+// RegenerateSummary：按一条既有【顶层】摘要的**原始材料**重跑一次压缩（**不落库**）—— 摘要重摇用。
+//
+// 材料与当初那次压缩**同源**：`source_kind=message` ⇒ 那段消息的**当前**正文；
+// `source_kind=summary` ⇒ 它的孩子摘要（按区间排序）。目标必须：在本会话、`parent_summary_id IS NULL`、
+// 区间两端都在（口径见 `TODO.md` 第 8 条）。
+//
+// 生效渠道 / 模型 / 模板 / 本地假上游与 `prepare` 同一套；产出过同一套验证（剔 `<state>`、非空），
+// 不行就报错（code 同一套词）；`Tokens` 与落库那条路同一个估算口径。
+//
+// **绝不写任何库**：`summaries` / `messages` 一个字节都不动；挂不挂号、动不动 turn 状态、
+// 要不要接受这一版，全由调用方决定（这里只管"重跑一次、把产出交回去"）。
+func (s *Service) RegenerateSummary(ctx context.Context, session model.Session, summaryID string) (Generated, error) {
+	_, agents, providersConfig, err := config.Load(s.Paths)
+	if err != nil {
+		return Generated{}, &Error{Code: "internal", Message: "读配置失败：" + err.Error()}
+	}
+	agent, _ := agents.Resolve(session.AgentID)
+	setting := abilities.Resolve(agent, abilities.Compact)
+	if !setting.Enabled {
+		// 与 `prepare` 同一条口径：关掉 compact 就该做不了压缩（重摇也是压缩那一趟）
+		return Generated{}, invalid("会话 %s 的 agent（%s）关掉了 compact 能力（abilities.compact.enabled = false）："+
+			"压缩不做就是不做，不会降级执行", shortID(session.ID), agentLabel(agent))
+	}
+	messages, err := s.Store.ListMessages(session.ID)
+	if err != nil {
+		return Generated{}, err
+	}
+	summaries, err := s.Store.ListSummaries(session.ID)
+	if err != nil {
+		return Generated{}, err
+	}
+	target, ok := summaryByID(summaries, summaryID)
+	if !ok {
+		return Generated{}, &Error{Code: "not_found",
+			Message: fmt.Sprintf("摘要 %s 不在会话 %s 里：重新取一次", shortID(summaryID), shortID(session.ID))}
+	}
+	if target.ParentSummaryID != nil {
+		// 重摇只针对**根**（没有父的那条）：有父的是合并的产物，得先动它的孩子
+		return Generated{}, invalid("摘要 %s 不是顶层（它有父）：重摇只换顶层摘要的正文", shortID(summaryID))
+	}
+	resolved, err := regenerateSpan(target, messages, summaries)
+	if err != nil {
+		return Generated{}, err
+	}
+	effective, err := resolveEffective(session, setting, providersConfig)
+	if err != nil {
+		return Generated{}, err
+	}
+	p := &prepared{
+		session: session, channel: effective.channel, model: effective.model,
+		template: effective.template, local: effective.local,
+		span: resolved,
+		// 状态段：消息级 = 区间末；合并级 = 最后一个孩子的区间末（`End` 是下标 ⇒ 序号 = End+1）
+		stateSection: stateSectionAt(session, agents, messages, resolved.End+1),
+	}
+	generated, err := s.generateText(ctx, p)
+	if err != nil {
+		return Generated{}, err
+	}
+	return Generated{
+		Text:          generated.text,
+		Tokens:        s.estimateTokens(p, generated.text),
+		Provider:      p.channel.ID,
+		Model:         p.model,
+		PromptVersion: abilities.PromptVersion(p.template),
+		Usage:         generated.usage,
+	}, nil
+}
+
+// regenerateSpan：按一条既有摘要的**原始材料**重建一份 span（只供重摇生成，不落库）。
+//
+// 消息级：成员是那段消息的**当前**正文；合并级：成员是它的孩子摘要（按区间排序），
+// Messages 取孩子覆盖的那一段快照（给轻抬头与"区间末状态"用）。区间两端对不上 ⇒ 报错。
+func regenerateSpan(target model.Summary, messages []model.Message, summaries []model.Summary) (span, error) {
+	positions := make(map[string]int, len(messages))
+	for index := range messages {
+		positions[messages[index].ID] = index
+	}
+	beginID, endID := deref(target.BeginMessageID), deref(target.EndMessageID)
+	begin, okBegin := positions[beginID]
+	end, okEnd := positions[endID]
+	if beginID == "" || endID == "" || !okBegin || !okEnd || begin > end {
+		return span{}, invalid("摘要 %s 的区间对不上眼前这条会话（被删过 / 老数据）：重新取一次", shortID(target.ID))
+	}
+	if target.SourceKind != model.SourceSummaries {
+		return makeSpan(messages, begin, end, int(target.Blocks)), nil
+	}
+	// 合并级：孩子摘要按区间排序（`SourceIDs` 记的本来就是这个序，这里现排一遍求稳）
+	byID := make(map[string]model.Summary, len(summaries))
+	for index := range summaries {
+		byID[summaries[index].ID] = summaries[index]
+	}
+	type childSpan struct {
+		summary model.Summary
+		begin   int
+		end     int
+	}
+	children := make([]childSpan, 0, len(target.SourceIDs))
+	for _, sourceID := range target.SourceIDs {
+		source, ok := byID[sourceID]
+		if !ok {
+			return span{}, invalid("摘要 %s 的孩子 %s 找不着了（被删过 / 老数据）：重新取一次",
+				shortID(target.ID), shortID(sourceID))
+		}
+		sourceBegin, sourceEnd, okRange := childRange(source, positions)
+		if !okRange {
+			return span{}, invalid("摘要 %s 的孩子 %s 的区间对不上眼前这条会话（被删过 / 老数据）：重新取一次",
+				shortID(target.ID), shortID(source.ID))
+		}
+		children = append(children, childSpan{summary: source, begin: sourceBegin, end: sourceEnd})
+	}
+	if len(children) < 2 {
+		return span{}, invalid("摘要 %s 是合并级的，但孩子不足两条（老数据）：重新取一次", shortID(target.ID))
+	}
+	sort.Slice(children, func(i, j int) bool { return children[i].begin < children[j].begin })
+	firstBegin, lastEnd := children[0].begin, children[len(children)-1].end
+	sources := make([]model.Summary, len(children))
+	blocks := 0
+	for index, child := range children {
+		sources[index] = child.summary
+		blocks += int(child.summary.Blocks)
+	}
+	snapshot := make([]model.Message, lastEnd-firstBegin+1)
+	copy(snapshot, messages[firstBegin:lastEnd+1])
+	return span{Begin: firstBegin, End: lastEnd, Blocks: blocks, Messages: snapshot, Sources: sources}, nil
+}
+
+// summaryByID：在这一串摘要里按 id 找（找不着 ⇒ false）。
+func summaryByID(summaries []model.Summary, id string) (model.Summary, bool) {
+	for _, summary := range summaries {
+		if summary.ID == id {
+			return summary, true
+		}
+	}
+	return model.Summary{}, false
+}
+
 // ── 取料：能力 + 区间（都在"调用之前"做完）────────────────────────────────────
 
 // prepared：受理时就把料取好、把闸过掉的那一份。
@@ -212,6 +361,44 @@ type span struct {
 	Sources  []model.Summary
 }
 
+// effective：生效渠道 / 模型 / 模板 / 本地话术 —— 能力上填了就用它，没填就骑会话的
+// （辅助调用本来就要同一个会话）。
+type effective struct {
+	channel  config.Provider
+	model    string
+	template string
+	local    string
+}
+
+// resolveEffective：把"这次压缩用哪条渠道、哪个模型、哪份模板、要不要本地假上游"算出来。
+//
+// `prepare`（落库那条路）与 `RegenerateSummary`（重摇那条路）共用 ⇒ 口径与错误文案只有一份
+// （模板的算式也只有一处：`abilities.Template`，agent 覆盖 ?: 代码里的默认）。
+func resolveEffective(session model.Session, setting abilities.Setting, providersConfig config.ProvidersConfig) (effective, error) {
+	providerID, modelID := session.Provider, session.Model
+	if setting.Provider != "" {
+		providerID = setting.Provider
+	}
+	if setting.Model != "" {
+		modelID = setting.Model
+	}
+	backend := providers.SelectBackend(providerID, modelID, providersConfig)
+	if backend.Name == providers.BackendFallback {
+		return effective{}, invalid("这条会话没有可用的模型（渠道 %q 不在 providers.json 里，或模型名为空）："+
+			"压缩要真调一次上游 —— 先配好渠道，或把这条会话切到 dummy", providerID)
+	}
+	local := ""
+	if backend.Name == providers.BackendDummy {
+		local = dummyReply
+	}
+	return effective{
+		channel:  backend.Provider,
+		model:    modelID,
+		template: abilities.Template(setting, abilities.Compact),
+		local:    local,
+	}, nil
+}
+
 func (s *Service) prepare(session model.Session, req Request) (*prepared, error) {
 	chatConfig, agents, providersConfig, err := config.Load(s.Paths)
 	if err != nil {
@@ -241,28 +428,14 @@ func (s *Service) prepare(session model.Session, req Request) (*prepared, error)
 		return nil, err
 	}
 
-	// 生效渠道 / 模型：能力上填了就用它，没填就骑会话的（辅助调用本来就要同一个会话）
-	providerID, modelID := session.Provider, session.Model
-	if setting.Provider != "" {
-		providerID = setting.Provider
-	}
-	if setting.Model != "" {
-		modelID = setting.Model
-	}
-	backend := providers.SelectBackend(providerID, modelID, providersConfig)
-	if backend.Name == providers.BackendFallback {
-		return nil, invalid("这条会话没有可用的模型（渠道 %q 不在 providers.json 里，或模型名为空）："+
-			"压缩要真调一次上游 —— 先配好渠道，或把这条会话切到 dummy", providerID)
-	}
-	local := ""
-	if backend.Name == providers.BackendDummy {
-		local = dummyReply
+	effective, err := resolveEffective(session, setting, providersConfig)
+	if err != nil {
+		return nil, err
 	}
 	return &prepared{
-		session: session, channel: backend.Provider, model: modelID,
-		// 生效模板只有一处算式（abilities.Template）：agent 覆盖 ?: 代码里的默认
-		template: abilities.Template(setting, abilities.Compact),
-		local:    local,
+		session: session, channel: effective.channel, model: effective.model,
+		template: effective.template,
+		local:    effective.local,
 		span:     resolved,
 		// 材料里附的那份状态：**at_idx 那条链**（`state.StateAt`）—— 底子是**当前**的生效提示词、
 		// 正文 fold 到区间末（`End` 是下标 ⇒ 序号 = End+1）。取料在锁里，所以在这儿算。
@@ -614,8 +787,21 @@ func (s *Service) execute(ctx context.Context, p *prepared) (Result, error) {
 	return result, nil
 }
 
-// call：真调一次 + 过五条验证 + 落库。
-func (s *Service) call(ctx context.Context, p *prepared) (Result, error) {
+// generatedText：**只生成、不落库**的那半程的产出 —— 过完 ①②（剔 `<state>`、非空）之后的正文与 usage。
+type generatedText struct {
+	text  string
+	usage json.RawMessage
+}
+
+// generateText：**只生成、不落库** —— 拼材料 → 调上游 → 剔 `<state>` → 非空校验，都在这里。
+//
+// `call()`（落库那条路）与 `RegenerateSummary`（重摇那条路）共用它：两者的分别只在
+// "材料从哪来"（都装在同一份 `prepared` 里）与"生成之后干什么"（落库 / 只回文本）。
+//
+// 两处"不发 / 不写"的判断留在这里，口径只有一份：
+//   - 材料剔完是空的 ⇒ 不发（整段都是 `<state>` 块时就是这样；判的是正文，不含附的那份状态）；
+//   - 上游回来的剔完是空的 ⇒ 报 upstream（宁可这一趟什么都没有，也别塞一条空摘要）。
+func (s *Service) generateText(ctx context.Context, p *prepared) (generatedText, error) {
 	merge := len(p.span.Sources) > 0
 	// 材料：消息级 = 这段对话正文；合并级 = 各段已有梗概（带轻抬头），外面套一句"这不是对话"。
 	material := ""
@@ -629,7 +815,7 @@ func (s *Service) call(ctx context.Context, p *prepared) (Result, error) {
 	if strings.TrimSpace(material) == "" {
 		// ②之前的半步：**材料是空的就别发**（整段都是 `<state>` 块时就是这样）。
 		// 注意判的是**正文**（不含下面附的那份状态）—— 状态不是"可压的内容"。
-		return Result{}, invalid("这一段剔掉 <state> 之后没有正文可压（整段都是状态块）")
+		return generatedText{}, invalid("这一段剔掉 <state> 之后没有正文可压（整段都是状态块）")
 	}
 	wire := providers.FromConfig(p.channel)
 	result, err := providers.NewClient(wire).Complete(ctx, wire, providers.Request{
@@ -644,7 +830,7 @@ func (s *Service) call(ctx context.Context, p *prepared) (Result, error) {
 		CacheRetention: providers.CacheNone,
 	}, p.local)
 	if err != nil {
-		return Result{}, &Error{Code: "upstream", Message: err.Error()}
+		return generatedText{}, &Error{Code: "upstream", Message: err.Error()}
 	}
 
 	// ① 剔 `<state>`：混进梗概里的状态块要拿掉（**只有 `statelang.Scan` 这一处**认得标签）
@@ -655,9 +841,20 @@ func (s *Service) call(ctx context.Context, p *prepared) (Result, error) {
 	}
 	// ② 非空：剔完是空的 ⇒ **不写**（宁可这一趟什么都没有，也别塞一条空摘要）
 	if text == "" {
-		return Result{}, &Error{Code: "upstream",
+		return generatedText{}, &Error{Code: "upstream",
 			Message: "上游回来的那段剔掉 <state> 之后是空的：这一份不落库"}
 	}
+	return generatedText{text: text, usage: result.Usage}, nil
+}
+
+// call：真调一次 + 过五条验证 + 落库。
+func (s *Service) call(ctx context.Context, p *prepared) (Result, error) {
+	merge := len(p.span.Sources) > 0
+	generated, err := s.generateText(ctx, p)
+	if err != nil {
+		return Result{}, err
+	}
+	text := generated.text
 
 	// 材料来源 → 落库那一份（成员是消息还是摘要）。
 	sourceIDs := make([]string, 0, len(p.span.Messages))
@@ -700,7 +897,7 @@ func (s *Service) call(ctx context.Context, p *prepared) (Result, error) {
 		Provider:  p.channel.ID, Model: p.model,
 		// ⑤ 落库一并写 prompt_version（**生效模板**的指纹）与 usage
 		PromptVersion: abilities.PromptVersion(p.template),
-		Usage:         result.Usage,
+		Usage:         generated.usage,
 		// 刚压出来就是干净的；合并级**传播**孩子的脏（父盖着被改过的内容）
 		Dirty:     dirty,
 		CreatedAt: time.Now().UnixMilli(),

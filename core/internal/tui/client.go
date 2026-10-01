@@ -438,54 +438,106 @@ type RerollItem struct {
 	Current bool   `json:"current"`
 }
 
-// RerollState：`GET /sessions/{session_id}/reroll` 的形状（界面靠它画位次与「重摇中…」）。
+// 重摇的两个家族（与后端的 `target_kind` 同一套词）。同一个会话同一时刻只有一个活着。
+const (
+	RerollKindMessage = "message" // 消息级：摇的是尾条那条 assistant 回复
+	RerollKindSummary = "summary" // 摘要级：摇的是 idx 上溯到的那条（根）摘要
+)
+
+// RerollState：`GET .../reroll-message` 或 `GET .../reroll-summary` 的形状
+// （界面靠它画位次与「重摇中…」；轮询按 `target_kind` 挑家族的 GET）。
 type RerollState struct {
-	Active          bool         `json:"active"`
-	TargetMessageID string       `json:"target_message_id,omitempty"`
-	Count           int          `json:"count"`
-	CurrentIdx      int          `json:"current_idx"`
-	Running         bool         `json:"running"`
-	ElapsedMS       int64        `json:"elapsed_ms"`
-	Error           string       `json:"error,omitempty"`
-	Items           []RerollItem `json:"items"`
+	Active bool `json:"active"`
+	// TargetKind：这次摇的是哪一类（`message` / `summary`）—— 没进模式就空着。
+	TargetKind      string `json:"target_kind,omitempty"`
+	TargetMessageID string `json:"target_message_id,omitempty"`
+	// TargetSummaryID：摘要模式摇的是哪条摘要（消息模式留空）。
+	TargetSummaryID string `json:"target_summary_id,omitempty"`
+	// FromIdx / ToIdx：摘要模式目标（根）盖的那段消息区间（1-based）；消息模式不给。
+	// 底栏那一句"目标是第 a–b 条那条摘要"就靠它俩。
+	FromIdx    *int         `json:"from_idx,omitempty"`
+	ToIdx      *int         `json:"to_idx,omitempty"`
+	Count      int          `json:"count"`
+	CurrentIdx int          `json:"current_idx"`
+	Running    bool         `json:"running"`
+	ElapsedMS  int64        `json:"elapsed_ms"`
+	Error      string       `json:"error,omitempty"`
+	Items      []RerollItem `json:"items"`
 }
 
-// Accepted：`POST .../reroll` 的 202 回执（受理那一刻：原文 + 正在摇的那一版）。
+// Accepted：`POST .../reroll-message` 或 `POST .../reroll-summary` 的 202 回执
+// （受理那一刻：原文 + 正在摇的那一版；消息模式给前一个目标、摘要模式给后一个）。
 type RerollAccepted struct {
-	TargetMessageID string      `json:"target_message_id"`
+	TargetMessageID string      `json:"target_message_id,omitempty"`
+	TargetSummaryID string      `json:"target_summary_id,omitempty"`
 	TaskID          string      `json:"task_id,omitempty"`
 	State           RerollState `json:"state"`
 }
 
-// Reroll：进重摇模式并**立刻摇一次**（已在模式里 ⇒ 再摇一版）。
+// Reroll：进**消息重摇**模式并立刻摇一次（`POST .../reroll-message`；已在模式里 ⇒ 再摇一版）。
 func (c *Client) Reroll(sessionID string) (RerollAccepted, error) {
 	var accepted RerollAccepted
-	err := c.post("/sessions/"+sessionID+"/reroll", nil, &accepted)
+	err := c.post("/sessions/"+sessionID+"/reroll-message", nil, &accepted)
 	return accepted, err
 }
 
-// RerollState：这一条会话的重摇状态（没进模式 ⇒ `active: false`）。
+// RerollStatus：消息重摇的状态（没进这一档 ⇒ `active: false` —— 另一个家族活着不算本档进模式）。
 func (c *Client) RerollStatus(sessionID string) (RerollState, error) {
 	var state RerollState
-	err := c.get("/sessions/"+sessionID+"/reroll", &state)
+	err := c.get("/sessions/"+sessionID+"/reroll-message", &state)
 	return state, err
 }
 
 // RerollSwitch：选中第 N 版（后端**就地重建**那条 Message：UUID 不变，正文与附带信息一起换）。
 func (c *Client) RerollSwitch(sessionID string, idx int) (RerollState, error) {
 	var state RerollState
-	err := c.post("/sessions/"+sessionID+"/reroll/switch", map[string]any{"idx": idx}, &state)
+	err := c.post("/sessions/"+sessionID+"/reroll-message/switch", map[string]any{"idx": idx}, &state)
 	return state, err
 }
 
 // RerollDelete：删掉第 N 版（后方位次统一 -1；只剩一版时后端退出模式并清列表）。
 func (c *Client) RerollDelete(sessionID string, idx int) (RerollState, error) {
 	var state RerollState
-	err := c.do(http.MethodDelete, fmt.Sprintf("/sessions/%s/reroll/%d", sessionID, idx), nil, &state)
+	err := c.do(http.MethodDelete, fmt.Sprintf("/sessions/%s/reroll-message/%d", sessionID, idx), nil, &state)
 	return state, err
 }
 
-// RerollClear：**退出重摇模式**（清列表；库里那条 Message 保留当前这版）。
+// RerollClear：**退出消息重摇模式**（清列表；库里那条 Message 保留当前这版）。
 func (c *Client) RerollClear(sessionID string) error {
-	return c.del("/sessions/" + sessionID + "/reroll")
+	return c.del("/sessions/" + sessionID + "/reroll-message")
+}
+
+// RerollSummary：进**摘要重摇**模式并立刻摇一版（`POST .../reroll-summary`，体 `{"idx": N}`）。
+//
+// `idx` 是 **1-based 消息序号**：由它上溯到所在的那条（根）摘要 —— 同树任意一条都指向同一个目标。
+func (c *Client) RerollSummary(sessionID string, idx int) (RerollAccepted, error) {
+	var accepted RerollAccepted
+	err := c.post("/sessions/"+sessionID+"/reroll-summary", map[string]any{"idx": idx}, &accepted)
+	return accepted, err
+}
+
+// RerollSummaryStatus：摘要重摇的状态（没进这一档 ⇒ `active: false`）。
+func (c *Client) RerollSummaryStatus(sessionID string) (RerollState, error) {
+	var state RerollState
+	err := c.get("/sessions/"+sessionID+"/reroll-summary", &state)
+	return state, err
+}
+
+// RerollSummarySwitch：选中第 N 版（摘要 id / 覆盖区间一概不变，只换正文）。
+func (c *Client) RerollSummarySwitch(sessionID string, idx int) (RerollState, error) {
+	var state RerollState
+	err := c.post("/sessions/"+sessionID+"/reroll-summary/switch", map[string]any{"idx": idx}, &state)
+	return state, err
+}
+
+// RerollSummaryDelete：删掉第 N 版（`idx` 是位次不是 id，与消息家族同一个形状）。
+func (c *Client) RerollSummaryDelete(sessionID string, idx int) (RerollState, error) {
+	var state RerollState
+	err := c.do(http.MethodDelete, fmt.Sprintf("/sessions/%s/reroll-summary/%d", sessionID, idx), nil, &state)
+	return state, err
+}
+
+// RerollSummaryClear：**退出摘要重摇模式**（清列表；只清摘要那一档 —— 消息重摇不受影响）。
+func (c *Client) RerollSummaryClear(sessionID string) error {
+	return c.del("/sessions/" + sessionID + "/reroll-summary")
 }

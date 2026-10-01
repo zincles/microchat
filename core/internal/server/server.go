@@ -87,12 +87,19 @@ func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *ch
 	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/context", s.sessionContext)
 	// 压缩：把最老的 N 个已闭合块收成一条摘要（**202** 受理；跑完的结局在 /status 的 compact 那一档）
 	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/compact", s.compactSession)
-	// 重摇：把尾条那条 assistant 回复重新摇几版，挑一版定下来（候选只在内存里；见 reroll_api.go）
-	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/reroll", s.rerollEnter)
-	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/reroll", s.rerollState)
-	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/reroll/switch", s.rerollSwitch)
-	s.mux.HandleFunc("DELETE /api/v1/sessions/{session_id}/reroll/{idx}", s.rerollDelete)
-	s.mux.HandleFunc("DELETE /api/v1/sessions/{session_id}/reroll", s.rerollClear)
+	// 重摇：**两个平行家族**（候选只在内存里；见 reroll_api.go）
+	// 消息级：把尾条那条 assistant 回复重新摇几版，挑一版定下来
+	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/reroll-message", s.rerollMessageEnter)
+	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/reroll-message", s.rerollMessageState)
+	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/reroll-message/switch", s.rerollMessageSwitch)
+	s.mux.HandleFunc("DELETE /api/v1/sessions/{session_id}/reroll-message/{idx}", s.rerollMessageDelete)
+	s.mux.HandleFunc("DELETE /api/v1/sessions/{session_id}/reroll-message", s.rerollMessageClear)
+	// 摘要级：按一条已存在顶层摘要的原始材料重摇它的正文（`{"idx": N}` 上溯到根）
+	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/reroll-summary", s.rerollSummaryEnter)
+	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/reroll-summary", s.rerollSummaryState)
+	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/reroll-summary/switch", s.rerollSummarySwitch)
+	s.mux.HandleFunc("DELETE /api/v1/sessions/{session_id}/reroll-summary/{idx}", s.rerollSummaryDelete)
+	s.mux.HandleFunc("DELETE /api/v1/sessions/{session_id}/reroll-summary", s.rerollSummaryClear)
 	return s
 }
 

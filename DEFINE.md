@@ -193,12 +193,14 @@ GET 只回它 ✓、DELETE 照它干 ✓。分成两条路 ⇒ 预览必然与�
 **竞态** ✓：预览之后、执行之前有人往尾部追加 ⇒ 会**多删** ✗ 且静默 ✗ ⇒
 DELETE 体里带回 `last_deleted_message_id` ✓，服务端核对它仍是最后一条 ✓，不符 ⇒ **409**（客户端重新预览 ✓）。
 
-## 重摇（Re-roll）：把尾条那条回复重摇几版，挑一版定下来 ✓（2026-09-30 定，**同日落地**）
+## 重摇（Re-roll）：把尾条回复**或一条摘要**重摇几版，挑一版定下来 ✓（2026-09-30 消息模式，2026-10-01 摘要模式）
 
-**一句话** ✓：**重摇就是"把最后那条 assistant 回复重来一遍"** —— 它不是新机制（接受 = **就地换正文**，见上面那节 ✓）；
+**一句话** ✓：**重摇就是"把目标重来一遍"** —— 它不是新机制（接受 = **就地换正文**，见上面那节 ✓）；
 多出来的是"**候选**"这一层：摇出来的几版先在**内存**里排队，你挑中的那版才进库。
+**两个平行家族**（路径同级、方法一一对应）：**消息**（`…/reroll-message`）与**摘要**（`…/reroll-summary`）；
+一个会话同一时刻只有**一个**重摇模式。
 
-### 十条口径（**别自作主张** ✗）
+### 十条口径（**消息模式**；**别自作主张** ✗）
 
 1. **只重摇"当前路径上的最后一条消息"，且它必须是 assistant** ✓ ——
    尾条是 user ⇒ 那不是重摇，是**重发** ✗（后端 **400** 明说，不猜）。
@@ -222,23 +224,42 @@ DELETE 体里带回 `last_deleted_message_id` ✓，服务端核对它仍是最�
 9. **Task kind 用 `reroll`** ✓：它是一次**对话型调用** ✓（与 `turn` 同类）、**不是开关** ✗（关掉它就没有对话了，说不通）；
    **产出不进历史** ✗（先当候选 ✓ 接受才写 ✓）—— 与"生成中的回复不入库"是同一条不变量 ✓。
 10. **界面上要看得见** ✓：那条消息旁给 `‹ 2/3 ›` 那种位次标记（**只在模式内** ✓、当前那版高亮 ✓）+ 状态行报
-    「重摇中… 耗时」✓ + 一条**显式退出**的命令 ✓（TUI 是 `/reroll off`；路由是 `DELETE /sessions/{session_id}/reroll`）。
+    「重摇中… 耗时」✓ + 一条**显式退出**的命令 ✓（TUI 是 `/reroll off`；路由是 `DELETE /sessions/{session_id}/reroll-message`）。
 
-### 五条路由 ✓
+### 摘要模式（2026-10-01 定）—— 只重摇"没有父"的摘要
+
+**一句话** ✓：**摘要重摇 = 把一条【根】摘要用同一份材料重来一遍**。
+
+- 命令给**消息 idx**（1-based）：沿 `summary_id → parent_summary_id` 上溯到**根**（同树任意 idx 指向同一目标 ✓）；
+  没被摘要盖住 / 越界 ⇒ **400**。
+- **材料与当初那次压缩同源**（`source_kind=message` ⇒ 那段消息的**当前**正文；`summary` ⇒ 它的孩子摘要）——
+  产出走 compact 的**"只生成、不落库"半程**（摘要**不许**绕过 compact 拼请求 ✓）。
+- **apply = 就地换那条摘要的正文**：`id` / 区间 / 父亲指针 / 孩子一概不动（守卫"仍无父" ⇒ 期间被并走就冲突）；
+  `dirty` = 材料新鲜度（message 级 ⇒ 0；合并级 ⇒ 任一孩子脏）。
+- 生命周期：候选照旧**只在内存**；**新消息不清摘要模式**（老摘要不受新消息影响）；目标被并走 / 被删 ⇒ 状态回 `active:false`。
+- 闸门 / 位次 / 「删到只剩一条 ⇒ 退出、保留当前版」与消息模式**同一套**。
+
+### 十条路由（两个家族）✓
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| POST | `/sessions/{session_id}/reroll` | **202** 受理：进模式并立刻摇一次（已在模式里 ⇒ 再摇一版）。回 `{target_message_id, task_id, state}` |
-| GET | `/sessions/{session_id}/reroll` | 状态：`{active, target_message_id, count, current_idx, running, elapsed_ms, error, items:[{idx, preview, at, pending, current}]}` —— **不吐全文**（预览几十字 ✓）|
-| POST | `/sessions/{session_id}/reroll/switch` | `{"idx": n}` ⇒ apply 回那条 Message（UUID 不变）|
-| DELETE | `/sessions/{session_id}/reroll/{idx}` | 删掉第 `idx` 版（后方位次统一 -1；删到只剩一条 ⇒ 退出模式 ✓）|
-| DELETE | `/sessions/{session_id}/reroll` | **显式退出**（清列表；message 保留当前这版 ✓）|
+| POST | `/sessions/{session_id}/reroll-message` | **202** 受理：进模式并立刻摇一次（已在模式里 ⇒ 再摇一版）。回 `{target_message_id, task_id, state}` |
+| GET | `.../reroll-message` | 状态：`{active, target_kind, target_message_id, count, current_idx, running, elapsed_ms, error, items:[…]}` —— **不吐全文**（预览几十字 ✓）|
+| POST | `.../reroll-message/switch` | `{"idx": n}` ⇒ apply 回那条 Message（UUID 不变）|
+| DELETE | `.../reroll-message/{idx}` | 删掉第 `idx` 版（后方位次统一 -1；删到只剩一条 ⇒ 退出模式 ✓）|
+| DELETE | `.../reroll-message` | **显式退出**（清列表；message 保留当前这版 ✓）|
+| POST | `/sessions/{session_id}/reroll-summary` | `{"idx": N}`（N = 1-based 消息 idx，上溯到根）⇒ **202**；回 `{target_summary_id, task_id, state}` |
+| GET | `.../reroll-summary` | 状态（多 `target_summary_id` / `from_idx` / `to_idx`）—— **不吐全文** |
+| POST | `.../reroll-summary/switch` | `{"idx": n}` ⇒ 就地换那条摘要的正文（`id` / 区间不动）|
+| DELETE | `.../reroll-summary/{idx}` | 删掉第 `idx` 版（删到只剩一条 ⇒ 退出模式 ✓）|
+| DELETE | `.../reroll-summary` | **显式退出** |
 
-**错误** ✓：尾条不是 assistant ⇒ **400**；已有重摇在跑 / 正在生成 ⇒ **409**；`idx` 越界 ⇒ **400**；没进模式 ⇒ **404**；
-切/删"还在摇的那一版" ⇒ **409**（它还没有正文，切过去也没东西可看 —— 等它出来，或按停）。
+**错误** ✓：尾条不是 assistant ⇒ **400**；没被摘要盖住 / `idx` 越界 ⇒ **400**；已有重摇在跑 / 正在生成 ⇒ **409**；没进模式 ⇒ **404**；
+切/删"还在摇的那一版" ⇒ **409**（它还没有正文，切过去也没东西可看 —— 等它出来，或按停）；摘要目标被并走 / 被删 ⇒ 状态回 `active:false`（切换时撞上 ⇒ 冲突）。
 
 **装配不另写一份** ✓：重摇那一发用的材料与一轮对话是**同一段装配**（`chat.assembleMessages`）、骑**同一个会话 id** ——
 差别只有"被重摇的那条回复不在历史里" ✓（重摇就是把它重来一遍）。
+**摘要也不另写一份** ✓：摘要重摇的材料与当初那次压缩**同源**，走 compact 的"只生成、不落库"半程（`RegenerateSummary`）。
 
 ## 出站载荷的三个名字：(a) / (b) / (c) ✓（2026-09-30 补进词表）
 

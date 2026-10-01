@@ -638,3 +638,173 @@ func TestCompactMergeRefusals(t *testing.T) {
 		t.Fatalf("失败不许落库：%+v", rows)
 	}
 }
+
+// 重摇的三条闸：目标不存在 / 有父（不是根）/ 区间两端缺失 —— 都该报错，且一个字节都不许落库。
+func TestRegenerateSummaryRefusals(t *testing.T) {
+	h := newHarness(t, config.AgentsConfig{})
+	h.turn(t, "第一句")
+	h.turn(t, "第二句")
+	h.turn(t, "第三句")
+
+	first, err := h.service.Compact(context.Background(), h.session, Request{Blocks: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.service.Compact(context.Background(), h.session, Request{Blocks: 1}); err != nil {
+		t.Fatal(err)
+	}
+	parent, err := h.service.Compact(context.Background(), h.session, Request{BeginIdx: 1, EndIdx: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	// 不存在：这条会话里没有这个 id
+	if _, err := h.service.RegenerateSummary(ctx, h.session, "查无此摘要"); err == nil {
+		t.Fatal("目标不在本会话：该报错")
+	}
+	// 有父：孩子不是根（重摇只换顶层摘要的正文）
+	if _, err := h.service.RegenerateSummary(ctx, h.session, first.SummaryID); err == nil {
+		t.Fatal("有父的摘要不该被重摇")
+	}
+	// 反例的对照：顶层那一条（父）该能重摇
+	if _, err := h.service.RegenerateSummary(ctx, h.session, parent.SummaryID); err != nil {
+		t.Fatalf("顶层摘要该能重摇：%v", err)
+	}
+
+	// 区间两端缺失：造一条**顶层**摘要，两端为空（老数据）—— 材料没法重建
+	//（`RecordSummary` 只管落库、不校验区间两端，这里正是要造出"老数据"那一格）
+	open := h.messages(t)[4:]
+	before := len(h.summaries(t))
+	staleID := "00000000-0000-7000-8000-0000000000ff"
+	if err := h.store.RecordSummary(model.Summary{
+		ID: staleID, SessionID: h.sessionID, SourceKind: model.SourceMessages, Text: "老数据",
+	}, []string{open[0].ID, open[1].ID}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.service.RegenerateSummary(ctx, h.session, staleID); err == nil {
+		t.Fatal("区间两端缺失的摘要：该报错")
+	}
+	if rows := h.summaries(t); len(rows) != before+1 { // 只多了刚造的那一行
+		t.Fatalf("重摇不落库：%+v", rows)
+	}
+	if after := h.messages(t); after[4].SummaryID == nil || *after[4].SummaryID != staleID {
+		t.Fatalf("重摇不许动 messages：%+v", after[4].SummaryID)
+	}
+}
+
+// 消息级根：按那段消息的**当前正文**重跑一次 ⇒ 正常回文本，且 summaries 行数不变（不落库）。
+func TestRegenerateSummaryMessageRootWritesNothing(t *testing.T) {
+	h := newHarness(t, config.AgentsConfig{})
+	h.turn(t, "第一句")
+	h.turn(t, "第二句")
+	h.turn(t, "第三句")
+
+	original, err := h.service.Compact(context.Background(), h.session, Request{Blocks: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := h.summaries(t)
+	messages := h.messages(t)
+
+	generated, err := h.service.RegenerateSummary(context.Background(), h.session, original.SummaryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(generated.Text, dummyReply) {
+		t.Fatalf("dummy 渠道该回本地假摘要：%q", generated.Text)
+	}
+	if generated.Tokens <= 0 || generated.Provider != "dummy" || generated.Model != "dummy" {
+		t.Fatalf("产出 = %+v", generated)
+	}
+	if generated.PromptVersion != abilities.PromptVersion(abilities.DefaultTemplate(abilities.Compact)) {
+		t.Fatalf("prompt_version = %d（想要默认模板的指纹）", generated.PromptVersion)
+	}
+	// 不落库：行数不变、原来那一行一个字都没改、消息的指针也没动
+	after := h.summaries(t)
+	if len(after) != len(rows) {
+		t.Fatalf("重摇不落库：%d → %d 行", len(rows), len(after))
+	}
+	if after[0].Text != rows[0].Text || after[0].Blocks != rows[0].Blocks {
+		t.Fatalf("原来那一行不该被改：%+v → %+v", rows[0], after[0])
+	}
+	for index, message := range h.messages(t) {
+		if (message.SummaryID == nil) != (messages[index].SummaryID == nil) {
+			t.Fatalf("重摇不许动 messages：第 %d 条", index)
+		}
+		if message.SummaryID != nil && *message.SummaryID != *messages[index].SummaryID {
+			t.Fatalf("重摇不许动 messages：第 %d 条", index)
+		}
+	}
+}
+
+// 合并级根：材料是孩子的**轻抬头 + 正文**（不是对话原文）—— httptest 假上游捕获请求体断言。
+//
+// 照 `TestMaterialStripsStateAndSendsTemplate` 的写法。
+func TestRegenerateSummaryMergeRootKeepsChildHeaders(t *testing.T) {
+	var body []byte
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"重摇出来的一段前情提要"}}],` +
+			`"usage":{"prompt_tokens":80,"completion_tokens":6,"total_tokens":86}}`))
+	}))
+	defer stub.Close()
+
+	h := newHarness(t, config.AgentsConfig{})
+	h.turn(t, "第一句")
+	h.turn(t, "第二句")
+	h.turn(t, "第三句")
+
+	if _, err := h.service.Compact(context.Background(), h.session, Request{Blocks: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.service.Compact(context.Background(), h.session, Request{Blocks: 1}); err != nil {
+		t.Fatal(err)
+	}
+	parent, err := h.service.Compact(context.Background(), h.session, Request{BeginIdx: 1, EndIdx: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 重摇走 openai-compat 假上游（与 `prepare` 同一套解析：能力没覆盖 ⇒ 骑会话的渠道 / 模型）
+	if err := config.SaveJSON(h.paths.Config("providers.json"), mustJSON(t,
+		`{"providers":[{"id":"stub","kind":"openai-compat","base_url":"`+stub.URL+`","identity":"bare"}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	h.session.Provider, h.session.Model = "stub", "m"
+
+	rows := h.summaries(t)
+	generated, err := h.service.RegenerateSummary(context.Background(), h.session, parent.SummaryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if generated.Text != "重摇出来的一段前情提要" ||
+		!strings.Contains(string(generated.Usage), `"completion_tokens":6`) {
+		t.Fatalf("产出该带上游回的正文与 usage：%+v", generated)
+	}
+	if generated.Provider != "stub" || generated.Model != "m" {
+		t.Fatalf("生效渠道 / 模型 = %s / %s", generated.Provider, generated.Model)
+	}
+
+	sent := string(body)
+	// 材料是各段孩子的**轻抬头 + 正文**（不是那段对话原文）
+	for _, want := range []string{
+		"【第 1–2 条（1 块）】",
+		"【第 3–4 条（1 块）】",
+		dummyReply, // 两条孩子当初就是 dummy 压出来的正文
+		"不是对话原文",   // mergeHeader 把口气说清
+	} {
+		if !strings.Contains(sent, want) {
+			t.Fatalf("合并级的材料里该有 %q：%s", want, sent)
+		}
+	}
+	if strings.Contains(sent, "第一句") || strings.Contains(sent, "<state>") {
+		t.Fatalf("合并级材料不该发对话原文 / 状态块：%s", sent)
+	}
+
+	// 不落库：行数不变
+	if after := h.summaries(t); len(after) != len(rows) {
+		t.Fatalf("重摇不落库：%d → %d 行", len(rows), len(after))
+	}
+}

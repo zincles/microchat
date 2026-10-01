@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"microchat/internal/chat"
 	"microchat/internal/config"
@@ -178,7 +179,7 @@ func TestSwitchKeepsUUIDAndSwapsMeta(t *testing.T) {
 	before := h.tail(t)
 
 	state := h.roll(t)
-	if _, err := h.service.Switch(h.sessionID, 2); err != nil {
+	if _, err := h.service.Switch(h.sessionID, TargetMessage, 2); err != nil {
 		t.Fatal(err)
 	}
 	after := h.tail(t)
@@ -199,7 +200,7 @@ func TestSwitchKeepsUUIDAndSwapsMeta(t *testing.T) {
 		t.Fatalf("改正文该刷新 updated_at：%d（原来 %d）", after.UpdatedAt, before.UpdatedAt)
 	}
 	// 切回原文那一版：正文与那组附带信息一起回来
-	if _, err := h.service.Switch(h.sessionID, 1); err != nil {
+	if _, err := h.service.Switch(h.sessionID, TargetMessage, 1); err != nil {
 		t.Fatal(err)
 	}
 	restored := h.tail(t)
@@ -222,10 +223,10 @@ func TestDeleteShiftsAndApplies(t *testing.T) {
 	h.roll(t) // 第 3 版：候选 2
 
 	// 当前指着第 2 版 ⇒ 删掉**前面**那条（第 1 版）：同一版换成第 1 位，名单缩成两条
-	if _, err := h.service.Switch(h.sessionID, 2); err != nil {
+	if _, err := h.service.Switch(h.sessionID, TargetMessage, 2); err != nil {
 		t.Fatal(err)
 	}
-	state, err := h.service.Delete(h.sessionID, 1)
+	state, err := h.service.Delete(h.sessionID, TargetMessage, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,10 +250,10 @@ func TestDeleteLastVersionClamps(t *testing.T) {
 	h.turn(t, "第一轮")
 	h.roll(t) // 第 2 版：候选 1
 	h.roll(t) // 第 3 版：候选 2
-	if _, err := h.service.Switch(h.sessionID, 3); err != nil {
+	if _, err := h.service.Switch(h.sessionID, TargetMessage, 3); err != nil {
 		t.Fatal(err)
 	}
-	state, err := h.service.Delete(h.sessionID, 3)
+	state, err := h.service.Delete(h.sessionID, TargetMessage, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -273,10 +274,10 @@ func TestDeleteCurrentVersionTakesNext(t *testing.T) {
 	h.turn(t, "第一轮")
 	h.roll(t) // 2：候选 1
 	h.roll(t) // 3：候选 2
-	if _, err := h.service.Switch(h.sessionID, 2); err != nil {
+	if _, err := h.service.Switch(h.sessionID, TargetMessage, 2); err != nil {
 		t.Fatal(err)
 	}
-	state, err := h.service.Delete(h.sessionID, 2)
+	state, err := h.service.Delete(h.sessionID, TargetMessage, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +294,7 @@ func TestDeleteDownToOneExitsAndKeepsCurrent(t *testing.T) {
 	h := newHarness(t)
 	h.turn(t, "第一轮")
 	h.roll(t) // 第 2 版
-	if _, err := h.service.Switch(h.sessionID, 2); err != nil {
+	if _, err := h.service.Switch(h.sessionID, TargetMessage, 2); err != nil {
 		t.Fatal(err)
 	}
 	if tail := h.tail(t); tail.Content != "候选 1" {
@@ -301,7 +302,7 @@ func TestDeleteDownToOneExitsAndKeepsCurrent(t *testing.T) {
 	}
 	before := h.tail(t)
 
-	state, err := h.service.Delete(h.sessionID, 1) // 删掉原文那一版 ⇒ 只剩一条
+	state, err := h.service.Delete(h.sessionID, TargetMessage, 1) // 删掉原文那一版 ⇒ 只剩一条
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,7 +316,7 @@ func TestDeleteDownToOneExitsAndKeepsCurrent(t *testing.T) {
 	if after.ID != before.ID || after.UpdatedAt != before.UpdatedAt {
 		t.Fatalf("退出这条路上不该再写库：%+v", after)
 	}
-	if got := h.service.State(h.sessionID); got.Active {
+	if got := h.service.State(h.sessionID, TargetMessage); got.Active {
 		t.Fatalf("清完列表就该是【没在重摇】：%+v", got)
 	}
 }
@@ -325,11 +326,11 @@ func TestClearKeepsCurrent(t *testing.T) {
 	h := newHarness(t)
 	h.turn(t, "第一轮")
 	h.roll(t)
-	if _, err := h.service.Switch(h.sessionID, 2); err != nil {
+	if _, err := h.service.Switch(h.sessionID, TargetMessage, 2); err != nil {
 		t.Fatal(err)
 	}
-	h.service.Clear(h.sessionID)
-	state := h.service.State(h.sessionID)
+	h.service.Clear(h.sessionID, TargetMessage)
+	state := h.service.State(h.sessionID, TargetMessage)
 	if state.Active || state.Count != 0 {
 		t.Fatalf("清完该是没在重摇：%+v", state)
 	}
@@ -341,8 +342,8 @@ func TestClearKeepsCurrent(t *testing.T) {
 		t.Fatalf("重新进模式该以当前正文当第一版：%+v", state)
 	}
 	// 幂等：没在重摇时清一次也没事
-	h.service.Clear(h.sessionID)
-	if state := h.service.State(h.sessionID); state.Active {
+	h.service.Clear(h.sessionID, TargetMessage)
+	if state := h.service.State(h.sessionID, TargetMessage); state.Active {
 		t.Fatalf("清两次也该是没在重摇：%+v", state)
 	}
 }
@@ -354,14 +355,14 @@ func TestCandidatesDieOnNewMessageAndRestart(t *testing.T) {
 	if state := h.roll(t); state.Count != 2 {
 		t.Fatalf("先摇出来两条：%+v", state)
 	}
-	if _, err := h.service.Switch(h.sessionID, 2); err != nil {
+	if _, err := h.service.Switch(h.sessionID, TargetMessage, 2); err != nil {
 		t.Fatal(err)
 	}
 	// 发一句**新**消息（真的走 chat.Accept：它会先落用户消息，再把候选全清）
 	if _, err := h.chat.Accept(h.session, "接着说"); err != nil {
 		t.Fatal(err)
 	}
-	if state := h.service.State(h.sessionID); state.Active || state.Count != 0 {
+	if state := h.service.State(h.sessionID, TargetMessage); state.Active || state.Count != 0 {
 		t.Fatalf("一发出新消息 ⇒ 候选全清：%+v", state)
 	}
 	// message 保留当前这版（候选从没进过库 ⇒ 没什么要回退的）
@@ -375,7 +376,7 @@ func TestCandidatesDieOnNewMessageAndRestart(t *testing.T) {
 
 	// 重启：新的 Service（进程内的事实 ⇒ 列表本来就是空的）
 	fresh := New(h.store, h.paths, turn.NewRegistry(), task.NewRegistry(), h.chat)
-	if state := fresh.State(h.sessionID); state.Active || state.Count != 0 {
+	if state := fresh.State(h.sessionID, TargetMessage); state.Active || state.Count != 0 {
 		t.Fatalf("重启之后该是空的（只剩你选中的那版）：%+v", state)
 	}
 }
@@ -395,7 +396,7 @@ func TestCandidatesDieWhenTailIsDeleted(t *testing.T) {
 	if err := h.store.ApplyDeletion(plan); err != nil {
 		t.Fatal(err)
 	}
-	if state := h.service.State(h.sessionID); state.Active || state.Count != 0 {
+	if state := h.service.State(h.sessionID, TargetMessage); state.Active || state.Count != 0 {
 		t.Fatalf("尾巴没了 ⇒ 候选自然消失：%+v", state)
 	}
 }
@@ -430,18 +431,18 @@ func TestEnterRefusals(t *testing.T) {
 	}
 	h.turns.Stop(h.sessionID)
 	// 没进模式时切/删 ⇒ not_found
-	if _, err := h.service.Switch(h.sessionID, 1); !isCode(err, "not_found") {
+	if _, err := h.service.Switch(h.sessionID, TargetMessage, 1); !isCode(err, "not_found") {
 		t.Fatalf("没进模式该 not_found：%v", err)
 	}
-	if _, err := h.service.Delete(h.sessionID, 1); !isCode(err, "not_found") {
+	if _, err := h.service.Delete(h.sessionID, TargetMessage, 1); !isCode(err, "not_found") {
 		t.Fatalf("没进模式该 not_found：%v", err)
 	}
 	// 位次越界 ⇒ invalid
 	h.roll(t)
-	if _, err := h.service.Switch(h.sessionID, 9); !isCode(err, "invalid") {
+	if _, err := h.service.Switch(h.sessionID, TargetMessage, 9); !isCode(err, "invalid") {
 		t.Fatalf("位次越界该 invalid：%v", err)
 	}
-	if _, err := h.service.Delete(h.sessionID, 0); !isCode(err, "invalid") {
+	if _, err := h.service.Delete(h.sessionID, TargetMessage, 0); !isCode(err, "invalid") {
 		t.Fatalf("位次 0 该 invalid：%v", err)
 	}
 }
@@ -469,6 +470,286 @@ func TestBusyGateIsSharedWithTurn(t *testing.T) {
 	}
 	if _, err := h.service.EnterSync(context.Background(), h.session); !isCode(err, "conflict") {
 		t.Fatalf("生成中该 conflict：%v", err)
+	}
+}
+
+// ── 摘要重摇（摘要级）────────────────────────────────────────────────────────
+
+// fakeGenerator：假生成器 —— 回的话按调用次数编号（能分出是哪一版），不必真起 compact。
+type fakeGenerator struct {
+	calls int
+	err   error
+}
+
+func (f *fakeGenerator) RegenerateSummary(_ context.Context, _ model.Session, _ string) (GeneratedSummary, error) {
+	if f.err != nil {
+		return GeneratedSummary{}, f.err
+	}
+	f.calls++
+	return GeneratedSummary{
+		Text:   fmt.Sprintf("摘要候选 %d", f.calls),
+		Tokens: 100 + f.calls,
+		// Provider/Model/PromptVersion 与"那一版"一起换 ⇒ `ReplaceSummaryText` 要它们
+		Provider: "fake", Model: "fake-model", PromptVersion: 7,
+		Usage: json.RawMessage(fmt.Sprintf(`{"prompt_tokens":%d}`, f.calls)),
+	}, nil
+}
+
+// blockingGenerator：摇起来就卡住，直到 release 关掉 —— 用来在"正在摇"的那一刻观察别的入口。
+type blockingGenerator struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (g *blockingGenerator) RegenerateSummary(_ context.Context, _ model.Session, _ string) (GeneratedSummary, error) {
+	close(g.started)
+	<-g.release
+	return GeneratedSummary{Text: "卡住之后摇出来的", Tokens: 1, Provider: "fake", Model: "fake-model",
+		PromptVersion: 1}, nil
+}
+
+// pyramid：造一块金字塔摘要 —— 四条消息（两轮）上的两条消息级摘要（s1: 1–2、s2: 3–4）
+// 底下的**一条合并级根**（s3: 1–4）。返回那四条消息（顺序 = idx 1..4）。
+func (h *harness) pyramid(t *testing.T) []model.Message {
+	t.Helper()
+	h.turn(t, "第一轮")
+	h.turn(t, "第二轮")
+	messages, err := h.store.ListMessages(h.sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 4 {
+		t.Fatalf("金字塔要四条消息，拿到 %d 条", len(messages))
+	}
+	record := func(id string, kind model.SummarySourceKind, begin, end, text string, sourceIDs []string) {
+		t.Helper()
+		if err := h.store.RecordSummary(model.Summary{
+			ID: id, SessionID: h.sessionID, SourceKind: kind,
+			BeginMessageID: &begin, EndMessageID: &end, Text: text, Tokens: 50,
+			Provider: "fake", Model: "fake-model", PromptVersion: 1, CreatedAt: 1,
+		}, sourceIDs); err != nil {
+			t.Fatalf("落摘要 %s 失败：%v", id, err)
+		}
+	}
+	record("s1", model.SourceMessages, messages[0].ID, messages[1].ID, "摘要一",
+		[]string{messages[0].ID, messages[1].ID})
+	record("s2", model.SourceMessages, messages[2].ID, messages[3].ID, "摘要二",
+		[]string{messages[2].ID, messages[3].ID})
+	record("s3", model.SourceSummaries, messages[0].ID, messages[3].ID, "摘要根", []string{"s1", "s2"})
+	return messages
+}
+
+// summary：从库里取一条摘要（apply 之后核对用）。
+func (h *harness) summary(t *testing.T, id string) model.Summary {
+	t.Helper()
+	summaries, err := h.store.ListSummaries(h.sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, summary := range summaries {
+		if summary.ID == id {
+			return summary
+		}
+	}
+	t.Fatalf("摘要 %s 不在库里", id)
+	return model.Summary{}
+}
+
+// enterSummary：同步摇一版摘要（`EnterSummarySync`），断言成功。
+func (h *harness) enterSummary(t *testing.T, idx int) Accepted {
+	t.Helper()
+	accepted, err := h.service.EnterSummarySync(context.Background(), h.session, idx)
+	if err != nil {
+		t.Fatalf("摘要重摇没摇起来（idx=%d）：%v", idx, err)
+	}
+	return accepted
+}
+
+// ⑦ 同树任意 idx（消息 idx）指向**同一个根摘要**；进模式两条；再摇 ⇒ 加一版；
+// 切换 ⇒ 就地换那条摘要（text/tokens/usage/provider/model/prompt_version 换了），
+// 而 id / 区间 / parent / children 一概不动。
+func TestSummaryTargetResolvesToRootAndApply(t *testing.T) {
+	h := newHarness(t)
+	messages := h.pyramid(t)
+	h.service.Summaries = &fakeGenerator{}
+
+	// 同树四个 idx 都指向 s3（同一目标）
+	for _, idx := range []int{1, 2, 3, 4} {
+		accepted := h.enterSummary(t, idx)
+		if accepted.TargetSummaryID != "s3" {
+			t.Fatalf("第 %d 条该指向根 s3，得到 %q", idx, accepted.TargetSummaryID)
+		}
+		if accepted.State.TargetKind != TargetSummary || accepted.State.TargetMessageID != "" {
+			t.Fatalf("摘要模式该报 kind=summary 且不给 target_message_id：%+v", accepted.State)
+		}
+		if accepted.State.FromIdx == nil || *accepted.State.FromIdx != 1 ||
+			accepted.State.ToIdx == nil || *accepted.State.ToIdx != 4 {
+			t.Fatalf("目标盖的区间该是 1..4：%+v", accepted.State)
+		}
+		h.service.Clear(h.sessionID, TargetSummary) // 换回干净状态，逐条验
+	}
+
+	// 进模式 = 两条：原文（目标摘要当前那一版）+ 摇出一版
+	h.service.Summaries = &fakeGenerator{} // 计数重置：下面的断言要从"候选 1"数起
+	accepted := h.enterSummary(t, 2)
+	state := accepted.State
+	if state.Count != 2 || state.CurrentIdx != 1 {
+		t.Fatalf("进模式该是【两条、当前第一版】：%+v", state)
+	}
+	if got := contents(state); got[0] != "1:摘要根" || got[1] != "2:摘要候选 1" {
+		t.Fatalf("两条该是【原文摘要 + 摇出来的】：%v", got)
+	}
+	// 再摇一版（同根）⇒ 加一版
+	if state = h.enterSummary(t, 4).State; state.Count != 3 {
+		t.Fatalf("同根再摇该加一版：%+v", state)
+	}
+
+	// 切换：库里那条摘要就地换正文与随行数据
+	if _, err := h.service.Switch(h.sessionID, TargetSummary, 2); err != nil {
+		t.Fatal(err)
+	}
+	after := h.summary(t, "s3")
+	if after.Text != "摘要候选 1" {
+		t.Fatalf("正文该换成第 2 版：%q", after.Text)
+	}
+	if after.Tokens != 101 || string(after.Usage) != `{"prompt_tokens":1}` ||
+		after.Provider != "fake" || after.Model != "fake-model" || after.PromptVersion != 7 {
+		t.Fatalf("随行数据该跟着换：%+v", after)
+	}
+	// id / 区间 / parent / children 一个字不动
+	if after.ID != "s3" || after.ParentSummaryID != nil ||
+		after.BeginMessageID == nil || *after.BeginMessageID != messages[0].ID ||
+		after.EndMessageID == nil || *after.EndMessageID != messages[3].ID {
+		t.Fatalf("id / 区间 / parent 不该动：%+v", after)
+	}
+	if after.Dirty {
+		t.Fatalf("孩子都干净 ⇒ apply 之后该是干净的：%+v", after)
+	}
+	for _, child := range []string{"s1", "s2"} {
+		got := h.summary(t, child)
+		if got.ParentSummaryID == nil || *got.ParentSummaryID != "s3" {
+			t.Fatalf("孩子 %s 的父不该动：%+v", child, got)
+		}
+	}
+	// 原样切回去：正文回到"摘要根"
+	if _, err := h.service.Switch(h.sessionID, TargetSummary, 1); err != nil {
+		t.Fatal(err)
+	}
+	if back := h.summary(t, "s3"); back.Text != "摘要根" || back.Tokens != 50 {
+		t.Fatalf("切回原文那版该连正文与 token 一起回来：%+v", back)
+	}
+}
+
+// ⑧ 未被摘要盖住的 idx / 越界 / 非正 ⇒ invalid（说清是哪一种）。
+func TestSummaryEnterRefusals(t *testing.T) {
+	h := newHarness(t)
+	h.service.Summaries = &fakeGenerator{}
+	h.turn(t, "第一轮")
+	messages, err := h.store.ListMessages(h.sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 只盖住第 1 条：第 2 条于是"还没被摘要盖住"
+	begin, end := messages[0].ID, messages[0].ID
+	if err := h.store.RecordSummary(model.Summary{
+		ID: "only1", SessionID: h.sessionID, SourceKind: model.SourceMessages,
+		BeginMessageID: &begin, EndMessageID: &end, Text: "只盖住第一条", Tokens: 5,
+		Provider: "fake", Model: "fake-model", PromptVersion: 1, CreatedAt: 1,
+	}, []string{messages[0].ID}); err != nil {
+		t.Fatal(err)
+	}
+	if accepted := h.enterSummary(t, 1); accepted.TargetSummaryID != "only1" {
+		t.Fatalf("第 1 条该指向 only1：%q", accepted.TargetSummaryID)
+	}
+	h.service.Clear(h.sessionID, TargetSummary)
+
+	_, err = h.service.EnterSummarySync(context.Background(), h.session, 2)
+	if !isCode(err, "invalid") || !strings.Contains(err.Error(), "还没被摘要盖住") {
+		t.Fatalf("没被盖住的 idx 该 invalid 并说清：%v", err)
+	}
+	if _, err := h.service.EnterSummarySync(context.Background(), h.session, 3); !isCode(err, "invalid") {
+		t.Fatalf("越界该 invalid：%v", err)
+	}
+	if _, err := h.service.EnterSummarySync(context.Background(), h.session, 0); !isCode(err, "invalid") {
+		t.Fatalf("非正该 invalid：%v", err)
+	}
+	// 另一个 kind 正活着 ⇒ 本模式没进 ⇒ not_found
+	if _, err := h.service.Switch(h.sessionID, TargetMessage, 1); !isCode(err, "not_found") {
+		t.Fatalf("没进消息模式该 not_found：%v", err)
+	}
+}
+
+// ⑨ 目标被并走（给它挂个父）⇒ State 回 inactive。
+func TestSummaryTargetMergedAwayGoesInactive(t *testing.T) {
+	h := newHarness(t)
+	h.pyramid(t)
+	h.service.Summaries = &fakeGenerator{}
+	if accepted := h.enterSummary(t, 1); accepted.TargetSummaryID != "s3" {
+		t.Fatalf("该指向 s3：%q", accepted.TargetSummaryID)
+	}
+	// 把 s3 并到一个新的父下面（它不再是根 ⇒ 没有可重摇的摘要了）
+	s3 := h.summary(t, "s3")
+	if err := h.store.RecordSummary(model.Summary{
+		ID: "s4", SessionID: h.sessionID, SourceKind: model.SourceSummaries,
+		BeginMessageID: s3.BeginMessageID, EndMessageID: s3.EndMessageID, Text: "更高的根", Tokens: 50,
+		Provider: "fake", Model: "fake-model", PromptVersion: 1, CreatedAt: 1,
+	}, []string{"s3"}); err != nil {
+		t.Fatal(err)
+	}
+	if state := h.service.State(h.sessionID, TargetSummary); state.Active || state.Count != 0 {
+		t.Fatalf("目标被并走 ⇒ 该退出模式：%+v", state)
+	}
+}
+
+// ⑩ 不同根再进 ⇒ 清旧进新；在摇时切换目标 ⇒ conflict。
+func TestSummarySwitchTargetAndBusy(t *testing.T) {
+	h := newHarness(t)
+	h.turn(t, "第一轮")
+	h.turn(t, "第二轮")
+	messages, err := h.store.ListMessages(h.sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.service.Summaries = &fakeGenerator{}
+	record := func(id string, begin, end string) {
+		t.Helper()
+		if err := h.store.RecordSummary(model.Summary{
+			ID: id, SessionID: h.sessionID, SourceKind: model.SourceMessages,
+			BeginMessageID: &begin, EndMessageID: &end, Text: "摘要 " + id, Tokens: 50,
+			Provider: "fake", Model: "fake-model", PromptVersion: 1, CreatedAt: 1,
+		}, []string{begin, end}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	record("r1", messages[0].ID, messages[1].ID) // 第 1–2 条
+	record("r2", messages[2].ID, messages[3].ID) // 第 3–4 条
+
+	// 先在第 1 条那个根（r1）里进模式并摇一版
+	if accepted := h.enterSummary(t, 1); accepted.TargetSummaryID != "r1" {
+		t.Fatalf("该指向 r1：%q", accepted.TargetSummaryID)
+	}
+	// 不进"另一种模式"的冲突路：换到另一个根（r2）⇒ 清旧进新
+	accepted := h.enterSummary(t, 3)
+	if accepted.TargetSummaryID != "r2" || accepted.State.Count != 2 {
+		t.Fatalf("换根该清旧进新（r2、两条）：%+v", accepted)
+	}
+	h.service.Clear(h.sessionID, TargetSummary)
+
+	// 在摇时切换目标 ⇒ conflict（说清在摇什么）
+	blocking := &blockingGenerator{started: make(chan struct{}), release: make(chan struct{})}
+	h.service.Summaries = blocking
+	go func() { _, _ = h.service.EnterSummary(h.session, 1) }()
+	<-blocking.started
+	if _, err := h.service.EnterSummary(h.session, 3); !isCode(err, "conflict") {
+		t.Fatalf("在摇时换目标该 conflict：%v", err)
+	}
+	close(blocking.release)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if status := h.turns.Status(h.sessionID).Reroll; status == nil || !status.IsRunning() {
+			break
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 

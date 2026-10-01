@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -218,4 +219,132 @@ func summariesByID(t *testing.T, st *Store, sessionID string) map[string]model.S
 		byID[row.ID] = row
 	}
 	return byID
+}
+
+// 摘要重摇的 apply（`ReplaceSummaryText`）：**就地**换正文与随行数据，
+// 地址 / 区间 / 成员 / 父指针 / 创建时间一概不动，也不碰 messages。
+func TestReplaceSummaryTextSwapsTextAndKeepsTheFrame(t *testing.T) {
+	st := openTemp(t)
+	seedSession(t, st, "s1", "m1", "m2", "m3", "m4")
+	original := model.Summary{
+		ID: "sum1", SessionID: "s1", SourceKind: model.SourceMessages,
+		BeginMessageID: new("m1"), EndMessageID: new("m2"),
+		Text: "旧正文", Blocks: 1, Tokens: 5, SourceIDs: []string{"m1", "m2"},
+		Provider: "dummy", Model: "dummy", PromptVersion: 42, CreatedAt: 10,
+	}
+	if err := st.RecordSummary(original, []string{"m1", "m2"}); err != nil {
+		t.Fatal(err)
+	}
+
+	updated := model.Summary{
+		ID: "sum1", SessionID: "s1",
+		// 下面这几格是"不许动"的，故意都给成别的值来验守卫
+		SourceKind: model.SourceSummaries, Blocks: 77, SourceIDs: []string{"别的"},
+		BeginMessageID: new("m3"), EndMessageID: new("m4"), CreatedAt: 999,
+		// 这几格才是该换的
+		Text: "新正文", Tokens: 999, Provider: "other", Model: "other-model",
+		PromptVersion: 7, Usage: json.RawMessage(`{"total_tokens":11}`), Dirty: true,
+	}
+	if err := st.ReplaceSummaryText(updated); err != nil {
+		t.Fatal(err)
+	}
+
+	got := summariesByID(t, st, "s1")["sum1"]
+	if got.Text != "新正文" || got.Tokens != 999 || got.Provider != "other" ||
+		got.Model != "other-model" || got.PromptVersion != 7 || !got.Dirty {
+		t.Fatalf("该换的那几格没换全：%+v", got)
+	}
+	if string(got.Usage) != `{"total_tokens":11}` {
+		t.Fatalf("usage 该跟着换：%s", got.Usage)
+	}
+	// 不该动的（含故意给错的值）
+	if got.ID != "sum1" || got.SessionID != "s1" || got.SourceKind != model.SourceMessages {
+		t.Fatalf("地址 / 成员种类被动了：%+v", got)
+	}
+	if got.Blocks != 1 || got.CreatedAt != 10 {
+		t.Fatalf("blocks / created_at 被动了：%+v", got)
+	}
+	if got.BeginMessageID == nil || *got.BeginMessageID != "m1" ||
+		got.EndMessageID == nil || *got.EndMessageID != "m2" {
+		t.Fatalf("覆盖区间被动了：%v–%v", got.BeginMessageID, got.EndMessageID)
+	}
+	if got.ParentSummaryID != nil {
+		t.Fatalf("顶层摘要不该被挂爹：%v", *got.ParentSummaryID)
+	}
+	if len(got.SourceIDs) != 2 || got.SourceIDs[0] != "m1" || got.SourceIDs[1] != "m2" {
+		t.Fatalf("成员指针被动了：%v", got.SourceIDs)
+	}
+	// 也不碰 messages：指针原样
+	messages, err := st.ListMessages("s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := range 2 {
+		if messages[index].SummaryID == nil || *messages[index].SummaryID != "sum1" {
+			t.Fatalf("messages 被动了：第 %d 条指针 = %v", index, messages[index].SummaryID)
+		}
+	}
+}
+
+// 非顶层（已被并走）/ 不存在 / 跨会话 ⇒ 报错（`ErrNotFound`，与改正文一致），且那一行原样。
+func TestReplaceSummaryTextRefusesNonTopLevelAndStray(t *testing.T) {
+	st := openTemp(t)
+	seedSession(t, st, "s1", "m1", "m2", "m3", "m4")
+	seedSession(t, st, "s2", "m5", "m6")
+	messageSummary := func(sessionID, id, begin, end string) model.Summary {
+		return model.Summary{
+			ID: id, SessionID: sessionID, SourceKind: model.SourceMessages,
+			BeginMessageID: new(begin), EndMessageID: new(end),
+			Text: id, Blocks: 1, Tokens: 3, SourceIDs: []string{begin, end},
+			Provider: "dummy", Model: "dummy", PromptVersion: 1, CreatedAt: 1,
+		}
+	}
+	if err := st.RecordSummary(messageSummary("s1", "c1", "m1", "m2"), []string{"m1", "m2"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RecordSummary(messageSummary("s1", "c2", "m3", "m4"), []string{"m3", "m4"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RecordSummary(messageSummary("s2", "c3", "m5", "m6"), []string{"m5", "m6"}); err != nil {
+		t.Fatal(err)
+	}
+	// c1 被并走 ⇒ 不再是顶层
+	parent := model.Summary{
+		ID: "p1", SessionID: "s1", SourceKind: model.SourceSummaries,
+		BeginMessageID: new("m1"), EndMessageID: new("m4"),
+		Text: "并起来", Blocks: 2, Tokens: 6, SourceIDs: []string{"c1", "c2"}, CreatedAt: 2,
+	}
+	if err := st.RecordSummary(parent, []string{"c1", "c2"}); err != nil {
+		t.Fatal(err)
+	}
+
+	before := summariesByID(t, st, "s1")
+	assertReplacedRefused := func(id, sessionID string) {
+		t.Helper()
+		err := st.ReplaceSummaryText(model.Summary{
+			ID: id, SessionID: sessionID, Text: "想改", Tokens: 999, Dirty: true,
+		})
+		if !errors.Is(err, ErrNotFound) {
+			t.Fatalf("%s/%s：该报 ErrNotFound：%v", sessionID, id, err)
+		}
+	}
+	// 目标有父
+	assertReplacedRefused("c1", "s1")
+	// 不存在
+	assertReplacedRefused("查无此条", "s1")
+	// 跨会话（c3 属于 s2）
+	assertReplacedRefused("c3", "s1")
+	// 换一对会话也一样
+	assertReplacedRefused("c1", "s2")
+
+	// 失败之后那一行原样（含 c1 的正文 / tokens / 父指针）
+	after := summariesByID(t, st, "s1")
+	if got := after["c1"]; got.Text != before["c1"].Text || got.Tokens != before["c1"].Tokens ||
+		got.Dirty || got.ParentSummaryID == nil || *got.ParentSummaryID != "p1" {
+		t.Fatalf("被拒之后 c1 该原样：%+v", got)
+	}
+	// s2 里的 c3 也一个字没动
+	if got := summariesByID(t, st, "s2")["c3"]; got.Text != "c3" || got.Tokens != 3 || got.Dirty {
+		t.Fatalf("跨会话那次不许动 c3：%+v", got)
+	}
 }

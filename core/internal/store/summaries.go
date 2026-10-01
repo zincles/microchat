@@ -88,6 +88,31 @@ func (s *Store) RecordSummary(summary model.Summary, sourceIDs []string) error {
 	return tx.Commit()
 }
 
+// ReplaceSummaryText：**就地换一条【顶层】摘要的正文与随行数据**（摘要重摇的 apply）。
+//
+// 与 `ReplaceMessage`（改正文那条路）同一套约定：**不换 id**（⇒ 摘要的覆盖区间、
+// 它盖的那段消息、以及它自己的成员指针一概不动），只换正文与随行的那几格。
+//
+// 代价与随行数据都按"这一版摘要"重新落：`text / tokens / provider / model /
+// prompt_version / usage / dirty`；其余列（含 `blocks / source_kind / source_ids /
+// begin_message_id / end_message_id / parent_summary_id / created_at`）一个字都不动。
+//
+// 守卫 `parent_summary_id IS NULL` 只认**仍顶层**的那条：换正文是"重摇后替换"，
+// 目标若已被并走（成了子摘要）或已被删 ⇒ 0 行 ⇒ `ErrNotFound`（与改正文一致）。
+// **不碰 `messages`**（正文是存档）。
+func (s *Store) ReplaceSummaryText(updated model.Summary) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return execTouchLocked(s.db,
+		`UPDATE summaries
+		    SET text = ?1, tokens = ?2, provider = ?3, model = ?4,
+		        prompt_version = ?5, usage = ?6, dirty = ?7
+		  WHERE id = ?8 AND session_id = ?9 AND parent_summary_id IS NULL`,
+		updated.Text, updated.Tokens, updated.Provider, updated.Model,
+		updated.PromptVersion, usageArg(updated.Usage), dirtyArg(updated.Dirty),
+		updated.ID, updated.SessionID)
+}
+
 // coveredCount：这批 id 里**属于这条会话**的有几条（少一条都说明区间变了）。
 // **调用方持事务**。
 func coveredCount(tx *sql.Tx, sessionID string, messageIDs []string) (int, error) {

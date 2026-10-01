@@ -2317,7 +2317,7 @@ func followOnce(t *testing.T, m model, cmd tea.Cmd) model {
 func rerollFixture() model {
 	m := fixture()
 	m.reroll = &RerollState{
-		Active: true, TargetMessageID: "m2", Count: 3, CurrentIdx: 2,
+		Active: true, TargetKind: RerollKindMessage, TargetMessageID: "m2", Count: 3, CurrentIdx: 2,
 		Items: []RerollItem{
 			{Idx: 1, Preview: "在。有什么事？"},
 			{Idx: 2, Preview: "在的，说说看。", Current: true},
@@ -2419,7 +2419,7 @@ func TestCommandRerollUsageAndList(t *testing.T) {
 	// `off`：真发那一条 DELETE（204 就算成功）
 	hits := 0
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodDelete || r.URL.Path != "/api/v1/sessions/c1/reroll" {
+		if r.Method != http.MethodDelete || r.URL.Path != "/api/v1/sessions/c1/reroll-message" {
 			http.NotFound(w, r)
 			return
 		}
@@ -2432,7 +2432,7 @@ func TestCommandRerollUsageAndList(t *testing.T) {
 	_, cmd := commandReroll(off, []string{"off"})
 	after := runCmds(t, off, cmd)
 	if hits != 1 {
-		t.Fatalf("该真发一次 DELETE /reroll，实际 %d 次", hits)
+		t.Fatalf("该真发一次 DELETE /reroll-message，实际 %d 次", hits)
 	}
 	if after.reroll != nil || !strings.Contains(after.lastAction, "已退出重摇模式") {
 		t.Fatalf("退出之后本地那一份该清掉：%+v / %q", after.reroll, after.lastAction)
@@ -2445,25 +2445,25 @@ func TestCommandRerollRoundTrip(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/c1/reroll":
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/c1/reroll-message":
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(RerollAccepted{
 				TargetMessageID: "m2", TaskID: "t1",
-				State: RerollState{Active: true, TargetMessageID: "m2", Count: 2, CurrentIdx: 1, Running: true,
+				State: RerollState{Active: true, TargetKind: RerollKindMessage, TargetMessageID: "m2", Count: 2, CurrentIdx: 1, Running: true,
 					Items: []RerollItem{{Idx: 1, Preview: "在。", Current: true}, {Idx: 2, Pending: true}}},
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/c1/reroll":
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/c1/reroll-message":
 			_ = json.NewEncoder(w).Encode(RerollState{
-				Active: true, TargetMessageID: "m2", Count: 2, CurrentIdx: 1,
+				Active: true, TargetKind: RerollKindMessage, TargetMessageID: "m2", Count: 2, CurrentIdx: 1,
 				Items: []RerollItem{{Idx: 1, Preview: "在。", Current: true}, {Idx: 2, Preview: "在的。"}}})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/c1/reroll/switch":
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/c1/reroll-message/switch":
 			var body struct {
 				Idx int `json:"idx"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			switchIdx = body.Idx
 			_ = json.NewEncoder(w).Encode(RerollState{
-				Active: true, TargetMessageID: "m2", Count: 2, CurrentIdx: 2,
+				Active: true, TargetKind: RerollKindMessage, TargetMessageID: "m2", Count: 2, CurrentIdx: 2,
 				Items: []RerollItem{{Idx: 1, Preview: "在。"}, {Idx: 2, Preview: "在的。", Current: true}}})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/c1/messages":
 			_ = json.NewEncoder(w).Encode([]Message{
@@ -2490,7 +2490,8 @@ func TestCommandRerollRoundTrip(t *testing.T) {
 		t.Fatalf("进模式那一刻该画位次：\n%s", entered.View().Content)
 	}
 	// 轮询那一跳：摇完 ⇒ 位次变两条实打实、合成分块退场，底栏也从「重摇中…」换成结果
-	polled := runCmds(t, entered, pollRerollCmd(entered.client, "c1"))
+	// （按当前模式的 target_kind 挑家族的 GET —— 消息模式走 /reroll-message）。
+	polled := runCmds(t, entered, pollRerollCmd(entered.client, "c1", rerollKindOf(entered.reroll)))
 	if polled.rerollRunning() || polled.reroll.Items[1].Preview == "" {
 		t.Fatalf("轮询回来该看到摇完的那一版：%+v", polled.reroll)
 	}
@@ -2512,5 +2513,237 @@ func TestCommandRerollRoundTrip(t *testing.T) {
 	}
 	if !strings.Contains(switched.View().Content, "‹ 2/2 ›") {
 		t.Fatalf("位次该跟着变：\n%s", switched.View().Content)
+	}
+}
+
+// rerollSummaryFixture：**摘要重摇**模式内的样子（目标盖第 2–3 条；消息区**不画**位次标记）。
+//
+// 故意把 TargetMessageID 也摆上（"m2"）：摘要模式**即便**目标消息对得上也不该画标记
+// —— 摇的是摘要、没有对应的那条消息可挂（判据是 target_kind，不是 target_message_id 对不对）。
+func rerollSummaryFixture() model {
+	m := fixture()
+	m.reroll = &RerollState{
+		Active: true, TargetKind: RerollKindSummary, TargetSummaryID: "s1", TargetMessageID: "m2",
+		FromIdx: new(2), ToIdx: new(3), Count: 3, CurrentIdx: 2,
+		Items: []RerollItem{
+			{Idx: 1, Preview: "早先那一版。"},
+			{Idx: 2, Preview: "压缩后的第二版。", Current: true},
+			{Idx: 3, Preview: "还在写。", Pending: true},
+		},
+	}
+	m.rerollFor = "c1"
+	return m
+}
+
+// 摘要模式**不画**消息旁的位次标记；目标（第 a–b 条）放底栏那一句里。
+func TestRerollSummaryHasNoMarkerButShowsTarget(t *testing.T) {
+	m := rerollSummaryFixture()
+	if strings.Contains(m.View().Content, "‹") {
+		t.Fatalf("摘要模式不该在消息旁画位次标记：\n%s", m.View().Content)
+	}
+	m.lastAction = rerollAction(*m.reroll)
+	if !strings.Contains(m.lastAction, "第 2–3 条那条摘要") {
+		t.Fatalf("底栏该说清目标是哪一段：%q", m.lastAction)
+	}
+	if !strings.Contains(m.lastAction, "/reroll-summary list") || !strings.Contains(m.lastAction, "/reroll-summary off") {
+		t.Fatalf("底栏该给摘要家族的命令名：%q", m.lastAction)
+	}
+	// 消息模式那一句**逐字不变**（断言别动）
+	message := rerollFixture()
+	if got := rerollAction(*message.reroll); got != "重摇：第 2/3 版（`/reroll list` 看有哪几版 · `/reroll off` 退出）" {
+		t.Fatalf("消息模式底栏口径该不变：%q", got)
+	}
+}
+
+// `/reroll-summary` 的命令解析：进模式要 idx；用法错当场说清；`list` 摊开每一版（含目标那一行）。
+func TestCommandRerollSummaryUsageAndList(t *testing.T) {
+	m := rerollSummaryFixture()
+	// 不带 idx ⇒ 说清用法（摘要有的是"我到底要摇哪一段"，缺了没得猜）
+	if bad, _ := commandRerollSummary(m, nil); !strings.Contains(bad.(model).lastAction, "用法") {
+		t.Fatalf("缺 idx 该说清用法：%q", bad.(model).lastAction)
+	}
+	// idx 非正 / 不是数 ⇒ 拒绝
+	if bad, _ := commandRerollSummary(m, []string{"0"}); !strings.Contains(bad.(model).lastAction, "正整数") {
+		t.Fatalf("idx 非正该拒绝：%q", bad.(model).lastAction)
+	}
+	if bad, _ := commandRerollSummary(m, []string{"abc"}); !strings.Contains(bad.(model).lastAction, "正整数") {
+		t.Fatalf("idx 不是数该拒绝：%q", bad.(model).lastAction)
+	}
+	// switch 缺位次 ⇒ 说清用法
+	if bad, _ := commandRerollSummary(m, []string{"switch"}); !strings.Contains(bad.(model).lastAction, "用法") {
+		t.Fatalf("switch 缺位次该说清用法：%q", bad.(model).lastAction)
+	}
+	// `list`：铺满消息区的查看器，带"目标"那一行 + 每一版的预览
+	listed, _ := commandRerollSummary(m, []string{"list"})
+	if listed.(model).viewer == nil {
+		t.Fatal("/reroll-summary list 该打开查看器")
+	}
+	joined := strings.Join(listed.(model).viewer, "\n")
+	for _, want := range []string{"目标：第 2–3 条", "第 1 版", "第 2 版", "（当前）", "第 3 版", "（还在摇…）", "压缩后的第二版。"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("查看器缺 %q：\n%s", want, joined)
+		}
+	}
+	// 消息模式进的模式 ⇒ `/reroll-summary list` 该说没在摘要那一档
+	if wrong, _ := commandRerollSummary(rerollFixture(), []string{"list"}); !strings.Contains(wrong.(model).lastAction, "没在摘要重摇模式里") {
+		t.Fatalf("不在摘要模式该说清：%q", wrong.(model).lastAction)
+	}
+	// 摘要模式进的模式 ⇒ `/reroll list` 也要说没在**消息**那一档（两家互不顶替）
+	if wrong, _ := commandReroll(m, []string{"list"}); !strings.Contains(wrong.(model).lastAction, "没在重摇模式里") {
+		t.Fatalf("摘要模式上 `/reroll list` 该说没在消息那一档：%q", wrong.(model).lastAction)
+	}
+}
+
+// 进摘要模式（带 idx）/ 切换 / 删除 / 退出：请求形状与消息家族一一对应，只换家族。
+func TestCommandRerollSummaryRoundTrip(t *testing.T) {
+	var enterIdx, switchIdx int
+	var deletedPath, clearedPath string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/c1/reroll-summary":
+			var body struct {
+				Idx int `json:"idx"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			enterIdx = body.Idx
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(RerollAccepted{
+				TargetSummaryID: "s1", TaskID: "t1",
+				State: RerollState{Active: true, TargetKind: RerollKindSummary, TargetSummaryID: "s1",
+					FromIdx: new(2), ToIdx: new(3), Count: 2, CurrentIdx: 1, Running: true,
+					Items: []RerollItem{{Idx: 1, Preview: "压缩一版。", Current: true}, {Idx: 2, Pending: true}}},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/c1/reroll-summary":
+			_ = json.NewEncoder(w).Encode(RerollState{
+				Active: true, TargetKind: RerollKindSummary, TargetSummaryID: "s1",
+				FromIdx: new(2), ToIdx: new(3), Count: 2, CurrentIdx: 1,
+				Items: []RerollItem{{Idx: 1, Preview: "压缩一版。", Current: true}, {Idx: 2, Preview: "压缩二版。"}}})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/c1/reroll-summary/switch":
+			var body struct {
+				Idx int `json:"idx"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			switchIdx = body.Idx
+			_ = json.NewEncoder(w).Encode(RerollState{
+				Active: true, TargetKind: RerollKindSummary, TargetSummaryID: "s1",
+				FromIdx: new(2), ToIdx: new(3), Count: 2, CurrentIdx: 2,
+				Items: []RerollItem{{Idx: 1, Preview: "压缩一版。"}, {Idx: 2, Preview: "压缩二版。", Current: true}}})
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v1/sessions/c1/reroll-summary/1":
+			deletedPath = r.URL.Path
+			_ = json.NewEncoder(w).Encode(RerollState{
+				Active: true, TargetKind: RerollKindSummary, TargetSummaryID: "s1",
+				FromIdx: new(2), ToIdx: new(3), Count: 1, CurrentIdx: 1,
+				Items: []RerollItem{{Idx: 1, Preview: "压缩一版。", Current: true}}})
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v1/sessions/c1/reroll-summary":
+			clearedPath = r.URL.Path
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer backend.Close()
+
+	m := fixture()
+	m.client = NewClient(backend.URL, "")
+
+	// `/reroll-summary 3` ⇒ 202 那一刻该把 idx（1-based 消息序号）带给后端并收下状态
+	_, cmd := commandRerollSummary(m, []string{"3"})
+	entered := runCmds(t, m, cmd)
+	if enterIdx != 3 {
+		t.Fatalf("该把 idx 发给后端，收到 %d", enterIdx)
+	}
+	if entered.reroll == nil || !entered.reroll.Active || entered.reroll.TargetKind != RerollKindSummary ||
+		entered.reroll.TargetSummaryID != "s1" {
+		t.Fatalf("进摘要模式该把状态收进来：%+v", entered.reroll)
+	}
+	if !entered.reroll.Running {
+		t.Fatalf("受理那一刻那一版还在摇：%+v", entered.reroll)
+	}
+	// 轮询那一跳：摇完 ⇒ 两条实打实
+	polled := runCmds(t, entered, pollRerollCmd(entered.client, "c1", rerollKindOf(entered.reroll)))
+	if polled.rerollRunning() || polled.reroll.Items[1].Preview == "" {
+		t.Fatalf("轮询回来该看到摇完的那一版：%+v", polled.reroll)
+	}
+	if !strings.Contains(polled.lastAction, "第 2–3 条那条摘要") {
+		t.Fatalf("摘要模式底栏该报目标区间：%q", polled.lastAction)
+	}
+
+	// `/reroll-summary switch 2` ⇒ 后端收到 idx=2；摘要换了正文（消息列表看不见，不重拉）
+	_, cmd = commandRerollSummary(polled, []string{"switch", "2"})
+	switched := runCmds(t, polled, cmd)
+	if switchIdx != 2 {
+		t.Fatalf("该把位次发给后端，收到 %d", switchIdx)
+	}
+	if switched.reroll == nil || switched.reroll.CurrentIdx != 2 {
+		t.Fatalf("切完当前那版该是第 2 版：%+v", switched.reroll)
+	}
+
+	// `/reroll-summary delete 1` ⇒ DELETE .../reroll-summary/1
+	_, cmd = commandRerollSummary(switched, []string{"delete", "1"})
+	deleted := runCmds(t, switched, cmd)
+	if deletedPath != "/api/v1/sessions/c1/reroll-summary/1" {
+		t.Fatalf("删除该打 .../reroll-summary/{idx}：%q", deletedPath)
+	}
+	if deleted.reroll == nil || deleted.reroll.Count != 1 {
+		t.Fatalf("删完该只剩一版：%+v", deleted.reroll)
+	}
+
+	// `/reroll-summary off` ⇒ DELETE .../reroll-summary（204）
+	_, cmd = commandRerollSummary(deleted, []string{"off"})
+	after := runCmds(t, deleted, cmd)
+	if clearedPath != "/api/v1/sessions/c1/reroll-summary" {
+		t.Fatalf("退出该打 DELETE .../reroll-summary：%q", clearedPath)
+	}
+	if after.reroll != nil || !strings.Contains(after.lastAction, "已退出摘要重摇模式") {
+		t.Fatalf("退出之后本地那一份该清掉：%+v / %q", after.reroll, after.lastAction)
+	}
+}
+
+// 轮询按 `target_kind` 挑家族的 GET：摘要模式只问 /reroll-summary（不碰消息那一档），反之亦然；
+// 还不知道家族（刚进会话，空串）⇒ 两个都问，捡起活着的那个。
+func TestPollRerollDispatchesByKind(t *testing.T) {
+	var messageHits, summaryHits int
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/sessions/c1/reroll-message":
+			messageHits++
+			_ = json.NewEncoder(w).Encode(RerollState{Active: false})
+		case "/api/v1/sessions/c1/reroll-summary":
+			summaryHits++
+			_ = json.NewEncoder(w).Encode(RerollState{
+				Active: true, TargetKind: RerollKindSummary, TargetSummaryID: "s1",
+				FromIdx: new(2), ToIdx: new(3), Count: 2, CurrentIdx: 1,
+				Items: []RerollItem{{Idx: 1, Preview: "压缩一版。", Current: true}, {Idx: 2, Preview: "压缩二版。"}}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer backend.Close()
+	client := NewClient(backend.URL, "")
+
+	// kind=summary ⇒ 只问摘要那一档
+	got := runCmds(t, fixture(), pollRerollCmd(client, "c1", RerollKindSummary))
+	if summaryHits != 1 || messageHits != 0 {
+		t.Fatalf("摘要模式该只问 /reroll-summary：message=%d summary=%d", messageHits, summaryHits)
+	}
+	if got.reroll == nil || got.reroll.TargetKind != RerollKindSummary {
+		t.Fatalf("该把摘要那一档收进来：%+v", got.reroll)
+	}
+	// kind=message ⇒ 只问消息那一档
+	messageHits, summaryHits = 0, 0
+	_ = runCmds(t, fixture(), pollRerollCmd(client, "c1", RerollKindMessage))
+	if messageHits != 1 || summaryHits != 0 {
+		t.Fatalf("消息模式该只问 /reroll-message：message=%d summary=%d", messageHits, summaryHits)
+	}
+	// 空串（还不知道家族）⇒ 先问消息那一档（这里 active:false），再问摘要那一档
+	messageHits, summaryHits = 0, 0
+	discovered := runCmds(t, fixture(), pollRerollCmd(client, "c1", ""))
+	if messageHits != 1 || summaryHits != 1 {
+		t.Fatalf("未知家族该两档都问：message=%d summary=%d", messageHits, summaryHits)
+	}
+	if discovered.reroll == nil || !discovered.reroll.Active || discovered.reroll.TargetKind != RerollKindSummary {
+		t.Fatalf("该捡起活着的摘要那一档：%+v", discovered.reroll)
 	}
 }

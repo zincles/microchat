@@ -9,6 +9,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -22,6 +23,7 @@ import (
 	"microchat/internal/chat"
 	"microchat/internal/compact"
 	"microchat/internal/config"
+	"microchat/internal/model"
 	"microchat/internal/registry"
 	"microchat/internal/reroll"
 	"microchat/internal/server"
@@ -88,6 +90,9 @@ func main() {
 	// 重摇：**把"最后那条 assistant 回复"重摇几版、挑一版定下来**（候选只在内存里）。
 	// 装配借的就是 `chat`（`RerollMessages`）—— 重摇与一轮对话共用同一份拼装，没有第二份。
 	rerollService := reroll.New(st, paths, turns, tasks, chatService)
+	// 摘要重摇借 compact 的"只生成、不落库"半程 —— 摘要不许绕过 compact 自己拼请求。
+	// 适配器把 `compact.Generated` 翻成 `reroll.GeneratedSummary`（字段同名逐个搬）。
+	rerollService.Summaries = summaryRoller{compact: compactService}
 	// 反向也点一下：**新消息一到 ⇒ 候选全清**（候选只属于"当前那条尾巴"）。
 	chatService.Candidates = rerollService
 	// 起标题挂在一轮生成上（拿到回复之后自动一次）—— 与压缩同一条口径：能力的事归能力
@@ -226,4 +231,19 @@ func tokenOf(cfg config.Config) string {
 		return ""
 	}
 	return *cfg.Server.AuthToken
+}
+
+// summaryRoller：摘要重摇的生成器适配器（`reroll.SummaryGenerator` 的唯一实现）——
+// 把 `compact` 的"只生成、不落库"半程接给 reroll。形状刻意不同名：reroll 不认识 compact 的包。
+type summaryRoller struct{ compact *compact.Service }
+
+func (r summaryRoller) RegenerateSummary(ctx context.Context, session model.Session, summaryID string) (reroll.GeneratedSummary, error) {
+	generated, err := r.compact.RegenerateSummary(ctx, session, summaryID)
+	if err != nil {
+		return reroll.GeneratedSummary{}, err
+	}
+	return reroll.GeneratedSummary{
+		Text: generated.Text, Tokens: generated.Tokens, Provider: generated.Provider,
+		Model: generated.Model, PromptVersion: generated.PromptVersion, Usage: generated.Usage,
+	}, nil
 }

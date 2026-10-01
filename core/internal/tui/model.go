@@ -305,16 +305,20 @@ type compactMsg struct {
 //
 // `quiet` = 这是**轮询**来的（每 300ms 看一次"摇完没有"）⇒ 只更新那一份状态，不动底栏 ——
 // 不然底栏每 300ms 被重写一次，用户刚做的事就被顶掉了。
+// `kind` = 这次问的是哪个家族（后端退出模式后回的 `active:false` 不带 `target_kind`，
+// 底栏那句"已退出…"就靠它把名字说对）。
 type rerollMsg struct {
 	sessionID string
 	state     RerollState
+	kind      string
 	quiet     bool
 	err       error
 }
 
-// rerollClearMsg：退出重摇模式（`DELETE .../reroll` ⇒ 204，没有状态可回）。
+// rerollClearMsg：退出重摇模式（`DELETE .../reroll-*` ⇒ 204，没有状态可回）。
 type rerollClearMsg struct {
 	sessionID string
+	kind      string
 	err       error
 }
 
@@ -584,45 +588,98 @@ func compactCmd(client *Client, sessionID string, blocks int) tea.Cmd {
 	}
 }
 
-// ── 重摇那几条（`/reroll`）────────────────────────────────────────────────
+// ── 重摇那两条（`/reroll` 与 `/reroll-summary`）────────────────────────────
+//
+// 两个家族一一镜像：进模式 / 切换 / 删除 / 退出；只有"进模式"要的入参不同
+// （消息家族摇尾条、无参；摘要家族摇 idx 上溯到的那条摘要、必带 idx）。
+// 下面的 Cmd 都按 `kind` 挑家族的接口 —— 与后端的 `target_kind` 同一套词。
 
-// rerollCmd：进模式并摇一次（已在模式里 ⇒ 再摇一版）—— 202 受理，候选在后台摇。
-func rerollCmd(client *Client, sessionID string) tea.Cmd {
+// rerollEnterCmd：进模式并摇一次（已在模式里 ⇒ 再摇一版）—— 202 受理，候选在后台摇。
+func rerollEnterCmd(client *Client, sessionID, kind string, idx int) tea.Cmd {
 	return func() tea.Msg {
-		accepted, err := client.Reroll(sessionID)
-		return rerollMsg{sessionID: sessionID, state: accepted.State, err: err}
+		var accepted RerollAccepted
+		var err error
+		if kind == RerollKindSummary {
+			accepted, err = client.RerollSummary(sessionID, idx)
+		} else {
+			accepted, err = client.Reroll(sessionID)
+		}
+		return rerollMsg{sessionID: sessionID, state: accepted.State, kind: kind, err: err}
 	}
 }
 
-// rerollSwitchCmd：选中第 n 版（后端就地重建那条消息）。
-func rerollSwitchCmd(client *Client, sessionID string, idx int) tea.Cmd {
+// rerollSwitchCmd：选中第 n 版（后端就地重建目标：消息换正文 / 摘要换正文）。
+func rerollSwitchCmd(client *Client, sessionID, kind string, idx int) tea.Cmd {
 	return func() tea.Msg {
-		state, err := client.RerollSwitch(sessionID, idx)
-		return rerollMsg{sessionID: sessionID, state: state, err: err}
+		var state RerollState
+		var err error
+		if kind == RerollKindSummary {
+			state, err = client.RerollSummarySwitch(sessionID, idx)
+		} else {
+			state, err = client.RerollSwitch(sessionID, idx)
+		}
+		return rerollMsg{sessionID: sessionID, state: state, kind: kind, err: err}
 	}
 }
 
 // rerollDeleteCmd：删掉第 n 版。
-func rerollDeleteCmd(client *Client, sessionID string, idx int) tea.Cmd {
+func rerollDeleteCmd(client *Client, sessionID, kind string, idx int) tea.Cmd {
 	return func() tea.Msg {
-		state, err := client.RerollDelete(sessionID, idx)
-		return rerollMsg{sessionID: sessionID, state: state, err: err}
+		var state RerollState
+		var err error
+		if kind == RerollKindSummary {
+			state, err = client.RerollSummaryDelete(sessionID, idx)
+		} else {
+			state, err = client.RerollDelete(sessionID, idx)
+		}
+		return rerollMsg{sessionID: sessionID, state: state, kind: kind, err: err}
 	}
 }
 
 // rerollClearCmd：退出重摇模式（204）。
-func rerollClearCmd(client *Client, sessionID string) tea.Cmd {
+func rerollClearCmd(client *Client, sessionID, kind string) tea.Cmd {
 	return func() tea.Msg {
-		return rerollClearMsg{sessionID: sessionID, err: client.RerollClear(sessionID)}
+		var err error
+		if kind == RerollKindSummary {
+			err = client.RerollSummaryClear(sessionID)
+		} else {
+			err = client.RerollClear(sessionID)
+		}
+		return rerollClearMsg{sessionID: sessionID, kind: kind, err: err}
 	}
 }
 
 // pollRerollCmd：看一眼重摇状态（**静默那一档** —— 轮询不动底栏）。
-func pollRerollCmd(client *Client, sessionID string) tea.Cmd {
+//
+// `kind` 按当前模式的 `target_kind` 挑家族的 GET（消息 / 摘要）。空串 = **还不知道**
+// （刚进会话，界面这一份还没拉回来）⇒ 两个家族都问一遍：消息那一档活着就用它，否则用摘要那一档。
+func pollRerollCmd(client *Client, sessionID, kind string) tea.Cmd {
 	return func() tea.Msg {
-		state, err := client.RerollStatus(sessionID)
-		return rerollMsg{sessionID: sessionID, state: state, quiet: true, err: err}
+		switch kind {
+		case RerollKindSummary:
+			state, err := client.RerollSummaryStatus(sessionID)
+			return rerollMsg{sessionID: sessionID, state: state, kind: RerollKindSummary, quiet: true, err: err}
+		case RerollKindMessage:
+			state, err := client.RerollStatus(sessionID)
+			return rerollMsg{sessionID: sessionID, state: state, kind: RerollKindMessage, quiet: true, err: err}
+		}
+		messageState, messageErr := client.RerollStatus(sessionID)
+		if messageErr == nil && messageState.Active {
+			return rerollMsg{sessionID: sessionID, state: messageState, kind: messageState.TargetKind, quiet: true}
+		}
+		if summaryState, summaryErr := client.RerollSummaryStatus(sessionID); summaryErr == nil {
+			return rerollMsg{sessionID: sessionID, state: summaryState, kind: RerollKindSummary, quiet: true}
+		}
+		return rerollMsg{sessionID: sessionID, state: messageState, kind: RerollKindMessage, quiet: true, err: messageErr}
 	}
+}
+
+// rerollKindOf：这份状态属于哪个家族（空串 = 还没有状态 ⇒ 轮询时两个都问）。
+func rerollKindOf(state *RerollState) string {
+	if state == nil {
+		return ""
+	}
+	return state.TargetKind
 }
 
 // rerollTickCmd：轮询的节拍（与生成同一套：tick 而不是在 Cmd 里 sleep）。
@@ -630,18 +687,45 @@ func rerollTickCmd(sessionID string) tea.Cmd {
 	return tea.Tick(turnPollInterval, func(time.Time) tea.Msg { return rerollTickMsg{sessionID: sessionID} })
 }
 
+// rerollTargetLabel：摘要模式的目标区间（"第 a–b 条"）；消息模式没有这一段。
+//
+// 老数据两端不全 ⇒ 只报有的一端（别瞎补一个数）。
+func rerollTargetLabel(state RerollState) string {
+	if state.TargetKind != RerollKindSummary {
+		return ""
+	}
+	switch {
+	case state.FromIdx != nil && state.ToIdx != nil && *state.FromIdx == *state.ToIdx:
+		return fmt.Sprintf("第 %d 条", *state.FromIdx)
+	case state.FromIdx != nil && state.ToIdx != nil:
+		return fmt.Sprintf("第 %d–%d 条", *state.FromIdx, *state.ToIdx)
+	case state.FromIdx != nil:
+		return fmt.Sprintf("第 %d 条起", *state.FromIdx)
+	default:
+		return "一段"
+	}
+}
+
 // rerollAction：重摇那几条指令的回执（底栏那一句）—— **只说状态里真有的东西**。
+//
+// 两个家族共用这一句，只是名字与命令名不同；摘要模式再补上目标区间（"第 a–b 条"那条摘要）。
 func rerollAction(state RerollState) string {
+	name, listCmd, offCmd := "重摇", "/reroll list", "/reroll off"
+	target := ""
+	if state.TargetKind == RerollKindSummary {
+		name, listCmd, offCmd = "摘要重摇", "/reroll-summary list", "/reroll-summary off"
+		target = fmt.Sprintf("（目标：%s那条摘要）", rerollTargetLabel(state))
+	}
 	switch {
 	case state.Running:
-		return fmt.Sprintf("重摇中…（第 %d 版还在摇）", state.Count)
+		return fmt.Sprintf("%s中…（第 %d 版还在摇）%s", name, state.Count, target)
 	case !state.Active:
-		return "重摇：只剩一版了 —— 已退出重摇模式（留下的是当前这版）"
+		return fmt.Sprintf("%s：只剩一版了 —— 已退出重摇模式（留下的是当前这版）", name)
 	case state.Count == 1:
-		return "重摇：现在只有一版"
+		return fmt.Sprintf("%s：现在只有一版%s", name, target)
 	default:
-		return fmt.Sprintf("重摇：第 %d/%d 版（`/reroll list` 看有哪几版 · `/reroll off` 退出）",
-			state.CurrentIdx, state.Count)
+		return fmt.Sprintf("%s：第 %d/%d 版%s（`%s` 看有哪几版 · `%s` 退出）",
+			name, state.CurrentIdx, state.Count, target, listCmd, offCmd)
 	}
 }
 
@@ -721,9 +805,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.promptFor != session.ID {
 				also = append(also, loadSystemPrompt(m.client, session.ID))
 			}
-			// 顺手看一眼这条会话在不在重摇模式里（候选只在内存里 ⇒ 换会话/重启后要重新问）
+			// 顺手看一眼这条会话在不在重摇模式里（候选只在内存里 ⇒ 换会话/重启后要重新问；
+			// 这时还不知道是哪个家族 ⇒ 让轮询自己两个都问一遍）。
 			if m.rerollFor != session.ID {
-				also = append(also, pollRerollCmd(m.client, session.ID))
+				also = append(also, pollRerollCmd(m.client, session.ID, ""))
 			}
 			return m, tea.Batch(also...)
 		}
@@ -1037,6 +1122,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// （摇完了 / 摇出错了）：不然底栏每 300ms 被重写一次，而且会**永久停在「重摇中…」上**撒谎。
 		wasRunning := m.rerollRunning()
 		announce := !message.quiet || wasRunning
+		// 后端退出模式后回的 `active:false` 不带 `target_kind` ⇒ 用这次问的家族补上，
+		// 底栏那句"只剩一版了 / 已退出…"才知道该叫"重摇"还是"摘要重摇"。
+		if message.state.TargetKind == "" {
+			message.state.TargetKind = message.kind
+		}
 		m.reroll, m.rerollFor = &message.state, message.sessionID
 		var also []tea.Cmd
 		switch {
@@ -1051,8 +1141,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// 摇完之前每 300ms 看一次（这一趟在后台跑）
 			also = append(also, rerollTickCmd(message.sessionID))
 		} else if !message.quiet {
-			// 切换是**写库**的（那条 Message 的正文与附带信息都换了）⇒ 消息列表要重拉一次
-			also = append(also, loadMessages(m.client, message.sessionID))
+			// 切换是**写库**的：消息模式换的是那条 Message 的正文与附带信息 ⇒ 消息列表要重拉一次；
+			// 摘要模式换的是摘要（消息列表里看不见它）⇒ 不必重拉。
+			if message.state.TargetKind != RerollKindSummary {
+				also = append(also, loadMessages(m.client, message.sessionID))
+			}
 		}
 		return m, tea.Batch(also...)
 
@@ -1060,7 +1153,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if message.sessionID != m.selectedID || !m.rerollRunning() {
 			return m, nil
 		}
-		return m, pollRerollCmd(m.client, message.sessionID)
+		return m, pollRerollCmd(m.client, message.sessionID, rerollKindOf(m.reroll))
 
 	case rerollClearMsg:
 		if message.err != nil {
@@ -1068,7 +1161,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.reroll, m.rerollFor = nil, ""
-		m.lastAction = "已退出重摇模式（库里那条消息保留当前这版）"
+		if message.kind == RerollKindSummary {
+			m.lastAction = "已退出摘要重摇模式（库里那条摘要保留当前这版）"
+		} else {
+			m.lastAction = "已退出重摇模式（库里那条消息保留当前这版）"
+		}
 		return m, nil
 
 	case stoppedMsg:
@@ -1081,10 +1178,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		// 按停的是哪一件？重摇与生成共用同一把闸 ⇒ 这一句要说对
-		// （重摇被停 ⇒ 那一版不落位、候选里那个占位也摘掉，message 还是当前这版）。
-		if m.rerollRunning() {
+		// （重摇被停 ⇒ 那一版不落位、候选里那个占位也摘掉，目标还是当前这版）。
+		if state := m.rerollState(); state != nil && state.Running {
 			m.lastAction = "已停止重摇（这一版没有落位）"
-			return m, pollRerollCmd(m.client, message.sessionID)
+			return m, pollRerollCmd(m.client, message.sessionID, rerollKindOf(state))
 		}
 		m = m.settleTurn(message.sessionID)
 		m.lastAction = "已停止这一轮（这条回复没有落库）"
@@ -1284,9 +1381,15 @@ func (m model) send(text string) (tea.Model, tea.Cmd) {
 		m.lastAction = "这个会话还在生成中（/stop 可以打断它），等它跑完再发"
 		return m, nil
 	}
-	if m.rerollRunning() {
-		// 与生成共用同一把闸（后端会 409）—— 这里先说清楚，省一次白跑
-		m.lastAction = "这个会话正在重摇（/reroll switch <n> 选一版，或 /reroll off 退出），摇完再发"
+	if state := m.rerollState(); state != nil && state.Running {
+		// 与生成共用同一把闸（后端会 409）—— 这里先说清楚，省一次白跑。
+		// 命令名按家族给对（摘要模式摇的是摘要，退出/切换走的是 /reroll-summary）。
+		example := "/reroll"
+		if state.TargetKind == RerollKindSummary {
+			example = "/reroll-summary"
+		}
+		m.lastAction = fmt.Sprintf("这个会话正在重摇（%s switch <n> 选一版，或 %s off 退出），摇完再发",
+			example, example)
 		return m, nil
 	}
 	m.lastAction = "发送中…"
@@ -1337,6 +1440,8 @@ func init() {
 		{name: "compact", args: "[N]", help: "把最老的 N 个已闭合块压成摘要（不给 N 用默认值）", run: commandCompact},
 		{name: "reroll", args: "[switch <n> | delete <n> | off | list]",
 			help: "重摇尾条那条回复（不带参数 = 进模式并摇一次；候选只在内存里）", run: commandReroll},
+		{name: "reroll-summary", args: "<idx> | switch <n> | delete <n> | off | list",
+			help: "重摇一条摘要（<idx> = 1-based 消息序号，上溯到它的根摘要；候选只在内存里）", run: commandRerollSummary},
 		{name: "stop", help: "打断正在生成的那一轮（幂等）", run: commandStop},
 		{name: "refresh", help: "重新拉会话列表", run: commandRefresh},
 		{name: "help", help: "列命令（含还没搬完的）", run: commandHelp},
@@ -1713,28 +1818,57 @@ func commandCompact(m model, args []string) (tea.Model, tea.Cmd) {
 // 候选**只在内存里**（后端也是）：一发出新消息、删那条消息、切会话、进程重启 ⇒ 自然消失。
 // 摇出来的那一版**不进历史**，选中才 apply 回库里那条 Message。
 func commandReroll(m model, args []string) (tea.Model, tea.Cmd) {
+	return rerollCommand(m, args, RerollKindMessage)
+}
+
+// commandRerollSummary：**重摇一条摘要** —— 与 `/reroll` 一一镜像，目标换成
+// `idx`（1-based 消息序号）上溯到的那条根摘要（同树任意一条都指向同一个目标）。
+//
+//	`/reroll-summary <idx>`        进模式并立刻摇一版（已经在模式里 ⇒ 再摇一版）
+//	`/reroll-summary switch <n>`   选中第 n 版（后端就地换那条摘要的正文；id / 区间都不变）
+//	`/reroll-summary delete <n>`   删掉第 n 版
+//	`/reroll-summary off`          显式退出
+//	`/reroll-summary list`         看一眼每一版的预览（铺满消息区的查看器）
+func commandRerollSummary(m model, args []string) (tea.Model, tea.Cmd) {
+	return rerollCommand(m, args, RerollKindSummary)
+}
+
+// rerollCommand：两个家族共用那一套用法（`/reroll` 与 `/reroll-summary` 镜像）。
+//
+// `kind` 决定打哪个家族的接口；两家只有"进模式"的入参不同：消息家族摇尾条、不带参数；
+// 摘要家族要带 `idx`（挖哪一段）。其余（switch / delete / off / list）逐字一套。
+func rerollCommand(m model, args []string, kind string) (tea.Model, tea.Cmd) {
 	session := m.currentSession()
-	if session == nil {
-		return m.fail("没有可重摇的会话：" + noSession), nil
+	example, subject, title := "/reroll", "重摇", "重摇 · 第几版"
+	if kind == RerollKindSummary {
+		example, subject, title = "/reroll-summary", "摘要重摇", "摘要重摇 · 第几版"
 	}
-	// `/reroll list`：把每一版的预览摊开（只读查看器，任意键关掉）
+	if session == nil {
+		return m.fail("没有可" + subject + "的会话：" + noSession), nil
+	}
+	// `list`：把每一版的预览摊开（只读查看器，任意键关掉）
 	if len(args) > 0 && args[0] == "list" {
 		state := m.rerollState()
-		if state == nil {
-			m.lastAction = "没在重摇模式里（`/reroll` 先摇一版）"
+		if state == nil || state.TargetKind != kind {
+			if kind == RerollKindSummary {
+				m.lastAction = "没在摘要重摇模式里（`/reroll-summary <idx>` 先摇一版）"
+			} else {
+				m.lastAction = "没在重摇模式里（`/reroll` 先摇一版）"
+			}
 			return m, nil
 		}
-		m.viewer, m.viewerTitle = m.rerollLines(*state), "重摇 · 第几版"
+		m.viewer, m.viewerTitle = m.rerollLines(*state), title
 		m.viewerHint = "任意键关掉"
 		return m, nil
 	}
 	if len(args) > 0 && args[0] == "off" {
-		m.lastAction = "退出重摇模式…"
-		return m, rerollClearCmd(m.client, session.ID)
+		m.lastAction = "退出" + subject + "模式…"
+		return m, rerollClearCmd(m.client, session.ID, kind)
 	}
 	if len(args) > 0 && (args[0] == "switch" || args[0] == "delete") {
 		if len(args) < 2 {
-			return m.fail("用法：/reroll " + args[0] + " <n>（n 是位次，从 1 起；`/reroll list` 看有哪几版）"), nil
+			return m.fail(fmt.Sprintf("用法：%s %s <n>（n 是位次，从 1 起；`%s list` 看有哪几版）",
+				example, args[0], example)), nil
 		}
 		idx, err := strconv.Atoi(args[1])
 		if err != nil || idx <= 0 {
@@ -1742,27 +1876,44 @@ func commandReroll(m model, args []string) (tea.Model, tea.Cmd) {
 		}
 		if args[0] == "switch" {
 			m.lastAction = fmt.Sprintf("切到第 %d 版…", idx)
-			return m, rerollSwitchCmd(m.client, session.ID, idx)
+			return m, rerollSwitchCmd(m.client, session.ID, kind, idx)
 		}
 		m.lastAction = fmt.Sprintf("删掉第 %d 版…", idx)
-		return m, rerollDeleteCmd(m.client, session.ID, idx)
+		return m, rerollDeleteCmd(m.client, session.ID, kind, idx)
 	}
-	if len(args) > 0 {
+	if len(args) > 0 && kind == RerollKindMessage {
 		return m.fail("不认识的用法：" + strings.Join(args, " ") +
 			"（可用：/reroll · /reroll switch <n> · /reroll delete <n> · /reroll off · /reroll list）"), nil
 	}
-	// 不带参数 = 进模式并摇一次（已经在模式里 ⇒ 再摇一版）
+	// 进模式并摇一次（已经在模式里 ⇒ 再摇一版）。
+	idx := 0
+	if kind == RerollKindSummary {
+		if len(args) == 0 {
+			return m.fail("用法：/reroll-summary <idx>（idx 是 1-based 消息序号，上溯到它的根摘要；" +
+				"`/reroll-summary list` 看有哪几版）"), nil
+		}
+		parsed, err := strconv.Atoi(args[0])
+		if err != nil || parsed <= 0 {
+			return m.fail("消息序号要正整数（1-based）：" + args[0]), nil
+		}
+		idx = parsed
+	}
 	if m.turn.Busy() && m.turn.sessionID == session.ID {
 		m.lastAction = "这个会话还在生成中：等这一轮跑完再摇（重摇与生成共用同一把闸）"
 		return m, nil
 	}
-	m.lastAction = "重摇中…"
-	return m, rerollCmd(m.client, session.ID)
+	m.lastAction = subject + "中…"
+	return m, rerollEnterCmd(m.client, session.ID, kind, idx)
 }
 
 // rerollLines：`/reroll list` 那个查看器的每一行（**当前那版高亮**，在摇的那版标出来）。
+// 摘要模式先摊一行目标区间（消息模式不画位次标记，信息都放在这儿/底栏）。
 func (m model) rerollLines(state RerollState) []string {
-	lines := make([]string, 0, len(state.Items)*2)
+	lines := make([]string, 0, len(state.Items)*2+2)
+	if state.TargetKind == RerollKindSummary {
+		lines = append(lines,
+			m.style.dim(truncate("目标："+rerollTargetLabel(state)+"那条摘要", max(1, m.width))), "")
+	}
 	for _, item := range state.Items {
 		marker := "  "
 		if item.Current {
@@ -2338,18 +2489,25 @@ func (m model) liveBlock(width int) []string {
 //
 // 口径与 `liveBlock` 同一条：只说真话 —— 说的是"在摇第 N 版 + 耗时"，
 // 不假装正文已经在往外蹦（重摇那一趟是非流式的，没有增量可看）。
+// 摘要模式还把目标区间带上（消息区没有对应的一条可画标记，信息只能在这儿/底栏说清）。
 func (m model) liveRerollBlock(width int) []string {
 	state := m.rerollState()
 	if state == nil {
 		return nil
 	}
+	command := "/reroll switch"
+	hint := ""
+	if state.TargetKind == RerollKindSummary {
+		command = "/reroll-summary switch"
+		hint = "（目标：" + rerollTargetLabel(*state) + "那条摘要）"
+	}
 	block := []string{m.style.joined([]segment{
 		{" 助手（", styleMagenta},
 		{fmt.Sprintf("重摇中… %.1fs", float64(state.ElapsedMS)/1000), styleYellow},
-		{"）：", styleMagenta},
+		{"）：" + hint, styleMagenta},
 	}, width, "")}
 	block = append(block, m.style.dim(truncate(
-		fmt.Sprintf("   第 %d 版还在摇 —— 摇完用 /reroll switch %d 换上去", state.Count, state.Count), width)))
+		fmt.Sprintf("   第 %d 版还在摇 —— 摇完用 %s %d 换上去", state.Count, command, state.Count), width)))
 	return append(block, "")
 }
 
@@ -2535,13 +2693,15 @@ func (m model) rerollRunning() bool {
 	return state != nil && state.Running
 }
 
-// rerollMarker：尾条旁边那个位次标记 —— `‹ 2/3 ›`（**只在重摇模式里**、只给它说的那条尾巴）。
+// rerollMarker：尾条旁边那个位次标记 —— `‹ 2/3 ›`（**只在消息重摇模式里**、只给它说的那条尾巴）。
 //
 // 「位次不是身份」：分母是现在共几版、分子是**当前 apply 的那一版**（当前这版高亮 —— 与挑选项同一条口径）。
+// 摘要模式**不画**这个标记：摇的是摘要、没有对应的那条消息可挂（信息放底栏 / `/reroll-summary list`）。
 // `TERM=dumb` / 非 TTY ⇒ 退回 ASCII `< 2/3 >`（`‹ ›` 也是这台终端不认识的那类字符）。
 func (m model) rerollMarker(messageID string) (string, bool) {
 	state := m.rerollState()
-	if state == nil || state.TargetMessageID != messageID || state.Count < 1 || state.CurrentIdx < 1 {
+	if state == nil || state.TargetKind == RerollKindSummary ||
+		state.TargetMessageID != messageID || state.Count < 1 || state.CurrentIdx < 1 {
 		return "", false
 	}
 	if m.ascii {

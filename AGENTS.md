@@ -66,15 +66,18 @@ reminder/                  ← 专题参考（`tool-calls.md` 工具调用 / `je
 | `chat` | 一轮生成怎么跑 | 拿到整段才 INSERT |
 | `turn` | 这一轮的流细节 | 增量什么都不算；游标读不消费 |
 | `task` | 作业的身份 + 生死（= 一次上游请求的全程） | `defer` 兜底（**Go 没有 Drop**）；绝不留下僵尸条目；TaskID 是 UUIDv7、不进库 |
-| `reroll` | 重摇的**候选列表**（进程内、会话级） | 候选**只在内存里**（不建表、不写库、Copy 不带走）；只重摇**尾条 assistant**；切换 = 就地换正文（**UUID 不变**）；与生成**共用同一把闸**；**装配不另写一份** |
+| `reroll` | 重摇的**候选列表**（进程内、会话级） | 候选**只在内存里**（不建表、不写库、Copy 不带走）；两个平行家族：**尾条 assistant**（reroll-message）与**没有父的摘要**（reroll-summary）；切换 = 就地换正文（消息 **UUID 不变** / 摘要 **id 不变**）；与生成**共用同一把闸**；**装配与摘要都不另写一份**（借 chat 的装配、借 compact 的生成半程） |
 | `server` | **只有它碰 HTTP** | 错误体固定；只编排不含业务 |
 
 依赖方向单向：`server → chat/compact/abilities → state（含 statelang）/blocks → registry/providers/config → store → model`。
 （`compact` 另要 `abilities` 与 `providers` —— 校验能力开关、借同一套真发；`blocks` 只依赖 `model`。）
 `turn`/`task` 是横切（谁都能挂号，不被依赖）。
-`reroll` **谁也不依赖、也不被谁依赖** ✓：它借 `chat` 的**装配**（`chat.Service.RerollMessages`）与 `turn` 的**闸门**，
-靠两个**接口**接上（`reroll.Assembler` / `chat.CandidateOwner`，都在消费方那一侧定义）——
-于是"重摇的装配就是一轮对话的装配"这条不变量成立，而两个包不会互相 import（Go 也就不会报环）。
+`reroll` **谁也不依赖、也不被谁依赖** ✓：它借 `chat` 的**装配**（`chat.Service.RerollMessages`）、
+`compact` 的**生成半程**（`compact.Service.RegenerateSummary`：只生成、不落库）与 `turn` 的**闸门**，
+靠三个**接口**接上（`reroll.Assembler` / `chat.CandidateOwner` / `reroll.SummaryGenerator`，都在消费方那一侧定义；
+`compact` → `reroll` 的适配器在 `main.go` 接线）——
+于是"重摇的装配就是一轮对话的装配""摘要重摇的材料就是当初那次压缩的材料"这两条不变量成立，
+而各包不会互相 import（Go 也就不会报环）。
 **Go 用编译器强制这张图**。
 
 ⚠ **表里还没建的只剩 `template`**（`{{…}}` 那套）：`compact` / `blocks` / `abilities` 都已落地 ✓（`chat` 早就有了 ✓）。
@@ -248,11 +251,16 @@ delete(AA)           # 删除
 | GET | `/sessions/{session_id}/turn/text?from=N&think_from=M` | — | `StreamSlice` | 流式增量的**游标读**（正文与思考各一条游标，`from` = 第几个字符）：只服务动画 |
 | POST | `/sessions/{session_id}/stop` | — | `{"stopped": bool}` | **幂等**：没在跑也 200（`false`）|
 | POST | `/sessions/{session_id}/compact` | `CompactReq` | `CompactStatus` · **202** | **压缩**：`{"blocks": N}` 或 `{"begin_idx": i, "end_idx": j}`（1-based 消息序号，与 `/messages?from_idx=&to_idx=` 同一套词；两种给法互斥、区间两端都得给；都不给 ⇒ 用 `chat.compact_blocks`）。区间入口按覆盖情况分派：全未覆盖 ⇒ 消息级；**同层顶层摘要恰好铺满** ⇒ 合并（金字塔）；其余 ⇒ 400 ⇒ 后台跑完一次压缩；**同一个会话同时只允许一次**（在跑 ⇒ 409）。跑完的结局在 `GET .../status` 的 `compact` 那一档（`running`/`done`/`error` + 原因）|
-| POST | `/sessions/{session_id}/reroll` | — | `{target_message_id, task_id, state}` · **202** | **重摇**：进模式并**立刻摇一次**（已在模式里 ⇒ 再摇一版）。候选（`RerolledMessage`）**只在内存里**、**不进历史** —— 选中才 apply 回那条 Message。尾条必须是 assistant（不是 ⇒ 400 说清那是"重发"）；与生成**共用同一把闸**（在跑 ⇒ 409）|
-| GET | `/sessions/{session_id}/reroll` | — | `{active, target_message_id, count, current_idx, running, elapsed_ms, error, items:[{idx, preview, at, pending, current}]}` | 重摇状态（**不吐全文**，预览几十字）：界面靠它画位次标记与「重摇中… 耗时」。没进模式 ⇒ `active: false`（**不是 404**）|
-| POST | `/sessions/{session_id}/reroll/switch` | `{"idx": n}` | 同上 | 选中第 `n` 版 ⇒ **就地重建**那条 Message（**UUID 不变**；正文与 usage / 耗时 / 思考一起换；摘要照旧标 `dirty`）|
-| DELETE | `/sessions/{session_id}/reroll/{idx}` | — | 同上 | 删掉第 `idx` 版（**位次不是身份**：后方统一 -1，再 apply 到 clamp 后的位置）；**删到只剩一条 ⇒ 退出模式 + 清列表**（**不 apply**：message 保留当前这版）|
-| DELETE | `/sessions/{session_id}/reroll` | — | 204 | **显式退出**重摇模式（清列表；message 保留当前这版）。错误：`idx` 越界 ⇒ 400；没进模式 ⇒ 404；切/删"还在摇的那一版" ⇒ 409 |
+| POST | `/sessions/{session_id}/reroll-message` | — | `{target_message_id, task_id, state}` · **202** | **重摇·消息**：进模式并**立刻摇一次**（已在模式里 ⇒ 再摇一版）。候选（`RerolledMessage`）**只在内存里**、**不进历史** —— 选中才 apply 回那条 Message。尾条必须是 assistant（不是 ⇒ 400 说清那是"重发"）；与生成**共用同一把闸**（在跑 ⇒ 409）|
+| GET | `/sessions/{session_id}/reroll-message` | — | `{active, target_kind, target_message_id, count, current_idx, running, elapsed_ms, error, items:[…]}` | 重摇状态（**不吐全文**，预览几十字）。没进模式 ⇒ `active: false`（**不是 404**）|
+| POST | `.../reroll-message/switch` | `{"idx": n}` | 同上 | 选中第 `n` 版 ⇒ **就地重建**那条 Message（**UUID 不变**；正文与 usage / 耗时 / 思考一起换；摘要照旧标 `dirty`）|
+| DELETE | `.../reroll-message/{idx}` | — | 同上 | 删掉第 `idx` 版（**位次不是身份**）；**删到只剩一条 ⇒ 退出模式 + 清列表**（**不 apply**：message 保留当前这版）|
+| DELETE | `.../reroll-message` | — | 204 | **显式退出**（message 保留当前这版）|
+| POST | `/sessions/{session_id}/reroll-summary` | `{"idx": N}` | `{target_summary_id, task_id, state}` · **202** | **重摇·摘要**：`N` = 1-based **消息** idx ⇒ 沿 `summary_id → parent_summary_id` 上溯到**根**（同树任意 idx 指向同一个目标）—— 只重摇**没有父**的摘要。材料与当初那次压缩**同源**（走 compact 的"只生成、不落库"半程）；没被摘要盖住 / 越界 ⇒ 400 |
+| GET | `/sessions/{session_id}/reroll-summary` | — | 同上形状（多 `target_summary_id`、`from_idx`/`to_idx`） | 摘要模式状态；与消息家族**同一套闸与位次**（一个会话同时只有一个重摇模式）|
+| POST | `.../reroll-summary/switch` | `{"idx": n}` | 同上 | 选中第 `n` 版 ⇒ **就地换那条摘要的正文**（`id` 与区间不动；守卫"仍无父"—— 期间被并走 ⇒ 冲突）。`dirty` = 材料新鲜度 |
+| DELETE | `.../reroll-summary/{idx}` | — | 同上 | 同消息家族（后方位次 -1；只剩一条 ⇒ 退出）|
+| DELETE | `.../reroll-summary` | — | 204 | **显式退出**。通用错误：`idx` 越界 / 没被摘要盖住 ⇒ 400；没进模式 ⇒ 404；切/删在摇的那版 ⇒ 409；目标被并走 ⇒ 状态回 `active:false` |
 
 同一会话在跑时再发 → **409**。`TurnAccepted` = `{user?, backend, turn}`：`turn.message_id` 是**这条回复的 id**（受理时定好，那会儿还没进库）。
 
@@ -711,12 +719,14 @@ prompt caching**"）。**不要为能力造子 session id**：网关的会话 id
 - 会话视图（Godot 版）：消息列表（署名 = **该会话 agent 的名字**，不是"助手"）；上方一行**上下文占用**（`上下文 12.3k（上轮实测 11.9k）/ 40k`；超 80% 黄、超触发阈值红）**待做**。
 - **消息级操作只出现在最后一条上**（线性会话里"从这里往后不要了"就是它）：`重摇`（可接受 / 丢弃）、`剪切`（删这条及之后）。
   消息级删除**必须先看删除预览**（`GET .../deletion-preview`）并让用户确认，再带 `last_deleted_message_id` 发 DELETE。
-- **重摇的位次与退出** ✓（2026-09-30 落地）：进重摇模式后，**被摇的那条消息旁**给一个位次标记
+- **重摇的位次与退出** ✓（2026-09-30 消息模式、2026-10-01 摘要模式）：进重摇模式后，**被摇的那条消息旁**给一个位次标记
   `‹ 2/3 ›`（**只在模式内**、当前那版高亮 = 粗体 + 青，与挑选项同一条口径），状态行报「重摇中… 耗时」（拿 `/status`
-  的 `reroll` 那一档或 `GET .../reroll`），消息区另起一块**合成**气泡（**不假装**正文在往外蹦：那一趟是非流式的）；
-  命令 `/reroll`（进模式并摇一次；已在模式里 ⇒ 再摇一版）、`/reroll switch <n>`、`/reroll delete <n>`、
-  `/reroll list`（摊开每一版的预览，只读查看器）、**`/reroll off` = 显式退出**（清单，message 保留当前那版）。
-  **候选只在内存里** ⇒ 一发出新消息 / 删那条消息 / 切会话 / 重启后端 ⇒ 自然消失（界面靠 `rerollFor` 认会话，与
+  的 `reroll` 那一档或对应家族的 `GET`），消息区另起一块**合成**气泡（**不假装**正文在往外蹦：那一趟是非流式的）；
+  命令 `/reroll`（消息：进模式并摇一次；已在模式里 ⇒ 再摇一版）、`/reroll switch <n>`、`/reroll delete <n>`、
+  `/reroll list`（摊开每一版的预览，只读查看器）、**`/reroll off` = 显式退出**（清单，message 保留当前那版）；
+  **摘要模式**同为 `/reroll-summary <idx>` + `switch / delete / off / list`（`idx` = 1-based 消息序号，上溯到根；
+  摘要没有"那条消息"可挂标记 ⇒ 目标与位次看底栏 / `list` 查看器；**新消息不清摘要模式**）。
+  **候选只在内存里** ⇒ 一发出新消息（消息模式）/ 删目标 / 切会话 / 重启后端 ⇒ 自然消失（界面靠 `rerollFor` 认会话，与
   `contextFor` / `promptFor` 同一条规矩）。
 - **分岔 = 复制会话**（`POST /sessions/{session_id}/copy`）：没有"切分支"这回事 ✗（`current_leaf` 已删）。
 - **卡片脚注**：`3.2s · 上行 1654 tok（缓存 1408 tok · 85%）· 下行 62 tok（思考 32 tok，含在内）`——只在有数据时显示。**单位是 token**（上游 `usage` 报的）；生成中气泡上「思考中… N 字」是**字符数**（流式帧里没有 token 数）——两处别混。`reasoning_tokens` 是 `completion_tokens` 的子集，不是另加。
@@ -739,7 +749,7 @@ prompt caching**"）。**不要为能力造子 session id**：网关的会话 id
   · TUI 模式下日志落到 `data/microchat.log`（别糊在界面上）；
   · 退出用 **`/quit` 或 ctrl+c** —— **没有裸 `q`**（会和打字打架）。
 - 跑法：`go -C core run .`（一条命令跑起来；要二进制就 `go -C core build -o ../microchat .`）。**TUI 内的命令**照 Pi：`/command`。**只放已经有路由的命令**，没搬完的在 `/help` 里如实列出来
-  （现在能用的：`/help` `/new` `/delete` `/cut` `/copy` `/rename` `/resume` `/model` `/outgoing` `/state` `/system` `/compact` `/reroll` `/stop` `/refresh` `/quit`；
+  （现在能用的：`/help` `/new` `/delete` `/cut` `/copy` `/rename` `/resume` `/model` `/outgoing` `/state` `/system` `/compact` `/reroll` `/reroll-summary` `/stop` `/refresh` `/quit`；
   还没做的：`/archive` —— `/fork`／`/tasks`／`/probe` 那几条**已砍**，不会再有
   （`/fork` 的位置由 `/copy` 接管）。
   `/delete`（删整条会话 —— **删完立刻再建一条并进去**）与 `/cut`（删一条及之后）都**不可逆** ⇒ 两个都先摊开、等 `回车 / y` 点头才动手；
