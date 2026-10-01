@@ -2738,7 +2738,7 @@ func (m model) visibleSystemPrompt(session *Session) *SystemPrompt {
 
 // systemBlock：消息区**最上面**那条"系统提示词"（调试用：这轮到底带了什么底子）。
 //
-// 口径：标签「系统提示词」用调色板里的 `system` 那档 = **暗色**（与 `/outgoing` 里 `source=system` 同一档）；
+// 口径：标签「系统提示词」用调色板里的 `system` 那档 = **暗色**（与 `/outgoing` 里 `type=system` 同一档）；
 // 正文保持默认色（内容才是主角，与别的消息一致）。**先排版、后上色**（截断作用在未着色的原文上）。
 func (m model) systemBlock(prompt SystemPrompt, width int) []string {
 	block := []string{m.style.joined([]segment{{" 系统提示词：", styleDim}}, width, "")}

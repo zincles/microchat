@@ -119,7 +119,7 @@ func mustJSON(t *testing.T, raw string) any {
 }
 
 // 走的完整条路：三块 → 压最老的两块 ⇒ summaries 一行（区间 / 块数 / prompt_version / usage）
-// + 那一段消息的 `summary_id` 指过去 + 装配里变成**一条** source=summary。
+// + 那一段消息的 `summary_id` 指过去 + 装配里变成**一条** type=summary。
 func TestCompactWritesOneSummaryAndPointsTheSpan(t *testing.T) {
 	h := newHarness(t, config.AgentsConfig{})
 	h.turn(t, "第一句")
@@ -174,7 +174,7 @@ func TestCompactWritesOneSummaryAndPointsTheSpan(t *testing.T) {
 		t.Fatal("最后那块（开着的）不该被盖")
 	}
 
-	// 装配：被压的那一段变成**一条** source=summary
+	// 装配：被压的那一段变成**一条** type=summary
 	outgoing := state.BuildOutgoing("", after, rows, nil)
 	summaries := 0
 	for _, item := range outgoing {

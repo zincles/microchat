@@ -68,7 +68,7 @@
 | 7 | 属于哪个会话 | `messages.session_id` | ✓ 已有 |
 | 8 | 有无 Summary | `messages.summary_id` | ✓ 已有 |
 | 9 | 发送时 / 结束时 / 耗时 | `messages.created_at` + `duration_ms`（+ `reasoning_ms`） | ✓ 已有 |
-| 9b | **修改时** | —— | ⚠ **建议加** `messages.updated_at`（顺带让 summary 的 `dirty` 判断变便宜） |
+| 9b | **修改时** | `messages.updated_at`（改正文时刷新） | ✓ 已有（2026-09-30） |
 
 #### 三处"故意不存"（破坏它们会静默出错）
 
@@ -391,9 +391,10 @@ DELETE 体里带回 `last_deleted_message_id` ✓，服务端核对它仍是最�
   ② **失败的处理永远在调用方** ✓（能力自己不吞错、不重试 ✓）：总结失败 ⇒ 那一轮压缩失败 ✓（会话不动 ✓）；
   起标题失败 ⇒ 名字先空着 ✓（下次再来 ✓）。
 - **`prompt_version`** ✓：`sha256(**生效模板**)[:8]` ✓，每次调用连带写进那行记录 ✓（`summaries.prompt_version` ✓：**换个 agent 或改一句话，指纹就变** ✓ —— 算的地方也只有一处 ✓ `abilities.PromptVersion` ✓）。
-- **只列真会做的** ✗：`compact`（压缩/总结）✓、`title`（起标题）✓ 两个**都已落地** ✓、`judge`（JEV 判断，**待做** ✓）；
+- **只列真会做的** ✗：`compact`（压缩/总结）✓、`title`（起标题）✓、`judge`（JEV 判断：`task.KindJudgement` + `internal/judge` 裸调用 ✓，
+  无提示词模板—— state+questions 由调用方拼；**裁决第二刀还没做**）三个**都已落地** ✓；
   文档里举的"**索引**"最虚（索引什么没说清 ✗）⇒
-  **不占位** ✗ —— 占位会让开关变成空诺 ✓（写着能开、其实没有实现 ✗）。同理：`judge` 既没模板也没它的 Task 种类 ✓。
+  **不占位** ✗ —— 占位会让开关变成空诺 ✓（写着能开、其实没有实现 ✗）。
 - **死字段已删** ✓（2026-09-30）：`Agent.params` / `Agent.prompt_order` —— 声明了、没人读、用途未定 ⇒ **删** ✓
   （要用再加 ✓）。老 `agents.json` 里还有它们也**不报错**，只是**下次整份重写时**会没掉（开发阶段可接受 ✓）。
 
@@ -419,7 +420,7 @@ DELETE 体里带回 `last_deleted_message_id` ✓，服务端核对它仍是最�
   为什么这么切 ✓：要被观察的正是这段**有边界、会卡住、能被停**的窗口 ✓ ——
   生成中的气泡、刷新按钮的转圈，挂的都是它 ✓。
 - **登记表在进程内、不进库** ✓（照旧）：重启后"没有在跑的活"是诚实的事实 ✓。
-- **`Kind` = 是哪种作业** ✓：`turn`（前台一轮生成）/ `reroll`（前台重摇一版）/ `compact`（压缩）/ `title`（起标题）/ `refresh_models`（拉模型列表）✓
+- **`Kind` = 是哪种作业** ✓：`turn`（前台一轮生成）/ `reroll`（前台重摇一版）/ `compact`（压缩）/ `title`（起标题）/ `judgement`（JEV 判断：值拼写注意，不是 `judge`）/ `refresh_models`（拉模型列表）✓
   —— **加一种 = 枚举里加一个变体** ✓（面板按它分组、日志按它过滤 ✓）。
 
 ### Task 状态五个 ✓（**这套词只属于 Task** ✓）
@@ -479,7 +480,7 @@ Task 状态答"这条上游请求的命" ✓，turn 状态答"这轮现在长什
 | `reroll` | ✓（非流式） | **不是** ✗ —— 与 `turn` 同类（对话型调用：把尾条那条回复重来一遍）| 历史**减去那条回复** → **候选**（`RerolledMessage`，只在内存里 ✓ 不进历史 ✗；接受才写 ✓） |
 | `title` | ✓ | ✓ | 会话的一段 → `sessions.title`（调用方写 ✓） |
 | `compact` | ✓ | ✓ | 一段（消息**或**摘要，两端用 id 指 ✓）→ 写进 `summaries`（调用方单事务 ✓） |
-| `judge`（JEV） | ✓（**不是 chat 协议** ✗ ⇒ 要第三种 provider kind ✓） | ✓ | 原始文本 + 系统提示词 + **状态表** → 概率表（调用方处置 ✓） |
+| `judgement`（JEV，能力 id 叫 `judge`） | ✓（**不是 chat 协议** ✗ ⇒ `vendor`×`protocol` 两轴里的 `protocol: systemone` ✓） | ✓ | 状态表 + 类型化问题 → 概率表（调用方处置 ✓；`internal/judge` 裸调用） |
 | `refresh_models` | **不调** ✗ | 不是 ✓ | 拉上游 `/models` |
 
 - **能力 = 会调模型的 Task 种类** ✓（`title` / `compact` / `judge`）—— 一张词表 ✓，别再造第三张 ✗。

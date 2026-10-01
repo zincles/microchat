@@ -93,7 +93,7 @@ func TestCompactRouteAcceptsAndMarksTheSpan(t *testing.T) {
 		t.Fatalf("跑完那一份 = %+v", done)
 	}
 
-	// 装配：被压的那一段变成**一条** source=summary（检查压缩效果只能靠这个）
+	// 装配：被压的那一段变成**一条** type=summary（检查压缩效果只能靠这个）
 	recorder = call(box.server, "GET", box.path+"/outgoing", "")
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("%d：%s", recorder.Code, recorder.Body.String())

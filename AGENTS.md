@@ -243,14 +243,15 @@ delete(AA)           # 删除
 | GET | `/sessions/{session_id}/messages/{message_id}/deletion-preview` | — | `DeletionPlan` | **只算不动**（安全 ⇒ GET）：会删掉哪些消息 / 摘要、哪些指针会被置空 |
 | DELETE | `/sessions/{session_id}/messages/{message_id}` | `{"last_deleted_message_id"}` | `DeletionPlan` | 删**这条及之后的全部**（级联见 `DEFINE.md`）。核对字段不符 ⇒ **409**（重新预览）；缺字段 ⇒ 422 |
 | GET | `/sessions/{session_id}/state` | — | `StateView` | `baseline` / `session` / `baseline_values` / `effective` / `tables`，**每次现算**。层名是 **`baseline`**（底子）、**不是** `global` ✗ —— `global` 现在是 **`tables` 里那张表**（不写表名的块落到它，且它**恒在**：空也回 `{}`）。查询参数 `?at_idx=N` ⇒ **截至第 N 条的现演**：底子**永远用当前的生效提示词**（不追究历史 ⇒ **不是真快照**）、正文只 fold 到第 N 条（含）、`0` ⇒ 只有底子、越界 ⇒ 当作到最后一条（与 `/messages` 一个口径）、不给 ⇒ 当前状态；负 / 非整数 ⇒ **400** |
-| GET | `/sessions/{session_id}/outgoing` | — | `[Outgoing]` | **(b) 当前已定历史的载荷**：把**已入库的东西**装配一遍 —— **不含还没发出去的那一句** ✗（标签已剔、状态已注入、**压缩已生效**）。每条带类型：`type` = `system`/`message`/`summary`（后者另有 `summary_id`、`blocks`，将来再加 `children` 嵌套）—— **检查压缩效果靠它**，别去猜正文抬头。每条还带序号：`type=system` ⇒ **`idx: 0`**（合成的、不是消息）、`type=message` ⇒ 它自己那条的 `idx`、`type=summary` ⇒ 它**替代的**范围 `from_idx`/`to_idx`（于是"第 5–10 条被压成了哪一条"一眼可见；摘要**没有**自己的 `idx` ✗）。⚠ **历史债**：字段今天还叫 `source`（`state.Outgoing.Source`、`GET /prompt` 的 `source`、`summaries.source_kind` 同理）—— 改名 `type` 时三处一起改，别只改一处 |
+| GET | `/sessions/{session_id}/outgoing` | — | `[Outgoing]` | **(b) 当前已定历史的载荷**：把**已入库的东西**装配一遍 —— **不含还没发出去的那一句** ✗（标签已剔、状态已注入、**压缩已生效**）。每条带类型：`type` = `system`/`message`/`summary`（后者另有 `summary_id`、`blocks`、`children` 嵌套—— summary 项往下展开一层，叶子只给 id+idx）—— **检查压缩效果靠它**，别去猜正文抬头。每条还带序号：`type=system` ⇒ **`idx: 0`**（合成的、不是消息）、`type=message` ⇒ 它自己那条的 `idx`、`type=summary` ⇒ 它**替代的**范围 `from_idx`/`to_idx`（于是"第 5–10 条被压成了哪一条"一眼可见；摘要**没有**自己的 `idx` ✗） |
 | POST | `/sessions/{session_id}/outgoing` | `{"content":"…"}` | `[Outgoing]` | **(c) 把这条 content 当成即将追加的那句用户消息之后**，真会发出去的东西（与 (b) **逐项同字段**、只**多**那条 user 项 —— **只有**那一项带 **`pending: true`**（`omitempty` ⇒ 其余各项不带这个键）：它的 `message_id` 是**预测值**，真发那一刻另铸一个 ⇒ **别拿它去查消息**；它的 `idx` = **下一条**（现有最大 + 1 ✓））。**只算不写**：不落库、不改任何状态。待发那句若带 `<state>` 块 ⇒ **状态表跟着变** ⇒ 必须重走一遍现演与装配（不是"(b) + 一条消息"）。缺 / 空白 `content` ⇒ **400** |
 | GET | `/sessions/{session_id}/context` | — | `ContextUsage` | 只有数字：`used_tokens`（估算）/ `budget_tokens` / `trigger_tokens` / `remaining_tokens` / `ctx_len` / `max_output` / `ratio` / `estimated` / `last_prompt_tokens` / `over_budget` |
-| GET | `/sessions/{session_id}/prompt` | — | `{"text","source"}` | **生效的系统提示词**（三级解析的**结果**，与出站拼装读同一处）：`source` = `conversation`（会话自己写了 `sessions.system_prompt`）/ `agent`（`agents.json` 里那个 agent 的）/ `builtin`（两级都没有 ⇒ 代码里的内置默认）。**永不给空**：解析全落空（典型：会话的 `agent_id` 软引用**悬空**）也退内置那句、`source` 报 `builtin`。将来做了可拼接的提示词，这里回**运算后**的结果（形状不变）|
-| GET | `/sessions/{session_id}/status` | — | `TurnStatus` | `idle`/`pending`/`streaming`/`error` + `message_id` + `elapsed_ms` + `chars` + `thinking_chars` + `error`。另搭两档**与轮次无关**的活状态：`compact`（压缩 / 压好了 / 失败）与 `reroll`（`running`/`done`/`error` + `elapsed_ms`）|
+| GET | `/sessions/{session_id}/prompt` | — | `{"text","type"}` | **生效的系统提示词**（三级解析的**结果**，与出站拼装读同一处）：`type` = `conversation`（会话自己写了 `sessions.system_prompt`）/ `agent`（`agents.json` 里那个 agent 的）/ `builtin`（两级都没有 ⇒ 代码里的内置默认）。**永不给空**：解析全落空（典型：会话的 `agent_id` 软引用**悬空**）也退内置那句、`type` 报 `builtin`。将来做了可拼接的提示词，这里回**运算后**的结果（形状不变）|
+| GET | `/sessions/{session_id}/status` | — | `TurnStatus` | `phase`（`idle`/`pending`/`streaming`/`error`）+ `message_id` + `elapsed_ms` + `chars` + `thinking_chars` + `error`。另搭两档**与轮次无关**的活状态：`compact`（`state`=`running`/`done`/`error` + `blocks`/`compacted`/`summary_id`/`from_idx`/`to_idx`/`merged` + `error`）与 `reroll`（`state` + `elapsed_ms` + `error`）|
 | GET | `/sessions/{session_id}/turn/text?from=N&think_from=M` | — | `StreamSlice` | 流式增量的**游标读**（正文与思考各一条游标，`from` = 第几个字符）：只服务动画 |
 | POST | `/sessions/{session_id}/stop` | — | `{"stopped": bool}` | **幂等**：没在跑也 200（`false`）|
-| POST | `/sessions/{session_id}/compact` | `CompactReq` | `CompactStatus` · **202** | **压缩**：`{"blocks": N}` 或 `{"begin_idx": i, "end_idx": j}`（1-based 消息序号，与 `/messages?from_idx=&to_idx=` 同一套词；两种给法互斥、区间两端都得给；都不给 ⇒ 用 `chat.compact_blocks`）。区间入口按覆盖情况分派：全未覆盖 ⇒ 消息级；**同层顶层摘要恰好铺满** ⇒ 合并（金字塔）；其余 ⇒ 400 ⇒ 后台跑完一次压缩；**同一个会话同时只允许一次**（在跑 ⇒ 409）。跑完的结局在 `GET .../status` 的 `compact` 那一档（`running`/`done`/`error` + 原因）|
+| POST | `/sessions/{session_id}/compact` | `CompactReq` | `CompactStatus` · **202** | **压缩**：`{"blocks": N}` 或 `{"begin_idx": i, "end_idx": j}`（1-based 消息序号，与 `/messages?from_idx=&to_idx=` 同一套词；两种给法互斥、区间两端都得给；都不给 ⇒ 用 `chat.compact_blocks`）。**按块，不按条**（块 = assistant→user 交界，一块 ≥2 条）。按块数 ⇒ 策略（底层凑不够就抬头并摘要）；按区间 ⇒ 全未覆盖走消息级、**同层顶层摘要恰好铺满**走合并（金字塔）、其余 ⇒ 400（混合有洞，不后台跑）。**同一个会话同时只允许一次**（在跑 ⇒ 409）。跑完的结局在 `GET .../status` 的 `compact` 那一档（`running`/`done`/`error` + `from_idx`/`to_idx`/`merged` + 原因）|
+| POST | `/sessions/{session_id}/compact/preview` | `{"blocks": N}` | `PreviewResult` · 200 | **压缩预览**：**只算不动**（调同一套策略；区间入口自己就是答案，不走这里 ⇒ 400）。回 `from_idx`/`to_idx` + `merged` + `source_ids` + 人话一句（"压第a–b条（N块）"/"并第a–b条那N坨"）。落库/调上游/挂号一概不碰 |
 | POST | `/sessions/{session_id}/reroll-message` | — | `{target_message_id, task_id, state}` · **202** | **重摇·消息**：进模式并**立刻摇一次**（已在模式里 ⇒ 再摇一版）。候选（`RerolledMessage`）**只在内存里**、**不进历史** —— 选中才 apply 回那条 Message。尾条必须是 assistant（不是 ⇒ 400 说清那是"重发"）；与生成**共用同一把闸**（在跑 ⇒ 409）|
 | GET | `/sessions/{session_id}/reroll-message` | — | `{active, target_kind, target_message_id, count, current_idx, running, elapsed_ms, error, items:[…]}` | 重摇状态（**不吐全文**，预览几十字）。没进模式 ⇒ `active: false`（**不是 404**）|
 | POST | `.../reroll-message/switch` | `{"idx": n}` | 同上 | 选中第 `n` 版 ⇒ **就地重建**那条 Message（**UUID 不变**；正文与 usage / 耗时 / 思考一起换；摘要照旧标 `dirty`）|
@@ -502,10 +503,14 @@ usage 的真实形状：`{prompt_tokens, completion_tokens, total_tokens, prompt
 
 | vendor | base_url（缺省，可覆写） | 密钥从哪来 | 每请求必带的头 |
 |---|---|---|---|
+| `dummy` | （无，不联网） | 不用 | 无 |
+| `openai-compat` / `custom` | （无，全靠配置给） | 按配置 / 环境 | 无（custom 可覆写端点跑 systemone，见下） |
 | `opencode-go` | `https://opencode.ai/zen/go/v1`（官方 discussion 里有人实测这条路 200）| `OPENCODE_API_KEY` | **`x-opencode-session: {{session_id}}`（网关必需** —— 注释原话"required per-conversation routing header"）+ `x-opencode-client: pi` + `user-agent: pi (linux <release>; x64)` + `accept: application/json` |
 | `opencode` | `https://opencode.ai/zen` | 同上 | 同上 |
-| `openrouter` | `https://openrouter.ai/api/v1` | `OPENROUTER_API_KEY` | `HTTP-Referer: https://pi.dev` / `X-OpenRouter-Title: pi` / `X-OpenRouter-Categories: cli-agent`（**可选**，归属用 —— Pi 那边还跟着"安装遥测开关"一起关） |
+| `openrouter` | `https://openrouter.ai/api/v1` | `OPENROUTER_API_KEY` | `HTTP-Referer: https://pi.dev` / `X-OpenRouter-Title: pi` / `X-OpenRouter-Categories: cli-agent`（**可选**，归属用 —— Pi 那边还跟着"安装遥测开关"一起关）；systemone 走 `https://openrouter.ai/api/alpha/decisions`（verbatim 覆写） |
 | `deepseek` | `https://api.deepseek.com` | `DEEPSEEK_API_KEY` | 无（直连官方：标准 UA + `stream_options.include_usage`；思考回传用官方的 `reasoning_content` —— OpenAI 兼容，不会话头、不归属头） |
+| `openai` | `https://api.openai.com/v1` | `OPENAI_API_KEY` | 会话亲和三条 + `prompt_cache_key`（长缓存才 `24h`） |
+| `ollama` / `lmstudio` | `http://127.0.0.1:11434/v1` / `http://127.0.0.1:1234/v1` | 不用 | 无（本地） |
 | `typesafe`（JEV 决策） | `https://api.typesafe.ai/v1/systemone`（**verbatim 整条 URL，原样 POST，不拼路径**） | `TYPESAFE_API_KEY`（备 `JEV_API_KEY`） | 只有 `Content-Type` + `Accept: application/json` + `Authorization`（无会话头：上下文在 state 里自带） |
 - **两轴**：`vendor` = 找谁（端点预设 + key env + 内建头）；`protocol` = 说什么话（`openai-chat-completion` 缺省 / `systemone` / 占位中的 `openai-response` 等）。
   渐进式配置：先选 `protocol`（干什么），再按兼容矩阵选 `vendor`（找谁），有预设的只输 `api_key`，只有 `custom` 才要 `base_url`。
@@ -713,7 +718,7 @@ prompt caching**"）。**不要为能力造子 session id**：网关的会话 id
   | 生成中（`生成中… 1.2s`，含「`/stop` 停止」）| **黄** `33` | |
   | 错误 / 失败（状态行那句**还摆着的**失败、删除预览的「不可逆」）| **红** `31` | |
   | 选中的列表项（挑选项 / 命令面板）| **粗体 + 青** `1;36` | 未选中保持默认 |
-  | `/outgoing` 查看器 | `source=summary` **黄** / `source=system` **暗** / `source=message` 默认 | 摘要是压缩过的，要一眼看出来 |
+  | `/outgoing` 查看器 | `type=summary` **黄** / `type=system` **暗** / `type=message` 默认 | 摘要是压缩过的，要一眼看出来 |
 
 - **降级两档**（一次判清，只有一处读环境）：
   · **颜色**：`NO_COLOR`（业界约定，设了就关）、`TERM=dumb`、非 TTY ⇒ 一律纯文本。
@@ -763,7 +768,7 @@ prompt caching**"）。**不要为能力造子 session id**：网关的会话 id
   · TUI 模式下日志落到 `data/microchat.log`（别糊在界面上）；
   · 退出用 **`/quit` 或 ctrl+c** —— **没有裸 `q`**（会和打字打架）。
 - 跑法：`go -C core run .`（一条命令跑起来；要二进制就 `go -C core build -o ../microchat .`）。**TUI 内的命令**照 Pi：`/command`。**只放已经有路由的命令**，没搬完的在 `/help` 里如实列出来
-  （现在能用的：`/help` `/new` `/delete` `/cut` `/copy` `/rename` `/resume` `/model` `/providers` `/provider-add` `/provider-del` `/outgoing` `/state` `/system` `/compact` `/reroll` `/reroll-summary` `/stop` `/refresh` `/quit`；
+  （现在能用的：`/help` `/new` `/delete` `/cut` `/copy` `/rename` `/resume` `/model` `/providers` `/provider-add` `/provider-del` `/outgoing` `/state` `/usage` `/think` `/system` `/compact` `/reroll` `/reroll-summary` `/stop` `/refresh` `/quit`；
   还没做的：`/archive` —— `/fork`／`/tasks`／`/probe` 那几条**已砍**，不会再有
   （`/fork` 的位置由 `/copy` 接管）。
   `/delete`（删整条会话 —— **删完立刻再建一条并进去**）与 `/cut`（删一条及之后）都**不可逆** ⇒ 两个都先摊开、等 `回车 / y` 点头才动手；

@@ -29,7 +29,7 @@ func (s *Server) providerUsage(w http.ResponseWriter, r *http.Request) {
 	}
 	if providers.FromConfig(provider).EffectiveVendor() != providers.VendorOpenCodeGo {
 		writeError(w, http.StatusBadRequest, "invalid",
-			"渠道 "+id+" 不是 opencode-go（套餐用量端点只有 OpenCode GO 有）—— 换个渠道，或把它的 kind 改成 opencode-go")
+			"渠道 "+id+" 不是 opencode-go（套餐用量端点只有 OpenCode GO 有）—— 换个渠道，或把它的 vendor 改成 opencode-go")
 		return
 	}
 	effective := providers.ApplyPreset(providers.FromConfig(provider))

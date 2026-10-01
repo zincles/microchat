@@ -69,8 +69,6 @@ func ResolveSystemPrompt(session model.Session, agents config.AgentsConfig) (str
 }
 
 // OpRow：一条"可现演的操作"—— 带上它来自哪条消息，于是"哪句话带来的状态"追得回来。
-//
-// JSON 形状与旧版（deprecated/）逐字一致：字段顺序即契约。
 type OpRow struct {
 	Seq       int64          `json:"seq"`
 	Table     string         `json:"table"`

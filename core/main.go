@@ -1,11 +1,4 @@
-// microchat 后端（Go 版）—— 主体代码。老的 Rust 版在 deprecated/ 里当参照，别再加功能。
-//
-// 迁移纪律（写在这里，免得忘）：
-//  1. **表结构照搬** `deprecated/src/store.rs` 的 MIGRATIONS（一字不改，见 internal/store/migrations.go）；
-//  2. **接口照搬** AGENTS.md 那张表 —— `python3 deprecated/tools/api-audit.py` 全绿 = 接口层次转对了；
-//  3. **行为照搬** 171 条测试 —— `go test ./...` 全绿 = 行为层次转对了；
-//  4. **只许对账**：`python3 deprecated/tools/go-parity.py` 把两版的响应逐字节比 —— 说法不同就是没转对；
-//  5. Rust 版先原地留着当参照，Go 版跑绿了再谈删。
+// microchat 后端 —— 主体代码（旧版 Rust 已删，现在只有这一份实现）。
 package main
 
 import (

@@ -72,11 +72,8 @@
 
 ### A. 金字塔压缩
 **已落地** ✓ ⇒ 见上面「已完成：金字塔压缩」那一节（2026-10-01：idx 入口、一次只吃同一层、单入口落库）。
-**历史债（小修小补，攒着一起还）**：
-- `source` → `type` 改名：`state.Outgoing.Source`（JSON `source`）+ `GET /prompt` 的 `source` + `summaries.source_kind` ——
-  三处一起改（TUI 查看器、Godot 将来、测试黄金断言都在读它）；`SrcKind` 这种中间名不许出现，要改就一次改到位。
-- `Outgoing` 加 `children` 嵌套（summary 项往下展开一层，叶子只给 id+idx 不给正文；真发那一发不展开）+
-  `POST .../compact/preview {"blocks": N}`（只算不写：人话一句 + 压完的 `after` 清单）—— 口径已定，动手就是。
+**历史债已还** ✓（2026-10-02）：`source`→`type` 三处改到位 + `Outgoing.children` 嵌套 + `POST .../compact/preview` +
+`/compact` 按块注释。DB 列名 `source_kind` 是历史（注释写清，不改）。
 
 ### B. Telegram Bot（下一件大事 ✓ 用户点名"特色"）
 · **不需要公网 HTTPS** ✓✓（**长轮询**即可 —— 只有 webhook 与 Mini App 才要公网 ✓）。
