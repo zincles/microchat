@@ -3093,3 +3093,19 @@ func TestTelegramTokenSetRejectsEmpty(t *testing.T) {
 		t.Fatalf("空 token 该说用法：%q", empty.(model).lastAction)
 	}
 }
+
+// 括号粘贴：整段插到光标处（与打字同一条路；picker/viewer/confirm 开着不吃）。
+func TestPasteInsertsAtCursor(t *testing.T) {
+	m := fixture()
+	m.input, m.inputCursor = "ab", 1
+	updated, _ := m.Update(tea.PasteMsg{Content: "XYZ"})
+	got := updated.(model)
+	if got.input != "aXYZb" || got.inputCursor != 4 {
+		t.Fatalf("粘贴该插光标处：%q cursor=%d", got.input, got.inputCursor)
+	}
+	// 中文不断半个字
+	cjk, _ := m.Update(tea.PasteMsg{Content: "你好世界"})
+	if cjk.(model).inputCursor != 1+4 {
+		t.Fatalf("中文光标该按 rune 走：%d", cjk.(model).inputCursor)
+	}
+}

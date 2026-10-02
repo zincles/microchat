@@ -852,10 +852,19 @@ func (m model) fail(text string) model {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch message := msg.(type) {
+	case tea.PasteMsg: // 括号粘贴（终端把粘贴整段包着发过来）—— 与打字同一条路：插光标处
+		text := message.Content
+		if text != "" && m.picker == pickerNone && m.viewer == nil && m.confirm == nil {
+			runes := []rune(m.input)
+			at := clampCursor(m.inputCursor, len(runes))
+			m.input = string(runes[:at]) + text + string(runes[at:])
+			m.inputCursor = at + len([]rune(text))
+			m.paletteIndex = 0
+		}
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.width, m.height, m.ready = message.Width, message.Height, true
 		return m, nil
-
 	case healthMsg:
 		if message.err != nil {
 			m.version = "" // 连不上 ⇒ 如实"未连接"，别留着上一次的版本号（界面口径：两半互不顶替）
