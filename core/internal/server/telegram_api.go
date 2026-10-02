@@ -73,27 +73,3 @@ func (s *Server) setTelegram(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, s.telegramStatus())
 }
-
-// bindTelegram：`/telegram-bind` 的旧入口 —— 只改 allowed_id（顶掉旧的），其余不动。
-// 留着是怕 TUI/脚本还在调它；新代码走 setTelegram。
-func (s *Server) bindTelegram(w http.ResponseWriter, r *http.Request) {
-	var req setTelegramReq
-	if !decodeJSON(w, r, &req) {
-		return
-	}
-	if req.AllowedID == nil || *req.AllowedID <= 0 {
-		writeError(w, http.StatusUnprocessableEntity, "invalid", "allowed_id 是那串纯数字 id（不是 @用户名）")
-		return
-	}
-	cfg, err := config.LoadConfig(s.paths)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
-		return
-	}
-	cfg.Telegram.AllowedID = *req.AllowedID
-	if err := config.SaveJSON(s.paths.Config("config.json"), cfg); err != nil {
-		writeStoreError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, s.telegramStatus())
-}

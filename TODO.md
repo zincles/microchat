@@ -81,7 +81,9 @@
   + 后端 `GET/PUT /config/telegram`（`has_token/allowed_id/enabled/running`；PUT 三格各改各的）
   + bot 长轮询（`enabled` 显式开才跑；没 token/连不上只 log）+ 白名单门卫（未绑只回 id）+ 超长按 rune 分段/翻页按钮（edit 同一条，不刷屏）。
 · **岔路口已定** ✓：**单人白名单**（只认你的 Telegram id ✓ 保持单人自托管模型 ✓）。
-· 还没做：① **真 token 实测**（getMe 探活 → 收发回声 → 超长翻页 → 门卫）；② **接 chat**（发话就是一轮：发消息→轮询→节流 edit；先回声验证）。
+· 真 token 实测 ✓（2026-10-02：getMe 通、收发回声通、菜单已摆 3 条；**发现并修了路由接错的 bug**——`PUT /config/telegram` 曾指着只认 allowed_id 的旧 handler，
+  `/telegram-bot-token-set` 与 `/telegram-toggle` 实际不工作；现已指向三格版并有测试）。
+· 还没做：**接 chat**（发话就是一轮：发消息→轮询→节流 edit；现在只回声）。
 · 旧口径保留：长轮询（不要公网）✓；流式节流 edit（≥100–300ms）✓；4096 按 rune 切 ✓；48 小时以上改发新消息 ✓；Topics 一话题一会话 ✓。
 
 ### C. 压缩的自动触发（**先聊三件才动手** ✗）

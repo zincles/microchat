@@ -3109,3 +3109,129 @@ func TestPasteInsertsAtCursor(t *testing.T) {
 		t.Fatalf("中文光标该按 rune 走：%d", cjk.(model).inputCursor)
 	}
 }
+
+// ── 底栏 TG 连通性指示（用户 2026-10-02 定）──
+//
+// 五种状态各自的段（零值 styler ⇒ 纯文本断言）：没拉过 / 没配**不显示**；
+// 开着跑着 = 绿勾；开着有 token 没跑 = 红叉；开着没 token = 红「缺token」；有 token 没开 = 暗「关」。
+func TestTelegramIndicatorStates(t *testing.T) {
+	cases := []struct {
+		name    string
+		loaded  bool
+		binding TelegramBinding
+		want    string
+		color   string
+	}{
+		{"没拉过不显示", false, TelegramBinding{}, "", ""},
+		{"没配不显示", true, TelegramBinding{}, "", ""},
+		{"开了+跑着=绿勾", true, TelegramBinding{HasToken: true, Enabled: true, Running: true}, "TG ✓", "\x1b[32mTG ✓\x1b[0m"},
+		{"开了+有token没跑=红叉", true, TelegramBinding{HasToken: true, Enabled: true}, "TG ✗", "\x1b[31mTG ✗\x1b[0m"},
+		{"开了+没token=缺token", true, TelegramBinding{Enabled: true}, "TG 缺token", "\x1b[31mTG 缺token\x1b[0m"},
+		{"有token没开=暗色关", true, TelegramBinding{HasToken: true}, "TG 关", "\x1b[2mTG 关\x1b[0m"},
+	}
+	for _, tc := range cases {
+		m := fixture()
+		m.tgLoaded, m.tg = tc.loaded, tc.binding
+		status := strings.Join(m.renderStatus(m.width), "\n")
+		if tc.want == "" {
+			if strings.Contains(status, "TG") {
+				t.Fatalf("%s：不该显示 TG 段：%q", tc.name, status)
+			}
+			continue
+		}
+		if !strings.Contains(status, tc.want) {
+			t.Fatalf("%s：缺 %q：%q", tc.name, tc.want, status)
+		}
+		// 段的位置：插在 `已连接 vX` **之前**
+		if at, conn := strings.Index(status, tc.want), strings.Index(status, "已连接 v"); conn >= 0 && at > conn {
+			t.Fatalf("%s：TG 段该在「已连接」之前：%q", tc.name, status)
+		}
+		if got := colored(m).View().Content; !strings.Contains(got, tc.color) {
+			t.Fatalf("%s：颜色不对（该有 %q）：\n%q", tc.name, tc.color, got)
+		}
+	}
+}
+
+// 低频轮询：还没拉过 ⇒ 去拉一次；拉到"没配" ⇒ **不再约下一次**（一个包都不多发）；
+// 配了 ⇒ 续下一次；拉不到 ⇒ 静默丢（不刷屏报错）但该续的还续（别把轮询掐死）。
+func TestTelegramPollSelfRenewsOnlyWhenConfigured(t *testing.T) {
+	m := fixture()
+	if got, _ := m.Update(tgTickMsg{}); got.(model).tgLoaded {
+		t.Fatal("节拍本身不该改状态")
+	}
+	if _, cmd := m.Update(tgTickMsg{}); cmd == nil {
+		t.Fatal("还没拉过时该去拉一次")
+	}
+	after, _ := m.Update(tgStatusMsg{binding: TelegramBinding{}})
+	if !after.(model).tgLoaded {
+		t.Fatal("拉到了该记下（好区分「没拉过」与「没配」）")
+	}
+	if _, cmd := after.(model).Update(tgStatusMsg{binding: TelegramBinding{}}); cmd != nil {
+		t.Fatal("没配 TG 的人不该再约下一次轮询")
+	}
+	if _, cmd := after.(model).Update(tgTickMsg{}); cmd != nil {
+		t.Fatal("没配的人就算节拍到了也不该再问（一个包都不多发）")
+	}
+	if _, cmd := after.(model).Update(tgStatusMsg{binding: TelegramBinding{HasToken: true}}); cmd == nil {
+		t.Fatal("配了 TG 该续下一次轮询")
+	}
+	silent, _ := m.Update(tgStatusMsg{err: errTest})
+	if said := silent.(model).lastAction; said != m.lastAction {
+		t.Fatalf("拉不到该静默丢、不动底栏：%q", said)
+	}
+	if _, cmd := silent.(model).Update(tgTickMsg{}); cmd == nil {
+		t.Fatal("拉不到之后还得接着试（还没拉过）")
+	}
+}
+
+// /telegram-toggle：先 GET 拿当前开关，再 PUT `{"enabled": <翻转>}`（别把"没读到"当"关着"给开了）；
+// 回执如实回显翻转后的状态，底栏那段指示也当场刷新。
+func TestTelegramToggleRoundTrip(t *testing.T) {
+	var puts []map[string]any
+	gets := 0
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/api/v1/config/telegram" {
+			http.NotFound(w, r)
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			gets++
+			_ = json.NewEncoder(w).Encode(TelegramBinding{HasToken: true, AllowedID: 42, Enabled: false})
+		case http.MethodPut:
+			raw, _ := io.ReadAll(r.Body)
+			var body map[string]any
+			_ = json.Unmarshal(raw, &body)
+			puts = append(puts, body)
+			_ = json.NewEncoder(w).Encode(TelegramBinding{HasToken: true, AllowedID: 42, Enabled: true, Running: true})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer backend.Close()
+
+	m := fixture()
+	m.client = NewClient(backend.URL, "")
+	updated, cmd := m.runCommand("/telegram-toggle")
+	if cmd == nil {
+		t.Fatal("/telegram-toggle 该去读开关再翻转")
+	}
+	next := runCmds(t, updated.(model), cmd)
+	if gets != 1 {
+		t.Fatalf("该先 GET 一次拿到当前开关：%d", gets)
+	}
+	if len(puts) != 1 {
+		t.Fatalf("该 PUT 一次：%+v", puts)
+	}
+	if got := puts[0]; len(got) != 1 || got["enabled"] != true {
+		t.Fatalf("PUT 体该只有翻转后的 enabled=true：%+v", got)
+	}
+	if said := next.lastAction; !strings.Contains(said, "开关开") || !strings.Contains(said, "跑着") {
+		t.Fatalf("回执该回显翻转后的状态：%q", said)
+	}
+	// 回执就是最新状态 ⇒ 指示器当场亮起来（不必等下一拍）
+	if !strings.Contains(next.View().Content, "TG ✓") {
+		t.Fatalf("翻转后指示器该当场刷新：\n%s", next.View().Content)
+	}
+}

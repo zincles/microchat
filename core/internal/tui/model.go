@@ -121,6 +121,10 @@ type model struct {
 	scroll int
 	// tasks：任务面板最新那一屏（`GET /tasks` 轮询来；running>0 才问，没活不问）。
 	tasks TaskBoard
+	// tg / tgLoaded：Telegram 连通性（底栏那段指示）—— `GET /config/telegram` **低频**轮询来。
+	// tgLoaded 区分"没拉过"与"拉到了但没配"：**没配的人底栏不长草、一个包都不多发**。
+	tg       TelegramBinding
+	tgLoaded bool
 }
 
 // liveTurn：这一轮生成在界面上的样子。
@@ -702,6 +706,50 @@ func (m model) tasksActive() bool {
 	return m.tasks.Running > 0
 }
 
+// ── Telegram 连通性（底栏那一段指示）─────────────────────────────────────
+//
+// 后端 `GET /config/telegram` 会告诉三件事：有没有 token（has_token）、配置里开没开
+// （enabled）、长轮询此刻真跑没跑（running）。TUI 每隔 `tgPollInterval` 拉一次，
+// 好让"开着的 bot 掉了 / 起来了"当场在底栏现形。
+//
+// **低频 + 自续期**：只给配了 TG 的人续下一次 tick（`enabled || has_token`），
+// 没配的人一个包都不多发（见 tgWanted）。与 turnTick / tasksPoll 那套"搭车"分开：
+// 那两个只在有活在跑时转，TG 得**常驻**地看着（bot 掉线时本地往往没活）。
+const tgPollInterval = 10 * time.Second
+
+// tgTickMsg：TG 轮询的节拍（与生成同一套：tick 而不是在 Cmd 里 sleep）。
+type tgTickMsg struct{}
+
+// tgStatusMsg：一次 TG 取数的结果。err 时**静默丢**：指示器宁可不亮，也不刷屏报错。
+type tgStatusMsg struct {
+	binding TelegramBinding
+	err     error
+}
+
+// loadTelegram：拉一次 TG 状态（`GET /config/telegram`）。
+func loadTelegram(client *Client) tea.Cmd {
+	return func() tea.Msg {
+		binding, err := client.TelegramStatus()
+		return tgStatusMsg{binding: binding, err: err}
+	}
+}
+
+// tgTickCmd：下一次 TG 轮询的节拍（自续期由收到结果的 handler 约）。
+func tgTickCmd() tea.Cmd {
+	return tea.Tick(tgPollInterval, func(time.Time) tea.Msg { return tgTickMsg{} })
+}
+
+// tgWanted：还要不要继续约下一次轮询 —— **没配 TG 的人一个包都不多发**。
+//
+// 还没拉过 ⇒ 要（启动那一刻后端可能还没起来，得接着试；拉到了且没配就自然停）；
+// 拉过了 ⇒ 只有配了（开着或有 token）才继续看着。
+func (m model) tgWanted() bool {
+	if !m.tgLoaded {
+		return true
+	}
+	return m.tg.Enabled || m.tg.HasToken
+}
+
 // ── 重摇那两条（`/reroll` 与 `/reroll-summary`）────────────────────────────
 //
 // 两个家族一一镜像：进模式 / 切换 / 删除 / 退出；只有"进模式"要的入参不同
@@ -872,14 +920,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.version = message.health.Version
 		m.lastAction = "已连接 " + m.client.BaseURL
+		// TG 连通性搭这一跳先拉一次（**还没拉过才拉** —— 拉过之后由低频轮询自续期，
+		// 免得重连时又多接一条链）。拉不到也不吭声（tgStatusMsg 静默丢）。
+		var telegram tea.Cmd
+		if !m.tgLoaded {
+			telegram = loadTelegram(m.client)
+		}
 		// 连上之后先做**启动编排**（先清空会话、再建一条真会话）—— 只做一次：
 		// 之后再有 healthMsg（连接失败后补拉）就只是补版本号，照旧去拉列表。
 		if m.startup {
 			m.startup = false
 			m.lastAction = "已连接 " + m.client.BaseURL + " · 清理空会话、建一条新会话…"
-			return m, bootstrapCmd(m.client, m.chosenProvider, m.chosenModel)
+			return m, tea.Batch(telegram, bootstrapCmd(m.client, m.chosenProvider, m.chosenModel))
 		}
-		return m, loadSessions(m.client)
+		return m, tea.Batch(telegram, loadSessions(m.client))
 
 	case sessionsMsg:
 		if message.err != nil {
@@ -1189,6 +1243,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		binding := message.binding
+		// 这一趟回执就是**最新的 TG 状态** ⇒ 顺手把底栏那段指示刷新（不必等下一拍）。
+		// 从"没配"翻上来时（原先没轮询）还得把低频轮询接上，不然指示器不会再自己更新。
+		wasWatching := m.tgLoaded && m.tgWanted()
+		m.tg, m.tgLoaded = binding, true
 		token := "无 token"
 		if binding.HasToken {
 			token = "有 token"
@@ -1206,6 +1264,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			bound = "绑 " + strconv.FormatInt(binding.AllowedID, 10)
 		}
 		m.lastAction = "TG（" + token + " · " + bound + " · 开关" + state + " · " + running + "；改开关/token 要重启生效）"
+		if !wasWatching && m.tgWanted() {
+			return m, tgTickCmd()
+		}
 		return m, nil
 	case deletedProviderMsg:
 		if message.err != nil {
@@ -1370,6 +1431,28 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil // 面板问不到就当没活（指示器宁可不亮，不许报错刷屏）
 		}
 		m.tasks = message.board
+		return m, nil
+
+	case tgTickMsg:
+		// 到了节拍再看一眼（没必要问的人不问了 —— 见 tgWanted）。
+		if !m.tgWanted() {
+			return m, nil
+		}
+		return m, loadTelegram(m.client)
+
+	case tgStatusMsg:
+		if message.err != nil {
+			// **静默丢**：指示器宁可不亮，也不刷屏报错。但该续的下一次还得续 ——
+			// 还没拉过 / 配了 TG 的人，一次失败不该把轮询掐死（下一拍接着试）。
+			if m.tgWanted() {
+				return m, tgTickCmd()
+			}
+			return m, nil
+		}
+		m.tg, m.tgLoaded = message.binding, true
+		if m.tgWanted() {
+			return m, tgTickCmd()
+		}
 		return m, nil
 
 	case rerollMsg:
@@ -3229,10 +3312,36 @@ func (m model) currentSession() *Session {
 	return &m.sessions[index]
 }
 
+// tgLine：底栏那段 **Telegram 连通性指示**（没拉过 / 没配 ⇒ 整段不显示）。
+//
+// 口径（用户 2026-10-02 定）：
+//
+//	开了 + 跑着        ⇒ `TG ✓` 绿（长轮询真在转）；
+//	开了 + 有 token 但没跑 ⇒ `TG ✗` 红（多半启动失败 / 端口冲突，原因在 log 里）；
+//	开了 + 没 token     ⇒ `TG 缺token` 红（开着也连不上）；
+//	有 token 但没开     ⇒ `TG 关` 暗色（别吓人：这是用户自己的选择）；
+//	没拉过 / 没配       ⇒ 不显示（没配 TG 的人底栏不长草）。
+func (m model) tgLine() (string, styleKind, bool) {
+	if !m.tgLoaded {
+		return "", stylePlain, false
+	}
+	switch {
+	case m.tg.Enabled && m.tg.Running:
+		return "TG ✓", styleGreen, true
+	case m.tg.Enabled && m.tg.HasToken:
+		return "TG ✗", styleRed, true
+	case m.tg.Enabled:
+		return "TG 缺token", styleRed, true
+	case m.tg.HasToken:
+		return "TG 关", styleDim, true
+	}
+	return "", stylePlain, false
+}
+
 // renderStatus：底下的**会话状态行**（口径见 AGENTS.md「界面该长什么样」）。
 //
 // 两半**互不顶替**（旧口径就这么定的）：会话那半（名字 | 短 id | 渠道/模型 | 上下文占用 | 在不在跑）
-// 与"已连接 vX | 最近一次动作"。一行放得下就一行，放不下就折成两行 —— **最多两行**。
+// 与"TG 连通性 | 已连接 vX | 最近一次动作"。一行放得下就一行，放不下就折成两行 —— **最多两行**。
 func (m model) renderStatus(width int) []string {
 	session := m.currentSession()
 	head := []segment{{"没有会话", styleDim}}
@@ -3273,9 +3382,15 @@ func (m model) renderStatus(width int) []string {
 		sessionInfo += " | " + m.style.paint(stateKind, state)
 		infoWidth += len(" | ") + runewidth.StringWidth(state)
 	}
-	tail := []segment{{"未连接", styleDim}}
-	if m.version != "" {
-		tail = []segment{{"已连接 v" + m.version, styleDim}}
+	tail := []segment{}
+	// TG 连通性那段插在 `已连接 vX` **之前**（没拉过 / 没配就整段不出现 —— 见 tgLine）。
+	if text, kind, show := m.tgLine(); show {
+		tail = append(tail, segment{text, kind})
+	}
+	if m.version == "" {
+		tail = append(tail, segment{"未连接", styleDim})
+	} else {
+		tail = append(tail, segment{"已连接 v" + m.version, styleDim})
 	}
 	if m.lastAction != "" {
 		kind := stylePlain
@@ -3499,6 +3614,7 @@ const (
 	styleMagenta
 	styleYellow
 	styleRed
+	styleGreen
 	styleBoldCyan
 )
 
@@ -3520,6 +3636,8 @@ func (s styler) paint(kind styleKind, text string) string {
 		code = "33"
 	case styleRed:
 		code = "31"
+	case styleGreen:
+		code = "32"
 	case styleBoldCyan:
 		code = "1;36"
 	default:

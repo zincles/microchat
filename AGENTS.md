@@ -310,6 +310,8 @@ delete(AA)           # 删除
 | DELETE | `/agents/{agent_id}` | — | 204 | 内置默认 agent 不可删 |
 | GET | `/config/chat` | — | `ChatConfig` | `config.json` 的 chat 段（不含密钥）|
 | PUT | `/config/chat` | `ChatConfig` | `ChatConfig` | **整段替换** chat（其余段原样保留）|
+| GET | `/config/telegram` | — | `{has_token,allowed_id,enabled,running}` | TG bot 状态（**token 只回有没有**，内容永不回显；`running` = 长轮询真跑着）|
+| PUT | `/config/telegram` | `{allowed_id?,bot_token?,enabled?}` | 同上 | **三格各改各的**（nil = 不动；`bot_token:""` = 清掉文件里的回落 env）；改开关/token **重启生效**（runner 归 main 管）|
 
 ### 运维
 
@@ -696,6 +698,9 @@ prompt caching**"）。**不要为能力造子 session id**：网关的会话 id
   "当前会话**还没有消息** ⇒ 无效" ✓（语义变成"你已经在一条新会话里了"）。
 
 - **会话状态行**（底下 1-2 行，**最多两行**）：前五个字段是**当前会话**的；后两半（`已连接 vX` 与"最近一次动作"）**互不顶替**（旧口径也这么定的）。一行放不下就折两行。
+  里面还搭一个 **TG 指示段** ✓（2026-10-02 加，10s 自续期轮询 `GET /config/telegram`，没配就一个包都不发）：
+  `enabled && running` ⇒ `TG ✓`（绿）/ `enabled && !running` ⇒ `TG ✗`（红）/ `enabled && !has_token` ⇒ `TG 缺token`（红）/
+  `has_token && !enabled` ⇒ `TG 关`（暗）；没配 / 没拉过 ⇒ **不显示**。
 - **输入行有光标**（2026-09-30 加 ✓ —— 早先是"只会在末尾追加"，`←`/`→` 移不动、也看不见光标）：
   打字**插在光标处**、退格删**光标前**一个 rune、`Delete` 删**光标处**那个、回车 / `Esc` 之后光标归 0；
   键位 `←`/`→` 一次一个 rune，`Home`/`Ctrl+A` 到首、`End`/`Ctrl+E` 到尾。

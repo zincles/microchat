@@ -3,6 +3,7 @@ package tg
 import (
 	"context"
 	"fmt"
+	"log"
 	"strconv"
 	"sync"
 	"time"
@@ -57,7 +58,8 @@ func NewRunner(token string, allowed int64) (*Runner, error) {
 
 // Go：后台跑长轮询（阻塞由调用方决定 —— main 里 go r.Go(ctx)）。
 func (r *Runner) Go(ctx context.Context) error {
-	if _, err := r.bot.GetMe(ctx); err != nil {
+	me, err := r.bot.GetMe(ctx)
+	if err != nil {
 		return fmt.Errorf("tg: 连不上 Telegram（token 错 / 没网）：%w", err)
 	}
 	if _, err := r.bot.SetMyCommands(ctx, &bot.SetMyCommandsParams{Commands: MenuCommands}); err != nil {
@@ -69,7 +71,11 @@ func (r *Runner) Go(ctx context.Context) error {
 	now := time.Now()
 	r.started = &now
 	r.mu.Unlock()
+	// 起来了就把"是谁、绑的谁"落一行日志 —— 排障时这行最有用（TUI 底栏只有个 ✓）。
+	log.Printf("TG bot 连上：@%s（%s）· 菜单已摆 %d 条 · 绑定 %d",
+		me.Username, me.FirstName, len(MenuCommands), r.allowedID())
 	r.bot.Start(ctx)
+	log.Printf("TG bot 长轮询退出（@%s）", me.Username)
 	return nil
 }
 

@@ -143,11 +143,6 @@ func main() {
 	// 起标题挂在一轮生成上（拿到回复之后自动一次）—— 与压缩同一条口径：能力的事归能力
 	chatService.Titles = title.New(st, paths, tasks)
 
-	// TG bot：显式开了（`telegram.enabled`）才跑 —— 连外网是显式动作，不许"配了就跑"。
-	// 没 token / 连不上 ⇒ 只 log（不弹错、不退出、不挡 TUI）。
-	tgRunner := startTelegramBot(cfg)
-	defer tgRunner.Stop() // 没跑起来就是空转（幂等）
-
 	// **先真听上端口，再切日志到文件**：端口被占这类启动失败必须留在**终端**上看得见 ——
 	// 不然 TUI 模式下日志去了 data/microchat.log，终端里只剩一句 "exit status 1"（真发生过）。
 	listener, err := net.Listen("tcp", *addr)
@@ -163,6 +158,12 @@ func main() {
 			defer logFile.Close()
 		}
 	}
+
+	// TG bot：显式开了（`telegram.enabled`）才跑 —— 连外网是显式动作，不许"配了就跑"。
+	// 没 token / 连不上 ⇒ 只 log（不弹错、不退出、不挡 TUI）。
+	// **放在日志切换之后**：TUI 模式下这几句要落进 microchat.log（不然界面上根本看不见）。
+	tgRunner := startTelegramBot(cfg)
+	defer tgRunner.Stop() // 没跑起来就是空转（幂等）
 	log.Printf("microchat 起在 http://%s（数据 %s，配置 %s，user_version=%d，TUI=%v）",
 		*addr, paths.DataDir, paths.ConfigDir, version, interactive)
 	go func() {

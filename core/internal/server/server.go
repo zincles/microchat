@@ -77,7 +77,7 @@ func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *ch
 	s.mux.HandleFunc("PATCH /api/v1/models", s.setModelOverride)
 	// TG bot 配置（单账户绑定；token 只回有没有）—— TUI 的 `/telegram-bind` 走这里
 	s.mux.HandleFunc("GET /api/v1/config/telegram", s.getTelegramConfig)
-	s.mux.HandleFunc("PUT /api/v1/config/telegram", s.bindTelegram)
+	s.mux.HandleFunc("PUT /api/v1/config/telegram", s.setTelegram)
 	// 任务面板：进程内的事实（与 `-debug tasks` 同一份 Board；轮询用，不进库）
 	s.mux.HandleFunc("GET /api/v1/tasks", s.taskBoard)
 
