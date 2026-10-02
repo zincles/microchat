@@ -85,6 +85,11 @@
   `/telegram-bot-token-set` 与 `/telegram-toggle` 实际不工作；现已指向三格版并有测试）。
 · 三条增强 ✓（2026-10-02）：无效命令明说（`/xxx` 未登记 ⇒ 回"不认识"+可用清单，不再当普通文本 echo）；
   摆菜单前**清四个常用作用域的旧命令**（Hermes 残留这么来的）；**上线给绑定用户发问候**（失败只记日志）。
+· 命令面扩展 ✓（2026-10-02）：bot 18 条命令（/help /status /new /resume /rename /copy /delete /cut /stop /compact
+  /state /outgoing /usage /think /system /providers /model + /start）——**经共享 `internal/apiclient` 调本机后端**
+  （抽包后 TUI 与 bot 同用一个客户端，零第二份）；菜单与 /help 从注册表派生（不许两处手写）；/status 打印 CLI 底栏内容
+  （会话 | 上下文 | 轮次 | TG | 后端）；/delete /cut 走按钮确认（callback_data ≤64B，待办表在内存）；
+  /model 按钮翻页选模型。不做：/provider-add /provider-del（配置管理留 CLI）、/reroll*（下一步）、/telegram-*（CLI 管）、/quit。
 · 还没做：**接 chat**（发话就是一轮：发消息→轮询→节流 edit；现在只回声）。
 · 旧口径保留：长轮询（不要公网）✓；流式节流 edit（≥100–300ms）✓；4096 按 rune 切 ✓；48 小时以上改发新消息 ✓；Topics 一话题一会话 ✓。
 

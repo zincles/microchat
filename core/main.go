@@ -19,6 +19,7 @@ import (
 	"golang.org/x/term"
 
 	"microchat/internal/abilities"
+	"microchat/internal/apiclient"
 	"microchat/internal/chat"
 	"microchat/internal/compact"
 	"microchat/internal/config"
@@ -45,9 +46,18 @@ func (n tgNullRunner) Stop() {
 
 func (n tgNullRunner) Running() bool { return n.runner != nil && n.runner.Running() }
 
+// newTGClient：TG bot 专用后端客户端 —— 连**本机回环**（跟 TUI 同一条 HTTP 契约），
+// 超时用短的那档（`tg.APITimeout`）：一条命令卡住不许把长轮询挂在那儿。
+func newTGClient(addr string, cfg config.Config) *apiclient.Client {
+	client := apiclient.NewClient(loopbackURL(addr, cfg.Server.Port), tokenOf(cfg))
+	client.HTTP.Timeout = tg.APITimeout
+	return client
+}
+
 // startTelegramBot：`telegram.enabled` 才建 runner 跑长轮询 —— 没开/没 token/连不上都只 log。
 // 一律返回"能问跑没跑"的东西（没跑起来就是空转壳，调用方 defer Stop 即可，不用判空）。
-func startTelegramBot(cfg config.Config) tgNullRunner {
+// `api` = 连本机后端的客户端（bot 的命令全靠它取数/写数）—— 由 main 用回环地址建好传进来。
+func startTelegramBot(cfg config.Config, api *apiclient.Client) tgNullRunner {
 	if !cfg.Telegram.Enabled {
 		return tgNullRunner{}
 	}
@@ -56,7 +66,7 @@ func startTelegramBot(cfg config.Config) tgNullRunner {
 		log.Printf("TG bot 没启动：没有 token（config.json 的 telegram.bot_token 或 TELEGRAM_BOT_TOKEN）")
 		return tgNullRunner{}
 	}
-	runner, err := tg.NewRunner(token, cfg.Telegram.AllowedID)
+	runner, err := tg.NewRunner(token, cfg.Telegram.AllowedID, api)
 	if err != nil {
 		log.Printf("TG bot 没启动：%v", err)
 		return tgNullRunner{}
@@ -162,7 +172,7 @@ func main() {
 	// TG bot：显式开了（`telegram.enabled`）才跑 —— 连外网是显式动作，不许"配了就跑"。
 	// 没 token / 连不上 ⇒ 只 log（不弹错、不退出、不挡 TUI）。
 	// **放在日志切换之后**：TUI 模式下这几句要落进 microchat.log（不然界面上根本看不见）。
-	tgRunner := startTelegramBot(cfg)
+	tgRunner := startTelegramBot(cfg, newTGClient(*addr, cfg))
 	defer tgRunner.Stop() // 没跑起来就是空转（幂等）
 	log.Printf("microchat 起在 http://%s（数据 %s，配置 %s，user_version=%d，TUI=%v）",
 		*addr, paths.DataDir, paths.ConfigDir, version, interactive)
