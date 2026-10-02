@@ -758,3 +758,55 @@ func isCode(err error, code string) bool {
 	var target *Error
 	return errors.As(err, &target) && target.Code == code
 }
+
+// 查表那一行：model_route 有 responses 行 ⇒ 这一发走 /responses，候选正文从 output_text 来；
+// 无行 ⇒ 还是 /chat/completions（零行为变化）。
+func TestMessageRerollRoutesByModelRouteTable(t *testing.T) {
+	var path string
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(path, "/responses") {
+			_, _ = w.Write([]byte(`{"output":[{"type":"message","content":[{"type":"output_text","text":"重摇候选"}]}]}`))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]any{"content": "重摇候选"}}},
+		})
+	}))
+	t.Cleanup(stub.Close)
+	providers := map[string]any{
+		"providers": []map[string]any{{"id": "fake", "kind": "openai-compat", "base_url": stub.URL}},
+	}
+
+	// 有行 ⇒ /responses。
+	h := newHarness(t)
+	if err := config.SaveJSON(h.paths.Config("providers.json"), providers); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.ReplaceModelRoutes("fake", map[string]string{"fake-model": "openai-responses"}, 7); err != nil {
+		t.Fatal(err)
+	}
+	h.turn(t, "第一轮")
+	state := h.roll(t)
+	if path != "/responses" {
+		t.Fatalf("有 responses 行该走 /responses：path = %q", path)
+	}
+	if got := contents(state); len(got) != 2 || got[1] != "2:重摇候选" {
+		t.Fatalf("候选正文该从 output_text 来：%v", got)
+	}
+
+	// 无行 ⇒ 还是 /chat/completions。
+	g := newHarness(t)
+	if err := config.SaveJSON(g.paths.Config("providers.json"), providers); err != nil {
+		t.Fatal(err)
+	}
+	g.turn(t, "第一轮")
+	gstate := g.roll(t)
+	if path != "/chat/completions" {
+		t.Fatalf("无行该还是 /chat/completions：path = %q", path)
+	}
+	if got := contents(gstate); len(got) != 2 || got[1] != "2:重摇候选" {
+		t.Fatalf("chat 体也该出同一句：%v", got)
+	}
+}

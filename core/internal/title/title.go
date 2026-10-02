@@ -53,15 +53,19 @@ const (
 // dummyReply：本地假上游（`kind: dummy`）吐的那句标题 —— 确定性、不联网，一眼认得出是假的。
 const dummyReply = "（测试用假标题）"
 
-// autoTimeout：**自动起标题这一趟子调用的上限** —— 10 秒。
+// autoTimeout：**自动起标题这一趟子调用的上限** —— 30 秒。
 //
 // 为什么必须给：渠道的 `timeouts.total_seconds` 缺省 300s，上游"接了不回"时这趟会一直挂着；
 // 而 `Auto` 排在 `chat.run` 的 `Finish`（翻 idle）**之前** ⇒ 那一轮就一直不翻 idle（界面像卡死）。
-// 10s 到点即撤：`Generate` 原样报错 ⇒ `Auto` 记日志 + 退**首句截断**兜底，会话不受影响。
+// 到点即撤：`Generate` 原样报错 ⇒ `Auto` 记日志 + 退**首句截断**兜底，会话不受影响。
+//
+// 为什么是 30 而不是 10：response 系模型的首字节要 3–5 秒（实测 muse-spark-1.3-contributor），
+// 10 秒会把"走对门但回得慢"的调用 whole-sale 掐掉，而掐掉的代价（标题退回首句截断）
+// 比多等 20 秒更大。chat 系照旧几秒就回，上限放宽不影响它们。
 //
 // **只加给辅助调用**（title —— compact 另有它自己的 60s，见 `compact.compactTimeout`）；
 // 前台那一轮的取消由 `turn` 登记表管，不在这里。
-const autoTimeout = 10 * time.Second
+const autoTimeout = 30 * time.Second
 
 // Result：一次起标题的结局（`-debug title` 直接打它）。
 type Result struct {
@@ -223,6 +227,8 @@ func (s *Service) Generate(ctx context.Context, session model.Session) (Result, 
 
 	template := abilities.Template(setting, abilities.Title)
 	wire := providers.FromConfig(backend.Provider)
+	// 与 chat.go Accept 同一条查表：有行且 api=="openai-responses" ⇒ 走 /responses，否则 chat 缺省。
+	wire.Protocol = providers.ResolveProtocol(s.Store.ModelRoute, backend.Provider.ID, modelID)
 	completion, err := providers.NewClient(wire).Complete(ctx, wire, providers.Request{
 		Model: modelID,
 		Messages: []providers.ChatMessage{

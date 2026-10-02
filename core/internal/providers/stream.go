@@ -154,8 +154,7 @@ func (c *Client) Complete(ctx context.Context, p Provider, r Request, localReply
 	if response.StatusCode < 200 || response.StatusCode > 299 {
 		return Result{}, &UpstreamError{Status: response.StatusCode, Body: snippet(string(body))}
 	}
-	// response 系走 output_text 数组拼正文（reasoning_summary 吞了记 log）；
-	// compact/title 调 Complete 走 chat 体 —— response 系模型拿来压摘要是下一步的活。
+	// response 系走 output_text 数组拼正文（reasoning_summary 吞了记 log）。
 	if p.EffectiveProtocol() == ProtocolOpenAIResponse {
 		return completeResponse(response.StatusCode, body)
 	}

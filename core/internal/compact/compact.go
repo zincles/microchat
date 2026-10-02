@@ -938,6 +938,8 @@ func (s *Service) generateText(ctx context.Context, p *prepared) (generatedText,
 		return generatedText{}, invalid("这一段剔掉 <state> 之后没有正文可压（整段都是状态块）")
 	}
 	wire := providers.FromConfig(p.channel)
+	// 与 chat.go Accept 同一条查表：有行且 api=="openai-responses" ⇒ 走 /responses，否则 chat 缺省。
+	wire.Protocol = providers.ResolveProtocol(s.Store.ModelRoute, p.channel.ID, p.model)
 	result, err := providers.NewClient(wire).Complete(ctx, wire, providers.Request{
 		Model: p.model,
 		Messages: []providers.ChatMessage{

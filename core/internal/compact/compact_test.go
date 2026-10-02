@@ -892,3 +892,58 @@ func TestStrategyMergesTopLevelSummariesPyramid(t *testing.T) {
 		t.Fatalf("失败不许落库：%d → %d", before, after)
 	}
 }
+
+// 查表那一行：model_route 有 responses 行 ⇒ 这一发走 /responses，正文从 output_text 来；
+// 无行 ⇒ 还是 /chat/completions（零行为变化）。
+func TestCompactRoutesByModelRouteTable(t *testing.T) {
+	var path string
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(path, "/responses") {
+			_, _ = w.Write([]byte(`{"output":[{"type":"message","content":[{"type":"output_text","text":"一段前情提要"}]}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"一段前情提要"}}]}`))
+	}))
+	defer stub.Close()
+
+	providersJSON := mustJSON(t, `{"providers":[{"id":"stub","kind":"openai-compat","base_url":"`+stub.URL+`","identity":"bare"}]}`)
+
+	// 有行 ⇒ /responses。
+	h := newHarness(t, config.AgentsConfig{})
+	if err := config.SaveJSON(h.paths.Config("providers.json"), providersJSON); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.ReplaceModelRoutes("stub", map[string]string{"m": "openai-responses"}, 7); err != nil {
+		t.Fatal(err)
+	}
+	h.session.Provider, h.session.Model = "stub", "m"
+	h.turn(t, "第一句")
+	h.turn(t, "第二句")
+	result, err := h.service.Compact(context.Background(), h.session, Request{Blocks: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != "/responses" {
+		t.Fatalf("有 responses 行该走 /responses：path = %q", path)
+	}
+	if !strings.Contains(result.Text, "一段前情提要") {
+		t.Fatalf("正文该从 output_text 来：%q", result.Text)
+	}
+
+	// 无行 ⇒ 还是 /chat/completions。
+	g := newHarness(t, config.AgentsConfig{})
+	if err := config.SaveJSON(g.paths.Config("providers.json"), providersJSON); err != nil {
+		t.Fatal(err)
+	}
+	g.session.Provider, g.session.Model = "stub", "m"
+	g.turn(t, "第一句")
+	g.turn(t, "第二句")
+	if _, err := g.service.Compact(context.Background(), g.session, Request{Blocks: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if path != "/chat/completions" {
+		t.Fatalf("无行该还是 /chat/completions：path = %q", path)
+	}
+}

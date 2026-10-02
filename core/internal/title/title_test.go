@@ -234,3 +234,59 @@ func TestMaterialIsRestrainedAndStripsState(t *testing.T) {
 		t.Fatalf("材料只取开头那几条（第 %d 条以内的），不该拖上整条会话：%s", materialMessages, sent)
 	}
 }
+
+// 查表那一行：model_route 有 responses 行 ⇒ 这一发走 /responses，标题是 output_text 那句；
+// 无行 ⇒ 还是 /chat/completions（零行为变化）。
+func TestTitleRoutesByModelRouteTable(t *testing.T) {
+	var path string
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(path, "/responses") {
+			_, _ = w.Write([]byte(`{"output":[{"type":"message","content":[{"type":"output_text","text":"山雨欲来"}]}]}`))
+			return
+		}
+		payload, _ := json.Marshal(map[string]any{
+			"choices": []map[string]any{{"message": map[string]any{"content": "山雨欲来"}}},
+		})
+		_, _ = w.Write(payload)
+	}))
+	t.Cleanup(stub.Close)
+
+	agent := &config.Agent{ID: "跑团", Abilities: map[string]config.AbilityToggle{
+		abilities.Title: {Provider: new("stub"), Model: new("m")},
+	}}
+	mkProviders := func() config.ProvidersConfig {
+		return config.ProvidersConfig{Providers: []config.Provider{
+			{ID: "dummy", Kind: "dummy"},
+			{ID: "stub", Kind: "openai-compat", BaseURL: stub.URL, Identity: "bare"},
+		}}
+	}
+
+	// 有行 ⇒ /responses。
+	h := newHarness(t, mkProviders(), agent)
+	h.say(t, "帮我写一段跑团的开幕词", "好的，山雨欲来……")
+	if err := h.store.ReplaceModelRoutes("stub", map[string]string{"m": "openai-responses"}, 7); err != nil {
+		t.Fatal(err)
+	}
+	result, err := h.service.Generate(context.Background(), h.session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != "/responses" {
+		t.Fatalf("有 responses 行该走 /responses：path = %q", path)
+	}
+	if result.Title != "山雨欲来" {
+		t.Fatalf("标题该是 output_text 那句：%+v", result)
+	}
+
+	// 无行 ⇒ 还是 /chat/completions。
+	g := newHarness(t, mkProviders(), agent)
+	g.say(t, "帮我写一段跑团的开幕词", "好的，山雨欲来……")
+	if _, err := g.service.Generate(context.Background(), g.session); err != nil {
+		t.Fatal(err)
+	}
+	if path != "/chat/completions" {
+		t.Fatalf("无行该还是 /chat/completions：path = %q", path)
+	}
+}
