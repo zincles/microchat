@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -38,6 +39,41 @@ var MenuCommands = []models.BotCommand{
 	{Command: "help", Description: "能干什么"},
 }
 
+// commandScopes：清旧菜单要挨个招呼的那几个作用域。
+// 旧 bot（如 Hermes）可能把命令摆在这些作用域上，残留会盖住新菜单 —— default 之外还得清三处"批量"作用域。
+func commandScopes() []models.BotCommandScope {
+	return []models.BotCommandScope{
+		&models.BotCommandScopeDefault{},
+		&models.BotCommandScopeAllPrivateChats{},
+		&models.BotCommandScopeAllGroupChats{},
+		&models.BotCommandScopeAllChatAdministrators{},
+	}
+}
+
+// unknownCommandReply：text 是 `/xxx` 形状（斜杠开头、非空）⇒ 给"不认识"的回复（含原文与可用清单）；
+// 否则 ok=false（走 echo 那条路）。
+//
+// 只看形状、不认名单：/start 这类已知命令也返回 true —— 它们由注册顺序在前面的精确匹配处理器接走，
+// 根本走不到 onEcho；到这儿还在的斜杠串就是没登记过的。
+func unknownCommandReply(text string) (string, bool) {
+	if text == "" || text[0] != '/' {
+		return "", false
+	}
+	names := make([]string, 0, len(MenuCommands))
+	for _, c := range MenuCommands {
+		names = append(names, "/"+c.Command)
+	}
+	return "不认识这个命令：" + text + "（可用：" + strings.Join(names, " ") + "）", true
+}
+
+// startupGreeting：上线问候 —— 绑了人才发（没绑就没处发）。返回 false 表示不发。
+func startupGreeting(allowedID int64) (string, bool) {
+	if allowedID <= 0 {
+		return "", false
+	}
+	return "microchat 上线了 ✓ 直接发话；/status 看状态", true
+}
+
 // NewRunner：只建壳，不连网（连网是 Go 的事 —— 建壳失败只可能是 token 空）。
 func NewRunner(token string, allowed int64) (*Runner, error) {
 	if token == "" {
@@ -62,8 +98,21 @@ func (r *Runner) Go(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("tg: 连不上 Telegram（token 错 / 没网）：%w", err)
 	}
+	// 先清旧菜单：旧 bot 可能把命令摆在别的批量作用域上，残留会盖住新菜单。
+	// 清不掉不阻断 —— 顶多菜单不对，摆新的这步才是正经事。
+	for _, scope := range commandScopes() {
+		if _, err := r.bot.DeleteMyCommands(ctx, &bot.DeleteMyCommandsParams{Scope: scope}); err != nil {
+			log.Printf("TG 旧菜单没清掉（%T）：%v", scope, err)
+		}
+	}
 	if _, err := r.bot.SetMyCommands(ctx, &bot.SetMyCommandsParams{Commands: MenuCommands}); err != nil {
 		return fmt.Errorf("tg: 菜单没摆上：%w", err)
+	}
+	// 上线问候：绑了人才发。对方从没跟 bot 说过话 ⇒ Telegram 报 chat not found，这不是错，只记日志。
+	if greeting, ok := startupGreeting(r.allowedID()); ok {
+		if err := sendLong(ctx, r.bot, r.allowedID(), greeting); err != nil {
+			log.Printf("TG 上线问候没发出去：%v", err)
+		}
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	r.mu.Lock()
@@ -171,6 +220,12 @@ func (r *Runner) onEcho(ctx context.Context, b *bot.Bot, update *models.Update) 
 		return
 	}
 	if !gateMessage(ctx, b, update.Message, r.allowedID()) {
+		return
+	}
+	// 斜杠形状但没登记过的命令：明说"不认识"（别让它当普通文本 echo 回去）。
+	// 放门卫之后：没绑定的人先收到绑定提示，不泄露命令清单。
+	if reply, ok := unknownCommandReply(update.Message.Text); ok {
+		_ = sendLong(ctx, b, update.Message.Chat.ID, reply)
 		return
 	}
 	text := "收到（" + strconv.Itoa(len([]rune(update.Message.Text))) + " 字）：" + update.Message.Text
