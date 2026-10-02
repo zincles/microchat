@@ -769,6 +769,10 @@ prompt caching**"）。**不要为能力造子 session id**：网关的会话 id
   · 唯一自动处理的情形：**没有 TTY**（丢进 tmux 重定向到日志那种）⇒ 不进 TUI，只服务；
   · TUI 模式下日志落到 `data/microchat.log`（别糊在界面上）；
   · 退出用 **`/quit` 或 ctrl+c** —— **没有裸 `q`**（会和打字打架）。
+  · **单实例锁** ✓（2026-10-02 加）：同一个 `data/` 起第二个实例时，**SIGTERM 掉旧的**再接管
+    （`<data>/microchat.pid`；僵尸/陈旧 pid 直接覆盖；等 3s 不退就报错说清 pid）。为什么必须：
+    TG 长轮询同 token 只允许一个消费者（否则 `conflict` 刷屏）、SQLite 同库两写、端口只能一个听。
+    `-debug` **不拿锁**（直操模式本来就允许多开）。
 - 跑法：`go -C core run .`（一条命令跑起来；要二进制就 `go -C core build -o ../microchat .`）。**TUI 内的命令**照 Pi：`/command`。**只放已经有路由的命令**，没搬完的在 `/help` 里如实列出来
   （现在能用的：`/help` `/new` `/delete` `/cut` `/copy` `/rename` `/resume` `/model` `/providers` `/provider-add` `/provider-del` `/telegram-bind` `/telegram-bot-token-set` `/telegram-toggle` `/telegram-status` `/outgoing` `/state` `/usage` `/think` `/system` `/compact` `/reroll` `/reroll-summary` `/stop` `/refresh` `/quit`；
   还没做的：`/archive` —— `/fork`／`/tasks`／`/probe` 那几条**已砍**，不会再有

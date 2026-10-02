@@ -3,12 +3,18 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
 
 	"golang.org/x/term"
 
@@ -93,6 +99,16 @@ func main() {
 	if *debugMode {
 		os.Exit(runDebug(paths, cfg, flag.Args()))
 	}
+
+	// 单实例守卫：**同一个 data 目录只允许一个实例在跑**（TG 长轮询同一个 token 只允许一个
+	// 消费者、SQLite 同库两写、端口也只能一个听）。已有活实例 ⇒ 先 SIGTERM 它再接管 ——
+	// 见 `acquireInstanceLock`。放在 `-debug` 之后：直操模式本来就允许多开，不拿锁。
+	releaseLock, err := acquireInstanceLock(paths.DataDir)
+	if err != nil {
+		fatal("单实例锁: %v", err)
+	}
+	defer releaseLock()
+
 	if *addr == "" {
 		*addr = fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	}
@@ -267,6 +283,104 @@ func tokenOf(cfg config.Config) string {
 		return ""
 	}
 	return *cfg.Server.AuthToken
+}
+
+// acquireInstanceLock：同 data 目录单实例 —— 已有活实例就 SIGTERM 它（最多等 ~3s），再写自己的 pid。
+// 返回 release 函数（defer 调；删除自己的锁 —— 只能删自己的，别删别人的）。
+//
+// 为什么必须单实例：TG bot 长轮询**同一个 token 只允许一个消费者**（第二个实例会一直
+// `conflict: terminated by other getUpdates request` 刷屏）、SQLite 同库两写、端口只能一个听。
+// 锁文件 `<dataDir>/microchat.pid`（随手写、不进库），内容就是 pid，不认 pid 之外的格式。
+func acquireInstanceLock(dataDir string) (release func(), err error) {
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		return nil, fmt.Errorf("建数据目录 %s 失败: %w", dataDir, err)
+	}
+	path := filepath.Join(dataDir, "microchat.pid")
+
+	// 已有活实例（且不是自己）：请它退场，再等它真退出 —— 它手里的 TG 长轮询 / 端口还没交出来。
+	if old, alive := liveInstancePID(path); alive {
+		if err := syscall.Kill(old, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+			return nil, fmt.Errorf("给旧实例（pid %d）发 SIGTERM 失败: %w", old, err)
+		}
+		if !waitPIDGone(old, 3*time.Second) {
+			return nil, fmt.Errorf("旧实例（pid %d）收到 SIGTERM 后 3s 内没退出；"+
+				"请先把它停了（kill %d），再起这个", old, old)
+		}
+	}
+
+	// 陈旧锁 / 没锁：直接覆盖成自己的 pid（pid == 自己也算陈旧，不杀自己）。
+	if err := os.WriteFile(path, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+		return nil, fmt.Errorf("写锁文件 %s 失败: %w", path, err)
+	}
+	return func() {
+		// 只能删自己的：锁可能已被后来的实例接管，删别人的锁 = 替别人解锁。
+		if b, readErr := os.ReadFile(path); readErr == nil && strings.TrimSpace(string(b)) == strconv.Itoa(os.Getpid()) {
+			_ = os.Remove(path)
+		}
+	}, nil
+}
+
+// liveInstancePID：读锁文件里的 pid 并判活。**pid == 自己**视为陈旧（同进程重启的测试场景），
+// 不杀自己；文件缺失 / 内容不是正整数 ⇒ 视为没有实例（陈旧锁由调用方覆盖）。
+func liveInstancePID(path string) (int, bool) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return 0, false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil || pid <= 0 || pid == os.Getpid() {
+		return pid, false
+	}
+	return pid, pidAlive(pid)
+}
+
+// pidAlive：`kill(pid, 0)` 探活 —— nil / EPERM 都算活着（EPERM = 进程在，只是不归我们管），
+// ESRCH = 死了。
+//
+// 僵尸（Z）例外：kill 说"在"，但它其实已经死了、只是父进程还没收尸 ⇒ 当死。
+// 不认这一档的话，被杀掉的旧实例若暂时成了僵尸，"杀旧实例"会白等 3 秒再报一个
+// 说不清的错（`kill <pid>` 对僵尸也无能为力）。
+func pidAlive(pid int) bool {
+	err := syscall.Kill(pid, 0)
+	if err != nil && !errors.Is(err, syscall.EPERM) {
+		return false
+	}
+	if zombie(pid) {
+		return false
+	}
+	return true
+}
+
+// zombie：`/proc/<pid>/stat` 的 state 是不是 Z。读不到（非 Linux / 权限）就不当僵尸 ——
+// 宁可退回到 kill 的判断，也不要把活实例误判成死的（那会去覆盖它的锁）。
+//
+// stat 的格式是 `pid (comm) state ...`，而 comm 里可能有空格和括号 ⇒ 取**最后一个 `)`**
+// 之后的第一个字段才是 state（按 Fields 数第 3 个字段在进程名带空格时会错位）。
+func zombie(pid int) bool {
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return false
+	}
+	at := strings.LastIndexByte(string(b), ')')
+	if at < 0 || at+1 >= len(b) {
+		return false
+	}
+	fields := strings.Fields(string(b[at+1:]))
+	return len(fields) > 0 && fields[0] == "Z"
+}
+
+// waitPIDGone：每 100ms 看一眼，等 pid 退出（SIGTERM 到进程真消失有间隔）。
+func waitPIDGone(pid int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		if !pidAlive(pid) {
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 // summaryRoller：摘要重摇的生成器适配器（`reroll.SummaryGenerator` 的唯一实现）——
