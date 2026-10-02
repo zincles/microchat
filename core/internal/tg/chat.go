@@ -107,8 +107,9 @@ func (r *Runner) pollTurn(ctx context.Context, b *bot.Bot, stream *turnStream, s
 			stream.replace(ctx, b, 0, "生成失败："+turnFailureReason(status))
 			return
 		case !status.Busy() && (sawBusy || chunkDone):
-			// 终稿再 sync 一遍（把最后一段 edit 到准；force 绕过节流）。
+			// 终稿再 sync 一遍（把最后一段 edit 到准；force 绕过节流），再给这次回复挂上 [◀ n/total ▶]。
 			stream.sync(ctx, b, turnFinal(full.String()), true)
+			r.attachReplyButtons(ctx, stream.chatID, sid, turnTargetID(accepted), stream.ids)
 			return
 		default:
 			stream.sync(ctx, b, turnDisplay(full.String(), thinking.String(), status), false)
@@ -147,6 +148,14 @@ func turnFinal(full string) []string {
 		return splitMessage(full)
 	}
 	return []string{"（这轮没有正文）"}
+}
+
+// turnTargetID：这一轮回复在库里的消息 id（重摇按钮认它 —— 受理时就定好了；没给就空）。
+func turnTargetID(turn apiclient.TurnStatus) string {
+	if turn.MessageID == nil {
+		return ""
+	}
+	return *turn.MessageID
 }
 
 // turnFailureReason：失败原因（后端没说就照实讲"未知"，别装没事）。

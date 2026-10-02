@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -26,14 +27,23 @@ type sentMessage struct {
 	markup *models.InlineKeyboardMarkup
 }
 
-// fakeTelegram：假 Bot API —— 只认发消息/改消息/回执（其余一律 404，测试就能发现"没想到的调用"）。
+// markupEdit：一次 editMessageReplyMarkup（挂按钮 / 清按钮）；markup 为 nil = 清掉。
+type markupEdit struct {
+	messageID int
+	markup    *models.InlineKeyboardMarkup
+}
+
+// fakeTelegram：假 Bot API —— 只认发消息/改消息/回执/挂按钮/删消息（其余一律 404，测试就能发现"没想到的调用"）。
 type fakeTelegram struct {
-	mu      sync.Mutex
-	nextID  int
-	sent    []sentMessage
-	edited  []string
-	answers []string
-	patched []string // PATCH 的请求体（/model 选中时）
+	mu          sync.Mutex
+	nextID      int
+	sent        []sentMessage
+	edited      []string
+	editMarkups []*models.InlineKeyboardMarkup // 与 edited 逐项对齐（editMessageText 带的按钮）
+	markups     []markupEdit                   // editMessageReplyMarkup 那一路
+	deleted     []int                          // deleteMessage
+	answers     []string
+	patched     []string // PATCH 的请求体（/model 选中时）
 }
 
 func (f *fakeTelegram) handler(w http.ResponseWriter, r *http.Request) {
@@ -52,10 +62,33 @@ func (f *fakeTelegram) handler(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, `{"ok":true,"result":{"message_id":%d,"date":0,"chat":{"id":42,"type":"private"},"text":""}}`, id)
 	case strings.HasSuffix(r.URL.Path, "/editMessageText"):
 		_ = r.ParseMultipartForm(1 << 20)
+		var markup *models.InlineKeyboardMarkup
+		if rawMarkup := r.FormValue("reply_markup"); rawMarkup != "" {
+			_ = json.Unmarshal([]byte(rawMarkup), &markup)
+		}
 		f.mu.Lock()
 		f.edited = append(f.edited, r.FormValue("text"))
+		f.editMarkups = append(f.editMarkups, markup)
 		f.mu.Unlock()
 		fmt.Fprint(w, `{"ok":true,"result":{"message_id":1,"date":0,"chat":{"id":42,"type":"private"},"text":""}}`)
+	case strings.HasSuffix(r.URL.Path, "/editMessageReplyMarkup"):
+		_ = r.ParseMultipartForm(1 << 20)
+		id, _ := strconv.Atoi(r.FormValue("message_id"))
+		var markup *models.InlineKeyboardMarkup
+		if rawMarkup := r.FormValue("reply_markup"); rawMarkup != "" {
+			_ = json.Unmarshal([]byte(rawMarkup), &markup)
+		}
+		f.mu.Lock()
+		f.markups = append(f.markups, markupEdit{messageID: id, markup: markup})
+		f.mu.Unlock()
+		fmt.Fprint(w, `{"ok":true,"result":{"message_id":1,"date":0,"chat":{"id":42,"type":"private"},"text":""}}`)
+	case strings.HasSuffix(r.URL.Path, "/deleteMessage"):
+		_ = r.ParseMultipartForm(1 << 20)
+		id, _ := strconv.Atoi(r.FormValue("message_id"))
+		f.mu.Lock()
+		f.deleted = append(f.deleted, id)
+		f.mu.Unlock()
+		fmt.Fprint(w, `{"ok":true,"result":true}`)
 	case strings.HasSuffix(r.URL.Path, "/sendChatAction"):
 		// 生成中报"正在输入"——不算意外调用，认下来（正文走 sendMessage）。
 		fmt.Fprint(w, `{"ok":true,"result":true}`)
@@ -86,6 +119,27 @@ func (f *fakeTelegram) replyTexts() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string{}, f.answers...)
+}
+
+// markupEdits：所有 editMessageReplyMarkup（挂按钮 / 清按钮）—— 按到达顺序。
+func (f *fakeTelegram) markupEdits() []markupEdit {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]markupEdit{}, f.markups...)
+}
+
+// editButtons：editMessageText 带的按钮，与 edits() 逐项对齐（没带按钮的项是 nil）。
+func (f *fakeTelegram) editButtons() []*models.InlineKeyboardMarkup {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]*models.InlineKeyboardMarkup{}, f.editMarkups...)
+}
+
+// deletedIDs：deleteMessage 删掉的段 id。
+func (f *fakeTelegram) deletedIDs() []int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]int{}, f.deleted...)
 }
 
 // newFakeRunner：假 Telegram + 假后端，装出一个**已绑定**的 Runner（allowed = 42）。

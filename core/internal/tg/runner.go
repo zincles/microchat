@@ -18,7 +18,7 @@ import (
 //
 // 生命周期归 main 管：Enable + 有 token 才 `Go(ctx)` 跑起来；ctx 取消就停。
 // 几条**进程内事实**（重启就没）：当前会话（currentSessionID）、
-// 等确认的待办（pending）—— 与 turn 登记表同一条脾气，不进库。
+// 等确认的待办（pending）、最近一条回复那组按钮（activeReply）—— 与 turn 登记表同一条脾气，不进库。
 type Runner struct {
 	mu      sync.Mutex
 	bot     *bot.Bot
@@ -28,6 +28,10 @@ type Runner struct {
 	api     *apiclient.Client
 	session string                // 当前会话 id（"" = 还没定，惰性取最近一条）
 	pending map[string]*pendingOp // key: 短 key（确认按钮按它找"要动哪件事"）
+	// replyMu / activeReply：最近一条回复那组 [◀ n/total ▶] 按钮（见 reroll.go）。
+	// 单独一把锁：按钮回调里的网络调用不许把 r.mu 占住。
+	replyMu     sync.Mutex
+	activeReply map[int64]*replyButtons // chatID → 最新一条回复的按钮组
 }
 
 // commandScopes：清旧菜单要挨个招呼的那几个作用域。
@@ -94,6 +98,7 @@ func (r *Runner) register(b *bot.Bot) {
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, cbConfirm, bot.MatchTypePrefix, r.onConfirm)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, cbCancel, bot.MatchTypePrefix, r.onConfirm)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, cbModel, bot.MatchTypePrefix, r.onModel)
+	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, cbReroll, bot.MatchTypePrefix, r.onRerollButton)
 }
 
 // Go：后台跑长轮询（阻塞由调用方决定 —— main 里 go r.Go(ctx)）。
