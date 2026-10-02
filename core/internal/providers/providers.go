@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -71,7 +72,7 @@ type Protocol string
 const (
 	// ProtocolChatCompletion：OpenAI Chat Completion（`/chat/completions`）—— 缺省。
 	ProtocolChatCompletion Protocol = "openai-chat-completion"
-	// ProtocolOpenAIResponse：占位 —— 暂不支持。
+	// ProtocolOpenAIResponse：OpenAI Response（`/responses`）—— opencode 系/openrouter/custom 可走。
 	ProtocolOpenAIResponse Protocol = "openai-response"
 	// ProtocolAnthropicMessages：占位 —— 暂不支持。
 	ProtocolAnthropicMessages Protocol = "anthropic-messages"
@@ -138,6 +139,9 @@ type Provider struct {
 	Timeouts       *Timeouts `json:"timeouts"`
 	Stream         *bool     `json:"stream"`
 	StoreReasoning *bool     `json:"store_reasoning"`
+	// Endpoints：protocol → 整条 URL（verbatim，原样 POST）。**预设专用**：配置里写了忽略+log；
+	// 缺省 = 老路（base_url + 后缀）。聚合站（opencode 系/openrouter）才带这张表。
+	Endpoints map[Protocol]string `json:"endpoints,omitempty"`
 }
 
 type Timeouts struct {
@@ -209,6 +213,9 @@ type preset struct {
 	// reasoningField：**回传思考**时用哪个字段名（"" = 不回传）。
 	// 认三种是照 Pi：`reasoning` / `reasoning_content` / `reasoning_text`（各家不同）。
 	reasoningField string
+	// responsesPath：Response 协议相对 base 的路径（opencode-go/opencode 是 "/responses"；其余空）。
+	// ApplyPreset 只在它非空时才填 Endpoints[openai-response]。
+	responsesPath string
 }
 
 var presets = map[Vendor]preset{
@@ -220,13 +227,50 @@ var presets = map[Vendor]preset{
 	// DeepSeek 官方：OpenAI 兼容（`/chat/completions` + `/models` 同形）；思考字段用官方的 `reasoning_content`
 	//（接收侧三种全认，发送侧用它 —— 也是 `wireMessages` 里"deepseek vendor 字段必须在"那条规则的落点）。
 	VendorDeepseek:   {baseURL: "https://api.deepseek.com", apiKeyEnvs: []string{"DEEPSEEK_API_KEY"}, supportsUsage: true, reasoningField: "reasoning_content"},
-	VendorOpenCodeGo: {baseURL: "https://opencode.ai/zen/go/v1", apiKeyEnvs: []string{"OPENCODE_API_KEY"}, supportsUsage: true, sessionHeader: "x-opencode-session", reasoningField: "reasoning_content"},
-	VendorOpenCode:   {baseURL: "https://opencode.ai/zen/v1", apiKeyEnvs: []string{"OPENCODE_API_KEY"}, supportsUsage: true, sessionHeader: "x-opencode-session", reasoningField: "reasoning_content"},
+	VendorOpenCodeGo: {baseURL: "https://opencode.ai/zen/go/v1", apiKeyEnvs: []string{"OPENCODE_API_KEY"}, supportsUsage: true, sessionHeader: "x-opencode-session", reasoningField: "reasoning_content", responsesPath: "/responses"},
+	VendorOpenCode:   {baseURL: "https://opencode.ai/zen/v1", apiKeyEnvs: []string{"OPENCODE_API_KEY"}, supportsUsage: true, sessionHeader: "x-opencode-session", reasoningField: "reasoning_content", responsesPath: "/responses"},
 	VendorOllama:     {baseURL: "http://127.0.0.1:11434/v1", supportsUsage: false},
 	VendorLMStudio:   {baseURL: "http://127.0.0.1:1234/v1", supportsUsage: false},
 	VendorTypesafe:   {baseURL: "https://api.typesafe.ai/v1/systemone", apiKeyEnvs: []string{"TYPESAFE_API_KEY", "JEV_API_KEY"}},
 	VendorDummy:      {},
 }
+
+// zenResponseModels：OpenCode Zen 走 Response 协议的模型（写死表兜底，发现优先 ——
+// registry 只给 `/models` 里真见到的打标，这张表有但发现里没有 ⇒ 自然不出现）。
+//
+// 以 2026-10-02 的 Zen 文档页为准（来源 https://opencode.ai/en/docs/zen 表格“Endpoint”列）：
+// GPT 全系 24 个 + grok 全系 4 个 + muse-spark 3 个 = 31 个走 `/zen/v1/responses`；
+// gemini 系各走各的 `/zen/v1/models/<mid>`（本次不管，`/models` 发现里也没有它们）。
+var zenResponseModels = map[string]bool{
+	"gpt-6-astra": true, "gpt-6-sol": true, "gpt-6.1-sol": true, "gpt-6-luna": true,
+	"gpt-5.6-sol": true, "gpt-5.6-terra": true, "gpt-5.6-luna": true,
+	"gpt-5.5": true, "gpt-5.5-pro": true,
+	"gpt-5.4": true, "gpt-5.4-pro": true, "gpt-5.4-mini": true, "gpt-5.4-nano": true,
+	"gpt-5.3-codex": true, "gpt-5.3-codex-spark": true,
+	"gpt-5.2": true, "gpt-5.2-codex": true,
+	"gpt-5.1": true, "gpt-5.1-codex": true, "gpt-5.1-codex-max": true, "gpt-5.1-codex-mini": true,
+	"gpt-5": true, "gpt-5-codex": true, "gpt-5-nano": true,
+	"grok-4.7": true, "grok-4.6": true, "grok-4.5": true, "grok-build-0.1": true,
+	"muse-spark-1.3": true, "muse-spark-1.2": true, "muse-spark-1.3-contributor-free": true,
+}
+
+// zenProtocolFor：这个模型在 Zen 上走哪条路 —— 命中写死表 ⇒ openai-response；
+// `gpt-`/`grok-` 前缀 ⇒ response（新模型兜底）；muse-spark 系只认表里显式列的；其余 ⇒ false（chat 那条路）。
+//
+// registry 用它给发现到的模型打标（`zen_protocol`）；按模型切路是下一步的事，这里只查表。
+// 表是包内私有的（同包测试直接查表断个数）。
+func zenProtocolFor(model string) (Protocol, bool) {
+	if zenResponseModels[model] {
+		return ProtocolOpenAIResponse, true
+	}
+	if strings.HasPrefix(model, "gpt-") || strings.HasPrefix(model, "grok-") {
+		return ProtocolOpenAIResponse, true
+	}
+	return "", false
+}
+
+// ZenProtocolFor：zenProtocolFor 的导出 wrapper（registry 用它给发现到的模型打标）。
+func ZenProtocolFor(model string) (Protocol, bool) { return zenProtocolFor(model) }
 
 // EffectiveVendor：Vendor 非空用它；否则 Kind 映射（openai-compat→custom，其余逐字）；都空→custom。
 func (p Provider) EffectiveVendor() Vendor {
@@ -261,14 +305,27 @@ func (p Provider) Normalize() Provider {
 //
 //   - chat-completion ← openai-compat、dummy、openai、openrouter、deepseek、opencode-go、
 //     opencode、ollama、lmstudio、custom；custom 必须有 base_url（端点全靠配置给）。
+//   - openai-response ← opencode-go、opencode、openrouter、custom；custom 必须有 base_url
+//     或 Endpoints[openai-response]（端点全靠配置给）；其余 vendor 走它直接错配。
 //   - systemone ← typesafe、openrouter、custom；base_url 非空（verbatim 整条 URL）。
-//   - 其余 protocol（openai-response、anthropic-messages、gemini-generate-content）是占位，永远报错"暂不支持"。
+//   - 其余 protocol（anthropic-messages、gemini-generate-content）是占位，永远报错"暂不支持"。
 func (p Provider) Validate() error {
 	vendor := p.EffectiveVendor()
 	protocol := p.EffectiveProtocol()
 	switch protocol {
-	case ProtocolOpenAIResponse, ProtocolAnthropicMessages, ProtocolGeminiGenerateContent:
+	case ProtocolAnthropicMessages, ProtocolGeminiGenerateContent:
 		return fmt.Errorf("providers: protocol %q 暂不支持", protocol)
+	case ProtocolOpenAIResponse:
+		switch vendor {
+		case VendorOpenCodeGo, VendorOpenCode, VendorOpenRouter, VendorCustom:
+		default:
+			return fmt.Errorf("providers: vendor %q 不支持 protocol %q", vendor, protocol)
+		}
+		if vendor == VendorCustom && strings.TrimSpace(p.BaseURL) == "" &&
+			strings.TrimSpace(p.Endpoints[ProtocolOpenAIResponse]) == "" {
+			return fmt.Errorf("providers: custom 缺少 base_url（端点全靠配置给，或配 endpoints[openai-response]）")
+		}
+		return nil
 	case ProtocolSystemOne:
 		switch vendor {
 		case VendorTypesafe, VendorOpenRouter, VendorCustom:
@@ -306,6 +363,24 @@ func ApplyPreset(p Provider) Provider {
 			if value := os.Getenv(env); value != "" {
 				p.APIKey = value
 				break
+			}
+		}
+	}
+	// Endpoints：预设专用 —— 聚合站（opencode 系/openrouter）才带这张表（配置里写了 FromConfig 直接忽略+log，
+	// 不断老配置）；用户显式填了的不动。
+	switch p.EffectiveVendor() {
+	case VendorOpenCodeGo, VendorOpenCode, VendorOpenRouter:
+		if p.Endpoints == nil {
+			p.Endpoints = map[Protocol]string{}
+		}
+		if _, ok := p.Endpoints[ProtocolChatCompletion]; !ok {
+			if url := urlForEndpoint(p.BaseURL, "/chat/completions"); url != "" {
+				p.Endpoints[ProtocolChatCompletion] = url
+			}
+		}
+		if _, ok := p.Endpoints[ProtocolOpenAIResponse]; !ok && preset.responsesPath != "" {
+			if url := urlForEndpoint(p.BaseURL, preset.responsesPath); url != "" {
+				p.Endpoints[ProtocolOpenAIResponse] = url
 			}
 		}
 	}
@@ -579,19 +654,25 @@ func clampPromptCacheKey(key string) string {
 
 // Build：拼出要发的那一发（**纯函数**，好测）。**不发**（dummy 也走它 —— 调试页看到的就是它）。
 //
-// 只走 chat 协议：入口先 Normalize＋Validate，protocol 非 chat 直接报错（systemone 走 BuildSystemOne）。
+// 按 protocol 分两路拼 URL（都先 Normalize＋Validate）：chat 走 `bodyFor`（Pi 的 openai-completions 形状），
+// openai-response 走占位体（`{"model","input","stream","max_output_tokens"}` —— 解析下一步做）；
+// systemone 走 BuildSystemOne，其余占位已在 Validate 拦下。
 func Build(p Provider, r Request) (*http.Request, error) {
 	p = ApplyPreset(p.Normalize())
 	if err := p.Validate(); err != nil {
 		return nil, err
 	}
-	if p.EffectiveProtocol() != ProtocolChatCompletion {
-		return nil, fmt.Errorf("providers: protocol %q 不走 Build（chat 请用空 protocol，systemone 走 BuildSystemOne）", p.Protocol)
-	}
 	if strings.TrimSpace(r.SessionID) == "" {
 		// 会话 id 是**路由键**：本会话的每一轮、每个辅助调用都必须带上同一个。
 		// 忘了传 ⇒ 在这里就报，别让它变成"上游看来时好时坏"的静默 bug。
 		return nil, errors.New("providers: SessionID 必填（每会话一个稳定 id —— 路由与提示词缓存都要它）")
+	}
+	if p.EffectiveProtocol() == ProtocolOpenAIResponse {
+		return buildResponse(p, r)
+	}
+	if p.EffectiveProtocol() != ProtocolChatCompletion {
+		// systemone 走 BuildSystemOne，其余占位已在 Validate 拦下。
+		return nil, fmt.Errorf("providers: protocol %q 不走 Build（chat 请用空 protocol，systemone 走 BuildSystemOne）", p.Protocol)
 	}
 	if p.EffectiveVendor() != VendorDummy && p.BaseURL == "" {
 		return nil, fmt.Errorf("providers: %s 缺少 base_url", p.ID)
@@ -600,7 +681,7 @@ func Build(p Provider, r Request) (*http.Request, error) {
 	if err != nil {
 		return nil, err
 	}
-	url := strings.TrimRight(p.BaseURL, "/") + "/chat/completions"
+	url := endpointURL(p, ProtocolChatCompletion, "/chat/completions")
 	request, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -613,6 +694,74 @@ func Build(p Provider, r Request) (*http.Request, error) {
 		request.Header.Set("Authorization", "Bearer "+p.APIKey)
 	}
 	return request, nil
+}
+
+// buildResponse：Response 协议那一发（占位体 —— 解析下一步做，stream.go 不动）。
+//
+// URL：Endpoints[response] 非空用它（预设按 base 拼的），否则老路 base+`/responses`；
+// 体：`{"model","input": <messages 压平成纯文本>,"stream": 照 r.Stream,
+// "max_output_tokens": 照 r.MaxTokens（>0 才发）}`。
+func buildResponse(p Provider, r Request) (*http.Request, error) {
+	if p.EffectiveVendor() != VendorDummy && p.BaseURL == "" &&
+		strings.TrimSpace(p.Endpoints[ProtocolOpenAIResponse]) == "" {
+		return nil, fmt.Errorf("providers: %s 缺少 base_url", p.ID)
+	}
+	body := map[string]any{
+		"model":  r.Model,
+		"input":  flattenMessages(r.Messages),
+		"stream": r.Stream,
+	}
+	if r.MaxTokens > 0 {
+		body["max_output_tokens"] = r.MaxTokens
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	url := endpointURL(p, ProtocolOpenAIResponse, "/responses")
+	request, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(raw))
+	if err != nil {
+		return nil, err
+	}
+	for name, value := range headersFor(p, r) {
+		request.Header.Set(name, value)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	if p.APIKey != "" {
+		request.Header.Set("Authorization", "Bearer "+p.APIKey)
+	}
+	return request, nil
+}
+
+// endpointURL：按 protocol 拼 URL —— Endpoints[protocol] 非空用它（verbatim，原样 POST），
+// 否则老路 base_url + 后缀。都先 Normalize＋Validate（调用方 Build 已做）。
+func endpointURL(p Provider, protocol Protocol, suffix string) string {
+	if url := strings.TrimSpace(p.Endpoints[protocol]); url != "" {
+		return url
+	}
+	return strings.TrimRight(p.BaseURL, "/") + suffix
+}
+
+// urlForEndpoint：预设拼端点表用 —— baseURL 去尾 `/` + path；baseURL 为空 ⇒ 空。
+func urlForEndpoint(baseURL, path string) string {
+	if strings.TrimSpace(baseURL) == "" {
+		return ""
+	}
+	return strings.TrimRight(baseURL, "/") + path
+}
+
+// flattenMessages：Response 占位体的纯函数 —— role+content 逐行拼（`<state>` 不剔 —— 占位体，
+// 解析落地时再对齐）。
+func flattenMessages(messages []ChatMessage) string {
+	lines := make([]string, 0, len(messages))
+	for _, message := range messages {
+		role := strings.TrimSpace(message.Role)
+		if role == "" {
+			role = "user"
+		}
+		lines = append(lines, role+": "+message.Content)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // BuildSystemOne：拼出打 SystemOne（JEV）协议的那一发（**纯函数**，好测）。**不发**。
@@ -700,6 +849,11 @@ func Snapshot(request *http.Request, at time.Time) (LastPayload, error) {
 // 各处手搓 `providers.Provider{...}` 时**漏掉一个字段就是静默失效** ——
 // 已经真发生过（`identity` 声明了却从没被转过去 ⇒ 配置里写 `"identity":"pi"` 被无声忽略）。
 func FromConfig(c config.Provider) Provider {
+	// Endpoints 是**预设专用**：配置里写了 ⇒ 忽略 + log（不断老配置）。
+	// （类型是 map[Protocol]string，config 侧是 map[string]string —— 但**逐项也不搬**：整张忽略。）
+	if len(c.Endpoints) > 0 {
+		log.Printf("providers: 配置 %q 的 endpoints 是预设专用，已忽略（沿用预设端点表）", c.ID)
+	}
 	return Provider{
 		ID: c.ID, Name: c.Name, Vendor: Vendor(c.Vendor), Kind: Kind(c.Kind),
 		Protocol: Protocol(c.Protocol), BaseURL: c.BaseURL,
@@ -752,7 +906,9 @@ func vendorProtocols(vendor Vendor) []Protocol {
 	case VendorTypesafe:
 		return []Protocol{ProtocolSystemOne}
 	case VendorOpenRouter, VendorCustom:
-		return []Protocol{ProtocolChatCompletion, ProtocolSystemOne}
+		return []Protocol{ProtocolChatCompletion, ProtocolOpenAIResponse, ProtocolSystemOne}
+	case VendorOpenCodeGo, VendorOpenCode:
+		return []Protocol{ProtocolChatCompletion, ProtocolOpenAIResponse}
 	default:
 		return []Protocol{ProtocolChatCompletion}
 	}

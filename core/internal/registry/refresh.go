@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"encoding/json"
 	"net"
 	"net/url"
 	"strings"
@@ -65,7 +66,38 @@ func Probe(provider config.Provider) (ProbeResult, error) {
 	if err := providers.NewClient(wire).GetJSON(wire, "/models", &parsed); err != nil {
 		return ProbeResult{}, err
 	}
-	return ProbeResult{Models: parsed.Data}, nil
+	return ProbeResult{Models: withZenProtocol(provider, parsed.Data)}, nil
+}
+
+// withZenProtocol：给发现到的模型按 Zen 写死表打标（仅 opencode-go/opencode vendor）。
+//
+// 发现优先：在 `models`（`/models` 刚拉到的）里循环 ⇒ Zen 那边有这个 id 才打标；
+// 写死表里有但发现里没有 ⇒ 自然不出现（删行逻辑不动）。
+// 命中 ⇒ UpstreamParams 并进 `{"zen_protocol":"openai-response"}`（已有 JSON 保留，只加键）；没命中 ⇒ 不动。
+// chat/compact/title 调用方零改动：它们继续调 Build（chat 体）—— 按模型切路是下一步。
+func withZenProtocol(provider config.Provider, models []store.Discovered) []store.Discovered {
+	wire := providers.FromConfig(provider)
+	vendor := wire.EffectiveVendor()
+	if vendor != providers.VendorOpenCodeGo && vendor != providers.VendorOpenCode {
+		return models
+	}
+	for index, model := range models {
+		protocol, ok := providers.ZenProtocolFor(model.UpstreamID)
+		if !ok {
+			continue
+		}
+		merged := map[string]any{}
+		if len(model.UpstreamParams) > 0 {
+			_ = json.Unmarshal(model.UpstreamParams, &merged) // 坏了就丢旧的，只留标
+		}
+		merged["zen_protocol"] = string(protocol)
+		raw, err := json.Marshal(merged)
+		if err != nil {
+			continue
+		}
+		models[index].UpstreamParams = raw
+	}
+	return models
 }
 
 // Skip：这个渠道**该不该**自动去问模型列表。返回非空 = 跳过（值就是给人看的原因）。

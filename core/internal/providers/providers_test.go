@@ -725,8 +725,8 @@ func TestValidateVendorProtocolMatrix(t *testing.T) {
 	if err := (Provider{ID: "t", Vendor: VendorTypesafe, Protocol: ProtocolSystemOne}).Validate(); err == nil {
 		t.Fatal("systemone 没给 base_url 该报错")
 	}
-	// 占位 protocol 永远"暂不支持"
-	for _, protocol := range []Protocol{ProtocolOpenAIResponse, ProtocolAnthropicMessages, ProtocolGeminiGenerateContent} {
+	// 占位 protocol 永远"暂不支持"（openai-response 已开放给 opencode 系/openrouter/custom，见 TestValidateResponseMatrix）
+	for _, protocol := range []Protocol{ProtocolAnthropicMessages, ProtocolGeminiGenerateContent} {
 		err := (Provider{ID: "p", Vendor: VendorOpenAI, Protocol: protocol, BaseURL: "https://x.invalid/v1"}).Validate()
 		if err == nil || !strings.Contains(err.Error(), "暂不支持") {
 			t.Fatalf("protocol %q 该报暂不支持：%v", protocol, err)

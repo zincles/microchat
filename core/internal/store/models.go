@@ -34,6 +34,8 @@ type Discovered struct {
 	MaxOutput         *int64          `json:"max_output"`
 	SupportedParams   []string        `json:"supported_parameters"`
 	DefaultParameters json.RawMessage `json:"default_parameters"`
+	// UpstreamParams：registry 打的发现期标记（如 Zen 的 `zen_protocol`）—— RefreshDiscovered 并进 upstream_params 列。
+	UpstreamParams json.RawMessage `json:"upstream_params,omitempty"`
 }
 
 const modelColumns = "provider, upstream_id, upstream_name, owned_by, context_length, max_output, " +
@@ -100,12 +102,25 @@ func (s *Store) RefreshDiscovered(provider string, found []Discovered, now int64
 	seen := map[string]bool{}
 	for _, item := range found {
 		seen[item.UpstreamID] = true
-		upstreamParams := json.RawMessage(nil)
+		mergedParams := map[string]any{}
 		if len(item.SupportedParams) > 0 || len(item.DefaultParameters) > 0 {
-			upstreamParams, _ = json.Marshal(map[string]any{
-				"supported": item.SupportedParams,
-				"default":   json.RawMessage(orEmptyObject(item.DefaultParameters)),
-			})
+			mergedParams["supported"] = item.SupportedParams
+			mergedParams["default"] = json.RawMessage(orEmptyObject(item.DefaultParameters))
+		}
+		// registry 打的标（如 Zen 的 `zen_protocol`）并进来 —— 已有的 supported/default 不覆盖。
+		if len(item.UpstreamParams) > 0 {
+			var extra map[string]any
+			if json.Unmarshal(item.UpstreamParams, &extra) == nil {
+				for key, value := range extra {
+					if _, exists := mergedParams[key]; !exists {
+						mergedParams[key] = value
+					}
+				}
+			}
+		}
+		var upstreamParams json.RawMessage
+		if len(mergedParams) > 0 {
+			upstreamParams, _ = json.Marshal(mergedParams)
 		}
 		result, e := tx.Exec(
 			`INSERT INTO models (provider, upstream_id, upstream_name, owned_by, context_length, max_output,

@@ -279,6 +279,9 @@ type Provider struct {
 	Stream         *bool     `json:"stream"`          // 缺省 = 开
 	StoreReasoning *bool     `json:"store_reasoning"` // 缺省 = 开
 	Timeouts       *Timeouts `json:"timeouts"`
+	// Endpoints：预设专用（protocol → 整条 URL 的端点表）；只透传，校验在 providers 侧 ——
+	// 配置里写了会被忽略+log（不断老配置）。
+	Endpoints map[string]string `json:"endpoints,omitempty"`
 }
 
 type Timeouts struct {
