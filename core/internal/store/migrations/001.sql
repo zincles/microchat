@@ -73,3 +73,10 @@ CREATE TABLE summaries (
 CREATE INDEX summaries_by_conv ON summaries(session_id, id);
 CREATE INDEX summaries_by_parent ON summaries(parent_summary_id);
 CREATE INDEX messages_by_summary ON messages(summary_id);
+CREATE TABLE model_route (
+  provider    TEXT NOT NULL,
+  upstream_id TEXT NOT NULL,
+  api         TEXT NOT NULL,   -- openai-completions | openai-responses | anthropic-messages | google-generative-ai
+  checked_at  INTEGER NOT NULL,
+  PRIMARY KEY (provider, upstream_id)
+);

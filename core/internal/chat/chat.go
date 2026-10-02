@@ -126,6 +126,14 @@ func (s *Service) Accept(session model.Session, content string) (Accepted, error
 		return Accepted{}, err
 	}
 	chosen := providers.SelectBackend(session.Provider, session.Model, providersConfig)
+	// 发之前查表定这次说什么话（**只做一处**）：`model_route` 有行且 api=="openai-responses" ⇒
+	// response；其余（含没有行）⇒ chat 缺省。只覆盖进 wire.Protocol（别改 session、别落库）。
+	// 查表键是**渠道 id**（`chosen.Provider.ID`）：`model_route` 是按渠道刷新的，
+	// 同一个 vendor 配两条渠道时各有各的表 —— 拿 vendor 查会串台。
+	// compact/title 不动：它们调 Complete 走 chat 体；response 系模型拿来压摘要是下一步的活。
+	if model := session.Model; chosen.Name != providers.BackendFallback && chosen.Name != providers.BackendDummy {
+		chosen.Provider.Protocol = string(providers.ResolveProtocol(s.Store.ModelRoute, chosen.Provider.ID, model))
+	}
 	go s.run(session, replyID, token, chosen, outgoing, reasoningByID, time.Now())
 	return Accepted{
 		User:    &user,

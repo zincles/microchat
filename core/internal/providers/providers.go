@@ -194,6 +194,9 @@ type Request struct {
 	// ReasoningEffort：推理强度（"low"/"medium"/"high"/"max"）—— 各家的取值集合不同，
 	// 所以**原样透传**，不做映射；没给就不发。
 	ReasoningEffort *string
+	// ReasoningSummary：思考摘要的档位（Pi 的 `reasoningSummary`）—— **原样透传**，没给就不发。
+	// 只进 Response 协议的 `reasoning.summary`；chat 体不发它。
+	ReasoningSummary *string
 	// Tools / ToolChoice：**工具透传**（原样进请求体；空 = 不发）。
 	Tools      []Tool
 	ToolChoice json.RawMessage
@@ -227,50 +230,30 @@ var presets = map[Vendor]preset{
 	// DeepSeek 官方：OpenAI 兼容（`/chat/completions` + `/models` 同形）；思考字段用官方的 `reasoning_content`
 	//（接收侧三种全认，发送侧用它 —— 也是 `wireMessages` 里"deepseek vendor 字段必须在"那条规则的落点）。
 	VendorDeepseek:   {baseURL: "https://api.deepseek.com", apiKeyEnvs: []string{"DEEPSEEK_API_KEY"}, supportsUsage: true, reasoningField: "reasoning_content"},
-	VendorOpenCodeGo: {baseURL: "https://opencode.ai/zen/go/v1", apiKeyEnvs: []string{"OPENCODE_API_KEY"}, supportsUsage: true, sessionHeader: "x-opencode-session", reasoningField: "reasoning_content", responsesPath: "/responses"},
-	VendorOpenCode:   {baseURL: "https://opencode.ai/zen/v1", apiKeyEnvs: []string{"OPENCODE_API_KEY"}, supportsUsage: true, sessionHeader: "x-opencode-session", reasoningField: "reasoning_content", responsesPath: "/responses"},
+	VendorOpenCodeGo: {baseURL: "https://opencode.ai/zen/go/v1", apiKeyEnvs: []string{"OPENCODE_API_KEY"}, supportsUsage: true, maxTokensOld: true, sessionHeader: "x-opencode-session", reasoningField: "reasoning_content", responsesPath: "/responses"},
+	VendorOpenCode:   {baseURL: "https://opencode.ai/zen/v1", apiKeyEnvs: []string{"OPENCODE_API_KEY"}, supportsUsage: true, maxTokensOld: true, sessionHeader: "x-opencode-session", reasoningField: "reasoning_content", responsesPath: "/responses"},
 	VendorOllama:     {baseURL: "http://127.0.0.1:11434/v1", supportsUsage: false},
 	VendorLMStudio:   {baseURL: "http://127.0.0.1:1234/v1", supportsUsage: false},
 	VendorTypesafe:   {baseURL: "https://api.typesafe.ai/v1/systemone", apiKeyEnvs: []string{"TYPESAFE_API_KEY", "JEV_API_KEY"}},
 	VendorDummy:      {},
 }
 
-// zenResponseModels：OpenCode Zen 走 Response 协议的模型（写死表兜底，发现优先 ——
-// registry 只给 `/models` 里真见到的打标，这张表有但发现里没有 ⇒ 自然不出现）。
+// ResolveProtocol：发之前定这次说什么话 —— 查 `model_route`（store 已落地），没有 ⇒ chat。
+// store 句柄由调用方给（别在 providers 里开库）。
 //
-// 以 2026-10-02 的 Zen 文档页为准（来源 https://opencode.ai/en/docs/zen 表格“Endpoint”列）：
-// GPT 全系 24 个 + grok 全系 4 个 + muse-spark 3 个 = 31 个走 `/zen/v1/responses`；
-// gemini 系各走各的 `/zen/v1/models/<mid>`（本次不管，`/models` 发现里也没有它们）。
-var zenResponseModels = map[string]bool{
-	"gpt-6-astra": true, "gpt-6-sol": true, "gpt-6.1-sol": true, "gpt-6-luna": true,
-	"gpt-5.6-sol": true, "gpt-5.6-terra": true, "gpt-5.6-luna": true,
-	"gpt-5.5": true, "gpt-5.5-pro": true,
-	"gpt-5.4": true, "gpt-5.4-pro": true, "gpt-5.4-mini": true, "gpt-5.4-nano": true,
-	"gpt-5.3-codex": true, "gpt-5.3-codex-spark": true,
-	"gpt-5.2": true, "gpt-5.2-codex": true,
-	"gpt-5.1": true, "gpt-5.1-codex": true, "gpt-5.1-codex-max": true, "gpt-5.1-codex-mini": true,
-	"gpt-5": true, "gpt-5-codex": true, "gpt-5-nano": true,
-	"grok-4.7": true, "grok-4.6": true, "grok-4.5": true, "grok-build-0.1": true,
-	"muse-spark-1.3": true, "muse-spark-1.2": true, "muse-spark-1.3-contributor-free": true,
-}
-
-// zenProtocolFor：这个模型在 Zen 上走哪条路 —— 命中写死表 ⇒ openai-response；
-// `gpt-`/`grok-` 前缀 ⇒ response（新模型兜底）；muse-spark 系只认表里显式列的；其余 ⇒ false（chat 那条路）。
-//
-// registry 用它给发现到的模型打标（`zen_protocol`）；按模型切路是下一步的事，这里只查表。
-// 表是包内私有的（同包测试直接查表断个数）。
-func zenProtocolFor(model string) (Protocol, bool) {
-	if zenResponseModels[model] {
-		return ProtocolOpenAIResponse, true
+// 规则：api=="openai-responses" ⇒ openai-response；其余（含没有行）⇒ chat 缺省。
+// 查表键是**渠道 id**（`model_route` 按渠道刷新：同一个 vendor 配两条渠道时各有各的表，
+// 拿 vendor 查会串台）。Zen 写死表已删（路由唯一真相 = model_route 表，见 registry 的快照链路）。
+func ResolveProtocol(lookup func(providerID, upstreamID string) (string, bool), providerID, model string) Protocol {
+	// store 里存的是 models.dev 口径（"openai-responses"，复数，见 registry.NpmToAPI）；
+	// providers.Protocol 是单数（"openai-response"）—— 这里认复数那一侧。
+	if lookup != nil {
+		if api, ok := lookup(providerID, model); ok && api == "openai-responses" {
+			return ProtocolOpenAIResponse
+		}
 	}
-	if strings.HasPrefix(model, "gpt-") || strings.HasPrefix(model, "grok-") {
-		return ProtocolOpenAIResponse, true
-	}
-	return "", false
+	return ProtocolChatCompletion
 }
-
-// ZenProtocolFor：zenProtocolFor 的导出 wrapper（registry 用它给发现到的模型打标）。
-func ZenProtocolFor(model string) (Protocol, bool) { return zenProtocolFor(model) }
 
 // EffectiveVendor：Vendor 非空用它；否则 Kind 映射（openai-compat→custom，其余逐字）；都空→custom。
 func (p Provider) EffectiveVendor() Vendor {
@@ -655,7 +638,7 @@ func clampPromptCacheKey(key string) string {
 // Build：拼出要发的那一发（**纯函数**，好测）。**不发**（dummy 也走它 —— 调试页看到的就是它）。
 //
 // 按 protocol 分两路拼 URL（都先 Normalize＋Validate）：chat 走 `bodyFor`（Pi 的 openai-completions 形状），
-// openai-response 走占位体（`{"model","input","stream","max_output_tokens"}` —— 解析下一步做）；
+// openai-response 走 `buildResponse`（Pi 的 openai-responses 形状：数组 input + reasoning/max_output_tokens/store）；
 // systemone 走 BuildSystemOne，其余占位已在 Validate 拦下。
 func Build(p Provider, r Request) (*http.Request, error) {
 	p = ApplyPreset(p.Normalize())
@@ -696,23 +679,65 @@ func Build(p Provider, r Request) (*http.Request, error) {
 	return request, nil
 }
 
-// buildResponse：Response 协议那一发（占位体 —— 解析下一步做，stream.go 不动）。
+// buildResponse：Response 协议那一发（照 Pi `openai-responses.ts:328-378`）。
 //
 // URL：Endpoints[response] 非空用它（预设按 base 拼的），否则老路 base+`/responses`；
-// 体：`{"model","input": <messages 压平成纯文本>,"stream": 照 r.Stream,
-// "max_output_tokens": 照 r.MaxTokens（>0 才发）}`。
+// 体：`{"model","input": [{role,content:[{type:"input_text",text}]}],"stream": 照 r.Stream,
+// "reasoning":{effort?,summary?}（给了才发）、"max_output_tokens"（>0 才发）、
+// "store":false（opencode 系照 Pi 发；custom 不发）、"temperature"（有就发）}`。
+// prompt_cache_key 条件照 chat（opencode 系本来就没有 longCache ⇒ 自然不发，别特意关）。
+// history 里没有工具，tool_calls 回放撞上再说（YAGNI）。
 func buildResponse(p Provider, r Request) (*http.Request, error) {
 	if p.EffectiveVendor() != VendorDummy && p.BaseURL == "" &&
 		strings.TrimSpace(p.Endpoints[ProtocolOpenAIResponse]) == "" {
 		return nil, fmt.Errorf("providers: %s 缺少 base_url", p.ID)
 	}
+	input := make([]map[string]any, 0, len(r.Messages))
+	for _, message := range r.Messages {
+		role := strings.TrimSpace(message.Role)
+		if role == "" {
+			role = "user"
+		}
+		input = append(input, map[string]any{
+			"role":    role,
+			"content": []map[string]any{{"type": "input_text", "text": message.Content}},
+		})
+	}
+	preset := presets[p.EffectiveVendor()]
 	body := map[string]any{
 		"model":  r.Model,
-		"input":  flattenMessages(r.Messages),
+		"input":  input,
 		"stream": r.Stream,
+	}
+	if r.ReasoningEffort != nil && *r.ReasoningEffort != "" || r.ReasoningSummary != nil && *r.ReasoningSummary != "" {
+		reasoning := map[string]any{}
+		if r.ReasoningEffort != nil && *r.ReasoningEffort != "" {
+			reasoning["effort"] = *r.ReasoningEffort
+		}
+		if r.ReasoningSummary != nil && *r.ReasoningSummary != "" {
+			reasoning["summary"] = *r.ReasoningSummary
+		}
+		body["reasoning"] = reasoning
 	}
 	if r.MaxTokens > 0 {
 		body["max_output_tokens"] = r.MaxTokens
+	}
+	// store:false：opencode 系照 Pi 发；custom 不发（用户自备端点，不认识的字段可能 400）。
+	// openrouter 走 chat 那条的老口径（预设里没开 supportsStore ⇒ 不发）。
+	if vendor := p.EffectiveVendor(); vendor == VendorOpenCodeGo || vendor == VendorOpenCode {
+		body["store"] = false
+	}
+	if r.Temperature != nil {
+		body["temperature"] = *r.Temperature
+	}
+	retention := r.CacheRetention
+	if retention == "" {
+		retention = CacheAuto
+	}
+	if (isOpenAIOfficial(p) && retention != CacheNone) || (retention == CacheLong && preset.longCache) {
+		if r.SessionID != "" {
+			body["prompt_cache_key"] = clampPromptCacheKey(r.SessionID)
+		}
 	}
 	raw, err := json.Marshal(body)
 	if err != nil {
@@ -748,20 +773,6 @@ func urlForEndpoint(baseURL, path string) string {
 		return ""
 	}
 	return strings.TrimRight(baseURL, "/") + path
-}
-
-// flattenMessages：Response 占位体的纯函数 —— role+content 逐行拼（`<state>` 不剔 —— 占位体，
-// 解析落地时再对齐）。
-func flattenMessages(messages []ChatMessage) string {
-	lines := make([]string, 0, len(messages))
-	for _, message := range messages {
-		role := strings.TrimSpace(message.Role)
-		if role == "" {
-			role = "user"
-		}
-		lines = append(lines, role+": "+message.Content)
-	}
-	return strings.Join(lines, "\n")
 }
 
 // BuildSystemOne：拼出打 SystemOne（JEV）协议的那一发（**纯函数**，好测）。**不发**。

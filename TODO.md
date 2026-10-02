@@ -75,13 +75,18 @@
 **历史债已还** ✓（2026-10-02）：`source`→`type` 三处改到位 + `Outgoing.children` 嵌套 + `POST .../compact/preview` +
 `/compact` 按块注释。DB 列名 `source_kind` 是历史（注释写清，不改）。
 
-### B0. Response 协议（地基已落地 2026-10-02；解析+切路下一步）
+### B0. Response 协议（主聊天已通 2026-10-02；辅助调用切路下一步）
 · 落了：`Provider.endpoints`（protocol→整条 verbatim，预设专用，配置写了忽略+log）+
   opencode-go/opencode 预设带 `/responses` + `Build` 按 protocol 分两路拼 URL（response 体先占位
   `{model,input,stream,max_output_tokens}`，解析下一步）+ `Validate` 矩阵 + Zen 写死表 31 模型
   （`gpt-*`/`grok-*` 前缀兜底，muse-spark 只认显式）+ registry 发现打标 `zen_protocol`（发现优先）。
   实测：refresh 打标 grok/gpt 行 ✓。调用方（chat/compact/title）零改动——**按模型切路还没做**。
 · Zen `/models` 只有 4 个键（无端点字段）；OpenRouter 有 supported_parameters 但无端点字段（JEV `/alpha/decisions` 仍走特例）。
+· 端到端实测 ✓：`muse-spark-1.3-contributor` 经 `/responses` 回话成功（"你好，我是 Muse Spark……"）——
+  前提是模型名带 `-contributor`（裸 id 在该 key 上 unavailable）+ `model_route` 有行。
+  查表键 = **渠道 id**（`model_route` 按渠道刷新；拿 vendor 查会串台——实测抓到，修掉了）。
+· **尾巴**：首轮顺带的起标题（title 调 `Complete` 走 chat 体）撞同个 400 被兜底盖过——
+  辅助调用（compact/title）切路还没做（`Complete` 只会 chat 体，response 非流式解析已写好，就差查表那一行）。
 
 ### B. Telegram Bot（下一件大事 ✓ 用户点名"特色"；地基已落地 2026-10-02）
 · 落了：`go-telegram/bot@v1.27.0`（零依赖）+ `config.json telegram{bot_token,allowed_id,enabled}`（token 文件优先/env 兜底，内容永不回显）

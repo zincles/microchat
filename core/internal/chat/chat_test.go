@@ -13,11 +13,16 @@ import (
 	"microchat/internal/abilities"
 	"microchat/internal/config"
 	"microchat/internal/model"
+	"microchat/internal/providers"
 	"microchat/internal/store"
 	"microchat/internal/task"
 	"microchat/internal/title"
 	"microchat/internal/turn"
 )
+
+// providersLastPayload / payloadURL：透一下 providers.LastSent（chat 测只断言 URL 后缀）。
+func providersLastPayload() (providers.LastPayload, bool) { return providers.LastSent() }
+func payloadURL(payload providers.LastPayload) string     { return payload.URL }
 
 // harness：一条会话 + 一份 providers.json + 三个登记表（真的走 Accept / run 这条路）。
 type harness struct {
@@ -389,4 +394,46 @@ func newLocalSSEStub(t *testing.T, status int, body string) *httptest.Server {
 	}))
 	t.Cleanup(server.Close)
 	return server
+}
+
+// Accept 里那一行查表：往 store 先塞一行 model_route 再 Accept ⇒ 假上游看到的 URL 以 /responses 结尾
+// （fake provider + last-payload 断言 protocol 进了 wire）。
+func TestAcceptRoutesByModelRouteTable(t *testing.T) {
+	var lastPath atomic.Value
+	lastPath.Store("")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		lastPath.Store(r.URL.Path)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(
+			`data: {"type":"response.created","response":{"id":"r1"}}` + "\n\n" +
+				`data: {"type":"response.output_text.delta","delta":"好"}` + "\n\n" +
+				`data: {"type":"response.completed","response":{"status":"completed"}}` + "\n\n" +
+				"data: [DONE]\n\n"))
+	}))
+	t.Cleanup(server.Close)
+	h := newHarness(t, config.ProvidersConfig{Providers: []config.Provider{{
+		ID: "ocgo", Vendor: "opencode-go", BaseURL: server.URL + "/v1",
+	}}}, "ocgo", "gpt-5")
+	if err := h.store.ReplaceModelRoutes("ocgo",
+		map[string]string{"gpt-5": "openai-responses"}, 7); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.service.Accept(h.session, "问一句"); err != nil {
+		t.Fatal(err)
+	}
+	messages := h.settle(t)
+	if len(messages) != 2 || messages[1].Content != "好" {
+		t.Fatalf("response 路该落正文：%+v", messages)
+	}
+	if path, _ := lastPath.Load().(string); path != "/v1/responses" {
+		t.Fatalf("protocol 该进 wire（URL 以 /responses 结尾）：path = %q", path)
+	}
+	payload, ok := providersLastPayload()
+	if !ok {
+		t.Fatal("发过就该留档")
+	}
+	if !strings.HasSuffix(payloadURL(payload), "/responses") {
+		t.Fatalf("last-payload 该是 /responses：%q", payloadURL(payload))
+	}
 }

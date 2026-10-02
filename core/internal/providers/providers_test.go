@@ -196,6 +196,26 @@ func TestBodyShape(t *testing.T) {
 		}
 	})
 
+	t.Run("opencode 系一律用 max_tokens（chat 体，Pi 生成器强制）", func(t *testing.T) {
+		for _, p := range []Provider{
+			{ID: "go", Vendor: VendorOpenCodeGo},
+			{ID: "oc", Vendor: VendorOpenCode},
+		} {
+			request, err := Build(p, Request{
+				Model: "m", Messages: messages, SessionID: session, Stream: true, MaxTokens: 64})
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := decode(t, request)
+			if body["max_tokens"] != float64(64) {
+				t.Fatalf("%s max_tokens = %v", p.Vendor, body["max_tokens"])
+			}
+			if _, exists := body["max_completion_tokens"]; exists {
+				t.Fatalf("%s 不该发 max_completion_tokens：%v", p.Vendor, body)
+			}
+		}
+	})
+
 	t.Run("long：发 24h（能支持时）", func(t *testing.T) {
 		request, err := Build(Provider{ID: "oa", Kind: KindOpenAI}, Request{
 			Model: "m", Messages: messages, SessionID: session, CacheRetention: CacheLong, Stream: true})

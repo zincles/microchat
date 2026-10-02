@@ -1,8 +1,10 @@
 package registry
 
 import (
+	"context"
 	"encoding/json"
 	"net"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
@@ -69,28 +71,36 @@ func Probe(provider config.Provider) (ProbeResult, error) {
 	return ProbeResult{Models: withZenProtocol(provider, parsed.Data)}, nil
 }
 
-// withZenProtocol：给发现到的模型按 Zen 写死表打标（仅 opencode-go/opencode vendor）。
+// withZenProtocol：给发现到的模型按 models.dev 快照 npm 现算打标（仅 opencode-go/opencode vendor）。
 //
-// 发现优先：在 `models`（`/models` 刚拉到的）里循环 ⇒ Zen 那边有这个 id 才打标；
-// 写死表里有但发现里没有 ⇒ 自然不出现（删行逻辑不动）。
-// 命中 ⇒ UpstreamParams 并进 `{"zen_protocol":"openai-response"}`（已有 JSON 保留，只加键）；没命中 ⇒ 不动。
-// chat/compact/title 调用方零改动：它们继续调 Build（chat 体）—— 按模型切路是下一步。
+// 出生=快照：`ParseModelsDev` .providers 节 npm 现算（`NpmToAPI` 已有）—— Zen 写死表已删，
+// 路由唯一真相 = model_route 表，这里只是给发现行留一份出生时的快照标。
+// 发现优先：在 `models`（`/models` 刚拉到的）里循环 ⇒ 快照里有这个 id 才打标；
+// 快照里没有 ⇒ 自然不出现（删行逻辑不动）。
+// 命中且 api=="openai-responses" ⇒ UpstreamParams 并进 `{"zen_protocol":"openai-responses"}`
+// 快照取不到（没网/坏）⇒ 不打标、不报错（刷新本身不受影响）。
 func withZenProtocol(provider config.Provider, models []store.Discovered) []store.Discovered {
 	wire := providers.FromConfig(provider)
 	vendor := wire.EffectiveVendor()
 	if vendor != providers.VendorOpenCodeGo && vendor != providers.VendorOpenCode {
 		return models
 	}
+	section := modelsDevSectionFor(vendor)
+	routes, err := fetchModelsDevSection(section)
+	if err != nil || len(routes) == 0 {
+		return models
+	}
 	for index, model := range models {
-		protocol, ok := providers.ZenProtocolFor(model.UpstreamID)
-		if !ok {
+		// 快照存的是 models.dev 口径（"openai-responses"，复数）—— 别拿单数的 Protocol 比。
+		api, ok := routes[model.UpstreamID]
+		if !ok || api != "openai-responses" {
 			continue
 		}
 		merged := map[string]any{}
 		if len(model.UpstreamParams) > 0 {
 			_ = json.Unmarshal(model.UpstreamParams, &merged) // 坏了就丢旧的，只留标
 		}
-		merged["zen_protocol"] = string(protocol)
+		merged["zen_protocol"] = api
 		raw, err := json.Marshal(merged)
 		if err != nil {
 			continue
@@ -98,6 +108,31 @@ func withZenProtocol(provider config.Provider, models []store.Discovered) []stor
 		models[index].UpstreamParams = raw
 	}
 	return models
+}
+
+// modelsDevSectionFor：vendor ⇒ 快照里要看的节（opencode-go 看 "opencode-go"，opencode 看 "opencode"）。
+func modelsDevSectionFor(vendor providers.Vendor) string {
+	if vendor == providers.VendorOpenCodeGo {
+		return "opencode-go"
+	}
+	return "opencode"
+}
+
+// fetchModelsDevSection：拉一次公开快照 ⇒ 只要这一节的 `{modelID: api}`。
+// 失败就照实回错（调用方决定：打标这一步失败 ⇒ 不打标、不拦刷新）。
+//
+// `modelsDevFetch` 可注入（测试把 Transport 劫到本地 httptest；线上默认直连 20s 超时）。
+var modelsDevFetch = func() (map[string]map[string]string, error) {
+	client := &http.Client{Timeout: 20 * time.Second}
+	return FetchModelsDev(context.Background(), client)
+}
+
+func fetchModelsDevSection(section string) (map[string]string, error) {
+	routes, err := modelsDevFetch()
+	if err != nil {
+		return nil, err
+	}
+	return routes[section], nil
 }
 
 // Skip：这个渠道**该不该**自动去问模型列表。返回非空 = 跳过（值就是给人看的原因）。

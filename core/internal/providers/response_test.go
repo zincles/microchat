@@ -9,13 +9,16 @@ import (
 	"microchat/internal/config"
 )
 
-// Build：opencode-go + response ⇒ URL 以 /responses 结尾、体有 input 无 messages。
+// Build：opencode-go + response ⇒ URL 以 /responses 结尾、体是数组 input、无 messages。
 func TestBuildResponse(t *testing.T) {
 	provider := Provider{ID: "go", Vendor: VendorOpenCodeGo, Protocol: ProtocolOpenAIResponse, APIKey: "sk-x"}
+	temperature := 0.7
+	effort, summary := "high", "auto"
 	request, err := Build(provider, Request{
 		Model: "muse-spark-1.3", SessionID: "s-1",
 		Messages:  []ChatMessage{{Role: "user", Content: "在吗"}, {Role: "assistant", Content: "在"}},
-		MaxTokens: 128,
+		MaxTokens: 128, Temperature: &temperature,
+		ReasoningEffort: &effort, ReasoningSummary: &summary,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -28,20 +31,42 @@ func TestBuildResponse(t *testing.T) {
 	if err := json.Unmarshal(raw, &body); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := body["input"]; !ok {
-		t.Fatalf("占位体该有 input：%s", raw)
-	}
 	if _, ok := body["messages"]; ok {
-		t.Fatalf("占位体不该有 messages：%s", raw)
+		t.Fatalf("response 体不该有 messages：%s", raw)
+	}
+	input, ok := body["input"].([]any)
+	if !ok || len(input) != 2 {
+		t.Fatalf("input 该是 2 项数组：%s", raw)
+	}
+	first, _ := input[0].(map[string]any)
+	if first["role"] != "user" {
+		t.Fatalf("首项 role = %v", first["role"])
+	}
+	content, ok := first["content"].([]any)
+	if !ok || len(content) != 1 {
+		t.Fatalf("content 该是 1 项数组：%v", first["content"])
+	}
+	part, _ := content[0].(map[string]any)
+	if part["type"] != "input_text" || part["text"] != "在吗" {
+		t.Fatalf("input_text 形状 = %v", content[0])
 	}
 	if body["max_output_tokens"] != float64(128) {
 		t.Fatalf("max_output_tokens = %v", body["max_output_tokens"])
 	}
-	input, _ := body["input"].(string)
-	if !strings.Contains(input, "user: 在吗") || !strings.Contains(input, "assistant: 在") {
-		t.Fatalf("input 形状 = %q", input)
+	if body["store"] != false {
+		t.Fatalf("opencode-go 该发 store:false：%s", raw)
 	}
-	// custom 无 endpoints ⇒ base+/responses
+	if body["temperature"] != 0.7 {
+		t.Fatalf("temperature = %v", body["temperature"])
+	}
+	reasoning, ok := body["reasoning"].(map[string]any)
+	if !ok || reasoning["effort"] != "high" || reasoning["summary"] != "auto" {
+		t.Fatalf("reasoning = %v", body["reasoning"])
+	}
+	if _, ok := body["prompt_cache_key"]; ok {
+		t.Fatalf("opencode 系本来就没有 longCache ⇒ 自然不发 prompt_cache_key：%s", raw)
+	}
+	// custom 无 endpoints ⇒ base+/responses，且 custom 不发 store（用户自备端点，别乱塞字段）
 	custom, err := Build(
 		Provider{ID: "c", Vendor: VendorCustom, Protocol: ProtocolOpenAIResponse, BaseURL: "https://x.invalid/v1"},
 		Request{Model: "m", SessionID: "s"},
@@ -51,6 +76,17 @@ func TestBuildResponse(t *testing.T) {
 	}
 	if custom.URL.String() != "https://x.invalid/v1/responses" {
 		t.Fatalf("URL = %q", custom.URL.String())
+	}
+	customRaw, _ := io.ReadAll(custom.Body)
+	var customBody map[string]any
+	if err := json.Unmarshal(customRaw, &customBody); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := customBody["store"]; ok {
+		t.Fatalf("custom 不该发 store：%s", customRaw)
+	}
+	if _, ok := customBody["reasoning"]; ok {
+		t.Fatalf("没给 effort/summary 就不该发 reasoning：%s", customRaw)
 	}
 }
 
@@ -87,30 +123,39 @@ func TestValidateResponseMatrix(t *testing.T) {
 	}
 }
 
-// zenProtocolFor：表里 31 个全在 + 前缀兜底 + chat 系不命中。
-func TestZenProtocolFor(t *testing.T) {
-	if len(zenResponseModels) != 31 {
-		t.Fatalf("写死表该 31 个，得到 %d", len(zenResponseModels))
-	}
-	for _, id := range []string{
-		"gpt-5", "gpt-5.3-codex-spark", "gpt-6.1-sol",
-		"grok-4.7", "grok-build-0.1",
-		"muse-spark-1.2", "muse-spark-1.3", "muse-spark-1.3-contributor-free",
-	} {
-		protocol, ok := zenProtocolFor(id)
-		if !ok || protocol != ProtocolOpenAIResponse {
-			t.Fatalf("%q 该走 response：%q %v", id, protocol, ok)
+// ResolveProtocol：有行且 api=="openai-responses" ⇒ response；无行/别的 api 值 ⇒ chat 缺省。
+// 路由唯一真相 = model_route 表（Zen 写死表已删，见 model_route）。
+func TestResolveProtocol(t *testing.T) {
+	responses := func(provider, upstreamID string) (string, bool) {
+		if provider == "oc" && upstreamID == "gpt-5" {
+			return "openai-responses", true
 		}
-	}
-	// 新模型兜底：前缀 gpt-/grok- 就算表里没有也走 response
-	if _, ok := zenProtocolFor("gpt-9-future"); !ok {
-		t.Fatal("gpt-9-future 该被前缀兜底")
-	}
-	// chat 系不命中
-	for _, id := range []string{"deepseek-v4.1-flash", "kimi-k2.5", "qwen3.8-max", "glm-5", "big-pickle"} {
-		if _, ok := zenProtocolFor(id); ok {
-			t.Fatalf("%q 不该走 response", id)
+		if provider == "oc" && upstreamID == "deepseek-v4.1-flash" {
+			return "openai-completions", true
 		}
+		return "", false
+	}
+	if got := ResolveProtocol(responses, "oc", "gpt-5"); got != ProtocolOpenAIResponse {
+		t.Fatalf("有行 responses 该走 response：%q", got)
+	}
+	if got := ResolveProtocol(responses, "oc", "deepseek-v4.1-flash"); got != ProtocolChatCompletion {
+		t.Fatalf("别的 api 值该回 chat：%q", got)
+	}
+	if got := ResolveProtocol(responses, "oc", "kimi-k2.5"); got != ProtocolChatCompletion {
+		t.Fatalf("无行该回 chat：%q", got)
+	}
+	if got := ResolveProtocol(nil, "oc", "gpt-5"); got != ProtocolChatCompletion {
+		t.Fatalf("lookup 为空该回 chat：%q", got)
+	}
+	// 查表键 = 渠道 id + 模型 id（model_route 按渠道刷新：同 vendor 两条渠道各有各的表）
+	seen := ""
+	lookup := func(provider, upstreamID string) (string, bool) {
+		seen = provider + "/" + upstreamID
+		return "", false
+	}
+	ResolveProtocol(lookup, "ocgo-2", "m")
+	if seen != "ocgo-2/m" {
+		t.Fatalf("查表键 = %q", seen)
 	}
 }
 

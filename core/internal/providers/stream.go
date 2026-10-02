@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -91,6 +92,11 @@ func (c *Client) Chat(ctx context.Context, p Provider, r Request, localReply str
 	if payload, err := Snapshot(request, time.Now()); err == nil {
 		RecordLastPayload(payload)
 	}
+	// 按 `p.EffectiveProtocol()` 分两路：chat 走老 `streamUpstream`，response 走新解析
+	// （URL/体由 `Build` 按 protocol 拼好 —— Chat 不自己拼 URL）。
+	if p.EffectiveProtocol() == ProtocolOpenAIResponse {
+		return c.streamResponseUpstream(ctx, request, onDelta)
+	}
 	return c.streamUpstream(ctx, request, onDelta)
 }
 
@@ -148,6 +154,11 @@ func (c *Client) Complete(ctx context.Context, p Provider, r Request, localReply
 	if response.StatusCode < 200 || response.StatusCode > 299 {
 		return Result{}, &UpstreamError{Status: response.StatusCode, Body: snippet(string(body))}
 	}
+	// response 系走 output_text 数组拼正文（reasoning_summary 吞了记 log）；
+	// compact/title 调 Complete 走 chat 体 —— response 系模型拿来压摘要是下一步的活。
+	if p.EffectiveProtocol() == ProtocolOpenAIResponse {
+		return completeResponse(response.StatusCode, body)
+	}
 	var parsed completionResponse
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		return Result{}, fmt.Errorf("providers: 解析响应失败：%w", err)
@@ -183,6 +194,21 @@ func (c *Client) streamUpstream(ctx context.Context, request *http.Request, onDe
 		return Result{}, &UpstreamError{Status: response.StatusCode, Body: snippet(string(body))}
 	}
 	return readStream(response.StatusCode, response.Body, onDelta)
+}
+
+// streamResponseUpstream：Response 协议那半程 —— 状态码检查与 streamUpstream 同口径，
+// 解析走 `readResponseStream`（URL/体由 `Build` 按 protocol 拼好，这里不拼）。
+func (c *Client) streamResponseUpstream(ctx context.Context, request *http.Request, onDelta func(Delta)) (Result, error) {
+	response, err := c.Do(request.WithContext(ctx))
+	if err != nil {
+		return Result{}, err // 连不上 / 超时 / 被取消：原样返回（不重试、不吞）
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode > 299 {
+		body, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+		return Result{}, &UpstreamError{Status: response.StatusCode, Body: snippet(string(body))}
+	}
+	return readResponseStream(response.StatusCode, response.Body, onDelta)
 }
 
 // streamChunk：一帧的 JSON（OpenAI 兼容的流式形状）。
@@ -258,6 +284,148 @@ func readStream(status int, body io.Reader, onDelta func(Delta)) (Result, error)
 		}
 	}
 	if result.Text == "" {
+		return Result{}, ErrEmpty
+	}
+	return result, nil
+}
+
+// readResponseStream：Response 协议的 SSE 解析（照 Pi `processResponsesStream` 全套事件，
+// **先只做文本**：`response.output_text.delta` → 正文）。
+//
+// 事件分派：
+//   - `response.output_text.delta`（`delta` 字符串）拼正文；
+//   - `response.reasoning_summary_text.delta/part.done` 与 `response.reasoning_text.delta` ⇒
+//     吞了记 log（别丢、别入库 —— 思考摘要只服务动画那类观测，这里连动画都不进）；
+//   - `response.refusal`/`response.failed`/`response.error` ⇒ 整轮失败（文案带事件名）；
+//   - `response.completed` ⇒ 收工（usage 在 `response.completed.response.usage` 里，认出来就归一化 ——
+//     认不出也不报错，usage 本来就是"有就好"）；`[DONE]` 照旧收工；别的事件跳过。
+//
+// 空正文 ⇒ `ErrEmpty`（与 chat 同一条脾气）。
+func readResponseStream(status int, body io.Reader, onDelta func(Delta)) (Result, error) {
+	var result Result
+	for event, err := range sse.Read(body, &sse.ReadConfig{MaxEventSize: maxEventSize}) {
+		if err != nil {
+			return Result{}, fmt.Errorf("providers: 解析流失败：%w", err)
+		}
+		data := strings.TrimSpace(event.Data)
+		if data == "" {
+			continue
+		}
+		if data == "[DONE]" {
+			break
+		}
+		var envelope struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal([]byte(data), &envelope) != nil || envelope.Type == "" {
+			continue // 心跳 / 注释 / 别家的私货：跳过，别让一个怪帧打断整条流
+		}
+		switch envelope.Type {
+		case "response.output_text.delta":
+			var frame struct {
+				Delta string `json:"delta"`
+			}
+			if json.Unmarshal([]byte(data), &frame) != nil {
+				continue
+			}
+			if frame.Delta == "" {
+				continue
+			}
+			result.Text += frame.Delta
+			if onDelta != nil {
+				onDelta(Delta{Text: frame.Delta})
+			}
+		case "response.reasoning_summary_text.delta", "response.reasoning_summary_part.done",
+			"response.reasoning_text.delta":
+			log.Printf("providers: response reasoning 事件吞掉（%s，别入库）", envelope.Type)
+		case "response.refusal", "response.refusal.delta":
+			return Result{}, &UpstreamError{Status: status, Body: snippet("response.refusal：" + data)}
+		case "response.failed", "response.error", "error":
+			return Result{}, &UpstreamError{Status: status, Body: snippet(envelope.Type + "：" + data)}
+		case "response.completed", "response.incomplete":
+			var frame struct {
+				Response struct {
+					Usage json.RawMessage `json:"usage"`
+				} `json:"response"`
+			}
+			if json.Unmarshal([]byte(data), &frame) == nil {
+				if usage := NormalizeUsage(frame.Response.Usage); len(usage) > 0 {
+					result.Usage = usage
+				}
+			}
+			if envelope.Type == "response.incomplete" {
+				log.Printf("providers: response incomplete（照 completed 收工，原因见帧）")
+			}
+		default:
+			// created/output_item.added/part.done/function_call_arguments/custom_tool_call_input/
+			// output_item.done 等：现在只做文本，别的都跳过。
+		}
+	}
+	if strings.TrimSpace(result.Text) == "" {
+		return Result{}, ErrEmpty
+	}
+	return result, nil
+}
+
+// responseOutputText：非流式 Response 体里一段 content（`output_text` 拼正文，`refusal` 照失败算）。
+// 只认 `type` + `text` 两个键，别家塞的私货跳过。
+func responseOutputText(content []map[string]any) (text string, refused bool) {
+	for _, part := range content {
+		kind, _ := part["type"].(string)
+		words, _ := part["text"].(string)
+		switch kind {
+		case "output_text":
+			text += words
+		case "refusal":
+			refused = true
+			text += words
+		}
+	}
+	return text, refused
+}
+
+// completeResponse：Response 协议非流式那一发 —— `response.output.output[].content[]` 里
+// `output_text` 数组拼正文；reasoning_summary 吞了记 log；refusal ⇒ 整轮失败；空正文 ⇒ ErrEmpty。
+func completeResponse(status int, body []byte) (Result, error) {
+	var parsed struct {
+		Output []struct {
+			Type    string `json:"type"`
+			Summary []struct {
+				Text string `json:"text"`
+			} `json:"summary"`
+			Content []map[string]any `json:"content"`
+		} `json:"output"`
+		Usage json.RawMessage `json:"usage"`
+		Error *struct {
+			Message string `json:"message"`
+			Code    string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return Result{}, fmt.Errorf("providers: 解析响应失败：%w", err)
+	}
+	if parsed.Error != nil {
+		return Result{}, &UpstreamError{Status: status, Body: snippet(parsed.Error.Code + "：" + parsed.Error.Message)}
+	}
+	var result Result
+	for _, item := range parsed.Output {
+		if item.Type == "reasoning" && len(item.Summary) > 0 {
+			log.Printf("providers: response reasoning 摘要吞掉（非流式，别入库）")
+			continue
+		}
+		if len(item.Content) == 0 {
+			continue
+		}
+		text, refused := responseOutputText(item.Content)
+		if refused {
+			return Result{}, &UpstreamError{Status: status, Body: snippet("response.refusal：" + text)}
+		}
+		result.Text += text
+	}
+	if usage := NormalizeUsage(parsed.Usage); len(usage) > 0 {
+		result.Usage = usage
+	}
+	if strings.TrimSpace(result.Text) == "" {
 		return Result{}, ErrEmpty
 	}
 	return result, nil

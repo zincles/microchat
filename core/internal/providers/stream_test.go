@@ -235,3 +235,81 @@ func TestNonStreamingIsRefusedExplicitly(t *testing.T) {
 		t.Fatalf("该明说这家渠道不能用来聊天：%v", err)
 	}
 }
+
+// readResponseStream：脚本化事件流 —— 文本分片拼正文、reasoning 系吞了记 log、usage 归一化。
+func TestReadResponseStreamTextAndUsage(t *testing.T) {
+	frames := []string{
+		`data: {"type":"response.created","response":{"id":"r1"}}`,
+		`data: {"type":"response.output_item.added","output_index":0,"item":{"type":"message"}}`,
+		`data: {"type":"response.output_text.delta","output_index":0,"delta":"你好"}`,
+		`data: {"type":"response.reasoning_summary_text.delta","output_index":0,"delta":"想一下"}`,
+		`data: {"type":"response.reasoning_summary_part.done","output_index":0}`,
+		`data: {"type":"response.reasoning_text.delta","output_index":0,"delta":"还是想"}`,
+		`data: {"type":"response.output_text.delta","output_index":0,"delta":"，世界"}`,
+		`data: {"type":"response.output_item.done","output_index":0,"item":{"type":"message"}}`,
+		`data: {"type":"response.completed","response":{"id":"r1","status":"completed","usage":{"prompt_tokens":10,"completion_tokens":3,"total_tokens":13}}}`,
+		`data: [DONE]`,
+	}
+	var deltas []Delta
+	result, err := readResponseStream(200, strings.NewReader(strings.Join(frames, "\n\n")+"\n\n"),
+		func(delta Delta) { deltas = append(deltas, delta) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Text != "你好，世界" {
+		t.Fatalf("正文 = %q", result.Text)
+	}
+	if result.Reasoning != "" {
+		t.Fatalf("reasoning 系该吞了别入库：%q", result.Reasoning)
+	}
+	if len(deltas) != 2 || deltas[0].Text != "你好" || deltas[1].Text != "，世界" {
+		t.Fatalf("增量 = %+v", deltas)
+	}
+	var usage Usage
+	if err := json.Unmarshal(result.Usage, &usage); err != nil {
+		t.Fatal(err)
+	}
+	if usage.PromptTokens != 10 || usage.CompletionTokens != 3 {
+		t.Fatalf("usage = %+v", usage)
+	}
+}
+
+// refusal ⇒ 整轮失败（文案带事件名）；空正文 ⇒ ErrEmpty（与 chat 同一条脾气）。
+func TestReadResponseStreamRefusalAndEmpty(t *testing.T) {
+	refusal := `data: {"type":"response.refusal.delta","delta":"不说"}` + "\n\n"
+	if _, err := readResponseStream(200, strings.NewReader(refusal), nil); err == nil {
+		t.Fatal("refusal 该失败")
+	} else if upstream, ok := err.(*UpstreamError); !ok || !strings.Contains(upstream.Body, "refusal") {
+		t.Fatalf("文案该带事件名：%v", err)
+	}
+	failed := `data: {"type":"response.failed","response":{"status":"failed"}}` + "\n\n"
+	if _, err := readResponseStream(200, strings.NewReader(failed), nil); err == nil {
+		t.Fatal("failed 该失败")
+	}
+	onlyDone := "data: [DONE]\n\n"
+	if _, err := readResponseStream(200, strings.NewReader(onlyDone), nil); !errors.Is(err, ErrEmpty) {
+		t.Fatalf("空正文该报 ErrEmpty：%v", err)
+	}
+}
+
+// completeResponse：非流式 output_text 数组拼正文；reasoning 摘要吞了；refusal 失败。
+func TestCompleteResponseBody(t *testing.T) {
+	body := `{"output":[
+		{"type":"reasoning","summary":[{"text":"想过了"}]},
+		{"type":"message","content":[{"type":"output_text","text":"答案"},{"type":"output_text","text":"是 42"}]}
+	],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}`
+	result, err := completeResponse(200, []byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Text != "答案是 42" {
+		t.Fatalf("正文 = %q", result.Text)
+	}
+	refused := `{"output":[{"type":"message","content":[{"type":"refusal","text":"不说"}]}]}`
+	if _, err := completeResponse(200, []byte(refused)); err == nil {
+		t.Fatal("refusal 该失败")
+	}
+	if _, err := completeResponse(200, []byte(`{"output":[]}`)); !errors.Is(err, ErrEmpty) {
+		t.Fatalf("空正文该报 ErrEmpty：%v", err)
+	}
+}
