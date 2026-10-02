@@ -9,10 +9,10 @@ import (
 
 // unknownCommandReply 只看形状（斜杠开头、非空）：
 //   - 命中 ⇒ 回复含原文与可用清单；
-//   - 不命中 ⇒ ok=false，交回 onEcho 走 echo。
+//   - 不命中 ⇒ ok=false，交给文本入口真发一轮。
 //
 // 注意语义边界：/start 这类已知命令在这里**也**返回 true —— 函数不认名单，
-// 已知命令靠 NewRunner 里注册顺序在前的精确匹配处理器接走，到不了 onEcho。
+// 已知命令靠命令表派发接走，根本到不了这儿。
 func TestUnknownCommandReply(t *testing.T) {
 	reply, ok := unknownCommandReply("/foo")
 	if !ok {
@@ -29,7 +29,7 @@ func TestUnknownCommandReply(t *testing.T) {
 		t.Fatal("/start 也命中：函数只管形状，已知由处理器顺序兜")
 	}
 
-	// 不是斜杠开头 / 空串 ⇒ 不命中，走 echo。
+	// 不是斜杠开头 / 空串 ⇒ 不命中，交给文本入口真发一轮。
 	for _, text := range []string{"hello", "", "  /foo", "hello /foo"} {
 		if reply, ok := unknownCommandReply(text); ok {
 			t.Fatalf("%q 不该命中：%q", text, reply)

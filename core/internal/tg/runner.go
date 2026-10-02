@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -18,7 +17,7 @@ import (
 // Runner：bot 长轮询的那一整个活 —— 启动 / 状态 / 停。
 //
 // 生命周期归 main 管：Enable + 有 token 才 `Go(ctx)` 跑起来；ctx 取消就停。
-// 几条**进程内事实**（重启就没）：翻页状态（page）、当前会话（currentSessionID）、
+// 几条**进程内事实**（重启就没）：当前会话（currentSessionID）、
 // 等确认的待办（pending）—— 与 turn 登记表同一条脾气，不进库。
 type Runner struct {
 	mu      sync.Mutex
@@ -28,14 +27,7 @@ type Runner struct {
 	allowed int64
 	api     *apiclient.Client
 	session string                // 当前会话 id（"" = 还没定，惰性取最近一条）
-	pages   map[string]*pageState // key: chatID:msgID（翻页回调按它找状态）
 	pending map[string]*pendingOp // key: 短 key（确认按钮按它找"要动哪件事"）
-}
-
-type pageState struct {
-	title string
-	pages []string
-	index int
 }
 
 // commandScopes：清旧菜单要挨个招呼的那几个作用域。
@@ -50,7 +42,7 @@ func commandScopes() []models.BotCommandScope {
 }
 
 // unknownCommandReply：text 是 `/xxx` 形状（斜杠开头、非空）⇒ 给"不认识"的回复（含原文与可用清单）；
-// 否则 ok=false（走 echo 那条路）。
+// 否则 ok=false（交给文本入口真发一轮）。
 //
 // 只看形状、不认名单：`/status` 这类已知命令也返回 true —— 它们由 onMessage 的注册表派发接走，
 // 根本走不到这儿；到这儿还在的斜杠串就是没登记过的。
@@ -87,19 +79,18 @@ func NewRunner(token string, allowed int64, api *apiclient.Client) (*Runner, err
 	}
 	r := &Runner{
 		bot: b, allowed: allowed, api: api,
-		pages: map[string]*pageState{}, pending: map[string]*pendingOp{},
+		pending: map[string]*pendingOp{},
 	}
 	r.register(b)
 	return r, nil
 }
 
-// register：把两个入口挂上 —— **一条文本入口 + 命令表派发**，加上四个回调前缀。
+// register：把两个入口挂上 —— **一条文本入口 + 命令表派发**，加上三个回调前缀。
 //
 // 不再逐条注册精确匹配：带参数的命令（`/rename a b`）在精确匹配下根本到不了，
 // 而且注册表与派发分成两处必然漂移。
 func (r *Runner) register(b *bot.Bot) {
 	b.RegisterHandler(bot.HandlerTypeMessageText, "", bot.MatchTypePrefix, r.onMessage)
-	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, cbPage, bot.MatchTypePrefix, r.onPage)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, cbConfirm, bot.MatchTypePrefix, r.onConfirm)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, cbCancel, bot.MatchTypePrefix, r.onConfirm)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, cbModel, bot.MatchTypePrefix, r.onModel)
@@ -207,7 +198,7 @@ func (r *Runner) setSessionID(id string) {
 
 // onMessage：**唯一的文本入口**。
 //
-// 顺序：门卫 → 命令表派发（命中就干，`/xxx` 形状但不认识 ⇒ 明说不认识）→ 都不是就回声验证。
+// 顺序：门卫 → 命令表派发（命中就干，`/xxx` 形状但不认识 ⇒ 明说不认识）→ 都不是就**真发一轮**。
 // 门卫在最前：没绑定的人先收到绑定提示，命令清单与任何数据都不泄露。
 func (r *Runner) onMessage(ctx context.Context, b *bot.Bot, update *models.Update) {
 	if update.Message == nil || update.Message.Text == "" {
@@ -224,75 +215,12 @@ func (r *Runner) onMessage(ctx context.Context, b *bot.Bot, update *models.Updat
 				return
 			}
 		}
-		// 斜杠形状但没登记过：明说"不认识"（别让它当普通文本 echo 回去）。
+		// 斜杠形状但没登记过：明说"不认识"（别让它当普通文本发进会话）。
 		if reply, ok := unknownCommandReply(text); ok {
 			_ = sendLong(ctx, b, update.Message.Chat.ID, reply)
 			return
 		}
 	}
-	// 回声验证（chat 接进来之前，先证明"收得到、发得出、分段对"）。
-	echo := "收到（" + strconv.Itoa(len([]rune(text))) + " 字）：" + text
-	// 超长走翻页（按钮翻，不连发刷屏）：先发第一段 + 按钮，剩下的按回调 edit。
-	parts := splitMessage(echo)
-	if len(parts) == 1 {
-		_ = sendLong(ctx, b, update.Message.Chat.ID, echo)
-		return
-	}
-	r.sendPaged(ctx, b, update.Message.Chat.ID, "回声（"+strconv.Itoa(len(parts))+" 段）", parts)
-}
-
-// sendPaged：发第一段 + 翻页按钮（剩下的按回调 edit 同一条消息）。
-func (r *Runner) sendPaged(ctx context.Context, b *bot.Bot, chatID int64, title string, parts []string) {
-	msg, err := b.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID: chatID, Text: title + "（1/" + strconv.Itoa(len(parts)) + "）\n" + parts[0],
-		ReplyMarkup: &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
-			{{Text: "下一段 →", CallbackData: cbPage + "1"}},
-		}},
-	})
-	if err != nil {
-		return
-	}
-	key := strconv.FormatInt(chatID, 10) + ":" + strconv.Itoa(msg.ID)
-	r.mu.Lock()
-	r.pages[key] = &pageState{title: title, pages: parts, index: 0}
-	r.mu.Unlock()
-}
-
-// onPage：翻页回调 —— edit 同一条消息（不刷屏）。
-func (r *Runner) onPage(ctx context.Context, b *bot.Bot, update *models.Update) {
-	if !r.gateCallback(ctx, b, update) {
-		return
-	}
-	index, err := strconv.Atoi(strings.TrimPrefix(update.CallbackQuery.Data, cbPage))
-	if err != nil {
-		return
-	}
-	message := callbackMessage(update)
-	if message == nil {
-		return
-	}
-	key := strconv.FormatInt(message.Chat.ID, 10) + ":" + strconv.Itoa(message.ID)
-	r.mu.Lock()
-	state, ok := r.pages[key]
-	r.mu.Unlock()
-	if !ok || index < 0 || index >= len(state.pages) {
-		return
-	}
-	state.index = index
-	buttons := []models.InlineKeyboardButton{}
-	if index > 0 {
-		buttons = append(buttons, models.InlineKeyboardButton{Text: "← 上一段", CallbackData: cbPage + strconv.Itoa(index-1)})
-	}
-	if index < len(state.pages)-1 {
-		buttons = append(buttons, models.InlineKeyboardButton{Text: "下一段 →", CallbackData: cbPage + strconv.Itoa(index+1)})
-	}
-	text := state.title + "（" + strconv.Itoa(index+1) + "/" + strconv.Itoa(len(state.pages)) + "）\n" + state.pages[index]
-	var markup *models.InlineKeyboardMarkup
-	if len(buttons) > 0 {
-		markup = &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{buttons}}
-	}
-	_, _ = b.EditMessageText(ctx, &bot.EditMessageTextParams{
-		ChatID: message.Chat.ID, MessageID: message.ID, Text: text, ReplyMarkup: markup,
-	})
-	_, _ = b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{CallbackQueryID: update.CallbackQuery.ID})
+	// 非命令文本 = 真发一轮（发进当前会话 → 轮询 → 节流 edit 把回复长出来）。
+	r.handleText(ctx, b, update)
 }

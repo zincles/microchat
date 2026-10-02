@@ -252,7 +252,6 @@ func modelPageText(items []apiclient.ModelListItem, page, pages int) string {
 // 长东西（预览文本、会话 id）一律留在内存 pending 表里（见 runner.go）。
 
 const (
-	cbPage    = "page:"    // 长输出翻页（回声）
 	cbConfirm = "confirm:" // 确认一次待办（删会话 / 删消息）
 	cbCancel  = "cancel:"  // 撤掉待办
 	cbModel   = "model:"   // /model 翻页与选择

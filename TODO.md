@@ -90,7 +90,10 @@
   （抽包后 TUI 与 bot 同用一个客户端，零第二份）；菜单与 /help 从注册表派生（不许两处手写）；/status 打印 CLI 底栏内容
   （会话 | 上下文 | 轮次 | TG | 后端）；/delete /cut 走按钮确认（callback_data ≤64B，待办表在内存）；
   /model 按钮翻页选模型。不做：/provider-add /provider-del（配置管理留 CLI）、/reroll*（下一步）、/telegram-*（CLI 管）、/quit。
-· 还没做：**接 chat**（发话就是一轮：发消息→轮询→节流 edit；现在只回声）。
+· **接 chat** ✓（2026-10-02）：纯文本 = 真发一轮（发进 bot 当前会话 → 202 → 700ms 轮询，
+  edit 节流 ≥1s 且文本不变不 edit；占位"生成中… 耗时"/"思考中… N 字"；超 4096 按段补发新消息；
+  409 ⇒ "上一轮还在跑"；失败 ⇒ 占位改成原因；~10min 超时说清后停；生成中每 5s sendChatAction(typing)）。
+  回声路径（onEcho/sendPaged/pageState）已删。
 · 旧口径保留：长轮询（不要公网）✓；流式节流 edit（≥100–300ms）✓；4096 按 rune 切 ✓；48 小时以上改发新消息 ✓；Topics 一话题一会话 ✓。
 
 ### C. 压缩的自动触发（**先聊三件才动手** ✗）

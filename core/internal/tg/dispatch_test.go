@@ -29,6 +29,7 @@ type sentMessage struct {
 // fakeTelegram：假 Bot API —— 只认发消息/改消息/回执（其余一律 404，测试就能发现"没想到的调用"）。
 type fakeTelegram struct {
 	mu      sync.Mutex
+	nextID  int
 	sent    []sentMessage
 	edited  []string
 	answers []string
@@ -44,15 +45,20 @@ func (f *fakeTelegram) handler(w http.ResponseWriter, r *http.Request) {
 			_ = json.Unmarshal([]byte(rawMarkup), &message.markup)
 		}
 		f.mu.Lock()
+		f.nextID++
+		id := f.nextID
 		f.sent = append(f.sent, message)
 		f.mu.Unlock()
-		fmt.Fprint(w, `{"ok":true,"result":{"message_id":1,"date":0,"chat":{"id":42,"type":"private"},"text":""}}`)
+		fmt.Fprintf(w, `{"ok":true,"result":{"message_id":%d,"date":0,"chat":{"id":42,"type":"private"},"text":""}}`, id)
 	case strings.HasSuffix(r.URL.Path, "/editMessageText"):
 		_ = r.ParseMultipartForm(1 << 20)
 		f.mu.Lock()
 		f.edited = append(f.edited, r.FormValue("text"))
 		f.mu.Unlock()
 		fmt.Fprint(w, `{"ok":true,"result":{"message_id":1,"date":0,"chat":{"id":42,"type":"private"},"text":""}}`)
+	case strings.HasSuffix(r.URL.Path, "/sendChatAction"):
+		// 生成中报"正在输入"——不算意外调用，认下来（正文走 sendMessage）。
+		fmt.Fprint(w, `{"ok":true,"result":true}`)
 	case strings.HasSuffix(r.URL.Path, "/answerCallbackQuery"):
 		_ = r.ParseMultipartForm(1 << 20)
 		f.mu.Lock()
@@ -95,7 +101,7 @@ func newFakeRunner(t *testing.T, backend http.HandlerFunc) (*Runner, *fakeTelegr
 	}
 	runner := &Runner{
 		bot: b, allowed: 42, api: stubClient(t, backend),
-		pages: map[string]*pageState{}, pending: map[string]*pendingOp{},
+		pending: map[string]*pendingOp{},
 	}
 	runner.register(b)
 	return runner, fake
@@ -165,7 +171,7 @@ func TestDispatchUnboundOnlyGetsHint(t *testing.T) {
 	}
 }
 
-// 斜杠形状但没登记过：明说"不认识"（不当回声）。
+// 斜杠形状但没登记过：明说"不认识"（不当普通文本发进会话）。
 func TestDispatchUnknownCommand(t *testing.T) {
 	runner, fake := newFakeRunner(t, func(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("不认识命令不该打后端：%s", r.URL.Path)
@@ -177,18 +183,6 @@ func TestDispatchUnknownCommand(t *testing.T) {
 	}
 	if !strings.Contains(sent[0].text, "/status") {
 		t.Fatalf("该列出可用命令：%s", sent[0].text)
-	}
-}
-
-// 普通文本照样回声验证（没被命令面包掉）。
-func TestDispatchPlainTextEchoes(t *testing.T) {
-	runner, fake := newFakeRunner(t, func(w http.ResponseWriter, r *http.Request) {
-		t.Errorf("回声不该打后端：%s", r.URL.Path)
-	})
-	runner.bot.ProcessUpdate(context.Background(), textUpdate("你好", 42))
-	sent := fake.messages()
-	if len(sent) != 1 || !strings.Contains(sent[0].text, "收到（2 字）：你好") {
-		t.Fatalf("回声不对：%+v", sent)
 	}
 }
 
