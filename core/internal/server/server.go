@@ -1,4 +1,4 @@
-// Package server：HTTP 层。**接口形状照搬 AGENTS.md 那张表**（43 条），一条条搬。
+// Package server：HTTP 层。**接口形状照搬 AGENTS.md 那张表**（49 条），一条条搬。
 //
 // 全部挂在 /api/v1 下；错误体固定 {"error":{"code","message"}}；配了口令就全都要 Bearer。
 package server
@@ -20,6 +20,7 @@ import (
 	"microchat/internal/model"
 	"microchat/internal/reroll"
 	"microchat/internal/store"
+	"microchat/internal/task"
 )
 
 type Server struct {
@@ -29,15 +30,16 @@ type Server struct {
 	chat    *chat.Service
 	compact *compact.Service
 	rerolls *reroll.Service
+	tasks   *task.Registry
 	mux     *http.ServeMux
 }
 
 // New：把"一轮生成"(chat)、"压缩"(compact) 与"重摇"(reroll) 三层注进来 —— 它们才是干活的那层
 // （server 只编排：解析请求、定错误码、写响应）。
 func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *chat.Service,
-	compactService *compact.Service, rerollService *reroll.Service) *Server {
+	compactService *compact.Service, rerollService *reroll.Service, tasks *task.Registry) *Server {
 	s := &Server{store: st, config: cfg, paths: paths, chat: chatService, compact: compactService,
-		rerolls: rerollService, mux: http.NewServeMux()}
+		rerolls: rerollService, tasks: tasks, mux: http.NewServeMux()}
 	// Go 1.22+ 的 ServeMux 原生支持 `GET /x/{id}` 这种模式 —— 连路由库都不需要。
 	s.mux.HandleFunc("GET /api/v1/health", s.health)
 	s.mux.HandleFunc("GET /api/v1/debug/last-payload", s.lastPayload)
@@ -65,6 +67,8 @@ func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *ch
 	s.mux.HandleFunc("PUT /api/v1/config/chat", s.putChatConfig)
 	s.mux.HandleFunc("GET /api/v1/models", s.listModels)
 	s.mux.HandleFunc("PATCH /api/v1/models", s.setModelOverride)
+	// 任务面板：进程内的事实（与 `-debug tasks` 同一份 Board；轮询用，不进库）
+	s.mux.HandleFunc("GET /api/v1/tasks", s.taskBoard)
 
 	// statelang：解析 + 计算（给外部工具用；不涉及会话、不落库）
 	s.mux.HandleFunc("POST /api/v1/statelang", s.statelangParse)

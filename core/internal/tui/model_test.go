@@ -561,7 +561,7 @@ func TestDroppedMessagesAreAnnounced(t *testing.T) {
 	m.height = 8 // 只装得下最新那一块（署名 + 两行正文 + 空行）加顶部那行提示
 	lines := viewLines(m)
 	body := strings.Join(lines, "\n")
-	if !strings.Contains(body, "（上面还有 1 条）") {
+	if !strings.Contains(body, "（上面还有 1 条") {
 		t.Fatalf("挤掉了就该说：\n%s", body)
 	}
 	// 装不下的那条**整块**不显示（不许露半截 —— 半截看起来像"不知道谁说的"）
@@ -3007,5 +3007,67 @@ func TestCompactPollReportsDoneRangeAndMerged(t *testing.T) {
 	}
 	if after := failed.(model); after.compact != nil {
 		t.Fatal("error 之后不该还记着这一次")
+	}
+}
+
+// 滚动按 message 走（聊天的最小单位，不是压缩块）：pgup 往上翻一条，到底回 0。
+func TestScrollMovesByMessage(t *testing.T) {
+	m := fixture()
+	m.messages = append(m.messages,
+		Message{ID: "m3", Role: "user", Content: "第三句"},
+		Message{ID: "m4", Role: "assistant", Content: "收到第三句"},
+	)
+	m.height = 10
+	m.width = 40
+	pressed, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyPgUp})
+	up := pressed.(model)
+	if up.scroll != 1 {
+		t.Fatalf("pgup 该翻 1 条：%d", up.scroll)
+	}
+	view := up.View().Content
+	if !strings.Contains(view, "下面还有") && !strings.Contains(view, "上面还有") {
+		t.Fatalf("往上翻了该说还有：\n%s", view)
+	}
+	if strings.Contains(view, "在。") {
+		t.Fatalf("往上翻 1 条，最新的助手回复该被翻过去：\n%s", view)
+	}
+	back, _ := up.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
+	if back.(model).scroll != 0 {
+		t.Fatal("pgdn 该回到到底")
+	}
+	// 新消息到了 ⇒ 回到底
+	top, _ := up.Update(messagesMsg{sessionID: "c1", messages: m.messages})
+	if top.(model).scroll != 0 {
+		t.Fatal("新消息到了该回到底")
+	}
+}
+
+// 长块超一屏：露末尾 + 如实说"本条上面还有 N 行"（块不断头，只断尾）。
+func TestLongBlockShowsTail(t *testing.T) {
+	m := fixture()
+	m.messages = []Message{{ID: "m1", Role: "assistant", Content: strings.Repeat("长\n", 30)}}
+	m.height = 10
+	m.width = 40
+	view := m.View().Content
+	if !strings.Contains(view, "本条上面还有") {
+		t.Fatalf("长块该露末尾并报数：\n%s", view)
+	}
+}
+
+// Tasks 指示器：有在跑的活才亮（搭 turnTick 节拍问，没活不问）。
+func TestTasksIndicatorLightsOnRunning(t *testing.T) {
+	m := fixture()
+	updated, cmd := m.Update(tasksPollMsg{board: TaskBoard{Running: 1, Tasks: []TaskRecord{
+		{ID: "t1", Kind: "compact", Title: "压缩", Outcome: "running"},
+	}}})
+	if got := updated.(model).turnLabel(updated.(model).currentSession()); !strings.Contains(got, "压缩中") {
+		t.Fatalf("有活在跑该亮：%q", got)
+	}
+	if cmd != nil {
+		t.Fatal("tasks 轮询不约下一次（搭 turnTick 的车）")
+	}
+	idle, _ := m.Update(tasksPollMsg{board: TaskBoard{}})
+	if got := idle.(model).turnLabel(idle.(model).currentSession()); got != "空闲" {
+		t.Fatalf("没活该空闲：%q", got)
 	}
 }

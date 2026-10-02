@@ -222,9 +222,10 @@ delete(AA)           # 删除
 
 - 无用：`GET /debug/state`、`GET /debug/file/{name}`、`DELETE /providers/{provider_id}/models`、`GET /sessions/{session_id}/export`
   （理由：后端自述会说谎、配置文件原文不该给远程客户端、上游模型列表本就自动清理、导出该由 Agent 卡带承担）
-- 可选（**待重做**，不做兼容）：`GET /tasks`、`POST /models/probe`、`POST /sessions/{session_id}/archive`、
+- 可选（**待重做**，不做兼容）：`POST /models/probe`、`POST /sessions/{session_id}/archive`、
   `GET /sessions/{session_id}/summaries`、`GET/PUT /abilities`
-  （`POST /sessions/{session_id}/compact` **已经重做落地** ✓ —— 见下面的路由表）
+  （`POST /sessions/{session_id}/compact` **已经重做落地** ✓ —— 见下面的路由表；
+  `GET /tasks` 以**新形状**重做落地 ✓ —— 见"运维"那节，不在会话下、只读进程内面板）
 - **`POST /sessions/{session_id}/fork` 已彻底作废** ✗（不是"待重做"）：线性会话里分岔就是 **Copy** ✓（见上表）
 - **不要照旧版补回来** ✗ —— 旧版是参照，不是目标；要加先改这张表。
 
@@ -316,6 +317,7 @@ delete(AA)           # 删除
 |---|---|---|---|
 | GET | `/health` | `{"status","version"}` | 探针；**也过鉴权** |
 | GET | `/debug/last-payload` | `LastPayload` | **(a) 上一次真发出去的那一发**：那一刻请求的**快照**（method / url / **头** / 体；内存一份，覆盖式；没发过 = `null`）。**不可重算** ✗ —— 历史事实（改一条旧消息也回不去），且**含请求头**：用来回答"我上一发到底发了什么 / 为什么被拒"（网关拒的往往是头不是体）。头也回显且打码 |
+| GET | `/tasks` | `TaskBoard` | **任务面板**：进程内的事实（`running` + 在跑的在前的 `tasks`；与 `-debug tasks` 同一份 `Board`，不进库）。轮询用（TUI 底栏指示器就问它）。重启就没 —— "没有在跑的"是诚实的事实 |
 
 ## 一轮生成（202 + 轮询）
 

@@ -109,7 +109,7 @@ func main() {
 	log.Printf("microchat 起在 http://%s（数据 %s，配置 %s，user_version=%d，TUI=%v）",
 		*addr, paths.DataDir, paths.ConfigDir, version, interactive)
 	go func() {
-		if err := http.Serve(listener, server.New(st, cfg, paths, chatService, compactService, rerollService).Handler()); err != nil {
+		if err := http.Serve(listener, server.New(st, cfg, paths, chatService, compactService, rerollService, tasks).Handler()); err != nil {
 			log.Printf("服务退出: %v", err)
 		}
 	}()

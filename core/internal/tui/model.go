@@ -117,6 +117,11 @@ type model struct {
 	// 那一趟轮询（`turnPollMsg.status.Compact`），由 `reportCompact` 报到底栏）。
 	compact    *CompactStatus
 	compactFor string
+	// scroll：消息区**往上翻了几条 message**（0 = 到底，默认）。滚动单位是 message（聊天的最小单位；
+	// 压缩块只是压缩的粒度，别混）。新消息/换会话/进 picker 与 viewer ⇒ 回 0。
+	scroll int
+	// tasks：任务面板最新那一屏（`GET /tasks` 轮询来；running>0 才问，没活不问）。
+	tasks TaskBoard
 }
 
 // liveTurn：这一轮生成在界面上的样子。
@@ -679,6 +684,25 @@ func pollCompactCmd(client *Client, sessionID string) tea.Cmd {
 	}
 }
 
+// tasksPollMsg：一次 Tasks 轮询的结果（`GET /tasks` 那一屏）。
+type tasksPollMsg struct {
+	board TaskBoard
+	err   error
+}
+
+// pollTasksCmd：看一眼任务面板（有活在跑才问 —— 搭 turnTick 同一趟节拍，别另起轮询）。
+func pollTasksCmd(client *Client) tea.Cmd {
+	return func() tea.Msg {
+		board, err := client.Tasks()
+		return tasksPollMsg{board: board, err: err}
+	}
+}
+
+// tasksActive：面板上有没有在跑的活（指示器亮不亮就看它）。
+func (m model) tasksActive() bool {
+	return m.tasks.Running > 0
+}
+
 // ── 重摇那两条（`/reroll` 与 `/reroll-summary`）────────────────────────────
 //
 // 两个家族一一镜像：进模式 / 切换 / 删除 / 退出；只有"进模式"要的入参不同
@@ -886,7 +910,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if session != nil && message.sessionID == session.ID {
 			m.messages = message.messages
 			m.messagesFor = message.sessionID
-			m.lastAction = fmt.Sprintf("消息 %d 条", len(m.messages))
+			m.scroll = 0 // 新消息到了 ⇒ 回到底（正在看历史的人被"拽回底"，与 Pi 同一条脾气）
 			// **进会话时**顺手量一次上下文占用 / 拉一次系统提示词
 			// （两份都记着"属于哪条会话" ⇒ 换会话会重新拉）
 			var also []tea.Cmd
@@ -1194,6 +1218,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.compact != nil && m.compactFor == message.sessionID {
 			cmds = append(cmds, pollCompactCmd(m.client, message.sessionID))
 		}
+		// Tasks 指示器搭同一趟节拍（别另起轮询）：有活在跑才问，没活不问。
+		if m.tasksActive() || m.turn.Busy() || m.compact != nil {
+			cmds = append(cmds, pollTasksCmd(m.client))
+		}
 		switch len(cmds) {
 		case 0:
 			return m, nil
@@ -1296,6 +1324,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, turnTickCmd(message.sessionID)
+
+	case tasksPollMsg:
+		if message.err != nil {
+			return m, nil // 面板问不到就当没活（指示器宁可不亮，不许报错刷屏）
+		}
+		m.tasks = message.board
+		return m, nil
 
 	case rerollMsg:
 		if message.err != nil {
@@ -1435,6 +1470,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "end", "ctrl+e":
 			m.inputCursor = len([]rune(m.input))
 			return m, nil
+		case "pgup":
+			return m.scrollBy(1), nil
+		case "pgdown":
+			return m.scrollBy(-1), nil
 		case "backspace":
 			// 删**光标前**那个 rune（行首无事发生）
 			runes := []rune(m.input)
@@ -2697,14 +2736,6 @@ func (m model) renderMessages(height, width int) []string {
 	}
 	busy := m.turn.Busy() && m.turn.sessionID == session.ID
 	systemPrompt := m.visibleSystemPrompt(session)
-	if m.messagesFor == session.ID && len(m.messages) == 0 && !busy {
-		lines := []string{}
-		if systemPrompt != nil { // 还没说话也照样能看底子（调试用）
-			lines = append(lines, m.systemBlock(*systemPrompt, width)...)
-		}
-		lines = append(lines, truncate(" 这条新会话还没有消息 —— 在下面输入就开始了", width))
-		return fillLines(lines, height)
-	}
 	blocks := make([][]string, 0, len(m.messages)+2)
 	// **系统提示词摆在最上面**（它就是"这轮带的底子"）：当成一条 role=system 的消息，
 	// 与别的块同一条规矩 —— 块不劈开、装不下就从**顶部**挤掉（fitBlocks 从最新那块往上量）。
@@ -2720,7 +2751,47 @@ func (m model) renderMessages(height, width int) []string {
 	if m.rerollRunning() { // 重摇中：另起一块（**不假装**那是已定稿的那条回复）
 		blocks = append(blocks, m.liveRerollBlock(width))
 	}
-	return fitBlocks(blocks, height, width)
+	return fitBlocksFrom(blocks, m.scrollEnd(len(blocks), systemPrompt != nil), height, width)
+}
+
+// scrollEnd：消息区画到第几块（不含）—— scroll 条 message 被翻过去 ⇒ 末尾少画 scroll 块。
+// system 提示词那块不算 message（offset=有它就 1）：scroll 只数 m.messages；
+// live 气泡是合成块，不占 scroll 名额 —— 往上翻时它们照旧在底下（有活在跑你得看得见）。
+func (m model) scrollEnd(total int, hasSystem bool) int {
+	offset := 0
+	if hasSystem {
+		offset = 1
+	}
+	// scroll 只数 m.messages：live 气泡（生成中/重摇中）是合成块，不占名额 ——
+	// 往上翻时它们照旧在底下（有活在跑你得看得见），画到底时自然全在。
+	end := offset + len(m.messages) - m.scroll
+	if m.turn.Busy() {
+		end++
+	}
+	if m.rerollRunning() {
+		end++
+	}
+	if end < offset {
+		end = offset
+	}
+	if end > total {
+		end = total
+	}
+	return end
+}
+
+// scrollBy：消息区往上/下翻几条 message（pgup=+1，pgdn=-1）。
+// 上限夹到"最老那条"（再往上没东西了）；下限 0（到底）。viewer/picker 开着时不进这里
+// （按键先被它们吃掉 —— 滚动只在纯消息区生效）。
+func (m model) scrollBy(delta int) model {
+	m.scroll += delta
+	if m.scroll < 0 {
+		m.scroll = 0
+	}
+	if m.scroll > len(m.messages) {
+		m.scroll = len(m.messages)
+	}
+	return m
 }
 
 // visibleSystemPrompt：这条会话**现在该画**的那份生效系统提示词（不画就回 nil）。
@@ -2800,23 +2871,9 @@ func thinkingLabel(message Message) string {
 }
 
 // fitBlocks：从**最新**那块往上装（整块装、装不下就整块不显示）；
-// 顶上被挤掉了几条就如实写一行"（上面还有 N 条）"。
+// 顶上被挤掉了几条就如实写一行"（上面还有 N 条）"。scroll语义见 fitBlocksFrom（0 = 到底）。
 func fitBlocks(blocks [][]string, height, width int) []string {
-	taken, used := fitFromBottom(blocks, height)
-	if taken > 0 { // 顶上那行提示自己也要占一格 ⇒ 少一格再量一次
-		taken, used = fitFromBottom(blocks, height-1)
-	}
-	lines := make([]string, 0, height)
-	if taken > 0 {
-		lines = append(lines, truncate(fmt.Sprintf(" （上面还有 %d 条）", taken), width))
-	}
-	for len(lines)+used < height { // 消息贴着输入行 ⇒ 空行全留在上面
-		lines = append(lines, "")
-	}
-	for _, block := range blocks[taken:] {
-		lines = append(lines, block...)
-	}
-	return fillLines(lines, height)
+	return fitBlocksFrom(blocks, len(blocks), height, width)
 }
 
 // fitFromBottom：从最新那块往上量，返回"最上面从第几块开始显示"与"一共用了几行"。
@@ -2831,6 +2888,65 @@ func fitFromBottom(blocks [][]string, height int) (taken, used int) {
 		taken--
 	}
 	return taken, used
+}
+
+// fitBlocksFrom：从第 end 块（不含）往上装 —— end < len(blocks) 就是"往上翻了"。
+// 顶上提示照算（还有几条没显示）；底下被翻过去的，有几条就报"（下面还有 N 条）"。
+// 单块超一屏：只露它能露出的**末尾**（块是逻辑单位，屏是物理窗口 —— 长块不断头，只断尾）。
+func fitBlocksFrom(blocks [][]string, end, height, width int) []string {
+	if end > len(blocks) {
+		end = len(blocks)
+	}
+	if end < 0 {
+		end = 0
+	}
+	visible := blocks[:end]
+	taken, used := fitFromBottom(visible, height)
+	lines := make([]string, 0, height)
+	if taken > 0 {
+		// 顶上提示占 1 行 ⇒ 可视区只剩 height-1：塞不下的块要露末尾（块不断头，只断尾）
+		budget := height - 1
+		kept := [][]string{}
+		hidden := 0
+		for i := len(visible) - 1; i >= taken; i-- {
+			if len(visible[i]) <= budget {
+				budget -= len(visible[i])
+				kept = append([][]string{visible[i]}, kept...)
+			} else {
+				hidden += len(visible[i]) - budget
+				kept = append([][]string{visible[i][len(visible[i])-budget:]}, kept...)
+				budget = 0
+				for _, block := range visible[taken:i] {
+					hidden += len(block)
+				}
+				break
+			}
+		}
+		lines = append(lines, truncate(fmt.Sprintf(" （上面还有 %d 条，本条上面还有 %d 行）", taken, hidden), width))
+		shown := kept
+		used = 0
+		for _, block := range shown {
+			used += len(block)
+		}
+		for len(lines)+used < height {
+			lines = append(lines, "")
+		}
+		for _, block := range shown {
+			lines = append(lines, block...)
+		}
+	} else {
+		shown := visible[taken:]
+		for len(lines)+used < height {
+			lines = append(lines, "")
+		}
+		for _, block := range shown {
+			lines = append(lines, block...)
+		}
+	}
+	if end < len(blocks) {
+		lines = append(lines, truncate(fmt.Sprintf(" （下面还有 %d 条 · End 回到底）", len(blocks)-end), width))
+	}
+	return fillLines(lines, height)
 }
 
 // fillLines：补空行到 height 行（多了就砍尾巴 —— 每块自己已经按宽度截过了）。
@@ -3021,8 +3137,8 @@ func (m model) renderStatus(width int) []string {
 	// 在不在跑**比名字重要**（用户口径）⇒ 先给它留位置，再把前面那几档按余量截断
 	state := m.turnLabel(session)
 	stateKind := styleDim
-	if strings.HasPrefix(state, "生成中") || strings.HasPrefix(state, "重摇中") {
-		stateKind = styleYellow // 生成中 / 重摇中 ⇒ 黄（含耗时）
+	if strings.HasPrefix(state, "生成中") || strings.HasPrefix(state, "重摇中") || strings.HasPrefix(state, "⚙") {
+		stateKind = styleYellow // 生成中 / 重摇中 / 有活在跑 ⇒ 黄（含耗时）
 	}
 	room := width - runewidth.StringWidth(state) - len(" | ")
 	sessionInfo, infoWidth := m.style.concat(head, max(room, 0), " | ")
@@ -3132,7 +3248,53 @@ func (m model) turnLabel(session *Session) string {
 	if session.Turn.Busy() {
 		return fmt.Sprintf("生成中 %.1fs", float64(session.Turn.ElapsedMS)/1000)
 	}
+	if tasks := m.tasksLine(); tasks != "" {
+		return tasks // 本会话空闲，但别处有活（后台压缩/标题/判断在跑）
+	}
 	return "空闲"
+}
+
+// tasksLine：底栏的 Tasks 指示器 —— 有在跑的活才亮（`⚙ 压缩中 · 起标题中`）。
+// 只报 running 的（已结束的不占地方）；本会话的生成/重摇已有专属档，不重复报。
+func (m model) tasksLine() string {
+	names := []string{}
+	seen := map[string]bool{}
+	for _, record := range m.tasks.Tasks {
+		if record.FinishedAt != nil {
+			continue
+		}
+		label := taskKindLabel(record.Kind)
+		if label == "" || seen[label] {
+			continue
+		}
+		seen[label] = true
+		names = append(names, label+"中")
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	return "⚙ " + strings.Join(names, " · ")
+}
+
+// taskKindLabel：Task 种类的中文名（与后端 `Kind.Label` 同一套词，界面侧照抄一份
+// —— TUI 不 import 后端内部包，走 HTTP 契约）。
+func taskKindLabel(kind string) string {
+	switch kind {
+	case "turn":
+		return "生成"
+	case "reroll":
+		return "重摇"
+	case "compact":
+		return "压缩"
+	case "title":
+		return "起标题"
+	case "judgement":
+		return "判断"
+	case "refresh_models":
+		return "刷新模型"
+	default:
+		return kind
+	}
 }
 
 // ── 小工具（宽度一律按**显示宽度**算：中文占两格，所以必须用 runewidth）──

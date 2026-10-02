@@ -26,7 +26,7 @@ func newTestServer(st *store.Store, cfg config.Config, paths config.Paths) *Serv
 	// 重摇那两条线也照着 main.go 接：装配借 chat、新消息一到清候选
 	rerollService := reroll.New(st, paths, turns, tasks, chatService)
 	chatService.Candidates = rerollService
-	return New(st, cfg, paths, chatService, compact.New(st, paths, turns, tasks), rerollService)
+	return New(st, cfg, paths, chatService, compact.New(st, paths, turns, tasks), rerollService, tasks)
 }
 
 // dummySandbox：一条会话 + dummy 渠道（**确定性、不联网** —— 验收与测试都靠它）。

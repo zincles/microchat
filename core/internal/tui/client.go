@@ -129,6 +129,25 @@ type PlanUsage struct {
 	Windows    []PlanWindow `json:"windows"`
 }
 
+// TaskRecord：任务面板里的一条（与后端 `task.Record` 同形状逐字段对齐；进程内的事实，不进库）。
+type TaskRecord struct {
+	ID         string  `json:"id"`
+	Kind       string  `json:"kind"`
+	Session    *string `json:"session,omitempty"`
+	Title      string  `json:"title"`
+	StartedAt  int64   `json:"started_at"`
+	FinishedAt *int64  `json:"finished_at,omitempty"`
+	Outcome    string  `json:"outcome"`
+	Error      string  `json:"error,omitempty"`
+}
+
+// TaskBoard：`GET /tasks` 回的那一屏（正在跑的在最前；`now` 给耗时换算用）。
+type TaskBoard struct {
+	Running int          `json:"running"`
+	Tasks   []TaskRecord `json:"tasks"`
+	Now     int64        `json:"now"`
+}
+
 // PlanWindow：一个配额窗口（5 小时 / 每周 / 每月）。`ResetsAt` 是 RFC3339。
 type PlanWindow struct {
 	ID       string    `json:"id"`
@@ -410,6 +429,13 @@ func (c *Client) ProviderUsage(providerID string) (PlanUsage, error) {
 	var usage PlanUsage
 	err := c.get("/providers/"+providerID+"/usage", &usage)
 	return usage, err
+}
+
+// Tasks：任务面板（`GET /tasks`）—— 进程内的事实，轮询用（底栏指示器就问它），不进库。
+func (c *Client) Tasks() (TaskBoard, error) {
+	var board TaskBoard
+	err := c.get("/tasks", &board)
+	return board, err
 }
 
 func (c *Client) Sessions() ([]Session, error) {
