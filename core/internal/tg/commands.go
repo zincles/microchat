@@ -171,12 +171,8 @@ func (r *Runner) sayWithButtons(ctx context.Context, b *bot.Bot, update *models.
 		_ = sendLong(ctx, b, update.Message.Chat.ID, text)
 		return
 	}
-	_, err := b.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID:      update.Message.Chat.ID,
-		Text:        clip(text, tgMaxLen),
-		ReplyMarkup: &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{buttons}},
-	})
-	if err != nil {
+	if _, err := sendMarkdownWithMarkup(ctx, b, update.Message.Chat.ID, clip(text, tgMaxLen),
+		&models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{buttons}}); err != nil {
 		_ = sendLong(ctx, b, update.Message.Chat.ID, text)
 	}
 }
@@ -645,9 +641,8 @@ func (r *Runner) cmdModel(ctx context.Context, b *bot.Bot, update *models.Update
 	if len(rows) > 0 {
 		markup = &models.InlineKeyboardMarkup{InlineKeyboard: rows}
 	}
-	if _, err := b.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID: update.Message.Chat.ID, Text: modelPageText(items, 0, pages), ReplyMarkup: markup,
-	}); err != nil {
+	if _, err := sendMarkdownWithMarkup(ctx, b, update.Message.Chat.ID,
+		modelPageText(items, 0, pages), markup); err != nil {
 		r.say(ctx, b, update, "模型面板没发出去："+err.Error())
 	}
 }
@@ -859,9 +854,7 @@ func (r *Runner) editCallback(ctx context.Context, b *bot.Bot, update *models.Up
 	if message == nil {
 		return fmt.Errorf("这条回调没有消息可改")
 	}
-	_, err := b.EditMessageText(ctx, &bot.EditMessageTextParams{
-		ChatID: message.Chat.ID, MessageID: message.ID, Text: clip(text, tgMaxLen), ReplyMarkup: markup,
-	})
+	_, err := editMarkdown(ctx, b, message.Chat.ID, message.ID, clip(text, tgMaxLen), markup)
 	return err
 }
 

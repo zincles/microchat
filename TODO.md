@@ -85,6 +85,8 @@
   `/telegram-bot-token-set` 与 `/telegram-toggle` 实际不工作；现已指向三格版并有测试）。
 · 三条增强 ✓（2026-10-02）：无效命令明说（`/xxx` 未登记 ⇒ 回"不认识"+可用清单，不再当普通文本 echo）；
   摆菜单前**清四个常用作用域的旧命令**（Hermes 残留这么来的）；**上线给绑定用户发问候**（失败只记日志）。
+· TG Markdown 服务端渲染 ✓（2026-10-02）：转义后 `parse_mode=MarkdownV2` 发，对端直接画富文本；
+  只转义不加糖，`can't parse entities` 才回退纯文本（429 照冒泡），每段独立回退。吐字动效 = 现有节流 edit（保持现状）。
 · 命令面扩展 ✓（2026-10-02）：bot 18 条命令（/help /status /new /resume /rename /copy /delete /cut /stop /compact
   /state /outgoing /usage /think /system /providers /model + /start）——**经共享 `internal/apiclient` 调本机后端**
   （抽包后 TUI 与 bot 同用一个客户端，零第二份）；菜单与 /help 从注册表派生（不许两处手写）；/status 打印 CLI 底栏内容

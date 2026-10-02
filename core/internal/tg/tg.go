@@ -31,9 +31,10 @@ func splitMessage(text string) []string {
 }
 
 // sendLong：分段发出（超长才分两段以上；一段就一次发完）。
+// 每段走 sendMarkdown 独立渲染 + 独立回退（坏一段不连累别的段）。
 func sendLong(ctx context.Context, b *bot.Bot, chatID int64, text string) error {
 	for _, part := range splitMessage(text) {
-		if _, err := b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: part}); err != nil {
+		if _, err := sendMarkdown(ctx, b, chatID, part); err != nil {
 			return err
 		}
 	}

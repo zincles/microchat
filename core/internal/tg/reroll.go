@@ -291,9 +291,7 @@ func (r *Runner) refreshReplyButtons(ctx context.Context, b *bot.Bot, chatID int
 
 	// 逐段 edit（文本 + 新按钮）；在段数范围内的先原地改。
 	for index := 0; index < len(parts) && index < len(segIDs); index++ {
-		if _, err := b.EditMessageText(ctx, &bot.EditMessageTextParams{
-			ChatID: chatID, MessageID: segIDs[index], Text: parts[index], ReplyMarkup: markup,
-		}); err != nil {
+		if _, err := editMarkdown(ctx, b, chatID, segIDs[index], parts[index], markup); err != nil {
 			log.Printf("TG 重摇后第 %d 段没 edit 上（消息 %d）：%v", index+1, segIDs[index], err)
 		}
 	}
@@ -307,9 +305,7 @@ func (r *Runner) refreshReplyButtons(ctx context.Context, b *bot.Bot, chatID int
 		segIDs = segIDs[:len(parts)]
 	case len(parts) > len(segIDs): // 变长：补发新段（也挂上按钮）
 		for _, part := range parts[len(segIDs):] {
-			message, err := b.SendMessage(ctx, &bot.SendMessageParams{
-				ChatID: chatID, Text: part, ReplyMarkup: markup,
-			})
+			message, err := sendMarkdownWithMarkup(ctx, b, chatID, part, markup)
 			if err != nil {
 				log.Printf("TG 重摇后补发的段没发出去：%v", err)
 				break

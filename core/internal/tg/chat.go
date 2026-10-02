@@ -61,7 +61,7 @@ func (r *Runner) runTurn(ctx context.Context, b *bot.Bot, update *models.Update,
 		log.Printf("TG 发了一轮（会话 %s，回复 id %s）", shortID(sid), *mid)
 	}
 	// 占位消息：先摆"生成中…"，之后的正文全在原地 edit（超长分段时再补发新消息）。
-	placeholder, err := b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: turnPlaceholder})
+	placeholder, err := sendMarkdown(ctx, b, chatID, turnPlaceholder)
 	if err != nil {
 		return
 	}
@@ -187,7 +187,7 @@ func (s *turnStream) sync(ctx context.Context, b *bot.Bot, parts []string, force
 	now := time.Now()
 	for index, part := range parts {
 		if index >= len(s.ids) {
-			message, err := b.SendMessage(ctx, &bot.SendMessageParams{ChatID: s.chatID, Text: part})
+			message, err := sendMarkdown(ctx, b, s.chatID, part)
 			if err != nil {
 				return
 			}
@@ -202,9 +202,7 @@ func (s *turnStream) sync(ctx context.Context, b *bot.Bot, parts []string, force
 		if !force && now.Sub(s.lastEdit[index]) < turnEditThrottle {
 			continue
 		}
-		if _, err := b.EditMessageText(ctx, &bot.EditMessageTextParams{
-			ChatID: s.chatID, MessageID: s.ids[index], Text: part,
-		}); err != nil {
+		if _, err := editMarkdown(ctx, b, s.chatID, s.ids[index], part, nil); err != nil {
 			continue
 		}
 		s.written[index] = part
@@ -217,9 +215,7 @@ func (s *turnStream) replace(ctx context.Context, b *bot.Bot, index int, text st
 	if index >= len(s.ids) || s.written[index] == text {
 		return
 	}
-	if _, err := b.EditMessageText(ctx, &bot.EditMessageTextParams{
-		ChatID: s.chatID, MessageID: s.ids[index], Text: text,
-	}); err != nil {
+	if _, err := editMarkdown(ctx, b, s.chatID, s.ids[index], text, nil); err != nil {
 		return
 	}
 	s.written[index] = text

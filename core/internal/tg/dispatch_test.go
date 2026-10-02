@@ -204,7 +204,7 @@ func TestDispatchStatusEndToEnd(t *testing.T) {
 		t.Fatalf("该只发一条：%d", len(sent))
 	}
 	for _, want := range []string{"会话：修 bug | aaaaaaaa | opencode-go/sonnet", "上下文：12.3k/131k (9.4%)", "轮次：生成中 2.4s", "TG：", "后端：v0.1.2"} {
-		if !strings.Contains(sent[0].text, want) {
+		if !strings.Contains(sent[0].text, escapeMarkdownV2(want)) {
 			t.Fatalf("发出去的 /status 缺 %q：\n%s", want, sent[0].text)
 		}
 	}
@@ -217,7 +217,7 @@ func TestDispatchUnboundOnlyGetsHint(t *testing.T) {
 	})
 	runner.bot.ProcessUpdate(context.Background(), textUpdate("/status", 7))
 	sent := fake.messages()
-	if len(sent) != 1 || !strings.Contains(sent[0].text, "/telegram-bind") {
+	if len(sent) != 1 || !strings.Contains(sent[0].text, escapeMarkdownV2("/telegram-bind")) {
 		t.Fatalf("该只回绑定提示：%+v", sent)
 	}
 	if strings.Contains(sent[0].text, "/status 看状态") {
@@ -313,7 +313,7 @@ func TestDispatchModelPick(t *testing.T) {
 		t.Fatalf("没切到选中的模型：%q", patched)
 	}
 	edits := fake.edits()
-	if len(edits) != 1 || !strings.Contains(edits[0], "已切到：opencode-go/opus") {
+	if len(edits) != 1 || !strings.Contains(edits[0], escapeMarkdownV2("已切到：opencode-go/opus")) {
 		t.Fatalf("该就地回执：%v", edits)
 	}
 	if replies := fake.replyTexts(); len(replies) != 1 || !strings.Contains(replies[0], "opus") {
