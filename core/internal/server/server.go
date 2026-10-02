@@ -31,8 +31,16 @@ type Server struct {
 	compact *compact.Service
 	rerolls *reroll.Service
 	tasks   *task.Registry
-	mux     *http.ServeMux
+	// telegram：bot 的活 runner（main 登记；只用来问"跑没跑" —— 启停归 main）。
+	telegram TelegramRunner
+	mux      *http.ServeMux
 }
+
+// TelegramRunner：bot 跑没跑 —— Server 只读这一句（启停归 main，见 main.startTelegramBot）。
+type TelegramRunner interface{ Running() bool }
+
+// SetTelegramRunner：把活 runner 登记给 Server（只用来问"跑没跑"）。
+func (s *Server) SetTelegramRunner(runner TelegramRunner) { s.telegram = runner }
 
 // New：把"一轮生成"(chat)、"压缩"(compact) 与"重摇"(reroll) 三层注进来 —— 它们才是干活的那层
 // （server 只编排：解析请求、定错误码、写响应）。
@@ -67,6 +75,9 @@ func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *ch
 	s.mux.HandleFunc("PUT /api/v1/config/chat", s.putChatConfig)
 	s.mux.HandleFunc("GET /api/v1/models", s.listModels)
 	s.mux.HandleFunc("PATCH /api/v1/models", s.setModelOverride)
+	// TG bot 配置（单账户绑定；token 只回有没有）—— TUI 的 `/telegram-bind` 走这里
+	s.mux.HandleFunc("GET /api/v1/config/telegram", s.getTelegramConfig)
+	s.mux.HandleFunc("PUT /api/v1/config/telegram", s.bindTelegram)
 	// 任务面板：进程内的事实（与 `-debug tasks` 同一份 Board；轮询用，不进库）
 	s.mux.HandleFunc("GET /api/v1/tasks", s.taskBoard)
 

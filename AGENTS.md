@@ -770,7 +770,7 @@ prompt caching**"）。**不要为能力造子 session id**：网关的会话 id
   · TUI 模式下日志落到 `data/microchat.log`（别糊在界面上）；
   · 退出用 **`/quit` 或 ctrl+c** —— **没有裸 `q`**（会和打字打架）。
 - 跑法：`go -C core run .`（一条命令跑起来；要二进制就 `go -C core build -o ../microchat .`）。**TUI 内的命令**照 Pi：`/command`。**只放已经有路由的命令**，没搬完的在 `/help` 里如实列出来
-  （现在能用的：`/help` `/new` `/delete` `/cut` `/copy` `/rename` `/resume` `/model` `/providers` `/provider-add` `/provider-del` `/outgoing` `/state` `/usage` `/think` `/system` `/compact` `/reroll` `/reroll-summary` `/stop` `/refresh` `/quit`；
+  （现在能用的：`/help` `/new` `/delete` `/cut` `/copy` `/rename` `/resume` `/model` `/providers` `/provider-add` `/provider-del` `/telegram-bind` `/telegram-bot-token-set` `/telegram-toggle` `/telegram-status` `/outgoing` `/state` `/usage` `/think` `/system` `/compact` `/reroll` `/reroll-summary` `/stop` `/refresh` `/quit`；
   还没做的：`/archive` —— `/fork`／`/tasks`／`/probe` 那几条**已砍**，不会再有
   （`/fork` 的位置由 `/copy` 接管）。
   `/delete`（删整条会话 —— **删完立刻再建一条并进去**）与 `/cut`（删一条及之后）都**不可逆** ⇒ 两个都先摊开、等 `回车 / y` 点头才动手；

@@ -3071,3 +3071,25 @@ func TestTasksIndicatorLightsOnRunning(t *testing.T) {
 		t.Fatalf("没活该空闲：%q", got)
 	}
 }
+
+// /telegram-bind：纯数字才收（@用户名不行）；成功报"已绑定 + 重启生效"。
+func TestTelegramBindValidatesID(t *testing.T) {
+	m := fixture()
+	bad, _ := m.runCommand("/telegram-bind @someone")
+	if !strings.Contains(bad.(model).lastAction, "纯数字") {
+		t.Fatalf("@用户名该被拦：%q", bad.(model).lastAction)
+	}
+	zero, _ := m.runCommand("/telegram-bind 0")
+	if !strings.Contains(zero.(model).lastAction, "纯数字") {
+		t.Fatalf("0 该被拦：%q", zero.(model).lastAction)
+	}
+}
+
+// /telegram-bot-token-set：空的拒收（token 不许空）。
+func TestTelegramTokenSetRejectsEmpty(t *testing.T) {
+	m := fixture()
+	empty, _ := m.runCommand("/telegram-bot-token-set")
+	if !strings.Contains(empty.(model).lastAction, "用法") {
+		t.Fatalf("空 token 该说用法：%q", empty.(model).lastAction)
+	}
+}

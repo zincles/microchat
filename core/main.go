@@ -22,10 +22,46 @@ import (
 	"microchat/internal/server"
 	"microchat/internal/store"
 	"microchat/internal/task"
+	"microchat/internal/tg"
 	"microchat/internal/title"
 	"microchat/internal/tui"
 	"microchat/internal/turn"
 )
+
+// tgNullRunner：bot 没跑起来时的空转壳（Stop 幂等，主流程不用分支）。
+type tgNullRunner struct{ runner *tg.Runner }
+
+func (n tgNullRunner) Stop() {
+	if n.runner != nil {
+		n.runner.Stop()
+	}
+}
+
+func (n tgNullRunner) Running() bool { return n.runner != nil && n.runner.Running() }
+
+// startTelegramBot：`telegram.enabled` 才建 runner 跑长轮询 —— 没开/没 token/连不上都只 log。
+// 一律返回"能问跑没跑"的东西（没跑起来就是空转壳，调用方 defer Stop 即可，不用判空）。
+func startTelegramBot(cfg config.Config) tgNullRunner {
+	if !cfg.Telegram.Enabled {
+		return tgNullRunner{}
+	}
+	token := cfg.BotToken()
+	if token == "" {
+		log.Printf("TG bot 没启动：没有 token（config.json 的 telegram.bot_token 或 TELEGRAM_BOT_TOKEN）")
+		return tgNullRunner{}
+	}
+	runner, err := tg.NewRunner(token, cfg.Telegram.AllowedID)
+	if err != nil {
+		log.Printf("TG bot 没启动：%v", err)
+		return tgNullRunner{}
+	}
+	go func() {
+		if err := runner.Go(context.Background()); err != nil {
+			log.Printf("TG bot 退了：%v", err)
+		}
+	}()
+	return tgNullRunner{runner: runner}
+}
 
 func main() {
 	// 与旧版同名：目录可用环境变量覆盖（MICROCHAT_CONFIG_DIR / MICROCHAT_DATA_DIR）
@@ -91,6 +127,11 @@ func main() {
 	// 起标题挂在一轮生成上（拿到回复之后自动一次）—— 与压缩同一条口径：能力的事归能力
 	chatService.Titles = title.New(st, paths, tasks)
 
+	// TG bot：显式开了（`telegram.enabled`）才跑 —— 连外网是显式动作，不许"配了就跑"。
+	// 没 token / 连不上 ⇒ 只 log（不弹错、不退出、不挡 TUI）。
+	tgRunner := startTelegramBot(cfg)
+	defer tgRunner.Stop() // 没跑起来就是空转（幂等）
+
 	// **先真听上端口，再切日志到文件**：端口被占这类启动失败必须留在**终端**上看得见 ——
 	// 不然 TUI 模式下日志去了 data/microchat.log，终端里只剩一句 "exit status 1"（真发生过）。
 	listener, err := net.Listen("tcp", *addr)
@@ -109,7 +150,9 @@ func main() {
 	log.Printf("microchat 起在 http://%s（数据 %s，配置 %s，user_version=%d，TUI=%v）",
 		*addr, paths.DataDir, paths.ConfigDir, version, interactive)
 	go func() {
-		if err := http.Serve(listener, server.New(st, cfg, paths, chatService, compactService, rerollService, tasks).Handler()); err != nil {
+		webServer := server.New(st, cfg, paths, chatService, compactService, rerollService, tasks)
+		webServer.SetTelegramRunner(tgRunner)
+		if err := http.Serve(listener, webServer.Handler()); err != nil {
 			log.Printf("服务退出: %v", err)
 		}
 	}()

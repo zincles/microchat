@@ -9,6 +9,8 @@ require (
 	modernc.org/sqlite v1.59.0
 )
 
+require github.com/go-telegram/bot v1.27.0 // indirect
+
 require (
 	github.com/charmbracelet/colorprofile v0.4.3 // indirect
 	github.com/charmbracelet/ultraviolet v0.0.0-20260703014108-f5a850f9c2b7 // indirect

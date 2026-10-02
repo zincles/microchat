@@ -59,6 +59,7 @@ type Config struct {
 	Server   ServerConfig   `json:"server"`
 	Defaults DefaultsConfig `json:"defaults"`
 	Chat     ChatConfig     `json:"chat"`
+	Telegram TelegramConfig `json:"telegram"`
 }
 
 type ServerConfig struct {
@@ -96,6 +97,26 @@ type DefaultsConfig struct {
 	Provider string `json:"provider"`
 	Model    string `json:"model"`
 	Agent    string `json:"agent"`
+}
+
+// TelegramConfig：TG bot 那一份（单账户：只认一个 Telegram id）。
+//
+// BotToken 为空 ⇒ 去环境变量 `TELEGRAM_BOT_TOKEN` 找（跟渠道 key 同一条"文件优先、环境兜底"规矩）；
+// 都没有 ⇒ bot 不启动（不是错误 —— 没配 token 的人本来就不用 TG）。
+// AllowedID = 0 ⇒ 还没绑定（谁来都只回 id 方便绑定）；绑新的自动顶掉旧的。
+// Enabled 必须显式开（`true`）：配了 token 也不自动跑 —— 连外网是显式动作，不许"配了就跑"。
+type TelegramConfig struct {
+	BotToken  string `json:"bot_token"`
+	AllowedID int64  `json:"allowed_id"`
+	Enabled   bool   `json:"enabled"`
+}
+
+// BotToken：生效的 token（文件优先，环境兜底）。
+func (c Config) BotToken() string {
+	if c.Telegram.BotToken != "" {
+		return c.Telegram.BotToken
+	}
+	return os.Getenv("TELEGRAM_BOT_TOKEN")
 }
 
 // DefaultConfig：与 Rust 版的 Default 逐字相同（开箱落到 dummy：没有上游，但立刻有回话）。

@@ -75,14 +75,14 @@
 **历史债已还** ✓（2026-10-02）：`source`→`type` 三处改到位 + `Outgoing.children` 嵌套 + `POST .../compact/preview` +
 `/compact` 按块注释。DB 列名 `source_kind` 是历史（注释写清，不改）。
 
-### B. Telegram Bot（下一件大事 ✓ 用户点名"特色"）
-· **不需要公网 HTTPS** ✓✓（**长轮询**即可 —— 只有 webhook 与 Mini App 才要公网 ✓）。
-· **岔路口先定** ✗：**单人白名单**（只认你的 Telegram id ✓ 保持单人自托管模型 ✓ 推荐 ✓）
-  还是真多用户（数据模型 / 会话归属 / 隔离全要动 ✗ 大决定）。
-· **命令天然对齐** ✓：TUI 那套 `/命令` ⇒ BotFather 的 `/` 菜单（`/new` `/resume` `/rename` `/compact` `/cut` `/outgoing` `/usage` `/state` ✓）。
-· **流式**：节流 **edit 同一条消息**（≥100–300ms 一次躲限流 ✓）；**4096 字要切** ✓；超 **48 小时不能 edit** ⇒ 改发新消息 ✓。
-· **会话 ↔ 聊天** ✓：群里用 **Topics**（一条话题 = 一条会话 ✓ 最自然 ✓）。
-· 第一步永远是**查官方最新文档 + 用自己的 bot 实测一次** ✓（凭记忆写 API 细节是这类集成的头号坑 ✗）。
+### B. Telegram Bot（下一件大事 ✓ 用户点名"特色"；地基已落地 2026-10-02）
+· 落了：`go-telegram/bot@v1.27.0`（零依赖）+ `config.json telegram{bot_token,allowed_id,enabled}`（token 文件优先/env 兜底，内容永不回显）
+  + TUI `/telegram-bind`（单账户，顶掉旧的）`/telegram-bot-token-set` `/telegram-toggle` `/telegram-status`
+  + 后端 `GET/PUT /config/telegram`（`has_token/allowed_id/enabled/running`；PUT 三格各改各的）
+  + bot 长轮询（`enabled` 显式开才跑；没 token/连不上只 log）+ 白名单门卫（未绑只回 id）+ 超长按 rune 分段/翻页按钮（edit 同一条，不刷屏）。
+· **岔路口已定** ✓：**单人白名单**（只认你的 Telegram id ✓ 保持单人自托管模型 ✓）。
+· 还没做：① **真 token 实测**（getMe 探活 → 收发回声 → 超长翻页 → 门卫）；② **接 chat**（发话就是一轮：发消息→轮询→节流 edit；先回声验证）。
+· 旧口径保留：长轮询（不要公网）✓；流式节流 edit（≥100–300ms）✓；4096 按 rune 切 ✓；48 小时以上改发新消息 ✓；Topics 一话题一会话 ✓。
 
 ### C. 压缩的自动触发（**先聊三件才动手** ✗）
 ① **何时压**（`compact_trigger_tokens` 只是其一 ✓ 要不要留缓冲 ✓）；② **压多少**（`compact_blocks` ✓ 压不动怎么办 ✓）；

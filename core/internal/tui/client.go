@@ -438,6 +438,35 @@ func (c *Client) Tasks() (TaskBoard, error) {
 	return board, err
 }
 
+// TelegramBinding：`GET /config/telegram` —— token 有没有 + 绑了谁 + 开了没 + 跑没跑（token 内容永不回显）。
+type TelegramBinding struct {
+	HasToken  bool  `json:"has_token"`
+	AllowedID int64 `json:"allowed_id"`
+	Enabled   bool  `json:"enabled"`
+	Running   bool  `json:"running"`
+}
+
+// BindTelegram：`/telegram-bind` 的后端那一半 —— 写 `allowed_id`（顶掉旧的）。
+func (c *Client) BindTelegram(id int64) (TelegramBinding, error) {
+	var binding TelegramBinding
+	err := c.do(http.MethodPut, "/config/telegram", map[string]any{"allowed_id": id}, &binding)
+	return binding, err
+}
+
+// SetTelegram：改 TG 配置（三格各改各的：allowed_id / bot_token / enabled；nil 不动）。
+func (c *Client) SetTelegram(body map[string]any) (TelegramBinding, error) {
+	var binding TelegramBinding
+	err := c.do(http.MethodPut, "/config/telegram", body, &binding)
+	return binding, err
+}
+
+// TelegramStatus：`GET /config/telegram` —— token 有没有 + 绑了谁 + 开了没 + 跑没跑。
+func (c *Client) TelegramStatus() (TelegramBinding, error) {
+	var binding TelegramBinding
+	err := c.get("/config/telegram", &binding)
+	return binding, err
+}
+
 func (c *Client) Sessions() ([]Session, error) {
 	var sessions []Session
 	err := c.get("/sessions", &sessions)

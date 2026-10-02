@@ -98,7 +98,6 @@ type model struct {
 	showSystemPrompt bool
 	// uiPath：界面偏好文件的位置（`initialModel` 填默认位置；测试填临时文件）。
 	uiPath string
-
 	// reroll / rerollFor：**重摇模式**那一份（候选只在内存里：后端也是，重启就只剩你选中的那版）。
 	// 与 context / prompt 同一条规矩：记着它属于哪条会话 —— 换会话时旧的还摆着 ⇒ 不许拿去画。
 	reroll    *RerollState
@@ -1167,6 +1166,38 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lastAction = fmt.Sprintf("已添加 %s（%s/%s）", message.info.ID, message.info.Vendor, protocol)
 		return m, nil
 
+	case bindTelegramMsg:
+		if message.err != nil {
+			m = m.fail("绑定失败：" + message.err.Error())
+			return m, nil
+		}
+		m.lastAction = fmt.Sprintf("已绑定 Telegram 单账户 %d（绑新的会自动顶掉；bot 重启后生效）", message.id)
+		return m, nil
+
+	case setTelegramMsg:
+		if message.err != nil {
+			m = m.fail("改 TG 配置失败：" + message.err.Error())
+			return m, nil
+		}
+		binding := message.binding
+		token := "无 token"
+		if binding.HasToken {
+			token = "有 token"
+		}
+		state := "关"
+		if binding.Enabled {
+			state = "开"
+		}
+		running := "没跑"
+		if binding.Running {
+			running = "跑着"
+		}
+		bound := "没绑"
+		if binding.AllowedID != 0 {
+			bound = "绑 " + strconv.FormatInt(binding.AllowedID, 10)
+		}
+		m.lastAction = "TG（" + token + " · " + bound + " · 开关" + state + " · " + running + "；改开关/token 要重启生效）"
+		return m, nil
 	case deletedProviderMsg:
 		if message.err != nil {
 			m = m.fail("删除渠道失败：" + message.err.Error())
@@ -1675,6 +1706,10 @@ func init() {
 		{name: "providers", help: "看全部渠道（每条一行：渠道、协议、有无密钥、几个模型；附预设名单）", run: commandProviders},
 		{name: "provider-add", help: "加一条渠道（四问：编号、预设 vendor、协议、密钥；dummy 跳过密钥）", run: commandProviderAdd},
 		{name: "provider-del", args: "<id>", help: "删一条渠道（不可逆，先确认）", run: commandProviderDel},
+		{name: "telegram-bind", args: "<tg_id>", help: "绑定 Telegram 单账户（绑新的自动顶掉旧的；bot 只认绑定的这个 id）", run: commandTelegramBind},
+		{name: "telegram-bot-token-set", args: "<token>", help: "设置 TG bot token（写 config.json；改完要重启生效）", run: commandTelegramTokenSet},
+		{name: "telegram-toggle", help: "开/关 TG bot（显式动作；开了才连外网，关了就停轮询）", run: commandTelegramToggle},
+		{name: "telegram-status", help: "看 TG bot 状态（跑没跑、绑了谁、在线多久）", run: commandTelegramStatus},
 		{name: "think", help: "展开当前会话的思考全文（默认折叠在消息上方，想读全文才用）", run: commandThink},
 		{name: "system", help: "显示 / 隐藏消息区顶部的系统提示词（调试用，开关记在 ~/.config/microchat/tui.json）", run: commandSystem},
 		{name: "compact", args: "[N]", help: "按块压 N 个块成摘要（块=assistant→user交界，一块≥2条；底层不够就抬头并摘要；不给N用默认值）", run: commandCompact},
@@ -2196,6 +2231,86 @@ func commandProviderDel(m model, args []string) (tea.Model, tea.Cmd) {
 	m.viewerHint = "回车 / y 执行 · 其他键取消"
 	m.lastAction = "看清了再点头（回车 / y）"
 	return m, nil
+}
+
+// bindTelegramMsg：一次绑定的结果（走后端 HTTP：改的是服务器配置，远端 TUI 照用）。
+type bindTelegramMsg struct {
+	id  int64
+	err error
+}
+
+// bindTelegramCmd：调后端的绑定（写 `allowed_id`，顶掉旧的）。
+func bindTelegramCmd(client *Client, id int64) tea.Cmd {
+	return func() tea.Msg {
+		binding, err := client.BindTelegram(id)
+		return bindTelegramMsg{id: binding.AllowedID, err: err}
+	}
+}
+
+// setTelegramMsg：改 TG 配置的结果（三格回显：token 只回有没有）。
+type setTelegramMsg struct {
+	binding TelegramBinding
+	err     error
+}
+
+// setTelegramCmd：调后端的三格改配置。
+func setTelegramCmd(client *Client, body map[string]any) tea.Cmd {
+	return func() tea.Msg {
+		binding, err := client.SetTelegram(body)
+		return setTelegramMsg{binding: binding, err: err}
+	}
+}
+
+// toggleTelegramCmd：先读开关再翻转（读不到就不动 —— 别把"没读到"当"关着"给开了）。
+func toggleTelegramCmd(client *Client) tea.Cmd {
+	return func() tea.Msg {
+		current, err := client.TelegramStatus()
+		if err != nil {
+			return setTelegramMsg{err: err}
+		}
+		binding, err := client.SetTelegram(map[string]any{"enabled": !current.Enabled})
+		return setTelegramMsg{binding: binding, err: err}
+	}
+}
+
+// statusTelegramCmd：读 TG 状态。
+func statusTelegramCmd(client *Client) tea.Cmd {
+	return func() tea.Msg {
+		binding, err := client.TelegramStatus()
+		return setTelegramMsg{binding: binding, err: err}
+	}
+}
+func commandTelegramBind(m model, args []string) (tea.Model, tea.Cmd) {
+	if len(args) == 0 {
+		return m.fail("用法：/telegram-bind <tg_id>（bot 告诉你的那串数字）"), nil
+	}
+	id, err := strconv.ParseInt(args[0], 10, 64)
+	if err != nil || id <= 0 {
+		return m.fail("tg_id 是那串纯数字 id（不是 @用户名）：" + args[0]), nil
+	}
+	m.lastAction = "绑定 Telegram 单账户…"
+	return m, bindTelegramCmd(m.client, id)
+}
+
+// commandTelegramTokenSet：`/telegram-bot-token-set <token>` —— 写文件里的 token（改完重启生效）。
+func commandTelegramTokenSet(m model, args []string) (tea.Model, tea.Cmd) {
+	if len(args) == 0 {
+		return m.fail("用法：/telegram-bot-token-set <token>（BotFather 给的那串）"), nil
+	}
+	m.lastAction = "设置 TG bot token…"
+	return m, setTelegramCmd(m.client, map[string]any{"bot_token": args[0]})
+}
+
+// commandTelegramToggle：`/telegram-toggle` —— 开/关 bot（显式动作；改完重启生效）。
+func commandTelegramToggle(m model, _ []string) (tea.Model, tea.Cmd) {
+	m.lastAction = "切 TG bot 开关…"
+	return m, toggleTelegramCmd(m.client)
+}
+
+// commandTelegramStatus：`/telegram-status` —— 看 bot 状态（跑没跑、绑了谁、在线多久）。
+func commandTelegramStatus(m model, _ []string) (tea.Model, tea.Cmd) {
+	m.lastAction = "看 TG bot 状态…"
+	return m, statusTelegramCmd(m.client)
 }
 
 func commandRefresh(m model, _ []string) (tea.Model, tea.Cmd) {
