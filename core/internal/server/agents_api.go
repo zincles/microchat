@@ -236,3 +236,55 @@ func (s *Server) putChatConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, cfg.Chat)
 }
+
+// getDefaults：新建会话的缺省三件（provider / model / agent）—— 只读。
+func (s *Server) getDefaults(w http.ResponseWriter, r *http.Request) {
+	cfg, err := config.LoadConfig(s.paths) // 每次现读：文件缺失 ⇒ 默认值
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, cfg.Defaults)
+}
+
+// putDefaults：改缺省三件 —— 三格各改各的（nil = 不动；"" = 清回内置缺省）。
+// 整段替换另有 `PUT /config/chat` 管 chat 段 —— 两段各改各的，别混。
+func (s *Server) putDefaults(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Provider *string `json:"provider"`
+		Model    *string `json:"model"`
+		Agent    *string `json:"agent"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	cfg, err := config.LoadConfig(s.paths)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	if req.Provider != nil {
+		cfg.Defaults.Provider = *req.Provider
+	}
+	if req.Model != nil {
+		cfg.Defaults.Model = *req.Model
+	}
+	if req.Agent != nil {
+		cfg.Defaults.Agent = *req.Agent
+	}
+	// 与 `LoadConfig` 同一个兜底：空 ⇒ 落盘时就写默认值（免得文件与接口两套数）
+	if cfg.Defaults.Provider == "" {
+		cfg.Defaults.Provider = "dummy"
+	}
+	if cfg.Defaults.Model == "" {
+		cfg.Defaults.Model = config.DummyModelID
+	}
+	if cfg.Defaults.Agent == "" {
+		cfg.Defaults.Agent = config.DefaultAgentID
+	}
+	if err := config.SaveJSON(s.paths.Config("config.json"), cfg); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, cfg.Defaults)
+}

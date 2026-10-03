@@ -40,6 +40,10 @@ type SystemPrompt = apiclient.SystemPrompt
 type RerollItem = apiclient.RerollItem
 type RerollState = apiclient.RerollState
 type RerollAccepted = apiclient.RerollAccepted
+type AgentAbility = apiclient.AgentAbility
+type Agent = apiclient.Agent
+type AgentsConfig = apiclient.AgentsConfig
+type Defaults = apiclient.Defaults
 
 // 重摇的两个家族（与后端的 `target_kind` 同一套词）。同一个会话同一时刻只有一个活着。
 const (

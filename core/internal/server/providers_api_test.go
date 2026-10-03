@@ -248,3 +248,37 @@ func TestProviderViewShowsEffectiveBaseURL(t *testing.T) {
 		t.Fatalf("该回预设的端点，得到 %q", views[0].BaseURL)
 	}
 }
+
+// GET/PUT /config/defaults：缺省三件各改各的（nil 不动；"" 清回内置缺省）。
+func TestDefaultsEndpoints(t *testing.T) {
+	server, _ := newProvidersServer(t, `{"providers":[]}`)
+	// 缺省读出来是内置值（沙盒 config.json 缺失 ⇒ LoadConfig 兜底）
+	var defaults map[string]string
+	if recorder := call(server, "GET", "/api/v1/config/defaults", ""); recorder.Code != 200 {
+		t.Fatalf("GET 缺省：%d %s", recorder.Code, recorder.Body.String())
+	} else if err := json.Unmarshal(recorder.Body.Bytes(), &defaults); err != nil {
+		t.Fatal(err)
+	} else if defaults["provider"] != "dummy" || defaults["model"] != "dummy" || defaults["agent"] != "default" {
+		t.Fatalf("内置缺省 = %+v", defaults)
+	}
+	// 只改 provider 一格，其余不动
+	recorder := call(server, "PUT", "/api/v1/config/defaults", `{"provider":"deepseek"}`)
+	if recorder.Code != 200 {
+		t.Fatalf("PUT 缺省：%d %s", recorder.Code, recorder.Body.String())
+	}
+	if recorder = call(server, "GET", "/api/v1/config/defaults", ""); recorder.Code != 200 {
+		t.Fatalf("重读：%d", recorder.Code)
+	} else if err := json.Unmarshal(recorder.Body.Bytes(), &defaults); err != nil {
+		t.Fatal(err)
+	} else if defaults["provider"] != "deepseek" || defaults["model"] != "dummy" {
+		t.Fatalf("只该动 provider：%+v", defaults)
+	}
+	// "" 清回内置缺省
+	if recorder := call(server, "PUT", "/api/v1/config/defaults", `{"provider":""}`); recorder.Code != 200 {
+		t.Fatalf("清缺省：%d %s", recorder.Code, recorder.Body.String())
+	} else if err := json.Unmarshal(recorder.Body.Bytes(), &defaults); err != nil {
+		t.Fatal(err)
+	} else if defaults["provider"] != "dummy" {
+		t.Fatalf("清空该回 dummy：%+v", defaults)
+	}
+}

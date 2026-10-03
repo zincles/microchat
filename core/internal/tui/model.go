@@ -105,10 +105,25 @@ type model struct {
 
 	// provider 向导（`/provider-add`）：四问的状态机。输入行就是问卷 —— 答案走 submit 进来；
 	// 与会话无关（换会话 / 新消息不丢）；Esc 取消（沿用清输入那条分支，不新增按键）；
-	// `/provider-add` 重进覆盖旧草稿。
+	// `/provider-add` 重进覆盖旧草稿；与 agents 详情 / 缺省三问同屏互斥（一边进另一边清 —— 输入行同一根问卷线）。
 	addStep    int
 	addDraft   providerDraft
 	addPresets []PresetItem
+
+	// agents 面板（`/agents`）：agents 生效列表 + agentDetail（nil=列表；非 nil=详情）。
+	// agentRows 存列表 viewer 行号→agent 的下标映射（不重拉）；detailAbils 存详情能力行 key；
+	// agentSel 是两屏共用的行光标；defStep/defDraft 是缺省三问。
+	agents         AgentsConfig
+	agentsLoaded   bool
+	agentDetail    *Agent
+	viewerMode     string
+	agentRows      []string
+	detailAbils    []string
+	agentSel       int
+	defStep        int
+	defDraft       Defaults
+	defaults       Defaults
+	defaultsLoaded bool
 
 	// 正在生成的这一轮（界面按状态**合成**的气泡；库里还没有它）
 	turn *liveTurn
@@ -163,11 +178,12 @@ const (
 
 // confirm：等着用户点头的那件事（模型里只存**意图**，命令由 `confirmExecute` 派生）。
 type confirm struct {
-	kind      string // confirmDeleteSession / confirmCut / confirmDeleteProvider
+	kind      string // confirmDeleteSession / confirmCut / confirmDeleteProvider / confirmDeleteAgent
 	sessionID string
 	messageID string       // cut 的目标
 	plan      DeletionPlan // cut：后端算好的预览（执行时照它，并把末尾那条带回去核对）
 	provider  string       // provider-del 的目标渠道
+	agentID   string       // agent-del 的目标人格
 }
 
 const (
@@ -177,6 +193,8 @@ const (
 	confirmCut = "cut"
 	// confirmDeleteProvider：删一条渠道。
 	confirmDeleteProvider = "delete-provider"
+	// confirmDeleteAgent：删一份人格（删完如实报；内置默认后端会 400）。
+	confirmDeleteAgent = "delete-agent"
 )
 
 // providerDraft：`/provider-add` 四问攒下来的草稿（`addStep` 指到第几问）。
@@ -1275,6 +1293,78 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.lastAction = "已删除渠道 " + message.id
 		return m, nil
+	case agentsMsg:
+		if message.err != nil {
+			m = m.fail("拉人格失败：" + message.err.Error())
+			return m, nil
+		}
+		m.agents, m.agentsLoaded = message.config, true
+		m = m.openAgentList()
+		m.lastAction = fmt.Sprintf("人格 %d 份（回车进详情）", len(m.agents.Agents))
+		if !m.defaultsLoaded {
+			return m, loadDefaultsCmd(m.client)
+		}
+		m.viewer, m.viewerTitle = m.agentListLines(), "人格"
+		return m, nil
+	case defaultsMsg:
+		if message.err != nil {
+			return m, nil
+		}
+		m.defaults, m.defaultsLoaded = message.defaults, true
+		if m.viewerMode == agentViewerList && m.viewer != nil {
+			m.viewer, m.viewerTitle = m.agentListLines(), "人格"
+		}
+		return m, nil
+	case createdAgentMsg:
+		if message.err != nil {
+			m = m.fail("建人格失败：" + message.err.Error())
+			return m, nil
+		}
+		m.agents.Agents = append(m.agents.Agents, message.agent)
+		m.agentsLoaded = true
+		m = m.openAgentDetail(message.agent)
+		m.lastAction = "已建人格 " + message.agent.Name + "（回车已在详情；t 拨开关）"
+		return m, nil
+	case updatedAgentMsg:
+		if message.err != nil {
+			m = m.fail("改人格失败：" + message.err.Error())
+			return m, nil
+		}
+		for i := range m.agents.Agents {
+			if m.agents.Agents[i].ID == message.agent.ID {
+				m.agents.Agents[i] = message.agent
+			}
+		}
+		if m.agentDetail != nil && m.agentDetail.ID == message.agent.ID {
+			m = m.openAgentDetail(message.agent)
+			m.lastAction = "已更新 " + message.agent.Name
+		}
+		return m, nil
+	case deletedAgentMsg:
+		if message.err != nil {
+			m = m.fail("删除人格失败：" + message.err.Error())
+			return m, nil
+		}
+		kept := m.agents.Agents[:0]
+		for _, a := range m.agents.Agents {
+			if a.ID != message.id {
+				kept = append(kept, a)
+			}
+		}
+		m.agents.Agents = kept
+		m.lastAction = "已删除人格 " + shortID(message.id)
+		return m, nil
+	case setDefaultsMsg:
+		if message.err != nil {
+			m = m.fail("设缺省失败：" + message.err.Error())
+			return m, nil
+		}
+		m.defaults, m.defaultsLoaded, m.defDraft = message.defaults, true, Defaults{}
+		if m.viewerMode == agentViewerList && m.viewer != nil {
+			m.viewer, m.viewerTitle = m.agentListLines(), "人格"
+		}
+		m.lastAction = fmt.Sprintf("缺省已设：%s/%s/%s（新会话生效）", message.defaults.Provider, message.defaults.Model, message.defaults.Agent)
+		return m, nil
 	case presetsMsg:
 		// 向导进行中才存（/providers 那条路不走这里 —— 别把两份名单混了）。
 		if m.addStep > 0 {
@@ -1551,8 +1641,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		}
-		if m.viewer != nil { // 查看器开着：任意键关掉（只读，没什么可操作的）
+		if m.viewer != nil { // 查看器开着：agents 两屏有自己的键，其余只读任意键关掉
+			if handled, next, cmd := m.agentViewerKey(message.String()); handled {
+				return next, cmd
+			}
 			m.viewer, m.viewerTitle, m.viewerHint = nil, "", ""
+			m.viewerMode, m.agentRows, m.detailAbils, m.agentSel = "", nil, nil, 0
+			m.agentDetail = nil
 			return m, nil
 		}
 		if m.picker != pickerNone {
@@ -1561,11 +1656,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch message.String() {
 		case "esc":
 			// 关面板 / 清输入（命令面板是**推导**出来的：清了输入它自然就没了）；
-			// 向导进行中 ⇒ 顺手把草稿也清了（Esc 取消 —— 沿用这条分支，不新增按键）。
+			// 向导 / 缺省三问进行中 ⇒ 顺手把草稿也清了（Esc 取消 —— 沿用这条分支，不新增按键）。
 			m.input, m.inputCursor, m.paletteIndex = "", 0, 0
 			if m.addStep > 0 {
 				m.addStep, m.addDraft, m.addPresets = 0, providerDraft{}, nil
 				m.lastAction = "已取消添加渠道（什么都没建）"
+			}
+			if m.defStep > 0 {
+				m.defStep, m.defDraft = 0, Defaults{}
+				m.lastAction = "已取消设缺省（什么都没改）"
 			}
 			return m, nil
 		case "enter":
@@ -1714,6 +1813,11 @@ func (m model) submit() (tea.Model, tea.Cmd) {
 		m.input, m.inputCursor, m.paletteIndex = "", 0, 0
 		return m.answerWizard(text)
 	}
+	// 缺省三问进行中时输入行也是问卷（空=不动，多行粘贴照吃 —— TrimSpace 后整串就是答案）。
+	if m.defStep > 0 && !strings.HasPrefix(text, "/") {
+		m.input, m.inputCursor, m.paletteIndex = "", 0, 0
+		return m.answerDefDraft(text)
+	}
 	// 面板补全要在**清空输入之前**算候选（先清空再算 ⇒ 候选恒为空，补全永远扑空 —— 测试抓到的）
 	if strings.HasPrefix(text, "/") && !strings.Contains(text, " ") {
 		if matches := m.paletteMatches(); len(matches) > 0 {
@@ -1798,6 +1902,9 @@ func init() {
 		{name: "providers", help: "看全部渠道（每条一行：渠道、协议、有无密钥、几个模型；附预设名单）", run: commandProviders},
 		{name: "provider-add", help: "加一条渠道（四问：编号、预设 vendor、协议、密钥；dummy 跳过密钥）", run: commandProviderAdd},
 		{name: "provider-del", args: "<id>", help: "删一条渠道（不可逆，先确认）", run: commandProviderDel},
+		{name: "agents", args: "[defaults | use <agentID> | set-prompt <文本>]", help: "看人格列表（回车进详情；t 拨能力开关；缺省三件附在下面）", run: commandAgents},
+		{name: "agent-create", args: "<名字>", help: "建一份人格（名唯一必填；建完自动进详情）", run: commandAgentCreate},
+		{name: "agent-del", args: "<id>", help: "删一份人格（不可逆，先确认）", run: commandAgentDel},
 		{name: "telegram-bind", args: "<tg_id>", help: "绑定 Telegram 单账户（绑新的自动顶掉旧的；bot 只认绑定的这个 id）", run: commandTelegramBind},
 		{name: "telegram-bot-token-set", args: "<token>", help: "设置 TG bot token（写 config.json；改完要重启生效）", run: commandTelegramTokenSet},
 		{name: "telegram-toggle", help: "开/关 TG bot（显式动作；开了才连外网，关了就停轮询）", run: commandTelegramToggle},
@@ -1957,6 +2064,9 @@ func (m model) confirmExecute() (tea.Model, tea.Cmd) {
 	case confirmDeleteProvider:
 		m.lastAction = "删除渠道 " + pending.provider + "…"
 		return m, deleteProviderCmd(m.client, pending.provider)
+	case confirmDeleteAgent:
+		m.lastAction = "删除人格 " + shortID(pending.agentID) + "…"
+		return m, deleteAgentCmd(m.client, pending.agentID)
 	}
 	return m, nil
 }
@@ -2182,6 +2292,9 @@ func (m model) providerLines(providers []ProviderInfo, presets []PresetItem) []s
 // → `key?`（可空；dummy 直接跳过）→ 一次 Create。重进覆盖旧草稿。
 func commandProviderAdd(m model, _ []string) (tea.Model, tea.Cmd) {
 	m.addStep, m.addDraft, m.addPresets = 1, providerDraft{}, nil
+	m.agentDetail, m.viewer, m.viewerTitle, m.viewerHint, m.viewerMode = nil, nil, "", "", ""
+	m.agentRows, m.detailAbils, m.agentSel = nil, nil, 0
+	m.defStep, m.defDraft = 0, Defaults{}
 	m.lastAction = "新渠道 id？（输入编号，回车继续；Esc 取消）"
 	return m, loadPresetsCmd(m.client)
 }
@@ -2323,6 +2436,388 @@ func commandProviderDel(m model, args []string) (tea.Model, tea.Cmd) {
 	m.viewerHint = "回车 / y 执行 · 其他键取消"
 	m.lastAction = "看清了再点头（回车 / y）"
 	return m, nil
+}
+
+// ── /agents 面板：人格列表 → 回车详情三段；缺省三问；t 拨开关 ──
+// 详情与 provider 向导同屏互斥：进一边清另一边（输入行同一根问卷线）。
+const (
+	agentViewerList   = "agents"
+	agentViewerDetail = "agent-detail"
+)
+
+// agentAbilityOrder：详情②段的固定行序（title/compact/judge —— 后端登记表同一顺序）。
+var agentAbilityOrder = []string{"title", "compact", "judge"}
+
+// agentAbilityLabel：能力中文名（与后端登记表同一份词）。
+var agentAbilityLabel = map[string]string{"title": "起标题", "compact": "压缩", "judge": "判断"}
+
+// agentsMsg：GET /agents 的结果（成功才开 viewer；失败如实说）。
+type agentsMsg struct {
+	config AgentsConfig
+	err    error
+}
+
+// defaultsMsg：GET /config/defaults 的结果（只拼缺省行，不开 viewer）。
+type defaultsMsg struct {
+	defaults Defaults
+	err      error
+}
+
+// createdAgentMsg：POST /agents 的结果（成功自动进详情）。
+type createdAgentMsg struct {
+	agent Agent
+	err   error
+}
+
+// updatedAgentMsg：PATCH /agents/{id} 的结果（详情就地刷新；拨开关与 set-prompt 都走它）。
+type updatedAgentMsg struct {
+	agent Agent
+	err   error
+}
+
+// deletedAgentMsg：DELETE /agents/{id} 的结果。
+type deletedAgentMsg struct {
+	id  string
+	err error
+}
+
+// setDefaultsMsg：PUT /config/defaults 的结果（缺省三问与 use 快捷都走它）。
+type setDefaultsMsg struct {
+	defaults Defaults
+	err      error
+}
+
+func loadAgentsCmd(client *Client) tea.Cmd {
+	return func() tea.Msg {
+		config, err := client.Agents()
+		return agentsMsg{config: config, err: err}
+	}
+}
+func loadDefaultsCmd(client *Client) tea.Cmd {
+	return func() tea.Msg {
+		defaults, err := client.Defaults()
+		return defaultsMsg{defaults: defaults, err: err}
+	}
+}
+func createAgentCmd(client *Client, name string) tea.Cmd {
+	return func() tea.Msg {
+		agent, err := client.CreateAgent(name, "")
+		return createdAgentMsg{agent: agent, err: err}
+	}
+}
+func updateAgentCmd(client *Client, id string, body map[string]any) tea.Cmd {
+	return func() tea.Msg {
+		agent, err := client.UpdateAgent(id, body)
+		return updatedAgentMsg{agent: agent, err: err}
+	}
+}
+func updateAgentPromptCmd(client *Client, id, prompt string) tea.Cmd {
+	return updateAgentCmd(client, id, map[string]any{"system_prompt": prompt})
+}
+func toggleAgentAbilityCmd(client *Client, agent Agent, key string) tea.Cmd {
+	return updateAgentCmd(client, agent.ID, map[string]any{"abilities": toggledAbilities(agent, key)})
+}
+func deleteAgentCmd(client *Client, id string) tea.Cmd {
+	return func() tea.Msg {
+		if err := client.DeleteAgent(id); err != nil {
+			return deletedAgentMsg{id: id, err: err}
+		}
+		return deletedAgentMsg{id: id}
+	}
+}
+func strptr(s string) *string { return new(s) }
+func setDefaultsCmd(client *Client, provider, model, agent *string) tea.Cmd {
+	return func() tea.Msg {
+		defaults, err := client.SetDefaults(provider, model, agent)
+		return setDefaultsMsg{defaults: defaults, err: err}
+	}
+}
+
+// toggledAbilities：详情②段 `t` 拨动的整段 abilities（读出整段改一位整段 PATCH —— 后端语义是整段替换）。
+func toggledAbilities(agent Agent, key string) map[string]any {
+	out := map[string]any{}
+	for _, k := range agentAbilityOrder {
+		cur := false
+		if ab, ok := agent.Abilities[k]; ok && ab.Enabled != nil {
+			cur = *ab.Enabled
+		}
+		if k == key {
+			cur = !cur
+		}
+		out[k] = map[string]any{"enabled": cur}
+	}
+	return out
+}
+func abilityOn(agent Agent, key string) bool {
+	if ab, ok := agent.Abilities[key]; ok && ab.Enabled != nil {
+		return *ab.Enabled
+	}
+	return false
+}
+func agentByID(config AgentsConfig, id string) *Agent {
+	for i := range config.Agents {
+		if config.Agents[i].ID == id {
+			return &config.Agents[i]
+		}
+	}
+	return nil
+}
+func shortPrompt(prompt string) string {
+	first := strings.TrimSpace(strings.SplitN(prompt, "\n", 2)[0])
+	runes := []rune(first)
+	if len(runes) > 100 {
+		return string(runes[:100])
+	}
+	return first
+}
+
+// agentListLines：/agents 列表 viewer 行（每行：★默认标记 · name · id 短串 · 开/关摘要；下面附缺省行）。
+func (m model) agentListLines() []string {
+	lines := []string{}
+	for _, agent := range m.agents.Agents {
+		mark := " "
+		if agent.ID == m.agents.DefaultAgent {
+			mark = "★"
+		}
+		on, off := 0, 0
+		for _, k := range agentAbilityOrder {
+			if abilityOn(agent, k) {
+				on++
+			} else {
+				off++
+			}
+		}
+		lines = append(lines, truncate(fmt.Sprintf(" %s%s · %s · 开%d/关%d", mark, agent.Name, shortID(agent.ID), on, off), max(1, m.width)))
+	}
+	def := m.defaults
+	if m.defDraft.Provider != "" || m.defDraft.Model != "" || m.defDraft.Agent != "" {
+		def = m.defDraft
+	}
+	if m.defaultsLoaded {
+		lines = append(lines, truncate(fmt.Sprintf(" 缺省：%s/%s/%s", def.Provider, def.Model, def.Agent), max(1, m.width)))
+	}
+	return lines
+}
+
+// agentDetailLines：详情三段（①人格 name/system_prompt 前 100 字；②能力开关；③能力覆盖有值才列）。
+func (m model) agentDetailLines(agent Agent) []string {
+	lines := []string{truncate(" "+agent.Name, max(1, m.width))}
+	if prompt := strings.TrimSpace(agent.SystemPrompt); prompt != "" {
+		lines = append(lines, truncate(" "+shortPrompt(agent.SystemPrompt), max(1, m.width)))
+	} else {
+		lines = append(lines, " （还没有人格提示词）")
+	}
+	abKeys := []string{}
+	for _, k := range agentAbilityOrder {
+		state := "关"
+		if abilityOn(agent, k) {
+			state = "开"
+		}
+		lines = append(lines, truncate(fmt.Sprintf(" %s%s：%s", agentAbilityLabel[k], k, state), max(1, m.width)))
+		abKeys = append(abKeys, k)
+	}
+	_ = abKeys
+	for _, k := range agentAbilityOrder {
+		ab := agent.Abilities[k]
+		if ab.Provider != nil && *ab.Provider != "" {
+			lines = append(lines, truncate(fmt.Sprintf(" %s渠道：%s", k, *ab.Provider), max(1, m.width)))
+		}
+		if ab.Model != nil && *ab.Model != "" {
+			lines = append(lines, truncate(fmt.Sprintf(" %s模型：%s", k, *ab.Model), max(1, m.width)))
+		}
+	}
+	return lines
+}
+
+// openAgentList：列表 viewer 铺开（下标映射存 model，不重拉）。
+func (m model) openAgentList() model {
+	m.agentDetail = nil
+	m.agentRows = make([]string, 0, len(m.agents.Agents))
+	for _, agent := range m.agents.Agents {
+		m.agentRows = append(m.agentRows, agent.ID)
+	}
+	m.viewer, m.viewerTitle = m.agentListLines(), "人格"
+	m.viewerHint = "回车进详情 · ↑↓ 选行 · Esc 关掉"
+	m.viewerMode = agentViewerList
+	if m.agentSel > len(m.agentRows)-1 {
+		m.agentSel = max(len(m.agentRows)-1, 0)
+	}
+	return m
+}
+
+// openAgentDetail：详情三段铺开（行号记住，`t` 拨动用）。
+func (m model) openAgentDetail(agent Agent) model {
+	cp := agent
+	m.agentDetail = &cp
+	m.detailAbils = append([]string{}, agentAbilityOrder...)
+	m.viewer, m.viewerTitle = m.agentDetailLines(agent), "人格详情"
+	m.viewerHint = "t 拨开关 · Esc 关掉"
+	m.viewerMode = agentViewerDetail
+	m.agentSel = 0
+	return m
+}
+
+// commandAgents：`/agents` 列表 viewer（含缺省行）+ 子命令（defaults/use/set-prompt）。
+func commandAgents(m model, args []string) (tea.Model, tea.Cmd) {
+	if len(args) > 0 {
+		switch args[0] {
+		case "defaults":
+			m.addStep, m.addDraft, m.addPresets = 0, providerDraft{}, nil
+			m.agentDetail, m.viewer, m.viewerTitle, m.viewerHint, m.viewerMode = nil, nil, "", "", ""
+			m.agentRows, m.detailAbils, m.agentSel = nil, nil, 0
+			m.defStep, m.defDraft = 1, m.defaults
+			m.lastAction = "缺省 provider？（空=不动；dummy-式填法：opencode-go/deepseek-v4-flash/default；Esc 取消）"
+			return m, nil
+		case "use":
+			if len(args) < 2 || strings.TrimSpace(args[1]) == "" {
+				return m.fail("用法：/agents use <agentID>（先用 /agents 看编号）"), nil
+			}
+			m.lastAction = "设缺省人格…"
+			return m, setDefaultsCmd(m.client, nil, nil, strptr(args[1]))
+		case "set-prompt":
+			if m.agentDetail == nil {
+				return m.fail("先用 /agents 回车进一份人格详情，再 /agents set-prompt <文本>"), nil
+			}
+			text := strings.TrimSpace(strings.Join(args[1:], " "))
+			if text == "" {
+				return m.fail("用法：/agents set-prompt <文本>（空文本不行）"), nil
+			}
+			m.lastAction = "写人格提示词…"
+			return m, updateAgentPromptCmd(m.client, m.agentDetail.ID, text)
+		}
+	}
+	m.addStep, m.addDraft, m.addPresets = 0, providerDraft{}, nil
+	m.agentDetail, m.agentRows, m.detailAbils, m.agentSel = nil, nil, nil, 0
+	m.defStep, m.defDraft = 0, Defaults{}
+	m.viewerMode = ""
+	m.lastAction = "拉人格…"
+	return m, tea.Batch(loadAgentsCmd(m.client), loadDefaultsCmd(m.client))
+}
+
+// commandAgentCreate：`/agent-create <名字>`（名唯一必填；建完自动进详情）。
+func commandAgentCreate(m model, args []string) (tea.Model, tea.Cmd) {
+	name := strings.TrimSpace(strings.Join(args, " "))
+	if name == "" {
+		return m.fail("用法：/agent-create <名字>（名字必填；建完自动进详情）"), nil
+	}
+	m.addStep, m.addDraft, m.addPresets = 0, providerDraft{}, nil
+	m.agentRows, m.detailAbils, m.agentSel = nil, nil, 0
+	m.defStep, m.defDraft = 0, Defaults{}
+	m.lastAction = "建人格 " + name + "…"
+	return m, createAgentCmd(m.client, name)
+}
+
+// commandAgentDel：`/agent-del <id>`（走现有 confirm，加 confirmDeleteAgent 种，删完如实报）。
+func commandAgentDel(m model, args []string) (tea.Model, tea.Cmd) {
+	if len(args) == 0 || strings.TrimSpace(args[0]) == "" {
+		return m.fail("用法：/agent-del <id>（先用 /agents 看编号）"), nil
+	}
+	m.confirm = &confirm{kind: confirmDeleteAgent, agentID: args[0]}
+	m.viewer, m.viewerTitle = []string{
+		m.style.red(" 不可逆") + "：删掉人格 " + args[0],
+		"",
+		" 回车 / y 执行 · 其他键取消",
+	}, "确认删除"
+	m.viewerHint = "回车 / y 执行 · 其他键取消"
+	m.viewerMode = ""
+	m.lastAction = "看清了再点头（回车 / y）"
+	return m, nil
+}
+
+// answerDefDraft：缺省三问（provider?→model?→agentID?，空=不动；一次 SetDefaults）。
+func (m model) answerDefDraft(text string) (tea.Model, tea.Cmd) {
+	answer := strings.TrimSpace(text)
+	switch m.defStep {
+	case 1:
+		if answer != "" {
+			m.defDraft.Provider = answer
+		}
+		m.defStep = 2
+		m.lastAction = "缺省 model？（空=不动；dummy-式填法：dummy；Esc 取消）"
+		return m, nil
+	case 2:
+		if answer != "" {
+			m.defDraft.Model = answer
+		}
+		m.defStep = 3
+		m.lastAction = "缺省 agentID？（空=不动；dummy-式填法：default；Esc 取消）"
+		return m, nil
+	case 3:
+		if answer != "" {
+			m.defDraft.Agent = answer
+		}
+		draft := m.defDraft
+		m.defStep, m.defDraft = 0, Defaults{}
+		m.lastAction = "设缺省…"
+		return m, setDefaultsCmd(m.client, strptr(draft.Provider), strptr(draft.Model), strptr(draft.Agent))
+	}
+	return m, nil
+}
+
+// agentViewerKey：agents viewer 开着时的键（列表/详情各认各的；别屏返回 handled=false 走"任意键关掉"）。
+func (m model) agentViewerKey(key string) (bool, model, tea.Cmd) {
+	switch m.viewerMode {
+	case agentViewerList:
+		switch key {
+		case "esc":
+			m.viewer, m.viewerTitle, m.viewerHint = nil, "", ""
+			m.viewerMode, m.agentRows, m.detailAbils, m.agentSel = "", nil, nil, 0
+			return true, m, nil
+		case "up":
+			if m.agentSel > 0 {
+				m.agentSel--
+			}
+			return true, m, nil
+		case "down":
+			if m.agentSel < len(m.agentRows)-1 {
+				m.agentSel++
+			}
+			return true, m, nil
+		case "enter":
+			if m.agentSel < 0 || m.agentSel >= len(m.agentRows) {
+				return true, m, nil
+			}
+			id := m.agentRows[m.agentSel]
+			if agent := agentByID(m.agents, id); agent != nil {
+				return true, m.openAgentDetail(*agent), nil
+			}
+			return true, m, nil
+		}
+		return false, m, nil
+	case agentViewerDetail:
+		switch key {
+		case "esc":
+			m.viewer, m.viewerTitle, m.viewerHint = nil, "", ""
+			m.viewerMode, m.agentRows, m.detailAbils, m.agentSel = "", nil, nil, 0
+			m.agentDetail = nil
+			return true, m, nil
+		case "t", "T":
+			if m.agentDetail == nil || len(m.detailAbils) == 0 {
+				return true, m, nil
+			}
+			idx := m.agentSel
+			if idx < 0 || idx >= len(m.detailAbils) {
+				idx = 0
+			}
+			key := m.detailAbils[idx]
+			m.lastAction = "拨开关 " + key + "…"
+			return true, m, toggleAgentAbilityCmd(m.client, *m.agentDetail, key)
+		case "up":
+			if m.agentSel > 0 {
+				m.agentSel--
+			}
+			return true, m, nil
+		case "down":
+			if m.agentSel < len(m.detailAbils)-1 {
+				m.agentSel++
+			}
+			return true, m, nil
+		case "enter":
+			return true, m, nil
+		}
+		return false, m, nil
+	}
+	return false, m, nil
 }
 
 // bindTelegramMsg：一次绑定的结果（走后端 HTTP：改的是服务器配置，远端 TUI 照用）。

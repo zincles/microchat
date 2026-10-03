@@ -73,6 +73,10 @@ func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *ch
 	s.mux.HandleFunc("DELETE /api/v1/agents/{agent_id}", s.deleteAgent)
 	s.mux.HandleFunc("GET /api/v1/config/chat", s.getChatConfig)
 	s.mux.HandleFunc("PUT /api/v1/config/chat", s.putChatConfig)
+	// 新建会话的缺省三件（provider / model / agent）：`PUT /config/chat` 只管 chat 段，
+	// 缺省另起一条（免得界面为改一个缺省去读整段 chat 再原样 PUT 回去 —— 两段各改各的）。
+	s.mux.HandleFunc("GET /api/v1/config/defaults", s.getDefaults)
+	s.mux.HandleFunc("PUT /api/v1/config/defaults", s.putDefaults)
 	s.mux.HandleFunc("GET /api/v1/models", s.listModels)
 	s.mux.HandleFunc("PATCH /api/v1/models", s.setModelOverride)
 	// TG bot 配置（单账户绑定；token 只回有没有）—— TUI 的 `/telegram-bind` 走这里
@@ -324,11 +328,18 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	provider := s.config.Defaults.Provider
+	// 缺省每次现读（`PUT /config/defaults` 改完**当场**生效 —— 启动快照会把它冻住，
+	// 那正是"改完缺省、新会话还是 dummy"那类 bug 的来源）。
+	cfg, err := config.LoadConfig(s.paths)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	provider := cfg.Defaults.Provider
 	if req.Provider != nil {
 		provider = *req.Provider
 	}
-	modelID := s.config.Defaults.Model
+	modelID := cfg.Defaults.Model
 	if req.Model != nil {
 		modelID = *req.Model
 	}

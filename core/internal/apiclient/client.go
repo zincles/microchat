@@ -691,3 +691,82 @@ func (c *Client) RerollSummaryDelete(sessionID string, idx int) (RerollState, er
 func (c *Client) RerollSummaryClear(sessionID string) error {
 	return c.del("/sessions/" + sessionID + "/reroll-summary")
 }
+
+// ── Agent 与缺省（`/agents` 面板用；TUI 与 TG bot 共用）──
+
+// AgentAbility：一个能力在这份人格上的开关 + 可选覆盖（与后端 `AbilityToggle` 同形状）。
+type AgentAbility struct {
+	Enabled  *bool   `json:"enabled,omitempty"`
+	Provider *string `json:"provider,omitempty"`
+	Model    *string `json:"model,omitempty"`
+	Prompt   *string `json:"prompt,omitempty"`
+}
+
+// Agent：一份人格 + 一组能力开关（`agents.json` 里的一条；id 后端生成）。
+type Agent struct {
+	ID           string                  `json:"id"`
+	Name         string                  `json:"name"`
+	SystemPrompt string                  `json:"system_prompt"`
+	Abilities    map[string]AgentAbility `json:"abilities,omitempty"`
+}
+
+// AgentsConfig：`GET /agents` 的生效列表（含内置默认 + `default_agent`）。
+type AgentsConfig struct {
+	DefaultAgent string  `json:"default_agent"`
+	Agents       []Agent `json:"agents"`
+}
+
+// Defaults：新建会话的缺省三件（provider / model / agent）。
+type Defaults struct {
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+	Agent    string `json:"agent"`
+}
+
+// Agents：生效列表（含内置默认 agent）。
+func (c *Client) Agents() (AgentsConfig, error) {
+	var config AgentsConfig
+	err := c.get("/agents", &config)
+	return config, err
+}
+
+// CreateAgent：建一份人格（名称唯一必填；id 后端生成）。
+func (c *Client) CreateAgent(name, systemPrompt string) (Agent, error) {
+	var agent Agent
+	err := c.post("/agents", map[string]any{"name": name, "system_prompt": systemPrompt}, &agent)
+	return agent, err
+}
+
+// UpdateAgent：改一份人格 —— body 只装要改的格（name / system_prompt / abilities 整段 / make_default / new_id）。
+func (c *Client) UpdateAgent(id string, body map[string]any) (Agent, error) {
+	var agent Agent
+	err := c.patch("/agents/"+id, body, &agent)
+	return agent, err
+}
+
+// DeleteAgent：删一份人格（内置默认不可删，后端 400）。
+func (c *Client) DeleteAgent(id string) error { return c.del("/agents/" + id) }
+
+// Defaults：读新建会话的缺省三件。
+func (c *Client) Defaults() (Defaults, error) {
+	var defaults Defaults
+	err := c.get("/config/defaults", &defaults)
+	return defaults, err
+}
+
+// SetDefaults：改缺省三件 —— 空指针 = 不动；空串 = 清回内置缺省。
+func (c *Client) SetDefaults(provider, model, agent *string) (Defaults, error) {
+	body := map[string]any{}
+	if provider != nil {
+		body["provider"] = *provider
+	}
+	if model != nil {
+		body["model"] = *model
+	}
+	if agent != nil {
+		body["agent"] = *agent
+	}
+	var defaults Defaults
+	err := c.do(http.MethodPut, "/config/defaults", body, &defaults)
+	return defaults, err
+}
