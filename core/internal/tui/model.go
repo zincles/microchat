@@ -2662,7 +2662,7 @@ func (m model) agentSplitLines() []string {
 	right := m.agentSplitRight(rightW)
 	height := max(len(left), len(right))
 	lines := make([]string, 0, height+2)
-	for i := 0; i < height; i++ {
+	for i := range height {
 		l, r := "", ""
 		if i < len(left) {
 			l = left[i]
@@ -2670,10 +2670,21 @@ func (m model) agentSplitLines() []string {
 		if i < len(right) {
 			r = right[i]
 		}
-		lines = append(lines, truncate(l, leftW)+" │ "+truncate(r, rightW))
+		// 先排版（pad 到固定格宽）、后上色：`│` 的列只认格数，不认内容长短。
+		lines = append(lines, padCell(l, leftW)+" │ "+padCell(r, rightW))
 	}
 	lines = append(lines, truncate(" [n]新增 [d]删除 ", width))
 	return lines
+}
+
+// padCell：截断 + 右侧补空格到 width 格（CJK 按两格算，见 runewidth）。
+// 只吃未着色原文 —— 着色码零宽，pad 完再包色（"先排版、后上色"那条纪律）。
+func padCell(text string, width int) string {
+	text = truncate(text, width)
+	if pad := width - runewidth.StringWidth(text); pad > 0 {
+		text += strings.Repeat(" ", pad)
+	}
+	return text
 }
 
 // agentSplitLeft：左栏行（`>` = 焦点在左且选中；焦点在右时左栏无标记 —— 焦点在哪一眼见）。

@@ -41,7 +41,7 @@ core/                      ← 后端（Go **核心**；叫 core 是因为它不
     server/                HTTP：路由、错误体、鉴权（只编排，不含业务）
     model/ config/         纯结构 / `config/` 读写
 
-frontend/                  ← Godot 4.8
+frontend/                  ← 三个前端（`godotui/` 图形 · `tui/` 终端 · `telegram/` Bot；后两者代码在 `core/internal/` 里，见 `frontend/README.md`）
 reminder/                  ← 专题参考（`tool-calls.md` 工具调用 / `jev.md` 决策模型）；
                              `AGENTS.md` 只留形状与指针，细节住这儿
 ```
@@ -795,7 +795,7 @@ prompt caching**"）。**不要为能力造子 session id**：网关的会话 id
 | `quit_on_go_back` | 安卓返回键 / 手势 | `NOTIFICATION_WM_GO_BACK_REQUEST` = 1007 | `Window.go_back_requested` |
 
 引擎里的顺序：根窗口先 `_propagate_window_notification()` → **全树节点的 `_notification` 先收到** → 再 `emit_signal` → SceneTree 按开关决定 `_quit`。即"通知一定先到，自动退出是之后才判的"。`get_tree().quit()` **不走这条路**（直接 `_quit = true`、不发通知）。
-**当前设定**（`frontend/project.godot`）：`quit_on_go_back=false`（返回键留给面板栈），`auto_accept_quit` 保持默认 `true`。
+**当前设定**（`frontend/godotui/project.godot`）：`quit_on_go_back=false`（返回键留给面板栈），`auto_accept_quit` 保持默认 `true`。
 **还没做**：① 返回栈（`_on_back()` 一处收口；安卓接 `go_back_requested`、桌面/Web 接 `ui_cancel`；栈空才真退）；② 安卓双击退出（第一次提示，约 2 秒内再来一次才 `quit()`）；③ 安卓"从最近任务划掉" = **进程被杀**，任何开关都拦不到 ⇒ 该落盘的写在 `NOTIFICATION_APPLICATION_PAUSED` 里落。
 **坑**：返回栈接上之前，安卓按返回键**什么都不发生**。4.8.dev5 实测"只关 `auto_accept_quit`、返回键那条路也不退" ⇒ **别依赖实现细节**，要拦哪条路就显式关哪条路的开关。
 
