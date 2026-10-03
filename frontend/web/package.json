@@ -1,0 +1,15 @@
+{
+  "name": "microchat-web",
+  "version": "0.1.0",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "dev": "vite --port 5173 --strictPort",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "type": "module",
+  "private": "true",
+  "devDependencies": {
+    "vite": "^7.3.6"
+  }
+}

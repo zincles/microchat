@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>microchat</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div id="app">
+    <header>
+      <span id="conn">未连接</span>
+      <span id="session"></span>
+    </header>
+    <main id="messages"></main>
+    <form id="composer">
+      <input id="input" type="text" autocomplete="off" placeholder="输入消息，回车发送" />
+      <button type="submit">发送</button>
+    </form>
+  </div>
+  <script type="module" src="./main.js"></script>
+</body>
+</html>

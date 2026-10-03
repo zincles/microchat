@@ -36,3 +36,11 @@ Thumbs.db
 # 其余（场景、脚本、.uid、project.godot、export_presets.cfg、*.import）都随仓库走。
 frontend/godotui/.godot/
 frontend/godotui/export/
+
+# Web 前端（frontend/web/）：node 产物一律不入库 —— 依赖靠 package-lock.json 锁死重装。
+# `npm ci` 从锁文件逐字节重装；`node_modules/`、`dist/`、`*.local` 永不进库。
+node_modules/
+frontend/web/node_modules/
+frontend/web/dist/
+frontend/web/.vite/
+*.tsbuildinfo
