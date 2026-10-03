@@ -32,7 +32,7 @@ Thumbs.db
 # 注：配置文件一律**严格 JSON**（不接受注释与尾逗号）——程序会整体重写它们，
 #     注释留不住；格式与示例写在 AGENTS.md 里。
 
-# Godot 前端（frontend/）：只排除编辑器缓存与导出产物，
+# Godot 前端（frontend/godotui/）：只排除编辑器缓存与导出产物，
 # 其余（场景、脚本、.uid、project.godot、export_presets.cfg、*.import）都随仓库走。
-frontend/.godot/
-frontend/export/
+frontend/godotui/.godot/
+frontend/godotui/export/
