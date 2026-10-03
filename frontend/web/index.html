@@ -11,10 +11,65 @@
     <header>
       <span id="conn">未连接</span>
       <span id="session"></span>
+      <button id="manage-toggle" type="button">管理</button>
     </header>
+    <div id="statusline" class="statusline">上下文 ?/?｜未知模型｜idle</div>
+    <details id="outgoing-box">
+      <summary id="outgoing-head">出站载荷（未加载）</summary>
+      <div id="outgoing"></div>
+    </details>
     <main id="messages"></main>
+    <div id="palette" class="palette hidden">
+      <div id="palette-list"></div>
+      <div class="palette-hint">Tab/↑↓ 选择，回车执行</div>
+    </div>
+    <div id="picker" class="picker hidden">
+      <div id="picker-title"></div>
+      <div id="picker-list"></div>
+    </div>
+    <div id="confirm-box" class="confirm hidden">
+      <div id="confirm-text"></div>
+      <div class="confirm-btns">
+        <button id="confirm-yes" type="button">确认</button>
+        <button id="confirm-no" type="button">取消</button>
+      </div>
+    </div>
+    <aside id="manage" class="manage hidden">
+      <details id="m-providers">
+        <summary>providers</summary>
+        <select id="preset-select"></select>
+        <input id="new-provider-id" placeholder="新渠道 id" />
+        <input id="new-provider-key" placeholder="api_key（可空）" />
+        <button id="provider-add" type="button">新建</button>
+        <button id="provider-del" type="button">删除所选</button>
+        <div id="provider-list"></div>
+      </details>
+      <details id="m-agents">
+        <summary>agents</summary>
+        <div id="agent-list"></div>
+        <input id="new-agent-name" placeholder="新 agent 名" />
+        <button id="agent-add" type="button">新建</button>
+        <div id="agent-detail" class="hidden">
+          <div id="agent-title"></div>
+          <textarea id="agent-prompt" rows="4"></textarea>
+          <label><input id="ab-title" type="checkbox" checked /> title</label>
+          <label><input id="ab-compact" type="checkbox" checked /> compact</label>
+          <label><input id="ab-judge" type="checkbox" checked /> judge</label>
+          <button id="agent-save" type="button">set-prompt 保存</button>
+          <button id="agent-del" type="button">删除</button>
+        </div>
+      </details>
+      <details id="m-defaults">
+        <summary>defaults</summary>
+        <input id="def-provider" placeholder="provider" />
+        <input id="def-model" placeholder="model" />
+        <input id="def-agent" placeholder="agent" />
+        <button id="def-save" type="button">保存缺省</button>
+        <div id="def-status"></div>
+      </details>
+    </aside>
     <form id="composer">
-      <input id="input" type="text" autocomplete="off" placeholder="输入消息，回车发送" />
+      <input id="input" type="text" autocomplete="off" placeholder="输入消息，回车发送；/ 开头进命令" />
       <button type="submit">发送</button>
     </form>
   </div>

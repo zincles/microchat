@@ -12,3 +12,18 @@ header { display: flex; gap: 1em; padding: 0.5em 1em; border-bottom: 1px solid #
 #composer { display: flex; gap: 0.5em; padding: 0.75em 1em; border-top: 1px solid #333; }
 #input { flex: 1; background: #222; color: #eee; border: 1px solid #444; padding: 0.5em; }
 button { background: #333; color: #eee; border: 1px solid #555; padding: 0.5em 1em; cursor: pointer; }
+.statusline { padding: 0.25em 1em; color: #888; border-bottom: 1px solid #222; font-size: 0.85em; }
+.statusline.over { color: #f66; }
+#outgoing-box { padding: 0.25em 1em; color: #888; font-size: 0.85em; }
+#outgoing-box summary { cursor: pointer; }
+.out { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.out.summary { color: #fc3; }
+.msg .think { color: #888; font-size: 0.85em; cursor: pointer; }
+.msg .think-body { white-space: pre-wrap; word-break: break-word; }
+.palette, .picker, .confirm { position: fixed; left: 50%; transform: translateX(-50%); bottom: 5em; background: #1a1a1a; border: 1px solid #555; padding: 0.5em 1em; max-width: 640px; width: 90%; z-index: 10; }
+.palette-item, .picker-item { padding: 0.25em 0.5em; cursor: pointer; }
+.palette-item.sel, .picker-item.sel { color: #4cc; }
+.hidden { display: none; }
+.manage { padding: 0.5em 1em; border-top: 1px solid #333; color: #aaa; font-size: 0.9em; max-height: 40vh; overflow-y: auto; }
+.manage input, .manage select, .manage textarea { background: #222; color: #eee; border: 1px solid #444; padding: 0.4em; margin: 0.2em; }
+#manage-toggle { margin-left: auto; }

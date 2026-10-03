@@ -1,5 +1,20 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
+import {
+  createApi,
+  parseCommand,
+  filterCommands,
+  advanceCursor,
+  buildTurnTextPath,
+} from "../src/api.js";
+import {
+  formatThinkLabel,
+  isSummaryItem,
+  formatStatusLine,
+  statusOverBudget,
+  groupModelsByProvider,
+  deletionPlanSummary,
+} from "../src/ui.js";
 
 // 契约测试（无浏览器）：只验纯函数与请求形状。`node --test test/`。
 // 后端真服务验证另走手工（见 README）。
@@ -24,4 +39,83 @@ test("游标读推进：next/think_next 只增不减", () => {
     thinkFrom = s.think_next;
   }
   assert.equal(text, "你好，世界");
+});
+
+test("命令解析：/compact 10 → 名+参数；普通文本 → null", () => {
+  assert.deepEqual(parseCommand("/compact 10"), { name: "compact", args: ["10"] });
+  assert.deepEqual(parseCommand("/resume"), { name: "resume", args: [] });
+  assert.equal(parseCommand("你好"), null);
+  assert.ok(filterCommands("c").includes("compact"));
+  assert.ok(filterCommands("").length >= 8);
+});
+
+test("游标回退包丢弃：advanceCursor 标记 stale", () => {
+  const cur = { from: 5, thinkFrom: 1 };
+  const bad = advanceCursor(cur, { next: 3, think_next: 0 });
+  assert.equal(bad.stale, true);
+  assert.equal(bad.from, 5);
+  const good = advanceCursor(cur, { next: 7, think_next: 2 });
+  assert.equal(good.stale, false);
+  assert.equal(good.from, 7);
+  assert.equal(
+    buildTurnTextPath("s1", 7, 2),
+    "/sessions/s1/turn/text?from=7&think_from=2",
+  );
+});
+
+test("思考折叠抬头：reasoning_ms 换算秒；无值回退", () => {
+  assert.equal(formatThinkLabel(2100), "思考过程（2.1s）");
+  assert.equal(formatThinkLabel(null), "思考过程");
+  assert.equal(isSummaryItem({ type: "summary" }), true);
+  assert.equal(isSummaryItem({ type: "message" }), false);
+});
+
+test("状态行：used/budget + provider/model + phase/耗时；超预算可判", () => {
+  const line = formatStatusLine({
+    ctx: { used_tokens: 100, budget_tokens: 1000, over_budget: true },
+    phase: "streaming",
+    elapsedMs: 300,
+    provider: "dummy",
+    model: "m",
+  });
+  assert.ok(line.includes("100/1000"));
+  assert.ok(line.includes("超预算"));
+  assert.ok(line.includes("dummy/m"));
+  assert.ok(line.includes("streaming"));
+  assert.equal(statusOverBudget({ over_budget: true }), true);
+  assert.equal(statusOverBudget({ over_budget: false }), false);
+});
+
+test("模型按 provider 分组；删除预览计数", () => {
+  const groups = groupModelsByProvider([
+    { provider: "a", upstream_id: "m1" },
+    { provider: "a", upstream_id: "m2" },
+    { provider: "b", upstream_id: "m3" },
+  ]);
+  assert.equal(groups.length, 2);
+  assert.equal(groups[0].items.length, 2);
+  const s = deletionPlanSummary({
+    deleted_message_ids: ["x"],
+    deleted_summary_ids: [],
+    unlinked_message_ids: ["y", "z"],
+  });
+  assert.ok(s.includes("1 条消息") && s.includes("2 条消息解链"));
+});
+
+test("api.call 请求形状：方法/路径/鉴权头/204 空", async () => {
+  const seen = [];
+  const fetchFn = async (url, opts) => {
+    seen.push({ url, opts });
+    if (url.endsWith("/gone")) return { status: 204, ok: true, json: async () => null };
+    return { status: 200, ok: true, json: async () => ({ ok: true }) };
+  };
+  const api = createApi({ base: "http://x/api/v1", token: "t", fetchFn });
+  await api.call("POST", "/sessions/s1/compact", { blocks: 2 });
+  assert.equal(seen[0].url, "http://x/api/v1/sessions/s1/compact");
+  assert.equal(seen[0].opts.headers.Authorization, "Bearer t");
+  assert.equal(seen[0].opts.body, JSON.stringify({ blocks: 2 }));
+  const r = await api.call("GET", "/gone");
+  assert.equal(r, null);
+  const p = await api.deletionPreview("s1", "m1");
+  assert.deepEqual(p, { ok: true });
 });
