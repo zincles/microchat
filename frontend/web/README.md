@@ -5,6 +5,8 @@
 ## 跑起来
 
 ```bash
+./start-web-ui.sh    # 一键：后端 :8787 + vite :5173（Ctrl+C 一起停）
+# 或分开跑：
 cd frontend/web
 npm ci            # 从锁文件重装（node_modules 永不入库）
 npm run dev       # vite :5173（连本机 8787 后端；远端改 localStorage.mc_api）
