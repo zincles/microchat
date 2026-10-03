@@ -113,6 +113,11 @@ type model struct {
 	// agents 面板（`/agents`）：agents 生效列表 + agentDetail（nil=列表；非 nil=详情）。
 	// agentRows 存列表 viewer 行号→agent 的下标映射（不重拉）；detailAbils 存详情能力行 key；
 	// agentSel 是两屏共用的行光标；defStep/defDraft 是缺省三问。
+	// 分栏后面板常驻：agentCol = 焦点在左（列表）/右（详情）；editField != "" 时输入行是编辑态
+	// （名/提示词/模型三格，回车 PATCH）；agentMode 标记分栏开着（viewer 复用同一块画布）。
+	agentCol       int
+	agentMode      bool
+	editField      string
 	agents         AgentsConfig
 	agentsLoaded   bool
 	agentDetail    *Agent
@@ -1304,7 +1309,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.defaultsLoaded {
 			return m, loadDefaultsCmd(m.client)
 		}
-		m.viewer, m.viewerTitle = m.agentListLines(), "人格"
+		m.viewer, m.viewerTitle = m.agentSplitLines(), "人格"
 		return m, nil
 	case defaultsMsg:
 		if message.err != nil {
@@ -1312,7 +1317,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.defaults, m.defaultsLoaded = message.defaults, true
 		if m.viewerMode == agentViewerList && m.viewer != nil {
-			m.viewer, m.viewerTitle = m.agentListLines(), "人格"
+			m.viewer, m.viewerTitle = m.agentSplitLines(), "人格"
 		}
 		return m, nil
 	case createdAgentMsg:
@@ -1361,7 +1366,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.defaults, m.defaultsLoaded, m.defDraft = message.defaults, true, Defaults{}
 		if m.viewerMode == agentViewerList && m.viewer != nil {
-			m.viewer, m.viewerTitle = m.agentListLines(), "人格"
+			m.viewer, m.viewerTitle = m.agentSplitLines(), "人格"
 		}
 		m.lastAction = fmt.Sprintf("缺省已设：%s/%s/%s（新会话生效）", message.defaults.Provider, message.defaults.Model, message.defaults.Agent)
 		return m, nil
@@ -1641,13 +1646,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		}
-		if m.viewer != nil { // 查看器开着：agents 两屏有自己的键，其余只读任意键关掉
+		if m.viewer != nil { // 查看器开着：agents 分栏有自己的键，其余只读任意键关掉
+			// 编辑态回车例外：输入行是同一根线，回车走 submit 进 answerAgentEdit ——
+			// 分栏键不得吞掉它（否则编辑态永远发不出去），面板也不得关（关了详情就没了）。
+			if m.editField != "" && message.String() == "enter" {
+				return m.submit()
+			}
 			if handled, next, cmd := m.agentViewerKey(message.String()); handled {
 				return next, cmd
 			}
 			m.viewer, m.viewerTitle, m.viewerHint = nil, "", ""
 			m.viewerMode, m.agentRows, m.detailAbils, m.agentSel = "", nil, nil, 0
-			m.agentDetail = nil
+			m.agentDetail, m.agentCol, m.agentMode, m.editField = nil, agentColList, false, ""
 			return m, nil
 		}
 		if m.picker != pickerNone {
@@ -1656,8 +1666,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch message.String() {
 		case "esc":
 			// 关面板 / 清输入（命令面板是**推导**出来的：清了输入它自然就没了）；
-			// 向导 / 缺省三问进行中 ⇒ 顺手把草稿也清了（Esc 取消 —— 沿用这条分支，不新增按键）。
+			// 向导 / 缺省三问 / agents 编辑态进行中 ⇒ 顺手把草稿也清了（Esc 取消 —— 沿用这条分支，不新增按键）。
 			m.input, m.inputCursor, m.paletteIndex = "", 0, 0
+			m.editField = ""
 			if m.addStep > 0 {
 				m.addStep, m.addDraft, m.addPresets = 0, providerDraft{}, nil
 				m.lastAction = "已取消添加渠道（什么都没建）"
@@ -1817,6 +1828,11 @@ func (m model) submit() (tea.Model, tea.Cmd) {
 	if m.defStep > 0 && !strings.HasPrefix(text, "/") {
 		m.input, m.inputCursor, m.paletteIndex = "", 0, 0
 		return m.answerDefDraft(text)
+	}
+	// agents 编辑态：输入行改右栏字段（名/提示词/模型三格 + 新增名字；Esc 取消沿用 esc 分支）。
+	if m.editField != "" && !strings.HasPrefix(text, "/") {
+		m.input, m.inputCursor, m.paletteIndex = "", 0, 0
+		return m.answerAgentEdit(text)
 	}
 	// 面板补全要在**清空输入之前**算候选（先清空再算 ⇒ 候选恒为空，补全永远扑空 —— 测试抓到的）
 	if strings.HasPrefix(text, "/") && !strings.Contains(text, " ") {
@@ -2445,6 +2461,12 @@ const (
 	agentViewerDetail = "agent-detail"
 )
 
+// agentCol：分栏焦点（左列表 / 右详情）。左/右键在它俩之间挪；回车只在左栏进详情（= 焦点挪右）。
+const (
+	agentColList = iota
+	agentColDetail
+)
+
 // agentAbilityOrder：详情②段的固定行序（title/compact/judge —— 后端登记表同一顺序）。
 var agentAbilityOrder = []string{"title", "compact", "judge"}
 
@@ -2629,29 +2651,154 @@ func (m model) agentDetailLines(agent Agent) []string {
 	return lines
 }
 
-// openAgentList：列表 viewer 铺开（下标映射存 model，不重拉）。
+// agentSplitLines：分栏拼行（左 agent 列表 | 右选中详情 + 底按钮行）。
+// 两栏按 runewidth 对半切（左 12 格保底，人名再长也截）；焦点那栏行首 `>`，另一栏两格空。
+// 详情字段行（可编辑那几行）行尾挂 `✎` —— e 改的就是它们。
+func (m model) agentSplitLines() []string {
+	width := max(1, m.width)
+	leftW := max(12, width/2-1)
+	rightW := max(1, width-leftW-3)
+	left := m.agentSplitLeft(leftW)
+	right := m.agentSplitRight(rightW)
+	height := max(len(left), len(right))
+	lines := make([]string, 0, height+2)
+	for i := 0; i < height; i++ {
+		l, r := "", ""
+		if i < len(left) {
+			l = left[i]
+		}
+		if i < len(right) {
+			r = right[i]
+		}
+		lines = append(lines, truncate(l, leftW)+" │ "+truncate(r, rightW))
+	}
+	lines = append(lines, truncate(" [n]新增 [d]删除 ", width))
+	return lines
+}
+
+// agentSplitLeft：左栏行（`>` = 焦点在左且选中；焦点在右时左栏无标记 —— 焦点在哪一眼见）。
+func (m model) agentSplitLeft(leftW int) []string {
+	lines := []string{}
+	for i, agent := range m.agents.Agents {
+		mark := " "
+		if agent.ID == m.agents.DefaultAgent {
+			mark = "★"
+		}
+		cursor := "  "
+		if m.agentCol == agentColList && i == m.agentSel {
+			cursor = "> "
+		}
+		lines = append(lines, truncate(fmt.Sprintf("%s%s%s · %s", cursor, mark, agent.Name, shortID(agent.ID)), leftW))
+	}
+	return lines
+}
+
+// agentSplitRight：右栏 = 选中详情的可编辑字段行（名/提示词/当前模型 + 开关行）。
+// `>` = 焦点在右且选中这行；行尾 `✎` = e 改的就是这行。
+func (m model) agentSplitRight(rightW int) []string {
+	if m.agentDetail == nil {
+		return []string{" （左栏选一份人格）"}
+	}
+	agent := *m.agentDetail
+	rows := []agentFieldRow{
+		{key: "name", label: "名", text: agent.Name},
+		{key: "prompt", label: "提示词", text: shortPrompt(agent.SystemPrompt)},
+		{key: "model", label: "当前模型", text: agentModelText(agent)},
+	}
+	for _, k := range agentAbilityOrder {
+		state := "关"
+		if abilityOn(agent, k) {
+			state = "开"
+		}
+		rows = append(rows, agentFieldRow{key: "abil:" + k, label: agentAbilityLabel[k], text: state})
+	}
+	lines := []string{}
+	for i, row := range rows {
+		cursor := "  "
+		if m.agentCol == agentColDetail && i == m.agentSel {
+			cursor = "> "
+		}
+		lines = append(lines, truncate(fmt.Sprintf("%s%s：%s ✎", cursor, row.label, row.text), rightW))
+	}
+	return lines
+}
+
+// agentFieldRow：右栏一行可编辑字段（key = e 改时 Dess PATCH 哪一格）。
+type agentFieldRow struct {
+	key   string
+	label string
+	text  string
+}
+
+// agentDetailRows：右栏字段行（与 agentSplitRight 同一顺序 —— 键处理按下标找它）。
+func (m model) agentDetailRows() []agentFieldRow {
+	if m.agentDetail == nil {
+		return nil
+	}
+	agent := *m.agentDetail
+	rows := []agentFieldRow{
+		{key: "name", label: "名", text: agent.Name},
+		{key: "prompt", label: "提示词", text: shortPrompt(agent.SystemPrompt)},
+		{key: "model", label: "当前模型", text: agentModelText(agent)},
+	}
+	for _, k := range agentAbilityOrder {
+		state := "关"
+		if abilityOn(agent, k) {
+			state = "开"
+		}
+		rows = append(rows, agentFieldRow{key: "abil:" + k, label: agentAbilityLabel[k], text: state})
+	}
+	return rows
+}
+
+// agentModelText：右栏"当前模型"那行 —— compact 覆盖的模型 ?: 会话缺省（只读看，不写）。
+func agentModelText(agent Agent) string {
+	if ab, ok := agent.Abilities["compact"]; ok && ab.Model != nil && *ab.Model != "" {
+		return *ab.Model
+	}
+	return "（跟缺省走）"
+}
+
+// openAgentList：分栏铺开（左列表 + 右详情常驻；焦点在左）。
+// agentRows 存列表行号→agent id；右详情跟左光标走（syncAgentDetail），列表空 ⇒ 详情空。
 func (m model) openAgentList() model {
 	m.agentDetail = nil
 	m.agentRows = make([]string, 0, len(m.agents.Agents))
 	for _, agent := range m.agents.Agents {
 		m.agentRows = append(m.agentRows, agent.ID)
 	}
-	m.viewer, m.viewerTitle = m.agentListLines(), "人格"
-	m.viewerHint = "回车进详情 · ↑↓ 选行 · Esc 关掉"
-	m.viewerMode = agentViewerList
 	if m.agentSel > len(m.agentRows)-1 {
 		m.agentSel = max(len(m.agentRows)-1, 0)
 	}
+	m.agentCol, m.agentMode = agentColList, true
+	m.syncAgentDetail()
+	m.viewer, m.viewerTitle = m.agentSplitLines(), "人格"
+	m.viewerHint = "←→ 焦点 · ↑↓ 选行 · 回车进详情 · n 新增 · d 删除 · Esc 关掉"
+	m.viewerMode = agentViewerList
 	return m
 }
 
-// openAgentDetail：详情三段铺开（行号记住，`t` 拨动用）。
+// syncAgentDetail：右详情跟左光标走（分栏常驻 ⇒ 详情永远是选中那条，不重拉）。
+func (m *model) syncAgentDetail() {
+	m.agentDetail = nil
+	m.detailAbils = append([]string{}, agentAbilityOrder...)
+	if m.agentSel < 0 || m.agentSel >= len(m.agentRows) {
+		return
+	}
+	if agent := agentByID(m.agents, m.agentRows[m.agentSel]); agent != nil {
+		cp := *agent
+		m.agentDetail = &cp
+	}
+}
+
+// openAgentDetail：回车进详情 = 焦点挪右（分栏不动，只是焦点过去；详情内容 sync 时已就位）。
 func (m model) openAgentDetail(agent Agent) model {
 	cp := agent
 	m.agentDetail = &cp
 	m.detailAbils = append([]string{}, agentAbilityOrder...)
-	m.viewer, m.viewerTitle = m.agentDetailLines(agent), "人格详情"
-	m.viewerHint = "t 拨开关 · Esc 关掉"
+	m.agentCol = agentColDetail
+	m.viewer, m.viewerTitle = m.agentSplitLines(), "人格"
+	m.viewerHint = "←→ 焦点 · ↑↓ 选字段 · t/回车拨开关 · e 改 · d 删 · Esc 关掉"
 	m.viewerMode = agentViewerDetail
 	m.agentSel = 0
 	return m
@@ -2712,9 +2859,14 @@ func commandAgentDel(m model, args []string) (tea.Model, tea.Cmd) {
 	if len(args) == 0 || strings.TrimSpace(args[0]) == "" {
 		return m.fail("用法：/agent-del <id>（先用 /agents 看编号）"), nil
 	}
-	m.confirm = &confirm{kind: confirmDeleteAgent, agentID: args[0]}
+	return m.confirmDeleteAgentByID(strings.TrimSpace(args[0]))
+}
+
+// confirmDeleteAgentByID：删人格确认框（d 键与 /agent-del 共用 —— id 来自光标或参数）。
+func (m model) confirmDeleteAgentByID(id string) (model, tea.Cmd) {
+	m.confirm = &confirm{kind: confirmDeleteAgent, agentID: id}
 	m.viewer, m.viewerTitle = []string{
-		m.style.red(" 不可逆") + "：删掉人格 " + args[0],
+		m.style.red(" 不可逆") + "：删掉人格 " + id,
 		"",
 		" 回车 / y 执行 · 其他键取消",
 	}, "确认删除"
@@ -2724,7 +2876,74 @@ func commandAgentDel(m model, args []string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// answerDefDraft：缺省三问（provider?→model?→agentID?，空=不动；一次 SetDefaults）。
+// answerAgentEdit：编辑态回车 —— 名/提示词/模型三格 + 新增名字，各走各的 PATCH。
+// 空回答 = 取消（别把字段清空 —— 清空另有 Coronary 语义，这里不给）；
+// 编辑态收工都清 editField（成了不用留，败了重进 e —— 留着只会让人误会还能续上）。
+func (m model) answerAgentEdit(text string) (tea.Model, tea.Cmd) {
+	field := m.editField
+	m.editField = ""
+	answer := strings.TrimSpace(text)
+	if field == "new-name" {
+		if answer == "" {
+			m.lastAction = "名字不能为空（已取消，什么都没建）"
+			return m, nil
+		}
+		m.lastAction = "建人格 " + answer + "…"
+		return m, createAgentCmd(m.client, answer)
+	}
+	if m.agentDetail == nil {
+		m.lastAction = "人格详情丢了（已取消，什么都没改）"
+		return m, nil
+	}
+	if answer == "" {
+		m.lastAction = "空回答 = 取消（什么都没改）"
+		return m, nil
+	}
+	id := m.agentDetail.ID
+	switch field {
+	case "name":
+		m.lastAction = "改名…"
+		return m, updateAgentCmd(m.client, id, map[string]any{"name": answer})
+	case "prompt":
+		m.lastAction = "写人格提示词…"
+		return m, updateAgentPromptCmd(m.client, id, text)
+	case "model":
+		// "当前模型"改的是 compact 覆盖的 model（整段 abilities 改一位 —— 后端语义整段替换）。
+		m.lastAction = "改 compact 模型…"
+		return m, updateAgentCmd(m.client, id, map[string]any{"abilities": abilityModelOverride(*m.agentDetail, answer)})
+	default:
+		m.lastAction = "不认识的编辑态（已取消，什么都没改）"
+		return m, nil
+	}
+}
+
+// abilityModelOverride：compact 覆盖的 model 改一位（其余能力原样带回 —— 整段替换语义）。
+func abilityModelOverride(agent Agent, model string) map[string]any {
+	out := map[string]any{}
+	for _, k := range agentAbilityOrder {
+		entry := map[string]any{}
+		if ab, ok := agent.Abilities[k]; ok {
+			if ab.Enabled != nil {
+				entry["enabled"] = *ab.Enabled
+			}
+			if ab.Provider != nil && *ab.Provider != "" {
+				entry["provider"] = *ab.Provider
+			}
+			if ab.Model != nil && *ab.Model != "" {
+				entry["model"] = *ab.Model
+			}
+			if ab.Prompt != nil && *ab.Prompt != "" {
+				entry["prompt"] = *ab.Prompt
+			}
+		}
+		out[k] = entry
+	}
+	entry := out["compact"].(map[string]any)
+	entry["model"] = model
+	out["compact"] = entry
+	return out
+}
+
 func (m model) answerDefDraft(text string) (tea.Model, tea.Cmd) {
 	answer := strings.TrimSpace(text)
 	switch m.defStep {
@@ -2754,70 +2973,139 @@ func (m model) answerDefDraft(text string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// agentViewerKey：agents viewer 开着时的键（列表/详情各认各的；别屏返回 handled=false 走"任意键关掉"）。
+// agentViewerKey：分栏开着时的键（左/右挪焦点；回车只在左栏进详情；右栏 t/回车拨开关、e 改、d 删；n 新增）。
+// Esc 关整屏；其余键返回 handled=false 走"任意键关掉"。
 func (m model) agentViewerKey(key string) (bool, model, tea.Cmd) {
-	switch m.viewerMode {
-	case agentViewerList:
-		switch key {
-		case "esc":
-			m.viewer, m.viewerTitle, m.viewerHint = nil, "", ""
-			m.viewerMode, m.agentRows, m.detailAbils, m.agentSel = "", nil, nil, 0
+	if m.viewerMode != agentViewerList && m.viewerMode != agentViewerDetail {
+		return false, m, nil
+	}
+	refresh := func() model {
+		m.viewer, m.viewerTitle = m.agentSplitLines(), "人格"
+		return m
+	}
+	switch key {
+	case "esc":
+		m.viewer, m.viewerTitle, m.viewerHint = nil, "", ""
+		m.viewerMode, m.agentRows, m.detailAbils, m.agentSel = "", nil, nil, 0
+		m.agentDetail, m.agentCol, m.agentMode, m.editField = nil, agentColList, false, ""
+		return true, m, nil
+	case "left":
+		// 焦点挪左：右栏回来时 agentSel 指回列表行（右栏字段下标在左栏越界 ⇒ 夹住）。
+		m.agentCol = agentColList
+		m.viewerMode = agentViewerList
+		if m.agentSel > len(m.agentRows)-1 {
+			m.agentSel = max(len(m.agentRows)-1, 0)
+		}
+		m.syncAgentDetail()
+		m.viewerHint = "←→ 焦点 · ↑↓ 选行 · 回车进详情 · n 新增 · d 删除 · Esc 关掉"
+		return true, refresh(), nil
+	case "right":
+		// 焦点挪右：agentSel 指到字段行（左栏行号在右栏越界 ⇒ 从 0 起）。
+		m.agentCol = agentColDetail
+		m.viewerMode = agentViewerDetail
+		if m.agentDetail == nil {
 			return true, m, nil
-		case "up":
+		}
+		if m.agentSel >= len(m.agentDetailRows()) {
+			m.agentSel = 0
+		}
+		m.viewerHint = "←→ 焦点 · ↑↓ 选字段 · t/回车拨开关 · e 改 · d 删 · Esc 关掉"
+		return true, refresh(), nil
+	case "up":
+		if m.agentCol == agentColDetail {
 			if m.agentSel > 0 {
 				m.agentSel--
 			}
-			return true, m, nil
-		case "down":
-			if m.agentSel < len(m.agentRows)-1 {
+		} else if m.agentSel > 0 {
+			m.agentSel--
+			m.syncAgentDetail()
+		}
+		return true, refresh(), nil
+	case "down":
+		if m.agentCol == agentColDetail {
+			if m.agentSel < len(m.agentDetailRows())-1 {
 				m.agentSel++
 			}
-			return true, m, nil
-		case "enter":
+		} else if m.agentSel < len(m.agentRows)-1 {
+			m.agentSel++
+			m.syncAgentDetail()
+		}
+		return true, refresh(), nil
+	case "enter":
+		if m.agentCol == agentColList {
+			// 左栏回车 = 进详情（焦点挪右，内容 sync 时已就位，不重拉）。
 			if m.agentSel < 0 || m.agentSel >= len(m.agentRows) {
 				return true, m, nil
 			}
-			id := m.agentRows[m.agentSel]
-			if agent := agentByID(m.agents, id); agent != nil {
-				return true, m.openAgentDetail(*agent), nil
+			if agent := agentByID(m.agents, m.agentRows[m.agentSel]); agent != nil {
+				m = m.openAgentDetail(*agent)
+				return true, refresh(), nil
 			}
 			return true, m, nil
 		}
-		return false, m, nil
-	case agentViewerDetail:
-		switch key {
-		case "esc":
-			m.viewer, m.viewerTitle, m.viewerHint = nil, "", ""
-			m.viewerMode, m.agentRows, m.detailAbils, m.agentSel = "", nil, nil, 0
-			m.agentDetail = nil
-			return true, m, nil
-		case "t", "T":
-			if m.agentDetail == nil || len(m.detailAbils) == 0 {
-				return true, m, nil
-			}
-			idx := m.agentSel
-			if idx < 0 || idx >= len(m.detailAbils) {
-				idx = 0
-			}
-			key := m.detailAbils[idx]
-			m.lastAction = "拨开关 " + key + "…"
-			return true, m, toggleAgentAbilityCmd(m.client, *m.agentDetail, key)
-		case "up":
-			if m.agentSel > 0 {
-				m.agentSel--
-			}
-			return true, m, nil
-		case "down":
-			if m.agentSel < len(m.detailAbils)-1 {
-				m.agentSel++
-			}
-			return true, m, nil
-		case "enter":
+		// 右栏回车 = 开关行拨一下（字段行什么都不做 —— 改走 e）。
+		next, cmd := m.toggleAtCursor()
+		return true, next, cmd
+	case "t", "T":
+		next, cmd := m.toggleAtCursor()
+		return true, next, cmd
+	case "e", "E":
+		// 进编辑态：输入行改选中字段（名/提示词/模型三格；开关行 e = 同 t 拨一下）。
+		if m.agentCol != agentColDetail || m.agentDetail == nil {
 			return true, m, nil
 		}
-		return false, m, nil
+		rows := m.agentDetailRows()
+		if m.agentSel < 0 || m.agentSel >= len(rows) {
+			return true, m, nil
+		}
+		field := rows[m.agentSel].key
+		if strings.HasPrefix(field, "abil:") {
+			next, cmd := m.toggleAtCursor()
+			return true, next, cmd
+		}
+		m.editField = field
+		m.input, m.inputCursor, m.paletteIndex = "", 0, 0
+		m.lastAction = "改" + rows[m.agentSel].label + "（回车 PATCH，Esc 取消）"
+		return true, m, nil
+	case "d", "D":
+		// 删：左栏删选中那条（进确认框），右栏删当前这条（同一确认框）。
+		id := ""
+		if m.agentCol == agentColDetail && m.agentDetail != nil {
+			id = m.agentDetail.ID
+		} else if m.agentSel >= 0 && m.agentSel < len(m.agentRows) {
+			id = m.agentRows[m.agentSel]
+		}
+		if id == "" {
+			return true, m, nil
+		}
+		next, cmd := m.confirmDeleteAgentByID(id)
+		return true, next, cmd
+	case "n", "N":
+		// 新增：输入行问名字（与 /agent-create 同一条路，回车 Create）。
+		m.editField = "new-name"
+		m.input, m.inputCursor, m.paletteIndex = "", 0, 0
+		m.lastAction = "新人格名字？（回车创建，Esc 取消）"
+		return true, m, nil
 	}
 	return false, m, nil
+}
+
+// toggleAtCursor：右栏 t/回车 —— 开关行拨一下（字段行不动手，改走 e）。
+func (m model) toggleAtCursor() (model, tea.Cmd) {
+	if m.agentDetail == nil || len(m.detailAbils) == 0 {
+		return m, nil
+	}
+	rows := m.agentDetailRows()
+	if m.agentSel < 0 || m.agentSel >= len(rows) {
+		return m, nil
+	}
+	field := rows[m.agentSel].key
+	if !strings.HasPrefix(field, "abil:") {
+		return m, nil
+	}
+	key := strings.TrimPrefix(field, "abil:")
+	m.lastAction = "拨开关 " + key + "…"
+	return m, toggleAgentAbilityCmd(m.client, *m.agentDetail, key)
 }
 
 // bindTelegramMsg：一次绑定的结果（走后端 HTTP：改的是服务器配置，远端 TUI 照用）。

@@ -3330,7 +3330,7 @@ func TestAgentsListShowsRowsAndDefaults(t *testing.T) {
 		t.Fatalf("下标映射该存两条不重拉：%v", after.agentRows)
 	}
 	joined := strings.Join(after.viewer, "\n")
-	for _, want := range []string{"★默认", "跑团", "开2/关1", "开0/关3", "缺省：opencode-go/deepseek-v4-flash/a1"} {
+	for _, want := range []string{"★默认", "跑团", "名：默认", "[n]新增", "[d]删除"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("列表缺 %q：\n%s", want, joined)
 		}
@@ -3354,13 +3354,82 @@ func TestAgentsEnterDetailThreeSections(t *testing.T) {
 		t.Fatalf("回车该进详情：%+v", detail.agentDetail)
 	}
 	joined := strings.Join(detail.viewer, "\n")
-	for _, want := range []string{"默认", "你是默认人格", "起标题title：开", "压缩compact：关", "判断judge：开", "judge渠道：ocgo", "judge模型：m1"} {
+	for _, want := range []string{"默认", "你是默认人格", "起标题：开", "压缩：关", "判断：开"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("详情三段缺 %q：\n%s", want, joined)
 		}
 	}
 	if len(detail.detailAbils) != 3 {
 		t.Fatalf("能力行号该记住三行：%v", detail.detailAbils)
+	}
+}
+func TestAgentsSplitLeftRightAndKeys(t *testing.T) {
+	cfg, defs := agentsFixtureCfg()
+	backend := newAgentTestBackend(t, cfg, defs, nil)
+	defer backend.Close()
+	m := fixture()
+	m.client = NewClient(backend.URL, "")
+	updated, cmd := m.runCommand("/agents")
+	split := runCmds(t, updated.(model), cmd)
+	joined := strings.Join(split.viewer, "\n")
+	// 分栏：左列表 + 右详情 + 底按钮行，一屏里全有
+	for _, want := range []string{"│", "★默认", "名：默认", "[n]新增", "[d]删除"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("分栏缺 %q：\n%s", want, joined)
+		}
+	}
+	// 左/右挪焦点：右栏后 ↑↓ 走字段行（回车不发请求 —— 字段行不是开关）
+	updated, _ = split.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+	right := updated.(model)
+	if right.agentCol != agentColDetail {
+		t.Fatalf("右键该挪焦点到详情：%d", right.agentCol)
+	}
+	updated, cmd = right.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatal("名行回车不该发请求（改走 e）")
+	}
+	// 回左栏：左/右键不再退出（旧 bug：左右键掉出 viewer）
+	updated, _ = updated.(model).Update(tea.KeyPressMsg{Code: tea.KeyLeft})
+	if back := updated.(model); back.viewer == nil || back.agentCol != agentColList {
+		t.Fatal("左键该回列表焦点，不许退出面板")
+	}
+}
+
+func TestAgentsEditFieldRoundTrip(t *testing.T) {
+	cfg, defs := agentsFixtureCfg()
+	var patched map[string]any
+	backend := newAgentTestBackend(t, cfg, defs, &patched)
+	defer backend.Close()
+	m := fixture()
+	m.client = NewClient(backend.URL, "")
+	updated, cmd := m.runCommand("/agents")
+	split := runCmds(t, updated.(model), cmd)
+	// 进右栏 → e 改名 → 输入行回车 PATCH
+	updated, _ = split.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+	updated, _ = updated.(model).Update(tea.KeyPressMsg{Code: 'e', Text: "e"})
+	if ed := updated.(model); ed.editField != "name" {
+		t.Fatalf("e 该进改名编辑态：%q", ed.editField)
+	}
+	// 编辑态输入行直接回车（submit 走 answerAgentEdit —— viewer 开着也一样，输入行是同一根线）
+	m2 := updated.(model)
+	m2.input, m2.inputCursor = "新名字", 3
+	updated2, cmd := m2.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("编辑态回车该发 PATCH")
+	}
+	after := runCmds(t, updated2.(model), cmd)
+	if patched["name"] != "新名字" {
+		t.Fatalf("改名 PATCH 体 = %v", patched)
+	}
+	if after.editField != "" {
+		t.Fatal("收工该清编辑态")
+	}
+	// Esc 取消：什么都不发
+	updated, _ = split.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+	updated, _ = updated.(model).Update(tea.KeyPressMsg{Code: 'e', Text: "e"})
+	updated, _ = updated.(model).Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if ed := updated.(model); ed.editField != "" {
+		t.Fatal("Esc 该清编辑态")
 	}
 }
 
@@ -3375,8 +3444,12 @@ func TestAgentsToggleSendsWholeAbilities(t *testing.T) {
 	after := runCmds(t, updated.(model), cmd)
 	updated, _ = after.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	detail := updated.(model)
-	// 光标移到 compact 行再拨
-	updated, _ = detail.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	// 焦点挪右 + 光标移到 compact 行再拨（分栏：右栏第 0 行是"名"，第 3 行起是开关）
+	updated, _ = detail.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+	right := updated.(model)
+	updated, _ = right.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	updated, _ = updated.(model).Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	updated, _ = updated.(model).Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	_, cmd = updated.(model).Update(tea.KeyPressMsg{Code: 't', Text: "t"})
 	if cmd == nil {
 		t.Fatal("t 该发整段 PATCH")
