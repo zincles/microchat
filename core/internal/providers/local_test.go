@@ -11,7 +11,7 @@ import (
 // 本地假上游（dummy / fallback）：**不联网**，把这句确定性的话分片吐出来 ——
 // 分片与停顿是刻意的（不然 `pending` / `streaming` / 耗时 这些状态根本观察不到）。
 func TestLocalDummyStreamsDeterministically(t *testing.T) {
-	provider := Provider{ID: "dummy", Kind: KindDummy}
+	provider := Provider{ID: "dummy", Vendor: VendorDummy}
 	started := time.Now()
 	var deltas []Delta
 	result, err := NewClient(provider).Chat(context.Background(), provider, Request{
@@ -46,7 +46,7 @@ func TestLocalDummyStreamsDeterministically(t *testing.T) {
 
 // 本地假上游同样**可以被按停**：ctx 一取消就退出，不留半句。
 func TestLocalDummyStopsOnCancel(t *testing.T) {
-	provider := Provider{ID: "dummy", Kind: KindDummy}
+	provider := Provider{ID: "dummy", Vendor: VendorDummy}
 	ctx, cancel := context.WithCancel(context.Background())
 	// 收到第一片就按停（模拟用户按 /stop）
 	result, err := NewClient(provider).Chat(ctx, provider, Request{
@@ -64,7 +64,7 @@ func TestLocalDummyStopsOnCancel(t *testing.T) {
 func TestLastPayloadIsRecordedBeforeSending(t *testing.T) {
 	stub := newStubUpstream(t, 200, "text/event-stream", "data: {\"choices\":[{\"delta\":{\"content\":\"好\"}}]}\n\ndata: [DONE]\n\n")
 	provider := Provider{
-		ID: "stub", Kind: KindOpenCodeGo, BaseURL: stub.baseURL(), APIKey: "sk-super-secret",
+		ID: "stub", Vendor: VendorOpenCodeGo, BaseURL: stub.baseURL(), APIKey: "sk-super-secret",
 	}
 	session := "01a0e965-4156-741d-a8bd-5e16f28eb90d"
 	if _, err := NewClient(provider).Chat(context.Background(), provider, Request{

@@ -13,7 +13,7 @@ import (
 )
 
 func opencodeProvider() Provider {
-	return Provider{ID: "go", Kind: KindOpenCodeGo, APIKey: "sk-test"}
+	return Provider{ID: "go", Vendor: VendorOpenCodeGo, APIKey: "sk-test"}
 }
 
 // 头：kind 决定必需头，identity 决定自报身份，用户 headers 最后合并。
@@ -48,14 +48,14 @@ func TestHeadersPerKindAndIdentity(t *testing.T) {
 			"X-Opencode-Client":  "pi",
 			"Accept":             "text/event-stream",
 		}, ""}, // 单独断言（格式带内核版本）
-		{"openrouter：x-session-id + 归属三样", Provider{ID: "or", Kind: KindOpenRouter}, map[string]string{
+		{"openrouter：x-session-id + 归属三样", Provider{ID: "or", Vendor: VendorOpenRouter}, map[string]string{
 			"X-Session-Id":            session,
 			"Accept":                  "text/event-stream",
 			"Http-Referer":            "https://github.com/zincles/microchat",
 			"X-Openrouter-Title":      "microchat",
 			"X-Openrouter-Categories": "cli-agent",
 		}, ""},
-		{"openai：会话亲和三条", Provider{ID: "oa", Kind: KindOpenAI}, map[string]string{
+		{"openai：会话亲和三条", Provider{ID: "oa", Vendor: VendorOpenAI}, map[string]string{
 			"Session_Id":          session,
 			"X-Client-Request-Id": session,
 			"X-Session-Affinity":  session,
@@ -139,7 +139,7 @@ func TestBodyShape(t *testing.T) {
 	}
 
 	t.Run("openai + auto：发 prompt_cache_key，不发 24h", func(t *testing.T) {
-		request, err := Build(Provider{ID: "oa", Kind: KindOpenAI}, Request{
+		request, err := Build(Provider{ID: "oa", Vendor: VendorOpenAI}, Request{
 			Model: "m", Messages: messages, SessionID: session, Stream: true, MaxTokens: 64})
 		if err != nil {
 			t.Fatal(err)
@@ -163,7 +163,7 @@ func TestBodyShape(t *testing.T) {
 	})
 
 	t.Run("cache=none：子调用不写缓存（照 Pi）", func(t *testing.T) {
-		request, err := Build(Provider{ID: "oa", Kind: KindOpenAI}, Request{
+		request, err := Build(Provider{ID: "oa", Vendor: VendorOpenAI}, Request{
 			Model: "m", Messages: messages, SessionID: session, CacheRetention: CacheNone, Stream: true})
 		if err != nil {
 			t.Fatal(err)
@@ -217,7 +217,7 @@ func TestBodyShape(t *testing.T) {
 	})
 
 	t.Run("long：发 24h（能支持时）", func(t *testing.T) {
-		request, err := Build(Provider{ID: "oa", Kind: KindOpenAI}, Request{
+		request, err := Build(Provider{ID: "oa", Vendor: VendorOpenAI}, Request{
 			Model: "m", Messages: messages, SessionID: session, CacheRetention: CacheLong, Stream: true})
 		if err != nil {
 			t.Fatal(err)
@@ -252,7 +252,7 @@ func TestWhatTheGatewaySees(t *testing.T) {
 	defer upstream.Close()
 
 	session := "01a0e965-4156-741d-a8bd-5e16f28eb90d"
-	provider := Provider{ID: "fake", Kind: KindOpenCodeGo, BaseURL: upstream.URL, APIKey: "sk-x"}
+	provider := Provider{ID: "fake", Vendor: VendorOpenCodeGo, BaseURL: upstream.URL, APIKey: "sk-x"}
 	request, err := Build(provider, Request{
 		Model: "deepseek-v4-flash", SessionID: session, Stream: true,
 		Messages: []ChatMessage{{Role: "user", Content: "在吗"}}})
@@ -341,7 +341,7 @@ func TestFromConfigCarriesEveryField(t *testing.T) {
 		t.Fatalf("端点 = %q", request.URL.String())
 	}
 	// 默认（什么都没配）⇒ **Pi 的形状**
-	request, err = Build(FromConfig(config.Provider{ID: "x", Kind: "opencode-go"}), Request{Model: "m", SessionID: "s"})
+	request, err = Build(FromConfig(config.Provider{ID: "x", Vendor: "opencode-go"}), Request{Model: "m", SessionID: "s"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -356,11 +356,11 @@ func TestPresets(t *testing.T) {
 	if len(list) < 5 {
 		t.Fatalf("预设太少：%d", len(list))
 	}
-	byKind := map[Kind]PresetInfo{}
+	byKind := map[Vendor]PresetInfo{}
 	for _, item := range list {
-		byKind[item.Kind] = item
+		byKind[item.Vendor] = item
 	}
-	goPreset, ok := byKind[KindOpenCodeGo]
+	goPreset, ok := byKind[VendorOpenCodeGo]
 	if !ok {
 		t.Fatal("必须有 opencode-go")
 	}
@@ -376,11 +376,11 @@ func TestPresets(t *testing.T) {
 	if len(goPreset.Identities) != 3 {
 		t.Fatalf("三种身份都该可选：%v", goPreset.Identities)
 	}
-	if dummy := byKind[KindDummy]; dummy.NeedsKey {
+	if dummy := byKind[VendorDummy]; dummy.NeedsKey {
 		t.Fatal("dummy 不需要密钥")
 	}
 	// DeepSeek 官方：端点 + 密钥 env + 官方思考字段（`reasoning_content`）
-	deepseek, ok := byKind[KindDeepseek]
+	deepseek, ok := byKind[VendorDeepseek]
 	if !ok {
 		t.Fatal("必须有 deepseek")
 	}
@@ -401,7 +401,7 @@ func TestDeepseekBuild(t *testing.T) {
 		{Role: "user", Content: "在吗"},
 		{Role: "assistant", Content: "在。", Reasoning: "他大概想问路。"},
 	}
-	request, err := Build(Provider{ID: "ds", Kind: KindDeepseek}, Request{
+	request, err := Build(Provider{ID: "ds", Vendor: VendorDeepseek}, Request{
 		Model: "deepseek-chat", SessionID: "s", Stream: true, Messages: messages})
 	if err != nil {
 		t.Fatal(err)
@@ -429,7 +429,7 @@ func TestDeepseekBuild(t *testing.T) {
 	}
 	// 密钥来自环境变量（没配 key 也能用 `DEEPSEEK_API_KEY` 顶上）
 	t.Setenv("DEEPSEEK_API_KEY", "sk-test")
-	wire := ApplyPreset(Provider{ID: "ds", Kind: KindDeepseek})
+	wire := ApplyPreset(Provider{ID: "ds", Vendor: VendorDeepseek})
 	if wire.APIKey != "sk-test" {
 		t.Fatalf("密钥该从环境变量来：%q", wire.APIKey)
 	}
@@ -440,7 +440,7 @@ func TestDeepseekBuild(t *testing.T) {
 
 // 旧命名（`openai-compat`）必须仍按 OpenAI 兼容对待 —— 否则老配置会静默失去 stream_options。
 func TestLegacyOpenAICompatKind(t *testing.T) {
-	request, err := Build(Provider{ID: "old", Kind: KindOpenAICompat, BaseURL: "https://example.invalid/v1"},
+	request, err := Build(Provider{ID: "old", Vendor: VendorOpenAICompat, BaseURL: "https://example.invalid/v1"},
 		Request{Model: "m", SessionID: "s", Stream: true})
 	if err != nil {
 		t.Fatal(err)
@@ -536,7 +536,7 @@ func TestReasoningReplay(t *testing.T) {
 		t.Fatal("user 那条不该有思考")
 	}
 	// 不支持回传的 kind（标准 OpenAI 兼容）⇒ 一个字都不发
-	plain, err := Build(Provider{ID: "cmp", Kind: KindOpenAICompat, BaseURL: "https://x.invalid/v1"},
+	plain, err := Build(Provider{ID: "cmp", Vendor: VendorOpenAICompat, BaseURL: "https://x.invalid/v1"},
 		Request{Model: "m", SessionID: "s", Messages: messages})
 	if err != nil {
 		t.Fatal(err)
@@ -555,13 +555,13 @@ func TestReasoningReplay(t *testing.T) {
 
 // 主选三种：界面新建渠道时只该看到它们（其余是便利预设）。
 func TestPrimaryPresets(t *testing.T) {
-	primary := map[Kind]bool{}
+	primary := map[Vendor]bool{}
 	for _, item := range Presets() {
 		if item.Primary {
-			primary[item.Kind] = true
+			primary[item.Vendor] = true
 		}
 	}
-	for _, want := range []Kind{KindDummy, KindOpenAICompat, KindOpenCodeGo} {
+	for _, want := range []Vendor{VendorDummy, VendorOpenAICompat, VendorOpenCodeGo} {
 		if !primary[want] {
 			t.Fatalf("%s 该是主选：%+v", want, primary)
 		}
@@ -573,7 +573,7 @@ func TestPrimaryPresets(t *testing.T) {
 
 // 三个渠道级选项：UA 覆写（优先最高）、会话头（nil/""/自定义）、思考字段（nil/""/自定义）。
 func TestProviderLevelOverrides(t *testing.T) {
-	base := func() Provider { return Provider{ID: "p", Kind: KindOpenCodeGo, APIKey: "k"} }
+	base := func() Provider { return Provider{ID: "p", Vendor: VendorOpenCodeGo, APIKey: "k"} }
 	build := func(t *testing.T, provider Provider, messages []ChatMessage) (*http.Request, map[string]any) {
 		t.Helper()
 		request, err := Build(provider, Request{Model: "m", SessionID: "sess", Stream: true, Messages: messages})

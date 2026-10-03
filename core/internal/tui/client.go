@@ -21,7 +21,6 @@ type TurnStatus = apiclient.TurnStatus
 type TurnAccepted = apiclient.TurnAccepted
 type StreamSlice = apiclient.StreamSlice
 type Session = apiclient.Session
-type SessionView = apiclient.SessionView
 type Message = apiclient.Message
 type Health = apiclient.Health
 type ModelListItem = apiclient.ModelListItem

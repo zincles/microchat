@@ -415,14 +415,6 @@ func (c *Client) CreateProvider(id, vendor, protocol, baseURL, apiKey string) (P
 // DeleteProvider：删掉一条渠道（204，没有响应体）。
 func (c *Client) DeleteProvider(id string) error { return c.del("/providers/" + id) }
 
-// RefreshProvider：拉一次上游模型并落库（发现列）。只给 chat 协议的渠道用 ——
-// dummy 没有上游可拉（后端 400），systemone 不走这条发现（各走各的，别混）。
-func (c *Client) RefreshProvider(id string) (ProviderInfo, error) {
-	var info ProviderInfo
-	err := c.post("/providers/"+id+"/refresh", nil, &info)
-	return info, err
-}
-
 // ProviderUsage：问一条渠道的套餐余量（只读）。渠道不是 opencode-go / 没配 key ⇒ 后端 400，
 // 这里把那条消息原样透出去（界面照实说一句）。
 func (c *Client) ProviderUsage(providerID string) (PlanUsage, error) {

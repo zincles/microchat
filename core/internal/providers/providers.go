@@ -53,17 +53,10 @@ const (
 type Kind string
 
 const (
+	// KindOpenAICompat：唯一还活着的别名 —— 存量 `kind: openai-compat` 读入仍走它
+	// （`EffectiveVendor` 的 openai-compat→custom 分支）。其余 Kind* 常量已删：
+	// 生产代码零引用，测试改用 Vendor 字面量。
 	KindOpenAICompat Kind = "openai-compat"
-	KindDummy        Kind = "dummy"
-	KindOpenAI       Kind = "openai"
-	KindOpenRouter   Kind = "openrouter"
-	KindDeepseek     Kind = "deepseek"
-	KindOpenCodeGo   Kind = "opencode-go"
-	KindOpenCode     Kind = "opencode"
-	KindOllama       Kind = "ollama"
-	KindLMStudio     Kind = "lmstudio"
-	KindTypesafe     Kind = "typesafe"
-	KindCustom       Kind = "custom"
 )
 
 // Protocol：渠道**说什么话**（线协议）。与 Vendor 正交，由 Validate 做兼容矩阵检查。

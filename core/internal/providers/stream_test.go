@@ -57,7 +57,7 @@ func TestChatStreamsAndSplitsReasoning(t *testing.T) {
 		`data: [DONE]`,
 	}
 	stub := newStubUpstream(t, http.StatusOK, "text/event-stream", strings.Join(frames, "\n\n")+"\n\n")
-	provider := Provider{ID: "stub", Kind: KindOpenAICompat, BaseURL: stub.baseURL(), Identity: IdentityBare}
+	provider := Provider{ID: "stub", Vendor: VendorOpenAICompat, BaseURL: stub.baseURL(), Identity: IdentityBare}
 
 	var deltas []Delta
 	result, err := NewClient(provider).Chat(context.Background(), provider, Request{
@@ -105,7 +105,7 @@ func TestTrailingUsageOnlyChunkIsAccepted(t *testing.T) {
 		"data: {\"choices\":[{\"delta\":{\"content\":\"在\"}}]}\n\n"+
 			"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":8,\"completion_tokens\":2,\"total_tokens\":10}}\n\n"+
 			"data: [DONE]\n\n")
-	provider := Provider{ID: "stub", Kind: KindDeepseek, BaseURL: stub.baseURL()}
+	provider := Provider{ID: "stub", Vendor: VendorDeepseek, BaseURL: stub.baseURL()}
 	result, err := NewClient(provider).Chat(context.Background(), provider, Request{
 		Model: "deepseek-chat", SessionID: "s", Messages: []ChatMessage{{Role: "user", Content: "在吗"}},
 	}, "", nil)
@@ -172,7 +172,7 @@ func TestNormalizeUsageRecognizesFieldVariants(t *testing.T) {
 func TestUpstreamErrorIsReturnedAsIsAndNotRetried(t *testing.T) {
 	stub := newStubUpstream(t, http.StatusTooManyRequests, "application/json",
 		`{"error":{"message":"rate limited","type":"too_many_requests"}}`)
-	provider := Provider{ID: "stub", Kind: KindOpenAICompat, BaseURL: stub.baseURL(), APIKey: "sk-real", Identity: IdentityBare}
+	provider := Provider{ID: "stub", Vendor: VendorOpenAICompat, BaseURL: stub.baseURL(), APIKey: "sk-real", Identity: IdentityBare}
 	_, err := NewClient(provider).Chat(context.Background(), provider, Request{
 		Model: "m", SessionID: "s1", Messages: []ChatMessage{{Role: "user", Content: "在吗"}},
 	}, "", nil)
@@ -198,7 +198,7 @@ func TestErrorInsideTheStreamFailsTheTurn(t *testing.T) {
 		`data: {"error":{"message":"上游崩了"}}`,
 	}
 	stub := newStubUpstream(t, http.StatusOK, "text/event-stream", strings.Join(frames, "\n\n")+"\n\n")
-	provider := Provider{ID: "stub", Kind: KindOpenAICompat, BaseURL: stub.baseURL(), Identity: IdentityBare}
+	provider := Provider{ID: "stub", Vendor: VendorOpenAICompat, BaseURL: stub.baseURL(), Identity: IdentityBare}
 	result, err := NewClient(provider).Chat(context.Background(), provider, Request{
 		Model: "m", SessionID: "s1", Messages: []ChatMessage{{Role: "user", Content: "在吗"}},
 	}, "", nil)
@@ -214,7 +214,7 @@ func TestErrorInsideTheStreamFailsTheTurn(t *testing.T) {
 // 空流 ⇒ 明确的错（不往库里塞一条空消息）。
 func TestEmptyStreamIsAnError(t *testing.T) {
 	stub := newStubUpstream(t, http.StatusOK, "text/event-stream", "data: [DONE]\n\n")
-	provider := Provider{ID: "stub", Kind: KindOpenAICompat, BaseURL: stub.baseURL(), Identity: IdentityBare}
+	provider := Provider{ID: "stub", Vendor: VendorOpenAICompat, BaseURL: stub.baseURL(), Identity: IdentityBare}
 	_, err := NewClient(provider).Chat(context.Background(), provider, Request{
 		Model: "m", SessionID: "s1", Messages: []ChatMessage{{Role: "user", Content: "在吗"}},
 	}, "", nil)
@@ -227,7 +227,7 @@ func TestEmptyStreamIsAnError(t *testing.T) {
 // （那会让人对着"时好时坏"猜）。"整段拿结果"的辅助调用走的是 `Complete`（那一发本来就不流式）。
 func TestNonStreamingIsRefusedExplicitly(t *testing.T) {
 	off := false
-	provider := Provider{ID: "stub", Kind: KindOpenAICompat, BaseURL: "http://127.0.0.1:1/v1", Stream: &off}
+	provider := Provider{ID: "stub", Vendor: VendorOpenAICompat, BaseURL: "http://127.0.0.1:1/v1", Stream: &off}
 	_, err := NewClient(provider).Chat(context.Background(), provider, Request{
 		Model: "m", SessionID: "s1",
 	}, "", nil)

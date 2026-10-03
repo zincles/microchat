@@ -66,11 +66,12 @@ A. 和玩家搭话    B. 无视玩家    C. 攻击玩家
 
 **还差一块地基**：扮演需要**角色档案**（性格 / 目标 / 与玩家的关系 / 说话习惯）。我们现在只有**会话 Agent**（那是"谁在跟你说话"，不是 NPC）⇒ 一份 `characters.json`（或落进变量表）是新东西，做不做另说。
 
-## 三、怎么接（将来的事）
+## 三、怎么接（已落地 ✓ 2026-10-01 —— `kind` 口径作废）
 
-- **加第三种 provider kind**：现在是 `dummy` / `openai-compat`；再要一个 **decision** 类（形状是 `state + questions → {choice, probs, confidence}`，不是 `messages → 文本`）；
-- 会话的**状态**永远来自 `vars` 现演 —— JEV 侧不存状态；
+- **不是第三种 kind**：`vendor` × `protocol` 两轴里它是 `protocol: systemone`（`vendor: typesafe` 或承载它的 openrouter / custom；verbatim 整条 URL 原样 POST `{model,state,questions}`）；
+- 会话的**状态**永远来自现演 —— JEV 侧不存状态；
 - 产出**不是消息**：它是**材料**（喂给会话 Agent）或**审计记录**，绝不塞进 `messages`。
+- 调用面：`judge.Service.JudgeFor`（开关 + 选渠道 + `task.KindJudgement` 挂号 + 失败原样返回）。
 
 ## 四、四条规矩（跟我们已有的硬边界对齐）
 

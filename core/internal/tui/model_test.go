@@ -15,6 +15,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/mattn/go-runewidth"
+	"microchat/internal/apiclient"
 )
 
 // fixture：一份手搭的界面状态（**不碰网络** —— 这正是 Elm 式的好处：状态与渲染分开，测起来就是喂数据）。
@@ -3057,7 +3058,7 @@ func TestLongBlockShowsTail(t *testing.T) {
 // Tasks 指示器：有在跑的活才亮（搭 turnTick 节拍问，没活不问）。
 func TestTasksIndicatorLightsOnRunning(t *testing.T) {
 	m := fixture()
-	updated, cmd := m.Update(tasksPollMsg{board: TaskBoard{Running: 1, Tasks: []TaskRecord{
+	updated, cmd := m.Update(tasksPollMsg{board: TaskBoard{Running: 1, Tasks: []apiclient.TaskRecord{
 		{ID: "t1", Kind: "compact", Title: "压缩", Outcome: "running"},
 	}}})
 	if got := updated.(model).turnLabel(updated.(model).currentSession()); !strings.Contains(got, "压缩中") {

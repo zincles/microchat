@@ -6,10 +6,15 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"microchat/internal/config"
+	"microchat/internal/model"
 	"microchat/internal/providers"
+	"microchat/internal/store"
 	"microchat/internal/task"
 )
 
@@ -100,5 +105,59 @@ func TestJudgementNeedsSession(t *testing.T) {
 	}()
 	if task.KindJudgement.Label() != "判断" {
 		t.Fatalf("标签 = %q", task.KindJudgement.Label())
+	}
+}
+
+// JudgeFor：开关 + 选渠道 + 挂号 —— 关掉明确拒绝；没渠道说清楚；通了挂号收尾。
+func TestJudgeForRespectsSwitchAndChannel(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"answers":{"intent":{"choice":"attack"}}}`))
+	}))
+	t.Cleanup(upstream.Close)
+	write("config.json", `{}`)
+	write("providers.json", `{"providers":[{"id":"jev1","vendor":"custom","protocol":"systemone","base_url":"`+upstream.URL+`/x"}]}`)
+	write("agents.json", `{"agents":[]}`)
+	st, err := store.Open(filepath.Join(dir, "microchat.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tasks := task.NewRegistry()
+	service := New(st, config.Paths{DataDir: dir, ConfigDir: dir}, tasks)
+	session := model.Session{ID: "c1", Provider: "jev1", Model: "jev-latest", AgentID: "default"}
+
+	answers, err := service.JudgeFor(context.Background(), session,
+		map[string]any{"text": "玩家拔刀"}, map[string]any{"intent": "打吗"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answers["intent"] == nil {
+		t.Fatalf("answers = %+v", answers)
+	}
+	if tasks.Running() != 0 {
+		t.Fatal("收尾后不该还在跑")
+	}
+
+	// 能力关掉 ⇒ 明确拒绝（连上游都不碰）
+	write("agents.json", `{"agents":[{"id":"off","abilities":{"judge":{"enabled":false}}}]}`)
+	session.AgentID = "off"
+	if _, err := service.JudgeFor(context.Background(), session, nil, nil); err == nil {
+		t.Fatal("关掉 judge 该明确拒绝")
+	}
+	if tasks.Running() != 0 {
+		t.Fatal("拒绝的不该留挂号")
+	}
+
+	// 渠道不在 ⇒ 说清楚
+	session.AgentID = "default"
+	session.Provider = "没有这条"
+	if _, err := service.JudgeFor(context.Background(), session, nil, nil); err == nil {
+		t.Fatal("没渠道该说清楚")
 	}
 }

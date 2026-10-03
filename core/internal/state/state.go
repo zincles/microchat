@@ -176,14 +176,14 @@ func FromSources(sessionID, systemPrompt string, source PromptSource, messages [
 // 越界（超过现有条数）当作"到最后一条" —— 与 `/messages` 的区间查询一个口吻（越界不是错）。
 // 参数层的错（负数 / 非整数）由调用方拦（HTTP 层回 400），这里只做防御：负数当 0。
 func StateAt(sessionID, systemPrompt string, source PromptSource, messages []model.Message, at int) View {
-	return FromSources(sessionID, systemPrompt, source, MessagesUpTo(messages, at))
+	return FromSources(sessionID, systemPrompt, source, messagesUpTo(messages, at))
 }
 
-// MessagesUpTo：`at_idx` 的**唯一**一处落地 —— 取"要 fold 的那一段正文"。
+// messagesUpTo：`at_idx` 的**唯一**一处落地 —— 取"要 fold 的那一段正文"。
 //
-// 序号 `idx` 是**派生**的（`store.IndexMessages`：按 `id` 排第几条，`0` = 合成的系统提示词）
+// 序号 `idx` 是**派生的**（`store.IndexMessages`：按 `id` 排第几条，`0` = 合成的系统提示词）
 // ⇒ 前 `at` 条就是 `messages[:at]`（不重算、不落库）。越界 ⇒ 全部；负数 ⇒ 空（防御，参数层已拦过）。
-func MessagesUpTo(messages []model.Message, at int) []model.Message {
+func messagesUpTo(messages []model.Message, at int) []model.Message {
 	if at < 0 {
 		at = 0
 	}

@@ -25,8 +25,8 @@ microchat：轻量 SillyTavern 替代（RPG 向）。三层，边界要清楚：
 | **任务（Task）** | **一次上游请求的全程**（发起 → 收尾 → 可能被取消）：一轮生成、一次压缩、一次刷新模型都挂号。**会调模型的一定是 Task**（**反之不成立** —— `refresh_models` 也是 Task，但它不调模型）。**TaskID 是 UUIDv7，且不进库** | "后台作业"（不都在后台）；拿它指"某个能力" |
 
 三层咬合：**Agent（人格 + 能力开关）→ 一次调用（对话型 / 功能型=能力）→ Task（这次上游请求的全程）**。
-**Task 的种类 ≡ 能力 id** ✓（2026-09-30 定，别再分两层）：`title` / `compact` / `judge` 既是能力也是 Task 种类，
-而 `turn` 作业发起的是**对话型调用**（**不算能力**）、`refresh_models` 发起 0 次 —— 完整口径见 `DEFINE.md`「任务（Task）与两族调用」。
+**Task 的种类 ≈ 能力 id** ✓（2026-09-30 定，别再分两层）：`title` / `compact` 是，`judge` 能力的 Task 面叫 **`judgement`**
+（JEV 那一发的名字；见 `DEFINE.md`「任务（Task）与两族调用」），而 `turn` 作业发起的是**对话型调用**（**不算能力**）、`refresh_models` 发起 0 次。
 "能不能自主选下一步"**不是** Agent 的判据，将来是某个能力（如 `plan`）的事。
 
 ## 代码布局
@@ -190,7 +190,7 @@ delete(AA)           # 删除
 **`data/config/`** 里是**严格 JSON**（程序整体重写），都可缺失。文件名一律 `.json`：
 
 - `config.json` — `{ "server": { "port": 8787, "auth_token": "可选", "refresh_models_on_start": true }, "defaults": { "provider": "dummy", "model": "dummy", "agent": "default" }, "chat": { "model_context_tokens": 131072, "compact_trigger_tokens": null, "compact_blocks": 10 } }`（`compact_blocks` = 压缩不给块数时压几个**对话块**；`refresh_models_on_start` = 启动时要不要自动去问每个渠道有哪些模型，**默认 true**，类型是 `*bool` ⇒ 没写就是开）
-- `providers.json` — `{ "providers": [ { "id": "dummy", "kind": "dummy" }, { "id": "openrouter", "base_url": "https://openrouter.ai/api/v1", "headers": {…}, "api_key": "sk-…", "timeouts": { "connect_seconds": 15, "total_seconds": 300 } } ] }`
+- `providers.json` — `{ "providers": [ { "id": "dummy", "vendor": "dummy" }, { "id": "openrouter", "vendor": "openrouter", "api_key": "sk-…" }, { "id": "自建", "vendor": "custom", "base_url": "https://…/v1", "api_key": "sk-…" } ] }`（`vendor` 是**唯一必填**；`kind` 只剩存量读入别名，新配置必须写 `vendor`；`protocol` 缺省 `openai-chat-completion`）
   **密钥就写在这一条里**（空串 = 没配）：整个 `config/` 在忽略范围内；接口一律不回显（只回 `has_key`），调试页读它时先打码；写回权限收紧到 0600。
 - `agents.json` — `{ "default_agent": "跑团", "agents": [ { "id": "跑团", "name": "跑团主持人", "system_prompt": "你是跑团主持人。<state>季节 = 初冬</state>" } ] }`
   每个 agent 上可以带**能力开关** `abilities`（键 = 能力 id：`title` / `compact` / `judge`；**未知的 id 在写入与启动读取时都报错**，不静默忽略）：
@@ -301,7 +301,7 @@ delete(AA)           # 删除
 | PATCH | `/providers/{provider_id}` | `UpdateProviderReq` | `ProviderView` | `api_key`：`None` = 不动，`""` = 清除 |
 | DELETE | `/providers/{provider_id}` | — | 204 | 密钥随记录一起没 |
 | POST | `/providers/{provider_id}/refresh` | — | `ProviderView` | **POST**（会写发现态）：拉 `/models` 并落库 |
-| GET | `/providers/{provider_id}/usage` | — | `ProviderUsageView` | **套餐余量**（只读）：**只对 `kind = opencode-go` 的渠道有义** ⇒ 别的 kind **400**（`invalid`）、没配 key 也 **400**；上游错原样传（`upstream`）。形状 = `plan` / `windows[].label/percent/resets_at` + `provider_id`。TUI 里 `/usage` 就是它 |
+| GET | `/providers/{provider_id}/usage` | — | `ProviderUsageView` | **套餐余量**（只读）：**只对 `vendor = opencode-go` 的渠道有义** ⇒ 别的 vendor **400**（`invalid`）、没配 key 也 **400**；上游错原样传（`upstream`）。形状 = `plan` / `windows[].label/percent/resets_at` + `provider_id`。TUI 里 `/usage` 就是它 |
 | GET | `/models` | — | `[ModelListItem]` | 跨 provider 拍平（"渠道 / 模型"下拉用）|
 | PATCH | `/models` | `{provider, upstream_id, context_override}` | `ModelView` | 设/清上下文覆盖（`null` = 清）。**刷新永不覆盖用户列** |
 | GET | `/agents` | — | `AgentsConfig` | 生效列表（含内置默认 agent）|
@@ -369,10 +369,11 @@ delete(AA)           # 删除
 - 落库 = **单入口 `store.RecordSummary`**（按 `source_kind` 分岔）+ 守卫 UPDATE，**同一事务**：消息级把这一段消息的 `summary_id` 指过去；合并级把孩子的 `parent_summary_id` 回填（只认还顶层的）。**绝不插/改/删 `messages` 的其它列**（正文是存档）。
 - 谁也**不许**绕过这里自己拼摘要请求。不持锁跨 await：取料在锁里、调用在锁外、落库再进锁。
 - **失败不阻塞**：失败就把这一次报失败（带原因），会话一个字节都不动；**重试由调用方决定**，这里绝不重试。
-- **还没做** ✗：自动触发（`compact_trigger_tokens` 只算了不算）、按范围的路由（`GET .../summaries`）。
+- **还没做** ✗：自动触发（`compact_trigger_tokens` 只算了不算）、按范围的查看页（`GET .../summaries`；`POST /compact` 的 `begin_idx`/`end_idx` 区间入口已落地）。
 
 **能力**（`internal/abilities`）：身份写死在代码里（`title` / `compact` / `judge` —— **枚举就是全部**），**开关 + 可选覆盖写在 `agents.json` 每个 agent 的 `abilities` 上**（不另开 `abilities.json`），只能**覆盖**模板/渠道/模型，不能造新的；**未知的 id 在写入与启动读取时都报错**。
-- `abilities.Resolve(agent, id)` 是**唯一**解析处：缺条目 = **默认全开**；`provider`/`model` 空 = 用会话的；`enabled: false` ⇒ 调用方**明确拒绝**（不静默降级）。
+- `abilities.Resolve(agent, id)` 是**唯一**解析处：缺条目 = **默认全开**；`provider`/`model` 空 = 用会话的；`enabled: false` ⇒ 调用方**明确拒绝**执行那一次（不是静默降级）。
+- `judge` 的调用面 = `judge.Service.JudgeFor`（开关 + 选渠道 + `task.KindJudgement` 挂号 + 失败原样返回；state/questions 由调用方拼，产出是材料**不落库**）—— 动态组合术调的就是它。
 - compact 换模型 / 改提示词**不用写代码**（例子：会话的渠道是 dummy，但压缩单独走 deepseek）：
   `"abilities": { "compact": { "provider": "deepseek", "model": "deepseek-chat", "prompt": "…" } }` ——
   `provider`/`model` 留空 = 蹭会话自己的；`prompt` 留空 = 代码里的默认模板（填了就整段替换，`prompt_version` 指纹跟着变）；
@@ -441,7 +442,7 @@ delete(AA)           # 删除
   ⇒ **细粒度能力留在算法层**：摘要的区间两端就是 message id，单条 Message 的摘要**合法**（存 / 装配 / 显示都支持）——"按块"是**入口**的约束，**不是数据层的约束** ✗。
 - **摘要里不存状态**：状态是**端点**的属性，不是段的属性 —— 存进去就是第二个真相来源，改一条旧消息它就过期。压缩的模板里也就写死这一句：「不要把世界状态写进梗概」（`DefaultTemplate`）；上游万一还是写了 `<state>`，落库前会被 `statelang.Scan(...).Cleaned` **剔掉**。
 - **真需要快照时它得是独立系统**（`state_snapshots`：从第一条推起、能接着上一个快照往后推进；覆盖的消息一经编辑即失效）。**现在不做** —— 现演的代价足够低。
-- **参数**：`compact_blocks = 10`（单位是块；`config.json` 的 `chat.compact_blocks`，不给块数时用它）；预算 = 模型上下文 − 输出预留（缺省 4096）；触发阈值用户设（缺省 = 预算）；停手线 = 阈值 × 0.8；终保护区 = 最近约 10k token。
+- **参数**：`compact_blocks = 10`（单位是块；`config.json` 的 `chat.compact_blocks`，不给块数时用它）；预算 = 模型上下文 − 输出预留（缺省 4096）；触发阈值用户设（**缺省 = 预算 × 0.8**，`chat/usage.go` 那条算式）；停手线 / 终保护区（阈值 × 0.8 / 最近约 10k token）**还没实现** —— 自动触发没落地之前它们只是名字。
 - **剪枝**（未做；**线性 + 区间摘要之后前提变了 ⇒ 要重做设计**）：早先的形态是"压缩即定稿 ⇒ 只留当前路径上的孩子、其余子树删掉"，
   但**删消息的级联会把盖住它的摘要一起作废** ⇒ "压完就删旧消息"等于把刚落的摘要也删了 ✗。
   要真做，得先想清"删了之后谁来代表那段"（现在只有 Compact，没有"丢"）⇒ **先当没这回事**。三条旧条件里仍然成立的两条：
@@ -534,8 +535,8 @@ usage 的真实形状：`{prompt_tokens, completion_tokens, total_tokens, prompt
   | 字段 | 三态 | 作用 |
   |---|---|---|
   | `client_ua_override` | 空 = 不用；有值 = **逐字用它** | 覆写 UA，**优先级最高**（高过 `identity` 与服务器默认）|
-  | `session_header` | `nil` = 按 kind（opencode 系 ⇒ `x-opencode-session`）；`""` = **明确不发**；有值 = 用这个名字 | 会话 id 透传成哪个头 |
-  | `reasoning_field` | `nil` = 按 kind（opencode 系 ⇒ `reasoning_content`）；`""` = **不回传**；有值 = 用这个名字 | 回传思考用哪个字段名 |
+  | `session_header` | `nil` = 按 vendor（opencode 系 ⇒ `x-opencode-session`）；`""` = **明确不发**；有值 = 用这个名字 | 会话 id 透传成哪个头 |
+  | `reasoning_field` | `nil` = 按 vendor（opencode 系 ⇒ `reasoning_content`；deepseek 恒 `reasoning_content`）；`""` = **不回传**；有值 = 用这个名字 | 回传思考用哪个字段名 |
 - **Pi 的 UA 里没有版本号** ✓ —— 那截 `<release>` 是**本机内核**（`pi (linux 7.1.13+deb13-amd64; x64)` ✓）：
   `providers` 里读 `/proc/sys/kernel/osrelease` ✓ 天然逐字一致 ✓。
 
@@ -605,7 +606,7 @@ prompt caching**"）。**不要为能力造子 session id**：网关的会话 id
   ⇒ 对照我们：重发、编辑、删消息 = 同一会话 ⇒ **同一 id**；**Copy 出来的新会话** = 新 id（天然满足 ✓）；
   （**我们不做"给子任务另开会话"** ✗：会调模型的 Task 一律骑 `sessions.id` ✓，见下面第 1 条 ✓）；
 - **辅助调用骑同一个 key**：标题生成、摘要压缩也要带**当前会话**的 id（不是每条请求随机）；
-- 归口：**provider 层按 kind 自动加**（维护者原话："该由 pi-ai 归一化各家的特殊需求"）；
+- 归口：**provider 层按 vendor 自动加**（维护者原话："该由 pi-ai 归一化各家的特殊需求"）；
   动态的会话头**压过**静态同名头；`opencode*` 之外不发。
 - 出处：`github.com/deepseek-ai/deepseek-harness/discussions/5495`（OpenCode 员工开的，含 09/05 硬期限）。
 - 会话 id 见上面那条规则（`SessionIDFor`）；`user-agent` 里那截

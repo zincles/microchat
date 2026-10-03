@@ -88,11 +88,6 @@ func IDs() []ID {
 	return ids
 }
 
-// Definitions：全部能力的代码侧定义（拷贝 ⇒ 调用方改不动这张表）。
-func Definitions() []Definition {
-	return append([]Definition(nil), definitions...)
-}
-
 // DefinitionOf：这个 id 的定义；不认识 ⇒ false（认不认识是 `Valid` / `Validate` 的事）。
 func DefinitionOf(id ID) (Definition, bool) {
 	for _, definition := range definitions {
