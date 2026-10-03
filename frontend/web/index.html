@@ -11,67 +11,110 @@
     <header>
       <span id="conn">未连接</span>
       <span id="session"></span>
-      <button id="manage-toggle" type="button">管理</button>
+      <button id="settings-open" type="button" title="设置">⚙ 设置</button>
     </header>
-    <div id="statusline" class="statusline">上下文 ?/?｜未知模型｜idle</div>
-    <details id="outgoing-box">
-      <summary id="outgoing-head">出站载荷（未加载）</summary>
-      <div id="outgoing"></div>
-    </details>
-    <main id="messages"></main>
-    <div id="palette" class="palette hidden">
-      <div id="palette-list"></div>
-      <div class="palette-hint">Tab/↑↓ 选择，回车执行</div>
+    <div id="columns">
+      <aside id="sessions-bar">
+        <div class="bar-head">
+          <span>会话</span>
+          <button id="session-new" type="button" title="新建会话">＋</button>
+        </div>
+        <div id="session-list"></div>
+      </aside>
+      <section id="chat-col">
+        <div id="statusline" class="statusline">上下文 ?/?｜未知模型｜idle</div>
+        <main id="messages"></main>
+        <div id="palette" class="palette hidden">
+          <div id="palette-list"></div>
+          <div class="palette-hint">Tab/↑↓ 选择，回车执行</div>
+        </div>
+        <div id="picker" class="picker hidden">
+          <div id="picker-title"></div>
+          <div id="picker-list"></div>
+        </div>
+        <div id="confirm-box" class="confirm hidden">
+          <div id="confirm-text"></div>
+          <div class="confirm-btns">
+            <button id="confirm-yes" type="button">确认</button>
+            <button id="confirm-no" type="button">取消</button>
+          </div>
+        </div>
+        <form id="composer">
+          <input id="input" type="text" autocomplete="off" placeholder="输入消息，回车发送；/ 开头进命令" />
+          <button type="submit">发送</button>
+        </form>
+      </section>
+      <aside id="payload-bar">
+        <div class="bar-head"><span>即将发送的载荷</span></div>
+        <div id="outgoing"></div>
+      </aside>
     </div>
-    <div id="picker" class="picker hidden">
-      <div id="picker-title"></div>
-      <div id="picker-list"></div>
-    </div>
-    <div id="confirm-box" class="confirm hidden">
-      <div id="confirm-text"></div>
-      <div class="confirm-btns">
-        <button id="confirm-yes" type="button">确认</button>
-        <button id="confirm-no" type="button">取消</button>
+    <div id="settings" class="modal hidden">
+      <div class="modal-box">
+        <div class="modal-head">
+          <span>设置</span>
+          <button id="settings-close" type="button" title="关闭（不保存不写）">×</button>
+        </div>
+        <nav class="tabs">
+          <button id="tab-server" type="button" class="tab sel">服务端</button>
+          <button id="tab-client" type="button" class="tab">客户端</button>
+          <button id="tab-agent" type="button" class="tab">Agent</button>
+          <button id="tab-provider" type="button" class="tab">Provider</button>
+        </nav>
+        <section id="panel-server" class="panel">
+          <h3>chat</h3>
+          <label class="field">标题字数 <input id="chat-title-chars" type="number" min="1" /></label>
+          <label class="field">模型上下文 tokens <input id="chat-model-ctx" type="number" min="1" /></label>
+          <label class="field">压缩块数 <input id="chat-compact-blocks" type="number" min="1" /></label>
+          <label class="field">压缩触发 tokens（空=默认） <input id="chat-compact-trigger" type="number" min="1" placeholder="空=默认" /></label>
+          <div class="row"><button id="chat-save" type="button">保存 chat</button><span id="chat-status" class="status"></span></div>
+          <h3>缺省三件</h3>
+          <label class="field">provider <input id="def-provider" placeholder="provider" /></label>
+          <label class="field">model <input id="def-model" placeholder="model" /></label>
+          <label class="field">agent <input id="def-agent" placeholder="agent" /></label>
+          <div class="row"><button id="def-save" type="button">保存缺省</button><span id="def-status" class="status"></span></div>
+        </section>
+        <section id="panel-client" class="panel hidden">
+          <label class="field">API 地址 <input id="cli-api" placeholder="http://127.0.0.1:8787/api/v1" /></label>
+          <label class="field">Token <input id="cli-token" placeholder="可空" type="password" /></label>
+          <div class="row"><button id="cli-save" type="button">保存</button><span id="cli-status" class="status"></span></div>
+          <p class="hint">改完刷新页面生效（localStorage.mc_api / mc_token）。</p>
+        </section>
+        <section id="panel-agent" class="panel hidden">
+          <div class="agent-cols">
+            <div class="agent-list-col">
+              <div id="agent-list"></div>
+              <div class="row">
+                <input id="new-agent-name" placeholder="新 agent 名" />
+                <button id="agent-add" type="button">新建</button>
+              </div>
+            </div>
+            <div id="agent-detail" class="agent-detail hidden">
+              <div id="agent-title" class="detail-title"></div>
+              <textarea id="agent-prompt" rows="6" placeholder="system_prompt"></textarea>
+              <div id="agent-abilities"></div>
+              <div class="row">
+                <button id="agent-save" type="button">保存整段</button>
+                <button id="agent-default" type="button">设为默认</button>
+                <button id="agent-del" type="button">删除</button>
+                <span id="agent-status" class="status"></span>
+              </div>
+            </div>
+          </div>
+        </section>
+        <section id="panel-provider" class="panel hidden">
+          <div id="provider-list"></div>
+          <div class="row">
+            <input id="new-provider-id" placeholder="新渠道 id" />
+            <select id="new-provider-vendor"></select>
+            <select id="new-provider-protocol"></select>
+            <input id="new-provider-key" placeholder="api_key（可空）" />
+            <button id="provider-add" type="button">新建</button>
+          </div>
+          <div id="routes-status" class="status"></div>
+        </section>
       </div>
     </div>
-    <aside id="manage" class="manage hidden">
-      <details id="m-providers">
-        <summary>providers</summary>
-        <select id="preset-select"></select>
-        <input id="new-provider-id" placeholder="新渠道 id" />
-        <input id="new-provider-key" placeholder="api_key（可空）" />
-        <button id="provider-add" type="button">新建</button>
-        <button id="provider-del" type="button">删除所选</button>
-        <div id="provider-list"></div>
-      </details>
-      <details id="m-agents">
-        <summary>agents</summary>
-        <div id="agent-list"></div>
-        <input id="new-agent-name" placeholder="新 agent 名" />
-        <button id="agent-add" type="button">新建</button>
-        <div id="agent-detail" class="hidden">
-          <div id="agent-title"></div>
-          <textarea id="agent-prompt" rows="4"></textarea>
-          <label><input id="ab-title" type="checkbox" checked /> title</label>
-          <label><input id="ab-compact" type="checkbox" checked /> compact</label>
-          <label><input id="ab-judge" type="checkbox" checked /> judge</label>
-          <button id="agent-save" type="button">set-prompt 保存</button>
-          <button id="agent-del" type="button">删除</button>
-        </div>
-      </details>
-      <details id="m-defaults">
-        <summary>defaults</summary>
-        <input id="def-provider" placeholder="provider" />
-        <input id="def-model" placeholder="model" />
-        <input id="def-agent" placeholder="agent" />
-        <button id="def-save" type="button">保存缺省</button>
-        <div id="def-status"></div>
-      </details>
-    </aside>
-    <form id="composer">
-      <input id="input" type="text" autocomplete="off" placeholder="输入消息，回车发送；/ 开头进命令" />
-      <button type="submit">发送</button>
-    </form>
   </div>
   <script type="module" src="./main.js"></script>
 </body>

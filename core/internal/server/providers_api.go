@@ -264,6 +264,28 @@ func (s *Server) refreshProvider(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, providerView(updated))
 }
 
+// refreshProviderRoutes：刷**路由表**（models.dev 快照 → `model_route` 落库）。
+// 与 `refreshProvider`（刷 `models` 表）各管各的：路由表决定模型走哪条 API，
+// 快照失败 ⇒ 旧行留着（宁可用旧表，别拿空表把路断了）—— 同 `registry.RefreshRoutes` 口径。
+func (s *Server) refreshProviderRoutes(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("provider_id")
+	provider, found := s.providerByID(id)
+	if !found {
+		writeError(w, http.StatusNotFound, "not_found", "渠道不存在")
+		return
+	}
+	outcomes := registry.RefreshRoutes(r.Context(), s.store, []config.Provider{provider}, nil)
+	if len(outcomes) != 1 {
+		writeError(w, http.StatusInternalServerError, "internal", "路由刷新没有返回结果")
+		return
+	}
+	if outcomes[0].Error != "" {
+		writeError(w, http.StatusBadGateway, "upstream", outcomes[0].Error)
+		return
+	}
+	writeJSON(w, http.StatusOK, outcomes[0])
+}
+
 // listProviderPresets：内建预设清单 —— 界面拿它生成"选一个内置 provider"的下拉。
 func (s *Server) listProviderPresets(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, providers.Presets())

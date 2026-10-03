@@ -14,6 +14,12 @@ import {
   statusOverBudget,
   groupModelsByProvider,
   deletionPlanSummary,
+  SETTINGS_TABS,
+  switchSettingsTab,
+  snapshotSettings,
+  settingsDirty,
+  formatRoutesOutcome,
+  buildAbilitiesPatch,
 } from "../src/ui.js";
 
 // 契约测试（无浏览器）：只验纯函数与请求形状。`node --test test/`。
@@ -118,4 +124,43 @@ test("api.call 请求形状：方法/路径/鉴权头/204 空", async () => {
   assert.equal(r, null);
   const p = await api.deletionPreview("s1", "m1");
   assert.deepEqual(p, { ok: true });
+});
+
+test("tab 切换纯函数：合法才切、非法留当前", () => {
+  assert.deepEqual(SETTINGS_TABS, ["server", "client", "agent", "provider"]);
+  assert.equal(switchSettingsTab("server", "agent"), "agent");
+  assert.equal(switchSettingsTab("server", "nope"), "server");
+});
+
+test("settings 快照丢弃语义：改表单不碰 snapshot，脏比对只认内容", () => {
+  const form = { title_chars: "32", provider: "dummy" };
+  const snap = snapshotSettings(form);
+  form.title_chars = "64"; // 关 modal 丢弃 ⇒ snap 不动
+  assert.equal(snap.title_chars, "32");
+  assert.equal(settingsDirty(snap, form), true);
+  assert.equal(settingsDirty(snap, snapshotSettings(snap)), false);
+});
+
+test("outgoingPreview 空不发：空/空白直接回 null、不调 fetch", async () => {
+  let n = 0;
+  const api = createApi({ base: "http://x/api/v1", fetchFn: async () => { n++; return { status: 200, ok: true, json: async () => ([]) }; } });
+  assert.equal(await api.outgoingPreview("s1", ""), null);
+  assert.equal(await api.outgoingPreview("s1", "   "), null);
+  assert.equal(n, 0);
+  const out = await api.outgoingPreview("s1", "hi");
+  assert.deepEqual(out, []);
+  assert.equal(n, 1);
+});
+
+test("refresh-routes 回形：{provider, models} 直拼缓存行，error 走失败文案", async () => {
+  const fetchFn = async (url) => {
+    assert.ok(url.endsWith("/providers/p1/refresh-routes"));
+    return { status: 200, ok: true, json: async () => ({ provider: "p1", models: 12 }) };
+  };
+  const api = createApi({ base: "http://x/api/v1", fetchFn });
+  const out = await api.refreshRoutes("p1");
+  assert.deepEqual(out, { provider: "p1", models: 12 });
+  assert.ok(formatRoutesOutcome(out).includes("12"));
+  assert.ok(formatRoutesOutcome({ provider: "p1", models: 0, error: "boom" }).includes("boom"));
+  assert.deepEqual(buildAbilitiesPatch({ title: { enabled: true, provider: "", model: "m", prompt: "" } }), { title: { enabled: true, model: "m" } });
 });

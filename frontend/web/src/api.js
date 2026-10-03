@@ -23,14 +23,21 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
     listSessions: () => call("GET", "/sessions"),
     createSession: (body = {}) => call("POST", "/sessions", body),
     deleteSession: (id) => call("DELETE", `/sessions/${enc(id)}`),
-    patchSession: (id, body) => call("PATCH", `/sessions/${enc(id)}`, body),
+    // closeSession：关会话 = DELETE 整条（删完后端不代建 —— 进哪条由调用方定）。
+    closeSession: (id) => call("DELETE", `/sessions/${enc(id)}`),
     listMessages: (id) => call("GET", `/sessions/${enc(id)}/messages`),
-    sendMessage: (id, content) => call("POST", `/sessions/${enc(id)}/messages`, { content }),
+    patchSession: (id, body) => call("PATCH", `/sessions/${enc(id)}`, body),
     status: (id) => call("GET", `/sessions/${enc(id)}/status`),
     turnText: (id, from, thinkFrom) =>
       call("GET", `/sessions/${enc(id)}/turn/text?from=${from}&think_from=${thinkFrom}`),
     context: (id) => call("GET", `/sessions/${enc(id)}/context`),
     outgoing: (id) => call("GET", `/sessions/${enc(id)}/outgoing`),
+    // outgoingPreview：右载荷预演 —— 待发那句问 (c)（只算不写）。
+    // 空/空白不发包（后端 400 也无意义）⇒ 直接回 null，调用方不刷右栏。
+    outgoingPreview: (id, content) => {
+      if (!String(content ?? "").trim()) return Promise.resolve(null);
+      return call("POST", `/sessions/${enc(id)}/outgoing`, { content });
+    },
     compact: (id, blocks) =>
       call("POST", `/sessions/${enc(id)}/compact`, blocks ? { blocks } : {}),
     stop: (id) => call("POST", `/sessions/${enc(id)}/stop`, {}),
@@ -49,7 +56,8 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
       call("DELETE", `/sessions/${enc(sid)}/messages/${enc(mid)}`, {
         last_deleted_message_id: lastDeletedMessageID,
       }),
-    models: () => call("GET", "/models"),
+    getChat: () => call("GET", "/config/chat"),
+    putChat: (body) => call("PUT", "/config/chat", body),
     agents: () => call("GET", "/agents"),
     createAgent: (body) => call("POST", "/agents", body),
     patchAgent: (id, body) => call("PATCH", `/agents/${enc(id)}`, body),
@@ -59,7 +67,9 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
     providers: () => call("GET", "/providers"),
     providerPresets: () => call("GET", "/providers/presets"),
     createProvider: (body) => call("POST", "/providers", body),
-    deleteProvider: (id) => call("DELETE", `/providers/${enc(id)}`),
+    refreshProvider: (id) => call("POST", `/providers/${enc(id)}/refresh`),
+    // refreshRoutes：刷路由表（models.dev 快照 → model_route 落库），回 {provider, models, error?}。
+    refreshRoutes: (id) => call("POST", `/providers/${enc(id)}/refresh-routes`),
   };
 }
 

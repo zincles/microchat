@@ -65,6 +65,8 @@ func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *ch
 	s.mux.HandleFunc("PATCH /api/v1/providers/{provider_id}", s.updateProvider)
 	s.mux.HandleFunc("DELETE /api/v1/providers/{provider_id}", s.deleteProvider)
 	s.mux.HandleFunc("POST /api/v1/providers/{provider_id}/refresh", s.refreshProvider)
+	// 路由表刷新（models.dev 快照 → `model_route`）：设置 Provider 面板用（看缓存/手刷）。
+	s.mux.HandleFunc("POST /api/v1/providers/{provider_id}/refresh-routes", s.refreshProviderRoutes)
 	// 套餐余量（只读）：**只对 kind=opencode-go 有义**，别的 kind 400 说清楚（见 usage_api.go）
 	s.mux.HandleFunc("GET /api/v1/providers/{provider_id}/usage", s.providerUsage)
 	s.mux.HandleFunc("GET /api/v1/agents", s.listAgents)

@@ -207,6 +207,22 @@ func TestRefreshDiscoversModels(t *testing.T) {
 	}
 }
 
+// refresh-routes：非聚合站 502 说清楚；不存在的渠道 404。
+func TestRefreshRoutesRejectsNonAggregators(t *testing.T) {
+	server, _ := newProvidersServer(t, `{"providers":[]}`)
+	if recorder := call(server, "POST", "/api/v1/providers/nope/refresh-routes", ""); recorder.Code != 404 {
+		t.Fatalf("不存在该 404：%d", recorder.Code)
+	}
+	recorder := call(server, "POST", "/api/v1/providers",
+		`{"id":"ds","vendor":"deepseek","api_key":"sk-x"}`)
+	if recorder.Code != 201 {
+		t.Fatalf("%d：%s", recorder.Code, recorder.Body.String())
+	}
+	if recorder := call(server, "POST", "/api/v1/providers/ds/refresh-routes", ""); recorder.Code != 502 {
+		t.Fatalf("非聚合站该 502 说清楚：%d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
 // 预设清单接口：客户端靠它列出"可选的预设 provider"。
 func TestProviderPresetsEndpoint(t *testing.T) {
 	server, _ := newProvidersServer(t, `{"providers":[]}`)
