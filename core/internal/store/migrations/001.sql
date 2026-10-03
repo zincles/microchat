@@ -13,31 +13,39 @@ CREATE TABLE sessions (
   provider      TEXT NOT NULL,
   model         TEXT NOT NULL,
   created_at    INTEGER NOT NULL,
-  updated_at    INTEGER NOT NULL
-, agent_id TEXT NOT NULL DEFAULT 'default');
+  updated_at    INTEGER NOT NULL,
+  agent_id      TEXT NOT NULL DEFAULT 'default'
+);
 CREATE TABLE messages (
-  id              TEXT PRIMARY KEY,
-  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-  role            TEXT NOT NULL CHECK (role IN ('user','assistant')),
-  content         TEXT NOT NULL,
-  created_at      INTEGER NOT NULL,
+  id          TEXT PRIMARY KEY,
+  session_id  TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  role        TEXT NOT NULL CHECK (role IN ('user','assistant')),
+  content     TEXT NOT NULL,
+  created_at  INTEGER NOT NULL,
   -- 修改时（毫秒）：新建时 = created_at；改正文时刷成当前毫秒。
-  updated_at      INTEGER NOT NULL
-, reasoning TEXT, duration_ms INTEGER, usage TEXT, reasoning_ms INTEGER, summary_id TEXT REFERENCES summaries(id) ON DELETE SET NULL);
+  updated_at  INTEGER NOT NULL,
+  reasoning   TEXT,
+  duration_ms INTEGER,
+  usage       TEXT,
+  reasoning_ms INTEGER,
+  summary_id  TEXT REFERENCES summaries(id) ON DELETE SET NULL
+);
 -- (session_id, id) = 这条会话的顺序（线性会话里"整条会话"就等于它）+ 取最新一条走它
 CREATE INDEX messages_by_session ON messages(session_id, id);
 CREATE TABLE models (
-  provider       TEXT NOT NULL,
-  upstream_id    TEXT NOT NULL,
-  upstream_name  TEXT,
-  owned_by       TEXT,
-  context_length INTEGER,
-  max_output     INTEGER,
-  display_name   TEXT,
-  params         TEXT NOT NULL DEFAULT '{}',
-  tokenizer      TEXT NOT NULL DEFAULT '{"kind":"approx","ratio":1.3}',
-  first_seen_at  INTEGER NOT NULL,
-  last_seen_at   INTEGER NOT NULL, upstream_params TEXT NOT NULL DEFAULT '{}', context_override INTEGER,
+  provider        TEXT NOT NULL,
+  upstream_id     TEXT NOT NULL,
+  upstream_name   TEXT,
+  owned_by        TEXT,
+  context_length  INTEGER,
+  max_output      INTEGER,
+  display_name    TEXT,
+  params          TEXT NOT NULL DEFAULT '{}',
+  tokenizer       TEXT NOT NULL DEFAULT '{"kind":"approx","ratio":1.3}',
+  first_seen_at   INTEGER NOT NULL,
+  last_seen_at    INTEGER NOT NULL,
+  upstream_params TEXT NOT NULL DEFAULT '{}',
+  context_override INTEGER,
   PRIMARY KEY (provider, upstream_id)
 );
 CREATE TABLE provider_state (
@@ -73,10 +81,5 @@ CREATE TABLE summaries (
 CREATE INDEX summaries_by_conv ON summaries(session_id, id);
 CREATE INDEX summaries_by_parent ON summaries(parent_summary_id);
 CREATE INDEX messages_by_summary ON messages(summary_id);
-CREATE TABLE model_route (
-  provider    TEXT NOT NULL,
-  upstream_id TEXT NOT NULL,
-  api         TEXT NOT NULL,   -- openai-completions | openai-responses | anthropic-messages | google-generative-ai
-  checked_at  INTEGER NOT NULL,
-  PRIMARY KEY (provider, upstream_id)
-);
+-- model_route（模型→走哪条 API）不住 001：它是 `refresh-routes` 建的（见 registry.RefreshRoutes），
+-- 删库重来也不经过这里。

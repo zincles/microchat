@@ -5,6 +5,7 @@ import "testing"
 // Replace 整批替换 + ModelRoute 查一行：第二批把旧行清掉，别家渠道不动；空表 ⇒ 清干净。
 func TestReplaceAndModelRoute(t *testing.T) {
 	st := openTemp(t)
+	// 表不住 001：Replace 用之前自建，调用方不用记这一步。
 	if _, ok := st.ModelRoute("opencode", "a"); ok {
 		t.Fatal("空表该查不到")
 	}

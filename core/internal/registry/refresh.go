@@ -205,3 +205,53 @@ func RefreshAll(list []config.Provider, refresh RefreshFunc) []Outcome {
 	}
 	return outcomes
 }
+
+// RoutesOutcome：一家聚合站这一趟路由表的结果（打给 `-debug refresh-routes` 看的）。
+type RoutesOutcome struct {
+	Provider string `json:"provider"`
+	Models   int    `json:"models"`
+	Error    string `json:"error,omitempty"`
+}
+
+// RefreshRoutes：刷**路由表**（`refresh-models` 只管 `models` 表，两者各管各的）。
+//
+// 只认聚合站（opencode-go/opencode vendor）：拉 models.dev 快照 → 取本 vendor 那节 →
+// 建表（没有才建）→ 整批替换该渠道的行。快照失败 ⇒ 这一家记错、继续下一家
+// （路由表旧行留着 —— 宁可用旧表，也别拿空表把路断了）。
+// 取数走 `modelsDevFetch`（与打标同一条可注入的钩子，线上默认直连 20s 超时）。
+func RefreshRoutes(ctx context.Context, st *store.Store, list []config.Provider, client *http.Client) []RoutesOutcome {
+	_ = ctx
+	_ = client
+	outcomes := make([]RoutesOutcome, 0, len(list))
+	for _, provider := range list {
+		outcome := RoutesOutcome{Provider: provider.ID}
+		wire := providers.FromConfig(provider)
+		vendor := wire.EffectiveVendor()
+		if vendor != providers.VendorOpenCodeGo && vendor != providers.VendorOpenCode {
+			outcome.Error = "不是聚合站（只给 opencode-go/opencode 刷路由表）"
+			outcomes = append(outcomes, outcome)
+			continue
+		}
+		routes, err := modelsDevFetch()
+		if err != nil {
+			outcome.Error = err.Error()
+			outcomes = append(outcomes, outcome)
+			continue
+		}
+		section := modelsDevSectionFor(vendor)
+		sectionRoutes, ok := routes[section]
+		if !ok || len(sectionRoutes) == 0 {
+			outcome.Error = "快照里没有 " + section + " 这一节"
+			outcomes = append(outcomes, outcome)
+			continue
+		}
+		if err := st.ReplaceModelRoutes(provider.ID, sectionRoutes, time.Now().UnixMilli()); err != nil {
+			outcome.Error = err.Error()
+			outcomes = append(outcomes, outcome)
+			continue
+		}
+		outcome.Models = len(sectionRoutes)
+		outcomes = append(outcomes, outcome)
+	}
+	return outcomes
+}

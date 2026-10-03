@@ -1,10 +1,23 @@
 package store
 
-// ReplaceModelRoutes：models.dev 快照整批替换某渠道的行 —— 删旧插新，同一事务。
-// 只记 `(provider, upstream_id, api, checked_at)` 四列；空表 ⇒ 把该渠道清干净（整份没了就别留旧的）。
+// model_route 建表：不住 001（那是原生四表的地方）—— `refresh-routes` 按需建，
+// 删库重来也不经过 001。`IF NOT EXISTS` ⇒ 建过就当没看见。
+const modelRouteDDL = `CREATE TABLE IF NOT EXISTS model_route (
+  provider    TEXT NOT NULL,
+  upstream_id TEXT NOT NULL,
+  api         TEXT NOT NULL,
+  checked_at  INTEGER NOT NULL,
+  PRIMARY KEY (provider, upstream_id)
+)`
+
 func (s *Store) ReplaceModelRoutes(provider string, routes map[string]string, now int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// 表不住 001 ⇒ 用之前先建（`IF NOT EXISTS`，建过就当没看见）。
+	// 调用方（测试与 refresh-routes）都不用记这一步。
+	if _, err := s.db.Exec(modelRouteDDL); err != nil {
+		return err
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err

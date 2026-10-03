@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -67,6 +68,8 @@ op：
   refresh-models [provider_id]                      **启动时那条路**：每个渠道各拉一次 /models 并落库
                                                     （同步跑完；跳过 dummy / 要去外网又没配 key 的；
                                                      每行一个渠道：拉了几个模型 / 跳过原因 / 失败原因）
+  refresh-routes [provider_id]                      只刷路由表：拉 models.dev 快照 → model_route 落库
+                                                    （只认聚合站；快照失败不拦这一家之外的；启动时**不跑**）
   tasks                                             任务面板
   usage [provider_id]                               OpenCode GO 的套餐余量（只读 GET；不给 id 就用第一个 opencode-go 渠道）
 
@@ -134,6 +137,8 @@ func runDebug(paths config.Paths, cfg config.Config, args []string) int {
 		return env.abilitiesOf(args[1:])
 	case "refresh-models":
 		return env.refreshModelsOp(args[1:])
+	case "refresh-routes":
+		return env.refreshRoutesOp(args[1:])
 	case "tasks":
 		return env.board()
 	case "usage":
@@ -863,6 +868,46 @@ func (e *debugEnv) refreshModelsOp(args []string) int {
 			failed++
 		}
 		emit(refreshLine{Event: "refresh", Outcome: outcome})
+	}
+	if failed > 0 {
+		return 1
+	}
+	return 0
+}
+
+// refreshRoutesLine：`-debug refresh-routes` 的一行 —— 一家聚合站这一趟的结果。
+type refreshRoutesLine struct {
+	Event string `json:"event"`
+	registry.RoutesOutcome
+}
+
+// refreshRoutesOp：只刷路由表（models.dev 快照 → model_route 落库）。
+// 与 refresh-models 各管各的：启动时不跑，快照失败不拦别家。有失败 ⇒ 退出码 1。
+func (e *debugEnv) refreshRoutesOp(args []string) int {
+	if len(args) > 1 {
+		return report(errf("invalid", "用法：-debug refresh-routes [provider_id]"))
+	}
+	_, _, providerConfig, err := config.Load(e.paths)
+	if err != nil {
+		return report(errf("internal", "读配置失败：%s", err.Error()))
+	}
+	list := providerConfig.Providers
+	if id := argAt(args, 0); id != "" {
+		provider, found := providerConfig.Get(id)
+		if !found {
+			return report(errf("not_found", "providers.json 里没有 id=%s 这个渠道", id))
+		}
+		list = []config.Provider{provider}
+	} else if len(list) == 0 {
+		return report(errf("not_found", "一个渠道都没读到：检查配置目录 %s 里的 providers.json", e.paths.ConfigDir))
+	}
+	client := &http.Client{Timeout: 30 * time.Second}
+	failed := 0
+	for _, outcome := range registry.RefreshRoutes(context.Background(), e.store, list, client) {
+		if outcome.Error != "" {
+			failed++
+		}
+		emit(refreshRoutesLine{Event: "routes", RoutesOutcome: outcome})
 	}
 	if failed > 0 {
 		return 1

@@ -1,9 +1,12 @@
 package registry
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"testing"
+	"time"
 
 	"microchat/internal/config"
 	"microchat/internal/store"
@@ -129,5 +132,43 @@ func TestZenTagSurvivesRefresh(t *testing.T) {
 	}
 	if params["zen_protocol"] != "openai-responses" {
 		t.Fatalf("标没落库：%v", params)
+	}
+}
+
+// RefreshRoutes：只认聚合站 —— 建表 + 快照节落库；非聚合站记错；快照失败不清空旧行。
+func TestRefreshRoutesWritesTable(t *testing.T) {
+	clearKeyEnv(t)
+	stubModelsDev(t, zenSnapshotFixture)
+	st := openStore(t)
+	client := &http.Client{Timeout: 5 * time.Second}
+	ctx := context.Background()
+	list := []config.Provider{
+		{ID: "zg", Vendor: "opencode-go"},
+		{ID: "plain", Vendor: "openai"},
+	}
+	outcomes := RefreshRoutes(ctx, st, list, client)
+	if len(outcomes) != 2 {
+		t.Fatalf("一家一行：%+v", outcomes)
+	}
+	// 注意：RefreshRoutes 拉的是真快照（stubModelsDev 只劫打标那条路），行数看线上是什么就是什么
+	if outcomes[0].Error != "" || outcomes[0].Models == 0 {
+		t.Fatalf("聚合站该落行：%+v", outcomes[0])
+	}
+	if api, ok := st.ModelRoute("zg", "g"); !ok || api != "openai-responses" {
+		t.Fatalf("路由表 = %q,%v", api, ok)
+	}
+	if outcomes[1].Error == "" {
+		t.Fatalf("非聚合站该记错：%+v", outcomes[1])
+	}
+	// 快照整份挂掉 ⇒ 旧行留着（宁可用旧表，别拿空表断路）
+	old := modelsDevFetch
+	modelsDevFetch = func() (map[string]map[string]string, error) { return nil, errFakeSnapshot() }
+	t.Cleanup(func() { modelsDevFetch = old })
+	outcomes = RefreshRoutes(ctx, st, list, client)
+	if outcomes[0].Error == "" {
+		t.Fatalf("快照挂了该记错：%+v", outcomes[0])
+	}
+	if api, ok := st.ModelRoute("zg", "g"); !ok || api != "openai-responses" {
+		t.Fatalf("旧行该留着：%q,%v", api, ok)
 	}
 }

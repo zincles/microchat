@@ -548,15 +548,10 @@ usage 的真实形状：`{prompt_tokens, completion_tokens, total_tokens, prompt
 - **怎么刷只有一份**：`registry.RefreshOne`（拉 `/models` ⇒ `store.RefreshDiscovered`，**只写发现列**）。
   三处共用它：HTTP 的 `POST /providers/{id}/refresh`、**启动时的自动刷新**、`-debug refresh-models`。
   **别写第二份** ✗ —— 第二份几乎必然漏掉"不动用户列"或"这次没见到的删行"，而漏了都是**静默**的。
-- **启动那条路**（`main.go`）：起了服务之后**后台**逐个渠道**串行**刷（整批放后台 ⇒ **绝不阻塞启动与界面**），
-  每个渠道**各自挂号**一个 `refresh_models` 的 Task，**失败只 log**（不弹错、不退出、不影响别的渠道）。
-  关掉它：`config.json` 的 `server.refresh_models_on_start`（**默认 true**）。
-- **自动跳过两种**（`registry.Skip`；只有自动那条路跳过，HTTP 那条是人明确点的、照发）：
-  ① `kind: dummy`（不联网，问了也没答案）；② **要去外网又没配密钥**（别拿一屏 401 刷屏）——
-  **本机 / 内网端点不算**（ollama、LM Studio、本地假上游本来就可能不要密钥，照刷 ✓）。
-  密钥也可能来自环境变量（`OPENCODE_API_KEY` 那类，`ApplyPreset` 会去找）⇒ 判定在它**之后**做。
-- 验收 / 排障：`-debug refresh-models [provider_id]` —— **同步**跑完，每行一个渠道
-  （`models` 拉了几个 / `skipped` 跳过原因 / `error` 失败原因；有失败 ⇒ 退出码 1）。
+- **路由表是另一个命令**：`-debug refresh-routes [provider_id]`（拉 models.dev 快照 ⇒ `model_route` 落库，
+  只认 opencode-go/opencode；建表按需，`IF NOT EXISTS`）。两个命令**各管各的**：
+  models 表管"有哪些模型"，model_route 管"每个模型走哪条 API" —— 别藕断丝连混成一个。
+  快照 5MB，一周手跑一次足够；**启动时不跑**（浪费）；快照失败不拦别家（旧行留着）。
 
 **客户端的身份规则（OpenCode 官方文档原话）**：
 
