@@ -229,7 +229,7 @@ func (s *Service) assistantMessage(session model.Session, replyID string, token 
 
 // assemble：历史（+ 可选的"还没进库的那一句"）→ 真会发出去的东西。
 //
-// **真发（`outgoingFor`）与预演（`OutgoingWithPending`）共用这一处** —— 各写一遍必然漂移，
+// **真发（`outgoingFor`）与预演（`PreviewWire`）共用这一处** —— 各写一遍必然漂移，
 // 而漂移之后预演说的就不再是"真发会发什么"（接口存在的全部理由就是这句话）。
 // 装配本身仍只有一条路：世界状态现演（`state.FromSources`）+ 出站拼装（`state.BuildOutgoing`）。
 //

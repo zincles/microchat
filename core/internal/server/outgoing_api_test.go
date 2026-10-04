@@ -47,7 +47,7 @@ func (b *dummySandbox) outgoingOf(t *testing.T, method, content string) []state.
 	return outgoing
 }
 
-// wireOf：拉一次真请求（content 为空 ⇒ 400，见 TestOutgoingWithPendingRejectsBlank）。
+// wireOf：拉一次真请求（content 为空 ⇒ 400，见 TestOutgoingWireRejectsBlank）。
 func (b *dummySandbox) wireOf(t *testing.T, content string) providers.LastPayload {
 	t.Helper()
 	body := `{"content":` + mustQuote(t, content) + `}`
@@ -63,7 +63,7 @@ func (b *dummySandbox) wireOf(t *testing.T, content string) providers.LastPayloa
 }
 
 // 基本形状：(c) 的体 = (b) 的正文 + 待发那句（末尾多一条 user；库内账一个不发）。
-func TestOutgoingWithPendingAppendsUserMessage(t *testing.T) {
+func TestOutgoingWireAppendsUserMessage(t *testing.T) {
 	box := newDummySandbox(t)
 	box.seedTurn(t, "先聊两句")
 
@@ -109,7 +109,7 @@ func wireBody(t *testing.T, payload providers.LastPayload) []map[string]any {
 
 // 核心：待发那句里的 `<state>` 块**真的重算状态表** ——
 // (c) 的第一条 system 里有新值，(b) 里没有（拿掉"重算"这一步就该红）。
-func TestOutgoingWithPendingRecomputesState(t *testing.T) {
+func TestOutgoingWireRecomputesState(t *testing.T) {
 	box := newDummySandbox(t)
 	box.seedTurn(t, "先聊两句")
 
@@ -131,7 +131,7 @@ func TestOutgoingWithPendingRecomputesState(t *testing.T) {
 func containsText(haystack, needle string) bool { return strings.Contains(haystack, needle) }
 
 // content 空白 / 缺失 ⇒ 400（固定错误体）；会话不存在 ⇒ 404。
-func TestOutgoingWithPendingRejectsBlank(t *testing.T) {
+func TestOutgoingWireRejectsBlank(t *testing.T) {
 	box := newDummySandbox(t)
 	for _, body := range []string{`{}`, `{"content":""}`, `{"content":"  \n "}`, `{"content":null}`} {
 		recorder := call(box.server, "POST", box.path+"/outgoing", body)
@@ -158,7 +158,7 @@ func TestOutgoingWithPendingRejectsBlank(t *testing.T) {
 }
 
 // 只算不写：调完 (c) 后，库里的消息条数一个不变。
-func TestOutgoingWithPendingDoesNotWrite(t *testing.T) {
+func TestOutgoingWireDoesNotWrite(t *testing.T) {
 	box := newDummySandbox(t)
 	box.seedTurn(t, "先聊两句")
 	count := len(box.messages(t))
