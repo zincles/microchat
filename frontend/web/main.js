@@ -32,6 +32,7 @@ const el = {
   input: document.getElementById("input"),
   statusline: document.getElementById("statusline"),
   outgoingRaw: document.getElementById("outgoing-raw"),
+  sessionList: document.getElementById("session-list"),
   sessionNew: document.getElementById("session-new"),
   palette: document.getElementById("palette"),
   paletteList: document.getElementById("palette-list"),
