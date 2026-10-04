@@ -500,13 +500,17 @@ function wireSettings() {
   const loadAgents = async () => {
     const data = await api.agents();
     curDefault = data.default_agent ?? "";
-    const box = document.getElementById("agent-list");
-    box.innerHTML = "";
     for (const a of data.agents ?? []) {
-      const d = document.createElement("div");
-      d.className = "picker-item" + (curAgent?.id === a.id ? " sel" : "");
-      d.textContent = `${a.name}${a.id === curDefault ? "（默认）" : ""}`;
+      const d = document.createElement("button");
+      d.type = "button";
+      d.className = "agent-item" + (curAgent?.id === a.id ? " sel" : "");
       d.title = a.id;
+      const name = document.createElement("span");
+      name.textContent = `${a.name}${a.id === curDefault ? "（默认）" : ""}`;
+      const sub = document.createElement("span");
+      sub.className = "sub";
+      sub.textContent = a.id;
+      d.append(name, sub);
       d.onclick = () => {
         curAgent = a;
         document.getElementById("agent-detail").classList.remove("hidden");
@@ -518,7 +522,6 @@ function wireSettings() {
           abilityInputs[id].enabled.checked = one.enabled !== false;
           abilityInputs[id].provider.value = one.provider ?? "";
           abilityInputs[id].model.value = one.model ?? "";
-          abilityInputs[id].prompt.value = one.prompt ?? "";
         }
       };
       box.appendChild(d);

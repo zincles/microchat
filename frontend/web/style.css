@@ -77,11 +77,18 @@ button { background: #333; color: #eee; border: 1px solid #555; padding: 0.5em 1
 .empty { color: var(--dim); padding: 0.8em 0.6em; font-size: 0.9em; }
 .agent-cols { display: flex; gap: 1em; }
 .agent-list-col { width: 220px; flex: none; }
+.agent-item { display: block; width: 100%; text-align: left; background: none; border: 1px solid transparent; border-radius: 8px; color: var(--dim); padding: 0.45em 0.6em; margin: 0.15em 0; cursor: pointer; }
+.agent-item:hover { background: #2a2a2a; }
+.agent-item.sel { background: #2f2f2f; color: var(--text); border-color: var(--line); }
+.agent-item .sub { display: block; font-size: 0.8em; color: var(--dim); }
 .agent-detail { flex: 1; min-width: 0; }
 .agent-detail textarea { width: 100%; background: #222; color: #eee; border: 1px solid #444; padding: 0.4em; border-radius: 6px; box-sizing: border-box; }
 .detail-title { color: var(--dim); margin-bottom: 0.4em; }
+/* 大段输入框独占一行：label 在上、框在下（跟右边挤一格没法看）。 */
+.field-block { display: block; margin: 0.35em 0; color: var(--dim); }
+.field-block > span { display: block; margin-bottom: 0.25em; }
+.field-block textarea { width: 100%; box-sizing: border-box; background: #222; color: #eee; border: 1px solid #444; padding: 0.45em 0.6em; border-radius: 6px; min-height: 7em; resize: vertical; }
 .ability { display: flex; gap: 0.4em; align-items: center; margin: 0.3em 0; flex-wrap: wrap; }
-.ability input[type=text], .ability input:not([type]) { background: #222; color: #eee; border: 1px solid #444; padding: 0.35em; border-radius: 6px; width: 9em; }
 .plist { width: 100%; border-collapse: collapse; font-size: 0.9em; }
 .plist th, .plist td { text-align: left; padding: 0.4em 0.6em; border-bottom: 1px solid var(--line); white-space: nowrap; }
 .plist th { color: var(--dim); font-weight: normal; }
