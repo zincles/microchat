@@ -47,6 +47,14 @@ const el = {
   confirmNo: document.getElementById("confirm-no"),
 };
 
+let sessionID = null;
+let sessionInfo = {};
+let palSel = 0;
+let palItems = [];
+let pickerItems = [];
+let pickerSel = 0;
+let pickerAction = null;
+
 function addMessage(who, text, cls, think) {
   const node = renderMessage(document, {
     who,
