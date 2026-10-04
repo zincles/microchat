@@ -94,7 +94,7 @@ async function refreshStatusline(phase, elapsedMs) {
       model: sessionInfo.model,
     });
     el.statusline.classList.toggle("over", statusOverBudget(ctx));
-    if (out) renderPayload(out, null);
+    if (out) renderPayload(out);
   } catch { /* 状态行失败不挡主流程 */ }
 }
 
@@ -109,9 +109,10 @@ function paintPayloadTab() {
   document.getElementById("outgoing").classList.toggle("hidden", !pretty);
   document.getElementById("outgoing-raw").classList.toggle("hidden", pretty);
 }
-function renderPayload(items, pendingText) {
+function renderPayload(items) {
+  // (c) 预演回来的那份**已经含** pending 那条（后端 `OutgoingWithPending` 标的）⇒
+  // 前端只渲染，不许再追一条（否则就是两条 pending —— 有 id 的那条是真的，没 id 的是前端手搓的）。
   lastPayloadItems = [...(items ?? [])];
-  if (pendingText != null) lastPayloadItems.push({ type: "message", pending: true, content: pendingText });
   el.outgoing.innerHTML = "";
   if (!lastPayloadItems.length) {
     const d = document.createElement("div");
@@ -800,7 +801,7 @@ el.input.addEventListener("input", () => {
     try {
       const out = await api.outgoingPreview(sessionID, text);
       if (out == null) return; // 空守卫回 null ⇒ 不刷，等下一拍
-      renderPayload(out, text);
+      renderPayload(out);
     } catch { /* 空/错就不刷，等下一拍 */ }
   }, 300);
 });
