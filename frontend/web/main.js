@@ -98,24 +98,41 @@ async function refreshStatusline(phase, elapsedMs) {
   } catch { /* 状态行失败不挡主流程 */ }
 }
 
-// renderPayload：右载荷栏（(b) 已定历史；预演时后面跟一条 pending 待发项）。
-// 空态"输入框打字即预演"（补在 outgoing 容器内，不另起容器）。
+// renderPayload：右载荷栏两档（格式化 / 原始JSON；tab 状态存 localStorage）。
+// pretty 是 (b)/(c) 的逐项渲染；raw 是同一份的 `JSON.stringify(out, null, 2)` —— 调试"到底发了什么"看它。
+let payloadTab = localStorage.getItem("mc_payload_tab") || "pretty";
+let lastPayloadItems = [];
+function paintPayloadTab() {
+  const pretty = payloadTab === "pretty";
+  document.getElementById("payload-tab-pretty").classList.toggle("sel", pretty);
+  document.getElementById("payload-tab-raw").classList.toggle("sel", !pretty);
+  document.getElementById("outgoing").classList.toggle("hidden", !pretty);
+  document.getElementById("outgoing-raw").classList.toggle("hidden", pretty);
+}
 function renderPayload(items, pendingText) {
+  lastPayloadItems = [...(items ?? [])];
+  if (pendingText != null) lastPayloadItems.push({ type: "message", pending: true, content: pendingText });
   el.outgoing.innerHTML = "";
-  if (!(items ?? []).length && pendingText == null) {
+  if (!lastPayloadItems.length) {
     const d = document.createElement("div");
     d.className = "empty";
     d.textContent = "输入框打字即预演";
     el.outgoing.appendChild(d);
-    return;
   }
-  for (const item of items ?? []) el.outgoing.appendChild(renderOutgoingItem(document, item));
-  if (pendingText != null) {
-    el.outgoing.appendChild(
-      renderOutgoingItem(document, { type: "message", pending: true, content: pendingText }),
-    );
-  }
+  for (const item of lastPayloadItems) el.outgoing.appendChild(renderOutgoingItem(document, item));
+  document.getElementById("outgoing-raw").textContent = JSON.stringify(lastPayloadItems, null, 2);
+  paintPayloadTab();
 }
+document.getElementById("payload-tab-pretty").addEventListener("click", () => {
+  payloadTab = "pretty";
+  localStorage.setItem("mc_payload_tab", payloadTab);
+  paintPayloadTab();
+});
+document.getElementById("payload-tab-raw").addEventListener("click", () => {
+  payloadTab = "raw";
+  localStorage.setItem("mc_payload_tab", payloadTab);
+  paintPayloadTab();
+});
 
 // renderSessions：左会话栏（当前高亮；× 关闭 → DELETE 会话；关的是当前 ⇒ 进剩下第一条）。
 // 空态"还没有会话"（new 按钮已在 bar-head，空态只提示）。

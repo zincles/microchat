@@ -26,6 +26,11 @@ header { display: flex; gap: 1em; align-items: center; padding: 0.6em 1em; borde
 .session-item .close { background: none; border: none; color: #666; padding: 0 0.3em; cursor: pointer; border-radius: 4px; }
 .session-item .close:hover { color: var(--err); background: #3a2a2a; }
 .out.pending { color: var(--acc); }
+/* 载荷栏两档：格式化 / 原始JSON（seg 小开关，hover 显底）。 */
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+.seg-btn { background: none; border: none; color: var(--dim); font-size: 0.8em; padding: 0.2em 0.8em; cursor: pointer; }
+.seg-btn.sel { background: #2f2f2f; color: var(--text); }
+#outgoing-raw { white-space: pre-wrap; word-break: break-all; margin: 0.4em 0; font-size: 0.8em; color: var(--dim); }
 #session-new { border-radius: 6px; }
 .msg .who { font-weight: bold; }
 .msg.user .who { color: #4cc; }
