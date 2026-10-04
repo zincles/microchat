@@ -166,11 +166,20 @@ async function enterSession(id) {
   const [sessions, messages] = await Promise.all([api.listSessions(), api.listMessages(id)]);
   const found = sessions.find((s) => s.id === id);
   sessionInfo = found ?? {};
-  el.session.textContent = sessionInfo.title || "新会话";
+  paintSessionHeader();
   renderSessions(sessions);
   renderHistory(messages);
   refreshStatusline("idle");
 }
+
+document.getElementById("session-model").addEventListener("click", () => {
+  if (!sessionID) return;
+  pickModel();
+});
+document.getElementById("session-agent").addEventListener("click", () => {
+  if (!sessionID) return;
+  pickAgent();
+});
 
 async function boot() {
   const health = await api.health();
@@ -293,20 +302,45 @@ async function runCommand(name, args) {
       break;
     }
     case "model": {
-      const models = await api.models();
-      const items = [];
-      for (const g of groupModelsByProvider(models)) {
-        for (const m of g.items) items.push({ label: `${g.provider} / ${m.name ?? m.upstream_id}`, value: m });
-      }
-      showPicker("选模型", items, async (it) => {
-        sessionInfo = await api.patchSession(sessionID, {
-          provider: it.value.provider,
-          model: it.value.upstream_id,
-        });
-        refreshStatusline("idle");
-      });
+      pickModel();
       break;
     }
+
+// pickModel：当前会话换模型（跟随 Agent 预设那句由后端回退管 —— 这里只管 PATCH 两格）。
+function pickModel() {
+  api.models().then((models) => {
+    const items = [];
+    for (const g of groupModelsByProvider(models)) {
+      for (const m of g.items) items.push({ label: `${g.provider} / ${m.name ?? m.upstream_id}`, value: m });
+    }
+    showPicker("选模型（只改当前会话）", items, async (it) => {
+      sessionInfo = await api.patchSession(sessionID, {
+        provider: it.value.provider,
+        model: it.value.upstream_id,
+      });
+      paintSessionHeader();
+      refreshStatusline("idle");
+    });
+  }).catch((err) => addMessage("系统", `模型列表失败：${err.message}`, "assistant"));
+}
+
+// pickAgent：当前会话换 Agent（只改这条会话的 agent_id；缺省不动）。
+function pickAgent() {
+  api.agents().then((data) => {
+    const items = (data.agents ?? []).map((a) => ({ label: `${a.name}（${a.id}）`, value: a }));
+    showPicker("选 Agent（只改当前会话）", items, async (it) => {
+      sessionInfo = await api.patchSession(sessionID, { agent_id: it.value.id });
+      paintSessionHeader();
+      refreshStatusline("idle");
+    });
+  }).catch((err) => addMessage("系统", `Agent 列表失败：${err.message}`, "assistant"));
+}
+
+// paintSessionHeader：顶部 `会话名 · 模型 · Agent` 三段（改完当场重画，不等轮询）。
+function paintSessionHeader() {
+  const who = [sessionInfo.provider, sessionInfo.model].filter(Boolean).join("/") || "还没选模型";
+  el.session.textContent = `${sessionInfo.title || "新会话"} · ${who} · ${sessionInfo.agent_id ?? "?"}`;
+}
     case "providers":
     case "agents": {
       const data = name === "providers" ? await api.providers() : await api.agents();
