@@ -77,7 +77,7 @@ func init() {
 		{name: "state", help: "看当前会话的世界状态", run: func(ctx context.Context, r *Runner, b *bot.Bot, update *models.Update, _ []string) {
 			r.say(ctx, b, update, r.cmdState(ctx))
 		}},
-		{name: "outgoing", help: "看已定历史的载荷（含压缩出来的那些）", run: func(ctx context.Context, r *Runner, b *bot.Bot, update *models.Update, _ []string) {
+		{name: "outgoing", help: "看真请求（method/url/headers/体）", run: func(ctx context.Context, r *Runner, b *bot.Bot, update *models.Update, _ []string) {
 			r.say(ctx, b, update, r.cmdOutgoing(ctx))
 		}},
 		{name: "usage", help: "看上下文占用与渠道套餐余量", run: func(ctx context.Context, r *Runner, b *bot.Bot, update *models.Update, _ []string) {
@@ -438,48 +438,15 @@ func (r *Runner) cmdOutgoing(ctx context.Context) string {
 	if err != nil {
 		return err.Error()
 	}
-	items, err := r.api.Outgoing(session.ID)
+	wire, err := r.api.PreviewWire(session.ID, "")
 	if err != nil {
 		return "载荷没问到：" + err.Error()
 	}
-	if len(items) == 0 {
-		return "这条会话还没有已定历史。"
+	raw, err := json.MarshalIndent(wire, "", "  ")
+	if err != nil {
+		return "载荷没法序列化：" + err.Error()
 	}
-	lines := []string{"当前载荷（会话 " + shortID(session.ID) + "，共 " + strconv.Itoa(len(items)) + " 项）："}
-	for index, item := range items {
-		lines = append(lines, outgoingLine(index+1, item))
-	}
-	return strings.Join(lines, "\n")
-}
-
-// outgoingLine：载荷里一项的一行 —— 类型 / 身份 / 正文（正文可能很长，sendLong 会分段）。
-func outgoingLine(ordinal int, item apiclient.Outgoing) string {
-	head := ""
-	switch item.Type {
-	case "system":
-		head = "system"
-	case "summary":
-		head = "摘要"
-		if item.SummaryID != nil {
-			head += " " + shortID(*item.SummaryID)
-		}
-		if item.FromIdx != nil && item.ToIdx != nil {
-			head += fmt.Sprintf("（第 %d–%d 条", *item.FromIdx, *item.ToIdx)
-			if item.Blocks != nil {
-				head += fmt.Sprintf("，%d 块", *item.Blocks)
-			}
-			head += "）"
-		}
-	default:
-		head = item.Role
-		if head == "" {
-			head = item.Type
-		}
-		if item.MessageID != nil {
-			head += " " + shortID(*item.MessageID)
-		}
-	}
-	return fmt.Sprintf("%d. [%s] %s", ordinal, head, item.Content)
+	return "真请求（会话 " + shortID(session.ID) + "）：\n" + string(raw)
 }
 
 func (r *Runner) cmdUsage(ctx context.Context) string {

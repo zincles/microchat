@@ -9,7 +9,6 @@ import {
 } from "../src/api.js";
 import {
   formatThinkLabel,
-  isSummaryItem,
   formatStatusLine,
   statusOverBudget,
   groupModelsByProvider,
@@ -72,8 +71,6 @@ test("游标回退包丢弃：advanceCursor 标记 stale", () => {
 test("思考折叠抬头：reasoning_ms 换算秒；无值回退", () => {
   assert.equal(formatThinkLabel(2100), "思考过程（2.1s）");
   assert.equal(formatThinkLabel(null), "思考过程");
-  assert.equal(isSummaryItem({ type: "summary" }), true);
-  assert.equal(isSummaryItem({ type: "message" }), false);
 });
 
 test("状态行：used/budget + provider/model + phase/耗时；超预算可判", () => {

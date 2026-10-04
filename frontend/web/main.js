@@ -4,11 +4,9 @@
 import { createApi, parseCommand, filterCommands, advanceCursor } from "./src/api.js";
 import {
   renderMessage,
-  renderOutgoingItem,
   formatStatusLine,
   statusOverBudget,
   groupModelsByProvider,
-  deletionPlanSummary,
   SETTINGS_TABS,
   switchSettingsTab,
   snapshotSettings,
@@ -82,10 +80,7 @@ function renderHistory(messages) {
 
 async function refreshStatusline(phase, elapsedMs) {
   try {
-    const [ctx, out] = await Promise.all([
-      api.context(sessionID).catch(() => null),
-      api.outgoing(sessionID).catch(() => null),
-    ]);
+    const ctx = await api.context(sessionID).catch(() => null);
     el.statusline.textContent = formatStatusLine({
       ctx,
       phase,
@@ -94,49 +89,24 @@ async function refreshStatusline(phase, elapsedMs) {
       model: sessionInfo.model,
     });
     el.statusline.classList.toggle("over", statusOverBudget(ctx));
-    if (out) renderPayload(out);
   } catch { /* 状态行失败不挡主流程 */ }
 }
 
-// renderPayload：右载荷栏两档（格式化 / 原始JSON；tab 状态存 localStorage）。
-// pretty 是 (b) 逐项渲染（给人看的：type/idx/pending 全在）；raw 是 (c) 真请求
-// （method/url/headers/体 —— 与 (a) 同一支笔，调试"到底发了什么"看它）。
-let payloadTab = localStorage.getItem("mc_payload_tab") || "pretty";
-let lastPayloadItems = [];
+// renderPayload：右载荷栏只剩 raw 一档（真请求 method/url/headers/体）。
+// pretty 那档（给人看的逐项）已删：它调的是旧 (b) 形状，后端不再回它 ——
+// 调了就 410（`gone`），比"画个假的糊弄"强。
 let lastPayloadWire = null;
 function paintPayloadTab() {
-  const pretty = payloadTab === "pretty";
-  document.getElementById("payload-tab-pretty").classList.toggle("sel", pretty);
-  document.getElementById("payload-tab-raw").classList.toggle("sel", !pretty);
-  document.getElementById("outgoing").classList.toggle("hidden", !pretty);
-  document.getElementById("outgoing-raw").classList.toggle("hidden", pretty);
+  document.getElementById("outgoing").classList.add("hidden");
+  document.getElementById("outgoing-raw").classList.remove("hidden");
 }
-function renderPayload(items, wire) {
-  if (wire !== undefined) lastPayloadWire = wire;
-  lastPayloadItems = [...(items ?? [])];
-  el.outgoing.innerHTML = "";
-  if (!lastPayloadItems.length) {
-    const d = document.createElement("div");
-    d.className = "empty";
-    d.textContent = "输入框打字即预演";
-    el.outgoing.appendChild(d);
-  }
-  for (const item of lastPayloadItems) el.outgoing.appendChild(renderOutgoingItem(document, item));
-  // raw 档只放真请求（(c) 的 method/url/headers/体）；没有就放空（别拿 pretty 糊）。
+function renderPayload(wire) {
+  lastPayloadWire = wire ?? null;
+  // 真请求直放（没有就放空话，不拿 pretty 糊）。
   document.getElementById("outgoing-raw").textContent =
     lastPayloadWire ? JSON.stringify(lastPayloadWire, null, 2) : "(还没有预演：输入框打字即问 (c))";
   paintPayloadTab();
 }
-document.getElementById("payload-tab-pretty").addEventListener("click", () => {
-  payloadTab = "pretty";
-  localStorage.setItem("mc_payload_tab", payloadTab);
-  paintPayloadTab();
-});
-document.getElementById("payload-tab-raw").addEventListener("click", () => {
-  payloadTab = "raw";
-  localStorage.setItem("mc_payload_tab", payloadTab);
-  paintPayloadTab();
-});
 
 // renderSessions：左会话栏（当前高亮；× 关闭 → DELETE 会话；关的是当前 ⇒ 进剩下第一条）。
 // 空态"还没有会话"（new 按钮已在 bar-head，空态只提示）。
@@ -804,8 +774,8 @@ el.input.addEventListener("input", () => {
     try {
       const out = await api.outgoingPreview(sessionID, text);
       if (out == null) return; // 空守卫回 null ⇒ 不刷，等下一拍
-      // (c) 现在就是真请求：pretty 档问 (b) 拿逐项，raw 档放这份 (c)。
-      renderPayload(await api.outgoing(sessionID).catch(() => []), out);
+      // (c) 就是真请求：直接放 raw 档（pretty 已删，不再问 (b) 糊）。
+      renderPayload(out);
     } catch { /* 空/错就不刷，等下一拍 */ }
   }, 300);
 });

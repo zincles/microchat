@@ -93,31 +93,16 @@ func TestCompactRouteAcceptsAndMarksTheSpan(t *testing.T) {
 		t.Fatalf("跑完那一份 = %+v", done)
 	}
 
-	// 装配：被压的那一段变成**一条** type=summary（检查压缩效果只能靠这个）
-	recorder = call(box.server, "GET", box.path+"/outgoing", "")
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("%d：%s", recorder.Code, recorder.Body.String())
-	}
-	var outgoing []struct {
-		Type      string  `json:"type"`
-		SummaryID *string `json:"summary_id"`
-		Blocks    *int64  `json:"blocks"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &outgoing); err != nil {
+	// 装配：被压的那一段在库里挂到同一份摘要下（查库，不调已删的 GET 形状）
+	rows, err := box.store.ListSummaries(box.sessionID)
+	if err != nil {
 		t.Fatal(err)
 	}
-	summaries := []int{}
-	for index, item := range outgoing {
-		if item.Type == "summary" {
-			summaries = append(summaries, index)
-		}
+	if len(rows) != 1 {
+		t.Fatalf("该正好一份摘要：%+v", rows)
 	}
-	if len(summaries) != 1 {
-		t.Fatalf("装配里该正好一条摘要：%+v", outgoing)
-	}
-	last := outgoing[summaries[0]]
-	if last.SummaryID == nil || *last.SummaryID != *done.SummaryID || last.Blocks == nil || *last.Blocks != 2 {
-		t.Fatalf("摘要那条 = %+v", last)
+	if rows[0].ID != *done.SummaryID || rows[0].Blocks != 2 {
+		t.Fatalf("摘要那条 = %+v", rows[0])
 	}
 
 	// 那一段消息的指针指过去；最后那块（开着的）没被动

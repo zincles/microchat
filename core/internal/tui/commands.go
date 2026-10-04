@@ -29,7 +29,7 @@ func init() {
 		{name: "rename", args: "<新名字>", help: "给当前会话改名（名字里可以有空格；改过名后自动起标题不再覆盖）", run: commandRename},
 		{name: "resume", args: "[uuid]", help: "挑一条已有会话；带 uuid 直接进", run: commandResume},
 		{name: "model", help: "挑渠道 / 模型（有会话就改它，没有则留给下一条）", run: commandModel},
-		{name: "outgoing", help: "看当前已定历史的载荷（哪几条是压缩出来的；不含还没发的那句）", run: commandOutgoing},
+		{name: "outgoing", help: "看真请求（method/url/headers/体；输入框有字就问那句的预演）", run: commandOutgoing},
 		{name: "state", help: "看当前会话的世界状态", run: commandState},
 		{name: "usage", help: "看当前渠道的套餐余量（OpenCode GO 套餐；别的渠道会如实说不支持）", run: commandUsage},
 		{name: "providers", help: "看全部渠道（每条一行：渠道、协议、有无密钥、几个模型；附预设名单）", run: commandProviders},
@@ -291,8 +291,14 @@ func commandOutgoing(m model, _ []string) (tea.Model, tea.Cmd) {
 	if session == nil {
 		return m.fail("没有载荷可看：" + noSession), nil
 	}
-	m.lastAction = "拉载荷…"
-	return m, loadOutgoingCmd(m.client, session.ID)
+	// 输入框有字 ⇒ 问那句的预演（(c) 真请求）；空 ⇒ 空 content 后端 400，
+	// 不如直接说（别拿 400 糊查看器）。
+	if text := strings.TrimSpace(m.input); text != "" {
+		m.lastAction = "问预演…"
+		return m, loadPreviewCmd(m.client, session.ID, text)
+	}
+	m.lastAction = "输入框打字再看（空 content 不问）"
+	return m, nil
 }
 
 func commandState(m model, _ []string) (tea.Model, tea.Cmd) {

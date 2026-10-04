@@ -4,10 +4,6 @@ export function formatThinkLabel(reasoningMs) {
   return `思考过程（${(reasoningMs / 1000).toFixed(1)}s）`;
 }
 
-export function isSummaryItem(item) {
-  return item?.type === "summary";
-}
-
 // 状态行：占用 used/budget（over_budget 标红由 CSS 类承担）+ provider/model + phase/耗时。
 export function formatStatusLine({ ctx, phase, elapsedMs, provider, model }) {
   const used = ctx?.used_tokens ?? "?";
@@ -109,26 +105,6 @@ export function renderMessage(doc, { who, role, content, reasoning, reasoningMs 
   const body = doc.createElement("div");
   body.className = "text";
   body.textContent = content ?? "";
-  div.appendChild(body);
-  return div;
-}
-
-export function renderOutgoingItem(doc, item) {
-  const div = doc.createElement("div");
-  div.className = "out" + (isSummaryItem(item) ? " summary" : "") + (item.pending ? " pending" : "");
-  const head = doc.createElement("span");
-  head.className = "out-type";
-  head.textContent =
-    item.type === "summary"
-      ? `summary ${item.from_idx ?? "?"}–${item.to_idx ?? "?"}（${item.blocks ?? "?"}块）`
-      : item.type === "system"
-        ? "system idx=0"
-        : `message idx=${item.idx ?? "?"}`;
-  if (item.pending) head.textContent += "（待发）";
-  div.appendChild(head);
-  const body = doc.createElement("span");
-  body.className = "out-text";
-  body.textContent = ` ${String(item.content ?? "").slice(0, 80)}`;
   div.appendChild(body);
   return div;
 }

@@ -6,7 +6,6 @@ import (
 
 	"microchat/internal/model"
 	"microchat/internal/state"
-	"microchat/internal/store"
 )
 
 // effectiveSystemPrompt：生效的系统提示词 —— **解析只有一处**（`state.ResolveSystemPrompt`：
@@ -76,31 +75,13 @@ func atIdx(w http.ResponseWriter, r *http.Request) (int, bool, bool) {
 	return value, true, true
 }
 
-// getSessionOutgoing：**(b) 当前已定历史的载荷** —— 标签已剔除、世界状态已注入、按摘要收拢。
+// getSessionOutgoing：旧 (b) 逐项形状已删 —— 调了就 410 `gone`。
 //
-// 口径钉死：它**不含还没发出去的那一句**（那正是 (c) 的事，见 `postSessionOutgoing`）；
-// 它是**算出来的**（改旧消息 / 换 agent / 世界状态变了 ⇒ 立刻不同），不是历史快照
-// （快照是 (a)：`GET /debug/last-payload`）。
+// 自拼的"给人看的载荷"不是真请求：`message_id`/`idx`/`type` 全是库内账，
+// 上游一格都不要 —— 留着就是糊弄，该报错就报错（别画个假的）。
+// 真要看"发出去什么"问 (c) `POST /outgoing`（真请求 method/url/headers/体）。
 func (s *Server) getSessionOutgoing(w http.ResponseWriter, r *http.Request) {
-	session, ok := s.requireSession(w, r)
-	if !ok {
-		return
-	}
-	messages, err := s.store.ListMessages(session.ID)
-	if err != nil {
-		writeStoreError(w, err)
-		return
-	}
-	store.IndexMessages(messages)
-	summaries, err := s.store.ListSummaries(session.ID)
-	if err != nil {
-		writeStoreError(w, err)
-		return
-	}
-	systemPrompt, source := s.effectiveSystemPrompt(*session)
-	view := state.FromSources(session.ID, systemPrompt, source, messages)
-	outgoing := state.BuildOutgoing(systemPrompt, messages, summaries, view.Tables)
-	writeJSON(w, http.StatusOK, state.ExpandChildren(outgoing, messages, summaries))
+	writeError(w, http.StatusGone, "gone", "GET /outgoing 已删：看真请求问 POST /outgoing（只算不写，method/url/headers/体）")
 }
 
 // OutgoingReq：`POST /sessions/{session_id}/outgoing` 的请求体 —— 待发的那一句。

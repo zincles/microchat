@@ -289,28 +289,20 @@ func (c *Client) DeleteMessagesFrom(sessionID, messageID, lastDeletedMessageID s
 	return plan, err
 }
 
-// Outgoing：**(b) 当前已定历史的载荷**（标签已剔、状态已注入、压缩已生效）—— **不含还没发出去的那句**。
-// 每一条自带类型（system / message+message_id / summary+summary_id+blocks+children）—— 检查压缩效果就靠它。
-type Outgoing struct {
-	Role      string  `json:"role"`
-	Content   string  `json:"content"`
-	Type      string  `json:"type"`
-	MessageID *string `json:"message_id"`
-	SummaryID *string `json:"summary_id"`
-	Blocks    *int64  `json:"blocks"`
-	// Idx：这一项是**第几条消息**（system ⇒ 0，它是合成的、不是消息）；摘要在 FromIdx/ToIdx 里
-	// 报"它替代了第几条到第几条"。**只服务调试**（`/outgoing` 查看器），界面别的地儿不用它。
-	Idx     *int `json:"idx,omitempty"`
-	FromIdx *int `json:"from_idx,omitempty"`
-	ToIdx   *int `json:"to_idx,omitempty"`
-	// Children：summary 项往下展开的一层（叶子只给 id+idx，不给正文）。
-	Children []Outgoing `json:"children,omitempty"`
+// PreviewWire：(c) 真请求（method/url/headers/体）—— 与 (a) 同一支笔 `Snapshot`。
+type WirePreview struct {
+	Method  string            `json:"method"`
+	URL     string            `json:"url"`
+	Headers map[string]string `json:"headers"`
+	Body    json.RawMessage   `json:"body"`
 }
 
-func (c *Client) Outgoing(sessionID string) ([]Outgoing, error) {
-	var items []Outgoing
-	err := c.get("/sessions/"+sessionID+"/outgoing", &items)
-	return items, err
+// PreviewWire：把待发那句追加进去之后真会发出去的那一发（只算不写）。
+// 空/空白 content 后端 400 ⇒ 这里照实回错（别拿报错糊右栏）。
+func (c *Client) PreviewWire(sessionID, content string) (WirePreview, error) {
+	var wire WirePreview
+	err := c.post("/sessions/"+sessionID+"/outgoing", map[string]any{"content": content}, &wire)
+	return wire, err
 }
 
 // Models：跨 provider 的全部模型（`/model` 的面板按 provider 分组显示）。

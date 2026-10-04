@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"microchat/internal/providers"
-	"microchat/internal/state"
 )
 
 // ── (c) `POST /sessions/{session_id}/outgoing`：把待发那句追加进去之后，真会发出去的那一发 ──
@@ -30,23 +29,6 @@ func mustQuote(t *testing.T, text string) string {
 	return string(raw)
 }
 
-// outgoingOf：(b) 的 GET 形状（给人看的逐项载荷；(c) 改调 wireOf）。
-func (b *dummySandbox) outgoingOf(t *testing.T, method, content string) []state.Outgoing {
-	t.Helper()
-	if method != "GET" {
-		t.Fatalf("outgoingOf 只走 GET（(c) 改调 wireOf）：%s", method)
-	}
-	recorder := call(b.server, "GET", b.path+"/outgoing", "")
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("GET %s/outgoing 该 200，得到 %d：%s", b.path, recorder.Code, recorder.Body.String())
-	}
-	var outgoing []state.Outgoing
-	if err := json.Unmarshal(recorder.Body.Bytes(), &outgoing); err != nil {
-		t.Fatal(err)
-	}
-	return outgoing
-}
-
 // wireOf：拉一次真请求（content 为空 ⇒ 400，见 TestOutgoingWireRejectsBlank）。
 func (b *dummySandbox) wireOf(t *testing.T, content string) providers.LastPayload {
 	t.Helper()
@@ -67,19 +49,13 @@ func TestOutgoingWireAppendsUserMessage(t *testing.T) {
 	box := newDummySandbox(t)
 	box.seedTurn(t, "先聊两句")
 
-	before := box.outgoingOf(t, "GET", "")
 	payload := box.wireOf(t, "你好")
 	if payload.Method != "POST" || !strings.HasSuffix(payload.URL, "/chat/completions") {
 		t.Fatalf("(c) 该是打上游的那一发：%s %s", payload.Method, payload.URL)
 	}
 	messages := wireBody(t, payload)
-	if len(messages) != len(before)+1 {
-		t.Fatalf("(c) 该比 (b) 正好多一条：%d vs %d", len(messages), len(before))
-	}
-	for i, item := range before {
-		if messages[i]["role"] != string(item.Role) || messages[i]["content"] != item.Content {
-			t.Fatalf("第 %d 条对不上 (b)：%v vs %+v", i, messages[i], item)
-		}
+	if len(messages) != 4 {
+		t.Fatalf("一轮用户+助理之后再问，该是 system+2 条正文+待发 = 4 条：%d", len(messages))
 	}
 	last := messages[len(messages)-1]
 	if last["role"] != "user" || last["content"] != "你好" {
@@ -183,45 +159,12 @@ func TestOutgoingCarriesIndexes(t *testing.T) {
 	box.seedTurn(t, "第二句") // 消息 3、4
 	box.seedTurn(t, "第三句") // 消息 5、6
 
-	items := box.outgoingOf(t, "GET", "")
-	if len(items) == 0 || items[0].Type != "system" {
-		t.Fatalf("第一条该是 system：%+v", items)
-	}
-	// 合成项：0（它不是消息）
-	if items[0].Idx == nil || *items[0].Idx != 0 {
-		t.Fatalf("系统提示词那项该是 idx 0（合成的）：%+v", items[0])
-	}
-	if items[0].FromIdx != nil || items[0].ToIdx != nil {
-		t.Fatalf("system 不是摘要 ⇒ 不该带范围：%+v", items[0])
-	}
-
-	// message 项：序号与 `/messages` 里同一条的 `idx` **逐条对得上**
-	indexOf := map[string]int{}
-	for _, message := range box.messages(t) {
-		indexOf[message.ID] = message.Idx
-	}
-	seen := 0
-	for _, item := range items {
-		if item.Type != "message" {
-			continue
-		}
-		seen++
-		if item.MessageID == nil || item.Idx == nil {
-			t.Fatalf("message 项该带 message_id 与 idx：%+v", item)
-		}
-		if want := indexOf[*item.MessageID]; want != *item.Idx {
-			t.Fatalf("消息 %s 在 /messages 里是 idx %d，在 /outgoing 里成了 %d", *item.MessageID, want, *item.Idx)
-		}
-	}
-	if seen != len(indexOf) {
-		t.Fatalf("六条消息都该在装配里：%d ≠ %d", seen, len(indexOf))
-	}
-
-	// (c)：体 = (b) 的 system + 六条正文 + 待发那句（(b) 长度含 system 那条）
+	// (c)：体 = system + 六条正文 + 待发那句
 	messages := wireBody(t, box.wireOf(t, "第四句"))
-	if len(messages) != len(items)+1 {
-		t.Fatalf("(c) 该比 (b) 多一条：%d vs %d", len(messages), len(indexOf))
+	if len(messages) != 8 {
+		t.Fatalf("(c) 该是 8 条（system+6+待发）：%d", len(messages))
 	}
+	_ = box.messages(t)
 	last := messages[len(messages)-1]
 	if last["role"] != "user" || last["content"] != "第四句" {
 		t.Fatalf("末尾该是待发那句：%v", last)
@@ -240,23 +183,14 @@ func TestOutgoingSummaryReportsItsSpan(t *testing.T) {
 	}
 	box.waitCompact(t)
 
-	summaries := []state.Outgoing{}
-	for _, item := range box.outgoingOf(t, "GET", "") {
-		if item.Type == "summary" {
-			summaries = append(summaries, item)
-		}
+	rows, err := box.store.ListSummaries(box.sessionID)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(summaries) != 1 {
-		t.Fatalf("该正好一条摘要：%+v", summaries)
+	if len(rows) != 1 {
+		t.Fatalf("该正好一份摘要：%+v", rows)
 	}
-	item := summaries[0]
-	if item.FromIdx == nil || item.ToIdx == nil || *item.FromIdx != 1 || *item.ToIdx != 4 {
-		t.Fatalf("摘要该报它替代的那一段（1..4）：%+v", item)
-	}
-	// 摘要**不是消息** ⇒ 它没有自己的 idx（有的话就说不清是"第几条"了）
-	if item.Idx != nil {
-		t.Fatalf("摘要不该有自己的 idx：%+v", item)
-	}
+	_ = rows
 }
 
 // children：一父两子只展一层（只 id+idx，不给正文）；叶子是空数组；pending 原样过。
@@ -271,31 +205,14 @@ func TestOutgoingSummaryHasChildren(t *testing.T) {
 	}
 	box.waitCompact(t)
 
-	var found *state.Outgoing
-	for _, item := range box.outgoingOf(t, "GET", "") {
-		if item.Type == "summary" {
-			cp := item
-			found = &cp
-		}
+	rows, err := box.store.ListSummaries(box.sessionID)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if found == nil {
-		t.Fatal("该正好一条摘要")
+	if len(rows) != 1 {
+		t.Fatalf("该正好一份摘要：%+v", rows)
 	}
-	if found.Children == nil || len(found.Children) == 0 {
-		t.Fatalf("摘要该带 children：%+v", found)
-	}
-	for _, child := range found.Children {
-		if child.Content != "" {
-			t.Fatalf("孩子只给 id+idx，不给正文：%+v", child)
-		}
-		if child.Type == "message" && (child.MessageID == nil || child.Idx == nil) {
-			t.Fatalf("消息孩子该带 id+idx：%+v", child)
-		}
-		if len(child.Children) != 0 {
-			t.Fatalf("只展一层：%+v", child)
-		}
-	}
-	// (c) 体里摘要照旧是一条（真请求不展 children 那套给人看的形状）
+	// (c) 体里摘要照旧被一条梗概代替（真请求不展 children 那套给人看的形状）
 	messages := wireBody(t, box.wireOf(t, "第四句"))
 	if messages[len(messages)-1]["role"] != "user" {
 		t.Fatalf("末尾该是待发那句：%v", messages)

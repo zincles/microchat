@@ -244,7 +244,7 @@ delete(AA)           # 删除
 | GET | `/sessions/{session_id}/messages/{message_id}/deletion-preview` | — | `DeletionPlan` | **只算不动**（安全 ⇒ GET）：会删掉哪些消息 / 摘要、哪些指针会被置空 |
 | DELETE | `/sessions/{session_id}/messages/{message_id}` | `{"last_deleted_message_id"}` | `DeletionPlan` | 删**这条及之后的全部**（级联见 `DEFINE.md`）。核对字段不符 ⇒ **409**（重新预览）；缺字段 ⇒ 422 |
 | GET | `/sessions/{session_id}/state` | — | `StateView` | `baseline` / `session` / `baseline_values` / `effective` / `tables`，**每次现算**。层名是 **`baseline`**（底子）、**不是** `global` ✗ —— `global` 现在是 **`tables` 里那张表**（不写表名的块落到它，且它**恒在**：空也回 `{}`）。查询参数 `?at_idx=N` ⇒ **截至第 N 条的现演**：底子**永远用当前的生效提示词**（不追究历史 ⇒ **不是真快照**）、正文只 fold 到第 N 条（含）、`0` ⇒ 只有底子、越界 ⇒ 当作到最后一条（与 `/messages` 一个口径）、不给 ⇒ 当前状态；负 / 非整数 ⇒ **400** |
-| GET | `/sessions/{session_id}/outgoing` | — | `[Outgoing]` | **(b) 当前已定历史的载荷**：把**已入库的东西**装配一遍 —— **不含还没发出去的那一句** ✗（标签已剔、状态已注入、**压缩已生效**）。每条带类型：`type` = `system`/`message`/`summary`（后者另有 `summary_id`、`blocks`、`children` 嵌套—— summary 项往下展开一层，叶子只给 id+idx）—— **检查压缩效果靠它**，别去猜正文抬头。每条还带序号：`type=system` ⇒ **`idx: 0`**（合成的、不是消息）、`type=message` ⇒ 它自己那条的 `idx`、`type=summary` ⇒ 它**替代的**范围 `from_idx`/`to_idx`（于是"第 5–10 条被压成了哪一条"一眼可见；摘要**没有**自己的 `idx` ✗） |
+| GET | `/sessions/{session_id}/outgoing` | — | 410 `gone` | 已删（旧逐项形状不是真请求）：看真请求问下面那条 `POST` |
 | POST | `/sessions/{session_id}/outgoing` | `{"content":"…"}` | `LastPayload`（`method/url/headers/体`） | **(c) 把这条 content 当成即将追加的那句用户消息之后**，真会发出去的那一发（**真请求**，与 (a) 同一支笔 `Snapshot`：`chat.PreviewWire` 与真发共用装配→`wireMessages`→选后端查表→`providers.Build` 两份对不上就地炸）。**只算不写**：不落库、不改任何状态。待发那句若带 `<state>` 块 ⇒ **状态表跟着变** ⇒ 必须重走一遍现演与装配（不是"(b) + 一条消息"）。缺 / 空白 `content` ⇒ **400** |
 | GET | `/sessions/{session_id}/context` | — | `ContextUsage` | 只有数字：`used_tokens`（估算）/ `budget_tokens` / `trigger_tokens` / `remaining_tokens` / `ctx_len` / `max_output` / `ratio` / `estimated` / `last_prompt_tokens` / `over_budget` |
 | GET | `/sessions/{session_id}/prompt` | — | `{"text","type"}` | **生效的系统提示词**（三级解析的**结果**，与出站拼装读同一处）：`type` = `conversation`（会话自己写了 `sessions.system_prompt`）/ `agent`（`agents.json` 里那个 agent 的）/ `builtin`（两级都没有 ⇒ 代码里的内置默认）。**永不给空**：解析全落空（典型：会话的 `agent_id` 软引用**悬空**）也退内置那句、`type` 报 `builtin`。将来做了可拼接的提示词，这里回**运算后**的结果（形状不变）|
@@ -266,19 +266,15 @@ delete(AA)           # 删除
 
 同一会话在跑时再发 → **409**。`TurnAccepted` = `{user?, backend, turn}`：`turn.message_id` 是**这条回复的 id**（受理时定好，那会儿还没进库）。
 
-**出站载荷有三件事 —— 别用一个词糊过去** ✗（各有名字、各有入口）：
+**出站载荷有两件事 —— 别用一个词糊过去** ✗（各有名字、各有入口）：
 
 | | 是什么 | 入口 | 能否重算 |
 |---|---|---|---|
-| **(a) 上一次真发出去的那一发** | 那一刻请求的**快照**（**含请求头**、覆盖式：只留最近一发） | `GET /debug/last-payload` | **不能** ✗ —— 历史事实：改一条旧消息就回不去了 |
-| **(b) 当前已定历史的载荷** | 把**已入库的东西**装配一遍（**不含还没发出去的那句** ✗；给人看的形状：`type/idx/pending` 全在） | `GET /sessions/{session_id}/outgoing` | 能 ✓ —— 改旧消息 / 换 agent / 世界状态变了，它立刻不同 |
-| **(c) 把待发那句追加进去之后** | (b) 的装配 + 待发那句 → 走**同一段 Build** 的**真请求**（`method/url/headers/体`，与 (a) 同一支笔；库内账一个不发） | `POST /sessions/{session_id}/outgoing` | 能 ✓，但**只有服务端算得出来** |
+| **(a) 上一次真发出去的那一发** | 那一刻请求的**快照**（**含请求头**；覆盖式，只留最近一发） | `GET /debug/last-payload` | **不能** ✗ —— 历史事实：改一条旧消息就回不去了 |
+| **(c) 把待发那句追加进去之后** | 同一段装配 + 同一段 Build 的**真请求**（`method/url/headers/体`，与 (a) 同一支笔；库内账一个不发；**只算不写**） | `POST /sessions/{session_id}/outgoing` | 能 ✓，但**只有服务端算得出来** |
 
 **(c) 为什么客户端拼不出来** ✗：待发那句里若带 `<state>` 块 ⇒ **注入系统提示词的状态表会跟着变** ⇒ (c) 不是"(b) + 一条消息" ✗，必须重走一遍状态现演与装配。
-
-**(b) 的序号 `idx`** ✓（2026-09-30 补）：每一项都带它 —— `system` ⇒ **0**（合成的，不是消息）、
-`message` ⇒ 自己那条 ✓、`summary` ⇒ 它**替代的**范围 `from_idx`/`to_idx` ✓（"第 5–10 条被压成了哪一条"一眼可见）；
-它是**派生的**（= 按 `id` 排第几条）、**不落库**、**永不改变** —— 见「不变量」第 4 条与 `DEFINE.md` 的「各种 id」。
+（旧 (b) 逐项形状已删：`message_id`/`idx`/`type` 全是库内账，上游一格都不要 —— 调 `GET /outgoing` 就 410 `gone`。）
 
 **真发的那一轮装配的就是 (c) 的前身** ✓：受理时先把用户消息落库，再走**同一段装配**
 （`chat.outgoingFor` ⇒ `assemble` ⇒ `state.FromSources` + `state.BuildOutgoing`）——

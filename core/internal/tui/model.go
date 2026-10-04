@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -305,8 +306,8 @@ type modelsMsg struct {
 }
 
 type outgoingMsg struct {
-	items []Outgoing
-	err   error
+	wire WirePreview
+	err  error
 }
 
 type stateMsg struct {
@@ -562,8 +563,16 @@ func loadModelsCmd(client *Client) tea.Cmd {
 
 func loadOutgoingCmd(client *Client, sessionID string) tea.Cmd {
 	return func() tea.Msg {
-		items, err := client.Outgoing(sessionID)
-		return outgoingMsg{items: items, err: err}
+		wire, err := client.PreviewWire(sessionID, "")
+		return outgoingMsg{wire: wire, err: err}
+	}
+}
+
+// loadPreviewCmd：问一句的预演（(c) 真请求；空 content 后端 400，调用方别传空）。
+func loadPreviewCmd(client *Client, sessionID, content string) tea.Cmd {
+	return func() tea.Msg {
+		wire, err := client.PreviewWire(sessionID, content)
+		return outgoingMsg{wire: wire, err: err}
 	}
 }
 
@@ -1170,51 +1179,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m = m.fail("拉载荷失败：" + message.err.Error())
 			return m, nil
 		}
-		lines := make([]string, 0, len(message.items)*3+2)
-		for _, item := range message.items {
-			// 出处一眼看出来（口径见 AGENTS.md）：**摘要是压缩过的 ⇒ 黄**、系统提示词 ⇒ 暗、
-			// 原样消息 ⇒ 默认色。正文一律默认色（内容才是主角）。
-			// 左列是**压缩前的消息序号**（摘要写它涵盖的区间）—— 与 `/messages`、
-			// `/state?at_idx` 同一套"第几条"的词汇：于是"第 5–10 条被压成了哪一条"不用去数。
-			label, who, kind := "-", "消息", stylePlain
-			switch item.Type {
-			case "system":
-				who, kind = "系统提示词", styleDim
-				if item.Idx != nil {
-					label = strconv.Itoa(*item.Idx)
-				}
-			case "summary":
-				blocks := int64(0)
-				if item.Blocks != nil {
-					blocks = *item.Blocks
-				}
-				id := ""
-				if item.SummaryID != nil {
-					id = shortID(*item.SummaryID)
-				}
-				who, kind = "摘要 "+id+"（覆盖 "+strconv.FormatInt(blocks, 10)+" 块）", styleYellow
-				if item.FromIdx != nil && item.ToIdx != nil {
-					label = strconv.Itoa(*item.FromIdx) + "-" + strconv.Itoa(*item.ToIdx)
-				}
-			default:
-				if item.MessageID != nil {
-					who = "消息 " + shortID(*item.MessageID)
-				}
-				if item.Idx != nil {
-					label = strconv.Itoa(*item.Idx)
-				}
-			}
-			head := fmt.Sprintf("%-7s %-9s %-8s", label, item.Role, "")
-			line, _ := m.style.concat([]segment{{head, stylePlain}, {who, kind}}, max(1, m.width), "")
-			lines = append(lines, line)
-			for _, line := range strings.Split(item.Content, "\n") {
-				lines = append(lines, truncate("     "+line, max(1, m.width)))
-			}
-			lines = append(lines, "")
+		raw, err := json.MarshalIndent(message.wire, "", "  ")
+		if err != nil {
+			m = m.fail("载荷没法序列化：" + err.Error())
+			return m, nil
 		}
-		m.viewer, m.viewerTitle = lines, fmt.Sprintf("当前已定历史的载荷（%d 条）", len(message.items))
+		lines := strings.Split(string(raw), "\n")
+		m.viewer, m.viewerTitle = lines, "真请求（method/url/headers/体）"
 		m.viewerHint = "任意键关掉"
-		m.lastAction = fmt.Sprintf("载荷 %d 条（Esc 关掉）", len(message.items))
+		m.lastAction = fmt.Sprintf("真请求（Esc 关掉）")
 		return m, nil
 
 	case usageMsg:
