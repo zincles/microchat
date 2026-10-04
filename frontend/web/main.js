@@ -31,7 +31,7 @@ const el = {
   form: document.getElementById("composer"),
   input: document.getElementById("input"),
   statusline: document.getElementById("statusline"),
-  outgoingRaw: el.outgoingRaw,
+  outgoingRaw: document.getElementById("outgoing-raw"),
   sessionNew: document.getElementById("session-new"),
   palette: document.getElementById("palette"),
   paletteList: document.getElementById("palette-list"),
