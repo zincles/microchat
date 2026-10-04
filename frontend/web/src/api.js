@@ -26,7 +26,8 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
     // closeSession：关会话 = DELETE 整条（删完后端不代建 —— 进哪条由调用方定）。
     closeSession: (id) => call("DELETE", `/sessions/${enc(id)}`),
     listMessages: (id) => call("GET", `/sessions/${enc(id)}/messages`),
-    patchSession: (id, body) => call("PATCH", `/sessions/${enc(id)}`, body),
+    // sendMessage：发一句话（202 受理 + 后台跑；预演调的不是这条，别混）。
+    sendMessage: (id, content) => call("POST", `/sessions/${enc(id)}/messages`, { content }),
     status: (id) => call("GET", `/sessions/${enc(id)}/status`),
     turnText: (id, from, thinkFrom) =>
       call("GET", `/sessions/${enc(id)}/turn/text?from=${from}&think_from=${thinkFrom}`),
