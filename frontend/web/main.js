@@ -17,7 +17,9 @@ import {
 
 const API = localStorage.getItem("mc_api") || "http://127.0.0.1:8787/api/v1";
 const TOKEN = localStorage.getItem("mc_token") || "";
-const api = createApi({ base: API, token: TOKEN });
+// 预演开关：localStorage.mc_preview —— "0" = 关，其余（含没写）= 开。
+// 每拍现读：设置里改完即时生效，不用刷新（API/Token 那两格才要刷新）。
+function previewOn() { return localStorage.getItem("mc_preview") !== "0"; }
 
 // 保留旧名：call() 照旧直调，boot()/send() 语义不变（扩展只加功能）。
 async function call(method, path, body) {
@@ -451,6 +453,7 @@ function wireSettings() {
   const loadClient = () => {
     document.getElementById("cli-api").value = localStorage.getItem("mc_api") || "http://127.0.0.1:8787/api/v1";
     document.getElementById("cli-token").value = localStorage.getItem("mc_token") || "";
+    document.getElementById("cli-preview").checked = previewOn();
   };
   const open = async () => {
     settingsSnap = snapshotSettings(readServerForm());
@@ -518,11 +521,12 @@ function wireSettings() {
     } catch (err) { document.getElementById("def-status").textContent = `保存失败：${err.message}`; }
   };
 
-  // 客户端区：localStorage.mc_api/mc_token 两格（改完提示刷新页面）。
+  // 客户端区：mc_api/mc_token 改完刷新生效；mc_preview 即时生效（下一拍现读）。
   document.getElementById("cli-save").onclick = () => {
     localStorage.setItem("mc_api", document.getElementById("cli-api").value.trim() || "http://127.0.0.1:8787/api/v1");
     localStorage.setItem("mc_token", document.getElementById("cli-token").value);
-    document.getElementById("cli-status").textContent = "已保存，刷新页面生效";
+    localStorage.setItem("mc_preview", document.getElementById("cli-preview").checked ? "1" : "0");
+    document.getElementById("cli-status").textContent = "已保存（API/Token 刷新页面生效，预演即时生效）";
   };
 
   // Agent 区：左列表+右详情（name/system_prompt/三能力checkbox/provider-model-prompt 三覆盖格/保存整段 PATCH/新建/删除/设默认）。
@@ -760,6 +764,8 @@ el.input.addEventListener("input", () => {
   clearTimeout(previewTimer);
   previewTimer = setTimeout(async () => {
     const text = el.input.value;
+    // 预演总闸：关了就不发包（右栏留旧话，不糊也不闪）。
+    if (!previewOn()) return;
     if (!sessionID || !text.trim() || text.startsWith("/")) {
       refreshStatusline("idle").catch(() => {});
       return;

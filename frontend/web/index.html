@@ -80,8 +80,9 @@
           <section id="panel-client" class="panel hidden">
             <label class="field"><span>API 地址</span><input id="cli-api" placeholder="http://127.0.0.1:8787/api/v1" /></label>
             <label class="field"><span>Token</span><input id="cli-token" placeholder="可空" type="password" /></label>
+            <label class="field"><span>输入时预演载荷</span><input id="cli-preview" type="checkbox" /></label>
             <div class="row"><button id="cli-save" type="button">保存</button><span id="cli-status" class="status"></span></div>
-            <p class="hint">改完刷新页面生效（localStorage.mc_api / mc_token）。</p>
+            <p class="hint">API/Token 改完刷新页面生效；预演开关即时生效（localStorage.mc_api / mc_token / mc_preview）。</p>
           </section>
           <section id="panel-agent" class="panel hidden">
             <div class="agent-cols">
