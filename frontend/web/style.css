@@ -4,8 +4,8 @@
 body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.7 system-ui, -apple-system, "Segoe UI", sans-serif; }
 #app { display: flex; flex-direction: column; height: 100vh; }
 header { display: flex; gap: 1em; align-items: center; padding: 0.6em 1em; border-bottom: 1px solid var(--line); color: var(--dim); background: var(--panel); }
-.pill { background: #2a2a2a; border: 1px solid var(--line); color: var(--text); border-radius: 999px; padding: 0.25em 0.9em; font-size: 0.85em; cursor: pointer; }
-.pill:hover { background: #333; }
+.pill, .pill-select { background: #2a2a2a; border: 1px solid var(--line); color: var(--text); border-radius: 999px; padding: 0.25em 0.9em; font-size: 0.85em; cursor: pointer; max-width: 16em; }
+.pill:hover, .pill-select:hover { background: #333; }
 /* 三栏：左会话 240px｜中对话自适应（最宽 800px 居中，ChatGPT 那种）｜右载荷 340px。窄屏（<1100px）右栏先藏，<700px 左栏变顶条 —— 消息优先。 */
 #columns { flex: 1; display: flex; min-height: 0; }
 #sessions-bar { width: 240px; flex: none; background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; overflow: hidden; }

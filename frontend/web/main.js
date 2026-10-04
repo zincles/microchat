@@ -167,18 +167,21 @@ async function enterSession(id) {
   const found = sessions.find((s) => s.id === id);
   sessionInfo = found ?? {};
   paintSessionHeader();
+  // 原生下拉跟当前值走（选项按 provider 分 optgroup；换选项即 PATCH，不再弹 picker）。
+  fillModelSelect(document.getElementById("session-model"));
+  fillAgentSelect(document.getElementById("session-agent"));
   renderSessions(sessions);
   renderHistory(messages);
   refreshStatusline("idle");
 }
 
-document.getElementById("session-model").addEventListener("click", () => {
-  if (!sessionID) return;
-  pickModel();
+document.getElementById("session-model").addEventListener("change", (e) => {
+  if (!sessionID || !e.target.value) return;
+  applyModelValue(e.target.value).catch((err) => addMessage("系统", `换模型失败：${err.message}`, "assistant"));
 });
-document.getElementById("session-agent").addEventListener("click", () => {
-  if (!sessionID) return;
-  pickAgent();
+document.getElementById("session-agent").addEventListener("change", (e) => {
+  if (!sessionID || !e.target.value) return;
+  applyAgentValue(e.target.value).catch((err) => addMessage("系统", `换 Agent 失败：${err.message}`, "assistant"));
 });
 
 async function boot() {
@@ -370,34 +373,67 @@ async function runCommand(name, args) {
   }
 }
 
-// pickModel：当前会话换模型（跟随 Agent 预设那句由后端回退管 —— 这里只管 PATCH 两格）。
+// pickModel / fillModelSelect / applyModelValue：顶部原生 <select> 换模型。
+// 选项按 provider 分 optgroup（当前值选中；换选项即 PATCH 两格，不再弹 picker）。
 function pickModel() {
+  fillModelSelect(document.getElementById("session-model"));
+}
+
+function fillModelSelect(sel) {
   api.models().then((models) => {
-    const items = [];
+    sel.innerHTML = "";
+    const cur = sessionInfo.provider && sessionInfo.model ? `${sessionInfo.provider}|||${sessionInfo.model}` : "";
     for (const g of groupModelsByProvider(models)) {
-      for (const m of g.items) items.push({ label: `${g.provider} / ${m.name ?? m.upstream_id}`, value: m });
+      const og = document.createElement("optgroup");
+      og.label = g.provider;
+      for (const m of g.items) {
+        const o = document.createElement("option");
+        o.value = `${g.provider}|||${m.upstream_id}`;
+        o.textContent = m.name ?? m.upstream_id;
+        og.appendChild(o);
+      }
+      sel.appendChild(og);
     }
-    showPicker("选模型（只改当前会话）", items, async (it) => {
-      sessionInfo = await api.patchSession(sessionID, {
-        provider: it.value.provider,
-        model: it.value.upstream_id,
-      });
-      paintSessionHeader();
-      refreshStatusline("idle");
-    });
+    if ([...sel.options].some((o) => o.value === cur)) sel.value = cur;
+    else if (!cur && sel.options[0]) applyModelValue(sel.options[0].value);
   }).catch((err) => addMessage("系统", `模型列表失败：${err.message}`, "assistant"));
 }
 
-// pickAgent：当前会话换 Agent（只改这条会话的 agent_id；缺省不动）。
+async function applyModelValue(value) {
+  const sep = value.indexOf("|||");
+  if (sep < 0) return;
+  sessionInfo = await api.patchSession(sessionID, {
+    provider: value.slice(0, sep),
+    model: value.slice(sep + 3),
+  });
+  paintSessionHeader();
+  refreshStatusline("idle");
+}
+
+// pickAgent / fillAgentSelect / applyAgentValue：顶部原生 <select> 换 Agent（只改当前会话）。
 function pickAgent() {
+  fillAgentSelect(document.getElementById("session-agent"));
+}
+
+function fillAgentSelect(sel) {
   api.agents().then((data) => {
-    const items = (data.agents ?? []).map((a) => ({ label: `${a.name}（${a.id}）`, value: a }));
-    showPicker("选 Agent（只改当前会话）", items, async (it) => {
-      sessionInfo = await api.patchSession(sessionID, { agent_id: it.value.id });
-      paintSessionHeader();
-      refreshStatusline("idle");
-    });
+    sel.innerHTML = "";
+    for (const a of data.agents ?? []) {
+      const o = document.createElement("option");
+      o.value = a.id;
+      o.textContent = a.name;
+      sel.appendChild(o);
+    }
+    if ([...sel.options].some((o) => o.value === sessionInfo.agent_id)) sel.value = sessionInfo.agent_id;
+    else if (!sessionInfo.agent_id && sel.options[0]) applyAgentValue(sel.options[0].value);
   }).catch((err) => addMessage("系统", `Agent 列表失败：${err.message}`, "assistant"));
+}
+
+async function applyAgentValue(id) {
+  if (!id) return;
+  sessionInfo = await api.patchSession(sessionID, { agent_id: id });
+  paintSessionHeader();
+  refreshStatusline("idle");
 }
 
 // paintSessionHeader：顶部 `会话名 · 模型 · Agent` 三段（改完当场重画，不等轮询）。
