@@ -31,7 +31,6 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
     turnText: (id, from, thinkFrom) =>
       call("GET", `/sessions/${enc(id)}/turn/text?from=${from}&think_from=${thinkFrom}`),
     context: (id) => call("GET", `/sessions/${enc(id)}/context`),
-    outgoing: (id) => call("GET", `/sessions/${enc(id)}/outgoing`),
     // outgoingPreview：右载荷预演 —— 待发那句问 (c)（只算不写）。
     // 空/空白不发包（后端 400 也无意义）⇒ 直接回 null，调用方不刷右栏。
     outgoingPreview: (id, content) => {

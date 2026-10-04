@@ -31,8 +31,7 @@ const el = {
   form: document.getElementById("composer"),
   input: document.getElementById("input"),
   statusline: document.getElementById("statusline"),
-  outgoing: document.getElementById("outgoing"),
-  sessionList: document.getElementById("session-list"),
+  outgoingRaw: el.outgoingRaw,
   sessionNew: document.getElementById("session-new"),
   palette: document.getElementById("palette"),
   paletteList: document.getElementById("palette-list"),
@@ -92,20 +91,13 @@ async function refreshStatusline(phase, elapsedMs) {
   } catch { /* 状态行失败不挡主流程 */ }
 }
 
-// renderPayload：右载荷栏只剩 raw 一档（真请求 method/url/headers/体）。
-// pretty 那档（给人看的逐项）已删：它调的是旧 (b) 形状，后端不再回它 ——
-// 调了就 410（`gone`），比"画个假的糊弄"强。
+// renderPayload：右载荷栏（真请求 method/url/headers/体直放）。
 let lastPayloadWire = null;
-function paintPayloadTab() {
-  document.getElementById("outgoing").classList.add("hidden");
-  document.getElementById("outgoing-raw").classList.remove("hidden");
-}
 function renderPayload(wire) {
   lastPayloadWire = wire ?? null;
-  // 真请求直放（没有就放空话，不拿 pretty 糊）。
-  document.getElementById("outgoing-raw").textContent =
+  // 真请求直放（没有就放空话）。
+  el.outgoingRaw.textContent =
     lastPayloadWire ? JSON.stringify(lastPayloadWire, null, 2) : "(还没有预演：输入框打字即问 (c))";
-  paintPayloadTab();
 }
 
 // renderSessions：左会话栏（当前高亮；× 关闭 → DELETE 会话；关的是当前 ⇒ 进剩下第一条）。
