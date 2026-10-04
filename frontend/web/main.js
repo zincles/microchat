@@ -17,6 +17,7 @@ import {
 
 const API = localStorage.getItem("mc_api") || "http://127.0.0.1:8787/api/v1";
 const TOKEN = localStorage.getItem("mc_token") || "";
+const api = createApi({ base: API, token: TOKEN });
 // 预演开关：localStorage.mc_preview —— "0" = 关，其余（含没写）= 开。
 // 每拍现读：设置里改完即时生效，不用刷新（API/Token 那两格才要刷新）。
 function previewOn() { return localStorage.getItem("mc_preview") !== "0"; }
@@ -55,17 +56,37 @@ let pickerItems = [];
 let pickerSel = 0;
 let pickerAction = null;
 
-function addMessage(who, text, cls, think) {
+function addMessage(who, text, cls, think, messageId) {
   const node = renderMessage(document, {
     who,
     role: cls === "user" ? "user" : "assistant",
     content: text,
     reasoning: typeof think === "string" ? think : think?.text,
     reasoningMs: think?.ms,
+    messageId,
+    onEdit: messageId ? (mid, kind, value) => editMessageSave(mid, kind, value).catch((err) =>
+      addMessage("系统", `改消息失败：${err.message}`, "assistant")) : undefined,
   });
   el.messages.appendChild(node);
   el.messages.scrollTop = el.messages.scrollHeight;
   return node;
+}
+
+// editMessageSave：行内保存 ⇒ PATCH ⇒ 整段重画（世界状态随之现演）。
+async function editMessageSave(messageId, kind, value) {
+  await api.editMessage(sessionID, messageId, kind === "reasoning" ? { reasoning: value } : { content: value });
+  renderHistory(await api.listMessages(sessionID));
+}
+
+// editMessageFlow：/edit 命令走它（无行内框 ⇒ 先取旧值当 prompt 初值，取消即收手）。
+async function editMessageFlow(messageId, kind) {
+  const messages = await api.listMessages(sessionID);
+  const target = messages.find((m) => m.id === messageId);
+  if (!target) { addMessage("系统", "那条消息已经不在了（多半被删了）：重进会话看看", "assistant"); return; }
+  const old = kind === "reasoning" ? (target.reasoning ?? "") : target.content;
+  const next = window.prompt(kind === "reasoning" ? "改思考（空=清掉）" : "改正文", old);
+  if (next === null) return;
+  await editMessageSave(messageId, kind, next);
 }
 
 function renderHistory(messages) {
@@ -76,6 +97,7 @@ function renderHistory(messages) {
       m.content,
       m.role,
       m.reasoning ? { text: m.reasoning, ms: m.reasoning_ms } : null,
+      m.id,
     );
   }
 }
@@ -350,6 +372,47 @@ async function runCommand(name, args) {
           if (!(await confirmAsk(`${deletionPlanSummary(plan)}，确认删 #${it.value.idx} 及之后？`))) return;
           await api.deleteMessages(sessionID, it.value.id, plan.last_deleted_message_id);
           renderHistory(await api.listMessages(sessionID));
+        },
+      );
+      break;
+    }
+    case "edit": {
+      // /edit <idx> [思考]：改那条消息的正文（带"思考"改思考）；不给 idx ⇒ 弹 picker 选。
+      const messages = await api.listMessages(sessionID);
+      const wantThink = (args[0] ?? "").toLowerCase().startsWith("思") || (args[1] ?? "").toLowerCase().startsWith("思");
+      const n = Number(wantThink && isNaN(Number(args[0])) ? args[1] : args[0]);
+      const one = async (m) => editMessageFlow(m.id, wantThink ? "reasoning" : "content");
+      if (Number.isInteger(n) && n > 0) {
+        const m = messages.find((x) => x.idx === n);
+        if (!m) { addMessage("系统", `没有第 ${n} 条`, "assistant"); break; }
+        await one(m);
+        break;
+      }
+      showPicker(
+        `edit：选一条（改${wantThink ? "思考" : "正文"}）`,
+        messages.filter((m) => m.idx > 0).map((m) => ({
+          label: `#${m.idx} ${m.role} ${(wantThink ? (m.reasoning ?? "") : m.content).slice(0, 40)}`,
+          value: m,
+        })),
+        async (it) => { await one(it.value); },
+      );
+      break;
+    }
+    case "editsum": {
+      // /editsum：picker 列出本会话摘要（listSummaries），选一条改 text。
+      const items = await api.listSummaries(sessionID);
+      if (!items.length) { addMessage("系统", "这条会话还没有摘要", "assistant"); break; }
+      showPicker(
+        "editsum：选一条摘要（改它的正文）",
+        items.map((s) => ({
+          label: `${(s.text ?? "").slice(0, 40)}${s.dirty ? "（已过期）" : ""}`,
+          value: s,
+        })),
+        async (it) => {
+          const next = window.prompt("改摘要正文", it.value.text ?? "");
+          if (next === null || !next.trim()) return;
+          await api.editSummary(sessionID, it.value.id, next);
+          addMessage("系统", "摘要已改", "assistant");
         },
       );
       break;

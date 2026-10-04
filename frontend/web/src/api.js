@@ -28,7 +28,12 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
     listMessages: (id) => call("GET", `/sessions/${enc(id)}/messages`),
     // sendMessage：发一句话（202 受理 + 后台跑；预演调的不是这条，别混）。
     sendMessage: (id, content) => call("POST", `/sessions/${enc(id)}/messages`, { content }),
-    // patchSession：改当前会话两格（provider/model/agent_id；只改给出来的那些）。
+    // editMessage：改任意一条消息的正文 / 思考（至少给一个；nil=不动、""=清掉）。
+    editMessage: (sid, mid, body) => call("PATCH", `/sessions/${enc(sid)}/messages/${enc(mid)}`, body),
+    // editSummary：手改任意一条摘要的正文（就地换 text；空 ⇒ 400）。
+    editSummary: (sid, sumid, text) => call("PATCH", `/sessions/${enc(sid)}/summaries/${enc(sumid)}`, { text }),
+    // listSummaries：这条会话的摘要列表（/editsum 的 picker 用；id + text + dirty 现成）。
+    listSummaries: (sid) => call("GET", `/sessions/${enc(sid)}/summaries`),
     patchSession: (id, body) => call("PATCH", `/sessions/${enc(id)}`, body),
     deleteProvider: (id) => call("DELETE", `/providers/${enc(id)}`),
     status: (id) => call("GET", `/sessions/${enc(id)}/status`),
@@ -90,6 +95,8 @@ export const COMMANDS = [
   "new",
   "delete",
   "cut",
+  "edit",
+  "editsum",
 ];
 
 // 前缀过滤（/ 开头输入用；空名回全部）。

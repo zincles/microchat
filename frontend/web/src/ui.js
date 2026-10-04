@@ -83,7 +83,7 @@ export function buildAbilitiesPatch(rows) {
 
 // ---- DOM 构造（需传 doc，方便测试注入；浏览器传 document）----
 
-export function renderMessage(doc, { who, role, content, reasoning, reasoningMs }) {
+export function renderMessage(doc, { who, role, content, reasoning, reasoningMs, messageId, onEdit }) {
   const div = doc.createElement("div");
   div.className = `msg ${role === "user" ? "user" : "assistant"}`;
   const head = doc.createElement("div");
@@ -106,5 +106,64 @@ export function renderMessage(doc, { who, role, content, reasoning, reasoningMs 
   body.className = "text";
   body.textContent = content ?? "";
   div.appendChild(body);
+  // 编辑按钮（有 messageId + onEdit 才挂：系统气泡与"生成中"占位不挂）。
+  // 点了 ⇒ 气泡就地变输入框（textarea + 保存/取消），不弹 prompt。
+  if (messageId && typeof onEdit === "function") {
+    const bar = doc.createElement("div");
+    bar.className = "edit-bar";
+    const mk = (label, kind) => {
+      const b = doc.createElement("button");
+      b.type = "button";
+      b.className = "edit-btn";
+      b.textContent = label;
+      b.onclick = () => openInlineEditor(div, kind);
+      bar.appendChild(b);
+    };
+    mk("改", "content");
+    if (role !== "user") mk("改思考", "reasoning");
+    div.appendChild(bar);
+  }
+  // openInlineEditor：把这条气泡的正文/思考就地换成 textarea + 保存/取消。
+  // 保存 ⇒ onEdit(messageId, kind, 新值)（存档由调用方 PATCH）；取消 ⇒ 原样换回来。
+  function openInlineEditor(root, kind) {
+    if (root.querySelector(".inline-edit")) return; // 已经在改 ⇒ 不重开
+    const isThink = kind === "reasoning";
+    if (isThink) {
+      // 思考默认折叠（<details> 关着）⇒ 改思考先展开，不然框挂在看不见的地方
+      const det = root.querySelector(".think");
+      if (det && !det.open) det.open = true;
+    }
+    const target = isThink ? root.querySelector(".think-body") : root.querySelector(".text");
+    if (!target) return;
+    const old = isThink ? (reasoning ?? "") : (content ?? "");
+    target.style.display = "none";
+    const box = doc.createElement("div");
+    box.className = "inline-edit";
+    const area = doc.createElement("textarea");
+    area.className = "inline-input";
+    area.value = old;
+    area.rows = Math.min(12, Math.max(3, old.split("\n").length + 1));
+    box.appendChild(area);
+    const row = doc.createElement("div");
+    row.className = "inline-btns";
+    const save = doc.createElement("button");
+    save.type = "button";
+    save.className = "edit-btn";
+    save.textContent = "保存";
+    save.onclick = () => onEdit(messageId, kind, area.value);
+    row.appendChild(save);
+    const cancel = doc.createElement("button");
+    cancel.type = "button";
+    cancel.className = "edit-btn";
+    cancel.textContent = "取消";
+    cancel.onclick = () => {
+      target.style.display = "";
+      box.remove();
+    };
+    row.appendChild(cancel);
+    box.appendChild(row);
+    target.after(box);
+    area.focus();
+  }
   return div;
 }

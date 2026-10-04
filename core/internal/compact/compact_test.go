@@ -528,7 +528,7 @@ func TestCompactMergesSameLevelSummaries(t *testing.T) {
 	}
 
 	// 改一条孩子覆盖的消息 ⇒ 那条摘要（含祖先）标 dirty；并出来后父该跟着脏（传播）
-	if _, err := h.store.UpdateMessage(h.sessionID, messages[0].ID, "第一句（改过）"); err != nil {
+	if _, err := h.store.UpdateMessage(h.sessionID, messages[0].ID, store.MessageEdit{Content: new("第一句（改过）")}); err != nil {
 		t.Fatal(err)
 	}
 	if !findSummary(t, h.summaries(t), first.SummaryID).Dirty {

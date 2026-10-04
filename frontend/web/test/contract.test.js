@@ -19,6 +19,7 @@ import {
   settingsDirty,
   formatRoutesOutcome,
   buildAbilitiesPatch,
+  renderMessage,
 } from "../src/ui.js";
 
 // 契约测试（无浏览器）：只验纯函数与请求形状。`node --test test/`。
@@ -177,4 +178,77 @@ test("refresh-routes 回形：{provider, models} 直拼缓存行，error 走失�
   assert.ok(formatRoutesOutcome(out).includes("12"));
   assert.ok(formatRoutesOutcome({ provider: "p1", models: 0, error: "boom" }).includes("boom"));
   assert.deepEqual(buildAbilitiesPatch({ title: { enabled: true, provider: "", model: "m", prompt: "" } }), { title: { enabled: true, model: "m" } });
+});
+
+test("编辑端点形状：PATCH 消息带 content/reasoning，PATCH 摘要带 text", async () => {
+  const seen = [];
+  const fetchFn = async (url, opts) => {
+    seen.push([url, opts.method, JSON.parse(opts.body)]);
+    return { status: 200, ok: true, json: async () => ({}) };
+  };
+  const api = createApi({ base: "http://x/api/v1", fetchFn });
+  await api.editMessage("s1", "m1", { reasoning: "想通了" });
+  await api.editSummary("s1", "sum1", "新手改");
+  assert.deepEqual(seen[0], ["http://x/api/v1/sessions/s1/messages/m1", "PATCH", { reasoning: "想通了" }]);
+  assert.deepEqual(seen[1], ["http://x/api/v1/sessions/s1/summaries/sum1", "PATCH", { text: "新手改" }]);
+});
+
+test("消息编辑按钮：有 id 才挂；点开是行内框（textarea+保存/取消），保存带新值", () => {
+  const calls = [];
+  function makeEl(tag) {
+    const el = {
+      tag, children: [],
+      className: "", textContent: "", type: "", value: "", rows: 0,
+      style: {},
+      appendChild(c) { this.children.push(c); return c; },
+      after(c) { this._after = c; },
+      remove() { this._removed = true; },
+      focus() {},
+      set onclick(fn) { this._click = fn; },
+      get onclick() { return this._click; },
+    };
+    return el;
+  }
+  const doc = {
+    createElement: (tag) => makeEl(tag),
+  };
+  // querySelector：按类名找（.text / .think-body），after 挂行内框
+  function withQuery(node, map) {
+    node.querySelector = (sel) => map[sel.startsWith(".") ? sel.slice(1) : sel] ?? null;
+    return node;
+  }
+  const onEdit = (mid, kind, value) => calls.push([mid, kind, value]);
+  // 无 id ⇒ 不挂按钮
+  const bare = renderMessage(doc, { who: "系", role: "assistant", content: "x" });
+  assert.ok(!bare.children.some((c) => c.className === "edit-bar"));
+  // user：只有"改"；点了 ⇒ 行内框出现（textarea 初值 = 旧正文），保存带新值
+  const u = withQuery(
+    renderMessage(doc, { who: "你", role: "user", content: "旧正文", messageId: "m1", onEdit }),
+    {},
+  );
+  const ubar = u.children.find((c) => c.className === "edit-bar");
+  assert.equal(ubar.children.length, 1);
+  // 手工补 query（renderMessage 内部用 root.querySelector，测试替身在外层包一层）
+  const textEl = makeEl("div");
+  textEl.className = "text";
+  const ubox = { box: null };
+  u.querySelector = (sel) => (sel === ".text" ? textEl : null);
+  textEl.after = (c) => { ubox.box = c; };
+  ubar.children[0].onclick();
+  assert.ok(ubox.box && ubox.box.className === "inline-edit");
+  const uarea = ubox.box.children[0];
+  assert.equal(uarea.value, "旧正文");
+  uarea.value = "新手改";
+  ubox.box.children[1].children[0].onclick(); // 保存
+  // assistant 改思考：初值 = 旧思考
+  const a = renderMessage(doc, { who: "助", role: "assistant", content: "x", reasoning: "旧思考", messageId: "m2", onEdit });
+  const abar = a.children.find((c) => c.className === "edit-bar");
+  assert.equal(abar.children.length, 2);
+  const thinkEl = makeEl("div");
+  const abox = { box: null };
+  a.querySelector = (sel) => (sel === ".think-body" ? thinkEl : null);
+  thinkEl.after = (c) => { abox.box = c; };
+  abar.children[1].onclick();
+  assert.equal(abox.box.children[0].value, "旧思考");
+  assert.deepEqual(calls, [["m1", "content", "新手改"]]);
 });

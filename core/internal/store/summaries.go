@@ -113,6 +113,63 @@ func (s *Store) ReplaceSummaryText(updated model.Summary) error {
 		updated.ID, updated.SessionID)
 }
 
+// SummaryEdit：改一条摘要的字段（nil = 不动）。
+//
+// Text：梗概正文（"" = 不许：空摘要没有意义 ⇒ InvalidError，与压缩的"剔完是空的不写"同一条规矩）。
+type SummaryEdit struct {
+	Text *string
+}
+
+// UpdateSummaryText：手改**任意**一条摘要的正文（**就地**换 text，不换 id、不碰区间与指针）。
+//
+// 与 `ReplaceSummaryText`（摘要重摇的 apply）同一套约定：只换正文，其余列一个字都不动；
+// 差别是**不要求顶层**（手改孩子也看得见 —— 装配按区间跳，孩子正文照用），
+// 且改完**把各级祖先标脏**（父盖着被改过的内容 ⇒ 脏，与"改被覆盖的消息标脏"同一条规矩）。
+func (s *Store) UpdateSummaryText(sessionID, summaryID string, edit SummaryEdit) (model.Summary, error) {
+	if edit.Text == nil {
+		return model.Summary{}, InvalidError("改摘要：text 必填（不给等于没改）")
+	}
+	if strings.TrimSpace(*edit.Text) == "" {
+		return model.Summary{}, InvalidError("改摘要：text 不许是空的（空摘要没有意义）")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return model.Summary{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	now := nowMS()
+	if err := execTouchLocked(tx,
+		"UPDATE summaries SET text = ?1, dirty = 0 WHERE id = ?2 AND session_id = ?3",
+		strings.TrimSpace(*edit.Text), summaryID, sessionID); err != nil {
+		return model.Summary{}, err
+	}
+	// 改的摘要若有爹 ⇒ 各级祖先标脏（父盖着被改过的内容）
+	if _, err := tx.Exec(
+		`WITH RECURSIVE chain(id, parent_summary_id) AS (
+		     SELECT id, parent_summary_id FROM summaries WHERE id = ?1
+		     UNION ALL
+		     SELECT summaries.id, summaries.parent_summary_id
+		     FROM summaries JOIN chain ON summaries.id = chain.parent_summary_id
+		 )
+		 UPDATE summaries SET dirty = 1 WHERE id IN (SELECT parent_summary_id FROM chain WHERE parent_summary_id IS NOT NULL)`,
+		summaryID); err != nil {
+		return model.Summary{}, err
+	}
+	updated, err := scanSummary(tx.QueryRow("SELECT "+summaryColumns+" FROM summaries WHERE id = ?1", summaryID))
+	if err != nil {
+		return model.Summary{}, err
+	}
+	if _, err := tx.Exec("UPDATE sessions SET updated_at = ?1 WHERE id = ?2", now, sessionID); err != nil {
+		return model.Summary{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return model.Summary{}, err
+	}
+	return updated, nil
+}
+
 // coveredCount：这批 id 里**属于这条会话**的有几条（少一条都说明区间变了）。
 // **调用方持事务**。
 func coveredCount(tx *sql.Tx, sessionID string, messageIDs []string) (int, error) {

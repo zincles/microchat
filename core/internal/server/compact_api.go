@@ -3,8 +3,8 @@ package server
 import (
 	"errors"
 	"net/http"
-
 	"microchat/internal/compact"
+	"microchat/internal/model"
 	"microchat/internal/providers"
 	"microchat/internal/store"
 )
@@ -59,6 +59,56 @@ func (s *Server) compactSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, status)
 }
 
+// EditSummaryReq：改一条摘要的正文 —— `text` **必填**（缺了 ⇒ 422；空 ⇒ 400，不许落空摘要）。
+type EditSummaryReq struct {
+	Text *string `json:"text"`
+}
+
+// editSummary：手改**任意**一条摘要的正文 = 就地换 text（id / 区间 / 指针不动；祖先标脏）。
+func (s *Server) editSummary(w http.ResponseWriter, r *http.Request) {
+	var req EditSummaryReq
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.Text == nil {
+		missingField(w, "text")
+		return
+	}
+	summary, err := s.store.UpdateSummaryText(r.PathValue("session_id"), r.PathValue("summary_id"),
+		store.SummaryEdit{Text: req.Text})
+	if err != nil {
+		var invalid store.InvalidError
+		if errors.As(err, &invalid) {
+			writeError(w, http.StatusBadRequest, "invalid", invalid.Error())
+			return
+		}
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "这条会话里没有这条摘要")
+			return
+		}
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, summary)
+}
+
+// listSummaries：`GET /sessions/{session_id}/summaries` —— 这条会话的摘要列表（/editsum 的 picker 用）。
+//
+// 只读整段（按 id 序）；会话不存在 ⇒ requireSession 已经 404。空会话 ⇒ 空数组（不是 404）。
+func (s *Server) listSummaries(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireSession(w, r); !ok {
+		return
+	}
+	summaries, err := s.store.ListSummaries(r.PathValue("session_id"))
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if summaries == nil {
+		summaries = []model.Summary{}
+	}
+	writeJSON(w, http.StatusOK, summaries)
+}
 // compactPreview：`POST /sessions/{session_id}/compact/preview` —— **只算不动**。
 //
 // 调同一套 `resolveSpan`（按块数那条路）：回"压哪段（from/to）、怎么压（merged）、

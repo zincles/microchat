@@ -99,6 +99,8 @@ func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *ch
 	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/prompt", s.getSessionPrompt)
 	s.mux.HandleFunc("PATCH /api/v1/sessions/{session_id}/messages/{message_id}", s.editMessage)
 	s.mux.HandleFunc("DELETE /api/v1/sessions/{session_id}/messages/{message_id}", s.deleteMessage)
+	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/summaries", s.listSummaries)
+	s.mux.HandleFunc("PATCH /api/v1/sessions/{session_id}/summaries/{summary_id}", s.editSummary)
 	// 删除预览：**只算不动**（安全 ⇒ GET）；DELETE 照同一份计算干
 	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/messages/{message_id}/deletion-preview", s.deletionPreview)
 	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/messages", s.listMessages)
@@ -509,22 +511,24 @@ func writeMessageError(w http.ResponseWriter, err error) {
 	writeStoreError(w, err)
 }
 
-// EditMessageReq：`content` 是**必填**（缺了 ⇒ 400，不是"改成空串"）——与 Rust 版一致。
+// EditMessageReq：正文 / 思考**至少给一个**（两个都不给 ⇒ 422）—— nil = 不动，"" = 清掉。
 type EditMessageReq struct {
-	Content *string `json:"content"`
+	Content   *string `json:"content"`
+	Reasoning *string `json:"reasoning"`
 }
 
-// editMessage：改正文 = 重写存档（世界状态随之现演，没有任何派生表要同步）。
+// editMessage：改**任意**一条消息的正文 / 思考 = 重写存档（世界状态随之现演；摘要只标 `dirty`、**不级联**）。
 func (s *Server) editMessage(w http.ResponseWriter, r *http.Request) {
 	var req EditMessageReq
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if req.Content == nil {
-		missingField(w, "content")
+	if req.Content == nil && req.Reasoning == nil {
+		missingField(w, "content / reasoning（至少给一个）")
 		return
 	}
-	message, err := s.store.UpdateMessage(r.PathValue("session_id"), r.PathValue("message_id"), *req.Content)
+	message, err := s.store.UpdateMessage(r.PathValue("session_id"), r.PathValue("message_id"),
+		store.MessageEdit{Content: req.Content, Reasoning: req.Reasoning})
 	if err != nil {
 		writeMessageError(w, err)
 		return

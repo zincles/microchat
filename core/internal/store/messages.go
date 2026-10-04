@@ -223,14 +223,69 @@ func (s *Store) InsertMessage(message model.Message) (model.Message, error) {
 	return message, nil
 }
 
-// UpdateMessage：改正文 = **重写存档**（世界状态随之现演，仓库里没有任何派生表要同步）。
+// MessageEdit：改一条消息的字段（nil = 不动）。
+//
+// Content：正文（存档本体，`<state>` 块原样留着）；Reasoning：思考原文（"" = 清掉）。
+// 至少给一个 ⇒ 两个都 nil = InvalidError（与 PATCH 那层的 422 对齐）。
+type MessageEdit struct {
+	Content   *string
+	Reasoning *string
+}
+
+// UpdateMessage：改**任意**一条消息的正文 / 思考 = **重写存档**（世界状态随之现演，仓库里没有任何派生表要同步）。
 //
 // 就地替换 ⇒ `message_id` 不变 ⇒ 摘要的覆盖区间仍然成立（只标 dirty、照用；级联只归删除）。
 // 与 PATCH /sessions 不同，这一个**要动 updated_at**（改了一句话 = 这篇对话变了）。
-func (s *Store) UpdateMessage(sessionID, messageID, content string) (model.Message, error) {
+// 只改思考也标 dirty + 推 `updated_at`：从简，不为"动没动正文"分两路（标脏是保守的，装配照用不误）。
+func (s *Store) UpdateMessage(sessionID, messageID string, edit MessageEdit) (model.Message, error) {
+	if edit.Content == nil && edit.Reasoning == nil {
+		return model.Message{}, InvalidError("改消息：content 与 reasoning 至少给一个（两个都不给等于没改）")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.writeMessageLocked(sessionID, messageID, content, nil)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return model.Message{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	now := nowMS()
+	sets := []string{"updated_at = ?"}
+	args := []any{now}
+	if edit.Content != nil {
+		sets = append(sets, "content = ?")
+		args = append(args, *edit.Content)
+	}
+	if edit.Reasoning != nil {
+		sets = append(sets, "reasoning = ?")
+		args = append(args, *edit.Reasoning)
+	}
+	args = append(args, messageID, sessionID)
+	if err := execTouchLocked(tx,
+		"UPDATE messages SET "+strings.Join(sets, ", ")+" WHERE id = ? AND session_id = ?",
+		args...); err != nil {
+		return model.Message{}, err
+	}
+	return finishMessageEditLocked(tx, sessionID, messageID, now)
+}
+
+// finishMessageEditLocked：改消息的收尾 —— 回读改后那条 + 推会话 updated_at + 标脏覆盖它的摘要链。**调用方持锁 + 持事务**。
+func finishMessageEditLocked(tx *sql.Tx, sessionID, messageID string, now int64) (model.Message, error) {
+	updated, err := scanMessage(tx.QueryRow("SELECT "+messageColumns+" FROM messages WHERE id = ?1", messageID))
+	if err != nil {
+		return model.Message{}, err
+	}
+	if _, err := tx.Exec("UPDATE sessions SET updated_at = ?1 WHERE id = ?2",
+		now, sessionID); err != nil {
+		return model.Message{}, err
+	}
+	// 改的消息可能正被某条摘要覆盖 ⇒ 那条摘要（含各级祖先）标过期
+	if err := markSummaryChainDirty(tx, messageID); err != nil {
+		return model.Message{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return model.Message{}, err
+	}
+	return updated, nil
 }
 
 // MessageMeta：一条消息上那组**只服务显示**的附带信息（usage / 耗时 / 思考）。
@@ -281,22 +336,7 @@ func (s *Store) writeMessageLocked(sessionID, messageID, content string, meta *M
 	if err != nil {
 		return model.Message{}, err
 	}
-	updated, err := scanMessage(tx.QueryRow("SELECT "+messageColumns+" FROM messages WHERE id = ?1", messageID))
-	if err != nil {
-		return model.Message{}, err
-	}
-	if _, err := tx.Exec("UPDATE sessions SET updated_at = ?1 WHERE id = ?2",
-		now, sessionID); err != nil {
-		return model.Message{}, err
-	}
-	// 改的正文可能正被某条摘要覆盖 ⇒ 那条摘要（含各级祖先）标过期
-	if err := markSummaryChainDirty(tx, messageID); err != nil {
-		return model.Message{}, err
-	}
-	if err := tx.Commit(); err != nil {
-		return model.Message{}, err
-	}
-	return updated, nil
+	return finishMessageEditLocked(tx, sessionID, messageID, now)
 }
 
 // DeletionPlan：算出"删这条及之后"会动到什么（**只算不动**）。

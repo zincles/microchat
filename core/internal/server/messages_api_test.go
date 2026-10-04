@@ -355,8 +355,112 @@ func TestMessageIndexFollowsIDOrderNotInsertOrder(t *testing.T) {
 		}
 	}
 }
+// PATCH 消息改 content / reasoning：各改各的（nil = 不动），两个都不给 ⇒ 422。
+func TestEditMessageEditsContentAndReasoningSeparately(t *testing.T) {
+	box := newSandbox(t, 2)
+	path := box.messagesPath("") + "/" + box.messages[1]
 
-// 三个查询参数：闭区间（含两端）/ 取尾 / 缺一端补默认 / 越界给现有的（**不算错**）/ 参数错 ⇒ 400。
+	// 只改思考 ⇒ 正文不动
+	recorder := call(box.server, "PATCH", path, `{"reasoning":"想通了"}`)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("改思考该 200，得到 %d：%s", recorder.Code, recorder.Body.String())
+	}
+	var edited model.Message
+	if err := json.Unmarshal(recorder.Body.Bytes(), &edited); err != nil {
+		t.Fatal(err)
+	}
+	if edited.Reasoning != "想通了" {
+		t.Fatalf("思考该换：%s", recorder.Body.String())
+	}
+	if listed := box.list(t, ""); listed[1].Content == "" || listed[1].Reasoning != "想通了" {
+		t.Fatalf("只改思考不该动正文：%+v", listed[1])
+	}
+
+	// 只改正文 ⇒ 思考不动
+	recorder = call(box.server, "PATCH", path, `{"content":"新正文"}`)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("改正文该 200，得到 %d：%s", recorder.Code, recorder.Body.String())
+	}
+	if listed := box.list(t, ""); listed[1].Content != "新正文" || listed[1].Reasoning != "想通了" {
+		t.Fatalf("只改正文不该动思考：%+v", listed[1])
+	}
+
+	// 两个都不给 ⇒ 422（与 axum 的 JsonRejection 对齐）
+	if recorder := call(box.server, "PATCH", path, `{}`); recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("空 PATCH 该 422：%d %s", recorder.Code, recorder.Body.String())
+	}
+
+	// 不存在的消息 ⇒ 404
+	ghost := box.messagesPath("") + "/01a00000-0000-7000-8000-0000000000ff"
+	if recorder := call(box.server, "PATCH", ghost, `{"content":"x"}`); recorder.Code != http.StatusNotFound {
+		t.Fatalf("不存在的消息该 404：%d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+// PATCH 摘要改 text：就地换正文（id / 区间不动）；缺 text ⇒ 422，空 ⇒ 400，不存在 ⇒ 404。
+func TestEditSummarySwapsTextOnly(t *testing.T) {
+	box := newSandbox(t, 4)
+	box.seedSummary(t, summaryID(1), box.messages[0], box.messages[1])
+	path := "/api/v1/sessions/" + box.sessionID + "/summaries/" + summaryID(1)
+
+	recorder := call(box.server, "PATCH", path, `{"text":"新手改的梗概"}`)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("改摘要该 200，得到 %d：%s", recorder.Code, recorder.Body.String())
+	}
+	var edited model.Summary
+	if err := json.Unmarshal(recorder.Body.Bytes(), &edited); err != nil {
+		t.Fatal(err)
+	}
+	if edited.Text != "新手改的梗概" || edited.ID != summaryID(1) {
+		t.Fatalf("该就地换正文：%s", recorder.Body.String())
+	}
+	if edited.BeginMessageID == nil || *edited.BeginMessageID != box.messages[0] ||
+		edited.EndMessageID == nil || *edited.EndMessageID != box.messages[1] {
+		t.Fatalf("改摘要不该动区间：%s", recorder.Body.String())
+	}
+
+	// 缺 text ⇒ 422
+	if recorder := call(box.server, "PATCH", path, `{}`); recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("缺 text 该 422：%d %s", recorder.Code, recorder.Body.String())
+	}
+	// 空 ⇒ 400（空摘要没有意义）
+	if recorder := call(box.server, "PATCH", path, `{"text":"  "}`); recorder.Code != http.StatusBadRequest {
+		t.Fatalf("空 text 该 400：%d %s", recorder.Code, recorder.Body.String())
+	}
+	// 不存在 ⇒ 404
+	ghost := "/api/v1/sessions/" + box.sessionID + "/summaries/01b00000-0000-7000-8000-0000000000ff"
+	if recorder := call(box.server, "PATCH", ghost, `{"text":"x"}`); recorder.Code != http.StatusNotFound {
+		t.Fatalf("不存在的摘要该 404：%d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+// GET summaries：这条会话的摘要列表（/editsum 的 picker 用）；空 ⇒ []，幽灵会话 ⇒ 404。
+func TestListSummariesReturnsTheWholeSpan(t *testing.T) {
+	box := newSandbox(t, 4)
+	box.seedSummary(t, summaryID(1), box.messages[0], box.messages[1])
+	recorder := call(box.server, "GET", "/api/v1/sessions/"+box.sessionID+"/summaries", "")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("列摘要该 200，得到 %d：%s", recorder.Code, recorder.Body.String())
+	}
+	var rows []model.Summary
+	if err := json.Unmarshal(recorder.Body.Bytes(), &rows); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].ID != summaryID(1) || rows[0].Text != "梗概" {
+		t.Fatalf("该回整段摘要：%s", recorder.Body.String())
+	}
+	// 空会话 ⇒ []（不是 404；各 sandbox 的库是独立的 ⇒ 用自己的 server 问自己的空会话）
+	empty := newSandbox(t, 0)
+	recorder = call(empty.server, "GET", "/api/v1/sessions/"+empty.sessionID+"/summaries", "")
+	if recorder.Code != http.StatusOK || recorder.Body.String() != "[]" {
+		t.Fatalf("空会话该回 []：%d %s", recorder.Code, recorder.Body.String())
+	}
+	// 幽灵会话 ⇒ 404
+	ghost := call(box.server, "GET", "/api/v1/sessions/01a00000-0000-7000-8000-0000000000ff/summaries", "")
+	if ghost.Code != http.StatusNotFound {
+		t.Fatalf("幽灵会话该 404：%d %s", ghost.Code, ghost.Body.String())
+	}
+}
 func TestMessageWindowQueries(t *testing.T) {
 	box := newSandbox(t, 6)
 

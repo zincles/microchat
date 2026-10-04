@@ -37,6 +37,12 @@ header { display: flex; gap: 1em; align-items: center; padding: 0.6em 1em; borde
 .msg.assistant .who { color: #c4c; }
 .msg .text { white-space: pre-wrap; word-break: break-word; }
 .msg .think { color: #888; font-size: 0.85em; }
+.msg .edit-bar { display: flex; gap: 0.4em; margin-top: 0.3em; }
+.msg .edit-btn { background: none; border: 1px solid var(--line); color: var(--dim); font-size: 0.75em; padding: 0.1em 0.6em; border-radius: 999px; cursor: pointer; }
+.msg .edit-btn:hover { color: var(--text); border-color: var(--dim); }
+.msg .inline-edit { margin-top: 0.3em; }
+.msg .inline-input { width: 100%; box-sizing: border-box; background: #222; color: #eee; border: 1px solid #555; border-radius: 6px; padding: 0.4em; font: inherit; resize: vertical; }
+.msg .inline-btns { display: flex; gap: 0.4em; margin-top: 0.3em; }
 #composer { display: flex; gap: 0.5em; padding: 0.75em 1em; border-top: 1px solid #333; }
 #input { flex: 1; background: #222; color: #eee; border: 1px solid #444; padding: 0.5em; }
 button { background: #333; color: #eee; border: 1px solid #555; padding: 0.5em 1em; cursor: pointer; }

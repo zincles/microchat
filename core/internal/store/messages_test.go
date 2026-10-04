@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -454,7 +455,7 @@ func TestMessageUpdatedAt(t *testing.T) {
 	}
 
 	time.Sleep(3 * time.Millisecond) // 毫秒粒度：睡一会儿才能观察到变大
-	edited, err := st.UpdateMessage(sessionID, inserted.ID, "改过了")
+	edited, err := st.UpdateMessage(sessionID, inserted.ID, MessageEdit{Content: new("改过了")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -463,5 +464,61 @@ func TestMessageUpdatedAt(t *testing.T) {
 	}
 	if edited.CreatedAt != inserted.CreatedAt {
 		t.Fatalf("改正文不该动 created_at：%+v", edited)
+	}
+}
+
+// 改消息的字段级语义：content / reasoning 各改各的（nil = 不动），两个都 nil ⇒ InvalidError。
+func TestUpdateMessageEditsContentAndReasoningSeparately(t *testing.T) {
+	st := openTemp(t)
+	const sessionID = "s1"
+	seedSession(t, st, sessionID, "m1", "m2")
+
+	// 只改思考 ⇒ 正文不动、思考换了
+	edited, err := st.UpdateMessage(sessionID, "m2", MessageEdit{Reasoning: new("想通了")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if edited.Reasoning != "想通了" {
+		t.Fatalf("思考该换：%+v", edited)
+	}
+	listed, err := st.ListMessages(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if listed[1].Content == "" || listed[1].Reasoning != "想通了" {
+		t.Fatalf("只改思考不该动正文：%+v", listed[1])
+	}
+
+	// 只改正文 ⇒ 思考不动
+	edited, err = st.UpdateMessage(sessionID, "m2", MessageEdit{Content: new("新正文")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if edited.Content != "新正文" || edited.Reasoning != "想通了" {
+		t.Fatalf("只改正文不该动思考：%+v", edited)
+	}
+
+	// 清掉思考（"" = 清掉，不是"不动"）
+	edited, err = st.UpdateMessage(sessionID, "m2", MessageEdit{Reasoning: new("")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if edited.Reasoning != "" {
+		t.Fatalf("空串该清掉思考：%+v", edited)
+	}
+
+	// 两个都不给 ⇒ InvalidError（与 PATCH 的 422 对齐），且库里原样
+	if _, err := st.UpdateMessage(sessionID, "m2", MessageEdit{}); err == nil {
+		t.Fatal("两个都不给该报错")
+	} else {
+		var invalid InvalidError
+		if !errors.As(err, &invalid) {
+			t.Fatalf("该报 InvalidError：%v", err)
+		}
+	}
+
+	// 不存在的消息 ⇒ NotFound
+	if _, err := st.UpdateMessage(sessionID, "查无此条", MessageEdit{Content: new("x")}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("不存在的消息该 NotFound：%v", err)
 	}
 }

@@ -348,3 +348,71 @@ func TestReplaceSummaryTextRefusesNonTopLevelAndStray(t *testing.T) {
 		t.Fatalf("跨会话那次不许动 c3：%+v", got)
 	}
 }
+
+// 手改摘要（`UpdateSummaryText`）：换 text 就行（tokens 不动），改孩子 ⇒ 祖先标脏，
+// 空正文 ⇒ InvalidError，不存在 / 跨会话 ⇒ NotFound。
+func TestUpdateSummaryTextEditsAnyAndDirtiesAncestors(t *testing.T) {
+	st := openTemp(t)
+	seedSession(t, st, "s1", "m1", "m2", "m3", "m4")
+	messageSummary := func(id, begin, end string) model.Summary {
+		return model.Summary{
+			ID: id, SessionID: "s1", Type: model.TypeMessages,
+			BeginMessageID: new(begin), EndMessageID: new(end),
+			Text: id, Blocks: 1, Tokens: 3, SourceIDs: []string{begin, end},
+			Provider: "dummy", Model: "dummy", PromptVersion: 1, CreatedAt: 1,
+		}
+	}
+	if err := st.RecordSummary(messageSummary("c1", "m1", "m2"), []string{"m1", "m2"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RecordSummary(messageSummary("c2", "m3", "m4"), []string{"m3", "m4"}); err != nil {
+		t.Fatal(err)
+	}
+	parent := model.Summary{
+		ID: "p1", SessionID: "s1", Type: model.TypeSummaries,
+		BeginMessageID: new("m1"), EndMessageID: new("m4"),
+		Text: "并起来", Blocks: 2, Tokens: 6, SourceIDs: []string{"c1", "c2"}, CreatedAt: 2,
+	}
+	if err := st.RecordSummary(parent, []string{"c1", "c2"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// 改孩子（非顶层也认）：正文换了、tokens 不动、自己干净、爹脏了
+	updated, err := st.UpdateSummaryText("s1", "c1", SummaryEdit{Text: new("孩子新手改")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Text != "孩子新手改" || updated.Tokens != 3 || updated.Dirty {
+		t.Fatalf("改完该是新手改 + tokens 不动 + 自己干净：%+v", updated)
+	}
+	if byID := summariesByID(t, st, "s1"); byID["p1"].Dirty != true {
+		t.Fatalf("改孩子该把父标脏：%+v", byID["p1"])
+	}
+
+	// 改顶层自己：干净（刚手改的就是干净的）
+	updated, err = st.UpdateSummaryText("s1", "p1", SummaryEdit{Text: new("父新手改")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Text != "父新手改" || updated.Dirty {
+		t.Fatalf("改顶层该干净：%+v", updated)
+	}
+
+	// 空正文 ⇒ InvalidError（与压缩"剔完是空的不写"同一条规矩）
+	if _, err := st.UpdateSummaryText("s1", "c1", SummaryEdit{Text: new("  ")}); err == nil {
+		t.Fatal("空正文该报错")
+	} else {
+		var invalid InvalidError
+		if !errors.As(err, &invalid) {
+			t.Fatalf("该报 InvalidError：%v", err)
+		}
+	}
+
+	// 不存在 / 跨会话 ⇒ NotFound
+	if _, err := st.UpdateSummaryText("s1", "查无此条", SummaryEdit{Text: new("x")}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("不存在的摘要该 NotFound：%v", err)
+	}
+	if _, err := st.UpdateSummaryText("s2", "c1", SummaryEdit{Text: new("x")}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("跨会话该 NotFound：%v", err)
+	}
+}
