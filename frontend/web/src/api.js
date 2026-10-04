@@ -46,12 +46,6 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
     rerollEnter: (id) => call("POST", `/sessions/${enc(id)}/reroll-message`, {}),
     rerollState: (id) => call("GET", `/sessions/${enc(id)}/reroll-message`),
     rerollSwitch: (id, idx) => call("POST", `/sessions/${enc(id)}/reroll-message/switch`, { idx }),
-    rerollDelete: (id, idx) => call("DELETE", `/sessions/${enc(id)}/reroll-message/${idx}`),
-    rerollClear: (id) => call("DELETE", `/sessions/${enc(id)}/reroll-message`),
-    rerollSummaryEnter: (id, idx) => call("POST", `/sessions/${enc(id)}/reroll-summary`, { idx }),
-    rerollSummaryState: (id) => call("GET", `/sessions/${enc(id)}/reroll-summary`),
-    rerollSummarySwitch: (id, idx) =>
-      call("POST", `/sessions/${enc(id)}/reroll-summary/switch`, { idx }),
     deletionPreview: (sid, mid) =>
       call("GET", `/sessions/${enc(sid)}/messages/${enc(mid)}/deletion-preview`),
     deleteMessages: (sid, mid, lastDeletedMessageID) =>
@@ -63,7 +57,6 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
     // models：跨 provider 拍平（`{provider, upstream_id, name}` —— 下拉选项就打它）。
     models: () => call("GET", "/models"),
     agents: () => call("GET", "/agents"),
-    createAgent: (body) => call("POST", "/agents", body),
     patchAgent: (id, body) => call("PATCH", `/agents/${enc(id)}`, body),
     deleteAgent: (id) => call("DELETE", `/agents/${enc(id)}`),
     getDefaults: () => call("GET", "/config/defaults"),
