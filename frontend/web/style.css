@@ -89,7 +89,10 @@ button { background: #333; color: #eee; border: 1px solid #555; padding: 0.5em 1
 .field-block > span { display: block; margin-bottom: 0.25em; }
 .field-block textarea { width: 100%; box-sizing: border-box; background: #222; color: #eee; border: 1px solid #444; padding: 0.45em 0.6em; border-radius: 6px; min-height: 7em; resize: vertical; }
 .ability { display: flex; gap: 0.4em; align-items: center; margin: 0.3em 0; flex-wrap: wrap; }
-.plist { width: 100%; border-collapse: collapse; font-size: 0.9em; }
+/* 能力块：fieldset 分隔三条（legend 当开关行），Model 下拉与提示词框各占一行。 */
+.ability-block { border: 1px solid var(--line); border-radius: 8px; padding: 0.4em 0.7em 0.7em; margin: 0.6em 0; }
+.ability-block legend { padding: 0 0.4em; color: var(--text); }
+.ability-block legend input { margin-right: 0.3em; }
 .plist th, .plist td { text-align: left; padding: 0.4em 0.6em; border-bottom: 1px solid var(--line); white-space: nowrap; }
 .plist th { color: var(--dim); font-weight: normal; }
 .plist td.ops { white-space: normal; }

@@ -479,23 +479,33 @@ function wireSettings() {
   const abBox = document.getElementById("agent-abilities");
   abBox.innerHTML = "";
   for (const id of ABILITY_IDS) {
-    const wrap = document.createElement("div");
-    wrap.className = "ability";
-    wrap.innerHTML = `<label><input type="checkbox" checked /> ${id}</label> `;
-    const mk = (key, ph) => {
-      const inp = document.createElement("input");
-      inp.placeholder = `${id} ${key}（空=默认）`;
-      inp.title = ph;
-      wrap.appendChild(inp);
-      return inp;
-    };
-    abilityInputs[id] = {
-      enabled: wrap.querySelector("input[type=checkbox]"),
-      provider: mk("provider", "留空=用会话自己的"),
-      model: mk("model", "留空=用会话自己的"),
-      prompt: mk("prompt", "留空=用代码默认模板"),
-    };
-    abBox.appendChild(wrap);
+    const block = document.createElement("fieldset");
+    block.className = "ability-block";
+    const legend = document.createElement("legend");
+    const check = document.createElement("input");
+    check.type = "checkbox";
+    check.checked = true;
+    legend.append(check, document.createTextNode(` ${id}`));
+    block.appendChild(legend);
+    // Model 一格：`{provider}/{model}` 下拉（空=跟会话走；选项打 GET /models 拍平）。
+    const modelRow = document.createElement("label");
+    modelRow.className = "field";
+    const modelLabel = document.createElement("span");
+    modelLabel.textContent = "Model";
+    const modelSel = document.createElement("select");
+    modelRow.append(modelLabel, modelSel);
+    block.appendChild(modelRow);
+    // 提示词覆盖独占一行（大段文本框跟右边挤没法看）。
+    const promptRow = document.createElement("label");
+    promptRow.className = "field-block";
+    const promptLabel = document.createElement("span");
+    promptLabel.textContent = "提示词覆盖（空=默认模板）";
+    const promptBox = document.createElement("textarea");
+    promptBox.rows = 3;
+    promptRow.append(promptLabel, promptBox);
+    block.appendChild(promptRow);
+    abilityInputs[id] = { enabled: check, modelSel, prompt: promptBox };
+    abBox.appendChild(block);
   }
   const loadAgents = async () => {
     const data = await api.agents();
@@ -522,27 +532,44 @@ function wireSettings() {
         for (const id of ABILITY_IDS) {
           const one = ab[id] ?? {};
           abilityInputs[id].enabled.checked = one.enabled !== false;
-          abilityInputs[id].provider.value = one.provider ?? "";
-          abilityInputs[id].model.value = one.model ?? "";
+          // 存量 `{provider,model}` 回填成下拉值（`provider/model`；散着填的老数据拼回去）。
+          const both = one.provider && one.model ? `${one.provider}/${one.model}` : "";
+          abilityInputs[id].modelSel.value = [...abilityInputs[id].modelSel.options].some((o) => o.value === both) ? both : "";
+          abilityInputs[id].prompt.value = one.prompt ?? "";
         }
       };
       box.appendChild(d);
     }
-  };
-  document.getElementById("agent-add").onclick = async () => {
-    const name = document.getElementById("new-agent-name").value.trim();
-    if (!name) return;
-    await api.createAgent({ name, system_prompt: "" });
-    loadAgents().catch(() => {});
+    // Model 下拉选项：GET /models 拍平（`{provider}/{model}`；空=跟会话走）。
+    try {
+      const models = await api.models();
+      for (const id of ABILITY_IDS) {
+        const sel = abilityInputs[id].modelSel;
+        sel.innerHTML = "";
+        const empty = document.createElement("option");
+        empty.value = "";
+        empty.textContent = "跟会话走";
+        sel.appendChild(empty);
+        for (const m of models ?? []) {
+          const o = document.createElement("option");
+          o.value = `${m.provider}/${m.upstream_id}`;
+          o.textContent = `${m.provider}/${m.name ?? m.upstream_id}`;
+          sel.appendChild(o);
+        }
+      }
+    } catch { /* 模型列表拿不到就不填下拉（空=跟会话走照旧） */ }
   };
   document.getElementById("agent-save").onclick = async () => {
     if (!curAgent) return;
     const rows = {};
     for (const id of ABILITY_IDS) {
+      // 下拉值拆回 `{provider,model}`（空=跟会话走 ⇒ 两格都不发）。
+      const both = abilityInputs[id].modelSel.value;
+      const slash = both.indexOf("/");
       rows[id] = {
         enabled: abilityInputs[id].enabled.checked,
-        provider: abilityInputs[id].provider.value,
-        model: abilityInputs[id].model.value,
+        provider: slash < 0 ? "" : both.slice(0, slash),
+        model: slash < 0 ? "" : both.slice(slash + 1),
         prompt: abilityInputs[id].prompt.value,
       };
     }
