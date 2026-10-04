@@ -99,9 +99,11 @@ async function refreshStatusline(phase, elapsedMs) {
 }
 
 // renderPayload：右载荷栏两档（格式化 / 原始JSON；tab 状态存 localStorage）。
-// pretty 是 (b)/(c) 的逐项渲染；raw 是同一份的 `JSON.stringify(out, null, 2)` —— 调试"到底发了什么"看它。
+// pretty 是 (b) 逐项渲染（给人看的：type/idx/pending 全在）；raw 是 (c) 真请求
+// （method/url/headers/体 —— 与 (a) 同一支笔，调试"到底发了什么"看它）。
 let payloadTab = localStorage.getItem("mc_payload_tab") || "pretty";
 let lastPayloadItems = [];
+let lastPayloadWire = null;
 function paintPayloadTab() {
   const pretty = payloadTab === "pretty";
   document.getElementById("payload-tab-pretty").classList.toggle("sel", pretty);
@@ -109,9 +111,8 @@ function paintPayloadTab() {
   document.getElementById("outgoing").classList.toggle("hidden", !pretty);
   document.getElementById("outgoing-raw").classList.toggle("hidden", pretty);
 }
-function renderPayload(items) {
-  // (c) 预演回来的那份**已经含** pending 那条（后端 `OutgoingWithPending` 标的）⇒
-  // 前端只渲染，不许再追一条（否则就是两条 pending —— 有 id 的那条是真的，没 id 的是前端手搓的）。
+function renderPayload(items, wire) {
+  if (wire !== undefined) lastPayloadWire = wire;
   lastPayloadItems = [...(items ?? [])];
   el.outgoing.innerHTML = "";
   if (!lastPayloadItems.length) {
@@ -121,7 +122,9 @@ function renderPayload(items) {
     el.outgoing.appendChild(d);
   }
   for (const item of lastPayloadItems) el.outgoing.appendChild(renderOutgoingItem(document, item));
-  document.getElementById("outgoing-raw").textContent = JSON.stringify(lastPayloadItems, null, 2);
+  // raw 档只放真请求（(c) 的 method/url/headers/体）；没有就放空（别拿 pretty 糊）。
+  document.getElementById("outgoing-raw").textContent =
+    lastPayloadWire ? JSON.stringify(lastPayloadWire, null, 2) : "(还没有预演：输入框打字即问 (c))";
   paintPayloadTab();
 }
 document.getElementById("payload-tab-pretty").addEventListener("click", () => {
@@ -801,7 +804,8 @@ el.input.addEventListener("input", () => {
     try {
       const out = await api.outgoingPreview(sessionID, text);
       if (out == null) return; // 空守卫回 null ⇒ 不刷，等下一拍
-      renderPayload(out);
+      // (c) 现在就是真请求：pretty 档问 (b) 拿逐项，raw 档放这份 (c)。
+      renderPayload(await api.outgoing(sessionID).catch(() => []), out);
     } catch { /* 空/错就不刷，等下一拍 */ }
   }, 300);
 });

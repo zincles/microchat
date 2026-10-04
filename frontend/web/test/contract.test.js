@@ -152,6 +152,23 @@ test("outgoingPreview 空不发：空/空白直接回 null、不调 fetch", asyn
   assert.equal(n, 1);
 });
 
+test("(c) 真请求形状：method/url/headers/体四格齐，且体里无库内账", async () => {
+  const wire = {
+    method: "POST", url: "https://x/v1/chat/completions",
+    headers: { "Content-Type": "application/json" },
+    body: { model: "m", stream: true, messages: [{ role: "user", content: "hi" }] },
+  };
+  const fetchFn = async () => ({ status: 200, ok: true, json: async () => wire });
+  const api = createApi({ base: "http://x/api/v1", fetchFn });
+  const out = await api.outgoingPreview("s1", "hi");
+  assert.equal(out.method, "POST");
+  assert.ok(out.url.endsWith("/chat/completions"));
+  const raw = JSON.stringify(out.body);
+  for (const banned of ["message_id", "pending", '"type"', "from_idx"]) {
+    assert.ok(!raw.includes(banned), `体里不许有 ${banned}：${raw}`);
+  }
+});
+
 test("refresh-routes 回形：{provider, models} 直拼缓存行，error 走失败文案", async () => {
   const fetchFn = async (url) => {
     assert.ok(url.endsWith("/providers/p1/refresh-routes"));

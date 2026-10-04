@@ -6,33 +6,19 @@ import (
 	"strings"
 	"testing"
 
+	"microchat/internal/providers"
 	"microchat/internal/state"
 )
 
-// ── (c) `POST /sessions/{session_id}/outgoing`：把待发那句追加进去之后，真会发出去的东西 ──
+// ── (c) `POST /sessions/{session_id}/outgoing`：把待发那句追加进去之后，真会发出去的那一发 ──
 //
 // 三件事别混：**(a)** `GET /debug/last-payload` = 上一次真发出去的那一发（快照、不可重算）；
-// **(b)** `GET /outgoing` = 当前已定历史的载荷（**不含待发那句**）；
-// **(c)** `POST /outgoing` = 把这条 content 当成即将追加的那句用户消息之后（**只算不写**）。
-
-// outgoingOf：拉一次出站载荷（`content` 为空 ⇒ 走 (b) 的 GET）。
-func (b *dummySandbox) outgoingOf(t *testing.T, method, content string) []state.Outgoing {
-	t.Helper()
-	body := ""
-	path := b.path + "/outgoing"
-	if method == "POST" {
-		body = `{"content":` + mustQuote(t, content) + `}`
-	}
-	recorder := call(b.server, method, path, body)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("%s %s 该 200，得到 %d：%s", method, path, recorder.Code, recorder.Body.String())
-	}
-	var outgoing []state.Outgoing
-	if err := json.Unmarshal(recorder.Body.Bytes(), &outgoing); err != nil {
-		t.Fatal(err)
-	}
-	return outgoing
-}
+// **(b)** `GET /outgoing` = 当前已定历史的载荷（**不含待发那句**，给人看的形状）；
+// **(c)** `POST /outgoing` = 真请求（method/url/headers/体 —— 与 (a) 同一支笔 `Snapshot`）。
+//
+// (c) 说的是"发出去什么"，不是"库里有什么" ⇒ 它**不走** `state.Outgoing` 那套给人看的形状：
+// 调试工具必须说真话 —— 体里只有上游要的 `role/content`（外加思考回传字段），
+// `message_id`/`idx`/`pending`/`type` 这些库内账一个都不发（`wireMessages` 早就丢了它们）。
 
 // mustQuote：把任意文本塞进 JSON 字符串（`<state>` 里有换行，手拼会拼坏）。
 func mustQuote(t *testing.T, text string) string {
@@ -44,63 +30,81 @@ func mustQuote(t *testing.T, text string) string {
 	return string(raw)
 }
 
-// 基本形状：(c) 与 (b) **逐项同字段**，且末尾**多出**那条 content 对应的 user 项。
+// outgoingOf：(b) 的 GET 形状（给人看的逐项载荷；(c) 改调 wireOf）。
+func (b *dummySandbox) outgoingOf(t *testing.T, method, content string) []state.Outgoing {
+	t.Helper()
+	if method != "GET" {
+		t.Fatalf("outgoingOf 只走 GET（(c) 改调 wireOf）：%s", method)
+	}
+	recorder := call(b.server, "GET", b.path+"/outgoing", "")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("GET %s/outgoing 该 200，得到 %d：%s", b.path, recorder.Code, recorder.Body.String())
+	}
+	var outgoing []state.Outgoing
+	if err := json.Unmarshal(recorder.Body.Bytes(), &outgoing); err != nil {
+		t.Fatal(err)
+	}
+	return outgoing
+}
+
+// wireOf：拉一次真请求（content 为空 ⇒ 400，见 TestOutgoingWithPendingRejectsBlank）。
+func (b *dummySandbox) wireOf(t *testing.T, content string) providers.LastPayload {
+	t.Helper()
+	body := `{"content":` + mustQuote(t, content) + `}`
+	recorder := call(b.server, "POST", b.path+"/outgoing", body)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("POST %s/outgoing 该 200，得到 %d：%s", b.path, recorder.Code, recorder.Body.String())
+	}
+	var payload providers.LastPayload
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	return payload
+}
+
+// 基本形状：(c) 的体 = (b) 的正文 + 待发那句（末尾多一条 user；库内账一个不发）。
 func TestOutgoingWithPendingAppendsUserMessage(t *testing.T) {
 	box := newDummySandbox(t)
 	box.seedTurn(t, "先聊两句")
 
 	before := box.outgoingOf(t, "GET", "")
-	after := box.outgoingOf(t, "POST", "你好")
+	payload := box.wireOf(t, "你好")
+	if payload.Method != "POST" || !strings.HasSuffix(payload.URL, "/chat/completions") {
+		t.Fatalf("(c) 该是打上游的那一发：%s %s", payload.Method, payload.URL)
+	}
+	messages := wireBody(t, payload)
+	if len(messages) != len(before)+1 {
+		t.Fatalf("(c) 该比 (b) 正好多一条：%d vs %d", len(messages), len(before))
+	}
+	for i, item := range before {
+		if messages[i]["role"] != string(item.Role) || messages[i]["content"] != item.Content {
+			t.Fatalf("第 %d 条对不上 (b)：%v vs %+v", i, messages[i], item)
+		}
+	}
+	last := messages[len(messages)-1]
+	if last["role"] != "user" || last["content"] != "你好" {
+		t.Fatalf("末尾该是待发那句：%v", last)
+	}
+	raw := string(payload.Body)
+	for _, banned := range []string{"message_id", "pending", `"type"`, "from_idx", "to_idx"} {
+		if strings.Contains(raw, banned) {
+			t.Fatalf("体里不许有库内账 %q：%s", banned, raw)
+		}
+	}
+}
 
-	if len(after) != len(before)+1 {
-		t.Fatalf("(c) 该比 (b) 正好多一条：%d vs %d\n%+v", len(after), len(before), after)
+// wireBody：真请求体的 messages（上游要的形状：role/content 数组）。
+func wireBody(t *testing.T, payload providers.LastPayload) []map[string]any {
+	t.Helper()
+	var body struct {
+		Model    string           `json:"model"`
+		Messages []map[string]any `json:"messages"`
+		Stream   bool             `json:"stream"`
 	}
-	// 前 len(before) 条逐字段一样（(c) 只是把一句追加进去了）
-	beforeJSON, _ := json.Marshal(before)
-	afterHeadJSON, _ := json.Marshal(after[:len(before)])
-	if string(beforeJSON) != string(afterHeadJSON) {
-		t.Fatalf("(c) 的前 %d 条该与 (b) 逐字段一致：\n%s\n%s", len(before), beforeJSON, afterHeadJSON)
+	if err := json.Unmarshal(payload.Body, &body); err != nil {
+		t.Fatalf("体不是 chat 请求：%s", payload.Body)
 	}
-	last := after[len(after)-1]
-	if last.Role != state.RoleUser || last.Content != "你好" || last.Type != "message" {
-		t.Fatalf("末尾该是那条待发的 user 消息：%+v", last)
-	}
-	// 同字段（不是"少几个字段的另一种形状"）
-	raw, err := json.Marshal(last)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var fields map[string]any
-	if err := json.Unmarshal(raw, &fields); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"role", "content", "type", "message_id"} {
-		if _, ok := fields[name]; !ok {
-			t.Fatalf("末尾那条缺字段 %q：%s", name, raw)
-		}
-	}
-	// (b) 自己不带那句（这正是两者的分别）
-	for _, item := range before {
-		if item.Role == state.RoleUser && item.Content == "你好" {
-			t.Fatalf("(b) 不该含待发那句（它还没进库）：%+v", before)
-		}
-	}
-	// 待发那条带 `pending: true`：它的 message_id 是**预测值**（真发时另铸）⇒ 别被误会成能查的 id
-	if !last.Pending {
-		t.Fatalf("待发那条该带 pending 标记：%+v", last)
-	}
-	if _, ok := fields["pending"]; !ok {
-		t.Fatalf("形状里该多出 pending 这一格：%s", raw)
-	}
-	// 反过来：(b) 里一个 pending 都不许有（它每一条都真在库里）
-	if strings.Contains(string(beforeJSON), `"pending"`) {
-		t.Fatalf("(b) 里不该出现 pending：%s", beforeJSON)
-	}
-	for _, item := range before {
-		if item.Pending {
-			t.Fatalf("(b) 里不该有待发项：%+v", item)
-		}
-	}
+	return body.Messages
 }
 
 // 核心：待发那句里的 `<state>` 块**真的重算状态表** ——
@@ -109,30 +113,18 @@ func TestOutgoingWithPendingRecomputesState(t *testing.T) {
 	box := newDummySandbox(t)
 	box.seedTurn(t, "先聊两句")
 
-	before := box.outgoingOf(t, "GET", "")
-	after := box.outgoingOf(t, "POST", "<state>\nHP = 7\n</state>")
-
-	systemOf := func(items []state.Outgoing) string {
-		if len(items) == 0 || items[0].Role != state.RoleSystem {
-			t.Fatalf("第一条该是 system：%+v", items)
-		}
-		return items[0].Content
+	messages := wireBody(t, box.wireOf(t, "<state>\nHP = 7\n</state>"))
+	if len(messages) == 0 || messages[0]["role"] != "system" {
+		t.Fatalf("第一条该是 system：%v", messages)
 	}
-	if got := systemOf(before); containsText(got, "HP = 7") {
-		t.Fatalf("(b) 不该有 HP = 7（那句还没发）：%q", got)
-	}
-	if got := systemOf(after); !containsText(got, "HP = 7") {
+	if got, _ := messages[0]["content"].(string); !containsText(got, "HP = 7") {
 		t.Fatalf("(c) 的 system 该出现 HP = 7（状态表只在这一轮被重算）：%q", got)
 	}
-	// 整句就是 `<state>` 块 ⇒ 剔除后为空 ⇒ 不往上游发这句（与真发一个口径）：
-	// 影响全在 system 那张表上。
-	for _, item := range after {
-		if containsText(item.Content, "<state>") {
-			t.Fatalf("标签不许出现在出站里：%+v", item)
+	// 整句就是 `<state>` 块 ⇒ 剔除后为空 ⇒ 体里不许多出一条带标签的 user 消息
+	for _, m := range messages {
+		if c, _ := m["content"].(string); containsText(c, "<state>") {
+			t.Fatalf("标签不许出现在体里：%v", m)
 		}
-	}
-	if len(after) != len(before) {
-		t.Fatalf("整句都是 <state> 块时不该多出一条消息：%d vs %d", len(after), len(before))
 	}
 }
 
@@ -172,7 +164,7 @@ func TestOutgoingWithPendingDoesNotWrite(t *testing.T) {
 	count := len(box.messages(t))
 
 	for _, content := range []string{"你好", "<state>\nHP = 7\n</state>", "第三句"} {
-		box.outgoingOf(t, "POST", content)
+		box.wireOf(t, content)
 	}
 	if got := len(box.messages(t)); got != count {
 		t.Fatalf("(c) 只算不写：消息条数该还是 %d，成了 %d", count, got)
@@ -225,18 +217,14 @@ func TestOutgoingCarriesIndexes(t *testing.T) {
 		t.Fatalf("六条消息都该在装配里：%d ≠ %d", seen, len(indexOf))
 	}
 
-	// (c)：待发那条 = **下一条**（现有最大 + 1），与它的 `pending: true` 一致
-	next := len(indexOf) + 1
-	after := box.outgoingOf(t, "POST", "第四句")
-	last := after[len(after)-1]
-	if !last.Pending || last.Idx == nil || *last.Idx != next {
-		t.Fatalf("待发那条该是 idx %d 且 pending：%+v", next, last)
+	// (c)：体 = (b) 的 system + 六条正文 + 待发那句（(b) 长度含 system 那条）
+	messages := wireBody(t, box.wireOf(t, "第四句"))
+	if len(messages) != len(items)+1 {
+		t.Fatalf("(c) 该比 (b) 多一条：%d vs %d", len(messages), len(indexOf))
 	}
-	// (b) 里没有这个号（它还没进库）
-	for _, item := range items {
-		if item.Idx != nil && *item.Idx == next {
-			t.Fatalf("(b) 里不该有第 %d 条的号：(b) 是已定历史：%+v", next, item)
-		}
+	last := messages[len(messages)-1]
+	if last["role"] != "user" || last["content"] != "第四句" {
+		t.Fatalf("末尾该是待发那句：%v", last)
 	}
 }
 
@@ -307,10 +295,9 @@ func TestOutgoingSummaryHasChildren(t *testing.T) {
 			t.Fatalf("只展一层：%+v", child)
 		}
 	}
-	// pending 原样过（无摘要可展，就多一条 pending，不展坏别的）
-	after := box.outgoingOf(t, "POST", "第四句")
-	last := after[len(after)-1]
-	if !last.Pending || len(last.Children) != 0 {
-		t.Fatalf("pending 项原样过：%+v", last)
+	// (c) 体里摘要照旧是一条（真请求不展 children 那套给人看的形状）
+	messages := wireBody(t, box.wireOf(t, "第四句"))
+	if messages[len(messages)-1]["role"] != "user" {
+		t.Fatalf("末尾该是待发那句：%v", messages)
 	}
 }

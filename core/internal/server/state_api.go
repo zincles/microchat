@@ -108,12 +108,12 @@ type OutgoingReq struct {
 	Content *string `json:"content"`
 }
 
-// postSessionOutgoing：**(c) 把这条 content 当成即将追加的那句用户消息之后**，真会发出去的东西。
+// postSessionOutgoing：**(c) 把这条 content 当成即将追加的那句用户消息之后**，真会发出去的那一发。
 //
-// **只算不写**：不落库、不改任何状态（消息条数一个不变）；响应形状与 (b) 逐项同字段。
-// 装配不走第二条路（`chat.OutgoingWithPending` ⇒ `assemble` ⇒ `state.FromSources` +
-// `state.BuildOutgoing`）—— 待发那句里带 `<state>` 块时，注入系统提示词的状态表会跟着变，
-// 所以这不是"(b) + 一条消息"，必须重算。
+// **只算不写**：不落库、不改任何状态（消息条数一个不变）。
+// 回的是**真请求**（method/url/headers/体 —— 与 (a) 同一支笔 `Snapshot`），不是"给人看的载荷"：
+// 调试工具必须说真话 —— `chat.PreviewWire` 与真发（`Accept → outgoingFor → run → Build`）
+// 共用每一段（装配 → wireMessages → 选后端查表 → `providers.Build`），两份对不上就地就炸。
 //
 // 缺 `content` / 只有空白 ⇒ **400**（空的一句不是"要发一句空的"，是调用方写错了）。
 func (s *Server) postSessionOutgoing(w http.ResponseWriter, r *http.Request) {
@@ -129,25 +129,12 @@ func (s *Server) postSessionOutgoing(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid", "content 不能为空")
 		return
 	}
-	outgoing, err := s.chat.OutgoingWithPending(*session, *req.Content)
+	payload, err := s.chat.PreviewWire(*session, *req.Content)
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
-	// children 只在查询路由里展：真发（chat.assemble 那条路）保持扁平。
-	// pending 项无摘要可展，原样过；重取一次已定历史只为给孩子算 id+idx。
-	messages, err := s.store.ListMessages(session.ID)
-	if err != nil {
-		writeStoreError(w, err)
-		return
-	}
-	store.IndexMessages(messages)
-	summaries, err := s.store.ListSummaries(session.ID)
-	if err != nil {
-		writeStoreError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, state.ExpandChildren(outgoing, messages, summaries))
+	writeJSON(w, http.StatusOK, payload)
 }
 
 // requireSession：取会话；不存在 ⇒ 404（顺带把"会话不见了"收在一处）。

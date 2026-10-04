@@ -309,34 +309,43 @@ func (s *Service) outgoingFor(session model.Session) ([]state.Outgoing, map[stri
 	return outgoing, reasoningByID, nil
 }
 
-// OutgoingWithPending：**把待发的那一句追加进去之后**，真会发出去的东西（`POST /outgoing`）。
+// PreviewWire："把这句发出去"会拼出的**真请求** —— 同一段装配 + 同一段 Build，不发。
 //
-// **只算不写**：不落库、不动任何状态。与真发那一轮（`outgoingFor`）共用同一段装配（`assemble`）——
-// 真发时是"先 INSERT 再 ListMessages（那句就在里面）"，这里是"ListMessages 之后把那句追在末尾"，
-// 落到 `FromSources` / `BuildOutgoing` 眼里是**同一回事** ✓（拼法没有第二种）。
+// 与真发（`Accept` → `outgoingFor` → `run` → `Client.Chat` → `Build`）共用每一段：
+// `assemble`（含 pending 追尾）→ `wireMessages`（role/content + 思考回填）→
+// 选后端 + `ResolveProtocol` 查表 → `providers.Build`。`Build` 里 `SessionID` 必填的
+// 断言同样生效（缺了在这里就炸，不会等发出去被上游拒）。
 //
-// 为什么必须重新走一遍装配（而不是"(b) + 一条消息"）：待发那句里可能带 `<state>` 块 ⇒
-// 它会改变**注入系统提示词的那张状态表** ⇒ 连第一条 system 都不一样。
-//
-// 那条 `pending` 消息的 id 是**预测值**（真发时另铸一个）：给出去只为让这一项与 (b) 里那些
-// message 项**逐字段同形状**；它不指向库里的任何东西，别拿它去查消息 —— 所以那一项**带 `pending: true`**，
-// 客户端一眼看得出"这条还没进库"（同形状，但不会被误会成能查的 id）。
-func (s *Service) OutgoingWithPending(session model.Session, content string) ([]state.Outgoing, error) {
-	ids, err := store.MintOrderedIDs(1)
+// 回的是 `providers.LastPayload` 同形状（method/url/headers/体；密钥打码）——
+// 与 (a) `GET /debug/last-payload` 同一支笔（`Snapshot`），两份对得上才叫调试可靠。
+func (s *Service) PreviewWire(session model.Session, content string) (providers.LastPayload, error) {
+	_, _, providersConfig := s.files()
+	pending := model.Message{ID: "preview", SessionID: session.ID, Role: model.RoleUser, Content: content}
+	outgoing, messages, err := s.assemble(session, []model.Message{pending})
 	if err != nil {
-		return nil, err
+		return providers.LastPayload{}, err
 	}
-	pending := model.Message{ID: ids[0], SessionID: session.ID, Role: model.RoleUser, Content: content}
-	outgoing, _, err := s.assemble(session, []model.Message{pending})
-	if err != nil {
-		return nil, err
-	}
-	for index := range outgoing {
-		if outgoing[index].MessageID != nil && *outgoing[index].MessageID == pending.ID {
-			outgoing[index].Pending = true
+	reasoningByID := map[string]string{}
+	for _, message := range messages {
+		if message.Reasoning != "" {
+			reasoningByID[message.ID] = message.Reasoning
 		}
 	}
-	return outgoing, nil
+	chosen := providers.SelectBackend(session.Provider, session.Model, providersConfig)
+	if model := session.Model; chosen.Name != providers.BackendFallback && chosen.Name != providers.BackendDummy {
+		chosen.Provider.Protocol = string(providers.ResolveProtocol(s.Store.ModelRoute, chosen.Provider.ID, model))
+	}
+	wire := providers.FromConfig(chosen.Provider)
+	request, err := providers.Build(wire, providers.Request{
+		Model:     session.Model,
+		Messages:  wireMessages(outgoing, reasoningByID),
+		SessionID: session.ID,
+		Stream:    true,
+	})
+	if err != nil {
+		return providers.LastPayload{}, err
+	}
+	return providers.Snapshot(request, time.Now())
 }
 
 // wireMessages：出站消息 → 上游形状（正文照抄，只把思考贴回 assistant 那几条）。
