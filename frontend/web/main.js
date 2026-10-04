@@ -500,6 +500,8 @@ function wireSettings() {
   const loadAgents = async () => {
     const data = await api.agents();
     curDefault = data.default_agent ?? "";
+    const box = document.getElementById("agent-list");
+    box.innerHTML = "";
     for (const a of data.agents ?? []) {
       const d = document.createElement("button");
       d.type = "button";
