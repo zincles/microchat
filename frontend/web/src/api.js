@@ -28,12 +28,14 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
     listMessages: (id) => call("GET", `/sessions/${enc(id)}/messages`),
     // sendMessage：发一句话（202 受理 + 后台跑；预演调的不是这条，别混）。
     sendMessage: (id, content) => call("POST", `/sessions/${enc(id)}/messages`, { content }),
+    // patchSession：改当前会话两格（provider/model/agent_id；只改给出来的那些）。
+    patchSession: (id, body) => call("PATCH", `/sessions/${enc(id)}`, body),
+    deleteProvider: (id) => call("DELETE", `/providers/${enc(id)}`),
     status: (id) => call("GET", `/sessions/${enc(id)}/status`),
     turnText: (id, from, thinkFrom) =>
       call("GET", `/sessions/${enc(id)}/turn/text?from=${from}&think_from=${thinkFrom}`),
     context: (id) => call("GET", `/sessions/${enc(id)}/context`),
     // outgoingPreview：右载荷预演 —— 待发那句问 (c)（只算不写）。
-    // 空/空白不发包（后端 400 也无意义）⇒ 直接回 null，调用方不刷右栏。
     outgoingPreview: (id, content) => {
       if (!String(content ?? "").trim()) return Promise.resolve(null);
       return call("POST", `/sessions/${enc(id)}/outgoing`, { content });
