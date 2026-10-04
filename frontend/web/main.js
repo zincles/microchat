@@ -306,41 +306,6 @@ async function runCommand(name, args) {
       break;
     }
 
-// pickModel：当前会话换模型（跟随 Agent 预设那句由后端回退管 —— 这里只管 PATCH 两格）。
-function pickModel() {
-  api.models().then((models) => {
-    const items = [];
-    for (const g of groupModelsByProvider(models)) {
-      for (const m of g.items) items.push({ label: `${g.provider} / ${m.name ?? m.upstream_id}`, value: m });
-    }
-    showPicker("选模型（只改当前会话）", items, async (it) => {
-      sessionInfo = await api.patchSession(sessionID, {
-        provider: it.value.provider,
-        model: it.value.upstream_id,
-      });
-      paintSessionHeader();
-      refreshStatusline("idle");
-    });
-  }).catch((err) => addMessage("系统", `模型列表失败：${err.message}`, "assistant"));
-}
-
-// pickAgent：当前会话换 Agent（只改这条会话的 agent_id；缺省不动）。
-function pickAgent() {
-  api.agents().then((data) => {
-    const items = (data.agents ?? []).map((a) => ({ label: `${a.name}（${a.id}）`, value: a }));
-    showPicker("选 Agent（只改当前会话）", items, async (it) => {
-      sessionInfo = await api.patchSession(sessionID, { agent_id: it.value.id });
-      paintSessionHeader();
-      refreshStatusline("idle");
-    });
-  }).catch((err) => addMessage("系统", `Agent 列表失败：${err.message}`, "assistant"));
-}
-
-// paintSessionHeader：顶部 `会话名 · 模型 · Agent` 三段（改完当场重画，不等轮询）。
-function paintSessionHeader() {
-  const who = [sessionInfo.provider, sessionInfo.model].filter(Boolean).join("/") || "还没选模型";
-  el.session.textContent = `${sessionInfo.title || "新会话"} · ${who} · ${sessionInfo.agent_id ?? "?"}`;
-}
     case "providers":
     case "agents": {
       const data = name === "providers" ? await api.providers() : await api.agents();
@@ -405,7 +370,41 @@ function paintSessionHeader() {
   }
 }
 
-// ---- 设置 modal（齿轮开全屏四 tab；不保存不写 —— 打开 snapshot，关丢弃）----
+// pickModel：当前会话换模型（跟随 Agent 预设那句由后端回退管 —— 这里只管 PATCH 两格）。
+function pickModel() {
+  api.models().then((models) => {
+    const items = [];
+    for (const g of groupModelsByProvider(models)) {
+      for (const m of g.items) items.push({ label: `${g.provider} / ${m.name ?? m.upstream_id}`, value: m });
+    }
+    showPicker("选模型（只改当前会话）", items, async (it) => {
+      sessionInfo = await api.patchSession(sessionID, {
+        provider: it.value.provider,
+        model: it.value.upstream_id,
+      });
+      paintSessionHeader();
+      refreshStatusline("idle");
+    });
+  }).catch((err) => addMessage("系统", `模型列表失败：${err.message}`, "assistant"));
+}
+
+// pickAgent：当前会话换 Agent（只改这条会话的 agent_id；缺省不动）。
+function pickAgent() {
+  api.agents().then((data) => {
+    const items = (data.agents ?? []).map((a) => ({ label: `${a.name}（${a.id}）`, value: a }));
+    showPicker("选 Agent（只改当前会话）", items, async (it) => {
+      sessionInfo = await api.patchSession(sessionID, { agent_id: it.value.id });
+      paintSessionHeader();
+      refreshStatusline("idle");
+    });
+  }).catch((err) => addMessage("系统", `Agent 列表失败：${err.message}`, "assistant"));
+}
+
+// paintSessionHeader：顶部 `会话名 · 模型 · Agent` 三段（改完当场重画，不等轮询）。
+function paintSessionHeader() {
+  const who = [sessionInfo.provider, sessionInfo.model].filter(Boolean).join("/") || "还没选模型";
+  el.session.textContent = `${sessionInfo.title || "新会话"} · ${who} · ${sessionInfo.agent_id ?? "?"}`;
+}
 let settingsTab = "server";
 let settingsSnap = null;
 function showSettingsTab(name) {
