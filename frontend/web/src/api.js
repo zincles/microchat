@@ -58,6 +58,8 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
       }),
     getChat: () => call("GET", "/config/chat"),
     putChat: (body) => call("PUT", "/config/chat", body),
+    // models：跨 provider 拍平（`{provider, upstream_id, name}` —— 下拉选项就打它）。
+    models: () => call("GET", "/models"),
     agents: () => call("GET", "/agents"),
     createAgent: (body) => call("POST", "/agents", body),
     patchAgent: (id, body) => call("PATCH", `/agents/${enc(id)}`, body),
