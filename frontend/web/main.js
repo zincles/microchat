@@ -590,18 +590,36 @@ function wireSettings() {
     }
     const box = document.getElementById("provider-list");
     box.innerHTML = "";
+    const table = document.createElement("table");
+    table.className = "plist";
+    const head = document.createElement("tr");
+    for (const h of ["渠道", "vendor", "protocol", "密钥", "模型", "操作"]) {
+      const th = document.createElement("th");
+      th.textContent = h;
+      head.appendChild(th);
+    }
+    table.appendChild(head);
     for (const p of list ?? []) {
-      const d = document.createElement("div");
-      d.className = "provider-item";
-      const info = document.createElement("span");
-      info.textContent = `${p.id}｜${p.vendor ?? "?"}｜${p.protocol ?? "?"}｜${p.has_key ? "有key" : "无key"}｜${p.models?.length ?? 0}模型`;
-      d.appendChild(info);
+      const tr = document.createElement("tr");
+      const cell = (text) => {
+        const td = document.createElement("td");
+        td.textContent = text;
+        tr.appendChild(td);
+        return td;
+      };
+      cell(p.id);
+      cell(p.vendor ?? "?");
+      cell(p.protocol ?? "?");
+      cell(p.has_key ? "有" : "无");
+      cell(String(p.models?.length ?? 0));
+      const ops = document.createElement("td");
+      ops.className = "ops";
       const mkBtn = (label, fn) => {
         const b = document.createElement("button");
         b.type = "button";
         b.textContent = label;
         b.onclick = fn;
-        d.appendChild(b);
+        ops.appendChild(b);
         return b;
       };
       mkBtn("刷新模型", async () => {
@@ -624,8 +642,10 @@ function wireSettings() {
           loadProviders().catch(() => {});
         }
       });
-      box.appendChild(d);
+      tr.appendChild(ops);
+      table.appendChild(tr);
     }
+    box.appendChild(table);
   };
   document.getElementById("provider-add").onclick = async () => {
     const id = document.getElementById("new-provider-id").value.trim();

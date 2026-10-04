@@ -78,6 +78,9 @@ button { background: #333; color: #eee; border: 1px solid #555; padding: 0.5em 1
 .detail-title { color: var(--dim); margin-bottom: 0.4em; }
 .ability { display: flex; gap: 0.4em; align-items: center; margin: 0.3em 0; flex-wrap: wrap; }
 .ability input[type=text], .ability input:not([type]) { background: #222; color: #eee; border: 1px solid #444; padding: 0.35em; border-radius: 6px; width: 9em; }
-.provider-item { display: flex; gap: 0.5em; align-items: center; padding: 0.4em 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
-.provider-item span { flex: 1; min-width: 12em; }
+.plist { width: 100%; border-collapse: collapse; font-size: 0.9em; }
+.plist th, .plist td { text-align: left; padding: 0.4em 0.6em; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.plist th { color: var(--dim); font-weight: normal; }
+.plist td.ops { white-space: normal; }
+.plist td.ops button { margin-right: 0.4em; padding: 0.3em 0.7em; }
 #settings-open { margin-left: auto; }
