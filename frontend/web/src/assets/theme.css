@@ -1,0 +1,68 @@
+/* microchat 主题 tokens —— Telegram 语义色。
+ *
+ * 七个语义槽（与 TG themeParams 同名同义，见 core.telegram.org/bots/webapps）：
+ *   bg / secondary_bg / text / hint / link / button / button_text
+ * 外加 destructive（删会话/删渠道那种红，TG 客户端里就是红色文字按钮）。
+ *
+ * 三层来源（就近覆盖，后写的赢）：
+ *   1. 默认深色（TG 安卓深夜蓝那套，不是纯黑）；
+ *   2. `color-scheme: light` 时的浅色（TG 日间白）；
+ *   3. TG 客户端注入的 `--tg-theme-*-color`（在 Mini App 里打开时自动跟随用户主题，
+ *      含自定义主题 —— 此时 1/2 的值全被盖掉，一个调色板都不用自己维护）。
+ *
+ * 用法：组件一律用 --tg-*，不许写死色值。--tg-* 本身永远有值（TG 外是默认值，TG 内是用户主题）。
+ */
+
+:root {
+  color-scheme: dark light;
+
+  /* —— 默认：TG 深色（跟随 Telegram Android 深色主题取色） —— */
+  --tg-bg: #0e1621;
+  --tg-secondary-bg: #17212b;
+  --tg-text: #f5f5f5;
+  --tg-hint: #708499;
+  --tg-link: #62b0e8;
+  --tg-button: #5288c1;
+  --tg-button-text: #ffffff;
+  --tg-destructive: #e53935;
+
+  /* —— 旧变量桥接（style.css 里还在用这些名：逐个指到语义槽，之后慢慢改调用方） —— */
+  --bg: var(--tg-bg);
+  --panel: var(--tg-secondary-bg);
+  --line: rgb(255 255 255 / 12%);
+  --text: var(--tg-text);
+  --dim: var(--tg-hint);
+  --acc: var(--tg-link);
+  --warn: #fc3;
+  --err: var(--tg-destructive);
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    /* —— TG 日间白 —— */
+    --tg-bg: #ffffff;
+    --tg-secondary-bg: #f1f1f1;
+    --tg-text: #222222;
+    --tg-hint: #999999;
+    --tg-link: #2481cc;
+    --tg-button: #2481cc;
+    --tg-button-text: #ffffff;
+    --tg-destructive: #cc2929;
+    --line: rgb(0 0 0 / 12%);
+    --warn: #a80;
+  }
+}
+
+/* —— TG 客户端注入（Mini App 里打开时）：Telegram 按 Bot API 7.0+ 往 WebView 里灌
+ * --tg-theme-*-color。不在 TG 里时这些变量不存在 ⇒ var() 回落到默认深色值。
+ * （不能写 var(--tg-bg, var(--tg-bg)) 自引用：内层是未解析值，外层直接作废 ⇒ 整组全空。
+ * 这里 fallback 写死色值，就是这个原因。） */
+:root {
+  --tg-bg: var(--tg-theme-bg-color, #0e1621);
+  --tg-secondary-bg: var(--tg-theme-secondary-bg-color, #17212b);
+  --tg-text: var(--tg-theme-text-color, #f5f5f5);
+  --tg-hint: var(--tg-theme-hint-color, #708499);
+  --tg-link: var(--tg-theme-link-color, #62b0e8);
+  --tg-button: var(--tg-theme-button-color, #5288c1);
+  --tg-button-text: var(--tg-theme-button-text-color, #ffffff);
+}

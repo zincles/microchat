@@ -1,7 +1,9 @@
 // microchat web 前端 —— 与 TUI/TG 同一条 HTTP 契约（只调 /api/v1，不碰后端内部）。
 // 零运行时依赖（fetch 直调；构建只用 vite）。契约见 AGENTS.md API 表。
-// 拆分：api.js（call+端点函数）/ ui.js（渲染）/ main.js（接线）。
-import { createApi, parseCommand, filterCommands, advanceCursor } from "./src/api.js";
+// 拆分（Vue 式布局，无框架运行时）：api/client.js（call+端点函数）/ components/MessageBubble.js（气泡渲染+纯函数）/ main.js（接线）。
+import { createApi } from "./api/client.js";
+import { parseCommand, filterCommands } from "./utils/commands.js";
+import { advanceCursor } from "./utils/cursor.js";
 import {
   renderMessage,
   formatStatusLine,
@@ -13,7 +15,7 @@ import {
   formatRoutesOutcome,
   ABILITY_IDS,
   buildAbilitiesPatch,
-} from "./src/ui.js";
+} from "./components/MessageBubble.js";
 
 const API = localStorage.getItem("mc_api") || "http://127.0.0.1:8787/api/v1";
 const TOKEN = localStorage.getItem("mc_token") || "";

@@ -111,6 +111,22 @@ export function renderMessage(doc, { who, role, content, reasoning, reasoningMs,
     head.appendChild(bar);
   }
   div.appendChild(head);
+  if (reasoning) {
+    const det = doc.createElement("details");
+    det.className = "think";
+    const sum = doc.createElement("summary");
+    sum.textContent = formatThinkLabel(reasoningMs);
+    det.appendChild(sum);
+    const pre = doc.createElement("div");
+    pre.className = "think-body";
+    pre.textContent = reasoning;
+    det.appendChild(pre);
+    div.appendChild(det);
+  }
+  const body = doc.createElement("div");
+  body.className = "text";
+  body.textContent = content ?? "";
+  div.appendChild(body);
   // openInlineEditor：把这条气泡的正文/思考就地换成 textarea + 保存/取消。
   // 保存 ⇒ onEdit(messageId, kind, 新值)（存档由调用方 PATCH）；取消 ⇒ 原样换回来。
   function openInlineEditor(root, kind) {

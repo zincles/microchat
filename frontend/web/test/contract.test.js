@@ -1,12 +1,8 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import {
-  createApi,
-  parseCommand,
-  filterCommands,
-  advanceCursor,
-  buildTurnTextPath,
-} from "../src/api.js";
+import { createApi } from "../src/api/client.js";
+import { parseCommand, filterCommands } from "../src/utils/commands.js";
+import { advanceCursor, buildTurnTextPath } from "../src/utils/cursor.js";
 import {
   formatThinkLabel,
   formatStatusLine,
@@ -20,7 +16,7 @@ import {
   formatRoutesOutcome,
   buildAbilitiesPatch,
   renderMessage,
-} from "../src/ui.js";
+} from "../src/components/MessageBubble.js";
 
 // 契约测试（无浏览器）：只验纯函数与请求形状。`node --test test/`。
 // 后端真服务验证另走手工（见 README）。
@@ -243,4 +239,25 @@ test("消息编辑按钮：头行右挂；点开是行内框（textarea+保存/�
   abar.children[1].onclick();
   assert.equal(abox.box.children[0].value, "旧思考");
   assert.deepEqual(calls, [["m1", "content", "新手改"]]);
+});
+
+test("消息正文节点永在：.text 带原文；有思考 ⇒ .think-body 带思考（丢了就是上次的事故）", () => {
+  const doc = { createElement: (tag) => ({
+    tag, children: [], className: "", textContent: "",
+    appendChild(c) { this.children.push(c); return c; },
+  }) };
+  const find = (node, cls) => {
+    if (node.className === cls) return node;
+    for (const c of node.children ?? []) {
+      const hit = find(c, cls);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  const u = renderMessage(doc, { who: "你", role: "user", content: "你好。" });
+  assert.equal(find(u, "text")?.textContent, "你好。");
+  assert.equal(find(u, "think-body"), null);
+  const a = renderMessage(doc, { who: "助", role: "assistant", content: "Hello", reasoning: "想了想" });
+  assert.equal(find(a, "text")?.textContent, "Hello");
+  assert.equal(find(a, "think-body")?.textContent, "想了想");
 });
