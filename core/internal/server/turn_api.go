@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"microchat/internal/store"
 	"microchat/internal/turn"
 )
 
@@ -40,6 +41,31 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 			"这个会话正在重摇（尾条那条回复还没定版）：先 `/reroll switch <n>` 选一版，或 `/reroll off` 退出")
 	case errors.Is(err, turn.ErrBusy):
 		writeError(w, http.StatusConflict, "conflict", "这个会话还在生成中，等它跑完或先按停止")
+	case err != nil:
+		writeStoreError(w, err)
+	default:
+		writeJSON(w, http.StatusAccepted, accepted)
+	}
+}
+
+// resendHistory：重发历史 —— **不落新消息**，拿现有历史再跑一轮生成。
+//
+// 与 sendMessage 共用 202 回执形状（`Accepted`，只是 `user` 为空 —— 没落新消息，没什么可回的）；
+// 空会话 ⇒ 400（没历史发什么）；在跑 ⇒ 409（同一把闸，不排队）。
+func (s *Server) resendHistory(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	accepted, err := s.chat.Resend(*session)
+	switch {
+	case errors.Is(err, turn.ErrRerollBusy):
+		writeError(w, http.StatusConflict, "conflict",
+			"这个会话正在重摇（尾条那条回复还没定版）：先 `/reroll switch <n>` 选一版，或 `/reroll off` 退出")
+	case errors.Is(err, turn.ErrBusy):
+		writeError(w, http.StatusConflict, "conflict", "这个会话还在生成中，等它跑完或先按停止")
+	case errors.As(err, new(store.InvalidError)):
+		writeError(w, http.StatusBadRequest, "invalid", err.Error())
 	case err != nil:
 		writeStoreError(w, err)
 	default:

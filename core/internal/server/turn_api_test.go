@@ -206,7 +206,66 @@ func TestSendMessageRoundTrip(t *testing.T) {
 	}
 }
 
-// serverSession：直接问后端要这条会话（列表里那一项：会话 + 这一轮的状态）。
+// resend：不落新消息、拿历史再跑一轮 —— 尾 user / 尾 assistant 都行；空会话 400；在跑 409。
+func TestResendHistoryReplaysWithoutNewMessage(t *testing.T) {
+	box := newDummySandbox(t)
+	// 空会话 ⇒ 400（没历史发什么）
+	if recorder := call(box.server, "POST", box.path+"/resend", ""); recorder.Code != http.StatusBadRequest {
+		t.Fatalf("空会话该 400：%d %s", recorder.Code, recorder.Body.String())
+	}
+	// 先发一句，等回复落库（user + assistant，尾条是 assistant）
+	box.send(t, "第一句")
+	box.waitPhase(t, box.sessionID, "idle")
+	before := box.messages(t)
+	if len(before) != 2 {
+		t.Fatalf("该有两条了：%+v", before)
+	}
+	// 尾 assistant 也能重发 ⇒ 202，回执 user 为空（没落新消息）
+	recorder := call(box.server, "POST", box.path+"/resend", "")
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("重发该 202，得到 %d：%s", recorder.Code, recorder.Body.String())
+	}
+	var accepted TurnAccepted
+	if err := json.Unmarshal(recorder.Body.Bytes(), &accepted); err != nil {
+		t.Fatal(err)
+	}
+	if accepted.User != nil {
+		t.Fatalf("重发不该落新消息，回执 user 该为空：%+v", accepted)
+	}
+	box.waitPhase(t, box.sessionID, "idle")
+	after := box.messages(t)
+	if len(after) != 3 || after[2].Role != model.RoleAssistant {
+		t.Fatalf("重发该多一条 assistant 回复：%+v", after)
+	}
+	// 在跑时再重发 ⇒ 409（同一把闸，不排队）
+	box.send(t, "第二句")
+	if recorder := call(box.server, "POST", box.path+"/resend", ""); recorder.Code != http.StatusConflict {
+		t.Fatalf("在跑时该 409：%d %s", recorder.Code, recorder.Body.String())
+	}
+	box.waitPhase(t, box.sessionID, "idle")
+}
+
+// resend 尾 user 那半：用户那句已落库、回复还没回来 ⇒ 重发直接补一版，不用删了重说。
+func TestResendHistoryWithTrailingUser(t *testing.T) {
+	box := newDummySandbox(t)
+	// 直接落一条 user（模拟"回复丢了"：有上文、没下文）
+	if _, err := box.store.InsertMessage(model.Message{
+		ID: "01a00000-0000-7000-8000-0000000000a1", SessionID: box.sessionID,
+		Role: model.RoleUser, Content: "没回的那句",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	recorder := call(box.server, "POST", box.path+"/resend", "")
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("尾 user 该 202，得到 %d：%s", recorder.Code, recorder.Body.String())
+	}
+	box.waitPhase(t, box.sessionID, "idle")
+	messages := box.messages(t)
+	if len(messages) != 2 || messages[1].Role != model.RoleAssistant {
+		t.Fatalf("该补一条回复：%+v", messages)
+	}
+}
+
 func (b *dummySandbox) serverSession(t *testing.T) model.SessionView {
 	t.Helper()
 	recorder := call(b.server, "GET", "/api/v1/sessions", "")

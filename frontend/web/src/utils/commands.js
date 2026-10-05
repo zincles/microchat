@@ -16,6 +16,7 @@ export const COMMANDS = [
   "reroll",
   "switch",
   "stop",
+  "resend",
   "new",
   "delete",
   "cut",

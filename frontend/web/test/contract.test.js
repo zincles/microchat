@@ -189,6 +189,17 @@ test("编辑端点形状：PATCH 消息带 content/reasoning，PATCH 摘要带 t
   assert.deepEqual(seen[1], ["http://x/api/v1/sessions/s1/summaries/sum1", "PATCH", { text: "新手改" }]);
 });
 
+test("resend 端点形状：POST /resend 无体", async () => {
+  let seen = null;
+  const fetchFn = async (url, opts) => {
+    seen = [url, opts.method, opts.body];
+    return { status: 202, ok: true, json: async () => ({ turn: {} }) };
+  };
+  const api = createApi({ base: "http://x/api/v1", fetchFn });
+  await api.resend("s1");
+  assert.deepEqual(seen, ["http://x/api/v1/sessions/s1/resend", "POST", undefined]);
+});
+
 test("消息编辑按钮：头行右挂；点开是行内框（textarea+保存/取消），保存带新值", () => {
   const calls = [];
   function makeEl(tag) {

@@ -24,6 +24,15 @@ const api = createApi({ base: API, token: TOKEN });
 // 每拍现读：设置里改完即时生效，不用刷新（API/Token 那两格才要刷新）。
 function previewOn() { return localStorage.getItem("mc_preview") !== "0"; }
 
+// 发送键：localStorage.mc_send —— "button"（默认，仅按钮）/ "enter"（回车发）/ "shift-enter"。
+// 每拍现读（设置里改完下一拍即生效，不用刷新）。
+function sendMode() { return localStorage.getItem("mc_send") || "button"; }
+// 发送键提示（placeholder 跟着策略走，免得"回车换行"配了个"回车发送"的提示）。
+function sendHint() {
+  return sendMode() === "enter" ? "输入消息（回车发送，Shift+回车换行）；/ 开头进命令"
+    : sendMode() === "shift-enter" ? "输入消息（Shift+回车发送，回车换行）；/ 开头进命令"
+    : "输入消息，点发送发出（回车换行）；/ 开头进命令";
+}
 // 主题预设：localStorage.mc_theme —— ""（跟随系统）/ midnight / paper / wine / forest / breeze / breeze-dark。
 // TG 客户端里打开（有 window.Telegram.WebApp）⇒ 不用预设，宿主主题说了算。
 function applyTheme() {
@@ -205,8 +214,8 @@ document.getElementById("session-agent").addEventListener("change", (e) => {
 });
 
 async function boot() {
+  el.input.placeholder = sendHint(); // 启动即按策略显示（默认仅按钮）
   const health = await api.health();
-  el.conn.textContent = `已连接 v${health.version}`;
   const sessions = await api.listSessions();
   for (const s of sessions) {
     if (s.messages === 0 && !s.title) await api.deleteSession(s.id).catch(() => {});
@@ -218,9 +227,19 @@ async function boot() {
 async function send(content) {
   const accepted = await api.sendMessage(sessionID, content);
   addMessage("你", content, "user");
+  await pollTurn(accepted.turn.message_id);
+}
+
+// 重发历史：不落新消息，拿现有历史再跑一轮（尾 user 没回复 / 尾 assistant 想再要一版）。
+async function resend() {
+  const accepted = await api.resend(sessionID);
+  await pollTurn(accepted.turn.message_id);
+}
+
+// pollTurn：守着一轮跑完（生成中气泡 + 300ms 轮询 + 游标读增量 + 落库后对账）。
+async function pollTurn(turnID) {
   const bubble = addMessage("助手", "生成中…", "assistant");
   const textEl = bubble.querySelector(".text");
-  const turnID = accepted.turn.message_id;
   let cur = { from: 0, thinkFrom: 0 };
   for (;;) {
     await new Promise((r) => setTimeout(r, 300));
@@ -362,6 +381,10 @@ async function runCommand(name, args) {
     }
     case "stop": {
       await api.stop(sessionID);
+      break;
+    }
+    case "resend": {
+      await resend();
       break;
     }
     case "delete": {
@@ -530,6 +553,8 @@ function wireSettings() {
     document.getElementById("cli-token").value = localStorage.getItem("mc_token") || "";
     document.getElementById("cli-preview").checked = previewOn();
     document.getElementById("cli-theme").value = localStorage.getItem("mc_theme") || "";
+    document.getElementById("cli-send").value = sendMode();
+    el.input.placeholder = sendHint();
   };
   const open = async () => {
     settingsSnap = snapshotSettings(readServerForm());
@@ -604,14 +629,16 @@ function wireSettings() {
     } catch (err) { document.getElementById("def-status").textContent = `保存失败：${err.message}`; }
   };
 
-  // 客户端区：mc_api/mc_token 改完刷新生效；mc_preview/mc_theme 即时生效。
+  // 客户端区：mc_api/mc_token 改完刷新生效；mc_preview/mc_theme/mc_send 即时生效。
   document.getElementById("cli-save").onclick = () => {
     localStorage.setItem("mc_api", document.getElementById("cli-api").value.trim() || "http://127.0.0.1:8787/api/v1");
     localStorage.setItem("mc_token", document.getElementById("cli-token").value);
     localStorage.setItem("mc_preview", document.getElementById("cli-preview").checked ? "1" : "0");
     localStorage.setItem("mc_theme", document.getElementById("cli-theme").value);
+    localStorage.setItem("mc_send", document.getElementById("cli-send").value);
     applyTheme(); // 主题即时生效（不刷新）
-    document.getElementById("cli-status").textContent = "已保存（API/Token 刷新页面生效，预演与主题即时生效）";
+    el.input.placeholder = sendHint();
+    document.getElementById("cli-status").textContent = "已保存（API/Token 刷新页面生效，其余即时生效）";
   };
 
   // Agent 区：左列表+右详情（name/system_prompt/三能力checkbox/provider-model-prompt 三覆盖格/保存整段 PATCH/新建/删除/设默认）。
@@ -837,7 +864,15 @@ function wireSettings() {
 }
 
 let previewTimer = 0;
+// 底栏自增高：1 行起，最多 6 行（CSS max-height 兜底出滚动）；发完/进会话复位。
+function autosizeInput() {
+  el.input.rows = 1;
+  const line = parseFloat(getComputedStyle(el.input).lineHeight) || 22;
+  const rows = Math.min(6, Math.max(1, Math.round(el.input.scrollHeight / line)));
+  el.input.rows = rows;
+}
 el.input.addEventListener("input", () => {
+  autosizeInput();
   const v = el.input.value;
   if (v.startsWith("/")) {
     const cmd = parseCommand(v);
@@ -898,15 +933,28 @@ el.input.addEventListener("keydown", (e) => {
   } else if (e.key === "Escape") {
     el.palette.classList.add("hidden");
     hidePicker();
+  } else if (e.key === "Enter" && !e.ctrlKey && !e.metaKey) {
+    // 发送键策略（命令面板没开时才到这儿）：enter ⇒ 裸回车发；shift-enter ⇒ Shift+回车发；button ⇒ 都不发。
+    const mode = sendMode();
+    const want = mode === "enter" ? !e.shiftKey : mode === "shift-enter" ? e.shiftKey : false;
+    if (want) {
+      e.preventDefault();
+      el.form.requestSubmit();
+    }
   }
 });
 
 el.form.addEventListener("submit", (e) => {
   e.preventDefault();
   const text = el.input.value.trim();
-  if (!text) return;
   el.input.value = "";
+  el.input.rows = 1; // 发完缩回一行
   el.palette.classList.add("hidden");
+  // 空输入 ⇒ 重发历史（不落新消息，拿现有历史再跑一轮；空会话后端 400 说清）。
+  if (!text) {
+    resend().catch((err) => addMessage("系统", `重发失败：${err.message}`, "assistant"));
+    return;
+  }
   const cmd = parseCommand(text);
   if (cmd) {
     runCommand(cmd.name, cmd.args).catch((err) => addMessage("系统", `命令失败：${err.message}`, "assistant"));

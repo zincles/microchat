@@ -106,11 +106,12 @@ func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *ch
 	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/messages", s.listMessages)
 	// 一轮生成：**受理与生成分开**（202 + 轮询）—— 状态 / 游标读 / 停止 / 上下文占用
 	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/messages", s.sendMessage)
+	// 重发历史：**不落新消息**，拿现有历史再跑一轮（尾 user 没回复 / 尾 assistant 想再要一版都行）
+	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/resend", s.resendHistory)
 	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/status", s.turnStatus)
 	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/turn/text", s.turnText)
 	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/stop", s.stopTurn)
 	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/context", s.sessionContext)
-	// 压缩：把最老的 N 个已闭合块收成一条摘要（**202** 受理；跑完的结局在 /status 的 compact 那一档）
 	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/compact", s.compactSession)
 	// 压缩预览：**只算不动**（调同一套 strategySpan；算完压哪段、压完树长什么样）
 	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/compact/preview", s.compactPreview)

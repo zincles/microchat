@@ -28,6 +28,8 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
     listMessages: (id) => call("GET", `/sessions/${enc(id)}/messages`),
     // sendMessage：发一句话（202 受理 + 后台跑；预演调的不是这条，别混）。
     sendMessage: (id, content) => call("POST", `/sessions/${enc(id)}/messages`, { content }),
+    // resend：重发历史（不落新消息，拿现有历史再跑一轮；空会话 400）。
+    resend: (id) => call("POST", `/sessions/${enc(id)}/resend`),
     // editMessage：改任意一条消息的正文 / 思考（至少给一个；nil=不动、""=清掉）。
     editMessage: (sid, mid, body) => call("PATCH", `/sessions/${enc(sid)}/messages/${enc(mid)}`, body),
     // editSummary：手改任意一条摘要的正文（就地换 text；空 ⇒ 400）。

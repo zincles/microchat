@@ -119,6 +119,41 @@ func (s *Service) Accept(session model.Session, content string) (Accepted, error
 	}
 	// 起标题**不在这儿**：它是 title 能力的事（`title.Service.Auto`，在拿到回复之后起）——
 	// 这里只落用户那句（用户的话不该丢，换个模型接着聊）。
+	accepted, err := s.launch(session, replyID, token, providersConfig)
+	if err != nil {
+		return Accepted{}, err
+	}
+	accepted.User = &user
+	return accepted, nil
+}
+
+// Resend：重发历史 —— **不落新消息**，拿现有历史再跑一轮生成（尾条 user 没回复 / 尾条 assistant 想再要一版）。
+//
+// 与 Accept 共用 `launch`（出站定稿 + 选后端 + 丢后台）：差别只有"落不落用户那句"。
+// 空会话（0 条消息）⇒ InvalidError（没历史发什么，system prompt 自己不算一轮）。
+func (s *Service) Resend(session model.Session) (Accepted, error) {
+	_, _, providersConfig := s.files()
+	messages, err := s.Store.ListMessages(session.ID)
+	if err != nil {
+		return Accepted{}, err
+	}
+	if len(messages) == 0 {
+		return Accepted{}, store.InvalidError("空会话没有历史可重发：先说一句话")
+	}
+	replyID, err := store.MintOrderedIDs(1)
+	if err != nil {
+		return Accepted{}, err
+	}
+	// **唯一的并发闸门**：同会话已经在跑 ⇒ 直接拒（不排队，与 Accept 同一把）
+	token, err := s.Turns.Begin(session.ID, replyID[0])
+	if err != nil {
+		return Accepted{}, err
+	}
+	return s.launch(session, replyID[0], token, providersConfig)
+}
+
+// launch：出站定稿 + 选后端 + 丢给后台跑。调用方已登记（Begin 过了）⇒ 失败摘登记。
+func (s *Service) launch(session model.Session, replyID string, token uint64, providersConfig config.ProvidersConfig) (Accepted, error) {
 	// 出站**此刻定稿**（受理时捕获的上文）：后台不再重算，期间别人改了库也不影响这一轮
 	outgoing, reasoningByID, err := s.outgoingFor(session)
 	if err != nil {
@@ -136,7 +171,6 @@ func (s *Service) Accept(session model.Session, content string) (Accepted, error
 	}
 	go s.run(session, replyID, token, chosen, outgoing, reasoningByID, time.Now())
 	return Accepted{
-		User:    &user,
 		Backend: chosen.Name,
 		Turn:    statusView(s.Turns.Status(session.ID)),
 	}, nil
