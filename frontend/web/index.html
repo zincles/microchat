@@ -14,7 +14,6 @@
       <span id="session"></span>
       <select id="session-model" class="pill-select" title="改当前会话的模型"></select>
       <select id="session-agent" class="pill-select" title="改当前会话的 Agent"></select>
-      <button id="settings-open" type="button" title="设置">⚙ 设置</button>
     </header>
     <div id="columns">
       <aside id="sessions-bar">
@@ -23,7 +22,11 @@
           <button id="session-new" type="button" title="新建会话">＋</button>
         </div>
         <div id="session-list"></div>
+        <div class="bar-foot">
+          <button id="settings-open" class="foot-btn" type="button" title="设置">⚙ 设置</button>
+        </div>
       </aside>
+      <div id="grip-left" class="grip" title="拖拽调左栏宽"></div>
       <section id="chat-col">
         <div id="statusline" class="statusline">上下文 ?/?｜未知模型｜idle</div>
         <main id="messages"></main>
@@ -47,6 +50,7 @@
           <button type="submit">发送</button>
         </form>
       </section>
+      <div id="grip-right" class="grip" title="拖拽调右栏宽"></div>
       <aside id="payload-bar">
         <div class="bar-head"><span>即将发送的载荷</span></div>
         <pre id="outgoing-raw"></pre>

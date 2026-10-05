@@ -899,6 +899,45 @@ el.sessionNew.addEventListener("click", async () => {
   await enterSession((await api.createSession({})).id);
 });
 
+// 拖拽调栏宽：grip 按住 ⇒ 跟随横移 ⇒ 松手落 localStorage（mc_bar_left/right，px）。
+// 夹紧 160..480（左）/ 240..600（右）；窄屏 grip 藏了 ⇒ 这段自然歇着。
+function wireResizers() {
+  const pairs = [
+    ["grip-left", "sessions-bar", "mc_bar_left", 160, 480],
+    ["grip-right", "payload-bar", "mc_bar_right", 240, 600],
+  ];
+  for (const [gripID, barID, key, min, max] of pairs) {
+    const grip = document.getElementById(gripID);
+    const bar = document.getElementById(barID);
+    if (!grip || !bar) continue;
+    const saved = Number(localStorage.getItem(key));
+    if (Number.isFinite(saved) && saved >= min && saved <= max) bar.style.width = `${saved}px`;
+    grip.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      grip.classList.add("active");
+      grip.setPointerCapture(e.pointerId);
+      const startX = e.clientX;
+      const startW = bar.getBoundingClientRect().width;
+      const left = barID === "sessions-bar";
+      const move = (ev) => {
+        const dx = ev.clientX - startX;
+        const w = Math.min(max, Math.max(min, startW + (left ? dx : -dx)));
+        bar.style.width = `${w}px`;
+      };
+      const up = (ev) => {
+        grip.classList.remove("active");
+        grip.removeEventListener("pointermove", move);
+        grip.removeEventListener("pointerup", up);
+        const w = Math.round(bar.getBoundingClientRect().width);
+        localStorage.setItem(key, String(Math.min(max, Math.max(min, w))));
+      };
+      grip.addEventListener("pointermove", move);
+      grip.addEventListener("pointerup", up);
+    });
+  }
+}
+wireResizers();
+
 wireSettings();
 
 boot().catch((err) => {

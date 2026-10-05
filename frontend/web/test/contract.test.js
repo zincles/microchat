@@ -194,12 +194,14 @@ test("消息编辑按钮：头行右挂；点开是行内框（textarea+保存/�
   function makeEl(tag) {
     const el = {
       tag, children: [],
-      className: "", textContent: "", type: "", value: "", rows: 0,
+      className: "", textContent: "", type: "", value: "", rows: 0, title: "",
+      attrs: {},
       style: {},
       appendChild(c) { this.children.push(c); return c; },
       after(c) { this._after = c; },
       remove() { this._removed = true; },
       focus() {},
+      setAttribute(k, v) { this.attrs[k] = v; },
       set onclick(fn) { this._click = fn; },
       get onclick() { return this._click; },
     };
@@ -217,6 +219,8 @@ test("消息编辑按钮：头行右挂；点开是行内框（textarea+保存/�
   const u = renderMessage(doc, { who: "你", role: "user", content: "旧正文", messageId: "m1", onEdit });
   const ubar = barOf(u);
   assert.equal(ubar.children.length, 1);
+  assert.equal(ubar.children[0].textContent, "✎");
+  assert.equal(ubar.children[0].title, "改正文");
   const textEl = makeEl("div");
   textEl.className = "text";
   const ubox = { box: null };
@@ -232,6 +236,8 @@ test("消息编辑按钮：头行右挂；点开是行内框（textarea+保存/�
   const a = renderMessage(doc, { who: "助", role: "assistant", content: "x", reasoning: "旧思考", messageId: "m2", onEdit });
   const abar = barOf(a);
   assert.equal(abar.children.length, 2);
+  assert.equal(abar.children[1].textContent, "✎⋯");
+  assert.equal(abar.children[1].title, "改思考");
   const thinkEl = makeEl("div");
   const abox = { box: null };
   a.querySelector = (sel) => (sel === ".think-body" ? thinkEl : null);

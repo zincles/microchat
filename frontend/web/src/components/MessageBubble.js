@@ -98,16 +98,19 @@ export function renderMessage(doc, { who, role, content, reasoning, reasoningMs,
   if (messageId && typeof onEdit === "function") {
     const bar = doc.createElement("div");
     bar.className = "edit-bar";
-    const mk = (label, kind) => {
+    // 图标按钮：✎ 改正文、✎⋯ 改思考（title 说清用途；字符图标，零依赖，比文字省宽）。
+    const mk = (icon, title, kind) => {
       const b = doc.createElement("button");
       b.type = "button";
       b.className = "edit-btn";
-      b.textContent = label;
+      b.textContent = icon;
+      b.title = title;
+      b.setAttribute("aria-label", title);
       b.onclick = () => openInlineEditor(div, kind);
       bar.appendChild(b);
     };
-    mk("改", "content");
-    if (role !== "user") mk("改思考", "reasoning");
+    mk("✎", "改正文", "content");
+    if (role !== "user") mk("✎⋯", "改思考", "reasoning");
     head.appendChild(bar);
   }
   div.appendChild(head);
