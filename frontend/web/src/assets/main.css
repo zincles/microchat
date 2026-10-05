@@ -129,8 +129,12 @@ button.danger, #agent-del { background: none; border: none; color: var(--tg-dest
 .ability-block { border: 1px solid var(--line); border-radius: 10px; padding: 0.4em 0.7em 0.7em; margin: 0.6em 0; }
 .ability-block legend { padding: 0 0.4em; color: var(--tg-text); }
 .ability-block legend input { margin-right: 0.3em; }
+.plist { width: 100%; border-collapse: collapse; }
 .plist th, .plist td { text-align: left; padding: 0.55em 0.6em; border-bottom: 1px solid var(--line); white-space: nowrap; }
-.plist th { color: var(--tg-hint); font-weight: normal; }
-.plist td.ops { white-space: normal; }
-.plist td.ops button { margin-right: 0.4em; padding: 0.3em 0.7em; }
+.plist th { color: var(--tg-hint); font-weight: normal; font-size: 0.85em; }
+.plist td.ops { white-space: normal; text-align: right; }
+/* 操作列：TG 风是蓝色文字操作，不是灰框按钮；删除是红色文字。 */
+.plist td.ops .link-btn { background: none; border: none; color: var(--tg-link); padding: 0.3em 0.5em; margin-left: 0.2em; cursor: pointer; }
+.plist td.ops .link-btn:hover { text-decoration: underline; }
+.plist td.ops .link-btn.danger { color: var(--tg-destructive); }
 #settings-open { margin-left: auto; }

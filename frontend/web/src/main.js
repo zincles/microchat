@@ -775,9 +775,10 @@ function wireSettings() {
       cell(String(p.models?.length ?? 0));
       const ops = document.createElement("td");
       ops.className = "ops";
-      const mkBtn = (label, fn) => {
+      const mkBtn = (label, fn, danger) => {
         const b = document.createElement("button");
         b.type = "button";
+        b.className = "link-btn" + (danger ? " danger" : "");
         b.textContent = label;
         b.onclick = fn;
         ops.appendChild(b);
@@ -802,7 +803,7 @@ function wireSettings() {
           await api.deleteProvider(p.id);
           loadProviders().catch(() => {});
         }
-      });
+      }, true);
       tr.appendChild(ops);
       table.appendChild(tr);
     }
