@@ -135,13 +135,29 @@ export function renderMessage(doc, { who, role, content, reasoning, reasoningMs,
   function openInlineEditor(root, kind) {
     if (root.querySelector(".inline-edit")) return; // 已经在改 ⇒ 不重开
     const isThink = kind === "reasoning";
+    let target = isThink ? root.querySelector(".think-body") : root.querySelector(".text");
     if (isThink) {
-      // 思考默认折叠（<details> 关着）⇒ 改思考先展开，不然框挂在看不见的地方
-      const det = root.querySelector(".think");
-      if (det && !det.open) det.open = true;
+      // 思考默认折叠（<details> 关着）⇒ 改思考先展开，不然框挂在看不见的地方。
+      // 没思考的模型（如 muse spark）根本没有 .think 段 ⇒ 现建一段空的，框才有地方挂。
+      let det = root.querySelector(".think");
+      if (!det) {
+        det = doc.createElement("details");
+        det.className = "think";
+        const sum = doc.createElement("summary");
+        sum.textContent = formatThinkLabel(reasoningMs);
+        det.appendChild(sum);
+        target = doc.createElement("div");
+        target.className = "think-body";
+        target.textContent = "";
+        det.appendChild(target);
+        // 新段的 after 必须管用（真 DOM 天生有；测试替身按 appendChild 实现 ⇒ 这里显式补一个）。
+        if (typeof target.after !== "function") target.after = (node) => { det.appendChild(node); };
+        // 思考段永远在正文头上（与正常画出来的顺序一致；只用 appendChild，不用 insertBefore）。
+        root.appendChild(det);
+        root.appendChild(root.querySelector(".text"));
+      }
+      if (!det.open) det.open = true;
     }
-    const target = isThink ? root.querySelector(".think-body") : root.querySelector(".text");
-    if (!target) return;
     const old = isThink ? (reasoning ?? "") : (content ?? "");
     target.style.display = "none";
     const box = doc.createElement("div");
