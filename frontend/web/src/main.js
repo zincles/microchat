@@ -24,7 +24,7 @@ const api = createApi({ base: API, token: TOKEN });
 // 每拍现读：设置里改完即时生效，不用刷新（API/Token 那两格才要刷新）。
 function previewOn() { return localStorage.getItem("mc_preview") !== "0"; }
 
-// 主题预设：localStorage.mc_theme —— ""（跟随系统）/ midnight / paper / wine / forest。
+// 主题预设：localStorage.mc_theme —— ""（跟随系统）/ midnight / paper / wine / forest / breeze / breeze-dark。
 // TG 客户端里打开（有 window.Telegram.WebApp）⇒ 不用预设，宿主主题说了算。
 function applyTheme() {
   if (window.Telegram?.WebApp) { document.documentElement.removeAttribute("data-theme"); return; }

@@ -93,3 +93,17 @@ html[data-theme="forest"] {
   --tg-link: #6fc287; --tg-button: #2f7d4f; --tg-button-text: #ffffff;
   --tg-destructive: #e5534b; --tg-float: #20302a; color-scheme: dark;
 }
+/* —— Breeze / Breeze Dark（KDE 经典配色，色值取自 /usr/share/color-schemes/Breeze{Light,Dark}.colors） ——
+ * 映射：bg=View.BackgroundNormal / secondary=Window.BackgroundNormal / text=View.ForegroundNormal /
+ * hint=View.ForegroundInactive / link=View.ForegroundLink / button=Selection.BackgroundNormal /
+ * destructive=View.ForegroundNegative / float=View.BackgroundAlternate（亮）·Complementary.BackgroundNormal（暗）。 */
+html[data-theme="breeze"] {
+  --tg-bg: #ffffff; --tg-secondary-bg: #eff0f1; --tg-text: #232629; --tg-hint: #707d8a;
+  --tg-link: #2980b9; --tg-button: #3daee9; --tg-button-text: #ffffff;
+  --tg-destructive: #da4453; --tg-float: #f7f7f7; color-scheme: light;
+}
+html[data-theme="breeze-dark"] {
+  --tg-bg: #141618; --tg-secondary-bg: #202326; --tg-text: #fcfcfc; --tg-hint: #a1a9b1;
+  --tg-link: #1d99f3; --tg-button: #3daee9; --tg-button-text: #fcfcfc;
+  --tg-destructive: #da4453; --tg-float: #202326; color-scheme: dark;
+}
