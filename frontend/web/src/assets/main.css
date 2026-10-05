@@ -51,7 +51,9 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 #sessions-bar { width: 260px; flex: none; background: var(--tg-secondary-bg); border-radius: 14px; display: flex; flex-direction: column; overflow: hidden; }
 #payload-bar { width: 340px; flex: none; background: var(--tg-secondary-bg); border-radius: 14px; overflow-y: auto; padding: 0.6em 0.8em; font-size: 0.85em; color: var(--tg-hint); }
 #chat-col { flex: 1; display: flex; flex-direction: column; min-width: 0; margin: 0 auto; width: 100%; position: relative; background: var(--tg-bg); border-radius: 14px; overflow: hidden; }
-#chat-col > * { max-width: 760px; margin-left: auto; margin-right: auto; width: 100%; box-sizing: border-box; }
+/* 聊天 doodle 底（手搓 SVG 平铺，--tg-hint 漆 16% 透明度：深底显浅纹、浅底显深纹，随主题走）。 */
+#chat-col::before { content: ""; position: absolute; inset: 0; background: url("./doodle.svg") repeat; background-size: 360px; color: var(--tg-hint); opacity: 0.16; pointer-events: none; }
+#chat-col > * { position: relative; z-index: 1; max-width: 760px; margin-left: auto; margin-right: auto; width: 100%; box-sizing: border-box; }
 /* 消息列：flex:1 撑满 + 两侧 56px 头像位 + 上下给浮动输入栏留位；窄屏收回。 */
 #messages { flex: 1; overflow-y: auto; min-height: 0; padding: 1em 56px 5em; display: flex; flex-direction: column; gap: 0.3em; }
 @media (max-width: 1100px) { #payload-bar { display: none; } }
