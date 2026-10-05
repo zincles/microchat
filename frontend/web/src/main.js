@@ -533,6 +533,13 @@ function wireSettings() {
   const close = () => modal.classList.add("hidden"); // 关丢弃：不回写、不 PUT
   document.getElementById("settings-open").onclick = open;
   document.getElementById("settings-close").onclick = close;
+  // 全屏切换（localStorage.mc_settings_full 记住；Agent 宽表用）。
+  const box = modal.querySelector(".modal-box");
+  if (localStorage.getItem("mc_settings_full") === "1") box?.classList.add("full");
+  document.getElementById("settings-full").onclick = () => {
+    const on = box?.classList.toggle("full") ?? false;
+    localStorage.setItem("mc_settings_full", on ? "1" : "0");
+  };
   modal.addEventListener("click", (e) => { if (e.target === modal) close(); });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && !modal.classList.contains("hidden")) close();
