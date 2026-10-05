@@ -1,5 +1,22 @@
 /* microchat web —— Telegram 风（语义色 tokens 见 assets/theme.css；组件只用 --tg-*）。
  * 气泡对话 + 分组列表 + 圆角按钮：照 TG 安卓客户端的观感手写，无 UI 框架。 */
+
+/* —— 输入框统一基线（TG 味 = 无边框底色块 + focus 下蓝线；select 自绘箭头 ▾） —— */
+input:not([type="checkbox"]):not([type="radio"]), select, textarea {
+  background: var(--tg-bg); color: var(--tg-text); border: none;
+  border-bottom: 2px solid transparent; border-radius: 8px 8px 0 0;
+  padding: 0.45em 0.6em; font: inherit; box-sizing: border-box;
+  outline: none; transition: border-color 150ms ease-out, background 150ms ease-out;
+}
+input:not([type="checkbox"]):not([type="radio"]):hover, select:hover, textarea:hover { background: rgb(255 255 255 / 4%); }
+input:not([type="checkbox"]):not([type="radio"]):focus, select:focus, textarea:focus { border-bottom-color: var(--tg-link); background: rgb(255 255 255 / 6%); }
+input[type="number"] { text-align: right; -moz-appearance: textfield; }
+input[type="number"]::-webkit-outer-spin-button, input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+select { appearance: none; -webkit-appearance: none; padding-right: 1.8em;
+  background-image: linear-gradient(45deg, transparent 50%, var(--tg-hint) 50%), linear-gradient(135deg, var(--tg-hint) 50%, transparent 50%);
+  background-position: calc(100% - 1.1em) 55%, calc(100% - 0.75em) 55%;
+  background-size: 0.35em 0.35em; background-repeat: no-repeat; cursor: pointer; }
+textarea { resize: vertical; }
 body { margin: 0; background: var(--tg-bg); color: var(--tg-text); font: 15px/1.65 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif; }
 #app { display: flex; flex-direction: column; height: 100vh; }
 header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; background: var(--tg-secondary-bg); color: var(--tg-hint); }
@@ -54,12 +71,18 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; ba
 .msg.user .edit-btn { color: inherit; }
 .msg .edit-btn:hover { text-decoration: underline; }
 .msg .inline-edit { margin-top: 0.3em; }
-.msg .inline-input { width: 100%; box-sizing: border-box; background: var(--tg-bg); color: var(--tg-text); border: 1px solid var(--line); border-radius: 8px; padding: 0.4em; font: inherit; resize: vertical; }
+.msg .inline-input { width: 100%; }
 .msg .inline-btns { display: flex; gap: 0.4em; margin-top: 0.3em; }
 #composer { display: flex; gap: 0.5em; padding: 0.6em 0.8em; }
 #input { flex: 1; background: var(--tg-secondary-bg); color: var(--tg-text); border: none; border-radius: 20px; padding: 0.55em 1em; font: inherit; }
 #input:focus { outline: 1px solid var(--tg-link); }
 #composer button { background: var(--tg-button); color: var(--tg-button-text); border: none; border-radius: 20px; padding: 0.55em 1.2em; cursor: pointer; }
+
+/* —— 按钮动效（TG 味 = 按下缩 97% + 120ms 回弹；主按钮带辉光） —— */
+button { transition: transform 120ms ease-out, filter 150ms ease-out, background 150ms ease-out; }
+button:active { transform: scale(0.97); }
+button.primary:active { filter: brightness(1.15); }
+@media (prefers-reduced-motion: reduce) { button { transition: none; } button:active { transform: none; } }
 button { background: var(--tg-secondary-bg); color: var(--tg-text); border: 1px solid var(--line); border-radius: 10px; padding: 0.5em 1em; cursor: pointer; }
 /* 主按钮（保存/新建这类肯定语，HTML 上点 class="primary"）+ 危险文字钮（删除，红字无底）。 */
 button.primary { background: var(--tg-button); color: var(--tg-button-text); border: none; }
@@ -105,7 +128,7 @@ button.danger, #agent-del { background: none; border: none; color: var(--tg-dest
   .field { grid-template-columns: 1fr; }
 }
 .row { display: flex; gap: 0.5em; align-items: center; margin: 0; padding: 0.55em 0; flex-wrap: wrap; }
-.row input, .row select { background: var(--tg-bg); color: var(--tg-text); border: 1px solid var(--line); padding: 0.45em 0.6em; border-radius: 8px; }
+
 .status { color: var(--tg-hint); font-size: 0.85em; }
 .hint { color: var(--tg-hint); font-size: 0.85em; }
 .empty { color: var(--tg-hint); padding: 0.8em 0.6em; font-size: 0.9em; }
@@ -123,7 +146,7 @@ button.danger, #agent-del { background: none; border: none; color: var(--tg-dest
 .field-block { display: block; margin: 0; padding: 0.55em 0; color: var(--tg-text); border-bottom: 1px solid var(--line); }
 .field-block:last-child { border-bottom: none; }
 .field-block > span { display: block; margin-bottom: 0.25em; color: var(--tg-hint); }
-.field-block textarea { width: 100%; box-sizing: border-box; background: var(--tg-bg); color: var(--tg-text); border: 1px solid var(--line); padding: 0.45em 0.6em; border-radius: 8px; min-height: 7em; resize: vertical; }
+.field-block textarea { width: 100%; min-height: 7em; }
 .ability { display: flex; gap: 0.4em; align-items: center; margin: 0.3em 0; flex-wrap: wrap; }
 /* 能力块：fieldset 分隔三条（legend 当开关行），Model 下拉与提示词框各占一行。 */
 .ability-block { border: 1px solid var(--line); border-radius: 10px; padding: 0.4em 0.7em 0.7em; margin: 0.6em 0; }
