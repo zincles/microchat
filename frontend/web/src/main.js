@@ -4,6 +4,7 @@
 import { createApi } from "./api/client.js";
 import { parseCommand, filterCommands } from "./utils/commands.js";
 import { advanceCursor } from "./utils/cursor.js";
+import { ICONS } from "./components/icons.js";
 import {
   renderMessage,
   formatStatusLine,
@@ -77,6 +78,25 @@ let pickerItems = [];
 let pickerSel = 0;
 let pickerAction = null;
 
+// toast：右上通知（TG 安卓味）—— kind: "" 信息（蓝条）/ "ok" 成功 / "error" 错误（红条）。
+// 3s 自动消；点一下提前消。对话里不再插"系统"气泡，通知全走这儿。
+function toast(text, kind) {
+  const box = document.getElementById("toasts");
+  if (!box) return;
+  const d = document.createElement("div");
+  d.className = "toast" + (kind ? ` ${kind}` : "");
+  d.textContent = text;
+  d.onclick = () => dismiss();
+  box.appendChild(d);
+  while (box.children.length > 4) box.firstChild.remove(); // 最多攒 4 条，老的顶掉
+  const timer = setTimeout(dismiss, 3000);
+  function dismiss() {
+    clearTimeout(timer);
+    d.classList.add("out");
+    setTimeout(() => d.remove(), 220);
+  }
+}
+
 function addMessage(who, text, cls, think, messageId) {
   const node = renderMessage(document, {
     who,
@@ -86,7 +106,7 @@ function addMessage(who, text, cls, think, messageId) {
     reasoningMs: think?.ms,
     messageId,
     onEdit: messageId ? (mid, kind, value) => editMessageSave(mid, kind, value).catch((err) =>
-      addMessage("系统", `改消息失败：${err.message}`, "assistant")) : undefined,
+      toast(`改消息失败：${err.message}`, "error")) : undefined,
   });
   el.messages.appendChild(node);
   el.messages.scrollTop = el.messages.scrollHeight;
@@ -103,7 +123,7 @@ async function editMessageSave(messageId, kind, value) {
 async function editMessageFlow(messageId, kind) {
   const messages = await api.listMessages(sessionID);
   const target = messages.find((m) => m.id === messageId);
-  if (!target) { addMessage("系统", "那条消息已经不在了（多半被删了）：重进会话看看", "assistant"); return; }
+  if (!target) { toast("那条消息已经不在了（多半被删了）：重进会话看看", "error"); return; }
   const old = kind === "reasoning" ? (target.reasoning ?? "") : target.content;
   const next = window.prompt(kind === "reasoning" ? "改思考（空=清掉）" : "改正文", old);
   if (next === null) return;
@@ -206,11 +226,11 @@ async function enterSession(id) {
 
 document.getElementById("session-model").addEventListener("change", (e) => {
   if (!sessionID || !e.target.value) return;
-  applyModelValue(e.target.value).catch((err) => addMessage("系统", `换模型失败：${err.message}`, "assistant"));
+  applyModelValue(e.target.value).catch((err) => toast(`换模型失败：${err.message}`, "error"));
 });
 document.getElementById("session-agent").addEventListener("change", (e) => {
   if (!sessionID || !e.target.value) return;
-  applyAgentValue(e.target.value).catch((err) => addMessage("系统", `换 Agent 失败：${err.message}`, "assistant"));
+  applyAgentValue(e.target.value).catch((err) => toast(`换 Agent 失败：${err.message}`, "error"));
 });
 
 async function boot() {
@@ -358,7 +378,7 @@ async function runCommand(name, args) {
     case "compact": {
       const n = args[0] ? Number(args[0]) : 0;
       await api.compact(sessionID, Number.isFinite(n) && n > 0 ? n : undefined);
-      addMessage("系统", `压缩已受理${n ? `（${n} 块）` : ""}`, "assistant");
+      toast(`压缩已受理${n ? `（${n} 块）` : ""}`, "ok");
       break;
     }
     case "reroll": {
@@ -419,7 +439,7 @@ async function runCommand(name, args) {
       const one = async (m) => editMessageFlow(m.id, wantThink ? "reasoning" : "content");
       if (Number.isInteger(n) && n > 0) {
         const m = messages.find((x) => x.idx === n);
-        if (!m) { addMessage("系统", `没有第 ${n} 条`, "assistant"); break; }
+        if (!m) { toast(`没有第 ${n} 条`, "error"); break; }
         await one(m);
         break;
       }
@@ -436,7 +456,7 @@ async function runCommand(name, args) {
     case "editsum": {
       // /editsum：picker 列出本会话摘要（listSummaries），选一条改 text。
       const items = await api.listSummaries(sessionID);
-      if (!items.length) { addMessage("系统", "这条会话还没有摘要", "assistant"); break; }
+      if (!items.length) { toast("这条会话还没有摘要"); break; }
       showPicker(
         "editsum：选一条摘要（改它的正文）",
         items.map((s) => ({
@@ -447,13 +467,13 @@ async function runCommand(name, args) {
           const next = window.prompt("改摘要正文", it.value.text ?? "");
           if (next === null || !next.trim()) return;
           await api.editSummary(sessionID, it.value.id, next);
-          addMessage("系统", "摘要已改", "assistant");
+          toast("摘要已改", "ok");
         },
       );
       break;
     }
     default:
-      addMessage("系统", `未知命令 /${name}`, "assistant");
+      toast(`未知命令 /${name}`);
   }
 }
 
@@ -480,7 +500,7 @@ function fillModelSelect(sel) {
     }
     if ([...sel.options].some((o) => o.value === cur)) sel.value = cur;
     else if (!cur && sel.options[0]) applyModelValue(sel.options[0].value);
-  }).catch((err) => addMessage("系统", `模型列表失败：${err.message}`, "assistant"));
+  }).catch((err) => toast(`模型列表失败：${err.message}`, "error"));
 }
 
 async function applyModelValue(value) {
@@ -510,7 +530,7 @@ function fillAgentSelect(sel) {
     }
     if ([...sel.options].some((o) => o.value === sessionInfo.agent_id)) sel.value = sessionInfo.agent_id;
     else if (!sessionInfo.agent_id && sel.options[0]) applyAgentValue(sel.options[0].value);
-  }).catch((err) => addMessage("系统", `Agent 列表失败：${err.message}`, "assistant"));
+  }).catch((err) => toast(`Agent 列表失败：${err.message}`, "error"));
 }
 
 async function applyAgentValue(id) {
@@ -927,7 +947,7 @@ el.input.addEventListener("keydown", (e) => {
       const cmd = parseCommand(el.input.value);
       el.input.value = "";
       runCommand(palItems[palSel], cmd ? cmd.args : []).catch((err) =>
-        addMessage("系统", `命令失败：${err.message}`, "assistant"),
+        toast(`命令失败：${err.message}`, "error"),
       );
     }
   } else if (e.key === "Escape") {
@@ -952,15 +972,15 @@ el.form.addEventListener("submit", (e) => {
   el.palette.classList.add("hidden");
   // 空输入 ⇒ 重发历史（不落新消息，拿现有历史再跑一轮；空会话后端 400 说清）。
   if (!text) {
-    resend().catch((err) => addMessage("系统", `重发失败：${err.message}`, "assistant"));
+    resend().catch((err) => toast(`重发失败：${err.message}`, "error"));
     return;
   }
   const cmd = parseCommand(text);
   if (cmd) {
-    runCommand(cmd.name, cmd.args).catch((err) => addMessage("系统", `命令失败：${err.message}`, "assistant"));
+    runCommand(cmd.name, cmd.args).catch((err) => toast(`命令失败：${err.message}`, "error"));
     return;
   }
-  send(text).catch((err) => addMessage("系统", `发送失败：${err.message}`, "assistant"));
+  send(text).catch((err) => toast(`发送失败：${err.message}`, "error"));
 });
 
 // 左栏＋按钮：＋新建（建完就进）；发完/收尾两栏都刷（标题是 idle 前写好的）。
@@ -1006,6 +1026,37 @@ function wireResizers() {
   }
 }
 wireResizers();
+
+// 侧栏显隐：顶栏 SVG 按钮切换（Lucide panel-left/right，见 components/icons.js）。
+// 状态记 localStorage（mc_bar_left_hidden / mc_bar_right_hidden）；藏栏连相邻 grip 一起藏。
+function wireSideToggles() {
+  const pairs = [
+    ["toggle-left", "sessions-bar", "grip-left", "mc_bar_left_hidden", "panelLeft", "显示/隐藏会话栏"],
+    ["toggle-right", "payload-bar", "grip-right", "mc_bar_right_hidden", "panelRight", "显示/隐藏载荷栏"],
+  ];
+  for (const [btnID, barID, gripID, key, icon, title] of pairs) {
+    const btn = document.getElementById(btnID);
+    const bar = document.getElementById(barID);
+    const grip = document.getElementById(gripID);
+    if (!btn || !bar) continue;
+    btn.innerHTML = ICONS[icon];
+    btn.setAttribute("aria-label", title);
+    const apply = (hidden) => {
+      bar.classList.toggle("collapsed", hidden);
+      grip?.classList.toggle("hidden-by-bar", hidden);
+    };
+    apply(localStorage.getItem(key) === "1");
+    btn.onclick = () => {
+      const hidden = !bar.classList.contains("collapsed");
+      localStorage.setItem(key, hidden ? "1" : "0");
+      apply(hidden);
+    };
+  }
+}
+wireSideToggles();
+
+// 发送按钮挂纸飞机 SVG（Lucide send-horizontal，见 components/icons.js）。
+document.getElementById("send-btn").innerHTML = ICONS.send;
 
 wireSettings();
 
