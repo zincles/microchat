@@ -1,4 +1,6 @@
 // microchat web UI 层 —— 纯渲染 + DOM 构造。顶层不碰 document，测试可直引纯函数。
+import { ICONS } from "./icons.js";
+
 export function formatThinkLabel(reasoningMs) {
   if (reasoningMs == null) return "思考过程";
   return `思考过程（${(reasoningMs / 1000).toFixed(1)}s）`;
@@ -98,19 +100,19 @@ export function renderMessage(doc, { who, role, content, reasoning, reasoningMs,
   if (messageId && typeof onEdit === "function") {
     const bar = doc.createElement("div");
     bar.className = "edit-bar";
-    // 图标按钮：✎ 改正文、✎⋯ 改思考（title 说清用途；字符图标，零依赖，比文字省宽）。
-    const mk = (icon, title, kind) => {
+    // SVG 图标按钮（Lucide pencil/brain，ISC，见 ./icons.js）：innerHTML 塞 svg，title 说清用途。
+    const mk = (svg, title, kind) => {
       const b = doc.createElement("button");
       b.type = "button";
       b.className = "edit-btn";
-      b.textContent = icon;
+      b.innerHTML = svg;
       b.title = title;
       b.setAttribute("aria-label", title);
       b.onclick = () => openInlineEditor(div, kind);
       bar.appendChild(b);
     };
-    mk("✎", "改正文", "content");
-    if (role !== "user") mk("✎⋯", "改思考", "reasoning");
+    mk(ICONS.pencil, "改正文", "content");
+    if (role !== "user") mk(ICONS.brain, "改思考", "reasoning");
     head.appendChild(bar);
   }
   div.appendChild(head);

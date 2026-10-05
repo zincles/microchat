@@ -46,7 +46,7 @@
           </div>
         </div>
         <form id="composer">
-          <input id="input" type="text" autocomplete="off" placeholder="输入消息，回车发送；/ 开头进命令" />
+          <textarea id="input" rows="1" autocomplete="off" placeholder="输入消息（回车换行）；/ 开头进命令"></textarea>
           <button type="submit">发送</button>
         </form>
       </section>
@@ -89,6 +89,11 @@
             <label class="field"><span>API 地址</span><input id="cli-api" placeholder="http://127.0.0.1:8787/api/v1" /></label>
             <label class="field"><span>Token</span><input id="cli-token" placeholder="可空" type="password" /></label>
             <label class="field"><span>输入时预演载荷</span><input id="cli-preview" type="checkbox" /></label>
+            <label class="field"><span>发送键</span><select id="cli-send">
+              <option value="button">仅按钮</option>
+              <option value="enter">回车发送（Shift+回车换行）</option>
+              <option value="shift-enter">Shift+回车发送（回车换行）</option>
+            </select></label>
             <label class="field"><span>主题</span><select id="cli-theme">
               <option value="">跟随系统</option>
               <option value="midnight">深夜蓝</option>

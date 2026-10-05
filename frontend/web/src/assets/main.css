@@ -19,7 +19,7 @@ select { appearance: none; -webkit-appearance: none; padding-right: 1.8em;
 textarea { resize: vertical; }
 body { margin: 0; background: var(--tg-bg); color: var(--tg-text); font: 15px/1.65 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif; }
 #app { display: flex; flex-direction: column; height: 100vh; }
-header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; background: var(--tg-secondary-bg); color: var(--tg-hint); border-bottom: 1px solid rgb(255 255 255 / 8%); }
+header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; color: var(--tg-hint); border-bottom: 1px solid rgb(255 255 255 / 8%); background: color-mix(in srgb, var(--tg-secondary-bg) 72%, transparent); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
 .pill, .pill-select { background: var(--tg-secondary-bg); border: 1px solid var(--line); color: var(--tg-text); border-radius: 10px; padding: 0.3em 0.7em; font-size: 0.85em; cursor: pointer; max-width: 16em; }
 .pill:hover, .pill-select:hover { background: rgb(255 255 255 / 8%); }
 /* 三栏：左会话 260px｜中对话自适应（最宽 720px 居中）｜右载荷 340px。窄屏（<1100px）右栏先藏，<700px 左栏变顶条 —— 消息优先。 */
@@ -62,7 +62,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; ba
 .session-item .close:hover { color: var(--tg-destructive); }
 .out.pending { color: var(--tg-link); }
 /* —— 消息气泡（TG 安卓味）：自己右蓝底白字，对方左底栏色；圆角 12px，贴边角小 —— */
-.msg { max-width: 70%; padding: 0.45em 0.7em; border-radius: 12px; background: var(--tg-secondary-bg); }
+.msg { max-width: 70%; min-width: 9em; padding: 0.45em 0.7em; border-radius: 12px; background: var(--tg-secondary-bg); }
 .msg.user { align-self: flex-end; background: var(--tg-button); color: var(--tg-button-text); border-bottom-right-radius: 4px; }
 .msg.user .who, .msg.user .edit-btn { color: inherit; opacity: 0.75; }
 .msg.assistant { align-self: flex-start; border-bottom-left-radius: 4px; }
@@ -76,10 +76,11 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; ba
 .msg .inline-edit { margin-top: 0.3em; }
 .msg .inline-input { width: 100%; }
 .msg .inline-btns { display: flex; gap: 0.4em; margin-top: 0.3em; }
-#composer { display: flex; gap: 0.5em; padding: 0.6em 0.8em; }
-#input { flex: 1; background: var(--tg-secondary-bg); color: var(--tg-text); border: none; border-radius: 20px; padding: 0.55em 1em; font: inherit; }
+#composer { display: flex; gap: 0.5em; padding: 0.6em 0.8em; align-items: flex-end; background: color-mix(in srgb, var(--tg-bg) 72%, transparent); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); border-top: 1px solid rgb(255 255 255 / 8%); }
+/* 底栏输入：多行 textarea（回车换行，只有按钮发送）；圆角随行数长大，上限 6 行出滚动。 */
+#input { flex: 1; background: var(--tg-secondary-bg); color: var(--tg-text); border: none; border-radius: 20px; padding: 0.55em 1em; font: inherit; resize: none; line-height: 1.5; max-height: calc(1.5em * 6 + 1.1em); overflow-y: auto; }
 #input:focus { outline: 1px solid var(--tg-link); }
-#composer button { background: var(--tg-button); color: var(--tg-button-text); border: none; border-radius: 20px; padding: 0.55em 1.2em; cursor: pointer; }
+#composer button { background: var(--tg-button); color: var(--tg-button-text); border: none; border-radius: 20px; padding: 0.55em 1.2em; cursor: pointer; align-self: flex-end; }
 
 /* —— 按钮动效（TG 味 = 按下缩 97% + 120ms 回弹；主按钮带辉光） —— */
 button { transition: transform 120ms ease-out, filter 150ms ease-out, background 150ms ease-out; }
