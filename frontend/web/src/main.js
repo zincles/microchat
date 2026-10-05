@@ -24,6 +24,16 @@ const api = createApi({ base: API, token: TOKEN });
 // 每拍现读：设置里改完即时生效，不用刷新（API/Token 那两格才要刷新）。
 function previewOn() { return localStorage.getItem("mc_preview") !== "0"; }
 
+// 主题预设：localStorage.mc_theme —— ""（跟随系统）/ midnight / paper / wine / forest。
+// TG 客户端里打开（有 window.Telegram.WebApp）⇒ 不用预设，宿主主题说了算。
+function applyTheme() {
+  if (window.Telegram?.WebApp) { document.documentElement.removeAttribute("data-theme"); return; }
+  const t = localStorage.getItem("mc_theme") || "";
+  if (t) document.documentElement.setAttribute("data-theme", t);
+  else document.documentElement.removeAttribute("data-theme");
+}
+applyTheme();
+
 // 保留旧名：call() 照旧直调，boot()/send() 语义不变（扩展只加功能）。
 async function call(method, path, body) {
   return api.call(method, path, body);
@@ -519,6 +529,7 @@ function wireSettings() {
     document.getElementById("cli-api").value = localStorage.getItem("mc_api") || "http://127.0.0.1:8787/api/v1";
     document.getElementById("cli-token").value = localStorage.getItem("mc_token") || "";
     document.getElementById("cli-preview").checked = previewOn();
+    document.getElementById("cli-theme").value = localStorage.getItem("mc_theme") || "";
   };
   const open = async () => {
     settingsSnap = snapshotSettings(readServerForm());
@@ -593,12 +604,14 @@ function wireSettings() {
     } catch (err) { document.getElementById("def-status").textContent = `保存失败：${err.message}`; }
   };
 
-  // 客户端区：mc_api/mc_token 改完刷新生效；mc_preview 即时生效（下一拍现读）。
+  // 客户端区：mc_api/mc_token 改完刷新生效；mc_preview/mc_theme 即时生效。
   document.getElementById("cli-save").onclick = () => {
     localStorage.setItem("mc_api", document.getElementById("cli-api").value.trim() || "http://127.0.0.1:8787/api/v1");
     localStorage.setItem("mc_token", document.getElementById("cli-token").value);
     localStorage.setItem("mc_preview", document.getElementById("cli-preview").checked ? "1" : "0");
-    document.getElementById("cli-status").textContent = "已保存（API/Token 刷新页面生效，预演即时生效）";
+    localStorage.setItem("mc_theme", document.getElementById("cli-theme").value);
+    applyTheme(); // 主题即时生效（不刷新）
+    document.getElementById("cli-status").textContent = "已保存（API/Token 刷新页面生效，预演与主题即时生效）";
   };
 
   // Agent 区：左列表+右详情（name/system_prompt/三能力checkbox/provider-model-prompt 三覆盖格/保存整段 PATCH/新建/删除/设默认）。

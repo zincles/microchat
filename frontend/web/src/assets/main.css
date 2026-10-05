@@ -19,7 +19,7 @@ select { appearance: none; -webkit-appearance: none; padding-right: 1.8em;
 textarea { resize: vertical; }
 body { margin: 0; background: var(--tg-bg); color: var(--tg-text); font: 15px/1.65 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif; }
 #app { display: flex; flex-direction: column; height: 100vh; }
-header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; background: var(--tg-secondary-bg); color: var(--tg-hint); }
+header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; background: var(--tg-secondary-bg); color: var(--tg-hint); border-bottom: 1px solid rgb(255 255 255 / 8%); }
 .pill, .pill-select { background: var(--tg-secondary-bg); border: 1px solid var(--line); color: var(--tg-text); border-radius: 10px; padding: 0.3em 0.7em; font-size: 0.85em; cursor: pointer; max-width: 16em; }
 .pill:hover, .pill-select:hover { background: rgb(255 255 255 / 8%); }
 /* 三栏：左会话 260px｜中对话自适应（最宽 720px 居中）｜右载荷 340px。窄屏（<1100px）右栏先藏，<700px 左栏变顶条 —— 消息优先。 */
