@@ -86,26 +86,13 @@ export function buildAbilitiesPatch(rows) {
 export function renderMessage(doc, { who, role, content, reasoning, reasoningMs, messageId, onEdit }) {
   const div = doc.createElement("div");
   div.className = `msg ${role === "user" ? "user" : "assistant"}`;
+  // 头行：署名左、编辑按钮右（共享一行高度，不另占一整行省空间）。
   const head = doc.createElement("div");
-  head.className = "who";
-  head.textContent = who;
-  div.appendChild(head);
-  if (reasoning) {
-    const det = doc.createElement("details");
-    det.className = "think";
-    const sum = doc.createElement("summary");
-    sum.textContent = formatThinkLabel(reasoningMs);
-    det.appendChild(sum);
-    const pre = doc.createElement("div");
-    pre.className = "think-body";
-    pre.textContent = reasoning;
-    det.appendChild(pre);
-    div.appendChild(det);
-  }
-  const body = doc.createElement("div");
-  body.className = "text";
-  body.textContent = content ?? "";
-  div.appendChild(body);
+  head.className = "msg-head";
+  const name = doc.createElement("span");
+  name.className = "who";
+  name.textContent = who;
+  head.appendChild(name);
   // 编辑按钮（有 messageId + onEdit 才挂：系统气泡与"生成中"占位不挂）。
   // 点了 ⇒ 气泡就地变输入框（textarea + 保存/取消），不弹 prompt。
   if (messageId && typeof onEdit === "function") {
@@ -121,8 +108,9 @@ export function renderMessage(doc, { who, role, content, reasoning, reasoningMs,
     };
     mk("改", "content");
     if (role !== "user") mk("改思考", "reasoning");
-    div.appendChild(bar);
+    head.appendChild(bar);
   }
+  div.appendChild(head);
   // openInlineEditor：把这条气泡的正文/思考就地换成 textarea + 保存/取消。
   // 保存 ⇒ onEdit(messageId, kind, 新值)（存档由调用方 PATCH）；取消 ⇒ 原样换回来。
   function openInlineEditor(root, kind) {

@@ -193,7 +193,7 @@ test("编辑端点形状：PATCH 消息带 content/reasoning，PATCH 摘要带 t
   assert.deepEqual(seen[1], ["http://x/api/v1/sessions/s1/summaries/sum1", "PATCH", { text: "新手改" }]);
 });
 
-test("消息编辑按钮：有 id 才挂；点开是行内框（textarea+保存/取消），保存带新值", () => {
+test("消息编辑按钮：头行右挂；点开是行内框（textarea+保存/取消），保存带新值", () => {
   const calls = [];
   function makeEl(tag) {
     const el = {
@@ -212,23 +212,15 @@ test("消息编辑按钮：有 id 才挂；点开是行内框（textarea+保存/
   const doc = {
     createElement: (tag) => makeEl(tag),
   };
-  // querySelector：按类名找（.text / .think-body），after 挂行内框
-  function withQuery(node, map) {
-    node.querySelector = (sel) => map[sel.startsWith(".") ? sel.slice(1) : sel] ?? null;
-    return node;
-  }
   const onEdit = (mid, kind, value) => calls.push([mid, kind, value]);
-  // 无 id ⇒ 不挂按钮
+  const barOf = (node) => node.children.find((c) => c.className === "msg-head").children.find((c) => c.className === "edit-bar");
+  // 无 id ⇒ 头行只有署名，不挂按钮
   const bare = renderMessage(doc, { who: "系", role: "assistant", content: "x" });
-  assert.ok(!bare.children.some((c) => c.className === "edit-bar"));
+  assert.ok(!barOf(bare));
   // user：只有"改"；点了 ⇒ 行内框出现（textarea 初值 = 旧正文），保存带新值
-  const u = withQuery(
-    renderMessage(doc, { who: "你", role: "user", content: "旧正文", messageId: "m1", onEdit }),
-    {},
-  );
-  const ubar = u.children.find((c) => c.className === "edit-bar");
+  const u = renderMessage(doc, { who: "你", role: "user", content: "旧正文", messageId: "m1", onEdit });
+  const ubar = barOf(u);
   assert.equal(ubar.children.length, 1);
-  // 手工补 query（renderMessage 内部用 root.querySelector，测试替身在外层包一层）
   const textEl = makeEl("div");
   textEl.className = "text";
   const ubox = { box: null };
@@ -242,7 +234,7 @@ test("消息编辑按钮：有 id 才挂；点开是行内框（textarea+保存/
   ubox.box.children[1].children[0].onclick(); // 保存
   // assistant 改思考：初值 = 旧思考
   const a = renderMessage(doc, { who: "助", role: "assistant", content: "x", reasoning: "旧思考", messageId: "m2", onEdit });
-  const abar = a.children.find((c) => c.className === "edit-bar");
+  const abar = barOf(a);
   assert.equal(abar.children.length, 2);
   const thinkEl = makeEl("div");
   const abox = { box: null };

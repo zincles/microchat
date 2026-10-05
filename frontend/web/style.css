@@ -32,14 +32,11 @@ header { display: flex; gap: 1em; align-items: center; padding: 0.6em 1em; borde
 .seg-btn.sel { background: #2f2f2f; color: var(--text); }
 #outgoing-raw { white-space: pre-wrap; word-break: break-all; margin: 0.4em 0; font-size: 0.8em; color: var(--dim); }
 #session-new { border-radius: 6px; }
+.msg { padding: 0.7em 0.2em; }
+.msg + .msg { border-top: 1px solid var(--line); }
+.msg .msg-head { display: flex; justify-content: space-between; align-items: center; gap: 0.6em; }
 .msg .who { font-weight: bold; }
-.msg.user .who { color: #4cc; }
-.msg.assistant .who { color: #c4c; }
-.msg .text { white-space: pre-wrap; word-break: break-word; }
-.msg .think { color: #888; font-size: 0.85em; }
-.msg .edit-bar { display: flex; gap: 0.4em; margin-top: 0.3em; }
-.msg .edit-btn { background: none; border: 1px solid var(--line); color: var(--dim); font-size: 0.75em; padding: 0.1em 0.6em; border-radius: 999px; cursor: pointer; }
-.msg .edit-btn:hover { color: var(--text); border-color: var(--dim); }
+.msg .edit-bar { display: flex; gap: 0.4em; margin-left: auto; }
 .msg .inline-edit { margin-top: 0.3em; }
 .msg .inline-input { width: 100%; box-sizing: border-box; background: #222; color: #eee; border: 1px solid #555; border-radius: 6px; padding: 0.4em; font: inherit; resize: vertical; }
 .msg .inline-btns { display: flex; gap: 0.4em; margin-top: 0.3em; }
