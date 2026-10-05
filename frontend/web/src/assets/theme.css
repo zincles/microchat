@@ -25,7 +25,9 @@
   --tg-button: #5288c1;
   --tg-button-text: #ffffff;
   --tg-destructive: #e53935;
-
+  /* —— 浮层提亮（TG 味 = 底色微差分层，不用边框切）：modal/菜单比底栏再亮约 4%。
+   * 深色取色：#17212b → #1e2c3a（TG 客户端弹窗底就是这么亮一档）；浅色：#f1f1f1 → #ffffff 纯白卡。 */
+  --tg-float: #1e2c3a;
   /* —— 旧变量桥接（style.css 里还在用这些名：逐个指到语义槽，之后慢慢改调用方） —— */
   --bg: var(--tg-bg);
   --panel: var(--tg-secondary-bg);
@@ -48,7 +50,7 @@
     --tg-button: #2481cc;
     --tg-button-text: #ffffff;
     --tg-destructive: #cc2929;
-    --line: rgb(0 0 0 / 12%);
+    --tg-float: #ffffff;
     --warn: #a80;
   }
 }
