@@ -93,24 +93,21 @@
             <p class="hint">API/Token 改完刷新页面生效；预演开关即时生效（localStorage.mc_api / mc_token / mc_preview）。</p>
           </section>
           <section id="panel-agent" class="panel hidden">
-            <div class="agent-cols">
-              <div class="agent-list-col">
-                <div id="agent-list"></div>
-                <div class="row">
-                  <input id="new-agent-name" placeholder="新 agent 名" />
-                  <button id="agent-add" type="button" class="primary">新建</button>
-                </div>
-              </div>
-              <div id="agent-detail" class="agent-detail hidden">
-                <div id="agent-title" class="detail-title"></div>
-                <label class="field-block"><span>系统提示词</span><textarea id="agent-prompt" rows="6" placeholder="system_prompt"></textarea></label>
-                <div id="agent-abilities"></div>
-                <div class="row">
-                  <button id="agent-save" type="button" class="primary">保存整段</button>
-                  <button id="agent-default" type="button">设为默认</button>
-                  <button id="agent-del" type="button" class="danger">删除</button>
-                  <span id="agent-status" class="status"></span>
-                </div>
+            <h3>已有 Agent</h3>
+            <div id="agent-list"></div>
+            <div class="row">
+              <input id="new-agent-name" placeholder="新 agent 名" />
+              <button id="agent-add" type="button" class="primary">新建</button>
+            </div>
+            <div id="agent-detail" class="agent-detail hidden">
+              <div id="agent-title" class="detail-title"></div>
+              <label class="field-block"><span>系统提示词</span><textarea id="agent-prompt" rows="6" placeholder="system_prompt"></textarea></label>
+              <div id="agent-abilities"></div>
+              <div class="row">
+                <button id="agent-save" type="button" class="primary">保存整段</button>
+                <button id="agent-default" type="button">设为默认</button>
+                <button id="agent-del" type="button" class="danger">删除</button>
+                <span id="agent-status" class="status"></span>
               </div>
             </div>
           </section>
