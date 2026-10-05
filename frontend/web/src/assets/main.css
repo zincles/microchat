@@ -7,6 +7,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; ba
 .pill:hover, .pill-select:hover { background: rgb(255 255 255 / 8%); }
 /* 三栏：左会话 260px｜中对话自适应（最宽 720px 居中）｜右载荷 340px。窄屏（<1100px）右栏先藏，<700px 左栏变顶条 —— 消息优先。 */
 #columns { flex: 1; display: flex; min-height: 0; }
+#sessions-bar { width: 260px; flex: none; background: var(--tg-secondary-bg); display: flex; flex-direction: column; overflow: hidden; }
 /* 拖拽条：4px 宽命中区，hover/拖拽时显 TG 蓝线；窄屏隐藏（栏都堆叠了，无宽可调）。 */
 .grip { flex: none; width: 5px; cursor: col-resize; background: transparent; }
 .grip:hover, .grip.active { background: var(--tg-link); }
@@ -30,7 +31,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; ba
 }
 .bar-head { display: flex; justify-content: space-between; align-items: center; padding: 0.7em 0.8em 0.3em; color: var(--tg-hint); font-size: 0.85em; }
 #session-list { overflow-y: auto; flex: 1; padding: 0.3em 0.5em; }
-.bar-foot { padding: 0.5em; border-top: 1px solid var(--line); }
+.bar-foot { padding: 0.5em; border-top: 1px solid var(--line); margin-top: auto; }
 .foot-btn { display: block; width: 100%; text-align: left; background: none; border: none; border-radius: 10px; color: var(--tg-hint); padding: 0.55em 0.7em; cursor: pointer; }
 .foot-btn:hover { background: rgb(255 255 255 / 6%); color: var(--tg-text); }
 .session-item { display: flex; gap: 0.5em; align-items: center; padding: 0.55em 0.7em; border-radius: 12px; cursor: pointer; white-space: nowrap; overflow: hidden; color: var(--tg-text); }
@@ -60,6 +61,10 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; ba
 #input:focus { outline: 1px solid var(--tg-link); }
 #composer button { background: var(--tg-button); color: var(--tg-button-text); border: none; border-radius: 20px; padding: 0.55em 1.2em; cursor: pointer; }
 button { background: var(--tg-secondary-bg); color: var(--tg-text); border: 1px solid var(--line); border-radius: 10px; padding: 0.5em 1em; cursor: pointer; }
+/* 主按钮（保存/新建这类肯定语，HTML 上点 class="primary"）+ 危险文字钮（删除，红字无底）。 */
+button.primary { background: var(--tg-button); color: var(--tg-button-text); border: none; }
+button.danger, #agent-del { background: none; border: none; color: var(--tg-destructive); }
+.plist td.ops button { margin-right: 0.4em; padding: 0.3em 0.7em; }
 .statusline { padding: 0.3em 1em; color: var(--tg-hint); font-size: 0.85em; }
 .statusline.over { color: var(--tg-destructive); }
 #outgoing-box { padding: 0.25em 1em; color: var(--tg-hint); font-size: 0.85em; }
@@ -81,17 +86,19 @@ button { background: var(--tg-secondary-bg); color: var(--tg-text); border: 1px 
 /* 图标按钮通用（× ＋ 这种）：去边框去底色，hover 才显底 —— 原生感就这么来。 */
 .icon-btn { background: none; border: none; color: var(--tg-hint); padding: 0.2em 0.4em; border-radius: 6px; cursor: pointer; }
 .icon-btn:hover { color: var(--tg-text); background: rgb(255 255 255 / 8%); }
-/* 分组卡片：每组一个圆角块（TG 设置页的观感），组内行用分隔线，不用外边框。 */
+/* 分组卡片（TG 设置页的观感）：tab 条本身是一组圆角块；panel 去底色，h3 是组标题
+ * （TG 蓝小字顶在卡片上方）；field/row 是卡片里的行（圆角只在组两端）。 */
 .settings-cols { display: block; }
-.settings-nav { display: flex; flex-direction: row; gap: 0.2em; margin-bottom: 0.8em; }
-.settings-nav .tab { text-align: center; background: none; border: none; border-radius: 10px; color: var(--tg-hint); padding: 0.45em 0.9em; }
-.settings-nav .tab.sel { color: var(--tg-text); background: var(--tg-secondary-bg); }
-.settings-cols .panel { background: var(--tg-secondary-bg); border-radius: 12px; padding: 0.4em 0.9em; margin-bottom: 0.8em; }
-.settings-cols .panel h3 { color: var(--tg-hint); font-size: 0.85em; font-weight: normal; margin: 0.8em 0 0.4em; }
-.field { display: grid; grid-template-columns: 140px 1fr; align-items: center; gap: 0.6em; margin: 0; padding: 0.55em 0; color: var(--tg-text); border-bottom: 1px solid var(--line); }
-.field:last-child { border-bottom: none; }
-.field > span { text-align: left; color: var(--tg-hint); }
-.field input, .field textarea, .field select { width: 100%; box-sizing: border-box; background: var(--tg-bg); color: var(--tg-text); border: 1px solid var(--line); padding: 0.45em 0.6em; border-radius: 8px; }
+.settings-nav { display: flex; flex-direction: row; gap: 0.2em; margin-bottom: 1em; background: var(--tg-secondary-bg); border-radius: 12px; padding: 0.25em; }
+.settings-nav .tab { flex: 1; text-align: center; background: none; border: none; border-radius: 9px; color: var(--tg-hint); padding: 0.45em 0.3em; font-size: 0.9em; }
+.settings-nav .tab.sel { color: var(--tg-text); background: rgb(255 255 255 / 10%); }
+.settings-cols .panel { background: none; padding: 0; margin: 0 0 1.2em; }
+.settings-cols .panel h3 { color: var(--tg-link); font-size: 0.78em; font-weight: normal; text-transform: uppercase; letter-spacing: 0.06em; margin: 0 0 0.4em 0.9em; background: none; }
+.settings-cols .panel .field, .settings-cols .panel .row { background: var(--tg-secondary-bg); margin: 0; padding: 0.6em 0.9em; border-bottom: 1px solid var(--line); }
+.settings-cols .panel h3 + .field, .settings-cols .panel h3 + .row { border-radius: 12px 12px 0 0; }
+.settings-cols .panel .row:last-child, .settings-cols .panel .field:last-child { border-radius: 0 0 12px 12px; border-bottom: none; }
+.settings-cols .panel .hint { background: none; margin: 0.4em 0 0 0.9em; }
+.field { display: grid; grid-template-columns: 140px 1fr; align-items: center; gap: 0.6em; color: var(--tg-text); }
 @media (max-width: 700px) {
   .field { grid-template-columns: 1fr; }
 }

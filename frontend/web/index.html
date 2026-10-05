@@ -75,18 +75,18 @@
             <label class="field"><span>模型上下文 tokens</span><input id="chat-model-ctx" type="number" min="1" /></label>
             <label class="field"><span>压缩块数</span><input id="chat-compact-blocks" type="number" min="1" /></label>
             <label class="field"><span>压缩触发 tokens（空=默认）</span><input id="chat-compact-trigger" type="number" min="1" placeholder="空=默认" /></label>
-            <div class="row"><button id="chat-save" type="button">保存 chat</button><span id="chat-status" class="status"></span></div>
+            <div class="row"><button id="chat-save" type="button" class="primary">保存 chat</button><span id="chat-status" class="status"></span></div>
             <h3>缺省三件</h3>
             <label class="field"><span>provider</span><input id="def-provider" placeholder="provider" /></label>
             <label class="field"><span>model</span><input id="def-model" placeholder="model" /></label>
             <label class="field"><span>agent</span><input id="def-agent" placeholder="agent" /></label>
-            <div class="row"><button id="def-save" type="button">保存缺省</button><span id="def-status" class="status"></span></div>
+            <div class="row"><button id="def-save" type="button" class="primary">保存缺省</button><span id="def-status" class="status"></span></div>
           </section>
           <section id="panel-client" class="panel hidden">
             <label class="field"><span>API 地址</span><input id="cli-api" placeholder="http://127.0.0.1:8787/api/v1" /></label>
             <label class="field"><span>Token</span><input id="cli-token" placeholder="可空" type="password" /></label>
             <label class="field"><span>输入时预演载荷</span><input id="cli-preview" type="checkbox" /></label>
-            <div class="row"><button id="cli-save" type="button">保存</button><span id="cli-status" class="status"></span></div>
+            <div class="row"><button id="cli-save" type="button" class="primary">保存</button><span id="cli-status" class="status"></span></div>
             <p class="hint">API/Token 改完刷新页面生效；预演开关即时生效（localStorage.mc_api / mc_token / mc_preview）。</p>
           </section>
           <section id="panel-agent" class="panel hidden">
@@ -95,7 +95,7 @@
                 <div id="agent-list"></div>
                 <div class="row">
                   <input id="new-agent-name" placeholder="新 agent 名" />
-                  <button id="agent-add" type="button">新建</button>
+                  <button id="agent-add" type="button" class="primary">新建</button>
                 </div>
               </div>
               <div id="agent-detail" class="agent-detail hidden">
@@ -103,9 +103,9 @@
                 <label class="field-block"><span>系统提示词</span><textarea id="agent-prompt" rows="6" placeholder="system_prompt"></textarea></label>
                 <div id="agent-abilities"></div>
                 <div class="row">
-                  <button id="agent-save" type="button">保存整段</button>
+                  <button id="agent-save" type="button" class="primary">保存整段</button>
                   <button id="agent-default" type="button">设为默认</button>
-                  <button id="agent-del" type="button">删除</button>
+                  <button id="agent-del" type="button" class="danger">删除</button>
                   <span id="agent-status" class="status"></span>
                 </div>
               </div>
@@ -118,7 +118,7 @@
               <select id="new-provider-vendor"></select>
               <select id="new-provider-protocol"></select>
               <input id="new-provider-key" placeholder="api_key（可空）" />
-              <button id="provider-add" type="button">新建</button>
+              <button id="provider-add" type="button" class="primary">新建</button>
             </div>
             <div id="routes-status" class="status"></div>
           </section>
