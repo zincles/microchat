@@ -6,6 +6,7 @@ import { toastVue } from "./toast-vue.js";
 import { mountComposer, composerClear, composerSubmit, composerSetStatus, composerSetRunning } from "./composer-vue.js";
 import { mountTopBar, topBar } from "./topbar-vue.js";
 import { mountSessionBar, sessionBar } from "./sessionbar-vue.js";
+import { openSessionSettings } from "./session-settings-vue.js";
 import { mountPayloadBar, payloadBar } from "./payloadbar-vue.js";
 import { parseCommand, filterCommands } from "./utils/commands.js";
 import { advanceCursor } from "./utils/cursor.js";
@@ -131,8 +132,16 @@ function renderSessions(sessions) {
 }
 mountSessionBar({
   onSelect: (id) => enterSession(id).catch((err) => toast(`进会话失败：${err.message}`, "error")),
+  onSettings: (id) => openSessionSettings(id, {
+    onNotify: (t, k) => toast(t, k),
+    onRenamed: () => { refreshSessionsBar(); if (id === sessionID) enterSession(id).catch(() => {}); },
+  }),
   onClose: async (id) => {
-    // 关会话 = DELETE 整条（删完后端不代建 —— 关的是当前 ⇒ 进剩下第一条，没有就建一条）。
+    // 关会话 = 全屏确认后 DELETE（confirm 全屏中央 + 遮罩加深，与消息删除同套）。
+    const list = await api.listSessions().catch(() => []);
+    const found = list.find((s) => s.id === id);
+    const name = found?.title || "新会话";
+    if (!(await confirmAsk(`删除会话「${name}」？不可逆。`))) return;
     await api.closeSession(id).catch((err) => { toast(`关闭失败：${err.message}`, "error"); return; });
     if (id === sessionID) {
       const rest = await api.listSessions();

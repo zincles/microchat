@@ -79,6 +79,11 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 .session-item .title { flex: 1; overflow: hidden; text-overflow: ellipsis; }
 .session-item .close { background: none; border: none; color: var(--tg-hint); padding: 0 0.3em; cursor: pointer; border-radius: 4px; }
 .session-item .close:hover { color: var(--tg-destructive); }
+/* 条目设置键（三横杠）：默认隐藏，hover 整条才显，与 × 同形。 */
+.session-item .item-btn { display: none; background: none; border: none; color: var(--tg-hint); padding: 0 0.3em; cursor: pointer; border-radius: 4px; }
+.session-item .item-btn svg { display: block; }
+.session-item:hover .item-btn, .session-item.sel .item-btn { display: block; }
+.session-item .item-btn:hover { color: var(--tg-text); }
 .out.pending { color: var(--tg-link); }
 /* —— 消息气泡（TG 安卓味）：自己右蓝底白字，对方左底栏色；圆角 12px，贴边角小 —— */
 .msg { max-width: 70%; min-width: 9em; padding: 0.45em 0.7em; border-radius: var(--r-card); background: var(--tg-secondary-bg); }

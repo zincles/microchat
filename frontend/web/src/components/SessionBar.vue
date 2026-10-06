@@ -1,9 +1,10 @@
 <script setup>
 // 左会话栏：列表 + 新建 + 置底设置按钮。
-// 挂载后接管 aside#sessions-bar（DOM 照旧：.bar-head/.session-item/.bar-foot）。
+// 每条：标题 + 设置（三横杠 ☰，改名/模型/agent）+ 关闭（×，全屏确认后删）。
 import { ref } from "vue";
+import { ICONS } from "./icons.js";
 
-const emit = defineEmits(["select", "close", "new", "open-settings"]);
+const emit = defineEmits(["select", "settings", "close", "new", "open-settings"]);
 
 const sessions = ref([]);
 const currentId = ref(null);
@@ -29,6 +30,14 @@ defineExpose({ setSessions });
         @click="$emit('select', s.id)"
       >
         <span class="title">{{ s.title || "新会话" }}</span>
+        <button
+          class="item-btn"
+          type="button"
+          title="会话设置"
+          aria-label="会话设置"
+          @click.stop="$emit('settings', s.id)"
+          v-html="ICONS.sliders"
+        ></button>
         <button
           class="close"
           type="button"

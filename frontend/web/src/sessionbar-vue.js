@@ -6,6 +6,7 @@ let inst = null;
 export function mountSessionBar(handlers) {
   inst = mount(SessionBar, "#sessionbar-vue", {
     onSelect: handlers.onSelect,
+    onSettings: handlers.onSettings,
     onClose: handlers.onClose,
     onNew: handlers.onNew,
     "onOpen-settings": handlers.onOpenSettings,
