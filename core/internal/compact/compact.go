@@ -48,12 +48,8 @@ const materialHeader = "【要压缩的这段对话】\n"
 // mergeHeader：合并级材料的抬头 —— 一句话说清"下面是各段梗概、不是对话原文"。
 const mergeHeader = "【下面是各段已有梗概（不是对话原文）—— 请把它们并成一段更粗的前情提要】\n\n"
 
-// stateHeader：材料后面附的那份状态的抬头 —— **口气定死**：程序事实、仅供参考、不要写进梗概。
-//
-// 它是 `at_idx` 那条链算出来的（**当前的**生效提示词打底 + 正文 fold 到区间末 ⇒ **不是快照**）：
-// 摘要本身**不存状态**（状态是端点的属性，存进去就是第二个真相来源），但"这一段结束时是什么样"
-// 对写梗概有用 ⇒ 作为**程序事实**摆在材料里，并明说别抄进梗概。
-const stateHeader = "【程序·状态（截至这段末尾；程序事实，仅供参考，不要写进梗概）】\n"
+const stateBeforeHeader = "# 待压缩段落开始时的状态（程序事实，仅供参考，不要写进梗概）：\n"
+const stateAfterHeader = "# 待压缩段落结束时的状态（程序事实，仅供参考，不要写进梗概）：\n"
 
 // dummyReply：本地假上游（`kind: dummy`）吐的那句摘要 —— 确定性、不联网，一眼认得出是假的。
 const dummyReply = "（测试用假摘要）"
@@ -249,8 +245,9 @@ func (s *Service) RegenerateSummary(ctx context.Context, session model.Session, 
 		session: session, channel: effective.channel, model: effective.model,
 		template: effective.template, local: effective.local,
 		span: resolved,
-		// 状态段：消息级 = 区间末；合并级 = 最后一个孩子的区间末（`End` 是下标 ⇒ 序号 = End+1）
+		// 状态段：消息级 = 区间两端；合并级 = 第一个孩子的区间头与最后一个孩子的区间末。
 		stateSection: stateSectionAt(session, agents, messages, resolved.End+1),
+		stateBefore:  stateSectionAt(session, agents, messages, resolved.Begin),
 	}
 	generated, err := s.generateText(ctx, p)
 	if err != nil {
@@ -351,6 +348,8 @@ type prepared struct {
 	// stateSection：材料里附的那份"算到区间末的状态"（渲染好的文本；空 = 一个变量都没有 ⇒ 不附）。
 	// 取料时就算好（那时手里有消息快照与生效提示词），调用期间不再碰库。
 	stateSection string
+	// stateBefore：同上，算到区间**开头**（段首状态；与段末配对，模型看得见变化）。
+	stateBefore string
 	// requested：面板上"请求压几个块"（区间入口 = 区间里实际几个块）。
 	requested int
 }
@@ -443,26 +442,47 @@ func (s *Service) prepare(session model.Session, req Request) (*prepared, error)
 		template: effective.template,
 		local:    effective.local,
 		span:     resolved,
-		// 材料里附的那份状态：**at_idx 那条链**（`state.StateAt`）—— 底子是**当前**的生效提示词、
-		// 正文 fold 到区间末（`End` 是下标 ⇒ 序号 = End+1）。取料在锁里，所以在这儿算。
+		// 材料里附的两份状态：**at_idx 那条链**（`state.StateAt`）—— 底子是**当前**的生效提示词、
+		// 正文 fold 到区间开头（`Begin` 是下标 ⇒ 序号 = Begin）与区间末（`End` 是下标 ⇒ 序号 = End+1）。
+		// 取料在锁里，所以在这儿算。
 		stateSection: stateSectionAt(session, agents, messages, resolved.End+1),
+		stateBefore:  stateSectionAt(session, agents, messages, resolved.Begin),
 		requested:    requestedBlocks(req, resolved, chatConfig.CompactBlocks),
 	}, nil
 }
 
-// stateSectionAt：材料里那份状态的文本（**算到 `at` 条为止**）—— 没有变量可报就回空串。
-//
-// 拿的是 `at_idx` 同一条链（`state.StateAt` ⇒ `FromSources`），渲染也走唯一的 `state.RenderTable`
-// ⇒ 与出站注入的那张表长得一模一样。空（一个变量都没有）⇒ 不附：材料里多一段空话纯属噪音。
-func stateSectionAt(session model.Session, agents config.AgentsConfig, messages []model.Message, at int) string {
-	// 底子用**当前**的生效提示词（三级解析只有一处：`state.ResolveSystemPrompt`）
+// stateAtTables：`at` 条为止的状态表（`at_idx` 同一条链）。调用方决定渲染。
+func stateAtTables(session model.Session, agents config.AgentsConfig, messages []model.Message, at int) state.Tables {
 	systemPrompt, source := state.ResolveSystemPrompt(session, agents)
-	tables := state.StateAt(session.ID, systemPrompt, source, messages, at).Tables
-	rendered, ok := state.RenderTable(tables)
-	if !ok {
-		return ""
+	return state.StateAt(session.ID, systemPrompt, source, messages, at).Tables
+}
+
+// stateSectionAt：材料里那份状态的 `<current_state>` 文本（**算到 `at` 条为止**）——
+// 没有变量可报就回空串。渲染走 `renderCurrentState`（与出站注入同形）。
+func stateSectionAt(session model.Session, agents config.AgentsConfig, messages []model.Message, at int) string {
+	return renderCurrentState(stateAtTables(session, agents, messages, at))
+}
+
+// renderCurrentState：状态表 → `<current_state>` 块文本（global 不写表名，命名表写表名）。
+// 空（一个变量都没有）⇒ ""（材料里多一段空话纯属噪音）。
+func renderCurrentState(tables state.Tables) string {
+	var body strings.Builder
+	for _, name := range sortedKeysOf(tables) {
+		table := tables[name]
+		if len(table) == 0 {
+			continue
+		}
+		if name == statelang.DefaultTable {
+			body.WriteString("<" + statelang.CurrentTag + ">\n")
+		} else {
+			body.WriteString("<" + statelang.CurrentTag + " " + name + ">\n")
+		}
+		for _, key := range sortedKeysOf(table) {
+			body.WriteString(key + " = " + table[key] + "\n")
+		}
+		body.WriteString("</" + statelang.CurrentTag + ">\n\n")
 	}
-	return rendered
+	return strings.TrimSpace(body.String())
 }
 
 // requestedBlocks：面板上那个"压 N 个块"（区间入口就是区间里实际几块）。
@@ -944,7 +964,7 @@ func (s *Service) generateText(ctx context.Context, p *prepared) (generatedText,
 		Model: p.model,
 		Messages: []providers.ChatMessage{
 			{Role: "system", Content: p.template},
-			{Role: "user", Content: header + withStateSection(material, p.stateSection)},
+			{Role: "user", Content: header + withStatePair(material, p.stateBefore, p.stateSection)},
 		},
 		// 骑**同一个会话 id**（网关按它路由、缓存按前缀算；缺了会被上游拒）
 		SessionID: p.session.ID,
@@ -1108,17 +1128,29 @@ func materialOf(messages []model.Message) string {
 	return strings.TrimSpace(builder.String())
 }
 
-// withStateSection：把那份状态附在材料后面（`section` 为空 ⇒ 原样返回）。
-//
-// 抬头由 `stateHeader` 说清口气（程序事实、仅供参考、不要写进梗概）—— 梗概里不存状态这条规矩不变：
-// 状态只是"写梗概时看得见的事实"，不进摘要、不进库。
-func withStateSection(material, section string) string {
-	if strings.TrimSpace(section) == "" {
-		return material
+// sortedKeysOf：map 键排序（`state.sortedKeys` 不导出，这里各排各的）。
+func sortedKeysOf[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
 	}
-	return material + "\n\n" + stateHeader + section
+	sort.Strings(keys)
+	return keys
 }
 
+// withStatePair：材料前后附段首/段末状态（为空的那份不附；两份都空 ⇒ 原样返回）。
+func withStatePair(material, before, after string) string {
+	out := material
+	if strings.TrimSpace(before) != "" {
+		out = stateBeforeHeader + before + "\n\n" + out
+	}
+	if strings.TrimSpace(after) != "" {
+		out = out + "\n\n" + stateAfterHeader + after
+	}
+	return out
+}
+
+// estimateTokens：
 // estimateTokens：这条摘要正文的估算 token 数（口径只有一处：`state.EstimateTokens`）。
 func (s *Service) estimateTokens(p *prepared, text string) int {
 	ratio := state.DefaultTokenizerRatio

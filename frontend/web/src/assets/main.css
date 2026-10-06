@@ -150,7 +150,9 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 .modal.hidden, .hidden { display: none; }
 .modal { position: fixed; inset: 0; background: rgb(0 0 0 / 60%); z-index: 20; display: flex; align-items: center; justify-content: center; }
 .modal-box { background: var(--tg-bg); border: none; border-radius: var(--r-shell); width: 94vw; max-width: 960px; height: 92vh; overflow-y: auto; padding: 1em 1.2em; box-sizing: border-box; box-shadow: 0 12px 40px rgb(0 0 0 / 45%); }
-/* modal 全屏切换（modal-box 上的 .full）：宽高拉满，圆角归零 —— Agent 详情这种宽表用。 */
+.modal.submodal { z-index: 40; }
+/* 二级与一级同尺寸（同框叠放，内容区对齐，只靠遮罩区分层级）。 */
+.modal.submodal .modal-box { max-width: 960px; height: 92vh; }
 .modal-box.full { width: 100vw; max-width: none; height: 100vh; border-radius: 0; border: none; box-shadow: none; }
 .modal-head { display: flex; justify-content: space-between; align-items: center; font-size: 1.1em; margin-bottom: 0.5em; }
 .modal-head .head-btns { display: flex; gap: 0.2em; align-items: center; }
@@ -187,7 +189,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 
 /* —— 按钮默认主题（全页兜底：裸 button 不再是浏览器灰框） ——
  * 三档：默认（底栏色卡底）/ .primary（蓝底白字，主动作）/ .danger（红字，删除）。
- * 文字型（icon-btn/edit-btn/link-btn）与异形（#send-btn 圆钮/.tab/.agent-item/.session-item）各有样式，不受这条影响。 */
+ * 文字型（icon-btn/edit-btn/link-btn）与异形（#send-btn 圆钮/.tab/.session-item）各有样式，不受这条影响。 */
 button { background: var(--tg-secondary-bg); color: var(--tg-text); border: 1px solid var(--line); border-radius: var(--r-btn); padding: 0.45em 1em; font: inherit; cursor: pointer; }
 button:hover { filter: brightness(1.15); }
 button:active { filter: brightness(0.95); }
@@ -207,15 +209,6 @@ button.toggle.on .knob { transform: translateX(1.1em); }
 #panel-agent > .row { max-width: 420px; flex-wrap: nowrap; }
 #panel-agent > .row input { flex: 1; min-width: 0; }
 #panel-agent > .row button { flex: none; }
-/* 已有 agent 一组深底（比卡片再深一档 = --tg-bg 本体）：组内项用分隔线，不用各画圆角。 */
-#agent-list { background: var(--tg-bg); border-radius: var(--r-card); padding: 0.25em; margin-bottom: 0.6em; }
-#agent-list:empty { display: none; }
-.agent-item { display: block; width: 100%; text-align: left; background: none; border: none; border-radius: 0; color: var(--tg-text); padding: 0.55em 0.7em; margin: 0; cursor: pointer; box-sizing: border-box; border-bottom: 1px solid var(--line); }
-.agent-item:first-child { border-radius: var(--r-btn) var(--r-btn) 0 0; }
-.agent-item:last-child { border-bottom: none; border-radius: 0 0 var(--r-btn) var(--r-btn); }
-.agent-item:only-child { border-radius: var(--r-btn); }
-.agent-item:hover { background: rgb(255 255 255 / 6%); }
-.agent-item.sel { background: rgb(255 255 255 / 10%); color: var(--tg-text); }
 .agent-detail { margin-top: 1em; background: var(--tg-secondary-bg); border: none; border-radius: var(--r-card); padding: 0.6em 0.9em; overflow: hidden; }
 .agent-detail select { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .detail-title { color: var(--tg-hint); margin-bottom: 0.4em; }
@@ -232,6 +225,10 @@ button.toggle.on .knob { transform: translateX(1.1em); }
 .plist { width: 100%; border-collapse: collapse; }
 .plist th, .plist td { text-align: left; padding: 0.55em 0.6em; border-bottom: 1px solid var(--line); white-space: nowrap; }
 .plist th { color: var(--tg-hint); font-weight: normal; font-size: 0.85em; }
+/* 可点行（进二级）：hover 高亮 + 选中底，被点的行 cursor 指针。 */
+.plist tr.clickable { cursor: pointer; }
+.plist tr.clickable:hover td { background: rgb(255 255 255 / 6%); }
+.plist tr.clickable.sel td { background: rgb(255 255 255 / 10%); }
 .plist td.ops { white-space: normal; text-align: right; }
 /* 操作列：TG 风是蓝色文字操作，不是灰框按钮；删除是红色文字。 */
 .plist td.ops .link-btn { background: none; border: none; color: var(--tg-link); padding: 0.3em 0.5em; margin-left: 0.2em; cursor: pointer; }

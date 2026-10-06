@@ -13,6 +13,17 @@ func set(key, value string) Statement {
 
 func remove(key string) Statement { return Statement{Kind: KindDelete, Key: key} }
 
+// `<current_state>` 只剔除、不解析（提示块，不是记账块 —— 摘要里混进它也掉）。
+func TestCurrentStateStrippedNotParsed(t *testing.T) {
+	doc := Scan("正文\n<current_state>\n位置=野外\n</current_state>\n尾")
+	if len(doc.Statements) != 0 {
+		t.Fatalf("current_state 不该解析成语句：%+v", doc.Statements)
+	}
+	if doc.Cleaned != "正文\n\n尾" {
+		t.Fatalf("current_state 该从正文剔除：%q", doc.Cleaned)
+	}
+}
+
 func TestScanStripsBlocksAndKeepsProse(t *testing.T) {
 	document := Scan("雨水顺着屋檐落下。\n\n<state>\nHP = 12\ndelete(火把)\n</state>\n")
 	if document.Cleaned != "雨水顺着屋檐落下。" {

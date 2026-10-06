@@ -37,6 +37,11 @@ const (
 // BlockTag：块的标签名。**不可改** —— 它已经在存档与文档里了。
 const BlockTag = "state"
 
+// CurrentTag：发给模型看的"当前状态"块（`<current_state>` / `<current_state 表名>`）。
+// 它只用于提示（贴用户句首），解析器不解析它 —— 但**剔除认它**（`Cleaned` 里绝不能留标签，
+// 不然摘要里混进它就污染存档）。与 `BlockTag` 同剔、同闭合口径。
+const CurrentTag = "current_state"
+
 // DefaultTable：**不写表名的块落到这张表**（`<state>` 与 `<state global>` 是同一张表）。
 //
 // 它同时也是"算完为空的表自动消失"的**唯一例外**：`global` 恒在 —— 一个变量都没有时

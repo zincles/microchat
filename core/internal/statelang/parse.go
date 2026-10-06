@@ -26,6 +26,22 @@ func Scan(text string) Document {
 		cleaned.WriteString(text[cursor:open])
 		document.Blocks++
 
+		// `<current_state>` 只剔除、不解析（提示块，不是记账块）。
+		if isCurrentTag(text, open, openEnd) {
+			close := findTag(text, openEnd, true)
+			if close < 0 {
+				document.Unterminated = true
+				cursor = len(text)
+				break
+			}
+			end := tagEnd(text, close)
+			if end < 0 {
+				end = len(text)
+			}
+			cursor = end
+			continue
+		}
+
 		close := findTag(text, openEnd, true)
 		if close < 0 {
 			// 没闭合：把剩下的都当块内容 —— **绝不能把它当正文发出去**
@@ -252,7 +268,8 @@ func findTag(text string, from int, closing bool) int {
 	return -1
 }
 
-// isBlockTag：标签名是不是我们的块标签 —— `state` 或 `state 表名`（大小写不敏感、允许多余空白）。
+// isBlockTag：标签名是不是我们的块标签 —— `state` / `current_state` 各带可选表名
+// （大小写不敏感、允许多余空白）。
 //
 // 闭合标签里写不写表名都认（`</state>` 与 `</state 玩家状态>` 等价）：模型爱写对称，
 // 不认的话整块会被当成"没闭合"，把后半段正文一起吞掉。
@@ -265,12 +282,17 @@ func isBlockTag(raw string, closing bool) bool {
 		}
 		name = trimSpace(rest)
 	}
-	if len(name) < len(BlockTag) || !strings.EqualFold(name[:len(BlockTag)], BlockTag) {
-		return false
+	for _, tag := range []string{BlockTag, CurrentTag} {
+		if len(name) < len(tag) || !strings.EqualFold(name[:len(tag)], tag) {
+			continue
+		}
+		rest := name[len(tag):]
+		// 必须是标签本身，或 `标签 表名`（`stateX` / `current_stateX` 不算）
+		if rest == "" || rest[0] == ' ' || rest[0] == '\t' {
+			return true
+		}
 	}
-	rest := name[len(BlockTag):]
-	// 必须是 `state` 本身，或 `state 表名`（`stateX` 不算）
-	return rest == "" || rest[0] == ' ' || rest[0] == '\t'
+	return false
 }
 
 // tagEnd：标签 `<…>` 的结束下标（**含** `>`）；没有 `>` 返回 -1 —— 那不是标签。
@@ -291,4 +313,14 @@ func lineOf(text string, offset int) int {
 		offset = len(text)
 	}
 	return 1 + strings.Count(text[:offset], "\n")
+}
+
+// isCurrentTag：开始标签是不是 `<current_state …>`（提示块 ⇒ 只剔不记）。
+func isCurrentTag(text string, open, openEnd int) bool {
+	inner := trimSpace(text[open+1 : openEnd-1])
+	if len(inner) < len(CurrentTag) || !strings.EqualFold(inner[:len(CurrentTag)], CurrentTag) {
+		return false
+	}
+	rest := inner[len(CurrentTag):]
+	return rest == "" || rest[0] == ' ' || rest[0] == '\t'
 }

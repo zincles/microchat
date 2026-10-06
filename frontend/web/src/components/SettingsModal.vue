@@ -3,12 +3,11 @@
 // 状态全本地 ref，进弹窗拉一次；保存逐段 PUT。逻辑照 main.js wireSettings。
 import { ref, onMounted, onUnmounted, watch, nextTick } from "vue";
 import ToggleSwitch from "./ToggleSwitch.vue";
+import AgentEditor from "./AgentEditor.vue";
+import ProviderEditor from "./ProviderEditor.vue";
 import { createApi } from "../api/client.js";
 import {
   SETTINGS_TABS,
-  ABILITY_IDS,
-  buildAbilitiesPatch,
-  formatRoutesOutcome,
 } from "../utils/format.js";
 
 const emit = defineEmits(["close", "notify"]);
@@ -43,14 +42,11 @@ const cli = ref({ api: API, token: "", preview: true, theme: "", send: "button" 
 const cliStatus = ref("");
 const agents = ref([]);
 const curDefault = ref("");
-const curAgent = ref(null);
-const agentPrompt = ref("");
-const agentRows = ref({}); // id -> {enabled, model, prompt}
-const agentStatus = ref("");
-const modelOptions = ref([]);
+const editAgent = ref(null); // null | 'new' | agent（二级编辑器）
 const providers = ref([]);
 const presets = ref([]);
-const newProvider = ref({ id: "", vendor: "", protocol: "", key: "" });
+const curProvider = ref(null); // 选中行（删除目标）
+const editProvider = ref(null); // null | 'new' | provider（二级编辑器）
 const routesStatus = ref("");
 
 const PROTOCOLS = ["openai-chat-completion", "openai-response", "anthropic-messages", "gemini-generate-content", "systemone"];
@@ -129,13 +125,6 @@ async function loadAgents() {
     curDefault.value = data.default_agent ?? "";
     agents.value = data.agents ?? [];
   } catch {}
-  try {
-    const models = await api.models();
-    modelOptions.value = (models ?? []).map((m) => ({
-      value: `${m.provider}/${m.upstream_id}`,
-      label: `${m.provider}/${m.name ?? m.upstream_id}`,
-    }));
-  } catch {}
 }
 
 async function loadProviders() {
@@ -143,91 +132,20 @@ async function loadProviders() {
     const [list, pres] = await Promise.all([api.providers(), api.providerPresets()]);
     providers.value = list ?? [];
     presets.value = pres ?? [];
-    if (!newProvider.value.vendor && presets.value[0]) newProvider.value.vendor = presets.value[0].vendor;
+    if (curProvider.value) {
+      const still = list.find((p) => p.id === curProvider.value.id);
+      curProvider.value = still ?? null;
+    }
   } catch {}
 }
 
-async function refreshProvider(id) {
-  try {
-    await api.refreshProvider(id);
-    routesStatus.value = `${id}：模型已刷新`;
-    loadProviders().catch(() => {});
-  } catch (e) { routesStatus.value = `${id}：刷新失败（${e.message}）`; }
-}
-
-async function refreshRoutes(id) {
-  try {
-    const out = await api.refreshRoutes(id);
-    routesStatus.value = `路由缓存：${formatRoutesOutcome(out)}`;
-  } catch (e) { routesStatus.value = `路由缓存：${id}：刷新失败（${e.message}）`; }
-}
-
-async function deleteProvider(id) {
-  notify(`删除渠道 ${id}？`, "");
-  await api.deleteProvider(id);
+async function deleteProvider() {
+  if (!curProvider.value) return;
+  await api.deleteProvider(curProvider.value.id);
+  curProvider.value = null;
   loadProviders().catch(() => {});
 }
 
-async function addProvider() {
-  const id = (newProvider.value.id ?? "").trim();
-  if (!id) return;
-  await api.createProvider({
-    id,
-    vendor: newProvider.value.vendor,
-    ...(newProvider.value.protocol ? { protocol: newProvider.value.protocol } : {}),
-    api_key: newProvider.value.key || undefined,
-  });
-  newProvider.value.id = "";
-  newProvider.value.key = "";
-  loadProviders().catch(() => {});
-}
-function pickAgent(a) {
-  curAgent.value = a;
-  agentPrompt.value = a.system_prompt ?? "";
-  const ab = a.abilities ?? {};
-  const rows = {};
-  for (const id of ABILITY_IDS) {
-    const one = ab[id] ?? {};
-    const both = one.provider && one.model ? `${one.provider}/${one.model}` : "";
-    rows[id] = { enabled: one.enabled !== false, model: both, prompt: one.prompt ?? "" };
-  }
-  agentRows.value = rows;
-}
-async function saveAgent() {
-  if (!curAgent.value) return;
-  const rows = {};
-  for (const id of ABILITY_IDS) {
-    const r = agentRows.value[id] ?? {};
-    const slash = (r.model ?? "").indexOf("/");
-    rows[id] = {
-      enabled: !!r.enabled,
-      provider: slash < 0 ? "" : r.model.slice(0, slash),
-      model: slash < 0 ? "" : r.model.slice(slash + 1),
-      prompt: r.prompt ?? "",
-    };
-  }
-  try {
-    curAgent.value = await api.patchAgent(curAgent.value.id, {
-      system_prompt: agentPrompt.value,
-      abilities: buildAbilitiesPatch(rows),
-    });
-    agentStatus.value = "已保存";
-    loadAgents().catch(() => {});
-  } catch (e) { agentStatus.value = `保存失败：${e.message}`; }
-}
-
-async function makeDefault() {
-  if (!curAgent.value) return;
-  await api.patchAgent(curAgent.value.id, { make_default: true });
-  loadAgents().catch(() => {});
-}
-
-async function deleteAgent() {
-  if (!curAgent.value) return;
-  await api.deleteAgent(curAgent.value.id);
-  curAgent.value = null;
-  loadAgents().catch(() => {});
-}
 
 onMounted(() => {
   loadClient();
@@ -307,73 +225,52 @@ function onKey(e) {
           <p class="hint">API/Token 改完刷新页面生效；其余即时生效。</p>
         </section>
         <section v-show="tab === 'agent'" id="panel-agent" class="panel">
-          <h3>已有 Agent</h3>
+          <div class="panel-head">
+            <h3>已有 Agent（点进二级改）</h3>
+            <button type="button" class="primary" @click="editAgent = 'new'">新建</button>
+          </div>
           <div id="agent-list">
-            <button
-              v-for="a in agents"
-              :key="a.id"
-              type="button"
-              class="agent-item"
-              :class="{ sel: curAgent?.id === a.id }"
-              :title="a.id"
-              @click="pickAgent(a)"
-            >
-              <span>{{ a.name }}{{ a.id === curDefault ? "（默认）" : "" }}</span><span class="sub">{{ a.id }}</span>
-            </button>
+            <table class="plist">
+              <thead><tr><th>名称</th><th>id</th><th>默认</th></tr></thead>
+              <tbody><tr v-for="a in agents" :key="a.id" class="clickable" @click="editAgent = a">
+                <td>{{ a.name }}</td>
+                <td>{{ a.id }}</td>
+                <td>{{ a.id === curDefault ? "✓" : "" }}</td>
+              </tr></tbody>
+            </table>
           </div>
-          <div v-if="curAgent" id="agent-detail" class="agent-detail">
-            <div id="agent-title" class="detail-title">
-              {{ curAgent.name }} / {{ curAgent.id }}{{ curAgent.id === curDefault ? "（默认）" : "" }}
-            </div>
-            <label class="field-block"><span>系统提示词</span><textarea v-model="agentPrompt" rows="6" placeholder="system_prompt"></textarea></label>
-            <div id="agent-abilities">
-              <fieldset v-for="id in ABILITY_IDS" :key="id" class="ability-block">
-                <legend><ToggleSwitch v-model="agentRows[id].enabled" /> {{ id }}</legend>
-                <label class="field"><span>Model</span><select v-model="agentRows[id].model">
-                  <option value="">跟会话走</option>
-                  <option v-for="m in modelOptions" :key="m.value" :value="m.value">{{ m.label }}</option>
-                </select></label>
-                <label class="field-block"><span>提示词覆盖（空=默认模板）</span><textarea v-model="agentRows[id].prompt" rows="3"></textarea></label>
-              </fieldset>
-            </div>
-            <div class="row">
-              <button type="button" class="primary" @click="saveAgent">保存整段</button>
-              <button type="button" @click="makeDefault">设为默认</button>
-              <button type="button" class="danger" @click="deleteAgent">删除</button>
-              <span class="status">{{ agentStatus }}</span>
-            </div>
-          </div>
+          <AgentEditor
+            v-if="editAgent"
+            :agent="editAgent === 'new' ? null : editAgent"
+            :is-default="editAgent !== 'new' && editAgent.id === curDefault"
+            @close="editAgent = null"
+            @saved="loadAgents"
+          />
         </section>
         <section v-show="tab === 'provider'" id="panel-provider" class="panel">
           <div id="provider-list">
             <table class="plist">
-              <thead><tr><th>渠道</th><th>vendor</th><th>protocol</th><th>密钥</th><th>模型</th><th>操作</th></tr></thead>
-              <tbody><tr v-for="p in providers" :key="p.id">
+              <thead><tr><th>渠道</th><th>vendor</th><th>protocol</th><th>密钥</th><th>模型</th></tr></thead>
+              <tbody><tr v-for="p in providers" :key="p.id" class="clickable" :class="{ sel: curProvider?.id === p.id }" @click="curProvider = p; editProvider = p">
                 <td>{{ p.id }}</td>
                 <td>{{ p.vendor ?? "?" }}</td>
                 <td>{{ p.protocol ?? "?" }}</td>
                 <td>{{ p.has_key ? "有" : "无" }}</td>
                 <td>{{ p.models?.length ?? 0 }}</td>
-                <td class="ops">
-                  <button type="button" class="link-btn" @click="refreshProvider(p.id)">刷新模型</button>
-                  <button type="button" class="link-btn" @click="refreshRoutes(p.id)">刷路由</button>
-                  <button type="button" class="link-btn danger" @click="deleteProvider(p.id)">删除</button>
-                </td>
               </tr></tbody>
             </table>
           </div>
           <div class="row">
-            <input v-model="newProvider.id" placeholder="新渠道 id" />
-            <select v-model="newProvider.vendor">
-              <option v-for="p in presets" :key="p.vendor" :value="p.vendor">{{ p.name }}（{{ p.vendor }}）</option>
-            </select>
-            <select v-model="newProvider.protocol">
-              <option value="">protocol（空=默认）</option>
-              <option v-for="pr in PROTOCOLS" :key="pr" :value="pr">{{ pr }}</option>
-            </select>
-            <input v-model="newProvider.key" placeholder="api_key（可空）" />
-            <button type="button" class="primary" @click="addProvider">新建</button>
+            <button type="button" class="primary" @click="editProvider = 'new'">新建</button>
+            <button type="button" class="danger" :disabled="!curProvider" @click="deleteProvider">删除</button>
+            <span class="status">{{ routesStatus }}</span>
           </div>
+          <ProviderEditor
+            v-if="editProvider"
+            :provider="editProvider === 'new' ? null : editProvider"
+            @close="editProvider = null"
+            @saved="loadProviders"
+          />
           <div class="status">{{ routesStatus }}</div>
         </section>
       </div>

@@ -63,6 +63,7 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
     // models：跨 provider 拍平（`{provider, upstream_id, name}` —— 下拉选项就打它）。
     models: () => call("GET", "/models"),
     agents: () => call("GET", "/agents"),
+    createAgent: (body) => call("POST", "/agents", body),
     patchAgent: (id, body) => call("PATCH", `/agents/${enc(id)}`, body),
     deleteAgent: (id) => call("DELETE", `/agents/${enc(id)}`),
     getDefaults: () => call("GET", "/config/defaults"),
@@ -70,6 +71,7 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
     providers: () => call("GET", "/providers"),
     providerPresets: () => call("GET", "/providers/presets"),
     createProvider: (body) => call("POST", "/providers", body),
+    patchProvider: (id, body) => call("PATCH", `/providers/${enc(id)}`, body),
     refreshProvider: (id) => call("POST", `/providers/${enc(id)}/refresh`),
     // refreshRoutes：刷路由表（models.dev 快照 → model_route 落库），回 {provider, models, error?}。
     refreshRoutes: (id) => call("POST", `/providers/${enc(id)}/refresh-routes`),

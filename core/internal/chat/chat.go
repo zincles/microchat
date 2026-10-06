@@ -22,6 +22,7 @@ import (
 	"microchat/internal/model"
 	"microchat/internal/providers"
 	"microchat/internal/state"
+	"microchat/internal/statelang"
 	"microchat/internal/store"
 	"microchat/internal/task"
 	"microchat/internal/title"
@@ -106,7 +107,8 @@ func (s *Service) Accept(session model.Session, content string) (Accepted, error
 	}
 
 	user, err := s.Store.InsertMessage(model.Message{
-		ID: userID, SessionID: session.ID, Role: model.RoleUser, Content: content,
+		// 用户 `<state>` 注入一律剔除再入库（只 system prompt 与 assistant 的块算数）。
+		ID: userID, SessionID: session.ID, Role: model.RoleUser, Content: statelang.Scan(content).Cleaned,
 	})
 	if err != nil {
 		s.Turns.Stop(session.ID) // 登记了却写不进去 ⇒ 摘掉，别留下一个假的"在跑"

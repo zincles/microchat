@@ -291,9 +291,8 @@ func TestMaterialStripsStateAndSendsTemplate(t *testing.T) {
 	if strings.Contains(sent, "<state>") {
 		t.Fatalf("材料里的 <state> 块该被剔掉：%s", sent)
 	}
-	// 对话那一段（附状态之前）里不许留下状态键的原文 —— 状态只以"程序事实"那一段的渲染形式出现
-	// （抬头里那个换行在 JSON 里被转义了 ⇒ 拿不带换行的那段去切）
-	dialogue, _, _ := strings.Cut(sent, strings.TrimSpace(stateHeader))
+	// 对话那一段（附状态之前）里不许留下状态键的原文 —— 状态只以段首/段末两份 `<current_state>` 出现
+	dialogue, _, _ := strings.Cut(sent, strings.TrimSpace(stateAfterHeader))
 	if strings.Contains(dialogue, "第几轮") {
 		t.Fatalf("对话材料里不该留状态键：%s", dialogue)
 	}
@@ -371,7 +370,7 @@ func TestMaterialCarriesTheStateAtTheRangeEnd(t *testing.T) {
 		}
 	}
 
-	// 压最老的一块（第 1、2 条）⇒ 区间末是第 2 条：材料里该是 `轮次 = 1`
+	// 压最老的一块（第 1、2 条）⇒ 段首无状态（第 1 条之前）、段末 `轮次 = 1`
 	if _, err := h.service.Compact(context.Background(), h.session, Request{Blocks: 1}); err != nil {
 		t.Fatal(err)
 	}
@@ -379,8 +378,11 @@ func TestMaterialCarriesTheStateAtTheRangeEnd(t *testing.T) {
 	if !strings.Contains(sent, "不要写进梗概") || !strings.Contains(sent, "仅供参考") {
 		t.Fatalf("材料里那份状态的抬头该写清口气：%s", sent)
 	}
-	if !strings.Contains(sent, "当前变量:") || !strings.Contains(sent, "轮次 = 1") {
-		t.Fatalf("材料里该附上「算到区间末」的那张变量表：%s", sent)
+	if !strings.Contains(sent, "current_state") || !strings.Contains(sent, "轮次 = 1") {
+		t.Fatalf("材料里该附上「算到区间末」的 <current_state>：%s", sent)
+	}
+	if !strings.Contains(sent, "待压缩段落结束时的状态") {
+		t.Fatalf("段末状态该有抬头：%s", sent)
 	}
 	for _, later := range []string{"轮次 = 2", "轮次 = 3"} {
 		if strings.Contains(sent, later) {
