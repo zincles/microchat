@@ -29,9 +29,8 @@ func (b *dummySandbox) stateView(t *testing.T, query string) state.View {
 	return view
 }
 
-// 层名：响应里是 `baseline` / `baseline_values`，**没有**顶层 `global` / `global_values`。
-//
-// 这条就是改名的守卫：谁把层名写回 `global`（那会和 `tables` 里那张表撞车），这里当场红。
+// 层名：响应里只有 `session` / `effective` / `tables` —— 系统提示词的块一律无视，
+// `baseline` / `baseline_values` 已死；顶层也没有 `global` / `global_values`。
 func TestStateResponseUsesBaselineLayerName(t *testing.T) {
 	box := newDummySandbox(t)
 	box.seedTurn(t, "开场")
@@ -44,12 +43,12 @@ func TestStateResponseUsesBaselineLayerName(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &fields); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"baseline", "session", "baseline_values", "effective", "tables"} {
+	for _, name := range []string{"session", "effective", "tables"} {
 		if _, ok := fields[name]; !ok {
 			t.Fatalf("缺字段 %q：%s", name, recorder.Body.String())
 		}
 	}
-	for _, gone := range []string{"global", "global_values"} {
+	for _, gone := range []string{"global", "global_values", "baseline", "baseline_values"} {
 		if _, ok := fields[gone]; ok {
 			t.Fatalf("`%s` 不该再是层名（`global` 只许是 tables 里那张表）：%s", gone, recorder.Body.String())
 		}
@@ -59,7 +58,7 @@ func TestStateResponseUsesBaselineLayerName(t *testing.T) {
 	}
 }
 
-// 空会话：`tables` 里**有** `global`（空的那张），`effective` / `baseline_values` 是空对象而不是 null。
+// 空会话：`tables` 里**有** `global`（空的那张），`effective` 是空对象而不是 null。
 //
 // 拿掉"global 恒在"这条例外，这条当场红。
 func TestEmptySessionStateStillHasGlobalTable(t *testing.T) {
@@ -70,8 +69,8 @@ func TestEmptySessionStateStillHasGlobalTable(t *testing.T) {
 	if !ok || table == nil || len(table) != 0 {
 		t.Fatalf("空会话该回 {\"global\": {}}：%+v", view.Tables)
 	}
-	if view.Effective == nil || view.BaselineValues == nil {
-		t.Fatalf("两份值永不给 null：effective=%+v baseline_values=%+v", view.Effective, view.BaselineValues)
+	if view.Effective == nil {
+		t.Fatalf("effective 永不给 null：%+v", view.Effective)
 	}
 	if _, ok := view.Tables[""]; ok {
 		t.Fatalf("空串不再是表的键：%+v", view.Tables)
@@ -138,14 +137,10 @@ func TestStateAtIndexFoldsOnlyUpToThatMessage(t *testing.T) {
 		t.Fatalf("越界当作到最后一条：%+v vs %+v", over.Session, now.Session)
 	}
 
-	// at_idx=0 ⇒ 只有底子（一条消息都不 fold）
+	// at_idx=0 ⇒ 空（系统提示词的块无视，正文一条不 fold）
 	zero := box.stateView(t, "?at_idx=0")
 	if len(zero.Session) != 0 || len(zero.Tables["global"]) != 0 {
-		t.Fatalf("at_idx=0 该只有底子：%+v", zero)
-	}
-	// 底子那两行与 at_idx 无关（底子永远是**当前**的生效提示词）
-	if len(zero.Baseline) != len(now.Baseline) || len(zero.Tables) != 1 {
-		t.Fatalf("底子不该跟着 at_idx 变：%+v vs %+v", zero.Baseline, now.Baseline)
+		t.Fatalf("at_idx=0 该是空的：%+v", zero)
 	}
 }
 

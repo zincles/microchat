@@ -21,6 +21,7 @@ const aid = ref(props.agent?.id ?? "");
 const name = ref(props.agent?.name ?? "");
 const prompt = ref(props.agent?.system_prompt ?? "");
 const rows = ref({});
+const prepend = ref(!!props.agent?.prepend_state);
 const modelOptions = ref([]);
 const status = ref("");
 
@@ -55,9 +56,10 @@ async function save() {
   if (!name.value.trim()) { status.value = "给个名字"; return; }
   try {
     if (isNew) {
-      await api.createAgent({ name: name.value.trim(), system_prompt: prompt.value, abilities: toPatch() });
+      await api.createAgent({ name: name.value.trim(), system_prompt: prompt.value, abilities: toPatch(), prepend_state: prepend.value || undefined });
     } else {
       const body = { system_prompt: prompt.value, abilities: toPatch() };
+      if (!!prepend.value !== !!props.agent.prepend_state) body.prepend_state = prepend.value;
       if (name.value.trim() !== props.agent.name) body.name = name.value.trim();
       if (aid.value.trim() && aid.value.trim() !== props.agent.id) body.new_id = aid.value.trim();
       await api.patchAgent(props.agent.id, body);
@@ -118,6 +120,7 @@ function onKey(e) {
           <label class="field"><span>id（改即重命名，搬引用）</span><input v-model="aid" :disabled="isNew" placeholder="新建时由后端生成" /></label>
           <label class="field"><span>名称</span><input v-model="name" placeholder="人格名" /></label>
           <label class="field-block"><span>系统提示词</span><textarea v-model="prompt" rows="6" placeholder="system_prompt"></textarea></label>
+          <label class="field"><span>句首贴当前状态（RP 类需要）</span><ToggleSwitch v-model="prepend" /></label>
           <h3>能力（开关 + 模型/提示词覆盖，空=默认）</h3>
           <fieldset v-for="id in ABILITY_IDS" :key="id" class="ability-block">
             <legend><ToggleSwitch v-model="rows[id].enabled" /> {{ id }}</legend>

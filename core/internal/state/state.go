@@ -83,18 +83,12 @@ type OpRow struct {
 
 // View：面板与接口要的一份快照。
 //
-// 三层来源各一行：`baseline`（底子：生效提示词里的块）、`session`（正文里的块 + 会话自己写的提示词里的块）。
-// 两份"默认表"的值：`baseline_values`（底子那层算完的）、`effective`（合并之后算完的，
-// 与 `tables[global]` 是同一份）；`tables` 才是全貌（表名 → 键 → 值）。
-//
-// ⚠ **层名是 `baseline`，不是 `global`**（2026-09-30 改）：`global` 现在是**表名**（不写表名的块落到它），
-// 同一个 JSON 里不许两义。名字里的 `global` 一律指那张表，`baseline` 一律指"底子"这一层。
+// 操作流水只有 `session`（正文里的块，按顺序；系统提示词的块一律无视）。
+// `effective`（global 那张表算完的值，与 `tables[global]` 同一份）；`tables` 才是全貌。
 type View struct {
-	Baseline       []OpRow                      `json:"baseline"`
-	Session        []OpRow                      `json:"session"`
-	BaselineValues map[string]string            `json:"baseline_values"`
-	Effective      map[string]string            `json:"effective"`
-	Tables         map[string]map[string]string `json:"tables"`
+	Session   []OpRow                      `json:"session"`
+	Effective map[string]string            `json:"effective"`
+	Tables    map[string]map[string]string `json:"tables"`
 }
 
 // Tables：表名 → 键 → 值。不写表名的块进 `global` 表（`statelang.DefaultTable`）——
@@ -102,33 +96,14 @@ type View struct {
 type Tables = map[string]map[string]string
 
 // FromSources：**现演一份快照**（顺序就是 fold 的顺序）。
-func FromSources(sessionID, systemPrompt string, source PromptSource, messages []model.Message) View {
-	promptScope := ScopeGlobal
-	if source == PromptFromSession {
-		promptScope = ScopeSession
-	}
-
-	globalRows := []OpRow{}
+//
+// 系统提示词里的 `<state>` / `<current_state>` 块**一律无视**（只取 `Cleaned` 出站，
+// 不解析、不算数）：提示词里大段讲语法的说明，一不小心就被当状态吃进去。
+// 状态只从消息正文里来（assistant 输出的块；用户注入入库前已剔）。
+func FromSources(sessionID string, _ string, _ PromptSource, messages []model.Message) View {
 	sessionRows := []OpRow{}
 
-	// 1) 底子：系统提示词里的块（没有块就是空底子，很正常）。
-	for _, statement := range statelang.Scan(systemPrompt).Statements {
-		row := OpRow{
-			Table:     statement.Table,
-			Scope:     promptScope,
-			Kind:      statement.Kind,
-			Key:       statement.Key,
-			Value:     statement.Value,
-			SessionID: &sessionID,
-		}
-		if promptScope == ScopeGlobal {
-			globalRows = append(globalRows, row)
-		} else {
-			sessionRows = append(sessionRows, row)
-		}
-	}
-
-	// 2) 然后才是消息，按顺序追加。
+	// 消息，按顺序追加。
 	for index := range messages {
 		message := messages[index]
 		messageID := message.ID
@@ -147,22 +122,16 @@ func FromSources(sessionID, systemPrompt string, source PromptSource, messages [
 		}
 	}
 
-	for index := range globalRows {
-		globalRows[index].Seq = int64(index)
-	}
 	for index := range sessionRows {
 		sessionRows[index].Seq = int64(index)
 	}
 
-	global := fold(globalRows, ScopeGlobal)
 	session := fold(sessionRows, ScopeSession)
-	merged := statelang.EnsureDefaultTable(merge(global, session))
+	merged := statelang.EnsureDefaultTable(session)
 	return View{
-		Baseline:       globalRows,
-		Session:        sessionRows,
-		BaselineValues: defaultTable(global),
-		Effective:      defaultTable(merged),
-		Tables:         merged,
+		Session:   sessionRows,
+		Effective: defaultTable(merged),
+		Tables:    merged,
 	}
 }
 
@@ -352,7 +321,10 @@ type Outgoing struct {
 //
 // 这是"剔除标签、只发当前状态、按摘要收拢"的**唯一**实现处；谁都不许再写第二条拼装路径。
 // 摘要在**装配**里取代原文（Mask），存放处一个字节都不动。
-func BuildOutgoing(systemPrompt string, messages []model.Message, summaries []model.Summary, tables Tables) []Outgoing {
+//
+// prependState：Agent 开了 `prepend_state` 时，把当前状态表渲染成 `<current_state>` 块
+// 贴到**最后一条用户消息**开头（只贴待发那句，历史不动）。关 ⇒ 老样子。
+func BuildOutgoing(systemPrompt string, messages []model.Message, summaries []model.Summary, tables Tables, prependState bool) []Outgoing {
 	// 提示词里的 `<state>` 块和消息里一个待遇：**原样留在存档里，发出去时剔除**。
 	system := strings.TrimSpace(statelang.Scan(systemPrompt).Cleaned)
 	if table, ok := RenderTable(tables); ok {
@@ -422,9 +394,48 @@ func BuildOutgoing(systemPrompt string, messages []model.Message, summaries []mo
 		}
 		outgoing = append(outgoing, item)
 	}
+	// Agent 开了 `prepend_state`：当前状态表渲染成 `<current_state>` 块，贴到最后一条用户消息开头。
+	// 只贴待发那句（历史不动）；没有用户消息 / 没有状态 ⇒ 不贴。
+	if prependState {
+		if block, ok := RenderCurrentState(tables); ok {
+			for i := len(outgoing) - 1; i >= 0; i-- {
+				if outgoing[i].Role == RoleUser && outgoing[i].Type == "message" {
+					outgoing[i].Content = block + "\n\n" + outgoing[i].Content
+					break
+				}
+			}
+		}
+	}
 	return outgoing
 }
 
+// RenderCurrentState：状态表 → `<current_state>` 块文本（global 不写表名，命名表写表名）。
+// 空（一个变量都没有）⇒ ("", false)。compact 的段首/段末与出站拼装共用这一处。
+func RenderCurrentState(tables Tables) (string, bool) {
+	var body strings.Builder
+	for _, name := range sortedKeys(tables) {
+		table := tables[name]
+		if len(table) == 0 {
+			continue
+		}
+		if name == statelang.DefaultTable {
+			body.WriteString("<" + statelang.CurrentTag + ">\n")
+		} else {
+			body.WriteString("<" + statelang.CurrentTag + " " + name + ">\n")
+		}
+		for _, key := range sortedKeys(table) {
+			body.WriteString(key + " = " + table[key] + "\n")
+		}
+		body.WriteString("</" + statelang.CurrentTag + ">\n\n")
+	}
+	rendered := strings.TrimSpace(body.String())
+	if rendered == "" {
+		return "", false
+	}
+	return rendered, true
+}
+
+// ExpandChildren：
 // ExpandChildren：给 `GET/POST /outgoing` 的那一层装配后处理 —— 把每个 type=summary 的项
 // 按它 `SourceIDs` 的顺序展开**一层**孩子（孙辈不展开：孩子的 Children 保持空）。
 //

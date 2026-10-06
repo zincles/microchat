@@ -292,7 +292,15 @@ func (s *Service) assembleMessages(session model.Session, messages []model.Messa
 	}
 	prompt, source := s.EffectiveSystemPrompt(session)
 	tables := state.FromSources(session.ID, prompt, source, messages).Tables
-	return state.BuildOutgoing(prompt, messages, summaries, tables), messages, nil
+	return state.BuildOutgoing(prompt, messages, summaries, tables, s.prependState(session)), messages, nil
+}
+
+// prependState：这个会话的 Agent 开了 `prepend_state` 才往用户句首贴 `<current_state>`。
+// 缺省关（只有 RP 这类 Agent 需要；`nil` = 没写 = 关）。
+func (s *Service) prependState(session model.Session) bool {
+	_, agents, _ := s.files()
+	agent, ok := agents.Get(session.AgentID)
+	return ok && agent.PrependState != nil && *agent.PrependState
 }
 
 // RerollMessages：**重摇那一趟**要发给上游的消息 —— 把最后那条 assistant 回复**摘掉**之后，

@@ -490,7 +490,7 @@ func (e *debugEnv) outgoing(args []string) int {
 	}
 	prompt, source := e.chat.EffectiveSystemPrompt(*session)
 	view := state.FromSources(session.ID, prompt, source, messages)
-	for index, item := range state.BuildOutgoing(prompt, messages, summaries, view.Tables) {
+	for index, item := range state.BuildOutgoing(prompt, messages, summaries, view.Tables, false) {
 		emit(outgoingLine{
 			Index: index, Outgoing: item,
 			Preview: preview(item.Content, 40), ContentChars: len([]rune(item.Content)),

@@ -9,4 +9,5 @@ export function mountPayloadBar() {
 
 export const payloadBar = {
   setWire(w) { inst?.call("setWire", w); },
+  setTables(t) { inst?.call("setTables", t); },
 };

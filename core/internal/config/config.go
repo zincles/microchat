@@ -204,6 +204,9 @@ type Agent struct {
 	Name         string                   `json:"name"`
 	SystemPrompt string                   `json:"system_prompt"`
 	Abilities    map[string]AbilityToggle `json:"abilities,omitempty"`
+	// PrependState：出站时把当前状态表渲染成 `<current_state>` 块，贴到用户句首。
+	// 缺省 = 关（只有 RP 这类 Agent 需要；一般问答用不到）。
+	PrependState *bool `json:"prepend_state,omitempty"`
 }
 
 type AgentsConfig struct {

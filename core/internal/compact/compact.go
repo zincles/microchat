@@ -460,29 +460,8 @@ func stateAtTables(session model.Session, agents config.AgentsConfig, messages [
 // stateSectionAt：材料里那份状态的 `<current_state>` 文本（**算到 `at` 条为止**）——
 // 没有变量可报就回空串。渲染走 `renderCurrentState`（与出站注入同形）。
 func stateSectionAt(session model.Session, agents config.AgentsConfig, messages []model.Message, at int) string {
-	return renderCurrentState(stateAtTables(session, agents, messages, at))
-}
-
-// renderCurrentState：状态表 → `<current_state>` 块文本（global 不写表名，命名表写表名）。
-// 空（一个变量都没有）⇒ ""（材料里多一段空话纯属噪音）。
-func renderCurrentState(tables state.Tables) string {
-	var body strings.Builder
-	for _, name := range sortedKeysOf(tables) {
-		table := tables[name]
-		if len(table) == 0 {
-			continue
-		}
-		if name == statelang.DefaultTable {
-			body.WriteString("<" + statelang.CurrentTag + ">\n")
-		} else {
-			body.WriteString("<" + statelang.CurrentTag + " " + name + ">\n")
-		}
-		for _, key := range sortedKeysOf(table) {
-			body.WriteString(key + " = " + table[key] + "\n")
-		}
-		body.WriteString("</" + statelang.CurrentTag + ">\n\n")
-	}
-	return strings.TrimSpace(body.String())
+	text, _ := state.RenderCurrentState(stateAtTables(session, agents, messages, at))
+	return text
 }
 
 // requestedBlocks：面板上那个"压 N 个块"（区间入口就是区间里实际几块）。

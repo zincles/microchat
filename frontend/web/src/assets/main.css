@@ -70,7 +70,18 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
   #messages-vue { padding: 0.5em 0.8em; }
 }
 .bar-head { display: flex; justify-content: space-between; align-items: center; padding: 0.7em 0.8em 0.3em; color: var(--tg-hint); font-size: 0.85em; }
-#session-list { overflow-y: auto; flex: 1; padding: 0.3em 0.5em; }
+/* 右栏双 tab（载荷/状态）：标题行变 tab 条，选中亮。 */
+.bar-head.bar-tabs { justify-content: flex-start; gap: 0.2em; padding: 0.5em 0.5em 0.3em; }
+.bar-head.bar-tabs .tab { flex: 1; background: none; border: none; border-radius: 8px; color: var(--tg-hint); padding: 0.4em; font-size: 1em; }
+.bar-head.bar-tabs .tab.sel { color: var(--tg-text); background: rgb(255 255 255 / 10%); }
+/* 状态表：表名小标题 + 键值行（键暗、值亮）。 */
+#state-view { overflow-y: auto; }
+#state-view .state-table { margin: 0 0 0.8em; }
+#state-view h4 { color: var(--tg-link); font-size: 0.78em; font-weight: normal; margin: 0.6em 0 0.2em; }
+#state-view .state-row { display: flex; gap: 0.6em; padding: 0.25em 0; border-bottom: 1px solid var(--line); }
+#state-view .state-row:last-child { border-bottom: none; }
+#state-view .k { flex: none; color: var(--tg-hint); }
+#state-view .v { flex: 1; color: var(--tg-text); word-break: break-word; }
 .bar-foot { padding: 0.5em; border-top: 1px solid var(--line); margin-top: auto; }
 .foot-btn { display: block; width: 100%; text-align: left; background: none; border: none; border-radius: var(--r-btn); color: var(--tg-hint); padding: 0.55em 0.7em; cursor: pointer; }
 .foot-btn:hover { background: rgb(255 255 255 / 6%); color: var(--tg-text); }
@@ -97,6 +108,8 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 .msg .edit-btn { background: none; border: none; color: var(--tg-hint); font-size: 0.75em; padding: 0.1em 0.3em; cursor: pointer; border-radius: 4px; }
 .msg.user .edit-btn { color: inherit; }
 .msg .edit-btn:hover { filter: brightness(1.3); }
+/* 气泡正文保留换行（与 think-body 同口径；{{ }} 插值不转 <br/>，靠 CSS 换行）。 */
+.msg .text { white-space: pre-wrap; word-break: break-word; }
 /* 气泡外操作行（deepseek/grok 味）：气泡下方一小排图标，不占气泡底色；
  * 默认半透明，hover 整行显形；删除 hover 变红。user 行右对齐、assistant 行左对齐。
  * 宽窄对齐由 .msg-wrap 承担（.msg 的 max-width 搬上来，气泡本身 max-width:100%）。 */

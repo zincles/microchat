@@ -175,7 +175,7 @@ func TestCompactWritesOneSummaryAndPointsTheSpan(t *testing.T) {
 	}
 
 	// 装配：被压的那一段变成**一条** type=summary
-	outgoing := state.BuildOutgoing("", after, rows, nil)
+	outgoing := state.BuildOutgoing("", after, rows, nil, false)
 	summaries := 0
 	for _, item := range outgoing {
 		if item.Type == "summary" {
@@ -582,7 +582,7 @@ func TestCompactMergesSameLevelSummaries(t *testing.T) {
 	}
 
 	// 装配：这一段变成**一条更粗的**（父），末块照旧逐条
-	outgoing := state.BuildOutgoing("", after, rows, nil)
+	outgoing := state.BuildOutgoing("", after, rows, nil, false)
 	summaries := 0
 	for _, item := range outgoing {
 		if item.Type != "summary" {

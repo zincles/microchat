@@ -19,42 +19,6 @@ func has(tables Tables, table, key string) (string, bool) {
 }
 
 // 底子来自 agent 的提示词 ⇒ 算**全局**；来自会话自己的提示词 ⇒ 算**本会话**（§3 的来源规则）。
-func TestPromptSourceDecidesTheLayer(t *testing.T) {
-	messages := []model.Message{message("m1", "走了。\n<state>\n地点 = 破庙\ndelete(HP)\n</state>")}
-
-	// agent 的提示词（全局）：删掉的 HP 会从底子漏回来（无墓碑，§38）
-	fromAgent := FromSources("c1", "<state>\nHP = 10\n</state>", PromptFromAgent, messages)
-	if value, ok := has(fromAgent.Tables, "global", "HP"); !ok || value != "10" {
-		t.Fatalf("本会话删不掉底子里的键（值该漏回来）：%+v", fromAgent.Tables)
-	}
-	if value, ok := has(fromAgent.Tables, "global", "地点"); !ok || value != "破庙" {
-		t.Fatalf("消息里的赋值该生效：%+v", fromAgent.Tables)
-	}
-	// 底子那层只装提示词里的块；本会话那层装消息
-	if len(fromAgent.Baseline) != 1 || fromAgent.Baseline[0].Key != "HP" || fromAgent.Baseline[0].Scope != ScopeGlobal {
-		t.Fatalf("baseline = %+v", fromAgent.Baseline)
-	}
-	if len(fromAgent.Session) != 2 || fromAgent.Session[1].Kind != "delete" {
-		t.Fatalf("session = %+v", fromAgent.Session)
-	}
-	// 每条操作都追得回"哪句话带来的"
-	if fromAgent.Session[1].MessageID == nil || *fromAgent.Session[1].MessageID != "m1" {
-		t.Fatalf("操作该带上 message_id：%+v", fromAgent.Session[1])
-	}
-	if fromAgent.Session[0].Seq != 0 || fromAgent.Session[1].Seq != 1 {
-		t.Fatalf("seq 该按顺序重排：%+v", fromAgent.Session)
-	}
-
-	// 会话自己的提示词（本会话）：底子与消息同一层 ⇒ 删得掉
-	fromSession := FromSources("c1", "<state>\nHP = 10\n</state>", PromptFromSession, messages)
-	if _, ok := has(fromSession.Tables, "global", "HP"); ok {
-		t.Fatalf("同一层里删除该真的删掉：%+v", fromSession.Tables)
-	}
-	if len(fromSession.Baseline) != 0 {
-		t.Fatalf("会话自己的提示词不算底子（它算本会话那层）：%+v", fromSession.Baseline)
-	}
-}
-
 // 不写表名与 `<state global>` 混在一条会话里 ⇒ **同一张表**，后写覆盖先写。
 //
 // （这是"未标表名默认视作 global"在现演那一层的落点；解析层的同一条在 `statelang` 里钉着。）
@@ -106,7 +70,7 @@ func TestGlobalTableIsAlwaysPresent(t *testing.T) {
 //
 // 三档：`at=2` 只看得到前两条带来的东西、`at=6`（= 全部）与不给参数一回事、`at=0` ⇒ 只有底子。
 func TestStateAtFoldsOnlyUpToTheIndex(t *testing.T) {
-	system := "<state 底子>种子 = 1</state>"
+	system := "<state 底子>种子 = 1</state>" // 系统提示词的块一律无视（只取 Cleaned 出站）
 	messages := []model.Message{
 		message("m1", "<state>第一 = 有</state>"),
 		message("m2", "<state>第二 = 有</state>"),
@@ -127,18 +91,13 @@ func TestStateAtFoldsOnlyUpToTheIndex(t *testing.T) {
 	if len(two.Session) != 2 {
 		t.Fatalf("只该 fold 前两条的操作：%+v", two.Session)
 	}
-	// 底子与 at 无关：它是**当前**的生效提示词（不是历史快照）
-	if len(two.Baseline) != 1 || len(at(0).Baseline) != 1 {
-		t.Fatalf("底子该一直都在：%+v / %+v", two.Baseline, at(0).Baseline)
-	}
-
-	// at=0 ⇒ 只有底子
+	// at=0 ⇒ 空（系统提示词的块无视，正文一条不 fold）
 	zero := at(0)
-	if len(zero.Session) != 0 || len(zero.Tables["global"]) != 0 {
-		t.Fatalf("at=0 该只有底子：%+v", zero)
+	if len(zero.Session) != 0 {
+		t.Fatalf("at=0 该没有操作：%+v", zero.Session)
 	}
-	if zero.Tables["底子"]["种子"] != "1" {
-		t.Fatalf("底子该算进来：%+v", zero.Tables)
+	if _, ok := zero.Tables["底子"]; ok {
+		t.Fatalf("系统提示词的块不该算进来：%+v", zero.Tables)
 	}
 
 	// at=6 与"不给参数"（全量）一致；越界也当作"到最后一条"
@@ -149,10 +108,10 @@ func TestStateAtFoldsOnlyUpToTheIndex(t *testing.T) {
 		}
 	}
 
-	// 底子**用当前的提示词**：换个提示词，同一个 at 的答案立刻跟着变（⇒ 它不是"那时候的快照"）
+	// 系统提示词换什么都不影响答案（它的块一律无视）
 	changed := StateAt("c1", "<state 底子>种子 = 2</state>", PromptFromAgent, messages, 2)
-	if changed.Tables["底子"]["种子"] != "2" {
-		t.Fatalf("底子看的是**当前**的提示词：%+v", changed.Tables)
+	if _, ok := changed.Tables["底子"]; ok {
+		t.Fatalf("系统提示词的块不该影响答案：%+v", changed.Tables)
 	}
 }
 
@@ -219,7 +178,7 @@ func TestStateViewLayerNamesAreStable(t *testing.T) {
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"baseline", "session", "baseline_values", "effective", "tables"}
+	want := []string{"session", "effective", "tables"}
 	if len(fields) != len(want) {
 		t.Fatalf("StateView 的字段该正好这几个：%s", raw)
 	}
@@ -230,9 +189,6 @@ func TestStateViewLayerNamesAreStable(t *testing.T) {
 	}
 	if _, ok := fields["global"]; ok {
 		t.Fatalf("`global` 只许是**表名**（住在 tables 里），不许再当层名：%s", raw)
-	}
-	if _, ok := fields["global_values"]; ok {
-		t.Fatalf("`global_values` 已改名成 `baseline_values`：%s", raw)
 	}
 	// 顺带钉住：`tables` 里那张表就叫 `global`
 	if _, ok := view.Tables["global"]; !ok {
@@ -248,7 +204,7 @@ func TestBuildOutgoing(t *testing.T) {
 		{ID: "m2", Role: model.RoleAssistant, Content: "<state>HP = 12</state>"}, // 整句都是块 ⇒ 剔除后为空
 		{ID: "m3", Role: model.RoleAssistant, Content: "你把火把点着了。"},
 	}
-	outgoing := BuildOutgoing(system, messages, nil, Tables{"global": {"HP": "12", "季节": "初冬"}})
+	outgoing := BuildOutgoing(system, messages, nil, Tables{"global": {"HP": "12", "季节": "初冬"}}, false)
 	if len(outgoing) != 3 {
 		t.Fatalf("出站 = %+v", outgoing)
 	}
@@ -265,7 +221,7 @@ func TestBuildOutgoing(t *testing.T) {
 		t.Fatalf("正文该只留散文：%+v", outgoing[1:])
 	}
 	// 没有系统提示词、也没有变量 ⇒ 不发明 system
-	if got := BuildOutgoing("", []model.Message{{ID: "m1", Role: model.RoleUser, Content: "在吗"}}, nil, Tables{}); len(got) != 1 || got[0].Role != RoleUser {
+	if got := BuildOutgoing("", []model.Message{{ID: "m1", Role: model.RoleUser, Content: "在吗"}}, nil, Tables{}, false); len(got) != 1 || got[0].Role != RoleUser {
 		t.Fatalf("空提示词不该发 system：%+v", got)
 	}
 }
@@ -281,7 +237,7 @@ func TestBuildOutgoingCarriesIndexes(t *testing.T) {
 		{ID: "m3", Idx: 3, Role: model.RoleUser, Content: "三"},
 	}
 	summaries := []model.Summary{span("s1", nil, "m1", "m2", "前情", 1)}
-	outgoing := BuildOutgoing("你是主持人", messages, summaries, Tables{})
+	outgoing := BuildOutgoing("你是主持人", messages, summaries, Tables{}, false)
 	if len(outgoing) != 3 {
 		t.Fatalf("出站 = %+v", outgoing)
 	}
@@ -304,7 +260,7 @@ func TestBuildOutgoingCarriesIndexes(t *testing.T) {
 	}
 
 	// 手搭的（没编过号的）消息 ⇒ 不带这一格
-	raw := BuildOutgoing("", []model.Message{{ID: "x", Role: model.RoleUser, Content: "在吗"}}, nil, Tables{})
+	raw := BuildOutgoing("", []model.Message{{ID: "x", Role: model.RoleUser, Content: "在吗"}}, nil, Tables{}, false)
 	if len(raw) != 1 || raw[0].Idx != nil {
 		t.Fatalf("没编过号的消息不该硬编一个：%+v", raw)
 	}

@@ -42,6 +42,7 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
     turnText: (id, from, thinkFrom) =>
       call("GET", `/sessions/${enc(id)}/turn/text?from=${from}&think_from=${thinkFrom}`),
     context: (id) => call("GET", `/sessions/${enc(id)}/context`),
+    sessionState: (id) => call("GET", `/sessions/${enc(id)}/state`),
     // outgoingPreview：右载荷预演 —— 有字问 (c)（待发追尾），空字问现有历史（与空发 resend 同段）。
     // 空会话空字 ⇒ 后端 400（与 resend 同错），调用方吞掉保持空话。
     outgoingPreview: (id, content) =>

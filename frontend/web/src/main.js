@@ -123,6 +123,10 @@ function renderPayload(wire) {
   // 真请求直放（没有就放空话）。
   payloadBar.setWire(lastPayloadWire);
 }
+// refreshStateView：右栏状态 tab（截至末条现演的 tables；失败留旧）。
+function refreshStateView(id) {
+  api.sessionState(id ?? sessionID).then((v) => payloadBar.setTables(v?.tables)).catch(() => {});
+}
 mountPayloadBar();
 
 // renderSessions：左会话栏（当前高亮；× 关闭 → DELETE 会话；关的是当前 ⇒ 进剩下第一条）。
@@ -175,6 +179,7 @@ async function enterSession(id) {
   renderSessions(sessions);
   renderHistory(messages);
   refreshStatusline("idle");
+  refreshStateView(id);
   // 进会话即预演现有历史（空输入点发送 = resend，右栏不再是空话；空会话 400 吞掉）。
   if (previewOn() && messages.length) {
     api.outgoingPreview(id, "").then(renderPayload).catch((err) => toast(`预演失败：${err.message}`, "error"));
@@ -232,7 +237,8 @@ async function pollTurn(turnID) {
         renderHistory(await api.listMessages(sessionID));
         refreshStatusline(st.phase, st.elapsed_ms);
         refreshSessionsBar();
-        // 输出完成 ⇒ 右栏刷新（落库后现有历史的那一发，与空发 resend 同段）。
+        // 输出完成 ⇒ 右栏刷新（载荷 + 状态 tab 同刷）。
+        refreshStateView();
         if (previewOn()) {
           api.outgoingPreview(sessionID, "").then(renderPayload).catch((err) => toast(`预演失败：${err.message}`, "error"));
         }
