@@ -107,11 +107,13 @@ defineExpose({
         </div>
       </div>
     </div>
-    <div class="confirm" :class="{ hidden: !confirmOpen }">
-      <div id="confirm-text">{{ confirmText }}</div>
-      <div class="confirm-btns">
-        <button id="confirm-yes" type="button" @click="confirmDone(true)">确认</button>
-        <button id="confirm-no" type="button" @click="confirmDone(false)">取消</button>
+    <div v-if="confirmOpen" class="confirm-backdrop" @click.self="confirmDone(false)">
+      <div class="confirm">
+        <div id="confirm-text">{{ confirmText }}</div>
+        <div class="confirm-btns">
+          <button id="confirm-yes" class="primary" type="button" @click="confirmDone(true)">确认</button>
+          <button id="confirm-no" type="button" @click="confirmDone(false)">取消</button>
+        </div>
       </div>
     </div>
   </div>

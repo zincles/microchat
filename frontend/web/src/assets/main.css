@@ -8,8 +8,8 @@ input:not([type="checkbox"]):not([type="radio"]), select, textarea {
   padding: 0.45em 0.6em; font: inherit; box-sizing: border-box;
   outline: none; transition: border-color 150ms ease-out, background 150ms ease-out;
 }
-input:not([type="checkbox"]):not([type="radio"]):hover, select:hover, textarea:hover { background: rgb(255 255 255 / 4%); }
-input:not([type="checkbox"]):not([type="radio"]):focus, select:focus, textarea:focus { border-bottom-color: var(--tg-link); background: rgb(255 255 255 / 6%); }
+input:not([type="checkbox"]):not([type="radio"]):hover, select:hover, textarea:hover { background-color: rgb(255 255 255 / 4%); }
+input:not([type="checkbox"]):not([type="radio"]):focus, select:focus, textarea:focus { border-bottom-color: var(--tg-link); background-color: rgb(255 255 255 / 6%); }
 input[type="number"] { text-align: right; -moz-appearance: textfield; }
 input[type="number"]::-webkit-outer-spin-button, input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 select { appearance: none; -webkit-appearance: none; padding-right: 1.8em;
@@ -23,11 +23,11 @@ body { margin: 0; background: var(--tg-bg); color: var(--tg-text); font: 15px/1.
 body::before { content: ""; position: fixed; inset: 0; z-index: 0; background: url("./doodle.svg") repeat; background-size: 360px; color: var(--tg-hint); opacity: 0.16; pointer-events: none; }
 #app { display: flex; flex-direction: column; height: 100vh; gap: 0.6em; padding: 0.6em; box-sizing: border-box; }
 /* 顶栏：悬浮圆角卡（外 margin 由 #app 的 gap/padding 给，圆角 14px，不贴边）。 */
-header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; color: var(--tg-hint); border-radius: 14px; background: var(--tg-secondary-bg); }
+header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; color: var(--tg-hint); border-radius: var(--r-shell); background: var(--tg-secondary-bg); }
 .head-spacer { flex: 1; }
 /* Toast 通知（右上堆叠，TG 安卓 toast 味：深底白字圆角 + 左色条区分 Plumbing/错误）。 */
 #toasts { position: fixed; top: 4.2em; right: 0.8em; display: flex; flex-direction: column; gap: 0.5em; z-index: 50; max-width: min(22em, 80vw); }
-.toast { background: var(--tg-float); color: var(--tg-text); border-radius: 12px; padding: 0.6em 0.9em 0.6em 0.8em; font-size: 0.88em; box-shadow: 0 8px 28px rgb(0 0 0 / 45%); border-left: 3px solid var(--tg-link); animation: toast-in 180ms ease-out; word-break: break-word; }
+.toast { background: var(--tg-float); color: var(--tg-text); border-radius: var(--r-card); padding: 0.6em 0.9em 0.6em 0.8em; font-size: 0.88em; box-shadow: 0 8px 28px rgb(0 0 0 / 45%); border-left: 3px solid var(--tg-link); animation: toast-in 180ms ease-out; word-break: break-word; }
 .toast.error { border-left-color: var(--tg-destructive); }
 .toast.ok { border-left-color: var(--tg-button); }
 @keyframes toast-in { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
@@ -50,14 +50,15 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 .palette, .picker, .confirm, .modal-box { transition: opacity 150ms ease-out, transform 150ms ease-out; }
 .hidden { transition: none; }
 /* 下方三栏：各是带圆角的悬浮卡（gap 即外 margin，互不贴边；拖拽条悬空 5px 不占卡）。 */
-#columns { flex: 1; display: flex; gap: 0.6em; min-height: 0; }
-#sessions-bar { width: 260px; flex: none; background: var(--tg-secondary-bg); border-radius: 14px; display: flex; flex-direction: column; overflow: hidden; }
-#payload-bar { width: 340px; flex: none; background: var(--tg-secondary-bg); border-radius: 14px; overflow-y: auto; padding: 0.6em 0.8em; font-size: 0.85em; color: var(--tg-hint); }
-#chat-col { flex: 1; display: flex; flex-direction: column; min-width: 0; margin: 0 auto; width: 100%; position: relative; background: transparent; border-radius: 14px; overflow: hidden; }
+#columns { flex: 1; display: flex; gap: 0.6em; min-height: 0; min-width: 0; }
+#sessions-bar { width: 260px; flex: none; background: var(--tg-secondary-bg); border-radius: var(--r-shell); display: flex; flex-direction: column; overflow: hidden; min-height: 0; }
+/* 右载荷栏：占满列高、内部滚动（内容再长也不撑页）。 */
+#payload-bar { width: 340px; flex: none; align-self: stretch; min-height: 0; background: var(--tg-secondary-bg); border-radius: var(--r-shell); overflow-y: auto; padding: 0.6em 0.8em; font-size: 0.85em; color: var(--tg-hint); }
+#chat-col { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; margin: 0 auto; width: 100%; max-width: 100%; position: relative; background: transparent; border-radius: var(--r-shell); overflow: hidden; }
 #chat-col > * { position: relative; z-index: 1; max-width: 760px; margin-left: auto; margin-right: auto; width: 100%; box-sizing: border-box; }
-/* 消息列：flex:1 撑满 + 两侧 56px 头像位 + 上下给浮动输入栏留位；窄屏收回。 */
+/* 消息列：flex:1 撑满 + 两侧 56px 头像位 + 上下给浮动输入栏留位；底部留空让尾条操作行不被输入框盖住。 */
 #messages { flex: 1; overflow-y: auto; min-height: 0; padding: 1em 56px 5em; display: flex; flex-direction: column; gap: 0.3em; }
-#messages-vue { flex: 1; overflow-y: auto; min-height: 0; padding: 1em 56px 5em; display: flex; flex-direction: column; gap: 0.3em; }
+#messages-vue { flex: 1; overflow-y: auto; min-height: 0; padding: 1em 56px 7em; display: flex; flex-direction: column; gap: 0.3em; }
 @media (max-width: 1100px) { #payload-bar { display: none; } }
 @media (max-width: 700px) {
   #columns { flex-direction: column; }
@@ -68,9 +69,9 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 .bar-head { display: flex; justify-content: space-between; align-items: center; padding: 0.7em 0.8em 0.3em; color: var(--tg-hint); font-size: 0.85em; }
 #session-list { overflow-y: auto; flex: 1; padding: 0.3em 0.5em; }
 .bar-foot { padding: 0.5em; border-top: 1px solid var(--line); margin-top: auto; }
-.foot-btn { display: block; width: 100%; text-align: left; background: none; border: none; border-radius: 10px; color: var(--tg-hint); padding: 0.55em 0.7em; cursor: pointer; }
+.foot-btn { display: block; width: 100%; text-align: left; background: none; border: none; border-radius: var(--r-btn); color: var(--tg-hint); padding: 0.55em 0.7em; cursor: pointer; }
 .foot-btn:hover { background: rgb(255 255 255 / 6%); color: var(--tg-text); }
-.session-item { display: flex; gap: 0.5em; align-items: center; padding: 0.55em 0.7em; border-radius: 12px; cursor: pointer; white-space: nowrap; overflow: hidden; color: var(--tg-text); }
+.session-item { display: flex; gap: 0.5em; align-items: center; padding: 0.55em 0.7em; border-radius: var(--r-card); cursor: pointer; white-space: nowrap; overflow: hidden; color: var(--tg-text); }
 .session-item:hover { background: rgb(255 255 255 / 6%); }
 .session-item.sel { background: rgb(255 255 255 / 10%); color: var(--tg-text); }
 .session-item .title { flex: 1; overflow: hidden; text-overflow: ellipsis; }
@@ -78,17 +79,29 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 .session-item .close:hover { color: var(--tg-destructive); }
 .out.pending { color: var(--tg-link); }
 /* —— 消息气泡（TG 安卓味）：自己右蓝底白字，对方左底栏色；圆角 12px，贴边角小 —— */
-.msg { max-width: 70%; min-width: 9em; padding: 0.45em 0.7em; border-radius: 12px; background: var(--tg-secondary-bg); }
+.msg { max-width: 70%; min-width: 9em; padding: 0.45em 0.7em; border-radius: var(--r-card); background: var(--tg-secondary-bg); }
 .msg.user { align-self: flex-end; background: var(--tg-button); color: var(--tg-button-text); border-bottom-right-radius: 4px; }
 .msg.user .who, .msg.user .edit-btn { color: inherit; opacity: 0.75; }
 .msg.assistant { align-self: flex-start; border-bottom-left-radius: 4px; }
 .msg .msg-head { display: flex; justify-content: space-between; align-items: center; gap: 0.6em; margin-bottom: 0.15em; }
 .msg .who { font-weight: bold; font-size: 0.85em; color: var(--tg-link); }
 .msg.user .who { color: inherit; }
-.msg .edit-bar { display: flex; gap: 0.4em; margin-left: auto; }
-.msg .edit-btn { background: none; border: none; color: var(--tg-hint); font-size: 0.75em; padding: 0.1em 0.3em; cursor: pointer; }
+.msg .edit-btn { background: none; border: none; color: var(--tg-hint); font-size: 0.75em; padding: 0.1em 0.3em; cursor: pointer; border-radius: 4px; }
 .msg.user .edit-btn { color: inherit; }
-.msg .edit-btn:hover { text-decoration: underline; }
+.msg .edit-btn:hover { filter: brightness(1.3); }
+/* 气泡外操作行（deepseek/grok 味）：气泡下方一小排图标，不占气泡底色；
+ * 默认半透明，hover 整行显形；删除 hover 变红。user 行右对齐、assistant 行左对齐。
+ * 宽窄对齐由 .msg-wrap 承担（.msg 的 max-width 搬上来，气泡本身 max-width:100%）。 */
+.msg-wrap { display: flex; flex-direction: column; max-width: 70%; min-width: 9em; }
+.msg-wrap.user { align-self: flex-end; align-items: flex-end; }
+.msg-wrap.assistant { align-self: flex-start; align-items: flex-start; }
+.msg-wrap .msg { max-width: 100%; align-self: stretch; }
+.msg-ops { display: flex; gap: 0.2em; margin-top: 0.2em; opacity: 0.55; }
+.msg-ops:hover { opacity: 1; }
+.msg-ops .edit-btn { background: none; border: none; color: var(--tg-hint); font-size: 0.75em; padding: 0.1em 0.3em; cursor: pointer; border-radius: 4px; }
+.msg-wrap.user .msg-ops .edit-btn { color: var(--tg-hint); }
+.msg-ops .edit-btn:hover { filter: brightness(1.3); }
+.msg-ops .edit-btn.danger:hover { color: var(--tg-destructive); }
 .msg .inline-edit { margin-top: 0.3em; }
 .msg .inline-input { width: 100%; }
 .msg .inline-btns { display: flex; gap: 0.4em; margin-top: 0.3em; }
@@ -104,16 +117,22 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 #composer button { background: var(--tg-button); color: var(--tg-button-text); border: none; border-radius: 50%; width: 2.6em; height: 2.6em; padding: 0; cursor: pointer; align-self: flex-end; display: flex; align-items: center; justify-content: center; flex: none; box-shadow: 0 2px 10px rgb(0 0 0 / 30%); }
 #composer button:hover { filter: brightness(1.1); }
 #composer button svg { display: block; }
+/* 停止态：红底（生成中点即停，与发送蓝钮区分）。 */
+#composer button.stop { background: var(--tg-destructive); }
 .msg .think { color: var(--tg-hint); font-size: 0.85em; cursor: pointer; }
 .msg .think-body { white-space: pre-wrap; word-break: break-word; }
-.palette, .picker, .confirm { position: fixed; left: 50%; transform: translateX(-50%); bottom: 5em; background: var(--tg-float); border: none; border-radius: 14px; padding: 0.5em; max-width: 640px; width: 90%; z-index: 10; box-shadow: 0 8px 30px rgb(0 0 0 / 40%); }
-.palette-item, .picker-item { padding: 0.55em 0.8em; cursor: pointer; border-radius: 10px; }
+.palette, .picker { position: fixed; left: 50%; transform: translateX(-50%); bottom: 5em; background: var(--tg-float); border: none; border-radius: var(--r-shell); padding: 0.5em; max-width: 640px; width: 90%; z-index: 10; box-shadow: 0 8px 30px rgb(0 0 0 / 40%); }
+/* 确认框：全屏中央（与 modal 同级遮罩：背后加深，只留中央小窗）。 */
+.confirm-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / 60%); z-index: 30; display: flex; align-items: center; justify-content: center; }
+.confirm { background: var(--tg-float); border: none; border-radius: var(--r-shell); padding: 1em 1.2em; max-width: 480px; width: 90%; box-shadow: 0 12px 40px rgb(0 0 0 / 50%); }
+.confirm-btns { display: flex; gap: 0.6em; justify-content: flex-end; margin-top: 0.8em; }
+.palette-item, .picker-item { padding: 0.55em 0.8em; cursor: pointer; border-radius: var(--r-btn); }
 .palette-item:hover, .picker-item:hover { background: rgb(255 255 255 / 6%); }
 .palette-item.sel, .picker-item.sel { color: var(--tg-link); }
 /* 设置 modal（分组卡片，不是左右分栏 —— TG 设置页就是一组一组的圆角块）。 */
 .modal.hidden, .hidden { display: none; }
 .modal { position: fixed; inset: 0; background: rgb(0 0 0 / 60%); z-index: 20; display: flex; align-items: center; justify-content: center; }
-.modal-box { background: var(--tg-bg); border: 1px solid rgb(255 255 255 / 8%); border-radius: 14px; width: 94vw; max-width: 960px; height: 92vh; overflow-y: auto; padding: 1em 1.2em; box-sizing: border-box; box-shadow: 0 12px 40px rgb(0 0 0 / 45%); }
+.modal-box { background: var(--tg-bg); border: none; border-radius: var(--r-shell); width: 94vw; max-width: 960px; height: 92vh; overflow-y: auto; padding: 1em 1.2em; box-sizing: border-box; box-shadow: 0 12px 40px rgb(0 0 0 / 45%); }
 /* modal 全屏切换（modal-box 上的 .full）：宽高拉满，圆角归零 —— Agent 详情这种宽表用。 */
 .modal-box.full { width: 100vw; max-width: none; height: 100vh; border-radius: 0; border: none; box-shadow: none; }
 .modal-head { display: flex; justify-content: space-between; align-items: center; font-size: 1.1em; margin-bottom: 0.5em; }
@@ -124,22 +143,35 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 /* 分组卡片（TG 设置页的观感）：tab 条本身是一组圆角块；panel 去底色，h3 是组标题
  * （TG 蓝小字顶在卡片上方）；field/row 是卡片里的行（圆角只在组两端）。 */
 .settings-cols { display: block; }
-.settings-nav { display: flex; flex-direction: row; gap: 0.2em; margin-bottom: 1em; background: var(--tg-secondary-bg); border: none; border-radius: 12px; padding: 0.25em; }
+.settings-nav { display: flex; flex-direction: row; gap: 0.2em; margin-bottom: 1em; background: var(--tg-secondary-bg); border: none; border-radius: var(--r-card); padding: 0.25em; }
 .settings-nav .tab { flex: 1; text-align: center; background: none; border: none; border-radius: 9px; color: var(--tg-hint); padding: 0.45em 0.3em; font-size: 0.9em; }
 .settings-nav .tab.sel { color: var(--tg-text); background: rgb(255 255 255 / 10%); }
 .settings-cols .panel { background: none; padding: 0; margin: 0 0 1.2em; }
-.settings-cols .panel h3 { color: var(--tg-link); font-size: 0.78em; font-weight: normal; text-transform: uppercase; letter-spacing: 0.06em; margin: 0 0 0.4em 0.9em; background: none; }
-.settings-cols .panel .field, .settings-cols .panel .row { background: var(--tg-secondary-bg); margin: 0; padding: 0.6em 0.9em; border-bottom: 1px solid var(--line); }
-.settings-cols .panel h3 + .field, .settings-cols .panel h3 + .row { border-radius: 12px 12px 0 0; }
-.settings-cols .panel .row:last-child, .settings-cols .panel .field:last-child { border-radius: 0 0 12px 12px; border-bottom: none; }
-.settings-cols .panel .hint { background: none; margin: 0.4em 0 0 0.9em; }
+.settings-cols .panel .field, .settings-cols .panel .row { background: var(--tg-secondary-bg); margin: 0; padding: 0.6em 0.9em; }
+.settings-cols .panel .field + .field, .settings-cols .panel .field + .row,
+.settings-cols .panel .row + .field, .settings-cols .panel .row + .row { border-top: 1px solid var(--line); }
+/* 卡片圆角只在组两端：组 = 一个 h3 带起的连续 field/row 串（无 h3 的 panel 整串算一组）。
+ * 顶：h3 后首行 / panel 首行；底：h3 前末行 / panel 末行。中间行上下直角。 */
+.settings-cols .panel h3 + .field, .settings-cols .panel h3 + .row,
+.settings-cols .panel > .field:first-child, .settings-cols .panel > .row:first-child { border-radius: var(--r-card) var(--r-card) 0 0; }
+.settings-cols .panel .field:has(+ h3), .settings-cols .panel .row:has(+ h3),
+.settings-cols .panel > .field:last-child, .settings-cols .panel > .row:last-child { border-radius: 0 0 var(--r-card) var(--r-card); }
+.settings-cols .panel h3 + .field:has(+ h3), .settings-cols .panel h3 + .row:has(+ h3) { border-radius: var(--r-card); }
 .field { display: grid; grid-template-columns: 140px 1fr; align-items: center; gap: 0.6em; color: var(--tg-text); }
 @media (max-width: 700px) {
   .field { grid-template-columns: 1fr; }
 }
 .row { display: flex; gap: 0.5em; align-items: center; margin: 0; padding: 0.55em 0; flex-wrap: wrap; }
 
-.status { color: var(--tg-hint); font-size: 0.85em; }
+/* —— 按钮默认主题（全页兜底：裸 button 不再是浏览器灰框） ——
+ * 三档：默认（底栏色卡底）/ .primary（蓝底白字，主动作）/ .danger（红字，删除）。
+ * 文字型（icon-btn/edit-btn/link-btn）与异形（#send-btn 圆钮/.tab/.agent-item/.session-item）各有样式，不受这条影响。 */
+button { background: var(--tg-secondary-bg); color: var(--tg-text); border: 1px solid var(--line); border-radius: var(--r-btn); padding: 0.45em 1em; font: inherit; cursor: pointer; }
+button:hover { filter: brightness(1.15); }
+button:active { filter: brightness(0.95); }
+button.primary { background: var(--tg-button); border-color: transparent; color: var(--tg-button-text); }
+button.danger { background: none; border-color: transparent; color: var(--tg-destructive); }
+button.danger:hover { text-decoration: underline; filter: none; }
 .hint { color: var(--tg-hint); font-size: 0.85em; }
 .empty { color: var(--tg-hint); padding: 0.8em 0.6em; font-size: 0.9em; }
 .icon-btn { background: none; border: none; color: var(--tg-hint); padding: 0.35em 0.55em; border-radius: 8px; cursor: pointer; font-size: 1.1em; line-height: 1; }
@@ -148,15 +180,15 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 #panel-agent > .row input { flex: 1; min-width: 0; }
 #panel-agent > .row button { flex: none; }
 /* 已有 agent 一组深底（比卡片再深一档 = --tg-bg 本体）：组内项用分隔线，不用各画圆角。 */
-#agent-list { background: var(--tg-bg); border-radius: 12px; padding: 0.25em; margin-bottom: 0.6em; }
+#agent-list { background: var(--tg-bg); border-radius: var(--r-card); padding: 0.25em; margin-bottom: 0.6em; }
 #agent-list:empty { display: none; }
 .agent-item { display: block; width: 100%; text-align: left; background: none; border: none; border-radius: 0; color: var(--tg-text); padding: 0.55em 0.7em; margin: 0; cursor: pointer; box-sizing: border-box; border-bottom: 1px solid var(--line); }
-.agent-item:first-child { border-radius: 10px 10px 0 0; }
-.agent-item:last-child { border-bottom: none; border-radius: 0 0 10px 10px; }
-.agent-item:only-child { border-radius: 10px; }
+.agent-item:first-child { border-radius: var(--r-btn) var(--r-btn) 0 0; }
+.agent-item:last-child { border-bottom: none; border-radius: 0 0 var(--r-btn) var(--r-btn); }
+.agent-item:only-child { border-radius: var(--r-btn); }
 .agent-item:hover { background: rgb(255 255 255 / 6%); }
 .agent-item.sel { background: rgb(255 255 255 / 10%); color: var(--tg-text); }
-.agent-detail { margin-top: 1em; background: var(--tg-secondary-bg); border: none; border-radius: 12px; padding: 0.6em 0.9em; overflow: hidden; }
+.agent-detail { margin-top: 1em; background: var(--tg-secondary-bg); border: none; border-radius: var(--r-card); padding: 0.6em 0.9em; overflow: hidden; }
 .agent-detail select { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .detail-title { color: var(--tg-hint); margin-bottom: 0.4em; }
 /* 大段输入框独占一行：label 在上、框在下（跟右边挤一格没法看）。 */
@@ -166,7 +198,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 .field-block textarea { width: 100%; min-height: 7em; }
 .ability { display: flex; gap: 0.4em; align-items: center; margin: 0.3em 0; flex-wrap: wrap; }
 /* 能力块：fieldset 分隔三条（legend 当开关行），Model 下拉与提示词框各占一行。 */
-.ability-block { border: 1px solid var(--line); border-radius: 10px; padding: 0.4em 0.7em 0.7em; margin: 0.6em 0; }
+.ability-block { border: 1px solid var(--line); border-radius: var(--r-btn); padding: 0.4em 0.7em 0.7em; margin: 0.6em 0; }
 .ability-block legend { padding: 0 0.4em; color: var(--tg-text); }
 .ability-block legend input { margin-right: 0.3em; }
 .plist { width: 100%; border-collapse: collapse; }

@@ -106,30 +106,48 @@ func TestOutgoingWireRecomputesState(t *testing.T) {
 
 func containsText(haystack, needle string) bool { return strings.Contains(haystack, needle) }
 
-// content 空白 / 缺失 ⇒ 400（固定错误体）；会话不存在 ⇒ 404。
-func TestOutgoingWireRejectsBlank(t *testing.T) {
+// content 空白 / 缺失 ⇒ 现有历史的那一发（与空发 resend 同段装配）；会话不存在 ⇒ 404。
+// 空会话（0 条消息）⇒ 400（与 resend 同错：没历史可重发）。
+func TestOutgoingWireBlankShowsHistory(t *testing.T) {
 	box := newDummySandbox(t)
+	box.seedTurn(t, "先聊两句")
+	want := box.wireOf(t, "你好")
+	tailWant := wireBody(t, want)
 	for _, body := range []string{`{}`, `{"content":""}`, `{"content":"  \n "}`, `{"content":null}`} {
 		recorder := call(box.server, "POST", box.path+"/outgoing", body)
-		if recorder.Code != http.StatusBadRequest {
-			t.Fatalf("%s 该 400，得到 %d：%s", body, recorder.Code, recorder.Body.String())
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("%s 该 200（现有历史），得到 %d：%s", body, recorder.Code, recorder.Body.String())
 		}
-		var failure struct {
-			Error struct {
-				Code    string `json:"code"`
-				Message string `json:"message"`
-			} `json:"error"`
-		}
-		if err := json.Unmarshal(recorder.Body.Bytes(), &failure); err != nil {
+		var payload providers.LastPayload
+		if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
 			t.Fatal(err)
 		}
-		if failure.Error.Code != "invalid" || failure.Error.Message == "" {
-			t.Fatalf("%s 的错误体不合契约：%s", body, recorder.Body.String())
+		got := wireBody(t, payload)
+		if len(got) != len(tailWant)-1 {
+			t.Fatalf("%s：历史 %d 条 + 待发 1 条，有待发该 %d、无待发该 %d：%d",
+				body, len(tailWant)-1, len(tailWant), len(tailWant)-1, len(got))
+		}
+		for i := range got {
+			if got[i]["role"] != tailWant[i]["role"] || got[i]["content"] != tailWant[i]["content"] {
+				t.Fatalf("%s：第 %d 条与有待发的不一致：%v vs %v", body, i, got[i], tailWant[i])
+			}
 		}
 	}
 	recorder := call(box.server, "POST", "/api/v1/sessions/00000000-0000-0000-0000-000000000000/outgoing", `{"content":"你好"}`)
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("会话不存在该 404，得到 %d：%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+// 空会话空 content ⇒ 400（与 resend 同错）；只算不写（条数不变）。
+func TestOutgoingWireBlankEmptySession(t *testing.T) {
+	box := newDummySandbox(t)
+	recorder := call(box.server, "POST", box.path+"/outgoing", `{"content":""}`)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("空会话空 content 该 400，得到 %d：%s", recorder.Code, recorder.Body.String())
+	}
+	if got := len(box.messages(t)); got != 0 {
+		t.Fatalf("(c) 只算不写：消息条数该还是 0，成了 %d", got)
 	}
 }
 

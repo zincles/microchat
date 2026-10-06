@@ -365,6 +365,30 @@ func (s *Service) PreviewWire(session model.Session, content string) (providers.
 			reasoningByID[message.ID] = message.Reasoning
 		}
 	}
+	return s.buildWire(session, outgoing, reasoningByID, providersConfig)
+}
+
+// PreviewHistoryWire："空输入点发送"会发出去的真请求 —— 现有历史、不追新句。
+// 与 `Resend → launch → outgoingFor` 同一段装配（`assemble(session, nil)`），只算不写。
+// 空会话（0 条消息）⇒ 与 Resend 同错（InvalidError），前端右栏保持空话。
+func (s *Service) PreviewHistoryWire(session model.Session) (providers.LastPayload, error) {
+	messages, err := s.Store.ListMessages(session.ID)
+	if err != nil {
+		return providers.LastPayload{}, err
+	}
+	if len(messages) == 0 {
+		return providers.LastPayload{}, store.InvalidError("空会话没有历史可重发：先说一句话")
+	}
+	_, _, providersConfig := s.files()
+	outgoing, reasoningByID, err := s.outgoingFor(session)
+	if err != nil {
+		return providers.LastPayload{}, err
+	}
+	return s.buildWire(session, outgoing, reasoningByID, providersConfig)
+}
+
+// buildWire：出站 → 选后端 → Build → 快照。PreviewWire 与 PreviewHistoryWire 共用。
+func (s *Service) buildWire(session model.Session, outgoing []state.Outgoing, reasoningByID map[string]string, providersConfig config.ProvidersConfig) (providers.LastPayload, error) {
 	chosen := providers.SelectBackend(session.Provider, session.Model, providersConfig)
 	if model := session.Model; chosen.Name != providers.BackendFallback && chosen.Name != providers.BackendDummy {
 		chosen.Provider.Protocol = string(providers.ResolveProtocol(s.Store.ModelRoute, chosen.Provider.ID, model))

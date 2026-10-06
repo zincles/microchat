@@ -1,18 +1,12 @@
-// payloadbar-vue 桥：PayloadBar.vue 挂 #payloadbar-vue（aside 由组件画，id 照旧）。
-import { createApp, h } from "vue";
 import PayloadBar from "./components/PayloadBar.vue";
+import { mount } from "./mount.js";
 
-let barRef = null;
+let inst = null;
 
 export function mountPayloadBar() {
-  const app = createApp({
-    render() {
-      return h(PayloadBar, { ref: (el) => { barRef = el; } });
-    },
-  });
-  app.mount("#payloadbar-vue");
+  inst = mount(PayloadBar, "#payloadbar-vue");
 }
 
 export const payloadBar = {
-  setWire(w) { barRef?.setWire(w); },
+  setWire(w) { inst?.call("setWire", w); },
 };

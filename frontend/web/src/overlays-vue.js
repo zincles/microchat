@@ -1,33 +1,27 @@
 // overlays-vue 桥：Overlays.vue 挂 #overlays-vue（浮层三件：命令面板/picker/确认框）。
-import { createApp, h } from "vue";
 import Overlays from "./components/Overlays.vue";
+import { mount } from "./mount.js";
 
-let ovRef = null;
+let inst = null;
 
 export function mountOverlays(handlers) {
-  const app = createApp({
-    render() {
-      return h(Overlays, {
-        ref: (el) => { ovRef = el; },
-        "onRun-command": handlers.onRunCommand,
-        onPick: handlers.onPick,
-      });
-    },
+  inst = mount(Overlays, "#overlays-vue", {
+    "onRun-command": handlers.onRunCommand,
+    onPick: handlers.onPick,
   });
-  app.mount("#overlays-vue");
 }
 
 export const overlays = {
-  showPalette(items) { ovRef?.showPalette(items); },
-  movePalette(d) { ovRef?.movePalette(d); },
-  hidePalette() { ovRef?.hidePalette(); },
-  showPicker(t, items, action) { ovRef?.showPicker(t, items, action); },
-  movePicker(d) { ovRef?.movePicker(d); },
-  hidePicker() { ovRef?.hidePicker(); },
-  confirmAsk(text) { return ovRef?.confirmAsk(text) ?? Promise.resolve(false); },
-  isPaletteOpen() { return ovRef?.isPaletteOpen() ?? false; },
-  isPickerOpen() { return ovRef?.isPickerOpen() ?? false; },
-  palSelected() { return ovRef?.palSelected(); },
-  pickerSelected() { return ovRef?.pickerSelected(); },
-  pickerAction() { return ovRef?.pickerAction(); },
+  showPalette(items) { inst?.call("showPalette", items); },
+  movePalette(d) { inst?.call("movePalette", d); },
+  hidePalette() { inst?.call("hidePalette"); },
+  showPicker(t, items, action) { inst?.call("showPicker", t, items, action); },
+  movePicker(d) { inst?.call("movePicker", d); },
+  hidePicker() { inst?.call("hidePicker"); },
+  confirmAsk(text) { return inst?.call("confirmAsk", text) ?? Promise.resolve(false); },
+  isPaletteOpen() { return inst?.call("isPaletteOpen") ?? false; },
+  isPickerOpen() { return inst?.call("isPickerOpen") ?? false; },
+  palSelected() { return inst?.call("palSelected"); },
+  pickerSelected() { return inst?.call("pickerSelected"); },
+  pickerAction() { return inst?.call("pickerAction"); },
 };

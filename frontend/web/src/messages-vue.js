@@ -11,9 +11,13 @@ const app = createApp({
     function onSave(mid, kind, value) {
       window.dispatchEvent(new CustomEvent("mc-edit-save", { detail: { mid, kind, value } }));
     }
-    return { vueMessages, vueStream, onSave };
+    function onDelete(mid, isLast) {
+      window.dispatchEvent(new CustomEvent("mc-delete", { detail: { mid, isLast } }));
+    }
+    return { vueMessages, vueStream, onSave, onDelete };
   },
   render(ctx) {
+    const lastId = [...vueMessages.value].reverse().find((m) => m.messageId)?.messageId;
     // Fragment 裹多根（v-for 气泡列）：占位 #messages-vue 本体保留，无需 anchor。
     return h(
       Fragment,
@@ -27,7 +31,9 @@ const app = createApp({
           reasoning: m.reasoning,
           reasoningMs: m.reasoningMs,
           messageId: m.messageId,
+          isLast: !!m.messageId && m.messageId === lastId,
           onSave: (...a) => ctx.onSave(...a),
+          onDelete: (...a) => ctx.onDelete(...a),
         }),
       ),
     );

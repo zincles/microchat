@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"microchat/internal/model"
+	"microchat/internal/providers"
 	"microchat/internal/state"
 )
 
@@ -96,7 +97,8 @@ type OutgoingReq struct {
 // 调试工具必须说真话 —— `chat.PreviewWire` 与真发（`Accept → outgoingFor → run → Build`）
 // 共用每一段（装配 → wireMessages → 选后端查表 → `providers.Build`），两份对不上就地就炸。
 //
-// 缺 `content` / 只有空白 ⇒ **400**（空的一句不是"要发一句空的"，是调用方写错了）。
+// 空 `content`（缺 / 空白）⇒ **现有历史会发出去的那一发**（与空发 `resend` 同一段装配
+// `PreviewHistoryWire`）；空会话 ⇒ 与 resend 同 400（没历史可重发）。
 func (s *Server) postSessionOutgoing(w http.ResponseWriter, r *http.Request) {
 	session, ok := s.requireSession(w, r)
 	if !ok {
@@ -106,11 +108,13 @@ func (s *Server) postSessionOutgoing(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
+	var payload providers.LastPayload
+	var err error
 	if req.Content == nil || trimSpace(*req.Content) == "" {
-		writeError(w, http.StatusBadRequest, "invalid", "content 不能为空")
-		return
+		payload, err = s.chat.PreviewHistoryWire(*session)
+	} else {
+		payload, err = s.chat.PreviewWire(*session, *req.Content)
 	}
-	payload, err := s.chat.PreviewWire(*session, *req.Content)
 	if err != nil {
 		writeStoreError(w, err)
 		return

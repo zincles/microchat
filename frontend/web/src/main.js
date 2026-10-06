@@ -3,7 +3,7 @@
 // 拆分（Vue 式布局，无框架运行时）：api/client.js（call+端点函数）/ components/MessageBubble.js（气泡渲染+纯函数）/ main.js（接线）。
 import { createApi } from "./api/client.js";
 import { toastVue } from "./toast-vue.js";
-import { mountComposer, composerClear, composerSubmit, composerSetStatus } from "./composer-vue.js";
+import { mountComposer, composerClear, composerSubmit, composerSetStatus, composerSetRunning } from "./composer-vue.js";
 import { mountTopBar, topBar } from "./topbar-vue.js";
 import { mountSessionBar, sessionBar } from "./sessionbar-vue.js";
 import { mountPayloadBar, payloadBar } from "./payloadbar-vue.js";
@@ -112,7 +112,7 @@ async function refreshStatusline(phase, elapsedMs) {
       provider: sessionInfo.provider,
       model: sessionInfo.model,
     }), statusOverBudget(ctx));
-  } catch { /* 状态行失败不挡主流程 */ }
+  } catch (err) { toast(`状态行失败：${err.message}`, "error"); }
 }
 
 // renderPayload：右载荷栏（真请求 method/url/headers/体直放）。
@@ -131,10 +131,10 @@ function renderSessions(sessions) {
   sessionBar.setSessions(sessions, sessionID);
 }
 mountSessionBar({
-  onSelect: (id) => enterSession(id),
+  onSelect: (id) => enterSession(id).catch((err) => toast(`进会话失败：${err.message}`, "error")),
   onClose: async (id) => {
     // 关会话 = DELETE 整条（删完后端不代建 —— 关的是当前 ⇒ 进剩下第一条，没有就建一条）。
-    await api.closeSession(id).catch((err) => alert(`关闭失败：${err.message}`));
+    await api.closeSession(id).catch((err) => { toast(`关闭失败：${err.message}`, "error"); return; });
     if (id === sessionID) {
       const rest = await api.listSessions();
       if (rest.length) await enterSession(rest[0].id);
@@ -142,7 +142,9 @@ mountSessionBar({
     } else refreshSessionsBar();
   },
   onNew: async () => {
-    await enterSession((await api.createSession({})).id);
+    try {
+      await enterSession((await api.createSession({})).id);
+    } catch (err) { toast(`新建失败：${err.message}`, "error"); }
   },
   onOpenSettings: () => window.__mcOpenSettings(),
 });
@@ -150,7 +152,7 @@ mountSessionBar({
 async function refreshSessionsBar() {
   try {
     renderSessions(await api.listSessions());
-  } catch { /* 栏失败不挡主流程 */ }
+  } catch (err) { toast(`刷会话栏失败：${err.message}`, "error"); }
 }
 
 async function enterSession(id) {
@@ -165,13 +167,18 @@ async function enterSession(id) {
   renderSessions(sessions);
   renderHistory(messages);
   refreshStatusline("idle");
+  // 进会话即预演现有历史（空输入点发送 = resend，右栏不再是空话；空会话 400 吞掉）。
+  if (previewOn() && messages.length) {
+    api.outgoingPreview(id, "").then(renderPayload).catch((err) => toast(`预演失败：${err.message}`, "error"));
+  }
 }
 
 async function boot() {
-  await api.health();
+  const health = await api.health();
+  topBar.setConn(`已连接 v${health.version ?? "?"}`);
   const sessions = await api.listSessions();
   for (const s of sessions) {
-    if (s.messages === 0 && !s.title) await api.deleteSession(s.id).catch(() => {});
+    if (s.messages === 0 && !s.title) await api.deleteSession(s.id).catch((err) => toast(`清空调会话失败：${err.message}`, "error"));
   }
   await enterSession((await api.createSession({})).id);
 }
@@ -190,35 +197,44 @@ async function resend() {
 }
 
 // pollTurn：守着一轮跑完（生成中气泡 + 300ms 轮询 + 游标读增量 + 落库后对账）。
+// 跑时圆钮变停止键（composerSetRunning），idle/error 落回发送键。
 async function pollTurn(turnID) {
   const m = { who: "助手", role: "assistant", _stream: true, stream: true, content: "生成中…" };
   vueMessages.value.push(m);
   vueStream.value = { id: turnID, text: "" };
+  composerSetRunning(true);
   let cur = { from: 0, thinkFrom: 0 };
-  for (;;) {
-    await new Promise((r) => setTimeout(r, 300));
-    const st = await api.status(sessionID);
-    const slice = await api.turnText(sessionID, cur.from, cur.thinkFrom);
-    if (slice.text) vueStream.value.text += slice.text;
-    cur = advanceCursor(cur, slice);
-    refreshStatusline(st.phase, st.elapsed_ms);
-    refreshSessionsBar();
-    if (st.phase === "idle" || st.phase === "error") {
-      if (st.phase === "error") vueStream.value.text = `失败：${st.error || "未知"}`;
-      else if (!vueStream.value.text) {
-        const all = await api.listMessages(sessionID);
-        const last = all[all.length - 1];
-        if (last && last.id === turnID) vueStream.value.text = last.content;
-      }
-      // 落库对账：整段重画（流式占位换成真消息，含 id 可编辑）。
-      renderHistory(await api.listMessages(sessionID));
+  try {
+    for (;;) {
+      await new Promise((r) => setTimeout(r, 300));
+      const st = await api.status(sessionID);
+      const slice = await api.turnText(sessionID, cur.from, cur.thinkFrom);
+      if (slice.text) vueStream.value.text += slice.text;
+      cur = advanceCursor(cur, slice);
       refreshStatusline(st.phase, st.elapsed_ms);
       refreshSessionsBar();
-      break;
+      if (st.phase === "idle" || st.phase === "error") {
+        if (st.phase === "error") vueStream.value.text = `失败：${st.error || "未知"}`;
+        else if (!vueStream.value.text) {
+          const all = await api.listMessages(sessionID);
+          const last = all[all.length - 1];
+          if (last && last.id === turnID) vueStream.value.text = last.content;
+        }
+        // 落库对账：整段重画（流式占位换成真消息，含 id 可编辑）。
+        renderHistory(await api.listMessages(sessionID));
+        refreshStatusline(st.phase, st.elapsed_ms);
+        refreshSessionsBar();
+        // 输出完成 ⇒ 右栏刷新（落库后现有历史的那一发，与空发 resend 同段）。
+        if (previewOn()) {
+          api.outgoingPreview(sessionID, "").then(renderPayload).catch((err) => toast(`预演失败：${err.message}`, "error"));
+        }
+        break;
+      }
     }
+  } finally {
+    composerSetRunning(false);
   }
 }
-
 // ---- 命令面板（输入 / 开头过滤，Tab/上下+回车）----
 // —— Vue 版：Overlays.vue 画浮层三件，经 overlays-vue 桥进来。
 import { mountOverlays, overlays } from "./overlays-vue.js";
@@ -229,8 +245,8 @@ const movePicker = (d) => overlays.movePicker(d);
 const hidePicker = () => overlays.hidePicker();
 const confirmAsk = (text) => overlays.confirmAsk(text);
 mountOverlays({
-  onRunCommand: (name) => runCommand(name, []),
-  onPick: (action, it) => action(it),
+  onRunCommand: (name) => runCommand(name, []).catch((err) => toast(`命令失败：${err.message}`, "error")),
+  onPick: (action, it) => Promise.resolve(action(it)).catch((err) => toast(`操作失败：${err.message}`, "error")),
 });
 
 async function runCommand(name, args) {
@@ -431,23 +447,22 @@ mountComposer({
     } else {
       overlays.hidePalette();
     }
-    // 右载荷预演（300ms 防抖）：输入框里的字当待发那句问 (c) —— 只算不写。
-    // 空输入 / 命令行不预演（退回 (b)）；400 按"没东西可预演"吞掉，不糊右栏。
+    // 右载荷预演（300ms 防抖）：有字当待发那句问 (c)，空字问现有历史（与空发 resend 同段）。
+    // 命令行不预演；400（空会话）按"没东西可预演"吞掉，不糊右栏。
     clearTimeout(previewTimer);
     previewTimer = setTimeout(async () => {
       const text = v;
       // 预演总闸：关了就不发包（右栏留旧话，不糊也不闪）。
       if (!previewOn()) return;
-      if (!sessionID || !text.trim() || text.startsWith("/")) {
-        refreshStatusline("idle").catch(() => {});
+      if (!sessionID || text.startsWith("/")) {
+        refreshStatusline("idle").catch((err) => toast(`状态行失败：${err.message}`, "error"));
         return;
       }
       try {
         const out = await api.outgoingPreview(sessionID, text);
-        if (out == null) return; // 空守卫回 null ⇒ 不刷，等下一拍
         // (c) 就是真请求：直接放 raw 档（pretty 已删，不再问 (b) 糊）。
         renderPayload(out);
-      } catch { /* 空/错就不刷，等下一拍 */ }
+      } catch (err) { if (!String(err.message ?? "").includes("400")) toast(`预演失败：${err.message}`, "error"); }
     }, 300);
   },
   onKeydown(e, value) {
@@ -507,6 +522,9 @@ mountComposer({
       return;
     }
     send(text).catch((err) => toast(`发送失败：${err.message}`, "error"));
+  },
+  onStop() {
+    api.stop(sessionID).catch((err) => toast(`停止失败：${err.message}`, "error"));
   },
 });
 
@@ -583,6 +601,25 @@ window.addEventListener("mc-edit-save", (e) => {
   editMessageSave(mid, kind, value).catch((err) => toast(`改消息失败：${err.message}`, "error"));
 });
 
+// Vue 气泡的删除 ⇒ 非尾条先警告（删它及之后：尾条直接 confirm，非尾条报清后果）。
+window.addEventListener("mc-delete", async (e) => {
+  const { mid, isLast } = e.detail ?? {};
+  if (!mid) return;
+  const plan = await api.deletionPreview(sessionID, mid).catch((err) => {
+    toast(`删除预览失败：${err.message}`, "error");
+    return null;
+  });
+  if (!plan) return;
+  const suffix = isLast
+    ? "确认删除这条？"
+    : `这不是最后一条：删它会连同之后 ${plan.deleted_message_ids.length - 1} 条一起删，确认？`;
+  if (!(await confirmAsk(`${deletionPlanSummary(plan)}，${suffix}`))) return;
+  await api.deleteMessages(sessionID, mid, plan.last_deleted_message_id)
+    .catch((err) => toast(`删除失败：${err.message}`, "error"));
+  renderHistory(await api.listMessages(sessionID));
+});
+
 boot().catch((err) => {
   topBar.setConn(`连不上（${err.message}；API 地址存在 localStorage.mc_api）`);
+  toast(`启动失败：${err.message}`, "error");
 });

@@ -134,15 +134,15 @@ test("settings 快照丢弃语义：改表单不碰 snapshot，脏比对只认�
   assert.equal(settingsDirty(snap, snapshotSettings(snap)), false);
 });
 
-test("outgoingPreview 空不发：空/空白直接回 null、不调 fetch", async () => {
-  let n = 0;
-  const api = createApi({ base: "http://x/api/v1", fetchFn: async () => { n++; return { status: 200, ok: true, json: async () => ([]) }; } });
-  assert.equal(await api.outgoingPreview("s1", ""), null);
-  assert.equal(await api.outgoingPreview("s1", "   "), null);
-  assert.equal(n, 0);
+test("outgoingPreview 空字问历史：空/空白也发包，与空发 resend 同段", async () => {
+  const seen = [];
+  const api = createApi({ base: "http://x/api/v1", fetchFn: async (url, opts) => { seen.push(JSON.parse(opts.body)); return { status: 200, ok: true, json: async () => ([]) }; } });
+  await api.outgoingPreview("s1", "");
+  await api.outgoingPreview("s1", "   ");
+  await api.outgoingPreview("s1", null);
+  assert.deepEqual(seen, [{ content: "" }, { content: "   " }, { content: "" }]);
   const out = await api.outgoingPreview("s1", "hi");
   assert.deepEqual(out, []);
-  assert.equal(n, 1);
 });
 
 test("(c) 真请求形状：method/url/headers/体四格齐，且体里无库内账", async () => {
