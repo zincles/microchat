@@ -19,6 +19,7 @@ export const overlays = {
   movePicker(d) { inst?.call("movePicker", d); },
   hidePicker() { inst?.call("hidePicker"); },
   confirmAsk(text) { return inst?.call("confirmAsk", text) ?? Promise.resolve(false); },
+  lift(px) { inst?.call("lift", px); },
   isPaletteOpen() { return inst?.call("isPaletteOpen") ?? false; },
   isPickerOpen() { return inst?.call("isPickerOpen") ?? false; },
   palSelected() { return inst?.call("palSelected"); },

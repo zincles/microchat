@@ -315,32 +315,35 @@ func (s *Service) RerollMessages(session model.Session) ([]providers.ChatMessage
 	if err != nil {
 		return nil, err
 	}
-	reasoningByID := map[string]string{}
-	for _, message := range kept {
-		if message.Reasoning != "" {
-			reasoningByID[message.ID] = message.Reasoning
-		}
-	}
-	return wireMessages(outgoing, reasoningByID), nil
+	return wireMessages(outgoing, s.reasoningTable(kept)), nil
 }
 
 // outgoingFor：受理那一刻把"真会发出去的东西"定稿。
 //
-// 拼装**只有一条路**（`state.BuildOutgoing`，经 `assemble`）；这里额外做的是把 assistant 消息当时的
+// 拼装**只有一条路**（`state.BuildOutgoing`，经 `assemble`）；这里额外做的是按需把 assistant 消息当时的
 // **思考**按 id 收成一张表 —— 那是回传上游用的 replay metadata（Pi 的原话：不回传，多轮推理就断了），
-// 正文一个字都不动。
+// 正文一个字都不动。收不收由 `chat.replay_reasoning` 定（缺省关：省上下文；思考仍落库可看）。
 func (s *Service) outgoingFor(session model.Session) ([]state.Outgoing, map[string]string, error) {
 	outgoing, messages, err := s.assemble(session, nil)
 	if err != nil {
 		return nil, nil, err
 	}
+	return outgoing, s.reasoningTable(messages), nil
+}
+
+// reasoningTable：思考回传表。`chat.replay_reasoning` 开才收，否则空表（`wireMessages` 贴不上思考）。
+// 每次现读配置（与 `files()` 同口径，不缓存）⇒ 改完即时生效，不用重启。
+func (s *Service) reasoningTable(messages []model.Message) map[string]string {
 	reasoningByID := map[string]string{}
-	for _, message := range messages {
-		if message.Reasoning != "" {
-			reasoningByID[message.ID] = message.Reasoning
+	chatConfig, _, _, err := config.Load(s.Paths)
+	if err == nil && chatConfig.ReplayReasoning != nil && *chatConfig.ReplayReasoning {
+		for _, message := range messages {
+			if message.Reasoning != "" {
+				reasoningByID[message.ID] = message.Reasoning
+			}
 		}
 	}
-	return outgoing, reasoningByID, nil
+	return reasoningByID
 }
 
 // PreviewWire："把这句发出去"会拼出的**真请求** —— 同一段装配 + 同一段 Build，不发。
@@ -359,13 +362,7 @@ func (s *Service) PreviewWire(session model.Session, content string) (providers.
 	if err != nil {
 		return providers.LastPayload{}, err
 	}
-	reasoningByID := map[string]string{}
-	for _, message := range messages {
-		if message.Reasoning != "" {
-			reasoningByID[message.ID] = message.Reasoning
-		}
-	}
-	return s.buildWire(session, outgoing, reasoningByID, providersConfig)
+	return s.buildWire(session, outgoing, s.reasoningTable(messages), providersConfig)
 }
 
 // PreviewHistoryWire："空输入点发送"会发出去的真请求 —— 现有历史、不追新句。

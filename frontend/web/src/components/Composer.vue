@@ -4,7 +4,7 @@
 import { ref, computed, watch, nextTick } from "vue";
 import { ICONS } from "./icons.js";
 
-const emit = defineEmits(["input-text", "keydown", "submit", "stop"]);
+const emit = defineEmits(["input-text", "keydown", "submit", "stop", "menu"]);
 const text = ref("");
 const statusText = ref("上下文 ?/?｜未知模型｜idle");
 const statusOver = ref(false);
@@ -14,7 +14,7 @@ function setRunning(v) { running.value = !!v; }
 const area = ref(null);
 const sendSvg = ICONS.send;
 function sendHint() {
-  const mode = localStorage.getItem("mc_send") || "button";
+  const mode = localStorage.getItem("mc_send") || "enter";
   return mode === "enter" ? "输入消息（回车发送，Shift+回车换行）；/ 开头进命令"
     : mode === "shift-enter" ? "输入消息（Shift+回车发送，回车换行）；/ 开头进命令"
     : "输入消息，点发送发出（回车换行）；/ 开头进命令";
@@ -55,6 +55,14 @@ defineExpose({ submit, clear, text, setStatus, setRunning });
 <template>
   <form id="composer" @submit.prevent="running ? $emit('stop') : submit()">
     <div id="statusline" class="statusline" :class="{ over: statusOver }">{{ statusText }}</div>
+    <button
+      type="button"
+      id="menu-btn"
+      title="命令菜单"
+      aria-label="命令菜单"
+      @click="$emit('menu')"
+      v-html="ICONS.menu"
+    ></button>
     <textarea
       id="input"
       ref="area"
@@ -68,10 +76,10 @@ defineExpose({ submit, clear, text, setStatus, setRunning });
     <button
       type="submit"
       id="send-btn"
-      :class="{ stop: running }"
-      :title="running ? '停止' : '发送'"
-      :aria-label="running ? '停止' : '发送'"
-      v-html="running ? ICONS.stop : sendSvg"
+      :class="{ stop: running, cont: !running && !text.trim() }"
+      :title="running ? '停止' : text.trim() ? '发送' : '续写（重发历史）'"
+      :aria-label="running ? '停止' : text.trim() ? '发送' : '续写（重发历史）'"
+      v-html="running ? ICONS.stop : text.trim() ? sendSvg : ICONS.cont"
     ></button>
   </form>
 </template>

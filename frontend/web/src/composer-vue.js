@@ -11,6 +11,7 @@ export function mountComposer(handlers) {
     onKeydown: handlers.onKeydown,
     onSubmit: handlers.onSubmit,
     onStop: handlers.onStop,
+    onMenu: handlers.onMenu,
   });
 }
 

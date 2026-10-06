@@ -52,6 +52,7 @@ async function loadChat() {
       model_context_tokens: c.model_context_tokens ?? "",
       compact_blocks: c.compact_blocks ?? "",
       compact_trigger_tokens: c.compact_trigger_tokens ?? "",
+      replay_reasoning: !!c.replay_reasoning,
     };
   } catch {}
 }
@@ -65,7 +66,7 @@ async function saveChat() {
   if (m !== undefined) body.model_context_tokens = m;
   if (b !== undefined) body.compact_blocks = b;
   const cur = await api.getChat().catch(() => ({}));
-  const fullBody = { ...cur, ...body };
+  const fullBody = { ...cur, ...body, replay_reasoning: !!chat.value.replay_reasoning };
   if (String(chat.value.compact_trigger_tokens ?? "").trim() === "") delete fullBody.compact_trigger_tokens;
   else fullBody.compact_trigger_tokens = Number(chat.value.compact_trigger_tokens);
   try {
@@ -92,8 +93,8 @@ function loadClient() {
     api: localStorage.getItem("mc_api") || "http://127.0.0.1:8787/api/v1",
     token: localStorage.getItem("mc_token") || "",
     preview: localStorage.getItem("mc_preview") !== "0",
-    theme: localStorage.getItem("mc_theme") || "",
-    send: localStorage.getItem("mc_send") || "button",
+    theme: localStorage.getItem("mc_theme") || "breeze-dark",
+    send: localStorage.getItem("mc_send") || "enter",
   };
 }
 function saveClient() {
@@ -102,8 +103,7 @@ function saveClient() {
   localStorage.setItem("mc_preview", cli.value.preview ? "1" : "0");
   localStorage.setItem("mc_theme", cli.value.theme);
   localStorage.setItem("mc_send", cli.value.send);
-  document.documentElement.setAttribute("data-theme", cli.value.theme);
-  if (!cli.value.theme) document.documentElement.removeAttribute("data-theme");
+  document.documentElement.setAttribute("data-theme", cli.value.theme || "breeze-dark");
   cliStatus.value = "已保存（API/Token 刷新页面生效，其余即时生效）";
 }
 
@@ -259,6 +259,7 @@ function onKey(e) {
           <label class="field"><span>模型上下文 tokens</span><input v-model="chat.model_context_tokens" type="number" min="1" /></label>
           <label class="field"><span>压缩块数</span><input v-model="chat.compact_blocks" type="number" min="1" /></label>
           <label class="field"><span>压缩触发 tokens（空=默认）</span><input v-model="chat.compact_trigger_tokens" type="number" min="1" placeholder="空=默认" /></label>
+          <label class="field"><span>回传思考（默认关，省上下文）</span><input v-model="chat.replay_reasoning" type="checkbox" /></label>
           <div class="row"><button type="button" class="primary" @click="saveChat">保存 chat</button><span class="status">{{ chatStatus }}</span></div>
           <h3>缺省三件</h3>
           <label class="field"><span>provider</span><input v-model="defaults.provider" placeholder="provider" /></label>
@@ -271,18 +272,18 @@ function onKey(e) {
           <label class="field"><span>Token</span><input v-model="cli.token" placeholder="可空" type="password" /></label>
           <label class="field"><span>输入时预演载荷</span><input v-model="cli.preview" type="checkbox" /></label>
           <label class="field"><span>发送键</span><select v-model="cli.send">
-            <option value="button">仅按钮</option>
             <option value="enter">回车发送（Shift+回车换行）</option>
             <option value="shift-enter">Shift+回车发送（回车换行）</option>
+            <option value="button">仅按钮</option>
           </select></label>
           <label class="field"><span>主题</span><select v-model="cli.theme">
-            <option value="">跟随系统</option>
+            <option value="breeze-dark">Breeze Dark（暗）</option>
             <option value="midnight">深夜蓝</option>
-            <option value="paper">日间白</option>
             <option value="wine">酒红</option>
             <option value="forest">森绿</option>
             <option value="breeze">Breeze（亮）</option>
-            <option value="breeze-dark">Breeze Dark（暗）</option>
+            <option value="paper">日间白</option>
+            <option value="">跟随系统</option>
           </select></label>
           <div class="row"><button type="button" class="primary" @click="saveClient">保存</button><span class="status">{{ cliStatus }}</span></div>
           <p class="hint">API/Token 改完刷新页面生效；其余即时生效。</p>

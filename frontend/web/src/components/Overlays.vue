@@ -2,6 +2,7 @@
 // 浮层三件（命令面板 / picker / 确认框）：挂 #overlays-vue，DOM 照旧
 // （.palette/.picker/.confirm + 各条目类），行为照 main.js。
 import { ref } from "vue";
+import { COMMAND_DESC } from "../utils/commands.js";
 
 const emit = defineEmits(["run-command", "pick"]);
 
@@ -69,17 +70,24 @@ defineExpose({
   showPalette, movePalette, hidePalette,
   showPicker, movePicker, hidePicker,
   confirmAsk,
+  lift,
   isPaletteOpen: () => palItems.value.length > 0,
   isPickerOpen: () => pickerOpen.value,
   palSelected: () => palItems.value[palSel.value],
   pickerSelected: () => pickerItems.value[pickerSel.value],
   pickerAction: () => pickerAction,
 });
+
+// lift：把面板/ picker 顶到输入框上方（输入框长高多少就顶多少）。
+// bottom = 输入框高 + 状态行 + 间隙，由调用方量好传进来（px）。
+const liftPx = ref(0);
+function lift(px) { liftPx.value = Math.max(0, px ?? 0); }
 </script>
 
 <template>
   <div id="overlays-vue">
-    <div class="palette" :class="{ hidden: !palItems.length }">
+    <div v-if="palItems.length" class="palette-backdrop" @click="hidePalette()"></div>
+    <div class="palette" :class="{ hidden: !palItems.length }" :style="liftPx ? { bottom: `calc(5em + ${liftPx}px)` } : null">
       <div id="palette-list">
         <div
           v-for="(name, i) in palItems"
@@ -88,12 +96,13 @@ defineExpose({
           :class="{ sel: i === palSel }"
           @click="$emit('run-command', name)"
         >
-          /{{ name }}
+          <span class="cmd-name">/{{ name }}</span>
+          <span class="cmd-desc">{{ COMMAND_DESC[name] ?? "" }}</span>
         </div>
       </div>
       <div class="palette-hint">Tab/↑↓ 选择，回车执行</div>
     </div>
-    <div class="picker" :class="{ hidden: !pickerOpen }">
+    <div class="picker" :class="{ hidden: !pickerOpen }" :style="liftPx ? { bottom: `calc(5em + ${liftPx}px)` } : null">
       <div id="picker-title">{{ pickerTitle }}</div>
       <div id="picker-list">
         <div

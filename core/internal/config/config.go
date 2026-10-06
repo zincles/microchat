@@ -161,13 +161,16 @@ func LoadConfig(paths Paths) (Config, error) {
 	return config, nil
 }
 
-// ChatConfig：`config.json` 的 chat 段（模型上下文 / 摘要触发阈值 / 标题字数 / 默认压几块）。
+// ChatConfig：`config.json` 的 chat 段（模型上下文 / 摘要触发阈值 / 标题字数 / 默认压几块 / 思考回传）。
 type ChatConfig struct {
 	TitleChars           int  `json:"title_chars"`
 	ModelContextTokens   int  `json:"model_context_tokens"`
 	CompactTriggerTokens *int `json:"compact_trigger_tokens"`
 	// CompactBlocks：压缩不给块数时压几个**对话块**（`compact_blocks`）。单位是块，不是 token。
 	CompactBlocks int `json:"compact_blocks"`
+	// ReplayReasoning：出站时回传思考（replay metadata，多轮推理不断档）。
+	// 缺省 = 关（省上下文；思考仍落库可看，只是不发给上游）。
+	ReplayReasoning *bool `json:"replay_reasoning,omitempty"`
 }
 
 // DefaultCompactBlocks：`compact_blocks` 的缺省（照 `AGENTS.md` 的参数那一节）。

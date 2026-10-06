@@ -24,17 +24,16 @@ const api = createApi({ base: API, token: TOKEN });
 // 每拍现读：设置里改完即时生效，不用刷新（API/Token 那两格才要刷新）。
 function previewOn() { return localStorage.getItem("mc_preview") !== "0"; }
 
-// 发送键：localStorage.mc_send —— "button"（默认，仅按钮）/ "enter"（回车发）/ "shift-enter"。
+// 发送键：localStorage.mc_send —— "enter"（默认，回车发）/ "button"（仅按钮）/ "shift-enter"。
 // 每拍现读（设置里改完下一拍即生效，不用刷新）。
-function sendMode() { return localStorage.getItem("mc_send") || "button"; }
+function sendMode() { return localStorage.getItem("mc_send") || "enter"; }
 // 发送键提示住 Composer.vue 的 hint computed（placeholder 跟着策略走）。
-// 主题预设：localStorage.mc_theme —— ""（跟随系统）/ midnight / paper / wine / forest / breeze / breeze-dark。
+// 主题预设：localStorage.mc_theme —— 缺省 breeze-dark；""=跟随系统 / midnight / paper / wine / forest / breeze。
 // TG 客户端里打开（有 window.Telegram.WebApp）⇒ 不用预设，宿主主题说了算。
 function applyTheme() {
   if (window.Telegram?.WebApp) { document.documentElement.removeAttribute("data-theme"); return; }
-  const t = localStorage.getItem("mc_theme") || "";
-  if (t) document.documentElement.setAttribute("data-theme", t);
-  else document.documentElement.removeAttribute("data-theme");
+  const t = localStorage.getItem("mc_theme") || "breeze-dark";
+  document.documentElement.setAttribute("data-theme", t);
 }
 applyTheme();
 
@@ -238,9 +237,14 @@ async function pollTurn(turnID) {
 // ---- 命令面板（输入 / 开头过滤，Tab/上下+回车）----
 // —— Vue 版：Overlays.vue 画浮层三件，经 overlays-vue 桥进来。
 import { mountOverlays, overlays } from "./overlays-vue.js";
-const showPalette = (items) => overlays.showPalette(items);
+const showPalette = (items) => { liftOverlays(); overlays.showPalette(items); };
+// liftOverlays：输入框长高 ⇒ 面板/picker 跟着往上顶（量 composer 实时高，超出一行约顶多少）。
+function liftOverlays() {
+  const form = document.querySelector("#composer-vue #composer");
+  if (form) overlays.lift(Math.max(0, form.getBoundingClientRect().height - 60));
+}
 const movePalette = (d) => overlays.movePalette(d);
-const showPicker = (t, items, action) => overlays.showPicker(t, items, action);
+const showPicker = (t, items, action) => { liftOverlays(); overlays.showPicker(t, items, action); };
 const movePicker = (d) => overlays.movePicker(d);
 const hidePicker = () => overlays.hidePicker();
 const confirmAsk = (text) => overlays.confirmAsk(text);
@@ -441,6 +445,8 @@ let previewTimer = 0;
 // —— Vue 版：Composer.vue 挂 #composer-vue，事件经 composer-vue 桥进来。
 mountComposer({
   onInputText(v) {
+    liftOverlays();
+
     if (v.startsWith("/")) {
       const cmd = parseCommand(v);
       showPalette(filterCommands(cmd ? cmd.name : ""));
@@ -525,6 +531,9 @@ mountComposer({
   },
   onStop() {
     api.stop(sessionID).catch((err) => toast(`停止失败：${err.message}`, "error"));
+  },
+  onMenu() {
+    showPalette(filterCommands(""));
   },
 });
 
