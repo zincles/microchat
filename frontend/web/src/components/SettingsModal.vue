@@ -1,7 +1,8 @@
 <script setup>
 // 设置弹窗（四页：服务端/客户端/Agent/Provider；关丢弃 ⇒ 不保存不写）。
 // 状态全本地 ref，进弹窗拉一次；保存逐段 PUT。逻辑照 main.js wireSettings。
-import { ref, onMounted, onUnmounted } from "vue";
+import { ref, onMounted, onUnmounted, watch, nextTick } from "vue";
+import ToggleSwitch from "./ToggleSwitch.vue";
 import { createApi } from "../api/client.js";
 import {
   SETTINGS_TABS,
@@ -18,8 +19,23 @@ const TOKEN = localStorage.getItem("mc_token") || "";
 const api = createApi({ base: API, token: TOKEN });
 
 const tab = ref("server");
+// tab-thumb 跟随：量选中按钮相对 nav 的 left/width（切页 + 开弹窗 + 缩放都重算）。
+const navEl = ref(null);
+const thumbLeft = ref(0);
+const thumbWidth = ref(0);
+function moveThumb() {
+  nextTick(() => {
+    const nav = navEl.value;
+    if (!nav) return;
+    const btn = nav.querySelector(`#tab-${tab.value}`);
+    if (!btn) return;
+    thumbLeft.value = btn.offsetLeft;
+    thumbWidth.value = btn.offsetWidth;
+  });
+}
+watch(tab, moveThumb);
 const full = ref(localStorage.getItem("mc_settings_full") === "1");
-const chat = ref({ title_chars: "", model_context_tokens: "", compact_blocks: "", compact_trigger_tokens: "" });
+const chat = ref({ title_chars: "", model_context_tokens: "", compact_blocks: "", compact_trigger_tokens: "", replay_reasoning: false });
 const chatStatus = ref("");
 const defaults = ref({ provider: "", model: "", agent: "" });
 const defStatus = ref("");
@@ -220,6 +236,7 @@ onMounted(() => {
   loadAgents().catch(() => {});
   loadProviders().catch(() => {});
   document.addEventListener("keydown", onKey);
+  moveThumb();
 });
 onUnmounted(() => document.removeEventListener("keydown", onKey));
 function onKey(e) {
@@ -240,7 +257,8 @@ function onKey(e) {
         </span>
       </div>
       <div class="settings-cols">
-        <nav class="settings-nav">
+        <nav ref="navEl" class="settings-nav">
+          <span class="tab-thumb" :style="{ left: thumbLeft + 'px', width: thumbWidth + 'px' }"></span>
           <button
             v-for="t in SETTINGS_TABS"
             :key="t"
@@ -259,7 +277,7 @@ function onKey(e) {
           <label class="field"><span>模型上下文 tokens</span><input v-model="chat.model_context_tokens" type="number" min="1" /></label>
           <label class="field"><span>压缩块数</span><input v-model="chat.compact_blocks" type="number" min="1" /></label>
           <label class="field"><span>压缩触发 tokens（空=默认）</span><input v-model="chat.compact_trigger_tokens" type="number" min="1" placeholder="空=默认" /></label>
-          <label class="field"><span>回传思考（默认关，省上下文）</span><input v-model="chat.replay_reasoning" type="checkbox" /></label>
+          <label class="field"><span>回传思考（默认关，省上下文）</span><ToggleSwitch v-model="chat.replay_reasoning" /></label>
           <div class="row"><button type="button" class="primary" @click="saveChat">保存 chat</button><span class="status">{{ chatStatus }}</span></div>
           <h3>缺省三件</h3>
           <label class="field"><span>provider</span><input v-model="defaults.provider" placeholder="provider" /></label>
@@ -270,7 +288,7 @@ function onKey(e) {
         <section v-show="tab === 'client'" id="panel-client" class="panel">
           <label class="field"><span>API 地址</span><input v-model="cli.api" placeholder="http://127.0.0.1:8787/api/v1" /></label>
           <label class="field"><span>Token</span><input v-model="cli.token" placeholder="可空" type="password" /></label>
-          <label class="field"><span>输入时预演载荷</span><input v-model="cli.preview" type="checkbox" /></label>
+          <label class="field"><span>输入时预演载荷</span><ToggleSwitch v-model="cli.preview" /></label>
           <label class="field"><span>发送键</span><select v-model="cli.send">
             <option value="enter">回车发送（Shift+回车换行）</option>
             <option value="shift-enter">Shift+回车发送（回车换行）</option>
@@ -310,7 +328,7 @@ function onKey(e) {
             <label class="field-block"><span>系统提示词</span><textarea v-model="agentPrompt" rows="6" placeholder="system_prompt"></textarea></label>
             <div id="agent-abilities">
               <fieldset v-for="id in ABILITY_IDS" :key="id" class="ability-block">
-                <legend><input v-model="agentRows[id].enabled" type="checkbox" /> {{ id }}</legend>
+                <legend><ToggleSwitch v-model="agentRows[id].enabled" /> {{ id }}</legend>
                 <label class="field"><span>Model</span><select v-model="agentRows[id].model">
                   <option value="">跟会话走</option>
                   <option v-for="m in modelOptions" :key="m.value" :value="m.value">{{ m.label }}</option>
