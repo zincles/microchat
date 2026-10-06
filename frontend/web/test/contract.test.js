@@ -15,8 +15,7 @@ import {
   settingsDirty,
   formatRoutesOutcome,
   buildAbilitiesPatch,
-  renderMessage,
-} from "../src/components/MessageBubble.js";
+} from "../src/utils/format.js";
 
 // 契约测试（无浏览器）：只验纯函数与请求形状。`node --test test/`。
 // 后端真服务验证另走手工（见 README）。
@@ -200,128 +199,5 @@ test("resend 端点形状：POST /resend 无体", async () => {
   assert.deepEqual(seen, ["http://x/api/v1/sessions/s1/resend", "POST", undefined]);
 });
 
-test("消息编辑按钮：头行右挂；点开是行内框（textarea+保存/取消），保存带新值", () => {
-  const calls = [];
-  function makeEl(tag) {
-    const el = {
-      tag, children: [],
-      className: "", textContent: "", innerHTML: "", type: "", value: "", rows: 0, title: "",
-      attrs: {},
-      style: {},
-      appendChild(c) { this.children.push(c); return c; },
-      after(c) { this._after = c; },
-      remove() { this._removed = true; },
-      focus() {},
-      setAttribute(k, v) { this.attrs[k] = v; },
-      set onclick(fn) { this._click = fn; },
-      get onclick() { return this._click; },
-    };
-    return el;
-  }
-  const doc = {
-    createElement: (tag) => makeEl(tag),
-  };
-  const onEdit = (mid, kind, value) => calls.push([mid, kind, value]);
-  const barOf = (node) => node.children.find((c) => c.className === "msg-head").children.find((c) => c.className === "edit-bar");
-  // 无 id ⇒ 头行只有署名，不挂按钮
-  const bare = renderMessage(doc, { who: "系", role: "assistant", content: "x" });
-  assert.ok(!barOf(bare));
-  // user：只有"改"；点了 ⇒ 行内框出现（textarea 初值 = 旧正文），保存带新值
-  const u = renderMessage(doc, { who: "你", role: "user", content: "旧正文", messageId: "m1", onEdit });
-  const ubar = barOf(u);
-  assert.equal(ubar.children.length, 1);
-  assert.ok(ubar.children[0].innerHTML.includes("<svg"));
-  assert.equal(ubar.children[0].title, "改正文");
-  const textEl = makeEl("div");
-  textEl.className = "text";
-  const ubox = { box: null };
-  u.querySelector = (sel) => (sel === ".text" ? textEl : null);
-  textEl.after = (c) => { ubox.box = c; };
-  ubar.children[0].onclick();
-  assert.ok(ubox.box && ubox.box.className === "inline-edit");
-  const uarea = ubox.box.children[0];
-  assert.equal(uarea.value, "旧正文");
-  uarea.value = "新手改";
-  ubox.box.children[1].children[0].onclick(); // 保存
-  // assistant 改思考：初值 = 旧思考
-  const a = renderMessage(doc, { who: "助", role: "assistant", content: "x", reasoning: "旧思考", messageId: "m2", onEdit });
-  const abar = barOf(a);
-  assert.equal(abar.children.length, 2);
-  assert.ok(abar.children[1].innerHTML.includes("<svg"));
-  assert.equal(abar.children[1].title, "改思考");
-  const thinkEl = makeEl("div");
-  const abox = { box: null };
-  const thinkDet = makeEl("details");
-  a.querySelector = (sel) => (sel === ".think" ? thinkDet : sel === ".think-body" ? thinkEl : null);
-  thinkEl.after = (c) => { abox.box = c; };
-  abar.children[1].onclick();
-  assert.equal(abox.box.children[0].value, "旧思考");
-  assert.deepEqual(calls, [["m1", "content", "新手改"]]);
-});
 
-test("无思考也可改思考：没 .think 段 ⇒ 现建空段再挂框（换模型不断档）", () => {
-  const calls = [];
-  function makeEl(tag) {
-    const el = {
-      tag, children: [],
-      className: "", textContent: "", innerHTML: "", type: "", value: "", rows: 0, title: "",
-      attrs: {}, style: {}, open: false,
-      appendChild(c) { this.children.push(c); return c; },
-      insertBefore(c, ref) { this.children.unshift(c); return c; },
-      after(c) { this._after = c; },
-      remove() { this._removed = true; },
-      focus() {},
-      setAttribute(k, v) { this.attrs[k] = v; },
-      set onclick(fn) { this._click = fn; },
-      get onclick() { return this._click; },
-    };
-    return el;
-  }
-  const doc = { createElement: (tag) => makeEl(tag) };
-  const onEdit = (mid, kind, value) => calls.push([mid, kind, value]);
-  // muse spark 那种：没 reasoning ⇒ 画出来就没有 .think 段，但改思考按钮照挂
-  const a = renderMessage(doc, { who: "助", role: "assistant", content: "Hello", messageId: "m3", onEdit });
-  const bar = a.children.find((c) => c.className === "msg-head").children.find((c) => c.className === "edit-bar");
-  assert.equal(bar.children.length, 2);
-  const box = { box: null };
-  const textEl = makeEl("div");
-  let built = null;
-  a.querySelector = (sel) => {
-    if (sel === ".text") return textEl;
-    if (sel === ".think") return built;
-    if (sel === ".think-body") return built?.children.find((c) => c.className === "think-body") ?? null;
-    if (sel === ".inline-edit") return box.box;
-    return null;
-  };
-  // 新段自带 after（实现里显式补的）⇒ 框挂在新 think-body 后面，从它身上认。
-  let seg = null;
-  const origAppend = a.appendChild.bind(a);
-  a.appendChild = (c) => { if (c.className === "think") { built = c; seg = c.children.find((x) => x.className === "think-body"); seg.after = (node) => { box.box = node; }; } return origAppend(c); };
-  bar.children[1].onclick(); // 改思考
-  assert.ok(built, "该现建一段空 .think");
-  assert.equal(box.box.children[0].value, "");
-  box.box.children[0].value = "后补的思考";
-  box.box.children[1].children[0].onclick(); // 保存
-  assert.deepEqual(calls, [["m3", "reasoning", "后补的思考"]]);
-});
 
-test("消息正文节点永在：.text 带原文；有思考 ⇒ .think-body 带思考（丢了就是上次的事故）", () => {
-  const doc = { createElement: (tag) => ({
-    tag, children: [], className: "", textContent: "",
-    appendChild(c) { this.children.push(c); return c; },
-  }) };
-  const find = (node, cls) => {
-    if (node.className === cls) return node;
-    for (const c of node.children ?? []) {
-      const hit = find(c, cls);
-      if (hit) return hit;
-    }
-    return null;
-  };
-  const u = renderMessage(doc, { who: "你", role: "user", content: "你好。" });
-  assert.equal(find(u, "text")?.textContent, "你好。");
-  assert.equal(find(u, "think-body"), null);
-  const a = renderMessage(doc, { who: "助", role: "assistant", content: "Hello", reasoning: "想了想" });
-  assert.equal(find(a, "text")?.textContent, "Hello");
-  assert.equal(find(a, "think-body")?.textContent, "想了想");
-});

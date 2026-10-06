@@ -9,57 +9,20 @@
 </head>
 <body>
   <div id="app">
-    <header>
-      <button id="toggle-left" class="icon-btn" type="button" title="显示/隐藏会话栏"></button>
-      <span id="conn">未连接</span>
-      <span id="session"></span>
-      <select id="session-model" class="pill-select" title="改当前会话的模型"></select>
-      <select id="session-agent" class="pill-select" title="改当前会话的 Agent"></select>
-      <span class="head-spacer"></span>
-      <button id="toggle-right" class="icon-btn" type="button" title="显示/隐藏载荷栏"></button>
-    </header>
+    <div id="topbar-vue"></div>
     <div id="columns">
-      <aside id="sessions-bar">
-        <div class="bar-head">
-          <span>会话</span>
-          <button id="session-new" type="button" title="新建会话">＋</button>
-        </div>
-        <div id="session-list"></div>
-        <div class="bar-foot">
-          <button id="settings-open" class="foot-btn" type="button" title="设置">⚙ 设置</button>
-        </div>
-      </aside>
+      <div id="sessionbar-vue"></div>
       <div id="grip-left" class="grip" title="拖拽调左栏宽"></div>
       <section id="chat-col">
-        <main id="messages"></main>
-        <div id="palette" class="palette hidden">
-          <div id="palette-list"></div>
-          <div class="palette-hint">Tab/↑↓ 选择，回车执行</div>
-        </div>
-        <div id="picker" class="picker hidden">
-          <div id="picker-title"></div>
-          <div id="picker-list"></div>
-        </div>
-        <div id="confirm-box" class="confirm hidden">
-          <div id="confirm-text"></div>
-          <div class="confirm-btns">
-            <button id="confirm-yes" type="button">确认</button>
-            <button id="confirm-no" type="button">取消</button>
-          </div>
-        </div>
-        <form id="composer">
-          <div id="statusline" class="statusline">上下文 ?/?｜未知模型｜idle</div>
-          <textarea id="input" rows="1" autocomplete="off" placeholder="输入消息（回车换行）；/ 开头进命令"></textarea>
-          <button type="submit" id="send-btn" title="发送" aria-label="发送"></button>
-        </form>
+        <main id="messages-vue"></main>
+        <div id="overlays-vue"></div>
+        <div id="composer-vue"></div>
       </section>
       <div id="grip-right" class="grip" title="拖拽调右栏宽"></div>
-      <aside id="payload-bar">
-        <div class="bar-head"><span>即将发送的载荷</span></div>
-        <pre id="outgoing-raw"></pre>
-      </aside>
+      <div id="payloadbar-vue"></div>
     </div>
     <div id="toasts" aria-live="polite"></div>
+    <div id="toast-vue"></div>
     <div id="settings" class="modal hidden">
       <div class="modal-box settings-box">
         <div class="modal-head">

@@ -18,9 +18,12 @@ select { appearance: none; -webkit-appearance: none; padding-right: 1.8em;
   background-size: 0.35em 0.35em; background-repeat: no-repeat; cursor: pointer; }
 textarea { resize: vertical; }
 body { margin: 0; background: var(--tg-bg); color: var(--tg-text); font: 15px/1.65 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif; }
+/* doodle 全页底（手搓 SVG 平铺整张网页：body 上漆 --tg-hint 16% 透明度；
+ * 深底显浅纹、浅底显深纹，随主题走。各栏半透明，纹理从空白处透出来。） */
+body::before { content: ""; position: fixed; inset: 0; z-index: 0; background: url("./doodle.svg") repeat; background-size: 360px; color: var(--tg-hint); opacity: 0.16; pointer-events: none; }
 #app { display: flex; flex-direction: column; height: 100vh; gap: 0.6em; padding: 0.6em; box-sizing: border-box; }
 /* 顶栏：悬浮圆角卡（外 margin 由 #app 的 gap/padding 给，圆角 14px，不贴边）。 */
-header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; color: var(--tg-hint); border-radius: 14px; background: color-mix(in srgb, var(--tg-secondary-bg) 82%, transparent); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; color: var(--tg-hint); border-radius: 14px; background: var(--tg-secondary-bg); }
 .head-spacer { flex: 1; }
 /* Toast 通知（右上堆叠，TG 安卓 toast 味：深底白字圆角 + 左色条区分 Plumbing/错误）。 */
 #toasts { position: fixed; top: 4.2em; right: 0.8em; display: flex; flex-direction: column; gap: 0.5em; z-index: 50; max-width: min(22em, 80vw); }
@@ -50,17 +53,17 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 #columns { flex: 1; display: flex; gap: 0.6em; min-height: 0; }
 #sessions-bar { width: 260px; flex: none; background: var(--tg-secondary-bg); border-radius: 14px; display: flex; flex-direction: column; overflow: hidden; }
 #payload-bar { width: 340px; flex: none; background: var(--tg-secondary-bg); border-radius: 14px; overflow-y: auto; padding: 0.6em 0.8em; font-size: 0.85em; color: var(--tg-hint); }
-#chat-col { flex: 1; display: flex; flex-direction: column; min-width: 0; margin: 0 auto; width: 100%; position: relative; background: var(--tg-bg); border-radius: 14px; overflow: hidden; }
-/* 聊天 doodle 底（手搓 SVG 平铺，--tg-hint 漆 16% 透明度：深底显浅纹、浅底显深纹，随主题走）。 */
-#chat-col::before { content: ""; position: absolute; inset: 0; background: url("./doodle.svg") repeat; background-size: 360px; color: var(--tg-hint); opacity: 0.16; pointer-events: none; }
+#chat-col { flex: 1; display: flex; flex-direction: column; min-width: 0; margin: 0 auto; width: 100%; position: relative; background: transparent; border-radius: 14px; overflow: hidden; }
 #chat-col > * { position: relative; z-index: 1; max-width: 760px; margin-left: auto; margin-right: auto; width: 100%; box-sizing: border-box; }
 /* 消息列：flex:1 撑满 + 两侧 56px 头像位 + 上下给浮动输入栏留位；窄屏收回。 */
 #messages { flex: 1; overflow-y: auto; min-height: 0; padding: 1em 56px 5em; display: flex; flex-direction: column; gap: 0.3em; }
+#messages-vue { flex: 1; overflow-y: auto; min-height: 0; padding: 1em 56px 5em; display: flex; flex-direction: column; gap: 0.3em; }
 @media (max-width: 1100px) { #payload-bar { display: none; } }
 @media (max-width: 700px) {
   #columns { flex-direction: column; }
   #sessions-bar { width: auto; border-right: none; border-bottom: 1px solid var(--line); max-height: 30vh; }
   #messages { padding: 0.5em 0.8em; }
+  #messages-vue { padding: 0.5em 0.8em; }
 }
 .bar-head { display: flex; justify-content: space-between; align-items: center; padding: 0.7em 0.8em 0.3em; color: var(--tg-hint); font-size: 0.85em; }
 #session-list { overflow-y: auto; flex: 1; padding: 0.3em 0.5em; }
