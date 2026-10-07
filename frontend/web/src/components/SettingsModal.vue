@@ -4,6 +4,8 @@
 import { ref, onMounted, onUnmounted, watch, nextTick } from "vue";
 import ToggleSwitch from "./ToggleSwitch.vue";
 import AgentEditor from "./AgentEditor.vue";
+import assistantPreset from "../../presets/assistant.json";
+import rpPreset from "../../presets/rp-agent.json";
 import ProviderEditor from "./ProviderEditor.vue";
 import { createApi } from "../api/client.js";
 import {
@@ -127,6 +129,20 @@ async function loadAgents() {
   } catch {}
 }
 
+// 预设模板（随 git 走：presets/*.json）： लंबे提示词不硬编码，前端不存第二份真相。
+const presetPick = ref("");
+function newFromTemplate(kind) {
+  if (kind === "blank") { editAgent.value = "new"; return; }
+}
+function presetNew() {
+  const kind = presetPick.value;
+  presetPick.value = "";
+  if (!kind) return;
+  // 名字清空等你起；其余（提示词/prepend/能力）照模板带。
+  const src = kind === "rp" ? rpPreset : assistantPreset;
+  editAgent.value = { template: { ...src, name: "" } };
+}
+
 async function loadProviders() {
   try {
     const [list, pres] = await Promise.all([api.providers(), api.providerPresets()]);
@@ -227,7 +243,14 @@ function onKey(e) {
         <section v-show="tab === 'agent'" id="panel-agent" class="panel">
           <div class="panel-head">
             <h3>已有 Agent（点进二级改）</h3>
-            <button type="button" class="primary" @click="editAgent = 'new'">新建</button>
+            <span class="head-btns">
+              <button type="button" class="primary" @click="newFromTemplate('blank')">新建</button>
+              <select v-model="presetPick" @change="presetNew" title="从模板创建">
+                <option value="">从模板创建…</option>
+                <option value="assistant">通用助手</option>
+                <option value="rp">角色扮演助手</option>
+              </select>
+            </span>
           </div>
           <div id="agent-list">
             <table class="plist">
@@ -241,8 +264,9 @@ function onKey(e) {
           </div>
           <AgentEditor
             v-if="editAgent"
-            :agent="editAgent === 'new' ? null : editAgent"
-            :is-default="editAgent !== 'new' && editAgent.id === curDefault"
+            :agent="editAgent === 'new' || editAgent?.template ? null : editAgent"
+            :template="editAgent?.template ?? null"
+            :is-default="editAgent !== 'new' && editAgent?.id === curDefault"
             @close="editAgent = null"
             @saved="loadAgents"
           />

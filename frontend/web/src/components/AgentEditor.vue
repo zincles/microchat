@@ -9,19 +9,19 @@ import ToggleSwitch from "./ToggleSwitch.vue";
 const props = defineProps({
   agent: { type: Object, default: null },
   isDefault: { type: Boolean, default: false },
+  template: { type: Object, default: null }, // 新建模板 {name, system_prompt, prepend_state, abilities}
 });
 const emit = defineEmits(["close", "saved"]);
 
 const API = localStorage.getItem("mc_api") || "http://127.0.0.1:8787/api/v1";
 const TOKEN = localStorage.getItem("mc_token") || "";
 const api = createApi({ base: API, token: TOKEN });
-
 const isNew = !props.agent;
 const aid = ref(props.agent?.id ?? "");
-const name = ref(props.agent?.name ?? "");
-const prompt = ref(props.agent?.system_prompt ?? "");
+const name = ref(props.agent?.name ?? props.template?.name ?? "");
+const prompt = ref(props.agent?.system_prompt ?? props.template?.system_prompt ?? "");
 const rows = ref({});
-const prepend = ref(!!props.agent?.prepend_state);
+const prepend = ref(!!(props.agent?.prepend_state ?? props.template?.prepend_state));
 const modelOptions = ref([]);
 const status = ref("");
 
@@ -35,7 +35,7 @@ function fillRows(a) {
   }
   rows.value = out;
 }
-fillRows(props.agent);
+fillRows(props.agent ?? props.template);
 
 function toPatch() {
   const out = {};
