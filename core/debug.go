@@ -52,10 +52,10 @@ const debugUsage = `microchat 直操模式（同进程调 internal/*；不起服
 op：
   sessions                                          列会话（id / 标题 / provider / model）
   new [--title X] [--provider P] [--model M]        建会话
+  import-st <jsonl文件> [--title X]                 从 SillyTavern JSONL 建会话并按序落库（测试工具）
   send <session_id> <内容>                          同步跑完一整轮（走 chat.Service）
   outgoing <session_id>                             逐条打印要发出去的东西（含出处）
   status <session_id>                               这一轮的 turn 状态
-  stop <session_id>                                 按停（幂等）
   delete-preview <session_id> <message_id>          删除预览（只算不动）
   delete <session_id> <message_id> <last_deleted_message_id>
                                                     执行删除（末尾核对不符 ⇒ 409）
@@ -113,6 +113,8 @@ func runDebug(paths config.Paths, cfg config.Config, args []string) int {
 		return env.sessions()
 	case "new":
 		return env.newSession(args[1:])
+	case "import-st":
+		return env.importSt(args[1:])
 	case "send":
 		return env.send(args[1:])
 	case "outgoing":
@@ -276,6 +278,68 @@ func (e *debugEnv) newSession(args []string) int {
 	}
 	emit(session)
 	return 0
+}
+
+// ── op：import-st（SillyTavern JSONL → 建会话 + 按序落库）────────────────────
+//
+// 测试工具：把 ST 导出的 jsonl（一行一条，第一行是 chat_metadata）灌进一个新会话。
+// 映射只认四样（其余全丢）：is_user ⇒ user / assistant；mes ⇒ content；
+// extra.reasoning ⇒ reasoning（assistant 才收）；send_date ⇒ created_at（毫秒）。
+// 没有 send_date / 坏时间 ⇒ 用"现在"（顺序不靠它：id 是 UUIDv7，按落库顺序铸 ⇒ 文件顺序 = 会话顺序）。
+//
+// 落库走 `store.InsertMessage`（与 copy 同一条路：插消息 + 推 updated_at，同一事务）。
+// 标题：`--title` 给了就用它；没给 ⇒ 用第一条用户消息起（`model.TitleFrom`，与自动起名同口径）。
+func (e *debugEnv) importSt(args []string) int {
+	if len(args) == 0 || strings.TrimSpace(args[0]) == "" {
+		return report(errf("invalid", "用法：-debug import-st <jsonl文件> [--title X]"))
+	}
+	values, err := parseNamedFlags(args[1:], "title")
+	if err != nil {
+		return report(err)
+	}
+	raw, err := os.ReadFile(args[0])
+	if err != nil {
+		return report(errf("invalid", "读文件失败：%s", err.Error()))
+	}
+	parsed, skipped := store.ParseSTLines(raw)
+	if len(parsed) == 0 {
+		return report(errf("invalid", "文件里没有可导入的消息（跳过 %d 行）", skipped))
+	}
+	provider := e.cfg.Defaults.Provider
+	modelID := e.cfg.Defaults.Model
+	session, err := e.store.CreateSession(provider, modelID, "", values["title"])
+	if err != nil {
+		return report(err)
+	}
+	if agentID := e.defaultAgentID(); agentID != "" && agentID != session.AgentID {
+		if err := e.store.SetSessionAgent(session.ID, agentID); err != nil {
+			return report(err)
+		}
+		session.AgentID = agentID
+	}
+	if err := e.store.ImportSTMessages(session.ID, parsed); err != nil {
+		return report(err)
+	}
+	if _, ok := values["title"]; !ok {
+		for _, item := range parsed {
+			if item.IsUser && strings.TrimSpace(item.Content) != "" {
+				_, _ = e.store.SetTitleIfEmpty(session.ID, model.TitleFrom(item.Content, e.cfg.Chat.TitleChars))
+				break
+			}
+		}
+	}
+	sessionFresh, err := e.store.GetSession(session.ID)
+	if err != nil {
+		return report(err)
+	}
+	emit(importResult{Session: *sessionFresh, Messages: len(parsed), Skipped: skipped})
+	return 0
+}
+
+type importResult struct {
+	Session  model.Session `json:"session"`
+	Messages int           `json:"messages"`
+	Skipped  int           `json:"skipped"`
 }
 
 // defaultAgentID：`agents.json` 的 `default_agent`（空串 / 缺失都算没配 ⇒ 内置默认）。

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -397,4 +398,96 @@ func dirtyArg(dirty bool) int64 {
 		return 1
 	}
 	return 0
+}
+
+// ── SillyTavern JSONL 导入 ───────────────────────────────────────────────────
+//
+// 一行一条（第一行是 chat_metadata，没有 `mes` ⇒ 天然跳过）。映射只认四样，
+// 其余全丢：`is_user` ⇒ role；`mes` ⇒ content；`extra.reasoning` ⇒ reasoning
+// （assistant 才收）；`send_date`（RFC3339）⇒ created_at（毫秒；坏时间/没给 ⇒ 0，
+// 由 `InsertMessage` 填"现在"）。顺序不靠时间：id 批铸排序 ⇒ 文件顺序 = 会话顺序。
+// 跳过：空行不计数 / 解不出 JSON / 无 mes 或空白 / `is_system`（role 只有 user/assistant）。
+
+// STMessage：一行 ST 消息的原文形状（只读这几格）。
+type STMessage struct {
+	IsUser   bool   `json:"is_user"`
+	IsSystem bool   `json:"is_system"`
+	SendDate string `json:"send_date"`
+	Mes      string `json:"mes"`
+	Extra    struct {
+		Reasoning string `json:"reasoning"`
+	} `json:"extra"`
+}
+
+// STParsed：一行里要的那四样（id 在落库时另铸，这里不带）。
+type STParsed struct {
+	IsUser    bool
+	Content   string
+	Reasoning string
+	CreatedAt int64
+}
+
+// ParseSTLines：逐行解 ST，返回（要落的，跳过的行数）。
+func ParseSTLines(raw []byte) ([]STParsed, int) {
+	parsed := []STParsed{}
+	skipped := 0
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var item STMessage
+		if err := json.Unmarshal([]byte(line), &item); err != nil {
+			skipped++
+			continue
+		}
+		if strings.TrimSpace(item.Mes) == "" {
+			skipped++
+			continue
+		}
+		if item.IsSystem {
+			skipped++
+			continue
+		}
+		reasoning := ""
+		if !item.IsUser {
+			reasoning = item.Extra.Reasoning
+		}
+		parsed = append(parsed, STParsed{
+			IsUser: item.IsUser, Content: item.Mes,
+			Reasoning: reasoning, CreatedAt: stMillis(item.SendDate),
+		})
+	}
+	return parsed, skipped
+}
+
+// stMillis：ST 的 `send_date`（RFC3339）⇒ 毫秒；坏时间/没给 ⇒ 0。
+func stMillis(sendDate string) int64 {
+	if strings.TrimSpace(sendDate) == "" {
+		return 0
+	}
+	if moment, err := time.Parse(time.RFC3339, sendDate); err == nil {
+		return moment.UnixMilli()
+	}
+	return 0
+}
+
+// ImportSTMessages：按序落库（调用方已建好会话）。id 批铸排序 ⇒ 文件顺序 = 会话顺序。
+func (s *Store) ImportSTMessages(sessionID string, parsed []STParsed) error {
+	ids, err := MintOrderedIDs(len(parsed))
+	if err != nil {
+		return err
+	}
+	for index, item := range parsed {
+		role := model.RoleAssistant
+		if item.IsUser {
+			role = model.RoleUser
+		}
+		if _, err := s.InsertMessage(model.Message{
+			ID: ids[index], SessionID: sessionID, Role: role,
+			Content: item.Content, Reasoning: item.Reasoning, CreatedAt: item.CreatedAt,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }

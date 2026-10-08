@@ -37,8 +37,8 @@ export function deletionPlanSummary(plan) {
 
 // ---- 设置 modal 纯逻辑（无 DOM，测试直引） ----
 
-// SETTINGS_TABS：modal 四区（服务端/客户端/Agent/Provider），顺序固定。
-export const SETTINGS_TABS = ["server", "client", "agent", "provider"];
+// SETTINGS_TABS：modal 五区（服务端/客户端/会话/Agent/Provider），顺序固定。
+export const SETTINGS_TABS = ["server", "client", "session", "agent", "provider"];
 
 // switchSettingsTab：tab 切换纯函数 —— 目标合法才切，否则留当前。
 export function switchSettingsTab(current, target) {

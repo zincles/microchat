@@ -12,7 +12,7 @@ import {
   SETTINGS_TABS,
 } from "../utils/format.js";
 
-const emit = defineEmits(["close", "notify"]);
+const emit = defineEmits(["close", "notify", "sessions-changed", "goto-session"]);
 function notify(t, k) { emit("notify", t, k); }
 
 const API = localStorage.getItem("mc_api") || "http://127.0.0.1:8787/api/v1";
@@ -102,6 +102,26 @@ async function saveDefaults() {
   } catch (e) { defStatus.value = `保存失败：${e.message}`; }
 }
 
+// 已有对话管理器：ST 导入（文件框 → POST /sessions/import-st，导完刷会话 tab + 左栏）。
+const importTitle = ref("");
+const importStatus = ref("");
+async function importSTFile(event) {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  importStatus.value = "导入中…";
+  try {
+    const text = await file.text();
+    const out = await api.importSt(text, importTitle.value.trim() || undefined);
+    importStatus.value = `已导入 ${out.messages} 条（跳过 ${out.skipped} 行）`;
+    await loadSessions();
+    emit("sessions-changed");
+  } catch (e) { importStatus.value = `导入失败：${e.message}`; }
+  event.target.value = "";
+}
+// 会话 tab：列表 + 新建/进入/删除（编辑走左栏 ☰ 二级）。
+const sessions = ref([]);
+const sessionMgrStatus = ref("");
+
 function loadClient() {
   cli.value = {
     api: localStorage.getItem("mc_api") || "http://127.0.0.1:8787/api/v1",
@@ -152,7 +172,7 @@ async function loadProviders() {
       const still = list.find((p) => p.id === curProvider.value.id);
       curProvider.value = still ?? null;
     }
-  } catch {}
+  } catch (e) { routesStatus.value = `渠道列表失败：${e.message}`; }
 }
 
 async function deleteProvider() {
@@ -162,6 +182,29 @@ async function deleteProvider() {
   loadProviders().catch(() => {});
 }
 
+// 会话 tab 动作：进会话关设置面板（App 切），删走全屏确认口（ App 没有，用 notify 转）。
+async function loadSessions() {
+  try {
+    sessions.value = await api.listSessions();
+  } catch (e) { sessionMgrStatus.value = `拉列表失败：${e.message}`; }
+}
+async function newSession() {
+  try {
+    await api.createSession({});
+    await loadSessions();
+    emit("sessions-changed");
+  } catch (e) { sessionMgrStatus.value = `新建失败：${e.message}`; }
+}
+function gotoSession(id) {
+  emit("goto-session", id);
+}
+async function dropSession(id) {
+  try {
+    await api.closeSession(id);
+    await loadSessions();
+    emit("sessions-changed");
+  } catch (e) { sessionMgrStatus.value = `删除失败：${e.message}`; }
+}
 
 onMounted(() => {
   loadClient();
@@ -169,6 +212,7 @@ onMounted(() => {
   loadDefaults().catch(() => {});
   loadAgents().catch(() => {});
   loadProviders().catch(() => {});
+  loadSessions().catch(() => {});
   document.addEventListener("keydown", onKey);
   moveThumb();
 });
@@ -202,7 +246,7 @@ function onKey(e) {
             :class="{ sel: tab === t }"
             @click="tab = t"
           >
-            {{ { server: "服务端", client: "客户端", agent: "Agent", provider: "Provider" }[t] }}
+            {{ { server: "服务端", client: "客户端", session: "会话", agent: "Agent", provider: "Provider" }[t] }}
           </button>
         </nav>
         <section v-show="tab === 'server'" id="panel-server" class="panel">
@@ -216,7 +260,10 @@ function onKey(e) {
           <h3>缺省三件</h3>
           <label class="field"><span>provider</span><input v-model="defaults.provider" placeholder="provider" /></label>
           <label class="field"><span>model</span><input v-model="defaults.model" placeholder="model" /></label>
-          <label class="field"><span>agent</span><input v-model="defaults.agent" placeholder="agent" /></label>
+          <label class="field"><span>缺省 Agent</span><select v-model="defaults.agent">
+            <option value="">内置默认</option>
+            <option v-for="a in agents" :key="a.id" :value="a.id">{{ a.name }}（{{ a.id }}）</option>
+          </select></label>
           <div class="row"><button type="button" class="primary" @click="saveDefaults">保存缺省</button><span class="status">{{ defStatus }}</span></div>
         </section>
         <section v-show="tab === 'client'" id="panel-client" class="panel">
@@ -239,6 +286,28 @@ function onKey(e) {
           </select></label>
           <div class="row"><button type="button" class="primary" @click="saveClient">保存</button><span class="status">{{ cliStatus }}</span></div>
           <p class="hint">API/Token 改完刷新页面生效；其余即时生效。</p>
+        </section>
+        <section v-show="tab === 'session'" id="panel-session" class="panel">
+          <div class="panel-head">
+            <h3>会话（{{ sessions.length }} 条，点进）</h3>
+            <button type="button" class="primary" @click="newSession">新建</button>
+          </div>
+          <div id="session-mgr-list">
+            <table class="plist">
+              <thead><tr><th>标题</th><th>条数</th><th>模型</th><th></th></tr></thead>
+              <tbody><tr v-for="s in sessions" :key="s.id" class="clickable" @click="gotoSession(s.id)">
+                <td>{{ s.title || "新会话" }}</td>
+                <td>{{ s.messages }}</td>
+                <td>{{ s.provider }}/{{ s.model }}</td>
+                <td class="ops"><button type="button" class="link-btn danger" @click.stop="dropSession(s.id)">删除</button></td>
+              </tr></tbody>
+            </table>
+          </div>
+          <div class="row"><span class="status">{{ sessionMgrStatus }}</span></div>
+          <h3>从 SillyTavern 导入</h3>
+          <label class="field"><span>导入标题（空=首句起）</span><input v-model="importTitle" placeholder="空=首句起" /></label>
+          <label class="field"><span>JSONL 文件</span><input type="file" accept=".jsonl,.json,.txt" @change="importSTFile" /></label>
+          <div class="row"><span class="status">{{ importStatus }}</span></div>
         </section>
         <section v-show="tab === 'agent'" id="panel-agent" class="panel">
           <div class="panel-head">

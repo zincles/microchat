@@ -120,7 +120,7 @@ test("api.call 请求形状：方法/路径/鉴权头/204 空", async () => {
 });
 
 test("tab 切换纯函数：合法才切、非法留当前", () => {
-  assert.deepEqual(SETTINGS_TABS, ["server", "client", "agent", "provider"]);
+  assert.deepEqual(SETTINGS_TABS, ["server", "client", "session", "agent", "provider"]);
   assert.equal(switchSettingsTab("server", "agent"), "agent");
   assert.equal(switchSettingsTab("server", "nope"), "server");
 });
@@ -201,3 +201,14 @@ test("resend 端点形状：POST /resend 无体", async () => {
 
 
 
+
+test("importSt 端点形状：POST /sessions/import-st 原文体 + ?title=", async () => {
+  let seen;
+  const fetchFn = async (url, opts) => {
+    seen = [url, opts.method, opts.headers["Content-Type"], opts.body];
+    return { status: 201, ok: true, json: async () => ({ session: {}, messages: 1, skipped: 0 }) };
+  };
+  const api = createApi({ base: "http://x/api/v1", fetchFn });
+  await api.importSt('{"mes":"hi"}\n', "ST");
+  assert.deepEqual(seen, ["http://x/api/v1/sessions/import-st?title=ST", "POST", "text/plain", '{"mes":"hi"}\n']);
+});

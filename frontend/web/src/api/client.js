@@ -16,6 +16,21 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
     return data;
   }
 
+  // callText：原文 POST（JSONL 导入口：体不是 JSON，不能走 JSON.stringify）。
+  async function callText(method, path, text) {
+    const res = await fetchFn(base + path, {
+      method,
+      headers: {
+        "Content-Type": "text/plain",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: text,
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error?.message ?? `HTTP ${res.status}`);
+    return data;
+  }
+
   const enc = encodeURIComponent;
   return {
     call,
@@ -70,10 +85,12 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
     getDefaults: () => call("GET", "/config/defaults"),
     putDefaults: (body) => call("PUT", "/config/defaults", body),
     providers: () => call("GET", "/providers"),
+    // importSt：ST JSONL 原文导入（体不是 JSON，走 callText；title 走 ?title=）。
+    importSt: (text, title) =>
+      callText("POST", `/sessions/import-st${title ? `?title=${enc(title)}` : ""}`, text),
     providerPresets: () => call("GET", "/providers/presets"),
     createProvider: (body) => call("POST", "/providers", body),
     patchProvider: (id, body) => call("PATCH", `/providers/${enc(id)}`, body),
-    refreshProvider: (id) => call("POST", `/providers/${enc(id)}/refresh`),
     // refreshRoutes：刷路由表（models.dev 快照 → model_route 落库），回 {provider, models, error?}。
     refreshRoutes: (id) => call("POST", `/providers/${enc(id)}/refresh-routes`),
   };

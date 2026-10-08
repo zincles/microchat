@@ -5,6 +5,7 @@ package server
 
 import (
 	"bytes"
+	"io"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -53,6 +54,7 @@ func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *ch
 	s.mux.HandleFunc("GET /api/v1/debug/last-payload", s.lastPayload)
 	s.mux.HandleFunc("GET /api/v1/sessions", s.listSessions)
 	s.mux.HandleFunc("POST /api/v1/sessions", s.createSession)
+	s.mux.HandleFunc("POST /api/v1/sessions/import-st", s.importSt)
 	s.mux.HandleFunc("PATCH /api/v1/sessions/{session_id}", s.updateSession)
 	s.mux.HandleFunc("DELETE /api/v1/sessions/{session_id}", s.deleteSession)
 	// Copy：线性会话里的"分岔"（新 session + 消息与摘要一并复制）
@@ -502,6 +504,66 @@ func (s *Server) copySession(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusCreated, copied)
 }
+
+// importSt：从 SillyTavern JSONL 建会话并按序落库（设置面板"已有对话管理器"的导入口")。
+//
+// 体是 JSONL 原文（按行解，见 `store.ParseSTLines`）。建会话走与 `createSession` 同一套缺省
+// （provider / model / agent）；标题给了就用（`?title=`），没给 ⇒ 首条 user 起。
+// 回 `{"session", "messages", "skipped"}`（201）。空文件 / 一条可落的都没有 ⇒ 400。
+func (s *Server) importSt(w http.ResponseWriter, r *http.Request) {
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 32<<20))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid", "读请求体失败："+err.Error())
+		return
+	}
+	parsed, skipped := store.ParseSTLines(raw)
+	if len(parsed) == 0 {
+		writeError(w, http.StatusBadRequest, "invalid", "文件里没有可导入的消息")
+		return
+	}
+	title := ""
+	if value := r.URL.Query().Get("title"); strings.TrimSpace(value) != "" {
+		title = strings.TrimSpace(value)
+	}
+	cfg, err := config.LoadConfig(s.paths)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	session, err := s.store.CreateSession(cfg.Defaults.Provider, cfg.Defaults.Model, "", title)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if agentID := s.defaultAgentID(); agentID != "" && agentID != session.AgentID {
+		if err := s.store.SetSessionAgent(session.ID, agentID); err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		session.AgentID = agentID
+	}
+	if err := s.store.ImportSTMessages(session.ID, parsed); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if title == "" {
+		for _, item := range parsed {
+			if item.IsUser && strings.TrimSpace(item.Content) != "" {
+				_, _ = s.store.SetTitleIfEmpty(session.ID, model.TitleFrom(item.Content, cfg.Chat.TitleChars))
+				break
+			}
+		}
+	}
+	sessionFresh, err := s.store.GetSession(session.ID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"session": sessionFresh, "messages": len(parsed), "skipped": skipped,
+	})
+}
+
 
 // writeMessageError：消息级路由的 404 文案 —— "会话不存在"会误导（多半是那条消息没了）。
 func writeMessageError(w http.ResponseWriter, err error) {
