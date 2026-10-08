@@ -21,6 +21,16 @@ type CreateAgentReq struct {
 	SystemPrompt string `json:"system_prompt"`
 	// Abilities：能力开关（键 = 能力 id）。**缺省 = 默认全开**；未知的 id ⇒ 400。
 	Abilities map[string]config.AbilityToggle `json:"abilities,omitempty"`
+	PrependState *bool  `json:"prepend_state,omitempty"`
+	DisplayMode  *string `json:"display_mode,omitempty"`
+}
+
+// DisplayModeValue：归一化（只认 roleplay，其余 ⇒ "" 缺省 chat）。
+func (r CreateAgentReq) DisplayModeValue() string {
+	if r.DisplayMode != nil && *r.DisplayMode == "roleplay" {
+		return "roleplay"
+	}
+	return ""
 }
 
 type UpdateAgentReq struct {
@@ -33,6 +43,8 @@ type UpdateAgentReq struct {
 	MakeDefault bool `json:"make_default"`
 	// 改 id = **重命名**：连同 `default_agent` 与所有会话的引用一起搬（空串 = 不改）。
 	NewID *string `json:"new_id"`
+	PrependState *bool   `json:"prepend_state,omitempty"`
+	DisplayMode  *string `json:"display_mode,omitempty"`
 }
 
 // （读 agents.json 的 loadAgents 在 server.go 里 —— 早就有，别写第二份）
@@ -68,6 +80,8 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		Name:         name,
 		SystemPrompt: req.SystemPrompt,
 		Abilities:    req.Abilities,
+		PrependState: req.PrependState,
+		DisplayMode:  req.DisplayModeValue(),
 	}
 	// 未知的能力 id 写进去只会"配了不生效" ⇒ 当场拒（口径见 `internal/abilities`）
 	if err := abilities.Validate(config.AgentsConfig{Agents: []config.Agent{agent}}); err != nil {
@@ -154,6 +168,12 @@ func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Abilities != nil {
 		agents.Agents[index].Abilities = req.Abilities
+	}
+	if req.PrependState != nil {
+		agents.Agents[index].PrependState = req.PrependState
+	}
+	if req.DisplayMode != nil {
+		agents.Agents[index].DisplayMode = *req.DisplayMode
 	}
 	// 未知的能力 id 一律在场拒（`POST` 与 `PATCH` 同一个口径）
 	if err := abilities.Validate(config.AgentsConfig{Agents: []config.Agent{agents.Agents[index]}}); err != nil {

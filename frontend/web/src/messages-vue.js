@@ -5,7 +5,7 @@ import MessageBubble from "./components/MessageBubble.vue";
 
 export const vueMessages = ref([]);
 export const vueStream = ref({ id: null, text: "" });
-
+export const vueDisplayMode = ref("chat");
 const app = createApp({
   setup() {
     function onSave(mid, kind, value) {
@@ -14,7 +14,10 @@ const app = createApp({
     function onDelete(mid, isLast) {
       window.dispatchEvent(new CustomEvent("mc-delete", { detail: { mid, isLast } }));
     }
-    return { vueMessages, vueStream, onSave, onDelete };
+    function onRefresh() {
+      window.dispatchEvent(new CustomEvent("mc-refresh"));
+    }
+    return { vueMessages, vueStream, vueDisplayMode, onSave, onDelete, onRefresh };
   },
   render(ctx) {
     const lastId = [...vueMessages.value].reverse().find((m) => m.messageId)?.messageId;
@@ -28,12 +31,14 @@ const app = createApp({
           who: m.who,
           role: m.role,
           content: m.stream ? vueStream.value.text : m.content,
-          reasoning: m.reasoning,
+          reasoning: m.stream ? (vueStream.value.reasoning ?? m.reasoning) : m.reasoning,
           reasoningMs: m.reasoningMs,
           messageId: m.messageId,
           isLast: !!m.messageId && m.messageId === lastId,
+          displayMode: vueDisplayMode.value,
           onSave: (...a) => ctx.onSave(...a),
           onDelete: (...a) => ctx.onDelete(...a),
+          onRefresh: (...a) => ctx.onRefresh(...a),
         }),
       ),
     );

@@ -207,6 +207,9 @@ type Agent struct {
 	// PrependState：出站时把当前状态表渲染成 `<current_state>` 块，贴到用户句首。
 	// 缺省 = 关（只有 RP 这类 Agent 需要；一般问答用不到）。
 	PrependState *bool `json:"prepend_state,omitempty"`
+	// DisplayMode：前端显示格式。"chat"（默认，聊天软件：双边气泡）/
+	// "roleplay"（用户气泡 + AI 纯文本占 80% 宽，无底无圆角）。
+	DisplayMode string `json:"display_mode,omitempty"`
 }
 
 type AgentsConfig struct {

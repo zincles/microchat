@@ -108,15 +108,37 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 .msg .edit-btn { background: none; border: none; color: var(--tg-hint); font-size: 0.75em; padding: 0.1em 0.3em; cursor: pointer; border-radius: 4px; }
 .msg.user .edit-btn { color: inherit; }
 .msg .edit-btn:hover { filter: brightness(1.3); }
-/* 气泡正文保留换行（与 think-body 同口径；{{ }} 插值不转 <br/>，靠 CSS 换行）。 */
-.msg .text { white-space: pre-wrap; word-break: break-word; }
+/* 气泡正文：markdown 渲染（marked 生成的 p/code/pre/longtable 走这里收敛）。 */
+.msg .text { word-break: break-word; }
+.msg .text p { margin: 0 0 0.5em; }
+.msg .text p:last-child { margin-bottom: 0; }
+.msg .text code { background: rgb(0 0 0 / 25%); border-radius: 4px; padding: 0.1em 0.35em; font-size: 0.88em; }
+.msg .text pre { background: rgb(0 0 0 / 25%); border-radius: 8px; padding: 0.6em 0.8em; overflow-x: auto; }
+.msg .text pre code { background: none; padding: 0; }
+.msg .text ul, .msg .text ol { margin: 0 0 0.5em; padding-left: 1.4em; }
+.msg .text blockquote { margin: 0 0 0.5em; padding-left: 0.7em; border-left: 2px solid var(--tg-link); opacity: 0.8; }
+.msg .text h1, .msg .text h2, .msg .text h3 { margin: 0.4em 0 0.3em; font-size: 1.05em; }
+/* KaTeX：色跟气泡走（默认黑，暗底看不见），显示块横滚。 */
+.msg .text .katex { color: inherit; }
+.msg .text .katex-display { overflow-x: auto; margin: 0.5em 0; }
+.msg .state-blocks { margin-top: 0.5em; display: flex; flex-direction: column; gap: 0.4em; }
+.msg .state-block { background: rgb(0 0 0 / 20%); border-radius: 8px; padding: 0.45em 0.65em; font-size: 0.85em; }
+.msg .state-block.current { border-left: 2px solid var(--tg-link); }
+.msg .state-table-name { color: var(--tg-link); font-size: 0.85em; margin-bottom: 0.15em; }
+.msg .state-line { white-space: pre-wrap; word-break: break-word; opacity: 0.9; }
 /* 气泡外操作行（deepseek/grok 味）：气泡下方一小排图标，不占气泡底色；
  * 默认半透明，hover 整行显形；删除 hover 变红。user 行右对齐、assistant 行左对齐。
  * 宽窄对齐由 .msg-wrap 承担（.msg 的 max-width 搬上来，气泡本身 max-width:100%）。 */
 .msg-wrap { display: flex; flex-direction: column; max-width: 70%; min-width: 9em; }
 .msg-wrap.user { align-self: flex-end; align-items: flex-end; }
-.msg-wrap.assistant { align-self: flex-start; align-items: flex-start; }
+.msg-wrap.assistant { align-self: flex-start; align-items: flex-start; max-width: 80%; width: 80%; }
 .msg-wrap .msg { max-width: 100%; align-self: stretch; }
+/* AI 气泡：长文顶满 80%，短句 fit-content 收（编辑态 textarea 同理 100% 宽）。 */
+.msg-wrap.assistant .msg { width: fit-content; min-width: 9em; max-width: 100%; }
+.msg-wrap.assistant .msg .inline-edit { width: 100%; }
+.msg-wrap.prose { max-width: 80%; min-width: 0; align-self: flex-start; }
+.msg.prose { background: none; padding: 0.2em 0; }
+.msg.prose .who { color: var(--tg-hint); font-weight: normal; }
 .msg-ops { display: flex; gap: 0.2em; margin-top: 0.2em; opacity: 0.55; }
 .msg-ops:hover { opacity: 1; }
 .msg-ops .edit-btn { background: none; border: none; color: var(--tg-hint); font-size: 0.75em; padding: 0.1em 0.3em; cursor: pointer; border-radius: 4px; }
@@ -143,6 +165,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 /* 菜单键：与发送圆钮同形，底栏色（输入框左侧，点开命令面板）。 */
 #composer #menu-btn { background: var(--tg-secondary-bg); color: var(--tg-hint); }
 #composer #menu-btn:hover { color: var(--tg-text); }
+.msg .think { color: var(--tg-hint); font-size: 0.82em; opacity: 0.65; }
 .msg .think-body { white-space: pre-wrap; word-break: break-word; }
 .palette, .picker { position: fixed; left: 50%; transform: translateX(-50%); bottom: 5em; background: var(--tg-float); border: none; border-radius: var(--r-shell); padding: 0.5em; width: min(649px, 90%); margin-left: -40px; z-index: 10; box-sizing: border-box; box-shadow: 0 8px 30px rgb(0 0 0 / 40%); }
 /* 确认框：全屏中央（与 modal 同级遮罩：背后加深，只留中央小窗）。 */

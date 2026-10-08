@@ -1,6 +1,7 @@
 // microchat web 前端 —— 与 TUI/TG 同一条 HTTP 契约（只调 /api/v1，不碰后端内部）。
 // 零运行时依赖（fetch 直调；构建只用 vite）。契约见 AGENTS.md API 表。
 // 拆分（Vue 式布局，无框架运行时）：api/client.js（call+端点函数）/ components/MessageBubble.js（气泡渲染+纯函数）/ main.js（接线）。
+import "katex/dist/katex.min.css";
 import { createApi } from "./api/client.js";
 import { toastVue } from "./toast-vue.js";
 import { mountComposer, composerClear, composerSubmit, composerSetStatus, composerSetRunning } from "./composer-vue.js";
@@ -16,7 +17,7 @@ import {
   groupModelsByProvider,
   deletionPlanSummary,
 } from "./utils/format.js";
-import { vueMessages, vueStream } from "./messages-vue.js";
+import { vueMessages, vueStream, vueDisplayMode } from "./messages-vue.js";
 
 const API = localStorage.getItem("mc_api") || "http://127.0.0.1:8787/api/v1";
 const TOKEN = localStorage.getItem("mc_token") || "";
@@ -100,7 +101,8 @@ function renderHistory(messages) {
       id: m.id,
     });
   }
-  el.messages.scrollTop = el.messages.scrollHeight;
+  // Vue 渲染是异步的：下一帧再滚到底（进会话从尾条看起）。
+  requestAnimationFrame(() => { el.messages.scrollTop = el.messages.scrollHeight; });
 }
 async function refreshStatusline(phase, elapsedMs) {
   try {
@@ -173,7 +175,8 @@ async function enterSession(id) {
   const found = sessions.find((s) => s.id === id);
   sessionInfo = found ?? {};
   paintSessionHeader();
-  // 原生下拉跟当前值走（选项按 provider 分 optgroup；换选项即 PATCH，不再弹 picker）。
+  // 显示格式跟着 Agent 走（roleplay ⇒ AI 纯文本；缺省 chat 双边气泡）。
+  refreshDisplayMode();
   fillModelSelect();
   fillAgentSelect();
   renderSessions(sessions);
@@ -211,10 +214,12 @@ async function resend() {
 
 // pollTurn：守着一轮跑完（生成中气泡 + 300ms 轮询 + 游标读增量 + 落库后对账）。
 // 跑时圆钮变停止键（composerSetRunning），idle/error 落回发送键。
+// 占位不是空气泡：思考进 think 段（折叠展开看流）、正文逐字长、红停止键可停。
+// 生成中占位无 messageId ⇒ 刷新钮天然不挂（isLast 只认落库真消息）。
 async function pollTurn(turnID) {
-  const m = { who: "助手", role: "assistant", _stream: true, stream: true, content: "生成中…" };
+  const m = { who: "助手", role: "assistant", _stream: true, stream: true, content: "", reasoning: "" };
   vueMessages.value.push(m);
-  vueStream.value = { id: turnID, text: "" };
+  vueStream.value = { id: turnID, text: "", reasoning: "" };
   composerSetRunning(true);
   let cur = { from: 0, thinkFrom: 0 };
   try {
@@ -222,6 +227,11 @@ async function pollTurn(turnID) {
       await new Promise((r) => setTimeout(r, 300));
       const st = await api.status(sessionID);
       const slice = await api.turnText(sessionID, cur.from, cur.thinkFrom);
+      // 思考与正文各归各（后端游标分开给；占位没有 messageId ⇒ 刷新钮天然不挂）。
+      if (slice.thinking) {
+        vueStream.value.reasoning = (vueStream.value.reasoning ?? "") + slice.thinking;
+        m.reasoning = vueStream.value.reasoning;
+      }
       if (slice.text) vueStream.value.text += slice.text;
       cur = advanceCursor(cur, slice);
       refreshStatusline(st.phase, st.elapsed_ms);
@@ -233,7 +243,6 @@ async function pollTurn(turnID) {
           const last = all[all.length - 1];
           if (last && last.id === turnID) vueStream.value.text = last.content;
         }
-        // 落库对账：整段重画（流式占位换成真消息，含 id 可编辑）。
         renderHistory(await api.listMessages(sessionID));
         refreshStatusline(st.phase, st.elapsed_ms);
         refreshSessionsBar();
@@ -445,18 +454,28 @@ async function applyAgentValue(id) {
   if (!id) return;
   sessionInfo = await api.patchSession(sessionID, { agent_id: id });
   paintSessionHeader();
+  refreshDisplayMode();
   refreshStatusline("idle");
 }
-// paintSessionHeader：顶部 `会话名 · 模型 · Agent` 三段（改完当场重画，不等轮询）。
+
+// refreshDisplayMode：查 Agent 的 display_mode（roleplay/chat），写进消息列。
+async function refreshDisplayMode() {
+  try {
+    const data = await api.agents();
+    const a = (data.agents ?? []).find((x) => x.id === sessionInfo.agent_id);
+    vueDisplayMode.value = a?.display_mode === "roleplay" ? "roleplay" : "chat";
+  } catch { /* 拿不到就 chat 兜底 */ }
+}
 function paintSessionHeader() {
   topBar.setSession(sessionInfo);
+  // 标签页标题：会话名（空=还没起名 ⇒ MicroChat）。
+  document.title = sessionInfo.title ? `${sessionInfo.title} - MicroChat` : "MicroChat";
 }
 import { mountSettings } from "./settings-vue.js";
 const settingsCtl = mountSettings({ onNotify: (t, k) => toast(t, k) });
 window.__mcOpenSettings = () => settingsCtl.open();
 
 let previewTimer = 0;
-// 底栏自增高：1 行起，最多 6 行（CSS max-height 兜底出滚动）；发完/进会话复位。
 // —— Vue 版：Composer.vue 挂 #composer-vue，事件经 composer-vue 桥进来。
 mountComposer({
   onInputText(v) {
@@ -641,6 +660,11 @@ window.addEventListener("mc-delete", async (e) => {
   await api.deleteMessages(sessionID, mid, plan.last_deleted_message_id)
     .catch((err) => toast(`删除失败：${err.message}`, "error"));
   renderHistory(await api.listMessages(sessionID));
+});
+
+// 气泡底刷新 ⇒ 重发历史（与空发/续写按钮同一条 resend，不落新消息）。
+window.addEventListener("mc-refresh", () => {
+  resend().catch((err) => toast(`重发失败：${err.message}`, "error"));
 });
 
 boot().catch((err) => {

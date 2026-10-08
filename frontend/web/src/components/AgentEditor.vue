@@ -22,6 +22,7 @@ const name = ref(props.agent?.name ?? props.template?.name ?? "");
 const prompt = ref(props.agent?.system_prompt ?? props.template?.system_prompt ?? "");
 const rows = ref({});
 const prepend = ref(!!(props.agent?.prepend_state ?? props.template?.prepend_state));
+const displayMode = ref(props.agent?.display_mode ?? props.template?.display_mode ?? "chat");
 const modelOptions = ref([]);
 const status = ref("");
 
@@ -56,10 +57,11 @@ async function save() {
   if (!name.value.trim()) { status.value = "给个名字"; return; }
   try {
     if (isNew) {
-      await api.createAgent({ name: name.value.trim(), system_prompt: prompt.value, abilities: toPatch(), prepend_state: prepend.value || undefined });
+      await api.createAgent({ name: name.value.trim(), system_prompt: prompt.value, abilities: toPatch(), prepend_state: prepend.value || undefined, display_mode: displayMode.value === "roleplay" ? "roleplay" : undefined });
     } else {
       const body = { system_prompt: prompt.value, abilities: toPatch() };
       if (!!prepend.value !== !!props.agent.prepend_state) body.prepend_state = prepend.value;
+      if ((displayMode.value || "chat") !== (props.agent.display_mode || "chat")) body.display_mode = displayMode.value;
       if (name.value.trim() !== props.agent.name) body.name = name.value.trim();
       if (aid.value.trim() && aid.value.trim() !== props.agent.id) body.new_id = aid.value.trim();
       await api.patchAgent(props.agent.id, body);
@@ -121,6 +123,10 @@ function onKey(e) {
           <label class="field"><span>名称</span><input v-model="name" placeholder="人格名" /></label>
           <label class="field-block"><span>系统提示词</span><textarea v-model="prompt" rows="6" placeholder="system_prompt"></textarea></label>
           <label class="field"><span>句首贴当前状态（RP 类需要）</span><ToggleSwitch v-model="prepend" /></label>
+          <label class="field"><span>显示格式</span><select v-model="displayMode">
+            <option value="chat">聊天软件（双边气泡）</option>
+            <option value="roleplay">RolePlay（用户气泡+AI 纯文本）</option>
+          </select></label>
           <h3>能力（开关 + 模型/提示词覆盖，空=默认）</h3>
           <fieldset v-for="id in ABILITY_IDS" :key="id" class="ability-block">
             <legend><ToggleSwitch v-model="rows[id].enabled" /> {{ id }}</legend>
