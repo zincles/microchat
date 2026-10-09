@@ -80,10 +80,10 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
   #sessions-bar.collapsed { max-height: 0; border-bottom: none; }
   #messages-vue { padding: 0.5em 0.8em; }
   #settings-view { padding: 0.4em 0.4em 0; }
-  .settings-head { padding: 0.45em 0.7em; }
-  /* 六区在窄屏排不下：导航改成可横滚（缩略块量的是 offsetLeft，照旧跟得住）。 */
+  .settings-bar { gap: 0.2em; }
+  /* 六区在窄屏：排得下就等分，排不下靠 nav 横滚（不设固定宽 —— 那两行会被后面的默认规则盖掉）。 */
   .settings-nav { overflow-x: auto; }
-  .settings-nav .tab { flex: 0 0 auto; padding: 0.45em 0.8em; white-space: nowrap; }
+  .settings-nav .tab { white-space: nowrap; }
 }
 .bar-head { display: flex; justify-content: space-between; align-items: center; padding: 0.7em 0.8em 0.3em; color: var(--tg-hint); font-size: 0.85em; }
 /* 新对话（DS 味，2026-10-10）：整行大按钮、比栏面亮一档 —— 左栏最显眼的那件东西。 */
@@ -215,26 +215,29 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 .icon-btn { background: none; border: none; color: var(--tg-hint); padding: 0.2em 0.4em; border-radius: 6px; cursor: pointer; }
 .icon-btn:hover { color: var(--tg-text); background: rgb(255 255 255 / 8%); }
 /* —— 设置视图（与对话同级；左栏右边那一整块，不是弹窗）—— */
-#settings-view { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 0.6em 0.6em 0; }
-.settings-head { display: flex; align-items: center; gap: 0.8em; padding: 0.55em 1em; border-radius: var(--r-shell); background: var(--tg-secondary-bg); }
-.settings-head .settings-title { flex: 1 1 auto; color: var(--tg-text); }
-.settings-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0.9em 0.2em 2em; }
+/* 一行式工具栏：去掉"悬浮卡"造型与"设置"标题（全屏页不需要它俩，tabs 自己就是路标）。 */
+#settings-view { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 0.5em 0.6em 0; }
+.settings-bar { display: flex; align-items: center; gap: 0.4em; max-width: 960px; width: 100%; margin: 0 auto; }
+.settings-bar .settings-nav { flex: 1 1 auto; min-width: 0; margin-bottom: 0; }
+.settings-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0.55em 0.2em 1.5em; }
 .settings-box { max-width: 960px; margin: 0 auto; }
 /* 分组卡片（TG 设置页的观感）：tab 条本身是一组圆角块；panel 去底色，h3 是组标题
  * （TG 蓝小字顶在卡片上方）；field/row 是卡片里的行（圆角只在组两端）。 */
 .settings-cols { display: block; }
 /* 这四类以前"没人管"（浏览器默认 h3/裸文本），补上（2026-10-10）： */
-.settings-cols .panel h3 { color: var(--tg-link); font-size: 0.8em; font-weight: normal; margin: 1em 0 0.3em; }
+.settings-cols .panel h3 { color: var(--tg-link); font-size: 0.8em; font-weight: normal; margin: 0.75em 0 0.22em; }
 .settings-cols .panel h3:first-child, .panel-head h3 { margin-top: 0.15em; }
 .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 0.6em; margin: 0.15em 0 0.3em; }
 .panel-head h3 { margin-bottom: 0; }
 .status { color: var(--tg-hint); font-size: 0.85em; }
-.hint { color: var(--tg-hint); font-size: 0.85em; margin: 0.6em 0 0; }
+.hint { color: var(--tg-hint); font-size: 0.85em; margin: 0.4em 0 0; }
 /* 列表（会话/Agent/渠道）：与会话卡片同一张"底"，窄屏可横滚。 */
-.settings-cols .panel table.plist { background: var(--tg-secondary-bg); border-radius: var(--r-card); margin: 0 0 0.6em; }
+.settings-cols .panel table.plist { background: var(--tg-secondary-bg); border-radius: var(--r-card); margin: 0 0 0.5em; }
 #session-mgr-list, #agent-list, #provider-list { overflow-x: auto; }
+/* 设置里的控件压到 DS 档（36px 上下）：只收纵向内间距，不动字号与横向命中区。 */
+.settings-cols .panel input:not([type="checkbox"]):not([type="radio"]), .settings-cols .panel select { padding-top: 0.3em; padding-bottom: 0.3em; }
 .settings-nav { display: flex; flex-direction: row; gap: 0.2em; margin-bottom: 1em; background: var(--tg-secondary-bg); border: none; border-radius: var(--r-card); padding: 0.25em; position: relative; }
-.settings-nav .tab { flex: 1; text-align: center; background: none; border: none; border-radius: 9px; color: var(--tg-hint); padding: 0.45em 0.3em; font-size: 0.9em; position: relative; z-index: 1; transition: color 150ms ease-out; }
+.settings-nav .tab { flex: 1; text-align: center; background: none; border: none; border-radius: 9px; color: var(--tg-hint); padding: 0.38em 0.3em; font-size: 0.9em; position: relative; z-index: 1; transition: color 150ms ease-out; }
 .settings-nav .tab.sel { color: var(--tg-text); }
 /* 选中块：绝对定位跟随（left/width 由 JS 量，150ms ease-out 滑过去）。 */
 .settings-nav .tab-thumb { position: absolute; top: 0.25em; bottom: 0.25em; border-radius: 9px; background: rgb(255 255 255 / 10%); transition: left 180ms ease-out, width 180ms ease-out; z-index: 0; }
@@ -242,7 +245,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 .settings-cols .panel { animation: panel-in 140ms ease-out; }
 @keyframes panel-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .settings-nav .tab-thumb { transition: none; } .settings-cols .panel { animation: none; } }
-.settings-cols .panel .field, .settings-cols .panel .row { background: var(--tg-secondary-bg); margin: 0; padding: 0.6em 0.9em; }
+.settings-cols .panel .field, .settings-cols .panel .row { background: var(--tg-secondary-bg); margin: 0; padding: 0.45em 0.9em; }
 .settings-cols .panel .field + .field, .settings-cols .panel .field + .row,
 .settings-cols .panel .row + .field, .settings-cols .panel .row + .row { border-top: 1px solid var(--line); }
 /* 卡片圆角只在组两端：组 = 一个 h3 带起的连续 field/row 串（无 h3 的 panel 整串算一组）。
@@ -256,7 +259,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 @media (max-width: 700px) {
   .field { grid-template-columns: 1fr; }
 }
-.row { display: flex; gap: 0.5em; align-items: center; margin: 0; padding: 0.55em 0; flex-wrap: wrap; }
+.row { display: flex; gap: 0.5em; align-items: center; margin: 0; padding: 0.4em 0; flex-wrap: wrap; }
 
 /* —— 按钮默认主题（全页兜底：裸 button 不再是浏览器灰框） ——
  * 三档：默认（底栏色卡底）/ .primary（蓝底白字，主动作）/ .danger（红字，删除）。
@@ -281,7 +284,7 @@ button.toggle.on .knob { transform: translateX(1.1em); }
 #panel-agent > .row input { flex: 1; min-width: 0; }
 #panel-agent > .row button { flex: none; }
 /* 大段输入框独占一行：label 在上、框在下（跟右边挤一格没法看）。 */
-.field-block { display: block; margin: 0; padding: 0.55em 0; color: var(--tg-text); border-bottom: 1px solid var(--line); }
+.field-block { display: block; margin: 0; padding: 0.45em 0; color: var(--tg-text); border-bottom: 1px solid var(--line); }
 .field-block:last-child { border-bottom: none; }
 .field-block > span { display: block; margin-bottom: 0.25em; color: var(--tg-hint); }
 .field-block textarea { width: 100%; min-height: 7em; }
@@ -291,7 +294,7 @@ button.toggle.on .knob { transform: translateX(1.1em); }
 .ability-block legend { padding: 0 0.4em; color: var(--tg-text); display: flex; align-items: center; gap: 0.4em; }
 .ability-block legend input { margin-right: 0.3em; }
 .plist { width: 100%; border-collapse: collapse; }
-.plist th, .plist td { text-align: left; padding: 0.55em 0.6em; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.plist th, .plist td { text-align: left; padding: 0.42em 0.6em; border-bottom: 1px solid var(--line); white-space: nowrap; }
 .plist th { color: var(--tg-hint); font-weight: normal; font-size: 0.85em; }
 /* 可点行（进二级）：hover 高亮 + 选中底，被点的行 cursor 指针。 */
 .plist tr.clickable { cursor: pointer; }

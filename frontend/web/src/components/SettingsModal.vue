@@ -222,7 +222,7 @@ function onKey(e) {
 
 <template>
   <section id="settings-view">
-    <div class="settings-head">
+    <div class="settings-bar">
       <button
         class="icon-btn"
         type="button"
@@ -231,7 +231,20 @@ function onKey(e) {
         @click="$emit('toggle-left')"
         v-html="leftSvg"
       ></button>
-      <span class="settings-title">设置</span>
+      <nav ref="navEl" class="settings-nav">
+        <span class="tab-thumb" :style="{ left: thumbLeft + 'px', width: thumbWidth + 'px' }"></span>
+        <button
+          v-for="t in SETTINGS_TABS"
+          :key="t"
+          :id="`tab-${t}`"
+          type="button"
+          class="tab"
+          :class="{ sel: tab === t }"
+          @click="tab = t"
+        >
+          {{ { chat: "聊天", ui: "界面", net: "连接", session: "会话", agent: "Agent", provider: "Provider" }[t] }}
+        </button>
+      </nav>
       <button id="settings-close" class="icon-btn" type="button" title="返回对话（Esc）" @click="$emit('close')">
         ×
       </button>
@@ -239,20 +252,6 @@ function onKey(e) {
     <div class="settings-body">
       <div class="settings-box">
         <div class="settings-cols">
-        <nav ref="navEl" class="settings-nav">
-          <span class="tab-thumb" :style="{ left: thumbLeft + 'px', width: thumbWidth + 'px' }"></span>
-          <button
-            v-for="t in SETTINGS_TABS"
-            :key="t"
-            :id="`tab-${t}`"
-            type="button"
-            class="tab"
-            :class="{ sel: tab === t }"
-            @click="tab = t"
-          >
-            {{ { chat: "聊天", ui: "界面", net: "连接", session: "会话", agent: "Agent", provider: "Provider" }[t] }}
-          </button>
-        </nav>
         <section v-show="tab === 'chat'" id="panel-chat" class="panel">
           <h3>生成与压缩</h3>
           <label class="field"><span>标题字数</span><input v-model="chat.title_chars" type="number" min="1" /></label>
