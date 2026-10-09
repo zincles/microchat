@@ -33,15 +33,8 @@
   --r-shell: 14px;
   --r-card: 12px;
   --r-btn: 10px;
-  /* —— 旧变量桥接（style.css 里还在用这些名：逐个指到语义槽，之后慢慢改调用方） —— */
-  --bg: var(--tg-bg);
-  --panel: var(--tg-secondary-bg);
+  /* —— 旧变量桥接（早期 style.css 取消后只剩这一个还在用：--line） —— */
   --line: rgb(255 255 255 / 12%);
-  --text: var(--tg-text);
-  --dim: var(--tg-hint);
-  --acc: var(--tg-link);
-  --warn: #fc3;
-  --err: var(--tg-destructive);
 }
 
 @media (prefers-color-scheme: light) {
@@ -57,7 +50,6 @@
     --tg-destructive: #cc2929;
     --tg-float: #ffffff;
     --tg-pattern: #e8e8e8;
-    --warn: #a80;
   }
 }
 
@@ -79,6 +71,17 @@
  * 盖在默认/TG注入之上（html[data-theme] 优先级高于 :root），但 TG 注入那组 fallback
  * 写的是死值 ⇒ 预设想"压过 TG 注入"得用 !important？不 —— TG 内打开时 data-theme 根本不设
  * （JS 里判了：有 window.Telegram.WebApp 就不用预设），两者永不同时生效。 */
+/* —— DeepSeek 深色（2026-10-10，色值实测自 chat.deepseek.com 的 `--dsw-alias-*` token：
+ * bg-base/layer-1/layer-2、label-primary/tertiary、brand-primary #5686fe，脚本抽自其 main.css） ——
+ * 映射：bg=bg-base / secondary=layer-1（侧栏、顶栏卡、输入框）/ text=label-primary /
+ * hint=label-tertiary / link=brand-text / button=brand-primary / float=layer-2（浮层）。
+ * `--tg-pattern: transparent` = DS 是纯平底，不铺花纹（花纹机制见 main.css 的 body::before）。
+ * 注：只对齐**配色**；气泡仍是 TG 形状（DS 的用户句是灰气泡、AI 无气泡 —— 那是另一笔）。 */
+html[data-theme="deepseek"] {
+  --tg-bg: #151517; --tg-secondary-bg: #232324; --tg-text: #f9fafb; --tg-hint: #adb2b8;
+  --tg-link: #679efe; --tg-button: #5686fe; --tg-button-text: #ffffff;
+  --tg-destructive: #f25a5a; --tg-float: #2c2c2e; --tg-pattern: transparent; color-scheme: dark;
+}
 html[data-theme="midnight"] {
   --tg-bg: #0e1621; --tg-secondary-bg: #17212b; --tg-text: #f5f5f5; --tg-hint: #708499;
   --tg-link: #62b0e8; --tg-button: #5288c1; --tg-button-text: #ffffff;

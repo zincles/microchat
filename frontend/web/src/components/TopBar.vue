@@ -1,5 +1,6 @@
 <script setup>
-// 顶栏：左显隐会话栏 + 模型/Agent 下拉 + 右显隐载荷栏（连接/会话名在左栏与状态行，不在这里）。
+// 顶栏：会话抬头（新加，左）+ 模型/Agent 下拉（右）+ 左右栏显隐（两端）。
+// 抬头是"我在哪条会话"的唯一门面：草稿 ⇒「新对话」、还没起名 ⇒「新会话」、超长省略（hover 全名）。
 // 挂载后接管 header（id 照旧：toggle-left/session-model/session-agent/toggle-right）。
 // 数据经事件与 main.js 互通（selectModel/selectAgent/patch 结果回填由父做）。
 import { ref, nextTick } from "vue";
@@ -11,6 +12,8 @@ const modelGroups = ref([]); // [{provider, items:[{value,label}]}]
 const agents = ref([]); // [{id,label}]
 const curModel = ref("");
 const curAgent = ref("");
+const title = ref("新对话");
+const titleFull = ref("");
 // 会话绑的模型/Agent 不在列表里（渠道被删、模型下架、agent 没了）⇒ 补一条"不在列表"选项，
 // 别让下拉空着 —— 空着看起来像"没选"，其实是有值（显示谎言）。
 const orphanModel = ref(null);
@@ -40,9 +43,12 @@ function syncOrphanAgent() {
   const known = cur && agents.value.some((a) => a.id === cur);
   orphanAgent.value = cur && !known ? { value: cur, label: `${cur}（不在列表）` } : null;
 }
-function setSession(info) {
+function setSession(info, isDraft) {
   if (info.provider && info.model) curModel.value = `${info.provider}|||${info.model}`;
   if (info.agent_id) curAgent.value = info.agent_id;
+  const t = (info.title ?? "").trim();
+  title.value = t || (isDraft ? "新对话" : "新会话");
+  titleFull.value = t;
   syncOrphanModel();
   syncOrphanAgent();
   reapplyValues();
@@ -64,6 +70,7 @@ defineExpose({ setSession, setModels, setAgents });
       @click="$emit('toggle-left')"
       v-html="leftSvg"
     ></button>
+    <span id="session-title" class="session-title" :title="titleFull">{{ title }}</span>
     <select
       id="session-model"
       ref="modelSel"
@@ -88,7 +95,6 @@ defineExpose({ setSession, setModels, setAgents });
       <option v-if="orphanAgent" :value="orphanAgent.value">{{ orphanAgent.label }}</option>
       <option v-for="a in agents" :key="a.id" :value="a.id">{{ a.label }}</option>
     </select>
-    <span class="head-spacer"></span>
     <button
       id="toggle-right"
       class="icon-btn"

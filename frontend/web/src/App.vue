@@ -29,8 +29,10 @@ function previewOn() { return localStorage.getItem("mc_preview") !== "0"; }
 function sendMode() { return localStorage.getItem("mc_send") || "enter"; }
 function applyTheme() {
   if (window.Telegram?.WebApp) { document.documentElement.removeAttribute("data-theme"); return; }
-  const t = localStorage.getItem("mc_theme") || "breeze-dark";
-  document.documentElement.setAttribute("data-theme", t);
+  // `??` 而不是 `||`：设过空串 = "跟随系统"（空串会被 `||` 吞掉变成默认主题，踩过）。
+  const t = localStorage.getItem("mc_theme") ?? "deepseek";
+  if (t) document.documentElement.setAttribute("data-theme", t);
+  else document.documentElement.removeAttribute("data-theme");
 }
 applyTheme();
 
@@ -42,6 +44,10 @@ const payloadbarRef = ref(null);
 const composerRef = ref(null);
 const overlaysRef = ref(null);
 const toast = (t, k) => toastRef.value?.push(t, k);
+// askConfirm：给设置/子编辑器用的全局确认框（与左栏删除同一个口 —— "不可逆的删除先摊开"）。
+function askConfirm(text) {
+  return overlaysRef.value?.confirmAsk(text) ?? Promise.resolve(false);
+}
 
 // —— 会话状态 ——
 let sessionID = null;
@@ -139,7 +145,7 @@ function onBubbleRefresh() {
 
 // —— 顶栏 ——
 function paintSessionHeader() {
-  topbarRef.value?.setSession(sessionInfo);
+  topbarRef.value?.setSession(sessionInfo, draft);
   document.title = sessionInfo.title ? `${sessionInfo.title} - MicroChat` : "MicroChat";
 }
 async function fillModelSelect() {
@@ -231,6 +237,7 @@ async function closeSession(id) {
     return; // 删失败就别切会话（catch 回调里的 return 不是这个函数的 return）
   }
   if (id === sessionID) {
+    closeSettings(); // 被删的是当前会话 ⇒ 接下来要去草稿：设置视图让位
     await startDraft(); // 删掉当前会话 ⇒ 回到草稿（不再预建空会话 —— 那正是被拿掉的旧行为）
   } else refreshSessionsBar();
 }
@@ -257,6 +264,7 @@ async function startDraft() {
   refreshPreview(); // 输入框里若还留着字（＋ 时不清输入框），预演立刻跟上
 }
 function newSession() {
+  closeSettings(); // 侧栏动作 = 把人带回对话区（设置视图让位）
   startDraft().catch((err) => toast(`新建失败：${err.message}`, "error"));
 }
 function renderSessions(sessions) {
@@ -660,6 +668,25 @@ function onComposerSubmit(text) {
   send(text).catch((err) => toast(`发送失败：${err.message}`, "error"));
 }
 
+// —— 设置视图（与对话同级，2026-10-10） ——
+// 窄屏打开设置时**自动收起左栏**（返回时还原）：手机上别让会话条占着 30vh 只当背景。
+// 用 matchMedia 判窄屏；只点类不写 localStorage（那是用户手动开关的持久化，别混淆）。
+let settingsAutoCollapsed = false;
+function openSettings() {
+  settingsOpen.value = true;
+  if (window.matchMedia?.("(max-width: 700px)")?.matches) {
+    const bar = document.getElementById("sessions-bar");
+    settingsAutoCollapsed = !!bar && !bar.classList.contains("collapsed");
+    if (settingsAutoCollapsed) applySideToggle("sessions-bar", true);
+  }
+}
+function closeSettings() {
+  settingsOpen.value = false;
+  if (settingsAutoCollapsed) {
+    applySideToggle("sessions-bar", false);
+    settingsAutoCollapsed = false;
+  }
+}
 // —— 拖拽调宽 ——
 onMounted(() => {
   applySideToggle("sessions-bar", localStorage.getItem("mc_bar_left_hidden") === "1");
@@ -686,13 +713,14 @@ onUnmounted(() => {
     <div id="columns">
       <SessionBar
         ref="sessionbarRef"
-        @select="(id) => enterSession(id).catch((err) => toast(`进会话失败：${err.message}`, 'error'))"
+        @select="(id) => { closeSettings(); enterSession(id).catch((err) => toast(`进会话失败：${err.message}`, 'error')); }"
         @settings="(id) => { sessionSettingsId = id; }"
         @close="closeSession"
         @new="newSession"
-        @open-settings="() => { settingsOpen = true; }"
+        @open-settings="openSettings"
       />
-      <section id="chat-col">
+      <div id="content">
+      <section id="chat-col" v-show="!settingsOpen">
     <TopBar
       ref="topbarRef"
       @toggle-left="toggleLeft"
@@ -717,7 +745,6 @@ onUnmounted(() => {
             @refresh="onBubbleRefresh"
           />
         </main>
-        <Overlays ref="overlaysRef" @run-command="(n) => runCommand(n, []).catch((err) => toast(`命令失败：${err.message}`, 'error'))" @pick="(a, it) => Promise.resolve(a(it)).catch((err) => toast(`操作失败：${err.message}`, 'error'))" />
     <Composer
       ref="composerRef"
       @input-text="onComposerInput"
@@ -727,21 +754,24 @@ onUnmounted(() => {
       @menu="() => overlaysRef?.showPalette(filterCommands(''))"
     />
       </section>
-      <PayloadBar ref="payloadbarRef" />
+      <PayloadBar v-show="!settingsOpen" ref="payloadbarRef" />
+      <SettingsModal
+        v-if="settingsOpen"
+        :ask="askConfirm"
+        @close="closeSettings"
+        @toggle-left="toggleLeft"
+        @sessions-changed="refreshSessionsBar"
+        @goto-session="(id) => { closeSettings(); enterSession(id).catch((err) => toast(`进会话失败：${err.message}`, 'error')); }"
+      />
+      </div>
     </div>
     <Toast ref="toastRef" />
-    <SettingsModal
-      v-if="settingsOpen"
-      @close="settingsOpen = false"
-      @notify="toast"
-      @sessions-changed="refreshSessionsBar"
-      @goto-session="(id) => { settingsOpen = false; enterSession(id).catch((err) => toast(`进会话失败：${err.message}`, 'error')); }"
-    />
+    <!-- Overlays 挂根层（不在聊天视图里）：设置视图开着时"确认"也要能弹（fixed 定位照旧）。 -->
+    <Overlays ref="overlaysRef" @run-command="(n) => runCommand(n, []).catch((err) => toast(`命令失败：${err.message}`, 'error'))" @pick="(a, it) => Promise.resolve(a(it)).catch((err) => toast(`操作失败：${err.message}`, 'error'))" />
     <SessionSettings
       v-if="sessionSettingsId"
       :session-id="sessionSettingsId"
       @close="sessionSettingsId = null"
-      @notify="toast"
       @renamed="() => { refreshSessionsBar(); if (sessionSettingsId === sessionID) enterSession(sessionID).catch(() => {}); sessionSettingsId = null; }"
     />
   </div>

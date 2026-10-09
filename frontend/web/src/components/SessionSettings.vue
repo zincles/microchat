@@ -6,7 +6,7 @@ import { createApi } from "../api/client.js";
 import { groupModelsByProvider } from "../utils/format.js";
 
 const props = defineProps({ sessionId: String });
-const emit = defineEmits(["close", "notify", "renamed", "deleted"]);
+const emit = defineEmits(["close", "renamed", "deleted"]);
 
 const API = localStorage.getItem("mc_api") || "http://127.0.0.1:8787/api/v1";
 const TOKEN = localStorage.getItem("mc_token") || "";

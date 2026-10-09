@@ -1,26 +1,30 @@
 <script setup>
-// 设置弹窗（四页：服务端/客户端/Agent/Provider；关丢弃 ⇒ 不保存不写）。
-// 状态全本地 ref，进弹窗拉一次；保存逐段 PUT。逻辑照 main.js wireSettings。
+// 设置**视图**（2026-10-10 起与对话同级，不再是弹窗 —— OpenWebUI 那种）：占满左栏右边的整块区域，
+// 自带小头（[◧] 左栏开关 · 设置 · [×] 返回对话）。子编辑器（Agent/Provider）仍是覆盖弹窗。
+// 关走 close（Esc/×）—— 视图不卸载就丢状态的口径照旧：v-if 挂载，进视图拉一次。
 import { ref, onMounted, onUnmounted, watch, nextTick } from "vue";
 import ToggleSwitch from "./ToggleSwitch.vue";
 import AgentEditor from "./AgentEditor.vue";
 import assistantPreset from "../../presets/assistant.json";
 import rpPreset from "../../presets/rp-agent.json";
 import ProviderEditor from "./ProviderEditor.vue";
+import { ICONS } from "./icons.js";
 import { createApi } from "../api/client.js";
 import {
   SETTINGS_TABS,
 } from "../utils/format.js";
 
-const emit = defineEmits(["close", "notify", "sessions-changed", "goto-session"]);
-function notify(t, k) { emit("notify", t, k); }
+const emit = defineEmits(["close", "toggle-left", "sessions-changed", "goto-session"]);
+// ask：全局确认框（App 的 Overlays.confirmAsk）—— 设置里的删除（会话/渠道/Agent）也必须先摊开再点头。
+const props = defineProps({ ask: { type: Function, default: null } });
 
 const API = localStorage.getItem("mc_api") || "http://127.0.0.1:8787/api/v1";
 const TOKEN = localStorage.getItem("mc_token") || "";
 const api = createApi({ base: API, token: TOKEN });
+const leftSvg = ICONS.panelLeft;
 
-const tab = ref("server");
-// tab-thumb 跟随：量选中按钮相对 nav 的 left/width（切页 + 开弹窗 + 缩放都重算）。
+const tab = ref("chat");
+// tab-thumb 跟随：量选中按钮相对 nav 的 left/width（切页 + 进视图 + 缩放都重算）。
 const navEl = ref(null);
 const thumbLeft = ref(0);
 const thumbWidth = ref(0);
@@ -35,28 +39,22 @@ function moveThumb() {
   });
 }
 watch(tab, moveThumb);
-const full = ref(localStorage.getItem("mc_settings_full") === "1");
 const chat = ref({ title_chars: "", model_context_tokens: "", compact_blocks: "", compact_trigger_tokens: "", replay_reasoning: false });
 const chatStatus = ref("");
 const defaults = ref({ provider: "", model: "", agent: "" });
 const defStatus = ref("");
 const cli = ref({ api: API, token: "", preview: true, theme: "", send: "button" });
-const cliStatus = ref("");
+const uiStatus = ref("");
+const netStatus = ref("");
 const agents = ref([]);
 const curDefault = ref("");
 const editAgent = ref(null); // null | 'new' | agent（二级编辑器）
 const providers = ref([]);
 const presets = ref([]);
-const curProvider = ref(null); // 选中行（删除目标）
 const editProvider = ref(null); // null | 'new' | provider（二级编辑器）
 const routesStatus = ref("");
 
 const PROTOCOLS = ["openai-chat-completion", "openai-response", "anthropic-messages", "gemini-generate-content", "systemone"];
-
-function toggleFull() {
-  full.value = !full.value;
-  localStorage.setItem("mc_settings_full", full.value ? "1" : "0");
-}
 
 async function loadChat() {
   try {
@@ -127,18 +125,26 @@ function loadClient() {
     api: localStorage.getItem("mc_api") || "http://127.0.0.1:8787/api/v1",
     token: localStorage.getItem("mc_token") || "",
     preview: localStorage.getItem("mc_preview") !== "0",
-    theme: localStorage.getItem("mc_theme") || "breeze-dark",
+    // `??`：没设过(null)=默认 deepseek；设过空串("")=跟随系统 —— 不能用 `||`（空串会被吞掉）。
+    theme: localStorage.getItem("mc_theme") ?? "deepseek",
     send: localStorage.getItem("mc_send") || "enter",
   };
 }
-function saveClient() {
+// 连接（net）：地址与口令 —— 刷新页面才生效。
+function saveNet() {
   localStorage.setItem("mc_api", cli.value.api.trim() || "http://127.0.0.1:8787/api/v1");
   localStorage.setItem("mc_token", cli.value.token);
+  netStatus.value = "已保存（刷新页面生效）";
+}
+// 界面（ui）：主题 / 发送键 / 预演 —— 即时生效。
+function saveUi() {
   localStorage.setItem("mc_preview", cli.value.preview ? "1" : "0");
   localStorage.setItem("mc_theme", cli.value.theme);
   localStorage.setItem("mc_send", cli.value.send);
-  document.documentElement.setAttribute("data-theme", cli.value.theme || "breeze-dark");
-  cliStatus.value = "已保存（API/Token 刷新页面生效，其余即时生效）";
+  // 空串 = 跟随系统：要把 data-theme 摘掉（留个空属性会一直盖住 :root，prefers-color-scheme 就不生效了）。
+  if (cli.value.theme) document.documentElement.setAttribute("data-theme", cli.value.theme);
+  else document.documentElement.removeAttribute("data-theme");
+  uiStatus.value = "已保存（即时生效）";
 }
 
 async function loadAgents() {
@@ -168,37 +174,29 @@ async function loadProviders() {
     const [list, pres] = await Promise.all([api.providers(), api.providerPresets()]);
     providers.value = list ?? [];
     presets.value = pres ?? [];
-    if (curProvider.value) {
-      const still = list.find((p) => p.id === curProvider.value.id);
-      curProvider.value = still ?? null;
-    }
   } catch (e) { routesStatus.value = `渠道列表失败：${e.message}`; }
 }
 
-async function deleteProvider() {
-  if (!curProvider.value) return;
-  await api.deleteProvider(curProvider.value.id);
-  curProvider.value = null;
-  loadProviders().catch(() => {});
+async function askDeleteProvider(id) {
+  if (props.ask && !(await props.ask(`删除渠道「${id}」？密钥随记录一起没，不可逆。`))) return;
+  try {
+    await api.deleteProvider(id);
+    if (editProvider.value && editProvider.value !== "new" && editProvider.value.id === id) editProvider.value = null;
+    loadProviders().catch(() => {});
+  } catch (e) { routesStatus.value = `删除失败：${e.message}`; }
 }
 
-// 会话 tab 动作：进会话关设置面板（App 切），删走全屏确认口（ App 没有，用 notify 转）。
+// 会话 tab 动作：进会话关设置面板（App 切；删除也要先确认 —— 与左栏同一个口）。
 async function loadSessions() {
   try {
     sessions.value = await api.listSessions();
   } catch (e) { sessionMgrStatus.value = `拉列表失败：${e.message}`; }
 }
-async function newSession() {
-  try {
-    await api.createSession({});
-    await loadSessions();
-    emit("sessions-changed");
-  } catch (e) { sessionMgrStatus.value = `新建失败：${e.message}`; }
-}
 function gotoSession(id) {
   emit("goto-session", id);
 }
-async function dropSession(id) {
+async function askDropSession(id, title) {
+  if (props.ask && !(await props.ask(`删除会话「${title || "新会话"}」？消息与摘要一并删，不可逆。`))) return;
   try {
     await api.closeSession(id);
     await loadSessions();
@@ -223,18 +221,24 @@ function onKey(e) {
 </script>
 
 <template>
-  <div id="settings" class="modal" @click.self="$emit('close')">
-    <div class="modal-box settings-box" :class="{ full }">
-      <div class="modal-head">
-        <span>设置</span>
-        <span class="head-btns">
-          <button id="settings-full" class="icon-btn" type="button" title="全屏切换" @click="toggleFull">⛶</button>
-          <button id="settings-close" class="icon-btn" type="button" title="关闭（不保存不写）" @click="$emit('close')">
-            ×
-          </button>
-        </span>
-      </div>
-      <div class="settings-cols">
+  <section id="settings-view">
+    <div class="settings-head">
+      <button
+        class="icon-btn"
+        type="button"
+        title="显示/隐藏会话栏"
+        aria-label="显示/隐藏会话栏"
+        @click="$emit('toggle-left')"
+        v-html="leftSvg"
+      ></button>
+      <span class="settings-title">设置</span>
+      <button id="settings-close" class="icon-btn" type="button" title="返回对话（Esc）" @click="$emit('close')">
+        ×
+      </button>
+    </div>
+    <div class="settings-body">
+      <div class="settings-box">
+        <div class="settings-cols">
         <nav ref="navEl" class="settings-nav">
           <span class="tab-thumb" :style="{ left: thumbLeft + 'px', width: thumbWidth + 'px' }"></span>
           <button
@@ -246,36 +250,22 @@ function onKey(e) {
             :class="{ sel: tab === t }"
             @click="tab = t"
           >
-            {{ { server: "服务端", client: "客户端", session: "会话", agent: "Agent", provider: "Provider" }[t] }}
+            {{ { chat: "聊天", ui: "界面", net: "连接", session: "会话", agent: "Agent", provider: "Provider" }[t] }}
           </button>
         </nav>
-        <section v-show="tab === 'server'" id="panel-server" class="panel">
-          <h3>chat</h3>
+        <section v-show="tab === 'chat'" id="panel-chat" class="panel">
+          <h3>生成与压缩</h3>
           <label class="field"><span>标题字数</span><input v-model="chat.title_chars" type="number" min="1" /></label>
           <label class="field"><span>模型上下文 tokens</span><input v-model="chat.model_context_tokens" type="number" min="1" /></label>
           <label class="field"><span>压缩块数</span><input v-model="chat.compact_blocks" type="number" min="1" /></label>
           <label class="field"><span>压缩触发 tokens（空=默认）</span><input v-model="chat.compact_trigger_tokens" type="number" min="1" placeholder="空=默认" /></label>
           <label class="field"><span>回传思考（默认关，省上下文）</span><ToggleSwitch v-model="chat.replay_reasoning" /></label>
-          <div class="row"><button type="button" class="primary" @click="saveChat">保存 chat</button><span class="status">{{ chatStatus }}</span></div>
-          <h3>缺省三件</h3>
-          <label class="field"><span>provider</span><input v-model="defaults.provider" placeholder="provider" /></label>
-          <label class="field"><span>model</span><input v-model="defaults.model" placeholder="model" /></label>
-          <label class="field"><span>缺省 Agent</span><select v-model="defaults.agent">
-            <option value="">内置默认</option>
-            <option v-for="a in agents" :key="a.id" :value="a.id">{{ a.name }}（{{ a.id }}）</option>
-          </select></label>
-          <div class="row"><button type="button" class="primary" @click="saveDefaults">保存缺省</button><span class="status">{{ defStatus }}</span></div>
+          <div class="row"><button type="button" class="primary" @click="saveChat">保存</button><span class="status">{{ chatStatus }}</span></div>
         </section>
-        <section v-show="tab === 'client'" id="panel-client" class="panel">
-          <label class="field"><span>API 地址</span><input v-model="cli.api" placeholder="http://127.0.0.1:8787/api/v1" /></label>
-          <label class="field"><span>Token</span><input v-model="cli.token" placeholder="可空" type="password" /></label>
-          <label class="field"><span>输入时预演载荷</span><ToggleSwitch v-model="cli.preview" /></label>
-          <label class="field"><span>发送键</span><select v-model="cli.send">
-            <option value="enter">回车发送（Shift+回车换行）</option>
-            <option value="shift-enter">Shift+回车发送（回车换行）</option>
-            <option value="button">仅按钮</option>
-          </select></label>
+        <section v-show="tab === 'ui'" id="panel-ui" class="panel">
+          <h3>外观</h3>
           <label class="field"><span>主题</span><select v-model="cli.theme">
+            <option value="deepseek">DeepSeek（暗，默认）</option>
             <option value="breeze-dark">Breeze Dark（暗）</option>
             <option value="midnight">深夜蓝</option>
             <option value="wine">酒红</option>
@@ -284,14 +274,32 @@ function onKey(e) {
             <option value="paper">日间白</option>
             <option value="">跟随系统</option>
           </select></label>
-          <div class="row"><button type="button" class="primary" @click="saveClient">保存</button><span class="status">{{ cliStatus }}</span></div>
-          <p class="hint">API/Token 改完刷新页面生效；其余即时生效。</p>
+          <h3>输入</h3>
+          <label class="field"><span>发送键</span><select v-model="cli.send">
+            <option value="enter">回车发送（Shift/Ctrl/Alt+回车换行）</option>
+            <option value="shift-enter">Shift+回车发送（回车换行）</option>
+            <option value="button">仅按钮</option>
+          </select></label>
+          <label class="field"><span>输入时预演载荷</span><ToggleSwitch v-model="cli.preview" /></label>
+          <div class="row"><button type="button" class="primary" @click="saveUi">保存</button><span class="status">{{ uiStatus }}</span></div>
+        </section>
+        <section v-show="tab === 'net'" id="panel-net" class="panel">
+          <h3>后端连接</h3>
+          <label class="field"><span>API 地址</span><input v-model="cli.api" placeholder="http://127.0.0.1:8787/api/v1" /></label>
+          <label class="field"><span>Token</span><input v-model="cli.token" placeholder="可空" type="password" /></label>
+          <div class="row"><button type="button" class="primary" @click="saveNet">保存</button><span class="status">{{ netStatus }}</span></div>
+          <p class="hint">改完刷新页面生效。</p>
         </section>
         <section v-show="tab === 'session'" id="panel-session" class="panel">
-          <div class="panel-head">
-            <h3>会话（{{ sessions.length }} 条，点进）</h3>
-            <button type="button" class="primary" @click="newSession">新建</button>
-          </div>
+          <h3>新会话缺省</h3>
+          <label class="field"><span>渠道</span><input v-model="defaults.provider" placeholder="provider" /></label>
+          <label class="field"><span>模型</span><input v-model="defaults.model" placeholder="model" /></label>
+          <label class="field"><span>Agent</span><select v-model="defaults.agent">
+            <option value="">内置默认</option>
+            <option v-for="a in agents" :key="a.id" :value="a.id">{{ a.name }}（{{ a.id }}）</option>
+          </select></label>
+          <div class="row"><button type="button" class="primary" @click="saveDefaults">保存缺省</button><span class="status">{{ defStatus }}</span></div>
+          <h3>会话（{{ sessions.length }} 条，点进）</h3>
           <div id="session-mgr-list">
             <table class="plist">
               <thead><tr><th>标题</th><th>条数</th><th>模型</th><th></th></tr></thead>
@@ -299,7 +307,7 @@ function onKey(e) {
                 <td>{{ s.title || "新会话" }}</td>
                 <td>{{ s.messages }}</td>
                 <td>{{ s.provider }}/{{ s.model }}</td>
-                <td class="ops"><button type="button" class="link-btn danger" @click.stop="dropSession(s.id)">删除</button></td>
+                <td class="ops"><button type="button" class="link-btn danger" @click.stop="askDropSession(s.id, s.title)">删除</button></td>
               </tr></tbody>
             </table>
           </div>
@@ -336,26 +344,28 @@ function onKey(e) {
             :agent="editAgent === 'new' || editAgent?.template ? null : editAgent"
             :template="editAgent?.template ?? null"
             :is-default="editAgent !== 'new' && editAgent?.id === curDefault"
+            :ask="ask"
             @close="editAgent = null"
             @saved="loadAgents"
           />
         </section>
         <section v-show="tab === 'provider'" id="panel-provider" class="panel">
+          <h3>渠道（点进二级改）</h3>
           <div id="provider-list">
             <table class="plist">
-              <thead><tr><th>渠道</th><th>vendor</th><th>protocol</th><th>密钥</th><th>模型</th></tr></thead>
-              <tbody><tr v-for="p in providers" :key="p.id" class="clickable" :class="{ sel: curProvider?.id === p.id }" @click="curProvider = p; editProvider = p">
+              <thead><tr><th>渠道</th><th>vendor</th><th>protocol</th><th>密钥</th><th>模型</th><th></th></tr></thead>
+              <tbody><tr v-for="p in providers" :key="p.id" class="clickable" @click="editProvider = p">
                 <td>{{ p.id }}</td>
                 <td>{{ p.vendor ?? "?" }}</td>
                 <td>{{ p.protocol ?? "?" }}</td>
                 <td>{{ p.has_key ? "有" : "无" }}</td>
                 <td>{{ p.models?.length ?? 0 }}</td>
+                <td class="ops"><button type="button" class="link-btn danger" @click.stop="askDeleteProvider(p.id)">删除</button></td>
               </tr></tbody>
             </table>
           </div>
           <div class="row">
             <button type="button" class="primary" @click="editProvider = 'new'">新建</button>
-            <button type="button" class="danger" :disabled="!curProvider" @click="deleteProvider">删除</button>
             <span class="status">{{ routesStatus }}</span>
           </div>
           <ProviderEditor
@@ -364,9 +374,9 @@ function onKey(e) {
             @close="editProvider = null"
             @saved="loadProviders"
           />
-          <div class="status">{{ routesStatus }}</div>
         </section>
       </div>
+      </div>
     </div>
-  </div>
+  </section>
 </template>

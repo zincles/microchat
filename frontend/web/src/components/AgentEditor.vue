@@ -10,6 +10,7 @@ const props = defineProps({
   agent: { type: Object, default: null },
   isDefault: { type: Boolean, default: false },
   template: { type: Object, default: null }, // 新建模板 {name, system_prompt, prepend_state, abilities}
+  ask: { type: Function, default: null }, // 全局确认框（删除前先摊开）
 });
 const emit = defineEmits(["close", "saved"]);
 
@@ -82,6 +83,7 @@ async function makeDefault() {
 
 async function remove() {
   if (isNew) return;
+  if (props.ask && !(await props.ask(`删除 Agent「${props.agent.name || props.agent.id}」？不可逆。`))) return;
   try {
     await api.deleteAgent(props.agent.id);
     emit("saved");

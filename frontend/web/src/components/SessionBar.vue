@@ -18,8 +18,10 @@ defineExpose({ setSessions });
   <aside id="sessions-bar">
     <div class="bar-head">
       <span>会话</span>
-      <button id="session-new" type="button" title="新建会话" @click="$emit('new')">＋</button>
     </div>
+    <button id="session-new" type="button" title="开启新对话（草稿：首句才建会话）" @click="$emit('new')">
+      <span class="plus">＋</span>开启新对话
+    </button>
     <div id="session-list">
       <div v-if="!sessions.length" class="empty">还没有会话</div>
       <div

@@ -37,8 +37,8 @@ export function deletionPlanSummary(plan) {
 
 // ---- 设置 modal 纯逻辑（无 DOM，测试直引） ----
 
-// SETTINGS_TABS：modal 五区（服务端/客户端/会话/Agent/Provider），顺序固定。
-export const SETTINGS_TABS = ["server", "client", "session", "agent", "provider"];
+// SETTINGS_TABS：设置视图六区（聊天/界面/连接/会话/Agent/Provider），顺序固定。
+export const SETTINGS_TABS = ["chat", "ui", "net", "session", "agent", "provider"];
 
 // formatRoutesOutcome：刷路由回形 {provider, models, error?} ⇒ 缓存行文案。
 export function formatRoutesOutcome(o) {

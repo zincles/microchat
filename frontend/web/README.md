@@ -1,6 +1,6 @@
-# frontend/web — Web 前端（最小可跑版）
+# frontend/web — Web 前端（当前主力）
 
-与 TUI / TG Bot **同一条 HTTP 契约**（只调 `/api/v1`，见 `AGENTS.md` API 表；不碰后端内部）。
+与 TUI / TG Bot **同一条 HTTP 契约**（只调 `/api/v1`，见根目录 `AGENTS.md` 的 API 表；不碰后端内部包）。
 
 ## 跑起来
 
@@ -9,19 +9,25 @@
 # 或分开跑：
 cd frontend/web
 npm ci            # 从锁文件重装（node_modules 永不入库）
-npm run dev       # vite :5173（连本机 8787 后端；远端改 localStorage.mc_api）
-npm test          # node 原生 test runner，无测试框架
+npm run dev       # vite :5173（默认连本机 8787；连远端改 localStorage.mc_api）
+npm test          # node 原生 test runner：纯函数与请求形状的契约测试
 npm run build     # 产出 dist/（不入库，部署时现打）
 ```
 
 后端另起：`./microchat`（8787 服务；CORS 全开，预检 204）。
 
-## 依赖（唯一：vite）
+## 依赖
 
-`package.json` 里只有一个 `devDependencies: vite@7`（构建用；运行时**零依赖**——`fetch` 直调）。
-版本锁死、LTS 线；加依赖先问。`node_modules/`、`dist/` 永不进库（根 `.gitignore` 已锁）。
+`vue@3.5`（框架）+ `marked`（markdown 渲染）+ `katex`（数学）；构建用 `vite` + `@vitejs/plugin-vue`。
+运行时没有自造传输层（`fetch` 直调）。**加依赖先问**；`node_modules/`、`dist/` 永不进库。
 
 ## 现在能干什么
 
-健康检查 → 启动编排（清 0 消息无标题会话 → 建真会话）→ 看消息 → 发一句话（202 受理 + 300ms 轮询 `status` + 游标读 `turn/text`）。
-多行粘贴、压缩、重摇、agents、providers 都还没做 —— 先把这一屏跑稳再加。
+- **会话**：草稿态（点＋/开机只开一张客户端草稿，**首句才建会话**）· 发送/流式（202 受理 + 轮询 + 游标读）·
+  重发 / 重摇 / 压缩 / 删除（带预览与确认）· 改名 / 换模型 / 换 Agent / 会话提示词 · ST（SillyTavern）JSONL 导入
+- **右载荷栏**：真请求预演（草稿也能 —— 客户端铸会话 id，`POST /outgoing`）+ 世界状态 tab
+- **设置五 tab**：服务端 / 客户端 / 会话 / Agent / Provider（与对话**同级的视图**，不是弹窗；窄屏自动收起左栏）；
+  主题七套（默认 `deepseek`，色值实测对齐 chat.deepseek.com）
+- **命令面板**：`/` 进（`/resume` `/compact` `/cut` `/reroll` `/edit` `/editsum` …，只放已有路由的命令）
+
+口径、路由表与"为什么这么设计"全在根目录 `AGENTS.md`。
