@@ -1,7 +1,7 @@
 <script setup>
 // App.vue —— 三栏骨架 + 全部接线（原 main.js + 九个桥，合一）。
 // 组件直接挂模板，ref 直调实例方法，不再经 *-vue.js 桥 / mount.js。
-import { ref, reactive, computed, onMounted, nextTick } from "vue";
+import { ref, reactive, computed, onMounted, onUnmounted } from "vue";
 import { createApi, advanceCursor } from "./api/client.js";
 import { parseCommand, filterCommands } from "./utils/commands.js";
 import {
@@ -50,9 +50,11 @@ const vueStream = ref({ id: null, text: "", reasoning: "" });
 const vueDisplayMode = ref("chat");
 const settingsOpen = ref(false);
 const sessionSettingsId = ref(null);
-const lastPayloadWire = ref(null);
 
 // —— 消息列 ——
+// tmpKey：只给"还没进库"的气泡（乐观用户消息 / 流式占位）当 v-for key —— 不能共用 'stream'（重键）。
+let tmpSeq = 0;
+function tmpKey() { return `tmp-${++tmpSeq}`; }
 function scrollBottom() {
   requestAnimationFrame(() => {
     const el = document.getElementById("messages-vue");
@@ -61,6 +63,7 @@ function scrollBottom() {
 }
 function addMessage(who, text, cls, think, messageId) {
   vueMessages.value.push({
+    id: tmpKey(),
     who,
     role: cls === "user" ? "user" : "assistant",
     content: text,
@@ -73,6 +76,7 @@ function addMessage(who, text, cls, think, messageId) {
 async function editMessageSave(messageId, kind, value) {
   await api.editMessage(sessionID, messageId, kind === "reasoning" ? { reasoning: value } : { content: value });
   renderHistory(await api.listMessages(sessionID));
+  refreshStateView();
 }
 async function editMessageFlow(messageId, kind) {
   const messages = await api.listMessages(sessionID);
@@ -117,6 +121,7 @@ async function onBubbleDelete(mid, isLast) {
   await api.deleteMessages(sessionID, mid, plan.last_deleted_message_id)
     .catch((err) => toast(`删除失败：${err.message}`, "error"));
   renderHistory(await api.listMessages(sessionID));
+  refreshStateView();
 }
 function onBubbleRefresh() {
   resend().catch((err) => toast(`重发失败：${err.message}`, "error"));
@@ -168,7 +173,7 @@ async function refreshDisplayMode() {
     vueDisplayMode.value = a?.display_mode === "roleplay" ? "roleplay" : "chat";
   } catch { /* 拿不到就 chat 兜底 */ }
 }
-function applySideToggle(barID, key, hidden) {
+function applySideToggle(barID, hidden) {
   document.getElementById(barID)?.classList.toggle("collapsed", hidden);
 }
 
@@ -177,19 +182,24 @@ function toggleLeft() {
   const bar = document.getElementById("sessions-bar");
   const hidden = !bar?.classList.contains("collapsed");
   localStorage.setItem("mc_bar_left_hidden", hidden ? "1" : "0");
-  applySideToggle("sessions-bar", "mc_bar_left_hidden", hidden);
+  applySideToggle("sessions-bar", hidden);
 }
 function toggleRight() {
   const bar = document.getElementById("payload-bar");
   const hidden = !bar?.classList.contains("collapsed");
   localStorage.setItem("mc_bar_right_hidden", hidden ? "1" : "0");
-  applySideToggle("payload-bar", "mc_bar_right_hidden", hidden);
+  applySideToggle("payload-bar", hidden);
 }
 async function closeSession(id) {
   const list = await api.listSessions().catch(() => []);
   const name = list.find((s) => s.id === id)?.title || "新会话";
   if (!(await overlaysRef.value.confirmAsk(`删除会话「${name}」？不可逆。`))) return;
-  await api.closeSession(id).catch((err) => { toast(`关闭失败：${err.message}`, "error"); return; });
+  try {
+    await api.closeSession(id);
+  } catch (err) {
+    toast(`关闭失败：${err.message}`, "error");
+    return; // 删失败就别切会话（catch 回调里的 return 不是这个函数的 return）
+  }
   if (id === sessionID) {
     const rest = await api.listSessions();
     if (rest.length) await enterSession(rest[0].id);
@@ -224,6 +234,8 @@ async function enterSession(id) {
   if (previewOn() && messages.length) {
     api.outgoingPreview(id, "").then((w) => payloadbarRef.value?.setWire(w))
       .catch((err) => toast(`预演失败：${err.message}`, "error"));
+  } else {
+    payloadbarRef.value?.setWire(null); // 别把上一条会话的载荷挂在空会话上
   }
 }
 async function boot() {
@@ -239,16 +251,18 @@ async function boot() {
 
 // —— 发送 / 轮询 ——
 async function send(content) {
-  const accepted = await api.sendMessage(sessionID, content);
+  const sid = sessionID;
+  const accepted = await api.sendMessage(sid, content);
   addMessage("你", content, "user");
-  await pollTurn(accepted.turn.message_id);
+  await pollTurn(sid, accepted.turn.message_id);
 }
 async function resend() {
-  const accepted = await api.resend(sessionID);
-  await pollTurn(accepted.turn.message_id);
+  const sid = sessionID;
+  const accepted = await api.resend(sid);
+  await pollTurn(sid, accepted.turn.message_id);
 }
-async function pollTurn(turnID) {
-  const m = { who: "助手", role: "assistant", _stream: true, stream: true, content: "", reasoning: "" };
+async function pollTurn(sid, turnID) {
+  const m = { who: "助手", role: "assistant", _stream: true, stream: true, content: "", reasoning: "", id: tmpKey() };
   vueMessages.value.push(m);
   vueStream.value = { id: turnID, text: "", reasoning: "" };
   composerRef.value?.setRunning(true);
@@ -256,8 +270,9 @@ async function pollTurn(turnID) {
   try {
     for (;;) {
       await new Promise((r) => setTimeout(r, 300));
-      const st = await api.status(sessionID);
-      const slice = await api.turnText(sessionID, cur.from, cur.thinkFrom);
+      if (sessionID !== sid) return; // 会话切走了：这一轮不再往界面上写（库里照旧落）
+      const st = await api.status(sid);
+      const slice = await api.turnText(sid, cur.from, cur.thinkFrom);
       if (slice.thinking) {
         vueStream.value.reasoning = (vueStream.value.reasoning ?? "") + slice.thinking;
         m.reasoning = vueStream.value.reasoning;
@@ -267,18 +282,20 @@ async function pollTurn(turnID) {
       refreshStatusline(st.phase, st.elapsed_ms);
       refreshSessionsBar();
       if (st.phase === "idle" || st.phase === "error") {
-        if (st.phase === "error") vueStream.value.text = `失败：${st.error || "未知"}`;
-        else if (!vueStream.value.text) {
-          const all = await api.listMessages(sessionID);
-          const last = all[all.length - 1];
-          if (last && last.id === turnID) vueStream.value.text = last.content;
+        const failed = st.phase === "error";
+        renderHistory(await api.listMessages(sid));
+        if (failed) {
+          // 失败合成一条气泡摆在文末（renderHistory 会清 vueStream，所以必须摆在它后面）+ toast 兜底。
+          const errText = `失败：${st.error || "未知"}`;
+          vueMessages.value.push({ who: "助手", role: "assistant", content: errText, id: tmpKey() });
+          scrollBottom();
+          toast(errText, "error");
         }
-        renderHistory(await api.listMessages(sessionID));
         refreshStatusline(st.phase, st.elapsed_ms);
         refreshSessionsBar();
-        refreshStateView();
+        refreshStateView(sid);
         if (previewOn()) {
-          api.outgoingPreview(sessionID, "").then((w) => payloadbarRef.value?.setWire(w))
+          api.outgoingPreview(sid, "").then((w) => payloadbarRef.value?.setWire(w))
             .catch((err) => toast(`预演失败：${err.message}`, "error"));
         }
         break;
@@ -302,9 +319,12 @@ function refreshStateView(id) {
 
 // —— 命令 ——
 function liftOverlays() {
-  const form = document.querySelector("#composer-vue #composer");
+  // 输入框自身就是 #composer（组件根）——"#composer-vue" 那层包装早没了，别再查它。
+  const form = document.querySelector("#composer");
   if (form) overlaysRef.value?.lift(Math.max(0, form.getBoundingClientRect().height - 60));
 }
+// 输入框高度是异步变的（autosize 在 nextTick 里长高）⇒ 量一次不够，盯住它本身。
+let composerRO = null;
 async function runCommand(name, args) {
   overlaysRef.value?.hidePalette();
   switch (name) {
@@ -385,6 +405,7 @@ async function runCommand(name, args) {
           if (!(await overlaysRef.value.confirmAsk(`${deletionPlanSummary(plan)}，确认删 #${it.value.idx} 及之后？`))) return;
           await api.deleteMessages(sessionID, it.value.id, plan.last_deleted_message_id);
           renderHistory(await api.listMessages(sessionID));
+          refreshStateView();
         },
       );
       break;
@@ -453,7 +474,6 @@ function onComposerInput(v) {
     try {
       const out = await api.outgoingPreview(sessionID, v);
       payloadbarRef.value?.setWire(out);
-      lastPayloadWire.value = out;
     } catch (err) { if (!String(err.message ?? "").includes("400")) toast(`预演失败：${err.message}`, "error"); }
   }, 300);
 }
@@ -472,17 +492,20 @@ function onComposerKeydown(e, value) {
       if (pickerOpen) overlaysRef.value?.movePicker(-1);
       else overlaysRef.value?.movePalette(-1);
     }
-  } else if (e.key === "Enter" && (palOpen || pickerOpen) && value.startsWith("/")) {
+  } else if (e.key === "Enter" && (palOpen || pickerOpen) && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    // 只有裸回车归浮层（修饰回车一律换行，与发送键口径一致 —— 不查修饰键的话
+    // Shift+回车会把高亮命令直接执行掉）。
     if (pickerOpen && overlaysRef.value?.pickerAction()) {
       e.preventDefault();
       const it = overlaysRef.value?.pickerSelected();
       const pa = overlaysRef.value?.pickerAction();
       overlaysRef.value?.hidePicker();
       if (it && pa) pa(it);
-    } else if (palOpen && overlaysRef.value?.palSelected()) {
+    } else if (palOpen && value.startsWith("/") && overlaysRef.value?.palSelected()) {
       e.preventDefault();
       const cmd = parseCommand(value);
       composerRef.value?.clear();
+      liftOverlays();
       runCommand(overlaysRef.value.palSelected(), cmd ? cmd.args : []).catch((err) =>
         toast(`命令失败：${err.message}`, "error"),
       );
@@ -503,6 +526,7 @@ function onComposerKeydown(e, value) {
   }
 }
 function onComposerSubmit(text) {
+  liftOverlays();
   overlaysRef.value?.hidePalette();
   if (!text) {
     resend().catch((err) => toast(`重发失败：${err.message}`, "error"));
@@ -518,13 +542,22 @@ function onComposerSubmit(text) {
 
 // —— 拖拽调宽 ——
 onMounted(() => {
-  applySideToggle("sessions-bar", "mc_bar_left_hidden", localStorage.getItem("mc_bar_left_hidden") === "1");
-  applySideToggle("payload-bar", "mc_bar_right_hidden", localStorage.getItem("mc_bar_right_hidden") === "1");
+  applySideToggle("sessions-bar", localStorage.getItem("mc_bar_left_hidden") === "1");
+  applySideToggle("payload-bar", localStorage.getItem("mc_bar_right_hidden") === "1");
+  if (typeof ResizeObserver !== "undefined" && !composerRO) {
+    composerRO = new ResizeObserver(() => liftOverlays());
+    const form = document.querySelector("#composer");
+    if (form) composerRO.observe(form);
+  }
   boot().catch((err) => {
     connText = "未连接";
     refreshStatusline("idle");
     toast(`启动失败：${err.message}`, "error");
   });
+});
+onUnmounted(() => {
+  composerRO?.disconnect();
+  composerRO = null;
 });
 </script>
 

@@ -9,10 +9,6 @@ import {
   statusOverBudget,
   groupModelsByProvider,
   deletionPlanSummary,
-  SETTINGS_TABS,
-  switchSettingsTab,
-  snapshotSettings,
-  settingsDirty,
   formatRoutesOutcome,
   buildAbilitiesPatch,
 } from "../src/utils/format.js";
@@ -113,21 +109,6 @@ test("api.call 请求形状：方法/路径/鉴权头/204 空", async () => {
   assert.equal(r, null);
   const p = await api.deletionPreview("s1", "m1");
   assert.deepEqual(p, { ok: true });
-});
-
-test("tab 切换纯函数：合法才切、非法留当前", () => {
-  assert.deepEqual(SETTINGS_TABS, ["server", "client", "session", "agent", "provider"]);
-  assert.equal(switchSettingsTab("server", "agent"), "agent");
-  assert.equal(switchSettingsTab("server", "nope"), "server");
-});
-
-test("settings 快照丢弃语义：改表单不碰 snapshot，脏比对只认内容", () => {
-  const form = { title_chars: "32", provider: "dummy" };
-  const snap = snapshotSettings(form);
-  form.title_chars = "64"; // 关 modal 丢弃 ⇒ snap 不动
-  assert.equal(snap.title_chars, "32");
-  assert.equal(settingsDirty(snap, form), true);
-  assert.equal(settingsDirty(snap, snapshotSettings(snap)), false);
 });
 
 test("outgoingPreview 空字问历史：空/空白也发包，与空发 resend 同段", async () => {

@@ -97,6 +97,8 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
     providerPresets: () => call("GET", "/providers/presets"),
     createProvider: (body) => call("POST", "/providers", body),
     patchProvider: (id, body) => call("PATCH", `/providers/${enc(id)}`, body),
+    // refreshProvider：拉该渠道的 /models 并落库（只写发现列，用户列不动）。
+    refreshProvider: (id) => call("POST", `/providers/${enc(id)}/refresh`),
     // refreshRoutes：刷路由表（models.dev 快照 → model_route 落库），回 {provider, models, error?}。
     refreshRoutes: (id) => call("POST", `/providers/${enc(id)}/refresh-routes`),
   };

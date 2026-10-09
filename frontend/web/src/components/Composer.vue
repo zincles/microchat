@@ -1,7 +1,7 @@
 <script setup>
 // 底栏输入（TG 底栏味）：textarea 回车换行 + 自增高 1..6 行 + 发送键三档 + 纸飞机圆钮。
 // 生成中（running）⇒ 圆钮变停止键（■），点即停。挂载点还是 #composer（CSS 照旧命中）。
-import { ref, computed, watch, nextTick } from "vue";
+import { ref, watch, nextTick } from "vue";
 import { ICONS } from "./icons.js";
 
 const emit = defineEmits(["input-text", "keydown", "submit", "stop", "menu"]);
@@ -22,9 +22,15 @@ function sendHint() {
 function autosize() {
   nextTick(() => {
     if (!area.value) return;
-    area.value.rows = 1;
-    const line = parseFloat(getComputedStyle(area.value).lineHeight) || 22;
-    area.value.rows = Math.min(6, Math.max(1, Math.round(area.value.scrollHeight / line)));
+    const el = area.value;
+    el.rows = 1; // 重置后 scrollHeight 才只反映内容高度（读它强制同步重排）
+    const cs = getComputedStyle(el);
+    const line = parseFloat(cs.lineHeight) || 22;
+    const pad = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+    // scrollHeight 含上下 padding：不减掉的话每算一次多出近一行（0.8 行取整成 1），
+    // 输入框只涨不缩（删除也不回退）——踩过的棘轮。
+    const rows = Math.round((el.scrollHeight - pad) / line);
+    el.rows = Math.min(6, Math.max(1, rows));
   });
 }
 watch(text, autosize);

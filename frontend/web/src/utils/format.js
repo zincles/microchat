@@ -40,21 +40,6 @@ export function deletionPlanSummary(plan) {
 // SETTINGS_TABS：modal 五区（服务端/客户端/会话/Agent/Provider），顺序固定。
 export const SETTINGS_TABS = ["server", "client", "session", "agent", "provider"];
 
-// switchSettingsTab：tab 切换纯函数 —— 目标合法才切，否则留当前。
-export function switchSettingsTab(current, target) {
-  return SETTINGS_TABS.includes(target) ? target : current;
-}
-
-// snapshotSettings：开 modal 时 snapshot（深拷贝）；关时丢弃 ⇒ 不保存不写。
-export function snapshotSettings(state) {
-  return JSON.parse(JSON.stringify(state ?? null));
-}
-
-// settingsDirty：snapshot 与现表单比对 —— 全等才算干净（只 PUT 脏区用）。
-export function settingsDirty(snap, cur) {
-  return JSON.stringify(snap ?? null) !== JSON.stringify(cur ?? null);
-}
-
 // formatRoutesOutcome：刷路由回形 {provider, models, error?} ⇒ 缓存行文案。
 export function formatRoutesOutcome(o) {
   if (!o || typeof o !== "object") return "未刷新";
