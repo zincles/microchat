@@ -68,6 +68,9 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
     // 空会话空字 ⇒ 后端 400（与 resend 同错），调用方吞掉保持空话。
     outgoingPreview: (id, content) =>
       call("POST", `/sessions/${enc(id)}/outgoing`, { content: content ?? "" }),
+    // draftOutgoing：草稿预演（**还没有会话**）—— 临时会话，不落库；id 是客户端铸的
+    // 草稿会话 id（建会话时交给 POST /sessions 同一个值 ⇒ 预演头 = 真发头）。
+    draftOutgoing: (body) => call("POST", "/outgoing", body),
     compact: (id, blocks) =>
       call("POST", `/sessions/${enc(id)}/compact`, blocks ? { blocks } : {}),
     stop: (id) => call("POST", `/sessions/${enc(id)}/stop`, {}),

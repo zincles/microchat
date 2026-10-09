@@ -6,7 +6,10 @@ import (
 	"strings"
 	"testing"
 
+	"microchat/internal/config"
+	"microchat/internal/model"
 	"microchat/internal/providers"
+	"microchat/internal/store"
 )
 
 // ── (c) `POST /sessions/{session_id}/outgoing`：把待发那句追加进去之后，真会发出去的那一发 ──
@@ -234,5 +237,96 @@ func TestOutgoingSummaryHasChildren(t *testing.T) {
 	messages := wireBody(t, box.wireOf(t, "第四句"))
 	if messages[len(messages)-1]["role"] != "user" {
 		t.Fatalf("末尾该是待发那句：%v", messages)
+	}
+}
+
+// ── 草稿预演 `POST /outgoing`：还没有会话（web 草稿态）时"这句发出去会是什么样" ──
+//
+// 与 (c) 同一支笔（`chat.PreviewWire`），唯一区别：会话不存在（临时种子会话，无历史）。
+// 两条硬约束各有守卫：**一条会话都不建**；给了 id 就进请求头（与将来 `POST /sessions` 逐字节同 id）。
+
+func TestDraftOutgoingDoesNotCreateSession(t *testing.T) {
+	box := newDummySandbox(t)
+	before, err := box.store.ListSessions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := call(box.server, "POST", "/api/v1/outgoing", `{"content":"草稿第一句","provider":"dummy","model":"dummy"}`)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("草稿预演该 200，得到 %d：%s", recorder.Code, recorder.Body.String())
+	}
+	var payload providers.LastPayload
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Method != "POST" || !strings.HasSuffix(payload.URL, "/chat/completions") {
+		t.Fatalf("该是打上游的那一发：%s %s", payload.Method, payload.URL)
+	}
+	// 草稿没有历史：system + 待发那句 = 2 条。
+	if messages := wireBody(t, payload); len(messages) != 2 {
+		t.Fatalf("草稿该是 system+待发 = 2 条，得到 %d：%v", len(messages), messages)
+	}
+	after, err := box.store.ListSessions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("草稿预演不许建会话：%d → %d", len(before), len(after))
+	}
+}
+
+// 草稿铸的 id：预演的请求头上就是它；`POST /sessions` 拿同一个 id 建出来 —— 两处必须是同一个值。
+func TestDraftOutgoingIDReachesHeaderAndSession(t *testing.T) {
+	dir := t.TempDir()
+	providersJSON := `{"providers":[{"id":"dummy","vendor":"dummy"},{"id":"oc","vendor":"opencode-go","api_key":"k"}]}`
+	if err := config.SaveJSON(dir+"/providers.json", mustJSON(t, providersJSON)); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(dir + "/microchat.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	server := newTestServer(st, config.DefaultConfig(), config.Paths{ConfigDir: dir, DataDir: dir})
+
+	id := "0198ba3c-1234-7abc-8def-0123456789ab"
+	recorder := call(server, "POST", "/api/v1/outgoing", `{"id":"`+id+`","provider":"oc","model":"m","content":"你好"}`)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("草稿预演该 200，得到 %d：%s", recorder.Code, recorder.Body.String())
+	}
+	var payload providers.LastPayload
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if got := payload.Headers[http.CanonicalHeaderKey("x-opencode-session")]; got != id {
+		t.Fatalf("预演的会话头该是草稿铸的 id %q，得到 %q（头：%v）", id, got, payload.Headers)
+	}
+
+	created := call(server, "POST", "/api/v1/sessions", `{"id":"`+id+`","provider":"oc","model":"m"}`)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("带 id 建会话该 201，得到 %d：%s", created.Code, created.Body.String())
+	}
+	var session model.Session
+	if err := json.Unmarshal(created.Body.Bytes(), &session); err != nil {
+		t.Fatal(err)
+	}
+	if session.ID != id {
+		t.Fatalf("会话该落草稿铸的 id %q，得到 %q", id, session.ID)
+	}
+
+	// 同一个 id 再来一次 ⇒ 409（说得清，别插出个半截）。
+	if again := call(server, "POST", "/api/v1/sessions", `{"id":"`+id+`"}`); again.Code != http.StatusConflict {
+		t.Fatalf("撞 id 该 409，得到 %d：%s", again.Code, again.Body.String())
+	}
+	// 形状不对 ⇒ 400（两条路都要守）。
+	if bad := call(server, "POST", "/api/v1/sessions", `{"id":"nope"}`); bad.Code != http.StatusBadRequest {
+		t.Fatalf("坏 id 该 400，得到 %d：%s", bad.Code, bad.Body.String())
+	}
+	if bad := call(server, "POST", "/api/v1/outgoing", `{"id":"nope","content":"x"}`); bad.Code != http.StatusBadRequest {
+		t.Fatalf("坏 id 该 400，得到 %d：%s", bad.Code, bad.Body.String())
+	}
+	// 空 content：草稿没有历史，空白不是"续写"。
+	if blank := call(server, "POST", "/api/v1/outgoing", `{"content":"  "}`); blank.Code != http.StatusBadRequest {
+		t.Fatalf("空白 content 该 400，得到 %d：%s", blank.Code, blank.Body.String())
 	}
 }

@@ -4,6 +4,7 @@
 import { ref, reactive, computed, onMounted, onUnmounted } from "vue";
 import { createApi, advanceCursor } from "./api/client.js";
 import { parseCommand, filterCommands } from "./utils/commands.js";
+import { uuidv7 } from "./utils/ids.js";
 import {
   formatStatusLine,
   statusOverBudget,
@@ -45,6 +46,15 @@ const toast = (t, k) => toastRef.value?.push(t, k);
 // —— 会话状态 ——
 let sessionID = null;
 const sessionInfo = reactive({});
+// 草稿态（DeepSeek 网页版行为，2026-10-09 定）：＋/开机/`/new` 只开一张**客户端草稿**，库里没有行；
+// 首条发送才 POST /sessions（带上草稿里选好的 provider/model/agent）。
+// ⚠ HACK（刻意，全项目唯一的口子）：草稿**铸一枚 UUIDv7** 当将来那会话的 id —— 预演
+// （POST /outgoing 临时会话）拿它进请求头，建会话时把同一个值交给 POST /sessions
+// ⇒ 预演的那一发给真发的那一发逐字节一致。别扩散（消息/摘要的 id 仍是服务端铸）。
+// 要会话的命令（compact/cut/reroll…）在草稿里明确拒绝（NEEDS_SESSION）。
+let draft = false;
+let draftPrefs = { provider: "", model: "", agent: "" };
+let draftId = null;
 const vueMessages = ref([]);
 const vueStream = ref({ id: null, text: "", reasoning: "" });
 const vueDisplayMode = ref("chat");
@@ -145,26 +155,46 @@ async function fillModelSelect() {
 async function applyModelValue(value) {
   const sep = value.indexOf("|||");
   if (sep < 0) return;
-  Object.assign(sessionInfo, await api.patchSession(sessionID, {
-    provider: value.slice(0, sep),
-    model: value.slice(sep + 3),
-  }));
+  const provider = value.slice(0, sep), model = value.slice(sep + 3);
+  if (draft) {
+    // 草稿：改动只活在客户端，建会话时随 POST /sessions 一起带上。
+    draftPrefs.provider = provider;
+    draftPrefs.model = model;
+    Object.assign(sessionInfo, { provider, model });
+    paintSessionHeader();
+    refreshStatusline("idle");
+    refreshPreview(); // 面板不许停在旧渠道那一发上
+    return;
+  }
+  Object.assign(sessionInfo, await api.patchSession(sessionID, { provider, model }));
   paintSessionHeader();
   refreshStatusline("idle");
+  refreshPreview();
 }
 function fillAgentSelect() {
   api.agents().then((data) => {
     const list = (data.agents ?? []).map((a) => ({ id: a.id, label: a.name }));
     topbarRef.value?.setAgents(list, sessionInfo.agent_id);
-    if (!sessionInfo.agent_id && list[0]) applyAgentValue(list[0].id);
+    // 没 agent 时别猜 list[0]：后端认的是 default_agent。
+    if (!sessionInfo.agent_id && list.length) applyAgentValue(data.default_agent || list[0].id);
   }).catch((err) => toast(`Agent 列表失败：${err.message}`, "error"));
 }
 async function applyAgentValue(id) {
   if (!id) return;
+  if (draft) {
+    draftPrefs.agent = id;
+    Object.assign(sessionInfo, { agent_id: id });
+    paintSessionHeader();
+    refreshDisplayMode();
+    refreshStatusline("idle");
+    refreshPreview();
+    return;
+  }
   Object.assign(sessionInfo, await api.patchSession(sessionID, { agent_id: id }));
   paintSessionHeader();
   refreshDisplayMode();
   refreshStatusline("idle");
+  refreshPreview();
 }
 async function refreshDisplayMode() {
   try {
@@ -201,15 +231,33 @@ async function closeSession(id) {
     return; // 删失败就别切会话（catch 回调里的 return 不是这个函数的 return）
   }
   if (id === sessionID) {
-    const rest = await api.listSessions();
-    if (rest.length) await enterSession(rest[0].id);
-    else await enterSession((await api.createSession({})).id);
+    await startDraft(); // 删掉当前会话 ⇒ 回到草稿（不再预建空会话 —— 那正是被拿掉的旧行为）
   } else refreshSessionsBar();
 }
-async function newSession() {
-  try {
-    await enterSession((await api.createSession({})).id);
-  } catch (err) { toast(`新建失败：${err.message}`, "error"); }
+async function startDraft() {
+  draft = true;
+  sessionID = null;
+  draftId = uuidv7(); // 这张草稿将来那会话的 id（预演与建会话都用它）
+  const d = await api.getDefaults().catch(() => ({}));
+  draftPrefs = { provider: d.provider ?? "", model: d.model ?? "", agent: d.agent ?? "" };
+  Object.assign(sessionInfo, {
+    title: "", provider: draftPrefs.provider, model: draftPrefs.model,
+    agent_id: draftPrefs.agent, system_prompt: "",
+  });
+  vueMessages.value = [];
+  vueStream.value = { id: null, text: "", reasoning: "" };
+  paintSessionHeader();
+  refreshDisplayMode();
+  fillModelSelect();
+  fillAgentSelect();
+  payloadbarRef.value?.setWire(null);
+  payloadbarRef.value?.setTables({});
+  refreshStatusline("idle");
+  refreshSessionsBar();
+  refreshPreview(); // 输入框里若还留着字（＋ 时不清输入框），预演立刻跟上
+}
+function newSession() {
+  startDraft().catch((err) => toast(`新建失败：${err.message}`, "error"));
 }
 function renderSessions(sessions) {
   sessionbarRef.value?.setSessions(sessions, sessionID);
@@ -220,6 +268,7 @@ async function refreshSessionsBar() {
   } catch (err) { toast(`刷会话栏失败：${err.message}`, "error"); }
 }
 async function enterSession(id) {
+  draft = false;
   sessionID = id;
   const [sessions, messages] = await Promise.all([api.listSessions(), api.listMessages(id)]);
   Object.assign(sessionInfo, sessions.find((s) => s.id === id) ?? {});
@@ -241,12 +290,8 @@ async function enterSession(id) {
 async function boot() {
   const health = await api.health();
   connText = `已连接 v${health.version ?? "?"}`;
-  refreshStatusline("idle");
-  const sessions = await api.listSessions();
-  for (const s of sessions) {
-    if (s.messages === 0 && !s.title) await api.deleteSession(s.id).catch((err) => toast(`清空调会话失败：${err.message}`, "error"));
-  }
-  await enterSession((await api.createSession({})).id);
+  // 不再"删空会话 + 预建真会话"：web 走草稿态，库里不产生空行（旧编排的两步一起拿掉）。
+  await startDraft();
 }
 
 // —— 发送 / 轮询 ——
@@ -307,6 +352,12 @@ async function pollTurn(sid, turnID) {
 }
 let connText = "未连接";
 function refreshStatusline(phase, elapsedMs) {
+  if (draft || !sessionID) {
+    // 草稿：没有会话可问占用 —— 状态行只报"新对话 + 将来会用的模型"。
+    const who = [sessionInfo.provider, sessionInfo.model].filter(Boolean).join("/") || "未选模型";
+    composerRef.value?.setStatus(`${connText}｜新对话｜${who}｜${phase ?? "idle"}`, false);
+    return;
+  }
   api.context(sessionID).catch(() => null).then((ctx) => {
     composerRef.value?.setStatus(`${connText}｜` + formatStatusLine({
       ctx, phase, elapsedMs, provider: sessionInfo.provider, model: sessionInfo.model,
@@ -314,6 +365,7 @@ function refreshStatusline(phase, elapsedMs) {
   }).catch((err) => toast(`状态行失败：${err.message}`, "error"));
 }
 function refreshStateView(id) {
+  if (draft || !(id ?? sessionID)) return; // 草稿：没有会话可问状态（右栏保持空话）
   api.sessionState(id ?? sessionID).then((v) => payloadbarRef.value?.setTables(v?.tables)).catch(() => {});
 }
 
@@ -325,12 +377,18 @@ function liftOverlays() {
 }
 // 输入框高度是异步变的（autosize 在 nextTick 里长高）⇒ 量一次不够，盯住它本身。
 let composerRO = null;
+// 要真会话的命令：草稿里明确拒绝（主语料不在，做了也是空转）。
+const NEEDS_SESSION = new Set(["compact", "reroll", "switch", "stop", "resend", "delete", "cut", "edit", "editsum"]);
 async function runCommand(name, args) {
   overlaysRef.value?.hidePalette();
+  if (draft && NEEDS_SESSION.has(name)) {
+    toast(`这是新对话：先发一句话再用 /${name}`, "error");
+    return;
+  }
   switch (name) {
     case "new": {
-      const s = await api.createSession({});
-      await enterSession(s.id);
+      if (draft) { toast("已经在一张新对话里了"); break; }
+      await startDraft();
       break;
     }
     case "resume": {
@@ -388,8 +446,7 @@ async function runCommand(name, args) {
     case "delete": {
       if (!(await overlaysRef.value.confirmAsk(`删除整个会话 ${sessionID}？`))) break;
       await api.deleteSession(sessionID);
-      const s = await api.createSession({});
-      await enterSession(s.id);
+      await startDraft();
       break;
     }
     case "cut": {
@@ -454,8 +511,36 @@ async function runCommand(name, args) {
   }
 }
 
-// —— 输入框事件 ——
+// —— 预演（右载荷栏）——
+// 两条路同一支笔：会话里走 `POST /sessions/{id}/outgoing`；草稿走 `POST /outgoing`（临时会话，
+// 带上草稿铸的 id —— 头上那个会话键就是将来真会话的）。previewSeq 丢弃迟到的那一版。
 let previewTimer = 0;
+let previewSeq = 0;
+async function previewPayload(v) {
+  const seq = ++previewSeq;
+  try {
+    const out = draft
+      ? await api.draftOutgoing({
+        id: draftId, provider: draftPrefs.provider, model: draftPrefs.model,
+        agent_id: draftPrefs.agent, content: v,
+      })
+      : await api.outgoingPreview(sessionID, v);
+    if (seq !== previewSeq) return; // 有更新的一发在路上：旧的丢掉
+    payloadbarRef.value?.setWire(out);
+  } catch (err) {
+    if (seq !== previewSeq) return;
+    if (!draft && String(err.message ?? "").includes("400")) return; // 空会话问历史 ⇒ 保持空话
+    toast(`预演失败：${err.message}`, "error");
+  }
+}
+// refreshPreview：拿输入框里现有的字**立刻**重跑（改模型/Agent、回草稿之后用）——空字/命令不跑。
+function refreshPreview() {
+  if (!previewOn()) return;
+  const v = composerRef.value?.text ?? "";
+  if (!v.trim() || v.startsWith("/")) return;
+  if (draft ? !draftId : !sessionID) return;
+  previewPayload(v);
+}
 function onComposerInput(v) {
   liftOverlays();
   if (v.startsWith("/")) {
@@ -465,16 +550,17 @@ function onComposerInput(v) {
     overlaysRef.value?.hidePalette();
   }
   clearTimeout(previewTimer);
-  previewTimer = setTimeout(async () => {
+  previewTimer = setTimeout(() => {
     if (!previewOn()) return;
-    if (!sessionID || v.startsWith("/")) {
+    if (v.startsWith("/") || (!draft && !sessionID)) {
       refreshStatusline("idle").catch(() => {});
       return;
     }
-    try {
-      const out = await api.outgoingPreview(sessionID, v);
-      payloadbarRef.value?.setWire(out);
-    } catch (err) { if (!String(err.message ?? "").includes("400")) toast(`预演失败：${err.message}`, "error"); }
+    if (draft && !v.trim()) {
+      payloadbarRef.value?.setWire(null); // 草稿清空 ⇒ 右栏回到占位文案
+      return;
+    }
+    previewPayload(v);
   }, 300);
 }
 function onComposerKeydown(e, value) {
@@ -525,16 +611,50 @@ function onComposerKeydown(e, value) {
     }
   }
 }
+// sendFromDraft：草稿的第一句 —— 建会话（带草稿里选的 model/agent）→ 受理 → 轮询。
+// 只有"受理"失败才回滚（删掉刚建的空会话、退回草稿）；轮询掉线不回滚（消息已入库）。
+async function sendFromDraft(text) {
+  const body = {};
+  if (draftId) body.id = draftId; // 预演头上那个 id —— 真会话必须落同一个
+  if (draftPrefs.provider) body.provider = draftPrefs.provider;
+  if (draftPrefs.model) body.model = draftPrefs.model;
+  if (draftPrefs.agent) body.agent_id = draftPrefs.agent;
+  const s = await api.createSession(body);
+  draft = false;
+  sessionID = s.id;
+  Object.assign(sessionInfo, s);
+  paintSessionHeader();
+  refreshSessionsBar();
+  let accepted;
+  try {
+    accepted = await api.sendMessage(s.id, text);
+  } catch (err) {
+    await api.deleteSession(s.id).catch(() => {});
+    await startDraft();
+    throw err;
+  }
+  addMessage("你", text, "user");
+  await pollTurn(s.id, accepted.turn.message_id);
+}
+function stopCurrent() {
+  if (!sessionID) return; // 草稿没有会话可停
+  api.stop(sessionID).catch((err) => toast(`停止失败：${err.message}`, "error"));
+}
 function onComposerSubmit(text) {
   liftOverlays();
   overlaysRef.value?.hidePalette();
   if (!text) {
+    if (draft) { toast("新对话还没有可续写的历史：先写一句"); return; }
     resend().catch((err) => toast(`重发失败：${err.message}`, "error"));
     return;
   }
   const cmd = parseCommand(text);
   if (cmd) {
     runCommand(cmd.name, cmd.args).catch((err) => toast(`命令失败：${err.message}`, "error"));
+    return;
+  }
+  if (draft) {
+    sendFromDraft(text).catch((err) => toast(`发送失败：${err.message}`, "error"));
     return;
   }
   send(text).catch((err) => toast(`发送失败：${err.message}`, "error"));
@@ -603,7 +723,7 @@ onUnmounted(() => {
       @input-text="onComposerInput"
       @keydown="onComposerKeydown"
       @submit="onComposerSubmit"
-      @stop="() => api.stop(sessionID).catch((err) => toast(`停止失败：${err.message}`, 'error'))"
+      @stop="stopCurrent"
       @menu="() => overlaysRef?.showPalette(filterCommands(''))"
     />
       </section>

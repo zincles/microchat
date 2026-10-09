@@ -8,7 +8,7 @@ const wire = ref(null);
 const tables = ref({});
 
 const payloadText = computed(() =>
-  wire.value ? JSON.stringify(wire.value, null, 2) : "(空会话：在有消息的会话里打字即预演真请求)",
+  wire.value ? JSON.stringify(wire.value, null, 2) : "(空：打几个字，这里按真请求预演)",
 );
 const tableNames = computed(() => Object.keys(tables.value ?? {}).sort());
 

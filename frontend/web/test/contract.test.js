@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { createApi } from "../src/api/client.js";
 import { parseCommand, filterCommands } from "../src/utils/commands.js";
 import { advanceCursor } from "../src/api/client.js";
+import { uuidv7 } from "../src/utils/ids.js";
 import {
   formatThinkLabel,
   formatStatusLine,
@@ -109,6 +110,26 @@ test("api.call 请求形状：方法/路径/鉴权头/204 空", async () => {
   assert.equal(r, null);
   const p = await api.deletionPreview("s1", "m1");
   assert.deepEqual(p, { ok: true });
+});
+
+test("uuidv7：与后端同形（version 7 / variant / 毫秒序）", () => {
+  const shape = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+  const a = uuidv7(1000);
+  const b = uuidv7(2000);
+  assert.match(a, shape);
+  assert.match(b, shape);
+  assert.ok(a < b, "毫秒不同 ⇒ 字符串序仍按时间（v7 的全部意义）");
+  assert.notEqual(uuidv7(7), uuidv7(7), "同毫秒靠随机位分开");
+});
+
+test("draftOutgoing 请求形状：POST /outgoing，体 = id + 缺省三件 + content", async () => {
+  const seen = [];
+  const api = createApi({ base: "http://x/api/v1", fetchFn: async (url, opts) => { seen.push({ url, opts }); return { status: 200, ok: true, json: async () => ({ ok: true }) }; } });
+  const id = "0198ba3c-1234-7abc-8def-0123456789ab";
+  await api.draftOutgoing({ id, provider: "dummy", model: "dummy", agent_id: "default", content: "hi" });
+  assert.equal(seen[0].url, "http://x/api/v1/outgoing");
+  assert.equal(seen[0].opts.method, "POST");
+  assert.deepEqual(JSON.parse(seen[0].opts.body), { id, provider: "dummy", model: "dummy", agent_id: "default", content: "hi" });
 });
 
 test("outgoingPreview 空字问历史：空/空白也发包，与空发 resend 同段", async () => {

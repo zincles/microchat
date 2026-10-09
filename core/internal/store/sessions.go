@@ -79,24 +79,36 @@ func (s *Store) ListSessions() ([]model.Session, error) {
 	return sessions, rows.Err()
 }
 
-// CreateSession：新会话。`title` 由调用方给（`POST /sessions` 的 `title`；不给 ⇒ 空串 ⇒
+// CreateSession：新会话（id 现铸）。`title` 由调用方给（`POST /sessions` 的 `title`；不给 ⇒ 空串 ⇒
 // 首条用户消息落库时才自动起名），`agent` 先落内置默认 —— 调用方（server）再按
 // `agents.json` 的 default_agent 覆盖。
 // 注意参数名不叫 model —— 那会遮蔽 model **包**（Go 会把它当成 string 用）。
 func (s *Store) CreateSession(provider, modelID, systemPrompt, title string) (model.Session, error) {
+	return s.CreateSessionWithID("", provider, modelID, systemPrompt, title)
+}
+
+// CreateSessionWithID：`id` 空 ⇒ 现铸 UUIDv7；给了就落给的 —— 这是**草稿铸的 id**
+// （预演的那一发已经拿它当 `sessions.id` 进过请求头，两边必须逐字节同一个）。
+// ⚠ 这是全项目唯一一处"落客户端给的 id"（HACK，动机见 `server.CreateSessionReq` 的注释）——
+// 消息 / 摘要的 id 仍然一律服务端铸。
+// **合法性与撞车由调用方（server）收口**：这里只负责插入，PK 冲突就照实报错。
+func (s *Store) CreateSessionWithID(id, provider, modelID, systemPrompt, title string) (model.Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	id, err := uuid.NewV7()
-	if err != nil {
-		return model.Session{}, err
+	if id == "" {
+		minted, err := uuid.NewV7()
+		if err != nil {
+			return model.Session{}, err
+		}
+		id = minted.String()
 	}
 	now := nowMS()
 	session := model.Session{
-		ID: id.String(), Title: title, SystemPrompt: systemPrompt,
+		ID: id, Title: title, SystemPrompt: systemPrompt,
 		Provider: provider, Model: modelID, AgentID: "default", // 内置默认，server 再按 agents.json 覆盖
 		CreatedAt: now, UpdatedAt: now,
 	}
-	_, err = s.db.Exec(
+	_, err := s.db.Exec(
 		`INSERT INTO sessions (id, title, system_prompt, provider, model, agent_id, created_at, updated_at)
 		 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
 		session.ID, session.Title, session.SystemPrompt,

@@ -3,10 +3,13 @@ package server
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"microchat/internal/model"
 	"microchat/internal/providers"
 	"microchat/internal/state"
+
+	"github.com/google/uuid"
 )
 
 // effectiveSystemPrompt：生效的系统提示词 —— **解析只有一处**（`state.ResolveSystemPrompt`：
@@ -115,6 +118,61 @@ func (s *Server) postSessionOutgoing(w http.ResponseWriter, r *http.Request) {
 	} else {
 		payload, err = s.chat.PreviewWire(*session, *req.Content)
 	}
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+// DraftOutgoingReq：`POST /outgoing` 的请求体 —— **还没有会话**（web 的草稿态）时的预演。
+//
+// `id` = 客户端为这张草稿铸的 UUIDv7（`POST /sessions` 会拿同一个 id 落库 ⇒ 预演那一发的
+// 请求头与真发逐字节一致）；省略 ⇒ 现铸一个（curl 手玩也能用，只是头上那个 id 将无处落）。
+type DraftOutgoingReq struct {
+	ID       *string `json:"id"`
+	Provider *string `json:"provider"`
+	Model    *string `json:"model"`
+	AgentID  *string `json:"agent_id"`
+	Content  *string `json:"content"`
+}
+
+// postDraftOutgoing：草稿的第一句"真会发出去的那一发" —— 与 (c) 同一支笔（`chat.PreviewWire`），
+// 区别只有一个：会话**还没进库**（临时种子会话走 assemble，`ListMessages` 空 ⇒ 无历史）。
+//
+// **只算不写**：一条会话都不建（草稿的"不落库"由这里守着）。
+// content 缺 / 空白 ⇒ 400（草稿没有历史可看，空 content 不是"续写"是调用方写错了）。
+func (s *Server) postDraftOutgoing(w http.ResponseWriter, r *http.Request) {
+	var req DraftOutgoingReq
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.Content == nil || trimSpace(*req.Content) == "" {
+		writeError(w, http.StatusBadRequest, "invalid", "草稿预演要一句 content（还没有历史可看）")
+		return
+	}
+	id := ""
+	if req.ID != nil && strings.TrimSpace(*req.ID) != "" {
+		normalized, ok := normalizeUUIDv7(strings.TrimSpace(*req.ID))
+		if !ok {
+			writeError(w, http.StatusBadRequest, "invalid", "id 要是 UUIDv7（草稿铸的那个）")
+			return
+		}
+		id = normalized
+	} else {
+		minted, err := uuid.NewV7()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			return
+		}
+		id = minted.String()
+	}
+	seed, err := s.newSessionSeed(id, req.Provider, req.Model, req.AgentID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	payload, err := s.chat.PreviewWire(seed, *req.Content)
 	if err != nil {
 		writeStoreError(w, err)
 		return

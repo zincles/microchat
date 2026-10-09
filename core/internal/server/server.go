@@ -22,6 +22,8 @@ import (
 	"microchat/internal/reroll"
 	"microchat/internal/store"
 	"microchat/internal/task"
+
+	"github.com/google/uuid"
 )
 
 type Server struct {
@@ -97,6 +99,9 @@ func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *ch
 	// 405 说"方法不对"，410 说"这东西没了"，后者才是真话）。
 	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/outgoing", s.getSessionOutgoing)
 	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/outgoing", s.postSessionOutgoing)
+	// 草稿预演：**还没有会话**（web 草稿态）时"这句发出去会是什么样" —— 临时种子会话走
+	// `chat.PreviewWire`（同一支笔），一条会话都不建。id 给了就当 sessions.id 用（进请求头）。
+	s.mux.HandleFunc("POST /api/v1/outgoing", s.postDraftOutgoing)
 	// 生效的系统提示词（三级解析的**结果** + 来源）—— 调试用：客户端摆在消息区最上方
 	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/prompt", s.getSessionPrompt)
 	s.mux.HandleFunc("PATCH /api/v1/sessions/{session_id}/messages/{message_id}", s.editMessage)
@@ -304,7 +309,17 @@ func queryIndex(w http.ResponseWriter, query url.Values, name string) (value int
 // （如"重建后的新库"）不必再多发一次 `PATCH`。省略 / `""` ⇒ 标题空着（等首条用户消息自动起名）。
 // ⚠ 在补上这一格之前，`{"title": …}` 是**被静默丢掉**的（`decodeJSON` 不认未知字段）——
 // 静默忽略比报错难查得多（这条踩过）。
+//
+// `id`（2026-10-09 加）：**客户端铸好的 UUIDv7** —— 草稿态（web 前端）用它把"预演的那一发"
+// 与"真发的那一发"钉成同一件事（`sessions.id` 会进请求头 `x-opencode-session` 那类，
+// 预演的头上已经是它）。省略 ⇒ 服务端现铸（一切旧客户端照旧）。已有同 id ⇒ **409**。
+//
+// ⚠ **HACK（刻意，别扩散）**：这是全项目**唯一**允许客户端铸 id 的口子 —— 动机只有草稿预演这一条
+// （会话还不存在时，预演的请求头上就得有那枚 id；不这样就得给后端发明"草稿"这个实体，更重）。
+// 消息 / 摘要 / agent 的 id 一律服务端铸，别拿这个口子去学。代价就是下面两条校验路：
+// 形状不对 ⇒ 400，撞车 ⇒ 409。
 type CreateSessionReq struct {
+	ID           *string `json:"id"`
 	Title        *string `json:"title"`
 	Provider     *string `json:"provider"`
 	Model        *string `json:"model"`
@@ -329,51 +344,92 @@ type UpdateSessionReq struct {
 	SystemPrompt *string `json:"system_prompt"`
 }
 
+// normalizeUUIDv7：校验 + 规范化（小写带横线）。`sessions.id` 的 v7 形状由这一处守
+// （客户端铸的 id 从 `POST /sessions` 进来 —— 不守的话"会话 id 恒为 UUIDv7"这条就悄悄破了）。
+func normalizeUUIDv7(raw string) (string, bool) {
+	parsed, err := uuid.Parse(raw)
+	if err != nil || parsed.Version() != 7 {
+		return "", false
+	}
+	return parsed.String(), true
+}
+
+// newSessionSeed：草稿/新会话的"种子会话" —— **没进库的一行**。
+// provider/model 省略 ⇒ config defaults（**每次现读**：`PUT /config/defaults` 改完当场生效）；
+// agent 空白 ⇒ `agents.json` 的 default_agent。
+// **建会话（createSession）与草稿预演（postDraftOutgoing）共用这一处** —— 否则
+// "预演说走 A 渠道、真建出来却是 B"这类漂移没有一处能对账。
+func (s *Server) newSessionSeed(id string, provider, modelID, agentID *string) (model.Session, error) {
+	cfg, err := config.LoadConfig(s.paths)
+	if err != nil {
+		return model.Session{}, err
+	}
+	p, m := cfg.Defaults.Provider, cfg.Defaults.Model
+	if provider != nil {
+		p = *provider
+	}
+	if modelID != nil {
+		m = *modelID
+	}
+	a := ""
+	if agentID != nil {
+		a = strings.TrimSpace(*agentID)
+	}
+	if a == "" {
+		a = s.defaultAgentID()
+	}
+	return model.Session{ID: id, Provider: p, Model: m, AgentID: a}, nil
+}
+
 // createSession：省略字段时取 config.json 的 defaults；
 // agent 缺省 → `agents.json` 的 default_agent（**不然新会话永远带着内置 default**，
 // agent 的提示词与世界状态底子对任何新会话都不生效 —— 这条踩过）。
+// `id` 给了就用给的（草稿铸的 —— 预演头上已经是它）：先校形状、再看撞没撞（409）。
 func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	var req CreateSessionReq
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	// 缺省每次现读（`PUT /config/defaults` 改完**当场**生效 —— 启动快照会把它冻住，
-	// 那正是"改完缺省、新会话还是 dummy"那类 bug 的来源）。
-	cfg, err := config.LoadConfig(s.paths)
+	id := ""
+	if req.ID != nil && strings.TrimSpace(*req.ID) != "" {
+		normalized, ok := normalizeUUIDv7(strings.TrimSpace(*req.ID))
+		if !ok {
+			writeError(w, http.StatusBadRequest, "invalid", "id 要是 UUIDv7（草稿铸的那个）")
+			return
+		}
+		id = normalized
+		existing, err := s.store.GetSession(id)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		if existing != nil {
+			writeError(w, http.StatusConflict, "conflict", "这个 id 已经有会话了")
+			return
+		}
+	}
+	// 缺省每次现读（`PUT /config/defaults` 改完**当场生效** —— 启动快照会把它冻住，
+	// 那正是"改完缺省、新会话还是 dummy"那类 bug 的来源）。口径与草稿预演同一处。
+	seed, err := s.newSessionSeed(id, req.Provider, req.Model, req.AgentID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
-	}
-	provider := cfg.Defaults.Provider
-	if req.Provider != nil {
-		provider = *req.Provider
-	}
-	modelID := cfg.Defaults.Model
-	if req.Model != nil {
-		modelID = *req.Model
 	}
 	title := ""
 	if req.Title != nil {
 		title = *req.Title
 	}
-	session, err := s.store.CreateSession(provider, modelID, req.SystemPrompt, title)
+	session, err := s.store.CreateSessionWithID(id, seed.Provider, seed.Model, req.SystemPrompt, title)
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
-	agentID := ""
-	if req.AgentID != nil {
-		agentID = strings.TrimSpace(*req.AgentID)
-	}
-	if agentID == "" {
-		agentID = s.defaultAgentID()
-	}
-	if agentID != session.AgentID {
-		if err := s.store.SetSessionAgent(session.ID, agentID); err != nil {
+	if seed.AgentID != session.AgentID {
+		if err := s.store.SetSessionAgent(session.ID, seed.AgentID); err != nil {
 			writeStoreError(w, err)
 			return
 		}
-		session.AgentID = agentID
+		session.AgentID = seed.AgentID
 	}
 	writeJSON(w, http.StatusCreated, session)
 }
