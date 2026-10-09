@@ -5,7 +5,6 @@ import { ref, reactive, computed, onMounted, nextTick } from "vue";
 import { createApi, advanceCursor } from "./api/client.js";
 import { parseCommand, filterCommands } from "./utils/commands.js";
 import {
-  groupModelsByProvider,
   formatStatusLine,
   statusOverBudget,
   deletionPlanSummary,
@@ -127,17 +126,6 @@ function paintSessionHeader() {
   topbarRef.value?.setSession(sessionInfo);
   document.title = sessionInfo.title ? `${sessionInfo.title} - MicroChat` : "MicroChat";
 }
-async function fillModelSelect() {
-  api.models().then((models) => {
-    const groups = groupModelsByProvider(models).map((g) => ({
-      provider: g.provider,
-      items: g.items.map((m) => ({ value: `${g.provider}|||${m.upstream_id}`, label: m.name ?? m.upstream_id })),
-    }));
-    const cur = sessionInfo.provider && sessionInfo.model ? `${sessionInfo.provider}|||${sessionInfo.model}` : "";
-    topbarRef.value?.setModels(groups, cur);
-    if (!cur && groups[0]?.items[0]) applyModelValue(groups[0].items[0].value);
-  }).catch((err) => toast(`模型列表失败：${err.message}`, "error"));
-}
 async function applyModelValue(value) {
   const sep = value.indexOf("|||");
   if (sep < 0) return;
@@ -169,9 +157,8 @@ async function refreshDisplayMode() {
     vueDisplayMode.value = a?.display_mode === "roleplay" ? "roleplay" : "chat";
   } catch { /* 拿不到就 chat 兜底 */ }
 }
-function applySideToggle(barID, gripID, key, hidden) {
+function applySideToggle(barID, key, hidden) {
   document.getElementById(barID)?.classList.toggle("collapsed", hidden);
-  document.getElementById(gripID)?.classList.toggle("hidden-by-bar", hidden);
 }
 
 // —— 会话 ——
@@ -179,13 +166,13 @@ function toggleLeft() {
   const bar = document.getElementById("sessions-bar");
   const hidden = !bar?.classList.contains("collapsed");
   localStorage.setItem("mc_bar_left_hidden", hidden ? "1" : "0");
-  applySideToggle("sessions-bar", "grip-left", "mc_bar_left_hidden", hidden);
+  applySideToggle("sessions-bar", "mc_bar_left_hidden", hidden);
 }
 function toggleRight() {
   const bar = document.getElementById("payload-bar");
   const hidden = !bar?.classList.contains("collapsed");
   localStorage.setItem("mc_bar_right_hidden", hidden ? "1" : "0");
-  applySideToggle("payload-bar", "grip-right", "mc_bar_right_hidden", hidden);
+  applySideToggle("payload-bar", "mc_bar_right_hidden", hidden);
 }
 async function closeSession(id) {
   const list = await api.listSessions().catch(() => []);
@@ -217,7 +204,6 @@ async function enterSession(id) {
   Object.assign(sessionInfo, sessions.find((s) => s.id === id) ?? {});
   paintSessionHeader();
   refreshDisplayMode();
-  fillModelSelect();
   fillAgentSelect();
   renderSessions(sessions);
   renderHistory(messages);
@@ -230,7 +216,8 @@ async function enterSession(id) {
 }
 async function boot() {
   const health = await api.health();
-  topbarRef.value?.setConn(`已连接 v${health.version ?? "?"}`);
+  connText = `已连接 v${health.version ?? "?"}`;
+  refreshStatusline("idle");
   const sessions = await api.listSessions();
   for (const s of sessions) {
     if (s.messages === 0 && !s.title) await api.deleteSession(s.id).catch((err) => toast(`清空调会话失败：${err.message}`, "error"));
@@ -289,9 +276,10 @@ async function pollTurn(turnID) {
     composerRef.value?.setRunning(false);
   }
 }
+let connText = "未连接";
 function refreshStatusline(phase, elapsedMs) {
   api.context(sessionID).catch(() => null).then((ctx) => {
-    composerRef.value?.setStatus(formatStatusLine({
+    composerRef.value?.setStatus(`${connText}｜` + formatStatusLine({
       ctx, phase, elapsedMs, provider: sessionInfo.provider, model: sessionInfo.model,
     }), statusOverBudget(ctx));
   }).catch((err) => toast(`状态行失败：${err.message}`, "error"));
@@ -323,7 +311,12 @@ async function runCommand(name, args) {
       break;
     }
     case "model": {
-      fillModelSelect();
+      const models = await api.models();
+      overlaysRef.value?.showPicker(
+        "换模型",
+        models.map((m) => ({ label: `${m.provider}/${m.upstream_id}`, value: `${m.provider}|||${m.upstream_id}` })),
+        (it) => applyModelValue(it.value).then(() => refreshStatusline("idle")),
+      );
       break;
     }
     case "providers":
@@ -514,48 +507,12 @@ function onComposerSubmit(text) {
 }
 
 // —— 拖拽调宽 ——
-function wireResizers() {
-  const pairs = [
-    ["grip-left", "sessions-bar", "mc_bar_left", 160, 480],
-    ["grip-right", "payload-bar", "mc_bar_right", 240, 600],
-  ];
-  for (const [gripID, barID, key, min, max] of pairs) {
-    const grip = document.getElementById(gripID);
-    const bar = document.getElementById(barID);
-    if (!grip || !bar) continue;
-    const saved = Number(localStorage.getItem(key));
-    if (Number.isFinite(saved) && saved >= min && saved <= max) bar.style.width = `${saved}px`;
-    grip.addEventListener("pointerdown", (e) => {
-      e.preventDefault();
-      grip.classList.add("active");
-      grip.setPointerCapture(e.pointerId);
-      const startX = e.clientX;
-      const startW = bar.getBoundingClientRect().width;
-      const left = barID === "sessions-bar";
-      const move = (ev) => {
-        const dx = ev.clientX - startX;
-        const w = Math.min(max, Math.max(min, startW + (left ? dx : -dx)));
-        bar.style.width = `${w}px`;
-      };
-      const up = () => {
-        grip.classList.remove("active");
-        grip.removeEventListener("pointermove", move);
-        grip.removeEventListener("pointerup", up);
-        const w = Math.round(bar.getBoundingClientRect().width);
-        localStorage.setItem(key, String(Math.min(max, Math.max(min, w))));
-      };
-      grip.addEventListener("pointermove", move);
-      grip.addEventListener("pointerup", up);
-    });
-  }
-}
-
 onMounted(() => {
-  wireResizers();
-  applySideToggle("sessions-bar", "grip-left", "mc_bar_left_hidden", localStorage.getItem("mc_bar_left_hidden") === "1");
-  applySideToggle("payload-bar", "grip-right", "mc_bar_right_hidden", localStorage.getItem("mc_bar_right_hidden") === "1");
+  applySideToggle("sessions-bar", "mc_bar_left_hidden", localStorage.getItem("mc_bar_left_hidden") === "1");
+  applySideToggle("payload-bar", "mc_bar_right_hidden", localStorage.getItem("mc_bar_right_hidden") === "1");
   boot().catch((err) => {
-    topbarRef.value?.setConn(`连不上（${err.message}；API 地址存在 localStorage.mc_api）`);
+    connText = "未连接";
+    refreshStatusline("idle");
     toast(`启动失败：${err.message}`, "error");
   });
 });
@@ -563,13 +520,6 @@ onMounted(() => {
 
 <template>
   <div id="app">
-    <TopBar
-      ref="topbarRef"
-      @toggle-left="toggleLeft"
-      @toggle-right="toggleRight"
-      @select-model="(v) => applyModelValue(v).catch((err) => toast(`换模型失败：${err.message}`, 'error'))"
-      @select-agent="(id) => applyAgentValue(id).catch((err) => toast(`换 Agent 失败：${err.message}`, 'error'))"
-    />
     <div id="columns">
       <SessionBar
         ref="sessionbarRef"
@@ -579,8 +529,13 @@ onMounted(() => {
         @new="newSession"
         @open-settings="() => { settingsOpen = true; }"
       />
-      <div id="grip-left" class="grip" title="拖拽调左栏宽"></div>
       <section id="chat-col">
+    <TopBar
+      ref="topbarRef"
+      @toggle-left="toggleLeft"
+      @toggle-right="toggleRight"
+      @select-agent="(id) => applyAgentValue(id).catch((err) => toast(`换 Agent 失败：${err.message}`, 'error'))"
+    />
         <main id="messages-vue">
           <MessageBubble
             v-for="m in vueMessages"
@@ -599,16 +554,15 @@ onMounted(() => {
           />
         </main>
         <Overlays ref="overlaysRef" @run-command="(n) => runCommand(n, []).catch((err) => toast(`命令失败：${err.message}`, 'error'))" @pick="(a, it) => Promise.resolve(a(it)).catch((err) => toast(`操作失败：${err.message}`, 'error'))" />
-        <Composer
-          ref="composerRef"
-          @input-text="onComposerInput"
-          @keydown="onComposerKeydown"
-          @submit="onComposerSubmit"
-          @stop="() => api.stop(sessionID).catch((err) => toast(`停止失败：${err.message}`, 'error'))"
-          @menu="() => overlaysRef?.showPalette(filterCommands(''))"
-        />
+    <Composer
+      ref="composerRef"
+      @input-text="onComposerInput"
+      @keydown="onComposerKeydown"
+      @submit="onComposerSubmit"
+      @stop="() => api.stop(sessionID).catch((err) => toast(`停止失败：${err.message}`, 'error'))"
+      @menu="() => overlaysRef?.showPalette(filterCommands(''))"
+    />
       </section>
-      <div id="grip-right" class="grip" title="拖拽调右栏宽"></div>
       <PayloadBar ref="payloadbarRef" />
     </div>
     <Toast ref="toastRef" />

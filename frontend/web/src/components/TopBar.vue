@@ -1,33 +1,24 @@
 <script setup>
-// 顶栏：左显隐会话栏 + 连接态 + 会话名 + 模型/agent 下拉 + 右显隐载荷栏。
-// 挂载后接管 header（id 照旧：toggle-left/conn/session/session-model/session-agent/toggle-right）。
+// 顶栏：左显隐会话栏 + Agent 下拉 + 右显隐载荷栏（连接/模型/会话名在左栏与状态行，不在这里）。
+// 挂载后接管 header（id 照旧：toggle-left/session-agent/toggle-right）。
 // 数据经事件与 main.js 互通（selectModel/selectAgent/patch 结果回填由父做）。
-import { ref, computed } from "vue";
+import { ref } from "vue";
 import { ICONS } from "./icons.js";
 
-const emit = defineEmits(["toggle-left", "toggle-right", "select-model", "select-agent"]);
+const emit = defineEmits(["toggle-left", "toggle-right", "select-agent"]);
 
-const conn = ref("未连接");
-const title = ref("");
-const modelGroups = ref([]); // [{provider, items:[{value,label}]}]
 const agents = ref([]); // [{id,label}]
-const curModel = ref("");
 const curAgent = ref("");
 
 const leftSvg = ICONS.panelLeft;
 const rightSvg = ICONS.panelRight;
 
-function setConn(t) { conn.value = t; }
 function setSession(info) {
-  const who = [info.provider, info.model].filter(Boolean).join("/") || "还没选模型";
-  title.value = `${info.title || "新会话"} · ${who} · ${info.agent_id ?? "?"}`;
-  if (info.provider && info.model) curModel.value = `${info.provider}|||${info.model}`;
   if (info.agent_id) curAgent.value = info.agent_id;
 }
-function setModels(groups, cur) { modelGroups.value = groups; if (cur !== undefined) curModel.value = cur; }
 function setAgents(list, cur) { agents.value = list; if (cur !== undefined) curAgent.value = cur; }
 
-defineExpose({ setConn, setSession, setModels, setAgents });
+defineExpose({ setSession, setAgents });
 </script>
 
 <template>
@@ -41,19 +32,6 @@ defineExpose({ setConn, setSession, setModels, setAgents });
       @click="$emit('toggle-left')"
       v-html="leftSvg"
     ></button>
-    <span id="conn">{{ conn }}</span>
-    <span id="session">{{ title }}</span>
-    <select
-      id="session-model"
-      class="pill-select"
-      title="改当前会话的模型"
-      :value="curModel"
-      @change="$emit('select-model', $event.target.value)"
-    >
-      <optgroup v-for="g in modelGroups" :key="g.provider" :label="g.provider">
-        <option v-for="m in g.items" :key="m.value" :value="m.value">{{ m.label }}</option>
-      </optgroup>
-    </select>
     <select
       id="session-agent"
       class="pill-select"

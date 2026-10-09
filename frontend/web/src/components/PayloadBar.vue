@@ -8,7 +8,7 @@ const wire = ref(null);
 const tables = ref({});
 
 const payloadText = computed(() =>
-  wire.value ? JSON.stringify(wire.value, null, 2) : "(还没有预演：输入框打字即问 (c))",
+  wire.value ? JSON.stringify(wire.value, null, 2) : "(空会话：在有消息的会话里打字即预演真请求)",
 );
 const tableNames = computed(() => Object.keys(tables.value ?? {}).sort());
 
@@ -26,7 +26,7 @@ defineExpose({ setWire, setTables });
     </div>
     <pre v-show="tab === 'payload'" id="outgoing-raw">{{ payloadText }}</pre>
     <div v-show="tab === 'state'" id="state-view">
-      <div v-if="!tableNames.length" class="empty">还没有状态</div>
+      <div v-if="!tableNames.length" class="empty">（发一句话后这里显示世界状态）</div>
       <section v-for="name in tableNames" :key="name" class="state-table">
         <h4>{{ name }}</h4>
         <div v-for="(v, k) in tables[name]" :key="k" class="state-row">
