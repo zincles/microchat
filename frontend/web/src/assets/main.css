@@ -68,6 +68,24 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 #sessions-bar { width: 260px; flex: none; align-self: stretch; max-height: 100%; background: var(--tg-secondary-bg); border-radius: 0; display: flex; flex-direction: column; overflow: hidden; min-height: 0; box-sizing: border-box; border-right: 1px solid var(--line); }
 #payload-bar { width: 340px; flex: none; align-self: stretch; min-height: 0; max-height: 100%; overflow-y: auto; background: var(--tg-secondary-bg); border-radius: 0; border-left: 1px solid var(--line); padding: 0.6em 0.8em; font-size: 0.85em; color: var(--tg-hint); box-sizing: border-box; }
 #outgoing-raw { white-space: pre; overflow-x: auto; margin: 0; max-width: 100%; }
+/* 压缩树（文件管理器那种看体积的树）：缩进行 + 行底容量条（du 味）。 */
+#compact-tree { font-size: 0.92em; }
+/* 压缩面板的"块数 + 压缩"一行。 */
+.ctree-actions { display: flex; gap: 0.4em; margin: 0.2em 0 0.6em; }
+.ctree-actions input { flex: 1; min-width: 0; }
+.ctree-actions button { flex: none; }
+.ctree-total { color: var(--tg-text); margin: 0.2em 0 0.5em; }
+.ctree-legend { color: var(--tg-hint); font-size: 0.85em; margin-top: 0.6em; }
+.ctree-row { position: relative; display: flex; align-items: center; gap: 0.25em; padding: 0.22em 0.2em; border-radius: 6px; overflow: hidden; }
+.ctree-row:hover { background: rgb(255 255 255 / 6%); }
+.ctree-bar { position: absolute; left: 0; top: 0; bottom: 0; background: rgb(255 255 255 / 7%); border-radius: 6px; pointer-events: none; }
+.ctree-row.sum .ctree-bar { background: color-mix(in srgb, var(--tg-link) 22%, transparent); }
+.ctree-row.used .ctree-label { color: var(--tg-link); }
+.ctree-tw { flex: none; width: 1.2em; background: none; border: none; color: var(--tg-hint); cursor: pointer; padding: 0; font-size: 0.9em; }
+.ctree-label { position: relative; flex: 1; color: var(--tg-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ctree-tag { flex: none; font-style: normal; font-size: 0.78em; color: var(--tg-link); border: 1px solid currentColor; border-radius: 4px; padding: 0 0.25em; }
+.ctree-tag.dirty { color: var(--tg-destructive); }
+.ctree-size { position: relative; flex: none; color: var(--tg-hint); font-size: 0.85em; }
 #chat-col { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; margin: 0 auto; width: 100%; max-width: 100%; position: relative; background: transparent; border-radius: 0; overflow: hidden; padding: 0.6em 0.6em 0; }
 #chat-col > * { position: relative; z-index: 1; max-width: 760px; margin-left: auto; margin-right: auto; width: 100%; box-sizing: border-box; }
 /* 消息列：flex:1 撑满 + 两侧 56px 头像位 + 上下给浮动输入栏留位；底部留空让尾条操作行不被输入框盖住。 */

@@ -4,6 +4,7 @@ import { createApi } from "../src/api/client.js";
 import { parseCommand, filterCommands } from "../src/utils/commands.js";
 import { advanceCursor } from "../src/api/client.js";
 import { uuidv7 } from "../src/utils/ids.js";
+import { buildCompactTree, treeTotals } from "../src/utils/tree.js";
 import {
   formatThinkLabel,
   formatStatusLine,
@@ -130,6 +131,53 @@ test("draftOutgoing 请求形状：POST /outgoing，体 = id + 缺省三件 + co
   assert.equal(seen[0].url, "http://x/api/v1/outgoing");
   assert.equal(seen[0].opts.method, "POST");
   assert.deepEqual(JSON.parse(seen[0].opts.body), { id, provider: "dummy", model: "dummy", agent_id: "default", content: "hi" });
+});
+
+test("压缩树：区间成目录、嵌套成子目录、used 标出装配真跳的那层", () => {
+  // 库内真形状：消息的 summary_id 指**直接**盖它的那个（合并后仍指孩子）；合并回填孩子的 parent。
+  const msgs = [
+    { id: "m1", idx: 1, role: "user", content: "a".repeat(130), summary_id: "s1" },
+    { id: "m2", idx: 2, role: "assistant", content: "b".repeat(130), summary_id: "s1" },
+    { id: "m3", idx: 3, role: "user", content: "c".repeat(65), summary_id: "s2" },
+    { id: "m4", idx: 4, role: "assistant", content: "d".repeat(65), summary_id: "s2" },
+    { id: "m5", idx: 5, role: "user", content: "e".repeat(26) },
+  ];
+  const s1 = { id: "s1", parent_summary_id: "s3", source_kind: "message", begin_message_id: "m1", end_message_id: "m2", blocks: 1, tokens: 40, dirty: false };
+  const s2 = { id: "s2", parent_summary_id: "s3", source_kind: "message", begin_message_id: "m3", end_message_id: "m4", blocks: 1, tokens: 30, dirty: false };
+  const s3 = { id: "s3", parent_summary_id: null, source_kind: "summary", begin_message_id: "m1", end_message_id: "m4", blocks: 2, tokens: 50, dirty: false };
+  // 只有 s3（最粗同左端）该被标 used；s1/s2 是它孩子
+  const tree = buildCompactTree(msgs, [s1, s2, s3]);
+  assert.equal(tree.length, 2, "顶层 = s3 + 尾条原文");
+  const [top, leaf] = tree;
+  assert.equal(top.kind, "summary");
+  assert.equal(top.id, "s3");
+  assert.equal(top.used, true, "装配跳到最粗同左端祖先 s3");
+  assert.deepEqual(top.children.map((c) => c.id), ["s1", "s2"]);
+  assert.deepEqual(top.children.map((c) => c.used), [false, false]);
+  assert.equal(top.children[0].children.length, 2, "消息级摘要的孩子 = 区间里的消息");
+  assert.equal(leaf.kind, "message");
+  assert.equal(leaf.idx, 5);
+  // 体积：rawChars 是子树和；tokens 各报各的（≈ 归一：130 字 → ceil(130/1.3)=100）
+  assert.equal(top.rawChars, 130 + 130 + 65 + 65);
+  assert.equal(top.children[0].rawChars, 260);
+  assert.equal(top.children[0].children[0].tokens, 100);
+  const totals = treeTotals(tree);
+  assert.deepEqual(totals, { rawChars: 130 + 130 + 65 + 65 + 26, sent: 50 + 20 });
+});
+
+test("压缩树：左端对不上就不算 used（照原文发那条）", () => {
+  const msgs = [
+    { id: "m1", idx: 1, role: "user", content: "x" },
+    { id: "m2", idx: 2, role: "assistant", content: "y" },
+  ];
+  // m1 身上挂着 s1，但 s1 的区间不从 m1 起 ⇒ 不跳，m1 照原文
+  const s1 = { id: "s1", parent_summary_id: null, source_kind: "message", begin_message_id: "m2", end_message_id: "m2", blocks: 1, tokens: 5, dirty: true };
+  const tree = buildCompactTree(msgs.map((m, i) => (i === 0 ? { ...m, summary_id: "s1" } : m)), [s1]);
+  assert.equal(tree.length, 2);
+  assert.equal(tree[0].kind, "message", "左端对不上 → 原文");
+  assert.equal(tree[1].kind, "summary");
+  assert.equal(tree[1].used, false);
+  assert.equal(tree[1].dirty, true);
 });
 
 test("outgoingPreview 空字问历史：空/空白也发包，与空发 resend 同段", async () => {

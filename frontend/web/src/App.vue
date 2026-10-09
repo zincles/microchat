@@ -5,6 +5,7 @@ import { ref, reactive, computed, onMounted, onUnmounted } from "vue";
 import { createApi, advanceCursor } from "./api/client.js";
 import { parseCommand, filterCommands } from "./utils/commands.js";
 import { uuidv7 } from "./utils/ids.js";
+import { buildCompactTree } from "./utils/tree.js";
 import {
   formatStatusLine,
   statusOverBudget,
@@ -72,6 +73,7 @@ const vueMessages = ref([]);
 const vueStream = ref({ id: null, text: "", reasoning: "" });
 const vueDisplayMode = ref("chat");
 const settingsOpen = ref(false);
+const compactDefault = ref(null); // chat.compact_blocks（压缩面板输入框的占位提示）
 const sessionSettingsId = ref(null);
 
 // —— 消息列 ——
@@ -110,7 +112,10 @@ async function editMessageFlow(messageId, kind) {
   if (next === null) return;
   await editMessageSave(messageId, kind, next);
 }
+// lastMessageList：最近一次渲染用的原始消息（派生物用 —— 压缩树拿它当底）。
+let lastMessageList = [];
 function renderHistory(messages) {
+  lastMessageList = messages ?? [];
   vueMessages.value = [];
   vueStream.value = { id: null, text: "", reasoning: "" };
   for (const m of messages) {
@@ -125,6 +130,15 @@ function renderHistory(messages) {
     });
   }
   scrollBottom();
+  refreshTree();
+}
+// refreshTree：压缩树 = 现取摘要 + 本地建树（两个 GET 就够，后端零改动）。
+async function refreshTree() {
+  if (!sessionID) { payloadbarRef.value?.setTree(null); return; }
+  try {
+    const sums = await api.listSummaries(sessionID);
+    payloadbarRef.value?.setTree(buildCompactTree(lastMessageList, sums));
+  } catch { payloadbarRef.value?.setTree(null); }
 }
 const lastMsgId = computed(() => [...vueMessages.value].reverse().find((m) => m.messageId)?.messageId ?? null);
 function onBubbleSave(mid, kind, value) {
@@ -249,6 +263,40 @@ async function switchReroll(sid, idx) {
   refreshStateView(sid);
   refreshStatusline("idle");
   await refreshReroll();
+}
+
+// compactNow：受理一次压缩（命令面板与右栏压缩面板共用一条路）；`blocks` 空 = 用配置默认。
+async function compactNow(blocks) {
+  const sid = sessionID;
+  if (!sid) { toast("先发一句话：草稿里还没有会话可压"); return; }
+  try {
+    const accepted = await api.compact(sid, blocks);
+    toast(`压缩已受理${blocks ? `（${blocks} 块）` : ""}`, "ok");
+    pollCompact(sid, accepted?.at_ms).catch(() => {});
+  } catch (err) {
+    toast(`压缩失败：${err.message}`, "error");
+  }
+}
+
+// pollCompact：盯一次压缩到收尾（拿受理时的 `at_ms` 对上这一发 —— 状态位是**持久**的，
+// 不认准 at_ms 会被上一次的旧结局骗），完了刷新消息列（装配变短）与压缩树。
+async function pollCompact(sid, atMS) {
+  for (let i = 0; i < 300; i++) {
+    await new Promise((r) => setTimeout(r, 700));
+    if (sessionID !== sid) return;
+    const st = await api.status(sid).catch(() => null);
+    const c = st?.compact;
+    if (!c || c.at_ms !== atMS || c.state === "running") continue;
+    if (c.state === "error") {
+      toast(`压缩失败：${c.error || "未知"}`, "error");
+      return;
+    }
+    const span = c.from_idx ? `第 ${c.from_idx}–${c.to_idx} 条` : "";
+    toast(`压缩完成${span ? `：${span}` : ""}${c.merged ? "（合并）" : ""}`, "ok");
+    renderHistory(await api.listMessages(sid));
+    refreshStateView(sid);
+    return;
+  }
 }
 
 // —— 顶栏 ——
@@ -383,6 +431,7 @@ async function startDraft() {
   refreshStatusline("idle");
   refreshSessionsBar();
   refreshReroll();
+  refreshTree();
   refreshPreview(); // 输入框里若还留着字（＋ 时不清输入框），预演立刻跟上
 }
 function newSession() {
@@ -422,6 +471,7 @@ async function enterSession(id) {
 async function boot() {
   const health = await api.health();
   connText = `已连接 v${health.version ?? "?"}`;
+  api.getChat().then((c) => { compactDefault.value = c?.compact_blocks ?? null; }).catch(() => {});
   // 不再"删空会话 + 预建真会话"：web 走草稿态，库里不产生空行（旧编排的两步一起拿掉）。
   await startDraft();
 }
@@ -546,8 +596,7 @@ async function runCommand(name, args) {
     }
     case "compact": {
       const n = args[0] ? Number(args[0]) : 0;
-      await api.compact(sessionID, Number.isFinite(n) && n > 0 ? n : undefined);
-      toast(`压缩已受理${n ? `（${n} 块）` : ""}`, "ok");
+      await compactNow(Number.isFinite(n) && n > 0 ? n : undefined);
       break;
     }
     case "reroll": {
@@ -870,7 +919,7 @@ onUnmounted(() => {
       @menu="() => overlaysRef?.showPalette(filterCommands(''))"
     />
       </section>
-      <PayloadBar v-show="!settingsOpen" ref="payloadbarRef" />
+      <PayloadBar v-show="!settingsOpen" ref="payloadbarRef" :default-blocks="compactDefault" @compact="(n) => compactNow(n ?? undefined)" />
       <SettingsModal
         v-if="settingsOpen"
         :ask="askConfirm"

@@ -173,8 +173,9 @@ type ChatConfig struct {
 	ReplayReasoning *bool `json:"replay_reasoning,omitempty"`
 }
 
-// DefaultCompactBlocks：`compact_blocks` 的缺省（照 `AGENTS.md` 的参数那一节）。
-const DefaultCompactBlocks = 10
+// DefaultCompactBlocks：`compact_blocks` 的缺省（2026-10-10 用户定：5 块 —— 10 太大，
+// "抬头"那条路要凑满 N 条同层相邻顶层摘要，10 常常凑不齐直接报无可压缩）。
+const DefaultCompactBlocks = 5
 
 func DefaultChat() ChatConfig {
 	return ChatConfig{TitleChars: 32, ModelContextTokens: 131072, CompactBlocks: DefaultCompactBlocks}
