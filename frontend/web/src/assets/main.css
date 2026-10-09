@@ -19,15 +19,12 @@ select { appearance: none; -webkit-appearance: none; padding-right: 1.8em;
   background-size: 0.35em 0.35em; background-repeat: no-repeat; cursor: pointer; }
 textarea { resize: vertical; }
 body { margin: 0; background: var(--tg-bg); color: var(--tg-text); font: 15px/1.65 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif; }
-/* doodle 全页底：花纹 = 用 doodle.svg 当**遮罩**（mask），颜色由 --tg-pattern 供给 ——
- * 不能再用 `background: url(svg)` + `color:`：SVG 作图片/背景时 currentColor 解析为**黑**
- * （实测 canvas 取像 [0,0,0]），各主题的 --tg-pattern 全是死值。mask 之后颜色才跟主题走；
- * 主题把 --tg-pattern 设成 transparent 即"不铺花纹"（DeepSeek 那套就是纯平底）。 */
+/* 自定义背景图（界面 tab 设：URL 或上传的图片）：整页 fixed 图层，垫在壳（#app，z-index 1）下面 ——
+ * 各面板自己有底色，图只从透明处（消息区）透出来。--mc-bg-image 由 utils/background.js 挂/摘；
+ * 没设 = none ⇒ 纯平底（2026-10-10 砍掉 doodle 花纹：机制换成这张背景图的接口，美术不再维护）。 */
 body::before { content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none;
-  background: var(--tg-pattern, #1a2635);
-  -webkit-mask-image: url("./doodle.svg"); mask-image: url("./doodle.svg");
-  -webkit-mask-repeat: repeat; mask-repeat: repeat;
-  -webkit-mask-size: 360px; mask-size: 360px; }
+  background-image: var(--mc-bg-image, none);
+  background-size: cover; background-position: center; background-repeat: no-repeat; }
 #app { display: flex; flex-direction: column; height: 100vh; gap: 0; padding: 0; box-sizing: border-box; position: relative; z-index: 1; }
 /* 顶栏：中间列里的悬浮圆角卡（上下留空，不贴边）。三段 = 开关 | 会话抬头（伸缩）| 控制。 */
 header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; color: var(--tg-hint); border-radius: var(--r-shell); background: var(--tg-secondary-bg); }

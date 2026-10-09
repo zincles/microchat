@@ -30,10 +30,9 @@
 10. ~~`TERM=dumb` 时满线退回 ASCII~~ ✓ **已完成**（2026-09-30）—— 满线 `-`、重摇位次标记 `< 2/3 >`；
    与颜色降级分开判（`TERM=dumb` / 非 TTY 才退字符集，`NO_COLOR` 只关颜色）。
 11. ~~`Task` 上加 `Ability` 字段~~ ✗ **已作废**（2026-09-30）—— `Task.Kind` 与能力 id 合层后该字段冗余，已删 ✓。
-12. **背景 doodle**（2026-10-10 记）—— 机制已修 ✓（`main.css` 的 `body::before` 改 **mask 版**：颜色真跟
-   `--tg-pattern` 走；之前 `background: url(svg)` + `currentColor` 是死路，实测解析为纯黑）。
-   剩**美术与浓淡**：要么重画一版更淡的花纹，要么逐主题调 `--tg-pattern` / 关掉（`deepseek` 那套就是
-   `transparent` = 纯平底 —— DS 的样子）。
+12. ~~**背景 doodle**~~ ✓ **已砍**（2026-10-10 用户定：花纹不要了）—— `doodle.svg` 与 `--tg-pattern`
+   整套删净，`body::before` 改挂**自定义背景图**：设置 → 界面，URL（浏览器直接加载）或上传
+   （本地压过再存 localStorage；没设 = 纯平底）。美术不再维护，缺图随时可从 git 历史捡回来。
 
 ## 已完成：金字塔压缩（多层摘要）✓ —— 2026-10-01 落地
 

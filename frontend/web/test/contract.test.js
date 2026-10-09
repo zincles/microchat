@@ -258,3 +258,44 @@ test("importSt 端点形状：POST /sessions/import-st 原文体 + ?title=", asy
   await api.importSt('{"mes":"hi"}\n', "ST");
   assert.deepEqual(seen, ["http://x/api/v1/sessions/import-st?title=ST", "POST", "text/plain", '{"mes":"hi"}\n']);
 });
+
+
+// —— 背景图（utils/background.js）：存储层的健壮性 —— 坏值当没设、往返一字不差。
+import { loadBackground, saveBackground, describeBackground } from "../src/utils/background.js";
+
+function stubStorage() {
+  const m = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (m.has(k) ? m.get(k) : null),
+    setItem: (k, v) => m.set(k, String(v)),
+    removeItem: (k) => m.delete(k),
+  };
+}
+
+test("背景图存储：坏 JSON / 缺字段 / 空串都当没设", () => {
+  stubStorage();
+  assert.equal(loadBackground(), null);
+  localStorage.setItem("mc_bg", "{oops");
+  assert.equal(loadBackground(), null);
+  localStorage.setItem("mc_bg", JSON.stringify({ kind: "nope", value: "x" }));
+  assert.equal(loadBackground(), null);
+  localStorage.setItem("mc_bg", JSON.stringify({ kind: "url", value: "" }));
+  assert.equal(loadBackground(), null);
+});
+
+test("背景图存储：save → load 往返；清除后回 null", () => {
+  stubStorage();
+  const bg = { kind: "url", value: "https://example.com/a.png" };
+  saveBackground(bg);
+  assert.deepEqual(loadBackground(), bg);
+  saveBackground(null);
+  assert.equal(loadBackground(), null);
+});
+
+test("背景图标注：未设 / URL 截断 / 上传带尺寸", () => {
+  assert.equal(describeBackground(null), "未设（纯平底）");
+  const long = "https://example.com/" + "x".repeat(80);
+  assert.ok(describeBackground({ kind: "url", value: long }).includes("…"));
+  const txt = describeBackground({ kind: "file", value: "d".repeat(1365), width: 1920, height: 1080 });
+  assert.ok(txt.includes("1920×1080") && txt.includes("1 KB"), txt);
+});

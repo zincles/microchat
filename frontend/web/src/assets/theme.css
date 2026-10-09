@@ -28,7 +28,6 @@
   /* —— 浮层提亮（TG 味 = 底色微差分层，不用边框切）：modal/菜单比底栏再亮约 4%。
    * 深色取色：#17212b → #1e2c3a（TG 客户端弹窗底就是这么亮一档）；浅色：#f1f1f1 → #ffffff 纯白卡。 */
   --tg-float: #1e2c3a;
-  --tg-pattern: #24344a;
   /* —— 圆角三档（改圆角只改这三处：外层悬浮卡 / 气泡与组卡 / 按钮与小卡） —— */
   --r-shell: 14px;
   --r-card: 12px;
@@ -49,7 +48,6 @@
     --tg-button-text: #ffffff;
     --tg-destructive: #cc2929;
     --tg-float: #ffffff;
-    --tg-pattern: #e8e8e8;
   }
 }
 
@@ -75,32 +73,31 @@
  * bg-base/layer-1/layer-2、label-primary/tertiary、brand-primary #5686fe，脚本抽自其 main.css） ——
  * 映射：bg=bg-base / secondary=layer-1（侧栏、顶栏卡、输入框）/ text=label-primary /
  * hint=label-tertiary / link=brand-text / button=brand-primary / float=layer-2（浮层）。
- * `--tg-pattern: transparent` = DS 是纯平底，不铺花纹（花纹机制见 main.css 的 body::before）。
  * 注：只对齐**配色**；气泡仍是 TG 形状（DS 的用户句是灰气泡、AI 无气泡 —— 那是另一笔）。 */
 html[data-theme="deepseek"] {
   --tg-bg: #151517; --tg-secondary-bg: #232324; --tg-text: #f9fafb; --tg-hint: #adb2b8;
   --tg-link: #679efe; --tg-button: #5686fe; --tg-button-text: #ffffff;
-  --tg-destructive: #f25a5a; --tg-float: #2c2c2e; --tg-pattern: transparent; color-scheme: dark;
+  --tg-destructive: #f25a5a; --tg-float: #2c2c2e; color-scheme: dark;
 }
 html[data-theme="midnight"] {
   --tg-bg: #0e1621; --tg-secondary-bg: #17212b; --tg-text: #f5f5f5; --tg-hint: #708499;
   --tg-link: #62b0e8; --tg-button: #5288c1; --tg-button-text: #ffffff;
-  --tg-destructive: #e53935; --tg-float: #1e2c3a; --tg-pattern: #24344a; color-scheme: dark;
+  --tg-destructive: #e53935; --tg-float: #1e2c3a; color-scheme: dark;
 }
 html[data-theme="paper"] {
   --tg-bg: #ffffff; --tg-secondary-bg: #f1f1f1; --tg-text: #222222; --tg-hint: #999999;
   --tg-link: #2481cc; --tg-button: #2481cc; --tg-button-text: #ffffff;
-  --tg-destructive: #cc2929; --tg-float: #ffffff; --tg-pattern: #e8e8e8; color-scheme: light;
+  --tg-destructive: #cc2929; --tg-float: #ffffff; color-scheme: light;
 }
 html[data-theme="wine"] {
   --tg-bg: #1f1215; --tg-secondary-bg: #2b1a1e; --tg-text: #f5eef0; --tg-hint: #a08a90;
   --tg-link: #e08aa0; --tg-button: #a0405c; --tg-button-text: #ffffff;
-  --tg-destructive: #e5534b; --tg-float: #38222a; --tg-pattern: #2e1c21; color-scheme: dark;
+  --tg-destructive: #e5534b; --tg-float: #38222a; color-scheme: dark;
 }
 html[data-theme="forest"] {
   --tg-bg: #101a14; --tg-secondary-bg: #182420; --tg-text: #eef5ef; --tg-hint: #7d9484;
   --tg-link: #6fc287; --tg-button: #2f7d4f; --tg-button-text: #ffffff;
-  --tg-destructive: #e5534b; --tg-float: #20302a; --tg-pattern: #1a2a21; color-scheme: dark;
+  --tg-destructive: #e5534b; --tg-float: #20302a; color-scheme: dark;
 }
 /* —— Breeze / Breeze Dark（KDE 经典配色，色值取自 /usr/share/color-schemes/Breeze{Light,Dark}.colors） ——
  * 映射：bg=View.BackgroundNormal / secondary=Window.BackgroundNormal / text=View.ForegroundNormal /
@@ -109,10 +106,10 @@ html[data-theme="forest"] {
 html[data-theme="breeze"] {
   --tg-bg: #ffffff; --tg-secondary-bg: #eff0f1; --tg-text: #232629; --tg-hint: #707d8a;
   --tg-link: #2980b9; --tg-button: #3daee9; --tg-button-text: #ffffff;
-  --tg-destructive: #da4453; --tg-float: #f7f7f7; --tg-pattern: #e3e5e7; color-scheme: light;
+  --tg-destructive: #da4453; --tg-float: #f7f7f7; color-scheme: light;
 }
 html[data-theme="breeze-dark"] {
   --tg-bg: #141618; --tg-secondary-bg: #202326; --tg-text: #fcfcfc; --tg-hint: #a1a9b1;
   --tg-link: #1d99f3; --tg-button: #3daee9; --tg-button-text: #fcfcfc;
-  --tg-destructive: #da4453; --tg-float: #202326; --tg-pattern: #202427; color-scheme: dark;
+  --tg-destructive: #da4453; --tg-float: #202326; color-scheme: dark;
 }

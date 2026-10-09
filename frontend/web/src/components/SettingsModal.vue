@@ -13,6 +13,7 @@ import { createApi } from "../api/client.js";
 import {
   SETTINGS_TABS,
 } from "../utils/format.js";
+import { loadBackground, saveBackground, applyBackground, describeBackground, fileToBackground } from "../utils/background.js";
 
 const emit = defineEmits(["close", "toggle-left", "sessions-changed", "goto-session"]);
 // ask：全局确认框（App 的 Overlays.confirmAsk）—— 设置里的删除（会话/渠道/Agent）也必须先摊开再点头。
@@ -47,8 +48,9 @@ const chat = ref({ title_chars: "", model_context_tokens: "", compact_blocks: ""
 const chatStatus = ref("");
 const defaults = ref({ provider: "", model: "", agent: "" });
 const defStatus = ref("");
-const cli = ref({ api: API, token: "", preview: true, theme: "", send: "button" });
+const cli = ref({ api: API, token: "", preview: true, theme: "", send: "button", bgUrl: "" });
 const uiStatus = ref("");
+const bgStatus = ref("");
 const netStatus = ref("");
 const agents = ref([]);
 const curDefault = ref("");
@@ -125,6 +127,7 @@ const sessions = ref([]);
 const sessionMgrStatus = ref("");
 
 function loadClient() {
+  const bg = loadBackground();
   cli.value = {
     api: localStorage.getItem("mc_api") || "http://127.0.0.1:8787/api/v1",
     token: localStorage.getItem("mc_token") || "",
@@ -132,7 +135,44 @@ function loadClient() {
     // `??`：没设过(null)=默认 deepseek；设过空串("")=跟随系统 —— 不能用 `||`（空串会被吞掉）。
     theme: localStorage.getItem("mc_theme") ?? "deepseek",
     send: localStorage.getItem("mc_send") || "enter",
+    bgUrl: bg?.kind === "url" ? bg.value : "",
   };
+  bgStatus.value = describeBackground(bg);
+}
+// 背景图（外观）：URL / 上传二选一，**即时生效**（不吃 saveUi 的保存键 —— 上传是异步的，攒着容易对不起账）。
+function applyBgUrl() {
+  const u = cli.value.bgUrl.trim();
+  if (!u) { bgStatus.value = "先填图片地址（或改用上传）"; return; }
+  saveBackground({ kind: "url", value: u });
+  applyBackground();
+  bgStatus.value = describeBackground(loadBackground());
+}
+async function pickBgFile(event) {
+  const f = event.target.files?.[0];
+  if (!f) return;
+  bgStatus.value = "读取图片…";
+  try {
+    let bg = await fileToBackground(f);
+    try {
+      saveBackground(bg);
+    } catch {
+      // 配额满：降档（长边 1280 / 质量 0.75）重压一次，再满就报错。
+      bgStatus.value = "太大存不下，压小重试…";
+      bg = await fileToBackground(f, { maxEdge: 1280, quality: 0.75 });
+      saveBackground(bg);
+    }
+    applyBackground();
+    bgStatus.value = describeBackground(bg);
+  } catch (e) {
+    bgStatus.value = `上传失败：${e.message}`;
+  }
+  event.target.value = "";
+}
+function clearBg() {
+  saveBackground(null);
+  applyBackground();
+  cli.value.bgUrl = "";
+  bgStatus.value = describeBackground(null);
 }
 // 连接（net）：地址与口令 —— 刷新页面才生效。
 function saveNet() {
@@ -280,6 +320,15 @@ function onKey(e) {
             <option value="paper">日间白</option>
             <option value="">跟随系统</option>
           </select></label>
+          <label class="field"><span>背景图 URL</span><input v-model="cli.bgUrl" placeholder="https://…（浏览器直接加载，跨域无妨）" /></label>
+          <div class="row">
+            <button type="button" class="primary" @click="applyBgUrl">应用 URL</button>
+            <label class="link-btn" style="cursor: pointer">上传图片…
+              <input type="file" accept="image/*" hidden @change="pickBgFile" />
+            </label>
+            <button type="button" class="link-btn danger" @click="clearBg">清除</button>
+          </div>
+          <div class="row"><span class="status">当前背景：{{ bgStatus }}</span></div>
           <h3>输入</h3>
           <label class="field"><span>发送键</span><select v-model="cli.send">
             <option value="enter">回车发送（Shift/Ctrl/Alt+回车换行）</option>

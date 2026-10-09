@@ -6,6 +6,7 @@ import { createApi, advanceCursor } from "./api/client.js";
 import { parseCommand, filterCommands } from "./utils/commands.js";
 import { uuidv7 } from "./utils/ids.js";
 import { buildCompactTree } from "./utils/tree.js";
+import { applyBackground } from "./utils/background.js";
 import {
   formatStatusLine,
   statusOverBudget,
@@ -36,6 +37,7 @@ function applyTheme() {
   else document.documentElement.removeAttribute("data-theme");
 }
 applyTheme();
+applyBackground();
 
 // —— 组件 refs（直调实例方法，替代桥） ——
 const toastRef = ref(null);
