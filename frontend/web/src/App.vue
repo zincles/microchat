@@ -7,6 +7,7 @@ import { parseCommand, filterCommands } from "./utils/commands.js";
 import {
   formatStatusLine,
   statusOverBudget,
+  groupModelsByProvider,
   deletionPlanSummary,
 } from "./utils/format.js";
 import TopBar from "./components/TopBar.vue";
@@ -126,6 +127,16 @@ function paintSessionHeader() {
   topbarRef.value?.setSession(sessionInfo);
   document.title = sessionInfo.title ? `${sessionInfo.title} - MicroChat` : "MicroChat";
 }
+async function fillModelSelect() {
+  api.models().then((models) => {
+    const groups = groupModelsByProvider(models).map((g) => ({
+      provider: g.provider,
+      items: g.items.map((m) => ({ value: `${g.provider}|||${m.upstream_id}`, label: m.name ?? m.upstream_id })),
+    }));
+    const cur = sessionInfo.provider && sessionInfo.model ? `${sessionInfo.provider}|||${sessionInfo.model}` : "";
+    topbarRef.value?.setModels(groups, cur);
+  }).catch((err) => toast(`模型列表失败：${err.message}`, "error"));
+}
 async function applyModelValue(value) {
   const sep = value.indexOf("|||");
   if (sep < 0) return;
@@ -204,6 +215,7 @@ async function enterSession(id) {
   Object.assign(sessionInfo, sessions.find((s) => s.id === id) ?? {});
   paintSessionHeader();
   refreshDisplayMode();
+  fillModelSelect();
   fillAgentSelect();
   renderSessions(sessions);
   renderHistory(messages);
@@ -311,12 +323,7 @@ async function runCommand(name, args) {
       break;
     }
     case "model": {
-      const models = await api.models();
-      overlaysRef.value?.showPicker(
-        "换模型",
-        models.map((m) => ({ label: `${m.provider}/${m.upstream_id}`, value: `${m.provider}|||${m.upstream_id}` })),
-        (it) => applyModelValue(it.value).then(() => refreshStatusline("idle")),
-      );
+      fillModelSelect();
       break;
     }
     case "providers":
@@ -483,9 +490,12 @@ function onComposerKeydown(e, value) {
   } else if (e.key === "Escape") {
     overlaysRef.value?.hidePalette();
     overlaysRef.value?.hidePicker();
-  } else if (e.key === "Enter" && !e.ctrlKey && !e.metaKey) {
+  } else if (e.key === "Enter") {
     const mode = sendMode();
-    const want = mode === "enter" ? !e.shiftKey : mode === "shift-enter" ? e.shiftKey : false;
+    // 三档：enter = 裸回车发送（任何修饰都换行）；shift-enter = Shift+回车发送；button = 仅按钮。
+    const want = mode === "enter" ? !(e.shiftKey || e.ctrlKey || e.metaKey || e.altKey)
+      : mode === "shift-enter" ? (e.shiftKey && !e.ctrlKey && !e.metaKey)
+      : false;
     if (want) {
       e.preventDefault();
       composerRef.value?.submit();
@@ -534,6 +544,7 @@ onMounted(() => {
       ref="topbarRef"
       @toggle-left="toggleLeft"
       @toggle-right="toggleRight"
+      @select-model="(v) => applyModelValue(v).catch((err) => toast(`换模型失败：${err.message}`, 'error'))"
       @select-agent="(id) => applyAgentValue(id).catch((err) => toast(`换 Agent 失败：${err.message}`, 'error'))"
     />
         <main id="messages-vue">

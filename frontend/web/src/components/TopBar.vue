@@ -1,24 +1,28 @@
 <script setup>
-// 顶栏：左显隐会话栏 + Agent 下拉 + 右显隐载荷栏（连接/模型/会话名在左栏与状态行，不在这里）。
-// 挂载后接管 header（id 照旧：toggle-left/session-agent/toggle-right）。
+// 顶栏：左显隐会话栏 + 模型/Agent 下拉 + 右显隐载荷栏（连接/会话名在左栏与状态行，不在这里）。
+// 挂载后接管 header（id 照旧：toggle-left/session-model/session-agent/toggle-right）。
 // 数据经事件与 main.js 互通（selectModel/selectAgent/patch 结果回填由父做）。
 import { ref } from "vue";
 import { ICONS } from "./icons.js";
 
-const emit = defineEmits(["toggle-left", "toggle-right", "select-agent"]);
+const emit = defineEmits(["toggle-left", "toggle-right", "select-model", "select-agent"]);
 
+const modelGroups = ref([]); // [{provider, items:[{value,label}]}]
 const agents = ref([]); // [{id,label}]
+const curModel = ref("");
 const curAgent = ref("");
 
 const leftSvg = ICONS.panelLeft;
 const rightSvg = ICONS.panelRight;
 
 function setSession(info) {
+  if (info.provider && info.model) curModel.value = `${info.provider}|||${info.model}`;
   if (info.agent_id) curAgent.value = info.agent_id;
 }
+function setModels(groups, cur) { modelGroups.value = groups; if (cur !== undefined) curModel.value = cur; }
 function setAgents(list, cur) { agents.value = list; if (cur !== undefined) curAgent.value = cur; }
 
-defineExpose({ setSession, setAgents });
+defineExpose({ setSession, setModels, setAgents });
 </script>
 
 <template>
@@ -32,6 +36,17 @@ defineExpose({ setSession, setAgents });
       @click="$emit('toggle-left')"
       v-html="leftSvg"
     ></button>
+    <select
+      id="session-model"
+      class="pill-select"
+      title="改当前会话的模型"
+      :value="curModel"
+      @change="$emit('select-model', $event.target.value)"
+    >
+      <optgroup v-for="g in modelGroups" :key="g.provider" :label="g.provider">
+        <option v-for="m in g.items" :key="m.value" :value="m.value">{{ m.label }}</option>
+      </optgroup>
+    </select>
     <select
       id="session-agent"
       class="pill-select"

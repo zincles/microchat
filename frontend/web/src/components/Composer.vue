@@ -15,7 +15,7 @@ const area = ref(null);
 const sendSvg = ICONS.send;
 function sendHint() {
   const mode = localStorage.getItem("mc_send") || "enter";
-  return mode === "enter" ? "输入消息（回车发送，Shift+回车换行）；/ 开头进命令"
+  return mode === "enter" ? "输入消息（回车发送，Shift/Ctrl/Alt+回车换行）；/ 开头进命令"
     : mode === "shift-enter" ? "输入消息（Shift+回车发送，回车换行）；/ 开头进命令"
     : "输入消息，点发送发出（回车换行）；/ 开头进命令";
 }
