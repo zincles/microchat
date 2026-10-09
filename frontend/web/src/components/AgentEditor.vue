@@ -108,44 +108,35 @@ function onKey(e) {
 </script>
 
 <template>
-  <div class="modal submodal" @click.self="$emit('close')">
-    <div class="modal-box">
-      <div class="modal-head">
-        <span>{{ isNew ? "新建 Agent" : `编辑 ${props.agent.name}` }}{{ !isNew && isDefault ? "（默认）" : "" }}</span>
-        <span class="head-btns">
-          <button class="icon-btn" type="button" title="关闭（不保存不写）" @click="$emit('close')">
-            ×
-          </button>
-        </span>
-      </div>
-      <div class="settings-cols">
-        <section class="panel">
-          <h3>基本</h3>
-          <label class="field"><span>id（改即重命名，搬引用）</span><input v-model="aid" :disabled="isNew" placeholder="新建时由后端生成" /></label>
-          <label class="field"><span>名称</span><input v-model="name" placeholder="人格名" /></label>
-          <label class="field-block"><span>系统提示词</span><textarea v-model="prompt" rows="6" placeholder="system_prompt"></textarea></label>
-          <label class="field"><span>句首贴当前状态（RP 类需要）</span><ToggleSwitch v-model="prepend" /></label>
-          <label class="field"><span>显示格式</span><select v-model="displayMode">
-            <option value="chat">聊天软件（双边气泡）</option>
-            <option value="roleplay">RolePlay（用户气泡+AI 纯文本）</option>
-          </select></label>
-          <h3>能力（开关 + 模型/提示词覆盖，空=默认）</h3>
-          <fieldset v-for="id in ABILITY_IDS" :key="id" class="ability-block">
-            <legend><ToggleSwitch v-model="rows[id].enabled" /> {{ id }}</legend>
-            <label class="field"><span>Model</span><select v-model="rows[id].model">
-              <option value="">跟会话走</option>
-              <option v-for="m in modelOptions" :key="m.value" :value="m.value">{{ m.label }}</option>
-            </select></label>
-            <label class="field-block"><span>提示词覆盖（空=默认模板）</span><textarea v-model="rows[id].prompt" rows="3"></textarea></label>
-          </fieldset>
-          <div class="row">
-            <button type="button" class="primary" @click="save">保存</button>
-            <button v-if="!isNew && !isDefault" type="button" @click="makeDefault">设为默认</button>
-            <button v-if="!isNew" type="button" class="danger" @click="remove">删除</button>
-            <span class="status">{{ status }}</span>
-          </div>
-        </section>
-      </div>
+  <!-- 二级页（2026-10-10 起不再是弹窗）：嵌在设置视图的 Agent tab 里，列表 ⇄ 详情就地切换。 -->
+  <div class="detail-pane">
+    <div class="panel-head">
+      <button class="icon-btn" type="button" title="返回列表（Esc）" @click="$emit('close')">←</button>
+      <span class="status">{{ isNew ? "新建 Agent" : `编辑「${props.agent.name}」` }}{{ !isNew && isDefault ? "（默认）" : "" }}</span>
+    </div>
+    <h3>基本</h3>
+    <label class="field"><span>id（改即重命名，搬引用）</span><input v-model="aid" :disabled="isNew" placeholder="新建时由后端生成" /></label>
+    <label class="field"><span>名称</span><input v-model="name" placeholder="人格名" /></label>
+    <label class="field-block"><span>系统提示词</span><textarea v-model="prompt" rows="6" placeholder="system_prompt"></textarea></label>
+    <label class="field"><span>句首贴当前状态（RP 类需要）</span><ToggleSwitch v-model="prepend" /></label>
+    <label class="field"><span>显示格式</span><select v-model="displayMode">
+      <option value="chat">聊天软件（双边气泡）</option>
+      <option value="roleplay">RolePlay（用户气泡+AI 纯文本）</option>
+    </select></label>
+    <h3>能力（开关 + 模型/提示词覆盖，空=默认）</h3>
+    <fieldset v-for="id in ABILITY_IDS" :key="id" class="ability-block">
+      <legend><ToggleSwitch v-model="rows[id].enabled" /> {{ id }}</legend>
+      <label class="field"><span>Model</span><select v-model="rows[id].model">
+        <option value="">跟会话走</option>
+        <option v-for="m in modelOptions" :key="m.value" :value="m.value">{{ m.label }}</option>
+      </select></label>
+      <label class="field-block"><span>提示词覆盖（空=默认模板）</span><textarea v-model="rows[id].prompt" rows="3"></textarea></label>
+    </fieldset>
+    <div class="row">
+      <button type="button" class="primary" @click="save">保存</button>
+      <button v-if="!isNew && !isDefault" type="button" @click="makeDefault">设为默认</button>
+      <button v-if="!isNew" type="button" class="danger" @click="remove">删除</button>
+      <span class="status">{{ status }}</span>
     </div>
   </div>
 </template>

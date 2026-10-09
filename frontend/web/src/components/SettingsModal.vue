@@ -16,7 +16,11 @@ import {
 
 const emit = defineEmits(["close", "toggle-left", "sessions-changed", "goto-session"]);
 // ask：全局确认框（App 的 Overlays.confirmAsk）—— 设置里的删除（会话/渠道/Agent）也必须先摊开再点头。
-const props = defineProps({ ask: { type: Function, default: null } });
+// escBlocked：外面临时弹窗（会话设置）开着时，Esc 归它 —— 一次按键不许关两层。
+const props = defineProps({
+  ask: { type: Function, default: null },
+  escBlocked: { type: Boolean, default: false },
+});
 
 const API = localStorage.getItem("mc_api") || "http://127.0.0.1:8787/api/v1";
 const TOKEN = localStorage.getItem("mc_token") || "";
@@ -216,7 +220,10 @@ onMounted(() => {
 });
 onUnmounted(() => document.removeEventListener("keydown", onKey));
 function onKey(e) {
-  if (e.key === "Escape") emit("close");
+  if (e.key !== "Escape") return;
+  // 二级页（Agent/渠道详情）或外面临时弹窗开着 ⇒ Esc 归它们；一次按键只关一层（踩过：双关）。
+  if (editAgent.value || editProvider.value || props.escBlocked) return;
+  emit("close");
 }
 </script>
 
@@ -317,29 +324,31 @@ function onKey(e) {
           <div class="row"><span class="status">{{ importStatus }}</span></div>
         </section>
         <section v-show="tab === 'agent'" id="panel-agent" class="panel">
-          <div class="panel-head">
-            <h3>已有 Agent（点进二级改）</h3>
-            <span class="head-btns">
-              <button type="button" class="primary" @click="newFromTemplate('blank')">新建</button>
-              <select v-model="presetPick" @change="presetNew" title="从模板创建">
-                <option value="">从模板创建…</option>
-                <option value="assistant">通用助手</option>
-                <option value="rp">角色扮演助手</option>
-              </select>
-            </span>
-          </div>
-          <div id="agent-list">
-            <table class="plist">
-              <thead><tr><th>名称</th><th>id</th><th>默认</th></tr></thead>
-              <tbody><tr v-for="a in agents" :key="a.id" class="clickable" @click="editAgent = a">
-                <td>{{ a.name }}</td>
-                <td>{{ a.id }}</td>
-                <td>{{ a.id === curDefault ? "✓" : "" }}</td>
-              </tr></tbody>
-            </table>
-          </div>
+          <template v-if="!editAgent">
+            <div class="panel-head">
+              <h3>已有 Agent（点进二级改）</h3>
+              <span class="head-btns">
+                <button type="button" class="primary" @click="newFromTemplate('blank')">新建</button>
+                <select v-model="presetPick" @change="presetNew" title="从模板创建">
+                  <option value="">从模板创建…</option>
+                  <option value="assistant">通用助手</option>
+                  <option value="rp">角色扮演助手</option>
+                </select>
+              </span>
+            </div>
+            <div id="agent-list">
+              <table class="plist">
+                <thead><tr><th>名称</th><th>id</th><th>默认</th></tr></thead>
+                <tbody><tr v-for="a in agents" :key="a.id" class="clickable" @click="editAgent = a">
+                  <td>{{ a.name }}</td>
+                  <td>{{ a.id }}</td>
+                  <td>{{ a.id === curDefault ? "✓" : "" }}</td>
+                </tr></tbody>
+              </table>
+            </div>
+          </template>
           <AgentEditor
-            v-if="editAgent"
+            v-else
             :agent="editAgent === 'new' || editAgent?.template ? null : editAgent"
             :template="editAgent?.template ?? null"
             :is-default="editAgent !== 'new' && editAgent?.id === curDefault"
@@ -349,26 +358,28 @@ function onKey(e) {
           />
         </section>
         <section v-show="tab === 'provider'" id="panel-provider" class="panel">
-          <h3>渠道（点进二级改）</h3>
-          <div id="provider-list">
-            <table class="plist">
-              <thead><tr><th>渠道</th><th>vendor</th><th>protocol</th><th>密钥</th><th>模型</th><th></th></tr></thead>
-              <tbody><tr v-for="p in providers" :key="p.id" class="clickable" @click="editProvider = p">
-                <td>{{ p.id }}</td>
-                <td>{{ p.vendor ?? "?" }}</td>
-                <td>{{ p.protocol ?? "?" }}</td>
-                <td>{{ p.has_key ? "有" : "无" }}</td>
-                <td>{{ p.models?.length ?? 0 }}</td>
-                <td class="ops"><button type="button" class="link-btn danger" @click.stop="askDeleteProvider(p.id)">删除</button></td>
-              </tr></tbody>
-            </table>
-          </div>
-          <div class="row">
-            <button type="button" class="primary" @click="editProvider = 'new'">新建</button>
-            <span class="status">{{ routesStatus }}</span>
-          </div>
+          <template v-if="!editProvider">
+            <h3>渠道（点进二级改）</h3>
+            <div id="provider-list">
+              <table class="plist">
+                <thead><tr><th>渠道</th><th>vendor</th><th>protocol</th><th>密钥</th><th>模型</th><th></th></tr></thead>
+                <tbody><tr v-for="p in providers" :key="p.id" class="clickable" @click="editProvider = p">
+                  <td>{{ p.id }}</td>
+                  <td>{{ p.vendor ?? "?" }}</td>
+                  <td>{{ p.protocol ?? "?" }}</td>
+                  <td>{{ p.has_key ? "有" : "无" }}</td>
+                  <td>{{ p.models?.length ?? 0 }}</td>
+                  <td class="ops"><button type="button" class="link-btn danger" @click.stop="askDeleteProvider(p.id)">删除</button></td>
+                </tr></tbody>
+              </table>
+            </div>
+            <div class="row">
+              <button type="button" class="primary" @click="editProvider = 'new'">新建</button>
+              <span class="status">{{ routesStatus }}</span>
+            </div>
+          </template>
           <ProviderEditor
-            v-if="editProvider"
+            v-else
             :provider="editProvider === 'new' ? null : editProvider"
             @close="editProvider = null"
             @saved="loadProviders"

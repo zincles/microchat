@@ -758,6 +758,7 @@ onUnmounted(() => {
       <SettingsModal
         v-if="settingsOpen"
         :ask="askConfirm"
+        :esc-blocked="!!sessionSettingsId"
         @close="closeSettings"
         @toggle-left="toggleLeft"
         @sessions-changed="refreshSessionsBar"

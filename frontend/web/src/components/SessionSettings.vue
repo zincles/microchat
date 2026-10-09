@@ -6,7 +6,7 @@ import { createApi } from "../api/client.js";
 import { groupModelsByProvider } from "../utils/format.js";
 
 const props = defineProps({ sessionId: String });
-const emit = defineEmits(["close", "renamed", "deleted"]);
+const emit = defineEmits(["close", "renamed"]);
 
 const API = localStorage.getItem("mc_api") || "http://127.0.0.1:8787/api/v1";
 const TOKEN = localStorage.getItem("mc_token") || "";
@@ -71,7 +71,7 @@ function onKey(e) {
 
 <template>
   <div class="modal" @click.self="$emit('close')">
-    <div class="modal-box settings-box">
+    <div class="modal-box compact">
       <div class="modal-head">
         <span>会话设置</span>
         <span class="head-btns">

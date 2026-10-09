@@ -106,39 +106,30 @@ function onKey(e) {
 </script>
 
 <template>
-  <div class="modal submodal" @click.self="$emit('close')">
-    <div class="modal-box">
-      <div class="modal-head">
-        <span>{{ isNew ? "新建渠道" : `渠道 ${pid}（${modelCount} 个模型）` }}</span>
-        <span class="head-btns">
-          <button class="icon-btn" type="button" title="关闭（不保存不写）" @click="$emit('close')">
-            ×
-          </button>
-        </span>
-      </div>
-      <div class="settings-cols">
-        <section class="panel">
-          <h3>基本</h3>
-          <label class="field"><span>渠道 id</span><input v-model="pid" :disabled="!isNew" placeholder="新建时填" /></label>
-          <label class="field"><span>vendor</span><select v-model="vendor">
-            <option v-for="p in presets" :key="p.vendor" :value="p.vendor">{{ p.name }}（{{ p.vendor }}）</option>
-          </select></label>
-          <label class="field"><span>protocol（空=默认）</span><select v-model="protocol">
-            <option value="">空=默认</option>
-            <option v-for="pr in PROTOCOLS" :key="pr" :value="pr">{{ pr }}</option>
-          </select></label>
-          <label class="field"><span>端点（空=预设）</span><input v-model="baseUrl" placeholder="空=预设端点" /></label>
-          <h3>密钥</h3>
-          <label class="field"><span>{{ hasKey ? "已有密钥（填=换，不填=不动）" : "api_key（可空）" }}</span><input v-model="key" placeholder="api_key" type="password" /></label>
-          <div class="row">
-            <button type="button" class="primary" @click="save">保存</button>
-            <button v-if="!isNew" type="button" @click="refresh">刷新模型</button>
-            <button v-if="!isNew" type="button" @click="refreshRoutes">刷路由</button>
-            <button v-if="!isNew && (hasKey || key)" type="button" class="danger" @click="clearKey">清密钥</button>
-            <span class="status">{{ status }}</span>
-          </div>
-        </section>
-      </div>
+  <!-- 二级页（2026-10-10 起不再是弹窗）：嵌在设置视图的 Provider tab 里，列表 ⇄ 详情就地切换。 -->
+  <div class="detail-pane">
+    <div class="panel-head">
+      <button class="icon-btn" type="button" title="返回列表（Esc）" @click="$emit('close')">←</button>
+      <span class="status">{{ isNew ? "新建渠道" : `渠道「${pid}」（${modelCount} 个模型）` }}</span>
+    </div>
+    <h3>基本</h3>
+    <label class="field"><span>渠道 id</span><input v-model="pid" :disabled="!isNew" placeholder="新建时填" /></label>
+    <label class="field"><span>vendor</span><select v-model="vendor">
+      <option v-for="p in presets" :key="p.vendor" :value="p.vendor">{{ p.name }}（{{ p.vendor }}）</option>
+    </select></label>
+    <label class="field"><span>protocol（空=默认）</span><select v-model="protocol">
+      <option value="">空=默认</option>
+      <option v-for="pr in PROTOCOLS" :key="pr" :value="pr">{{ pr }}</option>
+    </select></label>
+    <label class="field"><span>端点（空=预设）</span><input v-model="baseUrl" placeholder="空=预设端点" /></label>
+    <h3>密钥</h3>
+    <label class="field"><span>{{ hasKey ? "已有密钥（填=换，不填=不动）" : "api_key（可空）" }}</span><input v-model="key" placeholder="api_key" type="password" /></label>
+    <div class="row">
+      <button type="button" class="primary" @click="save">保存</button>
+      <button v-if="!isNew" type="button" @click="refresh">刷新模型</button>
+      <button v-if="!isNew" type="button" @click="refreshRoutes">刷路由</button>
+      <button v-if="!isNew && (hasKey || key)" type="button" class="danger" @click="clearKey">清密钥</button>
+      <span class="status">{{ status }}</span>
     </div>
   </div>
 </template>
