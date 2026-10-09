@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -508,9 +509,9 @@ func (s *Service) seedSummary(session model.Session, target model.Summary, fromI
 
 // roll：后台那半程 —— 两类共用外壳（挂 ctx、收尾），消息模式走装配 + 上游，摘要模式走生成器。
 //
-// 走 `Complete`（非流式）而不是 `Chat`：候选**没有人在一个字一个字地看**（界面只画「重摇中… 耗时」），
-// 而这一趟是"整段拿结果"的后台子调用 —— 与压缩、起标题同一条脾气。代价是**没有"第一段正文"那一刻** ⇒
-// 新摇出来的那一版 `reasoning_ms` 是空的（那格说的是"受理 → 第一段正文"，没有那一刻就不能编）。
+// 走 `Chat`（**流式**，2026-10-10 改）：候选流进 `turn` 缓冲（`BeginReroll` 清的），web 在目标
+// 气泡里**就地预览**（`/turn/text` 读同一份），摇完自动切到最新那版 ⇒ 预览与落地无缝衔接。
+// （摘要重摇仍走 `RegenerateSummary` 的整段式 —— 它借的是 compact 的非流式半程。）
 func (s *Service) roll(ctx context.Context, prepared *roll) {
 	defer prepared.guard.Interrupted() // 忘了收 / panic ⇒ 记成"中断"，绝不留僵尸条目
 	sessionID := prepared.session.ID
@@ -530,14 +531,26 @@ func (s *Service) roll(ctx context.Context, prepared *roll) {
 		return
 	}
 	started := time.Now()
+	var firstTextAt time.Time
 	wire := providers.FromConfig(prepared.channel)
 	// 与 chat.go Accept 同一条查表：有行且 api=="openai-responses" ⇒ 走 /responses，否则 chat 缺省。
 	wire.Protocol = providers.ResolveProtocol(s.Store.ModelRoute, prepared.channel.ID, prepared.model)
-	result, err := providers.NewClient(wire).Complete(ctx, wire, providers.Request{
+	result, err := providers.NewClient(wire).Chat(ctx, wire, providers.Request{
 		Model:     prepared.model,
 		Messages:  messages,
 		SessionID: sessionID, // 骑同一个会话 id（网关按它路由、前缀缓存也认它）
-	}, prepared.local)
+	}, prepared.local, func(delta providers.Delta) {
+		// 候选也走流：进 turn 缓冲（token 对不上自然丢 —— 被顶掉的旧摇不准污染新的一摇）。
+		if delta.Text != "" {
+			if firstTextAt.IsZero() {
+				firstTextAt = time.Now()
+			}
+			s.Turns.AppendContent(sessionID, prepared.token, delta.Text)
+		}
+		if delta.Reasoning != "" {
+			s.Turns.AppendReasoning(sessionID, prepared.token, delta.Reasoning)
+		}
+	})
 	if err != nil {
 		s.abort(prepared, err)
 		return
@@ -549,9 +562,16 @@ func (s *Service) roll(ctx context.Context, prepared *roll) {
 		RawText: result.Text, Usage: result.Usage, DurationMS: &durationMS,
 		At: time.Now().UnixMilli(),
 	}
-	// 思考：与一轮生成同一条规矩 —— 渠道要留档才留（`store_reasoning`）
+	// 思考：与一轮生成同一条规矩 —— 渠道要留档才留（`store_reasoning`）；
+	// 流式起，思考读**缓冲**（`ThinkingOf`，与 chat 落档同一处），用时 = 受理 → 第一段正文。
 	if prepared.storesReasoning {
-		candidate.Reasoning = result.Reasoning
+		if reasoning := s.Turns.ThinkingOf(sessionID); strings.TrimSpace(reasoning) != "" {
+			candidate.Reasoning = reasoning
+			if !firstTextAt.IsZero() {
+				ms := firstTextAt.Sub(started).Milliseconds()
+				candidate.ReasoningMS = &ms
+			}
+		}
 	}
 	if !s.Turns.IsMine(sessionID, prepared.token) {
 		// 被按停 / 被顶掉：结果**丢掉**（候选也不留），别把它写到别人的账上

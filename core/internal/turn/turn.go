@@ -166,8 +166,8 @@ func (r *Registry) Begin(sessionID, messageID string) (uint64, error) {
 
 // BeginReroll：登记一次重摇 —— **与一轮生成共用同一把闸**（另一方在跑就 409）。
 //
-// 与 `Begin` 同一条理由（不排队），只是这一趟的产出**先当候选**（不进历史）⇒ 流缓冲用不上：
-// 它的进度只有「在不在摇 + 耗时」（`RerollStatus`），界面靠它画「重摇中…」。
+// 与 `Begin` 同一条理由（不排队）。流缓冲**这一趟也用**（2026-10-10 起）：web 在目标气泡里
+// 就地预览候选流（`/turn/text` 读的就是这里），所以开摇时把两条缓冲清干净。
 func (r *Registry) BeginReroll(sessionID string) (uint64, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -183,6 +183,8 @@ func (r *Registry) BeginReroll(sessionID string) (uint64, error) {
 		item = &entry{phase: PhaseIdle}
 		r.entries[sessionID] = item
 	}
+	item.text.Reset()
+	item.thinking.Reset()
 	item.reroll = &RerollStatus{State: "running"}
 	item.rerollStarted = time.Now()
 	item.token = r.nextToken
@@ -201,6 +203,9 @@ func (r *Registry) FinishReroll(sessionID string, token uint64, failure string) 
 	}
 	item.reroll.ElapsedMS = time.Since(item.rerollStarted).Milliseconds()
 	item.cancel = nil
+	// 候选流的缓冲到此为止（客户端在 running 翻 false 时收工；留着只会误导下一次读）。
+	item.text.Reset()
+	item.thinking.Reset()
 	if failure == "" {
 		item.reroll.State = "done"
 		item.reroll.Error = ""
@@ -292,7 +297,11 @@ func (r *Registry) append(sessionID string, token uint64, delta string, thinking
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	item := r.lookup(sessionID)
-	if item == nil || item.token != token || item.phase == PhaseIdle {
+	if item == nil || item.token != token {
+		return false
+	}
+	// 一轮生成要 phase 非 idle；**重摇跑在 idle 上**（候选流）⇒ 认它的 running。
+	if item.phase == PhaseIdle && !item.reroll.IsRunning() {
 		return false
 	}
 	if thinking {

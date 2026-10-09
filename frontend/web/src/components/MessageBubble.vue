@@ -13,10 +13,15 @@ const props = defineProps({
   messageId: String,
   isLast: Boolean,
   displayMode: { type: String, default: "chat" },
+  streaming: Boolean, // 生成中（还没落库的那条）：等首字节时给三点呼吸动画
+  reroll: { type: Object, default: null }, // 重摇状态（本条是目标时才非 null）：{active,count,current_idx,running}
 });
-const emit = defineEmits(["save", "delete", "refresh"]);
+const emit = defineEmits(["save", "delete", "reroll", "reroll-go"]);
 
-const thinkLabel = computed(() => formatThinkLabel(props.reasoningMs));
+// 流式期间还没正文 ⇒ 标签说"思考中…"；落库后才是"思考过程（2.1s）"（那会儿才有用时）。
+const thinkLabel = computed(() =>
+  props.streaming && !props.content ? "思考中…" : formatThinkLabel(props.reasoningMs),
+);
 const canEdit = computed(() => !!props.messageId);
 
 const editing = ref(null); // null | "content" | "reasoning"
@@ -61,6 +66,9 @@ const editRows = computed(() => Math.min(12, Math.max(3, draft.value.split("\n")
         </div>
       </details>
       <div v-show="editing !== 'content'" class="text" v-html="bodyHtml"></div>
+      <div v-if="streaming && !content && !reasoning" class="typing" aria-label="正在生成">
+        <span></span><span></span><span></span>
+      </div>
       <div v-if="editing === 'content'" class="inline-edit">
         <textarea v-model="draft" class="inline-input" :rows="editRows"></textarea>
         <div class="inline-btns">
@@ -102,11 +110,16 @@ const editRows = computed(() => Math.min(12, Math.max(3, draft.value.split("\n")
         v-if="role !== 'user' && isLast"
         type="button"
         class="edit-btn"
-        title="刷新（重发历史，再跑一轮）"
-        aria-label="刷新（重发历史，再跑一轮）"
-        @click="$emit('refresh')"
+        title="重摇（摇新的一版并切过去）"
+        aria-label="重摇（摇新的一版并切过去）"
+        @click="$emit('reroll')"
         v-html="ICONS.refresh"
       ></button>
+      <template v-if="role !== 'user' && isLast && reroll && reroll.active">
+        <button type="button" class="edit-btn" title="上一版" aria-label="上一版" @click="$emit('reroll-go', -1)">◀</button>
+        <span class="reroll-pos">{{ reroll.running ? `${reroll.current_idx}→${reroll.count}` : `${reroll.current_idx}/${reroll.count}` }}</span>
+        <button type="button" class="edit-btn" title="下一版（到最右再按 = 再摇一版）" aria-label="下一版" @click="$emit('reroll-go', 1)">▶</button>
+      </template>
       <button
         type="button"
         class="edit-btn danger"

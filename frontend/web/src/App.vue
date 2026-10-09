@@ -48,6 +48,13 @@ const toast = (t, k) => toastRef.value?.push(t, k);
 function askConfirm(text) {
   return overlaysRef.value?.confirmAsk(text) ?? Promise.resolve(false);
 }
+// onPickAction：浮层"选中某项"的回执（动作在浮层里选好，这里执行 + 统一兜错）。
+// ⚠ 别把它写回模板内联（`(a, it) => Promise.resolve(a(it))…`）：模板里的 `Promise` 会被编译成
+// `_ctx.Promise`（实例代理上不存在）⇒ 点击那一刻当场 TypeError、被 Vue 吞掉，动作永远不执行
+// （踩过：picker 的鼠标点击从写下那天就是死的，键盘路径绕开了它所以一直没暴露）。
+function onPickAction(action, item) {
+  Promise.resolve(action(item)).catch((err) => toast(`操作失败：${err.message}`, "error"));
+}
 
 // —— 会话状态 ——
 let sessionID = null;
@@ -138,9 +145,110 @@ async function onBubbleDelete(mid, isLast) {
     .catch((err) => toast(`删除失败：${err.message}`, "error"));
   renderHistory(await api.listMessages(sessionID));
   refreshStateView();
+  refreshReroll();
 }
-function onBubbleRefresh() {
-  resend().catch((err) => toast(`重发失败：${err.message}`, "error"));
+// —— 重摇（尾条气泡的 ⟳ / ◀ ▶ 与 /reroll 命令共用）——
+// 口径：这只是**重摇**（`reroll-message`，就地换正文、UUID 不变），不是"重发历史"
+// （`/resend` 那条路归空输入点发送）。后端要求目标**必须是尾条 assistant** ⇒ 只挂最新一条。
+//
+// 交互（2026-10-10 用户定）：⟳ = 摇新一版并**立刻切到最新那版**（无论当前看着哪一版），
+// 结果就地换正文；模式活着期间气泡下出现 `◀ n/N ▶`：◀▶ 翻版，**最右的 ▶ = 再摇一版**。
+const rerollState = ref({ active: false });
+// 候选流预览（就地显示在目标气泡里）：running 期间靠 `/turn/text` 攒；任何一次落地/切版都清掉。
+const rerollPreview = ref({ text: "", reasoning: "" });
+function clearRerollPreview() { rerollPreview.value = { text: "", reasoning: "" }; }
+function rerollPreviewActive(m) {
+  return !!m.messageId && rerollState.value.target_message_id === m.messageId
+    && (rerollPreview.value.text !== "" || rerollPreview.value.reasoning !== "");
+}
+// 气泡内容的三个来源：合成流（一轮）> 候选预览（重摇）> 库内正文。
+function bubbleContent(m) {
+  if (m.stream) return vueStream.value.text;
+  if (rerollPreviewActive(m)) return rerollPreview.value.text || m.content;
+  return m.content;
+}
+function bubbleReasoning(m) {
+  if (m.stream) return vueStream.value.reasoning ?? m.reasoning;
+  if (rerollPreviewActive(m)) return rerollPreview.value.reasoning || m.reasoning;
+  return m.reasoning;
+}
+
+// refreshReroll：问一次重摇状态（进会话 / 一轮结束 / 删改之后都要对齐 —— 候选只在内存里，
+// 发新消息、删目标、切会话都会让它自然消失）。
+async function refreshReroll() {
+  if (!sessionID) { rerollState.value = { active: false }; clearRerollPreview(); return; }
+  try {
+    const st = await api.rerollState(sessionID);
+    const active = st?.active && st.target_kind === "message";
+    rerollState.value = active ? st : { active: false };
+    if (!active) clearRerollPreview();
+  } catch { rerollState.value = { active: false }; clearRerollPreview(); }
+}
+// pollReroll：等这一摇落地（顺带把状态行挂上"重摇中"，并把候选流攒进预览）。
+async function pollReroll(sid) {
+  let st = null;
+  let cur = { from: 0, thinkFrom: 0 };
+  for (let i = 0; i < 450; i++) {
+    await new Promise((r) => setTimeout(r, 400));
+    if (sessionID !== sid) return null;
+    st = await api.rerollState(sid).catch(() => null);
+    if (!st) return null;
+    if (st.active && st.target_kind === "message") rerollState.value = st;
+    if (st.running) {
+      // 候选流：与一轮的游标读同一套（读不消费；token 对不上后端自然给空）。
+      const slice = await api.turnText(sid, cur.from, cur.thinkFrom).catch(() => null);
+      if (slice) {
+        if (slice.text) rerollPreview.value.text += slice.text;
+        if (slice.thinking) rerollPreview.value.reasoning += slice.thinking;
+        cur = advanceCursor(cur, slice);
+      }
+    }
+    refreshStatusline(st.running ? "重摇中" : "idle");
+    if (!st.running) return st;
+  }
+  return st;
+}
+// rerollNow：⟳ / `/reroll` —— 摇一版（没进模式就先进），摇完**切到最新那版**。
+async function rerollNow() {
+  const sid = sessionID;
+  if (!sid) return;
+  clearRerollPreview();
+  try {
+    await api.rerollEnter(sid); // 202：进模式并立刻摇一版；已在模式里 ⇒ 再摇一版
+  } catch (err) {
+    toast(`重摇失败：${err.message}`, "error");
+    return;
+  }
+  const st = await pollReroll(sid);
+  if (sessionID !== sid) return;
+  if (st?.error) { toast(`重摇失败：${st.error}`, "error"); clearRerollPreview(); return; }
+  if (!st?.active) return;
+  await switchReroll(sid, st.count); // 最新那版的位次就是 count（1-based）
+}
+// rerollGo：◀ ▶ —— 翻版；最右再按 = 再摇一版（与 TUI/TG 的 `‹ 2/3 ›` 同一套语义）。
+async function rerollGo(delta) {
+  const sid = sessionID;
+  const st = rerollState.value;
+  if (!sid || !st?.active || st.running) return;
+  const to = st.current_idx + delta;
+  if (delta > 0 && to > st.count) { await rerollNow(); return; }
+  if (delta < 0 && to < 1) { toast("已经是第一版了"); return; }
+  await switchReroll(sid, to);
+}
+// switchReroll：就地换正文（UUID 不变），然后对齐列表与状态。
+async function switchReroll(sid, idx) {
+  try {
+    await api.rerollSwitch(sid, idx);
+  } catch (err) {
+    toast(`切版失败：${err.message}`, "error");
+    return;
+  }
+  if (sessionID !== sid) return;
+  renderHistory(await api.listMessages(sid));
+  clearRerollPreview();
+  refreshStateView(sid);
+  refreshStatusline("idle");
+  await refreshReroll();
 }
 
 // —— 顶栏 ——
@@ -274,6 +382,7 @@ async function startDraft() {
   payloadbarRef.value?.setTables({});
   refreshStatusline("idle");
   refreshSessionsBar();
+  refreshReroll();
   refreshPreview(); // 输入框里若还留着字（＋ 时不清输入框），预演立刻跟上
 }
 function newSession() {
@@ -302,6 +411,7 @@ async function enterSession(id) {
   renderHistory(messages);
   refreshStatusline("idle");
   refreshStateView(id);
+  refreshReroll();
   if (previewOn() && messages.length) {
     api.outgoingPreview(id, "").then((w) => payloadbarRef.value?.setWire(w))
       .catch((err) => toast(`预演失败：${err.message}`, "error"));
@@ -361,6 +471,7 @@ async function pollTurn(sid, turnID) {
         refreshStatusline(st.phase, st.elapsed_ms);
         refreshSessionsBar();
         refreshStateView(sid);
+        refreshReroll();
         if (previewOn()) {
           api.outgoingPreview(sid, "").then((w) => payloadbarRef.value?.setWire(w))
             .catch((err) => toast(`预演失败：${err.message}`, "error"));
@@ -440,16 +551,7 @@ async function runCommand(name, args) {
       break;
     }
     case "reroll": {
-      await api.rerollEnter(sessionID);
-      const st = await api.rerollState(sessionID);
-      overlaysRef.value?.showPicker(
-        "重摇选版",
-        (st.items ?? []).map((it, i) => ({ label: `#${i} ${String(it.preview ?? "").slice(0, 40)}`, value: i })),
-        async (it) => {
-          await api.rerollSwitch(sessionID, it.value);
-          renderHistory(await api.listMessages(sessionID));
-        },
-      );
+      await rerollNow();
       break;
     }
     case "switch": {
@@ -485,6 +587,7 @@ async function runCommand(name, args) {
           await api.deleteMessages(sessionID, it.value.id, plan.last_deleted_message_id);
           renderHistory(await api.listMessages(sessionID));
           refreshStateView();
+          refreshReroll();
         },
       );
       break;
@@ -744,15 +847,18 @@ onUnmounted(() => {
             :key="m.id ?? 'stream'"
             :who="m.who"
             :role="m.role"
-            :content="m.stream ? vueStream.text : m.content"
-            :reasoning="m.stream ? (vueStream.reasoning ?? m.reasoning) : m.reasoning"
+            :content="bubbleContent(m)"
+            :reasoning="bubbleReasoning(m)"
             :reasoning-ms="m.reasoningMs"
             :message-id="m.messageId"
             :is-last="!!m.messageId && m.messageId === lastMsgId"
             :display-mode="vueDisplayMode"
+            :streaming="!!m.stream"
+            :reroll="m.messageId && rerollState.active && rerollState.target_message_id === m.messageId ? rerollState : null"
             @save="onBubbleSave"
             @delete="onBubbleDelete"
-            @refresh="onBubbleRefresh"
+            @reroll="rerollNow"
+            @reroll-go="rerollGo"
           />
         </main>
     <Composer
@@ -779,7 +885,7 @@ onUnmounted(() => {
     </div>
     <Toast ref="toastRef" />
     <!-- Overlays 挂根层（不在聊天视图里）：设置视图开着时"确认"也要能弹（fixed 定位照旧）。 -->
-    <Overlays ref="overlaysRef" @run-command="(n) => runCommand(n, []).catch((err) => toast(`命令失败：${err.message}`, 'error'))" @pick="(a, it) => Promise.resolve(a(it)).catch((err) => toast(`操作失败：${err.message}`, 'error'))" />
+    <Overlays ref="overlaysRef" @run-command="(n) => runCommand(n, []).catch((err) => toast(`命令失败：${err.message}`, 'error'))" @pick="onPickAction" />
     <SessionSettings
       v-if="sessionSettingsId"
       :session-id="sessionSettingsId"

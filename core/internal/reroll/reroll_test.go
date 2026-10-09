@@ -49,16 +49,13 @@ func newHarness(t *testing.T) *harness {
 	var served int64
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		index := atomic.AddInt64(&served, 1)
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"choices": []map[string]any{{
-				"message": map[string]any{
-					"content":   fmt.Sprintf("候选 %d", index),
-					"reasoning": fmt.Sprintf("思考 %d", index),
-				},
-			}},
-			"usage": map[string]any{"prompt_tokens": 10 + index, "completion_tokens": 2, "total_tokens": 12 + index},
-		})
+		// 重摇走流式（`Chat`）⇒ 假上游也发 SSE（形状照 chat 测试：delta.content / delta.reasoning_content + usage + [DONE]）。
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(
+			`data: {"choices":[{"delta":{"reasoning_content":"思考 ` + fmt.Sprint(index) + `"}}]}` + "\n\n" +
+				`data: {"choices":[{"delta":{"content":"候选 ` + fmt.Sprint(index) + `"}}]}` + "\n\n" +
+				`data: {"choices":[],"usage":{"prompt_tokens":` + fmt.Sprint(10+index) + `,"completion_tokens":2,"total_tokens":` + fmt.Sprint(12+index) + `}}` + "\n\n" +
+				"data: [DONE]\n\n"))
 	}))
 	t.Cleanup(upstream.Close)
 
@@ -765,14 +762,19 @@ func TestMessageRerollRoutesByModelRouteTable(t *testing.T) {
 	var path string
 	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path = r.URL.Path
-		w.Header().Set("Content-Type", "application/json")
+		// 重摇走流式（`Chat`）⇒ 两个协议都发 SSE（形状照 chat 测试）。
+		w.Header().Set("Content-Type", "text/event-stream")
 		if strings.HasSuffix(path, "/responses") {
-			_, _ = w.Write([]byte(`{"output":[{"type":"message","content":[{"type":"output_text","text":"重摇候选"}]}]}`))
+			_, _ = w.Write([]byte(
+				`data: {"type":"response.created","response":{"id":"r1"}}` + "\n\n" +
+					`data: {"type":"response.output_text.delta","delta":"重摇候选"}` + "\n\n" +
+					`data: {"type":"response.completed","response":{"status":"completed"}}` + "\n\n" +
+					"data: [DONE]\n\n"))
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"choices": []map[string]any{{"message": map[string]any{"content": "重摇候选"}}},
-		})
+		_, _ = w.Write([]byte(
+			`data: {"choices":[{"delta":{"content":"重摇候选"}}]}` + "\n\n" +
+				"data: [DONE]\n\n"))
 	}))
 	t.Cleanup(stub.Close)
 	providers := map[string]any{
@@ -808,5 +810,66 @@ func TestMessageRerollRoutesByModelRouteTable(t *testing.T) {
 	}
 	if got := contents(gstate); len(got) != 2 || got[1] != "2:重摇候选" {
 		t.Fatalf("chat 体也该出同一句：%v", got)
+	}
+}
+
+// TestRerollStreamsCandidate：候选也走流（2026-10-10 从 Complete 改 Chat）——
+// 摇的过程中 `turn` 缓冲里就能读到正文在长（web 靠它做气泡内预览），摇完清空。
+func TestRerollStreamsCandidate(t *testing.T) {
+	h := newHarness(t)
+	var served int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt64(&served, 1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		_, _ = w.Write([]byte(`data: {"choices":[{"delta":{"content":"第一段"}}]}` + "\n\n"))
+		if flusher != nil {
+			flusher.Flush()
+		}
+		time.Sleep(150 * time.Millisecond)
+		_, _ = w.Write([]byte(`data: {"choices":[{"delta":{"content":"第二段"}}]}` + "\n\n" + "data: [DONE]\n\n"))
+	}))
+	t.Cleanup(upstream.Close)
+	// 把这个会话的假上游换成"慢流"（与 main.go 同一条接线：providers.json 是唯一来源）。
+	if err := config.SaveJSON(h.paths.Config("providers.json"), map[string]any{
+		"providers": []map[string]any{{"id": "fake", "kind": "openai-compat", "base_url": upstream.URL}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h.turn(t, "第一轮")
+
+	if _, err := h.service.Enter(h.session); err != nil {
+		t.Fatalf("进模式失败：%v", err)
+	}
+	// 摇的过程中：缓冲里该已经能看到第一段（还没摇完）。
+	deadline := time.Now().Add(2 * time.Second)
+	var mid string
+	for time.Now().Before(deadline) {
+		slice := h.turns.StreamSince(h.sessionID, 0, 0)
+		if slice.Text != "" {
+			mid = slice.Text
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if mid == "" {
+		t.Fatal("摇的过程中没在缓冲里看到任何正文（流没走 turn 缓冲？）")
+	}
+	if mid != "第一段" && mid != "第一段第二段" {
+		t.Fatalf("中途正文该是前缀，得到 %q", mid)
+	}
+	// 等摇完：候选正文 = 两段之和；缓冲清空。
+	for i := 0; i < 100; i++ {
+		if !h.service.State(h.sessionID, TargetMessage).Running {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	st := h.service.State(h.sessionID, TargetMessage)
+	if len(st.Items) != 2 || st.Items[1].Preview != "第一段第二段" {
+		t.Fatalf("候选该是整段两条：%+v", st.Items)
+	}
+	if got := h.turns.StreamSince(h.sessionID, 0, 0).Text; got != "" {
+		t.Fatalf("摇完缓冲该清空，得到 %q", got)
 	}
 }
