@@ -252,7 +252,7 @@ function onKey(e) {
           {{ { chat: "聊天", ui: "界面", net: "连接", session: "会话", agent: "Agent", provider: "Provider" }[t] }}
         </button>
       </nav>
-      <button id="settings-close" class="icon-btn" type="button" title="返回对话（Esc）" @click="$emit('close')">
+      <button id="settings-close" class="icon-btn" type="button" title="退出设置（Esc）" aria-label="退出设置" @click="$emit('close')">
         ×
       </button>
     </div>

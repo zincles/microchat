@@ -72,12 +72,21 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 #chat-col > * { position: relative; z-index: 1; max-width: 760px; margin-left: auto; margin-right: auto; width: 100%; box-sizing: border-box; }
 /* 消息列：flex:1 撑满 + 两侧 56px 头像位 + 上下给浮动输入栏留位；底部留空让尾条操作行不被输入框盖住。 */
 #messages-vue { flex: 1; overflow-y: auto; min-height: 0; padding: 1em 56px 7em; display: flex; flex-direction: column; gap: 0.3em; }
-@media (max-width: 1100px) { #payload-bar { display: none; } }
+/* 抽屉遮罩（只在窄屏显示；点一下 = 收起对应的栏）：与栏的状态由 CSS 兄弟选择器联动，不用 JS 状态。 */
+#scrim-left, #scrim-right { display: none; }
+/* 窄屏（≤1100）：右载荷栏改"抽屉"（2026-10-10）—— 不再 display:none 一刀切（[◨] 之前按了没反应）。 */
+@media (max-width: 1100px) {
+  #payload-bar { position: fixed; inset: 0 0 0 auto; z-index: 16; width: min(88vw, 380px); max-width: none; max-height: none; transform: none; opacity: 1; visibility: visible; transition: transform 200ms ease-out, visibility 0s linear 200ms; box-shadow: -10px 0 30px rgb(0 0 0 / 35%); }
+  #payload-bar.collapsed { transform: translateX(102%); max-width: none; opacity: 1; visibility: hidden; }
+  #scrim-right { display: block; position: fixed; inset: 0; z-index: 15; background: rgb(0 0 0 / 45%); opacity: 0; pointer-events: none; transition: opacity 180ms ease-out; }
+  #payload-bar:not(.collapsed) ~ #scrim-right { opacity: 1; pointer-events: auto; }
+}
+/* 手机（≤700）：左会话栏改"抽屉"（不再是顶部 30vh 死条）—— [◧] 调出/收起，选中会话自动收。 */
 @media (max-width: 700px) {
-  #columns { flex-direction: column; }
-  #sessions-bar { width: auto; border-right: none; border-bottom: 1px solid var(--line); max-height: 30vh; }
-  /* 竖排时 collapsed 得把**高**也收掉（横排那套只压宽 —— 手机上新对话/设置都要靠它让位）。 */
-  #sessions-bar.collapsed { max-height: 0; border-bottom: none; }
+  #sessions-bar { position: fixed; inset: 0 auto 0 0; z-index: 16; width: min(82vw, 300px); max-height: none; border-right: 1px solid var(--line); transform: none; opacity: 1; visibility: visible; transition: transform 200ms ease-out, visibility 0s linear 200ms; box-shadow: 10px 0 30px rgb(0 0 0 / 35%); }
+  #sessions-bar.collapsed { transform: translateX(-102%); max-width: none; opacity: 1; visibility: hidden; }
+  #scrim-left { display: block; position: fixed; inset: 0; z-index: 15; background: rgb(0 0 0 / 45%); opacity: 0; pointer-events: none; transition: opacity 180ms ease-out; }
+  #sessions-bar:not(.collapsed) ~ #scrim-left { opacity: 1; pointer-events: auto; }
   #messages-vue { padding: 0.5em 0.8em; }
   #settings-view { padding: 0.4em 0.4em 0; }
   .settings-bar { gap: 0.2em; }

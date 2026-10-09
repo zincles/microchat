@@ -214,18 +214,31 @@ function applySideToggle(barID, hidden) {
 }
 
 // —— 会话 ——
+// —— 侧栏/抽屉（2026-10-10 移动端）—— 同一对按钮两种身份：
+// 宽屏 = 布局里的栏（collapsed = 收起）；窄屏 = 覆盖式抽屉（collapsed = 关着）。
+// 窄屏一律默认关、不读不写 localStorage —— 抽屉的开合是瞬时的事，那是桌面偏好的账。
+const mqlLeft = window.matchMedia?.("(max-width: 700px)") ?? null;
+const mqlRight = window.matchMedia?.("(max-width: 1100px)") ?? null;
+function narrowLeft() { return !!mqlLeft?.matches; }
+function narrowRight() { return !!mqlRight?.matches; }
+function applySideStates() {
+  applySideToggle("sessions-bar", narrowLeft() ? true : localStorage.getItem("mc_bar_left_hidden") === "1");
+  applySideToggle("payload-bar", narrowRight() ? true : localStorage.getItem("mc_bar_right_hidden") === "1");
+}
 function toggleLeft() {
   const bar = document.getElementById("sessions-bar");
   const hidden = !bar?.classList.contains("collapsed");
-  localStorage.setItem("mc_bar_left_hidden", hidden ? "1" : "0");
+  if (!narrowLeft()) localStorage.setItem("mc_bar_left_hidden", hidden ? "1" : "0");
   applySideToggle("sessions-bar", hidden);
 }
 function toggleRight() {
   const bar = document.getElementById("payload-bar");
   const hidden = !bar?.classList.contains("collapsed");
-  localStorage.setItem("mc_bar_right_hidden", hidden ? "1" : "0");
+  if (!narrowRight()) localStorage.setItem("mc_bar_right_hidden", hidden ? "1" : "0");
   applySideToggle("payload-bar", hidden);
 }
+// 窄屏里"人去了别处"就得把左抽屉收回去（选会话 / 开新对话）。
+function closeLeftDrawer() { if (narrowLeft()) applySideToggle("sessions-bar", true); }
 async function closeSession(id) {
   const list = await api.listSessions().catch(() => []);
   const name = list.find((s) => s.id === id)?.title || "新会话";
@@ -264,6 +277,7 @@ async function startDraft() {
   refreshPreview(); // 输入框里若还留着字（＋ 时不清输入框），预演立刻跟上
 }
 function newSession() {
+  closeLeftDrawer(); // 窄屏：抽屉让位（人已经去新对话了）
   closeSettings(); // 侧栏动作 = 把人带回对话区（设置视图让位）
   startDraft().catch((err) => toast(`新建失败：${err.message}`, "error"));
 }
@@ -669,28 +683,21 @@ function onComposerSubmit(text) {
 }
 
 // —— 设置视图（与对话同级，2026-10-10） ——
-// 窄屏打开设置时**自动收起左栏**（返回时还原）：手机上别让会话条占着 30vh 只当背景。
-// 用 matchMedia 判窄屏；只点类不写 localStorage（那是用户手动开关的持久化，别混淆）。
-let settingsAutoCollapsed = false;
+// 窄屏：进/出设置都把左抽屉归位（手机上别让它压着视图）；宽屏：不动侧栏（并排看没问题）。
 function openSettings() {
   settingsOpen.value = true;
-  if (window.matchMedia?.("(max-width: 700px)")?.matches) {
-    const bar = document.getElementById("sessions-bar");
-    settingsAutoCollapsed = !!bar && !bar.classList.contains("collapsed");
-    if (settingsAutoCollapsed) applySideToggle("sessions-bar", true);
-  }
+  if (narrowLeft()) applySideToggle("sessions-bar", true);
 }
 function closeSettings() {
   settingsOpen.value = false;
-  if (settingsAutoCollapsed) {
-    applySideToggle("sessions-bar", false);
-    settingsAutoCollapsed = false;
-  }
+  if (narrowLeft()) applySideToggle("sessions-bar", true);
 }
 // —— 拖拽调宽 ——
 onMounted(() => {
-  applySideToggle("sessions-bar", localStorage.getItem("mc_bar_left_hidden") === "1");
-  applySideToggle("payload-bar", localStorage.getItem("mc_bar_right_hidden") === "1");
+  applySideStates();
+  // 跨断点（桌面 ⇄ 抽屉）时把两侧状态重算一遍：变成抽屉就一律先关掉，不然会"啪"地盖上来。
+  mqlLeft?.addEventListener?.("change", applySideStates);
+  mqlRight?.addEventListener?.("change", applySideStates);
   if (typeof ResizeObserver !== "undefined" && !composerRO) {
     composerRO = new ResizeObserver(() => liftOverlays());
     const form = document.querySelector("#composer");
@@ -705,6 +712,8 @@ onMounted(() => {
 onUnmounted(() => {
   composerRO?.disconnect();
   composerRO = null;
+  mqlLeft?.removeEventListener?.("change", applySideStates);
+  mqlRight?.removeEventListener?.("change", applySideStates);
 });
 </script>
 
@@ -713,12 +722,13 @@ onUnmounted(() => {
     <div id="columns">
       <SessionBar
         ref="sessionbarRef"
-        @select="(id) => { closeSettings(); enterSession(id).catch((err) => toast(`进会话失败：${err.message}`, 'error')); }"
+        @select="(id) => { closeLeftDrawer(); closeSettings(); enterSession(id).catch((err) => toast(`进会话失败：${err.message}`, 'error')); }"
         @settings="(id) => { sessionSettingsId = id; }"
         @close="closeSession"
         @new="newSession"
         @open-settings="openSettings"
       />
+      <div id="scrim-left" @click="toggleLeft"></div>
       <div id="content">
       <section id="chat-col" v-show="!settingsOpen">
     <TopBar
@@ -764,6 +774,7 @@ onUnmounted(() => {
         @sessions-changed="refreshSessionsBar"
         @goto-session="(id) => { closeSettings(); enterSession(id).catch((err) => toast(`进会话失败：${err.message}`, 'error')); }"
       />
+      <div id="scrim-right" @click="toggleRight"></div>
       </div>
     </div>
     <Toast ref="toastRef" />
