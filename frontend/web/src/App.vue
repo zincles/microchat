@@ -2,9 +2,8 @@
 // App.vue —— 三栏骨架 + 全部接线（原 main.js + 九个桥，合一）。
 // 组件直接挂模板，ref 直调实例方法，不再经 *-vue.js 桥 / mount.js。
 import { ref, reactive, computed, onMounted, nextTick } from "vue";
-import { createApi } from "./api/client.js";
+import { createApi, advanceCursor } from "./api/client.js";
 import { parseCommand, filterCommands } from "./utils/commands.js";
-import { advanceCursor } from "./utils/cursor.js";
 import {
   groupModelsByProvider,
   formatStatusLine,

@@ -1,5 +1,11 @@
 // microchat web API 层 —— 与 TUI/TG 同一条 HTTP 契约（只调 /api/v1）。
 // 零运行时依赖：fetch 直调。提一个 createApi 工厂，方便测试注入 fetch。
+// 游标推进 turn/text 轮询用
+export function advanceCursor(state, slice) {
+  if (slice.next < state.from || slice.think_next < state.thinkFrom) return { ...state, stale: true };
+  return { from: slice.next, thinkFrom: slice.think_next, stale: false };
+}
+
 export function createApi({ base, token = "", fetchFn = fetch }) {
   async function call(method, path, body) {
     const res = await fetchFn(base + path, {

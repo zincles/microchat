@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { createApi } from "../src/api/client.js";
 import { parseCommand, filterCommands } from "../src/utils/commands.js";
-import { advanceCursor, buildTurnTextPath } from "../src/utils/cursor.js";
+import { advanceCursor } from "../src/api/client.js";
 import {
   formatThinkLabel,
   formatStatusLine,
@@ -58,10 +58,6 @@ test("游标回退包丢弃：advanceCursor 标记 stale", () => {
   const good = advanceCursor(cur, { next: 7, think_next: 2 });
   assert.equal(good.stale, false);
   assert.equal(good.from, 7);
-  assert.equal(
-    buildTurnTextPath("s1", 7, 2),
-    "/sessions/s1/turn/text?from=7&think_from=2",
-  );
 });
 
 test("思考折叠抬头：reasoning_ms 换算秒；无值回退", () => {
