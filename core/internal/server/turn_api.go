@@ -124,6 +124,9 @@ func queryInt(w http.ResponseWriter, r *http.Request, name string) (int, bool) {
 // 不查会话是否存在：这个动作问的是"进程里有没有活在跑"，
 // 答案对不存在的会话同样是"没有"（回 false 比 404 更贴它的语义）。
 func (s *Server) stopTurn(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireSession(w, r); !ok {
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]bool{"stopped": s.chat.Stop(r.PathValue("session_id"))})
 }
 

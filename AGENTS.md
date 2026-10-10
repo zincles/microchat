@@ -22,6 +22,8 @@ microchat：轻量 SillyTavern 替代（RPG 向）。三层，边界要清楚：
 | **能力（Ability）** | **写死在代码里的一段固定流程**（**会调模型的 Task 种类**：现在 `title` / `compact` / `judge` 三个）；开关在 Agent 上、流程在代码里。**"对话本身"不是能力** ✗（那是 Agent 存在的方式） | "工具"（撞函数调用）、"子 Agent" |
 | **Agent** | **一份命名的人格 + 一组能力开关**（`agents.json`）：同一个运行时，只是开关不同 | 拿它指"某个能力" |
 | **任务（Task）** | **一次上游请求的全程**（发起 → 收尾 → 可能被取消）：一轮生成、一次压缩、一次刷新模型都挂号。**会调模型的一定是 Task**（**反之不成立** —— `refresh_models` 也是 Task，但它不调模型）。**TaskID 是 UUIDv7，且不进库** | "后台作业"（不都在后台）；拿它指"某个能力" |
+| **用户（User）** | **一个登录者**（`users` 行）：名字 + bcrypt 口令 + 角色。**UID 0 = ROOT 恒在**（建库即种、等 setup 设口令；**无口令 = 服务未启用**）；**其余 uid 从 1000 起、不可变**；会话靠 `owner_id` 归属（**无主 = 0 = root**）。口径全在 `DEFINE.md`「用户与鉴权」 | "agent"（那是人格）；"系统令牌"（那是 TUI/TG 的通道）|
+| **系统令牌** | **环回通道的凭据**（TUI/TG 与 server 同进程，启动现铸、只走内存）：认它 = 系统身份（等同 admin）。**不是**用户凭据 —— 用户凭据是登录换的 JWT | "管理员口令" |
 
 三层咬合：**Agent（人格 + 能力开关）→ 一次调用（对话型 / 功能型=能力）→ Task（这次上游请求的全程）**。
 **Task 的种类 ≈ 能力 id** ✓（2026-09-30 定，别再分两层）：`title` / `compact` 是，`judge` 能力的 Task 面叫 **`judgement`**
@@ -139,6 +141,7 @@ go -C core test ./...                                     # 后端测试（`-C c
                                                           #   不起服务 / 不发 HTTP / 不开 TUI，打印就退出
                                                           #   （每行一条 JSON，好接管道；op 一览以 `-debug` 无参数输出为准，不在这里列全）
                                                           #   典型：new → send（同步跑完一整轮）→ outgoing / state / status
+                                                          #   清理：reset-users（删光非 root 用户+其会话、root 清回无口令）
                                                           #   与 -config / -data / -addr 共存；给了 -debug 就不监听端口
 
 
@@ -194,7 +197,7 @@ delete(AA)           # 删除
 
 **`data/config/`** 里是**严格 JSON**（程序整体重写），都可缺失。文件名一律 `.json`：
 
-- `config.json` — `{ "server": { "host": "0.0.0.0", "port": 8787, "auth_token": "可选", "refresh_models_on_start": true }, "defaults": { "provider": "dummy", "model": "dummy", "agent": "default" }, "chat": { "model_context_tokens": 131072, "compact_trigger_tokens": null, "compact_blocks": 5 } }`（`host` **默认就是 `0.0.0.0`** —— 手机/平板开 `http://<本机IP>:8787/api/v1` 就能连；没设 `auth_token` 时同一网段人人可用，要收紧就设口令。`host`/`port` 随时改这个文件生效（命令行 `-addr host:port` 可临时盖））
+- `config.json` — `{ "server": { "host": "0.0.0.0", "port": 8787, "jwt_key": "（启动自动铸，64 hex）", "refresh_models_on_start": true }, "defaults": { "provider": "dummy", "model": "dummy", "agent": "default" }, "chat": { "model_context_tokens": 131072, "compact_trigger_tokens": null, "compact_blocks": 5 } }`（`host` **默认 `0.0.0.0`**：手机/平板开 `http://<本机IP>:8787/api/v1` 就能连。**登录口令不在配置里** —— root 靠一次性 setup 设（见 DEFINE「用户与鉴权」）；`jwt_key` 缺省启动时**现铸并写回本文件**，换它 = 全员登出。`host`/`port` 随时改这个文件生效（`-addr host:port` 可临时盖））
 （`compact_blocks` = 压缩不给块数时压几个**对话块**（**缺省 5**；2026-10-10 从 10 改小——抬头那条路要凑满 N 条同层相邻顶层摘要，10 常凑不齐直接报无可压缩）；`refresh_models_on_start` = 启动时要不要自动去问每个渠道有哪些模型，**默认 true**，类型是 `*bool` ⇒ 没写就是开）
 - `providers.json` — `{ "providers": [ { "id": "dummy", "vendor": "dummy" }, { "id": "openrouter", "vendor": "openrouter", "api_key": "sk-…" }, { "id": "自建", "vendor": "custom", "base_url": "https://…/v1", "api_key": "sk-…" } ] }`（`vendor` 是**唯一必填**；`kind` 只剩存量读入别名，新配置必须写 `vendor`；`protocol` 缺省 `openai-chat-completion`）
   **密钥就写在这一条里**（空串 = 没配）：整个 `config/` 在忽略范围内；接口一律不回显（只回 `has_key`），调试页读它时先打码；写回权限收紧到 0600。
@@ -211,16 +214,19 @@ delete(AA)           # 删除
 
 **唯一权威是 Go 版的路由表**（`core/internal/server/`）。全部挂在 **`/api/v1`** 下，请求与响应都是 JSON。
 
-- 配了口令时（`config.json` 的 `server.auth_token`）**所有**接口都要 `Authorization: Bearer <token>`（`/health` 也不例外）；
-  缺失 / 不符 ⇒ **401**（错误体同下，`code: unauthorized`）。**预检 `OPTIONS` 例外**——它不带凭据，在鉴权**之前**就被接管。
-  **没配**口令（空 / 未设）⇒ 全部放行（默认行为）。
+- **全请求强制鉴权**（2026-10-10 定，DEFINE「用户与鉴权」）：**每一个**请求都要 `Authorization: Bearer <token>` ——
+  `/health` 也不例外；缺失 / 不符 ⇒ **401**（错误体同下，`code: unauthorized`）。**仅有的三处开放口**：
+  `GET /auth/status`（门板探测必需）、`POST /auth/login`、`POST /auth/setup`（**只开一次**：给 root 设口令）。
+  凭据两种：**用户 JWT**（登录换的，30 天定长；`ver` 一变即失效）与**环回系统令牌**（TUI/TG 与 server 同进程、
+  启动现铸、只走内存——等同 admin）。**另有一道总闸**：root 无口令 ⇒ **服务未启用**，除 status/setup 外一律
+  **403 `setup_required`**（连 login 与系统令牌也挡）。**预检 `OPTIONS` 例外**：它在鉴权**之前**被 CORS 层接管。
 - 错误体固定 `{"error":{"code","message"}}`，`code` ∈ `invalid` / `not_found` / `conflict` / `unauthorized` / `upstream` / `internal`——客户端按 `code` 分支，别匹配文案。
 - **405 由框架自己回**（路径在、方法不对），不带上面的体，但带 `allow:` 头。
 - **CORS 全开 ✓ + 预检 204 ✓**（`Access-Control-*` 盖住**每一个**响应：200 / 401 / 404 / 405 / 错误体都带；
   `OPTIONS` 在**鉴权之前**被接管 ⇒ 预检不带 `Authorization` 也放行、回 **204 无体**；只有 `OPTIONS` 被我们截下，其余方法照旧透给路由）。
   `Allow-Origin` 有 `Origin` 就**回显**它、否则 `*`（并带 `Vary: Origin`）；`Allow-Headers` 回显 `Access-Control-Request-Headers`（没有则 `Authorization, Content-Type`）；
   `Max-Age: 600`；`Expose-Headers: Allow`（405 的 `allow:` 不在安全名单里，浏览器默认读不到）。
-  **默认不设 auth_token**，所以别把端口暴露到公网。
+- **TLS 不归我们**（用户定）：云上由反代终结（Cloudflare 一类）；本二进制只管 HTTP。
 
 ### 故意砍掉的（2026-09-29 定：**先简化，再往深走**）
 
@@ -232,12 +238,36 @@ delete(AA)           # 删除
   `GET/PUT /abilities`
 - **`POST /sessions/{session_id}/fork` 已彻底作废** ✗（不是"待重做"）：线性会话里分岔就是 **Copy** ✓（见上表）
 - **不要照旧版补回来** ✗ —— 旧版是参照，不是目标；要加先改这张表。
+### 鉴权（2026-10-10 · DEFINE「用户与鉴权」）
+
+|方法|路径|请求体|响应|说明|
+|---|---|---|---|---|
+|GET|`/auth/status`|—|`{status, version, needs_setup}`|**开放口**：门板/探针用——后端活着吗、root 初始化了没|
+|POST|`/auth/setup`|`{password}`|`{token, user}`|给 **uid 0 的 root** 设口令（名字固定 `root`）——**只开一次**；设过 ⇒ **403**（加人走将来的 `/users`）。口令 ≥6 位、bcrypt 存储；**空口令的 root 绝不可登录**|
+|POST|`/auth/login`|`{user, password}`|`{token, user}`|换 **JWT**（HS256、30 天定长；claims = `sub`/`adm`/`ver`）。**`user` 填用户名或 uid 都行**（全数字按 uid 查；用户名不许纯数字）；错就 401（不区分"没这人/口令错"）|
+|GET|`/auth/me`|—|`{id, name, is_admin}`|我是谁（系统身份回合成的一条）|
+|POST|`/auth/logout`|—|204|JWT 无状态：服务端没东西可清，这个口只是给客户端一个**明确动作**（前端就此丢掉本地令牌）|
+
+**用户 ↔ 会话**：`sessions.owner_id` 是**唯一一格归属**（消息/摘要/状态都继承）；非本人（且非 admin/系统）访问任何会话域接口 ⇒ **404**（不泄露存在性）；列表只列自己的。
+
+**设置 = root 专属（S2，2026-10-10 定）**：设置面（`/providers*` 含 presets/usage、`/config/chat`、`/config/telegram`、`/debug/last-payload`、`/sessions/import-st`）**读与写都要 admin**；聊天要用的读口照旧人人可读：`/agents`（顶栏人格）、`/models`（GET）、`/config/defaults`（GET，草稿预填）。`/tasks` 非 admin **只看得见自己会话的**（无会话的如"刷新模型"只在 admin 面板出现）。
+
+### 用户管理（admin；`users_api.go`）
+
+|方法|路径|请求体|响应|说明|
+|---|---|---|---|---|
+|GET|`/users`|—|`[{id,name,is_admin,has_password,tg_user_id,created_at}]`|列表（**绝不含口令哈希**，只有"有没有"）|
+|POST|`/users`|`{name,password}`|userView · 201|加人：名字 ≤32 字、**不许纯数字**（那是 uid 的地盘）、口令 ≥6 位；**uid 从 1000 起**；**新加的一律不是 admin**（root 权限暂不外发）|
+|PATCH|`/users/{user_id}`|`{name}`|userView|改名（admin 改谁都能改；**自己改自己也行**）；纯数字/重名 ⇒ 400|
+|POST|`/users/{user_id}/password`|`{password}`|204|改口令（admin 或**本人**）；`ver+1` ⇒ **那人旧票全废**（admin 用它踢人）|
+|DELETE|`/users/{user_id}?sessions=transfer\|purge`|—|`{sessions_affected}`|删人：**对会话必须显式**（transfer=转给 root / purge=连会话一起没）；**root（uid 0）不许删**；缺/坏参数 ⇒ 400|
+
 ### 会话与消息
 
 | 方法 | 路径 | 请求体 | 响应 | 说明 |
 |---|---|---|---|---|
 | GET | `/sessions` | — | `[SessionView]` | 每项 = 会话 + `messages`（**这条会话有几条消息** —— 客户端的启动编排据此认定"空会话"，不必逐条会话再拉一次消息）+ `turn`（客户端据此标"生成中"）|
-| POST | `/sessions/import-st` | JSONL 原文（`?title=` 可选） | `{session, messages, skipped}` · 201 | **ST 导入**：SillyTavern JSONL（一行一条）→ 建会话 + 按序落库；只认四样（is_user/mes/reasoning/send_date），其余全丢；空文件 ⇒ 400 |
+| POST | `/sessions/import-st` | JSONL 原文（`?title=` 可选） | `{session, messages, skipped}` · 201 | **admin 专属**（设置面）。**ST 导入**：SillyTavern JSONL（一行一条）→ 建会话 + 按序落库；只认四样（is_user/mes/reasoning/send_date），其余全丢；空文件 ⇒ 400 |
 | POST | `/sessions` | `CreateSessionReq` | `Session` · 201 | 省略字段时取 `config.json` 的 `defaults`；`title` **真生效**（建一条已命名的会话，不必再多发一次 `PATCH`）—— 不给 / `""` ⇒ 标题空着（等首条用户消息自动起名）。**`id`（可选，2026-10-09）**：客户端铸的 UUIDv7 —— 草稿态（web）靠它把"预演的那一发"与"真发的那一发"钉成同一个会话键；给了就用（先校形状 ⇒ 非 v7 **400**、已有 ⇒ **409**），不给 ⇒ 服务端现铸。⚠ **HACK（刻意，全项目唯一允许客户端铸 id 的口子）** —— 动机只有草稿预演那一条，别扩散（消息/摘要的 id 一律服务端铸） |
 | PATCH | `/sessions/{session_id}` | `UpdateSessionReq` | `Session` | 标题 / 模型 / agent / **提示词**（`system_prompt` 是**指针** ⇒ 没给或 `null` = 不动、`""` = **清掉会话级覆盖** ⇒ 回落 agent 的、非空 = 写进 `sessions.system_prompt`）|
 | DELETE | `/sessions/{session_id}` | — | 204 | 不存在 → 404 |
@@ -256,7 +286,7 @@ delete(AA)           # 删除
 | GET | `/sessions/{session_id}/prompt` | — | `{"text","type"}` | **生效的系统提示词**（三级解析的**结果**，与出站拼装读同一处）：`type` = `conversation`（会话自己写了 `sessions.system_prompt`）/ `agent`（`agents.json` 里那个 agent 的）/ `builtin`（两级都没有 ⇒ 代码里的内置默认）。**永不给空**：解析全落空（典型：会话的 `agent_id` 软引用**悬空**）也退内置那句、`type` 报 `builtin`。将来做了可拼接的提示词，这里回**运算后**的结果（形状不变）|
 | GET | `/sessions/{session_id}/status` | — | `TurnStatus` | `phase`（`idle`/`pending`/`streaming`/`error`）+ `message_id` + `elapsed_ms` + `chars` + `thinking_chars` + `error`。另搭两档**与轮次无关**的活状态：`compact`（`state`=`running`/`done`/`error` + `blocks`/`compacted`/`summary_id`/`from_idx`/`to_idx`/`merged` + `error`）与 `reroll`（`state` + `elapsed_ms` + `error`）|
 | GET | `/sessions/{session_id}/turn/text?from=N&think_from=M` | — | `StreamSlice` | 流式增量的**游标读**（正文与思考各一条游标，`from` = 第几个字符）：只服务动画 |
-| POST | `/sessions/{session_id}/stop` | — | `{"stopped": bool}` | **幂等**：没在跑也 200（`false`）|
+| POST | `/sessions/{session_id}/stop` | — | `{"stopped": bool}` | **幂等**：会话存在且是自己的、只是没在跑 ⇒ 200（`false`）；**不存在 / 不是自己的 ⇒ 404**（多用户起它不再是例外——不许掐别人的轮子）|
 | POST | `/sessions/{session_id}/compact` | `CompactReq` | `CompactStatus` · **202** | **压缩**：`{"blocks": N}` 或 `{"begin_idx": i, "end_idx": j}`（1-based 消息序号，与 `/messages?from_idx=&to_idx=` 同一套词；两种给法互斥、区间两端都得给；都不给 ⇒ 用 `chat.compact_blocks`）。**按块，不按条**（块 = assistant→user 交界，一块 ≥2 条）。按块数 ⇒ 策略（底层凑不够就抬头并摘要）；按区间 ⇒ 全未覆盖走消息级、**同层顶层摘要恰好铺满**走合并（金字塔）、其余 ⇒ 400（混合有洞，不后台跑）。**同一个会话同时只允许一次**（在跑 ⇒ 409）。跑完的结局在 `GET .../status` 的 `compact` 那一档（`running`/`done`/`error` + `from_idx`/`to_idx`/`merged` + 原因）|
 | POST | `/sessions/{session_id}/compact/preview` | `{"blocks": N}` | `PreviewResult` · 200 | **压缩预览**：**只算不动**（调同一套策略；区间入口自己就是答案，不走这里 ⇒ 400）。回 `from_idx`/`to_idx` + `merged` + `source_ids` + 人话一句（"压第a–b条（N块）"/"并第a–b条那N坨"）。落库/调上游/挂号一概不碰 |
 | GET | `/sessions/{session_id}/summaries` | — | `[Summary]` | 摘要列表（picker / 消息列折叠 / 分页切段用；按 id 序；空 ⇒ `[]`）。每条带 **`begin_idx` / `end_idx`**（区间两端的**消息序号**，派生 —— 与消息 `idx` 同一把尺；端点悬空/缺 ⇒ 缺省 ⇒ 界面按「不折」处理）|
@@ -327,8 +357,8 @@ delete(AA)           # 删除
 | 方法 | 路径 | 响应 | 说明 |
 |---|---|---|---|
 | GET | `/health` | `{"status","version"}` | 探针；**也过鉴权** |
-| GET | `/debug/last-payload` | `LastPayload` | **(a) 上一次真发出去的那一发**：那一刻请求的**快照**（method / url / **头** / 体；内存一份，覆盖式；没发过 = `null`）。**不可重算** ✗ —— 历史事实（改一条旧消息也回不去），且**含请求头**：用来回答"我上一发到底发了什么 / 为什么被拒"（网关拒的往往是头不是体）。头也回显且打码 |
-| GET | `/tasks` | `TaskBoard` | **任务面板**：进程内的事实（`running` + 在跑的在前的 `tasks`；与 `-debug tasks` 同一份 `Board`，不进库）。轮询用（状态指示器就问它）。重启就没 —— "没有在跑的"是诚实的事实 |
+| GET | `/debug/last-payload` | `LastPayload` | **admin 专属**。**(a) 上一次真发出去的那一发**：那一刻请求的**快照**（method / url / **头** / 体；内存一份，覆盖式；没发过 = `null`）。**不可重算** ✗ —— 历史事实（改一条旧消息也回不去），且**含请求头**：用来回答"我上一发到底发了什么 / 为什么被拒"（网关拒的往往是头不是体）。头也回显且打码 |
+| GET | `/tasks` | `TaskBoard` | **任务面板**：进程内的事实（`running` + 在跑的在前的 `tasks`；与 `-debug tasks` 同一份 `Board`，不进库）。轮询用（状态指示器就问它）。重启就没 —— "没有在跑的"是诚实的事实。**非 admin 只见自己会话的任务**（别人在跑什么不关你事）|
 
 ## 一轮生成（202 + 轮询）
 
@@ -404,7 +434,7 @@ delete(AA)           # 删除
 
 ### `sessions`
 
-`id` · `title`（首句自动生成；空串 = 还没起名）· `system_prompt`（**空串 = 没覆盖** ⇒ 底子算全局）· `provider` / `model` / `agent_id`（都是**软引用**，无外键）· `created_at` / `updated_at`（界面按 `updated_at` 排序）
+`id` · `title`（首句自动生成；空串 = 还没起名）· `system_prompt`（**空串 = 没覆盖** ⇒ 底子算全局）· `provider` / `model` / `agent_id`（都是**软引用**，无外键）· **`owner_id`**（归属：0 = admin；消息/摘要/状态都继承它，不许再加第二列）· `created_at` / `updated_at`（界面按 `updated_at` 排序）
 
 （**没有 `current_leaf`**：线性会话不需要"停在哪儿"，"最新一条" = `ORDER BY id DESC LIMIT 1`。）
 
@@ -417,6 +447,10 @@ delete(AA)           # 删除
 
 `upstream_name` / `owned_by` / `context_length` / `max_output` / `upstream_params` / `first_seen_at` / `last_seen_at`（**这次没见到就删行** ⇒ 列表 = 上游当前那份）
 **用户列**（刷新永不动）：`display_name` · `params` · `context_override` · `tokenizer`（缺省 `{"kind":"approx","ratio":1.3}`）
+
+### `users` —— 登录者（2026-10-10 多用户）
+
+`id`（INTEGER PK：**root 恒 0**（建库即种、无口令 = 服务未启用）、其余**从 1000 起**、不可变）· `name`（UNIQUE）· `pass_hash`（bcrypt，**JSON 永不出口**）· `is_admin` · `ver`（口令版本：+1 ⇒ 此人所有 JWT 立刻失效）· `tg_user_id`（UNIQUE，NULL = 没绑；S3 用）· `created_at`
 
 ### `summaries` + `provider_state`
 
@@ -525,12 +559,13 @@ delete(AA)           # 删除
 
 ### Web（当前主力，`frontend/web/`，Vue 3 + Vite）
 
-- 布局：左会话栏（顶部「＋开启新对话」大按钮；高亮当前，× 关，☰ 进二级改名/换模型）｜`#content` = **对话与设置同级**（2026-10-10，OpenWebUI 式）—— 对话（顶栏 = 显隐开关 + 会话抬头 + 渠道/模型与 Agent 下拉；消息列 + 输入行）与**设置视图**互斥切换；右载荷栏（三 tab：真请求直放 / 世界状态 / **压缩树**）随对话一起让位。**设置不再弹窗**：占满左栏右侧整块、顶部是**一行式工具栏** `[◧][六区 tabs][×]`（不设"顶部卡"、无标题；Esc 返回）。**窄屏（断点即身份，2026-10-10）**：≤1100 右载荷栏、≤700 左会话栏改**覆盖式抽屉**（`collapsed` = 关着；[◧][◨] 调出/收起 + 遮罩点击收起 + 选中会话/开新对话自动收）；窄屏**不读不写**桌面偏好（`mc_bar_*_hidden`），跨断点时两侧统一先关（不然会"啪"地盖上来）。遮罩的显隐由 CSS 兄弟选择器跟栏的类联动，不用 JS 状态。
+- 布局：左会话栏（顶部「＋开启新对话」大按钮；高亮当前，× 关，☰ 进二级改名/换模型）｜`#content` = **对话与设置同级**（2026-10-10，OpenWebUI 式）—— 对话（顶栏 = 显隐开关 + 会话抬头 + 渠道/模型与 Agent 下拉；消息列 + 输入行）与**设置视图**互斥切换；右载荷栏（三 tab：真请求直放 / 世界状态 / **压缩树**）随对话一起让位。**设置不再弹窗**：占满左栏右侧整块、顶部是**一行式工具栏** `[◧][五区 tabs][×]`（不设"顶部卡"、无标题；Esc 返回）。**窄屏（断点即身份，2026-10-10）**：≤1100 右载荷栏、≤700 左会话栏改**覆盖式抽屉**（`collapsed` = 关着；[◧][◨] 调出/收起 + 遮罩点击收起 + 选中会话/开新对话自动收）；窄屏**不读不写**桌面偏好（`mc_bar_*_hidden`），跨断点时两侧统一先关（不然会"啪"地盖上来）。遮罩的显隐由 CSS 兄弟选择器跟栏的类联动，不用 JS 状态。
 - 接线全在 `src/App.vue`（SFC 直接挂模板）；`src/api/client.js` 只调 `/api/v1`；`src/utils/` 放纯函数（contract 测试钉住请求形状）。
-- **连接门板**（2026-10-10 加）：启动自检探不通后端（新设备第一次打开/地址没填对）⇒ 不开破界面，先给全屏"连接到 microchat 后端"面板：填地址（裸写 `192.168.0.110:8787` 也行 —— `normalizeApiBase` 自动补 `http://` 与 `/api/v1`）+ 可选 Token → `检查连通性`（`probeHealth`：自带 4s 超时、**必须回 JSON `status:"ok"`**）→ 通过 ⇒ `saveNetPrefs` 存偏好并**刷新页面**进聊天（沿用"改完刷新生效"）。桌面设置 → 连接 tab 照旧可改（同一个写入口 `saveNetPrefs`）。
+- **连接门板**（2026-10-10 加）：启动自检探不通后端（新设备第一次打开/地址没填对）⇒ 不开破界面，先给全屏"连接到 microchat 后端"面板：填地址（裸写 `192.168.0.110:8787` 也行 —— `normalizeApiBase` 自动补 `http://` 与 `/api/v1`）→ 过 ⇒ `saveNetPrefs` 存 **JWT** + **刷新页面**进聊天（沿用"改完刷新生效"）。**2026-10-10 多用户改造**：启动自检探开放口 `/auth/status`——探不通 ⇒ 门板带原因；`needs_setup:true` ⇒ 「初始化 root」（**uid 0 恒在**，只设口令+确认；名字固定 root）；已初始化 ⇒ 登录（地址 / 用户名 / 口令）。探针两道闸照旧（`normalizeApiBase` + 必须回 `status:"ok"`）。
 - **默认后端地址跟着"你从哪儿打开页面"走**（2026-10-10 加）：没存过 `mc_api` 时 `apiBase()` = `location.hostname:8787`（前端 8788/后端 8787 是成对默认；IPv6 主机名套方括号）—— 手机从 `192.168.0.110:8788` 打开就直接连 `192.168.0.110:8787`，**探通直进、门板都不用看**（从前钉死 127.0.0.1 = 在手机上指手机自己）。启动自检按候选探：`apiBaseCandidates()` = 存过 ⇒ 只认存的；没存过 ⇒ [同主机 8787, **同源 `/api/v1`**]（后者兜底反代/单端口部署）；非首选胜出 ⇒ 存下来 + 刷新一次（`sharedApi` 等一切读的都是 `apiBase()`，不存会指错）。推导只读不写 —— 不偷偷存。
 - **滑动面板**（2026-10-10 加，触屏**跟手拖拽**）：左滑出右栏、右滑出左栏 —— **拖到哪儿面板停哪儿**（半开也维持着，不用等松手），松手才吸附（CSS 的 200ms 过渡演动画）：**中点吸附 + 两个方向的快甩都认**（`|v| ≥ 0.0025 开度/ms` 且已拖 6%）。⚠ 三条实测修正：① 只写"朝开"的 flick ⇒ 快关全落回"必须拖过 60%"，真机"关闭发涩"——对称补上"朝关"；② 速度样本有 **120ms 保鲜期**（甩完停住手再松手按位置算，不然历史峰值把"拖一半停手"也弹成开）；③ `v` 的单位是**开度/ms**（真实手速 0.002–0.01，写 0.5 = 死弦）。**先关后开**：已有一扇开着 ⇒ 只认"朝它关回去"的方向（跟手关，同样半开）——同向忽略，不许两扇同开。判定在 `utils/swipe.js`（纯函数：`classifyAxis` 先到先得的轴向锁 / `pickDrag` 拖哪扇从哪起 / `dragProgress` 位移→开度 / `resolveRelease` 松手吸附）；DOM 只做三件：跟手写内联 transform（transition 先掐）、松手清内联落 `collapsed` 类、scrim 透明度跟开度。不接管的场合：输入框/下拉、`pre`（自己的横向滚 —— 但**抽屉自己身上一律接管**，`pre` 也不例外：右栏载荷 tab 整块是 `pre`，早先被这条吞掉，真机表现"在面板上滑没反应"）、命令面板与 picker、设置视图、模态开着时；平板宽度（700–1100）上左栏是**常驻列** ⇒ 不算"该先关"、右滑也不动它。⚠ 坑（都实测咬过）：① 锁轴后**必须记住 axis**（漏了每枚 touchmove 都重进锁轴分支，第二枚就被自己摘掉的 `collapsed` 骗死）；② 锁轴时要**把 `d.p` 初始化成起点开度**（开=0/关=1），且**别动 `d.lastT`**（它在 touchstart 起表；重置会让第一枚 move 的 dt≈0、速度样本作废）；③ 速度阈值的单位是**开度/ms**（真实手速 0.002–0.01，早期写成 0.5 = 死弦）。
 - **移动端键盘不遮输入框**（2026-10-10 加）：`utils/viewport.js` 用 **visualViewport** 把应用盒拟合过去 —— `#app` 高 = `vv.height`、`translateY(vv.offsetTop)`（iOS 的"可视窗上推"跟着走；捏合缩放 scale>1 时不拟合）。`#app` 一带 transform 就成了其内全部 `fixed` 浮层（命令面板 / picker / 确认框 / toast / 连接门板）的**包含块** ⇒ 浮层自动钉在**键盘上沿**；命令面板/picker 限高 `calc(100% - 7em)`（百分比按包含块解析 ⇒ 键盘缩盒时自动跟着缩，小屏不顶出视口，内容自己滚 —— 实测过 617px 面板裸奔出视口）。`index.html` 的 `interactive-widget=resizes-content` 给 Chromium 系先缩布局视口（与 vv 拟合叠加不打架，都以 vv 为准）。配套的**文档锁死**（`html, body { height: 100%; overflow: hidden; overscroll-behavior: none }`）缺不得 —— 见踩过的坑「页面还能延展」；`#session-list` 也终于有自己的滚动（此前没有任何滚动规则，会话一多直接被裁）。
+- **用户视图**（2026-10-10 加，与设置**平级**的另一半）：左栏底 `👤 用户` 打开它 —— **设置管实例/服务器**（聊天参数、渠道、Agent、会话、连接），**用户管登录者自己**—— 身份（`/auth/me`：名字 + 管理员标记 + **退出登录**）与个人偏好（主题 / 背景图 / 发送键 / 输入预演）；**用户管理（加人/踢人/改口令）下一步做**。两块**互斥**（一屏只开一个，互相打开时对方让位）；视图口径同设置：`[◧] 用户 [×]`、Esc 一次只关一层；设置视图因此从六区缩成**五区**（原「界面」区整块搬走，`SETTINGS_TABS` 在 format.js）。
 - **后台任务行**（2026-10-10 加）：输入框上方、状态行**头上**再叠一行小字 —— `⟳ 后台任务 N：kind · kind`（就数 `/tasks` 的 `running`；kind 去重列前 3 种）。0 个 ⇒ **整行不渲染**；App 每 2s 拉一次 `/tasks`（进程内面板、零成本），受理类动作（发送/重发/压缩/重摇两族）后**立刻补刷一次**不等节拍。绝对定位叠行 ⇒ 不动布局（`liftOverlays` 的测量不受影响）；文案在 `format.js` 的 `taskLineText`（纯函数、契约测试钉住）。
 - **共享层（2026-10-10 审计整改）**：`utils/prefs.js` = 界面偏好与共享 api 客户端的唯一出口（主题应用含 TG 守卫 —— TG 里 data-theme 根本不设；发送键判定/提示、apiBase/Token、`sharedApi()` 按偏好缓存）；`api/client.js` 的 `mergeStreamSlice` = 流式合并唯一规则（游标回退 ⇒ 清零重建）；api 错误统一带 `code`/`status`（分支按 code，别猜文案）；`format.js` 的 modelKey/modelLabel/whoText/sessionTitle = 键与标签的唯一出口；`COMMAND_META`（commands.js）与 App 执行器启动对账。
 - 输入行 `/` 进命令面板（**只放已有路由的命令**），`resume` 走 picker；`model` 只是重拉顶栏下拉（不弹 picker）；不可逆的走全屏确认。
@@ -538,8 +573,9 @@ delete(AA)           # 删除
 - **压缩树**（右栏第三 tab，2026-10-10 加）：把压缩结构画成文件管理器那种树（目录 = 摘要、嵌套 = 嵌套压缩、行底 bar = 子树原文占比）。**后端零改动**：现取 `messages` + `summaries` 两个 GET，`utils/tree.js` 的 `buildCompactTree` 本地建树 —— 口径**逐字复刻 `state.walk`**（左端对齐才用摘要、升到最粗同左端祖先、跳过后不回看），`发` = 装配真跳到它、`脏` = 已过期。树顶一行是 **块数输入 + 压缩按钮**（空 = 用 config 的 `compact_blocks`；与 `/compact` 共用 `compactNow`）。压缩命令受理后 `pollCompact` 盯到收尾（拿受理回执的 `at_ms` 对上——状态位是持久的，别认旧结局）。
 - **消息列编号与摘要卡**（2026-10-10 加）：气泡头 `你 #2` / `助手 #4` —— 真消息用服务端 `idx`；库外的（乐观用户句、生成中那一发）按**后缀顺延**（线性追加 ⇒ 顺延号就是将来的真号）；纯合成的"失败"气泡不给号。被**顶层摘要**（没爹的那层 —— 金字塔只露最外）盖住的一段折成**四面圆角卡**（不是气泡）：头 `Summary #a-b`（+`脏`）、正文 = 摘要文本（发给模型的就是这份）、`查看未压缩文本` 展开原始气泡（**只读、无操作行** —— 用户定：展开里不许编辑/修改）。口径全在 `utils/chatrows.js`（纯函数，契约测试钉住）；端点悬空/不在场 ⇒ 不折（宁可露原文）。卡头右侧三件（2026-10-10 加）：`⟳` 刷新 = 摘要重摇 —— **当前那版先占第 1 版、不丢**（seedSummary 的规矩），摇完自动切最新版；生成走 compact 的"只生成、不落库"半程、**非流式**（卡头标「刷新中…」，没有流式预览）；`✎` 编辑 = 应用内模态编辑器（`/editsum` 同一条路 —— 原生 `window.prompt` 退休）；重摇模式活着时 `◀ n/N ▶`（与气泡同一套语义，最右 ▶ 再按 = 再摇一版）。消息/摘要两族共用一把闸：一族在跑，另一族进模式 ⇒ 后端 409、前端 toast。候选只在内存（发新消息 / 切会话 / 重启就散 —— 应用的那版已在库里）。
 - **消息列只挂窗口**（2026-10-10 加，防浏览器被撑炸）：进入会话只拉**最后 20 段**（段 = 一条消息或**一张顶层摘要卡**）；更老的按 `↑ 加载更多历史` 一页一页往回（一页也 20 段，`WINDOW_SEGMENTS` 一个常量 —— 改小就是一次一段；插入前记高度、插完补回滚动锚）。**被摘要盖住的原文一个字节都不取**（按"消息段"拼连续区间分批 GET，摘要段整段跳过）；`查看未压缩文本` **按下才拉**（每次按下都拉新的一版，不吃旧缓存）。总数拿 `?last=1` 问尾条（比会话列表计数新鲜）；`reloadWindow` = 按最新段布局重拉当前窗口（一轮结束/编辑/删除/压缩/切版后），起点先 `alignWindowFrom` 对回段边界。**压缩树 tab 是例外**：看着它才拉**全量**消息+摘要建树（分析视图 = 用户显式要全量）。
-- 设置六 tab：**聊天 / 界面 / 连接 / 会话 / Agent / Provider**（**视图不是弹窗**；顶部一行式工具栏 `[◧][tabs][×]`）；Agent/Provider 的编辑是 **tab 内二级页**（列表 ⇄ 详情就地切换，`[←]` 返回 —— 2026-10-10 从弹窗改过来，弹窗叠视图的账清了）；「会话设置」（左栏 ☰）是**紧凑对话框**（560px、高随内容）。**Esc 一次只关一层**：二级页开着时设置视图不响应 Esc、会话设置弹窗开着时同理（踩过：两边各监听 document，一下关两层）。会话 tab = 列表（点进）+ 删除 + **新会话缺省** + 尾部 ST 导入（`POST /sessions/import-st`）。
-- **背景图**（界面 tab，2026-10-10 加）：**花纹整套砍掉**（用户定）—— doodle.svg / `--tg-pattern` 删净，`body::before` 改挂**自定义背景图**：URL（浏览器直接加载，跨域无妨）或**上传**（canvas 压到长边 1920 / JPEG 0.85，配额满降档 1280/0.75 重试一次；小图原样存保 PNG；住 localStorage `mc_bg`，**不上后端** —— 纯本地偏好）。没设 = `none` 纯平底。口径与工具在 `utils/background.js`（App 开机 `applyBackground()`）。设置里**即时生效**（不吃 saveUi 的保存键：上传是异步的，攒着容易对不上账）。
+- **设置（⚙）只有 root 看得见**（S2）：普通用户连按钮都不给；`openSettings()` 亦有守卫（toast「只有 root（管理员）能进设置」）。**用户视图（👤，人人可进）** = 身份 + **改口令（自己）**（改完当场用新口令重登换票，不断线）+（admin 才有的）**用户管理块**：列表 / 加人 / 行内改名、改口令 / 删人（两步：先摊开"会话转给 root / 连会话一起删 / 取消"）。
+- 设置五 tab：**聊天 / 连接 / 会话 / Agent / Provider**（**视图不是弹窗**；顶部一行式工具栏 `[◧][tabs][×]`）；Agent/Provider 的编辑是 **tab 内二级页**（列表 ⇄ 详情就地切换，`[←]` 返回 —— 2026-10-10 从弹窗改过来，弹窗叠视图的账清了）；「会话设置」（左栏 ☰）是**紧凑对话框**（560px、高随内容）。**Esc 一次只关一层**：二级页开着时设置视图不响应 Esc、会话设置弹窗开着时同理（踩过：两边各监听 document，一下关两层）。会话 tab = 列表（点进）+ 删除 + **新会话缺省** + 尾部 ST 导入（`POST /sessions/import-st`）。
+- **背景图**（用户视图，2026-10-10 加；原先在设置→界面，随"用户"视图一起搬家）：**花纹整套砍掉**（用户定）—— doodle.svg / `--tg-pattern` 删净，`body::before` 改挂**自定义背景图**：URL（浏览器直接加载，跨域无妨）或**上传**（canvas 压到长边 1920 / JPEG 0.85，配额满降档 1280/0.75 重试一次；小图原样存保 PNG；住 localStorage `mc_bg`，**不上后端** —— 纯本地偏好）。没设 = `none` 纯平底。口径与工具在 `utils/background.js`（App 开机 `applyBackground()`）。设置里**即时生效**（不吃 saveUi 的保存键：上传是异步的，攒着容易对不上账）。
 - 交互照 Pi：CJK 宽度对齐 / markdown 渲染（LaTeX 降级显示）。
 
 ### TUI（已封存：不动）

@@ -85,6 +85,9 @@ func atIdx(w http.ResponseWriter, r *http.Request) (int, bool, bool) {
 // 上游一格都不要 —— 留着就是糊弄，该报错就报错（别画个假的）。
 // 真要看"发出去什么"问 (c) `POST /outgoing`（真请求 method/url/headers/体）。
 func (s *Server) getSessionOutgoing(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireSession(w, r); !ok {
+		return
+	}
 	writeError(w, http.StatusGone, "gone", "GET /outgoing 已删：看真请求问 POST /outgoing（只算不写，method/url/headers/体）")
 }
 
@@ -187,9 +190,34 @@ func (s *Server) requireSession(w http.ResponseWriter, r *http.Request) (*model.
 		writeStoreError(w, err)
 		return nil, false
 	}
-	if session == nil {
+	if session == nil || !ownedBy(r, session) {
+		// 找不到 / 不是我的 ⇒ **都回 404**（不泄露"存在但不给你"，DEFINE「用户与鉴权」）
 		writeError(w, http.StatusNotFound, "not_found", "会话不存在")
 		return nil, false
 	}
 	return session, true
+}
+
+// ownedBy：这条会话归请求里的这个人吗？admin / 系统身份视为"都归他"。
+func ownedBy(r *http.Request, session *model.Session) bool {
+	id := identityOf(r.Context())
+	if id.Admin || id.Sys {
+		return true
+	}
+	return session.OwnerID == id.UserID
+}
+
+// ownsSession：一切**按 id 直取**的会话处理器（PATCH/DELETE/Copy…）从它进 ——
+// 找不到 / 不是我的都 404；通过则真值。
+func (s *Server) ownsSession(w http.ResponseWriter, r *http.Request, id string) bool {
+	session, err := s.store.GetSession(id)
+	if err != nil {
+		writeStoreError(w, err)
+		return false
+	}
+	if session == nil || !ownedBy(r, session) {
+		writeError(w, http.StatusNotFound, "not_found", "会话不存在")
+		return false
+	}
+	return true
 }

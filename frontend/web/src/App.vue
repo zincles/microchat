@@ -2,7 +2,7 @@
 // App.vue —— 三栏骨架 + 全部接线（原 main.js + 九个桥，合一）。
 // 组件直接挂模板，ref 直调实例方法，不再经 *-vue.js 桥 / mount.js。
 import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from "vue";
-import { mergeStreamSlice, probeHealth } from "./api/client.js";
+import { mergeStreamSlice, probeAuthStatus } from "./api/client.js";
 import { parseCommand, filterCommands, COMMAND_META } from "./utils/commands.js";
 import { uuidv7 } from "./utils/ids.js";
 import { buildCompactTree } from "./utils/tree.js";
@@ -36,6 +36,7 @@ import ConnectGate from "./components/ConnectGate.vue";
 import Composer from "./components/Composer.vue";
 import Toast from "./components/Toast.vue";
 import SettingsModal from "./components/SettingsModal.vue";
+import UserView from "./components/UserView.vue";
 import SessionSettings from "./components/SessionSettings.vue";
 import Overlays from "./components/Overlays.vue";
 
@@ -92,6 +93,10 @@ const summaryMsgs = reactive(new Map()); // 摘要 id → {state:"loading"|"read
 const openSummaries = new Set(); // 哪些卡正展开着（reload 后补拉新鲜的）
 const vueDisplayMode = ref("chat");
 const settingsOpen = ref(false);
+const userOpen = ref(false); // 用户视图（与设置平级：一个管登录者，一个管实例）
+const currentUser = ref(null); // 当前登录者（boot 时问 /auth/me；用户视图也自己问一遍）
+// **设置 = root 专属**（用户定，2026-10-10）：`is_admin` 才给进设置；其他用户的入口按钮也不给。
+const isAdmin = computed(() => !!currentUser.value?.is_admin);
 const compactDefault = ref(null); // chat.compact_blocks（压缩面板输入框的占位提示）
 const sessionSettingsId = ref(null);
 
@@ -655,11 +660,11 @@ let panelDrag = null;
 
 function swipeBlocked(target) {
   if (overlaysRef.value?.isPaletteOpen() || overlaysRef.value?.isPickerOpen()) return true;
-  if (document.querySelector("#settings-view") || document.querySelector(".modal")) return true;
+  if (document.querySelector("#settings-view, #user-view") || document.querySelector(".modal")) return true;
   // 抽屉自己身上 ⇒ 一律接管（pre 也不例外）："把抽屉拖走"在这儿就该能用 ——
   // 右栏的载荷 tab 整块就是个 <pre>，早先被 pre 例外吞掉，真机上表现为"在面板上滑没反应"。
   if (target?.closest?.("#sessions-bar, #payload-bar")) return false;
-  return !!target?.closest?.("textarea, input, select, pre, .palette, .picker, .modal, #settings-view");
+  return !!target?.closest?.("textarea, input, select, pre, .palette, .picker, .modal, #settings-view, #user-view");
 }
 function paintDrag(d, p) {
   const off = d.pick.bar === "left" ? -102 : 102; // 与 CSS 的 collapsed 位移一致
@@ -829,19 +834,20 @@ async function enterSession(id) {
 }
 async function boot() {
   // 自检按候选顺序探（没存过地址时：先"跟页面同主机的 8787"，再"同源 /api/v1"兜底反代部署）。
-  let health = null;
+  // 探测走开放的 `/auth/status`（没有凭据也能问"后端活着吗、注册开了没"）。
+  let st = null;
   let lastErr = null;
   let winner = "";
   for (const cand of apiBaseCandidates()) {
     try {
-      health = await probeHealth(cand, apiToken());
+      st = await probeAuthStatus(cand);
       winner = cand;
       break;
     } catch (err) {
       lastErr = err;
     }
   }
-  if (!health) {
+  if (!st) {
     // 连不上后端：不开一副破界面，先给"连接"面板（新设备第一次打开走的也是这儿）。
     gateError.value = String(lastErr?.message ?? lastErr);
     showGate.value = true;
@@ -854,8 +860,31 @@ async function boot() {
     location.reload();
     return;
   }
-  connText = `已连接 v${health.version ?? "?"}`;
-  api.getChat().then((c) => { compactDefault.value = c?.compact_blocks ?? null; }).catch(() => {});
+  // 鉴权（2026-10-10；uid 0 = root 恒在）：root 没口令 ⇒ 门板初始化；没凭据/凭据失效 ⇒ 门板登录。
+  if (st.needs_setup) {
+    gateError.value = "root 还没初始化：先在门板里设置 root 口令";
+    showGate.value = true;
+    return;
+  }
+  if (!apiToken()) {
+    gateError.value = "请登录";
+    showGate.value = true;
+    return;
+  }
+  try {
+    currentUser.value = await api.me();
+  } catch {
+    gateError.value = "登录已失效：重新登录（改过口令/被踢/换了 key 都会这样）";
+    showGate.value = true;
+    return;
+  }
+  connText = `已连接 v${st.version ?? "?"}`;
+  // 压缩面板的默认块数读的是实例级 chat 配置（设置专属）：只有 admin 去问；普通用户留占位。
+  if (isAdmin.value) {
+    api.getChat().then((c) => { compactDefault.value = c?.compact_blocks ?? null; }).catch(() => {});
+  } else {
+    compactDefault.value = null;
+  }
   // 不再"删空会话 + 预建真会话"：web 走草稿态，库里不产生空行（旧编排的两步一起拿掉）。
   await startDraft();
 }
@@ -1222,9 +1251,17 @@ function onComposerSubmit(text) {
 // —— 设置视图（与对话同级，2026-10-10） ——
 // 窄屏：进/出设置都把左抽屉归位（手机上别让它压着视图）；宽屏：不动侧栏（并排看没问题）。
 function openSettings() {
+  if (!isAdmin.value) { toast("只有 root（管理员）能进设置"); return; }
   settingsOpen.value = true;
+  userOpen.value = false; // 与用户视图互斥（平级的两块，一屏只开一个）
   if (narrowLeft()) applySideToggle("sessions-bar", true);
 }
+function openUserView() {
+  userOpen.value = true;
+  settingsOpen.value = false;
+  if (narrowLeft()) applySideToggle("sessions-bar", true);
+}
+function closeUserView() { userOpen.value = false; }
 function closeSettings() {
   settingsOpen.value = false;
   if (narrowLeft()) applySideToggle("sessions-bar", true);
@@ -1282,15 +1319,17 @@ onUnmounted(() => {
     <div id="columns">
       <SessionBar
         ref="sessionbarRef"
+        :can-settings="isAdmin"
         @select="(id) => { closeLeftDrawer(); closeSettings(); enterSession(id).catch((err) => toast(`进会话失败：${err.message}`, 'error')); }"
         @settings="(id) => { sessionSettingsId = id; }"
+        @user="openUserView"
         @close="askDeleteSession"
         @new="newSession"
         @open-settings="openSettings"
       />
       <div id="scrim-left" @click="toggleLeft"></div>
       <div id="content">
-      <section id="chat-col" v-show="!settingsOpen">
+      <section id="chat-col" v-show="!settingsOpen && !userOpen">
     <TopBar
       ref="topbarRef"
       @toggle-left="toggleLeft"
@@ -1350,11 +1389,17 @@ onUnmounted(() => {
     />
       </section>
       <PayloadBar
-        v-show="!settingsOpen"
+        v-show="!settingsOpen && !userOpen"
         ref="payloadbarRef"
         :default-blocks="compactDefault"
         @compact="(n) => compactNow(n ?? undefined)"
         @tab="onPayloadTab"
+      />
+      <UserView
+        v-if="userOpen"
+        :esc-blocked="!!sessionSettingsId"
+        @close="closeUserView"
+        @toggle-left="toggleLeft"
       />
       <SettingsModal
         v-if="settingsOpen"

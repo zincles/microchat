@@ -20,11 +20,13 @@ func TestStatelangEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = st.Close() }()
+	enableService(t, st)
 	server := newTestServer(st, config.DefaultConfig(), config.Paths{ConfigDir: t.TempDir(), DataDir: t.TempDir()})
 
 	post := func(body string) *httptest.ResponseRecorder {
 		request := httptest.NewRequest(http.MethodPost, "/api/v1/statelang", strings.NewReader(body))
 		request.Header.Set("content-type", "application/json")
+		request.Header.Set("Authorization", "Bearer "+testSysToken) // 鉴权恒开（DEFINE）
 		recorder := httptest.NewRecorder()
 		server.Handler().ServeHTTP(recorder, request)
 		return recorder
@@ -116,6 +118,7 @@ func TestStatelangEndpoint(t *testing.T) {
 
 	t.Run("错误方法 ⇒ 405（路由在，方法不对）", func(t *testing.T) {
 		request := httptest.NewRequest(http.MethodGet, "/api/v1/statelang", nil)
+		request.Header.Set("Authorization", "Bearer "+testSysToken)
 		recorder := httptest.NewRecorder()
 		server.Handler().ServeHTTP(recorder, request)
 		if recorder.Code != http.StatusMethodNotAllowed {

@@ -75,6 +75,21 @@ const (
 	TypeSummaries SummaryType = "summary"
 )
 
+// User：一个登录者（多用户与鉴权，2026-10-10 定）。
+//
+// **第一个注册者是 admin，id = 0**；之后注册关闭、由 admin 在网页端加人。
+// 口令只存 bcrypt 哈希；`Ver` 是**口令版本**（+1 ⇒ 此人所有 JWT 立刻失效）；
+// `TgUserID` 是 Telegram 绑定（NULL = 没绑）。`0` 恒是 admin 的座次。
+type User struct {
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	PassHash  string `json:"-"` // 永不出口
+	IsAdmin   bool   `json:"is_admin"`
+	Ver       int64  `json:"ver"`
+	TgUserID  *int64 `json:"tg_user_id,omitempty"`
+	CreatedAt int64  `json:"created_at"`
+}
+
 // Summary：一条摘要（Compact 的产出）。派生数据：只插行，绝不碰 messages 的正文。
 //
 // `BeginMessageID` / `EndMessageID` = 它盖住的那一段（闭区间）：装配时按它 O(1) 跳过去。
@@ -110,6 +125,7 @@ type Session struct {
 	SystemPrompt string `json:"system_prompt"` // 空串 = 没覆盖（用 agent 的 ⇒ 世界状态底子算全局）
 	Provider     string `json:"provider"`      // 软引用
 	Model        string `json:"model"`
+	OwnerID      int64  `json:"owner_id"` // 归属（多用户）：0 = admin；消息/摘要/状态都继承它
 	AgentID      string `json:"agent_id"` // 软引用
 	CreatedAt    int64  `json:"created_at"`
 	UpdatedAt    int64  `json:"updated_at"`

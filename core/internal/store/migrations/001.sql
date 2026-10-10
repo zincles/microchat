@@ -6,12 +6,30 @@
 -- 会话是**线性的**（2026-09-29 定）：没有 `parent_message_id`、没有 `current_leaf`，
 -- 顺序完全由 `messages.id`（UUIDv7：受理时铸、就地替换不改 id）定 ⇒ "最新一条" = `ORDER BY id DESC LIMIT 1`。
 
+-- users：登录者（2026-10-10 多用户与鉴权）。**第一个注册者 id = 0 且 is_admin = 1**；
+-- 口令只存 bcrypt 哈希；ver = 口令版本（+1 ⇒ 这人所有 JWT 立刻失效）；tg_user_id = TG 绑定。
+CREATE TABLE users (
+  id         INTEGER PRIMARY KEY,
+  name       TEXT NOT NULL UNIQUE,
+  pass_hash  TEXT NOT NULL DEFAULT '', -- 空串 = 还没初始化（root 建库即种下，等 setup 设口令）
+  is_admin   INTEGER NOT NULL DEFAULT 0,
+  ver        INTEGER NOT NULL DEFAULT 0,
+  tg_user_id INTEGER UNIQUE,
+  created_at INTEGER NOT NULL
+);
+
+-- **uid 0 = ROOT，恒在**（DEFINE「用户与鉴权」）：建库即种下、口令空着等 setup。
+-- 空口令绝不可登录（bcrypt 对空哈希必失败——有测试钉着）；root 不许删。
+INSERT INTO users (id, name, pass_hash, is_admin, ver, created_at)
+VALUES (0, 'root', '', 1, 0, CAST(strftime('%s','now') AS INTEGER) * 1000);
+
 CREATE TABLE sessions (
   id            TEXT PRIMARY KEY,
   title         TEXT NOT NULL DEFAULT '',
   system_prompt TEXT NOT NULL DEFAULT '',
   provider      TEXT NOT NULL,
   model         TEXT NOT NULL,
+  owner_id      INTEGER NOT NULL DEFAULT 0, -- 归属：**这一格就是全部**（消息/摘要/状态都继承它）
   created_at    INTEGER NOT NULL,
   updated_at    INTEGER NOT NULL,
   agent_id      TEXT NOT NULL DEFAULT 'default'

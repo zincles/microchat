@@ -47,6 +47,7 @@ func newPromptSandbox(t *testing.T, agentsJSON string) *promptSandbox {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
+	enableService(t, st)
 	return &promptSandbox{
 		store:  st,
 		server: newTestServer(st, config.DefaultConfig(), config.Paths{ConfigDir: dir, DataDir: dir}),
@@ -56,7 +57,7 @@ func newPromptSandbox(t *testing.T, agentsJSON string) *promptSandbox {
 // session：造一条会话（`systemPrompt` 非空 = 会话自己写了；`agentID` 非空 = 改成它）。
 func (b *promptSandbox) session(t *testing.T, systemPrompt, agentID string) string {
 	t.Helper()
-	session, err := b.store.CreateSession("dummy", "dummy", systemPrompt, "")
+	session, err := b.store.CreateSession(0, "dummy", "dummy", systemPrompt, "")
 	if err != nil {
 		t.Fatal(err)
 	}

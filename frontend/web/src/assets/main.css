@@ -35,8 +35,9 @@ body::before { content: ""; position: fixed; inset: 0; z-index: 0; pointer-event
  * （命令面板/picker/确认框/toast/门板都以它为准 ⇒ 自动钉在键盘上沿）。没有 JS/var 时回落 100dvh→100vh。 */
 #app { display: flex; flex-direction: column; height: 100vh; height: var(--vvh, 100dvh); transform: translateY(var(--vvt, 0px)); gap: 0; padding: 0; box-sizing: border-box; position: relative; z-index: 1; }
 /* 顶栏：中间列里的悬浮圆角卡（上下留空，不贴边）。三段 = 开关 | 会话抬头（伸缩）| 控制。 */
-/* 顶栏：悬浮圆角卡 —— 和底部输入行同一档阴影（2026-10-10 用户定：上下两条 bar 都要影子）。 */
-header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; color: var(--tg-hint); border-radius: var(--r-shell); background: var(--tg-secondary-bg); box-shadow: 0 6px 24px rgb(0 0 0 / 32%); }
+/* 顶栏（2026-10-10 用户定）：**非浮动**的贴边平栏 —— 去圆角、去外边距、去阴影，底边一条描线当外框
+ * （左右两条线是左右栏自己的边框、顶上是窗口边，再描就重了）。 #chat-col 的外边距同步收掉。 */
+header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; color: var(--tg-hint); background: var(--tg-secondary-bg); border-bottom: 1px solid var(--line); }
 /* 会话抬头：占满中段（下拉被推到右端），超长省略；hover 出全名（title 属性）。
  * min-width = 窄屏时不小于 ~5.5em：空间不够先让两个下拉去收缩（它们是次要信息）。 */
 .session-title { flex: 1 1 auto; min-width: 5.5em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--tg-text); }
@@ -91,8 +92,12 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 .ctree-tag { flex: none; font-style: normal; font-size: 0.78em; color: var(--tg-link); border: 1px solid currentColor; border-radius: 4px; padding: 0 0.25em; }
 .ctree-tag.dirty { color: var(--tg-destructive); }
 .ctree-size { position: relative; flex: none; color: var(--tg-hint); font-size: 0.85em; }
-#chat-col { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; margin: 0 auto; width: 100%; max-width: 100%; position: relative; background: transparent; border-radius: 0; overflow: hidden; padding: 0.6em 0.6em 0; }
-#chat-col > * { position: relative; z-index: 1; max-width: 760px; margin-left: auto; margin-right: auto; width: 100%; box-sizing: border-box; }
+#chat-col { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; margin: 0 auto; width: 100%; max-width: 100%; position: relative; background: transparent; border-radius: 0; overflow: hidden; padding: 0; }
+/* 阅读列约束（760px 居中）：只管**消息列与输入行**；顶栏豁免 —— 它是贴边的平栏
+ * （2026-10-10 用户定："非 floating + 外框"；早先 `> *` 通配把顶栏也框进来了，
+ *  顶栏因此左右各缩 120px）。 */
+#chat-col > *:not(header) { position: relative; z-index: 1; max-width: 760px; margin-left: auto; margin-right: auto; width: 100%; box-sizing: border-box; }
+#chat-col > header { position: relative; z-index: 1; }
 /* 消息列：flex:1 撑满 + 两侧 56px 头像位 + 上下给浮动输入栏留位；底部留空让尾条操作行不被输入框盖住。 */
 #messages-vue { flex: 1; overflow-y: auto; overscroll-behavior: contain; min-height: 0; padding: 1em 56px 7em; display: flex; flex-direction: column; gap: 0.3em; }
 /* 抽屉遮罩（只在窄屏显示；点一下 = 收起对应的栏）：与栏的状态由 CSS 兄弟选择器联动，不用 JS 状态。 */
@@ -116,7 +121,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
   /* 底部留白别砍光（砍光过：滚到底时最后一条会滑到 statusline 底下，像被底栏"挡"住）——
    * 给状态行 + 任务行（都是绝对定位浮层）让位，约 3.5em。 */
   #messages-vue { padding: 0.5em 0.8em 3.5em; }
-  #settings-view { padding: 0.4em 0.4em 0; }
+  #settings-view, #user-view { padding: 0.4em 0.4em 0; }
   .settings-bar { gap: 0.2em; }
   /* 六区在窄屏：排得下就等分，排不下靠 nav 横滚（不设固定宽 —— 那两行会被后面的默认规则盖掉）。 */
   .settings-nav { overflow-x: auto; }
@@ -145,7 +150,10 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 /* 会话列表自己滚（此前没有任何滚动规则 ⇒ 会话一多直接被裁掉，移动端抽屉里更是够不着）。 */
 #session-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .bar-foot { padding: 0.5em; border-top: 1px solid var(--line); margin-top: auto; }
-.foot-btn { display: block; width: 100%; text-align: left; background: none; border: none; border-radius: var(--r-btn); color: var(--tg-hint); padding: 0.55em 0.7em; cursor: pointer; }
+.foot-btn { display: flex; align-items: center; gap: 0.5em; width: 100%; background: none; border: none; border-radius: var(--r-btn); color: var(--tg-hint); padding: 0.55em 0.7em; cursor: pointer; }
+/* 左栏底的图标（SVG 替 emoji）：尺寸跟随字号、垂直居中由 flex 管。 */
+.foot-btn .fb-icon { display: inline-flex; }
+.foot-btn .fb-icon svg { width: 1.1em; height: 1.1em; }
 .foot-btn:hover { background: rgb(255 255 255 / 6%); color: var(--tg-text); }
 .session-item { display: flex; gap: 0.5em; align-items: center; padding: 0.55em 0.7em; border-radius: var(--r-card); cursor: pointer; white-space: nowrap; overflow: hidden; color: var(--tg-text); }
 .session-item:hover { background: rgb(255 255 255 / 6%); }
@@ -246,8 +254,8 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 .msg .inline-btns { display: flex; gap: 0.4em; margin-top: 0.3em; }
 #composer { position: relative; display: flex; gap: 0.5em; align-items: flex-end; background: none; z-index: 5; padding: 0.6em 0.6em; }
 /* 输入框独立浮动卡 + 发送钮独立圆钮：逻辑相连、显示分开（TG 底栏就是输入框配外面一颗钮）。 */
-#input { flex: 1; background: color-mix(in srgb, var(--tg-secondary-bg) 88%, transparent); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); color: var(--tg-text); border: none; border-radius: 20px; padding: 0.6em 1.1em; font: inherit; resize: none; line-height: 1.5; max-height: calc(1.5em * 6 + 1.2em); overflow-y: auto; box-shadow: 0 6px 24px rgb(0 0 0 / 32%); }
-#input:focus { outline: 1px solid var(--tg-link); }
+#input { flex: 1; background: color-mix(in srgb, var(--tg-secondary-bg) 88%, transparent); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); color: var(--tg-text); border: 1px solid var(--line); border-radius: 20px; padding: 0.6em 1.1em; font: inherit; resize: none; line-height: 1.5; max-height: calc(1.5em * 6 + 1.2em); overflow-y: auto; box-shadow: 0 6px 24px rgb(0 0 0 / 32%); }
+#input:focus { outline: none; border-color: var(--tg-link); }
 /* 状态行：输入框上方独立小字（不进卡，跟输入框同宽居中，超预算红）。 */
 .statusline { position: absolute; left: 0; right: 0; bottom: 100%; margin-bottom: 0.3em; text-align: center; color: var(--tg-hint); font-size: 0.78em; text-shadow: 0 1px 6px rgb(0 0 0 / 60%); }
 .statusline.over { color: var(--tg-destructive); }
@@ -307,7 +315,9 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 .icon-btn:hover { color: var(--tg-text); background: rgb(255 255 255 / 8%); }
 /* —— 设置视图（与对话同级；左栏右边那一整块，不是弹窗）—— */
 /* 一行式工具栏：去掉"悬浮卡"造型与"设置"标题（全屏页不需要它俩，tabs 自己就是路标）。 */
-#settings-view { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 0.5em 0.6em 0; }
+#settings-view, #user-view { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 0.5em 0.6em 0; }
+/* 用户视图的标题（设置视图那条 bar 上是一排 tab，这里就一个词）。 */
+#user-view .view-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--tg-text); }
 .settings-bar { display: flex; align-items: center; gap: 0.4em; max-width: 960px; width: 100%; margin: 0 auto; }
 .settings-bar .settings-nav { flex: 1 1 auto; min-width: 0; margin-bottom: 0; }
 .settings-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0.55em 0.2em 1.5em; }

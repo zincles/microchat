@@ -3,6 +3,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -48,8 +50,8 @@ func (n tgNullRunner) Running() bool { return n.runner != nil && n.runner.Runnin
 
 // newTGClient：TG bot 专用后端客户端 —— 连**本机回环**（跟 TUI 同一条 HTTP 契约），
 // 超时用短的那档（`tg.APITimeout`）：一条命令卡住不许把长轮询挂在那儿。
-func newTGClient(addr string, cfg config.Config) *apiclient.Client {
-	client := apiclient.NewClient(loopbackURL(addr, cfg.Server.Port), tokenOf(cfg))
+func newTGClient(addr string, cfg config.Config, sysToken string) *apiclient.Client {
+	client := apiclient.NewClient(loopbackURL(addr, cfg.Server.Port), sysToken)
 	client.HTTP.Timeout = tg.APITimeout
 	return client
 }
@@ -104,6 +106,16 @@ func main() {
 	}
 	if err := abilities.Validate(agents); err != nil {
 		fatal("agents.json 的能力开关不合法: %v", err)
+	}
+	// 鉴权（DEFINE「用户与鉴权」）：JWT 签名密钥缺省现铸并写回配置；环回系统令牌每次启动现铸
+	// （只走内存 —— TUI/TG 与 server 同进程，没有落盘的必要）。
+	jwtKey, err := cfg.JWTKey(paths)
+	if err != nil {
+		fatal("准备 jwt_key 失败: %v", err)
+	}
+	sysToken, err := newSysToken()
+	if err != nil {
+		fatal("铸系统令牌失败: %v", err)
 	}
 	// 给了 -debug 就**只干这一件事**：在监听端口之前就退出（也别进 TUI）。
 	if *debugMode {
@@ -172,12 +184,17 @@ func main() {
 	// TG bot：显式开了（`telegram.enabled`）才跑 —— 连外网是显式动作，不许"配了就跑"。
 	// 没 token / 连不上 ⇒ 只 log（不弹错、不退出、不挡 TUI）。
 	// **放在日志切换之后**：TUI 模式下这几句要落进 microchat.log（不然界面上根本看不见）。
-	tgRunner := startTelegramBot(cfg, newTGClient(*addr, cfg))
+	tgRunner := startTelegramBot(cfg, newTGClient(*addr, cfg, sysToken))
 	defer tgRunner.Stop() // 没跑起来就是空转（幂等）
 	log.Printf("microchat 起在 http://%s（数据 %s，配置 %s，user_version=%d，TUI=%v）",
 		*addr, paths.DataDir, paths.ConfigDir, version, interactive)
+	// 规矩（DEFINE「用户与鉴权」）：uid 0 = root 恒在、口令空着等 setup —— **谁先访问 setup 谁当 root**，
+	// 所以"先初始化、再暴露公网"不是客套话。这里替人盯一眼。
+	if needs, err := st.RootNeedsSetup(); err == nil && needs {
+		log.Printf("⚠ root 还没初始化（uid 0 空口令）：打开前端完成「初始化 root」，**做完再暴露到公网**")
+	}
 	go func() {
-		webServer := server.New(st, cfg, paths, chatService, compactService, rerollService, tasks)
+		webServer := server.New(st, cfg, paths, chatService, compactService, rerollService, tasks, jwtKey, sysToken)
 		webServer.SetTelegramRunner(tgRunner)
 		if err := http.Serve(listener, webServer.Handler()); err != nil {
 			log.Printf("服务退出: %v", err)
@@ -196,7 +213,7 @@ func main() {
 		select {} // 没有终端：就是一台服务，跑到被杀
 	}
 	// 有终端：进 TUI（连自己起的这个服务）
-	if err := tui.Run(tui.NewClient(loopbackURL(*addr, cfg.Server.Port), tokenOf(cfg))); err != nil {
+	if err := tui.Run(tui.NewClient(loopbackURL(*addr, cfg.Server.Port), sysToken)); err != nil {
 		fatal("TUI 出错: %v", err)
 	}
 	log.Printf("TUI 退出，服务继续在 %s 上跑（Ctrl-C 停）", *addr)
@@ -289,11 +306,13 @@ func loopbackURL(addr string, port uint16) string {
 	return "http://" + net.JoinHostPort(host, listenPort)
 }
 
-func tokenOf(cfg config.Config) string {
-	if cfg.Server.AuthToken == nil {
-		return ""
+// newSysToken：环回系统令牌（32 字节随机 hex）—— TUI/TG 拿它过鉴权；随进程生灭。
+func newSysToken() (string, error) {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
 	}
-	return *cfg.Server.AuthToken
+	return hex.EncodeToString(buf), nil
 }
 
 // acquireInstanceLock：同 data 目录单实例 —— 已有活实例就 SIGTERM 它（最多等 ~3s），再写自己的 pid。

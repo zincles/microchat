@@ -2,11 +2,11 @@ package server
 
 import (
 	"errors"
-	"net/http"
 	"microchat/internal/compact"
 	"microchat/internal/model"
 	"microchat/internal/providers"
 	"microchat/internal/store"
+	"net/http"
 )
 
 // ── 压缩：`POST /sessions/{session_id}/compact` ─────────────────────────────
@@ -109,6 +109,7 @@ func (s *Server) listSummaries(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, summaries)
 }
+
 // compactPreview：`POST /sessions/{session_id}/compact/preview` —— **只算不动**。
 //
 // 调同一套 `resolveSpan`（按块数那条路）：回"压哪段（from/to）、怎么压（merged）、

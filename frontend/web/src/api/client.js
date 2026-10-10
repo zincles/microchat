@@ -39,30 +39,38 @@ export function normalizeApiBase(v) {
   return s;
 }
 
-// probeHealth：连通性探针（连接门板与启动自检共用）—— GET {base}/health，**自带超时**
-// （地址填错/黑洞 IP 时别让界面干等浏览器默认的超时）。成功回 {status, version}；
-// 失败抛带 .status 的 Error（401 = 要口令，别的非 2xx = 地址/路径不对）。
+// 鉴权帮手（2026-10-10 多用户）：门板**还没有凭据**时也要能调，所以是三个独立函数（不吃 sharedApi）。
 //
-// 两道闸，都是踩出来的：
-//   ① 地址**先过 normalizeApiBase** —— 裸地址（没协议）否则会被 fetch 当相对路径，
-//      撞上 vite 的 SPA 回退拿到 200 HTML，"死地址"也能"连通成功"；
-//   ② 回体必须是 JSON 且 `status: "ok"` —— 挡住"随便一个 web 服务回 200"的假阳性。
-export async function probeHealth(base, token = "", { timeoutMs = 4000, fetchFn = fetch } = {}) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    const res = await fetchFn(`${normalizeApiBase(base)}/health`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-      signal: ctrl.signal,
-    });
-    let data = null;
-    try { data = await res.json(); } catch { /* 非 JSON 体 */ }
-    if (!res.ok) throw httpError(data, res);
-    if (!data || data.status !== "ok") throw new Error("目标回的不是 microchat 后端（/health 没有 status:ok）");
-    return data;
-  } finally {
-    clearTimeout(timer);
-  }
+// 两道闸照旧（踩过）：地址先 normalizeApiBase（裸地址会被 fetch 当相对路径、被 vite 的 200 HTML 骗过）；
+// 回体必须是 JSON 且 `status:"ok"`（挡住"随便一个 web 服务回 200"）。
+export async function probeAuthStatus(base, { fetchFn = fetch } = {}) {
+  const res = await fetchFn(`${normalizeApiBase(base)}/auth/status`);
+  let data = null;
+  try { data = await res.json(); } catch { /* 非 JSON 体 */ }
+  if (!res.ok) throw httpError(data, res);
+  if (!data || data.status !== "ok") throw new Error("目标回的不是 microchat 后端（/auth/status 没有 status:ok）");
+  return data; // {status, version, needs_setup}
+}
+
+async function authPost(base, path, body, fetchFn = fetch) {
+  const res = await fetchFn(`${normalizeApiBase(base)}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  let data = null;
+  try { data = await res.json(); } catch { /* 非 JSON 体 */ }
+  if (!res.ok) throw httpError(data, res);
+  return data;
+}
+
+// authLogin：名字 + 口令 ⇒ {token, user}（token 由调用方存进 mc_token）。
+export function authLogin(base, user, password, opts = {}) {
+  return authPost(base, "/auth/login", { user, password }, opts.fetchFn);
+}
+// authSetup：给 **root（uid 0）** 设口令 —— 唯一一次；已经设过会 403（加人走用户页，S2）。
+export function authSetup(base, password, opts = {}) {
+  return authPost(base, "/auth/setup", { password }, opts.fetchFn);
 }
 
 // httpError：非 2xx 的统一定形 —— message = 后端文案，**code 原样带上**（调用方按 code 分支，
@@ -162,6 +170,16 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
       }),
     // tasks：进程内任务面板（后台有多少在跑、都是什么）。
     tasks: () => call("GET", "/tasks"),
+    // 鉴权（2026-10-10）：我是谁 / 登出（JWT 无状态，登出只是给客户端一个明确动作口）。
+    me: () => call("GET", "/auth/me"),
+    logout: () => call("POST", "/auth/logout", {}),
+    // 用户管理（admin；S2）：看列表 / 加人 / 改名 / 改口令（**自己改自己谁都行**）/
+    // 删人（**对会话必须显式**：transfer=转给 root、purge=连会话一起没）。
+    users: () => call("GET", "/users"),
+    createUser: (body) => call("POST", "/users", body),
+    patchUser: (uid, body) => call("PATCH", `/users/${enc(uid)}`, body),
+    setUserPassword: (uid, password) => call("POST", `/users/${enc(uid)}/password`, { password }),
+    deleteUser: (uid, sessions) => call("DELETE", `/users/${enc(uid)}?sessions=${enc(sessions)}`),
     getChat: () => call("GET", "/config/chat"),
     putChat: (body) => call("PUT", "/config/chat", body),
     // models：跨 provider 拍平（`{provider, upstream_id, name}` —— 下拉选项就打它）。

@@ -1,6 +1,7 @@
 <script setup>
 // 设置**视图**（2026-10-10 起与对话同级，不再是弹窗 —— OpenWebUI 那种）：占满左栏右边的整块区域，
 // 自带小头（[◧] 左栏开关 · 设置 · [×] 返回对话）。子编辑器（Agent/Provider）改为对应 tab 内的二级页（列表 ⇄ 详情就地切换）。
+// 「界面」一族的个人偏好（主题/背景图/发送键/预演）已搬到**用户视图**（与设置平级的另一半）。
 // 关走 close（Esc/×）—— 视图不卸载就丢状态的口径照旧：v-if 挂载，进视图拉一次。
 import { ref, onMounted, onUnmounted, watch, nextTick } from "vue";
 import ToggleSwitch from "./ToggleSwitch.vue";
@@ -9,9 +10,8 @@ import assistantPreset from "../../presets/assistant.json";
 import rpPreset from "../../presets/rp-agent.json";
 import ProviderEditor from "./ProviderEditor.vue";
 import { ICONS } from "./icons.js";
-import { sharedApi, apiBase, apiToken, previewOn, themePref, applyTheme, sendMode, saveNetPrefs } from "../utils/prefs.js";
+import { sharedApi, apiBase, apiToken, saveNetPrefs } from "../utils/prefs.js";
 import { SETTINGS_TABS } from "../utils/format.js";
-import { loadBackground, saveBackground, applyBackground, describeBackground, fileToBackground } from "../utils/background.js";
 
 const emit = defineEmits(["close", "toggle-left", "sessions-changed", "goto-session"]);
 // ask：全局确认框（App 的 Overlays.confirmAsk）—— 设置里的删除（会话/渠道/Agent）也必须先摊开再点头。
@@ -44,9 +44,7 @@ const chat = ref({ title_chars: "", model_context_tokens: "", compact_blocks: ""
 const chatStatus = ref("");
 const defaults = ref({ provider: "", model: "", agent: "" });
 const defStatus = ref("");
-const cli = ref({ api: apiBase(), token: "", preview: true, theme: "", send: "button", bgUrl: "" });
-const uiStatus = ref("");
-const bgStatus = ref("");
+const cli = ref({ api: apiBase(), token: "" });
 const netStatus = ref("");
 const agents = ref([]);
 const curDefault = ref("");
@@ -120,68 +118,9 @@ const sessions = ref([]);
 const sessionMgrStatus = ref("");
 
 function loadClient() {
-  const bg = loadBackground();
-  cli.value = {
-    api: apiBase(),
-    token: apiToken(),
-    preview: previewOn(),
-    // 空串=跟随系统的 `??` 语义已封在 themePref，这里不再区分。
-    theme: themePref(),
-    send: sendMode(),
-    bgUrl: bg?.kind === "url" ? bg.value : "",
-  };
-  bgStatus.value = describeBackground(bg);
+  // 只剩"连接"这一摊：外观/输入那类**登录者自己的偏好**已搬到用户视图（与设置平级）。
+  cli.value = { api: apiBase(), token: apiToken() };
 }
-// 背景图（外观）：URL / 上传二选一，**即时生效**（不吃 saveUi 的保存键 —— 上传是异步的，攒着容易对不起账）。
-function applyBgUrl() {
-  const u = cli.value.bgUrl.trim();
-  if (!u) { bgStatus.value = "先填图片地址（或改用上传）"; return; }
-  saveBackground({ kind: "url", value: u });
-  applyBackground();
-  bgStatus.value = describeBackground(loadBackground());
-}
-async function pickBgFile(event) {
-  const f = event.target.files?.[0];
-  if (!f) return;
-  bgStatus.value = "读取图片…";
-  try {
-    let bg = await fileToBackground(f);
-    try {
-      saveBackground(bg);
-    } catch {
-      // 配额满：降档（长边 1280 / 质量 0.75）重压一次，再满就报错。
-      bgStatus.value = "太大存不下，压小重试…";
-      bg = await fileToBackground(f, { maxEdge: 1280, quality: 0.75 });
-      saveBackground(bg);
-    }
-    applyBackground();
-    bgStatus.value = describeBackground(bg);
-  } catch (e) {
-    bgStatus.value = `上传失败：${e.message}`;
-  }
-  event.target.value = "";
-}
-function clearBg() {
-  saveBackground(null);
-  applyBackground();
-  cli.value.bgUrl = "";
-  bgStatus.value = describeBackground(null);
-}
-// 连接（net）：地址与口令 —— 刷新页面才生效（写入口收拢在 prefs.saveNetPrefs）。
-function saveNet() {
-  saveNetPrefs(cli.value.api, cli.value.token);
-  netStatus.value = "已保存（刷新页面生效）";
-}
-// 界面（ui）：主题 / 发送键 / 预演 —— 即时生效。
-function saveUi() {
-  localStorage.setItem("mc_preview", cli.value.preview ? "1" : "0");
-  localStorage.setItem("mc_theme", cli.value.theme);
-  localStorage.setItem("mc_send", cli.value.send);
-  // 主题应用收口到 applyTheme（含 TG 守卫、空串=跟随系统摘属性）。
-  applyTheme(cli.value.theme);
-  uiStatus.value = "已保存（即时生效）";
-}
-
 async function loadAgents() {
   try {
     const data = await api.agents();
@@ -296,36 +235,6 @@ function onKey(e) {
           <label class="field"><span>压缩触发 tokens（空=默认）</span><input v-model="chat.compact_trigger_tokens" type="number" min="1" placeholder="空=默认" /></label>
           <label class="field"><span>回传思考（默认关，省上下文）</span><ToggleSwitch v-model="chat.replay_reasoning" /></label>
           <div class="row"><button type="button" class="primary" @click="saveChat">保存</button><span class="status">{{ chatStatus }}</span></div>
-        </section>
-        <section v-show="tab === 'ui'" id="panel-ui" class="panel">
-          <h3>外观</h3>
-          <label class="field"><span>主题</span><select v-model="cli.theme">
-            <option value="deepseek">DeepSeek（暗，默认）</option>
-            <option value="breeze-dark">Breeze Dark（暗）</option>
-            <option value="midnight">深夜蓝</option>
-            <option value="wine">酒红</option>
-            <option value="forest">森绿</option>
-            <option value="breeze">Breeze（亮）</option>
-            <option value="paper">日间白</option>
-            <option value="">跟随系统</option>
-          </select></label>
-          <label class="field"><span>背景图 URL</span><input v-model="cli.bgUrl" placeholder="https://…（浏览器直接加载，跨域无妨）" /></label>
-          <div class="row">
-            <button type="button" class="primary" @click="applyBgUrl">应用 URL</button>
-            <label class="link-btn" style="cursor: pointer">上传图片…
-              <input type="file" accept="image/*" hidden @change="pickBgFile" />
-            </label>
-            <button type="button" class="link-btn danger" @click="clearBg">清除</button>
-          </div>
-          <div class="row"><span class="status">当前背景：{{ bgStatus }}</span></div>
-          <h3>输入</h3>
-          <label class="field"><span>发送键</span><select v-model="cli.send">
-            <option value="enter">回车发送（Shift/Ctrl/Alt+回车换行）</option>
-            <option value="shift-enter">Shift+回车发送（回车换行）</option>
-            <option value="button">仅按钮</option>
-          </select></label>
-          <label class="field"><span>输入时预演载荷</span><ToggleSwitch v-model="cli.preview" /></label>
-          <div class="row"><button type="button" class="primary" @click="saveUi">保存</button><span class="status">{{ uiStatus }}</span></div>
         </section>
         <section v-show="tab === 'net'" id="panel-net" class="panel">
           <h3>后端连接</h3>

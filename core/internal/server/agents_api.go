@@ -20,9 +20,9 @@ type CreateAgentReq struct {
 	Name         string `json:"name"`
 	SystemPrompt string `json:"system_prompt"`
 	// Abilities：能力开关（键 = 能力 id）。**缺省 = 默认全开**；未知的 id ⇒ 400。
-	Abilities map[string]config.AbilityToggle `json:"abilities,omitempty"`
-	PrependState *bool  `json:"prepend_state,omitempty"`
-	DisplayMode  *string `json:"display_mode,omitempty"`
+	Abilities    map[string]config.AbilityToggle `json:"abilities,omitempty"`
+	PrependState *bool                           `json:"prepend_state,omitempty"`
+	DisplayMode  *string                         `json:"display_mode,omitempty"`
 }
 
 // DisplayModeValue：归一化（只认 roleplay，其余 ⇒ "" 缺省 chat）。
@@ -42,7 +42,7 @@ type UpdateAgentReq struct {
 	// 把它设为 `agents.json` 的 `default_agent`（新建会话默认用它）。
 	MakeDefault bool `json:"make_default"`
 	// 改 id = **重命名**：连同 `default_agent` 与所有会话的引用一起搬（空串 = 不改）。
-	NewID *string `json:"new_id"`
+	NewID        *string `json:"new_id"`
 	PrependState *bool   `json:"prepend_state,omitempty"`
 	DisplayMode  *string `json:"display_mode,omitempty"`
 }
@@ -64,6 +64,9 @@ func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	var req CreateAgentReq
 	if !decodeJSON(w, r, &req) {
 		return
@@ -97,6 +100,9 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	id := r.PathValue("agent_id")
 	var req UpdateAgentReq
 	if !decodeJSON(w, r, &req) {
@@ -191,6 +197,9 @@ func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteAgent(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	id := r.PathValue("agent_id")
 	agents := s.loadAgents()
 	kept := make([]config.Agent, 0, len(agents.Agents))
@@ -226,6 +235,9 @@ func (s *Server) deleteAgent(w http.ResponseWriter, r *http.Request) {
 
 // getChatConfig：`config.json` 的 chat 段（不含密钥 —— 密钥在 providers.json 里）。
 func (s *Server) getChatConfig(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	cfg, err := config.LoadConfig(s.paths) // 每次现读：文件缺失 ⇒ 默认值
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
@@ -236,6 +248,9 @@ func (s *Server) getChatConfig(w http.ResponseWriter, r *http.Request) {
 
 // putChatConfig：**整段替换** chat（没给的字段取缺省）；server / defaults 原样保留。
 func (s *Server) putChatConfig(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	var chat config.ChatConfig
 	if !decodeJSON(w, r, &chat) {
 		return
@@ -270,6 +285,9 @@ func (s *Server) getDefaults(w http.ResponseWriter, r *http.Request) {
 // putDefaults：改缺省三件 —— 三格各改各的（nil = 不动；"" = 清回内置缺省）。
 // 整段替换另有 `PUT /config/chat` 管 chat 段 —— 两段各改各的，别混。
 func (s *Server) putDefaults(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	var req struct {
 		Provider *string `json:"provider"`
 		Model    *string `json:"model"`

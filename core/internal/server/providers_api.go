@@ -93,6 +93,9 @@ func rawOrEmptyObject(raw json.RawMessage) json.RawMessage {
 }
 
 func (s *Server) listProviders(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	configs := s.loadProviders()
 	models, err := s.store.ListModels("")
 	if err != nil {
@@ -118,6 +121,9 @@ func (s *Server) listProviders(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createProvider(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	var req CreateProviderReq
 	if !decodeJSON(w, r, &req) {
 		return
@@ -167,6 +173,9 @@ func (s *Server) createProvider(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateProvider(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	id := r.PathValue("provider_id")
 	var req UpdateProviderReq
 	if !decodeJSON(w, r, &req) {
@@ -217,6 +226,9 @@ func (s *Server) updateProvider(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteProvider(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	id := r.PathValue("provider_id")
 	configs := s.loadProviders()
 	kept := make([]config.Provider, 0, len(configs.Providers))
@@ -246,6 +258,9 @@ func (s *Server) deleteProvider(w http.ResponseWriter, r *http.Request) {
 // 走的都是它 —— 别在这儿再写一份"拉 + 落库"。这里只管 HTTP 那一层（找渠道、定错误码、回视图）。
 // 与自动那条路的区别：**这条是人明确点的**，所以不套 `registry.Skip`（dummy 照旧 400，没配 key 也真发）。
 func (s *Server) refreshProvider(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	id := r.PathValue("provider_id")
 	provider, found := s.providerByID(id)
 	if !found {
@@ -268,6 +283,9 @@ func (s *Server) refreshProvider(w http.ResponseWriter, r *http.Request) {
 // 与 `refreshProvider`（刷 `models` 表）各管各的：路由表决定模型走哪条 API，
 // 快照失败 ⇒ 旧行留着（宁可用旧表，别拿空表把路断了）—— 同 `registry.RefreshRoutes` 口径。
 func (s *Server) refreshProviderRoutes(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	id := r.PathValue("provider_id")
 	provider, found := s.providerByID(id)
 	if !found {
@@ -288,6 +306,9 @@ func (s *Server) refreshProviderRoutes(w http.ResponseWriter, r *http.Request) {
 
 // listProviderPresets：内建预设清单 —— 界面拿它生成"选一个内置 provider"的下拉。
 func (s *Server) listProviderPresets(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	writeJSON(w, http.StatusOK, providers.Presets())
 }
 
@@ -326,6 +347,9 @@ type SetModelOverrideReq struct {
 }
 
 func (s *Server) setModelOverride(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	var req SetModelOverrideReq
 	if !decodeJSON(w, r, &req) {
 		return

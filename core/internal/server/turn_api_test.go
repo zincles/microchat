@@ -17,6 +17,28 @@ import (
 	"microchat/internal/turn"
 )
 
+// 测试用凭据：系统令牌（call 帮手默认带上）+ 一枚随便的 JWT 签名密钥。
+const (
+	testSysToken = "test-sys-token"
+	testJWTKey   = "test-jwt-key"
+)
+
+// enableService：把测试服务带出"未初始化"态（给 root 设一枚占位口令）——
+// 规矩（DEFINE「用户与鉴权」）：root 无口令 ⇒ 服务未启用、除 status/setup 外一律 403
+// `setup_required`。除**鉴权专测**（它们从"未初始化"起步）外，所有测试都要先过这道。
+func enableService(t *testing.T, st *store.Store) {
+	t.Helper()
+	needs, err := st.RootNeedsSetup()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if needs {
+		if err := st.SetRootPassword("test-seed"); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 // newTestServer：一台测试用服务（进程内的 turn / task 登记表各一份，走真的 chat / compact / title / reroll 四层）。
 func newTestServer(st *store.Store, cfg config.Config, paths config.Paths) *Server {
 	turns, tasks := turn.NewRegistry(), task.NewRegistry()
@@ -26,7 +48,10 @@ func newTestServer(st *store.Store, cfg config.Config, paths config.Paths) *Serv
 	// 重摇那两条线也照着 main.go 接：装配借 chat、新消息一到清候选
 	rerollService := reroll.New(st, paths, turns, tasks, chatService)
 	chatService.Candidates = rerollService
-	return New(st, cfg, paths, chatService, compact.New(st, paths, turns, tasks), rerollService, tasks)
+	// 鉴权（DEFINE「用户与鉴权」）：测试统一用**测试系统令牌**——call/新构造的请求都带上它，
+	// 于是既有测试全按"系统身份"跑（等于从前的"没配口令就放行"）；鉴权本身另有专测。
+	return New(st, cfg, paths, chatService, compact.New(st, paths, turns, tasks), rerollService, tasks,
+		[]byte(testJWTKey), testSysToken)
 }
 
 // dummySandbox：一条会话 + dummy 渠道（**确定性、不联网** —— 验收与测试都靠它）。
@@ -38,6 +63,11 @@ type dummySandbox struct {
 }
 
 func newDummySandbox(t *testing.T) *dummySandbox {
+	return newDummySandboxWith(t, true)
+}
+
+// newDummySandboxWith：enable=false ⇒ 停在"未初始化"（root 无口令）——鉴权专测用。
+func newDummySandboxWith(t *testing.T, enable bool) *dummySandbox {
 	t.Helper()
 	dir := t.TempDir()
 	// dummy 渠道照着开箱默认（`config.DefaultConfig` 的 defaults 就是 dummy/dummy）
@@ -49,9 +79,12 @@ func newDummySandbox(t *testing.T) *dummySandbox {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	session, err := st.CreateSession("dummy", "dummy", "", "")
+	session, err := st.CreateSession(0, "dummy", "dummy", "", "")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if enable {
+		enableService(t, st)
 	}
 	box := &dummySandbox{
 		store: st, sessionID: session.ID,
@@ -426,8 +459,9 @@ func TestTurnTextValidatesCursors(t *testing.T) {
 	}
 }
 
-// 不存在的会话：状态 / 游标读 / 发送都 404；
-// `GET .../messages` 例外（空列表是它既有的口径）；`stop` 也例外（它问的是"进程里有没有活在跑"）。
+// 不存在的会话：状态 / 游标读 / 发送 / **stop** 都 404（多用户起 stop 不再是例外了 ——
+// "掐别人的轮子"必须有属主闸；幂等性只保"会话在、就是没在跑 ⇒ 200 false"那半）。
+// `GET .../messages` 仍是例外（空列表是它既有的口径）——但也要过属主闸（多用户后同 404）。
 func TestTurnRoutesOnMissingSession(t *testing.T) {
 	box := newDummySandbox(t)
 	missing := "/api/v1/sessions/01a00000-0000-7000-8000-0000000000ff"
@@ -439,9 +473,17 @@ func TestTurnRoutesOnMissingSession(t *testing.T) {
 	if recorder := call(box.server, "POST", missing+"/messages", `{"content":"喂"}`); recorder.Code != http.StatusNotFound {
 		t.Fatalf("不存在的会话不该受理：%d %s", recorder.Code, recorder.Body.String())
 	}
-	if recorder := call(box.server, "POST", missing+"/stop", ""); recorder.Code != http.StatusOK ||
+	if recorder := call(box.server, "POST", missing+"/stop", ""); recorder.Code != http.StatusNotFound {
+		t.Fatalf("对不存在的会话 stop 该 404（多用户：不许掐别人的轮子）：%d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+// stop 的幂等性（有义的那半）：会话在、就是没在跑 ⇒ 200 {"stopped":false}。
+func TestStopIsIdempotentOnExistingSession(t *testing.T) {
+	box := newDummySandbox(t)
+	if recorder := call(box.server, "POST", box.path+"/stop", ""); recorder.Code != http.StatusOK ||
 		recorder.Body.String() != `{"stopped":false}` {
-		t.Fatalf("stop 该幂等回 false：%d %s", recorder.Code, recorder.Body.String())
+		t.Fatalf("stop 幂等 = %d %s", recorder.Code, recorder.Body.String())
 	}
 }
 

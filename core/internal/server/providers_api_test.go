@@ -24,6 +24,7 @@ func newProvidersServer(t *testing.T, providersJSON string) (*Server, *store.Sto
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
+	enableService(t, st)
 	server := newTestServer(st, config.DefaultConfig(), config.Paths{ConfigDir: dir, DataDir: dir})
 	return server, st
 }
@@ -40,6 +41,7 @@ func mustJSON(t *testing.T, text string) config.ProvidersConfig {
 func call(server *Server, method, path, body string) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(method, path, strings.NewReader(body))
 	request.Header.Set("content-type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+testSysToken) // 鉴权（DEFINE）：测试按系统身份跑
 	recorder := httptest.NewRecorder()
 	server.Handler().ServeHTTP(recorder, request)
 	return recorder

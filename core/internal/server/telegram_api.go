@@ -30,6 +30,9 @@ func (s *Server) telegramStatus() telegramView {
 
 // getTelegramConfig：TG bot 的绑定状态（token 有没有 + 绑了谁 + 开了没 + 跑没跑）。
 func (s *Server) getTelegramConfig(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	writeJSON(w, http.StatusOK, s.telegramStatus())
 }
 
@@ -45,6 +48,9 @@ type setTelegramReq struct {
 // token 内容只进文件（0600），永不回显。开了（enabled=true）要重启生效 ——
 // runner 的生命周期归 main（启动时决定跑不跑），这里只写配置不管启停。
 func (s *Server) setTelegram(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	var req setTelegramReq
 	if !decodeJSON(w, r, &req) {
 		return

@@ -71,6 +71,7 @@ op：
   refresh-routes [provider_id]                      只刷路由表：拉 models.dev 快照 → model_route 落库
                                                     （只认聚合站；快照失败不拦这一家之外的；启动时**不跑**）
   tasks                                             任务面板
+  reset-users                删掉所有非 root 用户（连同其会话），root 清回无密码（回 setup 态）
   usage [provider_id]                               OpenCode GO 的套餐余量（只读 GET；不给 id 就用第一个 opencode-go 渠道）
 
 输出：每行一条 JSON；错误体固定 {"error":{"code","message"}}（与 HTTP 契约同一个形状）。
@@ -143,6 +144,8 @@ func runDebug(paths config.Paths, cfg config.Config, args []string) int {
 		return env.refreshRoutesOp(args[1:])
 	case "tasks":
 		return env.board()
+	case "reset-users":
+		return env.resetUsers()
 	case "usage":
 		return env.usageOf(args[1:])
 	default:
@@ -238,7 +241,7 @@ type sessionLine struct {
 
 // sessions：列会话 —— 与 `GET /sessions` 同一份排序口径（store 说什么就是什么）。
 func (e *debugEnv) sessions() int {
-	sessions, err := e.store.ListSessions()
+	sessions, err := e.store.ListSessions(0) // 直操 = 系统身份（DEFINE：本地信任通道按 owner 0）
 	if err != nil {
 		return report(err)
 	}
@@ -265,7 +268,7 @@ func (e *debugEnv) newSession(args []string) int {
 	if value, ok := values["model"]; ok {
 		modelID = value
 	}
-	session, err := e.store.CreateSession(provider, modelID, "", values["title"])
+	session, err := e.store.CreateSession(0, provider, modelID, "", values["title"]) // 直操 = 系统身份
 	if err != nil {
 		return report(err)
 	}
@@ -307,7 +310,7 @@ func (e *debugEnv) importSt(args []string) int {
 	}
 	provider := e.cfg.Defaults.Provider
 	modelID := e.cfg.Defaults.Model
-	session, err := e.store.CreateSession(provider, modelID, "", values["title"])
+	session, err := e.store.CreateSession(0, provider, modelID, "", values["title"]) // 直操 = 系统身份
 	if err != nil {
 		return report(err)
 	}
@@ -695,6 +698,18 @@ func (e *debugEnv) deleteMessage(args []string) int {
 }
 
 // board：任务面板（正在跑的在最前；进程内的事实，不进库）。
+// resetUsers：**一键重置所有用户**（操作员逃生门）：非 root 用户连同其会话一锅端，
+// root 清回无密码（服务回到"未启用、等 setup"）。uid 0 与它的会话不动。
+func (e *debugEnv) resetUsers() int {
+	users, sessions, err := e.store.ResetUsers()
+	if err != nil {
+		return fail("internal", err.Error())
+	}
+	out, _ := json.Marshal(map[string]any{"reset": map[string]any{"users_deleted": users, "sessions_deleted": sessions}})
+	fmt.Println(string(out))
+	return 0
+}
+
 func (e *debugEnv) board() int {
 	emit(e.tasks.Board())
 	return 0

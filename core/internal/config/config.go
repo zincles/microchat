@@ -8,6 +8,8 @@ package config
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -63,9 +65,12 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Host      string  `json:"host"`
-	Port      uint16  `json:"port"`
-	AuthToken *string `json:"auth_token"`
+	Host string `json:"host"`
+	Port uint16 `json:"port"`
+	// JwtKey：登录令牌的签名密钥（HMAC-SHA256，DEFINE「用户与鉴权」）。
+	// 缺省 ⇒ 启动时**现铸 32 字节随机并写回本文件**（0600）：零配置能跑；换 key = 全员登出。
+	// （旧的 `server.auth_token` 已退休：口令是第一个注册者自己设的。）
+	JwtKey *string `json:"jwt_key"`
 	// Identity：**服务器级默认特征**（以什么身份自报家门）："" = **pi**（默认）/ "microchat" / "bare" = 什么都不装。
 	// 单个渠道可以用 `providers.json` 里的 `identity` 覆盖它。
 	Identity string `json:"identity"`
@@ -137,6 +142,24 @@ const (
 )
 
 // LoadConfig：读 `config.json`，缺字段用默认值（`#[serde(default)]` 的等价物）。
+// JWTKey：拿签名密钥；文件里没有就现铸 32 字节随机、**写回配置**（0600）再回。
+// 写回失败不回退成"临时 key"——那会让每次重启全员登出，宁可启动报错。
+func (c Config) JWTKey(paths Paths) ([]byte, error) {
+	if c.Server.JwtKey != nil && *c.Server.JwtKey != "" {
+		return []byte(*c.Server.JwtKey), nil
+	}
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return nil, err
+	}
+	key := hex.EncodeToString(buf)
+	c.Server.JwtKey = &key
+	if err := SaveJSON(paths.Config("config.json"), c); err != nil {
+		return nil, err
+	}
+	return []byte(key), nil
+}
+
 func LoadConfig(paths Paths) (Config, error) {
 	config := DefaultConfig()
 	if err := loadJSON(paths.Config("config.json"), &config); err != nil {

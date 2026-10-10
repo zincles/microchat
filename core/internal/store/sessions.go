@@ -24,7 +24,7 @@ func (e InvalidError) Error() string { return string(e) }
 func nowMS() int64 { return time.Now().UnixMilli() }
 
 // sessionColumns：会话自己的列（**没有 current_leaf**：线性会话不需要"停在哪儿"）。
-const sessionColumns = "id, title, system_prompt, provider, model, agent_id, created_at, updated_at"
+const sessionColumns = "id, title, system_prompt, provider, model, owner_id, agent_id, created_at, updated_at"
 
 // 一个最小的扫描接口：sql.Row 与 sql.Rows 都满足它。
 type scanner interface{ Scan(dest ...any) error }
@@ -33,7 +33,7 @@ func scanSession(row scanner) (model.Session, error) {
 	var session model.Session
 	err := row.Scan(
 		&session.ID, &session.Title, &session.SystemPrompt,
-		&session.Provider, &session.Model, &session.AgentID,
+		&session.Provider, &session.Model, &session.OwnerID, &session.AgentID,
 		&session.CreatedAt, &session.UpdatedAt,
 	)
 	return session, err
@@ -58,12 +58,13 @@ func (s *Store) session(id string) (*model.Session, error) {
 	return &session, nil
 }
 
-// ListSessions：按 updated_at 倒序（同刻按 id 倒序）—— 界面的排序口径。
-func (s *Store) ListSessions() ([]model.Session, error) {
+// ListSessions：**只列这个人的**（多用户：归属过滤就在这里，一处收口）；
+// 按 updated_at 倒序（同刻按 id 倒序）—— 界面的排序口径。
+func (s *Store) ListSessions(ownerID int64) ([]model.Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rows, err := s.db.Query("SELECT " + sessionColumns +
-		" FROM sessions ORDER BY updated_at DESC, id DESC")
+		" FROM sessions WHERE owner_id = ?1 ORDER BY updated_at DESC, id DESC", ownerID)
 	if err != nil {
 		return nil, err
 	}
@@ -83,8 +84,8 @@ func (s *Store) ListSessions() ([]model.Session, error) {
 // 首条用户消息落库时才自动起名），`agent` 先落内置默认 —— 调用方（server）再按
 // `agents.json` 的 default_agent 覆盖。
 // 注意参数名不叫 model —— 那会遮蔽 model **包**（Go 会把它当成 string 用）。
-func (s *Store) CreateSession(provider, modelID, systemPrompt, title string) (model.Session, error) {
-	return s.CreateSessionWithID("", provider, modelID, systemPrompt, title)
+func (s *Store) CreateSession(ownerID int64, provider, modelID, systemPrompt, title string) (model.Session, error) {
+	return s.CreateSessionWithID(ownerID, "", provider, modelID, systemPrompt, title)
 }
 
 // CreateSessionWithID：`id` 空 ⇒ 现铸 UUIDv7；给了就落给的 —— 这是**草稿铸的 id**
@@ -92,7 +93,7 @@ func (s *Store) CreateSession(provider, modelID, systemPrompt, title string) (mo
 // ⚠ 这是全项目唯一一处"落客户端给的 id"（HACK，动机见 `server.CreateSessionReq` 的注释）——
 // 消息 / 摘要的 id 仍然一律服务端铸。
 // **合法性与撞车由调用方（server）收口**：这里只负责插入，PK 冲突就照实报错。
-func (s *Store) CreateSessionWithID(id, provider, modelID, systemPrompt, title string) (model.Session, error) {
+func (s *Store) CreateSessionWithID(ownerID int64, id, provider, modelID, systemPrompt, title string) (model.Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if id == "" {
@@ -105,14 +106,15 @@ func (s *Store) CreateSessionWithID(id, provider, modelID, systemPrompt, title s
 	now := nowMS()
 	session := model.Session{
 		ID: id, Title: title, SystemPrompt: systemPrompt,
-		Provider: provider, Model: modelID, AgentID: "default", // 内置默认，server 再按 agents.json 覆盖
+		Provider: provider, Model: modelID, OwnerID: ownerID,
+		AgentID: "default", // 内置默认，server 再按 agents.json 覆盖
 		CreatedAt: now, UpdatedAt: now,
 	}
 	_, err := s.db.Exec(
-		`INSERT INTO sessions (id, title, system_prompt, provider, model, agent_id, created_at, updated_at)
-		 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
+		`INSERT INTO sessions (id, title, system_prompt, provider, model, owner_id, agent_id, created_at, updated_at)
+		 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`,
 		session.ID, session.Title, session.SystemPrompt,
-		session.Provider, session.Model, session.AgentID, now, now)
+		session.Provider, session.Model, session.OwnerID, session.AgentID, now, now)
 	if err != nil {
 		return model.Session{}, err
 	}

@@ -21,6 +21,9 @@ type ProviderUsageView struct {
 // 拉取**复用** `providers.OpencodeUsageAt`（唯一实现 —— 不在这儿再写一份 HTTP + 解析）；
 // 端点取渠道**生效的** `base_url`（配了就用配置的，没配落官方预设）⇒ 自建代理 / 测试假上游也指得进来。
 func (s *Server) providerUsage(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	id := r.PathValue("provider_id")
 	provider, found := s.providerByID(id)
 	if !found {

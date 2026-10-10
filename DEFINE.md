@@ -496,6 +496,47 @@ Task 状态答"这条上游请求的命" ✓，turn 状态答"这轮现在长什
 - **材料克制** ✓：取会话**开头**那几条（两条一轮 ⇒ 两轮以内 ✓），每条剔 `<state>` 后截断 ⇒ 便宜 ✓。
 
 
+## 用户与鉴权（2026-10-10 定；**全请求强制鉴权**）
+
+### 谁能进来
+
+- **没有"免鉴权退化态"**：除 `GET /auth/status`（门板探测必需）、`POST /auth/setup`（**只开一次**：给 root 设口令）、`POST /auth/login` 三处外，**每一个请求都要有效凭据** —— `/health` 也不例外。`OPTIONS` 预检照旧在鉴权之前。
+- **uid 0 = ROOT，恒在**（2026-10-10 用户定规矩，已落地）：**建库即种下**（`name = "root"`、`is_admin = 1`、口令空着等 setup）——"数据库里至少有一个用户、且它就是 root"是**建库级的保证**，不是"第一个注册的人碰巧坐上 0 号"。**没有配置里的根口令**（旧的 `server.auth_token` 退休）。
+- **setup 只开一次**：`POST /auth/setup {password}` 给 root 设口令（口令 ≥6 位、bcrypt 存储）；设过 ⇒ 403（加人走 `/users`，S2）。**抢占窗口**：谁先访问 setup 谁当 root ⇒ 先初始化、再暴露公网（启动日志会警告）。
+- **root 无口令 = 整个后端服务未启用**（2026-10-10 用户定）：除 `GET /auth/status` 与 `POST /auth/setup` 外**一律 403 `setup_required`** —— 连 `login` 与环回系统令牌也一样（"必须先设密码才能启用服务功能；否则其他用户也无法创建"）。空口令的 root 因此**没有任何可登录的路径**（不是靠 bcrypt 巧合，是总闸挡的）。
+- **uid 分配**（用户定）：**root 恒 0，其他用户从 1000 起递增**（Linux 味）、**不可更改**；重置后再发人仍从 1000 起。
+- **登录认"用户名或 uid"**（用户定）：`user` 字段**全数字 ⇒ 当 uid 查**、否则按名字 ⇒ 用户名**不许是纯数字**（创建时就拦，免歧义）。
+- **一键重置所有用户**：`./microchat -debug reset-users`（操作员逃生门——恰好是"谁都没有能用的凭据"时的救援）：删光非 root 用户**连同他们的会话**（消息/摘要随外键级联）、root 清回无口令（= 服务回"未启用"、`ver+1` 旧票全废）；root 自己的会话不动。
+- **无主会话归 root**：`sessions.owner_id` 默认值就是 **0** —— TUI / `-debug` / 系统通道建的会话天生是 root 的；`0` 永远解析得到真人（它就是那行种子）。
+- **凭据的形态**：`POST /auth/login {user, password}` ⇒ 服务端签一枚 **JWT（HS256，30 天定长）**，claims = `sub`（用户 id）/ `adm` / `ver`（口令版本）/ `exp`。**吊销**：用户改口令或踢人 ⇒ `users.ver` **+1** ⇒ 这人所有 JWT 立刻失效；换 `server.jwt_key` ⇒ 全员失效。
+- **JWT 存在哪、怎么送**：**存在前端（`mc_token`）**，所有客户端一律 `Authorization: Bearer <JWT>` 送 —— 包括浏览器。**不用 cookie 当传输**：云端形态是"静态前端贴任意域名（如 Cloudflare Pages）+ 自部署后端"，跨站 cookie 是第三方 cookie，Safari/Firefox 已全封、Chrome 在封，靠不住。同源一体部署将来可另加一档 HttpOnly cookie 模式（那时才有它挡 XSS 的好处）。
+- **环回系统令牌**：TUI 与 TG 跑在**同一个进程**里、经环回 HTTP 说话 —— 启动时现铸一枚 32 字节随机串，只给这两家（内存，不落盘、不进日志），中间件认它 = **系统身份**（等同 admin，`sys` 标记）。它随进程生灭，不需要治理。
+
+### 用户 ↔ 会话
+
+- **归属只加一格**：`sessions.owner_id`（INTEGER，软引用，0 = admin）。消息 / 摘要 / 世界状态 / 重摇 / Task **一律继承会话的归属，不许加第二列**。
+- **关卡在 HTTP 边界**（`requireSession` 一处收口 + 列表/新建带 owner）：非本人（且非 admin/sys）访问任何会话域接口 ⇒ **404**（不是 403——不泄露"存在但不给你"）。
+- **admin 的列表也只看自己的**（聊天体验不乱）；"所有权限"体现在**按 id 直取时不 404**、以及管理面（用户 CRUD）只有他能用。
+- **设置 = root 专属**（S2，2026-10-10 用户定）：设置面（`/providers*` 含 presets/usage、`/config/chat`、`/config/telegram`、`/debug/last-payload`、`/sessions/import-st`）**读与写都要 admin**（"其他用户的设置不可见/不可改"是明说的规矩，不是漏配）。聊天界面要用的读口保持人人可读：`/agents`、`/models`（GET）、`/config/defaults`（GET）。`/tasks` 非 admin 只见**自己会话**的任务。前端口径：设置入口（⚙）对普通用户**连按钮都不渲染**（守卫同时兜底）；用户视图（👤）人人可进。
+- **删用户对会话必须显式**：`DELETE /users/{id}?sessions=transfer|purge`（transfer ⇒ 归 root）——不可逆的先摊开；**root（uid 0）不许删**。
+- **用户管理口（admin）**：`POST /users` 只收 `name` + `password`（名字 ≤32 字、**不许纯数字**、口令 ≥6 位、**uid 从 1000 起、不可变**；**新加的一律不是 admin**）。**改名 / 改口令都是"admin 或本人"**（改口令 `ver+1` ⇒ 那人旧票全废 = admin 的踢人手段；本人改完前端当场重登换票）。
+
+### Telegram（每个 TG 用户绑一个账户）
+
+- 绑定不走口令：网页端（用户视图）生成**一次性绑定码** → TG 里给 bot 发 `/bind CODE` ⇒ 写 `users.tg_user_id`（UNIQUE）。
+- bot 收到的每一条消息：先查 `tg_user_id → user` ⇒ **以那个用户的身份**调用全部接口（会话、状态、重摇都按他的归属走）；没绑的人只收到"去网页端生成绑定码"一句。
+- 旧的 `telegram.allowed_id` 退休。
+
+### 表（001.sql 直接改，删库重来）
+
+```sql
+users:    id（INTEGER PK；**root 恒 0、其余从 1000 起**）· name（UNIQUE）· pass_hash（bcrypt）·
+          is_admin · ver · tg_user_id（UNIQUE，NULL=没绑）· created_at
+sessions: + owner_id INTEGER NOT NULL DEFAULT 0
+```
+
+**口令哈希** = bcrypt（`golang.org/x/crypto`）；**JWT** = `golang-jwt/jwt/v5`（签名/校验不手搓，与"传输层/协议解析不自己写"同一条规矩）。`server.jwt_key` 缺省时**启动自动铸**并写回配置（0600）。
+
 ## 不用的词（与慎用的词）
 
 | 词 | 处理 | 为什么 |

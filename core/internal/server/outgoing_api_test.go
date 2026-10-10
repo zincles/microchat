@@ -247,7 +247,7 @@ func TestOutgoingSummaryHasChildren(t *testing.T) {
 
 func TestDraftOutgoingDoesNotCreateSession(t *testing.T) {
 	box := newDummySandbox(t)
-	before, err := box.store.ListSessions()
+	before, err := box.store.ListSessions(0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +266,7 @@ func TestDraftOutgoingDoesNotCreateSession(t *testing.T) {
 	if messages := wireBody(t, payload); len(messages) != 2 {
 		t.Fatalf("草稿该是 system+待发 = 2 条，得到 %d：%v", len(messages), messages)
 	}
-	after, err := box.store.ListSessions()
+	after, err := box.store.ListSessions(0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,6 +287,7 @@ func TestDraftOutgoingIDReachesHeaderAndSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
+	enableService(t, st)
 	server := newTestServer(st, config.DefaultConfig(), config.Paths{ConfigDir: dir, DataDir: dir})
 
 	id := "0198ba3c-1234-7abc-8def-0123456789ab"

@@ -35,7 +35,7 @@ func newSandbox(t *testing.T, count int) *sandbox {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	session, err := st.CreateSession("dummy", "dummy", "", "")
+	session, err := st.CreateSession(0, "dummy", "dummy", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,6 +45,7 @@ func newSandbox(t *testing.T, count int) *sandbox {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
+	enableService(t, st)
 	box := &sandbox{db: db, sessionID: session.ID}
 	box.server = newTestServer(st, config.DefaultConfig(), config.Paths{ConfigDir: dir, DataDir: dir})
 	for index := range count {
@@ -355,6 +356,7 @@ func TestMessageIndexFollowsIDOrderNotInsertOrder(t *testing.T) {
 		}
 	}
 }
+
 // PATCH 消息改 content / reasoning：各改各的（nil = 不动），两个都不给 ⇒ 422。
 func TestEditMessageEditsContentAndReasoningSeparately(t *testing.T) {
 	box := newSandbox(t, 2)

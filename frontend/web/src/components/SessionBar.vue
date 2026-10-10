@@ -4,7 +4,9 @@
 import { ref } from "vue";
 import { ICONS } from "./icons.js";
 
-const emit = defineEmits(["select", "settings", "close", "new", "open-settings"]);
+const emit = defineEmits(["select", "settings", "close", "new", "open-settings", "user"]);
+// canSettings：**设置 = root 专属**（用户定，2026-10-10）—— 普通用户这儿连按钮都不给。
+const props = defineProps({ canSettings: { type: Boolean, default: true } });
 
 const sessions = ref([]);
 const currentId = ref(null);
@@ -17,7 +19,7 @@ defineExpose({ setSessions });
 <template>
   <aside id="sessions-bar">
     <div class="bar-head">
-      <span>会话</span>
+      <span>MicroChat</span>
     </div>
     <button id="session-new" type="button" title="开启新对话（草稿：首句才建会话）" @click="$emit('new')">
       <span class="plus">＋</span>开启新对话
@@ -52,13 +54,23 @@ defineExpose({ setSessions });
     </div>
     <div class="bar-foot">
       <button
+        id="user-open"
+        class="foot-btn"
+        type="button"
+        title="用户（占位入口：点了会说还没做）"
+        @click="$emit('user')"
+      >
+        <span class="fb-icon" v-html="ICONS.user"></span>用户
+      </button>
+      <button
+        v-if="props.canSettings"
         id="settings-open"
         class="foot-btn"
         type="button"
-        title="设置"
+        title="设置（root 专属）"
         @click="$emit('open-settings')"
       >
-        ⚙ 设置
+        <span class="fb-icon" v-html="ICONS.settings"></span>设置
       </button>
     </div>
   </aside>

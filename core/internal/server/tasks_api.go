@@ -1,6 +1,7 @@
 package server
 
 import (
+	"microchat/internal/task"
 	"net/http"
 )
 
@@ -13,5 +14,29 @@ func (s *Server) taskBoard(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"running": 0, "tasks": []any{}, "now": 0})
 		return
 	}
-	writeJSON(w, http.StatusOK, s.tasks.Board())
+	board := s.tasks.Board()
+	id := identityOf(r.Context())
+	if id.Admin || id.Sys {
+		writeJSON(w, http.StatusOK, board)
+		return
+	}
+	// 非 admin：只看得见**自己会话**的任务（面板跨用户，别拿别人的会话 id 打招呼）。
+	kept := make([]task.Record, 0, len(board.Tasks))
+	running := 0
+	for _, rec := range board.Tasks {
+		if rec.Session == nil {
+			continue // 无会话的（刷新模型那类）只在 admin 面板出现
+		}
+		session, err := s.store.GetSession(*rec.Session)
+		if err != nil || session == nil || session.OwnerID != id.UserID {
+			continue
+		}
+		kept = append(kept, rec)
+		if rec.Running() {
+			running++
+		}
+	}
+	board.Tasks = kept
+	board.Running = running
+	writeJSON(w, http.StatusOK, board)
 }

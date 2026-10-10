@@ -11,6 +11,9 @@ import (
 // **留着它是因为它必要**：网关为什么 403 只能靠它 —— 拒的往往是头不是体（见 AGENTS.md 的实测表）。
 // 没发过 ⇒ `null`（照实说，不编）。
 func (s *Server) lastPayload(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	payload, ok := providers.LastSent()
 	if !ok {
 		writeJSON(w, http.StatusOK, nil)

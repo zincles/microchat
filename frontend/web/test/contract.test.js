@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { createApi, mergeStreamSlice, DEFAULT_API_URL, normalizeApiBase, probeHealth } from "../src/api/client.js";
+import { createApi, mergeStreamSlice, DEFAULT_API_URL, normalizeApiBase, probeAuthStatus, authLogin } from "../src/api/client.js";
 import { parseCommand, filterCommands, COMMAND_META } from "../src/utils/commands.js";
 import { uuidv7 } from "../src/utils/ids.js";
 import { buildCompactTree, treeTotals } from "../src/utils/tree.js";
@@ -125,6 +125,25 @@ test("api.call 请求形状：方法/路径/鉴权头/204 空", async () => {
   assert.equal(r, null);
   const p = await api.deletionPreview("s1", "m1");
   assert.deepEqual(p, { ok: true });
+});
+
+test("用户管理接口形状：路径 / 方法 / sessions 查询参数", async () => {
+  const seen = [];
+  const api = createApi({ base: "http://x/api/v1", token: "t", fetchFn: async (url, opts) => { seen.push({ url, opts }); return { status: 200, ok: true, json: async () => ({}) }; } });
+  await api.users();
+  await api.createUser({ name: "alice", password: "hunter22" });
+  await api.patchUser(1000, { name: "alice2" });
+  await api.setUserPassword(1000, "hunter33");
+  await api.deleteUser(1000, "transfer");
+  assert.deepEqual(seen.map(s => [s.opts.method, s.url.replace("http://x/api/v1", "")]), [
+    ["GET", "/users"],
+    ["POST", "/users"],
+    ["PATCH", "/users/1000"],
+    ["POST", "/users/1000/password"],
+    ["DELETE", "/users/1000?sessions=transfer"],
+  ]);
+  assert.deepEqual(JSON.parse(seen[1].opts.body), { name: "alice", password: "hunter22" });
+  assert.deepEqual(JSON.parse(seen[3].opts.body), { password: "hunter33" });
 });
 
 test("uuidv7：与后端同形（version 7 / variant / 毫秒序）", () => {
@@ -574,31 +593,25 @@ test("normalizeApiBase：补协议、补 /api/v1、去尾斜杠、空串回空",
   assert.equal(normalizeApiBase(""), "");
 });
 
-test("probeHealth：先规范化再探 /health；401 带 status 抛出；非 microchat 的 200 拒绝；网络错原样抛", async () => {
-  const ok = await probeHealth("x:8787", "", { fetchFn: async (url, opts) => {
-    assert.equal(url, "http://x:8787/api/v1/health"); // 裸地址 ⇒ 补协议、补 /api/v1（不给 vite 拿 200 HTML 骗过的机会）
-    assert.deepEqual(opts.headers, {});
-    return { ok: true, status: 200, json: async () => ({ status: "ok", version: "1" }) };
+test("probeAuthStatus：先规范化再探 /auth/status；非 microchat 的 200 拒绝；authLogin 形状", async () => {
+  const ok = await probeAuthStatus("x:8787", { fetchFn: async (url) => {
+    assert.equal(url, "http://x:8787/api/v1/auth/status"); // 裸地址 ⇒ 补协议、补 /api/v1
+    return { ok: true, status: 200, json: async () => ({ status: "ok", version: "1", needs_setup: false }) };
   } });
-  assert.equal(ok.version, "1");
+  assert.equal(ok.needs_setup, false);
   await assert.rejects(
-    () => probeHealth("http://x:8787", "", { fetchFn: async () => ({ ok: true, status: 200, json: async () => { throw new SyntaxError("html"); } }) }),
+    () => probeAuthStatus("http://x:8787", { fetchFn: async () => ({ ok: true, status: 200, json: async () => ({ hello: "world" }) }) }),
     (e) => /不是 microchat/.test(e.message),
   );
-  await assert.rejects(
-    () => probeHealth("http://x:8787", "", { fetchFn: async () => ({ ok: true, status: 200, json: async () => ({ hello: "world" }) }) }),
-    (e) => /不是 microchat/.test(e.message),
-  );
-  await assert.rejects(
-    () => probeHealth("http://x:8787", "tk", { fetchFn: async (url, opts) => {
-      assert.deepEqual(opts.headers, { Authorization: "Bearer tk" });
-      return { ok: false, status: 401, json: async () => ({ error: { code: "unauthorized", message: "要口令" } }) };
-    } }),
-    (e) => e.status === 401 && e.message === "要口令",
-  );
-  await assert.rejects(() => probeHealth("http://x", "", { fetchFn: async () => { throw new TypeError("fetch failed"); } }));
+  const login = await authLogin("x:8787", "alice", "pw", { fetchFn: async (url, opts) => {
+    assert.equal(url, "http://x:8787/api/v1/auth/login");
+    assert.equal(opts.method, "POST");
+    assert.deepEqual(JSON.parse(opts.body), { user: "alice", password: "pw" });
+    return { ok: false, status: 401, json: async () => ({ error: { code: "unauthorized", message: "用户名或口令不对" } }) };
+  } }).catch((e) => e);
+  assert.equal(login.status, 401);
+  assert.equal(login.message, "用户名或口令不对");
 });
-
 
 test("默认后端地址跟着页面走：hostname:8787；IPv6 套方括号；存过的最优先", () => {
   stubStorage();

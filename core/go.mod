@@ -9,7 +9,11 @@ require (
 	modernc.org/sqlite v1.59.0
 )
 
-require github.com/go-telegram/bot v1.27.0 // indirect
+require (
+	github.com/go-telegram/bot v1.27.0 // indirect
+	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
+	golang.org/x/crypto v0.58.0 // indirect
+)
 
 require (
 	github.com/charmbracelet/colorprofile v0.4.3 // indirect
@@ -30,8 +34,8 @@ require (
 	github.com/tmaxmax/go-sse v0.11.0
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
-	golang.org/x/term v0.46.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/term v0.47.0 // indirect
 	modernc.org/libc v1.75.7 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
