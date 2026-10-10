@@ -416,3 +416,45 @@ func TestUpdateSummaryTextEditsAnyAndDirtiesAncestors(t *testing.T) {
 		t.Fatalf("跨会话该 NotFound：%v", err)
 	}
 }
+
+// 派生序号（`begin_idx` / `end_idx`）：界面画 `Summary #a-b` 与分页切段要用 ——
+// 序号 = 按 id 排第几条（与 messages.idx 同一把尺）；端点悬空 ⇒ 那一端**缺省**
+// （界面据此"不折"，宁露原文不许藏）。
+func TestListSummariesFillsSpanIdx(t *testing.T) {
+	st := openTemp(t)
+	seedSession(t, st, "s1", "m1", "m2", "m3", "m4", "m5")
+	summary := model.Summary{
+		ID: "sum1", SessionID: "s1", Type: model.TypeMessages,
+		BeginMessageID: new("m2"), EndMessageID: new("m4"),
+		Text: "中间那段", Blocks: 1, Tokens: 5, SourceIDs: []string{"m2", "m3", "m4"},
+		Provider: "dummy", Model: "dummy", PromptVersion: 42, CreatedAt: 10,
+	}
+	if err := st.RecordSummary(summary, []string{"m2", "m3", "m4"}); err != nil {
+		t.Fatal(err)
+	}
+	summaries, err := st.ListSummaries("s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) != 1 || summaries[0].BeginIdx == nil || *summaries[0].BeginIdx != 2 {
+		t.Fatalf("begin_idx 应为 2：%+v", summaries)
+	}
+	if summaries[0].EndIdx == nil || *summaries[0].EndIdx != 4 {
+		t.Fatalf("end_idx 应为 4：%+v", summaries)
+	}
+
+	// 悬空端点：把 begin 指到一个不存在的 id（绕过 RecordSummary 的校验，直接改库模拟老数据）
+	if _, err := st.db.Exec("UPDATE summaries SET begin_message_id = 'ghost' WHERE id = 'sum1'"); err != nil {
+		t.Fatal(err)
+	}
+	summaries, err = st.ListSummaries("s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summaries[0].BeginIdx != nil {
+		t.Fatalf("悬空端点应缺省 begin_idx：%v", *summaries[0].BeginIdx)
+	}
+	if summaries[0].EndIdx == nil || *summaries[0].EndIdx != 4 {
+		t.Fatalf("另一端仍应有 end_idx=4：%+v", summaries[0])
+	}
+}

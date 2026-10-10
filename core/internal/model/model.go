@@ -86,6 +86,11 @@ type Summary struct {
 	Type            SummaryType     `json:"type"` // DB 列名是历史（`source_kind`），值与 JSON 名一致
 	BeginMessageID  *string         `json:"begin_message_id,omitempty"`
 	EndMessageID    *string         `json:"end_message_id,omitempty"`
+	// BeginIdx / EndIdx：区间两端的**消息序号**（派生：按 id 排第几条 —— 与 messages.idx 同一把尺）。
+	// 给界面用：画 `Summary #a-b`、以及分页窗口切段（前端手里没有全文，没法自己把 id 换成序号）。
+	// 端点不在（悬空/缺）⇒ 缺省 ⇒ 界面按"不折"处理。
+	BeginIdx *int `json:"begin_idx,omitempty"`
+	EndIdx   *int `json:"end_idx,omitempty"`
 	Text            string          `json:"text"`
 	Blocks          int64           `json:"blocks"`
 	Tokens          int64           `json:"tokens"`

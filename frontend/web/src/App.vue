@@ -1,11 +1,14 @@
 <script setup>
 // App.vue —— 三栏骨架 + 全部接线（原 main.js + 九个桥，合一）。
 // 组件直接挂模板，ref 直调实例方法，不再经 *-vue.js 桥 / mount.js。
-import { ref, reactive, computed, onMounted, onUnmounted } from "vue";
+import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from "vue";
 import { mergeStreamSlice } from "./api/client.js";
 import { parseCommand, filterCommands, COMMAND_META } from "./utils/commands.js";
 import { uuidv7 } from "./utils/ids.js";
 import { buildCompactTree } from "./utils/tree.js";
+import {
+  buildChatRows, computeSegments, windowStart, prevWindowStart, alignWindowFrom, olderCount, runsToFetch,
+} from "./utils/chatrows.js";
 import { applyBackground } from "./utils/background.js";
 import { sharedApi, previewOn, applyTheme, wantsSend } from "./utils/prefs.js";
 import {
@@ -24,6 +27,7 @@ import TopBar from "./components/TopBar.vue";
 import SessionBar from "./components/SessionBar.vue";
 import PayloadBar from "./components/PayloadBar.vue";
 import MessageBubble from "./components/MessageBubble.vue";
+import SummaryCard from "./components/SummaryCard.vue";
 import Composer from "./components/Composer.vue";
 import Toast from "./components/Toast.vue";
 import SettingsModal from "./components/SettingsModal.vue";
@@ -71,7 +75,14 @@ let draft = false;
 let draftPrefs = { provider: "", model: "", agent: "" };
 let draftId = null;
 const vueMessages = ref([]);
+const vueSegments = ref([]); // 整条会话的段布局（computeSegments 的产出）：窗口/折叠/编号都认它
 const vueStream = ref({ id: null, text: "", reasoning: "" });
+// 消息窗口（分页 + 折叠；口径与全套算法在 utils/chatrows.js）：
+// 只挂最后 N 段；更老的按"加载更多"一页一页往回；被摘要盖住的原文**展开才拉**（这里当缓存）。
+const WINDOW_SEGMENTS = 20; // 首屏段数；"加载更多"一页也这么多
+const windowFrom = ref(1); // 窗口起点（段对齐；1 = 已到最老）
+const summaryMsgs = reactive(new Map()); // 摘要 id → {state:"loading"|"ready", rows}（只有展开过的才有）
+const openSummaries = new Set(); // 哪些卡正展开着（reload 后补拉新鲜的）
 const vueDisplayMode = ref("chat");
 const settingsOpen = ref(false);
 const compactDefault = ref(null); // chat.compact_blocks（压缩面板输入框的占位提示）
@@ -101,7 +112,7 @@ function addMessage(who, text, cls, think, messageId) {
 }
 async function editMessageSave(messageId, kind, value) {
   await api.editMessage(sessionID, messageId, kind === "reasoning" ? { reasoning: value } : { content: value });
-  renderHistory(await api.listMessages(sessionID));
+  await reloadWindow();
   refreshStateView();
 }
 async function editMessageFlow(messageId, kind) {
@@ -113,37 +124,130 @@ async function editMessageFlow(messageId, kind) {
   if (next === null) return;
   await editMessageSave(messageId, kind, next);
 }
-// lastMessageList：最近一次渲染用的原始消息（派生物用 —— 压缩树拿它当底）。
-let lastMessageList = [];
-function renderHistory(messages) {
-  lastMessageList = messages ?? [];
-  vueMessages.value = [];
-  vueStream.value = { id: null, text: "", reasoning: "" };
-  for (const m of messages) {
-    vueMessages.value.push({
-      who: m.role === "user" ? "你" : "助手",
-      role: m.role,
-      content: m.content,
-      reasoning: m.reasoning,
-      reasoningMs: m.reasoning_ms,
-      messageId: m.id,
-      id: m.id,
-    });
-  }
-  scrollBottom();
-  refreshTree();
+// toRow：库里的消息 → 消息列的一行（展示形状）。
+function toRow(m) {
+  return {
+    who: m.role === "user" ? "你" : "助手",
+    idx: m.idx, // 服务端派生的序号（编号就认它）
+    role: m.role,
+    content: m.content,
+    reasoning: m.reasoning,
+    reasoningMs: m.reasoning_ms,
+    messageId: m.id,
+    id: m.id,
+  };
 }
-// refreshTree：压缩树 = 现取摘要 + 本地建树（两个 GET 就够，后端零改动）。
+
+// loadWindow：把窗口 [windowFrom..尾] 的消息取回来 —— **只按消息段拉**（runsToFetch）：
+// 被摘要盖住的 idx 一个字节都不取（想看原文 ⇒ 摘要卡展开时另拉）。
+// reset ⇒ 重新按"最后 N 段"定窗口；否则保持起点（先对回段边界：压缩/删除会改结构）。
+async function loadWindow({ reset = false, scroll = true } = {}) {
+  const sid = sessionID;
+  const my = epoch;
+  if (!sid) return false;
+  const [sums, tail] = await Promise.all([api.listSummaries(sid), api.listMessagesLast(sid, 1)]);
+  if (my !== epoch) return false;
+  // 总数 = 最后一条的 idx（拿"尾一行"问，比会话列表里的计数新鲜；空会话 = 0）。
+  const total = tail.length ? tail[tail.length - 1].idx : 0;
+  const segments = computeSegments(total, sums);
+  windowFrom.value = reset
+    ? windowStart(segments, WINDOW_SEGMENTS)
+    : alignWindowFrom(segments, windowFrom.value, WINDOW_SEGMENTS);
+  const runs = runsToFetch(segments, windowFrom.value, Infinity);
+  const got = [];
+  for (const [a, b] of runs) {
+    const part = b === Infinity ? await api.listMessagesTail(sid, a) : await api.listMessagesRange(sid, a, b);
+    got.push(...part);
+  }
+  if (my !== epoch) return false;
+  vueSegments.value = segments;
+  vueMessages.value = got.sort((x, y) => x.idx - y.idx).map(toRow);
+  // 摘要缓存：卡没了的清掉；还开着的补拉新鲜的一份（结构或正文可能刚变过）。
+  const alive = new Set(segments.filter((seg) => seg.kind === "summary").map((seg) => seg.id));
+  for (const key of [...summaryMsgs.keys()]) if (!alive.has(key)) summaryMsgs.delete(key);
+  for (const id of openSummaries) if (alive.has(id)) refreshSummaryMsgs(id);
+  if (scroll) scrollBottom();
+  if (treeVisible) refreshTree(); // 树看着就让它的全量账本跟着换
+  return true;
+}
+
+// reloadWindow：把当前窗口按服务端最新状态重拉（一轮结束 / 编辑 / 删除 / 压缩 / 切版之后）。
+async function reloadWindow({ scroll = true } = {}) {
+  return loadWindow({ reset: false, scroll });
+}
+
+// loadMore：往回一页（WINDOW_SEGMENTS 段）。插入新行前记高度，插完把滚动位置补回去（锚住视野）。
+async function loadMore() {
+  const sid = sessionID;
+  const my = epoch;
+  const older = prevWindowStart(vueSegments.value, windowFrom.value, WINDOW_SEGMENTS);
+  if (!sid || older >= windowFrom.value) return;
+  const runs = runsToFetch(vueSegments.value, older, windowFrom.value - 1);
+  const got = [];
+  for (const [a, b] of runs) got.push(...await api.listMessagesRange(sid, a, b));
+  if (my !== epoch) return;
+  const el = document.getElementById("messages-vue");
+  const beforeH = el ? el.scrollHeight : 0;
+  const beforeTop = el ? el.scrollTop : 0;
+  vueMessages.value = [...got.sort((x, y) => x.idx - y.idx).map(toRow), ...vueMessages.value];
+  windowFrom.value = older;
+  await nextTick();
+  if (el) el.scrollTop = beforeTop + (el.scrollHeight - beforeH);
+}
+
+// 摘要卡展开：**按下才拉**未压缩文本（每次按下都拉新的一版 —— 展开里编辑过也不吃旧缓存）。
+async function refreshSummaryMsgs(id) {
+  const seg = vueSegments.value.find((x) => x.kind === "summary" && x.id === id);
+  if (!seg) { summaryMsgs.delete(id); return; }
+  const my = epoch;
+  summaryMsgs.set(id, { state: "loading" });
+  try {
+    const msgs = await api.listMessagesRange(sessionID, seg.b, seg.e);
+    if (my !== epoch) return;
+    summaryMsgs.set(id, {
+      state: "ready",
+      rows: msgs.sort((x, y) => x.idx - y.idx).map((m) => ({ msg: toRow(m), displayIdx: m.idx })),
+    });
+  } catch (err) {
+    if (my !== epoch) return;
+    summaryMsgs.delete(id);
+    toast(`未压缩文本拉取失败：${err.message}`, "error");
+  }
+}
+function onSummaryToggle(id, open) {
+  if (!open) { openSummaries.delete(id); return; }
+  openSummaries.add(id);
+  refreshSummaryMsgs(id);
+}
+
+// 压缩树（右栏"压缩"tab）：**看着才拉全量**消息 + 摘要建树 ——
+// 树要的是整条账本（原文占比、嵌套），而消息列走的是窗口（见 utils/chatrows.js）；
+// "树 tab 开着"就是用户显式说"给我看全量"。
+let treeVisible = false;
+function onPayloadTab(t) {
+  treeVisible = t === "tree";
+  if (treeVisible) refreshTree();
+}
 async function refreshTree() {
-  if (!sessionID) { payloadbarRef.value?.setTree(null); return; }
+  if (!sessionID || !treeVisible) return;
   const my = epoch;
   try {
-    const sums = await api.listSummaries(sessionID);
+    const [msgs, sums] = await Promise.all([api.listMessages(sessionID), api.listSummaries(sessionID)]);
     if (my !== epoch) return;
-    payloadbarRef.value?.setTree(buildCompactTree(lastMessageList, sums));
-  } catch { if (my === epoch) payloadbarRef.value?.setTree(null); }
+    payloadbarRef.value?.setTree(buildCompactTree(msgs, sums));
+  } catch {
+    if (my === epoch) payloadbarRef.value?.setTree(null);
+  }
 }
 const lastMsgId = computed(() => [...vueMessages.value].reverse().find((m) => m.messageId)?.messageId ?? null);
+// 渲染行：气泡（带编号）+ 被顶层摘要折起来的卡（口径见 utils/chatrows.js）。
+const chatRows = computed(() => buildChatRows({
+  segments: vueSegments.value,
+  windowFrom: windowFrom.value,
+  messages: vueMessages.value,
+  summaryMsgs,
+}));
+const olderSegments = computed(() => olderCount(vueSegments.value, windowFrom.value));
 function onBubbleSave(mid, kind, value) {
   editMessageSave(mid, kind, value).catch((err) => toast(`改消息失败：${err.message}`, "error"));
 }
@@ -180,7 +284,7 @@ async function onBubbleDelete(mid, isLast) {
     return `${deletionPlanSummary(plan)}，${suffix}`;
   });
   if (!ok || my !== epoch) return;
-  renderHistory(await api.listMessages(sid));
+  await reloadWindow();
   refreshStateView(sid);
   refreshReroll();
 }
@@ -290,9 +394,8 @@ async function switchReroll(sid, idx) {
     toast(`切版失败：${err.message}`, "error");
     return;
   }
-  const msgs = await api.listMessages(sid).catch(() => null);
-  if (my !== epoch || !msgs) return;
-  renderHistory(msgs);
+  if (my !== epoch) return;
+  await reloadWindow();
   clearRerollPreview();
   refreshStateView(sid);
   refreshStatusline("idle");
@@ -329,7 +432,7 @@ async function pollCompact(sid, atMS) {
     }
     const span = c.from_idx ? `第 ${c.from_idx}–${c.to_idx} 条` : "";
     toast(`压缩完成${span ? `：${span}` : ""}${c.merged ? "（合并）" : ""}`, "ok");
-    renderHistory(await api.listMessages(sid));
+    await reloadWindow();
     refreshStateView(sid);
     return;
   }
@@ -483,7 +586,12 @@ async function startDraft() {
   refreshStatusline("idle");
   refreshSessionsBar();
   refreshReroll();
-  refreshTree();
+  // 窗口/树/懒加载缓存一起清（草稿没有会话可问）。
+  vueSegments.value = [];
+  windowFrom.value = 1;
+  summaryMsgs.clear();
+  openSummaries.clear();
+  payloadbarRef.value?.setTree(null);
   refreshPreview(); // 输入框里若还留着字（＋ 时不清输入框），预演立刻跟上
 }
 function newSession() {
@@ -503,7 +611,13 @@ async function enterSession(id) {
   const my = ++epoch;
   draft = false;
   sessionID = id;
-  const [sessions, messages] = await Promise.all([api.listSessions(), api.listMessages(id)]);
+  // 窗口重新起：先清掉上一条会话的一切（消息/段/展开态/懒加载缓存），再按"最后 N 段"拉。
+  vueMessages.value = [];
+  vueSegments.value = [];
+  windowFrom.value = 1;
+  summaryMsgs.clear();
+  openSummaries.clear();
+  const sessions = await api.listSessions();
   if (my !== epoch) return; // 迟到的上一发：整段丢掉（切会话竞态的唯一守卫）
   Object.assign(sessionInfo, sessions.find((s) => s.id === id) ?? {});
   paintSessionHeader();
@@ -511,11 +625,12 @@ async function enterSession(id) {
   fillModelSelect();
   fillAgentSelect();
   renderSessions(sessions);
-  renderHistory(messages);
+  const ok = await loadWindow({ reset: true });
+  if (my !== epoch || !ok) return;
   refreshStatusline("idle");
   refreshStateView(id);
   refreshReroll();
-  if (previewOn() && messages.length) {
+  if (previewOn() && vueMessages.value.length) {
     api.outgoingPreview(id, "").then((w) => { if (my === epoch) payloadbarRef.value?.setWire(w); })
       .catch((err) => { if (my === epoch) toast(`预演失败：${err.message}`, "error"); });
   } else {
@@ -576,11 +691,12 @@ async function pollTurn(sid, turnID) {
       if (st.phase === "idle" || st.phase === "error") {
         if (my !== epoch) return;
         const failed = st.phase === "error";
-        renderHistory(await api.listMessages(sid));
+        await reloadWindow();
+        if (my !== epoch) return;
         if (failed) {
-          // 失败合成一条气泡摆在文末（renderHistory 会清 vueStream，所以必须摆在它后面）+ toast 兜底。
+          // 失败合成一条气泡摆在文末（reloadWindow 会清 vueStream，所以必须摆在它后面）+ toast 兜底。
           const errText = `失败：${st.error || "未知"}`;
-          vueMessages.value.push({ who: "助手", role: "assistant", content: errText, id: tmpKey() });
+          vueMessages.value.push({ who: "助手", role: "assistant", content: errText, id: tmpKey(), noIdx: true });
           scrollBottom();
           toast(errText, "error");
         }
@@ -658,12 +774,10 @@ const COMMAND_RUNNERS = {
   },
   reroll: async () => { await rerollNow(); },
   switch: async (args) => {
-    const sid = sessionID;
     const my = epoch;
-    await api.rerollSwitch(sid, Number(args[0] ?? 0));
-    const msgs = await api.listMessages(sid);
+    await api.rerollSwitch(sessionID, Number(args[0] ?? 0));
     if (my !== epoch) return;
-    renderHistory(msgs);
+    await reloadWindow();
   },
   stop: async () => { await api.stop(sessionID); },
   resend: async () => { await resend(); },
@@ -674,7 +788,7 @@ const COMMAND_RUNNERS = {
   },
   cut: async () => {
     const sid = sessionID;
-    const messages = await api.listMessages(sid);
+    const messages = vueMessages.value; // 只列表里有的（想看更老的先"加载更多"）
     overlaysRef.value?.showPicker(
       "cut：选一条（删它及之后）",
       messages.filter((m) => m.idx > 0).map((m) => ({
@@ -685,14 +799,14 @@ const COMMAND_RUNNERS = {
         const ok = await deleteMessagesFlow(sid, it.value.id,
           (plan) => `${deletionPlanSummary(plan)}，确认删 #${it.value.idx} 及之后？`);
         if (!ok || sid !== sessionID) return;
-        renderHistory(await api.listMessages(sid));
+        await reloadWindow();
         refreshStateView(sid);
         refreshReroll();
       },
     );
   },
   edit: async (args) => {
-    const messages = await api.listMessages(sessionID);
+    const messages = vueMessages.value; // 只列表里有的（想看更老的先"加载更多"）
     const wantThink = (args[0] ?? "").toLowerCase().startsWith("思") || (args[1] ?? "").toLowerCase().startsWith("思");
     const n = Number(wantThink && isNaN(Number(args[0])) ? args[1] : args[0]);
     const one = async (m) => editMessageFlow(m.id, wantThink ? "reasoning" : "content");
@@ -948,24 +1062,42 @@ onUnmounted(() => {
       @select-agent="(id) => applyAgentValue(id).catch((err) => toast(`换 Agent 失败：${err.message}`, 'error'))"
     />
         <main id="messages-vue">
-          <MessageBubble
-            v-for="m in vueMessages"
-            :key="m.id ?? 'stream'"
-            :who="m.who"
-            :role="m.role"
-            :content="bubbleContent(m)"
-            :reasoning="bubbleReasoning(m)"
-            :reasoning-ms="m.reasoningMs"
-            :message-id="m.messageId"
-            :is-last="!!m.messageId && m.messageId === lastMsgId"
-            :display-mode="vueDisplayMode"
-            :streaming="!!m.stream"
-            :reroll="m.messageId && rerollState.active && rerollState.target_message_id === m.messageId ? rerollState : null"
-            @save="onBubbleSave"
-            @delete="onBubbleDelete"
-            @reroll="rerollNow"
-            @reroll-go="rerollGo"
-          />
+          <button
+            v-if="olderSegments > 0"
+            id="load-more"
+            type="button"
+            @click="loadMore().catch((err) => toast(`加载更多失败：${err.message}`, 'error'))"
+          >↑ 加载更多历史（还有 {{ olderSegments }} 段）</button>
+          <template v-for="row in chatRows" :key="row.key">
+            <SummaryCard
+              v-if="row.kind === 'summary'"
+              :summary="row.summary"
+              :from-idx="row.fromIdx"
+              :to-idx="row.toIdx"
+              :rows="row.rows"
+              :loading="row.loading"
+              :display-mode="vueDisplayMode"
+              @toggle-raw="(open) => onSummaryToggle(row.summary.id, open)"
+            />
+            <MessageBubble
+              v-else
+              :who="row.msg.who"
+              :idx="row.displayIdx"
+              :role="row.msg.role"
+              :content="bubbleContent(row.msg)"
+              :reasoning="bubbleReasoning(row.msg)"
+              :reasoning-ms="row.msg.reasoningMs"
+              :message-id="row.msg.messageId"
+              :is-last="!!row.msg.messageId && row.msg.messageId === lastMsgId"
+              :display-mode="vueDisplayMode"
+              :streaming="!!row.msg.stream"
+              :reroll="row.msg.messageId && rerollState.active && rerollState.target_message_id === row.msg.messageId ? rerollState : null"
+              @save="onBubbleSave"
+              @delete="onBubbleDelete"
+              @reroll="rerollNow"
+              @reroll-go="rerollGo"
+            />
+          </template>
         </main>
     <Composer
       ref="composerRef"
@@ -976,7 +1108,13 @@ onUnmounted(() => {
       @menu="() => overlaysRef?.showPalette(filterCommands(''))"
     />
       </section>
-      <PayloadBar v-show="!settingsOpen" ref="payloadbarRef" :default-blocks="compactDefault" @compact="(n) => compactNow(n ?? undefined)" />
+      <PayloadBar
+        v-show="!settingsOpen"
+        ref="payloadbarRef"
+        :default-blocks="compactDefault"
+        @compact="(n) => compactNow(n ?? undefined)"
+        @tab="onPayloadTab"
+      />
       <SettingsModal
         v-if="settingsOpen"
         :ask="askConfirm"

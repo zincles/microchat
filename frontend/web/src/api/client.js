@@ -78,6 +78,12 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
     // deleteSession：删整条会话（后端不代建 —— 删完进哪条由调用方定）。
     deleteSession: (id) => call("DELETE", `/sessions/${enc(id)}`),
     listMessages: (id) => call("GET", `/sessions/${enc(id)}/messages`),
+    // 消息窗口用（2026-10-10）：闭区间 / 只给起点（到末尾）/ 取尾 N 条 —— 都走 /messages 现成参数。
+    listMessagesRange: (id, fromIdx, toIdx) =>
+      call("GET", `/sessions/${enc(id)}/messages?from_idx=${fromIdx}&to_idx=${toIdx}`),
+    listMessagesTail: (id, fromIdx) =>
+      call("GET", `/sessions/${enc(id)}/messages?from_idx=${fromIdx}`),
+    listMessagesLast: (id, n) => call("GET", `/sessions/${enc(id)}/messages?last=${n}`),
     // sendMessage：发一句话（202 受理 + 后台跑；预演调的不是这条，别混）。
     sendMessage: (id, content) => call("POST", `/sessions/${enc(id)}/messages`, { content }),
     // resend：重发历史（不落新消息，拿现有历史再跑一轮；空会话 400）。

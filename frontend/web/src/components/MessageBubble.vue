@@ -6,6 +6,7 @@ import { formatThinkLabel } from "../utils/format.js";
 import { renderMarkdown, splitState } from "../utils/markdown.js";
 const props = defineProps({
   who: String,
+  idx: { type: [Number, String], default: null }, // 显示编号（真消息=服务端 idx；库外的按后缀顺延）
   role: String,
   content: String,
   reasoning: String,
@@ -52,7 +53,7 @@ const editRows = computed(() => Math.min(12, Math.max(3, draft.value.split("\n")
   <div :class="`msg-wrap ${role === 'user' ? 'user' : 'assistant'} ${displayMode === 'roleplay' && role !== 'user' ? 'prose' : ''}`">
     <div :class="`msg ${role === 'user' ? 'user' : 'assistant'} ${displayMode === 'roleplay' && role !== 'user' ? 'prose' : ''}`">
       <div class="msg-head">
-        <span class="who">{{ who }}</span>
+        <span class="who">{{ who }}<span v-if="idx !== null && idx !== undefined" class="msg-idx">#{{ idx }}</span></span>
       </div>
       <details v-if="reasoning || editing === 'reasoning'" class="think" :open="editing === 'reasoning'">
         <summary>{{ thinkLabel }}</summary>

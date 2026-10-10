@@ -4,6 +4,7 @@ import { createApi, mergeStreamSlice, DEFAULT_API_URL } from "../src/api/client.
 import { parseCommand, filterCommands, COMMAND_META } from "../src/utils/commands.js";
 import { uuidv7 } from "../src/utils/ids.js";
 import { buildCompactTree, treeTotals } from "../src/utils/tree.js";
+import { buildChatRows } from "../src/utils/chatrows.js";
 import {
   formatThinkLabel,
   formatStatusLine,
@@ -366,3 +367,165 @@ test("发送键判定：三档 + 修饰键（App 与 Composer 同一把尺）", 
   assert.equal(wantsSend(e(), "shift-enter"), false);
   assert.equal(wantsSend(e(), "button"), false);
 });
+
+
+// —— 消息列渲染行 v2（2026-10-10：窗口/分段/摘要折叠，摘要原文展开才拉） ——
+import {
+  computeSegments, windowStart, prevWindowStart, alignWindowFrom, olderCount, runsToFetch,
+} from "../src/utils/chatrows.js";
+
+const sum = (id, b, e, parent = null, dirty = false) => ({
+  id, parent_summary_id: parent, begin_idx: b, end_idx: e, text: `S${id}`, dirty,
+});
+
+test("分段：顶层摘要吃一段（端点序号来自接口）；孩子不另露；空档按消息段走", () => {
+  const segs = computeSegments(6, [sum("c", 2, 3, "s"), sum("s", 2, 4)]);
+  assert.deepEqual(segs.map((x) => x.kind), ["msg", "summary", "msg", "msg"]);
+  assert.deepEqual(segs.map((x) => x.b ?? x.idx), [1, 2, 5, 6]);
+  // 端点缺（悬空）= 不折；span 越界（快照滞后）= 按 total 夹住
+  assert.deepEqual(computeSegments(3, [{ id: "x", begin_idx: undefined, end_idx: undefined }]).map((x) => x.idx), [1, 2, 3]);
+  const clamped = computeSegments(3, [sum("y", 2, 9)]);
+  assert.equal(clamped[1].kind, "summary");
+  assert.equal(clamped[1].e, 3);
+});
+
+test("窗口：首屏取最后 N 段；往回一页 N 段；结构变了对回段边界", () => {
+  const segs = computeSegments(6, [sum("s", 2, 4)]); // [m1, sum2-4, m5, m6]
+  assert.equal(windowStart(segs, 2), 5);
+  assert.equal(windowStart(segs, 4), 1);
+  assert.equal(prevWindowStart(segs, 5, 2), 1);
+  assert.equal(prevWindowStart(segs, 1, 2), 1); // 已到最老
+  assert.equal(olderCount(segs, 5), 2);
+  assert.equal(olderCount(segs, 1), 0);
+  // 压缩把它并成 s(1-6)：原窗口起点 5 落在卡里 ⇒ 提到 1
+  assert.equal(alignWindowFrom(computeSegments(6, [sum("s", 1, 6)]), 5, 2), 1);
+  // 删除砍到 2 条：起点 5 越过末尾 ⇒ 回到最后一页
+  assert.equal(alignWindowFrom(computeSegments(2, []), 5, 2), 1);
+});
+
+test("要拉的区间：摘要段跳过；尾巴开区间（吸收总数快照滞后）", () => {
+  const segs = computeSegments(8, [sum("s", 3, 5)]); // [m1, m2, sum3-5, m6, m7, m8]
+  assert.deepEqual(runsToFetch(segs, 1, Infinity), [[1, 2], [6, Infinity]]);
+  assert.deepEqual(runsToFetch(segs, 4, 7), [[6, 7]]); // 窗口起点落在摘要里：只取消息段
+  const noSum = computeSegments(5, []);
+  assert.deepEqual(runsToFetch(noSum, 3, 4), [[3, 4]]);
+  // 最后一段是摘要（理论上不该有）：尾巴不开区间，别把被盖的原文顺手拉了
+  const tailSum = computeSegments(3, [sum("t", 2, 3)]);
+  assert.deepEqual(runsToFetch(tailSum, 1, Infinity), [[1, 1]]);
+});
+
+test("渲染行：卡（展开才带原文）+ 编号 + 库外尾巴顺延", () => {
+  const segs = computeSegments(4, [sum("s", 2, 3)]);
+  const messages = [
+    { id: "m1", idx: 1, content: "一" },
+    { id: "m4", idx: 4, content: "四" },
+    { id: "tmp", content: "刚发的" },
+    { id: "stream", content: "", stream: true },
+    { id: "err", content: "失败：x", noIdx: true },
+  ];
+  const rows = buildChatRows({ segments: segs, windowFrom: 1, messages, summaryMsgs: new Map() });
+  assert.deepEqual(rows.map((r) => r.kind), ["msg", "summary", "msg", "msg", "msg", "msg"]);
+  assert.equal(rows[1].key, "sum-s");
+  assert.equal(rows[1].fromIdx, 2);
+  assert.equal(rows[1].toIdx, 3);
+  assert.equal(rows[1].rows, null); // 没展开 ⇒ 没有原文
+  assert.equal(rows[1].loading, false);
+  assert.deepEqual(rows.filter((r) => r.kind === "msg").map((r) => r.displayIdx), [1, 4, 5, 6, null]);
+  // 展开后（ready）带原文；loading 态也标出来
+  const loaded = new Map([["s", { state: "ready", rows: [{ msg: { id: "m2", idx: 2 }, displayIdx: 2 }] }]]);
+  const rows2 = buildChatRows({ segments: segs, windowFrom: 1, messages, summaryMsgs: loaded });
+  assert.equal(rows2[1].rows.length, 1);
+  const loading = new Map([["s", { state: "loading" }]]);
+  assert.equal(buildChatRows({ segments: segs, windowFrom: 1, messages, summaryMsgs: loading })[1].loading, true);
+  // 窗口起点在卡后面：卡不进渲染行；窗口外的老消息也不许冒出来
+  const rows3 = buildChatRows({ segments: segs, windowFrom: 4, messages, summaryMsgs: new Map() });
+  assert.deepEqual(rows3.map((r) => r.kind), ["msg", "msg", "msg", "msg"]);
+  assert.deepEqual(rows3.map((r) => r.displayIdx), [4, 5, 6, null]);
+});
+
+test("背景图存储：坏 JSON / 缺字段 / 空串都当没设", () => {
+  stubStorage();
+  assert.equal(loadBackground(), null);
+  localStorage.setItem("mc_bg", "{oops");
+  assert.equal(loadBackground(), null);
+  localStorage.setItem("mc_bg", JSON.stringify({ kind: "nope", value: "x" }));
+  assert.equal(loadBackground(), null);
+  localStorage.setItem("mc_bg", JSON.stringify({ kind: "url", value: "" }));
+  assert.equal(loadBackground(), null);
+});
+
+test("背景图存储：save → load 往返；清除后回 null", () => {
+  stubStorage();
+  const bg = { kind: "url", value: "https://example.com/a.png" };
+  saveBackground(bg);
+  assert.deepEqual(loadBackground(), bg);
+  saveBackground(null);
+  assert.equal(loadBackground(), null);
+});
+
+test("背景图标注：未设 / URL 截断 / 上传带尺寸", () => {
+  assert.equal(describeBackground(null), "未设（纯平底）");
+  const long = "https://example.com/" + "x".repeat(80);
+  assert.ok(describeBackground({ kind: "url", value: long }).includes("…"));
+  const txt = describeBackground({ kind: "file", value: "d".repeat(1365), width: 1920, height: 1080 });
+  assert.ok(txt.includes("1920×1080") && txt.includes("1 KB"), txt);
+});
+
+// —— 共享层新增（2026-10-10 审计整改） ——
+
+test("API 错误：code/status 原样带上（调用方按 code 分支，别猜文案）", async () => {
+  const fetchFn = async () => ({ status: 409, ok: false, json: async () => ({ error: { code: "conflict", message: "末尾变了" } }) });
+  const api = createApi({ base: "http://x/api/v1", fetchFn });
+  await assert.rejects(() => api.stop("s1"), (e) => e.code === "conflict" && e.status === 409 && e.message === "末尾变了");
+});
+
+test("API 错误：非 JSON 错误体（框架 405 的 text/plain）不炸 SyntaxError，回退 HTTP <status>", async () => {
+  const fetchFn = async () => ({ status: 405, ok: false, json: async () => { throw new SyntaxError("Unexpected token"); } });
+  const api = createApi({ base: "http://x/api/v1", fetchFn });
+  await assert.rejects(() => api.stop("s1"), (e) => e.message === "HTTP 405" && e.code === null && e.status === 405);
+});
+
+test("模型键往返：provider 里带 / 也不歧义；无分隔符 → null", () => {
+  const k = modelKey("自建/代理", "deepseek/chat");
+  assert.equal(k, "自建/代理|||deepseek/chat");
+  assert.deepEqual(parseModelKey(k), { provider: "自建/代理", model: "deepseek/chat" });
+  assert.equal(parseModelKey("没有分隔符"), null);
+});
+
+test("modelLabel 三级回退：用户覆盖 → 上游名 → 上游 id", () => {
+  assert.equal(modelLabel({ display_name: "我的名字", name: "上游名", upstream_id: "id" }), "我的名字");
+  assert.equal(modelLabel({ display_name: null, name: "上游名", upstream_id: "id" }), "上游名");
+  assert.equal(modelLabel({ name: "", upstream_id: "id" }), "id");
+});
+
+test("whoText / sessionTitle：两处回退档各就各位", () => {
+  assert.equal(whoText("p", "m"), "p/m");
+  assert.equal(whoText("", ""), "未知模型");
+  assert.equal(whoText("", "", "未选模型"), "未选模型");
+  assert.equal(sessionTitle("", true), "新对话");
+  assert.equal(sessionTitle("", false), "新会话");
+  assert.equal(sessionTitle("  标题  "), "标题");
+});
+
+test("偏好读取：默认与空串语义（mc_theme 空串=跟随系统，不许被吞）", () => {
+  stubStorage();
+  assert.equal(apiBase(), DEFAULT_API_URL);
+  assert.equal(themePref(), DEFAULT_THEME);
+  assert.equal(sendMode(), DEFAULT_SEND);
+  localStorage.setItem("mc_theme", "");
+  assert.equal(themePref(), "");
+  localStorage.setItem("mc_api", "http://elsewhere/api/v1");
+  assert.equal(apiBase(), "http://elsewhere/api/v1");
+});
+
+test("发送键判定：三档 + 修饰键（App 与 Composer 同一把尺）", () => {
+  stubStorage();
+  const e = (o = {}) => ({ shiftKey: false, ctrlKey: false, metaKey: false, altKey: false, ...o });
+  assert.equal(wantsSend(e()), true);
+  assert.equal(wantsSend(e({ shiftKey: true })), false);
+  assert.equal(wantsSend(e({ shiftKey: true }), "shift-enter"), true);
+  assert.equal(wantsSend(e(), "shift-enter"), false);
+  assert.equal(wantsSend(e(), "button"), false);
+});
+
+

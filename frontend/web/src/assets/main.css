@@ -152,6 +152,31 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 .msg .msg-head { display: flex; justify-content: space-between; align-items: center; gap: 0.6em; margin-bottom: 0.15em; }
 .msg .who { font-weight: bold; font-size: 0.85em; color: var(--tg-link); }
 .msg.user .who { color: inherit; }
+/* 气泡头上的编号：收在名字里、淡一点（你 #2 / 助手 #4）。 */
+.msg .msg-idx { margin-left: 0.35em; font-weight: normal; opacity: 0.6; font-variant-numeric: tabular-nums; }
+/* "加载更多历史"：窗口化消息列顶上的那枚按钮（还有更老的一页时才挂）。 */
+#load-more { align-self: center; margin: 0.5em auto 0.7em; background: none; border: 1px dashed var(--line); color: var(--tg-hint); border-radius: 999px; padding: 0.3em 1em; cursor: pointer; font-size: 0.85em; }
+#load-more:hover { color: var(--tg-text); border-color: var(--tg-hint); }
+/* —— 摘要卡（2026-10-10）：一段被压过的对话在消息列里的样子 ——
+ * 四面圆角矩形（不是气泡、没有尾巴、不跟左右）；头行 Summary #a-b；正文 = 摘要文本
+ * （发给模型的就是这份）；`查看未压缩文本` 展开原始气泡（带着各自的操作）。 */
+.sum-block { align-self: stretch; margin: 0.15em 0; border: 1px solid var(--line); border-radius: var(--r-card); background: var(--tg-float); overflow: hidden; flex-shrink: 0; }
+/* ⚠ flex-shrink: 0 是**必须的**：overflow: hidden（为圆角）会让 flex 项的自动最小高度失效 ⇒ 不加这句，卡会被压得比内容矮（展开的原文被裁掉一截、还会把别的卡一起压扁 —— 2026-10-10 踩过）。 */
+.sum-head { display: flex; gap: 0.45em; align-items: baseline; padding: 0.45em 0.8em 0.1em; font-size: 0.85em; }
+.sum-name { color: var(--tg-link); font-weight: bold; }
+.sum-range { color: var(--tg-hint); font-variant-numeric: tabular-nums; }
+.sum-tag { color: var(--tg-destructive); border: 1px solid currentColor; border-radius: 4px; padding: 0 0.3em; font-size: 0.9em; }
+.sum-text { padding: 0.15em 0.8em 0.5em; white-space: pre-wrap; word-break: break-word; }
+.sum-raw { border-top: 1px solid var(--line); }
+.sum-raw > summary { list-style: none; cursor: pointer; padding: 0.35em 0.8em; color: var(--tg-link); font-size: 0.85em; }
+.sum-raw > summary::-webkit-details-marker { display: none; }
+.sum-raw > summary::before { content: "▸ "; }
+.sum-raw[open] > summary::before { content: "▾ "; }
+.sum-originals { display: flex; flex-direction: column; gap: 0.1em; padding: 0.2em 0.4em 0.5em 0.7em; border-left: 2px solid var(--line); margin: 0 0.4em 0.5em; }
+/* 卡里的原文气泡：比主列略宽（卡本身就窄了一圈，沿用 70%/80% 会显得挤）。 */
+.sum-originals .msg-wrap { max-width: 80%; }
+.sum-originals .msg-wrap.assistant { width: 92%; max-width: 92%; }
+.sum-loading { padding: 0.3em 0.8em 0.6em; color: var(--tg-hint); font-size: 0.9em; }
 .msg .edit-btn { background: none; border: none; color: var(--tg-hint); font-size: 0.75em; padding: 0.1em 0.3em; cursor: pointer; border-radius: 4px; }
 .msg.user .edit-btn { color: inherit; }
 .msg .edit-btn:hover { filter: brightness(1.3); }

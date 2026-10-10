@@ -9,9 +9,11 @@ import { treeTotals } from "../utils/tree.js";
 const props = defineProps({
   defaultBlocks: { type: Number, default: null }, // chat.compact_blocks（空输入框的默认，只用于提示）
 });
-const emit = defineEmits(["compact"]);
+const emit = defineEmits(["compact", "tab"]);
 
 const tab = ref("payload");
+// 切 tab 报给 App：压缩树看着才拉全量账本（窗口化的内存账，见 App.refreshTree）。
+function selectTab(t) { tab.value = t; emit("tab", t); }
 const blocks = ref(""); // 压缩面板上的块数输入（空 = 用配置默认）
 function doCompact() {
   const n = Number(blocks.value);
@@ -37,9 +39,9 @@ defineExpose({ setWire, setTables, setTree });
 <template>
   <aside id="payload-bar">
     <div class="bar-head bar-tabs">
-      <button type="button" class="tab" :class="{ sel: tab === 'payload' }" @click="tab = 'payload'">载荷</button>
-      <button type="button" class="tab" :class="{ sel: tab === 'state' }" @click="tab = 'state'">状态</button>
-      <button type="button" class="tab" :class="{ sel: tab === 'tree' }" @click="tab = 'tree'">压缩</button>
+      <button type="button" class="tab" :class="{ sel: tab === 'payload' }" @click="selectTab('payload')">载荷</button>
+      <button type="button" class="tab" :class="{ sel: tab === 'state' }" @click="selectTab('state')">状态</button>
+      <button type="button" class="tab" :class="{ sel: tab === 'tree' }" @click="selectTab('tree')">压缩</button>
     </div>
     <pre v-show="tab === 'payload'" id="outgoing-raw">{{ payloadText }}</pre>
     <div v-show="tab === 'state'" id="state-view">

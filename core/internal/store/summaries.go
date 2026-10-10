@@ -161,6 +161,9 @@ func (s *Store) UpdateSummaryText(sessionID, summaryID string, edit SummaryEdit)
 	if err != nil {
 		return model.Summary{}, err
 	}
+	if err := fillSpanIdx(tx, sessionID, &updated); err != nil {
+		return model.Summary{}, err
+	}
 	if _, err := tx.Exec("UPDATE sessions SET updated_at = ?1 WHERE id = ?2", now, sessionID); err != nil {
 		return model.Summary{}, err
 	}
@@ -298,6 +301,44 @@ func scanSummary(row scanner) (model.Summary, error) {
 	return summary, nil
 }
 
+// rowQuerier：*sql.DB 与 *sql.Tx 都能查一行（补序号两种上下文都要用）。
+type rowQuerier interface {
+	QueryRow(query string, args ...any) *sql.Row
+}
+
+// messageIdx：这条消息在会话里的**序号**（按 id 排第几条，1-based）——
+// 与 messages.idx 同一把尺（派生、不落库）；消息不在 ⇒ ok=false。
+func messageIdx(q rowQuerier, sessionID, messageID string) (int, bool, error) {
+	var n, exists int
+	err := q.QueryRow(
+		`SELECT COUNT(*), COUNT(CASE WHEN id = ?2 THEN 1 END)
+		   FROM messages WHERE session_id = ?1 AND id <= ?2`, sessionID, messageID).Scan(&n, &exists)
+	if err != nil {
+		return 0, false, err
+	}
+	return n, exists > 0, nil
+}
+
+// fillSpanIdx：给一条摘要补上区间两端的消息序号（界面画 `Summary #a-b`、分页切段要用）。
+// 端点缺/悬空 ⇒ 那一端留缺省（前端按"不折"处理）。
+func fillSpanIdx(q rowQuerier, sessionID string, summary *model.Summary) error {
+	if summary.BeginMessageID != nil {
+		if n, ok, err := messageIdx(q, sessionID, *summary.BeginMessageID); err != nil {
+			return err
+		} else if ok {
+			summary.BeginIdx = &n
+		}
+	}
+	if summary.EndMessageID != nil {
+		if n, ok, err := messageIdx(q, sessionID, *summary.EndMessageID); err != nil {
+			return err
+		} else if ok {
+			summary.EndIdx = &n
+		}
+	}
+	return nil
+}
+
 // listSummaries：按 id 顺序取这条会话的摘要（装配的行走、删除计划、Copy 都要用）。
 // **调用方持锁**。
 func (s *Store) listSummaries(sessionID string) ([]model.Summary, error) {
@@ -311,6 +352,9 @@ func (s *Store) listSummaries(sessionID string) ([]model.Summary, error) {
 	for rows.Next() {
 		summary, err := scanSummary(rows)
 		if err != nil {
+			return nil, err
+		}
+		if err := fillSpanIdx(s.db, sessionID, &summary); err != nil {
 			return nil, err
 		}
 		summaries = append(summaries, summary)
