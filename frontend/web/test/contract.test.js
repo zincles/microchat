@@ -1,10 +1,11 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { createApi, mergeStreamSlice, DEFAULT_API_URL } from "../src/api/client.js";
+import { createApi, mergeStreamSlice, DEFAULT_API_URL, normalizeApiBase, probeHealth } from "../src/api/client.js";
 import { parseCommand, filterCommands, COMMAND_META } from "../src/utils/commands.js";
 import { uuidv7 } from "../src/utils/ids.js";
 import { buildCompactTree, treeTotals } from "../src/utils/tree.js";
 import { buildChatRows } from "../src/utils/chatrows.js";
+import { computeViewportFit } from "../src/utils/viewport.js";
 import {
   formatThinkLabel,
   formatStatusLine,
@@ -20,7 +21,7 @@ import {
   whoText,
   sessionTitle,
 } from "../src/utils/format.js";
-import { sendMode, wantsSend, themePref, apiBase, DEFAULT_THEME, DEFAULT_SEND } from "../src/utils/prefs.js";
+import { sendMode, wantsSend, themePref, apiBase, defaultApiBase, apiBaseCandidates, DEFAULT_THEME, DEFAULT_SEND } from "../src/utils/prefs.js";
 
 // 契约测试（无浏览器）：只验纯函数与请求形状。`node --test test/`。
 // 后端真服务验证另走手工（见 README）。
@@ -561,4 +562,64 @@ test("/tasks 端点形状：GET，回 running + tasks（轮询用）", async () 
   const api = createApi({ base: "http://x/api/v1", fetchFn });
   await api.tasks();
   assert.deepEqual(seen, ["http://x/api/v1/tasks", "GET"]);
+});
+
+
+test("normalizeApiBase：补协议、补 /api/v1、去尾斜杠、空串回空", () => {
+  assert.equal(normalizeApiBase("192.168.0.110:8787"), "http://192.168.0.110:8787/api/v1");
+  assert.equal(normalizeApiBase("http://x:8787"), "http://x:8787/api/v1");
+  assert.equal(normalizeApiBase("http://x:8787/api/v1/"), "http://x:8787/api/v1");
+  assert.equal(normalizeApiBase("  https://box/api/v1  "), "https://box/api/v1");
+  assert.equal(normalizeApiBase(""), "");
+});
+
+test("probeHealth：先规范化再探 /health；401 带 status 抛出；非 microchat 的 200 拒绝；网络错原样抛", async () => {
+  const ok = await probeHealth("x:8787", "", { fetchFn: async (url, opts) => {
+    assert.equal(url, "http://x:8787/api/v1/health"); // 裸地址 ⇒ 补协议、补 /api/v1（不给 vite 拿 200 HTML 骗过的机会）
+    assert.deepEqual(opts.headers, {});
+    return { ok: true, status: 200, json: async () => ({ status: "ok", version: "1" }) };
+  } });
+  assert.equal(ok.version, "1");
+  await assert.rejects(
+    () => probeHealth("http://x:8787", "", { fetchFn: async () => ({ ok: true, status: 200, json: async () => { throw new SyntaxError("html"); } }) }),
+    (e) => /不是 microchat/.test(e.message),
+  );
+  await assert.rejects(
+    () => probeHealth("http://x:8787", "", { fetchFn: async () => ({ ok: true, status: 200, json: async () => ({ hello: "world" }) }) }),
+    (e) => /不是 microchat/.test(e.message),
+  );
+  await assert.rejects(
+    () => probeHealth("http://x:8787", "tk", { fetchFn: async (url, opts) => {
+      assert.deepEqual(opts.headers, { Authorization: "Bearer tk" });
+      return { ok: false, status: 401, json: async () => ({ error: { code: "unauthorized", message: "要口令" } }) };
+    } }),
+    (e) => e.status === 401 && e.message === "要口令",
+  );
+  await assert.rejects(() => probeHealth("http://x", "", { fetchFn: async () => { throw new TypeError("fetch failed"); } }));
+});
+
+
+test("默认后端地址跟着页面走：hostname:8787；IPv6 套方括号；存过的最优先", () => {
+  stubStorage();
+  assert.equal(defaultApiBase(), DEFAULT_API_URL); // node 里没有 location ⇒ 退回默认
+  globalThis.location = { hostname: "192.168.0.110", origin: "http://192.168.0.110:8788" };
+  assert.equal(defaultApiBase(), "http://192.168.0.110:8787/api/v1");
+  assert.equal(apiBase(), "http://192.168.0.110:8787/api/v1"); // 没存过 ⇒ 用推导值
+  assert.deepEqual(apiBaseCandidates(), ["http://192.168.0.110:8787/api/v1", "http://192.168.0.110:8788/api/v1"]);
+  globalThis.location = { hostname: "::1", origin: "http://[::1]:8788" };
+  assert.equal(defaultApiBase(), "http://[::1]:8787/api/v1");
+  localStorage.setItem("mc_api", "http://box:9999/api/v1");
+  assert.equal(apiBase(), "http://box:9999/api/v1"); // 存过 ⇒ 只认存的
+  assert.deepEqual(apiBaseCandidates(), ["http://box:9999/api/v1"]);
+  delete globalThis.location;
+});
+
+
+test("键盘拟合：高度取整、平移跟走；拿不到高或捏合缩放 ⇒ 不拟合（null）", () => {
+  assert.deepEqual(computeViewportFit({ height: 512.7, offsetTop: 0, scale: 1 }), { h: 513, y: 0 });
+  assert.deepEqual(computeViewportFit({ height: 512, offsetTop: 118.4, scale: 1 }), { h: 512, y: 118 });
+  assert.deepEqual(computeViewportFit({ height: 512, offsetTop: -3, scale: 1 }), { h: 512, y: 0 });
+  assert.equal(computeViewportFit({ height: 0 }), null);
+  assert.equal(computeViewportFit({ height: 512, scale: 2 }), null);
+  assert.equal(computeViewportFit({}), null);
 });

@@ -18,6 +18,11 @@ select { appearance: none; -webkit-appearance: none; padding-right: 1.8em;
   background-position: calc(100% - 1.1em) 55%, calc(100% - 0.75em) 55%;
   background-size: 0.35em 0.35em; background-repeat: no-repeat; cursor: pointer; }
 textarea { resize: vertical; }
+/* 文档本身**不滚**（app 壳的标准姿势）：滚动全部发生在内部容器里。
+ * 不锁的话移动端会出正反馈：页面一滚 → visualViewport.offsetTop 变大 → viewport.js 再平移
+ * → transform 又撑大可滚动区域 → 越滚越"延展"（2026-10-10 真机症状）。overscroll-behavior
+ * 一并掐掉回弹与下拉刷新。 */
+html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
 body { margin: 0; background: var(--tg-bg); color: var(--tg-text); font: 15px/1.65 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif; }
 /* 自定义背景图（界面 tab 设：URL 或上传的图片）：整页 fixed 图层，垫在壳（#app，z-index 1）下面 ——
  * 各面板自己有底色，图只从透明处（消息区）透出来。--mc-bg-image 由 utils/background.js 挂/摘；
@@ -25,7 +30,10 @@ body { margin: 0; background: var(--tg-bg); color: var(--tg-text); font: 15px/1.
 body::before { content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none;
   background-image: var(--mc-bg-image, none);
   background-size: cover; background-position: center; background-repeat: no-repeat; }
-#app { display: flex; flex-direction: column; height: 100vh; gap: 0; padding: 0; box-sizing: border-box; position: relative; z-index: 1; }
+/* 高度跟**视觉视口**走（utils/viewport.js 写 --vvh/--vvt）：键盘弹出时整盒变矮 ⇒ 输入框永远在
+ * 键盘上方；translateY 跟 iOS 的"可视窗上推"；顺带 #app 一带 transform 就收编了所有 fixed 浮层
+ * （命令面板/picker/确认框/toast/门板都以它为准 ⇒ 自动钉在键盘上沿）。没有 JS/var 时回落 100dvh→100vh。 */
+#app { display: flex; flex-direction: column; height: 100vh; height: var(--vvh, 100dvh); transform: translateY(var(--vvt, 0px)); gap: 0; padding: 0; box-sizing: border-box; position: relative; z-index: 1; }
 /* 顶栏：中间列里的悬浮圆角卡（上下留空，不贴边）。三段 = 开关 | 会话抬头（伸缩）| 控制。 */
 header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; color: var(--tg-hint); border-radius: var(--r-shell); background: var(--tg-secondary-bg); }
 /* 会话抬头：占满中段（下拉被推到右端），超长省略；hover 出全名（title 属性）。
@@ -62,7 +70,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 /* #content = 左栏右边那一整块：对话 / 设置**同级**（OpenWebUI 那种；2026-10-10 起设置不再是弹窗）。 */
 #content { flex: 1 1 auto; display: flex; min-width: 0; min-height: 0; }
 #sessions-bar { width: 260px; flex: none; align-self: stretch; max-height: 100%; background: var(--tg-secondary-bg); border-radius: 0; display: flex; flex-direction: column; overflow: hidden; min-height: 0; box-sizing: border-box; border-right: 1px solid var(--line); }
-#payload-bar { width: 340px; flex: none; align-self: stretch; min-height: 0; max-height: 100%; overflow-y: auto; background: var(--tg-secondary-bg); border-radius: 0; border-left: 1px solid var(--line); padding: 0.6em 0.8em; font-size: 0.85em; color: var(--tg-hint); box-sizing: border-box; }
+#payload-bar { width: 340px; flex: none; align-self: stretch; min-height: 0; max-height: 100%; overflow-y: auto; overscroll-behavior: contain; background: var(--tg-secondary-bg); border-radius: 0; border-left: 1px solid var(--line); padding: 0.6em 0.8em; font-size: 0.85em; color: var(--tg-hint); box-sizing: border-box; }
 #outgoing-raw { white-space: pre; overflow-x: auto; margin: 0; max-width: 100%; }
 /* 压缩树（文件管理器那种看体积的树）：缩进行 + 行底容量条（du 味）。 */
 #compact-tree { font-size: 0.92em; }
@@ -85,13 +93,14 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 #chat-col { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; margin: 0 auto; width: 100%; max-width: 100%; position: relative; background: transparent; border-radius: 0; overflow: hidden; padding: 0.6em 0.6em 0; }
 #chat-col > * { position: relative; z-index: 1; max-width: 760px; margin-left: auto; margin-right: auto; width: 100%; box-sizing: border-box; }
 /* 消息列：flex:1 撑满 + 两侧 56px 头像位 + 上下给浮动输入栏留位；底部留空让尾条操作行不被输入框盖住。 */
-#messages-vue { flex: 1; overflow-y: auto; min-height: 0; padding: 1em 56px 7em; display: flex; flex-direction: column; gap: 0.3em; }
+#messages-vue { flex: 1; overflow-y: auto; overscroll-behavior: contain; min-height: 0; padding: 1em 56px 7em; display: flex; flex-direction: column; gap: 0.3em; }
 /* 抽屉遮罩（只在窄屏显示；点一下 = 收起对应的栏）：与栏的状态由 CSS 兄弟选择器联动，不用 JS 状态。 */
 #scrim-left, #scrim-right { display: none; }
 /* 窄屏（≤1100）：右载荷栏改"抽屉"（2026-10-10）—— 不再 display:none 一刀切（[◨] 之前按了没反应）。 */
 /* 断点 700/1100 与 App.vue 的 BP 常量同源，改一处要改两处。 */
 @media (max-width: 1100px) {
-  #payload-bar { position: fixed; inset: 0 0 0 auto; z-index: 16; width: min(88vw, 380px); max-width: none; max-height: none; transform: none; opacity: 1; visibility: visible; transition: transform 200ms ease-out, visibility 0s linear 200ms; box-shadow: -10px 0 30px rgb(0 0 0 / 35%); }
+  /* 抽屉宽度与左栏（≤700 段）**同一把尺**：两扇一样的宽（340 也正好是桌面右栏宽）。 */
+  #payload-bar { position: fixed; inset: 0 0 0 auto; z-index: 16; width: min(86vw, 340px); max-width: none; max-height: none; transform: none; opacity: 1; visibility: visible; transition: transform 200ms ease-out, visibility 0s linear 200ms; box-shadow: -10px 0 30px rgb(0 0 0 / 35%); }
   #payload-bar.collapsed { transform: translateX(102%); max-width: none; opacity: 1; visibility: hidden; }
   #scrim-right { display: block; position: fixed; inset: 0; z-index: 15; background: rgb(0 0 0 / 45%); opacity: 0; pointer-events: none; transition: opacity 180ms ease-out; }
   #payload-bar:not(.collapsed) ~ #scrim-right { opacity: 1; pointer-events: auto; }
@@ -99,7 +108,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 /* 手机（≤700）：左会话栏改"抽屉"（不再是顶部 30vh 死条）—— [◧] 调出/收起，选中会话自动收。 */
 /* 断点 700/1100 与 App.vue 的 BP 常量同源，改一处要改两处。 */
 @media (max-width: 700px) {
-  #sessions-bar { position: fixed; inset: 0 auto 0 0; z-index: 16; width: min(82vw, 300px); max-height: none; border-right: 1px solid var(--line); transform: none; opacity: 1; visibility: visible; transition: transform 200ms ease-out, visibility 0s linear 200ms; box-shadow: 10px 0 30px rgb(0 0 0 / 35%); }
+  #sessions-bar { position: fixed; inset: 0 auto 0 0; z-index: 16; width: min(86vw, 340px); max-height: none; border-right: 1px solid var(--line); transform: none; opacity: 1; visibility: visible; transition: transform 200ms ease-out, visibility 0s linear 200ms; box-shadow: 10px 0 30px rgb(0 0 0 / 35%); }
   #sessions-bar.collapsed { transform: translateX(-102%); max-width: none; opacity: 1; visibility: hidden; }
   #scrim-left { display: block; position: fixed; inset: 0; z-index: 15; background: rgb(0 0 0 / 45%); opacity: 0; pointer-events: none; transition: opacity 180ms ease-out; }
   #sessions-bar:not(.collapsed) ~ #scrim-left { opacity: 1; pointer-events: auto; }
@@ -123,13 +132,15 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 .bar-head.bar-tabs .tab { flex: 1; background: none; border: none; border-radius: 8px; color: var(--tg-hint); padding: 0.4em; font-size: 1em; }
 .bar-head.bar-tabs .tab.sel { color: var(--tg-text); background: rgb(255 255 255 / 10%); }
 /* 状态表：表名小标题 + 键值行（键暗、值亮）。 */
-#state-view { overflow-y: auto; }
+#state-view { overflow-y: auto; overscroll-behavior: contain; }
 #state-view .state-table { margin: 0 0 0.8em; }
 #state-view h4 { color: var(--tg-link); font-size: 0.78em; font-weight: normal; margin: 0.6em 0 0.2em; }
 #state-view .state-row { display: flex; gap: 0.6em; padding: 0.25em 0; border-bottom: 1px solid var(--line); }
 #state-view .state-row:last-child { border-bottom: none; }
 #state-view .k { flex: none; color: var(--tg-hint); }
 #state-view .v { flex: 1; color: var(--tg-text); word-break: break-word; }
+/* 会话列表自己滚（此前没有任何滚动规则 ⇒ 会话一多直接被裁掉，移动端抽屉里更是够不着）。 */
+#session-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .bar-foot { padding: 0.5em; border-top: 1px solid var(--line); margin-top: auto; }
 .foot-btn { display: block; width: 100%; text-align: left; background: none; border: none; border-radius: var(--r-btn); color: var(--tg-hint); padding: 0.55em 0.7em; cursor: pointer; }
 .foot-btn:hover { background: rgb(255 255 255 / 6%); color: var(--tg-text); }
@@ -237,6 +248,12 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 /* 状态行：输入框上方独立小字（不进卡，跟输入框同宽居中，超预算红）。 */
 .statusline { position: absolute; left: 0; right: 0; bottom: 100%; margin-bottom: 0.3em; text-align: center; color: var(--tg-hint); font-size: 0.78em; text-shadow: 0 1px 6px rgb(0 0 0 / 60%); }
 .statusline.over { color: var(--tg-destructive); }
+/* 连接门板：进前端第一眼（探不通后端时）——全屏盖住一切（z-index 高过设置/浮层）。 */
+#connect-gate { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; background: var(--tg-bg); }
+.gate-box { width: min(460px, 92vw); background: var(--tg-secondary-bg); border: 1px solid var(--line); border-radius: var(--r-shell); padding: 1.1em 1.2em 0.9em; box-shadow: 0 12px 40px rgb(0 0 0 / 45%); }
+.gate-box h2 { margin: 0 0 0.6em; font-size: 1.05em; }
+.gate-box .hint { color: var(--tg-hint); font-size: 0.85em; margin: 0.4em 0 0; }
+.gate-box .hint code { background: rgb(255 255 255 / 8%); border-radius: 4px; padding: 0 0.25em; }
 /* 后台任务行：状态行头上再叠一行（绝对定位 ⇒ 不占布局；0 个任务时整行不渲染）。 */
 .taskline { position: absolute; left: 0; right: 0; bottom: 100%; margin-bottom: 1.75em; text-align: center; color: var(--tg-hint); font-size: 0.72em; text-shadow: 0 1px 6px rgb(0 0 0 / 60%); }
 #composer button { background: var(--tg-button); color: var(--tg-button-text); border: none; border-radius: 50%; width: 2.6em; height: 2.6em; padding: 0; cursor: pointer; align-self: flex-end; display: flex; align-items: center; justify-content: center; flex: none; box-shadow: 0 2px 10px rgb(0 0 0 / 30%); }
@@ -256,7 +273,10 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 .msg .typing span:nth-child(3) { animation-delay: 0.3s; }
 @keyframes typing-pulse { 0%, 60%, 100% { opacity: 0.25; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-0.18em); } }
 @media (prefers-reduced-motion: reduce) { .msg .typing span { animation: none; opacity: 0.6; } }
-.palette, .picker { position: fixed; left: 50%; transform: translateX(-50%); bottom: 5em; background: var(--tg-float); border: none; border-radius: var(--r-shell); padding: 0.5em; width: min(649px, 90%); margin-left: -40px; z-index: 10; box-sizing: border-box; box-shadow: 0 8px 30px rgb(0 0 0 / 40%); }
+.palette, .picker { position: fixed; left: 50%; transform: translateX(-50%); bottom: 5em; background: var(--tg-float); border: none; border-radius: var(--r-shell); padding: 0.5em; width: min(649px, 90%); margin-left: -40px; z-index: 10; box-sizing: border-box; box-shadow: 0 8px 30px rgb(0 0 0 / 40%);
+  /* 限高：百分比解析的是**包含块**（现在被 #app 的 transform 收编）⇒ 键盘把盒子缩矮时自动跟着缩，
+   * 小屏也不会顶出视口外（实测过 617px 面板在 500px 视口里 top≈-192 的裸奔）。内容自己滚。 */
+  max-height: calc(100% - 7em); overflow-y: auto; overscroll-behavior: contain; }
 /* 确认框：全屏中央（与 modal 同级遮罩：背后加深，只留中央小窗）。 */
 .confirm-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / 60%); z-index: 30; display: flex; align-items: center; justify-content: center; }
 /* 命令面板遮罩：透明（只吃点击关面板，不加深，面板自己 z=10 浮在上）。 */
@@ -274,7 +294,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 /* 设置 modal（分组卡片，不是左右分栏 —— TG 设置页就是一组一组的圆角块）。 */
 .hidden { display: none; }
 .modal { position: fixed; inset: 0; background: rgb(0 0 0 / 60%); z-index: 20; display: flex; align-items: center; justify-content: center; }
-.modal-box { background: var(--tg-bg); border: none; border-radius: var(--r-shell); width: 94vw; max-width: 960px; height: 92vh; overflow-y: auto; padding: 1em 1.2em; box-sizing: border-box; box-shadow: 0 12px 40px rgb(0 0 0 / 45%); }
+.modal-box { background: var(--tg-bg); border: none; border-radius: var(--r-shell); width: 94vw; max-width: 960px; height: 92vh; overflow-y: auto; overscroll-behavior: contain; padding: 1em 1.2em; box-sizing: border-box; box-shadow: 0 12px 40px rgb(0 0 0 / 45%); }
 /* 紧凑对话框（会话设置这种小表单）：宽够用、高随内容 —— 别用 92vh 的空盒子。 */
 .modal-box.compact { width: min(560px, 94vw); max-width: 560px; height: auto; max-height: 88vh; }
 .modal-head { display: flex; justify-content: space-between; align-items: center; font-size: 1.1em; margin-bottom: 0.5em; }
@@ -287,7 +307,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 #settings-view { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 0.5em 0.6em 0; }
 .settings-bar { display: flex; align-items: center; gap: 0.4em; max-width: 960px; width: 100%; margin: 0 auto; }
 .settings-bar .settings-nav { flex: 1 1 auto; min-width: 0; margin-bottom: 0; }
-.settings-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0.55em 0.2em 1.5em; }
+.settings-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0.55em 0.2em 1.5em; }
 .settings-box { max-width: 960px; margin: 0 auto; }
 /* 分组卡片（TG 设置页的观感）：h3 是组标题（TG 蓝小字顶在卡片上方）；
  * field/row 是卡片里的行，圆角只在组两端。 */

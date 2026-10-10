@@ -29,6 +29,42 @@ async function readJson(res) {
   }
 }
 
+// normalizeApiBase：把用户输入的地址收拾成标准 API 基址 ——
+// 去空白/尾斜杠；没写协议补 http://；没写 /api/v1 后缀就补上（"只填到端口"也能用）。
+export function normalizeApiBase(v) {
+  let s = (v ?? "").trim().replace(/\/+$/, "");
+  if (!s) return "";
+  if (!/^https?:\/\//i.test(s)) s = `http://${s}`;
+  if (!/\/api\/v1$/.test(s)) s += "/api/v1";
+  return s;
+}
+
+// probeHealth：连通性探针（连接门板与启动自检共用）—— GET {base}/health，**自带超时**
+// （地址填错/黑洞 IP 时别让界面干等浏览器默认的超时）。成功回 {status, version}；
+// 失败抛带 .status 的 Error（401 = 要口令，别的非 2xx = 地址/路径不对）。
+//
+// 两道闸，都是踩出来的：
+//   ① 地址**先过 normalizeApiBase** —— 裸地址（没协议）否则会被 fetch 当相对路径，
+//      撞上 vite 的 SPA 回退拿到 200 HTML，"死地址"也能"连通成功"；
+//   ② 回体必须是 JSON 且 `status: "ok"` —— 挡住"随便一个 web 服务回 200"的假阳性。
+export async function probeHealth(base, token = "", { timeoutMs = 4000, fetchFn = fetch } = {}) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetchFn(`${normalizeApiBase(base)}/health`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      signal: ctrl.signal,
+    });
+    let data = null;
+    try { data = await res.json(); } catch { /* 非 JSON 体 */ }
+    if (!res.ok) throw httpError(data, res);
+    if (!data || data.status !== "ok") throw new Error("目标回的不是 microchat 后端（/health 没有 status:ok）");
+    return data;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // httpError：非 2xx 的统一定形 —— message = 后端文案，**code 原样带上**（调用方按 code 分支，
 // 别猜文案；没错误体时 code=null、message 回退 `HTTP <status>`）。
 function httpError(data, res) {

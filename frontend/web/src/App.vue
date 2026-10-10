@@ -2,7 +2,7 @@
 // App.vue —— 三栏骨架 + 全部接线（原 main.js + 九个桥，合一）。
 // 组件直接挂模板，ref 直调实例方法，不再经 *-vue.js 桥 / mount.js。
 import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from "vue";
-import { mergeStreamSlice } from "./api/client.js";
+import { mergeStreamSlice, probeHealth } from "./api/client.js";
 import { parseCommand, filterCommands, COMMAND_META } from "./utils/commands.js";
 import { uuidv7 } from "./utils/ids.js";
 import { buildCompactTree } from "./utils/tree.js";
@@ -10,7 +10,8 @@ import {
   buildChatRows, computeSegments, windowStart, prevWindowStart, alignWindowFrom, olderCount, runsToFetch,
 } from "./utils/chatrows.js";
 import { applyBackground } from "./utils/background.js";
-import { sharedApi, previewOn, applyTheme, wantsSend } from "./utils/prefs.js";
+import { installViewportFit } from "./utils/viewport.js";
+import { sharedApi, previewOn, applyTheme, wantsSend, apiBase, apiToken, apiBaseCandidates, saveNetPrefs } from "./utils/prefs.js";
 import {
   formatStatusLine,
   statusOverBudget,
@@ -30,6 +31,7 @@ import PayloadBar from "./components/PayloadBar.vue";
 import MessageBubble from "./components/MessageBubble.vue";
 import SummaryCard from "./components/SummaryCard.vue";
 import SummaryEditor from "./components/SummaryEditor.vue";
+import ConnectGate from "./components/ConnectGate.vue";
 import Composer from "./components/Composer.vue";
 import Toast from "./components/Toast.vue";
 import SettingsModal from "./components/SettingsModal.vue";
@@ -61,6 +63,8 @@ function onPickAction(action, item) {
 }
 
 // —— 会话状态 ——
+const showGate = ref(false); // 启动探不通后端 ⇒ 先给"连接"门板（见 boot）
+const gateError = ref("");
 let sessionID = null;
 // 会话世代：进会话/回草稿就 +1。所有会话域的异步续写都在 await 后核对本世代，对不上就丢 ——
 // 没有这道闸，快速切会话时迟到的 A 续写会覆掉已切到的 B 的抬头与消息列（实测复现过：
@@ -734,7 +738,32 @@ async function enterSession(id) {
   }).catch(() => {});
 }
 async function boot() {
-  const health = await api.health();
+  // 自检按候选顺序探（没存过地址时：先"跟页面同主机的 8787"，再"同源 /api/v1"兜底反代部署）。
+  let health = null;
+  let lastErr = null;
+  let winner = "";
+  for (const cand of apiBaseCandidates()) {
+    try {
+      health = await probeHealth(cand, apiToken());
+      winner = cand;
+      break;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  if (!health) {
+    // 连不上后端：不开一副破界面，先给"连接"面板（新设备第一次打开走的也是这儿）。
+    gateError.value = String(lastErr?.message ?? lastErr);
+    showGate.value = true;
+    return;
+  }
+  if (winner && winner !== apiBase()) {
+    // 非首选候选胜出（给了同源等）：存下来 + 刷新 —— sharedApi() 等一切读的都是 apiBase()，
+    // 不存的话这一页会指着错的地址干活。一次性闪一下，之后就走存的。
+    saveNetPrefs(winner, apiToken());
+    location.reload();
+    return;
+  }
   connText = `已连接 v${health.version ?? "?"}`;
   api.getChat().then((c) => { compactDefault.value = c?.compact_blocks ?? null; }).catch(() => {});
   // 不再"删空会话 + 预建真会话"：web 走草稿态，库里不产生空行（旧编排的两步一起拿掉）。
@@ -1111,10 +1140,17 @@ function closeSettings() {
   if (narrowLeft()) applySideToggle("sessions-bar", true);
 }
 // —— 拖拽调宽 ——
+let uninstallViewportFit = null;
 onMounted(() => {
   applySideStates();
   refreshTasks();
   tasksTimer = setInterval(refreshTasks, TASKS_POLL_MS);
+  // 键盘遮挡：整盒跟着视觉视口拟合（见 utils/viewport.js）；键盘一开，如果人正在输入，
+  // 顺手把消息列贴回底部（矮了一截后最新一条不该被挤出视野）。
+  uninstallViewportFit = installViewportFit();
+  const vv = window.visualViewport;
+  const onVvResize = () => { if (document.activeElement?.id === "input") scrollBottom(); };
+  vv?.addEventListener("resize", onVvResize);
   // 跨断点（桌面 ⇄ 抽屉）时把两侧状态重算一遍：变成抽屉就一律先关掉，不然会"啪"地盖上来。
   mqlLeft?.addEventListener?.("change", applySideStates);
   mqlRight?.addEventListener?.("change", applySideStates);
@@ -1130,6 +1166,8 @@ onMounted(() => {
   });
 });
 onUnmounted(() => {
+  uninstallViewportFit?.();
+  uninstallViewportFit = null;
   if (tasksTimer) clearInterval(tasksTimer);
   tasksTimer = null;
   composerRO?.disconnect();
@@ -1141,6 +1179,7 @@ onUnmounted(() => {
 
 <template>
   <div id="app">
+    <ConnectGate v-if="showGate" :initial-error="gateError" />
     <div id="columns">
       <SessionBar
         ref="sessionbarRef"

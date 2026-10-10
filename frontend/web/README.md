@@ -28,6 +28,8 @@ npm run build     # 产出 dist/（不入库，部署时现打）
 - **右载荷栏**：真请求预演（草稿也能 —— 客户端铸会话 id，`POST /outgoing`）+ 世界状态 tab + **压缩树**（文件管理器那种看体积的树：目录 = 摘要、嵌套 = 嵌套压缩）
 - **设置六 tab**：聊天 / 界面 / 连接 / 会话 / Agent / Provider（与对话**同级的视图**，不是弹窗；窄屏自动收起左栏）；
   主题七套（默认 `deepseek`，色值实测对齐 chat.deepseek.com）· **背景图**（URL 或上传，本地存；没设 = 纯平底）
+- **移动端键盘不遮输入框**：visualViewport 拟合应用盒（浮层随键盘抬、命令面板限高不顶出小视口）
+- **连接门板**：探不通后端先给全屏"连接"面板（默认地址跟着**你打开页面的主机**预填：`<该主机>:8787`；裸地址自动补 `http://` 与 `/api/v1`；探通即存偏好刷新进聊天）
 - **命令面板**：`/` 进（`/resume` `/compact` `/cut` `/reroll` `/edit` `/editsum` …，只放已有路由的命令）
 - **共享层**：`utils/prefs.js`（界面偏好 + `sharedApi()` + 发送键判定/主题应用，含 TG 守卫）· `api/client.js` 的 `mergeStreamSlice`（流式合并唯一规则）· 错误带 `code`/`status`（按 code 分支）· `format.js` 的 modelKey/modelLabel/whoText/sessionTitle（键与标签唯一出口）
 

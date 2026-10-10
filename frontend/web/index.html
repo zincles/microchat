@@ -2,7 +2,9 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- interactive-widget=resizes-content：Chromium 系键盘弹出时**缩布局视口**（vh 跟着变）；
+       其余（iOS Safari / 不支持的）由 utils/viewport.js 的 visualViewport 拟合兜底。 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content" />
   <title>MicroChat</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="stylesheet" href="./src/assets/theme.css" />

@@ -3,7 +3,6 @@
 // 生成中（running）⇒ 圆钮变停止键（■），点即停。挂载点还是 #composer（CSS 照旧命中）。
 import { ref, watch, nextTick } from "vue";
 import { ICONS } from "./icons.js";
-import { sendHintText } from "../utils/prefs.js";
 
 const emit = defineEmits(["input-text", "keydown", "submit", "stop", "menu"]);
 const text = ref("");
@@ -73,7 +72,7 @@ defineExpose({ submit, clear, text, setStatus, setRunning, setTaskLine });
       v-model="text"
       rows="1"
       autocomplete="off"
-      :placeholder="sendHintText()"
+      placeholder="输入消息…"
       @input="onInput"
       @keydown="onKeydown"
     ></textarea>

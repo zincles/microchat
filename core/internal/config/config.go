@@ -123,7 +123,9 @@ func (c Config) BotToken() string {
 func DefaultConfig() Config {
 	return Config{
 		Version:  1,
-		Server:   ServerConfig{Host: "127.0.0.1", Port: 8787},
+		// 默认对局域网开放（0.0.0.0）：手机/平板开 http://<本机IP>:8787/api/v1 就能用。
+		// 没设 auth_token 时本网段人人可用 —— 要收紧就设口令（见 AGENTS 配置一节）。
+		Server:   ServerConfig{Host: "0.0.0.0", Port: 8787},
 		Defaults: DefaultsConfig{Provider: "dummy", Model: DummyModelID, Agent: DefaultAgentID},
 		Chat:     DefaultChat(),
 	}

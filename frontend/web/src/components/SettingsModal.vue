@@ -9,8 +9,7 @@ import assistantPreset from "../../presets/assistant.json";
 import rpPreset from "../../presets/rp-agent.json";
 import ProviderEditor from "./ProviderEditor.vue";
 import { ICONS } from "./icons.js";
-import { DEFAULT_API_URL } from "../api/client.js";
-import { sharedApi, apiBase, apiToken, previewOn, themePref, applyTheme, sendMode } from "../utils/prefs.js";
+import { sharedApi, apiBase, apiToken, previewOn, themePref, applyTheme, sendMode, saveNetPrefs } from "../utils/prefs.js";
 import { SETTINGS_TABS } from "../utils/format.js";
 import { loadBackground, saveBackground, applyBackground, describeBackground, fileToBackground } from "../utils/background.js";
 
@@ -168,10 +167,9 @@ function clearBg() {
   cli.value.bgUrl = "";
   bgStatus.value = describeBackground(null);
 }
-// 连接（net）：地址与口令 —— 刷新页面才生效。
+// 连接（net）：地址与口令 —— 刷新页面才生效（写入口收拢在 prefs.saveNetPrefs）。
 function saveNet() {
-  localStorage.setItem("mc_api", cli.value.api.trim() || DEFAULT_API_URL);
-  localStorage.setItem("mc_token", cli.value.token);
+  saveNetPrefs(cli.value.api, cli.value.token);
   netStatus.value = "已保存（刷新页面生效）";
 }
 // 界面（ui）：主题 / 发送键 / 预演 —— 即时生效。
