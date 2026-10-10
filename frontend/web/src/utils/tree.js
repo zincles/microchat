@@ -16,7 +16,8 @@ const approx = (text) => (runes(text) ? Math.max(1, Math.ceil(runes(text) / RATI
 
 // buildCompactTree(messages, summaries) → 顶层节点数组（按 idx 顺序的"森林"）。
 // messages 需要 {id, idx, role, content}（idx ≤ 0 的合成项会被丢）；summaries 就是
-// `GET /sessions/{id}/summaries` 的原样 [{id, parent_summary_id, source_kind,
+// `GET /sessions/{id}/summaries` 的原样 [{id, parent_summary_id, **type**（不是 source_kind ——
+// 那是 DB 列名的历史，接口只发 type）,
 // begin_message_id, end_message_id, blocks, tokens, dirty, …}]。
 export function buildCompactTree(messages, summaries) {
   const msgs = (messages ?? []).filter((m) => m.idx > 0);
@@ -82,7 +83,7 @@ export function buildCompactTree(messages, summaries) {
     return {
       kind: "summary", id: s.id,
       fromIdx: sp ? msgs[sp[0]].idx : null, toIdx: sp ? msgs[sp[1]].idx : null,
-      blocks: s.blocks ?? 0, sourceKind: s.source_kind,
+      blocks: s.blocks ?? 0,
       rawChars: kids.reduce((n, k) => n + k.rawChars, 0),
       tokens: s.tokens ?? 0,
       dirty: !!s.dirty, used: used.has(s.id), children: kids,

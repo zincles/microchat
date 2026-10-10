@@ -29,5 +29,6 @@ npm run build     # 产出 dist/（不入库，部署时现打）
 - **设置六 tab**：聊天 / 界面 / 连接 / 会话 / Agent / Provider（与对话**同级的视图**，不是弹窗；窄屏自动收起左栏）；
   主题七套（默认 `deepseek`，色值实测对齐 chat.deepseek.com）· **背景图**（URL 或上传，本地存；没设 = 纯平底）
 - **命令面板**：`/` 进（`/resume` `/compact` `/cut` `/reroll` `/edit` `/editsum` …，只放已有路由的命令）
+- **共享层**：`utils/prefs.js`（界面偏好 + `sharedApi()` + 发送键判定/主题应用，含 TG 守卫）· `api/client.js` 的 `mergeStreamSlice`（流式合并唯一规则）· 错误带 `code`/`status`（按 code 分支）· `format.js` 的 modelKey/modelLabel/whoText/sessionTitle（键与标签唯一出口）
 
 口径、路由表与"为什么这么设计"全在根目录 `AGENTS.md`。

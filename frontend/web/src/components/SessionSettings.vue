@@ -2,15 +2,13 @@
 // 会话设置弹窗：改名 / 换模型 / 换 Agent / 改会话提示词（PATCH /sessions/{id}，只发改过的格）。
 // 由左栏条目 ☰ 打开，关丢弃（不保存不写）。确认删除走同一套 confirm（全屏中央）。
 import { ref, onMounted, onUnmounted } from "vue";
-import { createApi } from "../api/client.js";
-import { groupModelsByProvider } from "../utils/format.js";
+import { sharedApi } from "../utils/prefs.js";
+import { groupModelsByProvider, modelKey, parseModelKey, modelOption, agentOption } from "../utils/format.js";
 
 const props = defineProps({ sessionId: String });
 const emit = defineEmits(["close", "renamed"]);
 
-const API = localStorage.getItem("mc_api") || "http://127.0.0.1:8787/api/v1";
-const TOKEN = localStorage.getItem("mc_token") || "";
-const api = createApi({ base: API, token: TOKEN });
+const api = sharedApi();
 
 const info = ref({});
 const title = ref("");
@@ -27,27 +25,28 @@ async function load() {
   const found = sessions.find((s) => s.id === props.sessionId) ?? {};
   info.value = found;
   title.value = found.title ?? "";
-  modelValue.value = found.provider && found.model ? `${found.provider}|||${found.model}` : "";
+  modelValue.value = found.provider && found.model ? modelKey(found.provider, found.model) : "";
   agentValue.value = found.agent_id ?? "";
   sysPrompt.value = found.system_prompt ?? "";
   sysPromptPh.value = found.system_prompt ? "" : "空=跟 Agent 走";
   const models = await api.models().catch(() => []);
   modelGroups.value = groupModelsByProvider(models).map((g) => ({
     provider: g.provider,
-    items: g.items.map((m) => ({ value: `${g.provider}|||${m.upstream_id}`, label: m.name ?? m.upstream_id })),
+    items: g.items.map((m) => modelOption(m)),
   }));
   const data = await api.agents().catch(() => ({ agents: [] }));
-  agents.value = (data.agents ?? []).map((a) => ({ id: a.id, label: a.name }));
+  agents.value = (data.agents ?? []).map((a) => agentOption(a));
 }
 
 async function save() {
   const body = {};
   if (title.value !== (info.value.title ?? "")) body.title = title.value;
   if (modelValue.value) {
-    const sep = modelValue.value.indexOf("|||");
-    const p = modelValue.value.slice(0, sep), m = modelValue.value.slice(sep + 3);
-    if (p !== info.value.provider) body.provider = p;
-    if (m !== info.value.model) body.model = m;
+    const parsed = parseModelKey(modelValue.value);
+    if (parsed) {
+      if (parsed.provider !== info.value.provider) body.provider = parsed.provider;
+      if (parsed.model !== info.value.model) body.model = parsed.model;
+    }
   }
   if (agentValue.value && agentValue.value !== info.value.agent_id) body.agent_id = agentValue.value;
   if (sysPrompt.value !== (info.value.system_prompt ?? "")) body.system_prompt = sysPrompt.value;

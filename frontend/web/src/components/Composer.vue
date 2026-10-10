@@ -3,6 +3,7 @@
 // 生成中（running）⇒ 圆钮变停止键（■），点即停。挂载点还是 #composer（CSS 照旧命中）。
 import { ref, watch, nextTick } from "vue";
 import { ICONS } from "./icons.js";
+import { sendHintText } from "../utils/prefs.js";
 
 const emit = defineEmits(["input-text", "keydown", "submit", "stop", "menu"]);
 const text = ref("");
@@ -13,12 +14,6 @@ const running = ref(false);
 function setRunning(v) { running.value = !!v; }
 const area = ref(null);
 const sendSvg = ICONS.send;
-function sendHint() {
-  const mode = localStorage.getItem("mc_send") || "enter";
-  return mode === "enter" ? "输入消息（回车发送，Shift/Ctrl/Alt+回车换行）；/ 开头进命令"
-    : mode === "shift-enter" ? "输入消息（Shift+回车发送，回车换行）；/ 开头进命令"
-    : "输入消息，点发送发出（回车换行）；/ 开头进命令";
-}
 function autosize() {
   nextTick(() => {
     if (!area.value) return;
@@ -75,14 +70,14 @@ defineExpose({ submit, clear, text, setStatus, setRunning });
       v-model="text"
       rows="1"
       autocomplete="off"
-      :placeholder="sendHint()"
+      :placeholder="sendHintText()"
       @input="onInput"
       @keydown="onKeydown"
     ></textarea>
     <button
       type="submit"
       id="send-btn"
-      :class="{ stop: running, cont: !running && !text.trim() }"
+      :class="{ stop: running }"
       :title="running ? '停止' : text.trim() ? '发送' : '续写（重发历史）'"
       :aria-label="running ? '停止' : text.trim() ? '发送' : '续写（重发历史）'"
       v-html="running ? ICONS.stop : text.trim() ? sendSvg : ICONS.cont"

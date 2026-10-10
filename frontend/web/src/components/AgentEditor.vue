@@ -1,9 +1,9 @@
 <script setup>
-// Agent 编辑器（二级弹窗，盖在设置窗口之上）：新建 / 改 id·名 / 提示词 / 三能力开关 / 设默认 / 删除。
-// mode: "create"（空表单）/ "edit"（带入 agent 快照，保存后父重拉，id 变了也对得上）。关即销毁。
+// Agent 编辑器（设置视图 Agent tab 内的二级页，列表 ⇄ 详情就地切换）：新建 / 改 id·名 / 提示词 / 三能力开关 / 设默认 / 删除。
+// isNew（boolean）：无 agent 快照=新建（空表单）；有=编辑（带入快照，保存后父重拉，id 变了也对得上）。关即销毁。
 import { ref, onMounted, onUnmounted } from "vue";
-import { createApi } from "../api/client.js";
-import { ABILITY_IDS, buildAbilitiesPatch } from "../utils/format.js";
+import { sharedApi } from "../utils/prefs.js";
+import { ABILITY_IDS, buildAbilitiesPatch, modelKey, parseModelKey, modelLabel } from "../utils/format.js";
 import ToggleSwitch from "./ToggleSwitch.vue";
 
 const props = defineProps({
@@ -14,9 +14,7 @@ const props = defineProps({
 });
 const emit = defineEmits(["close", "saved"]);
 
-const API = localStorage.getItem("mc_api") || "http://127.0.0.1:8787/api/v1";
-const TOKEN = localStorage.getItem("mc_token") || "";
-const api = createApi({ base: API, token: TOKEN });
+const api = sharedApi();
 const isNew = !props.agent;
 const aid = ref(props.agent?.id ?? "");
 const name = ref(props.agent?.name ?? props.template?.name ?? "");
@@ -32,7 +30,7 @@ function fillRows(a) {
   const out = {};
   for (const id of ABILITY_IDS) {
     const one = ab[id] ?? {};
-    const both = one.provider && one.model ? `${one.provider}/${one.model}` : "";
+    const both = one.provider && one.model ? modelKey(one.provider, one.model) : "";
     out[id] = { enabled: one.enabled !== false, model: both, prompt: one.prompt ?? "" };
   }
   rows.value = out;
@@ -43,11 +41,11 @@ function toPatch() {
   const out = {};
   for (const id of ABILITY_IDS) {
     const r = rows.value[id] ?? {};
-    const slash = (r.model ?? "").indexOf("/");
+    const parsed = parseModelKey(r.model ?? "");
     out[id] = {
       enabled: !!r.enabled,
-      provider: slash < 0 ? "" : r.model.slice(0, slash),
-      model: slash < 0 ? "" : r.model.slice(slash + 1),
+      provider: parsed?.provider ?? "",
+      model: parsed?.model ?? "",
       prompt: r.prompt ?? "",
     };
   }
@@ -95,8 +93,8 @@ onMounted(async () => {
   try {
     const models = await api.models();
     modelOptions.value = (models ?? []).map((m) => ({
-      value: `${m.provider}/${m.upstream_id}`,
-      label: `${m.provider}/${m.name ?? m.upstream_id}`,
+      value: modelKey(m.provider, m.upstream_id),
+      label: `${m.provider}/${modelLabel(m)}`,
     }));
   } catch {}
   document.addEventListener("keydown", onKey);

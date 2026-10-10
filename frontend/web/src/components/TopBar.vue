@@ -1,12 +1,13 @@
 <script setup>
 // 顶栏：会话抬头（新加，左）+ 模型/Agent 下拉（右）+ 左右栏显隐（两端）。
 // 抬头是"我在哪条会话"的唯一门面：草稿 ⇒「新对话」、还没起名 ⇒「新会话」、超长省略（hover 全名）。
-// 挂载后接管 header（id 照旧：toggle-left/session-model/session-agent/toggle-right）。
-// 数据经事件与 main.js 互通（selectModel/selectAgent/patch 结果回填由父做）。
+// 渲染 header（id 照旧：toggle-left/session-model/session-agent/toggle-right）。
+// 数据经事件与 App.vue 互通（selectModel/selectAgent/patch 结果回填由父做）。
 import { ref, nextTick } from "vue";
 import { ICONS } from "./icons.js";
+import { modelKey, parseModelKey, sessionTitle } from "../utils/format.js";
 
-const emit = defineEmits(["toggle-left", "toggle-right", "select-model", "select-agent"]);
+defineEmits(["toggle-left", "toggle-right", "select-model", "select-agent"]);
 
 const modelGroups = ref([]); // [{provider, items:[{value,label}]}]
 const agents = ref([]); // [{id,label}]
@@ -36,7 +37,8 @@ function reapplyValues() {
 function syncOrphanModel() {
   const cur = curModel.value;
   const known = cur && modelGroups.value.some((g) => (g.items ?? []).some((i) => i.value === cur));
-  orphanModel.value = cur && !known ? { value: cur, label: `${cur.replace("|||", "/")}（不在列表）` } : null;
+  const parsed = cur ? parseModelKey(cur) : null;
+  orphanModel.value = cur && !known ? { value: cur, label: `${parsed ? `${parsed.provider}/${parsed.model}` : cur}（不在列表）` } : null;
 }
 function syncOrphanAgent() {
   const cur = curAgent.value;
@@ -44,11 +46,10 @@ function syncOrphanAgent() {
   orphanAgent.value = cur && !known ? { value: cur, label: `${cur}（不在列表）` } : null;
 }
 function setSession(info, isDraft) {
-  if (info.provider && info.model) curModel.value = `${info.provider}|||${info.model}`;
+  if (info.provider && info.model) curModel.value = modelKey(info.provider, info.model);
   if (info.agent_id) curAgent.value = info.agent_id;
-  const t = (info.title ?? "").trim();
-  title.value = t || (isDraft ? "新对话" : "新会话");
-  titleFull.value = t;
+  title.value = sessionTitle(info.title, isDraft);
+  titleFull.value = (info.title ?? "").trim();
   syncOrphanModel();
   syncOrphanAgent();
   reapplyValues();

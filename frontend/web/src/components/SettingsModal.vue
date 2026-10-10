@@ -1,6 +1,6 @@
 <script setup>
 // 设置**视图**（2026-10-10 起与对话同级，不再是弹窗 —— OpenWebUI 那种）：占满左栏右边的整块区域，
-// 自带小头（[◧] 左栏开关 · 设置 · [×] 返回对话）。子编辑器（Agent/Provider）仍是覆盖弹窗。
+// 自带小头（[◧] 左栏开关 · 设置 · [×] 返回对话）。子编辑器（Agent/Provider）改为对应 tab 内的二级页（列表 ⇄ 详情就地切换）。
 // 关走 close（Esc/×）—— 视图不卸载就丢状态的口径照旧：v-if 挂载，进视图拉一次。
 import { ref, onMounted, onUnmounted, watch, nextTick } from "vue";
 import ToggleSwitch from "./ToggleSwitch.vue";
@@ -9,10 +9,9 @@ import assistantPreset from "../../presets/assistant.json";
 import rpPreset from "../../presets/rp-agent.json";
 import ProviderEditor from "./ProviderEditor.vue";
 import { ICONS } from "./icons.js";
-import { createApi } from "../api/client.js";
-import {
-  SETTINGS_TABS,
-} from "../utils/format.js";
+import { DEFAULT_API_URL } from "../api/client.js";
+import { sharedApi, apiBase, apiToken, previewOn, themePref, applyTheme, sendMode } from "../utils/prefs.js";
+import { SETTINGS_TABS } from "../utils/format.js";
 import { loadBackground, saveBackground, applyBackground, describeBackground, fileToBackground } from "../utils/background.js";
 
 const emit = defineEmits(["close", "toggle-left", "sessions-changed", "goto-session"]);
@@ -23,9 +22,7 @@ const props = defineProps({
   escBlocked: { type: Boolean, default: false },
 });
 
-const API = localStorage.getItem("mc_api") || "http://127.0.0.1:8787/api/v1";
-const TOKEN = localStorage.getItem("mc_token") || "";
-const api = createApi({ base: API, token: TOKEN });
+const api = sharedApi();
 const leftSvg = ICONS.panelLeft;
 
 const tab = ref("chat");
@@ -48,7 +45,7 @@ const chat = ref({ title_chars: "", model_context_tokens: "", compact_blocks: ""
 const chatStatus = ref("");
 const defaults = ref({ provider: "", model: "", agent: "" });
 const defStatus = ref("");
-const cli = ref({ api: API, token: "", preview: true, theme: "", send: "button", bgUrl: "" });
+const cli = ref({ api: apiBase(), token: "", preview: true, theme: "", send: "button", bgUrl: "" });
 const uiStatus = ref("");
 const bgStatus = ref("");
 const netStatus = ref("");
@@ -56,11 +53,8 @@ const agents = ref([]);
 const curDefault = ref("");
 const editAgent = ref(null); // null | 'new' | agent（二级编辑器）
 const providers = ref([]);
-const presets = ref([]);
 const editProvider = ref(null); // null | 'new' | provider（二级编辑器）
 const routesStatus = ref("");
-
-const PROTOCOLS = ["openai-chat-completion", "openai-response", "anthropic-messages", "gemini-generate-content", "systemone"];
 
 async function loadChat() {
   try {
@@ -129,12 +123,12 @@ const sessionMgrStatus = ref("");
 function loadClient() {
   const bg = loadBackground();
   cli.value = {
-    api: localStorage.getItem("mc_api") || "http://127.0.0.1:8787/api/v1",
-    token: localStorage.getItem("mc_token") || "",
-    preview: localStorage.getItem("mc_preview") !== "0",
-    // `??`：没设过(null)=默认 deepseek；设过空串("")=跟随系统 —— 不能用 `||`（空串会被吞掉）。
-    theme: localStorage.getItem("mc_theme") ?? "deepseek",
-    send: localStorage.getItem("mc_send") || "enter",
+    api: apiBase(),
+    token: apiToken(),
+    preview: previewOn(),
+    // 空串=跟随系统的 `??` 语义已封在 themePref，这里不再区分。
+    theme: themePref(),
+    send: sendMode(),
     bgUrl: bg?.kind === "url" ? bg.value : "",
   };
   bgStatus.value = describeBackground(bg);
@@ -176,7 +170,7 @@ function clearBg() {
 }
 // 连接（net）：地址与口令 —— 刷新页面才生效。
 function saveNet() {
-  localStorage.setItem("mc_api", cli.value.api.trim() || "http://127.0.0.1:8787/api/v1");
+  localStorage.setItem("mc_api", cli.value.api.trim() || DEFAULT_API_URL);
   localStorage.setItem("mc_token", cli.value.token);
   netStatus.value = "已保存（刷新页面生效）";
 }
@@ -185,9 +179,8 @@ function saveUi() {
   localStorage.setItem("mc_preview", cli.value.preview ? "1" : "0");
   localStorage.setItem("mc_theme", cli.value.theme);
   localStorage.setItem("mc_send", cli.value.send);
-  // 空串 = 跟随系统：要把 data-theme 摘掉（留个空属性会一直盖住 :root，prefers-color-scheme 就不生效了）。
-  if (cli.value.theme) document.documentElement.setAttribute("data-theme", cli.value.theme);
-  else document.documentElement.removeAttribute("data-theme");
+  // 主题应用收口到 applyTheme（含 TG 守卫、空串=跟随系统摘属性）。
+  applyTheme(cli.value.theme);
   uiStatus.value = "已保存（即时生效）";
 }
 
@@ -199,7 +192,7 @@ async function loadAgents() {
   } catch {}
 }
 
-// 预设模板（随 git 走：presets/*.json）： लंबे提示词不硬编码，前端不存第二份真相。
+// 预设模板（随 git 走：presets/*.json）：长提示词不硬编码，前端不存第二份真相。
 const presetPick = ref("");
 function newFromTemplate(kind) {
   if (kind === "blank") { editAgent.value = "new"; return; }
@@ -215,9 +208,7 @@ function presetNew() {
 
 async function loadProviders() {
   try {
-    const [list, pres] = await Promise.all([api.providers(), api.providerPresets()]);
-    providers.value = list ?? [];
-    presets.value = pres ?? [];
+    providers.value = (await api.providers()) ?? [];
   } catch (e) { routesStatus.value = `渠道列表失败：${e.message}`; }
 }
 
@@ -242,7 +233,7 @@ function gotoSession(id) {
 async function askDropSession(id, title) {
   if (props.ask && !(await props.ask(`删除会话「${title || "新会话"}」？消息与摘要一并删，不可逆。`))) return;
   try {
-    await api.closeSession(id);
+    await api.deleteSession(id);
     await loadSessions();
     emit("sessions-changed");
   } catch (e) { sessionMgrStatus.value = `删除失败：${e.message}`; }
@@ -282,14 +273,14 @@ function onKey(e) {
         <span class="tab-thumb" :style="{ left: thumbLeft + 'px', width: thumbWidth + 'px' }"></span>
         <button
           v-for="t in SETTINGS_TABS"
-          :key="t"
-          :id="`tab-${t}`"
+          :key="t.id"
+          :id="`tab-${t.id}`"
           type="button"
           class="tab"
-          :class="{ sel: tab === t }"
-          @click="tab = t"
+          :class="{ sel: tab === t.id }"
+          @click="tab = t.id"
         >
-          {{ { chat: "聊天", ui: "界面", net: "连接", session: "会话", agent: "Agent", provider: "Provider" }[t] }}
+          {{ t.label }}
         </button>
       </nav>
       <button id="settings-close" class="icon-btn" type="button" title="退出设置（Esc）" aria-label="退出设置" @click="$emit('close')">

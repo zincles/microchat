@@ -1,8 +1,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { createApi } from "../src/api/client.js";
-import { parseCommand, filterCommands } from "../src/utils/commands.js";
-import { advanceCursor } from "../src/api/client.js";
+import { createApi, mergeStreamSlice, DEFAULT_API_URL } from "../src/api/client.js";
+import { parseCommand, filterCommands, COMMAND_META } from "../src/utils/commands.js";
 import { uuidv7 } from "../src/utils/ids.js";
 import { buildCompactTree, treeTotals } from "../src/utils/tree.js";
 import {
@@ -13,7 +12,13 @@ import {
   deletionPlanSummary,
   formatRoutesOutcome,
   buildAbilitiesPatch,
+  modelKey,
+  parseModelKey,
+  modelLabel,
+  whoText,
+  sessionTitle,
 } from "../src/utils/format.js";
+import { sendMode, wantsSend, themePref, apiBase, DEFAULT_THEME, DEFAULT_SEND } from "../src/utils/prefs.js";
 
 // 契约测试（无浏览器）：只验纯函数与请求形状。`node --test test/`。
 // 后端真服务验证另走手工（见 README）。
@@ -44,18 +49,23 @@ test("命令解析：/compact 10 → 名+参数；普通文本 → null", () => 
   assert.deepEqual(parseCommand("/compact 10"), { name: "compact", args: ["10"] });
   assert.deepEqual(parseCommand("/resume"), { name: "resume", args: [] });
   assert.equal(parseCommand("你好"), null);
-  assert.ok(filterCommands("c").includes("compact"));
-  assert.ok(filterCommands("").length >= 8);
+  const cs = filterCommands("c");
+  assert.deepEqual(cs.map((x) => x.name), cs.map((x) => x.name).filter((n) => n.startsWith("c")));
+  assert.ok(cs.some((x) => x.name === "compact" && x.desc));
+  assert.ok(filterCommands("").length === Object.keys(COMMAND_META).length);
 });
 
-test("游标回退包丢弃：advanceCursor 标记 stale", () => {
-  const cur = { from: 5, thinkFrom: 1 };
-  const bad = advanceCursor(cur, { next: 3, think_next: 0 });
-  assert.equal(bad.stale, true);
-  assert.equal(bad.from, 5);
-  const good = advanceCursor(cur, { next: 7, think_next: 2 });
-  assert.equal(good.stale, false);
-  assert.equal(good.from, 7);
+test("流式合并：正常追加 + 游标推进", () => {
+  const a1 = mergeStreamSlice({ text: "你", reasoning: "想" }, { from: 1, thinkFrom: 1 },
+    { text: "好", thinking: "了", next: 2, think_next: 2 });
+  assert.deepEqual(a1, { text: "你好", reasoning: "想了", cur: { from: 2, thinkFrom: 2 }, reset: false });
+});
+
+test("流式合并：游标回退（缓冲换了一轮）⇒ 清零重建，不把旧尾巴接上新开头", () => {
+  // 已在旧一轮读到 from=9；后端缓冲被新轮重置（next=2）⇒ 不许追加，下一拍从 0 重读。
+  const r = mergeStreamSlice({ text: "旧一轮的九", reasoning: "旧" }, { from: 9, thinkFrom: 1 },
+    { text: "", thinking: "", next: 2, think_next: 0 });
+  assert.deepEqual(r, { text: "", reasoning: "", cur: { from: 0, thinkFrom: 0 }, reset: true });
 });
 
 test("思考折叠抬头：reasoning_ms 换算秒；无值回退", () => {
@@ -142,9 +152,9 @@ test("压缩树：区间成目录、嵌套成子目录、used 标出装配真跳
     { id: "m4", idx: 4, role: "assistant", content: "d".repeat(65), summary_id: "s2" },
     { id: "m5", idx: 5, role: "user", content: "e".repeat(26) },
   ];
-  const s1 = { id: "s1", parent_summary_id: "s3", source_kind: "message", begin_message_id: "m1", end_message_id: "m2", blocks: 1, tokens: 40, dirty: false };
-  const s2 = { id: "s2", parent_summary_id: "s3", source_kind: "message", begin_message_id: "m3", end_message_id: "m4", blocks: 1, tokens: 30, dirty: false };
-  const s3 = { id: "s3", parent_summary_id: null, source_kind: "summary", begin_message_id: "m1", end_message_id: "m4", blocks: 2, tokens: 50, dirty: false };
+  const s1 = { id: "s1", parent_summary_id: "s3", type: "message", begin_message_id: "m1", end_message_id: "m2", blocks: 1, tokens: 40, dirty: false };
+  const s2 = { id: "s2", parent_summary_id: "s3", type: "message", begin_message_id: "m3", end_message_id: "m4", blocks: 1, tokens: 30, dirty: false };
+  const s3 = { id: "s3", parent_summary_id: null, type: "summary", begin_message_id: "m1", end_message_id: "m4", blocks: 2, tokens: 50, dirty: false };
   // 只有 s3（最粗同左端）该被标 used；s1/s2 是它孩子
   const tree = buildCompactTree(msgs, [s1, s2, s3]);
   assert.equal(tree.length, 2, "顶层 = s3 + 尾条原文");
@@ -171,7 +181,7 @@ test("压缩树：左端对不上就不算 used（照原文发那条）", () => 
     { id: "m2", idx: 2, role: "assistant", content: "y" },
   ];
   // m1 身上挂着 s1，但 s1 的区间不从 m1 起 ⇒ 不跳，m1 照原文
-  const s1 = { id: "s1", parent_summary_id: null, source_kind: "message", begin_message_id: "m2", end_message_id: "m2", blocks: 1, tokens: 5, dirty: true };
+  const s1 = { id: "s1", parent_summary_id: null, type: "message", begin_message_id: "m2", end_message_id: "m2", blocks: 1, tokens: 5, dirty: true };
   const tree = buildCompactTree(msgs.map((m, i) => (i === 0 ? { ...m, summary_id: "s1" } : m)), [s1]);
   assert.equal(tree.length, 2);
   assert.equal(tree[0].kind, "message", "左端对不上 → 原文");
@@ -298,4 +308,61 @@ test("背景图标注：未设 / URL 截断 / 上传带尺寸", () => {
   assert.ok(describeBackground({ kind: "url", value: long }).includes("…"));
   const txt = describeBackground({ kind: "file", value: "d".repeat(1365), width: 1920, height: 1080 });
   assert.ok(txt.includes("1920×1080") && txt.includes("1 KB"), txt);
+});
+
+// —— 共享层新增（2026-10-10 审计整改） ——
+
+test("API 错误：code/status 原样带上（调用方按 code 分支，别猜文案）", async () => {
+  const fetchFn = async () => ({ status: 409, ok: false, json: async () => ({ error: { code: "conflict", message: "末尾变了" } }) });
+  const api = createApi({ base: "http://x/api/v1", fetchFn });
+  await assert.rejects(() => api.stop("s1"), (e) => e.code === "conflict" && e.status === 409 && e.message === "末尾变了");
+});
+
+test("API 错误：非 JSON 错误体（框架 405 的 text/plain）不炸 SyntaxError，回退 HTTP <status>", async () => {
+  const fetchFn = async () => ({ status: 405, ok: false, json: async () => { throw new SyntaxError("Unexpected token"); } });
+  const api = createApi({ base: "http://x/api/v1", fetchFn });
+  await assert.rejects(() => api.stop("s1"), (e) => e.message === "HTTP 405" && e.code === null && e.status === 405);
+});
+
+test("模型键往返：provider 里带 / 也不歧义；无分隔符 → null", () => {
+  const k = modelKey("自建/代理", "deepseek/chat");
+  assert.equal(k, "自建/代理|||deepseek/chat");
+  assert.deepEqual(parseModelKey(k), { provider: "自建/代理", model: "deepseek/chat" });
+  assert.equal(parseModelKey("没有分隔符"), null);
+});
+
+test("modelLabel 三级回退：用户覆盖 → 上游名 → 上游 id", () => {
+  assert.equal(modelLabel({ display_name: "我的名字", name: "上游名", upstream_id: "id" }), "我的名字");
+  assert.equal(modelLabel({ display_name: null, name: "上游名", upstream_id: "id" }), "上游名");
+  assert.equal(modelLabel({ name: "", upstream_id: "id" }), "id");
+});
+
+test("whoText / sessionTitle：两处回退档各就各位", () => {
+  assert.equal(whoText("p", "m"), "p/m");
+  assert.equal(whoText("", ""), "未知模型");
+  assert.equal(whoText("", "", "未选模型"), "未选模型");
+  assert.equal(sessionTitle("", true), "新对话");
+  assert.equal(sessionTitle("", false), "新会话");
+  assert.equal(sessionTitle("  标题  "), "标题");
+});
+
+test("偏好读取：默认与空串语义（mc_theme 空串=跟随系统，不许被吞）", () => {
+  stubStorage();
+  assert.equal(apiBase(), DEFAULT_API_URL);
+  assert.equal(themePref(), DEFAULT_THEME);
+  assert.equal(sendMode(), DEFAULT_SEND);
+  localStorage.setItem("mc_theme", "");
+  assert.equal(themePref(), "");
+  localStorage.setItem("mc_api", "http://elsewhere/api/v1");
+  assert.equal(apiBase(), "http://elsewhere/api/v1");
+});
+
+test("发送键判定：三档 + 修饰键（App 与 Composer 同一把尺）", () => {
+  stubStorage();
+  const e = (o = {}) => ({ shiftKey: false, ctrlKey: false, metaKey: false, altKey: false, ...o });
+  assert.equal(wantsSend(e()), true);
+  assert.equal(wantsSend(e({ shiftKey: true })), false);
+  assert.equal(wantsSend(e({ shiftKey: true }), "shift-enter"), true);
+  assert.equal(wantsSend(e(), "shift-enter"), false);
+  assert.equal(wantsSend(e(), "button"), false);
 });

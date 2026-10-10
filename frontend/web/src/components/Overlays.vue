@@ -2,7 +2,6 @@
 // 浮层三件（命令面板 / picker / 确认框）：挂 #overlays-vue，DOM 照旧
 // （.palette/.picker/.confirm + 各条目类），行为照 main.js。
 import { ref } from "vue";
-import { COMMAND_DESC } from "../utils/commands.js";
 
 const emit = defineEmits(["run-command", "pick"]);
 
@@ -90,14 +89,14 @@ function lift(px) { liftPx.value = Math.max(0, px ?? 0); }
     <div class="palette" :class="{ hidden: !palItems.length }" :style="liftPx ? { bottom: `calc(5em + ${liftPx}px)` } : null">
       <div id="palette-list">
         <div
-          v-for="(name, i) in palItems"
-          :key="name"
+          v-for="(it, i) in palItems"
+          :key="it.name"
           class="palette-item"
           :class="{ sel: i === palSel }"
-          @click="$emit('run-command', name)"
+          @click="$emit('run-command', it.name)"
         >
-          <span class="cmd-name">/{{ name }}</span>
-          <span class="cmd-desc">{{ COMMAND_DESC[name] ?? "" }}</span>
+          <span class="cmd-name">/{{ it.name }}</span>
+          <span class="cmd-desc">{{ it.desc }}</span>
         </div>
       </div>
       <div class="palette-hint">Tab/↑↓ 选择，回车执行</div>

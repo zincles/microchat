@@ -1,5 +1,27 @@
 // 纯函数（无 DOM）：测试直引这里。DOM 构造已迁 MessageBubble.vue。
 
+// —— 模型/Agent 的键与标签（唯一出口，别在组件里手拼） ——
+// 模型键 `provider|||upstream_id`：下拉 <option> 的 value 用它（分隔符是 magic 串，解析只在这里）。
+export function modelKey(provider, model) { return `${provider}|||${model}`; }
+export function parseModelKey(v) {
+  const i = (v ?? "").indexOf("|||");
+  if (i < 0) return null;
+  return { provider: v.slice(0, i), model: v.slice(i + 3) };
+}
+// 显示名三级回退（与后端两列同义：用户覆盖 → 上游名 → 上游 id）。
+export function modelLabel(m) { return m?.display_name || m?.name || m?.upstream_id || ""; }
+// 下拉项（`/models` 的行 → {value,label}）。
+export function modelOption(m) { return { value: modelKey(m.provider, m.upstream_id), label: modelLabel(m) }; }
+export function agentOption(a) { return { id: a.id, label: a.name || a.id }; }
+// 谁在答（状态行与草稿共用；fallback 两处不同：会话里"未知模型"、草稿"未选模型"）。
+export function whoText(provider, model, fallback = "未知模型") {
+  return [provider, model].filter(Boolean).join("/") || fallback;
+}
+// 会话抬头：空标题按草稿/真会话两态回退（TopBar/SessionBar/设置列表/删除确认共用）。
+export function sessionTitle(title, isDraft = false) {
+  return (title ?? "").trim() || (isDraft ? "新对话" : "新会话");
+}
+
 export function formatThinkLabel(reasoningMs) {
   if (reasoningMs == null) return "思考过程";
   return `思考过程（${(reasoningMs / 1000).toFixed(1)}s）`;
@@ -10,7 +32,7 @@ export function formatStatusLine({ ctx, phase, elapsedMs, provider, model }) {
   const used = ctx?.used_tokens ?? "?";
   const budget = ctx?.budget_tokens ?? "?";
   const over = ctx?.over_budget ? " 超预算" : "";
-  const who = [provider, model].filter(Boolean).join("/") || "未知模型";
+  const who = whoText(provider, model);
   return `上下文 ${used}/${budget}${over}｜${who}｜${phase ?? "idle"}${elapsedMs != null ? ` ${elapsedMs}ms` : ""}`.trim();
 }
 
@@ -37,8 +59,15 @@ export function deletionPlanSummary(plan) {
 
 // ---- 设置 modal 纯逻辑（无 DOM，测试直引） ----
 
-// SETTINGS_TABS：设置视图六区（聊天/界面/连接/会话/Agent/Provider），顺序固定。
-export const SETTINGS_TABS = ["chat", "ui", "net", "session", "agent", "provider"];
+// SETTINGS_TABS：设置视图六区（顺序固定）—— **id 与中文名同一份**（按钮标签、panel id 都从它来）。
+export const SETTINGS_TABS = [
+  { id: "chat", label: "聊天" },
+  { id: "ui", label: "界面" },
+  { id: "net", label: "连接" },
+  { id: "session", label: "会话" },
+  { id: "agent", label: "Agent" },
+  { id: "provider", label: "Provider" },
+];
 
 // formatRoutesOutcome：刷路由回形 {provider, models, error?} ⇒ 缓存行文案。
 export function formatRoutesOutcome(o) {

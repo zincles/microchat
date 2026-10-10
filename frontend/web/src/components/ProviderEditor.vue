@@ -1,17 +1,15 @@
 <script setup>
-// Provider 编辑器（二级弹窗，盖在设置窗口之上）：新建 / 改 vendor/protocol/端点/key。
-// mode: "create"（空表单）/ "edit"（带入 provider，只发改过的格；key 另填=换，不填=不动）。
+// Provider 编辑器（设置视图 Provider tab 内的二级页，列表 ⇄ 详情就地切换）：新建 / 改 vendor/protocol/端点/key。
+// isNew（boolean）：无 provider 快照=新建（空表单）；有=编辑（带入 provider，只发改过的格；key 另填=换，不填=不动）。
 // 内置刷新模型列表 + 刷路由（编辑时直接点，不用退回一级）。
 import { ref, onMounted, onUnmounted } from "vue";
-import { createApi } from "../api/client.js";
+import { sharedApi } from "../utils/prefs.js";
 import { formatRoutesOutcome } from "../utils/format.js";
 
 const props = defineProps({ provider: { type: Object, default: null } });
 const emit = defineEmits(["close", "saved"]);
 
-const API = localStorage.getItem("mc_api") || "http://127.0.0.1:8787/api/v1";
-const TOKEN = localStorage.getItem("mc_token") || "";
-const api = createApi({ base: API, token: TOKEN });
+const api = sharedApi();
 
 const PROTOCOLS = ["openai-chat-completion", "openai-response", "anthropic-messages", "gemini-generate-content", "systemone"];
 

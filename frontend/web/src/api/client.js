@@ -1,9 +1,41 @@
 // microchat web API 层 —— 与 TUI/TG 同一条 HTTP 契约（只调 /api/v1）。
 // 零运行时依赖：fetch 直调。提一个 createApi 工厂，方便测试注入 fetch。
-// 游标推进 turn/text 轮询用
-export function advanceCursor(state, slice) {
-  if (slice.next < state.from || slice.think_next < state.thinkFrom) return { ...state, stale: true };
-  return { from: slice.next, thinkFrom: slice.think_next, stale: false };
+export const DEFAULT_API_URL = "http://127.0.0.1:8787/api/v1";
+
+// mergeStreamSlice：把一次游标读并进（正文/思考）累积器 —— 流式轮询的唯一合并规则。
+// `slice.next < cur.from` = 游标回退（后端缓冲被新一轮重置）⇒ **清零重建**：
+// 返回空累积 + 游标归零，下一拍从 0 读回新缓冲的全部内容（不是"接着往后追加"——
+// 那样会把旧一轮的尾巴接在新一轮前面，且永远错过新缓冲开头）。
+// 正常情况：追加本段、游标推进到 slice.next/think_next。
+export function mergeStreamSlice(acc, cur, slice) {
+  const reset = slice.next < cur.from || slice.think_next < cur.thinkFrom;
+  if (reset) return { text: "", reasoning: "", cur: { from: 0, thinkFrom: 0 }, reset: true };
+  return {
+    text: acc.text + (slice.text ?? ""),
+    reasoning: acc.reasoning + (slice.thinking ?? ""),
+    cur: { from: slice.next, thinkFrom: slice.think_next },
+    reset: false,
+  };
+}
+
+// readJson：2xx/错误体都当 JSON 读；读不出来（如框架 405 的 text/plain）不炸成 SyntaxError ——
+// 错误面给 null（由 httpError 回退 `HTTP <status>`），成功面照旧原样抛（成功体必是 JSON，不许瞒）。
+async function readJson(res) {
+  try {
+    return await res.json();
+  } catch (e) {
+    if (res.ok) throw e;
+    return null;
+  }
+}
+
+// httpError：非 2xx 的统一定形 —— message = 后端文案，**code 原样带上**（调用方按 code 分支，
+// 别猜文案；没错误体时 code=null、message 回退 `HTTP <status>`）。
+function httpError(data, res) {
+  const e = new Error(data?.error?.message ?? `HTTP ${res.status}`);
+  e.code = data?.error?.code ?? null;
+  e.status = res.status;
+  return e;
 }
 
 export function createApi({ base, token = "", fetchFn = fetch }) {
@@ -17,8 +49,8 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     });
     if (res.status === 204) return null;
-    const data = await res.json();
-    if (!res.ok) throw new Error(data?.error?.message ?? `HTTP ${res.status}`);
+    const data = await readJson(res);
+    if (!res.ok) throw httpError(data, res);
     return data;
   }
 
@@ -32,8 +64,8 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
       },
       body: text,
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data?.error?.message ?? `HTTP ${res.status}`);
+    const data = await readJson(res);
+    if (!res.ok) throw httpError(data, res);
     return data;
   }
 
@@ -43,9 +75,8 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
     health: () => call("GET", "/health"),
     listSessions: () => call("GET", "/sessions"),
     createSession: (body = {}) => call("POST", "/sessions", body),
+    // deleteSession：删整条会话（后端不代建 —— 删完进哪条由调用方定）。
     deleteSession: (id) => call("DELETE", `/sessions/${enc(id)}`),
-    // closeSession：关会话 = DELETE 整条（删完后端不代建 —— 进哪条由调用方定）。
-    closeSession: (id) => call("DELETE", `/sessions/${enc(id)}`),
     listMessages: (id) => call("GET", `/sessions/${enc(id)}/messages`),
     // sendMessage：发一句话（202 受理 + 后台跑；预演调的不是这条，别混）。
     sendMessage: (id, content) => call("POST", `/sessions/${enc(id)}/messages`, { content }),
