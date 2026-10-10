@@ -114,12 +114,18 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
     rerollEnter: (id) => call("POST", `/sessions/${enc(id)}/reroll-message`, {}),
     rerollState: (id) => call("GET", `/sessions/${enc(id)}/reroll-message`),
     rerollSwitch: (id, idx) => call("POST", `/sessions/${enc(id)}/reroll-message/switch`, { idx }),
+    // 摘要重摇家族（形状一一对应）：enter 的 idx 是 **1-based 消息序号**（上溯到根摘要）。
+    rerollSummaryEnter: (id, idx) => call("POST", `/sessions/${enc(id)}/reroll-summary`, { idx }),
+    rerollSummaryState: (id) => call("GET", `/sessions/${enc(id)}/reroll-summary`),
+    rerollSummarySwitch: (id, idx) => call("POST", `/sessions/${enc(id)}/reroll-summary/switch`, { idx }),
     deletionPreview: (sid, mid) =>
       call("GET", `/sessions/${enc(sid)}/messages/${enc(mid)}/deletion-preview`),
     deleteMessages: (sid, mid, lastDeletedMessageID) =>
       call("DELETE", `/sessions/${enc(sid)}/messages/${enc(mid)}`, {
         last_deleted_message_id: lastDeletedMessageID,
       }),
+    // tasks：进程内任务面板（后台有多少在跑、都是什么）。
+    tasks: () => call("GET", "/tasks"),
     getChat: () => call("GET", "/config/chat"),
     putChat: (body) => call("PUT", "/config/chat", body),
     // models：跨 provider 拍平（`{provider, upstream_id, name}` —— 下拉选项就打它）。

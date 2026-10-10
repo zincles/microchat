@@ -13,6 +13,7 @@ import {
   deletionPlanSummary,
   formatRoutesOutcome,
   buildAbilitiesPatch,
+  taskLineText,
   modelKey,
   parseModelKey,
   modelLabel,
@@ -529,3 +530,35 @@ test("发送键判定：三档 + 修饰键（App 与 Composer 同一把尺）", 
 });
 
 
+
+
+test("摘要重摇家族：三个方法的形状（enter 带消息 idx；switch 带位次）", async () => {
+  const seen = [];
+  const fetchFn = async (url, opts) => { seen.push([url, opts.method, opts.body]); return { status: 200, ok: true, json: async () => ({}) }; };
+  const api = createApi({ base: "http://x/api/v1", fetchFn });
+  await api.rerollSummaryEnter("s1", 3);
+  await api.rerollSummaryState("s1");
+  await api.rerollSummarySwitch("s1", 2);
+  assert.deepEqual(seen[0], ["http://x/api/v1/sessions/s1/reroll-summary", "POST", '{"idx":3}']);
+  assert.deepEqual(seen[1], ["http://x/api/v1/sessions/s1/reroll-summary", "GET", undefined]);
+  assert.deepEqual(seen[2], ["http://x/api/v1/sessions/s1/reroll-summary/switch", "POST", '{"idx":2}']);
+});
+
+
+test("任务行文案：只数在跑的、kind 去重、0 个 ⇒ 空串", () => {
+  assert.equal(taskLineText(null), "");
+  assert.equal(taskLineText({ running: 0, tasks: [{ kind: "turn", finished_at: 123 }] }), "");
+  assert.equal(
+    taskLineText({ running: 2, tasks: [{ kind: "turn" }, { kind: "compact" }, { kind: "turn" }] }),
+    "⟳ 后台任务 2：turn · compact",
+  );
+  assert.equal(taskLineText({ running: 1, tasks: [{ kind: "" }] }), "⟳ 后台任务 1");
+});
+
+test("/tasks 端点形状：GET，回 running + tasks（轮询用）", async () => {
+  let seen = null;
+  const fetchFn = async (url, opts) => { seen = [url, opts.method]; return { status: 200, ok: true, json: async () => ({ running: 1, tasks: [] }) }; };
+  const api = createApi({ base: "http://x/api/v1", fetchFn });
+  await api.tasks();
+  assert.deepEqual(seen, ["http://x/api/v1/tasks", "GET"]);
+});

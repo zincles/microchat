@@ -17,6 +17,18 @@ export function agentOption(a) { return { id: a.id, label: a.name || a.id }; }
 export function whoText(provider, model, fallback = "未知模型") {
   return [provider, model].filter(Boolean).join("/") || fallback;
 }
+// taskLineText：输入框上方那行小字的文案（后台任务面板 `/tasks` → 一行）。
+// 只数**还在跑**的（finished_at 有值的不算）；0 个 ⇒ 空串（调用方据此藏行）。
+// 形状：`⟳ 后台任务 2：turn · compact`（kind 去重，最多列 3 种）。
+export function taskLineText(board) {
+  const n = board?.running ?? 0;
+  if (!n) return "";
+  const kinds = [...new Set((board?.tasks ?? [])
+    .filter((t) => !t.finished_at && t.kind)
+    .map((t) => t.kind))].slice(0, 3);
+  return `⟳ 后台任务 ${n}${kinds.length ? `：${kinds.join(" · ")}` : ""}`;
+}
+
 // 会话抬头：空标题按草稿/真会话两态回退（TopBar/SessionBar/设置列表/删除确认共用）。
 export function sessionTitle(title, isDraft = false) {
   return (title ?? "").trim() || (isDraft ? "新对话" : "新会话");

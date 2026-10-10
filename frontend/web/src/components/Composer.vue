@@ -7,6 +7,8 @@ import { sendHintText } from "../utils/prefs.js";
 
 const emit = defineEmits(["input-text", "keydown", "submit", "stop", "menu"]);
 const text = ref("");
+const taskText = ref(""); // 输入框上方、状态行头上那行小字（后台任务；空 = 藏）
+function setTaskLine(t) { taskText.value = t ?? ""; }
 const statusText = ref("上下文 ?/?｜未知模型｜idle");
 const statusOver = ref(false);
 function setStatus(t, over) { statusText.value = t; statusOver.value = !!over; }
@@ -50,11 +52,12 @@ function clear() {
   if (area.value) area.value.rows = 1;
 }
 
-defineExpose({ submit, clear, text, setStatus, setRunning });
+defineExpose({ submit, clear, text, setStatus, setRunning, setTaskLine });
 </script>
 
 <template>
   <form id="composer" @submit.prevent="running ? $emit('stop') : submit()">
+    <div v-if="taskText" class="taskline">{{ taskText }}</div>
     <div id="statusline" class="statusline" :class="{ over: statusOver }">{{ statusText }}</div>
     <button
       type="button"
