@@ -11,6 +11,7 @@ import {
 } from "./utils/chatrows.js";
 import { applyBackground } from "./utils/background.js";
 import { installViewportFit } from "./utils/viewport.js";
+import { classifyAxis, pickDrag, dragProgress, resolveRelease } from "./utils/swipe.js";
 import { sharedApi, previewOn, applyTheme, wantsSend, apiBase, apiToken, apiBaseCandidates, saveNetPrefs } from "./utils/prefs.js";
 import {
   formatStatusLine,
@@ -641,6 +642,95 @@ function toggleRight() {
 }
 // 窄屏里"人去了别处"就得把左抽屉收回去（选会话 / 开新对话）。
 function closeLeftDrawer() { if (narrowLeft()) applySideToggle("sessions-bar", true); }
+
+// —— 滑动面板（触屏**跟手拖拽**；2026-10-10 用户定/细化）——
+// 拖到哪儿面板停哪儿（**半开也维持**，不用等松手）；松手按"过半 + 速度"吸附开/关。
+// 方向：左滑出右栏、右滑出左栏；已有一扇开着 ⇒ 先关后开（只认朝它关回去的方向）。
+// 最终仍落在同一个 collapsed 类上（手势 = [◧]/[◨] 的替身，不另造开合状态）。
+// 判定全在 utils/swipe.js（纯函数）；这里只碰 DOM：跟手期间写内联 transform（transition 先掐掉），
+// 松手把内联清掉、按结果落类 —— 由 CSS 自己的 200ms 过渡完成吸附动画。
+const barSide = (bar) => (bar === "left" ? "sessions-bar" : "payload-bar");
+const scrimSide = (bar) => (bar === "left" ? "scrim-left" : "scrim-right");
+let panelDrag = null;
+
+function swipeBlocked(target) {
+  if (overlaysRef.value?.isPaletteOpen() || overlaysRef.value?.isPickerOpen()) return true;
+  if (document.querySelector("#settings-view") || document.querySelector(".modal")) return true;
+  // 抽屉自己身上 ⇒ 一律接管（pre 也不例外）："把抽屉拖走"在这儿就该能用 ——
+  // 右栏的载荷 tab 整块就是个 <pre>，早先被 pre 例外吞掉，真机上表现为"在面板上滑没反应"。
+  if (target?.closest?.("#sessions-bar, #payload-bar")) return false;
+  return !!target?.closest?.("textarea, input, select, pre, .palette, .picker, .modal, #settings-view");
+}
+function paintDrag(d, p) {
+  const off = d.pick.bar === "left" ? -102 : 102; // 与 CSS 的 collapsed 位移一致
+  d.el.style.transform = `translateX(${off * (1 - p)}%)`;
+  if (d.scrim) d.scrim.style.opacity = String(p);
+}
+function onTouchStart(e) {
+  panelDrag = null;
+  if (e.touches.length !== 1 || swipeBlocked(e.target)) return;
+  const t = e.touches[0];
+  panelDrag = {
+    x0: t.clientX, y0: t.clientY, axis: null, pick: null,
+    el: null, scrim: null, w: 0, p: 0, lastT: Date.now(), v: 0,
+  };
+}
+function onTouchMove(e) {
+  const d = panelDrag;
+  if (!d || e.touches.length !== 1) return;
+  const t = e.touches[0];
+  const dx = t.clientX - d.x0;
+  const dy = t.clientY - d.y0;
+  if (!d.axis) {
+    const axis = classifyAxis(dx, dy);
+    if (!axis) return;
+    if (axis === "v") { panelDrag = null; return; } // 归浏览器滚列表
+    const left = document.getElementById("sessions-bar");
+    const right = document.getElementById("payload-bar");
+    const pick = pickDrag({
+      dx,
+      leftDrawer: narrowLeft(),
+      rightDrawer: narrowRight(),
+      leftOpen: !!left && !left.classList.contains("collapsed"),
+      rightOpen: !!right && !right.classList.contains("collapsed"),
+    });
+    if (!pick) { panelDrag = null; return; }
+    d.axis = axis; // ⚠ 必须记住：不然每次 touchmove 都重进这里，第二枚就被自己摘掉的 collapsed 骗死
+    d.pick = pick;
+    d.p = pick.base; // ⚠ 起点开度（开=0 / 关=1）：不初始化，第一枚 move 的速度会算出天文数字、
+    //   被"快甩"规则误判成弹回（实测咬过一次）。⚠ **别动 d.lastT**：它在 touchstart 起表，
+    //   重置成此刻的话第一枚 move 的 dt≈0、速度样本直接作废（快甩失灵，也实测咬过）。
+    d.el = pick.bar === "left" ? left : right;
+    d.scrim = document.getElementById(scrimSide(pick.bar));
+    d.w = d.el.getBoundingClientRect().width || 300;
+    d.el.style.transition = "none"; // 跟手期间不许有过渡
+    if (d.scrim) d.scrim.style.transition = "none";
+    applySideToggle(barSide(pick.bar), false); // 拖起来先亮出来，位置全由内联管
+  }
+  e.preventDefault(); // 这手势归我们了：别让页面跟着滚
+  const p = dragProgress(d.pick.base, dx, d.w, d.pick.bar);
+  const now = Date.now();
+  const dt = now - d.lastT;
+  if (dt > 0) d.v = (p - d.p) / dt; // 开度速度（朝开为正）
+  d.lastT = now;
+  d.p = p;
+  paintDrag(d, p);
+}
+function settleDrag(useVelocity) {
+  const d = panelDrag;
+  panelDrag = null;
+  if (!d || !d.axis || !d.pick) return;
+  // 速度样本要有**保鲜期**：甩完停住手再松（>120ms 没有新 move）就按位置吸附 ——
+  // 不然照着历史峰值走，拖到一半停手也会被当快甩弹开（实测咬过一次）。
+  const fresh = Date.now() - d.lastT <= 120;
+  const open = resolveRelease(d.p, useVelocity && fresh ? d.v : 0) === "open";
+  d.el.style.transition = ""; // 先还 CSS 过渡，再清内联 —— 吸附动画由它完成
+  d.el.style.transform = "";
+  if (d.scrim) { d.scrim.style.transition = ""; d.scrim.style.opacity = ""; }
+  applySideToggle(barSide(d.pick.bar), !open);
+}
+function onTouchEnd() { settleDrag(true); }
+function onTouchCancel() { settleDrag(false); }
 async function askDeleteSession(id) {
   const list = await api.listSessions().catch(() => []);
   const name = sessionTitle(list.find((s) => s.id === id)?.title);
@@ -1151,6 +1241,11 @@ onMounted(() => {
   const vv = window.visualViewport;
   const onVvResize = () => { if (document.activeElement?.id === "input") scrollBottom(); };
   vv?.addEventListener("resize", onVvResize);
+  // 滑动面板：跟手拖拽。touchmove 必须非 passive（接管后要 preventDefault 压住页面滚）。
+  document.addEventListener("touchstart", onTouchStart, { passive: true });
+  document.addEventListener("touchmove", onTouchMove, { passive: false });
+  document.addEventListener("touchend", onTouchEnd, { passive: true });
+  document.addEventListener("touchcancel", onTouchCancel, { passive: true });
   // 跨断点（桌面 ⇄ 抽屉）时把两侧状态重算一遍：变成抽屉就一律先关掉，不然会"啪"地盖上来。
   mqlLeft?.addEventListener?.("change", applySideStates);
   mqlRight?.addEventListener?.("change", applySideStates);
@@ -1168,6 +1263,10 @@ onMounted(() => {
 onUnmounted(() => {
   uninstallViewportFit?.();
   uninstallViewportFit = null;
+  document.removeEventListener("touchstart", onTouchStart);
+  document.removeEventListener("touchmove", onTouchMove);
+  document.removeEventListener("touchend", onTouchEnd);
+  document.removeEventListener("touchcancel", onTouchCancel);
   if (tasksTimer) clearInterval(tasksTimer);
   tasksTimer = null;
   composerRO?.disconnect();

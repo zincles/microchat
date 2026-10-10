@@ -35,7 +35,8 @@ body::before { content: ""; position: fixed; inset: 0; z-index: 0; pointer-event
  * （命令面板/picker/确认框/toast/门板都以它为准 ⇒ 自动钉在键盘上沿）。没有 JS/var 时回落 100dvh→100vh。 */
 #app { display: flex; flex-direction: column; height: 100vh; height: var(--vvh, 100dvh); transform: translateY(var(--vvt, 0px)); gap: 0; padding: 0; box-sizing: border-box; position: relative; z-index: 1; }
 /* 顶栏：中间列里的悬浮圆角卡（上下留空，不贴边）。三段 = 开关 | 会话抬头（伸缩）| 控制。 */
-header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; color: var(--tg-hint); border-radius: var(--r-shell); background: var(--tg-secondary-bg); }
+/* 顶栏：悬浮圆角卡 —— 和底部输入行同一档阴影（2026-10-10 用户定：上下两条 bar 都要影子）。 */
+header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; color: var(--tg-hint); border-radius: var(--r-shell); background: var(--tg-secondary-bg); box-shadow: 0 6px 24px rgb(0 0 0 / 32%); }
 /* 会话抬头：占满中段（下拉被推到右端），超长省略；hover 出全名（title 属性）。
  * min-width = 窄屏时不小于 ~5.5em：空间不够先让两个下拉去收缩（它们是次要信息）。 */
 .session-title { flex: 1 1 auto; min-width: 5.5em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--tg-text); }
@@ -112,7 +113,9 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
   #sessions-bar.collapsed { transform: translateX(-102%); max-width: none; opacity: 1; visibility: hidden; }
   #scrim-left { display: block; position: fixed; inset: 0; z-index: 15; background: rgb(0 0 0 / 45%); opacity: 0; pointer-events: none; transition: opacity 180ms ease-out; }
   #sessions-bar:not(.collapsed) ~ #scrim-left { opacity: 1; pointer-events: auto; }
-  #messages-vue { padding: 0.5em 0.8em; }
+  /* 底部留白别砍光（砍光过：滚到底时最后一条会滑到 statusline 底下，像被底栏"挡"住）——
+   * 给状态行 + 任务行（都是绝对定位浮层）让位，约 3.5em。 */
+  #messages-vue { padding: 0.5em 0.8em 3.5em; }
   #settings-view { padding: 0.4em 0.4em 0; }
   .settings-bar { gap: 0.2em; }
   /* 六区在窄屏：排得下就等分，排不下靠 nav 横滚（不设固定宽 —— 那两行会被后面的默认规则盖掉）。 */
@@ -243,7 +246,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 .msg .inline-btns { display: flex; gap: 0.4em; margin-top: 0.3em; }
 #composer { position: relative; display: flex; gap: 0.5em; align-items: flex-end; background: none; z-index: 5; padding: 0.6em 0.6em; }
 /* 输入框独立浮动卡 + 发送钮独立圆钮：逻辑相连、显示分开（TG 底栏就是输入框配外面一颗钮）。 */
-#input { flex: 1; background: color-mix(in srgb, var(--tg-secondary-bg) 88%, transparent); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); color: var(--tg-text); border: none; border-radius: 20px; padding: 0.6em 1.1em; font: inherit; resize: none; line-height: 1.5; max-height: calc(1.5em * 6 + 1.2em); overflow-y: auto; box-shadow: 0 4px 20px rgb(0 0 0 / 35%); }
+#input { flex: 1; background: color-mix(in srgb, var(--tg-secondary-bg) 88%, transparent); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); color: var(--tg-text); border: none; border-radius: 20px; padding: 0.6em 1.1em; font: inherit; resize: none; line-height: 1.5; max-height: calc(1.5em * 6 + 1.2em); overflow-y: auto; box-shadow: 0 6px 24px rgb(0 0 0 / 32%); }
 #input:focus { outline: 1px solid var(--tg-link); }
 /* 状态行：输入框上方独立小字（不进卡，跟输入框同宽居中，超预算红）。 */
 .statusline { position: absolute; left: 0; right: 0; bottom: 100%; margin-bottom: 0.3em; text-align: center; color: var(--tg-hint); font-size: 0.78em; text-shadow: 0 1px 6px rgb(0 0 0 / 60%); }

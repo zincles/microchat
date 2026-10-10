@@ -6,6 +6,7 @@ import { uuidv7 } from "../src/utils/ids.js";
 import { buildCompactTree, treeTotals } from "../src/utils/tree.js";
 import { buildChatRows } from "../src/utils/chatrows.js";
 import { computeViewportFit } from "../src/utils/viewport.js";
+import { classifyAxis, pickDrag, dragProgress, resolveRelease } from "../src/utils/swipe.js";
 import {
   formatThinkLabel,
   formatStatusLine,
@@ -622,4 +623,37 @@ test("键盘拟合：高度取整、平移跟走；拿不到高或捏合缩放 �
   assert.equal(computeViewportFit({ height: 0 }), null);
   assert.equal(computeViewportFit({ height: 512, scale: 2 }), null);
   assert.equal(computeViewportFit({}), null);
+});
+
+
+test("跟手拖拽：轴向锁、拖哪扇、开度换算、松手吸附", () => {
+  // 轴向锁：先到先得；纵向的手势整个放给浏览器
+  assert.equal(classifyAxis(3, 2), null);
+  assert.equal(classifyAxis(20, 5), "h");
+  assert.equal(classifyAxis(5, 30), "v");
+  // 拖哪扇：都没开朝哪拖哪扇；左开着只认往左（关回去）、右开着只认往右
+  assert.deepEqual(pickDrag({ dx: 40, leftDrawer: true, rightDrawer: true, leftOpen: false, rightOpen: false }), { bar: "left", base: 0 });
+  assert.deepEqual(pickDrag({ dx: -40, leftDrawer: true, rightDrawer: true, leftOpen: false, rightOpen: false }), { bar: "right", base: 0 });
+  assert.deepEqual(pickDrag({ dx: -40, leftDrawer: true, rightDrawer: true, leftOpen: true, rightOpen: false }), { bar: "left", base: 1 });
+  assert.equal(pickDrag({ dx: 40, leftDrawer: true, rightDrawer: true, leftOpen: true, rightOpen: false }), null);
+  assert.deepEqual(pickDrag({ dx: 40, leftDrawer: true, rightDrawer: true, leftOpen: false, rightOpen: true }), { bar: "right", base: 1 });
+  assert.equal(pickDrag({ dx: -40, leftDrawer: true, rightDrawer: true, leftOpen: false, rightOpen: true }), null);
+  assert.equal(pickDrag({ dx: -40, leftDrawer: false, rightDrawer: false, leftOpen: false, rightOpen: false }), null); // 平板：不是抽屉就不接管
+  // 开度：换算 + 夹在 0..1（跟手关时用 base=1 反向算）
+  assert.equal(Math.round(dragProgress(0, 150, 300, "left") * 100), 50);
+  assert.equal(Math.round(dragProgress(0, -150, 300, "right") * 100), 50);
+  assert.equal(dragProgress(0, -50, 300, "left"), 0);
+  assert.equal(dragProgress(0, 400, 300, "left"), 1);
+  assert.equal(Math.round(dragProgress(1, -150, 300, "left") * 100), 50);
+  assert.equal(dragProgress(1, 150, 300, "left"), 1);
+  // 松手吸附：中点 + 两个方向的快甩（v 单位 = 开度/ms，真实手速量级 ~0.002-0.01）
+  assert.equal(resolveRelease(0.55, 0), "open");      // 慢拖过中点
+  assert.equal(resolveRelease(0.45, 0), "close");     // 慢拖不过中点
+  assert.equal(resolveRelease(0.2, 0.004), "open");   // 快甩朝开（60px/30ms 量级）
+  assert.equal(resolveRelease(0.8, -0.004), "close"); // 快甩朝关（对称规则；此前缺了它 ⇒ 关手势发涩）
+  assert.equal(resolveRelease(0.2, 0.0005), "close"); // 慢慢挪到 20%：还不算开
+  assert.equal(resolveRelease(0.97, -0.006), "open"); // 几乎没拖就恨恨一甩：按兵不动（p>1-flickAt，位置也没过中点）
+  assert.equal(resolveRelease(0.05, 0.006), "close"); // 没动几步的光速点击式滑动不算
+  assert.equal(classifyAxis(5, 2), null);             // 轴向锁现在 6px
+  assert.equal(classifyAxis(7, 2), "h");
 });
