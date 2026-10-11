@@ -1,6 +1,8 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { createApi, mergeStreamSlice, DEFAULT_API_URL, normalizeApiBase, probeAuthStatus, authLogin } from "../src/api/client.js";
+import { parseWireMessages } from "../src/utils/payload.js";
+import { assemblePrompt, missingSegments } from "../src/utils/prompt.js";
 import { parseCommand, filterCommands, COMMAND_META } from "../src/utils/commands.js";
 import { uuidv7 } from "../src/utils/ids.js";
 import { buildCompactTree, treeTotals } from "../src/utils/tree.js";
@@ -127,6 +129,35 @@ test("api.call 请求形状：方法/路径/鉴权头/204 空", async () => {
   assert.deepEqual(p, { ok: true });
 });
 
+test("系统提示词拼装：base + 追加段（顺序、空行、缺段跳过）—— 与后端同规则", () => {
+  const lib = [
+    { id: "katex", text: "数学用 $…$ 写。" },
+    { id: "empty", text: "  " },
+    { id: "mcp", text: "需要联网时调用搜索工具。" },
+  ];
+  assert.equal(
+    assemblePrompt("你是助手。", ["katex", "empty", "mcp"], lib),
+    "你是助手。\n\n数学用 $…$ 写。\n\n需要联网时调用搜索工具。",
+  );
+  assert.equal(assemblePrompt("", ["mcp"], lib), "需要联网时调用搜索工具。");
+  assert.equal(assemblePrompt("base", ["nope"], lib), "base");
+  assert.equal(assemblePrompt("  ", [], lib), "");
+  assert.deepEqual(missingSegments(["a", "katex"], lib), ["a"]);
+});
+
+test("提示词段接口形状：路径 / 方法", async () => {
+  const seen = [];
+  const api = createApi({ base: "http://x/api/v1", token: "t", fetchFn: async (url, opts) => { seen.push({ url, opts }); return { status: 200, ok: true, json: async () => ({}) }; } });
+  await api.createSegment({ id: "katex", text: "x" });
+  await api.patchSegment("katex", { text: "y" });
+  await api.deleteSegment("katex");
+  assert.deepEqual(seen.map((s) => [s.opts.method, s.url.replace("http://x/api/v1", "")]), [
+    ["POST", "/segments"],
+    ["PATCH", "/segments/katex"],
+    ["DELETE", "/segments/katex"],
+  ]);
+});
+
 test("用户管理接口形状：路径 / 方法 / sessions 查询参数", async () => {
   const seen = [];
   const api = createApi({ base: "http://x/api/v1", token: "t", fetchFn: async (url, opts) => { seen.push({ url, opts }); return { status: 200, ok: true, json: async () => ({}) }; } });
@@ -144,6 +175,45 @@ test("用户管理接口形状：路径 / 方法 / sessions 查询参数", async
   ]);
   assert.deepEqual(JSON.parse(seen[1].opts.body), { name: "alice", password: "hunter22" });
   assert.deepEqual(JSON.parse(seen[3].opts.body), { password: "hunter33" });
+});
+
+test("载荷分块：parseWireMessages 只认形状（messages 数组），边角字段一个不吞", () => {
+  const wire = {
+    method: "POST",
+    url: "https://x/v1/chat/completions",
+    headers: {},
+    body: {
+      model: "m1",
+      stream: true,
+      tools: [{}, {}],
+      messages: [
+        { role: "system", content: "规则" },
+        { role: "user", content: "你好" },
+        { role: "assistant", content: "答", reasoning_content: "想了一下" },
+        { role: "assistant", content: null, tool_calls: [{ function: { name: "get_weather" } }] },
+        { role: "tool", content: "晴", tool_call_id: "call_1", name: "get_weather" },
+      ],
+    },
+  };
+  const p = parseWireMessages(wire);
+  assert.equal(p.meta.model, "m1");
+  assert.equal(p.meta.stream, true);
+  assert.equal(p.meta.tools, 2);
+  assert.deepEqual(p.messages.map((m) => m.role), ["system", "user", "assistant", "assistant", "tool"]);
+  assert.equal(p.messages[1].content, "你好");
+  assert.equal(p.messages[1].chars, 2); // rune 数（CJK 一字算一）
+  assert.equal(p.messages[2].reasoning, "想了一下");
+  assert.equal(p.messages[3].content, ""); // content 为 null ⇒ 空串（靠 tool_calls 行交代）
+  assert.equal(p.messages[3].toolCalls, "get_weather");
+  assert.equal(p.messages[4].toolCallId, "call_1");
+  assert.equal(p.messages[4].name, "get_weather");
+  // 不是这个形状 ⇒ null（调用方退回裸 JSON）
+  assert.equal(parseWireMessages(null), null);
+  assert.equal(parseWireMessages({ body: "字符串" }), null);
+  assert.equal(parseWireMessages({ body: { messages: "nope" } }), null);
+  // content 不是字符串（多模态数组）⇒ JSON 化，不吞
+  const mm = parseWireMessages({ body: { messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }] } });
+  assert.match(mm.messages[0].content, /"text"/);
 });
 
 test("uuidv7：与后端同形（version 7 / variant / 毫秒序）", () => {

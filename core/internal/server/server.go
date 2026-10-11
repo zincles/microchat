@@ -98,6 +98,11 @@ func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *ch
 	s.mux.HandleFunc("POST /api/v1/agents", s.createAgent)
 	s.mux.HandleFunc("PATCH /api/v1/agents/{agent_id}", s.updateAgent)
 	s.mux.HandleFunc("DELETE /api/v1/agents/{agent_id}", s.deleteAgent)
+	// 提示词段（system prompt segment）：读口随 `GET /agents`（那份就是 AgentsConfig 全貌）；
+	// 这里只有三个写口（设置面 = admin）。删除有守卫：还被引用 ⇒ 拒绝（列出引用者）。
+	s.mux.HandleFunc("POST /api/v1/segments", s.createSegment)
+	s.mux.HandleFunc("PATCH /api/v1/segments/{segment_id}", s.updateSegment)
+	s.mux.HandleFunc("DELETE /api/v1/segments/{segment_id}", s.deleteSegment)
 	s.mux.HandleFunc("GET /api/v1/config/chat", s.getChatConfig)
 	s.mux.HandleFunc("PUT /api/v1/config/chat", s.putChatConfig)
 	// 新建会话的缺省三件（provider / model / agent）：`PUT /config/chat` 只管 chat 段，

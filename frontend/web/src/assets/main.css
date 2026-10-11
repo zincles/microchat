@@ -74,6 +74,35 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 #sessions-bar { width: 260px; flex: none; align-self: stretch; max-height: 100%; background: var(--tg-secondary-bg); border-radius: 0; display: flex; flex-direction: column; overflow: hidden; min-height: 0; box-sizing: border-box; border-right: 1px solid var(--line); }
 #payload-bar { width: 340px; flex: none; align-self: stretch; min-height: 0; max-height: 100%; overflow-y: auto; overscroll-behavior: contain; background: var(--tg-secondary-bg); border-radius: 0; border-left: 1px solid var(--line); padding: 0.6em 0.8em; font-size: 0.85em; color: var(--tg-hint); box-sizing: border-box; }
 #outgoing-raw { white-space: pre; overflow-x: auto; margin: 0; max-width: 100%; }
+/* 内置段的标记（代码里内嵌、只读 —— 2026-10-11）。 */
+.builtin-tag { font-style: normal; font-size: 0.78em; color: var(--tg-link); border: 1px solid currentColor; border-radius: 4px; padding: 0 0.25em; margin-left: 0.4em; }
+/* Agent 编辑器的"提示词段"行（system prompt segment，2026-10-11）：顺序 = 拼接顺序。 */
+.seg-row { display: flex; align-items: center; gap: 0.35em; padding: 0.25em 0.3em; border: 1px solid var(--line); border-radius: 6px; margin-bottom: 0.25em; }
+.seg-row.missing { border-color: var(--tg-destructive); }
+.seg-row .seg-id { font-weight: bold; white-space: nowrap; }
+.seg-row .seg-preview { color: var(--tg-hint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.seg-assembled { margin: 0.3em 0; }
+.seg-assembled summary { cursor: pointer; color: var(--tg-hint); }
+.seg-assembled pre { white-space: pre-wrap; word-break: break-word; max-height: 20em; overflow-y: auto; background: rgb(0 0 0 / 20%); padding: 0.5em 0.6em; border-radius: 6px; }
+/* 载荷栏"分块视图"（用户点名 2026-10-11）：body.messages 一块块矩形画出来（角色徽标 + 内容）。 */
+.pv-toolbar { display: flex; align-items: center; gap: 0.5em; margin: 0 0 0.5em; color: var(--tg-hint); }
+.pv-toolbar .lbl { font-size: 0.9em; }
+.pv-meta { display: flex; flex-wrap: wrap; gap: 0.35em; align-items: center; margin: 0 0 0.5em; font-size: 0.85em; color: var(--tg-hint); }
+.pv-method { color: var(--tg-text); font-weight: bold; }
+.pv-url { color: var(--tg-link); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.pv-chip { border: 1px solid var(--line); border-radius: 4px; padding: 0 0.3em; font-size: 0.85em; color: var(--tg-hint); }
+.pv-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.45em; }
+.pv-msg { border: 1px solid var(--line); border-radius: 8px; background: rgb(255 255 255 / 3%); padding: 0.45em 0.55em; }
+.pv-head { display: flex; align-items: center; gap: 0.4em; margin-bottom: 0.3em; }
+.pv-role { font-size: 0.78em; font-weight: bold; border-radius: 4px; padding: 0.05em 0.4em; color: var(--tg-bg); background: var(--tg-hint); }
+.pv-msg.role-user .pv-role { background: var(--tg-button); color: var(--tg-button-text); }
+.pv-msg.role-assistant .pv-role { background: var(--tg-link); }
+.pv-msg.role-tool .pv-role { background: none; color: var(--tg-hint); border: 1px dashed var(--tg-hint); }
+.pv-idx { color: var(--tg-hint); font-size: 0.8em; font-variant-numeric: tabular-nums; }
+.pv-chars { margin-left: auto; color: var(--tg-hint); font-size: 0.78em; }
+.pv-content { white-space: pre-wrap; word-break: break-word; color: var(--tg-text); font-size: 0.9em; }
+.pv-content.pv-empty { color: var(--tg-hint); }
+.pv-extra { margin-top: 0.3em; padding-top: 0.3em; border-top: 1px dashed var(--line); color: var(--tg-hint); font-size: 0.85em; white-space: pre-wrap; word-break: break-word; }
 /* 压缩树（文件管理器那种看体积的树）：缩进行 + 行底容量条（du 味）。 */
 #compact-tree { font-size: 0.92em; }
 /* 压缩面板的"块数 + 压缩"一行。 */

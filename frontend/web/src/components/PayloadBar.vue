@@ -4,7 +4,10 @@
 // 压缩 = 压缩树（buildCompactTree 的产出：文件管理器那种看体积的树）。
 import { ref, computed } from "vue";
 import CompactTree from "./CompactTree.vue";
+import ToggleSwitch from "./ToggleSwitch.vue";
 import { treeTotals } from "../utils/tree.js";
+import { parseWireMessages } from "../utils/payload.js";
+import { payloadVizOn, savePayloadViz } from "../utils/prefs.js";
 
 const props = defineProps({
   defaultBlocks: { type: Number, default: null }, // chat.compact_blocks（空输入框的默认，只用于提示）
@@ -20,6 +23,10 @@ function doCompact() {
   emit("compact", Number.isFinite(n) && n > 0 ? Math.floor(n) : null);
 }
 const wire = ref(null);
+// 分块视图（用户点名 2026-10-11）：开关记忆在 localStorage；开着就把 body.messages 一块块画。
+const viz = ref(payloadVizOn());
+function setViz(v) { viz.value = !!v; savePayloadViz(viz.value); }
+const vizData = computed(() => (viz.value ? parseWireMessages(wire.value) : null));
 const tables = ref({});
 const tree = ref(null); // null = 还没数据（不发请求，显示空话）
 
@@ -43,7 +50,41 @@ defineExpose({ setWire, setTables, setTree });
       <button type="button" class="tab" :class="{ sel: tab === 'state' }" @click="selectTab('state')">状态</button>
       <button type="button" class="tab" :class="{ sel: tab === 'tree' }" @click="selectTab('tree')">压缩</button>
     </div>
-    <pre v-show="tab === 'payload'" id="outgoing-raw">{{ payloadText }}</pre>
+    <div v-show="tab === 'payload'" id="payload-pane">
+      <div class="pv-toolbar">
+        <ToggleSwitch :model-value="viz" @update:model-value="setViz" />
+        <span class="lbl">分块视图（按 message 拆开看）</span>
+      </div>
+      <div v-if="viz && vizData" id="payload-viz">
+        <div class="pv-meta">
+          <span class="pv-method">{{ vizData.meta.method }}</span>
+          <span class="pv-url" :title="vizData.meta.url">{{ vizData.meta.url }}</span>
+          <span v-if="vizData.meta.model" class="pv-chip">{{ vizData.meta.model }}</span>
+          <span class="pv-chip">{{ vizData.messages.length }} 条</span>
+          <span v-if="vizData.meta.tools" class="pv-chip">tools ×{{ vizData.meta.tools }}</span>
+          <span v-if="vizData.meta.stream" class="pv-chip">stream</span>
+        </div>
+        <ol class="pv-list">
+          <li v-for="(m, i) in vizData.messages" :key="i" class="pv-msg" :class="`role-${m.role}`">
+            <div class="pv-head">
+              <span class="pv-role">{{ m.role }}</span>
+              <span class="pv-idx">#{{ i + 1 }}</span>
+              <span v-if="m.name" class="pv-chip">{{ m.name }}</span>
+              <span class="pv-chars">{{ m.chars }} 字</span>
+            </div>
+            <div v-if="m.reasoning" class="pv-extra">思考（reasoning_content）：{{ m.reasoning }}</div>
+            <div v-if="m.content" class="pv-content">{{ m.content }}</div>
+            <div v-else-if="!m.toolCalls" class="pv-content pv-empty">（空）</div>
+            <div v-if="m.toolCalls" class="pv-extra">tool_calls：{{ m.toolCalls }}</div>
+            <div v-if="m.toolCallId" class="pv-extra">tool_call_id：{{ m.toolCallId }}</div>
+          </li>
+        </ol>
+      </div>
+      <div v-else>
+        <div v-if="viz && wire" class="empty">（这条载荷里没有 messages 数组可分块 —— 下面是原始 JSON）</div>
+        <pre id="outgoing-raw">{{ payloadText }}</pre>
+      </div>
+    </div>
     <div v-show="tab === 'state'" id="state-view">
       <div v-if="!tableNames.length" class="empty">（发一句话后这里显示世界状态）</div>
       <section v-for="name in tableNames" :key="name" class="state-table">

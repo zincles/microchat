@@ -290,8 +290,8 @@ func (s *Service) assembleMessages(session model.Session, messages []model.Messa
 	if err != nil {
 		return nil, nil, err
 	}
-	prompt, source := s.EffectiveSystemPrompt(session)
-	tables := state.FromSources(session.ID, prompt, source, messages).Tables
+	prompt, _ := s.EffectiveSystemPrompt(session)
+	tables := state.FromSources(session.ID, messages).Tables
 	return state.BuildOutgoing(prompt, messages, summaries, tables, s.prependState(session)), messages, nil
 }
 

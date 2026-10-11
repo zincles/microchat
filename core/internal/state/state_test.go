@@ -18,12 +18,11 @@ func has(tables Tables, table, key string) (string, bool) {
 	return value, ok
 }
 
-// 底子来自 agent 的提示词 ⇒ 算**全局**；来自会话自己的提示词 ⇒ 算**本会话**（§3 的来源规则）。
 // 不写表名与 `<state global>` 混在一条会话里 ⇒ **同一张表**，后写覆盖先写。
 //
 // （这是"未标表名默认视作 global"在现演那一层的落点；解析层的同一条在 `statelang` 里钉着。）
 func TestUnnamedAndGlobalTableAreTheSame(t *testing.T) {
-	view := FromSources("c1", "<state>HP = 10</state>", PromptFromSession, []model.Message{
+	view := FromSources("c1", []model.Message{
 		message("m1", "<state>HP = 12</state>"),
 		message("m2", "<state global>HP = 15</state>"),
 		message("m3", "<state>弹药 = 3</state>"),
@@ -41,7 +40,7 @@ func TestUnnamedAndGlobalTableAreTheSame(t *testing.T) {
 
 // `global` 恒在：**一个变量都没有也回 `{"global": {}}`**；算完为空的**命名**表照旧消失。
 func TestGlobalTableIsAlwaysPresent(t *testing.T) {
-	empty := FromSources("c1", "", PromptFromAgent, []model.Message{message("m1", "走吧。")})
+	empty := FromSources("c1", []model.Message{message("m1", "走吧。")})
 	if table, ok := empty.Tables["global"]; !ok || table == nil || len(table) != 0 {
 		t.Fatalf("空状态该回 {\"global\": {}}：%+v", empty.Tables)
 	}
@@ -54,7 +53,7 @@ func TestGlobalTableIsAlwaysPresent(t *testing.T) {
 	}
 
 	// 命名表算完为空 ⇒ 整张消失（例外只给 global）
-	named := FromSources("c1", "", PromptFromSession, []model.Message{
+	named := FromSources("c1", []model.Message{
 		message("m1", "<state 临时>X = 1</state>"),
 		message("m2", "<state 临时>X = </state>"),
 	})
@@ -66,11 +65,10 @@ func TestGlobalTableIsAlwaysPresent(t *testing.T) {
 	}
 }
 
-// `at_idx` 那条链（`StateAt`）：**底子永远是当前的提示词**，正文只 fold 到第 N 条（含）。
+// `at_idx` 那条链（`StateAt`）：正文只 fold 到第 N 条（含）—— 状态只从正文来（提示词是说明文）。
 //
-// 三档：`at=2` 只看得到前两条带来的东西、`at=6`（= 全部）与不给参数一回事、`at=0` ⇒ 只有底子。
+// 三档：`at=2` 只看得到前两条带来的东西、`at=6`（= 全部）与不给参数一回事、`at=0` ⇒ 空状态。
 func TestStateAtFoldsOnlyUpToTheIndex(t *testing.T) {
-	system := "<state 底子>种子 = 1</state>" // 系统提示词的块一律无视（只取 Cleaned 出站）
 	messages := []model.Message{
 		message("m1", "<state>第一 = 有</state>"),
 		message("m2", "<state>第二 = 有</state>"),
@@ -79,7 +77,7 @@ func TestStateAtFoldsOnlyUpToTheIndex(t *testing.T) {
 		message("m5", "<state>第五 = 有</state>"),
 		message("m6", "<state>第六 = 有</state>"),
 	}
-	at := func(index int) View { return StateAt("c1", system, PromptFromAgent, messages, index) }
+	at := func(index int) View { return StateAt("c1", messages, index) }
 
 	two := at(2)
 	if two.Tables["global"]["第二"] != "有" {
@@ -91,33 +89,24 @@ func TestStateAtFoldsOnlyUpToTheIndex(t *testing.T) {
 	if len(two.Session) != 2 {
 		t.Fatalf("只该 fold 前两条的操作：%+v", two.Session)
 	}
-	// at=0 ⇒ 空（系统提示词的块无视，正文一条不 fold）
+	// at=0 ⇒ 一条都不 fold
 	zero := at(0)
 	if len(zero.Session) != 0 {
 		t.Fatalf("at=0 该没有操作：%+v", zero.Session)
 	}
-	if _, ok := zero.Tables["底子"]; ok {
-		t.Fatalf("系统提示词的块不该算进来：%+v", zero.Tables)
-	}
 
 	// at=6 与"不给参数"（全量）一致；越界也当作"到最后一条"
-	all := FromSources("c1", system, PromptFromAgent, messages)
+	all := FromSources("c1", messages)
 	for _, view := range []View{at(6), at(99)} {
 		if len(view.Session) != len(all.Session) || len(view.Tables["global"]) != len(all.Tables["global"]) {
 			t.Fatalf("at=6/越界该等于全量：%+v vs %+v", view.Session, all.Session)
 		}
 	}
-
-	// 系统提示词换什么都不影响答案（它的块一律无视）
-	changed := StateAt("c1", "<state 底子>种子 = 2</state>", PromptFromAgent, messages, 2)
-	if _, ok := changed.Tables["底子"]; ok {
-		t.Fatalf("系统提示词的块不该影响答案：%+v", changed.Tables)
-	}
 }
 
 // 空值 = 清掉；删除只作用于自己那张表。
 func TestEmptyValueAndTableNamespacing(t *testing.T) {
-	view := FromSources("c1", "", PromptFromSession, []model.Message{
+	view := FromSources("c1", []model.Message{
 		message("m1", "<state 玩家状态>想法 = ;HP = 10</state>"),
 		message("m2", "<state 世界情况>情况 = 待处理</state>"),
 		message("m3", "<state 玩家状态>HP = </state>"),
@@ -164,12 +153,10 @@ func TestRenderTableGroupsByTable(t *testing.T) {
 	}
 }
 
-// `StateView` 的层名是 `baseline`（**不是** `global`）—— 2026-09-30 的改名，靠这条钉住。
-//
-// 为什么必须改：`global` 现在是**表名**（不写表名的块落到它）⇒ 同一份 JSON 里不许两义。
-// 这条测试红了，多半是有人把层名写回了 `global`（那会和 `tables` 里那张表撞车）。
+// `StateView` 的字段正好三个：`session` / `effective` / `tables`（`global` 只许是**表名**，
+// 住在 `tables` 里）。从前那个 `baseline` 层 2026-10-07 已删 —— 别加回来（加回来就会和表名撞车）。
 func TestStateViewLayerNamesAreStable(t *testing.T) {
-	view := FromSources("c1", "<state>HP = 1</state>", PromptFromSession, []model.Message{message("m1", "<state>HP = 2</state>")})
+	view := FromSources("c1", []model.Message{message("m1", "<state>HP = 2</state>")})
 	raw, err := json.Marshal(view)
 	if err != nil {
 		t.Fatal(err)
@@ -196,8 +183,10 @@ func TestStateViewLayerNamesAreStable(t *testing.T) {
 	}
 }
 
-// 唯一的出站拼装：标签剔除、当前表注入、空的正文不发、没有提示词就不发 system。
+// 唯一的出站拼装：**正文**剔块（提示词原样）、当前表注入、空的正文不发、没有提示词就不发 system。
 func TestBuildOutgoing(t *testing.T) {
+	// 系统提示词**原样出站**（2026-10-11 定）：它是说明文，块不算状态、也不剔除 ——
+	// 提示词里的语法示例要活到模型眼前（实测过：从前剔块把示例剪得七零八落）。
 	system := "你是主持人。\n<state>\n季节 = 初冬\n</state>"
 	messages := []model.Message{
 		{ID: "m1", Role: model.RoleUser, Content: "开场。<state>HP = 10</state>"},
@@ -211,8 +200,8 @@ func TestBuildOutgoing(t *testing.T) {
 	if outgoing[0].Role != RoleSystem || !strings.Contains(outgoing[0].Content, "你是主持人。") {
 		t.Fatalf("system = %+v", outgoing[0])
 	}
-	if strings.Contains(outgoing[0].Content, "<state>") {
-		t.Fatalf("标签泄漏进上下文：%s", outgoing[0].Content)
+	if !strings.Contains(outgoing[0].Content, "<state>\n季节 = 初冬\n</state>") {
+		t.Fatalf("提示词该原样出站（含示例块）：%s", outgoing[0].Content)
 	}
 	if !strings.Contains(outgoing[0].Content, "HP = 12") || !strings.Contains(outgoing[0].Content, "季节 = 初冬") {
 		t.Fatalf("该注入当前状态表：%s", outgoing[0].Content)
@@ -450,14 +439,46 @@ func TestEstimateTokens(t *testing.T) {
 	}
 }
 
-// 生效提示词的**唯一一处**解析：会话覆盖 → agent 的 → 内置默认；落空就往上弹，**永不返回空串**。
-//
-// 悬空 agent（软引用找不到）与"只写了空白"都当"没这一级"—— 底子曾因此发成空串。
-func TestResolveSystemPromptNeverEmpty(t *testing.T) {
-	agents := config.AgentsConfig{Agents: []config.Agent{
-		{ID: "跑团", Name: "跑团主持人", SystemPrompt: "你是跑团主持人。"},
-		{ID: "沉默", Name: "沉默", SystemPrompt: "   \n  "},
+// 拼装（`AssembleSystemPrompt`）：base + 追加段，**纯字符串拼接**（用户定 2026-10-11）——
+// 顺序、空行分隔、空 base / 空段跳过、缺段跳过（+日志，不炸）。
+func TestAssembleSystemPrompt(t *testing.T) {
+	agents := config.AgentsConfig{Segments: []config.Segment{
+		{ID: "katex", Text: "数学用 $…$ 写。"},
+		{ID: "empty", Text: "   "},
+		{ID: "mcp", Text: "需要联网时调用搜索工具。"},
 	}}
+	got := AssembleSystemPrompt(config.Agent{ID: "a", SystemPrompt: "你是助手。", Segments: []string{"katex", "empty", "mcp"}}, agents)
+	if want := "你是助手。\n\n数学用 $…$ 写。\n\n需要联网时调用搜索工具。"; got != want {
+		t.Fatalf("拼装 = %q，要 %q", got, want)
+	}
+	// base 空 ⇒ 从第一段开始；段序 = 列表序（换个序就是换个结果）
+	got = AssembleSystemPrompt(config.Agent{ID: "a", Segments: []string{"mcp", "katex"}}, agents)
+	if want := "需要联网时调用搜索工具。\n\n数学用 $…$ 写。"; got != want {
+		t.Fatalf("无 base 的拼装 = %q，要 %q", got, want)
+	}
+	// 缺段 ⇒ 跳过（启动校验已挡；运行期兜底不炸）
+	if got := AssembleSystemPrompt(config.Agent{ID: "a", SystemPrompt: "base", Segments: []string{"nope"}}, agents); got != "base" {
+		t.Fatalf("缺段该跳过：%q", got)
+	}
+	// 全空 ⇒ 空串（调用方决定回落）
+	if got := AssembleSystemPrompt(config.Agent{ID: "a", SystemPrompt: "  ", Segments: []string{"empty"}}, agents); got != "" {
+		t.Fatalf("全空该是空串：%q", got)
+	}
+}
+
+// 生效提示词的**唯一一处**解析：会话覆盖 → agent 的（base+段拼装）→ 内置默认；落空就往上弹，**永不返回空串**。
+//
+// 悬空 agent（软引用找不到）与"只写了空白"都当"没这一级"。
+func TestResolveSystemPromptNeverEmpty(t *testing.T) {
+	agents := config.AgentsConfig{
+		Segments: []config.Segment{{ID: "katex", Text: "数学用 $…$ 写。"}},
+		Agents: []config.Agent{
+			{ID: "跑团", Name: "跑团主持人", SystemPrompt: "你是跑团主持人。"},
+			{ID: "沉默", Name: "沉默", SystemPrompt: "   \n  "},
+			{ID: "带段", Name: "带段", SystemPrompt: "你是助手。", Segments: []string{"katex"}},
+			{ID: "只有段", Name: "只有段", Segments: []string{"katex"}},
+		},
+	}
 	builtin := config.BuiltinDefaultAgent().SystemPrompt
 
 	cases := []struct {
@@ -473,6 +494,8 @@ func TestResolveSystemPromptNeverEmpty(t *testing.T) {
 		{"会话只写了空白 ⇒ 不算写，回落 agent", model.Session{SystemPrompt: "  \n ", AgentID: "跑团"}, "你是跑团主持人。", PromptFromAgent},
 		{"内置 default（文件里没有这条）⇒ builtin", model.Session{AgentID: "default"}, builtin, PromptFromBuiltin},
 		{"什么都没有 ⇒ builtin", model.Session{}, builtin, PromptFromBuiltin},
+		{"agent 带段 ⇒ base + 段拼装", model.Session{AgentID: "带段"}, "你是助手。\n\n数学用 $…$ 写。", PromptFromAgent},
+		{"只有段、没有 base ⇒ 段本身", model.Session{AgentID: "只有段"}, "数学用 $…$ 写。", PromptFromAgent},
 	}
 	for _, c := range cases {
 		text, source := ResolveSystemPrompt(c.session, agents)

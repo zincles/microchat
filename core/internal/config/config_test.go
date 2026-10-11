@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -26,5 +27,60 @@ func TestProviderEndpointsPassthrough(t *testing.T) {
 	endpoints, _ := back["endpoints"].(map[string]any)
 	if endpoints["openai-response"] != "https://x.invalid/r" {
 		t.Fatalf("透传丢了：%s", out)
+	}
+}
+
+// 提示词段（system prompt segment）：段库与引用的一致性 —— 写入与启动读取同一个口径。
+func TestValidateSegments(t *testing.T) {
+	ok := AgentsConfig{
+		Segments: []Segment{{ID: "katex", Text: "数学用 $…$ 写。"}},
+		Agents:   []Agent{{ID: "a", Segments: []string{"katex"}}},
+	}
+	if err := ok.ValidateSegments(); err != nil {
+		t.Fatalf("合法的该过：%v", err)
+	}
+	for _, probe := range []struct {
+		name string
+		cfg  AgentsConfig
+	}{
+		{"空 id", AgentsConfig{Segments: []Segment{{ID: "  "}}}},
+		{"重复 id", AgentsConfig{Segments: []Segment{{ID: "a"}, {ID: "a"}}}},
+		{"引用不存在", AgentsConfig{Agents: []Agent{{ID: "x", Segments: []string{"nope"}}}}},
+	} {
+		if err := probe.cfg.ValidateSegments(); err == nil {
+			t.Fatalf("%s 该报错", probe.name)
+		}
+	}
+}
+
+// 内置段（2026-10-11 用户定）：正文住 `segments/*.md`（go:embed 进二进制）；id 保留、只读；
+// 引用内置合法；SegmentByID 找得到。`current_state` 那条已删（用户定）。
+func TestBuiltinSegmentsAreReserved(t *testing.T) {
+	builtins := BuiltinSegments()
+	if len(builtins) != 4 {
+		t.Fatalf("内置段该四条（2026-10-11 迁移）：%+v", builtins)
+	}
+	if _, ok := BuiltinSegmentByID("current_state"); ok {
+		t.Fatal("current_state 已删（2026-10-11 用户定）")
+	}
+	first := builtins[0]
+	if first.ID != "StateLang 语法" || first.Text == "" {
+		t.Fatalf("首条内置该是 StateLang 语法 且正文非空：%+v", first)
+	}
+	// 正文现读自嵌入文件（逐字）
+	if !strings.Contains(first.Text, "StateLang 语法规范") {
+		t.Fatalf("嵌入正文没读到？%q", first.Text[:40])
+	}
+	// 用户段撞内置 id ⇒ 校验拒（写入与启动读取同一个口径）
+	if err := (AgentsConfig{Segments: []Segment{{ID: first.ID, Text: "x"}}}).ValidateSegments(); err == nil {
+		t.Fatal("撞内置 id 该报错")
+	}
+	// 引用内置 ⇒ 合法
+	if err := (AgentsConfig{Agents: []Agent{{ID: "a", Segments: []string{first.ID}}}}).ValidateSegments(); err != nil {
+		t.Fatalf("引用内置该过：%v", err)
+	}
+	// SegmentByID 找得到内置（拼装靠它）
+	if seg, found := (AgentsConfig{}).SegmentByID(first.ID); !found || seg.Text == "" {
+		t.Fatal("SegmentByID 该找得到内置")
 	}
 }

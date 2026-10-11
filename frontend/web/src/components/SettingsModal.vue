@@ -6,6 +6,7 @@
 import { ref, onMounted, onUnmounted, watch, nextTick } from "vue";
 import ToggleSwitch from "./ToggleSwitch.vue";
 import AgentEditor from "./AgentEditor.vue";
+import SegmentEditor from "./SegmentEditor.vue";
 import assistantPreset from "../../presets/assistant.json";
 import rpPreset from "../../presets/rp-agent.json";
 import ProviderEditor from "./ProviderEditor.vue";
@@ -47,8 +48,12 @@ const defStatus = ref("");
 const cli = ref({ api: apiBase(), token: "" });
 const netStatus = ref("");
 const agents = ref([]);
+const segmentsLib = ref([]); // 提示词段库（随 GET /agents 一起给）
 const curDefault = ref("");
 const editAgent = ref(null); // null | 'new' | agent（二级编辑器）
+const editSeg = ref(null); // null | 'new' | segment（「提示词」tab 内的二级页）
+// 谁引用了这个段（「提示词」tab 列表与编辑器共用）。
+const segRefs = (id) => agents.value.filter((a) => (a.segments ?? []).includes(id)).map((a) => a.name || a.id);
 const providers = ref([]);
 const editProvider = ref(null); // null | 'new' | provider（二级编辑器）
 const routesStatus = ref("");
@@ -126,6 +131,7 @@ async function loadAgents() {
     const data = await api.agents();
     curDefault.value = data.default_agent ?? "";
     agents.value = data.agents ?? [];
+    segmentsLib.value = data.segments ?? [];
   } catch {}
 }
 
@@ -190,7 +196,7 @@ onUnmounted(() => document.removeEventListener("keydown", onKey));
 function onKey(e) {
   if (e.key !== "Escape") return;
   // 二级页（Agent/渠道详情）或外面临时弹窗开着 ⇒ Esc 归它们；一次按键只关一层（踩过：双关）。
-  if (editAgent.value || editProvider.value || props.escBlocked) return;
+  if (editAgent.value || editSeg.value || editProvider.value || props.escBlocked) return;
   emit("close");
 }
 </script>
@@ -295,12 +301,39 @@ function onKey(e) {
             </div>
           </template>
           <AgentEditor
-            v-else
+            v-if="editAgent"
             :agent="editAgent === 'new' || editAgent?.template ? null : editAgent"
             :template="editAgent?.template ?? null"
+            :segments="segmentsLib"
             :is-default="editAgent !== 'new' && editAgent?.id === curDefault"
             :ask="ask"
             @close="editAgent = null"
+            @saved="loadAgents"
+          />
+
+        </section>
+        <section v-show="tab === 'prompt'" id="panel-prompt" class="panel">
+          <template v-if="!editSeg">
+            <div class="panel-head">
+              <h3>提示词段（可复用的 sys prompt 段；「智能体」里逐段引用）</h3>
+              <span class="head-btns"><button type="button" class="primary" @click="editSeg = 'new'">新建</button></span>
+            </div>
+            <table v-if="segmentsLib.length" class="plist">
+              <thead><tr><th>id</th><th>预览</th><th>被谁引用</th></tr></thead>
+              <tbody><tr v-for="s in segmentsLib" :key="s.id" class="clickable" @click="editSeg = s">
+                <td>{{ s.id }}<i v-if="s.builtin" class="builtin-tag">内置</i></td>
+                <td>{{ s.text.slice(0, 40) }}</td>
+                <td>{{ segRefs(s.id).join("、") || "—" }}</td>
+              </tr></tbody>
+            </table>
+            <div v-else class="status">（还没有段 —— 点「新建」起一段：比如教模型写 &lt;state&gt; 的那套、KaTeX 用法、联网搜索纪律）</div>
+          </template>
+          <SegmentEditor
+            v-else
+            :segment="editSeg === 'new' ? null : editSeg"
+            :agents="agents"
+            :ask="ask"
+            @close="editSeg = null"
             @saved="loadAgents"
           />
         </section>

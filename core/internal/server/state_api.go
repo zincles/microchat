@@ -25,21 +25,18 @@ func (s *Server) viewOf(session model.Session) (state.View, error) {
 	if err != nil {
 		return state.View{}, err
 	}
-	systemPrompt, source := s.effectiveSystemPrompt(session)
-	return state.FromSources(session.ID, systemPrompt, source, messages), nil
+	return state.FromSources(session.ID, messages), nil
 }
 
-// getSessionState：某会话的世界状态：底子（生效提示词里的块）+ 顺着正文重演出来的本会话改动 + 生效值。
+// getSessionState：某会话的世界状态：顺着正文现演出来的值（提示词里的块**不算数**——那是说明文）。
 //
 // 查询参数 `at_idx=N`（**同一条路由加参数**，不开新路）⇒ **截至第 N 条的现演**：
 //
-//   - **底子永远用当前的生效提示词** ✗（不追究历史）⇒ 它是"用**今天**的底子 + 到那一条为止的正文
-//     算出来的"，**不是真快照**（换提示词，同一个 N 的答案立刻跟着变）；
-//   - 正文只 fold **到第 N 条（含）**；`at_idx=0` ⇒ 只有底子；
+//   - 正文只 fold **到第 N 条（含）**；`at_idx=0` ⇒ 空状态（一条都不 fold）；
 //   - `N` 超过现有条数 ⇒ 当作"到最后一条"（与 `/messages` 的区间查询一个口吻：**越界不是错**）；
 //   - 不给参数 ⇒ **当前状态**（现状一字不改）；给了但不是非负整数（`-1` / `abc` / 空）⇒ **400**。
 //
-// 响应仍是同一个 `StateView`（`baseline` / `session` / `baseline_values` / `effective` / `tables`）。
+// 响应仍是同一个 `StateView`（`session` / `effective` / `tables`）。
 func (s *Server) getSessionState(w http.ResponseWriter, r *http.Request) {
 	session, ok := s.requireSession(w, r)
 	if !ok {
@@ -54,13 +51,12 @@ func (s *Server) getSessionState(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	systemPrompt, source := s.effectiveSystemPrompt(*session)
 	if !given {
 		// 不给参数 = 当前状态：走**原来那条**（一条消息都不截）
-		writeJSON(w, http.StatusOK, state.FromSources(session.ID, systemPrompt, source, messages))
+		writeJSON(w, http.StatusOK, state.FromSources(session.ID, messages))
 		return
 	}
-	writeJSON(w, http.StatusOK, state.StateAt(session.ID, systemPrompt, source, messages, at))
+	writeJSON(w, http.StatusOK, state.StateAt(session.ID, messages, at))
 }
 
 // atIdx：读 `at_idx`：不给 ⇒ (0, false, true)；给了就要非负整数（`0` 合法 —— 只有底子）⇒ 否则 400。

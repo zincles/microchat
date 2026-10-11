@@ -185,6 +185,10 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
     // models：跨 provider 拍平（`{provider, upstream_id, name}` —— 下拉选项就打它）。
     models: () => call("GET", "/models"),
     agents: () => call("GET", "/agents"),
+    // 提示词段（system prompt segment）：读口随 `GET /agents`（段库就在那份里）；写口三个（admin）。
+    createSegment: (body) => call("POST", "/segments", body),
+    patchSegment: (id, body) => call("PATCH", `/segments/${enc(id)}`, body),
+    deleteSegment: (id) => call("DELETE", `/segments/${enc(id)}`),
     createAgent: (body) => call("POST", "/agents", body),
     patchAgent: (id, body) => call("PATCH", `/agents/${enc(id)}`, body),
     deleteAgent: (id) => call("DELETE", `/agents/${enc(id)}`),

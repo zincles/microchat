@@ -107,6 +107,9 @@ func main() {
 	if err := abilities.Validate(agents); err != nil {
 		fatal("agents.json 的能力开关不合法: %v", err)
 	}
+	if err := agents.ValidateSegments(); err != nil {
+		fatal("agents.json 的提示词段不合法: %v", err)
+	}
 	// 鉴权（DEFINE「用户与鉴权」）：JWT 签名密钥缺省现铸并写回配置；环回系统令牌每次启动现铸
 	// （只走内存 —— TUI/TG 与 server 同进程，没有落盘的必要）。
 	jwtKey, err := cfg.JWTKey(paths)

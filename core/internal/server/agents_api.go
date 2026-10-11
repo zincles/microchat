@@ -19,6 +19,9 @@ type CreateAgentReq struct {
 	// 名称是**唯一的人类句柄** —— id 由后端生成，不接受指定。
 	Name         string `json:"name"`
 	SystemPrompt string `json:"system_prompt"`
+	// Segments：追加段（段库里的 id 列表，顺序 = 追加顺序；拼装见 `state.AssembleSystemPrompt`）。
+	// 引用的段必须在库里 ⇒ 400。
+	Segments []string `json:"segments,omitempty"`
 	// Abilities：能力开关（键 = 能力 id）。**缺省 = 默认全开**；未知的 id ⇒ 400。
 	Abilities    map[string]config.AbilityToggle `json:"abilities,omitempty"`
 	PrependState *bool                           `json:"prepend_state,omitempty"`
@@ -36,6 +39,8 @@ func (r CreateAgentReq) DisplayModeValue() string {
 type UpdateAgentReq struct {
 	Name         *string `json:"name"`
 	SystemPrompt *string `json:"system_prompt"`
+	// Segments：给了就**整段替换**这串引用（nil = 不动；`[]` = 清空）。引用的段必须在库里 ⇒ 400。
+	Segments []string `json:"segments,omitempty"`
 	// Abilities：给了就**整段替换**这张映射（与 `system_prompt` 一个语义；nil = 不动）。
 	// 未知的能力 id ⇒ 400（写了不生效是最难查的一类问题，不许静默忽略）。
 	Abilities map[string]config.AbilityToggle `json:"abilities,omitempty"`
@@ -53,13 +58,37 @@ func (s *Server) saveAgents(agents config.AgentsConfig) error {
 	return config.SaveJSON(s.paths.Config("agents.json"), agents)
 }
 
+// segmentView：段库对外的一条 —— 用户段与**内置段**同列，`builtin` 标出来源（文件里没有它）。
+type segmentView struct {
+	config.Segment
+	Builtin bool `json:"builtin,omitempty"`
+}
+
+// agentsView：`GET /agents` 的响应 = AgentsConfig 全貌 + 段库（外层的 `segments` 盖过内嵌的那个）。
+type agentsView struct {
+	config.AgentsConfig
+	Segments []segmentView `json:"segments,omitempty"`
+}
+
 // listAgents：对外给"生效列表"——含内置默认 agent（文件里没有 `default` 时补上）。
 func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
 	agents := s.loadAgents()
-	writeJSON(w, http.StatusOK, config.AgentsConfig{
-		Version:      agents.Version,
-		DefaultAgent: agents.DefaultAgent,
-		Agents:       agents.Effective(),
+	// 段库 = 用户段 + **内置段**（带 `builtin: true` 标记，编辑器据此只读/给"复制为自定义"）。
+	// 内置的实体在代码里（`config.BuiltinSegments`），永远不进文件。
+	segments := make([]segmentView, 0, len(agents.Segments)+len(config.BuiltinSegments()))
+	for _, s := range config.BuiltinSegments() {
+		segments = append(segments, segmentView{Segment: s, Builtin: true})
+	}
+	for _, s := range agents.Segments {
+		segments = append(segments, segmentView{Segment: s})
+	}
+	writeJSON(w, http.StatusOK, agentsView{
+		AgentsConfig: config.AgentsConfig{
+			Version:      agents.Version,
+			DefaultAgent: agents.DefaultAgent,
+			Agents:       agents.Effective(),
+		},
+		Segments: segments,
 	})
 }
 
@@ -82,12 +111,18 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		ID:           uuid.Must(uuid.NewV7()).String(),
 		Name:         name,
 		SystemPrompt: req.SystemPrompt,
+		Segments:     req.Segments,
 		Abilities:    req.Abilities,
 		PrependState: req.PrependState,
 		DisplayMode:  req.DisplayModeValue(),
 	}
 	// 未知的能力 id 写进去只会"配了不生效" ⇒ 当场拒（口径见 `internal/abilities`）
 	if err := abilities.Validate(config.AgentsConfig{Agents: []config.Agent{agent}}); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid", err.Error())
+		return
+	}
+	// 段引用同理：不在库里 ⇒ 400（启动读取还会再报一次，同一个口径）
+	if err := (config.AgentsConfig{Segments: agents.Segments, Agents: []config.Agent{agent}}).ValidateSegments(); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid", err.Error())
 		return
 	}
@@ -172,6 +207,9 @@ func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request) {
 	if req.SystemPrompt != nil {
 		agents.Agents[index].SystemPrompt = *req.SystemPrompt
 	}
+	if req.Segments != nil {
+		agents.Agents[index].Segments = req.Segments
+	}
 	if req.Abilities != nil {
 		agents.Agents[index].Abilities = req.Abilities
 	}
@@ -183,6 +221,10 @@ func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	// 未知的能力 id 一律在场拒（`POST` 与 `PATCH` 同一个口径）
 	if err := abilities.Validate(config.AgentsConfig{Agents: []config.Agent{agents.Agents[index]}}); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid", err.Error())
+		return
+	}
+	if err := (config.AgentsConfig{Segments: agents.Segments, Agents: []config.Agent{agents.Agents[index]}}).ValidateSegments(); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid", err.Error())
 		return
 	}

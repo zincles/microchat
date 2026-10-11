@@ -564,8 +564,8 @@ func (e *debugEnv) outgoing(args []string) int {
 	if err != nil {
 		return report(err)
 	}
-	prompt, source := e.chat.EffectiveSystemPrompt(*session)
-	view := state.FromSources(session.ID, prompt, source, messages)
+	prompt, _ := e.chat.EffectiveSystemPrompt(*session)
+	view := state.FromSources(session.ID, messages)
 	for index, item := range state.BuildOutgoing(prompt, messages, summaries, view.Tables, false) {
 		emit(outgoingLine{
 			Index: index, Outgoing: item,
@@ -665,8 +665,7 @@ func (e *debugEnv) stateOf(args []string) int {
 	if err != nil {
 		return report(err)
 	}
-	prompt, source := e.chat.EffectiveSystemPrompt(*session)
-	emit(state.FromSources(session.ID, prompt, source, messages))
+	emit(state.FromSources(session.ID, messages))
 	return 0
 }
 

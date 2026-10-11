@@ -9,10 +9,13 @@ package config
 import (
 	"bytes"
 	"crypto/rand"
+	"embed"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Paths：两个目录都相对工作目录，可用环境变量覆盖（与 Rust 版同名）。
@@ -127,7 +130,7 @@ func (c Config) BotToken() string {
 // DefaultConfig：与 Rust 版的 Default 逐字相同（开箱落到 dummy：没有上游，但立刻有回话）。
 func DefaultConfig() Config {
 	return Config{
-		Version:  1,
+		Version: 1,
 		// 默认对局域网开放（0.0.0.0）：手机/平板开 http://<本机IP>:8787/api/v1 就能用。
 		// 没设 auth_token 时本网段人人可用 —— 要收紧就设口令（见 AGENTS 配置一节）。
 		Server:   ServerConfig{Host: "0.0.0.0", Port: 8787},
@@ -226,10 +229,14 @@ type AbilityToggle struct {
 // `Abilities` 的键 = 能力 id（**枚举，写在代码里**，见 `internal/abilities`）；
 // 未知的键在写入与启动读取时都**报清楚**（不静默忽略 —— 写了不生效最难查）。
 type Agent struct {
-	ID           string                   `json:"id"`
-	Name         string                   `json:"name"`
-	SystemPrompt string                   `json:"system_prompt"`
-	Abilities    map[string]AbilityToggle `json:"abilities,omitempty"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	SystemPrompt string `json:"system_prompt"`
+	// Segments：追加段（段库里的 id 列表，**顺序 = 追加顺序**）。
+	// 拼装 = base（`system_prompt`）+ 逐段 `"\n\n"` 拼接 —— **纯字符串拼接**，
+	// 无替换无递归（`state.AssembleSystemPrompt`，唯一实现处）。
+	Segments  []string                 `json:"segments,omitempty"`
+	Abilities map[string]AbilityToggle `json:"abilities,omitempty"`
 	// PrependState：出站时把当前状态表渲染成 `<current_state>` 块，贴到用户句首。
 	// 缺省 = 关（只有 RP 这类 Agent 需要；一般问答用不到）。
 	PrependState *bool `json:"prepend_state,omitempty"`
@@ -238,10 +245,104 @@ type Agent struct {
 	DisplayMode string `json:"display_mode,omitempty"`
 }
 
+// Segment：一段可复用的提示词（"system prompt segment"，用户定 2026-10-11）。
+//
+// 住 `agents.json` 顶层（与"没有 abilities.json"同一条思路：一个文件 = 人格 + 段，
+// 卡带导出天然完整）；agent 用 `segments: [id…]` 引用，拼装 = base + 逐段拼接。
+type Segment struct {
+	ID   string `json:"id"`
+	Text string `json:"text"`
+}
+
 type AgentsConfig struct {
-	Version      int     `json:"version"`
-	DefaultAgent string  `json:"default_agent"`
-	Agents       []Agent `json:"agents"`
+	Version      int       `json:"version"`
+	DefaultAgent string    `json:"default_agent"`
+	Segments     []Segment `json:"segments,omitempty"`
+	Agents       []Agent   `json:"agents"`
+}
+
+// 内置提示词段（2026-10-11 用户定）：正文住 `segments/*.md`，**随二进制嵌入** ——
+// 一字不改地随代码提交/分发（git 里可 diff、新装即得）；**只读、删不掉**（要改就"复制为自定义"）；
+// 用户段**不许与内置撞 id**（`ValidateSegments` 在写入与启动读取时都报）。
+//
+//go:embed segments/*.md
+var builtinSegmentFS embed.FS
+
+// builtinSegmentFiles：内置段清单（顺序 = 段库里的展示顺序；id ↔ 文件的映射就在这儿）。
+var builtinSegmentFiles = []struct{ ID, File string }{
+	{ID: "StateLang 语法", File: "segments/statelang-syntax.md"},
+	{ID: "合理的RolePlay", File: "segments/roleplay.md"},
+	{ID: "在RolePlay里使用StateLang", File: "segments/statelang-in-roleplay.md"},
+	{ID: "Markdown RolePlay相关", File: "segments/markdown-roleplay.md"},
+}
+
+// BuiltinSegments：全部内置段（正文现读自嵌入文件）。
+func BuiltinSegments() []Segment {
+	out := make([]Segment, 0, len(builtinSegmentFiles))
+	for _, item := range builtinSegmentFiles {
+		text, err := builtinSegmentFS.ReadFile(item.File)
+		if err != nil {
+			// 文件在编译期就嵌进来了（`go:embed`）—— 读不到只可能是清单里文件名写错，开发错误，直接炸。
+			panic("内置提示词段读不到：" + item.File + "（" + err.Error() + "）")
+		}
+		out = append(out, Segment{ID: item.ID, Text: string(text)})
+	}
+	return out
+}
+
+// SegmentByID：按 id 找段（用户库在前，内置在后 —— 撞名被校验挡掉，正常不会两义）。
+func (c AgentsConfig) SegmentByID(id string) (Segment, bool) {
+	for _, segment := range c.Segments {
+		if segment.ID == id {
+			return segment, true
+		}
+	}
+	for _, segment := range BuiltinSegments() {
+		if segment.ID == id {
+			return segment, true
+		}
+	}
+	return Segment{}, false
+}
+
+// BuiltinSegmentByID：只在内置里找（段 CRUD 的守卫用：内置只读）。
+func BuiltinSegmentByID(id string) (Segment, bool) {
+	for _, segment := range BuiltinSegments() {
+		if segment.ID == id {
+			return segment, true
+		}
+	}
+	return Segment{}, false
+}
+
+// ValidateSegments：段库与引用的一致性 —— **写入与启动读取时都报**（与 abilities 一个口径）：
+// 段 id 非空且唯一、**不许与内置撞名**；每个 agent 引用的段必须在库**或内置**里
+// （写了不生效是最难查的一类问题）。
+func (c AgentsConfig) ValidateSegments() error {
+	seen := map[string]bool{}
+	for _, segment := range c.Segments {
+		id := strings.TrimSpace(segment.ID)
+		if id == "" {
+			return fmt.Errorf("提示词段有空 id")
+		}
+		if _, builtin := BuiltinSegmentByID(id); builtin {
+			return fmt.Errorf("提示词段 id 与内置段撞名：%s（内置只读，换个 id）", id)
+		}
+		if seen[id] {
+			return fmt.Errorf("提示词段 id 重复：%s", id)
+		}
+		seen[id] = true
+	}
+	for _, agent := range c.Agents {
+		for _, ref := range agent.Segments {
+			if !seen[ref] {
+				if _, builtin := BuiltinSegmentByID(ref); !builtin {
+					return fmt.Errorf("agent %q 引用了不存在的提示词段：%s", agent.ID, ref)
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func (c AgentsConfig) Get(id string) (Agent, bool) {

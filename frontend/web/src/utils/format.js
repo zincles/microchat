@@ -71,14 +71,16 @@ export function deletionPlanSummary(plan) {
 
 // ---- 设置 modal 纯逻辑（无 DOM，测试直引） ----
 
-// SETTINGS_TABS：设置视图五区（顺序固定）—— **id 与中文名同一份**（按钮标签、panel id 都从它来）。
+// SETTINGS_TABS：设置视图六区（顺序固定）—— **id 与中文名同一份**（按钮标签、panel id 都从它来）。
 // （原来的「界面」区已搬到用户视图；用户视图与设置视图平级，不带 tab。）
+// 「提示词」= 可复用提示词段（system prompt segment）的库；「智能体」里逐段引用（2026-10-11 用户定）。
 export const SETTINGS_TABS = [
   { id: "chat", label: "聊天" },
   { id: "net", label: "连接" },
   { id: "session", label: "会话" },
-  { id: "agent", label: "Agent" },
-  { id: "provider", label: "Provider" },
+  { id: "agent", label: "智能体" },
+  { id: "provider", label: "渠道" },
+  { id: "prompt", label: "提示词" },
 ];
 
 // formatRoutesOutcome：刷路由回形 {provider, models, error?} ⇒ 缓存行文案。

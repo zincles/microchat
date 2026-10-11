@@ -11,6 +11,7 @@ package state
 
 import (
 	"encoding/json"
+	"log"
 	"math"
 	"sort"
 	"strconv"
@@ -21,39 +22,29 @@ import (
 	"microchat/internal/statelang"
 )
 
-// Scope：一条操作算哪一层。
-type Scope string
-
-const (
-	// ScopeGlobal：底子来自 agent 的提示词（或内置默认那句）⇒ 用同一个 agent 的会话共享。
-	ScopeGlobal Scope = "global"
-	// ScopeSession：底子来自会话自己的提示词，或来自消息正文 ⇒ 只属于这条会话。
-	ScopeSession Scope = "session"
-)
-
-// PromptSource：生效的那份系统提示词是从哪儿来的 —— 决定它的 `<state>` 块算哪一层。
+// PromptSource：生效的那份系统提示词是从哪儿来的 —— `GET /prompt` 的 `type` 就报它。
 type PromptSource string
 
 const (
-	// PromptFromAgent：会话没写自己的提示词（用的 agent 的）⇒ 底子算全局。
+	// PromptFromAgent：会话没写自己的提示词（用的 agent 的：base + 追加段拼装）。
 	PromptFromAgent PromptSource = "agent"
-	// PromptFromSession：会话自己写了（覆盖了 agent 的）⇒ 底子算本会话。
+	// PromptFromSession：会话自己写了（整段覆盖 agent 的）。
 	PromptFromSession PromptSource = "session"
 	// PromptFromBuiltin：会话没写、会话的 agent 也没给出提示词（agent 悬空 / 没写 / 只写了空白）
-	// ⇒ 用内置默认 agent 的那句 ⇒ 底子算全局。
+	// ⇒ 用内置默认 agent 的那句。
 	PromptFromBuiltin PromptSource = "builtin"
 )
 
-// ResolveSystemPrompt：**生效的系统提示词** —— 全仓**唯一一处**解析（会话覆盖 → agent 的 → 内置默认）。
+// ResolveSystemPrompt：**生效的系统提示词** —— 全仓**唯一一处**解析（会话覆盖 → agent 的（base+段拼装）→ 内置默认）。
 //
 // 三级自上而下，落空就往上弹，**永不返回空串**：
 //
-//	会话自己写了（去空白后非空）⇒ 它的，来源 PromptFromSession
-//	会话的 agent（`agents.json` 里真有这一条）写了非空提示词 ⇒ agent 的，来源 PromptFromAgent
+//	会话自己写了（去空白后非空）⇒ 它的（整段覆盖），来源 PromptFromSession
+//	会话的 agent（`agents.json` 里真有这一条）拼装后非空 ⇒ agent 的，来源 PromptFromAgent
 //	其余（agent 悬空 / 没写 / 只写了空白）⇒ `config.BuiltinDefaultAgent().SystemPrompt`，来源 PromptFromBuiltin
 //
 // "只写了空白" 与 "没写" 同待遇 —— 与 `<state>` 的"空值就是清掉"一个口径。
-// 出站拼装、世界状态底子、`GET /prompt` 都读这一处，免得三处口径打架（悬空 agent 曾让出站那条链发出空底子）。
+// 出站拼装与 `GET /prompt` 都读这一处，免得两处口径打架（悬空 agent 曾让出站那条链发出空底子）。
 func ResolveSystemPrompt(session model.Session, agents config.AgentsConfig) (string, PromptSource) {
 	if own := strings.TrimSpace(session.SystemPrompt); own != "" {
 		return own, PromptFromSession
@@ -61,18 +52,42 @@ func ResolveSystemPrompt(session model.Session, agents config.AgentsConfig) (str
 	// 只用文件里**真有**的那条：`Resolve` 会把内置默认补进来，
 	// 那会把 builtin 那一级伪装成 agent 的（来源就报错了）⇒ 这里用 `Get`。
 	if agent, ok := agents.Get(session.AgentID); ok {
-		if prompt := strings.TrimSpace(agent.SystemPrompt); prompt != "" {
-			return agent.SystemPrompt, PromptFromAgent
+		if prompt := AssembleSystemPrompt(agent, agents); strings.TrimSpace(prompt) != "" {
+			return prompt, PromptFromAgent
 		}
 	}
 	return config.BuiltinDefaultAgent().SystemPrompt, PromptFromBuiltin
+}
+
+// AssembleSystemPrompt：**拼装** agent 的提示词 = base + 追加段（用户定 2026-10-11）。
+//
+// 规则只有三条：顺序 = `agent.Segments` 的顺序；每段之间隔一个空行（`"\n\n"`）；
+// 空 base / 空段跳过。**纯字符串拼接** —— 无替换、无递归、无运行时语义，
+// 同一形状永远拼出同一结果（前缀缓存的前提）。
+// 缺段（文件被手改）⇒ 跳过 + 日志；正常路径由 `AgentsConfig.ValidateSegments`
+// 在写入与启动读取时挡掉。
+func AssembleSystemPrompt(agent config.Agent, agents config.AgentsConfig) string {
+	parts := make([]string, 0, 1+len(agent.Segments))
+	if base := strings.TrimSpace(agent.SystemPrompt); base != "" {
+		parts = append(parts, base)
+	}
+	for _, id := range agent.Segments {
+		segment, ok := agents.SegmentByID(id)
+		if !ok {
+			log.Printf("提示词段 %q 不在库里（agent %q）—— 已跳过", id, agent.ID)
+			continue
+		}
+		if text := strings.TrimSpace(segment.Text); text != "" {
+			parts = append(parts, text)
+		}
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 // OpRow：一条"可现演的操作"—— 带上它来自哪条消息，于是"哪句话带来的状态"追得回来。
 type OpRow struct {
 	Seq       int64          `json:"seq"`
 	Table     string         `json:"table"`
-	Scope     Scope          `json:"scope"`
 	Kind      statelang.Kind `json:"kind"`
 	Key       string         `json:"key"`
 	Value     *string        `json:"value"`
@@ -97,10 +112,9 @@ type Tables = map[string]map[string]string
 
 // FromSources：**现演一份快照**（顺序就是 fold 的顺序）。
 //
-// 系统提示词里的 `<state>` / `<current_state>` 块**一律无视**（只取 `Cleaned` 出站，
-// 不解析、不算数）：提示词里大段讲语法的说明，一不小心就被当状态吃进去。
-// 状态只从消息正文里来（assistant 输出的块；用户注入入库前已剔）。
-func FromSources(sessionID string, _ string, _ PromptSource, messages []model.Message) View {
+// 状态**只从消息正文里来**（assistant 输出的块；用户注入入库前已剔）——系统提示词是说明文，
+// 里面的 `<state>` 块不算数（底子层 2026-10-07 已删；提示词原样出站，见 `BuildOutgoing`）。
+func FromSources(sessionID string, messages []model.Message) View {
 	sessionRows := []OpRow{}
 
 	// 消息，按顺序追加。
@@ -111,7 +125,6 @@ func FromSources(sessionID string, _ string, _ PromptSource, messages []model.Me
 		for _, statement := range statelang.Scan(message.Content).Statements {
 			sessionRows = append(sessionRows, OpRow{
 				Table:     statement.Table,
-				Scope:     ScopeSession,
 				Kind:      statement.Kind,
 				Key:       statement.Key,
 				Value:     statement.Value,
@@ -126,26 +139,21 @@ func FromSources(sessionID string, _ string, _ PromptSource, messages []model.Me
 		sessionRows[index].Seq = int64(index)
 	}
 
-	session := fold(sessionRows, ScopeSession)
-	merged := statelang.EnsureDefaultTable(session)
+	tables := statelang.EnsureDefaultTable(foldRows(sessionRows))
 	return View{
 		Session:   sessionRows,
-		Effective: defaultTable(merged),
-		Tables:    merged,
+		Effective: defaultTable(tables),
+		Tables:    tables,
 	}
 }
 
-// StateAt：**`at_idx` 的那条链** —— "用**当前**的底子 + 正文只 fold 到第 N 条（含）"算出来的状态。
+// StateAt：**`at_idx` 的那条链** —— 正文只 fold 到第 N 条（含）算出来的状态。
 //
-// ⚠ **它不是真快照**（这是刻意的，2026-09-30 定）：底子永远是**当前**的生效提示词
-// （不追究历史）⇒ 改了提示词，同一个 `at` 的答案立刻跟着变。它回答的是
-// "**用今天的底子** + 到那一条为止的正文，算出来是什么"，不是"那会儿到底是什么"。
-//
-// `at` 是**序号**：`0` ⇒ 只有底子（一条消息都不 fold）；`1..N` ⇒ 前 N 条；
+// `at` 是**序号**：`0` ⇒ 一条消息都不 fold（空状态）；`1..N` ⇒ 前 N 条；
 // 越界（超过现有条数）当作"到最后一条" —— 与 `/messages` 的区间查询一个口吻（越界不是错）。
 // 参数层的错（负数 / 非整数）由调用方拦（HTTP 层回 400），这里只做防御：负数当 0。
-func StateAt(sessionID, systemPrompt string, source PromptSource, messages []model.Message, at int) View {
-	return FromSources(sessionID, systemPrompt, source, messagesUpTo(messages, at))
+func StateAt(sessionID string, messages []model.Message, at int) View {
+	return FromSources(sessionID, messagesUpTo(messages, at))
 }
 
 // messagesUpTo：`at_idx` 的**唯一**一处落地 —— 取"要 fold 的那一段正文"。
@@ -173,12 +181,9 @@ func Fold(statements []statelang.Statement) Tables {
 	return foldStatements(rows)
 }
 
-func fold(rows []OpRow, scope Scope) Tables {
+func foldRows(rows []OpRow) Tables {
 	statements := make([]statelang.Statement, 0, len(rows))
 	for index := range rows {
-		if rows[index].Scope != scope {
-			continue
-		}
 		statements = append(statements, statelang.Statement{
 			Kind: rows[index].Kind, Table: rows[index].Table,
 			Key: rows[index].Key, Value: rows[index].Value,
@@ -210,33 +215,6 @@ func foldStatements(statements []statelang.Statement) Tables {
 // clears：这条语句是不是"把这个键清掉" —— `delete(键)`，或**赋成空值** `键 =`（§37）。
 func clears(statement statelang.Statement) bool {
 	return statement.Kind == statelang.KindDelete || statement.Value == nil || *statement.Value == ""
-}
-
-// merge：全局打底、本会话覆写，**按表各自合并**。
-// 本会话删掉的键会从全局漏回来 —— 这就是"无墓碑"的语义（§38）。
-func merge(global, session Tables) Tables {
-	merged := Tables{}
-	for name, table := range global {
-		copied := make(map[string]string, len(table))
-		for key, value := range table {
-			copied[key] = value
-		}
-		merged[name] = copied
-	}
-	for name, table := range session {
-		if merged[name] == nil {
-			merged[name] = map[string]string{}
-		}
-		for key, value := range table {
-			merged[name][key] = value
-		}
-	}
-	for name, table := range merged {
-		if len(table) == 0 {
-			delete(merged, name)
-		}
-	}
-	return merged
 }
 
 // defaultTable：那层里 `global` 表的值（不写表名的块都住那儿）—— 空就回空 map，**永不给 nil**。
@@ -325,8 +303,10 @@ type Outgoing struct {
 // prependState：Agent 开了 `prepend_state` 时，把当前状态表渲染成 `<current_state>` 块
 // 贴到**最后一条用户消息**开头（只贴待发那句，历史不动）。关 ⇒ 老样子。
 func BuildOutgoing(systemPrompt string, messages []model.Message, summaries []model.Summary, tables Tables, prependState bool) []Outgoing {
-	// 提示词里的 `<state>` 块和消息里一个待遇：**原样留在存档里，发出去时剔除**。
-	system := strings.TrimSpace(statelang.Scan(systemPrompt).Cleaned)
+	// 系统提示词**原样出站**（2026-10-11 改）：它是说明文，不是状态来源（底子层早已删）——
+	// 从前这里也剔块，把提示词里的语法示例剪得七零八落（实测："块长这样（…）：" 后面空空如也）。
+	// 剔块只对**消息正文**做（那儿才是块的家）。
+	system := strings.TrimSpace(systemPrompt)
 	if table, ok := RenderTable(tables); ok {
 		if system != "" {
 			system += "\n\n"

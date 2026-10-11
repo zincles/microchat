@@ -9,6 +9,10 @@ export const DEFAULT_SEND = "enter";
 
 export function previewOn() { return localStorage.getItem("mc_preview") !== "0"; }
 
+// 载荷栏"分块视图"（2026-10-11 用户点名）：开着就把 body.messages 一块块画出来（比裸 JSON 直观）。
+export function payloadVizOn() { return localStorage.getItem("mc_payload_viz") === "1"; }
+export function savePayloadViz(on) { localStorage.setItem("mc_payload_viz", on ? "1" : "0"); }
+
 // defaultApiBase：**跟着"你从哪儿打开这个页面"走**（location.hostname）——
 // 手机从 http://192.168.0.110:8788 打开，默认后端就是 http://192.168.0.110:8787/api/v1，
 // 探通直接进聊天、探不通时门板也按这个预填（从前钉死 127.0.0.1，在手机上指的是手机自己）。

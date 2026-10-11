@@ -1,15 +1,17 @@
 <script setup>
 // Agent 编辑器（设置视图 Agent tab 内的二级页，列表 ⇄ 详情就地切换）：新建 / 改 id·名 / 提示词 / 三能力开关 / 设默认 / 删除。
 // isNew（boolean）：无 agent 快照=新建（空表单）；有=编辑（带入快照，保存后父重拉，id 变了也对得上）。关即销毁。
-import { ref, onMounted, onUnmounted } from "vue";
+import { ref, computed, onMounted, onUnmounted } from "vue";
 import { sharedApi } from "../utils/prefs.js";
 import { ABILITY_IDS, buildAbilitiesPatch, modelKey, parseModelKey, modelLabel } from "../utils/format.js";
+import { assemblePrompt, missingSegments } from "../utils/prompt.js";
 import ToggleSwitch from "./ToggleSwitch.vue";
 
 const props = defineProps({
   agent: { type: Object, default: null },
   isDefault: { type: Boolean, default: false },
   template: { type: Object, default: null }, // 新建模板 {name, system_prompt, prepend_state, abilities}
+  segments: { type: Array, default: () => [] }, // 段库（picker 用；随 GET /agents 一起给）
   ask: { type: Function, default: null }, // 全局确认框（删除前先摊开）
 });
 const emit = defineEmits(["close", "saved"]);
@@ -22,6 +24,24 @@ const prompt = ref(props.agent?.system_prompt ?? props.template?.system_prompt ?
 const rows = ref({});
 const prepend = ref(!!(props.agent?.prepend_state ?? props.template?.prepend_state));
 const displayMode = ref(props.agent?.display_mode ?? props.template?.display_mode ?? "chat");
+// 追加段（顺序 = 拼接顺序）。段库在 `props.segments`；拼装预览走纯函数（与后端同规则）。
+const segs = ref([...(props.agent?.segments ?? props.template?.segments ?? [])]);
+const segPick = ref("");
+const segText = (id) => props.segments.find((s) => s.id === id)?.text ?? "";
+const segMissing = (id) => !props.segments.some((s) => s.id === id);
+const assembled = computed(() => assemblePrompt(prompt.value, segs.value, props.segments));
+const missing = computed(() => missingSegments(segs.value, props.segments));
+function addSeg() {
+  if (segPick.value && !segs.value.includes(segPick.value)) segs.value.push(segPick.value);
+  segPick.value = "";
+}
+function moveSeg(i, d) {
+  const j = i + d;
+  if (j < 0 || j >= segs.value.length) return;
+  const list = segs.value;
+  [list[i], list[j]] = [list[j], list[i]];
+}
+function dropSeg(i) { segs.value.splice(i, 1); }
 const modelOptions = ref([]);
 const status = ref("");
 
@@ -56,9 +76,9 @@ async function save() {
   if (!name.value.trim()) { status.value = "给个名字"; return; }
   try {
     if (isNew) {
-      await api.createAgent({ name: name.value.trim(), system_prompt: prompt.value, abilities: toPatch(), prepend_state: prepend.value || undefined, display_mode: displayMode.value === "roleplay" ? "roleplay" : undefined });
+      await api.createAgent({ name: name.value.trim(), system_prompt: prompt.value, segments: segs.value, abilities: toPatch(), prepend_state: prepend.value || undefined, display_mode: displayMode.value === "roleplay" ? "roleplay" : undefined });
     } else {
-      const body = { system_prompt: prompt.value, abilities: toPatch() };
+      const body = { system_prompt: prompt.value, segments: segs.value, abilities: toPatch() };
       if (!!prepend.value !== !!props.agent.prepend_state) body.prepend_state = prepend.value;
       if ((displayMode.value || "chat") !== (props.agent.display_mode || "chat")) body.display_mode = displayMode.value;
       if (name.value.trim() !== props.agent.name) body.name = name.value.trim();
@@ -115,7 +135,30 @@ function onKey(e) {
     <h3>基本</h3>
     <label class="field"><span>id（改即重命名，搬引用）</span><input v-model="aid" :disabled="isNew" placeholder="新建时由后端生成" /></label>
     <label class="field"><span>名称</span><input v-model="name" placeholder="人格名" /></label>
-    <label class="field-block"><span>系统提示词</span><textarea v-model="prompt" rows="6" placeholder="system_prompt"></textarea></label>
+    <label class="field-block"><span>系统提示词（base）</span><textarea v-model="prompt" rows="6" placeholder="system_prompt"></textarea></label>
+    <h3>提示词段（追加在 base 后面，顺序 = 拼接顺序）</h3>
+    <div v-if="!segs.length" class="status">（还没有段 —— 从下面挑一个加进来）</div>
+    <div v-for="(sid, i) in segs" :key="sid" class="seg-row" :class="{ missing: segMissing(sid) }">
+      <button type="button" class="icon-btn" title="上移" :disabled="i === 0" @click="moveSeg(i, -1)">↑</button>
+      <button type="button" class="icon-btn" title="下移" :disabled="i === segs.length - 1" @click="moveSeg(i, 1)">↓</button>
+      <span class="seg-id">{{ sid }}<template v-if="segMissing(sid)"> ⚠ 库里没有</template></span>
+      <span class="seg-preview">{{ segText(sid).slice(0, 48) }}</span>
+      <button type="button" class="icon-btn danger" title="移除（不删库里的段）" @click="dropSeg(i)">✕</button>
+    </div>
+    <div class="row">
+      <select v-model="segPick" title="从段库挑一个">
+        <option value="">从段库挑一个…</option>
+        <option v-for="s in props.segments" :key="s.id" :value="s.id" :disabled="segs.includes(s.id)">
+          {{ s.id }}{{ s.builtin ? "（内置）" : "" }} —— {{ s.text.slice(0, 30) }}
+        </option>
+      </select>
+      <button type="button" :disabled="!segPick" @click="addSeg">添加段</button>
+      <span v-if="missing.length" class="status">引用了库里没有的段：{{ missing.join("、") }}（保存会被后端拒）</span>
+    </div>
+    <details class="seg-assembled">
+      <summary>拼装预览（{{ assembled.length }} 字）</summary>
+      <pre>{{ assembled }}</pre>
+    </details>
     <label class="field"><span>句首贴当前状态（RP 类需要）</span><ToggleSwitch v-model="prepend" /></label>
     <label class="field"><span>显示格式</span><select v-model="displayMode">
       <option value="chat">聊天软件（双边气泡）</option>

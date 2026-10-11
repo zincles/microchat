@@ -246,8 +246,8 @@ func (s *Service) RegenerateSummary(ctx context.Context, session model.Session, 
 		template: effective.template, local: effective.local,
 		span: resolved,
 		// 状态段：消息级 = 区间两端；合并级 = 第一个孩子的区间头与最后一个孩子的区间末。
-		stateSection: stateSectionAt(session, agents, messages, resolved.End+1),
-		stateBefore:  stateSectionAt(session, agents, messages, resolved.Begin),
+		stateSection: stateSectionAt(session, messages, resolved.End+1),
+		stateBefore:  stateSectionAt(session, messages, resolved.Begin),
 	}
 	generated, err := s.generateText(ctx, p)
 	if err != nil {
@@ -445,22 +445,21 @@ func (s *Service) prepare(session model.Session, req Request) (*prepared, error)
 		// 材料里附的两份状态：**at_idx 那条链**（`state.StateAt`）—— 底子是**当前**的生效提示词、
 		// 正文 fold 到区间开头（`Begin` 是下标 ⇒ 序号 = Begin）与区间末（`End` 是下标 ⇒ 序号 = End+1）。
 		// 取料在锁里，所以在这儿算。
-		stateSection: stateSectionAt(session, agents, messages, resolved.End+1),
-		stateBefore:  stateSectionAt(session, agents, messages, resolved.Begin),
+		stateSection: stateSectionAt(session, messages, resolved.End+1),
+		stateBefore:  stateSectionAt(session, messages, resolved.Begin),
 		requested:    requestedBlocks(req, resolved, chatConfig.CompactBlocks),
 	}, nil
 }
 
 // stateAtTables：`at` 条为止的状态表（`at_idx` 同一条链）。调用方决定渲染。
-func stateAtTables(session model.Session, agents config.AgentsConfig, messages []model.Message, at int) state.Tables {
-	systemPrompt, source := state.ResolveSystemPrompt(session, agents)
-	return state.StateAt(session.ID, systemPrompt, source, messages, at).Tables
+func stateAtTables(session model.Session, messages []model.Message, at int) state.Tables {
+	return state.StateAt(session.ID, messages, at).Tables
 }
 
 // stateSectionAt：材料里那份状态的 `<current_state>` 文本（**算到 `at` 条为止**）——
 // 没有变量可报就回空串。渲染走 `renderCurrentState`（与出站注入同形）。
-func stateSectionAt(session model.Session, agents config.AgentsConfig, messages []model.Message, at int) string {
-	text, _ := state.RenderCurrentState(stateAtTables(session, agents, messages, at))
+func stateSectionAt(session model.Session, messages []model.Message, at int) string {
+	text, _ := state.RenderCurrentState(stateAtTables(session, messages, at))
 	return text
 }
 
