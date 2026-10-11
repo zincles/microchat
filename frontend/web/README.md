@@ -31,6 +31,7 @@ npm run build     # 产出 dist/（不入库，部署时现打）
 - **用户视图**（与设置平级，左栏底 `👤 用户`，人人可进）：身份（名字 · 管理员 · 退出登录）+ **改口令（自己）**（改完当场重登换票）+（**admin 才有**的）**用户管理**：列表 / 加人 / 行内改名、改口令 / 删人（两步确认："会话转给 root / 连会话一起删"）+ 个人偏好 —— 主题七套（默认 `deepseek`，色值实测对齐 chat.deepseek.com）· **背景图**（URL 或上传，本地存；没设 = 纯平底）· 发送键 · 输入预演
 - **滑动面板**（触屏**跟手**）：左滑出右栏、右滑出左栏，半开维持、松手吸附；先关后开
 - **移动端键盘不遮输入框**：visualViewport 拟合应用盒（浮层随键盘抬、命令面板限高不顶出小视口）
+- **PWA（可"安装为应用"）**：`vite-plugin-pwa`（v2）。**只在 build/preview 开 SW**（dev 不开——免得开发时吃到旧缓存）。SW **只预缓存壳**（HTML/JS/CSS/图标/字体）：离线打开能进"连接门板"；`/api` 一概不碰（数据必须现取，且 API 在另一个来源，SW 天生管不着）。**安装的前提在来源：HTTPS 或 localhost** —— 局域网 `http://<IP>:8788` 装不了（不是安全上下文，连 SW 都不会注册）；云端形态（反代终结 TLS，如 Cloudflare）天然满足。图标 `public/pwa-192.png` / `pwa-512.png` / `pwa-maskable-512.png` / `apple-touch-icon.png`（由 `favicon.svg` 栅格化）。桌面/安卓 Chrome：地址栏装或菜单"安装应用"；iOS 16.4+：分享菜单"添加到主屏幕"
 - **连接门板**：探不通后端先给全屏"连接"面板（默认地址跟着**你打开页面的主机**预填：`<该主机>:8787`；裸地址自动补 `http://` 与 `/api/v1`；探通即存偏好刷新进聊天）
 - **命令面板**：`/` 进（`/resume` `/compact` `/cut` `/reroll` `/edit` `/editsum` …，只放已有路由的命令）
 - **共享层**：`utils/prefs.js`（界面偏好 + `sharedApi()` + 发送键判定/主题应用，含 TG 守卫）· `api/client.js` 的 `mergeStreamSlice`（流式合并唯一规则）· 错误带 `code`/`status`（按 code 分支）· `format.js` 的 modelKey/modelLabel/whoText/sessionTitle（键与标签唯一出口）

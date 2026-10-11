@@ -144,6 +144,18 @@ func (s *Store) UpdateUserPassword(id int64, passHash string) error {
 	return s.execTouch("UPDATE users SET pass_hash = ?1, ver = ver + 1 WHERE id = ?2", passHash, id)
 }
 
+// ResetRootPassword：**无视现状直接换 root 的口令**（`ver+1` ⇒ 旧票全废）。
+//
+// **只有 CLI 走它**（`-debug set-root-password`，用户定 2026-10-10）：网络口对 uid 0 的口令改写
+// 一律 403 —— 本机 shell 才是"已经拿到一切"的信任边界，root 的凭据不许被网络口换掉/抢走。
+// 与 `SetRootPassword`（setup 的"只开一次"）分开：语义不同就别共用一个门。
+func (s *Store) ResetRootPassword(passHash string) error {
+	if passHash == "" {
+		return InvalidError("口令不许为空")
+	}
+	return s.execTouch("UPDATE users SET pass_hash = ?1, ver = ver + 1 WHERE id = 0", passHash)
+}
+
 // ResetUsers：**一键重置所有用户**（操作员逃生门，`-debug reset-users` 走它）：
 // 删掉所有**非 root** 用户**连同他们的会话**（消息/摘要随外键级联），把 root 的口令清空
 // （回到"无密码 = 服务未启用"的 setup 态、`ver+1` 让旧票全废）。root 行恒在、uid 0 不动。

@@ -27,12 +27,19 @@ const canEdit = computed(() => !!props.messageId);
 
 const editing = ref(null); // null | "content" | "reasoning"
 const draft = ref("");
+// msgEl / lockedWidth：**编辑期间把气泡宽度钉住**（2026-10-11 用户定："宽度不该随编辑改变"）。
+// 气泡是按内容撑宽的（user ≤70%、assistant fit-content ≤80%），正文一换成 textarea
+// （固有宽度 ~20 字符）就被拉窄 —— 点开编辑前先量下当前宽，编辑期间原样用回去
+// （textarea 的 width:100% 这才有得可依）。
+const msgEl = ref(null);
+const lockedWidth = ref(0);
 
 // 正文拆说话/状态：说话走 markdown，状态块进独立容器（只在非编辑态；编辑态看原文）。
 const parts = computed(() => splitState(editing.value ? "" : props.content));
 const bodyHtml = computed(() => renderMarkdown(parts.value.cleaned));
 function openEditor(kind) {
   if (editing.value) return;
+  lockedWidth.value = msgEl.value?.offsetWidth ?? 0;
   editing.value = kind;
   draft.value = kind === "reasoning" ? (props.reasoning ?? "") : (props.content ?? "");
 }
@@ -51,7 +58,11 @@ const editRows = computed(() => Math.min(12, Math.max(3, draft.value.split("\n")
 
 <template>
   <div :class="`msg-wrap ${role === 'user' ? 'user' : 'assistant'} ${displayMode === 'roleplay' && role !== 'user' ? 'prose' : ''}`">
-    <div :class="`msg ${role === 'user' ? 'user' : 'assistant'} ${displayMode === 'roleplay' && role !== 'user' ? 'prose' : ''}`">
+    <div
+      ref="msgEl"
+      :class="`msg ${role === 'user' ? 'user' : 'assistant'} ${displayMode === 'roleplay' && role !== 'user' ? 'prose' : ''}`"
+      :style="editing && lockedWidth ? { width: `${lockedWidth}px`, boxSizing: 'border-box' } : null"
+    >
       <div class="msg-head">
         <span class="who">{{ who }}<span v-if="idx !== null && idx !== undefined" class="msg-idx">#{{ idx }}</span></span>
       </div>

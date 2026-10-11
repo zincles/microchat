@@ -117,6 +117,14 @@ func (s *Server) setUserPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := identityOf(r.Context())
+	if target == 0 && !id.Sys {
+		// **网络口不给"重设 root 口令"的能力**（用户定，2026-10-10）：JWT 身份**连 root 自己的票也不行** ——
+		// 票可能已在别处泄漏，能换口令 = 能把 root 抢走。**只有系统身份**（进程内的环回令牌 = 本机 CLI，
+		// 也就是 TUI 的 `/passwd`）能改 —— 网络口拿不到那枚令牌（只走内存、从不发给客户端）。
+		// 首次初始化（root 无口令时的 POST /auth/setup）是另一回事。
+		writeError(w, http.StatusForbidden, "forbidden", "root 的口令只能从本机 CLI 重设：TUI 里打 /passwd，或 ./microchat -debug set-root-password")
+		return
+	}
 	if !id.Admin && !id.Sys && id.UserID != target {
 		writeError(w, http.StatusForbidden, "forbidden", "只有管理员能改别人的口令")
 		return

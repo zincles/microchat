@@ -46,6 +46,29 @@ func TestRootSeededAndSetupRunsOnce(t *testing.T) {
 	}
 }
 
+// CLI 专属的"重设 root 口令"：**无视现状**（已有口令也能再换）、每次 `ver+1`；空口令挡掉。
+// 与 SetRootPassword（setup 的"只开一次"）是两条语义不同的路。
+func TestResetRootPasswordUnconditional(t *testing.T) {
+	st := openTemp(t)
+	if err := st.SetRootPassword("hash-1"); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := st.GetUserByID(0)
+	if err := st.ResetRootPassword("hash-2"); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := st.GetUserByID(0)
+	if after.PassHash != "hash-2" || after.Ver != before.Ver+1 {
+		t.Fatalf("重设应换哈希并 ver+1：%+v", after)
+	}
+	if needs, _ := st.RootNeedsSetup(); needs {
+		t.Fatal("重设之后不该回到 setup 态")
+	}
+	if err := st.ResetRootPassword(""); err == nil {
+		t.Fatal("空口令该被挡")
+	}
+}
+
 // uid 分配：root 恒 0，其他用户**从 1000 起**（Linux 味）；ResetUsers 后仍是 1000。
 // ResetUsers：非 root 用户连同其会话一锅端、root 清回无口令（服务回到"未启用"）。
 func TestUserIDsFrom1000AndResetUsers(t *testing.T) {

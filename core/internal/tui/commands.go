@@ -42,6 +42,7 @@ func init() {
 		{name: "telegram-bot-token-set", args: "<token>", help: "设置 TG bot token（写 config.json；改完要重启生效）", run: commandTelegramTokenSet},
 		{name: "telegram-toggle", help: "开/关 TG bot（显式动作；开了才连外网，关了就停轮询）", run: commandTelegramToggle},
 		{name: "telegram-status", help: "看 TG bot 状态（跑没跑、绑了谁、在线多久）", run: commandTelegramStatus},
+		{name: "passwd", help: "重设 root 口令（本机 CLI 专属：走进程内环回令牌；两问：新口令+确认，输入不回显）", run: commandPasswd},
 		{name: "think", help: "展开当前会话的思考全文（默认折叠在消息上方，想读全文才用）", run: commandThink},
 		{name: "system", help: "显示 / 隐藏消息区顶部的系统提示词（调试用，开关记在 ~/.config/microchat/tui.json）", run: commandSystem},
 		{name: "compact", args: "[N]", help: "按块压 N 个块成摘要（块=assistant→user交界，一块≥2条；底层不够就抬头并摘要；不给N用默认值）", run: commandCompact},
@@ -460,6 +461,56 @@ func presetByVendor(presets []PresetItem, vendor string) *PresetItem {
 		}
 	}
 	return nil
+}
+
+// commandPasswd：重设 root 口令（**本机 CLI 专属** —— 走系统身份那枚进程内环回令牌；网络口一律 403）。
+// 两问：新口令 + 确认；进行中输入行**不回显**（render 打点）。与别的问卷同屏互斥：进来先把
+// 渠道向导 / 缺省三问 / agents 编辑态清掉（输入行同一根问卷线）。
+func commandPasswd(m model, _ []string) (tea.Model, tea.Cmd) {
+	m.addStep, m.addDraft, m.addPresets = 0, providerDraft{}, nil
+	m.defStep, m.defDraft = 0, Defaults{}
+	m.editField = ""
+	m.passStep, m.passDraft = 1, ""
+	m.lastAction = "新 root 口令（≥6 位，输入不回显；回车到确认；Esc 取消）"
+	return m, nil
+}
+
+// answerPass：`/passwd` 的两问。口令长度这里只是**先说清楚**（后端 auth.MinPassword 才是权威，还会再拦）。
+func (m model) answerPass(text string) (tea.Model, tea.Cmd) {
+	answer := strings.TrimSpace(text)
+	switch m.passStep {
+	case 1:
+		if len([]rune(answer)) < passMinLen {
+			m.lastAction = fmt.Sprintf("口令至少 %d 位（再输一次；Esc 取消）", passMinLen)
+			return m, nil
+		}
+		m.passDraft = answer
+		m.passStep = 2
+		m.lastAction = "再输一次（确认；Esc 取消）"
+		return m, nil
+	case 2:
+		if answer != m.passDraft {
+			m.passStep, m.passDraft = 1, ""
+			m.lastAction = "两次不一致 —— 重来：新 root 口令（≥6 位；Esc 取消）"
+			return m, nil
+		}
+		password := m.passDraft
+		m.passStep, m.passDraft = 0, ""
+		m.lastAction = "重设 root 口令…"
+		return m, resetRootPasswordCmd(m.client, password)
+	}
+	return m, nil
+}
+
+// passMinLen：与后端 auth.MinPassword 对齐（这里只为别白跑一趟；权威在后端）。
+const passMinLen = 6
+
+// passwordResetMsg：重设 root 口令的结果。
+type passwordResetMsg struct{ err error }
+
+// resetRootPasswordCmd：打 `POST /users/0/password` —— 这一口认**系统身份**（TUI 的环回令牌）。
+func resetRootPasswordCmd(client *Client, password string) tea.Cmd {
+	return func() tea.Msg { return passwordResetMsg{err: client.SetUserPassword(0, password)} }
 }
 
 // answerWizard：向导的一问答完了（输入行非 `/` 开头的那句就是答案）。

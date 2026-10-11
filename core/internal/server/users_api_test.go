@@ -114,6 +114,33 @@ func TestUsersCRUDAdminOnly(t *testing.T) {
 	}
 }
 
+// **root 的口令 = CLI 专属**（用户定，2026-10-10）：网络口（**连 root 自己的票也不行**）一律 403，
+// 拒绝理由要指路 CLI。这是刻意的能力缺口 —— 票可能泄漏，能换 root 口令 = 能把 root 抢走。
+func TestRootPasswordNotResettableOverHTTP(t *testing.T) {
+	u := newUsersSandbox(t)
+	got := authCall(u.server, "POST", "/api/v1/users/0/password", `{"password":"hunter44"}`, u.rootTok)
+	if got.Code != http.StatusForbidden {
+		t.Fatalf("root 改 root 口令（HTTP）= %d，想要 403", got.Code)
+	}
+	if body := got.Body.String(); !strings.Contains(body, "set-root-password") {
+		t.Fatalf("拒绝理由该指路 CLI：%s", body)
+	}
+	// 口令真的没被改：旧口令照样能登
+	if login := authCall(u.server, "POST", "/api/v1/auth/login", `{"user":"0","password":"hunter22"}`, ""); login.Code != 200 {
+		t.Fatalf("root 旧口令登录 = %d（口令不该被网络口改掉）", login.Code)
+	}
+	// 但**系统身份**（进程内环回令牌 = 本机 CLI，也就是 TUI 的 `/passwd`）可以
+	if got := authCall(u.server, "POST", "/api/v1/users/0/password", `{"password":"hunter44"}`, testSysToken); got.Code != 204 {
+		t.Fatalf("系统身份改 root 口令 = %d，想要 204（%s）", got.Code, got.Body.String())
+	}
+	if login := authCall(u.server, "POST", "/api/v1/auth/login", `{"user":"0","password":"hunter44"}`, ""); login.Code != 200 {
+		t.Fatalf("重设后的新口令登录 = %d", login.Code)
+	}
+	if login := authCall(u.server, "POST", "/api/v1/auth/login", `{"user":"0","password":"hunter22"}`, ""); login.Code != http.StatusUnauthorized {
+		t.Fatalf("旧口令该作废（ver+1）= %d", login.Code)
+	}
+}
+
 // 删人：**对会话必须显式**（transfer|purge）；root 不许删。
 func TestDeleteUserRequiresExplicitSessions(t *testing.T) {
 	u := newUsersSandbox(t)
@@ -217,5 +244,53 @@ func TestTaskBoardFiltersByOwner(t *testing.T) {
 	bobBoard := decodeBody[task.Board](t, authCall(u.server, "GET", "/api/v1/tasks", "", u.bobTok))
 	if bobBoard.Running != 0 || len(bobBoard.Tasks) != 0 {
 		t.Fatalf("bob 面板 = %+v，想要空的（那不是他的会话）", bobBoard)
+	}
+}
+
+// **TUI（系统身份）= root 登录**（用户定，2026-10-10）：列表、归属、我是谁全按 uid 0 算 ——
+// 不是"随便都能看的上帝视角"。这条钉住：系统身份看见的列表 == root 自己的 JWT 看见的那份。
+func TestSystemIdentityEqualsRootLogin(t *testing.T) {
+	u := newUsersSandbox(t)
+	// 造一条"别人的会话"：它绝不该出现在 TUI/root 的列表里
+	hash, err := auth.HashPassword("hunter22")
+	if err != nil {
+		t.Fatal(err)
+	}
+	alice, err := u.store.CreateUser("alice", hash, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := u.store.CreateSession(alice.ID, "dummy", "dummy", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	idsOf := func(token string) map[string]bool {
+		list := authCall(u.server, "GET", "/api/v1/sessions", "", token)
+		if list.Code != 200 {
+			t.Fatalf("列表 = %d（%s）", list.Code, list.Body.String())
+		}
+		out := map[string]bool{}
+		for _, s := range decodeBody[[]struct {
+			ID string `json:"id"`
+		}](t, list) {
+			out[s.ID] = true
+		}
+		return out
+	}
+	sysIDs, rootIDs := idsOf(testSysToken), idsOf(u.rootTok)
+	if sysIDs[other.ID] || rootIDs[other.ID] {
+		t.Fatalf("别人的会话不该出现在 TUI/root 的列表里：%v / %v", sysIDs, rootIDs)
+	}
+	if !sysIDs[u.sessionID] || !rootIDs[u.sessionID] {
+		t.Fatalf("root 自己的会话该都在：%v / %v", sysIDs, rootIDs)
+	}
+	if len(sysIDs) != len(rootIDs) {
+		t.Fatalf("系统身份看见的列表该与 root 的 JWT 一模一样：%d vs %d", len(sysIDs), len(rootIDs))
+	}
+	// "我是谁"：回 root（带 sys 标记）
+	me := authCall(u.server, "GET", "/api/v1/auth/me", "", testSysToken)
+	if me.Code != 200 || !strings.Contains(me.Body.String(), `"id":0`) || !strings.Contains(me.Body.String(), `"sys":true`) {
+		t.Fatalf("系统身份的 me 该是 root+sys：%s", me.Body.String())
 	}
 }

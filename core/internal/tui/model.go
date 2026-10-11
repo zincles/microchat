@@ -103,6 +103,11 @@ type model struct {
 	reroll    *RerollState
 	rerollFor string
 
+	// passStep / passDraft：`/passwd`（重设 root 口令）的两问状态机（0=没在问 · 1=新口令 · 2=确认）。
+	// 进行中输入行**不回显**（render 打点）；Esc 取消（沿用清输入那条分支）。
+	passStep  int
+	passDraft string
+
 	// provider 向导（`/provider-add`）：四问的状态机。输入行就是问卷 —— 答案走 submit 进来；
 	// 与会话无关（换会话 / 新消息不丢）；Esc 取消（沿用清输入那条分支，不新增按键）；
 	// `/provider-add` 重进覆盖旧草稿；与 agents 详情 / 缺省三问同屏互斥（一边进另一边清 —— 输入行同一根问卷线）。
@@ -1342,6 +1347,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.lastAction = fmt.Sprintf("缺省已设：%s/%s/%s（新会话生效）", message.defaults.Provider, message.defaults.Model, message.defaults.Agent)
 		return m, nil
+	case passwordResetMsg:
+		if message.err != nil {
+			m = m.fail("重设 root 口令失败：" + message.err.Error())
+			return m, nil
+		}
+		m.lastAction = "已重设 root 口令（root 的旧票全部作废；新口令即刻生效）"
+		return m, nil
 	case presetsMsg:
 		// 向导进行中才存（/providers 那条路不走这里 —— 别把两份名单混了）。
 		if m.addStep > 0 {
@@ -1649,6 +1661,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.defStep, m.defDraft = 0, Defaults{}
 				m.lastAction = "已取消设缺省（什么都没改）"
 			}
+			if m.passStep > 0 {
+				m.passStep, m.passDraft = 0, ""
+				m.lastAction = "已取消重设口令（什么都没改）"
+			}
 			return m, nil
 		case "enter":
 			return m.submit()
@@ -1790,6 +1806,11 @@ func (m model) pickerChoose() (tea.Model, tea.Cmd) {
 // submit：回车了 —— 是命令就派发，不是就**真发**。
 func (m model) submit() (tea.Model, tea.Cmd) {
 	text := strings.TrimSpace(m.input)
+	// 重设口令的两问进行中：输入行是问卷（**不回显**）—— 口令别被当成命令/消息。
+	if m.passStep > 0 && !strings.HasPrefix(text, "/") {
+		m.input, m.inputCursor, m.paletteIndex = "", 0, 0
+		return m.answerPass(text)
+	}
 	// 向导进行中时输入行就是问卷 —— 别先按"空输入直接返回"丢掉（第四问 key 可空，
 	// 空回答也是答案，要进 answerWizard 落到 finishWizard 发 Create）。
 	if m.addStep > 0 && !strings.HasPrefix(text, "/") {

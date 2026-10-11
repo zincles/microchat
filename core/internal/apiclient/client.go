@@ -451,6 +451,14 @@ func (c *Client) TelegramStatus() (TelegramBinding, error) {
 	return binding, err
 }
 
+// SetUserPassword：改某个用户的口令（`POST /users/{uid}/password`）。
+//
+// uid 0 特殊：**只有系统身份**（TUI 的进程内环回令牌 = 本机 CLI）能改 —— TUI `/passwd` 走它；
+// 网络口（JWT，含 root 自己的票）一律 403（AGENTS「重置类 = CLI 专属」）。
+func (c *Client) SetUserPassword(uid int64, password string) error {
+	return c.post(fmt.Sprintf("/users/%d/password", uid), map[string]any{"password": password}, nil)
+}
+
 func (c *Client) Sessions() ([]Session, error) {
 	var sessions []Session
 	err := c.get("/sessions", &sessions)

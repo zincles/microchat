@@ -40,6 +40,81 @@ func TestRenameArgParsing(t *testing.T) {
 	}
 }
 
+// ── `/passwd`：重设 root 口令（两问、输入不回显、真打那一口）──
+
+// 两问状态机：太短留在第一问、不一致退回第一问；进行中输入行打点（不回显）。
+func TestCommandPasswdTwoQuestions(t *testing.T) {
+	m := fixture()
+	updated, cmd := m.runCommand("/passwd")
+	m = updated.(model)
+	if cmd != nil {
+		t.Fatal("进问卷不该发请求")
+	}
+	if m.passStep != 1 || !strings.Contains(m.lastAction, "新 root 口令") {
+		t.Fatalf("该进第一问：step=%d %q", m.passStep, m.lastAction)
+	}
+	m.input = "hunter22"
+	m.inputCursor = len([]rune(m.input)) // 假想"打完了"（光标在末尾）
+	if got := m.displayInput(); got != "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" {
+		t.Fatalf("口令进行中输入行该打点，得到 %q", got)
+	}
+	if col := m.inputCursorColumn(); col != 2+8 {
+		t.Fatalf("打点时光标列 = %d，该是 10", col)
+	}
+	updated, _ = m.answerPass("short")
+	m = updated.(model)
+	if m.passStep != 1 || !strings.Contains(m.lastAction, "至少 6 位") {
+		t.Fatalf("太短该留在第一问：%d %q", m.passStep, m.lastAction)
+	}
+	updated, _ = m.answerPass("hunter22")
+	m = updated.(model)
+	if m.passStep != 2 || m.passDraft != "hunter22" {
+		t.Fatalf("该进第二问：%d %q", m.passStep, m.passDraft)
+	}
+	updated, _ = m.answerPass("hunter23")
+	m = updated.(model)
+	if m.passStep != 1 || m.passDraft != "" {
+		t.Fatalf("不一致该退回第一问：%d %q", m.passStep, m.passDraft)
+	}
+}
+
+// 走通两问 ⇒ 真打 `POST /users/0/password`，结局写进底栏。
+func TestCommandPasswdRoundTrip(t *testing.T) {
+	var hits int
+	var body map[string]any
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/users/0/password" {
+			http.NotFound(w, r)
+			return
+		}
+		hits++
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer backend.Close()
+	m := fixture()
+	m.client = NewClient(backend.URL, "")
+	updated, _ := m.runCommand("/passwd")
+	m = updated.(model)
+	updated, _ = m.answerPass("hunter22")
+	m = updated.(model)
+	updated, cmd := m.answerPass("hunter22")
+	m = updated.(model)
+	if cmd == nil {
+		t.Fatal("确认后该发请求")
+	}
+	m = runCmds(t, m, cmd)
+	if hits != 1 {
+		t.Fatalf("该真发一次，实际 %d", hits)
+	}
+	if body["password"] != "hunter22" {
+		t.Fatalf("体不对：%v", body)
+	}
+	if m.passStep != 0 || !strings.Contains(m.lastAction, "已重设") {
+		t.Fatalf("结局该写进底栏：step=%d %q", m.passStep, m.lastAction)
+	}
+}
+
 func TestRenameCommandNeedsAName(t *testing.T) {
 	m := fixture()
 	// 不给参数 ⇒ 只说用法，**不发请求**

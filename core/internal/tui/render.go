@@ -205,7 +205,7 @@ func (m model) render() (string, *tea.Cursor) {
 	lines := m.renderMessages(bodyHeight, width)
 	lines = append(lines, palette...)
 	inputLine := len(lines)                                           // 输入行在 `lines` 里的下标（消息区 + 面板之后）
-	lines = append(lines, truncate("> "+m.input, width))              // 输入行（命令与消息都从这儿走）
+	lines = append(lines, truncate("> "+m.displayInput(), width))     // 输入行（命令与消息都从这儿走）
 	lines = append(lines, m.style.dim(rule(width, m.width, m.ascii))) // 满线（暗色）：窄屏退回 ASCII `-`
 	lines = append(lines, status...)
 	if len(lines) > height { // 屏幕实在太矮（< 4 行）：宁可切掉上面的消息，也别把输入行挤没
@@ -247,7 +247,25 @@ func clampCursor(cursor, runes int) int {
 // `a你|` 是 2+1+2=5。
 func (m model) inputCursorColumn() int {
 	runes := []rune(m.input)
-	return 2 + runewidth.StringWidth(string(runes[:clampCursor(m.inputCursor, len(runes))]))
+	cursor := clampCursor(m.inputCursor, len(runes))
+	if m.maskedInput() {
+		return 2 + cursor // 打点后每个 rune 一格：列 = 前缀 2 格 + 光标前几个字符
+	}
+	return 2 + runewidth.StringWidth(string(runes[:cursor]))
+}
+
+// maskedInput：输入行现在要不要打点（`/passwd` 的口令两问进行中）。
+// 打在 `/` 开头的命令上时**不打点** —— 向导里想打命令逃出去，遮住反而看不见自己在打什么。
+func (m model) maskedInput() bool {
+	return m.passStep > 0 && !strings.HasPrefix(m.input, "/")
+}
+
+// displayInput：输入行真正画出来的那串（口令两问打点・其余原样）。
+func (m model) displayInput() string {
+	if m.maskedInput() {
+		return strings.Repeat("•", len([]rune(m.input)))
+	}
+	return m.input
 }
 
 // paletteWindow：面板装不下时只显示**高亮那条**附近的一段（不加行，也不让高亮跑出屏幕）。

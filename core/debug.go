@@ -17,6 +17,7 @@ package main
 // op 一览与用法在 `debugUsage` 里。
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -30,7 +31,10 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/term"
+
 	"microchat/internal/abilities"
+	"microchat/internal/auth"
 	"microchat/internal/chat"
 	"microchat/internal/compact"
 	"microchat/internal/config"
@@ -72,6 +76,9 @@ op：
                                                     （只认聚合站；快照失败不拦这一家之外的；启动时**不跑**）
   tasks                                             任务面板
   reset-users                删掉所有非 root 用户（连同其会话），root 清回无密码（回 setup 态）
+  set-root-password                                 重设 root 口令（**CLI 专属**：网络口对 uid 0 的口令改写
+                                                    一律 403）：口令**只从标准输入**读一行 —— 不走 argv
+                                                    （免进 shell 历史与 ps 的命令行）；TTY 上不回显
   usage [provider_id]                               OpenCode GO 的套餐余量（只读 GET；不给 id 就用第一个 opencode-go 渠道）
 
 输出：每行一条 JSON；错误体固定 {"error":{"code","message"}}（与 HTTP 契约同一个形状）。
@@ -144,6 +151,8 @@ func runDebug(paths config.Paths, cfg config.Config, args []string) int {
 		return env.refreshRoutesOp(args[1:])
 	case "tasks":
 		return env.board()
+	case "set-root-password":
+		return env.setRootPassword()
 	case "reset-users":
 		return env.resetUsers()
 	case "usage":
@@ -707,6 +716,43 @@ func (e *debugEnv) resetUsers() int {
 	}
 	out, _ := json.Marshal(map[string]any{"reset": map[string]any{"users_deleted": users, "sessions_deleted": sessions}})
 	fmt.Println(string(out))
+	return 0
+}
+
+// setRootPassword：**重设 root 口令**（CLI 专属；HTTP 口对 uid 0 的口令改写一律 403）。
+//
+// 口令**只从标准输入**读：不走 argv（argv 会进 shell 历史与 `ps` 的命令行）；TTY 上不回显
+// （term.ReadPassword），管道里 `printf '新口令' | ./microchat -debug set-root-password` 一样用。
+// 改完 `ver+1` ⇒ root 的旧票全废，新口令即刻生效。
+func (e *debugEnv) setRootPassword() int {
+	fd := int(os.Stdin.Fd())
+	var password string
+	if term.IsTerminal(fd) {
+		fmt.Fprint(os.Stderr, "新 root 口令（≥6 位，输入不回显，回车结束）：")
+		raw, err := term.ReadPassword(fd)
+		fmt.Fprintln(os.Stderr)
+		if err != nil {
+			return fail("invalid", "读口令失败："+err.Error())
+		}
+		password = string(raw)
+	} else {
+		line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+		if line == "" && err != nil {
+			return fail("invalid", "没读到口令（标准输入是空的？）："+err.Error())
+		}
+		password = strings.TrimRight(line, "\r\n")
+	}
+	if len(password) < auth.MinPassword {
+		return fail("invalid", fmt.Sprintf("口令至少 %d 位", auth.MinPassword))
+	}
+	hash, err := auth.HashPassword(password)
+	if err != nil {
+		return fail("internal", "口令哈希失败："+err.Error())
+	}
+	if err := e.store.ResetRootPassword(hash); err != nil {
+		return fail("internal", err.Error())
+	}
+	emit(map[string]any{"root_password": "已重设", "note": "root 的旧票已全部作废（ver+1）；新口令即刻生效"})
 	return 0
 }
 

@@ -185,11 +185,14 @@ onUnmounted(() => document.removeEventListener("keydown", onKey));
               <button type="button" @click="logout">退出登录</button>
             </div>
             <h3 v-if="me">改口令（自己）</h3>
-            <template v-if="me">
+            <template v-if="me && me.id !== 0">
               <label class="field"><span>新口令（≥6 位）</span><input v-model="pass1" type="password" /></label>
               <label class="field"><span>再输一次</span><input v-model="pass2" type="password" /></label>
               <div class="row"><button type="button" class="primary" @click="changeOwnPassword">改口令</button><span class="status">{{ passStatus }}</span></div>
             </template>
+            <p v-else-if="me" id="root-pass-note" class="status">
+              root 的口令只能从本机重设：TUI 里打 <code>/passwd</code>，或 <code>./microchat -debug set-root-password</code>（网络口不给这个能力 —— 连 root 自己的票也不行）
+            </p>
             <template v-if="me?.is_admin">
               <h3>用户管理（root）</h3>
               <div id="user-mgr-list">
@@ -204,7 +207,9 @@ onUnmounted(() => document.removeEventListener("keydown", onKey));
                         <td>{{ u.has_password ? "有" : "无" }}</td>
                         <td class="ops">
                           <button type="button" class="link-btn" @click="rowEdit = { id: u.id, kind: 'name', value: u.name }; rowDel = null">改名</button>
-                          <button type="button" class="link-btn" @click="rowEdit = { id: u.id, kind: 'pass', value: '' }; rowDel = null">改口令</button>
+                          <button v-if="u.id !== 0" type="button" class="link-btn" @click="rowEdit = { id: u.id, kind: 'pass', value: '' }; rowDel = null">改口令</button>
+                          <!-- root 的口令 = **CLI 专属**（网络口一律 403）：这儿不给按钮 —— 给了就是死路（点了必失败）。 -->
+                          <span v-else class="status" title="root 的口令只能从本机重设：TUI 里 /passwd，或 ./microchat -debug set-root-password">口令走 CLI</span>
                           <button v-if="u.id !== 0" type="button" class="link-btn danger" @click="rowDel = rowDel === u.id ? null : u.id; rowEdit = null">删除</button>
                           <span v-else class="status">root 不许删</span>
                         </td>
