@@ -113,7 +113,8 @@ async function exportSessionRow(s) {
   } catch (e) { sessionMgrStatus.value = `导出失败：${e.message}`; }
 }
 
-// Agent 卡带导入（2026-10-11）：文件 → POST /agents（段在导出时已拼平，卡带里没有引用）。
+// Agent 卡带导入（2026-10-11）：卡带 = agent + 它引用到的用户段（id+原文）。
+// 合并规则（用户定）：系统里已有同 id 的段（用户段或内置）⇒ **丢弃卡带那份**；没有 ⇒ 建（打「导入」标记）。
 const cartridgeInput = ref(null);
 const cartridgeStatus = ref("");
 async function importCartridge(event) {
@@ -121,9 +122,18 @@ async function importCartridge(event) {
   if (!file) return;
   cartridgeStatus.value = "导入中…";
   try {
-    const agent = cartridgeAgent(JSON.parse(await file.text()));
-    const made = await api.createAgent(agent);
-    cartridgeStatus.value = `已导入「${made.name}」`;
+    const card = cartridgeAgent(JSON.parse(await file.text()));
+    const known = new Set(segmentsLib.value.map((s) => s.id));
+    let created = 0;
+    let skipped = 0;
+    for (const seg of card.segments) {
+      if (known.has(seg.id)) { skipped++; continue; }
+      await api.createSegment({ id: seg.id, text: seg.text, imported: true });
+      known.add(seg.id);
+      created++;
+    }
+    const made = await api.createAgent(card.agent);
+    cartridgeStatus.value = `已导入「${made.name}」（段：新建 ${created} / 复用 ${skipped}）`;
     await loadAgents();
   } catch (e) { cartridgeStatus.value = `导入失败：${e.message}`; }
   event.target.value = "";
@@ -372,7 +382,7 @@ function onKey(e) {
             <table v-if="segmentsLib.length" class="plist">
               <thead><tr><th>id</th><th>预览</th><th>被谁引用</th></tr></thead>
               <tbody><tr v-for="s in segmentsLib" :key="s.id" class="clickable" @click="editSeg = s">
-                <td>{{ s.id }}<i v-if="s.builtin" class="builtin-tag">内置</i></td>
+                <td>{{ s.id }}<i v-if="s.builtin" class="builtin-tag">内置</i><i v-if="s.imported" class="builtin-tag imported">导入</i></td>
                 <td>{{ s.text.slice(0, 40) }}</td>
                 <td>{{ segRefs(s.id).join("、") || "—" }}</td>
               </tr></tbody>

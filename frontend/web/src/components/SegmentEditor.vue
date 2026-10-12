@@ -69,7 +69,7 @@ function onKey(e) { if (e.key === "Escape") emit("close"); }
   <div class="detail-pane">
     <div class="panel-head">
       <button class="icon-btn" type="button" title="返回列表（Esc）" @click="$emit('close')">←</button>
-      <span class="status">{{ isNew ? "新建提示词段" : isBuiltin ? `内置「${props.segment.id}」（只读）` : `编辑「${props.segment.id}」` }}</span>
+      <span class="status">{{ isNew ? "新建提示词段" : isBuiltin ? `内置「${props.segment.id}」（只读）` : `编辑「${props.segment.id}」${props.segment.imported ? "（导入）" : ""}` }}</span>
     </div>
     <label class="field"><span>id（段名；改 = 所有引用一起搬）</span><input v-model="id" :readonly="isBuiltin" placeholder="例如 statelang / katex / mcp-search" /></label>
     <label class="field-block"><span>正文（原样追加进提示词，纯文本）</span><textarea v-model="text" rows="12" :readonly="isBuiltin" placeholder="这段提示词的内容…"></textarea></label>

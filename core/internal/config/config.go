@@ -256,6 +256,9 @@ type Agent struct {
 type Segment struct {
 	ID   string `json:"id"`
 	Text string `json:"text"`
+	// Imported：**来源标记**（2026-10-11 用户定）—— true = 这条是"卡带导入"带进来的
+	// （界面显示「导入」徽标）。记的是**从哪来**，用户编辑不清标；删掉就是删掉。
+	Imported bool `json:"imported,omitempty"`
 }
 
 type AgentsConfig struct {

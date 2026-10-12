@@ -169,7 +169,7 @@ function onKey(e) {
       <select v-model="segPick" title="从段库挑一个">
         <option value="">从段库挑一个…</option>
         <option v-for="s in props.segments" :key="s.id" :value="s.id" :disabled="segs.includes(s.id)">
-          {{ s.id }}{{ s.builtin ? "（内置）" : "" }} —— {{ s.text.slice(0, 30) }}
+          {{ s.id }}{{ s.builtin ? "（内置）" : "" }}{{ s.imported ? "（导入）" : "" }} —— {{ s.text.slice(0, 30) }}
         </option>
       </select>
       <button type="button" :disabled="!segPick" @click="addSeg">添加段</button>

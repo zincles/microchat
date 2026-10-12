@@ -76,6 +76,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 #outgoing-raw { white-space: pre; overflow-x: auto; margin: 0; max-width: 100%; }
 /* 内置段的标记（代码里内嵌、只读 —— 2026-10-11）。 */
 .builtin-tag { font-style: normal; font-size: 0.78em; color: var(--tg-link); border: 1px solid currentColor; border-radius: 4px; padding: 0 0.25em; margin-left: 0.4em; }
+.builtin-tag.imported { color: var(--tg-hint); }
 /* Agent 编辑器的"提示词段"行（system prompt segment，2026-10-11）：顺序 = 拼接顺序。 */
 .seg-row { display: flex; align-items: center; gap: 0.35em; padding: 0.25em 0.3em; border: 1px solid var(--line); border-radius: 6px; margin-bottom: 0.25em; }
 .seg-row.missing { border-color: var(--tg-destructive); }
@@ -93,7 +94,9 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 .pv-chip { border: 1px solid var(--line); border-radius: 4px; padding: 0 0.3em; font-size: 0.85em; color: var(--tg-hint); }
 .pv-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.45em; }
 .pv-msg { border: 1px solid var(--line); border-radius: 8px; background: rgb(255 255 255 / 3%); padding: 0.45em 0.55em; }
-.pv-head { display: flex; align-items: center; gap: 0.4em; margin-bottom: 0.3em; }
+.pv-head { display: flex; align-items: center; gap: 0.4em; margin: 0 0 0.3em; width: 100%; background: none; border: none; color: inherit; font: inherit; text-align: left; cursor: pointer; padding: 0.15em 0; -webkit-tap-highlight-color: transparent; user-select: none; }
+.pv-tw { flex: none; width: 1em; color: var(--tg-hint); }
+.pv-preview { color: var(--tg-hint); font-size: 0.9em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pv-role { font-size: 0.78em; font-weight: bold; border-radius: 4px; padding: 0.05em 0.4em; color: var(--tg-bg); background: var(--tg-hint); }
 .pv-msg.role-user .pv-role { background: var(--tg-button); color: var(--tg-button-text); }
 .pv-msg.role-assistant .pv-role { background: var(--tg-link); }

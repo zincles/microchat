@@ -10,6 +10,21 @@ function runeLen(s) {
   return [...s].length;
 }
 
+// 长块默认折叠（2026-10-11 用户定）：system prompt 这类巨块不该一上来就撑满面板。
+// 阈值按 rune 数 —— 与界面别处的"N 字"同一把尺。
+export const LONG_BLOCK_CHARS = 500;
+
+export function shouldCollapse(content) {
+  return runeLen(String(content ?? "")) > LONG_BLOCK_CHARS;
+}
+
+// previewBlock：折叠态的**单行预览**（前 n 个 rune + 省略号；换行压成空格，单行显示）。
+export function previewBlock(content, n = 90) {
+  const flat = String(content ?? "").replace(/\s+/g, " ").trim();
+  const runes = [...flat];
+  return runes.length > n ? runes.slice(0, n).join("") + "…" : flat;
+}
+
 export function parseWireMessages(wire) {
   const body = wire?.body;
   if (!body || typeof body !== "object") return null;

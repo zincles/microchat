@@ -15,6 +15,8 @@ import (
 type segmentReq struct {
 	ID   string `json:"id"`
 	Text string `json:"text"`
+	// Imported：卡带导入时置 true（来源标记；界面显示「导入」徽标）。手动建段不写就是 false。
+	Imported bool `json:"imported,omitempty"`
 }
 
 func (s *Server) createSegment(w http.ResponseWriter, r *http.Request) {
@@ -43,12 +45,12 @@ func (s *Server) createSegment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "conflict", "段 id 被占了："+id)
 		return
 	}
-	agents.Segments = append(agents.Segments, config.Segment{ID: id, Text: req.Text})
+	agents.Segments = append(agents.Segments, config.Segment{ID: id, Text: req.Text, Imported: req.Imported})
 	if err := s.saveAgents(agents); err != nil {
 		writeStoreError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, config.Segment{ID: id, Text: req.Text})
+	writeJSON(w, http.StatusCreated, config.Segment{ID: id, Text: req.Text, Imported: req.Imported})
 }
 
 // updateSegment：改内容 / 改名。改名 = 把所有 agent 的引用一起搬（同文件内，一次重写）。

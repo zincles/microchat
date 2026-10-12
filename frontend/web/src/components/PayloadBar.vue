@@ -2,11 +2,11 @@
 // 右载荷栏：载荷 / 状态 / 压缩 三 tab。
 // 载荷 = 真请求直放（method/url/headers/体 JSON）；状态 = 截至末条现演（tables 按表分组）；
 // 压缩 = 压缩树（buildCompactTree 的产出：文件管理器那种看体积的树）。
-import { ref, computed } from "vue";
+import { ref, computed, watch } from "vue";
 import CompactTree from "./CompactTree.vue";
 import ToggleSwitch from "./ToggleSwitch.vue";
 import { treeTotals } from "../utils/tree.js";
-import { parseWireMessages } from "../utils/payload.js";
+import { parseWireMessages, shouldCollapse, previewBlock } from "../utils/payload.js";
 import { payloadVizOn, savePayloadViz } from "../utils/prefs.js";
 
 const props = defineProps({
@@ -27,6 +27,16 @@ const wire = ref(null);
 const viz = ref(payloadVizOn());
 function setViz(v) { viz.value = !!v; savePayloadViz(viz.value); }
 const vizData = computed(() => (viz.value ? parseWireMessages(wire.value) : null));
+// 每块的开合（2026-10-11）：**长块默认折叠**（system prompt 那种巨块不撑爆面板）；
+// 用户点过的以点过的为准。换一份载荷 ⇒ 状态清空、重按默认来。
+const openMap = ref(new Map());
+watch(vizData, () => { openMap.value = new Map(); });
+function blockOpen(m, i) {
+  return openMap.value.has(i) ? openMap.value.get(i) : !shouldCollapse(m.content);
+}
+function toggleBlock(m, i) {
+  openMap.value.set(i, !blockOpen(m, i));
+}
 const tables = ref({});
 const tree = ref(null); // null = 还没数据（不发请求，显示空话）
 
@@ -66,15 +76,18 @@ defineExpose({ setWire, setTables, setTree });
         </div>
         <ol class="pv-list">
           <li v-for="(m, i) in vizData.messages" :key="i" class="pv-msg" :class="`role-${m.role}`">
-            <div class="pv-head">
+            <!-- 整行可点开合（触摸友好：大目标）—— 长块默认折叠，点开才铺全文（面板整体滚，不做嵌套滚动） -->
+            <button type="button" class="pv-head" :aria-expanded="blockOpen(m, i)" @click="toggleBlock(m, i)">
+              <span class="pv-tw">{{ blockOpen(m, i) ? "▾" : "▸" }}</span>
               <span class="pv-role">{{ m.role }}</span>
               <span class="pv-idx">#{{ i + 1 }}</span>
               <span v-if="m.name" class="pv-chip">{{ m.name }}</span>
               <span class="pv-chars">{{ m.chars }} 字</span>
-            </div>
-            <div v-if="m.reasoning" class="pv-extra">思考（reasoning_content）：{{ m.reasoning }}</div>
-            <div v-if="m.content" class="pv-content">{{ m.content }}</div>
-            <div v-else-if="!m.toolCalls" class="pv-content pv-empty">（空）</div>
+            </button>
+            <div v-if="!blockOpen(m, i) && m.content" class="pv-preview">{{ previewBlock(m.content) }}</div>
+            <div v-if="blockOpen(m, i) && m.reasoning" class="pv-extra">思考（reasoning_content）：{{ m.reasoning }}</div>
+            <div v-if="blockOpen(m, i) && m.content" class="pv-content">{{ m.content }}</div>
+            <div v-else-if="blockOpen(m, i) && !m.toolCalls" class="pv-content pv-empty">（空）</div>
             <div v-if="m.toolCalls" class="pv-extra">tool_calls：{{ m.toolCalls }}</div>
             <div v-if="m.toolCallId" class="pv-extra">tool_call_id：{{ m.toolCallId }}</div>
           </li>

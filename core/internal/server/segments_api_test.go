@@ -136,3 +136,32 @@ func TestSegmentsCRUDAndAssembly(t *testing.T) {
 		t.Fatalf("摘掉引用后该能删：%d（%s）", got.Code, got.Body.String())
 	}
 }
+
+// 段的「导入」来源标记：POST 收 `imported`，`GET /agents` 里原样回（界面据此显示「导入」徽标）。
+func TestSegmentImportedFlag(t *testing.T) {
+	box := newDummySandboxWith(t, true)
+	if got := authCall(box.server, "POST", "/api/v1/segments", `{"id":"from-card","text":"x","imported":true}`, testSysToken); got.Code != 201 {
+		t.Fatalf("建段 = %d（%s）", got.Code, got.Body.String())
+	}
+	list := decodeBody[struct {
+		Segments []struct {
+			ID       string `json:"id"`
+			Imported bool   `json:"imported"`
+		} `json:"segments"`
+	}](t, authCall(box.server, "GET", "/api/v1/agents", "", testSysToken))
+	found := false
+	for _, s := range list.Segments {
+		if s.ID == "from-card" {
+			found = true
+			if !s.Imported {
+				t.Fatal("imported 该原样回")
+			}
+		}
+		if s.ID == "StateLang 语法" && s.Imported {
+			t.Fatal("内置段不该带 imported")
+		}
+	}
+	if !found {
+		t.Fatal("没找到 from-card")
+	}
+}

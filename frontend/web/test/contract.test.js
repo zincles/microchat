@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { createApi, mergeStreamSlice, DEFAULT_API_URL, normalizeApiBase, probeAuthStatus, authLogin } from "../src/api/client.js";
-import { parseWireMessages } from "../src/utils/payload.js";
+import { parseWireMessages, shouldCollapse, previewBlock, LONG_BLOCK_CHARS } from "../src/utils/payload.js";
 import { assemblePrompt, missingSegments } from "../src/utils/prompt.js";
 import { buildCartridge, cartridgeAgent } from "../src/utils/cartridge.js";
 import { parseCommand, filterCommands, COMMAND_META } from "../src/utils/commands.js";
@@ -130,6 +130,19 @@ test("api.call 请求形状：方法/路径/鉴权头/204 空", async () => {
   assert.deepEqual(p, { ok: true });
 });
 
+test("载荷长块折叠：>500 字默认折叠；预览单行截断（换行压空格）", () => {
+  assert.equal(LONG_BLOCK_CHARS, 500);
+  assert.equal(shouldCollapse("短句"), false);
+  assert.equal(shouldCollapse("x".repeat(500)), false);
+  assert.equal(shouldCollapse("x".repeat(501)), true);
+  assert.equal(previewBlock("你好\n世界"), "你好 世界");
+  const long = "字".repeat(120);
+  const pv = previewBlock(long, 90);
+  assert.equal([...pv].length, 91); // 90 + 省略号
+  assert.ok(pv.endsWith("…"));
+  assert.equal(previewBlock("短", 90), "短");
+});
+
 test("系统提示词拼装：base + 追加段（顺序、空行、缺段跳过）—— 与后端同规则", () => {
   const lib = [
     { id: "katex", text: "数学用 $…$ 写。" },
@@ -146,29 +159,42 @@ test("系统提示词拼装：base + 追加段（顺序、空行、缺段跳过�
   assert.deepEqual(missingSegments(["a", "katex"], lib), ["a"]);
 });
 
-test("agent 卡带：段拼平进 system_prompt、不留引用（免除依赖）；导入校验形状", () => {
-  const lib = [{ id: "katex", text: "数学用 $…$ 写。" }, { id: "mcp", text: "需要联网时调用搜索。" }];
+test("agent 卡带 v2：带引用段（内置不带）、结构不拼平；v1 老卡带照收；导入侧校验", () => {
+  const lib = [
+    { id: "katex", text: "数学用 $…$ 写。" },
+    { id: "mcp", text: "需要联网时调用搜索。" },
+    { id: "合理的RolePlay", text: "内置的", builtin: true },
+  ];
   const agent = {
     id: "rp-agent-simple", name: "RP Agent", system_prompt: "你是主持人。",
-    segments: ["katex", "mcp"], first_message: "开场", abilities: { title: { enabled: false } },
-    prepend_state: true, display_mode: "roleplay",
+    segments: ["katex", "合理的RolePlay", "mcp"], first_message: "开场",
+    abilities: { title: { enabled: false } }, prepend_state: true, display_mode: "roleplay",
   };
   const card = buildCartridge(agent, lib);
-  assert.equal(card.version, 1);
-  assert.equal(card.agent.system_prompt, "你是主持人。\n\n数学用 $…$ 写。\n\n需要联网时调用搜索。");
-  assert.equal(card.agent.segments, undefined); // 不留引用
+  assert.equal(card.version, 2);
+  assert.equal(card.agent.system_prompt, "你是主持人。"); // base 原文，**不拼平**
+  assert.deepEqual(card.agent.segments, ["katex", "合理的RolePlay", "mcp"]); // 引用照旧
+  assert.deepEqual(card.segments, [ // 只带引用到的**用户段**；内置不带
+    { id: "katex", text: "数学用 $…$ 写。" },
+    { id: "mcp", text: "需要联网时调用搜索。" },
+  ]);
   assert.equal(card.agent.id, undefined); // 导入方现铸
-  assert.equal(card.agent.first_message, "开场");
   assert.equal(card.agent.display_mode, "roleplay");
   assert.deepEqual(card.agent.abilities, { title: { enabled: false } });
-  // 导入侧：形状不对 ⇒ 说清；对了 ⇒ 归一化成 POST /agents 的体
+  // 导入侧：形状不对 ⇒ 说清；对了 ⇒ {agent, segments} 归一化
   assert.throws(() => cartridgeAgent({}), /不是 agent 卡带/);
   assert.throws(() => cartridgeAgent({ agent: { name: "  " } }), /没有名字/);
+  assert.throws(() => cartridgeAgent({ agent: { name: "x" }, segments: [{ id: "  " }] }), /空 id/);
   const back = cartridgeAgent(card);
-  assert.equal(back.name, "RP Agent");
-  assert.equal(back.system_prompt, card.agent.system_prompt);
-  assert.equal(back.prepend_state, true);
-  assert.equal(cartridgeAgent({ agent: { name: "x" } }).display_mode, undefined);
+  assert.equal(back.agent.name, "RP Agent");
+  assert.deepEqual(back.agent.segments, ["katex", "合理的RolePlay", "mcp"]);
+  assert.equal(back.segments.length, 2);
+  assert.equal(back.agent.prepend_state, true);
+  assert.equal(cartridgeAgent({ agent: { name: "x" } }).agent.display_mode, undefined);
+  // v1 老卡带（提示词已拼平、无 segments 数组）照样能导
+  const v1 = cartridgeAgent({ version: 1, agent: { name: "老卡", system_prompt: "拼平过的" } });
+  assert.deepEqual(v1.segments, []);
+  assert.equal(v1.agent.system_prompt, "拼平过的");
 });
 
 test("对话导出/导入接口形状：路径 / 方法 / 体", async () => {
