@@ -167,6 +167,8 @@ func main() {
 	chatService.Candidates = rerollService
 	// 起标题挂在一轮生成上（拿到回复之后自动一次）—— 与压缩同一条口径：能力的事归能力
 	chatService.Titles = title.New(st, paths, tasks)
+	// 自动压缩也挂在一轮生成上（翻 idle 之后自己挂号跑）—— 同一条"消费方定义接口"的路。
+	chatService.Compactor = autoCompactor{svc: compactService}
 
 	// **先真听上端口，再切日志到文件**：端口被占这类启动失败必须留在**终端**上看得见 ——
 	// 不然 TUI 模式下日志去了 data/microchat.log，终端里只剩一句 "exit status 1"（真发生过）。
@@ -429,4 +431,12 @@ func (r summaryRoller) RegenerateSummary(ctx context.Context, session model.Sess
 		Text: generated.Text, Tokens: generated.Tokens, Provider: generated.Provider,
 		Model: generated.Model, PromptVersion: generated.PromptVersion, Usage: generated.Usage,
 	}, nil
+}
+
+// autoCompactor：把 `compact.Service` 适配成 `chat.Compactor`（接口在消费方那侧定义 —— 同 reroll 的套路）。
+type autoCompactor struct{ svc *compact.Service }
+
+func (a autoCompactor) Compact(ctx context.Context, session model.Session, blocks int) error {
+	_, err := a.svc.Compact(ctx, session, compact.Request{Blocks: blocks})
+	return err
 }

@@ -84,3 +84,16 @@ func TestBuiltinSegmentsAreReserved(t *testing.T) {
 		t.Fatal("SegmentByID 该找得到内置")
 	}
 }
+
+// 自动压缩：**缺省 = 关**（未经验证，2026-10-11 用户定）与块数缺省（3）。
+func TestAutoCompactDefaults(t *testing.T) {
+	if DefaultCompactBlocks != 3 {
+		t.Fatalf("缺省块数该是 3：%d", DefaultCompactBlocks)
+	}
+	if (ChatConfig{}).AutoCompact {
+		t.Fatal("缺字段该算关（这套未经验证，默认不开）")
+	}
+	if !(ChatConfig{AutoCompact: true}).AutoCompact {
+		t.Fatal("显式 true 该算开")
+	}
+}

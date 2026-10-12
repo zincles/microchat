@@ -30,6 +30,12 @@ import (
 )
 
 // Service：一轮生成的唯一实现处。
+// Compactor：自动压缩要的"压 N 块"那一口 —— **消费方定义接口**（与 reroll 那三个一个套路），
+// `compact.Service` 在 main.go 里适配（各包不互相 import ⇒ 不报环）。nil = 没接 ⇒ 自动压缩不跑。
+type Compactor interface {
+	Compact(ctx context.Context, session model.Session, blocks int) error
+}
+
 type Service struct {
 	Store *store.Store
 	Turns *turn.Registry
@@ -46,6 +52,9 @@ type Service struct {
 	// 类型是接口（在下面定义）：`chat` 与 `reroll` 于是**互不依赖** —— 装配与候选各归各的包，
 	// 只在这一处点一下。没接（单测 / 直操模式）就是"没人维护候选"，不影响这一轮。
 	Candidates CandidateOwner
+	// Compactor：自动压缩的那一口（见上面接口）—— main.go 里接上；没接（单测 / 直操模式）
+	// 就是"没人自动压"，手动 `/compact` 照旧。
+	Compactor Compactor
 }
 
 // CandidateOwner：候选列表的持有者（唯一实现是 `reroll.Service`）。
@@ -237,6 +246,11 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 	}
 	s.Turns.Finish(sessionID, token, "") // 成功 ⇒ idle（客户端据此一次性重拉消息）
 	guard.Succeed()
+	// 自动压缩（2026-10-11 用户定）：**翻 idle 之后**再看 —— 压缩是好几个上游调用，
+	// 别让界面为它多转圈；它自己挂号（compact 的 Task），在"后台任务"行里看得见。
+	if s.Compactor != nil {
+		go s.MaybeAutoCompact(session)
+	}
 }
 
 // assistantMessage：把这一轮的产出拼成要落库的那一行。

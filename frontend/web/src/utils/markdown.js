@@ -7,8 +7,36 @@ import katex from "katex";
 
 marked.setOptions({ breaks: true, gfm: true });
 
+// __下划线__ ⇒ <u>…</u>（2026-10-11 用户定）：标准 Markdown 把 `__x__` 当 **bold**，
+// 但 RP 模型（Discord 味）惯用它表示**下划线** —— 契约（内置段 `Markdown RolePlay相关`）里
+// 明确列的是 `**bold**` 与 `*italics*`，`__x__` 留给下划线。
+// 写成 marked 的**行内扩展**：只在"该位置真以 __ 开头"时命中，进了反引号就是 code 的地盘
+// ⇒ `__init__` 这类代码段**保持原样**（盲替换正则会把它也吃掉 ✗）。内容不吃下划线、不跨行。
+marked.use({
+  extensions: [
+    {
+      name: "underline",
+      level: "inline",
+      start(src) {
+        const i = src.indexOf("__");
+        return i < 0 ? undefined : i;
+      },
+      tokenizer(src) {
+        const m = /^__([^_\n]+?)__/.exec(src);
+        if (!m) return undefined;
+        return { type: "underline", raw: m[0], tokens: this.lexer.inlineTokens(m[1]) };
+      },
+      renderer(token) {
+        return `<u>${this.parser.parseInline(token.tokens)}</u>`;
+      },
+    },
+  ],
+});
+
+// 只转义 `&` 与 `<`：没有 `<` 就造不出标签（XSS 的门在这儿）——**`>` 必须留着**，
+// 行首的它正是**引述块**的记号（契约里的 `> OOC`）；从前连 `>` 一起转，引述块从来没渲染过（2026-10-11 修）。
 function esc(s) {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
 }
 
 export function renderMarkdown(text) {

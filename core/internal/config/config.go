@@ -191,8 +191,12 @@ func LoadConfig(paths Paths) (Config, error) {
 
 // ChatConfig：`config.json` 的 chat 段（模型上下文 / 摘要触发阈值 / 标题字数 / 默认压几块 / 思考回传）。
 type ChatConfig struct {
-	TitleChars           int  `json:"title_chars"`
-	ModelContextTokens   int  `json:"model_context_tokens"`
+	TitleChars         int `json:"title_chars"`
+	ModelContextTokens int `json:"model_context_tokens"`
+	// AutoCompact：**自动压缩**开关（2026-10-11 用户定）。**缺省 = 关** —— 这套还没实测验证过，
+	// 要用的自己在设置→聊天 里打开。开 ⇒ 一轮翻 idle 之后看占用：到触发线就压，压到退出线以下
+	// （口径见 chat/autocompact.go）。默认关 ⇒ 零值（false）就是诚实值，不需要三态指针。
+	AutoCompact          bool `json:"auto_compact,omitempty"`
 	CompactTriggerTokens *int `json:"compact_trigger_tokens"`
 	// CompactBlocks：压缩不给块数时压几个**对话块**（`compact_blocks`）。单位是块，不是 token。
 	CompactBlocks int `json:"compact_blocks"`
@@ -201,9 +205,9 @@ type ChatConfig struct {
 	ReplayReasoning *bool `json:"replay_reasoning,omitempty"`
 }
 
-// DefaultCompactBlocks：`compact_blocks` 的缺省（2026-10-10 用户定：5 块 —— 10 太大，
-// "抬头"那条路要凑满 N 条同层相邻顶层摘要，10 常常凑不齐直接报无可压缩）。
-const DefaultCompactBlocks = 5
+// DefaultCompactBlocks：`compact_blocks` 的缺省（2026-10-11 用户定：**3** —— 小步快跑：
+// 每坨原话只嚼一次，且"抬头"那条路要凑满 N 条同层相邻顶层摘要，N 太大常常凑不齐直接报无可压缩）。
+const DefaultCompactBlocks = 3
 
 func DefaultChat() ChatConfig {
 	return ChatConfig{TitleChars: 32, ModelContextTokens: 131072, CompactBlocks: DefaultCompactBlocks}

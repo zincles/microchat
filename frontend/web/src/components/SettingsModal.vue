@@ -43,7 +43,7 @@ function moveThumb() {
   });
 }
 watch(tab, moveThumb);
-const chat = ref({ title_chars: "", model_context_tokens: "", compact_blocks: "", compact_trigger_tokens: "", replay_reasoning: false });
+const chat = ref({ title_chars: "", model_context_tokens: "", compact_blocks: "", compact_trigger_tokens: "", replay_reasoning: false, auto_compact: true });
 const chatStatus = ref("");
 const defaults = ref({ provider: "", model: "", agent: "" });
 const defStatus = ref("");
@@ -69,6 +69,7 @@ async function loadChat() {
       compact_blocks: c.compact_blocks ?? "",
       compact_trigger_tokens: c.compact_trigger_tokens ?? "",
       replay_reasoning: !!c.replay_reasoning,
+      auto_compact: !!c.auto_compact, // 缺字段 = 关（与后端同一口径；这套未经验证，默认不开）
     };
   } catch {}
 }
@@ -82,7 +83,7 @@ async function saveChat() {
   if (m !== undefined) body.model_context_tokens = m;
   if (b !== undefined) body.compact_blocks = b;
   const cur = await api.getChat().catch(() => ({}));
-  const fullBody = { ...cur, ...body, replay_reasoning: !!chat.value.replay_reasoning };
+  const fullBody = { ...cur, ...body, replay_reasoning: !!chat.value.replay_reasoning, auto_compact: !!chat.value.auto_compact };
   if (String(chat.value.compact_trigger_tokens ?? "").trim() === "") delete fullBody.compact_trigger_tokens;
   else fullBody.compact_trigger_tokens = Number(chat.value.compact_trigger_tokens);
   try {
@@ -290,8 +291,9 @@ function onKey(e) {
           <h3>生成与压缩</h3>
           <label class="field"><span>标题字数</span><input v-model="chat.title_chars" type="number" min="1" /></label>
           <label class="field"><span>模型上下文 tokens</span><input v-model="chat.model_context_tokens" type="number" min="1" /></label>
-          <label class="field"><span>压缩块数</span><input v-model="chat.compact_blocks" type="number" min="1" /></label>
-          <label class="field"><span>压缩触发 tokens（空=默认）</span><input v-model="chat.compact_trigger_tokens" type="number" min="1" placeholder="空=默认" /></label>
+          <label class="field"><span>压缩块数（自动压缩一次压几个）</span><input v-model="chat.compact_blocks" type="number" min="1" placeholder="空=3" /></label>
+          <label class="field"><span>自动压缩（到触发线就压，压到 50% 以下）</span><ToggleSwitch v-model="chat.auto_compact" /></label>
+          <label class="field"><span>压缩触发 tokens（空=预算的 80%）</span><input v-model="chat.compact_trigger_tokens" type="number" min="1" placeholder="空=预算的 80%" /></label>
           <label class="field"><span>回传思考（默认关，省上下文）</span><ToggleSwitch v-model="chat.replay_reasoning" /></label>
           <div class="row"><button type="button" class="primary" @click="saveChat">保存</button><span class="status">{{ chatStatus }}</span></div>
         </section>

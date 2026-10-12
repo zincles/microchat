@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { createApi, mergeStreamSlice, DEFAULT_API_URL, normalizeApiBase, probeAuthStatus, authLogin } from "../src/api/client.js";
 import { parseWireMessages, shouldCollapse, previewBlock, LONG_BLOCK_CHARS } from "../src/utils/payload.js";
 import { assemblePrompt, missingSegments } from "../src/utils/prompt.js";
+import { renderMarkdown } from "../src/utils/markdown.js";
 import { buildCartridge, cartridgeAgent } from "../src/utils/cartridge.js";
 import { parseCommand, filterCommands, COMMAND_META } from "../src/utils/commands.js";
 import { uuidv7 } from "../src/utils/ids.js";
@@ -128,6 +129,23 @@ test("api.call 请求形状：方法/路径/鉴权头/204 空", async () => {
   assert.equal(r, null);
   const p = await api.deletionPreview("s1", "m1");
   assert.deepEqual(p, { ok: true });
+});
+
+test("Markdown 渲染：加粗/斜体/下划线/行内码/删除线/引述；代码段里不转换", () => {
+  const h = renderMarkdown("**粗** 与 *斜* 与 _斜_ 与 __下划线__ 与 `code __x__` 与 ~~删~~");
+  assert.match(h, /<strong>粗<\/strong>/);
+  assert.match(h, /<em>斜<\/em>/);
+  assert.match(h, /<u>下划线<\/u>/); // __x__ = 下划线（不是 bold）
+  assert.match(h, /<code>code __x__<\/code>/); // 代码段里原样（`__init__` 那类）
+  assert.match(h, /<del>删<\/del>/);
+  assert.match(renderMarkdown("> OOC：题外话"), /<blockquote>/);
+});
+
+test("Markdown 渲染：HTML 一律转义、数学走 KaTeX 占位", () => {
+  const h = renderMarkdown("<script>alert(1)</script>");
+  assert.ok(!h.includes("<script>"));
+  assert.ok(h.includes("&lt;script&gt;"));
+  assert.ok(renderMarkdown("$x^2$").includes("katex"));
 });
 
 test("载荷长块折叠：>500 字默认折叠；预览单行截断（换行压空格）", () => {
