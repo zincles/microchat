@@ -12,7 +12,7 @@ import {
 import { applyBackground } from "./utils/background.js";
 import { installViewportFit } from "./utils/viewport.js";
 import { classifyAxis, pickDrag, dragProgress, resolveRelease } from "./utils/swipe.js";
-import { sharedApi, previewOn, applyTheme, wantsSend, apiBase, apiToken, apiBaseCandidates, saveNetPrefs } from "./utils/prefs.js";
+import { sharedApi, previewOn, applyTheme, wantsSend, apiBase, apiToken, apiBaseCandidates, saveNetPrefs, lastSessionId, saveLastSession } from "./utils/prefs.js";
 import {
   formatStatusLine,
   statusOverBudget,
@@ -771,6 +771,7 @@ async function startDraft() {
   ++epoch;
   draft = true;
   sessionID = null;
+  saveLastSession(""); // 人在草稿 ⇒ 开机也该回草稿（别把人拽回上次那条会话）
   draftId = uuidv7(); // 这张草稿将来那会话的 id（预演与建会话都用它）
   const d = await api.getDefaults().catch(() => ({}));
   draftPrefs = { provider: d.provider ?? "", model: d.model ?? "", agent: d.agent ?? "" };
@@ -814,6 +815,7 @@ async function enterSession(id) {
   const my = ++epoch;
   draft = false;
   sessionID = id;
+  saveLastSession(id); // 记住"在看哪条"——刷新/重载回来就进它
   // 窗口重新起：先清掉上一条会话的一切（消息/段/展开态/懒加载缓存），再按"最后 N 段"拉。
   vueMessages.value = [];
   vueSegments.value = [];
@@ -901,7 +903,16 @@ async function boot() {
   } else {
     compactDefault.value = null;
   }
-  // 不再"删空会话 + 预建真会话"：web 走草稿态，库里不产生空行（旧编排的两步一起拿掉）。
+  // 回到"上次在看的那条会话"（2026-10-11 用户定）：刷新 / 被安卓丢弃后重载 ⇒ 不再是一张空草稿。
+  // 记的 id 取不到（删了 / 换人登录 / 别的设备）⇒ 回落草稿 —— 取不到就是取不到，不猜。
+  const last = lastSessionId();
+  if (last) {
+    const sessions = await api.listSessions().catch(() => []);
+    if (sessions.some((s) => s.id === last)) {
+      await enterSession(last);
+      return;
+    }
+  }
   await startDraft();
 }
 
@@ -1225,6 +1236,7 @@ async function sendFromDraft(text) {
   const s = await api.createSession(body);
   draft = false;
   sessionID = s.id;
+  saveLastSession(s.id); // 草稿转真会话：从现在起"在看的就是它"
   Object.assign(sessionInfo, s);
   paintSessionHeader();
   refreshSessionsBar();

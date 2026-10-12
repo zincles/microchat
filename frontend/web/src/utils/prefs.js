@@ -9,6 +9,11 @@ export const DEFAULT_SEND = "enter";
 
 export function previewOn() { return localStorage.getItem("mc_preview") !== "0"; }
 
+// 上次在看的那条会话（2026-10-11 用户定）：刷新 / 被安卓丢弃后重载 ⇒ 回到它，不再是一张空草稿。
+// 空串 = 没记（或人在草稿）⇒ 开机进草稿。**不按用户分键**：换人登录时那条会话取不到 ⇒ 回落草稿。
+export function lastSessionId() { return localStorage.getItem("mc_last_session") || ""; }
+export function saveLastSession(id) { localStorage.setItem("mc_last_session", id ?? ""); }
+
 // 载荷栏"分块视图"（2026-10-11 用户点名）：开着就把 body.messages 一块块画出来（比裸 JSON 直观）。
 export function payloadVizOn() { return localStorage.getItem("mc_payload_viz") === "1"; }
 export function savePayloadViz(on) { localStorage.setItem("mc_payload_viz", on ? "1" : "0"); }
