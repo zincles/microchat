@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { createApi, mergeStreamSlice, DEFAULT_API_URL, normalizeApiBase, probeAuthStatus, authLogin } from "../src/api/client.js";
 import { parseWireMessages } from "../src/utils/payload.js";
 import { assemblePrompt, missingSegments } from "../src/utils/prompt.js";
+import { buildCartridge, cartridgeAgent } from "../src/utils/cartridge.js";
 import { parseCommand, filterCommands, COMMAND_META } from "../src/utils/commands.js";
 import { uuidv7 } from "../src/utils/ids.js";
 import { buildCompactTree, treeTotals } from "../src/utils/tree.js";
@@ -143,6 +144,43 @@ test("系统提示词拼装：base + 追加段（顺序、空行、缺段跳过�
   assert.equal(assemblePrompt("base", ["nope"], lib), "base");
   assert.equal(assemblePrompt("  ", [], lib), "");
   assert.deepEqual(missingSegments(["a", "katex"], lib), ["a"]);
+});
+
+test("agent 卡带：段拼平进 system_prompt、不留引用（免除依赖）；导入校验形状", () => {
+  const lib = [{ id: "katex", text: "数学用 $…$ 写。" }, { id: "mcp", text: "需要联网时调用搜索。" }];
+  const agent = {
+    id: "rp-agent-simple", name: "RP Agent", system_prompt: "你是主持人。",
+    segments: ["katex", "mcp"], first_message: "开场", abilities: { title: { enabled: false } },
+    prepend_state: true, display_mode: "roleplay",
+  };
+  const card = buildCartridge(agent, lib);
+  assert.equal(card.version, 1);
+  assert.equal(card.agent.system_prompt, "你是主持人。\n\n数学用 $…$ 写。\n\n需要联网时调用搜索。");
+  assert.equal(card.agent.segments, undefined); // 不留引用
+  assert.equal(card.agent.id, undefined); // 导入方现铸
+  assert.equal(card.agent.first_message, "开场");
+  assert.equal(card.agent.display_mode, "roleplay");
+  assert.deepEqual(card.agent.abilities, { title: { enabled: false } });
+  // 导入侧：形状不对 ⇒ 说清；对了 ⇒ 归一化成 POST /agents 的体
+  assert.throws(() => cartridgeAgent({}), /不是 agent 卡带/);
+  assert.throws(() => cartridgeAgent({ agent: { name: "  " } }), /没有名字/);
+  const back = cartridgeAgent(card);
+  assert.equal(back.name, "RP Agent");
+  assert.equal(back.system_prompt, card.agent.system_prompt);
+  assert.equal(back.prepend_state, true);
+  assert.equal(cartridgeAgent({ agent: { name: "x" } }).display_mode, undefined);
+});
+
+test("对话导出/导入接口形状：路径 / 方法 / 体", async () => {
+  const seen = [];
+  const api = createApi({ base: "http://x/api/v1", token: "t", fetchFn: async (url, opts) => { seen.push({ url, opts }); return { status: 200, ok: true, json: async () => ({}) }; } });
+  await api.exportSession("s1");
+  await api.importJson({ version: 1, title: "x", messages: [{ role: "user", content: "a" }] });
+  assert.deepEqual(seen.map((s) => [s.opts.method, s.url.replace("http://x/api/v1", "")]), [
+    ["GET", "/sessions/s1/export"],
+    ["POST", "/sessions/import-json"],
+  ]);
+  assert.deepEqual(JSON.parse(seen[1].opts.body).messages[0], { role: "user", content: "a" });
 });
 
 test("提示词段接口形状：路径 / 方法", async () => {

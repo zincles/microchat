@@ -13,6 +13,8 @@ import ProviderEditor from "./ProviderEditor.vue";
 import { ICONS } from "./icons.js";
 import { sharedApi, apiBase, apiToken, saveNetPrefs } from "../utils/prefs.js";
 import { SETTINGS_TABS } from "../utils/format.js";
+import { downloadJSON } from "../utils/download.js";
+import { buildCartridge, cartridgeAgent } from "../utils/cartridge.js";
 
 const emit = defineEmits(["close", "toggle-left", "sessions-changed", "goto-session"]);
 // ask：全局确认框（App 的 Overlays.confirmAsk）—— 设置里的删除（会话/渠道/Agent）也必须先摊开再点头。
@@ -100,6 +102,47 @@ async function saveDefaults() {
     await api.putDefaults({ ...defaults.value });
     defStatus.value = "已保存";
   } catch (e) { defStatus.value = `保存失败：${e.message}`; }
+}
+
+// 会话行导出（2026-10-11）：与 ☰ 里那颗同一支笔（GET /sessions/{id}/export → 下载）。
+async function exportSessionRow(s) {
+  try {
+    const doc = await api.exportSession(s.id);
+    downloadJSON(doc, `${s.title || "新会话"}.json`);
+    sessionMgrStatus.value = `已导出 ${doc.messages.length} 条：${s.title || "新会话"}`;
+  } catch (e) { sessionMgrStatus.value = `导出失败：${e.message}`; }
+}
+
+// Agent 卡带导入（2026-10-11）：文件 → POST /agents（段在导出时已拼平，卡带里没有引用）。
+const cartridgeInput = ref(null);
+const cartridgeStatus = ref("");
+async function importCartridge(event) {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  cartridgeStatus.value = "导入中…";
+  try {
+    const agent = cartridgeAgent(JSON.parse(await file.text()));
+    const made = await api.createAgent(agent);
+    cartridgeStatus.value = `已导入「${made.name}」`;
+    await loadAgents();
+  } catch (e) { cartridgeStatus.value = `导入失败：${e.message}`; }
+  event.target.value = "";
+}
+
+// JSON 对话导入（2026-10-11）：与 ST 导入同口径 —— 文件框 → POST /sessions/import-json → 刷列表。
+const jsonStatus = ref("");
+async function importJSONFile(event) {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  jsonStatus.value = "导入中…";
+  try {
+    const doc = JSON.parse(await file.text());
+    const out = await api.importJson(doc);
+    jsonStatus.value = `已导入 ${out.messages} 条：${out.session?.title || "新会话"}`;
+    await loadSessions();
+    emit("sessions-changed");
+  } catch (e) { jsonStatus.value = `导入失败：${e.message}`; }
+  event.target.value = "";
 }
 
 // 已有对话管理器：ST 导入（文件框 → POST /sessions/import-st，导完刷会话 tab + 左栏）。
@@ -266,7 +309,10 @@ function onKey(e) {
                 <td>{{ s.title || "新会话" }}</td>
                 <td>{{ s.messages }}</td>
                 <td>{{ s.provider }}/{{ s.model }}</td>
-                <td class="ops"><button type="button" class="link-btn danger" @click.stop="askDropSession(s.id, s.title)">删除</button></td>
+                <td class="ops">
+                  <button type="button" class="link-btn" @click.stop="exportSessionRow(s)" title="导出对话记录（JSON：只有 role+content+标题）">导出</button>
+                  <button type="button" class="link-btn danger" @click.stop="askDropSession(s.id, s.title)">删除</button>
+                </td>
               </tr></tbody>
             </table>
           </div>
@@ -275,12 +321,16 @@ function onKey(e) {
           <label class="field"><span>导入标题（空=首句起）</span><input v-model="importTitle" placeholder="空=首句起" /></label>
           <label class="field"><span>JSONL 文件</span><input type="file" accept=".jsonl,.json,.txt" @change="importSTFile" /></label>
           <div class="row"><span class="status">{{ importStatus }}</span></div>
+          <label class="field"><span>对话 JSON（本应用导出格式）</span><input type="file" accept=".json" @change="importJSONFile" /></label>
+          <div class="row"><span class="status">{{ jsonStatus }}</span></div>
         </section>
         <section v-show="tab === 'agent'" id="panel-agent" class="panel">
           <template v-if="!editAgent">
             <div class="panel-head">
               <h3>已有 Agent（点进二级改）</h3>
               <span class="head-btns">
+                <button type="button" @click="cartridgeInput?.click()" title="导入 agent 卡带（JSON；段已拼平，无依赖）">导入卡带…</button>
+                <input ref="cartridgeInput" type="file" accept=".json" hidden @change="importCartridge" />
                 <button type="button" class="primary" @click="newFromTemplate('blank')">新建</button>
                 <select v-model="presetPick" @change="presetNew" title="从模板创建">
                   <option value="">从模板创建…</option>
@@ -289,6 +339,7 @@ function onKey(e) {
                 </select>
               </span>
             </div>
+            <div class="row"><span class="status">{{ cartridgeStatus }}</span></div>
             <div id="agent-list">
               <table class="plist">
                 <thead><tr><th>名称</th><th>id</th><th>默认</th></tr></thead>

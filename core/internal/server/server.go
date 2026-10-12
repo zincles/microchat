@@ -78,10 +78,13 @@ func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *ch
 	s.mux.HandleFunc("GET /api/v1/sessions", s.listSessions)
 	s.mux.HandleFunc("POST /api/v1/sessions", s.createSession)
 	s.mux.HandleFunc("POST /api/v1/sessions/import-st", s.importSt)
+	s.mux.HandleFunc("POST /api/v1/sessions/import-json", s.importJSON)
 	s.mux.HandleFunc("PATCH /api/v1/sessions/{session_id}", s.updateSession)
 	s.mux.HandleFunc("DELETE /api/v1/sessions/{session_id}", s.deleteSession)
 	// Copy：线性会话里的"分岔"（新 session + 消息与摘要一并复制）
 	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/copy", s.copySession)
+	// 对话记录导出（JSON）：**会话域**（owner 自己就能导）；导入在设置面（import-json，admin）。
+	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/export", s.exportSession)
 	// provider / 模型 / 渠道（registry 那一层）
 	s.mux.HandleFunc("GET /api/v1/providers", s.listProviders)
 	// 内建预设清单（字面段优先于 {id}，Go 的 ServeMux 自己保证）
@@ -526,6 +529,22 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		}
 		session.AgentID = seed.AgentID
 	}
+	// 首段对话（`agent.first_message`，2026-10-11 用户定）：新会话把它插成**第一条 assistant 消息**
+	// （idx 1）。插失败就把刚建的会话删掉（草稿铸的 id 还能重试），不留半截会话。
+	// 导入（自己带消息表）与 Copy（复制既有会话）**都不走这儿** —— 不会被这条打扰。
+	if first := s.loadAgents().FirstMessageOf(session.AgentID); first != "" {
+		greeting := model.Message{
+			ID:        uuid.Must(uuid.NewV7()).String(),
+			SessionID: session.ID,
+			Role:      model.RoleAssistant,
+			Content:   first,
+		}
+		if _, err := s.store.InsertMessage(greeting); err != nil {
+			_ = s.store.DeleteSession(session.ID)
+			writeStoreError(w, err)
+			return
+		}
+	}
 	writeJSON(w, http.StatusCreated, session)
 }
 
@@ -705,7 +724,7 @@ func (s *Server) importSt(w http.ResponseWriter, r *http.Request) {
 		}
 		session.AgentID = agentID
 	}
-	if err := s.store.ImportSTMessages(session.ID, parsed); err != nil {
+	if err := s.store.ImportMessages(session.ID, parsed); err != nil {
 		writeStoreError(w, err)
 		return
 	}

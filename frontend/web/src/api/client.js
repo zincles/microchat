@@ -185,6 +185,10 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
     // models：跨 provider 拍平（`{provider, upstream_id, name}` —— 下拉选项就打它）。
     models: () => call("GET", "/models"),
     agents: () => call("GET", "/agents"),
+    // 对话记录导出/导入（JSON，2026-10-11）：只带 role+content+标题（不含 system prompt / agent）。
+    // 导出 = 会话域（owner 自己就能导）；导入 = 设置面（admin，与 ST 导入一致）。
+    exportSession: (id) => call("GET", `/sessions/${enc(id)}/export`),
+    importJson: (doc) => call("POST", "/sessions/import-json", doc),
     // 提示词段（system prompt segment）：读口随 `GET /agents`（段库就在那份里）；写口三个（admin）。
     createSegment: (body) => call("POST", "/segments", body),
     patchSegment: (id, body) => call("PATCH", `/segments/${enc(id)}`, body),

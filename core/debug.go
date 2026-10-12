@@ -329,7 +329,7 @@ func (e *debugEnv) importSt(args []string) int {
 		}
 		session.AgentID = agentID
 	}
-	if err := e.store.ImportSTMessages(session.ID, parsed); err != nil {
+	if err := e.store.ImportMessages(session.ID, parsed); err != nil {
 		return report(err)
 	}
 	if _, ok := values["title"]; !ok {

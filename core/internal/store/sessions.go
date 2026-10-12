@@ -63,7 +63,7 @@ func (s *Store) session(id string) (*model.Session, error) {
 func (s *Store) ListSessions(ownerID int64) ([]model.Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows, err := s.db.Query("SELECT " + sessionColumns +
+	rows, err := s.db.Query("SELECT "+sessionColumns+
 		" FROM sessions WHERE owner_id = ?1 ORDER BY updated_at DESC, id DESC", ownerID)
 	if err != nil {
 		return nil, err
@@ -107,7 +107,7 @@ func (s *Store) CreateSessionWithID(ownerID int64, id, provider, modelID, system
 	session := model.Session{
 		ID: id, Title: title, SystemPrompt: systemPrompt,
 		Provider: provider, Model: modelID, OwnerID: ownerID,
-		AgentID: "default", // 内置默认，server 再按 agents.json 覆盖
+		AgentID:   "default", // 内置默认，server 再按 agents.json 覆盖
 		CreatedAt: now, UpdatedAt: now,
 	}
 	_, err := s.db.Exec(
@@ -433,8 +433,8 @@ type STMessage struct {
 	} `json:"extra"`
 }
 
-// STParsed：一行里要的那四样（id 在落库时另铸，这里不带）。
-type STParsed struct {
+// ImportMessage：一条要落的导入消息（**ST 导入与 JSON 导入共用**；id 在落库时批铸排序，这里不带）。
+type ImportMessage struct {
 	IsUser    bool
 	Content   string
 	Reasoning string
@@ -442,8 +442,8 @@ type STParsed struct {
 }
 
 // ParseSTLines：逐行解 ST，返回（要落的，跳过的行数）。
-func ParseSTLines(raw []byte) ([]STParsed, int) {
-	parsed := []STParsed{}
+func ParseSTLines(raw []byte) ([]ImportMessage, int) {
+	parsed := []ImportMessage{}
 	skipped := 0
 	for _, line := range strings.Split(string(raw), "\n") {
 		if strings.TrimSpace(line) == "" {
@@ -466,7 +466,7 @@ func ParseSTLines(raw []byte) ([]STParsed, int) {
 		if !item.IsUser {
 			reasoning = item.Extra.Reasoning
 		}
-		parsed = append(parsed, STParsed{
+		parsed = append(parsed, ImportMessage{
 			IsUser: item.IsUser, Content: item.Mes,
 			Reasoning: reasoning, CreatedAt: stMillis(item.SendDate),
 		})
@@ -485,8 +485,9 @@ func stMillis(sendDate string) int64 {
 	return 0
 }
 
-// ImportSTMessages：按序落库（调用方已建好会话）。id 批铸排序 ⇒ 文件顺序 = 会话顺序。
-func (s *Store) ImportSTMessages(sessionID string, parsed []STParsed) error {
+// ImportMessages：按序落库（调用方已建好会话）。id 批铸排序 ⇒ 文件顺序 = 会话顺序
+// （UUIDv7 只在毫秒上有序 ⇒ 一口气连铸会乱序，排序这一刀别省）。
+func (s *Store) ImportMessages(sessionID string, parsed []ImportMessage) error {
 	ids, err := MintOrderedIDs(len(parsed))
 	if err != nil {
 		return err

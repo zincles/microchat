@@ -92,6 +92,7 @@ const windowFrom = ref(1); // 窗口起点（段对齐；1 = 已到最老）
 const summaryMsgs = reactive(new Map()); // 摘要 id → {state:"loading"|"ready", rows}（只有展开过的才有）
 const openSummaries = new Set(); // 哪些卡正展开着（reload 后补拉新鲜的）
 const vueDisplayMode = ref("chat");
+const vueAgents = ref([]); // 生效 agent 列表（显示模式与草稿首段都从这儿看）
 const settingsOpen = ref(false);
 const userOpen = ref(false); // 用户视图（与设置平级：一个管登录者，一个管实例）
 const currentUser = ref(null); // 当前登录者（boot 时问 /auth/me；用户视图也自己问一遍）
@@ -253,12 +254,26 @@ async function refreshTree() {
 }
 const lastMsgId = computed(() => [...vueMessages.value].reverse().find((m) => m.messageId)?.messageId ?? null);
 // 渲染行：气泡（带编号）+ 被顶层摘要折起来的卡（口径见 utils/chatrows.js）。
-const chatRows = computed(() => buildChatRows({
-  segments: vueSegments.value,
-  windowFrom: windowFrom.value,
-  messages: vueMessages.value,
-  summaryMsgs,
-}));
+// 当前 agent 的"首段对话"（`first_message`，2026-10-11 用户定）—— **computed 只看响应式的两格**
+// （vueAgents + sessionInfo.agent_id）。⚠ 别把它写成"先看普通变量 draft 再早退"：早退分支不碰任何
+// 响应式依赖 ⇒ computed 没依赖、缓存住空串**永不重算**（踩过）。
+const agentGreeting = computed(() => {
+  const a = vueAgents.value.find((x) => x.id === sessionInfo.agent_id);
+  return (a?.first_message ?? "").trim();
+});
+const chatRows = computed(() => {
+  // 草稿里把首段**合成气泡先画出来**（发送后它就是库里的 #1，编号顺延天然给它 1；
+  // 换 agent 就换首段）。draft 是普通变量 ⇒ 判断放在这儿（chatRows 每次都重算）。
+  const greet = draft ? agentGreeting.value : "";
+  return buildChatRows({
+    segments: vueSegments.value,
+    windowFrom: windowFrom.value,
+    messages: greet
+      ? [{ id: "draft-first", role: "assistant", who: "助手", content: greet }, ...vueMessages.value]
+      : vueMessages.value,
+    summaryMsgs,
+  });
+});
 const olderSegments = computed(() => olderCount(vueSegments.value, windowFrom.value));
 function onBubbleSave(mid, kind, value) {
   editMessageSave(mid, kind, value).catch((err) => toast(`改消息失败：${err.message}`, "error"));
@@ -610,7 +625,8 @@ async function refreshDisplayMode() {
   try {
     const data = await api.agents();
     if (my !== epoch) return;
-    const a = (data.agents ?? []).find((x) => x.id === sessionInfo.agent_id);
+    vueAgents.value = data.agents ?? []; // 首段对话也从这儿看（草稿的合成气泡）
+    const a = vueAgents.value.find((x) => x.id === sessionInfo.agent_id);
     vueDisplayMode.value = a?.display_mode === "roleplay" ? "roleplay" : "chat";
   } catch { /* 拿不到就 chat 兜底 */ }
 }

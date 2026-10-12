@@ -5,6 +5,8 @@ import { ref, computed, onMounted, onUnmounted } from "vue";
 import { sharedApi } from "../utils/prefs.js";
 import { ABILITY_IDS, buildAbilitiesPatch, modelKey, parseModelKey, modelLabel } from "../utils/format.js";
 import { assemblePrompt, missingSegments } from "../utils/prompt.js";
+import { buildCartridge } from "../utils/cartridge.js";
+import { downloadJSON } from "../utils/download.js";
 import ToggleSwitch from "./ToggleSwitch.vue";
 
 const props = defineProps({
@@ -21,6 +23,7 @@ const isNew = !props.agent;
 const aid = ref(props.agent?.id ?? "");
 const name = ref(props.agent?.name ?? props.template?.name ?? "");
 const prompt = ref(props.agent?.system_prompt ?? props.template?.system_prompt ?? "");
+const firstMsg = ref(props.agent?.first_message ?? props.template?.first_message ?? "");
 const rows = ref({});
 const prepend = ref(!!(props.agent?.prepend_state ?? props.template?.prepend_state));
 const displayMode = ref(props.agent?.display_mode ?? props.template?.display_mode ?? "chat");
@@ -76,9 +79,9 @@ async function save() {
   if (!name.value.trim()) { status.value = "给个名字"; return; }
   try {
     if (isNew) {
-      await api.createAgent({ name: name.value.trim(), system_prompt: prompt.value, segments: segs.value, abilities: toPatch(), prepend_state: prepend.value || undefined, display_mode: displayMode.value === "roleplay" ? "roleplay" : undefined });
+      await api.createAgent({ name: name.value.trim(), system_prompt: prompt.value, first_message: firstMsg.value, segments: segs.value, abilities: toPatch(), prepend_state: prepend.value || undefined, display_mode: displayMode.value === "roleplay" ? "roleplay" : undefined });
     } else {
-      const body = { system_prompt: prompt.value, segments: segs.value, abilities: toPatch() };
+      const body = { system_prompt: prompt.value, first_message: firstMsg.value, segments: segs.value, abilities: toPatch() };
       if (!!prepend.value !== !!props.agent.prepend_state) body.prepend_state = prepend.value;
       if ((displayMode.value || "chat") !== (props.agent.display_mode || "chat")) body.display_mode = displayMode.value;
       if (name.value.trim() !== props.agent.name) body.name = name.value.trim();
@@ -88,6 +91,22 @@ async function save() {
     emit("saved");
     emit("close");
   } catch (e) { status.value = `保存失败：${e.message}`; }
+}
+
+// 导出卡带（2026-10-11 用户定）：**只导 agent 自己** —— 用到的段**拼平**进 system_prompt、
+// 不留引用（免除依赖，方便再分发；导入后要不要拆段由人后续处理）。
+function exportCartridge() {
+  const doc = buildCartridge({
+    name: name.value.trim() || "未命名",
+    system_prompt: prompt.value,
+    segments: segs.value,
+    first_message: firstMsg.value,
+    abilities: toPatch(),
+    prepend_state: prepend.value,
+    display_mode: displayMode.value,
+  }, props.segments);
+  downloadJSON(doc, `${name.value.trim() || "agent"}.card.json`);
+  status.value = "已导出卡带（段已拼平）";
 }
 
 async function makeDefault() {
@@ -136,6 +155,7 @@ function onKey(e) {
     <label class="field"><span>id（改即重命名，搬引用）</span><input v-model="aid" :disabled="isNew" placeholder="新建时由后端生成" /></label>
     <label class="field"><span>名称</span><input v-model="name" placeholder="人格名" /></label>
     <label class="field-block"><span>系统提示词（base）</span><textarea v-model="prompt" rows="6" placeholder="system_prompt"></textarea></label>
+    <label class="field-block"><span>首段对话（新会话的第一条 assistant 消息；空 = 不启用）</span><textarea v-model="firstMsg" rows="3" placeholder="例如：你好，我是……（可带 &lt;state&gt; 块设初始状态）"></textarea></label>
     <h3>提示词段（追加在 base 后面，顺序 = 拼接顺序）</h3>
     <div v-if="!segs.length" class="status">（还没有段 —— 从下面挑一个加进来）</div>
     <div v-for="(sid, i) in segs" :key="sid" class="seg-row" :class="{ missing: segMissing(sid) }">
@@ -175,6 +195,7 @@ function onKey(e) {
     </fieldset>
     <div class="row">
       <button type="button" class="primary" @click="save">保存</button>
+      <button type="button" @click="exportCartridge" title="导出 agent 卡带（JSON；段拼平进提示词、不留引用）">导出卡带</button>
       <button v-if="!isNew && !isDefault" type="button" @click="makeDefault">设为默认</button>
       <button v-if="!isNew" type="button" class="danger" @click="remove">删除</button>
       <span class="status">{{ status }}</span>

@@ -366,9 +366,19 @@ func (s *Service) reasoningTable(messages []model.Message) map[string]string {
 // 回的是 `providers.LastPayload` 同形状（method/url/headers/体；密钥打码）——
 // 与 (a) `GET /debug/last-payload` 同一支笔（`Snapshot`），两份对得上才叫调试可靠。
 func (s *Service) PreviewWire(session model.Session, content string) (providers.LastPayload, error) {
-	_, _, providersConfig := s.files()
-	pending := model.Message{ID: "preview", SessionID: session.ID, Role: model.RoleUser, Content: content}
-	outgoing, messages, err := s.assemble(session, []model.Message{pending})
+	_, agents, providersConfig := s.files()
+	// 合成消息的 id 只用来**定序**（`IndexMessages` 按 id 排）：`preview-1` < `preview-2`。
+	pending := []model.Message{{ID: "preview-2", SessionID: session.ID, Role: model.RoleUser, Content: content}}
+	// 草稿（这条会话**还不存在**）：`POST /sessions` 会把 agent 的"首段对话"插成第一条 assistant ——
+	// 预演必须把它算进去，不然"预演 = 真发"这条不变量当场破（真发那条会多出一条 assistant）。
+	// 已存在的会话不用模拟：首段已经在库里了。
+	if existing, err := s.Store.GetSession(session.ID); err == nil && existing == nil {
+		if first := agents.FirstMessageOf(session.AgentID); first != "" {
+			greeting := model.Message{ID: "preview-1", SessionID: session.ID, Role: model.RoleAssistant, Content: first}
+			pending = append([]model.Message{greeting}, pending...)
+		}
+	}
+	outgoing, messages, err := s.assemble(session, pending)
 	if err != nil {
 		return providers.LastPayload{}, err
 	}

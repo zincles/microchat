@@ -4,6 +4,7 @@
 import { ref, onMounted, onUnmounted } from "vue";
 import { sharedApi } from "../utils/prefs.js";
 import { groupModelsByProvider, modelKey, parseModelKey, modelOption, agentOption } from "../utils/format.js";
+import { downloadJSON } from "../utils/download.js";
 
 const props = defineProps({ sessionId: String });
 const emit = defineEmits(["close", "renamed"]);
@@ -58,6 +59,15 @@ async function save() {
   } catch (e) { status.value = `保存失败：${e.message}`; }
 }
 
+// 导出对话（JSON，2026-10-11 用户定）：只带 role+content+标题 —— 浏览器直接落一个文件。
+async function exportJSON() {
+  try {
+    const doc = await api.exportSession(props.sessionId);
+    downloadJSON(doc, `${info.value.title || "新会话"}.json`);
+    status.value = `已导出 ${doc.messages.length} 条`;
+  } catch (e) { status.value = `导出失败：${e.message}`; }
+}
+
 onMounted(() => {
   load().catch((e) => { status.value = `载入失败：${e.message}`; });
   document.addEventListener("keydown", onKey);
@@ -94,7 +104,11 @@ function onKey(e) {
           </select></label>
           <h3>提示词覆盖</h3>
           <label class="field-block"><span>会话提示词（空=跟 Agent 走）</span><textarea v-model="sysPrompt" :placeholder="sysPromptPh" rows="4"></textarea></label>
-          <div class="row"><button type="button" class="primary" @click="save">保存</button><span class="status">{{ status }}</span></div>
+          <div class="row">
+            <button type="button" class="primary" @click="save">保存</button>
+            <button type="button" @click="exportJSON" title="导出对话记录（JSON：只有 role+content+标题）">导出对话（JSON）</button>
+            <span class="status">{{ status }}</span>
+          </div>
         </section>
       </div>
     </div>

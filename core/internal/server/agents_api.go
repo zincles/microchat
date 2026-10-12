@@ -19,6 +19,8 @@ type CreateAgentReq struct {
 	// 名称是**唯一的人类句柄** —— id 由后端生成，不接受指定。
 	Name         string `json:"name"`
 	SystemPrompt string `json:"system_prompt"`
+	// FirstMessage：首段对话（新会话的第一条 assistant 消息；空 = 不启用）。
+	FirstMessage string `json:"first_message,omitempty"`
 	// Segments：追加段（段库里的 id 列表，顺序 = 追加顺序；拼装见 `state.AssembleSystemPrompt`）。
 	// 引用的段必须在库里 ⇒ 400。
 	Segments []string `json:"segments,omitempty"`
@@ -39,6 +41,8 @@ func (r CreateAgentReq) DisplayModeValue() string {
 type UpdateAgentReq struct {
 	Name         *string `json:"name"`
 	SystemPrompt *string `json:"system_prompt"`
+	// FirstMessage：nil = 不动；`""` = 清掉（首段不启用）；非空 = 写进去。
+	FirstMessage *string `json:"first_message"`
 	// Segments：给了就**整段替换**这串引用（nil = 不动；`[]` = 清空）。引用的段必须在库里 ⇒ 400。
 	Segments []string `json:"segments,omitempty"`
 	// Abilities：给了就**整段替换**这张映射（与 `system_prompt` 一个语义；nil = 不动）。
@@ -111,6 +115,7 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		ID:           uuid.Must(uuid.NewV7()).String(),
 		Name:         name,
 		SystemPrompt: req.SystemPrompt,
+		FirstMessage: req.FirstMessage,
 		Segments:     req.Segments,
 		Abilities:    req.Abilities,
 		PrependState: req.PrependState,
@@ -206,6 +211,9 @@ func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.SystemPrompt != nil {
 		agents.Agents[index].SystemPrompt = *req.SystemPrompt
+	}
+	if req.FirstMessage != nil {
+		agents.Agents[index].FirstMessage = *req.FirstMessage
 	}
 	if req.Segments != nil {
 		agents.Agents[index].Segments = req.Segments

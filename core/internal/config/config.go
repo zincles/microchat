@@ -232,6 +232,10 @@ type Agent struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`
 	SystemPrompt string `json:"system_prompt"`
+	// FirstMessage：**首段对话**（2026-10-11 用户定）——以这个 agent 新建会话时，
+	// 它作为**第一条 assistant 消息**（idx 1）落库；空 = 不启用。正文原样存档
+	// （可带 `<state>` 块 —— 于是"首段设初始状态"天然成立）。
+	FirstMessage string `json:"first_message,omitempty"`
 	// Segments：追加段（段库里的 id 列表，**顺序 = 追加顺序**）。
 	// 拼装 = base（`system_prompt`）+ 逐段 `"\n\n"` 拼接 —— **纯字符串拼接**，
 	// 无替换无递归（`state.AssembleSystemPrompt`，唯一实现处）。
@@ -288,6 +292,15 @@ func BuiltinSegments() []Segment {
 		out = append(out, Segment{ID: item.ID, Text: string(text)})
 	}
 	return out
+}
+
+// FirstMessageOf：这个 agent 的首段对话（trim；空 = 没配）。
+func (c AgentsConfig) FirstMessageOf(agentID string) string {
+	agent, ok := c.Get(agentID)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(agent.FirstMessage)
 }
 
 // SegmentByID：按 id 找段（用户库在前，内置在后 —— 撞名被校验挡掉，正常不会两义）。
