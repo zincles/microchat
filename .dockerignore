@@ -1,0 +1,8 @@
+# 构建上下文里别塞这些东西（Dockerfile 只装工具链、不 COPY 源码，但上下文小了 build 才快）
+.git
+data
+frontend/web/node_modules
+frontend/web/dist
+archive
+*.tar.gz
+*.apk

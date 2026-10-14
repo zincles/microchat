@@ -765,15 +765,17 @@ test("probeAuthStatus：先规范化再探 /auth/status；非 microchat 的 200 
   assert.equal(login.message, "用户名或口令不对");
 });
 
-test("默认后端地址跟着页面走：hostname:8787；IPv6 套方括号；存过的最优先", () => {
+test("默认后端地址跟着页面走：hostname:8787；IPv6 套方括号；存过的最优先；候选同源在前", () => {
   stubStorage();
   assert.equal(defaultApiBase(), DEFAULT_API_URL); // node 里没有 location ⇒ 退回默认
   globalThis.location = { hostname: "192.168.0.110", origin: "http://192.168.0.110:8788" };
   assert.equal(defaultApiBase(), "http://192.168.0.110:8787/api/v1");
   assert.equal(apiBase(), "http://192.168.0.110:8787/api/v1"); // 没存过 ⇒ 用推导值
-  assert.deepEqual(apiBaseCandidates(), ["http://192.168.0.110:8787/api/v1", "http://192.168.0.110:8788/api/v1"]);
+  // 候选：**同源第一**（vite 代理把 /api 转给后端 ⇒ 单容器部署零配置直进），推导值兜底。
+  assert.deepEqual(apiBaseCandidates(), ["http://192.168.0.110:8788/api/v1", "http://192.168.0.110:8787/api/v1"]);
   globalThis.location = { hostname: "::1", origin: "http://[::1]:8788" };
   assert.equal(defaultApiBase(), "http://[::1]:8787/api/v1");
+  assert.deepEqual(apiBaseCandidates(), ["http://[::1]:8788/api/v1", "http://[::1]:8787/api/v1"]);
   localStorage.setItem("mc_api", "http://box:9999/api/v1");
   assert.equal(apiBase(), "http://box:9999/api/v1"); // 存过 ⇒ 只认存的
   assert.deepEqual(apiBaseCandidates(), ["http://box:9999/api/v1"]);

@@ -1,0 +1,45 @@
+# microchat 部署（单容器，用户定 2026-10-14）：
+#
+#   git clone <repo> && cd <repo> && docker compose up -d
+#   然后开 http://<这台机器>:8788 —— 首次进去是 root 初始化，之后是登录。
+#
+# 形状：前端（Node/vite preview）与后端（Go）都在**同一个容器**里 ——
+# vite 把 /api 代理到 127.0.0.1 上的后端（同一 network namespace，就是 localhost）。
+# ⇒ 浏览器只认**一个来源**（8788），永远不用填后端地址；地址的唯一权威 =
+#    后端自己的配置文件 data/config/config.json（server.host/port），vite 启动时读它。
+#
+# 版本全部钉死：镜像见 Dockerfile（两个 base 按 digest 锁死）；npm 依赖走 package-lock
+# （entrypoint 用 npm ci）；Go 依赖走 go.mod/go.sum；工具链版本由镜像里的 Go/Node 定。
+#
+# podman 机器（本机就是，没装 docker）：直接 **`podman compose up -d`** —— rootless 用户态，
+# 更安全、零 shim（provider 是 podman-compose）；命令里想保留 docker 这个词也行：
+# `sudo apt install podman-docker`（它装的 /usr/bin/docker 就是 `exec podman "$@"`，实测扒过包）——非必需。
+# 注意卷名带项目前缀：这里写的 microchat-go 实际叫 microchat_microchat-go（down -v / volume rm 按实际名）。
+services:
+  microchat:
+    build: .
+    image: microchat
+    container_name: microchat
+    restart: unless-stopped
+    ports:
+      - "8788:8788" # 唯一公开口（LAN 可达）：前端
+      # 回环口：本机的 `vite dev`（5173，HMR）与脚本/curl 直连容器后端用；**只绑 127.0.0.1**，
+      # LAN 与外网都够不着（鉴权照旧全员 Bearer，多这一口不放松任何东西）。不想要就删这行。
+      - "127.0.0.1:8787:8787"
+    environment:
+      GOCACHE: /go/cache # Go 编译缓存落 /go（命名卷）⇒ 重启不用重新编
+      MICROCHAT_DATA_DIR: /app/data # 三处共读：后端本体、vite 的代理目标、entrypoint
+    volumes:
+      - ./:/app # 仓库本体。data/（库 + 配置 + jwt_key）随它在宿主机上持久化
+      - microchat-go:/go # Go 模块缓存 + 编译缓存
+      # 前端依赖卷挂在 **/build** 下（bind 之外）——entrypoint 每次把源码拷进 /build 再构建。
+      # ⚠ 别把它挪回 /app/frontend/web 底下：① podman-compose 把 bind 排在卷之后、整个盖住
+      # 嵌套卷（实测踩过）；② 跟宿主共用 node_modules 本来就错 —— 宿主 glibc、容器 musl，
+      # rollup 原生包不通用（实测直接 MODULE_NOT_FOUND）。
+      - microchat-node-modules:/build/web/node_modules
+    command: ["sh", "/app/docker/entrypoint.sh"]
+    working_dir: /app
+
+volumes:
+  microchat-go:
+  microchat-node-modules:

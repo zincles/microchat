@@ -31,16 +31,19 @@ export function defaultApiBase() {
 export function apiBase() { return localStorage.getItem("mc_api") || defaultApiBase(); }
 
 // apiBaseCandidates：启动自检按顺序试的候选 —— 有存过就只认存的（人定的最大）；
-// 没存过：[跟页面同主机的 8787，**同源 /api/v1**]（后者兜底反代/单端口部署）。
+// 没存过：[**同源 /api/v1**（首选：单容器部署与 dev 都靠它 —— vite 把 /api 代理给后端，
+// 见 vite.config.js；浏览器因此永远同源、不用填地址），跟页面同主机的 8787（兜底：
+// 前端被别的静态服务器端出来、没有代理时）]。
 // 非首选候选胜出时调用方要把它存下来（sharedApi 等一切读的都是 apiBase()）。
 export function apiBaseCandidates() {
   const stored = localStorage.getItem("mc_api");
   if (stored) return [stored];
-  const list = [defaultApiBase()];
+  const list = [];
   if (typeof location !== "undefined" && location.origin && location.origin !== "null") {
-    const same = `${location.origin}/api/v1`;
-    if (!list.includes(same)) list.push(same);
+    list.push(`${location.origin}/api/v1`);
   }
+  const dflt = defaultApiBase();
+  if (!list.includes(dflt)) list.push(dflt);
   return list;
 }
 export function apiToken() { return localStorage.getItem("mc_token") || ""; }
