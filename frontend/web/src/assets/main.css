@@ -37,15 +37,36 @@ body::before { content: ""; position: fixed; inset: 0; z-index: 0; pointer-event
 /* 顶栏：中间列里的悬浮圆角卡（上下留空，不贴边）。三段 = 开关 | 会话抬头（伸缩）| 控制。 */
 /* 顶栏（2026-10-10 用户定）：**非浮动**的贴边平栏 —— 去圆角、去外边距、去阴影，底边一条描线当外框
  * （左右两条线是左右栏自己的边框、顶上是窗口边，再描就重了）。 #chat-col 的外边距同步收掉。 */
-header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; color: var(--tg-hint); background: var(--tg-secondary-bg); border-bottom: 1px solid var(--line); }
-/* 会话抬头：占满中段（下拉被推到右端），超长省略；hover 出全名（title 属性）。
- * min-width = 窄屏时不小于 ~5.5em：空间不够先让两个下拉去收缩（它们是次要信息）。 */
-.session-title { flex: 1 1 auto; min-width: 5.5em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--tg-text); }
-/* 顶栏下拉（渠道/模型、Agent）：胶囊形、可压缩 —— min-width:0 让窄屏收缩省略而不是把顶栏撑破；
- * Agent 是最少动的那个，上限更紧（先于模型被裁）。 */
-.pill-select { flex: 0 1 auto; min-width: 0; max-width: 38%; border-radius: 999px; border-bottom: none; background-color: rgb(255 255 255 / 7%); padding: 0.3em 1.8em 0.3em 0.9em; }
-#session-agent { max-width: 24%; }
-.pill-select:hover { background-color: rgb(255 255 255 / 11%); }
+/* 顶栏（2026-10-14 用户定，去壳版）：**透明**（底色与外框线都撤了，体感更像浮动抬头；
+ * 背景图/纯底都透出来）—— 字压在图上要看得清，给一层同状态行那样的柔影。 */
+header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; color: var(--tg-hint); background: none;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 85%), 0 1px 10px rgb(0 0 0 / 55%); }
+/* 顶栏左上角那枚"当前模型"：**静默下拉**（2026-10-14 用户定：没有按钮轮廓，只有字）——
+ * 胶囊底、边框、自绘箭头全撤；点一下照样弹原生选项。窄屏可收缩省略（max-width 半幅）。 */
+.flat-select { flex: 0 1 auto; min-width: 0; max-width: 50%; background: none; background-image: none; border: none; padding: 0.15em 0; font: inherit; color: var(--tg-text); cursor: pointer; text-overflow: ellipsis; }
+.flat-select:hover { filter: brightness(1.25); }
+.flat-select:focus { outline: none; }
+/* 右开关吃剩余空档（贴右缘）；左开关在时它就是最左那件。 */
+#toggle-right { margin-left: auto; }
+/* Agent 头像（顶栏左上、模型字左边，2026-10-14 用户定）：圆形首字标，底色由 id 派生
+ * （同一 id 永远同一个色，纯计算无存储）；点开 = 选人浮板。 */
+.agent-btn { flex: none; width: 1.95em; height: 1.95em; padding: 0; border: none; border-radius: 50%; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; color: #fff; font-size: 0.85em; font-weight: 600;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 35%); }
+.agent-btn:hover { filter: brightness(1.12); }
+/* 菜单：贴着头像往下掉（--tg-float 浮板，与命令面板同族）；背后一层透明遮罩，点哪儿都收。 */
+.agent-menu-backdrop { position: fixed; inset: 0; z-index: 1; }
+.agent-menu { position: absolute; z-index: 2; top: calc(100% + 0.35em); left: 1em; min-width: 11em; max-width: 20em;
+  max-height: 60vh; overflow-y: auto; overscroll-behavior: contain;
+  background: var(--tg-float); border-radius: var(--r-shell); padding: 0.35em; box-shadow: 0 10px 30px rgb(0 0 0 / 45%); }
+.agent-item { display: flex; align-items: center; gap: 0.55em; width: 100%; box-sizing: border-box; text-align: left;
+  background: none; border: none; border-radius: var(--r-btn); padding: 0.45em 0.55em; color: var(--tg-text); cursor: pointer; font: inherit; }
+.agent-item:hover { background: rgb(255 255 255 / 6%); }
+.agent-item .agent-dot { flex: none; width: 1.6em; height: 1.6em; border-radius: 50%; display: flex; align-items: center;
+  justify-content: center; color: #fff; font-size: 0.8em; font-weight: 600; }
+.agent-item .agent-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-item .agent-check { color: var(--tg-link); }
+.agent-empty { margin: 0.4em 0.6em; color: var(--tg-hint); font-size: 0.9em; }
 .pill-select:focus { border-bottom: none; background-color: rgb(255 255 255 / 13%); outline: 1px solid var(--tg-link); }
 /* Toast 通知（右上堆叠，TG 安卓 toast 味：深底白字圆角 + 左色条区分 Plumbing/错误）。 */
 #toasts { position: fixed; top: 4.2em; right: 0.8em; display: flex; flex-direction: column; gap: 0.5em; z-index: 50; max-width: min(22em, 80vw); }
@@ -128,10 +149,23 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 /* 阅读列约束（760px 居中）：只管**消息列与输入行**；顶栏豁免 —— 它是贴边的平栏
  * （2026-10-10 用户定："非 floating + 外框"；早先 `> *` 通配把顶栏也框进来了，
  *  顶栏因此左右各缩 120px）。 */
-#chat-col > *:not(header) { position: relative; z-index: 1; max-width: 760px; margin-left: auto; margin-right: auto; width: 100%; box-sizing: border-box; }
-#chat-col > header { position: relative; z-index: 1; }
+/* 注：**别在这里写 position/z-index** —— `:not(header)` 的特异性(1-0-1)会压过组件自己的
+ * `#composer{position:absolute}`(1-0-0)，输入行的悬浮层会被它悄悄扳回 relative（2026-10-14 踩过）。
+ * `#messages-vue` 也豁免：它要**占满整个对话区**（滚动条贴最右缘），阅读列约束落在里面的
+ * `.messages-inner`（2026-10-14 用户定：滚动条离右边一段空白看得难受）。 */
+#chat-col > *:not(header):not(#messages-vue) { max-width: var(--read-col, 920px); margin-left: auto; margin-right: auto; width: 100%; box-sizing: border-box; }
+/* 顶栏 = **悬浮层**，且**全透明**（2026-10-14 用户定：不折腾模糊了 —— 无毛玻璃、无渐隐，
+ * 就一层浮字；滑过的内容照原样透过去，字靠双层柔影读清，见 header 的 text-shadow）。
+ * 底部输入栏的模糊保留（那是 #input 自己的浮卡底，见下）。 */
+#chat-col > header { position: absolute; top: 0; left: 0; right: 0; z-index: 6; background: none; }
 /* 消息列：flex:1 撑满 + 两侧 56px 头像位 + 上下给浮动输入栏留位；底部留空让尾条操作行不被输入框盖住。 */
-#messages-vue { flex: 1; overflow-y: auto; overscroll-behavior: contain; min-height: 0; padding: 1em 56px 7em; display: flex; flex-direction: column; gap: 0.3em; }
+#messages-vue { flex: 1; overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
+/* 阅读列（气泡/摘要卡/加载更多都住这里）：--read-col（920，2026-10-15 用户定：760 小了"一点点"）
+ * 居中 + 两侧 56px 空档 + 上下留白喂两个悬浮层。改宽窄只有这一个数（输入行共用同一个变量）。
+ * 上下留白：顶栏 ~2.5em 撑住 3.2em；底部 = 输入行实测高（--composer-h，App 的 composerRO 现量现写）
+ * + 状态行/任务行两行小字的位置。 */
+.messages-inner { max-width: var(--read-col, 920px); margin: 0 auto; box-sizing: border-box;
+  padding: 3.2em 56px calc(var(--composer-h, 4.6em) + 2.6em); display: flex; flex-direction: column; gap: 0.3em; }
 /* 抽屉遮罩（只在窄屏显示；点一下 = 收起对应的栏）：与栏的状态由 CSS 兄弟选择器联动，不用 JS 状态。 */
 #scrim-left, #scrim-right { display: none; }
 /* 窄屏（≤1100）：右载荷栏改"抽屉"（2026-10-10）—— 不再 display:none 一刀切（[◨] 之前按了没反应）。 */
@@ -151,8 +185,8 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
   #scrim-left { display: block; position: fixed; inset: 0; z-index: 15; background: rgb(0 0 0 / 45%); opacity: 0; pointer-events: none; transition: opacity 180ms ease-out; }
   #sessions-bar:not(.collapsed) ~ #scrim-left { opacity: 1; pointer-events: auto; }
   /* 底部留白别砍光（砍光过：滚到底时最后一条会滑到 statusline 底下，像被底栏"挡"住）——
-   * 给状态行 + 任务行（都是绝对定位浮层）让位，约 3.5em。 */
-  #messages-vue { padding: 0.5em 0.8em 3.5em; }
+   * 窄屏同样按"输入行实测高 + 小字位置"算（2026-10-14 起输入行是悬浮层，高度会变）。 */
+  .messages-inner { padding: 2.8em 0.8em calc(var(--composer-h, 4.6em) + 1.8em); }
   #settings-view, #user-view { padding: 0.4em 0.4em 0; }
   .settings-bar { gap: 0.2em; }
   /* 六区在窄屏：排得下就等分，排不下靠 nav 横滚（不设固定宽 —— 那两行会被后面的默认规则盖掉）。 */
@@ -160,6 +194,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
   .settings-nav .tab { white-space: nowrap; }
 }
 .bar-head { display: flex; justify-content: space-between; align-items: center; padding: 0.7em 0.8em 0.3em; color: var(--tg-hint); font-size: 0.85em; }
+.bar-head .icon-btn { font-size: 1em; padding: 0.2em 0.35em; }
 /* 新对话（DS 味，2026-10-10）：整行大按钮、比栏面亮一档 —— 左栏最显眼的那件东西。 */
 #session-new { display: flex; align-items: center; justify-content: center; gap: 0.45em;
   width: calc(100% - 1.2em); margin: 0.35em 0.6em 0.5em; padding: 0.72em 0.9em;
@@ -193,6 +228,9 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 .session-item .title { flex: 1; overflow: hidden; text-overflow: ellipsis; }
 .session-item .close { background: none; border: none; color: var(--tg-hint); padding: 0 0.3em; cursor: pointer; border-radius: 4px; }
 .session-item .close:hover { color: var(--tg-destructive); }
+.session-item .close { opacity: 0; transition: opacity 120ms ease-out; }
+.session-item:hover .close, .session-item.sel .close { opacity: 1; }
+@media (hover: none) { .session-item .close { opacity: 1; } }
 /* 条目设置键（三横杠）：默认隐藏，hover 整条才显，与 × 同形。 */
 .session-item .item-btn { display: none; background: none; border: none; color: var(--tg-hint); padding: 0 0.3em; cursor: pointer; border-radius: 4px; }
 .session-item .item-btn svg { display: block; }
@@ -255,6 +293,10 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 /* KaTeX：色跟气泡走（默认黑，暗底看不见），显示块横滚。 */
 .msg .text .katex { color: inherit; }
 .msg .text .katex-display { overflow-x: auto; margin: 0.5em 0; }
+/* 装"不能换行"的内容（显示公式 / 代码块）的消息：**用满整个阅读列**，别再被气泡的
+ * 70%/80% 上限按住 —— 公式明明放得下却出横滚，就是这个上限造成的（2026-10-15 用户报）。
+ * `:has` 不认识的老浏览器 = 维持现状（不是回归）。真超宽（比整列还宽）仍走上面的横滚 ✓。 */
+.msg-wrap:has(.katex-display), .msg-wrap:has(pre) { max-width: 100%; width: fit-content; }
 .msg .state-blocks { margin-top: 0.5em; display: flex; flex-direction: column; gap: 0.4em; }
 .msg .state-block { background: rgb(0 0 0 / 20%); border-radius: 8px; padding: 0.45em 0.65em; font-size: 0.85em; }
 .msg .state-block.current { border-left: 2px solid var(--tg-link); }
@@ -282,26 +324,67 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
 .msg-wrap.user .msg-ops .edit-btn { color: var(--tg-hint); }
 .msg-ops .edit-btn:hover { filter: brightness(1.3); }
 .msg-ops .edit-btn.danger:hover { color: var(--tg-destructive); }
+/* 操作钮（改/改思考/删）：默认隐身（opacity 仍占位 ⇒ hover 不跳版），hover 或键盘 focus 才显；
+ * 重摇那组（⟳ 与 ◀ n/N ▶）**不隐** —— 它是尾条气泡的入口，得让人找得到（2026-10-10 用户设计）。
+ * 触屏没有 hover ⇒ 全显（否则永远够不着）。 */
+.msg-ops .hover-only { opacity: 0; transition: opacity 120ms ease-out; }
+.msg-wrap:hover .msg-ops .hover-only, .msg-wrap:focus-within .msg-ops .hover-only { opacity: 1; }
+@media (hover: none) { .msg-ops .hover-only { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .msg-ops .hover-only { transition: none; } }
 /* 重摇位次牌（气泡下 ◀ 2/3 ▶ 的中间那块）。 */
 .msg-ops .reroll-pos { font-size: 0.75em; color: var(--tg-hint); padding: 0.1em 0.15em; }
 .msg .inline-edit { margin-top: 0.3em; }
 .msg .inline-input { width: 100%; }
 .msg .inline-btns { display: flex; gap: 0.4em; margin-top: 0.3em; }
-#composer { position: relative; display: flex; gap: 0.5em; align-items: flex-end; background: none; z-index: 5; padding: 0.6em 0.6em; }
+#composer { position: absolute; bottom: 0; left: 0; right: 0; display: flex; gap: 0.5em; align-items: flex-end; background: none; z-index: 5;
+  padding: 0.6em 0.6em calc(0.6em + env(safe-area-inset-bottom, 0px)); }
 /* 输入框独立浮动卡 + 发送钮独立圆钮：逻辑相连、显示分开（TG 底栏就是输入框配外面一颗钮）。 */
 #input { flex: 1; background: color-mix(in srgb, var(--tg-secondary-bg) 88%, transparent); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); color: var(--tg-text); border: 1px solid var(--line); border-radius: 20px; padding: 0.6em 1.1em; font: inherit; resize: none; line-height: 1.5; max-height: calc(1.5em * 6 + 1.2em); overflow-y: auto; box-shadow: 0 6px 24px rgb(0 0 0 / 32%); }
 #input:focus { outline: none; border-color: var(--tg-link); }
 /* 状态行：输入框上方独立小字（不进卡，跟输入框同宽居中，超预算红）。 */
-.statusline { position: absolute; left: 0; right: 0; bottom: 100%; margin-bottom: 0.3em; text-align: center; color: var(--tg-hint); font-size: 0.78em; text-shadow: 0 1px 6px rgb(0 0 0 / 60%); }
+.statusline { position: absolute; left: 0; right: 0; bottom: 100%; margin-bottom: 0.3em; text-align: center; font-size: 0.78em;
+  /* 颜色提亮一档（hint 混 text）：这两行小字现在是**浮在背景图/消息上的**，纯 hint 太暗读不动
+   * （2026-10-14 顶栏去壳一并统一；over 态仍是警告红）。 */
+  color: color-mix(in srgb, var(--tg-hint) 75%, var(--tg-text));
+  /* 悬浮小字压在背景图上要读得清：**双层柔影**（近处实、远处散）—— 2026-10-14 顶栏去壳后一并统一。 */
+  text-shadow: 0 1px 2px rgb(0 0 0 / 85%), 0 1px 10px rgb(0 0 0 / 55%); }
 .statusline.over { color: var(--tg-destructive); }
-/* 连接门板：进前端第一眼（探不通后端时）——全屏盖住一切（z-index 高过设置/浮层）。 */
-#connect-gate { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; background: var(--tg-bg); }
-.gate-box { width: min(460px, 92vw); background: var(--tg-secondary-bg); border: 1px solid var(--line); border-radius: var(--r-shell); padding: 1.1em 1.2em 0.9em; box-shadow: 0 12px 40px rgb(0 0 0 / 45%); }
-.gate-box h2 { margin: 0 0 0.6em; font-size: 1.05em; }
-.gate-box .hint { color: var(--tg-hint); font-size: 0.85em; margin: 0.4em 0 0; }
+/* 连接门板 / 登录 = 进前端第一眼（2026-10-14 用户定"更好看"；z-index 高过设置/浮层，全屏盖住一切）。
+ * 底：自己铺 **同一张用户背景图**（--mc-bg-image 就是 background.js 挂的那枚）+ 一层跟主题走的面纱
+ *   —— 门板在 #app 里、body::before 的图层在它后面 ✗，想"透出图片"不能靠透明（那会把聊天壳也透出来，
+ *   实测截图里左栏顶栏全露馅），得自己画。没设图 = 面纱叠底色，与从前一样。
+ * 卡：玻璃卡 + 装饰光晕（color-mix，不支持的浏览器 = 没光晕，功能不受影响）。 */
+#connect-gate { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; overflow: hidden;
+  background-color: var(--tg-bg);
+  background-image: linear-gradient(color-mix(in srgb, var(--tg-bg) 35%, transparent), color-mix(in srgb, var(--tg-bg) 65%, transparent)), var(--mc-bg-image, none);
+  background-size: cover; background-position: center; background-repeat: no-repeat; }
+#connect-gate .gate-glow { position: absolute; inset: -25%; pointer-events: none; background: radial-gradient(40% 40% at 50% 32%, color-mix(in srgb, var(--tg-button) 24%, transparent), transparent 70%); }
+.gate-box { position: relative; box-sizing: border-box; width: min(400px, 92vw);
+  background: color-mix(in srgb, var(--tg-secondary-bg) 94%, transparent);
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  border: 1px solid var(--line); border-radius: 18px; padding: 1.5em 1.4em 1.1em;
+  box-shadow: 0 18px 60px rgb(0 0 0 / 45%);
+  animation: gate-in 320ms ease-out; }
+@keyframes gate-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .gate-box { animation: none; } }
+.gate-brand { display: flex; align-items: center; gap: 0.75em; margin-bottom: 1.1em; }
+.gate-brand h1 { margin: 0; font-size: 1.25em; letter-spacing: 0.01em; }
+.gate-sub { margin: 0.15em 0 0; color: var(--tg-hint); font-size: 0.82em; }
+.gate-logo { flex: none; border-radius: 13px; box-shadow: 0 6px 18px color-mix(in srgb, var(--tg-button) 35%, transparent); }
+/* 卡窄 ⇒ 门板里的 field 改竖排（标签在上、输入在下），比 140px 标签列好看也好按。 */
+#connect-gate .field { grid-template-columns: 1fr; gap: 0.28em; margin-bottom: 0.7em; }
+#connect-gate .field > span { color: var(--tg-hint); font-size: 0.85em; }
+#connect-gate input { width: 100%; padding: 0.55em 0.65em; }
+#connect-gate .gate-btn { display: block; box-sizing: border-box; width: 100%; margin-top: 0.35em; padding: 0.72em 1em; font-size: 1em; }
+#connect-gate .status { margin: 0.75em 0 0; text-align: center; color: var(--tg-hint); font-size: 0.85em; }
+#connect-gate .status.bad { color: var(--tg-destructive); }
+/* 空态（会话列）：安静居中 + 一句引导，别像报错。 */
+#session-list .empty { padding: 1.6em 0.8em; text-align: center; color: var(--tg-hint); font-size: 0.9em; line-height: 1.9; }
+#session-list .empty .sub { font-size: 0.9em; opacity: 0.8; }
+.gate-box .hint { color: var(--tg-hint); font-size: 0.8em; margin: 0.55em 0 0; text-align: center; }
 .gate-box .hint code { background: rgb(255 255 255 / 8%); border-radius: 4px; padding: 0 0.25em; }
 /* 后台任务行：状态行头上再叠一行（绝对定位 ⇒ 不占布局；0 个任务时整行不渲染）。 */
-.taskline { position: absolute; left: 0; right: 0; bottom: 100%; margin-bottom: 1.75em; text-align: center; color: var(--tg-hint); font-size: 0.72em; text-shadow: 0 1px 6px rgb(0 0 0 / 60%); }
+.taskline { position: absolute; left: 0; right: 0; bottom: 100%; margin-bottom: 1.75em; text-align: center; font-size: 0.72em; color: color-mix(in srgb, var(--tg-hint) 75%, var(--tg-text)); text-shadow: 0 1px 2px rgb(0 0 0 / 85%), 0 1px 10px rgb(0 0 0 / 55%); }
 #composer button { background: var(--tg-button); color: var(--tg-button-text); border: none; border-radius: 50%; width: 2.6em; height: 2.6em; padding: 0; cursor: pointer; align-self: flex-end; display: flex; align-items: center; justify-content: center; flex: none; box-shadow: 0 2px 10px rgb(0 0 0 / 30%); }
 #composer button:hover { filter: brightness(1.1); }
 #composer button svg { display: block; }
@@ -396,6 +479,11 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.55em 1em; co
   .field { grid-template-columns: 1fr; }
 }
 .row { display: flex; gap: 0.5em; align-items: center; margin: 0; padding: 0.4em 0; flex-wrap: wrap; }
+
+/* 键盘可达性：Tab 到按钮/开关/链接时给个可见轮廓（鼠标点不给 —— `:focus-visible` 的语义）。
+ * 输入框不掺和：它们本来就有 focus 样式。 */
+button:focus-visible, a:focus-visible, select:focus-visible, [tabindex]:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--tg-link) 75%, transparent); outline-offset: 2px; }
 
 /* —— 按钮默认主题（全页兜底：裸 button 不再是浏览器灰框） ——
  * 三档：默认（底栏色卡底）/ .primary（蓝底白字，主动作）/ .danger（红字，删除）。

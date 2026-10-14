@@ -3,7 +3,6 @@ package server
 import (
 	"encoding/json"
 	"net/http"
-	"os"
 
 	"microchat/internal/config"
 	"microchat/internal/providers"
@@ -407,11 +406,9 @@ func deref(value *string) string {
 
 // loadProviders / saveProviders：`providers.json` 的读写（配置层负责严格 JSON；这里只搬运）。
 func (s *Server) loadProviders() config.ProvidersConfig {
-	var providers config.ProvidersConfig
-	raw, err := os.ReadFile(s.paths.Config("providers.json"))
-	if err == nil {
-		_ = json.Unmarshal(raw, &providers)
-	}
+	// 走 config.LoadProviders（唯一入口）：**全新装的 dummy 兜底与 chat 同一条口径**。
+	// 读坏/读不到就退回空表（与旧行为一致：页面显示"还没有渠道"，而不是 500）。
+	providers, _ := config.LoadProviders(s.paths)
 	return providers
 }
 

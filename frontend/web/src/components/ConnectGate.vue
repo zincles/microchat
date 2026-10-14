@@ -18,6 +18,7 @@ const password = ref("");
 const password2 = ref(""); // setup 模式的确认口令（口误一次就锁死，得防）
 const status = ref(props.initialError ? `上次连接失败：${props.initialError}` : "");
 const busy = ref(false);
+const bad = ref(false); // 出错时状态行染色（信息态保持 hint 色）
 const mode = ref(""); // "" 还没探测（或又断了）· "setup" 建管理员 · "login" 登录
 const needAddress = computed(() => !mode.value); // 探通了就收起地址栏
 
@@ -30,29 +31,32 @@ onMounted(async () => {
       : `已发现后端 v${st.version}：请登录`;
   } catch (e) {
     status.value = `连不上：${e?.message ?? e}`;
+    bad.value = true;
   }
 });
 
 async function connect() {
   busy.value = true;
+  bad.value = false;
   try {
     const st = await probeAuthStatus(base.value);
     mode.value = st.needs_setup ? "setup" : "login";
     if (st.needs_setup) {
-      if (!password.value) { status.value = "想个口令（≥6 位），再点一次"; return; }
-      if (password.value !== password2.value) { status.value = "两次口令不一致"; return; }
+      if (!password.value) { status.value = "想个口令（≥6 位），再点一次"; bad.value = true; return; }
+      if (password.value !== password2.value) { status.value = "两次口令不一致"; bad.value = true; return; }
       const out = await authSetup(base.value, password.value);
       saveNetPrefs(base.value, out.token);
       status.value = `已初始化 root（${out.user.name}）—— 正在进入…`;
       location.reload();
       return;
     }
-    if (!user.value.trim() || !password.value) { status.value = "填用户名与口令，再点一次"; return; }
+    if (!user.value.trim() || !password.value) { status.value = "填用户名与口令，再点一次"; bad.value = true; return; }
     const out = await authLogin(base.value, user.value.trim(), password.value);
     saveNetPrefs(base.value, out.token);
     status.value = `已连接 v${st.version}（${out.user.name}${out.user.is_admin ? " · 管理员" : ""}）—— 正在进入…`;
     location.reload();
   } catch (e) {
+    bad.value = true;
     if (e?.status === 401) status.value = "用户名或口令不对";
     else if (e?.status === 403) status.value = "root 已经初始化过了 —— 请改用登录";
     else if (e?.status === 400) status.value = e.message;
@@ -68,8 +72,23 @@ async function connect() {
 
 <template>
   <div id="connect-gate">
+    <div class="gate-glow" aria-hidden="true"></div>
     <div class="gate-box">
-      <h2>{{ mode === "setup" ? "初始化 root" : mode === "login" ? "登录 microchat" : "连接到 microchat 后端" }}</h2>
+      <header class="gate-brand">
+        <svg class="gate-logo" viewBox="0 0 48 48" width="44" height="44" aria-hidden="true">
+          <rect width="48" height="48" rx="14" fill="var(--tg-button)" />
+          <path d="M14 13h20a5 5 0 0 1 5 5v9a5 5 0 0 1-5 5H23l-7 6v-6h-2a5 5 0 0 1-5-5v-9a5 5 0 0 1 5-5z" fill="var(--tg-button-text)" opacity="0.96" />
+          <circle cx="17" cy="22.5" r="2.3" fill="var(--tg-button)" />
+          <circle cx="24" cy="22.5" r="2.3" fill="var(--tg-button)" />
+          <circle cx="31" cy="22.5" r="2.3" fill="var(--tg-button)" />
+        </svg>
+        <div>
+          <h1>MicroChat</h1>
+          <p class="gate-sub">
+            {{ mode === "setup" ? "第一次使用：设置管理员口令" : mode === "login" ? "登录你的账号" : "连接到后端" }}
+          </p>
+        </div>
+      </header>
       <label class="field" v-if="needAddress"><span>后端地址</span>
         <input v-model="base" placeholder="http://192.168.0.110:8787/api/v1" @keydown.enter="connect" />
       </label>
@@ -82,12 +101,10 @@ async function connect() {
       <label class="field" v-if="mode === 'setup'"><span>再输一次</span>
         <input v-model="password2" type="password" placeholder="确认口令" @keydown.enter="connect" />
       </label>
-      <div class="row">
-        <button type="button" class="primary" :disabled="busy" @click="connect">
-          {{ mode === "setup" ? "初始化并进入" : "登录" }}
-        </button>
-        <span class="status">{{ status }}</span>
-      </div>
+      <button type="button" class="primary gate-btn" :disabled="busy" @click="connect">
+        {{ busy ? "连接中…" : mode === "setup" ? "初始化并进入" : "登录" }}
+      </button>
+      <p class="status" :class="{ bad }">{{ status }}</p>
       <p class="hint" v-if="needAddress">已按你打开这个页面的主机预填（后端默认在它的 8787）；只填到端口也行（自动补 /api/v1）。</p>
     </div>
   </div>

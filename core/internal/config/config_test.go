@@ -85,6 +85,20 @@ func TestBuiltinSegmentsAreReserved(t *testing.T) {
 	}
 }
 
+// 全新装（没有 providers.json）：内置缺省必须含 dummy —— 默认会话就是 dummy/dummy，
+// 少这条就落 fallback（第一句话回"未配置模型"，2026-10-14 走查实测）。
+func TestLoadProvidersDefaultsToDummy(t *testing.T) {
+	dir := t.TempDir()
+	_, _, providers, err := Load(Paths{ConfigDir: dir, DataDir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, ok := providers.Get("dummy")
+	if !ok || p.Vendor != "dummy" {
+		t.Fatalf("缺省该含 dummy 渠道：%+v ok=%v", p, ok)
+	}
+}
+
 // 自动压缩：**缺省 = 关**（未经验证，2026-10-11 用户定）与块数缺省（3）。
 func TestAutoCompactDefaults(t *testing.T) {
 	if DefaultCompactBlocks != 3 {

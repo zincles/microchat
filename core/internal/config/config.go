@@ -12,6 +12,7 @@ import (
 	"embed"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -487,10 +488,35 @@ func Load(paths Paths) (chat ChatConfig, agents AgentsConfig, providers Provider
 	if err = loadJSON(paths.Config("agents.json"), &agents); err != nil {
 		return
 	}
-	if err = loadJSON(paths.Config("providers.json"), &providers); err != nil {
+	if providers, err = LoadProviders(paths); err != nil {
 		return
 	}
 	return
+}
+
+// DefaultProviders：全新装（还没有 providers.json）的内置渠道表（目前只有 dummy 一条）。
+// 为什么必须有它：config.Defaults 默认就是 `dummy/dummy`（"开箱立刻有回话"），可全新装没有
+// providers.json ⇒ SelectBackend 找不到渠道 ⇒ 落 fallback ⇒ 第一句话回"未配置模型"
+// （2026-10-14 走查实测咬到）。**只认"文件缺失"这一种情况** —— 用户真把渠道删光了
+// （文件在、列表空）就尊重他，回 fallback 是正确行为。
+func DefaultProviders() ProvidersConfig {
+	return ProvidersConfig{Version: 1, Providers: []Provider{{ID: "dummy", Vendor: "dummy"}}}
+}
+
+// LoadProviders：读 `providers.json` 的唯一入口（`Load` 与 HTTP 层都走它，口径不许分家）。
+func LoadProviders(paths Paths) (ProvidersConfig, error) {
+	raw, err := os.ReadFile(paths.Config("providers.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return DefaultProviders(), nil
+	}
+	if err != nil {
+		return ProvidersConfig{}, err
+	}
+	var providers ProvidersConfig
+	if err := json.Unmarshal(raw, &providers); err != nil {
+		return ProvidersConfig{}, err
+	}
+	return providers, nil
 }
 
 // SaveJSON：整体写回（0600 —— 文件里有密钥）。

@@ -595,10 +595,18 @@ function fillAgentSelect() {
   api.agents().then((data) => {
     if (my !== epoch) return;
     const list = (data.agents ?? []).map(agentOption);
+    // 顶栏的圆头像 = Agent 入口（2026-10-14）；状态行小字里那份是"显示"。
     topbarRef.value?.setAgents(list, sessionInfo.agent_id);
+    statusAgent.value = list.find((a) => a.id === sessionInfo.agent_id)?.label ?? sessionInfo.agent_id ?? "";
+    refreshStatusline();
     // 没 agent 时别猜 list[0]：后端认的是 default_agent。
     if (!sessionInfo.agent_id && list.length) applyAgentValue(data.default_agent || list[0].id);
   }).catch((err) => { if (my === epoch) toast(`Agent 列表失败：${err.message}`, "error"); });
+}
+// 状态行那格"当前助手"的标签（顶栏那份交给圆头像了；这格只管显示）。
+// 换人要当场重算 —— 它原来只在"进会话"时算过一次，换完留着旧名字（2026-10-14 实测咬到）。
+function agentLabelOf(id) {
+  return vueAgents.value.find((a) => a.id === id)?.name || id || "";
 }
 async function applyAgentValue(id) {
   if (!id) return;
@@ -607,6 +615,7 @@ async function applyAgentValue(id) {
     Object.assign(sessionInfo, { agent_id: id });
     paintSessionHeader();
     refreshDisplayMode();
+    statusAgent.value = agentLabelOf(id);
     refreshStatusline("idle");
     refreshPreview();
     return;
@@ -617,6 +626,7 @@ async function applyAgentValue(id) {
   Object.assign(sessionInfo, updated);
   paintSessionHeader();
   refreshDisplayMode();
+  statusAgent.value = agentLabelOf(id);
   refreshStatusline("idle");
   refreshPreview();
 }
@@ -630,8 +640,14 @@ async function refreshDisplayMode() {
     vueDisplayMode.value = a?.display_mode === "roleplay" ? "roleplay" : "chat";
   } catch { /* 拿不到就 chat 兜底 */ }
 }
+// leftHidden / rightHidden：两侧栏收没收的**响应式镜像**（真实状态仍是 DOM 类 + localStorage 偏好；
+// 2026-10-14 用户定：栏开着时顶栏不渲染那一侧的开关 —— 按钮跟着它控制的东西走）。
+const leftHidden = ref(false);
+const rightHidden = ref(false);
 function applySideToggle(barID, hidden) {
   document.getElementById(barID)?.classList.toggle("collapsed", hidden);
+  if (barID === "sessions-bar") leftHidden.value = hidden;
+  if (barID === "payload-bar") rightHidden.value = hidden;
 }
 
 // —— 会话 ——
@@ -981,6 +997,8 @@ async function pollTurn(sid, turnID) {
   }
 }
 let connText = "未连接";
+// statusAgent：当前助手的显示名（顶栏去壳后，它住在状态行小字里；数据在进会话时现取）。
+const statusAgent = ref("");
 // 后台任务行（/tasks 是进程内事实；2s 一拉 —— 端点零成本，也别等太久看不见压缩/标题这些短命任务）。
 const TASKS_POLL_MS = 2000;
 let tasksTimer = null;
@@ -994,12 +1012,12 @@ function refreshStatusline(phase, elapsedMs) {
   if (draft || !sessionID) {
     // 草稿：没有会话可问占用 —— 状态行只报"新对话 + 将来会用的模型"。
     const who = whoText(sessionInfo.provider, sessionInfo.model, "未选模型");
-    composerRef.value?.setStatus(`${connText}｜新对话｜${who}｜${phase ?? "idle"}`, false);
+    composerRef.value?.setStatus([connText, "新对话", statusAgent.value, phase ?? "idle"].filter(Boolean).join("｜"), false);
     return;
   }
   api.context(sessionID).catch(() => null).then((ctx) => {
     composerRef.value?.setStatus(`${connText}｜` + formatStatusLine({
-      ctx, phase, elapsedMs, provider: sessionInfo.provider, model: sessionInfo.model,
+      ctx, phase, elapsedMs, agent: statusAgent.value,
     }), statusOverBudget(ctx));
   }).catch((err) => toast(`状态行失败：${err.message}`, "error"));
 }
@@ -1013,7 +1031,11 @@ function refreshStateView(id) {
 function liftOverlays() {
   // 输入框自身就是 #composer（组件根）——"#composer-vue" 那层包装早没了，别再查它。
   const form = document.querySelector("#composer");
-  if (form) overlaysRef.value?.lift(Math.max(0, form.getBoundingClientRect().height - 60));
+  if (!form) return;
+  const h = form.getBoundingClientRect().height;
+  overlaysRef.value?.lift(Math.max(0, h - 60));
+  // 输入行现在是**悬浮层**（绝对定位）⇒ 消息列底部留白得知道它多高（textarea 会长高，写死会错位）。
+  document.getElementById("chat-col")?.style.setProperty("--composer-h", `${Math.round(h)}px`);
 }
 // 输入框高度是异步变的（autosize 在 nextTick 里长高）⇒ 量一次不够，盯住它本身。
 let composerRO = null;
@@ -1347,6 +1369,7 @@ onUnmounted(() => {
     <div id="columns">
       <SessionBar
         ref="sessionbarRef"
+        @toggle-left="toggleLeft"
         :can-settings="isAdmin"
         @select="(id) => { closeLeftDrawer(); closeSettings(); enterSession(id).catch((err) => toast(`进会话失败：${err.message}`, 'error')); }"
         @settings="(id) => { sessionSettingsId = id; }"
@@ -1360,12 +1383,17 @@ onUnmounted(() => {
       <section id="chat-col" v-show="!settingsOpen && !userOpen">
     <TopBar
       ref="topbarRef"
+      :left-hidden="leftHidden"
+      :right-hidden="rightHidden"
       @toggle-left="toggleLeft"
       @toggle-right="toggleRight"
       @select-model="(v) => applyModelValue(v).catch((err) => toast(`换模型失败：${err.message}`, 'error'))"
       @select-agent="(id) => applyAgentValue(id).catch((err) => toast(`换 Agent 失败：${err.message}`, 'error'))"
     />
         <main id="messages-vue">
+          <!-- 滚动容器（#messages-vue）现在**占满整个对话区**（滚动条因此贴最右缘，2026-10-14 用户定）；
+               阅读列约束（760 居中、两侧 56px、上下留白）落在这一层 —— 气泡别拉成整屏长句。 -->
+          <div class="messages-inner">
           <button
             v-if="olderSegments > 0"
             id="load-more"
@@ -1406,6 +1434,7 @@ onUnmounted(() => {
               @reroll-go="rerollGo"
             />
           </template>
+          </div>
         </main>
     <Composer
       ref="composerRef"
@@ -1420,6 +1449,7 @@ onUnmounted(() => {
         v-show="!settingsOpen && !userOpen"
         ref="payloadbarRef"
         :default-blocks="compactDefault"
+        @toggle-right="toggleRight"
         @compact="(n) => compactNow(n ?? undefined)"
         @tab="onPayloadTab"
       />

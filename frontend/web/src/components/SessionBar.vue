@@ -4,7 +4,7 @@
 import { ref } from "vue";
 import { ICONS } from "./icons.js";
 
-const emit = defineEmits(["select", "settings", "close", "new", "open-settings", "user"]);
+const emit = defineEmits(["select", "settings", "close", "new", "open-settings", "user", "toggle-left"]);
 // canSettings：**设置 = root 专属**（用户定，2026-10-10）—— 普通用户这儿连按钮都不给。
 const props = defineProps({ canSettings: { type: Boolean, default: true } });
 
@@ -20,12 +20,21 @@ defineExpose({ setSessions });
   <aside id="sessions-bar">
     <div class="bar-head">
       <span>MicroChat</span>
+      <button
+        id="toggle-left"
+        class="icon-btn"
+        type="button"
+        title="收起会话栏"
+        aria-label="收起会话栏"
+        @click="$emit('toggle-left')"
+        v-html="ICONS.panelLeft"
+      ></button>
     </div>
     <button id="session-new" type="button" title="开启新对话（草稿：首句才建会话）" @click="$emit('new')">
       <span class="plus">＋</span>开启新对话
     </button>
     <div id="session-list">
-      <div v-if="!sessions.length" class="empty">还没有会话</div>
+      <div v-if="!sessions.length" class="empty">还没有会话<br /><span class="sub">点上面「＋ 开启新对话」开始</span></div>
       <div
         v-for="s in sessions"
         :key="s.id"

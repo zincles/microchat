@@ -40,12 +40,13 @@ export function formatThinkLabel(reasoningMs) {
 }
 
 // 状态行：占用 used/budget（over_budget 标红由 CSS 类承担）+ provider/model + phase/耗时。
-export function formatStatusLine({ ctx, phase, elapsedMs, provider, model }) {
+export function formatStatusLine({ ctx, phase, elapsedMs, agent }) {
   const used = ctx?.used_tokens ?? "?";
   const budget = ctx?.budget_tokens ?? "?";
   const over = ctx?.over_budget ? " 超预算" : "";
-  const who = whoText(provider, model);
-  return `上下文 ${used}/${budget}${over}｜${who}｜${phase ?? "idle"}${elapsedMs != null ? ` ${elapsedMs}ms` : ""}`.trim();
+  // 2026-10-14：中间那格从"渠道/模型"换成"当前助手" —— 模型住顶栏左上（别两处重复），
+  // 助手住这儿（顶栏已无 Agent 下拉）。
+  return `上下文 ${used}/${budget}${over}｜${agent ?? "?"}｜${phase ?? "idle"}${elapsedMs != null ? ` ${elapsedMs}ms` : ""}`.trim();
 }
 
 export function statusOverBudget(ctx) {

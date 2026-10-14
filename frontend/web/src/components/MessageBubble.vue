@@ -103,7 +103,7 @@ const editRows = computed(() => Math.min(12, Math.max(3, draft.value.split("\n")
     <div v-if="canEdit" class="msg-ops">
       <button
         type="button"
-        class="edit-btn"
+        class="edit-btn hover-only"
         title="改正文"
         aria-label="改正文"
         @click="openEditor('content')"
@@ -112,7 +112,7 @@ const editRows = computed(() => Math.min(12, Math.max(3, draft.value.split("\n")
       <button
         v-if="role !== 'user'"
         type="button"
-        class="edit-btn"
+        class="edit-btn hover-only"
         title="改思考"
         aria-label="改思考"
         @click="openEditor('reasoning')"
@@ -134,7 +134,7 @@ const editRows = computed(() => Math.min(12, Math.max(3, draft.value.split("\n")
       </template>
       <button
         type="button"
-        class="edit-btn danger"
+        class="edit-btn danger hover-only"
         title="删除这条及之后"
         aria-label="删除这条及之后"
         @click="$emit('delete', messageId, isLast)"

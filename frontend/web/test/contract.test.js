@@ -81,17 +81,17 @@ test("思考折叠抬头：reasoning_ms 换算秒；无值回退", () => {
   assert.equal(formatThinkLabel(null), "思考过程");
 });
 
-test("状态行：used/budget + provider/model + phase/耗时；超预算可判", () => {
+test("状态行：used/budget + 助手 + phase/耗时；超预算可判（2026-10-14 起中间是助手，模型住顶栏）", () => {
   const line = formatStatusLine({
     ctx: { used_tokens: 100, budget_tokens: 1000, over_budget: true },
     phase: "streaming",
     elapsedMs: 300,
-    provider: "dummy",
-    model: "m",
+    agent: "默认助手",
   });
   assert.ok(line.includes("100/1000"));
   assert.ok(line.includes("超预算"));
-  assert.ok(line.includes("dummy/m"));
+  assert.ok(line.includes("默认助手"));
+  assert.ok(!line.includes("dummy/m")); // 模型不再出现在状态行（单处归属：顶栏左上）
   assert.ok(line.includes("streaming"));
   assert.equal(statusOverBudget({ over_budget: true }), true);
   assert.equal(statusOverBudget({ over_budget: false }), false);

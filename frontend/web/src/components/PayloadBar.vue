@@ -5,6 +5,7 @@
 import { ref, computed, watch } from "vue";
 import CompactTree from "./CompactTree.vue";
 import ToggleSwitch from "./ToggleSwitch.vue";
+import { ICONS } from "./icons.js";
 import { treeTotals } from "../utils/tree.js";
 import { parseWireMessages, shouldCollapse, previewBlock } from "../utils/payload.js";
 import { payloadVizOn, savePayloadViz } from "../utils/prefs.js";
@@ -12,7 +13,7 @@ import { payloadVizOn, savePayloadViz } from "../utils/prefs.js";
 const props = defineProps({
   defaultBlocks: { type: Number, default: null }, // chat.compact_blocks（空输入框的默认，只用于提示）
 });
-const emit = defineEmits(["compact", "tab"]);
+const emit = defineEmits(["compact", "tab", "toggle-right"]);
 
 const tab = ref("payload");
 // 切 tab 报给 App：压缩树看着才拉全量账本（窗口化的内存账，见 App.refreshTree）。
@@ -56,9 +57,19 @@ defineExpose({ setWire, setTables, setTree });
 <template>
   <aside id="payload-bar">
     <div class="bar-head bar-tabs">
+      <button
+        id="toggle-right"
+        class="icon-btn"
+        type="button"
+        title="收起载荷栏"
+        aria-label="收起载荷栏"
+        @click="$emit('toggle-right')"
+        v-html="ICONS.panelRight"
+      ></button>
       <button type="button" class="tab" :class="{ sel: tab === 'payload' }" @click="selectTab('payload')">载荷</button>
       <button type="button" class="tab" :class="{ sel: tab === 'state' }" @click="selectTab('state')">状态</button>
       <button type="button" class="tab" :class="{ sel: tab === 'tree' }" @click="selectTab('tree')">压缩</button>
+
     </div>
     <div v-show="tab === 'payload'" id="payload-pane">
       <div class="pv-toolbar">
