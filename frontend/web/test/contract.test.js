@@ -8,12 +8,17 @@ import { buildCartridge, cartridgeAgent } from "../src/utils/cartridge.js";
 import { parseCommand, filterCommands, COMMAND_META } from "../src/utils/commands.js";
 import { uuidv7 } from "../src/utils/ids.js";
 import { buildCompactTree, treeTotals } from "../src/utils/tree.js";
-import { buildChatRows } from "../src/utils/chatrows.js";
+import { buildChatRows, rerollTargetLive, bubbleText } from "../src/utils/chatrows.js";
 import { computeViewportFit } from "../src/utils/viewport.js";
 import { classifyAxis, pickDrag, dragProgress, resolveRelease } from "../src/utils/swipe.js";
 import {
   formatThinkLabel,
   formatStatusLine,
+  formatTokens,
+  statusLineTitle,
+  formatCost,
+  usageFoot,
+  usageFootTitle,
   statusOverBudget,
   groupModelsByProvider,
   deletionPlanSummary,
@@ -26,7 +31,7 @@ import {
   whoText,
   sessionTitle,
 } from "../src/utils/format.js";
-import { sendMode, wantsSend, themePref, apiBase, defaultApiBase, apiBaseCandidates, DEFAULT_THEME, DEFAULT_SEND } from "../src/utils/prefs.js";
+import { sendMode, wantsSend, themePref, apiBase, defaultApiBase, apiBaseCandidates, DEFAULT_THEME, DEFAULT_SEND, composerStyle, applyComposerStyle, saveComposerStyle, DEFAULT_COMPOSER } from "../src/utils/prefs.js";
 
 // 契约测试（无浏览器）：只验纯函数与请求形状。`node --test test/`。
 // 后端真服务验证另走手工（见 README）。
@@ -81,6 +86,70 @@ test("思考折叠抬头：reasoning_ms 换算秒；无值回退", () => {
   assert.equal(formatThinkLabel(null), "思考过程");
 });
 
+// 上下文数字的人话格式（2026-10-17 用户点名）：向下取整、K/M 两档、去掉多余的 0。
+// 证伪点：四舍五入（995904 ⇒ 996K）、.0 尾巴（1000 ⇒ 1.0K）、M 档不封顶（1e9 还写 K）。
+test("formatTokens：9.8K / 995K / 1.04M（向下取整，别把用量说大）", () => {
+  assert.equal(formatTokens(0), "0");
+  assert.equal(formatTokens(999), "999");
+  assert.equal(formatTokens(1000), "1K");
+  assert.equal(formatTokens(4096), "4K");
+  assert.equal(formatTokens(9857), "9.8K");
+  assert.equal(formatTokens(9999), "9.9K");
+  assert.equal(formatTokens(10000), "10K");
+  assert.equal(formatTokens(131072), "131K");
+  assert.equal(formatTokens(995904), "995K"); // 不四舍五入成 996K
+  assert.equal(formatTokens(1000000), "1M");
+  assert.equal(formatTokens(1048576), "1.04M");
+  assert.equal(formatTokens(null), "?");
+  assert.equal(formatTokens(undefined), "?");
+});
+
+test("状态行悬停解释：分母是输入预算 = 上下文 − 输出预留", () => {
+  const t = statusLineTitle({ ctx_len: 1000000, max_output: 4096, budget_tokens: 995904 });
+  assert.ok(t.includes("995,904"));
+  assert.ok(t.includes("1,000,000"));
+  assert.ok(t.includes("4,096"));
+  assert.equal(statusLineTitle(null), "");
+});
+
+// 成本与气泡脚注（2026-10-20）：OpenRouter 在 `usage.cost` 里报实扣金额，直连渠道不报。
+// 证伪点：① 把"没数据"显示成 $0.00（说谎，直连渠道全中）；② 便宜模型的单发被两位小数抹成 $0.00
+// （deepseek-v4.1-flash 一发就是 0.0004 量级）；③ 把 reasoning 当额外开销加上去（它是 completion 的子集）。
+test("formatCost：便宜模型给 4 位小数；没数据回空串（不是 $0.00）", () => {
+  assert.equal(formatCost(0), "$0");              // 免费模型：真的 0
+  assert.equal(formatCost(0.0004), "$0.0004");    // 便宜模型单发
+  assert.equal(formatCost(0.001234), "$0.0012");
+  assert.equal(formatCost(0.0123), "$0.01");      // ≥1 分 ⇒ 两位
+  assert.equal(formatCost(1.5), "$1.50");
+  assert.equal(formatCost(null), "");             // 直连渠道不报 ⇒ 什么都不显示
+  assert.equal(formatCost(undefined), "");
+  assert.equal(formatCost("0.5"), "");            // 不是数字 ⇒ 当没有
+});
+
+test("usageFoot：token 用量 + 成本；没用量整行为空", () => {
+  const foot = usageFoot({ prompt_tokens: 6585, completion_tokens: 945, cached_tokens: 0, reasoning_tokens: 333, cost_usd: 0.0012 });
+  assert.ok(foot.includes("6.5K→945"));           // 向下取整：6585 ⇒ 6.5K
+  assert.ok(foot.includes("思考 333"));
+  assert.ok(foot.includes("$0.0012"));
+  assert.ok(!foot.includes("缓存命中"));          // 0 命中不啰嗦
+
+  const withCache = usageFoot({ prompt_tokens: 100000, completion_tokens: 50, cached_tokens: 96000 });
+  assert.ok(withCache.includes("缓存命中 96K"));
+  assert.ok(!withCache.includes("$"));            // 没 cost ⇒ 没有价格那一格
+
+  assert.equal(usageFoot(null), "");              // 生成中 / 库外那条
+  assert.equal(usageFoot({}), "");                // 上游没报
+  assert.equal(usageFootTitle(null), "");
+});
+
+test("usageFoot 的悬停说明：点明思考是输出的子集、成本是上游报的", () => {
+  const title = usageFootTitle({ prompt_tokens: 100, completion_tokens: 40, cached_tokens: 80, reasoning_tokens: 30, cost_usd: 0.0004 });
+  assert.ok(title.includes("输入 100 tok（其中缓存命中 80）"));
+  assert.ok(title.includes("子集"));              // 别让人把 reasoning 再加一遍
+  assert.ok(title.includes("$0.0004"));
+  assert.ok(title.includes("上游报的"));
+});
+
 test("状态行：used/budget + 助手 + phase/耗时；超预算可判（2026-10-14 起中间是助手，模型住顶栏）", () => {
   const line = formatStatusLine({
     ctx: { used_tokens: 100, budget_tokens: 1000, over_budget: true },
@@ -88,7 +157,7 @@ test("状态行：used/budget + 助手 + phase/耗时；超预算可判（2026-1
     elapsedMs: 300,
     agent: "默认助手",
   });
-  assert.ok(line.includes("100/1000"));
+  assert.ok(line.includes("100/1K")); // 1000 ⇒ 1K（2026-10-17 起人话格式）
   assert.ok(line.includes("超预算"));
   assert.ok(line.includes("默认助手"));
   assert.ok(!line.includes("dummy/m")); // 模型不再出现在状态行（单处归属：顶栏左上）
@@ -457,6 +526,39 @@ function stubStorage() {
   };
 }
 
+// 输入栏形态（2026-10-20 用户定：**主题项** —— 要效率还是要美观）。
+// 证伪点：① 默认不是浮空（老用户开机被改成实心）；② 空串/坏值被当成 solid（应回落 float）；
+// ③ 切回 float 时属性没摘掉（CSS 还在按 solid 画，界面"切了没反应"）；④ 值不是 solid 也挂属性。
+test("输入栏形态：默认浮空、只认 solid、切回来要摘掉属性", () => {
+  stubStorage();
+  const root = { attrs: {}, setAttribute(k, v) { this.attrs[k] = v; }, removeAttribute(k) { delete this.attrs[k]; } };
+  const originalDoc = globalThis.document;
+  globalThis.document = { documentElement: root };
+  try {
+    assert.equal(DEFAULT_COMPOSER, "float");
+    assert.equal(composerStyle(), "float");            // 没设过 ⇒ 浮空（既有观感）
+    assert.deepEqual(root.attrs, {});                  // 没调 apply 之前什么都不挂
+
+    applyComposerStyle();                              // 缺省：属性不该出现
+    assert.equal(root.attrs["data-composer"], undefined);
+
+    saveComposerStyle("solid");
+    assert.equal(composerStyle(), "solid");
+    assert.equal(root.attrs["data-composer"], "solid");
+
+    saveComposerStyle("float");                        // 切回来 ⇒ 属性摘掉（CSS 才知道回浮空）
+    assert.equal(composerStyle(), "float");
+    assert.equal(root.attrs["data-composer"], undefined);
+
+    localStorage.setItem("mc_composer_style", "nonsense"); // 坏值 ⇒ 回落默认，不许当 solid
+    assert.equal(composerStyle(), "float");
+    localStorage.setItem("mc_composer_style", "");         // 空串 = 没设过
+    assert.equal(composerStyle(), "float");
+  } finally {
+    globalThis.document = originalDoc;
+  }
+});
+
 test("背景图存储：坏 JSON / 缺字段 / 空串都当没设", () => {
   stubStorage();
   assert.equal(loadBackground(), null);
@@ -823,4 +925,30 @@ test("跟手拖拽：轴向锁、拖哪扇、开度换算、松手吸附", () =>
   assert.equal(resolveRelease(0.05, 0.006), "close"); // 没动几步的光速点击式滑动不算
   assert.equal(classifyAxis(5, 2), null);             // 轴向锁现在 6px
   assert.equal(classifyAxis(7, 2), "h");
+});
+
+// 重摇期间的显示（2026-10-17 用户定）：点下 ⟳ 就**立刻**切空白 + 「正在输出…」，
+// 旧正文一直挂到第一帧才被换掉"有点丑"。证伪点：live 时回落 msg.content（又把旧正文挂回去）、
+// startingId 对不上也当 live（清错了别的消息）、摇完了还判 live（该显示库内正文/候选）。
+test("重摇：正在摇的那条 = 刚落手（startingId）或后端说 running", () => {
+  const msg = { messageId: "m1", content: "旧正文" };
+  assert.equal(rerollTargetLive(msg, {}), false);
+  assert.equal(rerollTargetLive(msg, { startingId: "m1" }), true);          // 刚点下、状态还没回来
+  assert.equal(rerollTargetLive(msg, { startingId: "m2" }), false);        // 别的消息不受影响
+  assert.equal(rerollTargetLive(msg, { state: { active: true, running: true, target_message_id: "m1" } }), true);
+  assert.equal(rerollTargetLive(msg, { state: { active: true, running: false, target_message_id: "m1" } }), false); // 摇完了
+  assert.equal(rerollTargetLive(msg, { state: { active: false, running: true, target_message_id: "m1" } }), false);
+  assert.equal(rerollTargetLive({ messageId: null, content: "x" }, { startingId: null }), false); // 库外那条（还没 id）
+});
+
+test("气泡正文：合成流 > 正在摇的那条（空白起步）> 库内字段", () => {
+  const stored = { messageId: "m1", content: "旧正文", reasoning: "旧思考" };
+  assert.equal(bubbleText(stored, { live: true, previewText: "" }), "");   // 摇的过程中还没有字 ⇒ 空（不是旧正文）
+  assert.equal(bubbleText(stored, { live: true, previewText: null }), "");
+  assert.equal(bubbleText(stored, { live: true, previewText: "新的一版" }), "新的一版");
+  assert.equal(bubbleText(stored, { live: false }), "旧正文");              // 不摇 ⇒ 库内正文
+  assert.equal(bubbleText(stored, { field: "reasoning", live: false }), "旧思考"); // 思考各读各的字段
+  const streamRow = { stream: true, content: "", reasoning: "" };
+  assert.equal(bubbleText(streamRow, { streamText: "正在吐" }), "正在吐"); // 一轮的合成流优先
+  assert.equal(bubbleText(streamRow, { streamText: null }), "");
 });

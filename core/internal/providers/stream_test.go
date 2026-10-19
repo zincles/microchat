@@ -168,6 +168,49 @@ func TestNormalizeUsageRecognizesFieldVariants(t *testing.T) {
 	}
 }
 
+// 成本：OpenRouter 在 `usage.cost` 里报**这一发实际扣了多少钱**（美元）。
+// 证伪点：① 只有聚合站报 ⇒ 直连渠道必须留 nil（不能显示成 $0.00 骗人）；
+// ② 数字写成字符串也认；③ 认不出来就 nil（别用 0 冒充"免费"）；④ 这格坏了不许拖垮整份用量。
+func TestNormalizeUsageCarriesUpstreamCost(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want *float64 // nil = 这一格该缺（omitempty 不出现）
+	}{
+		{"OpenRouter 数字写法", `{"prompt_tokens":10,"completion_tokens":2,"cost":0.00123}`, float64Ptr(0.00123)},
+		{"OpenRouter 数字写成字符串", `{"prompt_tokens":10,"cost":"0.0004"}`, float64Ptr(0.0004)},
+		{"免费模型 = 0（是「免费」，不是「没说」）", `{"prompt_tokens":10,"cost":0}`, float64Ptr(0)},
+		{"直连渠道不报 cost ⇒ 没有这一格", `{"prompt_tokens":10,"completion_tokens":2}`, nil},
+		{"cost 是坏值 ⇒ 这一格没有，别的数照给", `{"prompt_tokens":10,"completion_tokens":2,"cost":"n/a"}`, nil},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			var got Usage
+			normalized := NormalizeUsage(json.RawMessage(testCase.raw))
+			if len(normalized) == 0 {
+				t.Fatalf("这份用量该认得出来：%s", testCase.raw)
+			}
+			if err := json.Unmarshal(normalized, &got); err != nil {
+				t.Fatal(err)
+			}
+			// 归一化之后 token 数照旧在（cost 坏了不许拖垮别的格）
+			if got.PromptTokens != 10 {
+				t.Fatalf("prompt_tokens 丢了：%+v", got)
+			}
+			switch {
+			case testCase.want == nil && got.CostUSD != nil:
+				t.Fatalf("该没有 cost_usd，得到 %v", *got.CostUSD)
+			case testCase.want != nil && got.CostUSD == nil:
+				t.Fatalf("该有 cost_usd=%v，却没有", *testCase.want)
+			case testCase.want != nil && *got.CostUSD != *testCase.want:
+				t.Fatalf("cost_usd = %v，想要 %v", *got.CostUSD, *testCase.want)
+			}
+		})
+	}
+}
+
+func float64Ptr(value float64) *float64 { return &value }
+
 // 上游报错**原样返回**：不重试（打一次就是一次）、不吞错（状态码与正文都在）、不改写文案。
 func TestUpstreamErrorIsReturnedAsIsAndNotRetried(t *testing.T) {
 	stub := newStubUpstream(t, http.StatusTooManyRequests, "application/json",

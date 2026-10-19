@@ -7,11 +7,11 @@
 import { ref, onMounted, onUnmounted } from "vue";
 import ToggleSwitch from "./ToggleSwitch.vue";
 import { ICONS } from "./icons.js";
-import { previewOn, themePref, applyTheme, sendMode, sharedApi, apiBase, saveNetPrefs } from "../utils/prefs.js";
+import { previewOn, themePref, applyTheme, sendMode, sharedApi, apiBase, saveNetPrefs, commandMenuOn, saveCommandMenu, composerStyle as composerStylePref, saveComposerStyle } from "../utils/prefs.js";
 import { authLogin } from "../api/client.js";
 import { loadBackground, saveBackground, applyBackground, describeBackground, fileToBackground } from "../utils/background.js";
 
-const emit = defineEmits(["close", "toggle-left"]);
+const emit = defineEmits(["close", "toggle-left", "prefs-saved"]);
 // escBlocked：外面临时弹窗（会话设置）开着时，Esc 归它 —— 一次按键不许关两层。
 const props = defineProps({ escBlocked: { type: Boolean, default: false } });
 const leftSvg = ICONS.panelLeft;
@@ -82,6 +82,11 @@ async function dropUser(uid, mode) {
 const theme = ref("");
 const send = ref("enter");
 const preview = ref(true);
+// 命令菜单（默认关）：输入框左侧那颗 ☰ 与输入 "/" 弹出的面板。移动端碍事 ⇒ 想用的人才开。
+const cmdMenu = ref(false);
+// 输入栏形态（**外观项**，2026-10-20 用户定）：float = 浮空气泡（美观）｜ solid = 实心贴底（效率）。
+// 与主题同类：改的是长相，所以住「外观」区；保存后当场生效（写的是根节点属性）。
+const composerStyle = ref("float");
 const bgUrl = ref("");
 const bgStatus = ref("");
 const uiStatus = ref("");
@@ -94,6 +99,8 @@ function load() {
   theme.value = themePref();
   send.value = sendMode();
   preview.value = previewOn();
+  cmdMenu.value = commandMenuOn();
+  composerStyle.value = composerStylePref();
   const bg = loadBackground();
   bgUrl.value = bg?.kind === "url" ? bg.value : "";
   bgStatus.value = describeBackground(bg);
@@ -138,7 +145,10 @@ function savePrefs() {
   localStorage.setItem("mc_preview", preview.value ? "1" : "0");
   localStorage.setItem("mc_theme", theme.value);
   localStorage.setItem("mc_send", send.value);
+  saveCommandMenu(cmdMenu.value);
+  saveComposerStyle(composerStyle.value);
   applyTheme(theme.value);
+  emit("prefs-saved"); // 聊天壳上的活开关立刻跟上（命令菜单那颗 ☰）
   uiStatus.value = "已保存（即时生效）";
 }
 // 退出登录：JWT 无状态（服务端没东西可清）—— 通知一声、清掉本地凭据、刷新回门板。
@@ -265,6 +275,13 @@ onUnmounted(() => document.removeEventListener("keydown", onKey));
               <button type="button" class="link-btn danger" @click="clearBg">清除</button>
             </div>
             <div class="row"><span class="status">当前背景：{{ bgStatus }}</span></div>
+            <!-- 输入栏形态（2026-10-20 用户定）：**外观项** —— 要效率还是要美观，自己挑。
+                 与主题同类（改的是长相），所以住这一区；保存后当场生效（写根节点属性，不刷新）。 -->
+            <label class="field"><span>输入栏形态</span><select v-model="composerStyle">
+              <option value="float">浮空气泡（圆角玻璃卡，两侧留白）</option>
+              <option value="solid">实心贴底（方角、边到边，省地方）</option>
+            </select></label>
+            <p class="hint">实心 = 输入栏自己贴住底边、没有外侧留白，输入框融进栏里 —— 更省地方；浮空 = 那颗圆角玻璃卡浮在消息上，背景图透得出来。</p>
             <h3>输入</h3>
             <label class="field"><span>发送键</span><select v-model="send">
               <option value="enter">回车发送（Shift/Ctrl/Alt+回车换行）</option>
@@ -272,6 +289,7 @@ onUnmounted(() => document.removeEventListener("keydown", onKey));
               <option value="button">仅按钮</option>
             </select></label>
             <label class="field"><span>输入时预演载荷</span><ToggleSwitch v-model="preview" /></label>
+            <label class="field"><span>命令菜单（输入框左侧 ☰ 与 / 面板）</span><ToggleSwitch v-model="cmdMenu" /></label>
             <div class="row"><button type="button" class="primary" @click="savePrefs">保存</button><span class="status">{{ uiStatus }}</span></div>
           </section>
         </div>

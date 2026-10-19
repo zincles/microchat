@@ -9,6 +9,37 @@ export const DEFAULT_SEND = "enter";
 
 export function previewOn() { return localStorage.getItem("mc_preview") !== "0"; }
 
+// 命令菜单（2026-10-17 用户定，**默认关**）：输入框左侧那颗 ☰ 与输入 "/" 自动弹出的命令面板。
+// 移动端那玩意儿纯碍事 ⇒ 默认不给入口；关着也能直接打 `/name` 回车执行（命令本身没消失，
+// 只是没有"菜单"这一层）。开关在用户视图 → 输入。
+export function commandMenuOn() { return localStorage.getItem("mc_cmd_menu") === "1"; }
+export function saveCommandMenu(on) { localStorage.setItem("mc_cmd_menu", on ? "1" : "0"); }
+
+// —— 输入栏形态（2026-10-20 用户定：这是**主题项**，不是输入选项）——
+// 两种形态，用户自己挑"要效率还是要美观"：
+//   float（默认）= 浮空气泡：输入框是一颗圆角玻璃卡，浮在消息列上、两侧留白；
+//   solid        = 实心贴底：栏自己实心、方角、边到边（外侧没 padding、输入框没圆角）。
+// 为什么归"外观"而不是"输入"：它改的是**界面长相**，与"回车发不发"那类操作习惯不是一类。
+// 载体是**根节点的 `data-composer` 属性**（照 applyTheme 那套）—— CSS 只认属性，组件一个 prop 都不用传。
+// ⚠ **不要**跟 `applyTheme` 那条 TG 守卫：它守的是**配色来源**（TG 里颜色由 TG 注入，我们不许覆盖）；
+// 而输入栏形态是**布局**，TG Mini App 里照样该由用户自己挑 —— 两件事，别照抄。
+export const DEFAULT_COMPOSER = "float";
+export function composerStyle() {
+  // `??` 语义：空串 = "没设过" ⇒ 回落默认；真存了 "solid" 就得用 —— 别被 `||` 吞掉。
+  const v = localStorage.getItem("mc_composer_style");
+  return v === "solid" ? "solid" : DEFAULT_COMPOSER;
+}
+export function applyComposerStyle(style) {
+  const s = style === undefined ? composerStyle() : style;
+  const root = document.documentElement;
+  if (s === "solid") root.setAttribute("data-composer", "solid");
+  else root.removeAttribute("data-composer"); // 缺省 = float（属性不出现）
+}
+export function saveComposerStyle(style) {
+  localStorage.setItem("mc_composer_style", style === "solid" ? "solid" : DEFAULT_COMPOSER);
+  applyComposerStyle(style);
+}
+
 // 上次在看的那条会话（2026-10-11 用户定）：刷新 / 被安卓丢弃后重载 ⇒ 回到它，不再是一张空草稿。
 // 空串 = 没记（或人在草稿）⇒ 开机进草稿。**不按用户分键**：换人登录时那条会话取不到 ⇒ 回落草稿。
 export function lastSessionId() { return localStorage.getItem("mc_last_session") || ""; }

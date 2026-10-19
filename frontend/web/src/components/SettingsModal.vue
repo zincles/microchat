@@ -159,6 +159,8 @@ async function importJSONFile(event) {
 // 已有对话管理器：ST 导入（文件框 → POST /sessions/import-st，导完刷会话 tab + 左栏）。
 const importTitle = ref("");
 const importStatus = ref("");
+const stInput = ref(null);   // ST 的隐藏文件框（按钮负责长相，见下）
+const jsonInput = ref(null); // 对话 JSON 的隐藏文件框
 async function importSTFile(event) {
   const file = event.target.files?.[0];
   if (!file) return;
@@ -291,6 +293,9 @@ function onKey(e) {
           <h3>生成与压缩</h3>
           <label class="field"><span>标题字数</span><input v-model="chat.title_chars" type="number" min="1" /></label>
           <label class="field"><span>模型上下文 tokens</span><input v-model="chat.model_context_tokens" type="number" min="1" /></label>
+          <!-- 为什么状态行的分母常常比这里小：它是**输入预算** = 上下文 − 给回复留的输出额度。
+               移动端没有 hover，所以这句话必须写在这儿（不能只藏在状态行的 title 里）。 -->
+          <p class="hint">状态行的分母是<b>输入预算</b> = 这里填的上下文 − 模型的输出预留（上游报的 <code>max_output</code>，没报按 4096）⇒ 填 1000000 时它显示 995904 ✓。</p>
           <label class="field"><span>压缩块数（自动压缩一次压几个）</span><input v-model="chat.compact_blocks" type="number" min="1" placeholder="空=3" /></label>
           <label class="field"><span>自动压缩（到触发线就压，压到 50% 以下）</span><ToggleSwitch v-model="chat.auto_compact" /></label>
           <label class="field"><span>压缩触发 tokens（空=预算的 80%）</span><input v-model="chat.compact_trigger_tokens" type="number" min="1" placeholder="空=预算的 80%" /></label>
@@ -328,13 +333,33 @@ function onKey(e) {
               </tr></tbody>
             </table>
           </div>
-          <div class="row"><span class="status">{{ sessionMgrStatus }}</span></div>
-          <h3>从 SillyTavern 导入</h3>
-          <label class="field"><span>导入标题（空=首句起）</span><input v-model="importTitle" placeholder="空=首句起" /></label>
-          <label class="field"><span>JSONL 文件</span><input type="file" accept=".jsonl,.json,.txt" @change="importSTFile" /></label>
-          <div class="row"><span class="status">{{ importStatus }}</span></div>
-          <label class="field"><span>对话 JSON（本应用导出格式）</span><input type="file" accept=".json" @change="importJSONFile" /></label>
-          <div class="row"><span class="status">{{ jsonStatus }}</span></div>
+          <div class="row" v-if="sessionMgrStatus"><span class="status">{{ sessionMgrStatus }}</span></div>
+          <!-- 导入区（2026-10-17 用户点名「混在一起、都乱了」）：两种格式各一张卡 ——
+               各有一句「这是哪种文件、导进去会怎样」，动作都是按钮 + 隐藏文件框（原生 file 框太丑，
+               而且两张卡长一样 ⇒ 分不清谁是谁）。 -->
+          <h3>导入对话</h3>
+          <div class="io-cards">
+            <div class="io-card">
+              <div class="io-head"><b>SillyTavern 记录</b><i class="io-tag">.jsonl</i></div>
+              <p class="hint">SillyTavern 导出的<b>一行一条</b>记录：只认「谁说的 / 正文 / 思考 / 时间」四样，其余一概丢掉。</p>
+              <div class="row">
+                <button type="button" class="primary" @click="stInput?.click()">选择 .jsonl 文件…</button>
+                <input ref="stInput" type="file" accept=".jsonl,.json,.txt" hidden @change="importSTFile" />
+                <span class="status">{{ importStatus }}</span>
+              </div>
+              <label class="field"><span>标题</span><input v-model="importTitle" placeholder="空 = 用首句起" /></label>
+            </div>
+            <div class="io-card">
+              <div class="io-head"><b>MicroChat 对话 JSON</b><i class="io-tag">.json</i></div>
+              <p class="hint">本应用「导出」出来的那份：标题 + 每条的 role 与正文（正文里的 <code>&lt;state&gt;</code> 块留着 ⇒ 导回去状态照常现演）。</p>
+              <div class="row">
+                <button type="button" class="primary" @click="jsonInput?.click()">选择 .json 文件…</button>
+                <input ref="jsonInput" type="file" accept=".json" hidden @change="importJSONFile" />
+                <span class="status">{{ jsonStatus }}</span>
+              </div>
+            </div>
+          </div>
+          <p class="hint">两种导入都是<b>新建一条会话</b>，不动现有会话；导完左栏立刻能看到。</p>
         </section>
         <section v-show="tab === 'agent'" id="panel-agent" class="panel">
           <template v-if="!editAgent">

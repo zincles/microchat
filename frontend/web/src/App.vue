@@ -8,13 +8,15 @@ import { uuidv7 } from "./utils/ids.js";
 import { buildCompactTree } from "./utils/tree.js";
 import {
   buildChatRows, computeSegments, windowStart, prevWindowStart, alignWindowFrom, olderCount, runsToFetch,
+  rerollTargetLive, bubbleText,
 } from "./utils/chatrows.js";
 import { applyBackground } from "./utils/background.js";
 import { installViewportFit } from "./utils/viewport.js";
 import { classifyAxis, pickDrag, dragProgress, resolveRelease } from "./utils/swipe.js";
-import { sharedApi, previewOn, applyTheme, wantsSend, apiBase, apiToken, apiBaseCandidates, saveNetPrefs, lastSessionId, saveLastSession } from "./utils/prefs.js";
+import { sharedApi, previewOn, applyTheme, wantsSend, apiBase, apiToken, apiBaseCandidates, saveNetPrefs, lastSessionId, saveLastSession, commandMenuOn, applyComposerStyle } from "./utils/prefs.js";
 import {
   formatStatusLine,
+  statusLineTitle,
   statusOverBudget,
   groupModelsByProvider,
   deletionPlanSummary,
@@ -39,10 +41,24 @@ import SettingsModal from "./components/SettingsModal.vue";
 import UserView from "./components/UserView.vue";
 import SessionSettings from "./components/SessionSettings.vue";
 import Overlays from "./components/Overlays.vue";
+import UpdateBar from "./components/UpdateBar.vue";
+import { registerPWA, onUpdateReady, startUpdate } from "./utils/pwa.js";
 
 const api = sharedApi();
 applyTheme();
 applyBackground();
+// 输入栏形态（主题项，2026-10-20）：挂根节点的 `data-composer` —— CSS 认它，组件不用传 prop。
+// 放在这里与 applyTheme 并列：**开机第一帧就得对**，否则会先闪一下浮空卡再变实心。
+applyComposerStyle();
+// —— 新版本提示（PWA 更新条，2026-10-20 用户定）——
+// 从 `autoUpdate` 改成 `prompt`：新版本**等用户点**才切，而不是悄悄自己 reload。
+// 勾子必须在**开机**就挂（SW 装完是异步回调 —— 挂晚了那一次提示就丢了）。
+const updateRef = ref(null);
+const updateReady = ref(false);
+onUpdateReady(() => { updateReady.value = true; });
+registerPWA();
+// 点「刷新」⇒ 发 skipWaiting，新 SW 接管后由 vite-plugin-pwa 内建回调 reload 这一页。
+function applyUpdate() { startUpdate(); }
 
 // —— 组件 refs（直调实例方法，替代桥） ——
 const toastRef = ref(null);
@@ -51,6 +67,9 @@ const sessionbarRef = ref(null);
 const payloadbarRef = ref(null);
 const composerRef = ref(null);
 const overlaysRef = ref(null);
+// 命令菜单（输入框左侧 ☰ 与 "/" 浮层）：默认关（移动端碍事，2026-10-17 用户定）；
+// 用户视图里改了立刻生效（不刷新）—— 偏好住 localStorage，这里是它的活视图。
+const cmdMenu = ref(commandMenuOn());
 const toast = (t, k) => toastRef.value?.push(t, k);
 // askConfirm：给设置/子编辑器用的全局确认框（与左栏删除同一个口 —— "不可逆的删除先摊开"）。
 function askConfirm(text) {
@@ -148,6 +167,9 @@ function toRow(m) {
     reasoningMs: m.reasoning_ms,
     messageId: m.id,
     id: m.id,
+    // usage：气泡脚注用它（token + 成本）。上游没报就是 null ⇒ 脚注整行不渲染。
+    // 归一化在后端（providers.NormalizeUsage），这里**只读**那几格。
+    usage: m.usage ?? null,
   };
 }
 
@@ -327,20 +349,17 @@ const summaryEditTarget = ref(null); // 编辑中的摘要（SummaryEditor 模�
 // 候选流预览（就地显示在目标气泡里）：running 期间靠 `/turn/text` 攒；任何一次落地/切版都清掉。
 const rerollPreview = ref({ text: "", reasoning: "" });
 function clearRerollPreview() { rerollPreview.value = { text: "", reasoning: "" }; }
-function rerollPreviewActive(m) {
-  return !!m.messageId && rerollState.value.target_message_id === m.messageId
-    && (rerollPreview.value.text !== "" || rerollPreview.value.reasoning !== "");
-}
-// 气泡内容的三个来源：合成流（一轮）> 候选预览（重摇）> 库内正文。
+// rerollStarting：**刚点下 ⟳ 的那一刻**（状态还没回来）就记下目标 —— 让那条气泡立刻切成空白 +
+// 「正在输出…」（2026-10-17 用户定：旧正文一直挂到第一帧才换掉很难看）。状态回来后交给 rerollState。
+const rerollStarting = ref(null);
+// 判据都在 utils/chatrows.js（纯函数、契约测试钉着）：这条是不是"正在摇的那条"、该显示什么。
+const isLive = (m) => rerollTargetLive(m, { startingId: rerollStarting.value, state: rerollState.value });
 function bubbleContent(m) {
-  if (m.stream) return vueStream.value.text;
-  if (rerollPreviewActive(m)) return rerollPreview.value.text || m.content;
-  return m.content;
+  return bubbleText(m, { field: "content", live: isLive(m), streamText: vueStream.value.text, previewText: rerollPreview.value.text });
 }
 function bubbleReasoning(m) {
-  if (m.stream) return vueStream.value.reasoning ?? m.reasoning;
-  if (rerollPreviewActive(m)) return rerollPreview.value.reasoning || m.reasoning;
-  return m.reasoning;
+  // 思考多一层回落：库里没思考、合成流也没有 ⇒ 照旧用 m.reasoning（与从前一致）。
+  return bubbleText(m, { field: "reasoning", live: isLive(m), streamText: vueStream.value.reasoning ?? m.reasoning, previewText: rerollPreview.value.reasoning });
 }
 
 // refreshReroll：问一次重摇状态（进会话 / 一轮结束 / 删改之后都要对齐 —— 候选只在内存里，
@@ -474,18 +493,25 @@ async function rerollNow() {
   if (!sid) return;
   const my = epoch;
   clearRerollPreview();
+  // 立刻把那条气泡切空白（别等第一帧）：目标 = 尾条 assistant（后端也只认它，不是它 ⇒ 400）。
+  rerollStarting.value = lastMsgId.value;
   try {
-    await api.rerollEnter(sid); // 202：进模式并立刻摇一版；已在模式里 ⇒ 再摇一版
-    refreshTasks();
-  } catch (err) {
-    toast(`重摇失败：${err.message}`, "error");
-    return;
+    try {
+      await api.rerollEnter(sid); // 202：进模式并立刻摇一版；已在模式里 ⇒ 再摇一版
+      refreshTasks();
+    } catch (err) {
+      toast(`重摇失败：${err.message}`, "error");
+      return;
+    }
+    const st = await pollReroll(sid);
+    if (my !== epoch) return;
+    if (st?.error) { toast(`重摇失败：${st.error}`, "error"); clearRerollPreview(); return; }
+    if (!st?.active) return;
+    await switchReroll(sid, st.count); // 最新那版的位次就是 count（1-based）
+  } finally {
+    // 走到哪儿都别留下"永远在摇"的假象（出错、被停、切会话、epoch 变了都算）。
+    rerollStarting.value = null;
   }
-  const st = await pollReroll(sid);
-  if (my !== epoch) return;
-  if (st?.error) { toast(`重摇失败：${st.error}`, "error"); clearRerollPreview(); return; }
-  if (!st?.active) return;
-  await switchReroll(sid, st.count); // 最新那版的位次就是 count（1-based）
 }
 // rerollGo：◀ ▶ —— 翻版；最右再按 = 再摇一版（与 TUI/TG 的 `‹ 2/3 ›` 同一套语义）。
 async function rerollGo(delta) {
@@ -508,7 +534,10 @@ async function switchReroll(sid, idx) {
   }
   if (my !== epoch) return;
   await reloadWindow();
+  // 两件事必须**同一拍**做（中间不能有 await）：预览一清、库内正文也已经是新那版 ⇒ 气泡无缝换过去；
+  // `rerollStarting` 若拖到 rerollNow 的 finally 才清，中间会闪一帧空白（预览空了却还判"在摇"）。
   clearRerollPreview();
+  rerollStarting.value = null;
   refreshStateView(sid);
   refreshStatusline("idle");
   await refreshRerolls();
@@ -1018,7 +1047,7 @@ function refreshStatusline(phase, elapsedMs) {
   api.context(sessionID).catch(() => null).then((ctx) => {
     composerRef.value?.setStatus(`${connText}｜` + formatStatusLine({
       ctx, phase, elapsedMs, agent: statusAgent.value,
-    }), statusOverBudget(ctx));
+    }), statusOverBudget(ctx), statusLineTitle(ctx));
   }).catch((err) => toast(`状态行失败：${err.message}`, "error"));
 }
 function refreshStateView(id) {
@@ -1182,7 +1211,7 @@ function refreshPreview() {
 }
 function onComposerInput(v) {
   liftOverlays();
-  if (v.startsWith("/")) {
+  if (cmdMenu.value && v.startsWith("/")) {
     const cmd = parseCommand(v);
     overlaysRef.value?.showPalette(filterCommands(cmd ? cmd.name : ""));
   } else {
@@ -1312,6 +1341,11 @@ function openUserView() {
   if (narrowLeft()) applySideToggle("sessions-bar", true);
 }
 function closeUserView() { userOpen.value = false; }
+// 用户视图里存了个人偏好 ⇒ 聊天壳上活着的开关立刻跟上（命令菜单是唯一现在就长短不一的那个）。
+function onUserPrefsSaved() {
+  cmdMenu.value = commandMenuOn();
+  if (!cmdMenu.value) overlaysRef.value?.hidePalette();
+}
 function closeSettings() {
   settingsOpen.value = false;
   if (narrowLeft()) applySideToggle("sessions-bar", true);
@@ -1426,7 +1460,8 @@ onUnmounted(() => {
               :message-id="row.msg.messageId"
               :is-last="!!row.msg.messageId && row.msg.messageId === lastMsgId"
               :display-mode="vueDisplayMode"
-              :streaming="!!row.msg.stream"
+              :streaming="!!row.msg.stream || isLive(row.msg)"
+              :usage="row.msg.usage"
               :reroll="row.msg.messageId && rerollState.active && rerollState.target_message_id === row.msg.messageId ? rerollState : null"
               @save="onBubbleSave"
               @delete="onBubbleDelete"
@@ -1438,6 +1473,7 @@ onUnmounted(() => {
         </main>
     <Composer
       ref="composerRef"
+      :menu-on="cmdMenu"
       @input-text="onComposerInput"
       @keydown="onComposerKeydown"
       @submit="onComposerSubmit"
@@ -1458,6 +1494,7 @@ onUnmounted(() => {
         :esc-blocked="!!sessionSettingsId"
         @close="closeUserView"
         @toggle-left="toggleLeft"
+        @prefs-saved="onUserPrefsSaved"
       />
       <SettingsModal
         v-if="settingsOpen"
@@ -1472,6 +1509,8 @@ onUnmounted(() => {
       </div>
     </div>
     <Toast ref="toastRef" />
+    <!-- 更新条：只在检测到新版本时出现（挂根层 —— 设置/用户视图开着也该看得见）。 -->
+    <UpdateBar v-if="updateReady" ref="updateRef" @update="applyUpdate" />
     <!-- Overlays 挂根层（不在聊天视图里）：设置视图开着时"确认"也要能弹（fixed 定位照旧）。 -->
     <Overlays ref="overlaysRef" @run-command="(n) => runCommand(n, []).catch((err) => toast(`命令失败：${err.message}`, 'error'))" @pick="onPickAction" />
     <SummaryEditor

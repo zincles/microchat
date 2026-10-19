@@ -39,14 +39,78 @@ export function formatThinkLabel(reasoningMs) {
   return `思考过程（${(reasoningMs / 1000).toFixed(1)}s）`;
 }
 
-// 状态行：占用 used/budget（over_budget 标红由 CSS 类承担）+ provider/model + phase/耗时。
+// 状态行：占用 used/budget（over_budget 标红由 CSS 类承担）+ 当前助手 + phase/耗时。
 export function formatStatusLine({ ctx, phase, elapsedMs, agent }) {
-  const used = ctx?.used_tokens ?? "?";
-  const budget = ctx?.budget_tokens ?? "?";
+  const used = formatTokens(ctx?.used_tokens);
+  const budget = formatTokens(ctx?.budget_tokens);
   const over = ctx?.over_budget ? " 超预算" : "";
   // 2026-10-14：中间那格从"渠道/模型"换成"当前助手" —— 模型住顶栏左上（别两处重复），
   // 助手住这儿（顶栏已无 Agent 下拉）。
   return `上下文 ${used}/${budget}${over}｜${agent ?? "?"}｜${phase ?? "idle"}${elapsedMs != null ? ` ${elapsedMs}ms` : ""}`.trim();
+}
+
+// formatTokens：上下文数字的人话格式（2026-10-17 用户点名）：9857 → 9.8K、995904 → 995K、
+// 1048576 → 1.04M。**一律向下取整**（不四舍五入）：这两个数里有一个是"我用了多少"，
+// 向上取整会把用量说大；而且 995904 报成"996K"会让人以为分母真是 996K ✗。
+export function formatTokens(n) {
+  if (n == null || !Number.isFinite(n)) return "?";
+  const sign = n < 0 ? "-" : "";
+  const abs = Math.abs(n);
+  const floored = (v, digits) => { const f = 10 ** digits; return Math.floor(v * f + 1e-9) / f; };
+  const trim = (s) => (s.includes(".") ? s.replace(/\.?0+$/, "") : s);
+  if (abs < 1000) return sign + String(abs);
+  if (abs < 10000) return sign + trim(floored(abs / 1000, 1).toFixed(1)) + "K"; // 9.8K
+  if (abs < 1000000) return sign + String(floored(abs / 1000, 0)) + "K";       // 995K
+  return sign + trim(floored(abs / 1000000, 2).toFixed(2)) + "M";              // 1.04M
+}
+
+// statusLineTitle：状态行悬停的解释（桌面才有 hover；移动端靠设置页那行小字，两处都写）。
+// 分母是**输入预算**不是模型上下文 —— 这就是"填了 1 000 000 却显示 995904"的来由。
+export function statusLineTitle(ctx) {
+  if (!ctx) return "";
+  const num = (v) => Number(v ?? 0).toLocaleString("en-US");
+  return `输入预算 ${num(ctx.budget_tokens)} = 模型上下文 ${num(ctx.ctx_len)} − 输出预留 ${num(ctx.max_output)}`;
+}
+
+// formatCost：上游报的"这一发花了多少美元"（2026-10-20，OpenRouter 的 usage.cost）。
+//
+// 三档：< $0.01 给 4 位小数（便宜模型的单发就是 0.0004 这种量级，两位小数会全变成 $0.00）、
+// 其余给 2 位；**恰好 0 ⇒ $0**（免费模型是真的 0，不是"没数据"）。
+// `null`/`undefined` ⇒ 空串 —— 直连渠道（DeepSeek / OpenCode GO）不报 cost，
+// 那时**什么都不显示**，绝不显示成 $0.00（那是"免费"的意思，会说谎）。
+export function formatCost(usd) {
+  if (usd == null || !Number.isFinite(usd)) return "";
+  if (usd === 0) return "$0";
+  if (usd < 0.01) return `$${usd.toFixed(4)}`;
+  return `$${usd.toFixed(2)}`;
+}
+
+// usageFoot：气泡下面那行小字（token 用量 + 成本）。
+//
+// 口径（AGENTS.md「用量两处别混」）：单位是 token，`reasoning_tokens` 是
+// `completion_tokens` 的**子集**（不是另加）；未命中 = prompt − cached（推导，不另存）。
+// 空（没用量）⇒ 空串，调用方据此不渲染这一行。
+export function usageFoot(usage) {
+  if (!usage || usage.prompt_tokens == null) return "";
+  const prompt = formatTokens(usage.prompt_tokens);
+  const completion = formatTokens(usage.completion_tokens);
+  const parts = [`${prompt}→${completion}`];
+  if (usage.cached_tokens > 0) parts.push(`缓存命中 ${formatTokens(usage.cached_tokens)}`);
+  if (usage.reasoning_tokens > 0) parts.push(`思考 ${formatTokens(usage.reasoning_tokens)}`);
+  const cost = formatCost(usage.cost_usd);
+  if (cost) parts.push(cost);
+  return parts.join(" · ");
+}
+
+// usageFootTitle：那行小字的悬停解释（说清哪个数是子集、cost 是谁报的）。
+export function usageFootTitle(usage) {
+  if (!usage || usage.prompt_tokens == null) return "";
+  const lines = [
+    `输入 ${usage.prompt_tokens} tok（其中缓存命中 ${usage.cached_tokens ?? 0}）`,
+    `输出 ${usage.completion_tokens ?? 0} tok（其中思考 ${usage.reasoning_tokens ?? 0} —— 是输出的子集，不另加）`,
+  ];
+  if (usage.cost_usd != null) lines.push(`成本 ${formatCost(usage.cost_usd)}：上游报的实扣金额`);
+  return lines.join("\n");
 }
 
 export function statusOverBudget(ctx) {

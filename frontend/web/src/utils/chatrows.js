@@ -135,3 +135,23 @@ export function buildChatRows({ segments, windowFrom, messages, summaryMsgs }) {
   }
   return rows;
 }
+
+// —— 气泡正文的三个来源（2026-10-17 用户定）————————————————————————
+//   · 一轮的合成流（还没落库那条）
+//   · **正在摇的那条**：摇的过程中气泡立刻切走（空白起步，随候选流长字）—— 旧正文一直挂到第一帧
+//     才被换掉"有点丑"（用户原话）。空白**不等于**丢内容：旧版就是候选 #1（后端的 [原文, 新候选]），
+//     切回去、或者摇失败，都照旧回来。
+//   · 库内正文。
+export function rerollTargetLive(msg, { startingId = null, state = null } = {}) {
+  if (!msg?.messageId) return false;
+  if (startingId === msg.messageId) return true; // 刚落手、状态还没回来那一小段
+  return !!state?.active && !!state?.running && state.target_message_id === msg.messageId;
+}
+
+// bubbleText：这条消息在 `field`（正文 content / 思考 reasoning）上该显示什么。
+// 顺序：合成流 > 正在摇的那条 > 库内字段。**正在摇时不给回落**（就是要空白起步）。
+export function bubbleText(msg, { field = "content", live = false, streamText = null, previewText = null } = {}) {
+  if (msg?.stream) return streamText ?? "";
+  if (live) return previewText ?? "";
+  return msg?.[field] ?? "";
+}

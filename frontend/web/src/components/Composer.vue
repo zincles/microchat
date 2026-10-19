@@ -5,12 +5,16 @@ import { ref, watch, nextTick } from "vue";
 import { ICONS } from "./icons.js";
 
 const emit = defineEmits(["input-text", "keydown", "submit", "stop", "menu"]);
+// menuOn：命令菜单开不开（用户视图 → 输入；缺省关 —— 移动端那颗 ☰ 纯碍事）。
+const props = defineProps({ menuOn: { type: Boolean, default: false } });
 const text = ref("");
 const taskText = ref(""); // 输入框上方、状态行头上那行小字（后台任务；空 = 藏）
 function setTaskLine(t) { taskText.value = t ?? ""; }
 const statusText = ref("上下文 ?/?｜未知模型｜idle");
 const statusOver = ref(false);
-function setStatus(t, over) { statusText.value = t; statusOver.value = !!over; }
+const statusTitle = ref("");
+// title：悬停解释（"分母是输入预算"那件事）—— 移动端没有 hover，设置页另有一行小字。
+function setStatus(t, over, title) { statusText.value = t; statusOver.value = !!over; statusTitle.value = title ?? ""; }
 const running = ref(false);
 function setRunning(v) { running.value = !!v; }
 const area = ref(null);
@@ -57,8 +61,9 @@ defineExpose({ submit, clear, text, setStatus, setRunning, setTaskLine });
 <template>
   <form id="composer" @submit.prevent="running ? $emit('stop') : submit()">
     <div v-if="taskText" class="taskline">{{ taskText }}</div>
-    <div id="statusline" class="statusline" :class="{ over: statusOver }">{{ statusText }}</div>
+    <div id="statusline" class="statusline" :class="{ over: statusOver }" :title="statusTitle">{{ statusText }}</div>
     <button
+      v-if="props.menuOn"
       type="button"
       id="menu-btn"
       title="命令菜单"

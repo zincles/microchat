@@ -2,7 +2,7 @@
 // 消息气泡：正文 markdown 渲染 + <state> 块独立容器（状态变化单列，不混进正文）。
 import { ref, computed } from "vue";
 import { ICONS } from "./icons.js";
-import { formatThinkLabel } from "../utils/format.js";
+import { formatThinkLabel, usageFoot, usageFootTitle } from "../utils/format.js";
 import { renderMarkdown, splitState } from "../utils/markdown.js";
 const props = defineProps({
   who: String,
@@ -16,8 +16,16 @@ const props = defineProps({
   displayMode: { type: String, default: "chat" },
   streaming: Boolean, // 生成中（还没落库的那条）：等首字节时给三点呼吸动画
   reroll: { type: Object, default: null }, // 重摇状态（本条是目标时才非 null）：{active,count,current_idx,running}
+  // usage：上游报的用量（归一化后的那几格；2026-10-20 起气泡脚注就用它）。
+  // 只有聚合站（OpenRouter）会带 cost_usd；直连渠道没有 ⇒ 脚注不显示价格。
+  usage: { type: Object, default: null },
 });
 const emit = defineEmits(["save", "delete", "reroll", "reroll-go"]);
+
+// 脚注：token 用量 + 成本（纯函数在 utils/format.js，契约测试钉着）。
+// 没用量（生成中 / 库外那条 / 上游没报）⇒ 空串 ⇒ 整行不渲染。
+const foot = computed(() => usageFoot(props.usage));
+const footTitle = computed(() => usageFootTitle(props.usage));
 
 // 流式期间还没正文 ⇒ 标签说"思考中…"；落库后才是"思考过程（2.1s）"（那会儿才有用时）。
 const thinkLabel = computed(() =>
@@ -80,6 +88,7 @@ const editRows = computed(() => Math.min(12, Math.max(3, draft.value.split("\n")
       <div v-show="editing !== 'content'" class="text" v-html="bodyHtml"></div>
       <div v-if="streaming && !content && !reasoning" class="typing" aria-label="正在生成">
         <span></span><span></span><span></span>
+        <i class="typing-hint">正在输出…</i>
       </div>
       <div v-if="editing === 'content'" class="inline-edit">
         <textarea v-model="draft" class="inline-input" :rows="editRows"></textarea>
@@ -99,6 +108,9 @@ const editRows = computed(() => Math.min(12, Math.max(3, draft.value.split("\n")
           <div v-for="(ln, j) in b.lines" :key="j" class="state-line">{{ ln }}</div>
         </div>
       </div>
+      <!-- 脚注（2026-10-20）：这一发实际用了多少 token、花了多少钱（上游报的）。
+           只在**落库后的**消息上有（生成中那条没有用量）；直连渠道不报 cost ⇒ 这里只有 token。 -->
+      <div v-if="foot && editing === null" class="msg-foot" :title="footTitle">{{ foot }}</div>
     </div>
     <div v-if="canEdit" class="msg-ops">
       <button

@@ -43,7 +43,17 @@ export default defineConfig({
     //     云端形态（Cloudflare 一类）天然满足。详见 README。
     //   · 只在 build/preview 生效（dev 不开 SW：免得开发时吃到旧缓存）。
     VitePWA({
-      registerType: "autoUpdate",
+      // **prompt**（2026-10-20 用户定，从 `autoUpdate` 改过来）—— 为什么改：
+      // `autoUpdate` 会在新 SW `activated` 时**自己** `location.reload()`：看着"省事"，
+      // 实则**静默**——你要是不巧正没看那个标签页，刷新就悄悄发生了；更糟的是它只保证
+      // "最终会更新"，**不告诉你此刻看的是旧的**。2026-10-20 就因此白排查一轮：
+      // 服务器上明明是新的（三份 bundle 逐字节相同），界面上却看不到新加的选项，
+      // 最后靠"清站点数据"才发现是 SW 缓存的旧壳 —— README 里那句"再刷一次就是新的"
+      // 说的正是它，但那句**救不了不知道自己该刷新的人**。
+      // 现在：检测到新版本 ⇒ `onNeedRefresh` 弹一条 toast（「有新版本，点这里刷新」），
+      // 由**用户点**了才 `updateServiceWorker()`（发 skipWaiting → controlling → reload）。
+      // 于是"我看到的是哪一版"变成一件**说得出口**的事，而不是靠猜。
+      registerType: "prompt",
       manifest: {
         name: "MicroChat",
         short_name: "MicroChat",

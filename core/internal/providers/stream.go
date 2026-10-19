@@ -15,7 +15,9 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -491,6 +493,12 @@ type Usage struct {
 	TotalTokens      int64 `json:"total_tokens"`
 	CachedTokens     int64 `json:"cached_tokens"`
 	ReasoningTokens  int64 `json:"reasoning_tokens"`
+	// CostUSD：这一发**实际扣了多少钱**（上游自己报的，不是我们按价目表算的）。
+	//
+	// 只有聚合站报（OpenRouter 的 `usage.cost`，见 `reminder/openrouter.md`）；直连渠道
+	// （DeepSeek / OpenCode GO）**不回这一格** ⇒ 指针为 nil。用指针就是为了把
+	// **"免费（0）"与"上游没说（nil）"**分开 —— 后者不该在界面上显示成 $0.00。
+	CostUSD *float64 `json:"cost_usd,omitempty"`
 	// Raw：上游原样的那份（留档备查；**别再往它上面写逻辑**）。
 	Raw json.RawMessage `json:"raw,omitempty"`
 }
@@ -515,6 +523,10 @@ func NormalizeUsage(raw json.RawMessage) json.RawMessage {
 			ReasoningTokens *int64 `json:"reasoning_tokens"`
 		} `json:"completion_tokens_details"`
 		ReasoningTokens *int64 `json:"reasoning_tokens"`
+		// Cost：OpenRouter 的 `usage.cost`（**美元**，已经扣完的那一笔）。
+		// 用 RawMessage 接：正常是数字，但"数字写成字符串"这种事在上游见得够多了 ——
+		// 那不该让整份用量归零（宁可这一格没有，别的数照给）。
+		Cost json.RawMessage `json:"cost"`
 	}
 	if json.Unmarshal(raw, &wire) != nil || wire.PromptTokens == nil {
 		return nil // 连 prompt_tokens 都没有 ⇒ 这份用量我们不认识
@@ -527,6 +539,7 @@ func NormalizeUsage(raw json.RawMessage) json.RawMessage {
 		TotalTokens:      numberOr(wire.TotalTokens, prompt+completion),
 		CachedTokens:     firstNumber(wire.PromptDetails.CachedTokens, wire.PromptCacheHitTokens, wire.CacheReadInputTokens),
 		ReasoningTokens:  firstNumber(wire.CompletionDetails.ReasoningTokens, wire.ReasoningTokens),
+		CostUSD:          parseCost(wire.Cost),
 		Raw:              raw,
 	}
 	encoded, err := json.Marshal(usage)
@@ -551,6 +564,23 @@ func firstNumber(values ...*int64) int64 {
 		}
 	}
 	return 0
+}
+
+// parseCost：把上游那个"这一发花了多少钱"解成美元数。
+//
+// 认两种写法：JSON 数字（正常）与数字字符串（见过上游这么发）。**认不出来就回 nil**
+// —— 别用 0 冒充"免费"：这一格的含义是"上游说的"，不是"我们猜的"。
+func parseCost(raw json.RawMessage) *float64 {
+	text := strings.TrimSpace(string(raw))
+	if text == "" || text == "null" {
+		return nil
+	}
+	text = strings.Trim(text, `"`)
+	value, err := strconv.ParseFloat(text, 64)
+	if err != nil || math.IsNaN(value) || math.IsInf(value, 0) {
+		return nil
+	}
+	return &value
 }
 
 // snippet：错误正文缩成一行、截到 300 字 —— 够看清原因，又不把整页 HTML 灌进界面。
