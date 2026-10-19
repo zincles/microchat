@@ -808,7 +808,7 @@ async function askDeleteSession(id) {
     return; // 删失败就别切会话（catch 回调里的 return 不是这个函数的 return）
   }
   if (id === sessionID) {
-    closeSettings(); // 被删的是当前会话 ⇒ 接下来要去草稿：设置视图让位
+    backToChat(); // 被删的是当前会话 ⇒ 接下来要去草稿：**两个视图都让位**（哪边开着都回对话区）
     await startDraft(); // 删掉当前会话 ⇒ 回到草稿（不再预建空会话 —— 那正是被拿掉的旧行为）
   } else refreshSessionsBar();
 }
@@ -845,7 +845,7 @@ async function startDraft() {
 }
 function newSession() {
   closeLeftDrawer(); // 窄屏：抽屉让位（人已经去新对话了）
-  closeSettings(); // 侧栏动作 = 把人带回对话区（设置视图让位）
+  backToChat(); // 侧栏动作 = 把人带回对话区（**两个视图**都让位 —— 别再只 closeSettings）
   startDraft().catch((err) => toast(`新建失败：${err.message}`, "error"));
 }
 function renderSessions(sessions) {
@@ -1350,6 +1350,20 @@ function closeSettings() {
   settingsOpen.value = false;
   if (narrowLeft()) applySideToggle("sessions-bar", true);
 }
+// backToChat：**侧栏动作要把人带回对话区**（点会话 / 点＋新对话 / 当前会话被删）—— 唯一出口。
+//
+// 为什么要有它（2026-10-20 用户报："设置里点左侧会话会退出设置进对话，用户视图点了没反应"）：
+// 设置与用户视图是**平级的两块**（一屏只能开一个），所以"让位"必须**同时**管两边。
+// 从前只有 `closeSettings()`（只关设置），而 `closeUserView()` 定义了却**从没被调用过** ⇒
+// 于是侧栏那三个动作在用户视图里**全都**失灵（点会话、`/new`、删当前会话）。
+// 收成一个出口，往后加侧栏动作只需调它 —— 别再成对地手写两个 close（漏一个就是这条 bug 复发）。
+//
+// ⚠ 只给**侧栏动作**用它：命令面板（`/resume` `/new` `/delete` 那些）与启动恢复路径**不需要** ——
+// 命令面板挂在聊天壳里（`#chat-col` 有 `v-show`），那两个视图开着时根本触发不到。
+function backToChat() {
+  closeSettings();
+  closeUserView();
+}
 // —— 拖拽调宽 ——
 let uninstallViewportFit = null;
 onMounted(() => {
@@ -1405,7 +1419,7 @@ onUnmounted(() => {
         ref="sessionbarRef"
         @toggle-left="toggleLeft"
         :can-settings="isAdmin"
-        @select="(id) => { closeLeftDrawer(); closeSettings(); enterSession(id).catch((err) => toast(`进会话失败：${err.message}`, 'error')); }"
+        @select="(id) => { closeLeftDrawer(); backToChat(); enterSession(id).catch((err) => toast(`进会话失败：${err.message}`, 'error')); }"
         @settings="(id) => { sessionSettingsId = id; }"
         @user="openUserView"
         @close="askDeleteSession"
