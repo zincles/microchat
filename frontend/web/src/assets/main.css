@@ -48,6 +48,20 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .flat-select:focus { outline: none; }
 /* 右开关吃剩余空档（贴右缘）；左开关在时它就是最左那件。 */
 #toggle-right { margin-left: auto; }
+/* 顶栏里那两枚开关（2026-10-17 用户定"加个底"）：栏收着时它们孤零零浮在消息列上 ——
+ * 透明底在滚动内容/背景图前根本看不清。给一层栏底色的小圆片（与输入行那颗 ☰ 同一个色），
+ * 悬停只提亮、不丢底（`.icon-btn:hover` 那层半透明白会把底"洗掉"⇒ 这里显式覆盖回来）。
+ * ⚠ 作用域只到 `#chat-col > header`：左栏头/右栏 tabs 行里那两枚开关**同名 id**（历史遗留），
+ * 它们在自己栏面上、本来就有底，别被这条改动波及。 */
+#chat-col > header #toggle-left, #chat-col > header #toggle-right {
+  flex: none; width: 2em; height: 2em; margin: 0; padding: 0; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--tg-secondary-bg); color: var(--tg-hint);
+}
+#chat-col > header #toggle-right { margin-left: auto; }
+#chat-col > header #toggle-left:hover, #chat-col > header #toggle-right:hover {
+  background: var(--tg-secondary-bg); color: var(--tg-text); filter: brightness(1.25);
+}
 /* Agent 头像（顶栏左上、模型字左边，2026-10-14 用户定）：圆形首字标，底色由 id 派生
  * （同一 id 永远同一个色，纯计算无存储）；点开 = 选人浮板。 */
 .agent-btn { flex: none; width: 1.95em; height: 1.95em; padding: 0; border: none; border-radius: 50%; cursor: pointer;
