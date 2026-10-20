@@ -395,11 +395,19 @@ html[data-composer="solid"] .messages-inner { padding-bottom: calc(var(--compose
 /* 输入框独立浮动卡 + 发送钮独立圆钮：逻辑相连、显示分开（TG 底栏就是输入框配外面一颗钮）。 */
 #input { flex: 1; background: color-mix(in srgb, var(--tg-secondary-bg) 88%, transparent); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); color: var(--tg-text); border: 1px solid var(--line); border-radius: 20px; padding: 0.6em 1.1em; font: inherit; resize: none; line-height: 1.5; max-height: calc(1.5em * 6 + 1.2em); overflow-y: auto; box-shadow: 0 6px 24px rgb(0 0 0 / 32%); }
 #input:focus { outline: none; border-color: var(--tg-link); }
+/* —— 滚动隐藏上下栏（触屏；2026-10-17 用户定，默认开）——
+ * JS（App 的 onMessagesScroll）只写根节点上两个 px 变量，这里只做位移：
+ * 往下看顶栏往上让位、往回看底栏往下让位，**进度与位移成正比**（不是到阈值才啪一下）。
+ * 短过渡只为把抖动抹平（浏览器工具栏也是这个味道）；reduced-motion 里关掉。 */
+#chat-col > header { transform: translateY(calc(-1 * var(--chrome-top, 0px))); transition: transform 90ms linear; }
+#composer { transform: translateY(var(--chrome-bottom, 0px)); transition: transform 90ms linear; }
+@media (prefers-reduced-motion: reduce) { #chat-col > header, #composer { transition: none; } }
 /* —— 输入栏的两种形态（2026-10-20 用户定：**主题项**，不是输入选项）——————————
  * 载体是根节点的 `data-composer="solid"`（照 applyTheme 那套，见 utils/prefs.js）：
  * CSS 只认属性，组件一个 prop 都不传 —— 于是"换形态"这件事只有一处开关，且**立刻生效**。
  *
- *   float（缺省，属性不出现）= 浮空气泡：栏透明，里面一颗圆角玻璃卡浮在消息列上、两侧留白；
+ *   ⚠ 用户口径（2026-10-17 定名）：float = **正常模式**、solid = **紧凑模式**（值名不改）。
+ *   float（缺省，属性不出现）= 正常：栏透明，里面一颗圆角卡浮在消息列上、两侧留白；
  *   solid                     = 实心贴底：栏自己实心、方角、边到边（外侧没 padding、输入框没圆角）。
  *
  * 实心形态的三条必须覆盖：

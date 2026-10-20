@@ -149,7 +149,15 @@ async function importJSONFile(event) {
   try {
     const doc = JSON.parse(await file.text());
     const out = await api.importJson(doc);
-    jsonStatus.value = `已导入 ${out.messages} 条：${out.session?.title || "新会话"}`;
+    const bits = [`已导入 ${out.messages} 条：${out.session?.title || "新会话"}`];
+    // v2 起文件带着会话的三格绑定 ⇒ 回执里能看出"搬过来之后绑的是谁"。
+    const bound = [out.session?.provider, out.session?.model].filter(Boolean).join("/");
+    if (bound) bits.push(`渠道/模型 ${bound}`);
+    // agent 本机没有 ⇒ 照绑了 id（不静默换人），但人设会回落内置默认 —— 必须说出来 + 给出下一步。
+    if (out.agent_missing) {
+      bits.push(`⚠ Agent「${doc?.agent_name || doc?.agent_id || "?"}」本机没有：已按 id 绑上，人设会回落内置默认；要人设请从「智能体」导它的卡带`);
+    }
+    jsonStatus.value = bits.join(" · ");
     await loadSessions();
     emit("sessions-changed");
   } catch (e) { jsonStatus.value = `导入失败：${e.message}`; }
@@ -327,7 +335,7 @@ function onKey(e) {
                 <td>{{ s.messages }}</td>
                 <td>{{ s.provider }}/{{ s.model }}</td>
                 <td class="ops">
-                  <button type="button" class="link-btn" @click.stop="exportSessionRow(s)" title="导出对话记录（JSON：只有 role+content+标题）">导出</button>
+                  <button type="button" class="link-btn" @click.stop="exportSessionRow(s)" title="导出对话记录（JSON：标题 + 每条的 role/正文 + 这条会话绑的渠道/模型/Agent）">导出</button>
                   <button type="button" class="link-btn danger" @click.stop="askDropSession(s.id, s.title)">删除</button>
                 </td>
               </tr></tbody>
@@ -351,7 +359,7 @@ function onKey(e) {
             </div>
             <div class="io-card">
               <div class="io-head"><b>MicroChat 对话 JSON</b><i class="io-tag">.json</i></div>
-              <p class="hint">本应用「导出」出来的那份：标题 + 每条的 role 与正文（正文里的 <code>&lt;state&gt;</code> 块留着 ⇒ 导回去状态照常现演）。</p>
+              <p class="hint">本应用「导出」出来的那份：标题 + 每条的 role 与正文（正文里的 <code>&lt;state&gt;</code> 块留着 ⇒ 导回去状态照常现演），<b>还会带回这条会话当初的渠道 / 模型 / Agent</b>（照抄绑定；本机没有那个 Agent 会明说，人设回落内置默认）。</p>
               <div class="row">
                 <button type="button" class="primary" @click="jsonInput?.click()">选择 .json 文件…</button>
                 <input ref="jsonInput" type="file" accept=".json" hidden @change="importJSONFile" />

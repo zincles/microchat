@@ -9,6 +9,11 @@ export const DEFAULT_SEND = "enter";
 
 export function previewOn() { return localStorage.getItem("mc_preview") !== "0"; }
 
+// 滚动隐藏上下栏（2026-10-17 用户定，**默认开**；只在触屏上生效）：跟浏览器一个味道 ——
+// 往下看（内容前进）顶栏按位移**逐步**收起，往回看（内容后退）底栏逐步收起；反方向把对面那栏放回来。
+export function chromeHideOn() { return localStorage.getItem("mc_chrome_hide") !== "0"; }
+export function saveChromeHide(on) { localStorage.setItem("mc_chrome_hide", on ? "1" : "0"); }
+
 // 命令菜单（2026-10-17 用户定，**默认关**）：输入框左侧那颗 ☰ 与输入 "/" 自动弹出的命令面板。
 // 移动端那玩意儿纯碍事 ⇒ 默认不给入口；关着也能直接打 `/name` 回车执行（命令本身没消失，
 // 只是没有"菜单"这一层）。开关在用户视图 → 输入。
@@ -17,8 +22,10 @@ export function saveCommandMenu(on) { localStorage.setItem("mc_cmd_menu", on ? "
 
 // —— 输入栏形态（2026-10-20 用户定：这是**主题项**，不是输入选项）——
 // 两种形态，用户自己挑"要效率还是要美观"：
-//   float（默认）= 浮空气泡：输入框是一颗圆角玻璃卡，浮在消息列上、两侧留白；
-//   solid        = 实心贴底：栏自己实心、方角、边到边（外侧没 padding、输入框没圆角）。
+//   用户口径（2026-10-17 定名）：**正常模式** = float、**紧凑模式** = solid。
+//   float（默认）= 正常：输入框是一颗圆角卡，浮在消息列上、两侧留白（状态小字在框上方）；
+//   solid        = 紧凑：栏自己实心、方角、边到边（外侧没 padding、输入框没圆角）。
+// 值名不改（改用 normal/compact 会把已经存下的偏好作废）。
 // 为什么归"外观"而不是"输入"：它改的是**界面长相**，与"回车发不发"那类操作习惯不是一类。
 // 载体是**根节点的 `data-composer` 属性**（照 applyTheme 那套）—— CSS 只认属性，组件一个 prop 都不用传。
 // ⚠ **不要**跟 `applyTheme` 那条 TG 守卫：它守的是**配色来源**（TG 里颜色由 TG 注入，我们不许覆盖）；

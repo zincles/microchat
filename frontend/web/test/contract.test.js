@@ -9,6 +9,7 @@ import { parseCommand, filterCommands, COMMAND_META } from "../src/utils/command
 import { uuidv7 } from "../src/utils/ids.js";
 import { buildCompactTree, treeTotals } from "../src/utils/tree.js";
 import { buildChatRows, rerollTargetLive, bubbleText } from "../src/utils/chatrows.js";
+import { resetChrome, stepChrome } from "../src/utils/chrome.js";
 import { computeViewportFit } from "../src/utils/viewport.js";
 import { classifyAxis, pickDrag, dragProgress, resolveRelease } from "../src/utils/swipe.js";
 import {
@@ -951,4 +952,47 @@ test("气泡正文：合成流 > 正在摇的那条（空白起步）> 库内字
   const streamRow = { stream: true, content: "", reasoning: "" };
   assert.equal(bubbleText(streamRow, { streamText: "正在吐" }), "正在吐"); // 一轮的合成流优先
   assert.equal(bubbleText(streamRow, { streamText: null }), "");
+});
+
+// 滚动隐藏上下栏（2026-10-17 用户定，触屏默认开）：进度与位移**成正比**、一次只藏一边、
+// 反向要攒够 slop 才算换向（真手指的滚动是一串正负小步，不滤就抖出重影）。
+// 证伪点：变成阈值开关（dy 小就不动）、两边一起藏、不夹上限（收成负数/超过整栏高）、到顶不展开。
+test("滚动隐藏：往下看收顶栏、往回看收底栏，比例 1:1 且夹在 0..栏高", () => {
+  const H = { headerH: 40, composerH: 64 };
+  let s = resetChrome(500);
+  // 往下看 12px ⇒ 顶栏收 12、底栏不动（本来就没收）
+  s = stepChrome(s, { dy: 12, scrollTop: 512, ...H });
+  assert.equal(s.top, 12);
+  assert.equal(s.bottom, 0);
+  // 再往下 100 ⇒ 顶栏到顶（40）、底栏仍是 0
+  s = stepChrome(s, { dy: 100, scrollTop: 612, ...H });
+  assert.equal(s.top, 40);
+  assert.equal(s.bottom, 0);
+  // 往回看 30 ⇒ 底栏收 30、顶栏退 30
+  s = stepChrome(s, { dy: -30, scrollTop: 582, ...H });
+  assert.equal(s.bottom, 30);
+  assert.equal(s.top, 10);
+  // 再往回 200 ⇒ 底栏封顶在栏高、顶栏退到 0
+  s = stepChrome(s, { dy: -200, scrollTop: 382, ...H });
+  assert.equal(s.bottom, 64);
+  assert.equal(s.top, 0);
+});
+
+test("滚动隐藏：反向不足 slop 当抖动；上滑到顶全放回顶栏", () => {
+  const H = { headerH: 40, composerH: 64 };
+  let s = stepChrome(resetChrome(1000), { dy: 20, scrollTop: 1020, ...H }); // 往下看，收 20
+  assert.equal(s.top, 20);
+  // 反向 3px（< slop=6）⇒ 什么都不变（方向没换、量也没动）
+  const jitter = stepChrome(s, { dy: -3, scrollTop: 1017, ...H });
+  assert.equal(jitter.top, 20);
+  assert.equal(jitter.bottom, 0);
+  // 反向再来 5px（累计 8 ≥ slop）⇒ 真换向：底栏收、顶栏退
+  const turned = stepChrome(jitter, { dy: -5, scrollTop: 1012, ...H });
+  assert.equal(turned.dir, -1);
+  assert.equal(turned.bottom, 5);
+  assert.equal(turned.top, 15);
+  // 滚回顶部 ⇒ 顶栏立刻展开（底栏按位移逐步退，不"啪"）
+  const atTop = stepChrome(turned, { dy: -1012, scrollTop: 0, ...H });
+  assert.equal(atTop.top, 0);
+  assert.equal(atTop.bottom, 0);
 });

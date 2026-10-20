@@ -4,6 +4,7 @@
 import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from "vue";
 import { mergeStreamSlice, probeAuthStatus } from "./api/client.js";
 import { parseCommand, filterCommands, COMMAND_META } from "./utils/commands.js";
+import { resetChrome as resetChromeState, stepChrome } from "./utils/chrome.js";
 import { uuidv7 } from "./utils/ids.js";
 import { buildCompactTree } from "./utils/tree.js";
 import {
@@ -13,7 +14,7 @@ import {
 import { applyBackground } from "./utils/background.js";
 import { installViewportFit } from "./utils/viewport.js";
 import { classifyAxis, pickDrag, dragProgress, resolveRelease } from "./utils/swipe.js";
-import { sharedApi, previewOn, applyTheme, wantsSend, apiBase, apiToken, apiBaseCandidates, saveNetPrefs, lastSessionId, saveLastSession, commandMenuOn, applyComposerStyle } from "./utils/prefs.js";
+import { sharedApi, previewOn, applyTheme, wantsSend, apiBase, apiToken, apiBaseCandidates, saveNetPrefs, lastSessionId, saveLastSession, commandMenuOn, applyComposerStyle, chromeHideOn } from "./utils/prefs.js";
 import {
   formatStatusLine,
   statusLineTitle,
@@ -1327,6 +1328,45 @@ function onComposerSubmit(text) {
   send(text).catch((err) => toast(`发送失败：${err.message}`, "error"));
 }
 
+// —— 滚动隐藏上下栏（触屏；2026-10-17 用户定，默认开）——
+// 味道照浏览器：**进度跟位移成正比**（不是"过阈值啪一下"）。方向是用户定的口径：
+//   往下看（`scrollTop` ↑，内容前进）⇒ **顶栏**按位移逐步收起，底栏同时放回来；
+//   往回看（`scrollTop` ↓）⇒ **底栏**逐步收起，顶栏放回来。
+// 一次只藏一边（藏起来的那边由反向滚动放回）；到顶/见底立刻全放回（浏览器也这样）。
+// 载体只有两个 CSS 变量（px），CSS 只做 translateY ⇒ 这里永远不碰布局。
+const CHROME_JUMP = 200; // 一次跳这么多 ⇒ 不是手指，是切会话/贴底 ⇒ 重置，别把栏收走
+let chrome = resetChromeState();
+const coarsePointer = window.matchMedia?.("(pointer: coarse)") ?? null;
+function applyChrome() {
+  const root = document.documentElement.style;
+  root.setProperty("--chrome-top", `${Math.round(chrome.top)}px`);
+  root.setProperty("--chrome-bottom", `${Math.round(chrome.bottom)}px`);
+}
+function resetChrome(el) {
+  chrome = resetChromeState(el?.scrollTop ?? 0);
+  applyChrome();
+}
+// 判据在 utils/chrome.js（纯函数、契约测试钉着）；这里只喂数字 + 写两个 CSS 变量。
+function onMessagesScroll() {
+  const el = document.querySelector("#messages-vue");
+  if (!el) return;
+  if (!chromeHideOn() || !coarsePointer?.matches) {
+    if (chrome.top || chrome.bottom) resetChrome(el);
+    else chrome.last = el.scrollTop;
+    return;
+  }
+  const y = el.scrollTop;
+  const dy = y - chrome.last;
+  if (Math.abs(dy) > CHROME_JUMP) { resetChrome(el); return; }
+  chrome = stepChrome(chrome, {
+    dy,
+    scrollTop: y,
+    headerH: document.querySelector("#chat-col > header")?.offsetHeight ?? 40,
+    composerH: document.querySelector("#composer")?.offsetHeight ?? 64,
+  });
+  applyChrome();
+}
+
 // —— 设置视图（与对话同级，2026-10-10） ——
 // 窄屏：进/出设置都把左抽屉归位（手机上别让它压着视图）；宽屏：不动侧栏（并排看没问题）。
 function openSettings() {
@@ -1344,6 +1384,7 @@ function closeUserView() { userOpen.value = false; }
 // 用户视图里存了个人偏好 ⇒ 聊天壳上活着的开关立刻跟上（命令菜单是唯一现在就长短不一的那个）。
 function onUserPrefsSaved() {
   cmdMenu.value = commandMenuOn();
+  if (!chromeHideOn()) resetChrome(document.querySelector("#messages-vue")); // 关掉这功能 ⇒ 栏立刻回来
   if (!cmdMenu.value) overlaysRef.value?.hidePalette();
 }
 function closeSettings() {
@@ -1376,6 +1417,8 @@ onMounted(() => {
   const vv = window.visualViewport;
   const onVvResize = () => { if (document.activeElement?.id === "input") scrollBottom(); };
   vv?.addEventListener("resize", onVvResize);
+  // 滚动隐藏上下栏（触屏）：passive 监听，只写两个 CSS 变量。
+  document.querySelector("#messages-vue")?.addEventListener("scroll", onMessagesScroll, { passive: true });
   // 滑动面板：跟手拖拽。touchmove 必须非 passive（接管后要 preventDefault 压住页面滚）。
   document.addEventListener("touchstart", onTouchStart, { passive: true });
   document.addEventListener("touchmove", onTouchMove, { passive: false });

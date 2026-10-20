@@ -565,6 +565,32 @@ func (s *Server) defaultAgentID() string {
 	return model.DefaultAgentID()
 }
 
+// findAgent / agentExists / agentName：按 id 在**生效**列表里找（含内置默认；空 id 找不到）。
+// 找的是"本机这一份"，导出的元数据（agent_id / agent_name）靠它说话。
+func (s *Server) findAgent(id string) (config.Agent, bool) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return config.Agent{}, false
+	}
+	for _, agent := range s.loadAgents().Effective() {
+		if agent.ID == id {
+			return agent, true
+		}
+	}
+	return config.Agent{}, false
+}
+
+func (s *Server) agentExists(id string) bool {
+	_, ok := s.findAgent(id)
+	return ok
+}
+
+// agentName：id ⇒ 名字（找不到 ⇒ 空串；导出里 `agent_name` 只为"本机没有也能说清是谁"）。
+func (s *Server) agentName(id string) string {
+	agent, _ := s.findAgent(id)
+	return agent.Name
+}
+
 func (s *Server) updateSession(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("session_id")
 	if !s.ownsSession(w, r, id) {

@@ -285,7 +285,7 @@ delete(AA)           # 删除
 
 - 无用：`GET /debug/state`、`GET /debug/file/{name}`、`DELETE /providers/{provider_id}/models`
   （理由：后端自述会说谎、配置文件原文不该给远程客户端、上游模型列表本就自动清理）
-  —— ⚠ `GET /sessions/{session_id}/export` 2026-10-11 **以"对话 JSON 导出"的名义回来了**（新形状、只带 role/content；见下表）
+  —— ⚠ `GET /sessions/{session_id}/export` 2026-10-11 **以"对话 JSON 导出"的名义回来了**（2026-10-17 扩成 v2：再带渠道/模型/Agent 三格软引用；见下表）
 - 可选（**待重做**，不做兼容）：`POST /models/probe`、`POST /sessions/{session_id}/archive`、
   `GET/PUT /abilities`
 - **`POST /sessions/{session_id}/fork` 已彻底作废** ✗（不是"待重做"）：线性会话里分岔就是 **Copy** ✓（见上表）
@@ -321,8 +321,8 @@ delete(AA)           # 删除
 | 方法 | 路径 | 请求体 | 响应 | 说明 |
 |---|---|---|---|---|
 | GET | `/sessions` | — | `[SessionView]` | 每项 = 会话 + `messages`（**这条会话有几条消息** —— 客户端的启动编排据此认定"空会话"，不必逐条会话再拉一次消息）+ `turn`（客户端据此标"生成中"）|
-| GET | `/sessions/{session_id}/export` | — | `{version,title,messages:[{role,content}]}` | **对话记录导出**（JSON，2026-10-11 用户定）：**只带足够重建对话的** —— 标题 + 每条 role/content（正文原样，`<state>` 块留着 ⇒ 导回去状态照常现演）；system prompt / agent / 摘要 / 思考 / 用量一概不带。**会话域**（owner 自己就能导）|
-| POST | `/sessions/import-json` | 上面那个导出格式 | `{session, messages}` · 201 | **JSON 导入**：建新会话 + 按序落库（id 批铸排序）；role 只许 user/assistant（坏 ⇒ 400 点名第几条）、空 messages ⇒ 400；标题没给 ⇒ 首条 user 起。**admin**（与 ST 导入同口径）。**不经过 `POST /sessions`** ⇒ 不插首段对话 |
+| GET | `/sessions/{session_id}/export` | — | `{version:2,title,provider,model,agent_id,agent_name,messages:[{role,content}]}` | **对话记录导出**（JSON；2026-10-11 起，**2026-10-17 扩成 v2**）：标题 + 每条 role/content（正文原样，`<state>` 块留着 ⇒ 导回去状态照常现演）+ **这条会话当初绑的渠道 / 模型 / Agent 三格软引用**（`agent_name` 只为"本机没有也能说清是谁"）；system prompt / 摘要 / 思考 / 用量 / 消息 id 一概不带；**Agent 的定义也不带**（人设搬家走卡带）。**会话域**（owner 自己就能导） |
+| POST | `/sessions/import-json` | 上面那个导出格式（v1 也收） | `{session, messages, agent_missing}` · 201 | **JSON 导入**：建新会话 + 按序落库（id 批铸排序）；role 只许 user/assistant（坏 ⇒ 400 点名第几条）、空 messages ⇒ 400、`version > 2` ⇒ 400；标题没给 ⇒ 首条 user 起。**v2 的三格照抄**（`provider`/`model`/`agent_id` —— 本机没有也照抄、不静默换缺省；文件没点名 agent 才用 `default_agent`），agent 本机没有 ⇒ `agent_missing: true`（界面提示"人设回落内置默认、要人设导卡带"）。**admin**（与 ST 导入同口径）。**不经过** `POST /sessions` ⇒ 不插首段对话 |
 | POST | `/sessions/import-st` | JSONL 原文（`?title=` 可选） | `{session, messages, skipped}` · 201 | **admin 专属**（设置面）。**ST 导入**：SillyTavern JSONL（一行一条）→ 建会话 + 按序落库；只认四样（is_user/mes/reasoning/send_date），其余全丢；空文件 ⇒ 400 |
 | POST | `/sessions` | `CreateSessionReq` | `Session` · 201 | **配了 `first_message` 的 agent ⇒ 顺手把首段插成第一条 assistant（idx 1）**。省略字段时取 `config.json` 的 `defaults`；`title` **真生效**（建一条已命名的会话，不必再多发一次 `PATCH`）—— 不给 / `""` ⇒ 标题空着（等首条用户消息自动起名）。**`id`（可选，2026-10-09）**：客户端铸的 UUIDv7 —— 草稿态（web）靠它把"预演的那一发"与"真发的那一发"钉成同一个会话键；给了就用（先校形状 ⇒ 非 v7 **400**、已有 ⇒ **409**），不给 ⇒ 服务端现铸。⚠ **HACK（刻意，全项目唯一允许客户端铸 id 的口子）** —— 动机只有草稿预演那一条，别扩散（消息/摘要的 id 一律服务端铸） |
 | PATCH | `/sessions/{session_id}` | `UpdateSessionReq` | `Session` | 标题 / 模型 / agent / **提示词**（`system_prompt` 是**指针** ⇒ 没给或 `null` = 不动、`""` = **清掉会话级覆盖** ⇒ 回落 agent 的、非空 = 写进 `sessions.system_prompt`）|
@@ -654,6 +654,13 @@ DeepSeek / OpenCode GO 直连**确实不报**，所以那一格在那儿永远�
 - **连接门板**（2026-10-10 加）：启动自检探不通后端（新设备第一次打开/地址没填对）⇒ 不开破界面，先给全屏"连接到 microchat 后端"面板：填地址（裸写 `192.168.0.110:8787` 也行 —— `normalizeApiBase` 自动补 `http://` 与 `/api/v1`）→ 过 ⇒ `saveNetPrefs` 存 **JWT** + **刷新页面**进聊天（沿用"改完刷新生效"）。**地址栏只在"探不通"时出现**（2026-10-14 用户定）：探通 ⇒ 收起，登录界面只有用户名/口令（单容器部署里浏览器永远同源，不该再问地址）；中途又断了 ⇒ 地址栏自动放回来。**2026-10-10 多用户改造**：启动自检探开放口 `/auth/status`——探不通 ⇒ 门板带原因；`needs_setup:true` ⇒ 「初始化 root」（**uid 0 恒在**，只设口令+确认；名字固定 root）；已初始化 ⇒ 登录（地址 / 用户名 / 口令）。探针两道闸照旧（`normalizeApiBase` + 必须回 `status:"ok"`）。
 - **默认后端地址跟着"你从哪儿打开页面"走**（2026-10-10 加；2026-10-14 改候选序）：没存过 `mc_api` 时启动自检按候选探：`apiBaseCandidates()` = 存过 ⇒ 只认存的；没存过 ⇒ [**同源 `/api/v1`（首选）**，`location.hostname:8787`]—— 同源优先是因为 vite 现在把 `/api` **代理**给后端（见「Docker 部署」），dev 与单容器部署都走它 ⇒ 浏览器**永远同源、零地址配置**；同主机 8787 退为兜底（前端被别的静态服务器端出来、没有代理时，手机从 `192.168.0.110:8788` 打开就直接连 `192.168.0.110:8787`）。非首选胜出 ⇒ 存下来 + 刷新一次（`sharedApi` 等一切读的都是 `apiBase()`，不存会指错）。推导只读不写 —— 不偷偷存。
 - **滑动面板**（2026-10-10 加，触屏**跟手拖拽**）：左滑出右栏、右滑出左栏 —— **拖到哪儿面板停哪儿**（半开也维持着，不用等松手），松手才吸附（CSS 的 200ms 过渡演动画）：**中点吸附 + 两个方向的快甩都认**（`|v| ≥ 0.0025 开度/ms` 且已拖 6%）。⚠ 三条实测修正：① 只写"朝开"的 flick ⇒ 快关全落回"必须拖过 60%"，真机"关闭发涩"——对称补上"朝关"；② 速度样本有 **120ms 保鲜期**（甩完停住手再松手按位置算，不然历史峰值把"拖一半停手"也弹成开）；③ `v` 的单位是**开度/ms**（真实手速 0.002–0.01，写 0.5 = 死弦）。**先关后开**：已有一扇开着 ⇒ 只认"朝它关回去"的方向（跟手关，同样半开）——同向忽略，不许两扇同开。判定在 `utils/swipe.js`（纯函数：`classifyAxis` 先到先得的轴向锁 / `pickDrag` 拖哪扇从哪起 / `dragProgress` 位移→开度 / `resolveRelease` 松手吸附）；DOM 只做三件：跟手写内联 transform（transition 先掐）、松手清内联落 `collapsed` 类、scrim 透明度跟开度。不接管的场合：输入框/下拉、`pre`（自己的横向滚 —— 但**抽屉自己身上一律接管**，`pre` 也不例外：右栏载荷 tab 整块是 `pre`，早先被这条吞掉，真机表现"在面板上滑没反应"）、命令面板与 picker、设置视图、模态开着时；平板宽度（700–1100）上左栏是**常驻列** ⇒ 不算"该先关"、右滑也不动它。⚠ 坑（都实测咬过）：① 锁轴后**必须记住 axis**（漏了每枚 touchmove 都重进锁轴分支，第二枚就被自己摘掉的 `collapsed` 骗死）；② 锁轴时要**把 `d.p` 初始化成起点开度**（开=0/关=1），且**别动 `d.lastT`**（它在 touchstart 起表；重置会让第一枚 move 的 dt≈0、速度样本作废）；③ 速度阈值的单位是**开度/ms**（真实手速 0.002–0.01，早期写成 0.5 = 死弦）。
+- **滚动隐藏上下栏**（2026-10-17 用户定：**触屏默认开**，用户视图 → 外观 可关）：跟浏览器一个味道 ——
+  **往下看（内容前进）顶栏按位移逐步收起，往回看底栏逐步收起**，进度与位移**成正比**（不是"过阈值啪一下"，
+  那是开关不是体验）；**一次只藏一边**（反向滚动把对面那栏放回来），到顶/见底立刻全放回；
+  反向不足 6px 算抖动（真手指的滚动是一串正负交替小步，不滤会把栏抖出重影）；一次跳 >200px 视为切会话/贴底 ⇒ 重置。
+  判据是纯函数 `utils/chrome.js` 的 `stepChrome`（契约测试钉着），App 只把算出的两个像素数写成根节点的
+  `--chrome-top` / `--chrome-bottom`，CSS 只做 `translateY`（90ms linear 抹抖，reduced-motion 里关过渡）。
+  触屏判定 = `(pointer: coarse)` ⇒ 鼠标滚轮不参与（桌面滚不隐藏）。
 - **移动端键盘不遮输入框**（2026-10-10 加）：`utils/viewport.js` 用 **visualViewport** 把应用盒拟合过去 —— `#app` 高 = `vv.height`、`translateY(vv.offsetTop)`（iOS 的"可视窗上推"跟着走；捏合缩放 scale>1 时不拟合）。`#app` 一带 transform 就成了其内全部 `fixed` 浮层（命令面板 / picker / 确认框 / toast / 连接门板）的**包含块** ⇒ 浮层自动钉在**键盘上沿**；命令面板/picker 限高 `calc(100% - 7em)`（百分比按包含块解析 ⇒ 键盘缩盒时自动跟着缩，小屏不顶出视口，内容自己滚 —— 实测过 617px 面板裸奔出视口）。`index.html` 的 `interactive-widget=resizes-content` 给 Chromium 系先缩布局视口（与 vv 拟合叠加不打架，都以 vv 为准）。配套的**文档锁死**（`html, body { height: 100%; overflow: hidden; overscroll-behavior: none }`）缺不得 —— 见踩过的坑「页面还能延展」；`#session-list` 也终于有自己的滚动（此前没有任何滚动规则，会话一多直接被裁）。
 - **用户视图**（2026-10-10 加，与设置**平级**的另一半）：左栏底 `👤 用户` 打开它 —— **设置管实例/服务器**（聊天参数、渠道、Agent、会话、连接），**用户管登录者自己**—— 身份（`/auth/me`：名字 + 管理员标记 + **退出登录**）与个人偏好（主题 / 背景图 / 发送键 / 输入预演）；**用户管理（加人/踢人/改口令）下一步做**。两块**互斥**（一屏只开一个，互相打开时对方让位）；视图口径同设置：`[◧] 用户 [×]`、Esc 一次只关一层；设置视图因此从六区缩成**五区**（原「界面」区整块搬走，`SETTINGS_TABS` 在 format.js）。
 - **后台任务行**（2026-10-10 加）：输入框上方、状态行**头上**再叠一行小字 —— `⟳ 后台任务 N：kind · kind`（就数 `/tasks` 的 `running`；kind 去重列前 3 种）。0 个 ⇒ **整行不渲染**；App 每 2s 拉一次 `/tasks`（进程内面板、零成本），受理类动作（发送/重发/压缩/重摇两族）后**立刻补刷一次**不等节拍。绝对定位叠行 ⇒ 不动布局（`liftOverlays` 的测量不受影响）；文案在 `format.js` 的 `taskLineText`（纯函数、契约测试钉住）。
@@ -662,9 +669,11 @@ DeepSeek / OpenCode GO 直连**确实不报**，所以那一格在那儿永远�
   **命令菜单默认关**（2026-10-17 用户定：移动端那颗 ☰ 与 `/` 浮层纯碍事）—— 关着时输入框左侧**没有 ☰**、
   输入 `/` **不弹面板**（但 `/name` 回车照旧执行：命令本身没消失，只是没有"菜单"这一层）；
   开回来在**用户视图 → 输入 → 命令菜单**（个人偏好 `mc_cmd_menu`，保存后**即时生效**，不用刷新）。
-- **输入栏有两种形态**（2026-10-20 用户定：**这是"外观"项，不是"输入"项** —— 要效率还是要美观，用户自己挑）：
-  `float`（**默认**）= 浮空气泡：栏透明，里面一颗圆角玻璃卡浮在消息列上、两侧留白、背景图透得出来；
-  `solid` = 实心贴底：**栏自己实心、方角、边到边**（外侧没 padding、输入框没圆角没边框没阴影），更省地方。
+- **两种显示模式**（2026-10-20 落地、**2026-10-17 用户定名**：这是"外观"项，不是"输入"项 —— 要效率还是要美观，用户自己挑）：
+  **正常模式** = `float`（**默认**）：输入框是**圆角矩形、浮在消息之上**（栏透明，一颗圆角卡、两侧留白、
+  背景图透得出来），**状态那行小字在输入框上方**；
+  **紧凑模式** = `solid`：输入框**占满整行、方角**（栏自己实心、边到边，外侧没 padding、输入框没圆角没边框没阴影），
+  状态与任务那两行**收进栏里**，更省地方。⚠ 值名沿用 `float`/`solid`（改成 normal/compact 会把已存偏好作废）。
   载体是**根节点的 `data-composer="solid"` 属性**（照 `applyTheme` 那套）—— CSS 只认属性、组件不传 prop，
   于是"换形态"只有一个开关（`utils/prefs.js` 的 `applyComposerStyle`，开机第一帧就应用，免得闪一下）。
   口径与坑（都在 `main.css` 那段注释里）：

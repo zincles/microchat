@@ -10,17 +10,29 @@ import (
 	"microchat/internal/store"
 )
 
-// 对话记录导出 / 导入（JSON，2026-10-11 用户定）：
+// 对话记录导出 / 导入（JSON；2026-10-11 起，2026-10-17 用户扩了元数据）：
 //
-// **只带足够重建对话的东西** —— 标题 + 每条 `{role, content}`（正文原样：`<state>` 块留着，
-// 导回去状态照常现演）。system prompt / agent / 摘要 / 思考 / 用量 / 时间戳一概不带。
+// v1（2026-10-11）：**只带足够重建对话的** —— 标题 + 每条 `{role, content}`。
+// v2（2026-10-17 用户定："不止导入聊天记录，还导入当前 Agent / 渠道 / 模型"）：
+//   **再加三个软引用** —— `provider` / `model` / `agent_id`（+ `agent_name` 只为报错时说得出口）。
+//   就这三个：它们是会话自己的三格绑定（`sessions.provider/model/agent_id`），导回去"这条对话
+//   当初是谁在什么模型上说的"就齐了。
+//   **仍然不带**：system prompt（会话级覆盖）/ 摘要 / 思考 / 用量 / 时间戳 / 消息 id ——
+//   那些不是"重建对话"必需，而且带回来就得面对"本机对不上怎么办"（宁可少带，不许乱猜）。
+//   **agent 的"定义"不在这份文件里** ✗：人设搬家走 agent 卡带（`{version:2, agent, segments}`）；
+//   本机没有那个 agent ⇒ 照绑 id（界面显示「不在列表」、人设回落内置默认），并在回执里
+//   `agent_missing: true` 明说 —— **不静默换成 default_agent**（那等于悄悄换了个人）。
 // 导入**不经过** `createSession` ⇒ 不会插 agent 的首段对话（JSON 自带完整对话）。
 
-// sessionExport：导出的形状（导入也收它；`version` 先留着，将来变形状好认）。
+// sessionExport：导出的形状（导入也收它）。`version`：1 = 老文件（没有那三格 ⇒ 用本机缺省）。
 type sessionExport struct {
-	Version  int             `json:"version"`
-	Title    string          `json:"title"`
-	Messages []exportMessage `json:"messages"`
+	Version   int             `json:"version"`
+	Title     string          `json:"title"`
+	Provider  string          `json:"provider,omitempty"`
+	Model     string          `json:"model,omitempty"`
+	AgentID   string          `json:"agent_id,omitempty"`
+	AgentName string          `json:"agent_name,omitempty"`
+	Messages  []exportMessage `json:"messages"`
 }
 
 type exportMessage struct {
@@ -39,7 +51,12 @@ func (s *Server) exportSession(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	out := sessionExport{Version: 1, Title: session.Title, Messages: make([]exportMessage, 0, len(messages))}
+	out := sessionExport{
+		Version: 2, Title: session.Title,
+		Provider: session.Provider, Model: session.Model, AgentID: session.AgentID,
+		AgentName: s.agentName(session.AgentID),
+		Messages:  make([]exportMessage, 0, len(messages)),
+	}
 	for _, m := range messages {
 		out.Messages = append(out.Messages, exportMessage{Role: string(m.Role), Content: m.Content})
 	}
@@ -57,6 +74,11 @@ func (s *Server) importJSON(w http.ResponseWriter, r *http.Request) {
 	}
 	var req sessionExport
 	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.Version > 2 {
+		writeError(w, http.StatusBadRequest, "invalid",
+			fmt.Sprintf("这份文件的 version = %d 比本程序认识的（2）新：请升级后再导入", req.Version))
 		return
 	}
 	if len(req.Messages) == 0 {
@@ -78,13 +100,28 @@ func (s *Server) importJSON(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
+	// v2 的三格软引用：文件给了就照抄（**渠道/模型不校验存在性** —— 本机没这个渠道也照样绑，
+	// 界面会显示它、真发时当场报"未配置模型"，这比偷换成缺省诚实）；没给（v1 文件）⇒ 用本机缺省。
+	provider, modelID := strings.TrimSpace(req.Provider), strings.TrimSpace(req.Model)
+	if provider == "" {
+		provider = cfg.Defaults.Provider
+	}
+	if modelID == "" {
+		modelID = cfg.Defaults.Model
+	}
 	title := strings.TrimSpace(req.Title)
-	session, err := s.store.CreateSession(identityOf(r.Context()).UserID, cfg.Defaults.Provider, cfg.Defaults.Model, "", title)
+	session, err := s.store.CreateSession(identityOf(r.Context()).UserID, provider, modelID, "", title)
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
-	if agentID := s.defaultAgentID(); agentID != "" && agentID != session.AgentID {
+	// agent：文件里点名了就绑它（本机有没有都绑 —— 软引用），只有**没点名**才用 default_agent。
+	agentID := strings.TrimSpace(req.AgentID)
+	agentMissing := agentID != "" && !s.agentExists(agentID)
+	if agentID == "" {
+		agentID = s.defaultAgentID()
+	}
+	if agentID != "" && agentID != session.AgentID {
 		if err := s.store.SetSessionAgent(session.ID, agentID); err != nil {
 			writeStoreError(w, err)
 			return
@@ -108,5 +145,9 @@ func (s *Server) importJSON(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"session": sessionFresh, "messages": len(parsed)})
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"session": sessionFresh, "messages": len(parsed),
+		// agent_missing：文件点的 agent 本机没有 ⇒ 照绑了 id，但人设会回落内置默认（界面要说一句）。
+		"agent_missing": agentMissing,
+	})
 }
