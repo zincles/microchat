@@ -1560,6 +1560,7 @@ onUnmounted(() => {
         @close="closeSettings"
         @toggle-left="toggleLeft"
         @sessions-changed="refreshSessionsBar"
+        @models-changed="fillModelSelect"
         @goto-session="(id) => { closeSettings(); enterSession(id).catch((err) => toast(`进会话失败：${err.message}`, 'error')); }"
       />
       <div id="scrim-right" @click="toggleRight"></div>

@@ -294,3 +294,48 @@ func (s *Store) LastRefreshAt(provider string) (*int64, error) {
 	}
 	return nil, nil
 }
+
+// DeleteProviderData：**渠道被删时把它在库里的痕迹一并抹掉**（2026-10-22 修）。
+//
+// 为什么必须有这一处：`DELETE /providers/{id}` 从前**只改 `providers.json`**，库里的
+// `models` 行原封不动 ⇒ `GET /models` 照样把它们列出来、界面照样能选。选中之后
+// `providers.SelectBackend` 找不到渠道 ⇒ **静默回落 `BackendFallback`**（回一句"未配置模型"），
+// 用户看到的是"这个模型点了没反应"而不是"这个渠道没了" —— 静默错，最难查的那类。
+// 实测咬过：配置里只剩 4 个渠道，库里躺着 5 组模型（553 个已删渠道的模型仍可选中）。
+//
+// 三张表一起清（**同一事务**，要么全没、要么全在）：
+//   - `models`：模型清单（含用户覆盖列 —— 渠道都没了，那些覆盖没有归属可言）；
+//   - `model_route`：路由表（按渠道刷新，键就是 provider；表可能还没建 ⇒ 先查有没有）；
+//   - `provider_state`：上次刷新时间（渠道回来时重新发现，不该继承旧时间戳）。
+//
+// **不动 `sessions`**：会话里存的是 `(provider, model)` 软引用，那是**历史事实**
+// （这条会话当初绑的就是它）；删渠道不该改写用户的历史记录 —— 那种会话下次发消息会
+// 照实回 `BackendFallback`，这是诚实的，不是这次要修的东西。
+func (s *Store) DeleteProviderData(provider string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec("DELETE FROM models WHERE provider = ?1", provider); err != nil {
+		return err
+	}
+	// `model_route` 不住 001（`refresh-routes` 按需建）⇒ 没建过时这表根本不存在。
+	// 用 sqlite_master **问一句**再删，别拿错误文案去猜（"no such table" 的措辞不属于契约）。
+	var exists int
+	if err := tx.QueryRow(
+		"SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'model_route'").Scan(&exists); err != nil {
+		return err
+	}
+	if exists > 0 {
+		if _, err := tx.Exec("DELETE FROM model_route WHERE provider = ?1", provider); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec("DELETE FROM provider_state WHERE provider = ?1", provider); err != nil {
+		return err
+	}
+	return tx.Commit()
+}

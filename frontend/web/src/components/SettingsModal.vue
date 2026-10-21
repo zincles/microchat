@@ -16,7 +16,9 @@ import { SETTINGS_TABS } from "../utils/format.js";
 import { downloadJSON } from "../utils/download.js";
 import { buildCartridge, cartridgeAgent } from "../utils/cartridge.js";
 
-const emit = defineEmits(["close", "toggle-left", "sessions-changed", "goto-session"]);
+// models-changed：渠道/模型那摊变了（删除渠道会连模型一起没）⇒ 让 App 重拉顶栏的模型下拉。
+// 与会话左栏那个 sessions-changed 是**两件事**，别合并（各自的读口不同）。
+const emit = defineEmits(["close", "toggle-left", "sessions-changed", "models-changed", "goto-session"]);
 // ask：全局确认框（App 的 Overlays.confirmAsk）—— 设置里的删除（会话/渠道/Agent）也必须先摊开再点头。
 // escBlocked：外面临时弹窗（会话设置）开着时，Esc 归它 —— 一次按键不许关两层。
 const props = defineProps({
@@ -220,11 +222,17 @@ async function loadProviders() {
 }
 
 async function askDeleteProvider(id) {
-  if (props.ask && !(await props.ask(`删除渠道「${id}」？密钥随记录一起没，不可逆。`))) return;
+  // 文案要说清"模型也一起没"（2026-10-22）：从前删渠道只删配置、模型留在列表里仍可选中，
+  // 用户以为删干净了；现在真的连模型一起删 —— 那就得在确认框里说出来，别让人删完才发现。
+  if (props.ask && !(await props.ask(`删除渠道「${id}」？密钥与它发现到的模型会一起删掉，不可逆。`))) return;
   try {
     await api.deleteProvider(id);
     if (editProvider.value && editProvider.value !== "new" && editProvider.value.id === id) editProvider.value = null;
     loadProviders().catch(() => {});
+    // 顶栏"渠道 / 模型"下拉吃的是 `/models`（另一个读口），得让它也重拉一次。
+    // ⚠ `sessions-changed` 是**会话左栏**的刷新（App 里只挂到 refreshSessionsBar）——
+    // 别拿它冒充"模型列表已刷新"，那是两件事（我一开始就这么写错了，核过 App 才发现）。
+    emit("models-changed");
   } catch (e) { routesStatus.value = `删除失败：${e.message}`; }
 }
 

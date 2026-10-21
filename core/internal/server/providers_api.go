@@ -224,6 +224,19 @@ func (s *Server) updateProvider(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, providerView(provider))
 }
 
+// deleteProvider：删渠道 = **配置 + 库里痕迹一起删**（2026-10-22 修）。
+//
+// 从前这里只改 `providers.json`，`models` 行留在库里 ⇒ `GET /models` 照样列、界面照样能选；
+// 选中后 `SelectBackend` 找不到渠道 ⇒ 静默回落 fallback（"点了没反应"）。见
+// `store.DeleteProviderData` 的注释（那里记了实测数据：4 个渠道配着 5 组模型）。
+//
+// **顺序是刻意的：先删库、再改配置。** 两个写操作不在同一个事务里（一个 SQLite、一个 JSON 文件），
+// 所以只能选"失败时哪种残留更可接受"：
+//   - 先删库后写配置，写配置失败 ⇒ 渠道还在、模型没了 ⇒ 用户再点一次"刷新模型"就长回来
+//     （自愈，且渠道本身没丢 —— 用户的配置是他手填的，最不该丢的就是它）；
+//   - 反过来（先写配置后删库），删库失败 ⇒ 渠道没了、模型却还在列表里 ⇒ **正是这个 bug 的形态**
+//     （而且用户已经看不到那个渠道了，只能靠手改库才清得掉）。
+// 所以选前者。删库失败就直接报错、**不动配置**（宁可这次没删成，也不留半截状态）。
 func (s *Server) deleteProvider(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
 		return
@@ -243,6 +256,12 @@ func (s *Server) deleteProvider(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "渠道不存在")
 		return
 	}
+	// ① 先清库里的痕迹（models / model_route / provider_state，同一事务）
+	if err := s.store.DeleteProviderData(id); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	// ② 再改配置（失败的话：渠道还在、模型没了 ⇒ 刷新模型自愈，见上面的顺序说明）
 	configs.Providers = kept
 	if err := s.saveProviders(configs); err != nil {
 		writeStoreError(w, err)

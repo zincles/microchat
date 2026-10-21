@@ -300,3 +300,88 @@ func TestDefaultsEndpoints(t *testing.T) {
 		t.Fatalf("清空该回 dummy：%+v", defaults)
 	}
 }
+
+// 删渠道 ⇒ **它的模型一并消失**（2026-10-22 用户报："删除一个 Provider 不会导致它的模型被删掉。
+// 我还是能选中！"）。
+//
+// 证伪点（这个 bug 的每一环都要钉住）：
+//  ① `GET /models` 里不再出现已删渠道的模型（用户报的直接现象）；
+//  ② 库里那几行真的没了（不是只在接口层过滤 —— 否则换个读口又漏出来）；
+//  ③ **别的渠道的模型一个都不许少**（删 A 不能连带删 B，最容易写错的方向）；
+//  ④ `provider_state` 也清了（渠道回来时重新发现，不该继承旧时间戳）。
+func TestDeleteProviderAlsoDeletesItsModels(t *testing.T) {
+	server, st := newProvidersServer(t, `{"providers":[
+	  {"id":"gone","vendor":"openai-compat","base_url":"http://127.0.0.1:1/v1"},
+	  {"id":"kept","vendor":"openai-compat","base_url":"http://127.0.0.1:2/v1"}
+	]}`)
+	// 两个渠道各铺两个模型（发现列走 RefreshDiscovered，与真实刷新同一条路）
+	if _, _, _, err := st.RefreshDiscovered("gone", []store.Discovered{
+		{UpstreamID: "g-1"}, {UpstreamID: "g-2"},
+	}, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := st.RefreshDiscovered("kept", []store.Discovered{
+		{UpstreamID: "k-1"}, {UpstreamID: "k-2"},
+	}, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	if recorder := call(server, "DELETE", "/api/v1/providers/gone", ""); recorder.Code != 204 {
+		t.Fatalf("删渠道：%d %s", recorder.Code, recorder.Body.String())
+	}
+
+	// ① 接口层：只剩 kept 的两个
+	recorder := call(server, "GET", "/api/v1/models", "")
+	if recorder.Code != 200 {
+		t.Fatalf("列模型：%d %s", recorder.Code, recorder.Body.String())
+	}
+	var items []ModelListItem
+	if err := json.Unmarshal(recorder.Body.Bytes(), &items); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range items {
+		if item.Provider == "gone" {
+			t.Fatalf("已删渠道的模型还在列表里（用户就是这么撞上的）：%+v", item)
+		}
+	}
+	if len(items) != 2 {
+		t.Fatalf("该只剩 kept 的 2 个，得到 %d 个：%+v", len(items), items)
+	}
+
+	// ② 库层：那两行真的没了
+	if rows, err := st.ListModels("gone"); err != nil {
+		t.Fatal(err)
+	} else if len(rows) != 0 {
+		t.Fatalf("库里还留着已删渠道的模型：%+v", rows)
+	}
+
+	// ③ 别的渠道一个不少（删 A 连带删 B 是这类改动最容易犯的错）
+	if rows, err := st.ListModels("kept"); err != nil {
+		t.Fatal(err)
+	} else if len(rows) != 2 {
+		t.Fatalf("误删了别的渠道的模型：%+v", rows)
+	}
+
+	// ④ 刷新时间也清了
+	if at, err := st.LastRefreshAt("gone"); err != nil {
+		t.Fatal(err)
+	} else if at != nil {
+		t.Fatalf("provider_state 该被清掉，仍留着 %d", *at)
+	}
+}
+
+// 渠道不存在 ⇒ 404，且**不许**顺手删掉同名的模型数据（那条路径不该有任何副作用）。
+func TestDeleteUnknownProviderIs404AndTouchesNothing(t *testing.T) {
+	server, st := newProvidersServer(t, `{"providers":[{"id":"kept","vendor":"openai-compat","base_url":"http://127.0.0.1:1/v1"}]}`)
+	if _, _, _, err := st.RefreshDiscovered("kept", []store.Discovered{{UpstreamID: "k-1"}}, 1); err != nil {
+		t.Fatal(err)
+	}
+	if recorder := call(server, "DELETE", "/api/v1/providers/nope", ""); recorder.Code != 404 {
+		t.Fatalf("该 404：%d", recorder.Code)
+	}
+	if rows, err := st.ListModels("kept"); err != nil {
+		t.Fatal(err)
+	} else if len(rows) != 1 {
+		t.Fatalf("404 那条路不该动数据：%+v", rows)
+	}
+}
