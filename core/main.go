@@ -243,6 +243,13 @@ func refreshModelsOnStart(st *store.Store, tasks *task.Registry, cfg config.Conf
 		case outcome.Skipped != "":
 			log.Printf("启动刷新模型：跳过渠道 %s（%s）", outcome.Provider, outcome.Skipped)
 		default:
+			// 挂了筛选器就多说一句"筛掉了几个"（2026-10-22）：不然"拉 470 个、导入 12 个"
+			// 这件事在日志里看不见，排查"模型怎么少了"要翻配置才知道有筛选器。
+			if outcome.Filtered > 0 {
+				log.Printf("启动刷新模型：渠道 %s 导入 %d 个模型（筛选器挡掉 %d 个；没见到的删了 %d 条）",
+					outcome.Provider, outcome.Models, outcome.Filtered, outcome.Removed)
+				continue
+			}
 			log.Printf("启动刷新模型：渠道 %s 拉到 %d 个模型（没见到的删了 %d 条）",
 				outcome.Provider, outcome.Models, outcome.Removed)
 		}

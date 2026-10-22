@@ -675,6 +675,9 @@ button.toggle.on .knob { transform: translateX(1.1em); }
 .field-block textarea { width: 100%; min-height: 7em; }
 /* 二级页（Agent/渠道详情，就地嵌在 tab 里）：返回键 + 标题左对齐。 */
 .detail-pane .panel-head { justify-content: flex-start; gap: 0.5em; }
+/* 二级页里的说明小字（筛选器那段：举例子要用等宽体才看得清 `openai/gpt-5` 这种串）。
+ * 抄门板那条 `.gate-box .hint code` 的形状 —— 同一个用途、同一种观感。 */
+.detail-pane .hint code { background: rgb(255 255 255 / 8%); border-radius: 4px; padding: 0 0.25em; font-size: 0.92em; }
 /* 能力块：fieldset 分隔三条（legend 当开关行），Model 下拉与提示词框各占一行。 */
 .ability-block { border: 1px solid var(--line); border-radius: var(--r-btn); padding: 0.35em 0.7em 0.5em; margin: 0.5em 0; }
 .ability-block legend { padding: 0 0.4em; color: var(--tg-text); display: flex; align-items: center; gap: 0.4em; }

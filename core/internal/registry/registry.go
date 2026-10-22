@@ -14,7 +14,11 @@ import (
 
 // ProbeResult：试拉一次模型列表的结果（刷新模型走它；**不落库**）。
 type ProbeResult struct {
+	// Models：**筛选后**、真正要导入的那些（筛选器空 = 上游给多少就是多少）。
 	Models []store.Discovered `json:"models"`
+	// Filtered：被模型筛选器挡掉的个数（0 = 没筛）。留着它只为把话说清
+	// （"470 个里筛剩 12 个"），落库逻辑一个字都不看它。
+	Filtered int `json:"filtered"`
 }
 
 // ModelsResponse：上游 `/models` 的响应（OpenAI 形状 **`{"data": [...]}`**；OpenRouter 同形多给几个字段）。

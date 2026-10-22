@@ -70,7 +70,7 @@ func TestProvidersNeverEchoSecrets(t *testing.T) {
 func TestProviderViewShape(t *testing.T) {
 	server, _ := newProvidersServer(t, `{"providers":[{"id":"ocgo","kind":"opencode-go","base_url":"https://opencode.ai/zen/go/v1","headers":{"X-Extra":"1"}}]}`)
 	recorder := call(server, "GET", "/api/v1/providers", "")
-	want := `[{"id":"ocgo","name":null,"kind":"opencode-go","vendor":"opencode-go","protocol":"openai-chat-completion","base_url":"https://opencode.ai/zen/go/v1","headers":{"X-Extra":"1"},"has_key":false,"identity":"pi","last_refresh_at":null,"models":[]}]`
+	want := `[{"id":"ocgo","name":null,"kind":"opencode-go","vendor":"opencode-go","protocol":"openai-chat-completion","base_url":"https://opencode.ai/zen/go/v1","headers":{"X-Extra":"1"},"has_key":false,"model_filter":"","identity":"pi","last_refresh_at":null,"models":[]}]`
 	if got := recorder.Body.String(); got != want {
 		t.Fatalf("形状变了：\n得到 %s\n想要 %s", got, want)
 	}
@@ -383,5 +383,206 @@ func TestDeleteUnknownProviderIs404AndTouchesNothing(t *testing.T) {
 		t.Fatal(err)
 	} else if len(rows) != 1 {
 		t.Fatalf("404 那条路不该动数据：%+v", rows)
+	}
+}
+
+// 模型筛选器（2026-10-22 用户定）：建渠道能带上、PATCH 能改能清、视图回显、坏写法 422。
+//
+// 这条钉的是**契约那一层**（字段名 / 三态语义 None=不动、""=清）。筛选的语义本身在
+// `registry` 的测试里（`FilterModels` / `RefreshOne`），这里不重复。
+func TestProviderModelFilterRoundTrip(t *testing.T) {
+	server, _ := newProvidersServer(t, `{"providers":[{"id":"or","vendor":"openrouter","api_key":"sk-x"}]}`)
+
+	// ① 建渠道时带上筛选器
+	recorder := call(server, "POST", "/api/v1/providers",
+		`{"id":"or2","vendor":"openrouter","api_key":"sk-y","model_filter":"gpt"}`)
+	if recorder.Code != 201 {
+		t.Fatalf("建渠道：%d %s", recorder.Code, recorder.Body.String())
+	}
+	var view ProviderView
+	if err := json.Unmarshal(recorder.Body.Bytes(), &view); err != nil {
+		t.Fatal(err)
+	}
+	if view.ModelFilter != "gpt" {
+		t.Fatalf("视图该回显 model_filter=gpt，得到 %q", view.ModelFilter)
+	}
+
+	// ② 写进文件了没（配置是整体重写的，字段漏了就是静默丢）
+	configs, err := config.LoadProviders(config.Paths{ConfigDir: server.paths.ConfigDir, DataDir: server.paths.DataDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, provider := range configs.Providers {
+		if provider.ID == "or2" {
+			found = true
+			if provider.ModelFilter != "gpt" {
+				t.Fatalf("落盘的 model_filter 是 %q，该是 gpt", provider.ModelFilter)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("or2 没写进 providers.json")
+	}
+
+	// ③ PATCH 改
+	recorder = call(server, "PATCH", "/api/v1/providers/or2", `{"model_filter":"claude"}`)
+	if recorder.Code != 200 {
+		t.Fatalf("PATCH：%d %s", recorder.Code, recorder.Body.String())
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &view); err != nil {
+		t.Fatal(err)
+	}
+	if view.ModelFilter != "claude" {
+		t.Fatalf("PATCH 后该是 claude，得到 %q", view.ModelFilter)
+	}
+
+	// ④ PATCH 不带这个字段 = 不动（None 语义）
+	if recorder = call(server, "PATCH", "/api/v1/providers/or2", `{"name":"新名字"}`); recorder.Code != 200 {
+		t.Fatalf("PATCH name：%d", recorder.Code)
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &view); err != nil {
+		t.Fatal(err)
+	}
+	if view.ModelFilter != "claude" {
+		t.Fatalf("没给 model_filter 就不该动它，得到 %q", view.ModelFilter)
+	}
+
+	// ⑤ PATCH 给 "" = 清（不筛）
+	if recorder = call(server, "PATCH", "/api/v1/providers/or2", `{"model_filter":""}`); recorder.Code != 200 {
+		t.Fatalf("PATCH 清空：%d", recorder.Code)
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &view); err != nil {
+		t.Fatal(err)
+	}
+	if view.ModelFilter != "" {
+		t.Fatalf("该被清空，得到 %q", view.ModelFilter)
+	}
+}
+
+// `*` 在**写入时**就 422：它没有"全部"的含义，而照字面匹配会把渠道的模型表悄悄清空
+// （详见 registry.ValidateModelFilter 的注释）。
+func TestProviderModelFilterRejectsWildcard(t *testing.T) {
+	server, _ := newProvidersServer(t, `{"providers":[{"id":"or","vendor":"openrouter"}]}`)
+
+	recorder := call(server, "POST", "/api/v1/providers",
+		`{"id":"bad","vendor":"openrouter","model_filter":"*"}`)
+	if recorder.Code != 422 {
+		t.Fatalf("建渠道带 * 该 422，得到 %d %s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "通配符") {
+		t.Fatalf("报错该讲清是哪不对：%s", recorder.Body.String())
+	}
+
+	// PATCH 这条路同样要拦（两条写入口同一个口径）
+	recorder = call(server, "PATCH", "/api/v1/providers/or", `{"model_filter":"gpt*"}`)
+	if recorder.Code != 422 {
+		t.Fatalf("PATCH 带 gpt* 该 422，得到 %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+// 筛选器在**真 HTTP 刷新链路**上也生效（用户点的是「刷新模型」这个按钮，不是 registry 的函数）。
+// 顺带钉住"改筛选器 ⇒ 再刷一次才生效，且旧行会被剪掉"这个时序。
+func TestRefreshProviderAppliesModelFilterOverHTTP(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[
+		  {"id":"openai/gpt-5"},{"id":"gpt-6"},{"id":"openai/gpt-5.6-sol"},
+		  {"id":"anthropic/claude-sonnet-4.5"}]}`))
+	}))
+	defer upstream.Close()
+
+	server, st := newProvidersServer(t, `{"providers":[]}`)
+	recorder := call(server, "POST", "/api/v1/providers",
+		`{"id":"or","vendor":"openai","base_url":"`+upstream.URL+`","model_filter":"gpt"}`)
+	if recorder.Code != 201 {
+		t.Fatalf("建渠道：%d %s", recorder.Code, recorder.Body.String())
+	}
+	if recorder = call(server, "POST", "/api/v1/providers/or/refresh", ""); recorder.Code != 200 {
+		t.Fatalf("刷新：%d %s", recorder.Code, recorder.Body.String())
+	}
+
+	// ① 只导入了匹配的 3 个（用户原话那三个）
+	rows, err := st.ListModels("or")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make([]string, 0, len(rows))
+	for _, row := range rows {
+		got = append(got, row.UpstreamID)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("该只导入 3 个，得到 %d：%v", len(rows), got)
+	}
+	for _, id := range got {
+		if !strings.Contains(id, "gpt") {
+			t.Fatalf("不匹配的模型被导入了：%v", got)
+		}
+	}
+
+	// ② 模型下拉（`GET /models`）看到的也只有这 3 个
+	recorder = call(server, "GET", "/api/v1/models", "")
+	var items []ModelListItem
+	if err := json.Unmarshal(recorder.Body.Bytes(), &items); err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 3 {
+		t.Fatalf("/models 该只有 3 个，得到 %d", len(items))
+	}
+
+	// ③ 换成 claude 再刷 ⇒ 先前那 3 行被"没见到就删行"剪掉，只剩 claude
+	if recorder = call(server, "PATCH", "/api/v1/providers/or", `{"model_filter":"claude"}`); recorder.Code != 200 {
+		t.Fatalf("改筛选器：%d %s", recorder.Code, recorder.Body.String())
+	}
+	if recorder = call(server, "POST", "/api/v1/providers/or/refresh", ""); recorder.Code != 200 {
+		t.Fatalf("再刷：%d %s", recorder.Code, recorder.Body.String())
+	}
+	rows, err = st.ListModels("or")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].UpstreamID != "anthropic/claude-sonnet-4.5" {
+		t.Fatalf("换筛选器后该只剩 claude，得到 %+v", rows)
+	}
+}
+
+// 手改配置文件塞进 `*` 的兜底：刷新**报错**而不是把模型表清空（Probe 里先验后拉）。
+func TestRefreshProviderWithWildcardFilterFailsAndKeepsModels(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"openai/gpt-5"}]}`))
+	}))
+	defer upstream.Close()
+
+	server, st := newProvidersServer(t, `{"providers":[]}`)
+	// 走写入接口建不了（`*` 会被 422 拦）⇒ 这里直接造库里的旧数据模拟"以前导入过"
+	if _, _, _, err := st.RefreshDiscovered("or", []store.Discovered{{UpstreamID: "openai/gpt-5"}}, 1); err != nil {
+		t.Fatal(err)
+	}
+	// 再把手写的 `*` 塞进配置文件（绕开写入校验，模拟用户直接改文件）
+	configs, err := config.LoadProviders(config.Paths{ConfigDir: server.paths.ConfigDir, DataDir: server.paths.DataDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	configs.Providers = append(configs.Providers, config.Provider{
+		ID: "or", Vendor: "openai", BaseURL: upstream.URL, ModelFilter: "*",
+	})
+	if err := config.SaveJSON(server.paths.Config("providers.json"), configs); err != nil {
+		t.Fatal(err)
+	}
+
+	if recorder := call(server, "POST", "/api/v1/providers/or/refresh", ""); recorder.Code == 200 {
+		t.Fatalf("`*` 该让刷新失败，得到 %d %s", recorder.Code, recorder.Body.String())
+	}
+	rows, err := st.ListModels("or")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("坏筛选器不许动数据，该还是 1 行，得到 %d", len(rows))
 	}
 }

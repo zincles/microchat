@@ -32,8 +32,10 @@ type Outcome struct {
 	Provider string `json:"provider"`
 	// Skipped：**跳过**的原因（空 = 真去刷了）。文案是给人看的，直接打给用户。
 	Skipped string `json:"skipped,omitempty"`
-	// Models：上游这次给了几个模型（跳过 / 失败时是 0）。
+	// Models：这次**导入**了几个（已过筛选器；跳过 / 失败时是 0）。
 	Models int `json:"models"`
+	// Filtered：被模型筛选器挡掉、没导入的个数（0 = 没筛）。有它才说得出"470 个里筛剩 12 个"。
+	Filtered int `json:"filtered,omitempty"`
 	// Removed：这次没见到、被删掉的旧行（"没见到就删行"那条不变量的可见面）。
 	Removed int `json:"removed"`
 	// Error：失败原因（空 = 没失败）。**一个渠道失败不影响别的**（各自挂号、各自收尾）。
@@ -49,17 +51,29 @@ func RefreshOne(provider config.Provider, st *store.Store) (Outcome, error) {
 	if err != nil {
 		return outcome, err
 	}
+	// 落库的是**筛选后**的那份 ⇒ 不匹配的旧行会被"没见到就删行"顺手清掉。
+	// 这正是"有且只有符合筛选器的模型会被导入"的落地方式（筛选器改了要再刷一次才生效）。
 	_, _, removed, err := st.RefreshDiscovered(provider.ID, result.Models, time.Now().UnixMilli())
 	if err != nil {
 		return outcome, err
 	}
 	outcome.Models = len(result.Models)
+	outcome.Filtered = result.Filtered
 	outcome.Removed = removed
 	return outcome, nil
 }
 
 // Probe：拉一次 `/models`（**不落库**）。网络只有 `providers` 碰得到 —— 这里只要一份列表。
+//
+// **模型筛选器**在这一步生效（2026-10-22）：回的是"真正要导入的那些"，不是上游原表。
+// 放这一层的理由：HTTP / 启动 / `-debug refresh-models` 三条刷新路径**都从这里过**
+// （`RefreshOne` 是唯一调用方）⇒ 筛在这儿就不可能漏掉某一条。
 func Probe(provider config.Provider) (ProbeResult, error) {
+	// 先验筛选器，**再**拉网络：坏筛选器（`*` 那类）必须在动任何数据之前拦下 ——
+	// 否则"筛完是空"会顺着 `RefreshDiscovered` 的"没见到就删行"把整个渠道的模型表清空。
+	if err := ValidateModelFilter(provider.ModelFilter); err != nil {
+		return ProbeResult{}, err
+	}
 	// `FromConfig` + `ApplyPreset` 是**唯一**的转换处（手搓字面量会漏字段 ⇒ 静默失效）
 	wire := providers.ApplyPreset(providers.FromConfig(provider))
 	// 上游 `/models` 的形状是 **`{"data": [...]}`**（OpenAI 的；OpenRouter 同形多给几个字段）。
@@ -68,7 +82,10 @@ func Probe(provider config.Provider) (ProbeResult, error) {
 	if err := providers.NewClient(wire).GetJSON(wire, "/models", &parsed); err != nil {
 		return ProbeResult{}, err
 	}
-	return ProbeResult{Models: withZenProtocol(provider, parsed.Data)}, nil
+	// 筛选在 withZenProtocol **之后**：那个函数只给 opencode 系打标、不改集合，
+	// 先筛后标与先标后筛结果相同，但放后面省得它去拉一次用不上的快照。
+	kept, dropped := FilterModels(provider.ModelFilter, withZenProtocol(provider, parsed.Data))
+	return ProbeResult{Models: kept, Filtered: dropped}, nil
 }
 
 // withZenProtocol：给发现到的模型按 models.dev 快照 npm 现算打标（仅 opencode-go/opencode vendor）。

@@ -446,13 +446,16 @@ function onKey(e) {
             <h3>渠道（点进二级改）</h3>
             <div id="provider-list">
               <table class="plist">
-                <thead><tr><th>渠道</th><th>vendor</th><th>protocol</th><th>密钥</th><th>模型</th><th></th></tr></thead>
+                <thead><tr><th>渠道</th><th>vendor</th><th>protocol</th><th>密钥</th><th>模型</th><th>筛选器</th><th></th></tr></thead>
                 <tbody><tr v-for="p in providers" :key="p.id" class="clickable" @click="editProvider = p">
                   <td>{{ p.id }}</td>
                   <td>{{ p.vendor ?? "?" }}</td>
                   <td>{{ p.protocol ?? "?" }}</td>
                   <td>{{ p.has_key ? "有" : "无" }}</td>
                   <td>{{ p.models?.length ?? 0 }}</td>
+                  <!-- 筛选器：让"这个渠道怎么只有 12 个模型"在列表里就能看到答案（空 = 没筛）。
+                       用 `||` 而不是 `??`：空串要显示成「没筛」，不是留一格白。 -->
+                  <td>{{ p.model_filter || "没筛" }}</td>
                   <td class="ops"><button type="button" class="link-btn danger" @click.stop="askDeleteProvider(p.id)">删除</button></td>
                 </tr></tbody>
               </table>

@@ -20,6 +20,9 @@ type ProviderView struct {
 	BaseURL  string            `json:"base_url"`
 	Headers  map[string]string `json:"headers"`
 	HasKey   bool              `json:"has_key"`
+	// ModelFilter：模型筛选器（空 = 不筛）。界面要能看见渠道上挂着什么筛选器 ——
+	// 否则"这个渠道怎么只有 12 个模型"会变成一个查不出来的谜。
+	ModelFilter string `json:"model_filter"`
 	// Identity：生效的身份（渠道自己的，或服务器级默认）。
 	Identity      string      `json:"identity"`
 	LastRefreshAt *int64      `json:"last_refresh_at"`
@@ -58,6 +61,8 @@ type CreateProviderReq struct {
 	BaseURL  *string           `json:"base_url"`
 	Headers  map[string]string `json:"headers"`
 	APIKey   *string           `json:"api_key"`
+	// ModelFilter：模型筛选器（省略 / 空 = 不筛）。校验在 ValidateModelFilter（坏写法 ⇒ 422）。
+	ModelFilter *string `json:"model_filter"`
 }
 
 type UpdateProviderReq struct {
@@ -67,6 +72,9 @@ type UpdateProviderReq struct {
 	Name     *string           `json:"name"` // None = 不动；"" = 清显示名
 	Headers  map[string]string `json:"headers"`
 	APIKey   *string           `json:"api_key"` // None = 不动；"" = 删除密钥
+	// ModelFilter：None = 不动；"" = 清（不筛）。**改了要再刷一次模型才生效**
+	// （筛选是在发现那一步做的，配置本身不会回头去动已有的行）。
+	ModelFilter *string `json:"model_filter"`
 }
 
 func modelView(row store.ModelRow) ModelView {
@@ -138,7 +146,8 @@ func (s *Server) createProvider(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	provider := config.Provider{ID: req.ID, Kind: "", BaseURL: "", Headers: req.Headers, APIKey: deref(req.APIKey)}
+	provider := config.Provider{ID: req.ID, Kind: "", BaseURL: "", Headers: req.Headers,
+		APIKey: deref(req.APIKey), ModelFilter: deref(req.ModelFilter)}
 	if req.Name != nil && *req.Name != "" {
 		provider.Name = *req.Name
 	}
@@ -157,6 +166,12 @@ func (s *Server) createProvider(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.BaseURL != nil {
 		provider.BaseURL = *req.BaseURL
+	}
+	// 筛选器坏了在**写入时**就拦（同 abilities / segments 的"写入即报错"口径）：
+	// 让它落进文件再去刷新，就会出现"刷新失败/筛空"这种隔了一层才知道的错。
+	if err := registry.ValidateModelFilter(provider.ModelFilter); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "invalid", err.Error())
+		return
 	}
 	// 错配在**写入时**就拦（兼容矩阵即校验表）：custom 没端点、deepseek+systemone 这类不落地。
 	if err := providers.FromConfig(provider).Normalize().Validate(); err != nil {
@@ -210,6 +225,14 @@ func (s *Server) updateProvider(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.APIKey != nil { // None = 不动；"" = 删除密钥
 		provider.APIKey = *req.APIKey
+	}
+	if req.ModelFilter != nil { // None = 不动；"" = 清（不筛）
+		provider.ModelFilter = *req.ModelFilter
+	}
+	// 筛选器坏了在写入时就拦（createProvider 那边同一个口径）
+	if err := registry.ValidateModelFilter(provider.ModelFilter); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "invalid", err.Error())
+		return
 	}
 	// 改完也要过矩阵（vendor/protocol/base_url 任一动了都可能错配）
 	if err := providers.FromConfig(provider).Normalize().Validate(); err != nil {
@@ -412,7 +435,8 @@ func providerView(provider config.Provider) ProviderView {
 		ID: provider.ID, Name: name, Kind: provider.Kind,
 		Vendor: string(effective.EffectiveVendor()), Protocol: string(effective.EffectiveProtocol()),
 		BaseURL: effective.BaseURL, Headers: provider.Headers,
-		HasKey: provider.APIKey != "", Identity: string(effective.Identity), Models: []ModelView{},
+		HasKey: provider.APIKey != "", ModelFilter: provider.ModelFilter,
+		Identity: string(effective.Identity), Models: []ModelView{},
 	}
 }
 
