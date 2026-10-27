@@ -4,7 +4,7 @@
 import { ref } from "vue";
 import { ICONS } from "./icons.js";
 
-const emit = defineEmits(["select", "settings", "close", "new", "open-settings", "user", "toggle-left"]);
+defineEmits(["select", "settings", "close", "new", "open-settings", "user", "toggle-left"]);
 // canSettings：**设置 = root 专属**（用户定，2026-10-10）—— 普通用户这儿连按钮都不给。
 const props = defineProps({ canSettings: { type: Boolean, default: true } });
 

@@ -6,7 +6,7 @@
 import MessageBubble from "./MessageBubble.vue";
 import { ICONS } from "./icons.js";
 
-const props = defineProps({
+defineProps({
   summary: { type: Object, required: true }, // {id, text, dirty, tokens, …}
   fromIdx: { type: [Number, String], default: null },
   toIdx: { type: [Number, String], default: null },

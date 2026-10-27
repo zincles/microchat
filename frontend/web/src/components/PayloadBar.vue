@@ -10,7 +10,7 @@ import { treeTotals } from "../utils/tree.js";
 import { parseWireMessages, shouldCollapse, previewBlock } from "../utils/payload.js";
 import { payloadVizOn, savePayloadViz } from "../utils/prefs.js";
 
-const props = defineProps({
+defineProps({
   defaultBlocks: { type: Number, default: null }, // chat.compact_blocks（空输入框的默认，只用于提示）
 });
 const emit = defineEmits(["compact", "tab", "toggle-right"]);
