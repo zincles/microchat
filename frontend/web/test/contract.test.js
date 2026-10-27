@@ -256,7 +256,7 @@ test("agent 卡带 v2：带引用段（内置不带）、结构不拼平；v1 �
   const agent = {
     id: "rp-agent-simple", name: "RP Agent", system_prompt: "你是主持人。",
     segments: ["katex", "合理的RolePlay", "mcp"], first_message: "开场",
-    abilities: { title: { enabled: false } }, prepend_state: true, display_mode: "roleplay",
+    abilities: { title: { enabled: false } }, prepend_state: true,
   };
   const card = buildCartridge(agent, lib);
   assert.equal(card.version, 2);
@@ -267,7 +267,8 @@ test("agent 卡带 v2：带引用段（内置不带）、结构不拼平；v1 �
     { id: "mcp", text: "需要联网时调用搜索。" },
   ]);
   assert.equal(card.agent.id, undefined); // 导入方现铸
-  assert.equal(card.agent.display_mode, "roleplay");
+  // ⚠ `display_mode` 2026-10-27 已删（显示只有一种形态）⇒ 卡带里不该再有这一格。
+  assert.equal(card.agent.display_mode, undefined);
   assert.deepEqual(card.agent.abilities, { title: { enabled: false } });
   // 导入侧：形状不对 ⇒ 说清；对了 ⇒ {agent, segments} 归一化
   assert.throws(() => cartridgeAgent({}), /不是 agent 卡带/);
@@ -278,7 +279,10 @@ test("agent 卡带 v2：带引用段（内置不带）、结构不拼平；v1 �
   assert.deepEqual(back.agent.segments, ["katex", "合理的RolePlay", "mcp"]);
   assert.equal(back.segments.length, 2);
   assert.equal(back.agent.prepend_state, true);
-  assert.equal(cartridgeAgent({ agent: { name: "x" } }).agent.display_mode, undefined);
+  // 老卡带（还带着 display_mode）照样能导：那个键没人看，归一化后自然不在结果里。
+  const legacy = cartridgeAgent({ agent: { name: "x", display_mode: "roleplay" } });
+  assert.equal(legacy.agent.display_mode, undefined);
+  assert.equal(legacy.agent.name, "x");
   // v1 老卡带（提示词已拼平、无 segments 数组）照样能导
   const v1 = cartridgeAgent({ version: 1, agent: { name: "老卡", system_prompt: "拼平过的" } });
   assert.deepEqual(v1.segments, []);

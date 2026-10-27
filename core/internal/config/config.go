@@ -249,10 +249,15 @@ type Agent struct {
 	// PrependState：出站时把当前状态表渲染成 `<current_state>` 块，贴到用户句首。
 	// 缺省 = 关（只有 RP 这类 Agent 需要；一般问答用不到）。
 	PrependState *bool `json:"prepend_state,omitempty"`
-	// DisplayMode：前端显示格式。"chat"（默认，聊天软件：双边气泡）/
-	// "roleplay"（用户气泡 + AI 纯文本占 80% 宽，无底无圆角）。
-	DisplayMode string `json:"display_mode,omitempty"`
 }
+
+// ⚠ **`display_mode` 已删除**（2026-10-27 用户定：「只允许"你用气泡发消息，AI 回你 markdown
+// 而非气泡"的模式」）。从前它是 agent 上的二选一：
+//   - `chat`（默认）= 两边都是气泡；
+//   - `roleplay`   = 用户气泡 + AI 纯文本。
+// 现在**只有后者这一种**（而且不再是"模式"，就是界面的样子）⇒ 这个字段没有意义了，删掉。
+// 老 `agents.json` 里还留着 `"display_mode": "chat"/"roleplay"` 也不报错：它成了**不认识的键**，
+// 下次整份重写时自己就没了（与当年 `params` / `prompt_order` 同一条处理口径 ✓）。
 
 // Segment：一段可复用的提示词（"system prompt segment"，用户定 2026-10-11）。
 //

@@ -285,11 +285,15 @@ html[data-composer="solid"] .messages-inner { padding-bottom: calc(var(--compose
 .session-item .item-btn svg { display: block; }
 .session-item:hover .item-btn, .session-item.sel .item-btn { display: block; }
 .session-item .item-btn:hover { color: var(--tg-text); }
-/* —— 消息气泡（TG 安卓味）：自己右蓝底白字，对方左底栏色；圆角 12px，贴边角小 —— */
-.msg { max-width: 70%; min-width: 9em; padding: 0.45em 0.7em; border-radius: var(--r-card); background: var(--tg-secondary-bg); }
-.msg.user { align-self: flex-end; background: var(--tg-button); color: var(--tg-button-text); border-bottom-right-radius: 4px; }
+/* —— 消息（2026-10-27 起**只有一种形态**：你发气泡、AI 回正文）——
+ * 基础 `.msg` 只放两边共用的东西；**气泡那套（底色/圆角/内边距）只挂在 `.msg.user` 上**。
+ * 从前这些挂在 `.msg` 基础规则上、由 `.msg.assistant` 一条条盖回去 —— 留下 `border-bottom-left-radius`
+ * 这类"看着像气泡但其实没背景"的残影，改基础规则的人会以为 AI 还是气泡。别退回那种写法。 */
+.msg { max-width: 70%; min-width: 9em; }
+.msg.user { align-self: flex-end; background: var(--tg-button); color: var(--tg-button-text); border-bottom-right-radius: 4px;
+  padding: 0.45em 0.7em; border-radius: var(--r-card); }
 .msg.user .who, .msg.user .edit-btn { color: inherit; opacity: 0.75; }
-.msg.assistant { align-self: flex-start; border-bottom-left-radius: 4px; }
+.msg.assistant { align-self: flex-start; }
 .msg .msg-head { display: flex; justify-content: space-between; align-items: center; gap: 0.6em; margin-bottom: 0.15em; }
 .msg .who { font-weight: bold; font-size: 0.85em; color: var(--tg-link); }
 .msg.user .who { color: inherit; }
@@ -350,7 +354,9 @@ html[data-composer="solid"] .messages-inner { padding-bottom: calc(var(--compose
 /* 装"不能换行"的内容（显示公式 / 代码块）的消息：**用满整个阅读列**，别再被气泡的
  * 70%/80% 上限按住 —— 公式明明放得下却出横滚，就是这个上限造成的（2026-10-15 用户报）。
  * `:has` 不认识的老浏览器 = 维持现状（不是回归）。真超宽（比整列还宽）仍走上面的横滚 ✓。 */
-.msg-wrap:has(.katex-display), .msg-wrap:has(pre) { max-width: 100%; width: fit-content; }
+/* 宽内容（公式 / 代码块）别被 70% 的气泡挤扁。**只管 user**：assistant 现在恒 100% 宽，
+ * 给它 `width: fit-content` 反而是往回缩（从前两边都是气泡时这条是全局的）。 */
+.msg-wrap.user:has(.katex-display), .msg-wrap.user:has(pre) { max-width: 100%; width: fit-content; }
 .msg .state-blocks { margin-top: 0.5em; display: flex; flex-direction: column; gap: 0.4em; }
 .msg .state-block { background: rgb(0 0 0 / 20%); border-radius: 8px; padding: 0.45em 0.65em; font-size: 0.85em; }
 .msg .state-block.current { border-left: 2px solid var(--tg-link); }
@@ -361,17 +367,18 @@ html[data-composer="solid"] .messages-inner { padding-bottom: calc(var(--compose
  * 宽窄对齐由 .msg-wrap 承担（.msg 的 max-width 搬上来，气泡本身 max-width:100%）。 */
 .msg-wrap { display: flex; flex-direction: column; max-width: 70%; min-width: 9em; }
 .msg-wrap.user { align-self: flex-end; align-items: flex-end; }
-.msg-wrap.assistant { align-self: flex-start; align-items: flex-start; max-width: 80%; width: 80%; }
+/* AI = **正文，不是气泡**（2026-10-27 用户定：只保留"你发气泡、AI 回 markdown"这一种形态，
+ * 从前两边都是气泡的那套已删）。所以 assistant 占满消息列左右 100%、无底色无圆角无内边距 —— 
+ * 从前这里还有一串 `.prose` 的覆盖规则（"RP 模式下不按气泡看"），形态成唯一之后那个开关没了，
+ * 覆盖规则也就没东西可覆盖 ⇒ 直接并进下面这几条，`.prose` 这个类名整个删掉。 */
+.msg-wrap.assistant { align-self: flex-start; align-items: flex-start; max-width: 100%; width: 100%; min-width: 0; }
 .msg-wrap .msg { max-width: 100%; align-self: stretch; }
-/* AI 气泡：长文顶满 80%，短句 fit-content 收（编辑态 textarea 同理 100% 宽）。 */
-.msg-wrap.assistant .msg { width: fit-content; min-width: 9em; max-width: 100%; }
+/* 只留"占满 + 上下留一点呼吸"：底色与内边距**基础规则已经不给 assistant** 了（见上面 `.msg` 那组），
+ * 这里再写一遍 `background: none` 只是自欺 —— 将来基础规则若又给 AI 上底色，这条会跟着一起错。 */
+.msg-wrap.assistant .msg { width: 100%; padding: 0.2em 0; }
 .msg-wrap.assistant .msg .inline-edit { width: 100%; }
-/* RP（prose）模式：assistant 不当"气泡"看，是**平铺的叙述** —— 占满消息列左右 100%
- * （2026-10-11 用户定：不再 80% 上限、也不再 fit-content 收缩）。 */
-.msg-wrap.prose { max-width: 100%; width: 100%; min-width: 0; align-self: flex-start; }
-.msg-wrap.prose .msg { width: 100%; }
-.msg.prose { background: none; padding: 0.2em 0; }
-.msg.prose .who { color: var(--tg-hint); font-weight: normal; }
+.msg.assistant .who { color: var(--tg-hint); font-weight: normal; }
+.msg.assistant .msg-foot { color: var(--tg-hint); }
 .msg-ops { display: flex; gap: 0.2em; margin-top: 0.2em; opacity: 0.55; }
 .msg-ops:hover { opacity: 1; }
 .msg-ops .edit-btn { background: none; border: none; color: var(--tg-hint); font-size: 0.75em; padding: 0.1em 0.3em; cursor: pointer; border-radius: 4px; }

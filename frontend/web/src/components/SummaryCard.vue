@@ -14,7 +14,6 @@ const props = defineProps({
   // 分页的意义就在这：折叠态一个字节的原文都不在浏览器里）。
   rows: { type: Array, default: null },
   loading: { type: Boolean, default: false },
-  displayMode: { type: String, default: "chat" },
   // 摘要重摇状态（本条被摇时才非 null，与气泡的 reroll 同一套）：{count, current_idx, running}
   reroll: { type: Object, default: null },
 });
@@ -71,7 +70,6 @@ defineEmits(["toggle-raw", "refresh", "edit", "version"]);
           :content="r.msg.content"
           :reasoning="r.msg.reasoning"
           :reasoning-ms="r.msg.reasoningMs"
-          :display-mode="displayMode"
         />
       </div>
     </details>

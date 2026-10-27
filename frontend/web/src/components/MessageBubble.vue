@@ -13,7 +13,6 @@ const props = defineProps({
   reasoningMs: Number,
   messageId: String,
   isLast: Boolean,
-  displayMode: { type: String, default: "chat" },
   streaming: Boolean, // 生成中（还没落库的那条）：等首字节时给三点呼吸动画
   reroll: { type: Object, default: null }, // 重摇状态（本条是目标时才非 null）：{active,count,current_idx,running}
   // usage：上游报的用量（归一化后的那几格；2026-10-20 起气泡脚注就用它）。
@@ -65,10 +64,13 @@ const editRows = computed(() => Math.min(12, Math.max(3, draft.value.split("\n")
 </script>
 
 <template>
-  <div :class="`msg-wrap ${role === 'user' ? 'user' : 'assistant'} ${displayMode === 'roleplay' && role !== 'user' ? 'prose' : ''}`">
+  <!-- 只有一种形态（2026-10-27 用户定）：**用户 = 气泡，AI = 正文**。
+       从前这里按 `display_mode` 切两套 class（两边气泡 / 用户气泡+AI 纯文本）；现在后者是唯一的样子，
+       所以不再有条件类 —— 形态本身写在 CSS 的 `.msg.assistant` / `.msg-wrap.assistant` 里。 -->
+  <div :class="`msg-wrap ${role === 'user' ? 'user' : 'assistant'}`">
     <div
       ref="msgEl"
-      :class="`msg ${role === 'user' ? 'user' : 'assistant'} ${displayMode === 'roleplay' && role !== 'user' ? 'prose' : ''}`"
+      :class="`msg ${role === 'user' ? 'user' : 'assistant'}`"
       :style="editing && lockedWidth ? { width: `${lockedWidth}px`, boxSizing: 'border-box' } : null"
     >
       <div class="msg-head">

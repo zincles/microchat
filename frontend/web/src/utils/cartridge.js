@@ -24,7 +24,8 @@ export function buildCartridge(agent, segments) {
       first_message: agent.first_message ?? "",
       abilities: agent.abilities ?? {},
       prepend_state: !!agent.prepend_state,
-      display_mode: agent.display_mode ?? "",
+      // ⚠ 没有 `display_mode`（2026-10-27 删）：显示只有一种形态，卡带里不必再记。
+      // 老卡带里带着它也不报错 —— 读进来时没人看，下次导出自然就没了。
     },
     segments: bundled,
   };
@@ -49,7 +50,6 @@ export function cartridgeAgent(doc) {
       first_message: String(agent.first_message ?? ""),
       abilities: agent.abilities ?? {},
       prepend_state: !!agent.prepend_state,
-      display_mode: agent.display_mode === "roleplay" ? "roleplay" : undefined,
     },
     segments,
   };

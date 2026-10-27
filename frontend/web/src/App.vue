@@ -111,8 +111,7 @@ const WINDOW_SEGMENTS = 20; // 首屏段数；"加载更多"一页也这么多
 const windowFrom = ref(1); // 窗口起点（段对齐；1 = 已到最老）
 const summaryMsgs = reactive(new Map()); // 摘要 id → {state:"loading"|"ready", rows}（只有展开过的才有）
 const openSummaries = new Set(); // 哪些卡正展开着（reload 后补拉新鲜的）
-const vueDisplayMode = ref("chat");
-const vueAgents = ref([]); // 生效 agent 列表（显示模式与草稿首段都从这儿看）
+const vueAgents = ref([]); // 生效 agent 列表（草稿首段的合成气泡看它；显示形态本身已无开关）
 const settingsOpen = ref(false);
 const userOpen = ref(false); // 用户视图（与设置平级：一个管登录者，一个管实例）
 const currentUser = ref(null); // 当前登录者（boot 时问 /auth/me；用户视图也自己问一遍）
@@ -644,7 +643,7 @@ async function applyAgentValue(id) {
     draftPrefs.agent = id;
     Object.assign(sessionInfo, { agent_id: id });
     paintSessionHeader();
-    refreshDisplayMode();
+    refreshAgents();
     statusAgent.value = agentLabelOf(id);
     refreshStatusline("idle");
     refreshPreview();
@@ -655,20 +654,20 @@ async function applyAgentValue(id) {
   if (my !== epoch) return;
   Object.assign(sessionInfo, updated);
   paintSessionHeader();
-  refreshDisplayMode();
+  refreshAgents();
   statusAgent.value = agentLabelOf(id);
   refreshStatusline("idle");
   refreshPreview();
 }
-async function refreshDisplayMode() {
+// refreshAgents：拉生效 agent 列表（**只为草稿的首段对话**与状态行的助手名 —— 从前它顺带算
+// "显示模式"，2026-10-27 那个开关没了 ⇒ 更名收窄，别再往这儿加显示相关的东西）。
+async function refreshAgents() {
   const my = epoch;
   try {
     const data = await api.agents();
     if (my !== epoch) return;
-    vueAgents.value = data.agents ?? []; // 首段对话也从这儿看（草稿的合成气泡）
-    const a = vueAgents.value.find((x) => x.id === sessionInfo.agent_id);
-    vueDisplayMode.value = a?.display_mode === "roleplay" ? "roleplay" : "chat";
-  } catch { /* 拿不到就 chat 兜底 */ }
+    vueAgents.value = data.agents ?? [];
+  } catch { /* 拿不到就空着：草稿不画首段、状态行回落到 agent id */ }
 }
 // leftHidden / rightHidden：两侧栏收没收的**响应式镜像**（真实状态仍是 DOM 类 + localStorage 偏好；
 // 2026-10-14 用户定：栏开着时顶栏不渲染那一侧的开关 —— 按钮跟着它控制的东西走）。
@@ -828,7 +827,7 @@ async function startDraft() {
   vueMessages.value = [];
   vueStream.value = { id: null, text: "", reasoning: "" };
   paintSessionHeader();
-  refreshDisplayMode();
+  refreshAgents();
   fillModelSelect();
   fillAgentSelect();
   payloadbarRef.value?.setWire(null);
@@ -872,7 +871,7 @@ async function enterSession(id) {
   if (my !== epoch) return; // 迟到的上一发：整段丢掉（切会话竞态的唯一守卫）
   Object.assign(sessionInfo, sessions.find((s) => s.id === id) ?? {});
   paintSessionHeader();
-  refreshDisplayMode();
+  refreshAgents();
   fillModelSelect();
   fillAgentSelect();
   renderSessions(sessions);
@@ -1499,7 +1498,6 @@ onUnmounted(() => {
               :to-idx="row.toIdx"
               :rows="row.rows"
               :loading="row.loading"
-              :display-mode="vueDisplayMode"
               :reroll="summaryReroll.active && summaryReroll.target_summary_id === row.summary.id ? summaryReroll : null"
               @toggle-raw="(open) => onSummaryToggle(row.summary.id, open)"
               @refresh="summaryRefresh(row.summary.id)"
@@ -1516,7 +1514,6 @@ onUnmounted(() => {
               :reasoning-ms="row.msg.reasoningMs"
               :message-id="row.msg.messageId"
               :is-last="!!row.msg.messageId && row.msg.messageId === lastMsgId"
-              :display-mode="vueDisplayMode"
               :streaming="!!row.msg.stream || isLive(row.msg)"
               :usage="row.msg.usage"
               :reroll="row.msg.messageId && rerollState.active && rerollState.target_message_id === row.msg.messageId ? rerollState : null"

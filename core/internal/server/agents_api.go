@@ -27,15 +27,8 @@ type CreateAgentReq struct {
 	// Abilities：能力开关（键 = 能力 id）。**缺省 = 默认全开**；未知的 id ⇒ 400。
 	Abilities    map[string]config.AbilityToggle `json:"abilities,omitempty"`
 	PrependState *bool                           `json:"prepend_state,omitempty"`
-	DisplayMode  *string                         `json:"display_mode,omitempty"`
-}
-
-// DisplayModeValue：归一化（只认 roleplay，其余 ⇒ "" 缺省 chat）。
-func (r CreateAgentReq) DisplayModeValue() string {
-	if r.DisplayMode != nil && *r.DisplayMode == "roleplay" {
-		return "roleplay"
-	}
-	return ""
+	// ⚠ 没有 `display_mode`（2026-10-27 删）：显示只有一种形态 —— 用户气泡 + AI 正文，
+	// 不再二选一。老客户端还发它 ⇒ 被当作不认识的键忽略（不报错）。
 }
 
 type UpdateAgentReq struct {
@@ -53,7 +46,7 @@ type UpdateAgentReq struct {
 	// 改 id = **重命名**：连同 `default_agent` 与所有会话的引用一起搬（空串 = 不改）。
 	NewID        *string `json:"new_id"`
 	PrependState *bool   `json:"prepend_state,omitempty"`
-	DisplayMode  *string `json:"display_mode,omitempty"`
+	// ⚠ 没有 `display_mode`（2026-10-27 删，理由见 `CreateAgentReq`）。
 }
 
 // （读 agents.json 的 loadAgents 在 server.go 里 —— 早就有，别写第二份）
@@ -119,7 +112,6 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		Segments:     req.Segments,
 		Abilities:    req.Abilities,
 		PrependState: req.PrependState,
-		DisplayMode:  req.DisplayModeValue(),
 	}
 	// 未知的能力 id 写进去只会"配了不生效" ⇒ 当场拒（口径见 `internal/abilities`）
 	if err := abilities.Validate(config.AgentsConfig{Agents: []config.Agent{agent}}); err != nil {
@@ -223,9 +215,6 @@ func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.PrependState != nil {
 		agents.Agents[index].PrependState = req.PrependState
-	}
-	if req.DisplayMode != nil {
-		agents.Agents[index].DisplayMode = *req.DisplayMode
 	}
 	// 未知的能力 id 一律在场拒（`POST` 与 `PATCH` 同一个口径）
 	if err := abilities.Validate(config.AgentsConfig{Agents: []config.Agent{agents.Agents[index]}}); err != nil {
