@@ -228,6 +228,13 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .ctree-actions input { flex: 1; min-width: 0; }
 .ctree-actions button { flex: none; }
 .ctree-total { color: var(--tg-text); margin: 0.2em 0 0.5em; }
+/* 压缩那发的载荷（「看载荷」按钮拉回来的那一发）—— 复用 .pv-* 那套渲染，只补它自己的头。
+   放"载荷 tab"里也行，但那是**这一轮要发的**；压缩是另一发，混在一起会让人认错。 */
+#compact-payload { margin: 0 0 0.7em; padding: 0.5em 0.55em; border: 1px solid var(--line); border-radius: var(--r-card); background: color-mix(in srgb, var(--tg-text) 3%, transparent); }
+.cp-head { display: flex; align-items: center; gap: 0.4em; margin: 0 0 0.4em; }
+.cp-title { flex: 1; color: var(--tg-text); font-size: 0.9em; }
+.cp-close { flex: none; background: none; border: none; color: var(--tg-hint); font-size: 1.1em; line-height: 1; padding: 0 0.2em; cursor: pointer; }
+.cp-close:hover { color: var(--tg-text); }
 .ctree-legend { color: var(--tg-hint); font-size: 0.85em; margin-top: 0.6em; }
 .ctree-row { position: relative; display: flex; align-items: center; gap: 0.25em; padding: 0.22em 0.2em; border-radius: 6px; overflow: hidden; }
 .ctree-row:hover { background: color-mix(in srgb, var(--tg-text) 6%, transparent); }

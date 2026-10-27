@@ -13,7 +13,7 @@ import { payloadVizOn, savePayloadViz } from "../utils/prefs.js";
 defineProps({
   defaultBlocks: { type: Number, default: null }, // chat.compact_blocks（空输入框的默认，只用于提示）
 });
-const emit = defineEmits(["compact", "tab", "toggle-right"]);
+const emit = defineEmits(["compact", "tab", "toggle-right", "compact-payload"]);
 
 const tab = ref("payload");
 // 切 tab 报给 App：压缩树看着才拉全量账本（窗口化的内存账，见 App.refreshTree）。
@@ -51,7 +51,45 @@ function setWire(w) { wire.value = w ?? null; }
 function setTables(t) { tables.value = t ?? {}; }
 function setTree(t) { tree.value = t ?? null; }
 
-defineExpose({ setWire, setTables, setTree });
+// —— 压缩那发的载荷（2026-10-28）——
+// 用户问的是"能不能预览**即将被压缩的文本**"。答：能，而且给的是**整发请求** ——
+// 后端的 `POST .../compact/payload` 与真压走同一段拼装（同一个 `wireFor`），所以这里画出来的
+// 就是真会发出去的那一发（合同测试逐字节钉着）。App 拉回来经 `setCompactWire` 塞进来。
+const compactInfo = ref({});
+const compactWire = computed(() => compactInfo.value.payload ?? null);
+const compactViz = computed(() => (compactWire.value ? parseWireMessages(compactWire.value) : null));
+const compactMeta = computed(() => compactViz.value?.meta ?? {});
+const compactMessages = computed(() => compactViz.value?.messages ?? []);
+const compactRange = computed(() => {
+  const info = compactInfo.value;
+  if (!info.from_idx) return "";
+  return `${info.merged ? "并" : "压"}第 ${info.from_idx}–${info.to_idx} 条（${info.blocks} 块）`;
+});
+// 材料里附没附世界状态 —— 附了就不是"纯文本那么小"，值得说一声。
+const compactStateHint = computed(() => {
+  const info = compactInfo.value;
+  if (info.state_before && info.state_after) return "附了段首+段末状态";
+  if (info.state_after) return "附了段末状态";
+  if (info.state_before) return "附了段首状态";
+  return "";
+});
+// 开合状态独立于上面"载荷"tab 那份（两边都在看同一种形状，但不要互相打断阅读）。
+const cpOpenMap = ref(new Map());
+function cpOpen(m, i) {
+  return cpOpenMap.value.has(i) ? cpOpenMap.value.get(i) : !shouldCollapse(m.content);
+}
+function cpToggle(m, i) { cpOpenMap.value.set(i, !cpOpen(m, i)); }
+function setCompactWire(result) {
+  compactInfo.value = result ?? {};
+  cpOpenMap.value = new Map(); // 换一发 ⇒ 开合回到默认（长块默认折叠）
+}
+// previewCompact：把面板上那个块数（空 = 用配置默认）交给 App 去问后端。
+function previewCompact() {
+  const n = Number(blocks.value);
+  emit("compact-payload", Number.isFinite(n) && n > 0 ? Math.floor(n) : null);
+}
+
+defineExpose({ setWire, setTables, setTree, setCompactWire });
 </script>
 
 <template>
@@ -129,6 +167,34 @@ defineExpose({ setWire, setTables, setTree });
           @keydown.enter.prevent="doCompact"
         />
         <button type="button" class="primary" title="压缩 N 个块（空 = 用配置的 compact_blocks）" @click="doCompact">压缩</button>
+        <!-- 压缩那发的载荷预演（2026-10-28 用户点名要）：只算不发，看得见"即将被嚼的文本" -->
+        <button type="button" title="预览这一次压缩真会发出去的请求（不联网、不落库）" @click="previewCompact">看载荷</button>
+      </div>
+      <div v-if="compactWire" id="compact-payload">
+        <div class="cp-head">
+          <span class="cp-title">这一发压缩的载荷</span>
+          <button type="button" class="cp-close" title="收起" aria-label="收起" @click="compactWire = null">×</button>
+        </div>
+        <div class="pv-meta">
+          <span class="pv-method">{{ compactMeta.method }}</span>
+          <span class="pv-url" :title="compactMeta.url">{{ compactMeta.url }}</span>
+          <span v-if="compactMeta.model" class="pv-chip">{{ compactMeta.model }}</span>
+          <span v-if="compactRange" class="pv-chip">{{ compactRange }}</span>
+          <span v-if="compactInfo.material_chars" class="pv-chip">材料 {{ compactInfo.material_chars }} 字</span>
+          <span v-if="compactStateHint" class="pv-chip">{{ compactStateHint }}</span>
+        </div>
+        <ol class="pv-list">
+          <li v-for="(m, i) in compactMessages" :key="i" class="pv-msg" :class="`role-${m.role}`">
+            <button type="button" class="pv-head" :aria-expanded="cpOpen(m, i)" @click="cpToggle(m, i)">
+              <span class="pv-tw">{{ cpOpen(m, i) ? "▾" : "▸" }}</span>
+              <span class="pv-role">{{ m.role }}</span>
+              <span class="pv-idx">#{{ i + 1 }}</span>
+              <span class="pv-chars">{{ m.chars }} 字</span>
+            </button>
+            <div v-if="!cpOpen(m, i)" class="pv-preview">{{ previewBlock(m.content) }}</div>
+            <div v-else class="pv-content">{{ m.content }}</div>
+          </li>
+        </ol>
       </div>
       <div v-if="!tree" class="empty">（发几句话后这里显示压缩树：目录 = 摘要，嵌套 = 嵌套压缩）</div>
       <template v-else>

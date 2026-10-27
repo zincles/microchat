@@ -153,6 +153,10 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
     draftOutgoing: (body) => call("POST", "/outgoing", body),
     compact: (id, blocks) =>
       call("POST", `/sessions/${enc(id)}/compact`, blocks ? { blocks } : {}),
+    // compactPayload：压缩那一发**真会发出去什么**（只算不发）—— 与真压同一段拼装，
+    // 所以它返回的就是 `LastPayload` 形状（和 outgoingPreview 同一个渲染器能画）。
+    compactPayload: (id, blocks) =>
+      call("POST", `/sessions/${enc(id)}/compact/payload`, blocks ? { blocks } : {}),
     stop: (id) => call("POST", `/sessions/${enc(id)}/stop`, {}),
     rerollEnter: (id) => call("POST", `/sessions/${enc(id)}/reroll-message`, {}),
     rerollState: (id) => call("GET", `/sessions/${enc(id)}/reroll-message`),

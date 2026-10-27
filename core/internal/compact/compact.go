@@ -29,6 +29,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"microchat/internal/abilities"
 	"microchat/internal/blocks"
@@ -530,6 +531,61 @@ func Preview(messages []model.Message, summaries []model.Summary, blocks int, de
 	return result, nil
 }
 
+// PayloadPreview：**载荷预演**的结果 —— 真会发出去的那一发 + 这一趟压哪儿（与 `PreviewResult` 同一套词）。
+type PayloadPreview struct {
+	Payload providers.LastPayload `json:"payload"`
+	FromIdx int                   `json:"from_idx"`
+	ToIdx   int                   `json:"to_idx"`
+	Merged  bool                  `json:"merged"`
+	Blocks  int                   `json:"blocks"`
+	// Messages：这段区间里几条消息（合并级 = 被那几坨摘要盖住的原文条数）。
+	Messages int `json:"messages"`
+	// MaterialChars：材料正文的**字数**（按 rune 算，与界面别处的"N 字"同一把尺）——
+	// **不含**抬头、不含附上的两份状态：它回答的是"这次到底要嚼多少字"。
+	MaterialChars int `json:"material_chars"`
+	// StateBefore / StateAfter：材料里附没附段首 / 段末的世界状态（附了就不是纯文本那么小）。
+	StateBefore bool `json:"state_before"`
+	StateAfter  bool `json:"state_after"`
+}
+
+// PreviewPayload：这一趟压缩**真会发出去的那一发请求**（只算不动：不联网、不落库、不挂号）。
+//
+// 与 `Compact` 走**同一个 `prepare` + 同一个 `wireFor`** ⇒ 预演到的就是真发的那一发；
+// 这也是它和 `Preview`（只算区间、不读能力配置、不选渠道）的分工：那条答"压哪儿"，这条答"发什么"。
+// 两种给法都收（按块数 / 按区间）—— 它俩都只是"选哪一段"。
+//
+// 体里的 `stream` 是 false：压缩是整段式的辅助调用（`Complete` 也是这么发）。
+// 别拿这条载荷去跟 `POST /outgoing` 那发比 —— 那一轮是真流式，体里是 `stream:true`，两者不是一回事。
+func (s *Service) PreviewPayload(session model.Session, req Request) (PayloadPreview, error) {
+	p, err := s.prepare(session, req)
+	if err != nil {
+		return PayloadPreview{}, err
+	}
+	wire, request, material, err := s.wireFor(p)
+	if err != nil {
+		return PayloadPreview{}, err
+	}
+	built, err := providers.Build(wire, request)
+	if err != nil {
+		return PayloadPreview{}, err
+	}
+	payload, err := providers.Snapshot(built, time.Now())
+	if err != nil {
+		return PayloadPreview{}, err
+	}
+	return PayloadPreview{
+		Payload:       payload,
+		FromIdx:       p.span.Begin + 1,
+		ToIdx:         p.span.End + 1,
+		Merged:        len(p.span.Sources) > 0,
+		Blocks:        p.span.Blocks,
+		Messages:      len(p.span.Messages),
+		MaterialChars: utf8.RuneCountInString(material),
+		StateBefore:   strings.TrimSpace(p.stateBefore) != "",
+		StateAfter:    strings.TrimSpace(p.stateSection) != "",
+	}, nil
+}
+
 // strategySpan：策略 —— 按**块数** N 入口（块 = assistant→user 交界，一块 ≥2 条；
 // `/compact 1` 是压 1 块不是 1 条），两层找。
 //
@@ -920,35 +976,11 @@ type generatedText struct {
 //   - 材料剔完是空的 ⇒ 不发（整段都是 `<state>` 块时就是这样；判的是正文，不含附的那份状态）；
 //   - 上游回来的剔完是空的 ⇒ 报 upstream（宁可这一趟什么都没有，也别塞一条空摘要）。
 func (s *Service) generateText(ctx context.Context, p *prepared) (generatedText, error) {
-	merge := len(p.span.Sources) > 0
-	// 材料：消息级 = 这段对话正文；合并级 = 各段已有梗概（带轻抬头），外面套一句"这不是对话"。
-	material := ""
-	header := materialHeader
-	if merge {
-		material = mergeMaterial(p.span.Sources, messageIdxs(p.span.Messages))
-		header = mergeHeader
-	} else {
-		material = materialOf(p.span.Messages)
+	wire, request, _, err := s.wireFor(p)
+	if err != nil {
+		return generatedText{}, err
 	}
-	if strings.TrimSpace(material) == "" {
-		// ②之前的半步：**材料是空的就别发**（整段都是 `<state>` 块时就是这样）。
-		// 注意判的是**正文**（不含下面附的那份状态）—— 状态不是"可压的内容"。
-		return generatedText{}, invalid("这一段剔掉 <state> 之后没有正文可压（整段都是状态块）")
-	}
-	wire := providers.FromConfig(p.channel)
-	// 与 chat.go Accept 同一条查表：有行且 api=="openai-responses" ⇒ 走 /responses，否则 chat 缺省。
-	wire.Protocol = providers.ResolveProtocol(s.Store.ModelRoute, p.channel.ID, p.model)
-	result, err := providers.NewClient(wire).Complete(ctx, wire, providers.Request{
-		Model: p.model,
-		Messages: []providers.ChatMessage{
-			{Role: "system", Content: p.template},
-			{Role: "user", Content: header + withStatePair(material, p.stateBefore, p.stateSection)},
-		},
-		// 骑**同一个会话 id**（网关按它路由、缓存按前缀算；缺了会被上游拒）
-		SessionID: p.session.ID,
-		// 一次性的子调用：不写提示词缓存（照 Pi：Avoid cache writes for one-off summaries）
-		CacheRetention: providers.CacheNone,
-	}, p.local)
+	result, err := providers.NewClient(wire).Complete(ctx, wire, request, p.local)
 	if err != nil {
 		return generatedText{}, &Error{Code: "upstream", Message: err.Error()}
 	}
@@ -965,6 +997,46 @@ func (s *Service) generateText(ctx context.Context, p *prepared) (generatedText,
 			Message: "上游回来的那段剔掉 <state> 之后是空的：这一份不落库"}
 	}
 	return generatedText{text: text, usage: result.Usage}, nil
+}
+
+// wireFor：这一趟压缩**真会发出去的那一发** —— 材料怎么拼、模板放哪条、附哪两份状态，全在这里。
+//
+// 两个调用点：真发（`generateText`）与预演（`PreviewPayload`）。抽成一处是刻意的 ——
+// 预演与真发必须是**同一段拼装**，否则"我看到的载荷"会和"实际发的"悄悄分叉
+// （`POST /outgoing` 那条老经验：预演要能当证据）。
+//
+// 第三个返回值是**材料正文**（不含抬头、不含附上的两份状态）：预演要报"这次要嚼多少字"，
+// 而那是拼装的副产品 —— 让调用方自己再拼一遍就等于开了第二个口径。
+func (s *Service) wireFor(p *prepared) (providers.Provider, providers.Request, string, error) {
+	// 材料：消息级 = 这段对话正文；合并级 = 各段已有梗概（带轻抬头），外面套一句"这不是对话"。
+	material := ""
+	header := materialHeader
+	if len(p.span.Sources) > 0 {
+		material = mergeMaterial(p.span.Sources, messageIdxs(p.span.Messages))
+		header = mergeHeader
+	} else {
+		material = materialOf(p.span.Messages)
+	}
+	if strings.TrimSpace(material) == "" {
+		// **材料是空的就别发**（整段都是 `<state>` 块时就是这样）。
+		// 注意判的是**正文**（不含下面附的那份状态）—— 状态不是"可压的内容"。
+		return providers.Provider{}, providers.Request{}, "",
+			invalid("这一段剔掉 <state> 之后没有正文可压（整段都是状态块）")
+	}
+	wire := providers.FromConfig(p.channel)
+	// 与 chat.go Accept 同一条查表：有行且 api=="openai-responses" ⇒ 走 /responses，否则 chat 缺省。
+	wire.Protocol = providers.ResolveProtocol(s.Store.ModelRoute, p.channel.ID, p.model)
+	return wire, providers.Request{
+		Model: p.model,
+		Messages: []providers.ChatMessage{
+			{Role: "system", Content: p.template},
+			{Role: "user", Content: header + withStatePair(material, p.stateBefore, p.stateSection)},
+		},
+		// 骑**同一个会话 id**（网关按它路由、缓存按前缀算；缺了会被上游拒）
+		SessionID: p.session.ID,
+		// 一次性的子调用：不写提示词缓存（照 Pi：Avoid cache writes for one-off summaries）
+		CacheRetention: providers.CacheNone,
+	}, material, nil
 }
 
 // call：真调一次 + 过五条验证 + 落库。

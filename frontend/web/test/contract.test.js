@@ -1034,3 +1034,25 @@ test("外壳色：index.html 与 PWA manifest 跟暗色主题的底色一致", (
     assert.equal(m[1].toLowerCase(), want, `PWA manifest 的 ${key} 与暗色主题底色对不上`);
   }
 });
+
+// —— 压缩载荷预演（右栏「看载荷」）——
+// 这条链是"四处各写一遍"的典型：按钮 → emit → App 的 @ 监听 → api 方法 → 渲染。
+// 少接一环**不会报错**，只是按钮点了没反应（或点了报 undefined）—— 2026-10-28 之前
+// 就踩过同类（`sessions-changed` 挂错了事件，刷的是会话左栏不是模型下拉）。
+// 所以这里不测行为、只钉"四处都还在、并且名字逐个对得上"。
+test("压缩载荷预演：按钮 / 事件 / App 监听 / 接口四处都接着", () => {
+  const bar = readFileSync(join(SRC, "components", "PayloadBar.vue"), "utf8");
+  assert.match(bar, /"compact-payload"/, "PayloadBar 的 defineEmits 里没有 compact-payload");
+  assert.match(bar, /@click="previewCompact"/, "压缩面板上没有「看载荷」按钮");
+  assert.match(bar, /emit\("compact-payload"/, "按钮没有 emit 出 compact-payload");
+  assert.match(bar, /setCompactWire/, "PayloadBar 没有暴露 setCompactWire");
+
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  assert.match(app, /@compact-payload="previewCompactPayload"/, "App 没有监听 compact-payload");
+  assert.match(app, /function previewCompactPayload/, "App 里没有 previewCompactPayload");
+  assert.match(app, /api\.compactPayload\(/, "App 没有调 api.compactPayload");
+
+  const client = readFileSync(join(SRC, "api", "client.js"), "utf8");
+  assert.match(client, /compactPayload:\s*\(id, blocks\)/, "api 里没有 compactPayload");
+  assert.match(client, /\/compact\/payload/, "api 打错了路径（该是 /compact/payload）");
+});

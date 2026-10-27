@@ -835,6 +835,7 @@ async function startDraft() {
   fillAgentSelect();
   payloadbarRef.value?.setWire(null);
   payloadbarRef.value?.setTables({});
+  payloadbarRef.value?.setCompactWire(null); // 上一发的压缩载荷不许挂在别的会话上
   refreshStatusline("idle");
   refreshSessionsBar();
   refreshRerolls();
@@ -889,6 +890,8 @@ async function enterSession(id) {
   } else {
     payloadbarRef.value?.setWire(null); // 别把上一条会话的载荷挂在空会话上
   }
+  // 压缩那发的载荷同理：换会话就清掉（那是**某一次**压缩的账，不属于"当前"）
+  payloadbarRef.value?.setCompactWire(null);
   // 这一轮还在跑？（刷新页面、切走又回来）—— status 是权威：把合成的流气泡与轮询接回来。
   // reply 落库前消息列里本来就没有它，不接的话界面装 idle、发送才知道 409。
   api.status(id).then((st) => {
@@ -1211,6 +1214,23 @@ function refreshPreview() {
   if (!v.trim() || v.startsWith("/")) return;
   if (draft ? !draftId : !sessionID) return;
   previewPayload(v);
+}
+// previewCompactPayload：压缩那发**真会发出去什么**（右栏「看载荷」按钮）。
+//
+// 只算不发：后端与真压走同一段拼装（同一个 `wireFor`，合同测试逐字节钉着），
+// 所以这里拿到的就是那一发请求本身 —— 与载荷 tab 同一套渲染器能画。
+// 草稿态没有会话 ⇒ 没得压（后端那条口是会话域的），直接说清。
+async function previewCompactPayload(n) {
+  if (draft || !sessionID) {
+    toast("这是新对话：先发一句话再预览压缩", "error");
+    return;
+  }
+  try {
+    payloadbarRef.value?.setCompactWire(await api.compactPayload(sessionID, n ?? null));
+  } catch (err) {
+    // 400 多半是"这会儿没得压"（凑不满块 / 能力关着）—— 原话照转，别自己编一句
+    toast(`压缩载荷预演失败：${err.message}`, "error");
+  }
 }
 function onComposerInput(v) {
   liftOverlays();
@@ -1544,6 +1564,7 @@ onUnmounted(() => {
         :default-blocks="compactDefault"
         @toggle-right="toggleRight"
         @compact="(n) => compactNow(n ?? undefined)"
+        @compact-payload="previewCompactPayload"
         @tab="onPayloadTab"
       />
       <UserView

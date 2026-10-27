@@ -150,6 +150,48 @@ func (s *Server) compactPreview(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
+// compactPayload：`POST /sessions/{session_id}/compact/payload` —— **这一发压缩真会发出去什么**。
+//
+// 与 `.../compact/preview` 的分工：那条答"压哪儿"（纯算区间，不读能力配置、不选渠道）；
+// 这条答"**发什么**"（与真压同一段 `prepare` + 同一个 `wireFor` ⇒ 预演到的就是真发的那一发）。
+// 回的是完整请求：method / url / 头（密钥打码）/ 体 —— 与 `POST /outgoing` 同一个 `LastPayload` 形状，
+// 于是界面里那套"分块视图"直接能画。
+//
+// 只算不动：不联网、不落库、不挂号（与 deletion-preview / outgoing 同一条规矩）。
+// 两种给法都收 —— 它俩都只是"选哪一段"。
+func (s *Server) compactPayload(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	var req CompactReq
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	// 两种给法同时出现 ⇒ 说不清要压哪儿（与 `compactSession` 同一口径，连文案都一样）
+	if req.Blocks != nil && (req.BeginIdx != nil || req.EndIdx != nil) {
+		writeError(w, http.StatusBadRequest, "invalid", "blocks 与 begin_idx/end_idx 只能给一种")
+		return
+	}
+	request := compact.Request{}
+	switch {
+	case req.BeginIdx != nil || req.EndIdx != nil:
+		if req.BeginIdx == nil || req.EndIdx == nil {
+			writeError(w, http.StatusBadRequest, "invalid", "按区间压要两端都给：begin_idx + end_idx")
+			return
+		}
+		request.BeginIdx, request.EndIdx = *req.BeginIdx, *req.EndIdx
+	case req.Blocks != nil:
+		request.Blocks = *req.Blocks
+	}
+	preview, err := s.compact.PreviewPayload(*session, request)
+	if err != nil {
+		writeCompactError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, preview)
+}
+
 // writeCompactError：压缩那一路的失败 → 固定的错误体（客户端按 `code` 分支）。
 func writeCompactError(w http.ResponseWriter, err error) {
 	var compactError *compact.Error

@@ -151,6 +151,8 @@ func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *ch
 	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/compact", s.compactSession)
 	// 压缩预览：**只算不动**（调同一套 strategySpan；算完压哪段、压完树长什么样）
 	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/compact/preview", s.compactPreview)
+	// 压缩载荷预演：**这一发真会发出去什么**（只算不动；与真压同一段拼装）
+	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/compact/payload", s.compactPayload)
 	// 重摇：**两个平行家族**（候选只在内存里；见 reroll_api.go）
 	// 消息级：把尾条那条 assistant 回复重新摇几版，挑一版定下来
 	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/reroll-message", s.rerollMessageEnter)
