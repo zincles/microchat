@@ -264,7 +264,7 @@ onUnmounted(() => document.removeEventListener("keydown", onKey));
             </template>
             <h3>外观</h3>
             <label class="field"><span>主题</span><select v-model="theme">
-              <option value="deepseek">DeepSeek（暗，默认）</option>
+              <option value="graphite">石墨（暗，默认）</option>
               <option value="breeze-dark">Breeze Dark（暗）</option>
               <option value="midnight">深夜蓝</option>
               <option value="wine">酒红</option>

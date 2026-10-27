@@ -1,5 +1,22 @@
-/* microchat web —— Telegram 风（语义色 tokens 见 assets/theme.css；组件只用 --tg-*）。
- * 气泡对话 + 分组列表 + 圆角按钮：照 TG 安卓客户端的观感手写，无 UI 框架。 */
+/* microchat web —— 语义色 tokens 见 assets/theme.css（组件只用 --tg-* / --line / --hover / --shadow-*）。
+ * 观感基线 2026-10-28 换过一次：早年是「照 TG 安卓客户端手写」（饱和蓝 + 色卡按钮 + 大光晕），
+ * 现在是**中性灰阶 + 发丝分隔 + 无边框按钮**（参考 OpenWebUI）。下面注释里还留着不少"TG 味"的
+ * 历史说明 —— 讲的是**形状**（气泡/分组列表），配色相关的以 theme.css 为准。 */
+
+/* —— 全局细节三件：文字渲染、选中色、滚动条 ——
+ * 三样都是"不写就吃浏览器默认"的东西，而默认值恰恰是最显廉价的那一档：
+ * 系统滚动条在 Windows/Linux 上是一根带箭头的粗灰条，选中色是浏览器的默认蓝。
+ * 形状（宽度）写死，颜色一律从 --tg-* 派生 ⇒ 深浅两套自动对。 */
+body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+::selection { background: color-mix(in srgb, var(--tg-button) 32%, transparent); color: var(--tg-text); }
+* { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--tg-text) 22%, transparent) transparent; }
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: transparent; }
+/* border + background-clip 是给拇指"减重"的老技巧：靠透明边框把 9px 缩成视觉上的 5px，
+ * 又不影响可点击区域。 */
+::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--tg-text) 16%, transparent); border: 2px solid transparent; background-clip: content-box; border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--tg-text) 28%, transparent); background-clip: content-box; }
+::-webkit-scrollbar-corner { background: transparent; }
 
 /* —— 输入框统一基线（TG 味 = 无边框底色块 + focus 下蓝线；select 自绘箭头 ▾） —— */
 input:not([type="checkbox"]):not([type="radio"]), select, textarea {
@@ -8,8 +25,8 @@ input:not([type="checkbox"]):not([type="radio"]), select, textarea {
   padding: 0.45em 0.6em; font: inherit; box-sizing: border-box;
   outline: none; transition: border-color 150ms ease-out, background 150ms ease-out;
 }
-input:not([type="checkbox"]):not([type="radio"]):hover, select:hover, textarea:hover { background-color: rgb(255 255 255 / 4%); }
-input:not([type="checkbox"]):not([type="radio"]):focus, select:focus, textarea:focus { border-bottom-color: var(--tg-link); background-color: rgb(255 255 255 / 6%); }
+input:not([type="checkbox"]):not([type="radio"]):hover, select:hover, textarea:hover { background-color: color-mix(in srgb, var(--tg-text) 4%, transparent); }
+input:not([type="checkbox"]):not([type="radio"]):focus, select:focus, textarea:focus { border-bottom-color: var(--tg-link); background-color: color-mix(in srgb, var(--tg-text) 6%, transparent); }
 input[type="number"] { text-align: right; -moz-appearance: textfield; }
 /* 复选框：跟主题走（accent-color 染原生勾选框：勾/点用 TG 蓝，底跟系统）。 */
 input[type="checkbox"], input[type="radio"] { accent-color: var(--tg-link); width: 1.1em; height: 1.1em; cursor: pointer; }
@@ -40,7 +57,9 @@ body::before { content: ""; position: fixed; inset: 0; z-index: 0; pointer-event
 /* 顶栏（2026-10-14 用户定，去壳版）：**透明**（底色与外框线都撤了，体感更像浮动抬头；
  * 背景图/纯底都透出来）—— 字压在图上要看得清，给一层同状态行那样的柔影。 */
 header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; color: var(--tg-hint); background: none;
-  text-shadow: 0 1px 2px rgb(0 0 0 / 85%), 0 1px 10px rgb(0 0 0 / 55%); }
+  /* 浮字柔影：影子的颜色取**底色**而不是黑色 —— 深色主题＝暗影、浅色主题＝亮晕，
+ * 两套都能把字从任何背景图里托出来。写死黑色那版在浅色主题里是给深色字加黑边（糊）。 */
+  text-shadow: 0 1px 2px color-mix(in srgb, var(--tg-bg) 85%, transparent), 0 1px 10px color-mix(in srgb, var(--tg-bg) 55%, transparent); }
 /* 顶栏左上角那枚"当前模型"：**静默下拉**（2026-10-14 用户定：没有按钮轮廓，只有字）——
  * 胶囊底、边框、自绘箭头全撤；点一下照样弹原生选项。窄屏可收缩省略（max-width 半幅）。 */
 .flat-select { flex: 0 1 auto; min-width: 0; max-width: 50%; background: none; background-image: none; border: none; padding: 0.1em 0; font: inherit; line-height: 1.3; color: var(--tg-text); cursor: pointer; text-overflow: ellipsis; }
@@ -66,16 +85,16 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
  * （同一 id 永远同一个色，纯计算无存储）；点开 = 选人浮板。 */
 .agent-btn { flex: none; width: 1.95em; height: 1.95em; padding: 0; border: none; border-radius: 50%; cursor: pointer;
   display: flex; align-items: center; justify-content: center; color: #fff; font-size: 0.85em; font-weight: 600;
-  box-shadow: 0 2px 8px rgb(0 0 0 / 35%); }
+  box-shadow: var(--shadow-1); }
 .agent-btn:hover { filter: brightness(1.12); }
 /* 菜单：贴着头像往下掉（--tg-float 浮板，与命令面板同族）；背后一层透明遮罩，点哪儿都收。 */
 .agent-menu-backdrop { position: fixed; inset: 0; z-index: 1; }
 .agent-menu { position: absolute; z-index: 2; top: calc(100% + 0.35em); left: 1em; min-width: 11em; max-width: 20em;
   max-height: 60vh; overflow-y: auto; overscroll-behavior: contain;
-  background: var(--tg-float); border-radius: var(--r-shell); padding: 0.35em; box-shadow: 0 10px 30px rgb(0 0 0 / 45%); }
+  background: var(--tg-float); border-radius: var(--r-shell); padding: 0.35em; box-shadow: var(--shadow-3); }
 .agent-item { display: flex; align-items: center; gap: 0.55em; width: 100%; box-sizing: border-box; text-align: left;
   background: none; border: none; border-radius: var(--r-btn); padding: 0.3em 0.55em; color: var(--tg-text); cursor: pointer; font: inherit; line-height: 1.3; }
-.agent-item:hover { background: rgb(255 255 255 / 6%); }
+.agent-item:hover { background: color-mix(in srgb, var(--tg-text) 6%, transparent); }
 .agent-item .agent-dot { flex: none; width: 1.6em; height: 1.6em; border-radius: 50%; display: flex; align-items: center;
   justify-content: center; color: #fff; font-size: 0.8em; font-weight: 600; }
 .agent-item .agent-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -83,7 +102,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .agent-empty { margin: 0.4em 0.6em; color: var(--tg-hint); font-size: 0.9em; }
 /* Toast 通知（右上堆叠，TG 安卓 toast 味：深底白字圆角 + 左色条区分 Plumbing/错误）。 */
 #toasts { position: fixed; top: 4.2em; right: 0.8em; display: flex; flex-direction: column; gap: 0.5em; z-index: 50; max-width: min(22em, 80vw); }
-.toast { background: var(--tg-float); color: var(--tg-text); border-radius: var(--r-card); padding: 0.6em 0.9em 0.6em 0.8em; font-size: 0.88em; box-shadow: 0 8px 28px rgb(0 0 0 / 45%); border-left: 3px solid var(--tg-link); animation: toast-in 180ms ease-out; word-break: break-word; }
+.toast { background: var(--tg-float); color: var(--tg-text); border-radius: var(--r-card); padding: 0.6em 0.9em 0.6em 0.8em; font-size: 0.88em; box-shadow: var(--shadow-3); border-left: 3px solid var(--tg-link); animation: toast-in 180ms ease-out; word-break: break-word; }
 .toast.error { border-left-color: var(--tg-destructive); }
 .toast.ok { border-left-color: var(--tg-button); }
 @keyframes toast-in { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
@@ -103,7 +122,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
   background: var(--tg-float); color: var(--tg-text);
   border: 1px solid var(--line); border-left: 3px solid var(--tg-button);
   border-radius: var(--r-card); padding: 0.5em 0.7em 0.5em 0.85em;
-  font-size: 0.88em; box-shadow: 0 8px 28px rgb(0 0 0 / 45%);
+  font-size: 0.88em; box-shadow: var(--shadow-3);
   animation: toast-in 180ms ease-out; }
 #update-bar .ub-text { flex: 1; min-width: 0; word-break: break-word; }
 #update-bar .ub-go { flex: none; background: var(--tg-button); color: var(--tg-button-text);
@@ -158,7 +177,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .pv-url { color: var(--tg-link); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .pv-chip { border: 1px solid var(--line); border-radius: 4px; padding: 0 0.3em; font-size: 0.85em; color: var(--tg-hint); }
 .pv-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.45em; }
-.pv-msg { border: 1px solid var(--line); border-radius: 8px; background: rgb(255 255 255 / 3%); padding: 0.45em 0.55em; }
+.pv-msg { border: 1px solid var(--line); border-radius: 8px; background: color-mix(in srgb, var(--tg-text) 3%, transparent); padding: 0.45em 0.55em; }
 .pv-head { display: flex; align-items: center; gap: 0.4em; margin: 0 0 0.3em; width: 100%; background: none; border: none; color: inherit; font: inherit; line-height: 1.3; text-align: left; cursor: pointer; padding: 0.15em 0; -webkit-tap-highlight-color: transparent; user-select: none; }
 .pv-tw { flex: none; width: 1em; color: var(--tg-hint); }
 .pv-preview { color: var(--tg-hint); font-size: 0.9em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -180,8 +199,8 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .ctree-total { color: var(--tg-text); margin: 0.2em 0 0.5em; }
 .ctree-legend { color: var(--tg-hint); font-size: 0.85em; margin-top: 0.6em; }
 .ctree-row { position: relative; display: flex; align-items: center; gap: 0.25em; padding: 0.22em 0.2em; border-radius: 6px; overflow: hidden; }
-.ctree-row:hover { background: rgb(255 255 255 / 6%); }
-.ctree-bar { position: absolute; left: 0; top: 0; bottom: 0; background: rgb(255 255 255 / 7%); border-radius: 6px; pointer-events: none; }
+.ctree-row:hover { background: color-mix(in srgb, var(--tg-text) 6%, transparent); }
+.ctree-bar { position: absolute; left: 0; top: 0; bottom: 0; background: color-mix(in srgb, var(--tg-text) 7%, transparent); border-radius: 6px; pointer-events: none; }
 .ctree-row.sum .ctree-bar { background: color-mix(in srgb, var(--tg-link) 22%, transparent); }
 .ctree-row.used .ctree-label { color: var(--tg-link); }
 .ctree-tw { flex: none; width: 1.2em; background: none; border: none; color: var(--tg-hint); cursor: pointer; padding: 0; font-size: 0.9em; }
@@ -221,7 +240,7 @@ html[data-composer="solid"] .messages-inner { padding-bottom: calc(var(--compose
 /* 断点 700/1100 与 App.vue 的 BP 常量同源，改一处要改两处。 */
 @media (max-width: 1100px) {
   /* 抽屉宽度与左栏（≤700 段）**同一把尺**：两扇一样的宽（340 也正好是桌面右栏宽）。 */
-  #payload-bar { position: fixed; inset: 0 0 0 auto; z-index: 16; width: min(86vw, 340px); max-width: none; max-height: none; transform: none; opacity: 1; visibility: visible; transition: transform 200ms ease-out, visibility 0s linear 200ms; box-shadow: -10px 0 30px rgb(0 0 0 / 35%); }
+  #payload-bar { position: fixed; inset: 0 0 0 auto; z-index: 16; width: min(86vw, 340px); max-width: none; max-height: none; transform: none; opacity: 1; visibility: visible; transition: transform 200ms ease-out, visibility 0s linear 200ms; box-shadow: var(--shadow-right); }
   #payload-bar.collapsed { transform: translateX(102%); max-width: none; opacity: 1; visibility: hidden; }
   #scrim-right { display: block; position: fixed; inset: 0; z-index: 15; background: rgb(0 0 0 / 45%); opacity: 0; pointer-events: none; transition: opacity 180ms ease-out; }
   #payload-bar:not(.collapsed) ~ #scrim-right { opacity: 1; pointer-events: auto; }
@@ -229,7 +248,7 @@ html[data-composer="solid"] .messages-inner { padding-bottom: calc(var(--compose
 /* 手机（≤700）：左会话栏改"抽屉"（不再是顶部 30vh 死条）—— [◧] 调出/收起，选中会话自动收。 */
 /* 断点 700/1100 与 App.vue 的 BP 常量同源，改一处要改两处。 */
 @media (max-width: 700px) {
-  #sessions-bar { position: fixed; inset: 0 auto 0 0; z-index: 16; width: min(86vw, 340px); max-height: none; border-right: 1px solid var(--line); transform: none; opacity: 1; visibility: visible; transition: transform 200ms ease-out, visibility 0s linear 200ms; box-shadow: 10px 0 30px rgb(0 0 0 / 35%); }
+  #sessions-bar { position: fixed; inset: 0 auto 0 0; z-index: 16; width: min(86vw, 340px); max-height: none; border-right: 1px solid var(--line); transform: none; opacity: 1; visibility: visible; transition: transform 200ms ease-out, visibility 0s linear 200ms; box-shadow: var(--shadow-left); }
   #sessions-bar.collapsed { transform: translateX(-102%); max-width: none; opacity: 1; visibility: hidden; }
   #scrim-left { display: block; position: fixed; inset: 0; z-index: 15; background: rgb(0 0 0 / 45%); opacity: 0; pointer-events: none; transition: opacity 180ms ease-out; }
   #sessions-bar:not(.collapsed) ~ #scrim-left { opacity: 1; pointer-events: auto; }
@@ -247,14 +266,14 @@ html[data-composer="solid"] .messages-inner { padding-bottom: calc(var(--compose
 /* 新对话（DS 味，2026-10-10）：整行大按钮、比栏面亮一档 —— 左栏最显眼的那件东西。 */
 #session-new { display: flex; align-items: center; justify-content: center; gap: 0.45em;
   width: calc(100% - 1.2em); margin: 0.35em 0.6em 0.5em; padding: 0.72em 0.9em;
-  border: none; border-radius: var(--r-btn); background: rgb(255 255 255 / 8%);
+  border: none; border-radius: var(--r-btn); background: color-mix(in srgb, var(--tg-text) 8%, transparent);
   color: var(--tg-text); font-size: 0.95em; font-weight: 500; cursor: pointer; }
-#session-new:hover { background: rgb(255 255 255 / 13%); }
+#session-new:hover { background: color-mix(in srgb, var(--tg-text) 13%, transparent); }
 #session-new .plus { font-weight: 400; opacity: 0.9; }
 /* 右栏双 tab（载荷/状态）：标题行变 tab 条，选中亮。 */
 .bar-head.bar-tabs { flex: none; justify-content: flex-start; gap: 0.2em; padding: 0.35em 0.4em 0.25em; }
 .bar-head.bar-tabs .tab { flex: 1; background: none; border: none; border-radius: 7px; color: var(--tg-hint); padding: 0.28em; font-size: 1em; line-height: 1.25; }
-.bar-head.bar-tabs .tab.sel { color: var(--tg-text); background: rgb(255 255 255 / 10%); }
+.bar-head.bar-tabs .tab.sel { color: var(--tg-text); background: color-mix(in srgb, var(--tg-text) 10%, transparent); }
 /* 状态表：表名小标题 + 键值行（键暗、值亮）。滚动与 tabs 常驻见上面 #payload-pane 那组规则。 */
 #state-view .state-table { margin: 0 0 0.8em; }
 #state-view h4 { color: var(--tg-link); font-size: 0.78em; font-weight: normal; margin: 0.6em 0 0.2em; }
@@ -269,10 +288,10 @@ html[data-composer="solid"] .messages-inner { padding-bottom: calc(var(--compose
 /* 左栏底的图标（SVG 替 emoji）：尺寸跟随字号、垂直居中由 flex 管。 */
 .foot-btn .fb-icon { display: inline-flex; }
 .foot-btn .fb-icon svg { width: 1.1em; height: 1.1em; }
-.foot-btn:hover { background: rgb(255 255 255 / 6%); color: var(--tg-text); }
+.foot-btn:hover { background: color-mix(in srgb, var(--tg-text) 6%, transparent); color: var(--tg-text); }
 .session-item { display: flex; gap: 0.5em; align-items: center; padding: 0.38em 0.7em; border-radius: var(--r-card); cursor: pointer; white-space: nowrap; overflow: hidden; color: var(--tg-text); line-height: 1.3; }
-.session-item:hover { background: rgb(255 255 255 / 6%); }
-.session-item.sel { background: rgb(255 255 255 / 10%); color: var(--tg-text); }
+.session-item:hover { background: color-mix(in srgb, var(--tg-text) 6%, transparent); }
+.session-item.sel { background: color-mix(in srgb, var(--tg-text) 10%, transparent); color: var(--tg-text); }
 .session-item .title { flex: 1; overflow: hidden; text-overflow: ellipsis; }
 .session-item .close { background: none; border: none; color: var(--tg-hint); padding: 0 0.3em; cursor: pointer; border-radius: 4px; }
 .session-item .close:hover { color: var(--tg-destructive); }
@@ -292,8 +311,15 @@ html[data-composer="solid"] .messages-inner { padding-bottom: calc(var(--compose
  * 从前这里还写着 `max-width: 70%; min-width: 9em;` —— 前者被 `.msg-wrap .msg { max-width: 100% }`
  * 按特异性恒压（永不生效的死值），后者与父级重复（`.msg` 被 stretch 撑满）。删掉是对的，
  * 别再往 `.msg` 上加宽高：那会让"气泡多宽"有两个来源。 */
-.msg.user { align-self: flex-end; background: var(--tg-button); color: var(--tg-button-text); border-bottom-right-radius: 4px;
-  padding: 0.45em 0.7em; border-radius: var(--r-card); }
+/* 用户气泡（2026-10-28 改中性灰）：从前是 `--tg-button` 亮蓝底 + 白字 —— 那是**即时通讯**
+ * 的形状，不是 AI 对话的形状。参考 OpenWebUI：用户那句是一枚中性灰气泡（`dark:bg-gray-850`），
+ * 颜色留给"动作"（发送钮、链接、开关），不拿来当聊天气泡。
+ * 底色从文字色派生 ⇒ 深色里是浅一档的灰、浅色里是深一档的灰，两套主题都不用各写一遍。
+ * 圆角也放大一档（气泡比控件圆，才不像一块色卡）。
+ * ⚠ 从前这里还有一句 `border-bottom-right-radius: 4px`（TG 那种小尾巴）写在 `border-radius`
+ * **前面** —— 简写会把它重置掉，从来没生效过（死值，已删）。 */
+.msg.user { align-self: flex-end; background: color-mix(in srgb, var(--tg-text) 10%, transparent); color: var(--tg-text);
+  padding: 0.45em 0.7em; border-radius: var(--r-bubble); }
 .msg.user .who, .msg.user .edit-btn { color: inherit; opacity: 0.75; }
 .msg.assistant { align-self: flex-start; }
 .msg .msg-head { display: flex; justify-content: space-between; align-items: center; gap: 0.6em; margin-bottom: 0.15em; }
@@ -402,7 +428,7 @@ html[data-composer="solid"] .messages-inner { padding-bottom: calc(var(--compose
 #composer { position: absolute; bottom: 0; left: 0; right: 0; display: flex; gap: 0.5em; align-items: flex-end; background: none; z-index: 5;
   padding: 0.6em 0.6em calc(0.6em + env(safe-area-inset-bottom, 0px)); }
 /* 输入框独立浮动卡 + 发送钮独立圆钮：逻辑相连、显示分开（TG 底栏就是输入框配外面一颗钮）。 */
-#input { flex: 1; background: color-mix(in srgb, var(--tg-secondary-bg) 88%, transparent); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); color: var(--tg-text); border: 1px solid var(--line); border-radius: 20px; padding: 0.6em 1.1em; font: inherit; resize: none; line-height: 1.5; max-height: calc(1.5em * 6 + 1.2em); overflow-y: auto; box-shadow: 0 6px 24px rgb(0 0 0 / 32%); }
+#input { flex: 1; background: color-mix(in srgb, var(--tg-secondary-bg) 88%, transparent); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); color: var(--tg-text); border: 1px solid var(--line); border-radius: 20px; padding: 0.6em 1.1em; font: inherit; resize: none; line-height: 1.5; max-height: calc(1.5em * 6 + 1.2em); overflow-y: auto; box-shadow: var(--shadow-2); }
 #input:focus { outline: none; border-color: var(--tg-link); }
 /* —— 滚动隐藏上下栏（触屏；2026-10-17 用户定，默认开）——
  * JS（App 的 onMessagesScroll）只写根节点上两个 px 变量，这里只做位移：
@@ -506,7 +532,7 @@ html[data-composer="solid"] #composer .statusline.over { color: var(--tg-destruc
    * （2026-10-14 顶栏去壳一并统一；over 态仍是警告红）。 */
   color: color-mix(in srgb, var(--tg-hint) 75%, var(--tg-text));
   /* 悬浮小字压在背景图上要读得清：**双层柔影**（近处实、远处散）—— 2026-10-14 顶栏去壳后一并统一。 */
-  text-shadow: 0 1px 2px rgb(0 0 0 / 85%), 0 1px 10px rgb(0 0 0 / 55%); }
+  text-shadow: 0 1px 2px color-mix(in srgb, var(--tg-bg) 85%, transparent), 0 1px 10px color-mix(in srgb, var(--tg-bg) 55%, transparent); }
 .statusline.over { color: var(--tg-destructive); }
 /* ⚠ 分割线**只给实心形态**（2026-10-20 用户点名："它和底部输入栏之间有分割线比较好"）：
  * 浮空形态里这行是**飘在消息上的一行字**（不是栏的一部分），给它画条线只是一条悬空的横杠，
@@ -525,14 +551,15 @@ html[data-composer="solid"] #composer .statusline.over { color: var(--tg-destruc
   background: color-mix(in srgb, var(--tg-secondary-bg) 94%, transparent);
   -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
   border: 1px solid var(--line); border-radius: 18px; padding: 1.5em 1.4em 1.1em;
-  box-shadow: 0 18px 60px rgb(0 0 0 / 45%);
+  box-shadow: var(--shadow-4);
   animation: gate-in 320ms ease-out; }
 @keyframes gate-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .gate-box { animation: none; } }
 .gate-brand { display: flex; align-items: center; gap: 0.75em; margin-bottom: 1.1em; }
 .gate-brand h1 { margin: 0; font-size: 1.25em; letter-spacing: 0.01em; }
 .gate-sub { margin: 0.15em 0 0; color: var(--tg-hint); font-size: 0.82em; }
-.gate-logo { flex: none; border-radius: 13px; box-shadow: 0 6px 18px color-mix(in srgb, var(--tg-button) 35%, transparent); }
+/* 门板 logo 那圈彩色光晕：从 35% 收到 22% 并加负扩散（同 --shadow-* 的道理 —— 大模糊高浓度就是糊）。 */
+.gate-logo { flex: none; border-radius: 13px; box-shadow: 0 4px 14px -4px color-mix(in srgb, var(--tg-button) 22%, transparent); }
 /* 卡窄 ⇒ 门板里的 field 改竖排（标签在上、输入在下），比 140px 标签列好看也好按。 */
 #connect-gate .field { grid-template-columns: 1fr; gap: 0.28em; margin-bottom: 0.7em; }
 #connect-gate .field > span { color: var(--tg-hint); font-size: 0.85em; }
@@ -544,10 +571,10 @@ html[data-composer="solid"] #composer .statusline.over { color: var(--tg-destruc
 #session-list .empty { padding: 1.6em 0.8em; text-align: center; color: var(--tg-hint); font-size: 0.9em; line-height: 1.9; }
 #session-list .empty .sub { font-size: 0.9em; opacity: 0.8; }
 .gate-box .hint { color: var(--tg-hint); font-size: 0.8em; margin: 0.55em 0 0; text-align: center; }
-.gate-box .hint code { background: rgb(255 255 255 / 8%); border-radius: 4px; padding: 0 0.25em; }
+.gate-box .hint code { background: color-mix(in srgb, var(--tg-text) 8%, transparent); border-radius: 4px; padding: 0 0.25em; }
 /* 后台任务行：状态行头上再叠一行（绝对定位 ⇒ 不占布局；0 个任务时整行不渲染）。 */
-.taskline { position: absolute; left: 0; right: 0; bottom: 100%; margin-bottom: 1.75em; text-align: center; font-size: 0.72em; color: color-mix(in srgb, var(--tg-hint) 75%, var(--tg-text)); text-shadow: 0 1px 2px rgb(0 0 0 / 85%), 0 1px 10px rgb(0 0 0 / 55%); }
-#composer button { background: var(--tg-button); color: var(--tg-button-text); border: none; border-radius: 50%; width: 2.6em; height: 2.6em; padding: 0; cursor: pointer; align-self: flex-end; display: flex; align-items: center; justify-content: center; flex: none; box-shadow: 0 2px 10px rgb(0 0 0 / 30%); }
+.taskline { position: absolute; left: 0; right: 0; bottom: 100%; margin-bottom: 1.75em; text-align: center; font-size: 0.72em; color: color-mix(in srgb, var(--tg-hint) 75%, var(--tg-text)); text-shadow: 0 1px 2px color-mix(in srgb, var(--tg-bg) 85%, transparent), 0 1px 10px color-mix(in srgb, var(--tg-bg) 55%, transparent); }
+#composer button { background: var(--tg-button); color: var(--tg-button-text); border: none; border-radius: 50%; width: 2.6em; height: 2.6em; padding: 0; cursor: pointer; align-self: flex-end; display: flex; align-items: center; justify-content: center; flex: none; box-shadow: var(--shadow-1); }
 #composer button:hover { filter: brightness(1.1); }
 #composer button svg { display: block; }
 /* 停止态：红底（生成中点即停，与发送蓝钮区分）。 */
@@ -567,7 +594,7 @@ html[data-composer="solid"] #composer .statusline.over { color: var(--tg-destruc
 .msg .typing span:nth-child(3) { animation-delay: 0.3s; }
 @keyframes typing-pulse { 0%, 60%, 100% { opacity: 0.25; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-0.18em); } }
 @media (prefers-reduced-motion: reduce) { .msg .typing span { animation: none; opacity: 0.6; } }
-.palette, .picker { position: fixed; left: 50%; transform: translateX(-50%); bottom: 5em; background: var(--tg-float); border: none; border-radius: var(--r-shell); padding: 0.5em; width: min(649px, 90%); margin-left: -40px; z-index: 10; box-sizing: border-box; box-shadow: 0 8px 30px rgb(0 0 0 / 40%);
+.palette, .picker { position: fixed; left: 50%; transform: translateX(-50%); bottom: 5em; background: var(--tg-float); border: none; border-radius: var(--r-shell); padding: 0.5em; width: min(649px, 90%); margin-left: -40px; z-index: 10; box-sizing: border-box; box-shadow: var(--shadow-3);
   /* 限高：百分比解析的是**包含块**（现在被 #app 的 transform 收编）⇒ 键盘把盒子缩矮时自动跟着缩，
    * 小屏也不会顶出视口外（实测过 617px 面板在 500px 视口里 top≈-192 的裸奔）。内容自己滚。 */
   max-height: calc(100% - 7em); overflow-y: auto; overscroll-behavior: contain; }
@@ -575,10 +602,10 @@ html[data-composer="solid"] #composer .statusline.over { color: var(--tg-destruc
 .confirm-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / 60%); z-index: 30; display: flex; align-items: center; justify-content: center; }
 /* 命令面板遮罩：透明（只吃点击关面板，不加深，面板自己 z=10 浮在上）。 */
 .palette-backdrop { position: fixed; inset: 0; z-index: 9; }
-.confirm { background: var(--tg-float); border: none; border-radius: var(--r-shell); padding: 1em 1.2em; max-width: 480px; width: 90%; box-shadow: 0 12px 40px rgb(0 0 0 / 50%); }
+.confirm { background: var(--tg-float); border: none; border-radius: var(--r-shell); padding: 1em 1.2em; max-width: 480px; width: 90%; box-shadow: var(--shadow-4); }
 .confirm-btns { display: flex; gap: 0.6em; justify-content: flex-end; margin-top: 0.8em; }
 .palette-item, .picker-item { padding: 0.55em 0.8em; cursor: pointer; border-radius: var(--r-btn); }
-.palette-item:hover, .picker-item:hover { background: rgb(255 255 255 / 6%); }
+.palette-item:hover, .picker-item:hover { background: color-mix(in srgb, var(--tg-text) 6%, transparent); }
 .palette-item.sel, .picker-item.sel { color: var(--tg-link); }
 /* 命令面板：名左 + 说明右（说明暗色，选中跟名同色）。 */
 .palette-item { display: flex; gap: 0.8em; align-items: baseline; }
@@ -588,14 +615,14 @@ html[data-composer="solid"] #composer .statusline.over { color: var(--tg-destruc
 /* 设置 modal（分组卡片，不是左右分栏 —— TG 设置页就是一组一组的圆角块）。 */
 .hidden { display: none; }
 .modal { position: fixed; inset: 0; background: rgb(0 0 0 / 60%); z-index: 20; display: flex; align-items: center; justify-content: center; }
-.modal-box { background: var(--tg-bg); border: none; border-radius: var(--r-shell); width: 94vw; max-width: 960px; height: 92vh; overflow-y: auto; overscroll-behavior: contain; padding: 1em 1.2em; box-sizing: border-box; box-shadow: 0 12px 40px rgb(0 0 0 / 45%); }
+.modal-box { background: var(--tg-bg); border: none; border-radius: var(--r-shell); width: 94vw; max-width: 960px; height: 92vh; overflow-y: auto; overscroll-behavior: contain; padding: 1em 1.2em; box-sizing: border-box; box-shadow: var(--shadow-4); }
 /* 紧凑对话框（会话设置这种小表单）：宽够用、高随内容 —— 别用 92vh 的空盒子。 */
 .modal-box.compact { width: min(560px, 94vw); max-width: 560px; height: auto; max-height: 88vh; }
 .modal-head { display: flex; justify-content: space-between; align-items: center; font-size: 1.1em; margin-bottom: 0.5em; }
 .modal-head .head-btns { display: flex; gap: 0.2em; align-items: center; }
 /* 图标按钮通用（× ＋ 这种）：去边框去底色，hover 才显底 —— 原生感就这么来。 */
 .icon-btn { background: none; border: none; color: var(--tg-hint); padding: 0.35em 0.55em; border-radius: 8px; cursor: pointer; font-size: 1.1em; line-height: 1; }
-.icon-btn:hover { color: var(--tg-text); background: rgb(255 255 255 / 8%); }
+.icon-btn:hover { color: var(--tg-text); background: color-mix(in srgb, var(--tg-text) 8%, transparent); }
 /* —— 设置视图（与对话同级；左栏右边那一整块，不是弹窗）—— */
 /* 一行式工具栏：去掉"悬浮卡"造型与"设置"标题（全屏页不需要它俩，tabs 自己就是路标）。 */
 #settings-view, #user-view { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 0.5em 0.6em 0; }
@@ -623,7 +650,7 @@ html[data-composer="solid"] #composer .statusline.over { color: var(--tg-destruc
 .settings-nav .tab { flex: 1; text-align: center; background: none; border: none; border-radius: 8px; color: var(--tg-hint); padding: 0.28em 0.3em; font-size: 0.9em; line-height: 1.25; position: relative; z-index: 1; transition: color 150ms ease-out; }
 .settings-nav .tab.sel { color: var(--tg-text); }
 /* 选中块：绝对定位跟随（left/width 由 JS 量，150ms ease-out 滑过去）。 */
-.settings-nav .tab-thumb { position: absolute; top: 0.18em; bottom: 0.18em; border-radius: 8px; background: rgb(255 255 255 / 10%); transition: left 170ms ease-out, width 170ms ease-out; z-index: 0; }
+.settings-nav .tab-thumb { position: absolute; top: 0.18em; bottom: 0.18em; border-radius: 8px; background: color-mix(in srgb, var(--tg-text) 10%, transparent); transition: left 170ms ease-out, width 170ms ease-out; z-index: 0; }
 /* 面板淡入（切页 120ms，opacity+位移，不碰 layout）。 */
 .settings-cols .panel { animation: panel-in 140ms ease-out; }
 @keyframes panel-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
@@ -641,7 +668,7 @@ html[data-composer="solid"] #composer .statusline.over { color: var(--tg-destruc
 /* 导入卡（2026-10-17）：两种"导入"各一张 —— 卡面比面板底亮一档、自带圆角与内边距，
  * 卡里的 .field/.row 把面板那套"连体行"背景与分隔线**脱掉**（不然卡里又长出条纹，还是分不清谁是谁）。 */
 .io-cards { display: flex; flex-direction: column; gap: 0.5em; }
-.io-card { background: rgb(255 255 255 / 5%); border: 1px solid var(--line); border-radius: var(--r-card); padding: 0.55em 0.9em 0.6em; }
+.io-card { background: color-mix(in srgb, var(--tg-text) 5%, transparent); border: 1px solid var(--line); border-radius: var(--r-card); padding: 0.55em 0.9em 0.6em; }
 .io-head { display: flex; align-items: baseline; gap: 0.5em; }
 .io-head b { color: var(--tg-text); font-weight: 500; font-size: 0.95em; }
 .io-tag { font-style: normal; font-size: 0.78em; color: var(--tg-hint); border: 1px solid var(--line); border-radius: 4px; padding: 0 0.3em; }
@@ -661,22 +688,33 @@ button:focus-visible, a:focus-visible, select:focus-visible, [tabindex]:focus-vi
   outline: 2px solid color-mix(in srgb, var(--tg-link) 75%, transparent); outline-offset: 2px; }
 
 /* —— 按钮默认主题（全页兜底：裸 button 不再是浏览器灰框） ——
- * 三档：默认（底栏色卡底）/ .primary（蓝底白字，主动作）/ .danger（红字，删除）。
+ * 三档：默认（淡淡一层色，无边框）/ .primary（蓝底白字，主动作）/ .danger（红字，删除）。
  * 文字型（icon-btn/edit-btn/link-btn）与异形（#send-btn 圆钮/.tab/.session-item）各有样式，不受这条影响。 */
 /* ⚠ `font: inherit` 会连 **line-height 一起继承**（body 是 1.65，正文用的值）——
  * 按钮的行盒因此是 15×1.65 = 24.75px，比内边距加起来还高，撑出 40px 的"大按钮"。
  * 按钮不需要正文那种行距 ⇒ 显式压回 1.3（2026-10-27 用户：「电报风格的按钮好大啊」）。
- * 实测 40.3px → 32.0px。**改这条时别只调 padding** —— 大头在行高。 */
-button { background: var(--tg-secondary-bg); color: var(--tg-text); border: 1px solid var(--line); border-radius: var(--r-btn); padding: 0.35em 0.85em; font: inherit; line-height: 1.3; cursor: pointer; }
-button:hover { filter: brightness(1.15); }
-button:active { filter: brightness(0.95); }
-button.primary { background: var(--tg-button); border-color: transparent; color: var(--tg-button-text); }
-button.danger { background: none; border-color: transparent; color: var(--tg-destructive); }
-button.danger:hover { text-decoration: underline; filter: none; }
+ * 实测 40.3px → 32.0px。**改这条时别只调 padding** —— 大头在行高。
+ *
+ * 2026-10-28 从「色卡底 + 1px 边框」改成**淡淡一层、没有边框**：
+ *   - 旧写法 `background: var(--tg-secondary-bg)` 和它所在的那些面板（设置行、右栏）**是同一个色**
+ *     ⇒ 按钮本身其实不可见，真正让它"是个按钮"的只有那条 1px 边框。全项目 95 个 `<button>`
+ *     因此人人带一圈轮廓，这就是"电报风/廉价"的来源（像一排 TG inline keyboard）。
+ *   - 现在底色是**从文字色派生的半透明层** ⇒ 坐在任何面上都比面亮/暗一档，看得见、但没有轮廓；
+ *     浅色主题里也自动反过来（旧写法在浅色主题里同样是错的，见 theme.css 的注释）。
+ *   - 悬停/按下用**换底色**，不再用 `filter: brightness()` —— filter 会把文字和底色一起拉，
+ *     遇到深底反而越悬停越糊。 */
+button { background: var(--hover); color: var(--tg-text); border: none; border-radius: var(--r-btn); padding: 0.35em 0.85em; font: inherit; line-height: 1.3; cursor: pointer;
+  transition: background-color 120ms ease-out, color 120ms ease-out; }
+button:hover { background: color-mix(in srgb, var(--tg-text) 13%, transparent); }
+button:active { background: color-mix(in srgb, var(--tg-text) 17%, transparent); }
+button.primary { background: var(--tg-button); color: var(--tg-button-text); }
+button.primary:hover { background: color-mix(in srgb, var(--tg-button) 86%, var(--tg-text)); }
+button.danger { background: none; color: var(--tg-destructive); }
+button.danger:hover { text-decoration: underline; }
 /* 开关滑块（TG 风）：轨道 + 圆钮，150ms 位移 + 底色过渡；开态 TG 蓝。 */
-button.toggle { width: 2.6em; height: 1.5em; padding: 0; border: none; border-radius: 999px; background: rgb(255 255 255 / 15%); position: relative; flex: none; filter: none; }
+button.toggle { width: 2.6em; height: 1.5em; padding: 0; border: none; border-radius: 999px; background: color-mix(in srgb, var(--tg-text) 15%, transparent); position: relative; flex: none; filter: none; }
 button.toggle:hover { filter: brightness(1.2); }
-button.toggle .knob { position: absolute; top: 0.15em; left: 0.15em; width: 1.2em; height: 1.2em; border-radius: 50%; background: #fff; transition: transform 150ms ease-out; box-shadow: 0 1px 4px rgb(0 0 0 / 40%); }
+button.toggle .knob { position: absolute; top: 0.15em; left: 0.15em; width: 1.2em; height: 1.2em; border-radius: 50%; background: #fff; transition: transform 150ms ease-out; box-shadow: var(--shadow-1); }
 button.toggle.on { background: var(--tg-link); }
 button.toggle.on .knob { transform: translateX(1.1em); }
 @media (prefers-reduced-motion: reduce) { button.toggle .knob { transition: none; } }
@@ -690,7 +728,7 @@ button.toggle.on .knob { transform: translateX(1.1em); }
 .detail-pane .panel-head { justify-content: flex-start; gap: 0.5em; }
 /* 二级页里的说明小字（筛选器那段：举例子要用等宽体才看得清 `openai/gpt-5` 这种串）。
  * 抄门板那条 `.gate-box .hint code` 的形状 —— 同一个用途、同一种观感。 */
-.detail-pane .hint code { background: rgb(255 255 255 / 8%); border-radius: 4px; padding: 0 0.25em; font-size: 0.92em; }
+.detail-pane .hint code { background: color-mix(in srgb, var(--tg-text) 8%, transparent); border-radius: 4px; padding: 0 0.25em; font-size: 0.92em; }
 /* 能力块：fieldset 分隔三条（legend 当开关行），Model 下拉与提示词框各占一行。 */
 .ability-block { border: 1px solid var(--line); border-radius: var(--r-btn); padding: 0.35em 0.7em 0.5em; margin: 0.5em 0; }
 .ability-block legend { padding: 0 0.4em; color: var(--tg-text); display: flex; align-items: center; gap: 0.4em; }
@@ -699,7 +737,7 @@ button.toggle.on .knob { transform: translateX(1.1em); }
 .plist th { color: var(--tg-hint); font-weight: normal; font-size: 0.85em; }
 /* 可点行（进二级）：hover 高亮，被点的行 cursor 指针。 */
 .plist tr.clickable { cursor: pointer; }
-.plist tr.clickable:hover td { background: rgb(255 255 255 / 6%); }
+.plist tr.clickable:hover td { background: color-mix(in srgb, var(--tg-text) 6%, transparent); }
 .plist td.ops { white-space: normal; text-align: right; }
 /* 文字型按钮（列表操作列 + 设置里的"上传图片/清除"）：TG 风是蓝色文字，不是灰框按钮；删除是红色文字。
  * 字号/字重不另设 —— 跟父级走（与旧的 plist 版观感一致）。 */

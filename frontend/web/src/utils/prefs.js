@@ -4,7 +4,9 @@
 // 口径不变：**改完偏好刷新页面生效**（组件在装载时取一次；sharedApi 按偏好键缓存）。
 import { createApi, DEFAULT_API_URL, normalizeApiBase } from "../api/client.js";
 
-export const DEFAULT_THEME = "deepseek"; // App/SettingsModal 的主题默认（`??` 语义：null=没设过）
+// 主题默认（`??` 语义：null = 没设过）。2026-10-28 从 `deepseek` 换成 `graphite`（中性灰阶）；
+// 老的 `deepseek` 值在 theme.css 里与它**同一条规则**（别名），存过它的人不会突然变样。
+export const DEFAULT_THEME = "graphite";
 export const DEFAULT_SEND = "enter";
 
 export function previewOn() { return localStorage.getItem("mc_preview") !== "0"; }

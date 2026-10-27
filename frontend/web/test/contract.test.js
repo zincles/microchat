@@ -1000,3 +1000,43 @@ test("滚动隐藏：反向不足 slop 当抖动；上滑到顶全放回顶栏",
   assert.equal(atTop.top, 0);
   assert.equal(atTop.bottom, 0);
 });
+
+// —— 主题 id 的一致性守卫（2026-10-28 加）——
+// 主题在**两处**各写一遍：`src/utils/prefs.js` 的 DEFAULT_THEME 与 `src/assets/theme.css` 的
+// `html[data-theme="…"]` 规则，外加 `UserView.vue` 那个下拉的 option。改了一处忘了另一处**不会报错**
+// —— 页面安静地退回默认配色（换 id 时尤其容易：老 id 还在 localStorage 里，只是匹配不到任何规则）。
+// 这条测试就是把这三张表钉在一起（读文件，不引 CSS 解析器）。
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+
+const SRC = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
+
+function themeCssIds() {
+  const css = readFileSync(join(SRC, "assets", "theme.css"), "utf8");
+  return new Set([...css.matchAll(/html\[data-theme="([^"]+)"\]/g)].map((m) => m[1]));
+}
+
+test("主题：默认 id 在 theme.css 里有对应规则", () => {
+  const ids = themeCssIds();
+  assert.ok(ids.size > 0, "theme.css 里一条 html[data-theme=…] 都没有？");
+  assert.ok(ids.has(DEFAULT_THEME), `DEFAULT_THEME="${DEFAULT_THEME}" 在 theme.css 里没有对应规则，会静默退回默认配色`);
+  // 老默认值 `deepseek` 必须留作**别名**：存过它的人不该因为换默认值而变样。
+  assert.ok(ids.has("deepseek"), "deepseek 别名没了 —— 老 localStorage 里的人会退回「跟随系统」");
+});
+
+test("主题：下拉里每个可选 id 都有对应规则", () => {
+  const vue = readFileSync(join(SRC, "components", "UserView.vue"), "utf8");
+  // ⚠ 必须**只取主题那个 select** 里的 option：UserView 里还有别的下拉（输入栏形态之类），
+  // 广撒网会把 "float" 这种非主题值捞进来（第一版就是这么挂的）。
+  const sel = vue.match(/<select v-model="theme">([\s\S]*?)<\/select>/);
+  assert.ok(sel, "没找到 v-model=\"theme\" 那个下拉");
+  const chosen = [...sel[1].matchAll(/<option value="([^"]*)">/g)].map((m) => m[1]).filter((v) => v !== "");
+  assert.ok(chosen.length > 0, "没找到主题下拉的 option");
+  const ids = themeCssIds();
+  for (const id of chosen) {
+    assert.ok(ids.has(id), `下拉里的主题「${id}」在 theme.css 里没有规则 —— 选了它页面不会变`);
+  }
+  // `""` = 跟随系统：它不给规则，靠 --mc-def-* 两层，所以不进上面的循环。
+  assert.ok(vue.includes('<option value="">'), "「跟随系统」那一项没了？");
+});

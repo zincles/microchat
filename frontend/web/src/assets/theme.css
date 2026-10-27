@@ -1,93 +1,126 @@
-/* microchat 主题 tokens —— Telegram 语义色。
+/* microchat 主题 tokens。
  *
- * 七个语义槽（与 TG themeParams 同名同义，见 core.telegram.org/bots/webapps）：
+ * 语义槽还是七个（沿用 TG themeParams 的名字，见 core.telegram.org/bots/webapps）：
  *   bg / secondary_bg / text / hint / link / button / button_text
- * 外加 destructive（删会话/删渠道那种红，TG 客户端里就是红色文字按钮）。
+ * 外加 destructive（删会话/删渠道那种红）与 float（浮层）。
+ * 名字是历史包袱（变量名不值当全项目改一遍），**值不再是 TG 那套** —— 2026-10-28 换成
+ * 中性灰阶（参考 OpenWebUI）：TG 深夜蓝在 9% 明度上挂 40% 饱和度，出来是浑浊的藏青；
+ * 中性灰只靠明度分层，同样的暗度读起来干净得多。
  *
  * 三层来源（就近覆盖，后写的赢）：
- *   1. 默认深色（TG 安卓深夜蓝那套，不是纯黑）；
- *   2. `color-scheme: light` 时的浅色（TG 日间白）；
- *   3. TG 客户端注入的 `--tg-theme-*-color`（在 Mini App 里打开时自动跟随用户主题，
- *      含自定义主题 —— 此时 1/2 的值全被盖掉，一个调色板都不用自己维护）。
+ *   1. `--mc-def-*` 默认层（深色 / 浅色各一套，跟着 `prefers-color-scheme` 走）；
+ *   2. `--tg-*` 语义层 = TG 客户端注入值 ?? 默认层；
+ *   3. `html[data-theme=…]` 用户预设（优先级高于 `:root`，直接盖语义层）。
  *
- * 用法：组件一律用 --tg-*，不许写死色值。--tg-* 本身永远有值（TG 外是默认值，TG 内是用户主题）。
+ * ⚠ 为什么要有 `--mc-def-*` 这个中间层（2026-10-28 修的真实 bug）：
+ *   从前写的是 `--tg-bg: var(--tg-theme-bg-color, #0e1621)` —— fallback 写死深色值，而这一组
+ *   排在 `@media (prefers-color-scheme: light)` **之后**、特异性又一样（都是 `:root`）⇒
+ *   **浅色主题永远赢不了**，"跟随系统 + 系统浅色"会拿到深色底。现在 fallback 指向 `--mc-def-*`，
+ *   两组都是 `:root` 但管的是不同变量名，不打架。
+ *
+ * 用法：组件一律用 `--tg-*` / `--line` / `--hover` / `--shadow-*`，不许写死色值。
  */
 
+/* —— 第 1 层：默认层（深色）。命名灰阶，chroma = 0 —— */
 :root {
   color-scheme: dark light;
 
-  /* —— 默认：TG 深色（跟随 Telegram Android 深色主题取色） —— */
-  --tg-bg: #0e1621;
-  --tg-secondary-bg: #17212b;
-  --tg-text: #f5f5f5;
-  --tg-hint: #708499;
-  --tg-link: #62b0e8;
-  --tg-button: #5288c1;
-  --tg-button-text: #ffffff;
-  --tg-destructive: #e53935;
-  /* —— 浮层提亮（TG 味 = 底色微差分层，不用边框切）：modal/菜单比底栏再亮约 4%。
-   * 深色取色：#17212b → #1e2c3a（TG 客户端弹窗底就是这么亮一档）；浅色：#f1f1f1 → #ffffff 纯白卡。 */
-  --tg-float: #1e2c3a;
-  /* —— 圆角三档（改圆角只改这三处：外层悬浮卡 / 气泡与组卡 / 按钮与小卡） —— */
-  --r-shell: 14px;
-  --r-card: 12px;
-  --r-btn: 10px;
-  /* —— 旧变量桥接（早期 style.css 取消后只剩这一个还在用：--line） —— */
-  --line: rgb(255 255 255 / 12%);
+  --mc-def-bg: #131313;           /* 页面底 / 对话区 */
+  --mc-def-secondary-bg: #1c1c1c; /* 左栏、右栏、顶栏、输入框、气泡 */
+  --mc-def-float: #262626;        /* 弹窗、菜单、浮板 */
+  --mc-def-text: #ebebeb;
+  --mc-def-hint: #9b9b9b;
+  --mc-def-link: #60a5fa;
+  --mc-def-button: #2563eb;
+  --mc-def-destructive: #f87171;
 }
 
 @media (prefers-color-scheme: light) {
   :root {
-    /* —— TG 日间白 —— */
-    --tg-bg: #ffffff;
-    --tg-secondary-bg: #f1f1f1;
-    --tg-text: #222222;
-    --tg-hint: #999999;
-    --tg-link: #2481cc;
-    --tg-button: #2481cc;
-    --tg-button-text: #ffffff;
-    --tg-destructive: #cc2929;
-    --tg-float: #ffffff;
+    --mc-def-bg: #ffffff;
+    --mc-def-secondary-bg: #f5f5f5;
+    --mc-def-float: #ffffff;
+    --mc-def-text: #161616;
+    --mc-def-hint: #6b6b6b;
+    --mc-def-link: #2563eb;
+    --mc-def-button: #2563eb;
+    --mc-def-destructive: #dc2626;
   }
 }
 
-/* —— TG 客户端注入（Mini App 里打开时）：Telegram 按 Bot API 7.0+ 往 WebView 里灌
- * --tg-theme-*-color。不在 TG 里时这些变量不存在 ⇒ var() 回落到默认深色值。
- * （不能写 var(--tg-bg, var(--tg-bg)) 自引用：内层是未解析值，外层直接作废 ⇒ 整组全空。
- * 这里 fallback 写死色值，就是这个原因。） */
+/* —— 第 2 层：语义层。TG 注入的 `--tg-theme-*-color` 在时用它的，否则回落到默认层 ——
+ * （不能写 var(--tg-bg, var(--tg-bg)) 自引用：内层是未解析值，外层直接作废 ⇒ 整组全空。） */
 :root {
-  --tg-bg: var(--tg-theme-bg-color, #0e1621);
-  --tg-secondary-bg: var(--tg-theme-secondary-bg-color, #17212b);
-  --tg-text: var(--tg-theme-text-color, #f5f5f5);
-  --tg-hint: var(--tg-theme-hint-color, #708499);
-  --tg-link: var(--tg-theme-link-color, #62b0e8);
-  --tg-button: var(--tg-theme-button-color, #5288c1);
+  --tg-bg: var(--tg-theme-bg-color, var(--mc-def-bg));
+  --tg-secondary-bg: var(--tg-theme-secondary-bg-color, var(--mc-def-secondary-bg));
+  --tg-text: var(--tg-theme-text-color, var(--mc-def-text));
+  --tg-hint: var(--tg-theme-hint-color, var(--mc-def-hint));
+  --tg-link: var(--tg-theme-link-color, var(--mc-def-link));
+  --tg-button: var(--tg-theme-button-color, var(--mc-def-button));
   --tg-button-text: var(--tg-theme-button-text-color, #ffffff);
+  --tg-destructive: var(--mc-def-destructive);
+  --tg-float: var(--mc-def-float);
+}
+
+/* —— 第 3 层：与配色无关的工艺 token。
+ *
+ * `--line` / `--hover` 用 **color-mix 从当前文字色派生**，不写死白或黑：
+ *   写死 `rgb(255 255 255 / 12%)` 那版在浅色主题里是一道**看不见**的白线（白底上白线），
+ *   而浅色那几套（paper / breeze）从来没覆盖过它 —— 一直是坏的。
+ *   从 `--tg-text` 派生 ⇒ 深色里是浅线、浅色里是深线，TG 注入的自定义主题也自动对。
+ *
+ * 阴影一律带**负扩散**（-Npx）：正扩散 = 大模糊糊成一圈浑浊的光晕，负扩散把阴影往里收、
+ * 只留贴边薄薄一层。浓度也跟着降到 20-34%（从前 30-50%，比 Tailwind 的 shadow-lg 重 3-5 倍）。
+ * 深色底上黑影本来就几乎不可见，深色那层的"浮起"靠的是面更亮 + 发丝线，不靠光晕。 */
+:root {
+  /* 12% → 9%（2026-10-28）：一屏能画七八条分隔线（左栏右缘、右栏左缘、顶栏、状态行、
+   * 表格行、字段行），每条都比标准重就成了"格子铺"——分栏该靠底色差，线只是补一句"这儿断开"。 */
+  --line: color-mix(in srgb, var(--tg-text) 9%, transparent);
+  --hover: color-mix(in srgb, var(--tg-text) 7%, transparent);
+
+  --shadow-1: 0 1px 2px -1px rgb(0 0 0 / 22%), 0 1px 3px -1px rgb(0 0 0 / 14%);
+  --shadow-2: 0 4px 10px -3px rgb(0 0 0 / 26%), 0 2px 5px -2px rgb(0 0 0 / 16%);
+  --shadow-3: 0 10px 24px -6px rgb(0 0 0 / 30%), 0 4px 10px -5px rgb(0 0 0 / 18%);
+  --shadow-4: 0 18px 44px -10px rgb(0 0 0 / 34%), 0 8px 18px -8px rgb(0 0 0 / 20%);
+  /* 侧栏从边缘滑出时那道"压暗背景"的投影：X 方向，同样带负扩散 */
+  --shadow-left: 4px 0 16px -6px rgb(0 0 0 / 30%);
+  --shadow-right: -4px 0 16px -6px rgb(0 0 0 / 30%);
+
+  /* —— 圆角三档（改圆角只改这三处：外层悬浮卡 / 卡片与组卡 / 按钮与小卡）——
+   * 2026-10-28 各收 2px：OpenWebUI 的主力圆角是 8px（`rounded-lg` 用了 56 次），
+   * 大圆角铺满所有元素读起来"软塌塌"，小圆角才是"精确"。 */
+  --r-shell: 12px;
+  --r-card: 10px;
+  --r-btn: 8px;
+  /* 气泡单独一档，而且比控件**圆**：聊天气泡圆一点才像"话"，方一点就像"色卡/表格"。 */
+  --r-bubble: 16px;
 }
 
 /* —— 用户主题预设（localStorage.mc_theme，JS 往 <html> 上点 data-theme 即时切换） ——
  * 盖在默认/TG注入之上（html[data-theme] 优先级高于 :root），但 TG 注入那组 fallback
- * 写的是死值 ⇒ 预设想"压过 TG 注入"得用 !important？不 —— TG 内打开时 data-theme 根本不设
+ * 写的是默认层 ⇒ 预设想"压过 TG 注入"得用 !important？不 —— TG 内打开时 data-theme 根本不设
  * （JS 里判了：有 window.Telegram.WebApp 就不用预设），两者永不同时生效。 */
-/* —— DeepSeek 深色（2026-10-10，色值实测自 chat.deepseek.com 的 `--dsw-alias-*` token：
- * bg-base/layer-1/layer-2、label-primary/tertiary、brand-primary #5686fe，脚本抽自其 main.css） ——
- * 映射：bg=bg-base / secondary=layer-1（侧栏、顶栏卡、输入框）/ text=label-primary /
- * hint=label-tertiary / link=brand-text / button=brand-primary / float=layer-2（浮层）。
- * 注：只对齐**配色**；气泡仍是 TG 形状（DS 的用户句是灰气泡、AI 无气泡 —— 那是另一笔）。 */
+
+/* —— 石墨（深色，默认）：中性灰阶。色值 = OpenWebUI 的灰阶（oklch L 换算成 sRGB），
+ * chroma 全 0；三层明度 19 / 28 / 38，步长一致。文字 #ebebeb 在 #131313 上 15.6:1。
+ * `deepseek` 作为**别名**一起匹配：老版本把这个 id 存进了 localStorage，
+ * 换掉 id 会让那些人的主题凭空变成"跟随系统"（另一个颜色）—— 别名让他们看到的是同一套。 */
+html[data-theme="graphite"],
 html[data-theme="deepseek"] {
-  --tg-bg: #151517; --tg-secondary-bg: #232324; --tg-text: #f9fafb; --tg-hint: #adb2b8;
-  --tg-link: #679efe; --tg-button: #5686fe; --tg-button-text: #ffffff;
-  --tg-destructive: #f25a5a; --tg-float: #2c2c2e; color-scheme: dark;
+  --tg-bg: #131313; --tg-secondary-bg: #1c1c1c; --tg-float: #262626; --tg-text: #ebebeb;
+  --tg-hint: #9b9b9b; --tg-link: #60a5fa; --tg-button: #2563eb; --tg-button-text: #ffffff;
+  --tg-destructive: #f87171; color-scheme: dark;
 }
+/* 深夜蓝：TG 那套（换肤时留作怀旧选项，别当默认） */
 html[data-theme="midnight"] {
   --tg-bg: #0e1621; --tg-secondary-bg: #17212b; --tg-text: #f5f5f5; --tg-hint: #708499;
   --tg-link: #62b0e8; --tg-button: #5288c1; --tg-button-text: #ffffff;
   --tg-destructive: #e53935; --tg-float: #1e2c3a; color-scheme: dark;
 }
 html[data-theme="paper"] {
-  --tg-bg: #ffffff; --tg-secondary-bg: #f1f1f1; --tg-text: #222222; --tg-hint: #999999;
-  --tg-link: #2481cc; --tg-button: #2481cc; --tg-button-text: #ffffff;
-  --tg-destructive: #cc2929; --tg-float: #ffffff; color-scheme: light;
+  --tg-bg: #ffffff; --tg-secondary-bg: #f5f5f5; --tg-text: #161616; --tg-hint: #6b6b6b;
+  --tg-link: #2563eb; --tg-button: #2563eb; --tg-button-text: #ffffff;
+  --tg-destructive: #dc2626; --tg-float: #ffffff; color-scheme: light;
 }
 html[data-theme="wine"] {
   --tg-bg: #1f1215; --tg-secondary-bg: #2b1a1e; --tg-text: #f5eef0; --tg-hint: #a08a90;
