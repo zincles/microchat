@@ -61,8 +61,11 @@ export default defineConfig({
         lang: "zh-CN",
         start_url: ".",
         display: "standalone",
-        background_color: "#0e1621",
-        theme_color: "#0e1621",
+        // 启动画面与外壳色 = 默认（暗色）主题的底色。⚠ 改主题配色时这两格要跟着改 ——
+        // 从前是 TG 深夜蓝 #0e1621，2026-10-28 换中性灰阶后忘了改，装成 PWA 的人
+        // 会看到"图标背景是藏青、应用是灰"的割裂感。
+        background_color: "#131313",
+        theme_color: "#131313",
         icons: [
           { src: "pwa-192.png", sizes: "192x192", type: "image/png" },
           { src: "pwa-512.png", sizes: "512x512", type: "image/png" },

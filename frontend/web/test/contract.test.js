@@ -1009,3 +1009,28 @@ test("界面缩放：落盘、读回、挂到根节点的 --app-text-scale", () 
     globalThis.document = originalDoc;
   }
 });
+
+// —— 外壳色（`<meta name="theme-color">` 与 PWA manifest）——
+// 这两处是**静态**的，而主题是三套运行时切换的 ⇒ 只能钉"默认（暗色）那套的底色"。
+// 证伪点：改了配色却忘了改它们 —— 2026-10-28 就真踩过：主题换成中性灰，
+// 手机状态栏和 PWA 启动画面还是旧的 TG 深夜蓝 #0e1621，装成 PWA 的人看到的是割裂感。
+test("外壳色：index.html 与 PWA manifest 跟暗色主题的底色一致", () => {
+  const theme = readFileSync(join(SRC, "assets", "theme.css"), "utf8");
+  const dark = theme.match(/html\[data-theme="dark"\]\s*\{([\s\S]*?)\}/);
+  assert.ok(dark, 'theme.css 里没找到 html[data-theme="dark"] 那一块');
+  const bg = dark[1].match(/--tg-bg:\s*(#[0-9a-fA-F]{6})/);
+  assert.ok(bg, "暗色主题里没读到 --tg-bg");
+  const want = bg[1].toLowerCase();
+
+  const html = readFileSync(join(SRC, "..", "index.html"), "utf8");
+  const meta = html.match(/<meta name="theme-color" content="([^"]*)"/);
+  assert.ok(meta, "index.html 里没有 theme-color meta");
+  assert.equal(meta[1].toLowerCase(), want, "index.html 的 theme-color 与暗色主题底色对不上");
+
+  const vite = readFileSync(join(SRC, "..", "vite.config.js"), "utf8");
+  for (const key of ["background_color", "theme_color"]) {
+    const m = vite.match(new RegExp(`${key}:\\s*"([^"]*)"`));
+    assert.ok(m, `vite.config.js 里没有 ${key}`);
+    assert.equal(m[1].toLowerCase(), want, `PWA manifest 的 ${key} 与暗色主题底色对不上`);
+  }
+});

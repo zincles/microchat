@@ -10,7 +10,9 @@
   <!-- PWA：图标（iOS 用 apple-touch-icon；安卓走 manifest）+ 独立窗口 + 主题色 -->
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="theme-color" content="#0e1621" />
+  <!-- 主题色（手机状态栏 / PWA 标题栏）：兜底是**暗色主题的底色**，
+       applyTheme 会按当前主题现改它（三套底色不同，写死一个值在亮色下就是一条黑边）。 -->
+  <meta name="theme-color" content="#131313" />
   <link rel="stylesheet" href="./src/assets/theme.css" />
   <link rel="stylesheet" href="./src/assets/main.css" />
 </head>

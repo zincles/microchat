@@ -144,8 +144,23 @@ export function themePref() {
 // 主题应用（唯一一处）：TG Mini App 里 data-theme **根本不设**（用户主题由 TG 注入的
 // --tg-theme-* 供给）—— 缺了这道守卫，TG 里保存一次设置就会把预设色压到 TG 注入色上。
 export function applyTheme(theme) {
-  if (window.Telegram?.WebApp) { document.documentElement.removeAttribute("data-theme"); return; }
+  if (window.Telegram?.WebApp) {
+    document.documentElement.removeAttribute("data-theme");
+    syncThemeColor();
+    return;
+  }
   document.documentElement.setAttribute("data-theme", theme === undefined ? themePref() : normalizeTheme(theme));
+  syncThemeColor();
+}
+
+// 手机状态栏 / PWA 标题栏那根 `<meta name="theme-color">`：**写死不行** —— 三套主题底色不同，
+// 写死一个值在另外两套下就是一条突兀的色边（亮色主题配深色状态栏是最扎眼的）。
+// 值从 `--tg-bg` 现读（`var()` 在计算值阶段就替换掉了，读到的是真颜色；TG 注入时也是对的）。
+function syncThemeColor() {
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (!meta) return;
+  const bg = getComputedStyle(document.documentElement).getPropertyValue("--tg-bg").trim();
+  if (bg) meta.setAttribute("content", bg);
 }
 
 // 连接偏好的唯一写入口（连接门板与设置页共用）：地址先过 normalizeApiBase。
