@@ -43,7 +43,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
   text-shadow: 0 1px 2px rgb(0 0 0 / 85%), 0 1px 10px rgb(0 0 0 / 55%); }
 /* 顶栏左上角那枚"当前模型"：**静默下拉**（2026-10-14 用户定：没有按钮轮廓，只有字）——
  * 胶囊底、边框、自绘箭头全撤；点一下照样弹原生选项。窄屏可收缩省略（max-width 半幅）。 */
-.flat-select { flex: 0 1 auto; min-width: 0; max-width: 50%; background: none; background-image: none; border: none; padding: 0.15em 0; font: inherit; color: var(--tg-text); cursor: pointer; text-overflow: ellipsis; }
+.flat-select { flex: 0 1 auto; min-width: 0; max-width: 50%; background: none; background-image: none; border: none; padding: 0.1em 0; font: inherit; line-height: 1.3; color: var(--tg-text); cursor: pointer; text-overflow: ellipsis; }
 .flat-select:hover { filter: brightness(1.25); }
 .flat-select:focus { outline: none; }
 /* 右开关吃剩余空档（贴右缘）；左开关在时它就是最左那件。 */
@@ -74,7 +74,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
   max-height: 60vh; overflow-y: auto; overscroll-behavior: contain;
   background: var(--tg-float); border-radius: var(--r-shell); padding: 0.35em; box-shadow: 0 10px 30px rgb(0 0 0 / 45%); }
 .agent-item { display: flex; align-items: center; gap: 0.55em; width: 100%; box-sizing: border-box; text-align: left;
-  background: none; border: none; border-radius: var(--r-btn); padding: 0.45em 0.55em; color: var(--tg-text); cursor: pointer; font: inherit; }
+  background: none; border: none; border-radius: var(--r-btn); padding: 0.3em 0.55em; color: var(--tg-text); cursor: pointer; font: inherit; line-height: 1.3; }
 .agent-item:hover { background: rgb(255 255 255 / 6%); }
 .agent-item .agent-dot { flex: none; width: 1.6em; height: 1.6em; border-radius: 50%; display: flex; align-items: center;
   justify-content: center; color: #fff; font-size: 0.8em; font-weight: 600; }
@@ -107,7 +107,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
   animation: toast-in 180ms ease-out; }
 #update-bar .ub-text { flex: 1; min-width: 0; word-break: break-word; }
 #update-bar .ub-go { flex: none; background: var(--tg-button); color: var(--tg-button-text);
-  border: none; border-radius: var(--r-btn); padding: 0.3em 0.85em; font: inherit; cursor: pointer; }
+  border: none; border-radius: var(--r-btn); padding: 0.25em 0.85em; font: inherit; line-height: 1.3; cursor: pointer; }
 #update-bar .ub-go:hover:not(:disabled) { filter: brightness(1.1); }
 #update-bar .ub-go:disabled { opacity: 0.65; cursor: default; }
 #update-bar .ub-x { flex: none; background: none; border: none; color: var(--tg-hint);
@@ -159,7 +159,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .pv-chip { border: 1px solid var(--line); border-radius: 4px; padding: 0 0.3em; font-size: 0.85em; color: var(--tg-hint); }
 .pv-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.45em; }
 .pv-msg { border: 1px solid var(--line); border-radius: 8px; background: rgb(255 255 255 / 3%); padding: 0.45em 0.55em; }
-.pv-head { display: flex; align-items: center; gap: 0.4em; margin: 0 0 0.3em; width: 100%; background: none; border: none; color: inherit; font: inherit; text-align: left; cursor: pointer; padding: 0.15em 0; -webkit-tap-highlight-color: transparent; user-select: none; }
+.pv-head { display: flex; align-items: center; gap: 0.4em; margin: 0 0 0.3em; width: 100%; background: none; border: none; color: inherit; font: inherit; line-height: 1.3; text-align: left; cursor: pointer; padding: 0.15em 0; -webkit-tap-highlight-color: transparent; user-select: none; }
 .pv-tw { flex: none; width: 1em; color: var(--tg-hint); }
 .pv-preview { color: var(--tg-hint); font-size: 0.9em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pv-role { font-size: 0.78em; font-weight: bold; border-radius: 4px; padding: 0.05em 0.4em; color: var(--tg-bg); background: var(--tg-hint); }
@@ -252,8 +252,8 @@ html[data-composer="solid"] .messages-inner { padding-bottom: calc(var(--compose
 #session-new:hover { background: rgb(255 255 255 / 13%); }
 #session-new .plus { font-weight: 400; opacity: 0.9; }
 /* 右栏双 tab（载荷/状态）：标题行变 tab 条，选中亮。 */
-.bar-head.bar-tabs { flex: none; justify-content: flex-start; gap: 0.2em; padding: 0.5em 0.5em 0.3em; }
-.bar-head.bar-tabs .tab { flex: 1; background: none; border: none; border-radius: 8px; color: var(--tg-hint); padding: 0.4em; font-size: 1em; }
+.bar-head.bar-tabs { flex: none; justify-content: flex-start; gap: 0.2em; padding: 0.35em 0.4em 0.25em; }
+.bar-head.bar-tabs .tab { flex: 1; background: none; border: none; border-radius: 7px; color: var(--tg-hint); padding: 0.28em; font-size: 1em; line-height: 1.25; }
 .bar-head.bar-tabs .tab.sel { color: var(--tg-text); background: rgb(255 255 255 / 10%); }
 /* 状态表：表名小标题 + 键值行（键暗、值亮）。滚动与 tabs 常驻见上面 #payload-pane 那组规则。 */
 #state-view .state-table { margin: 0 0 0.8em; }
@@ -265,12 +265,12 @@ html[data-composer="solid"] .messages-inner { padding-bottom: calc(var(--compose
 /* 会话列表自己滚（此前没有任何滚动规则 ⇒ 会话一多直接被裁掉，移动端抽屉里更是够不着）。 */
 #session-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .bar-foot { padding: 0.5em; border-top: 1px solid var(--line); margin-top: auto; }
-.foot-btn { display: flex; align-items: center; gap: 0.5em; width: 100%; background: none; border: none; border-radius: var(--r-btn); color: var(--tg-hint); padding: 0.55em 0.7em; cursor: pointer; }
+.foot-btn { display: flex; align-items: center; gap: 0.5em; width: 100%; background: none; border: none; border-radius: var(--r-btn); color: var(--tg-hint); padding: 0.38em 0.7em; cursor: pointer; line-height: 1.3; }
 /* 左栏底的图标（SVG 替 emoji）：尺寸跟随字号、垂直居中由 flex 管。 */
 .foot-btn .fb-icon { display: inline-flex; }
 .foot-btn .fb-icon svg { width: 1.1em; height: 1.1em; }
 .foot-btn:hover { background: rgb(255 255 255 / 6%); color: var(--tg-text); }
-.session-item { display: flex; gap: 0.5em; align-items: center; padding: 0.55em 0.7em; border-radius: var(--r-card); cursor: pointer; white-space: nowrap; overflow: hidden; color: var(--tg-text); }
+.session-item { display: flex; gap: 0.5em; align-items: center; padding: 0.38em 0.7em; border-radius: var(--r-card); cursor: pointer; white-space: nowrap; overflow: hidden; color: var(--tg-text); line-height: 1.3; }
 .session-item:hover { background: rgb(255 255 255 / 6%); }
 .session-item.sel { background: rgb(255 255 255 / 10%); color: var(--tg-text); }
 .session-item .title { flex: 1; overflow: hidden; text-overflow: ellipsis; }
@@ -619,16 +619,16 @@ html[data-composer="solid"] #composer .statusline.over { color: var(--tg-destruc
 #session-mgr-list, #agent-list, #provider-list { overflow-x: auto; }
 /* 设置里的控件压到 DS 档（36px 上下）：只收纵向内间距，不动字号与横向命中区。 */
 .settings-cols .panel input:not([type="checkbox"]):not([type="radio"]), .settings-cols .panel select { padding-top: 0.3em; padding-bottom: 0.3em; }
-.settings-nav { display: flex; flex-direction: row; gap: 0.2em; margin-bottom: 1em; background: var(--tg-secondary-bg); border: none; border-radius: var(--r-card); padding: 0.25em; position: relative; }
-.settings-nav .tab { flex: 1; text-align: center; background: none; border: none; border-radius: 9px; color: var(--tg-hint); padding: 0.38em 0.3em; font-size: 0.9em; position: relative; z-index: 1; transition: color 150ms ease-out; }
+.settings-nav { display: flex; flex-direction: row; gap: 0.2em; margin-bottom: 0.7em; background: var(--tg-secondary-bg); border: none; border-radius: var(--r-card); padding: 0.18em; position: relative; }
+.settings-nav .tab { flex: 1; text-align: center; background: none; border: none; border-radius: 8px; color: var(--tg-hint); padding: 0.28em 0.3em; font-size: 0.9em; line-height: 1.25; position: relative; z-index: 1; transition: color 150ms ease-out; }
 .settings-nav .tab.sel { color: var(--tg-text); }
 /* 选中块：绝对定位跟随（left/width 由 JS 量，150ms ease-out 滑过去）。 */
-.settings-nav .tab-thumb { position: absolute; top: 0.25em; bottom: 0.25em; border-radius: 9px; background: rgb(255 255 255 / 10%); transition: left 180ms ease-out, width 180ms ease-out; z-index: 0; }
+.settings-nav .tab-thumb { position: absolute; top: 0.18em; bottom: 0.18em; border-radius: 8px; background: rgb(255 255 255 / 10%); transition: left 170ms ease-out, width 170ms ease-out; z-index: 0; }
 /* 面板淡入（切页 120ms，opacity+位移，不碰 layout）。 */
 .settings-cols .panel { animation: panel-in 140ms ease-out; }
 @keyframes panel-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .settings-nav .tab-thumb { transition: none; } .settings-cols .panel { animation: none; } }
-.settings-cols .panel .field, .settings-cols .panel .row { background: var(--tg-secondary-bg); margin: 0; padding: 0.45em 0.9em; }
+.settings-cols .panel .field, .settings-cols .panel .row { background: var(--tg-secondary-bg); margin: 0; padding: 0.32em 0.9em; line-height: 1.35; }
 .settings-cols .panel .field + .field, .settings-cols .panel .field + .row,
 .settings-cols .panel .row + .field, .settings-cols .panel .row + .row { border-top: 1px solid var(--line); }
 /* 卡片圆角只在组两端：组 = 一个 h3 带起的连续 field/row 串（无 h3 的 panel 整串算一组）。
@@ -663,7 +663,11 @@ button:focus-visible, a:focus-visible, select:focus-visible, [tabindex]:focus-vi
 /* —— 按钮默认主题（全页兜底：裸 button 不再是浏览器灰框） ——
  * 三档：默认（底栏色卡底）/ .primary（蓝底白字，主动作）/ .danger（红字，删除）。
  * 文字型（icon-btn/edit-btn/link-btn）与异形（#send-btn 圆钮/.tab/.session-item）各有样式，不受这条影响。 */
-button { background: var(--tg-secondary-bg); color: var(--tg-text); border: 1px solid var(--line); border-radius: var(--r-btn); padding: 0.45em 1em; font: inherit; cursor: pointer; }
+/* ⚠ `font: inherit` 会连 **line-height 一起继承**（body 是 1.65，正文用的值）——
+ * 按钮的行盒因此是 15×1.65 = 24.75px，比内边距加起来还高，撑出 40px 的"大按钮"。
+ * 按钮不需要正文那种行距 ⇒ 显式压回 1.3（2026-10-27 用户：「电报风格的按钮好大啊」）。
+ * 实测 40.3px → 32.0px。**改这条时别只调 padding** —— 大头在行高。 */
+button { background: var(--tg-secondary-bg); color: var(--tg-text); border: 1px solid var(--line); border-radius: var(--r-btn); padding: 0.35em 0.85em; font: inherit; line-height: 1.3; cursor: pointer; }
 button:hover { filter: brightness(1.15); }
 button:active { filter: brightness(0.95); }
 button.primary { background: var(--tg-button); border-color: transparent; color: var(--tg-button-text); }
@@ -691,7 +695,7 @@ button.toggle.on .knob { transform: translateX(1.1em); }
 .ability-block { border: 1px solid var(--line); border-radius: var(--r-btn); padding: 0.35em 0.7em 0.5em; margin: 0.5em 0; }
 .ability-block legend { padding: 0 0.4em; color: var(--tg-text); display: flex; align-items: center; gap: 0.4em; }
 .plist { width: 100%; border-collapse: collapse; }
-.plist th, .plist td { text-align: left; padding: 0.42em 0.6em; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.plist th, .plist td { text-align: left; padding: 0.3em 0.6em; border-bottom: 1px solid var(--line); white-space: nowrap; line-height: 1.35; }
 .plist th { color: var(--tg-hint); font-weight: normal; font-size: 0.85em; }
 /* 可点行（进二级）：hover 高亮，被点的行 cursor 指针。 */
 .plist tr.clickable { cursor: pointer; }
