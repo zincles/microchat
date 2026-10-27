@@ -326,14 +326,18 @@ function onKey(e) {
           <p class="hint">改完刷新页面生效。</p>
         </section>
         <section v-show="tab === 'session'" id="panel-session" class="panel">
-          <h3>新会话缺省</h3>
-          <label class="field"><span>渠道</span><input v-model="defaults.provider" placeholder="provider" /></label>
-          <label class="field"><span>模型</span><input v-model="defaults.model" placeholder="model" /></label>
+          <!-- 文案（2026-10-28 用户提）：「缺省」是技术圈黑话，普通用户读不出"默认值"。
+               一律说「默认」；「会话」留着 —— 它是 DEFINE.md 的词（左栏、导出、删除确认都这么说），
+               一块面板里混用「对话/会话」只会更乱。 -->
+          <h3>新会话默认值</h3>
+          <label class="field"><span>渠道</span><input v-model="defaults.provider" placeholder="留空 = 内置默认 dummy" /></label>
+          <label class="field"><span>模型</span><input v-model="defaults.model" placeholder="留空 = 内置默认 dummy" /></label>
           <label class="field"><span>Agent</span><select v-model="defaults.agent">
             <option value="">内置默认</option>
             <option v-for="a in agents" :key="a.id" :value="a.id">{{ a.name }}（{{ a.id }}）</option>
           </select></label>
-          <div class="row"><button type="button" class="primary" @click="saveDefaults">保存缺省</button><span class="status">{{ defStatus }}</span></div>
+          <div class="row"><button type="button" class="primary" @click="saveDefaults">保存默认值</button><span class="status">{{ defStatus }}</span></div>
+          <p class="hint">新建会话时用这三格；留空就是内置默认。渠道与模型是手填的 id，填错不会报错，只会在发送时回落成「未配置模型」。</p>
           <h3>会话（{{ sessions.length }} 条，点进）</h3>
           <div id="session-mgr-list">
             <table class="plist">
