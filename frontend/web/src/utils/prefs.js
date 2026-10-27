@@ -4,9 +4,25 @@
 // 口径不变：**改完偏好刷新页面生效**（组件在装载时取一次；sharedApi 按偏好键缓存）。
 import { createApi, DEFAULT_API_URL, normalizeApiBase } from "../api/client.js";
 
-// 主题默认（`??` 语义：null = 没设过）。2026-10-28 从 `deepseek` 换成 `graphite`（中性灰阶）；
-// 老的 `deepseek` 值在 theme.css 里与它**同一条规则**（别名），存过它的人不会突然变样。
-export const DEFAULT_THEME = "graphite";
+// 主题（2026-10-28 用户定：「只保留 亮色 / 暗色 / Breeze 三种风格，不保留TG风格」）。
+// `THEME_IDS` 是**唯一权威**：theme.css 的 `html[data-theme]` 与设置页那个下拉都只能取这三个，
+// `contract.test.js` 钉着三处一致 —— 改一处忘另一处不会报错，只是页面安静退回默认配色。
+export const THEME_IDS = ["light", "dark", "breeze"];
+export const DEFAULT_THEME = "dark";
+// 老 id → 新 id。**删主题不能只是删规则**：那些 id 还躺在别人的 localStorage 里，
+// 匹配不到规则 = 页面退回默认 ⇒ 用户会发现"我的主题自己变了"。
+// 搬到最接近的那套：深夜蓝/酒红/森绿/石墨 都是深色 ⇒ 暗色；日间白 ⇒ 亮色；Breeze Dark ⇒ Breeze。
+const THEME_ALIASES = {
+  graphite: "dark", deepseek: "dark", midnight: "dark", wine: "dark", forest: "dark",
+  paper: "light", "breeze-dark": "breeze",
+};
+// 归一化：给什么 id 都换成 THEME_IDS 里的一个（认不出 ⇒ 默认）。
+// 老版本的空串（"跟随系统"）也走这儿 —— 那个选项已经没了，空串现在就是"没设过"。
+export function normalizeTheme(id) {
+  if (THEME_IDS.includes(id)) return id;
+  const mapped = THEME_ALIASES[id];
+  return THEME_IDS.includes(mapped) ? mapped : DEFAULT_THEME;
+}
 export const DEFAULT_SEND = "enter";
 
 export function previewOn() { return localStorage.getItem("mc_preview") !== "0"; }
@@ -88,18 +104,16 @@ export function apiBaseCandidates() {
 }
 export function apiToken() { return localStorage.getItem("mc_token") || ""; }
 export function themePref() {
-  // `??` 而不是 `||`：设过空串 = "跟随系统"（空串会被 `||` 吞掉变成默认主题，踩过）。
-  return localStorage.getItem("mc_theme") ?? DEFAULT_THEME;
+  // 空串 / 认不出的 id 都归一到 THEME_IDS 里的一档（见 normalizeTheme）。
+  // 从前这里要 `??` 保住空串（那是"跟随系统"），现在那个选项没了 ⇒ 空串就是"没设过"。
+  return normalizeTheme(localStorage.getItem("mc_theme"));
 }
 
 // 主题应用（唯一一处）：TG Mini App 里 data-theme **根本不设**（用户主题由 TG 注入的
 // --tg-theme-* 供给）—— 缺了这道守卫，TG 里保存一次设置就会把预设色压到 TG 注入色上。
-// `theme` 为空串 = 跟随系统（摘掉属性）；不传 = 读偏好。
 export function applyTheme(theme) {
-  const t = theme === undefined ? themePref() : theme;
   if (window.Telegram?.WebApp) { document.documentElement.removeAttribute("data-theme"); return; }
-  if (t) document.documentElement.setAttribute("data-theme", t);
-  else document.documentElement.removeAttribute("data-theme");
+  document.documentElement.setAttribute("data-theme", theme === undefined ? themePref() : normalizeTheme(theme));
 }
 
 // 连接偏好的唯一写入口（连接门板与设置页共用）：地址先过 normalizeApiBase。

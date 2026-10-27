@@ -32,7 +32,7 @@ import {
   whoText,
   sessionTitle,
 } from "../src/utils/format.js";
-import { sendMode, wantsSend, themePref, apiBase, defaultApiBase, apiBaseCandidates, DEFAULT_THEME, DEFAULT_SEND, composerStyle, applyComposerStyle, saveComposerStyle, DEFAULT_COMPOSER } from "../src/utils/prefs.js";
+import { sendMode, wantsSend, themePref, normalizeTheme, apiBase, defaultApiBase, apiBaseCandidates, THEME_IDS, DEFAULT_THEME, DEFAULT_SEND, composerStyle, applyComposerStyle, saveComposerStyle, DEFAULT_COMPOSER } from "../src/utils/prefs.js";
 
 // 契约测试（无浏览器）：只验纯函数与请求形状。`node --test test/`。
 // 后端真服务验证另走手工（见 README）。
@@ -628,13 +628,17 @@ test("whoText / sessionTitle：两处回退档各就各位", () => {
   assert.equal(sessionTitle("  标题  "), "标题");
 });
 
-test("偏好读取：默认与空串语义（mc_theme 空串=跟随系统，不许被吞）", () => {
+test("偏好读取：默认与空串语义（mc_theme 空串 / 认不出的 id 都归默认主题）", () => {
   stubStorage();
   assert.equal(apiBase(), DEFAULT_API_URL);
   assert.equal(themePref(), DEFAULT_THEME);
   assert.equal(sendMode(), DEFAULT_SEND);
+  // 2026-10-28：`""` 以前是"跟随系统"，那个选项删了 ⇒ 现在它就是"没设过"，落到默认主题。
   localStorage.setItem("mc_theme", "");
-  assert.equal(themePref(), "");
+  assert.equal(themePref(), DEFAULT_THEME);
+  // 删主题留下的老 id 不许让页面"没有主题"：themePref 读的时候就归一化了。
+  localStorage.setItem("mc_theme", "midnight");
+  assert.equal(themePref(), "dark");
   localStorage.setItem("mc_api", "http://elsewhere/api/v1");
   assert.equal(apiBase(), "http://elsewhere/api/v1");
 });
@@ -723,94 +727,6 @@ test("渲染行：卡（展开才带原文）+ 编号 + 库外尾巴顺延", () 
   assert.deepEqual(rows3.map((r) => r.kind), ["msg", "msg", "msg", "msg"]);
   assert.deepEqual(rows3.map((r) => r.displayIdx), [4, 5, 6, null]);
 });
-
-test("背景图存储：坏 JSON / 缺字段 / 空串都当没设", () => {
-  stubStorage();
-  assert.equal(loadBackground(), null);
-  localStorage.setItem("mc_bg", "{oops");
-  assert.equal(loadBackground(), null);
-  localStorage.setItem("mc_bg", JSON.stringify({ kind: "nope", value: "x" }));
-  assert.equal(loadBackground(), null);
-  localStorage.setItem("mc_bg", JSON.stringify({ kind: "url", value: "" }));
-  assert.equal(loadBackground(), null);
-});
-
-test("背景图存储：save → load 往返；清除后回 null", () => {
-  stubStorage();
-  const bg = { kind: "url", value: "https://example.com/a.png" };
-  saveBackground(bg);
-  assert.deepEqual(loadBackground(), bg);
-  saveBackground(null);
-  assert.equal(loadBackground(), null);
-});
-
-test("背景图标注：未设 / URL 截断 / 上传带尺寸", () => {
-  assert.equal(describeBackground(null), "未设（纯平底）");
-  const long = "https://example.com/" + "x".repeat(80);
-  assert.ok(describeBackground({ kind: "url", value: long }).includes("…"));
-  const txt = describeBackground({ kind: "file", value: "d".repeat(1365), width: 1920, height: 1080 });
-  assert.ok(txt.includes("1920×1080") && txt.includes("1 KB"), txt);
-});
-
-// —— 共享层新增（2026-10-10 审计整改） ——
-
-test("API 错误：code/status 原样带上（调用方按 code 分支，别猜文案）", async () => {
-  const fetchFn = async () => ({ status: 409, ok: false, json: async () => ({ error: { code: "conflict", message: "末尾变了" } }) });
-  const api = createApi({ base: "http://x/api/v1", fetchFn });
-  await assert.rejects(() => api.stop("s1"), (e) => e.code === "conflict" && e.status === 409 && e.message === "末尾变了");
-});
-
-test("API 错误：非 JSON 错误体（框架 405 的 text/plain）不炸 SyntaxError，回退 HTTP <status>", async () => {
-  const fetchFn = async () => ({ status: 405, ok: false, json: async () => { throw new SyntaxError("Unexpected token"); } });
-  const api = createApi({ base: "http://x/api/v1", fetchFn });
-  await assert.rejects(() => api.stop("s1"), (e) => e.message === "HTTP 405" && e.code === null && e.status === 405);
-});
-
-test("模型键往返：provider 里带 / 也不歧义；无分隔符 → null", () => {
-  const k = modelKey("自建/代理", "deepseek/chat");
-  assert.equal(k, "自建/代理|||deepseek/chat");
-  assert.deepEqual(parseModelKey(k), { provider: "自建/代理", model: "deepseek/chat" });
-  assert.equal(parseModelKey("没有分隔符"), null);
-});
-
-test("modelLabel 三级回退：用户覆盖 → 上游名 → 上游 id", () => {
-  assert.equal(modelLabel({ display_name: "我的名字", name: "上游名", upstream_id: "id" }), "我的名字");
-  assert.equal(modelLabel({ display_name: null, name: "上游名", upstream_id: "id" }), "上游名");
-  assert.equal(modelLabel({ name: "", upstream_id: "id" }), "id");
-});
-
-test("whoText / sessionTitle：两处回退档各就各位", () => {
-  assert.equal(whoText("p", "m"), "p/m");
-  assert.equal(whoText("", ""), "未知模型");
-  assert.equal(whoText("", "", "未选模型"), "未选模型");
-  assert.equal(sessionTitle("", true), "新对话");
-  assert.equal(sessionTitle("", false), "新会话");
-  assert.equal(sessionTitle("  标题  "), "标题");
-});
-
-test("偏好读取：默认与空串语义（mc_theme 空串=跟随系统，不许被吞）", () => {
-  stubStorage();
-  assert.equal(apiBase(), DEFAULT_API_URL);
-  assert.equal(themePref(), DEFAULT_THEME);
-  assert.equal(sendMode(), DEFAULT_SEND);
-  localStorage.setItem("mc_theme", "");
-  assert.equal(themePref(), "");
-  localStorage.setItem("mc_api", "http://elsewhere/api/v1");
-  assert.equal(apiBase(), "http://elsewhere/api/v1");
-});
-
-test("发送键判定：三档 + 修饰键（App 与 Composer 同一把尺）", () => {
-  stubStorage();
-  const e = (o = {}) => ({ shiftKey: false, ctrlKey: false, metaKey: false, altKey: false, ...o });
-  assert.equal(wantsSend(e()), true);
-  assert.equal(wantsSend(e({ shiftKey: true })), false);
-  assert.equal(wantsSend(e({ shiftKey: true }), "shift-enter"), true);
-  assert.equal(wantsSend(e(), "shift-enter"), false);
-  assert.equal(wantsSend(e(), "button"), false);
-});
-
-
-
 
 test("摘要重摇家族：三个方法的形状（enter 带消息 idx；switch 带位次）", async () => {
   const seen = [];
@@ -1001,11 +917,12 @@ test("滚动隐藏：反向不足 slop 当抖动；上滑到顶全放回顶栏",
   assert.equal(atTop.bottom, 0);
 });
 
-// —— 主题 id 的一致性守卫（2026-10-28 加）——
-// 主题在**两处**各写一遍：`src/utils/prefs.js` 的 DEFAULT_THEME 与 `src/assets/theme.css` 的
-// `html[data-theme="…"]` 规则，外加 `UserView.vue` 那个下拉的 option。改了一处忘了另一处**不会报错**
-// —— 页面安静地退回默认配色（换 id 时尤其容易：老 id 还在 localStorage 里，只是匹配不到任何规则）。
-// 这条测试就是把这三张表钉在一起（读文件，不引 CSS 解析器）。
+// —— 主题 id 的一致性守卫（2026-10-28 加，同日随「只留三套」收紧）——
+// 主题 id 在**三处**各写一遍：`src/utils/prefs.js` 的 `THEME_IDS`、`src/assets/theme.css` 的
+// `html[data-theme="…"]` 规则、`UserView.vue` 那个下拉的 option。改了一处忘了另一处**不会报错**
+// —— 页面只是安静地退回默认配色（或者让人选到一个没有规则的 id）。
+// 所以把三张表钉死：THEME_IDS 是唯一权威，另外两处必须**正好**是它（顺序也一样）。
+// 读文件比对，不引 CSS/Vue 解析器。
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -1017,26 +934,37 @@ function themeCssIds() {
   return new Set([...css.matchAll(/html\[data-theme="([^"]+)"\]/g)].map((m) => m[1]));
 }
 
-test("主题：默认 id 在 theme.css 里有对应规则", () => {
-  const ids = themeCssIds();
-  assert.ok(ids.size > 0, "theme.css 里一条 html[data-theme=…] 都没有？");
-  assert.ok(ids.has(DEFAULT_THEME), `DEFAULT_THEME="${DEFAULT_THEME}" 在 theme.css 里没有对应规则，会静默退回默认配色`);
-  // 老默认值 `deepseek` 必须留作**别名**：存过它的人不该因为换默认值而变样。
-  assert.ok(ids.has("deepseek"), "deepseek 别名没了 —— 老 localStorage 里的人会退回「跟随系统」");
-});
+test("主题：theme.css 与下拉必须正好是 THEME_IDS 这三套", () => {
+  // theme.css：一条不多、一条不少（多出来 = 有人偷偷加了主题；少了 = 那份 id 没人给规则）
+  assert.deepEqual([...themeCssIds()].sort(), [...THEME_IDS].sort(),
+    "theme.css 的 data-theme 规则与 prefs.js 的 THEME_IDS 对不上");
+  assert.ok(THEME_IDS.includes(DEFAULT_THEME), `DEFAULT_THEME="${DEFAULT_THEME}" 不在 THEME_IDS 里`);
 
-test("主题：下拉里每个可选 id 都有对应规则", () => {
+  // 下拉：顺序也照 THEME_IDS（"亮色/暗色/Breeze" 是用户点名的顺序，别在界面上乱换）
   const vue = readFileSync(join(SRC, "components", "UserView.vue"), "utf8");
-  // ⚠ 必须**只取主题那个 select** 里的 option：UserView 里还有别的下拉（输入栏形态之类），
+  // ⚠ 必须**只取主题那个 select**：UserView 里还有别的下拉（输入栏形态之类），
   // 广撒网会把 "float" 这种非主题值捞进来（第一版就是这么挂的）。
   const sel = vue.match(/<select v-model="theme">([\s\S]*?)<\/select>/);
-  assert.ok(sel, "没找到 v-model=\"theme\" 那个下拉");
-  const chosen = [...sel[1].matchAll(/<option value="([^"]*)">/g)].map((m) => m[1]).filter((v) => v !== "");
-  assert.ok(chosen.length > 0, "没找到主题下拉的 option");
-  const ids = themeCssIds();
-  for (const id of chosen) {
-    assert.ok(ids.has(id), `下拉里的主题「${id}」在 theme.css 里没有规则 —— 选了它页面不会变`);
+  assert.ok(sel, '没找到 v-model="theme" 那个下拉');
+  const chosen = [...sel[1].matchAll(/<option value="([^"]*)">/g)].map((m) => m[1]);
+  assert.deepEqual(chosen, THEME_IDS, "主题下拉的 option 与 THEME_IDS 对不上");
+});
+
+test("主题：删掉的老 id 都能搬到现存的一档（不许让人主题凭空变样）", () => {
+  // 这些 id 曾经写进过别人的 localStorage。删主题时如果只删 CSS 规则，他们匹配不到任何规则
+  // ⇒ 页面退回默认配色，用户看到的是"我的主题自己变了"。
+  const LEGACY = ["graphite", "deepseek", "midnight", "wine", "forest", "paper", "breeze-dark"];
+  for (const id of LEGACY) {
+    const moved = normalizeTheme(id);
+    assert.ok(THEME_IDS.includes(moved), `老主题「${id}」被搬到了「${moved}」，那不是一个现存的主题`);
+    assert.notEqual(moved, undefined);
   }
-  // `""` = 跟随系统：它不给规则，靠 --mc-def-* 两层，所以不进上面的循环。
-  assert.ok(vue.includes('<option value="">'), "「跟随系统」那一项没了？");
+  // 深夜蓝/酒红/森绿都是深色 ⇒ 归暗色；日间白 ⇒ 亮色；Breeze Dark ⇒ Breeze。钉住这几条映射。
+  assert.equal(normalizeTheme("midnight"), "dark");
+  assert.equal(normalizeTheme("paper"), "light");
+  assert.equal(normalizeTheme("breeze-dark"), "breeze");
+  // 认不出的（含老版本的"跟随系统"空串）⇒ 默认，不再摘掉 data-theme。
+  for (const junk of ["", null, undefined, "随便填的", "Dark"]) {
+    assert.equal(normalizeTheme(junk), DEFAULT_THEME);
+  }
 });

@@ -7,66 +7,47 @@
  * 中性灰阶（参考 OpenWebUI）：TG 深夜蓝在 9% 明度上挂 40% 饱和度，出来是浑浊的藏青；
  * 中性灰只靠明度分层，同样的暗度读起来干净得多。
  *
- * 三层来源（就近覆盖，后写的赢）：
- *   1. `--mc-def-*` 默认层（深色 / 浅色各一套，跟着 `prefers-color-scheme` 走）；
- *   2. `--tg-*` 语义层 = TG 客户端注入值 ?? 默认层；
- *   3. `html[data-theme=…]` 用户预设（优先级高于 `:root`，直接盖语义层）。
+ * 只有三套主题（2026-10-28 用户定：「主题只保留 亮色 / 暗色 / Breeze 三种风格，不保留TG风格」）：
+ * `html[data-theme=…]` 三选一，id 的**唯一权威**是 `utils/prefs.js` 的 `THEME_IDS`
+ * （`contract.test.js` 钉着这里、下拉、常量三方一致）。
+ * 从前那一批（midnight 深夜蓝 / wine / forest / paper / graphite / breeze-dark / deepseek）
+ * **全删了** —— 主题多不是"可选"，是"没人知道它本该长什么样"。
+ * 老 id 不会报错：`prefs.js` 的 `THEME_ALIASES` 把它们搬到最接近的那一套。
  *
- * ⚠ 为什么要有 `--mc-def-*` 这个中间层（2026-10-28 修的真实 bug）：
- *   从前写的是 `--tg-bg: var(--tg-theme-bg-color, #0e1621)` —— fallback 写死深色值，而这一组
- *   排在 `@media (prefers-color-scheme: light)` **之后**、特异性又一样（都是 `:root`）⇒
- *   **浅色主题永远赢不了**，"跟随系统 + 系统浅色"会拿到深色底。现在 fallback 指向 `--mc-def-*`，
- *   两组都是 `:root` 但管的是不同变量名，不打架。
+ * 两层来源（就近覆盖，后写的赢）：
+ *   1. `--tg-*` 语义层 = TG 客户端注入值 ?? 暗色兜底（TG 从不全量注入，缺的就吃这层）；
+ *   2. `html[data-theme=…]` 用户预设（优先级高于 `:root`，直接盖语义层）。
+ *
+ * ⚠ 别再往 `:root` 里塞 `@media (prefers-color-scheme: light)` 那种块 ✗：两块都是 `:root`、
+ *   特异性一模一样，谁赢只看**谁写在后面** —— 2026-10-28 修的那条浅色 bug 就是这么来的
+ *   （浅色兜底排在语义层前面，永远赢不了，白底主题拿到深色底）。要浅色就点「亮色」或
+ *   「Breeze」，那是 `data-theme` 的事，不是媒体查询的事。
  *
  * 用法：组件一律用 `--tg-*` / `--line` / `--hover` / `--shadow-*`，不许写死色值。
  */
 
-/* —— 第 1 层：默认层（深色）。命名灰阶，chroma = 0 —— */
+/* —— 第 1 层：语义层。TG 注入的 `--tg-theme-*-color` 在时用它的，否则回落到暗色 ——
+ * （不能写 var(--tg-bg, var(--tg-bg)) 自引用：内层是未解析值，外层直接作废 ⇒ 整组全空。）
+ * 兜底一律是**暗色**：默认主题就是暗色，开机第一帧不该先白一下再变黑。 */
 :root {
-  color-scheme: dark light;
+  color-scheme: dark;
 
-  --mc-def-bg: #131313;           /* 页面底 / 对话区 */
-  --mc-def-secondary-bg: #1c1c1c; /* 左栏、右栏、顶栏、输入框、气泡 */
-  --mc-def-float: #262626;        /* 弹窗、菜单、浮板 */
-  --mc-def-text: #ebebeb;
-  --mc-def-hint: #9b9b9b;
-  --mc-def-link: #60a5fa;
-  --mc-def-button: #2563eb;
-  --mc-def-destructive: #f87171;
-}
-
-@media (prefers-color-scheme: light) {
-  :root {
-    --mc-def-bg: #ffffff;
-    --mc-def-secondary-bg: #f5f5f5;
-    --mc-def-float: #ffffff;
-    --mc-def-text: #161616;
-    --mc-def-hint: #6b6b6b;
-    --mc-def-link: #2563eb;
-    --mc-def-button: #2563eb;
-    --mc-def-destructive: #dc2626;
-  }
-}
-
-/* —— 第 2 层：语义层。TG 注入的 `--tg-theme-*-color` 在时用它的，否则回落到默认层 ——
- * （不能写 var(--tg-bg, var(--tg-bg)) 自引用：内层是未解析值，外层直接作废 ⇒ 整组全空。） */
-:root {
-  --tg-bg: var(--tg-theme-bg-color, var(--mc-def-bg));
-  --tg-secondary-bg: var(--tg-theme-secondary-bg-color, var(--mc-def-secondary-bg));
-  --tg-text: var(--tg-theme-text-color, var(--mc-def-text));
-  --tg-hint: var(--tg-theme-hint-color, var(--mc-def-hint));
-  --tg-link: var(--tg-theme-link-color, var(--mc-def-link));
-  --tg-button: var(--tg-theme-button-color, var(--mc-def-button));
+  --tg-bg: var(--tg-theme-bg-color, #131313);           /* 页面底 / 对话区 */
+  --tg-secondary-bg: var(--tg-theme-secondary-bg-color, #1c1c1c); /* 左栏、右栏、顶栏、输入框 */
+  --tg-text: var(--tg-theme-text-color, #ebebeb);
+  --tg-hint: var(--tg-theme-hint-color, #9b9b9b);
+  --tg-link: var(--tg-theme-link-color, #60a5fa);
+  --tg-button: var(--tg-theme-button-color, #2563eb);
   --tg-button-text: var(--tg-theme-button-text-color, #ffffff);
-  --tg-destructive: var(--mc-def-destructive);
-  --tg-float: var(--mc-def-float);
+  --tg-destructive: #f87171;
+  --tg-float: #262626;                                  /* 弹窗、菜单、浮板 */
 }
 
-/* —— 第 3 层：与配色无关的工艺 token。
+/* —— 第 2 层：与配色无关的工艺 token。
  *
  * `--line` / `--hover` 用 **color-mix 从当前文字色派生**，不写死白或黑：
  *   写死 `rgb(255 255 255 / 12%)` 那版在浅色主题里是一道**看不见**的白线（白底上白线），
- *   而浅色那几套（paper / breeze）从来没覆盖过它 —— 一直是坏的。
+ *   而后面那些浅色主题从来没覆盖过它 —— 一直是坏的。
  *   从 `--tg-text` 派生 ⇒ 深色里是浅线、浅色里是深线，TG 注入的自定义主题也自动对。
  *
  * 阴影一律带**负扩散**（-Npx）：正扩散 = 大模糊糊成一圈浑浊的光晕，负扩散把阴影往里收、
@@ -96,53 +77,37 @@
   --r-bubble: 16px;
 }
 
-/* —— 用户主题预设（localStorage.mc_theme，JS 往 <html> 上点 data-theme 即时切换） ——
- * 盖在默认/TG注入之上（html[data-theme] 优先级高于 :root），但 TG 注入那组 fallback
- * 写的是默认层 ⇒ 预设想"压过 TG 注入"得用 !important？不 —— TG 内打开时 data-theme 根本不设
- * （JS 里判了：有 window.Telegram.WebApp 就不用预设），两者永不同时生效。 */
+/* —— 三套预设（id 只在 `utils/prefs.js` 的 THEME_IDS 里，别在这儿另起名字） ——
+ * `html[data-theme]` 优先级高于 `:root`（同是元素级，但它多了属性选择器）⇒ 压得住语义层。
+ * 而 TG 里 data-theme 根本不设（`applyTheme` 判了 `window.Telegram.WebApp`），两者永不同时生效，
+ * 所以这里不需要 !important。 */
 
-/* —— 石墨（深色，默认）：中性灰阶。色值 = OpenWebUI 的灰阶（oklch L 换算成 sRGB），
- * chroma 全 0；三层明度 19 / 28 / 38，步长一致。文字 #ebebeb 在 #131313 上 15.6:1。
- * `deepseek` 作为**别名**一起匹配：老版本把这个 id 存进了 localStorage，
- * 换掉 id 会让那些人的主题凭空变成"跟随系统"（另一个颜色）—— 别名让他们看到的是同一套。 */
-html[data-theme="graphite"],
-html[data-theme="deepseek"] {
+/* 暗色（默认）：中性灰阶，chroma 全 0 —— 色值 = OpenWebUI 的灰阶（oklch L 换算成 sRGB）。
+ * 三层明度 19 / 28 / 38，步长一致。文字 #ebebeb 在 #131313 上 15.6:1。 */
+html[data-theme="dark"] {
   --tg-bg: #131313; --tg-secondary-bg: #1c1c1c; --tg-float: #262626; --tg-text: #ebebeb;
   --tg-hint: #9b9b9b; --tg-link: #60a5fa; --tg-button: #2563eb; --tg-button-text: #ffffff;
   --tg-destructive: #f87171; color-scheme: dark;
 }
-/* 深夜蓝：TG 那套（换肤时留作怀旧选项，别当默认） */
-html[data-theme="midnight"] {
-  --tg-bg: #0e1621; --tg-secondary-bg: #17212b; --tg-text: #f5f5f5; --tg-hint: #708499;
-  --tg-link: #62b0e8; --tg-button: #5288c1; --tg-button-text: #ffffff;
-  --tg-destructive: #e53935; --tg-float: #1e2c3a; color-scheme: dark;
+/* 亮色：同一套中性灰阶的浅色端。正文 18.1:1、hint 5.3:1。 */
+html[data-theme="light"] {
+  --tg-bg: #ffffff; --tg-secondary-bg: #f5f5f5; --tg-float: #ffffff; --tg-text: #161616;
+  --tg-hint: #6b6b6b; --tg-link: #2563eb; --tg-button: #2563eb; --tg-button-text: #ffffff;
+  --tg-destructive: #dc2626; color-scheme: light;
 }
-html[data-theme="paper"] {
-  --tg-bg: #ffffff; --tg-secondary-bg: #f5f5f5; --tg-text: #161616; --tg-hint: #6b6b6b;
-  --tg-link: #2563eb; --tg-button: #2563eb; --tg-button-text: #ffffff;
-  --tg-destructive: #dc2626; --tg-float: #ffffff; color-scheme: light;
-}
-html[data-theme="wine"] {
-  --tg-bg: #1f1215; --tg-secondary-bg: #2b1a1e; --tg-text: #f5eef0; --tg-hint: #a08a90;
-  --tg-link: #e08aa0; --tg-button: #a0405c; --tg-button-text: #ffffff;
-  --tg-destructive: #e5534b; --tg-float: #38222a; color-scheme: dark;
-}
-html[data-theme="forest"] {
-  --tg-bg: #101a14; --tg-secondary-bg: #182420; --tg-text: #eef5ef; --tg-hint: #7d9484;
-  --tg-link: #6fc287; --tg-button: #2f7d4f; --tg-button-text: #ffffff;
-  --tg-destructive: #e5534b; --tg-float: #20302a; color-scheme: dark;
-}
-/* —— Breeze / Breeze Dark（KDE 经典配色，色值取自 /usr/share/color-schemes/Breeze{Light,Dark}.colors） ——
+/* Breeze：KDE 经典配色（色值取自 /usr/share/color-schemes/BreezeLight.colors）。
  * 映射：bg=View.BackgroundNormal / secondary=Window.BackgroundNormal / text=View.ForegroundNormal /
  * hint=View.ForegroundInactive / link=View.ForegroundLink / button=Selection.BackgroundNormal /
- * destructive=View.ForegroundNegative / float=View.BackgroundAlternate（亮）·Complementary.BackgroundNormal（暗）。 */
+ * destructive=View.ForegroundNegative / float=View.BackgroundAlternate。
+ * Breeze 的底色比「亮色」更灰一档（#eff0f1 vs #f5f5f5），蓝也更"桌面色"（#3daee9）——
+ * 这两条就是它跟「亮色」的区别，不是换汤不换药。 */
 html[data-theme="breeze"] {
-  --tg-bg: #ffffff; --tg-secondary-bg: #eff0f1; --tg-text: #232629; --tg-hint: #707d8a;
-  --tg-link: #2980b9; --tg-button: #3daee9; --tg-button-text: #ffffff;
+  --tg-bg: #ffffff; --tg-secondary-bg: #eff0f1; --tg-text: #232629;
+  /* ⚠ 有三个值**故意**偏离 BreezeLight.colors —— 它原样那套过不了 AA，白底上读不清：
+   *   hint  #707d8a → #646f7b   4.21 → 5.12（面板上 4.49）
+   *   link  #2980b9 → #2470a2   4.30 → 5.36（面板上 4.70）
+   *   button_text #ffffff → #161616  2.49 → 7.26（白字压在 #3daee9 上，发送钮图标会糊）
+   * 色相照旧（灰蓝 / 桌面蓝 / Breeze 蓝），只是压深一档。 */
+  --tg-hint: #646f7b; --tg-link: #2470a2; --tg-button: #3daee9; --tg-button-text: #161616;
   --tg-destructive: #da4453; --tg-float: #f7f7f7; color-scheme: light;
-}
-html[data-theme="breeze-dark"] {
-  --tg-bg: #141618; --tg-secondary-bg: #202326; --tg-text: #fcfcfc; --tg-hint: #a1a9b1;
-  --tg-link: #1d99f3; --tg-button: #3daee9; --tg-button-text: #fcfcfc;
-  --tg-destructive: #da4453; --tg-float: #202326; color-scheme: dark;
 }

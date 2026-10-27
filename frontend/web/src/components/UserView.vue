@@ -146,7 +146,7 @@ function clearBg() {
   bgUrl.value = "";
   bgStatus.value = describeBackground(null);
 }
-// 个人偏好（外观/输入）：即时生效（主题应用收口在 applyTheme，含 TG 守卫、空串=跟随系统）。
+// 个人偏好（外观/输入）：即时生效（主题应用收口在 applyTheme，含 TG 守卫与老 id 的归一化）。
 function savePrefs() {
   localStorage.setItem("mc_preview", preview.value ? "1" : "0");
   localStorage.setItem("mc_theme", theme.value);
@@ -263,15 +263,12 @@ onUnmounted(() => document.removeEventListener("keydown", onKey));
               </div>
             </template>
             <h3>外观</h3>
+            <!-- 只有三套（2026-10-28 用户定）。id 必须与 prefs.js 的 THEME_IDS 逐个对得上，
+                 contract.test.js 钉着 —— 这里多一个少一个都不会报错，只会让人选到没规则的主题。 -->
             <label class="field"><span>主题</span><select v-model="theme">
-              <option value="graphite">石墨（暗，默认）</option>
-              <option value="breeze-dark">Breeze Dark（暗）</option>
-              <option value="midnight">深夜蓝</option>
-              <option value="wine">酒红</option>
-              <option value="forest">森绿</option>
-              <option value="breeze">Breeze（亮）</option>
-              <option value="paper">日间白</option>
-              <option value="">跟随系统</option>
+              <option value="light">亮色</option>
+              <option value="dark">暗色（默认）</option>
+              <option value="breeze">Breeze</option>
             </select></label>
             <label class="field"><span>背景图 URL</span><input v-model="bgUrl" placeholder="https://…（浏览器直接加载，跨域无妨）" /></label>
             <div class="row">
