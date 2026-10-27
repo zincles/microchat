@@ -8,7 +8,8 @@ import (
 )
 
 // 对话记录导出/导入（JSON）：正文 + 标题 + **v2 起再带会话的三格软引用**
-// （provider / model / agent_id / agent_name）；system prompt / 摘要 / 思考 / 用量一概不带；
+// （provider / model / agent_id / agent_name）+ **v3 起带整张摘要金字塔**（见 export_v3_test.go）；
+// system prompt / 用量一概不带；
 // 正文原样（`<state>` 块留着）；导入严格校验 role；空 messages ⇒ 400。
 func TestSessionExportImportRoundTrip(t *testing.T) {
 	box := newDummySandboxWith(t, true)
@@ -40,7 +41,7 @@ func TestSessionExportImportRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(exported.Body.Bytes(), &doc); err != nil {
 		t.Fatal(err)
 	}
-	if doc.Version != 2 || len(doc.Messages) != 4 || doc.Title != "导出测试会话" {
+	if doc.Version != 3 || len(doc.Messages) != 4 || doc.Title != "导出测试会话" {
 		t.Fatalf("导出形状不对：%+v", doc)
 	}
 	// v2 的三格软引用：渠道/模型/agent 都要带（导出那一刻会话绑的是谁）
@@ -50,9 +51,11 @@ func TestSessionExportImportRoundTrip(t *testing.T) {
 	if doc.Messages[0].Role != "user" || !strings.Contains(doc.Messages[0].Content, "<state>HP = 10</state>") {
 		t.Fatalf("正文该原样（含 <state> 块）：%+v", doc.Messages[0])
 	}
-	// 内容级的账一概不带：整份 JSON 里不许出现 system prompt / reasoning / usage 那些键
+	// 内容级的账一概不带：整份 JSON 里不许出现 system prompt / usage 那些键。
+	// （`reasoning` 是 v3 起**要**带的：它是模型说过的话的一部分；`summary` 只在真压过时才出现，
+	//  这里这条会话没压过 ⇒ 整份文件里连这个键都不该有。）
 	raw := exported.Body.String()
-	for _, banned := range []string{"reasoning", "usage", "system_prompt", "summary"} {
+	for _, banned := range []string{"usage", "system_prompt", "summary"} {
 		if strings.Contains(raw, banned) {
 			t.Fatalf("导出不该带 %q：%s", banned, raw)
 		}
@@ -158,8 +161,8 @@ func TestSessionImportKeepsUnknownBindings(t *testing.T) {
 func TestSessionImportRejectsNewerVersion(t *testing.T) {
 	box := newDummySandboxWith(t, true)
 	rec := authCall(box.server, "POST", "/api/v1/sessions/import-json",
-		`{"version":3,"messages":[{"role":"user","content":"a"}]}`, testSysToken)
-	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "version = 3") {
+		`{"version":4,"messages":[{"role":"user","content":"a"}]}`, testSysToken)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "version = 4") {
 		t.Fatalf("更新的 version 该 400 并说清：%d（%s）", rec.Code, rec.Body.String())
 	}
 }

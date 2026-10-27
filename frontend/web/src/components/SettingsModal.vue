@@ -112,7 +112,9 @@ async function exportSessionRow(s) {
   try {
     const doc = await api.exportSession(s.id);
     downloadJSON(doc, `${s.title || "新会话"}.json`);
-    sessionMgrStatus.value = `已导出 ${doc.messages.length} 条：${s.title || "新会话"}`;
+    // v3 起文件里还有整张摘要金字塔 ⇒ 说一声"压缩状态一起走了"，不然用户不知道它带没带。
+    const packed = doc.summaries?.length ? `，压缩块 ${doc.summaries.length} 个` : "";
+    sessionMgrStatus.value = `已导出 ${doc.messages.length} 条${packed}：${s.title || "新会话"}`;
   } catch (e) { sessionMgrStatus.value = `导出失败：${e.message}`; }
 }
 
@@ -152,6 +154,8 @@ async function importJSONFile(event) {
     const doc = JSON.parse(await file.text());
     const out = await api.importJson(doc);
     const bits = [`已导入 ${out.messages} 条：${out.session?.title || "新会话"}`];
+    // v3 起文件可能带着整张摘要金字塔（含被压缩消息的摘要，任意层级）。
+    if (out.summaries) bits.push(`压缩块 ${out.summaries} 个`);
     // v2 起文件带着会话的三格绑定 ⇒ 回执里能看出"搬过来之后绑的是谁"。
     const bound = [out.session?.provider, out.session?.model].filter(Boolean).join("/");
     if (bound) bits.push(`渠道/模型 ${bound}`);
@@ -347,7 +351,7 @@ function onKey(e) {
                 <td>{{ s.messages }}</td>
                 <td>{{ s.provider }}/{{ s.model }}</td>
                 <td class="ops">
-                  <button type="button" class="link-btn" @click.stop="exportSessionRow(s)" title="导出对话记录（JSON：标题 + 每条的 role/正文 + 这条会话绑的渠道/模型/Agent）">导出</button>
+                  <button type="button" class="link-btn" @click.stop="exportSessionRow(s)" title="导出对话记录（JSON v3：全部消息 + 压缩金字塔 + 这条会话绑的渠道/模型/Agent）">导出</button>
                   <button type="button" class="link-btn danger" @click.stop="askDropSession(s.id, s.title)">删除</button>
                 </td>
               </tr></tbody>

@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -390,4 +391,167 @@ func insertSummary(tx *sql.Tx, summary model.Summary) error {
 		string(encoded), summary.Provider, summary.Model, summary.PromptVersion,
 		usageArg(summary.Usage), dirtyArg(summary.Dirty), summary.CreatedAt)
 	return err
+}
+
+// —— 导入：把一整张金字塔压回一个新会话（`POST /sessions/import-json` 的 v3）——
+
+// ImportSummary：一条要还原的摘要。
+//
+// `Summary.ID` / `ParentSummaryID` 由调用方**先换成新 id** —— 摘要在导入时全铸新 id（照抄会撞主键，
+// 同一个文件导两次就炸），所以父子关系也得跟着重映射；`Summary.SessionID` 不看（一律用参数那个）。
+// 区间用 **1-based 消息序号**（与 `messages.idx` 同一把尺），`0` = 这一端不写（库里可空同义）。
+type ImportSummary struct {
+	Summary  model.Summary
+	BeginIdx int
+	EndIdx   int
+}
+
+// RestoreSummaries：把一串摘要写进一个**刚导入的**会话，并把 `messages.summary_id` 回填回去。
+//
+// 为什么不能直接 `RecordSummary`：那条路是"新压一次"的闸（拒覆已覆盖区间、要求成员未被盖），
+// 而导入是把**既成事实**搬进来 —— 金字塔的每一层都已经被盖过了。所以这里另开一条只服务导入的路，
+// 但守住同样的不变量：一条摘要的区间自洽、父指针落地、`source_ids` 与真实成员一致。
+//
+// 三件容易错的事，各自挡住：
+//   - **`source_ids` 重建**（不照抄文件）：id 在导入时全换新，照抄下来的全是悬空的旧 id。
+//     消息级 = 区间里那几条消息的新 id；摘要级 = 父指针指向它的那几条子摘要的新 id。
+//   - **父指针最后写**（`insertSummary` 一律先写 NULL，自引用外键要求父先存在）。
+//   - **消息回填带 `summary_id IS NULL` 守卫**：区间重叠会在这里当场变成错误，而不是悄悄盖掉一条。
+//
+// 调用方必须在**消息已经导入完**之后调它（区间按消息序号解析）。
+func (s *Store) RestoreSummaries(sessionID string, rows []ImportSummary) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	ids, err := messageIDsInOrder(tx, sessionID)
+	if err != nil {
+		return err
+	}
+
+	known := make(map[string]bool, len(rows))
+	for _, row := range rows {
+		if row.Summary.ID == "" {
+			return InvalidError("导入的摘要缺 id")
+		}
+		if known[row.Summary.ID] {
+			return InvalidError("导入的摘要 id 重复：" + row.Summary.ID)
+		}
+		known[row.Summary.ID] = true
+	}
+	for _, row := range rows {
+		if parent := row.Summary.ParentSummaryID; parent != nil && !known[*parent] {
+			return InvalidError("导入的摘要指着一条不在文件里的父摘要：" + *parent)
+		}
+	}
+
+	// leafRanges：消息级摘要的区间（回填 messages.summary_id 用）。
+	type leafRange struct {
+		id         string
+		begin, end int
+	}
+	leafRanges := make([]leafRange, 0, len(rows))
+
+	for _, row := range rows {
+		summary := row.Summary
+		summary.SessionID = sessionID
+		if summary.Type != model.TypeMessages && summary.Type != model.TypeSummaries {
+			return InvalidError("摘要的成员只能是消息或摘要（type 不认识：" + string(summary.Type) + "）")
+		}
+		// 区间：两头都给才写（只给一头 = 文件坏了，不猜）。
+		summary.BeginMessageID, summary.EndMessageID = nil, nil
+		begin, end := row.BeginIdx, row.EndIdx
+		if begin > 0 || end > 0 {
+			if begin < 1 || end < begin || end > len(ids) {
+				return InvalidError(fmt.Sprintf(
+					"摘要 %s 的区间 %d-%d 不在 1-%d 里", row.Summary.ID, begin, end, len(ids)))
+			}
+			beginID, endID := ids[begin-1], ids[end-1]
+			summary.BeginMessageID, summary.EndMessageID = &beginID, &endID
+		}
+		if summary.CreatedAt <= 0 {
+			summary.CreatedAt = nowMS()
+		}
+		// source_ids 重建（见函数注释第一条）。
+		members := []string{}
+		switch summary.Type {
+		case model.TypeMessages:
+			if summary.BeginMessageID != nil {
+				members = append(members, ids[begin-1:end]...)
+				leafRanges = append(leafRanges, leafRange{id: summary.ID, begin: begin, end: end})
+			}
+		case model.TypeSummaries:
+			for _, child := range rows {
+				if child.Summary.ParentSummaryID != nil && *child.Summary.ParentSummaryID == summary.ID {
+					members = append(members, child.Summary.ID)
+				}
+			}
+		}
+		summary.SourceIDs = members
+		if err := insertSummary(tx, summary); err != nil {
+			return err
+		}
+	}
+
+	// 父指针：全部插完之后再回填（自引用外键，父必须先存在）。
+	for _, row := range rows {
+		if row.Summary.ParentSummaryID == nil {
+			continue
+		}
+		res, err := tx.Exec(
+			`UPDATE summaries SET parent_summary_id = ?1
+			  WHERE id = ?2 AND session_id = ?3 AND parent_summary_id IS NULL`,
+			*row.Summary.ParentSummaryID, row.Summary.ID, sessionID)
+		if err != nil {
+			return err
+		}
+		if affected, err := res.RowsAffected(); err == nil && affected != 1 {
+			return InvalidError("摘要的父指针没写进去：" + row.Summary.ID)
+		}
+	}
+
+	// 消息回填：`summary_id IS NULL` 是重叠守卫（见函数注释第三条）。
+	for _, span := range leafRanges {
+		for index := span.begin - 1; index < span.end; index++ {
+			res, err := tx.Exec(
+				`UPDATE messages SET summary_id = ?1
+				  WHERE id = ?2 AND session_id = ?3 AND summary_id IS NULL`,
+				span.id, ids[index], sessionID)
+			if err != nil {
+				return err
+			}
+			if affected, err := res.RowsAffected(); err == nil && affected != 1 {
+				return InvalidError(fmt.Sprintf(
+					"消息 %d 已经被另一条摘要盖住了：两条消息级摘要的区间重叠（导入的文件有问题）", index+1))
+			}
+		}
+	}
+	return tx.Commit()
+}
+
+// messageIDsInOrder：这条会话的消息 id，按 `id` 升序 —— 下标 i 对应 `messages.idx = i+1`（同一把尺）。
+// **调用方持事务**。
+func messageIDsInOrder(tx *sql.Tx, sessionID string) ([]string, error) {
+	rows, err := tx.Query(`SELECT id FROM messages WHERE session_id = ?1 ORDER BY id`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
