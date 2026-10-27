@@ -139,6 +139,10 @@ cd frontend/web && ./node_modules/.bin/vite               # 前端 dev（0.0.0.0
 go -C core build -o ../microchat .                        # 要二进制就这条；产出 ./microchat
 ./microchat                                               # 起来就既在 8787 服务、又在终端里开 TUI
 go -C core test ./...                                     # 后端测试（`-C core` 是 Go 自带，不用 cd）
+podman compose restart                                    # ← **每次提交之后都跑一次**（2026-10-28 用户定）：
+                                                          #   源码是 bind 的、entrypoint 每次启动现编译（约 10 秒），
+                                                          #   这是把改动推到 http://<本机>:8788 的唯一一步。
+                                                          #   改 Dockerfile / 依赖层才要 `up -d --build`
 
 ./microchat -debug <op> [参数…]                            # ← 直操模式：**同进程**调 internal/*，
                                                           #   不起服务 / 不发 HTTP / 不开 TUI，打印就退出
