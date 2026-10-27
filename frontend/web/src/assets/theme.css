@@ -32,6 +32,12 @@
 :root {
   color-scheme: dark;
 
+  /* 界面缩放（「界面」tab 的滑杆）：**只乘字号**，其余靠 em 跟着走 ——
+   * 全项目的尺寸几乎都是 em（0 处 rem、0 处 px 字号，2026-10-28 核过），所以
+   * 改这一格 = 整页等比缩放，不必逐个改。px 的只有 `--r-*` 圆角与滚动条宽度，
+   * 它们不跟着缩 —— 放大到 130% 时圆角显得略小，可接受（OpenWebUI 同样如此）。 */
+  --app-text-scale: 1;
+
   --tg-bg: var(--tg-theme-bg-color, #131313);           /* 页面底 / 对话区 */
   --tg-secondary-bg: var(--tg-theme-secondary-bg-color, #1c1c1c); /* 左栏、右栏、顶栏、输入框 */
   --tg-text: var(--tg-theme-text-color, #ebebeb);

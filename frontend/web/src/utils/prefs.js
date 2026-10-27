@@ -23,6 +23,38 @@ export function normalizeTheme(id) {
   const mapped = THEME_ALIASES[id];
   return THEME_IDS.includes(mapped) ? mapped : DEFAULT_THEME;
 }
+// —— 界面缩放（2026-10-28，照 OpenWebUI 的 UI Scale）——
+// 只乘**字号**：theme.css 的 `--app-text-scale` 乘到 body 的 font-size 上，
+// 全项目尺寸几乎都是 em（0 处 rem、0 处 px 字号）⇒ 改这一格就是整页等比缩放。
+// 范围/步长钉在这里，滑杆与守卫测试都读它（改一处忘另一处不会报错，只会滑不动或存不住）。
+export const TEXT_SCALE_MIN = 0.85;
+export const TEXT_SCALE_MAX = 1.3;
+export const TEXT_SCALE_STEP = 0.05;
+export const DEFAULT_TEXT_SCALE = 1;
+
+// 归一化：认不出的（老版本没存过、手改过的、NaN）一律回落 100%，
+// 再夹到 [MIN, MAX] 并对齐到 5% 的格 —— 滑杆只会给出这些值，localStorage 什么都能塞。
+export function normalizeTextScale(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_TEXT_SCALE;
+  const clamped = Math.min(TEXT_SCALE_MAX, Math.max(TEXT_SCALE_MIN, n));
+  // toFixed 是为了掐掉 `17 * 0.05 = 0.8500000000000001` 这类二进制尾巴。
+  return Number((Math.round(clamped / TEXT_SCALE_STEP) * TEXT_SCALE_STEP).toFixed(2));
+}
+
+export function textScale() { return normalizeTextScale(localStorage.getItem("mc_text_scale")); }
+
+export function applyTextScale(scale) {
+  const s = scale === undefined ? textScale() : normalizeTextScale(scale);
+  document.documentElement.style.setProperty("--app-text-scale", String(s));
+}
+
+export function saveTextScale(scale) {
+  const s = normalizeTextScale(scale);
+  localStorage.setItem("mc_text_scale", String(s));
+  applyTextScale(s);
+}
+
 export const DEFAULT_SEND = "enter";
 
 export function previewOn() { return localStorage.getItem("mc_preview") !== "0"; }

@@ -3,6 +3,23 @@
  * 现在是**中性灰阶 + 发丝分隔 + 无边框按钮**（参考 OpenWebUI）。下面注释里还留着不少"TG 味"的
  * 历史说明 —— 讲的是**形状**（气泡/分组列表），配色相关的以 theme.css 为准。 */
 
+/* —— 字体：自托管 Inter（2026-10-28，照 OpenWebUI）——
+ * 为什么自带一份：`system-ui` 在 Linux 上常常落到 DejaVu Sans / Cantarell 上，西文与数字的
+ * 字形比 macOS 的 SF 差一截，而"廉价感"有一半是字给的。macOS / iOS 仍然优先用系统 SF
+ * （见下面 body 的字族顺序：-apple-system 在前面先命中），所以这份只兜底别的平台。
+ * 只带 WOFF2（325KB；同源 TTF 804KB），可变轴 wght 100–900 + slnt —— 一套字重全覆盖。
+ * 中文字形 Inter 没有 ⇒ 自然落到后面的 PingFang SC / Noto Sans SC，正是我们要的。
+ * 许可：SIL OFL 1.1，全文在 `public/fonts/OFL.txt`。 */
+@font-face {
+  font-family: "Inter";
+  /* 用 `woff2` 而不是 `woff2-variations`：后者是早期写法，认不出它的浏览器会**整条 src 跳过**
+   * （字体静默不生效，页面悄悄退回 system-ui）；可变轴靠下面的 font-weight 区间表达即可。 */
+  src: url("/fonts/Inter-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
 /* —— 全局细节三件：文字渲染、选中色、滚动条 ——
  * 三样都是"不写就吃浏览器默认"的东西，而默认值恰恰是最显廉价的那一档：
  * 系统滚动条在 Windows/Linux 上是一根带箭头的粗灰条，选中色是浏览器的默认蓝。
@@ -19,17 +36,25 @@ body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 ::-webkit-scrollbar-corner { background: transparent; }
 
 /* —— 输入框统一基线（TG 味 = 无边框底色块 + focus 下蓝线；select 自绘箭头 ▾） —— */
-input:not([type="checkbox"]):not([type="radio"]), select, textarea {
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, textarea {
   background: var(--tg-bg); color: var(--tg-text); border: none;
   border-bottom: 2px solid transparent; border-radius: 8px 8px 0 0;
   padding: 0.45em 0.6em; font: inherit; box-sizing: border-box;
   outline: none; transition: border-color 150ms ease-out, background 150ms ease-out;
 }
-input:not([type="checkbox"]):not([type="radio"]):hover, select:hover, textarea:hover { background-color: color-mix(in srgb, var(--tg-text) 4%, transparent); }
-input:not([type="checkbox"]):not([type="radio"]):focus, select:focus, textarea:focus { border-bottom-color: var(--tg-link); background-color: color-mix(in srgb, var(--tg-text) 6%, transparent); }
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):hover, select:hover, textarea:hover { background-color: color-mix(in srgb, var(--tg-text) 4%, transparent); }
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus, select:focus, textarea:focus { border-bottom-color: var(--tg-link); background-color: color-mix(in srgb, var(--tg-text) 6%, transparent); }
 input[type="number"] { text-align: right; -moz-appearance: textfield; }
 /* 复选框：跟主题走（accent-color 染原生勾选框：勾/点用 TG 蓝，底跟系统）。 */
 input[type="checkbox"], input[type="radio"] { accent-color: var(--tg-link); width: 1.1em; height: 1.1em; cursor: pointer; }
+/* 滑杆（界面缩放在用）：**不吃上面那条输入框基线** —— 给 range 加下边框会长出一条压在轨道上的蓝线。
+ * 轨道/拇指自己画：颜色全从 --tg-* 派生，深浅三套自动对（原生滑杆在暗色下是白底，很跳）。 */
+input[type="range"] { appearance: none; -webkit-appearance: none; width: 100%; height: 1.4em; background: none; border: none; padding: 0; cursor: pointer; }
+input[type="range"]::-webkit-slider-runnable-track { height: 3px; border-radius: 999px; background: color-mix(in srgb, var(--tg-text) 18%, transparent); }
+input[type="range"]::-moz-range-track { height: 3px; border-radius: 999px; background: color-mix(in srgb, var(--tg-text) 18%, transparent); }
+input[type="range"]::-webkit-slider-thumb { appearance: none; -webkit-appearance: none; width: 0.9em; height: 0.9em; margin-top: -0.34em; border-radius: 999px; background: var(--tg-text); border: none; }
+input[type="range"]::-moz-range-thumb { width: 0.9em; height: 0.9em; border: none; border-radius: 999px; background: var(--tg-text); }
+input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px color-mix(in srgb, var(--tg-link) 45%, transparent); }
 select { appearance: none; -webkit-appearance: none; padding-right: 1.8em;
   background-image: linear-gradient(45deg, transparent 50%, var(--tg-hint) 50%), linear-gradient(135deg, var(--tg-hint) 50%, transparent 50%);
   background-position: calc(100% - 1.1em) 55%, calc(100% - 0.75em) 55%;
@@ -40,7 +65,13 @@ textarea { resize: vertical; }
  * → transform 又撑大可滚动区域 → 越滚越"延展"（2026-10-10 真机症状）。overscroll-behavior
  * 一并掐掉回弹与下拉刷新。 */
 html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
-body { margin: 0; background: var(--tg-bg); color: var(--tg-text); font: 15px/1.65 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif; }
+/* 字族顺序 = 平台分流，不是随便排的：macOS/iOS 命中 `-apple-system`/`BlinkMacSystemFont` 用系统 SF；
+ * 其余平台（Linux/Windows/Android）跳过它们直接落 **Inter** —— 这正是 2026-10-28 加自托管字体的目的，
+ * 别把 `system-ui` 挪到 Inter 前面，那会让 Linux 又回到 DejaVu。
+ * 字号拆出来单独写（不用 `font` 简写）：要吃 `--app-text-scale`，而简写里塞 calc 会把行高也一起吃掉。 */
+body { margin: 0; background: var(--tg-bg); color: var(--tg-text);
+  font-family: -apple-system, BlinkMacSystemFont, "Inter", system-ui, "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif;
+  font-size: calc(15px * var(--app-text-scale, 1)); line-height: 1.65; }
 /* 自定义背景图（界面 tab 设：URL 或上传的图片）：整页 fixed 图层，垫在壳（#app，z-index 1）下面 ——
  * 各面板自己有底色，图只从透明处（消息区）透出来。--mc-bg-image 由 utils/background.js 挂/摘；
  * 没设 = none ⇒ 纯平底（2026-10-10 砍掉 doodle 花纹：机制换成这张背景图的接口，美术不再维护）。 */
@@ -747,3 +778,10 @@ button.toggle.on .knob { transform: translateX(1.1em); }
 /* plist 操作列：一格内多个文字操作靠 margin-left 分开（设置里的 .row 由 gap 负责）。 */
 .plist td.ops .link-btn { margin-left: 0.2em; }
 #settings-open { margin-left: auto; }
+
+/* 界面缩放滑杆（UserView 的「外观」区）：包一层是因为 `.field` 是两列网格 ——
+ * 滑杆与百分比各当一个子元素的话，百分比会被挤到下一行去。 */
+.scale-wrap { display: flex; align-items: center; gap: 0.6em; min-width: 0; }
+.scale-wrap input[type="range"] { flex: 1; min-width: 0; }
+/* 右边那个百分比：等宽数字（tabular-nums），拖动时不会因 99%→100% 而左右跳。 */
+.scale-value { min-width: 3.2em; text-align: right; font-variant-numeric: tabular-nums; color: var(--tg-hint); font-weight: 500; }

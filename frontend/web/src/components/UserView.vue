@@ -4,10 +4,10 @@
 //   用户 = **登录者自己**的事：个人偏好（外观/输入）现在就落在这儿，
 //   将来的账号/凭证/多用户身份也归这儿。单用户实例先如实说明，不假装有登录。
 // 视图口径同设置：占满内容区、[◧] 左栏开关 · 标题 · [×]，Esc 关闭（一次只关一层）。
-import { ref, onMounted, onUnmounted } from "vue";
+import { ref, computed, onMounted, onUnmounted } from "vue";
 import ToggleSwitch from "./ToggleSwitch.vue";
 import { ICONS } from "./icons.js";
-import { previewOn, themePref, applyTheme, sendMode, sharedApi, apiBase, saveNetPrefs, commandMenuOn, saveCommandMenu, chromeHideOn, saveChromeHide, composerStyle as composerStylePref, saveComposerStyle } from "../utils/prefs.js";
+import { previewOn, themePref, applyTheme, sendMode, sharedApi, apiBase, saveNetPrefs, commandMenuOn, saveCommandMenu, chromeHideOn, saveChromeHide, composerStyle as composerStylePref, saveComposerStyle, textScale as textScalePref, saveTextScale, TEXT_SCALE_MIN, TEXT_SCALE_MAX, TEXT_SCALE_STEP } from "../utils/prefs.js";
 import { authLogin } from "../api/client.js";
 import { loadBackground, saveBackground, applyBackground, describeBackground, fileToBackground } from "../utils/background.js";
 
@@ -90,6 +90,19 @@ const cmdMenu = ref(false);
 // 值名沿用 float/solid ⇒ 已经存过的偏好不作废。
 // 与主题同类：改的是长相，所以住「外观」区；保存后当场生效（写的是根节点属性）。
 const composerStyle = ref("float");
+// 界面缩放（2026-10-28）：**拖的时候就生效**（不像别的偏好等"保存"）——
+// 尺寸这东西得看着调，等你点保存再看效果等于摸黑。落盘也顺手做了（saveTextScale）。
+const textScale = ref(1);
+const scaleBounds = { min: TEXT_SCALE_MIN, max: TEXT_SCALE_MAX, step: TEXT_SCALE_STEP };
+const scalePercent = computed(() => Math.round(textScale.value * 100));
+function onScaleInput(event) {
+  textScale.value = Number(event.target.value);
+  saveTextScale(textScale.value);
+}
+function resetScale() {
+  textScale.value = 1;
+  saveTextScale(1);
+}
 // 滚动隐藏上下栏（触屏；默认开）：往下看顶栏让位、往回看底栏让位，进度跟位移成正比。
 const chromeHide = ref(true);
 const bgUrl = ref("");
@@ -106,6 +119,7 @@ function load() {
   preview.value = previewOn();
   cmdMenu.value = commandMenuOn();
   composerStyle.value = composerStylePref();
+  textScale.value = textScalePref();
   chromeHide.value = chromeHideOn();
   const bg = loadBackground();
   bgUrl.value = bg?.kind === "url" ? bg.value : "";
@@ -153,6 +167,7 @@ function savePrefs() {
   localStorage.setItem("mc_send", send.value);
   saveCommandMenu(cmdMenu.value);
   saveComposerStyle(composerStyle.value);
+  saveTextScale(textScale.value);
   saveChromeHide(chromeHide.value);
   applyTheme(theme.value);
   emit("prefs-saved"); // 聊天壳上的活开关立刻跟上（命令菜单那颗 ☰）
@@ -270,6 +285,28 @@ onUnmounted(() => document.removeEventListener("keydown", onKey));
               <option value="dark">暗色（默认）</option>
               <option value="breeze">Breeze</option>
             </select></label>
+            <!-- 界面缩放（2026-10-28，照 OpenWebUI 的 UI Scale）：**拖动即生效**，不用点保存。
+                 只乘字号 ⇒ 整页等比（尺寸几乎都是 em）；圆角是 px，放大时相对显小，可接受。 -->
+            <!-- `.field` 是两列网格（label | 控件）：滑杆与百分比必须包成**一个**子元素，
+                 否则百分比会被挤到第二行第一列去（看着像标签下面多了一行孤立数字）。 -->
+            <label class="field"><span>界面缩放</span>
+              <span class="scale-wrap">
+                <input
+                  type="range"
+                  :min="scaleBounds.min"
+                  :max="scaleBounds.max"
+                  :step="scaleBounds.step"
+                  :value="textScale"
+                  @input="onScaleInput"
+                  aria-label="界面缩放"
+                />
+                <b class="scale-value">{{ scalePercent }}%</b>
+              </span>
+            </label>
+            <div class="row">
+              <button type="button" class="link-btn" @click="resetScale">复位 100%</button>
+              <span class="status">拖动即生效；只放大字号，布局留白跟着等比</span>
+            </div>
             <label class="field"><span>背景图 URL</span><input v-model="bgUrl" placeholder="https://…（浏览器直接加载，跨域无妨）" /></label>
             <div class="row">
               <button type="button" class="primary" @click="applyBgUrl">应用 URL</button>

@@ -32,7 +32,7 @@ import {
   whoText,
   sessionTitle,
 } from "../src/utils/format.js";
-import { sendMode, wantsSend, themePref, normalizeTheme, apiBase, defaultApiBase, apiBaseCandidates, THEME_IDS, DEFAULT_THEME, DEFAULT_SEND, composerStyle, applyComposerStyle, saveComposerStyle, DEFAULT_COMPOSER } from "../src/utils/prefs.js";
+import { sendMode, wantsSend, themePref, normalizeTheme, apiBase, defaultApiBase, apiBaseCandidates, THEME_IDS, DEFAULT_THEME, DEFAULT_SEND, composerStyle, applyComposerStyle, saveComposerStyle, DEFAULT_COMPOSER, normalizeTextScale, textScale, applyTextScale, saveTextScale, TEXT_SCALE_MIN, TEXT_SCALE_MAX, DEFAULT_TEXT_SCALE } from "../src/utils/prefs.js";
 
 // 契约测试（无浏览器）：只验纯函数与请求形状。`node --test test/`。
 // 后端真服务验证另走手工（见 README）。
@@ -966,5 +966,46 @@ test("主题：删掉的老 id 都能搬到现存的一档（不许让人主题�
   // 认不出的（含老版本的"跟随系统"空串）⇒ 默认，不再摘掉 data-theme。
   for (const junk of ["", null, undefined, "随便填的", "Dark"]) {
     assert.equal(normalizeTheme(junk), DEFAULT_THEME);
+  }
+});
+
+// —— 界面缩放（2026-10-28，照 OpenWebUI 的 UI Scale）——
+// 证伪点：① 认不出的值把字号弄成 0 / NaN（整页缩没了）；② 超出范围的滑杆值原样落盘
+// （下次开机字号离谱，用户不知道怎么退回去）；③ 浮点尾数让同一档存成两个值；
+// ④ 滑杆范围与 CSS 兜底对不上（拖到 85% 却按 100% 画）。
+test("界面缩放：夹到范围内、对齐 5%、坏值回落 100%", () => {
+  assert.equal(DEFAULT_TEXT_SCALE, 1);
+  // 没设过 / 认不出的 ⇒ 100%（不是 0，也不能是 NaN —— 那会把 body 字号算成 0px）
+  for (const junk of [null, undefined, "", "abc", 0, -1, NaN, Infinity]) {
+    assert.equal(normalizeTextScale(junk), 1, `坏值 ${String(junk)} 该回落 100%`);
+  }
+  // 超范围往回收：滑杆给不出 5 倍，但 localStorage 什么都能塞
+  assert.equal(normalizeTextScale(9), TEXT_SCALE_MAX);
+  assert.equal(normalizeTextScale(0.1), TEXT_SCALE_MIN);
+  // 对齐到 5%：0.87 不是滑杆上的格 ⇒ 落到最近的 0.85
+  assert.equal(normalizeTextScale(0.87), 0.85);
+  assert.equal(normalizeTextScale(1.02), 1);
+  // 二进制尾数（17 * 0.05 = 0.8500000000000001）不许漏到 localStorage 里
+  const s = String(normalizeTextScale(TEXT_SCALE_MIN));
+  assert.ok(s.length <= 4, `存下来的值太长：${s}`);
+});
+
+test("界面缩放：落盘、读回、挂到根节点的 --app-text-scale", () => {
+  stubStorage();
+  const vars = {};
+  const originalDoc = globalThis.document;
+  globalThis.document = { documentElement: { style: { setProperty: (k, v) => { vars[k] = v; } } } };
+  try {
+    assert.equal(textScale(), 1);                 // 没设过 ⇒ 100%
+    saveTextScale(1.15);
+    assert.equal(localStorage.getItem("mc_text_scale"), "1.15");
+    assert.equal(vars["--app-text-scale"], "1.15"); // 存完当场生效（不是等刷新）
+    assert.equal(textScale(), 1.15);
+    localStorage.setItem("mc_text_scale", "3");   // 手改过
+    assert.equal(textScale(), TEXT_SCALE_MAX);    // 读的时候也要夹
+    applyTextScale(0.9);
+    assert.equal(vars["--app-text-scale"], "0.9");
+  } finally {
+    globalThis.document = originalDoc;
   }
 });

@@ -673,6 +673,18 @@ DeepSeek / OpenCode GO 直连**确实不报**，所以那一格在那儿永远�
 - **用户视图**（2026-10-10 加，与设置**平级**的另一半）：左栏底 `👤 用户` 打开它 —— **设置管实例/服务器**（聊天参数、渠道、Agent、会话、连接），**用户管登录者自己**—— 身份（`/auth/me`：名字 + 管理员标记 + **退出登录**）与个人偏好（主题 / 背景图 / 发送键 / 输入预演）；**用户管理（加人/踢人/改口令）下一步做**。两块**互斥**（一屏只开一个，互相打开时对方让位）；视图口径同设置：`[◧] 用户 [×]`、Esc 一次只关一层；设置视图因此从六区缩成**五区**（原「界面」区整块搬走，`SETTINGS_TABS` 在 format.js）。
 - **后台任务行**（2026-10-10 加）：输入框上方、状态行**头上**再叠一行小字 —— `⟳ 后台任务 N：kind · kind`（就数 `/tasks` 的 `running`；kind 去重列前 3 种）。0 个 ⇒ **整行不渲染**；App 每 2s 拉一次 `/tasks`（进程内面板、零成本），受理类动作（发送/重发/压缩/重摇两族）后**立刻补刷一次**不等节拍。绝对定位叠行 ⇒ 不动布局（`liftOverlays` 的测量不受影响）；文案在 `format.js` 的 `taskLineText`（纯函数、契约测试钉住）。
 - **共享层（2026-10-10 审计整改）**：`utils/prefs.js` = 界面偏好与共享 api 客户端的唯一出口（主题应用含 TG 守卫 —— TG 里 data-theme 根本不设；发送键判定/提示、apiBase/Token、`sharedApi()` 按偏好缓存）；`api/client.js` 的 `mergeStreamSlice` = 流式合并唯一规则（游标回退 ⇒ 清零重建）；api 错误统一带 `code`/`status`（分支按 code，别猜文案）；`format.js` 的 modelKey/modelLabel/whoText/sessionTitle = 键与标签的唯一出口；`COMMAND_META`（commands.js）与 App 执行器启动对账。
+- **外观两件（2026-10-28 加，照 OpenWebUI）**：
+  **① 自托管 Inter**：`frontend/web/public/fonts/Inter-Variable.woff2`（325KB 可变字重 100–900，源是同目录 TTF 转的，
+  不再带 TTF）+ `OFL.txt`；`main.css` 顶部一条 `@font-face`，`body` 字族排成
+  `-apple-system, BlinkMacSystemFont, "Inter", system-ui, "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif`
+  —— **顺序是平台分流不是随手排**：macOS/iOS 命中 `-apple-system` 用系统 SF，其余平台跳过它落 Inter
+  （`system-ui` 在 Linux 常落到 DejaVu Sans，西文数字明显差一档）。别把 `system-ui` 挪到 Inter 前面。
+  中文 Inter 没有字形 ⇒ 自然落到后面两个中文字族，那正是要的。PWA 预缓存会带上它（离线也有字）。
+  **② 界面缩放**：`theme.css` 的 `--app-text-scale`（根节点 inline style，`prefs.js` 的
+  `applyTextScale`/`saveTextScale`，开机第一帧就应用）。它**只乘 body 的 `font-size`**
+  （`calc(15px * var(--app-text-scale, 1))`）—— 全项目尺寸几乎都是 em、0 处 rem、0 处 px 字号，
+  于是改这一格 = 整页等比缩放。范围/步长钉在 `prefs.js` 的 `TEXT_SCALE_MIN/MAX/STEP`（0.85–1.3，5% 一格），
+  滑杆在**用户视图 → 外观**，**拖动即生效**（尺寸得看着调）。`--r-*` 圆角与滚动条是 px ⇒ 不跟着缩（OpenWebUI 同样如此）。
 - 输入行 `/` 进命令面板（**只放已有路由的命令**），`resume` 走 picker；`model` 只是重拉顶栏下拉（不弹 picker）；不可逆的走全屏确认。
   **命令菜单默认关**（2026-10-17 用户定：移动端那颗 ☰ 与 `/` 浮层纯碍事）—— 关着时输入框左侧**没有 ☰**、
   输入 `/` **不弹面板**（但 `/name` 回车照旧执行：命令本身没消失，只是没有"菜单"这一层）；

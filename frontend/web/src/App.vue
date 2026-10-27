@@ -14,7 +14,7 @@ import {
 import { applyBackground } from "./utils/background.js";
 import { installViewportFit } from "./utils/viewport.js";
 import { classifyAxis, pickDrag, dragProgress, resolveRelease } from "./utils/swipe.js";
-import { sharedApi, previewOn, applyTheme, wantsSend, apiBase, apiToken, apiBaseCandidates, saveNetPrefs, lastSessionId, saveLastSession, commandMenuOn, applyComposerStyle, chromeHideOn } from "./utils/prefs.js";
+import { sharedApi, previewOn, applyTheme, wantsSend, apiBase, apiToken, apiBaseCandidates, saveNetPrefs, lastSessionId, saveLastSession, commandMenuOn, applyComposerStyle, applyTextScale, chromeHideOn } from "./utils/prefs.js";
 import {
   formatStatusLine,
   statusLineTitle,
@@ -51,6 +51,9 @@ applyBackground();
 // 输入栏形态（主题项，2026-10-20）：挂根节点的 `data-composer` —— CSS 认它，组件不用传 prop。
 // 放在这里与 applyTheme 并列：**开机第一帧就得对**，否则会先闪一下浮空卡再变实心。
 applyComposerStyle();
+// 界面缩放（2026-10-28）：同样**开机第一帧就得对** —— 晚一帧就是"字先小一下再变大"的闪。
+// 它写在根节点的 `style` 上（`--app-text-scale`），theme.css 的 body 字号吃这一格。
+applyTextScale();
 // —— 新版本提示（PWA 更新条，2026-10-20 用户定）——
 // 从 `autoUpdate` 改成 `prompt`：新版本**等用户点**才切，而不是悄悄自己 reload。
 // 勾子必须在**开机**就挂（SW 装完是异步回调 —— 挂晚了那一次提示就丢了）。
