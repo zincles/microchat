@@ -288,7 +288,10 @@ html[data-composer="solid"] .messages-inner { padding-bottom: calc(var(--compose
  * 基础 `.msg` 只放两边共用的东西；**气泡那套（底色/圆角/内边距）只挂在 `.msg.user` 上**。
  * 从前这些挂在 `.msg` 基础规则上、由 `.msg.assistant` 一条条盖回去 —— 留下 `border-bottom-left-radius`
  * 这类"看着像气泡但其实没背景"的残影，改基础规则的人会以为 AI 还是气泡。别退回那种写法。 */
-.msg { max-width: 70%; min-width: 9em; }
+/* ⚠ `.msg` 自己没有"尺寸"规则：宽窄全由父级 `.msg-wrap` 定（`max-width` / `min-width` 在那边）。
+ * 从前这里还写着 `max-width: 70%; min-width: 9em;` —— 前者被 `.msg-wrap .msg { max-width: 100% }`
+ * 按特异性恒压（永不生效的死值），后者与父级重复（`.msg` 被 stretch 撑满）。删掉是对的，
+ * 别再往 `.msg` 上加宽高：那会让"气泡多宽"有两个来源。 */
 .msg.user { align-self: flex-end; background: var(--tg-button); color: var(--tg-button-text); border-bottom-right-radius: 4px;
   padding: 0.45em 0.7em; border-radius: var(--r-card); }
 .msg.user .who, .msg.user .edit-btn { color: inherit; opacity: 0.75; }
