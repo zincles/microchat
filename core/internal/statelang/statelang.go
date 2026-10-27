@@ -171,7 +171,4 @@ func Fold(statements []Statement) map[string]string {
 	return folded
 }
 
-// 语法里用到的几个字符串判断，收在一处。
-func isKeywordDelete(token string) bool { return token == "del" }
-
 func trimSpace(text string) string { return strings.TrimSpace(text) }
