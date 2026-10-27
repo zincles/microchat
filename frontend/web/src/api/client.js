@@ -116,7 +116,6 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
   const enc = encodeURIComponent;
   return {
     call,
-    health: () => call("GET", "/health"),
     listSessions: () => call("GET", "/sessions"),
     createSession: (body = {}) => call("POST", "/sessions", body),
     // deleteSession：删整条会话（后端不代建 —— 删完进哪条由调用方定）。
