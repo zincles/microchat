@@ -81,7 +81,6 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .agent-item .agent-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-item .agent-check { color: var(--tg-link); }
 .agent-empty { margin: 0.4em 0.6em; color: var(--tg-hint); font-size: 0.9em; }
-.pill-select:focus { border-bottom: none; background-color: rgb(255 255 255 / 13%); outline: 1px solid var(--tg-link); }
 /* Toast 通知（右上堆叠，TG 安卓 toast 味：深底白字圆角 + 左色条区分 Plumbing/错误）。 */
 #toasts { position: fixed; top: 4.2em; right: 0.8em; display: flex; flex-direction: column; gap: 0.5em; z-index: 50; max-width: min(22em, 80vw); }
 .toast { background: var(--tg-float); color: var(--tg-text); border-radius: var(--r-card); padding: 0.6em 0.9em 0.6em 0.8em; font-size: 0.88em; box-shadow: 0 8px 28px rgb(0 0 0 / 45%); border-left: 3px solid var(--tg-link); animation: toast-in 180ms ease-out; word-break: break-word; }
