@@ -189,14 +189,19 @@ export function formatRoutesOutcome(o) {
   return `${o.provider ?? "?"}：${o.models ?? 0} 个模型`;
 }
 
-// 能力 id（三件，写死 —— 与后端 abilities 枚举同口径，未知的后端 400）。
-export const ABILITY_IDS = ["title", "compact", "judge"];
+// 能力 id（写死 —— 与后端 `abilities.definitions` 同口径，未知的后端 400）。
+//
+// `judge` 2026-10-28 **退役**（用户：「暂时砍掉 agent 的 judge 功能」）：它没有流程、
+// 也没有模板，留在界面上只是一块点了没反应的开关。后端把它当"退役的 id"放行
+// （老 `agents.json` 里写着它照常能读），但不再列进枚举 ⇒ 这里也不能再列。
+// 契约测试拿这张表去对 `core/internal/abilities/abilities.go` 的 definitions。
+export const ABILITY_IDS = ["title", "compact"];
 
 // 能力的**默认模板住在哪条内置段**（2026-10-28：两个默认模板都搬进了段库）。
 // ⚠ 这两个 id 与后端 `config.CompactTemplateSegmentID` / `config.TitleTemplateSegmentID`
 // 必须逐字相同 —— 写错不报错，只是预览里少一段（真正的模板仍由后端拼）。
 // 契约测试从 `core/internal/config/config.go` 里读那两个常量来对。
-// `judge` 没有模板（流程还没写）⇒ 不在这张表里。
+// 每个在册能力都必须在这张表里（没有默认模板的能力，是因为它连流程都没有 —— 那就不该在册）。
 export const ABILITY_TEMPLATE_SEGMENT = { compact: "压缩提示词", title: "起标题提示词" };
 
 // buildAbilitiesPatch：Agent 右详情 → PATCH 整段 abilities（给了就整段替换；nil=不动）。

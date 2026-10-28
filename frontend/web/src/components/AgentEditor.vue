@@ -52,12 +52,14 @@ function abilityHasTemplate(id) {
   return !!seg && !!(r.segments ?? []).includes(seg);
 }
 // 段清单上面那一行说明（`SegmentList` 的 hint）：只在"用户可能误判"的地方说一句。
+//
+// 在册的能力都有一条默认模板段（`ABILITY_TEMPLATE_SEGMENT`），所以三句话都建立在
+// "这个能力有模板"之上 —— 没有模板的那种能力，是连流程都还没有的能力，它压根不该在册
+// （`judge` 就是这个原因在 2026-10-28 退役的，别再把没有流程的 id 加回来）。
 function abilitySegHint(id) {
   const template = ABILITY_TEMPLATE_SEGMENT[id];
+  if (!template) return "";
   const r = rows.value[id] ?? {};
-  if (!template) {
-    return "这个能力还没有流程（judge 的调用点还没写）—— 段会存进配置，等流程接上才生效。";
-  }
   if (!(r.segments ?? []).length) return `空着 = 只用内置段「${template}」（可在段库里查看 / 复制成自定义）。`;
   if (!abilityHasTemplate(id)) return `⚠ 没挑「${template}」也没填覆盖 ⇒ 这一发只有你挑的段，没有流程说明。`;
   return "";

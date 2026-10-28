@@ -3,7 +3,8 @@
 //
 // 四条口径（见 `DEFINE.md`「能力（Ability）」与 `AGENTS.md`「后台任务 / 压缩 / 能力」）：
 //
-//  1. **流程在代码里，开关在 Agent 上**："能力"= 会调模型的那种作业（`title` / `compact` / `judge`），
+//  1. **流程在代码里，开关在 Agent 上**："能力"= 会调模型的那种作业（现在是 `title` / `compact`；
+//     `judge` 2026-10-28 退役，见下面 `retired`），
 //     能覆盖的只有模板 / 渠道 / 模型 —— **不能造新的**（表里没有的 id 写了也不认，报错）；
 //  2. **缺字段 = 默认全开**（现有 `agents.json` 一个字都不用改）；`enabled: false` ⇒
 //     调用方**明确拒绝**执行那一次，**不是静默降级**；
@@ -29,7 +30,7 @@ import (
 	"microchat/internal/task"
 )
 
-// ID：能力 id。**只此三个** —— 加一个 = 同时加一段流程（在代码里），不是加一个配置项。
+// ID：能力 id。**只有下面这几个** —— 加一个 = 同时加一段流程（在代码里），不是加一个配置项。
 type ID = string
 
 const (
@@ -37,14 +38,26 @@ const (
 	Title ID = "title"
 	// Compact：把一段压成摘要（一段 → `summaries` 一行，落库由调用方单事务负责）。
 	Compact ID = "compact"
-	// Judge：JEV 决策（原始文本 + 提示词 + 状态表 → 概率表）。**流程还没写**，但它是能力。
+	// Judge：**已退役**（2026-10-28 用户：「暂时砍掉 agent 的 judge 功能」）。
+	//
+	// 它不在 `definitions` 里 ⇒ 界面不出这一块、`Valid` 不认、新写的配置不会带它。
+	// 常量留着是因为两处还引着它：`internal/judge`（JEV 那发的实现，还没接调用点）
+	// 与 `task.KindJudgement`（那一发的作业种类）。**流程回来时**把下面 `definitions`
+	// 里那行加回去就行 —— 别把这个常量也删掉，否则那边得跟着改。
 	Judge ID = "judge"
 )
+
+// retired：**已退役**的能力 id（`config.RetiredAbilityIDs`，住 config 是因为读文件时就要摘掉，
+// 而 config 不能 import 这个包）。这里只借来看一眼：`Validate` 要把"退役"和"写错"分开 ——
+// 老 `agents.json` 里的 `judge` 是历史，不是错，不能让整份人格读不进来。
+var retired = config.RetiredAbilityIDs
 
 // Definition：一个能力的**代码侧定义** —— id、面板上的中文名、它在 `task` 里算哪种作业、默认模板。
 //
 // 这张表就是"流程在代码里"的落点：加一个能力 = 往这儿加一行（同时写下它那段流程）。
-// `Template` 空 = 还没有模板（judge 的 state+questions 由调用方拼，不走模板）。
+// 两行都 `TemplateSegment`：默认模板住段库（可读、可复制、可参与自由组合）。
+//
+// `Template` 空 = 没有模板（从前 `judge` 就是这种：state+questions 由调用方拼，不走模板）。
 //
 // `TemplateSegment` = "默认模板其实是段库里的一条内置段"（与 `Template` 二选一）。
 // 为什么要这一格：模板也是提示词，用户的抱怨很直接 ——「凭什么这一段我读不到、也拼不了」。
@@ -58,11 +71,14 @@ type Definition struct {
 }
 
 // definitions：全部能力（顺序固定 ⇒ 界面与 `-debug abilities` 的输出稳定）。
+//
+// `judge` 2026-10-28 退役（用户：「暂时砍掉 agent 的 judge 功能」）——
+// 它的定义行搬去了上面的 `retired`；流程回来时把这一行加回来：
+//
+//	{ID: Judge, Label: "判断", TaskKind: task.KindJudgement},
 var definitions = []Definition{
 	{ID: Title, Label: "起标题", TaskKind: task.KindTitle, TemplateSegment: config.TitleTemplateSegmentID},
 	{ID: Compact, Label: "压缩", TaskKind: task.KindCompact, TemplateSegment: config.CompactTemplateSegmentID},
-	// judge：还没有提示词模板（state+questions 由调用方拼），但登记表里已有它这一种
-	{ID: Judge, Label: "判断", TaskKind: task.KindJudgement},
 }
 
 // IDs：全部能力 id（顺序 = `definitions` 的顺序）。
@@ -157,7 +173,7 @@ func digitValue(char byte) int {
 	return int(char-'a') + 10
 }
 
-// Valid：这是个认识的能力 id 吗。
+// Valid：这是个**现在提供**的能力 id 吗（退役的不算 —— 见 `retired`）。
 func Valid(id string) bool {
 	_, ok := DefinitionOf(id)
 	return ok
@@ -200,6 +216,9 @@ func Resolve(agent config.Agent, id ID) Setting {
 //
 // 为什么不能静默忽略：写了 `"ablities": …` 或 `"compactt": {…}` 的人以为它生效了，
 // 而实际什么都没发生 —— 这类"配了不生效"是最难查的一类问题。
+//
+// **退役的 id 不在此列**（`retired`）：老文件里写着 `judge` 是历史，不是写错；
+// 为此把整份人格判死、服务起不来，代价远大于收益。
 func Validate(agents config.AgentsConfig) error {
 	for _, agent := range agents.Effective() {
 		for _, id := range unknownIDs(agent) {
@@ -210,10 +229,13 @@ func Validate(agents config.AgentsConfig) error {
 	return nil
 }
 
-// unknownIDs：这份人格上写了、但不认识的能力 id（排好序 ⇒ 报错稳定）。
+// unknownIDs：这份人格上写了、但不认识的能力 id（排好序 ⇒ 报错稳定；退役的不算不认识）。
 func unknownIDs(agent config.Agent) []string {
 	unknown := []string{}
 	for id := range agent.Abilities {
+		if retired[id] {
+			continue
+		}
 		if !Valid(id) {
 			unknown = append(unknown, id)
 		}

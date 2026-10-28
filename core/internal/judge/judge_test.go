@@ -144,14 +144,18 @@ func TestJudgeForRespectsSwitchAndChannel(t *testing.T) {
 		t.Fatal("收尾后不该还在跑")
 	}
 
-	// 能力关掉 ⇒ 明确拒绝（连上游都不碰）
+	// `judge` 2026-10-28 退役（用户：「暂时砍掉 agent 的 judge 功能」）⇒ 老文件里那条
+	// `"enabled": false` 会在**读入时就被摘掉**（`config.RetiredAbilityIDs`），于是这条流程
+	// 不再被它挡住 —— 这不是漏了判断，是"开关已经不提供"了。流程本身还能跑（下面这条就是为了钉住它）。
+	// ⚠ 「关掉 ⇒ 明确拒绝」这半条契约现在由**在册**能力承担（`compact` 有专门的测试），
+	//   别拿 judge 来测它了 —— 它已经不在册。
 	write("agents.json", `{"agents":[{"id":"off","abilities":{"judge":{"enabled":false}}}]}`)
 	session.AgentID = "off"
-	if _, err := service.JudgeFor(context.Background(), session, nil, nil); err == nil {
-		t.Fatal("关掉 judge 该明确拒绝")
+	if _, err := service.JudgeFor(context.Background(), session, nil, nil); err != nil {
+		t.Fatalf("退役开关已摘掉，这一发该照常跑（流程还在）：%v", err)
 	}
 	if tasks.Running() != 0 {
-		t.Fatal("拒绝的不该留挂号")
+		t.Fatal("收尾后不该还在跑")
 	}
 
 	// 渠道不在 ⇒ 说清楚

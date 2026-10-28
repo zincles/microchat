@@ -548,13 +548,55 @@ func Load(paths Paths) (chat ChatConfig, agents AgentsConfig, providers Provider
 			chat.CompactBlocks = DefaultCompactBlocks
 		}
 	}
-	if err = loadJSON(paths.Config("agents.json"), &agents); err != nil {
+	if agents, err = LoadAgents(paths); err != nil {
 		return
 	}
 	if providers, err = LoadProviders(paths); err != nil {
 		return
 	}
 	return
+}
+
+// LoadAgents：读 `agents.json` 的**唯一入口**（`Load` 与 HTTP 层都走它 —— 口径不许分家：
+// 从前 `server.loadAgents` 自己 `json.Unmarshal` 了一遍，于是"退役的能力要摘掉"这条
+// 只在启动时成立、问一次 `GET /agents` 又冒回来了）。
+//
+// 文件可以缺失（回零值，不是错）。
+func LoadAgents(paths Paths) (AgentsConfig, error) {
+	var agents AgentsConfig
+	if err := loadJSON(paths.Config("agents.json"), &agents); err != nil {
+		return AgentsConfig{}, err
+	}
+	// 退役的能力在这里就摘掉（2026-10-28 起 `judge`）—— 读进来不算数，写回去也就没有它。
+	agents.dropRetiredAbilities()
+	return agents, nil
+}
+
+// RetiredAbilityIDs：**从前是能力、现在不再提供**的 id（2026-10-28 起：`judge`）。
+//
+// 为什么它住在 `config`、而不是 `internal/abilities`：读文件的时候就得把它们**丢掉**
+// （与 `display_mode` 同一条口径 —— 不是结构体的字段，写回去自然就没了），而 `config`
+// 不能 import `abilities`（反过来才是允许的方向，`abilities` 读这张表）。
+//
+// **退役 ≠ 写错**：老 `agents.json` 里写着 `"judge": {…}` 是历史（现场那份就有四个 agent 带它），
+// 把它当"写错的 id"报，等于让整份人格读不进来、服务起不来。写错（`"judgee"`）仍然要 400 ——
+// 退役只是不再提供，不是"什么都懒得查了"。
+var RetiredAbilityIDs = map[string]bool{
+	"judge": true,
+}
+
+// dropRetiredAbilities：把退役的能力从这份人格上摘掉（`Load` 里读完 `agents.json` 就调）。
+//
+// 摘掉而不是留着：留着的话它在 `GET /agents` 里还会露一次、界面上看不到、改别的字段也不会消，
+// 就这么一直躺着 —— 用户永远不知道那条配置还在。摘了就是"从此不算数，下次重写没有它"。
+func (c *AgentsConfig) dropRetiredAbilities() {
+	for index := range c.Agents {
+		for id := range c.Agents[index].Abilities {
+			if RetiredAbilityIDs[id] {
+				delete(c.Agents[index].Abilities, id)
+			}
+		}
+	}
 }
 
 // DefaultProviders：全新装（还没有 providers.json）的内置渠道表（目前只有 dummy 一条）。

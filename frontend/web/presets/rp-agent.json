@@ -6,12 +6,8 @@
     "compact": {
       "enabled": true
     },
-    "judge": {
-      "enabled": true
-    },
     "title": {
       "enabled": true
     }
-  },
-  "display_mode": "roleplay"
+  }
 }

@@ -12,7 +12,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 
@@ -551,10 +550,13 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 }
 
 // loadAgents：读 `agents.json`（读不到就算空的 —— 文件可以缺失）。
+//
+// 走 `config.LoadAgents`，不自己 `json.Unmarshal`：那条路上还挂着"退役的能力要摘掉"
+// （2026-10-28 起 `judge`）—— 自己解析一遍，就等于只有启动时才摘、问一次接口又冒回来。
 func (s *Server) loadAgents() config.AgentsConfig {
-	var agents config.AgentsConfig
-	if body, err := os.ReadFile(s.paths.Config("agents.json")); err == nil {
-		_ = json.Unmarshal(body, &agents)
+	agents, err := config.LoadAgents(s.paths)
+	if err != nil {
+		return config.AgentsConfig{}
 	}
 	return agents
 }

@@ -19,14 +19,14 @@ microchat：轻量 SillyTavern 替代（RPG 向）。三层，边界要清楚：
 | 词 | **只**指什么 | 别叫 |
 |---|---|---|
 | **世界状态（state）** | `<state>` 那套：**只从消息正文现演**的键值 —— 词汇只有两种：**变量**（键 → 值）与**表**（命名空间，不写表名就落到 `global` 表）；删除不留痕迹（提示词里的块不算数） | 孤立地说"状态"（得说清是世界状态、turn 状态还是 Task 状态） |
-| **能力（Ability）** | **写死在代码里的一段固定流程**（**会调模型的 Task 种类**：现在 `title` / `compact` / `judge` 三个）；开关在 Agent 上、流程在代码里。**"对话本身"不是能力** ✗（那是 Agent 存在的方式） | "工具"（撞函数调用）、"子 Agent" |
+| **能力（Ability）** | **写死在代码里的一段固定流程**（**会调模型的 Task 种类**：现在 `title` / `compact` 两个；`judge` 2026-10-28 退役）；开关在 Agent 上、流程在代码里。**"对话本身"不是能力** ✗（那是 Agent 存在的方式） | "工具"（撞函数调用）、"子 Agent" |
 | **Agent** | **一份命名的人格 + 一组能力开关**（`agents.json`）：同一个运行时，只是开关不同 | 拿它指"某个能力" |
 | **任务（Task）** | **一次上游请求的全程**（发起 → 收尾 → 可能被取消）：一轮生成、一次压缩、一次刷新模型都挂号。**会调模型的一定是 Task**（**反之不成立** —— `refresh_models` 也是 Task，但它不调模型）。**TaskID 是 UUIDv7，且不进库** | "后台作业"（不都在后台）；拿它指"某个能力" |
 | **用户（User）** | **一个登录者**（`users` 行）：名字 + bcrypt 口令 + 角色。**UID 0 = ROOT 恒在**（建库即种、等 setup 设口令；**无口令 = 服务未启用**）；**其余 uid 从 1000 起、不可变**；会话靠 `owner_id` 归属（**无主 = 0 = root**）。口径全在 `DEFINE.md`「用户与鉴权」 | "agent"（那是人格）；"系统令牌"（那是 TUI/TG 的通道）|
 | **系统令牌** | **环回通道的凭据**（TUI/TG 与 server 同进程，启动现铸、只走内存）：认它 = 系统身份（等同 admin）。**不是**用户凭据 —— 用户凭据是登录换的 JWT | "管理员口令" |
 
 三层咬合：**Agent（人格 + 能力开关）→ 一次调用（对话型 / 功能型=能力）→ Task（这次上游请求的全程）**。
-**Task 的种类 ≈ 能力 id** ✓（2026-09-30 定，别再分两层）：`title` / `compact` 是，`judge` 能力的 Task 面叫 **`judgement`**
+**Task 的种类 ≈ 能力 id** ✓（2026-09-30 定，别再分两层）：`title` / `compact` 是，`judge` 能力的 Task 面叫 **`judgement`**（能力已退役、这一发的种类与实现都留着）
 （JEV 那一发的名字；见 `DEFINE.md`「任务（Task）与两族调用」），而 `turn` 作业发起的是**对话型调用**（**不算能力**）、`refresh_models` 发起 0 次。
 "能不能自主选下一步"**不是** Agent 的判据，将来是某个能力（如 `plan`）的事。
 
@@ -255,7 +255,7 @@ delete(AA)           # 删除
   每个 agent 可以带 **`first_message`（首段对话，2026-10-11 用户定）**：以它**新建**会话时，这段文本作为
   **第一条 assistant 消息（idx 1）**落库（正文**原样存档** ⇒ 可带 `<state>` 设初始状态）；空 = 不启用。
   草稿预演（`POST /outgoing`）把它**模拟**进去（"预演 = 真发"）；Copy 不重复插、ST 导入不受影响、改 agent 不追溯。
-  每个 agent 上可以带**能力开关** `abilities`（键 = 能力 id：`title` / `compact` / `judge`；**未知的 id 在写入与启动读取时都报错**，不静默忽略）：
+  每个 agent 上可以带**能力开关** `abilities`（键 = 能力 id：`title` / `compact`；**未知的 id 在写入与启动读取时都报错**，不静默忽略；**退役的 `judge` 例外** —— 老文件里写着它照常能读，读入时就地摘掉）：
   `"abilities": { "compact": { "enabled": false, "provider": "deepseek", "model": "deepseek-chat", "prompt": "…" } }`
   —— **缺字段 = 默认全开** ✓（不带 `abilities` 的 agent 三个能力都是开着的，现有文件一个字都不用改）；
   `provider` / `model` 留空 = 用**会话自己的**；`prompt` 留空 = 用代码里的默认模板；`enabled: false` ⇒ 调用方**明确拒绝**执行那一次（不是静默降级）。
@@ -514,9 +514,14 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
   每一批自己挂号（`compact` 的 Task ⇒ "后台任务"行里看得见）；**失败不阻塞任何一轮**（停了下一轮再来看）。
   开关 = `chat.auto_compact`（**缺字段 = 关** —— 未经验证，默认不开）；关着就全靠手动。
 
-**能力**（`internal/abilities`）：身份写死在代码里（`title` / `compact` / `judge` —— **枚举就是全部**），**开关 + 可选覆盖写在 `agents.json` 每个 agent 的 `abilities` 上**（不另开 `abilities.json`），只能**覆盖**模板/渠道/模型，不能造新的；**未知的 id 在写入与启动读取时都报错**。
+**能力**（`internal/abilities`）：身份写死在代码里（`title` / `compact` —— **枚举就是全部**），**开关 + 可选覆盖写在 `agents.json` 每个 agent 的 `abilities` 上**（不另开 `abilities.json`），只能**覆盖**模板/渠道/模型，不能造新的；**未知的 id 在写入与启动读取时都报错**。
+- **`judge` 2026-10-28 退役**（用户原话：「暂时砍掉 agent 的 judge 功能」）：它从来只有开关、没有流程（`judge.Service.JudgeFor` 一直没人调），界面上就是一块点了没反应的开关。
+  退役办理：`internal/abilities/definitions` 里那一行拿掉（`Valid("judge")` 假、`IDs()` 不含它 ⇒ 界面不出、新写的配置不带）；
+  `config.RetiredAbilityIDs` 记着它，**`config.LoadAgents` 读进来就地摘掉**（与 `display_mode` 同口径：读了不算数、写回去就没有）。
+  **退役 ≠ 写错**：老 `agents.json` 里写着 `"judge": {…}` 是历史（现场那份就有四个 agent 带它），报错会让整份人格读不进来、服务起不来；而 `"judgee"` 那种真的写错仍然 400。
+  流程与那发的实现**没删**（`internal/judge` + `task.KindJudgement`，见「决策模型（JEV）」）—— 要复活就往 `definitions` 加回一行、再把 `RetiredAbilityIDs` 那条删掉。
 - `abilities.Resolve(agent, id)` 是**唯一**解析处：缺条目 = **默认全开**；`provider`/`model` 空 = 用会话的；`enabled: false` ⇒ 调用方**明确拒绝**执行那一次（不是静默降级）。
-- `judge` 的调用面 = `judge.Service.JudgeFor`（开关 + 选渠道 + `task.KindJudgement` 挂号 + 失败原样返回；state/questions 由调用方拼，产出是材料**不落库**）—— 动态组合术调的就是它。
+- `judge` 的调用面 = `judge.Service.JudgeFor`（开关 + 选渠道 + `task.KindJudgement` 挂号 + 失败原样返回；state/questions 由调用方拼，产出是材料**不落库**）—— 动态组合术调的就是它。**但能力已退役（2026-10-28）、至今没有调用点**：这段代码还在，接回去时记得先把 `judge` 从 `config.RetiredAbilityIDs` 里拿出来。
 - compact 换模型 / 改提示词**不用写代码**（例子：会话的渠道是 dummy，但压缩单独走 deepseek）：
   `"abilities": { "compact": { "provider": "deepseek", "model": "deepseek-chat", "prompt": "…" } }` ——
   `provider`/`model` 留空 = 蹭会话自己的；`prompt` 留空 = 代码里的默认模板（填了就整段替换，`prompt_version` 指纹跟着变）；
@@ -661,6 +666,7 @@ DeepSeek / OpenCode GO 直连**确实不报**，所以那一格在那儿永远�
 `typesafe/jev` 那类是**决策模型**（状态 + 类型化问题 → 概率），不生成文本、不能驱动会话、不走 `refresh`（没有统一 `/models` 口径 ⇒ 跳过不算错）。
 落点：`vendor: typesafe`（或承载它的 openrouter / custom）× `protocol: systemone`（verbatim 整条 URL 原样 POST `{model,state,questions}`）；
 `judge` 能力的 Task 面就是 `task.KindJudgement`（"判断"，要会话 id —— 调外部模型就要归属可查）；裸调用在 `internal/judge`（10s 超时、不重试、失败原路返回）。
+⚠ **2026-10-28 起 `judge` 这个能力退役了**（用户：「暂时砍掉 agent 的 judge 功能」）：开关没了、界面没了，`internal/judge` 与 `task.KindJudgement` 原样留着但**没人调**。
 规划中的用途与四条规矩（只动尾部 / 失败降级 / 产出不进历史与变量 / 阈值实测校准）见 **`reminder/jev.md`**。**裁决（阈值/NPC 动作集）还没做** —— 那是第二刀。
 
 ## 界面（口径）

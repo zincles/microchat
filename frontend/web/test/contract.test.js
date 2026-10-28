@@ -28,6 +28,7 @@ import {
   groupModelsByProvider,
   deletionPlanSummary,
   formatRoutesOutcome,
+  ABILITY_IDS,
   ABILITY_TEMPLATE_SEGMENT,
   buildAbilitiesPatch,
   taskLineText,
@@ -566,8 +567,29 @@ test("能力的默认模板段 id：前端常量与后端 const 逐字相同（�
     assert.ok(go.includes(`{ID: ${constName}, File: "${file}"}`),
       `内置段清单里没有 ${constName} 那一行（正文住 config/${file}）`);
   }
-  // judge 还没有模板（流程没写）⇒ 不该在这张表里：放进去等于预览里凭空多一段
-  assert.equal(ABILITY_TEMPLATE_SEGMENT.judge, undefined, "judge 没有默认模板，不该登记");
+  // 退役的 judge 不该在这张表里：它连流程都没有，登记进来等于预览里凭空多一段。
+  assert.equal(ABILITY_TEMPLATE_SEGMENT.judge, undefined, "judge 已退役，不该登记模板段");
+});
+
+// 能力 id 也是"两处各写一遍"的那种：前端 `ABILITY_IDS` 决定编辑器画出几块，
+// 后端 `abilities.definitions` 决定校验认几个 —— 少同步一处**不会报错**，
+// 只是界面多出一块点了没反应的开关（`judge` 那块正是这么来的）。
+test("能力 id：前端 ABILITY_IDS 与后端 abilities.definitions 一致", () => {
+  const go = readFileSync(join(REPO, "core", "internal", "abilities", "abilities.go"), "utf8");
+  const block = go.match(/var definitions = \[\]Definition\{([\s\S]*?)\n\}/);
+  assert.ok(block, "core/internal/abilities/abilities.go 里找不到 definitions 表");
+  // definitions 里写的是 Go 常量名（Title / Compact）⇒ 转成 id 再比
+  const goIDs = [...block[1].matchAll(/\{ID: (\w+),/g)].map((m) => m[1].toLowerCase());
+  assert.deepEqual(ABILITY_IDS, goIDs, "前端 ABILITY_IDS 与后端 definitions 对不上");
+
+  // 退役的**不在** definitions 里 —— 否则老配置会读不进来
+  assert.ok(!goIDs.includes("judge"), "judge 已退役（2026-10-28 用户：「暂时砍掉 agent 的 judge 功能」），别加回 definitions");
+  // 但必须在 config 的退役表里：读文件时靠它把这条历史摘掉（摘不掉就一直躺在 agents.json 里）
+  const cfg = readFileSync(join(REPO, "core", "internal", "config", "config.go"), "utf8");
+  assert.ok(/var RetiredAbilityIDs = map\[string\]bool\{\s*"judge": true,/.test(cfg),
+    "config.RetiredAbilityIDs 里该有 judge（读入时摘掉它，否则它会一直躺在老文件里）");
+  assert.ok(cfg.includes("agents.dropRetiredAbilities()"),
+    "config.LoadAgents 该调 dropRetiredAbilities —— 否则只有启动时才摘、问一次接口又冒回来");
 });
 
 test("能力提示词拼装：覆盖打头 / 空则垫内置模板段 / 挑了它就不重复", () => {
@@ -583,7 +605,7 @@ test("能力提示词拼装：覆盖打头 / 空则垫内置模板段 / 挑了�
   assert.equal(abilityPrompt("", ["风格", "压缩提示词"], segs, "压缩提示词"), "【风格】用第二人称。\n\n【模板】照我说的压。");
   // 填了覆盖 ⇒ 覆盖打头，不再垫默认
   assert.equal(abilityPrompt("【我的】短一点。", ["风格"], segs, "压缩提示词"), "【我的】短一点。\n\n【风格】用第二人称。");
-  // 没有默认模板段的能力（judge —— 流程还没写）⇒ 行为就是普通的 base + 段
+  // 没有模板段的能力（退役的 judge 那种）⇒ 行为就是普通的 base + 段
   assert.equal(abilityPrompt("base", ["风格"], segs, undefined), "base\n\n【风格】用第二人称。");
 });
 

@@ -11,7 +11,7 @@ import (
 func TestMissingToggleMeansEverythingOn(t *testing.T) {
 	setting := Resolve(config.Agent{ID: "a"}, Compact)
 	if !setting.Enabled {
-		t.Fatal("没写 abilities 的 agent：三个能力都该是开着的")
+		t.Fatal("没写 abilities 的 agent：在册的能力都该是开着的")
 	}
 	if setting.Provider != "" || setting.Model != "" || setting.Prompt != "" {
 		t.Fatalf("没写就没有覆盖：%+v", setting)
@@ -44,8 +44,10 @@ func TestToggleOverrides(t *testing.T) {
 	if setting := Resolve(agent, Title); setting.Enabled {
 		t.Fatal("title 也被关掉了")
 	}
+	// 退役的 judge（老配置里还写着它）：**照实解析**，不报错、没提到就是默认全开 ——
+	// 只把它从"能力清单"里拿掉，不是把它变成一颗地雷。
 	if setting := Resolve(agent, Judge); !setting.Enabled {
-		t.Fatal("没提到的能力保持默认全开")
+		t.Fatal("退役的 id 也得照实解析（老配置里还写着它）")
 	}
 }
 
@@ -72,8 +74,37 @@ func TestValidateRejectsUnknownIDs(t *testing.T) {
 	if err := Validate(config.AgentsConfig{Agents: []config.Agent{{ID: "好的"}}}); err != nil {
 		t.Fatalf("没写 abilities 的 agent 不该报错：%v", err)
 	}
-	if !Valid(Compact) || !Valid(Title) || !Valid(Judge) || Valid("turn") {
-		t.Fatal("能力 id 就是 title / compact / judge 三个（turn 不是开关）")
+	if !Valid(Compact) || !Valid(Title) || Valid(Judge) || Valid("turn") {
+		t.Fatal("在册能力就是 title / compact 两个（judge 已退役、turn 不是开关）")
+	}
+}
+
+// `judge` 2026-10-28 退役（用户：「暂时砍掉 agent 的 judge 功能」）：**老配置不许因此读不进来**。
+//
+// 现场那份 `agents.json` 就有四个 agent 写着 `"judge": {…}` —— 把退役 id 当"写错"报，
+// 会让整份人格读不进来、服务起不来。所以：不认它，但**放行**。
+func TestRetiredJudgeIsToleratedNotRejected(t *testing.T) {
+	agents := config.AgentsConfig{Agents: []config.Agent{
+		{ID: "老文件", Abilities: map[string]config.AbilityToggle{
+			Judge:   {Enabled: new(false)},
+			Compact: {Enabled: new(true)},
+		}},
+	}}
+	if err := Validate(agents); err != nil {
+		t.Fatalf("退役的 id 不该让整份人格读不进来：%v", err)
+	}
+	// 但也不能假装它还生效：列出来的能力里没有它。
+	for _, id := range IDs() {
+		if id == Judge {
+			t.Fatalf("退役的 judge 不该还在能力清单里：%v", IDs())
+		}
+	}
+	// 真·写错的 id 仍然要报（退役不等于"什么都不查了"）。
+	typo := config.AgentsConfig{Agents: []config.Agent{
+		{ID: "写错的", Abilities: map[string]config.AbilityToggle{"judgee": {}}},
+	}}
+	if err := Validate(typo); err == nil || !strings.Contains(err.Error(), "judgee") {
+		t.Fatalf("写错的 id 仍该报出来：%v", err)
 	}
 }
 
@@ -87,7 +118,7 @@ func TestEffectiveTemplateAndPromptVersion(t *testing.T) {
 		}
 	}
 	if DefaultTemplate(Judge) != "" || DefaultTemplate("没有这个能力") != "" {
-		t.Fatal("没实现的 / 不认识的：没有模板")
+		t.Fatal("退役的 / 不认识的：没有模板")
 	}
 	// 没覆盖 ⇒ 默认那句；覆盖了 ⇒ 覆盖那句
 	bare := Resolve(config.Agent{ID: "a"}, Compact)

@@ -386,13 +386,13 @@ DELETE 体里带回 `last_deleted_message_id` ✓，服务端核对它仍是最�
 
 （2026-09-29 定；**2026-09-30 落地** ✓ —— `Agent.Abilities` 与 `internal/abilities` 都在跑了，压缩已经按它开关。）
 
-- **能力 = 一段写死在代码里的固定流程** ✓（总结 / 起标题 / 判断…）。**不是**给模型用的工具 ✗，也**不是**"子 Agent" ✗。
+- **能力 = 一段写死在代码里的固定流程** ✓（现在只有总结 / 起标题两个；判断 2026-10-28 退役，见下）。**不是**给模型用的工具 ✗，也**不是**"子 Agent" ✗。
 - **它分成两半，别混** ✗：
 
   | | 属于谁 | 长什么样 |
   |---|---|---|
   | **流程** | **代码** ✓（不可配置 ✓ 不可新增 ✓） | 包级一张表：`{ID, Label, TaskKind, Template}` ✓（产物归属见「能力（Ability）」上面那条模板规矩 ✓） |
-  | **开关 + 可选覆盖** | **Agent** ✓ | `agents.json` 里每个 agent：`"abilities": {"compact": {"enabled": true, "provider": null, "model": null, "prompt": null}, "title": {…}, "judge": {…}}` ✓ |
+  | **开关 + 可选覆盖** | **Agent** ✓ | `agents.json` 里每个 agent：`"abilities": {"compact": {"enabled": true, "provider": null, "model": null, "prompt": null, "segments": []}, "title": {…}}` ✓ |
 
 - **默认全开** ✓（暂定）：缺字段 = 用默认 ⇒ 现有 `agents.json` 一个字都不用改 ✓。
   （实现上 `enabled` 是 `*bool`：**缺字段**与 `false` 是两件事 —— 前者=开，后者=关 ✓。）
@@ -413,8 +413,10 @@ DELETE 体里带回 `last_deleted_message_id` ✓，服务端核对它仍是最�
   ② **失败的处理永远在调用方** ✓（能力自己不吞错、不重试 ✓）：总结失败 ⇒ 那一轮压缩失败 ✓（会话不动 ✓）；
   起标题失败 ⇒ 名字先空着 ✓（下次再来 ✓）。
 - **`prompt_version`** ✓：`sha256(**生效模板**)[:8]` ✓，每次调用连带写进那行记录 ✓（`summaries.prompt_version` ✓：**换个 agent 或改一句话，指纹就变** ✓ —— 算的地方也只有一处 ✓ `abilities.PromptVersion` ✓）。
-- **只列真会做的** ✗：`compact`（压缩/总结）✓、`title`（起标题）✓、`judge`（JEV 判断：`task.KindJudgement` + `internal/judge` 裸调用 ✓，
-  无提示词模板—— state+questions 由调用方拼；**裁决第二刀还没做**）三个**都已落地** ✓；
+- **只列真会做的** ✗：`compact`（压缩/总结）✓、`title`（起标题）✓ 两个**已落地** ✓；`judge`（JEV 判断）**2026-10-28 退役** ✓
+  —— 它的流程（`internal/judge` 裸调用 + `task.KindJudgement`）还在，但**一个调用点都没有**，界面上那块开关点了什么都不发生
+  ⇒ 按"占位会让开关变成空诺"这条规矩摘掉 ✓。**退役 ≠ 写错**：老 `agents.json` 里写着 `"judge": {…}` 照常能读（读入时就地摘掉，
+  `config.RetiredAbilityIDs` 记着它），而 `"judgee"` 那种真写错仍然 400 ✓。复活 = 往能力表加回一行 + 把退役表那条删掉 ✓；
   文档里举的"**索引**"最虚（索引什么没说清 ✗）⇒
   **不占位** ✗ —— 占位会让开关变成空诺 ✓（写着能开、其实没有实现 ✗）。
 - **死字段已删** ✓（2026-09-30）：`Agent.params` / `Agent.prompt_order` —— 声明了、没人读、用途未定 ⇒ **删** ✓
@@ -445,7 +447,7 @@ DELETE 体里带回 `last_deleted_message_id` ✓，服务端核对它仍是最�
   为什么这么切 ✓：要被观察的正是这段**有边界、会卡住、能被停**的窗口 ✓ ——
   生成中的气泡、刷新按钮的转圈，挂的都是它 ✓。
 - **登记表在进程内、不进库** ✓（照旧）：重启后"没有在跑的活"是诚实的事实 ✓。
-- **`Kind` = 是哪种作业** ✓：`turn`（前台一轮生成）/ `reroll`（前台重摇一版）/ `compact`（压缩）/ `title`（起标题）/ `judgement`（JEV 判断：值拼写注意，不是 `judge`）/ `refresh_models`（拉模型列表）✓
+- **`Kind` = 是哪种作业** ✓：`turn`（前台一轮生成）/ `reroll`（前台重摇一版）/ `compact`（压缩）/ `title`（起标题）/ `judgement`（JEV 判断：值拼写注意，不是 `judge`；**对应的能力已退役、这一发没人发起**）/ `refresh_models`（拉模型列表）✓
   —— **加一种 = 枚举里加一个变体** ✓（面板按它分组、日志按它过滤 ✓）。
 
 ### Task 状态五个 ✓（**这套词只属于 Task** ✓）
@@ -504,10 +506,10 @@ Task 状态答"这条上游请求的命" ✓，turn 状态答"这轮现在长什
 | `reroll` | ✓（非流式） | **不是** ✗ —— 与 `turn` 同类（对话型调用：把尾条那条回复重来一遍）| 历史**减去那条回复** → **候选**（`RerolledMessage`，只在内存里 ✓ 不进历史 ✗；接受才写 ✓） |
 | `title` | ✓ | ✓ | 会话的一段 → `sessions.title`（调用方写 ✓） |
 | `compact` | ✓ | ✓ | 一段（消息**或**摘要，两端用 id 指 ✓）→ 写进 `summaries`（调用方单事务 ✓） |
-| `judgement`（JEV，能力 id 叫 `judge`） | ✓（**不是 chat 协议** ✗ ⇒ `vendor`×`protocol` 两轴里的 `protocol: systemone` ✓） | ✓ | 状态表 + 类型化问题 → 概率表（调用方处置 ✓；`internal/judge` 裸调用） |
+| `judgement`（JEV，能力 id 叫 `judge`） | ✓（**不是 chat 协议** ✗ ⇒ `vendor`×`protocol` 两轴里的 `protocol: systemone` ✓） | ✓ | 状态表 + 类型化问题 → 概率表（调用方处置 ✓；`internal/judge` 裸调用）。⚠ 能力已退役（2026-10-28）：种类与实现留着，**没有调用点** |
 | `refresh_models` | **不调** ✗ | 不是 ✓ | 拉上游 `/models` |
 
-- **能力 = 会调模型的 Task 种类** ✓（`title` / `compact` / `judge`）—— 一张词表 ✓，别再造第三张 ✗。
+- **能力 = 会调模型的 Task 种类** ✓（现在是 `title` / `compact`；`judge` 2026-10-28 退役，`judgement` 这一发仍留着）—— 一张词表 ✓，别再造第三张 ✗。
 - `turn` 是 Task 而**不是开关** ✗；`refresh_models` 既不调模型也不是能力 ✗（它只是"一次上游请求"里
   那个不调模型的成员 —— "会调模型的一定是 Task，反过来不成立"这句就是为它留的 ✓）。
 

@@ -68,7 +68,7 @@ op：
   compact <session_id> [--blocks N | --begin-idx N --end-idx M]
                                                     压缩：同步跑完一次并打印区间 / 块数 / 摘要
   title <session_id>                                手动起一次标题（不管现有没有；产物落 sessions.title）
-  abilities <session_id>                            这个会话的 agent 在三个能力上的解析结果
+  abilities <session_id>                            这个会话的 agent 在每个能力上的解析结果
   refresh-models [provider_id]                      **启动时那条路**：每个渠道各拉一次 /models 并落库
                                                     （同步跑完；跳过 dummy / 要去外网又没配 key 的；
                                                      每行一个渠道：拉了几个模型 / 跳过原因 / 失败原因）
@@ -929,9 +929,10 @@ type abilityLine struct {
 	Model    string `json:"model"`
 }
 
-// abilitiesOf：这个会话的 agent 在三个能力上的解析结果（`abilities.Resolve` 那一处的原话）。
+// abilitiesOf：这个会话的 agent 在各能力上的解析结果（`abilities.Resolve` 那一处的原话）。
 //
-// 三个能力都**照实**打（含 `judge` —— 它的流程还没写，但它是能力，开关认得它）。
+// 打的就是 `abilities.IDs()` —— 现在两个（`title` / `compact`）。**退役的不打**
+// （`judge` 2026-10-28 砍掉，见 `abilities.retired`）；老配置里还写着它也只当历史，不列出来。
 func (e *debugEnv) abilitiesOf(args []string) int {
 	session, ok := e.session(argAt(args, 0))
 	if !ok {
