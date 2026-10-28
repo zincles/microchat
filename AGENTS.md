@@ -335,8 +335,17 @@ delete(AA)           # 删除
 切的是 `#messages-vue` + `#composer` 与 `ContextWorkspace.vue`（三处 `v-show`）。
 **顶栏不在切换范围内**（它自己带着开关，切掉就再也点不回来 —— 死锁）；**状态不写 localStorage**
 （存下来下次打开直接落在空白工作区，人会以为消息没了）；换会话也不重置（正对照上下文时不该被弹出去）。
-面板现在是**空的**（用户明说"暂时不妨东西"），但空着也立了块牌子说清它是什么 ——
-全白的一块分不清"还没做"和"加载失败"。`prop has-session` 靠 `sessionInfo.id` 判草稿
+2026-10-29 第二轮（用户：「要不我们把右侧栏那个上下文给挪过来？」）：**右侧载荷栏整块搬进工作区** ——
+它那三 tab（载荷 / 状态 / 压缩）一个不少地住进 `ContextWorkspace.vue`（由它渲染 `PayloadBar.vue`，
+并把 `setWire/setTables/setTree/setCompactWire` 四个 setter 透给 App）。
+**栏本身连同它的一切一起删了**：`#payload-bar`、`[◨]` 开关（`rightHidden` / `toggleRight`）、
+`#scrim-right`、≤1100 那段右抽屉规则、`mc_bar_right_hidden` 偏好、`barSide`/`scrimSide` 两个 helper。
+⚠ **搬一半最糟**：面板在新地方、开关还在顶栏，点了没反应 —— 契约测试逐文件钉着"一处都不许剩"。
+⚠ 判"有没有残留"要**先剥注释**（注释里写一句"`#scrim-right` 已经不存在了"是对的）。
+⚠ 面板是 `v-show` 常驻的 ⇒ tab 状态会留着（这是对的），但"看着压缩 tab"App 只在**切 tab 那一下**知道
+⇒ 切进工作区、以及在工作区里换会话时都要补喊一次 `refreshTree()`（它自己按 `treeVisible` 早退），
+否则树会一直空着、或者显示上一条会话的账。
+草稿态（还没有会话）另说一句 —— 那三 tab 确实全是空的。`prop has-session` 靠 `sessionInfo.id` 判草稿
 （⚠ 曾经从真会话切草稿时 `Object.assign` 不清旧键，`id` 会留着上一条的 id —— 现在 `startDraft` 显式写 `id: ""`）。
 ⚠ `liftOverlays` 里 `if (h <= 0) return`：切到工作区时输入行 `display:none`、量出来是 0，
 那不是"输入行 0 高"而是"这一下没在量"；照写会让 `--composer-h` 掉到 0，切回来时消息列底部留白塌一帧。

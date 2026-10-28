@@ -210,17 +210,16 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 }
 /* 上下文工作区（2026-10-29）：占满消息列那块地方（顶栏是悬浮层，所以顶部要自己留出高度）。
  * **没有输入行** —— 这不是说话的地方，切回来才说。 */
-#context-workspace { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
-  padding: 3.2em 0.8em 2em; }
-.ws-inner { max-width: var(--read-col, 920px); margin: 0 auto; }
-.ws-empty { display: flex; flex-direction: column; gap: 0.55em;
+/* 2026-10-29：右栏那三条 tab 搬进来之后，这块**自己不滚** —— 滚动交给面板里各自的 pane
+ * （`#payload-pane` / `#state-view` / `#compact-tree`，各带 `overscroll-behavior: contain`）。
+ * 两层都滚会让 contain 把链式滚动断在"滚不动的那一层"上（2026-10-17 在右栏踩过同样的坑）。 */
+#context-workspace { flex: 1; min-height: 0; display: flex; flex-direction: column;
+  padding: 3em 0.8em 0.7em; gap: 0.5em; }
+/* 草稿态那句提示：工作区里没有会话可谈时，先说一句再给面板（面板本身照样在，只是全空）。 */
+.ws-draft-note { flex: none; margin: 0 auto; max-width: var(--read-col, 920px); width: 100%;
+  box-sizing: border-box; color: var(--tg-hint); font-size: 0.85em; line-height: 1.6;
   border: 1px dashed color-mix(in srgb, var(--tg-text) 18%, transparent);
-  border-radius: var(--r-card); padding: 1.2em 1.1em 1.3em; }
-.ws-empty-title { margin: 0; color: var(--tg-text); font-size: 1em; font-weight: 600; }
-.ws-empty-note { margin: 0; color: var(--tg-hint); font-size: 0.88em; line-height: 1.6; }
-.ws-empty-note strong { color: var(--tg-text); font-weight: 600; }
-.ws-empty-todo { color: var(--tg-text); }
-.ws-empty-draft { color: var(--tg-destructive); }
+  border-radius: var(--r-card); padding: 0.6em 0.9em; }
 /* 浮板：与 Agent 选人同一族（同底、同阴影、同圆角），只是从右边缘掉下来。 */
 .ctx-menu { left: auto; right: 0.35em; min-width: 15em; max-width: 19em; padding: 0.6em 0.7em 0.55em; max-height: none; }
 .ctx-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.6em; }
@@ -279,11 +278,11 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 #update-bar .ub-x:hover { color: var(--tg-text); }
 @media (prefers-reduced-motion: reduce) { #update-bar { animation: none; } }
 /* 侧栏滑入滑出（TG 味 = 200ms ease-out；只动 transform/opacity，宽用 max-width 过渡不跳）。 */
-#sessions-bar, #payload-bar { transition: transform 200ms ease-out, opacity 180ms ease-out, max-width 200ms ease-out, visibility 0s linear 200ms; overflow: hidden; }
+/* 2026-10-29：右栏搬进上下文工作区 ⇒ 这套滑入滑出只剩左栏（见 App 的 barSide 注释）。 */
+#sessions-bar { transition: transform 200ms ease-out, opacity 180ms ease-out, max-width 200ms ease-out, visibility 0s linear 200ms; overflow: hidden; }
 #sessions-bar.collapsed { transform: translateX(-12px); opacity: 0; max-width: 0; visibility: hidden; }
-#payload-bar.collapsed { transform: translateX(12px); opacity: 0; max-width: 0; visibility: hidden; }
-#sessions-bar:not(.collapsed), #payload-bar:not(.collapsed) { transition-delay: 0s; }
-@media (prefers-reduced-motion: reduce) { #sessions-bar, #payload-bar { transition: none; } }
+#sessions-bar:not(.collapsed) { transition-delay: 0s; }
+@media (prefers-reduced-motion: reduce) { #sessions-bar { transition: none; } }
 /* —— 动效（TG 味 = 快而短：150–200ms，ease-out；只动 opacity/translate，不碰 layout） —— */
 @keyframes msg-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 .msg { animation: msg-in 160ms ease-out; }
@@ -295,11 +294,14 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 /* #content = 左栏右边那一整块：对话 / 设置**同级**（OpenWebUI 那种；2026-10-10 起设置不再是弹窗）。 */
 #content { flex: 1 1 auto; display: flex; min-width: 0; min-height: 0; }
 #sessions-bar { width: 260px; flex: none; align-self: stretch; max-height: 100%; background: var(--tg-secondary-bg); border-radius: 0; display: flex; flex-direction: column; overflow: hidden; min-height: 0; box-sizing: border-box; border-right: 1px solid var(--line); }
-/* 右栏（2026-10-17 用户定）：**tabs 常驻顶部**，三个面板各自是**滚动子界面** —— 栏自己不滚。
- * 为什么改：从前栏自己滚、三个面板又各自 `overflow-y: auto`，可面板没有高度约束（自己永远滚不动），
- * 而它们身上的 `overscroll-behavior: contain` 把链式滚动**断在"滚不动的自己"身上** ⇒ 状态/压缩两栏
- * 触摸与滚轮双双失效（载荷栏侥幸没事：它的 <pre> 没有 contain，链得到父级）。同样的形状照左栏来。 */
-#payload-bar { width: 340px; flex: none; align-self: stretch; min-height: 0; max-height: 100%; display: flex; flex-direction: column; background: var(--tg-secondary-bg); border-radius: 0; border-left: 1px solid var(--line); padding: 0.6em 0.8em; font-size: 0.85em; color: var(--tg-hint); box-sizing: border-box; }
+/* 上下文面板（2026-10-29 从右栏搬进工作区）：**tabs 常驻顶部**，三个面板各自是**滚动子界面** ——
+ * 面板本身不滚。这条形状是 2026-10-17 竖起来的，别改回去：从前面板自己滚、又没有高度约束
+ * （永远滚不动），而 `overscroll-behavior: contain` 把链式滚动**断在"滚不动的自己"身上** ⇒
+ * 状态/压缩两栏触摸与滚轮双双失效。所以：容器 flex column + 每块 pane 是那个滚动者。 */
+.ws-panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
+  max-width: var(--read-col, 920px); width: calc(100% - 0px); margin: 0 auto;
+  background: var(--tg-secondary-bg); border-radius: var(--r-card);
+  padding: 0.15em 0.8em 0.6em; font-size: 0.85em; color: var(--tg-hint); box-sizing: border-box; }
 /* 三个面板：占满 tabs 以下的空间、自己滚（`contain` 在这儿才有意义 —— 它就是那个滚动者）。 */
 #payload-pane, #state-view, #compact-tree { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 #outgoing-raw { white-space: pre; overflow-x: auto; margin: 0; max-width: 100%; }
@@ -390,19 +392,12 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
  * 高度算进了 `--composer-h` ⇒ 再留一截就是白占（与"更高效"相悖）。只留一点呼吸位。
  * 特异性(1,2,0) 压得过下面两个媒体查询里的 `.messages-inner`（0,1,0）—— 窄屏也一并生效。 */
 html[data-composer="solid"] .messages-inner { padding-bottom: calc(var(--composer-h, 4.6em) + 0.7em); }
-/* 抽屉遮罩（只在窄屏显示；点一下 = 收起对应的栏）：与栏的状态由 CSS 兄弟选择器联动，不用 JS 状态。 */
-#scrim-left, #scrim-right { display: none; }
-/* 窄屏（≤1100）：右载荷栏改"抽屉"（2026-10-10）—— 不再 display:none 一刀切（[◨] 之前按了没反应）。 */
-/* 断点 700/1100 与 App.vue 的 BP 常量同源，改一处要改两处。 */
-@media (max-width: 1100px) {
-  /* 抽屉宽度与左栏（≤700 段）**同一把尺**：两扇一样的宽（340 也正好是桌面右栏宽）。 */
-  #payload-bar { position: fixed; inset: 0 0 0 auto; z-index: 16; width: min(86vw, 340px); max-width: none; max-height: none; transform: none; opacity: 1; visibility: visible; transition: transform 200ms ease-out, visibility 0s linear 200ms; box-shadow: var(--shadow-right); }
-  #payload-bar.collapsed { transform: translateX(102%); max-width: none; opacity: 1; visibility: hidden; }
-  #scrim-right { display: block; position: fixed; inset: 0; z-index: 15; background: rgb(0 0 0 / 45%); opacity: 0; pointer-events: none; transition: opacity 180ms ease-out; }
-  #payload-bar:not(.collapsed) ~ #scrim-right { opacity: 1; pointer-events: auto; }
-}
+/* 抽屉遮罩（只在窄屏显示；点一下 = 收起左栏）：与栏的状态由 CSS 兄弟选择器联动，不用 JS 状态。 */
+/* 2026-10-29：右栏搬进上下文工作区 ⇒ `#scrim-right` 与 ≤1100 那段右抽屉规则一起删了
+ * （右抽屉不存在，断点也只剩 700 这一个）。 */
+#scrim-left { display: none; }
 /* 手机（≤700）：左会话栏改"抽屉"（不再是顶部 30vh 死条）—— [◧] 调出/收起，选中会话自动收。 */
-/* 断点 700/1100 与 App.vue 的 BP 常量同源，改一处要改两处。 */
+/* 断点 700 与 App.vue 的 BP 常量同源，改一处要改两处。 */
 @media (max-width: 700px) {
   #sessions-bar { position: fixed; inset: 0 auto 0 0; z-index: 16; width: min(86vw, 340px); max-height: none; border-right: 1px solid var(--line); transform: none; opacity: 1; visibility: visible; transition: transform 200ms ease-out, visibility 0s linear 200ms; box-shadow: var(--shadow-left); }
   #sessions-bar.collapsed { transform: translateX(-102%); max-width: none; opacity: 1; visibility: hidden; }
@@ -794,7 +789,7 @@ html[data-composer="solid"] #composer .taskline {
 /* ⚠ 必须带上 `.settings-cols .panel` 前缀：面板那套连体行规则是 (0,3,0)，两层的选择器压不过它。 */
 .settings-cols .panel .io-card .field, .settings-cols .panel .io-card .row { background: none; padding: 0.3em 0; border-top: none; border-radius: 0; }
 .field { display: grid; grid-template-columns: 140px 1fr; align-items: center; gap: 0.6em; color: var(--tg-text); }
-/* 断点 700/1100 与 App.vue 的 BP 常量同源，改一处要改两处。 */
+/* 断点 700 与 App.vue 的 BP 常量同源，改一处要改两处。 */
 @media (max-width: 700px) {
   .field { grid-template-columns: 1fr; }
 }

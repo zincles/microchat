@@ -1233,13 +1233,16 @@ test("上下文环：App 喂 ctx / 环在顶栏画 / 状态行不再报占用", 
   assert.match(top, /pathLength="100"/, "弧长没走 pathLength 归一化（dasharray 会被当成绝对长度）");
   assert.match(top, /setContext/, "TopBar 没有暴露 setContext");
   assert.match(top, /class="agent-menu ctx-menu"/, "浮板没有复用 Agent 选人那套底（--tg-float / shadow-3）");
-  // 顺序：环在**左**、载荷栏开关在**右**（2026-10-28 用户定）。开关是"控制栏的按钮"= 这一簇的锚，
-  // 位置要稳；环是随状态变的仪表，挂它左边。两个都是绝对定位的兄弟，换顺序**不会报错**，
-  // 只会悄悄换到另一边 —— 所以钉住先后。
+  // 顺序：2026-10-28 定的是「环在左、载荷栏开关在右」—— 那是**栏还在**时的锚点关系。
+  // 2026-10-29 右栏搬进上下文工作区后那枚开关没了，锚点换成**工作区两段开关**：
+  // 它排在环左边（用户原话「就位于那个绿色圆环左侧」），环仍然是簇里最靠里的那枚仪表。
+  // 三样东西都是绝对定位的兄弟，换顺序**不会报错**，只会悄悄换到另一边 —— 所以钉住先后。
   assert.ok(
-    top.indexOf('id="ctx-ring"') < top.indexOf('id="toggle-right"'),
-    "环该在载荷栏开关的左边（用户 2026-10-28 定）",
+    top.indexOf('class="ws-switch"') < top.indexOf('id="ctx-ring"'),
+    "工作区开关该在环的左边（用户 2026-10-29 定）",
   );
+  // 右栏的开关必须真的没了：留着它点了没反应（栏不存在），比没有更糟。
+  assert.ok(!top.includes('id="toggle-right"'), "顶栏还留着载荷栏那枚 [◨] 开关 —— 栏已经搬走了");
 
   // 判规则时要**先剥掉注释**：这次的教训就写在一条注释里（"从前这里有 .statusline.over"），
   // 不剥的话字面匹配会把注释当成规则 —— 守卫测试自己先误报，比漏报更浪费人。
@@ -1596,7 +1599,8 @@ test("上下文工作区：开关在绿环左边，只切内容不切顶栏", ()
   // ② 顶栏不在切换范围内：只有消息列 / 输入行 / 工作区三处带 v-show
   assert.match(app, /<main id="messages-vue" v-show="workspace === 'chat'"/, "消息列没跟着工作区切");
   assert.match(app, /<Composer\s+v-show="workspace === 'chat'"/, "输入行没跟着工作区切");
-  assert.match(app, /<ContextWorkspace v-show="workspace === 'context'"/, "工作区没挂上");
+  // 标签现在是多行的（它接了 ref / 三个事件）⇒ 用 [\s\S] 跨行，别指望它一行写完。
+  assert.match(app, /<ContextWorkspace\s+v-show="workspace === 'context'"/, "工作区没挂上");
   // 顶栏那行不许出现 workspace 的 v-show/v-if（切掉它 = 再也切不回来）
   const topbarTag = app.match(/<TopBar[\s\S]*?\/>/)?.[0] ?? "";
   assert.ok(!/v-show=|v-if=/.test(topbarTag), "顶栏被绑上了显示条件 —— 切到上下文就再也切不回来");
@@ -1605,14 +1609,59 @@ test("上下文工作区：开关在绿环左边，只切内容不切顶栏", ()
   assert.ok(!/mc_workspace/.test(app), "工作区状态进了 localStorage —— 下次打开会落在空白工作区");
 });
 
-// 工作区是**空**的（用户明说"暂时不妨东西"），但空着不等于什么都不画：
-// 全白的一块分不清"还没做"和"加载失败"。
-test("上下文工作区：空着也要说清它是什么", () => {
+// 2026-10-29 第二轮（用户：「要不我们把右侧栏那个上下文给挪过来？」）：
+// 右栏那三条 tab（载荷 / 状态 / 压缩）整块搬进上下文工作区，**栏本身删掉**。
+//
+// 这条钉的是"搬干净了"：搬一半最糟 —— 面板在新地方、栏的开关还在顶栏，点了没反应。
+test("上下文工作区：右栏三 tab 搬进来了，栏本身删干净", () => {
   const ws = readFileSync(join(SRC, "components", "ContextWorkspace.vue"), "utf8");
-  assert.match(ws, /上下文工作区/, "没有标题");
-  assert.match(ws, /还没往里放东西/, "没说清现在为什么是空的");
-  // 草稿态要另说一句（那时确实没有任何上下文）
+  const bar = readFileSync(join(SRC, "components", "PayloadBar.vue"), "utf8");
+  const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
+  const app = readFileSync(join(SRC, "..", "src", "App.vue"), "utf8");
+
+  // ① 面板挂在工作区里（不是各画一份 —— 两份必然在某天分叉）
+  assert.match(ws, /import PayloadBar from "\.\/PayloadBar\.vue"/, "工作区没复用那块面板");
+  assert.match(ws, /<PayloadBar/, "工作区里没渲染面板");
+  // 四个 setter 一路透到面板身上（App 只认工作区这个 ref）
+  for (const fn of ["setWire", "setTables", "setTree", "setCompactWire"]) {
+    assert.match(ws, new RegExp(`${fn}:`), `工作区没转发 ${fn}（App 塞进来的数据到不了面板）`);
+  }
+  // 三件事照旧往上报（压缩树"看着才拉全量"靠它）
+  assert.match(ws, /emit\('tab', t\)/, "tab 没往上报 —— 压缩树不会拉全量");
+  assert.match(ws, /emit\('compact'/, "压缩没往上报");
+  assert.match(ws, /emit\('compact-payload'/, "载荷预演没往上报");
+
+  // ② 三条 tab 一个不少
+  for (const t of ["payload", "state", "tree"]) {
+    assert.match(bar, new RegExp(`selectTab\\('${t}'\\)`), `面板里少了 ${t} 那一页`);
+  }
+
+  // ③ 栏真的没了：它那些"栏才有的东西"一处都不许剩。
+  //
+  // ⚠ **判之前必须剥注释**：注释里写一句"`#scrim-right` 已经不存在了"是对的 ——
+  // 那句正是在提醒后人别把它加回来。不剥注释，一句正确的注释就会让守卫假失败（踩过一次）。
+  const strip = (text) => text
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8");
+  for (const [name, raw] of [["PayloadBar.vue", bar], ["App.vue", app], ["TopBar.vue", top], ["main.css", css]]) {
+    const text = strip(raw);
+    assert.ok(!text.includes('id="payload-bar"') && !/^#payload-bar\b/m.test(text),
+      `${name} 里还留着 #payload-bar —— 栏已经搬走，留着就是一条点不动的空壳`);
+    assert.ok(!text.includes("scrim-right"), `${name} 里还留着右栏遮罩`);
+    assert.ok(!text.includes("mc_bar_right_hidden"), `${name} 里还留着右栏的收起偏好`);
+  }
+  assert.ok(!top.includes("toggle-right"), "顶栏还有载荷栏开关");
+  assert.ok(!/function toggleRight/.test(app), "App 里还留着 toggleRight");
+  assert.ok(!/rightHidden/.test(app), "App 里还留着 rightHidden");
+});
+
+// 草稿态（还没建会话）时那三条 tab 全是空的 —— 要说一句，别让人以为面板坏了。
+test("上下文工作区：草稿态要说明为什么是空的", () => {
+  const ws = readFileSync(join(SRC, "components", "ContextWorkspace.vue"), "utf8");
   assert.match(ws, /hasSession/, "没区分草稿态");
+  assert.match(ws, /草稿/, "草稿态没有一句人话");
 });
 
 // 切到上下文工作区时输入行是 display:none ⇒ getBoundingClientRect().height 量出来是 0。
@@ -1629,4 +1678,26 @@ test("工作区：量不到输入行高度时不写 --composer-h", () => {
   const writeAt = fn.indexOf('setProperty("--composer-h"');
   assert.ok(writeAt > 0, "找不到写 --composer-h 的那句");
   assert.ok(guardAt > 0 && guardAt < writeAt, "守卫该在写 --composer-h 之前");
+});
+
+// 面板是 v-show 常驻（tab 状态要留着），所以"看着压缩 tab"这件事 App 只在**切 tab 那一下**知道。
+// 于是从聊天切回工作区时树不会自己重拉 —— 而它可能刚被 setTree(null) 清过（换会话）。
+// 这条钉的是那两个补喊 refreshTree 的地方（少一处就是"树一直空白"或"看着上一条会话的账"）。
+test("上下文工作区：切进去 / 换会话时补拉压缩树", () => {
+  const app = readFileSync(join(SRC, "..", "src", "App.vue"), "utf8");
+  const fn = app.match(/function selectWorkspace\(next\)[\s\S]*?\n\}/)?.[0] ?? "";
+  assert.ok(fn, "找不到 selectWorkspace");
+  assert.match(fn, /workspace\.value === "context"\) refreshTree\(\)/,
+    "切进工作区时没补拉压缩树 —— 树被 setTree(null) 清过就一直空着");
+  // 换会话那条：setTree(null) 之后要紧跟一次 refreshTree。
+  // ⚠ **别用 indexOf 找那句**：`refreshTree` 自己的 catch 里也有一模一样的
+  // 「setTree(null)」（那一处是正确的：拉失败就清空），先命中的是它，断言就永远看着错的地方。
+  // 锚点换成上方那句独有的 `summaryMsgs.clear();`。
+  const anchor = app.indexOf("summaryMsgs.clear();");
+  assert.ok(anchor > 0, "找不到换会话那段（summaryMsgs.clear）");
+  const at = app.indexOf("payloadbarRef.value?.setTree(null);", anchor);
+  assert.ok(at > 0, "换会话那段里没清树");
+  const after = app.slice(at, at + 400);
+  assert.match(after, /if \(workspace\.value === "context"\) refreshTree\(\)/,
+    "换会话时没补拉压缩树 —— 会一直显示上一条会话的账");
 });

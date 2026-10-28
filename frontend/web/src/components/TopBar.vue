@@ -13,10 +13,9 @@ import { ICONS } from "./icons.js";
 import { modelKey, parseModelKey, formatTokens, formatStatusLine, contextArc, contextPercentText, contextTitle, contextOverBudget, curModelLabelOf, filterModelGroups } from "../utils/format.js";
 
 defineProps({
-  // leftHidden / rightHidden：那一侧栏收着 ⇒ 顶栏出它那枚开关；栏开着 ⇒ 开关在栏自己头上
-  // （按钮跟着它控制的东西走）。
+  // leftHidden：左栏收着 ⇒ 顶栏出它那枚开关；栏开着 ⇒ 开关在栏自己头上（按钮跟着它控制的东西走）。
+  // （右栏 2026-10-29 搬进上下文工作区 ⇒ 顶栏不再有 [◨] 那枚开关，`rightHidden` 跟着删。）
   leftHidden: { type: Boolean, default: false },
-  rightHidden: { type: Boolean, default: false },
   // workspace：这一下要显示哪块工作区（"chat" | "context"）。
   //
   // 2026-10-29 用户定：「每个对话分为俩部分：对话界面 和 上下文工作区 界面」，
@@ -24,7 +23,7 @@ defineProps({
   // 是因为它和环管的是同一件事的两面：环说"占了多少"，工作区说"占的是什么"。
   workspace: { type: String, default: "chat" },
 });
-const emit = defineEmits(["toggle-left", "toggle-right", "select-model", "select-agent", "select-workspace"]);
+const emit = defineEmits(["toggle-left", "select-model", "select-agent", "select-workspace"]);
 
 const modelGroups = ref([]); // [{provider, items:[{value,label,provider_name,upstream_id}]}]
 const curModel = ref("");
@@ -84,7 +83,6 @@ function pickActive() {
 watch(modelQuery, () => { modelActive.value = -1; });
 
 const leftSvg = ICONS.panelLeft;
-const rightSvg = ICONS.panelRight;
 
 // —— Agent 头像 + 选人菜单 ——
 const agents = ref([]); // [{id,label}]
@@ -288,16 +286,6 @@ defineExpose({ setSession, setModels, setAgents, setContext, setStatus });
           <circle class="ctx-ring-fill" cx="16" cy="16" r="13" pathLength="100" :stroke-dasharray="ctxDash" />
         </svg>
       </button>
-      <button
-        v-if="rightHidden"
-        id="toggle-right"
-        class="icon-btn"
-        type="button"
-        title="显示/隐藏载荷栏"
-        aria-label="显示/隐藏载荷栏"
-        @click="$emit('toggle-right')"
-        v-html="rightSvg"
-      ></button>
     </span>
     <template v-if="agentOpen">
       <div class="agent-menu-backdrop" @click="agentOpen = false"></div>

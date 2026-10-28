@@ -27,7 +27,6 @@ import {
 } from "./utils/format.js";
 import TopBar from "./components/TopBar.vue";
 import SessionBar from "./components/SessionBar.vue";
-import PayloadBar from "./components/PayloadBar.vue";
 import MessageBubble from "./components/MessageBubble.vue";
 import SummaryCard from "./components/SummaryCard.vue";
 import SummaryEditor from "./components/SummaryEditor.vue";
@@ -669,10 +668,10 @@ async function refreshAgents() {
     vueAgents.value = data.agents ?? [];
   } catch { /* 拿不到就空着：草稿不画首段、状态行回落到 agent id */ }
 }
-// leftHidden / rightHidden：两侧栏收没收的**响应式镜像**（真实状态仍是 DOM 类 + localStorage 偏好；
+// leftHidden：左栏收没收的**响应式镜像**（真实状态仍是 DOM 类 + localStorage 偏好；
 // 2026-10-14 用户定：栏开着时顶栏不渲染那一侧的开关 —— 按钮跟着它控制的东西走）。
+// （右栏 2026-10-29 搬进上下文工作区 ⇒ 没有"右侧栏收没收"这回事了。）
 const leftHidden = ref(false);
-const rightHidden = ref(false);
 
 // —— 工作区（2026-10-29 用户定）——
 // 「每个对话分为俩部分：对话界面 和 上下文工作区 界面」，顶栏右上角（绿环左边）那颗两段开关切。
@@ -685,39 +684,38 @@ function selectWorkspace(next) {
   // 只认这两个值：调用方（按钮）本来只发这两个，但这儿再挡一道 ——
   // 将来加了第三块，漏改某处会得到一个**空白区**（v-show 谁都不匹配），那是最难查的一类。
   workspace.value = next === "context" ? "context" : "chat";
+  // 面板是 `v-show` 常驻的 ⇒ 里面选中的 tab 会留着（这是对的：回头再看还是那一页），
+  // 但"看着压缩 tab"这件事 App 只在 **切 tab 那一下** 知道（`onPayloadTab`）。
+  // 于是从聊天切回工作区时，树不会自己重拉 —— 而它可能已经被 setTree(null) 清过（换会话时）。
+  // `refreshTree` 自己会按 `treeVisible` 早退，所以这里无条件喊一声就够了。
+  if (workspace.value === "context") refreshTree();
 }
 function applySideToggle(barID, hidden) {
   document.getElementById(barID)?.classList.toggle("collapsed", hidden);
   if (barID === "sessions-bar") leftHidden.value = hidden;
-  if (barID === "payload-bar") rightHidden.value = hidden;
 }
 
 // —— 会话 ——
 // —— 侧栏/抽屉（2026-10-10 移动端）—— 同一对按钮两种身份：
 // 宽屏 = 布局里的栏（collapsed = 收起）；窄屏 = 覆盖式抽屉（collapsed = 关着）。
 // 窄屏一律默认关、不读不写 localStorage —— 抽屉的开合是瞬时的事，那是桌面偏好的账。
-// 响应式断点：与 main.css 的三处 @media **同源**（700 = 左栏改抽屉 / 1100 = 右栏改抽屉），
+// 响应式断点：与 main.css 的 @media **同源**（700 = 左栏改抽屉），
 // CSS 里没法读 JS 常量，改一处要改两处。
-const BP = { leftDrawer: 700, rightBar: 1100 };
+//
+// 2026-10-29：右栏搬进上下文工作区（用户：「把右侧栏那个上下文给挪过来」）⇒ **只剩左抽屉**。
+// `BP.rightBar` / `mqlRight` / `narrowRight` / `mc_bar_right_hidden` 一起删了 ——
+// 留着它们就是留着一条永远走不到的分支（拖拽那边同理，见 `rightDrawer: false` 的注释）。
+const BP = { leftDrawer: 700 };
 const mqlLeft = window.matchMedia?.(`(max-width: ${BP.leftDrawer}px)`) ?? null;
-const mqlRight = window.matchMedia?.(`(max-width: ${BP.rightBar}px)`) ?? null;
 function narrowLeft() { return !!mqlLeft?.matches; }
-function narrowRight() { return !!mqlRight?.matches; }
 function applySideStates() {
   applySideToggle("sessions-bar", narrowLeft() ? true : localStorage.getItem("mc_bar_left_hidden") === "1");
-  applySideToggle("payload-bar", narrowRight() ? true : localStorage.getItem("mc_bar_right_hidden") === "1");
 }
 function toggleLeft() {
   const bar = document.getElementById("sessions-bar");
   const hidden = !bar?.classList.contains("collapsed");
   if (!narrowLeft()) localStorage.setItem("mc_bar_left_hidden", hidden ? "1" : "0");
   applySideToggle("sessions-bar", hidden);
-}
-function toggleRight() {
-  const bar = document.getElementById("payload-bar");
-  const hidden = !bar?.classList.contains("collapsed");
-  if (!narrowRight()) localStorage.setItem("mc_bar_right_hidden", hidden ? "1" : "0");
-  applySideToggle("payload-bar", hidden);
 }
 // 窄屏里"人去了别处"就得把左抽屉收回去（选会话 / 开新对话）。
 function closeLeftDrawer() { if (narrowLeft()) applySideToggle("sessions-bar", true); }
@@ -728,8 +726,11 @@ function closeLeftDrawer() { if (narrowLeft()) applySideToggle("sessions-bar", t
 // 最终仍落在同一个 collapsed 类上（手势 = [◧]/[◨] 的替身，不另造开合状态）。
 // 判定全在 utils/swipe.js（纯函数）；这里只碰 DOM：跟手期间写内联 transform（transition 先掐掉），
 // 松手把内联清掉、按结果落类 —— 由 CSS 自己的 200ms 过渡完成吸附动画。
-const barSide = (bar) => (bar === "left" ? "sessions-bar" : "payload-bar");
-const scrimSide = (bar) => (bar === "left" ? "scrim-left" : "scrim-right");
+// 只剩左抽屉（右栏 2026-10-29 搬进上下文工作区）⇒ 不再按 `bar` 分派：
+// 两个 helper 一起收掉，直接写死左栏那两枚 id。
+// 为什么不留着通用版：它们指向的 DOM（`#payload-bar` / `#scrim-right`）已经不存在了，
+// 留着就是两条永远拿到 null 的分支 —— 而 null 是静默的（拖拽照样跑，只是什么都不动）。
+// `pickDrag` 本身仍是通用纯函数（有它自己的测试），我们只是永远不给它"右边能开"的输入。
 let panelDrag = null;
 
 function swipeBlocked(target) {
@@ -737,7 +738,7 @@ function swipeBlocked(target) {
   if (document.querySelector("#settings-view, #user-view") || document.querySelector(".modal")) return true;
   // 抽屉自己身上 ⇒ 一律接管（pre 也不例外）："把抽屉拖走"在这儿就该能用 ——
   // 右栏的载荷 tab 整块就是个 <pre>，早先被 pre 例外吞掉，真机上表现为"在面板上滑没反应"。
-  if (target?.closest?.("#sessions-bar, #payload-bar")) return false;
+  if (target?.closest?.("#sessions-bar")) return false;
   return !!target?.closest?.("textarea, input, select, pre, .palette, .picker, .modal, #settings-view, #user-view");
 }
 function paintDrag(d, p) {
@@ -765,13 +766,15 @@ function onTouchMove(e) {
     if (!axis) return;
     if (axis === "v") { panelDrag = null; return; } // 归浏览器滚列表
     const left = document.getElementById("sessions-bar");
-    const right = document.getElementById("payload-bar");
     const pick = pickDrag({
       dx,
       leftDrawer: narrowLeft(),
-      rightDrawer: narrowRight(),
+      // 右栏已经没了（2026-10-29 搬进上下文工作区）⇒ 永远"没有右抽屉、也没开着"。
+      // 写死这两格而不是删参数：`pickDrag` 是通用纯函数（有自己的测试），
+      // 这两格是**它的输入**，不是它的 identity —— 将来真要再加一根右栏，改回来就是。
+      rightDrawer: false,
       leftOpen: !!left && !left.classList.contains("collapsed"),
-      rightOpen: !!right && !right.classList.contains("collapsed"),
+      rightOpen: false,
     });
     if (!pick) { panelDrag = null; return; }
     d.axis = axis; // ⚠ 必须记住：不然每次 touchmove 都重进这里，第二枚就被自己摘掉的 collapsed 骗死
@@ -780,11 +783,11 @@ function onTouchMove(e) {
     //   被"快甩"规则误判成弹回（实测咬过一次）。⚠ **别动 d.lastT**：它在 touchstart 起表，
     //   重置成此刻的话第一枚 move 的 dt≈0、速度样本直接作废（快甩失灵，也实测咬过）。
     d.el = pick.bar === "left" ? left : right;
-    d.scrim = document.getElementById(scrimSide(pick.bar));
+    d.scrim = document.getElementById("scrim-left");
     d.w = d.el.getBoundingClientRect().width || 300;
     d.el.style.transition = "none"; // 跟手期间不许有过渡
     if (d.scrim) d.scrim.style.transition = "none";
-    applySideToggle(barSide(pick.bar), false); // 拖起来先亮出来，位置全由内联管
+    applySideToggle("sessions-bar", false); // 拖起来先亮出来，位置全由内联管
   }
   e.preventDefault(); // 这手势归我们了：别让页面跟着滚
   const p = dragProgress(d.pick.base, dx, d.w, d.pick.bar);
@@ -806,7 +809,7 @@ function settleDrag(useVelocity) {
   d.el.style.transition = ""; // 先还 CSS 过渡，再清内联 —— 吸附动画由它完成
   d.el.style.transform = "";
   if (d.scrim) { d.scrim.style.transition = ""; d.scrim.style.opacity = ""; }
-  applySideToggle(barSide(d.pick.bar), !open);
+  applySideToggle("sessions-bar", !open);
 }
 function onTouchEnd() { settleDrag(true); }
 function onTouchCancel() { settleDrag(false); }
@@ -858,6 +861,9 @@ async function startDraft() {
   summaryMsgs.clear();
   openSummaries.clear();
   payloadbarRef.value?.setTree(null);
+  // 人可能正站在上下文工作区里换会话（左栏点一下就换）⇒ 树要跟着换上新的，
+  // 否则那块地方会一直显示上一条会话的账本（静默的错，看不出来）。
+  if (workspace.value === "context") refreshTree();
   refreshPreview(); // 输入框里若还留着字（＋ 时不清输入框），预演立刻跟上
 }
 function newSession() {
@@ -1519,11 +1525,9 @@ onUnmounted(() => {
     <TopBar
       ref="topbarRef"
       :left-hidden="leftHidden"
-      :right-hidden="rightHidden"
       :workspace="workspace"
       @select-workspace="selectWorkspace"
       @toggle-left="toggleLeft"
-      @toggle-right="toggleRight"
       @select-model="(v) => applyModelValue(v).catch((err) => toast(`换模型失败：${err.message}`, 'error'))"
       @select-agent="(id) => applyAgentValue(id).catch((err) => toast(`换 Agent 失败：${err.message}`, 'error'))"
     />
@@ -1584,17 +1588,16 @@ onUnmounted(() => {
     />
     <!-- 上下文工作区（2026-10-29 用户定）：与消息列 + 输入行互斥 —— 同一块地方换个视角看。
          顶栏不在切换范围内（它自己带着那颗开关，切掉就找不回来了）。 -->
-    <ContextWorkspace v-show="workspace === 'context'" :has-session="!!sessionInfo.id" />
+    <ContextWorkspace
+      v-show="workspace === 'context'"
+      ref="payloadbarRef"
+      :has-session="!!sessionInfo.id"
+      :default-blocks="compactDefault"
+      @compact="(n) => compactNow(n ?? undefined)"
+      @compact-payload="previewCompactPayload"
+      @tab="onPayloadTab"
+    />
       </section>
-      <PayloadBar
-        v-show="!settingsOpen && !userOpen"
-        ref="payloadbarRef"
-        :default-blocks="compactDefault"
-        @toggle-right="toggleRight"
-        @compact="(n) => compactNow(n ?? undefined)"
-        @compact-payload="previewCompactPayload"
-        @tab="onPayloadTab"
-      />
       <UserView
         v-if="userOpen"
         :esc-blocked="!!sessionSettingsId"
@@ -1612,7 +1615,6 @@ onUnmounted(() => {
         @models-changed="fillModelSelect"
         @goto-session="(id) => { closeSettings(); enterSession(id).catch((err) => toast(`进会话失败：${err.message}`, 'error')); }"
       />
-      <div id="scrim-right" @click="toggleRight"></div>
       </div>
     </div>
     <Toast ref="toastRef" />

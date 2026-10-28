@@ -1,11 +1,15 @@
 <script setup>
-// 右载荷栏：载荷 / 状态 / 压缩 三 tab。
+// 上下文面板：载荷 / 状态 / 压缩 三 tab。
 // 载荷 = 真请求直放（method/url/headers/体 JSON）；状态 = 截至末条现演（tables 按表分组）；
 // 压缩 = 压缩树（buildCompactTree 的产出：文件管理器那种看体积的树）。
+//
+// 2026-10-29 用户定「把右侧栏那个上下文给挪过来」：它从前是**右侧的可收起栏**（`#payload-bar`，
+// 带一枚 [◨] 开关、窄屏变抽屉），现在整块搬进**上下文工作区**，三条 tab 一个不少。
+// 于是这个组件不再是"栏"：外壳交给 `ContextWorkspace.vue`，它只交出一块能自适应的面板
+// （`.ws-panel` 管圆角与底，panes 管滚动）。开关与抽屉那套随之作废 —— 别再把它接回栏里。
 import { ref, computed, watch } from "vue";
 import CompactTree from "./CompactTree.vue";
 import ToggleSwitch from "./ToggleSwitch.vue";
-import { ICONS } from "./icons.js";
 import { treeTotals } from "../utils/tree.js";
 import { parseWireMessages, shouldCollapse, previewBlock } from "../utils/payload.js";
 import { payloadVizOn, savePayloadViz } from "../utils/prefs.js";
@@ -13,7 +17,7 @@ import { payloadVizOn, savePayloadViz } from "../utils/prefs.js";
 defineProps({
   defaultBlocks: { type: Number, default: null }, // chat.compact_blocks（空输入框的默认，只用于提示）
 });
-const emit = defineEmits(["compact", "tab", "toggle-right", "compact-payload"]);
+const emit = defineEmits(["compact", "tab", "compact-payload"]);
 
 const tab = ref("payload");
 // 切 tab 报给 App：压缩树看着才拉全量账本（窗口化的内存账，见 App.refreshTree）。
@@ -93,17 +97,8 @@ defineExpose({ setWire, setTables, setTree, setCompactWire });
 </script>
 
 <template>
-  <aside id="payload-bar">
+  <div class="ws-panel">
     <div class="bar-head bar-tabs">
-      <button
-        id="toggle-right"
-        class="icon-btn"
-        type="button"
-        title="收起载荷栏"
-        aria-label="收起载荷栏"
-        @click="$emit('toggle-right')"
-        v-html="ICONS.panelRight"
-      ></button>
       <button type="button" class="tab" :class="{ sel: tab === 'payload' }" @click="selectTab('payload')">载荷</button>
       <button type="button" class="tab" :class="{ sel: tab === 'state' }" @click="selectTab('state')">状态</button>
       <button type="button" class="tab" :class="{ sel: tab === 'tree' }" @click="selectTab('tree')">压缩</button>
@@ -203,5 +198,5 @@ defineExpose({ setWire, setTables, setTree, setCompactWire });
         <div class="ctree-legend">▾ 折叠 · <i class="ctree-tag">发</i> 这一坨发出的就是它 · <i class="ctree-tag dirty">脏</i> 已过期</div>
       </template>
     </div>
-  </aside>
+  </div>
 </template>
