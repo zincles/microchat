@@ -860,6 +860,18 @@ DeepSeek / OpenCode GO 直连**确实不报**，所以那一格在那儿永远�
 
 ## 踩过的坑（都是实测出来的，改代码前扫一眼）
 
+- **删掉一个声明，就别只用"我记得"去清引用** ✗（2026-10-29 白屏事故）：删右栏时删了 `mqlRight` 的声明，
+  却漏了底部 `onMounted`/`onUnmounted` 里两处 `mqlRight?.addEventListener(...)` ——
+  **构建通过、94 条契约全绿**，浏览器一打开 `ReferenceError`、整页白。
+  JS 里"用了没声明的名字"是**运行时**才报的：静态检查不管、字面匹配也搜不到（要搜的正是"它还在"）。
+  两条防线（互补，别删任何一个）：
+  ① `test/ssr-smoke.test.js` —— 把 App 真的 SSR 渲染一遍，抓**模块顶层与 `setup()`** 里抛的错；
+  ② `contract.test.js` 里一张**"这次删掉的名字"清单** —— 逐名查 App 是否还在引用。
+  ⚠ ①**盖不到** `onMounted`/`onUnmounted`/`watch` 回调（SSR 不执行挂载钩子），而那次错的正是这一档；
+  ⚠ ②靠人记得往清单里加名字 —— 删声明时顺手加，漏了就等于没查。
+  流程上还有一条最便宜的：删完声明**立刻 `grep` 那个名字**（我这次 grep 了 `rightHidden`/`narrowRight`/
+  `payload-bar`，唯独没 grep `mqlRight` 本身）。
+
 - **启动时刷模型列表：只许有一份实现、且必须放后台** ✗：HTTP / 启动 / `-debug` 三处走的都是
   `registry.RefreshOne`；启动那条路整批塞进一个 goroutine（**别**在 `main` 里同步跑 —— 上游慢一秒，
   界面就晚一秒可用），逐渠道**各自挂号** Task、**失败只 log**。刷新**只写发现列**

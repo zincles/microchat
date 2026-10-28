@@ -1654,6 +1654,18 @@ test("上下文工作区：右栏三 tab 搬进来了，栏本身删干净", () 
   }
   assert.ok(!top.includes("toggle-right"), "顶栏还有载荷栏开关");
   assert.ok(!/function toggleRight/.test(app), "App 里还留着 toggleRight");
+
+  // ④ **删掉的声明，别名再被引用** —— 这一档 SSR 冒烟盖不到（错在 onMounted 里），
+  // 却正是 2026-10-29 白屏那次：删了 `mqlRight` 的声明，漏了 onMounted/onUnmounted 里两处引用。
+  // 构建不会报（JS 里未声明标识符是运行时的错），字面搜索也搜不到（我要搜的正是"它还在"）。
+  // 只能显式列一份"这次删掉的名字"，逐个查引用。
+  // ⚠ 下次删声明时把名字加进来 —— 清单漏了就等于没查。
+  for (const gone of ["mqlRight", "narrowRight", "rightHidden", "toggleRight", "barSide", "scrimSide"]) {
+    assert.ok(!new RegExp(`\\b${gone}\\b`).test(strip(app)),
+      `App.vue 里还在引用 ${gone} —— 它已经删了，浏览器会 ReferenceError（整页白）`);
+  }
+  assert.ok(!top.includes("toggle-right"), "顶栏还有载荷栏开关");
+  assert.ok(!/function toggleRight/.test(app), "App 里还留着 toggleRight");
   assert.ok(!/rightHidden/.test(app), "App 里还留着 rightHidden");
 });
 

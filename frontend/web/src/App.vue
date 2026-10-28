@@ -1474,9 +1474,9 @@ onMounted(() => {
   document.addEventListener("touchmove", onTouchMove, { passive: false });
   document.addEventListener("touchend", onTouchEnd, { passive: true });
   document.addEventListener("touchcancel", onTouchCancel, { passive: true });
-  // 跨断点（桌面 ⇄ 抽屉）时把两侧状态重算一遍：变成抽屉就一律先关掉，不然会"啪"地盖上来。
+  // 跨断点（桌面 ⇄ 抽屉）时把状态重算一遍：变成抽屉就一律先关掉，不然会"啪"地盖上来。
+  // 只剩左栏这一个断点（右栏 2026-10-29 搬进上下文工作区）。
   mqlLeft?.addEventListener?.("change", applySideStates);
-  mqlRight?.addEventListener?.("change", applySideStates);
   if (typeof ResizeObserver !== "undefined" && !composerRO) {
     composerRO = new ResizeObserver(() => liftOverlays());
     const form = document.querySelector("#composer");
@@ -1500,7 +1500,6 @@ onUnmounted(() => {
   composerRO?.disconnect();
   composerRO = null;
   mqlLeft?.removeEventListener?.("change", applySideStates);
-  mqlRight?.removeEventListener?.("change", applySideStates);
 });
 </script>
 
