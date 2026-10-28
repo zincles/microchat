@@ -243,11 +243,15 @@ delete(AA)           # 删除
   `compact_blocks` = 压缩不给块数时压几个**对话块**（**缺省 3**；2026-10-11 从 5 改 3——小步快跑，每坨原话只嚼一次，且抬头那条路要凑满 N 条同层相邻顶层摘要，N 大常凑不齐直接报无可压缩）；`refresh_models_on_start` = 启动时要不要自动去问每个渠道有哪些模型，**默认 true**，类型是 `*bool` ⇒ 没写就是开）
 - `providers.json` — `{ "providers": [ { "id": "dummy", "vendor": "dummy" }, { "id": "openrouter", "vendor": "openrouter", "api_key": "sk-…", "model_filter": "gpt" }, { "id": "自建", "vendor": "custom", "base_url": "https://…/v1", "api_key": "sk-…" } ] }`（`vendor` 是**唯一必填**；`kind` 只剩存量读入别名，新配置必须写 `vendor`；`protocol` 缺省 `openai-chat-completion`）
   **密钥就写在这一条里**（空串 = 没配）：整个 `config/` 在忽略范围内；接口一律不回显（只回 `has_key`），调试页读它时先打码；写回权限收紧到 0600。
-  **模型筛选器 `model_filter`（2026-10-22 用户定）** = **只有 id 含这段子串的模型才导入**
+  **模型筛选器 `model_filter`（2026-10-22 用户定）** = **只有 id 命中任意一条规则的模型才导入**
   （聚合站动辄几百个模型：OpenRouter 实测 470 个，真正常用的就几个）。空 / 纯空白 = **不筛**。
-  语义**只有一份**：`registry.ValidateModelFilter` + `registry.FilterModels` ——
-  **子串**匹配 `upstream_id`（`openai/` 这类前缀**也参与**比较）、**不分大小写**、**不支持通配符**
-  （`*` 被拒绝：它没有「全部」的意思；要全部就留空）。坏写法在**写入时**就 422；
+  语义**只有一份**：`registry.SplitModelFilter` + `registry.ValidateModelFilter` + `registry.FilterModels` ——
+  **多条规则用半角逗号分隔、命中任意一条就算中**（2026-10-28 用户定：`deepseek,mimo` ⇒
+  `deepseek-v4-flash` 与 `mimo-v2.6-flash` **都**导入，「因为它们分别满足了一个规则」；是 **OR** 不是 AND）；
+  每条都是**子串**匹配 `upstream_id`（`openai/` 这类前缀**也参与**比较）、**不分大小写**、**不支持通配符**
+  （`*` 被拒绝、报错**点名是哪一条**；要全部就留空）；每条首尾空白吃掉、空条丢掉
+  （`gpt,,claude,` ⇒ 两条规则；全是逗号 = 没填 = 不筛）、分隔符**只有半角逗号**
+  （全角 `，` 是字面字符：多一个分隔符就多一个「id 里正好有它」的可能）。坏写法在**写入时**就 422；
   万一它从手改的文件里钻进来，刷新会**报错且一行都不动**（先验后拉 —— 否则"筛完是空"会顺着
   「没见到的删行」把整张模型表清空）。⚠ 它在**发现那一步**生效 ⇒ **改了要再刷一次模型**；
   刷完不匹配的旧行会被删掉（连同那些行上的用户覆盖：模型是可再发现的数据，覆盖不可）。

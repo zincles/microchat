@@ -18,7 +18,10 @@ const vendor = ref("");
 const protocol = ref("");
 const baseUrl = ref("");
 const key = ref("");
-// filter：模型筛选器（只导入 id 含这段子串的模型；空 = 不筛）。
+// filter：模型筛选器（只导入 id 命中任意一条规则的模型；空 = 不筛）。
+//
+// 多条规则用**半角逗号**分隔，命中任意一条就算中（2026-10-28 用户定：「deepseek,mimo 会吧
+// deepseek-v4-flash 和 mimo-v2.6-flash 都允许，因为它们分别满足了一个规则」）。
 const filter = ref("");
 // baseFilter：**已保存的**筛选器 —— 增量比较的基准。不直接比 props.provider：
 // 改了筛选器会留在原地，而父组件的 editProvider 仍指着旧对象 ⇒ 拿它当基准会把"没改"误判成"改了"。
@@ -237,10 +240,13 @@ function onKey(e) {
     <h3>密钥</h3>
     <label class="field"><span>{{ hasKey ? "已有密钥（填=换，不填=不动）" : "api_key（可空）" }}</span><input v-model="key" placeholder="api_key" type="password" /></label>
     <h3>模型筛选器</h3>
-    <label class="field"><span>只导入 id 含此子串的模型</span><input v-model="filter" placeholder="空=全部（例：gpt）" /></label>
+    <label class="field"><span>只导入 id 命中这些子串的模型</span>
+      <input v-model="filter" placeholder="空=全部（例：deepseek,mimo）" />
+    </label>
     <p class="hint">
-      子串匹配、不分大小写：填 <code>gpt</code> ⇒ <code>openai/gpt-5</code>、<code>gpt-6</code>、
-      <code>openai/gpt-5.6-sol</code> 都会导入（<code>openai/</code> 这种前缀也参与比较）。
+      多条规则用<b>半角逗号</b>分隔，<b>命中任意一条就导入</b>：填 <code>deepseek,mimo</code> ⇒
+      <code>deepseek-v4-flash</code> 与 <code>mimo-v2.6-flash</code> 都会进来。
+      每条都是子串匹配、不分大小写（<code>openai/</code> 这种前缀也参与比较）；
       不支持通配符（<code>*</code> 无效）；留空 = 不筛。保存后会自动按筛选器重新导入一次。
     </p>
     <div class="row">

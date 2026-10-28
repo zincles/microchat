@@ -1488,3 +1488,26 @@ test("渠道编辑器：vendor 分组 / 先 vendor 后 id / 端点给出实际�
   assert.match(code, /这一发会打到/, "端点没把那句人话显示出来");
 });
 
+// 模型筛选器：多条规则用半角逗号分隔、命中任意一条就导入（2026-10-28 用户定：
+// 「deepseek,mimo 会吧 deepseek-v4-flash 和 mimo-v2.6-flash 都允许，因为它们分别满足了一个规则」）。
+//
+// 这条只钉**界面把话说清楚了**：真逻辑在后端 registry.SplitModelFilter / FilterModels
+// （那边有成组的单测）。但界面不说清"逗号"与"任意一条"，用户填了 `deepseek,mimo` 会以为
+// 那是**一个**子串 ⇒ 一个模型都筛不出来，而界面还显示"已筛选" —— 静默的错。
+test("渠道编辑器：模型筛选器说清逗号与「任意一条」", () => {
+  const editor = readFileSync(join(SRC, "components", "ProviderEditor.vue"), "utf8");
+  // **HTML 注释与 JS 注释都要剥**：设计意图写在注释里是对的（"命中任意一条就算中"），
+  // 但这条测试问的是**界面上**有没有那么说。不剥 JS 注释的话，注释一句话就能让它假通过。
+  const code = editor
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+
+  // 措辞不能再是"含此子串"（单条）—— 那正是要改掉的旧口径
+  assert.ok(!/只导入 id 含此子串的模型/.test(code), "筛选器的标签还是单条子串口径");
+  // 必须提到：半角逗号分隔 + 任意一条 + 一个含逗号的例子
+  assert.match(code, /半角逗号/, "没说是半角逗号分隔");
+  assert.match(code, /命中任意一条/, "没说清是 OR（命中任意一条）");
+  assert.match(code, /deepseek,mimo/, "没给出那个具体的例子");
+});
+

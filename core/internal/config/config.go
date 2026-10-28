@@ -479,15 +479,20 @@ type Provider struct {
 	BaseURL  string            `json:"base_url"`
 	Headers  map[string]string `json:"headers"`
 	APIKey   string            `json:"api_key"`
-	// ModelFilter：**模型筛选器**（2026-10-22 用户定）—— 发现到的模型里，只有 id **包含**这段子串的
+	// ModelFilter：**模型筛选器**（2026-10-22 用户定）—— 发现到的模型里，只有 id 命中**任意一条规则**的
 	// 才导入；空（或纯空白）= 不筛，全都要。
 	//
-	// 聚合站的模型动辄几百条（OpenRouter 实测 470 个），真正常用的就几个 ⇒ 用一段子串把列表切小。
-	// 语义**只有一份**：`registry.ValidateModelFilter` / `registry.FilterModels`（别在别处再写一遍）：
-	//   - **子串**匹配模型 id（`upstream_id`；`openai/` 这类前缀也一起比）：`gpt` 命中
+	// 聚合站的模型动辄几百条（OpenRouter 实测 470 个），真正常用的就几个 ⇒ 用几条子串把列表切小。
+	// 语义**只有一份**：`registry.SplitModelFilter` / `ValidateModelFilter` / `FilterModels`
+	// （别在别处再写一遍）：
+	//   - **多条规则用半角逗号分隔，命中任意一条就算中**（2026-10-28 用户定）：
+	//     `deepseek,mimo` ⇒ `deepseek-v4-flash` 与 `mimo-v2.6-flash` **都**导入 ——
+	//     「因为它们分别满足了一个规则」。是 **OR**，不是 AND；
+	//   - **每条都是子串**匹配模型 id（`upstream_id`；`openai/` 这类前缀也一起比）：`gpt` 命中
 	//     `openai/gpt-5`、`gpt-6`、`openai/gpt-5.6-sol`；
 	//   - **不分大小写**（id 里大小写混着：`meta-llama/Llama-3.3-70B`）；
-	//   - **不支持通配符 / 布尔**：`*` 会被**拒绝**（它没有"全部"的意思；要全部就留空）。
+	//   - **不支持通配符 / 布尔**：`*` 会被**拒绝**（它没有"全部"的意思；要全部就留空）；
+	//   - 每条首尾空白吃掉、空条丢掉（`gpt,,claude,` ⇒ 两条规则）；分隔符**只有半角逗号**。
 	//
 	// ⚠ 它与"刷新时没见到的删行"是同一套账：改了筛选器**要再刷一次**才生效 —— 刷完不匹配的旧行会被删掉
 	// （模型是可再发现的数据，刷新就回来；但那些行上的用户覆盖（display_name / context_override）也跟着没）。

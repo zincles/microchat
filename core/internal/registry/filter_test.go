@@ -226,3 +226,103 @@ func TestRefreshOneRejectsWildcardFilterWithoutTouchingData(t *testing.T) {
 		t.Fatalf("坏筛选器不许动数据，该还是 1 行，得到 %d", len(rows))
 	}
 }
+
+// ── 逗号分隔的多条规则（2026-10-28 用户定）────────────────────────────────
+
+// 用户原话就是这组用例的规格：「模型筛选器我希望可以用逗号（半角）分割。例如 deepseek,mimo
+// 会吧 deepseek-v4-flash 和 mimo-v2.6-flash 都允许，因为它们分别满足了一个规则。」
+//
+// 关键在最后半句：这是 **OR**。做成 AND 的话那个例子一个都筛不出来（没有哪个 id 同时含两段）。
+func TestFilterModelsCommaSeparatedRulesAreOr(t *testing.T) {
+	all := []store.Discovered{
+		{UpstreamID: "deepseek-v4-flash"},
+		{UpstreamID: "mimo-v2.6-flash"},
+		{UpstreamID: "openai/gpt-5"},
+	}
+	kept, dropped := FilterModels("deepseek,mimo", all)
+	if !sameIDs(kept, "deepseek-v4-flash", "mimo-v2.6-flash") {
+		t.Fatalf("deepseek,mimo 该留下那两条，得到 %v", ids(kept))
+	}
+	if dropped != 1 {
+		t.Fatalf("该挡掉 1 个（gpt），得到 %d", dropped)
+	}
+	// 顺序照抄原表（筛选不该重排）—— 界面按这个顺序显示
+	if kept[0].UpstreamID != "deepseek-v4-flash" || kept[1].UpstreamID != "mimo-v2.6-flash" {
+		t.Fatalf("筛选后顺序该与上游一致，得到 %v", ids(kept))
+	}
+}
+
+// 分隔符是**半角**逗号；顺带钉住"空白怎么处理"（用户从别处粘一串很常见）。
+func TestSplitModelFilter(t *testing.T) {
+	cases := []struct {
+		filter string
+		want   []string
+	}{
+		{"", nil},
+		{"   ", nil},
+		{"gpt", []string{"gpt"}},
+		{"gpt,claude", []string{"gpt", "claude"}},
+		{"deepseek,mimo", []string{"deepseek", "mimo"}},
+		// 每条首尾空白吃掉
+		{" gpt , claude ", []string{"gpt", "claude"}},
+		// 空条丢掉：末尾多一个逗号不该变成"必须含空串"的怪规则（空串子串什么都命中 ⇒ 筛选器静默作废）
+		{"gpt,,claude,", []string{"gpt", "claude"}},
+		{" , , ", nil},
+		// 全角逗号**不是**分隔符（它是字面字符）—— 只收一个分隔符，说清楚
+		{"gpt，claude", []string{"gpt，claude"}},
+	}
+	for _, c := range cases {
+		got := SplitModelFilter(c.filter)
+		// 用 %q 打：`[""]` 与 `[]` 在 %v 下长得一模一样（都是 `[]`），
+		// 而"空条有没有被丢掉"恰恰是这组用例要区分的东西 —— 打不出来就等于没验。
+		if len(got) != len(c.want) {
+			t.Fatalf("筛选器 %q：得到 %q（%d 条），想要 %q（%d 条）", c.filter, got, len(got), c.want, len(c.want))
+		}
+		for i := range c.want {
+			if got[i] != c.want[i] {
+				t.Fatalf("筛选器 %q 第 %d 条：得到 %q，想要 %q", c.filter, i, got[i], c.want[i])
+			}
+		}
+	}
+}
+
+// 多条规则里只要有一条含通配符 ⇒ 整体拒绝，且报错**点名是哪一条**
+// （几条并列时不点名的话，用户得自己一条条试）。
+func TestValidateModelFilterRejectsWildcardInAnyRule(t *testing.T) {
+	err := ValidateModelFilter("deepseek,mimo*")
+	if err == nil {
+		t.Fatal("第二条含 `*` 该整体被拒")
+	}
+	if !strings.Contains(err.Error(), "mimo*") {
+		t.Fatalf("报错该点名出问题的那条，得到：%v", err)
+	}
+	// 全是空条 = 没填 = 合法（与留空等价：都不筛）
+	for _, filter := range []string{",", " , , ", ""} {
+		if err := ValidateModelFilter(filter); err != nil {
+			t.Fatalf("筛选器 %q 该算「没填」，不该报错：%v", filter, err)
+		}
+	}
+	if kept, dropped := FilterModels(",", filterFixture()); len(kept) != len(filterFixture()) || dropped != 0 {
+		t.Fatalf("全是逗号该原样全要，得到 %v / dropped=%d", ids(kept), dropped)
+	}
+}
+
+// 同一模型命中多条规则 ⇒ **只出现一次**（别因为 break 忘了而重复 append）。
+func TestFilterModelsNoDuplicateWhenMultipleRulesMatch(t *testing.T) {
+	all := []store.Discovered{{UpstreamID: "openai/gpt-5"}, {UpstreamID: "claude-4"}}
+	kept, _ := FilterModels("gpt,openai,gpt-5", all)
+	if !sameIDs(kept, "openai/gpt-5") {
+		t.Fatalf("三条规则都命中同一个模型，该只留一条，得到 %v", ids(kept))
+	}
+}
+
+// 各条规则各自不分大小写（不是"整体降一次"就完事）。
+func TestFilterModelsEachRuleIsCaseInsensitive(t *testing.T) {
+	all := []store.Discovered{{UpstreamID: "DeepSeek-V4-Flash"}, {UpstreamID: "MIMO-v2.6"}}
+	for _, filter := range []string{"deepseek,mimo", "DEEPSEEK,MIMO", "DeepSeek,MiMo"} {
+		if kept, _ := FilterModels(filter, all); len(kept) != 2 {
+			t.Fatalf("筛选器 %q 该命中两条，得到 %v", filter, ids(kept))
+		}
+	}
+}
+
