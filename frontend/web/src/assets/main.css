@@ -109,6 +109,13 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
   background: var(--tg-secondary-bg); color: var(--tg-hint);
 }
 #chat-col > header #toggle-right { margin-left: auto; }
+/* 顶栏右端那一簇（2026-10-28 用户定：上下文占用从状态行搬到右上角一枚环）：
+ * 右开关 + 环住进同一个 flex 容器，**空档全部给容器**（container 吃剩余、里面两个都不吃），
+ * 所以要把它俩的 auto margin 收掉 —— 一个容器 + 一个 auto margin 才是"整簇贴右"。 */
+.header-right { flex: none; margin-left: auto; display: inline-flex; align-items: center; gap: 0.45em; }
+/* ⚠ 特异性：上面 `#chat-col > header #toggle-right` 是 (2,1,0)，光写 `.header-right > #toggle-right`
+ * 只有 (1,1,0) —— 压不住，那枚开关会继续吃 auto margin。所以这里照抄它的前缀再加一层。 */
+#chat-col > header .header-right #toggle-right { margin-left: 0; }
 #chat-col > header #toggle-left:hover, #chat-col > header #toggle-right:hover {
   background: var(--tg-secondary-bg); color: var(--tg-text); filter: brightness(1.25);
 }
@@ -131,6 +138,44 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .agent-item .agent-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-item .agent-check { color: var(--tg-link); }
 .agent-empty { margin: 0.4em 0.6em; color: var(--tg-hint); font-size: 0.9em; }
+
+/* —— 上下文占比环（右上角，2026-10-28 用户定）——
+ * 从前这数字是输入框上方那行状态小字里的"上下文 344/1.04M"，紧贴着对话；用户要求搬这儿：
+ * 一枚绿色小环，环长 = 已用 / 输入预算，点开掉浮板看明细（同族于 Agent 选人浮板）。
+ * 尺寸 1.8em（顶栏那两枚开关是 2em）—— 环是**仪表**，不该比开关更抢眼。
+ * ⚠ 弧长不在 CSS 里算：TopBar 的 `<circle pathLength="100">` 把周长归一化成 100，
+ *   dasharray 直接写百分数 ⇒ 改 r 也不用改代码。这里只管描边。 */
+#ctx-ring { flex: none; width: 1.8em; height: 1.8em; padding: 0; border: none; border-radius: 50%;
+  background: none; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+#ctx-ring:hover { background: color-mix(in srgb, var(--tg-text) 8%, transparent); }
+#ctx-ring svg { display: block; width: 100%; height: 100%; transform: rotate(-90deg); } /* 起点转到 12 点方向 */
+#ctx-ring circle { fill: none; stroke-width: 3.2; }
+.ctx-ring-track { stroke: color-mix(in srgb, var(--tg-text) 14%, transparent); }
+/* 绿 = 正常占用、红 = 超预算。**只有两档**：27px 的环上分不出第三种深浅，
+ * 而"超预算"这个信号从前在状态行上有（整行变红），不能丢。 */
+.ctx-ring-fill { stroke: var(--tg-ok); stroke-linecap: round;
+  transition: stroke-dasharray 240ms ease-out, stroke 160ms linear; }
+#ctx-ring.over .ctx-ring-fill { stroke: var(--tg-destructive); }
+#ctx-ring.idle .ctx-ring-fill { stroke: none; }
+/* 浮板：与 Agent 选人同一族（同底、同阴影、同圆角），只是从右边缘掉下来。 */
+.ctx-menu { left: auto; right: 0.35em; min-width: 15em; max-width: 19em; padding: 0.6em 0.7em 0.55em; max-height: none; }
+.ctx-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.6em; }
+.ctx-used { font-size: 1.05em; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ctx-sep { margin: 0 0.12em; color: var(--tg-hint); font-weight: 400; }
+.ctx-pct { color: var(--tg-ok); font-weight: 600; font-variant-numeric: tabular-nums; }
+.ctx-pct.over { color: var(--tg-destructive); }
+.ctx-bar { height: 3px; margin: 0.5em 0 0.55em; border-radius: 999px; overflow: hidden;
+  background: color-mix(in srgb, var(--tg-text) 12%, transparent); }
+.ctx-bar > i { display: block; height: 100%; border-radius: inherit; background: var(--tg-ok);
+  transition: width 240ms ease-out; }
+.ctx-menu.over .ctx-bar > i { background: var(--tg-destructive); }
+/* 明细：左标签右数值（数值等宽数字，滚动刷新时不会左右抖）。 */
+.ctx-rows { margin: 0; }
+.ctx-row { display: flex; align-items: baseline; gap: 0.6em; padding: 0.22em 0; }
+.ctx-row dt { flex: none; width: 5.2em; color: var(--tg-hint); }
+.ctx-row dd { flex: 1; margin: 0; text-align: right; font-variant-numeric: tabular-nums; word-break: break-word; }
+.ctx-note { margin: 0.5em 0 0; padding-top: 0.45em; border-top: 1px solid var(--line);
+  color: var(--tg-hint); font-size: 0.85em; line-height: 1.4; }
 /* Toast 通知（右上堆叠，TG 安卓 toast 味：深底白字圆角 + 左色条区分 Plumbing/错误）。 */
 #toasts { position: fixed; top: 4.2em; right: 0.8em; display: flex; flex-direction: column; gap: 0.5em; z-index: 50; max-width: min(22em, 80vw); }
 .toast { background: var(--tg-float); color: var(--tg-text); border-radius: var(--r-card); padding: 0.6em 0.9em 0.6em 0.8em; font-size: 0.88em; box-shadow: var(--shadow-3); border-left: 3px solid var(--tg-link); animation: toast-in 180ms ease-out; word-break: break-word; }
@@ -553,11 +598,9 @@ html[data-composer="solid"] #composer .statusline {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 html[data-composer="solid"] #composer .taskline { order: -2; margin-bottom: 0.1em; }
-/* ⚠ 超预算那一下**必须**跟着搬进来，且特异性要赢过上面那条（2026-10-20 自查抓到）：
- * 上面 `html[data-composer="solid"] #composer .statusline` 是 (1,2,1)，而 `.statusline.over`
- * 只有 (0,2,0) —— 不补这条，实心模式下"超预算"就不再变红（警告被静默吃掉，最难发现的那种）。
- * 写法抄基础规则的三段式，只把色换成警告红。 */
-html[data-composer="solid"] #composer .statusline.over { color: var(--tg-destructive); }
+/* （2026-10-20 这里曾有一条 `html[data-composer="solid"] #composer .statusline.over`，
+ *  修的是"实心模式下超预算不变红"的特异性事故；2026-10-28 超预算信号搬去右上角的环了，
+ *  这条随之删掉 —— 那个教训（作用域化的规则特异性更高，样式得跟着搬）仍然成立。） */
 /* 状态行：输入框上方独立小字（不进卡，跟输入框同宽居中，超预算红）。 */
 .statusline { position: absolute; left: 0; right: 0; bottom: 100%; margin-bottom: 0.3em; text-align: center;
   /* 2026-10-20 用户点名"占的高度小一些"：**高度的大头不是字号，是行高** —— 它继承了 body 的
@@ -571,7 +614,9 @@ html[data-composer="solid"] #composer .statusline.over { color: var(--tg-destruc
   color: color-mix(in srgb, var(--tg-hint) 75%, var(--tg-text));
   /* 悬浮小字压在背景图上要读得清：**双层柔影**（近处实、远处散）—— 2026-10-14 顶栏去壳后一并统一。 */
   text-shadow: 0 1px 2px color-mix(in srgb, var(--tg-bg) 85%, transparent), 0 1px 10px color-mix(in srgb, var(--tg-bg) 55%, transparent); }
-.statusline.over { color: var(--tg-destructive); }
+/* ⚠ 从前这里有 `.statusline.over`（超预算整行变红）。2026-10-28 起**没有这个状态**了：
+ * 上下文占用整块搬去右上角那枚环（`#ctx-ring`，超预算时环变红），状态行只报"助手｜相位"。
+ * 别把 `.over` 加回这行 —— 那会是一条永远匹配不上的规则（`setStatus` 已经不接 over 了）。 */
 /* ⚠ 分割线**只给实心形态**（2026-10-20 用户点名："它和底部输入栏之间有分割线比较好"）：
  * 浮空形态里这行是**飘在消息上的一行字**（不是栏的一部分），给它画条线只是一条悬空的横杠，
  * 反而脏；而实心形态那条栏是**一整块实心底**，"状态行 / 输入行"是两个隔间 ⇒ 分格线才讲得通。 */

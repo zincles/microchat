@@ -46,6 +46,9 @@
   --tg-button: var(--tg-theme-button-color, #2563eb);
   --tg-button-text: var(--tg-theme-button-text-color, #ffffff);
   --tg-destructive: #f87171;
+  /* 绿：只在右上角那枚上下文环上用（正常占用）。**不是装饰色** ——
+   * 环变红（--tg-destructive）才是"超预算"，别拿它做别的"正确/成功"提示。 */
+  --tg-ok: #4ade80;
   --tg-float: #262626;                                  /* 弹窗、菜单、浮板 */
 }
 
@@ -93,13 +96,13 @@
 html[data-theme="dark"] {
   --tg-bg: #131313; --tg-secondary-bg: #1c1c1c; --tg-float: #262626; --tg-text: #ebebeb;
   --tg-hint: #9b9b9b; --tg-link: #60a5fa; --tg-button: #2563eb; --tg-button-text: #ffffff;
-  --tg-destructive: #f87171; color-scheme: dark;
+  --tg-destructive: #f87171; --tg-ok: #4ade80; color-scheme: dark;
 }
 /* 亮色：同一套中性灰阶的浅色端。正文 18.1:1、hint 5.3:1。 */
 html[data-theme="light"] {
   --tg-bg: #ffffff; --tg-secondary-bg: #f5f5f5; --tg-float: #ffffff; --tg-text: #161616;
   --tg-hint: #6b6b6b; --tg-link: #2563eb; --tg-button: #2563eb; --tg-button-text: #ffffff;
-  --tg-destructive: #dc2626; color-scheme: light;
+  --tg-destructive: #dc2626; --tg-ok: #16a34a; color-scheme: light;
 }
 /* Breeze：KDE 经典配色（色值取自 /usr/share/color-schemes/BreezeLight.colors）。
  * 映射：bg=View.BackgroundNormal / secondary=Window.BackgroundNormal / text=View.ForegroundNormal /
@@ -115,5 +118,5 @@ html[data-theme="breeze"] {
    *   button_text #ffffff → #161616  2.49 → 7.26（白字压在 #3daee9 上，发送钮图标会糊）
    * 色相照旧（灰蓝 / 桌面蓝 / Breeze 蓝），只是压深一档。 */
   --tg-hint: #646f7b; --tg-link: #2470a2; --tg-button: #3daee9; --tg-button-text: #161616;
-  --tg-destructive: #da4453; --tg-float: #f7f7f7; color-scheme: light;
+  --tg-destructive: #da4453; --tg-ok: #1f8a4c; --tg-float: #f7f7f7; color-scheme: light;
 }

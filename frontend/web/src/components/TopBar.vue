@@ -7,7 +7,7 @@
 // 会话抬头不在顶栏（左栏列表高亮 + 状态行都有它）。
 import { ref, computed, nextTick } from "vue";
 import { ICONS } from "./icons.js";
-import { modelKey, parseModelKey } from "../utils/format.js";
+import { modelKey, parseModelKey, formatTokens, contextArc, contextPercentText, contextTitle, contextOverBudget } from "../utils/format.js";
 
 defineProps({
   // leftHidden / rightHidden：那一侧栏收着 ⇒ 顶栏出它那枚开关；栏开着 ⇒ 开关在栏自己头上
@@ -71,7 +71,41 @@ function setSession(info) {
 function setModels(groups, cur) { modelGroups.value = groups; if (cur !== undefined) curModel.value = cur; syncOrphanModel(); reapplyValues(); }
 function setAgents(list, cur) { agents.value = list ?? []; if (cur !== undefined) curAgent.value = cur; }
 
-defineExpose({ setSession, setModels, setAgents });
+// —— 上下文占比环（2026-10-28 用户定）——
+// 从前"上下文 344/1.04M"住在输入框上面那行状态小字里（紧贴着对话）；用户要求它搬这儿：
+// 右上角一枚绿色小环，环长 = 已用 / 输入预算。点击掉一块浮板（与 Agent 选人同一族）看明细。
+//
+// ⚠ 只留**两档**颜色（绿 = 正常 / 红 = 超预算），不做琥珀中间档：环只有 1.8em ≈ 27px，
+//   三档色在同一亮度下分不出深浅；而"超预算"这个信号从前在状态行上有，不能悄悄丢掉。
+// ⚠ 弧长用 `pathLength="100"` 把周长**归一化**成 100 ⇒ dasharray 直接写百分数，
+//   不必在 JS 里算 2πr（r 改了也不用改代码）。
+const ctx = ref(null);
+const ctxOpen = ref(false);
+// 弧长（含"用了就得看得见"的最小弧）在 `utils/format.js` 的 `contextArc` 里 —— 那边才测得到。
+const ctxArc = computed(() => contextArc(ctx.value));
+// dasharray="a b" 且 a+b=100 ⇒ 正好一道弧、没有第二道。
+const ctxDash = computed(() => `${ctxArc.value} ${100 - ctxArc.value}`);
+const ctxOver = computed(() => contextOverBudget(ctx.value));
+const ctxTitle = computed(() => (ctx.value ? `${contextPercentText(ctx.value)} 已用 · ${contextTitle(ctx.value)}` : "上下文占用"));
+const ctxRows = computed(() => {
+  const c = ctx.value;
+  if (!c) return [];
+  const num = (v) => Number(v ?? 0).toLocaleString("en-US");
+  const rows = [
+    ["输入预算", `${num(c.budget_tokens)} = 上下文 ${num(c.ctx_len)} − 输出预留 ${num(c.max_output)}`],
+    ["剩余", formatTokens(c.remaining_tokens)],
+    ["压缩触发", c.trigger_tokens != null ? `${formatTokens(c.trigger_tokens)}（到这儿自动压）` : "没开（手动 /compact）"],
+  ];
+  // 上一次真发出去的 prompt_tokens（上游报的实数）与估算并排 —— 估算偏了看得见。
+  if (c.last_prompt_tokens != null) rows.push(["上一发实测", `${formatTokens(c.last_prompt_tokens)}（这格是估的：${formatTokens(c.used_tokens)}）`]);
+  return rows;
+});
+function toggleCtx() { ctxOpen.value = !ctxOpen.value; if (ctxOpen.value) agentOpen.value = false; }
+function toggleAgent() { agentOpen.value = !agentOpen.value; if (agentOpen.value) ctxOpen.value = false; }
+// setContext：App 每轮 refreshStatusline 喂一次（草稿态传 null）。
+function setContext(c) { ctx.value = c ?? null; }
+
+defineExpose({ setSession, setModels, setAgents, setContext });
 </script>
 
 <template>
@@ -93,7 +127,7 @@ defineExpose({ setSession, setModels, setAgents });
       :style="agentDotStyle(curAgent)"
       :title="`当前助手：${curAgentLabel}（点击切换）`"
       aria-label="切换 Agent"
-      @click="agentOpen = !agentOpen"
+      @click="toggleAgent"
     >{{ agentInitial }}</button>
     <select
       id="session-model"
@@ -108,16 +142,34 @@ defineExpose({ setSession, setModels, setAgents });
         <option v-for="m in g.items" :key="m.value" :value="m.value">{{ m.label }}</option>
       </optgroup>
     </select>
-    <button
-      v-if="rightHidden"
-      id="toggle-right"
-      class="icon-btn"
-      type="button"
-      title="显示/隐藏载荷栏"
-      aria-label="显示/隐藏载荷栏"
-      @click="$emit('toggle-right')"
-      v-html="rightSvg"
-    ></button>
+    <span class="header-right">
+      <button
+        v-if="rightHidden"
+        id="toggle-right"
+        class="icon-btn"
+        type="button"
+        title="显示/隐藏载荷栏"
+        aria-label="显示/隐藏载荷栏"
+        @click="$emit('toggle-right')"
+        v-html="rightSvg"
+      ></button>
+      <!-- 上下文占比环：环长 = 已用 / 输入预算；绿正常、红超预算。点开看明细。 -->
+      <button
+        id="ctx-ring"
+        class="ctx-ring"
+        :class="{ over: ctxOver, idle: !ctx }"
+        type="button"
+        :title="ctxTitle"
+        aria-label="上下文占用"
+        :aria-expanded="ctxOpen ? 'true' : 'false'"
+        @click="toggleCtx"
+      >
+        <svg viewBox="0 0 32 32" aria-hidden="true">
+          <circle class="ctx-ring-track" cx="16" cy="16" r="13" />
+          <circle class="ctx-ring-fill" cx="16" cy="16" r="13" pathLength="100" :stroke-dasharray="ctxDash" />
+        </svg>
+      </button>
+    </span>
     <template v-if="agentOpen">
       <div class="agent-menu-backdrop" @click="agentOpen = false"></div>
       <div class="agent-menu" role="menu">
@@ -134,6 +186,26 @@ defineExpose({ setSession, setModels, setAgents });
           <span v-if="a.id === curAgent" class="agent-check">✓</span>
         </button>
         <p v-if="!agentItems.length" class="agent-empty">没有可选的 Agent</p>
+      </div>
+    </template>
+    <template v-if="ctxOpen">
+      <div class="agent-menu-backdrop" @click="ctxOpen = false"></div>
+      <div class="agent-menu ctx-menu" :class="{ over: ctxOver }" role="dialog" aria-label="上下文占用">
+        <template v-if="ctx">
+          <div class="ctx-head">
+            <b class="ctx-used">{{ formatTokens(ctx.used_tokens) }}<span class="ctx-sep">/</span>{{ formatTokens(ctx.budget_tokens) }}</b>
+            <b class="ctx-pct" :class="{ over: ctxOver }">{{ contextPercentText(ctx) }}</b>
+          </div>
+          <div class="ctx-bar"><i :style="{ width: `${ctxArc}%` }"></i></div>
+          <dl class="ctx-rows">
+            <div v-for="[k, v] in ctxRows" :key="k" class="ctx-row">
+              <dt>{{ k }}</dt>
+              <dd>{{ v }}</dd>
+            </div>
+          </dl>
+          <p class="ctx-note">分母是输入预算（上下文减去输出预留），不是模型名义上下文。</p>
+        </template>
+        <p v-else class="agent-empty">这是新对话，还没有可统计的上下文。</p>
       </div>
     </template>
   </header>

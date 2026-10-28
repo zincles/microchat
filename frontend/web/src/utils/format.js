@@ -39,14 +39,47 @@ export function formatThinkLabel(reasoningMs) {
   return `思考过程（${(reasoningMs / 1000).toFixed(1)}s）`;
 }
 
-// 状态行：占用 used/budget（over_budget 标红由 CSS 类承担）+ 当前助手 + phase/耗时。
-export function formatStatusLine({ ctx, phase, elapsedMs, agent }) {
-  const used = formatTokens(ctx?.used_tokens);
-  const budget = formatTokens(ctx?.budget_tokens);
-  const over = ctx?.over_budget ? " 超预算" : "";
+// 状态行：当前助手 + phase/耗时。
+// ⚠ 上下文占用**不在这一行**（2026-10-28 用户定）：它挪到右上角那枚小环（TopBar 的 `#ctx-ring`），
+// 点开才看明细。所以这里不接 ctx —— 同一个数字住两处，只会让两处都可能过期。
+export function formatStatusLine({ phase, elapsedMs, agent }) {
   // 2026-10-14：中间那格从"渠道/模型"换成"当前助手" —— 模型住顶栏左上（别两处重复），
   // 助手住这儿（顶栏已无 Agent 下拉）。
-  return `上下文 ${used}/${budget}${over}｜${agent ?? "?"}｜${phase ?? "idle"}${elapsedMs != null ? ` ${elapsedMs}ms` : ""}`.trim();
+  return `${agent ?? "?"}｜${phase ?? "idle"}${elapsedMs != null ? ` ${elapsedMs}ms` : ""}`.trim();
+}
+
+// contextRatio：已用 / 输入预算，夹到 0..1（分母缺失或为 0 ⇒ 0）。
+// 分母是**输入预算**不是模型上下文（见 contextTitle）—— 这就是"填了 1 000 000 却显示 995904"的来由。
+export function contextRatio(ctx) {
+  const used = Number(ctx?.used_tokens ?? 0);
+  const budget = Number(ctx?.budget_tokens ?? 0);
+  if (!(budget > 0) || !Number.isFinite(used)) return 0;
+  return Math.max(0, Math.min(1, used / budget));
+}
+
+// contextPercentText：给人看的占比。
+// 一上来就是 344/1.04M 这种小占比 ⇒ 整数会显示成 0%（看起来像"坏了"），所以 10% 以下带一位小数、
+// 0.1% 以下单说。**向下取整**（与 formatTokens 同一个理由：别把用量说大）。
+export function contextPercentText(ctx) {
+  const used = Number(ctx?.used_tokens ?? 0);
+  if (!(used > 0)) return "0%";
+  const r = contextRatio(ctx) * 100;
+  if (r < 0.1) return "<0.1%";
+  if (r < 10) return `${Math.floor(r * 10) / 10}%`;
+  return `${Math.floor(r)}%`;
+}
+
+// CONTEXT_MIN_ARC：环上那道弧的**最小可见百分比**。
+// 344/1.04M ≈ 0.03% ⇒ 四舍五入成 0，环整个消失 —— 那看起来像"坏了"，而不像"几乎没占"。
+// 所以只要用了（used > 0）就至少画出这么长一道弧；**文字**照实报（contextPercentText），
+// 弧只回答"有没有占用、大概多少"这个粗问题。
+export const CONTEXT_MIN_ARC = 2;
+
+// contextArc：环该画多少（0..100 的百分比，直接喂 SVG 的 stroke-dasharray）。
+export function contextArc(ctx) {
+  const used = Number(ctx?.used_tokens ?? 0);
+  if (!(used > 0)) return 0;
+  return Math.max(CONTEXT_MIN_ARC, Math.min(100, Math.round(contextRatio(ctx) * 100)));
 }
 
 // formatTokens：上下文数字的人话格式（2026-10-17 用户点名）：9857 → 9.8K、995904 → 995K、
@@ -64,10 +97,10 @@ export function formatTokens(n) {
   return sign + trim(floored(abs / 1000000, 2).toFixed(2)) + "M";              // 1.04M
 }
 
-// statusLineTitle：状态行悬停的解释（桌面才有 hover；移动端靠设置页那行小字，两处都写）。
-// 分母是**输入预算**不是模型上下文 —— 这就是"填了 1 000 000 却显示 995904"的来由。
-export function statusLineTitle(ctx) {
-  if (!ctx) return "";
+// contextTitle：上下文环的悬停解释（桌面才有 hover；移动端靠环点开的浮板，两处都写同一句话）。
+// 分母是**输入预算**不是模型上下文 —— 这是"填了 1 000 000 却显示 995904"的来由。
+export function contextTitle(ctx) {
+  if (!ctx) return "上下文占用（还没有会话）";
   const num = (v) => Number(v ?? 0).toLocaleString("en-US");
   return `输入预算 ${num(ctx.budget_tokens)} = 模型上下文 ${num(ctx.ctx_len)} − 输出预留 ${num(ctx.max_output)}`;
 }
@@ -113,7 +146,8 @@ export function usageFootTitle(usage) {
   return lines.join("\n");
 }
 
-export function statusOverBudget(ctx) {
+// contextOverBudget：超预算 ⇒ 环变红（从前是状态行那行小字变红，信号不能丢）。
+export function contextOverBudget(ctx) {
   return !!ctx?.over_budget;
 }
 

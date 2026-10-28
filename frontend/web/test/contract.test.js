@@ -16,11 +16,15 @@ import {
   formatThinkLabel,
   formatStatusLine,
   formatTokens,
-  statusLineTitle,
+  contextTitle,
+  contextRatio,
+  contextPercentText,
+  contextArc,
+  CONTEXT_MIN_ARC,
+  contextOverBudget,
   formatCost,
   usageFoot,
   usageFootTitle,
-  statusOverBudget,
   groupModelsByProvider,
   deletionPlanSummary,
   formatRoutesOutcome,
@@ -105,12 +109,39 @@ test("formatTokens：9.8K / 995K / 1.04M（向下取整，别把用量说大）"
   assert.equal(formatTokens(undefined), "?");
 });
 
-test("状态行悬停解释：分母是输入预算 = 上下文 − 输出预留", () => {
-  const t = statusLineTitle({ ctx_len: 1000000, max_output: 4096, budget_tokens: 995904 });
+// 2026-10-28：这串解释跟着上下文占用一起从状态行搬到右上角那枚环（悬停 title + 浮板底部同一句话）。
+test("上下文环的悬停解释：分母是输入预算 = 上下文 − 输出预留", () => {
+  const t = contextTitle({ ctx_len: 1000000, max_output: 4096, budget_tokens: 995904 });
   assert.ok(t.includes("995,904"));
   assert.ok(t.includes("1,000,000"));
   assert.ok(t.includes("4,096"));
-  assert.equal(statusLineTitle(null), "");
+  // 没有会话时也要给出一句人话（从前回空串 ⇒ 环的 title 是空的，等于没解释）
+  assert.equal(contextTitle(null), "上下文占用（还没有会话）");
+});
+
+// 环要能把"几乎没占"和"快满了"分开画：0.03% 那种小占比不能显示成 0%（看着像环坏了），
+// 也不能因为它小而把弧画到画不出来（TopBar 里另有 2% 的最小可见弧）。
+test("上下文占比：夹到 0..1、小占比不显示成 0%、向下取整（不把用量说大）", () => {
+  assert.equal(contextRatio({ used_tokens: 344, budget_tokens: 1044480 }), 344 / 1044480);
+  assert.equal(contextRatio({ used_tokens: 2000, budget_tokens: 1000 }), 1); // 超预算也夹到 1
+  assert.equal(contextRatio({ used_tokens: 100, budget_tokens: 0 }), 0);    // 分母缺失 ⇒ 0（不能 NaN）
+  assert.equal(contextRatio(null), 0);
+  assert.equal(contextRatio({ used_tokens: null, budget_tokens: 1000 }), 0);
+
+  assert.equal(contextPercentText({ used_tokens: 0, budget_tokens: 1000 }), "0%");
+  assert.equal(contextPercentText({ used_tokens: 344, budget_tokens: 1044480 }), "<0.1%");
+  assert.equal(contextPercentText({ used_tokens: 34, budget_tokens: 1000 }), "3.4%");
+  assert.equal(contextPercentText({ used_tokens: 99, budget_tokens: 100 }), "99%");
+  // 向下取整：999/1000 = 99.9% ⇒ 报 99%（向上取整会把用量说大，与 formatTokens 同一个理由）
+  assert.equal(contextPercentText({ used_tokens: 999, budget_tokens: 1000 }), "99%");
+
+  // 弧长：**用了就至少画一道**（344/1.04M 取整成 0 会让环消失，看起来像坏了），
+  // 没用就不画；满/超都封顶 100。
+  assert.equal(contextArc({ used_tokens: 344, budget_tokens: 1044480 }), CONTEXT_MIN_ARC);
+  assert.equal(contextArc({ used_tokens: 0, budget_tokens: 1000 }), 0);
+  assert.equal(contextArc({ used_tokens: 500, budget_tokens: 1000 }), 50);
+  assert.equal(contextArc({ used_tokens: 2000, budget_tokens: 1000 }), 100);
+  assert.equal(contextArc(null), 0);
 });
 
 // 成本与气泡脚注（2026-10-20）：OpenRouter 在 `usage.cost` 里报实扣金额，直连渠道不报。
@@ -151,20 +182,21 @@ test("usageFoot 的悬停说明：点明思考是输出的子集、成本是上�
   assert.ok(title.includes("上游报的"));
 });
 
-test("状态行：used/budget + 助手 + phase/耗时；超预算可判（2026-10-14 起中间是助手，模型住顶栏）", () => {
-  const line = formatStatusLine({
-    ctx: { used_tokens: 100, budget_tokens: 1000, over_budget: true },
-    phase: "streaming",
-    elapsedMs: 300,
-    agent: "默认助手",
-  });
-  assert.ok(line.includes("100/1K")); // 1000 ⇒ 1K（2026-10-17 起人话格式）
-  assert.ok(line.includes("超预算"));
+test("状态行：助手 + phase/耗时；上下文占用不在这行（2026-10-28 挪去右上角的环）", () => {
+  const line = formatStatusLine({ phase: "streaming", elapsedMs: 300, agent: "默认助手" });
   assert.ok(line.includes("默认助手"));
-  assert.ok(!line.includes("dummy/m")); // 模型不再出现在状态行（单处归属：顶栏左上）
   assert.ok(line.includes("streaming"));
-  assert.equal(statusOverBudget({ over_budget: true }), true);
-  assert.equal(statusOverBudget({ over_budget: false }), false);
+  assert.ok(line.includes("300ms"));
+  assert.ok(!line.includes("dummy/m")); // 模型不再出现在状态行（单处归属：顶栏左上）
+  // 上下文占用整块搬走了：这行里不许再出现 used/budget/超预算（两处都显示同一个数字，
+  // 只会让两处都可能过期）。
+  assert.ok(!line.includes("上下文"));
+  assert.ok(!line.includes("超预算"));
+  assert.ok(!formatStatusLine({ phase: "idle" }).includes("上下文"));
+  // 超预算的信号还在（环变红用它判），只是不再走状态行
+  assert.equal(contextOverBudget({ over_budget: true }), true);
+  assert.equal(contextOverBudget({ over_budget: false }), false);
+  assert.equal(contextOverBudget(null), false);
 });
 
 test("模型按 provider 分组；删除预览计数", () => {
@@ -1055,4 +1087,37 @@ test("压缩载荷预演：按钮 / 事件 / App 监听 / 接口四处都接着"
   const client = readFileSync(join(SRC, "api", "client.js"), "utf8");
   assert.match(client, /compactPayload:\s*\(id, blocks\)/, "api 里没有 compactPayload");
   assert.match(client, /\/compact\/payload/, "api 打错了路径（该是 /compact/payload）");
+});
+
+// —— 上下文占比环（右上角，2026-10-28）——
+// 这条链又是"每一环各写一遍"：App 算 ctx → 喂给 TopBar → 环画弧 → 点开浮板。
+// 少接一环**不会报错**：App 不调 setContext ⇒ 环永远是空的（看着像"没占用"）。
+// 另钉一条**反向**的：状态行不许再把上下文报回来 —— 同一个数字住两处，
+// 只会让两处都可能过期（这正是这次搬家的理由）。
+test("上下文环：App 喂 ctx / 环在顶栏画 / 状态行不再报占用", () => {
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  assert.match(app, /topbarRef\.value\?\.setContext\(ctx\)/, "App 没有把 ctx 喂给顶栏");
+  assert.match(app, /topbarRef\.value\?\.setContext\(null\)/, "草稿态没有清掉环（会挂着上一条会话的数字）");
+  assert.ok(!app.includes("statusOverBudget"), "App 还在用状态行的超预算（已经搬去环上了）");
+
+  const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
+  assert.match(top, /id="ctx-ring"/, "顶栏里没有那枚环");
+  assert.match(top, /pathLength="100"/, "弧长没走 pathLength 归一化（dasharray 会被当成绝对长度）");
+  assert.match(top, /setContext/, "TopBar 没有暴露 setContext");
+  assert.match(top, /class="agent-menu ctx-menu"/, "浮板没有复用 Agent 选人那套底（--tg-float / shadow-3）");
+
+  // 判规则时要**先剥掉注释**：这次的教训就写在一条注释里（"从前这里有 .statusline.over"），
+  // 不剥的话字面匹配会把注释当成规则 —— 守卫测试自己先误报，比漏报更浪费人。
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.match(css, /\.ctx-ring-fill \{ stroke: var\(--tg-ok\)/, "环没用 --tg-ok");
+  // 三套主题都得有绿色，否则换主题后环就没了颜色（CSS 变量缺失 ⇒ stroke 回 initial = 黑）
+  const theme = readFileSync(join(SRC, "assets", "theme.css"), "utf8");
+  const okCount = (theme.match(/--tg-ok:/g) ?? []).length;
+  assert.equal(okCount, 4, `--tg-ok 该在 :root + 三套预设里各一条，实际 ${okCount} 条`);
+
+  // 反向守卫：状态行只剩"助手｜相位"，不要再接 ctx/over/title
+  const composer = readFileSync(join(SRC, "components", "Composer.vue"), "utf8");
+  assert.match(composer, /function setStatus\(t\)/, "Composer 的 setStatus 该只有一个参数");
+  assert.ok(!composer.includes("statusOver"), "Composer 里还留着 statusOver（环才有超预算这个状态）");
+  assert.ok(!/\.statusline\.over/.test(css), "main.css 里还留着 .statusline.over 规则（永远匹配不上）");
 });

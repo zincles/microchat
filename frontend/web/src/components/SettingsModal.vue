@@ -313,9 +313,9 @@ function onKey(e) {
           <h3>生成与压缩</h3>
           <label class="field"><span>标题字数</span><input v-model="chat.title_chars" type="number" min="1" /></label>
           <label class="field"><span>模型上下文 tokens</span><input v-model="chat.model_context_tokens" type="number" min="1" /></label>
-          <!-- 为什么状态行的分母常常比这里小：它是**输入预算** = 上下文 − 给回复留的输出额度。
-               移动端没有 hover，所以这句话必须写在这儿（不能只藏在状态行的 title 里）。 -->
-          <p class="hint">状态行的分母是<b>输入预算</b> = 这里填的上下文 − 模型的输出预留（上游报的 <code>max_output</code>，没报按 4096）⇒ 填 1000000 时它显示 995904 ✓。</p>
+          <!-- 为什么右上角那枚环的分母常常比这里小：它是**输入预算** = 上下文 − 给回复留的输出额度。
+               移动端没有 hover，所以这句话必须写在这儿（不能只藏在环的 title 里）。 -->
+          <p class="hint">右上角那枚环的分母是<b>输入预算</b> = 这里填的上下文 − 模型的输出预留（上游报的 <code>max_output</code>，没报按 4096）⇒ 填 1000000 时它显示 995904 ✓。</p>
           <label class="field"><span>压缩块数（自动压缩一次压几个）</span><input v-model="chat.compact_blocks" type="number" min="1" placeholder="空=3" /></label>
           <label class="field"><span>自动压缩（到触发线就压，压到 50% 以下）</span><ToggleSwitch v-model="chat.auto_compact" /></label>
           <label class="field"><span>压缩触发 tokens（空=预算的 80%）</span><input v-model="chat.compact_trigger_tokens" type="number" min="1" placeholder="空=预算的 80%" /></label>

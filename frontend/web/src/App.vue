@@ -17,15 +17,12 @@ import { classifyAxis, pickDrag, dragProgress, resolveRelease } from "./utils/sw
 import { sharedApi, previewOn, applyTheme, wantsSend, apiBase, apiToken, apiBaseCandidates, saveNetPrefs, lastSessionId, saveLastSession, commandMenuOn, applyComposerStyle, applyTextScale, chromeHideOn } from "./utils/prefs.js";
 import {
   formatStatusLine,
-  statusLineTitle,
-  statusOverBudget,
   groupModelsByProvider,
   deletionPlanSummary,
   modelKey,
   parseModelKey,
   modelOption,
   agentOption,
-  whoText,
   sessionTitle,
   taskLineText,
 } from "./utils/format.js";
@@ -1045,15 +1042,16 @@ async function refreshTasks() {
 }
 function refreshStatusline(phase, elapsedMs) {
   if (draft || !sessionID) {
-    // 草稿：没有会话可问占用 —— 状态行只报"新对话 + 将来会用的模型"。
-    const who = whoText(sessionInfo.provider, sessionInfo.model, "未选模型");
-    composerRef.value?.setStatus([connText, "新对话", statusAgent.value, phase ?? "idle"].filter(Boolean).join("｜"), false);
+    // 草稿：没有会话可问占用 —— 状态行只报"新对话 + 将来会用的模型"，
+    // 右上角那枚环也清空（没有会话就没有"占了多少"这回事）。
+    composerRef.value?.setStatus([connText, "新对话", statusAgent.value, phase ?? "idle"].filter(Boolean).join("｜"));
+    topbarRef.value?.setContext(null);
     return;
   }
   api.context(sessionID).catch(() => null).then((ctx) => {
-    composerRef.value?.setStatus(`${connText}｜` + formatStatusLine({
-      ctx, phase, elapsedMs, agent: statusAgent.value,
-    }), statusOverBudget(ctx), statusLineTitle(ctx));
+    // 占用**不再进状态行**（2026-10-28 用户定）—— 它住右上角那枚环，点开才是明细。
+    composerRef.value?.setStatus(`${connText}｜` + formatStatusLine({ phase, elapsedMs, agent: statusAgent.value }));
+    topbarRef.value?.setContext(ctx);
   }).catch((err) => toast(`状态行失败：${err.message}`, "error"));
 }
 function refreshStateView(id) {
