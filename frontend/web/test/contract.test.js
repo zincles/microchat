@@ -1713,3 +1713,50 @@ test("上下文工作区：切进去 / 换会话时补拉压缩树", () => {
   assert.match(after, /if \(workspace\.value === "context"\) refreshTree\(\)/,
     "换会话时没补拉压缩树 —— 会一直显示上一条会话的账");
 });
+
+// 上下文工作区：**平铺，不是面板**（2026-10-29 用户定：「不需要面板…我们完全可以平铺，
+// 就像聊天界面的模型输出一样，不需要气泡框起来」）。
+//
+// 参照物是聊天里的 `.msg.assistant` —— 它本来就**没有底**（只有 `.msg.user` 才是气泡）。
+// 所以工作区里也不该出现：卡片底、圆角、给每块内容套的边框。
+// 这些都不会报错，只会"悄悄长回去"（下次谁想给某块加个 hover/分组，最顺手的就是加个 border +
+// background + border-radius —— 三件套一上就又变成面板了）。
+test("上下文工作区：平铺，不许再长出卡片和气泡", () => {
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  const rule = (sel) => {
+    const m = css.match(new RegExp(`(^|\\n)${sel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\{([^}]*)\\}`));
+    return m ? m[2] : "";
+  };
+
+  // ① 外壳：没有底色、没有圆角、没有内边距
+  const panel = rule(".ws-panel");
+  assert.ok(panel, "找不到 .ws-panel 规则");
+  assert.match(panel, /background:\s*none/, "工作区外壳又有底色了 —— 那又变成一张卡片");
+  assert.match(panel, /border-radius:\s*0/, "工作区外壳又有圆角了");
+  assert.match(panel, /padding:\s*0/, "工作区外壳又有内边距了（那是卡片的特征）");
+  // 与聊天保持一致：宽度对齐阅读列、正文色
+  assert.match(panel, /max-width:\s*var\(--read-col/, "没和聊天共用阅读列宽度");
+  assert.match(panel, /color:\s*var\(--tg-text\)/, "正文色该是 --tg-text（不是提示色）");
+
+  // ② 载荷的每一块：不许有边框/底色（从前是"小卡片"，用户点名不要）
+  const pv = rule(".pv-msg");
+  assert.ok(pv, "找不到 .pv-msg 规则");
+  assert.match(pv, /border:\s*none/, ".pv-msg 又带边框了 —— 那是给每块内容套的框");
+  assert.match(pv, /background:\s*none/, ".pv-msg 又有底色了（那是气泡）");
+  // ⚠ 别写 `!/border-radius:\s*(?!0)/` 这种负向前瞻：`\s*` 会**回溯**到匹配空串，
+  // 于是"下一个字符是空格"也让断言成立 —— 圆角明明非 0 却抓不到（真实的坑，写过一次）。
+  // 正面断言"它必须是 0"更干脆，也更难写错。
+  assert.match(pv, /border-radius:\s*0\b/, ".pv-msg 又有圆角了 —— 那是给每块内容套的框");
+  // 块间只用一条细线分开（与状态表同一个手法）
+  assert.match(pv, /border-bottom:\s*1px solid var\(--line\)/, "块之间该用一条细线分隔");
+
+  // ③ role 标签：纯文字，不是彩色药丸
+  const role = rule(".pv-role");
+  assert.match(role, /border:\s*none/, "role 又变成带框的药丸了");
+  assert.match(role, /background:\s*none|background:\s*transparent|border-radius:\s*0/, "role 又有底色了");
+
+  // ④ 元信息 chip：裸文字（靠 ::before 加分隔点）
+  const chip = rule(".pv-chip");
+  assert.match(chip, /border:\s*none/, "元信息又变成带框的小标签了");
+  assert.match(css, /\.pv-chip \+ \.pv-chip::before/, "元信息之间没有分隔点（裸文字会连成一片）");
+});

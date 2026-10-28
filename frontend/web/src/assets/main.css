@@ -214,12 +214,11 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
  * （`#payload-pane` / `#state-view` / `#compact-tree`，各带 `overscroll-behavior: contain`）。
  * 两层都滚会让 contain 把链式滚动断在"滚不动的那一层"上（2026-10-17 在右栏踩过同样的坑）。 */
 #context-workspace { flex: 1; min-height: 0; display: flex; flex-direction: column;
-  padding: 3em 0.8em 0.7em; gap: 0.5em; }
-/* 草稿态那句提示：工作区里没有会话可谈时，先说一句再给面板（面板本身照样在，只是全空）。 */
+  padding: 3em 0.8em 0.7em; gap: 0.4em; }
+/* 草稿态那句提示：**平铺一行小字**（2026-10-29 用户：「不需要面板…完全可以平铺」——
+ * 连这条提示也不该是一块虚线框；它不是内容，是一句说明）。 */
 .ws-draft-note { flex: none; margin: 0 auto; max-width: var(--read-col, 920px); width: 100%;
-  box-sizing: border-box; color: var(--tg-hint); font-size: 0.85em; line-height: 1.6;
-  border: 1px dashed color-mix(in srgb, var(--tg-text) 18%, transparent);
-  border-radius: var(--r-card); padding: 0.6em 0.9em; }
+  box-sizing: border-box; color: var(--tg-hint); font-size: 0.85em; line-height: 1.6; padding: 0; }
 /* 浮板：与 Agent 选人同一族（同底、同阴影、同圆角），只是从右边缘掉下来。 */
 .ctx-menu { left: auto; right: 0.35em; min-width: 15em; max-width: 19em; padding: 0.6em 0.7em 0.55em; max-height: none; }
 .ctx-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.6em; }
@@ -298,10 +297,14 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
  * 面板本身不滚。这条形状是 2026-10-17 竖起来的，别改回去：从前面板自己滚、又没有高度约束
  * （永远滚不动），而 `overscroll-behavior: contain` 把链式滚动**断在"滚不动的自己"身上** ⇒
  * 状态/压缩两栏触摸与滚轮双双失效。所以：容器 flex column + 每块 pane 是那个滚动者。 */
-.ws-panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
-  max-width: var(--read-col, 920px); width: calc(100% - 0px); margin: 0 auto;
-  background: var(--tg-secondary-bg); border-radius: var(--r-card);
-  padding: 0.15em 0.8em 0.6em; font-size: 0.85em; color: var(--tg-hint); box-sizing: border-box; }
+/* **不是卡片**（2026-10-29 用户定：「不需要面板…完全可以平铺，就像聊天界面的模型输出一样，
+ * 不需要气泡框起来」）。聊天里 `.msg.assistant` 本来就是**没有底的裸文本**（只有 `.msg.user`
+ * 才带气泡）⇒ 这一块照它来：透明、无圆角、无内边距，宽度对齐阅读列，字色走正文那套。
+ * 只保留"纵向 flex + 让 pane 自己滚"这两条结构性的东西（那是 2026-10-17 立的规矩）。 */
+.ws-panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 0.5em;
+  max-width: var(--read-col, 920px); width: 100%; margin: 0 auto;
+  background: none; border-radius: 0; padding: 0;
+  font-size: 0.92em; color: var(--tg-text); box-sizing: border-box; }
 /* 三个面板：占满 tabs 以下的空间、自己滚（`contain` 在这儿才有意义 —— 它就是那个滚动者）。 */
 #payload-pane, #state-view, #compact-tree { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 #outgoing-raw { white-space: pre; overflow-x: auto; margin: 0; max-width: 100%; }
@@ -325,16 +328,25 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .pv-meta { display: flex; flex-wrap: wrap; gap: 0.35em; align-items: center; margin: 0 0 0.5em; font-size: 0.85em; color: var(--tg-hint); }
 .pv-method { color: var(--tg-text); font-weight: bold; }
 .pv-url { color: var(--tg-link); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
-.pv-chip { border: 1px solid var(--line); border-radius: 4px; padding: 0 0.3em; font-size: 0.85em; color: var(--tg-hint); }
-.pv-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.45em; }
-.pv-msg { border: 1px solid var(--line); border-radius: 8px; background: color-mix(in srgb, var(--tg-text) 3%, transparent); padding: 0.45em 0.55em; }
+/* 元信息（模型 / 条数 / tools / stream）：从前每个是带框的小 chip。整块平铺之后框就没伴了，
+ * 改成**裸文字 + 前置分隔点**（`::before`），读起来是一行说明而不是一排标签。 */
+.pv-chip { border: none; border-radius: 0; padding: 0; font-size: 0.85em; color: var(--tg-hint); }
+.pv-chip + .pv-chip::before, .pv-url + .pv-chip::before { content: "·"; margin-right: 0.35em; opacity: 0.6; }
+/* 载荷的分块（2026-10-29）：从前每块是一个带边框的小卡片（"气泡"），用户点名不要。
+ * 现在块与块之间只用**一条细线**分开 —— 与状态表 `.state-row` 同一个手法，
+ * 于是三页看起来是同一族东西（都是裸文本 + 细线），不再是三种盒子。 */
+.pv-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.pv-msg { border: none; border-radius: 0; background: none; padding: 0.4em 0;
+  border-bottom: 1px solid var(--line); }
+.pv-msg:last-child { border-bottom: none; }
 .pv-head { display: flex; align-items: center; gap: 0.4em; margin: 0 0 0.3em; width: 100%; background: none; border: none; color: inherit; font: inherit; line-height: 1.3; text-align: left; cursor: pointer; padding: 0.15em 0; -webkit-tap-highlight-color: transparent; user-select: none; }
 .pv-tw { flex: none; width: 1em; color: var(--tg-hint); }
 .pv-preview { color: var(--tg-hint); font-size: 0.9em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pv-role { font-size: 0.78em; font-weight: bold; border-radius: 4px; padding: 0.05em 0.4em; color: var(--tg-bg); background: var(--tg-hint); }
-.pv-msg.role-user .pv-role { background: var(--tg-button); color: var(--tg-button-text); }
-.pv-msg.role-assistant .pv-role { background: var(--tg-link); }
-.pv-msg.role-tool .pv-role { background: none; color: var(--tg-hint); border: 1px dashed var(--tg-hint); }
+/* role 不再是彩色药丸 —— 聊天里那一行本来也只是"助手 #3"几个字（`.msg .who`）。
+ * 现在靠**字色**区分：user 正文色、assistant 链接色、tool 提示色。 */
+.pv-role { font-size: 0.8em; font-weight: bold; border: none; border-radius: 0; padding: 0; color: var(--tg-hint); }
+.pv-msg.role-user .pv-role { color: var(--tg-text); }
+.pv-msg.role-assistant .pv-role { color: var(--tg-link); }
 .pv-idx { color: var(--tg-hint); font-size: 0.8em; font-variant-numeric: tabular-nums; }
 .pv-chars { margin-left: auto; color: var(--tg-hint); font-size: 0.78em; }
 .pv-content { white-space: pre-wrap; word-break: break-word; color: var(--tg-text); font-size: 0.9em; }
@@ -349,7 +361,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .ctree-total { color: var(--tg-text); margin: 0.2em 0 0.5em; }
 /* 压缩那发的载荷（「看载荷」按钮拉回来的那一发）—— 复用 .pv-* 那套渲染，只补它自己的头。
    放"载荷 tab"里也行，但那是**这一轮要发的**；压缩是另一发，混在一起会让人认错。 */
-#compact-payload { margin: 0 0 0.7em; padding: 0.5em 0.55em; border: 1px solid var(--line); border-radius: var(--r-card); background: color-mix(in srgb, var(--tg-text) 3%, transparent); }
+#compact-payload { margin: 0 0 0.7em; padding: 0.5em 0 0; border: none; border-top: 1px solid var(--line); border-radius: 0; background: none; }
 .cp-head { display: flex; align-items: center; gap: 0.4em; margin: 0 0 0.4em; }
 .cp-title { flex: 1; color: var(--tg-text); font-size: 0.9em; }
 .cp-close { flex: none; background: none; border: none; color: var(--tg-hint); font-size: 1.1em; line-height: 1; padding: 0 0.2em; cursor: pointer; }
@@ -422,9 +434,14 @@ html[data-composer="solid"] .messages-inner { padding-bottom: calc(var(--compose
 #session-new:hover { background: color-mix(in srgb, var(--tg-text) 13%, transparent); }
 #session-new .plus { font-weight: 400; opacity: 0.9; }
 /* 右栏双 tab（载荷/状态）：标题行变 tab 条，选中亮。 */
-.bar-head.bar-tabs { flex: none; justify-content: flex-start; gap: 0.2em; padding: 0.35em 0.4em 0.25em; }
-.bar-head.bar-tabs .tab { flex: 1; background: none; border: none; border-radius: 7px; color: var(--tg-hint); padding: 0.28em; font-size: 1em; line-height: 1.25; }
-.bar-head.bar-tabs .tab.sel { color: var(--tg-text); background: color-mix(in srgb, var(--tg-text) 10%, transparent); }
+/* 三个 tab：**平铺的一行文字导航**（2026-10-29）。从前是"等分 + 选中那块填底"的胶囊组，
+ * 在一个卡片里好看；卡片没了之后那种填底就是无源之木 —— 现在只靠**颜色 + 一条下划线**
+ * 说"你在哪一页"，与整块平铺的观感一致。下划线用 padding 撑、不占额外高度。 */
+.bar-head.bar-tabs { flex: none; justify-content: flex-start; gap: 1.1em; padding: 0 0 0.1em; }
+.bar-head.bar-tabs .tab { flex: none; background: none; border: none; border-bottom: 2px solid transparent;
+  border-radius: 0; color: var(--tg-hint); padding: 0.2em 0; font-size: 0.95em; line-height: 1.3; }
+.bar-head.bar-tabs .tab:hover { color: var(--tg-text); }
+.bar-head.bar-tabs .tab.sel { color: var(--tg-text); border-bottom-color: var(--tg-link); }
 /* 状态表：表名小标题 + 键值行（键暗、值亮）。滚动与 tabs 常驻见上面 #payload-pane 那组规则。 */
 #state-view .state-table { margin: 0 0 0.8em; }
 #state-view h4 { color: var(--tg-link); font-size: 0.78em; font-weight: normal; margin: 0.6em 0 0.2em; }
