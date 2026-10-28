@@ -226,6 +226,40 @@ export function groupModelsByProvider(models) {
   return [...groups.entries()].map(([provider, items]) => ({ provider, items }));
 }
 
+// providerChoices / modelChoicesFor：设置里**「新会话默认值」那两格**的下拉选项。
+//
+// 从前那两格是**手打 id 的文本框**，说明文自己都写着「填错不会报错，只会在发送时回落成
+// 『未配置模型』」—— 那等于把校验推给用户。改成下拉之后，能选出来的都是真存在的东西。
+//
+// 但**当前值必须始终在里面**：它可能是一个已经不存在的渠道（手改过 providers.json / 删过渠道），
+// 也可能是一条还没发现模型的渠道（`dummy` 就是这种 —— 它不联网，永远不会有一行模型）。
+// 不在列表里就补一条并说清"不在列表里"：悄悄丢掉它 = 一保存就把人配好的默认值换成别的。
+export function providerChoices(providers, cur = "") {
+  const items = (providers ?? []).map((p) => ({
+    value: p.id,
+    label: p.vendor_name ? `${p.id}（${p.vendor_name}）` : p.id,
+  }));
+  if (cur && !items.some((i) => i.value === cur)) {
+    items.push({ value: cur, label: `${cur}（不在渠道列表里）`, missing: true });
+  }
+  return items;
+}
+
+// ⚠ 值是 **upstream_id**（裸模型 id），不是 `modelKey(...)` 拼的 `provider/model`：
+// `config.json` 的 `defaults.model` 存的就是裸 id（后端 `Defaults.Model = "dummy"`）。
+// 两处用同一把尺，才不会在"渠道换了但模型没换"的时候静默错位。
+export function modelChoicesFor(groups, provider, cur = "") {
+  const items = [];
+  for (const g of groups ?? []) {
+    if (g.provider !== provider) continue;
+    for (const item of g.items ?? []) items.push({ value: item.upstream_id, label: item.label });
+  }
+  if (cur && !items.some((i) => i.value === cur)) {
+    items.push({ value: cur, label: `${cur}（不在列表里）`, missing: true });
+  }
+  return items;
+}
+
 export function deletionPlanSummary(plan) {
   const nm = plan?.deleted_message_ids?.length ?? 0;
   const ns = plan?.deleted_summary_ids?.length ?? 0;
@@ -235,12 +269,15 @@ export function deletionPlanSummary(plan) {
 
 // ---- 设置 modal 纯逻辑（无 DOM，测试直引） ----
 
-// SETTINGS_TABS：设置视图六区（顺序固定）—— **id 与中文名同一份**（按钮标签、panel id 都从它来）。
+// SETTINGS_TABS：设置视图五区（顺序固定）—— **id 与中文名同一份**（按钮标签、panel id 都从它来）。
 // （原来的「界面」区已搬到用户视图；用户视图与设置视图平级，不带 tab。）
+// 「连接」区 2026-10-28 **删掉**：那一页只有「后端地址 + Token」两格，而单容器部署里浏览器
+// 永远同源（vite 把 /api 代理给后端），地址是启动自检自动探出来的；连不上时门板会自己弹出来
+// 让人填 —— 正常部署里这格一辈子用不到。更糟的是它的「保存」按钮绑的 `saveNet` 在重构时丢了，
+// 点下去直接抛错。留着只会让人以为"我得自己配点什么"。
 // 「提示词」= 可复用提示词段（system prompt segment）的库；「智能体」里逐段引用（2026-10-11 用户定）。
 export const SETTINGS_TABS = [
   { id: "chat", label: "聊天" },
-  { id: "net", label: "连接" },
   { id: "session", label: "会话" },
   { id: "agent", label: "智能体" },
   { id: "provider", label: "渠道" },

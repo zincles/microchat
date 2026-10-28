@@ -380,7 +380,7 @@ html[data-composer="solid"] .messages-inner { padding-bottom: calc(var(--compose
   .messages-inner { padding: 2.8em 0.8em calc(var(--composer-h, 4.6em) + 1.3em); }
   #settings-view, #user-view { padding: 0.4em 0.4em 0; }
   .settings-bar { gap: 0.2em; }
-  /* 六区在窄屏：排得下就等分，排不下靠 nav 横滚（不设固定宽 —— 那两行会被后面的默认规则盖掉）。 */
+  /* 五个区在窄屏：排得下就等分，排不下靠 nav 横滚（不设固定宽 —— 那两行会被后面的默认规则盖掉）。 */
   .settings-nav { overflow-x: auto; }
   .settings-nav .tab { white-space: nowrap; }
 }

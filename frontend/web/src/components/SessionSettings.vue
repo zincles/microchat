@@ -59,7 +59,8 @@ async function save() {
   } catch (e) { status.value = `保存失败：${e.message}`; }
 }
 
-// 导出对话（JSON，2026-10-11 用户定）：只带 role+content+标题 —— 浏览器直接落一个文件。
+// 导出对话（JSON，2026-10-11 用户定；2026-10-28 已到 v3）：角色/正文/思考 + 整张摘要金字塔
+// + 这条会话绑的渠道/模型/Agent —— 浏览器直接落一个文件。
 async function exportJSON() {
   try {
     const doc = await api.exportSession(props.sessionId);
@@ -106,7 +107,7 @@ function onKey(e) {
           <label class="field-block"><span>会话提示词（空=跟 Agent 走）</span><textarea v-model="sysPrompt" :placeholder="sysPromptPh" rows="4"></textarea></label>
           <div class="row">
             <button type="button" class="primary" @click="save">保存</button>
-            <button type="button" @click="exportJSON" title="导出对话记录（JSON：只有 role+content+标题）">导出对话（JSON）</button>
+            <button type="button" @click="exportJSON" title="导出对话记录（JSON v3：全部消息 + 思考 + 压缩金字塔 + 这条会话绑的渠道/模型/Agent）">导出对话（JSON）</button>
             <span class="status">{{ status }}</span>
           </div>
         </section>

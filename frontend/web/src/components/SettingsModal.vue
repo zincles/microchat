@@ -3,7 +3,7 @@
 // 自带小头（[◧] 左栏开关 · 设置 · [×] 返回对话）。子编辑器（Agent/Provider）改为对应 tab 内的二级页（列表 ⇄ 详情就地切换）。
 // 「界面」一族的个人偏好（主题/背景图/发送键/预演）已搬到**用户视图**（与设置平级的另一半）。
 // 关走 close（Esc/×）—— 视图不卸载就丢状态的口径照旧：v-if 挂载，进视图拉一次。
-import { ref, onMounted, onUnmounted } from "vue";
+import { ref, computed, onMounted, onUnmounted } from "vue";
 import ToggleSwitch from "./ToggleSwitch.vue";
 import TabBar from "./TabBar.vue";
 import AgentEditor from "./AgentEditor.vue";
@@ -12,8 +12,8 @@ import assistantPreset from "../../presets/assistant.json";
 import rpPreset from "../../presets/rp-agent.json";
 import ProviderEditor from "./ProviderEditor.vue";
 import { ICONS } from "./icons.js";
-import { sharedApi, apiBase, apiToken, saveNetPrefs } from "../utils/prefs.js";
-import { SETTINGS_TABS } from "../utils/format.js";
+import { sharedApi } from "../utils/prefs.js";
+import { SETTINGS_TABS, groupModelsByProvider, modelOption, providerChoices, modelChoicesFor } from "../utils/format.js";
 import { downloadJSON } from "../utils/download.js";
 import { buildCartridge, cartridgeAgent } from "../utils/cartridge.js";
 
@@ -30,14 +30,13 @@ const props = defineProps({
 const api = sharedApi();
 const leftSvg = ICONS.panelLeft;
 
-// 六个区的页签：底片滑动的算法住在 `TabBar` 里（与 Agent 编辑器里那组二级页签同一个组件）。
+// 五个区的页签：底片滑动的算法住在 `TabBar` 里（与 Agent 编辑器里那组二级页签同一个组件）。
+// （「连接」那一区 2026-10-28 删了 —— 理由写在 format.js 的 SETTINGS_TABS 上。）
 const tab = ref("chat");
 const chat = ref({ title_chars: "", model_context_tokens: "", compact_blocks: "", compact_trigger_tokens: "", replay_reasoning: false, auto_compact: true });
 const chatStatus = ref("");
 const defaults = ref({ provider: "", model: "", agent: "" });
 const defStatus = ref("");
-const cli = ref({ api: apiBase(), token: "" });
-const netStatus = ref("");
 const agents = ref([]);
 const segmentsLib = ref([]); // 提示词段库（随 GET /agents 一起给）
 const curDefault = ref("");
@@ -46,6 +45,8 @@ const editSeg = ref(null); // null | 'new' | segment（「提示词」tab 内的
 // 谁引用了这个段（「提示词」tab 列表与编辑器共用）。
 const segRefs = (id) => agents.value.filter((a) => (a.segments ?? []).includes(id)).map((a) => a.name || a.id);
 const providers = ref([]);
+// 顶栏/会话设置用的是同一份 `GET /models`（跨渠道拍平那一条）：默认值那两格的下拉也从它取。
+const modelGroups = ref([]);
 const editProvider = ref(null); // null | 'new' | provider（二级编辑器）
 const routesStatus = ref("");
 
@@ -179,10 +180,6 @@ async function importSTFile(event) {
 const sessions = ref([]);
 const sessionMgrStatus = ref("");
 
-function loadClient() {
-  // 只剩"连接"这一摊：外观/输入那类**登录者自己的偏好**已搬到用户视图（与设置平级）。
-  cli.value = { api: apiBase(), token: apiToken() };
-}
 async function loadAgents() {
   try {
     const data = await api.agents();
@@ -194,9 +191,6 @@ async function loadAgents() {
 
 // 预设模板（随 git 走：presets/*.json）：长提示词不硬编码，前端不存第二份真相。
 const presetPick = ref("");
-function newFromTemplate(kind) {
-  if (kind === "blank") { editAgent.value = "new"; return; }
-}
 function presetNew() {
   const kind = presetPick.value;
   presetPick.value = "";
@@ -206,10 +200,32 @@ function presetNew() {
   editAgent.value = { template: { ...src, name: "" } };
 }
 
+// 默认值那两格的下拉选项（纯函数在 format.js，测试直引）。
+// 模型跟着渠道走：换了渠道却留着上一家的模型 id，等于存了一对配不上的值。
+const providerOpts = computed(() => providerChoices(providers.value, defaults.value.provider));
+const modelOpts = computed(() => modelChoicesFor(modelGroups.value, defaults.value.provider, defaults.value.model));
+
+// 换渠道时**把配不上的模型清掉**：留着上一家的 model id，新建会话就会拿一对
+// "渠道 A + 只存在于 B 的模型" 去发 —— 那正是这套下拉要消灭的那种错误。
+// 清成空 = 回落内置默认（dummy），比静默发错强。
+function pickDefaultProvider(next) {
+  defaults.value.provider = next;
+  const stillThere = modelChoicesFor(modelGroups.value, next).some((c) => c.value === defaults.value.model);
+  if (!stillThere) defaults.value.model = "";
+}
+
 async function loadProviders() {
   try {
     providers.value = (await api.providers()) ?? [];
   } catch (e) { routesStatus.value = `渠道列表失败：${e.message}`; }
+  // 模型清单另一个读口（`/models` 跨渠道拍平）：拉失败不该拖垮渠道列表 ⇒ 单独 catch。
+  try {
+    const models = await api.models();
+    modelGroups.value = groupModelsByProvider(models).map((g) => ({
+      provider: g.provider,
+      items: g.items.map(modelOption),
+    }));
+  } catch {}
 }
 
 async function askDeleteProvider(id) {
@@ -246,7 +262,6 @@ async function askDropSession(id, title) {
 }
 
 onMounted(() => {
-  loadClient();
   loadChat().catch(() => {});
   loadDefaults().catch(() => {});
   loadAgents().catch(() => {});
@@ -295,26 +310,30 @@ function onKey(e) {
           <label class="field"><span>回传思考（默认关，省上下文）</span><ToggleSwitch v-model="chat.replay_reasoning" /></label>
           <div class="row"><button type="button" class="primary" @click="saveChat">保存</button><span class="status">{{ chatStatus }}</span></div>
         </section>
-        <section v-show="tab === 'net'" id="panel-net" class="panel">
-          <h3>后端连接</h3>
-          <label class="field"><span>API 地址</span><input v-model="cli.api" placeholder="http://127.0.0.1:8787/api/v1" /></label>
-          <label class="field"><span>Token</span><input v-model="cli.token" placeholder="可空" type="password" /></label>
-          <div class="row"><button type="button" class="primary" @click="saveNet">保存</button><span class="status">{{ netStatus }}</span></div>
-          <p class="hint">改完刷新页面生效。</p>
-        </section>
         <section v-show="tab === 'session'" id="panel-session" class="panel">
           <!-- 文案（2026-10-28 用户提）：「缺省」是技术圈黑话，普通用户读不出"默认值"。
                一律说「默认」；「会话」留着 —— 它是 DEFINE.md 的词（左栏、导出、删除确认都这么说），
                一块面板里混用「对话/会话」只会更乱。 -->
           <h3>新会话默认值</h3>
-          <label class="field"><span>渠道</span><input v-model="defaults.provider" placeholder="留空 = 内置默认 dummy" /></label>
-          <label class="field"><span>模型</span><input v-model="defaults.model" placeholder="留空 = 内置默认 dummy" /></label>
+          <!-- 三格都是**下拉**（2026-10-28）：从前渠道/模型是手打 id 的文本框，说明文自己都写着
+               「填错不会报错，只会在发送时回落成『未配置模型』」—— 那是把校验推给用户。
+               现在能选出来的都真实存在；当前值即使不在列表里（渠道被删、手改过配置文件、
+               或 dummy 这种永远发现不到模型的渠道）也会补一条并标明，**不许**静默丢掉。 -->
+          <label class="field"><span>渠道</span><select :value="defaults.provider" @change="pickDefaultProvider($event.target.value)">
+            <option value="">内置默认（dummy）</option>
+            <option v-for="c in providerOpts" :key="c.value" :value="c.value">{{ c.label }}</option>
+          </select></label>
+          <label class="field"><span>模型</span><select v-model="defaults.model">
+            <option value="">内置默认（dummy）</option>
+            <option v-for="c in modelOpts" :key="c.value" :value="c.value">{{ c.label }}</option>
+          </select></label>
           <label class="field"><span>Agent</span><select v-model="defaults.agent">
             <option value="">内置默认</option>
             <option v-for="a in agents" :key="a.id" :value="a.id">{{ a.name }}（{{ a.id }}）</option>
           </select></label>
           <div class="row"><button type="button" class="primary" @click="saveDefaults">保存默认值</button><span class="status">{{ defStatus }}</span></div>
-          <p class="hint">新建会话时用这三格；留空就是内置默认。渠道与模型是手填的 id，填错不会报错，只会在发送时回落成「未配置模型」。</p>
+          <p class="hint" v-if="!modelOpts.length">这条渠道还没有发现到任何模型 —— 模型只能选空（= 内置默认），或者先去「渠道」里刷新一次。</p>
+          <p class="hint">新建会话时用这三格；留空 = 内置默认（<code>dummy</code>：不联网的假上游，开箱就有回话）。</p>
           <h3>会话（{{ sessions.length }} 条，点进）</h3>
           <div id="session-mgr-list">
             <table class="plist">
@@ -365,7 +384,7 @@ function onKey(e) {
               <span class="head-btns">
                 <button type="button" @click="cartridgeInput?.click()" title="导入 agent 卡带（JSON；段已拼平，无依赖）">导入卡带…</button>
                 <input ref="cartridgeInput" type="file" accept=".json" hidden @change="importCartridge" />
-                <button type="button" class="primary" @click="newFromTemplate('blank')">新建</button>
+                <button type="button" class="primary" @click="editAgent = 'new'">新建</button>
                 <select v-model="presetPick" @change="presetNew" title="从模板创建">
                   <option value="">从模板创建…</option>
                   <option value="assistant">通用助手</option>

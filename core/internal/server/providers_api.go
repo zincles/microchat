@@ -111,24 +111,18 @@ func (s *Server) listProviders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	configs := s.loadProviders()
-	models, err := s.store.ListModels("")
-	if err != nil {
+	// 先探一次模型表：读不出来就整条路 500（别让每条渠道各自静默显示 0 个模型）。
+	// 真正的填充在 `providerViewWithModels` 里按渠道查 —— 那一步的失败退回空列表，
+	// 因为到那儿已经"这条渠道确实没有模型"与"读不出来"分不清了。
+	if _, err := s.store.ListModels(""); err != nil {
 		writeStoreError(w, err)
 		return
 	}
 	views := make([]ProviderView, 0, len(configs.Providers))
 	for _, provider := range configs.Providers {
-		provider = s.config.WithIdentity(provider)
+		view := s.providerViewWithModels(provider)
 		lastRefresh, _ := s.store.LastRefreshAt(provider.ID)
-		items := []ModelView{}
-		for _, model := range models {
-			if model.Provider == provider.ID {
-				items = append(items, modelView(model))
-			}
-		}
-		view := providerView(provider)
 		view.LastRefreshAt = lastRefresh
-		view.Models = items
 		views = append(views, view)
 	}
 	writeJSON(w, http.StatusOK, views)
@@ -325,7 +319,7 @@ func (s *Server) refreshProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	updated, _ := s.providerByID(id)
-	writeJSON(w, http.StatusOK, providerView(updated))
+	writeJSON(w, http.StatusOK, s.providerViewWithModels(updated))
 }
 
 // refreshProviderRoutes：刷**路由表**（models.dev 快照 → `model_route` 落库）。
@@ -448,6 +442,31 @@ func providerView(provider config.Provider) ProviderView {
 		HasKey: provider.APIKey != "", ModelFilter: provider.ModelFilter,
 		Identity: string(effective.Identity), Models: []ModelView{},
 	}
+}
+
+// providerViewWithModels：视图 + **这条渠道发现到的模型** —— 只有 `GET /providers` 与
+// `POST /providers/{id}/refresh` 两条路会给它（列表里要显示"这个渠道有几个模型"；
+// 刷新那条要能回报"这次导入了几个"）。
+//
+// 为什么单独一个函数：`providerView()` 是**单条渠道、不查模型表**的廉价视图，
+// 建/改/删渠道那几条路都复用它。从前 refresh 也复用它 ⇒ 回来的 `models` 恒为 `[]`，
+// 而界面正是拿 `view.models.length` 报"已导入 N 个模型"的 ⇒ **永远报 0 个**
+// （模型其实好好地进了库，只是这句话骗人；改完筛选器后那句"已导入 0 个"更让人以为筛选器坏了）。
+func (s *Server) providerViewWithModels(provider config.Provider) ProviderView {
+	provider = s.config.WithIdentity(provider)
+	rows, err := s.store.ListModels(provider.ID)
+	if err != nil {
+		// 模型表读不出来不该让整个视图失败（渠道本身是好的）：退回空列表，
+		// 与"这个渠道确实还没有模型"看起来一样 —— 这两件事本来就分不清，不假装分得清。
+		return providerView(provider)
+	}
+	items := make([]ModelView, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, modelView(row))
+	}
+	view := providerView(provider)
+	view.Models = items
+	return view
 }
 
 func deref(value *string) string {

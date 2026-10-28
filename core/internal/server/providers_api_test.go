@@ -84,6 +84,48 @@ func TestProviderViewShape(t *testing.T) {
 	}
 }
 
+// 刷新回来的视图必须**带模型**（2026-10-28 修的 bug）：
+//
+// 从前 `refreshProvider` 用 `providerView()` 收尾，而那函数把 `Models` 写死成 `[]ModelView{}`
+// ⇒ 界面拿 `view.models.length` 报"已导入 N 个模型"时**永远报 0 个**（模型其实好好地进了库）。
+// 改完筛选器之后那句"已导入 0 个"更糟：会让人以为筛选器把模型全筛没了。
+//
+// 这条**走真刷新**（假上游 + `POST .../refresh`），断言的是**响应体里**有没有那两个模型 ——
+// 只测 `providerViewWithModels` 本身是守不住的：那函数写对了、`refreshProvider` 忘了调它，
+// 界面上照样是 0 个。
+func TestRefreshResponseCarriesModels(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" {
+			w.WriteHeader(404)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"alpha"},{"id":"beta"}]}`))
+	}))
+	defer upstream.Close()
+
+	server, _ := newProvidersServer(t, `{"providers":[]}`)
+	recorder := call(server, "POST", "/api/v1/providers", `{"id":"x","vendor":"openai","base_url":"`+upstream.URL+`"}`)
+	if recorder.Code != 201 {
+		t.Fatalf("%d：%s", recorder.Code, recorder.Body.String())
+	}
+	recorder = call(server, "POST", "/api/v1/providers/x/refresh", "")
+	if recorder.Code != 200 {
+		t.Fatalf("刷新：%d %s", recorder.Code, recorder.Body.String())
+	}
+	var view ProviderView
+	if err := json.Unmarshal(recorder.Body.Bytes(), &view); err != nil {
+		t.Fatal(err)
+	}
+	if len(view.Models) != 2 {
+		t.Fatalf("刷新回来的视图该带 2 个模型，得到 %d 个 —— 界面正是拿它报「已导入 N 个」：%s",
+			len(view.Models), recorder.Body.String())
+	}
+	if view.Models[0].UpstreamID != "alpha" {
+		t.Fatalf("模型行没填上游 id：%+v", view.Models[0])
+	}
+}
+
 // POST：201；重名 ⇒ 409；缺 vendor ⇒ 422；错配（矩阵）⇒ 422。
 func TestCreateProvider(t *testing.T) {
 	server, _ := newProvidersServer(t, `{"providers":[]}`)

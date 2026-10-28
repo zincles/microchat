@@ -66,7 +66,7 @@ defineExpose({ setSessions });
         id="user-open"
         class="foot-btn"
         type="button"
-        title="用户（占位入口：点了会说还没做）"
+        title="用户（身份 / 改口令 / 外观 / 输入）"
         @click="$emit('user')"
       >
         <span class="fb-icon" v-html="ICONS.user"></span>用户

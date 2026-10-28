@@ -26,6 +26,9 @@ import {
   usageFoot,
   usageFootTitle,
   groupModelsByProvider,
+  providerChoices,
+  modelChoicesFor,
+  SETTINGS_TABS,
   providerIdForNextVendor,
   filterModelGroups,
   curModelLabelOf,
@@ -1263,7 +1266,7 @@ test("上下文环：App 喂 ctx / 环在顶栏画 / 状态行不再报占用", 
   assert.ok(!/\.statusline/.test(css), "main.css 里还留着 .statusline 规则（那一行已经删了）");
 });
 
-// 页签条也是"两处各写一遍"的那种东西（设置主栏六区 + Agent 编辑器的二级页签）。
+// 页签条也是"两处各写一遍"的那种东西（设置主栏五区 + Agent 编辑器的二级页签）。
 // 底片滑动的算法（量 offsetLeft/offsetWidth）抄错一个像素看不出来，抄出两份就会一边顺一边顿，
 // 而且 window resize / 界面缩放滑杆之后两边行为会分叉。⇒ 共用一个 `TabBar`。
 test("页签条：设置主栏与 Agent 编辑器用的是同一个组件", () => {
@@ -1511,3 +1514,62 @@ test("渠道编辑器：模型筛选器说清逗号与「任意一条」", () =>
   assert.match(code, /deepseek,mimo/, "没给出那个具体的例子");
 });
 
+
+// 设置界面清理（2026-10-28 用户：「有没有无用选项？ 比如说 那个后端地址？」）。
+//
+// 「连接」页那一整页被删掉了：单容器部署里浏览器**永远同源**（vite 把 /api 代理给后端）、
+// 地址由启动自检自动探出来（`apiBaseCandidates()`），连不上时门板会自己弹出来让人填。
+// 更要紧的是它那个「保存」按钮绑的 `saveNet` 在重构时丢了 —— 点下去直接抛错。
+// 这条钉的是"它不再回来"：留着只会让人以为"我得自己配点什么"。
+test("设置：没有「连接」页，也没有绑不存在的 saveNet", () => {
+  const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
+  assert.ok(!settings.includes('id="panel-net"'), "「连接」页又回来了 —— 单容器部署里它没有用处");
+  assert.ok(!/\btab === "net"/.test(settings), "还有指向 net 那一页的分区");
+  // 绑一个不存在的函数 = 点下去必抛错（浏览器里是 ReferenceError，控制台才看得见）
+  assert.ok(!/saveNet\b/.test(settings), "还在绑 saveNet（那个函数已经不存在了）");
+  assert.ok(!/直接改地址|API 地址/.test(settings), "设置里又开始让人手填后端地址了");
+});
+
+// 页签条与 SETTINGS_TABS 是同一份：删一页要两边一起删（只删 panel、留着 tab，
+// 点进去就是一块空白面板 —— 那种"看起来坏了"最费人）。
+test("设置页签：id 与 panel 一一对应", () => {
+  const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
+  const panels = [...settings.matchAll(/v-show="tab === '([a-z]+)'"/g)].map((m) => m[1]);
+  assert.deepEqual([...panels].sort(), ["agent", "chat", "prompt", "provider", "session"],
+    `面板与页签对不上了：${panels.join(", ")}`);
+  assert.deepEqual(SETTINGS_TABS.map((t) => t.id), ["chat", "session", "agent", "provider", "prompt"],
+    "SETTINGS_TABS 的顺序变了");
+});
+
+// 「新会话默认值」那两格从前是**手打 id 的文本框**，说明文自己都写着
+// 「填错不会报错，只会在发送时回落成『未配置模型』」—— 把校验推给用户。
+// 改成下拉之后，能选出来的都是真存在的；但当前值即使不在列表里也必须保住（见下一条）。
+test("设置：新会话默认值的渠道/模型是下拉，不是手打 id", () => {
+  const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
+  assert.match(settings, /providerOpts/, "渠道那格没走 providerChoices");
+  assert.match(settings, /modelOpts/, "模型那格没走 modelChoicesFor");
+  assert.match(settings, /@change="pickDefaultProvider\(\$event\.target\.value\)"/,
+    "换渠道时不重算模型 —— 会留下「渠道 A + 只存在于 B 的模型」这种配不上的对");
+  // 旧的"手填、填错不报错"那套说法不该再出现在界面上
+  assert.ok(!/渠道与模型是手填的 id/.test(settings), "hint 还写着「渠道与模型是手填的 id」");
+});
+
+// 当前值不在列表里时**不许静默丢掉**：那可能是一个被删掉的渠道、一份手改过的
+// providers.json，或 dummy 这种永远发现不到模型的渠道（它不联网）。
+// 悄悄丢掉 = 一打开设置再一保存，人就发现自己的默认值被换成了别的。
+test("设置默认值：当前值不在列表里也要留住，并说明白", () => {
+  const opts = providerChoices([{ id: "a", vendor_name: "甲" }, { id: "b" }], "已删的渠道");
+  const tail = opts[opts.length - 1];
+  assert.equal(tail.value, "已删的渠道", "当前值被丢掉了");
+  assert.ok(tail.missing, "没标出来它不在列表里");
+  assert.equal(providerChoices([{ id: "a" }], "a").length, 1, "在列表里就不该重复补一条");
+
+  // 模型那格的值是**裸 upstream_id**（不是 provider/model）：config.json 里存的就是裸 id，
+  // 两处用两把尺会静默错位。
+  const groups = [{ provider: "a", items: [{ upstream_id: "m1", label: "M1" }] }];
+  assert.deepEqual(modelChoicesFor(groups, "a").map((c) => c.value), ["m1"]);
+  assert.equal(modelChoicesFor(groups, "别的渠道").length, 0, "别的渠道的模型不该出现");
+  const withCur = modelChoicesFor(groups, "a", "m-old");
+  assert.equal(withCur[withCur.length - 1].value, "m-old");
+  assert.ok(withCur[withCur.length - 1].missing);
+});
