@@ -391,7 +391,17 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .ctree-row.sum .ctree-bar { background: color-mix(in srgb, var(--tg-link) 22%, transparent); }
 .ctree-row.used .ctree-label { color: var(--tg-link); }
 .ctree-tw { flex: none; width: 1.2em; background: none; border: none; color: var(--tg-hint); cursor: pointer; padding: 0; font-size: 0.9em; }
-.ctree-label { position: relative; flex: 1; color: var(--tg-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 标签 = 名字（`#3 你` / `#3–12 摘要×2`）+ 一行原文预览（2026-10-29 用户定：
+ * 「条目不是简单的 #3 你，而是 #3 你 XXXXX…（原文前 n 个字符）」，为了能一眼定位）。
+ * **名字永不截断**（编号就是锚），被截的只能是预览那半 —— 所以拆成两个 flex 子项，
+ * 而不是让外层一个 ellipsis 把名字也吃掉。`position: relative` 留着：容量条是绝对定位的底层。 */
+.ctree-label { position: relative; flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 0.35em; color: var(--tg-text); }
+.ctree-name { flex: none; white-space: nowrap; }
+/* 预览：提示色 + 小一档（它是线索，不是正文），超宽就省略号。
+ * 前面一个小圆点是分隔符 —— 不靠它的话 "你 你推开门…" 会读成两个"你"连在一起。 */
+.ctree-preview { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--tg-hint); font-size: 0.9em; }
+.ctree-preview::before { content: "·"; margin-right: 0.3em; opacity: 0.55; }
 .ctree-tag { flex: none; font-style: normal; font-size: 0.78em; color: var(--tg-link); border: 1px solid currentColor; border-radius: 4px; padding: 0 0.25em; }
 .ctree-tag.dirty { color: var(--tg-destructive); }
 .ctree-size { position: relative; flex: none; color: var(--tg-hint); font-size: 0.85em; }

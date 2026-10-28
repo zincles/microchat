@@ -74,8 +74,13 @@ function barStyle(n, depth) {
       >{{ collapsed.has(r.n.id) ? "▸" : "▾" }}</button>
       <span v-else class="ctree-tw"></span>
       <span class="ctree-label" :title="r.n.kind === 'summary' ? `摘要 ${r.n.id}` : `消息 ${r.n.id}`">
-        <template v-if="r.n.kind === 'summary'">#{{ r.n.fromIdx }}–{{ r.n.toIdx }} 摘要×{{ r.n.blocks }}</template>
-        <template v-else>#{{ r.n.idx }} {{ r.n.role === "user" ? "你" : "助手" }}</template>
+        <!-- 名字（编号 + 角色 / 区间 + 层数）**永不截断** —— 它就是定位用的锚。
+             2026-10-29：名字后面跟一段原文预览，否则只剩 "#3 你"，翻十条一模一样。 -->
+        <span class="ctree-name">
+          <template v-if="r.n.kind === 'summary'">#{{ r.n.fromIdx }}–{{ r.n.toIdx }} 摘要×{{ r.n.blocks }}</template>
+          <template v-else>#{{ r.n.idx }} {{ r.n.role === "user" ? "你" : "助手" }}</template>
+        </span>
+        <span v-if="r.n.preview" class="ctree-preview">{{ r.n.preview }}</span>
       </span>
       <i v-if="r.n.used" class="ctree-tag" title="装配真的跳到这里（这一坨发出的就是这份）">发</i>
       <i v-if="r.n.dirty" class="ctree-tag dirty" title="被盖的消息改过：摘要已过期（装配照用）">脏</i>

@@ -10,8 +10,25 @@
 // tokens = **发出去时这份的估算大小**：message ≈ 估算（`ceil(字数/1.3)`，与后端
 // `state.EstimateTokens` 同一把尺；模型级 tokenizer 覆盖估不到，所以标 ≈），
 // summary = 落库的 `tokens`（压缩那一发的产出，本来就是估的）。
+import { splitState } from "./markdown.js";
+
 const RATIO = 1.3; // 与后端 DefaultTokenizerRatio 同值
 const runes = (text) => [...(text ?? "")].length;
+// previewOf：每行开头那段"一眼能认出是哪一条"的原文（2026-10-29 用户定：
+// 「条目不是简单的 #3 你，而是 #3 你 XXXXX…（XXXXX 为你原始输入文本的前 n 个字符）」）。
+// 三个讲究，缺一个就没法定位：
+//   ① **先剥 `<state>` 块**：RP 的消息常以状态块开头，不剥的话每一行预览都是 "state …"，
+//      长得一模一样，等于没有。⚠ 复用 markdown.js 的 `splitState`（"什么算状态块"的唯一权威），
+//      不在这儿另写一条正则 —— 两份实现一旦分岔，预览和气泡会对不上，而且没人知道该信谁。
+//   ② **压平空白**：换行、连续空格全压成一个空格（这是单行预览，不是正文）。
+//   ③ 截断加 `…`：只留开头 PREVIEW_CHARS 个字，再长的交给 CSS 的 ellipsis。
+const PREVIEW_CHARS = 40;
+function previewOf(text) {
+  const flat = splitState(text).cleaned.replace(/\s+/g, " ").trim();
+  if (!flat) return "";
+  const chars = [...flat];
+  return chars.length > PREVIEW_CHARS ? `${chars.slice(0, PREVIEW_CHARS).join("")}…` : flat;
+}
 const approx = (text) => (runes(text) ? Math.max(1, Math.ceil(runes(text) / RATIO)) : 0);
 
 // buildCompactTree(messages, summaries) → 顶层节点数组（按 idx 顺序的"森林"）。
@@ -65,6 +82,7 @@ export function buildCompactTree(messages, summaries) {
 
   const msgNode = (m) => ({
     kind: "message", id: m.id, idx: m.idx, role: m.role,
+    preview: previewOf(m.content),
     rawChars: runes(m.content), tokens: approx(m.content),
     dirty: false, used: false, children: [],
   });
@@ -82,6 +100,7 @@ export function buildCompactTree(messages, summaries) {
     }
     return {
       kind: "summary", id: s.id,
+      preview: previewOf(s.text),
       fromIdx: sp ? msgs[sp[0]].idx : null, toIdx: sp ? msgs[sp[1]].idx : null,
       blocks: s.blocks ?? 0,
       rawChars: kids.reduce((n, k) => n + k.rawChars, 0),

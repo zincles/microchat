@@ -1868,3 +1868,50 @@ test("压缩载荷：「收起」按钮真的能收（不是给 computed 赋值�
   // 改的必须是**来源**（compactInfo），不是那个 computed
   assert.match(fn, /compactInfo\.value\s*=/, "closeCompactPayload 没清掉真正的来源 compactInfo");
 });
+
+// 压缩树每行要带一段原文预览（2026-10-29 用户定：「条目不是简单的 #3 你，而是
+// #3 你 XXXXX…（XXXXX 为你原始输入文本的前 n 个字符）」，为了能一眼定位；摘要块同理）。
+test("压缩树：每行带原文预览（剥状态块 / 压平空白 / 截断加省略号）", () => {
+  const msgs = [
+    // ① 开头就是 <state> 块 —— 不剥的话每行预览都是 "state …"，等于定位不到（RP 消息很常见）
+    { id: "m1", idx: 1, role: "user", summary_id: "s1",
+      content: "<state 玩家状态>\nHP = 10\n</state>\n你推开门，门轴发出一声长响。" },
+    // ② 只有状态块、没有正文 ⇒ 预览为空（不能退化成 "state HP = 10"）
+    { id: "m2", idx: 2, role: "assistant", summary_id: "s1",
+      content: "<state>\nHP = 10\n</state>" },
+    // ③ 换行/连续空格要压平（单行预览），首尾空白要 trim
+    { id: "m3", idx: 3, role: "user", content: "  \n\n  我靠近   那盏灯。  \n" },
+    // ④ 超长要截断并加 `…`
+    { id: "m4", idx: 4, role: "assistant", content: "灯".repeat(100) },
+  ];
+  const s1 = { id: "s1", parent_summary_id: null, type: "message", begin_message_id: "m1",
+    end_message_id: "m2", blocks: 1, tokens: 40, dirty: false,
+    text: "玩家推开门进入门厅，走廊尽头有一盏亮着的灯。" };
+  const tree = buildCompactTree(msgs, [s1]);
+  const [summary, leaf3, leaf4] = tree;
+
+  // 摘要块：预览取**摘要自己**的正文（那一坨被压成的东西），不是原文
+  assert.equal(summary.kind, "summary");
+  assert.equal(summary.preview, "玩家推开门进入门厅，走廊尽头有一盏亮着的灯。");
+  const kids = summary.children;
+  assert.equal(kids[0].preview, "你推开门，门轴发出一声长响。", "状态块没剥掉 —— 预览会变成 'state …'");
+  assert.equal(kids[1].preview, "", "只有状态块的消息，预览该是空（别把 state 内容当正文）");
+
+  // 空白压平
+  assert.equal(leaf3.preview, "我靠近 那盏灯。", "空白没压平（换行/连续空格该并成一个）");
+
+  // 截断：40 字 + `…`
+  assert.equal([...leaf4.preview].length, 41, "超长预览该是 40 字 + 省略号");
+  assert.ok(leaf4.preview.endsWith("…"), "截断没加省略号");
+});
+
+// 预览的**唯一权威**：剥状态块必须复用 markdown.js 的 splitState，
+// 不许在 tree.js 里另写一条正则 —— 两份实现一分岔，预览和气泡就对不上，而且没人知道该信谁。
+test("压缩树：预览剥状态块复用 splitState（不另写正则）", () => {
+  const tree = readFileSync(join(SRC, "utils", "tree.js"), "utf8");
+  assert.match(tree, /import\s*\{[^}]*splitState[^}]*\}\s*from\s*"\.\/markdown\.js"/,
+    "没复用 splitState —— 预览和气泡会各剥各的");
+  // 不许出现第二条 state 正则（`state` 出现在正则里就说明自己另写了一套）
+  const code = tree.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  assert.ok(!/<\/state|state\|current_state/.test(code), "tree.js 里另写了一条状态块正则 —— 该用 splitState");
+});
