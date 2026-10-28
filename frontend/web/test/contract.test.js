@@ -1760,3 +1760,52 @@ test("上下文工作区：平铺，不许再长出卡片和气泡", () => {
   assert.match(chip, /border:\s*none/, "元信息又变成带框的小标签了");
   assert.match(css, /\.pv-chip \+ \.pv-chip::before/, "元信息之间没有分隔点（裸文字会连成一片）");
 });
+
+// 「聊天 / 上下文」那颗开关的大小（2026-10-29 用户：「把那个切换按钮弄大一点」）。
+//
+// 它长在**悬浮顶栏**里 —— 顶栏是 absolute 层，消息列的顶部留白（`.messages-inner` 的
+// padding-top）是唯一给它让位的东西。所以"放大"这件事有个硬上限：
+// **总高不能超过那截留白**，否则第一条消息会被压在开关底下（不报错，只是看不见）。
+// 这条按实际声明**算一遍**，两头都钉：够大（别悄悄改小）、又没顶到天花板。
+test("工作区开关：够大，但没顶穿消息列的顶部留白", () => {
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  const rule = (sel) => {
+    const m = css.match(new RegExp(`(^|\\n)${sel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\{([^}]*)\\}`));
+    return m ? m[2] : "";
+  };
+  // ⚠ 别一律要求 `em` 单位：`line-height: 1.3` 是**无单位倍数**（相对自身 font-size），
+  // 而 `font-size` / `padding` 在这儿都写成 em。按名字分两种取法，取不到就 NaN（下面会报）。
+  const em = (text, name) => {
+    const m = text.match(new RegExp(`${name}:\\s*([\\d.]+)em`));
+    return m ? Number(m[1]) : NaN;
+  };
+  const bare = (text, name) => {
+    const m = text.match(new RegExp(`${name}:\\s*([\\d.]+)\\s*(?:;|$)`));
+    return m ? Number(m[1]) : NaN;
+  };
+
+  const tab = rule(".ws-tab");
+  const box = rule(".ws-switch");
+  assert.ok(tab && box, "找不到 .ws-tab / .ws-switch");
+
+  const font = em(tab, "font-size");
+  const line = bare(tab, "line-height");                // 无单位倍数
+  const padY = em(tab, "padding");                      // 竖排 padding（简写取第一个）
+  const padBox = em(box, "padding");
+  for (const [n, v] of [["font-size", font], ["line-height", line], ["padding(.ws-tab 竖)", padY], ["padding(.ws-switch)", padBox]]) {
+    assert.ok(Number.isFinite(v), `.ws-tab / .ws-switch 的 ${n} 不是 em 数字，算不出高度`);
+  }
+  // em 是**相对自身 font-size** 的：padding 的 em 要先乘回 font，再落到父级那一把尺上。
+  const height = font * line + 2 * padY * font + 2 * padBox;
+
+  // ① 够大：至少与旁边那枚环（1.8em）同量级 —— 用户要的是"说得出口的控件"，不是一行小字。
+  //    从前的 0.78em/0.16em 0.55em 只有 ≈1.35em，正是被嫌弃的那个尺寸。
+  assert.ok(height >= 1.8, `开关太小了（算出来 ${height.toFixed(2)}em，至少 1.8em）`);
+
+  // ② 没顶穿：消息列顶部留白是它唯一让位的东西。
+  const inner = rule(".messages-inner");
+  const reserve = em(inner, "padding");
+  assert.ok(Number.isFinite(reserve), "读不出 .messages-inner 的顶部留白");
+  assert.ok(height < reserve - 0.5,
+    `开关 ${height.toFixed(2)}em 快顶到消息列顶部留白 ${reserve}em 了 —— 再大就会压住第一条消息`);
+});
