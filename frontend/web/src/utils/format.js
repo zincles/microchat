@@ -202,12 +202,20 @@ export const ABILITY_IDS = ["title", "compact"];
 // 契约测试从 `core/internal/abilities/abilities.go` 里读 `Label: "…"` 来对。
 export const ABILITY_LABELS = { title: "起标题", compact: "压缩" };
 
-// 能力的**默认模板住在哪条内置段**（2026-10-28：两个默认模板都搬进了段库）。
-// ⚠ 这两个 id 与后端 `config.CompactTemplateSegmentID` / `config.TitleTemplateSegmentID`
-// 必须逐字相同 —— 写错不报错，只是预览里少一段（真正的模板仍由后端拼）。
-// 契约测试从 `core/internal/config/config.go` 里读那两个常量来对。
-// 每个在册能力都必须在这张表里（没有默认模板的能力，是因为它连流程都没有 —— 那就不该在册）。
-export const ABILITY_TEMPLATE_SEGMENT = { compact: "压缩提示词", title: "起标题提示词" };
+// 能力的**模板住在哪几条内置段**（2026-10-28：模板都搬进了段库；压缩有两条 —— 通用版与 RP 版）。
+//
+// 数组的**第一条是默认**，后面是候选。挑中任何一条都算"我要这个模板"：后端
+// `abilities.AssemblePrompt` 于是不再自动垫默认那份 ⇒ 挑 RP 版得到的就是 RP 版，
+// 不夹通用版（两份模板叠在一起会互相打架：一份写"不要复述原文"，另一份写"细节不能丢"）。
+//
+// ⚠ 这些 id 与后端 `config.CompactTemplateSegmentID` / `config.CompactRPTemplateSegmentID` /
+// `config.TitleTemplateSegmentID` 必须逐字相同 —— 写错不报错，只是预览里少一段
+// （真正的模板仍由后端拼）。契约测试从 `core/internal/config/config.go` 里读常量与内置段清单来对。
+// 每个在册能力都必须在这张表里（没有模板的能力，是因为它连流程都没有 —— 那就不该在册）。
+export const ABILITY_TEMPLATE_SEGMENTS = {
+  compact: ["压缩提示词", "RP压缩提示词"],
+  title: ["起标题提示词"],
+};
 
 // buildAbilitiesPatch：Agent 右详情 → PATCH 整段 abilities（给了就整段替换；nil=不动）。
 // 每能力：checkbox 开关 + provider/model/prompt 三覆盖格（空串=不覆盖）+ 追加段 id 列表

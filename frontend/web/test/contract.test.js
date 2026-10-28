@@ -30,7 +30,7 @@ import {
   formatRoutesOutcome,
   ABILITY_IDS,
   ABILITY_LABELS,
-  ABILITY_TEMPLATE_SEGMENT,
+  ABILITY_TEMPLATE_SEGMENTS,
   buildAbilitiesPatch,
   taskLineText,
   modelKey,
@@ -547,29 +547,44 @@ test("提示词段的编辑器：agent 级与能力级用的是同一个组件",
   assert.match(editor, /segments: \[\.\.\.\(r\.segments \?\? \[\]\)\]/, "toPatch 没把段发出去");
   // 能力级的预览必须是"这一发真会发出去的提示词"（模板 + 段），不是只把段拼起来
   assert.match(editor, /abilityPrompt\(r\.prompt, r\.segments/, "预览没走能力的完整拼装");
-  assert.match(editor, /ABILITY_TEMPLATE_SEGMENT\[id\]/, "预览不知道这能力的默认模板住在哪条内置段");
+  assert.match(editor, /ABILITY_TEMPLATE_SEGMENTS\[id\]/, "预览不知道这能力的模板住在哪几条内置段");
 });
 
-// 能力的默认模板 2026-10-28 起都住在段库（用户：「把默认压缩载荷挑出来，制作成单独的内置 segment」
-// + 起标题那条同一个道理）。前端要 preview 它，就得知道那条内置段的 id ——
-// 而**真正的模板仍由后端拼**。这个 id 在两处各写一遍（Go 常量 / JS 常量），
-// 写错**不会报错**，只会让预览少一段。
-test("能力的默认模板段 id：前端常量与后端 const 逐字相同（两个能力各一条）", () => {
+// 能力的模板 2026-10-28 起都住在段库（用户：「把默认压缩载荷挑出来，制作成单独的内置 segment」
+// + 起标题那条同一个道理；后来又加了「适用于 RP Agent 的压缩用提示词」）。
+// 前端要 preview 它，就得知道那几条内置段的 id —— 而**真正的模板仍由后端拼**。
+// 这些 id 在两处各写一遍（Go 常量 / JS 常量），写错**不会报错**，只会让预览少一段。
+//
+// 两条都要钉住：① 数组第一条 = 后端那个 `*TemplateSegmentID`（默认）；
+// ② 每一条候选都**真的在内置段清单里** —— 列表里挂着一条库里没有的 id，
+// 挑它的时候后端会静默跳过（`JoinPrompt` 只是跳过 + 打日志），界面照挑不误。
+test("能力的模板段 id：前端常量与后端 const / 内置段清单都对得上", () => {
   const go = readFileSync(join(REPO, "core", "internal", "config", "config.go"), "utf8");
-  const cases = [
-    ["compact", "CompactTemplateSegmentID", "segments/compact-prompt.md"],
-    ["title", "TitleTemplateSegmentID", "segments/title-prompt.md"],
+  const constValue = (name) => {
+    const found = go.match(new RegExp(`${name}\\s*=\\s*"([^"]+)"`));
+    assert.ok(found, `core/internal/config/config.go 里找不到 ${name}`);
+    return found[1];
+  };
+  // ① 第一条是默认
+  const defaults = [
+    ["compact", "CompactTemplateSegmentID"],
+    ["title", "TitleTemplateSegmentID"],
   ];
-  for (const [ability, constName, file] of cases) {
-    const found = go.match(new RegExp(`${constName}\\s*=\\s*"([^"]+)"`));
-    assert.ok(found, `core/internal/config/config.go 里找不到 ${constName}`);
-    assert.equal(ABILITY_TEMPLATE_SEGMENT[ability], found[1], `前后端的 ${ability} 默认模板段 id 对不上`);
-    // 正文也得真在段库里（内置段清单里那一行）
-    assert.ok(go.includes(`{ID: ${constName}, File: "${file}"}`),
-      `内置段清单里没有 ${constName} 那一行（正文住 config/${file}）`);
+  for (const [ability, constName] of defaults) {
+    assert.equal(ABILITY_TEMPLATE_SEGMENTS[ability][0], constValue(constName),
+      `前后端的 ${ability} 默认模板段 id 对不上`);
+  }
+  // ② 每条候选都在内置段清单里（清单里那一行写的是 Go 常量名或字面量 id）
+  const listed = [...go.matchAll(/\{ID: ([^,]+), File: "segments\/[^"]+\.md"\}/g)].map((m) => m[1].trim());
+  assert.ok(listed.length >= 7, `内置段清单只解析出 ${listed.length} 条`);
+  const listedIDs = listed.map((name) => (go.match(new RegExp(`${name}\\s*=\\s*"([^"]+)"`))?.[1] ?? name.replace(/^"|"$/g, "")));
+  for (const [ability, ids] of Object.entries(ABILITY_TEMPLATE_SEGMENTS)) {
+    for (const id of ids) {
+      assert.ok(listedIDs.includes(id), `${ability} 的模板段「${id}」不在内置段清单里 —— 挑它等于什么都没挑`);
+    }
   }
   // 退役的 judge 不该在这张表里：它连流程都没有，登记进来等于预览里凭空多一段。
-  assert.equal(ABILITY_TEMPLATE_SEGMENT.judge, undefined, "judge 已退役，不该登记模板段");
+  assert.equal(ABILITY_TEMPLATE_SEGMENTS.judge, undefined, "judge 已退役，不该登记模板段");
 });
 
 // 能力 id 也是"两处各写一遍"的那种：前端 `ABILITY_IDS` 决定编辑器画出几块，
@@ -593,19 +608,24 @@ test("能力 id：前端 ABILITY_IDS 与后端 abilities.definitions 一致", ()
     "config.LoadAgents 该调 dropRetiredAbilities —— 否则只有启动时才摘、问一次接口又冒回来");
 });
 
-test("能力提示词拼装：覆盖打头 / 空则垫内置模板段 / 挑了它就不重复", () => {
+test("能力提示词拼装：覆盖打头 / 空则垫默认模板段 / 挑了它就替换", () => {
+  const comp = ["压缩提示词", "RP压缩提示词"];
   const segs = [
     { id: "压缩提示词", text: "【模板】照我说的压。", builtin: true },
+    { id: "RP压缩提示词", text: "【RP模板】讲处境与停点。", builtin: true },
     { id: "风格", text: "【风格】用第二人称。" },
   ];
-  // 什么都没填 ⇒ 就是内置模板段正文
-  assert.equal(abilityPrompt("", [], segs, "压缩提示词"), "【模板】照我说的压。");
-  // 加了段 ⇒ 模板在前
-  assert.equal(abilityPrompt("", ["风格"], segs, "压缩提示词"), "【模板】照我说的压。\n\n【风格】用第二人称。");
-  // 把模板段自己挑进来 ⇒ 按列表位置出现，**不重复**
-  assert.equal(abilityPrompt("", ["风格", "压缩提示词"], segs, "压缩提示词"), "【风格】用第二人称。\n\n【模板】照我说的压。");
+  // 什么都没填 ⇒ 就是默认模板段正文
+  assert.equal(abilityPrompt("", [], segs, comp), "【模板】照我说的压。");
+  // 加了普通段 ⇒ 模板在前
+  assert.equal(abilityPrompt("", ["风格"], segs, comp), "【模板】照我说的压。\n\n【风格】用第二人称。");
+  // 把默认模板段自己挑进来 ⇒ 按列表位置出现，**不重复**
+  assert.equal(abilityPrompt("", ["风格", "压缩提示词"], segs, comp), "【风格】用第二人称。\n\n【模板】照我说的压。");
+  // 挑**候选**（RP 版）⇒ 整份替换默认，不夹通用版（两份模板会互相打架）
+  assert.equal(abilityPrompt("", ["RP压缩提示词"], segs, comp), "【RP模板】讲处境与停点。");
+  assert.equal(abilityPrompt("", ["风格", "RP压缩提示词"], segs, comp), "【风格】用第二人称。\n\n【RP模板】讲处境与停点。");
   // 填了覆盖 ⇒ 覆盖打头，不再垫默认
-  assert.equal(abilityPrompt("【我的】短一点。", ["风格"], segs, "压缩提示词"), "【我的】短一点。\n\n【风格】用第二人称。");
+  assert.equal(abilityPrompt("【我的】短一点。", ["风格"], segs, comp), "【我的】短一点。\n\n【风格】用第二人称。");
   // 没有模板段的能力（退役的 judge 那种）⇒ 行为就是普通的 base + 段
   assert.equal(abilityPrompt("base", ["风格"], segs, undefined), "base\n\n【风格】用第二人称。");
 });

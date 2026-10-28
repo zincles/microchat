@@ -295,7 +295,7 @@ type AgentsConfig struct {
 var builtinSegmentFS embed.FS
 
 // builtinSegmentFiles：内置段清单（顺序 = 段库里的展示顺序；id ↔ 文件的映射就在这儿）。
-// 两个 `*TemplateSegmentID`：**能力的默认模板**就是这两条内置段（2026-10-28 用户定
+// `*TemplateSegmentID`：**能力的模板**就是这几条内置段（2026-10-28 用户定
 // 「把默认压缩载荷挑出来，制作成单独的内置 segment」—— 起标题那条同一个道理）。
 //
 // 它必须住段库、而不是住代码里的字符串：住代码里的那段用户读不到也拼不了，
@@ -303,13 +303,22 @@ var builtinSegmentFS embed.FS
 const (
 	// CompactTemplateSegmentID：压缩能力的默认模板。
 	CompactTemplateSegmentID = "压缩提示词"
+	// CompactRPTemplateSegmentID：压缩的 **RP 版**模板（2026-10-28 用户：「编写一个适用于
+	// RP Agent 的压缩用提示词」）—— 讲处境与人、讲停点、讲别替玩家做决定，篇幅也允许长一点。
+	//
+	// 它是 `compact` 的**候选模板**（`abilities.Definition.TemplateSegments` 里排第二条）：
+	// 挑中它就整份替换默认模板，**不是叠加** —— 两份模板叠在一起只会互相打架
+	// （一份说"不要复述原文"，另一份说"细节不能丢"，模型只能二选一）。
+	CompactRPTemplateSegmentID = "RP压缩提示词"
 	// TitleTemplateSegmentID：起标题能力的默认模板。
 	TitleTemplateSegmentID = "起标题提示词"
 )
 
 var builtinSegmentFiles = []struct{ ID, File string }{
-	// 两个能力的默认模板排在最前：它们是"默认就会生效"的那两条，用户最可能来找它们。
+	// 能力的模板排在最前：它们是"默认就会生效"的那几条，用户最可能来找它们。
+	// 压缩的两条相邻放着（通用版在前 = 默认，RP 版在后 = 候选），一眼看出是一族。
 	{ID: CompactTemplateSegmentID, File: "segments/compact-prompt.md"},
+	{ID: CompactRPTemplateSegmentID, File: "segments/compact-prompt-rp.md"},
 	{ID: TitleTemplateSegmentID, File: "segments/title-prompt.md"},
 	{ID: "StateLang 语法", File: "segments/statelang-syntax.md"},
 	{ID: "合理的RolePlay", File: "segments/roleplay.md"},

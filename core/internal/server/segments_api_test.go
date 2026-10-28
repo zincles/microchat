@@ -35,17 +35,20 @@ func TestSegmentsCRUDAndAssembly(t *testing.T) {
 			Builtin bool   `json:"builtin"`
 		} `json:"segments"`
 	}](t, authCall(box.server, "GET", "/api/v1/agents", "", testSysToken))
-	// 2026-10-28 起内置是六条（最前两条是两个能力的默认模板），用户段仍排在内置之后。
-	if len(agents.Segments) != 8 || !agents.Segments[0].Builtin || agents.Segments[0].ID != config.CompactTemplateSegmentID {
-		t.Fatalf("段库该是「六条内置 + 两条用户段」：%+v", agents.Segments)
+	// 2026-10-28 起内置是七条（最前三条是能力的模板），用户段仍排在内置之后。
+	if len(agents.Segments) != 9 || !agents.Segments[0].Builtin || agents.Segments[0].ID != config.CompactTemplateSegmentID {
+		t.Fatalf("段库该是「七条内置 + 两条用户段」：%+v", agents.Segments)
 	}
-	if agents.Segments[1].ID != config.TitleTemplateSegmentID {
-		t.Fatalf("内置第二条该是起标题默认模板：%+v", agents.Segments[:2])
+	if agents.Segments[1].ID != config.CompactRPTemplateSegmentID {
+		t.Fatalf("内置第二条该是压缩的 RP 版模板：%+v", agents.Segments[:2])
 	}
-	if agents.Segments[2].ID != "StateLang 语法" {
-		t.Fatalf("内置第三条该是 StateLang 语法：%+v", agents.Segments[:3])
+	if agents.Segments[2].ID != config.TitleTemplateSegmentID {
+		t.Fatalf("内置第三条该是起标题默认模板：%+v", agents.Segments[:3])
 	}
-	if agents.Segments[6].ID != "katex" || agents.Segments[6].Builtin || agents.Segments[7].ID != "mcp" {
+	if agents.Segments[3].ID != "StateLang 语法" {
+		t.Fatalf("内置第四条该是 StateLang 语法：%+v", agents.Segments[:4])
+	}
+	if agents.Segments[7].ID != "katex" || agents.Segments[7].Builtin || agents.Segments[8].ID != "mcp" {
 		t.Fatalf("用户段不该带 builtin 标记：%+v", agents.Segments[6:])
 	}
 	// 内置**只读**：删 / 改都拒、id 保留（要改走"复制为自定义"）

@@ -274,19 +274,28 @@ delete(AA)           # 删除
   段改名 = 所有 agent 的引用一起搬。**内置段**（2026-10-11 用户定）：正文住 `core/internal/config/segments/*.md`
   （`go:embed` 进二进制 —— **git 里可 diff、新装即得**，正是"方便提交"那一条）、**只读删不掉**（要改就「复制为自定义」）、
   **id 保留**（用户段撞名 ⇒ 写入与启动读取都报）；`GET /agents` 的 `segments` = 内置（带 `builtin: true`，排在前）+ 用户段。
-  **目前六条**（顺序 = `builtinSegmentFiles`）：`压缩提示词` / `起标题提示词` / `StateLang 语法` / `合理的RolePlay` /
-  `在RolePlay里使用StateLang` / `Markdown RolePlay相关`（后四条 2026-10-11 从用户库迁入，**一字未改**；早期那条 `current_state` 已删）。
+  **目前七条**（顺序 = `builtinSegmentFiles`）：`压缩提示词` / `RP压缩提示词` / `起标题提示词` / `StateLang 语法` /
+  `合理的RolePlay` / `在RolePlay里使用StateLang` / `Markdown RolePlay相关`（后四条 2026-10-11 从用户库迁入，**一字未改**；早期那条 `current_state` 已删）。
   **能力的默认模板一律住段库**（2026-10-28 用户定：「把默认压缩载荷挑出来，制作成单独的内置 segment」，
   起标题那条同一个道理 —— 否则"凭什么这个能力的模板我读不到"就是个没道理的特例）：
-  住 `core/internal/config/segments/{compact,title}-prompt.md`，`abilities` 定义表里由 `Definition.TemplateSegment`
-  指过去（`config.CompactTemplateSegmentID` / `config.TitleTemplateSegmentID`）——
+  住 `core/internal/config/segments/{compact,compact-rp,title}-prompt.md`，`abilities` 定义表里由
+  `Definition.TemplateSegments`（**数组，第一个是默认**）指过去
+  （`config.CompactTemplateSegmentID` / `config.CompactRPTemplateSegmentID` / `config.TitleTemplateSegmentID`）——
   于是那段话可读、可「复制为自定义」、可当普通段参与自由组合，**Go 里不再另有一份字符串**（`Definition.Template` 只剩给"模板还不是段"的能力用）。
+  **压缩有两个模板：通用版与 RP 版**（2026-10-28 用户：「编写一个适用于 RP Agent 的压缩用提示词」）——
+  RP 版讲处境 / 讲人（称呼、口癖、随身物）/ 讲关系与账 / 讲停点 / 讲"别替玩家做决定"，篇幅放到四到六段。
+  挑中**任何一条候选**都算"我要这个模板" ⇒ **整份替换**默认，**不是叠加**：两份模板挂在同一条消息上必然互相打架
+  （通用版写"不要复述原文"、RP 版写"细节不能丢"），模型只会挑一个执行、或者两头都不到。
   **能力拼装只有一处**（`abilities.AssemblePrompt`，`title` 与 `compact` 都调它）三条：
-  ① base = `prompt` 覆盖 ?: 那条内置模板段；② **段列表里已经挑了它 ⇒ 不再垫一份**（否则同一段说明文读两遍）；
+  ① base = `prompt` 覆盖 ?: **默认的那条**内置模板段（候选里的第一条）；② **段列表里已经挑了任何一条模板段 ⇒ 不再垫一份**
+  （否则同一段说明文读两遍；挑候选的那条同理 —— 挑了 RP 版就不夹通用版）；
   ③ 段按列表顺序追加在 base 后（走 `state.JoinPrompt`，与 agent 提示词同一条规则）。`prompt_version` 从**拼完的**模板算。
+  ⚠ 只挑普通段、两条模板都没碰 ⇒ **照旧垫默认**（否则"我加了一条风格段，流程说明却没了"）。
   ⚠ 从前 `title` 用的是裸 `abilities.Template`（**不拼段**）⇒ 编辑器让你给 title 挑段、后端一个字都不读（静默无效）；已修。
-  ⚠ 这条规则前端有一份镜像（`utils/prompt.js` 的 `abilityPrompt`）只做预览；两个段 id 由契约测试
-  对着 `core/internal/config/config.go` 的常量核 —— 写错不报错、只会让预览少一段。
+  ⚠ 这条规则前端有一份镜像（`utils/prompt.js` 的 `abilityPrompt`，模板 id 表是
+  `utils/format.js` 的 `ABILITY_TEMPLATE_SEGMENTS`，同样是"第一条 = 默认"）只做预览；这些 id 由契约测试
+  对着 `core/internal/config/config.go` 的常量和内置段清单核 —— 写错不报错、只会让预览少一段
+  （清单里挂着一条库里没有的 id 更糟：挑它时后端默默跳过，界面照挑不误）。
   `prepend_state`（agent 上的开关，缺省关）= 把当前状态渲染成 `<current_state>` 贴到
   **最后一条用户消息**句首（历史不动；前缀缓存友好）。
 

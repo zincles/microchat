@@ -57,10 +57,10 @@ func TestValidateSegments(t *testing.T) {
 // 引用内置合法；SegmentByID 找得到。`current_state` 那条已删（用户定）。
 func TestBuiltinSegmentsAreReserved(t *testing.T) {
 	builtins := BuiltinSegments()
-	// 2026-10-28 起是六条：两个能力的默认模板排在最前（`压缩提示词` / `起标题提示词`），
+	// 2026-10-28 起是七条：能力的模板排在最前（`压缩提示词` / `RP压缩提示词` / `起标题提示词`），
 	// 其后是 10-11 迁移的四条。
-	if len(builtins) != 6 {
-		t.Fatalf("内置段该六条（10-11 的四条 + 10-28 的压缩模板与起标题模板）：%+v", builtins)
+	if len(builtins) != 7 {
+		t.Fatalf("内置段该七条（10-11 的四条 + 10-28 的压缩模板、RP 压缩模板、起标题模板）：%+v", builtins)
 	}
 	if _, ok := BuiltinSegmentByID("current_state"); ok {
 		t.Fatal("current_state 已删（2026-10-11 用户定）")
@@ -70,14 +70,19 @@ func TestBuiltinSegmentsAreReserved(t *testing.T) {
 	if tmpl.ID != CompactTemplateSegmentID || !strings.Contains(tmpl.Text, "你是Compactor") {
 		t.Fatalf("首条内置该是压缩默认模板且正文非空：%+v", tmpl)
 	}
-	// 第二条是起标题的默认模板（同一个理由：默认就会生效）
-	title := builtins[1]
-	if title.ID != TitleTemplateSegmentID || !strings.Contains(title.Text, "你是一名起标题助手") {
-		t.Fatalf("第二条内置该是起标题默认模板且正文非空：%+v", title)
+	// 第二条是压缩的 RP 版模板 —— 紧跟通用版，一眼看出是一族（并排才不会被当成"另一个能力"）
+	rp := builtins[1]
+	if rp.ID != CompactRPTemplateSegmentID || !strings.Contains(rp.Text, "RP 的 Compactor") {
+		t.Fatalf("第二条内置该是压缩的 RP 版模板且正文非空：%+v", rp)
 	}
-	first := builtins[2]
+	// 第三条是起标题的模板（同一个理由：默认就会生效）
+	title := builtins[2]
+	if title.ID != TitleTemplateSegmentID || !strings.Contains(title.Text, "你是一名起标题助手") {
+		t.Fatalf("第三条内置该是起标题默认模板且正文非空：%+v", title)
+	}
+	first := builtins[3]
 	if first.ID != "StateLang 语法" || first.Text == "" {
-		t.Fatalf("第三条内置该是 StateLang 语法 且正文非空：%+v", first)
+		t.Fatalf("第四条内置该是 StateLang 语法 且正文非空：%+v", first)
 	}
 	// 正文现读自嵌入文件（逐字）
 	if !strings.Contains(first.Text, "StateLang 语法规范") {

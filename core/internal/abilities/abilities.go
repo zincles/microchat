@@ -8,8 +8,8 @@
 //     能覆盖的只有模板 / 渠道 / 模型 —— **不能造新的**（表里没有的 id 写了也不认，报错）；
 //  2. **缺字段 = 默认全开**（现有 `agents.json` 一个字都不用改）；`enabled: false` ⇒
 //     调用方**明确拒绝**执行那一次，**不是静默降级**；
-//  3. **模板只有一份**：默认模板住这张表（`Definition.Template`；压缩那份住段库、
-//     由 `Definition.TemplateSegment` 指过去）；生效模板 = agent 覆盖 ?: 默认，
+//  3. **模板只有一份**：默认模板住这张表（`Definition.Template`；压缩与起标题那两份住段库、
+//     由 `Definition.TemplateSegments` 指过去，第一个是默认、其余是候选）；生效模板 = agent 覆盖 ?: 默认，
 //     `Template(setting, id)` 是**唯一**的算式，`PromptVersion` 由**生效模板**算（改一个字就变）；
 //  4. **一个函数搞定**：`Resolve(agent, id)` 是"这份人格在这个能力上怎么配"的**唯一**解析处 ——
 //     别在调用点各读一遍 map（那会让"默认全开"这条口径散成好几份）。
@@ -59,15 +59,40 @@ var retired = config.RetiredAbilityIDs
 //
 // `Template` 空 = 没有模板（从前 `judge` 就是这种：state+questions 由调用方拼，不走模板）。
 //
-// `TemplateSegment` = "默认模板其实是段库里的一条内置段"（与 `Template` 二选一）。
+// `TemplateSegments` = "模板其实是段库里的一条（或几条）内置段"（与 `Template` 二选一）。
 // 为什么要这一格：模板也是提示词，用户的抱怨很直接 ——「凭什么这一段我读不到、也拼不了」。
 // 住段库 ⇒ 可读、可复制成自定义、可以被 `segments` 引用进"自由组合"。
+//
+// **第一个是默认**，后面的是候选（2026-10-28 起压缩有两条：通用版与 RP 版）。
+// 挑中其中**任何一条**都算"我要这个模板"—— 于是不再自动垫默认那份（见 `AssemblePrompt`）。
+// 为什么是"替换"而不是"叠加"：两份模板挂在同一条消息上必然互相打架
+// （一份写"不要复述原文"，另一份写"细节不能丢"），模型只会挑一个执行、或者两头都不到。
 type Definition struct {
-	ID              ID
-	Label           string
-	TaskKind        task.Kind
-	Template        string
-	TemplateSegment string
+	ID               ID
+	Label            string
+	TaskKind         task.Kind
+	Template         string
+	TemplateSegments []string
+}
+
+// DefaultTemplateSegment：默认模板住在哪条内置段（没有 ⇒ 空）。
+func (d Definition) DefaultTemplateSegment() string {
+	if len(d.TemplateSegments) == 0 {
+		return ""
+	}
+	return d.TemplateSegments[0]
+}
+
+// templateChosen：列表里挑中了这个能力的模板（任何一条候选都算）。
+func (d Definition) templateChosen(segments []string) bool {
+	for _, candidate := range d.TemplateSegments {
+		for _, chosen := range segments {
+			if chosen == candidate {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // definitions：全部能力（顺序固定 ⇒ 界面与 `-debug abilities` 的输出稳定）。
@@ -77,8 +102,11 @@ type Definition struct {
 //
 //	{ID: Judge, Label: "判断", TaskKind: task.KindJudgement},
 var definitions = []Definition{
-	{ID: Title, Label: "起标题", TaskKind: task.KindTitle, TemplateSegment: config.TitleTemplateSegmentID},
-	{ID: Compact, Label: "压缩", TaskKind: task.KindCompact, TemplateSegment: config.CompactTemplateSegmentID},
+	{ID: Title, Label: "起标题", TaskKind: task.KindTitle,
+		TemplateSegments: []string{config.TitleTemplateSegmentID}},
+	{ID: Compact, Label: "压缩", TaskKind: task.KindCompact,
+		// 通用版是默认；RP 版是候选（挑中它 = 整份替换，见 `AssemblePrompt`）。
+		TemplateSegments: []string{config.CompactTemplateSegmentID, config.CompactRPTemplateSegmentID}},
 }
 
 // IDs：全部能力 id（顺序 = `definitions` 的顺序）。
@@ -106,9 +134,9 @@ func DefaultTemplate(id ID) string {
 	if !ok {
 		return ""
 	}
-	if definition.TemplateSegment != "" {
+	if segmentID := definition.DefaultTemplateSegment(); segmentID != "" {
 		// 住段库的那一类：正文现读自内置段（唯一一份）。读不到只可能是 id 写错 —— 开发错误，当空。
-		if segment, found := config.BuiltinSegmentByID(definition.TemplateSegment); found {
+		if segment, found := config.BuiltinSegmentByID(segmentID); found {
 			return segment.Text
 		}
 		return ""
@@ -127,22 +155,23 @@ func Template(setting Setting, id ID) string {
 // AssemblePrompt：这一发能力的**系统提示词** = 模板 + 追加段。**只此一处**（`title` 与
 // `compact` 都调它 —— 从前两条流程各拼一份，`title` 那份根本没拼段）。
 //
-// 一条必须说清的规矩：**默认模板已经在段列表里时不额外再垫一份**。
+// 一条必须说清的规矩：**模板段已经在段列表里时不额外再垫一份**。
 // 用户把它挑进 `segments` 就是在说"我要它按这个位置出现" —— 既在开头垫一份、
 // 又在中途出现一次，等于同一段说明文读两遍（重复只会让模型更糊涂）。
-// 同理：`prompt` 非空时它是 base，此时列表里再选那条内置段就是"再追加一次默认模板"，
+//
+// 候选的那些**同样**算数（压缩有通用版与 RP 版两条）：挑了 RP 版 ⇒ base 空着、
+// 由 `JoinPrompt` 把它按位置接上 ⇒ 生效模板**就是** RP 版那一段，不夹通用版。
+// 反过来，如果只挑别的普通段、两条模板都没碰，那还是照旧垫默认 ——
+// 否则"我加了条风格段，结果流程说明没了"。
+//
+// 同理：`prompt` 非空时它是 base，此时列表里再选模板段就是"再追加一次模板"，
 // 那是用户显式的选择，不挡。
 func AssemblePrompt(setting Setting, id ID, agents config.AgentsConfig) string {
 	base := strings.TrimSpace(setting.Prompt)
 	if base == "" {
 		explicit := false
-		if definition, ok := DefinitionOf(id); ok && definition.TemplateSegment != "" {
-			for _, segmentID := range setting.Segments {
-				if segmentID == definition.TemplateSegment {
-					explicit = true
-					break
-				}
-			}
+		if definition, ok := DefinitionOf(id); ok {
+			explicit = definition.templateChosen(setting.Segments)
 		}
 		if !explicit {
 			base = DefaultTemplate(id)

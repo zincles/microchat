@@ -150,6 +150,65 @@ func TestCompactTemplateSegmentCanBePlacedExplicitly(t *testing.T) {
 	}
 }
 
+// RP 版模板（2026-10-28 用户：「编写一个适用于 RP Agent 的压缩用提示词」）是**候选**：
+// 挑中它就整份**替换**默认模板，而不是叠在默认模板后面。
+//
+// 为什么必须替换：两份模板挂在同一条消息上必然互相打架 —— 通用版写「不要复述原文」，
+// RP 版写「具体细节不能丢」，模型只能挑一个执行、或者两头都不到。
+func TestCompactRPPromptReplacesTheDefault(t *testing.T) {
+	segment, ok := config.BuiltinSegmentByID(config.CompactRPTemplateSegmentID)
+	if !ok {
+		t.Fatalf("内置段库里没有 %q", config.CompactRPTemplateSegmentID)
+	}
+	if !strings.Contains(segment.Text, "RP 的 Compactor") {
+		t.Fatalf("RP 版正文不对：%q", firstRunes(segment.Text, 40))
+	}
+	if segment.Text == abilities.DefaultTemplate(abilities.Compact) {
+		t.Fatal("RP 版不能与通用版一字不差 —— 那样挑它等于没挑")
+	}
+
+	box := newDummySandbox(t)
+	box.writeAgents(t, `{
+		"default_agent": "default",
+		"agents": [{"id": "default", "name": "默认",
+			"abilities": {"compact": {"segments": ["RP压缩提示词"]}}}]
+	}`)
+	box.seedTurn(t, "第一句")
+	box.seedTurn(t, "第二句")
+	box.seedTurn(t, "第三句")
+
+	system, _ := box.previewPayload(t, `{"blocks":2}`).wireParts(t)
+	if system != segment.Text {
+		t.Fatalf("挑了 RP 版 ⇒ 那一发的 system 该**只有** RP 版（%d 字），得到 %d 字：%q…",
+			len(segment.Text), len(system), firstRunes(system, 60))
+	}
+	if strings.Contains(system, "你是Compactor") {
+		t.Fatal("挑了 RP 版就不该再垫通用版 —— 两份模板会互相打架")
+	}
+}
+
+// 只挑普通段、两条模板都没碰 ⇒ 照旧垫默认（否则"我加了一条风格段，流程说明却没了"）。
+func TestCompactKeepsDefaultWhenOnlyPlainSegmentsAreChosen(t *testing.T) {
+	box := newDummySandbox(t)
+	box.writeAgents(t, `{
+		"default_agent": "default",
+		"segments": [{"id": "风格", "text": "【风格】用第二人称。"}],
+		"agents": [{"id": "default", "name": "默认",
+			"abilities": {"compact": {"segments": ["风格"]}}}]
+	}`)
+	box.seedTurn(t, "第一句")
+	box.seedTurn(t, "第二句")
+	box.seedTurn(t, "第三句")
+
+	system, _ := box.previewPayload(t, `{"blocks":2}`).wireParts(t)
+	if !strings.HasPrefix(system, abilities.DefaultTemplate(abilities.Compact)) {
+		t.Fatalf("普通段不该顶掉默认模板：%q…", firstRunes(system, 60))
+	}
+	if !strings.HasSuffix(system, "【风格】用第二人称。") {
+		t.Fatalf("普通段该追加在后面：%q…", firstRunes(system, 60))
+	}
+}
+
 // `prompt` 覆盖 ⇒ 它就是 base（列表里再选那条内置段 = 用户显式再要一份，不挡）。
 func TestCompactPromptOverrideComesFirst(t *testing.T) {
 	box := newDummySandbox(t)

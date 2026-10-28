@@ -7,7 +7,7 @@
 // 保存一行留在页签**外面**（哪一页都能保存；翻页不丢已填的东西，状态都在 ref 里）。
 import { ref, computed, onMounted, onUnmounted } from "vue";
 import { sharedApi } from "../utils/prefs.js";
-import { ABILITY_IDS, ABILITY_LABELS, ABILITY_TEMPLATE_SEGMENT, buildAbilitiesPatch, modelKey, parseModelKey, modelLabel } from "../utils/format.js";
+import { ABILITY_IDS, ABILITY_LABELS, ABILITY_TEMPLATE_SEGMENTS, buildAbilitiesPatch, modelKey, parseModelKey, modelLabel } from "../utils/format.js";
 import { assemblePrompt, abilityPrompt } from "../utils/prompt.js";
 import { buildCartridge } from "../utils/cartridge.js";
 import { downloadJSON } from "../utils/download.js";
@@ -54,26 +54,36 @@ const status = ref("");
 // （从前它在 Go 的常量里，预览只能显示"段"，不敢报总量）。
 function abilityAssembled(id) {
   const r = rows.value[id] ?? {};
-  return abilityPrompt(r.prompt, r.segments ?? [], props.segments, ABILITY_TEMPLATE_SEGMENT[id]);
+  return abilityPrompt(r.prompt, r.segments ?? [], props.segments, ABILITY_TEMPLATE_SEGMENTS[id]);
 }
 // 这个能力有没有"模板"（覆盖或内置段）：没有 ⇒ 预览要提醒"这一发只有你挑的段"
 function abilityHasTemplate(id) {
   const r = rows.value[id] ?? {};
   if (String(r.prompt ?? "").trim()) return true;
-  const seg = ABILITY_TEMPLATE_SEGMENT[id];
-  return !!seg && !!(r.segments ?? []).includes(seg);
+  const candidates = ABILITY_TEMPLATE_SEGMENTS[id] ?? [];
+  return candidates.some((id) => (r.segments ?? []).includes(id));
 }
 // 段清单上面那一行说明（`SegmentList` 的 hint）：只在"用户可能误判"的地方说一句。
 //
-// 在册的能力都有一条默认模板段（`ABILITY_TEMPLATE_SEGMENT`），所以三句话都建立在
+// 在册的能力都有模板段（`ABILITY_TEMPLATE_SEGMENTS[0]` 是默认），三句话都建立在
 // "这个能力有模板"之上 —— 没有模板的那种能力，是连流程都还没有的能力，它压根不该在册
 // （`judge` 就是这个原因在 2026-10-28 退役的，别再把没有流程的 id 加回来）。
+//
+// 有多个候选时要**说清是替换不是叠加**（压缩有通用版与 RP 版）：不说的话，用户挑两条
+// 只会得到一份自相矛盾的提示词 —— 一份写"不要复述原文"，另一份写"细节不能丢"。
 function abilitySegHint(id) {
-  const template = ABILITY_TEMPLATE_SEGMENT[id];
-  if (!template) return "";
+  const candidates = ABILITY_TEMPLATE_SEGMENTS[id] ?? [];
+  if (!candidates.length) return "";
   const r = rows.value[id] ?? {};
-  if (!(r.segments ?? []).length) return `空着 = 只用内置段「${template}」（可在段库里查看 / 复制成自定义）。`;
-  if (!abilityHasTemplate(id)) return `⚠ 没挑「${template}」也没填覆盖 ⇒ 这一发只有你挑的段，没有流程说明。`;
+  const others = candidates.slice(1);
+  if (!(r.segments ?? []).length) {
+    const more = others.length ? `；想换成「${others.join("」/「")}」就从下面挑它 —— 它**整份替换**默认模板，不会叠加。` : "";
+    return `空着 = 用默认模板（内置段「${candidates[0]}」）${more}`;
+  }
+  if (!abilityHasTemplate(id)) {
+    const all = candidates.map((one) => `「${one}」`).join(" / ");
+    return `⚠ 没挑 ${all} 也没填覆盖 ⇒ 这一发只有你挑的段，没有流程说明。`;
+  }
   return "";
 }
 
