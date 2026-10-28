@@ -143,16 +143,8 @@ defineExpose({ setSession, setModels, setAgents, setContext });
       </optgroup>
     </select>
     <span class="header-right">
-      <button
-        v-if="rightHidden"
-        id="toggle-right"
-        class="icon-btn"
-        type="button"
-        title="显示/隐藏载荷栏"
-        aria-label="显示/隐藏载荷栏"
-        @click="$emit('toggle-right')"
-        v-html="rightSvg"
-      ></button>
+      <!-- 顺序是**环在左、开关在右**（2026-10-28 用户定）：开关是"控制栏的按钮"，
+           它是这一簇的锚，位置稳定；环是随状态变的仪表，挂在它左边不抢锚点。 -->
       <!-- 上下文占比环：环长 = 已用 / 输入预算；绿正常、红超预算。点开看明细。 -->
       <button
         id="ctx-ring"
@@ -169,6 +161,16 @@ defineExpose({ setSession, setModels, setAgents, setContext });
           <circle class="ctx-ring-fill" cx="16" cy="16" r="13" pathLength="100" :stroke-dasharray="ctxDash" />
         </svg>
       </button>
+      <button
+        v-if="rightHidden"
+        id="toggle-right"
+        class="icon-btn"
+        type="button"
+        title="显示/隐藏载荷栏"
+        aria-label="显示/隐藏载荷栏"
+        @click="$emit('toggle-right')"
+        v-html="rightSvg"
+      ></button>
     </span>
     <template v-if="agentOpen">
       <div class="agent-menu-backdrop" @click="agentOpen = false"></div>

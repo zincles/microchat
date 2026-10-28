@@ -1105,6 +1105,13 @@ test("上下文环：App 喂 ctx / 环在顶栏画 / 状态行不再报占用", 
   assert.match(top, /pathLength="100"/, "弧长没走 pathLength 归一化（dasharray 会被当成绝对长度）");
   assert.match(top, /setContext/, "TopBar 没有暴露 setContext");
   assert.match(top, /class="agent-menu ctx-menu"/, "浮板没有复用 Agent 选人那套底（--tg-float / shadow-3）");
+  // 顺序：环在**左**、载荷栏开关在**右**（2026-10-28 用户定）。开关是"控制栏的按钮"= 这一簇的锚，
+  // 位置要稳；环是随状态变的仪表，挂它左边。两个都是绝对定位的兄弟，换顺序**不会报错**，
+  // 只会悄悄换到另一边 —— 所以钉住先后。
+  assert.ok(
+    top.indexOf('id="ctx-ring"') < top.indexOf('id="toggle-right"'),
+    "环该在载荷栏开关的左边（用户 2026-10-28 定）",
+  );
 
   // 判规则时要**先剥掉注释**：这次的教训就写在一条注释里（"从前这里有 .statusline.over"），
   // 不剥的话字面匹配会把注释当成规则 —— 守卫测试自己先误报，比漏报更浪费人。
