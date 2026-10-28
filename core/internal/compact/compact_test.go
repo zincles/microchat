@@ -949,3 +949,61 @@ func TestCompactRoutesByModelRouteTable(t *testing.T) {
 		t.Fatalf("无行该还是 /chat/completions：path = %q", path)
 	}
 }
+
+// ── RP 版压缩模板：内容契约 + 与真实材料抬头对齐 ────────────────────────────
+
+// 提示词里写着「看到某个抬头就按某种方式处理」，而抬头原文住在 `materialHeader` /
+// `mergeHeader` 里。两边一分岔就没人会发现：模型照着提示词找不到那个抬头，
+// 于是把"各段已有梗概"当成对话原文来压 —— 产出看起来正常，实际是把梗概又抄了一遍。
+//
+// 这条把两者的字面**绑在一起**。改抬头名是个正当的改动，但改了就得回来改提示词。
+func TestCompactRPPromptKnowsTheRealMaterialHeaders(t *testing.T) {
+	segment, ok := config.BuiltinSegmentByID(config.CompactRPTemplateSegmentID)
+	if !ok {
+		t.Fatalf("内置段库里没有 %q", config.CompactRPTemplateSegmentID)
+	}
+	// 抬头在材料里是「【…】」，提示词里引用的也是这一对，所以直接比括号里的那截。
+	for _, header := range []string{materialHeader, mergeHeader} {
+		name := strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(header), "【"), "】")
+		if name == strings.TrimSpace(header) {
+			t.Fatalf("抬头格式变了（不是【…】）：%q", header)
+		}
+		// 提示词里引的是抬头的前缀（后面可能接「…」），比前 8 个字就够认出来
+		prefix := []rune(name)
+		if len(prefix) > 8 {
+			prefix = prefix[:8]
+		}
+		if !strings.Contains(segment.Text, string(prefix)) {
+			t.Fatalf("RP 版模板没提这个抬头：%q（抬头的部分：%q）\n"+
+				"模型照着提示词找不到它，就会把梗概当原文重抄一遍。", name, string(prefix))
+		}
+	}
+}
+
+// RP 版该比通用版多出来的东西（这些都是 RP 特有的，通用版不必有）。
+//
+// 不是为了"越长越好"：每一条都对应一种**下一段会写错**的具体失败。
+func TestCompactRPPromptCoversRoleplaySpecifics(t *testing.T) {
+	segment, ok := config.BuiltinSegmentByID(config.CompactRPTemplateSegmentID)
+	if !ok {
+		t.Fatal("内置段库里没有 RP 版")
+	}
+	text := segment.Text
+	checks := []struct{ want, why string }{
+		{"停在哪", "不写停点 ⇒ 下一段要么跳回去要么把最后一段重演一遍"},
+		{"第二人称", "RP 的旁白用「你」称呼玩家；梗概换了人称，接上去就会文风断裂"},
+		{"合并", "材料可能是「各段已有梗概」而不是原文 —— 不说清就会把梗概并列抄一遍"},
+		{"已经消耗掉的", "用掉的资源/受的伤/失去的信任若在梗概里消失，下一段会当成还在"},
+		{"替玩家决定", "摘要替玩家做了决定，等于把玩家的选择权偷走了"},
+		{"<state>", "状态由程序现算，写进梗概就是过期的第二份事实"},
+	}
+	for _, check := range checks {
+		if !strings.Contains(text, check.want) {
+			t.Errorf("RP 版模板少了 %q —— %s", check.want, check.why)
+		}
+	}
+	// 通用版的招牌句不该出现（出现了说明是抄的通用版）
+	if strings.Contains(text, "你是Compactor") {
+		t.Error("RP 版里混进了通用版的开头")
+	}
+}
