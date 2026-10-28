@@ -1965,3 +1965,31 @@ test("压缩：有一键折叠全部，树与分块一起收，且没有一键�
   assert.equal((tpl.match(/class="collapse-all"/g) ?? []).length, 2, "两个折叠按钮没用同一个类");
   assert.ok(!/pv-collapse-all|ctree-collapse-all/.test(bar + css), "还有按钮在用自己的旧类名 —— 样式会分岔");
 });
+
+// 三个 tab 的字号（2026-10-29 用户：「载荷/状态/压缩 三个字至少要大一点吧」）。
+//
+// ⚠ 这里有个**叠乘陷阱**：`.ws-panel` 自己 `font-size: 0.92em`，tab 的 em 是**相对它**的，
+// 所以 "tab 是 0.95em" 落到根上只有 0.87em —— 比正文还小。光看声明数字（0.95 接近 1）
+// 完全看不出问题，必须乘一遍。所以这条按实际声明**算有效字号**，判据也很朴素：
+// **tab 不该比它标注的内容更小**（≥ 面板正文的 1em）。
+test("上下文面板：三个 tab 不小于正文", () => {
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  const rule = (sel) => css.match(new RegExp(`(?:^|\\n)${sel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\{([^}]*)\\}`))?.[1] ?? "";
+  const em = (text, name) => {
+    const m = text.match(new RegExp(`${name}:\\s*([\\d.]+)em`));
+    return m ? Number(m[1]) : NaN;
+  };
+
+  const panel = em(rule(".ws-panel"), "font-size");
+  const tab = em(rule(".bar-head.bar-tabs .tab"), "font-size");
+  assert.ok(Number.isFinite(panel) && Number.isFinite(tab), "读不出 .ws-panel / .bar-head.bar-tabs .tab 的 font-size");
+
+  const effective = panel * tab; // 落到根上的有效字号
+  assert.ok(effective >= 0.98,
+    `tab 有效字号只有 ${effective.toFixed(2)}em（${tab}em × 面板 ${panel}em）—— 比正文还小，看着像附注`);
+  // 也别大得离谱（把 tab 做得比正文大两档就是另一种失衡）
+  assert.ok(effective <= 1.35, `tab 有效字号 ${effective.toFixed(2)}em 太大了 —— 这排字是导航，不该压过内容`);
+  // 点击区域也要够（纵向 padding 撑高度，别只靠字号）
+  const pad = em(rule(".bar-head.bar-tabs .tab"), "padding");
+  assert.ok(pad >= 0.3, `tab 纵向 padding 只有 ${pad}em —— 触摸目标太小`);
+});
