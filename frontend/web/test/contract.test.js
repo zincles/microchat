@@ -26,6 +26,10 @@ import {
   usageFoot,
   usageFootTitle,
   groupModelsByProvider,
+  filterModelGroups,
+  curModelLabelOf,
+  modelMatches,
+  ORPHAN_MODEL_GROUP,
   deletionPlanSummary,
   formatRoutesOutcome,
   ABILITY_IDS,
@@ -1302,4 +1306,107 @@ test("能力中文名：前端 ABILITY_LABELS 与后端 definitions 的 Label �
   const pairs = [...block[1].matchAll(/\{ID: (\w+), Label: "([^"]+)"/g)];
   const goLabels = Object.fromEntries(pairs.map((m) => [m[1].toLowerCase(), m[2]]));
   assert.deepEqual(ABILITY_LABELS, goLabels, "前端能力名与后端 Label 对不上");
+});
+
+// —— 顶栏的模型选择浮板（2026-10-28 用户定：「可否把模型的那个选择器也改成这种自定义的面板，
+// 按 Provider 分类的（接近 openwebui 风格的）面板？」）——
+// 从前是个静默 `<select>`。换成自己的面板之后有两块要能验：
+//   ① 纯逻辑（搜什么、怎么分组、当前那条显示什么）—— 直接测函数
+//   ② 接线（按钮 → 面板 → emit → App 收）+ **旧的 `<select>` 真的删干净了**（CSS 留着就是死码）
+const MODEL_SAMPLE = [
+  {
+    provider: "openrouter",
+    items: [
+      { value: modelKey("openrouter", "openai/gpt-4o"), label: "GPT-4o", provider_name: "OpenRouter", upstream_id: "openai/gpt-4o" },
+      { value: modelKey("openrouter", "anthropic/claude-3.7"), label: "Claude 3.7", provider_name: "OpenRouter", upstream_id: "anthropic/claude-3.7" },
+    ],
+  },
+  {
+    provider: "本地",
+    items: [
+      { value: modelKey("本地", "qwen2.5:14b"), label: "Qwen 2.5 14B", provider_name: "本地 ollama", upstream_id: "qwen2.5:14b" },
+    ],
+  },
+];
+
+test("模型面板：按渠道分组、搜索命中显示名 / 渠道名 / 上游 id", () => {
+  assert.equal(filterModelGroups(MODEL_SAMPLE, "").length, 2, "不搜的时候该有两个渠道组");
+  // 组头用的是 provider_name（渠道的显示名），不是冷冰冰的 id
+  assert.equal(filterModelGroups(MODEL_SAMPLE, "")[1].providerName, "本地 ollama");
+
+  // 按显示名搜（不分大小写）
+  const gpt = filterModelGroups(MODEL_SAMPLE, "gpt-4o");
+  assert.equal(gpt.length, 1);
+  assert.deepEqual(gpt[0].items.map((i) => i.label), ["GPT-4o"]);
+
+  // 按上游 id 搜 —— 显示名里没有 "anthropic"，这条只有上游 id 能命中
+  assert.equal(filterModelGroups(MODEL_SAMPLE, "anthropic")[0].items[0].label, "Claude 3.7");
+
+  // 按渠道显示名搜 ⇒ 整组都在（搜"本地 ollama"该把它的模型都捞出来）
+  const local = filterModelGroups(MODEL_SAMPLE, "本地 ollama");
+  assert.equal(local.length, 1);
+  assert.equal(local[0].items.length, 1);
+
+  // 搜不到：空数组（界面上是"没有匹配的模型"），**不是**保留一堆空组头
+  assert.deepEqual(filterModelGroups(MODEL_SAMPLE, "没有这个模型"), []);
+  // 分完就空的组要丢掉 —— 留着空组头会让人以为"搜到了但没显示"
+  assert.ok(filterModelGroups(MODEL_SAMPLE, "gpt").every((g) => g.items.length > 0), "不该留下空组");
+});
+
+test("模型面板：扁平序号连续（上下键要能一条条走完可见列表）", () => {
+  // 顺序 = 分组顺序 + 组内顺序；序号 0..n-1 连续无洞
+  const all = filterModelGroups(MODEL_SAMPLE, "");
+  const flats = all.flatMap((g) => g.items.map((i) => i.flat));
+  assert.deepEqual(flats, [0, 1, 2]);
+
+  // 过滤之后仍然从 0 起、连续（否则上下键会跳空）
+  const one = filterModelGroups(MODEL_SAMPLE, "gpt");
+  assert.deepEqual(one.flatMap((g) => g.items.map((i) => i.flat)), [0]);
+  // 搜索改变的是"序号是什么"，不是"序号从几开始"
+  assert.deepEqual(filterModelGroups(MODEL_SAMPLE, "qwen").flatMap((g) => g.items.map((i) => i.flat)), [0]);
+});
+
+test("模型面板：当前模型不在列表里 ⇒ 单独一组排最前（别让它看着像没选）", () => {
+  const orphan = { value: modelKey("删掉的渠道", "m1"), label: "删掉的渠道/m1（不在列表）" };
+  const groups = filterModelGroups(MODEL_SAMPLE, "", orphan);
+  assert.equal(groups.length, 3);
+  assert.equal(groups[0].provider, ORPHAN_MODEL_GROUP);
+  assert.equal(groups[0].providerName, "当前（不在列表）");
+  assert.equal(groups[0].items[0].flat, 0, "孤儿项该拿到第一个序号");
+  // 搜别的词时它可以让位（不是"永远钉在最上面"）
+  assert.ok(!filterModelGroups(MODEL_SAMPLE, "gpt", orphan).some((g) => g.provider === ORPHAN_MODEL_GROUP));
+});
+
+test("模型面板：按钮上那行字（列表里有 → 显示名；没有 → 不在列表；列表还没到 → provider/model）", () => {
+  const key = modelKey("openrouter", "openai/gpt-4o");
+  assert.equal(curModelLabelOf(MODEL_SAMPLE, key), "GPT-4o");
+  assert.equal(
+    curModelLabelOf(MODEL_SAMPLE, modelKey("x", "y"), { value: modelKey("x", "y"), label: "x/y（不在列表）" }),
+    "x/y（不在列表）",
+  );
+  // 列表还没到（异步）也不能空白：空白看着像"没选模型"
+  assert.equal(curModelLabelOf([], modelKey("openrouter", "openai/gpt-4o")), "openrouter/openai/gpt-4o");
+  assert.equal(curModelLabelOf([], ""), "选择模型");
+});
+
+test("模型面板：按钮 / 浮板 / emit / App 监听四处接着，且不再有原生 <select>", () => {
+  const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+
+  assert.match(top, /id="model-btn"/, "顶栏里没有那枚模型按钮");
+  assert.match(top, /class="agent-menu model-menu"/, "浮板没有复用 Agent 选人那套底（--tg-float / shadow-3）");
+  assert.match(top, /function toggleModel\(/, "TopBar 没有 toggleModel");
+  assert.match(top, /emit\("select-model", value\)/, "面板选完没 emit select-model");
+  assert.match(app, /@select-model=/, "App 没有监听 select-model（点了不会换模型）");
+  // 三个浮板互斥：开模型面板要把 Agent 与上下文那两块关掉（否则叠在一起）
+  assert.match(top, /agentOpen\.value = false;[\s\S]{0,80}ctxOpen\.value = false;/, "打开模型面板时没有关掉另外两块浮板");
+
+  // 旧的静默下拉必须彻底删掉：留着 CSS 就是死码（chrome 里也不该再有这个 id）
+  assert.ok(!top.includes('id="session-model"'), "TopBar 里还留着 #session-model");
+  assert.ok(!top.includes("flat-select"), "TopBar 里还留着 .flat-select");
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.ok(!/\.flat-select/.test(css), "main.css 里还留着 .flat-select 规则（下拉已经删了）");
+  assert.match(css, /\.model-menu \{/, "main.css 里没有模型浮板的样式");
+  // 搜索框与列表滚动分开：搜索框得留在上面不跟着滚
+  assert.match(css, /\.model-list \{ overflow-y: auto/, "列表没有自己的滚动区（搜索框会跟着滚走）");
 });

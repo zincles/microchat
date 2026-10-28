@@ -11,7 +11,16 @@ export function parseModelKey(v) {
 // 显示名三级回退（与后端两列同义：用户覆盖 → 上游名 → 上游 id）。
 export function modelLabel(m) { return m?.display_name || m?.name || m?.upstream_id || ""; }
 // 下拉项（`/models` 的行 → {value,label}）。
-export function modelOption(m) { return { value: modelKey(m.provider, m.upstream_id), label: modelLabel(m) }; }
+// 2026-10-28：顶栏的模型选择器换成自定义面板之后，每项还带着 `provider_name` / `upstream_id` ——
+// 面板要按渠道分组、搜索要能按渠道名与上游 id 命中（label 只是显示名，常常不含渠道信息）。
+export function modelOption(m) {
+  return {
+    value: modelKey(m.provider, m.upstream_id),
+    label: modelLabel(m),
+    provider_name: m.provider_name || m.provider,
+    upstream_id: m.upstream_id,
+  };
+}
 export function agentOption(a) { return { id: a.id, label: a.name || a.id }; }
 // 谁在答（状态行与草稿共用；fallback 两处不同：会话里"未知模型"、草稿"未选模型"）。
 export function whoText(provider, model, fallback = "未知模型") {
@@ -149,6 +158,49 @@ export function usageFootTitle(usage) {
 // contextOverBudget：超预算 ⇒ 环变红（从前是状态行那行小字变红，信号不能丢）。
 export function contextOverBudget(ctx) {
   return !!ctx?.over_budget;
+}
+
+// ---- 顶栏的模型选择浮板（2026-10-28）----
+// 为什么这些纯函数住这儿：面板要"按渠道分组 + 搜索"，而搜什么、怎么分组、当前选的是哪条
+// 都能脱离 DOM 说清楚 —— 住组件里就只能靠正则去钉源码（钉不出"搜到了什么"）。
+export const ORPHAN_MODEL_GROUP = "\u0000orphan";
+
+// 一条模型匹配不匹配查询词：显示名 / 渠道名 / 上游 id 三者任一含它即算。
+// 上游 id 必须参与 —— 显示名常常不含渠道信息（"GPT-4o" 是哪家的？），而人恰恰按它找。
+export function modelMatches(m, query) {
+  const q = String(query ?? "").trim().toLowerCase();
+  if (!q) return true;
+  return [m?.label, m?.provider_name, m?.upstream_id].filter(Boolean).join(" ").toLowerCase().includes(q);
+}
+
+// 过滤 + 分组 + 扁平序号：面板的上下键要能一条条走完整个可见列表，
+// 所以每项带 `flat`（在本列表里的下标；分组顺序 = 传入顺序，组内 = 原顺序）。
+// 分完是空的组直接丢（搜索之后留一堆空组头只会让人以为没搜到）。
+// `orphan` = 当前值不在列表里那一条（渠道删了 / 模型下架）：它排最前 —— 那是"我现在在哪"。
+export function filterModelGroups(groups, query, orphan = null) {
+  const out = [];
+  let flat = 0;
+  if (orphan && modelMatches(orphan, query)) {
+    out.push({ provider: ORPHAN_MODEL_GROUP, providerName: "当前（不在列表）", items: [{ ...orphan, flat: flat++ }] });
+  }
+  for (const g of groups ?? []) {
+    const items = (g.items ?? []).filter((m) => modelMatches(m, query)).map((m) => ({ ...m, flat: flat++ }));
+    if (!items.length) continue;
+    out.push({ provider: g.provider, providerName: items[0].provider_name || g.provider, items });
+  }
+  return out;
+}
+
+// 顶栏按钮上那行字：列表里找到就用显示名；找不到用"不在列表"那条；再找不到（列表还没到）
+// 就把 key 拆开拼个 provider/model —— 总比空白强（空白看着像"没选模型"）。
+export function curModelLabelOf(groups, cur, orphan = null) {
+  for (const g of groups ?? []) {
+    const hit = (g.items ?? []).find((i) => i.value === cur);
+    if (hit) return hit.label;
+  }
+  if (orphan) return orphan.label;
+  const parsed = cur ? parseModelKey(cur) : null;
+  return parsed ? `${parsed.provider}/${parsed.model}` : "选择模型";
 }
 
 export function groupModelsByProvider(models) {

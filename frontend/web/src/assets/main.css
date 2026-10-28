@@ -91,11 +91,19 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
   /* 浮字柔影：影子的颜色取**底色**而不是黑色 —— 深色主题＝暗影、浅色主题＝亮晕，
  * 两套都能把字从任何背景图里托出来。写死黑色那版在浅色主题里是给深色字加黑边（糊）。 */
   text-shadow: 0 1px 2px color-mix(in srgb, var(--tg-bg) 85%, transparent), 0 1px 10px color-mix(in srgb, var(--tg-bg) 55%, transparent); }
-/* 顶栏左上角那枚"当前模型"：**静默下拉**（2026-10-14 用户定：没有按钮轮廓，只有字）——
- * 胶囊底、边框、自绘箭头全撤；点一下照样弹原生选项。窄屏可收缩省略（max-width 半幅）。 */
-.flat-select { flex: 0 1 auto; min-width: 0; max-width: 50%; background: none; background-image: none; border: none; padding: 0.1em 0; font: inherit; line-height: 1.3; color: var(--tg-text); cursor: pointer; text-overflow: ellipsis; }
-.flat-select:hover { filter: brightness(1.25); }
-.flat-select:focus { outline: none; }
+/* 顶栏左上角那枚"当前模型"（2026-10-28 用户定：从静默 `<select>` 换成自定义浮板）：
+ * 静息**仍只有字**（顶栏是透明的，栏面上不该长出一颗按钮），悬停给一层薄底说"这能点"，
+ * 右边一枚小三角。窄屏可收缩省略（max-width 半幅，省略号在 `.model-btn-label` 上）。
+ * ⚠ 外壳 `.model-anchor` 是给浮板定位用的：浮板贴**按钮**掉，不贴栏的左内边距
+ *   —— 顶栏左边还有头像与开关，写死一个 left 迟早对不上。 */
+.model-anchor { position: relative; flex: 0 1 auto; min-width: 0; display: inline-flex; }
+.model-btn { flex: 0 1 auto; min-width: 0; max-width: 100%; display: inline-flex; align-items: center; gap: 0.35em;
+  background: none; border: none; border-radius: var(--r-btn); margin-left: -0.4em; padding: 0.12em 0.4em;
+  font: inherit; line-height: 1.3; color: var(--tg-text); cursor: pointer; }
+.model-btn:hover { background: color-mix(in srgb, var(--tg-text) 8%, transparent); }
+.model-btn:focus-visible { outline: 2px solid color-mix(in srgb, var(--tg-link) 55%, transparent); outline-offset: 1px; }
+.model-btn-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-caret { flex: none; width: 0.5em; height: 0.3em; fill: currentColor; opacity: 0.45; }
 /* 右开关吃剩余空档（贴右缘）；左开关在时它就是最左那件。 */
 #toggle-right { margin-left: auto; }
 /* 顶栏里那两枚开关（2026-10-17 用户定"加个底"）：栏收着时它们孤零零浮在消息列上 ——
@@ -138,6 +146,29 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .agent-item .agent-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-item .agent-check { color: var(--tg-link); }
 .agent-empty { margin: 0.4em 0.6em; color: var(--tg-hint); font-size: 0.9em; }
+/* —— 模型选择浮板（2026-10-28 用户定：按渠道分组，接近 OpenWebUI 那种）——
+ * 壳子直接借 `.agent-menu`（--tg-float / --shadow-3 / --r-shell），这里只改三件事：
+ * ① 定位贴按钮（`left: 0`，父级是 `.model-anchor`）；② 滚动交给列表 —— 搜索框必须留在
+ * 上面不跟着滚；③ 宽一点（渠道名 + 模型名一行要放得下，20em 太窄会切掉模型名）。
+ * 为什么要有搜索框：聚合站动辄几百个模型（OpenRouter 实测 470），一条原生长菜单里
+ * 既搜不了、同一渠道的模型也不挨在一起。 */
+.model-menu { left: 0; min-width: 17em; max-width: 24em; max-height: none; overflow: visible;
+  display: flex; flex-direction: column; gap: 0.2em; }
+.model-search { width: 100%; margin: 0; }
+.model-list { overflow-y: auto; max-height: 46vh; overscroll-behavior: contain; }
+.model-group-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.6em;
+  margin: 0.4em 0.55em 0.1em; color: var(--tg-hint); font-size: 0.82em; letter-spacing: 0.02em; }
+.model-group-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-group-count { flex: none; font-variant-numeric: tabular-nums; opacity: 0.75; }
+.model-item { display: flex; align-items: center; gap: 0.5em; width: 100%; box-sizing: border-box; text-align: left;
+  background: none; border: none; border-radius: var(--r-btn); padding: 0.28em 0.55em; color: var(--tg-text);
+  cursor: pointer; font: inherit; line-height: 1.3; }
+.model-item:hover, .model-item.active { background: color-mix(in srgb, var(--tg-text) 7%, transparent); }
+/* 当前这一项：只染字与勾，不填底色 —— 底色是"你正指着它"（hover / 上下键）的信号，
+ * 两个都用同一种填色会分不清"我选了哪个"和"我指着哪个"。 */
+.model-item.sel { color: var(--tg-link); }
+.model-item .model-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-item .model-check { flex: none; color: var(--tg-link); }
 
 /* —— 上下文占比环（右上角，2026-10-28 用户定）——
  * 从前这数字是输入框上方那行状态小字里的"上下文 344/1.04M"，紧贴着对话；用户要求搬这儿：

@@ -2,12 +2,15 @@
 // 顶栏（2026-10-14 用户定，去壳版）：**全透明**，左上角 = **圆头像（当前 Agent，点开换）** + **当前模型平铺字**；
 // 右侧只在某一侧栏收着时才出它的开关（栏开着 ⇒ 开关在栏自己头上，见 App 的 applySideToggle）。
 //
+// 模型选择器（2026-10-28 用户定）：从静默 `<select>` 换成自定义浮板（按渠道分组 + 搜索），
+// 与 Agent 选人、上下文环那两个浮板同一族。
+//
 // 头像（2026-10-14 用户定）：圆形小图标就是**新的 Agent 入口** —— 里头是名字首字、底色由 id 派生
 // （同一个人永远同一个色）；点开掉出浮板选人。状态行小字里那个助手名管"显示"，头像管"选"。
 // 会话抬头不在顶栏（左栏列表高亮 + 状态行都有它）。
-import { ref, computed, nextTick } from "vue";
+import { ref, computed, nextTick, watch } from "vue";
 import { ICONS } from "./icons.js";
-import { modelKey, parseModelKey, formatTokens, formatStatusLine, contextArc, contextPercentText, contextTitle, contextOverBudget } from "../utils/format.js";
+import { modelKey, parseModelKey, formatTokens, formatStatusLine, contextArc, contextPercentText, contextTitle, contextOverBudget, curModelLabelOf, filterModelGroups } from "../utils/format.js";
 
 defineProps({
   // leftHidden / rightHidden：那一侧栏收着 ⇒ 顶栏出它那枚开关；栏开着 ⇒ 开关在栏自己头上
@@ -17,14 +20,62 @@ defineProps({
 });
 const emit = defineEmits(["toggle-left", "toggle-right", "select-model", "select-agent"]);
 
-const modelGroups = ref([]); // [{provider, items:[{value,label}]}]
+const modelGroups = ref([]); // [{provider, items:[{value,label,provider_name,upstream_id}]}]
 const curModel = ref("");
-// 会话绑的模型不在列表里（渠道被删、模型下架）⇒ 补一条"不在列表"选项，别让下拉空着
-// —— 空着看起来像"没选"，其实是有值（显示谎言）。
+// 会话绑的模型不在列表里（渠道被删、模型下架）⇒ 补一条"不在列表"，别让它看起来像没选
+// —— 那是有值，只是列表里没有（显示谎言比多一行丑得多）。
 const orphanModel = ref(null);
-// select 的选项是异步到的（/models 晚于进会话）：值在选项之前落进 DOM 时会掉（浏览器把
-// 选中的 option 换掉后不自动重选，Vue 对"值没变"的绑定也不重放）⇒ 每次落值后补写一次。
-const modelSel = ref(null);
+// —— 模型选择器（2026-10-28 用户定）——
+// 从前这儿是个静默 `<select>`：**原生选项**在 470 个模型的聚合站上是一条滚不完的长菜单，
+// 同一渠道的模型还不挨在一起、也没法搜。现在点开一块与 Agent 选人同族的浮板：
+// 搜索框 + 按渠道分组（组头带渠道名与条数）+ 当前项打勾 + 上下键与回车。
+//
+// ⚠ 顺带删掉了 `modelSel` / `reapplyValues` 那套补写：那是给 `<select>` 打的补丁 ——
+//   选项异步到、`value` 先落进 DOM 会被浏览器换掉。既然是自己的面板，值就只是数据。
+const modelOpen = ref(false);
+const modelQuery = ref("");
+const modelSearchEl = ref(null);
+const modelActive = ref(-1); // 上下键选中的那一项（在**扁平化**的列表里的下标），-1 = 没选
+
+const curModelLabel = computed(() => curModelLabelOf(modelGroups.value, curModel.value, orphanModel.value));
+
+// 过滤 + 分组 + 扁平序号都在 `utils/format.js` 的 `filterModelGroups` 里（那边才测得到"搜到了什么"）。
+const filteredGroups = computed(() => filterModelGroups(modelGroups.value, modelQuery.value, orphanModel.value));
+const modelFlatCount = computed(() => filteredGroups.value.reduce((n, g) => n + g.items.length, 0));
+
+function toggleModel() {
+  modelOpen.value = !modelOpen.value;
+  if (!modelOpen.value) return;
+  agentOpen.value = false;
+  ctxOpen.value = false;
+  modelQuery.value = "";
+  modelActive.value = -1;
+  // 打开就聚焦搜索框：几百个模型，第一次动作必然是打字。
+  nextTick(() => modelSearchEl.value?.focus());
+}
+function pickModel(value) {
+  modelOpen.value = false;
+  // 点当前那一项 = 什么都不做（别为了一次误点发一个 PATCH）。
+  if (value && value !== curModel.value) emit("select-model", value);
+}
+function flatItemAt(index) {
+  for (const g of filteredGroups.value) {
+    for (const m of g.items) if (m.flat === index) return m;
+  }
+  return null;
+}
+function moveActive(delta) {
+  const n = modelFlatCount.value;
+  if (!n) return;
+  const next = modelActive.value + delta;
+  modelActive.value = next < 0 ? 0 : next >= n ? n - 1 : next;
+}
+function pickActive() {
+  const hit = flatItemAt(modelActive.value);
+  if (hit) pickModel(hit.value);
+}
+// 改了搜索词就丢掉上次的高亮（不然回车会选中一个新列表里不存在的位次）。
+watch(modelQuery, () => { modelActive.value = -1; });
 
 const leftSvg = ICONS.panelLeft;
 const rightSvg = ICONS.panelRight;
@@ -50,12 +101,6 @@ function agentHue(id) {
 function agentDotStyle(id) { return { background: `hsl(${agentHue(id)} 42% 46%)` }; }
 function pickAgent(id) { agentOpen.value = false; emit("select-agent", id); }
 
-function reapplyValues() {
-  nextTick(() => {
-    if (modelSel.value && curModel.value) modelSel.value.value = curModel.value;
-  });
-}
-
 function syncOrphanModel() {
   const cur = curModel.value;
   const known = cur && modelGroups.value.some((g) => (g.items ?? []).some((i) => i.value === cur));
@@ -66,9 +111,8 @@ function setSession(info) {
   if (info.provider && info.model) curModel.value = modelKey(info.provider, info.model);
   if (info.agent_id) curAgent.value = info.agent_id;
   syncOrphanModel();
-  reapplyValues();
 }
-function setModels(groups, cur) { modelGroups.value = groups; if (cur !== undefined) curModel.value = cur; syncOrphanModel(); reapplyValues(); }
+function setModels(groups, cur) { modelGroups.value = groups; if (cur !== undefined) curModel.value = cur; syncOrphanModel(); }
 function setAgents(list, cur) { agents.value = list ?? []; if (cur !== undefined) curAgent.value = cur; }
 
 // —— 上下文占比环（2026-10-28 用户定）——
@@ -99,8 +143,8 @@ const ctxRows = computed(() => {
   if (c.last_prompt_tokens != null) rows.push(["上一发实测", `${formatTokens(c.last_prompt_tokens)}（这格是估的：${formatTokens(c.used_tokens)}）`]);
   return rows;
 });
-function toggleCtx() { ctxOpen.value = !ctxOpen.value; if (ctxOpen.value) agentOpen.value = false; }
-function toggleAgent() { agentOpen.value = !agentOpen.value; if (agentOpen.value) ctxOpen.value = false; }
+function toggleCtx() { ctxOpen.value = !ctxOpen.value; if (ctxOpen.value) { agentOpen.value = false; modelOpen.value = false; } }
+function toggleAgent() { agentOpen.value = !agentOpen.value; if (agentOpen.value) { ctxOpen.value = false; modelOpen.value = false; } }
 // setContext：App 每轮 refreshStatusline 喂一次（草稿态传 null）。
 function setContext(c) { ctx.value = c ?? null; }
 
@@ -142,19 +186,59 @@ defineExpose({ setSession, setModels, setAgents, setContext, setStatus });
       aria-label="切换 Agent"
       @click="toggleAgent"
     >{{ agentInitial }}</button>
-    <select
-      id="session-model"
-      ref="modelSel"
-      class="flat-select"
-      title="改当前会话的模型"
-      :value="curModel"
-      @change="$emit('select-model', $event.target.value)"
-    >
-      <option v-if="orphanModel" :value="orphanModel.value">{{ orphanModel.label }}</option>
-      <optgroup v-for="g in modelGroups" :key="g.provider" :label="g.provider">
-        <option v-for="m in g.items" :key="m.value" :value="m.value">{{ m.label }}</option>
-      </optgroup>
-    </select>
+    <!-- 当前模型（2026-10-28 用户定：换成自定义面板，按渠道分组）。
+         外壳 `span` 只管定位（浮板要贴着按钮掉，而不是贴着栏的左内边距）。 -->
+    <span class="model-anchor">
+      <button
+        id="model-btn"
+        class="model-btn"
+        type="button"
+        title="改当前会话的模型"
+        aria-label="选择模型"
+        :aria-expanded="modelOpen ? 'true' : 'false'"
+        @click="toggleModel"
+      >
+        <span class="model-btn-label">{{ curModelLabel }}</span>
+        <svg class="model-caret" viewBox="0 0 10 6" aria-hidden="true"><path d="M0 0h10L5 6z" /></svg>
+      </button>
+      <template v-if="modelOpen">
+        <div class="agent-menu-backdrop" @click="modelOpen = false"></div>
+        <div class="agent-menu model-menu" role="dialog" aria-label="选择模型" @keydown.esc="modelOpen = false">
+          <input
+            ref="modelSearchEl"
+            v-model="modelQuery"
+            class="model-search"
+            type="search"
+            placeholder="搜索模型 / 渠道…"
+            aria-label="搜索模型"
+            @keydown.down.prevent="moveActive(1)"
+            @keydown.up.prevent="moveActive(-1)"
+            @keydown.enter.prevent="pickActive"
+          />
+          <div class="model-list">
+            <template v-for="g in filteredGroups" :key="g.provider">
+              <div class="model-group-head">
+                <span class="model-group-name">{{ g.providerName }}</span>
+                <span class="model-group-count">{{ g.items.length }}</span>
+              </div>
+              <button
+                v-for="m in g.items"
+                :key="m.value"
+                type="button"
+                class="model-item"
+                :class="{ sel: m.value === curModel, active: m.flat === modelActive }"
+                :title="`${g.providerName} / ${m.upstream_id || m.label}`"
+                @click="pickModel(m.value)"
+              >
+                <span class="model-name">{{ m.label }}</span>
+                <span v-if="m.value === curModel" class="model-check">✓</span>
+              </button>
+            </template>
+            <p v-if="!filteredGroups.length" class="agent-empty">没有匹配的模型</p>
+          </div>
+        </div>
+      </template>
+    </span>
     <span class="header-right">
       <!-- 顺序是**环在左、开关在右**（2026-10-28 用户定）：开关是"控制栏的按钮"，
            它是这一簇的锚，位置稳定；环是随状态变的仪表，挂在它左边不抢锚点。 -->
