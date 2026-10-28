@@ -1,14 +1,19 @@
 <script setup>
-// Agent 编辑器（设置视图 Agent tab 内的二级页，列表 ⇄ 详情就地切换）：新建 / 改 id·名 / 提示词 / 三能力开关 / 设默认 / 删除。
+// Agent 编辑器（设置视图 Agent tab 内的二级页，列表 ⇄ 详情就地切换）：新建 / 改 id·名 / 提示词 / 能力开关 / 设默认 / 删除。
 // isNew（boolean）：无 agent 快照=新建（空表单）；有=编辑（带入快照，保存后父重拉，id 变了也对得上）。关即销毁。
+//
+// 2026-10-28 用户：「在具体某个 Agent 的设置界面里，我们最好也分 TAB，不然的话，全挤在一起很丑。」
+// ⇒ 一条长滚动拆成页签：基本 / 系统提示词 / 每个能力一页（页签条用 `TabBar`，与设置主栏同一个组件）。
+// 保存一行留在页签**外面**（哪一页都能保存；翻页不丢已填的东西，状态都在 ref 里）。
 import { ref, computed, onMounted, onUnmounted } from "vue";
 import { sharedApi } from "../utils/prefs.js";
-import { ABILITY_IDS, ABILITY_TEMPLATE_SEGMENT, buildAbilitiesPatch, modelKey, parseModelKey, modelLabel } from "../utils/format.js";
+import { ABILITY_IDS, ABILITY_LABELS, ABILITY_TEMPLATE_SEGMENT, buildAbilitiesPatch, modelKey, parseModelKey, modelLabel } from "../utils/format.js";
 import { assemblePrompt, abilityPrompt } from "../utils/prompt.js";
 import { buildCartridge } from "../utils/cartridge.js";
 import { downloadJSON } from "../utils/download.js";
 import ToggleSwitch from "./ToggleSwitch.vue";
 import SegmentList from "./SegmentList.vue";
+import TabBar from "./TabBar.vue";
 
 const props = defineProps({
   agent: { type: Object, default: null },
@@ -21,6 +26,13 @@ const emit = defineEmits(["close", "saved"]);
 
 const api = sharedApi();
 const isNew = !props.agent;
+// 页签：基本 → 系统提示词 → 每个能力一页（顺序跟着 `ABILITY_IDS` 走，加能力就自动多一页）。
+const tabs = [
+  { id: "base", label: "基本" },
+  { id: "prompt", label: "系统提示词" },
+  ...ABILITY_IDS.map((id) => ({ id, label: ABILITY_LABELS[id] ?? id })),
+];
+const tab = ref("base");
 const aid = ref(props.agent?.id ?? "");
 const name = ref(props.agent?.name ?? props.template?.name ?? "");
 const prompt = ref(props.agent?.system_prompt ?? props.template?.system_prompt ?? "");
@@ -169,20 +181,26 @@ function onKey(e) {
       <button class="icon-btn" type="button" title="返回列表（Esc）" @click="$emit('close')">←</button>
       <span class="status">{{ isNew ? "新建 Agent" : `编辑「${props.agent.name}」` }}{{ !isNew && isDefault ? "（默认）" : "" }}</span>
     </div>
-    <h3>基本</h3>
-    <label class="field"><span>id（改即重命名，搬引用）</span><input v-model="aid" :disabled="isNew" placeholder="新建时由后端生成" /></label>
-    <label class="field"><span>名称</span><input v-model="name" placeholder="人格名" /></label>
-    <label class="field-block"><span>系统提示词（base）</span><textarea v-model="prompt" rows="6" placeholder="system_prompt"></textarea></label>
-    <label class="field-block"><span>首段对话（新会话的第一条 assistant 消息；空 = 不启用）</span><textarea v-model="firstMsg" rows="3" placeholder="例如：你好，我是……（可带 &lt;state&gt; 块设初始状态）"></textarea></label>
-    <SegmentList
-      v-model:ids="segs"
-      :segments="props.segments"
-      :assembled="assembled"
-      heading="提示词段（追加在 base 后面，顺序 = 拼接顺序）" />
-    <label class="field"><span>句首贴当前状态（RP 类需要）</span><ToggleSwitch v-model="prepend" /></label>
-    <h3>能力（开关 + 模型 / 提示词 / 提示词段，空=默认）</h3>
-    <fieldset v-for="id in ABILITY_IDS" :key="id" class="ability-block">
-      <legend><ToggleSwitch v-model="rows[id].enabled" /> {{ id }}</legend>
+    <TabBar v-model="tab" :tabs="tabs" />
+
+    <section v-show="tab === 'base'" class="pane-section">
+      <label class="field"><span>id（改即重命名，搬引用）</span><input v-model="aid" :disabled="isNew" placeholder="新建时由后端生成" /></label>
+      <label class="field"><span>名称</span><input v-model="name" placeholder="人格名" /></label>
+      <label class="field-block"><span>首段对话（新会话的第一条 assistant 消息；空 = 不启用）</span><textarea v-model="firstMsg" rows="3" placeholder="例如：你好，我是……（可带 &lt;state&gt; 块设初始状态）"></textarea></label>
+      <label class="field"><span>句首贴当前状态（RP 类需要）</span><ToggleSwitch v-model="prepend" /></label>
+    </section>
+
+    <section v-show="tab === 'prompt'" class="pane-section">
+      <label class="field-block"><span>系统提示词（base）</span><textarea v-model="prompt" rows="6" placeholder="system_prompt"></textarea></label>
+      <SegmentList
+        v-model:ids="segs"
+        :segments="props.segments"
+        :assembled="assembled"
+        heading="提示词段（追加在 base 后面，顺序 = 拼接顺序）" />
+    </section>
+
+    <section v-for="id in ABILITY_IDS" v-show="tab === id" :key="id" class="pane-section">
+      <label class="field"><span>启用（关掉 = 这一发明确拒绝，不是静默跳过）</span><ToggleSwitch v-model="rows[id].enabled" /></label>
       <label class="field"><span>Model</span><select v-model="rows[id].model">
         <option value="">跟会话走</option>
         <option v-for="m in modelOptions" :key="m.value" :value="m.value">{{ m.label }}</option>
@@ -197,7 +215,8 @@ function onKey(e) {
         :assembled="abilityAssembled(id)"
         :hint="abilitySegHint(id)"
         heading="提示词段（追加在模板后面，顺序 = 拼接顺序）" />
-    </fieldset>
+    </section>
+
     <div class="row">
       <button type="button" class="primary" @click="save">保存</button>
       <button type="button" @click="exportCartridge" title="导出 agent 卡带（JSON；段拼平进提示词、不留引用）">导出卡带</button>

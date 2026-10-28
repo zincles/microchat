@@ -29,6 +29,7 @@ import {
   deletionPlanSummary,
   formatRoutesOutcome,
   ABILITY_IDS,
+  ABILITY_LABELS,
   ABILITY_TEMPLATE_SEGMENT,
   buildAbilitiesPatch,
   taskLineText,
@@ -1235,4 +1236,50 @@ test("上下文环：App 喂 ctx / 环在顶栏画 / 状态行不再报占用", 
   assert.match(top, /const statusRows = computed/, "浮板里没有连接/助手/运行那三行");
   assert.match(top, /ctx-rows-status/, "浮板里那三行没接样式");
   assert.ok(!/\.statusline/.test(css), "main.css 里还留着 .statusline 规则（那一行已经删了）");
+});
+
+// 页签条也是"两处各写一遍"的那种东西（设置主栏六区 + Agent 编辑器的二级页签）。
+// 底片滑动的算法（量 offsetLeft/offsetWidth）抄错一个像素看不出来，抄出两份就会一边顺一边顿，
+// 而且 window resize / 界面缩放滑杆之后两边行为会分叉。⇒ 共用一个 `TabBar`。
+test("页签条：设置主栏与 Agent 编辑器用的是同一个组件", () => {
+  const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
+  const editor = readFileSync(join(SRC, "components", "AgentEditor.vue"), "utf8");
+  const bar = readFileSync(join(SRC, "components", "TabBar.vue"), "utf8");
+  assert.match(settings, /<TabBar v-model="tab" :tabs="SETTINGS_TABS" \/>/, "设置主栏没用 TabBar");
+  assert.match(editor, /<TabBar v-model="tab" :tabs="tabs" \/>/, "Agent 编辑器没用 TabBar");
+  // 手写一套的话会有这些痕迹：nav 里的 tab-thumb、以及自己去量 offsetLeft。
+  for (const [name, src] of [["SettingsModal.vue", settings], ["AgentEditor.vue", editor]]) {
+    assert.ok(!src.includes("tab-thumb"), `${name} 自己画了一枚 tab-thumb —— 该交给 TabBar`);
+    assert.ok(!src.includes("offsetWidth"), `${name} 自己在量按钮宽度 —— 该交给 TabBar`);
+  }
+  assert.match(bar, /window\.addEventListener\("resize", moveThumb\)/, "TabBar 没跟窗口缩放（字大小变了底片会错位）");
+});
+
+// 用户 2026-10-28：「在具体某个 Agent 的设置界面里，我们最好也分 TAB，不然的话，全挤在一起很丑。」
+// 分页签这件事**两个地方都要**：TabBar 在，且每个能力各占一页（加能力自动多一页，
+// 别写成硬编码的两页 —— 硬编码的那种，加第三个能力时那个能力的开关会悄悄挤在最后一页里）。
+test("Agent 编辑器分页签：基本 / 系统提示词 / 每个能力各一页", () => {
+  const editor = readFileSync(join(SRC, "components", "AgentEditor.vue"), "utf8");
+  assert.match(editor, /\{ id: "base", label: "基本" \}/, "没有「基本」那一页");
+  assert.match(editor, /\.\.\.ABILITY_IDS\.map\(\(id\) => \(\{ id, label: ABILITY_LABELS\[id\] \?\? id \}\)\)/,
+    "能力那几页该由 ABILITY_IDS 生成（加能力自动多一页）");
+  // 三个分区都在（v-show 切换：翻页不丢已填的东西）
+  assert.match(editor, /v-show="tab === 'base'"/, "基本那一页没有分区");
+  assert.match(editor, /v-show="tab === 'prompt'"/, "系统提示词那一页没有分区");
+  assert.match(editor, /v-for="id in ABILITY_IDS" v-show="tab === id"/, "能力那几页没有分区");
+  // 保存行在页签**外面**：哪一页都能存（藏在某一页里的那种，翻到别的页就找不到保存了）
+  const saveAt = editor.indexOf(">保存<");
+  const lastSectionEnd = editor.lastIndexOf("</section>");
+  assert.ok(saveAt > lastSectionEnd, "保存行该在页签分区外面（否则只在某一页能看见）");
+});
+
+// 能力的**中文名**同样是"两处各写一遍"：前端 `ABILITY_LABELS`（页签名）与后端
+// `abilities.definitions` 的 `Label`。叫法不一致不会报错，只会让人以为是两个东西。
+test("能力中文名：前端 ABILITY_LABELS 与后端 definitions 的 Label 一致", () => {
+  const go = readFileSync(join(REPO, "core", "internal", "abilities", "abilities.go"), "utf8");
+  const block = go.match(/var definitions = \[\]Definition\{([\s\S]*?)\n\}/);
+  assert.ok(block, "找不到 definitions 表");
+  const pairs = [...block[1].matchAll(/\{ID: (\w+), Label: "([^"]+)"/g)];
+  const goLabels = Object.fromEntries(pairs.map((m) => [m[1].toLowerCase(), m[2]]));
+  assert.deepEqual(ABILITY_LABELS, goLabels, "前端能力名与后端 Label 对不上");
 });

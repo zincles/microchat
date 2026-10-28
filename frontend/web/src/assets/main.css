@@ -783,9 +783,12 @@ button.toggle.on .knob { transform: translateX(1.1em); }
 /* 二级页里的说明小字（筛选器那段：举例子要用等宽体才看得清 `openai/gpt-5` 这种串）。
  * 抄门板那条 `.gate-box .hint code` 的形状 —— 同一个用途、同一种观感。 */
 .detail-pane .hint code { background: color-mix(in srgb, var(--tg-text) 8%, transparent); border-radius: 4px; padding: 0 0.25em; font-size: 0.92em; }
-/* 能力块：fieldset 分隔三条（legend 当开关行），Model 下拉与提示词框各占一行。 */
-.ability-block { border: 1px solid var(--line); border-radius: var(--r-btn); padding: 0.35em 0.7em 0.5em; margin: 0.5em 0; }
-.ability-block legend { padding: 0 0.4em; color: var(--tg-text); display: flex; align-items: center; gap: 0.4em; }
+/* 二级页里的页签分区（Agent 编辑器：基本 / 系统提示词 / 每个能力一页）。
+ * 不再用 fieldset 围边（2026-10-28 分页签之后）：页签本身就是分隔，
+ * 一个能力一页，再套一圈框只是多一层线和圆角。 */
+.detail-pane .pane-section { padding-bottom: 0.2em; }
+/* 页签条在这一层里不要那个下外边距留下的空档（保存行要贴在它下面）。 */
+.detail-pane > .settings-nav { margin-bottom: 0.55em; }
 .plist { width: 100%; border-collapse: collapse; }
 .plist th, .plist td { text-align: left; padding: 0.3em 0.6em; border-bottom: 1px solid var(--line); white-space: nowrap; line-height: 1.35; }
 .plist th { color: var(--tg-hint); font-weight: normal; font-size: 0.85em; }

@@ -197,6 +197,11 @@ export function formatRoutesOutcome(o) {
 // 契约测试拿这张表去对 `core/internal/abilities/abilities.go` 的 definitions。
 export const ABILITY_IDS = ["title", "compact"];
 
+// 能力的中文名（页签 / 标题用）。**与后端 `abilities.definitions` 的 `Label` 逐字相同** ——
+// 它是给人看的那一层，两处叫法不同不会报错，只会让人疑惑"这是不是两个东西"。
+// 契约测试从 `core/internal/abilities/abilities.go` 里读 `Label: "…"` 来对。
+export const ABILITY_LABELS = { title: "起标题", compact: "压缩" };
+
 // 能力的**默认模板住在哪条内置段**（2026-10-28：两个默认模板都搬进了段库）。
 // ⚠ 这两个 id 与后端 `config.CompactTemplateSegmentID` / `config.TitleTemplateSegmentID`
 // 必须逐字相同 —— 写错不报错，只是预览里少一段（真正的模板仍由后端拼）。

@@ -3,8 +3,9 @@
 // 自带小头（[◧] 左栏开关 · 设置 · [×] 返回对话）。子编辑器（Agent/Provider）改为对应 tab 内的二级页（列表 ⇄ 详情就地切换）。
 // 「界面」一族的个人偏好（主题/背景图/发送键/预演）已搬到**用户视图**（与设置平级的另一半）。
 // 关走 close（Esc/×）—— 视图不卸载就丢状态的口径照旧：v-if 挂载，进视图拉一次。
-import { ref, onMounted, onUnmounted, watch, nextTick } from "vue";
+import { ref, onMounted, onUnmounted } from "vue";
 import ToggleSwitch from "./ToggleSwitch.vue";
+import TabBar from "./TabBar.vue";
 import AgentEditor from "./AgentEditor.vue";
 import SegmentEditor from "./SegmentEditor.vue";
 import assistantPreset from "../../presets/assistant.json";
@@ -29,22 +30,8 @@ const props = defineProps({
 const api = sharedApi();
 const leftSvg = ICONS.panelLeft;
 
+// 六个区的页签：底片滑动的算法住在 `TabBar` 里（与 Agent 编辑器里那组二级页签同一个组件）。
 const tab = ref("chat");
-// tab-thumb 跟随：量选中按钮相对 nav 的 left/width（切页 + 进视图 + 缩放都重算）。
-const navEl = ref(null);
-const thumbLeft = ref(0);
-const thumbWidth = ref(0);
-function moveThumb() {
-  nextTick(() => {
-    const nav = navEl.value;
-    if (!nav) return;
-    const btn = nav.querySelector(`#tab-${tab.value}`);
-    if (!btn) return;
-    thumbLeft.value = btn.offsetLeft;
-    thumbWidth.value = btn.offsetWidth;
-  });
-}
-watch(tab, moveThumb);
 const chat = ref({ title_chars: "", model_context_tokens: "", compact_blocks: "", compact_trigger_tokens: "", replay_reasoning: false, auto_compact: true });
 const chatStatus = ref("");
 const defaults = ref({ provider: "", model: "", agent: "" });
@@ -266,7 +253,6 @@ onMounted(() => {
   loadProviders().catch(() => {});
   loadSessions().catch(() => {});
   document.addEventListener("keydown", onKey);
-  moveThumb();
 });
 onUnmounted(() => document.removeEventListener("keydown", onKey));
 function onKey(e) {
@@ -288,20 +274,7 @@ function onKey(e) {
         @click="$emit('toggle-left')"
         v-html="leftSvg"
       ></button>
-      <nav ref="navEl" class="settings-nav">
-        <span class="tab-thumb" :style="{ left: thumbLeft + 'px', width: thumbWidth + 'px' }"></span>
-        <button
-          v-for="t in SETTINGS_TABS"
-          :key="t.id"
-          :id="`tab-${t.id}`"
-          type="button"
-          class="tab"
-          :class="{ sel: tab === t.id }"
-          @click="tab = t.id"
-        >
-          {{ t.label }}
-        </button>
-      </nav>
+      <TabBar v-model="tab" :tabs="SETTINGS_TABS" />
       <button id="settings-close" class="icon-btn" type="button" title="退出设置（Esc）" aria-label="退出设置" @click="$emit('close')">
         ×
       </button>
