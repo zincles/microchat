@@ -1809,3 +1809,62 @@ test("工作区开关：够大，但没顶穿消息列的顶部留白", () => {
   assert.ok(height < reserve - 0.5,
     `开关 ${height.toFixed(2)}em 快顶到消息列顶部留白 ${reserve}em 了 —— 再大就会压住第一条消息`);
 });
+
+// 载荷面板的「折叠全部」（2026-10-29 用户定：「我希望有个按钮可以一键折叠全部（但没有一键展开的）」）。
+//
+// 那个不对称是**刻意的**，所以两头都得钉：
+//   ① 折叠全部必须在（别被谁顺手删了/当成"和展开对称"给成对改了）；
+//   ② **不许**长出"展开全部" —— 展开那一下会把整发请求（常含几十 KB 的 system prompt）
+//      一次铺满面板，而折叠只是"收拾"。收起来永远安全，铺开需要人逐条确认。
+test("载荷：有一键折叠全部，且没有一键展开", () => {
+  const bar = readFileSync(join(SRC, "components", "PayloadBar.vue"), "utf8");
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  const script = bar.slice(0, bar.indexOf("</script>")).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  // ⚠ tpl 要**先剥 HTML 注释**：我要断言的正是"不许出现展开全部"，而注释里写一句
+  // "没有反向的展开全部"是对的（那正是在提醒后人别加）—— 不剥注释，正确的注释会让守卫假失败。
+  const tpl = bar.slice(bar.indexOf("<template>")).replace(/<!--[\s\S]*?-->/g, "");
+
+  // ① 有按钮，且它落在载荷那一页的工具栏里
+  assert.match(tpl, /class="pv-collapse-all"/, "载荷页没有「折叠全部」按钮");
+  const toolbar = tpl.slice(tpl.indexOf('class="pv-toolbar"'), tpl.indexOf('id="payload-viz"'));
+  assert.ok(toolbar.includes("pv-collapse-all"), "「折叠全部」没放在载荷页的工具栏里");
+  assert.match(tpl, /@click="collapseAll"/, "按钮没接 collapseAll");
+
+  // ② 折叠的实现：**每一条都显式记成 false**。
+  //    `blockOpen` 的默认值取决于块长短（长块默认折叠），所以"不管当前状态一律收起"必须写显式的 false，
+  //    不能靠"清空 map 让它回默认"—— 那样短块会自己弹开。
+  const fn = script.match(/function collapseAll\(\)[\s\S]*?\n\}/)?.[0] ?? "";
+  assert.ok(fn, "找不到 collapseAll");
+  assert.match(fn, /set\(i, false\)|set\([^,]+,\s*false\)/, "折叠时没把每条显式设成 false —— 短块会自己弹开");
+
+  // ③ **没有展开全部**（用户明确不要）。这条防的是"顺手补个对称按钮"。
+  assert.ok(!/展开全部|expandAll|expand-all/i.test(tpl), "多出了「展开全部」—— 用户明确不要（折叠是收拾，展开是倾泻）");
+  assert.ok(!/function expandAll/.test(script), "脚本里冒出了 expandAll");
+
+  // ④ 全收起来时禁用（别给一个点了没反应的样子）
+  assert.match(tpl, /:disabled="allCollapsed"/, "全折叠后按钮没禁用（会变成点不动的死按钮）");
+
+  // ⑤ 平铺样式：这个按钮也不许长成"盒子"
+  const rule = css.match(/(?:^|\n)\.pv-collapse-all\s*\{([^}]*)\}/)?.[1] ?? "";
+  assert.ok(rule, "找不到 .pv-collapse-all 样式");
+  assert.match(rule, /background:\s*none/, "折叠按钮有底色了（这三页是平铺，不放盒子）");
+  assert.match(rule, /border:\s*none/, "折叠按钮有边框了");
+  assert.match(css, /\.pv-collapse-all:disabled/, "没给禁用态样式 —— 禁用后看起来还能点");
+});
+
+// 2026-10-29 顺手修的：压缩页那个「收起」× 从前是 `@click="compactWire = null"`，
+// 而 `compactWire` 是 **computed（只读）** ⇒ 赋值只打一条警告、什么都不发生。
+// 这类"死按钮"不报错、不误路由，就是点下去没反应 —— 而且**构建和契约测试都看不见**。
+test("压缩载荷：「收起」按钮真的能收（不是给 computed 赋值）", () => {
+  const bar = readFileSync(join(SRC, "components", "PayloadBar.vue"), "utf8");
+  // 那个只读赋值必须真的没了
+  assert.ok(!/compactWire\s*=\s*null/.test(bar),
+    "还在给只读的 compactWire 赋值 —— 按钮点下去毫无反应");
+  const tpl = bar.slice(bar.indexOf("<template>")).replace(/<!--[\s\S]*?-->/g, "");
+  assert.match(tpl, /@click="closeCompactPayload"/, "「收起」没接到一个真能改状态的函数");
+  const script = bar.slice(0, bar.indexOf("</script>")).replace(/^\s*\/\/.*$/gm, "");
+  const fn = script.match(/function closeCompactPayload\(\)[\s\S]*?\n\}/)?.[0] ?? "";
+  assert.ok(fn, "找不到 closeCompactPayload");
+  // 改的必须是**来源**（compactInfo），不是那个 computed
+  assert.match(fn, /compactInfo\.value\s*=/, "closeCompactPayload 没清掉真正的来源 compactInfo");
+});

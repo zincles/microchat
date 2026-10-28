@@ -42,6 +42,26 @@ function blockOpen(m, i) {
 function toggleBlock(m, i) {
   openMap.value.set(i, !blockOpen(m, i));
 }
+// 一键折叠全部（2026-10-29 用户点名要），**并且明确不要"一键展开"**。
+//
+// 这个不对称是刻意的、不是漏做：
+//   · 折叠是**收拾**——把铺开的东西收回去，看骨架。最坏结果只是"我得再点开一条"。
+//   · 展开是**倾泻**——这一发请求里常有整份 system prompt（几十 KB），一键铺开等于
+//     把面板灌满、还要人手动滚回去。那是不可撤销的视觉冲击，没有"反向动作"的对称必要。
+// 所以这里只有单向按钮；想看全文就逐条点（那也需要人确认"我确实要看这一条"）。
+const allCollapsed = computed(() => {
+  const messages = vizData.value?.messages ?? [];
+  return messages.length > 0 && messages.every((m, i) => !blockOpen(m, i));
+});
+function collapseAll() {
+  const messages = vizData.value?.messages ?? [];
+  if (!messages.length) return;
+  // 整张表换新（而不是逐条 set）：逐条改也触发更新，但换新一个 Map 只走一次刷新，
+  // 而且"全部收起"就是一张干净的表 —— 没有中间态。
+  const next = new Map();
+  messages.forEach((_, i) => next.set(i, false));
+  openMap.value = next;
+}
 const tables = ref({});
 const tree = ref(null); // null = 还没数据（不发请求，显示空话）
 
@@ -83,6 +103,14 @@ function cpOpen(m, i) {
   return cpOpenMap.value.has(i) ? cpOpenMap.value.get(i) : !shouldCollapse(m.content);
 }
 function cpToggle(m, i) { cpOpenMap.value.set(i, !cpOpen(m, i)); }
+// 关掉"这一发压缩的载荷"那块预览。
+// ⚠ 从前模板里写的是 `@click="closeCompactPayload"` —— 而 `compactWire` 是 **computed（只读）**，
+// 那个赋值在浏览器里只会打一条 "computed value is readonly" 警告、什么都不发生
+// （按钮点下去毫无反应，还看不出是坏了）。要改的是它背后的来源 `compactInfo`。
+function closeCompactPayload() {
+  compactInfo.value = {};
+  cpOpenMap.value = new Map();
+}
 function setCompactWire(result) {
   compactInfo.value = result ?? {};
   cpOpenMap.value = new Map(); // 换一发 ⇒ 开合回到默认（长块默认折叠）
@@ -108,6 +136,17 @@ defineExpose({ setWire, setTables, setTree, setCompactWire });
       <div class="pv-toolbar">
         <ToggleSwitch :model-value="viz" @update:model-value="setViz" />
         <span class="lbl">分块视图（按 message 拆开看）</span>
+        <!-- 一键折叠全部（2026-10-29 用户定）。**没有反向的"展开全部"** —— 理由写在
+             `collapseAll` 上面：折叠是收拾，展开是倾泻。全收起来了就禁用，别给人一个
+             "点了没反应"的错觉。 -->
+        <button
+          v-if="viz && vizData && vizData.messages.length"
+          type="button"
+          class="pv-collapse-all"
+          :disabled="allCollapsed"
+          :title="allCollapsed ? '已经全部折叠了' : '把每一条都收起来，只看骨架'"
+          @click="collapseAll"
+        >折叠全部</button>
       </div>
       <div v-if="viz && vizData" id="payload-viz">
         <div class="pv-meta">
@@ -168,7 +207,7 @@ defineExpose({ setWire, setTables, setTree, setCompactWire });
       <div v-if="compactWire" id="compact-payload">
         <div class="cp-head">
           <span class="cp-title">这一发压缩的载荷</span>
-          <button type="button" class="cp-close" title="收起" aria-label="收起" @click="compactWire = null">×</button>
+          <button type="button" class="cp-close" title="收起" aria-label="收起" @click="closeCompactPayload">×</button>
         </div>
         <div class="pv-meta">
           <span class="pv-method">{{ compactMeta.method }}</span>

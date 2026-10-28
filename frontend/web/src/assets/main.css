@@ -332,6 +332,17 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 /* 载荷栏"分块视图"（用户点名 2026-10-11）：body.messages 一块块矩形画出来（角色徽标 + 内容）。 */
 .pv-toolbar { display: flex; align-items: center; gap: 0.5em; margin: 0 0 0.5em; color: var(--tg-hint); }
 .pv-toolbar .lbl { font-size: 0.9em; }
+/* 「折叠全部」（2026-10-29 用户定）。**平铺的手感**：没有边框、没有底色，只是一行可点的字 ——
+ * 与 .pv-role / .pv-chip 那套一致（这三页现在都是裸文本 + 细线，不放盒子）。
+ * margin-left:auto 把它推到行的右端：它是"收拾"动作，不抢左边那个开关的位置。 */
+.pv-collapse-all { margin-left: auto; flex: none; background: none; border: none; padding: 0.1em 0;
+  font: inherit; font-size: 0.85em; color: var(--tg-link); cursor: pointer; white-space: nowrap;
+  -webkit-tap-highlight-color: transparent; }
+.pv-collapse-all:hover { text-decoration: underline; }
+/* 已经全收起来了 ⇒ 禁用。**必须显式给禁用样式**：不然它会看起来照样可点，
+ * 点下去什么都没发生 —— 那是"死按钮"的老毛病。 */
+.pv-collapse-all:disabled { color: var(--tg-hint); opacity: 0.55; cursor: default; text-decoration: none; }
+.pv-collapse-all:focus-visible { outline: 2px solid color-mix(in srgb, var(--tg-link) 55%, transparent); outline-offset: 2px; }
 .pv-meta { display: flex; flex-wrap: wrap; gap: 0.35em; align-items: center; margin: 0 0 0.5em; font-size: 0.85em; color: var(--tg-hint); }
 .pv-method { color: var(--tg-text); font-weight: bold; }
 .pv-url { color: var(--tg-link); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
