@@ -2,18 +2,25 @@
 // CompactTree：压缩树（文件管理器那种一眼看体积的树）—— 缩进行 + 行底容量条。
 // 行元素：▸/▾ 折叠 | 行底 bar（宽度 = 子树原文占比，du 式）| 标签（区间/角色 + 标记）| 右侧体积。
 // 标记：`发` = 装配真的跳到它（这一坨就发这份）；`脏` = 摘要被覆盖的消息改过、已过期（装配照用）。
-import { ref, computed } from "vue";
+import { computed } from "vue";
 
 const props = defineProps({
   nodes: { type: Array, default: () => [] }, // buildCompactTree 的产出
+  // 折叠状态由**外面**持有（2026-10-29）：压缩页要有个"一键折叠全部"，那得有个人能一次改到底。
+  // 状态留在这个组件里的话，外面只能靠 ref+defineExpose 摸进来 —— 那是不对称的（谁能读、谁能写
+  // 全靠约定），而且"全收起来了吗"这个判断会变成跨组件的字符串比较。
+  // 现在：父组件拿着 Set，这里只负责「按 Set 渲染」+「点一下发新的 Set」。
+  collapsed: { type: Object, default: () => new Set() },
 });
+const emit = defineEmits(["update:collapsed"]);
 
-const collapsed = ref(new Set());
+// ⚠ 每次都发**新的 Set**，不改传进来的那份：prop 是父组件的 state，
+// 就地改它等于绕过 `update:` 约定（父组件那边可能还有别的读者）。
 function toggle(id) {
-  const s = new Set(collapsed.value);
+  const s = new Set(props.collapsed);
   if (s.has(id)) s.delete(id);
   else s.add(id);
-  collapsed.value = s;
+  emit("update:collapsed", s);
 }
 
 // 展平成行（带 depth）：渲染与"bar 基准"共用一份遍历。
@@ -22,7 +29,7 @@ const rows = computed(() => {
   const walk = (ns, depth) => {
     for (const n of ns) {
       out.push({ n, depth });
-      if (!collapsed.value.has(n.id)) walk(n.children, depth + 1);
+      if (!props.collapsed.has(n.id)) walk(n.children, depth + 1);
     }
   };
   walk(props.nodes, 0);

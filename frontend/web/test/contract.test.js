@@ -1825,9 +1825,9 @@ test("载荷：有一键折叠全部，且没有一键展开", () => {
   const tpl = bar.slice(bar.indexOf("<template>")).replace(/<!--[\s\S]*?-->/g, "");
 
   // ① 有按钮，且它落在载荷那一页的工具栏里
-  assert.match(tpl, /class="pv-collapse-all"/, "载荷页没有「折叠全部」按钮");
+  assert.match(tpl, /class="collapse-all"/, "没有「折叠全部」按钮");
   const toolbar = tpl.slice(tpl.indexOf('class="pv-toolbar"'), tpl.indexOf('id="payload-viz"'));
-  assert.ok(toolbar.includes("pv-collapse-all"), "「折叠全部」没放在载荷页的工具栏里");
+  assert.ok(toolbar.includes("collapse-all"), "「折叠全部」没放在载荷页的工具栏里");
   assert.match(tpl, /@click="collapseAll"/, "按钮没接 collapseAll");
 
   // ② 折叠的实现：**每一条都显式记成 false**。
@@ -1845,11 +1845,11 @@ test("载荷：有一键折叠全部，且没有一键展开", () => {
   assert.match(tpl, /:disabled="allCollapsed"/, "全折叠后按钮没禁用（会变成点不动的死按钮）");
 
   // ⑤ 平铺样式：这个按钮也不许长成"盒子"
-  const rule = css.match(/(?:^|\n)\.pv-collapse-all\s*\{([^}]*)\}/)?.[1] ?? "";
-  assert.ok(rule, "找不到 .pv-collapse-all 样式");
+  const rule = css.match(/(?:^|\n)\.collapse-all\s*\{([^}]*)\}/)?.[1] ?? "";
+  assert.ok(rule, "找不到 .collapse-all 样式");
   assert.match(rule, /background:\s*none/, "折叠按钮有底色了（这三页是平铺，不放盒子）");
   assert.match(rule, /border:\s*none/, "折叠按钮有边框了");
-  assert.match(css, /\.pv-collapse-all:disabled/, "没给禁用态样式 —— 禁用后看起来还能点");
+  assert.match(css, /\.collapse-all:disabled/, "没给禁用态样式 —— 禁用后看起来还能点");
 });
 
 // 2026-10-29 顺手修的：压缩页那个「收起」× 从前是 `@click="compactWire = null"`，
@@ -1914,4 +1914,54 @@ test("压缩树：预览剥状态块复用 splitState（不另写正则）", () 
   // 不许出现第二条 state 正则（`state` 出现在正则里就说明自己另写了一套）
   const code = tree.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
   assert.ok(!/<\/state|state\|current_state/.test(code), "tree.js 里另写了一条状态块正则 —— 该用 splitState");
+});
+
+// 压缩页也要「折叠全部」（2026-10-29 用户：「在"压缩"里，也请准备一键折叠的按钮吧」）。
+//
+// 这一页有两堆能折的东西：**压缩树**（目录节点）与「看载荷」拉回来的**分块列表**。
+// 一个写着"全部"的按钮只该有一个含义 ⇒ 两堆一起收，禁用条件也两堆一起算。
+test("压缩：有一键折叠全部，树与分块一起收，且没有一键展开", () => {
+  const bar = readFileSync(join(SRC, "components", "PayloadBar.vue"), "utf8");
+  const tree = readFileSync(join(SRC, "components", "CompactTree.vue"), "utf8");
+  const tpl = bar.slice(bar.indexOf("<template>")).replace(/<!--[\s\S]*?-->/g, "");
+  const script = bar.slice(0, bar.indexOf("</script>")).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+
+  // ① 压缩页有这个按钮，且按钮在 tree tab 里
+  const treePane = tpl.slice(tpl.indexOf('id="compact-tree"'));
+  assert.ok(treePane.includes('class="collapse-all"'), "压缩页没有「折叠全部」按钮");
+  assert.match(treePane, /@click="collapseCompact"/, "按钮没接 collapseCompact");
+
+  // ② 折叠状态提到了父组件：树变成**受控**的
+  //    留在子组件里的话，父组件要么摸不进去、要么得靠 defineExpose 约定 —— 而且"全收了吗"
+  //    这个判断会变成跨组件读取，禁用条件就没法算。
+  assert.match(tree, /collapsed:\s*\{[^}]*type:\s*Object/, "CompactTree 的折叠状态没提成 prop");
+  assert.match(tree, /emit\("update:collapsed"/, "CompactTree 没发 update:collapsed（父组件改不动它）");
+  assert.match(tpl, /v-model:collapsed="treeCollapsed"/, "树没接上 v-model:collapsed");
+  // ⚠ 发新 Set、不改传进来的那份（就地改 prop 等于绕过 update 约定）
+  assert.match(tree, /new Set\(props\.collapsed\)/, "toggle 没基于 props 生成新 Set");
+
+  // ③ 两堆一起收：树节点 + 压缩载荷分块
+  const fn = script.match(/function collapseCompact\(\)[\s\S]*?\n\}/)?.[0] ?? "";
+  assert.ok(fn, "找不到 collapseCompact");
+  assert.match(fn, /next\.add\(n\.id\)/, "没把有孩子的树节点加进折叠集合");
+  assert.match(fn, /cpNext\.set\(i, false\)|set\(i,\s*false\)/,
+    "没把压缩载荷的分块显式设成 false —— 短块会自己弹开（载荷页踩过）");
+  // ④ 禁用条件两堆一起算
+  const all = script.match(/const compactAllCollapsed = computed\(\(\) => \{[\s\S]*?\n\}\)/)?.[0] ?? "";
+  assert.ok(all, "找不到 compactAllCollapsed");
+  assert.match(all, /collapsibleIds/, "禁用条件没算树");
+  assert.match(all, /compactMessages/, "禁用条件没算压缩载荷那几块");
+
+  // ⑤ 换树（换会话）要清掉旧的折叠集合（节点 id 全换新，留着只涨不落）
+  const setTree = script.match(/function setTree\([\s\S]*?\n\}/)?.[0] ?? "";
+  assert.ok(setTree, "找不到 setTree");
+  assert.match(setTree, /treeCollapsed\.value = new Set\(\)/, "setTree 没清折叠状态");
+
+  // ⑥ 仍然**不许**有展开全部
+  assert.ok(!/展开全部|expandAll/.test(tpl), "压缩页也冒出了「展开全部」—— 用户只说要折叠");
+
+  // ⑦ 两处折叠按钮共用同一个类（各写一套必分岔）
+  assert.equal((tpl.match(/class="collapse-all"/g) ?? []).length, 2, "两个折叠按钮没用同一个类");
+  assert.ok(!/pv-collapse-all|ctree-collapse-all/.test(bar + css), "还有按钮在用自己的旧类名 —— 样式会分岔");
 });

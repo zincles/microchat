@@ -73,7 +73,52 @@ const totals = computed(() => (tree.value ? treeTotals(tree.value) : null));
 
 function setWire(w) { wire.value = w ?? null; }
 function setTables(t) { tables.value = t ?? {}; }
-function setTree(t) { tree.value = t ?? null; }
+function setTree(t) {
+  tree.value = t ?? null;
+  // 折叠状态是**节点 id 的集合**：换一棵树（换会话 / 重新拉全量）那些 id 就全是外人的了。
+  // 留着不清 = 集合只涨不落（虽然 id 对不上、界面不会错），换会话久了就是一段白占的内存。
+  treeCollapsed.value = new Set();
+}
+
+// —— 压缩页的「折叠全部」（2026-10-29 用户：「在"压缩"里，也请准备一键折叠的按钮吧」）——
+// 折叠状态**住在这一层**而不是 CompactTree 里：那个按钮要一次改到底，还要能算"已经全收了吗"
+// 来禁用自己 —— 状态留在子组件里，这两件事都得靠 ref + 约定去摸，难看且易错。
+const treeCollapsed = ref(new Set());
+// 可折叠的 = **有孩子的节点**（叶子折叠了没有意义，它本来就没有下文）。
+const collapsibleIds = computed(() => {
+  const ids = [];
+  const walk = (ns) => {
+    for (const n of ns ?? []) {
+      if (n.children?.length) ids.push(n.id);
+      walk(n.children);
+    }
+  };
+  walk(tree.value);
+  return ids;
+});
+// 「全收了吗」要连**压缩载荷那几块**一起算 —— 那个按钮说"全部"，就只该有一个含义：
+// 这一页里凡是能收的都收起来了。（`every` 对空数组是 true ⇒ "没有可收的" 也算已收，按钮就该灰。）
+const compactAllCollapsed = computed(() => {
+  const treeDone = collapsibleIds.value.every((id) => treeCollapsed.value.has(id));
+  const cpDone = compactMessages.value.every((m, i) => !cpOpen(m, i));
+  return treeDone && cpDone;
+});
+function collapseCompact() {
+  const next = new Set();
+  const walk = (ns) => {
+    for (const n of ns ?? []) {
+      if (n.children?.length) next.add(n.id);
+      walk(n.children);
+    }
+  };
+  walk(tree.value);
+  treeCollapsed.value = next;
+  // 压缩载荷那几块一起收。**显式全设 false**，不是 `= new Map()` ——
+  // 那个类的默认值取决于块长短（短块默认展开），清空会让短块自己弹开（载荷页踩过同一个坑）。
+  const cpNext = new Map();
+  compactMessages.value.forEach((_, i) => cpNext.set(i, false));
+  cpOpenMap.value = cpNext;
+}
 
 // —— 压缩那发的载荷（2026-10-28）——
 // 用户问的是"能不能预览**即将被压缩的文本**"。答：能，而且给的是**整发请求** ——
@@ -142,7 +187,7 @@ defineExpose({ setWire, setTables, setTree, setCompactWire });
         <button
           v-if="viz && vizData && vizData.messages.length"
           type="button"
-          class="pv-collapse-all"
+          class="collapse-all"
           :disabled="allCollapsed"
           :title="allCollapsed ? '已经全部折叠了' : '把每一条都收起来，只看骨架'"
           @click="collapseAll"
@@ -232,8 +277,21 @@ defineExpose({ setWire, setTables, setTree, setCompactWire });
       </div>
       <div v-if="!tree" class="empty">（发几句话后这里显示压缩树：目录 = 摘要，嵌套 = 嵌套压缩）</div>
       <template v-else>
-        <div v-if="totals" class="ctree-total">原文 {{ totals.rawChars }} 字 · 装配后 ≈{{ totals.sent }} tok</div>
-        <CompactTree :nodes="tree" />
+        <div class="ctree-head">
+          <span v-if="totals" class="ctree-total">原文 {{ totals.rawChars }} 字 · 装配后 ≈{{ totals.sent }} tok</span>
+          <!-- 一键折叠（2026-10-29 用户定）。**只折叠、没有展开** —— 与载荷页同一个口径：
+               收起是收拾，铺开是倾泻（这一页里常有一整份 system prompt 压出来的摘要）。
+               全收起来了就禁用，不留一个"点了没反应"的样子。 -->
+          <button
+            v-if="tree || compactWire"
+            type="button"
+            class="collapse-all"
+            :disabled="compactAllCollapsed"
+            :title="compactAllCollapsed ? '已经全部折叠了' : '把树和下面的分块都收起来'"
+            @click="collapseCompact"
+          >折叠全部</button>
+        </div>
+        <CompactTree v-model:collapsed="treeCollapsed" :nodes="tree" />
         <div class="ctree-legend">▾ 折叠 · <i class="ctree-tag">发</i> 这一坨发出的就是它 · <i class="ctree-tag dirty">脏</i> 已过期</div>
       </template>
     </div>
