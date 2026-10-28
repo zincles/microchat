@@ -312,6 +312,11 @@ delete(AA)           # 删除
   `TestCompactRPPromptCoversRoleplaySpecifics` 钉上面那几条 RP 专有内容（砍掉哪条都会说清"下一段会怎么错"）。
   挑中**任何一条候选**都算"我要这个模板" ⇒ **整份替换**默认，**不是叠加**：两份模板挂在同一条消息上必然互相打架
   （通用版写"不要复述原文"、RP 版写"细节不能丢"），模型只会挑一个执行、或者两头都不到。
+  **RP 预设默认就挑 RP 版**（2026-10-28 用户：「帮我改内置RPAgent」）：`frontend/web/presets/rp-agent.json`
+  的 `abilities.compact.segments = ["RP压缩提示词"]` —— 从「智能体 → 从模板创建 → 角色扮演助手」建出来的
+  RP Agent 一开始就用 RP 版的压缩口径，不必再手动去挑。⚠ 预设是**建的时候**烘进去的（段引用存进
+  `agents.json` 的 `abilities.compact.segments`），所以**已经建好的 agent 不会跟着变** —— 老的那些要手动
+  打开「智能体 → 压缩」那一页把 `RP压缩提示词` 挑上。
   **能力拼装只有一处**（`abilities.AssemblePrompt`，`title` 与 `compact` 都调它）三条：
   ① base = `prompt` 覆盖 ?: **默认的那条**内置模板段（候选里的第一条）；② **段列表里已经挑了任何一条模板段 ⇒ 不再垫一份**
   （否则同一段说明文读两遍；挑候选的那条同理 —— 挑了 RP 版就不夹通用版）；

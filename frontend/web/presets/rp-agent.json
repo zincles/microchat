@@ -4,7 +4,10 @@
   "prepend_state": true,
   "abilities": {
     "compact": {
-      "enabled": true
+      "enabled": true,
+      "segments": [
+        "RP压缩提示词"
+      ]
     },
     "title": {
       "enabled": true
