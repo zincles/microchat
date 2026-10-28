@@ -67,10 +67,18 @@ func TestProvidersNeverEchoSecrets(t *testing.T) {
 }
 
 // 字段顺序是契约（照旧版逐字对齐）。
+//
+// 2026-10-28 加了三格（`vendor_name` / `protocol_name` / `protocol_options`）：界面从此打中文名，
+// 不再把 `opencode-go` 这种内部 id 摆在用户面前。它们紧跟在 `vendor` / `protocol` 后面 ——
+// 与哪些 id 是一对，排列本身就在说这件事。
 func TestProviderViewShape(t *testing.T) {
 	server, _ := newProvidersServer(t, `{"providers":[{"id":"ocgo","kind":"opencode-go","base_url":"https://opencode.ai/zen/go/v1","headers":{"X-Extra":"1"}}]}`)
 	recorder := call(server, "GET", "/api/v1/providers", "")
-	want := `[{"id":"ocgo","name":null,"kind":"opencode-go","vendor":"opencode-go","protocol":"openai-chat-completion","base_url":"https://opencode.ai/zen/go/v1","headers":{"X-Extra":"1"},"has_key":false,"model_filter":"","identity":"pi","last_refresh_at":null,"models":[]}]`
+	want := `[{"id":"ocgo","name":null,"kind":"opencode-go","vendor":"opencode-go","protocol":"openai-chat-completion",` +
+		`"vendor_name":"OpenCode Go","protocol_name":"对话补全",` +
+		`"protocol_options":[{"protocol":"openai-chat-completion","label":"对话补全","hint":"最常见的一种（/chat/completions），绝大多数渠道都走它"},` +
+		`{"protocol":"openai-response","label":"应答接口","hint":"OpenAI 的 /responses；opencode 系、OpenRouter、自建可用"}],` +
+		`"base_url":"https://opencode.ai/zen/go/v1","headers":{"X-Extra":"1"},"has_key":false,"model_filter":"","identity":"pi","last_refresh_at":null,"models":[]}]`
 	if got := recorder.Body.String(); got != want {
 		t.Fatalf("形状变了：\n得到 %s\n想要 %s", got, want)
 	}
@@ -245,6 +253,15 @@ func TestProviderPresetsEndpoint(t *testing.T) {
 	}
 	if kinds["opencode-go"].SessionHeader != "x-opencode-session" {
 		t.Fatal("OpenCode Go 的会话头要如实告诉客户端")
+	}
+	// 协议选项要带中文名（2026-10-28）：界面拿它画下拉，**不许自己另抄一张表**。
+	for _, option := range kinds["opencode-go"].ProtocolOptions {
+		if option.Label == "" {
+			t.Fatalf("协议 %q 没有中文名", option.Protocol)
+		}
+	}
+	if kinds["opencode-go"].ProtocolOptions[0].Label != "对话补全" {
+		t.Fatalf("第一个该是对话补全（缺省那条），得到 %+v", kinds["opencode-go"].ProtocolOptions)
 	}
 	// 它不该被 /providers/{id} 抢走（字面段优先）
 	if recorder.Code == 404 {

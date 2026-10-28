@@ -160,6 +160,19 @@ export function contextOverBudget(ctx) {
   return !!ctx?.over_budget;
 }
 
+// 新建渠道时"换 vendor 要不要跟着换 id"（2026-10-28）。
+//
+// 判据只有一条：**id 还是自动填的那个**才动它。用户手打过 `我的渠道`，再改 vendor 就把它冲掉
+// 等于抢方向盘；而新建时一路点下来（id 还没落地）就该省掉那一格。
+// 纯函数是为了能测：这段逻辑出错不会报错，只会静默地把人填好的名字换掉。
+export function providerIdForNextVendor(currentId, autoId, vendor) {
+  const current = String(currentId ?? "").trim();
+  const auto = String(autoId ?? "");
+  // 手填过（当前值既非空、又不是上次自动填的那个）⇒ 一个字符都不碰。
+  if (current && current !== auto) return current;
+  return vendor ? String(vendor) : "";
+}
+
 // ---- 顶栏的模型选择浮板（2026-10-28）----
 // 为什么这些纯函数住这儿：面板要"按渠道分组 + 搜索"，而搜什么、怎么分组、当前选的是哪条
 // 都能脱离 DOM 说清楚 —— 住组件里就只能靠正则去钉源码（钉不出"搜到了什么"）。

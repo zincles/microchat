@@ -12,14 +12,21 @@ import (
 
 // ProviderView：`GET /providers` 的一项。**绝不含密钥内容**（只回 `has_key`）。
 type ProviderView struct {
-	ID       string            `json:"id"`
-	Name     *string           `json:"name"`
-	Kind     string            `json:"kind"`
-	Vendor   string            `json:"vendor"`
-	Protocol string            `json:"protocol"`
-	BaseURL  string            `json:"base_url"`
-	Headers  map[string]string `json:"headers"`
-	HasKey   bool              `json:"has_key"`
+	ID       string  `json:"id"`
+	Name     *string `json:"name"`
+	Kind     string  `json:"kind"`
+	Vendor   string  `json:"vendor"`
+	Protocol string  `json:"protocol"`
+	// VendorName / ProtocolName：这两个 id 的**中文名**（唯一权威在 providers 包的协议与 vendor 表里）。
+	// 界面直接显示它们 —— 渠道列表与编辑器从前把 `opencode-go` 这种内部 id 摆在用户面前，
+	// 那是在让人读代码。
+	VendorName   string `json:"vendor_name"`
+	ProtocolName string `json:"protocol_name"`
+	// ProtocolOptions：这个渠道能换成哪些协议（带中文名）。
+	ProtocolOptions []providers.ProtocolOption `json:"protocol_options"`
+	BaseURL         string                     `json:"base_url"`
+	Headers         map[string]string          `json:"headers"`
+	HasKey          bool                       `json:"has_key"`
 	// ModelFilter：模型筛选器（空 = 不筛）。界面要能看见渠道上挂着什么筛选器 ——
 	// 否则"这个渠道怎么只有 12 个模型"会变成一个查不出来的谜。
 	ModelFilter string `json:"model_filter"`
@@ -259,6 +266,7 @@ func (s *Server) updateProvider(w http.ResponseWriter, r *http.Request) {
 //     （自愈，且渠道本身没丢 —— 用户的配置是他手填的，最不该丢的就是它）；
 //   - 反过来（先写配置后删库），删库失败 ⇒ 渠道没了、模型却还在列表里 ⇒ **正是这个 bug 的形态**
 //     （而且用户已经看不到那个渠道了，只能靠手改库才清得掉）。
+//
 // 所以选前者。删库失败就直接报错、**不动配置**（宁可这次没删成，也不留半截状态）。
 func (s *Server) deleteProvider(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
@@ -434,7 +442,9 @@ func providerView(provider config.Provider) ProviderView {
 	return ProviderView{
 		ID: provider.ID, Name: name, Kind: provider.Kind,
 		Vendor: string(effective.EffectiveVendor()), Protocol: string(effective.EffectiveProtocol()),
-		BaseURL: effective.BaseURL, Headers: provider.Headers,
+		VendorName: effective.EffectiveVendor().VendorName(), ProtocolName: providers.ProtocolLabel(effective.EffectiveProtocol()),
+		ProtocolOptions: providers.ProtocolOptionsFor(effective),
+		BaseURL:         effective.BaseURL, Headers: provider.Headers,
 		HasKey: provider.APIKey != "", ModelFilter: provider.ModelFilter,
 		Identity: string(effective.Identity), Models: []ModelView{},
 	}

@@ -427,11 +427,13 @@ function onKey(e) {
             <h3>渠道（点进二级改）</h3>
             <div id="provider-list">
               <table class="plist">
-                <thead><tr><th>渠道</th><th>vendor</th><th>protocol</th><th>密钥</th><th>模型</th><th>筛选器</th><th></th></tr></thead>
+                <!-- 这两列打**中文名**（2026-10-28 用户：「vendor 和 protocol 应该用中文化的名字吧」）；
+                     内部 id 挂在 title 上 —— 手改配置文件的人还得能对上号。 -->
+                <thead><tr><th>渠道</th><th>走哪家</th><th>说什么话</th><th>密钥</th><th>模型</th><th>筛选器</th><th></th></tr></thead>
                 <tbody><tr v-for="p in providers" :key="p.id" class="clickable" @click="editProvider = p">
                   <td>{{ p.id }}</td>
-                  <td>{{ p.vendor ?? "?" }}</td>
-                  <td>{{ p.protocol ?? "?" }}</td>
+                  <td :title="p.vendor">{{ p.vendor_name || p.vendor || "?" }}</td>
+                  <td :title="p.protocol">{{ p.protocol_name || p.protocol || "?" }}</td>
                   <td>{{ p.has_key ? "有" : "无" }}</td>
                   <td>{{ p.models?.length ?? 0 }}</td>
                   <!-- 筛选器：让"这个渠道怎么只有 12 个模型"在列表里就能看到答案（空 = 没筛）。

@@ -2,16 +2,15 @@
 // Provider 编辑器（设置视图 Provider tab 内的二级页，列表 ⇄ 详情就地切换）：新建 / 改 vendor/protocol/端点/key。
 // isNew（boolean）：无 provider 快照=新建（空表单）；有=编辑（带入 provider，只发改过的格；key 另填=换，不填=不动）。
 // 内置刷新模型列表 + 刷路由（编辑时直接点，不用退回一级）。
-import { ref, onMounted, onUnmounted } from "vue";
+import { ref, computed, onMounted, onUnmounted } from "vue";
 import { sharedApi } from "../utils/prefs.js";
-import { formatRoutesOutcome } from "../utils/format.js";
+import { formatRoutesOutcome, providerIdForNextVendor } from "../utils/format.js";
 
 const props = defineProps({ provider: { type: Object, default: null } });
 const emit = defineEmits(["close", "saved"]);
 
 const api = sharedApi();
 
-const PROTOCOLS = ["openai-chat-completion", "openai-response", "anthropic-messages", "gemini-generate-content", "systemone"];
 
 const isNew = !props.provider;
 const pid = ref("");
@@ -24,16 +23,85 @@ const filter = ref("");
 // baseFilter：**已保存的**筛选器 —— 增量比较的基准。不直接比 props.provider：
 // 改了筛选器会留在原地，而父组件的 editProvider 仍指着旧对象 ⇒ 拿它当基准会把"没改"误判成"改了"。
 const baseFilter = ref("");
+// 协议的可选项**不让界面自己列**（2026-10-28 用户：「vendor 和 protocol 应该用中文化的名字吧」）：
+// 从前这张表写死在前端，既漏了中文名、又把 `Validate` 一律拒绝的两个占位协议
+// （anthropic-messages / gemini-generate-content）摆进下拉 —— 那是递给人一个按下去必炸的选项。
+// 现在全从 `GET /providers/presets` 的 `protocol_options` 来（后端是唯一权威，契约测试钉着）。
 const hasKey = ref(false);
 const modelCount = ref(0);
 const presets = ref([]);
 const status = ref("");
 
+// 预设分两组：`primary`（后端说的"主选三种"）在前，其余便利预设殿后。
+//
+// 从前 11 个 vendor 平铺在一条下拉里，`OpenCode Go` 与 `OpenCode (Zen)` 挨着，
+// 新人根本不知道"我该选哪个"。分组把"常见用法"和"我要特殊东西"分开 ——
+// 分组是后端给的 `primary` 标记，不是前端另拍一套。
+const primaryPresets = computed(() => presets.value.filter((p) => p.primary));
+const otherPresets = computed(() => presets.value.filter((p) => !p.primary));
+
+// 当前 vendor 的预设（vendor 一改，可选协议就跟着换）。
+const curPreset = computed(() => presets.value.find((p) => p.vendor === vendor.value) ?? null);
+
+// protocolChoices：这条渠道能换成哪些协议（带中文名）。
+//
+// 两处来源合并：① 当前 vendor 的 `protocol_options`（后端按兼容矩阵给）；
+// ② 这条渠道**自己正在用的**那条 —— 老配置里可能是手写的、或 vendor 换了而协议还留着。
+// 不把 ② 补进来，下拉会在"暂时没选"的瞬间把用户手写的那条显示成空白，一保存就悄悄换掉协议。
+const protocolChoices = computed(() => {
+  const list = [...(curPreset.value?.protocol_options ?? [])];
+  if (!protocol.value) return list;
+  if (list.some((option) => option.protocol === protocol.value)) return list;
+  const known = (props.provider?.protocol_options ?? []).find((option) => option.protocol === protocol.value);
+  return [...list, { protocol: protocol.value, label: known?.label ?? protocol.value, hint: "当前渠道正在用的协议（不在这个 vendor 的常规名单里）" }];
+});
+
+// protocolHint：选中那一条的一句人话 —— 下拉关起来之后，人只剩 id 可看。
+const protocolHint = computed(() =>
+  protocolChoices.value.find((option) => option.protocol === protocol.value)?.hint ??
+  "空 = 用这个渠道的默认协议（对话补全）",
+);
+
+// effectiveBase：这一发真会打到哪儿 —— 端点留空时用预设的，所以"空"不等于"没有端点"。
+// 从前这一格是空的、提示只是"空=预设端点"，人得自己去猜预设是哪条。
+const effectiveBase = computed(() => {
+  if (baseUrl.value.trim()) return baseUrl.value.trim();
+  const preset = curPreset.value?.base_url ?? props.provider?.base_url ?? "";
+  return preset || "（这个 vendor 没有预设端点，必须自己填）";
+});
+
+// vendorHint：选中的 vendor 的端点与"要不要密钥"，省得人再去别处查。
+const vendorHint = computed(() => {
+  const preset = curPreset.value;
+  if (!preset) return "";
+  const bits = [];
+  if (preset.base_url) bits.push(preset.base_url);
+  bits.push(preset.needs_key ? `需要密钥${preset.key_env ? `（也可用环境变量 ${preset.key_env}）` : ""}` : "不需要密钥");
+  return bits.join(" · ");
+});
+
+// pickVendor：新建时换 vendor 顺手跟着换 id —— **只在 id 还是"上回自动填的那个"时才动**。
+//
+// 这条判据是整段的关键：用户已经手打了 `我的渠道`，再改 vendor 就把它冲掉，那是抢方向盘。
+// 判"是不是自动填的"用 `autoId` 记住上一次自动填进去的值（空 = 从没自动填过 ⇒ 用户填的）。
+const autoId = ref("");
+function pickVendor(next) {
+  vendor.value = next;
+  if (!isNew) return;
+  pid.value = providerIdForNextVendor(pid.value, autoId.value, next);
+  autoId.value = pid.value;
+}
+// 手打了 id 就不再当它是自动值（之后改 vendor 不该覆盖）。
+function touchId() {
+  if (pid.value === autoId.value) return;
+  autoId.value = "";
+}
+
 async function load() {
   const pres = await api.providerPresets().catch(() => []);
   presets.value = pres ?? [];
   if (isNew) {
-    if (presets.value[0]) vendor.value = presets.value[0].vendor;
+    if (presets.value[0]) pickVendor(presets.value[0].vendor);
     return;
   }
   const p = props.provider;
@@ -141,15 +209,31 @@ function onKey(e) {
       <span class="status">{{ isNew ? "新建渠道" : `渠道「${pid}」（${modelCount} 个模型）` }}</span>
     </div>
     <h3>基本</h3>
-    <label class="field"><span>渠道 id</span><input v-model="pid" :disabled="!isNew" placeholder="新建时填" /></label>
-    <label class="field"><span>vendor</span><select v-model="vendor">
-      <option v-for="p in presets" :key="p.vendor" :value="p.vendor">{{ p.name }}（{{ p.vendor }}）</option>
+    <!-- 先问"走哪家"、再问 id（2026-10-28）：从前 id 排在最前面，可它恰恰是**最不该让人自己想**的那格 ——
+         改 vendor 时它还会跟着变，先填等于白填。 -->
+    <!-- vendor / protocol 一律**中文名在前、内部 id 附后**（2026-10-28 用户：「应该用中文化的名字吧」）。
+         id 不藏起来：手改 config/providers.json 的人得能对上号，出错信息里也打的是 id。 -->
+    <label class="field"><span>走哪家（vendor）</span><select :value="vendor" @change="pickVendor($event.target.value)">
+      <optgroup label="常见">
+        <option v-for="p in primaryPresets" :key="p.vendor" :value="p.vendor">{{ p.name }}（{{ p.vendor }}）</option>
+      </optgroup>
+      <optgroup v-if="otherPresets.length" label="其它预设">
+        <option v-for="p in otherPresets" :key="p.vendor" :value="p.vendor">{{ p.name }}（{{ p.vendor }}）</option>
+      </optgroup>
     </select></label>
-    <label class="field"><span>protocol（空=默认）</span><select v-model="protocol">
-      <option value="">空=默认</option>
-      <option v-for="pr in PROTOCOLS" :key="pr" :value="pr">{{ pr }}</option>
+    <p v-if="vendorHint" class="hint">{{ vendorHint }}</p>
+    <label class="field"><span>渠道 id</span><input v-model="pid" :disabled="!isNew" placeholder="新建时填" @input="touchId" /></label>
+    <p v-if="isNew" class="hint">id 是这条渠道在你机器上的名字（会写进 <code>providers.json</code>、也会出现在模型列表的「渠道」那列）。
+      换 vendor 时它跟着变 —— 你手改过之后就不再动它了。</p>
+    <label class="field"><span>说什么话（protocol）</span><select v-model="protocol">
+      <option value="">用默认（对话补全）</option>
+      <option v-for="option in protocolChoices" :key="option.protocol" :value="option.protocol">
+        {{ option.label }}（{{ option.protocol }}）
+      </option>
     </select></label>
-    <label class="field"><span>端点（空=预设）</span><input v-model="baseUrl" placeholder="空=预设端点" /></label>
+    <p class="hint">{{ protocolHint }}</p>
+    <label class="field"><span>端点（空 = 用预设的）</span><input v-model="baseUrl" :placeholder="effectiveBase" /></label>
+    <p class="hint">这一发会打到 <code>{{ effectiveBase }}</code></p>
     <h3>密钥</h3>
     <label class="field"><span>{{ hasKey ? "已有密钥（填=换，不填=不动）" : "api_key（可空）" }}</span><input v-model="key" placeholder="api_key" type="password" /></label>
     <h3>模型筛选器</h3>

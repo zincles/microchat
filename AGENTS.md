@@ -251,6 +251,18 @@ delete(AA)           # 删除
   万一它从手改的文件里钻进来，刷新会**报错且一行都不动**（先验后拉 —— 否则"筛完是空"会顺着
   「没见到的删行」把整张模型表清空）。⚠ 它在**发现那一步**生效 ⇒ **改了要再刷一次模型**；
   刷完不匹配的旧行会被删掉（连同那些行上的用户覆盖：模型是可再发现的数据，覆盖不可）。
+  **vendor / protocol 的中文名只有一个来源**（2026-10-28 用户：「vendor 和 protocol……应该用中文化的名字吧」）：
+  `providers/presetNames`（vendor → 中文名）与 `providers/protocolNames`（protocol → 中文名 + 一句人话）——
+  界面只**显示**它们（`GET /providers/presets` 的 `name` / `protocol_options`，`GET /providers` 的
+  `vendor_name` / `protocol_name` / `protocol_options`），**不许自己另抄一张翻译表**（少一条就留个点不动的死选项）。
+  列表页打中文名、内部 id 挂在 `title` 上（手改配置文件的人还得能对上号，出错信息里打的也是 id）。
+  ⚠ **占位协议不出现在下拉里**：`anthropic-messages` / `gemini-generate-content` 在 `Validate` 里一律被拒，
+  它们**没有中文名**，而 `protocolOptionsFor` 只放认识的那些 ⇒ 结构上就列不出来。从前前端写死一张 `PROTOCOLS`
+  表把它们摆进下拉，那是递给人一个按下去必炸的选项。
+  **新建渠道的流程**（2026-10-28）：先问「走哪家」再问「渠道 id」（id 会跟着 vendor 变，先填等于白填）——
+  换 vendor 时 id 跟着变，**但只在 id 还是自动填的那个时才动**（手填过就不抢方向盘，判据是纯函数
+  `providerIdForNextVendor`，住 `frontend/web/src/utils/format.js`）；vendor 下拉按后端的 `primary` 分成
+  「常见」/「其它预设」两组；端点那一格留空时会把**真会打到的地址**显示出来（"空"不等于"没有端点"）。
 - `agents.json` — `{ "default_agent": "跑团", "agents": [ { "id": "跑团", "name": "跑团主持人", "system_prompt": "你是跑团主持人。", "first_message": "你好！我是跑团主持人。" } ] }`
   每个 agent 可以带 **`first_message`（首段对话，2026-10-11 用户定）**：以它**新建**会话时，这段文本作为
   **第一条 assistant 消息（idx 1）**落库（正文**原样存档** ⇒ 可带 `<state>` 设初始状态）；空 = 不启用。

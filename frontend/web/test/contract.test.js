@@ -26,6 +26,7 @@ import {
   usageFoot,
   usageFootTitle,
   groupModelsByProvider,
+  providerIdForNextVendor,
   filterModelGroups,
   curModelLabelOf,
   modelMatches,
@@ -1410,3 +1411,80 @@ test("模型面板：按钮 / 浮板 / emit / App 监听四处接着，且不再
   // 搜索框与列表滚动分开：搜索框得留在上面不跟着滚
   assert.match(css, /\.model-list \{ overflow-y: auto/, "列表没有自己的滚动区（搜索框会跟着滚走）");
 });
+
+// —— 渠道编辑器里的 vendor / protocol 用中文名（2026-10-28 用户：「vendor 和 protocol……
+//    应该用中文化的名字吧」）——
+// 这里钉的是"名字只有一个来源"：协议的中文名与"这家能给哪些协议"全在后端
+// （`providers.protocolNames` / `ProtocolOptionsFor`），界面只显示。
+// 从前前端自己写死了一张 PROTOCOLS 表 —— 它既没有中文名，又把 `Validate` 一律拒绝的两个
+// 占位协议（anthropic-messages / gemini-generate-content）摆进下拉：递给人一个按下去必炸的选项。
+test("渠道编辑器：协议下拉来自后端，界面不自己列协议表", () => {
+  const editor = readFileSync(join(SRC, "components", "ProviderEditor.vue"), "utf8");
+  // 判"界面里有没有这个协议"之前要**先剥注释**：注释里提一句"这些都是占位、别列出来"是对的，
+  // 留在注释里提醒后人恰恰是好事 —— 只有出现在**选项里**才是错。（行内 // 不整体剥：URL 里也有 //。）
+  const code = editor
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+
+  // ① 不再有前端自己的协议清单
+  assert.ok(!/const PROTOCOLS\s*=/.test(code), "编辑器里还留着一张自己的协议表（该从后端的 protocol_options 来）");
+  // ② 占位协议绝不该在界面里出现（后端 Validate 一律拒绝它们）
+  for (const dead of ["anthropic-messages", "gemini-generate-content"]) {
+    assert.ok(!code.includes(dead), `编辑器里出现了后端一律拒绝的占位协议 ${dead}`);
+  }
+  // ③ 选项确实来自后端给的那一份
+  assert.match(code, /curPreset\.value\?\.protocol_options/, "协议选项没接后端的 protocol_options");
+  assert.match(code, /v-for="option in protocolChoices"/, "下拉没渲染 protocolChoices");
+  // ④ 选了之后要有一句人话（下拉一关就只剩 id，用户没法判断区别）
+  assert.match(code, /\{\{ protocolHint \}\}/, "选中的协议没有一句人话");
+  // ⑤ vendor 与 protocol 的显示都带中文名（id 附后，不藏起来）
+  assert.match(code, /\{\{ p\.name \}\}（\{\{ p\.vendor \}\}）/, "vendor 没显示中文名");
+  assert.match(code, /\{\{ option\.label \}\}（\{\{ option\.protocol \}\}）/, "协议没显示中文名");
+});
+
+test("渠道列表：打中文名，内部 id 挂在 title 上", () => {
+  const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
+  assert.match(settings, /p\.vendor_name/, "列表没显示 vendor 的中文名");
+  assert.match(settings, /p\.protocol_name/, "列表没显示 protocol 的中文名");
+  // id 不能丢：手改 providers.json 的人得能对上号
+  assert.match(settings, /:title="p\.vendor"/, "vendor 的内部 id 没留在 title 上");
+  assert.match(settings, /:title="p\.protocol"/, "protocol 的内部 id 没留在 title 上");
+});
+
+// 新建渠道时"换 vendor 要不要跟着换 id"（2026-10-28）。
+// 这段判错不会报错 —— 只会**静默地把人填好的名字换掉**，所以单独测。
+test("新建渠道：换 vendor 跟着换 id，但手填过的 id 不许动", () => {
+  // 一路点下来（id 还是自动填的）⇒ 跟着换
+  assert.equal(providerIdForNextVendor("openai", "openai", "deepseek"), "deepseek");
+  // 空着 ⇒ 也当自动值（新建第一屏）
+  assert.equal(providerIdForNextVendor("", "", "deepseek"), "deepseek");
+  // 手填过 ⇒ 一个字符都不碰（这是"别抢方向盘"那条）
+  assert.equal(providerIdForNextVendor("我的渠道", "openai", "deepseek"), "我的渠道");
+  assert.equal(providerIdForNextVendor("我的渠道", "", "deepseek"), "我的渠道");
+  // 手填过之后又手动清空 ⇒ 回到"自动"那一侧
+  assert.equal(providerIdForNextVendor("", "openai", "deepseek"), "deepseek");
+  // 首尾空白不算内容（不然"填了个空格"就永远不再自动了）
+  assert.equal(providerIdForNextVendor("  ", "", "dummy"), "dummy");
+  // 没 vendor（理论上的空选）⇒ 清掉自动值，别留一个假 id
+  assert.equal(providerIdForNextVendor("openai", "openai", ""), "");
+});
+
+// 新建渠道的三处流程改进（2026-10-28）：vendor 分组、先问 vendor 再问 id、端点给"真会打到哪儿"。
+test("渠道编辑器：vendor 分组 / 先 vendor 后 id / 端点给出实际地址", () => {
+  const editor = readFileSync(join(SRC, "components", "ProviderEditor.vue"), "utf8");
+  const code = editor.replace(/<!--[\s\S]*?-->/g, "");
+
+  // ① vendor 按后端给的 primary 分组，而不是平铺 11 个
+  assert.match(code, /primaryPresets/, "vendor 没按 primary 分组");
+  assert.match(code, /<optgroup label="常见">/, "没有「常见」那一组");
+  // ② 顺序：vendor 在 id 前面（id 是改 vendor 时会跟着变的格，先填等于白填）
+  const vendorAt = code.indexOf("走哪家（vendor）");
+  const idAt = code.indexOf("<span>渠道 id</span>");
+  assert.ok(vendorAt > 0 && idAt > 0, "找不到 vendor / id 那两格");
+  assert.ok(vendorAt < idAt, "该先问 vendor、再问 id（id 会跟着 vendor 变）");
+  // ③ 端点那一格要说出"真会打到哪儿"（留空 = 用预设，光靠 placeholder 说不清）
+  assert.match(code, /effectiveBase/, "端点没有算出实际地址");
+  assert.match(code, /这一发会打到/, "端点没把那句人话显示出来");
+});
+

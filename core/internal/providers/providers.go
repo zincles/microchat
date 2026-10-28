@@ -33,6 +33,14 @@ import (
 // Vendor：渠道背后是**找谁**（哪家上游）。它决定 base_url、必需头、以及几家特有的兼容开关。
 type Vendor string
 
+// VendorName：这个 vendor 的中文名（认不出来就回 id 本身 —— 界面永远有字可显示）。
+func (v Vendor) VendorName() string {
+	if name, ok := presetNames[v]; ok {
+		return name
+	}
+	return string(v)
+}
+
 const (
 	// VendorOpenAICompat：**旧命名**（Rust 时代）—— 端点全靠配置给，仍按 OpenAI 兼容对待。
 	// 留它是为了**不静默改变老配置的行为**（少了它，老配置会掉进"未知 vendor" ⇒ 不发 stream_options）。
@@ -887,9 +895,45 @@ type PresetInfo struct {
 	KeyEnv        string     `json:"key_env"`
 	SessionHeader string     `json:"session_header,omitempty"`
 	Protocols     []Protocol `json:"protocols"`
+	// ProtocolOptions：`Protocols` 的**可选项全貌**（界面直接拿去画下拉，别在界面里另抄一张表）。
+	// 每个进程只含**这个 vendor 真能用的**协议 —— `Validate` 会拒的占位协议（anthropic-messages、
+	// gemini-generate-content）绝不出现在这里：列出来等于给用户递一个按下去必炸的选项。
+	ProtocolOptions []ProtocolOption `json:"protocol_options"`
 	// Primary：界面上的"主选"三种（Dummy / 标准 OpenAI 兼容 / OpenCode GO）；其余是便利预设。
 	Primary    bool     `json:"primary"`
 	Identities []string `json:"identities"`
+}
+
+// ProtocolOption：一个协议给界面看的样子（id + 中文名 + 一句人话）。
+//
+// **中文名只住这儿**（后端）—— 界面另抄一份迟早对不上（多一条协议就漏一个翻译，
+// 少一条就留个点不动的死选项）。契约测试钉着"界面不许自己写协议名表"。
+type ProtocolOption struct {
+	Protocol Protocol `json:"protocol"`
+	Label    string   `json:"label"`
+	Hint     string   `json:"hint"`
+}
+
+// protocolNames：协议的中文名与一句人话（**唯一权威**）。
+// 只登记**能用的**那一部分 —— 占位的那两个不在这里，也就不可能被列进 `ProtocolOptions`。
+var protocolNames = map[Protocol]ProtocolOption{
+	ProtocolChatCompletion: {Protocol: ProtocolChatCompletion, Label: "对话补全", Hint: "最常见的一种（/chat/completions），绝大多数渠道都走它"},
+	ProtocolOpenAIResponse: {Protocol: ProtocolOpenAIResponse, Label: "应答接口", Hint: "OpenAI 的 /responses；opencode 系、OpenRouter、自建可用"},
+	ProtocolSystemOne:      {Protocol: ProtocolSystemOne, Label: "SystemOne", Hint: "Typesafe 那家的专有协议（端点就是整条 URL）"},
+}
+
+// ProtocolLabel：协议的中文名（认不出来就回 id 本身 —— 界面永远有字可显示）。
+func ProtocolLabel(protocol Protocol) string {
+	if option, ok := protocolNames[protocol]; ok {
+		return option.Label
+	}
+	return string(protocol)
+}
+
+// ProtocolOptionOf：一个协议的完整可选项（占位协议没有 ⇒ ok=false）。
+func ProtocolOptionOf(protocol Protocol) (ProtocolOption, bool) {
+	option, ok := protocolNames[protocol]
+	return option, ok
 }
 
 // primaryKinds：**主选**的三种（新建渠道时只该看到这三个 —— 其余是便利预设）。按 vendor。
@@ -918,6 +962,36 @@ func vendorProtocols(vendor Vendor) []Protocol {
 	}
 }
 
+// ProtocolOptionsFor：一个渠道**能换成哪些协议**（带中文名）。
+//
+// 与 `protocolOptionsFor` 的区别：那个只按 vendor 查表，这个还要把**当前这条渠道自己配的**
+// 协议算进来 —— 否则界面会遇到"这条渠道明明跑着 openai-response，下拉里却没有它"（换的时候就
+// 把它悄悄改掉了）。当前协议不在已知名单里（手改文件写进来的怪值）也照列，标签回 id。
+func ProtocolOptionsFor(p Provider) []ProtocolOption {
+	effective := p.EffectiveProtocol()
+	list := protocolOptionsFor(p.EffectiveVendor())
+	for _, option := range list {
+		if option.Protocol == effective {
+			return list
+		}
+	}
+	return append(list, ProtocolOption{Protocol: effective, Label: ProtocolLabel(effective), Hint: "当前渠道正在用的协议（不在常规名单里）"})
+}
+
+// protocolOptionsFor：这个 vendor 能用的协议**带着中文名**的全貌（顺序 = vendorProtocols）。
+// 只放认识的：不认识 = 没有中文名 = 也不该出现在下拉里（占位协议正是这么被挡在外的）。
+func protocolOptionsFor(vendor Vendor) []ProtocolOption {
+	list := make([]ProtocolOption, 0, 3)
+	for _, protocol := range vendorProtocols(vendor) {
+		if option, ok := protocolNames[protocol]; ok {
+			list = append(list, option)
+		}
+	}
+	return list
+}
+
+// presetNames：vendor 的中文名（**唯一权威**：`GET /providers/presets` 的 `name` 就打这一份，
+// 界面只显示它、不许自己另抄一张翻译表）。
 var presetNames = map[Vendor]string{
 	VendorOpenAICompat: "标准（OpenAI 兼容）",
 	VendorCustom:       "自定义（OpenAI 兼容）",
@@ -946,10 +1020,11 @@ func Presets() []PresetInfo {
 		list = append(list, PresetInfo{
 			Vendor: vendor, Kind: Kind(vendor), Name: presetNames[vendor], BaseURL: preset.baseURL,
 			NeedsKey: len(preset.apiKeyEnvs) > 0 && vendor != VendorDummy, KeyEnv: keyEnv,
-			SessionHeader: preset.sessionHeader,
-			Protocols:     vendorProtocols(vendor),
-			Primary:       isPrimary(vendor),
-			Identities:    []string{string(IdentityMicrochat), string(IdentityPi), string(IdentityBare)},
+			SessionHeader:   preset.sessionHeader,
+			Protocols:       vendorProtocols(vendor),
+			ProtocolOptions: protocolOptionsFor(vendor),
+			Primary:         isPrimary(vendor),
+			Identities:      []string{string(IdentityMicrochat), string(IdentityPi), string(IdentityBare)},
 		})
 	}
 	return list
