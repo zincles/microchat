@@ -7,7 +7,7 @@
 // 会话抬头不在顶栏（左栏列表高亮 + 状态行都有它）。
 import { ref, computed, nextTick } from "vue";
 import { ICONS } from "./icons.js";
-import { modelKey, parseModelKey, formatTokens, contextArc, contextPercentText, contextTitle, contextOverBudget } from "../utils/format.js";
+import { modelKey, parseModelKey, formatTokens, formatStatusLine, contextArc, contextPercentText, contextTitle, contextOverBudget } from "../utils/format.js";
 
 defineProps({
   // leftHidden / rightHidden：那一侧栏收着 ⇒ 顶栏出它那枚开关；栏开着 ⇒ 开关在栏自己头上
@@ -86,7 +86,6 @@ const ctxArc = computed(() => contextArc(ctx.value));
 // dasharray="a b" 且 a+b=100 ⇒ 正好一道弧、没有第二道。
 const ctxDash = computed(() => `${ctxArc.value} ${100 - ctxArc.value}`);
 const ctxOver = computed(() => contextOverBudget(ctx.value));
-const ctxTitle = computed(() => (ctx.value ? `${contextPercentText(ctx.value)} 已用 · ${contextTitle(ctx.value)}` : "上下文占用"));
 const ctxRows = computed(() => {
   const c = ctx.value;
   if (!c) return [];
@@ -105,7 +104,21 @@ function toggleAgent() { agentOpen.value = !agentOpen.value; if (agentOpen.value
 // setContext：App 每轮 refreshStatusline 喂一次（草稿态传 null）。
 function setContext(c) { ctx.value = c ?? null; }
 
-defineExpose({ setSession, setModels, setAgents, setContext });
+// —— 连接 / 助手 / 相位（2026-10-28 用户定："已连接 v0.1.0｜默认助手｜idle 这个也塞那个环的面板里"）——
+// 从前它是输入框上方那行小字。搬进面板之后**分三行**给（而不是拼成一句话）：
+// 面板里每一格都是"标签 → 值"，拼成一行再拆出差错，也没必要（`formatStatusLine` 仍用来做悬停解释）。
+const status = ref(null);
+const statusRows = computed(() => {
+  const s = status.value;
+  if (!s) return [];
+  const phase = `${s.phase ?? "idle"}${s.elapsedMs != null ? ` · ${s.elapsedMs}ms` : ""}`;
+  return [["连接", s.conn || "未连接"], ["助手", s.agent || "?"], ["运行", phase]];
+});
+function setStatus(s) { status.value = s ?? null; }
+// 悬停解释 = 状态一句 + 预算一句（两处都是"一眼看不清、要解释"的东西）。
+const ringTitle = computed(() => [formatStatusLine(status.value ?? {}), contextTitle(ctx.value)].filter(Boolean).join("\n"));
+
+defineExpose({ setSession, setModels, setAgents, setContext, setStatus });
 </script>
 
 <template>
@@ -151,7 +164,7 @@ defineExpose({ setSession, setModels, setAgents, setContext });
         class="ctx-ring"
         :class="{ over: ctxOver, idle: !ctx }"
         type="button"
-        :title="ctxTitle"
+        :title="ringTitle"
         aria-label="上下文占用"
         :aria-expanded="ctxOpen ? 'true' : 'false'"
         @click="toggleCtx"
@@ -192,7 +205,7 @@ defineExpose({ setSession, setModels, setAgents, setContext });
     </template>
     <template v-if="ctxOpen">
       <div class="agent-menu-backdrop" @click="ctxOpen = false"></div>
-      <div class="agent-menu ctx-menu" :class="{ over: ctxOver }" role="dialog" aria-label="上下文占用">
+      <div class="agent-menu ctx-menu" :class="{ over: ctxOver }" role="dialog" aria-label="上下文与运行状态">
         <template v-if="ctx">
           <div class="ctx-head">
             <b class="ctx-used">{{ formatTokens(ctx.used_tokens) }}<span class="ctx-sep">/</span>{{ formatTokens(ctx.budget_tokens) }}</b>
@@ -208,6 +221,12 @@ defineExpose({ setSession, setModels, setAgents, setContext });
           <p class="ctx-note">分母是输入预算（上下文减去输出预留），不是模型名义上下文。</p>
         </template>
         <p v-else class="agent-empty">这是新对话，还没有可统计的上下文。</p>
+        <dl v-if="statusRows.length" class="ctx-rows ctx-rows-status">
+          <div v-for="[k, v] in statusRows" :key="k" class="ctx-row">
+            <dt>{{ k }}</dt>
+            <dd>{{ v }}</dd>
+          </div>
+        </dl>
       </div>
     </template>
   </header>

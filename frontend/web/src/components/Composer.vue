@@ -10,11 +10,6 @@ const props = defineProps({ menuOn: { type: Boolean, default: false } });
 const text = ref("");
 const taskText = ref(""); // 输入框上方、状态行头上那行小字（后台任务；空 = 藏）
 function setTaskLine(t) { taskText.value = t ?? ""; }
-// 状态行只有一句"连接 + 助手 + 相位"。**上下文占用不在这儿**（2026-10-28 用户定）：
-// 它住顶栏右上角那枚环（`TopBar.vue` 的 `#ctx-ring`），点开才是明细。
-// 所以这里不接 over/title —— 环形自己会变红，别留一份永远为假的"超预算"状态。
-const statusText = ref("连接中｜未知模型｜idle");
-function setStatus(t) { statusText.value = t ?? ""; }
 const running = ref(false);
 function setRunning(v) { running.value = !!v; }
 const area = ref(null);
@@ -55,13 +50,12 @@ function clear() {
   if (area.value) area.value.rows = 1;
 }
 
-defineExpose({ submit, clear, text, setStatus, setRunning, setTaskLine });
+defineExpose({ submit, clear, text, setRunning, setTaskLine });
 </script>
 
 <template>
   <form id="composer" @submit.prevent="running ? $emit('stop') : submit()">
     <div v-if="taskText" class="taskline">{{ taskText }}</div>
-    <div id="statusline" class="statusline">{{ statusText }}</div>
     <button
       v-if="props.menuOn"
       type="button"

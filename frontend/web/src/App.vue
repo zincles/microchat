@@ -16,7 +16,6 @@ import { installViewportFit } from "./utils/viewport.js";
 import { classifyAxis, pickDrag, dragProgress, resolveRelease } from "./utils/swipe.js";
 import { sharedApi, previewOn, applyTheme, wantsSend, apiBase, apiToken, apiBaseCandidates, saveNetPrefs, lastSessionId, saveLastSession, commandMenuOn, applyComposerStyle, applyTextScale, chromeHideOn } from "./utils/prefs.js";
 import {
-  formatStatusLine,
   groupModelsByProvider,
   deletionPlanSummary,
   modelKey,
@@ -1040,19 +1039,22 @@ async function refreshTasks() {
     composerRef.value?.setTaskLine(taskLineText(board));
   } catch { composerRef.value?.setTaskLine(""); }
 }
+// refreshStatusline：连接 / 助手 / 相位 / 上下文 —— 全都喂给右上角那枚环（2026-10-28 用户定）。
+//
+// 这四样从前是一行小字（"已连接 v0.1.0｜上下文 344/1.04M｜默认助手｜idle"），紧贴着对话；
+// 现在共用一处落点：环里是占比，点开的浮板里是明细（含连接与相位）。
+// ⚠ 别再造第二条"显示状态行"的路 —— 同一个数字住两处，只会让两处都可能过期。
 function refreshStatusline(phase, elapsedMs) {
+  // 连接 + 助手 + 相位：草稿态也要报（"没连上"跟有没有会话无关）。
+  topbarRef.value?.setStatus({ conn: connText, agent: statusAgent.value, phase, elapsedMs });
   if (draft || !sessionID) {
-    // 草稿：没有会话可问占用 —— 状态行只报"新对话 + 将来会用的模型"，
-    // 右上角那枚环也清空（没有会话就没有"占了多少"这回事）。
-    composerRef.value?.setStatus([connText, "新对话", statusAgent.value, phase ?? "idle"].filter(Boolean).join("｜"));
+    // 草稿：没有会话可问占用 ⇒ 环清空（没有会话就没有"占了多少"这回事）。
     topbarRef.value?.setContext(null);
     return;
   }
   api.context(sessionID).catch(() => null).then((ctx) => {
-    // 占用**不再进状态行**（2026-10-28 用户定）—— 它住右上角那枚环，点开才是明细。
-    composerRef.value?.setStatus(`${connText}｜` + formatStatusLine({ phase, elapsedMs, agent: statusAgent.value }));
     topbarRef.value?.setContext(ctx);
-  }).catch((err) => toast(`状态行失败：${err.message}`, "error"));
+  }).catch((err) => toast(`上下文占用读取失败：${err.message}`, "error"));
 }
 function refreshStateView(id) {
   if (draft || !(id ?? sessionID)) return; // 草稿：没有会话可问状态（右栏保持空话）

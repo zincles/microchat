@@ -1122,9 +1122,18 @@ test("上下文环：App 喂 ctx / 环在顶栏画 / 状态行不再报占用", 
   const okCount = (theme.match(/--tg-ok:/g) ?? []).length;
   assert.equal(okCount, 4, `--tg-ok 该在 :root + 三套预设里各一条，实际 ${okCount} 条`);
 
-  // 反向守卫：状态行只剩"助手｜相位"，不要再接 ctx/over/title
+  // —— 2026-10-28 用户定：「已连接 v0.1.0｜默认助手｜idle 这个也塞那个环的面板里」——
+  // 于是输入框上方那行小字整条没了：连接 / 助手 / 运行改住环的浮板。四处联动，少一环都不会报错、
+  // 只会让某处"看着还在但永远不更新"：
+  //   ① App 把状态喂给顶栏（不再喂 Composer）② TopBar 存它并渲染成三行
+  //   ③ Composer 没有状态行了 ④ main.css 没有 .statusline 规则了
   const composer = readFileSync(join(SRC, "components", "Composer.vue"), "utf8");
-  assert.match(composer, /function setStatus\(t\)/, "Composer 的 setStatus 该只有一个参数");
-  assert.ok(!composer.includes("statusOver"), "Composer 里还留着 statusOver（环才有超预算这个状态）");
-  assert.ok(!/\.statusline\.over/.test(css), "main.css 里还留着 .statusline.over 规则（永远匹配不上）");
+  assert.ok(!composer.includes("statusline"), "Composer 里还留着状态行（已经搬进环的浮板）");
+  assert.ok(!composer.includes("setStatus"), "Composer 还暴露着 setStatus（状态归顶栏）");
+  assert.match(app, /topbarRef\.value\?\.setStatus\(/, "App 没把连接/助手/相位喂给顶栏");
+  assert.ok(!app.includes("composerRef.value?.setStatus"), "App 还在往 Composer 塞状态行");
+  assert.match(top, /function setStatus\(s\)/, "TopBar 没有 setStatus");
+  assert.match(top, /const statusRows = computed/, "浮板里没有连接/助手/运行那三行");
+  assert.match(top, /ctx-rows-status/, "浮板里那三行没接样式");
+  assert.ok(!/\.statusline/.test(css), "main.css 里还留着 .statusline 规则（那一行已经删了）");
 });

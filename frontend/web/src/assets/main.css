@@ -176,6 +176,11 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .ctx-row dd { flex: 1; margin: 0; text-align: right; font-variant-numeric: tabular-nums; word-break: break-word; }
 .ctx-note { margin: 0.5em 0 0; padding-top: 0.45em; border-top: 1px solid var(--line);
   color: var(--tg-hint); font-size: 0.85em; line-height: 1.4; }
+/* 「连接 / 助手 / 运行」三行（2026-10-28 从输入框上方那行小字搬进来）。
+ * 与上面那组上下文数字之间**画一条分隔**：它们是两件事（"占了多大"是仪表读数，
+ * "连没连上、在不在跑"是运行状态），混成一张表会让人以为"运行"也是 Token 数。 */
+.ctx-rows-status { margin-top: 0.45em; padding-top: 0.4em; border-top: 1px solid var(--line); }
+.ctx-rows-status .ctx-row { padding: 0.16em 0; }
 /* Toast 通知（右上堆叠，TG 安卓 toast 味：深底白字圆角 + 左色条区分 Plumbing/错误）。 */
 #toasts { position: fixed; top: 4.2em; right: 0.8em; display: flex; flex-direction: column; gap: 0.5em; z-index: 50; max-width: min(22em, 80vw); }
 .toast { background: var(--tg-float); color: var(--tg-text); border-radius: var(--r-card); padding: 0.6em 0.9em 0.6em 0.8em; font-size: 0.88em; box-shadow: var(--shadow-3); border-left: 3px solid var(--tg-link); animation: toast-in 180ms ease-out; word-break: break-word; }
@@ -309,12 +314,13 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 /* 阅读列（气泡/摘要卡/加载更多都住这里）：--read-col（920，2026-10-15 用户定：760 小了"一点点"）
  * 居中 + 两侧 56px 空档 + 上下留白喂两个悬浮层。改宽窄只有这一个数（输入行共用同一个变量）。
  * 上下留白：顶栏 ~2.5em 撑住 3.2em；底部 = 输入行实测高（--composer-h，App 的 composerRO 现量现写）
- * + 状态行/任务行两行小字的位置。 */
+ * + 任务行那一行小字的位置（2026-10-28 起只剩它一行：状态行搬进右上角的环了，
+ *   所以 2.6em 收到 1.5em = 任务行的 0.3em 间距 + 约 1.2em 行高）。 */
 .messages-inner { max-width: var(--read-col, 920px); margin: 0 auto; box-sizing: border-box;
-  padding: 3.2em 56px calc(var(--composer-h, 4.6em) + 2.6em); display: flex; flex-direction: column; gap: 0.3em; }
-/* 实心形态的底部留白（2026-10-20）：浮空模式那 2.6em 是留给**挂在栏外**的状态行/任务行的
- * （它们 `bottom: 100%` 浮在输入框上面，不计入 `--composer-h`）；实心模式里这两行已经**进栏**、
- * 高度算进了 `--composer-h` ⇒ 再留 2.6em 就是白占一截（与"更高效"相悖）。只留一点呼吸位。
+  padding: 3.2em 56px calc(var(--composer-h, 4.6em) + 1.5em); display: flex; flex-direction: column; gap: 0.3em; }
+/* 实心形态的底部留白（2026-10-20）：浮空模式那 1.5em 是留给**挂在栏外**的任务行的
+ * （它 `bottom: 100%` 浮在输入框上面，不计入 `--composer-h`）；实心模式里这行已经**进栏**、
+ * 高度算进了 `--composer-h` ⇒ 再留一截就是白占（与"更高效"相悖）。只留一点呼吸位。
  * 特异性(1,2,0) 压得过下面两个媒体查询里的 `.messages-inner`（0,1,0）—— 窄屏也一并生效。 */
 html[data-composer="solid"] .messages-inner { padding-bottom: calc(var(--composer-h, 4.6em) + 0.7em); }
 /* 抽屉遮罩（只在窄屏显示；点一下 = 收起对应的栏）：与栏的状态由 CSS 兄弟选择器联动，不用 JS 状态。 */
@@ -335,9 +341,9 @@ html[data-composer="solid"] .messages-inner { padding-bottom: calc(var(--compose
   #sessions-bar.collapsed { transform: translateX(-102%); max-width: none; opacity: 1; visibility: hidden; }
   #scrim-left { display: block; position: fixed; inset: 0; z-index: 15; background: rgb(0 0 0 / 45%); opacity: 0; pointer-events: none; transition: opacity 180ms ease-out; }
   #sessions-bar:not(.collapsed) ~ #scrim-left { opacity: 1; pointer-events: auto; }
-  /* 底部留白别砍光（砍光过：滚到底时最后一条会滑到 statusline 底下，像被底栏"挡"住）——
+  /* 底部留白别砍光（砍光过：滚到底时最后一条会滑到任务行底下，像被底栏"挡"住）——
    * 窄屏同样按"输入行实测高 + 小字位置"算（2026-10-14 起输入行是悬浮层，高度会变）。 */
-  .messages-inner { padding: 2.8em 0.8em calc(var(--composer-h, 4.6em) + 1.8em); }
+  .messages-inner { padding: 2.8em 0.8em calc(var(--composer-h, 4.6em) + 1.3em); }
   #settings-view, #user-view { padding: 0.4em 0.4em 0; }
   .settings-bar { gap: 0.2em; }
   /* 六区在窄屏：排得下就等分，排不下靠 nav 横滚（不设固定宽 —— 那两行会被后面的默认规则盖掉）。 */
@@ -555,71 +561,31 @@ html[data-composer="solid"] #composer #input {
 html[data-composer="solid"] #composer #input:focus { outline: none; border-color: transparent; }
 /* 两颗圆钮在实心栏里保留圆形（它们是按钮，不是"卡"）—— 只把阴影去掉，贴着实心底更干净。 */
 html[data-composer="solid"] #composer button { box-shadow: none; }
-/* 状态行/任务行进栏：`flex: 1 0 100%` 各占一整行，`order` 把它们排在输入框**上面**
- * （DOM 里 taskline 在前、statusline 在后，顺序靠 order 定，不靠 DOM）。
- * `position: static` 是**必须的**：基础的 `.statusline`/`.taskline` 是
- * `position: absolute; bottom: 100%` 挂在栏外 —— 不扳回 static 就会既浮着又占位。
- * （`margin` 归零的是任务行；状态行的左右负 margin 见下面分割线那段，是**故意**的。）
+/* 任务行进栏：`flex: 1 0 100%` 独占一整行，`order: -2` 排在输入框**上面**。
+ * `position: static` 是**必须的**：基础的 `.taskline` 是 `position: absolute; bottom: 100%`
+ * 挂在栏外 —— 不扳回 static 就会既浮着又占位。
  *
- * `row-gap: 0`：换行后**行间**间距改由各行自己的 margin 给（行距可控、可单独调），
- * 列间（输入框 ↔ 两颗圆钮）仍吃 `#composer` 的 `gap: 0.5em`，不受影响。 */
+ * ⚠ 这里原本还有一块给**状态行**进栏用的规则 + 那条"边到边"的分割线（2026-10-20 用户点名
+ * "它和底部输入栏之间有分割线比较好"）。2026-10-28 状态行整条搬进右上角环的浮板
+ * （用户："已连接 v0.1.0｜默认助手｜idle 这个也塞那个环的面板里"）⇒ 两个隔间只剩一个，
+ * 分割线没有对象了，一并删掉。要再画线时**别**用伪元素外扩（会被 `overflow: hidden` 裁掉）
+ * —— 那个教训写在 git 历史里（`git log -S'border-bottom: 1px solid var(--line)'`）。
+ *
+ * `row-gap: 0`：换行后**行间**间距改由各行自己的 margin 给；列间（输入框 ↔ 两颗圆钮）
+ * 仍吃 `#composer` 的 `gap: 0.5em`，不受影响。 */
 html[data-composer="solid"] #composer { flex-wrap: wrap; row-gap: 0; }
-html[data-composer="solid"] #composer .statusline,
 html[data-composer="solid"] #composer .taskline {
   position: static; margin: 0 0 0.15em;
   flex: 1 0 100%; order: -1; text-align: left; text-shadow: none;
   padding: 0 0.6em; color: var(--tg-hint);
 }
-/* 实心形态的分割线（2026-10-20 用户点名："它和底部输入栏之间有分割线比较好"）：
- * 状态行已经**进栏**（是栏内的一行），线画在它**下边**，并且**边到边**。
- *
- * ⚠ 这里换过三种写法，前两种都是错的，记下来免得再走一遍：
- *   ① 伪元素挂 `.statusline::after` + `left/right` 负值外扩 —— 那行为了省略号带着
- *      `overflow: hidden`，**会把外扩的伪元素整个裁掉**（线直接消失，不报错）。
- *   ② 伪元素挂 `#composer::after` + 写死 `top` —— 任务行（`order: -2`）一出现，状态行整体下移
- *      约 15.5px，线就**盖在状态行上**（"有没有后台任务"会让线跳位置，典型的漂移 bug）。
- * 现在：**用 `border-bottom` 画在状态行自己身上**（不靠溢出，裁不到；跟着行走，不漂），
- * 再用**负 margin** 把这一行撑到栏的左右边缘（栏有 `padding: 0.5em`，负 0.5em 正好抵消）——
- * 于是线边到边、且行高怎么变都对。`box-sizing` 保证撑宽后不横向溢出。 */
-html[data-composer="solid"] #composer .statusline {
-  position: relative;
-  /* 左右负 0.5em **抵消栏的 padding**（栏 `padding: 0.5em`）⇒ 这一行撑到栏的左右边缘，
-   * 底边框于是**边到边**。注意这里的 em 按 `#composer` 的字号（正文 15px）解析。 */
-  margin: 0 -0.5em 0.15em;
-  /* 文字**仍从原来的位置起**：负 margin 把行左缘拉到栏外后，得把这段补回来。
-   * ⚠ 这里的 em 按**状态行自己**的字号（0.74em ≈ 11.1px）解析，与上面的 margin **不是同一把尺** ——
-   * 所以抵消栏 padding 的那 0.5em 要换算成状态行的字号：0.5 / 0.74 ≈ 0.6757em。
-   * 写成 `calc(0.6em + 0.5em / 0.74)` 而不是两个裸 0.5em：后者会少补 1.94px，文字悄悄左移。 */
-  padding: 0 calc(0.6em + 0.5em / 0.74) 0.28em;
-  box-sizing: border-box;
-  border-bottom: 1px solid var(--line);
-  /* 省略号需要 overflow:hidden —— 这**不影响**自己的 border（border 不属于溢出内容），
-   * 正是换到"画在自己身上"的理由（伪元素外扩会被它裁掉）。 */
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-html[data-composer="solid"] #composer .taskline { order: -2; margin-bottom: 0.1em; }
-/* （2026-10-20 这里曾有一条 `html[data-composer="solid"] #composer .statusline.over`，
- *  修的是"实心模式下超预算不变红"的特异性事故；2026-10-28 超预算信号搬去右上角的环了，
- *  这条随之删掉 —— 那个教训（作用域化的规则特异性更高，样式得跟着搬）仍然成立。） */
-/* 状态行：输入框上方独立小字（不进卡，跟输入框同宽居中，超预算红）。 */
-.statusline { position: absolute; left: 0; right: 0; bottom: 100%; margin-bottom: 0.3em; text-align: center;
-  /* 2026-10-20 用户点名"占的高度小一些"：**高度的大头不是字号，是行高** —— 它继承了 body 的
-   * 1.65（那是给正文读起来松快的），而这一行是**仪表**（一行数据，没人逐字读）⇒ 1.3 就够。
-   * 字号跟着从 0.78 降到 0.74（只降一点：再小就不好认了，省高度的事主要交给行高）。
-   * `nowrap` + 省略号：万一窄到放不下，宁可一行截尾也别折成两行（折行才是真正吃高度的元凶）。 */
-  font-size: 0.74em; line-height: 1.3;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  /* 颜色提亮一档（hint 混 text）：这两行小字现在是**浮在背景图/消息上的**，纯 hint 太暗读不动
-   * （2026-10-14 顶栏去壳一并统一；over 态仍是警告红）。 */
-  color: color-mix(in srgb, var(--tg-hint) 75%, var(--tg-text));
-  /* 悬浮小字压在背景图上要读得清：**双层柔影**（近处实、远处散）—— 2026-10-14 顶栏去壳后一并统一。 */
-  text-shadow: 0 1px 2px color-mix(in srgb, var(--tg-bg) 85%, transparent), 0 1px 10px color-mix(in srgb, var(--tg-bg) 55%, transparent); }
-/* ⚠ 从前这里有 `.statusline.over`（超预算整行变红）。2026-10-28 起**没有这个状态**了：
- * 上下文占用整块搬去右上角那枚环（`#ctx-ring`，超预算时环变红），状态行只报"助手｜相位"。
- * 别把 `.over` 加回这行 —— 那会是一条永远匹配不上的规则（`setStatus` 已经不接 over 了）。 */
-/* ⚠ 分割线**只给实心形态**（2026-10-20 用户点名："它和底部输入栏之间有分割线比较好"）：
- * 浮空形态里这行是**飘在消息上的一行字**（不是栏的一部分），给它画条线只是一条悬空的横杠，
- * 反而脏；而实心形态那条栏是**一整块实心底**，"状态行 / 输入行"是两个隔间 ⇒ 分格线才讲得通。 */
+/* ⚠ 状态行（`.statusline`）2026-10-28 **整条删掉**了：连接 / 助手 / 相位搬进右上角那枚环的
+ * 浮板（`#ctx-ring` → `.ctx-menu` 里的"连接 / 助手 / 运行"三行），上下文占用则是环本身。
+ * 于是这里没有"一行浮在输入框上方的小字"了 —— 别把它加回来：同一件事住两处，
+ * 只会让两处都可能过期（而且那行字要一直挤着对话的底部）。
+ * 随它一起没掉的还有两条：实心模式的"状态行 ↔ 输入行"分割线（两个隔间只剩一个了）、
+ * 以及那条 `html[data-composer="solid"] #composer .statusline.over`（2026-10-20 的特异性事故：
+ * 作用域化的规则特异性更高，样式得跟着搬 —— 这个教训仍然成立）。 */
 /* 连接门板 / 登录 = 进前端第一眼（2026-10-14 用户定"更好看"；z-index 高过设置/浮层，全屏盖住一切）。
  * 底：自己铺 **同一张用户背景图**（--mc-bg-image 就是 background.js 挂的那枚）+ 一层跟主题走的面纱
  *   —— 门板在 #app 里、body::before 的图层在它后面 ✗，想"透出图片"不能靠透明（那会把聊天壳也透出来，
@@ -655,8 +621,10 @@ html[data-composer="solid"] #composer .taskline { order: -2; margin-bottom: 0.1e
 #session-list .empty .sub { font-size: 0.9em; opacity: 0.8; }
 .gate-box .hint { color: var(--tg-hint); font-size: 0.8em; margin: 0.55em 0 0; text-align: center; }
 .gate-box .hint code { background: color-mix(in srgb, var(--tg-text) 8%, transparent); border-radius: 4px; padding: 0 0.25em; }
-/* 后台任务行：状态行头上再叠一行（绝对定位 ⇒ 不占布局；0 个任务时整行不渲染）。 */
-.taskline { position: absolute; left: 0; right: 0; bottom: 100%; margin-bottom: 1.75em; text-align: center; font-size: 0.72em; color: color-mix(in srgb, var(--tg-hint) 75%, var(--tg-text)); text-shadow: 0 1px 2px color-mix(in srgb, var(--tg-bg) 85%, transparent), 0 1px 10px color-mix(in srgb, var(--tg-bg) 55%, transparent); }
+/* 后台任务行：输入框上方一行小字（绝对定位 ⇒ 不占布局；0 个任务时整行不渲染）。
+ * `margin-bottom` 从 1.75em 收到 0.3em：那 1.75em 是**为了浮在状态行上面**留的，
+ * 状态行 2026-10-28 搬走后就是一段白飘在对话底下（用户一直在要"更紧凑"）。 */
+.taskline { position: absolute; left: 0; right: 0; bottom: 100%; margin-bottom: 0.3em; text-align: center; font-size: 0.72em; color: color-mix(in srgb, var(--tg-hint) 75%, var(--tg-text)); text-shadow: 0 1px 2px color-mix(in srgb, var(--tg-bg) 85%, transparent), 0 1px 10px color-mix(in srgb, var(--tg-bg) 55%, transparent); }
 #composer button { background: var(--tg-button); color: var(--tg-button-text); border: none; border-radius: 50%; width: 2.6em; height: 2.6em; padding: 0; cursor: pointer; align-self: flex-end; display: flex; align-items: center; justify-content: center; flex: none; box-shadow: var(--shadow-1); }
 #composer button:hover { filter: brightness(1.1); }
 #composer button svg { display: block; }
