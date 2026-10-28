@@ -33,6 +33,7 @@ import SummaryCard from "./components/SummaryCard.vue";
 import SummaryEditor from "./components/SummaryEditor.vue";
 import ConnectGate from "./components/ConnectGate.vue";
 import Composer from "./components/Composer.vue";
+import ContextWorkspace from "./components/ContextWorkspace.vue";
 import Toast from "./components/Toast.vue";
 import SettingsModal from "./components/SettingsModal.vue";
 import UserView from "./components/UserView.vue";
@@ -672,6 +673,19 @@ async function refreshAgents() {
 // 2026-10-14 用户定：栏开着时顶栏不渲染那一侧的开关 —— 按钮跟着它控制的东西走）。
 const leftHidden = ref(false);
 const rightHidden = ref(false);
+
+// —— 工作区（2026-10-29 用户定）——
+// 「每个对话分为俩部分：对话界面 和 上下文工作区 界面」，顶栏右上角（绿环左边）那颗两段开关切。
+//
+// **不存进 localStorage**：它是"这一下要看哪块"，不是外观偏好。存下来的话，下次打开
+// 直接落在空白的工作区里、以为会话是空的 —— 那种"我的消息没了"的惊吓比省一次点击贵得多。
+// 换会话也不重置：人正在对照两份上下文时，切会话不该把他弹出工作区。
+const workspace = ref("chat");
+function selectWorkspace(next) {
+  // 只认这两个值：调用方（按钮）本来只发这两个，但这儿再挡一道 ——
+  // 将来加了第三块，漏改某处会得到一个**空白区**（v-show 谁都不匹配），那是最难查的一类。
+  workspace.value = next === "context" ? "context" : "chat";
+}
 function applySideToggle(barID, hidden) {
   document.getElementById(barID)?.classList.toggle("collapsed", hidden);
   if (barID === "sessions-bar") leftHidden.value = hidden;
@@ -819,8 +833,11 @@ async function startDraft() {
   draftId = uuidv7(); // 这张草稿将来那会话的 id（预演与建会话都用它）
   const d = await api.getDefaults().catch(() => ({}));
   draftPrefs = { provider: d.provider ?? "", model: d.model ?? "", agent: d.agent ?? "" };
+  // `id: ""` 是必须的：`Object.assign` **不清旧键**，从一条真会话切到草稿时
+  // `sessionInfo.id` 会留着上一条的 id —— 于是"这是草稿吗"就答错了（曾经就没人读它，
+  // 所以一直没露；上下文工作区要读它才露出来）。
   Object.assign(sessionInfo, {
-    title: "", provider: draftPrefs.provider, model: draftPrefs.model,
+    id: "", title: "", provider: draftPrefs.provider, model: draftPrefs.model,
     agent_id: draftPrefs.agent, system_prompt: "",
   });
   vueMessages.value = [];
@@ -1068,6 +1085,11 @@ function liftOverlays() {
   const form = document.querySelector("#composer");
   if (!form) return;
   const h = form.getBoundingClientRect().height;
+  // 量不到就别写（2026-10-29）：切到上下文工作区时输入行是 `display:none`，量出来是 0 ——
+  // 那不是"输入行 0 高"，是"这一下没在量"。照写会让 `--composer-h` 掉到 0，
+  // 切回聊天时消息列底部的留白先塌一下、等 ResizeObserver 回调再补回来（一帧的跳动，
+  // 眼睛看得见、代码看不出来）。
+  if (h <= 0) return;
   overlaysRef.value?.lift(Math.max(0, h - 60));
   // 输入行现在是**悬浮层**（绝对定位）⇒ 消息列底部留白得知道它多高（textarea 会长高，写死会错位）。
   document.getElementById("chat-col")?.style.setProperty("--composer-h", `${Math.round(h)}px`);
@@ -1498,12 +1520,14 @@ onUnmounted(() => {
       ref="topbarRef"
       :left-hidden="leftHidden"
       :right-hidden="rightHidden"
+      :workspace="workspace"
+      @select-workspace="selectWorkspace"
       @toggle-left="toggleLeft"
       @toggle-right="toggleRight"
       @select-model="(v) => applyModelValue(v).catch((err) => toast(`换模型失败：${err.message}`, 'error'))"
       @select-agent="(id) => applyAgentValue(id).catch((err) => toast(`换 Agent 失败：${err.message}`, 'error'))"
     />
-        <main id="messages-vue">
+        <main id="messages-vue" v-show="workspace === 'chat'">
           <!-- 滚动容器（#messages-vue）现在**占满整个对话区**（滚动条因此贴最右缘，2026-10-14 用户定）；
                阅读列约束（760 居中、两侧 56px、上下留白）落在这一层 —— 气泡别拉成整屏长句。 -->
           <div class="messages-inner">
@@ -1549,6 +1573,7 @@ onUnmounted(() => {
           </div>
         </main>
     <Composer
+      v-show="workspace === 'chat'"
       ref="composerRef"
       :menu-on="cmdMenu"
       @input-text="onComposerInput"
@@ -1557,6 +1582,9 @@ onUnmounted(() => {
       @stop="stopCurrent"
       @menu="() => overlaysRef?.showPalette(filterCommands(''))"
     />
+    <!-- 上下文工作区（2026-10-29 用户定）：与消息列 + 输入行互斥 —— 同一块地方换个视角看。
+         顶栏不在切换范围内（它自己带着那颗开关，切掉就找不回来了）。 -->
+    <ContextWorkspace v-show="workspace === 'context'" :has-session="!!sessionInfo.id" />
       </section>
       <PayloadBar
         v-show="!settingsOpen && !userOpen"

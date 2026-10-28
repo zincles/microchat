@@ -17,8 +17,14 @@ defineProps({
   // （按钮跟着它控制的东西走）。
   leftHidden: { type: Boolean, default: false },
   rightHidden: { type: Boolean, default: false },
+  // workspace：这一下要显示哪块工作区（"chat" | "context"）。
+  //
+  // 2026-10-29 用户定：「每个对话分为俩部分：对话界面 和 上下文工作区 界面」，
+  // 开关就落在右上角、**绿环左边**（"位于那个绿色圆环左侧"）。放在这一簇而不是别处，
+  // 是因为它和环管的是同一件事的两面：环说"占了多少"，工作区说"占的是什么"。
+  workspace: { type: String, default: "chat" },
 });
-const emit = defineEmits(["toggle-left", "toggle-right", "select-model", "select-agent"]);
+const emit = defineEmits(["toggle-left", "toggle-right", "select-model", "select-agent", "select-workspace"]);
 
 const modelGroups = ref([]); // [{provider, items:[{value,label,provider_name,upstream_id}]}]
 const curModel = ref("");
@@ -240,6 +246,30 @@ defineExpose({ setSession, setModels, setAgents, setContext, setStatus });
       </template>
     </span>
     <span class="header-right">
+      <!-- 🔀 聊天 / 上下文（2026-10-29 用户定）：「每个对话分为俩部分：对话界面 和 上下文工作区
+           界面」，开关在**绿环左边**。放在这一簇里因为它和环是同一件事的两面 ——
+           环说"占了多少"，这块说"占的是什么"。
+           用 role=tablist 而不是两枚普通按钮：它切的是**视图**，选中状态要能被读屏念出来。 -->
+      <span class="ws-switch" role="tablist" aria-label="工作区">
+        <button
+          type="button"
+          class="ws-tab"
+          role="tab"
+          :class="{ sel: workspace === 'chat' }"
+          :aria-selected="workspace === 'chat' ? 'true' : 'false'"
+          title="对话本身"
+          @click="$emit('select-workspace', 'chat')"
+        >聊天</button>
+        <button
+          type="button"
+          class="ws-tab"
+          role="tab"
+          :class="{ sel: workspace === 'context' }"
+          :aria-selected="workspace === 'context' ? 'true' : 'false'"
+          title="上下文工作区（压缩出来的前情提要、层级、状态、真发出去的载荷）"
+          @click="$emit('select-workspace', 'context')"
+        >上下文</button>
+      </span>
       <!-- 顺序是**环在左、开关在右**（2026-10-28 用户定）：开关是"控制栏的按钮"，
            它是这一簇的锚，位置稳定；环是随状态变的仪表，挂在它左边不抢锚点。 -->
       <!-- 上下文占比环：环长 = 已用 / 输入预算；绿正常、红超预算。点开看明细。 -->

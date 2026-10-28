@@ -1573,3 +1573,60 @@ test("设置默认值：当前值不在列表里也要留住，并说明白", ()
   assert.equal(withCur[withCur.length - 1].value, "m-old");
   assert.ok(withCur[withCur.length - 1].missing);
 });
+
+// 上下文工作区（2026-10-29 用户定）：「每个对话分为俩部分：对话界面 和 上下文工作区 界面」，
+// 开关「就位于那个绿色圆环左侧」。
+//
+// 这条钉三件事，每一件错了都不报错、只是"看起来怪"或"找不回来"：
+//   ① 开关在**环左边**（顺序反了就成了"环跟着开关走"，位置全变）；
+//   ② 切换**只换内容**、不动顶栏（顶栏带着开关，切掉就再也点不回来 —— 死锁）；
+//   ③ 状态**不写 localStorage**（存下来下次打开直接落在空白工作区，人会以为消息没了）。
+test("上下文工作区：开关在绿环左边，只切内容不切顶栏", () => {
+  const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
+  const app = readFileSync(join(SRC, "..", "src", "App.vue"), "utf8").replace(/<!--[\s\S]*?-->/g, "");
+
+  // ① 顺序：ws-switch 出现在 ctx-ring 之前，且都在 .header-right 里
+  const switchAt = top.indexOf('class="ws-switch"');
+  const ringAt = top.indexOf('id="ctx-ring"');
+  const rightAt = top.indexOf('class="header-right"');
+  assert.ok(switchAt > 0 && ringAt > 0 && rightAt > 0, "找不到 ws-switch / ctx-ring / header-right");
+  assert.ok(rightAt < switchAt, "两段开关该在 .header-right 里（与环同一簇）");
+  assert.ok(switchAt < ringAt, "开关该在绿环**左边**（用户原话），现在顺序反了");
+
+  // ② 顶栏不在切换范围内：只有消息列 / 输入行 / 工作区三处带 v-show
+  assert.match(app, /<main id="messages-vue" v-show="workspace === 'chat'"/, "消息列没跟着工作区切");
+  assert.match(app, /<Composer\s+v-show="workspace === 'chat'"/, "输入行没跟着工作区切");
+  assert.match(app, /<ContextWorkspace v-show="workspace === 'context'"/, "工作区没挂上");
+  // 顶栏那行不许出现 workspace 的 v-show/v-if（切掉它 = 再也切不回来）
+  const topbarTag = app.match(/<TopBar[\s\S]*?\/>/)?.[0] ?? "";
+  assert.ok(!/v-show=|v-if=/.test(topbarTag), "顶栏被绑上了显示条件 —— 切到上下文就再也切不回来");
+
+  // ③ 不落盘
+  assert.ok(!/mc_workspace/.test(app), "工作区状态进了 localStorage —— 下次打开会落在空白工作区");
+});
+
+// 工作区是**空**的（用户明说"暂时不妨东西"），但空着不等于什么都不画：
+// 全白的一块分不清"还没做"和"加载失败"。
+test("上下文工作区：空着也要说清它是什么", () => {
+  const ws = readFileSync(join(SRC, "components", "ContextWorkspace.vue"), "utf8");
+  assert.match(ws, /上下文工作区/, "没有标题");
+  assert.match(ws, /还没往里放东西/, "没说清现在为什么是空的");
+  // 草稿态要另说一句（那时确实没有任何上下文）
+  assert.match(ws, /hasSession/, "没区分草稿态");
+});
+
+// 切到上下文工作区时输入行是 display:none ⇒ getBoundingClientRect().height 量出来是 0。
+// 那不是"输入行 0 高"，是"这一下没在量"：照写会让 `--composer-h` 掉到 0，
+// 切回聊天时消息列底部留白先塌一帧再补回来（眼睛看得见，代码看不出来）。
+test("工作区：量不到输入行高度时不写 --composer-h", () => {
+  const app = readFileSync(join(SRC, "..", "src", "App.vue"), "utf8");
+  const fn = app.match(/function liftOverlays\(\)[\s\S]*?\n\}/)?.[0] ?? "";
+  assert.ok(fn, "找不到 liftOverlays");
+  assert.match(fn, /if \(h <= 0\) return;/, "量到 0 时没提前返回 —— 隐藏态会把 --composer-h 写成 0");
+  // 守卫必须在**真正的写入**之前（别用 indexOf("--composer-h")：注释里先提到它，
+  // 那样写出来的断言会在守卫挪到写入之后时依然通过 —— 断言自己把自己骗了）。
+  const guardAt = fn.indexOf("if (h <= 0) return;");
+  const writeAt = fn.indexOf('setProperty("--composer-h"');
+  assert.ok(writeAt > 0, "找不到写 --composer-h 的那句");
+  assert.ok(guardAt > 0 && guardAt < writeAt, "守卫该在写 --composer-h 之前");
+});
