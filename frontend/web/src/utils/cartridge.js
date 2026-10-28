@@ -5,13 +5,18 @@
 // - 导入的合并规则：系统里已有同 id 的段（用户段或内置）⇒ **丢弃卡带那份**（用本地的）；
 //   没有 ⇒ 建它，并打上「导入」来源标记（`imported: true`）。
 // - v1 老卡带（agent 的提示词已拼平、无 `segments` 数组）照样能导：字段都可缺省。
+import { ABILITY_IDS } from "./format.js";
+
 export const CARTRIDGE_VERSION = 2;
 
 // buildCartridge：agent（`GET /agents` 的形状）+ 段库 ⇒ 卡带对象。
 export function buildCartridge(agent, segments) {
   const refs = (agent.segments ?? []).map((x) => String(x));
+  // 能力也能引用段（2026-10-28）⇒ 打包时**一并收**：只收 agent 自己那份的话，
+  // 卡带导到另一台机器上，能力的段引用会指向不存在的段（后端写入时直接 400）。
+  const abilityRefs = ABILITY_IDS.flatMap((id) => (agent.abilities?.[id]?.segments ?? []).map((x) => String(x)));
   const bundled = [];
-  for (const id of refs) {
+  for (const id of [...new Set([...refs, ...abilityRefs])]) {
     const seg = (segments ?? []).find((s) => s.id === id);
     if (seg && !seg.builtin) bundled.push({ id: seg.id, text: seg.text }); // 内置不带
   }

@@ -249,7 +249,10 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .seg-row .seg-preview { color: var(--tg-hint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
 .seg-assembled { margin: 0.3em 0; }
 .seg-assembled summary { cursor: pointer; color: var(--tg-hint); }
-.seg-assembled pre { white-space: pre-wrap; word-break: break-word; max-height: 20em; overflow-y: auto; background: rgb(0 0 0 / 20%); padding: 0.5em 0.6em; border-radius: 6px; }
+/* ⚠ 底色别写死黑（2026-10-28）：`rgb(0 0 0 / 20%)` 在浅色主题里是一块**脏灰**，
+ * 而这里放的是"拼装后的提示词"——最该好读的一块。跟着文字色派生，深浅两套都成立。 */
+.seg-assembled pre { white-space: pre-wrap; word-break: break-word; max-height: 20em; overflow-y: auto;
+  background: color-mix(in srgb, var(--tg-text) 7%, transparent); padding: 0.5em 0.6em; border-radius: 6px; }
 /* 载荷栏"分块视图"（用户点名 2026-10-11）：body.messages 一块块矩形画出来（角色徽标 + 内容）。 */
 .pv-toolbar { display: flex; align-items: center; gap: 0.5em; margin: 0 0 0.5em; color: var(--tg-hint); }
 .pv-toolbar .lbl { font-size: 0.9em; }

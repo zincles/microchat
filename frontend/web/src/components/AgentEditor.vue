@@ -1,7 +1,7 @@
 <script setup>
 // Agent 编辑器（设置视图 Agent tab 内的二级页，列表 ⇄ 详情就地切换）：新建 / 改 id·名 / 提示词 / 三能力开关 / 设默认 / 删除。
 // isNew（boolean）：无 agent 快照=新建（空表单）；有=编辑（带入快照，保存后父重拉，id 变了也对得上）。关即销毁。
-import { ref, computed, onMounted, onUnmounted } from "vue";
+import { ref, reactive, computed, onMounted, onUnmounted } from "vue";
 import { sharedApi } from "../utils/prefs.js";
 import { ABILITY_IDS, buildAbilitiesPatch, modelKey, parseModelKey, modelLabel } from "../utils/format.js";
 import { assemblePrompt, missingSegments } from "../utils/prompt.js";
@@ -47,13 +47,39 @@ function dropSeg(i) { segs.value.splice(i, 1); }
 const modelOptions = ref([]);
 const status = ref("");
 
+// —— 能力里的提示词段（2026-10-28 用户定："用于 Compact 的提示词段"也要能自由组合）——
+// 与上面 agent 的段编辑器**同形**（同一套 .seg-row 样式、同一个段库、同一条拼装规则），
+// 只是每个能力各管一份清单。segPickOf 是"每个能力各记一个待添加的选中项"。
+const segPickOf = reactive({});
+function moveAbilitySeg(id, i, d) {
+  const list = rows.value[id]?.segments ?? [];
+  const j = i + d;
+  if (j < 0 || j >= list.length) return;
+  [list[i], list[j]] = [list[j], list[i]];
+}
+function dropAbilitySeg(id, i) { rows.value[id]?.segments?.splice(i, 1); }
+function addAbilitySeg(id) {
+  const picked = segPickOf[id];
+  const list = rows.value[id]?.segments;
+  if (!picked || !list || list.includes(picked)) return;
+  list.push(picked);
+  segPickOf[id] = "";
+}
+// 这能力的段拼起来多少字（**不含模板本身** —— 模板在代码里，前端看不到；
+// 用户填了 `prompt` 覆盖时才会把那段也算上，所以这里只报"段"的字数，不谎报总量）。
+function abilitySegChars(id) {
+  return assemblePrompt("", rows.value[id]?.segments ?? [], props.segments).length;
+}
+
 function fillRows(a) {
   const ab = a?.abilities ?? {};
   const out = {};
   for (const id of ABILITY_IDS) {
     const one = ab[id] ?? {};
     const both = one.provider && one.model ? modelKey(one.provider, one.model) : "";
-    out[id] = { enabled: one.enabled !== false, model: both, prompt: one.prompt ?? "" };
+    // segments：能力的追加段（2026-10-28）。老配置没有这一格 ⇒ 空数组（不是 undefined，
+    // 否则模板里 `rows[id].segments.length` 会在老数据上炸）。
+    out[id] = { enabled: one.enabled !== false, model: both, prompt: one.prompt ?? "", segments: [...(one.segments ?? [])] };
   }
   rows.value = out;
 }
@@ -69,6 +95,7 @@ function toPatch() {
       provider: parsed?.provider ?? "",
       model: parsed?.model ?? "",
       prompt: r.prompt ?? "",
+      segments: [...(r.segments ?? [])],
     };
   }
   return buildAbilitiesPatch(out);
@@ -185,6 +212,32 @@ function onKey(e) {
         <option v-for="m in modelOptions" :key="m.value" :value="m.value">{{ m.label }}</option>
       </select></label>
       <label class="field-block"><span>提示词覆盖（空=默认模板）</span><textarea v-model="rows[id].prompt" rows="3"></textarea></label>
+      <!-- 提示词段：追加在（覆盖 ?: 默认）模板**后面**，顺序 = 这里的顺序。
+           改了模板不必把段里的字抄进来 —— 抄进来就是两份，改一处忘一处。 -->
+      <div class="field-block">
+        <span>提示词段（追加在模板后面，顺序 = 拼接顺序）</span>
+        <div v-if="!rows[id].segments.length" class="status">（还没有段 —— 从下面挑一个加进来）</div>
+        <div v-for="(sid, i) in rows[id].segments" :key="sid" class="seg-row" :class="{ missing: segMissing(sid) }">
+          <button type="button" class="icon-btn" title="上移" :disabled="i === 0" @click="moveAbilitySeg(id, i, -1)">↑</button>
+          <button type="button" class="icon-btn" title="下移" :disabled="i === rows[id].segments.length - 1" @click="moveAbilitySeg(id, i, 1)">↓</button>
+          <span class="seg-id">{{ sid }}<template v-if="segMissing(sid)"> ⚠ 库里没有</template></span>
+          <span class="seg-preview">{{ segText(sid).slice(0, 40) }}</span>
+          <button type="button" class="icon-btn danger" title="移除（不删库里的段）" @click="dropAbilitySeg(id, i)">✕</button>
+        </div>
+        <div class="row">
+          <select v-model="segPickOf[id]" title="从段库挑一个">
+            <option value="">从段库挑一个…</option>
+            <option v-for="s in props.segments" :key="s.id" :value="s.id" :disabled="rows[id].segments.includes(s.id)">
+              {{ s.id }}{{ s.builtin ? "（内置）" : "" }}{{ s.imported ? "（导入）" : "" }} —— {{ s.text.slice(0, 30) }}
+            </option>
+          </select>
+          <button type="button" :disabled="!segPickOf[id]" @click="addAbilitySeg(id)">添加段</button>
+        </div>
+        <details v-if="rows[id].segments.length" class="seg-assembled">
+          <summary>这些段拼起来（{{ abilitySegChars(id) }} 字；前面还有模板本身，这里看不到）</summary>
+          <pre>{{ assemblePrompt("", rows[id].segments, props.segments) }}</pre>
+        </details>
+      </div>
     </fieldset>
     <div class="row">
       <button type="button" class="primary" @click="save">保存</button>

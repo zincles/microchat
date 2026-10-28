@@ -155,6 +155,9 @@ type Setting struct {
 	Provider string
 	Model    string
 	Prompt   string
+	// Segments：追加段 id（顺序 = 追加顺序）。2026-10-28 起能力也能拼段 ——
+	// 与 agent 的 `segments` 共用同一个段库与同一条拼装（`state.JoinPrompt`）。
+	Segments []string
 }
 
 // Resolve：**唯一**的解析处 —— 缺条目 = 默认全开、无覆盖。
@@ -171,6 +174,7 @@ func Resolve(agent config.Agent, id ID) Setting {
 		Provider: trim(toggle.Provider),
 		Model:    trim(toggle.Model),
 		Prompt:   strings.TrimSpace(deref(toggle.Prompt)),
+		Segments: toggle.Segments,
 	}
 	return setting
 }

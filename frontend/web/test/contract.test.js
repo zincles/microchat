@@ -288,7 +288,8 @@ test("agent 卡带 v2：带引用段（内置不带）、结构不拼平；v1 �
   const agent = {
     id: "rp-agent-simple", name: "RP Agent", system_prompt: "你是主持人。",
     segments: ["katex", "合理的RolePlay", "mcp"], first_message: "开场",
-    abilities: { title: { enabled: false } }, prepend_state: true,
+    // 能力也引用段（2026-10-28）：`mcp` 与 agent 自己那份**重叠** ⇒ 卡带里只出现一次
+    abilities: { title: { enabled: false }, compact: { segments: ["mcp", "katex"] } }, prepend_state: true,
   };
   const card = buildCartridge(agent, lib);
   assert.equal(card.version, 2);
@@ -301,7 +302,8 @@ test("agent 卡带 v2：带引用段（内置不带）、结构不拼平；v1 �
   assert.equal(card.agent.id, undefined); // 导入方现铸
   // ⚠ `display_mode` 2026-10-27 已删（显示只有一种形态）⇒ 卡带里不该再有这一格。
   assert.equal(card.agent.display_mode, undefined);
-  assert.deepEqual(card.agent.abilities, { title: { enabled: false } });
+  // 能力原样带（含 2026-10-28 的 `segments`）—— 卡带不解释能力，只搬运
+  assert.deepEqual(card.agent.abilities, { title: { enabled: false }, compact: { segments: ["mcp", "katex"] } });
   // 导入侧：形状不对 ⇒ 说清；对了 ⇒ {agent, segments} 归一化
   assert.throws(() => cartridgeAgent({}), /不是 agent 卡带/);
   assert.throws(() => cartridgeAgent({ agent: { name: "  " } }), /没有名字/);
@@ -510,6 +512,23 @@ test("refresh-routes 回形：{provider, models} 直拼缓存行，error 走失�
   assert.ok(formatRoutesOutcome(out).includes("12"));
   assert.ok(formatRoutesOutcome({ provider: "p1", models: 0, error: "boom" }).includes("boom"));
   assert.deepEqual(buildAbilitiesPatch({ title: { enabled: true, provider: "", model: "m", prompt: "" } }), { title: { enabled: true, model: "m" } });
+  // 能力的追加段（2026-10-28）：空清单**不发**（省略 = 没有段），顺序照抄（顺序就是语义）
+  assert.deepEqual(
+    buildAbilitiesPatch({ compact: { enabled: true, segments: ["b", "", "a", "b"] } }),
+    { compact: { enabled: true, segments: ["b", "a", "b"] } },
+  );
+});
+
+// 能力里的提示词段（2026-10-28）：`.vue` 里的接线**只能读源码验** —— 少接一环不会报错，
+// 只会让"我加了段、它没生效"变成一场排查（后端那份由 `compact_segments_test.go` 用真载荷钉住）。
+test("能力里的提示词段：编辑器读回 / 写回 / 挑 / 排序 / 删 五处都接着", () => {
+  const editor = readFileSync(join(SRC, "components", "AgentEditor.vue"), "utf8");
+  assert.match(editor, /segments: \[\.\.\.\(one\.segments \?\? \[\]\)\]/, "fillRows 没把能力的段读回来");
+  assert.match(editor, /segments: \[\.\.\.\(r\.segments \?\? \[\]\)\]/, "toPatch 没把段发出去");
+  assert.match(editor, /function addAbilitySeg/, "没有「从段库挑一个加进来」");
+  assert.match(editor, /function moveAbilitySeg/, "没有上下移（顺序就是语义）");
+  assert.match(editor, /function dropAbilitySeg/, "没有移除");
+  assert.match(editor, /assemblePrompt\("", rows\[id\]\.segments/, "没有段预览");
 });
 
 test("编辑端点形状：PATCH 消息带 content/reasoning，PATCH 摘要带 text", async () => {

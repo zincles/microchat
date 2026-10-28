@@ -67,14 +67,26 @@ func ResolveSystemPrompt(session model.Session, agents config.AgentsConfig) (str
 // 缺段（文件被手改）⇒ 跳过 + 日志；正常路径由 `AgentsConfig.ValidateSegments`
 // 在写入与启动读取时挡掉。
 func AssembleSystemPrompt(agent config.Agent, agents config.AgentsConfig) string {
-	parts := make([]string, 0, 1+len(agent.Segments))
-	if base := strings.TrimSpace(agent.SystemPrompt); base != "" {
-		parts = append(parts, base)
+	return JoinPrompt(agent.SystemPrompt, agent.Segments, agents, "agent "+agent.ID)
+}
+
+// JoinPrompt：**拼装的唯一实现** = base + 追加段（规则就是 `AssembleSystemPrompt` 那三条：
+// 顺序 = 列表顺序、段间一个空行、空 base / 空段跳过；缺段跳过 + 日志）。
+//
+// 抽成通用形是因为 2026-10-28 起**能力也能拼段**（`abilities.<id>.segments`）：
+// agent 的提示词与能力的提示词模板是两处调用、一条规则 —— 别让后加的那处自己再写一遍
+// （写第二遍的代价不是重复几行，是"两处拼接规则慢慢不一样"）。
+//
+// `who` 只进日志（"谁引用了的段不见了"要能一眼看出是 agent 还是哪个能力）。
+func JoinPrompt(base string, segments []string, agents config.AgentsConfig, who string) string {
+	parts := make([]string, 0, 1+len(segments))
+	if text := strings.TrimSpace(base); text != "" {
+		parts = append(parts, text)
 	}
-	for _, id := range agent.Segments {
+	for _, id := range segments {
 		segment, ok := agents.SegmentByID(id)
 		if !ok {
-			log.Printf("提示词段 %q 不在库里（agent %q）—— 已跳过", id, agent.ID)
+			log.Printf("提示词段 %q 不在库里（%s）—— 已跳过", id, who)
 			continue
 		}
 		if text := strings.TrimSpace(segment.Text); text != "" {

@@ -238,7 +238,7 @@ func (s *Service) RegenerateSummary(ctx context.Context, session model.Session, 
 	if err != nil {
 		return Generated{}, err
 	}
-	effective, err := resolveEffective(session, setting, providersConfig)
+	effective, err := resolveEffective(session, setting, providersConfig, agents)
 	if err != nil {
 		return Generated{}, err
 	}
@@ -378,9 +378,14 @@ type effective struct {
 
 // resolveEffective：把"这次压缩用哪条渠道、哪个模型、哪份模板、要不要本地假上游"算出来。
 //
+// 模板 = `abilities.Template`（能力的 `prompt` 覆盖 ?: 代码里的默认）**再拼上能力的段**
+// （`abilities.<id>.segments`，2026-10-28 用户定）。拼装走 `state.JoinPrompt` ——
+// 与 agent 提示词同一条规则、同一处实现；`agents` 传进来只为查段正文。
+// ⚠ 指纹（`PromptVersion`）从**拼完的**模板算 ⇒ 加一个段也会让版本变（要的就是这个）。
+//
 // `prepare`（落库那条路）与 `RegenerateSummary`（重摇那条路）共用 ⇒ 口径与错误文案只有一份
 // （模板的算式也只有一处：`abilities.Template`，agent 覆盖 ?: 代码里的默认）。
-func resolveEffective(session model.Session, setting abilities.Setting, providersConfig config.ProvidersConfig) (effective, error) {
+func resolveEffective(session model.Session, setting abilities.Setting, providersConfig config.ProvidersConfig, agents config.AgentsConfig) (effective, error) {
 	providerID, modelID := session.Provider, session.Model
 	if setting.Provider != "" {
 		providerID = setting.Provider
@@ -400,7 +405,7 @@ func resolveEffective(session model.Session, setting abilities.Setting, provider
 	return effective{
 		channel:  backend.Provider,
 		model:    modelID,
-		template: abilities.Template(setting, abilities.Compact),
+		template: state.JoinPrompt(abilities.Template(setting, abilities.Compact), setting.Segments, agents, "compact"),
 		local:    local,
 	}, nil
 }
@@ -434,7 +439,7 @@ func (s *Service) prepare(session model.Session, req Request) (*prepared, error)
 		return nil, err
 	}
 
-	effective, err := resolveEffective(session, setting, providersConfig)
+	effective, err := resolveEffective(session, setting, providersConfig, agents)
 	if err != nil {
 		return nil, err
 	}

@@ -193,7 +193,8 @@ export function formatRoutesOutcome(o) {
 export const ABILITY_IDS = ["title", "compact", "judge"];
 
 // buildAbilitiesPatch：Agent 右详情 → PATCH 整段 abilities（给了就整段替换；nil=不动）。
-// 每能力：checkbox 开关 + provider/model/prompt 三覆盖格（空串=不覆盖）。
+// 每能力：checkbox 开关 + provider/model/prompt 三覆盖格（空串=不覆盖）+ 追加段 id 列表
+// （2026-10-28 加：`segments` 与 agent 的 `segments` 同一套 —— 顺序 = 拼接顺序）。
 export function buildAbilitiesPatch(rows) {
   const out = {};
   for (const id of ABILITY_IDS) {
@@ -204,6 +205,10 @@ export function buildAbilitiesPatch(rows) {
       const v = (r[k] ?? "").trim();
       if (v) one[k] = v;
     }
+    // 段：空清单**不发**（省略 = 没有段，与 `enabled` 之下的空串同理）；
+    // 去掉空串并保持顺序 —— 顺序就是语义，别去重排序。
+    const segments = (r.segments ?? []).map((x) => String(x ?? "").trim()).filter(Boolean);
+    if (segments.length) one.segments = segments;
     out[id] = one;
   }
   return out;

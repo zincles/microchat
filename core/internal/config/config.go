@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -225,8 +226,16 @@ type AbilityToggle struct {
 	Enabled  *bool   `json:"enabled,omitempty"`
 	Provider *string `json:"provider,omitempty"`
 	Model    *string `json:"model,omitempty"`
-	// Prompt：这个能力的提示词模板（流程在代码里，模板可换）。空 = 用代码里的默认。
+	// Prompt：这个能力的提示词**模板**（流程在代码里，模板可换）。空 = 用代码里的默认。
 	Prompt *string `json:"prompt,omitempty"`
+	// Segments：追加段（段库里的 id 列表，**顺序 = 追加顺序**）—— 与 agent 的 `segments`
+	// 完全同一套：同一个段库、同一条拼装规则（`state.JoinPrompt`）、同样在写入与启动读取时
+	// 校验引用是否落地。
+	//
+	// 为什么能力也要能拼段（2026-10-28 用户定）：压缩的模板是**一段流程说明**，
+	// 不同世界观要的补充往往**已经写成了段**（StateLang 语法、Markdown RolePlay…）。
+	// 从前只能整份复制进 `prompt` —— 于是同一段文字在库里有两份，改一处忘一处。
+	Segments []string `json:"segments,omitempty"`
 }
 
 // Agent：会话 Agent（一份命名的人格 + 一组能力开关）。
@@ -367,8 +376,29 @@ func (c AgentsConfig) ValidateSegments() error {
 				}
 			}
 		}
+		// 能力上的段（2026-10-28 加）走**同一个库、同一条校验** —— 能力不是另一个世界，
+		// 少查这一处，写错的能力段会安静地不生效（最难查的一类）。
+		for _, id := range sortedAbilityIDs(agent.Abilities) {
+			for _, ref := range agent.Abilities[id].Segments {
+				if !seen[ref] {
+					if _, builtin := BuiltinSegmentByID(ref); !builtin {
+						return fmt.Errorf("agent %q 的能力 %q 引用了不存在的提示词段：%s", agent.ID, id, ref)
+					}
+				}
+			}
+		}
 	}
 	return nil
+}
+
+// sortedAbilityIDs：能力 id 排好序（报错稳定 —— map 的遍历顺序是随机的）。
+func sortedAbilityIDs(abilities map[string]AbilityToggle) []string {
+	ids := make([]string, 0, len(abilities))
+	for id := range abilities {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 func (c AgentsConfig) Get(id string) (Agent, bool) {
