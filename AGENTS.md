@@ -274,18 +274,28 @@ delete(AA)           # 删除
   段改名 = 所有 agent 的引用一起搬。**内置段**（2026-10-11 用户定）：正文住 `core/internal/config/segments/*.md`
   （`go:embed` 进二进制 —— **git 里可 diff、新装即得**，正是"方便提交"那一条）、**只读删不掉**（要改就「复制为自定义」）、
   **id 保留**（用户段撞名 ⇒ 写入与启动读取都报）；`GET /agents` 的 `segments` = 内置（带 `builtin: true`，排在前）+ 用户段。
-  **目前五条**（顺序 = `builtinSegmentFiles`）：`压缩提示词` / `StateLang 语法` / `合理的RolePlay` /
+  **目前六条**（顺序 = `builtinSegmentFiles`）：`压缩提示词` / `起标题提示词` / `StateLang 语法` / `合理的RolePlay` /
   `在RolePlay里使用StateLang` / `Markdown RolePlay相关`（后四条 2026-10-11 从用户库迁入，**一字未改**；早期那条 `current_state` 已删）。
-  **`压缩提示词`（2026-10-28 用户定：「把默认压缩载荷挑出来，制作成单独的内置 segment」）**：压缩能力的
-  **默认模板本身就是这条内置段**（正文住 `core/internal/config/segments/compact-prompt.md`），
-  `abilities` 定义表里它由 `Definition.TemplateSegment` 指过去（`config.CompactTemplateSegmentID`）——
-  于是那段话可读、可「复制为自定义」、可当普通段参与自由组合，**不必在 Go 里再抄一份字符串**。
-  能力拼装（`compact.compactTemplate`）的三条：① base = `prompt` 覆盖 ?: 这条内置段；
-  ② **段列表里已经挑了它 ⇒ 不再垫一份**（否则同一段说明文读两遍）；③ 段按列表顺序追加在 base 后。
-  ⚠ 这条规则前端有一份镜像（`utils/prompt.js` 的 `abilityPrompt`）只做预览；两处的段 id 由契约测试
+  **能力的默认模板一律住段库**（2026-10-28 用户定：「把默认压缩载荷挑出来，制作成单独的内置 segment」，
+  起标题那条同一个道理 —— 否则"凭什么这个能力的模板我读不到"就是个没道理的特例）：
+  住 `core/internal/config/segments/{compact,title}-prompt.md`，`abilities` 定义表里由 `Definition.TemplateSegment`
+  指过去（`config.CompactTemplateSegmentID` / `config.TitleTemplateSegmentID`）——
+  于是那段话可读、可「复制为自定义」、可当普通段参与自由组合，**Go 里不再另有一份字符串**（`Definition.Template` 只剩给"模板还不是段"的能力用）。
+  **能力拼装只有一处**（`abilities.AssemblePrompt`，`title` 与 `compact` 都调它）三条：
+  ① base = `prompt` 覆盖 ?: 那条内置模板段；② **段列表里已经挑了它 ⇒ 不再垫一份**（否则同一段说明文读两遍）；
+  ③ 段按列表顺序追加在 base 后（走 `state.JoinPrompt`，与 agent 提示词同一条规则）。`prompt_version` 从**拼完的**模板算。
+  ⚠ 从前 `title` 用的是裸 `abilities.Template`（**不拼段**）⇒ 编辑器让你给 title 挑段、后端一个字都不读（静默无效）；已修。
+  ⚠ 这条规则前端有一份镜像（`utils/prompt.js` 的 `abilityPrompt`）只做预览；两个段 id 由契约测试
   对着 `core/internal/config/config.go` 的常量核 —— 写错不报错、只会让预览少一段。
   `prepend_state`（agent 上的开关，缺省关）= 把当前状态渲染成 `<current_state>` 贴到
   **最后一条用户消息**句首（历史不动；前缀缓存友好）。
+
+**提示词段的编辑器只有一个**（2026-10-28 用户：「不协调。总觉得和编辑系统提示词的有区别。」）：
+agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src/components/SegmentList.vue` ——
+挑段 / 上下移 / 移除 / 缺段警告 / 拼装预览**只有这一份实现**。从前两处各写一套，于是标题一边是 `<h3>`、
+另一边是灰色小字加一条底边线；预览一边叫「拼装预览」、另一边叫「这一发真会发出去的提示词」；
+截断 48 vs 40 字；缺段警告一边有一边没有 —— 这些都不是功能差异，纯粹是忘了同步。
+契约测试钉的就是"两处都用同一个组件"（谁再手写一套就炸）。
 
 ## HTTP API（客户端契约）
 

@@ -225,7 +225,9 @@ func (s *Service) Generate(ctx context.Context, session model.Session) (Result, 
 	guard := s.Tasks.Begin(task.KindTitle, &session.ID, "起标题 · 会话 "+shortID(session.ID))
 	defer guard.Interrupted() // 忘了收 / panic ⇒ 记成"中断"，绝不留僵尸条目
 
-	template := abilities.Template(setting, abilities.Title)
+	// 模板 + 追加段：**与压缩同一个拼装**（`abilities.AssemblePrompt`）——
+	// 从前这里是裸 `abilities.Template`，于是编辑器让你给 title 挑段、这一发却一个字都不拼（静默无效）。
+	template := abilities.AssemblePrompt(setting, abilities.Title, agents)
 	wire := providers.FromConfig(backend.Provider)
 	// 与 chat.go Accept 同一条查表：有行且 api=="openai-responses" ⇒ 走 /responses，否则 chat 缺省。
 	wire.Protocol = providers.ResolveProtocol(s.Store.ModelRoute, backend.Provider.ID, modelID)

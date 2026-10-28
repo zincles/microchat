@@ -1,13 +1,14 @@
 <script setup>
 // Agent 编辑器（设置视图 Agent tab 内的二级页，列表 ⇄ 详情就地切换）：新建 / 改 id·名 / 提示词 / 三能力开关 / 设默认 / 删除。
 // isNew（boolean）：无 agent 快照=新建（空表单）；有=编辑（带入快照，保存后父重拉，id 变了也对得上）。关即销毁。
-import { ref, reactive, computed, onMounted, onUnmounted } from "vue";
+import { ref, computed, onMounted, onUnmounted } from "vue";
 import { sharedApi } from "../utils/prefs.js";
 import { ABILITY_IDS, ABILITY_TEMPLATE_SEGMENT, buildAbilitiesPatch, modelKey, parseModelKey, modelLabel } from "../utils/format.js";
-import { assemblePrompt, abilityPrompt, missingSegments } from "../utils/prompt.js";
+import { assemblePrompt, abilityPrompt } from "../utils/prompt.js";
 import { buildCartridge } from "../utils/cartridge.js";
 import { downloadJSON } from "../utils/download.js";
 import ToggleSwitch from "./ToggleSwitch.vue";
+import SegmentList from "./SegmentList.vue";
 
 const props = defineProps({
   agent: { type: Object, default: null },
@@ -26,45 +27,16 @@ const prompt = ref(props.agent?.system_prompt ?? props.template?.system_prompt ?
 const firstMsg = ref(props.agent?.first_message ?? props.template?.first_message ?? "");
 const rows = ref({});
 const prepend = ref(!!(props.agent?.prepend_state ?? props.template?.prepend_state));
-// 追加段（顺序 = 拼接顺序）。段库在 `props.segments`；拼装预览走纯函数（与后端同规则）。
+// 追加段（顺序 = 拼接顺序）。段库在 `props.segments`；挑 / 排 / 删与预览都在
+// `SegmentList` 里（与能力那块**同一个组件** —— 用户 2026-10-28：「不协调」）。
 const segs = ref([...(props.agent?.segments ?? props.template?.segments ?? [])]);
-const segPick = ref("");
-const segText = (id) => props.segments.find((s) => s.id === id)?.text ?? "";
-const segMissing = (id) => !props.segments.some((s) => s.id === id);
 const assembled = computed(() => assemblePrompt(prompt.value, segs.value, props.segments));
-const missing = computed(() => missingSegments(segs.value, props.segments));
-function addSeg() {
-  if (segPick.value && !segs.value.includes(segPick.value)) segs.value.push(segPick.value);
-  segPick.value = "";
-}
-function moveSeg(i, d) {
-  const j = i + d;
-  if (j < 0 || j >= segs.value.length) return;
-  const list = segs.value;
-  [list[i], list[j]] = [list[j], list[i]];
-}
-function dropSeg(i) { segs.value.splice(i, 1); }
 const modelOptions = ref([]);
 const status = ref("");
 
 // —— 能力里的提示词段（2026-10-28 用户定："用于 Compact 的提示词段"也要能自由组合）——
-// 与上面 agent 的段编辑器**同形**（同一套 .seg-row 样式、同一个段库、同一条拼装规则），
-// 只是每个能力各管一份清单。segPickOf 是"每个能力各记一个待添加的选中项"。
-const segPickOf = reactive({});
-function moveAbilitySeg(id, i, d) {
-  const list = rows.value[id]?.segments ?? [];
-  const j = i + d;
-  if (j < 0 || j >= list.length) return;
-  [list[i], list[j]] = [list[j], list[i]];
-}
-function dropAbilitySeg(id, i) { rows.value[id]?.segments?.splice(i, 1); }
-function addAbilitySeg(id) {
-  const picked = segPickOf[id];
-  const list = rows.value[id]?.segments;
-  if (!picked || !list || list.includes(picked)) return;
-  list.push(picked);
-  segPickOf[id] = "";
-}
+// 编辑器就是 `SegmentList`（与上面 agent 级**同一个组件**：同一个段库、同一条拼装规则、
+// 同一套文案）。这里只剩"这一发拼出来是什么"和"要不要提醒一句"。
 // 这能力**真正会发出去**的提示词（模板 + 段）。模板 = 你填的覆盖 ?: 那条内置模板段。
 // 压缩的默认模板 2026-10-28 搬进段库（`压缩提示词`）⇒ 前端终于能把它显示全了
 // （从前它在 Go 的常量里，预览只能显示"段"，不敢报总量）。
@@ -78,6 +50,17 @@ function abilityHasTemplate(id) {
   if (String(r.prompt ?? "").trim()) return true;
   const seg = ABILITY_TEMPLATE_SEGMENT[id];
   return !!seg && !!(r.segments ?? []).includes(seg);
+}
+// 段清单上面那一行说明（`SegmentList` 的 hint）：只在"用户可能误判"的地方说一句。
+function abilitySegHint(id) {
+  const template = ABILITY_TEMPLATE_SEGMENT[id];
+  const r = rows.value[id] ?? {};
+  if (!template) {
+    return "这个能力还没有流程（judge 的调用点还没写）—— 段会存进配置，等流程接上才生效。";
+  }
+  if (!(r.segments ?? []).length) return `空着 = 只用内置段「${template}」（可在段库里查看 / 复制成自定义）。`;
+  if (!abilityHasTemplate(id)) return `⚠ 没挑「${template}」也没填覆盖 ⇒ 这一发只有你挑的段，没有流程说明。`;
+  return "";
 }
 
 function fillRows(a) {
@@ -189,31 +172,13 @@ function onKey(e) {
     <label class="field"><span>名称</span><input v-model="name" placeholder="人格名" /></label>
     <label class="field-block"><span>系统提示词（base）</span><textarea v-model="prompt" rows="6" placeholder="system_prompt"></textarea></label>
     <label class="field-block"><span>首段对话（新会话的第一条 assistant 消息；空 = 不启用）</span><textarea v-model="firstMsg" rows="3" placeholder="例如：你好，我是……（可带 &lt;state&gt; 块设初始状态）"></textarea></label>
-    <h3>提示词段（追加在 base 后面，顺序 = 拼接顺序）</h3>
-    <div v-if="!segs.length" class="status">（还没有段 —— 从下面挑一个加进来）</div>
-    <div v-for="(sid, i) in segs" :key="sid" class="seg-row" :class="{ missing: segMissing(sid) }">
-      <button type="button" class="icon-btn" title="上移" :disabled="i === 0" @click="moveSeg(i, -1)">↑</button>
-      <button type="button" class="icon-btn" title="下移" :disabled="i === segs.length - 1" @click="moveSeg(i, 1)">↓</button>
-      <span class="seg-id">{{ sid }}<template v-if="segMissing(sid)"> ⚠ 库里没有</template></span>
-      <span class="seg-preview">{{ segText(sid).slice(0, 48) }}</span>
-      <button type="button" class="icon-btn danger" title="移除（不删库里的段）" @click="dropSeg(i)">✕</button>
-    </div>
-    <div class="row">
-      <select v-model="segPick" title="从段库挑一个">
-        <option value="">从段库挑一个…</option>
-        <option v-for="s in props.segments" :key="s.id" :value="s.id" :disabled="segs.includes(s.id)">
-          {{ s.id }}{{ s.builtin ? "（内置）" : "" }}{{ s.imported ? "（导入）" : "" }} —— {{ s.text.slice(0, 30) }}
-        </option>
-      </select>
-      <button type="button" :disabled="!segPick" @click="addSeg">添加段</button>
-      <span v-if="missing.length" class="status">引用了库里没有的段：{{ missing.join("、") }}（保存会被后端拒）</span>
-    </div>
-    <details class="seg-assembled">
-      <summary>拼装预览（{{ assembled.length }} 字）</summary>
-      <pre>{{ assembled }}</pre>
-    </details>
+    <SegmentList
+      v-model:ids="segs"
+      :segments="props.segments"
+      :assembled="assembled"
+      heading="提示词段（追加在 base 后面，顺序 = 拼接顺序）" />
     <label class="field"><span>句首贴当前状态（RP 类需要）</span><ToggleSwitch v-model="prepend" /></label>
-    <h3>能力（开关 + 模型/提示词覆盖，空=默认）</h3>
+    <h3>能力（开关 + 模型 / 提示词 / 提示词段，空=默认）</h3>
     <fieldset v-for="id in ABILITY_IDS" :key="id" class="ability-block">
       <legend><ToggleSwitch v-model="rows[id].enabled" /> {{ id }}</legend>
       <label class="field"><span>Model</span><select v-model="rows[id].model">
@@ -222,37 +187,14 @@ function onKey(e) {
       </select></label>
       <label class="field-block"><span>提示词覆盖（空=默认模板）</span><textarea v-model="rows[id].prompt" rows="3"></textarea></label>
       <!-- 提示词段：追加在（覆盖 ?: 默认）模板**后面**，顺序 = 这里的顺序。
-           改了模板不必把段里的字抄进来 —— 抄进来就是两份，改一处忘一处。 -->
-      <div class="field-block">
-        <span>提示词段（追加在模板后面，顺序 = 拼接顺序）</span>
-        <div v-if="!rows[id].segments.length" class="status">（还没有段 —— 从下面挑一个加进来）</div>
-        <div v-for="(sid, i) in rows[id].segments" :key="sid" class="seg-row" :class="{ missing: segMissing(sid) }">
-          <button type="button" class="icon-btn" title="上移" :disabled="i === 0" @click="moveAbilitySeg(id, i, -1)">↑</button>
-          <button type="button" class="icon-btn" title="下移" :disabled="i === rows[id].segments.length - 1" @click="moveAbilitySeg(id, i, 1)">↓</button>
-          <span class="seg-id">{{ sid }}<template v-if="segMissing(sid)"> ⚠ 库里没有</template></span>
-          <span class="seg-preview">{{ segText(sid).slice(0, 40) }}</span>
-          <button type="button" class="icon-btn danger" title="移除（不删库里的段）" @click="dropAbilitySeg(id, i)">✕</button>
-        </div>
-        <div class="row">
-          <select v-model="segPickOf[id]" title="从段库挑一个">
-            <option value="">从段库挑一个…</option>
-            <option v-for="s in props.segments" :key="s.id" :value="s.id" :disabled="rows[id].segments.includes(s.id)">
-              {{ s.id }}{{ s.builtin ? "（内置）" : "" }}{{ s.imported ? "（导入）" : "" }} —— {{ s.text.slice(0, 30) }}
-            </option>
-          </select>
-          <button type="button" :disabled="!segPickOf[id]" @click="addAbilitySeg(id)">添加段</button>
-        </div>
-        <p v-if="ABILITY_TEMPLATE_SEGMENT[id] && !rows[id].segments.length" class="status">
-          空着 = 只用内置段「{{ ABILITY_TEMPLATE_SEGMENT[id] }}」（可在上面段库里查看 / 复制成自定义）。
-        </p>
-        <p v-else-if="ABILITY_TEMPLATE_SEGMENT[id] && !abilityHasTemplate(id)" class="status">
-          ⚠ 没挑「{{ ABILITY_TEMPLATE_SEGMENT[id] }}」也没填覆盖 ⇒ 这一发只有你挑的段，没有流程说明。
-        </p>
-        <details v-if="abilityAssembled(id)" class="seg-assembled">
-          <summary>这一发真会发出去的提示词（{{ abilityAssembled(id).length }} 字）</summary>
-          <pre>{{ abilityAssembled(id) }}</pre>
-        </details>
-      </div>
+           改了模板不必把段里的字抄进来 —— 抄进来就是两份，改一处忘一处。
+           编辑器就是 agent 级那一个 `SegmentList`（同一个组件 ⇒ 不会各长一样）。 -->
+      <SegmentList
+        v-model:ids="rows[id].segments"
+        :segments="props.segments"
+        :assembled="abilityAssembled(id)"
+        :hint="abilitySegHint(id)"
+        heading="提示词段（追加在模板后面，顺序 = 拼接顺序）" />
     </fieldset>
     <div class="row">
       <button type="button" class="primary" @click="save">保存</button>

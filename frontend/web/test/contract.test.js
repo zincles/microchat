@@ -520,31 +520,54 @@ test("refresh-routes 回形：{provider, models} 直拼缓存行，error 走失�
   );
 });
 
-// 能力里的提示词段（2026-10-28）：`.vue` 里的接线**只能读源码验** —— 少接一环不会报错，
+// 提示词段的编辑器（agent 级 + 能力级）：`.vue` 里的接线**只能读源码验** —— 少接一环不会报错，
 // 只会让"我加了段、它没生效"变成一场排查（后端那份由 `compact_segments_test.go` 用真载荷钉住）。
-test("能力里的提示词段：编辑器读回 / 写回 / 挑 / 排序 / 删 五处都接着", () => {
+//
+// 2026-10-28 用户：「不协调。总觉得和编辑系统提示词的有区别。」⇒ 两处**共用同一个组件**。
+// 这条守卫要的正是这个：挑 / 排 / 删 / 缺段警告 / 拼装预览**只有一份实现**，
+// 谁要是又在某一个地方手写一套，这里就该炸。
+test("提示词段的编辑器：agent 级与能力级用的是同一个组件", () => {
   const editor = readFileSync(join(SRC, "components", "AgentEditor.vue"), "utf8");
+  const list = readFileSync(join(SRC, "components", "SegmentList.vue"), "utf8");
+  // 两处都调它，而且各自绑对了自己的清单（agent 的 `segs` / 能力的 `rows[id].segments`）
+  assert.equal(editor.match(/<SegmentList/g)?.length, 2,
+    "AgentEditor 该在两处（agent 级、能力级）都用 SegmentList —— 各写一套必然长得不一样");
+  assert.match(editor, /v-model:ids="segs"/, "agent 级没绑自己的段清单");
+  assert.match(editor, /v-model:ids="rows\[id\]\.segments"/, "能力级没绑自己的段清单");
+  // 组件本身：挑 / 排 / 删 / 缺段警告 / 拼装预览，五样都在
+  assert.match(list, /function add\(/, "没有「从段库挑一个加进来」");
+  assert.match(list, /function move\(/, "没有上下移（顺序就是语义）");
+  assert.match(list, /function drop\(/, "没有移除");
+  assert.match(list, /引用了库里没有的段/, "缺段的汇总警告没了");
+  assert.match(list, /拼装预览（\{\{ assembled\.length \}\} 字）/, "拼装预览没了");
+  // 编辑器的读回 / 写回仍然在 AgentEditor（那是配置形状，不是编辑器）
   assert.match(editor, /segments: \[\.\.\.\(one\.segments \?\? \[\]\)\]/, "fillRows 没把能力的段读回来");
   assert.match(editor, /segments: \[\.\.\.\(r\.segments \?\? \[\]\)\]/, "toPatch 没把段发出去");
-  assert.match(editor, /function addAbilitySeg/, "没有「从段库挑一个加进来」");
-  assert.match(editor, /function moveAbilitySeg/, "没有上下移（顺序就是语义）");
-  assert.match(editor, /function dropAbilitySeg/, "没有移除");
-  // 预览必须是"这一发真会发出去的提示词"（模板 + 段），不是只把段拼起来
+  // 能力级的预览必须是"这一发真会发出去的提示词"（模板 + 段），不是只把段拼起来
   assert.match(editor, /abilityPrompt\(r\.prompt, r\.segments/, "预览没走能力的完整拼装");
   assert.match(editor, /ABILITY_TEMPLATE_SEGMENT\[id\]/, "预览不知道这能力的默认模板住在哪条内置段");
 });
 
-// 压缩的默认模板 2026-10-28 搬进段库（用户：「把默认压缩载荷挑出来，制作成单独的内置 segment」）。
-// 前端要 preview 它，就得知道那条内置段的 id —— 而**真正的模板仍由后端拼**。
-// 这个 id 在两处各写一遍（Go 常量 / JS 常量），写错**不会报错**，只会让预览少一段。
-test("压缩默认模板的段 id：前端常量与后端 const 逐字相同", () => {
+// 能力的默认模板 2026-10-28 起都住在段库（用户：「把默认压缩载荷挑出来，制作成单独的内置 segment」
+// + 起标题那条同一个道理）。前端要 preview 它，就得知道那条内置段的 id ——
+// 而**真正的模板仍由后端拼**。这个 id 在两处各写一遍（Go 常量 / JS 常量），
+// 写错**不会报错**，只会让预览少一段。
+test("能力的默认模板段 id：前端常量与后端 const 逐字相同（两个能力各一条）", () => {
   const go = readFileSync(join(REPO, "core", "internal", "config", "config.go"), "utf8");
-  const found = go.match(/CompactTemplateSegmentID\s*=\s*"([^"]+)"/);
-  assert.ok(found, "core/internal/config/config.go 里找不到 CompactTemplateSegmentID");
-  assert.equal(ABILITY_TEMPLATE_SEGMENT.compact, found[1], "前后端的压缩模板段 id 对不上");
-  // 正文也得真在段库里（内置段清单里那一行）
-  assert.match(go, /\{ID: CompactTemplateSegmentID, File: "segments\/compact-prompt\.md"\}/,
-    "内置段清单里没有压缩模板那一行（正文住 config/segments/compact-prompt.md）");
+  const cases = [
+    ["compact", "CompactTemplateSegmentID", "segments/compact-prompt.md"],
+    ["title", "TitleTemplateSegmentID", "segments/title-prompt.md"],
+  ];
+  for (const [ability, constName, file] of cases) {
+    const found = go.match(new RegExp(`${constName}\\s*=\\s*"([^"]+)"`));
+    assert.ok(found, `core/internal/config/config.go 里找不到 ${constName}`);
+    assert.equal(ABILITY_TEMPLATE_SEGMENT[ability], found[1], `前后端的 ${ability} 默认模板段 id 对不上`);
+    // 正文也得真在段库里（内置段清单里那一行）
+    assert.ok(go.includes(`{ID: ${constName}, File: "${file}"}`),
+      `内置段清单里没有 ${constName} 那一行（正文住 config/${file}）`);
+  }
+  // judge 还没有模板（流程没写）⇒ 不该在这张表里：放进去等于预览里凭空多一段
+  assert.equal(ABILITY_TEMPLATE_SEGMENT.judge, undefined, "judge 没有默认模板，不该登记");
 });
 
 test("能力提示词拼装：覆盖打头 / 空则垫内置模板段 / 挑了它就不重复", () => {
@@ -560,7 +583,7 @@ test("能力提示词拼装：覆盖打头 / 空则垫内置模板段 / 挑了�
   assert.equal(abilityPrompt("", ["风格", "压缩提示词"], segs, "压缩提示词"), "【风格】用第二人称。\n\n【模板】照我说的压。");
   // 填了覆盖 ⇒ 覆盖打头，不再垫默认
   assert.equal(abilityPrompt("【我的】短一点。", ["风格"], segs, "压缩提示词"), "【我的】短一点。\n\n【风格】用第二人称。");
-  // 没有默认模板段的能力（title / judge）⇒ 行为就是普通的 base + 段
+  // 没有默认模板段的能力（judge —— 流程还没写）⇒ 行为就是普通的 base + 段
   assert.equal(abilityPrompt("base", ["风格"], segs, undefined), "base\n\n【风格】用第二人称。");
 });
 

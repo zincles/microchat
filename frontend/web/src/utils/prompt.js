@@ -13,8 +13,8 @@ export function assemblePrompt(base, ids, segments) {
   return parts.join("\n\n");
 }
 
-// abilityPrompt：**能力**的提示词拼装（与后端 `compact.compactTemplate` 同一规则，
-// 2026-10-28 用户定「默认压缩载荷挑出来做成单独的内置 segment」）。
+// abilityPrompt：**能力**的提示词拼装（与后端 `abilities.AssemblePrompt` 同一规则 ——
+// `title` 与 `compact` 都走那一个；2026-10-28 用户定「默认压缩载荷挑出来做成单独的内置 segment」）。
 //
 // 三条，和 agent 那条只差一个"默认模板也是段"：
 //   1. base = 你填的 `prompt`（覆盖）；空 ⇒ 用那条**内置模板段**（`templateSegmentId`）。

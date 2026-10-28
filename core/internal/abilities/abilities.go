@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	"microchat/internal/config"
+	"microchat/internal/state"
 	"microchat/internal/task"
 )
 
@@ -38,23 +39,6 @@ const (
 	Compact ID = "compact"
 	// Judge：JEV 决策（原始文本 + 提示词 + 状态表 → 概率表）。**流程还没写**，但它是能力。
 	Judge ID = "judge"
-)
-
-// titleTemplate：**代码里的默认模板**（能力只能覆盖，不能新增流程）。
-//
-// 它进 `prompt_version`（改一个字就变），所以**模板就是这一份**，别在别处再抄一段。
-//
-// ⚠ 压缩的默认模板**不在这儿** —— 2026-10-28 用户定「把默认压缩载荷挑出来，制作成单独的
-// 内置 segment」⇒ 它搬进了 `config/segments/compact-prompt.md`（内置段 `压缩提示词`），
-// 于是能在段库里读到、复制成自定义、像别的段一样参与"自由组合"。
-const (
-	titleTemplate = `你是一名起标题助手。给下面这段对话起一个标题。
-
-规矩：
-- 只回一行标题本身：不要引号、不要句号、不要"标题："这类前缀。
-- 概括这一段在聊什么（人物 / 事件 / 话题），别写成流水账，也别只抄第一句。
-- 用与对话相同的语言；中文不超过 16 个字，英文不超过 8 个词。`
-
 )
 
 // Definition：一个能力的**代码侧定义** —— id、面板上的中文名、它在 `task` 里算哪种作业、默认模板。
@@ -75,7 +59,7 @@ type Definition struct {
 
 // definitions：全部能力（顺序固定 ⇒ 界面与 `-debug abilities` 的输出稳定）。
 var definitions = []Definition{
-	{ID: Title, Label: "起标题", TaskKind: task.KindTitle, Template: titleTemplate},
+	{ID: Title, Label: "起标题", TaskKind: task.KindTitle, TemplateSegment: config.TitleTemplateSegmentID},
 	{ID: Compact, Label: "压缩", TaskKind: task.KindCompact, TemplateSegment: config.CompactTemplateSegmentID},
 	// judge：还没有提示词模板（state+questions 由调用方拼），但登记表里已有它这一种
 	{ID: Judge, Label: "判断", TaskKind: task.KindJudgement},
@@ -122,6 +106,33 @@ func Template(setting Setting, id ID) string {
 		return setting.Prompt
 	}
 	return DefaultTemplate(id)
+}
+
+// AssemblePrompt：这一发能力的**系统提示词** = 模板 + 追加段。**只此一处**（`title` 与
+// `compact` 都调它 —— 从前两条流程各拼一份，`title` 那份根本没拼段）。
+//
+// 一条必须说清的规矩：**默认模板已经在段列表里时不额外再垫一份**。
+// 用户把它挑进 `segments` 就是在说"我要它按这个位置出现" —— 既在开头垫一份、
+// 又在中途出现一次，等于同一段说明文读两遍（重复只会让模型更糊涂）。
+// 同理：`prompt` 非空时它是 base，此时列表里再选那条内置段就是"再追加一次默认模板"，
+// 那是用户显式的选择，不挡。
+func AssemblePrompt(setting Setting, id ID, agents config.AgentsConfig) string {
+	base := strings.TrimSpace(setting.Prompt)
+	if base == "" {
+		explicit := false
+		if definition, ok := DefinitionOf(id); ok && definition.TemplateSegment != "" {
+			for _, segmentID := range setting.Segments {
+				if segmentID == definition.TemplateSegment {
+					explicit = true
+					break
+				}
+			}
+		}
+		if !explicit {
+			base = DefaultTemplate(id)
+		}
+	}
+	return state.JoinPrompt(base, setting.Segments, agents, string(id))
 }
 
 // PromptVersion：生效模板的指纹（`sha256(模板)` 十六进制前 8 位）。

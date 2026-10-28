@@ -376,42 +376,13 @@ type effective struct {
 	local    string
 }
 
-// compactTemplate：这一趟压缩的 system 模板 = 模板 + 追加段。
-//
-// 模板 = `prompt` 覆盖 ?: **内置段 `压缩提示词`**（2026-10-28 起默认模板住段库，
-// 见 `config.CompactTemplateSegmentID`）；段 = `abilities.compact.segments`，顺序照抄。
-//
-// 一条必须说清的规矩：**默认模板已经在段列表里时不额外再拼一份**。
-// 用户把它挑进 `segments` 就是在说"我要它按这个位置出现" —— 既在开头垫一份、
-// 又在中途出现一次，等于同一段字读两遍（而模板是说明文，重复只会让模型更糊涂）。
-// 同理：`prompt` 非空时它是 base，此时列表里再选那条内置段就是"再追加一次默认模板"，
-// 那是用户显式的选择，不挡。
-func compactTemplate(setting abilities.Setting, agents config.AgentsConfig) string {
-	base := strings.TrimSpace(setting.Prompt)
-	if base == "" {
-		explicit := false
-		for _, id := range setting.Segments {
-			if id == config.CompactTemplateSegmentID {
-				explicit = true
-				break
-			}
-		}
-		if !explicit {
-			base = abilities.DefaultTemplate(abilities.Compact)
-		}
-	}
-	return state.JoinPrompt(base, setting.Segments, agents, "compact")
-}
-
 // resolveEffective：把"这次压缩用哪条渠道、哪个模型、哪份模板、要不要本地假上游"算出来。
 //
-// 模板 = `abilities.Template`（能力的 `prompt` 覆盖 ?: 代码里的默认）**再拼上能力的段**
-// （`abilities.<id>.segments`，2026-10-28 用户定）。拼装走 `state.JoinPrompt` ——
-// 与 agent 提示词同一条规则、同一处实现；`agents` 传进来只为查段正文。
+// 模板 = `abilities.AssemblePrompt`（`prompt` 覆盖 ?: 住段库的默认模板，**再拼上能力的段**）。
+// 那个函数是**唯一**的拼装处 —— 起标题走的是同一个（从前不是：title 那份根本没拼段）。
 // ⚠ 指纹（`PromptVersion`）从**拼完的**模板算 ⇒ 加一个段也会让版本变（要的就是这个）。
 //
-// `prepare`（落库那条路）与 `RegenerateSummary`（重摇那条路）共用 ⇒ 口径与错误文案只有一份
-// （模板的算式也只有一处：`abilities.Template`，agent 覆盖 ?: 代码里的默认）。
+// `prepare`（落库那条路）与 `RegenerateSummary`（重摇那条路）共用 ⇒ 口径与错误文案只有一份。
 func resolveEffective(session model.Session, setting abilities.Setting, providersConfig config.ProvidersConfig, agents config.AgentsConfig) (effective, error) {
 	providerID, modelID := session.Provider, session.Model
 	if setting.Provider != "" {
@@ -432,7 +403,9 @@ func resolveEffective(session model.Session, setting abilities.Setting, provider
 	return effective{
 		channel:  backend.Provider,
 		model:    modelID,
-		template: compactTemplate(setting, agents),
+		// 模板 + 追加段：拼装只有一份（`abilities.AssemblePrompt`，与起标题同一处）——
+		// 默认模板住段库（`压缩提示词`）；段 = `abilities.compact.segments`，顺序照抄。
+		template: abilities.AssemblePrompt(setting, abilities.Compact, agents),
 		local:    local,
 	}, nil
 }
