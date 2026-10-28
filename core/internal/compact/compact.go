@@ -376,6 +376,33 @@ type effective struct {
 	local    string
 }
 
+// compactTemplate：这一趟压缩的 system 模板 = 模板 + 追加段。
+//
+// 模板 = `prompt` 覆盖 ?: **内置段 `压缩提示词`**（2026-10-28 起默认模板住段库，
+// 见 `config.CompactTemplateSegmentID`）；段 = `abilities.compact.segments`，顺序照抄。
+//
+// 一条必须说清的规矩：**默认模板已经在段列表里时不额外再拼一份**。
+// 用户把它挑进 `segments` 就是在说"我要它按这个位置出现" —— 既在开头垫一份、
+// 又在中途出现一次，等于同一段字读两遍（而模板是说明文，重复只会让模型更糊涂）。
+// 同理：`prompt` 非空时它是 base，此时列表里再选那条内置段就是"再追加一次默认模板"，
+// 那是用户显式的选择，不挡。
+func compactTemplate(setting abilities.Setting, agents config.AgentsConfig) string {
+	base := strings.TrimSpace(setting.Prompt)
+	if base == "" {
+		explicit := false
+		for _, id := range setting.Segments {
+			if id == config.CompactTemplateSegmentID {
+				explicit = true
+				break
+			}
+		}
+		if !explicit {
+			base = abilities.DefaultTemplate(abilities.Compact)
+		}
+	}
+	return state.JoinPrompt(base, setting.Segments, agents, "compact")
+}
+
 // resolveEffective：把"这次压缩用哪条渠道、哪个模型、哪份模板、要不要本地假上游"算出来。
 //
 // 模板 = `abilities.Template`（能力的 `prompt` 覆盖 ?: 代码里的默认）**再拼上能力的段**
@@ -405,7 +432,7 @@ func resolveEffective(session model.Session, setting abilities.Setting, provider
 	return effective{
 		channel:  backend.Provider,
 		model:    modelID,
-		template: state.JoinPrompt(abilities.Template(setting, abilities.Compact), setting.Segments, agents, "compact"),
+		template: compactTemplate(setting, agents),
 		local:    local,
 	}, nil
 }

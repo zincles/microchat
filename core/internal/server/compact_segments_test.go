@@ -96,6 +96,82 @@ func TestCompactTemplateAppendsAbilitySegments(t *testing.T) {
 	}
 }
 
+// 默认模板**住段库**（2026-10-28 用户定：「把默认压缩载荷挑出来，制作成单独的内置 segment」）。
+//
+// 这条钉的是"唯一一份"：能力表里的 `Template` 不再抄一段字符串，而是指向内置段
+// `压缩提示词`（正文住 `config/segments/compact-prompt.md`）——
+// 于是用户能读到它、复制成自定义、并把它当普通段参与自由组合。
+func TestCompactDefaultTemplateIsTheBuiltinSegment(t *testing.T) {
+	segment, ok := config.BuiltinSegmentByID(config.CompactTemplateSegmentID)
+	if !ok {
+		t.Fatalf("内置段库里没有 %q", config.CompactTemplateSegmentID)
+	}
+	if !strings.Contains(segment.Text, "你是Compactor") {
+		t.Fatalf("内置段正文不对：%q", segment.Text)
+	}
+	if got := abilities.DefaultTemplate(abilities.Compact); got != segment.Text {
+		t.Fatalf("压缩的默认模板该就是那条内置段的正文（%d 字），得到 %d 字", len(segment.Text), len(got))
+	}
+
+	// 端到端：什么都不配 ⇒ 那一发的 system 消息 == 内置段正文
+	box := newDummySandbox(t)
+	box.writeAgents(t, `{"default_agent": "default", "agents": [{"id": "default", "name": "默认"}]}`)
+	box.seedTurn(t, "第一句")
+	box.seedTurn(t, "第二句")
+	box.seedTurn(t, "第三句")
+	system, _ := box.previewPayload(t, `{"blocks":2}`).wireParts(t)
+	if system != segment.Text {
+		t.Fatalf("默认模板该逐字等于内置段（%d 字），得到 %d 字：%q…", len(segment.Text), len(system), firstRunes(system, 60))
+	}
+}
+
+// 把那条内置段**自己挑进** segments ⇒ 按你放的位置出现，**不会**既垫在开头又重复一次。
+func TestCompactTemplateSegmentCanBePlacedExplicitly(t *testing.T) {
+	box := newDummySandbox(t)
+	box.writeAgents(t, `{
+		"default_agent": "default",
+		"segments": [{"id": "风格", "text": "【风格】用第二人称。"}],
+		"agents": [{"id": "default", "name": "默认",
+			"abilities": {"compact": {"segments": ["风格", "压缩提示词"]}}}]
+	}`)
+	box.seedTurn(t, "第一句")
+	box.seedTurn(t, "第二句")
+	box.seedTurn(t, "第三句")
+
+	system, _ := box.previewPayload(t, `{"blocks":2}`).wireParts(t)
+	if strings.Count(system, "你是Compactor") != 1 {
+		t.Fatalf("默认模板只能出现一次（否则同一段说明文读两遍）：%q…", firstRunes(system, 80))
+	}
+	if strings.Index(system, "【风格】") > strings.Index(system, "你是Compactor") {
+		t.Fatalf("段该按列表顺序出现（风格 在 压缩提示词 之前）：%q…", firstRunes(system, 80))
+	}
+	if !strings.HasPrefix(system, "【风格】用第二人称。") {
+		t.Fatalf("列表第一项该排在最前：%q…", firstRunes(system, 60))
+	}
+}
+
+// `prompt` 覆盖 ⇒ 它就是 base（列表里再选那条内置段 = 用户显式再要一份，不挡）。
+func TestCompactPromptOverrideComesFirst(t *testing.T) {
+	box := newDummySandbox(t)
+	box.writeAgents(t, `{
+		"default_agent": "default",
+		"segments": [{"id": "风格", "text": "【风格】用第二人称。"}],
+		"agents": [{"id": "default", "name": "默认",
+			"abilities": {"compact": {"prompt": "【自定义模板】照我说的压。", "segments": ["风格"]}}}]
+	}`)
+	box.seedTurn(t, "第一句")
+	box.seedTurn(t, "第二句")
+	box.seedTurn(t, "第三句")
+
+	system, _ := box.previewPayload(t, `{"blocks":2}`).wireParts(t)
+	if want := "【自定义模板】照我说的压。\n\n【风格】用第二人称。"; system != want {
+		t.Fatalf("覆盖模板该打头，段跟在后面：\n得到 %q\n期望 %q", system, want)
+	}
+	if strings.Contains(system, "你是Compactor") {
+		t.Fatal("填了 prompt 覆盖就不再自动垫默认模板")
+	}
+}
+
 // 没配 segments ⇒ 模板与从前**一字不差**（老 agents.json 一个字都不用改）。
 func TestCompactTemplateWithoutSegmentsIsUnchanged(t *testing.T) {
 	box := newDummySandbox(t)

@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { createApi, mergeStreamSlice, DEFAULT_API_URL, normalizeApiBase, probeAuthStatus, authLogin } from "../src/api/client.js";
 import { parseWireMessages, shouldCollapse, previewBlock, LONG_BLOCK_CHARS } from "../src/utils/payload.js";
-import { assemblePrompt, missingSegments } from "../src/utils/prompt.js";
+import { assemblePrompt, abilityPrompt, missingSegments } from "../src/utils/prompt.js";
 import { renderMarkdown } from "../src/utils/markdown.js";
 import { buildCartridge, cartridgeAgent } from "../src/utils/cartridge.js";
 import { parseCommand, filterCommands, COMMAND_META } from "../src/utils/commands.js";
@@ -28,6 +28,7 @@ import {
   groupModelsByProvider,
   deletionPlanSummary,
   formatRoutesOutcome,
+  ABILITY_TEMPLATE_SEGMENT,
   buildAbilitiesPatch,
   taskLineText,
   modelKey,
@@ -528,7 +529,39 @@ test("能力里的提示词段：编辑器读回 / 写回 / 挑 / 排序 / 删 �
   assert.match(editor, /function addAbilitySeg/, "没有「从段库挑一个加进来」");
   assert.match(editor, /function moveAbilitySeg/, "没有上下移（顺序就是语义）");
   assert.match(editor, /function dropAbilitySeg/, "没有移除");
-  assert.match(editor, /assemblePrompt\("", rows\[id\]\.segments/, "没有段预览");
+  // 预览必须是"这一发真会发出去的提示词"（模板 + 段），不是只把段拼起来
+  assert.match(editor, /abilityPrompt\(r\.prompt, r\.segments/, "预览没走能力的完整拼装");
+  assert.match(editor, /ABILITY_TEMPLATE_SEGMENT\[id\]/, "预览不知道这能力的默认模板住在哪条内置段");
+});
+
+// 压缩的默认模板 2026-10-28 搬进段库（用户：「把默认压缩载荷挑出来，制作成单独的内置 segment」）。
+// 前端要 preview 它，就得知道那条内置段的 id —— 而**真正的模板仍由后端拼**。
+// 这个 id 在两处各写一遍（Go 常量 / JS 常量），写错**不会报错**，只会让预览少一段。
+test("压缩默认模板的段 id：前端常量与后端 const 逐字相同", () => {
+  const go = readFileSync(join(REPO, "core", "internal", "config", "config.go"), "utf8");
+  const found = go.match(/CompactTemplateSegmentID\s*=\s*"([^"]+)"/);
+  assert.ok(found, "core/internal/config/config.go 里找不到 CompactTemplateSegmentID");
+  assert.equal(ABILITY_TEMPLATE_SEGMENT.compact, found[1], "前后端的压缩模板段 id 对不上");
+  // 正文也得真在段库里（内置段清单里那一行）
+  assert.match(go, /\{ID: CompactTemplateSegmentID, File: "segments\/compact-prompt\.md"\}/,
+    "内置段清单里没有压缩模板那一行（正文住 config/segments/compact-prompt.md）");
+});
+
+test("能力提示词拼装：覆盖打头 / 空则垫内置模板段 / 挑了它就不重复", () => {
+  const segs = [
+    { id: "压缩提示词", text: "【模板】照我说的压。", builtin: true },
+    { id: "风格", text: "【风格】用第二人称。" },
+  ];
+  // 什么都没填 ⇒ 就是内置模板段正文
+  assert.equal(abilityPrompt("", [], segs, "压缩提示词"), "【模板】照我说的压。");
+  // 加了段 ⇒ 模板在前
+  assert.equal(abilityPrompt("", ["风格"], segs, "压缩提示词"), "【模板】照我说的压。\n\n【风格】用第二人称。");
+  // 把模板段自己挑进来 ⇒ 按列表位置出现，**不重复**
+  assert.equal(abilityPrompt("", ["风格", "压缩提示词"], segs, "压缩提示词"), "【风格】用第二人称。\n\n【模板】照我说的压。");
+  // 填了覆盖 ⇒ 覆盖打头，不再垫默认
+  assert.equal(abilityPrompt("【我的】短一点。", ["风格"], segs, "压缩提示词"), "【我的】短一点。\n\n【风格】用第二人称。");
+  // 没有默认模板段的能力（title / judge）⇒ 行为就是普通的 base + 段
+  assert.equal(abilityPrompt("base", ["风格"], segs, undefined), "base\n\n【风格】用第二人称。");
 });
 
 test("编辑端点形状：PATCH 消息带 content/reasoning，PATCH 摘要带 text", async () => {
@@ -979,6 +1012,8 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
+// 仓库根（契约测试偶尔要读后端源码/内置段文件来对口径 —— 两处各写一遍的常量最容易漂）
+const REPO = join(SRC, "..", "..", "..");
 
 function themeCssIds() {
   const css = readFileSync(join(SRC, "assets", "theme.css"), "utf8");

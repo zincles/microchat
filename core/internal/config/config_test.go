@@ -57,15 +57,21 @@ func TestValidateSegments(t *testing.T) {
 // 引用内置合法；SegmentByID 找得到。`current_state` 那条已删（用户定）。
 func TestBuiltinSegmentsAreReserved(t *testing.T) {
 	builtins := BuiltinSegments()
-	if len(builtins) != 4 {
-		t.Fatalf("内置段该四条（2026-10-11 迁移）：%+v", builtins)
+	// 2026-10-28 起是五条：`压缩提示词`（压缩能力的默认模板）排在最前，其后是 10-11 迁移的四条。
+	if len(builtins) != 5 {
+		t.Fatalf("内置段该五条（10-11 的四条 + 10-28 的压缩模板）：%+v", builtins)
 	}
 	if _, ok := BuiltinSegmentByID("current_state"); ok {
 		t.Fatal("current_state 已删（2026-10-11 用户定）")
 	}
-	first := builtins[0]
+	// 首条是压缩的默认模板 —— 它是"默认就会生效"的那一条，用户最可能来找它。
+	tmpl := builtins[0]
+	if tmpl.ID != CompactTemplateSegmentID || !strings.Contains(tmpl.Text, "你是Compactor") {
+		t.Fatalf("首条内置该是压缩默认模板且正文非空：%+v", tmpl)
+	}
+	first := builtins[1]
 	if first.ID != "StateLang 语法" || first.Text == "" {
-		t.Fatalf("首条内置该是 StateLang 语法 且正文非空：%+v", first)
+		t.Fatalf("第二条内置该是 StateLang 语法 且正文非空：%+v", first)
 	}
 	// 正文现读自嵌入文件（逐字）
 	if !strings.Contains(first.Text, "StateLang 语法规范") {

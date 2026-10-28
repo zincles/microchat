@@ -274,8 +274,17 @@ delete(AA)           # 删除
   段改名 = 所有 agent 的引用一起搬。**内置段**（2026-10-11 用户定）：正文住 `core/internal/config/segments/*.md`
   （`go:embed` 进二进制 —— **git 里可 diff、新装即得**，正是"方便提交"那一条）、**只读删不掉**（要改就「复制为自定义」）、
   **id 保留**（用户段撞名 ⇒ 写入与启动读取都报）；`GET /agents` 的 `segments` = 内置（带 `builtin: true`，排在前）+ 用户段。
-  目前四条：`StateLang 语法` / `合理的RolePlay` / `在RolePlay里使用StateLang` / `Markdown RolePlay相关`
-  （2026-10-11 从用户库迁入，**一字未改**；早期那条 `current_state` 已删）。`prepend_state`（agent 上的开关，缺省关）= 把当前状态渲染成 `<current_state>` 贴到
+  **目前五条**（顺序 = `builtinSegmentFiles`）：`压缩提示词` / `StateLang 语法` / `合理的RolePlay` /
+  `在RolePlay里使用StateLang` / `Markdown RolePlay相关`（后四条 2026-10-11 从用户库迁入，**一字未改**；早期那条 `current_state` 已删）。
+  **`压缩提示词`（2026-10-28 用户定：「把默认压缩载荷挑出来，制作成单独的内置 segment」）**：压缩能力的
+  **默认模板本身就是这条内置段**（正文住 `core/internal/config/segments/compact-prompt.md`），
+  `abilities` 定义表里它由 `Definition.TemplateSegment` 指过去（`config.CompactTemplateSegmentID`）——
+  于是那段话可读、可「复制为自定义」、可当普通段参与自由组合，**不必在 Go 里再抄一份字符串**。
+  能力拼装（`compact.compactTemplate`）的三条：① base = `prompt` 覆盖 ?: 这条内置段；
+  ② **段列表里已经挑了它 ⇒ 不再垫一份**（否则同一段说明文读两遍）；③ 段按列表顺序追加在 base 后。
+  ⚠ 这条规则前端有一份镜像（`utils/prompt.js` 的 `abilityPrompt`）只做预览；两处的段 id 由契约测试
+  对着 `core/internal/config/config.go` 的常量核 —— 写错不报错、只会让预览少一段。
+  `prepend_state`（agent 上的开关，缺省关）= 把当前状态渲染成 `<current_state>` 贴到
   **最后一条用户消息**句首（历史不动；前缀缓存友好）。
 
 ## HTTP API（客户端契约）

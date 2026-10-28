@@ -295,7 +295,16 @@ type AgentsConfig struct {
 var builtinSegmentFS embed.FS
 
 // builtinSegmentFiles：内置段清单（顺序 = 段库里的展示顺序；id ↔ 文件的映射就在这儿）。
+// CompactTemplateSegmentID：压缩能力的**默认模板**就是这条内置段（2026-10-28 用户定
+// 「把默认压缩载荷挑出来，制作成单独的内置 segment」）。
+//
+// 它必须住段库、而不是住代码里的字符串：住代码里的那段用户读不到也拼不了，
+// 想在压缩提示词里换个说法就只能整份复制进 `prompt` —— 于是同一段话有两份，改一处忘一处。
+const CompactTemplateSegmentID = "压缩提示词"
+
 var builtinSegmentFiles = []struct{ ID, File string }{
+	// 压缩的默认模板排在最前：它是"默认就会生效"的那一条，用户最可能来找它。
+	{ID: CompactTemplateSegmentID, File: "segments/compact-prompt.md"},
 	{ID: "StateLang 语法", File: "segments/statelang-syntax.md"},
 	{ID: "合理的RolePlay", File: "segments/roleplay.md"},
 	{ID: "在RolePlay里使用StateLang", File: "segments/statelang-in-roleplay.md"},

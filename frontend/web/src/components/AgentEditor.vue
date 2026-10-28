@@ -3,8 +3,8 @@
 // isNew（boolean）：无 agent 快照=新建（空表单）；有=编辑（带入快照，保存后父重拉，id 变了也对得上）。关即销毁。
 import { ref, reactive, computed, onMounted, onUnmounted } from "vue";
 import { sharedApi } from "../utils/prefs.js";
-import { ABILITY_IDS, buildAbilitiesPatch, modelKey, parseModelKey, modelLabel } from "../utils/format.js";
-import { assemblePrompt, missingSegments } from "../utils/prompt.js";
+import { ABILITY_IDS, ABILITY_TEMPLATE_SEGMENT, buildAbilitiesPatch, modelKey, parseModelKey, modelLabel } from "../utils/format.js";
+import { assemblePrompt, abilityPrompt, missingSegments } from "../utils/prompt.js";
 import { buildCartridge } from "../utils/cartridge.js";
 import { downloadJSON } from "../utils/download.js";
 import ToggleSwitch from "./ToggleSwitch.vue";
@@ -65,10 +65,19 @@ function addAbilitySeg(id) {
   list.push(picked);
   segPickOf[id] = "";
 }
-// 这能力的段拼起来多少字（**不含模板本身** —— 模板在代码里，前端看不到；
-// 用户填了 `prompt` 覆盖时才会把那段也算上，所以这里只报"段"的字数，不谎报总量）。
-function abilitySegChars(id) {
-  return assemblePrompt("", rows.value[id]?.segments ?? [], props.segments).length;
+// 这能力**真正会发出去**的提示词（模板 + 段）。模板 = 你填的覆盖 ?: 那条内置模板段。
+// 压缩的默认模板 2026-10-28 搬进段库（`压缩提示词`）⇒ 前端终于能把它显示全了
+// （从前它在 Go 的常量里，预览只能显示"段"，不敢报总量）。
+function abilityAssembled(id) {
+  const r = rows.value[id] ?? {};
+  return abilityPrompt(r.prompt, r.segments ?? [], props.segments, ABILITY_TEMPLATE_SEGMENT[id]);
+}
+// 这个能力有没有"模板"（覆盖或内置段）：没有 ⇒ 预览要提醒"这一发只有你挑的段"
+function abilityHasTemplate(id) {
+  const r = rows.value[id] ?? {};
+  if (String(r.prompt ?? "").trim()) return true;
+  const seg = ABILITY_TEMPLATE_SEGMENT[id];
+  return !!seg && !!(r.segments ?? []).includes(seg);
 }
 
 function fillRows(a) {
@@ -233,9 +242,15 @@ function onKey(e) {
           </select>
           <button type="button" :disabled="!segPickOf[id]" @click="addAbilitySeg(id)">添加段</button>
         </div>
-        <details v-if="rows[id].segments.length" class="seg-assembled">
-          <summary>这些段拼起来（{{ abilitySegChars(id) }} 字；前面还有模板本身，这里看不到）</summary>
-          <pre>{{ assemblePrompt("", rows[id].segments, props.segments) }}</pre>
+        <p v-if="ABILITY_TEMPLATE_SEGMENT[id] && !rows[id].segments.length" class="status">
+          空着 = 只用内置段「{{ ABILITY_TEMPLATE_SEGMENT[id] }}」（可在上面段库里查看 / 复制成自定义）。
+        </p>
+        <p v-else-if="ABILITY_TEMPLATE_SEGMENT[id] && !abilityHasTemplate(id)" class="status">
+          ⚠ 没挑「{{ ABILITY_TEMPLATE_SEGMENT[id] }}」也没填覆盖 ⇒ 这一发只有你挑的段，没有流程说明。
+        </p>
+        <details v-if="abilityAssembled(id)" class="seg-assembled">
+          <summary>这一发真会发出去的提示词（{{ abilityAssembled(id).length }} 字）</summary>
+          <pre>{{ abilityAssembled(id) }}</pre>
         </details>
       </div>
     </fieldset>

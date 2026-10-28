@@ -192,6 +192,12 @@ export function formatRoutesOutcome(o) {
 // 能力 id（三件，写死 —— 与后端 abilities 枚举同口径，未知的后端 400）。
 export const ABILITY_IDS = ["title", "compact", "judge"];
 
+// 能力的**默认模板住在哪条内置段**（2026-10-28：压缩的默认模板搬进段库）。
+// ⚠ 这个 id 与后端 `config.CompactTemplateSegmentID` 必须逐字相同 —— 写错不报错，
+// 只是预览里少一段（真正的模板仍由后端拼）。契约测试从 `core/internal/config/config.go`
+// 里读这个常量来对。
+export const ABILITY_TEMPLATE_SEGMENT = { compact: "压缩提示词" };
+
 // buildAbilitiesPatch：Agent 右详情 → PATCH 整段 abilities（给了就整段替换；nil=不动）。
 // 每能力：checkbox 开关 + provider/model/prompt 三覆盖格（空串=不覆盖）+ 追加段 id 列表
 // （2026-10-28 加：`segments` 与 agent 的 `segments` 同一套 —— 顺序 = 拼接顺序）。
