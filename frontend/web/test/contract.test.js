@@ -2596,3 +2596,40 @@ test("一轮的轮询：单拍失败继续，不判死刑", () => {
   const tryAt = body.indexOf("try {\n        st = await api.status(sid);");
   assert.ok(tryAt > 0, "api.status 不在容错的那层 try 里");
 });
+
+// ── 域名部署：Host 闸门（2026-11-02）────────────────────────────
+//
+// 用户把服务放到 `tavern.zincles.cc` 后面（Cloudflare + 反代 + 密码），被 vite 直接挡了：
+//
+//   Blocked request. This host ("tavern.zincles.cc") is not allowed.
+//
+// vite 默认只放行 localhost 与各种 IP（防 DNS rebinding）。先前的修法是让域名走环境变量 ——
+// 于是**每次换部署形态都要先撞一次 403、回来配一遍**。用户同日定案：「前端就不能不设域名限制吗」
+// ⇒ **默认放行任何 Host**，想收窄才设名单。
+//
+// 三件事钉住：默认必须是放行的、名单仍然能收窄、两个 server 都要挂上。
+test("vite：Host 默认不限制，设了名单才收窄", () => {
+  const config = readFileSync(join(SRC, "..", "vite.config.js"), "utf8");
+  const body = config.replace(/\/\/[^\n]*/g, ""); // 先剥注释 —— 注释里全是这些词
+
+  // ① 默认**放行**：名单为空时必须落到 `true`。
+  //    这条正是用户要的：不设任何东西，域名部署就能用。
+  assert.match(body, /allowedHosts:\s*allowedHosts\.length\s*\?\s*allowedHosts\s*:\s*true/,
+    "默认不是'不限制任何 Host' —— 没设名单时域名部署还会 403");
+
+  // ② 名单来自环境变量（不是写死域名，也不是塞进 config.json —— 那个文件后端会整体重写，
+  //    塞进去的自定义键会在下一次改设置时悄悄消失）。
+  assert.match(body, /process\.env\.MICROCHAT_ALLOWED_HOSTS/, "没读 MICROCHAT_ALLOWED_HOSTS");
+  assert.ok(!/config\.json[\s\S]{0,200}allowed_hosts/.test(body),
+    "把允许的 Host 塞进了 config.json —— 后端整体重写会把它抹掉");
+  assert.ok(!/allowedHosts:\s*\[\s*"/.test(body), "值写死成了字面量数组");
+
+  // ③ 两个 server 都要挂上（preview 是部署口，dev 也常常要透过反代访问）。
+  for (const key of ["server:", "preview:"]) {
+    const rule = body.slice(body.indexOf(key), body.indexOf("}", body.indexOf(key)));
+    assert.match(rule, /\.\.\.hostGate/, `${key} 没挂上 Host 闸门`);
+  }
+
+  // ④ 生效值要打在日志里 —— 部署时"到底生效没有"不该靠猜（`podman logs` 能看见）。
+  assert.match(body, /console\.log\(\s*`\[vite\] allowedHosts/, "没有把生效值打进日志");
+});

@@ -176,6 +176,19 @@ podman compose restart                                    # ← **每次提交�
   要让手机/平板用就把 compose 里那行改成 `"8788:8788"` —— 同时**没有任何保护**了。
   vite 把 `/api` **代理**给同容器的后端（`frontend/web/vite.config.js` 的 `server.proxy` + `preview.proxy`）
   ⇒ 浏览器**永远同源**、部署里**没有任何要填的地址**。
+- **Host 闸门默认不限制**（2026-11-02）：vite 默认只放行 localhost 与 IP（防 DNS rebinding），
+  于是每次域名部署都要先撞一次 `Blocked request. This host (...) is not allowed.`。
+  半天之内这条路上的坑踩了两回，用户定案：「前端就不能不设域名限制吗」⇒ **默认 `allowedHosts: true`**
+  —— 反代、内网 IP、隧道，什么都不用配就能访问。
+  **想收窄**才设 `MICROCHAT_ALLOWED_HOSTS`（逗号分隔，`.example.com` 连子域）：
+  `MICROCHAT_ALLOWED_HOSTS=localhost,127.0.0.1,tavern.zincles.cc`。
+  ⚠ 收窄挡的是 **DNS rebinding**（恶意网页把自己的域名解析到 127.0.0.1，拿本机服务当自己的接口用）；
+  本项目 `/api` 的 CORS 是 `*`，真被 rebind 成功对方能**读走存档**。所以口径是：
+  **默认按"跑在远处（VPS / 反代后面）"配**（那里 rebinding 没有意义），
+  **本机跑又在意的**，把名单设成 localhost 那几个。
+  ⚠ 生效值会打一行日志（`[vite] allowedHosts = …`）—— 部署时"到底生效没有"不该靠猜。
+  ⚠ 名单**不塞 `config.json`**：那个文件后端会整体重写（`SaveJSON` 只写它认识的字段），
+  塞进去的自定义键会在下一次改设置时**悄悄消失**。
 - **后端地址的唯一权威 = 后端自己的 `data/config/config.json`**（`server.host/port`）：vite 启动时读它算代理目标
   （`0.0.0.0` 当连接地址时换成 `127.0.0.1`）；读不到（首次启动、文件还没生成）⇒ 默认 `127.0.0.1:8787`。
   （2026-11-01：原来还有个「连接门板」让人填地址/口令，**整块删了** —— 没有要填的东西了。）

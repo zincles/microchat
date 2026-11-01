@@ -32,6 +32,33 @@ function backendOrigin() {
 }
 const apiProxy = { "/api": { target: backendOrigin() } };
 
+// ── 允许哪些 Host（2026-11-02）────────────────────────────────────────────────
+//
+// **默认不限制**（`allowedHosts: true`）：域名部署、反代、内网 IP、diag 隧道 —— 全都直接能用，
+// 不用配置。（2026-11-02 用户定：「前端就不能不设域名限制吗」—— 先前那版默认只放行
+// localhost 与 IP，于是每一次域名部署都要先撞一次 403 再回来配环境变量，成本全落在部署上。）
+//
+// 想**收窄**就设 `MICROCHAT_ALLOWED_HOSTS`（逗号分隔；`.example.com` 连子域一起放行）：
+//
+//   MICROCHAT_ALLOWED_HOSTS=localhost,127.0.0.1,tavern.zincles.cc
+//
+// ⚠ 收窄挡的是 **DNS rebinding**（恶意网页把自己的域名解析到 127.0.0.1，然后拿本机服务
+//   当自己的接口用）。本项目 `/api` 的 CORS 是 `*`，所以真被 rebind 成功，对方能**读走**存档。
+//   于是这条口径是：**默认按"跑在远处（VPS/反代后面）"来配**（那里 rebinding 没有意义 ——
+//   攻击者够得着的话直接打就行，用不着骗浏览器）；本机跑、又在意这个的，把名单设成 localhost 那几个。
+// ⚠ 为什么不用 `config.json` 存这份名单：那个文件后端会**整体重写**（`SaveJSON` 只写它认识的
+//   字段），塞进去的自定义键会在下一次改设置时**悄悄消失**。
+const allowedHosts = (process.env.MICROCHAT_ALLOWED_HOSTS || "")
+  .split(",")
+  .map((host) => host.trim())
+  .filter(Boolean);
+// 名单为空 = 不限制。
+const hostGate = { allowedHosts: allowedHosts.length ? allowedHosts : true };
+// 打一行到日志里 —— 部署时"到底生效没有"不该靠猜（`podman logs <容器>` 就能看见）。
+console.log(
+  `[vite] allowedHosts = ${allowedHosts.length ? allowedHosts.join(", ") : "true（不限制任何 Host）"}`,
+);
+
 export default defineConfig({
   plugins: [
     vue(),
@@ -82,6 +109,6 @@ export default defineConfig({
   resolve: { alias: { "vue": "vue/dist/vue.esm-bundler.js" } },
   // dev 用 5173、preview 用 8788：**8788 是部署口**（docker 容器发布它）——两者分开，
   // 同一台机器上"dev 服务器 + 容器"才能并存（实测踩过：都用 8788 ⇒ 容器起不来，端口被自家 dev 占着）。
-  server: { host: "0.0.0.0", port: 5173, strictPort: true, proxy: apiProxy },
-  preview: { host: "0.0.0.0", port: 8788, strictPort: true, proxy: apiProxy },
+  server: { host: "0.0.0.0", port: 5173, strictPort: true, proxy: apiProxy, ...hostGate },
+  preview: { host: "0.0.0.0", port: 8788, strictPort: true, proxy: apiProxy, ...hostGate },
 });
