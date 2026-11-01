@@ -2633,3 +2633,24 @@ test("vite：Host 默认不限制，设了名单才收窄", () => {
   // ④ 生效值要打在日志里 —— 部署时"到底生效没有"不该靠猜（`podman logs` 能看见）。
   assert.match(body, /console\.log\(\s*`\[vite\] allowedHosts/, "没有把生效值打进日志");
 });
+
+// ── 容器里的后端必须绑 0.0.0.0（2026-11-02 实测修的）──────────────
+//
+// 后端默认绑 `127.0.0.1`（宿主机上那是唯一闸门）。但在**容器**里绑回环 ⇒ 宿主的端口发布
+// 转发到容器 eth0，而那里没人听 ⇒ `127.0.0.1:8787:8787` 能连上却**永远没有应答**。
+// 表现是"连得上、没响应"，比连不上更难查。
+test("容器 entrypoint：后端绑 0.0.0.0，且端口在启动前就解析好", () => {
+  const script = readFileSync(
+    join(SRC, "..", "..", "..", "docker", "entrypoint.sh"), "utf8");
+  const body = script.replace(/^\s*#.*$/gm, ""); // 先剥注释
+
+  // ① 必须是 `-addr "0.0.0.0:$PORT"` —— 绑回环的话发布出来也是死的。
+  assert.match(body, /microchat-server\s+-addr\s+"0\.0\.0\.0:\$PORT"/,
+    "后端没有以 -addr 0.0.0.0:$PORT 启动（容器里绑回环 ⇒ 宿主发布没应答）");
+
+  // ② `$PORT` 必须在**起后端之前**算出来 —— 顺序反了就是 `-addr "0.0.0.0:"`（退化成默认地址）。
+  const portAt = body.indexOf("PORT=${PORT:-8787}");
+  const startAt = body.indexOf("-addr");
+  assert.ok(portAt > 0, "没有 `PORT=${PORT:-8787}` 这个兜底");
+  assert.ok(portAt < startAt, "端口在起后端之后才解析 —— 那时 $PORT 还是空的");
+});

@@ -21,12 +21,21 @@ CONFIG_DIR=${MICROCHAT_CONFIG_DIR:-$DATA_DIR/config}
 # 后端的默认数据目录 = CWD/data —— 曾经 cd 进 core 再起 ⇒ 数据落进 /app/core/data（仓库里凭空多一份影子库 ✗，
 # 实测咬过：needs_setup 说"全新库"，说的是那个影子）。二进制始终从 /app 起 ⇒ 数据在 /app/data ✓。
 (cd /app/core && CGO_ENABLED=0 go build -o /tmp/microchat-server .)
-/tmp/microchat-server &
-BACK=$!
 
-# 等它真的在听：端口从配置读（改过 server.port 也等得对）；文件还没生成（首次启动）⇒ 8787 缺省。
+# 端口：从配置读（改过 server.port 也等得对）；文件还没生成（首次启动）⇒ 8787 缺省。
+# ⚠ 必须**起后端之前**读出来 —— 下面要用它拼 `-addr`。
 PORT=$(grep -o '"port"[[:space:]]*:[[:space:]]*[0-9]\+' "$CONFIG_DIR/config.json" 2>/dev/null | head -1 | grep -o '[0-9]\+$' || true)
 PORT=${PORT:-8787}
+
+# **容器里绑 `0.0.0.0`**（2026-11-02 修）：后端默认绑 `127.0.0.1`（那是宿主机的"唯一闸门"），
+# 但在容器里绑回环 ⇒ 宿主的端口发布**转发到容器的 eth0，而那里没人听**
+# ⇒ `127.0.0.1:8787:8787` 那条发布能连上却**永远没有应答**（实测过；注释里"给本机 dev/curl 用"是假的）。
+#
+# 为什么这样不放松安全性：容器的 `0.0.0.0` 只在本容器的网络名字空间里可见，
+# 外界够不够得着**完全由 compose 的端口绑定决定**（那儿两条都是 `127.0.0.1:` 开头）。
+# 换句话说：闸门没有从端口绑定挪走，只是让"容器内"这一层别再自己挡自己。
+/tmp/microchat-server -addr "0.0.0.0:$PORT" &
+BACK=$!
 i=0
 until nc -z 127.0.0.1 "$PORT" 2>/dev/null; do
   i=$((i+1))
