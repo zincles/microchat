@@ -40,7 +40,6 @@ import {
   ABILITY_LABELS,
   ABILITY_TEMPLATE_SEGMENTS,
   buildAbilitiesPatch,
-  taskLineText,
   modelKey,
   parseModelKey,
   modelLabel,
@@ -899,14 +898,59 @@ test("摘要重摇家族：三个方法的形状（enter 带消息 idx；switch 
 });
 
 
-test("任务行文案：只数在跑的、kind 去重、0 个 ⇒ 空串", () => {
-  assert.equal(taskLineText(null), "");
-  assert.equal(taskLineText({ running: 0, tasks: [{ kind: "turn", finished_at: 123 }] }), "");
-  assert.equal(
-    taskLineText({ running: 2, tasks: [{ kind: "turn" }, { kind: "compact" }, { kind: "turn" }] }),
-    "⟳ 后台任务 2：turn · compact",
-  );
-  assert.equal(taskLineText({ running: 1, tasks: [{ kind: "" }] }), "⟳ 后台任务 1");
+// 后台任务徽标（2026-11-01 用户定：「把后台任务也做成右上角那个圆环一样的东西……显示一个数字，
+// 按下就在一个小面板里（类似那个绿色的上下文栏）显示有多少后台任务」）。
+//
+// 从前那个数字是输入框上方的一行小字（`taskLineText`）—— **已经删了**：
+// 同一件事住两处，只会让两处都可能过期（2026-10-28 状态行搬家时定下的规矩）。
+test("后台任务：顶栏徽标 + 浮板，数字 / 明细都来自 /tasks", () => {
+  const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
+  const app = readFileSync(join(SRC, "..", "src", "App.vue"), "utf8");
+  const composer = readFileSync(join(SRC, "components", "Composer.vue"), "utf8");
+  const fmt = readFileSync(join(SRC, "utils", "format.js"), "utf8");
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  const tpl = top.slice(top.indexOf("<template>")).replace(/<!--[\s\S]*?-->/g, "");
+
+  // ① 徽标在顶栏右端那一簇里，圆里是数字，点开浮板
+  assert.match(tpl, /id="task-badge"/, "顶栏没有后台任务徽标");
+  assert.match(tpl, /class="task-badge"/, "徽标没有 .task-badge 类");
+  assert.match(tpl, /\{\{ taskCountText \}\}/, "徽标里不是那个数字");
+  assert.match(tpl, /aria-label="后台任务"/, "徽标没有无障碍名");
+  assert.match(tpl, /@click="toggleTasks"/, "徽标点不开浮板");
+  assert.match(tpl, /class="agent-menu task-menu"/, "浮板不是一个 agent-menu");
+
+  // ② 数字 = **在跑**的条数（finished_at 有值的不算）；这个口径只有一处
+  assert.match(top, /const taskRunning = computed\(\(\) => tasks\.value\?\.running \?\? 0\)/,
+    "徽标数字没取 board.running（自己去数 tasks 就会与后端不一致）");
+
+  // ③ 0 个时压暗而不是藏起来（与环的 .idle 同一套语言）
+  assert.match(tpl, /:class="\{ live: taskRunning > 0 \}"/, "徽标没有 running 态的类");
+  assert.match(css, /\.task-badge\.live\b/, "没有 .task-badge.live 的样式");
+  assert.ok(!/v-if="taskRunning"/.test(tpl), "有任务汇总类的 v-if —— 0 个时别把它整个藏起来");
+
+  // ④ 喂数只有一处：App 把 /tasks 的账本交给顶栏；输入框上方那行小字连尸首都不许留
+  assert.match(app, /topbarRef\.value\?\.setTasks\(board\)/, "App 没把任务账本喂给顶栏");
+  assert.match(app, /topbarRef\.value\?\.setTasks\(null\)/, "取不到任务时该喂 null（徽标归 0）");
+  assert.ok(!/setTaskLine/.test(composer), "Composer 还留着 setTaskLine");
+  assert.ok(!/taskline/.test(composer), "Composer 还留着 .taskline 那行");
+  assert.ok(!/taskLineText/.test(fmt), "format.js 还留着 taskLineText（没有调用方了）");
+  assert.ok(!/taskLineText/.test(app), "App 还在引用 taskLineText");
+
+  // ⑤ 浮板列的是「还有谁在跑」：kind / 标题 / 时长，失败点名
+  assert.match(tpl, /v-for="t in taskRecords"/, "浮板没有逐条列出任务");
+  assert.match(tpl, /taskElapsed\(t\)/, "浮板没显示跑了多久");
+  assert.match(tpl, /:class="\{ done: t\.finished_at, failed: !!t\.error \}"/, "浮板没区分已结束 / 失败");
+  assert.match(css, /\.task-row\.failed\b/, "失败的任务行没有样式");
+});
+
+test("顶栏是不透明的（消息滚到栏底下要被挡住）", () => {
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  const rule = css.match(/#chat-col > header \{[^}]*\}/g)?.find((r) => /position:\s*absolute/.test(r));
+  assert.ok(rule, "找不到 #chat-col > header 的定位规则");
+  assert.ok(!/background:\s*none/.test(rule), "顶栏还是透明的（background: none）");
+  assert.match(rule, /background:\s*var\(--tg-bg\)/, "顶栏底色该用页面底色铺满");
+  // 「不透明」要的是挡住，不是把栏画成一个盒子 —— 别顺手加边框/分隔线。
+  assert.ok(!/border-bottom/.test(rule), "顶栏加了分隔线（用户只说不透明）");
 });
 
 test("/tasks 端点形状：GET，回 running + tasks（轮询用）", async () => {

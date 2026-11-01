@@ -23,7 +23,6 @@ import {
   modelOption,
   agentOption,
   sessionTitle,
-  taskLineText,
 } from "./utils/format.js";
 import TopBar from "./components/TopBar.vue";
 import SessionBar from "./components/SessionBar.vue";
@@ -1083,8 +1082,8 @@ let tasksTimer = null;
 async function refreshTasks() {
   try {
     const board = await api.tasks();
-    composerRef.value?.setTaskLine(taskLineText(board));
-  } catch { composerRef.value?.setTaskLine(""); }
+    topbarRef.value?.setTasks(board);
+  } catch { topbarRef.value?.setTasks(null); }
 }
 // refreshStatusline：连接 / 助手 / 相位 / 上下文 —— 全都喂给右上角那枚环（2026-10-28 用户定）。
 //

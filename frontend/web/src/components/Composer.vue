@@ -8,8 +8,6 @@ const emit = defineEmits(["input-text", "keydown", "submit", "stop", "menu"]);
 // menuOn：命令菜单开不开（用户视图 → 输入；缺省关 —— 移动端那颗 ☰ 纯碍事）。
 const props = defineProps({ menuOn: { type: Boolean, default: false } });
 const text = ref("");
-const taskText = ref(""); // 输入框上方、状态行头上那行小字（后台任务；空 = 藏）
-function setTaskLine(t) { taskText.value = t ?? ""; }
 const running = ref(false);
 function setRunning(v) { running.value = !!v; }
 const area = ref(null);
@@ -50,12 +48,11 @@ function clear() {
   if (area.value) area.value.rows = 1;
 }
 
-defineExpose({ submit, clear, text, setRunning, setTaskLine });
+defineExpose({ submit, clear, text, setRunning });
 </script>
 
 <template>
   <form id="composer" @submit.prevent="running ? $emit('stop') : submit()">
-    <div v-if="taskText" class="taskline">{{ taskText }}</div>
     <button
       v-if="props.menuOn"
       type="button"

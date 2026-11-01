@@ -53,6 +53,7 @@ function toggleModel() {
   if (!modelOpen.value) return;
   agentOpen.value = false;
   ctxOpen.value = false;
+  taskOpen.value = false;
   modelQuery.value = "";
   modelActive.value = -1;
   // 打开就聚焦搜索框：几百个模型，第一次动作必然是打字。
@@ -147,10 +148,41 @@ const ctxRows = computed(() => {
   if (c.last_prompt_tokens != null) rows.push(["上一发实测", `${formatTokens(c.last_prompt_tokens)}（这格是估的：${formatTokens(c.used_tokens)}）`]);
   return rows;
 });
-function toggleCtx() { ctxOpen.value = !ctxOpen.value; if (ctxOpen.value) { agentOpen.value = false; modelOpen.value = false; } }
-function toggleAgent() { agentOpen.value = !agentOpen.value; if (agentOpen.value) { ctxOpen.value = false; modelOpen.value = false; } }
+function toggleCtx() { ctxOpen.value = !ctxOpen.value; if (ctxOpen.value) { agentOpen.value = false; modelOpen.value = false; taskOpen.value = false; } }
+function toggleAgent() { agentOpen.value = !agentOpen.value; if (agentOpen.value) { ctxOpen.value = false; modelOpen.value = false; taskOpen.value = false; } }
+function toggleTasks() { taskOpen.value = !taskOpen.value; if (taskOpen.value) { agentOpen.value = false; modelOpen.value = false; ctxOpen.value = false; } }
 // setContext：App 每轮 refreshStatusline 喂一次（草稿态传 null）。
 function setContext(c) { ctx.value = c ?? null; }
+
+// —— 后台任务（2026-11-01 用户定：「把后台任务也做成右上角那个圆环一样的东西……显示一个数字，
+//     按下就在一个小面板里（类似那个绿色的上下文栏）显示有多少后台任务」）——
+//
+// 小圆里的数字 = **还在跑**的条数（`board.running`；`finished_at` 有值的不算）—— 与从前输入框
+// 上方那行小字同一个口径。浮板里给明细：kind / 标题 / 跑了多久 / 成没成。
+//
+// ⚠ 这格是 `/tasks` 的**唯一**落点（从前输入框上方那行小字**已经删掉**）：同一个数字住两处，
+//   只会让两处都可能过期 —— 那是 2026-10-28 状态行搬进环的浮板时定下的规矩，别再犯。
+// ⚠ 0 个时**仍然在**、只是压暗（跟环的 `.idle` 一个道理：常驻但安静）。藏起来的话，
+//   "怎么知道有没有任务在跑"就变成了碰运气。
+const tasks = ref(null);
+const taskOpen = ref(false);
+const taskRunning = computed(() => tasks.value?.running ?? 0);
+// 浮板最多列几条（跑着的永远在最前，后端已排序；下面补几条刚结束的）。
+const TASK_ROWS = 12;
+const taskRecords = computed(() => (tasks.value?.tasks ?? []).slice(0, TASK_ROWS));
+// 帽子上的数字：>99 收成 "99+"（1.8em 的圆装不下三位数；真数在 title 与浮板里）。
+const taskCountText = computed(() => (taskRunning.value > 99 ? "99+" : String(taskRunning.value)));
+const taskTitle = computed(() => (taskRunning.value ? `后台任务：${taskRunning.value} 个在跑` : "后台任务：现在没有在跑"));
+// taskElapsed：跑了多久 / 一共跑了多久。`now` 用**后端**那一份（前端时钟与它不一致也照样对）。
+function taskElapsed(t) {
+  const now = tasks.value?.now ?? Date.now();
+  const ms = (t.finished_at ?? now) - (t.started_at ?? now);
+  if (!(ms >= 0)) return "";
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+// setTasks：App 轮询 `/tasks` 喂进来（取不到就传 null ⇒ 帽子归 0、浮板说"读不到"）。
+function setTasks(board) { tasks.value = board ?? null; }
 
 // —— 连接 / 助手 / 相位（2026-10-28 用户定："已连接 v0.1.0｜默认助手｜idle 这个也塞那个环的面板里"）——
 // 从前它是输入框上方那行小字。搬进面板之后**分三行**给（而不是拼成一句话）：
@@ -166,7 +198,7 @@ function setStatus(s) { status.value = s ?? null; }
 // 悬停解释 = 状态一句 + 预算一句（两处都是"一眼看不清、要解释"的东西）。
 const ringTitle = computed(() => [formatStatusLine(status.value ?? {}), contextTitle(ctx.value)].filter(Boolean).join("\n"));
 
-defineExpose({ setSession, setModels, setAgents, setContext, setStatus });
+defineExpose({ setSession, setModels, setAgents, setContext, setStatus, setTasks });
 </script>
 
 <template>
@@ -286,6 +318,18 @@ defineExpose({ setSession, setModels, setAgents, setContext, setStatus });
           <circle class="ctx-ring-fill" cx="16" cy="16" r="13" pathLength="100" :stroke-dasharray="ctxDash" />
         </svg>
       </button>
+      <!-- 后台任务（2026-11-01 用户定）：与环同一个语言 —— 一颗小圆，圆里是**在跑的条数**；
+           点开是浮板明细。0 个时压暗（`.live` 才是亮的）。 -->
+      <button
+        id="task-badge"
+        class="task-badge"
+        :class="{ live: taskRunning > 0 }"
+        type="button"
+        :title="taskTitle"
+        aria-label="后台任务"
+        :aria-expanded="taskOpen ? 'true' : 'false'"
+        @click="toggleTasks"
+      >{{ taskCountText }}</button>
     </span>
     <template v-if="agentOpen">
       <div class="agent-menu-backdrop" @click="agentOpen = false"></div>
@@ -329,6 +373,31 @@ defineExpose({ setSession, setModels, setAgents, setContext, setStatus });
             <dd>{{ v }}</dd>
           </div>
         </dl>
+      </div>
+    </template>
+    <template v-if="taskOpen">
+      <div class="agent-menu-backdrop" @click="taskOpen = false"></div>
+      <div class="agent-menu task-menu" role="dialog" aria-label="后台任务">
+        <div class="task-head">
+          <b>{{ taskRunning ? `${taskRunning} 个在跑` : "没有在跑的任务" }}</b>
+          <span v-if="taskRecords.length" class="task-total">最近 {{ taskRecords.length }} 条</span>
+        </div>
+        <p v-if="!tasks" class="agent-empty">读不到任务面板（后端没应？）。</p>
+        <p v-else-if="!taskRecords.length" class="agent-empty">
+          后台任务会在这里出现：一轮生成、一次压缩、一次刷新模型。
+        </p>
+        <ul v-else class="task-list">
+          <li
+            v-for="t in taskRecords"
+            :key="t.id"
+            class="task-row"
+            :class="{ done: t.finished_at, failed: !!t.error }"
+          >
+            <span class="task-kind">{{ t.kind || "?" }}</span>
+            <span class="task-label" :title="t.title">{{ t.title || "—" }}</span>
+            <span class="task-time">{{ taskElapsed(t) }}</span>
+          </li>
+        </ul>
       </div>
     </template>
   </header>

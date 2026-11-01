@@ -188,6 +188,36 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
   transition: stroke-dasharray 240ms ease-out, stroke 160ms linear; }
 #ctx-ring.over .ctx-ring-fill { stroke: var(--tg-destructive); }
 #ctx-ring.idle .ctx-ring-fill { stroke: none; }
+/* —— 后台任务徽标（右上角，2026-11-01 用户定）——
+ * 「把后台任务也做成右上角那个圆环一样的东西……显示一个数字」⇒ 一颗 1.8em 的小圆（与环同高），
+ * 圆里是**在跑的条数**；点开掉浮板看明细。
+ * ⚠ 0 个时**不藏**、只压暗：藏起来的话"有没有任务在跑"就得靠猜（与环的 `.idle` 同一套语言）。
+ * ⚠ 只有 `.live`（有在跑）才给底色 —— 静息时它是一枚浅灰数字，不该比环更抢眼。 */
+.task-badge { flex: none; width: 1.8em; height: 1.8em; padding: 0; border: none; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+  font: inherit; font-size: 0.72em; font-variant-numeric: tabular-nums; line-height: 1;
+  background: none; color: var(--tg-hint); -webkit-tap-highlight-color: transparent; }
+.task-badge.live { background: color-mix(in srgb, var(--tg-link) 18%, transparent); color: var(--tg-link); }
+.task-badge:hover { background: color-mix(in srgb, var(--tg-text) 8%, transparent); }
+.task-badge.live:hover { background: color-mix(in srgb, var(--tg-link) 26%, transparent); }
+.task-badge:focus-visible { outline: 2px solid color-mix(in srgb, var(--tg-link) 55%, transparent); outline-offset: 1px; }
+/* 浮板：与 Agent / 上下文那两块同族（都是 `.agent-menu`），只是内容一列一列地排。
+ * `right: 1em` 而不是 `left: 1em` —— 它挂在最右缘，浮板该往左展开，不该往右出界。 */
+.task-menu { left: auto; right: 1em; min-width: 16em; max-width: min(26em, calc(100vw - 2em)); }
+.task-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.6em;
+  padding: 0.3em 0.55em 0.45em; border-bottom: 1px solid color-mix(in srgb, var(--tg-text) 10%, transparent); }
+.task-head b { font-weight: 600; color: var(--tg-text); }
+.task-total { flex: none; font-size: 0.85em; color: var(--tg-hint); }
+.task-list { list-style: none; margin: 0.25em 0 0; padding: 0; }
+.task-row { display: flex; align-items: baseline; gap: 0.5em; padding: 0.25em 0.55em; border-radius: var(--r-btn); }
+.task-row:hover { background: color-mix(in srgb, var(--tg-text) 6%, transparent); }
+.task-kind { flex: none; width: 4.6em; font-size: 0.85em; color: var(--tg-hint);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--tg-text); }
+.task-time { flex: none; font-size: 0.85em; font-variant-numeric: tabular-nums; color: var(--tg-hint); }
+/* 已结束的压暗一档（它还在这张表里只是"刚发生"，不是在跑）；失败的整行点名（红字）。 */
+.task-row.done { opacity: 0.6; }
+.task-row.failed .task-label { color: var(--tg-destructive); }
 /* 聊天 / 上下文 两段开关（2026-10-29 用户定）：落在绿环左边，切的是**这一下看哪块视图**。
  * 一段式胶囊（容器带底、选中那段浮起来）—— 与 `.settings-nav` 的页签同族但**不做滑动底片**：
  * 只有两段、宽度固定，动画反而让人以为中间还有东西。
@@ -435,7 +465,14 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 /* 顶栏 = **悬浮层**，且**全透明**（2026-10-14 用户定：不折腾模糊了 —— 无毛玻璃、无渐隐，
  * 就一层浮字；滑过的内容照原样透过去，字靠双层柔影读清，见 header 的 text-shadow）。
  * 底部输入栏的模糊保留（那是 #input 自己的浮卡底，见下）。 */
-#chat-col > header { position: absolute; top: 0; left: 0; right: 0; z-index: 6; background: none; }
+/* 顶栏**不透明**（2026-11-01 用户定：「然后顶栏是不透明的比较好吧」）。
+ * 从前它是 `background: none` —— 消息滚到栏底下时能透出来，读顶栏那行字是隔着文字读的。
+ * 现在用页面底色铺满：栏底下滚过去的东西被实实在在挡住，栏本身仍**没有边框、没有分隔线**
+ * （"不透明"要的是挡住，不是把栏画成一个盒子）。`.messages-inner` 的 `padding-top: 3.2em`
+ * 照旧是唯一给它让位的东西 —— 加了高度记得一起改。
+ * ⚠ 只到 `#chat-col > header`：左栏头 / 设置头的 `header` 共用上面那条基础规则，
+ *   它们本来就在自己栏面上，别被这条波及。 */
+#chat-col > header { position: absolute; top: 0; left: 0; right: 0; z-index: 6; background: var(--tg-bg); }
 /* 消息列：flex:1 撑满 + 两侧 56px 头像位 + 上下给浮动输入栏留位；底部留空让尾条操作行不被输入框盖住。 */
 #messages-vue { flex: 1; overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
 /* 阅读列（气泡/摘要卡/加载更多都住这里）：--read-col（920，2026-10-15 用户定：760 小了"一点点"）
@@ -691,24 +728,11 @@ html[data-composer="solid"] #composer #input {
 html[data-composer="solid"] #composer #input:focus { outline: none; border-color: transparent; }
 /* 两颗圆钮在实心栏里保留圆形（它们是按钮，不是"卡"）—— 只把阴影去掉，贴着实心底更干净。 */
 html[data-composer="solid"] #composer button { box-shadow: none; }
-/* 任务行进栏：`flex: 1 0 100%` 独占一整行，`order: -2` 排在输入框**上面**。
- * `position: static` 是**必须的**：基础的 `.taskline` 是 `position: absolute; bottom: 100%`
- * 挂在栏外 —— 不扳回 static 就会既浮着又占位。
- *
- * ⚠ 这里原本还有一块给**状态行**进栏用的规则 + 那条"边到边"的分割线（2026-10-20 用户点名
- * "它和底部输入栏之间有分割线比较好"）。2026-10-28 状态行整条搬进右上角环的浮板
- * （用户："已连接 v0.1.0｜默认助手｜idle 这个也塞那个环的面板里"）⇒ 两个隔间只剩一个，
- * 分割线没有对象了，一并删掉。要再画线时**别**用伪元素外扩（会被 `overflow: hidden` 裁掉）
- * —— 那个教训写在 git 历史里（`git log -S'border-bottom: 1px solid var(--line)'`）。
- *
- * `row-gap: 0`：换行后**行间**间距改由各行自己的 margin 给；列间（输入框 ↔ 两颗圆钮）
- * 仍吃 `#composer` 的 `gap: 0.5em`，不受影响。 */
-html[data-composer="solid"] #composer { flex-wrap: wrap; row-gap: 0; }
-html[data-composer="solid"] #composer .taskline {
-  position: static; margin: 0 0 0.15em;
-  flex: 1 0 100%; order: -1; text-align: left; text-shadow: none;
-  padding: 0 0.6em; color: var(--tg-hint);
-}
+/* ⚠ 这里原本有"任务行进栏"那条规则（`.taskline` 占一整行、`order: -1` 排在输入框上面）
+ * 和上面「两个隔间」那段历史。**2026-11-01 整块删掉了**：后台任务搬进顶栏徽标（`#task-badge`），
+ * 输入栏上方不再有任何小字 —— 于是 `flex-wrap` 也没有对象了（`#composer` 不再换行）。
+ * 别把它加回来：同一个数字住两处，只会让两处都可能过期。
+ */
 /* ⚠ 状态行（`.statusline`）2026-10-28 **整条删掉**了：连接 / 助手 / 相位搬进右上角那枚环的
  * 浮板（`#ctx-ring` → `.ctx-menu` 里的"连接 / 助手 / 运行"三行），上下文占用则是环本身。
  * 于是这里没有"一行浮在输入框上方的小字"了 —— 别把它加回来：同一件事住两处，
@@ -751,10 +775,6 @@ html[data-composer="solid"] #composer .taskline {
 #session-list .empty .sub { font-size: 0.9em; opacity: 0.8; }
 .gate-box .hint { color: var(--tg-hint); font-size: 0.8em; margin: 0.55em 0 0; text-align: center; }
 .gate-box .hint code { background: color-mix(in srgb, var(--tg-text) 8%, transparent); border-radius: 4px; padding: 0 0.25em; }
-/* 后台任务行：输入框上方一行小字（绝对定位 ⇒ 不占布局；0 个任务时整行不渲染）。
- * `margin-bottom` 从 1.75em 收到 0.3em：那 1.75em 是**为了浮在状态行上面**留的，
- * 状态行 2026-10-28 搬走后就是一段白飘在对话底下（用户一直在要"更紧凑"）。 */
-.taskline { position: absolute; left: 0; right: 0; bottom: 100%; margin-bottom: 0.3em; text-align: center; font-size: 0.72em; color: color-mix(in srgb, var(--tg-hint) 75%, var(--tg-text)); text-shadow: 0 1px 2px color-mix(in srgb, var(--tg-bg) 85%, transparent), 0 1px 10px color-mix(in srgb, var(--tg-bg) 55%, transparent); }
 #composer button { background: var(--tg-button); color: var(--tg-button-text); border: none; border-radius: 50%; width: 2.6em; height: 2.6em; padding: 0; cursor: pointer; align-self: flex-end; display: flex; align-items: center; justify-content: center; flex: none; box-shadow: var(--shadow-1); }
 #composer button:hover { filter: brightness(1.1); }
 #composer button svg { display: block; }
