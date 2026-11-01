@@ -657,8 +657,8 @@ test("importSt 端点形状：POST /sessions/import-st 原文体 + ?title=", asy
 });
 
 
-// —— 背景图（utils/background.js）：存储层的健壮性 —— 坏值当没设、往返一字不差。
-import { loadBackground, saveBackground, describeBackground } from "../src/utils/background.js";
+// —— 背景图（utils/background.js）：2026-11-01 起**住服务器**（不再是 localStorage 的一枚 data URL）。
+import { describeBackground, backgroundCssUrl } from "../src/utils/background.js";
 
 function stubStorage() {
   const m = new Map();
@@ -702,32 +702,27 @@ test("输入栏形态：默认浮空、只认 solid、切回来要摘掉属性",
   }
 });
 
-test("背景图存储：坏 JSON / 缺字段 / 空串都当没设", () => {
-  stubStorage();
-  assert.equal(loadBackground(), null);
-  localStorage.setItem("mc_bg", "{oops");
-  assert.equal(loadBackground(), null);
-  localStorage.setItem("mc_bg", JSON.stringify({ kind: "nope", value: "x" }));
-  assert.equal(loadBackground(), null);
-  localStorage.setItem("mc_bg", JSON.stringify({ kind: "url", value: "" }));
-  assert.equal(loadBackground(), null);
-});
-
-test("背景图存储：save → load 往返；清除后回 null", () => {
-  stubStorage();
-  const bg = { kind: "url", value: "https://example.com/a.png" };
-  saveBackground(bg);
-  assert.deepEqual(loadBackground(), bg);
-  saveBackground(null);
-  assert.equal(loadBackground(), null);
+// 背景图的地址怎么拼（2026-11-01 改口径后**唯一**值得钉的地方）：
+//   - `url` 型 = 用户填的外部地址，原样用；
+//   - `file` 型 = 服务器上那张，拼到我们自己的端点，并带 `v=` 破缓存
+//     —— 图换了但路径不变，只有版本号能让浏览器重取（后端 `getBackground` 的 ETag 配套）。
+// 从前这里测的是"localStorage 里的坏 JSON 当没设"，那条存储层没了，测试跟着换。
+test("背景图地址：url 原样、file 拼端点且带版本号破缓存", () => {
+  assert.equal(backgroundCssUrl(null), "");
+  assert.equal(backgroundCssUrl({ kind: "url", value: "https://example.com/a.png" }),
+    "https://example.com/a.png");
+  const fileUrl = backgroundCssUrl({ kind: "file", version: "abc123" });
+  assert.ok(fileUrl.endsWith("/config/prefs/background?v=abc123"), fileUrl);
+  // 坏 kind（既不 url 也不 file）当没设 —— 别拼出一个指向不知道哪儿的地址。
+  assert.equal(backgroundCssUrl({ kind: "nope", value: "x" }), "");
 });
 
 test("背景图标注：未设 / URL 截断 / 上传带尺寸", () => {
   assert.equal(describeBackground(null), "未设（纯平底）");
   const long = "https://example.com/" + "x".repeat(80);
   assert.ok(describeBackground({ kind: "url", value: long }).includes("…"));
-  const txt = describeBackground({ kind: "file", value: "d".repeat(1365), width: 1920, height: 1080 });
-  assert.ok(txt.includes("1920×1080") && txt.includes("1 KB"), txt);
+  const txt = describeBackground({ kind: "file", width: 1920, height: 1080 });
+  assert.ok(txt.includes("1920×1080"), txt);
 });
 
 // —— 共享层新增（2026-10-10 审计整改） ——
@@ -1280,19 +1275,29 @@ test("界面缩放：夹到范围内、对齐 5%、坏值回落 100%", () => {
   assert.ok(s.length <= 4, `存下来的值太长：${s}`);
 });
 
-test("界面缩放：落盘、读回、挂到根节点的 --app-text-scale", () => {
+// 界面缩放（2026-11-01 起**存服务器**，不再写 localStorage）：
+// 这里钉三件事 —— 缺省 100%、存完**当场**生效（不是等刷新）、读的时候也要夹。
+// 从前那条还断言 `localStorage.mc_text_scale` 往返；现在那一格不再是存储（只是老数据的
+// 读入兜底），所以改成断言"写的是服务器那份缓存"，而不是"写进了 localStorage"。
+test("界面缩放：存到服务器那份缓存、读回、挂到根节点的 --app-text-scale", () => {
   stubStorage();
   const vars = {};
   const originalDoc = globalThis.document;
   globalThis.document = { documentElement: { style: { setProperty: (k, v) => { vars[k] = v; } } } };
   try {
-    assert.equal(textScale(), 1);                 // 没设过 ⇒ 100%
-    saveTextScale(1.15);
-    assert.equal(localStorage.getItem("mc_text_scale"), "1.15");
-    assert.equal(vars["--app-text-scale"], "1.15"); // 存完当场生效（不是等刷新）
-    assert.equal(textScale(), 1.15);
-    localStorage.setItem("mc_text_scale", "3");   // 手改过
+    // ① 老数据的读入兜底：localStorage 里还留着旧值时读得出来（迁移前的那一帧靠它）。
+    //    ⚠ 顺序有讲究：**先**测兜底，**再**测存盘 —— 一旦 `saveTextScale` 写过缓存，
+    //    缓存就是权威了，再改旧键不会影响读取（那正是"服务器权威"该有的样子）。
+    localStorage.setItem("mc_text_scale", "1.05");
+    assert.equal(textScale(), 1.05);
+    localStorage.setItem("mc_text_scale", "3");   // 旧键被手改成越界值
     assert.equal(textScale(), TEXT_SCALE_MAX);    // 读的时候也要夹
+
+    // ② 存盘：进缓存、当场挂到根节点（不等刷新），读回来还是它。
+    saveTextScale(1.15);
+    assert.equal(vars["--app-text-scale"], "1.15");
+    assert.equal(textScale(), 1.15);
+
     applyTextScale(0.9);
     assert.equal(vars["--app-text-scale"], "0.9");
   } finally {
@@ -2290,4 +2295,111 @@ test("生成轮询不刷全量：withContext:false + 列表只在收尾刷", () 
     "轮询里还在按默认问 /context（每拍一次全量装配）");
   const calls = (loop.match(/refreshSessionsBar\(\)/g) || []).length;
   assert.ok(calls <= 1, `轮询里 refreshSessionsBar() 还在每拍刷（找到 ${calls} 处；只该在收尾那一次）`);
+});
+
+// ── markdown 逐类型开关（2026-11-01）────────────────────────────────
+//
+// 用户口径：「增加 markdown 渲染开关 …… 所有的会被 Markdown 解析的非 <div> HTML 块，
+// 我们为每个类型都加个开关。不然瞎解析不好。」
+//
+// 这里测的是**行为**（渲染出来的 HTML），不是"界面上有那个开关" ——
+// 后者只能说明画了个框，说明不了关掉之后到底还解不解析。
+// allOff：所有类型都关（总开关仍开）—— "关掉每一类"的极端情形。
+const allOff = { typeOn: () => false };
+
+test("markdown 逐类型关掉时：原样显示（不是渲染成别的、也不是吃掉标记）", () => {
+  const cases = [
+    ["粗体", "**粗**", "**粗**"],
+    ["斜体", "*斜*", "*斜*"],
+    ["删除线", "~~删~~", "~~删~~"],
+    ["标题", "# 标题", "# 标题"],
+    ["引用", "> 引文", "> 引文"],
+    ["分隔线", "---", "---"],
+    ["行内代码", "用 `code` 吧", "用 `code` 吧"],
+    ["链接", "[名](https://a.b)", "[名](https://a.b)"],
+    ["图片", "![说明](https://a.b/x.png)", "![说明](https://a.b/x.png)"],
+    ["自动链接", "看 https://a.b/c", "看 https://a.b/c"],
+    ["下划线", "__划__", "__划__"],
+  ];
+  for (const [label, src, want] of cases) {
+    const html = renderMarkdown(src, allOff);
+    assert.ok(html.includes(want), `${label}：关掉后该原样显示 ${want}，得到 ${html}`);
+  }
+});
+
+test("markdown 逐类型关掉时：块级语法不再变成元素、但换行留着", () => {
+  const list = renderMarkdown("- a\n- b", allOff);
+  assert.ok(!list.includes("<ul>") && !list.includes("<li>"), `列表还在解析：${list}`);
+  assert.ok(list.includes("- a") && list.includes("- b"), list);
+  assert.ok(list.includes("<br>"), "块级原文必须把换行留住（否则一坨挤成一行）");
+
+  const table = renderMarkdown("| a | b |\n| - | - |\n| 1 | 2 |", allOff);
+  assert.ok(!table.includes("<table>"), `表格还在解析：${table}`);
+  assert.ok(table.includes("| a | b |"), table);
+
+  const code = renderMarkdown("```js\nlet x = 1;\n```", allOff);
+  assert.ok(!code.includes("<code") && !code.includes("<pre>"), `代码块还在解析：${code}`);
+  assert.ok(code.includes("```js"), code);
+});
+
+test("markdown 逐类型关掉时：只关那一类，别的照常渲染", () => {
+  const noBold = { typeOn: (id) => id !== "bold" };
+  const html = renderMarkdown("**粗** 和 *斜*", noBold);
+  assert.ok(html.includes("**粗**"), `粗体关了该原样：${html}`);
+  assert.ok(html.includes("<em>斜</em>"), `斜体没关，该照常渲染：${html}`);
+
+  const noTable = { typeOn: (id) => id !== "table" };
+  const mixed = renderMarkdown("| a |\n| - |\n| 1 |\n\n**粗**", noTable);
+  assert.ok(!mixed.includes("<table>"), `表格关着还在解析：${mixed}`);
+  assert.ok(mixed.includes("<strong>粗</strong>"), `表格之外的粗体该照常：${mixed}`);
+});
+
+test("markdown 总开关关掉：整段原文 + 换行保留", () => {
+  const html = renderMarkdown("**粗**\n# 标题", { enabled: false });
+  assert.ok(!html.includes("<strong>"), html);
+  assert.ok(!html.includes("<h1>"), html);
+  assert.ok(html.includes("**粗**") && html.includes("# 标题"), html);
+  assert.ok(html.includes("<br>"), "总开关关掉也要留住换行");
+});
+
+test("markdown 数学：关掉时**保留原始定界符**（$a$ 不许被改成 \\(a\\)）", () => {
+  const noMath = { typeOn: (id) => id !== "katex" };
+  // ⚠ 这条是踩出来的：`String.replace` 的替换串里 `$$` 是转义序列，
+  // 最早那版把 `$$x^2$$` 悄悄吃成了 `$x^2$` —— 不报错，只是内容少了一半。
+  assert.ok(renderMarkdown("$$x^2$$", noMath).includes("$$x^2$$"), "display 数学该原样");
+  assert.ok(renderMarkdown("式中 $a+b$ 这样", noMath).includes("$a+b$"), "单 $ 该原样（别换成 \\(…\\)）");
+  assert.ok(renderMarkdown(String.raw`式中 \(a+b\) 这样`, noMath).includes(String.raw`\(a+b\)`), "行内 \\(…\\) 该原样");
+  // 开着的数学仍是 KaTeX（不是"关掉才不渲染"的反面漏了）。
+  assert.ok(renderMarkdown("$$x^2$$").includes("katex"), "数学开着的该渲染成 KaTeX");
+});
+
+test("markdown 转义：关掉任何类型都不影响 XSS 那道门", () => {
+  // 裸 HTML 从来就不解析：我们**先行转义** `&` 与 `<`。
+  const html = renderMarkdown("<script>alert(1)</script>", allOff);
+  assert.ok(!html.includes("<script>"), `转义被绕过了：${html}`);
+  assert.ok(html.includes("&lt;script&gt;"), html);
+  const html2 = renderMarkdown("<img src=x onerror=alert(1)>");
+  assert.ok(!html2.includes("<img src=x"), `转义被绕过了：${html2}`);
+});
+
+// 前端渲染用的类型清单必须与后端**逐个对上**（多一个不触发、少一个点了没反应）。
+test("markdown 类型清单：前端的 FALLBACK 与后端 MarkdownTypes 对得上", () => {
+  const go = readFileSync(join(SRC, "..", "..", "..", "core", "internal", "config", "prefs.go"), "utf8");
+  const registry = go.slice(go.indexOf("var MarkdownTypes = []MarkdownType{")
+    , go.indexOf("// markdownTypeIDs"));
+  const ids = [...registry.matchAll(/\{ID:\s*"([\w]+)"/g)].map((m) => m[1]);
+  assert.ok(ids.length >= 10, `后端类型清单看起来没解析出来：${ids}`);
+
+  // `renderMarkdown` 认识的每一类（BLOCK_TYPES / INLINE_TYPES 的键 + 这几个特例）
+  const js = readFileSync(join(SRC, "utils", "markdown.js"), "utf8");
+  const blockKeys = [...js.slice(js.indexOf("const BLOCK_TYPES"), js.indexOf("// 行内语法"))
+    .matchAll(/^\s{2}(\w+):\s*"/gm)].map((m) => m[1]);
+  const inlineKeys = [...js.slice(js.indexOf("const INLINE_TYPES"), js.indexOf("// buildMarked"))
+    .matchAll(/^\s{2}(\w+):\s*"/gm)].map((m) => m[1]);
+  const handled = new Set([...blockKeys, ...inlineKeys,
+    "breaks", "katex", "underline", "link", "autolink"]);
+
+  for (const id of ids) {
+    assert.ok(handled.has(id), `后端有类型 ${id}，但 markdown.js 不认识它（那个开关点了没反应）`);
+  }
 });

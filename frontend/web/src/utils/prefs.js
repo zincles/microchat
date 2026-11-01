@@ -1,7 +1,17 @@
-// 界面偏好（localStorage `mc_*`）的唯一出口 + 共享 api 客户端。
-// 为什么集中：以前每个组件各自 `localStorage.getItem("mc_api") || "http://127.0.0.1:8787/api/v1"`
-// 抄一份（5 处），还有主题应用两份（一份忘了 TG 守卫）—— 全部收口到这里。
-// 口径不变：**改完偏好刷新页面生效**（组件在装载时取一次；sharedApi 按偏好键缓存）。
+// 界面偏好 + 共享 api 客户端。
+//
+// 2026-11-01 用户定：「所有设置均存储在服务器上」—— 从前这些全在浏览器 localStorage
+// （`mc_theme` 那一串）。现在**服务器是权威**（`data/config/prefs.json`），localStorage
+// 只留一份**镜像**，用途只有一个：开机第一帧不闪（见 `MIRROR_KEY` 那段）。
+//
+// 两个例外**仍住 localStorage**，各有硬理由，别"顺手统一"掉：
+//   - `mc_api`：它是"去哪个服务器"，在拿到地址之前没法请求 —— 放服务器是循环依赖。
+//   - `mc_last_session`：**设备状态**而不是设置（手机与桌面各自回到自己上次看的那条），
+//     而且每次切会话都要写，走一趟 HTTP 不值得。
+//
+// 为什么所有 getter 仍是**同步**的：调用点遍布 App 与各组件（`previewOn()` 在渲染路径上）。
+// 若改成 async，半个应用要跟着改成 await —— 换来的只是"改成从服务器读"这一个结果。
+// 所以：内存缓存（`cache`）是读取的唯一来源，`syncPrefs()` 负责把它与服务器对齐。
 import { createApi, DEFAULT_API_URL, normalizeApiBase } from "../api/client.js";
 
 // 主题（2026-10-28 用户定：「只保留 亮色 / 暗色 / Breeze 三种风格，不保留TG风格」）。
@@ -23,6 +33,7 @@ export function normalizeTheme(id) {
   const mapped = THEME_ALIASES[id];
   return THEME_IDS.includes(mapped) ? mapped : DEFAULT_THEME;
 }
+
 // —— 界面缩放（2026-10-28，照 OpenWebUI 的 UI Scale）——
 // 只乘**字号**：theme.css 的 `--app-text-scale` 乘到 body 的 font-size 上，
 // 全项目尺寸几乎都是 em（0 处 rem、0 处 px 字号）⇒ 改这一格就是整页等比缩放。
@@ -32,8 +43,8 @@ export const TEXT_SCALE_MAX = 1.3;
 export const TEXT_SCALE_STEP = 0.05;
 export const DEFAULT_TEXT_SCALE = 1;
 
-// 归一化：认不出的（老版本没存过、手改过的、NaN）一律回落 100%，
-// 再夹到 [MIN, MAX] 并对齐到 5% 的格 —— 滑杆只会给出这些值，localStorage 什么都能塞。
+// 归一化：认不出的（没存过、手改过的、NaN）一律回落 100%，
+// 再夹到 [MIN, MAX] 并对齐到 5% 的格 —— 滑杆只会给出这些值，存储里什么都能塞。
 export function normalizeTextScale(value) {
   const n = Number(value);
   if (!Number.isFinite(n) || n <= 0) return DEFAULT_TEXT_SCALE;
@@ -42,102 +53,242 @@ export function normalizeTextScale(value) {
   return Number((Math.round(clamped / TEXT_SCALE_STEP) * TEXT_SCALE_STEP).toFixed(2));
 }
 
-export function textScale() { return normalizeTextScale(localStorage.getItem("mc_text_scale")); }
-
-export function applyTextScale(scale) {
-  const s = scale === undefined ? textScale() : normalizeTextScale(scale);
-  document.documentElement.style.setProperty("--app-text-scale", String(s));
-}
-
-export function saveTextScale(scale) {
-  const s = normalizeTextScale(scale);
-  localStorage.setItem("mc_text_scale", String(s));
-  applyTextScale(s);
-}
-
 export const DEFAULT_SEND = "enter";
-
-export function previewOn() { return localStorage.getItem("mc_preview") !== "0"; }
-
-// 滚动隐藏上下栏（2026-10-17 用户定，**默认开**；只在触屏上生效）：跟浏览器一个味道 ——
-// 往下看（内容前进）顶栏按位移**逐步**收起，往回看（内容后退）底栏逐步收起；反方向把对面那栏放回来。
-export function chromeHideOn() { return localStorage.getItem("mc_chrome_hide") !== "0"; }
-export function saveChromeHide(on) { localStorage.setItem("mc_chrome_hide", on ? "1" : "0"); }
-
-// 命令菜单（2026-10-17 用户定，**默认关**）：输入框左侧那颗 ☰ 与输入 "/" 自动弹出的命令面板。
-// 移动端那玩意儿纯碍事 ⇒ 默认不给入口；关着也能直接打 `/name` 回车执行（命令本身没消失，
-// 只是没有"菜单"这一层）。开关在用户视图 → 输入。
-export function commandMenuOn() { return localStorage.getItem("mc_cmd_menu") === "1"; }
-export function saveCommandMenu(on) { localStorage.setItem("mc_cmd_menu", on ? "1" : "0"); }
-
-// —— 输入栏形态（2026-10-20 用户定：这是**主题项**，不是输入选项）——
-// 两种形态，用户自己挑"要效率还是要美观"：
-//   用户口径（2026-10-17 定名）：**正常模式** = float、**紧凑模式** = solid。
-//   float（默认）= 正常：输入框是一颗圆角卡，浮在消息列上、两侧留白（状态小字在框上方）；
-//   solid        = 紧凑：栏自己实心、方角、边到边（外侧没 padding、输入框没圆角）。
-// 值名不改（改用 normal/compact 会把已经存下的偏好作废）。
-// 为什么归"外观"而不是"输入"：它改的是**界面长相**，与"回车发不发"那类操作习惯不是一类。
-// 载体是**根节点的 `data-composer` 属性**（照 applyTheme 那套）—— CSS 只认属性，组件一个 prop 都不用传。
-// ⚠ **不要**跟 `applyTheme` 那条 TG 守卫：它守的是**配色来源**（TG 里颜色由 TG 注入，我们不许覆盖）；
-// 而输入栏形态是**布局**，TG Mini App 里照样该由用户自己挑 —— 两件事，别照抄。
 export const DEFAULT_COMPOSER = "float";
-export function composerStyle() {
-  // `??` 语义：空串 = "没设过" ⇒ 回落默认；真存了 "solid" 就得用 —— 别被 `||` 吞掉。
-  const v = localStorage.getItem("mc_composer_style");
-  return v === "solid" ? "solid" : DEFAULT_COMPOSER;
-}
-export function applyComposerStyle(style) {
-  const s = style === undefined ? composerStyle() : style;
-  const root = document.documentElement;
-  if (s === "solid") root.setAttribute("data-composer", "solid");
-  else root.removeAttribute("data-composer"); // 缺省 = float（属性不出现）
-}
-export function saveComposerStyle(style) {
-  localStorage.setItem("mc_composer_style", style === "solid" ? "solid" : DEFAULT_COMPOSER);
-  applyComposerStyle(style);
+
+// ── 服务器偏好的本地镜像与内存缓存 ──────────────────────────────────
+//
+// `MIRROR_KEY` 里放服务器那份 Prefs 的原样 JSON。它**不是**权威，只是"上一帧长什么样"：
+// 开机时先拿它把主题/缩放过一遍，页面第一帧就是对的；随后 `syncPrefs()` 去问服务器，
+// 不一致就改过来（那次改动是可见的，但它只在"别处改过设置"时发生 —— 正常情况两处一样）。
+//
+// ⚠ 别把新东西只写进镜像而不写服务器：镜像随时会被服务器整份覆盖。
+const MIRROR_KEY = "mc_prefs";
+
+// FALLBACK_PREFS：**服务器还没答话时**的缺省（第一帧用）。
+// 必须与后端 `config.DefaultPrefs()` 逐个对齐 —— `contract.test.js` 钉着两处一致。
+// 真正权威的缺省由 `GET /config/prefs` 的 `defaults` 给（在线之后就以它为准）。
+const FALLBACK_PREFS = {
+  markdown: { enabled: true, disabled: [] },
+  theme: "",
+  text_scale: "",
+  composer_style: "",
+  background: {},
+  send: "",
+  preview: true,
+  command_menu: false,
+  chrome_hide: true,
+  payload_viz: false,
+  bar_left_hidden: false,
+};
+
+// 内存缓存。读取的唯一来源（同步）。
+let cache = FALLBACK_PREFS;
+// 服务器给的 markdown 类型清单（`[{id,name,kind,sample}]`）；未同步前为空。
+let mdTypes = [];
+// 是否已经从服务器同步过一次。
+let hydrated = false;
+
+function clone(value) {
+  return JSON.parse(JSON.stringify(value));
 }
 
-// 上次在看的那条会话（2026-10-11 用户定）：刷新 / 被安卓丢弃后重载 ⇒ 回到它，不再是一张空草稿。
-// 空串 = 没记（或人在草稿）⇒ 开机进草稿。**不按用户分键**：换人登录时那条会话取不到 ⇒ 回落草稿。
-export function lastSessionId() { return localStorage.getItem("mc_last_session") || ""; }
-export function saveLastSession(id) { localStorage.setItem("mc_last_session", id ?? ""); }
-
-// 载荷栏"分块视图"（2026-10-11 用户点名）：开着就把 body.messages 一块块画出来（比裸 JSON 直观）。
-export function payloadVizOn() { return localStorage.getItem("mc_payload_viz") === "1"; }
-export function savePayloadViz(on) { localStorage.setItem("mc_payload_viz", on ? "1" : "0"); }
-
-// defaultApiBase：**跟着"你从哪儿打开这个页面"走**（location.hostname）——
-// 手机从 http://192.168.0.110:8788 打开，默认后端就是 http://192.168.0.110:8787/api/v1，
-// 探通直接进聊天、探不通时门板也按这个预填（从前钉死 127.0.0.1，在手机上指的是手机自己）。
-// 前端 8788 / 后端 8787 是我们的成对默认；IPv6 主机名要套方括号（location.hostname 不带）。
-export function defaultApiBase() {
-  const host = (typeof location !== "undefined" && location.hostname) || "";
-  if (!host) return DEFAULT_API_URL; // file:// 或非浏览器环境
-  const h = host.includes(":") ? `[${host}]` : host;
-  return `http://${h}:8787/api/v1`;
-}
-export function apiBase() { return localStorage.getItem("mc_api") || defaultApiBase(); }
-
-// apiBaseCandidates：启动自检按顺序试的候选 —— 有存过就只认存的（人定的最大）；
-// 没存过：[**同源 /api/v1**（首选：单容器部署与 dev 都靠它 —— vite 把 /api 代理给后端，
-// 见 vite.config.js；浏览器因此永远同源、不用填地址），跟页面同主机的 8787（兜底：
-// 前端被别的静态服务器端出来、没有代理时）]。
-// 非首选候选胜出时调用方要把它存下来（sharedApi 等一切读的都是 apiBase()）。
-export function apiBaseCandidates() {
-  const stored = localStorage.getItem("mc_api");
-  if (stored) return [stored];
-  const list = [];
-  if (typeof location !== "undefined" && location.origin && location.origin !== "null") {
-    list.push(`${location.origin}/api/v1`);
+// 读镜像（同步、静默失败 —— 坏镜像当没有，不是错）。
+function readMirror() {
+  try {
+    const raw = localStorage.getItem(MIRROR_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
   }
-  const dflt = defaultApiBase();
-  if (!list.includes(dflt)) list.push(dflt);
-  return list;
 }
+
+function writeMirror(prefs) {
+  try {
+    localStorage.setItem(MIRROR_KEY, JSON.stringify(prefs));
+  } catch {
+    // 配额满之类：镜像只是"让第一帧好看"，写不进就算了（顶多开机闪一下）。
+  }
+}
+
+// 把一份 Prefs 合进缺省（缺字段 = 缺省，与后端"缺字段 = 默认"同一条口径）。
+function merge(base, incoming) {
+  const out = clone(base);
+  if (!incoming || typeof incoming !== "object") return out;
+  for (const key of Object.keys(out)) {
+    if (incoming[key] === undefined || incoming[key] === null) continue;
+    const value = incoming[key];
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      out[key] = { ...out[key], ...value };
+    } else {
+      out[key] = value;
+    }
+  }
+  // `markdown.disabled` 必须是数组（后端也会校验；这里防一手坏镜像）。
+  if (!Array.isArray(out.markdown?.disabled)) {
+    out.markdown = { ...out.markdown, disabled: [] };
+  }
+  return out;
+}
+
+// —— 迁移：老浏览器里的 `mc_*` 散键 ⇒ 一份完整 Prefs ——
+//
+// 只在"三个条件同时成立"时做：镜像不存在、服务器上还是缺省、老键确实存过。
+// 这三个一起成立 ⇒ 就是"这台浏览器从旧版本升级上来、而服务器上还没人设过"。
+// 迁完立刻 PUT 上去，并写镜像；此后永远不再看老键（它们留着无害，也不再读）。
+const LEGACY_KEYS = ["mc_theme", "mc_text_scale", "mc_composer_style", "mc_preview",
+  "mc_chrome_hide", "mc_cmd_menu", "mc_payload_viz", "mc_bar_left_hidden", "mc_send"];
+
+function legacyPrefs() {
+  if (!LEGACY_KEYS.some((key) => localStorage.getItem(key) !== null)) return null;
+  const theme = localStorage.getItem("mc_theme");
+  const scale = localStorage.getItem("mc_text_scale");
+  const style = localStorage.getItem("mc_composer_style");
+  // 旧布尔键有两种相反约定（`!== "0"` 与 `=== "1"`）⇒ 不能一个函数通吃，
+  // 由调用处按各自的原意给缺省与判定。
+  const notZero = (key, dflt) => {
+    const v = localStorage.getItem(key);
+    return v === null ? dflt : v !== "0";
+  };
+  return {
+    markdown: { enabled: true, disabled: [] },
+    theme: theme === null ? "" : normalizeTheme(theme),
+    text_scale: scale === null ? "" : String(normalizeTextScale(scale)),
+    composer_style: style === "solid" ? "solid" : "",
+    background: {},
+    send: localStorage.getItem("mc_send") || "",
+    preview: notZero("mc_preview", true),
+    command_menu: localStorage.getItem("mc_cmd_menu") === "1",
+    chrome_hide: notZero("mc_chrome_hide", true),
+    payload_viz: localStorage.getItem("mc_payload_viz") === "1",
+    bar_left_hidden: localStorage.getItem("mc_bar_left_hidden") === "1",
+  };
+}
+
+// —— 与服务器同步 / 回写 ——
+
+// syncPrefs：启动时调一次（`App.vue` 的 boot）。顺带承担"迁移"（见 `legacyPrefs`）。
+export async function syncPrefs(api) {
+  const client = api ?? sharedApi();
+  const view = await client.getPrefs();
+
+  mdTypes = Array.isArray(view.markdown_types) ? view.markdown_types : [];
+  const defaults = merge(FALLBACK_PREFS, view.defaults);
+  let incoming = merge(defaults, view.prefs);
+
+  // 三条件齐 ⇒ 迁移（写服务器，然后以迁完的为准）。
+  const serverIsDefault = !view.prefs || Object.keys(defaults).every((key) =>
+    JSON.stringify(view.prefs[key]) === JSON.stringify(defaults[key]));
+  const legacy = readMirror() ? null : legacyPrefs();
+  if (legacy && serverIsDefault) {
+    incoming = merge(defaults, legacy);
+    try {
+      await client.putPrefs(incoming); // 迁不动也不致命：下面照样用它跑这一次
+    } catch {
+      // 服务器写不进去（只读文件系统之类）⇒ 本次仍按迁移来的值显示，下次再试。
+    }
+  }
+
+  cache = incoming;
+  writeMirror(cache);
+  hydrated = true;
+  applyAll();
+}
+
+// 防抖回写：一次交互常常连着改好几格（滑杆拖动），别每一下都发一次 PUT。
+let putTimer = null;
+let pendingPut = false;
+
+function schedulePut() {
+  pendingPut = true;
+  if (putTimer) clearTimeout(putTimer);
+  putTimer = setTimeout(() => {
+    putTimer = null;
+    if (!pendingPut) return;
+    pendingPut = false;
+    const snapshot = clone(cache);
+    sharedApi().putPrefs(snapshot).then((view) => {
+      // 服务器可能把内容归一化了（例如 `disabled` 排序）⇒ 以它回的为准。
+      if (view?.prefs) {
+        cache = merge(merge(FALLBACK_PREFS, view.defaults), view.prefs);
+        writeMirror(cache);
+      }
+    }).catch((err) => {
+      // 写不进去要让**页面**知道（偏好只在这台浏览器上生效了，刷新就没了）。
+      console.error("保存界面偏好失败：", err);
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("mc-prefs-error", { detail: err }));
+      }
+    });
+  }, 250);
+}
+
+// setPref：改一格并回写（内部用；外部用下面那些具名 save* 函数）。
+//
+// `path` 走 `"markdown.disabled"` 这种点号形式 —— 偏好是浅层的，不值得引一个 set 库。
+function setPref(path, value) {
+  const keys = path.split(".");
+  let node = cache;
+  for (let i = 0; i < keys.length - 1; i++) {
+    if (!node[keys[i]] || typeof node[keys[i]] !== "object") node[keys[i]] = {};
+    node = node[keys[i]];
+  }
+  node[keys[keys.length - 1]] = value;
+  writeMirror(cache);
+  schedulePut();
+}
+
+// prefsSnapshot：当前偏好的只读快照（设置界面渲染用）。
+export function prefsSnapshot() { return clone(cache); }
+
+// prefsHydrated：已经从服务器同步过了吗（设置界面据此说"保存中 / 离线"）。
+export function prefsHydrated() { return hydrated; }
+
+// markdownTypes：后端给的语法类型清单（未同步前是空数组）。
+export function markdownTypes() { return mdTypes; }
+
+// markdownPrefs：当前的 markdown 开关（`{enabled, disabled: []}`）。
+export function markdownPrefs() { return clone(cache.markdown ?? FALLBACK_PREFS.markdown); }
+
+// markdownTypeOn：某一类语法此刻要不要渲染。
+//
+// ⚠ 这是**另一份**判定，权威在后端 `Prefs.Markdown.TypeOn`；这里只服务渲染。
+// 两边口径必须一样（缺省全开），`contract.test.js` 钉着。
+export function markdownTypeOn(id) {
+  const md = cache.markdown ?? FALLBACK_PREFS.markdown;
+  return !(md.disabled ?? []).includes(id);
+}
+
+// saveMarkdown：整份改 markdown 开关（总开关 + 关掉哪几类）。
+export function saveMarkdown({ enabled, disabled } = {}) {
+  const next = { ...(cache.markdown ?? {}) };
+  if (enabled !== undefined) next.enabled = !!enabled;
+  if (disabled !== undefined) next.disabled = [...disabled];
+  setPref("markdown", next);
+}
+
+// saveBackground：写背景那一格。
+//
+// `url` 型由这里设（服务器上不涉及文件）；`file` 型**别走这儿** ——
+// 它必须经过上传端点（图要先落盘），见 `utils/background.js` 的 `uploadBackground`。
+export function saveBackground(bg) {
+  setPref("background", bg ?? {});
+}
+
+// refreshPrefs：重新问一次服务器（上传/删背景图之后要调：那两条口子会改服务器上的元信息，
+// 而本地缓存并不知道）。与 `syncPrefs` 同一套逻辑 —— 迁移那步在镜像已存在时会自己跳过。
+export function refreshPrefs() {
+  return syncPrefs();
+}
+
+// —— 主题 ——
+
 export function themePref() {
   // 空串 / 认不出的 id 都归一到 THEME_IDS 里的一档（见 normalizeTheme）。
-  // 从前这里要 `??` 保住空串（那是"跟随系统"），现在那个选项没了 ⇒ 空串就是"没设过"。
-  return normalizeTheme(localStorage.getItem("mc_theme"));
+  // 空串 = "没设过"（"跟随系统"那个选项已经没了）。
+  return normalizeTheme(cache.theme || localStorage.getItem("mc_theme"));
 }
 
 // 主题应用（唯一一处）：TG Mini App 里 data-theme **根本不设**（用户主题由 TG 注入的
@@ -152,6 +303,11 @@ export function applyTheme(theme) {
   syncThemeColor();
 }
 
+export function saveTheme(theme) {
+  setPref("theme", normalizeTheme(theme));
+  applyTheme(theme);
+}
+
 // 手机状态栏 / PWA 标题栏那根 `<meta name="theme-color">`：**写死不行** —— 三套主题底色不同，
 // 写死一个值在另外两套下就是一条突兀的色边（亮色主题配深色状态栏是最扎眼的）。
 // 值从 `--tg-bg` 现读（`var()` 在计算值阶段就替换掉了，读到的是真颜色；TG 注入时也是对的）。
@@ -162,18 +318,141 @@ function syncThemeColor() {
   if (bg) meta.setAttribute("content", bg);
 }
 
+// —— 界面缩放 ——
+
+export function textScale() {
+  return normalizeTextScale(cache.text_scale || localStorage.getItem("mc_text_scale"));
+}
+
+export function applyTextScale(scale) {
+  const s = scale === undefined ? textScale() : normalizeTextScale(scale);
+  document.documentElement.style.setProperty("--app-text-scale", String(s));
+}
+
+export function saveTextScale(scale) {
+  const s = normalizeTextScale(scale);
+  setPref("text_scale", String(s));
+  applyTextScale(s);
+}
+
+// —— 布尔开关（一律走同一对面）——
+
+function flagPref(key, fallback) {
+  const value = cache[key];
+  return typeof value === "boolean" ? value : fallback;
+}
+
+export function previewOn() { return flagPref("preview", true); }
+export function savePreview(on) { setPref("preview", !!on); }
+
+// 滚动隐藏上下栏（2026-10-17 用户定，**默认开**；只在触屏上生效）：跟浏览器一个味道 ——
+// 往下看（内容前进）顶栏按位移**逐步**收起，往回看（内容后退）底栏逐步收起；反方向把对面那栏放回来。
+export function chromeHideOn() { return flagPref("chrome_hide", true); }
+export function saveChromeHide(on) { setPref("chrome_hide", !!on); }
+
+// 命令菜单（2026-10-17 用户定，**默认关**）：输入框左侧那颗 ☰ 与输入 "/" 自动弹出的命令面板。
+// 移动端那玩意儿纯碍事 ⇒ 默认不给入口；关着也能直接打 `/name` 回车执行（命令本身没消失，
+// 只是没有"菜单"这一层）。
+export function commandMenuOn() { return flagPref("command_menu", false); }
+export function saveCommandMenu(on) { setPref("command_menu", !!on); }
+
+// 载荷栏"分块视图"（2026-10-11 用户点名）：开着就把 body.messages 一块块画出来（比裸 JSON 直观）。
+export function payloadVizOn() { return flagPref("payload_viz", false); }
+export function savePayloadViz(on) { setPref("payload_viz", !!on); }
+
+// 左栏收着没有（2026-11-01 起住服务器：换设备也该是同一个工作台）。
+export function barLeftHidden() { return flagPref("bar_left_hidden", false); }
+export function saveBarLeftHidden(on) { setPref("bar_left_hidden", !!on); }
+
+// —— 输入栏形态（2026-10-20 用户定：这是**主题项**，不是输入选项）——
+// 两种形态，用户自己挑"要效率还是要美观"：
+//   用户口径（2026-10-17 定名）：**正常模式** = float、**紧凑模式** = solid。
+//   float（默认）= 正常：输入框是一颗圆角卡，浮在消息列上、两侧留白（状态小字在框上方）；
+//   solid        = 紧凑：栏自己实心、方角、边到边（外侧没 padding、输入框没圆角）。
+// 值名不改（改用 normal/compact 会把已经存下的偏好作废）。
+// 载体是**根节点的 `data-composer` 属性**（照 applyTheme 那套）—— CSS 只认属性，组件一个 prop 都不用传。
+// ⚠ **不要**跟 `applyTheme` 那条 TG 守卫：它守的是**配色来源**（TG 里颜色由 TG 注入，我们不许覆盖）；
+// 而输入栏形态是**布局**，TG Mini App 里照样该由用户自己挑 —— 两件事，别照抄。
+export function composerStyle() {
+  // 空串 = "没设过" ⇒ 回落默认；真存了 "solid" 就得用 —— 别被 `||` 吞掉。
+  const value = cache.composer_style || localStorage.getItem("mc_composer_style");
+  return value === "solid" ? "solid" : DEFAULT_COMPOSER;
+}
+export function applyComposerStyle(style) {
+  const s = style === undefined ? composerStyle() : style;
+  const root = document.documentElement;
+  if (s === "solid") root.setAttribute("data-composer", "solid");
+  else root.removeAttribute("data-composer"); // 缺省 = float（属性不出现）
+}
+export function saveComposerStyle(style) {
+  const value = style === "solid" ? "solid" : DEFAULT_COMPOSER;
+  setPref("composer_style", value);
+  applyComposerStyle(value);
+}
+
+// —— 发送键三档（App 的 keydown 判定与 Composer 的占位提示同源）——
+
+export function sendMode() {
+  return cache.send || localStorage.getItem("mc_send") || DEFAULT_SEND;
+}
+export function saveSendMode(mode) { setPref("send", mode || DEFAULT_SEND); }
+
+// 这一下回车算不算"发送"。
+export function wantsSend(e, mode = sendMode()) {
+  if (mode === "enter") return !(e.shiftKey || e.ctrlKey || e.metaKey || e.altKey);
+  if (mode === "shift-enter") return e.shiftKey && !e.ctrlKey && !e.metaKey;
+  return false; // button 档：裸回车一律换行，只能点按钮
+}
+
+// —— 仍住 localStorage 的两样（理由见文件顶）——
+
+// 上次在看的那条会话（2026-10-11 用户定）：刷新 / 被安卓丢弃后重载 ⇒ 回到它，不再是一张空草稿。
+// 空串 = 没记（或人在草稿）⇒ 开机进草稿。
+export function lastSessionId() { return localStorage.getItem("mc_last_session") || ""; }
+export function saveLastSession(id) { localStorage.setItem("mc_last_session", id ?? ""); }
+
+// defaultApiBase：**跟着"你从哪儿打开这个页面"走**（location.hostname）——
+// 手机从 http://192.168.0.110:8788 打开，默认后端就是 http://192.168.0.110:8787/api/v1。
+// 前端 8788 / 后端 8787 是我们的成对默认；IPv6 主机名要套方括号（location.hostname 不带）。
+export function defaultApiBase() {
+  const host = (typeof location !== "undefined" && location.hostname) || "";
+  if (!host) return DEFAULT_API_URL; // file:// 或非浏览器环境
+  const h = host.includes(":") ? `[${host}]` : host;
+  return `http://${h}:8787/api/v1`;
+}
+export function apiBase() { return localStorage.getItem("mc_api") || defaultApiBase(); }
+
+// apiBaseCandidates：启动自检按顺序试的候选 —— 有存过就只认存的（人定的最大）；
+// 没存过：[**同源 /api/v1**（首选：单容器部署与 dev 都靠它 —— vite 把 /api 代理给后端），
+// 跟页面同主机的 8787（兜底：前端被别的静态服务器端出来、没有代理时）]。
+// 非首选候选胜出时调用方要把它存下来（sharedApi 等一切读的都是 apiBase()）。
+export function apiBaseCandidates() {
+  const stored = localStorage.getItem("mc_api");
+  if (stored) return [stored];
+  const list = [];
+  if (typeof location !== "undefined" && location.origin && location.origin !== "null") {
+    list.push(`${location.origin}/api/v1`);
+  }
+  const dflt = defaultApiBase();
+  if (!list.includes(dflt)) list.push(dflt);
+  return list;
+}
+
 // 连接偏好的唯一写入口：地址先过 normalizeApiBase。
-//
-// 2026-11-01：`token` 那格删了（鉴权与账号一起砍掉 —— 本机单人使用，只允许 127.0.0.1）。
-// `mc_token` 这个 localStorage 键也不再读写；老浏览器里残留的那一条没人看，无害。
 export function saveNetPrefs(base) {
   localStorage.setItem("mc_api", normalizeApiBase(base) || defaultApiBase());
 }
 
-// 共享 api 客户端：按 base 缓存 —— 组件与 App 拿的是同一个实例；
-// 偏好改了（刷新后）第一次调用就会重建，不需要各自再抄构造代码。
-//
-// 2026-11-01：缓存键里的 `token` 没了（没有凭据了）。
+// applyAll：把"住在 DOM/CSS 上的偏好"整份重新应用一遍。
+// `syncPrefs` 拿到服务器的值之后调它 —— 这几样各有 apply*，但漏一样就是
+// "设置里改了、这一帧没生效"（`@prefs-saved` 那条教训）。
+export function applyAll() {
+  applyTheme();
+  applyTextScale();
+  applyComposerStyle();
+}
+
+// 共享 api 客户端：按 base 缓存 —— 组件与 App 拿的是同一个实例。
 let cached = null;
 let cachedKey = "";
 export function sharedApi() {
@@ -184,11 +463,3 @@ export function sharedApi() {
   }
   return cached;
 }
-
-// 发送键三档（App 的 keydown 判定与 Composer 的占位提示同源）：这一下回车算不算"发送"。
-export function wantsSend(e, mode = sendMode()) {
-  if (mode === "enter") return !(e.shiftKey || e.ctrlKey || e.metaKey || e.altKey);
-  if (mode === "shift-enter") return e.shiftKey && !e.ctrlKey && !e.metaKey;
-  return false; // button 档：裸回车一律换行，只能点按钮
-}
-export function sendMode() { return localStorage.getItem("mc_send") || DEFAULT_SEND; }

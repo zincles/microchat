@@ -57,7 +57,7 @@ reminder/                  ← 专题参考（`tool-calls.md` 工具调用 / `je
 | `model` | 纯结构 | 无依赖 |
 | `statelang` | `<state>` 语法 | 零依赖纯函数；**解析即验证**；`Cleaned` 里**永不出现标签**（fuzz 守着）；写回（`Format`）**带表名**（丢了就悄悄落回 `global`）|
 | `store` | **只有它碰 SQL** | 正文/提示词原样存档；变量不落库；会话是**线性**的（顺序在 `id` 上，没有父指针/leaf）；摘要盖的是**一段**（`begin/end`）；生成中的回复不在库里；消息序号 `idx` **派生**（按 `id` 排第几条，不落库）|
-| `config` | `config/` 四个文件 | 可缺失；整体重写；密钥不回显 |
+| `config` | `config/` 五个文件 | 可缺失；整体重写；密钥不回显 |
 | `registry` | 模型口径 | 身份 `(provider, upstream_id)`；发现与覆盖分列，刷新不动用户列 |
 | `providers` | **只有它碰网络** | 只走成熟库；超时必配；**选后端**（哪条渠道来答）也只有这一处 |
 | `state` | **只有它拼出站文本** | 发出去的**正文**剔标签、改注入当前状态（**提示词原样出站**）；提示词拼装（base + 追加段）也在这儿（`AssembleSystemPrompt`） |
@@ -91,7 +91,11 @@ reminder/                  ← 专题参考（`tool-calls.md` 工具调用 / `je
 ## 不变量（破坏了会静默出错）
 
 1. **存储是 SQLite**（不选全 JSON：崩溃安全、并发、查询都白拿）：`data/microchat.db`。手写配置只在 `config/`（**严格 JSON**：注释与尾逗号都报错——程序会整体重写）。**配置住数据目录里**（默认 `data/config/`）⇒ 备份 / 搬家只要搬 `data/` 一个目录；
-  两者路径**相对工作目录**，可用 `MICROCHAT_CONFIG_DIR` / `MICROCHAT_DATA_DIR` 覆盖。界面偏好另存 `~/.config/microchat/frontend.json`（不同机制，别混）。
+  两者路径**相对工作目录**，可用 `MICROCHAT_CONFIG_DIR` / `MICROCHAT_DATA_DIR` 覆盖。
+  **界面偏好也归 `data/`**（`data/config/prefs.json` + `data/prefs/background.bin`，2026-11-01 起）——
+  从前它们在浏览器 localStorage（`mc_theme` 那一串），现在服务器是权威：换设备/清缓存/装 PWA 都不丢。
+  ⚠ 只有两样仍住 localStorage，各有硬理由：`mc_api`（"去哪个服务器"，拿到地址之前没法请求）与
+  `mc_last_session`（**设备状态**，不是设置）。
   **连接级 pragma 挂在 DSN 上**（`?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)`）：`db.Exec("PRAGMA …")` 只管当时那一条连接，池子后来新开的就漏了（踩过，见「踩过的坑」）。
 2. **正文与提示词都是存档**：`<state>` 块原样留在消息正文里；**发出去的正文一律剔块**、改注入当前状态表。**系统提示词原样出站**（它是说明文：块不算状态、也不剔除 —— 2026-10-11 修：从前剔块会把提示词里的语法示例剪碎）。唯一出口 `state.BuildOutgoing()`——不许写第二条拼装路径。
 3. **世界状态不落库**：世界状态**每次现算**（`state.FromSources`）——**只按会话顺序扫消息正文里的块**，然后 fold。每条操作带 `message_id`，"哪句话带来的状态"追得回来。**没有派生表** ⇒ 编辑/删除消息、Copy 一条会话都不需要"重算"（换个会话看状态就是重拉 `/sessions/{session_id}/state`）。
@@ -266,6 +270,17 @@ delete(AA)           # 删除
   换 vendor 时 id 跟着变，**但只在 id 还是自动填的那个时才动**（手填过就不抢方向盘，判据是纯函数
   `providerIdForNextVendor`，住 `frontend/web/src/utils/format.js`）；vendor 下拉按后端的 `primary` 分成
   「常见」/「其它预设」两组；端点那一格留空时会把**真会打到的地址**显示出来（"空"不等于"没有端点"）。
+- `prefs.json` — **界面偏好**（2026-11-01 用户定「所有设置均存储在服务器上」）。
+  它**由程序写**（不是手写配置，虽然也能手改）：改设置就整份重写，0600。
+  形状：`{ "markdown": {"enabled": true, "disabled": ["table","image"]}, "theme": "dark",
+  "text_scale": "1.1", "composer_style": "solid", "background": {"kind":"file","version":"…"},
+  "send": "enter", "preview": true, "command_menu": false, "chrome_hide": true,
+  "payload_viz": false, "bar_left_hidden": false }`
+  **`markdown.disabled` 是唯一权威的"关掉哪几类"** —— 空/缺失 = **全开**（新加的语法类型自动跟着开）。
+  用列表而不是一排布尔，就是为了躲 `bool` 零值那个坑（见 `abilities.enabled` 的教训）。
+  未知 id 在**写入与读取时都报错并点名**（写了不生效最难查）；坏文件 GET 直接报错，
+  **不悄悄回落全默认**（那等于"用户的开关自己全开了"，而他一点线索都没有）。
+  写出的 `disabled` 按类型清单排序 ⇒ 同一个状态永远写同一份文件。
 - `agents.json` — `{ "default_agent": "跑团", "agents": [ { "id": "跑团", "name": "跑团主持人", "system_prompt": "你是跑团主持人。", "first_message": "你好！我是跑团主持人。" } ] }`
   每个 agent 可以带 **`first_message`（首段对话，2026-10-11 用户定）**：以它**新建**会话时，这段文本作为
   **第一条 assistant 消息（idx 1）**落库（正文**原样存档** ⇒ 可带 `<state>` 设初始状态）；空 = 不启用。
@@ -411,6 +426,28 @@ delete(AA)           # 删除
 （⚠ 曾经从真会话切草稿时 `Object.assign` 不清旧键，`id` 会留着上一条的 id —— 现在 `startDraft` 显式写 `id: ""`）。
 ⚠ `liftOverlays` 里 `if (h <= 0) return`：切到工作区时输入行 `display:none`、量出来是 0，
 那不是"输入行 0 高"而是"这一下没在量"；照写会让 `--composer-h` 掉到 0，切回来时消息列底部留白塌一帧。
+
+**markdown 渲染是逐类型可关的**（2026-11-01 用户定：「增加 markdown 渲染开关 …… 所有的会被
+Markdown 解析的非 <div> HTML 块，我们为每个类型都加个开关。不然瞎解析不好。」）：
+设置 → 外观的最下面一区，一个**总开关** + 十六类**逐类型开关**（按 `块级`/`行内` 分两组，
+每组带「全关 / 全开」）。类型清单**由后端给**（`GET /config/prefs` 的 `markdown_types`），
+前端不另抄一张表 —— 少一条就留个点不动的死开关，多一条就是个后端不认识的选项。
+
+**关掉的含义 = 原样显示**，不是"渲染成别的"、更不是"吃掉标记"：关掉粗体就看见 `**粗**` 本身。
+总开关关掉 ⇒ 整条消息一个字都不解析（但**换行留着** —— `.msg .text` 没有 `white-space: pre-wrap`，
+不留换行就挤成一坨）。
+
+实现（`utils/markdown.js`）：**每次渲染建一个 `new Marked()` 实例**，只给"关掉的那几类"挂
+渲染器覆盖（覆盖体 = 把 `token.raw` 转义后原样吐出）；开着的类型一个都不覆盖 ⇒ 走 marked 自己的
+默认渲染。这样既不重写渲染器（那必然与上游行为分岔），也不必手搓解析。
+⚠ 三处踩过的坑，都写了测试钉着：
+① **`String.replace` 的替换串里 `$$` 是转义序列** ⇒ 最早那版把 `$$x^2$$` 悄悄吃成 `$x^2$`
+   （不报错，只是内容少一半）。填回数学必须用**函数**替换。
+② **关掉数学要保留原始定界符**：`$a+b$` 不许显示成 `\(a+b\)` —— 一个用户写什么就该看到什么。
+③ **块级关掉时换行要转 `<br>`**：`.msg .text` 没有 `pre-wrap`，不转的话一个列表会挤成一行
+   （那既不是"渲染了"也不是"原样"）。
+⚠ **裸 HTML 永远不解析**，且这不是开关能改的：我们**先行转义** `&` 与 `<`（XSS 的门在那儿），
+所以 `<div>` 之类根本到不了 marked。用户那句"非 `<div>` HTML 块"说的正是这条边界。
 
 **提示词段的编辑器只有一个**（2026-10-28 用户：「不协调。总觉得和编辑系统提示词的有区别。」）：
 agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src/components/SegmentList.vue` ——
@@ -563,6 +600,11 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 | PATCH | `/segments/{segment_id}` | `{new_id?,text?}` | `Segment`| 改内容 / 改名（改名 = 所有 agent 的引用一起搬）；**内置段 ⇒ 400（只读）**|
 | DELETE | `/segments/{segment_id}` | — | 204 | 删段；**还被引用 ⇒ 400（列出引用者）**、**内置段 ⇒ 400（删不掉）**。读口不另开 —— 段库随 `GET /agents` 一起给（内置带 `builtin` 标记）|
 | DELETE | `/agents/{agent_id}` | — | 204 | 内置默认 agent 不可删 |
+| GET | `/config/prefs` | — | `{prefs, markdown_types, defaults}` | **界面偏好**（2026-11-01 起住服务器）。<br>**`markdown_types` 是语法清单的唯一权威**（`[{id,name,kind,sample}]`）—— 界面据此排开关，**不许前端另抄一张**（少一条就留个点不动的死开关，多一条就是个后端不认识的选项）。<br>`defaults` = 出厂值（界面"恢复默认"与前端缺省都读它）。<br>⚠ 文件坏了（未知类型 / 坏背景）**直接报错**，不悄悄回落全默认 —— 那等于"用户的开关自己全开了"而他一点线索都没有 |
+| PUT | `/config/prefs` | `Prefs` | 同上 | **整份替换**（偏好是一组独立开关，客户端手里就有全量；补丁语义只会多出"没给的算不动还是算清空"这类歧义）。<br>⚠ **`background` 单开指针语义**：没传 = **不动它**；要清空得显式给 `"background": {}`（否则"只改主题"的客户端会顺手抹掉壁纸 —— 静默的数据丢失，与 `PATCH /sessions` 的 `system_prompt` 同一条规矩）。<br>未知 `markdown.disabled` id ⇒ **422 并点名**（先验后写：坏请求一个字都不落盘）|
+| GET | `/config/prefs/background` | — | 图片字节 | 服务器上那张自定义背景图（`data/prefs/background.bin`）。没有 ⇒ **404**；类型由 `DetectContentType` **现判**；带 `ETag`（= 登记里的 `version`），对上了回 **304**。`Cache-Control: private, max-age=0, must-revalidate` —— 每次回来问一句，换图才不会拿到旧的 |
+| PUT | `/config/prefs/background` | 原始图片字节 | `Background` | **上传**（不是 multipart：调用方只有我们自己的前端，多一层编码只多一处出错的地方）。上限 **4MB**（前端已压到长边 1920）；非图片 ⇒ 422；上传成功铸一枚新 `version` 并登记进 `prefs.json` |
+| DELETE | `/config/prefs/background` | — | 204 | 删掉那张（**幂等**：没设过也 204 —— "它现在没有图"是事实，不是错）|
 | GET | `/config/chat` | — | `ChatConfig` | `config.json` 的 chat 段（不含密钥）|
 | PUT | `/config/chat` | `ChatConfig` | `ChatConfig` | **整段替换** chat（其余段原样保留）|
 | GET | `/config/defaults` | — | `{provider,model,agent}` | 新建会话的缺省三件（只读；`PUT /config/chat` 不动它）|

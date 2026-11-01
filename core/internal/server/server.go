@@ -79,6 +79,13 @@ func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *ch
 	s.mux.HandleFunc("POST /api/v1/segments", s.createSegment)
 	s.mux.HandleFunc("PATCH /api/v1/segments/{segment_id}", s.updateSegment)
 	s.mux.HandleFunc("DELETE /api/v1/segments/{segment_id}", s.deleteSegment)
+	// **界面偏好**（2026-11-01：住服务器，不再住浏览器 localStorage）
+	s.mux.HandleFunc("GET /api/v1/config/prefs", s.getPrefs)
+	s.mux.HandleFunc("PUT /api/v1/config/prefs", s.putPrefs)
+	// 自定义背景图：原始字节进出（它是张图，不是 JSON）
+	s.mux.HandleFunc("GET /api/v1/config/prefs/background", s.getBackground)
+	s.mux.HandleFunc("PUT /api/v1/config/prefs/background", s.putBackground)
+	s.mux.HandleFunc("DELETE /api/v1/config/prefs/background", s.deleteBackground)
 	s.mux.HandleFunc("GET /api/v1/config/chat", s.getChatConfig)
 	s.mux.HandleFunc("PUT /api/v1/config/chat", s.putChatConfig)
 	// 新建会话的缺省三件（provider / model / agent）：`PUT /config/chat` 只管 chat 段，

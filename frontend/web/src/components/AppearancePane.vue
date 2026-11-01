@@ -1,24 +1,38 @@
 <script setup>
-// 外观面板（设置视图的「外观」区，2026-11-01 用户定：「把外观设置做到设置里」）。
+// 外观面板（设置视图的「外观」区）。
 //
 // 这块**原本住在用户视图**（`UserView.vue`）。账号砍掉之后用户视图整个没了 ——
-// 它原来那两半：**身份**（名字 / 管理员 / 退出登录 / 用户管理）跟着账号一起删，
-// **个人偏好**（主题 / 缩放 / 背景图 / 显示模式 / 滚动收起 / 发送键 / 预演 / 命令菜单）
-// 原样搬到这儿，一个字都不改口径。
+// 它原来那半：**个人偏好**（主题 / 缩放 / 背景图 / 显示模式 / 滚动收起 / 发送键 /
+// 预演 / 命令菜单）原样搬到这儿；2026-11-01 又加了一区 **markdown 渲染**。
 //
-// ⚠ 全部**即时生效**，没有"保存"按钮：改外观就该当场看见（从前那个"保存"只是顺手
-//   落盘 + 打一句"已保存"，真正的应用发生在改的瞬间）。`emit("prefs-saved")` 保留 ——
+// 2026-11-01 两件大事：
+//   ① **全部偏好搬到服务器**（`data/config/prefs.json`，见 `utils/prefs.js` 顶上的说明）。
+//      背景图那张也搬了：从前是一枚 data URL 躺在 localStorage、5MB 配额说满就满；
+//      现在落服务器上，换设备也在。
+//   ② **markdown 逐类型开关**（用户口径：「所有的会被 Markdown 解析的非 <div> HTML 块，
+//      我们为每个类型都加个开关。不然瞎解析不好。」）—— 类型清单由**后端**给
+//      （`GET /config/prefs` 的 `markdown_types`），前端不许另抄一张：
+//      少一条就留个点不动的死开关，多一条就是个后端不认识的选项。
+//
+// ⚠ 全部**即时生效**，没有"保存"按钮：改外观就该当场看见。`emit("prefs-saved")` 保留 ——
 //   聊天壳上有活开关（命令菜单那颗 ☰）要跟着变。
 import { ref, computed, onMounted } from "vue";
 import ToggleSwitch from "./ToggleSwitch.vue";
 import {
-  previewOn, themePref, applyTheme, sendMode,
-  commandMenuOn, saveCommandMenu, chromeHideOn, saveChromeHide,
+  themePref, saveTheme, sendMode, saveSendMode,
+  previewOn, savePreview,
+  commandMenuOn, saveCommandMenu,
+  chromeHideOn, saveChromeHide,
   composerStyle as composerStylePref, saveComposerStyle,
   textScale as textScalePref, saveTextScale,
+  markdownPrefs, markdownTypes, saveMarkdown, saveBackground,
+  refreshPrefs,
   TEXT_SCALE_MIN, TEXT_SCALE_MAX, TEXT_SCALE_STEP,
 } from "../utils/prefs.js";
-import { loadBackground, saveBackground, applyBackground, describeBackground, fileToBackground } from "../utils/background.js";
+import {
+  currentBackground, backgroundCssUrl, applyBackground, describeBackground,
+  uploadBackground, clearBackground,
+} from "../utils/background.js";
 
 const emit = defineEmits(["prefs-saved"]);
 
@@ -30,28 +44,50 @@ const cmdMenu = ref(false);
 // 显示模式（**外观项**；2026-10-17 用户给这两个形态定了名）：
 //   **正常模式** = float：圆角矩形输入框、浮在消息之上，框上方一行小字报状态；
 //   **紧凑模式** = solid：输入框占满整行、方角贴底，省地方。
-// 值名沿用 float/solid ⇒ 已经存过的偏好不作废。
 const composerStyle = ref("float");
-// 界面缩放（2026-10-28）：**拖的时候就生效**（不像别的偏好等"保存"）——
-// 尺寸这东西得看着调，等你点保存再看效果等于摸黑。落盘也顺手做了（saveTextScale）。
+// 界面缩放（2026-10-28）：**拖的时候就生效** —— 尺寸这东西得看着调。
 const textScale = ref(1);
 const scaleBounds = { min: TEXT_SCALE_MIN, max: TEXT_SCALE_MAX, step: TEXT_SCALE_STEP };
 const scalePercent = computed(() => Math.round(textScale.value * 100));
-// 滚动隐藏上下栏（触屏；默认开）：往下看顶栏让位、往回看底栏让位，进度跟位移成正比。
+// 滚动隐藏上下栏（触屏；默认开）。
 const chromeHide = ref(true);
 const bgUrl = ref("");
 const bgStatus = ref("");
+const bgPreview = ref("");
+
+// —— markdown 开关 ——
+const mdEnabled = ref(true);
+// 关掉的那些类型（id 集合；后端口径是"记住关掉的"，不是"记住开着的"——
+// 这样新加的语法类型自动跟着开，加一条 `MarkdownTypes` 不用改任何文件）。
+const mdDisabled = ref([]);
+const mdTypes = ref([]);
+// 按 block / inline 分组（顺序沿用后端清单的顺序，界面不自己排）。
+const mdGroups = computed(() => {
+  const groups = [
+    { kind: "block", title: "块级", items: [] },
+    { kind: "inline", title: "行内", items: [] },
+  ];
+  for (const item of mdTypes.value) {
+    const group = groups.find((g) => g.kind === item.kind) ?? groups[1];
+    group.items.push(item);
+  }
+  return groups.filter((g) => g.items.length);
+});
 
 function onScaleInput(event) {
   textScale.value = Number(event.target.value);
   saveTextScale(textScale.value);
+  emit("prefs-saved");
 }
 function resetScale() {
   textScale.value = 1;
   saveTextScale(1);
+  emit("prefs-saved");
 }
 
-onMounted(() => {
+// loadFromPrefs：把内存里的偏好灌进这些 ref。
+// 每次同步完都要重跑一次（服务器可能改过东西，例如迁移、或另一个标签页改的）。
+function loadFromPrefs() {
   theme.value = themePref();
   send.value = sendMode();
   preview.value = previewOn();
@@ -59,57 +95,95 @@ onMounted(() => {
   composerStyle.value = composerStylePref();
   textScale.value = textScalePref();
   chromeHide.value = chromeHideOn();
-  const bg = loadBackground();
+  const md = markdownPrefs();
+  mdEnabled.value = md.enabled !== false;
+  mdDisabled.value = [...(md.disabled ?? [])];
+  mdTypes.value = markdownTypes();
+  const bg = currentBackground();
   bgUrl.value = bg?.kind === "url" ? bg.value : "";
+  bgPreview.value = backgroundCssUrl(bg);
   bgStatus.value = describeBackground(bg);
-});
-
-// 背景图（外观）：URL / 上传二选一，**即时生效**（上传是异步的，攒着容易对不上账）。
-function applyBgUrl() {
-  const u = bgUrl.value.trim();
-  if (!u) { bgStatus.value = "先填图片地址（或改用上传）"; return; }
-  saveBackground({ kind: "url", value: u });
-  applyBackground();
-  bgStatus.value = describeBackground(loadBackground());
 }
+
+onMounted(loadFromPrefs);
+
+// —— 每一项改了就落盘（服务器），并喊一声让聊天壳跟上 ——
+function persist() {
+  saveTheme(theme.value);
+  saveSendMode(send.value);
+  savePreview(preview.value);
+  saveCommandMenu(cmdMenu.value);
+  saveComposerStyle(composerStyle.value);
+  saveTextScale(textScale.value);
+  saveChromeHide(chromeHide.value);
+  emit("prefs-saved"); // 聊天壳上的活开关立刻跟上（命令菜单那颗 ☰）
+}
+
+// —— markdown ——
+function persistMarkdown() {
+  saveMarkdown({ enabled: mdEnabled.value, disabled: mdDisabled.value });
+}
+function toggleType(id, on) {
+  const set = new Set(mdDisabled.value);
+  if (on) set.delete(id);
+  else set.add(id);
+  // 顺序按后端清单来（与后端 `Normalize` 同一个规矩：同一个状态写同一份文件）。
+  mdDisabled.value = mdTypes.value.map((t) => t.id).filter((x) => set.has(x));
+  persistMarkdown();
+}
+function typeOn(id) {
+  return !mdDisabled.value.includes(id);
+}
+// 全部关掉 / 全部打开（也走同一个落盘口）。
+function disableAll() {
+  mdDisabled.value = mdTypes.value.map((t) => t.id);
+  persistMarkdown();
+}
+function enableAll() {
+  mdDisabled.value = [];
+  persistMarkdown();
+}
+
+// —— 背景图（外观）：URL / 上传二选一，**即时生效** ——
+function applyBgUrl() {
+  const value = bgUrl.value.trim();
+  if (!value) {
+    bgStatus.value = "先填图片地址（或改用上传）";
+    return;
+  }
+  // `url` 型是纯元信息（服务器上没有文件）⇒ 直接写偏好那一格，不上传。
+  saveBackground({ kind: "url", value });
+  applyBackground();
+  loadFromPrefs();
+  emit("prefs-saved");
+}
+
 async function pickBgFile(event) {
-  const f = event.target.files?.[0];
-  if (!f) return;
-  bgStatus.value = "读取图片…";
+  const file = event.target.files?.[0];
+  if (!file) return;
+  bgStatus.value = "上传中…";
   try {
-    let bg = await fileToBackground(f);
-    try {
-      saveBackground(bg);
-    } catch {
-      // 配额满：降档（长边 1280 / 质量 0.75）重压一次，再满就报错。
-      bgStatus.value = "太大存不下，压小重试…";
-      bg = await fileToBackground(f, { maxEdge: 1280, quality: 0.75 });
-      saveBackground(bg);
-    }
+    await uploadBackground(file);       // 压好 + 传上去（服务器那边顺手登记元信息）
+    await refreshPrefs();               // 拿回服务器登记好的那份（含版本号）
+    loadFromPrefs();
     applyBackground();
-    bgStatus.value = describeBackground(bg);
+    emit("prefs-saved");
   } catch (e) {
     bgStatus.value = `上传失败：${e.message}`;
   }
   event.target.value = "";
 }
-function clearBg() {
-  saveBackground(null);
-  applyBackground();
-  bgUrl.value = "";
-  bgStatus.value = describeBackground(null);
-}
-// 每一项都是**改了就落盘**（与从前的"保存"按钮同一个落点，只是少了那一次点击）。
-function persist() {
-  localStorage.setItem("mc_preview", preview.value ? "1" : "0");
-  localStorage.setItem("mc_theme", theme.value);
-  localStorage.setItem("mc_send", send.value);
-  saveCommandMenu(cmdMenu.value);
-  saveComposerStyle(composerStyle.value);
-  saveTextScale(textScale.value);
-  saveChromeHide(chromeHide.value);
-  applyTheme(theme.value);
-  emit("prefs-saved"); // 聊天壳上的活开关立刻跟上（命令菜单那颗 ☰）
+
+async function clearBg() {
+  try {
+    await clearBackground();
+    await refreshPrefs();
+    loadFromPrefs();
+    applyBackground();
+    emit("prefs-saved");
+  } catch (e) {
+    bgStatus.value = `清除失败：${e.message}`;
+  }
 }
 </script>
 
@@ -124,9 +198,8 @@ function persist() {
       <option value="breeze">Breeze</option>
     </select></label>
     <!-- 界面缩放（2026-10-28，照 OpenWebUI 的 UI Scale）：**拖动即生效**，不用点保存。
-         只乘字号 ⇒ 整页等比（尺寸几乎都是 em）；圆角是 px，放大时相对显小，可接受。 -->
-    <!-- `.field` 是两列网格（label | 控件）：滑杆与百分比必须包成**一个**子元素，
-         否则百分比会被挤到第二行第一列去（看着像标签下面多了一行孤立数字）。 -->
+         `.field` 是两列网格（label | 控件）：滑杆与百分比必须包成**一个**子元素，
+         否则百分比会被挤到第二行第一列去。 -->
     <label class="field"><span>界面缩放</span>
       <span class="scale-wrap">
         <input
@@ -154,8 +227,8 @@ function persist() {
       <button type="button" class="link-btn danger" @click="clearBg">清除</button>
     </div>
     <div class="row"><span class="status">当前背景：{{ bgStatus }}</span></div>
-    <!-- 输入栏形态（2026-10-20 用户定）：**外观项** —— 要效率还是要美观，自己挑。
-         与主题同类（改的是长相），所以住这一区；保存后当场生效（写根节点属性，不刷新）。 -->
+    <p v-if="bgPreview" class="hint">背景图存在服务器上（<code>data/prefs/</code>）—— 换设备也在。</p>
+    <!-- 输入栏形态（2026-10-20 用户定）：**外观项** —— 要效率还是要美观，自己挑。 -->
     <label class="field"><span>显示模式</span><select v-model="composerStyle" @change="persist">
       <option value="float">正常模式（圆角浮空输入框，状态小字在框上方）</option>
       <option value="solid">紧凑模式（输入框占满整行、方角，省地方）</option>
@@ -164,14 +237,38 @@ function persist() {
     <p class="hint">往下看（内容前进）顶栏按位移逐步收起，往回看底栏逐步收起 —— 一次只藏一边，反向滚动就放回来；到顶/见底立刻全放回。只在触屏上生效。</p>
     <p class="hint"><b>正常</b> = 输入框是一颗圆角卡、浮在消息上（两侧留白，背景图透得出来），状态那行小字在它上面；<b>紧凑</b> = 输入框边到边、方角贴底 —— 省出一点地方。</p>
 
-    <h3>输入</h3>
-    <label class="field"><span>发送键</span><select v-model="send" @change="persist">
-      <option value="enter">回车发送（Shift/Ctrl/Alt+回车换行）</option>
-      <option value="shift-enter">Shift+回车发送（回车换行）</option>
-      <option value="button">仅按钮</option>
-    </select></label>
-    <label class="field"><span>输入时预演载荷</span><ToggleSwitch v-model="preview" @update:model-value="persist" /></label>
-    <label class="field"><span>命令菜单（输入框左侧 ☰ 与 / 面板）</span><ToggleSwitch v-model="cmdMenu" @update:model-value="persist" /></label>
-    <p class="hint">这一页**没有保存按钮**：改了就生效、也顺手存下了（2026-11-01 起）。</p>
+    <!-- ── markdown 渲染（2026-11-01）──
+         用户口径：「不然瞎解析不好」⇒ 每一类都能单独关掉，关掉的含义是**原样显示**
+         （把 `**粗**` 照字面画出来，而不是悄悄变成"粗"、更不是吃掉标记）。 -->
+    <h3>markdown 渲染</h3>
+    <label class="field"><span>渲染 markdown</span><ToggleSwitch v-model="mdEnabled" @update:model-value="persistMarkdown" /></label>
+    <p class="hint">
+      关掉 = 整条消息**原样显示**（一个标记都不解析，但换行保留）。
+      开着的时候，下面每一类还能单独关 —— 关掉的那类同样原样显示。
+    </p>
+    <!-- 类型清单是**后端给的**（`GET /config/prefs` 的 `markdown_types`）：
+         名字与例子都从那儿来，前端不另抄一张表。 -->
+    <div v-for="group in mdGroups" :key="group.kind" class="md-group">
+      <div class="md-group-head">
+        <span>{{ group.title }}</span>
+        <span class="md-group-ops">
+          <button type="button" class="link-btn" :disabled="!mdEnabled" @click="disableAll">全关</button>
+          <button type="button" class="link-btn" :disabled="!mdEnabled" @click="enableAll">全开</button>
+        </span>
+      </div>
+      <label v-for="item in group.items" :key="item.id" class="field md-row">
+        <span>
+          {{ item.name }}
+          <code class="md-sample">{{ item.sample }}</code>
+        </span>
+        <ToggleSwitch :model-value="typeOn(item.id)" :disabled="!mdEnabled" @update:model-value="(on) => toggleType(item.id, on)" />
+      </label>
+    </div>
+    <p v-if="!mdEnabled" class="hint">总开关关着时，逐类型的勾选不生效（但会留着 —— 重新打开就恢复）。</p>
+    <p class="hint">
+      <b>不解析的东西</b>：裸 HTML（<code>&lt;div&gt;</code> 之类）从来就不解析 —— 我们先把
+      <code>&amp;</code> 与 <code>&lt;</code> 转义掉（XSS 的门在那儿）。
+    </p>
+    <p class="hint">这一页**没有保存按钮**：改了就生效、也顺手存到服务器上（2026-11-01 起）。</p>
   </section>
 </template>

@@ -14,7 +14,7 @@ import {
 import { applyBackground } from "./utils/background.js";
 import { installViewportFit } from "./utils/viewport.js";
 import { classifyAxis, pickDrag, dragProgress, resolveRelease } from "./utils/swipe.js";
-import { sharedApi, previewOn, applyTheme, wantsSend, apiBase, apiBaseCandidates, saveNetPrefs, lastSessionId, saveLastSession, commandMenuOn, applyComposerStyle, applyTextScale, chromeHideOn } from "./utils/prefs.js";
+import { sharedApi, previewOn, applyTheme, wantsSend, apiBase, apiBaseCandidates, saveNetPrefs, lastSessionId, saveLastSession, commandMenuOn, applyComposerStyle, applyTextScale, chromeHideOn, syncPrefs, saveBarLeftHidden, barLeftHidden } from "./utils/prefs.js";
 import {
   groupModelsByProvider,
   deletionPlanSummary,
@@ -47,6 +47,13 @@ applyComposerStyle();
 // 界面缩放（2026-10-28）：同样**开机第一帧就得对** —— 晚一帧就是"字先小一下再变大"的闪。
 // 它写在根节点的 `style` 上（`--app-text-scale`），theme.css 的 body 字号吃这一格。
 applyTextScale();
+// 服务器是**偏好的权威**（2026-11-01「所有设置均存储在服务器上」）。
+// 上面那几行先按**本地镜像**把主题/缩放/输入栏形态铺上 —— 那是为了让**第一帧**就是对的
+// （不然会先闪一下默认配色再变）。随后这一发去问服务器，不一致就改过来（并重挂背景图）。
+// 失败只 toast：连不上后端时页面照样能用，只是偏好停在镜像那一份。
+syncPrefs()
+  .then(() => { applyBackground(); cmdMenu.value = commandMenuOn(); })
+  .catch((err) => toast(`界面偏好读取失败：${err.message}`, "error"));
 // —— 新版本提示（PWA 更新条，2026-10-20 用户定）——
 // 从 `autoUpdate` 改成 `prompt`：新版本**等用户点**才切，而不是悄悄自己 reload。
 // 勾子必须在**开机**就挂（SW 装完是异步回调 —— 挂晚了那一次提示就丢了）。
@@ -65,7 +72,7 @@ const payloadbarRef = ref(null);
 const composerRef = ref(null);
 const overlaysRef = ref(null);
 // 命令菜单（输入框左侧 ☰ 与 "/" 浮层）：默认关（移动端碍事，2026-10-17 用户定）；
-// 用户视图里改了立刻生效（不刷新）—— 偏好住 localStorage，这里是它的活视图。
+// 设置 → 外观里改了立刻生效（不刷新）—— 偏好住服务器（`prefs.json`），这里是它的活视图。
 const cmdMenu = ref(commandMenuOn());
 const toast = (t, k) => toastRef.value?.push(t, k);
 // askConfirm：给设置/子编辑器用的全局确认框（与左栏删除同一个口 —— "不可逆的删除先摊开"）。
@@ -684,7 +691,7 @@ async function refreshAgents() {
     vueAgents.value = data.agents ?? [];
   } catch { /* 拿不到就空着：草稿不画首段、状态行回落到 agent id */ }
 }
-// leftHidden：左栏收没收的**响应式镜像**（真实状态仍是 DOM 类 + localStorage 偏好；
+// leftHidden：左栏收没收的**响应式镜像**（真实状态仍是 DOM 类 + 服务器偏好；
 // 2026-10-14 用户定：栏开着时顶栏不渲染那一侧的开关 —— 按钮跟着它控制的东西走）。
 // （右栏 2026-10-29 搬进上下文工作区 ⇒ 没有"右侧栏收没收"这回事了。）
 const leftHidden = ref(false);
@@ -714,7 +721,7 @@ function applySideToggle(barID, hidden) {
 // —— 会话 ——
 // —— 侧栏/抽屉（2026-10-10 移动端）—— 同一对按钮两种身份：
 // 宽屏 = 布局里的栏（collapsed = 收起）；窄屏 = 覆盖式抽屉（collapsed = 关着）。
-// 窄屏一律默认关、不读不写 localStorage —— 抽屉的开合是瞬时的事，那是桌面偏好的账。
+// 窄屏一律默认关、不读不写偏好 —— 抽屉的开合是瞬时的事，那是桌面偏好的账。
 // 响应式断点：与 main.css 的 @media **同源**（700 = 左栏改抽屉），
 // CSS 里没法读 JS 常量，改一处要改两处。
 //
@@ -725,12 +732,12 @@ const BP = { leftDrawer: 700 };
 const mqlLeft = window.matchMedia?.(`(max-width: ${BP.leftDrawer}px)`) ?? null;
 function narrowLeft() { return !!mqlLeft?.matches; }
 function applySideStates() {
-  applySideToggle("sessions-bar", narrowLeft() ? true : localStorage.getItem("mc_bar_left_hidden") === "1");
+  applySideToggle("sessions-bar", narrowLeft() ? true : barLeftHidden());
 }
 function toggleLeft() {
   const bar = document.getElementById("sessions-bar");
   const hidden = !bar?.classList.contains("collapsed");
-  if (!narrowLeft()) localStorage.setItem("mc_bar_left_hidden", hidden ? "1" : "0");
+  if (!narrowLeft()) saveBarLeftHidden(hidden);
   applySideToggle("sessions-bar", hidden);
 }
 // 窄屏里"人去了别处"就得把左抽屉收回去（选会话 / 开新对话）。

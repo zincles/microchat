@@ -78,6 +78,20 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
     return data;
   }
 
+  // callBytes：**原始字节** PUT（背景图专用）—— 体是一张图的字节流，
+  // 走 JSON.stringify 会把它毁掉。`Content-Type` 交给浏览器按 blob 的类型给。
+  async function callBytes(method, path, blob) {
+    const res = await fetchFn(base + path, {
+      method,
+      headers: { "Content-Type": blob.type || "application/octet-stream" },
+      body: blob,
+    });
+    if (res.status === 204) return null;
+    const data = await readJson(res);
+    if (!res.ok) throw httpError(data, res);
+    return data;
+  }
+
   // callText：原文 POST（JSONL 导入口：体不是 JSON，不能走 JSON.stringify）。
   async function callText(method, path, text) {
     const res = await fetchFn(base + path, {
@@ -165,6 +179,16 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
     enqueueQueue: (body) => call("POST", "/tasks/queues", body),
     // cancelQueue：随时取消；在飞的那一发会被一起掐断（压缩要整段才落库 ⇒ 不留半条）。
     cancelQueue: (queueId) => call("POST", `/tasks/queues/${enc(queueId)}/cancel`),
+    // —— 界面偏好（2026-11-01 起住服务器，不再住浏览器 localStorage）——
+    getPrefs: () => call("GET", "/config/prefs"),
+    // putPrefs：**整份**替换（偏好是一组独立开关，客户端手里就有全量；补丁语义只会多出歧义）。
+    putPrefs: (prefs) => call("PUT", "/config/prefs", prefs),
+    // 自定义背景图：原始字节进出。`backgroundUrl` 拼的是**给 CSS 用**的地址
+    // （带 `v=` 破缓存 —— 图换了但路径不变，只有版本号能让浏览器重取）。
+    backgroundUrl: (version) => `${base}/config/prefs/background${version ? `?v=${enc(version)}` : ""}`,
+    uploadBackground: (blob) => callBytes("PUT", "/config/prefs/background", blob),
+    deleteBackground: () => call("DELETE", "/config/prefs/background"),
+
     getChat: () => call("GET", "/config/chat"),
     putChat: (body) => call("PUT", "/config/chat", body),
     // models：跨 provider 拍平（`{provider, upstream_id, name}` —— 下拉选项就打它）。
