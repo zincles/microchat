@@ -104,27 +104,21 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .model-btn:focus-visible { outline: 2px solid color-mix(in srgb, var(--tg-link) 55%, transparent); outline-offset: 1px; }
 .model-btn-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-caret { flex: none; width: 0.5em; height: 0.3em; fill: currentColor; opacity: 0.45; }
-/* 右开关吃剩余空档（贴右缘）；左开关在时它就是最左那件。 */
-#toggle-right { margin-left: auto; }
-/* 顶栏里那两枚开关（2026-10-17 用户定"加个底"）：栏收着时它们孤零零浮在消息列上 ——
+/* 顶栏里那颗开关（2026-10-17 用户定"加个底"）：栏收着时它孤零零浮在消息列上 ——
  * 透明底在滚动内容/背景图前根本看不清。给一层栏底色的小圆片（与输入行那颗 ☰ 同一个色），
  * 悬停只提亮、不丢底（`.icon-btn:hover` 那层半透明白会把底"洗掉"⇒ 这里显式覆盖回来）。
- * ⚠ 作用域只到 `#chat-col > header`：左栏头/右栏 tabs 行里那两枚开关**同名 id**（历史遗留），
- * 它们在自己栏面上、本来就有底，别被这条改动波及。 */
-#chat-col > header #toggle-left, #chat-col > header #toggle-right {
+ * ⚠ 作用域只到 `#chat-col > header`：左栏头里那颗开关**同名 id**（历史遗留），
+ * 它在自己栏面上、本来就有底，别被这条改动波及。
+ * （2026-11-01：右开关 `#toggle-right` 随载荷栏一起没了 —— 2026-10-29 搬走时漏删的。） */
+#chat-col > header #toggle-left {
   flex: none; width: 2em; height: 2em; margin: 0; padding: 0; border-radius: 50%;
   display: inline-flex; align-items: center; justify-content: center;
   background: var(--tg-secondary-bg); color: var(--tg-hint);
 }
-#chat-col > header #toggle-right { margin-left: auto; }
 /* 顶栏右端那一簇（2026-10-28 用户定：上下文占用从状态行搬到右上角一枚环）：
- * 右开关 + 环住进同一个 flex 容器，**空档全部给容器**（container 吃剩余、里面两个都不吃），
- * 所以要把它俩的 auto margin 收掉 —— 一个容器 + 一个 auto margin 才是"整簇贴右"。 */
+ * 整簇一个 flex 容器吃剩余空档、贴右缘。 */
 .header-right { flex: none; margin-left: auto; display: inline-flex; align-items: center; gap: 0.45em; }
-/* ⚠ 特异性：上面 `#chat-col > header #toggle-right` 是 (2,1,0)，光写 `.header-right > #toggle-right`
- * 只有 (1,1,0) —— 压不住，那枚开关会继续吃 auto margin。所以这里照抄它的前缀再加一层。 */
-#chat-col > header .header-right #toggle-right { margin-left: 0; }
-#chat-col > header #toggle-left:hover, #chat-col > header #toggle-right:hover {
+#chat-col > header #toggle-left:hover {
   background: var(--tg-secondary-bg); color: var(--tg-text); filter: brightness(1.25);
 }
 /* Agent 头像（顶栏左上、模型字左边，2026-10-14 用户定）：圆形首字标，底色由 id 派生
@@ -546,7 +540,7 @@ html[data-composer="solid"] .messages-inner { padding-bottom: calc(var(--compose
   /* 底部留白别砍光（砍光过：滚到底时最后一条会滑到任务行底下，像被底栏"挡"住）——
    * 窄屏同样按"输入行实测高 + 小字位置"算（2026-10-14 起输入行是悬浮层，高度会变）。 */
   .messages-inner { padding: 2.8em 0.8em calc(var(--composer-h, 4.6em) + 1.3em); }
-  #settings-view, #user-view { padding: 0.4em 0.4em 0; }
+  #settings-view { padding: 0.4em 0.4em 0; }
   .settings-bar { gap: 0.2em; }
   /* 五个区在窄屏：排得下就等分，排不下靠 nav 横滚（不设固定宽 —— 那两行会被后面的默认规则盖掉）。 */
   .settings-nav { overflow-x: auto; }
@@ -785,41 +779,11 @@ html[data-composer="solid"] #composer button { box-shadow: none; }
  * 随它一起没掉的还有两条：实心模式的"状态行 ↔ 输入行"分割线（两个隔间只剩一个了）、
  * 以及那条 `html[data-composer="solid"] #composer .statusline.over`（2026-10-20 的特异性事故：
  * 作用域化的规则特异性更高，样式得跟着搬 —— 这个教训仍然成立）。 */
-/* 连接门板 / 登录 = 进前端第一眼（2026-10-14 用户定"更好看"；z-index 高过设置/浮层，全屏盖住一切）。
- * 底：自己铺 **同一张用户背景图**（--mc-bg-image 就是 background.js 挂的那枚）+ 一层跟主题走的面纱
- *   —— 门板在 #app 里、body::before 的图层在它后面 ✗，想"透出图片"不能靠透明（那会把聊天壳也透出来，
- *   实测截图里左栏顶栏全露馅），得自己画。没设图 = 面纱叠底色，与从前一样。
- * 卡：玻璃卡 + 装饰光晕（color-mix，不支持的浏览器 = 没光晕，功能不受影响）。 */
-#connect-gate { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; overflow: hidden;
-  background-color: var(--tg-bg);
-  background-image: linear-gradient(color-mix(in srgb, var(--tg-bg) 35%, transparent), color-mix(in srgb, var(--tg-bg) 65%, transparent)), var(--mc-bg-image, none);
-  background-size: cover; background-position: center; background-repeat: no-repeat; }
-#connect-gate .gate-glow { position: absolute; inset: -25%; pointer-events: none; background: radial-gradient(40% 40% at 50% 32%, color-mix(in srgb, var(--tg-button) 24%, transparent), transparent 70%); }
-.gate-box { position: relative; box-sizing: border-box; width: min(400px, 92vw);
-  background: color-mix(in srgb, var(--tg-secondary-bg) 94%, transparent);
-  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
-  border: 1px solid var(--line); border-radius: 18px; padding: 1.5em 1.4em 1.1em;
-  box-shadow: var(--shadow-4);
-  animation: gate-in 320ms ease-out; }
-@keyframes gate-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
-@media (prefers-reduced-motion: reduce) { .gate-box { animation: none; } }
-.gate-brand { display: flex; align-items: center; gap: 0.75em; margin-bottom: 1.1em; }
-.gate-brand h1 { margin: 0; font-size: 1.25em; letter-spacing: 0.01em; }
-.gate-sub { margin: 0.15em 0 0; color: var(--tg-hint); font-size: 0.82em; }
-/* 门板 logo 那圈彩色光晕：从 35% 收到 22% 并加负扩散（同 --shadow-* 的道理 —— 大模糊高浓度就是糊）。 */
-.gate-logo { flex: none; border-radius: 13px; box-shadow: 0 4px 14px -4px color-mix(in srgb, var(--tg-button) 22%, transparent); }
-/* 卡窄 ⇒ 门板里的 field 改竖排（标签在上、输入在下），比 140px 标签列好看也好按。 */
-#connect-gate .field { grid-template-columns: 1fr; gap: 0.28em; margin-bottom: 0.7em; }
-#connect-gate .field > span { color: var(--tg-hint); font-size: 0.85em; }
-#connect-gate input { width: 100%; padding: 0.55em 0.65em; }
-#connect-gate .gate-btn { display: block; box-sizing: border-box; width: 100%; margin-top: 0.35em; padding: 0.72em 1em; font-size: 1em; }
-#connect-gate .status { margin: 0.75em 0 0; text-align: center; color: var(--tg-hint); font-size: 0.85em; }
-#connect-gate .status.bad { color: var(--tg-destructive); }
+/* （2026-11-01：连接门板 / 登录那一整段样式随账号功能删了 —— `ConnectGate.vue` 早没了，
+ * 这些规则只会让 `main.css` 里躺着一堆匹配不到的 id。需要时从 git 历史里捡。） */
 /* 空态（会话列）：安静居中 + 一句引导，别像报错。 */
 #session-list .empty { padding: 1.6em 0.8em; text-align: center; color: var(--tg-hint); font-size: 0.9em; line-height: 1.9; }
 #session-list .empty .sub { font-size: 0.9em; opacity: 0.8; }
-.gate-box .hint { color: var(--tg-hint); font-size: 0.8em; margin: 0.55em 0 0; text-align: center; }
-.gate-box .hint code { background: color-mix(in srgb, var(--tg-text) 8%, transparent); border-radius: 4px; padding: 0 0.25em; }
 #composer button { background: var(--tg-button); color: var(--tg-button-text); border: none; border-radius: 50%; width: 2.6em; height: 2.6em; padding: 0; cursor: pointer; align-self: flex-end; display: flex; align-items: center; justify-content: center; flex: none; box-shadow: var(--shadow-1); }
 #composer button:hover { filter: brightness(1.1); }
 #composer button svg { display: block; }
@@ -871,9 +835,7 @@ html[data-composer="solid"] #composer button { box-shadow: none; }
 .icon-btn:hover { color: var(--tg-text); background: color-mix(in srgb, var(--tg-text) 8%, transparent); }
 /* —— 设置视图（与对话同级；左栏右边那一整块，不是弹窗）—— */
 /* 一行式工具栏：去掉"悬浮卡"造型与"设置"标题（全屏页不需要它俩，tabs 自己就是路标）。 */
-#settings-view, #user-view { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 0.5em 0.6em 0; }
-/* 用户视图的标题（设置视图那条 bar 上是一排 tab，这里就一个词）。 */
-#user-view .view-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--tg-text); }
+#settings-view { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 0.5em 0.6em 0; }
 .settings-bar { display: flex; align-items: center; gap: 0.4em; max-width: 960px; width: 100%; margin: 0 auto; }
 .settings-bar .settings-nav { flex: 1 1 auto; min-width: 0; margin-bottom: 0; }
 .settings-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0.55em 0.2em 1.5em; }
@@ -973,7 +935,7 @@ button.toggle.on .knob { transform: translateX(1.1em); }
 /* 二级页（Agent/渠道详情，就地嵌在 tab 里）：返回键 + 标题左对齐。 */
 .detail-pane .panel-head { justify-content: flex-start; gap: 0.5em; }
 /* 二级页里的说明小字（筛选器那段：举例子要用等宽体才看得清 `openai/gpt-5` 这种串）。
- * 抄门板那条 `.gate-box .hint code` 的形状 —— 同一个用途、同一种观感。 */
+ * 与设置里其它说明小字同一种观感。 */
 .detail-pane .hint code { background: color-mix(in srgb, var(--tg-text) 8%, transparent); border-radius: 4px; padding: 0 0.25em; font-size: 0.92em; }
 /* 二级页里的页签分区（Agent 编辑器：基本 / 系统提示词 / 每个能力一页）。
  * 不再用 fieldset 围边（2026-10-28 分页签之后）：页签本身就是分隔，
@@ -997,7 +959,7 @@ button.toggle.on .knob { transform: translateX(1.1em); }
 .plist td.ops .link-btn { margin-left: 0.2em; }
 #settings-open { margin-left: auto; }
 
-/* 界面缩放滑杆（UserView 的「外观」区）：包一层是因为 `.field` 是两列网格 ——
+/* 界面缩放滑杆（设置 → 外观 → 界面缩放）：包一层是因为 `.field` 是两列网格 ——
  * 滑杆与百分比各当一个子元素的话，百分比会被挤到下一行去。 */
 .scale-wrap { display: flex; align-items: center; gap: 0.6em; min-width: 0; }
 .scale-wrap input[type="range"] { flex: 1; min-width: 0; }

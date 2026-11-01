@@ -2254,3 +2254,40 @@ test("过时的东西不回来：outgoing 墓碑、debug/last-payload、config.v
   // ④ `version` 从没人读过
   assert.ok(!/\bVersion\s+int\s+`json:"version"`/.test(cfg), "config.go 里还有那个没人读的 version 字段");
 });
+
+// 设置 → 外观改完，聊天壳上的活开关要立刻跟上。
+//
+// 2026-11-01：外观区从用户视图搬进设置时，`onPrefsSaved` 搬过来了、模板上的
+// `@prefs-saved` 却漏了 —— 函数定义了没人调，命令菜单那颗 ☰ 要刷新页面才变。
+// 这类"定义了但没人用"的错 SSR 冒烟抓不到（它不报错），只能正面钉住。
+test("设置 → 外观改完，聊天壳上的活开关跟手（@prefs-saved 接上）", () => {
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  const modal = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
+  const pane = readFileSync(join(SRC, "components", "AppearancePane.vue"), "utf8");
+
+  assert.match(pane, /emit\("prefs-saved"\)/, "AppearancePane 改完没发 prefs-saved");
+  assert.match(modal, /<AppearancePane[^>]*@prefs-saved=/, "SettingsModal 没把 AppearancePane 的 prefs-saved 转发出来");
+  assert.match(app, /<SettingsModal[\s\S]*?@prefs-saved="onPrefsSaved"/,
+    "App 没接 SettingsModal 的 prefs-saved（改外观后聊天壳不跟手）");
+  assert.match(app, /function onPrefsSaved\(\)/, "App 没有 onPrefsSaved");
+  assert.match(app, /cmdMenu\.value = commandMenuOn\(\)/, "onPrefsSaved 没把命令菜单那颗 ☰ 换成新偏好");
+});
+
+// 生成轮询不许每拍刷全量（2026-11-01）。
+//
+// 从前 300ms 的循环每拍两次额外请求：GET /sessions（全量列表）+ GET /context
+// （O(n) 全量装配：列消息 + 现演状态 + 拼出站）。一条 30 秒的回复 ≈ 200 个请求。
+// 现在：相位每拍照推（纯本地），列表与占用等翻 idle 再刷。
+test("生成轮询不刷全量：withContext:false + 列表只在收尾刷", () => {
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  assert.match(app, /function refreshStatusline\(phase, elapsedMs, \{ withContext = true \} = \{\}\)/,
+    "refreshStatusline 没有 withContext 开关");
+
+  const start = app.indexOf("async function pollTurn");
+  const end = app.indexOf('let connText = "未连接"', start);
+  const loop = app.slice(start, end === -1 ? start + 4000 : end);
+  assert.match(loop, /refreshStatusline\(st\.phase, st\.elapsed_ms, \{ withContext: false \}\)/,
+    "轮询里还在按默认问 /context（每拍一次全量装配）");
+  const calls = (loop.match(/refreshSessionsBar\(\)/g) || []).length;
+  assert.ok(calls <= 1, `轮询里 refreshSessionsBar() 还在每拍刷（找到 ${calls} 处；只该在收尾那一次）`);
+});

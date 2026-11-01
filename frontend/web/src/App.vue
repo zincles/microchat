@@ -416,7 +416,7 @@ async function pollRerollSummary(sid) {
     st = await api.rerollSummaryState(sid).catch(() => null);
     if (!st || my !== epoch) return null;
     if (st.active && st.target_kind === "summary") summaryReroll.value = st;
-    refreshStatusline(st.running ? "摘要刷新中" : "idle");
+    refreshStatusline(st.running ? "摘要刷新中" : "idle", undefined, { withContext: !st.running });
     if (!st.running) return st;
   }
   return st;
@@ -473,7 +473,7 @@ async function pollReroll(sid) {
         cur = merged.cur;
       }
     }
-    refreshStatusline(st.running ? "重摇中" : "idle");
+    refreshStatusline(st.running ? "重摇中" : "idle", undefined, { withContext: !st.running });
     if (!st.running) return st;
   }
   return st;
@@ -751,11 +751,11 @@ let panelDrag = null;
 
 function swipeBlocked(target) {
   if (overlaysRef.value?.isPaletteOpen() || overlaysRef.value?.isPickerOpen()) return true;
-  if (document.querySelector("#settings-view, #user-view") || document.querySelector(".modal")) return true;
+  if (document.querySelector("#settings-view") || document.querySelector(".modal")) return true;
   // 抽屉自己身上 ⇒ 一律接管（pre 也不例外）："把抽屉拖走"在这儿就该能用 ——
   // 右栏的载荷 tab 整块就是个 <pre>，早先被 pre 例外吞掉，真机上表现为"在面板上滑没反应"。
   if (target?.closest?.("#sessions-bar")) return false;
-  return !!target?.closest?.("textarea, input, select, pre, .palette, .picker, .modal, #settings-view, #user-view");
+  return !!target?.closest?.("textarea, input, select, pre, .palette, .picker, .modal, #settings-view");
 }
 function paintDrag(d, p) {
   const off = d.pick.bar === "left" ? -102 : 102; // 与 CSS 的 collapsed 位移一致
@@ -1005,6 +1005,9 @@ async function pollTurn(sid, turnID) {
   vueMessages.value.push(m);
   vueStream.value = { id: turnID, text: "", reasoning: "" };
   composerRef.value?.setRunning(true);
+  // 受理这一刻用户那句已经进库了 ⇒ 占用本来就变了：问一次（这一发整轮只问这一次，
+  // 轮询里靠 withContext:false 把它省掉；见 refreshStatusline）。
+  refreshStatusline("pending");
   let cur = { from: 0, thinkFrom: 0 };
   try {
     for (;;) {
@@ -1020,8 +1023,10 @@ async function pollTurn(sid, turnID) {
       vueStream.value.reasoning = merged.reasoning;
       m.reasoning = merged.reasoning;
       cur = merged.cur;
-      refreshStatusline(st.phase, st.elapsed_ms);
-      refreshSessionsBar();
+      // 轮询期间只推相位（本地写，不发请求）；左栏与占用等这一轮落地再刷 ——
+      // 从前这里是每 300ms 一次 GET /sessions + GET /context（一条 30 秒的回复 ≈ 200 个请求，
+      // 且 /context 每次都要全量装配：列消息 + 现演状态 + 拼出站）。见 refreshStatusline 的 withContext。
+      refreshStatusline(st.phase, st.elapsed_ms, { withContext: false });
       if (st.phase === "idle" || st.phase === "error") {
         if (my !== epoch) return;
         const failed = st.phase === "error";
@@ -1083,7 +1088,11 @@ async function refreshTasks() {
 // 这四样从前是一行小字（"已连接 v0.1.0｜上下文 344/1.04M｜默认助手｜idle"），紧贴着对话；
 // 现在共用一处落点：环里是占比，点开的浮板里是明细（含连接与相位）。
 // ⚠ 别再造第二条"显示状态行"的路 —— 同一个数字住两处，只会让两处都可能过期。
-function refreshStatusline(phase, elapsedMs) {
+// withContext：这一拍要不要**真去问** `/context`（它是 O(n) 的全量装配：列消息 + 现演状态 + 拼出站）。
+// 生成 / 重摇 / 摘要刷新这些轮询每秒要问好几次，而占用在一轮落地前根本不变 ⇒ 轮询里传 false，
+// 只在翻 idle 那一拍（以及进会话/换模型这些"事情真的变了"的时刻）按默认 true 问一次。
+// 少掉的是请求与装配，不是显示：环在轮询期间保持上一拍的数（那正是此刻真实的占用）。
+function refreshStatusline(phase, elapsedMs, { withContext = true } = {}) {
   // 连接 + 助手 + 相位：草稿态也要报（"没连上"跟有没有会话无关）。
   topbarRef.value?.setStatus({ conn: connText, agent: statusAgent.value, phase, elapsedMs });
   if (draft || !sessionID) {
@@ -1091,6 +1100,7 @@ function refreshStatusline(phase, elapsedMs) {
     topbarRef.value?.setContext(null);
     return;
   }
+  if (!withContext) return;
   api.context(sessionID).catch(() => null).then((ctx) => {
     topbarRef.value?.setContext(ctx);
   }).catch((err) => toast(`上下文占用读取失败：${err.message}`, "error"));
@@ -1612,12 +1622,13 @@ onUnmounted(() => {
         @toggle-left="toggleLeft"
         @sessions-changed="refreshSessionsBar"
         @models-changed="fillModelSelect"
+        @prefs-saved="onPrefsSaved"
         @goto-session="(id) => { closeSettings(); enterSession(id).catch((err) => toast(`进会话失败：${err.message}`, 'error')); }"
       />
       </div>
     </div>
     <Toast ref="toastRef" />
-    <!-- 更新条：只在检测到新版本时出现（挂根层 —— 设置/用户视图开着也该看得见）。 -->
+    <!-- 更新条：只在检测到新版本时出现（挂根层 —— 设置视图开着也该看得见）。 -->
     <UpdateBar v-if="updateReady" ref="updateRef" @update="applyUpdate" />
     <!-- Overlays 挂根层（不在聊天视图里）：设置视图开着时"确认"也要能弹（fixed 定位照旧）。 -->
     <Overlays ref="overlaysRef" @run-command="(n) => runCommand(n, []).catch((err) => toast(`命令失败：${err.message}`, 'error'))" @pick="onPickAction" />
