@@ -2535,3 +2535,64 @@ test("重摇：没多出版就不切版本（取消 ≠ 换一版）", () => {
     assert.match(body, new RegExp(`${refresh.replace(/[()]/g, "\\$&")}`), `${enter} 被按停时没对齐状态`);
   }
 });
+
+// ── 回到前台要自己对齐（2026-11-01 用户定）──────────────────────────
+//
+// 用户原话：「假设，我发送了消息，llm要一分钟才能返回结果。此时我切换到其他网页。然后2min后
+// 回来。此时，我必须打开别的对话再回到当前会话才能刷新结果。这尤其常见于安卓浏览器里。」
+//
+// 为什么非做不可：**后台标签页的计时器会被节流甚至冻住**（安卓内存紧时直接丢页面）——
+// 本地那个轮询循环要么卡在很久以前那一拍、要么已经因为一次网络错退出。
+// 唯一可信的是后端，所以回来就问一句"现在什么相位"。
+test("回到前台会跟后端对齐（三条事件都接）", () => {
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+
+  // ① 三条事件都要接，而且都要卸（少了 pageshow 就漏掉安卓从 bfcache 恢复那条路）。
+  for (const ev of ['"visibilitychange"', '"focus"', '"pageshow"']) {
+    assert.match(app, new RegExp(`addEventListener\\(${ev}, resyncOnForeground\\)`), `没接 ${ev}`);
+    assert.match(app, new RegExp(`removeEventListener\\(${ev}, resyncOnForeground\\)`), `没卸 ${ev}`);
+  }
+
+  const start = app.indexOf("async function resyncOnForeground()");
+  assert.ok(start > 0, "找不到 resyncOnForeground");
+  const body = app.slice(start, app.indexOf("\n// resumeReroll", start));
+
+  // ② **还在跑就只接轮询、不许重拉消息列** —— 重拉会把正在流的那个气泡换成库里的，
+  //    等于把活人从屏幕上抹掉。
+  assert.match(body, /st\.phase === "pending" \|\| st\.phase === "streaming"/,
+    "resync 没区分'还在跑'");
+  const running = body.slice(body.indexOf('st.phase === "pending"'), body.indexOf('// ② 已经落地'));
+  assert.ok(!/reloadWindow/.test(running), "还在跑的时候重拉了消息列 —— 会把正在流的回复抹掉");
+
+  // ③ 已经落地 ⇒ 对齐（消息列 + 状态 + 占用 + 重摇）。
+  assert.match(body, /await reloadWindow\(\)/, "落地之后没重拉消息列");
+  assert.match(body, /refreshStateView\(sessionID\)/, "落地之后没刷状态视图");
+  assert.match(body, /refreshStatusline\(/, "落地之后没刷状态行（上下文占用就在那儿）");
+
+  // ④ 判"要不要接轮询"靠**循环在不在**（liveTurnPoll），不能靠"有没有 stream 气泡" ——
+  //    气泡是循环死掉之后留下的假象，拿它当判据就永远不接。
+  assert.match(app, /let liveTurnPoll = 0;/, "没有 liveTurnPoll 计数");
+  assert.match(app, /liveTurnPoll\+\+;/, "轮询开始没计数");
+  assert.match(app, /liveTurnPoll--;/, "轮询结束没减计数");
+  assert.match(body, /liveTurnPoll === 0/, "resync 没按'循环在不在'决定接不接");
+
+  // ⑤ 连发事件要合并（切回来时三条常常一串来）。
+  assert.match(body, /resyncing \|\| now - lastResyncAt < 300/, "连发的三条事件没有合并");
+});
+
+// 轮询循环碰到偶发网络错**不许直接死掉**。
+//
+// 后台切回来那几拍请求本来就会失败；从前一抛出去循环就没了，而合成气泡还留在列表里
+// ⇒ 界面一直"在等待"。现在单拍失败继续下一拍，连着十拍不行才认栽。
+test("一轮的轮询：单拍失败继续，不判死刑", () => {
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  const start = app.indexOf("async function pollTurn(sid, turnID)");
+  assert.ok(start > 0);
+  const body = app.slice(start, app.indexOf("\nlet connText", start));
+  assert.match(body, /let misses = 0;/, "没有连续失败计数");
+  assert.match(body, /if \(\+\+misses > 10\) throw err;/, "失败没有上限（会死循环）或没有上限判断");
+  assert.match(body, /misses = 0;/, "成功之后没把计数清零");
+  // status 必须在那层 try 里面（放在外面等于没兜住）。
+  const tryAt = body.indexOf("try {\n        st = await api.status(sid);");
+  assert.ok(tryAt > 0, "api.status 不在容错的那层 try 里");
+});

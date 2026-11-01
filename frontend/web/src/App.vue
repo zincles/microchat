@@ -627,6 +627,104 @@ async function pollCompact(sid, atMS) {
   }
 }
 
+// ── 回到前台：把界面跟后端对齐（2026-11-01 用户定）──────────────────────
+//
+// 用户原话：「假设，我发送了消息，llm要一分钟才能返回结果。此时我切换到其他网页。
+// 然后2min后回来。此时，我必须打开别的对话再回到当前会话才能刷新结果。这尤其常见于安卓浏览器里。」
+//
+// 为什么本地的轮询靠不住：**后台标签页的计时器会被节流、甚至整个冻住**（安卓更狠，内存紧时
+// 直接丢页面）。所以"我发了一句话然后切走"这件事，回来时本地那个循环要么卡在很久以前那一拍、
+// 要么已经因为一次网络错退出。**唯一可信的是后端**：回来就问一句"现在什么相位"。
+//
+// 三条分寸（都踩过或想清楚了才这么写）：
+//   ① **还在跑就不许重拉消息列** —— 那会把正在流的那个气泡换成库里的，等于把活人从屏幕上抹掉。
+//      这种情况只把轮询**接回来**（并且先摘掉僵住的 stream 气泡，免得接出两个）。
+//   ② **已经落地就一次性对齐**：消息列、状态视图、占用、重摇、任务、预演。用户回来该看到的是
+//      "答案就在那儿"，不是"还得再点一下"。
+//   ③ **合并连发事件**：切回来时 `visibilitychange` / `focus` / `pageshow` 常常一串来，
+//      每条都跑一遍就是三倍请求。用一个很短的时间窗吃掉（resync 本身是幂等的，重复跑不会错，
+//      只是浪费）。
+let lastResyncAt = 0;
+let resyncing = false;
+
+// dropStreamBubbles：摘掉本地那些"正在流"的合成气泡（循环已经不在了，它们就是僵住的假象）。
+function dropStreamBubbles() {
+  if (!vueMessages.value.some((m) => m.stream)) return;
+  vueMessages.value = vueMessages.value.filter((m) => !m.stream);
+}
+
+async function resyncOnForeground() {
+  if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+  const now = Date.now();
+  if (resyncing || now - lastResyncAt < 300) return;
+  resyncing = true;
+  lastResyncAt = now;
+  const my = epoch;
+  try {
+    // 左栏与任务面板与"哪条会话"无关，先刷（草稿态也有意义）。
+    refreshSessionsBar();
+    refreshTasks();
+    if (!sessionID) return;
+    const st = await api.status(sessionID).catch(() => null);
+    if (my !== epoch || !st) return;
+
+    if (st.phase === "pending" || st.phase === "streaming") {
+      // ① 还在跑：只把轮询接回来，**不动消息列**。
+      refreshStatusline(st.phase, st.elapsed_ms);
+      if (liveTurnPoll === 0) {
+        dropStreamBubbles();
+        pollTurn(sessionID, st.message_id).catch(() => {});
+      }
+      // 重摇是另一条活（同一把闸，不可能与一轮同时在跑），但它的轮询也可能一起断了。
+      return;
+    }
+
+    // ② 已经落地（idle / error）：整体对齐。
+    //
+    // ⚠ 先摘僵住的 stream 气泡再 reload —— 不摘的话 `reloadWindow` 里那句"没在流才重建"
+    // 的判断可能把旧的合成气泡留在列表里（它就是那个"永远在等待"的来源）。
+    dropStreamBubbles();
+    await reloadWindow();
+    if (my !== epoch) return;
+    refreshStatusline(st.phase, st.elapsed_ms);
+    refreshStateView(sessionID);
+    refreshRerolls();
+    // 重摇那趟如果还活着 ⇒ 把它的轮询也接回来（不 await：它可能还要摇一阵）。
+    resumeRerollIfLive().catch(() => {});
+    if (st.phase === "error" && st.error) toast(`上一轮失败了：${st.error}`, "error");
+    if (previewOn() && vueMessages.value.length) {
+      api.outgoingPreview(sessionID, "")
+        .then((w) => { if (my === epoch) payloadbarRef.value?.setWire(w); })
+        .catch(() => {});
+    }
+  } finally {
+    resyncing = false;
+  }
+}
+
+// resumeReroll：重摇那两条轮询也可能在后台断掉 —— 回来后接着等它（口径与 `rerollNow` 一致：
+// 只有**真的多出一版**才切，取消不换版）。
+async function resumeRerollIfLive() {
+  if (!sessionID) return;
+  const messageLive = rerollState.value?.active && rerollState.value?.running;
+  const summaryLive = summaryReroll.value?.active && summaryReroll.value?.running;
+  if (!messageLive && !summaryLive) return;
+  const my = epoch;
+  if (messageLive) {
+    const before = rerollState.value?.count ?? 0;
+    const st = await pollReroll(sessionID).catch(() => null);
+    if (my !== epoch || !st) return;
+    if (st.active && st.count > before) await switchReroll(sessionID, st.count);
+    else refreshReroll();
+    return;
+  }
+  const before = summaryReroll.value?.count ?? 0;
+  const st = await pollRerollSummary(sessionID).catch(() => null);
+  if (my !== epoch || !st) return;
+  if (st.active && st.count > before) await summarySwitch(st.count);
+  else refreshRerollSummary();
+}
+
 // —— 顶栏 ——
 function paintSessionHeader() {
   topbarRef.value?.setSession(sessionInfo, draft);
@@ -1031,8 +1129,16 @@ async function resend() {
   refreshTasks();
   await pollTurn(sid, accepted.turn.message_id);
 }
+// liveTurnPoll：**本地此刻有几条轮询循环真的在跑**（0 或 1）。
+//
+// 为什么需要这个数，而不是"看有没有 stream 气泡"：气泡是**一次性的**，循环死掉（网络错、
+// 后台被冻住之后异常退出）而气泡还留在列表里 —— 那个气泡就是僵住的假象。判"要不要接回来"
+// 必须看循环本身在不在。
+let liveTurnPoll = 0;
+
 async function pollTurn(sid, turnID) {
   const my = epoch;
+  liveTurnPoll++;
   const m = { who: "助手", role: "assistant", _stream: true, stream: true, content: "", reasoning: "", id: tmpKey() };
   vueMessages.value.push(m);
   vueStream.value = { id: turnID, text: "", reasoning: "" };
@@ -1041,12 +1147,24 @@ async function pollTurn(sid, turnID) {
   // 轮询里靠 withContext:false 把它省掉；见 refreshStatusline）。
   refreshStatusline("pending");
   let cur = { from: 0, thinkFrom: 0 };
+  let misses = 0; // 连续几拍没拿到（切后台/断网那几下会这样）
   try {
     for (;;) {
       await new Promise((r) => setTimeout(r, 300));
       if (my !== epoch) return; // 会话世代变了（切走/回草稿）：这一轮不再往界面上写（库里照旧落）
-      const st = await api.status(sid);
-      const slice = await api.turnText(sid, cur.from, cur.thinkFrom);
+      let st;
+      let slice;
+      try {
+        st = await api.status(sid);
+        slice = await api.turnText(sid, cur.from, cur.thinkFrom);
+        misses = 0;
+      } catch (err) {
+        // **一拍失败不判死刑**（2026-11-01）：切到后台、手机换网、App 被冻住再醒 ——
+        // 那几拍请求本来就会失败。从前这里直接抛出去 ⇒ 轮询循环当场死掉、而气泡还留在
+        // 列表里 ⇒ 界面就一直"在等待"（用户报的正是这个）。连着十拍都不行才算真不行。
+        if (++misses > 10) throw err;
+        continue;
+      }
       if (my !== epoch) return;
       // 游标回退（缓冲被新一轮重置）⇒ 清零重建（mergeStreamSlice 的语义，别在别处再写一份）。
       const merged = mergeStreamSlice(
@@ -1083,6 +1201,7 @@ async function pollTurn(sid, turnID) {
       }
     }
   } finally {
+    liveTurnPoll--;
     composerRef.value?.setRunning(false);
   }
 }
@@ -1545,6 +1664,13 @@ onMounted(() => {
   // 跨断点（桌面 ⇄ 抽屉）时把状态重算一遍：变成抽屉就一律先关掉，不然会"啪"地盖上来。
   // 只剩左栏这一个断点（右栏 2026-10-29 搬进上下文工作区）。
   mqlLeft?.addEventListener?.("change", applySideStates);
+  // 回到前台就对齐（2026-11-01 用户定）。三条都要：
+  //   visibilitychange —— 切标签页/切 App（手机最常见的那条路）；
+  //   pageshow         —— 从 bfcache 里恢复（安卓丢页面再回来常走这条，那时 visibilitychange 可能不响）；
+  //   focus            —— 同窗口切焦点（桌面 alt+tab 到别的窗口）。
+  document.addEventListener("visibilitychange", resyncOnForeground);
+  window.addEventListener("focus", resyncOnForeground);
+  window.addEventListener("pageshow", resyncOnForeground);
   if (typeof ResizeObserver !== "undefined" && !composerRO) {
     composerRO = new ResizeObserver(() => liftOverlays());
     const form = document.querySelector("#composer");
@@ -1568,6 +1694,9 @@ onUnmounted(() => {
   composerRO?.disconnect();
   composerRO = null;
   mqlLeft?.removeEventListener?.("change", applySideStates);
+  document.removeEventListener("visibilitychange", resyncOnForeground);
+  window.removeEventListener("focus", resyncOnForeground);
+  window.removeEventListener("pageshow", resyncOnForeground);
 });
 </script>
 
