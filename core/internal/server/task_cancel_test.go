@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"microchat/internal/model"
+	"microchat/internal/reroll"
 	"microchat/internal/task"
 )
 
@@ -266,4 +267,55 @@ func mustMessages(t *testing.T, box *dummySandbox) []model.Message {
 		t.Fatal(err)
 	}
 	return messages
+}
+
+// 按停一趟重摇 ⇒ 候选列表**不留占位**（否则以后每次重摇都 409），
+// 而且状态必须回到 `active:false` —— 前端就是靠它退出"在等待"的。
+//
+// 用户报的现象：「当我取消重摇后（从小面板里），对话界面还是老样子，在等待。」
+// 前端那一半的根因已另修（轮询只在活着时写回状态），这里钉后端这一半：
+// 状态得**真的**变成没了，并且下一次重摇还能进得去。
+func TestCanceledRerollLeavesNoPendingSlot(t *testing.T) {
+	upstream := newHungUpstream(t, `{"choices":[{"message":{"content":"摇出来的一版"}}]}`)
+	box := newDummySandbox(t)
+	box.seedTurn(t, "第一句") // 尾条 assistant 就是重摇目标
+
+	if recorder := call(box.server, "POST", "/api/v1/providers",
+		`{"id":"hung","vendor":"openai-compat","base_url":"`+upstream.server.URL+`"}`); recorder.Code != http.StatusCreated {
+		t.Fatalf("建渠道该 201：%d %s", recorder.Code, recorder.Body.String())
+	}
+	if recorder := call(box.server, "PATCH", "/api/v1/sessions/"+box.sessionID,
+		`{"provider":"hung","model":"m"}`); recorder.Code != http.StatusOK {
+		t.Fatalf("切渠道该 200：%d %s", recorder.Code, recorder.Body.String())
+	}
+
+	box.rerollMessageEnter(t) // 202
+	record := runningTask(t, box, task.KindReroll)
+	if !record.Cancelable {
+		t.Fatal("重摇该是能按停的")
+	}
+	if got := decodeBody[map[string]bool](t,
+		call(box.server, "POST", "/api/v1/tasks/"+record.ID+"/cancel", "")); !got["canceled"] {
+		t.Fatal("该回 canceled:true")
+	}
+
+	// ① 状态回到"没了"（前端据此退出"在等待"）。
+	deadline := time.Now().Add(10 * time.Second)
+	var state reroll.State
+	for time.Now().Before(deadline) {
+		state = box.rerollMessageState(t)
+		if !state.Active {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if state.Active {
+		t.Fatalf("按停之后重摇模式该退出（active:false），实际 %+v", state)
+	}
+
+	// ② **占位也被摘掉了**：再摇一次必须进得去。
+	//    （`pendingToken` 漏清的话，这里会 409「已经有一版在摇了」—— 而且是**永久**的。）
+	if recorder := call(box.server, "POST", box.path+"/reroll-message", ""); recorder.Code != http.StatusAccepted {
+		t.Fatalf("按停之后该还能再摇（202），得到 %d：%s", recorder.Code, recorder.Body.String())
+	}
 }

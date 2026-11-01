@@ -189,3 +189,38 @@ func TestCompactStatusRidesAlong(t *testing.T) {
 		t.Fatalf("收尾该带区间与合并位：%+v", status.Compact)
 	}
 }
+
+// 挂取消函数时那一趟**已经被停掉了** ⇒ 当场取消它。
+//
+// 场景（2026-11-01）：任务的 `Begin` 在受理那一刻就发生了，而取消函数是**后台 goroutine**
+// 起来之后才 `Attach` 上去的。两次"按停"（`Stop` / `StopReroll`）都会把整条登记摘掉 ——
+// 如果摘登记正好落在 `Begin` 与 `Attach` 之间，`Attach` 就找不到条目。
+//
+// 从前它什么都不做 ⇒ 那个 ctx 永远没人取消 ⇒ 上游请求白跑到底（结果会被 `IsMine` 丢掉，
+// 所以**不会**写错库，但 token 已经烧了，而用户以为自己按住了）。
+func TestAttachAfterStopCancelsImmediately(t *testing.T) {
+	registry := NewRegistry()
+	cancelled := false
+	// 这个会话压根没有登记（= 已经被摘掉了），令牌自然对不上。
+	registry.Attach("session-gone", 42, func() { cancelled = true })
+	if !cancelled {
+		t.Fatal("已经停掉的那一趟，挂 ctx 时就该当场取消 —— 否则上游会白跑完")
+	}
+}
+
+// 正常那条路不能被误伤：登记还在、令牌对得上 ⇒ 只挂上去，**不许**顺手取消。
+func TestAttachOnLiveTurnDoesNotCancel(t *testing.T) {
+	registry := NewRegistry()
+	token, err := registry.Begin("session-live", "message-1")
+	if err != nil {
+		t.Fatalf("登记该成功：%v", err)
+	}
+	cancelled := false
+	registry.Attach("session-live", token, func() { cancelled = true })
+	if cancelled {
+		t.Fatal("正常挂载不该取消 —— 那会把刚受理的一轮当场掐掉")
+	}
+	if !registry.IsMine("session-live", token) {
+		t.Fatal("挂上之后这一趟还是自己的")
+	}
+}

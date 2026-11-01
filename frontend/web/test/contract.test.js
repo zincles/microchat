@@ -2474,3 +2474,64 @@ test("任务面板：能停的任务有取消按钮，按不动的不画", () =>
   assert.ok(poll.indexOf('"canceled"') < poll.indexOf("压缩完成"),
     "canceled 那一支必须排在压缩完成前面（否则被当成功）");
 });
+
+// ── 按停重摇之后，界面必须"退出来"（2026-11-01 用户报的 bug）──────────
+//
+// 用户原话：「当我取消重摇后（从小面板里），对话界面还是老样子，在等待。」
+//
+// 根因：两条轮询循环都只在**活着**的时候同步状态 ——
+//
+//     if (st.active && st.target_kind === "message") rerollState.value = st;
+//
+// 状态变成"没了"（取消 / 失败 / 只剩原文一版）时**一个字都不写**，`rerollState` 就停在
+// 旧的 `running:true` 上 ⇒ `rerollTargetLive` 一直为真 ⇒ 气泡一直是空白 +"正在输出"，
+// 直到下一次进会话才恢复。这正是"老样子，在等待"。
+//
+// 这类 bug 不报错、不误路由、构建也过 —— 只能按"状态是不是**无条件**写回"来钉。
+test("重摇轮询：状态没了也要写回（否则取消后界面一直等）", () => {
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+
+  for (const [fn, ref, kind] of [
+    ["pollReroll", "rerollState", "message"],
+    ["pollRerollSummary", "summaryReroll", "summary"],
+  ]) {
+    const start = app.indexOf(`async function ${fn}(sid)`);
+    assert.ok(start > 0, `找不到 ${fn}`);
+    const body = app.slice(start, app.indexOf("\n}", start));
+    // 必须有"不活跃 ⇒ 显式写回 inactive"这条（三元那半边），而不是只有"活跃才写"。
+    assert.match(body, new RegExp(`${ref}\\.value = st\\.active && st\\.target_kind === "${kind}" \\? st : \\{ active: false \\}`),
+      `${fn} 在状态变成"没了"时没有写回 inactive —— 取消之后界面会一直等`);
+    // 反面：**不许**再出现"活跃才写"那种写法（它正是这个 bug 的形状）。
+    assert.ok(!new RegExp(`if \\(st\\.active && st\\.target_kind === "${kind}"\\) ${ref}\\.value = st;`).test(body),
+      `${fn} 里还留着"活跃才写"的老写法`);
+  }
+
+  // 面板按停之后要顺手对齐两族状态（不一定有轮询在跑）。
+  const cancel = app.slice(app.indexOf("function cancelTask(id)"), app.indexOf("// cancelQueue"));
+  assert.match(cancel, /refreshReroll\(\)/, "cancelTask 没对齐消息族重摇状态");
+  assert.match(cancel, /refreshRerollSummary\(\)/, "cancelTask 没对齐摘要族重摇状态");
+});
+
+// 按停**不许偷偷换版**：摇完只有"真的多出一版"才切过去。
+//
+// 若直接 `switchReroll(st.count)`：按停时候选列表还在（之前摇过几版就还在），`count` 没变，
+// 那句会把正文切到**已经存在**的最后一版上 —— 用户按的是"取消"，界面却换了一版内容。
+// 那就是取消干了实事，正是要避免的。
+test("重摇：没多出版就不切版本（取消 ≠ 换一版）", () => {
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+
+  for (const [enter, switchCall, refresh] of [
+    ["async function rerollNow()", "await switchReroll(sid, st.count)", "refreshReroll()"],
+    ["async function summaryRefresh(", "await summarySwitch(st.count)", "refreshRerollSummary()"],
+  ]) {
+    const start = app.indexOf(enter);
+    assert.ok(start > 0, `找不到 ${enter}`);
+    const body = app.slice(start, app.indexOf("\n}\n", start));
+    assert.match(body, /const versionsBefore = /, `${enter} 没记"摇之前有几版"`);
+    assert.match(body, /st\.count <= versionsBefore/, `${enter} 没判"到底多没多出一版"`);
+    // 切版本那一句必须排在"没多出"那道闸**之后**。
+    assert.ok(body.indexOf("st.count <= versionsBefore") < body.indexOf(switchCall),
+      `${enter} 里先切版本后判"多没多出" —— 顺序反了等于没判`);
+    assert.match(body, new RegExp(`${refresh.replace(/[()]/g, "\\$&")}`), `${enter} 被按停时没对齐状态`);
+  }
+});

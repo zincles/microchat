@@ -400,6 +400,8 @@ async function summaryRefresh(sumId) {
   const seg = vueSegments.value.find((x) => x.kind === "summary" && x.id === sumId);
   if (!sid || !seg) return;
   if (summaryReroll.value.active && summaryReroll.value.running) { toast("摘要还在刷新"); return; }
+  // 与 `rerollNow` 同一个口径：只有"真的多出一版"才切（被按停 ⇒ 不切）。
+  const versionsBefore = summaryReroll.value?.count ?? 0;
   try {
     await api.rerollSummaryEnter(sid, seg.b); // idx = 段起点（同树任意一条都上溯到同一个根）
     refreshTasks();
@@ -412,6 +414,7 @@ async function summaryRefresh(sumId) {
   if (my !== epoch) return;
   if (st?.error) { toast(`刷新失败：${st.error}`, "error"); return; }
   if (!st?.active) return;
+  if (st.count <= versionsBefore) { refreshRerollSummary(); return; } // 被按停：不切（同上一条）
   await summarySwitch(st.count); // 最新那版的位次就是 count（1-based，与气泡同一套）
 }
 async function pollRerollSummary(sid) {
@@ -422,7 +425,8 @@ async function pollRerollSummary(sid) {
     if (my !== epoch) return null;
     st = await api.rerollSummaryState(sid).catch(() => null);
     if (!st || my !== epoch) return null;
-    if (st.active && st.target_kind === "summary") summaryReroll.value = st;
+    // 与消息族同一个坑，同一条改法（见 `pollReroll` 上面那条注释）。
+    summaryReroll.value = st.active && st.target_kind === "summary" ? st : { active: false };
     refreshStatusline(st.running ? "摘要刷新中" : "idle", undefined, { withContext: !st.running });
     if (!st.running) return st;
   }
@@ -469,7 +473,12 @@ async function pollReroll(sid) {
     if (my !== epoch) return null;
     st = await api.rerollState(sid).catch(() => null);
     if (!st || my !== epoch) return null;
-    if (st.active && st.target_kind === "message") rerollState.value = st;
+    // ⚠ **无条件写回**，不是"活着才写"（2026-11-01 修的 bug：从任务面板按停之后，
+    // 对话界面一直"在等待"）。原来写的是 `if (st.active && ...) rerollState.value = st`
+    // ⇒ 状态变成"没了"时**一个字都不写**，`rerollState` 就永远停在旧的 `running:true` 上
+    // ⇒ `rerollTargetLive` 一直为真 ⇒ 气泡一直是空白 +"正在输出"，直到下一次刷新才恢复。
+    // 这与 `refreshReroll` 同一条口径：**不活跃就显式写回 inactive**。
+    rerollState.value = st.active && st.target_kind === "message" ? st : { active: false };
     if (st.running) {
       // 候选流：与一轮的游标读同一套（读不消费；token 对不上后端自然给空）。
       const slice = await api.turnText(sid, cur.from, cur.thinkFrom).catch(() => null);
@@ -493,6 +502,12 @@ async function rerollNow() {
   clearRerollPreview();
   // 立刻把那条气泡切空白（别等第一帧）：目标 = 尾条 assistant（后端也只认它，不是它 ⇒ 400）。
   rerollStarting.value = lastMsgId.value;
+  // 摇之前有几版 —— 摇完只有"真的多出来一版"才切过去。
+  //
+  // 为什么不能直接 `switchReroll(st.count)`（2026-11-01 修的第二个洞）：从任务面板**按停**之后
+  // 候选列表还在（之前摇过的版本还在），`st.count` 没变，于是那句会把正文切到最后**已经存在**的那版上
+  // —— 用户按的是"取消"，界面却换了一版内容。那就是"取消"干了实事，正是要避免的。
+  const versionsBefore = rerollState.value?.count ?? 0;
   try {
     try {
       await api.rerollEnter(sid); // 202：进模式并立刻摇一版；已在模式里 ⇒ 再摇一版
@@ -504,7 +519,12 @@ async function rerollNow() {
     const st = await pollReroll(sid);
     if (my !== epoch) return;
     if (st?.error) { toast(`重摇失败：${st.error}`, "error"); clearRerollPreview(); return; }
-    if (!st?.active) return;
+    if (!st?.active) return; // 连模式都退了（取消 / 只剩原文一版）
+    if (st.count <= versionsBefore) {
+      // 没多出新的一版 ⇒ 这一趟是被按停的（或者没摇成）：**什么都不切**。
+      refreshReroll();
+      return;
+    }
     await switchReroll(sid, st.count); // 最新那版的位次就是 count（1-based）
   } finally {
     // 走到哪儿都别留下"永远在摇"的假象（出错、被停、切会话、epoch 变了都算）。
@@ -1083,6 +1103,10 @@ function cancelTask(id) {
     .then((res) => {
       if (!res?.canceled) toast("这一发已经结束了");
       refreshTasks();
+      // 按停的可能是一趟重摇 ⇒ 两族的界面状态也当场对齐（别等轮询或者下一次进会话）。
+      // 轮询那两条路自己会写回，但"面板按停"不一定有轮询在跑（例如换了标签页回来才点的）。
+      refreshReroll();
+      refreshRerollSummary();
     })
     .catch((err) => toast(`按停失败：${err.message}`, "error"));
 }

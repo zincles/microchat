@@ -269,10 +269,21 @@ func (errRerollBusy) Error() string { return "这个会话正在重摇" }
 // （令牌一样是那枚令牌：谁挂上来的，回来时就得对得上）。
 func (r *Registry) Attach(sessionID string, token uint64, cancel context.CancelFunc) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	if item := r.lookup(sessionID); item != nil && item.token == token {
+	item := r.lookup(sessionID)
+	if item != nil && item.token == token {
 		item.cancel = cancel
+		r.mu.Unlock()
+		return
 	}
+	r.mu.Unlock()
+	// 这一趟**在挂上取消函数之前就已经被停掉了**（`Stop` / `StopReroll` 把整条登记摘了在先）。
+	//
+	// 从前这里什么都不做 ⇒ 那个 ctx 永远没人取消 ⇒ 上游请求白跑到底（结果虽然会被 `IsMine`
+	// 丢掉，token 已经烧了，而用户以为自己按住了）。当场取消它才是"按停"该有的样子。
+	//
+	// 窗口很窄（`Begin` 立刻起 goroutine，`Attach` 在它第一行），但窄不等于没有 ——
+	// 而这条路上的代价是"真金白银的上游调用"，不是一点界面抖动。
+	cancel()
 }
 
 // IsMine：令牌还对得上吗？—— 被 `stop` 顶掉的旧任务回来时会对不上，结果直接丢掉。
