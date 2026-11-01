@@ -39,38 +39,18 @@ export function normalizeApiBase(v) {
   return s;
 }
 
-// 鉴权帮手（2026-10-10 多用户）：门板**还没有凭据**时也要能调，所以是三个独立函数（不吃 sharedApi）。
+// probeHealth：启动自检 —— "这个地址后面是不是一个活着的 microchat 后端"。
 //
-// 两道闸照旧（踩过）：地址先 normalizeApiBase（裸地址会被 fetch 当相对路径、被 vite 的 200 HTML 骗过）；
-// 回体必须是 JSON 且 `status:"ok"`（挡住"随便一个 web 服务回 200"）。
-export async function probeAuthStatus(base, { fetchFn = fetch } = {}) {
-  const res = await fetchFn(`${normalizeApiBase(base)}/auth/status`);
+// 2026-11-01：鉴权砍了，原来的 `/auth/status` 也没了 ⇒ 换成 `/health`（它本来就要鉴权，现在不用了）。
+// 两道闸照旧（都是踩过的坑）：地址先 `normalizeApiBase`（裸地址会被 fetch 当相对路径、
+// 被 vite 的 200 HTML 骗过）；回体必须是 JSON 且 `status:"ok"`（挡住"随便一个 web 服务回 200"）。
+export async function probeHealth(base, { fetchFn = fetch } = {}) {
+  const res = await fetchFn(`${normalizeApiBase(base)}/health`);
   let data = null;
   try { data = await res.json(); } catch { /* 非 JSON 体 */ }
   if (!res.ok) throw httpError(data, res);
-  if (!data || data.status !== "ok") throw new Error("目标回的不是 microchat 后端（/auth/status 没有 status:ok）");
-  return data; // {status, version, needs_setup}
-}
-
-async function authPost(base, path, body, fetchFn = fetch) {
-  const res = await fetchFn(`${normalizeApiBase(base)}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  let data = null;
-  try { data = await res.json(); } catch { /* 非 JSON 体 */ }
-  if (!res.ok) throw httpError(data, res);
-  return data;
-}
-
-// authLogin：名字 + 口令 ⇒ {token, user}（token 由调用方存进 mc_token）。
-export function authLogin(base, user, password, opts = {}) {
-  return authPost(base, "/auth/login", { user, password }, opts.fetchFn);
-}
-// authSetup：给 **root（uid 0）** 设口令 —— 唯一一次；已经设过会 403（加人走用户页，S2）。
-export function authSetup(base, password, opts = {}) {
-  return authPost(base, "/auth/setup", { password }, opts.fetchFn);
+  if (!data || data.status !== "ok") throw new Error("目标回的不是 microchat 后端（/health 没有 status:ok）");
+  return data; // {status, version}
 }
 
 // httpError：非 2xx 的统一定形 —— message = 后端文案，**code 原样带上**（调用方按 code 分支，
@@ -182,16 +162,6 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
     enqueueQueue: (body) => call("POST", "/tasks/queues", body),
     // cancelQueue：随时取消；在飞的那一发会被一起掐断（压缩要整段才落库 ⇒ 不留半条）。
     cancelQueue: (queueId) => call("POST", `/tasks/queues/${enc(queueId)}/cancel`),
-    // 鉴权（2026-10-10）：我是谁 / 登出（JWT 无状态，登出只是给客户端一个明确动作口）。
-    me: () => call("GET", "/auth/me"),
-    logout: () => call("POST", "/auth/logout", {}),
-    // 用户管理（admin；S2）：看列表 / 加人 / 改名 / 改口令（**自己改自己谁都行**）/
-    // 删人（**对会话必须显式**：transfer=转给 root、purge=连会话一起没）。
-    users: () => call("GET", "/users"),
-    createUser: (body) => call("POST", "/users", body),
-    patchUser: (uid, body) => call("PATCH", `/users/${enc(uid)}`, body),
-    setUserPassword: (uid, password) => call("POST", `/users/${enc(uid)}/password`, { password }),
-    deleteUser: (uid, sessions) => call("DELETE", `/users/${enc(uid)}?sessions=${enc(sessions)}`),
     getChat: () => call("GET", "/config/chat"),
     putChat: (body) => call("PUT", "/config/chat", body),
     // models：跨 provider 拍平（`{provider, upstream_id, name}` —— 下拉选项就打它）。

@@ -134,7 +134,6 @@ export function apiBaseCandidates() {
   if (!list.includes(dflt)) list.push(dflt);
   return list;
 }
-export function apiToken() { return localStorage.getItem("mc_token") || ""; }
 export function themePref() {
   // 空串 / 认不出的 id 都归一到 THEME_IDS 里的一档（见 normalizeTheme）。
   // 从前这里要 `??` 保住空串（那是"跟随系统"），现在那个选项没了 ⇒ 空串就是"没设过"。
@@ -163,23 +162,25 @@ function syncThemeColor() {
   if (bg) meta.setAttribute("content", bg);
 }
 
-// 连接偏好的唯一写入口（连接门板与设置页共用）：地址先过 normalizeApiBase。
-export function saveNetPrefs(base, token) {
+// 连接偏好的唯一写入口：地址先过 normalizeApiBase。
+//
+// 2026-11-01：`token` 那格删了（鉴权与账号一起砍掉 —— 本机单人使用，只允许 127.0.0.1）。
+// `mc_token` 这个 localStorage 键也不再读写；老浏览器里残留的那一条没人看，无害。
+export function saveNetPrefs(base) {
   localStorage.setItem("mc_api", normalizeApiBase(base) || defaultApiBase());
-  localStorage.setItem("mc_token", token ?? "");
 }
 
-// 共享 api 客户端：按 (base, token) 缓存 —— 组件与 App 拿的是同一个实例；
+// 共享 api 客户端：按 base 缓存 —— 组件与 App 拿的是同一个实例；
 // 偏好改了（刷新后）第一次调用就会重建，不需要各自再抄构造代码。
+//
+// 2026-11-01：缓存键里的 `token` 没了（没有凭据了）。
 let cached = null;
 let cachedKey = "";
 export function sharedApi() {
   const base = apiBase();
-  const token = apiToken();
-  const key = `${base}\u0000${token}`;
-  if (!cached || key !== cachedKey) {
-    cached = createApi({ base, token });
-    cachedKey = key;
+  if (!cached || base !== cachedKey) {
+    cached = createApi({ base });
+    cachedKey = base;
   }
   return cached;
 }

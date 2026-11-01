@@ -8,9 +8,7 @@ package config
 
 import (
 	"bytes"
-	"crypto/rand"
 	"embed"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -72,10 +70,8 @@ type Config struct {
 type ServerConfig struct {
 	Host string `json:"host"`
 	Port uint16 `json:"port"`
-	// JwtKey：登录令牌的签名密钥（HMAC-SHA256，DEFINE「用户与鉴权」）。
-	// 缺省 ⇒ 启动时**现铸 32 字节随机并写回本文件**（0600）：零配置能跑；换 key = 全员登出。
-	// （旧的 `server.auth_token` 已退休：口令是第一个注册者自己设的。）
-	JwtKey *string `json:"jwt_key"`
+	// 2026-11-01：`jwt_key` 那格**删了**（鉴权与账号一起砍掉 —— 本机单人使用，只允许 127.0.0.1）。
+	// 老配置里若还写着它，读入时被忽略、下次整份重写时消失。
 	// Identity：**服务器级默认特征**（以什么身份自报家门）："" = **pi**（默认）/ "microchat" / "bare" = 什么都不装。
 	// 单个渠道可以用 `providers.json` 里的 `identity` 覆盖它。
 	Identity string `json:"identity"`
@@ -133,9 +129,12 @@ func (c Config) BotToken() string {
 func DefaultConfig() Config {
 	return Config{
 		Version: 1,
-		// 默认对局域网开放（0.0.0.0）：手机/平板开 http://<本机IP>:8787/api/v1 就能用。
-		// 没设 auth_token 时本网段人人可用 —— 要收紧就设口令（见 AGENTS 配置一节）。
-		Server:   ServerConfig{Host: "0.0.0.0", Port: 8787},
+		// **默认只听回环**（127.0.0.1，2026-11-01 用户定：「我们只允许来自 127.0.0.1 的访问」）。
+		//
+		// 为什么不是 0.0.0.0：账号与鉴权都砍了，后端一旦对局域网开放，同网段任何设备
+		// 都能直接改数据（删会话、读 API key、花 token）。绑回环是**唯一真能挡住**的办法。
+		// 要放开就显式把 config.json 的 server.host 改成 0.0.0.0（那时就没有这道保护了）。
+		Server:   ServerConfig{Host: "127.0.0.1", Port: 8787},
 		Defaults: DefaultsConfig{Provider: "dummy", Model: DummyModelID, Agent: DefaultAgentID},
 		Chat:     DefaultChat(),
 	}
@@ -147,24 +146,6 @@ const (
 )
 
 // LoadConfig：读 `config.json`，缺字段用默认值（`#[serde(default)]` 的等价物）。
-// JWTKey：拿签名密钥；文件里没有就现铸 32 字节随机、**写回配置**（0600）再回。
-// 写回失败不回退成"临时 key"——那会让每次重启全员登出，宁可启动报错。
-func (c Config) JWTKey(paths Paths) ([]byte, error) {
-	if c.Server.JwtKey != nil && *c.Server.JwtKey != "" {
-		return []byte(*c.Server.JwtKey), nil
-	}
-	buf := make([]byte, 32)
-	if _, err := rand.Read(buf); err != nil {
-		return nil, err
-	}
-	key := hex.EncodeToString(buf)
-	c.Server.JwtKey = &key
-	if err := SaveJSON(paths.Config("config.json"), c); err != nil {
-		return nil, err
-	}
-	return []byte(key), nil
-}
-
 func LoadConfig(paths Paths) (Config, error) {
 	config := DefaultConfig()
 	if err := loadJSON(paths.Config("config.json"), &config); err != nil {

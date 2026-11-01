@@ -20,9 +20,6 @@ type segmentReq struct {
 }
 
 func (s *Server) createSegment(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
-		return
-	}
 	var req segmentReq
 	if !decodeJSON(w, r, &req) {
 		return
@@ -55,9 +52,6 @@ func (s *Server) createSegment(w http.ResponseWriter, r *http.Request) {
 
 // updateSegment：改内容 / 改名。改名 = 把所有 agent 的引用一起搬（同文件内，一次重写）。
 func (s *Server) updateSegment(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
-		return
-	}
 	id := r.PathValue("segment_id")
 	var req struct {
 		NewID *string `json:"new_id"`
@@ -114,9 +108,6 @@ func (s *Server) updateSegment(w http.ResponseWriter, r *http.Request) {
 
 // deleteSegment：删段。**还被引用 ⇒ 拒绝**（列出引用者 —— 先把引用摘掉再删）。
 func (s *Server) deleteSegment(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
-		return
-	}
 	id := r.PathValue("segment_id")
 	if _, builtin := config.BuiltinSegmentByID(id); builtin {
 		writeError(w, http.StatusBadRequest, "invalid", "内置段删不掉（内嵌在应用里）")

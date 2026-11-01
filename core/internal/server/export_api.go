@@ -140,9 +140,6 @@ func (s *Server) exportSession(w http.ResponseWriter, r *http.Request) {
 // 空 messages ⇒ 400；标题给了就用，没给 ⇒ 首条 user 起（与 ST 导入同口径）。
 // 写口 = 设置面（admin）——与 ST 导入一致。
 func (s *Server) importJSON(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
-		return
-	}
 	var req sessionExport
 	if !decodeJSON(w, r, &req) {
 		return
@@ -190,7 +187,7 @@ func (s *Server) importJSON(w http.ResponseWriter, r *http.Request) {
 		modelID = cfg.Defaults.Model
 	}
 	title := strings.TrimSpace(req.Title)
-	session, err := s.store.CreateSession(identityOf(r.Context()).UserID, provider, modelID, "", title)
+	session, err := s.store.CreateSession(provider, modelID, "", title)
 	if err != nil {
 		writeStoreError(w, err)
 		return

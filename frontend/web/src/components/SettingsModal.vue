@@ -7,6 +7,7 @@ import { ref, computed, onMounted, onUnmounted } from "vue";
 import ToggleSwitch from "./ToggleSwitch.vue";
 import TabBar from "./TabBar.vue";
 import AgentEditor from "./AgentEditor.vue";
+import AppearancePane from "./AppearancePane.vue";
 import SegmentEditor from "./SegmentEditor.vue";
 import assistantPreset from "../../presets/assistant.json";
 import rpPreset from "../../presets/rp-agent.json";
@@ -19,7 +20,7 @@ import { buildCartridge, cartridgeAgent } from "../utils/cartridge.js";
 
 // models-changed：渠道/模型那摊变了（删除渠道会连模型一起没）⇒ 让 App 重拉顶栏的模型下拉。
 // 与会话左栏那个 sessions-changed 是**两件事**，别合并（各自的读口不同）。
-const emit = defineEmits(["close", "toggle-left", "sessions-changed", "models-changed", "goto-session"]);
+const emit = defineEmits(["close", "toggle-left", "sessions-changed", "models-changed", "goto-session", "prefs-saved"]);
 // ask：全局确认框（App 的 Overlays.confirmAsk）—— 设置里的删除（会话/渠道/Agent）也必须先摊开再点头。
 // escBlocked：外面临时弹窗（会话设置）开着时，Esc 归它 —— 一次按键不许关两层。
 const props = defineProps({
@@ -416,6 +417,9 @@ function onKey(e) {
           />
 
         </section>
+        <!-- 外观（2026-11-01 从删掉的用户视图搬来）：主题 / 缩放 / 背景图 / 显示模式 /
+             滚动收起 / 发送键 / 预演 / 命令菜单。全部即时生效，改了就存。 -->
+        <AppearancePane v-show="tab === 'appearance'" @prefs-saved="(v) => emit('prefs-saved', v)" />
         <section v-show="tab === 'prompt'" id="panel-prompt" class="panel">
           <template v-if="!editSeg">
             <div class="panel-head">

@@ -133,7 +133,6 @@ type Session struct {
 	SystemPrompt string `json:"system_prompt"` // 空串 = 没覆盖（用 agent 的 ⇒ 世界状态底子算全局）
 	Provider     string `json:"provider"`      // 软引用
 	Model        string `json:"model"`
-	OwnerID      int64  `json:"owner_id"` // 归属（多用户）：0 = admin；消息/摘要/状态都继承它
 	AgentID      string `json:"agent_id"` // 软引用
 	CreatedAt    int64  `json:"created_at"`
 	UpdatedAt    int64  `json:"updated_at"`

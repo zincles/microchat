@@ -69,7 +69,7 @@ func TestEnqueueQueueWithTimes(t *testing.T) {
 // `steps` 那一种形状：显式步骤列表（跨会话也走它）。
 func TestEnqueueQueueWithSteps(t *testing.T) {
 	b := newDummySandbox(t)
-	other, err := b.store.CreateSession(0, "dummy", "dummy", "", "乙")
+	other, err := b.store.CreateSession("dummy", "dummy", "", "乙")
 	if err != nil {
 		t.Fatal(err)
 	}

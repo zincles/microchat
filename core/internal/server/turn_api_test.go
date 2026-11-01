@@ -22,24 +22,18 @@ import (
 
 // 测试用凭据：系统令牌（call 帮手默认带上）+ 一枚随便的 JWT 签名密钥。
 const (
-	testSysToken = "test-sys-token"
-	testJWTKey   = "test-jwt-key"
+	// 鉴权砍了（2026-11-01）⇒ 不再有凭据。这两个留成空串，只为不惊动那几十处调用点。
+	testSysToken = ""
+	testJWTKey   = ""
 )
 
-// enableService：把测试服务带出"未初始化"态（给 root 设一枚占位口令）——
-// 规矩（DEFINE「用户与鉴权」）：root 无口令 ⇒ 服务未启用、除 status/setup 外一律 403
-// `setup_required`。除**鉴权专测**（它们从"未初始化"起步）外，所有测试都要先过这道。
+// enableService：**现在什么也不用做**（从前要给 root 设口令才能让服务"启用"）。
+//
+// 留着这个空壳是因为 `newDummySandboxWith(t, false)` 那条路还在（它表示"停在没初始化的状态"），
+// 而那个状态**已经不存在了** —— 参数 `enable` 现在被忽略，见下面的注释。
 func enableService(t *testing.T, st *store.Store) {
 	t.Helper()
-	needs, err := st.RootNeedsSetup()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if needs {
-		if err := st.SetRootPassword("test-seed"); err != nil {
-			t.Fatal(err)
-		}
-	}
+	_, _ = t, st
 }
 
 // newTestServer：一台测试用服务（进程内的 turn / task 登记表各一份，走真的 chat / compact / title / reroll 四层）。
@@ -57,8 +51,7 @@ func newTestServer(st *store.Store, cfg config.Config, paths config.Paths) *Serv
 	// 队列（2026-11-01）：与 main.go 同一条接线 —— 每一步就是一次**阻塞**压缩。
 	queueService := queue.New(st, tasks)
 	queueService.Runner = testStepper{store: st, compact: compactService}
-	return New(st, cfg, paths, chatService, compactService, rerollService, tasks, queueService,
-		[]byte(testJWTKey), testSysToken)
+	return New(st, cfg, paths, chatService, compactService, rerollService, tasks, queueService)
 }
 
 // testStepper：`main.compactStepper` 的测试版。
@@ -107,7 +100,7 @@ func newDummySandboxWith(t *testing.T, enable bool) *dummySandbox {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	session, err := st.CreateSession(0, "dummy", "dummy", "", "")
+	session, err := st.CreateSession("dummy", "dummy", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

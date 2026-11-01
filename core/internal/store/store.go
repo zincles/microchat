@@ -74,7 +74,32 @@ func (s *Store) migrate() error {
 			return err
 		}
 	}
-	return nil
+	return s.dropRetired()
+}
+
+// dropRetired：把**已经不用的老结构**顺手清掉（幂等，每次打开都跑一遍）。
+//
+// 2026-11-01 砍掉账号功能：`users` 表与 `sessions.owner_id` 不再有任何读写。
+// ⚠ 新库本来就没有它们（`001.sql` 已经删了那一段），老库则**还留着** —— 而迁移靠
+// `PRAGMA user_version` 拦着，改 `001.sql` 对老库**不生效**（它不会被重跑）。
+// 所以这里补一把：只删"那一列/那张表在不在都行"的东西，**绝不碰会话、消息、摘要的数据**。
+//
+// ⚠ 两步都要判存在：`DROP COLUMN` 在 SQLite 3.35+ 才有，`DROP TABLE IF EXISTS` 则一直都有；
+//   万一某天它已经在别处删过了，这里再跑一次也不能报错（每次打开都跑）。
+func (s *Store) dropRetired() error {
+	if _, err := s.db.Exec("DROP TABLE IF EXISTS users"); err != nil {
+		return err
+	}
+	var hasColumn int
+	if err := s.db.QueryRow(
+		"SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'owner_id'").Scan(&hasColumn); err != nil {
+		return err
+	}
+	if hasColumn == 0 {
+		return nil // 新库：本来就没有
+	}
+	_, err := s.db.Exec("ALTER TABLE sessions DROP COLUMN owner_id")
+	return err
 }
 
 // UserVersion：库当前的迁移版本。

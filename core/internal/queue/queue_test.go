@@ -91,11 +91,11 @@ func waitState(t *testing.T, svc *Service, id string, want task.State) Queue {
 // 严格串行 + 全部成功 ⇒ 状态是"成功"，Index == 总步数，且**一步跑完才开下一步**。
 func TestQueueRunsStepsSerially(t *testing.T) {
 	st := openTemp(t)
-	first, err := st.CreateSession(0, "dummy", "dummy", "", "甲")
+	first, err := st.CreateSession("dummy", "dummy", "", "甲")
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := st.CreateSession(0, "dummy", "dummy", "", "乙")
+	second, err := st.CreateSession("dummy", "dummy", "", "乙")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,11 +132,11 @@ func TestQueueRunsStepsSerially(t *testing.T) {
 // 一步失败 ⇒ 整个队列停在那儿，**不再跑后面的**。
 func TestQueueStopsOnFirstFailure(t *testing.T) {
 	st := openTemp(t)
-	a, err := st.CreateSession(0, "dummy", "dummy", "", "甲")
+	a, err := st.CreateSession("dummy", "dummy", "", "甲")
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := st.CreateSession(0, "dummy", "dummy", "", "乙")
+	b, err := st.CreateSession("dummy", "dummy", "", "乙")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func TestQueueStopsOnFirstFailure(t *testing.T) {
 // 取消：在飞的那一发立刻返回，队列落到"取消"，后面的步骤不再开。
 func TestQueueCancelAbortsInFlightStep(t *testing.T) {
 	st := openTemp(t)
-	a, err := st.CreateSession(0, "dummy", "dummy", "", "甲")
+	a, err := st.CreateSession("dummy", "dummy", "", "甲")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +225,7 @@ func TestQueueCancelAbortsInFlightStep(t *testing.T) {
 // 取消是幂等的：已经结束的队列再按一次，原样返回、不报错、不改结局。
 func TestCancelIsIdempotent(t *testing.T) {
 	st := openTemp(t)
-	a, err := st.CreateSession(0, "dummy", "dummy", "", "甲")
+	a, err := st.CreateSession("dummy", "dummy", "", "甲")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +252,7 @@ func TestCancelIsIdempotent(t *testing.T) {
 // 入参校验：空队列 / 会话不存在 / 不认识的 kind —— 全在**开跑之前**被拒。
 func TestEnqueueValidatesBeforeRunning(t *testing.T) {
 	st := openTemp(t)
-	a, err := st.CreateSession(0, "dummy", "dummy", "", "甲")
+	a, err := st.CreateSession("dummy", "dummy", "", "甲")
 	if err != nil {
 		t.Fatal(err)
 	}

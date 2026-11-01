@@ -257,8 +257,11 @@ export function deletionPlanSummary(plan) {
 
 // ---- 设置 modal 纯逻辑（无 DOM，测试直引） ----
 
-// SETTINGS_TABS：设置视图五区（顺序固定）—— **id 与中文名同一份**（按钮标签、panel id 都从它来）。
-// （原来的「界面」区已搬到用户视图；用户视图与设置视图平级，不带 tab。）
+// SETTINGS_TABS：设置视图六区（顺序固定）—— **id 与中文名同一份**（按钮标签、panel id 都从它来）。
+// 「外观」区 2026-11-01 搬回设置（用户定：「把外观设置做到设置里」）——
+// 它原本住**用户视图**（`UserView.vue`），而那个视图随账号功能一起删了：
+// 身份/用户管理跟着账号没了，个人偏好（主题/缩放/背景图/显示模式/发送键/预演/命令菜单）
+// 整块搬进这一区，一个字都没改口径。
 // 「连接」区 2026-10-28 **删掉**：那一页只有「后端地址 + Token」两格，而单容器部署里浏览器
 // 永远同源（vite 把 /api 代理给后端），地址是启动自检自动探出来的；连不上时门板会自己弹出来
 // 让人填 —— 正常部署里这格一辈子用不到。更糟的是它的「保存」按钮绑的 `saveNet` 在重构时丢了，
@@ -270,6 +273,7 @@ export const SETTINGS_TABS = [
   { id: "agent", label: "智能体" },
   { id: "provider", label: "渠道" },
   { id: "prompt", label: "提示词" },
+  { id: "appearance", label: "外观" },
 ];
 
 // formatRoutesOutcome：刷路由回形 {provider, models, error?} ⇒ 缓存行文案。

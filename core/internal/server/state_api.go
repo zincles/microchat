@@ -186,7 +186,7 @@ func (s *Server) requireSession(w http.ResponseWriter, r *http.Request) (*model.
 		writeStoreError(w, err)
 		return nil, false
 	}
-	if session == nil || !ownedBy(r, session) {
+	if session == nil {
 		// 找不到 / 不是我的 ⇒ **都回 404**（不泄露"存在但不给你"，DEFINE「用户与鉴权」）
 		writeError(w, http.StatusNotFound, "not_found", "会话不存在")
 		return nil, false
@@ -194,24 +194,17 @@ func (s *Server) requireSession(w http.ResponseWriter, r *http.Request) (*model.
 	return session, true
 }
 
-// ownedBy：这条会话归请求里的这个人吗？admin / 系统身份视为"都归他"。
-func ownedBy(r *http.Request, session *model.Session) bool {
-	id := identityOf(r.Context())
-	if id.Admin || id.Sys {
-		return true
-	}
-	return session.OwnerID == id.UserID
-}
-
-// ownsSession：一切**按 id 直取**的会话处理器（PATCH/DELETE/Copy…）从它进 ——
-// 找不到 / 不是我的都 404；通过则真值。
+// ownsSession：一切**按 id 直取**的会话处理器（PATCH/DELETE/Copy…）从它进。
+//
+// 2026-11-01 起没有"归谁"了（账号砍了）：只判**在不在** —— 名字留着，是因为
+// 十几处调用点都在用它当"会话存在吗"的闸，且它顺手把 404 的措辞统一在一处。
 func (s *Server) ownsSession(w http.ResponseWriter, r *http.Request, id string) bool {
 	session, err := s.store.GetSession(id)
 	if err != nil {
 		writeStoreError(w, err)
 		return false
 	}
-	if session == nil || !ownedBy(r, session) {
+	if session == nil {
 		writeError(w, http.StatusNotFound, "not_found", "会话不存在")
 		return false
 	}

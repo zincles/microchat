@@ -4,9 +4,7 @@
 import { ref } from "vue";
 import { ICONS } from "./icons.js";
 
-defineEmits(["select", "settings", "close", "new", "open-settings", "user", "toggle-left"]);
-// canSettings：**设置 = root 专属**（用户定，2026-10-10）—— 普通用户这儿连按钮都不给。
-const props = defineProps({ canSettings: { type: Boolean, default: true } });
+defineEmits(["select", "settings", "close", "new", "open-settings", "toggle-left"]);
 
 const sessions = ref([]);
 const currentId = ref(null);
@@ -62,21 +60,13 @@ defineExpose({ setSessions });
       </div>
     </div>
     <div class="bar-foot">
+      <!-- 设置：2026-11-01 起**没有"root 专属"这回事**（账号砍了），谁都能进；
+           外观那一区在同一天从删掉的用户视图搬了进来。 -->
       <button
-        id="user-open"
-        class="foot-btn"
-        type="button"
-        title="用户（身份 / 改口令 / 外观 / 输入）"
-        @click="$emit('user')"
-      >
-        <span class="fb-icon" v-html="ICONS.user"></span>用户
-      </button>
-      <button
-        v-if="props.canSettings"
         id="settings-open"
         class="foot-btn"
         type="button"
-        title="设置（root 专属）"
+        title="设置（渠道 / 智能体 / 提示词 / 外观）"
         @click="$emit('open-settings')"
       >
         <span class="fb-icon" v-html="ICONS.settings"></span>设置

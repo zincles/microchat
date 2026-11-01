@@ -2,7 +2,7 @@
 // App.vue —— 三栏骨架 + 全部接线（原 main.js + 九个桥，合一）。
 // 组件直接挂模板，ref 直调实例方法，不再经 *-vue.js 桥 / mount.js。
 import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from "vue";
-import { mergeStreamSlice, probeAuthStatus } from "./api/client.js";
+import { mergeStreamSlice, probeHealth } from "./api/client.js";
 import { parseCommand, filterCommands, COMMAND_META } from "./utils/commands.js";
 import { resetChrome as resetChromeState, stepChrome } from "./utils/chrome.js";
 import { uuidv7 } from "./utils/ids.js";
@@ -14,7 +14,7 @@ import {
 import { applyBackground } from "./utils/background.js";
 import { installViewportFit } from "./utils/viewport.js";
 import { classifyAxis, pickDrag, dragProgress, resolveRelease } from "./utils/swipe.js";
-import { sharedApi, previewOn, applyTheme, wantsSend, apiBase, apiToken, apiBaseCandidates, saveNetPrefs, lastSessionId, saveLastSession, commandMenuOn, applyComposerStyle, applyTextScale, chromeHideOn } from "./utils/prefs.js";
+import { sharedApi, previewOn, applyTheme, wantsSend, apiBase, apiBaseCandidates, saveNetPrefs, lastSessionId, saveLastSession, commandMenuOn, applyComposerStyle, applyTextScale, chromeHideOn } from "./utils/prefs.js";
 import {
   groupModelsByProvider,
   deletionPlanSummary,
@@ -29,12 +29,10 @@ import SessionBar from "./components/SessionBar.vue";
 import MessageBubble from "./components/MessageBubble.vue";
 import SummaryCard from "./components/SummaryCard.vue";
 import SummaryEditor from "./components/SummaryEditor.vue";
-import ConnectGate from "./components/ConnectGate.vue";
 import Composer from "./components/Composer.vue";
 import ContextWorkspace from "./components/ContextWorkspace.vue";
 import Toast from "./components/Toast.vue";
 import SettingsModal from "./components/SettingsModal.vue";
-import UserView from "./components/UserView.vue";
 import SessionSettings from "./components/SessionSettings.vue";
 import Overlays from "./components/Overlays.vue";
 import UpdateBar from "./components/UpdateBar.vue";
@@ -83,8 +81,6 @@ function onPickAction(action, item) {
 }
 
 // —— 会话状态 ——
-const showGate = ref(false); // 启动探不通后端 ⇒ 先给"连接"门板（见 boot）
-const gateError = ref("");
 let sessionID = null;
 // 会话世代：进会话/回草稿就 +1。所有会话域的异步续写都在 await 后核对本世代，对不上就丢 ——
 // 没有这道闸，快速切会话时迟到的 A 续写会覆掉已切到的 B 的抬头与消息列（实测复现过：
@@ -111,10 +107,7 @@ const summaryMsgs = reactive(new Map()); // 摘要 id → {state:"loading"|"read
 const openSummaries = new Set(); // 哪些卡正展开着（reload 后补拉新鲜的）
 const vueAgents = ref([]); // 生效 agent 列表（草稿首段的合成气泡看它；显示形态本身已无开关）
 const settingsOpen = ref(false);
-const userOpen = ref(false); // 用户视图（与设置平级：一个管登录者，一个管实例）
-const currentUser = ref(null); // 当前登录者（boot 时问 /auth/me；用户视图也自己问一遍）
 // **设置 = root 专属**（用户定，2026-10-10）：`is_admin` 才给进设置；其他用户的入口按钮也不给。
-const isAdmin = computed(() => !!currentUser.value?.is_admin);
 const compactDefault = ref(null); // chat.compact_blocks（压缩面板输入框的占位提示）
 const sessionSettingsId = ref(null);
 
@@ -945,57 +938,40 @@ async function enterSession(id) {
 }
 async function boot() {
   // 自检按候选顺序探（没存过地址时：先"跟页面同主机的 8787"，再"同源 /api/v1"兜底反代部署）。
-  // 探测走开放的 `/auth/status`（没有凭据也能问"后端活着吗、注册开了没"）。
-  let st = null;
+  //
+  // 2026-11-01：探的口从 `/auth/status` 换成 `/health`（鉴权砍了，那个口也没了）。
+  // 判据照旧两道（都是踩过的坑）：地址先 `normalizeApiBase`（裸地址会被 fetch 当相对路径、
+  // 被 vite 的 200 HTML 骗过）；回体必须是 JSON 且 `status:"ok"`。
+  let health = null;
   let lastErr = null;
   let winner = "";
   for (const cand of apiBaseCandidates()) {
     try {
-      st = await probeAuthStatus(cand);
+      health = await probeHealth(cand);
       winner = cand;
       break;
     } catch (err) {
       lastErr = err;
     }
   }
-  if (!st) {
-    // 连不上后端：不开一副破界面，先给"连接"面板（新设备第一次打开走的也是这儿）。
-    gateError.value = String(lastErr?.message ?? lastErr);
-    showGate.value = true;
+  if (!health) {
+    // 连不上后端：不开一副破界面，就明说"连不上"，并把试过的地址列出来 ——
+    // 从前这里弹的是一张要填地址/口令的**门板**，账号砍了之后那种门板没有意义了
+    //（没有要填的东西），于是改成一句能照着查的提示。
+    toast(`连不上后端（${String(lastErr?.message ?? lastErr)}）。检查它起没起、地址对不对。`, "error");
+    connText = "未连接";
     return;
   }
   if (winner && winner !== apiBase()) {
     // 非首选候选胜出（给了同源等）：存下来 + 刷新 —— sharedApi() 等一切读的都是 apiBase()，
     // 不存的话这一页会指着错的地址干活。一次性闪一下，之后就走存的。
-    saveNetPrefs(winner, apiToken());
+    saveNetPrefs(winner);
     location.reload();
     return;
   }
-  // 鉴权（2026-10-10；uid 0 = root 恒在）：root 没口令 ⇒ 门板初始化；没凭据/凭据失效 ⇒ 门板登录。
-  if (st.needs_setup) {
-    gateError.value = "root 还没初始化：先在门板里设置 root 口令";
-    showGate.value = true;
-    return;
-  }
-  if (!apiToken()) {
-    gateError.value = "请登录";
-    showGate.value = true;
-    return;
-  }
-  try {
-    currentUser.value = await api.me();
-  } catch {
-    gateError.value = "登录已失效：重新登录（改过口令/被踢/换了 key 都会这样）";
-    showGate.value = true;
-    return;
-  }
-  connText = `已连接 v${st.version ?? "?"}`;
-  // 压缩面板的默认块数读的是实例级 chat 配置（设置专属）：只有 admin 去问；普通用户留占位。
-  if (isAdmin.value) {
-    api.getChat().then((c) => { compactDefault.value = c?.compact_blocks ?? null; }).catch(() => {});
-  } else {
-    compactDefault.value = null;
-  }
+  connText = `已连接 v${health.version ?? "?"}`;
+  // 压缩面板的默认块数读的是实例级 chat 配置（现在没有"设置专属"这回事了：本机单人）。
+  api.getChat().then((c) => { compactDefault.value = c?.compact_blocks ?? null; }).catch(() => {});
   // 回到"上次在看的那条会话"（2026-10-11 用户定）：刷新 / 被安卓丢弃后重载 ⇒ 不再是一张空草稿。
   // 记的 id 取不到（删了 / 换人登录 / 别的设备）⇒ 回落草稿 —— 取不到就是取不到，不猜。
   const last = lastSessionId();
@@ -1450,19 +1426,12 @@ function onMessagesScroll() {
 // —— 设置视图（与对话同级，2026-10-10） ——
 // 窄屏：进/出设置都把左抽屉归位（手机上别让它压着视图）；宽屏：不动侧栏（并排看没问题）。
 function openSettings() {
-  if (!isAdmin.value) { toast("只有 root（管理员）能进设置"); return; }
+  // 2026-11-01：账号砍了 ⇒ 没有"只有管理员能进"这回事（本机单人使用）。
   settingsOpen.value = true;
-  userOpen.value = false; // 与用户视图互斥（平级的两块，一屏只开一个）
   if (narrowLeft()) applySideToggle("sessions-bar", true);
 }
-function openUserView() {
-  userOpen.value = true;
-  settingsOpen.value = false;
-  if (narrowLeft()) applySideToggle("sessions-bar", true);
-}
-function closeUserView() { userOpen.value = false; }
-// 用户视图里存了个人偏好 ⇒ 聊天壳上活着的开关立刻跟上（命令菜单是唯一现在就长短不一的那个）。
-function onUserPrefsSaved() {
+// 外观那一区改完偏好 ⇒ 聊天壳上活着的开关立刻跟上（命令菜单是唯一现在就长短不一的那个）。
+function onPrefsSaved() {
   cmdMenu.value = commandMenuOn();
   if (!chromeHideOn()) resetChrome(document.querySelector("#messages-vue")); // 关掉这功能 ⇒ 栏立刻回来
   if (!cmdMenu.value) overlaysRef.value?.hidePalette();
@@ -1474,16 +1443,14 @@ function closeSettings() {
 // backToChat：**侧栏动作要把人带回对话区**（点会话 / 点＋新对话 / 当前会话被删）—— 唯一出口。
 //
 // 为什么要有它（2026-10-20 用户报："设置里点左侧会话会退出设置进对话，用户视图点了没反应"）：
-// 设置与用户视图是**平级的两块**（一屏只能开一个），所以"让位"必须**同时**管两边。
-// 从前只有 `closeSettings()`（只关设置），而 `closeUserView()` 定义了却**从没被调用过** ⇒
-// 于是侧栏那三个动作在用户视图里**全都**失灵（点会话、`/new`、删当前会话）。
-// 收成一个出口，往后加侧栏动作只需调它 —— 别再成对地手写两个 close（漏一个就是这条 bug 复发）。
+// 2026-11-01 之前这里是"设置与用户视图两块的让位"（那个 bug：`closeUserView()` 定义了却
+// 从没被调用，于是侧栏动作在用户视图里全失灵）。用户视图随账号一起删了 ⇒ 只剩设置要让位，
+// 但**这道出口留着**：往后再加"与对话平级的视图"时，别再成对地手写两个 close。
 //
 // ⚠ 只给**侧栏动作**用它：命令面板（`/resume` `/new` `/delete` 那些）与启动恢复路径**不需要** ——
 // 命令面板挂在聊天壳里（`#chat-col` 有 `v-show`），那两个视图开着时根本触发不到。
 function backToChat() {
   closeSettings();
-  closeUserView();
 }
 // —— 拖拽调宽 ——
 let uninstallViewportFit = null;
@@ -1535,22 +1502,19 @@ onUnmounted(() => {
 
 <template>
   <div id="app">
-    <ConnectGate v-if="showGate" :initial-error="gateError" />
     <div id="columns">
       <SessionBar
         ref="sessionbarRef"
         @toggle-left="toggleLeft"
-        :can-settings="isAdmin"
         @select="(id) => { closeLeftDrawer(); backToChat(); enterSession(id).catch((err) => toast(`进会话失败：${err.message}`, 'error')); }"
         @settings="(id) => { sessionSettingsId = id; }"
-        @user="openUserView"
         @close="askDeleteSession"
         @new="newSession"
         @open-settings="openSettings"
       />
       <div id="scrim-left" @click="toggleLeft"></div>
       <div id="content">
-      <section id="chat-col" v-show="!settingsOpen && !userOpen">
+      <section id="chat-col" v-show="!settingsOpen">
     <TopBar
       ref="topbarRef"
       :left-hidden="leftHidden"
@@ -1630,14 +1594,7 @@ onUnmounted(() => {
       @undo="undoSummary"
     />
       </section>
-      <UserView
-        v-if="userOpen"
-        :esc-blocked="!!sessionSettingsId"
-        @close="closeUserView"
-        @toggle-left="toggleLeft"
-        @prefs-saved="onUserPrefsSaved"
-      />
-      <SettingsModal
+<SettingsModal
         v-if="settingsOpen"
         :ask="askConfirm"
         :esc-blocked="!!sessionSettingsId"

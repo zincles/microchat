@@ -36,9 +36,6 @@ type EnqueueQueueReq struct {
 // **admin 专属**：队列会绕过逐会话的归属检查（它直接调 `compact.Compact`），
 // 所以不能让人拿别人的会话 id 去排队 —— 那等于给别人灌 token。口径同 `/sessions/import-st`。
 func (s *Server) enqueueQueue(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
-		return
-	}
 	var req EnqueueQueueReq
 	if !decodeJSON(w, r, &req) {
 		return
@@ -83,9 +80,6 @@ func (s *Server) enqueueQueue(w http.ResponseWriter, r *http.Request) {
 // 幂等（已经结束的再按一次，原样回它现在的样子）；在飞的那一发会被 ctx 一起掐断 ——
 // 压缩要整段拿到才落库，所以**不会留半条摘要**。
 func (s *Server) cancelQueue(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
-		return
-	}
 	canceled, err := s.queues.Cancel(r.PathValue("queue_id"))
 	if err != nil {
 		writeQueueError(w, err)

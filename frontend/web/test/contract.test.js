@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { createApi, mergeStreamSlice, DEFAULT_API_URL, normalizeApiBase, probeAuthStatus, authLogin } from "../src/api/client.js";
+import { createApi, mergeStreamSlice, DEFAULT_API_URL, normalizeApiBase, probeHealth } from "../src/api/client.js";
 import { parseWireMessages, shouldCollapse, previewBlock, LONG_BLOCK_CHARS } from "../src/utils/payload.js";
 import { assemblePrompt, abilityPrompt, missingSegments } from "../src/utils/prompt.js";
 import { renderMarkdown } from "../src/utils/markdown.js";
@@ -356,25 +356,6 @@ test("提示词段接口形状：路径 / 方法", async () => {
     ["PATCH", "/segments/katex"],
     ["DELETE", "/segments/katex"],
   ]);
-});
-
-test("用户管理接口形状：路径 / 方法 / sessions 查询参数", async () => {
-  const seen = [];
-  const api = createApi({ base: "http://x/api/v1", token: "t", fetchFn: async (url, opts) => { seen.push({ url, opts }); return { status: 200, ok: true, json: async () => ({}) }; } });
-  await api.users();
-  await api.createUser({ name: "alice", password: "hunter22" });
-  await api.patchUser(1000, { name: "alice2" });
-  await api.setUserPassword(1000, "hunter33");
-  await api.deleteUser(1000, "transfer");
-  assert.deepEqual(seen.map(s => [s.opts.method, s.url.replace("http://x/api/v1", "")]), [
-    ["GET", "/users"],
-    ["POST", "/users"],
-    ["PATCH", "/users/1000"],
-    ["POST", "/users/1000/password"],
-    ["DELETE", "/users/1000?sessions=transfer"],
-  ]);
-  assert.deepEqual(JSON.parse(seen[1].opts.body), { name: "alice", password: "hunter22" });
-  assert.deepEqual(JSON.parse(seen[3].opts.body), { password: "hunter33" });
 });
 
 test("载荷分块：parseWireMessages 只认形状（messages 数组），边角字段一个不吞", () => {
@@ -1045,24 +1026,51 @@ test("normalizeApiBase：补协议、补 /api/v1、去尾斜杠、空串回空",
   assert.equal(normalizeApiBase(""), "");
 });
 
-test("probeAuthStatus：先规范化再探 /auth/status；非 microchat 的 200 拒绝；authLogin 形状", async () => {
-  const ok = await probeAuthStatus("x:8787", { fetchFn: async (url) => {
-    assert.equal(url, "http://x:8787/api/v1/auth/status"); // 裸地址 ⇒ 补协议、补 /api/v1
-    return { ok: true, status: 200, json: async () => ({ status: "ok", version: "1", needs_setup: false }) };
+// 启动自检（2026-11-01 换口）：`/auth/status` 随鉴权一起删了 ⇒ 探 `/health`。
+// 两道闸照旧 —— 地址先规范化（裸地址会被 fetch 当相对路径）、回体必须是 microchat 的 JSON。
+test("probeHealth：先规范化再探 /health；非 microchat 的 200 拒绝", async () => {
+  const ok = await probeHealth("x:8787", { fetchFn: async (url) => {
+    assert.equal(url, "http://x:8787/api/v1/health"); // 裸地址 ⇒ 补协议、补 /api/v1
+    return { ok: true, status: 200, json: async () => ({ status: "ok", version: "1" }) };
   } });
-  assert.equal(ok.needs_setup, false);
+  assert.equal(ok.version, "1");
   await assert.rejects(
-    () => probeAuthStatus("http://x:8787", { fetchFn: async () => ({ ok: true, status: 200, json: async () => ({ hello: "world" }) }) }),
+    () => probeHealth("http://x:8787", { fetchFn: async () => ({ ok: true, status: 200, json: async () => ({ hello: "world" }) }) }),
     (e) => /不是 microchat/.test(e.message),
   );
-  const login = await authLogin("x:8787", "alice", "pw", { fetchFn: async (url, opts) => {
-    assert.equal(url, "http://x:8787/api/v1/auth/login");
-    assert.equal(opts.method, "POST");
-    assert.deepEqual(JSON.parse(opts.body), { user: "alice", password: "pw" });
-    return { ok: false, status: 401, json: async () => ({ error: { code: "unauthorized", message: "用户名或口令不对" } }) };
-  } }).catch((e) => e);
-  assert.equal(login.status, 401);
-  assert.equal(login.message, "用户名或口令不对");
+});
+
+// 鉴权与账号**已经砍掉**了（2026-11-01 用户定：只允许来自 127.0.0.1 的访问）。
+// 这条守着"别把 Bearer / 门板 / 用户管理悄悄加回来" —— 前后端一起删过一轮，加回来就是倒退。
+test("鉴权与账号已经砍掉：没有 token、没有门板、没有用户管理", () => {
+  const api = readFileSync(join(SRC, "api", "client.js"), "utf8");
+  const prefs = readFileSync(join(SRC, "utils", "prefs.js"), "utf8");
+  const app = readFileSync(join(SRC, "..", "src", "App.vue"), "utf8");
+  const srcDir = join(SRC, "..", "src");
+
+  // ① API 客户端：没有登录/登出/用户管理那几个口
+  for (const gone of ["authLogin", "authSetup", "probeAuthStatus", "authPost"]) {
+    assert.ok(!api.includes(gone), `api/client.js 还留着 ${gone}`);
+  }
+  for (const gone of ["me: () =>", "logout: () =>", "createUser", "deleteUser", "setUserPassword"]) {
+    assert.ok(!api.includes(gone), `api/client.js 还留着 ${gone}`);
+  }
+
+  // ② 没有凭据存槽
+  assert.ok(!prefs.includes("apiToken"), "prefs.js 还留着 apiToken");
+  assert.ok(!/localStorage\.setItem\("mc_token"/.test(prefs), "prefs.js 还在写 mc_token");
+
+  // ③ 没有门板 / 用户视图（文件都删了）
+  for (const gone of ["ConnectGate.vue", "UserView.vue"]) {
+    assert.ok(!readFileSync(join(srcDir, "App.vue"), "utf8").includes(gone), `App.vue 还在 import ${gone}`);
+    assert.throws(() => readFileSync(join(SRC, "components", gone)), `${gone} 该已经被删掉`);
+  }
+  for (const gone of ["showGate", "gateError", "currentUser", "isAdmin", "userOpen"]) {
+    assert.ok(!app.includes(gone), `App.vue 还留着 ${gone}`);
+  }
+
+  // ④ 启动自检走 /health
+  assert.match(app, /probeHealth\(cand\)/, "启动自检没走 probeHealth");
 });
 
 test("默认后端地址跟着页面走：hostname:8787；IPv6 套方括号；存过的最优先；候选同源在前", () => {
@@ -1220,10 +1228,13 @@ test("主题：theme.css 与下拉必须正好是 THEME_IDS 这三套", () => {
   assert.ok(THEME_IDS.includes(DEFAULT_THEME), `DEFAULT_THEME="${DEFAULT_THEME}" 不在 THEME_IDS 里`);
 
   // 下拉：顺序也照 THEME_IDS（"亮色/暗色/Breeze" 是用户点名的顺序，别在界面上乱换）
-  const vue = readFileSync(join(SRC, "components", "UserView.vue"), "utf8");
-  // ⚠ 必须**只取主题那个 select**：UserView 里还有别的下拉（输入栏形态之类），
+  // 2026-11-01：这块从删掉的 UserView 搬到了 AppearancePane（设置里的「外观」区）。
+  const vue = readFileSync(join(SRC, "components", "AppearancePane.vue"), "utf8");
+  // ⚠ 必须**只取主题那个 select**：这一页还有别的下拉（显示模式、发送键），
   // 广撒网会把 "float" 这种非主题值捞进来（第一版就是这么挂的）。
-  const sel = vue.match(/<select v-model="theme">([\s\S]*?)<\/select>/);
+  // ⚠ 现在这个 select 上多了一个 `@change="persist"`（改了就存，没有保存按钮），
+  // 所以正则要容得下它 —— 钉得太死的写法会在加了事件时误报成下拉没了（刚踩过）。
+  const sel = vue.match(/<select v-model="theme"[^>]*>([\s\S]*?)<\/select>/);
   assert.ok(sel, '没找到 v-model="theme" 那个下拉');
   const chosen = [...sel[1].matchAll(/<option value="([^"]*)">/g)].map((m) => m[1]);
   assert.deepEqual(chosen, THEME_IDS, "主题下拉的 option 与 THEME_IDS 对不上");
@@ -1657,9 +1668,11 @@ test("设置：没有「连接」页，也没有绑不存在的 saveNet", () => 
 test("设置页签：id 与 panel 一一对应", () => {
   const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
   const panels = [...settings.matchAll(/v-show="tab === '([a-z]+)'"/g)].map((m) => m[1]);
-  assert.deepEqual([...panels].sort(), ["agent", "chat", "prompt", "provider", "session"],
+  // 2026-11-01 加了「外观」（从删掉的用户视图搬来）。
+  assert.deepEqual([...panels].sort(), ["agent", "appearance", "chat", "prompt", "provider", "session"],
     `面板与页签对不上了：${panels.join(", ")}`);
-  assert.deepEqual(SETTINGS_TABS.map((t) => t.id), ["chat", "session", "agent", "provider", "prompt"],
+  // 顺序也钉着（`appearance` 2026-11-01 加在最后：外观是调长相，排在最后不打断配置流）。
+  assert.deepEqual(SETTINGS_TABS.map((t) => t.id), ["chat", "session", "agent", "provider", "prompt", "appearance"],
     "SETTINGS_TABS 的顺序变了");
 });
 

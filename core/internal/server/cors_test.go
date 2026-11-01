@@ -1,7 +1,6 @@
 package server
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -87,45 +86,33 @@ func TestPreflightDefaultAllowHeaders(t *testing.T) {
 	}
 }
 
-// 鉴权**恒开**（DEFINE「用户与鉴权」）：无 / 错凭据 ⇒ 401（且**带 CORS 头**，否则浏览器读不到这个错误）；
-// 系统令牌 ⇒ 200。
-func TestAuthEnforcedAlways(t *testing.T) {
+// 鉴权**已经没有了**（2026-11-01 用户定：砍掉鉴权，只允许来自 127.0.0.1 的访问）。
+//
+// 这条测试反过来钉住那件事：**不带任何凭据也要 200**。它不是"忘了测鉴权"，
+// 而是"鉴权被刻意删掉了"的证据 —— 哪天谁把 Bearer 那套加回来，这里会立刻红。
+//
+// ⚠ 真正的访问闸门不在这儿（Go 看到的来源永远是 127.0.0.1：浏览器 → vite 8788 → 代理到 8787），
+//   而是 `docker-compose.yml` 里那个 `127.0.0.1:8788:8788` 绑定。
+func TestNoAuthRequired(t *testing.T) {
 	server := newCORSServer(t)
 
-	noToken := corsRequest(server, "GET", "/api/v1/health", map[string]string{"Origin": "http://x"})
-	if noToken.Code != http.StatusUnauthorized {
-		t.Fatalf("无 token 状态码 = %d，想要 401", noToken.Code)
+	bare := corsRequest(server, "GET", "/api/v1/health", map[string]string{"Origin": "http://x"})
+	if bare.Code != http.StatusOK {
+		t.Fatalf("不带凭据该 200（鉴权已砍），得到 %d：%s", bare.Code, bare.Body.String())
 	}
-	assertCORS(t, noToken, "http://x")
-	var body struct {
-		Error struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	if err := json.Unmarshal(noToken.Body.Bytes(), &body); err != nil {
-		t.Fatalf("401 响应体不是固定错误体：%v（%s）", err, noToken.Body.String())
-	}
-	if body.Error.Code != "unauthorized" || body.Error.Message == "" {
-		t.Fatalf("401 错误体 = %+v，想要 code=unauthorized", body.Error)
+	assertCORS(t, bare, "http://x")
+
+	// 带一个瞎编的 Authorization 也不该被拒（那个头现在完全没人看）。
+	stray := corsRequest(server, "GET", "/api/v1/health", map[string]string{"Authorization": "Bearer nope"})
+	if stray.Code != http.StatusOK {
+		t.Fatalf("带个无效 Authorization 也不该被拒，得到 %d", stray.Code)
 	}
 
-	wrong := corsRequest(server, "GET", "/api/v1/health", map[string]string{"Authorization": "Bearer nope"})
-	if wrong.Code != http.StatusUnauthorized {
-		t.Fatalf("错 token 状态码 = %d，想要 401", wrong.Code)
-	}
-
-	ok := corsRequest(server, "GET", "/api/v1/health", map[string]string{"Authorization": "Bearer " + testSysToken})
-	if ok.Code != http.StatusOK {
-		t.Fatalf("对 token 状态码 = %d，想要 200", ok.Code)
-	}
-}
-
-// 鉴权**恒开**（DEFINE「用户与鉴权」）：什么都没配也**不**放行 —— 没凭据就是 401。
-func TestAuthAlwaysOnWithoutToken(t *testing.T) {
-	server := newCORSServer(t)
-	if got := corsRequest(server, "GET", "/api/v1/health", nil).Code; got != http.StatusUnauthorized {
-		t.Fatalf("无凭据状态码 = %d，想要 401", got)
+	// 鉴权相关的路由整批不存在了：路径不在 ⇒ 404（不是 401，也不是 405）。
+	for _, path := range []string{"/api/v1/auth/status", "/api/v1/auth/login", "/api/v1/users"} {
+		if got := corsRequest(server, "GET", path, nil).Code; got != http.StatusNotFound {
+			t.Fatalf("%s 该 404（那条路由已经删了），得到 %d", path, got)
+		}
 	}
 }
 

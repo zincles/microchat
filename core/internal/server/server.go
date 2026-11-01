@@ -5,8 +5,6 @@ package server
 
 import (
 	"bytes"
-	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"io"
@@ -15,7 +13,6 @@ import (
 	"strconv"
 	"strings"
 
-	"microchat/internal/auth"
 	"microchat/internal/chat"
 	"microchat/internal/compact"
 	"microchat/internal/config"
@@ -40,10 +37,6 @@ type Server struct {
 	// telegram：bot 的活 runner（main 登记；只用来问"跑没跑" —— 启停归 main）。
 	telegram TelegramRunner
 	mux      *http.ServeMux
-	// 鉴权（DEFINE「用户与鉴权」）：jwtKey 签/验登录令牌；sysToken 是**环回系统令牌**
-	// （TUI/TG 与 server 同进程，启动时现铸、只走内存）——中间件认它 = 系统身份（等同 admin）。
-	jwtKey   []byte
-	sysToken string
 }
 
 // TelegramRunner：bot 跑没跑 —— Server 只读这一句（启停归 main，见 main.startTelegramBot）。
@@ -56,25 +49,13 @@ func (s *Server) SetTelegramRunner(runner TelegramRunner) { s.telegram = runner 
 // （server 只编排：解析请求、定错误码、写响应）。
 func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *chat.Service,
 	compactService *compact.Service, rerollService *reroll.Service, tasks *task.Registry,
-	queues *queue.Service, jwtKey []byte, sysToken string) *Server {
+	queues *queue.Service) *Server {
 	s := &Server{store: st, config: cfg, paths: paths, chat: chatService, compact: compactService,
-		rerolls: rerollService, tasks: tasks, queues: queues, mux: http.NewServeMux(),
-		jwtKey: jwtKey, sysToken: sysToken}
+		rerolls: rerollService, tasks: tasks, queues: queues, mux: http.NewServeMux()}
 	// Go 1.22+ 的 ServeMux 原生支持 `GET /x/{id}` 这种模式 —— 连路由库都不需要。
 	s.mux.HandleFunc("GET /api/v1/health", s.health)
 	// 鉴权（DEFINE「用户与鉴权」）：status/login/register 是**仅有的三处开放口**
 	// （register 另有"还没有用户"的闸）；其余一切都要有效凭据。
-	s.mux.HandleFunc("GET /api/v1/auth/status", s.authStatus)
-	s.mux.HandleFunc("POST /api/v1/auth/setup", s.authSetup)
-	s.mux.HandleFunc("POST /api/v1/auth/login", s.authLogin)
-	s.mux.HandleFunc("GET /api/v1/auth/me", s.authMe)
-	s.mux.HandleFunc("POST /api/v1/auth/logout", s.authLogout)
-	// 用户管理（admin；S2 2026-10-10）：改口令"自己改自己"谁都行 —— 见 users_api.go 的注释。
-	s.mux.HandleFunc("GET /api/v1/users", s.listUsers)
-	s.mux.HandleFunc("POST /api/v1/users", s.createUser)
-	s.mux.HandleFunc("PATCH /api/v1/users/{user_id}", s.updateUser)
-	s.mux.HandleFunc("POST /api/v1/users/{user_id}/password", s.setUserPassword)
-	s.mux.HandleFunc("DELETE /api/v1/users/{user_id}", s.deleteUser)
 	s.mux.HandleFunc("GET /api/v1/debug/last-payload", s.lastPayload)
 	s.mux.HandleFunc("GET /api/v1/sessions", s.listSessions)
 	s.mux.HandleFunc("POST /api/v1/sessions", s.createSession)
@@ -182,7 +163,8 @@ func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *ch
 // ⇒ 要是先撞鉴权就是 401、预检失败、正式请求根本发不出去。所以 OPTIONS 在 CORS 这一层就被接管，
 // 永远进不到鉴权，也进不到路由（405 那条口径不受影响：只有 `OPTIONS` 被我们截下）。
 // 反过来 CORS 头要盖住**每一个**响应（200 / 401 / 404 / 405 / 错误体）⇒ CORS 必须在最外层。
-func (s *Server) Handler() http.Handler { return withCORS(s.auth(s.mux)) }
+// Handler：CORS 包一层就够了 —— 2026-11-01 起**没有鉴权**（只听 127.0.0.1，见 AGENTS.md）。
+func (s *Server) Handler() http.Handler { return withCORS(s.mux) }
 
 // withCORS：给每个响应加 CORS 头，并把预检 `OPTIONS` 就地回成 204（无响应体）。
 //
@@ -214,99 +196,6 @@ func withCORS(next http.Handler) http.Handler {
 	})
 }
 
-// auth：**每一个请求都要有效凭据**（DEFINE「用户与鉴权」）—— 除 `GET /auth/status`、
-// `POST /auth/setup`（另有"只开一次"闸）、`POST /auth/login`（另有"服务已启用"闸）三处外，全要 Bearer。
-// 另有一道总闸：**root 无口令 ⇒ 服务未启用**，除 status/setup 外一律 403 `setup_required`。
-// 凭据两种：① **环回系统令牌**（TUI/TG 与 server 同进程，启动现铸、内存传递）＝系统身份（等同 admin）；
-// ② 用户 **JWT**（登录换的）—— 验签后再核 `ver`（改口令/踢人 ⇒ 旧令牌立刻失效）。
-// 预检 OPTIONS 已在 CORS 那层截住，到不了这里。
-func (s *Server) auth(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// 三处开放口里，**真开放**的只有 status 与 setup（login 要等"服务已启用"，见下）。
-		if (r.Method == http.MethodGet && r.URL.Path == "/api/v1/auth/status") ||
-			(r.Method == http.MethodPost && r.URL.Path == "/api/v1/auth/setup") {
-			next.ServeHTTP(w, r)
-			return
-		}
-		// root 没口令 ⇒ **整个后端服务未启用**（用户 2026-10-10 定规矩）：除上面两处外一律挡
-		// —— 连 login 与环回系统令牌都一样（"必须先设密码才能启用服务功能；否则其他用户也无法创建"）。
-		if needs, err := s.store.RootNeedsSetup(); err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", "查用户失败")
-			return
-		} else if needs {
-			writeError(w, http.StatusForbidden, "setup_required", "服务还没启用：先完成「初始化 root」（POST /auth/setup）")
-			return
-		}
-		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/auth/login" {
-			next.ServeHTTP(w, r)
-			return
-		}
-		token := bearerToken(r.Header.Get("Authorization"))
-		if token == "" {
-			writeError(w, http.StatusUnauthorized, "unauthorized", "缺少或错误的 Authorization")
-			return
-		}
-		if subtle.ConstantTimeCompare([]byte(token), []byte(s.sysToken)) == 1 {
-			next.ServeHTTP(w, r.WithContext(withIdentity(r.Context(), identity{Sys: true, Admin: true, UserID: 0})))
-			return
-		}
-		claims, err := auth.Verify(s.jwtKey, token)
-		if err != nil {
-			writeError(w, http.StatusUnauthorized, "unauthorized", "令牌无效或已过期")
-			return
-		}
-		user, err := s.store.GetUserByID(claims.UserID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", "查用户失败")
-			return
-		}
-		if user == nil || user.Ver != claims.Ver {
-			writeError(w, http.StatusUnauthorized, "unauthorized", "凭据已失效（改过口令或被踢）")
-			return
-		}
-		next.ServeHTTP(w, r.WithContext(withIdentity(r.Context(), identity{UserID: user.ID, Admin: user.IsAdmin})))
-	})
-}
-
-// identity：这个请求落在谁头上（中间件放进去的；三个开放口没有它）。
-type identity struct {
-	UserID int64
-	Admin  bool
-	Sys    bool
-}
-
-type identityKey struct{}
-
-func withIdentity(ctx context.Context, id identity) context.Context {
-	return context.WithValue(ctx, identityKey{}, id)
-}
-
-func identityOf(ctx context.Context) identity {
-	id, _ := ctx.Value(identityKey{}).(identity)
-	return id
-}
-
-// requireAdmin：实例级资源的**写**口（providers / agents / config）只有 admin（或系统身份）能动 ——
-// 它们一改人人都受影响；读不限（任何登录者）。
-func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
-	id := identityOf(r.Context())
-	if id.Admin || id.Sys {
-		return true
-	}
-	writeError(w, http.StatusForbidden, "forbidden", "只有管理员能做这件事")
-	return false
-}
-
-// bearerToken：从 `Authorization: Bearer <token>` 里取出那条 token（没有/格式不对 = 空串）。
-// 比较一律走调用方的**定长比较**（subtle），免得按字符早退泄漏凭据形状。
-func bearerToken(header string) string {
-	const prefix = "Bearer "
-	if !strings.HasPrefix(header, prefix) {
-		return ""
-	}
-	return header[len(prefix):]
-}
-
 // health：探针（Rust 版回 {"status","version"}）。
 // health：版本号与 Rust 版**刻意对齐** —— 这个端口要取代它，形状必须一模一样。
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
@@ -318,7 +207,7 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 //
 // 状态是**进程内**的事实：后端一重启就全是 idle —— 那是诚实的（没有生成在跑）。
 func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
-	sessions, err := s.store.ListSessions(identityOf(r.Context()).UserID)
+	sessions, err := s.store.ListSessions()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
@@ -524,7 +413,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	if req.Title != nil {
 		title = *req.Title
 	}
-	session, err := s.store.CreateSessionWithID(identityOf(r.Context()).UserID, id, seed.Provider, seed.Model, req.SystemPrompt, title)
+	session, err := s.store.CreateSessionWithID(id, seed.Provider, seed.Model, req.SystemPrompt, title)
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -726,9 +615,6 @@ func (s *Server) copySession(w http.ResponseWriter, r *http.Request) {
 // （provider / model / agent）；标题给了就用（`?title=`），没给 ⇒ 首条 user 起。
 // 回 `{"session", "messages", "skipped"}`（201）。空文件 / 一条可落的都没有 ⇒ 400。
 func (s *Server) importSt(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
-		return
-	}
 	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 32<<20))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid", "读请求体失败："+err.Error())
@@ -748,7 +634,7 @@ func (s *Server) importSt(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
-	session, err := s.store.CreateSession(identityOf(r.Context()).UserID, cfg.Defaults.Provider, cfg.Defaults.Model, "", title)
+	session, err := s.store.CreateSession(cfg.Defaults.Provider, cfg.Defaults.Model, "", title)
 	if err != nil {
 		writeStoreError(w, err)
 		return
