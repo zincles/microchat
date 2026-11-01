@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -172,6 +173,100 @@ func (s *Store) UpdateSummaryText(sessionID, summaryID string, edit SummaryEdit)
 		return model.Summary{}, err
 	}
 	return updated, nil
+}
+
+// ErrSummaryNotTopLevel：想撤销的是一条**被上层盖住**的摘要。
+//
+// 结构上不允许：上层那条的区间还盖着它，撤掉孩子会在**上层的覆盖范围里留一个洞** ——
+// 装配按区间 O(1) 跳，跳过之后那一截既不是原文也不是摘要。
+// （这不是"策略"而是"结构"：就算调用方绕过了 `compact.PlanUndo` 的检查，
+// ③ 那条 DELETE 上挂的条件也让它删不掉。）
+var ErrSummaryNotTopLevel = errors.New("summary_not_top_level")
+
+// UndoResult：撤销一次的账（给测试与日志一个"确实动了东西"的证据）。
+type UndoResult struct {
+	SessionID string `json:"session_id"`
+	SummaryID string `json:"summary_id"`
+	Messages  int    `json:"messages"` // 放回原文的消息条数
+	Children  int    `json:"children"` // 重新变回顶层的子摘要条数
+}
+
+// UndoSummary：撤销一次压缩 —— 把一条**顶层**摘要拿掉，并把被它盖住的东西放回来。
+//
+// 一个事务里三步（顺序就是语义）：
+//
+//	① 孩子的 `parent_summary_id` 置空 ⇒ 合并级撤掉后，子摘要重新变回顶层；
+//	② 直接指向它的消息的 `summary_id` 置空 ⇒ 消息级撤掉后，那几条重新按原文发；
+//	③ 删掉这一条摘要。
+//
+// ⚠ **①必须早于③**：`summaries.parent_summary_id` 是**自引用外键**，外键在**语句末尾**
+// 才核（`ApplyDeletion` 上记着同一条坑）—— 反过来就是 `FOREIGN KEY constraint failed`。
+//
+// ⚠ **②对合并级匹配 0 行**（没有消息会指着一份"摘要的摘要"），所以两种层级共用一段代码。
+//
+// ⚠ 合法性（顶层 + 每层最新）**不在这里判** —— 那是 `compact.PlanUndo` 的纯函数，
+// 界面与接口共用同一份判断。这里只兜住**结构**那条（③上挂着 `parent_summary_id IS NULL`）。
+func (s *Store) UndoSummary(sessionID, summaryID string) (UndoResult, error) {
+	result := UndoResult{SessionID: sessionID, SummaryID: summaryID}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return result, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// ① 孩子重新变回顶层。
+	released, err := tx.Exec(
+		"UPDATE summaries SET parent_summary_id = NULL WHERE session_id = ?1 AND parent_summary_id = ?2",
+		sessionID, summaryID)
+	if err != nil {
+		return result, err
+	}
+	if affected, err := released.RowsAffected(); err == nil {
+		result.Children = int(affected)
+	}
+
+	// ② 消息重新按原文发。
+	unbound, err := tx.Exec(
+		"UPDATE messages SET summary_id = NULL WHERE session_id = ?1 AND summary_id = ?2",
+		sessionID, summaryID)
+	if err != nil {
+		return result, err
+	}
+	if affected, err := unbound.RowsAffected(); err == nil {
+		result.Messages = int(affected)
+	}
+
+	// ③ 删掉这一条。`parent_summary_id IS NULL` = 结构上就删不掉一条被盖住的摘要。
+	deleted, err := tx.Exec(
+		"DELETE FROM summaries WHERE id = ?1 AND session_id = ?2 AND parent_summary_id IS NULL",
+		summaryID, sessionID)
+	if err != nil {
+		return result, err
+	}
+	affected, err := deleted.RowsAffected()
+	if err != nil {
+		return result, err
+	}
+	if affected == 0 {
+		// 没删掉只有两种可能，**得分清楚** —— 统一报 404 会把"被盖住的"也说成"没有这条"。
+		var total int
+		if err := tx.QueryRow(
+			"SELECT COUNT(*) FROM summaries WHERE id = ?1 AND session_id = ?2",
+			summaryID, sessionID).Scan(&total); err != nil {
+			return result, err
+		}
+		if total > 0 {
+			return result, ErrSummaryNotTopLevel
+		}
+		return result, ErrNotFound
+	}
+
+	if _, err := tx.Exec("UPDATE sessions SET updated_at = ?1 WHERE id = ?2", nowMS(), sessionID); err != nil {
+		return result, err
+	}
+	return result, tx.Commit()
 }
 
 // coveredCount：这批 id 里**属于这条会话**的有几条（少一条都说明区间变了）。

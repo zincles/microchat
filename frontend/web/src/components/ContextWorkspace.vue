@@ -20,7 +20,7 @@ const props = defineProps({
 });
 // tab / compact / compact-payload：面板那三件事照旧往上报 ——
 // 压缩树要"看着才拉全量"（App 的 treeVisible），压缩与预演也得让 App 去发请求。
-const emit = defineEmits(["tab", "compact", "compact-payload"]);
+const emit = defineEmits(["tab", "compact", "compact-payload", "undo"]);
 
 // inner：真正的面板。四个 setter 由 App 通过本组件的 expose 一路打到它身上
 // （载荷 / 状态表 / 压缩树 / 压缩那一发的载荷）。
@@ -47,6 +47,7 @@ defineExpose({
       @tab="(t) => emit('tab', t)"
       @compact="(n) => emit('compact', n)"
       @compact-payload="(n) => emit('compact-payload', n)"
+      @undo="(id) => emit('undo', id)"
     />
   </section>
 </template>

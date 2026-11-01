@@ -17,7 +17,7 @@ import { payloadVizOn, savePayloadViz } from "../utils/prefs.js";
 defineProps({
   defaultBlocks: { type: Number, default: null }, // chat.compact_blocks（空输入框的默认，只用于提示）
 });
-const emit = defineEmits(["compact", "tab", "compact-payload"]);
+const emit = defineEmits(["compact", "tab", "compact-payload", "undo"]);
 
 const tab = ref("payload");
 // 切 tab 报给 App：压缩树看着才拉全量账本（窗口化的内存账，见 App.refreshTree）。
@@ -291,7 +291,11 @@ defineExpose({ setWire, setTables, setTree, setCompactWire });
             @click="collapseCompact"
           >折叠全部</button>
         </div>
-        <CompactTree v-model:collapsed="treeCollapsed" :nodes="tree" />
+        <CompactTree
+          v-model:collapsed="treeCollapsed"
+          :nodes="tree"
+          @undo="(id) => emit('undo', id)"
+        />
         <div class="ctree-legend">▾ 折叠 · <i class="ctree-tag">发</i> 这一坨发出的就是它 · <i class="ctree-tag dirty">脏</i> 已过期</div>
       </template>
     </div>

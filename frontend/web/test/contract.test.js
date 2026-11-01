@@ -1993,3 +1993,86 @@ test("上下文面板：三个 tab 不小于正文", () => {
   const pad = em(rule(".bar-head.bar-tabs .tab"), "padding");
   assert.ok(pad >= 0.3, `tab 纵向 padding 只有 ${pad}em —— 触摸目标太小`);
 });
+
+// 撤销压缩（2026-11-01 用户定：「增加一个'删除'图标的按钮，悬停会显示为'撤销'」）。
+//
+// 合法性只有一份（后端 `compact.PlanUndo`：顶层 + 每层最近那次），界面**只读不算** ——
+// 所以这里钉的是"数据搬对了、两处都接上了、不能撤时不是死按钮"。
+test("撤销压缩：树与摘要卡两处按钮，只按后端给的 undoable 亮", () => {
+  const tree = readFileSync(join(SRC, "components", "CompactTree.vue"), "utf8");
+  const card = readFileSync(join(SRC, "components", "SummaryCard.vue"), "utf8");
+  const bar = readFileSync(join(SRC, "components", "PayloadBar.vue"), "utf8");
+  const ws = readFileSync(join(SRC, "components", "ContextWorkspace.vue"), "utf8");
+  const app = readFileSync(join(SRC, "..", "src", "App.vue"), "utf8");
+  const api = readFileSync(join(SRC, "api", "client.js"), "utf8");
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  const treeTpl = tree.slice(tree.indexOf("<template>")).replace(/<!--[\s\S]*?-->/g, "");
+  const cardTpl = card.slice(card.indexOf("<template>")).replace(/<!--[\s\S]*?-->/g, "");
+
+  // ① 接口：DELETE 到 summaries/{id}
+  assert.match(api, /undoSummary:\s*\(sid, sumid\) => call\("DELETE", `\/sessions\/\$\{enc\(sid\)\}\/summaries\/\$\{enc\(sumid\)\}`/,
+    "API 客户端没有 undoSummary（或方法/路径不对）");
+
+  // ② 树行：垃圾桶图标 + 悬停"撤销" + 禁用系在 undoable 上
+  assert.match(treeTpl, /class="ctree-undo"/, "压缩树行没有撤销按钮");
+  assert.match(treeTpl, /:disabled="!r\.n\.undoable"/, "树上的撤销按钮没有系在 undoable 上（会变成能点但失败）");
+  assert.match(treeTpl, /'撤销'/, "树上的撤销按钮悬停没写「撤销」");
+  assert.ok(treeTpl.includes("ICONS.trash"), "树上的撤销按钮没用垃圾桶图标");
+  // 只有摘要行才有 —— 消息行（叶子）不可撤，别长出一颗灰按钮
+  assert.match(treeTpl, /v-if="r\.n\.kind === 'summary'"/, "树上的撤销按钮没有限定在摘要行");
+
+  // ③ 摘要卡：与刷新/编辑并排
+  assert.match(cardTpl, /aria-label="撤销这次压缩"/, "摘要卡没有撤销按钮");
+  assert.match(cardTpl, /:disabled="!summary\.undoable/, "摘要卡的撤销按钮没系在 summary.undoable 上");
+  assert.match(cardTpl, /'撤销'/, "摘要卡的撤销按钮悬停没写「撤销」");
+  assert.ok(cardTpl.includes("ICONS.trash"), "摘要卡的撤销按钮没用垃圾桶图标");
+
+  // ④ 一路往上报：树 → 面板 → 工作区 → App（少一环就是点了没反应）
+  assert.match(tree, /defineEmits\(\[[^\]]*"undo"/, "CompactTree 没声明 undo 事件");
+  assert.match(bar, /@undo="\(id\) => emit\('undo', id\)"/, "面板没把树的 undo 往上报");
+  assert.match(bar, /defineEmits\(\[[^\]]*"undo"/, "面板没声明 undo");
+  assert.match(ws, /@undo="\(id\) => emit\('undo', id\)"/, "工作区没把 undo 往上报");
+  assert.match(ws, /defineEmits\(\[[^\]]*"undo"/, "工作区没声明 undo");
+  // App：两处都接上（摘要卡给自己那条 id；工作区把 id 透传给同一个处理函数）
+  assert.match(app, /@undo="undoSummary\(row\.summary\.id\)"/, "App 没接摘要卡的 undo");
+  assert.match(app, /@undo="undoSummary"/, "App 没接工作区的 undo");
+  assert.match(app, /async function undoSummary\(summaryID\)/, "App 没有 undoSummary");
+  // 撤销会让装配**变长**（那段回到原文）⇒ 三个视图都要重算，少一个就是数字不更新
+  const fn = app.match(/async function undoSummary\(summaryID\)[\s\S]*?\n\}/)?.[0] ?? "";
+  assert.match(fn, /reloadWindow\(\)/, "撤销后没重拉消息列（装配变长了）");
+  assert.match(fn, /refreshStateView\(/, "撤销后没刷新状态视图");
+  assert.match(fn, /refreshStatusline\(/, "撤销后没刷新上下文环");
+  // 失败要把后端那句话原样给人看（409 的理由是"第 N 层最近一次"，比"撤销失败"有用）
+  assert.match(fn, /err\.message/, "撤销失败时没显示出后端给的说明");
+
+  // ⑤ 禁用态必须显式压暗（否则是个"看起来能点"的死按钮）
+  assert.match(css, /\.ctree-undo:disabled/, "树上撤销按钮没给禁用样式");
+  assert.match(css, /\.ctree-undo:disabled\s*\{[^}]*opacity/, "禁用态没压暗");
+});
+
+// 数据层：`buildCompactTree` 要把后端的 undoable/level 搬到树上（界面不自己判）。
+test("撤销压缩：树节点原样搬后端的 undoable / level", () => {
+  const msgs = [
+    { id: "m1", idx: 1, role: "user", content: "a".repeat(10), summary_id: "s1" },
+    { id: "m2", idx: 2, role: "assistant", content: "b".repeat(10), summary_id: "s1" },
+    { id: "m3", idx: 3, role: "user", content: "c" },
+  ];
+  // 后端算了：s1 在第 2 层、可撤。
+  const s1 = { id: "s1", parent_summary_id: null, type: "summary", begin_message_id: "m1",
+    end_message_id: "m2", blocks: 1, tokens: 9, dirty: false, text: "梗概", level: 2, undoable: true };
+  const tree = buildCompactTree(msgs, [s1]);
+  const top = tree[0];
+  assert.equal(top.kind, "summary");
+  assert.equal(top.undoable, true, "undoable 没搬到树上");
+  assert.equal(top.level, 2, "level 没搬到树上");
+
+  // 后端没给（缺席）⇒ 不能撤。这是唯一口径：`!!s.undoable`。
+  s1.undoable = undefined;
+  const tree2 = buildCompactTree(msgs, [s1]);
+  assert.equal(tree2[0].undoable, false, "undoable 缺席时该按不可撤处理");
+
+  // 消息节点没有撤销这回事。
+  const leaf = tree2.find((n) => n.kind === "message");
+  assert.ok(leaf, "该有一条消息叶子");
+  assert.ok(!leaf.undoable, "消息节点不该带 undoable");
+});

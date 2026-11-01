@@ -411,6 +411,18 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .ctree-tag { flex: none; font-style: normal; font-size: 0.78em; color: var(--tg-link); border: 1px solid currentColor; border-radius: 4px; padding: 0 0.25em; }
 .ctree-tag.dirty { color: var(--tg-destructive); }
 .ctree-size { position: relative; flex: none; color: var(--tg-hint); font-size: 0.85em; }
+/* 树行的「撤销」（2026-11-01 用户定：垃圾桶图标、**悬停说'撤销'**）。
+ * 平铺口径：没有边框没有底色，就是个图标 —— 与 .ctree-tw（折叠箭头）同一族。
+ * 不能撤的**留着但禁用**（让人看见这儿本来能撤），禁用态要**显式压暗**，
+ * 否则它会看起来照样能点，点下去什么都没发生（"死按钮"的老毛病）。
+ * `position: relative` 是必需的：容量条 `.ctree-bar` 是绝对定位的底层，不抬起来会被它盖住。 */
+.ctree-undo { position: relative; flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 1.5em; height: 1.5em; padding: 0; background: none; border: none; border-radius: 4px;
+  color: var(--tg-hint); cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.ctree-undo:hover:not(:disabled) { color: var(--tg-destructive); background: color-mix(in srgb, var(--tg-destructive) 12%, transparent); }
+.ctree-undo:disabled { opacity: 0.28; cursor: default; }
+.ctree-undo:focus-visible { outline: 2px solid color-mix(in srgb, var(--tg-destructive) 55%, transparent); outline-offset: 1px; }
+.ctree-undo svg { display: block; }
 #chat-col { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; margin: 0 auto; width: 100%; max-width: 100%; position: relative; background: transparent; border-radius: 0; overflow: hidden; padding: 0; }
 /* 阅读列约束（760px 居中）：只管**消息列与输入行**；顶栏豁免 —— 它是贴边的平栏
  * （2026-10-10 用户定："非 floating + 外框"；早先 `> *` 通配把顶栏也框进来了，

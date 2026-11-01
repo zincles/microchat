@@ -19,7 +19,7 @@ defineProps({
 });
 // 卡里的原文气泡**只读**：不给 messageId ⇒ MessageBubble 不画操作行（用户定：展开里不许编辑/修改）。
 // refresh = 摇新一版（当前那版留在第 1 位，不丢）；edit = 应用内编辑器；version = ◀▶ 翻版（最右再按 = 再摇）。
-defineEmits(["toggle-raw", "refresh", "edit", "version"]);
+defineEmits(["toggle-raw", "refresh", "edit", "version", "undo"]);
 </script>
 
 <template>
@@ -51,6 +51,18 @@ defineEmits(["toggle-raw", "refresh", "edit", "version"]);
           aria-label="编辑摘要"
           @click="$emit('edit')"
           v-html="ICONS.pencil"
+        ></button>
+        <!-- 撤销这次压缩（2026-11-01 用户定）：垃圾桶图标，**悬停说'撤销'**。
+             只有合法的能点（`summary.undoable` 由后端算：顶层 + 每层最近那次）。
+             不能撤的**留着但禁用** —— 让人看见"这儿本来能撤"，配上说明才不是死按钮。 -->
+        <button
+          type="button"
+          class="edit-btn"
+          :disabled="!summary.undoable || (!!reroll && reroll.running)"
+          :title="summary.undoable ? '撤销' : '只有每层最近的那一次压缩可以撤销'"
+          aria-label="撤销这次压缩"
+          @click="$emit('undo')"
+          v-html="ICONS.trash"
         ></button>
         <span v-if="reroll && reroll.running" class="sum-busy">刷新中…</span>
       </span>

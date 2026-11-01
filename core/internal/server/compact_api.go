@@ -107,7 +107,72 @@ func (s *Server) listSummaries(w http.ResponseWriter, r *http.Request) {
 	if summaries == nil {
 		summaries = []model.Summary{}
 	}
+	annotateUndo(summaries)
 	writeJSON(w, http.StatusOK, summaries)
+}
+
+// annotateUndo：把**派生**的两格填进摘要（`level` / `undoable`），只在这里填。
+//
+// 为什么是"服务端填"而不是"前端自己算"：判定要的是**整条会话的摘要**（"每层最新的那一个"
+// 得看全貌），而前端在多个地方各拿一部分数据（树拿全量、消息卡只知道自己那条）——
+// 各算各的必然分岔。一份纯函数 `compact.PlanUndo` 在这儿跑，界面只负责画。
+func annotateUndo(summaries []model.Summary) {
+	plan := compact.PlanUndo(summaries)
+	for index := range summaries {
+		summaries[index].Level = plan.Levels[summaries[index].ID]
+		summaries[index].Undoable = plan.Undoable[summaries[index].ID]
+	}
+}
+
+// undoSummary：`DELETE /sessions/{session_id}/summaries/{summary_id}` —— **撤销一次压缩**。
+//
+// 用户 2026-11-01 定：只能撤**合法**的那些 —— 顶层、且是所在层最近的**那一次**压缩。
+// 判定只有一份（`compact.UndoBlocker`），界面亮不亮按钮用的也是它。
+//
+// 状态码的取舍：
+//
+//	404 —— 这条会话里没这条摘要（"没有"就是"没有"）。
+//	409 —— 请求本身没问题，是**现在这个状态**不允许撤（被上层盖着 / 不是该层最近那次）。
+//	       与"压缩在跑 ⇒ 409"同一个口径：这不是坏请求，是"此刻不行"。
+//	204 —— 撤掉了。**不回体**：撤销之后该看的是新的摘要列表，不是这一条的残骸。
+func (s *Server) undoSummary(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	summaryID := r.PathValue("summary_id")
+	summaries, err := s.store.ListSummaries(session.ID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	found := false
+	for index := range summaries {
+		if summaries[index].ID == summaryID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "not_found", "这条会话里没有这条摘要")
+		return
+	}
+	if blocker := compact.UndoBlocker(summaries, summaryID); blocker != "" {
+		writeError(w, http.StatusConflict, "conflict", blocker)
+		return
+	}
+	if _, err := s.store.UndoSummary(session.ID, summaryID); err != nil {
+		switch {
+		case errors.Is(err, store.ErrSummaryNotTopLevel):
+			writeError(w, http.StatusConflict, "conflict", "它已经被上层摘要盖住了：先撤上面那层")
+		case errors.Is(err, store.ErrNotFound):
+			writeError(w, http.StatusNotFound, "not_found", "这条会话里没有这条摘要")
+		default:
+			writeStoreError(w, err)
+		}
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // compactPreview：`POST /sessions/{session_id}/compact/preview` —— **只算不动**。

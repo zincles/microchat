@@ -3,6 +3,7 @@
 // 行元素：▸/▾ 折叠 | 行底 bar（宽度 = 子树原文占比，du 式）| 标签（区间/角色 + 标记）| 右侧体积。
 // 标记：`发` = 装配真的跳到它（这一坨就发这份）；`脏` = 摘要被覆盖的消息改过、已过期（装配照用）。
 import { computed } from "vue";
+import { ICONS } from "./icons.js";
 
 const props = defineProps({
   nodes: { type: Array, default: () => [] }, // buildCompactTree 的产出
@@ -12,7 +13,7 @@ const props = defineProps({
   // 现在：父组件拿着 Set，这里只负责「按 Set 渲染」+「点一下发新的 Set」。
   collapsed: { type: Object, default: () => new Set() },
 });
-const emit = defineEmits(["update:collapsed"]);
+const emit = defineEmits(["update:collapsed", "undo"]);
 
 // ⚠ 每次都发**新的 Set**，不改传进来的那份：prop 是父组件的 state，
 // 就地改它等于绕过 `update:` 约定（父组件那边可能还有别的读者）。
@@ -94,6 +95,19 @@ function barStyle(n, depth) {
       <span class="ctree-size" :title="r.n.kind === 'summary' ? `压缩后 ≈${r.n.tokens} tok（原文 ${r.n.rawChars} 字）` : `原文 ${r.n.rawChars} 字`">
         {{ r.n.kind === "summary" ? "→" : "≈" }}{{ r.n.tokens }}
       </span>
+      <!-- 撤销这次压缩（2026-11-01 用户定）：图标是垃圾桶，**悬停说'撤销'**。
+           只有合法的能点（顶层 + 该层最近那次）；不能撤的**留着但禁用** ——
+           留着是为了让人看见"这里本来能撤"，禁用配一句说明，才不是个死按钮。 -->
+      <button
+        v-if="r.n.kind === 'summary'"
+        type="button"
+        class="ctree-undo"
+        :disabled="!r.n.undoable"
+        :title="r.n.undoable ? '撤销' : '只有每层最近的那一次压缩可以撤销'"
+        aria-label="撤销这次压缩"
+        @click.stop="emit('undo', r.n.id)"
+        v-html="ICONS.trash"
+      ></button>
     </div>
   </div>
 </template>

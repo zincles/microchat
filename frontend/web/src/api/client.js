@@ -136,7 +136,11 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
     // editSummary：手改任意一条摘要的正文（就地换 text；空 ⇒ 400）。
     editSummary: (sid, sumid, text) => call("PATCH", `/sessions/${enc(sid)}/summaries/${enc(sumid)}`, { text }),
     // listSummaries：这条会话的摘要列表（/editsum 的 picker 用；id + text + dirty 现成）。
+    // 2026-11-01 起还带两格**派生**字段：`level`（层级）与 `undoable`（现在能不能撤销）。
     listSummaries: (sid) => call("GET", `/sessions/${enc(sid)}/summaries`),
+    // undoSummary：**撤销一次压缩**。只允许撤合法的（顶层 + 每层最近那次）——
+    // 判定在后端（`compact.PlanUndo`），不合法回 409 并带一句人话，界面请原样显示。
+    undoSummary: (sid, sumid) => call("DELETE", `/sessions/${enc(sid)}/summaries/${enc(sumid)}`),
     patchSession: (id, body) => call("PATCH", `/sessions/${enc(id)}`, body),
     deleteProvider: (id) => call("DELETE", `/providers/${enc(id)}`),
     status: (id) => call("GET", `/sessions/${enc(id)}/status`),

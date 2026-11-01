@@ -101,6 +101,11 @@ export function buildCompactTree(messages, summaries) {
     return {
       kind: "summary", id: s.id,
       preview: previewOf(s.text),
+      // 撤销（2026-11-01）：两格都由**后端**算好（`compact.PlanUndo`：顶层 + 每层最新），
+      // 这里只搬 —— 界面不该自己再判一遍（判两遍必然某天对不上）。
+      // `undoable` 缺席 = 不能撤（与前面 `!!s.undoable` 同一口径）。
+      undoable: !!s.undoable,
+      level: s.level ?? 0,
       fromIdx: sp ? msgs[sp[0]].idx : null, toIdx: sp ? msgs[sp[1]].idx : null,
       blocks: s.blocks ?? 0,
       rawChars: kids.reduce((n, k) => n + k.rawChars, 0),

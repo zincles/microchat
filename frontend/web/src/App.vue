@@ -556,6 +556,30 @@ async function compactNow(blocks) {
   }
 }
 
+// undoSummary：**撤销一次压缩**（2026-11-01 用户定）。
+//
+// 只允许撤合法的（顶层 + 每层最近那次）—— 判定在**后端**（`compact.PlanUndo`），
+// 界面那颗按钮亮不亮读的也是同一份判断（`summary.undoable` / 树的 `node.undoable`）。
+// 所以正常情况下不会点出 409；真撞上了（比如树是几秒前的快照）就把后端那句话**原样**给人看，
+// 别换成"撤销失败" —— 那句"它所在的第 1 层，最近一次压缩不是它"才是他要知道的。
+async function undoSummary(summaryID) {
+  const sid = sessionID;
+  if (!sid || !summaryID) return;
+  const my = epoch;
+  try {
+    await api.undoSummary(sid, summaryID);
+  } catch (err) {
+    if (my === epoch) toast(`撤销失败：${err.message}`, "error");
+    return;
+  }
+  if (my !== epoch) return;
+  toast("已撤销这次压缩", "ok");
+  // 装配会**变长**（那一段回到原文）⇒ 消息列、状态、环上的占用都要重算一遍。
+  await reloadWindow();
+  refreshStateView(sid);
+  refreshStatusline("idle");
+}
+
 // pollCompact：盯一次压缩到收尾（拿受理时的 `at_ms` 对上这一发 —— 状态位是**持久**的，
 // 不认准 at_ms 会被上一次的旧结局骗），完了刷新消息列（装配变短）与压缩树。
 async function pollCompact(sid, atMS) {
@@ -1553,6 +1577,7 @@ onUnmounted(() => {
               @refresh="summaryRefresh(row.summary.id)"
               @edit="openSummaryEdit(row.summary)"
               @version="(d) => summaryVersion(d)"
+              @undo="undoSummary(row.summary.id)"
             />
             <MessageBubble
               v-else
@@ -1595,6 +1620,7 @@ onUnmounted(() => {
       @compact="(n) => compactNow(n ?? undefined)"
       @compact-payload="previewCompactPayload"
       @tab="onPayloadTab"
+      @undo="undoSummary"
     />
       </section>
       <UserView

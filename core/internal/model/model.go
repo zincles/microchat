@@ -95,27 +95,35 @@ type User struct {
 // `BeginMessageID` / `EndMessageID` = 它盖住的那一段（闭区间）：装配时按它 O(1) 跳过去。
 // 都可为空（老数据）——那时装配退回逐条走，不跳。
 type Summary struct {
-	ID              string          `json:"id"`
-	SessionID       string          `json:"session_id"`
-	ParentSummaryID *string         `json:"parent_summary_id,omitempty"`
-	Type            SummaryType     `json:"type"` // DB 列名是历史（`source_kind`），值与 JSON 名一致
-	BeginMessageID  *string         `json:"begin_message_id,omitempty"`
-	EndMessageID    *string         `json:"end_message_id,omitempty"`
+	ID              string      `json:"id"`
+	SessionID       string      `json:"session_id"`
+	ParentSummaryID *string     `json:"parent_summary_id,omitempty"`
+	Type            SummaryType `json:"type"` // DB 列名是历史（`source_kind`），值与 JSON 名一致
+	BeginMessageID  *string     `json:"begin_message_id,omitempty"`
+	EndMessageID    *string     `json:"end_message_id,omitempty"`
 	// BeginIdx / EndIdx：区间两端的**消息序号**（派生：按 id 排第几条 —— 与 messages.idx 同一把尺）。
 	// 给界面用：画 `Summary #a-b`、以及分页窗口切段（前端手里没有全文，没法自己把 id 换成序号）。
 	// 端点不在（悬空/缺）⇒ 缺省 ⇒ 界面按"不折"处理。
-	BeginIdx *int `json:"begin_idx,omitempty"`
-	EndIdx   *int `json:"end_idx,omitempty"`
-	Text            string          `json:"text"`
-	Blocks          int64           `json:"blocks"`
-	Tokens          int64           `json:"tokens"`
-	SourceIDs       []string        `json:"source_ids"`
-	Provider        string          `json:"provider"`
-	Model           string          `json:"model"`
-	PromptVersion   int64           `json:"prompt_version"`
-	Usage           json.RawMessage `json:"usage,omitempty"`
-	Dirty           bool            `json:"dirty"`
-	CreatedAt       int64           `json:"created_at"`
+	BeginIdx      *int            `json:"begin_idx,omitempty"`
+	EndIdx        *int            `json:"end_idx,omitempty"`
+	Text          string          `json:"text"`
+	Blocks        int64           `json:"blocks"`
+	Tokens        int64           `json:"tokens"`
+	SourceIDs     []string        `json:"source_ids"`
+	Provider      string          `json:"provider"`
+	Model         string          `json:"model"`
+	PromptVersion int64           `json:"prompt_version"`
+	Usage         json.RawMessage `json:"usage,omitempty"`
+	Dirty         bool            `json:"dirty"`
+	CreatedAt     int64           `json:"created_at"`
+	// Level / Undoable：**派生**（不落库），只由 `GET /summaries` 填（2026-11-01 加）。
+	// Level = 层级（1 = 直接盖消息，2 = 盖住那一层……）；Undoable = 现在能不能撤销。
+	// 判定在 `compact.PlanUndo`（顶层 + 每层最新），界面与接口共用同一份。
+	//
+	// 都用 `omitempty`：没算的地方（导出、单条 PATCH 的响应）**不出现**这两个字段，
+	// 语义是"这里没算过"，而不是"算出来是 false"—— 前者不会误导人，后者会。
+	Level    int  `json:"level,omitempty"`
+	Undoable bool `json:"undoable,omitempty"`
 }
 
 // Session：一处会话。**线性**（没有 current_leaf：最新一条 = `ORDER BY id DESC LIMIT 1`）。

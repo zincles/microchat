@@ -379,6 +379,19 @@ delete(AA)           # 删除
 完全看不出来。现在 tab 是 `1.15em` ⇒ 根上 **≈1.06em**，纵向 padding `0.35em`（行高约 32px）。
 契约测试按实际声明**乘一遍**再判：`≥ 0.98em`（不小于正文）且 `≤ 1.35em`（别反过来压过内容），
 外加 padding `≥ 0.3em`（触摸目标）。
+**撤销压缩**（2026-11-01 用户定：「增加一个'删除'图标的按钮，悬停会显示为'撤销'」，并给了金字塔的例子）：
+按钮在**两处**（压缩树的摘要行 + 聊天界面的摘要卡，与刷新/编辑并排），图标是垃圾桶、悬停文案「撤销」。
+「合法」是两条闸，**判定只有一份**（`core/internal/compact/undo.go` 的 `PlanUndo` / `UndoBlocker`，
+纯函数）—— 界面亮不亮按钮（`undoable`）与接口拒不拒（409）读的是同一个判断，不会两套打架：
+① **只算顶层**：被上层盖住的摘要不能单独撤，撤了会在上层的覆盖区间里留一个洞（装配按区间 O(1) 跳，
+跳过之后那一截既不是原文也不是摘要）；想撤它就先撤上层。
+② **每层只允许撤最新那一次**（按 `created_at`，同毫秒用 UUIDv7 的 id 序破平）：撤销是"后悔上一步"，
+压缩是一条**栈**、每层各一条；跳过中间去撤更早的，剩下的是"数得出压过几次、推不出上次压了什么"。
+⚠ 不能撤的按钮**留着但禁用**（让人看见这儿本来能撤），禁用态要**显式压暗** + 一句说明 —— 否则又是死按钮。
+⚠ 这个 **不对称**（只折叠不展开、只撤最新不撤任意）是刻意的，不是没做完。
+⚠ 落库三步的顺序是语义：孩子 parent 置空 → 消息 `summary_id` 置空 → 删摘要。反了就是
+`FOREIGN KEY constraint failed`（自引用外键在语句末尾才核，与 `ApplyDeletion` 同一个坑）。
+⚠ 撤销会让**装配变长**（那段回到原文）⇒ 前端三处都要重算：消息列、状态视图、上下文档（契约测试钉着）。
 **压缩树的每行带一段原文预览**（2026-10-29 用户定：「条目不是简单的 `#3 你`，而是
 `#3 你 XXXXX…`（原始输入文本的前 n 个字符）」，摘要块同理）。否则翻十条全是"#3 你"，
 根本定位不到是哪一条。`utils/tree.js` 的 `previewOf` 三个讲究，缺一个就没法定位：
@@ -486,8 +499,9 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 | POST | `/sessions/{session_id}/compact` | `CompactReq` | `CompactStatus` · **202** | **压缩**：`{"blocks": N}` 或 `{"begin_idx": i, "end_idx": j}`（1-based 消息序号，与 `/messages?from_idx=&to_idx=` 同一套词；两种给法互斥、区间两端都得给；都不给 ⇒ 用 `chat.compact_blocks`）。**按块，不按条**（块 = assistant→user 交界，一块 ≥2 条）。按块数 ⇒ 策略（底层凑不够就抬头并摘要）；按区间 ⇒ 全未覆盖走消息级、**同层顶层摘要恰好铺满**走合并（金字塔）、其余 ⇒ 400（混合有洞，不后台跑）。**同一个会话同时只允许一次**（在跑 ⇒ 409）。跑完的结局在 `GET .../status` 的 `compact` 那一档（`running`/`done`/`error` + `from_idx`/`to_idx`/`merged` + 原因）|
 | POST | `/sessions/{session_id}/compact/preview` | `{"blocks": N}` | `PreviewResult` · 200 | **压缩预览**：**只算不动**（调同一套策略；区间入口自己就是答案，不走这里 ⇒ 400）。回 `from_idx`/`to_idx` + `merged` + `source_ids` + 人话一句（"压第a–b条（N块）"/"并第a–b条那N坨"）。落库/调上游/挂号一概不碰 |
 | POST | `/sessions/{session_id}/compact/payload` | `CompactReq`（两种给法都收） | `PayloadPreview` · 200 | **压缩那一发的载荷预演**（2026-10-28 用户点名要）：这一趟压缩**真会发出去什么** —— 回 `payload`（与 `LastPayload` 同形：method / url / 头（密钥打码）/ 体）+ `from_idx`/`to_idx`/`merged`/`blocks`/`messages` + `material_chars`（材料正文字数，按 rune，不含抬头与附上的状态）+ `state_before`/`state_after`（材料里附没附那两份状态）。**与真压走同一段拼装**（同一个 `prepare` + 同一个 `wireFor`）⇒ 预演 = 真发（合同测试把两边的体**逐字节**比）；与 `…/compact/preview` 的分工：那条答「压哪儿」，这条答「发什么」。**只算不动**：不联网、不落库、不挂号，**也不写 `/debug/last-payload`**（那是"真发过什么"的记录）|
-| GET | `/sessions/{session_id}/summaries` | — | `[Summary]` | 摘要列表（picker / 消息列折叠 / 分页切段用；按 id 序；空 ⇒ `[]`）。每条带 **`begin_idx` / `end_idx`**（区间两端的**消息序号**，派生 —— 与消息 `idx` 同一把尺；端点悬空/缺 ⇒ 缺省 ⇒ 界面按「不折」处理）|
+| GET | `/sessions/{session_id}/summaries` | — | `[Summary]` | 摘要列表（picker / 消息列折叠 / 分页切段用；按 id 序；空 ⇒ `[]`）。每条带 **`begin_idx` / `end_idx`**（区间两端的**消息序号**，派生 —— 与消息 `idx` 同一把尺；端点悬空/缺 ⇒ 缺省 ⇒ 界面按「不折」处理），以及 2026-11-01 加的两格派生字段 **`level`**（层级：1 = 直接盖消息）与 **`undoable`**（现在能不能撤销）。⚠ 两格都 `omitempty`：**没算的地方不出现**（导出、单条 PATCH 的响应），语义是"这里没算过"而不是"算出来是 false" —— 前端按 `!!s.undoable` 读 |
 | PATCH | `/sessions/{session_id}/summaries/{summary_id}` | `{"text":"…"}`（必填；空 ⇒ 400） | `Summary` | 手改**任意**一条摘要的正文 = 就地换 text（id / 区间 / 指针不动；改孩子 ⇒ 祖先标脏；自己变干净）|
+| DELETE | `/sessions/{session_id}/summaries/{summary_id}` | — | 204 | **撤销一次压缩**（2026-11-01）。只允许撤**合法**的 ⇒ 判定只有一份（`compact.PlanUndo`）：① **顶层**（`parent_summary_id IS NULL`；被上层盖住的不能单独撤，否则上层的覆盖区间破个洞）；② **每层只允许撤最新那一次**。不合法 ⇒ **409**（请求没毛病、是"此刻不行"，理由是一句人话，直接给人看）；没有这条 ⇒ **404**。落库一个事务三步（顺序就是语义，自引用外键在语句末尾才核）：孩子的 parent 置空 → 直接指着它的消息 `summary_id` 置空 → 删这一行。**不回体**（撤销之后该看的是新列表）|
 | POST | `/sessions/{session_id}/reroll-message` | — | `{target_message_id, task_id, state}` · **202** | **重摇·消息**：进模式并**立刻摇一次**（已在模式里 ⇒ 再摇一版）。候选（`RerolledMessage`）**只在内存里**、**不进历史** —— 选中才 apply 回那条 Message。尾条必须是 assistant（不是 ⇒ 400 说清那是"重发"）；与生成**共用同一把闸**（在跑 ⇒ 409）。**候选生成走流式**（2026-10-10 起）：deltas 进 `turn` 缓冲（`BeginReroll` 清、`FinishReroll` 清）⇒ 摇的过程中 `/turn/text` 能读到正文在长（web 靠它做气泡内预览）|
 | GET | `/sessions/{session_id}/reroll-message` | — | `{active, target_kind, target_message_id, count, current_idx, running, elapsed_ms, error, items:[…]}` | 重摇状态（**不吐全文**，预览几十字）。没进模式 ⇒ `active: false`（**不是 404**）|
 | POST | `.../reroll-message/switch` | `{"idx": n}` | 同上 | 选中第 `n` 版 ⇒ **就地重建**那条 Message（**UUID 不变**；正文与 usage / 耗时 / 思考一起换；摘要照旧标 `dirty`）|
