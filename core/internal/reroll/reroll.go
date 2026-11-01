@@ -337,6 +337,8 @@ func (s *Service) prepare(session model.Session) (*roll, error) {
 	}
 	sessionID := session.ID
 	guard := s.Tasks.Begin(task.KindReroll, &sessionID, "重摇 · 会话 "+shortID(sessionID))
+	// 任务面板上的按钮与 `DELETE /sessions/{id}/reroll-message` 同一个口（一个动作一处实现）。
+	guard.Cancellable(func() { s.Turns.StopReroll(sessionID) })
 	if err := s.seed(tail, token); err != nil {
 		guard.Fail(err.Error())
 		s.Turns.FinishReroll(session.ID, token, err.Error())
@@ -419,6 +421,7 @@ func (s *Service) prepareSummary(session model.Session, idx int) (*roll, error) 
 	}
 	sessionID := session.ID
 	guard := s.Tasks.Begin(task.KindReroll, &sessionID, "重摇摘要 · 会话 "+shortID(sessionID))
+	guard.Cancellable(func() { s.Turns.StopReroll(sessionID) })
 	if err := s.seedSummary(session, target, fromIdx, toIdx, token); err != nil {
 		guard.Fail(err.Error())
 		s.Turns.FinishReroll(session.ID, token, err.Error())

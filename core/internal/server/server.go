@@ -96,6 +96,9 @@ func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *ch
 	s.mux.HandleFunc("PATCH /api/v1/models", s.setModelOverride)
 	// 任务面板：进程内的事实（与 `-debug tasks` 同一份 Board；轮询用，不进库）
 	s.mux.HandleFunc("GET /api/v1/tasks", s.taskBoard)
+	// 按停**一个**任务（2026-11-01 用户定：「任务菜单里，我希望有办法取消任务」）。
+	// 按的是 **TaskID** —— 面板上只有那个 id，它够不到任务自己的 ctx，所以这条路是必需的。
+	s.mux.HandleFunc("POST /api/v1/tasks/{task_id}/cancel", s.cancelTask)
 	// 队列任务（2026-11-01 用户定）—— 排 / 取消，都是 admin（队列绕过逐会话归属检查）。
 	s.mux.HandleFunc("POST /api/v1/tasks/queues", s.enqueueQueue)
 	s.mux.HandleFunc("POST /api/v1/tasks/queues/{queue_id}/cancel", s.cancelQueue)

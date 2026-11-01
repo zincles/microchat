@@ -114,6 +114,12 @@ type Record struct {
 	// Error：失败原因 —— **单开一个字段**放着（状态字段里只放那五个词之一：
 	// "失败：上游 429"这种串会让客户端只能匹配文案）。
 	Error string `json:"error,omitempty"`
+	// Cancelable：**这个任务能不能被按停**（2026-11-01）。
+	//
+	// 面板据此决定要不要画那颗按钮 —— 画了按不动是最糟的一种（"点了没反应"）。
+	// 由任务自己在 `Guard.Cancellable(...)` 时置位：手上有 ctx / 有 stop 口的那些能停，
+	// 纯本地一口气跑完的（`refresh_models`）不能 —— 它快到没必要，也没有可断的地方。
+	Cancelable bool `json:"cancelable,omitempty"`
 }
 
 func (r Record) Running() bool { return r.FinishedAt == nil }
@@ -140,9 +146,13 @@ type Registry struct {
 	mu      sync.Mutex
 	order   []string // 登记顺序（= 开始顺序）
 	records map[string]Record
+	// cancels：**能停的那几个**的停止函数（id → cancel）。收尾时摘掉。
+	cancels map[string]func()
 }
 
-func NewRegistry() *Registry { return &Registry{records: map[string]Record{}} }
+func NewRegistry() *Registry {
+	return &Registry{records: map[string]Record{}, cancels: map[string]func(){}}
+}
 
 // Guard：一次任务的把手。四个收尾方法**幂等且只生效一次**（先到的那次算数）；
 // **忘了收 = 兜底的 `Interrupted`**（面板上绝不留下僵尸条目）。
@@ -180,6 +190,51 @@ func (g *Guard) ID() string {
 	return g.id
 }
 
+// Cancellable：把这枚任务的"停止方式"交给登记表（**能停才登记**，不能停就别调）。
+//
+// 为什么要登记而不是让调用方自己留着：任务面板是按 **TaskID** 说话的（面板上只有那个 id），
+// 它够不到任务自己的 ctx。所以"按下按钮"这条路必须是：面板 → `Registry.Cancel(id)` → 这里存下的那个函数。
+//
+// ⚠ 这个函数**只是请求停止**（Go 的 ctx 语义）：真正让它停的是任务自己 —— 它得在拿到 ctx 之后
+// 的每一步看一眼 ctx。已经发出去的上游请求会被掐断，但"掐断"是异步的，所以
+// `Cancel()` 回 true 不等于"它现在就已经停了"。
+//
+// ⚠ 幂等：任务已经收尾了就别登记（否则面板上那颗按钮会去叫一个跑完的活）。
+func (g *Guard) Cancellable(cancel func()) {
+	if g == nil || cancel == nil {
+		return
+	}
+	r := g.registry
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	record, ok := r.records[g.id]
+	if !ok || record.FinishedAt != nil {
+		return
+	}
+	record.Cancelable = true
+	r.records[g.id] = record
+	r.cancels[g.id] = cancel
+}
+
+// Cancel：请第 id 个任务停下来。回 true = **找到并叫了它**（不代表它现在已经停了，见 `Cancellable`）。
+//
+// 回 false 的三种情况都算"没什么可停的"，不是错误：没有这个 id（早被 trim 掉了）、
+// 它已经收尾、或者它压根就没登记停止方式（`refresh_models` 那种纯本地的活）。
+func (r *Registry) Cancel(id string) bool {
+	r.mu.Lock()
+	cancel, ok := r.cancels[id]
+	if ok {
+		// 只叫一次：连按两下不该叫两遍（第二下应当是"已经叫过了" ⇒ false）。
+		delete(r.cancels, id)
+	}
+	r.mu.Unlock()
+	if !ok {
+		return false
+	}
+	cancel()
+	return true
+}
+
 // Succeed：干完了。
 func (g *Guard) Succeed() { g.finish(StateSucceeded, "") }
 
@@ -210,6 +265,9 @@ func (g *Guard) finish(state State, reason string) {
 		record.Outcome = state
 		record.Error = reason
 		g.registry.records[g.id] = record
+		// 收尾了就没什么可停的：摘掉（否则 Cancel 会去叫一个已经跑完的活，
+		// 而那个函数闭着的 ctx 早就 cancel 过了 —— 静默无害，但谎报 true）。
+		delete(g.registry.cancels, g.id)
 		g.registry.trim()
 	})
 }

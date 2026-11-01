@@ -179,6 +179,10 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
     enqueueQueue: (body) => call("POST", "/tasks/queues", body),
     // cancelQueue：随时取消；在飞的那一发会被一起掐断（压缩要整段才落库 ⇒ 不留半条）。
     cancelQueue: (queueId) => call("POST", `/tasks/queues/${enc(queueId)}/cancel`),
+    // cancelTask：按停**一个**任务（2026-11-01）。回 `{canceled}` —— **false 不是错误**
+    // （没这个 id / 已经收尾 / 它压根不能停，三种都是"没什么可停的"）。
+    cancelTask: (id) => call("POST", `/tasks/${enc(id)}/cancel`),
+
     // —— 界面偏好（2026-11-01 起住服务器，不再住浏览器 localStorage）——
     getPrefs: () => call("GET", "/config/prefs"),
     // putPrefs：**整份**替换（偏好是一组独立开关，客户端手里就有全量；补丁语义只会多出歧义）。

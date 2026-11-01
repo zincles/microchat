@@ -194,6 +194,8 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 	// 挂号：前台这一轮也是任务（会调模型的作业必带会话 id ⇒ Begin 自己会断言）
 	guard := s.Tasks.Begin(task.KindTurn, &sessionID, "生成 · 会话 "+shortID(sessionID))
 	defer guard.Interrupted() // 忘了收 / panic ⇒ 记成"中断"，绝不留僵尸条目
+	// 任务面板上的按钮走的也是这条（与 `POST /sessions/{id}/stop` 同一个口 —— 两处一个动作，别分家）。
+	guard.Cancellable(func() { s.Turns.Stop(sessionID) })
 
 	ctx, cancel := context.WithCancel(context.Background())
 	s.Turns.Attach(sessionID, token, cancel)

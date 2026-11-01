@@ -23,6 +23,7 @@ package title
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -132,8 +133,17 @@ func (s *Service) Auto(session model.Session) {
 	// 辅助调用只给这一趟短超时（理由见 `autoTimeout`）：到点即撤 ⇒ 这一轮照常翻 idle。
 	ctx, cancel := context.WithTimeout(context.Background(), autoTimeout)
 	defer cancel()
-	result, generateErr := s.Generate(ctx, *current)
+	result, generateErr := s.generate(ctx, *current, cancel)
 	if generateErr != nil {
+		// 被按停 ⇒ **什么都不做**：不兜底、不写名字。
+		//
+		// 兜底会往 `sessions.title` 写一段首句截断 —— 那就不是"取消 = 没做过"了，
+		// 而且写进去之后 `Auto` 永远不再自动起名（它只在标题为空时才跑）⇒ 一次误按会留下
+		// 一个永久的次品名字。按停就该是**干干净净地没起过**，下次那一轮还会再试。
+		if errors.Is(ctx.Err(), context.Canceled) {
+			log.Printf("起标题：会话 %s 被按停，名字留空（下次那一轮还会再起）", shortID(current.ID))
+			return
+		}
 		log.Printf("起标题：会话 %s 没起成，退回首句截断兜底（这一轮照常）：%v", shortID(current.ID), generateErr)
 		s.fallback(*current)
 		return
@@ -181,7 +191,13 @@ func (s *Service) write(sessionID, text string) {
 //
 // 能力关掉 ⇒ 明确拒绝（不是静默成功、也不是降级）；上游失败 ⇒ 原样报错（**不重试、不吞错**；
 // 重试由调用方决定 —— 与 `compact` 同一条脾气）。**落库不在这儿**（调用方说了算）。
+// Generate：跑一次起标题（`stop` = nil —— ctx 由调用方自己管）。
 func (s *Service) Generate(ctx context.Context, session model.Session) (Result, error) {
+	return s.generate(ctx, session, nil)
+}
+
+// generate：`stop` 非 nil 就登记到任务面板（那颗按钮够得着它）。
+func (s *Service) generate(ctx context.Context, session model.Session, stop context.CancelFunc) (Result, error) {
 	chatConfig, agents, providersConfig, err := config.Load(s.Paths)
 	if err != nil {
 		// 读不出来就说读不出来：能力开关默认"全开"，静默按默认跑会让"配了要关"的人以为关上了
@@ -224,6 +240,9 @@ func (s *Service) Generate(ctx context.Context, session model.Session) (Result, 
 	// 挂号：**会调模型的作业必带会话 id** ⇒ `Begin` 自己会断言
 	guard := s.Tasks.Begin(task.KindTitle, &session.ID, "起标题 · 会话 "+shortID(session.ID))
 	defer guard.Interrupted() // 忘了收 / panic ⇒ 记成"中断"，绝不留僵尸条目
+	if stop != nil {
+		guard.Cancellable(func() { stop() })
+	}
 
 	// 模板 + 追加段：**与压缩同一个拼装**（`abilities.AssemblePrompt`）——
 	// 从前这里是裸 `abilities.Template`，于是编辑器让你给 title 挑段、这一发却一个字都不拼（静默无效）。

@@ -23,7 +23,7 @@ defineProps({
   // 是因为它和环管的是同一件事的两面：环说"占了多少"，工作区说"占的是什么"。
   workspace: { type: String, default: "chat" },
 });
-const emit = defineEmits(["toggle-left", "select-model", "select-agent", "select-workspace", "cancel-queue"]);
+const emit = defineEmits(["toggle-left", "select-model", "select-agent", "select-workspace", "cancel-queue", "cancel-task"]);
 
 const modelGroups = ref([]); // [{provider, items:[{value,label,provider_name,upstream_id}]}]
 const curModel = ref("");
@@ -453,7 +453,17 @@ defineExpose({ setSession, setModels, setAgents, setContext, setStatus, setTasks
             >
               <span class="task-kind">{{ t.kind || "?" }}</span>
               <span class="task-label" :title="t.title">{{ t.title || "—" }}</span>
-              <span class="task-time">{{ taskElapsed(t) }}</span>
+              <!-- 按停（2026-11-01 用户定：「任务菜单里，我希望有办法取消任务」）。
+                   只在**能停**（后端给了 `cancelable`）且**还在跑**时画 —— 画一颗按不动的按钮
+                   是最糟的（"点了没反应"）。不能停的那些（纯本地的活）本来就不该有这个入口。 -->
+              <button
+                v-if="t.cancelable && !t.finished_at"
+                type="button"
+                class="task-cancel"
+                title="按停这个任务（已经写下的东西不受影响：取消 = 没做过）"
+                @click.stop="emit('cancel-task', t.id)"
+              >取消</button>
+              <span v-else class="task-time">{{ taskElapsed(t) }}</span>
             </li>
           </ul>
         </template>

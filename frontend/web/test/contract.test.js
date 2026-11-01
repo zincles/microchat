@@ -2436,3 +2436,41 @@ test("顶栏有向下阴影（替边框干活），且仍不描线", () => {
   assert.ok(!/border(-bottom|-block-end)?:\s*(?!none)/.test(headerRule[0].replace(/border-radius[^;]*;/g, "")),
     "顶栏加回了边框 —— 那条口径是用阴影、不用线");
 });
+
+// ── 按停任务（2026-11-01 用户定）────────────────────────────────────
+//
+// 用户口径：「任务菜单里，我希望有办法取消任务。而且要考虑原子性。如果任务被取消了，
+// 那么就相当于没做过。」
+//
+// 后端那半（原子性）由 `core/internal/server/task_cancel_test.go` 钉着 —— 它会真的
+// 掐断一发上游、然后断言库里一条摘要都没多、重提交压的还是同一段。
+// 这里只钉**前端这条路接上了没有**：按钮、事件、接口、以及"按不动的按钮不许画"。
+test("任务面板：能停的任务有取消按钮，按不动的不画", () => {
+  const bar = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  const api = readFileSync(join(SRC, "api", "client.js"), "utf8");
+
+  // ① 接口：POST /tasks/{id}/cancel
+  assert.match(api, /cancelTask:\s*\(id\) => call\("POST", `\/tasks\/\$\{enc\(id\)\}\/cancel`\)/,
+    "API 客户端没有 cancelTask（或路径不对）");
+
+  // ② 按钮：**两个条件都要**（能停 + 还在跑）。
+  //    ⚠ 少任何一个就是一颗按不动的死按钮：不能停的任务按了没反应；
+  //    已经跑完的按了更是没反应（它连 cancel 登记都被摘掉了）。
+  assert.match(bar, /v-if="t\.cancelable && !t\.finished_at"[\s\S]{0,200}@click\.stop="emit\('cancel-task', t\.id\)"/,
+    "任务行没有那颗取消按钮（或条件写漏了）");
+
+  // ③ 事件一路接到 App（emit → 模板 → 处理函数 → 接口）。
+  assert.match(bar, /defineEmits\(\[[^\]]*"cancel-task"/, "TopBar 没声明 cancel-task 事件");
+  assert.match(app, /@cancel-task="cancelTask"/, "App 没接 TopBar 的 cancel-task");
+  assert.match(app, /function cancelTask\(id\)/, "App 没有 cancelTask");
+  assert.match(app, /api\.cancelTask\(id\)/, "cancelTask 没调接口");
+
+  // ④ 被取消的压缩**不是失败也不是完成** —— 界面上得说清"一条都没写，重提交还是压同一段"。
+  //    不加这一支，`canceled` 会掉进"压缩完成"那条分支（因为它非 running 非 error），
+  //    于是按停之后弹一句"压缩完成" —— 那是假的。
+  const poll = app.slice(app.indexOf("async function pollCompact"), app.indexOf("// —— 顶栏 ——"));
+  assert.match(poll, /c\.state === "canceled"/, "压缩轮询没认 canceled 状态");
+  assert.ok(poll.indexOf('"canceled"') < poll.indexOf("压缩完成"),
+    "canceled 那一支必须排在压缩完成前面（否则被当成功）");
+});

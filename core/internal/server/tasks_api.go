@@ -37,3 +37,21 @@ func (s *Server) taskBoard(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, view)
 }
+
+// cancelTask：按停一个正在跑的任务（2026-11-01）。
+//
+// **`canceled:false` 不是错误** —— 它只是"没什么可停的"：id 不存在（早被 trim 掉了）、
+// 那个任务已经收尾、或者它压根没登记停止方式（`refresh_models` 那种纯本地的活）。
+// 三种情况对调用方是同一件事，所以都回 **200**（面板轮询里那些 id 随时可能刚跑完，
+// 回 404 只会让界面在"刚好收尾"的那一帧弹一条假错误）。
+//
+// ⚠ 回 true 也不等于"它现在已经停了"：ctx 的取消是**请求**，真正停下要等任务自己走到下一个检查点。
+// 面板看到它翻成"取消"才算数（那时它也自然会从 running 里消失）。
+func (s *Server) cancelTask(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("task_id")
+	canceled := false
+	if s.tasks != nil {
+		canceled = s.tasks.Cancel(id)
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"canceled": canceled})
+}

@@ -149,8 +149,8 @@ func (s *Service) Start(session model.Session, req Request) (turn.CompactStatus,
 		// 辅助调用只给这一趟短超时（理由见 `compactTimeout`）：到点即撤 ⇒ 这一次报失败、会话不动。
 		ctx, cancel := context.WithTimeout(context.Background(), compactTimeout)
 		defer cancel()
-		_, runErr := s.execute(ctx, prepared)
-		s.finish(session.ID, runErr)
+		_, runErr := s.execute(ctx, prepared, cancel)
+		s.finish(session.ID, runErr, ctx)
 	}()
 	return *status, nil
 }
@@ -164,15 +164,26 @@ func (s *Service) Compact(ctx context.Context, session model.Session, req Reques
 	if _, err := s.Turns.BeginCompact(session.ID, prepared.requested, time.Now().UnixMilli()); err != nil {
 		return Result{}, busy()
 	}
-	result, err := s.execute(ctx, prepared)
-	s.finish(session.ID, err)
+	// 同步那条（直操模式）不登记停止方式：ctx 是调用方给的，它自己就是那个按钮。
+	result, err := s.execute(ctx, prepared, nil)
+	s.finish(session.ID, err, ctx)
 	return result, err
 }
 
 // finish：把这一次的结局写进 `turn` 的压缩状态（界面看到的"压缩中 / 压好了 / 失败了"）。
-func (s *Service) finish(sessionID string, runErr error) {
+//
+// 2026-11-01：多一档 **`canceled`**（用户按停）。它与 `error` 是两件事 ——
+// 按停是**正常操作**（`task.State` 的注释就写着这句），界面不该弹一个红色失败。
+//
+// 判"是不是被按停"**看 ctx 而不是看错误串**：上游库把 `context.Canceled` 包成什么样我们不该猜
+// （而且超时 `DeadlineExceeded` 与按停是两回事 —— 前者该报失败）。
+func (s *Service) finish(sessionID string, runErr error, ctx context.Context) {
 	if runErr == nil {
 		return // 成功那条路由 `execute` 自己收（它手里有 summary_id 与块数）
+	}
+	if ctx != nil && errors.Is(ctx.Err(), context.Canceled) {
+		s.Turns.FinishCompact(sessionID, "canceled", "", "", 0, 0, 0, false)
+		return
 	}
 	s.Turns.FinishCompact(sessionID, "error", "", runErr.Error(), 0, 0, 0, false)
 }
@@ -401,8 +412,8 @@ func resolveEffective(session model.Session, setting abilities.Setting, provider
 		local = dummyReply
 	}
 	return effective{
-		channel:  backend.Provider,
-		model:    modelID,
+		channel: backend.Provider,
+		model:   modelID,
 		// 模板 + 追加段：拼装只有一份（`abilities.AssemblePrompt`，与起标题同一处）——
 		// 默认模板住段库（`压缩提示词`）；段 = `abilities.compact.segments`，顺序照抄。
 		template: abilities.AssemblePrompt(setting, abilities.Compact, agents),
@@ -949,14 +960,28 @@ func ensureUncovered(messages []model.Message, begin, end int) error {
 // execute：后台/同步那半程 —— 挂号 → 拼材料 → 调上游 → 过闸 → 单事务落库 → 收尾。
 //
 // **失败不阻塞**：错一律原样返回（会话一个字节都不动），重试由调用方决定。
-func (s *Service) execute(ctx context.Context, p *prepared) (Result, error) {
+// execute：**调上游 + 落库**那一趟。`stop` = 让这一趟停下来的办法（没有就传 nil）。
+//
+// `stop` 只有一个用途：交给登记表，让任务面板上那颗按钮够得着它（`Guard.Cancellable`）。
+// 停下来的语义是**整趟作废**：上游请求被掐断 ⇒ `call` 在 `RecordSummary` 之前就返回了
+// ⇒ 库里一个字节都没动（这就是"取消 = 没做过"的机制，不是靠事后回滚）。
+func (s *Service) execute(ctx context.Context, p *prepared, stop context.CancelFunc) (Result, error) {
 	sessionID := p.session.ID
 	// 挂号：会调模型的作业必带会话 id ⇒ `Begin` 自己会断言
 	guard := s.Tasks.Begin(task.KindCompact, &sessionID, "压缩 · 会话 "+shortID(sessionID))
 	defer guard.Interrupted() // 忘了收 / panic ⇒ 记成"中断"，绝不留僵尸条目
+	if stop != nil {
+		guard.Cancellable(func() { stop() })
+	}
 
 	result, err := s.call(ctx, p)
 	if err != nil {
+		// 按停 ≠ 失败：这一趟**什么都没写**（落库在最后那个事务里，`call` 根本没走到）
+		// ⇒ 记成"取消"，面板上也不该是一片红。
+		if errors.Is(ctx.Err(), context.Canceled) {
+			guard.Cancel()
+			return Result{}, err
+		}
 		guard.Fail(err.Error())
 		return Result{}, err
 	}

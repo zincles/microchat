@@ -594,6 +594,11 @@ async function pollCompact(sid, atMS) {
       toast(`压缩失败：${c.error || "未知"}`, "error");
       return;
     }
+    // 按停（2026-11-01）：**不是失败**，也不是"完成" —— 库里什么都没变，重提交一次就行。
+    if (c.state === "canceled") {
+      toast("压缩已取消（一条都没写，重提交还是压同一段）");
+      return;
+    }
     const span = c.from_idx ? `第 ${c.from_idx}–${c.to_idx} 条` : "";
     toast(`压缩完成${span ? `：${span}` : ""}${c.merged ? "（合并）" : ""}`, "ok");
     await reloadWindow();
@@ -1066,6 +1071,21 @@ let connText = "未连接";
 const statusAgent = ref("");
 // 后台任务行（/tasks 是进程内事实；2s 一拉 —— 端点零成本，也别等太久看不见压缩/标题这些短命任务）。
 const TASKS_POLL_MS = 2000;
+// cancelTask：按停**一个**原子任务（2026-11-01 用户定：「任务菜单里，我希望有办法取消任务」）。
+//
+// `canceled:false` 不是错误：面板轮询里那些 id 随时可能"刚好跑完"。这种时候什么都不说
+// （补刷一次面板，那一行自己就消失了）—— 弹一条"取消失败"只会让人以为自己点慢了。
+//
+// ⚠ 按下之后**不立刻**从面板上抹掉那一行：真正停不停由那一发自己决定（ctx 取消是**请求**）。
+// 我们只是补刷一次，让它按真实状态变（多半下一秒就翻成"取消"）。
+function cancelTask(id) {
+  api.cancelTask(id)
+    .then((res) => {
+      if (!res?.canceled) toast("这一发已经结束了");
+      refreshTasks();
+    })
+    .catch((err) => toast(`按停失败：${err.message}`, "error"));
+}
 // cancelQueue：取消一个**队列任务**（2026-11-01）—— 在飞的那一发会被一起掐断。
 // 取消完立刻补刷一次面板，别等那 2 秒的节拍（人按了按钮就该马上看见变化）。
 function cancelQueue(id) {
@@ -1551,6 +1571,7 @@ onUnmounted(() => {
       @select-model="(v) => applyModelValue(v).catch((err) => toast(`换模型失败：${err.message}`, 'error'))"
       @select-agent="(id) => applyAgentValue(id).catch((err) => toast(`换 Agent 失败：${err.message}`, 'error'))"
       @cancel-queue="cancelQueue"
+      @cancel-task="cancelTask"
     />
         <main id="messages-vue" v-show="workspace === 'chat'">
           <!-- 滚动容器（#messages-vue）现在**占满整个对话区**（滚动条因此贴最右缘，2026-10-14 用户定）；
