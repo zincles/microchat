@@ -936,7 +936,35 @@ test("后台任务：顶栏徽标 + 浮板，数字 / 明细都来自 /tasks", (
   assert.ok(!/taskLineText/.test(fmt), "format.js 还留着 taskLineText（没有调用方了）");
   assert.ok(!/taskLineText/.test(app), "App 还在引用 taskLineText");
 
-  // ⑤ 浮板列的是「还有谁在跑」：kind / 标题 / 时长，失败点名
+  // ⑤ 位置：右上角那一簇的**最左**（在切换开关与环之前）
+  const atBadge = tpl.indexOf('id="task-badge"');
+  const atSwitch = tpl.indexOf('class="ws-switch"');
+  const atRing = tpl.indexOf('id="ctx-ring"');
+  assert.ok(atBadge > 0 && atSwitch > 0 && atRing > 0, "三个都不是第一次出现，没法判次序");
+  assert.ok(atBadge < atSwitch && atBadge < atRing,
+    `徽标该在最左（task-badge@${atBadge} 应在 ws-switch@${atSwitch} / ctx-ring@${atRing} 之前）`);
+
+  // ⑥ 加个底：它得是一个**实心圆片**，不是一个飘着的数字
+  const badgeRule = css.match(/\.task-badge \{[^}]*\}/)?.[0] ?? "";
+  assert.ok(badgeRule, "找不到 .task-badge 的规则");
+  assert.match(badgeRule, /background:\s*var\(--tg-secondary-bg\)/, "徽标没有底（该与顶栏那两枚开关同一个色）");
+  assert.match(badgeRule, /border-radius:\s*50%/, "徽标的底不是圆的");
+
+  // ⑦ 有任务时**转起来**（不是只换个颜色）
+  assert.match(css, /@keyframes task-spin/, "没有转圈的 keyframes");
+  assert.match(css, /\.task-badge\.live::before[^{]*\{[^}]*animation:\s*task-spin/, "有任务时外圈不转");
+  assert.match(css, /prefers-reduced-motion[\s\S]{0,200}task-badge\.live::before/,
+    "减少动效时没兜底（转圈是纯装饰，但\"在跑\"这个信息不能丢）");
+
+  // ⑧ ⚠ **尺寸与字号不能写在同一个元素上**：em 会叠乘
+  //    （1.8em × 0.72em = 20.7px ≠ 环的 28.8px —— 看起来就是个附注，踩过）
+  assert.match(badgeRule, /width:\s*1\.8em/, "徽标不是与环同高的 1.8em");
+  assert.ok(!/font-size/.test(badgeRule),
+    "徽标把 font-size 写在自己身上了 —— 会与 width 叠乘，实际尺寸缩水一圈；字号该给 .task-badge-n");
+  const numRule = css.match(/\.task-badge-n \{[^}]*\}/)?.[0] ?? "";
+  assert.match(numRule, /font-size:\s*0\.72em/, ".task-badge-n 该是 0.72em（数字字号）");
+
+  // ⑨ 浮板列的是「还有谁在跑」：kind / 标题 / 时长，失败点名
   assert.match(tpl, /v-for="t in taskRecords"/, "浮板没有逐条列出任务");
   assert.match(tpl, /taskElapsed\(t\)/, "浮板没显示跑了多久");
   assert.match(tpl, /:class="\{ done: t\.finished_at, failed: !!t\.error \}"/, "浮板没区分已结束 / 失败");

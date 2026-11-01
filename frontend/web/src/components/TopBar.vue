@@ -276,6 +276,23 @@ defineExpose({ setSession, setModels, setAgents, setContext, setStatus, setTasks
       </template>
     </span>
     <span class="header-right">
+      <!-- 后台任务（2026-11-01 用户定；同日二改：「它应该位于右上角栏的最左侧。而且，加个底吧。
+           在有后台任务时会显示加载动画」）—— 圆片里是**还在跑**的条数，有任务时外圈一道弧转起来。
+           放**最左**：这一簇里只有它是"会自己变"的仪表，靠左不与环、开关抢位置；
+           从右往左读是「占用 ← 视图 ← 任务」，从"现在在忙什么"读到"上下文有多满"。
+           ⚠ 数字包一层 `.task-badge-n`：**尺寸用根 em、字号才用 0.72em** ——
+             两者写在同一个元素上会叠乘（1.8em × 0.72 = 20.7px，比环的 28.8px 小一圈，
+             看起来像个附注；踩过）。 -->
+      <button
+        id="task-badge"
+        class="task-badge"
+        :class="{ live: taskRunning > 0 }"
+        type="button"
+        :title="taskTitle"
+        aria-label="后台任务"
+        :aria-expanded="taskOpen ? 'true' : 'false'"
+        @click="toggleTasks"
+      ><span class="task-badge-n">{{ taskCountText }}</span></button>
       <!-- 🔀 聊天 / 上下文（2026-10-29 用户定）：「每个对话分为俩部分：对话界面 和 上下文工作区
            界面」，开关在**绿环左边**。放在这一簇里因为它和环是同一件事的两面 ——
            环说"占了多少"，这块说"占的是什么"。
@@ -318,18 +335,6 @@ defineExpose({ setSession, setModels, setAgents, setContext, setStatus, setTasks
           <circle class="ctx-ring-fill" cx="16" cy="16" r="13" pathLength="100" :stroke-dasharray="ctxDash" />
         </svg>
       </button>
-      <!-- 后台任务（2026-11-01 用户定）：与环同一个语言 —— 一颗小圆，圆里是**在跑的条数**；
-           点开是浮板明细。0 个时压暗（`.live` 才是亮的）。 -->
-      <button
-        id="task-badge"
-        class="task-badge"
-        :class="{ live: taskRunning > 0 }"
-        type="button"
-        :title="taskTitle"
-        aria-label="后台任务"
-        :aria-expanded="taskOpen ? 'true' : 'false'"
-        @click="toggleTasks"
-      >{{ taskCountText }}</button>
     </span>
     <template v-if="agentOpen">
       <div class="agent-menu-backdrop" @click="agentOpen = false"></div>

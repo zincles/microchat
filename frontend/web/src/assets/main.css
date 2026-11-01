@@ -188,19 +188,38 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
   transition: stroke-dasharray 240ms ease-out, stroke 160ms linear; }
 #ctx-ring.over .ctx-ring-fill { stroke: var(--tg-destructive); }
 #ctx-ring.idle .ctx-ring-fill { stroke: none; }
-/* —— 后台任务徽标（右上角，2026-11-01 用户定）——
- * 「把后台任务也做成右上角那个圆环一样的东西……显示一个数字」⇒ 一颗 1.8em 的小圆（与环同高），
- * 圆里是**在跑的条数**；点开掉浮板看明细。
- * ⚠ 0 个时**不藏**、只压暗：藏起来的话"有没有任务在跑"就得靠猜（与环的 `.idle` 同一套语言）。
- * ⚠ 只有 `.live`（有在跑）才给底色 —— 静息时它是一枚浅灰数字，不该比环更抢眼。 */
-.task-badge { flex: none; width: 1.8em; height: 1.8em; padding: 0; border: none; border-radius: 50%;
-  display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
-  font: inherit; font-size: 0.72em; font-variant-numeric: tabular-nums; line-height: 1;
-  background: none; color: var(--tg-hint); -webkit-tap-highlight-color: transparent; }
-.task-badge.live { background: color-mix(in srgb, var(--tg-link) 18%, transparent); color: var(--tg-link); }
-.task-badge:hover { background: color-mix(in srgb, var(--tg-text) 8%, transparent); }
-.task-badge.live:hover { background: color-mix(in srgb, var(--tg-link) 26%, transparent); }
+/* —— 后台任务徽标（右上角那一簇的**最左**，2026-11-01 用户定）——
+ * 用户原话：「把后台任务也做成右上角那个圆环一样的东西……显示一个数字」→「它应该位于右上角栏的
+ * 最左侧。而且，加个底吧。在有后台任务时会显示加载动画」。
+ * ⇒ 一颗 1.8em 的**实心圆片**（与旁边两枚开关同一个底 `--tg-secondary-bg`，于是它读起来是
+ *   "能点的按钮"而不是一个飘着的数字），圆里是在跑的条数；有任务时外圈一道弧**转起来** ——
+ *   动比色更能在余光里看出"正在干活"。
+ *
+ * ⚠ 弧用 `inset: 0` 画在**圆片自己的边缘上**，不往外长：往外长会挤到旁边的切换开关，
+ *   也会让这一簇的基线跳动（顶栏是 `absolute` 悬浮层，高度一变就压住第一条消息）。
+ * ⚠ 尺寸 (1.8em) 与字号 (0.72em) **不能写在同一个元素上** —— em 会叠乘：
+ *   1.8 × 0.72 = 1.296em ⇒ 只有 20.7px，比环的 28.8px 小一圈，看着像个附注（踩过）。
+ *   所以数字包一层 `.task-badge-n`。
+ * ⚠ 0 个时**不藏、也不转**：藏起来的话"有没有任务在跑"就得靠猜（与环的 `.idle` 同一套语言）。
+ */
+.task-badge { position: relative; flex: none; width: 1.8em; height: 1.8em; padding: 0; border: none;
+  border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+  font: inherit; line-height: 1; background: var(--tg-secondary-bg); color: var(--tg-hint);
+  -webkit-tap-highlight-color: transparent; }
+.task-badge-n { font-size: 0.72em; font-variant-numeric: tabular-nums; line-height: 1; }
+.task-badge.live { color: var(--tg-link); }
+.task-badge:hover { filter: brightness(1.25); }
 .task-badge:focus-visible { outline: 2px solid color-mix(in srgb, var(--tg-link) 55%, transparent); outline-offset: 1px; }
+/* 转圈：一圈淡底 + 两段亮弧（top/right 拼出半圈）—— 转到一半时看得出"它在动"，又不闪眼。 */
+.task-badge.live::before { content: ""; position: absolute; inset: 0; border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--tg-link) 26%, transparent);
+  border-top-color: var(--tg-link); border-right-color: var(--tg-link);
+  animation: task-spin 0.9s linear infinite; }
+@keyframes task-spin { to { transform: rotate(360deg); } }
+/* 减少动效：不转，留一道实心弧 —— "在跑"这件事本身不能丢。 */
+@media (prefers-reduced-motion: reduce) {
+  .task-badge.live::before { animation: none; border-color: var(--tg-link); opacity: 0.55; }
+}
 /* 浮板：与 Agent / 上下文那两块同族（都是 `.agent-menu`），只是内容一列一列地排。
  * `right: 1em` 而不是 `left: 1em` —— 它挂在最右缘，浮板该往左展开，不该往右出界。 */
 .task-menu { left: auto; right: 1em; min-width: 16em; max-width: min(26em, calc(100vw - 2em)); }
