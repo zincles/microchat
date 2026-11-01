@@ -1078,6 +1078,13 @@ let connText = "未连接";
 const statusAgent = ref("");
 // 后台任务行（/tasks 是进程内事实；2s 一拉 —— 端点零成本，也别等太久看不见压缩/标题这些短命任务）。
 const TASKS_POLL_MS = 2000;
+// cancelQueue：取消一个**队列任务**（2026-11-01）—— 在飞的那一发会被一起掐断。
+// 取消完立刻补刷一次面板，别等那 2 秒的节拍（人按了按钮就该马上看见变化）。
+function cancelQueue(id) {
+  api.cancelQueue(id)
+    .then(() => refreshTasks())
+    .catch((err) => toast(`取消失败：${err.message}`, "error"));
+}
 let tasksTimer = null;
 async function refreshTasks() {
   try {
@@ -1552,6 +1559,7 @@ onUnmounted(() => {
       @toggle-left="toggleLeft"
       @select-model="(v) => applyModelValue(v).catch((err) => toast(`换模型失败：${err.message}`, 'error'))"
       @select-agent="(id) => applyAgentValue(id).catch((err) => toast(`换 Agent 失败：${err.message}`, 'error'))"
+      @cancel-queue="cancelQueue"
     />
         <main id="messages-vue" v-show="workspace === 'chat'">
           <!-- 滚动容器（#messages-vue）现在**占满整个对话区**（滚动条因此贴最右缘，2026-10-14 用户定）；

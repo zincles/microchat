@@ -26,6 +26,7 @@ import (
 	"microchat/internal/compact"
 	"microchat/internal/config"
 	"microchat/internal/model"
+	"microchat/internal/queue"
 	"microchat/internal/registry"
 	"microchat/internal/reroll"
 	"microchat/internal/server"
@@ -157,6 +158,10 @@ func main() {
 	tasks := task.NewRegistry()
 	chatService := chat.New(st, paths, turns, tasks)
 	compactService := compact.New(st, paths, turns, tasks)
+	// 队列任务（2026-11-01 用户定）：一串原子任务**串行**跑 —— 一步失败整个队列结束，可随时取消。
+	// 队列本身不认识压缩，只知道"有个 Runner 能把一步跑完"（适配器在下面）。
+	queueService := queue.New(st, tasks)
+	queueService.Runner = compactStepper{store: st, compact: compactService}
 	// 重摇：**把"最后那条 assistant 回复"重摇几版、挑一版定下来**（候选只在内存里）。
 	// 装配借的就是 `chat`（`RerollMessages`）—— 重摇与一轮对话共用同一份拼装，没有第二份。
 	rerollService := reroll.New(st, paths, turns, tasks, chatService)
@@ -199,7 +204,7 @@ func main() {
 		log.Printf("⚠ root 还没初始化（uid 0 空口令）：打开前端完成「初始化 root」，**做完再暴露到公网**")
 	}
 	go func() {
-		webServer := server.New(st, cfg, paths, chatService, compactService, rerollService, tasks, jwtKey, sysToken)
+		webServer := server.New(st, cfg, paths, chatService, compactService, rerollService, tasks, queueService, jwtKey, sysToken)
 		webServer.SetTelegramRunner(tgRunner)
 		if err := http.Serve(listener, webServer.Handler()); err != nil {
 			log.Printf("服务退出: %v", err)
@@ -441,6 +446,23 @@ func (r summaryRoller) RegenerateSummary(ctx context.Context, session model.Sess
 }
 
 // autoCompactor：把 `compact.Service` 适配成 `chat.Compactor`（接口在消费方那侧定义 —— 同 reroll 的套路）。
+// compactStepper：把**队列的一步**落成一次压缩 —— 阻塞到这一发有结局（队列就靠它串行）。
+//
+// 与 `autoCompactor` 只差一处：那个是"一轮生成收尾时顺手压"，手上已经有 session；
+// 这个只有 id（队列里存的就是 id），所以要自己取一次。**跑法完全一样**（同一支笔）。
+type compactStepper struct {
+	store   *store.Store
+	compact *compact.Service
+}
+
+func (c compactStepper) RunStep(ctx context.Context, step queue.Step) error {
+	session, err := c.store.GetSession(step.SessionID)
+	if err != nil {
+		return err
+	}
+	return autoCompactor{svc: c.compact}.Compact(ctx, *session, step.Blocks)
+}
+
 type autoCompactor struct{ svc *compact.Service }
 
 func (a autoCompactor) Compact(ctx context.Context, session model.Session, blocks int) error {

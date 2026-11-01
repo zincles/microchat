@@ -924,7 +924,9 @@ test("后台任务：顶栏徽标 + 浮板，数字 / 明细都来自 /tasks", (
     "徽标数字没取 board.running（自己去数 tasks 就会与后端不一致）");
 
   // ③ 0 个时压暗而不是藏起来（与环的 .idle 同一套语言）
-  assert.match(tpl, /:class="\{ live: taskRunning > 0 \}"/, "徽标没有 running 态的类");
+  // 2026-11-01 二改：转圈看的是"有没有活在跑"——原子任务**或队列**，任一都算
+  //（队列两步之间那几毫秒里 taskRunning 可能是 0，但它显然还在跑）。
+  assert.match(tpl, /:class="\{ live: taskBusy \}"/, "徽标没有 running 态的类");
   assert.match(css, /\.task-badge\.live\b/, "没有 .task-badge.live 的样式");
   assert.ok(!/v-if="taskRunning"/.test(tpl), "有任务汇总类的 v-if —— 0 个时别把它整个藏起来");
 
@@ -965,10 +967,55 @@ test("后台任务：顶栏徽标 + 浮板，数字 / 明细都来自 /tasks", (
   assert.match(numRule, /font-size:\s*0\.72em/, ".task-badge-n 该是 0.72em（数字字号）");
 
   // ⑨ 浮板列的是「还有谁在跑」：kind / 标题 / 时长，失败点名
-  assert.match(tpl, /v-for="t in taskRecords"/, "浮板没有逐条列出任务");
+  // 原子任务改成**按大类分组**渲染（2026-11-01）：先遍历组，再遍历组里的条目。
+  assert.match(tpl, /v-for="g in taskGroups"/, "浮板没有按大类分组");
+  assert.match(tpl, /v-for="t in g\.items"/, "浮板没有逐条列出任务");
   assert.match(tpl, /taskElapsed\(t\)/, "浮板没显示跑了多久");
   assert.match(tpl, /:class="\{ done: t\.finished_at, failed: !!t\.error \}"/, "浮板没区分已结束 / 失败");
   assert.match(css, /\.task-row\.failed\b/, "失败的任务行没有样式");
+});
+
+// 队列任务（2026-11-01 用户定）：「队列」「一般任务」「LLM 生成任务」三个词要在面板上分得开。
+//
+// 队列 = 一串串行的原子任务（有进度、可取消）；原子任务按大类分组。
+// **两层，不是一个列表** —— 队列跑的时候下面同时会有"当前这一步"的原子任务，那不是重复。
+test("后台任务面板：队列单独一栏（带进度与取消），原子任务按大类分组", () => {
+  const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
+  const app = readFileSync(join(SRC, "..", "src", "App.vue"), "utf8");
+  const api = readFileSync(join(SRC, "api", "client.js"), "utf8");
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  const tpl = top.slice(top.indexOf("<template>")).replace(/<!--[\s\S]*?-->/g, "");
+
+  // ① 队列那一栏：遍历 `queues`，带 `index/total` 进度
+  assert.match(tpl, /v-for="q in queues"/, "浮板里没有队列那一栏");
+  assert.match(tpl, /\{\{ q\.index \}\}\/\{\{ q\.total \}\}/, "队列行没有 i/n 进度");
+
+  // ② 取消按钮：**只在跑着的时候出现**，点了把 id 报上去（App 去发请求）
+  assert.match(tpl, /class="task-cancel"/, "队列行没有取消按钮");
+  assert.match(tpl, /v-if="!q\.finished_at"[\s\S]{0,200}class="task-cancel"/,
+    "取消按钮没限定在「还在跑」的队列上（跑完了还给颗取消按钮 = 死按钮）");
+  assert.match(tpl, /@click\.stop="emit\('cancel-queue', q\.id\)"/, "取消按钮没把队列 id 报上去");
+  assert.match(top, /defineEmits\(\[[^\]]*"cancel-queue"/, "TopBar 没声明 cancel-queue");
+  assert.match(app, /@cancel-queue="cancelQueue"/, "App 没接 cancel-queue");
+  assert.match(app, /function cancelQueue\(id\)/, "App 没有 cancelQueue");
+  // 取消完要**立刻**刷一次面板（别等那 2 秒的节拍）
+  assert.match(app, /api\.cancelQueue\(id\)[\s\S]{0,80}refreshTasks\(\)/, "取消之后没补刷面板");
+  assert.match(api, /cancelQueue:\s*\(queueId\) => call\("POST", `\/tasks\/queues\/\$\{enc\(queueId\)\}\/cancel`\)/,
+    "API 客户端的 cancelQueue 路径不对");
+
+  // ③ 大类：按**后端给的 `group`** 分，前端不按 kind 猜
+  assert.match(top, /const key = t\.group \|\| "plain"/, "分组没读后端给的 group（按 kind 猜会分岔）");
+  assert.match(top, /GROUP_LABELS = \{ llm: "LLM 生成", plain: "一般" \}/,
+    "两个大类的名字该是「LLM 生成」与「一般」（用户原话）");
+  assert.match(tpl, /class="task-group-head"/, "分组没有小标题");
+
+  // ④ 队列归哪一类由后端给（压缩 = llm），前端别自己判
+  assert.ok(!/kind === "compact"/.test(top), "前端在按 kind 判大类 —— 该读 group");
+
+  // ⑤ 样式：队列行 / 进度 / 取消按钮都得有
+  for (const cls of [".task-queue", ".task-progress", ".task-cancel"]) {
+    assert.ok(css.includes(cls + " "), `缺少 ${cls} 的样式`);
+  }
 });
 
 test("顶栏是不透明的（消息滚到栏底下要被挡住）", () => {

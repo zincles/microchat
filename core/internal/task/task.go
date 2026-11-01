@@ -30,6 +30,33 @@ const (
 	KindRefreshModels Kind = "refresh_models" // 后台：从上游拉某个渠道的模型列表
 )
 
+// Group：任务的**大类** —— 界面按它分组（2026-11-01 用户定：「要区分一般任务和 LLM 生成任务」）。
+//
+// 判据是**这一发会不会打上游**（与 `needsSession` 同一件事的两面）：
+//
+//	llm   —— 会调模型、烧 token：turn / reroll / compact / title（judgement 已退役但种类还在）
+//	plain —— 不调模型，就是本地/HTTP 的活儿：refresh_models
+//
+// ⚠ **只在这一处分类**：`Kind.Group()` 是唯一权威，`Record.Group` 在 `Begin` 时由它填。
+//
+//	别在界面上再写一张 kind → 大类的映射表（两边一分岔，面板就会把某类任务挂到错的组里，
+//	而且不报错 —— 只是"看着少了一条"）。
+type Group string
+
+const (
+	GroupLLM   Group = "llm"   // LLM 生成
+	GroupPlain Group = "plain" // 一般
+)
+
+// Group：这个 kind 属于哪一类。**未知的 kind 一律算一般**（保守：不会把它误挂进"烧钱"那组）。
+func (k Kind) Group() Group {
+	switch k {
+	case KindTurn, KindReroll, KindCompact, KindTitle, KindJudgement:
+		return GroupLLM
+	}
+	return GroupPlain
+}
+
 // needsSession：这个作业会调模型吗 —— 会调的**必须**带会话 id。
 //
 // 理由不是记账好看：辅助调用要**骑同一个会话 id**（`x-opencode-session` 那类头，网关按它路由、
@@ -78,6 +105,7 @@ type Record struct {
 	// （两个不同时间的活对不上）。
 	ID         string  `json:"id"`
 	Kind       Kind    `json:"kind"`
+	Group      Group   `json:"group"` // 大类：llm / plain（`Kind.Group()` 在 Begin 时填，**别手写**）
 	Session    *string `json:"session,omitempty"`
 	Title      string  `json:"title"`
 	StartedAt  int64   `json:"started_at"`
@@ -135,7 +163,7 @@ func (r *Registry) Begin(kind Kind, sessionID *string, title string) *Guard {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.records[id] = Record{
-		ID: id, Kind: kind, Session: sessionID, Title: title,
+		ID: id, Kind: kind, Group: kind.Group(), Session: sessionID, Title: title,
 		StartedAt: time.Now().UnixMilli(), Outcome: StateRunning,
 	}
 	r.order = append(r.order, id)

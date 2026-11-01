@@ -178,3 +178,44 @@ func TestKindLabels(t *testing.T) {
 		t.Fatal("标签该是中文")
 	}
 }
+
+// 大类（2026-11-01 用户定：「要区分一般任务和 LLM 生成任务」）。
+//
+// 判据 = **这一发会不会打上游**（与 needsSession 同一件事的两面）。这张表是唯一权威：
+// 界面按 `group` 分组，别再在前端另抄一份 kind → 大类（两边一分岔就不报错地挂错组）。
+func TestKindGroup(t *testing.T) {
+	llm := []Kind{KindTurn, KindReroll, KindCompact, KindTitle, KindJudgement}
+	for _, kind := range llm {
+		if got := kind.Group(); got != GroupLLM {
+			t.Fatalf("%s 该是 LLM 生成，实际 %q", kind, got)
+		}
+	}
+	plain := []Kind{KindRefreshModels}
+	for _, kind := range plain {
+		if got := kind.Group(); got != GroupPlain {
+			t.Fatalf("%s 该是一般任务（不调模型），实际 %q", kind, got)
+		}
+	}
+	// 不认识的 kind 一律算一般（保守：别把野路子挂进"烧钱"那组）。
+	if got := Kind("野路子").Group(); got != GroupPlain {
+		t.Fatalf("未知 kind 该算一般，实际 %q", got)
+	}
+}
+
+// Record.Group 由 Begin 填（**别手写**：手写就会与 Kind.Group() 分岔）。
+func TestBeginFillsGroup(t *testing.T) {
+	registry := NewRegistry()
+	sessionID := "s1"
+	guard := registry.Begin(KindCompact, &sessionID, "压缩")
+	defer guard.Succeed()
+	for _, record := range registry.Board().Tasks {
+		if record.ID != guard.ID() {
+			continue
+		}
+		if record.Group != GroupLLM {
+			t.Fatalf("compact 那格该是 llm，实际 %q", record.Group)
+		}
+		return
+	}
+	t.Fatal("面板里没有刚挂的那一条")
+}

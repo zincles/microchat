@@ -237,6 +237,32 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 /* 已结束的压暗一档（它还在这张表里只是"刚发生"，不是在跑）；失败的整行点名（红字）。 */
 .task-row.done { opacity: 0.6; }
 .task-row.failed .task-label { color: var(--tg-destructive); }
+/* —— 队列任务（2026-11-01 用户定）——
+ * 面板上"队列"与"原子任务"是**两层**：队列说"这一大批跑到第几步"，原子任务说"此刻在跑哪一发"。
+ * 所以队列单独一栏、带 i/n 进度、带一颗取消；下面才是按大类分的原子任务。
+ * ⚠ 队列跑着的时候两处会**同时**有东西（队列 12/100 + 一个 compact 原子任务）——
+ *   那不是重复，是同一个事实的两层表述。别为了"看起来不重复"把原子任务那行藏掉：
+ *   藏了就看不出"这一步卡在哪条会话上"。 */
+.task-group-head { padding: 0.55em 0.55em 0.2em; font-size: 0.85em; color: var(--tg-hint);
+  letter-spacing: 0.02em; }
+.task-queue .task-kind { color: var(--tg-link); }
+/* 进度 i/n：数字要能一眼扫（tabular-nums），且不跟名字挤在一起。 */
+.task-progress { flex: none; margin-left: 0.4em; font-variant-numeric: tabular-nums; color: var(--tg-link); font-weight: 600; }
+/* 失败原因（与原子任务的 `.task-row.failed .task-label` 同色，但队列行还要把原因本身写出来）。 */
+.task-why { display: block; margin-top: 0.1em; font-size: 0.85em; color: var(--tg-destructive);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 取消：一颗**小而不抢眼**的按钮 —— 它在每一行右边，不能比任务名还重。
+ * 触屏上给够 1.6em 的高度，否则点不准（点不中的按钮比没有更糟）。 */
+.task-cancel { flex: none; min-height: 1.6em; padding: 0 0.5em; border-radius: var(--r-btn);
+  background: none; border: 1px solid color-mix(in srgb, var(--tg-text) 18%, transparent);
+  color: var(--tg-hint); font: inherit; font-size: 0.85em; cursor: pointer; line-height: 1;
+  -webkit-tap-highlight-color: transparent; }
+.task-cancel:hover { color: var(--tg-destructive);
+  border-color: color-mix(in srgb, var(--tg-destructive) 45%, transparent);
+  background: color-mix(in srgb, var(--tg-destructive) 10%, transparent); }
+.task-cancel:focus-visible { outline: 2px solid color-mix(in srgb, var(--tg-destructive) 55%, transparent); outline-offset: 1px; }
+/* 已结束的队列那格显示结局（成功 / 取消 / 失败）—— 与原子任务的时长同一列。 */
+.task-queue.done { opacity: 0.7; }
 /* 聊天 / 上下文 两段开关（2026-10-29 用户定）：落在绿环左边，切的是**这一下看哪块视图**。
  * 一段式胶囊（容器带底、选中那段浮起来）—— 与 `.settings-nav` 的页签同族但**不做滑动底片**：
  * 只有两段、宽度固定，动画反而让人以为中间还有东西。

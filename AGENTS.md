@@ -41,6 +41,7 @@ core/                      ← 后端（Go **核心**；叫 core 是因为它不
     server/                HTTP：路由、错误体、鉴权（只编排，不含业务）
     apiclient/             后端 REST 的薄封装（TUI / TG 共用：只取数写数，不碰内部包，可连远端）
     tui/ tg/               终端 / Telegram（**封存**：不动；新能力只接 Web）
+    queue/                 队列任务：一串**串行**跑的原子任务（一步失败即整体结束、可取消）
     model/ config/         纯结构 / `config/` 读写
 
 frontend/
@@ -72,11 +73,14 @@ reminder/                  ← 专题参考（`tool-calls.md` 工具调用 / `je
 | `turn` | 这一轮的流细节 | 增量什么都不算；游标读不消费 |
 | `task` | 作业的身份 + 生死（= 一次上游请求的全程） | `defer` 兜底（**Go 没有 Drop**）；绝不留下僵尸条目；TaskID 是 UUIDv7、不进库 |
 | `reroll` | 重摇的**候选列表**（进程内、会话级） | 候选**只在内存里**（不建表、不写库、Copy 不带走）；两个平行家族：**尾条 assistant**（reroll-message）与**没有父的摘要**（reroll-summary）；切换 = 就地换正文（消息 **UUID 不变** / 摘要 **id 不变**）；与生成**共用同一把闸**；**装配与摘要都不另写一份**（借 chat 的装配、借 compact 的生成半程）；**候选生成走流式**（消息族，流进 `turn` 缓冲、摇完清空；摘要族仍整段式走 compact 半程） |
+| `queue` | 队列任务（一串串行的原子任务） | **严格串行**（一步收尾才开下一步）；**一步失败即整体结束**；**可随时取消**（在飞的那一发一起掐断）；**不认识压缩**（Runner 由 `main.go` 接） |
 | `server` | **只有它碰 HTTP** | 错误体固定；只编排不含业务 |
 
 依赖方向单向：`server → chat/compact/abilities → state（含 statelang）/blocks → registry/providers/config → store → model`。
 （`compact` 另要 `abilities` 与 `providers` —— 校验能力开关、借同一套真发；`blocks` 只依赖 `model`。）
 `turn`/`task` 是横切（谁都能挂号，不被依赖）。
+`queue` **只依赖 `task` + `store`**，不认识 `compact`：它只知道"有个 Runner 能把一步跑完"，
+适配器 `compactStepper` 住 `main.go`（组装点）—— 于是队列不必 import compact，压缩也不必知道有队列。
 `reroll` **谁也不依赖、也不被谁依赖** ✓：它借 `chat` 的**装配**（`chat.Service.RerollMessages`）、
 `compact` 的**生成半程**（`compact.Service.RegenerateSummary`：只生成、不落库）与 `turn` 的**闸门**，
 靠三个**接口**接上（`reroll.Assembler` / `chat.CandidateOwner` / `reroll.SummaryGenerator`，都在消费方那一侧定义；
@@ -572,7 +576,9 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 |---|---|---|---|
 | GET | `/health` | `{"status","version"}` | 探针；**也过鉴权** |
 | GET | `/debug/last-payload` | `LastPayload` | **admin 专属**。**(a) 上一次真发出去的那一发**：那一刻请求的**快照**（method / url / **头** / 体；内存一份，覆盖式；没发过 = `null`）。**不可重算** ✗ —— 历史事实（改一条旧消息也回不去），且**含请求头**：用来回答"我上一发到底发了什么 / 为什么被拒"（网关拒的往往是头不是体）。头也回显且打码 |
-| GET | `/tasks` | `TaskBoard` | **任务面板**：进程内的事实（`running` + 在跑的在前的 `tasks`；与 `-debug tasks` 同一份 `Board`，不进库）。轮询用（状态指示器就问它）。重启就没 —— "没有在跑的"是诚实的事实。**非 admin 只见自己会话的任务**（别人在跑什么不关你事）|
+| GET | `/tasks` | `TaskBoard` | **任务面板**：进程内的事实（`running` + 在跑的在前的 `tasks` + 2026-11-01 加的 `queues`；与 `-debug tasks` 同一份 `Board`，不进库）。轮询用（状态指示器就问它）。重启就没 —— "没有在跑的"是诚实的事实。**非 admin 只见自己会话的任务**（别人在跑什么不关你事）。<br>2026-11-01 加两格：每条 `task` 带 **`group`**（`llm` / `plain` —— 「LLM 生成」与「一般」，由 `task.Kind.Group()` 这一处判定，界面**只读不猜**）；`queues` 是队列任务那一层（见下两条），**admin 才看得见** |
+| POST | `/tasks/queues` | `{kind?,title?,steps?}` 或 `{kind?,title?,session_id,blocks?,times?}` | `Queue` · 201 | **排一个队列任务**（2026-11-01 用户定）：把 N 步排成**一个**串行队列，立刻开跑。**两种给法二选一**（都给 ⇒ 400）：`steps`（显式列表，每步 `{session_id, blocks}`，跨会话也走它）或 `session_id + blocks + times`（同一个会话重复 N 次 —— 用户那句「这条对话连压 100 次」就是它）。`kind` 缺省 `compact`（现在也只有它）；`blocks` 缺省 0 = 用 `chat.compact_blocks`。<br>**三条规矩**：① **严格串行**（上一步收尾才开下一步）；② **一步失败 ⇒ 整个队列结束**（不跳过、不重试、不接着跑剩下的）；③ **可随时取消**（在飞的那一发一起掐断）。校验（会话在不在、步数、times）全在**开跑之前**做完 ⇒ 排错的队列当场被拒，不会跑到第 87 步才发现 id 写错。**admin 专属** —— 它绕过逐会话的归属检查 |
+| POST | `/tasks/queues/{queue_id}/cancel` | — | `Queue` · 200 | **随时取消**（幂等：已结束的再按一次，原样回它现在的样子）。**在飞的那一发会被 ctx 一起掐断** —— 压缩要整段拿到才落库 ⇒ **不会留半条摘要**。没有这个队列 ⇒ 404 |
 
 ## 一轮生成（202 + 轮询）
 

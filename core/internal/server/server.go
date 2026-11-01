@@ -20,6 +20,7 @@ import (
 	"microchat/internal/compact"
 	"microchat/internal/config"
 	"microchat/internal/model"
+	"microchat/internal/queue"
 	"microchat/internal/reroll"
 	"microchat/internal/store"
 	"microchat/internal/task"
@@ -35,6 +36,7 @@ type Server struct {
 	compact *compact.Service
 	rerolls *reroll.Service
 	tasks   *task.Registry
+	queues  *queue.Service // 队列任务（2026-11-01）：串行、一步失败即整体结束、可取消
 	// telegram：bot 的活 runner（main 登记；只用来问"跑没跑" —— 启停归 main）。
 	telegram TelegramRunner
 	mux      *http.ServeMux
@@ -54,9 +56,9 @@ func (s *Server) SetTelegramRunner(runner TelegramRunner) { s.telegram = runner 
 // （server 只编排：解析请求、定错误码、写响应）。
 func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *chat.Service,
 	compactService *compact.Service, rerollService *reroll.Service, tasks *task.Registry,
-	jwtKey []byte, sysToken string) *Server {
+	queues *queue.Service, jwtKey []byte, sysToken string) *Server {
 	s := &Server{store: st, config: cfg, paths: paths, chat: chatService, compact: compactService,
-		rerolls: rerollService, tasks: tasks, mux: http.NewServeMux(),
+		rerolls: rerollService, tasks: tasks, queues: queues, mux: http.NewServeMux(),
 		jwtKey: jwtKey, sysToken: sysToken}
 	// Go 1.22+ 的 ServeMux 原生支持 `GET /x/{id}` 这种模式 —— 连路由库都不需要。
 	s.mux.HandleFunc("GET /api/v1/health", s.health)
@@ -118,6 +120,9 @@ func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *ch
 	s.mux.HandleFunc("PUT /api/v1/config/telegram", s.setTelegram)
 	// 任务面板：进程内的事实（与 `-debug tasks` 同一份 Board；轮询用，不进库）
 	s.mux.HandleFunc("GET /api/v1/tasks", s.taskBoard)
+	// 队列任务（2026-11-01 用户定）—— 排 / 取消，都是 admin（队列绕过逐会话归属检查）。
+	s.mux.HandleFunc("POST /api/v1/tasks/queues", s.enqueueQueue)
+	s.mux.HandleFunc("POST /api/v1/tasks/queues/{queue_id}/cancel", s.cancelQueue)
 
 	// statelang：解析 + 计算（给外部工具用；不涉及会话、不落库）
 	s.mux.HandleFunc("POST /api/v1/statelang", s.statelangParse)

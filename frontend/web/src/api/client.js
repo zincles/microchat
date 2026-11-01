@@ -177,6 +177,11 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
       }),
     // tasks：进程内任务面板（后台有多少在跑、都是什么）。
     tasks: () => call("GET", "/tasks"),
+    // enqueueQueue：把一串原子任务排成**一个队列**（2026-11-01）—— 串行跑，一步失败整个结束。
+    // body 两种形状二选一：`{steps:[{session_id,blocks}…]}` 或 `{session_id,blocks,times}`。
+    enqueueQueue: (body) => call("POST", "/tasks/queues", body),
+    // cancelQueue：随时取消；在飞的那一发会被一起掐断（压缩要整段才落库 ⇒ 不留半条）。
+    cancelQueue: (queueId) => call("POST", `/tasks/queues/${enc(queueId)}/cancel`),
     // 鉴权（2026-10-10）：我是谁 / 登出（JWT 无状态，登出只是给客户端一个明确动作口）。
     me: () => call("GET", "/auth/me"),
     logout: () => call("POST", "/auth/logout", {}),

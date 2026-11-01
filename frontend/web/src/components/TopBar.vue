@@ -23,7 +23,7 @@ defineProps({
   // 是因为它和环管的是同一件事的两面：环说"占了多少"，工作区说"占的是什么"。
   workspace: { type: String, default: "chat" },
 });
-const emit = defineEmits(["toggle-left", "select-model", "select-agent", "select-workspace"]);
+const emit = defineEmits(["toggle-left", "select-model", "select-agent", "select-workspace", "cancel-queue"]);
 
 const modelGroups = ref([]); // [{provider, items:[{value,label,provider_name,upstream_id}]}]
 const curModel = ref("");
@@ -181,6 +181,29 @@ function taskElapsed(t) {
   if (ms < 1000) return `${ms}ms`;
   return `${(ms / 1000).toFixed(1)}s`;
 }
+// —— 队列任务（2026-11-01 用户定）——
+//
+// 一个队列 = 一串**串行**跑的同种原子任务（现在只有压缩）。面板上它是**单独一栏**：
+// 队列说"这一大批跑到第几步"，下面的原子任务说"此刻在跑哪一发" —— 两层东西，别塞一个列表。
+const queues = computed(() => tasks.value?.queues ?? []);
+const queueRunning = computed(() => queues.value.filter((q) => !q.finished_at).length);
+// 转圈看的是"有没有活在跑"：原子任务、队列，任一都算（队列两步之间那几毫秒也算）。
+const taskBusy = computed(() => taskRunning.value > 0 || queueRunning.value > 0);
+
+// 大类的中文名 —— **只有这一份**。后端给 `group`（llm / plain），前端不按 kind 猜：
+// 猜就会与 `task.Kind.Group()` 分岔，而且不报错，只是"某类任务挂到了错的组里"。
+const GROUP_LABELS = { llm: "LLM 生成", plain: "一般" };
+const taskGroups = computed(() => {
+  const buckets = new Map();
+  for (const t of taskRecords.value) {
+    const key = t.group || "plain";
+    if (!buckets.has(key)) buckets.set(key, { key, label: GROUP_LABELS[key] || key, items: [] });
+    buckets.get(key).items.push(t);
+  }
+  // LLM 那组排前面：烧钱的那几发比"刷模型"更值得一眼看见。
+  return [...buckets.values()].sort((a, b) => (a.key === "llm" ? 0 : 1) - (b.key === "llm" ? 0 : 1));
+});
+
 // setTasks：App 轮询 `/tasks` 喂进来（取不到就传 null ⇒ 帽子归 0、浮板说"读不到"）。
 function setTasks(board) { tasks.value = board ?? null; }
 
@@ -286,7 +309,7 @@ defineExpose({ setSession, setModels, setAgents, setContext, setStatus, setTasks
       <button
         id="task-badge"
         class="task-badge"
-        :class="{ live: taskRunning > 0 }"
+        :class="{ live: taskBusy }"
         type="button"
         :title="taskTitle"
         aria-label="后台任务"
@@ -385,24 +408,59 @@ defineExpose({ setSession, setModels, setAgents, setContext, setStatus, setTasks
       <div class="agent-menu task-menu" role="dialog" aria-label="后台任务">
         <div class="task-head">
           <b>{{ taskRunning ? `${taskRunning} 个在跑` : "没有在跑的任务" }}</b>
-          <span v-if="taskRecords.length" class="task-total">最近 {{ taskRecords.length }} 条</span>
+          <span v-if="queues.length" class="task-total">{{ queues.length }} 个队列</span>
         </div>
         <p v-if="!tasks" class="agent-empty">读不到任务面板（后端没应？）。</p>
-        <p v-else-if="!taskRecords.length" class="agent-empty">
+
+        <!-- 队列（2026-11-01）：单独一栏，带进度与取消。
+             它跑的时候下面那栏会同时出现"当前这一步"的原子任务 —— 那是两层，不是重复。 -->
+        <template v-if="queues.length">
+          <div class="task-group-head">队列</div>
+          <ul class="task-list">
+            <li
+              v-for="q in queues"
+              :key="q.id"
+              class="task-row task-queue"
+              :class="{ done: q.finished_at, failed: !!q.error }"
+            >
+              <span class="task-kind">{{ q.kind }}</span>
+              <span class="task-label" :title="q.title || '队列'">
+                {{ q.title || "队列" }}
+                <b class="task-progress">{{ q.index }}/{{ q.total }}</b>
+                <span v-if="q.error" class="task-why">{{ q.error }}</span>
+              </span>
+              <button
+                v-if="!q.finished_at"
+                type="button"
+                class="task-cancel"
+                title="取消这个队列（在飞的那一发也一起掐断）"
+                @click.stop="emit('cancel-queue', q.id)"
+              >取消</button>
+              <span v-else class="task-time">{{ q.state }}</span>
+            </li>
+          </ul>
+        </template>
+
+        <!-- 原子任务：按大类分组（`group` 由后端给，见 task.Kind.Group） -->
+        <template v-for="g in taskGroups" :key="g.key">
+          <div class="task-group-head">{{ g.label }}</div>
+          <ul class="task-list">
+            <li
+              v-for="t in g.items"
+              :key="t.id"
+              class="task-row"
+              :class="{ done: t.finished_at, failed: !!t.error }"
+            >
+              <span class="task-kind">{{ t.kind || "?" }}</span>
+              <span class="task-label" :title="t.title">{{ t.title || "—" }}</span>
+              <span class="task-time">{{ taskElapsed(t) }}</span>
+            </li>
+          </ul>
+        </template>
+
+        <p v-if="tasks && !taskRecords.length && !queues.length" class="agent-empty">
           后台任务会在这里出现：一轮生成、一次压缩、一次刷新模型。
         </p>
-        <ul v-else class="task-list">
-          <li
-            v-for="t in taskRecords"
-            :key="t.id"
-            class="task-row"
-            :class="{ done: t.finished_at, failed: !!t.error }"
-          >
-            <span class="task-kind">{{ t.kind || "?" }}</span>
-            <span class="task-label" :title="t.title">{{ t.title || "—" }}</span>
-            <span class="task-time">{{ taskElapsed(t) }}</span>
-          </li>
-        </ul>
       </div>
     </template>
   </header>

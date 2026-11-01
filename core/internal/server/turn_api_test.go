@@ -1,7 +1,9 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
@@ -10,6 +12,7 @@ import (
 	"microchat/internal/compact"
 	"microchat/internal/config"
 	"microchat/internal/model"
+	"microchat/internal/queue"
 	"microchat/internal/reroll"
 	"microchat/internal/store"
 	"microchat/internal/task"
@@ -50,8 +53,33 @@ func newTestServer(st *store.Store, cfg config.Config, paths config.Paths) *Serv
 	chatService.Candidates = rerollService
 	// 鉴权（DEFINE「用户与鉴权」）：测试统一用**测试系统令牌**——call/新构造的请求都带上它，
 	// 于是既有测试全按"系统身份"跑（等于从前的"没配口令就放行"）；鉴权本身另有专测。
-	return New(st, cfg, paths, chatService, compact.New(st, paths, turns, tasks), rerollService, tasks,
+	compactService := compact.New(st, paths, turns, tasks)
+	// 队列（2026-11-01）：与 main.go 同一条接线 —— 每一步就是一次**阻塞**压缩。
+	queueService := queue.New(st, tasks)
+	queueService.Runner = testStepper{store: st, compact: compactService}
+	return New(st, cfg, paths, chatService, compactService, rerollService, tasks, queueService,
 		[]byte(testJWTKey), testSysToken)
+}
+
+// testStepper：`main.compactStepper` 的测试版。
+//
+// 真适配器住 `main` 包（那是组装点），测试里 import 不了 `main` ⇒ 照抄一份**最小**的。
+// 两者做的事必须一样：取会话 → 阻塞跑一次压缩。改了那边记得也看这里一眼。
+type testStepper struct {
+	store   *store.Store
+	compact *compact.Service
+}
+
+func (s testStepper) RunStep(ctx context.Context, step queue.Step) error {
+	session, err := s.store.GetSession(step.SessionID)
+	if err != nil {
+		return err
+	}
+	if session == nil {
+		return errors.New("会话不存在")
+	}
+	_, err = s.compact.Compact(ctx, *session, compact.Request{Blocks: step.Blocks})
+	return err
 }
 
 // dummySandbox：一条会话 + dummy 渠道（**确定性、不联网** —— 验收与测试都靠它）。
