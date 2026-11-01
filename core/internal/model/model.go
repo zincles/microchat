@@ -1,4 +1,4 @@
-// Package model：领域结构。**JSON 字段名与 Rust 版逐字一致**（Godot 那边按它写）。
+// Package model：领域结构。**JSON 字段名与 Rust 版逐字一致**（各前端按它写）。
 //
 // 注意点（都是从 Rust 版抓下来的活形状）：
 //   - 可空字段用 `omitempty` 省略（对应 Rust 的 skip_serializing_if），别输出 null 之外的差异；

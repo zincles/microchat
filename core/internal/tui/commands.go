@@ -165,7 +165,7 @@ func renameArg(args []string) string {
 
 // commandSystem：切换消息区顶部那条"系统提示词"（调试用）—— 顺手把开关**记到本地**。
 //
-// 界面偏好住 `~/.config/microchat/tui.json`（**不进**后端 `config/` 与 `data/`，也**不动** Godot 那份 `frontend.json`）。
+// 界面偏好住 `~/.config/microchat/tui.json`（**不进**后端 `config/` 与 `data/`，也**不动**别的前端那份 `frontend.json`）。
 func commandSystem(m model, _ []string) (tea.Model, tea.Cmd) {
 	m.showSystemPrompt = !m.showSystemPrompt
 	if m.showSystemPrompt {

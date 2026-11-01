@@ -7,7 +7,6 @@ microchat：轻量 SillyTavern 替代（RPG 向）。三层，边界要清楚：
 | 后端（**唯一权威**） | `core/`（Go + 标准库 + `modernc.org/sqlite`） | **新代码一律写这儿** |
 | Web 前端（**当前主力**） | `frontend/web/` | **优先迭代这儿**（2026-10-04 定：迭代快，助手擅 Web 栈；新界面能力先落这儿） |
 | TUI / TG Bot | `core/internal/tui/`、`core/internal/tg/` | **封存**（2026-10-09 起：不动；新能力只接 Web，Vue 完善前不碰这两处） |
-| Godot 前端 | `archive/godotui-frozen-20261009.tar.gz`（已封存，目录删了） | **封存**：Vue 完善前不动；用户要在编辑器里改时从 tar 恢复 |
 
 ## 术语表（一个词只指一件事）
 
@@ -46,7 +45,7 @@ core/                      ← 后端（Go **核心**；叫 core 是因为它不
 
 frontend/
   web/                     ← Web 前端（**当前主力**，Vue 3 + Vite：`src/App.vue` 单文件接线 + `api/` + `utils/` + SFC）
-  archive/godotui-frozen-20261009.tar.gz ← Godot 前端封存（2026-10-09：目录删了，tar 留底；Vue 完善前不动）
+  （没有 archive/ —— Godot 前端 2026-11-01 已彻底删除，见 git 历史）
 reminder/                  ← 专题参考（`tool-calls.md` 工具调用 / `jev.md` 决策模型 / `opencode-usage.md` 用量口径 / `gateway.md` 网关实测与会话头 / `compact.md` 区间装配与剪枝）；
 ```
 
@@ -124,7 +123,7 @@ reminder/                  ← 专题参考（`tool-calls.md` 工具调用 / `je
      ⇒ 停止/失败/被杀都不留半条，也没有"清理占位"要维护。
 5. **模型身份 = `(provider, upstream_id)`**；显示名三级回退（用户覆盖 → 上游名 → prettify）**只在后端**做。
    新建会话的 agent 取 `agents.json` 的 `default_agent`（空串/缺失都算没配 ⇒ 内置默认）。**agent 的 id** 新建时由后端生成；改名走 `PATCH /agents/{agent_id}` 的 `new_id`——一次把 `default_agent` 与所有会话的引用搬过去（软引用无外键，找不到就回落**内置默认那句**而不是回空，所以人设会悄悄换掉 —— 仍必须由这一处维护）。
-6. **`data/`（含 `data/config/`）永不入库**（端口口令、连接信息、密钥、存档）。默认值全在代码里，文件缺失也能跑。`.gitignore` 只放行 Godot 项目的非缓存部分。
+6. **`data/`（含 `data/config/`）永不入库**（端口口令、连接信息、密钥、存档）。默认值全在代码里，文件缺失也能跑。`.gitignore` 只排除构建产物与依赖（`web/dist`、`node_modules`）。
 7. **HTTP API 看下面那节**（**唯一权威是路由表**）。改了接口就跑 `go -C core test ./...`。
    （旧版 Rust 已删 —— 对账工具跟着一起没了 ✓ 现在只有这一份实现 ✓）
 
@@ -153,11 +152,6 @@ podman compose restart                                    # ← **每次提交�
                                                           #   输入读新口令；TTY 不回显）—— 网络口永不提供这些能力
                                                           #   与 -config / -data / -addr 共存；给了 -debug 就不监听端口
 
-
-cd frontend
-godot --headless --path . --quit-after 3                   # 语法+运行检查
-godot --headless --script /tmp/x.gd                        # 灌事件跑帧
-ANDROID_HOME=~/Android/Sdk godot --headless --path . --export-debug "Android" /tmp/x.apk
 ```
 
 **直操模式（`-debug`）**：验收 / 排障时**不隔着 TUI 与 HTTP**看后端的一条路（实现在 `core/debug.go`，
@@ -902,12 +896,6 @@ DeepSeek / OpenCode GO 直连**确实不报**，所以那一格在那儿永远�
 - 单实例锁（`<data>/microchat.pid`：SIGTERM 掉旧的再接管；`-debug` 不拿锁）。
 - 启动编排照旧（封存前口径，**不跟 web 的草稿态**）：先清【0 条消息且标题为空】的会话（带标题的空会话是改过名的，留着），再 `POST /sessions` 建一条真的并进去 —— 顺序不能反（TUI 有 `/rename` `/system` 之类处处要判"没有会话"，宁可永远活在一个真会话里）。
 
-### Godot（已封存：`archive/godotui-frozen-20261009.tar.gz`；Vue 完善前不动 —— 要改时从 tar 恢复，动手前先问）
-
-- 实测存档：`offset_transform_position` 单位是 ui 不是像素（键盘像素高要乘视图比）；`virtual_keyboard_get_height()` 在 Web 是桩（读 `window.visualViewport`）；CJK 字体打进项目挂 `theme/custom_font`；别为留白加容器节点；`--check-only --script` 看不到 autoload（要查就 `--quit-after 3` 实跑）；没 `[display] window/stretch` 时视图坐标≠设计坐标。
-
-- 返回键 / 退出（方案已定，尚未开工）：两开关**各管一扇门**（`auto_accept_quit` 管关窗、`quit_on_go_back` 管安卓返回，默认都 `true`；当前 `quit_on_go_back=false` 留给面板栈）。通知先到、自动退出后判；`get_tree().quit()` 不走这条路。还没做：返回栈一处收口（`_on_back()`）· 安卓双击退出 · 被划掉=进程被杀（落盘写 `NOTIFICATION_APPLICATION_PAUSED`）。坑：返回栈接上前安卓返回键什么都不发生。
-
 ## 踩过的坑（都是实测出来的，改代码前扫一眼）
 
 - **删掉一个声明，就别只用"我记得"去清引用** ✗（2026-10-29 白屏事故）：删右栏时删了 `mqlRight` 的声明，
@@ -957,12 +945,11 @@ DeepSeek / OpenCode GO 直连**确实不报**，所以那一格在那儿永远�
 
 - 搜索：`tavily` MCP（`mcp__tavily_*`，配置在 `~/.omp/agent/mcp.json`）——直连的几家搜索引擎常被反爬挡掉，优先用它。
 - 真机：SM-X810（Galaxy Tab S9+，2560×1600 横屏），**无线 adb**；可 `adb shell input tap X Y`、`screencap` 截图。
-- Godot：`~/.local/bin/godot`（4.8.dev5），导出模板齐（Android/Web 都在）。Web 版服务与 SSL 由用户自己提供。
 
 ## 本项目的协作习惯
 
 - **提交由用户指挥**：做完一段有意义的进度 → 跑测试 → 实跑验证 → 报告，**停在这儿**等他说"可以提交了"。推送同理。
-- 提交时只带用户点名的范围（`git commit <文件…>` 只记这些文件；失败的 commit 会把 staged 留在索引里 ⇒ 下次先 `git diff --cached --name-status` 核对）；**别把 `frontend/godotui/`**（用户自己在编辑器里改的）**卷进无关提交**；别把 `config/`、`data/`、大 APK 带进去。
+- 提交时只带用户点名的范围（`git commit <文件…>` 只记这些文件；失败的 commit 会把 staged 留在索引里 ⇒ 下次先 `git diff --cached --name-status` 核对）；别把 `config/`、`data/`、大 APK 带进去。
 - 注释、提交信息用**中文**；提交信息写清"**为什么**"，别只写"改了什么"。
 - **造了测试数据就按显式 id 清** ✗：别按标题/内容匹配删（会话的自动标题是异步生成的 —— 匹配可能打到用户同名会话头上；实测踩过：按标题 find 首条 = 赌自己的那条标题已生成，别赌）。
 - **无头验证的两个测量陷阱**（2026-10-10 实测，一下午的假线索都从这儿来）：① `page.on("console")` **一条都收不到**页面 console —— 别拿"探针没打日志"当证据；② `tab.run` 里的原生 `page.evaluate` 跑在**隔离世界**、`tab.evaluate` 直连才是**主世界** —— expando 探针（`window.__x`）跨世界不可见，读页面里写的探针**必须用 `tab.evaluate`**（写入口用哪个世界，读的时候也得对得上）。
@@ -980,5 +967,4 @@ DeepSeek / OpenCode GO 直连**确实不报**，所以那一格在那儿永远�
   它杀不掉 `go run` 起的子进程（孤儿继续占端口 ⇒ 新实例绑不上就退，端口上回答你的是**老二进制** —— 症状就是"新加的路由一直 404"）。
   看日志 = `data/microchat.log`（TUI 模式下日志落这儿）；**tmux 下崩了没有通知** ⇒ 靠 `pgrep` 与日志。
 - **先量再断言**：能实测的就不猜（本项目几乎所有关键结论都来自实测）。
-- 用户可能**同时在编辑器里改 `frontend/godotui/`**：改场景前先读最新文件（并留备份），他的未保存改动优先。
 - **重大决策留一句在案**（就写进本文件：结论 + 一句话理由）；**过程与来回不记**（git 里有历史，别把这份撑肿）。

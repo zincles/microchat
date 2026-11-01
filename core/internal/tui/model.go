@@ -94,7 +94,7 @@ type model struct {
 	promptFor string
 	// showSystemPrompt：消息区顶部那条"系统提示词"要不要显示（调试用）。**默认开** ⇒
 	// 读 `~/.config/microchat/tui.json` 的 `show_system_prompt`（`uiPath` 是它住哪儿；
-	// **不进**后端的 `config/` 与 `data/`，也**不动** Godot 那份 `frontend.json`）。
+	// **不进**后端的 `config/` 与 `data/`，也**不动**别的前端那份 `frontend.json`）。
 	showSystemPrompt bool
 	// uiPath：界面偏好文件的位置（`initialModel` 填默认位置；测试填临时文件）。
 	uiPath string
