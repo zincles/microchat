@@ -2403,3 +2403,36 @@ test("markdown 类型清单：前端的 FALLBACK 与后端 MarkdownTypes 对得�
     assert.ok(handled.has(id), `后端有类型 ${id}，但 markdown.js 不认识它（那个开关点了没反应）`);
   }
 });
+
+// 顶栏阴影（2026-11-01 用户定：「顶部栏有阴影」）。
+//
+// 这条不是"好看一点"：顶栏是**不透明**的悬浮层，压在滚过去的消息上 ——
+// 没有阴影时那条边是齐刷刷一刀切（像正文被裁掉了），有阴影才读成"栏在内容**上面**"。
+// 也就是说，阴影在这儿替**边框**干活。所以同时钉住两件事：
+//   ① 必须有阴影（而且要**向下**的 —— 顶栏的阴影往下落，不是往两边）；
+//   ② 仍**不许描线**（2026-11-01 的另一条口径：「不透明要的是挡住，不是把栏画成一个盒子」）。
+test("顶栏有向下阴影（替边框干活），且仍不描线", () => {
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8");
+  const theme = readFileSync(join(SRC, "assets", "theme.css"), "utf8");
+  const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, ""); // 判"有没有声明"要先剥注释
+
+  const headerRule = strip(css).match(/#chat-col > header \{[^}]*\}/);
+  assert.ok(headerRule, "找不到 #chat-col > header 那条规则");
+
+  // ① 有阴影，且用的是 token（组件不许写死色值 —— theme.css 顶上那条规矩）。
+  assert.match(headerRule[0], /box-shadow:\s*var\(--shadow-top\)/,
+    "顶栏没有 box-shadow: var(--shadow-top)");
+
+  // ② 真**向下**：offset-y 为正（负的就是往上，落在栏自己背后，看不见）。
+  const token = strip(theme).match(/--shadow-top:\s*([^;]+);/);
+  assert.ok(token, "theme.css 里没有 --shadow-top");
+  const offsets = [...token[1].matchAll(/(-?[\d.]+)px\s+(-?[\d.]+)px/g)].map((m) => Number(m[2]));
+  assert.ok(offsets.length >= 2, `--shadow-top 应该是两层（接触影 + 离开感），得到 ${offsets}`);
+  for (const y of offsets) {
+    assert.ok(y > 0, `--shadow-top 的第 ${y}px 不是向下 —— 顶栏的阴影要落在栏下面`);
+  }
+
+  // ③ 仍不描线。
+  assert.ok(!/border(-bottom|-block-end)?:\s*(?!none)/.test(headerRule[0].replace(/border-radius[^;]*;/g, "")),
+    "顶栏加回了边框 —— 那条口径是用阴影、不用线");
+});

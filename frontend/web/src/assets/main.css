@@ -511,7 +511,13 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
  * 照旧是唯一给它让位的东西 —— 加了高度记得一起改。
  * ⚠ 只到 `#chat-col > header`：左栏头 / 设置头的 `header` 共用上面那条基础规则，
  *   它们本来就在自己栏面上，别被这条波及。 */
-#chat-col > header { position: absolute; top: 0; left: 0; right: 0; z-index: 6; background: var(--tg-bg); }
+/* 顶栏**有阴影**（2026-11-01 用户定：「顶部栏有阴影」）。
+ * 它现在是**不透明**的（见上），压在滚过去的消息上 —— 没有阴影时那条边是"齐刷刷一刀切"，
+ * 像正文被裁掉了；有了阴影才读成"栏在内容**上面**"。所以阴影在这儿不只是装饰，
+ * 它在替**边框**干活：要的是"挡住 + 浮起"，不是"画个盒子"，所以仍然**不描线**。
+ * 值住在 `theme.css` 的 `--shadow-top`（不写死色值 —— 那是那条"组件一律用 token"的规矩）。 */
+#chat-col > header { position: absolute; top: 0; left: 0; right: 0; z-index: 6; background: var(--tg-bg);
+  box-shadow: var(--shadow-top); }
 /* 消息列：flex:1 撑满 + 两侧 56px 头像位 + 上下给浮动输入栏留位；底部留空让尾条操作行不被输入框盖住。 */
 #messages-vue { flex: 1; overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
 /* 阅读列（气泡/摘要卡/加载更多都住这里）：--read-col（920，2026-10-15 用户定：760 小了"一点点"）
