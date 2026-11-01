@@ -1061,6 +1061,16 @@ function cancelQueue(id) {
     .then(() => refreshTasks())
     .catch((err) => toast(`取消失败：${err.message}`, "error"));
 }
+// afterCopy：**创建副本**之后（2026-11-01）—— 刷左栏让它出现，然后直接进副本。
+//
+// 为什么刷了左栏还要再进一次：副本是"接着在这儿往下写"的东西，
+// 停在原会话里会让人以为点了没反应（副本在左栏、视线还在弹窗上）。
+function afterCopy(fresh) {
+  if (!fresh?.id) { toast("复制完成了，但没拿到新会话 id", "error"); return; }
+  toast(`已创建副本「${fresh.title || "未命名"}」`, "ok");
+  refreshSessionsBar();
+  enterSession(fresh.id).catch((err) => toast(`进副本失败：${err.message}`, "error"));
+}
 let tasksTimer = null;
 async function refreshTasks() {
   try {
@@ -1623,6 +1633,7 @@ onUnmounted(() => {
       :session-id="sessionSettingsId"
       @close="sessionSettingsId = null"
       @renamed="() => { refreshSessionsBar(); if (sessionSettingsId === sessionID) enterSession(sessionID).catch(() => {}); sessionSettingsId = null; }"
+      @copy="(fresh) => { sessionSettingsId = null; afterCopy(fresh); }"
     />
   </div>
 </template>

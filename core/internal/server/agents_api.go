@@ -81,7 +81,6 @@ func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, agentsView{
 		AgentsConfig: config.AgentsConfig{
-			Version:      agents.Version,
 			DefaultAgent: agents.DefaultAgent,
 			Agents:       agents.Effective(),
 		},

@@ -6,7 +6,7 @@ microchat：轻量 SillyTavern 替代（RPG 向）。三层，边界要清楚：
 |---|---|---|
 | 后端（**唯一权威**） | `core/`（Go + 标准库 + `modernc.org/sqlite`） | **新代码一律写这儿** |
 | Web 前端（**当前主力**） | `frontend/web/` | **优先迭代这儿**（2026-10-04 定：迭代快，助手擅 Web 栈；新界面能力先落这儿） |
-| TUI / TG Bot | `core/internal/tui/`、`core/internal/tg/` | **封存**（2026-10-09 起：不动；新能力只接 Web，Vue 完善前不碰这两处） |
+| ~~TUI / TG Bot~~ | **已删除**（2026-11-01：用户「砍掉CLI对话器，只保留服务web前端的功能」） | 只剩 web 一个前端 |
 
 ## 术语表（一个词只指一件事）
 
@@ -32,14 +32,13 @@ microchat：轻量 SillyTavern 替代（RPG 向）。三层，边界要清楚：
 
 ```
 core/                      ← 后端（Go **核心**；叫 core 是因为它不只是"服务端"：
-  main.go                  一个二进制 —— 无 TTY 只服务，有 TTY 开 TUI（TUI 已封存；主力是 Web）
+  main.go                  一个二进制 —— **只服务**（TUI 2026-11-01 删了，见下）
   internal/
     statelang/             `<state>` 语法的唯一权威（零依赖纯函数 + testdata/cases.json 共享语料）
     state/                 世界状态：分层现演、注入渲染、**唯一**出站拼装
     store/                 SQLite：打开/迁移/读写（migrations/*.sql）
     server/                HTTP：路由、错误体、鉴权（只编排，不含业务）
-    apiclient/             后端 REST 的薄封装（TUI / TG 共用：只取数写数，不碰内部包，可连远端）
-    tui/ tg/               终端 / Telegram（**封存**：不动；新能力只接 Web）
+    （2026-11-01 删了 apiclient/ tui/ tg/ —— 见下面那条）
     queue/                 队列任务：一串**串行**跑的原子任务（一步失败即整体结束、可取消）
     model/ config/         纯结构 / `config/` 读写
 
@@ -66,8 +65,6 @@ reminder/                  ← 专题参考（`tool-calls.md` 工具调用 / `je
 | `compact` | 摘要唯一入口 | **只往 summaries 插行**；消息级不许覆盖已压缩的区间（**合并级相反**：只吃同层顶层摘要）；失败不阻塞一轮 |
 | `abilities` | 能力身份（枚举） | 产出不进历史/树/变量；失败不阻塞一轮；**缺条目 = 默认全开** |
 | `template` | `{{…}}` | 白名单 = 枚举；只扫一遍；会话 Agent 的提示词永不替换 |
-| `apiclient` | TUI / TG 的取数口 | 只调 REST，不碰内部包与数据库；不含业务 |
-| `tg` | Telegram 接入 | 走 `apiclient` 取数；**封存**（不动） |
 | `chat` | 一轮生成怎么跑 | 拿到整段才 INSERT |
 | `turn` | 这一轮的流细节 | 增量什么都不算；游标读不消费 |
 | `task` | 作业的身份 + 生死（= 一次上游请求的全程） | `defer` 兜底（**Go 没有 Drop**）；绝不留下僵尸条目；TaskID 是 UUIDv7、不进库 |
@@ -133,13 +130,13 @@ reminder/                  ← 专题参考（`tool-calls.md` 工具调用 / `je
 ## 常用命令
 
 ```bash
-./run.sh                                                  # ← 最常用：不加参数，服务 + TUI 一起起（内部就是 go -C core run .）
+./run.sh                                                  # ← 开发机直接跑：就是一台 web 服务（没有 TUI 了，2026-11-01）
 docker compose up -d                                      # ← 部署（单容器，2026-10-14）：只公开 8788（前端），
                                                           #   后端只在容器里、地址零配置 —— 版本身份与口径见「Docker 部署」一节
 cd frontend/web && ./node_modules/.bin/vite               # 前端 dev（0.0.0.0:5173；**8788 是部署口**，见「Docker 部署」；
                                                           #   监听地址写在 vite.config.js；别走 npm exec —— npm 会吃掉 --port/--host）
 go -C core build -o ../microchat .                        # 要二进制就这条；产出 ./microchat
-./microchat                                               # 起来就既在 8787 服务、又在终端里开 TUI
+./microchat                                               # 起来就在 8787 服务（只服务，不开 TUI）
 go -C core test ./...                                     # 后端测试（`-C core` 是 Go 自带，不用 cd）
 podman compose restart                                    # ← **每次提交之后都跑一次**（2026-10-28 用户定）：
                                                           #   源码是 bind 的、entrypoint 每次启动现编译（约 10 秒），
@@ -163,7 +160,7 @@ podman compose restart                                    # ← **每次提交�
   `tasks` 打的就是这一进程的面板。
 - 于是"并发再发 ⇒ 409"与"另一个进程里 stop"靠一枚 **per-session 的 pid 锁**（`data/debug-turns/*.lock`）：
   锁活着 ⇒ 后到的那个 409；`stop` 找到活的 pid 就发 SIGTERM，那边的 send 当成本地按停。
-  它**只服务直操模式**（server / TUI 的权威仍是进程内的登记表，它们从不看这个文件）。
+  它**只服务直操模式**（server 的权威仍是进程内的登记表，它从不看这个文件）。
 
 ## Docker 部署（单容器，2026-10-14 用户定）
 
@@ -496,7 +493,6 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 | GET | `/sessions/{session_id}/messages/{message_id}/deletion-preview` | — | `DeletionPlan` | **只算不动**（安全 ⇒ GET）：会删掉哪些消息 / 摘要、哪些指针会被置空 |
 | DELETE | `/sessions/{session_id}/messages/{message_id}` | `{"last_deleted_message_id"}` | `DeletionPlan` | 删**这条及之后的全部**（级联见 `DEFINE.md`）。核对字段不符 ⇒ **409**（重新预览）；缺字段 ⇒ 422 |
 | GET | `/sessions/{session_id}/state` | — | `StateView` | `session` / `effective` / `tables`，**每次现算**（状态只从**正文**来——提示词的块不算数）。`global` 是 **`tables` 里那张表**（不写表名的块落到它，且它**恒在**：空也回 `{}`）。查询参数 `?at_idx=N` ⇒ **截至第 N 条的现演**：正文只 fold 到第 N 条（含）、`0` ⇒ 空状态、越界 ⇒ 当作到最后一条（与 `/messages` 一个口径）、不给 ⇒ 当前状态；负 / 非整数 ⇒ **400** |
-| GET | `/sessions/{session_id}/outgoing` | — | 410 `gone` | 已删（旧逐项形状不是真请求）：看真请求问下面那条 `POST` |
 | POST | `/sessions/{session_id}/outgoing` | `{"content":"…"}` | `LastPayload`（`method/url/headers/体`） | **(c) 把这条 content 当成即将追加的那句用户消息之后**，真会发出去的那一发（**真请求**，与 (a) 同一支笔 `Snapshot`：`chat.PreviewWire` 与真发共用装配→`wireMessages`→选后端查表→`providers.Build` 两份对不上就地炸）。**只算不写**：不落库、不改任何状态。待发那句若带 `<state>` 块 ⇒ **状态表跟着变** ⇒ 必须重走一遍现演与装配（不是"(b) + 一条消息"）。缺 / 空白 `content` ⇒ **400** |
 | POST | `/outgoing` | `{"id?","provider?","model?","agent_id?","content"}` | `LastPayload` | **草稿预演**（2026-10-09 加，web 草稿态用）：**还没有会话**时的第一句 —— 临时种子会话（零行、无历史）走同一个 `chat.PreviewWire`，**一条会话都不建**。`id` = 客户端（草稿）铸的 UUIDv7 ⇒ 进请求头（`x-opencode-session` 那类）就是将来真会话要用的那个；省略 ⇒ 服务端现铸。`provider/model/agent_id` 省略 ⇒ 与 `POST /sessions` **同一处口径**（config defaults + `default_agent`）。空 `content` ⇒ **400**（草稿没有历史可续写）。**agent 配了 `first_message` 时把它模拟成一条 assistant 垫在用户句前**（真会话会带它 ⇒ 预演 = 真发） |
 | GET | `/sessions/{session_id}/context` | — | `ContextUsage` | 只有数字：`used_tokens`（估算）/ `budget_tokens` / `trigger_tokens` / `remaining_tokens` / `ctx_len` / `max_output` / `ratio` / `estimated` / `last_prompt_tokens` / `over_budget` |
@@ -557,7 +553,7 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 | DELETE | `/providers/{provider_id}` | — | 204 | 密钥随记录一起没 |
 | POST | `/providers/{provider_id}/refresh` | — | `ProviderView` | **POST**（会写发现态）：拉 `/models` 并落库 |
 | POST | `/providers/{provider_id}/refresh-routes` | — | `{provider, models}` | 只刷路由表：拉 models.dev 快照 ⇒ `model_route` 落库（只认聚合站；**启动时不跑**，一周手跑一次）|
-| GET | `/providers/{provider_id}/usage` | — | `ProviderUsageView` | **套餐余量**（只读）：**只对 `vendor = opencode-go` 的渠道有义** ⇒ 别的 vendor **400**（`invalid`）、没配 key 也 **400**；上游错原样传（`upstream`）。形状 = `plan` / `windows[].label/percent/resets_at` + `provider_id`（TUI 里 `/usage` 就是它） |
+| GET | `/providers/{provider_id}/usage` | — | `ProviderUsageView` | **套餐余量**（只读）：**只对 `vendor = opencode-go` 的渠道有义** ⇒ 别的 vendor **400**（`invalid`）、没配 key 也 **400**；上游错原样传（`upstream`）。形状 = `plan` / `windows[].label/percent/resets_at` + `provider_id`（`-debug usage` 就是它；web 界面还没入口） |
 | GET | `/models` | — | `[ModelListItem]` | 跨 provider 拍平（"渠道 / 模型"下拉用）|
 | PATCH | `/models` | `{provider, upstream_id, context_override}` | `ModelView` | 设/清上下文覆盖（`null` = 清）。**刷新永不覆盖用户列** |
 | GET | `/agents` | — | `AgentsConfig` | 生效列表（含内置默认 agent）|
@@ -571,15 +567,12 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 | PUT | `/config/chat` | `ChatConfig` | `ChatConfig` | **整段替换** chat（其余段原样保留）|
 | GET | `/config/defaults` | — | `{provider,model,agent}` | 新建会话的缺省三件（只读；`PUT /config/chat` 不动它）|
 | PUT | `/config/defaults` | `{provider?,model?,agent?}` | 同上 | **三格各改各的**（nil = 不动；`""` = 清回内置缺省）；改完**当场**生效（`POST /sessions` 每次现读，不拿启动快照）|
-| GET | `/config/telegram` | — | `{has_token,allowed_id,enabled,running}` | TG bot 状态（**token 只回有没有**，内容永不回显；`running` = 长轮询真跑着）|
-| PUT | `/config/telegram` | `{allowed_id?,bot_token?,enabled?}` | 同上 | **三格各改各的**（nil = 不动；`bot_token:""` = 清掉文件里的回落 env）；改开关/token **重启生效**（runner 归 main 管）|
 
 ### 运维
 
 | 方法 | 路径 | 响应 | 说明 |
 |---|---|---|---|
 | GET | `/health` | `{"status","version"}` | 探针；**也过鉴权** |
-| GET | `/debug/last-payload` | `LastPayload` | **(a) 上一次真发出去的那一发**：那一刻请求的**快照**（method / url / **头** / 体；内存一份，覆盖式；没发过 = `null`）。**不可重算** ✗ —— 历史事实（改一条旧消息也回不去），且**含请求头**：用来回答"我上一发到底发了什么 / 为什么被拒"（网关拒的往往是头不是体）。头也回显且打码 |
 | GET | `/tasks` | `TaskBoard` | **任务面板**：进程内的事实（`running` + 在跑的在前的 `tasks` + 2026-11-01 加的 `queues`；与 `-debug tasks` 同一份 `Board`，不进库）。轮询用（状态指示器就问它）。重启就没 —— "没有在跑的"是诚实的事实。**没有权限过滤**（2026-11-01 账号砍了；面板就是"这台机器上此刻在跑什么"）。<br>2026-11-01 加两格：每条 `task` 带 **`group`**（`llm` / `plain` —— 「LLM 生成」与「一般」，由 `task.Kind.Group()` 这一处判定，界面**只读不猜**）；`queues` 是队列任务那一层（见下两条）|
 | POST | `/tasks/queues` | `{kind?,title?,steps?}` 或 `{kind?,title?,session_id,blocks?,times?}` | `Queue` · 201 | **排一个队列任务**（2026-11-01 用户定）：把 N 步排成**一个**串行队列，立刻开跑。**两种给法二选一**（都给 ⇒ 400）：`steps`（显式列表，每步 `{session_id, blocks}`，跨会话也走它）或 `session_id + blocks + times`（同一个会话重复 N 次 —— 用户那句「这条对话连压 100 次」就是它）。`kind` 缺省 `compact`（现在也只有它）；`blocks` 缺省 0 = 用 `chat.compact_blocks`。<br>**三条规矩**：① **严格串行**（上一步收尾才开下一步）；② **一步失败 ⇒ 整个队列结束**（不跳过、不重试、不接着跑剩下的）；③ **可随时取消**（在飞的那一发一起掐断）。校验（会话在不在、步数、times）全在**开跑之前**做完 ⇒ 排错的队列当场被拒，不会跑到第 87 步才发现 id 写错。**不要凭据** |
 | POST | `/tasks/queues/{queue_id}/cancel` | — | `Queue` · 200 | **随时取消**（幂等：已结束的再按一次，原样回它现在的样子）。**在飞的那一发会被 ctx 一起掐断** —— 压缩要整段拿到才落库 ⇒ **不会留半条摘要**。没有这个队列 ⇒ 404 |
@@ -898,7 +891,7 @@ DeepSeek / OpenCode GO 直连**确实不报**，所以那一格在那儿永远�
      content-box 下加 padding 会**横向溢出** ⇒ 实心规则里必须显式写 `box-sizing: border-box`。
   ⚠ **别给 `applyComposerStyle` 照抄 `applyTheme` 的 TG 守卫**：那条守的是**配色来源**（TG 里颜色由 TG 注入），
   而输入栏形态是**布局**，Mini App 里照样该由用户挑 —— 两件事。
-- **草稿态**（2026-10-09 定，学 DeepSeek 网页版）：点＋/`/new` 只开一张**客户端草稿**（清空消息列与右栏，顶栏显示 `config` defaults 的模型/Agent，改它只改本地 prefs）；草稿**铸一枚 UUIDv7**（`utils/ids.js`）当将来那会话的 id —— **预演走 `POST /outgoing`**（临时会话、头上就是这枚 id）、**首条发送才 `POST /sessions`**（把这枚 id 与改过的 provider/model/agent 一起带上 ⇒ 预演那一发 = 真发那一发；受理失败 ⇒ 删掉刚建的空会话、退回草稿）。⚠ **这是 HACK**（客户端铸 `sessions.id`，全项目唯一的口子 —— 动机与代价见上面 `POST /sessions` 那行；别扩散）。库里不再产生空行 ⇒ 旧"启动编排"（先清空会话再预建真会话）连同一起拿掉。改模型/Agent、回草稿都会**立刻重跑预演**（`previewSeq` 丢弃迟到的旧版）。要会话的命令（`/compact` `/cut` `/reroll` `/switch` `/stop` `/resend` `/delete` `/edit` `/editsum`）在草稿里明确拒绝。TUI 保留旧口径（见下）。
+- **草稿态**（2026-10-09 定，学 DeepSeek 网页版）：点＋/`/new` 只开一张**客户端草稿**（清空消息列与右栏，顶栏显示 `config` defaults 的模型/Agent，改它只改本地 prefs）；草稿**铸一枚 UUIDv7**（`utils/ids.js`）当将来那会话的 id —— **预演走 `POST /outgoing`**（临时会话、头上就是这枚 id）、**首条发送才 `POST /sessions`**（把这枚 id 与改过的 provider/model/agent 一起带上 ⇒ 预演那一发 = 真发那一发；受理失败 ⇒ 删掉刚建的空会话、退回草稿）。⚠ **这是 HACK**（客户端铸 `sessions.id`，全项目唯一的口子 —— 动机与代价见上面 `POST /sessions` 那行；别扩散）。库里不再产生空行 ⇒ 旧"启动编排"（先清空会话再预建真会话）连同一起拿掉。改模型/Agent、回草稿都会**立刻重跑预演**（`previewSeq` 丢弃迟到的旧版）。要会话的命令（`/compact` `/cut` `/reroll` `/switch` `/stop` `/resend` `/delete` `/edit` `/editsum`）在草稿里明确拒绝。（TUI 2026-11-01 已删，那句只作历史记录。）
 - **压缩树**（右栏第三 tab，2026-10-10 加）：把压缩结构画成文件管理器那种树（目录 = 摘要、嵌套 = 嵌套压缩、行底 bar = 子树原文占比）。**后端零改动**：现取 `messages` + `summaries` 两个 GET，`utils/tree.js` 的 `buildCompactTree` 本地建树 —— 口径**逐字复刻 `state.walk`**（左端对齐才用摘要、升到最粗同左端祖先、跳过后不回看），`发` = 装配真跳到它、`脏` = 已过期。树顶一行是 **块数输入 + 压缩按钮**（空 = 用 config 的 `compact_blocks`；与 `/compact` 共用 `compactNow`）。压缩命令受理后 `pollCompact` 盯到收尾（拿受理回执的 `at_ms` 对上——状态位是持久的，别认旧结局）。
 - **消息列编号与摘要卡**（2026-10-10 加）：气泡头 `你 #2` / `助手 #4` —— 真消息用服务端 `idx`；库外的（乐观用户句、生成中那一发）按**后缀顺延**（线性追加 ⇒ 顺延号就是将来的真号）；纯合成的"失败"气泡不给号。被**顶层摘要**（没爹的那层 —— 金字塔只露最外）盖住的一段折成**四面圆角卡**（不是气泡）：头 `Summary #a-b`（+`脏`）、正文 = 摘要文本（发给模型的就是这份）、`查看未压缩文本` 展开原始气泡（**只读、无操作行** —— 用户定：展开里不许编辑/修改）。口径全在 `utils/chatrows.js`（纯函数，契约测试钉住）；端点悬空/不在场 ⇒ 不折（宁可露原文）。卡头右侧三件（2026-10-10 加）：`⟳` 刷新 = 摘要重摇 —— **当前那版先占第 1 版、不丢**（seedSummary 的规矩），摇完自动切最新版；生成走 compact 的"只生成、不落库"半程、**非流式**（卡头标「刷新中…」，没有流式预览）；`✎` 编辑 = 应用内模态编辑器（`/editsum` 同一条路 —— 原生 `window.prompt` 退休）；重摇模式活着时 `◀ n/N ▶`（与气泡同一套语义，最右 ▶ 再按 = 再摇一版）。消息/摘要两族共用一把闸：一族在跑，另一族进模式 ⇒ 后端 409、前端 toast。候选只在内存（发新消息 / 切会话 / 重启就散 —— 应用的那版已在库里）。
 - **消息列只挂窗口**（2026-10-10 加，防浏览器被撑炸）：进入会话只拉**最后 20 段**（段 = 一条消息或**一张顶层摘要卡**）；更老的按 `↑ 加载更多历史` 一页一页往回（一页也 20 段，`WINDOW_SEGMENTS` 一个常量 —— 改小就是一次一段；插入前记高度、插完补回滚动锚）。**被摘要盖住的原文一个字节都不取**（按"消息段"拼连续区间分批 GET，摘要段整段跳过）；`查看未压缩文本` **按下才拉**（每次按下都拉新的一版，不吃旧缓存）。总数拿 `?last=1` 问尾条（比会话列表计数新鲜）；`reloadWindow` = 按最新段布局重拉当前窗口（一轮结束/编辑/删除/压缩/切版后），起点先 `alignWindowFrom` 对回段边界。**压缩树 tab 是例外**：看着它才拉**全量**消息+摘要建树（分析视图 = 用户显式要全量）。
@@ -926,14 +919,6 @@ DeepSeek / OpenCode GO 直连**确实不报**，所以那一格在那儿永远�
   `**粗**` / `*斜*`（`_斜_` 同）/ **`__下划线__` ⇒ `<u>`**（marked 默认当 bold —— RP 模型惯用 `__` 表下划线，
   行内扩展改掉它，**代码段里不转换**：`` `__init__` `` 原样）/ 行内码 / `~~删~~` / 引述块 `> OOC`。
   ⚠ 转义先行**只转 `&` 与 `<`**：`>` 必须留着——行首的它就是引述块记号（从前连 `>` 一起转，引述块从来没渲染过）。
-
-### TUI（已封存：不动）
-
-- 一屏三块（消息区 · 输入行 · 会话状态行），与别的前端走**同一条 HTTP 契约**（回环到自己端口）。
-- **TUI 登录 = root 登录**（环回系统令牌 ⇒ 身份 `{Sys, Admin, uid 0}`）：新建会话归 root、列表只列 root 的、`/auth/me` 回 root（带 `sys` 标记）——不出现登录/口令提示；`/passwd`（重设 root 口令）就是靠这个身份：两问（新口令+确认）、**输入行不回显**（打点）。
-- 同一个二进制（`./microchat` ⇒ 监听端口 + 开 TUI；无 TTY ⇒ 只服务）；日志落 `data/microchat.log`；退出 `/quit` 或 ctrl+c（没有裸 `q`）。
-- 单实例锁（`<data>/microchat.pid`：SIGTERM 掉旧的再接管；`-debug` 不拿锁）。
-- 启动编排照旧（封存前口径，**不跟 web 的草稿态**）：先清【0 条消息且标题为空】的会话（带标题的空会话是改过名的，留着），再 `POST /sessions` 建一条真的并进去 —— 顺序不能反（TUI 有 `/rename` `/system` 之类处处要判"没有会话"，宁可永远活在一个真会话里）。
 
 ## 踩过的坑（都是实测出来的，改代码前扫一眼）
 
@@ -1004,6 +989,6 @@ DeepSeek / OpenCode GO 直连**确实不报**，所以那一格在那儿永远�
 
   重启 = `ss -ltnp | grep 8787` 拿 PID 精确 `kill`（确认端口空了再起）—— **别用 `tmux kill-session`** ✗：
   它杀不掉 `go run` 起的子进程（孤儿继续占端口 ⇒ 新实例绑不上就退，端口上回答你的是**老二进制** —— 症状就是"新加的路由一直 404"）。
-  看日志 = `data/microchat.log`（TUI 模式下日志落这儿）；**tmux 下崩了没有通知** ⇒ 靠 `pgrep` 与日志。
+  看日志 = 终端（TUI 删了之后日志不再落 data/microchat.log，直接打 stderr）；**tmux 下崩了没有通知** ⇒ 靠 `pgrep` 与日志。
 - **先量再断言**：能实测的就不猜（本项目几乎所有关键结论都来自实测）。
 - **重大决策留一句在案**（就写进本文件：结论 + 一句话理由）；**过程与来回不记**（git 里有历史，别把这份撑肿）。

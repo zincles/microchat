@@ -7,7 +7,7 @@ import { groupModelsByProvider, modelKey, parseModelKey, modelOption, agentOptio
 import { downloadJSON } from "../utils/download.js";
 
 const props = defineProps({ sessionId: String });
-const emit = defineEmits(["close", "renamed"]);
+const emit = defineEmits(["close", "renamed", "copy"]);
 
 const api = sharedApi();
 
@@ -69,6 +69,22 @@ async function exportJSON() {
   } catch (e) { status.value = `导出失败：${e.message}`; }
 }
 
+// 创建副本（2026-11-01 用户定：「接下来给前端补上复制对话的办法，在 对话 的配置界面里允许创建副本」）。
+//
+// 为什么这个按钮值得有：后端 `POST /sessions/{id}/copy` **一直**是完整实现的
+// （新会话 + 消息与摘要一并复制、摘要铸新 id、指针重映射、世界状态不复制），
+// 但 web 界面从来没给过入口 —— 于是"线性会话里想分岔"只能靠命令行。
+//
+// 复制完**进新会话**（emit copy）：副本的意义就是接着在它上面往下写；
+// 停在原会话里会让人以为"点了没反应"（复制出来的那条在左栏最上面，但视线在弹窗里）。
+async function copySession() {
+  status.value = "复制中…";
+  try {
+    const fresh = await api.copySession(props.sessionId);
+    emit("copy", fresh);
+  } catch (e) { status.value = `复制失败：${e.message}`; }
+}
+
 onMounted(() => {
   load().catch((e) => { status.value = `载入失败：${e.message}`; });
   document.addEventListener("keydown", onKey);
@@ -109,6 +125,14 @@ function onKey(e) {
             <button type="button" class="primary" @click="save">保存</button>
             <button type="button" @click="exportJSON" title="导出对话记录（JSON v3：全部消息 + 思考 + 压缩金字塔 + 这条会话绑的渠道/模型/Agent）">导出对话（JSON）</button>
             <span class="status">{{ status }}</span>
+          </div>
+          <h3>创建副本</h3>
+          <p class="hint">
+            把这条对话**整份复制**成一条新会话（消息、思考、压缩金字塔都带上；世界状态不复制 —— 它本来就由正文现演）。
+            复制完直接进副本，接着往下写。线性会话里想"分岔"就用它。
+          </p>
+          <div class="row">
+            <button type="button" @click="copySession" title="复制成一条新会话（副本）">创建副本</button>
           </div>
         </section>
       </div>

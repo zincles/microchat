@@ -2208,3 +2208,49 @@ test("撤销压缩：树节点原样搬后端的 undoable / level", () => {
   assert.ok(leaf, "该有一条消息叶子");
   assert.ok(!leaf.undoable, "消息节点不该带 undoable");
 });
+
+// 创建副本（2026-11-01 用户定：「接下来给前端补上复制对话的办法，在 对话 的配置界面里允许创建副本」）。
+//
+// 背景：后端 `POST /sessions/{id}/copy` **一直是完整实现的**（新会话 + 消息与摘要一并复制、
+// 摘要铸新 id、指针重映射、世界状态不复制），但 web 界面从来没给过入口 ——
+// 于是"线性会话里想分岔"只能靠 TUI 或命令行。TUI 砍了之后，这里是**唯一**入口。
+test("创建副本：会话设置里能复制，复制完进副本", () => {
+  const panel = readFileSync(join(SRC, "components", "SessionSettings.vue"), "utf8");
+  const app = readFileSync(join(SRC, "..", "src", "App.vue"), "utf8");
+  const api = readFileSync(join(SRC, "api", "client.js"), "utf8");
+  const tpl = panel.slice(panel.indexOf("<template>")).replace(/<!--[\s\S]*?-->/g, "");
+
+  // ① 接口：POST .../copy
+  assert.match(api, /copySession:\s*\(id\) => call\("POST", `\/sessions\/\$\{enc\(id\)\}\/copy`\)/,
+    "API 客户端没有 copySession（或路径不对）");
+
+  // ② 面板里有一颗「创建副本」，且**说清它做什么**（世界状态不复制这条最容易让人误会）
+  assert.match(tpl, /<h3>创建副本<\/h3>/, "会话设置里没有「创建副本」那一节");
+  assert.match(tpl, /@click="copySession"/, "「创建副本」按钮没绑处理函数");
+  assert.match(panel, /世界状态不复制/, "没说明「世界状态不复制」—— 不说清就会有人以为连状态也带过去了");
+
+  // ③ 复制完**进副本**（停在原会话里会让人以为点了没反应）
+  assert.match(panel, /defineEmits\(\[[^\]]*"copy"/, "SessionSettings 没声明 copy 事件");
+  assert.match(panel, /emit\("copy", fresh\)/, "复制成功后没把新会话交出去");
+  assert.match(app, /@copy="\(fresh\) => \{ sessionSettingsId = null; afterCopy\(fresh\); \}"/,
+    "App 没接 session-copy");
+  assert.match(app, /function afterCopy\(fresh\)/, "App 没有 afterCopy");
+  assert.match(app, /enterSession\(fresh\.id\)/, "复制完之后没进副本");
+  assert.match(app, /refreshSessionsBar\(\)/, "复制完之后没刷左栏（副本不出现）");
+});
+
+// 2026-11-01 的两个删除：死接口与死字段不许长回来。
+test("过时的东西不回来：outgoing 墓碑、debug/last-payload、config.version、telegram", () => {
+  const server = readFileSync(join(SRC, "..", "..", "..", "core", "internal", "server", "server.go"), "utf8");
+  const cfg = readFileSync(join(SRC, "..", "..", "..", "core", "internal", "config", "config.go"), "utf8");
+
+  // ① `GET /sessions/{id}/outgoing` 是 410 墓碑（真请求问 POST 那条），删了
+  assert.ok(!server.includes('GET /api/v1/sessions/{session_id}/outgoing'), "outgoing 的 410 墓碑接口还在");
+  // ② `GET /debug/last-payload` 前端与 TUI 都没有入口，删了
+  assert.ok(!server.includes("/debug/last-payload"), "debug/last-payload 还在（没有调用方）");
+  // ③ `telegram` 那一段（TG bot 随 TUI 一起砍）
+  assert.ok(!server.includes("/config/telegram"), "TG 配置接口还在");
+  assert.ok(!cfg.includes("TelegramConfig"), "config.go 里还有 TelegramConfig");
+  // ④ `version` 从没人读过
+  assert.ok(!/\bVersion\s+int\s+`json:"version"`/.test(cfg), "config.go 里还有那个没人读的 version 字段");
+});

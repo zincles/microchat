@@ -60,11 +60,9 @@ func loadJSON(path string, into any) error {
 
 // Config：`config.json` 整体（文件可以不存在 ⇒ 全用默认值）。
 type Config struct {
-	Version  int            `json:"version"`
 	Server   ServerConfig   `json:"server"`
 	Defaults DefaultsConfig `json:"defaults"`
 	Chat     ChatConfig     `json:"chat"`
-	Telegram TelegramConfig `json:"telegram"`
 }
 
 type ServerConfig struct {
@@ -105,30 +103,13 @@ type DefaultsConfig struct {
 	Agent    string `json:"agent"`
 }
 
-// TelegramConfig：TG bot 那一份（单账户：只认一个 Telegram id）。
-//
-// BotToken 为空 ⇒ 去环境变量 `TELEGRAM_BOT_TOKEN` 找（跟渠道 key 同一条"文件优先、环境兜底"规矩）；
-// 都没有 ⇒ bot 不启动（不是错误 —— 没配 token 的人本来就不用 TG）。
-// AllowedID = 0 ⇒ 还没绑定（谁来都只回 id 方便绑定）；绑新的自动顶掉旧的。
-// Enabled 必须显式开（`true`）：配了 token 也不自动跑 —— 连外网是显式动作，不许"配了就跑"。
-type TelegramConfig struct {
-	BotToken  string `json:"bot_token"`
-	AllowedID int64  `json:"allowed_id"`
-	Enabled   bool   `json:"enabled"`
-}
-
-// BotToken：生效的 token（文件优先，环境兜底）。
-func (c Config) BotToken() string {
-	if c.Telegram.BotToken != "" {
-		return c.Telegram.BotToken
-	}
-	return os.Getenv("TELEGRAM_BOT_TOKEN")
-}
+// 2026-11-01：`telegram` 那一整段**删了**（用户：「砍掉CLI对话器，只保留服务web前端的功能」
+// —— TG bot 是另一个前端，一起砍）。老配置里若还写着 `telegram` 块，读入时被忽略、
+// 下次整份重写时消失；bot token 也随之作废（不再有任何代码去读它）。
 
 // DefaultConfig：与 Rust 版的 Default 逐字相同（开箱落到 dummy：没有上游，但立刻有回话）。
 func DefaultConfig() Config {
 	return Config{
-		Version: 1,
 		// **默认只听回环**（127.0.0.1，2026-11-01 用户定：「我们只允许来自 127.0.0.1 的访问」）。
 		//
 		// 为什么不是 0.0.0.0：账号与鉴权都砍了，后端一旦对局域网开放，同网段任何设备
@@ -262,7 +243,6 @@ type Segment struct {
 }
 
 type AgentsConfig struct {
-	Version      int       `json:"version"`
 	DefaultAgent string    `json:"default_agent"`
 	Segments     []Segment `json:"segments,omitempty"`
 	Agents       []Agent   `json:"agents"`
@@ -505,7 +485,6 @@ type Timeouts struct {
 }
 
 type ProvidersConfig struct {
-	Version   int        `json:"version"`
 	Providers []Provider `json:"providers"`
 }
 
@@ -600,7 +579,7 @@ func (c *AgentsConfig) dropRetiredAbilities() {
 // （2026-10-14 走查实测咬到）。**只认"文件缺失"这一种情况** —— 用户真把渠道删光了
 // （文件在、列表空）就尊重他，回 fallback 是正确行为。
 func DefaultProviders() ProvidersConfig {
-	return ProvidersConfig{Version: 1, Providers: []Provider{{ID: "dummy", Vendor: "dummy"}}}
+	return ProvidersConfig{Providers: []Provider{{ID: "dummy", Vendor: "dummy"}}}
 }
 
 // LoadProviders：读 `providers.json` 的唯一入口（`Load` 与 HTTP 层都走它，口径不许分家）。

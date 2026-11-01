@@ -122,6 +122,9 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
     // 判定在后端（`compact.PlanUndo`），不合法回 409 并带一句人话，界面请原样显示。
     undoSummary: (sid, sumid) => call("DELETE", `/sessions/${enc(sid)}/summaries/${enc(sumid)}`),
     patchSession: (id, body) => call("PATCH", `/sessions/${enc(id)}`, body),
+    // copySession：**创建副本**（2026-11-01 补的界面 —— 后端 `POST /copy` 早就有，web 一直没入口）。
+    // 新会话 + 消息与摘要一并复制（摘要新 id、指针重映射）；**世界状态不复制**（它本来就从正文现演）。
+    copySession: (id) => call("POST", `/sessions/${enc(id)}/copy`),
     deleteProvider: (id) => call("DELETE", `/providers/${enc(id)}`),
     status: (id) => call("GET", `/sessions/${enc(id)}/status`),
     turnText: (id, from, thinkFrom) =>

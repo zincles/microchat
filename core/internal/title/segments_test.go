@@ -49,7 +49,7 @@ func (h *harness) writeAgents(t *testing.T, agents config.AgentsConfig) {
 
 // agentsWith：一份人格 + 一个可选的段库（能力配置由调用方给）。
 func agentsWith(agent config.Agent, segments ...config.Segment) config.AgentsConfig {
-	return config.AgentsConfig{Version: 1, Segments: segments, Agents: []config.Agent{agent}}
+	return config.AgentsConfig{Segments: segments, Agents: []config.Agent{agent}}
 }
 
 // stubHarness：一个假上游 + 一条会话 + 一份"能力走 stub"的人格。

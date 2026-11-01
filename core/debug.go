@@ -30,7 +30,6 @@ import (
 	"syscall"
 	"time"
 
-
 	"microchat/internal/abilities"
 	"microchat/internal/chat"
 	"microchat/internal/compact"
@@ -72,8 +71,11 @@ op：
   refresh-routes [provider_id]                      只刷路由表：拉 models.dev 快照 → model_route 落库
                                                     （只认聚合站；快照失败不拦这一家之外的；启动时**不跑**）
   tasks                                             任务面板
-                                                    一律 403）：口令**只从标准输入**读一行 —— 不走 argv
-                                                    （免进 shell 历史与 ps 的命令行）；TTY 上不回显
+  last-payload                                      最近一发**真发出去**的请求（含请求头；没发过 = null）
+                                                    ⚠ 它是**唯一**能回答"网关为什么 403"的东西 ——
+                                                    拒的往往是头不是体（见 AGENTS.md 的实测表）。
+                                                    2026-11-01：原来只有 GET /debug/last-payload 一个
+                                                    入口，而它没有前端、TUI 也砍了 ⇒ 搬到这里。
   usage [provider_id]                               OpenCode GO 的套餐余量（只读 GET；不给 id 就用第一个 opencode-go 渠道）
 
 输出：每行一条 JSON；错误体固定 {"error":{"code","message"}}（与 HTTP 契约同一个形状）。
@@ -148,6 +150,8 @@ func runDebug(paths config.Paths, cfg config.Config, args []string) int {
 		return env.board()
 	case "usage":
 		return env.usageOf(args[1:])
+	case "last-payload":
+		return env.lastPayloadOp()
 	default:
 		fmt.Fprintf(os.Stderr, "直操模式：不认识这个 op：%s\n\n", op)
 		fmt.Fprint(os.Stderr, debugUsage)
@@ -699,6 +703,21 @@ func (e *debugEnv) deleteMessage(args []string) int {
 // board：任务面板（正在跑的在最前；进程内的事实，不进库）。
 func (e *debugEnv) board() int {
 	emit(e.tasks.Board())
+	return 0
+}
+
+// lastPayloadOp：最近一发**真发出去**的请求（含请求头，Authorization 已打码）。
+//
+// 这一发**不可重算** ✗ —— 它是历史事实（改一条旧消息也回不去），而且**含请求头**。
+// 上游 / 网关为什么 403，答案通常就在这里（拒的往往是头不是体）。
+// 没发过 ⇒ 打 `null`（照实说，不编）。
+func (e *debugEnv) lastPayloadOp() int {
+	payload, ok := providers.LastSent()
+	if !ok {
+		emit(nil)
+		return 0
+	}
+	emit(payload)
 	return 0
 }
 

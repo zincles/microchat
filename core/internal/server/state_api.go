@@ -80,13 +80,6 @@ func atIdx(w http.ResponseWriter, r *http.Request) (int, bool, bool) {
 // 自拼的"给人看的载荷"不是真请求：`message_id`/`idx`/`type` 全是库内账，
 // 上游一格都不要 —— 留着就是糊弄，该报错就报错（别画个假的）。
 // 真要看"发出去什么"问 (c) `POST /outgoing`（真请求 method/url/headers/体）。
-func (s *Server) getSessionOutgoing(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireSession(w, r); !ok {
-		return
-	}
-	writeError(w, http.StatusGone, "gone", "GET /outgoing 已删：看真请求问 POST /outgoing（只算不写，method/url/headers/体）")
-}
-
 // OutgoingReq：`POST /sessions/{session_id}/outgoing` 的请求体 —— 待发的那一句。
 type OutgoingReq struct {
 	Content *string `json:"content"`

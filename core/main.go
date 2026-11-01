@@ -16,10 +16,7 @@ import (
 	"syscall"
 	"time"
 
-	"golang.org/x/term"
-
 	"microchat/internal/abilities"
-	"microchat/internal/apiclient"
 	"microchat/internal/chat"
 	"microchat/internal/compact"
 	"microchat/internal/config"
@@ -30,56 +27,9 @@ import (
 	"microchat/internal/server"
 	"microchat/internal/store"
 	"microchat/internal/task"
-	"microchat/internal/tg"
 	"microchat/internal/title"
-	"microchat/internal/tui"
 	"microchat/internal/turn"
 )
-
-// tgNullRunner：bot 没跑起来时的空转壳（Stop 幂等，主流程不用分支）。
-type tgNullRunner struct{ runner *tg.Runner }
-
-func (n tgNullRunner) Stop() {
-	if n.runner != nil {
-		n.runner.Stop()
-	}
-}
-
-func (n tgNullRunner) Running() bool { return n.runner != nil && n.runner.Running() }
-
-// newTGClient：TG bot 专用后端客户端 —— 连**本机回环**（跟 TUI 同一条 HTTP 契约），
-// 超时用短的那档（`tg.APITimeout`）：一条命令卡住不许把长轮询挂在那儿。
-func newTGClient(addr string, cfg config.Config) *apiclient.Client {
-	// token 传空：2026-11-01 起**没有鉴权**（只听 127.0.0.1），apiclient 见到空串就不发 Authorization。
-	client := apiclient.NewClient(loopbackURL(addr, cfg.Server.Port), "")
-	client.HTTP.Timeout = tg.APITimeout
-	return client
-}
-
-// startTelegramBot：`telegram.enabled` 才建 runner 跑长轮询 —— 没开/没 token/连不上都只 log。
-// 一律返回"能问跑没跑"的东西（没跑起来就是空转壳，调用方 defer Stop 即可，不用判空）。
-// `api` = 连本机后端的客户端（bot 的命令全靠它取数/写数）—— 由 main 用回环地址建好传进来。
-func startTelegramBot(cfg config.Config, api *apiclient.Client) tgNullRunner {
-	if !cfg.Telegram.Enabled {
-		return tgNullRunner{}
-	}
-	token := cfg.BotToken()
-	if token == "" {
-		log.Printf("TG bot 没启动：没有 token（config.json 的 telegram.bot_token 或 TELEGRAM_BOT_TOKEN）")
-		return tgNullRunner{}
-	}
-	runner, err := tg.NewRunner(token, cfg.Telegram.AllowedID, api)
-	if err != nil {
-		log.Printf("TG bot 没启动：%v", err)
-		return tgNullRunner{}
-	}
-	go func() {
-		if err := runner.Go(context.Background()); err != nil {
-			log.Printf("TG bot 退了：%v", err)
-		}
-	}()
-	return tgNullRunner{runner: runner}
-}
 
 func main() {
 	// 与旧版同名：目录可用环境变量覆盖（MICROCHAT_CONFIG_DIR / MICROCHAT_DATA_DIR）
@@ -131,7 +81,6 @@ func main() {
 	// **一个二进制，一副面孔**（用户 2026-09-29 定）：起来就**既对外服务、又在终端里能直接聊**。
 	// TUI 与别的客户端走**同一条 HTTP 契约**（回环到自己的端口）⇒ 接口天天被主力界面跑着，不会烂。
 	// 唯一自动处理的情形：**没有 TTY**（丢进 tmux 重定向到日志文件那种）⇒ 不进 TUI，只服务。
-	interactive := interactive()
 
 	st, err := store.Open(paths.DataDir + "/microchat.db")
 	if err != nil {
@@ -170,26 +119,10 @@ func main() {
 	if err != nil {
 		fatal("监听 %s 失败: %v（已经有一个在跑？用 -addr 换个端口，或先把它停了）", *addr, err)
 	}
-	if interactive {
-		// 起来了才把日志挪进文件：别糊在 TUI 上
-		if logFile, fileErr := os.OpenFile(paths.DataDir+"/microchat.log",
-			os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); fileErr == nil {
-			log.SetOutput(logFile)
-			loggingToFile = true // 从这一刻起，致命错要**额外**写一份到 stderr（否则终端什么也看不到）
-			defer logFile.Close()
-		}
-	}
-
-	// TG bot：显式开了（`telegram.enabled`）才跑 —— 连外网是显式动作，不许"配了就跑"。
-	// 没 token / 连不上 ⇒ 只 log（不弹错、不退出、不挡 TUI）。
-	// **放在日志切换之后**：TUI 模式下这几句要落进 microchat.log（不然界面上根本看不见）。
-	tgRunner := startTelegramBot(cfg, newTGClient(*addr, cfg))
-	defer tgRunner.Stop() // 没跑起来就是空转（幂等）
-	log.Printf("microchat 起在 http://%s（数据 %s，配置 %s，user_version=%d，TUI=%v）",
-		*addr, paths.DataDir, paths.ConfigDir, version, interactive)
+	log.Printf("microchat 起在 http://%s（数据 %s，配置 %s，user_version=%d）",
+		*addr, paths.DataDir, paths.ConfigDir, version)
 	go func() {
 		webServer := server.New(st, cfg, paths, chatService, compactService, rerollService, tasks, queueService)
-		webServer.SetTelegramRunner(tgRunner)
 		if err := http.Serve(listener, webServer.Handler()); err != nil {
 			log.Printf("服务退出: %v", err)
 		}
@@ -203,14 +136,8 @@ func main() {
 		go refreshModelsOnStart(st, tasks, cfg, providerConfig.Providers)
 	}
 
-	if !interactive {
-		select {} // 没有终端：就是一台服务，跑到被杀
-	}
-	// 有终端：进 TUI（连自己起的这个服务）
-	if err := tui.Run(tui.NewClient(loopbackURL(*addr, cfg.Server.Port), "")); err != nil {
-		fatal("TUI 出错: %v", err)
-	}
-	log.Printf("TUI 退出，服务继续在 %s 上跑（Ctrl-C 停）", *addr)
+	// 2026-11-01：TUI **删了**（用户：「砍掉CLI对话器，只保留服务web前端的功能」）。
+	// 于是这里只剩一件事：把服务挂着跑到被杀。
 	select {}
 }
 
@@ -270,41 +197,16 @@ func refreshModels(st *store.Store, tasks *task.Registry, cfg config.Config, lis
 	})
 }
 
-// fatal：启动 / 运行中的致命错 —— **一律 stderr + 日志双写**。
+// fatal：启动 / 运行中的致命错 —— **stderr + 日志都写一遍**。
 //
-// 为什么不能只用 log：TUI 模式下日志已经挪进 data/microchat.log ⇒ 终端里只剩一句
-// "exit status 1"，看不到为什么（真发生过）。
+// 2026-11-01 之前这里有个 `if loggingToFile` 分支（TUI 模式把日志挪进
+// data/microchat.log ⇒ 终端里只剩 "exit status 1"）。TUI 删了、日志不再挪文件，
+// 于是两个出口**永远都写** —— 比"看情况写"简单，也不会再出现"终端什么也看不到"。
 func fatal(format string, args ...any) {
 	message := fmt.Sprintf(format, args...)
-	if loggingToFile { // 日志已经去文件了 ⇒ 终端这边必须**另外**说一句
-		fmt.Fprintln(os.Stderr, "microchat: "+message)
-	}
+	fmt.Fprintln(os.Stderr, "microchat: "+message)
 	log.Print(message)
 	os.Exit(1)
-}
-
-// loggingToFile：日志是否已被挪进 data/microchat.log（见 fatal 的注释）。
-var loggingToFile bool
-
-// interactive：stdin 与 stdout **都是真终端**才进 TUI。
-//
-// 别用 `ModeCharDevice` 判 ✗ —— `/dev/null` 也是字符设备，脚本 / 服务把 stdio 丢 DEVNULL
-// 时会被误判成"有终端" ⇒ 跑去开 TUI、端口上永远没人听（真发生过：api-audit 的沙盒起不来）。
-func interactive() bool {
-	// stdin 不是终端就没法打字，进去也没用
-	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
-}
-
-// loopbackURL：TUI 连的那个地址。`0.0.0.0`/`::` 这种"监听所有网卡"的要换成回环才能连。
-func loopbackURL(addr string, port uint16) string {
-	host, listenPort, err := net.SplitHostPort(addr)
-	if err != nil {
-		return "http://127.0.0.1:" + fmt.Sprint(port)
-	}
-	if host == "" || host == "0.0.0.0" || host == "::" {
-		host = "127.0.0.1"
-	}
-	return "http://" + net.JoinHostPort(host, listenPort)
 }
 
 // acquireInstanceLock：同 data 目录单实例 —— 已有活实例就 SIGTERM 它（最多等 ~3s），再写自己的 pid。

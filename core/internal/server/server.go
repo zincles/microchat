@@ -34,16 +34,8 @@ type Server struct {
 	rerolls *reroll.Service
 	tasks   *task.Registry
 	queues  *queue.Service // 队列任务（2026-11-01）：串行、一步失败即整体结束、可取消
-	// telegram：bot 的活 runner（main 登记；只用来问"跑没跑" —— 启停归 main）。
-	telegram TelegramRunner
-	mux      *http.ServeMux
+	mux     *http.ServeMux
 }
-
-// TelegramRunner：bot 跑没跑 —— Server 只读这一句（启停归 main，见 main.startTelegramBot）。
-type TelegramRunner interface{ Running() bool }
-
-// SetTelegramRunner：把活 runner 登记给 Server（只用来问"跑没跑"）。
-func (s *Server) SetTelegramRunner(runner TelegramRunner) { s.telegram = runner }
 
 // New：把"一轮生成"(chat)、"压缩"(compact) 与"重摇"(reroll) 三层注进来 —— 它们才是干活的那层
 // （server 只编排：解析请求、定错误码、写响应）。
@@ -56,7 +48,6 @@ func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *ch
 	s.mux.HandleFunc("GET /api/v1/health", s.health)
 	// 鉴权（DEFINE「用户与鉴权」）：status/login/register 是**仅有的三处开放口**
 	// （register 另有"还没有用户"的闸）；其余一切都要有效凭据。
-	s.mux.HandleFunc("GET /api/v1/debug/last-payload", s.lastPayload)
 	s.mux.HandleFunc("GET /api/v1/sessions", s.listSessions)
 	s.mux.HandleFunc("POST /api/v1/sessions", s.createSession)
 	s.mux.HandleFunc("POST /api/v1/sessions/import-st", s.importSt)
@@ -96,9 +87,6 @@ func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *ch
 	s.mux.HandleFunc("PUT /api/v1/config/defaults", s.putDefaults)
 	s.mux.HandleFunc("GET /api/v1/models", s.listModels)
 	s.mux.HandleFunc("PATCH /api/v1/models", s.setModelOverride)
-	// TG bot 配置（单账户绑定；token 只回有没有）—— TUI 的 `/telegram-bind` 走这里
-	s.mux.HandleFunc("GET /api/v1/config/telegram", s.getTelegramConfig)
-	s.mux.HandleFunc("PUT /api/v1/config/telegram", s.setTelegram)
 	// 任务面板：进程内的事实（与 `-debug tasks` 同一份 Board；轮询用，不进库）
 	s.mux.HandleFunc("GET /api/v1/tasks", s.taskBoard)
 	// 队列任务（2026-11-01 用户定）—— 排 / 取消，都是 admin（队列绕过逐会话归属检查）。
@@ -111,7 +99,6 @@ func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *ch
 	// (c) 预演：把待发那句追加进去之后真会发出去的东西 —— **只算不写**（同一个装配，重算状态）。
 	// GET 那条（旧 (b) 逐项形状）已删：显式注册回 410 `gone`（不用框架默认 405 ——
 	// 405 说"方法不对"，410 说"这东西没了"，后者才是真话）。
-	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/outgoing", s.getSessionOutgoing)
 	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/outgoing", s.postSessionOutgoing)
 	// 草稿预演：**还没有会话**（web 草稿态）时"这句发出去会是什么样" —— 临时种子会话走
 	// `chat.PreviewWire`（同一支笔），一条会话都不建。id 给了就当 sessions.id 用（进请求头）。
