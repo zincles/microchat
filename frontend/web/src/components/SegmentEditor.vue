@@ -69,15 +69,15 @@ function onKey(e) { if (e.key === "Escape") emit("close"); }
   <div class="detail-pane">
     <div class="panel-head">
       <button class="icon-btn" type="button" title="返回列表（Esc）" @click="$emit('close')">←</button>
-      <span class="status">{{ isNew ? "新建提示词段" : isBuiltin ? `内置「${props.segment.id}」（只读）` : `编辑「${props.segment.id}」${props.segment.imported ? "（导入）" : ""}` }}</span>
+      <span class="status">{{ isNew ? "新建提示词片段" : isBuiltin ? `内置片段「${props.segment.id}」（只读）` : `编辑「${props.segment.id}」${props.segment.imported ? "（导入）" : ""}` }}</span>
     </div>
-    <label class="field"><span>id（段名；改 = 所有引用一起搬）</span><input v-model="id" :readonly="isBuiltin" placeholder="例如 statelang / katex / mcp-search" /></label>
-    <label class="field-block"><span>正文（原样追加进提示词，纯文本）</span><textarea v-model="text" rows="12" :readonly="isBuiltin" placeholder="这段提示词的内容…"></textarea></label>
-    <div v-if="!isNew" class="status">被谁引用：{{ refs().join("、") || "（没人用）" }}</div>
+    <label class="field"><span>名称（改名会同步所有引用）</span><input v-model="id" :readonly="isBuiltin" placeholder="例如：状态语法 / 数学公式 / 联网规则" /></label>
+    <label class="field-block"><span>内容（会原样追加到提示词末尾）</span><textarea v-model="text" rows="12" :readonly="isBuiltin" placeholder="这段提示词的内容…"></textarea></label>
+    <div v-if="!isNew" class="status">谁在用：{{ refs().join("、") || "（没人用）" }}</div>
     <div v-if="isBuiltin" class="row">
-      <span class="status">内置段内嵌在应用里：只读、删不掉。要改就复制一份：</span>
-      <input v-model="copyID" placeholder="副本的新 id" />
-      <button type="button" class="primary" @click="copyToCustom">复制为自定义</button>
+      <span class="status">内置片段随应用提供：只读、删不掉。想改就复制一份：</span>
+      <input v-model="copyID" placeholder="新片段的名称" />
+      <button type="button" class="primary" @click="copyToCustom">复制一份来改</button>
     </div>
     <div v-else class="row">
       <button type="button" class="primary" @click="save">保存</button>

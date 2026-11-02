@@ -76,8 +76,8 @@ func TestProviderViewShape(t *testing.T) {
 	recorder := call(server, "GET", "/api/v1/providers", "")
 	want := `[{"id":"ocgo","name":null,"kind":"opencode-go","vendor":"opencode-go","protocol":"openai-chat-completion",` +
 		`"vendor_name":"OpenCode Go","protocol_name":"对话补全",` +
-		`"protocol_options":[{"protocol":"openai-chat-completion","label":"对话补全","hint":"最常见的一种（/chat/completions），绝大多数渠道都走它"},` +
-		`{"protocol":"openai-response","label":"应答接口","hint":"OpenAI 的 /responses；opencode 系、OpenRouter、自建可用"}],` +
+		`"protocol_options":[{"protocol":"openai-chat-completion","label":"对话补全","hint":"最常用，绝大多数服务商都支持"},` +
+		`{"protocol":"openai-response","label":"应答接口","hint":"另一种接口格式；部分服务商支持"}],` +
 		`"base_url":"https://opencode.ai/zen/go/v1","headers":{"X-Extra":"1"},"has_key":false,"model_filter":"","identity":"pi","last_refresh_at":null,"models":[]}]`
 	if got := recorder.Body.String(); got != want {
 		t.Fatalf("形状变了：\n得到 %s\n想要 %s", got, want)

@@ -42,10 +42,10 @@ export function applyBackground() {
 }
 
 export function describeBackground(bg) {
-  if (!bg) return "未设（纯平底）";
+  if (!bg) return "未设置（纯色背景）";
   if (bg.kind === "url") {
     const u = bg.value ?? "";
-    return `URL：${u.length > 64 ? u.slice(0, 61) + "…" : u}`;
+    return `图片地址：${u.length > 64 ? u.slice(0, 61) + "…" : u}`;
   }
   const dim = bg.width && bg.height ? `${bg.width}×${bg.height}` : "已上传";
   return `已上传 ${dim}`;

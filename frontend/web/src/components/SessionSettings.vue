@@ -29,7 +29,7 @@ async function load() {
   modelValue.value = found.provider && found.model ? modelKey(found.provider, found.model) : "";
   agentValue.value = found.agent_id ?? "";
   sysPrompt.value = found.system_prompt ?? "";
-  sysPromptPh.value = found.system_prompt ? "" : "空=跟 Agent 走";
+  sysPromptPh.value = found.system_prompt ? "" : "留空 = 使用智能体的设置";
   const models = await api.models().catch(() => []);
   modelGroups.value = groupModelsByProvider(models).map((g) => ({
     provider: g.provider,
@@ -109,27 +109,27 @@ function onKey(e) {
       <div class="settings-cols">
         <section class="panel">
           <h3>名称</h3>
-          <label class="field"><span>标题（空=还没起名）</span><input v-model="title" placeholder="空=还没起名" /></label>
+          <label class="field"><span>标题（留空 = 自动起名）</span><input v-model="title" placeholder="留空 = 自动起名" /></label>
           <h3>模型</h3>
-          <label class="field"><span>渠道 / 模型</span><select v-model="modelValue">
+          <label class="field"><span>渠道和模型</span><select v-model="modelValue">
             <optgroup v-for="g in modelGroups" :key="g.provider" :label="g.provider">
               <option v-for="m in g.items" :key="m.value" :value="m.value">{{ m.label }}</option>
             </optgroup>
           </select></label>
-          <label class="field"><span>Agent</span><select v-model="agentValue">
+          <label class="field"><span>智能体</span><select v-model="agentValue">
             <option v-for="a in agents" :key="a.id" :value="a.id">{{ a.label }}</option>
           </select></label>
-          <h3>提示词覆盖</h3>
-          <label class="field-block"><span>会话提示词（空=跟 Agent 走）</span><textarea v-model="sysPrompt" :placeholder="sysPromptPh" rows="4"></textarea></label>
+          <h3>自定义提示词</h3>
+          <label class="field-block"><span>这条会话的系统提示词（留空 = 使用智能体的设置）</span><textarea v-model="sysPrompt" :placeholder="sysPromptPh" rows="4"></textarea></label>
           <div class="row">
             <button type="button" class="primary" @click="save">保存</button>
-            <button type="button" @click="exportJSON" title="导出对话记录（JSON v3：全部消息 + 思考 + 压缩金字塔 + 这条会话绑的渠道/模型/Agent）">导出对话（JSON）</button>
+            <button type="button" @click="exportJSON" title="导出这条对话（含全部消息、思考过程和摘要，以及使用的渠道、模型和智能体）">导出对话（JSON）</button>
             <span class="status">{{ status }}</span>
           </div>
           <h3>创建副本</h3>
           <p class="hint">
-            把这条对话**整份复制**成一条新会话（消息、思考、压缩金字塔都带上；世界状态不复制 —— 它本来就由正文现演）。
-            复制完直接进副本，接着往下写。线性会话里想"分岔"就用它。
+            把这条对话<b>整份复制</b>成一条新会话（消息、思考过程和已有的摘要都带上；对话里的状态不复制 —— 它会由正文重新算出来）。
+            复制完直接进入副本，可以接着往下写。想从某条对话分出另一条线，就用它。
           </p>
           <div class="row">
             <button type="button" @click="copySession" title="复制成一条新会话（副本）">创建副本</button>

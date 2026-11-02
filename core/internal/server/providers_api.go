@@ -365,7 +365,7 @@ func (s *Server) testProvider(w http.ResponseWriter, r *http.Request) {
 	provider.Timeouts = &config.Timeouts{ConnectSeconds: 8, TotalSeconds: 15}
 	wire := providers.FromConfig(provider).Normalize()
 	if wire.EffectiveVendor() == providers.VendorDummy {
-		writeJSON(w, http.StatusOK, TestProviderResult{OK: true, Note: "本地假上游：不联网，无需测试"})
+		writeJSON(w, http.StatusOK, TestProviderResult{OK: true, Note: "本地示例：不联网，无需测试"})
 		return
 	}
 	if err := wire.Validate(); err != nil {

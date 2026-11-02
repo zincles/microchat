@@ -64,8 +64,8 @@ const mdTypes = ref([]);
 // 按 block / inline 分组（顺序沿用后端清单的顺序，界面不自己排）。
 const mdGroups = computed(() => {
   const groups = [
-    { kind: "block", title: "块级", items: [] },
-    { kind: "inline", title: "行内", items: [] },
+    { kind: "block", title: "整段格式", items: [] },
+    { kind: "inline", title: "文字里的格式", items: [] },
   ];
   for (const item of mdTypes.value) {
     const group = groups.find((g) => g.kind === item.kind) ?? groups[1];
@@ -225,53 +225,53 @@ async function clearBg() {
       </label>
       <div class="row">
         <button type="button" class="link-btn" @click="resetScale">复位 100%</button>
-        <span class="status">拖动即生效；只放大字号，布局留白跟着等比</span>
+        <span class="status">拖动立即生效；字号和留白会一起等比缩放</span>
       </div>
-      <label class="field"><span>背景图 URL</span><input v-model="bgUrl" placeholder="https://…（跨域也可）" /></label>
+      <label class="field"><span>背景图地址</span><input v-model="bgUrl" placeholder="https://…（跨域也可）" /></label>
       <div class="row">
-        <button type="button" class="primary" @click="applyBgUrl">应用 URL</button>
+        <button type="button" class="primary" @click="applyBgUrl">应用地址</button>
         <label class="link-btn" style="cursor: pointer">上传图片…
           <input type="file" accept="image/*" hidden @change="pickBgFile" />
         </label>
         <button type="button" class="link-btn danger" @click="clearBg">清除</button>
       </div>
       <div class="row"><span class="status">当前背景：{{ bgStatus }}</span></div>
-      <p v-if="bgPreview" class="hint">背景图存在服务器上（<code>data/prefs/</code>）—— 换设备也在。</p>
+      <p v-if="bgPreview" class="hint">背景图保存在服务器上 —— 换设备也在。</p>
     </section>
 
     <section class="settings-card">
       <h3>布局</h3>
       <!-- 输入栏形态（2026-10-20 用户定）：**外观项** —— 要效率还是要美观，自己挑。 -->
-      <label class="field"><span>显示模式</span><select v-model="composerStyle" @change="persist">
-        <option value="float">正常模式（浮空输入框）</option>
-        <option value="solid">紧凑模式（方角贴底、省地方）</option>
+      <label class="field"><span>输入框样式</span><select v-model="composerStyle" @change="persist">
+        <option value="float">浮动输入框（默认）</option>
+        <option value="solid">贴底输入框（更省空间）</option>
       </select></label>
-      <label class="field"><span>滚动时收起顶栏/底栏（触屏）</span><ToggleSwitch :model-value="chromeHide" @update:model-value="setChromeHide" /></label>
-      <p class="hint">往下看（内容前进）顶栏按位移逐步收起，往回看底栏逐步收起 —— 一次只藏一边，反向滚动就放回来；到顶/见底立刻全放回。只在触屏上生效。</p>
-      <p class="hint"><b>正常</b> = 输入框是一颗圆角卡、浮在消息上（两侧留白，背景图透得出来），状态那行小字在它上面；<b>紧凑</b> = 输入框边到边、方角贴底 —— 省出一点地方。</p>
+      <label class="field"><span>滚动时自动收起顶栏/底栏（仅触屏）</span><ToggleSwitch :model-value="chromeHide" @update:model-value="setChromeHide" /></label>
+      <p class="hint">向下浏览时顶栏逐步收起，往回看时底栏逐步收起 —— 一次只收一边，反向滚动就放回来；到顶或到底立刻全部放回。只在触屏上生效。</p>
+      <p class="hint"><b>浮动</b> = 输入框是一颗圆角卡、浮在消息上（两侧留白，背景图透得出来）；<b>贴底</b> = 输入框边到边、方角贴底，省出一点空间。</p>
     </section>
 
     <section class="settings-card">
       <h3>输入</h3>
-      <label class="field"><span>发送键</span><select v-model="send" @change="persist">
-        <option value="enter">回车发送（修饰键换行）</option>
-        <option value="shift-enter">Shift+回车发送</option>
-        <option value="button">仅按钮（回车换行）</option>
+      <label class="field"><span>发送方式</span><select v-model="send" @change="persist">
+        <option value="enter">按回车发送（Shift+回车换行）</option>
+        <option value="shift-enter">按 Shift+回车发送</option>
+        <option value="button">只用发送按钮（回车换行）</option>
       </select></label>
-      <label class="field"><span>输入时预演载荷</span><ToggleSwitch :model-value="preview" @update:model-value="setPreview" /></label>
+      <label class="field"><span>输入时预览将要发送的内容</span><ToggleSwitch :model-value="preview" @update:model-value="setPreview" /></label>
       <label class="field"><span>命令菜单</span><ToggleSwitch :model-value="cmdMenu" @update:model-value="setCmdMenu" /></label>
-      <p class="hint">发送键决定回车怎么算；预演开着时，输入内容会先算一遍真会发出去的请求（上下文工作区可看）；命令菜单打开后输入框左侧有 ☰、输入 <code>/</code> 弹面板。</p>
+      <p class="hint">发送方式决定回车怎么用；预览会在输入时先算一遍会发给模型的内容（可在上下文工作区查看）；打开命令菜单后，输入框左侧会出现 ☰，输入 <code>/</code> 会弹出命令列表。</p>
     </section>
 
     <section class="settings-card">
       <!-- ── markdown 渲染（2026-11-01）──
            用户口径：「不然瞎解析不好」⇒ 每一类都能单独关掉，关掉的含义是**原样显示**
            （把 `**粗**` 照字面画出来，而不是悄悄变成"粗"、更不是吃掉标记）。 -->
-      <h3>markdown 渲染</h3>
-      <label class="field"><span>渲染 markdown</span><ToggleSwitch :model-value="mdEnabled" @update:model-value="setMdEnabled" /></label>
+      <h3>文本格式（Markdown）</h3>
+      <label class="field"><span>解析 Markdown 格式</span><ToggleSwitch :model-value="mdEnabled" @update:model-value="setMdEnabled" /></label>
       <p class="hint">
-        关掉 = 整条消息<b>原样显示</b>（一个标记都不解析，但换行保留）。
-        开着的时候，下面每一类还能单独关 —— 关掉的那类同样原样显示。
+        关闭后，整条消息按<b>原文显示</b>（标记不转换，但换行保留）。
+        开启时，下面每一类格式还能单独关闭 —— 关闭的那一类同样按原文显示。
       </p>
       <!-- 类型清单是**后端给的**（`GET /config/prefs` 的 `markdown_types`）：
            名字与例子都从那儿来，前端不另抄一张表。 -->
@@ -279,8 +279,8 @@ async function clearBg() {
         <div class="md-group-head">
           <span>{{ group.title }}</span>
           <span class="md-group-ops">
-            <button type="button" class="link-btn" :disabled="!mdEnabled" @click="disableAll">全关</button>
-            <button type="button" class="link-btn" :disabled="!mdEnabled" @click="enableAll">全开</button>
+            <button type="button" class="link-btn" :disabled="!mdEnabled" @click="disableAll">全部关闭</button>
+            <button type="button" class="link-btn" :disabled="!mdEnabled" @click="enableAll">全部开启</button>
           </span>
         </div>
         <label v-for="item in group.items" :key="item.id" class="field md-row">
@@ -291,12 +291,11 @@ async function clearBg() {
           <ToggleSwitch :model-value="typeOn(item.id)" :disabled="!mdEnabled" @update:model-value="(on) => toggleType(item.id, on)" />
         </label>
       </div>
-      <p v-if="!mdEnabled" class="hint">总开关关着时，逐类型的勾选不生效（但会留着 —— 重新打开就恢复）。</p>
+      <p v-if="!mdEnabled" class="hint">总开关关闭时，下面的单项开关不生效（设置会保留，重新打开就恢复）。</p>
       <p class="hint">
-        <b>不解析的东西</b>：裸 HTML（<code>&lt;div&gt;</code> 之类）从来就不解析 —— 我们先把
-        <code>&amp;</code> 与 <code>&lt;</code> 转义掉（XSS 的门在那儿）。
+        <b>HTML 标签一律不解析</b>：程序会先把 <code>&amp;</code> 和 <code>&lt;</code> 转义掉，防止注入脚本。
       </p>
-      <p class="hint">这一页<b>没有保存按钮</b>：改了就生效、也顺手存到服务器上（2026-11-01 起）。</p>
+      <p class="hint">这一页<b>没有保存按钮</b>：改动立即生效，并保存到服务器。</p>
     </section>
   </section>
 </template>

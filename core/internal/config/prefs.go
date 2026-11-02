@@ -61,7 +61,7 @@ var MarkdownTypes = []MarkdownType{
 	// 它同样会被解析⇒ 同样得有开关。
 	{ID: "underline", Name: "下划线", Kind: "inline", Sample: "__下划__"},
 	{ID: "autolink", Name: "自动链接", Kind: "inline", Sample: "https://…"},
-	{ID: "breaks", Name: "单换行断行", Kind: "inline", Sample: "一行\n一行"},
+	{ID: "breaks", Name: "单换行就换行", Kind: "inline", Sample: "一行\n一行"},
 	// 数学不归 markdown 管（是 KaTeX），但它同样"会被解析"⇒ 同一个开关面板里管它才合理。
 	{ID: "katex", Name: "数学公式", Kind: "inline", Sample: "$$…$$"},
 }

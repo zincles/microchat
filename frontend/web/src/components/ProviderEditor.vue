@@ -56,13 +56,13 @@ const protocolChoices = computed(() => {
   if (!protocol.value) return list;
   if (list.some((option) => option.protocol === protocol.value)) return list;
   const known = (props.provider?.protocol_options ?? []).find((option) => option.protocol === protocol.value);
-  return [...list, { protocol: protocol.value, label: known?.label ?? protocol.value, hint: "当前渠道正在用的协议（不在这个 vendor 的常规名单里）" }];
+  return [...list, { protocol: protocol.value, label: known?.label ?? protocol.value, hint: "当前渠道正在用的接口（不在这个服务商的常见选项里）" }];
 });
 
 // protocolHint：选中那一条的一句人话 —— 下拉关起来之后，人只剩 id 可看。
 const protocolHint = computed(() =>
   protocolChoices.value.find((option) => option.protocol === protocol.value)?.hint ??
-  "空 = 用这个渠道的默认协议（对话补全）",
+  "留空 = 使用默认接口（对话补全）",
 );
 
 // effectiveBase：这一发真会打到哪儿 —— 端点留空时用预设的，所以"空"不等于"没有端点"。
@@ -70,7 +70,7 @@ const protocolHint = computed(() =>
 const effectiveBase = computed(() => {
   if (baseUrl.value.trim()) return baseUrl.value.trim();
   const preset = curPreset.value?.base_url ?? props.provider?.base_url ?? "";
-  return preset || "（这个 vendor 没有预设端点，必须自己填）";
+  return preset || "（这个服务商没有默认地址，需要自己填）";
 });
 
 // vendorHint：选中的 vendor 的端点与"要不要密钥"，省得人再去别处查。
@@ -78,8 +78,8 @@ const vendorHint = computed(() => {
   const preset = curPreset.value;
   if (!preset) return "";
   const bits = [];
-  if (preset.base_url) bits.push(preset.base_url);
-  bits.push(preset.needs_key ? `需要密钥${preset.key_env ? `（也可用环境变量 ${preset.key_env}）` : ""}` : "不需要密钥");
+  if (preset.base_url) bits.push(`默认地址：${preset.base_url}`);
+  bits.push(preset.needs_key ? "需要 API Key" : "不需要 API Key");
   return bits.join(" · ");
 });
 
@@ -157,7 +157,7 @@ async function save() {
 async function reloadModels(id) {
   // dummy 没有上游可拉：保存成功就够了，别报一条看起来像失败的刷新错误。
   if (vendor.value === "dummy") {
-    status.value = "已保存（本地假上游：不联网，没有模型可刷新）";
+    status.value = "已保存（本地示例：不联网，没有模型可刷新）";
     emit("saved");
     return;
   }
@@ -229,36 +229,33 @@ function onKey(e) {
          id 不藏起来：手改 config/providers.json 的人得能对上号，出错信息里也打的是 id。 -->
     <label class="field"><span>服务商</span><select :value="vendor" @change="pickVendor($event.target.value)">
       <optgroup label="常见">
-        <option v-for="p in primaryPresets" :key="p.vendor" :value="p.vendor">{{ p.name }}（{{ p.vendor }}）</option>
+        <option v-for="p in primaryPresets" :key="p.vendor" :value="p.vendor" :title="p.vendor">{{ p.name }}</option>
       </optgroup>
       <optgroup v-if="otherPresets.length" label="其它预设">
-        <option v-for="p in otherPresets" :key="p.vendor" :value="p.vendor">{{ p.name }}（{{ p.vendor }}）</option>
+        <option v-for="p in otherPresets" :key="p.vendor" :value="p.vendor" :title="p.vendor">{{ p.name }}</option>
       </optgroup>
     </select></label>
     <p v-if="vendorHint" class="hint">{{ vendorHint }}</p>
-    <label class="field"><span>渠道 id</span><input v-model="pid" :disabled="!isNew" placeholder="新建时填" @input="touchId" /></label>
-    <p v-if="isNew" class="hint">id 是这条渠道在你机器上的名字（会写进 <code>providers.json</code>、也会出现在模型列表的「渠道」那列）。
-      换服务商时它跟着变 —— 你手改过之后就不再动它了。</p>
-    <label class="field"><span>接口协议</span><select v-model="protocol">
+    <label class="field"><span>渠道标识</span><input v-model="pid" :disabled="!isNew" placeholder="新建时自动生成" @input="touchId" /></label>
+    <p v-if="isNew" class="hint">这个标识是渠道在本机的名字，会出现在模型列表和配置文件里。换服务商时会自动跟着变；你手改过之后就不再自动改。</p>
+    <label class="field"><span>接口类型</span><select v-model="protocol">
       <option value="">用默认（对话补全）</option>
-      <option v-for="option in protocolChoices" :key="option.protocol" :value="option.protocol">
-        {{ option.label }}（{{ option.protocol }}）
+      <option v-for="option in protocolChoices" :key="option.protocol" :value="option.protocol" :title="option.protocol">
+        {{ option.label }}
       </option>
     </select></label>
     <p class="hint">{{ protocolHint }}</p>
     <label class="field"><span>接口地址</span><input v-model="baseUrl" :placeholder="effectiveBase" /></label>
-    <p class="hint">这一发会打到 <code>{{ effectiveBase }}</code></p>
+    <p class="hint">实际请求地址：<code>{{ effectiveBase }}</code></p>
     <h3>密钥</h3>
     <label class="field"><span>{{ hasKey ? "API Key（留空=不改）" : "API Key（可空）" }}</span><input v-model="key" placeholder="API Key" type="password" /></label>
-    <h3>模型筛选</h3>
+    <h3>模型筛选（可选）</h3>
     <label class="field"><span>只导入匹配的模型</span>
-      <input v-model="filter" placeholder="空=全部（例：deepseek,mimo）" />
+      <input v-model="filter" placeholder="留空 = 全部（例如：deepseek,mimo）" />
     </label>
     <p class="hint">
-      多条规则用<b>半角逗号</b>分隔，<b>命中任意一条就导入</b>：填 <code>deepseek,mimo</code> ⇒
-      <code>deepseek-v4-flash</code> 与 <code>mimo-v2.6-flash</code> 都会进来。
-      每条都是子串匹配、不分大小写（<code>openai/</code> 这种前缀也参与比较）；
-      不支持通配符（<code>*</code> 无效）；留空 = 不筛。
+      用半角逗号分隔几个关键词；模型名包含<b>任意一个</b>就会导入，不区分大小写。
+      不支持 <code>*</code> 通配符；留空 = 全部导入。
     </p>
     <div class="row">
       <button type="button" class="primary" @click="save">保存并刷新</button>

@@ -157,7 +157,7 @@ async function importJSONFile(event) {
     if (bound) bits.push(`渠道/模型 ${bound}`);
     // agent 本机没有 ⇒ 照绑了 id（不静默换人），但人设会回落内置默认 —— 必须说出来 + 给出下一步。
     if (out.agent_missing) {
-      bits.push(`⚠ Agent「${doc?.agent_name || doc?.agent_id || "?"}」本机没有：已按 id 绑上，人设会回落内置默认；要人设请从「智能体」导它的卡带`);
+      bits.push(`⚠ 智能体「${doc?.agent_name || doc?.agent_id || "?"}」本机没有：已按名称绑上，人设会回落内置默认；要人设请从「智能体」导入它的文件`);
     }
     jsonStatus.value = bits.join(" · ");
     await loadSessions();
@@ -308,16 +308,16 @@ function onKey(e) {
         <div class="settings-cols">
         <section v-show="tab === 'chat'" id="panel-chat" class="panel">
           <section class="settings-card">
-            <h3>生成与压缩</h3>
-            <label class="field"><span>标题字数</span><input v-model="chat.title_chars" type="number" min="1" /></label>
-            <label class="field"><span>模型上下文 tokens</span><input v-model="chat.model_context_tokens" type="number" min="1" /></label>
+            <h3>回复与自动压缩</h3>
+            <label class="field"><span>自动标题最多字数</span><input v-model="chat.title_chars" type="number" min="1" /></label>
+            <label class="field"><span>一次能记住多少内容（token 数）</span><input v-model="chat.model_context_tokens" type="number" min="1" /></label>
             <!-- 为什么右上角那枚环的分母常常比这里小：它是**输入预算** = 上下文 − 给回复留的输出额度。
                  移动端没有 hover，所以这句话必须写在这儿（不能只藏在环的 title 里）。 -->
-            <p class="hint">右上角那枚环的分母是<b>输入预算</b> = 这里填的上下文 − 模型的输出预留（上游报的 <code>max_output</code>，没报按 4096）⇒ 填 1000000 时它显示 995904 ✓。</p>
-            <label class="field"><span>压缩块数（自动压缩一次压几个）</span><input v-model="chat.compact_blocks" type="number" min="1" placeholder="空=3" /></label>
-            <label class="field"><span>自动压缩（到触发线就压，压到 50% 以下）</span><ToggleSwitch v-model="chat.auto_compact" /></label>
-            <label class="field"><span>压缩触发 tokens（空=预算的 80%）</span><input v-model="chat.compact_trigger_tokens" type="number" min="1" placeholder="空=预算的 80%" /></label>
-            <label class="field"><span>回传思考（默认关，省上下文）</span><ToggleSwitch v-model="chat.replay_reasoning" /></label>
+            <p class="hint">右上角那枚环显示的是<b>还能输入多少</b>：这里填的上下文长度减去给回复预留的空间。填 1000000 时通常显示 995904。</p>
+            <label class="field"><span>每次自动压缩几段对话</span><input v-model="chat.compact_blocks" type="number" min="1" placeholder="留空 = 3" /></label>
+            <label class="field"><span>自动压缩（到 80% 开始，压到 50% 以下）</span><ToggleSwitch v-model="chat.auto_compact" /></label>
+            <label class="field"><span>多少占用时开始压缩（留空 = 80%）</span><input v-model="chat.compact_trigger_tokens" type="number" min="1" placeholder="留空 = 80%" /></label>
+            <label class="field"><span>把思考过程也发给模型（默认关）</span><ToggleSwitch v-model="chat.replay_reasoning" /></label>
             <div class="row"><button type="button" class="primary" @click="saveChat">保存</button><span class="status">{{ chatStatus }}</span></div>
           </section>
         </section>
@@ -325,36 +325,36 @@ function onKey(e) {
           <!-- 文案（2026-10-28 用户提）：「缺省」是技术圈黑话，普通用户读不出"默认值"。
                一律说「默认」；「会话」留着 —— 它是 DEFINE.md 的词（左栏、导出、删除确认都这么说），
                一块面板里混用「对话/会话」只会更乱。 -->
-          <h3>新会话默认值</h3>
+          <h3>新会话默认设置</h3>
           <!-- 三格都是**下拉**（2026-10-28）：从前渠道/模型是手打 id 的文本框，说明文自己都写着
                「填错不会报错，只会在发送时回落成『未配置模型』」—— 那是把校验推给用户。
                现在能选出来的都真实存在；当前值即使不在列表里（渠道被删、手改过配置文件、
                或 dummy 这种永远发现不到模型的渠道）也会补一条并标明，**不许**静默丢掉。 -->
           <label class="field"><span>渠道</span><select :value="defaults.provider" @change="pickDefaultProvider($event.target.value)">
-            <option value="">内置默认（dummy）</option>
+            <option value="">内置默认（本地示例）</option>
             <option v-for="c in providerOpts" :key="c.value" :value="c.value">{{ c.label }}</option>
           </select></label>
           <label class="field"><span>模型</span><select v-model="defaults.model">
-            <option value="">内置默认（dummy）</option>
+            <option value="">内置默认（本地示例）</option>
             <option v-for="c in modelOpts" :key="c.value" :value="c.value">{{ c.label }}</option>
           </select></label>
-          <label class="field"><span>Agent</span><select v-model="defaults.agent">
+          <label class="field"><span>智能体</span><select v-model="defaults.agent">
             <option value="">内置默认</option>
-            <option v-for="a in agents" :key="a.id" :value="a.id">{{ a.name }}（{{ a.id }}）</option>
+            <option v-for="a in agents" :key="a.id" :value="a.id">{{ a.name }}</option>
           </select></label>
           <div class="row"><button type="button" class="primary" @click="saveDefaults">保存默认值</button><span class="status">{{ defStatus }}</span></div>
-          <p class="hint" v-if="!modelOpts.length">这条渠道还没有发现到任何模型 —— 模型只能选空（= 内置默认），或者先去「渠道」里刷新一次。</p>
-          <p class="hint">新建会话时用这三格；留空 = 内置默认（<code>dummy</code>：不联网的假上游，开箱就有回话）。</p>
-          <h3>会话（{{ sessions.length }} 条，点进）</h3>
+          <p class="hint" v-if="!modelOpts.length">这个渠道还没有拉到任何模型 —— 可以先留空用内置默认，或去「渠道」里点「保存并刷新」。</p>
+          <p class="hint">新建会话时使用这三项；留空 = 内置默认（本地示例模型，不联网，开箱就能回话）。</p>
+          <h3>已有会话（{{ sessions.length }} 条，点击打开）</h3>
           <div id="session-mgr-list">
             <table class="plist">
-              <thead><tr><th>标题</th><th>条数</th><th>模型</th><th></th></tr></thead>
+              <thead><tr><th>标题</th><th>消息数</th><th>模型</th><th></th></tr></thead>
               <tbody><tr v-for="s in sessions" :key="s.id" class="clickable" @click="gotoSession(s.id)">
                 <td>{{ s.title || "新会话" }}</td>
                 <td>{{ s.messages }}</td>
-                <td>{{ s.provider }}/{{ s.model }}</td>
+                <td :title="`${s.provider}/${s.model}`">{{ s.model || "—" }}</td>
                 <td class="ops">
-                  <button type="button" class="link-btn" @click.stop="exportSessionRow(s)" title="导出对话记录（JSON v3：全部消息 + 压缩金字塔 + 这条会话绑的渠道/模型/Agent）">导出</button>
+                  <button type="button" class="link-btn" @click.stop="exportSessionRow(s)" title="导出这条对话（含全部消息、摘要，以及使用的渠道、模型和智能体）">导出</button>
                   <button type="button" class="link-btn danger" @click.stop="askDropSession(s.id, s.title)">删除</button>
                 </td>
               </tr></tbody>
@@ -367,18 +367,18 @@ function onKey(e) {
           <h3>导入对话</h3>
           <div class="io-cards">
             <div class="io-card">
-              <div class="io-head"><b>SillyTavern 记录</b><i class="io-tag">.jsonl</i></div>
-              <p class="hint">SillyTavern 导出的<b>一行一条</b>记录：只认「谁说的 / 正文 / 思考 / 时间」四样，其余一概丢掉。</p>
+              <div class="io-head"><b>SillyTavern 聊天记录</b><i class="io-tag">.jsonl</i></div>
+              <p class="hint">SillyTavern 导出的聊天记录（一行一条）。只读取说话人、正文、思考过程和时间，其余内容会丢掉。</p>
               <div class="row">
                 <button type="button" class="primary" @click="stInput?.click()">选择 .jsonl 文件…</button>
                 <input ref="stInput" type="file" accept=".jsonl,.json,.txt" hidden @change="importSTFile" />
                 <span class="status">{{ importStatus }}</span>
               </div>
-              <label class="field"><span>标题</span><input v-model="importTitle" placeholder="空 = 用首句起" /></label>
+              <label class="field"><span>标题</span><input v-model="importTitle" placeholder="留空 = 用第一句话自动起名" /></label>
             </div>
             <div class="io-card">
-              <div class="io-head"><b>MicroChat 对话 JSON</b><i class="io-tag">.json</i></div>
-              <p class="hint">本应用「导出」出来的那份：标题 + 每条的 role 与正文（正文里的 <code>&lt;state&gt;</code> 块留着 ⇒ 导回去状态照常现演），<b>还会带回这条会话当初的渠道 / 模型 / Agent</b>（照抄绑定；本机没有那个 Agent 会明说，人设回落内置默认）。</p>
+              <div class="io-head"><b>MicroChat 对话记录</b><i class="io-tag">.json</i></div>
+              <p class="hint">本应用导出的对话记录：标题、每条消息的说话人和正文（消息里的状态块会保留，导回去后状态照常重算），以及这条会话当时使用的渠道、模型和智能体（本机没有那个智能体会提示，人设回落到内置默认）。</p>
               <div class="row">
                 <button type="button" class="primary" @click="jsonInput?.click()">选择 .json 文件…</button>
                 <input ref="jsonInput" type="file" accept=".json" hidden @change="importJSONFile" />
@@ -386,14 +386,14 @@ function onKey(e) {
               </div>
             </div>
           </div>
-          <p class="hint">两种导入都是<b>新建一条会话</b>，不动现有会话；导完左栏立刻能看到。</p>
+          <p class="hint">两种导入都会<b>新建一条会话</b>，不会改动现有会话；导入完成后左栏马上能看到。</p>
         </section>
         <section v-show="tab === 'agent'" id="panel-agent" class="panel">
           <template v-if="!editAgent">
             <div class="panel-head">
-              <h3>已有 Agent（点进二级改）</h3>
+              <h3>已有智能体（点击编辑）</h3>
               <span class="head-btns">
-                <button type="button" @click="cartridgeInput?.click()" title="导入 agent 卡带（JSON；段已拼平，无依赖）">导入卡带…</button>
+                <button type="button" @click="cartridgeInput?.click()" title="导入智能体文件（JSON；提示词片段会一起带进来）">导入智能体…</button>
                 <input ref="cartridgeInput" type="file" accept=".json" hidden @change="importCartridge" />
                 <button type="button" class="primary" @click="editAgent = 'new'">新建</button>
                 <select v-model="presetPick" @change="presetNew" title="从模板创建">
@@ -406,7 +406,7 @@ function onKey(e) {
             <div class="row"><span class="status">{{ cartridgeStatus }}</span></div>
             <div id="agent-list">
               <table class="plist">
-                <thead><tr><th>名称</th><th>id</th><th>默认</th></tr></thead>
+                <thead><tr><th>名称</th><th>标识</th><th>默认使用</th></tr></thead>
                 <tbody><tr v-for="a in agents" :key="a.id" class="clickable" @click="editAgent = a">
                   <td>{{ a.name }}</td>
                   <td>{{ a.id }}</td>
@@ -433,18 +433,20 @@ function onKey(e) {
         <section v-show="tab === 'prompt'" id="panel-prompt" class="panel">
           <template v-if="!editSeg">
             <div class="panel-head">
-              <h3>提示词段（可复用的 sys prompt 段；「智能体」里逐段引用）</h3>
+              <h3>提示词片段（可复用的文本，在智能体里按顺序引用）</h3>
               <span class="head-btns"><button type="button" class="primary" @click="editSeg = 'new'">新建</button></span>
             </div>
-            <table v-if="segmentsLib.length" class="plist">
-              <thead><tr><th>id</th><th>预览</th><th>被谁引用</th></tr></thead>
-              <tbody><tr v-for="s in segmentsLib" :key="s.id" class="clickable" @click="editSeg = s">
-                <td>{{ s.id }}<i v-if="s.builtin" class="builtin-tag">内置</i><i v-if="s.imported" class="builtin-tag imported">导入</i></td>
-                <td>{{ s.text.slice(0, 40) }}</td>
-                <td>{{ segRefs(s.id).join("、") || "—" }}</td>
-              </tr></tbody>
-            </table>
-            <div v-else class="status">（还没有段 —— 点「新建」起一段：比如教模型写 &lt;state&gt; 的那套、KaTeX 用法、联网搜索纪律）</div>
+            <div id="prompt-list" v-if="segmentsLib.length">
+              <table class="plist">
+                <thead><tr><th>名称</th><th>内容预览</th><th>谁在用</th></tr></thead>
+                <tbody><tr v-for="s in segmentsLib" :key="s.id" class="clickable" @click="editSeg = s">
+                  <td>{{ s.id }}<i v-if="s.builtin" class="builtin-tag">内置</i><i v-if="s.imported" class="builtin-tag imported">导入</i></td>
+                  <td>{{ s.text.slice(0, 40) }}</td>
+                  <td>{{ segRefs(s.id).join("、") || "—" }}</td>
+                </tr></tbody>
+              </table>
+            </div>
+            <div v-else class="status">（还没有片段 —— 点「新建」创建一个，例如教模型写状态块、数学公式或联网规则）</div>
           </template>
           <SegmentEditor
             v-else
@@ -458,7 +460,7 @@ function onKey(e) {
         <section v-show="tab === 'provider'" id="panel-provider" class="panel">
           <template v-if="!editProvider">
             <h3>渠道</h3>
-            <p class="hint">一条渠道 = 用哪个服务商、哪个密钥、哪些模型。点一行编辑；模型数是上次刷新发现到的数量。</p>
+            <p class="hint">一条渠道 = 用哪个服务商、哪个密钥、哪些模型。点一行编辑；模型数是上次刷新到的数量。</p>
             <div id="provider-list">
               <table class="plist">
                 <thead><tr><th>渠道</th><th>服务商</th><th>模型</th><th>密钥</th><th></th></tr></thead>

@@ -917,9 +917,9 @@ type ProtocolOption struct {
 // protocolNames：协议的中文名与一句人话（**唯一权威**）。
 // 只登记**能用的**那一部分 —— 占位的那两个不在这里，也就不可能被列进 `ProtocolOptions`。
 var protocolNames = map[Protocol]ProtocolOption{
-	ProtocolChatCompletion: {Protocol: ProtocolChatCompletion, Label: "对话补全", Hint: "最常见的一种（/chat/completions），绝大多数渠道都走它"},
-	ProtocolOpenAIResponse: {Protocol: ProtocolOpenAIResponse, Label: "应答接口", Hint: "OpenAI 的 /responses；opencode 系、OpenRouter、自建可用"},
-	ProtocolSystemOne:      {Protocol: ProtocolSystemOne, Label: "SystemOne", Hint: "Typesafe 那家的专有协议（端点就是整条 URL）"},
+	ProtocolChatCompletion: {Protocol: ProtocolChatCompletion, Label: "对话补全", Hint: "最常用，绝大多数服务商都支持"},
+	ProtocolOpenAIResponse: {Protocol: ProtocolOpenAIResponse, Label: "应答接口", Hint: "另一种接口格式；部分服务商支持"},
+	ProtocolSystemOne:      {Protocol: ProtocolSystemOne, Label: "SystemOne", Hint: "Typesafe 专用的决策接口"},
 }
 
 // ProtocolLabel：协议的中文名（认不出来就回 id 本身 —— 界面永远有字可显示）。
@@ -995,7 +995,7 @@ func protocolOptionsFor(vendor Vendor) []ProtocolOption {
 var presetNames = map[Vendor]string{
 	VendorOpenAICompat: "标准（OpenAI 兼容）",
 	VendorCustom:       "自定义（OpenAI 兼容）",
-	VendorDummy:        "本地假上游（不联网）",
+	VendorDummy:        "本地示例（不联网）",
 	VendorOpenAI:       "OpenAI 官方",
 	VendorOpenRouter:   "OpenRouter",
 	VendorDeepseek:     "DeepSeek 官方",

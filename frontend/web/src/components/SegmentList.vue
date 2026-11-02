@@ -46,24 +46,24 @@ function optionLabel(segment) {
 <template>
   <h3>{{ heading }}</h3>
   <p v-if="hint" class="status">{{ hint }}</p>
-  <div v-if="!ids.length" class="status">（还没有段 —— 从下面挑一个加进来）</div>
+  <div v-if="!ids.length" class="status">（还没有片段 —— 从下面挑一个加进来）</div>
   <div v-for="(sid, i) in ids" :key="sid" class="seg-row" :class="{ missing: segMissing(sid) }">
     <button type="button" class="icon-btn" title="上移" :disabled="i === 0" @click="move(i, -1)">↑</button>
     <button type="button" class="icon-btn" title="下移" :disabled="i === ids.length - 1" @click="move(i, 1)">↓</button>
-    <span class="seg-id">{{ sid }}<template v-if="segMissing(sid)"> ⚠ 库里没有</template></span>
+    <span class="seg-id">{{ sid }}<template v-if="segMissing(sid)"> ⚠ 不存在</template></span>
     <span class="seg-preview">{{ segText(sid).slice(0, 48) }}</span>
-    <button type="button" class="icon-btn danger" title="移除（不删库里的段）" @click="drop(i)">✕</button>
+    <button type="button" class="icon-btn danger" title="移除（不会删除片段本身）" @click="drop(i)">✕</button>
   </div>
   <div class="row">
-    <select v-model="pick" title="从段库挑一个">
-      <option value="">从段库挑一个…</option>
+    <select v-model="pick" title="从提示词片段里挑一个">
+      <option value="">从提示词片段里挑一个…</option>
       <option v-for="s in segments" :key="s.id" :value="s.id" :disabled="ids.includes(s.id)">{{ optionLabel(s) }}</option>
     </select>
-    <button type="button" :disabled="!pick" @click="add">添加段</button>
-    <span v-if="missing.length" class="status">引用了库里没有的段：{{ missing.join("、") }}（保存会被后端拒）</span>
+    <button type="button" :disabled="!pick" @click="add">添加片段</button>
+    <span v-if="missing.length" class="status">引用了不存在的片段：{{ missing.join("、") }}（保存会被拒绝）</span>
   </div>
   <details class="seg-assembled">
-    <summary>拼装预览（{{ assembled.length }} 字）</summary>
+    <summary>拼好的提示词预览（{{ assembled.length }} 字）</summary>
     <pre>{{ assembled }}</pre>
   </details>
 </template>

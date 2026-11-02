@@ -908,7 +908,14 @@ html[data-composer="solid"] #composer button { box-shadow: none; }
 .hint { color: var(--tg-hint); font-size: 0.85em; margin: 0.4em 0 0; }
 /* 列表（会话/Agent/渠道）：与会话卡片同一张"底"，窄屏可横滚。 */
 .settings-cols .panel table.plist { background: var(--tg-secondary-bg); border-radius: var(--r-card); margin: 0 0 0.5em; }
-#session-mgr-list, #agent-list, #provider-list { overflow-x: auto; }
+#session-mgr-list, #agent-list, #provider-list, #prompt-list { overflow-x: auto; }
+/* 提示词片段表三列：名称 / 内容预览 / 谁在用 —— 定宽 + 省略号，
+ * 不然长预览会把「谁在用」挤出卡片（看起来像被裁掉了）。 */
+#prompt-list table { table-layout: fixed; }
+#prompt-list th:nth-child(1), #prompt-list td:nth-child(1) { width: 27%; }
+#prompt-list th:nth-child(2), #prompt-list td:nth-child(2) { width: 53%; }
+#prompt-list th:nth-child(3), #prompt-list td:nth-child(3) { width: 20%; }
+#prompt-list td { overflow: hidden; text-overflow: ellipsis; }
 /* 设置里的控件压到 DS 档（36px 上下）：只收纵向内间距，不动字号与横向命中区。 */
 .settings-cols .panel input:not([type="checkbox"]):not([type="radio"]), .settings-cols .panel select { padding-top: 0.3em; padding-bottom: 0.3em; }
 .settings-nav { display: flex; flex-direction: row; gap: 0.2em; margin-bottom: 0.7em; background: var(--tg-secondary-bg); border: none; border-radius: var(--r-card); padding: 0.18em; position: relative; }

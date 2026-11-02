@@ -238,10 +238,14 @@ export function groupModelsByProvider(models) {
 // 也可能是一条还没发现模型的渠道（`dummy` 就是这种 —— 它不联网，永远不会有一行模型）。
 // 不在列表里就补一条并说清"不在列表里"：悄悄丢掉它 = 一保存就把人配好的默认值换成别的。
 export function providerChoices(providers, cur = "") {
-  const items = (providers ?? []).map((p) => ({
-    value: p.id,
-    label: p.vendor_name ? `${p.id}（${p.vendor_name}）` : p.id,
-  }));
+  const items = (providers ?? []).map((p) => {
+    // 默认值下拉要能区分同服务商的多条渠道（OpenRouter 可以挂两条不同端点），
+    // 所以「服务商中文名 + 渠道标识」都留着；dummy 是内置示例，不摆内部 id。
+    const label = p.id === "dummy"
+      ? "本地示例（不联网）"
+      : (p.name || (p.vendor_name ? `${p.vendor_name}（${p.id}）` : p.id));
+    return { value: p.id, label };
+  });
   if (cur && !items.some((i) => i.value === cur)) {
     items.push({ value: cur, label: `${cur}（不在渠道列表里）`, missing: true });
   }
@@ -258,7 +262,11 @@ export function modelChoicesFor(groups, provider, cur = "") {
     for (const item of g.items ?? []) items.push({ value: item.upstream_id, label: item.label });
   }
   if (cur && !items.some((i) => i.value === cur)) {
-    items.push({ value: cur, label: `${cur}（不在列表里）`, missing: true });
+    items.push({
+      value: cur,
+      label: cur === "dummy" ? "本地示例（不在模型列表里）" : `${cur}（不在列表里）`,
+      missing: true,
+    });
   }
   return items;
 }

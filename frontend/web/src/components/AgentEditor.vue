@@ -77,12 +77,12 @@ function abilitySegHint(id) {
   const r = rows.value[id] ?? {};
   const others = candidates.slice(1);
   if (!(r.segments ?? []).length) {
-    const more = others.length ? `；想换成「${others.join("」/「")}」就从下面挑它 —— 它**整份替换**默认模板，不会叠加。` : "";
-    return `空着 = 用默认模板（内置段「${candidates[0]}」）${more}`;
+    const more = others.length ? `；想换成「${others.join("」/「")}」就从下面挑它 —— 会整份替换默认模板，不会叠加。` : "";
+    return `留空 = 使用默认模板（内置片段「${candidates[0]}」）${more}`;
   }
   if (!abilityHasTemplate(id)) {
     const all = candidates.map((one) => `「${one}」`).join(" / ");
-    return `⚠ 没挑 ${all} 也没填覆盖 ⇒ 这一发只有你挑的段，没有流程说明。`;
+    return `⚠ 没挑 ${all} 也没填自定义提示词 ⇒ 这一次不会带流程说明。`;
   }
   return "";
 }
@@ -146,7 +146,7 @@ function exportCartridge() {
     prepend_state: prepend.value,
   }, props.segments);
   downloadJSON(doc, `${name.value.trim() || "agent"}.card.json`);
-  status.value = "已导出卡带（段已拼平）";
+  status.value = "已导出智能体文件";
 }
 
 async function makeDefault() {
@@ -189,33 +189,33 @@ function onKey(e) {
   <div class="detail-pane">
     <div class="panel-head">
       <button class="icon-btn" type="button" title="返回列表（Esc）" @click="$emit('close')">←</button>
-      <span class="status">{{ isNew ? "新建 Agent" : `编辑「${props.agent.name}」` }}{{ !isNew && isDefault ? "（默认）" : "" }}</span>
+      <span class="status">{{ isNew ? "新建智能体" : `编辑「${props.agent.name}」` }}{{ !isNew && isDefault ? "（默认）" : "" }}</span>
     </div>
     <TabBar v-model="tab" :tabs="tabs" />
 
     <section v-show="tab === 'base'" class="pane-section">
-      <label class="field"><span>id（改即重命名，搬引用）</span><input v-model="aid" :disabled="isNew" placeholder="新建时由后端生成" /></label>
-      <label class="field"><span>名称</span><input v-model="name" placeholder="人格名" /></label>
-      <label class="field-block"><span>首段对话（新会话的第一条 assistant 消息；空 = 不启用）</span><textarea v-model="firstMsg" rows="3" placeholder="例如：你好，我是……（可带 &lt;state&gt; 块设初始状态）"></textarea></label>
-      <label class="field"><span>句首贴当前状态（RP 类需要）</span><ToggleSwitch v-model="prepend" /></label>
+      <label class="field"><span>标识（改名会同步所有引用）</span><input v-model="aid" :disabled="isNew" placeholder="新建时自动生成" /></label>
+      <label class="field"><span>名称</span><input v-model="name" placeholder="例如：跑团主持人" /></label>
+      <label class="field-block"><span>开场白（新会话里的第一条回复；留空 = 不启用）</span><textarea v-model="firstMsg" rows="3" placeholder="例如：你好，我是……（可以包含状态块来设置初始状态）"></textarea></label>
+      <label class="field"><span>在消息开头附上当前状态（角色扮演建议开启）</span><ToggleSwitch v-model="prepend" /></label>
     </section>
 
     <section v-show="tab === 'prompt'" class="pane-section">
-      <label class="field-block"><span>系统提示词（base）</span><textarea v-model="prompt" rows="6" placeholder="system_prompt"></textarea></label>
+      <label class="field-block"><span>系统提示词（基础人设）</span><textarea v-model="prompt" rows="6" placeholder="写这个智能体的基础设定…"></textarea></label>
       <SegmentList
         v-model:ids="segs"
         :segments="props.segments"
         :assembled="assembled"
-        heading="提示词段（追加在 base 后面，顺序 = 拼接顺序）" />
+        heading="提示词片段（追加在基础提示词后面，顺序就是拼接顺序）" />
     </section>
 
     <section v-for="id in ABILITY_IDS" v-show="tab === id" :key="id" class="pane-section">
-      <label class="field"><span>启用（关掉 = 这一发明确拒绝，不是静默跳过）</span><ToggleSwitch v-model="rows[id].enabled" /></label>
-      <label class="field"><span>Model</span><select v-model="rows[id].model">
-        <option value="">跟会话走</option>
+      <label class="field"><span>启用（关闭后这项功能不会运行）</span><ToggleSwitch v-model="rows[id].enabled" /></label>
+      <label class="field"><span>模型</span><select v-model="rows[id].model">
+        <option value="">跟随会话</option>
         <option v-for="m in modelOptions" :key="m.value" :value="m.value">{{ m.label }}</option>
       </select></label>
-      <label class="field-block"><span>提示词覆盖（空=默认模板）</span><textarea v-model="rows[id].prompt" rows="3"></textarea></label>
+      <label class="field-block"><span>自定义提示词（留空 = 使用默认模板）</span><textarea v-model="rows[id].prompt" rows="3"></textarea></label>
       <!-- 提示词段：追加在（覆盖 ?: 默认）模板**后面**，顺序 = 这里的顺序。
            改了模板不必把段里的字抄进来 —— 抄进来就是两份，改一处忘一处。
            编辑器就是 agent 级那一个 `SegmentList`（同一个组件 ⇒ 不会各长一样）。 -->
@@ -224,12 +224,12 @@ function onKey(e) {
         :segments="props.segments"
         :assembled="abilityAssembled(id)"
         :hint="abilitySegHint(id)"
-        heading="提示词段（追加在模板后面，顺序 = 拼接顺序）" />
+        heading="提示词片段（追加在模板后面，顺序就是拼接顺序）" />
     </section>
 
     <div class="row">
       <button type="button" class="primary" @click="save">保存</button>
-      <button type="button" @click="exportCartridge" title="导出 agent 卡带（JSON；段拼平进提示词、不留引用）">导出卡带</button>
+      <button type="button" @click="exportCartridge" title="导出智能体文件（JSON；提示词片段会展开成完整提示词）">导出智能体</button>
       <button v-if="!isNew && !isDefault" type="button" @click="makeDefault">设为默认</button>
       <button v-if="!isNew" type="button" class="danger" @click="remove">删除</button>
       <span class="status">{{ status }}</span>

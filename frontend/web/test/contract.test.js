@@ -529,8 +529,8 @@ test("提示词段的编辑器：agent 级与能力级用的是同一个组件",
   assert.match(list, /function add\(/, "没有「从段库挑一个加进来」");
   assert.match(list, /function move\(/, "没有上下移（顺序就是语义）");
   assert.match(list, /function drop\(/, "没有移除");
-  assert.match(list, /引用了库里没有的段/, "缺段的汇总警告没了");
-  assert.match(list, /拼装预览（\{\{ assembled\.length \}\} 字）/, "拼装预览没了");
+  assert.match(list, /引用了不存在的片段/, "缺段的汇总警告没了");
+  assert.match(list, /拼好的提示词预览（\{\{ assembled\.length \}\} 字）/, "拼装预览没了");
   // 编辑器的读回 / 写回仍然在 AgentEditor（那是配置形状，不是编辑器）
   assert.match(editor, /segments: \[\.\.\.\(one\.segments \?\? \[\]\)\]/, "fillRows 没把能力的段读回来");
   assert.match(editor, /segments: \[\.\.\.\(r\.segments \?\? \[\]\)\]/, "toPatch 没把段发出去");
@@ -719,7 +719,7 @@ test("背景图地址：url 原样、file 拼端点且带版本号破缓存", ()
 });
 
 test("背景图标注：未设 / URL 截断 / 上传带尺寸", () => {
-  assert.equal(describeBackground(null), "未设（纯平底）");
+  assert.equal(describeBackground(null), "未设置（纯色背景）");
   const long = "https://example.com/" + "x".repeat(80);
   assert.ok(describeBackground({ kind: "url", value: long }).includes("…"));
   const txt = describeBackground({ kind: "file", width: 1920, height: 1080 });
@@ -1616,9 +1616,11 @@ test("渠道编辑器：协议下拉来自后端，界面不自己列协议表",
   assert.match(code, /v-for="option in protocolChoices"/, "下拉没渲染 protocolChoices");
   // ④ 选了之后要有一句人话（下拉一关就只剩 id，用户没法判断区别）
   assert.match(code, /\{\{ protocolHint \}\}/, "选中的协议没有一句人话");
-  // ⑤ vendor 与 protocol 的显示都带中文名（id 附后，不藏起来）
-  assert.match(code, /\{\{ p\.name \}\}（\{\{ p\.vendor \}\}）/, "vendor 没显示中文名");
-  assert.match(code, /\{\{ option\.label \}\}（\{\{ option\.protocol \}\}）/, "协议没显示中文名");
+  // ⑤ 显示只用中文名；内部 id 挪到 option 的 title（悬停能看到，不占正文）
+  assert.match(code, /\{\{ p\.name \}\}/, "服务商没显示中文名");
+  assert.match(code, /:title="p\.vendor"/, "服务商的内部 id 没留在 title 上");
+  assert.match(code, /\{\{ option\.label \}\}/, "接口类型没显示中文名");
+  assert.match(code, /:title="option\.protocol"/, "接口类型的内部 id 没留在 title 上");
 });
 
 test("渠道列表：服务商打中文名，内部 id 挂在 title 上", () => {
@@ -1627,7 +1629,8 @@ test("渠道列表：服务商打中文名，内部 id 挂在 title 上", () => 
   assert.match(settings, /p\.vendor_name/, "列表没显示 vendor 的中文名");
   // 协议列已从列表移除（用户说"说什么话"看不懂）；它只在编辑器里，用中文名 + id 附后。
   assert.ok(!/p\.protocol_name/.test(settings), "列表又把 protocol 那列加回来了");
-  assert.match(editor, /\{\{ option\.label \}\}（\{\{ option\.protocol \}\}）/, "编辑器里的协议没显示中文名");
+  assert.match(editor, /\{\{ option\.label \}\}/, "编辑器里的接口类型没显示中文名");
+  assert.match(editor, /:title="option\.protocol"/, "接口类型的内部 id 没留在 title 上");
   // id 不能丢：手改 providers.json 的人得能对上号
   assert.match(settings, /:title="p\.vendor"/, "vendor 的内部 id 没留在 title 上");
 });
@@ -1660,12 +1663,12 @@ test("渠道编辑器：vendor 分组 / 先 vendor 后 id / 端点给出实际�
   assert.match(code, /<optgroup label="常见">/, "没有「常见」那一组");
   // ② 顺序：服务商在 id 前面（id 是改服务商时会跟着变的格，先填等于白填）
   const vendorAt = code.indexOf("<span>服务商</span>");
-  const idAt = code.indexOf("<span>渠道 id</span>");
+  const idAt = code.indexOf("<span>渠道标识</span>");
   assert.ok(vendorAt > 0 && idAt > 0, "找不到服务商 / id 那两格");
   assert.ok(vendorAt < idAt, "该先问服务商、再问 id（id 会跟着服务商变）");
   // ③ 端点那一格要说出"真会打到哪儿"（留空 = 用预设，光靠 placeholder 说不清）
   assert.match(code, /effectiveBase/, "端点没有算出实际地址");
-  assert.match(code, /这一发会打到/, "端点没把那句人话显示出来");
+  assert.match(code, /实际请求地址/, "端点没把那句人话显示出来");
   // ④ 按钮：从「保存 / 刷新模型 / 刷路由」收成「保存并刷新 / 测试连通性」。
   assert.match(code, />保存并刷新</, "没有「保存并刷新」");
   assert.match(code, />测试连通性</, "没有「测试连通性」");
@@ -1686,7 +1689,7 @@ test("渠道列表：列名说人话，筛选器并进模型数", () => {
 // 这条只钉**界面把话说清楚了**：真逻辑在后端 registry.SplitModelFilter / FilterModels
 // （那边有成组的单测）。但界面不说清"逗号"与"任意一条"，用户填了 `deepseek,mimo` 会以为
 // 那是**一个**子串 ⇒ 一个模型都筛不出来，而界面还显示"已筛选" —— 静默的错。
-test("渠道编辑器：模型筛选器说清逗号与「任意一条」", () => {
+test("渠道编辑器：模型筛选说清逗号与「包含任意一个」", () => {
   const editor = readFileSync(join(SRC, "components", "ProviderEditor.vue"), "utf8");
   // **HTML 注释与 JS 注释都要剥**：设计意图写在注释里是对的（"命中任意一条就算中"），
   // 但这条测试问的是**界面上**有没有那么说。不剥 JS 注释的话，注释一句话就能让它假通过。
@@ -1697,9 +1700,9 @@ test("渠道编辑器：模型筛选器说清逗号与「任意一条」", () =>
 
   // 措辞不能再是"含此子串"（单条）—— 那正是要改掉的旧口径
   assert.ok(!/只导入 id 含此子串的模型/.test(code), "筛选器的标签还是单条子串口径");
-  // 必须提到：半角逗号分隔 + 任意一条 + 一个含逗号的例子
+  // 必须提到：半角逗号分隔 + 任意一个 + 一个含逗号的例子
   assert.match(code, /半角逗号/, "没说是半角逗号分隔");
-  assert.match(code, /命中任意一条/, "没说清是 OR（命中任意一条）");
+  assert.match(code, /任意一个/, "没说清是“包含任意一个就导入”");
   assert.match(code, /deepseek,mimo/, "没给出那个具体的例子");
 });
 
@@ -2792,7 +2795,7 @@ test("Inter 字体是子集（别把 300KB 全量塞回首屏）", () => {
   assert.equal(font.toString("ascii", 0, 4), "wOF2", "不是 WOFF2");
 });
 
-test("设置页：标题只有一套语言，六个 tab 同宽", () => {
+test("设置页：标题只有一套语言，设置与会话/渠道管理页同宽", () => {
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   // 所有 panel 的 h3 统一：正文色半粗 + 蓝色竖条；卡片不许再单独定义一份。
   assert.match(css, /\.settings-cols \.panel h3\s*\{[^}]*color:\s*var\(--tg-text\)/, "h3 不是正文色半粗");
