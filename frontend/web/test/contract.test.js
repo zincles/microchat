@@ -12,7 +12,6 @@ import { buildChatRows, rerollTargetLive, bubbleText } from "../src/utils/chatro
 import { resetChrome, stepChrome } from "../src/utils/chrome.js";
 import { computeViewportFit } from "../src/utils/viewport.js";
 import { classifyAxis, pickDrag, dragProgress, resolveRelease } from "../src/utils/swipe.js";
-import { installGuidance } from "../src/utils/install.js";
 import {
   formatThinkLabel,
   formatStatusLine,
@@ -1449,7 +1448,7 @@ test("页签条：设置主栏与 Agent 编辑器用的是同一个组件", () =
   const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
   const editor = readFileSync(join(SRC, "components", "AgentEditor.vue"), "utf8");
   const bar = readFileSync(join(SRC, "components", "TabBar.vue"), "utf8");
-  assert.match(settings, /<TabBar v-model="tab" :tabs="SETTINGS_TABS" \/>/, "设置主栏没用 TabBar");
+  assert.match(settings, /<TabBar v-if="!only" v-model="tab" :tabs="SETTINGS_TABS" \/>/, "设置主栏没用 TabBar");
   assert.match(editor, /<TabBar v-model="tab" :tabs="tabs" \/>/, "Agent 编辑器没用 TabBar");
   // 手写一套的话会有这些痕迹：nav 里的 tab-thumb、以及自己去量 offsetLeft。
   for (const [name, src] of [["SettingsModal.vue", settings], ["AgentEditor.vue", editor]]) {
@@ -1622,13 +1621,15 @@ test("渠道编辑器：协议下拉来自后端，界面不自己列协议表",
   assert.match(code, /\{\{ option\.label \}\}（\{\{ option\.protocol \}\}）/, "协议没显示中文名");
 });
 
-test("渠道列表：打中文名，内部 id 挂在 title 上", () => {
+test("渠道列表：服务商打中文名，内部 id 挂在 title 上", () => {
   const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
+  const editor = readFileSync(join(SRC, "components", "ProviderEditor.vue"), "utf8");
   assert.match(settings, /p\.vendor_name/, "列表没显示 vendor 的中文名");
-  assert.match(settings, /p\.protocol_name/, "列表没显示 protocol 的中文名");
+  // 协议列已从列表移除（用户说"说什么话"看不懂）；它只在编辑器里，用中文名 + id 附后。
+  assert.ok(!/p\.protocol_name/.test(settings), "列表又把 protocol 那列加回来了");
+  assert.match(editor, /\{\{ option\.label \}\}（\{\{ option\.protocol \}\}）/, "编辑器里的协议没显示中文名");
   // id 不能丢：手改 providers.json 的人得能对上号
   assert.match(settings, /:title="p\.vendor"/, "vendor 的内部 id 没留在 title 上");
-  assert.match(settings, /:title="p\.protocol"/, "protocol 的内部 id 没留在 title 上");
 });
 
 // 新建渠道时"换 vendor 要不要跟着换 id"（2026-10-28）。
@@ -1657,16 +1658,28 @@ test("渠道编辑器：vendor 分组 / 先 vendor 后 id / 端点给出实际�
   // ① vendor 按后端给的 primary 分组，而不是平铺 11 个
   assert.match(code, /primaryPresets/, "vendor 没按 primary 分组");
   assert.match(code, /<optgroup label="常见">/, "没有「常见」那一组");
-  // ② 顺序：vendor 在 id 前面（id 是改 vendor 时会跟着变的格，先填等于白填）
-  const vendorAt = code.indexOf("走哪家（vendor）");
+  // ② 顺序：服务商在 id 前面（id 是改服务商时会跟着变的格，先填等于白填）
+  const vendorAt = code.indexOf("<span>服务商</span>");
   const idAt = code.indexOf("<span>渠道 id</span>");
-  assert.ok(vendorAt > 0 && idAt > 0, "找不到 vendor / id 那两格");
-  assert.ok(vendorAt < idAt, "该先问 vendor、再问 id（id 会跟着 vendor 变）");
+  assert.ok(vendorAt > 0 && idAt > 0, "找不到服务商 / id 那两格");
+  assert.ok(vendorAt < idAt, "该先问服务商、再问 id（id 会跟着服务商变）");
   // ③ 端点那一格要说出"真会打到哪儿"（留空 = 用预设，光靠 placeholder 说不清）
   assert.match(code, /effectiveBase/, "端点没有算出实际地址");
   assert.match(code, /这一发会打到/, "端点没把那句人话显示出来");
+  // ④ 按钮：从「保存 / 刷新模型 / 刷路由」收成「保存并刷新 / 测试连通性」。
+  assert.match(code, />保存并刷新</, "没有「保存并刷新」");
+  assert.match(code, />测试连通性</, "没有「测试连通性」");
+  assert.ok(!/>刷新模型</.test(code) && !/>刷路由</.test(code), "旧的刷新/刷路由按钮又回来了");
 });
 
+test("渠道列表：列名说人话，筛选器并进模型数", () => {
+  const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
+  for (const label of ["渠道", "服务商", "模型", "密钥"]) {
+    assert.match(settings, new RegExp(`<th>${label}</th>`), `渠道列表缺「${label}」列`);
+  }
+  assert.ok(!/走哪家|说什么话|筛选器<\/th>/.test(settings), "渠道列表又出现了走哪家/说什么话/筛选器这种黑话");
+  assert.match(settings, /p\.model_filter[^>]*title=/, "筛选器没有并进模型那一格（title 提示）");
+});
 // 模型筛选器：多条规则用半角逗号分隔、命中任意一条就导入（2026-10-28 用户定：
 // 「deepseek,mimo 会吧 deepseek-v4-flash 和 mimo-v2.6-flash 都允许，因为它们分别满足了一个规则」）。
 //
@@ -1706,17 +1719,25 @@ test("设置：没有「连接」页，也没有绑不存在的 saveNet", () => 
   assert.ok(!/直接改地址|API 地址/.test(settings), "设置里又开始让人手填后端地址了");
 });
 
-// 页签条与 SETTINGS_TABS 是同一份：删一页要两边一起删（只删 panel、留着 tab，
-// 点进去就是一块空白面板 —— 那种"看起来坏了"最费人）。
-test("设置页签：id 与 panel 一一对应", () => {
+// 页签条与 SETTINGS_TABS 是同一份；会话/渠道的 panel 还在，但**不再住设置 tab** ——
+// 它们由左栏底部的独立入口用 `:only` 打开。这条同时钉住两头，防止"只删 tab、
+// panel 变成永远进不去的死页"或"又偷偷塞回设置里"。
+test("设置页签：四区 + 会话/渠道独立入口", () => {
   const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
+  const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
   const panels = [...settings.matchAll(/v-show="tab === '([a-z]+)'"/g)].map((m) => m[1]);
-  // 2026-11-01 加了「外观」（从删掉的用户视图搬来）。
+  // 六个 panel 都还在（session/provider 由独立入口打开）。
   assert.deepEqual([...panels].sort(), ["agent", "appearance", "chat", "prompt", "provider", "session"],
-    `面板与页签对不上了：${panels.join(", ")}`);
-  // 顺序也钉着（`appearance` 2026-11-01 加在最后：外观是调长相，排在最后不打断配置流）。
-  assert.deepEqual(SETTINGS_TABS.map((t) => t.id), ["chat", "session", "agent", "provider", "prompt", "appearance"],
-    "SETTINGS_TABS 的顺序变了");
+    `panel 不齐：${panels.join(", ")}`);
+  // 设置主栏只剩四个 tab。
+  assert.deepEqual(SETTINGS_TABS.map((t) => t.id), ["chat", "agent", "prompt", "appearance"],
+    "SETTINGS_TABS 又塞回了会话/渠道，或顺序变了");
+  // 独立入口：左栏底两枚按钮 + App 用 :only 打开同一个视图。
+  assert.match(bar, /@click="\$emit\('open-sessions'\)"/, "左栏没有「会话」入口");
+  assert.match(bar, /@click="\$emit\('open-providers'\)"/, "左栏没有「渠道」入口");
+  assert.match(settings, /only: \{ type: String, default: "" \}/, "SettingsModal 没有独立入口的 only 参数");
+  assert.match(settings, /<h2 v-else class="settings-title">/, "独立入口没有页头标题");
+  assert.match(settings, /<TabBar v-if="!only"/, "独立入口仍渲染设置 TabBar");
 });
 
 // 「新会话默认值」那两格从前是**手打 id 的文本框**，说明文自己都写着
@@ -2803,35 +2824,23 @@ test("开机请求：会话/Agent 不重复，重活按需，加载有骨架", (
   assert.match(app, /v-if="loadingSession" class="chat-skeleton"/, "消息列没有加载骨架");
 });
 
-// ── PWA 安装（2026-11-02）────────────────────────────────────────────────────
+// ── 左栏入口（2026-11-02 用户定）────────────────────────────────────────────
 //
-// 应用本身可安装（manifest / 图标 / SW 都在），但"能不能装"取决于**来源与浏览器**：
-// localhost/HTTPS 才有安全上下文；Chrome 系才有 beforeinstallprompt；iOS 只有分享菜单。
-// 安装入口必须把这几种情况说清楚，不能点下去毫无反应。
-test("PWA 安装说明：四种情况各有话说", () => {
-  assert.match(installGuidance({ secure: false, origin: "http://192.168.0.110:8788" }), /HTTPS/,
-    "局域网 HTTP 必须说清需要 HTTPS/localhost");
-  assert.match(installGuidance({ ios: true }), /添加到主屏幕/, "iOS 应指到分享菜单");
-  assert.match(installGuidance({ prompt: true }), /已准备好/, "浏览器给了事件时应说可以一键装");
-  assert.match(installGuidance({ standalone: true }), /独立窗口/, "装好后不该再劝人安装");
-  assert.match(installGuidance({}), /Chrome 菜单/, "没有事件时给手动入口");
-});
-
-test("PWA 安装入口：左栏有按钮，事件在模块求值时就挂上", () => {
+// 「安装说明」删掉；左栏底改成 会话 / 渠道 / 设置。会话与渠道走同一个设置视图的
+// `:only` 模式，不再占设置 tab。
+test("左栏：有会话/渠道/设置，没有安装说明", () => {
   const pwa = readFileSync(join(SRC, "utils", "pwa.js"), "utf8");
   const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
 
-  // 事件监听必须在模块顶层（if (typeof window...) 里面），不能等 mounted —— 挂晚了收不到。
-  assert.match(pwa, /if \(typeof window !== "undefined"\)\s*\{[\s\S]*beforeinstallprompt/,
-    "beforeinstallprompt 没有在模块求值时挂上");
-  assert.match(pwa, /e\.preventDefault\(\)/, "没拦浏览器的自动迷你条（自定义按钮会与它打架）");
-  assert.match(pwa, /prompt\.userChoice/, "没等用户选择就当作装完了");
-
-  assert.match(bar, /id="install-app"/, "左栏没有安装入口");
-  assert.match(bar, /installable \? "安装应用" : "安装说明"/, "安装入口没区分「能装」与「说明」");
-  assert.match(app, /@install="installApp"/, "安装按钮没有接到 App");
-  assert.match(app, /installGuidance\(\)/, "不能一键装时没有把原因说出来");
+  assert.match(bar, /id="sessions-manage"/, "左栏没有会话入口");
+  assert.match(bar, /id="providers-manage"/, "左栏没有渠道入口");
+  assert.match(bar, /id="settings-open"/, "左栏没有设置入口");
+  for (const dead of ["install-app", "安装说明", "installable", "standalone", "download"]) {
+    assert.ok(!bar.includes(dead), `左栏还留着安装入口的 ${dead}`);
+  }
+  assert.ok(!/beforeinstallprompt/.test(pwa), "PWA 安装事件还挂在模块里（入口已删）");
+  assert.ok(!/installApp/.test(app), "App 还留着 installApp 死代码");
 });
 
 test("PWA 图标：尺寸对、换掉了纸飞机", () => {

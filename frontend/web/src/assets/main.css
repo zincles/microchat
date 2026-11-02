@@ -890,6 +890,8 @@ html[data-composer="solid"] #composer button { box-shadow: none; }
 /* 一行式工具栏：去掉"悬浮卡"造型与"设置"标题（全屏页不需要它俩，tabs 自己就是路标）。 */
 #settings-view { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 0.5em 0.6em 0; }
 .settings-bar { display: flex; align-items: center; gap: 0.4em; max-width: 960px; width: 100%; margin: 0 auto; }
+/* 单独入口（会话 / 渠道）的页头：没有 TabBar，标题吃掉中间空档。 */
+.settings-title { flex: 1 1 auto; min-width: 0; margin: 0; font-size: 1em; font-weight: 600; color: var(--tg-text); }
 .settings-bar .settings-nav { flex: 1 1 auto; min-width: 0; margin-bottom: 0; }
 .settings-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0.55em 0.2em 1.5em; }
 .settings-box { max-width: 960px; margin: 0 auto; }
@@ -960,7 +962,7 @@ html[data-composer="solid"] #composer button { box-shadow: none; }
 .io-card { background: color-mix(in srgb, var(--tg-text) 5%, transparent); border: 1px solid var(--line); border-radius: var(--r-card); padding: 0.55em 0.9em 0.6em; }
 .io-head { display: flex; align-items: baseline; gap: 0.5em; }
 .io-head b { color: var(--tg-text); font-weight: 500; font-size: 0.95em; }
-.io-tag { font-style: normal; font-size: 0.78em; color: var(--tg-hint); border: 1px solid var(--line); border-radius: var(--r-xs); padding: 0 0.3em; }
+.io-tag { font-style: normal; font-size: 0.78em; color: var(--tg-hint); border: 1px solid var(--line); border-radius: var(--r-xs); padding: 0 0.3em; margin-left: 0.35em; }
 .io-card .hint { margin: 0.25em 0 0.5em; }
 /* ⚠ 必须带上 `.settings-cols .panel` 前缀：面板那套连体行规则是 (0,3,0)，两层的选择器压不过它。 */
 .settings-cols .panel .io-card .field, .settings-cols .panel .io-card .row { background: none; padding: 0.3em 0; border-top: none; border-radius: 0; }
@@ -1043,10 +1045,10 @@ button.toggle.on .knob { transform: translateX(1.1em); }
 /* 可点行（进二级）：hover 高亮，被点的行 cursor 指针。 */
 .plist tr.clickable { cursor: pointer; }
 .plist tr.clickable:hover td { background: var(--mix-6); }
-.plist td.ops { white-space: normal; text-align: right; }
+.plist td.ops { white-space: nowrap; text-align: right; }
 /* 文字型按钮（列表操作列 + 设置里的"上传图片/清除"）：TG 风是蓝色文字，不是灰框按钮；删除是红色文字。
  * 字号/字重不另设 —— 跟父级走（与旧的 plist 版观感一致）。 */
-.link-btn { color: var(--tg-link); padding: 0.3em 0.5em; }
+.link-btn { color: var(--tg-link); padding: 0.3em 0.5em; white-space: nowrap; }
 .link-btn:hover { text-decoration: underline; }
 .link-btn.danger { color: var(--tg-destructive); }
 /* plist 操作列：一格内多个文字操作靠 margin-left 分开（设置里的 .row 由 gap 负责）。 */

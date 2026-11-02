@@ -37,8 +37,7 @@ import SettingsModal from "./components/SettingsModal.vue";
 import SessionSettings from "./components/SessionSettings.vue";
 import Overlays from "./components/Overlays.vue";
 import UpdateBar from "./components/UpdateBar.vue";
-import { registerPWA, onUpdateReady, startUpdate, onInstallAvailable, installReady, promptInstall } from "./utils/pwa.js";
-import { isStandalone, installGuidance } from "./utils/install.js";
+import { registerPWA, onUpdateReady, startUpdate } from "./utils/pwa.js";
 
 const api = sharedApi();
 applyTheme();
@@ -77,21 +76,6 @@ const overlaysRef = ref(null);
 // 设置 → 外观里改了立刻生效（不刷新）—— 偏好住服务器（`prefs.json`），这里是它的活视图。
 const cmdMenu = ref(commandMenuOn());
 const toast = (t, k) => toastRef.value?.push(t, k);
-// —— 安装（PWA，2026-11-02）——
-// `installable` = 浏览器已经给了 beforeinstallprompt（能一键装）；`standalone` = 现在就是
-// 装好后的独立窗口。两个都不是 ⇒ 按钮变成"安装说明"，点一下把原因说清楚
-// （iOS 分享菜单 / 局域网 HTTP 不是安全上下文 / 浏览器没给入口）。
-const installable = ref(installReady());
-const standalone = ref(isStandalone());
-onInstallAvailable((ready) => { installable.value = ready; standalone.value = isStandalone(); });
-async function installApp() {
-  if (standalone.value) { toast("已经在独立窗口中运行。"); return; }
-  if (!installable.value) { toast(installGuidance(), "error"); return; }
-  const res = await promptInstall();
-  if (res?.outcome === "accepted") { toast("已开始安装。", "ok"); }
-  else if (res?.outcome === "dismissed") { toast("已取消安装。"); }
-  else { toast(installGuidance(), "error"); }
-}
 // askConfirm：给设置/子编辑器用的全局确认框（与左栏删除同一个口 —— "不可逆的删除先摊开"）。
 function askConfirm(text) {
   return overlaysRef.value?.confirmAsk(text) ?? Promise.resolve(false);
@@ -134,6 +118,9 @@ const summaryMsgs = reactive(new Map()); // 摘要 id → {state:"loading"|"read
 const openSummaries = new Set(); // 哪些卡正展开着（reload 后补拉新鲜的）
 const vueAgents = ref([]); // 生效 agent 列表（草稿首段的合成气泡看它；显示形态本身已无开关）
 const settingsOpen = ref(false);
+// 设置视图的"单独入口"："" = 完整设置（四个 tab）；"session" / "provider" = 只显示那一页，
+// 从左侧栏底部的「会话 / 渠道」进来。两者共用同一个视图与同一份数据加载。
+const settingsOnly = ref("");
 // **设置 = root 专属**（用户定，2026-10-10）：`is_admin` 才给进设置；其他用户的入口按钮也不给。
 const compactDefault = ref(null); // chat.compact_blocks（压缩面板输入框的占位提示）
 const sessionSettingsId = ref(null);
@@ -1687,6 +1674,13 @@ function onMessagesScroll() {
 // 窄屏：进/出设置都把左抽屉归位（手机上别让它压着视图）；宽屏：不动侧栏（并排看没问题）。
 function openSettings() {
   // 2026-11-01：账号砍了 ⇒ 没有"只有管理员能进"这回事（本机单人使用）。
+  settingsOnly.value = "";
+  settingsOpen.value = true;
+  if (narrowLeft()) applySideToggle("sessions-bar", true);
+}
+// openManage：左栏底部的「会话 / 渠道」—— 同一个视图、只显示那一页（不经过设置 tab）。
+function openManage(pane) {
+  settingsOnly.value = pane === "provider" ? "provider" : "session";
   settingsOpen.value = true;
   if (narrowLeft()) applySideToggle("sessions-bar", true);
 }
@@ -1698,6 +1692,7 @@ function onPrefsSaved() {
 }
 function closeSettings() {
   settingsOpen.value = false;
+  settingsOnly.value = "";
   if (narrowLeft()) applySideToggle("sessions-bar", true);
 }
 // backToChat：**侧栏动作要把人带回对话区**（点会话 / 点＋新对话 / 当前会话被删）—— 唯一出口。
@@ -1776,15 +1771,14 @@ onUnmounted(() => {
     <div id="columns">
       <SessionBar
         ref="sessionbarRef"
-        :installable="installable"
-        :standalone="standalone"
-        @install="installApp"
         @toggle-left="toggleLeft"
         @select="(id) => { closeLeftDrawer(); backToChat(); enterSession(id).catch((err) => toast(`进会话失败：${err.message}`, 'error')); }"
         @settings="(id) => { sessionSettingsId = id; }"
         @close="askDeleteSession"
         @new="newSession"
         @open-settings="openSettings"
+        @open-sessions="() => openManage('session')"
+        @open-providers="() => openManage('provider')"
       />
       <div id="scrim-left" @click="toggleLeft"></div>
       <div id="content">
@@ -1883,8 +1877,9 @@ onUnmounted(() => {
       @undo="undoSummary"
     />
       </section>
-<SettingsModal
+      <SettingsModal
         v-if="settingsOpen"
+        :only="settingsOnly"
         :ask="askConfirm"
         :esc-blocked="!!sessionSettingsId"
         @close="closeSettings"

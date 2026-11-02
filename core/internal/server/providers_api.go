@@ -307,6 +307,81 @@ func (s *Server) refreshProvider(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.providerViewWithModels(updated))
 }
 
+// TestProviderReq：测试连通性时可覆盖表单里的值（不保存）。nil / 空 = 用已保存的。
+// `api_key` 只接受非空覆盖：测试不该把已存的密钥清掉；要测"没 key"就新建一个空渠道测。
+type TestProviderReq struct {
+	Vendor      *string `json:"vendor"`
+	Protocol    *string `json:"protocol"`
+	BaseURL     *string `json:"base_url"`
+	APIKey      *string `json:"api_key"`
+	ModelFilter *string `json:"model_filter"`
+}
+
+// TestProviderResult：测试结果。**200 也带 `ok:false`** —— "连不上"是测试的结论，
+// 不是 HTTP 层的错误（前端要把原因原样显示，而不是 catch 成"接口挂了"）。
+type TestProviderResult struct {
+	OK       bool   `json:"ok"`
+	Models   int    `json:"models"`
+	Filtered int    `json:"filtered"`
+	Note     string `json:"note,omitempty"`
+	Error    string `json:"error,omitempty"`
+}
+
+// testProvider：拉一次 `/models` 验证端点/密钥/协议是否通，**不落库、不保存配置**。
+// 与 refresh 的分工：refresh 会写模型表；test 只回答"这条渠道现在通不通"。
+func (s *Server) testProvider(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("provider_id")
+	var req TestProviderReq
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	configs := s.loadProviders()
+	provider, found := configs.Get(id)
+	if !found {
+		// 新建渠道还没落盘：用表单值临时拼一条（id 必填，否则连请求头都没法算）。
+		if id == "" {
+			writeError(w, http.StatusUnprocessableEntity, "invalid", "渠道 id 不能为空")
+			return
+		}
+		provider = config.Provider{ID: id}
+	}
+	if req.Vendor != nil {
+		provider.Vendor = *req.Vendor
+	}
+	if req.Protocol != nil {
+		provider.Protocol = *req.Protocol
+	}
+	if req.BaseURL != nil {
+		provider.BaseURL = *req.BaseURL
+	}
+	if req.APIKey != nil && *req.APIKey != "" {
+		provider.APIKey = *req.APIKey
+	}
+	if req.ModelFilter != nil {
+		provider.ModelFilter = *req.ModelFilter
+	}
+	// 连通性测试是**交互**，不该等渠道默认的 300s。给 8/15 秒的短上限；
+	// 这不改保存的配置，只影响这一发。
+	provider.Timeouts = &config.Timeouts{ConnectSeconds: 8, TotalSeconds: 15}
+	wire := providers.FromConfig(provider).Normalize()
+	if wire.EffectiveVendor() == providers.VendorDummy {
+		writeJSON(w, http.StatusOK, TestProviderResult{OK: true, Note: "本地假上游：不联网，无需测试"})
+		return
+	}
+	if err := wire.Validate(); err != nil {
+		writeJSON(w, http.StatusOK, TestProviderResult{OK: false, Error: err.Error()})
+		return
+	}
+	result, err := registry.Probe(provider)
+	if err != nil {
+		writeJSON(w, http.StatusOK, TestProviderResult{OK: false, Error: err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, TestProviderResult{
+		OK: true, Models: len(result.Models), Filtered: result.Filtered,
+	})
+}
+
 // refreshProviderRoutes：刷**路由表**（models.dev 快照 → `model_route` 落库）。
 // 与 `refreshProvider`（刷 `models` 表）各管各的：路由表决定模型走哪条 API，
 // 快照失败 ⇒ 旧行留着（宁可用旧表，别拿空表把路断了）—— 同 `registry.RefreshRoutes` 口径。

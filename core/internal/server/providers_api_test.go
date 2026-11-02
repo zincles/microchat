@@ -364,10 +364,11 @@ func TestDefaultsEndpoints(t *testing.T) {
 // 我还是能选中！"）。
 //
 // 证伪点（这个 bug 的每一环都要钉住）：
-//  ① `GET /models` 里不再出现已删渠道的模型（用户报的直接现象）；
-//  ② 库里那几行真的没了（不是只在接口层过滤 —— 否则换个读口又漏出来）；
-//  ③ **别的渠道的模型一个都不许少**（删 A 不能连带删 B，最容易写错的方向）；
-//  ④ `provider_state` 也清了（渠道回来时重新发现，不该继承旧时间戳）。
+//
+//	① `GET /models` 里不再出现已删渠道的模型（用户报的直接现象）；
+//	② 库里那几行真的没了（不是只在接口层过滤 —— 否则换个读口又漏出来）；
+//	③ **别的渠道的模型一个都不许少**（删 A 不能连带删 B，最容易写错的方向）；
+//	④ `provider_state` 也清了（渠道回来时重新发现，不该继承旧时间戳）。
 func TestDeleteProviderAlsoDeletesItsModels(t *testing.T) {
 	server, st := newProvidersServer(t, `{"providers":[
 	  {"id":"gone","vendor":"openai-compat","base_url":"http://127.0.0.1:1/v1"},
@@ -643,5 +644,30 @@ func TestRefreshProviderWithWildcardFilterFailsAndKeepsModels(t *testing.T) {
 	}
 	if len(rows) != 1 {
 		t.Fatalf("坏筛选器不许动数据，该还是 1 行，得到 %d", len(rows))
+	}
+}
+
+// 测试连通性：只读、不落库；dummy 直接回"不用测"，缺端点的 transient 配置回 ok:false。
+// 2026-11-02：编辑器从「保存 / 刷新模型 / 刷路由」三个按钮改成「保存并刷新 / 测试连通性」。
+func TestTestProviderEndpoint(t *testing.T) {
+	server, _ := newProvidersServer(t, `{"providers":[{"id":"dummy","vendor":"dummy"}]}`)
+
+	rec := call(server, "POST", "/api/v1/providers/dummy/test", `{}`)
+	if rec.Code != 200 {
+		t.Fatalf("dummy 测试该 200，得到 %d：%s", rec.Code, rec.Body.String())
+	}
+	got := decodeBody[TestProviderResult](t, rec)
+	if !got.OK || got.Note == "" {
+		t.Fatalf("dummy 该回 ok + note，得到 %+v", got)
+	}
+
+	// 还没保存的新渠道：用请求体里的临时配置测；缺 base_url 的 custom ⇒ ok:false（不是 500）。
+	rec = call(server, "POST", "/api/v1/providers/brand-new/test", `{"vendor":"custom"}`)
+	if rec.Code != 200 {
+		t.Fatalf("配置不完整的测试该 200+ok:false，得到 %d：%s", rec.Code, rec.Body.String())
+	}
+	got = decodeBody[TestProviderResult](t, rec)
+	if got.OK || got.Error == "" {
+		t.Fatalf("缺端点的 custom 该回 ok:false + error，得到 %+v", got)
 	}
 }

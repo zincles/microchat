@@ -5,12 +5,7 @@ import { ref } from "vue";
 import { ICONS } from "./icons.js";
 import { relativeTime } from "../utils/format.js";
 
-defineEmits(["select", "settings", "close", "new", "open-settings", "toggle-left", "install"]);
-defineProps({
-  // 浏览器是否已给出 beforeinstallprompt（能一键装）；standalone = 已经是装好的窗口。
-  installable: { type: Boolean, default: false },
-  standalone: { type: Boolean, default: false },
-});
+defineEmits(["select", "settings", "close", "new", "open-settings", "toggle-left", "open-sessions", "open-providers"]);
 
 const sessions = ref([]);
 const currentId = ref(null);
@@ -71,18 +66,25 @@ defineExpose({ setSessions });
       </div>
     </div>
     <div class="bar-foot">
-      <!-- 安装入口（2026-11-02）：浏览器给了 beforeinstallprompt 就是「一键装」；
-           没给（iOS / 局域网 HTTP / 浏览器没入口）就是「安装说明」，点开把原因说清楚。
-           放在设置上面：它是"把这个应用带走"的动作，不是设置。 -->
+      <!-- 管理入口（2026-11-02 用户定）：会话 / 渠道从设置里拆出来，各有一个独立入口；
+           它们与「设置」共用同一个视图，只是不经过设置 tab。 -->
       <button
-        v-if="!standalone"
-        id="install-app"
+        id="sessions-manage"
         class="foot-btn"
         type="button"
-        :title="installable ? '安装 MicroChat 到桌面' : '如何把 MicroChat 安装为应用'"
-        @click="$emit('install')"
+        title="会话管理（新建默认值 / 列表 / 导入）"
+        @click="$emit('open-sessions')"
       >
-        <span class="fb-icon" v-html="ICONS.download"></span>{{ installable ? "安装应用" : "安装说明" }}
+        <span class="fb-icon" v-html="ICONS.chat"></span>会话
+      </button>
+      <button
+        id="providers-manage"
+        class="foot-btn"
+        type="button"
+        title="渠道管理（端点 / 密钥 / 模型筛选）"
+        @click="$emit('open-providers')"
+      >
+        <span class="fb-icon" v-html="ICONS.server"></span>渠道
       </button>
       <!-- 设置：2026-11-01 起**没有"root 专属"这回事**（账号砍了），谁都能进；
            外观那一区在同一天从删掉的用户视图搬了进来。 -->
@@ -90,7 +92,7 @@ defineExpose({ setSessions });
         id="settings-open"
         class="foot-btn"
         type="button"
-        title="设置（渠道 / 智能体 / 提示词 / 外观）"
+        title="设置（聊天 / 智能体 / 提示词 / 外观）"
         @click="$emit('open-settings')"
       >
         <span class="fb-icon" v-html="ICONS.settings"></span>设置

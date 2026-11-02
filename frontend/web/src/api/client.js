@@ -220,6 +220,8 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
     patchProvider: (id, body) => call("PATCH", `/providers/${enc(id)}`, body),
     // refreshProvider：拉该渠道的 /models 并落库（只写发现列，用户列不动）。
     refreshProvider: (id) => call("POST", `/providers/${enc(id)}/refresh`),
+    // testProvider：只拉一次 /models 测连通性（不落库、不保存）；body 可带表单覆盖值。
+    testProvider: (id, body = {}) => call("POST", `/providers/${enc(id)}/test`, body),
     // refreshRoutes：刷路由表（models.dev 快照 → model_route 落库），回 {provider, models, error?}。
     refreshRoutes: (id) => call("POST", `/providers/${enc(id)}/refresh-routes`),
   };

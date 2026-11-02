@@ -272,7 +272,9 @@ export function deletionPlanSummary(plan) {
 
 // ---- 设置 modal 纯逻辑（无 DOM，测试直引） ----
 
-// SETTINGS_TABS：设置视图六区（顺序固定）—— **id 与中文名同一份**（按钮标签、panel id 都从它来）。
+// SETTINGS_TABS：设置视图四区（顺序固定）—— **id 与中文名同一份**（按钮标签、panel id 都从它来）。
+// 2026-11-02 用户「设置面板塞了太多东西」：**会话 / 渠道** 不再住设置 tab，
+// 改由左栏底部的「会话 / 渠道」两个独立入口打开（同一个视图，`:only` 只显示那一页）。
 // 「外观」区 2026-11-01 搬回设置（用户定：「把外观设置做到设置里」）——
 // 它原本住**用户视图**（`UserView.vue`），而那个视图随账号功能一起删了：
 // 身份/用户管理跟着账号没了，个人偏好（主题/缩放/背景图/显示模式/发送键/预演/命令菜单）
@@ -284,9 +286,7 @@ export function deletionPlanSummary(plan) {
 // 「提示词」= 可复用提示词段（system prompt segment）的库；「智能体」里逐段引用（2026-10-11 用户定）。
 export const SETTINGS_TABS = [
   { id: "chat", label: "聊天" },
-  { id: "session", label: "会话" },
   { id: "agent", label: "智能体" },
-  { id: "provider", label: "渠道" },
   { id: "prompt", label: "提示词" },
   { id: "appearance", label: "外观" },
 ];

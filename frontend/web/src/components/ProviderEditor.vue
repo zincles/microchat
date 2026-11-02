@@ -4,7 +4,7 @@
 // 内置刷新模型列表 + 刷路由（编辑时直接点，不用退回一级）。
 import { ref, computed, onMounted, onUnmounted } from "vue";
 import { sharedApi } from "../utils/prefs.js";
-import { formatRoutesOutcome, providerIdForNextVendor } from "../utils/format.js";
+import { providerIdForNextVendor } from "../utils/format.js";
 
 const props = defineProps({ provider: { type: Object, default: null } });
 const emit = defineEmits(["close", "saved"]);
@@ -121,6 +121,7 @@ async function load() {
 async function save() {
   const wanted = filter.value.trim();
   try {
+    let savedID = props.provider?.id ?? "";
     if (isNew) {
       const id = pid.value.trim();
       if (!id) { status.value = "给个渠道 id"; return; }
@@ -132,43 +133,66 @@ async function save() {
         api_key: key.value || undefined,
         ...(wanted ? { model_filter: wanted } : {}),
       });
-      baseFilter.value = wanted;
-      emit("saved");
-      // 新建的渠道一个模型都没有；填了筛选器就顺手按它导入一次，然后**回列表**。
-      // 不留在原地：这个二级页的 `isNew` 是挂载时定的常量，建完再留着会一直显示"新建渠道"，
-      // 那时再点保存就是拿同一个 id 再建一次 ⇒ 409（无谓的报错）。
-      if (wanted) { await reloadModels(id); }
-      emit("close");
-      return;
+      savedID = id;
+    } else {
+      const body = {};
+      if (vendor.value !== (props.provider.vendor ?? "")) body.vendor = vendor.value;
+      if (protocol.value !== (props.provider.protocol ?? "")) body.protocol = protocol.value;
+      if (baseUrl.value.trim() !== (props.provider.base_url ?? "")) body.base_url = baseUrl.value.trim();
+      if (key.value) body.api_key = key.value;
+      if (wanted !== baseFilter.value) body.model_filter = wanted;
+      if (Object.keys(body).length) await api.patchProvider(props.provider.id, body);
     }
-    const body = {};
-    if (vendor.value !== (props.provider.vendor ?? "")) body.vendor = vendor.value;
-    if (protocol.value !== (props.provider.protocol ?? "")) body.protocol = protocol.value;
-    if (baseUrl.value.trim() !== (props.provider.base_url ?? "")) body.base_url = baseUrl.value.trim();
-    if (key.value) body.api_key = key.value;
-    const filterChanged = wanted !== baseFilter.value;
-    if (filterChanged) body.model_filter = wanted;
-    if (!Object.keys(body).length) { status.value = "没改动"; return; }
-    await api.patchProvider(props.provider.id, body);
     baseFilter.value = wanted;
     emit("saved");
-    // 筛选器只管"导入哪些"：改完不重刷，界面上**一点区别都没有**（用户会以为没生效，
-    // 而且列表里那些已经导入的行也还留着）。所以改了就就地刷一次、留在这儿 ——
-    // 成功能看见结果，失败（没 key / 没网）也能看见原因，不用再猜。
-    if (filterChanged) { await reloadModels(props.provider.id); return; }
-    emit("close");
+    // 「保存并刷新」：保存完**总是**再拉一次模型（不是只在筛选器变了时）。
+    // 新建的渠道刷新完就回列表（这个二级页的 isNew 是挂载时定的常量，留着再点保存会 409）；
+    // 已有的留在原地，结果直接写在状态行里。
+    await reloadModels(savedID);
+    if (isNew) emit("close");
   } catch (e) { status.value = `保存失败：${e.message}`; }
 }
 
-// reloadModels：按当前配置重拉该渠道的模型清单（"刷新模型"按钮与"改完筛选器"共用这一处）。
+// reloadModels：按当前配置重拉该渠道的模型清单（「保存并刷新」的刷新半程）。
 async function reloadModels(id) {
+  // dummy 没有上游可拉：保存成功就够了，别报一条看起来像失败的刷新错误。
+  if (vendor.value === "dummy") {
+    status.value = "已保存（本地假上游：不联网，没有模型可刷新）";
+    emit("saved");
+    return;
+  }
   try {
     const view = await api.refreshProvider(id);
     modelCount.value = view?.models?.length ?? 0;
-    status.value = `已导入 ${modelCount.value} 个模型` +
-      (baseFilter.value ? `（筛选器：${baseFilter.value}）` : "");
+    status.value = `已保存并刷新：导入 ${modelCount.value} 个模型` +
+      (baseFilter.value ? `（筛选：${baseFilter.value}）` : "");
     emit("saved");
-  } catch (e) { status.value = `刷新失败（${e.message}）`; }
+  } catch (e) { status.value = `已保存，但刷新失败：${e.message}`; }
+}
+
+// testConnection：只拉一次 /models，**不保存、不落库**。测的是表单里此刻的值，
+// 所以新建/改到一半也能先测；后端给 15 秒短上限。
+async function testConnection() {
+  const id = pid.value.trim();
+  if (!id) { status.value = "先填渠道 id 再测"; return; }
+  status.value = "测试中…（最多 15 秒）";
+  try {
+    const body = {
+      vendor: vendor.value,
+      protocol: protocol.value,
+      base_url: baseUrl.value.trim(),
+      model_filter: filter.value.trim(),
+    };
+    if (key.value) body.api_key = key.value;
+    const out = await api.testProvider(id, body);
+    if (out?.ok) {
+      status.value = `连接成功：${out.models} 个模型` +
+        (out.filtered ? `（筛掉 ${out.filtered} 个）` : "") +
+        (out.note ? ` · ${out.note}` : "");
+    } else {
+      status.value = `连接失败：${out?.error || "未知原因"}`;
+    }
+  } catch (e) { status.value = `测试失败：${e.message}`; }
 }
 
 async function clearKey() {
@@ -179,19 +203,6 @@ async function clearKey() {
     key.value = "";
     status.value = "密钥已清";
   } catch (e) { status.value = `清密钥失败：${e.message}`; }
-}
-
-async function refresh() {
-  if (isNew) return;
-  await reloadModels(props.provider.id);
-}
-
-async function refreshRoutes() {
-  if (isNew) return;
-  try {
-    const out = await api.refreshRoutes(props.provider.id);
-    status.value = `路由缓存：${formatRoutesOutcome(out)}`;
-  } catch (e) { status.value = `路由缓存刷新失败（${e.message}）`; }
 }
 
 onMounted(() => {
@@ -212,11 +223,11 @@ function onKey(e) {
       <span class="status">{{ isNew ? "新建渠道" : `渠道「${pid}」（${modelCount} 个模型）` }}</span>
     </div>
     <h3>基本</h3>
-    <!-- 先问"走哪家"、再问 id（2026-10-28）：从前 id 排在最前面，可它恰恰是**最不该让人自己想**的那格 ——
+    <!-- 先问"服务商"、再问 id（2026-10-28）：从前 id 排在最前面，可它恰恰是**最不该让人自己想**的那格 ——
          改 vendor 时它还会跟着变，先填等于白填。 -->
     <!-- vendor / protocol 一律**中文名在前、内部 id 附后**（2026-10-28 用户：「应该用中文化的名字吧」）。
          id 不藏起来：手改 config/providers.json 的人得能对上号，出错信息里也打的是 id。 -->
-    <label class="field"><span>走哪家（vendor）</span><select :value="vendor" @change="pickVendor($event.target.value)">
+    <label class="field"><span>服务商</span><select :value="vendor" @change="pickVendor($event.target.value)">
       <optgroup label="常见">
         <option v-for="p in primaryPresets" :key="p.vendor" :value="p.vendor">{{ p.name }}（{{ p.vendor }}）</option>
       </optgroup>
@@ -227,33 +238,32 @@ function onKey(e) {
     <p v-if="vendorHint" class="hint">{{ vendorHint }}</p>
     <label class="field"><span>渠道 id</span><input v-model="pid" :disabled="!isNew" placeholder="新建时填" @input="touchId" /></label>
     <p v-if="isNew" class="hint">id 是这条渠道在你机器上的名字（会写进 <code>providers.json</code>、也会出现在模型列表的「渠道」那列）。
-      换 vendor 时它跟着变 —— 你手改过之后就不再动它了。</p>
-    <label class="field"><span>说什么话（protocol）</span><select v-model="protocol">
+      换服务商时它跟着变 —— 你手改过之后就不再动它了。</p>
+    <label class="field"><span>接口协议</span><select v-model="protocol">
       <option value="">用默认（对话补全）</option>
       <option v-for="option in protocolChoices" :key="option.protocol" :value="option.protocol">
         {{ option.label }}（{{ option.protocol }}）
       </option>
     </select></label>
     <p class="hint">{{ protocolHint }}</p>
-    <label class="field"><span>端点（空 = 用预设的）</span><input v-model="baseUrl" :placeholder="effectiveBase" /></label>
+    <label class="field"><span>接口地址</span><input v-model="baseUrl" :placeholder="effectiveBase" /></label>
     <p class="hint">这一发会打到 <code>{{ effectiveBase }}</code></p>
     <h3>密钥</h3>
-    <label class="field"><span>{{ hasKey ? "已有密钥（填=换，不填=不动）" : "api_key（可空）" }}</span><input v-model="key" placeholder="api_key" type="password" /></label>
-    <h3>模型筛选器</h3>
-    <label class="field"><span>只导入 id 命中这些子串的模型</span>
+    <label class="field"><span>{{ hasKey ? "API Key（留空=不改）" : "API Key（可空）" }}</span><input v-model="key" placeholder="API Key" type="password" /></label>
+    <h3>模型筛选</h3>
+    <label class="field"><span>只导入匹配的模型</span>
       <input v-model="filter" placeholder="空=全部（例：deepseek,mimo）" />
     </label>
     <p class="hint">
       多条规则用<b>半角逗号</b>分隔，<b>命中任意一条就导入</b>：填 <code>deepseek,mimo</code> ⇒
       <code>deepseek-v4-flash</code> 与 <code>mimo-v2.6-flash</code> 都会进来。
       每条都是子串匹配、不分大小写（<code>openai/</code> 这种前缀也参与比较）；
-      不支持通配符（<code>*</code> 无效）；留空 = 不筛。保存后会自动按筛选器重新导入一次。
+      不支持通配符（<code>*</code> 无效）；留空 = 不筛。
     </p>
     <div class="row">
-      <button type="button" class="primary" @click="save">保存</button>
-      <button v-if="!isNew" type="button" @click="refresh">刷新模型</button>
-      <button v-if="!isNew" type="button" @click="refreshRoutes">刷路由</button>
-      <button v-if="!isNew && (hasKey || key)" type="button" class="danger" @click="clearKey">清密钥</button>
+      <button type="button" class="primary" @click="save">保存并刷新</button>
+      <button type="button" @click="testConnection">测试连通性</button>
+      <button v-if="!isNew && (hasKey || key)" type="button" class="link-btn danger" @click="clearKey">清密钥</button>
       <span class="status">{{ status }}</span>
     </div>
   </div>

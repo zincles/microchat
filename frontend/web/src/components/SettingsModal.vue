@@ -4,7 +4,7 @@
 // 「外观」那族的个人偏好（主题/缩放/背景图/发送键/预演/显示模式）住在**本视图的「外观」区**
 //（2026-11-01 从删掉的用户视图整块搬进来，由 `AppearancePane.vue` 渲染）。
 // 关走 close（Esc/×）—— 视图不卸载就丢状态的口径照旧：v-if 挂载，进视图拉一次。
-import { ref, computed, onMounted, onUnmounted } from "vue";
+import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import ToggleSwitch from "./ToggleSwitch.vue";
 import TabBar from "./TabBar.vue";
 import AgentEditor from "./AgentEditor.vue";
@@ -27,14 +27,20 @@ const emit = defineEmits(["close", "toggle-left", "sessions-changed", "models-ch
 const props = defineProps({
   ask: { type: Function, default: null },
   escBlocked: { type: Boolean, default: false },
+  // only：单独入口（"session" / "provider"）—— 只显示那一页、不渲染设置页签；
+  // 空串 = 完整设置。两者共用同一份数据加载与同一套 panel。
+  only: { type: String, default: "" },
 });
 
 const api = sharedApi();
 const leftSvg = ICONS.panelLeft;
 
-// 五个区的页签：底片滑动的算法住在 `TabBar` 里（与 Agent 编辑器里那组二级页签同一个组件）。
+// 四个设置区 + 两个独立管理页（会话 / 渠道）。
 // （「连接」那一区 2026-10-28 删了 —— 理由写在 format.js 的 SETTINGS_TABS 上。）
-const tab = ref("chat");
+const tab = ref(props.only || "chat");
+// 单独入口的页头文字；空串 = 完整设置（显示 TabBar）。
+const onlyTitle = computed(() => (props.only === "session" ? "会话管理" : props.only === "provider" ? "渠道管理" : ""));
+watch(() => props.only, (v) => { tab.value = v || "chat"; });
 const chat = ref({ title_chars: "", model_context_tokens: "", compact_blocks: "", compact_trigger_tokens: "", replay_reasoning: false, auto_compact: true });
 const chatStatus = ref("");
 const defaults = ref({ provider: "", model: "", agent: "" });
@@ -291,7 +297,8 @@ function onKey(e) {
         @click="$emit('toggle-left')"
         v-html="leftSvg"
       ></button>
-      <TabBar v-model="tab" :tabs="SETTINGS_TABS" />
+      <TabBar v-if="!only" v-model="tab" :tabs="SETTINGS_TABS" />
+      <h2 v-else class="settings-title">{{ onlyTitle }}</h2>
       <button id="settings-close" class="icon-btn" type="button" title="退出设置（Esc）" aria-label="退出设置" @click="$emit('close')">
         ×
       </button>
@@ -450,21 +457,16 @@ function onKey(e) {
         </section>
         <section v-show="tab === 'provider'" id="panel-provider" class="panel">
           <template v-if="!editProvider">
-            <h3>渠道（点进二级改）</h3>
+            <h3>渠道</h3>
+            <p class="hint">一条渠道 = 用哪个服务商、哪个密钥、哪些模型。点一行编辑；模型数是上次刷新发现到的数量。</p>
             <div id="provider-list">
               <table class="plist">
-                <!-- 这两列打**中文名**（2026-10-28 用户：「vendor 和 protocol 应该用中文化的名字吧」）；
-                     内部 id 挂在 title 上 —— 手改配置文件的人还得能对上号。 -->
-                <thead><tr><th>渠道</th><th>走哪家</th><th>说什么话</th><th>密钥</th><th>模型</th><th>筛选器</th><th></th></tr></thead>
+                <thead><tr><th>渠道</th><th>服务商</th><th>模型</th><th>密钥</th><th></th></tr></thead>
                 <tbody><tr v-for="p in providers" :key="p.id" class="clickable" @click="editProvider = p">
-                  <td>{{ p.id }}</td>
+                  <td :title="p.name || p.id">{{ p.id }}</td>
                   <td :title="p.vendor">{{ p.vendor_name || p.vendor || "?" }}</td>
-                  <td :title="p.protocol">{{ p.protocol_name || p.protocol || "?" }}</td>
-                  <td>{{ p.has_key ? "有" : "无" }}</td>
-                  <td>{{ p.models?.length ?? 0 }}</td>
-                  <!-- 筛选器：让"这个渠道怎么只有 12 个模型"在列表里就能看到答案（空 = 没筛）。
-                       用 `||` 而不是 `??`：空串要显示成「没筛」，不是留一格白。 -->
-                  <td>{{ p.model_filter || "没筛" }}</td>
+                  <td>{{ p.models?.length ?? 0 }} 个<i v-if="p.model_filter" class="io-tag" :title="`只导入匹配：${p.model_filter}`">筛选</i></td>
+                  <td>{{ p.has_key ? "已配置" : "未配置" }}</td>
                   <td class="ops"><button type="button" class="link-btn danger" @click.stop="askDeleteProvider(p.id)">删除</button></td>
                 </tr></tbody>
               </table>
