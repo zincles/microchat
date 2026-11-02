@@ -23,6 +23,7 @@ import {
   modelOption,
   agentOption,
   sessionTitle,
+  whoText,
 } from "./utils/format.js";
 import TopBar from "./components/TopBar.vue";
 import SessionBar from "./components/SessionBar.vue";
@@ -36,7 +37,8 @@ import SettingsModal from "./components/SettingsModal.vue";
 import SessionSettings from "./components/SessionSettings.vue";
 import Overlays from "./components/Overlays.vue";
 import UpdateBar from "./components/UpdateBar.vue";
-import { registerPWA, onUpdateReady, startUpdate } from "./utils/pwa.js";
+import { registerPWA, onUpdateReady, startUpdate, onInstallAvailable, installReady, promptInstall } from "./utils/pwa.js";
+import { isStandalone, installGuidance } from "./utils/install.js";
 
 const api = sharedApi();
 applyTheme();
@@ -75,6 +77,21 @@ const overlaysRef = ref(null);
 // 设置 → 外观里改了立刻生效（不刷新）—— 偏好住服务器（`prefs.json`），这里是它的活视图。
 const cmdMenu = ref(commandMenuOn());
 const toast = (t, k) => toastRef.value?.push(t, k);
+// —— 安装（PWA，2026-11-02）——
+// `installable` = 浏览器已经给了 beforeinstallprompt（能一键装）；`standalone` = 现在就是
+// 装好后的独立窗口。两个都不是 ⇒ 按钮变成"安装说明"，点一下把原因说清楚
+// （iOS 分享菜单 / 局域网 HTTP 不是安全上下文 / 浏览器没给入口）。
+const installable = ref(installReady());
+const standalone = ref(isStandalone());
+onInstallAvailable((ready) => { installable.value = ready; standalone.value = isStandalone(); });
+async function installApp() {
+  if (standalone.value) { toast("已经在独立窗口中运行。"); return; }
+  if (!installable.value) { toast(installGuidance(), "error"); return; }
+  const res = await promptInstall();
+  if (res?.outcome === "accepted") { toast("已开始安装。", "ok"); }
+  else if (res?.outcome === "dismissed") { toast("已取消安装。"); }
+  else { toast(installGuidance(), "error"); }
+}
 // askConfirm：给设置/子编辑器用的全局确认框（与左栏删除同一个口 —— "不可逆的删除先摊开"）。
 function askConfirm(text) {
   return overlaysRef.value?.confirmAsk(text) ?? Promise.resolve(false);
@@ -104,6 +121,9 @@ let draft = false;
 let draftPrefs = { provider: "", model: "", agent: "" };
 let draftId = null;
 const vueMessages = ref([]);
+// 会话加载中的骨架（2026-11-02）：进会话会先清空消息列，再等 /sessions + 消息窗口；
+// 远端部署时那是两三个 RTT 的空白。给一层静态骨架，至少让人知道"在加载"而不是"坏了"。
+const loadingSession = ref(true);
 const vueSegments = ref([]); // 整条会话的段布局（computeSegments 的产出）：窗口/折叠/编号都认它
 const vueStream = ref({ id: null, text: "", reasoning: "" });
 // 消息窗口（分页 + 折叠；口径与全套算法在 utils/chatrows.js）：
@@ -257,9 +277,14 @@ function onSummaryToggle(id, open) {
 // 树要的是整条账本（原文占比、嵌套），而消息列走的是窗口（见 utils/chatrows.js）；
 // "树 tab 开着"就是用户显式说"给我看全量"。
 let treeVisible = false;
+let payloadTab = "payload"; // PayloadBar 的默认页；它切页时 onPayloadTab 会更新
 function onPayloadTab(t) {
+  payloadTab = t;
   treeVisible = t === "tree";
+  if (workspace.value !== "context") return; // 人不在工作区：等他切过去再由 refreshContextLazy 拉
   if (treeVisible) refreshTree();
+  else if (t === "state") refreshStateView(sessionID);
+  else refreshHistoryPreview();
 }
 async function refreshTree() {
   if (!sessionID || !treeVisible) return;
@@ -272,6 +297,29 @@ async function refreshTree() {
     if (my === epoch) payloadbarRef.value?.setTree(null);
   }
 }
+// 历史预演（载荷 tab 的"这一发会发什么"）：**只在真的看载荷时才问**。
+// 从前 enterSession 无条件 `POST /outgoing` —— 服务端要列消息、现演世界状态、拼整段出站，
+// 换会话/刷新页面时这是最重的一发，而人可能根本没打开工作区。现在改成按需。
+let historyPreviewSeq = 0;
+async function refreshHistoryPreview() {
+  if (!previewOn() || draft || !sessionID) { payloadbarRef.value?.setWire(null); return; }
+  const sid = sessionID;
+  const my = epoch;
+  const seq = ++historyPreviewSeq;
+  try {
+    const w = await api.outgoingPreview(sid, "");
+    if (my === epoch && seq === historyPreviewSeq) payloadbarRef.value?.setWire(w);
+  } catch (err) {
+    if (my === epoch && seq === historyPreviewSeq) toast(`预演失败：${err.message}`, "error");
+  }
+}
+// 工作区按当前 tab 懒加载：切进上下文 / 换会话时只拉"此刻真要看的那一页"。
+function refreshContextLazy() {
+  if (workspace.value !== "context") return;
+  if (payloadTab === "tree") refreshTree();
+  else if (payloadTab === "state") refreshStateView(sessionID);
+  else refreshHistoryPreview();
+}
 const lastMsgId = computed(() => [...vueMessages.value].reverse().find((m) => m.messageId)?.messageId ?? null);
 // 渲染行：气泡（带编号）+ 被顶层摘要折起来的卡（口径见 utils/chatrows.js）。
 // 当前 agent 的"首段对话"（`first_message`，2026-10-11 用户定）—— **computed 只看响应式的两格**
@@ -281,6 +329,11 @@ const agentGreeting = computed(() => {
   const a = vueAgents.value.find((x) => x.id === sessionInfo.agent_id);
   return (a?.first_message ?? "").trim();
 });
+// 空草稿首屏的两格（2026-11-02）：当前助手名 + 会话模型。
+// 模型显示上游 id（顶栏那份是 prettify 后的名字）—— 草稿还没有模型列表可查，
+// 而这一行是"我马上要跟谁说话"，宁可给原始 id 也不留空。
+const draftAgentName = computed(() => agentLabelOf(sessionInfo.agent_id) || "默认助手");
+const draftModelName = computed(() => whoText(sessionInfo.provider, sessionInfo.model, "未选模型"));
 const chatRows = computed(() => {
   // 草稿里把首段**合成气泡先画出来**（发送后它就是库里的 #1，编号顺延天然给它 1；
   // 换 agent 就换首段）。draft 是普通变量 ⇒ 判断放在这儿（chatRows 每次都重算）。
@@ -764,15 +817,26 @@ async function applyModelValue(value) {
   refreshStatusline("idle");
   refreshPreview();
 }
+// Agent 列表在"进会话"这一拍会被两条路同时要（顶栏选人 + 草稿首段/状态行）：
+// 从前各发一次 GET /agents（实测同一毫秒两发、每发 42KB）。这里让同一拍共享一发。
+let agentsInflight = null;
+function fetchAgentsOnce() {
+  if (!agentsInflight) {
+    agentsInflight = api.agents().finally(() => { agentsInflight = null; });
+  }
+  return agentsInflight;
+}
 function fillAgentSelect() {
   const my = epoch;
-  api.agents().then((data) => {
+  fetchAgentsOnce().then((data) => {
     if (my !== epoch) return;
     const list = (data.agents ?? []).map(agentOption);
     // 顶栏的圆头像 = Agent 入口（2026-10-14）；状态行小字里那份是"显示"。
     topbarRef.value?.setAgents(list, sessionInfo.agent_id);
     statusAgent.value = list.find((a) => a.id === sessionInfo.agent_id)?.label ?? sessionInfo.agent_id ?? "";
-    refreshStatusline();
+    // 这一发只更新"助手"那格；上下文环由 enterSession 的 refreshStatusline 统一问一次
+    //（从前这里也带 withContext，实测同一拍发两次 GET /context）。
+    refreshStatusline("idle", undefined, { withContext: false });
     // 没 agent 时别猜 list[0]：后端认的是 default_agent。
     if (!sessionInfo.agent_id && list.length) applyAgentValue(data.default_agent || list[0].id);
   }).catch((err) => { if (my === epoch) toast(`Agent 列表失败：${err.message}`, "error"); });
@@ -809,7 +873,7 @@ async function applyAgentValue(id) {
 async function refreshAgents() {
   const my = epoch;
   try {
-    const data = await api.agents();
+    const data = await fetchAgentsOnce();
     if (my !== epoch) return;
     vueAgents.value = data.agents ?? [];
   } catch { /* 拿不到就空着：草稿不画首段、状态行回落到 agent id */ }
@@ -832,9 +896,8 @@ function selectWorkspace(next) {
   workspace.value = next === "context" ? "context" : "chat";
   // 面板是 `v-show` 常驻的 ⇒ 里面选中的 tab 会留着（这是对的：回头再看还是那一页），
   // 但"看着压缩 tab"这件事 App 只在 **切 tab 那一下** 知道（`onPayloadTab`）。
-  // 于是从聊天切回工作区时，树不会自己重拉 —— 而它可能已经被 setTree(null) 清过（换会话时）。
-  // `refreshTree` 自己会按 `treeVisible` 早退，所以这里无条件喊一声就够了。
-  if (workspace.value === "context") refreshTree();
+  // 于是从聊天切回工作区时，树/状态/载荷都不会自己重拉 —— 按当前 tab 补一发。
+  if (workspace.value === "context") refreshContextLazy();
 }
 function applySideToggle(barID, hidden) {
   document.getElementById(barID)?.classList.toggle("collapsed", hidden);
@@ -990,6 +1053,7 @@ async function startDraft() {
     agent_id: draftPrefs.agent, system_prompt: "",
   });
   vueMessages.value = [];
+  loadingSession.value = false;
   vueStream.value = { id: null, text: "", reasoning: "" };
   paintSessionHeader();
   refreshAgents();
@@ -1007,9 +1071,9 @@ async function startDraft() {
   summaryMsgs.clear();
   openSummaries.clear();
   payloadbarRef.value?.setTree(null);
-  // 人可能正站在上下文工作区里换会话（左栏点一下就换）⇒ 树要跟着换上新的，
+  // 人可能正站在上下文工作区里换会话（左栏点一下就换）⇒ 当前 tab 要跟着换上新的，
   // 否则那块地方会一直显示上一条会话的账本（静默的错，看不出来）。
-  if (workspace.value === "context") refreshTree();
+  refreshContextLazy();
   refreshPreview(); // 输入框里若还留着字（＋ 时不清输入框），预演立刻跟上
 }
 function newSession() {
@@ -1025,8 +1089,10 @@ async function refreshSessionsBar() {
     renderSessions(await api.listSessions());
   } catch (err) { toast(`刷会话栏失败：${err.message}`, "error"); }
 }
-async function enterSession(id) {
+async function enterSession(id, preloaded = null) {
   const my = ++epoch;
+  loadingSession.value = true;
+  try {
   draft = false;
   sessionID = id;
   saveLastSession(id); // 记住"在看哪条"——刷新/重载回来就进它
@@ -1036,7 +1102,9 @@ async function enterSession(id) {
   windowFrom.value = 1;
   summaryMsgs.clear();
   openSummaries.clear();
-  const sessions = await api.listSessions();
+  // 开机恢复那条路已经拉过一次 `/sessions`（boot），别在同一毫秒再要一遍 ——
+  // 远端部署时那是一整个 RTT + 一份完整会话列表。
+  const sessions = preloaded ?? await api.listSessions();
   if (my !== epoch) return; // 迟到的上一发：整段丢掉（切会话竞态的唯一守卫）
   Object.assign(sessionInfo, sessions.find((s) => s.id === id) ?? {});
   paintSessionHeader();
@@ -1047,16 +1115,14 @@ async function enterSession(id) {
   const ok = await loadWindow({ reset: true });
   if (my !== epoch || !ok) return;
   refreshStatusline("idle");
-  refreshStateView(id);
   refreshRerolls();
-  if (previewOn() && vueMessages.value.length) {
-    api.outgoingPreview(id, "").then((w) => { if (my === epoch) payloadbarRef.value?.setWire(w); })
-      .catch((err) => { if (my === epoch) toast(`预演失败：${err.message}`, "error"); });
-  } else {
-    payloadbarRef.value?.setWire(null); // 别把上一条会话的载荷挂在空会话上
-  }
+  // 载荷/状态/树都只在"人正看着工作区"时才拉（2026-11-02）：换会话时从前无条件
+  // `POST /outgoing` + `GET /state`，而聊天界面根本用不到它们 —— 远端部署时那是两次
+  // 重装配（列消息 + 现演状态 + 拼整段出站）+ 两个 RTT。
+  payloadbarRef.value?.setWire(null);
   // 压缩那发的载荷同理：换会话就清掉（那是**某一次**压缩的账，不属于"当前"）
   payloadbarRef.value?.setCompactWire(null);
+  refreshContextLazy();
   // 这一轮还在跑？（刷新页面、切走又回来）—— status 是权威：把合成的流气泡与轮询接回来。
   // reply 落库前消息列里本来就没有它，不接的话界面装 idle、发送才知道 409。
   api.status(id).then((st) => {
@@ -1065,6 +1131,9 @@ async function enterSession(id) {
       if (!vueMessages.value.some((m) => m.stream)) pollTurn(id, st.message_id).catch(() => {});
     }
   }).catch(() => {});
+  } finally {
+    if (my === epoch) loadingSession.value = false;
+  }
 }
 async function boot() {
   // 自检按候选顺序探（没存过地址时：先"跟页面同主机的 8787"，再"同源 /api/v1"兜底反代部署）。
@@ -1090,6 +1159,7 @@ async function boot() {
     //（没有要填的东西），于是改成一句能照着查的提示。
     toast(`连不上后端（${String(lastErr?.message ?? lastErr)}）。检查它起没起、地址对不对。`, "error");
     connText = "未连接";
+    loadingSession.value = false;
     return;
   }
   if (winner && winner !== apiBase()) {
@@ -1108,7 +1178,7 @@ async function boot() {
   if (last) {
     const sessions = await api.listSessions().catch(() => []);
     if (sessions.some((s) => s.id === last)) {
-      await enterSession(last);
+      await enterSession(last, sessions);
       return;
     }
   }
@@ -1678,6 +1748,7 @@ onMounted(() => {
   }
   boot().catch((err) => {
     connText = "未连接";
+    loadingSession.value = false;
     refreshStatusline("idle");
     toast(`启动失败：${err.message}`, "error");
   });
@@ -1705,6 +1776,9 @@ onUnmounted(() => {
     <div id="columns">
       <SessionBar
         ref="sessionbarRef"
+        :installable="installable"
+        :standalone="standalone"
+        @install="installApp"
         @toggle-left="toggleLeft"
         @select="(id) => { closeLeftDrawer(); backToChat(); enterSession(id).catch((err) => toast(`进会话失败：${err.message}`, 'error')); }"
         @settings="(id) => { sessionSettingsId = id; }"
@@ -1730,6 +1804,20 @@ onUnmounted(() => {
           <!-- 滚动容器（#messages-vue）现在**占满整个对话区**（滚动条因此贴最右缘，2026-10-14 用户定）；
                阅读列约束（760 居中、两侧 56px、上下留白）落在这一层 —— 气泡别拉成整屏长句。 -->
           <div class="messages-inner">
+          <!-- 会话加载骨架（2026-11-02）：先撑住消息列，别让人对着纯黑猜"是不是坏了"。 -->
+          <div v-if="loadingSession" class="chat-skeleton" aria-label="正在加载会话" role="status">
+            <span class="sk-line sk-a"></span>
+            <span class="sk-line sk-b"></span>
+            <span class="sk-line sk-c"></span>
+          </div>
+          <!-- 空草稿首屏（2026-11-02）：从前点「开启新对话」得到的是一整页纯黑 ——
+               没有欢迎语、没有当前助手/模型，第一眼像坏了。这里补一句人话 + 当前配置；
+               真正的第一条消息仍然由输入框发起（不伪造历史）。 -->
+          <div v-if="draft && !chatRows.length" class="draft-welcome">
+            <h2>有什么想聊的？</h2>
+            <p class="dw-sub">{{ draftAgentName }}<span class="dw-sep">·</span>{{ draftModelName }}</p>
+            <p class="dw-hint">直接在下面输入第一条消息开始；也可以用 <kbd>/</kbd> 开头的命令。</p>
+          </div>
           <button
             v-if="olderSegments > 0"
             id="load-more"

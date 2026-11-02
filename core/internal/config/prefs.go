@@ -212,19 +212,23 @@ type Prefs struct {
 // 每一项的默认值都与前端从前的 localStorage 缺省**逐个对齐**（`!== "0"` 的那些 = true，
 // `=== "1"` 的那些 = false）—— 迁移不该悄悄改掉任何人的现状。
 func DefaultPrefs() Prefs {
-	on := true
-	off := false
 	return Prefs{
 		Markdown:      MarkdownPrefs{}, // Enabled 为 nil ⇒ 开；Disabled 空 ⇒ 全开
 		Theme:         "",
 		TextScale:     "",
 		ComposerStyle: "",
 		Send:          "",
-		Preview:       &on,
-		CommandMenu:   &off,
-		ChromeHide:    &on,
-		PayloadViz:    &off,
-		BarLeftHidden: &off,
+		// ⚠ 每一格都要**独立**的指针（2026-11-02 修）。从前写的是 `on := true; off := false`
+		// 然后所有 `&on` / `&off` 共用同一个变量 —— JSON 解码 `command_menu:true` 会把那个
+		// 共享的 `off` 改成 true，连带 `payload_viz` / `bar_left_hidden` 一起变；下一行
+		// `payload_viz:false` 又把它改回来。最终值取决于字段在 JSON 里的顺序，
+		// 表现是"开关怎么点都存不住"（实测：界面 on、服务端 off）。
+		// `new(true)` 每次调用都分配一个新变量（Go 1.26）。
+		Preview:       new(true),
+		CommandMenu:   new(false),
+		ChromeHide:    new(true),
+		PayloadViz:    new(false),
+		BarLeftHidden: new(false),
 	}
 }
 

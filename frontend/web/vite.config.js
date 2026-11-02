@@ -59,9 +59,41 @@ console.log(
   `[vite] allowedHosts = ${allowedHosts.length ? allowedHosts.join(", ") : "true（不限制任何 Host）"}`,
 );
 
+// ── 静态产物的缓存头（2026-11-02）────────────────────────────────────────────
+//
+// `vite preview` 默认给**所有**响应 `Cache-Control: no-cache`。对 `index.html` / `sw.js`
+// 这是对的（每次回来问一句），但对 `/assets/index-abcdef.js` 这种**内容寻址**的文件是浪费：
+// 它永远不会原地变，每次刷新都多一个 304 往返（移动网络上一来一回就是几百毫秒）。
+// 这里按路径分开：带哈希的进 immutable，入口与 SW 仍 no-cache。
+//
+// ⚠ 只 **setHeader、不 end**：后面 sirv 的静态处理照旧；它只在没有头时才写自己的。
+function assetCacheHeaders() {
+  return {
+    name: "asset-cache-headers",
+    configurePreviewServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const path = (req.url || "").split("?")[0];
+        const hashed = /^\/assets\/.+-[A-Za-z0-9_-]{8,}\.(?:js|css|woff2?|png|svg)$/.test(path)
+          || /^\/workbox-[A-Za-z0-9_-]+\.js$/.test(path);
+        if (hashed) {
+          res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+        } else if (path.startsWith("/fonts/")) {
+          // 自托管 Inter / KaTeX 字体：文件名不随内容变，别给 immutable（换字体要能刷到）。
+          res.setHeader("Cache-Control", "public, max-age=604800");
+        } else {
+          // index.html / manifest / sw.js / 图标：每次都回来问。
+          res.setHeader("Cache-Control", "no-cache");
+        }
+        next();
+      });
+    },
+  };
+}
+
 export default defineConfig({
   plugins: [
     vue(),
+    assetCacheHeaders(),
     // PWA（2026-10-11 用户点名）：可"安装为应用"。三件事 —— manifest / 图标 / 一个最小 SW。
     //   · SW **只预缓存壳**（HTML/JS/CSS/图标）：/api 一概不碰（数据必须现取；别写
     //     runtimeCaching 去接它，接了就是串数据）。

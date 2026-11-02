@@ -67,6 +67,15 @@
    * 表格行、字段行），每条都比标准重就成了"格子铺"——分栏该靠底色差，线只是补一句"这儿断开"。 */
   --line: color-mix(in srgb, var(--tg-text) 9%, transparent);
   --hover: color-mix(in srgb, var(--tg-text) 7%, transparent);
+  /* 文字色蒙层（2026-11-02）：hover 底、分隔线、滑杆轨道、选中底都用同几种浓度。
+   * 以前 24 处把 `color-mix(... N%, transparent)` 抄一遍 —— 值散在文件各处，
+   * 想统一调一档要全文搜。现在只在这里改；名字按浓度（不是按用途），因为同一个
+   * 浓度在不同控件上本来就该是同一个灰。 */
+  --mix-6: color-mix(in srgb, var(--tg-text) 6%, transparent);
+  --mix-8: color-mix(in srgb, var(--tg-text) 8%, transparent);
+  --mix-10: color-mix(in srgb, var(--tg-text) 10%, transparent);
+  --mix-13: color-mix(in srgb, var(--tg-text) 13%, transparent);
+  --mix-18: color-mix(in srgb, var(--tg-text) 18%, transparent);
 
   --shadow-1: 0 1px 2px -1px rgb(0 0 0 / 22%), 0 1px 3px -1px rgb(0 0 0 / 14%);
   --shadow-2: 0 4px 10px -3px rgb(0 0 0 / 26%), 0 2px 5px -2px rgb(0 0 0 / 16%);
@@ -93,6 +102,9 @@
   --r-shell: 12px;
   --r-card: 10px;
   --r-btn: 8px;
+  --r-md: 8px;
+  --r-sm: 6px;
+  --r-xs: 4px;
   /* 气泡单独一档，而且比控件**圆**：聊天气泡圆一点才像"话"，方一点就像"色卡/表格"。 */
   --r-bubble: 16px;
 }

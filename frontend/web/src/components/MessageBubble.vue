@@ -1,6 +1,6 @@
 <script setup>
 // 消息气泡：正文 markdown 渲染 + <state> 块独立容器（状态变化单列，不混进正文）。
-import { ref, computed } from "vue";
+import { ref, computed, watch, onMounted, nextTick } from "vue";
 import { ICONS } from "./icons.js";
 import { formatThinkLabel, usageFoot, usageFootTitle } from "../utils/format.js";
 import { renderMarkdown, splitState } from "../utils/markdown.js";
@@ -44,6 +44,21 @@ const lockedWidth = ref(0);
 // 正文拆说话/状态：说话走 markdown，状态块进独立容器（只在非编辑态；编辑态看原文）。
 const parts = computed(() => splitState(editing.value ? "" : props.content));
 const bodyHtml = computed(() => renderMarkdown(parts.value.cleaned));
+// 公式比列宽时给右缘一道内阴影（2026-11-02）：手机上原本是"一刀切"，看不出还能往右滑。
+// `overflow-x: auto` 之外再标一个类 —— 只有真的溢出才提示，短公式不受影响。
+const textEl = ref(null);
+function markMathOverflow() {
+  const root = textEl.value;
+  if (!root) return;
+  for (const el of root.querySelectorAll(".katex-display")) {
+    el.classList.toggle("scroll-x", el.scrollWidth > el.clientWidth + 1);
+  }
+}
+onMounted(() => nextTick(markMathOverflow));
+// 流式期间正文每来一段就重算一次 —— 那时不扫（每帧扫一遍 DOM 是白烧 CPU）；
+// 收尾那一拍再扫。编辑保存不是流式，照常扫。
+watch(bodyHtml, () => { if (!props.streaming) nextTick(markMathOverflow); });
+watch(() => props.streaming, (s) => { if (!s) nextTick(markMathOverflow); });
 function openEditor(kind) {
   if (editing.value) return;
   lockedWidth.value = msgEl.value?.offsetWidth ?? 0;
@@ -87,7 +102,7 @@ const editRows = computed(() => Math.min(12, Math.max(3, draft.value.split("\n")
           </div>
         </div>
       </details>
-      <div v-show="editing !== 'content'" class="text" v-html="bodyHtml"></div>
+      <div v-show="editing !== 'content'" ref="textEl" class="text" v-html="bodyHtml"></div>
       <div v-if="streaming && !content && !reasoning" class="typing" aria-label="正在生成">
         <span></span><span></span><span></span>
         <i class="typing-hint">正在输出…</i>

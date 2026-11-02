@@ -48,7 +48,14 @@ function clear() {
   if (area.value) area.value.rows = 1;
 }
 
-defineExpose({ submit, clear, text, setRunning });
+// setText：空草稿的示例句点一下就填进来（App 调）。聚焦放在同一拍 ——
+// 用户点的是"我要说这句"，下一步动作必然是补充或回车，不该再点一次输入框。
+function setText(t) {
+  text.value = String(t ?? "");
+  nextTick(() => area.value?.focus());
+}
+
+defineExpose({ submit, clear, setText, text, setRunning });
 </script>
 
 <template>

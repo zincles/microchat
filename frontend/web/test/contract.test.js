@@ -12,6 +12,7 @@ import { buildChatRows, rerollTargetLive, bubbleText } from "../src/utils/chatro
 import { resetChrome, stepChrome } from "../src/utils/chrome.js";
 import { computeViewportFit } from "../src/utils/viewport.js";
 import { classifyAxis, pickDrag, dragProgress, resolveRelease } from "../src/utils/swipe.js";
+import { installGuidance } from "../src/utils/install.js";
 import {
   formatThinkLabel,
   formatStatusLine,
@@ -45,6 +46,7 @@ import {
   modelLabel,
   whoText,
   sessionTitle,
+  relativeTime,
 } from "../src/utils/format.js";
 import { sendMode, wantsSend, themePref, normalizeTheme, apiBase, defaultApiBase, apiBaseCandidates, THEME_IDS, DEFAULT_THEME, DEFAULT_SEND, composerStyle, applyComposerStyle, saveComposerStyle, DEFAULT_COMPOSER, normalizeTextScale, textScale, applyTextScale, saveTextScale, TEXT_SCALE_MIN, TEXT_SCALE_MAX, DEFAULT_TEXT_SCALE } from "../src/utils/prefs.js";
 
@@ -761,6 +763,17 @@ test("whoText / sessionTitle：两处回退档各就各位", () => {
   assert.equal(sessionTitle("  标题  "), "标题");
 });
 
+test("relativeTime：会话列表第二行（边界 + 时钟倒走不出现负数）", () => {
+  const now = 1_700_000_000_000;
+  assert.equal(relativeTime(0, now), "");
+  assert.equal(relativeTime(null, now), "");
+  assert.equal(relativeTime(now - 30_000, now), "刚刚");
+  assert.equal(relativeTime(now + 5_000, now), "刚刚"); // 时钟偏一点，别显示"-1 分钟前"
+  assert.equal(relativeTime(now - 5 * 60_000, now), "5 分钟前");
+  assert.equal(relativeTime(now - 3 * 3_600_000, now), "3 小时前");
+  assert.equal(relativeTime(now - 2 * 86_400_000, now), "2 天前");
+});
+
 test("偏好读取：默认与空串语义（mc_theme 空串 / 认不出的 id 都归默认主题）", () => {
   stubStorage();
   assert.equal(apiBase(), DEFAULT_API_URL);
@@ -1233,6 +1246,31 @@ test("主题：theme.css 与下拉必须正好是 THEME_IDS 这三套", () => {
   assert.ok(sel, '没找到 v-model="theme" 那个下拉');
   const chosen = [...sel[1].matchAll(/<option value="([^"]*)">/g)].map((m) => m[1]);
   assert.deepEqual(chosen, THEME_IDS, "主题下拉的 option 与 THEME_IDS 对不上");
+});
+
+test("外观页：发送键 / 预演 / 命令菜单三格都在（搬用户视图时丢过）", () => {
+  const vue = readFileSync(join(SRC, "components", "AppearancePane.vue"), "utf8");
+  // 发送键的三档必须与 `prefs.js` 的 `wantsSend` 完全一致（多一档 = 选了不生效）。
+  const sel = vue.match(/<select v-model="send"[^>]*>([\s\S]*?)<\/select>/);
+  assert.ok(sel, '没找到 v-model="send" 那个下拉 —— 发送键入口又丢了');
+  const options = [...sel[1].matchAll(/<option value="([^"]*)">/g)].map((m) => m[1]);
+  assert.deepEqual(options, ["enter", "shift-enter", "button"], "发送键三档与 wantsSend 对不上");
+
+  assert.match(vue, /:model-value="preview"/, "「输入时预演载荷」开关没了");
+  assert.match(vue, /:model-value="cmdMenu"/, "「命令菜单」开关没了");
+
+  // 开关必须"先赋值、再存"：`v-model + @update:model-value="persist"` 两个监听同挂 update 时，
+  // 显式那个可能先跑 ⇒ 存的是旧值（实测：界面 on、服务端 off）。
+  for (const fn of ["setPreview", "setCmdMenu", "setChromeHide", "setMdEnabled"]) {
+    assert.match(vue, new RegExp(`function ${fn}\\(v\\)`), `${fn} 不存在（又会存成旧值）`);
+  }
+  assert.ok(!/v-model="(preview|cmdMenu|chromeHide|mdEnabled)"[^>]*@update:model-value="persist/.test(vue),
+    "开关又用回了 v-model + @update:model-value=\"persist\"（会存旧值）");
+
+  // 三格都必须落盘（`persist` 是唯一出口）。
+  for (const fn of ["saveSendMode", "savePreview", "saveCommandMenu"]) {
+    assert.match(vue, new RegExp(`${fn}\\(`), `${fn} 没有接到设置项`);
+  }
 });
 
 test("主题：删掉的老 id 都能搬到现存的一档（不许让人主题凭空变样）", () => {
@@ -1829,26 +1867,31 @@ test("工作区：量不到输入行高度时不写 --composer-h", () => {
   assert.ok(guardAt > 0 && guardAt < writeAt, "守卫该在写 --composer-h 之前");
 });
 
-// 面板是 v-show 常驻（tab 状态要留着），所以"看着压缩 tab"这件事 App 只在**切 tab 那一下**知道。
-// 于是从聊天切回工作区时树不会自己重拉 —— 而它可能刚被 setTree(null) 清过（换会话）。
-// 这条钉的是那两个补喊 refreshTree 的地方（少一处就是"树一直空白"或"看着上一条会话的账"）。
-test("上下文工作区：切进去 / 换会话时补拉压缩树", () => {
+// 面板是 v-show 常驻（tab 状态要留着），所以"看着哪一页"这件事 App 只在**切 tab 那一下**知道。
+// 2026-11-02 起不再是"一律补拉树"：改由 `refreshContextLazy()` 按当前 tab 只拉那一页
+//（载荷 / 状态 / 压缩树）—— 换会话时无条件的 outgoing + state 是远端部署的主要延迟来源。
+test("上下文工作区：切进去 / 换会话时按当前 tab 补拉", () => {
   const app = readFileSync(join(SRC, "..", "src", "App.vue"), "utf8");
   const fn = app.match(/function selectWorkspace\(next\)[\s\S]*?\n\}/)?.[0] ?? "";
   assert.ok(fn, "找不到 selectWorkspace");
-  assert.match(fn, /workspace\.value === "context"\) refreshTree\(\)/,
-    "切进工作区时没补拉压缩树 —— 树被 setTree(null) 清过就一直空着");
-  // 换会话那条：setTree(null) 之后要紧跟一次 refreshTree。
-  // ⚠ **别用 indexOf 找那句**：`refreshTree` 自己的 catch 里也有一模一样的
-  // 「setTree(null)」（那一处是正确的：拉失败就清空），先命中的是它，断言就永远看着错的地方。
-  // 锚点换成上方那句独有的 `summaryMsgs.clear();`。
-  const anchor = app.indexOf("summaryMsgs.clear();");
-  assert.ok(anchor > 0, "找不到换会话那段（summaryMsgs.clear）");
-  const at = app.indexOf("payloadbarRef.value?.setTree(null);", anchor);
-  assert.ok(at > 0, "换会话那段里没清树");
-  const after = app.slice(at, at + 400);
-  assert.match(after, /if \(workspace\.value === "context"\) refreshTree\(\)/,
-    "换会话时没补拉压缩树 —— 会一直显示上一条会话的账");
+  assert.match(fn, /workspace\.value === "context"\) refreshContextLazy\(\)/,
+    "切进工作区时没补拉当前 tab");
+  // 懒加载的分派只此一处：三种 tab 各管各的。
+  const lazy = app.match(/function refreshContextLazy\(\)[\s\S]*?\n\}/)?.[0] ?? "";
+  assert.ok(lazy, "找不到 refreshContextLazy");
+  assert.match(lazy, /payloadTab === "tree"\) refreshTree\(\)/, "压缩 tab 没拉树");
+  assert.match(lazy, /payloadTab === "state"\) refreshStateView\(sessionID\)/, "状态 tab 没拉状态");
+  assert.match(lazy, /else refreshHistoryPreview\(\)/, "载荷 tab 没拉历史预演");
+
+  // 换会话那条：enterSession 落地之后也要按当前 tab 补拉。
+  // ⚠ 从前这里用 `summaryMsgs.clear()` 当锚点 —— 它先命中的是 `startDraft`，等于一直在测草稿，
+  //    enterSession 根本没被钉住（2026-11-02 才发现）。直接取函数体。
+  const enter = app.match(/async function enterSession\(id, preloaded = null\)[\s\S]*?\n\}/)?.[0] ?? "";
+  assert.ok(enter, "找不到 enterSession");
+  assert.match(enter, /refreshContextLazy\(\)/, "换会话时没按当前 tab 补拉 —— 会一直显示上一条会话的账");
+  const draft = app.match(/async function startDraft\(\)[\s\S]*?\n\}/)?.[0] ?? "";
+  assert.ok(draft, "找不到 startDraft");
+  assert.match(draft, /refreshContextLazy\(\)/, "回草稿时没按当前 tab 补拉");
 });
 
 // 上下文工作区：**平铺，不是面板**（2026-10-29 用户定：「不需要面板…我们完全可以平铺，
@@ -1981,11 +2024,17 @@ test("载荷：有一键折叠全部，且没有一键展开", () => {
   // ④ 全收起来时禁用（别给一个点了没反应的样子）
   assert.match(tpl, /:disabled="allCollapsed"/, "全折叠后按钮没禁用（会变成点不动的死按钮）");
 
-  // ⑤ 平铺样式：这个按钮也不许长成"盒子"
+  // ⑤ 平铺样式：这个按钮也不许长成"盒子"。
+  //    2026-11-02 起底色/边框收进共享的「幽灵按钮底座」（.icon-btn/.foot-btn/.edit-btn…），
+  //    所以这里同时钉两件事：底座确实去底去边框；`.collapse-all` 自己**没有**再上一套。
   const rule = css.match(/(?:^|\n)\.collapse-all\s*\{([^}]*)\}/)?.[1] ?? "";
+  const base = css.match(/\.icon-btn,\s*\.foot-btn,[\s\S]*?\{([^}]*)\}/)?.[1] ?? "";
   assert.ok(rule, "找不到 .collapse-all 样式");
-  assert.match(rule, /background:\s*none/, "折叠按钮有底色了（这三页是平铺，不放盒子）");
-  assert.match(rule, /border:\s*none/, "折叠按钮有边框了");
+  assert.ok(base, "找不到幽灵按钮底座（background:none/border:none 应该只有一处）");
+  assert.match(base, /background:\s*none/, "幽灵按钮底座没有去底色");
+  assert.match(base, /border:\s*none/, "幽灵按钮底座没有去边框");
+  assert.ok(!/background:/.test(rule), "折叠按钮自己又上了底色（应复用底座）");
+  assert.ok(!/border:/.test(rule), "折叠按钮自己又描了边（应复用底座）");
   assert.match(css, /\.collapse-all:disabled/, "没给禁用态样式 —— 禁用后看起来还能点");
 });
 
@@ -2416,7 +2465,9 @@ test("顶栏有向下阴影（替边框干活），且仍不描线", () => {
   const theme = readFileSync(join(SRC, "assets", "theme.css"), "utf8");
   const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, ""); // 判"有没有声明"要先剥注释
 
-  const headerRule = strip(css).match(/#chat-col > header \{[^}]*\}/);
+  // 只认**悬浮层那条**主规则（`position: absolute`）。不能按"第一个 #chat-col > header {"
+  // 取 —— 2026-11-02 窄屏媒体查询里另有一条调 gap/padding 的同名规则会排在它前面。
+  const headerRule = strip(css).match(/#chat-col > header \{(?=[^}]*position:\s*absolute)[^}]*\}/);
   assert.ok(headerRule, "找不到 #chat-col > header 那条规则");
 
   // ① 有阴影，且用的是 token（组件不许写死色值 —— theme.css 顶上那条规矩）。
@@ -2653,4 +2704,181 @@ test("容器 entrypoint：后端绑 0.0.0.0，且端口在启动前就解析好"
   const startAt = body.indexOf("-addr");
   assert.ok(portAt > 0, "没有 `PORT=${PORT:-8787}` 这个兜底");
   assert.ok(portAt < startAt, "端口在起后端之后才解析 —— 那时 $PORT 还是空的");
+});
+
+// ── 前端可用性收尾（2026-11-02：实看 390px 截图后补的）──────────────
+//
+// 三条都是"不报错、不误路由、构建也过"的那类：空草稿是一页纯黑、模型名被挤成一个字母、
+// 会话操作键小到手指点不准。钉住它们，免得下次改布局又悄悄退回去。
+test("空草稿首屏：有欢迎语与当前助手/模型，不是一整页纯黑", () => {
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.match(app, /v-if="draft && !chatRows\.length" class="draft-welcome"/,
+    "草稿空态没有欢迎块");
+  assert.match(app, /draftAgentName/, "欢迎块没给当前助手");
+  assert.match(app, /draftModelName/, "欢迎块没给当前模型");
+  assert.match(app, /直接在下面输入第一条消息开始/, "没说清下一步该做什么");
+  assert.match(css, /\.draft-welcome\s*\{/, "欢迎块没有样式（会与消息列挤在一起）");
+});
+
+test("移动端顶栏：模型名吃剩余空间，不再被挤成一个字母", () => {
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.match(css, /#chat-col > header \.model-anchor\s*\{[^}]*flex:\s*1 1 auto/,
+    "模型外壳不会伸缩 —— 窄屏只剩固定宽度");
+  assert.match(css, /#chat-col > header \.model-btn\s*\{[^}]*flex:\s*1 1 auto/,
+    "模型按钮自己不伸缩");
+  assert.match(css, /#chat-col > header \.model-caret\s*\{[^}]*display:\s*none/,
+    "窄屏还留着 8px 的下拉箭头，白占模型名的位置");
+});
+
+test("会话列表：条数/时间可见，操作键有能点中的尺寸", () => {
+  const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.match(bar, /relativeTime\(s\.updated_at\)/, "会话条目没有最近活动时间");
+  assert.match(bar, /s\.messages/, "会话条目没有消息条数");
+  assert.match(css, /\.session-item \.close,\s*\.session-item \.item-btn\s*\{[^}]*width:\s*1\.9em/,
+    "会话操作键的命中区又缩回去了");
+});
+
+test("空输入时的发送键不是向下箭头（那个位置会被读成「滚到底」）", () => {
+  const icons = readFileSync(join(SRC, "components", "icons.js"), "utf8");
+  const cont = icons.slice(icons.indexOf("cont:"), icons.indexOf("menu:"));
+  assert.ok(!cont.includes("M12 5v14"), "续写图标又变回向下箭头");
+  assert.match(cont, /M3 12a9 9/, "续写图标应是回转箭头");
+});
+
+test("公式比列宽时给提示（不能只是右缘一刀切）", () => {
+  const bubble = readFileSync(join(SRC, "components", "MessageBubble.vue"), "utf8");
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.match(bubble, /scrollWidth\s*>\s*el\.clientWidth/, "没有量公式是否真的溢出");
+  assert.match(bubble, /classList\.toggle\("scroll-x"/, "没给溢出的公式挂提示类");
+  assert.match(css, /\.katex-display\.scroll-x\s*\{[^}]*box-shadow/, "提示类没有视觉实现");
+});
+
+// ── 生产交付（2026-11-02：远端部署"响应慢"的静态侧）────────────────────────
+test("静态产物缓存：哈希 assets immutable，入口/SW 仍 no-cache", () => {
+  const vite = readFileSync(join(SRC, "..", "vite.config.js"), "utf8");
+  assert.match(vite, /assetCacheHeaders\(\)/, "vite 没挂缓存头插件");
+  assert.match(vite, /max-age=31536000, immutable/, "哈希资源没有 immutable");
+  assert.match(vite, /max-age=604800/, "字体没给一周缓存");
+  assert.match(vite, /path\.startsWith\("\/fonts\/"\)/, "字体与哈希资源没分开");
+});
+
+test("Inter 字体是子集（别把 300KB 全量塞回首屏）", () => {
+  const font = readFileSync(join(SRC, "..", "public", "fonts", "Inter-Variable.woff2"));
+  assert.ok(font.length < 150 * 1024, `Inter-Variable.woff2 是 ${font.length} 字节，子集应小于 150KB`);
+  // woff2 魔数（wOF2）—— 防的是有人把 TTF 改个后缀塞进来。
+  assert.equal(font.toString("ascii", 0, 4), "wOF2", "不是 WOFF2");
+});
+
+test("设置页：标题只有一套语言，六个 tab 同宽", () => {
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  // 所有 panel 的 h3 统一：正文色半粗 + 蓝色竖条；卡片不许再单独定义一份。
+  assert.match(css, /\.settings-cols \.panel h3\s*\{[^}]*color:\s*var\(--tg-text\)/, "h3 不是正文色半粗");
+  assert.match(css, /\.settings-cols \.panel h3::before\s*\{[^}]*background:\s*var\(--tg-link\)/, "h3 没有统一的蓝色竖条");
+  assert.ok(!/\.settings-card h3::before/.test(css), "卡片又给 h3 单独定义了一套竖条");
+  // 六个 tab 的宽度必须一起写，切 tab 不能忽宽忽窄。
+  const width = css.match(/#panel-appearance\s*,[^{]*#panel-provider\s*\{[^}]*max-width:\s*760px/);
+  assert.ok(width, "六个 panel 没有统一 760 宽");
+});
+
+test("开机请求：会话/Agent 不重复，重活按需，加载有骨架", () => {
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  // Agent 列表同一拍共享一发（顶栏 + 草稿首段/状态行都要它）。
+  assert.match(app, /function fetchAgentsOnce\(\)/, "没有 Agent 请求去重");
+  for (const fn of ["refreshAgents", "fillAgentSelect"]) {
+    const body = app.match(new RegExp(`(?:async )?function ${fn}\\([^)]*\\)[\\s\\S]*?\\n\\}`))?.[0] ?? "";
+    assert.match(body, /fetchAgentsOnce\(\)/, `${fn} 没走去重后的 Agent 请求`);
+  }
+  // boot 已经拉过 /sessions ⇒ enterSession 直接吃现成的。
+  assert.match(app, /enterSession\(last, sessions\)/, "开机恢复没把已拉到的会话列表传进去");
+  assert.match(app, /const sessions = preloaded \?\? await api\.listSessions\(\)/, "enterSession 仍无条件再拉一次 /sessions");
+  // 进会话不再无条件 POST /outgoing / GET /state：只在工作区看得见时按 tab 拉。
+  const enter = app.match(/async function enterSession\(id, preloaded = null\)[\s\S]*?\n\}/)?.[0] ?? "";
+  assert.ok(enter, "找不到 enterSession");
+  assert.ok(!/api\.outgoingPreview/.test(enter), "enterSession 又无条件预演历史载荷了");
+  assert.match(enter, /refreshContextLazy\(\)/, "进会话没按工作区 tab 懒加载");
+  // 加载空白用骨架撑住。
+  assert.match(app, /const loadingSession = ref\(true\)/, "没有 loadingSession 状态");
+  assert.match(app, /v-if="loadingSession" class="chat-skeleton"/, "消息列没有加载骨架");
+});
+
+// ── PWA 安装（2026-11-02）────────────────────────────────────────────────────
+//
+// 应用本身可安装（manifest / 图标 / SW 都在），但"能不能装"取决于**来源与浏览器**：
+// localhost/HTTPS 才有安全上下文；Chrome 系才有 beforeinstallprompt；iOS 只有分享菜单。
+// 安装入口必须把这几种情况说清楚，不能点下去毫无反应。
+test("PWA 安装说明：四种情况各有话说", () => {
+  assert.match(installGuidance({ secure: false, origin: "http://192.168.0.110:8788" }), /HTTPS/,
+    "局域网 HTTP 必须说清需要 HTTPS/localhost");
+  assert.match(installGuidance({ ios: true }), /添加到主屏幕/, "iOS 应指到分享菜单");
+  assert.match(installGuidance({ prompt: true }), /已准备好/, "浏览器给了事件时应说可以一键装");
+  assert.match(installGuidance({ standalone: true }), /独立窗口/, "装好后不该再劝人安装");
+  assert.match(installGuidance({}), /Chrome 菜单/, "没有事件时给手动入口");
+});
+
+test("PWA 安装入口：左栏有按钮，事件在模块求值时就挂上", () => {
+  const pwa = readFileSync(join(SRC, "utils", "pwa.js"), "utf8");
+  const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+
+  // 事件监听必须在模块顶层（if (typeof window...) 里面），不能等 mounted —— 挂晚了收不到。
+  assert.match(pwa, /if \(typeof window !== "undefined"\)\s*\{[\s\S]*beforeinstallprompt/,
+    "beforeinstallprompt 没有在模块求值时挂上");
+  assert.match(pwa, /e\.preventDefault\(\)/, "没拦浏览器的自动迷你条（自定义按钮会与它打架）");
+  assert.match(pwa, /prompt\.userChoice/, "没等用户选择就当作装完了");
+
+  assert.match(bar, /id="install-app"/, "左栏没有安装入口");
+  assert.match(bar, /installable \? "安装应用" : "安装说明"/, "安装入口没区分「能装」与「说明」");
+  assert.match(app, /@install="installApp"/, "安装按钮没有接到 App");
+  assert.match(app, /installGuidance\(\)/, "不能一键装时没有把原因说出来");
+});
+
+test("PWA 图标：尺寸对、换掉了纸飞机", () => {
+  const dir = join(SRC, "..", "public");
+  const sizeOf = (name) => {
+    const b = readFileSync(join(dir, name));
+    assert.equal(b.toString("ascii", 1, 4), "PNG", `${name} 不是 PNG`);
+    return { w: b.readUInt32BE(16), h: b.readUInt32BE(20) };
+  };
+  assert.deepEqual(sizeOf("pwa-192.png"), { w: 192, h: 192 });
+  assert.deepEqual(sizeOf("pwa-512.png"), { w: 512, h: 512 });
+  assert.deepEqual(sizeOf("pwa-maskable-512.png"), { w: 512, h: 512 });
+  assert.deepEqual(sizeOf("apple-touch-icon.png"), { w: 180, h: 180 });
+
+  const favicon = readFileSync(join(dir, "favicon.svg"), "utf8");
+  assert.ok(!favicon.includes("M3.714 3.048"), "favicon 还是旧纸飞机");
+  assert.match(favicon, /#60a5fa/, "favicon 没用新图标的主色");
+  assert.match(favicon, /M256 172c6 40/, "favicon 里没有星芒");
+});
+
+// ── CSS 复用（2026-11-02）────────────────────────────────────────────────────
+//
+// 幽灵按钮的 `background/border/cursor` 与几种文字色蒙层以前到处抄；现在各只有一处。
+// 这条防的是"下次加按钮时又顺手抄一遍"—— 抄了不会报错，只会让下一次调色改不动。
+test("CSS 复用：幽灵按钮底座与蒙层 token 只有一处", () => {
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  const theme = readFileSync(join(SRC, "assets", "theme.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+
+  // ① 底座只能有一份，且三件事齐全。
+  const base = css.match(/\.icon-btn,\s*\.foot-btn,[\s\S]*?\{([^}]*)\}/)?.[1] ?? "";
+  assert.ok(base, "找不到幽灵按钮底座");
+  assert.match(base, /background:\s*none/, "底座没有去底色");
+  assert.match(base, /border:\s*none/, "底座没有去边框");
+  assert.match(base, /cursor:\s*pointer/, "底座没有指针样式");
+
+  // ② 具体按钮不许再把这三条抄回来（只查最典型的四个）。
+  for (const sel of [".icon-btn", ".foot-btn", ".msg \\.edit-btn", ".link-btn"]) {
+    const rule = css.match(new RegExp(`${sel}\\s*\\{([^}]*)\\}`))?.[1] ?? "";
+    assert.ok(rule, `找不到 ${sel} 的规则`);
+    assert.ok(!/background:\s*none/.test(rule), `${sel} 又自己写了一遍 background:none（应复用底座）`);
+    assert.ok(!/border:\s*none/.test(rule), `${sel} 又自己写了一遍 border:none（应复用底座）`);
+    assert.ok(!/cursor:\s*pointer/.test(rule), `${sel} 又自己写了一遍 cursor:pointer（应复用底座）`);
+  }
+
+  // ③ 蒙层浓度 token 在 theme.css，main.css 只管引用。
+  for (const id of ["--mix-6", "--mix-8", "--mix-10", "--mix-13", "--mix-18"]) {
+    assert.match(theme, new RegExp(`${id}:\\s*color-mix`), `theme.css 缺少 ${id}`);
+  }
+  assert.ok(!/color-mix\(in srgb, var\(--tg-text\) 6%/.test(css), "main.css 又出现了写死的 6% 蒙层");
 });
