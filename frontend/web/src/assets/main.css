@@ -171,11 +171,20 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
  * 尺寸 1.8em（顶栏那两枚开关是 2em）—— 环是**仪表**，不该比开关更抢眼。
  * ⚠ 弧长不在 CSS 里算：TopBar 的 `<circle pathLength="100">` 把周长归一化成 100，
  *   dasharray 直接写百分数 ⇒ 改 r 也不用改代码。这里只管描边。 */
-#ctx-ring { flex: none; width: 1.8em; height: 1.8em; padding: 0; border: none; border-radius: 50%;
+#ctx-ring { flex: none; position: relative; width: 1.8em; height: 1.8em; padding: 0; border: none; border-radius: 50%;
   background: none; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
 #ctx-ring:hover { background: var(--mix-8); }
 #ctx-ring svg { display: block; width: 100%; height: 100%; transform: rotate(-90deg); } /* 起点转到 12 点方向 */
 #ctx-ring circle { fill: none; stroke-width: 3.2; }
+/* 环心数字（2026-11-02 合并后台任务）：还在跑的条数。尺寸跟环走，字号单独一层 ——
+ * 不跟 width 写在同一个元素上（em 叠乘会让数字缩成一行附注）。 */
+.ctx-ring-n { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-size: 0.68em; line-height: 1; font-variant-numeric: tabular-nums; color: var(--tg-hint); pointer-events: none; }
+#ctx-ring.busy .ctx-ring-n { color: var(--tg-text); opacity: 1; }
+/* 有后台任务时整个环转起来（圆心数字不动）。 */
+#ctx-ring.busy svg { animation: ctx-ring-spin 1.1s linear infinite; }
+@keyframes ctx-ring-spin { from { transform: rotate(-90deg); } to { transform: rotate(270deg); } }
+@media (prefers-reduced-motion: reduce) { #ctx-ring.busy svg { animation: none; } }
 .ctx-ring-track { stroke: color-mix(in srgb, var(--tg-text) 14%, transparent); }
 /* 绿 = 正常占用、红 = 超预算。**只有两档**：27px 的环上分不出第三种深浅，
  * 而"超预算"这个信号从前在状态行上有（整行变红），不能丢。 */
@@ -183,41 +192,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
   transition: stroke-dasharray 240ms ease-out, stroke 160ms linear; }
 #ctx-ring.over .ctx-ring-fill { stroke: var(--tg-destructive); }
 #ctx-ring.idle .ctx-ring-fill { stroke: none; }
-/* —— 后台任务徽标（右上角那一簇的**最左**，2026-11-01 用户定）——
- * 用户原话：「把后台任务也做成右上角那个圆环一样的东西……显示一个数字」→「它应该位于右上角栏的
- * 最左侧。而且，加个底吧。在有后台任务时会显示加载动画」。
- * ⇒ 一颗 1.8em 的**实心圆片**（与旁边两枚开关同一个底 `--tg-secondary-bg`，于是它读起来是
- *   "能点的按钮"而不是一个飘着的数字），圆里是在跑的条数；有任务时外圈一道弧**转起来** ——
- *   动比色更能在余光里看出"正在干活"。
- *
- * ⚠ 弧用 `inset: 0` 画在**圆片自己的边缘上**，不往外长：往外长会挤到旁边的切换开关，
- *   也会让这一簇的基线跳动（顶栏是 `absolute` 悬浮层，高度一变就压住第一条消息）。
- * ⚠ 尺寸 (1.8em) 与字号 (0.72em) **不能写在同一个元素上** —— em 会叠乘：
- *   1.8 × 0.72 = 1.296em ⇒ 只有 20.7px，比环的 28.8px 小一圈，看着像个附注（踩过）。
- *   所以数字包一层 `.task-badge-n`。
- * ⚠ 0 个时**不藏、也不转**：藏起来的话"有没有任务在跑"就得靠猜（与环的 `.idle` 同一套语言）。
- */
-.task-badge { position: relative; flex: none; width: 1.8em; height: 1.8em; padding: 0; border: none;
-  border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
-  font: inherit; line-height: 1; background: var(--tg-secondary-bg); color: var(--tg-hint);
-  -webkit-tap-highlight-color: transparent; }
-.task-badge-n { font-size: 0.72em; line-height: 1; }
-.task-badge.live { color: var(--tg-link); }
-.task-badge:hover { filter: brightness(1.25); }
-.task-badge:focus-visible { outline: 2px solid color-mix(in srgb, var(--tg-link) 55%, transparent); outline-offset: 1px; }
-/* 转圈：一圈淡底 + 两段亮弧（top/right 拼出半圈）—— 转到一半时看得出"它在动"，又不闪眼。 */
-.task-badge.live::before { content: ""; position: absolute; inset: 0; border-radius: 50%;
-  border: 2px solid color-mix(in srgb, var(--tg-link) 26%, transparent);
-  border-top-color: var(--tg-link); border-right-color: var(--tg-link);
-  animation: task-spin 0.9s linear infinite; }
-@keyframes task-spin { to { transform: rotate(360deg); } }
-/* 减少动效：不转，留一道实心弧 —— "在跑"这件事本身不能丢。 */
-@media (prefers-reduced-motion: reduce) {
-  .task-badge.live::before { animation: none; border-color: var(--tg-link); opacity: 0.55; }
-}
-/* 浮板：与 Agent / 上下文那两块同族（都是 `.agent-menu`），只是内容一列一列地排。
- * `right: 1em` 而不是 `left: 1em` —— 它挂在最右缘，浮板该往左展开，不该往右出界。 */
-.task-menu { left: auto; right: 1em; min-width: 16em; max-width: min(26em, calc(100vw - 2em)); }
+/* 后台任务明细现在住上下文环的浮板里（2026-11-02 合并）；任务行的样式继续用下面这组。 */
 .task-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.6em;
   padding: 0.3em 0.55em 0.45em; border-bottom: 1px solid var(--mix-10); }
 .task-head b { font-weight: 600; color: var(--tg-text); }
@@ -306,7 +281,12 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .ws-draft-note { flex: none; margin: 0 auto; max-width: var(--read-col, 920px); width: 100%;
   box-sizing: border-box; color: var(--tg-hint); font-size: 0.85em; line-height: 1.6; padding: 0; }
 /* 浮板：与 Agent 选人同一族（同底、同阴影、同圆角），只是从右边缘掉下来。 */
-.ctx-menu { left: auto; right: 0.35em; min-width: 15em; max-width: 19em; padding: 0.6em 0.7em 0.55em; max-height: none; }
+.ctx-menu { left: auto; right: 0.35em; min-width: 18em; max-width: min(24em, calc(100vw - 2em)); padding: 0.6em 0.7em 0.55em;
+  max-height: min(76vh, 38em); overflow-y: auto; overscroll-behavior: contain; }
+/* 环面板的两个 tab（2026-11-02）：上下文状态 / 任务。两堆东西不再上下叠。 */
+.ctx-tabs { align-self: flex-start; margin-bottom: 0.45em; }
+.ctx-tab-count { margin-left: 0.35em; font-size: 0.86em; opacity: 0.8; font-variant-numeric: tabular-nums; }
+.ctx-tasks { padding-top: 0.1em; }
 .ctx-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.6em; }
 .ctx-used { font-size: 1.05em; font-weight: 600; }
 .ctx-sep { margin: 0 0.12em; color: var(--tg-hint); font-weight: 400; }
@@ -320,7 +300,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 /* 明细：左标签右数值（数值等宽数字，滚动刷新时不会左右抖）。 */
 .ctx-rows { margin: 0; }
 .ctx-row { display: flex; align-items: baseline; gap: 0.6em; padding: 0.22em 0; }
-.ctx-row dt { flex: none; width: 5.2em; color: var(--tg-hint); }
+.ctx-row dt { flex: none; width: 6.8em; color: var(--tg-hint); }
 .ctx-row dd { flex: 1; margin: 0; text-align: right; word-break: break-word; }
 .ctx-note { margin: 0.5em 0 0; padding-top: 0.45em; border-top: 1px solid var(--line);
   color: var(--tg-hint); font-size: 0.85em; line-height: 1.4; }
@@ -821,7 +801,7 @@ html[data-composer="solid"] #composer #input:focus { outline: none; border-color
 /* 两颗圆钮在实心栏里保留圆形（它们是按钮，不是"卡"）—— 只把阴影去掉，贴着实心底更干净。 */
 html[data-composer="solid"] #composer button { box-shadow: none; }
 /* ⚠ 这里原本有"任务行进栏"那条规则（`.taskline` 占一整行、`order: -1` 排在输入框上面）
- * 和上面「两个隔间」那段历史。**2026-11-01 整块删掉了**：后台任务搬进顶栏徽标（`#task-badge`），
+ * 和上面「两个隔间」那段历史。**2026-11-01 整块删掉了**：后台任务已并进顶栏的上下文环（`#ctx-ring`），
  * 输入栏上方不再有任何小字 —— 于是 `flex-wrap` 也没有对象了（`#composer` 不再换行）。
  * 别把它加回来：同一个数字住两处，只会让两处都可能过期。
  */
@@ -1046,6 +1026,10 @@ button.toggle.on .knob { transform: translateX(1.1em); }
 .detail-pane .pane-section { padding-bottom: 0.2em; }
 /* 页签条在这一层里不要那个下外边距留下的空档（保存行要贴在它下面）。 */
 .detail-pane > .settings-nav { margin-bottom: 0.55em; }
+/* 渠道详情里的模型清单（只读）：条目可能上百个，给内部滚动 + 断掉滚动链。 */
+.provider-models { max-height: 22em; overflow: auto; overscroll-behavior: contain; border-radius: var(--r-card); }
+.provider-models table.plist { margin: 0; }
+.model-upstream { color: var(--tg-hint); font-size: 0.85em; white-space: normal; word-break: break-all; }
 .plist { width: 100%; border-collapse: collapse; }
 .plist th, .plist td { text-align: left; padding: 0.3em 0.6em; border-bottom: 1px solid var(--line); white-space: nowrap; line-height: 1.35; }
 .plist th { color: var(--tg-hint); font-weight: normal; font-size: 0.85em; }
@@ -1070,6 +1054,6 @@ button.toggle.on .knob { transform: translateX(1.1em); }
 .scale-value { min-width: 3.2em; text-align: right; color: var(--tg-hint); font-weight: 500; }
 /* 等宽数字（2026-11-02）：这一族数字会随流式/滚动变化，宽度不一就会左右跳。
  * 以前 14 条规则各写一遍 `font-variant-numeric`，现在只在这里写一次。 */
-.model-group-count, .task-badge-n, .task-time, .task-progress, .ctx-used, .ctx-pct,
+.model-group-count, .task-time, .task-progress, .ctx-used, .ctx-pct,
 .ctx-row dd, .pv-idx, .session-main .meta, .msg .msg-idx, .msg .msg-foot,
 .sum-range, .sum-pos, .scale-value { font-variant-numeric: tabular-nums; }

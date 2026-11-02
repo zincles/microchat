@@ -1156,7 +1156,7 @@ async function boot() {
     location.reload();
     return;
   }
-  connText = `已连接 v${health.version ?? "?"}`;
+  connText = `已连接 · v${health.version ?? "?"}`;
   // 压缩面板的默认块数读的是实例级 chat 配置（现在没有"设置专属"这回事了：本机单人）。
   api.getChat().then((c) => { compactDefault.value = c?.compact_blocks ?? null; }).catch(() => {});
   // 回到"上次在看的那条会话"（2026-10-11 用户定）：刷新 / 被安卓丢弃后重载 ⇒ 不再是一张空草稿。

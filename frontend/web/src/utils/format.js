@@ -51,13 +51,29 @@ export function formatThinkLabel(reasoningMs) {
   return `思考过程（${(reasoningMs / 1000).toFixed(1)}s）`;
 }
 
-// 状态行：当前助手 + phase/耗时。
+// phaseText：把后端的相位词翻成人话（面板与悬停共用）。
+export function phaseText(phase) {
+  return { idle: "空闲", pending: "等待响应", streaming: "生成中", error: "出错" }[phase] ?? "空闲";
+}
+
+// formatDuration：耗时说人话（面板与悬停共用）。毫秒只在不到一秒时出现。
+export function formatDuration(ms) {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return "";
+  if (ms < 1000) return `${Math.max(0.1, Math.round(ms / 100) / 10)} 秒`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)} 秒`;
+  const m = Math.floor(ms / 60000);
+  const s = Math.round((ms % 60000) / 1000);
+  return s ? `${m} 分 ${s} 秒` : `${m} 分钟`;
+}
+
+// 状态行：当前助手 + 这一轮在干什么/多久。
 // ⚠ 上下文占用**不在这一行**（2026-10-28 用户定）：它挪到右上角那枚小环（TopBar 的 `#ctx-ring`），
 // 点开才看明细。所以这里不接 ctx —— 同一个数字住两处，只会让两处都可能过期。
 export function formatStatusLine({ phase, elapsedMs, agent }) {
   // 2026-10-14：中间那格从"渠道/模型"换成"当前助手" —— 模型住顶栏左上（别两处重复），
   // 助手住这儿（顶栏已无 Agent 下拉）。
-  return `${agent ?? "?"}｜${phase ?? "idle"}${elapsedMs != null ? ` ${elapsedMs}ms` : ""}`.trim();
+  const t = elapsedMs != null ? ` ${formatDuration(elapsedMs)}` : "";
+  return `${agent ?? "?"}｜${phaseText(phase)}${t}`.trim();
 }
 
 // contextRatio：已用 / 输入预算，夹到 0..1（分母缺失或为 0 ⇒ 0）。
@@ -76,7 +92,7 @@ export function contextPercentText(ctx) {
   const used = Number(ctx?.used_tokens ?? 0);
   if (!(used > 0)) return "0%";
   const r = contextRatio(ctx) * 100;
-  if (r < 0.1) return "<0.1%";
+  if (r < 0.1) return "不到 0.1%";
   if (r < 10) return `${Math.floor(r * 10) / 10}%`;
   return `${Math.floor(r)}%`;
 }
@@ -114,7 +130,7 @@ export function formatTokens(n) {
 export function contextTitle(ctx) {
   if (!ctx) return "上下文占用（还没有会话）";
   const num = (v) => Number(v ?? 0).toLocaleString("en-US");
-  return `输入预算 ${num(ctx.budget_tokens)} = 模型上下文 ${num(ctx.ctx_len)} − 输出预留 ${num(ctx.max_output)}`;
+  return `输入预算 ${num(ctx.budget_tokens)} tokens = 上下文上限 ${num(ctx.ctx_len)} − 输出预留 ${num(ctx.max_output)}`;
 }
 
 // formatCost：上游报的"这一发花了多少美元"（2026-10-20，OpenRouter 的 usage.cost）。

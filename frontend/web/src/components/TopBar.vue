@@ -10,7 +10,7 @@
 // 会话抬头不在顶栏（左栏列表高亮 + 状态行都有它）。
 import { ref, computed, nextTick, watch } from "vue";
 import { ICONS } from "./icons.js";
-import { modelKey, parseModelKey, formatTokens, formatStatusLine, contextArc, contextPercentText, contextTitle, contextOverBudget, curModelLabelOf, filterModelGroups } from "../utils/format.js";
+import { modelKey, parseModelKey, formatTokens, formatStatusLine, formatDuration, phaseText, contextArc, contextPercentText, contextTitle, contextOverBudget, curModelLabelOf, filterModelGroups } from "../utils/format.js";
 
 defineProps({
   // leftHidden：左栏收着 ⇒ 顶栏出它那枚开关；栏开着 ⇒ 开关在栏自己头上（按钮跟着它控制的东西走）。
@@ -53,7 +53,6 @@ function toggleModel() {
   if (!modelOpen.value) return;
   agentOpen.value = false;
   ctxOpen.value = false;
-  taskOpen.value = false;
   modelQuery.value = "";
   modelActive.value = -1;
   // 打开就聚焦搜索框：几百个模型，第一次动作必然是打字。
@@ -130,6 +129,8 @@ function setAgents(list, cur) { agents.value = list ?? []; if (cur !== undefined
 //   不必在 JS 里算 2πr（r 改了也不用改代码）。
 const ctx = ref(null);
 const ctxOpen = ref(false);
+// 环面板的两个 tab（2026-11-02 用户定）：上下文状态 / 正在运行的任务。
+const ctxTab = ref("context");
 // 弧长（含"用了就得看得见"的最小弧）在 `utils/format.js` 的 `contextArc` 里 —— 那边才测得到。
 const ctxArc = computed(() => contextArc(ctx.value));
 // dasharray="a b" 且 a+b=100 ⇒ 正好一道弧、没有第二道。
@@ -138,19 +139,23 @@ const ctxOver = computed(() => contextOverBudget(ctx.value));
 const ctxRows = computed(() => {
   const c = ctx.value;
   if (!c) return [];
-  const num = (v) => Number(v ?? 0).toLocaleString("en-US");
   const rows = [
-    ["输入预算", `${num(c.budget_tokens)} = 上下文 ${num(c.ctx_len)} − 输出预留 ${num(c.max_output)}`],
-    ["剩余", formatTokens(c.remaining_tokens)],
-    ["压缩触发", c.trigger_tokens != null ? `${formatTokens(c.trigger_tokens)}（到这儿自动压）` : "没开（手动 /compact）"],
+    ["剩余可用", `${formatTokens(c.remaining_tokens)} tokens`],
+    ["自动压缩阈值", c.trigger_tokens != null ? `${formatTokens(c.trigger_tokens)} tokens` : "未启用"],
   ];
-  // 上一次真发出去的 prompt_tokens（上游报的实数）与估算并排 —— 估算偏了看得见。
-  if (c.last_prompt_tokens != null) rows.push(["上一发实测", `${formatTokens(c.last_prompt_tokens)}（这格是估的：${formatTokens(c.used_tokens)}）`]);
+  // 上一次真发出去的 prompt_tokens（上游报的实数）—— 与本次估算值分开记。
+  if (c.last_prompt_tokens != null) rows.push(["上次实际用量", `${formatTokens(c.last_prompt_tokens)} tokens`]);
   return rows;
 });
-function toggleCtx() { ctxOpen.value = !ctxOpen.value; if (ctxOpen.value) { agentOpen.value = false; modelOpen.value = false; taskOpen.value = false; } }
-function toggleAgent() { agentOpen.value = !agentOpen.value; if (agentOpen.value) { ctxOpen.value = false; modelOpen.value = false; taskOpen.value = false; } }
-function toggleTasks() { taskOpen.value = !taskOpen.value; if (taskOpen.value) { agentOpen.value = false; modelOpen.value = false; ctxOpen.value = false; } }
+// 预算这句是说给"为什么不是 100 万"的：只解释一次，不把算式塞进表格。
+const ctxBudgetNote = computed(() => {
+  const c = ctx.value;
+  if (!c) return "";
+  const num = (v) => Number(v ?? 0).toLocaleString("en-US");
+  return `输入预算 ${num(c.budget_tokens)} tokens = 上下文上限 ${num(c.ctx_len)} − 输出预留 ${num(c.max_output)}。`;
+});
+function toggleCtx() { ctxOpen.value = !ctxOpen.value; if (ctxOpen.value) { agentOpen.value = false; modelOpen.value = false; } }
+function toggleAgent() { agentOpen.value = !agentOpen.value; if (agentOpen.value) { ctxOpen.value = false; modelOpen.value = false; } }
 // setContext：App 每轮 refreshStatusline 喂一次（草稿态传 null）。
 function setContext(c) { ctx.value = c ?? null; }
 
@@ -162,37 +167,61 @@ function setContext(c) { ctx.value = c ?? null; }
 //
 // ⚠ 这格是 `/tasks` 的**唯一**落点（从前输入框上方那行小字**已经删掉**）：同一个数字住两处，
 //   只会让两处都可能过期 —— 那是 2026-10-28 状态行搬进环的浮板时定下的规矩，别再犯。
-// ⚠ 0 个时**仍然在**、只是压暗（跟环的 `.idle` 一个道理：常驻但安静）。藏起来的话，
-//   "怎么知道有没有任务在跑"就变成了碰运气。
+// ⚠ 0 个时环心不显示数字（2026-11-02 用户定），环本身仍在、不转；有任务才出现数字。
 const tasks = ref(null);
-const taskOpen = ref(false);
 const taskRunning = computed(() => tasks.value?.running ?? 0);
-// 浮板最多列几条（跑着的永远在最前，后端已排序；下面补几条刚结束的）。
+// 浮板只列**正在跑**的（2026-11-02 用户定：这个 tab 是「正在运行的任务」）。
+// 后端已把跑着的排前面；最多 12 条，避免面板被历史记录撑长。
 const TASK_ROWS = 12;
-const taskRecords = computed(() => (tasks.value?.tasks ?? []).slice(0, TASK_ROWS));
-// 帽子上的数字：>99 收成 "99+"（1.8em 的圆装不下三位数；真数在 title 与浮板里）。
-const taskCountText = computed(() => (taskRunning.value > 99 ? "99+" : String(taskRunning.value)));
-const taskTitle = computed(() => (taskRunning.value ? `后台任务：${taskRunning.value} 个在跑` : "后台任务：现在没有在跑"));
+const taskRecords = computed(() => (tasks.value?.tasks ?? []).filter((t) => !t.finished_at).slice(0, TASK_ROWS));
 // taskElapsed：跑了多久 / 一共跑了多久。`now` 用**后端**那一份（前端时钟与它不一致也照样对）。
 function taskElapsed(t) {
   const now = tasks.value?.now ?? Date.now();
-  const ms = (t.finished_at ?? now) - (t.started_at ?? now);
-  if (!(ms >= 0)) return "";
-  if (ms < 1000) return `${ms}ms`;
-  return `${(ms / 1000).toFixed(1)}s`;
+  const ms = (now - (t.started_at ?? now));
+  return formatDuration(ms);
 }
 // —— 队列任务（2026-11-01 用户定）——
 //
 // 一个队列 = 一串**串行**跑的同种原子任务（现在只有压缩）。面板上它是**单独一栏**：
 // 队列说"这一大批跑到第几步"，下面的原子任务说"此刻在跑哪一发" —— 两层东西，别塞一个列表。
 const queues = computed(() => tasks.value?.queues ?? []);
-const queueRunning = computed(() => queues.value.filter((q) => !q.finished_at).length);
+// 只留还没结束的队列：结束的跑完就消失，别在「正在运行」里冒充活人。
+const runningQueues = computed(() => queues.value.filter((q) => !q.finished_at));
+const queueRunning = computed(() => runningQueues.value.length);
 // 转圈看的是"有没有活在跑"：原子任务、队列，任一都算（队列两步之间那几毫秒也算）。
 const taskBusy = computed(() => taskRunning.value > 0 || queueRunning.value > 0);
+// 环心数字：>99 收成 "99+"（1.8em 的圆装不下三位数；真数在 title 与浮板里）。
+// 队列与它当前那一步原子任务是同一件事，用 max 避免重复计数；队列两步之间也算 1。
+const activeTaskCount = computed(() => Math.max(taskRunning.value, queueRunning.value));
+const taskCountText = computed(() => (activeTaskCount.value > 99 ? "99+" : String(activeTaskCount.value)));
+// 环的可见弧：正常跟上下文占用；有任务在跑时至少留一小段，让"在转"看得见
+//（否则占用很低时只有 2/100，或者草稿完全没有弧，转起来跟没转一样）。
+const ringDash = computed(() => {
+  if (!taskBusy.value) return ctxDash.value;
+  // 有任务在跑时至少留一小段可见的弧：占用很低时原本只有 2/100，转起来像没转。
+  const arc = Math.max(ctxArc.value, 18);
+  return `${arc} ${100 - arc}`;
+});
+// 环的 title / aria：把"在跑什么"和上下文占用一起说清。
+const taskTitle = computed(() => {
+  if (!taskBusy.value) return "后台任务：当前无运行任务";
+  const q = queueRunning.value ? ` · ${queueRunning.value} 个队列` : "";
+  return `后台任务：${taskRunning.value} 个运行中${q}`;
+});
 
 // 大类的中文名 —— **只有这一份**。后端给 `group`（llm / plain），前端不按 kind 猜：
 // 猜就会与 `task.Kind.Group()` 分岔，而且不报错，只是"某类任务挂到了错的组里"。
-const GROUP_LABELS = { llm: "LLM 生成", plain: "一般" };
+const GROUP_LABELS = { llm: "模型调用", plain: "其他任务" };
+// 任务种类的人话名（原始 kind 是给机器看的，`refresh_models` 这种不该出现在面板里）。
+const TASK_KIND_LABELS = {
+  refresh_models: "刷新模型", turn: "对话", compact: "压缩", title: "起标题",
+  reroll: "重摇", judgement: "判断",
+};
+// 标题常常已经以种类名开头（"刷新模型 · opendesign"）⇒ 别把同一个词在行首再印一遍。
+function taskKindText(t) {
+  const label = TASK_KIND_LABELS[t.kind] || "任务";
+  return t.title && t.title.startsWith(label) ? "" : label;
+}
 const taskGroups = computed(() => {
   const buckets = new Map();
   for (const t of taskRecords.value) {
@@ -214,12 +243,12 @@ const status = ref(null);
 const statusRows = computed(() => {
   const s = status.value;
   if (!s) return [];
-  const phase = `${s.phase ?? "idle"}${s.elapsedMs != null ? ` · ${s.elapsedMs}ms` : ""}`;
-  return [["连接", s.conn || "未连接"], ["助手", s.agent || "?"], ["运行", phase]];
+  const phase = `${phaseText(s.phase)}${s.elapsedMs != null ? ` · ${formatDuration(s.elapsedMs)}` : ""}`;
+  return [["连接状态", s.conn || "未连接"], ["当前助手", s.agent || "?"], ["运行状态", phase]];
 });
 function setStatus(s) { status.value = s ?? null; }
 // 悬停解释 = 状态一句 + 预算一句（两处都是"一眼看不清、要解释"的东西）。
-const ringTitle = computed(() => [formatStatusLine(status.value ?? {}), contextTitle(ctx.value)].filter(Boolean).join("\n"));
+const ringTitle = computed(() => [formatStatusLine(status.value ?? {}), contextTitle(ctx.value), taskTitle.value].filter(Boolean).join("\n"));
 
 defineExpose({ setSession, setModels, setAgents, setContext, setStatus, setTasks });
 </script>
@@ -299,27 +328,7 @@ defineExpose({ setSession, setModels, setAgents, setContext, setStatus, setTasks
       </template>
     </span>
     <span class="header-right">
-      <!-- 后台任务（2026-11-01 用户定；同日二改：「它应该位于右上角栏的最左侧。而且，加个底吧。
-           在有后台任务时会显示加载动画」）—— 圆片里是**还在跑**的条数，有任务时外圈一道弧转起来。
-           放**最左**：这一簇里只有它是"会自己变"的仪表，靠左不与环、开关抢位置；
-           从右往左读是「占用 ← 视图 ← 任务」，从"现在在忙什么"读到"上下文有多满"。
-           ⚠ 数字包一层 `.task-badge-n`：**尺寸用根 em、字号才用 0.72em** ——
-             两者写在同一个元素上会叠乘（1.8em × 0.72 = 20.7px，比环的 28.8px 小一圈，
-             看起来像个附注；踩过）。 -->
-      <button
-        id="task-badge"
-        class="task-badge"
-        :class="{ live: taskBusy }"
-        type="button"
-        :title="taskTitle"
-        aria-label="后台任务"
-        :aria-expanded="taskOpen ? 'true' : 'false'"
-        @click="toggleTasks"
-      ><span class="task-badge-n">{{ taskCountText }}</span></button>
-      <!-- 🔀 聊天 / 上下文（2026-10-29 用户定）：「每个对话分为俩部分：对话界面 和 上下文工作区
-           界面」，开关在**绿环左边**。放在这一簇里因为它和环是同一件事的两面 ——
-           环说"占了多少"，这块说"占的是什么"。
-           用 role=tablist 而不是两枚普通按钮：它切的是**视图**，选中状态要能被读屏念出来。 -->
+      <!-- 聊天 / 上下文（2026-10-29 用户定）：开关在环左边；环说"占了多少"，这块说"占的是什么"。 -->
       <span class="ws-switch" role="tablist" aria-label="工作区">
         <button
           type="button"
@@ -342,21 +351,24 @@ defineExpose({ setSession, setModels, setAgents, setContext, setStatus, setTasks
       </span>
       <!-- 顺序是**环在左、开关在右**（2026-10-28 用户定）：开关是"控制栏的按钮"，
            它是这一簇的锚，位置稳定；环是随状态变的仪表，挂在它左边不抢锚点。 -->
-      <!-- 上下文占比环：环长 = 已用 / 输入预算；绿正常、红超预算。点开看明细。 -->
+      <!-- 上下文占比环（2026-11-02 合并后台任务）：环长 = 已用 / 输入预算；绿正常、红超预算。
+           圆心放**还在跑的后台任务数**；有任务时整个环转起来。点开是同一块面板，
+           两个 tab：上下文数字 / 运行任务明细。 -->
       <button
         id="ctx-ring"
         class="ctx-ring"
-        :class="{ over: ctxOver, idle: !ctx }"
+        :class="{ over: ctxOver, idle: !ctx, busy: taskBusy }"
         type="button"
         :title="ringTitle"
-        aria-label="上下文占用"
+        aria-label="上下文占用与后台任务"
         :aria-expanded="ctxOpen ? 'true' : 'false'"
         @click="toggleCtx"
       >
         <svg viewBox="0 0 32 32" aria-hidden="true">
           <circle class="ctx-ring-track" cx="16" cy="16" r="13" />
-          <circle class="ctx-ring-fill" cx="16" cy="16" r="13" pathLength="100" :stroke-dasharray="ctxDash" />
+          <circle class="ctx-ring-fill" cx="16" cy="16" r="13" pathLength="100" :stroke-dasharray="ringDash" />
         </svg>
+        <span v-if="activeTaskCount > 0" class="ctx-ring-n">{{ taskCountText }}</span>
       </button>
     </span>
     <template v-if="agentOpen">
@@ -379,11 +391,19 @@ defineExpose({ setSession, setModels, setAgents, setContext, setStatus, setTasks
     </template>
     <template v-if="ctxOpen">
       <div class="agent-menu-backdrop" @click="ctxOpen = false"></div>
-      <div class="agent-menu ctx-menu" :class="{ over: ctxOver }" role="dialog" aria-label="上下文与运行状态">
+      <div class="agent-menu ctx-menu" :class="{ over: ctxOver }" role="dialog" aria-label="上下文与任务">
+        <div class="ws-switch ctx-tabs" role="tablist" aria-label="上下文与任务">
+          <button type="button" class="ws-tab" role="tab" :aria-selected="ctxTab === 'context'"
+            :class="{ sel: ctxTab === 'context' }" @click="ctxTab = 'context'">上下文</button>
+          <button type="button" class="ws-tab" role="tab" :aria-selected="ctxTab === 'tasks'"
+            :class="{ sel: ctxTab === 'tasks' }" @click="ctxTab = 'tasks'">任务<span
+              v-if="activeTaskCount > 0" class="ctx-tab-count">{{ taskCountText }}</span></button>
+        </div>
+        <template v-if="ctxTab === 'context'">
         <template v-if="ctx">
           <div class="ctx-head">
-            <b class="ctx-used">{{ formatTokens(ctx.used_tokens) }}<span class="ctx-sep">/</span>{{ formatTokens(ctx.budget_tokens) }}</b>
-            <b class="ctx-pct" :class="{ over: ctxOver }">{{ contextPercentText(ctx) }}</b>
+            <b class="ctx-used">已用 {{ formatTokens(ctx.used_tokens) }} / {{ formatTokens(ctx.budget_tokens) }}</b>
+            <b class="ctx-pct" :class="{ over: ctxOver }">{{ ctxOver ? "超出预算" : contextPercentText(ctx) }}</b>
           </div>
           <div class="ctx-bar"><i :style="{ width: `${ctxArc}%` }"></i></div>
           <dl class="ctx-rows">
@@ -392,85 +412,80 @@ defineExpose({ setSession, setModels, setAgents, setContext, setStatus, setTasks
               <dd>{{ v }}</dd>
             </div>
           </dl>
-          <p class="ctx-note">分母是输入预算（上下文减去输出预留），不是模型名义上下文。</p>
+          <p class="ctx-note">{{ ctxBudgetNote }}</p>
         </template>
-        <p v-else class="agent-empty">这是新对话，还没有可统计的上下文。</p>
+        <p v-else class="agent-empty">当前会话暂无上下文数据。</p>
         <dl v-if="statusRows.length" class="ctx-rows ctx-rows-status">
           <div v-for="[k, v] in statusRows" :key="k" class="ctx-row">
             <dt>{{ k }}</dt>
             <dd>{{ v }}</dd>
           </div>
         </dl>
-      </div>
-    </template>
-    <template v-if="taskOpen">
-      <div class="agent-menu-backdrop" @click="taskOpen = false"></div>
-      <div class="agent-menu task-menu" role="dialog" aria-label="后台任务">
-        <div class="task-head">
-          <b>{{ taskRunning ? `${taskRunning} 个在跑` : "没有在跑的任务" }}</b>
-          <span v-if="queues.length" class="task-total">{{ queues.length }} 个队列</span>
+        </template>
+        <template v-else>
+        <!-- 正在运行的任务（2026-11-02 分 tab）：队列单独一栏，原子任务按大类分组。
+             结束的立刻消失 —— 这个 tab 的名字就是"正在运行"。取消按钮只在还能停时画。 -->
+        <div class="ctx-tasks">
+          <div class="task-head">
+            <b>{{ taskBusy ? "运行中" : "当前无运行任务" }}</b>
+            <span v-if="taskBusy" class="task-total">
+              {{ taskRunning }} 个任务<template v-if="queueRunning"> · {{ queueRunning }} 个队列</template>运行中
+            </span>
+          </div>
+          <p v-if="!tasks" class="agent-empty">无法读取任务状态（服务未响应）。</p>
+          <p v-else-if="!taskBusy" class="agent-empty">
+            对话生成、上下文压缩、模型列表刷新等任务会显示在这里。
+          </p>
+          <template v-else>
+            <template v-if="runningQueues.length">
+              <div class="task-group-head">队列</div>
+              <ul class="task-list">
+                <li
+                  v-for="q in runningQueues"
+                  :key="q.id"
+                  class="task-row task-queue"
+                  :class="{ failed: !!q.error }"
+                >
+                  <span class="task-kind">{{ taskKindText(q) || "队列" }}</span>
+                  <span class="task-label" :title="q.title || '队列'">
+                    {{ q.title || "队列" }}
+                    <b class="task-progress">第 {{ q.index }} / {{ q.total }} 步</b>
+                    <span v-if="q.error" class="task-why">{{ q.error }}</span>
+                  </span>
+                  <button
+                    type="button"
+                    class="task-cancel"
+                    title="取消这个队列（在飞的那一发也一起掐断）"
+                    @click.stop="emit('cancel-queue', q.id)"
+                  >取消</button>
+                </li>
+              </ul>
+            </template>
+            <template v-for="g in taskGroups" :key="g.key">
+              <div class="task-group-head">{{ g.label }}</div>
+              <ul class="task-list">
+                <li
+                  v-for="t in g.items"
+                  :key="t.id"
+                  class="task-row"
+                  :class="{ failed: !!t.error }"
+                >
+                  <span v-if="taskKindText(t)" class="task-kind">{{ taskKindText(t) }}</span>
+                  <span class="task-label" :title="t.title">{{ t.title || "任务" }}</span>
+                  <button
+                    v-if="t.cancelable"
+                    type="button"
+                    class="task-cancel"
+                    title="按停这个任务（已经写下的东西不受影响：取消 = 没做过）"
+                    @click.stop="emit('cancel-task', t.id)"
+                  >取消</button>
+                  <span v-else class="task-time">{{ taskElapsed(t) }}</span>
+                </li>
+              </ul>
+            </template>
+          </template>
         </div>
-        <p v-if="!tasks" class="agent-empty">读不到任务面板（后端没应？）。</p>
-
-        <!-- 队列（2026-11-01）：单独一栏，带进度与取消。
-             它跑的时候下面那栏会同时出现"当前这一步"的原子任务 —— 那是两层，不是重复。 -->
-        <template v-if="queues.length">
-          <div class="task-group-head">队列</div>
-          <ul class="task-list">
-            <li
-              v-for="q in queues"
-              :key="q.id"
-              class="task-row task-queue"
-              :class="{ done: q.finished_at, failed: !!q.error }"
-            >
-              <span class="task-kind">{{ q.kind }}</span>
-              <span class="task-label" :title="q.title || '队列'">
-                {{ q.title || "队列" }}
-                <b class="task-progress">{{ q.index }}/{{ q.total }}</b>
-                <span v-if="q.error" class="task-why">{{ q.error }}</span>
-              </span>
-              <button
-                v-if="!q.finished_at"
-                type="button"
-                class="task-cancel"
-                title="取消这个队列（在飞的那一发也一起掐断）"
-                @click.stop="emit('cancel-queue', q.id)"
-              >取消</button>
-              <span v-else class="task-time">{{ q.state }}</span>
-            </li>
-          </ul>
         </template>
-
-        <!-- 原子任务：按大类分组（`group` 由后端给，见 task.Kind.Group） -->
-        <template v-for="g in taskGroups" :key="g.key">
-          <div class="task-group-head">{{ g.label }}</div>
-          <ul class="task-list">
-            <li
-              v-for="t in g.items"
-              :key="t.id"
-              class="task-row"
-              :class="{ done: t.finished_at, failed: !!t.error }"
-            >
-              <span class="task-kind">{{ t.kind || "?" }}</span>
-              <span class="task-label" :title="t.title">{{ t.title || "—" }}</span>
-              <!-- 按停（2026-11-01 用户定：「任务菜单里，我希望有办法取消任务」）。
-                   只在**能停**（后端给了 `cancelable`）且**还在跑**时画 —— 画一颗按不动的按钮
-                   是最糟的（"点了没反应"）。不能停的那些（纯本地的活）本来就不该有这个入口。 -->
-              <button
-                v-if="t.cancelable && !t.finished_at"
-                type="button"
-                class="task-cancel"
-                title="按停这个任务（已经写下的东西不受影响：取消 = 没做过）"
-                @click.stop="emit('cancel-task', t.id)"
-              >取消</button>
-              <span v-else class="task-time">{{ taskElapsed(t) }}</span>
-            </li>
-          </ul>
-        </template>
-
-        <p v-if="tasks && !taskRecords.length && !queues.length" class="agent-empty">
-          后台任务会在这里出现：一轮生成、一次压缩、一次刷新模型。
-        </p>
       </div>
     </template>
   </header>

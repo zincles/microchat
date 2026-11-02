@@ -4,7 +4,7 @@
 // 内置刷新模型列表 + 刷路由（编辑时直接点，不用退回一级）。
 import { ref, computed, onMounted, onUnmounted } from "vue";
 import { sharedApi } from "../utils/prefs.js";
-import { providerIdForNextVendor } from "../utils/format.js";
+import { formatTokens, providerIdForNextVendor } from "../utils/format.js";
 
 const props = defineProps({ provider: { type: Object, default: null } });
 const emit = defineEmits(["close", "saved"]);
@@ -31,7 +31,9 @@ const baseFilter = ref("");
 // （anthropic-messages / gemini-generate-content）摆进下拉 —— 那是递给人一个按下去必炸的选项。
 // 现在全从 `GET /providers/presets` 的 `protocol_options` 来（后端是唯一权威，契约测试钉着）。
 const hasKey = ref(false);
-const modelCount = ref(0);
+// 模型列表**只读**：渠道页能看见"这次刷新导入了什么"，不在这里编辑。
+const models = ref([]);
+const modelCount = computed(() => models.value.length);
 const presets = ref([]);
 const status = ref("");
 
@@ -72,6 +74,12 @@ const effectiveBase = computed(() => {
   const preset = curPreset.value?.base_url ?? props.provider?.base_url ?? "";
   return preset || "（这个服务商没有默认地址，需要自己填）";
 });
+
+// modelContext：模型列表里那格"上下文" —— 用户覆盖优先，没配过就显示上游报的。
+function modelContext(m) {
+  const n = m?.context_override ?? m?.context_length;
+  return n == null ? "—" : formatTokens(n);
+}
 
 // vendorHint：选中的 vendor 的端点与"要不要密钥"，省得人再去别处查。
 const vendorHint = computed(() => {
@@ -115,7 +123,7 @@ async function load() {
   filter.value = p.model_filter ?? "";
   baseFilter.value = filter.value;
   hasKey.value = !!p.has_key;
-  modelCount.value = p.models?.length ?? 0;
+  models.value = p.models ?? [];
 }
 
 async function save() {
@@ -163,7 +171,7 @@ async function reloadModels(id) {
   }
   try {
     const view = await api.refreshProvider(id);
-    modelCount.value = view?.models?.length ?? 0;
+    models.value = view?.models ?? [];
     status.value = `已保存并刷新：导入 ${modelCount.value} 个模型` +
       (baseFilter.value ? `（筛选：${baseFilter.value}）` : "");
     emit("saved");
@@ -262,6 +270,25 @@ function onKey(e) {
       <button type="button" @click="testConnection">测试连通性</button>
       <button v-if="!isNew && (hasKey || key)" type="button" class="link-btn danger" @click="clearKey">清密钥</button>
       <span class="status">{{ status }}</span>
+    </div>
+    <!-- 模型列表（2026-11-02 用户定）：渠道详情里要看得见「这个渠道导入了哪些模型」。
+         只读 —— 编辑模型（显示名 / 上下文 / 参数）不是这一页的事。 -->
+    <h3>模型（{{ modelCount }}）</h3>
+    <p class="hint">这个渠道从上游导入的模型；这里只读，不能编辑。</p>
+    <div v-if="isNew || !modelCount" class="status">
+      {{ isNew ? "新建渠道保存并刷新后，导入的模型会出现在这里。" : "还没有导入模型 —— 点「保存并刷新」试试。" }}
+    </div>
+    <div v-else class="provider-models">
+      <table class="plist">
+        <thead><tr><th>模型</th><th>上下文</th></tr></thead>
+        <tbody><tr v-for="m in models" :key="m.upstream_id">
+          <td :title="m.display_name || m.name || m.upstream_id">
+            {{ m.name || m.upstream_id }}
+            <div class="model-upstream" :title="m.upstream_id">{{ m.upstream_id }}</div>
+          </td>
+          <td>{{ modelContext(m) }}</td>
+        </tr></tbody>
+      </table>
     </div>
   </div>
 </template>

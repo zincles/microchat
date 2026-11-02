@@ -210,8 +210,11 @@ type preset struct {
 	apiKeyEnvs    []string
 	supportsUsage bool // stream_options.include_usage
 	supportsStore bool // store: false
-	longCache     bool // prompt_cache_retention: "24h"
-	maxTokensOld  bool // 用 max_tokens 而不是 max_completion_tokens
+	// supportsCost：上游会报**这一发实际扣了多少钱**（OpenRouter 的 usage.cost）。
+	// 不支持的渠道即便回了 cost（包括 0）也不该上屏 —— 那不是"免费"，是"这家不报"。
+	supportsCost bool
+	longCache    bool // prompt_cache_retention: "24h"
+	maxTokensOld bool // 用 max_tokens 而不是 max_completion_tokens
 	// sessionHeader：会话头（opencode 系必需）
 	sessionHeader string
 	// reasoningField：**回传思考**时用哪个字段名（"" = 不回传）。
@@ -227,7 +230,7 @@ var presets = map[Vendor]preset{
 	VendorOpenAICompat: {supportsUsage: true, supportsStore: true},
 	VendorCustom:       {supportsUsage: true, supportsStore: true},
 	VendorOpenAI:       {baseURL: "https://api.openai.com/v1", apiKeyEnvs: []string{"OPENAI_API_KEY"}, supportsUsage: true, supportsStore: true, longCache: true},
-	VendorOpenRouter:   {baseURL: "https://openrouter.ai/api/v1", apiKeyEnvs: []string{"OPENROUTER_API_KEY"}, supportsUsage: true},
+	VendorOpenRouter:   {baseURL: "https://openrouter.ai/api/v1", apiKeyEnvs: []string{"OPENROUTER_API_KEY"}, supportsUsage: true, supportsCost: true},
 	// DeepSeek 官方：OpenAI 兼容（`/chat/completions` + `/models` 同形）；思考字段用官方的 `reasoning_content`
 	//（接收侧三种全认，发送侧用它 —— 也是 `wireMessages` 里"deepseek vendor 字段必须在"那条规则的落点）。
 	VendorDeepseek:   {baseURL: "https://api.deepseek.com", apiKeyEnvs: []string{"DEEPSEEK_API_KEY"}, supportsUsage: true, reasoningField: "reasoning_content"},
@@ -268,6 +271,14 @@ func (p Provider) EffectiveVendor() Vendor {
 		return Vendor(p.Kind)
 	}
 	return VendorCustom
+}
+
+// ReportsCost：这家渠道会不会报"这一发花了多少钱"。
+//
+// 只有 OpenRouter 报；其余渠道归一化时可能连"免费"和"没报"都分不开 ——
+// 所以不支持的渠道**一律不带 cost_usd**（不是显示成 $0，是压根不显示）。
+func (p Provider) ReportsCost() bool {
+	return presets[p.EffectiveVendor()].supportsCost
 }
 
 // EffectiveProtocol：空→openai-chat-completion（缺省）。

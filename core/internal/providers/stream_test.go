@@ -209,6 +209,78 @@ func TestNormalizeUsageCarriesUpstreamCost(t *testing.T) {
 	}
 }
 
+// 端到端：Chat 的返回用量也要过渠道能力闸（单测 costAwareUsage 之外，防止某条返回路径漏掉）。
+func TestChatAppliesCostCapability(t *testing.T) {
+	frames := `data: {"choices":[{"delta":{"content":"好"}}]}` + "\n\n" +
+		`data: {"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":2,"cost":0}}` + "\n\n" +
+		`data: [DONE]` + "\n\n"
+	for _, testCase := range []struct {
+		vendor Vendor
+		want   bool
+	}{
+		{VendorOpenRouter, true},
+		{VendorDeepseek, false},
+	} {
+		t.Run(string(testCase.vendor), func(t *testing.T) {
+			stub := newStubUpstream(t, http.StatusOK, "text/event-stream", frames)
+			provider := Provider{ID: "stub", Vendor: testCase.vendor, BaseURL: stub.baseURL(), Identity: IdentityBare}
+			result, err := NewClient(provider).Chat(context.Background(), provider, Request{
+				Model: "m", SessionID: "01a0e965-4156-741d-a8bd-5e16f28eb90d",
+				Messages: []ChatMessage{{Role: "user", Content: "在吗"}},
+			}, "", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var usage Usage
+			if err := json.Unmarshal(result.Usage, &usage); err != nil {
+				t.Fatal(err)
+			}
+			if testCase.want && usage.CostUSD == nil {
+				t.Fatal("OpenRouter 的 cost 被误删了")
+			}
+			if !testCase.want && usage.CostUSD != nil {
+				t.Fatalf("不报费用的渠道仍带 cost_usd=%v", *usage.CostUSD)
+			}
+		})
+	}
+}
+
+// 渠道能力：不报费用的渠道即便回了 cost（含 0），也不许把 cost_usd 带到界面上。
+// 证伪点：把 DeepSeek 的 cost:0 当成「免费」⇒ 气泡会画一个 $0，用户以为这家在计费。
+func TestCostOnlyKeptForVendorsThatReportIt(t *testing.T) {
+	raw := NormalizeUsage(json.RawMessage(`{"prompt_tokens":10,"completion_tokens":2,"cost":0}`))
+	if len(raw) == 0 {
+		t.Fatal("这份用量该认得出来")
+	}
+	cases := []struct {
+		vendor Vendor
+		want   bool
+	}{
+		{VendorOpenRouter, true}, // 免费模型 = 0，是实话
+		{VendorDeepseek, false},
+		{VendorOpenCodeGo, false},
+		{VendorCustom, false},
+	}
+	for _, testCase := range cases {
+		t.Run(string(testCase.vendor), func(t *testing.T) {
+			got := (Provider{Vendor: testCase.vendor}).costAwareUsage(raw)
+			var usage Usage
+			if err := json.Unmarshal(got, &usage); err != nil {
+				t.Fatal(err)
+			}
+			if testCase.want && usage.CostUSD == nil {
+				t.Fatal("支持费用的渠道把 cost_usd 弄丢了")
+			}
+			if !testCase.want && usage.CostUSD != nil {
+				t.Fatalf("不报费用的渠道不该带 cost_usd，得到 %v", *usage.CostUSD)
+			}
+			if usage.PromptTokens != 10 {
+				t.Fatalf("摘 cost 不该动别的格：%+v", usage)
+			}
+		})
+	}
+}
+
 func float64Ptr(value float64) *float64 { return &value }
 
 // 上游报错**原样返回**：不重试（打一次就是一次）、不吞错（状态码与正文都在）、不改写文案。

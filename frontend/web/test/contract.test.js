@@ -140,7 +140,7 @@ test("上下文占比：夹到 0..1、小占比不显示成 0%、向下取整（
   assert.equal(contextRatio({ used_tokens: null, budget_tokens: 1000 }), 0);
 
   assert.equal(contextPercentText({ used_tokens: 0, budget_tokens: 1000 }), "0%");
-  assert.equal(contextPercentText({ used_tokens: 344, budget_tokens: 1044480 }), "<0.1%");
+  assert.equal(contextPercentText({ used_tokens: 344, budget_tokens: 1044480 }), "不到 0.1%");
   assert.equal(contextPercentText({ used_tokens: 34, budget_tokens: 1000 }), "3.4%");
   assert.equal(contextPercentText({ used_tokens: 99, budget_tokens: 100 }), "99%");
   // 向下取整：999/1000 = 99.9% ⇒ 报 99%（向上取整会把用量说大，与 formatTokens 同一个理由）
@@ -196,8 +196,9 @@ test("usageFoot 的悬停说明：点明思考是输出的子集、成本是上�
 test("状态行：助手 + phase/耗时；上下文占用不在这行（2026-10-28 挪去右上角的环）", () => {
   const line = formatStatusLine({ phase: "streaming", elapsedMs: 300, agent: "默认助手" });
   assert.ok(line.includes("默认助手"));
-  assert.ok(line.includes("streaming"));
-  assert.ok(line.includes("300ms"));
+  assert.ok(line.includes("生成中"));
+  assert.ok(line.includes("0.3 秒"));
+  assert.ok(!line.includes("streaming") && !line.includes("300ms"), "状态行还留着机器词");
   assert.ok(!line.includes("dummy/m")); // 模型不再出现在状态行（单处归属：顶栏左上）
   // 上下文占用整块搬走了：这行里不许再出现 used/budget/超预算（两处都显示同一个数字，
   // 只会让两处都可能过期）。
@@ -886,12 +887,11 @@ test("摘要重摇家族：三个方法的形状（enter 带消息 idx；switch 
 });
 
 
-// 后台任务徽标（2026-11-01 用户定：「把后台任务也做成右上角那个圆环一样的东西……显示一个数字，
-// 按下就在一个小面板里（类似那个绿色的上下文栏）显示有多少后台任务」）。
+// 上下文环合并后台任务（2026-11-02 用户定：「以上下文指示器的绿色圈圈为主体。中央原本空着的
+// 区域，放入代表活跃后台任务数量的数字。在后台任务运行时，绿色圈圈会转动」）。
 //
-// 从前那个数字是输入框上方的一行小字（`taskLineText`）—— **已经删了**：
-// 同一件事住两处，只会让两处都可能过期（2026-10-28 状态行搬家时定下的规矩）。
-test("后台任务：顶栏徽标 + 浮板，数字 / 明细都来自 /tasks", () => {
+// 原来那枚独立的任务徽标（`#task-badge`）删掉；数字进环心，点环打开的面板里同时有上下文与任务明细。
+test("上下文环：圆心是后台任务数，有任务时转动，面板里能取消", () => {
   const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
   const app = readFileSync(join(SRC, "..", "src", "App.vue"), "utf8");
   const composer = readFileSync(join(SRC, "components", "Composer.vue"), "utf8");
@@ -899,67 +899,69 @@ test("后台任务：顶栏徽标 + 浮板，数字 / 明细都来自 /tasks", (
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   const tpl = top.slice(top.indexOf("<template>")).replace(/<!--[\s\S]*?-->/g, "");
 
-  // ① 徽标在顶栏右端那一簇里，圆里是数字，点开浮板
-  assert.match(tpl, /id="task-badge"/, "顶栏没有后台任务徽标");
-  assert.match(tpl, /class="task-badge"/, "徽标没有 .task-badge 类");
-  assert.match(tpl, /\{\{ taskCountText \}\}/, "徽标里不是那个数字");
-  assert.match(tpl, /aria-label="后台任务"/, "徽标没有无障碍名");
-  assert.match(tpl, /@click="toggleTasks"/, "徽标点不开浮板");
-  assert.match(tpl, /class="agent-menu task-menu"/, "浮板不是一个 agent-menu");
+  // ① 独立徽标没了；数字在环心，环本身还是上下文占比。
+  assert.ok(!/id="task-badge"/.test(tpl), "还有独立的后台任务徽标 —— 该并进上下文环");
+  assert.ok(!/toggleTasks|taskOpen/.test(top), "还留着独立任务浮板的开关/状态");
+  assert.match(tpl, /id="ctx-ring"/, "上下文环没了");
+  assert.match(tpl, /v-if="activeTaskCount > 0"/, "环心数字没有按任务数显示/隐藏");
+  assert.match(tpl, /\{\{ taskCountText \}\}/, "环心没有后台任务数字");
+  assert.match(tpl, /class="ctx-ring-n"/, "环心数字没有独立样式层（em 叠乘会缩水）");
+  assert.match(tpl, /:class="\{ over: ctxOver, idle: !ctx, busy: taskBusy \}"/, "环没有 busy 态");
+  assert.match(tpl, /aria-label="上下文占用与后台任务"/, "环的无障碍名没包含后台任务");
+  assert.match(tpl, /:title="ringTitle"/, "环的 title 没合并任务信息");
 
-  // ② 数字 = **在跑**的条数（finished_at 有值的不算）；这个口径只有一处
+  // ①b 面板分两个 tab（2026-11-02 用户定）：上下文状态 / 运行任务，不再上下叠。
+  // 面板文案要严谨、专业（2026-11-02 用户定）：用标准口径，不写口语化说明。
+  assert.match(top, /\["剩余可用", .*tokens/, "上下文面板没给剩余可用额度");
+  assert.match(top, /\["自动压缩阈值", c\.trigger_tokens/, "上下文面板没给自动压缩阈值");
+  assert.match(top, /\["上次实际用量"/, "上次实际用量没有按 token 报");
+  assert.match(top, /phaseText\(s\.phase\)/, "相位还在面板里印 idle/streaming");
+  assert.match(top, /refresh_models: "刷新模型"/, "任务种类没翻成中文");
+  assert.ok(!/t\.kind \|\| "\?"/.test(tpl), "任务行还在直接印原始 kind");
+  assert.match(top, /\["连接状态", s\.conn/, "状态行没有连接状态");
+  assert.match(top, /\["运行状态", phase/, "状态行没有运行状态");
+  assert.match(top, /输入预算 .* tokens = 上下文上限 .* − 输出预留/, "预算口径没有写清楚");
+  assert.match(css, /\.ctx-row dt \{[^}]*width:\s*6\.8em/, "标签列太窄（「自动压缩阈值」「上次实际用量」会换行）");
+  assert.ok(!/还能装|给回复留的地方|没有在跑的任务|上次用了/.test(top), "面板里还留着口语化文案");
+  assert.match(top, /const ctxTab = ref\("context"\)/, "面板没有 tab 状态");
+  assert.match(tpl, /role="tablist"/, "面板没有 tablist");
+  assert.match(tpl, /ctxTab = 'context'/, "没有上下文 tab");
+  assert.match(tpl, /ctxTab = 'tasks'/, "没有任务 tab");
+  assert.match(tpl, /v-if="ctxTab === 'context'"/, "上下文内容没有按 tab 切换");
+  assert.match(top, /filter\(\(t\) => !t\.finished_at\)/, "任务 tab 没滤掉已结束的任务（它叫「正在运行」）");
+  assert.match(top, /const runningQueues = computed\(\(\) => queues\.value\.filter\(\(q\) => !q\.finished_at\)\)/,
+    "任务 tab 的队列没滤掉已结束的");
+  assert.ok(/v-if="ctxTab === 'context'"/.test(tpl) && /<template v-else>\s*<div class="ctx-tasks">/.test(tpl),
+    "任务内容没有挂在任务 tab 下");
+
+  // ② 数字 = **在跑**的条数（finished_at 有值的不算）；这个口径只有一处。
   assert.match(top, /const taskRunning = computed\(\(\) => tasks\.value\?\.running \?\? 0\)/,
-    "徽标数字没取 board.running（自己去数 tasks 就会与后端不一致）");
+    "环心数字没取 board.running（自己去数 tasks 就会与后端不一致）");
+  assert.match(top, /Math\.max\(taskRunning\.value, queueRunning\.value\)/,
+    "环心没把队列算进去（两步之间会显示 0，但队列显然还在跑）");
 
-  // ③ 0 个时压暗而不是藏起来（与环的 .idle 同一套语言）
-  // 2026-11-01 二改：转圈看的是"有没有活在跑"——原子任务**或队列**，任一都算
-  //（队列两步之间那几毫秒里 taskRunning 可能是 0，但它显然还在跑）。
-  assert.match(tpl, /:class="\{ live: taskBusy \}"/, "徽标没有 running 态的类");
-  assert.match(css, /\.task-badge\.live\b/, "没有 .task-badge.live 的样式");
-  assert.ok(!/v-if="taskRunning"/.test(tpl), "有任务汇总类的 v-if —— 0 个时别把它整个藏起来");
+  // ③ 没有后台任务时**不显示 0**（2026-11-02 用户定）；有任务时整个环转（数字本身不动）。
+  assert.ok(!/v-if="taskRunning"/.test(tpl), "别用 taskRunning 藏数字 —— 队列也要算");
+  assert.match(css, /#ctx-ring\.busy svg[^{]*\{[^}]*animation:\s*ctx-ring-spin/, "有任务时环不转");
+  assert.match(css, /@keyframes ctx-ring-spin/, "没有环转动的 keyframes");
+  assert.match(css, /prefers-reduced-motion[\s\S]{0,120}ctx-ring\.busy svg/,
+    "减少动效时没兜底（环不该转，但数字还在）");
+  assert.match(css, /\.ctx-ring-n \{[^}]*font-size:\s*0\.68em/, "环心数字没有字号（会与 width 叠乘）");
 
-  // ④ 喂数只有一处：App 把 /tasks 的账本交给顶栏；输入框上方那行小字连尸首都不许留
+  // ④ 喂数只有一处；输入框上方那行小字连尸首都不许留。
   assert.match(app, /topbarRef\.value\?\.setTasks\(board\)/, "App 没把任务账本喂给顶栏");
-  assert.match(app, /topbarRef\.value\?\.setTasks\(null\)/, "取不到任务时该喂 null（徽标归 0）");
+  assert.match(app, /topbarRef\.value\?\.setTasks\(null\)/, "取不到任务时该喂 null（环心归 0）");
   assert.ok(!/setTaskLine/.test(composer), "Composer 还留着 setTaskLine");
   assert.ok(!/taskline/.test(composer), "Composer 还留着 .taskline 那行");
   assert.ok(!/taskLineText/.test(fmt), "format.js 还留着 taskLineText（没有调用方了）");
   assert.ok(!/taskLineText/.test(app), "App 还在引用 taskLineText");
 
-  // ⑤ 位置：右上角那一簇的**最左**（在切换开关与环之前）
-  const atBadge = tpl.indexOf('id="task-badge"');
-  const atSwitch = tpl.indexOf('class="ws-switch"');
-  const atRing = tpl.indexOf('id="ctx-ring"');
-  assert.ok(atBadge > 0 && atSwitch > 0 && atRing > 0, "三个都不是第一次出现，没法判次序");
-  assert.ok(atBadge < atSwitch && atBadge < atRing,
-    `徽标该在最左（task-badge@${atBadge} 应在 ws-switch@${atSwitch} / ctx-ring@${atRing} 之前）`);
-
-  // ⑥ 加个底：它得是一个**实心圆片**，不是一个飘着的数字
-  const badgeRule = css.match(/\.task-badge \{[^}]*\}/)?.[0] ?? "";
-  assert.ok(badgeRule, "找不到 .task-badge 的规则");
-  assert.match(badgeRule, /background:\s*var\(--tg-secondary-bg\)/, "徽标没有底（该与顶栏那两枚开关同一个色）");
-  assert.match(badgeRule, /border-radius:\s*50%/, "徽标的底不是圆的");
-
-  // ⑦ 有任务时**转起来**（不是只换个颜色）
-  assert.match(css, /@keyframes task-spin/, "没有转圈的 keyframes");
-  assert.match(css, /\.task-badge\.live::before[^{]*\{[^}]*animation:\s*task-spin/, "有任务时外圈不转");
-  assert.match(css, /prefers-reduced-motion[\s\S]{0,200}task-badge\.live::before/,
-    "减少动效时没兜底（转圈是纯装饰，但\"在跑\"这个信息不能丢）");
-
-  // ⑧ ⚠ **尺寸与字号不能写在同一个元素上**：em 会叠乘
-  //    （1.8em × 0.72em = 20.7px ≠ 环的 28.8px —— 看起来就是个附注，踩过）
-  assert.match(badgeRule, /width:\s*1\.8em/, "徽标不是与环同高的 1.8em");
-  assert.ok(!/font-size/.test(badgeRule),
-    "徽标把 font-size 写在自己身上了 —— 会与 width 叠乘，实际尺寸缩水一圈；字号该给 .task-badge-n");
-  const numRule = css.match(/\.task-badge-n \{[^}]*\}/)?.[0] ?? "";
-  assert.match(numRule, /font-size:\s*0\.72em/, ".task-badge-n 该是 0.72em（数字字号）");
-
-  // ⑨ 浮板列的是「还有谁在跑」：kind / 标题 / 时长，失败点名
-  // 原子任务改成**按大类分组**渲染（2026-11-01）：先遍历组，再遍历组里的条目。
-  assert.match(tpl, /v-for="g in taskGroups"/, "浮板没有按大类分组");
-  assert.match(tpl, /v-for="t in g\.items"/, "浮板没有逐条列出任务");
-  assert.match(tpl, /taskElapsed\(t\)/, "浮板没显示跑了多久");
-  assert.match(tpl, /:class="\{ done: t\.finished_at, failed: !!t\.error \}"/, "浮板没区分已结束 / 失败");
+  // ⑤ 点环打开的面板里同时有任务明细与取消。
+  assert.match(tpl, /v-for="g in taskGroups"/, "环的面板没有按大类分组列任务");
+  assert.match(tpl, /v-for="t in g\.items"/, "环的面板没有逐条列出任务");
+  assert.match(tpl, /taskElapsed\(t\)/, "面板没显示任务跑了多久");
+  assert.match(tpl, /@click\.stop="emit\('cancel-task', t\.id\)"/, "面板不能取消任务");
+  assert.match(tpl, /@click\.stop="emit\('cancel-queue', q\.id\)"/, "面板不能取消队列");
   assert.match(css, /\.task-row\.failed\b/, "失败的任务行没有样式");
 });
 
@@ -974,14 +976,12 @@ test("后台任务面板：队列单独一栏（带进度与取消），原子�
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   const tpl = top.slice(top.indexOf("<template>")).replace(/<!--[\s\S]*?-->/g, "");
 
-  // ① 队列那一栏：遍历 `queues`，带 `index/total` 进度
-  assert.match(tpl, /v-for="q in queues"/, "浮板里没有队列那一栏");
-  assert.match(tpl, /\{\{ q\.index \}\}\/\{\{ q\.total \}\}/, "队列行没有 i/n 进度");
+  // ① 队列那一栏：只遍历**没结束**的 `runningQueues`，带 `index/total` 进度
+  assert.match(tpl, /v-for="q in runningQueues"/, "浮板里没有正在跑的队列那一栏");
+  assert.match(tpl, /第 \{\{ q\.index \}\} \/ \{\{ q\.total \}\} 步/, "队列行没有「第几/共几步」进度");
 
-  // ② 取消按钮：**只在跑着的时候出现**，点了把 id 报上去（App 去发请求）
+  // ② 取消按钮：列表本来就只含在跑的，点了把 id 报上去（App 去发请求）
   assert.match(tpl, /class="task-cancel"/, "队列行没有取消按钮");
-  assert.match(tpl, /v-if="!q\.finished_at"[\s\S]{0,200}class="task-cancel"/,
-    "取消按钮没限定在「还在跑」的队列上（跑完了还给颗取消按钮 = 死按钮）");
   assert.match(tpl, /@click\.stop="emit\('cancel-queue', q\.id\)"/, "取消按钮没把队列 id 报上去");
   assert.match(top, /defineEmits\(\[[^\]]*"cancel-queue"/, "TopBar 没声明 cancel-queue");
   assert.match(app, /@cancel-queue="cancelQueue"/, "App 没接 cancel-queue");
@@ -993,8 +993,8 @@ test("后台任务面板：队列单独一栏（带进度与取消），原子�
 
   // ③ 大类：按**后端给的 `group`** 分，前端不按 kind 猜
   assert.match(top, /const key = t\.group \|\| "plain"/, "分组没读后端给的 group（按 kind 猜会分岔）");
-  assert.match(top, /GROUP_LABELS = \{ llm: "LLM 生成", plain: "一般" \}/,
-    "两个大类的名字该是「LLM 生成」与「一般」（用户原话）");
+  assert.match(top, /GROUP_LABELS = \{ llm: "模型调用", plain: "其他任务" \}/,
+    "两个大类的名字不规范（模型调用 / 其他任务）");
   assert.match(tpl, /class="task-group-head"/, "分组没有小标题");
 
   // ④ 队列归哪一类由后端给（压缩 = llm），前端别自己判
@@ -1689,6 +1689,22 @@ test("渠道列表：列名说人话，筛选器并进模型数", () => {
 // 这条只钉**界面把话说清楚了**：真逻辑在后端 registry.SplitModelFilter / FilterModels
 // （那边有成组的单测）。但界面不说清"逗号"与"任意一条"，用户填了 `deepseek,mimo` 会以为
 // 那是**一个**子串 ⇒ 一个模型都筛不出来，而界面还显示"已筛选" —— 静默的错。
+// 渠道详情里的模型清单（2026-11-02 用户定）：能看见这个渠道导入了什么，但**不能编辑**。
+test("渠道详情：只读列出这个渠道导入的模型", () => {
+  const editor = readFileSync(join(SRC, "components", "ProviderEditor.vue"), "utf8");
+  assert.match(editor, /const models = ref\(\[\]\)/, "编辑器没有模型列表状态");
+  assert.match(editor, /models\.value = p\.models \?\? \[\]/, "打开详情时没带出已有模型");
+  assert.match(editor, /models\.value = view\?\.models \?\? \[\]/, "保存并刷新后没更新模型列表");
+  for (const label of ["模型", "上下文"]) {
+    assert.match(editor, new RegExp(`<th>${label}</th>`), `模型清单缺「${label}」列`);
+  }
+  assert.match(editor, /class="model-upstream"[^>]*>\{\{ m\.upstream_id \}\}/, "模型清单没显示上游 ID");
+  assert.match(editor, /v-for="m in models"/, "模型清单没有遍历 models");
+  assert.ok(/<h3>模型（\{\{ modelCount \}\}）<\/h3>/.test(editor), "详情里没有模型数量标题");
+  assert.ok(!/v-for="m in models"[\s\S]{0,400}@click/.test(editor), "模型清单不该能点开编辑");
+  assert.ok(!/v-for="m in models"[\s\S]{0,400}<button/.test(editor), "模型清单不该有操作按钮");
+});
+
 test("渠道编辑器：模型筛选说清逗号与「包含任意一个」", () => {
   const editor = readFileSync(join(SRC, "components", "ProviderEditor.vue"), "utf8");
   // **HTML 注释与 JS 注释都要剥**：设计意图写在注释里是对的（"命中任意一条就算中"），
@@ -2529,10 +2545,9 @@ test("任务面板：能停的任务有取消按钮，按不动的不画", () =>
   assert.match(api, /cancelTask:\s*\(id\) => call\("POST", `\/tasks\/\$\{enc\(id\)\}\/cancel`\)/,
     "API 客户端没有 cancelTask（或路径不对）");
 
-  // ② 按钮：**两个条件都要**（能停 + 还在跑）。
-  //    ⚠ 少任何一个就是一颗按不动的死按钮：不能停的任务按了没反应；
-  //    已经跑完的按了更是没反应（它连 cancel 登记都被摘掉了）。
-  assert.match(bar, /v-if="t\.cancelable && !t\.finished_at"[\s\S]{0,200}@click\.stop="emit\('cancel-task', t\.id\)"/,
+  // ② 按钮：列表只含正在跑的任务，所以只看 `cancelable`。
+  //    ⚠ 不能停的任务（refresh_models）按了没反应 —— 不给它画按钮。
+  assert.match(bar, /v-if="t\.cancelable"[\s\S]{0,200}@click\.stop="emit\('cancel-task', t\.id\)"/,
     "任务行没有那颗取消按钮（或条件写漏了）");
 
   // ③ 事件一路接到 App（emit → 模板 → 处理函数 → 接口）。

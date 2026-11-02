@@ -96,10 +96,18 @@ func (c *Client) Chat(ctx context.Context, p Provider, r Request, localReply str
 	}
 	// 按 `p.EffectiveProtocol()` 分两路：chat 走老 `streamUpstream`，response 走新解析
 	// （URL/体由 `Build` 按 protocol 拼好 —— Chat 不自己拼 URL）。
+	var result Result
 	if p.EffectiveProtocol() == ProtocolOpenAIResponse {
-		return c.streamResponseUpstream(ctx, request, onDelta)
+		result, err = c.streamResponseUpstream(ctx, request, onDelta)
+	} else {
+		result, err = c.streamUpstream(ctx, request, onDelta)
 	}
-	return c.streamUpstream(ctx, request, onDelta)
+	if err != nil {
+		return Result{}, err
+	}
+	// 不报费用的渠道：cost_usd 一律摘掉（含上游回了 cost: 0 的情况）。
+	result.Usage = p.costAwareUsage(result.Usage)
+	return result, nil
 }
 
 // completionResponse：**非流式**那一发的响应形状（OpenAI 兼容的正常形状）。
@@ -158,7 +166,12 @@ func (c *Client) Complete(ctx context.Context, p Provider, r Request, localReply
 	}
 	// response 系走 output_text 数组拼正文（reasoning_summary 吞了记 log）。
 	if p.EffectiveProtocol() == ProtocolOpenAIResponse {
-		return completeResponse(response.StatusCode, body)
+		result, err := completeResponse(response.StatusCode, body)
+		if err != nil {
+			return Result{}, err
+		}
+		result.Usage = p.costAwareUsage(result.Usage)
+		return result, nil
 	}
 	var parsed completionResponse
 	if err := json.Unmarshal(body, &parsed); err != nil {
@@ -175,6 +188,7 @@ func (c *Client) Complete(ctx context.Context, p Provider, r Request, localReply
 	if strings.TrimSpace(result.Text) == "" {
 		return Result{}, ErrEmpty
 	}
+	result.Usage = p.costAwareUsage(result.Usage)
 	return result, nil
 }
 
@@ -547,6 +561,27 @@ func NormalizeUsage(raw json.RawMessage) json.RawMessage {
 		return nil
 	}
 	return encoded
+}
+
+// costAwareUsage：按渠道能力决定这份用量能不能带 cost_usd。
+//
+// 不支持费用的渠道（DeepSeek / OpenCode GO / 本地模型…）即使上游回了 `cost: 0`，
+// 那也不是"免费"，而是"这家不报"—— 从归一化结果里摘掉，界面就不会画出 $0。
+// OpenRouter 的 `cost: 0` 是真的免费，仍然保留。
+func (p Provider) costAwareUsage(usage json.RawMessage) json.RawMessage {
+	if p.ReportsCost() || len(usage) == 0 {
+		return usage
+	}
+	var normalized Usage
+	if json.Unmarshal(usage, &normalized) != nil || normalized.CostUSD == nil {
+		return usage
+	}
+	normalized.CostUSD = nil
+	out, err := json.Marshal(normalized)
+	if err != nil {
+		return usage
+	}
+	return out
 }
 
 func numberOr(value *int64, fallback int64) int64 {
