@@ -19,7 +19,7 @@ const props = defineProps({
   // 只有聚合站（OpenRouter）会带 cost_usd；直连渠道没有 ⇒ 脚注不显示价格。
   usage: { type: Object, default: null },
 });
-const emit = defineEmits(["save", "delete", "reroll", "reroll-go"]);
+defineEmits(["edit", "delete", "reroll", "reroll-go"]);
 
 // 脚注：token 用量 + 成本（纯函数在 utils/format.js，契约测试钉着）。
 // 没用量（生成中 / 库外那条 / 上游没报）⇒ 空串 ⇒ 整行不渲染。
@@ -32,17 +32,8 @@ const thinkLabel = computed(() =>
 );
 const canEdit = computed(() => !!props.messageId);
 
-const editing = ref(null); // null | "content" | "reasoning"
-const draft = ref("");
-// msgEl / lockedWidth：**编辑期间把气泡宽度钉住**（2026-10-11 用户定："宽度不该随编辑改变"）。
-// 气泡是按内容撑宽的（user ≤70%、assistant fit-content ≤80%），正文一换成 textarea
-// （固有宽度 ~20 字符）就被拉窄 —— 点开编辑前先量下当前宽，编辑期间原样用回去
-// （textarea 的 width:100% 这才有得可依）。
-const msgEl = ref(null);
-const lockedWidth = ref(0);
-
-// 正文拆说话/状态：说话走 markdown，状态块进独立容器（只在非编辑态；编辑态看原文）。
-const parts = computed(() => splitState(editing.value ? "" : props.content));
+// 正文拆说话/状态：说话走 markdown，状态块进独立容器。
+const parts = computed(() => splitState(props.content));
 const bodyHtml = computed(() => renderMarkdown(parts.value.cleaned));
 // 公式比列宽时给右缘一道内阴影（2026-11-02）：手机上原本是"一刀切"，看不出还能往右滑。
 // `overflow-x: auto` 之外再标一个类 —— 只有真的溢出才提示，短公式不受影响。
@@ -56,26 +47,9 @@ function markMathOverflow() {
 }
 onMounted(() => nextTick(markMathOverflow));
 // 流式期间正文每来一段就重算一次 —— 那时不扫（每帧扫一遍 DOM 是白烧 CPU）；
-// 收尾那一拍再扫。编辑保存不是流式，照常扫。
+// 收尾那一拍再扫。
 watch(bodyHtml, () => { if (!props.streaming) nextTick(markMathOverflow); });
 watch(() => props.streaming, (s) => { if (!s) nextTick(markMathOverflow); });
-function openEditor(kind) {
-  if (editing.value) return;
-  lockedWidth.value = msgEl.value?.offsetWidth ?? 0;
-  editing.value = kind;
-  draft.value = kind === "reasoning" ? (props.reasoning ?? "") : (props.content ?? "");
-}
-
-function cancel() {
-  editing.value = null;
-}
-
-function save() {
-  emit("save", props.messageId, editing.value, draft.value);
-  editing.value = null;
-}
-
-const editRows = computed(() => Math.min(12, Math.max(3, draft.value.split("\n").length + 1)));
 </script>
 
 <template>
@@ -83,38 +57,20 @@ const editRows = computed(() => Math.min(12, Math.max(3, draft.value.split("\n")
        从前这里按 `display_mode` 切两套 class（两边气泡 / 用户气泡+AI 纯文本）；现在后者是唯一的样子，
        所以不再有条件类 —— 形态本身写在 CSS 的 `.msg.assistant` / `.msg-wrap.assistant` 里。 -->
   <div :class="`msg-wrap ${role === 'user' ? 'user' : 'assistant'}`">
-    <div
-      ref="msgEl"
-      :class="`msg ${role === 'user' ? 'user' : 'assistant'}`"
-      :style="editing && lockedWidth ? { width: `${lockedWidth}px`, boxSizing: 'border-box' } : null"
-    >
+    <div :class="`msg ${role === 'user' ? 'user' : 'assistant'}`">
       <div class="msg-head">
         <span class="who">{{ who }}<span v-if="idx !== null && idx !== undefined" class="msg-idx">#{{ idx }}</span></span>
       </div>
-      <details v-if="reasoning || editing === 'reasoning'" class="think" :open="editing === 'reasoning'">
+      <details v-if="reasoning" class="think">
         <summary>{{ thinkLabel }}</summary>
-        <div v-show="editing !== 'reasoning'" class="think-body">{{ reasoning }}</div>
-        <div v-if="editing === 'reasoning'" class="inline-edit">
-          <textarea v-model="draft" class="inline-input" :rows="editRows"></textarea>
-          <div class="inline-btns">
-            <button type="button" class="edit-btn" @click="save">保存</button>
-            <button type="button" class="edit-btn" @click="cancel">取消</button>
-          </div>
-        </div>
+        <div class="think-body">{{ reasoning }}</div>
       </details>
-      <div v-show="editing !== 'content'" ref="textEl" class="text" v-html="bodyHtml"></div>
+      <div ref="textEl" class="text" v-html="bodyHtml"></div>
       <div v-if="streaming && !content && !reasoning" class="typing" aria-label="正在生成">
         <span></span><span></span><span></span>
         <i class="typing-hint">正在输出…</i>
       </div>
-      <div v-if="editing === 'content'" class="inline-edit">
-        <textarea v-model="draft" class="inline-input" :rows="editRows"></textarea>
-        <div class="inline-btns">
-          <button type="button" class="edit-btn" @click="save">保存</button>
-          <button type="button" class="edit-btn" @click="cancel">取消</button>
-        </div>
-      </div>
-      <div v-if="editing !== 'content' && parts.blocks.length" class="state-blocks">
+      <div v-if="parts.blocks.length" class="state-blocks">
         <div
           v-for="(b, i) in parts.blocks"
           :key="i"
@@ -127,7 +83,7 @@ const editRows = computed(() => Math.min(12, Math.max(3, draft.value.split("\n")
       </div>
       <!-- 脚注（2026-10-20）：这一发实际用了多少 token、花了多少钱（上游报的）。
            只在**落库后的**消息上有（生成中那条没有用量）；直连渠道不报 cost ⇒ 这里只有 token。 -->
-      <div v-if="foot && editing === null" class="msg-foot" :title="footTitle">{{ foot }}</div>
+      <div v-if="foot" class="msg-foot" :title="footTitle">{{ foot }}</div>
     </div>
     <div v-if="canEdit" class="msg-ops">
       <button
@@ -135,7 +91,7 @@ const editRows = computed(() => Math.min(12, Math.max(3, draft.value.split("\n")
         class="edit-btn hover-only"
         title="改正文"
         aria-label="改正文"
-        @click="openEditor('content')"
+        @click="$emit('edit', messageId, 'content')"
         v-html="ICONS.pencil"
       ></button>
       <button
@@ -144,7 +100,7 @@ const editRows = computed(() => Math.min(12, Math.max(3, draft.value.split("\n")
         class="edit-btn hover-only"
         title="改思考"
         aria-label="改思考"
-        @click="openEditor('reasoning')"
+        @click="$emit('edit', messageId, 'reasoning')"
         v-html="ICONS.brain"
       ></button>
       <button
@@ -153,7 +109,7 @@ const editRows = computed(() => Math.min(12, Math.max(3, draft.value.split("\n")
         class="edit-btn"
         title="重摇（摇新的一版并切过去）"
         aria-label="重摇（摇新的一版并切过去）"
-        @click="$emit('reroll')"
+        @click="$emit('reroll', messageId)"
         v-html="ICONS.refresh"
       ></button>
       <template v-if="role !== 'user' && isLast && reroll && reroll.active">

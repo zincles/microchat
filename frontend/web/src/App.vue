@@ -9,7 +9,7 @@ import { uuidv7 } from "./utils/ids.js";
 import { buildCompactTree } from "./utils/tree.js";
 import {
   buildChatRows, computeSegments, windowStart, prevWindowStart, alignWindowFrom, olderCount, runsToFetch,
-  rerollTargetLive, bubbleText,
+  rerollTargetLive, bubbleText, editRerollTarget,
 } from "./utils/chatrows.js";
 import { applyBackground } from "./utils/background.js";
 import { installViewportFit } from "./utils/viewport.js";
@@ -30,6 +30,7 @@ import SessionBar from "./components/SessionBar.vue";
 import MessageBubble from "./components/MessageBubble.vue";
 import SummaryCard from "./components/SummaryCard.vue";
 import SummaryEditor from "./components/SummaryEditor.vue";
+import MessageEditor from "./components/MessageEditor.vue";
 import Composer from "./components/Composer.vue";
 import ContextWorkspace from "./components/ContextWorkspace.vue";
 import Toast from "./components/Toast.vue";
@@ -147,19 +148,20 @@ function addMessage(who, text, cls, think, messageId) {
   });
   scrollBottom();
 }
-async function editMessageSave(messageId, kind, value) {
-  await api.editMessage(sessionID, messageId, kind === "reasoning" ? { reasoning: value } : { content: value });
-  await reloadWindow();
-  refreshStateView();
-}
-async function editMessageFlow(messageId, kind) {
-  const messages = await api.listMessages(sessionID);
-  const target = messages.find((m) => m.id === messageId);
-  if (!target) { toast("那条消息已经不在了（多半被删了）：重进会话看看", "error"); return; }
-  const old = kind === "reasoning" ? (target.reasoning ?? "") : target.content;
-  const next = window.prompt(kind === "reasoning" ? "改思考（空=清掉）" : "改正文", old);
-  if (next === null) return;
-  await editMessageSave(messageId, kind, next);
+// 打开消息编辑器（新窗口，2026-11-02 用户定）：不再在气泡里就地换 textarea。
+// message 可以是消息列里的行，也可以是 /edit 从 vueMessages 里挑的原对象。
+function openMessageEditor(message, kind) {
+  const mid = message?.messageId ?? message?.id;
+  if (!mid) { toast("这条消息还没有 id，暂时不能编辑", "error"); return; }
+  // 重摇只认尾条 assistant：编辑它自己、或编辑它前面那条 user，才能「保存并重摇」。
+  const rerollTargetId = editRerollTarget(vueMessages.value, mid);
+  messageEditTarget.value = {
+    sessionId: sessionID,
+    message: { ...message, id: mid },
+    kind,
+    rerollable: !!rerollTargetId,
+    rerollTargetId,
+  };
 }
 // toRow：库里的消息 → 消息列的一行（展示形状）。
 function toRow(m) {
@@ -335,8 +337,10 @@ const chatRows = computed(() => {
   });
 });
 const olderSegments = computed(() => olderCount(vueSegments.value, windowFrom.value));
-function onBubbleSave(mid, kind, value) {
-  editMessageSave(mid, kind, value).catch((err) => toast(`改消息失败：${err.message}`, "error"));
+function onBubbleEdit(mid, kind) {
+  const m = vueMessages.value.find((x) => x.messageId === mid || x.id === mid);
+  if (!m) { toast("那条消息已经不在了（多半被删了）：重进会话看看", "error"); return; }
+  openMessageEditor(m, kind);
 }
 // deleteMessagesFlow：消息级删除的唯一出口（气泡"删"与 /cut 共用）——预览 → 确认 → 执行；
 // 执行时 409（conflict：末尾变了，别人删过/改过）⇒ **重新预览再确认**（最多三轮），
@@ -384,6 +388,7 @@ async function onBubbleDelete(mid, isLast) {
 const rerollState = ref({ active: false });
 const summaryReroll = ref({ active: false }); // 摘要重摇（另一族；与消息族共用同一把闸 —— 进错族 409）
 const summaryEditTarget = ref(null); // 编辑中的摘要（SummaryEditor 模态）
+const messageEditTarget = ref(null); // 编辑中的消息（MessageEditor 模态）
 // 候选流预览（就地显示在目标气泡里）：running 期间靠 `/turn/text` 攒；任何一次落地/切版都清掉。
 const rerollPreview = ref({ text: "", reasoning: "" });
 function clearRerollPreview() { rerollPreview.value = { text: "", reasoning: "" }; }
@@ -503,6 +508,20 @@ async function onSummaryEdited() {
   if (treeVisible) refreshTree();
   toast("摘要已改", "ok");
 }
+async function onMessageEdited(result = {}) {
+  const sid = sessionID;
+  const target = messageEditTarget.value;
+  messageEditTarget.value = null;
+  await reloadWindow();
+  refreshStateView(sid);
+  if (result.reroll && target?.rerollTargetId) {
+    // 先保存、再摇：保存已经落库，随后走正常重摇路径（旧正文立刻清空）。
+    // 编辑尾条 user 时，重摇的是它后面那条 assistant，不是这条 user 本身。
+    await rerollNow(target.rerollTargetId);
+    return;
+  }
+  toast("消息已保存", "ok");
+}
 // pollReroll：等这一摇落地（顺带把状态行挂上"重摇中"，并把候选流攒进预览）。
 async function pollReroll(sid) {
   const my = epoch;
@@ -535,13 +554,16 @@ async function pollReroll(sid) {
   return st;
 }
 // rerollNow：⟳ / `/reroll` —— 摇一版（没进模式就先进），摇完**切到最新那版**。
-async function rerollNow() {
+async function rerollNow(targetId = null) {
   const sid = sessionID;
   if (!sid) return;
   const my = epoch;
   clearRerollPreview();
-  // 立刻把那条气泡切空白（别等第一帧）：目标 = 尾条 assistant（后端也只认它，不是它 ⇒ 400）。
-  rerollStarting.value = lastMsgId.value;
+  // 立刻把**被点的那条**切空白（别等第一帧）：优先用气泡报上来的 id，
+  // 命令 / 版本导航没有 id 时回落到尾条 assistant（后端也只认它）。
+  const target = targetId || lastMsgId.value;
+  if (!target) return;
+  rerollStarting.value = target;
   // 摇之前有几版 —— 摇完只有"真的多出来一版"才切过去。
   //
   // 为什么不能直接 `switchReroll(st.count)`（2026-11-01 修的第二个洞）：从任务面板**按停**之后
@@ -1421,7 +1443,7 @@ const COMMAND_RUNNERS = {
     const messages = vueMessages.value; // 只列表里有的（想看更老的先"加载更多"）
     const wantThink = (args[0] ?? "").toLowerCase().startsWith("思") || (args[1] ?? "").toLowerCase().startsWith("思");
     const n = Number(wantThink && isNaN(Number(args[0])) ? args[1] : args[0]);
-    const one = async (m) => editMessageFlow(m.id, wantThink ? "reasoning" : "content");
+    const one = (m) => openMessageEditor(m, wantThink ? "reasoning" : "content");
     if (Number.isInteger(n) && n > 0) {
       const m = messages.find((x) => x.idx === n);
       if (!m) { toast(`没有第 ${n} 条`, "error"); return; }
@@ -1846,7 +1868,7 @@ onUnmounted(() => {
               :streaming="!!row.msg.stream || isLive(row.msg)"
               :usage="row.msg.usage"
               :reroll="row.msg.messageId && rerollState.active && rerollState.target_message_id === row.msg.messageId ? rerollState : null"
-              @save="onBubbleSave"
+              @edit="onBubbleEdit"
               @delete="onBubbleDelete"
               @reroll="rerollNow"
               @reroll-go="rerollGo"
@@ -1902,6 +1924,15 @@ onUnmounted(() => {
       :summary="summaryEditTarget"
       @close="summaryEditTarget = null"
       @saved="onSummaryEdited"
+    />
+    <MessageEditor
+      v-if="messageEditTarget"
+      :session-id="messageEditTarget.sessionId"
+      :message="messageEditTarget.message"
+      :kind="messageEditTarget.kind"
+      :rerollable="messageEditTarget.rerollable"
+      @close="messageEditTarget = null"
+      @saved="onMessageEdited"
     />
     <SessionSettings
       v-if="sessionSettingsId"

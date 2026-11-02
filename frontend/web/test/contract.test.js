@@ -8,7 +8,7 @@ import { buildCartridge, cartridgeAgent } from "../src/utils/cartridge.js";
 import { parseCommand, filterCommands, COMMAND_META } from "../src/utils/commands.js";
 import { uuidv7 } from "../src/utils/ids.js";
 import { buildCompactTree, treeTotals } from "../src/utils/tree.js";
-import { buildChatRows, rerollTargetLive, bubbleText } from "../src/utils/chatrows.js";
+import { buildChatRows, rerollTargetLive, bubbleText, editRerollTarget } from "../src/utils/chatrows.js";
 import { resetChrome, stepChrome } from "../src/utils/chrome.js";
 import { computeViewportFit } from "../src/utils/viewport.js";
 import { classifyAxis, pickDrag, dragProgress, resolveRelease } from "../src/utils/swipe.js";
@@ -1152,6 +1152,24 @@ test("重摇：正在摇的那条 = 刚落手（startingId）或后端说 runnin
   assert.equal(rerollTargetLive(msg, { state: { active: true, running: false, target_message_id: "m1" } }), false); // 摇完了
   assert.equal(rerollTargetLive(msg, { state: { active: false, running: true, target_message_id: "m1" } }), false);
   assert.equal(rerollTargetLive({ messageId: null, content: "x" }, { startingId: null }), false); // 库外那条（还没 id）
+});
+
+// 编辑后「保存并重摇」的合法位置（2026-11-02 用户定）：
+// 只有尾条 assistant、或紧挨着它的前一条 user（例如 user2 后面只剩 AI2）可以；
+// 编辑 user1 不行 —— 它后面还跟着多条消息，重摇尾条 AI2 跟 user1 没关系。
+test("编辑后能否重摇：尾条 assistant 或它前面的那条 user", () => {
+  const list = [
+    { id: "u1", role: "user" },
+    { id: "a1", role: "assistant" },
+    { id: "u2", role: "user" },
+    { id: "a2", role: "assistant" },
+  ];
+  assert.equal(editRerollTarget(list, "a2"), "a2");
+  assert.equal(editRerollTarget(list, "u2"), "a2"); // 用户2 保存后重摇 AI2
+  assert.equal(editRerollTarget(list, "u1"), null);
+  assert.equal(editRerollTarget(list, "a1"), null);
+  assert.equal(editRerollTarget(list.slice(0, 3), "u2"), null, "后面没有 assistant 时不该给重摇");
+  assert.equal(editRerollTarget(list, "missing"), null);
 });
 
 test("气泡正文：合成流 > 正在摇的那条（空白起步）> 库内字段", () => {
@@ -2605,13 +2623,52 @@ test("重摇轮询：状态没了也要写回（否则取消后界面一直等�
 // 按停**不许偷偷换版**：摇完只有"真的多出一版"才切过去。
 //
 // 若直接 `switchReroll(st.count)`：按停时候选列表还在（之前摇过几版就还在），`count` 没变，
+// 消息编辑走独立模态（2026-11-02 用户定）：不把旧气泡就地换成 textarea；/edit 也不再弹原生 prompt。
+test("消息编辑：应用内模态，不就地改气泡", () => {
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  const bubble = readFileSync(join(SRC, "components", "MessageBubble.vue"), "utf8");
+  const modal = readFileSync(join(SRC, "components", "MessageEditor.vue"), "utf8");
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8");
+  assert.ok(!/inline-edit|inline-input/.test(bubble), "气泡里还留着就地编辑的 textarea");
+  assert.ok(!/window\.prompt/.test(app), "/edit 还在用原生 prompt");
+  assert.match(bubble, /\$emit\('edit', messageId, 'content'\)/, "改正文按钮没打开编辑器");
+  assert.match(bubble, /\$emit\('edit', messageId, 'reasoning'\)/, "改思考按钮没打开编辑器");
+  assert.match(app, /<MessageEditor/, "App 没挂消息编辑器");
+  assert.match(app, /@edit="onBubbleEdit"/, "气泡的 edit 事件没接上");
+  assert.match(app, /function onBubbleEdit\(mid, kind\)/, "没有 onBubbleEdit");
+  assert.match(modal, /api\.editMessage\(props\.sessionId, props\.message\.id, body\)/, "模态保存没走消息编辑接口");
+  assert.match(modal, /props\.kind === "reasoning" \? \{ reasoning: text\.value \} : \{ content: text\.value \}/,
+    "模态没按正文/思考分别提交");
+  assert.match(modal, /class="modal-box message-edit-box"/, "消息编辑还是小窗口（没用接近全屏的壳）");
+  assert.match(modal, /class="modal-foot"/, "保存/退出没有独立底栏");
+  assert.match(modal, /保存并重摇/, "没有「保存并重摇」");
+  assert.match(modal, /document\.documentElement\.requestFullscreen\(\)/, "没有真网页全屏");
+  assert.match(modal, /document\.exitFullscreen\(\)/, "没有退出全屏");
+  assert.match(modal, /fullscreenchange/, "全屏状态没有跟着浏览器事件同步");
+  assert.match(modal, /@click="save\(true\)"/, "「保存并重摇」没走带 reroll 的保存");
+  assert.match(css, /\.modal-actions \{[^}]*margin-left:\s*auto[^}]*justify-content:\s*flex-end/, "保存/退出没有靠右");
+  assert.match(app, /editRerollTarget\(vueMessages\.value, mid\)/, "没有判断这条编辑后能不能重摇");
+  assert.match(app, /rerollable: !!rerollTargetId/, "没有把可重摇状态带给编辑器");
+  assert.match(app, /:rerollable="messageEditTarget\.rerollable"/, "没把 rerollable 传给编辑器");
+  assert.match(app, /if \(result\.reroll && target\?\.rerollTargetId\)[\s\S]{0,200}rerollNow\(target\.rerollTargetId\)/, "保存并重摇没接到重摇目标");
+  assert.match(css, /\.modal-box\.message-edit-box \{[^}]*width:\s*96vw[^}]*height:\s*92vh/s,
+    "消息编辑窗口没有接近全屏（96vw × 92vh）");
+  assert.match(css, /\.message-edit-field \{[^}]*flex:\s*1 1 auto[^}]*min-height:\s*0/s,
+    "文本框没有撑满剩余高度");
+});
+
 // 那句会把正文切到**已经存在**的最后一版上 —— 用户按的是"取消"，界面却换了一版内容。
 // 那就是取消干了实事，正是要避免的。
 test("重摇：没多出版就不切版本（取消 ≠ 换一版）", () => {
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
 
+  assert.match(app, /async function rerollNow\(targetId = null\)/, "rerollNow 没接收被点气泡的 id");
+  assert.match(app, /const target = targetId \|\| lastMsgId\.value/, "rerollNow 没优先用被点气泡的 id");
+  const bubble = readFileSync(join(SRC, "components", "MessageBubble.vue"), "utf8");
+  assert.match(bubble, /\$emit\('reroll', messageId\)/, "重摇按钮没把目标 id 报上去");
+
   for (const [enter, switchCall, refresh] of [
-    ["async function rerollNow()", "await switchReroll(sid, st.count)", "refreshReroll()"],
+    ["async function rerollNow(targetId = null)", "await switchReroll(sid, st.count)", "refreshReroll()"],
     ["async function summaryRefresh(", "await summarySwitch(st.count)", "refreshRerollSummary()"],
   ]) {
     const start = app.indexOf(enter);

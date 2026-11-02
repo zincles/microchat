@@ -148,6 +148,25 @@ export function rerollTargetLive(msg, { startingId = null, state = null } = {}) 
   return !!state?.active && !!state?.running && state.target_message_id === msg.messageId;
 }
 
+// editRerollTarget：编辑这条消息后，能不能"保存并重摇"，以及重摇谁。
+//
+// 重摇只认尾条 assistant（后端同一条闸），所以只有两种编辑位置合法：
+//   · 尾条 assistant 自己；
+//   · 紧挨着它前面的那条 user（例如 user2 后面只剩 AI2）。
+// user1 后面还跟着多条消息 ⇒ 不行；没有尾条 assistant ⇒ 不行。
+// 返回目标消息 id（string）或 null；纯函数，App 只读它。
+export function editRerollTarget(messages, messageId) {
+  const list = messages ?? [];
+  const idOf = (m) => m?.messageId ?? m?.id ?? null;
+  const index = list.findIndex((m) => idOf(m) === messageId);
+  if (index < 0) return null;
+  const message = list[index];
+  const next = list[index + 1] ?? null;
+  if (message?.role === "assistant" && index === list.length - 1) return idOf(message);
+  if (message?.role === "user" && next?.role === "assistant" && index + 1 === list.length - 1) return idOf(next);
+  return null;
+}
+
 // bubbleText：这条消息在 `field`（正文 content / 思考 reasoning）上该显示什么。
 // 顺序：合成流 > 正在摇的那条 > 库内字段。**正在摇时不给回落**（就是要空白起步）。
 export function bubbleText(msg, { field = "content", live = false, streamText = null, previewText = null } = {}) {
