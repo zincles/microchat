@@ -130,7 +130,7 @@ watch(() => props.streaming, (s) => nextTick(() => {
     <div v-if="canEdit" class="msg-ops">
       <button
         type="button"
-        class="edit-btn hover-only"
+        class="edit-btn"
         title="改正文"
         aria-label="改正文"
         @click="$emit('edit', messageId, 'content')"
@@ -139,7 +139,7 @@ watch(() => props.streaming, (s) => nextTick(() => {
       <button
         v-if="role !== 'user'"
         type="button"
-        class="edit-btn hover-only"
+        class="edit-btn"
         title="改思考"
         aria-label="改思考"
         @click="$emit('edit', messageId, 'reasoning')"
@@ -149,10 +149,11 @@ watch(() => props.streaming, (s) => nextTick(() => {
         v-if="role !== 'user' && isLast && promptId"
         type="button"
         class="edit-btn prompt-edit-btn"
-        title="编辑这条回复对应的用户输入"
+        title="编辑最新 Prompt（编辑这条回复对应的用户输入）"
         aria-label="编辑最新 Prompt"
         @click="$emit('edit-prompt', promptId)"
-      >编辑最新 Prompt</button>
+        v-html="ICONS.notebookPen"
+      ></button>
       <button
         v-if="role !== 'user' && isLast"
         type="button"
@@ -169,7 +170,7 @@ watch(() => props.streaming, (s) => nextTick(() => {
       </template>
       <button
         type="button"
-        class="edit-btn danger hover-only"
+        class="edit-btn danger"
         title="删除这条及之后"
         aria-label="删除这条及之后"
         @click="$emit('delete', messageId, isLast)"

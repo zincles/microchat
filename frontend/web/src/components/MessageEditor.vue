@@ -5,6 +5,7 @@
 // 只 PATCH 这一条消息的 content 或 reasoning；保存成功后由父组件重拉消息与状态。
 import { ref, computed, nextTick, onMounted, onUnmounted } from "vue";
 import { sharedApi } from "../utils/prefs.js";
+import { ICONS } from "./icons.js";
 
 const props = defineProps({
   sessionId: { type: String, required: true },
@@ -20,7 +21,7 @@ const original = props.kind === "reasoning" ? (props.message.reasoning ?? "") : 
 const text = ref(original);
 const status = ref("");
 const busy = ref(false);
-const isFullscreen = ref(false);
+const expanded = ref(false);
 const changed = computed(() => text.value !== original);
 const label = computed(() => (props.kind === "reasoning" ? "思考" : "正文"));
 const heading = computed(() => {
@@ -28,32 +29,13 @@ const heading = computed(() => {
   return `编辑${label.value}${n != null ? ` · #${n}` : ""}`;
 });
 
-async function leaveFullscreen() {
-  if (document.fullscreenElement) {
-    try { await document.exitFullscreen(); } catch { /* 浏览器拒绝退出时保持原样 */ }
-  }
-}
-async function toggleFullscreen() {
-  try {
-    if (document.fullscreenElement) await document.exitFullscreen();
-    else await document.documentElement.requestFullscreen();
-  } catch (e) {
-    status.value = `全屏失败：${e.message}`;
-  }
-}
-function syncFullscreen() { isFullscreen.value = !!document.fullscreenElement; }
-async function close() {
-  await leaveFullscreen();
-  emit("close");
-}
+// 网页全屏：只是把编辑框铺满 #app（不是浏览器 Fullscreen API，不占用户整块屏幕）。
+function toggleExpanded() { expanded.value = !expanded.value; }
+function close() { emit("close"); }
 async function save(reroll = false) {
   if (!changed.value) {
-    if (reroll) {
-      await leaveFullscreen();
-      emit("saved", { reroll: true });
-    } else {
-      await close();
-    }
+    if (reroll) emit("saved", { reroll: true });
+    else close();
     return;
   }
   busy.value = true;
@@ -61,7 +43,6 @@ async function save(reroll = false) {
   try {
     const body = props.kind === "reasoning" ? { reasoning: text.value } : { content: text.value };
     await api.editMessage(props.sessionId, props.message.id, body);
-    await leaveFullscreen();
     emit("saved", { reroll });
   } catch (e) {
     status.value = `保存失败：${e.message}`;
@@ -73,23 +54,22 @@ function onKey(e) {
 }
 onMounted(() => {
   document.addEventListener("keydown", onKey);
-  document.addEventListener("fullscreenchange", syncFullscreen);
   nextTick(() => field.value?.focus());
 });
-onUnmounted(() => {
-  document.removeEventListener("keydown", onKey);
-  document.removeEventListener("fullscreenchange", syncFullscreen);
-});
+onUnmounted(() => document.removeEventListener("keydown", onKey));
 </script>
 
 <template>
   <div class="modal" @click.self="close">
-    <div class="modal-box message-edit-box">
+    <div class="modal-box message-edit-box" :class="{ expanded }">
       <div class="modal-head">
         <span>{{ heading }}</span>
         <span class="head-btns">
-          <button class="icon-btn full-btn" type="button" :title="isFullscreen ? '退出全屏' : '全屏'"
-            :aria-pressed="isFullscreen ? 'true' : 'false'" @click="toggleFullscreen">{{ isFullscreen ? "退出全屏" : "全屏" }}</button>
+          <button class="icon-btn full-btn" type="button"
+            :title="expanded ? '退出网页全屏' : '网页全屏'"
+            :aria-label="expanded ? '退出网页全屏' : '网页全屏'"
+            :aria-pressed="expanded ? 'true' : 'false'"
+            @click="toggleExpanded" v-html="expanded ? ICONS.minimize : ICONS.maximize"></button>
           <button class="icon-btn" type="button" title="关闭（不保存）" @click="close">×</button>
         </span>
       </div>

@@ -10,7 +10,7 @@ import { uuidv7 } from "../src/utils/ids.js";
 import { buildCompactTree, treeTotals } from "../src/utils/tree.js";
 import { buildChatRows, rerollTargetLive, bubbleText, editRerollTarget, latestPromptFor } from "../src/utils/chatrows.js";
 import { resetChrome, stepChrome } from "../src/utils/chrome.js";
-import { typewriterDuration, revealCount, TYPEWRITER_MIN_MS, TYPEWRITER_MAX_MS } from "../src/utils/typewriter.js";
+import { typewriterDuration, revealCount, TYPEWRITER_DEFAULT_MS, TYPEWRITER_MIN_MS, TYPEWRITER_MAX_MS } from "../src/utils/typewriter.js";
 import { computeViewportFit } from "../src/utils/viewport.js";
 import { classifyAxis, pickDrag, dragProgress, resolveRelease } from "../src/utils/swipe.js";
 import {
@@ -1163,12 +1163,13 @@ test("跟手拖拽：轴向锁、拖哪扇、开度换算、松手吸附", () =>
 });
 
 // 流式打字机（2026-11-03 用户定）：后端一块一块到，前端把这一块摊在几帧里露出。
-test("打字机：100 字约 300ms，块再大也封顶；线性露出", () => {
-  assert.equal(typewriterDuration(0), 0);
+test("打字机：按前后两包的到达间隔决定这一拍的速度；线性露出", () => {
+  assert.equal(typewriterDuration(0), TYPEWRITER_DEFAULT_MS); // 第一包没有上一包
   assert.equal(typewriterDuration(20), TYPEWRITER_MIN_MS);
-  assert.equal(typewriterDuration(100), 300);
-  assert.equal(typewriterDuration(1000), TYPEWRITER_MAX_MS);
-  assert.equal(typewriterDuration(10, 200), 500);
+  assert.equal(typewriterDuration(100), 100);
+  assert.equal(typewriterDuration(500), 500); // 0s→0.5s 这一拍摊 0.5s
+  assert.equal(typewriterDuration(700), 700); // 0.5s→1.2s 这一拍摊 0.7s
+  assert.equal(typewriterDuration(5000), TYPEWRITER_MAX_MS);
   assert.equal(revealCount(0, 100, 0, 300), 0);
   assert.equal(revealCount(0, 100, 150, 300), 50);
   assert.equal(revealCount(0, 100, 300, 300), 100);
@@ -1178,6 +1179,8 @@ test("打字机：100 字约 300ms，块再大也封顶；线性露出", () => {
   assert.match(app, /const streamDisplay = ref\(/, "没有打字机显示状态");
   assert.match(app, /setStreamTarget\(merged\.text, merged\.reasoning\)/, "轮询到字后没进打字机");
   assert.match(app, /streamText: streamDisplay\.value\.text/, "气泡还在直接吞整块");
+  assert.match(app, /const gap = twLastAt \? start - twLastAt : 0/, "没有按上一包到这一包的真实间隔计时");
+  assert.match(app, /duration: typewriterDuration\(gap\)/, "打字时长不是按包间隔算的");
   assert.match(app, /await waitTypewriter\(\)/, "收尾没等打字机放完（会跳一下）");
   assert.match(app, /requestAnimationFrame|requestFrame/, "没有逐帧推进");
   assert.ok(!/streamDisplay\.value\.reasoning \|\| m\.reasoning/.test(app),
@@ -1224,6 +1227,8 @@ test("最新 Prompt：A-B-C-D-E-F 指向 E；只在尾条 AI 上给按钮", () =
   assert.match(app, /@edit-prompt="onBubbleEditPrompt"/, "没接「编辑最新 Prompt」");
   assert.match(bubble, /v-if="role !== 'user' && isLast && promptId"/, "按钮不该出现在非尾条/用户消息上");
   assert.match(bubble, /\$emit\('edit-prompt', promptId\)/, "按钮没把 Prompt id 报上去");
+  assert.match(bubble, /v-html="ICONS\.notebookPen"/, "「编辑最新 Prompt」还是纯文字按钮，没换成记事本+笔图标");
+  assert.ok(!/>编辑最新 Prompt</.test(bubble), "按钮里还留着纯文字");
 });
 
 // 编辑后「保存并重摇」的合法位置（2026-11-02 用户定）：
@@ -2408,10 +2413,10 @@ test("创建副本：会话设置里能复制，复制完进副本", () => {
   assert.match(api, /copySession:\s*\(id\) => call\("POST", `\/sessions\/\$\{enc\(id\)\}\/copy`\)/,
     "API 客户端没有 copySession（或路径不对）");
 
-  // ② 面板里有一颗「创建副本」，且**说清它做什么**（世界状态不复制这条最容易让人误会）
+  // ② 面板里只留标题与按钮（2026-11-03 用户：那段三行描述太啰唆，删掉）
   assert.match(tpl, /<h3>创建副本<\/h3>/, "会话设置里没有「创建副本」那一节");
   assert.match(tpl, /@click="copySession"/, "「创建副本」按钮没绑处理函数");
-  assert.match(panel, /世界状态不复制/, "没说明「世界状态不复制」—— 不说清就会有人以为连状态也带过去了");
+  assert.ok(!tpl.includes("世界状态不复制"), "复制功能的冗长说明又回来了");
 
   // ③ 复制完**进副本**（停在原会话里会让人以为点了没反应）
   assert.match(panel, /defineEmits\(\[[^\]]*"copy"/, "SessionSettings 没声明 copy 事件");
@@ -2714,9 +2719,11 @@ test("消息编辑：应用内模态，不就地改气泡", () => {
   assert.match(modal, /class="modal-box message-edit-box"/, "消息编辑还是小窗口（没用接近全屏的壳）");
   assert.match(modal, /class="modal-foot"/, "保存/退出没有独立底栏");
   assert.match(modal, /保存并重摇/, "没有「保存并重摇」");
-  assert.match(modal, /document\.documentElement\.requestFullscreen\(\)/, "没有真网页全屏");
-  assert.match(modal, /document\.exitFullscreen\(\)/, "没有退出全屏");
-  assert.match(modal, /fullscreenchange/, "全屏状态没有跟着浏览器事件同步");
+  assert.match(modal, /const expanded = ref\(false\)/, "没有网页全屏状态");
+  assert.match(modal, /function toggleExpanded\(\)/, "没有网页全屏切换");
+  assert.match(modal, /ICONS\.maximize/, "全屏按钮没有图标");
+  assert.ok(!/requestFullscreen|document\.fullscreenElement|fullscreenchange/.test(modal),
+    "还在用浏览器 Fullscreen API（会占整块屏幕）");
   assert.match(modal, /@click="save\(true\)"/, "「保存并重摇」没走带 reroll 的保存");
   assert.match(css, /\.modal-actions \{[^}]*margin-left:\s*auto[^}]*justify-content:\s*flex-end/, "保存/退出没有靠右");
   assert.match(app, /editRerollTarget\(vueMessages\.value, mid\)/, "没有判断这条编辑后能不能重摇");
@@ -2725,6 +2732,8 @@ test("消息编辑：应用内模态，不就地改气泡", () => {
   assert.match(app, /if \(result\.reroll && target\?\.rerollTargetId\)[\s\S]{0,200}rerollNow\(target\.rerollTargetId\)/, "保存并重摇没接到重摇目标");
   assert.match(css, /\.modal-box\.message-edit-box \{[^}]*width:\s*96vw[^}]*height:\s*92vh/s,
     "消息编辑窗口没有接近全屏（96vw × 92vh）");
+  assert.match(css, /\.modal-box\.message-edit-box\.expanded \{[^}]*width:\s*100%[^}]*height:\s*100%/s,
+    "网页全屏没有铺满 #app（不是浏览器全屏）");
   assert.match(css, /\.message-edit-field \{[^}]*flex:\s*1 1 auto[^}]*min-height:\s*0/s,
     "文本框没有撑满剩余高度");
 });
@@ -2784,7 +2793,7 @@ test("回到前台会跟后端对齐（三条事件都接）", () => {
   assert.ok(!/reloadWindow/.test(running), "还在跑的时候重拉了消息列 —— 会把正在流的回复抹掉");
 
   // ③ 已经落地 ⇒ 对齐（消息列 + 状态 + 占用 + 重摇）。
-  assert.match(body, /await reloadWindow\(\)/, "落地之后没重拉消息列");
+  assert.match(body, /await reloadWindowKeepingScroll\(\)/, "落地之后没重拉消息列（或没保留滚动位置）");
   assert.match(body, /refreshStateView\(sessionID\)/, "落地之后没刷状态视图");
   assert.match(body, /refreshStatusline\(/, "落地之后没刷状态行（上下文占用就在那儿）");
 
@@ -3051,4 +3060,35 @@ test("CSS 复用：幽灵按钮底座与蒙层 token 只有一处", () => {
     assert.match(theme, new RegExp(`${id}:\\s*color-mix`), `theme.css 缺少 ${id}`);
   }
   assert.ok(!/color-mix\(in srgb, var\(--tg-text\) 6%/.test(css), "main.css 又出现了写死的 6% 蒙层");
+});
+
+test("聊天布局：16px / 1.7 行高、840 阅读列、更松的消息间距", () => {
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.match(css, /--read-col, 840px/, "阅读列还停在 920px（中文行太长）");
+  assert.match(css, /\.msg \{[^}]*font-size:\s*calc\(16px \* var\(--app-text-scale/, "聊天正文没有 16px 字号");
+  assert.match(css, /\.msg \{[^}]*line-height:\s*1\.7/, "聊天正文行高没放宽");
+  assert.match(css, /#?messages-inner \{[^}]*gap:\s*0\.8em/, "消息之间还是挤在一起");
+  assert.match(css, /\.msg-wrap\.assistant \.msg \{[^}]*padding:\s*0\.45em 0/, "assistant 上下仍太挤");
+  assert.match(css, /\.msg \.text p \{[^}]*margin:\s*0 0 0\.7em/, "段落间距没放宽");
+  assert.match(css, /\.msg \.msg-foot \{[^}]*font-size:\s*0\.7em/, "用量脚注没有收成更小的一档");
+  assert.match(css, /\.icon-btn, \.edit-btn, button:has\(> svg\)[^{]*\{[^}]*align-items:\s*center/, "图标按钮没有统一 flex 居中");
+  assert.match(css, /button > svg \{[^}]*display:\s*block/, "SVG 还按 inline 基线落（会偏下）");
+});
+
+test("回到前台重拉消息列时，用户没在底部就保留原来的滚动位置", () => {
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  assert.match(app, /async function reloadWindowKeepingScroll\(\)/, "没有保留滚动位置的重拉函数");
+  assert.match(app, /const stick = nearBottom\(el\)/, "没判断重拉前是否贴底");
+  assert.match(app, /if \(stick\) next\.scrollTop = next\.scrollHeight/, "贴底时没继续贴底");
+  assert.match(app, /next\.scrollTop = Math\.min\(top,/, "不在底部时没恢复原位置");
+  assert.match(app, /dropStreamBubbles\(\);\s*await reloadWindowKeepingScroll\(\)/, "前台对齐没走保留滚动");
+  assert.match(app, /await waitTypewriter\(\);[\s\S]{0,160}await reloadWindowKeepingScroll\(\)/, "一轮落库后仍会把不贴底的人拽到底部");
+});
+
+test("消息操作行：编辑/思考/重摇/删除始终可见，不再等 hover", () => {
+  const bubble = readFileSync(join(SRC, "components", "MessageBubble.vue"), "utf8");
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.ok(!/hover-only/.test(bubble), "气泡里还留着 hover-only（那三个按钮又会被藏起来）");
+  assert.ok(!/\.msg-ops \.hover-only/.test(css), "CSS 还在按 hover 藏操作按钮");
+  assert.match(css, /\.msg-ops \{[^}]*opacity:\s*0\.72/, "操作行没有常显的底噪");
 });

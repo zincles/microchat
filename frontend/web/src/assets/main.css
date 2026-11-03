@@ -283,7 +283,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
   padding: 3em 0.8em 0.7em; gap: 0.4em; }
 /* 草稿态那句提示：**平铺一行小字**（2026-10-29 用户：「不需要面板…完全可以平铺」——
  * 连这条提示也不该是一块虚线框；它不是内容，是一句说明）。 */
-.ws-draft-note { flex: none; margin: 0 auto; max-width: var(--read-col, 920px); width: 100%;
+.ws-draft-note { flex: none; margin: 0 auto; max-width: var(--read-col, 840px); width: 100%;
   box-sizing: border-box; color: var(--tg-hint); font-size: 0.85em; line-height: 1.6; padding: 0; }
 /* 浮板：与 Agent 选人同一族（同底、同阴影、同圆角），只是从右边缘掉下来。 */
 .ctx-menu { left: auto; right: 0.35em; min-width: 18em; max-width: min(24em, calc(100vw - 2em)); padding: 0.6em 0.7em 0.55em;
@@ -355,7 +355,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 @media (prefers-reduced-motion: reduce) { #sessions-bar { transition: none; } }
 /* —— 动效（TG 味 = 快而短：150–200ms，ease-out；只动 opacity/translate，不碰 layout） —— */
 @keyframes msg-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-.msg { position: relative; animation: msg-in 160ms ease-out; }
+.msg { position: relative; font-size: calc(16px * var(--app-text-scale, 1)); line-height: 1.7; animation: msg-in 160ms ease-out; }
 @media (prefers-reduced-motion: reduce) { .msg { animation: none; } }
 .palette, .picker, .confirm, .modal-box { transition: opacity 150ms ease-out, transform 150ms ease-out; }
 .hidden { transition: none; }
@@ -373,7 +373,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
  * 才带气泡）⇒ 这一块照它来：透明、无圆角、无内边距，宽度对齐阅读列，字色走正文那套。
  * 只保留"纵向 flex + 让 pane 自己滚"这两条结构性的东西（那是 2026-10-17 立的规矩）。 */
 .ws-panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 0.5em;
-  max-width: var(--read-col, 920px); width: 100%; margin: 0 auto;
+  max-width: var(--read-col, 840px); width: 100%; margin: 0 auto;
   background: none; border-radius: 0; padding: 0;
   font-size: 0.92em; color: var(--tg-text); box-sizing: border-box; }
 /* 三个面板：占满 tabs 以下的空间、自己滚（`contain` 在这儿才有意义 —— 它就是那个滚动者）。 */
@@ -495,7 +495,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
  * `#composer{position:absolute}`(1-0-0)，输入行的悬浮层会被它悄悄扳回 relative（2026-10-14 踩过）。
  * `#messages-vue` 也豁免：它要**占满整个对话区**（滚动条贴最右缘），阅读列约束落在里面的
  * `.messages-inner`（2026-10-14 用户定：滚动条离右边一段空白看得难受）。 */
-#chat-col > *:not(header):not(#messages-vue) { max-width: var(--read-col, 920px); margin-left: auto; margin-right: auto; width: 100%; box-sizing: border-box; }
+#chat-col > *:not(header):not(#messages-vue) { max-width: var(--read-col, 840px); margin-left: auto; margin-right: auto; width: 100%; box-sizing: border-box; }
 /* 顶栏 = **悬浮层**，且**全透明**（2026-10-14 用户定：不折腾模糊了 —— 无毛玻璃、无渐隐，
  * 就一层浮字；滑过的内容照原样透过去，字靠双层柔影读清，见 header 的 text-shadow）。
  * 底部输入栏的模糊保留（那是 #input 自己的浮卡底，见下）。 */
@@ -515,13 +515,13 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
   box-shadow: var(--shadow-top); }
 /* 消息列：flex:1 撑满 + 两侧 56px 头像位 + 上下给浮动输入栏留位；底部留空让尾条操作行不被输入框盖住。 */
 #messages-vue { flex: 1; overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
-/* 阅读列（气泡/摘要卡/加载更多都住这里）：--read-col（920，2026-10-15 用户定：760 小了"一点点"）
+/* 阅读列（气泡/摘要卡/加载更多都住这里）：--read-col（840，2026-11-03 用户定：920 一行太长；保持公式仍有空间）
  * 居中 + 两侧 56px 空档 + 上下留白喂两个悬浮层。改宽窄只有这一个数（输入行共用同一个变量）。
  * 上下留白：顶栏 ~2.5em 撑住 3.2em；底部 = 输入行实测高（--composer-h，App 的 composerRO 现量现写）
  * + 任务行那一行小字的位置（2026-10-28 起只剩它一行：状态行搬进右上角的环了，
  *   所以 2.6em 收到 1.5em = 任务行的 0.3em 间距 + 约 1.2em 行高）。 */
-.messages-inner { max-width: var(--read-col, 920px); margin: 0 auto; box-sizing: border-box;
-  padding: 3.2em 56px calc(var(--composer-h, 4.6em) + 1.5em); display: flex; flex-direction: column; gap: 0.3em; }
+.messages-inner { max-width: var(--read-col, 840px); margin: 0 auto; box-sizing: border-box;
+  padding: 3.2em 56px calc(var(--composer-h, 4.6em) + 1.5em); display: flex; flex-direction: column; gap: 0.8em; }
 /* 空草稿首屏（2026-11-02）：把"一整页纯黑"换成一句人话 + 当前助手/模型。
  * 50vh 的最小高度 + `justify-content:center` 让它在消息区里居中；它不是消息，
  * 所以没有 who/编号/操作行。 */
@@ -645,7 +645,7 @@ html[data-composer="solid"] .messages-inner { padding-bottom: calc(var(--compose
   padding: 0.45em 0.7em; border-radius: var(--r-bubble); }
 .msg.user .who, .msg.user .edit-btn { color: inherit; opacity: 0.75; }
 .msg.assistant { align-self: flex-start; }
-.msg .msg-head { display: flex; justify-content: space-between; align-items: center; gap: 0.6em; margin-bottom: 0.15em; }
+.msg .msg-head { display: flex; justify-content: space-between; align-items: center; gap: 0.6em; margin-bottom: 0.25em; }
 .msg .who { font-weight: bold; font-size: 0.85em; color: var(--tg-link); }
 .msg.user .who { color: inherit; }
 /* 气泡头上的编号：收在名字里、淡一点（你 #2 / 助手 #4）。 */
@@ -653,7 +653,8 @@ html[data-composer="solid"] .messages-inner { padding-bottom: calc(var(--compose
 /* 气泡脚注（2026-10-20）：这一发用了多少 token、花了多少钱（上游 usage 报的）。
  * 贴着正文底部、比正文小一档、暗色 —— 它是**事后账**，不该抢正文的视线。
  * 用户气泡（蓝底）用继承色 + 降透明度，跟 `.who` 同一个待遇。 */
-.msg .msg-foot { margin-top: 0.35em; font-size: 0.72em; color: var(--tg-hint); opacity: 0.8; }
+.msg .msg-foot { margin-top: 0.3em; font-size: 0.7em; line-height: 1.4; letter-spacing: 0.01em;
+  color: color-mix(in srgb, var(--tg-hint) 86%, var(--tg-text)); opacity: 1; }
 .msg.user .msg-foot { color: inherit; opacity: 0.7; }
 /* "加载更多历史"：窗口化消息列顶上的那枚按钮（还有更老的一页时才挂）。 */
 #load-more { align-self: center; margin: 0.5em auto 0.7em; background: none; border: 1px dashed var(--line); color: var(--tg-hint); border-radius: 999px; padding: 0.3em 1em; cursor: pointer; font-size: 0.85em; }
@@ -691,6 +692,10 @@ html[data-composer="solid"] .messages-inner { padding-bottom: calc(var(--compose
 .modal-box.message-edit-box { width: 96vw; max-width: 96vw; height: 92vh; max-height: 92vh;
   display: flex; flex-direction: column; overflow: hidden; }
 .message-edit-field { flex: 1 1 auto; min-height: 0; resize: none; font: inherit; line-height: 1.55; overflow-y: auto; }
+/* 网页全屏：铺满 #app（不是浏览器 Fullscreen API），仍然只是页面内的一块模态。 */
+.modal-box.message-edit-box.expanded { width: 100%; max-width: 100%; height: 100%; max-height: 100%; border-radius: 0; }
+.message-edit-box .full-btn { display: inline-flex; align-items: center; justify-content: center;
+  width: 2em; height: 2em; padding: 0; }
 /* 操作区固定在底部右侧（2026-11-02 用户定）：状态在左、按钮组在右；窄屏按钮也靠右。 */
 .modal-foot { display: flex; align-items: center; gap: 0.6em; margin-top: 0.6em; }
 .modal-foot .status { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
@@ -708,13 +713,13 @@ html[data-composer="solid"] .messages-inner { padding-bottom: calc(var(--compose
 @media (prefers-reduced-motion: reduce) {
   .stream-cursor { animation: none; opacity: 0.7; }
 }
-.msg .text p { margin: 0 0 0.5em; }
+.msg .text p { margin: 0 0 0.7em; }
 .msg .text p:last-child { margin-bottom: 0; }
 .msg .text code { background: rgb(0 0 0 / 25%); border-radius: var(--r-xs); padding: 0.1em 0.35em; font-size: 0.88em; }
-.msg .text pre { background: rgb(0 0 0 / 25%); border-radius: var(--r-md); padding: 0.6em 0.8em; overflow-x: auto; }
+.msg .text pre { background: rgb(0 0 0 / 25%); border-radius: var(--r-md); padding: 0.6em 0.8em; margin: 0.6em 0; overflow-x: auto; }
 .msg .text pre code { background: none; padding: 0; }
-.msg .text ul, .msg .text ol { margin: 0 0 0.5em; padding-left: 1.4em; }
-.msg .text blockquote { margin: 0 0 0.5em; padding-left: 0.7em; border-left: 2px solid var(--tg-link); opacity: 0.8; }
+.msg .text ul, .msg .text ol { margin: 0 0 0.7em; padding-left: 1.4em; }
+.msg .text blockquote { margin: 0 0 0.7em; padding-left: 0.7em; border-left: 2px solid var(--tg-link); opacity: 0.8; }
 .msg .text h1, .msg .text h2, .msg .text h3 { margin: 0.4em 0 0.3em; font-size: 1.05em; }
 /* KaTeX：色跟气泡走（默认黑，暗底看不见），显示块横滚。
  * 2026-11-02：此前只写了 `overflow-x:auto` —— 手机屏幕上公式比整列宽时右缘一刀切，
@@ -752,23 +757,18 @@ html[data-composer="solid"] .messages-inner { padding-bottom: calc(var(--compose
 .msg-wrap .msg { max-width: 100%; align-self: stretch; }
 /* 只留"占满 + 上下留一点呼吸"：底色与内边距**基础规则已经不给 assistant** 了（见上面 `.msg` 那组），
  * 这里再写一遍 `background: none` 只是自欺 —— 将来基础规则若又给 AI 上底色，这条会跟着一起错。 */
-.msg-wrap.assistant .msg { width: 100%; padding: 0.2em 0; }
+.msg-wrap.assistant .msg { width: 100%; padding: 0.45em 0; }
 .msg.assistant .who { color: var(--tg-hint); font-weight: normal; }
 .msg.assistant .msg-foot { color: var(--tg-hint); }
-.msg-ops { display: flex; gap: 0.2em; margin-top: 0.2em; opacity: 0.55; }
+.msg-ops { display: flex; gap: 0.2em; margin-top: 0.2em; opacity: 0.72; }
 .msg-ops:hover { opacity: 1; }
 .msg-ops .edit-btn { color: var(--tg-hint); font-size: 0.8em; min-width: 2.3em; min-height: 2.3em;
   display: inline-flex; align-items: center; justify-content: center; padding: 0.2em; border-radius: var(--r-sm); }
 .msg-wrap.user .msg-ops .edit-btn { color: var(--tg-hint); }
 .msg-ops .edit-btn:hover { filter: brightness(1.3); }
 .msg-ops .edit-btn.danger:hover { color: var(--tg-destructive); }
-/* 操作钮（改/改思考/删）：默认隐身（opacity 仍占位 ⇒ hover 不跳版），hover 或键盘 focus 才显；
- * 重摇那组（⟳ 与 ◀ n/N ▶）**不隐** —— 它是尾条气泡的入口，得让人找得到（2026-10-10 用户设计）。
- * 触屏没有 hover ⇒ 全显（否则永远够不着）。 */
-.msg-ops .hover-only { opacity: 0; transition: opacity 120ms ease-out; }
-.msg-wrap:hover .msg-ops .hover-only, .msg-wrap:focus-within .msg-ops .hover-only { opacity: 1; }
-@media (hover: none) { .msg-ops .hover-only { opacity: 1; } }
-@media (prefers-reduced-motion: reduce) { .msg-ops .hover-only { transition: none; } }
+/* 操作行常显（2026-11-03 用户定：编辑/思考/重摇/删除都不许只在 hover 时出现）。
+ * 整行 0.72 的底噪，hover 整行才提到 1；按钮本身不再单独藏。 */
 /* 重摇位次牌（气泡下 ◀ 2/3 ▶ 的中间那块）。 */
 .msg-ops .reroll-pos { font-size: 0.75em; color: var(--tg-hint); padding: 0.1em 0.15em; }
 .msg-ops .prompt-edit-btn { font-size: 0.75em; white-space: nowrap; color: var(--tg-link); }
@@ -885,6 +885,11 @@ html[data-composer="solid"] #composer button { box-shadow: none; }
 .message-edit-box .full-btn { font-size: 0.82em; }
 /* 图标按钮通用（× ＋ 这种）：去边框去底色，hover 才显底 —— 原生感就这么来。 */
 .icon-btn { color: var(--tg-hint); padding: 0.35em 0.55em; border-radius: var(--r-md); font-size: 1.1em; line-height: 1; }
+/* 图标按钮统一居中（2026-11-03 用户报：图标有时偏下）：SVG 是 inline 元素，默认按基线落，
+   只靠 line-height 对不齐；带图标的按钮一律用 flex 居中，SVG 自身 display:block 去掉基线。
+   `:has` 兜住那些没有 .icon-btn/.edit-btn 的裸按钮（本地已大量使用 :has）。 */
+.icon-btn, .edit-btn, button:has(> svg) { display: inline-flex; align-items: center; justify-content: center; }
+.icon-btn > svg, .edit-btn > svg, button > svg { display: block; }
 .icon-btn:hover { color: var(--tg-text); background: var(--mix-8); }
 /* —— 设置视图（与对话同级；左栏右边那一整块，不是弹窗）—— */
 /* 一行式工具栏：去掉"悬浮卡"造型与"设置"标题（全屏页不需要它俩，tabs 自己就是路标）。 */

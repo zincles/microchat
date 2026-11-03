@@ -127,12 +127,8 @@ function onKey(e) {
             <span class="status">{{ status }}</span>
           </div>
           <h3>创建副本</h3>
-          <p class="hint">
-            把这条对话<b>整份复制</b>成一条新会话（消息、思考过程和已有的摘要都带上；对话里的状态不复制 —— 它会由正文重新算出来）。
-            复制完直接进入副本，可以接着往下写。想从某条对话分出另一条线，就用它。
-          </p>
           <div class="row">
-            <button type="button" @click="copySession" title="复制成一条新会话（副本）">创建副本</button>
+            <button type="button" @click="copySession">创建副本</button>
           </div>
         </section>
       </div>

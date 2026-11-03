@@ -117,6 +117,7 @@ const vueStream = ref({ id: null, text: "", reasoning: "" });
 const streamDisplay = ref({ text: "", reasoning: "" });
 let twState = null;
 let twFrame = 0;
+let twLastAt = 0;
 const twWaiters = [];
 const nowMs = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
 const requestFrame = (cb) => (typeof requestAnimationFrame === "function"
@@ -230,6 +231,24 @@ async function loadWindow({ reset = false, scroll = true } = {}) {
 // reloadWindow：把当前窗口按服务端最新状态重拉（一轮结束 / 编辑 / 删除 / 压缩 / 切版之后）。
 async function reloadWindow({ scroll = true } = {}) {
   return loadWindow({ reset: false, scroll });
+}
+// foreground / 落库后的重拉：**人没在底部就别把人拽回底部**（2026-11-03 用户报：
+// 出去截图再回来，滚动条自己跳回最新一条）。贴底才继续贴底；否则恢复原来的 scrollTop。
+const SCROLL_STICK_PX = 48;
+function nearBottom(el) {
+  return !el || el.scrollHeight - el.scrollTop - el.clientHeight <= SCROLL_STICK_PX;
+}
+async function reloadWindowKeepingScroll() {
+  const el = document.getElementById("messages-vue");
+  const stick = nearBottom(el);
+  const top = el?.scrollTop ?? 0;
+  const ok = await reloadWindow({ scroll: false });
+  const next = document.getElementById("messages-vue");
+  if (next) {
+    if (stick) next.scrollTop = next.scrollHeight;
+    else next.scrollTop = Math.min(top, Math.max(0, next.scrollHeight - next.clientHeight));
+  }
+  return ok;
 }
 
 // loadMore：往回一页（WINDOW_SEGMENTS 段）。插入新行前记高度，插完把滚动位置补回去（锚住视野）。
@@ -424,6 +443,7 @@ function resetTypewriter() {
   if (twFrame) cancelFrame(twFrame);
   twFrame = 0;
   twState = null;
+  twLastAt = 0;
   streamDisplay.value = { text: "", reasoning: "" };
   settleTwWaiters();
 }
@@ -470,26 +490,31 @@ function setStreamTarget(text, reasoning) {
   if (!targetText.startsWith(shown.text) || !targetReasoning.startsWith(shown.reasoning)) {
     fromText = 0;
     fromReason = 0;
+    twLastAt = 0;
     streamDisplay.value = { text: "", reasoning: "" };
   }
   const toText = targetText.length;
   const toReason = targetReasoning.length;
   if (toText <= fromText && toReason <= fromReason) return;
   const start = nowMs();
+  // 这一拍的时长 = **上一个数据包到这一拍的实测间隔**；第一拍没有上一拍 ⇒ 默认 300ms。
+  const gap = twLastAt ? start - twLastAt : 0;
+  twLastAt = start;
   twState = {
     targetText, targetReasoning, fromText, fromReason, toText, toReason,
-    start, lastPaint: start, duration: typewriterDuration(toText - fromText, toReason - fromReason),
+    start, lastPaint: start, duration: typewriterDuration(gap),
   };
   if (!twFrame) twFrame = requestFrame(twTick);
 }
 // waitTypewriter：一轮收尾时先把最后一块放完再 reloadWindow（顶栏/消息别在最后一跳时换掉）。
 // rAF 在后台标签页可能被冻住 ⇒ 超时兜底 flush，不无限等。
-function waitTypewriter(maxMs = 520) {
+function waitTypewriter(maxMs = 0) {
   if (!twState) return Promise.resolve();
+  const limit = maxMs > 0 ? maxMs : Math.min(2000, twState.duration + 100);
   return new Promise((resolve) => {
     let done = false;
     const finish = () => { if (done) return; done = true; clearTimeout(timer); resolve(); };
-    const timer = setTimeout(() => { flushTypewriter(); finish(); }, maxMs);
+    const timer = setTimeout(() => { flushTypewriter(); finish(); }, limit);
     twWaiters.push(finish);
   });
 }
@@ -843,7 +868,7 @@ async function resyncOnForeground() {
     // ⚠ 先摘僵住的 stream 气泡再 reload —— 不摘的话 `reloadWindow` 里那句"没在流才重建"
     // 的判断可能把旧的合成气泡留在列表里（它就是那个"永远在等待"的来源）。
     dropStreamBubbles();
-    await reloadWindow();
+    await reloadWindowKeepingScroll();
     if (my !== epoch) return;
     refreshStatusline(st.phase, st.elapsed_ms);
     refreshStateView(sessionID);
@@ -1362,7 +1387,7 @@ async function pollTurn(sid, turnID) {
         const failed = st.phase === "error";
         await waitTypewriter();
         if (my !== epoch) return;
-        await reloadWindow();
+        await reloadWindowKeepingScroll();
         resetTypewriter();
         if (my !== epoch) return;
         if (failed) {
