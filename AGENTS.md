@@ -761,7 +761,7 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
   `utils/typewriter.js` 的节奏摊开（`typewriterDuration(gapMs)`：用**上一包到这一包的实测间隔**当这一拍的时长，内容/间隔决定速度；第一包无上一包 ⇒ 默认 300ms，下限 80ms、上限 1200ms；`revealCount` 线性推进）。rAF 每帧推进，但**限到 ~30fps**（每帧重排 markdown 会吃满 CPU；30 与 60 肉眼无差）。
   一轮收尾 `await waitTypewriter()` 再 `reloadWindow`（rAF 在后台被冻住时超时 flush，不无限等）。
   ⚠ 正文与思考各走各的前缀；`bubbleReasoning` **不许回落到 `m.reasoning`** —— 那会让思考整块瞬间冒出。
-  重摇候选流仍走 `rerollPreview`，暂未接这套（它是另一条流）。
+  重摇候选流也走这套（`pollReroll` 把候选增量 `setStreamTarget`；气泡 live 读 `streamDisplay`，切版前 `waitTypewriter`）—— 两条流共用同一个打字机（同一时刻只可能有一条在跑）。
   末尾有**终端光标** `.stream-cursor`（2026-11-03 用户定）：它挂在 `.msg`（**不在 v-html 里**），每帧用 Range 量最后一个文字节点的末尾坐标后绝对定位 ——
   这样 Markdown 每帧重写正文不会把光标一起重建、闪烁动画也不会每帧重启。1.05s 硬切闪烁，`prefers-reduced-motion` 下常亮；流式结束就移除。
 

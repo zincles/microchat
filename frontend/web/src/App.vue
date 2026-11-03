@@ -527,11 +527,11 @@ function waitTypewriter(maxMs = 0) {
 }
 const isLive = (m) => rerollTargetLive(m, { startingId: rerollStarting.value, state: rerollState.value });
 function bubbleContent(m) {
-  return bubbleText(m, { field: "content", live: isLive(m), streamText: streamDisplay.value.text, previewText: rerollPreview.value.text });
+  return bubbleText(m, { field: "content", live: isLive(m), streamText: streamDisplay.value.text, previewText: streamDisplay.value.text });
 }
 function bubbleReasoning(m) {
   // 思考多一层回落：库里没思考、合成流也没有 ⇒ 照旧用 m.reasoning（与从前一致）。
-  return bubbleText(m, { field: "reasoning", live: isLive(m), streamText: streamDisplay.value.reasoning, previewText: rerollPreview.value.reasoning });
+  return bubbleText(m, { field: "reasoning", live: isLive(m), streamText: streamDisplay.value.reasoning, previewText: streamDisplay.value.reasoning });
 }
 
 // refreshReroll：问一次重摇状态（进会话 / 一轮结束 / 删改之后都要对齐 —— 候选只在内存里，
@@ -674,6 +674,7 @@ async function pollReroll(sid) {
         const merged = mergeStreamSlice(
           { text: rerollPreview.value.text, reasoning: rerollPreview.value.reasoning }, cur, slice);
         rerollPreview.value = { text: merged.text, reasoning: merged.reasoning };
+        setStreamTarget(merged.text, merged.reasoning);
         cur = merged.cur;
       }
     }
@@ -688,6 +689,7 @@ async function rerollNow(targetId = null) {
   if (!sid) return;
   const my = epoch;
   clearRerollPreview();
+  resetTypewriter();
   // 立刻把**被点的那条**切空白（别等第一帧）：优先用气泡报上来的 id，
   // 命令 / 版本导航没有 id 时回落到尾条 assistant（后端也只认它）。
   const target = targetId || lastMsgId.value;
@@ -716,6 +718,7 @@ async function rerollNow(targetId = null) {
       refreshReroll();
       return;
     }
+    await waitTypewriter(); // 候选最后一块先放完，再切到库里那版（不然会跳一下）
     await switchReroll(sid, st.count); // 最新那版的位次就是 count（1-based）
   } finally {
     // 走到哪儿都别留下"永远在摇"的假象（出错、被停、切会话、epoch 变了都算）。
