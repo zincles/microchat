@@ -131,6 +131,7 @@ func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *ch
 	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/resend", s.resendHistory)
 	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/status", s.turnStatus)
 	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/turn/text", s.turnText)
+	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/turn/poll", s.turnPoll)
 	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/stop", s.stopTurn)
 	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/context", s.sessionContext)
 	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/compact", s.compactSession)

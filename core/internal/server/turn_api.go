@@ -83,6 +83,35 @@ func (s *Server) turnStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.chat.Status(r.PathValue("session_id")))
 }
 
+// TurnPoll：一次轮询同时拿「状态 + 增量」—— 远程部署把两发串行 HTTP 合成一发，
+// 少一个完整 RTT（CF 链路 500–1000ms 时这不是小钱）。
+type TurnPoll struct {
+	Status turn.Status      `json:"status"`
+	Slice  turn.StreamSlice `json:"slice"`
+}
+
+// turnPoll：`GET .../turn/poll?from=&think_from=` —— status 与 text 的合并读口。
+//
+// 游标参数与 `/turn/text` 同一套校验；会话不存在照样 404。
+func (s *Server) turnPoll(w http.ResponseWriter, r *http.Request) {
+	from, ok := queryInt(w, r, "from")
+	if !ok {
+		return
+	}
+	thinkFrom, ok := queryInt(w, r, "think_from")
+	if !ok {
+		return
+	}
+	if _, ok := s.requireSession(w, r); !ok {
+		return
+	}
+	sid := r.PathValue("session_id")
+	writeJSON(w, http.StatusOK, TurnPoll{
+		Status: s.chat.Status(sid),
+		Slice:  s.chat.StreamSince(sid, from, thinkFrom),
+	})
+}
+
 // turnText：这一轮已生成正文的**增量**（两条游标：正文 + 思考）—— 只服务动画。
 //
 // 读**不消费**：多个客户端与断线重连各拿各的，互不偷；`done` 表示这轮结束，

@@ -536,3 +536,30 @@ func TestSessionListShowsTheRunningTurn(t *testing.T) {
 	}
 	box.waitPhase(t, box.sessionID, "idle")
 }
+
+// turn/poll：一发同时回 status + slice（2026-11-03 远程少一个 RTT）。
+func TestTurnPollCombinesStatusAndSlice(t *testing.T) {
+	box := newDummySandbox(t)
+	recorder := call(box.server, "GET", box.path+"/turn/poll?from=0&think_from=0", "")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("轮询该 200，得到 %d：%s", recorder.Code, recorder.Body.String())
+	}
+	var got struct {
+		Status struct {
+			Phase string `json:"phase"`
+		} `json:"status"`
+		Slice struct {
+			Next      int `json:"next"`
+			ThinkNext int `json:"think_next"`
+		} `json:"slice"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Status.Phase != string(turn.PhaseIdle) {
+		t.Fatalf("没有轮次时 phase 该是 idle，得到 %q", got.Status.Phase)
+	}
+	if got.Slice.Next != 0 || got.Slice.ThinkNext != 0 {
+		t.Fatalf("空轮次的游标该是 0，得到 %+v", got.Slice)
+	}
+}

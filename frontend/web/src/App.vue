@@ -1362,23 +1362,31 @@ async function pollTurn(sid, turnID) {
   refreshStatusline("pending");
   let cur = { from: 0, thinkFrom: 0 };
   let misses = 0; // 连续几拍没拿到（切后台/断网那几下会这样）
+  let delay = 200;
   try {
     for (;;) {
-      await new Promise((r) => setTimeout(r, 300));
+      await new Promise((r) => setTimeout(r, delay));
       if (my !== epoch) return; // 会话世代变了（切走/回草稿）：这一轮不再往界面上写（库里照旧落）
+      let poll;
       let st;
       let slice;
+      const requestAt = performance.now();
       try {
-        st = await api.status(sid);
-        slice = await api.turnText(sid, cur.from, cur.thinkFrom);
+        // 一发改拿 status+增量：CF 链路一来一回 500–1000ms，两个串行请求是半秒到两秒的差距。
+        poll = await api.turnPoll(sid, cur.from, cur.thinkFrom);
+        st = poll.status;
+        slice = poll.slice;
         misses = 0;
       } catch (err) {
         // **一拍失败不判死刑**（2026-11-01）：切到后台、手机换网、App 被冻住再醒 ——
         // 那几拍请求本来就会失败。从前这里直接抛出去 ⇒ 轮询循环当场死掉、而气泡还留在
         // 列表里 ⇒ 界面就一直"在等待"（用户报的正是这个）。连着十拍都不行才算真不行。
         if (++misses > 10) throw err;
+        delay = 200;
         continue;
       }
+      // 本地 RTT 小 ⇒ 仍保持 ~300ms 一拍；远端 RTT 大 ⇒ 不再额外睡满 300ms（单发在飞就够）。
+      delay = Math.max(80, 300 - (performance.now() - requestAt));
       if (my !== epoch) return;
       // 游标回退（缓冲被新一轮重置）⇒ 清零重建（mergeStreamSlice 的语义，别在别处再写一份）。
       const merged = mergeStreamSlice(

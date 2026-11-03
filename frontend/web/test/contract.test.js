@@ -2820,6 +2820,8 @@ test("回到前台会跟后端对齐（三条事件都接）", () => {
 // 后台切回来那几拍请求本来就会失败；从前一抛出去循环就没了，而合成气泡还留在列表里
 // ⇒ 界面一直"在等待"。现在单拍失败继续下一拍，连着十拍不行才认栽。
 test("一轮的轮询：单拍失败继续，不判死刑", () => {
+  const api = readFileSync(join(SRC, "api", "client.js"), "utf8");
+  assert.match(api, /turnPoll:\s*\(id, from, thinkFrom\) =>/, "API 客户端没有 turnPoll");
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
   const start = app.indexOf("async function pollTurn(sid, turnID)");
   assert.ok(start > 0);
@@ -2827,9 +2829,12 @@ test("一轮的轮询：单拍失败继续，不判死刑", () => {
   assert.match(body, /let misses = 0;/, "没有连续失败计数");
   assert.match(body, /if \(\+\+misses > 10\) throw err;/, "失败没有上限（会死循环）或没有上限判断");
   assert.match(body, /misses = 0;/, "成功之后没把计数清零");
-  // status 必须在那层 try 里面（放在外面等于没兜住）。
-  const tryAt = body.indexOf("try {\n        st = await api.status(sid);");
-  assert.ok(tryAt > 0, "api.status 不在容错的那层 try 里");
+  // 合并的 status+增量必须在容错层 try 里（放在外面等于没兜住）。
+  const tryAt = body.indexOf("poll = await api.turnPoll(sid, cur.from, cur.thinkFrom);");
+  assert.ok(tryAt > 0, "api.turnPoll 不在容错的那层 try 里");
+  assert.ok(!/await api\.status\(sid\)/.test(body), "pollTurn 还在额外发 status —— 两发串行又回来了");
+  assert.match(body, /delay = Math\.max\(80, 300 - \(performance\.now\(\) - requestAt\)\)/,
+    "没有按 RTT 自适应下一拍间隔");
 });
 
 // ── 域名部署：Host 闸门（2026-11-02）────────────────────────────
