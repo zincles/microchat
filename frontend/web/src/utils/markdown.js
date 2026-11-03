@@ -147,8 +147,21 @@ export function renderMarkdown(text, options = {}) {
   // 总开关关着 ⇒ 什么都不解析，整段原文（但换行要留住 —— 见 `literalBlock` 的注释）。
   if (!masterOn) return literalBlock(src);
 
-  // 先抽块级 $$…$$，再抽行内 \(…\) 与 $…$（单 $ 要两边非空，避开 $5 这种）。
+  // **先把代码保护起来再找数学定界符**（2026-11-03）：模型会写「用 `$$` 包裹」这种说明，
+  // 其中反引号里的 `$$` 不是块级公式的开头。不保护的话它会把后续所有 `$$` 的配对整体错位，
+  // 最后一大段 Markdown/正文被当成一条畸形的 KaTeX 公式 ⇒ 整块 `.katex-error` 红字。
+  // 代码块/行内代码换成占位符，抽完数学后原样还原，再交给 marked 解析。
   let tmp = src;
+  const codeStash = [];
+  const protectCode = (raw) => {
+    codeStash.push(raw);
+    return `\u0000CODE${codeStash.length - 1}\u0000`;
+  };
+  tmp = tmp.replace(/(^|\n)(```[\s\S]*?```|~~~[\s\S]*?~~~)(?=\n|$)/g,
+    (_, lead, block) => lead + protectCode(block));
+  tmp = tmp.replace(/(`+)([^`]*?)\1/g, (m) => protectCode(m));
+  tmp = tmp.replace(/(^|\n)((?: {4}|\t)[^\n]*(?:\n(?: {4}|\t)[^\n]*)*)/g,
+    (_, lead, block) => lead + protectCode(block));
   const stash = [];
   // 每条都记下**原始定界符**：关掉数学时要原样吐回去，而 `$a+b$` 与 `\(a+b\)`
   // 是两种写法 —— 换掉形态就不叫"原样"了（一个用户写什么就该看到什么）。
@@ -160,10 +173,15 @@ export function renderMarkdown(text, options = {}) {
     stash.push({ body, display: false, open: "\\(", close: "\\)" });
     return `\u0000MATH${stash.length - 1}\u0000`;
   });
-  tmp = tmp.replace(/(?<!\S)\$(?!\s)(.+?)(?<!\s)\$(?!\S)/g, (m, body) => {
+  // 行内 $…$：**闭合 `$` 后面允许紧跟中文标点**（`$u(x)\to 0$，` / `$A-B$）`）。
+  // 旧规则要求闭合后是空白，于是中文里的 `$…$，` 永远配不上，解析器会一路吃到下一个 `$`，
+  // 把两句话之间的正文当成一条畸形公式涂红（2026-11-03 用户报的红色块）。
+  tmp = tmp.replace(/(?<![\\$])\$(?!\$|\s)([^$\n]+?)(?<!\s)\$(?!\$)/g, (m, body) => {
     stash.push({ body, display: false, open: "$", close: "$" });
     return `\u0000MATH${stash.length - 1}\u0000`;
   });
+  // 数学抽完再把代码原文放回去，交给 marked 按正常代码块/行内代码解析。
+  tmp = tmp.replace(/\u0000CODE(\d+)\u0000/g, (_, index) => codeStash[Number(index)] ?? "");
 
   let html = buildMarked().parse(esc(tmp));
 

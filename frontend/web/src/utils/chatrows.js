@@ -148,6 +148,24 @@ export function rerollTargetLive(msg, { startingId = null, state = null } = {}) 
   return !!state?.active && !!state?.running && state.target_message_id === msg.messageId;
 }
 
+// latestPromptFor：最新一条 assistant 对应的那条 user（A-B-C-D-E-F ⇒ E）。
+//
+// 只认"最新 assistant 之前最近的一条 user"：它才是这条回复的 prompt。没有 assistant、
+// 或它前面没有 user（例如开场白）⇒ null。消息 id 用 messageId 优先（toRow 形状）/ id（接口原形）。
+export function latestPromptFor(messages) {
+  const list = messages ?? [];
+  const idOf = (m) => m?.messageId ?? m?.id ?? null;
+  let lastAI = -1;
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i]?.role === "assistant" && idOf(list[i])) { lastAI = i; break; }
+  }
+  if (lastAI < 0) return null;
+  for (let i = lastAI - 1; i >= 0; i--) {
+    if (list[i]?.role === "user" && idOf(list[i])) return idOf(list[i]);
+  }
+  return null;
+}
+
 // editRerollTarget：编辑这条消息后，能不能"保存并重摇"，以及重摇谁。
 //
 // 重摇只认尾条 assistant（后端同一条闸），所以只有两种编辑位置合法：

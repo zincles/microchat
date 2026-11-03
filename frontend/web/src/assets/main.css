@@ -94,16 +94,16 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
   text-shadow: 0 1px 2px color-mix(in srgb, var(--tg-bg) 85%, transparent), 0 1px 10px color-mix(in srgb, var(--tg-bg) 55%, transparent); }
 /* 顶栏左上角那枚"当前模型"（2026-10-28 用户定：从静默 `<select>` 换成自定义浮板）：
  * 静息**仍只有字**（顶栏是透明的，栏面上不该长出一颗按钮），悬停给一层薄底说"这能点"，
- * 右边一枚小三角。窄屏可收缩省略（max-width 半幅，省略号在 `.model-btn-label` 上）。
+ * 右边一枚小三角。模型名**优先占满顶栏剩余空间**（够就完整显示，不够才在 `.model-btn-label` 上省略）。
  * ⚠ 外壳 `.model-anchor` 是给浮板定位用的：浮板贴**按钮**掉，不贴栏的左内边距
  *   —— 顶栏左边还有头像与开关，写死一个 left 迟早对不上。 */
-.model-anchor { position: relative; flex: 0 1 auto; min-width: 0; display: inline-flex; }
+.model-anchor { position: relative; flex: 1 1 auto; min-width: 0; display: inline-flex; }
 .model-btn { flex: 0 1 auto; min-width: 0; max-width: 100%; display: inline-flex; align-items: center; gap: 0.25em;
   border-radius: var(--r-btn); margin-left: -0.4em; padding: 0.12em 0.3em;
   font: inherit; line-height: 1.3; color: var(--tg-text); }
 .model-btn:hover { background: var(--mix-8); }
 .model-btn:focus-visible { outline: 2px solid color-mix(in srgb, var(--tg-link) 55%, transparent); outline-offset: 1px; }
-.model-btn-label { flex: 0 0 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-btn-label { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-caret { flex: none; width: 0.45em; height: 0.3em; fill: currentColor; opacity: 0.45; }
 /* 顶栏里那颗开关（2026-10-17 用户定"加个底"）：栏收着时它孤零零浮在消息列上 ——
  * 透明底在滚动内容/背景图前根本看不清。给一层栏底色的小圆片（与输入行那颗 ☰ 同一个色），
@@ -257,16 +257,21 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 /* 窄屏：顶栏那一行本来就挤（头像 + 模型名 + 环），但**不能靠缩字**换空间 ——
  * 那正好把"弄大一点"抵消掉。收的是**横向 padding**（触摸目标靠高度撑着，仍够点），
  * 字与高度保持不动。 */
-@media (max-width: 700px) {
-  /* 顶栏重排（2026-11-02）：390px 下模型名曾被挤成 `d…` —— 右侧那一簇是固定宽，
-     能伸缩的只有模型。把可伸缩的那一格真正交给它，并收一收间距/箭头。
-     ⚠ 不靠缩字换空间（2026-10-29 那条口径），字与高度保持不动。 */
-  #chat-col > header { gap: 0.45em; padding: 0.3em 0.6em; }
+@media (max-width: 1100px) {
+  /* 中等宽度（平板/窄桌）：把顶栏的间距与内边距收紧，把省下来的横向空间交给模型名。
+     ⚠ 不缩字；390 以下另有换行规则。 */
+  #chat-col > header { gap: 0.35em; padding: 0.3em 0.5em; }
   #chat-col > header .model-anchor { flex: 1 1 auto; min-width: 0; }
   #chat-col > header .model-btn { flex: 1 1 auto; }
   #chat-col > header .model-btn-label { flex: 1 1 auto; min-width: 0; }
-  #chat-col > header .model-caret { display: none; }
   #chat-col > header .header-right { gap: 0.25em; }
+}
+@media (max-width: 700px) {
+  /* 顶栏重排（2026-11-02）：390px 下模型名曾被挤成 `d…`。
+     空间实在不够时**允许换行**，宁可栏高一点，也不把名字截成谜语；*/
+  #chat-col > header .model-btn-label { white-space: normal; overflow: visible; text-overflow: clip;
+    line-height: 1.15; overflow-wrap: anywhere; }
+  #chat-col > header .model-caret { display: none; }
   .ws-tab { padding: 0.3em 0.5em; }
 }
 /* 上下文工作区（2026-10-29）：占满消息列那块地方（顶栏是悬浮层，所以顶部要自己留出高度）。
@@ -350,7 +355,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 @media (prefers-reduced-motion: reduce) { #sessions-bar { transition: none; } }
 /* —— 动效（TG 味 = 快而短：150–200ms，ease-out；只动 opacity/translate，不碰 layout） —— */
 @keyframes msg-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-.msg { animation: msg-in 160ms ease-out; }
+.msg { position: relative; animation: msg-in 160ms ease-out; }
 @media (prefers-reduced-motion: reduce) { .msg { animation: none; } }
 .palette, .picker, .confirm, .modal-box { transition: opacity 150ms ease-out, transform 150ms ease-out; }
 .hidden { transition: none; }
@@ -695,6 +700,14 @@ html[data-composer="solid"] .messages-inner { padding-bottom: calc(var(--compose
 .msg .edit-btn:hover { filter: brightness(1.3); }
 /* 气泡正文：markdown 渲染（marked 生成的 p/code/pre/longtable 走这里收敛）。 */
 .msg .text { word-break: break-word; }
+/* 流式末尾的终端光标：实心方块 + 老式终端那种硬切闪烁；只服务"正在写"的观感。 */
+.stream-cursor { position: absolute; width: 0.42em; height: 1em; margin-left: 0.09em;
+  background: currentColor; border-radius: 1px; opacity: 0.8;
+  pointer-events: none; animation: stream-cursor-blink 1.05s steps(1, end) infinite; }
+@keyframes stream-cursor-blink { 0%, 46% { opacity: 0.8; } 50%, 100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .stream-cursor { animation: none; opacity: 0.7; }
+}
 .msg .text p { margin: 0 0 0.5em; }
 .msg .text p:last-child { margin-bottom: 0; }
 .msg .text code { background: rgb(0 0 0 / 25%); border-radius: var(--r-xs); padding: 0.1em 0.35em; font-size: 0.88em; }
@@ -708,7 +721,7 @@ html[data-composer="solid"] .messages-inner { padding-bottom: calc(var(--compose
  * 看不出"还能往右滑"。现在留一条细滚动条（触摸设备滚动时会浮出来）+ 底部一点内边距，
  * 让"这里有第二页"至少有迹可循；真超宽的仍走横滚，不缩字（缩字会把可读性一起赔掉）。 */
 .msg .text .katex { color: inherit; }
-.msg .text .katex-display { overflow-x: auto; margin: 0.5em 0; padding-bottom: 0.25em;
+.msg .text .katex-display { overflow-x: auto; margin: 0.8em 0; padding-bottom: 0.3em;
   scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--tg-text) 30%, transparent) transparent; }
 .msg .text .katex-display::-webkit-scrollbar { height: 4px; }
 .msg .text .katex-display::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--tg-text) 30%, transparent); border-radius: 999px; }
@@ -758,6 +771,7 @@ html[data-composer="solid"] .messages-inner { padding-bottom: calc(var(--compose
 @media (prefers-reduced-motion: reduce) { .msg-ops .hover-only { transition: none; } }
 /* 重摇位次牌（气泡下 ◀ 2/3 ▶ 的中间那块）。 */
 .msg-ops .reroll-pos { font-size: 0.75em; color: var(--tg-hint); padding: 0.1em 0.15em; }
+.msg-ops .prompt-edit-btn { font-size: 0.75em; white-space: nowrap; color: var(--tg-link); }
 #composer { position: absolute; bottom: 0; left: 0; right: 0; display: flex; gap: 0.5em; align-items: flex-end; background: none; z-index: 5;
   padding: 0.6em 0.6em calc(0.6em + env(safe-area-inset-bottom, 0px)); }
 /* 输入框独立浮动卡 + 发送钮独立圆钮：逻辑相连、显示分开（TG 底栏就是输入框配外面一颗钮）。 */
@@ -1063,3 +1077,9 @@ button.toggle.on .knob { transform: translateX(1.1em); }
 .model-group-count, .task-time, .task-progress, .ctx-used, .ctx-pct,
 .ctx-row dd, .pv-idx, .session-main .meta, .msg .msg-idx, .msg .msg-foot,
 .sum-range, .sum-pos, .scale-value { font-variant-numeric: tabular-nums; }
+
+/* 窄屏模型名换行后顶栏会变高（见上）：这条必须写在所有 `.messages-inner` 规则之后，
+   否则会被上面那条 `padding: 2.8em ...` 的简写覆盖。App 的 topbarRO 把实测高度写进 --topbar-h。 */
+@media (max-width: 700px) {
+  .messages-inner { padding-top: max(2.8em, calc(var(--topbar-h, 2.2em) + 0.6em)); }
+}

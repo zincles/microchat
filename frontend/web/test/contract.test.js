@@ -8,8 +8,9 @@ import { buildCartridge, cartridgeAgent } from "../src/utils/cartridge.js";
 import { parseCommand, filterCommands, COMMAND_META } from "../src/utils/commands.js";
 import { uuidv7 } from "../src/utils/ids.js";
 import { buildCompactTree, treeTotals } from "../src/utils/tree.js";
-import { buildChatRows, rerollTargetLive, bubbleText, editRerollTarget } from "../src/utils/chatrows.js";
+import { buildChatRows, rerollTargetLive, bubbleText, editRerollTarget, latestPromptFor } from "../src/utils/chatrows.js";
 import { resetChrome, stepChrome } from "../src/utils/chrome.js";
+import { typewriterDuration, revealCount, TYPEWRITER_MIN_MS, TYPEWRITER_MAX_MS } from "../src/utils/typewriter.js";
 import { computeViewportFit } from "../src/utils/viewport.js";
 import { classifyAxis, pickDrag, dragProgress, resolveRelease } from "../src/utils/swipe.js";
 import {
@@ -253,6 +254,27 @@ test("Markdown 渲染：加粗/斜体/下划线/行内码/删除线/引述；代
   assert.match(h, /<code>code __x__<\/code>/); // 代码段里原样（`__init__` 那类）
   assert.match(h, /<del>删<\/del>/);
   assert.match(renderMarkdown("> OOC：题外话"), /<blockquote>/);
+});
+
+// 2026-11-03 用户报的红色块：模型在正文里写「用 `$$` 包裹」—— 反引号里的 $$ 不是公式开头。
+// 旧实现先抓 $$ 再做 Markdown，导致后续所有 $$ 配对错位，最后一大段正文被当成一条畸形公式，
+// KaTeX 用 .katex-error 把整段涂红。代码必须先保护，再抽数学定界符。
+test("Markdown：行内代码/代码块里的 $$ 不参与块级公式配对", () => {
+  const src = "公式块均使用 `$$` 包裹：\n\n---\n\n### 三、使用要点\n\n$$x^2$$\n\n正文 $a+b$。";
+  const html = renderMarkdown(src);
+  assert.ok(!html.includes("katex-error"), "行内代码里的 $$ 又把公式配对带歪了（整段会变红）");
+  assert.match(html, /<code>\$\$<\/code>/, "行内代码没有原样保留");
+  assert.match(html, /katex/, "真正的公式没有渲染");
+
+  const fenced = renderMarkdown("```\n$$\n```\n\n$$y^2$$");
+  assert.ok(!fenced.includes("katex-error"), "代码块里的 $$ 影响了公式");
+  assert.match(fenced, /<code>\$\$/, "代码块内容丢了");
+
+  // 中文标点紧贴闭合 $：必须在这里收口，不能一路吃到下一句。
+  const cjk = renderMarkdown("内层函数满足 $u(x) \\to 0$，则公式中的 $x$ 可替换；又如 $A - B$），只有当 $A$ 与 $B$ 不抵消。");
+  assert.ok(!cjk.includes("katex-error"), "中文标点后的 $ 仍被吞进公式");
+  assert.ok(cjk.includes("内层函数满足"), "正文被误当成公式吞掉");
+  assert.ok(cjk.includes("只有当"), "后半句被误当成公式吞掉");
 });
 
 test("Markdown 渲染：HTML 一律转义、数学走 KaTeX 占位", () => {
@@ -1140,6 +1162,35 @@ test("跟手拖拽：轴向锁、拖哪扇、开度换算、松手吸附", () =>
   assert.equal(classifyAxis(7, 2), "h");
 });
 
+// 流式打字机（2026-11-03 用户定）：后端一块一块到，前端把这一块摊在几帧里露出。
+test("打字机：100 字约 300ms，块再大也封顶；线性露出", () => {
+  assert.equal(typewriterDuration(0), 0);
+  assert.equal(typewriterDuration(20), TYPEWRITER_MIN_MS);
+  assert.equal(typewriterDuration(100), 300);
+  assert.equal(typewriterDuration(1000), TYPEWRITER_MAX_MS);
+  assert.equal(typewriterDuration(10, 200), 500);
+  assert.equal(revealCount(0, 100, 0, 300), 0);
+  assert.equal(revealCount(0, 100, 150, 300), 50);
+  assert.equal(revealCount(0, 100, 300, 300), 100);
+  assert.equal(revealCount(40, 100, 999, 300), 100);
+
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  assert.match(app, /const streamDisplay = ref\(/, "没有打字机显示状态");
+  assert.match(app, /setStreamTarget\(merged\.text, merged\.reasoning\)/, "轮询到字后没进打字机");
+  assert.match(app, /streamText: streamDisplay\.value\.text/, "气泡还在直接吞整块");
+  assert.match(app, /await waitTypewriter\(\)/, "收尾没等打字机放完（会跳一下）");
+  assert.match(app, /requestAnimationFrame|requestFrame/, "没有逐帧推进");
+  assert.ok(!/streamDisplay\.value\.reasoning \|\| m\.reasoning/.test(app),
+    "思考还回落到完整 target —— 会整块瞬间冒出");
+  const bubble = readFileSync(join(SRC, "components", "MessageBubble.vue"), "utf8");
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8");
+  assert.match(bubble, /(className = "stream-cursor"|class="stream-cursor")/, "流式正文没有终端光标");
+  assert.match(bubble, /createTreeWalker\(textEl\.value, NodeFilter\.SHOW_TEXT/, "光标没贴在最后一个文字节点后");
+  assert.match(bubble, /aria-hidden\),?\s*"true"|setAttribute\("aria-hidden", "true"\)/, "光标没对读屏隐藏");
+  assert.match(css, /\.stream-cursor \{[^}]*position:\s*absolute[^}]*animation:\s*stream-cursor-blink/, "终端光标不是绝对定位的稳定覆盖层/不闪");
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]{0,160}\.stream-cursor/, "减少动效时没兜底");
+});
+
 // 重摇期间的显示（2026-10-17 用户定）：点下 ⟳ 就**立刻**切空白 + 「正在输出…」，
 // 旧正文一直挂到第一帧才被换掉"有点丑"。证伪点：live 时回落 msg.content（又把旧正文挂回去）、
 // startingId 对不上也当 live（清错了别的消息）、摇完了还判 live（该显示库内正文/候选）。
@@ -1152,6 +1203,27 @@ test("重摇：正在摇的那条 = 刚落手（startingId）或后端说 runnin
   assert.equal(rerollTargetLive(msg, { state: { active: true, running: false, target_message_id: "m1" } }), false); // 摇完了
   assert.equal(rerollTargetLive(msg, { state: { active: false, running: true, target_message_id: "m1" } }), false);
   assert.equal(rerollTargetLive({ messageId: null, content: "x" }, { startingId: null }), false); // 库外那条（还没 id）
+});
+
+// 最新 AI 回复底部的「编辑最新 Prompt」入口：A-B-C-D-E-F ⇒ 编辑 E，不用翻回去点 E。
+test("最新 Prompt：A-B-C-D-E-F 指向 E；只在尾条 AI 上给按钮", () => {
+  const list = [
+    { id: "a", role: "user" }, { id: "b", role: "assistant" },
+    { id: "c", role: "user" }, { id: "d", role: "assistant" },
+    { id: "e", role: "user" }, { id: "f", role: "assistant" },
+  ];
+  assert.equal(latestPromptFor(list), "e");
+  assert.equal(latestPromptFor([{ id: "u", role: "user" }]), null);
+  assert.equal(latestPromptFor([{ id: "a", role: "assistant" }]), null);
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  const bubble = readFileSync(join(SRC, "components", "MessageBubble.vue"), "utf8");
+  assert.match(app, /const latestPromptId = computed\(\(\) => latestPromptFor\(vueMessages\.value\)\)/,
+    "App 没算最新 Prompt");
+  assert.match(app, /:prompt-id="row\.msg\.messageId === lastMsgId \? latestPromptId : null"/,
+    "没把 Prompt id 交给尾条 AI");
+  assert.match(app, /@edit-prompt="onBubbleEditPrompt"/, "没接「编辑最新 Prompt」");
+  assert.match(bubble, /v-if="role !== 'user' && isLast && promptId"/, "按钮不该出现在非尾条/用户消息上");
+  assert.match(bubble, /\$emit\('edit-prompt', promptId\)/, "按钮没把 Prompt id 报上去");
 });
 
 // 编辑后「保存并重摇」的合法位置（2026-11-02 用户定）：
@@ -2825,6 +2897,18 @@ test("移动端顶栏：模型名吃剩余空间，不再被挤成一个字母",
     "模型按钮自己不伸缩");
   assert.match(css, /#chat-col > header \.model-caret\s*\{[^}]*display:\s*none/,
     "窄屏还留着 8px 的下拉箭头，白占模型名的位置");
+  // 2026-11-02：空间够就完整显示；390 这种真放不下时允许换行，不再一律截成省略号。
+  assert.match(css, /\.model-anchor\s*\{[^}]*flex:\s*1 1 auto/, "宽屏也没把剩余空间给模型");
+  assert.match(css, /\.model-btn-label\s*\{[^}]*flex:\s*0 1 auto[^}]*min-width:\s*0/, "模型名不能收缩");
+  assert.match(css, /@media \(max-width: 1100px\)[\s\S]{0,900}#chat-col > header\s*\{[^}]*gap:\s*0\.35em/,
+    "中等宽度没有收紧顶栏间距（还是把模型名挤掉）");
+  assert.match(css, /@media \(max-width: 700px\)[\s\S]{0,700}\.model-btn-label\s*\{[^}]*white-space:\s*normal/,
+    "极窄屏仍不换行（只能截断）");
+  assert.match(css, /\.messages-inner \{[^}]*padding-top:\s*max\([^)]*--topbar-h,/s,
+    "换行后的顶栏高度没有从消息列留白里让出来");
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  assert.match(app, /topbarRO = new ResizeObserver\(sync\)/, "App 没有观察顶栏高度");
+  assert.match(app, /--topbar-h/, "App 没有把顶栏高度写进 --topbar-h");
 });
 
 test("会话列表：条数/时间可见，操作键有能点中的尺寸", () => {
@@ -2849,6 +2933,8 @@ test("公式比列宽时给提示（不能只是右缘一刀切）", () => {
   assert.match(bubble, /scrollWidth\s*>\s*el\.clientWidth/, "没有量公式是否真的溢出");
   assert.match(bubble, /classList\.toggle\("scroll-x"/, "没给溢出的公式挂提示类");
   assert.match(css, /\.katex-display\.scroll-x\s*\{[^}]*box-shadow/, "提示类没有视觉实现");
+  assert.match(css, /\.katex-display\s*\{[^}]*margin:\s*0\.8em 0[^}]*padding-bottom:\s*0\.3em/,
+    "KaTeX 块上下仍太挤（margin/padding 没放宽）");
 });
 
 // ── 生产交付（2026-11-02：远端部署"响应慢"的静态侧）────────────────────────

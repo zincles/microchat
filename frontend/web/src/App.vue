@@ -9,11 +9,12 @@ import { uuidv7 } from "./utils/ids.js";
 import { buildCompactTree } from "./utils/tree.js";
 import {
   buildChatRows, computeSegments, windowStart, prevWindowStart, alignWindowFrom, olderCount, runsToFetch,
-  rerollTargetLive, bubbleText, editRerollTarget,
+  rerollTargetLive, bubbleText, editRerollTarget, latestPromptFor,
 } from "./utils/chatrows.js";
 import { applyBackground } from "./utils/background.js";
 import { installViewportFit } from "./utils/viewport.js";
 import { classifyAxis, pickDrag, dragProgress, resolveRelease } from "./utils/swipe.js";
+import { typewriterDuration, revealCount } from "./utils/typewriter.js";
 import { sharedApi, previewOn, applyTheme, wantsSend, apiBase, apiBaseCandidates, saveNetPrefs, lastSessionId, saveLastSession, commandMenuOn, applyComposerStyle, applyTextScale, chromeHideOn, syncPrefs, saveBarLeftHidden, barLeftHidden } from "./utils/prefs.js";
 import {
   groupModelsByProvider,
@@ -111,6 +112,19 @@ const vueMessages = ref([]);
 const loadingSession = ref(true);
 const vueSegments = ref([]); // 整条会话的段布局（computeSegments 的产出）：窗口/折叠/编号都认它
 const vueStream = ref({ id: null, text: "", reasoning: "" });
+// 流式显字（2026-11-03）：`vueStream` 是后端的完整目标；`streamDisplay` 是打字机当前露出的前缀。
+// 每帧只改 streamDisplay，轮询与合并仍只认 vueStream（两个状态别互相镜像）。
+const streamDisplay = ref({ text: "", reasoning: "" });
+let twState = null;
+let twFrame = 0;
+const twWaiters = [];
+const nowMs = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
+const requestFrame = (cb) => (typeof requestAnimationFrame === "function"
+  ? requestAnimationFrame(cb) : setTimeout(() => cb(nowMs()), 16));
+const cancelFrame = (id) => {
+  if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(id);
+  else clearTimeout(id);
+};
 // 消息窗口（分页 + 折叠；口径与全套算法在 utils/chatrows.js）：
 // 只挂最后 N 段；更老的按"加载更多"一页一页往回；被摘要盖住的原文**展开才拉**（这里当缓存）。
 const WINDOW_SEGMENTS = 20; // 首屏段数；"加载更多"一页也这么多
@@ -310,6 +324,8 @@ function refreshContextLazy() {
   else refreshHistoryPreview();
 }
 const lastMsgId = computed(() => [...vueMessages.value].reverse().find((m) => m.messageId)?.messageId ?? null);
+// 最新 AI 回复对应的用户输入（A-B-C-D-E-F ⇒ E）——“编辑最新 Prompt”的入口目标。
+const latestPromptId = computed(() => latestPromptFor(vueMessages.value));
 // 渲染行：气泡（带编号）+ 被顶层摘要折起来的卡（口径见 utils/chatrows.js）。
 // 当前 agent 的"首段对话"（`first_message`，2026-10-11 用户定）—— **computed 只看响应式的两格**
 // （vueAgents + sessionInfo.agent_id）。⚠ 别把它写成"先看普通变量 draft 再早退"：早退分支不碰任何
@@ -342,6 +358,7 @@ function onBubbleEdit(mid, kind) {
   if (!m) { toast("那条消息已经不在了（多半被删了）：重进会话看看", "error"); return; }
   openMessageEditor(m, kind);
 }
+function onBubbleEditPrompt(mid) { onBubbleEdit(mid, "content"); }
 // deleteMessagesFlow：消息级删除的唯一出口（气泡"删"与 /cut 共用）——预览 → 确认 → 执行；
 // 执行时 409（conflict：末尾变了，别人删过/改过）⇒ **重新预览再确认**（最多三轮），
 // 不是干弹一个错（AGENTS 的口径：核对字段不符 ⇒ 409 ⇒ 重新预览）。
@@ -396,13 +413,93 @@ function clearRerollPreview() { rerollPreview.value = { text: "", reasoning: "" 
 // 「正在输出…」（2026-10-17 用户定：旧正文一直挂到第一帧才换掉很难看）。状态回来后交给 rerollState。
 const rerollStarting = ref(null);
 // 判据都在 utils/chatrows.js（纯函数、契约测试钉着）：这条是不是"正在摇的那条"、该显示什么。
+// —— 流式打字机（2026-11-03 用户定：「不是每隔 0.5s 全冒出来，而是在这 0.5s 里平滑打出来」）——
+// 轮询每次到一大块（后端 buffer 增量），这里按 typewriterDuration 把它摊到几帧里逐字露出；
+// 下一拍来了就把剩余字符重新计时，永远追着最新目标走。
+function settleTwWaiters() {
+  const list = twWaiters.splice(0);
+  for (const resolve of list) resolve();
+}
+function resetTypewriter() {
+  if (twFrame) cancelFrame(twFrame);
+  twFrame = 0;
+  twState = null;
+  streamDisplay.value = { text: "", reasoning: "" };
+  settleTwWaiters();
+}
+function flushTypewriter() {
+  if (twFrame) cancelFrame(twFrame);
+  twFrame = 0;
+  const state = twState;
+  twState = null;
+  if (state) streamDisplay.value = { text: state.targetText, reasoning: state.targetReasoning };
+  settleTwWaiters();
+}
+function twTick(ts) {
+  const s = twState;
+  if (!s) { twFrame = 0; return; }
+  const at = typeof ts === "number" ? ts : nowMs();
+  const p = s.duration > 0 ? Math.min(1, (at - s.start) / s.duration) : 1;
+  // 30fps 就够了：每帧都重排 markdown 会把 CPU 吃满，而肉眼也看不出 30 与 60 的区别。
+  if (p < 1 && at - (s.lastPaint ?? s.start) < 32) {
+    twFrame = requestFrame(twTick);
+    return;
+  }
+  s.lastPaint = at;
+  const textEnd = revealCount(s.fromText, s.toText, p * s.duration, s.duration);
+  const thinkEnd = revealCount(s.fromReason, s.toReason, p * s.duration, s.duration);
+  streamDisplay.value = {
+    text: s.targetText.slice(0, textEnd),
+    reasoning: s.targetReasoning.slice(0, thinkEnd),
+  };
+  if (p < 1) {
+    twFrame = requestFrame(twTick);
+  } else {
+    twFrame = 0;
+    twState = null;
+    settleTwWaiters();
+  }
+}
+function setStreamTarget(text, reasoning) {
+  const targetText = text ?? "";
+  const targetReasoning = reasoning ?? "";
+  const shown = streamDisplay.value;
+  let fromText = shown.text.length;
+  let fromReason = shown.reasoning.length;
+  // 缓冲被重置 / 换了目标（不是前缀）⇒ 从空白重新开始；否则接着当前前缀往后露。
+  if (!targetText.startsWith(shown.text) || !targetReasoning.startsWith(shown.reasoning)) {
+    fromText = 0;
+    fromReason = 0;
+    streamDisplay.value = { text: "", reasoning: "" };
+  }
+  const toText = targetText.length;
+  const toReason = targetReasoning.length;
+  if (toText <= fromText && toReason <= fromReason) return;
+  const start = nowMs();
+  twState = {
+    targetText, targetReasoning, fromText, fromReason, toText, toReason,
+    start, lastPaint: start, duration: typewriterDuration(toText - fromText, toReason - fromReason),
+  };
+  if (!twFrame) twFrame = requestFrame(twTick);
+}
+// waitTypewriter：一轮收尾时先把最后一块放完再 reloadWindow（顶栏/消息别在最后一跳时换掉）。
+// rAF 在后台标签页可能被冻住 ⇒ 超时兜底 flush，不无限等。
+function waitTypewriter(maxMs = 520) {
+  if (!twState) return Promise.resolve();
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => { if (done) return; done = true; clearTimeout(timer); resolve(); };
+    const timer = setTimeout(() => { flushTypewriter(); finish(); }, maxMs);
+    twWaiters.push(finish);
+  });
+}
 const isLive = (m) => rerollTargetLive(m, { startingId: rerollStarting.value, state: rerollState.value });
 function bubbleContent(m) {
-  return bubbleText(m, { field: "content", live: isLive(m), streamText: vueStream.value.text, previewText: rerollPreview.value.text });
+  return bubbleText(m, { field: "content", live: isLive(m), streamText: streamDisplay.value.text, previewText: rerollPreview.value.text });
 }
 function bubbleReasoning(m) {
   // 思考多一层回落：库里没思考、合成流也没有 ⇒ 照旧用 m.reasoning（与从前一致）。
-  return bubbleText(m, { field: "reasoning", live: isLive(m), streamText: vueStream.value.reasoning ?? m.reasoning, previewText: rerollPreview.value.reasoning });
+  return bubbleText(m, { field: "reasoning", live: isLive(m), streamText: streamDisplay.value.reasoning, previewText: rerollPreview.value.reasoning });
 }
 
 // refreshReroll：问一次重摇状态（进会话 / 一轮结束 / 删改之后都要对齐 —— 候选只在内存里，
@@ -1064,6 +1161,7 @@ async function startDraft() {
   vueMessages.value = [];
   loadingSession.value = false;
   vueStream.value = { id: null, text: "", reasoning: "" };
+  resetTypewriter();
   paintSessionHeader();
   refreshAgents();
   fillModelSelect();
@@ -1109,6 +1207,7 @@ async function enterSession(id, preloaded = null) {
   vueMessages.value = [];
   vueSegments.value = [];
   windowFrom.value = 1;
+  resetTypewriter();
   summaryMsgs.clear();
   openSummaries.clear();
   // 开机恢复那条路已经拉过一次 `/sessions`（boot），别在同一毫秒再要一遍 ——
@@ -1221,6 +1320,7 @@ async function pollTurn(sid, turnID) {
   const m = { who: "助手", role: "assistant", _stream: true, stream: true, content: "", reasoning: "", id: tmpKey() };
   vueMessages.value.push(m);
   vueStream.value = { id: turnID, text: "", reasoning: "" };
+  resetTypewriter();
   composerRef.value?.setRunning(true);
   // 受理这一刻用户那句已经进库了 ⇒ 占用本来就变了：问一次（这一发整轮只问这一次，
   // 轮询里靠 withContext:false 把它省掉；见 refreshStatusline）。
@@ -1250,6 +1350,7 @@ async function pollTurn(sid, turnID) {
         { text: vueStream.value.text ?? "", reasoning: vueStream.value.reasoning ?? "" }, cur, slice);
       vueStream.value.text = merged.text;
       vueStream.value.reasoning = merged.reasoning;
+      setStreamTarget(merged.text, merged.reasoning);
       m.reasoning = merged.reasoning;
       cur = merged.cur;
       // 轮询期间只推相位（本地写，不发请求）；左栏与占用等这一轮落地再刷 ——
@@ -1259,7 +1360,10 @@ async function pollTurn(sid, turnID) {
       if (st.phase === "idle" || st.phase === "error") {
         if (my !== epoch) return;
         const failed = st.phase === "error";
+        await waitTypewriter();
+        if (my !== epoch) return;
         await reloadWindow();
+        resetTypewriter();
         if (my !== epoch) return;
         if (failed) {
           // 失败合成一条气泡摆在文末（reloadWindow 会清 vueStream，所以必须摆在它后面）+ toast 兜底。
@@ -1377,6 +1481,9 @@ function liftOverlays() {
 }
 // 输入框高度是异步变的（autosize 在 nextTick 里长高）⇒ 量一次不够，盯住它本身。
 let composerRO = null;
+// 顶栏高度（2026-11-02）：窄屏模型名允许换行后栏会变高，消息列顶部留白必须跟着量，
+// 否则第一行消息会被顶栏盖住（和 composerRO 同一个道理）。
+let topbarRO = null;
 // 命令执行器：键与 commands.js 的 COMMAND_META **同一份命令表**（说明在表里、动作在这里；
 // 启动时对账，两边对不上立刻 console.error，不静默）。“要真会话”由表上的 needsSession 决定。
 const COMMAND_RUNNERS = {
@@ -1763,6 +1870,19 @@ onMounted(() => {
     const form = document.querySelector("#composer");
     if (form) composerRO.observe(form);
   }
+  if (typeof ResizeObserver !== "undefined" && !topbarRO) {
+    const bar = document.querySelector("#chat-col > header");
+    if (bar) {
+      const sync = () => {
+        const h = bar.getBoundingClientRect().height;
+        // 量不到（切工作区等）就别写 0 —— 那会让消息列顶到栏里去。
+        if (h > 0) document.getElementById("chat-col")?.style.setProperty("--topbar-h", `${Math.round(h)}px`);
+      };
+      topbarRO = new ResizeObserver(sync);
+      topbarRO.observe(bar);
+      sync();
+    }
+  }
   boot().catch((err) => {
     connText = "未连接";
     loadingSession.value = false;
@@ -1781,6 +1901,8 @@ onUnmounted(() => {
   tasksTimer = null;
   composerRO?.disconnect();
   composerRO = null;
+  topbarRO?.disconnect();
+  topbarRO = null;
   mqlLeft?.removeEventListener?.("change", applySideStates);
   document.removeEventListener("visibilitychange", resyncOnForeground);
   window.removeEventListener("focus", resyncOnForeground);
@@ -1864,11 +1986,13 @@ onUnmounted(() => {
               :reasoning="bubbleReasoning(row.msg)"
               :reasoning-ms="row.msg.reasoningMs"
               :message-id="row.msg.messageId"
+              :prompt-id="row.msg.messageId === lastMsgId ? latestPromptId : null"
               :is-last="!!row.msg.messageId && row.msg.messageId === lastMsgId"
               :streaming="!!row.msg.stream || isLive(row.msg)"
               :usage="row.msg.usage"
               :reroll="row.msg.messageId && rerollState.active && rerollState.target_message_id === row.msg.messageId ? rerollState : null"
               @edit="onBubbleEdit"
+              @edit-prompt="onBubbleEditPrompt"
               @delete="onBubbleDelete"
               @reroll="rerollNow"
               @reroll-go="rerollGo"

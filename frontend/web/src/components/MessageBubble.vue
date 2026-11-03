@@ -12,6 +12,7 @@ const props = defineProps({
   reasoning: String,
   reasoningMs: Number,
   messageId: String,
+  promptId: { type: String, default: null }, // 最新 AI 回复对应的用户输入（仅尾条 assistant 有）
   isLast: Boolean,
   streaming: Boolean, // 生成中（还没落库的那条）：等首字节时给三点呼吸动画
   reroll: { type: Object, default: null }, // 重摇状态（本条是目标时才非 null）：{active,count,current_idx,running}
@@ -19,7 +20,7 @@ const props = defineProps({
   // 只有聚合站（OpenRouter）会带 cost_usd；直连渠道没有 ⇒ 脚注不显示价格。
   usage: { type: Object, default: null },
 });
-defineEmits(["edit", "delete", "reroll", "reroll-go"]);
+defineEmits(["edit", "edit-prompt", "delete", "reroll", "reroll-go"]);
 
 // 脚注：token 用量 + 成本（纯函数在 utils/format.js，契约测试钉着）。
 // 没用量（生成中 / 库外那条 / 上游没报）⇒ 空串 ⇒ 整行不渲染。
@@ -38,6 +39,8 @@ const bodyHtml = computed(() => renderMarkdown(parts.value.cleaned));
 // 公式比列宽时给右缘一道内阴影（2026-11-02）：手机上原本是"一刀切"，看不出还能往右滑。
 // `overflow-x: auto` 之外再标一个类 —— 只有真的溢出才提示，短公式不受影响。
 const textEl = ref(null);
+const msgEl = ref(null);
+let cursorEl = null;
 function markMathOverflow() {
   const root = textEl.value;
   if (!root) return;
@@ -45,11 +48,50 @@ function markMathOverflow() {
     el.classList.toggle("scroll-x", el.scrollWidth > el.clientWidth + 1);
   }
 }
-onMounted(() => nextTick(markMathOverflow));
-// 流式期间正文每来一段就重算一次 —— 那时不扫（每帧扫一遍 DOM 是白烧 CPU）；
-// 收尾那一拍再扫。
-watch(bodyHtml, () => { if (!props.streaming) nextTick(markMathOverflow); });
-watch(() => props.streaming, (s) => { if (!s) nextTick(markMathOverflow); });
+// 流式期间的终端光标：v-html 每帧会重写正文，所以每帧在**最后一个有字的文本节点**后面
+// 插一个光标（不塞进 Markdown 源，免得落进代码块/公式被转义）。它只是装饰，aria-hidden。
+function clearStreamCursor() {
+  cursorEl?.remove();
+  cursorEl = null;
+}
+function placeStreamCursor() {
+  const box = msgEl.value;
+  if (!props.streaming || !textEl.value || !box) { clearStreamCursor(); return; }
+  const walker = document.createTreeWalker(textEl.value, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      return node.nodeValue && node.nodeValue.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+    },
+  });
+  let last = null;
+  while (walker.nextNode()) last = walker.currentNode;
+  if (!last) { clearStreamCursor(); return; }
+  // 光标挂在 `.msg`（不在 v-html 里）⇒ Markdown 每帧重写正文也不会把动画重建成"常亮"；
+  // 这里只把它的绝对坐标移到最后一个文字节点的末尾。
+  if (!cursorEl || !cursorEl.isConnected) {
+    cursorEl = document.createElement("span");
+    cursorEl.className = "stream-cursor";
+    cursorEl.setAttribute("aria-hidden", "true");
+    box.appendChild(cursorEl);
+  }
+  const range = document.createRange();
+  range.selectNodeContents(last);
+  range.setStart(last, last.nodeValue.length);
+  range.setEnd(last, last.nodeValue.length);
+  const rect = range.getBoundingClientRect();
+  const host = box.getBoundingClientRect();
+  if (!rect.height) { clearStreamCursor(); return; }
+  cursorEl.style.left = `${rect.right - host.left}px`;
+  cursorEl.style.top = `${rect.top - host.top}px`;
+  cursorEl.style.height = `${rect.height}px`;
+}
+onMounted(() => nextTick(() => { markMathOverflow(); placeStreamCursor(); }));
+// 流式期间正文每来一段就重算一次 —— 那时不扫公式（每帧扫一遍是白烧 CPU）；
+// 但光标要跟着最后一个字走。收尾那一拍去掉光标再扫公式。
+watch(bodyHtml, () => { if (props.streaming) nextTick(placeStreamCursor); else nextTick(markMathOverflow); });
+watch(() => props.streaming, (s) => nextTick(() => {
+  if (s) placeStreamCursor();
+  else { clearStreamCursor(); markMathOverflow(); }
+}));
 </script>
 
 <template>
@@ -57,7 +99,7 @@ watch(() => props.streaming, (s) => { if (!s) nextTick(markMathOverflow); });
        从前这里按 `display_mode` 切两套 class（两边气泡 / 用户气泡+AI 纯文本）；现在后者是唯一的样子，
        所以不再有条件类 —— 形态本身写在 CSS 的 `.msg.assistant` / `.msg-wrap.assistant` 里。 -->
   <div :class="`msg-wrap ${role === 'user' ? 'user' : 'assistant'}`">
-    <div :class="`msg ${role === 'user' ? 'user' : 'assistant'}`">
+    <div ref="msgEl" :class="`msg ${role === 'user' ? 'user' : 'assistant'}`">
       <div class="msg-head">
         <span class="who">{{ who }}<span v-if="idx !== null && idx !== undefined" class="msg-idx">#{{ idx }}</span></span>
       </div>
@@ -103,6 +145,14 @@ watch(() => props.streaming, (s) => { if (!s) nextTick(markMathOverflow); });
         @click="$emit('edit', messageId, 'reasoning')"
         v-html="ICONS.brain"
       ></button>
+      <button
+        v-if="role !== 'user' && isLast && promptId"
+        type="button"
+        class="edit-btn prompt-edit-btn"
+        title="编辑这条回复对应的用户输入"
+        aria-label="编辑最新 Prompt"
+        @click="$emit('edit-prompt', promptId)"
+      >编辑最新 Prompt</button>
       <button
         v-if="role !== 'user' && isLast"
         type="button"
