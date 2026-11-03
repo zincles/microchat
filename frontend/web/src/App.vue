@@ -127,8 +127,9 @@ const cancelFrame = (id) => {
   else clearTimeout(id);
 };
 // 消息窗口（分页 + 折叠；口径与全套算法在 utils/chatrows.js）：
-// 只挂最后 N 段；更老的按"加载更多"一页一页往回；被摘要盖住的原文**展开才拉**（这里当缓存）。
-const WINDOW_SEGMENTS = 20; // 首屏段数；"加载更多"一页也这么多
+// 只挂最后 N 段（默认 5，来自 chat.history_window）；更老的按"加载更多"一页一页往回；
+// 被摘要盖住的原文**展开才拉**（这里当缓存）。
+const windowLimit = ref(5);
 const windowFrom = ref(1); // 窗口起点（段对齐；1 = 已到最老）
 const summaryMsgs = reactive(new Map()); // 摘要 id → {state:"loading"|"ready", rows}（只有展开过的才有）
 const openSummaries = new Set(); // 哪些卡正展开着（reload 后补拉新鲜的）
@@ -139,6 +140,12 @@ const settingsOpen = ref(false);
 const settingsOnly = ref("");
 // **设置 = root 专属**（用户定，2026-10-10）：`is_admin` 才给进设置；其他用户的入口按钮也不给。
 const compactDefault = ref(null); // chat.compact_blocks（压缩面板输入框的占位提示）
+// windowLimit：消息列首屏/加载更多一页多少段（chat.history_window；默认 5）。
+function applyChatConfig(c) {
+  compactDefault.value = c?.compact_blocks ?? null;
+  const n = Number(c?.history_window);
+  windowLimit.value = Number.isFinite(n) && n >= 1 ? Math.floor(n) : 5;
+}
 const sessionSettingsId = ref(null);
 
 // —— 消息列 ——
@@ -208,8 +215,8 @@ async function loadWindow({ reset = false, scroll = true } = {}) {
   const total = tail.length ? tail[tail.length - 1].idx : 0;
   const segments = computeSegments(total, sums);
   windowFrom.value = reset
-    ? windowStart(segments, WINDOW_SEGMENTS)
-    : alignWindowFrom(segments, windowFrom.value, WINDOW_SEGMENTS);
+    ? windowStart(segments, windowLimit.value)
+    : alignWindowFrom(segments, windowFrom.value, windowLimit.value);
   const runs = runsToFetch(segments, windowFrom.value, Infinity);
   const got = [];
   for (const [a, b] of runs) {
@@ -251,11 +258,11 @@ async function reloadWindowKeepingScroll() {
   return ok;
 }
 
-// loadMore：往回一页（WINDOW_SEGMENTS 段）。插入新行前记高度，插完把滚动位置补回去（锚住视野）。
+// loadMore：往回一页（windowLimit 段）。插入新行前记高度，插完把滚动位置补回去（锚住视野）。
 async function loadMore() {
   const sid = sessionID;
   const my = epoch;
-  const older = prevWindowStart(vueSegments.value, windowFrom.value, WINDOW_SEGMENTS);
+  const older = prevWindowStart(vueSegments.value, windowFrom.value, windowLimit.value);
   if (!sid || older >= windowFrom.value) return;
   const runs = runsToFetch(vueSegments.value, older, windowFrom.value - 1);
   const got = [];
@@ -1303,8 +1310,8 @@ async function boot() {
     return;
   }
   connText = `已连接 · v${health.version ?? "?"}`;
-  // 压缩面板的默认块数读的是实例级 chat 配置（现在没有"设置专属"这回事了：本机单人）。
-  api.getChat().then((c) => { compactDefault.value = c?.compact_blocks ?? null; }).catch(() => {});
+  // 压缩默认块数 / 消息窗口读实例级 chat 配置（本机单人；远程部署也该在首屏生效）。
+  applyChatConfig(await api.getChat().catch(() => null));
   // 回到"上次在看的那条会话"（2026-10-11 用户定）：刷新 / 被安卓丢弃后重载 ⇒ 不再是一张空草稿。
   // 记的 id 取不到（删了 / 换人登录 / 别的设备）⇒ 回落草稿 —— 取不到就是取不到，不猜。
   const last = lastSessionId();
@@ -1839,6 +1846,13 @@ function openManage(pane) {
   if (narrowLeft()) applySideToggle("sessions-bar", true);
 }
 // 外观那一区改完偏好 ⇒ 聊天壳上活着的开关立刻跟上（命令菜单是唯一现在就长短不一的那个）。
+async function onChatSaved() {
+  const before = windowLimit.value;
+  applyChatConfig(await api.getChat().catch(() => null));
+  if (sessionID && before !== windowLimit.value) {
+    await loadWindow({ reset: true, scroll: false });
+  }
+}
 function onPrefsSaved() {
   cmdMenu.value = commandMenuOn();
   if (!chromeHideOn()) resetChrome(document.querySelector("#messages-vue")); // 关掉这功能 ⇒ 栏立刻回来
@@ -2057,6 +2071,7 @@ onUnmounted(() => {
         @toggle-left="toggleLeft"
         @sessions-changed="refreshSessionsBar"
         @models-changed="fillModelSelect"
+        @chat-saved="onChatSaved"
         @prefs-saved="onPrefsSaved"
         @goto-session="(id) => { closeSettings(); enterSession(id).catch((err) => toast(`进会话失败：${err.message}`, 'error')); }"
       />

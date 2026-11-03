@@ -41,7 +41,7 @@ const tab = ref(props.only || "chat");
 // 单独入口的页头文字；空串 = 完整设置（显示 TabBar）。
 const onlyTitle = computed(() => (props.only === "session" ? "会话管理" : props.only === "provider" ? "渠道管理" : ""));
 watch(() => props.only, (v) => { tab.value = v || "chat"; });
-const chat = ref({ title_chars: "", model_context_tokens: "", compact_blocks: "", compact_trigger_tokens: "", replay_reasoning: false, auto_compact: true });
+const chat = ref({ title_chars: "", model_context_tokens: "", history_window: "", compact_blocks: "", compact_trigger_tokens: "", replay_reasoning: false, auto_compact: true });
 const chatStatus = ref("");
 const defaults = ref({ provider: "", model: "", agent: "" });
 const defStatus = ref("");
@@ -64,6 +64,7 @@ async function loadChat() {
     chat.value = {
       title_chars: c.title_chars ?? "",
       model_context_tokens: c.model_context_tokens ?? "",
+      history_window: c.history_window ?? "",
       compact_blocks: c.compact_blocks ?? "",
       compact_trigger_tokens: c.compact_trigger_tokens ?? "",
       replay_reasoning: !!c.replay_reasoning,
@@ -77,9 +78,11 @@ async function saveChat() {
   const t = num(chat.value.title_chars);
   const m = num(chat.value.model_context_tokens);
   const b = num(chat.value.compact_blocks);
+  const hw = num(chat.value.history_window);
   if (t !== undefined) body.title_chars = t;
   if (m !== undefined) body.model_context_tokens = m;
   if (b !== undefined) body.compact_blocks = b;
+  if (hw !== undefined) body.history_window = hw;
   const cur = await api.getChat().catch(() => ({}));
   const fullBody = { ...cur, ...body, replay_reasoning: !!chat.value.replay_reasoning, auto_compact: !!chat.value.auto_compact };
   if (String(chat.value.compact_trigger_tokens ?? "").trim() === "") delete fullBody.compact_trigger_tokens;
@@ -87,6 +90,7 @@ async function saveChat() {
   try {
     await api.putChat(fullBody);
     chatStatus.value = "已保存";
+    emit("chat-saved");
   } catch (e) { chatStatus.value = `保存失败：${e.message}`; }
 }
 
@@ -314,6 +318,8 @@ function onKey(e) {
             <!-- 为什么右上角那枚环的分母常常比这里小：它是**输入预算** = 上下文 − 给回复留的输出额度。
                  移动端没有 hover，所以这句话必须写在这儿（不能只藏在环的 title 里）。 -->
             <p class="hint">右上角那枚环显示的是<b>还能输入多少</b>：这里填的上下文长度减去给回复预留的空间。填 1000000 时通常显示 995904。</p>
+            <label class="field"><span>首屏加载多少条消息</span><input v-model="chat.history_window" type="number" min="1" placeholder="留空 = 5" /></label>
+            <p class="hint">包含用户与 AI 消息；「加载更多」每页也按这个数量。默认 5，远程部署时首屏更快。</p>
             <label class="field"><span>每次自动压缩几段对话</span><input v-model="chat.compact_blocks" type="number" min="1" placeholder="留空 = 3" /></label>
             <label class="field"><span>自动压缩（到 80% 开始，压到 50% 以下）</span><ToggleSwitch v-model="chat.auto_compact" /></label>
             <label class="field"><span>多少占用时开始压缩（留空 = 80%）</span><input v-model="chat.compact_trigger_tokens" type="number" min="1" placeholder="留空 = 80%" /></label>

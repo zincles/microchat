@@ -164,6 +164,9 @@ type ChatConfig struct {
 	CompactTriggerTokens *int `json:"compact_trigger_tokens"`
 	// CompactBlocks：压缩不给块数时压几个**对话块**（`compact_blocks`）。单位是块，不是 token。
 	CompactBlocks int `json:"compact_blocks"`
+	// HistoryWindow：消息列首屏 / “加载更多”一页加载多少**消息段**（2026-11-03 用户定：默认 5）。
+	// 段 = 一条消息或一张顶层摘要卡；被摘要盖住的原文仍然按需展开，不在这里预取。
+	HistoryWindow int `json:"history_window"`
 	// ReplayReasoning：出站时回传思考（replay metadata，多轮推理不断档）。
 	// 缺省 = 关（省上下文；思考仍落库可看，只是不发给上游）。
 	ReplayReasoning *bool `json:"replay_reasoning,omitempty"`
@@ -173,8 +176,11 @@ type ChatConfig struct {
 // 每坨原话只嚼一次，且"抬头"那条路要凑满 N 条同层相邻顶层摘要，N 太大常常凑不齐直接报无可压缩）。
 const DefaultCompactBlocks = 3
 
+// DefaultHistoryWindow：消息窗口默认 5 段（用户 2026-11-03 定：远程部署首屏别一次拉 20 条）。
+const DefaultHistoryWindow = 5
+
 func DefaultChat() ChatConfig {
-	return ChatConfig{TitleChars: 32, ModelContextTokens: 131072, CompactBlocks: DefaultCompactBlocks}
+	return ChatConfig{TitleChars: 32, ModelContextTokens: 131072, CompactBlocks: DefaultCompactBlocks, HistoryWindow: DefaultHistoryWindow}
 }
 
 // AbilityToggle：**一个能力在这份人格上的开关 + 可选覆盖**（挂 `agents.json` 每个 agent 上）。
@@ -520,6 +526,9 @@ func Load(paths Paths) (chat ChatConfig, agents AgentsConfig, providers Provider
 		}
 		if chat.CompactBlocks == 0 {
 			chat.CompactBlocks = DefaultCompactBlocks
+		}
+		if chat.HistoryWindow <= 0 {
+			chat.HistoryWindow = DefaultHistoryWindow
 		}
 	}
 	if agents, err = LoadAgents(paths); err != nil {

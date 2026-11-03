@@ -2265,7 +2265,7 @@ test("压缩：有一键折叠全部，树与分块一起收，且没有一键�
   // ③ 两堆一起收：树节点 + 压缩载荷分块
   const fn = script.match(/function collapseCompact\(\)[\s\S]*?\n\}/)?.[0] ?? "";
   assert.ok(fn, "找不到 collapseCompact");
-  assert.match(fn, /next\.add\(n\.id\)/, "没把有孩子的树节点加进折叠集合");
+  assert.match(fn, /collapsibleSet\(tree\.value\)/, "没把有孩子的树节点加进折叠集合");
   assert.match(fn, /cpNext\.set\(i, false\)|set\(i,\s*false\)/,
     "没把压缩载荷的分块显式设成 false —— 短块会自己弹开（载荷页踩过）");
   // ④ 禁用条件两堆一起算
@@ -2274,10 +2274,14 @@ test("压缩：有一键折叠全部，树与分块一起收，且没有一键�
   assert.match(all, /collapsibleIds/, "禁用条件没算树");
   assert.match(all, /compactMessages/, "禁用条件没算压缩载荷那几块");
 
-  // ⑤ 换树（换会话）要清掉旧的折叠集合（节点 id 全换新，留着只涨不落）
+  // ⑤ 换树要**默认全部收起**（2026-11-03 用户定：压缩后的文本默认折叠，点开才看）
   const setTree = script.match(/function setTree\([\s\S]*?\n\}/)?.[0] ?? "";
   assert.ok(setTree, "找不到 setTree");
-  assert.match(setTree, /treeCollapsed\.value = new Set\(\)/, "setTree 没清折叠状态");
+  assert.match(script, /function collapsibleSet\(nodes\)/, "没有收集可折叠节点 id 的纯函数");
+  assert.match(setTree, /treeCollapsed\.value = collapsibleSet\(tree\.value\)/, "换树没默认全收起");
+  const treeTpl = tree.slice(tree.indexOf("<template>"));
+  assert.match(treeTpl, /r\.n\.kind !== 'summary' \|\| !collapsed\.has\(r\.n\.id\)/,
+    "折叠的摘要还显示压缩后的预览文本");
 
   // ⑥ 仍然**不许**有展开全部
   assert.ok(!/展开全部|expandAll/.test(tpl), "压缩页也冒出了「展开全部」—— 用户只说要折叠");
@@ -3091,4 +3095,15 @@ test("消息操作行：编辑/思考/重摇/删除始终可见，不再等 hove
   assert.ok(!/hover-only/.test(bubble), "气泡里还留着 hover-only（那三个按钮又会被藏起来）");
   assert.ok(!/\.msg-ops \.hover-only/.test(css), "CSS 还在按 hover 藏操作按钮");
   assert.match(css, /\.msg-ops \{[^}]*opacity:\s*0\.72/, "操作行没有常显的底噪");
+});
+
+test("消息窗口：默认 5 段，设置里可改，首屏与加载更多共用", () => {
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
+  assert.match(app, /const windowLimit = ref\(5\)/, "消息窗口默认不是 5");
+  assert.match(app, /windowStart\(segments, windowLimit\.value\)/, "首屏没用可配置窗口");
+  assert.match(app, /prevWindowStart\(vueSegments\.value, windowFrom\.value, windowLimit\.value\)/, "加载更多没用可配置窗口");
+  assert.match(app, /history_window/, "App 没从 chat 配置读 history_window");
+  assert.match(settings, /v-model="chat\.history_window"/, "设置里没有首屏消息数输入");
+  assert.match(settings, /首屏加载多少条消息/, "设置项没有说人话的标签");
 });

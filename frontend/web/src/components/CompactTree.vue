@@ -88,7 +88,7 @@ function barStyle(n, depth) {
           <template v-if="r.n.kind === 'summary'">#{{ r.n.fromIdx }}–{{ r.n.toIdx }} 摘要×{{ r.n.blocks }}</template>
           <template v-else>#{{ r.n.idx }} {{ r.n.role === "user" ? "你" : "助手" }}</template>
         </span>
-        <span v-if="r.n.preview" class="ctree-preview">{{ r.n.preview }}</span>
+        <span v-if="r.n.preview && (r.n.kind !== 'summary' || !collapsed.has(r.n.id))" class="ctree-preview">{{ r.n.preview }}</span>
       </span>
       <i v-if="r.n.used" class="ctree-tag" title="装配真的跳到这里（这一坨发出的就是这份）">发</i>
       <i v-if="r.n.dirty" class="ctree-tag dirty" title="被盖的消息改过：摘要已过期（装配照用）">脏</i>

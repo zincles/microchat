@@ -128,3 +128,9 @@ func TestAutoCompactDefaults(t *testing.T) {
 		t.Fatal("显式 true 该算开")
 	}
 }
+
+func TestDefaultChatHistoryWindow(t *testing.T) {
+	if got := DefaultChat().HistoryWindow; got != 5 {
+		t.Fatalf("DefaultChat().HistoryWindow = %d，想要 5（远程首屏默认只拉 5 段）", got)
+	}
+}

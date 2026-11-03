@@ -73,11 +73,24 @@ const totals = computed(() => (tree.value ? treeTotals(tree.value) : null));
 
 function setWire(w) { wire.value = w ?? null; }
 function setTables(t) { tables.value = t ?? {}; }
+// 折叠集合：只收**有孩子的节点**（叶子折了没意义）。
+function collapsibleSet(nodes) {
+  const out = new Set();
+  const walk = (ns) => {
+    for (const n of ns ?? []) {
+      if (n.children?.length) out.add(n.id);
+      walk(n.children);
+    }
+  };
+  walk(nodes);
+  return out;
+}
 function setTree(t) {
   tree.value = t ?? null;
-  // 折叠状态是**节点 id 的集合**：换一棵树（换会话 / 重新拉全量）那些 id 就全是外人的了。
-  // 留着不清 = 集合只涨不落（虽然 id 对不上、界面不会错），换会话久了就是一段白占的内存。
-  treeCollapsed.value = new Set();
+  // 换一棵树（换会话 / 重新拉全量）时**默认全部收起**（2026-11-03 用户定：
+  // 上下文面板里压缩后的文本默认折叠；点开才看这一段的摘要/原文）。
+  // 用 Set 而不是空 Set：空 = 全展开，正是要改掉的旧行为。
+  treeCollapsed.value = collapsibleSet(tree.value);
 }
 
 // —— 压缩页的「折叠全部」（2026-10-29 用户：「在"压缩"里，也请准备一键折叠的按钮吧」）——
@@ -104,15 +117,7 @@ const compactAllCollapsed = computed(() => {
   return treeDone && cpDone;
 });
 function collapseCompact() {
-  const next = new Set();
-  const walk = (ns) => {
-    for (const n of ns ?? []) {
-      if (n.children?.length) next.add(n.id);
-      walk(n.children);
-    }
-  };
-  walk(tree.value);
-  treeCollapsed.value = next;
+  treeCollapsed.value = collapsibleSet(tree.value);
   // 压缩载荷那几块一起收。**显式全设 false**，不是 `= new Map()` ——
   // 那个类的默认值取决于块长短（短块默认展开），清空会让短块自己弹开（载荷页踩过同一个坑）。
   const cpNext = new Map();

@@ -288,6 +288,9 @@ func (s *Server) putChatConfig(w http.ResponseWriter, r *http.Request) {
 	if cfg.Chat.CompactBlocks == 0 {
 		cfg.Chat.CompactBlocks = config.DefaultCompactBlocks
 	}
+	if cfg.Chat.HistoryWindow <= 0 {
+		cfg.Chat.HistoryWindow = config.DefaultHistoryWindow
+	}
 	if err := config.SaveJSON(s.paths.Config("config.json"), cfg); err != nil {
 		writeStoreError(w, err)
 		return
