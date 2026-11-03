@@ -10,6 +10,10 @@ export const DEFAULT_API_URL = "http://127.0.0.1:8787/api/v1";
 export function mergeStreamSlice(acc, cur, slice) {
   const reset = slice.next < cur.from || slice.think_next < cur.thinkFrom;
   if (reset) return { text: "", reasoning: "", cur: { from: 0, thinkFrom: 0 }, reset: true };
+  // **同一个游标读两次**（网络重试 / 迟到的重复响应）不许把同一段再追加一遍。
+  if (slice.next === cur.from && slice.think_next === cur.thinkFrom) {
+    return { text: acc.text, reasoning: acc.reasoning, cur, reset: false };
+  }
   return {
     text: acc.text + (slice.text ?? ""),
     reasoning: acc.reasoning + (slice.thinking ?? ""),

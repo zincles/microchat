@@ -1348,8 +1348,13 @@ async function resend() {
 // 后台被冻住之后异常退出）而气泡还留在列表里 —— 那个气泡就是僵住的假象。判"要不要接回来"
 // 必须看循环本身在不在。
 let liveTurnPoll = 0;
+// 同一个会话只允许一个轮询循环（2026-11-03）：前台对齐/重进会话/发送三路都可能喊 pollTurn，
+// 两个循环各带各的游标写同一个 streamDisplay ⇒ 字符会重复/跳序。这里是一把**前端单飞闸**。
+const activeTurnPolls = new Set();
 
 async function pollTurn(sid, turnID) {
+  if (activeTurnPolls.has(sid)) return;
+  activeTurnPolls.add(sid);
   const my = epoch;
   liveTurnPoll++;
   const m = { who: "助手", role: "assistant", _stream: true, stream: true, content: "", reasoning: "", id: tmpKey() };
@@ -1376,6 +1381,8 @@ async function pollTurn(sid, turnID) {
         poll = await api.turnPoll(sid, cur.from, cur.thinkFrom);
         st = poll.status;
         slice = poll.slice;
+        // 迟到的旧循环拿到的是新一轮：立刻收手，别把新的字写进旧的显示前缀。
+        if (turnID && st.message_id && st.message_id !== turnID && st.phase !== "idle") return;
         misses = 0;
       } catch (err) {
         // **一拍失败不判死刑**（2026-11-01）：切到后台、手机换网、App 被冻住再醒 ——
@@ -1427,6 +1434,7 @@ async function pollTurn(sid, turnID) {
       }
     }
   } finally {
+    activeTurnPolls.delete(sid);
     liveTurnPoll--;
     composerRef.value?.setRunning(false);
   }

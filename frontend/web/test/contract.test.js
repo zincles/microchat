@@ -91,6 +91,12 @@ test("流式合并：正常追加 + 游标推进", () => {
   assert.deepEqual(a1, { text: "你好", reasoning: "想了", cur: { from: 2, thinkFrom: 2 }, reset: false });
 });
 
+test("流式合并：同一个游标重复读不重复追加", () => {
+  const same = mergeStreamSlice({ text: "你好", reasoning: "想了" }, { from: 2, thinkFrom: 2 },
+    { text: "好", thinking: "了", next: 2, think_next: 2 });
+  assert.deepEqual(same, { text: "你好", reasoning: "想了", cur: { from: 2, thinkFrom: 2 }, reset: false });
+});
+
 test("流式合并：游标回退（缓冲换了一轮）⇒ 清零重建，不把旧尾巴接上新开头", () => {
   // 已在旧一轮读到 from=9；后端缓冲被新轮重置（next=2）⇒ 不许追加，下一拍从 0 重读。
   const r = mergeStreamSlice({ text: "旧一轮的九", reasoning: "旧" }, { from: 9, thinkFrom: 1 },
@@ -2827,6 +2833,9 @@ test("一轮的轮询：单拍失败继续，不判死刑", () => {
   assert.ok(start > 0);
   const body = app.slice(start, app.indexOf("\nlet connText", start));
   assert.match(body, /let misses = 0;/, "没有连续失败计数");
+  assert.match(body, /if \(activeTurnPolls\.has\(sid\)\) return;/, "没有单飞闸（两个循环会写乱同一个显示前缀）");
+  assert.ok(/activeTurnPolls\.add\(sid\)/.test(body) && /activeTurnPolls\.delete\(sid\)/.test(body), "单飞闸没有登记/释放");
+  assert.match(body, /st\.message_id !== turnID/, "迟到的旧循环没校验轮次 id");
   assert.match(body, /if \(\+\+misses > 10\) throw err;/, "失败没有上限（会死循环）或没有上限判断");
   assert.match(body, /misses = 0;/, "成功之后没把计数清零");
   // 合并的 status+增量必须在容错层 try 里（放在外面等于没兜住）。
