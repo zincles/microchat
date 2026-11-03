@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -561,5 +562,23 @@ func TestTurnPollCombinesStatusAndSlice(t *testing.T) {
 	}
 	if got.Slice.Next != 0 || got.Slice.ThinkNext != 0 {
 		t.Fatalf("空轮次的游标该是 0，得到 %+v", got.Slice)
+	}
+}
+
+// turn/events：SSE 读口（无轮次时也应立即回一个 idle 事件）。
+func TestTurnEventsSendsIdleEvent(t *testing.T) {
+	box := newDummySandbox(t)
+	recorder := call(box.server, "GET", box.path+"/turn/events?from=0&think_from=0", "")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("SSE 该 200，得到 %d：%s", recorder.Code, recorder.Body.String())
+	}
+	if got := recorder.Header().Get("Content-Type"); !strings.HasPrefix(got, "text/event-stream") {
+		t.Fatalf("Content-Type = %q，想要 text/event-stream", got)
+	}
+	if !strings.Contains(recorder.Body.String(), `"phase":"idle"`) {
+		t.Fatalf("没有 idle 事件：%s", recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "data: ") {
+		t.Fatalf("不是 SSE 帧：%s", recorder.Body.String())
 	}
 }

@@ -2485,7 +2485,7 @@ test("生成轮询不刷全量：withContext:false + 列表只在收尾刷", () 
   assert.match(app, /function refreshStatusline\(phase, elapsedMs, \{ withContext = true \} = \{\}\)/,
     "refreshStatusline 没有 withContext 开关");
 
-  const start = app.indexOf("async function pollTurn");
+  const start = app.indexOf("function applyTurnStream");
   const end = app.indexOf('let connText = "未连接"', start);
   const loop = app.slice(start, end === -1 ? start + 4000 : end);
   assert.match(loop, /refreshStatusline\(st\.phase, st\.elapsed_ms, \{ withContext: false \}\)/,
@@ -2807,7 +2807,8 @@ test("回到前台会跟后端对齐（三条事件都接）", () => {
 
   // ③ 已经落地 ⇒ 对齐（消息列 + 状态 + 占用 + 重摇）。
   assert.match(body, /await reloadWindowKeepingScroll\(\)/, "落地之后没重拉消息列（或没保留滚动位置）");
-  assert.match(body, /refreshStateView\(sessionID\)/, "落地之后没刷状态视图");
+  assert.match(body, /refreshContextLazy\(\)/, "落地之后没按当前工作区懒刷上下文");
+  assert.ok(!/outgoingPreview\(sessionID/.test(body), "聊天界面的前台对齐还在无条件拉 /outgoing");
   assert.match(body, /refreshStatusline\(/, "落地之后没刷状态行（上下文占用就在那儿）");
 
   // ④ 判"要不要接轮询"靠**循环在不在**（liveTurnPoll），不能靠"有没有 stream 气泡" ——
@@ -2829,21 +2830,24 @@ test("一轮的轮询：单拍失败继续，不判死刑", () => {
   const api = readFileSync(join(SRC, "api", "client.js"), "utf8");
   assert.match(api, /turnPoll:\s*\(id, from, thinkFrom\) =>/, "API 客户端没有 turnPoll");
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
-  const start = app.indexOf("async function pollTurn(sid, turnID)");
+  const start = app.indexOf("async function pollTurnHTTP(sid, turnID, my, row)");
   assert.ok(start > 0);
-  const body = app.slice(start, app.indexOf("\nlet connText", start));
+  const body = app.slice(start, app.indexOf("async function pollTurn(sid, turnID)", start));
   assert.match(body, /let misses = 0;/, "没有连续失败计数");
-  assert.match(body, /if \(activeTurnPolls\.has\(sid\)\) return;/, "没有单飞闸（两个循环会写乱同一个显示前缀）");
-  assert.ok(/activeTurnPolls\.add\(sid\)/.test(body) && /activeTurnPolls\.delete\(sid\)/.test(body), "单飞闸没有登记/释放");
-  assert.match(body, /st\.message_id !== turnID/, "迟到的旧循环没校验轮次 id");
   assert.match(body, /if \(\+\+misses > 10\) throw err;/, "失败没有上限（会死循环）或没有上限判断");
   assert.match(body, /misses = 0;/, "成功之后没把计数清零");
-  // 合并的 status+增量必须在容错层 try 里（放在外面等于没兜住）。
   const tryAt = body.indexOf("poll = await api.turnPoll(sid, cur.from, cur.thinkFrom);");
   assert.ok(tryAt > 0, "api.turnPoll 不在容错的那层 try 里");
-  assert.ok(!/await api\.status\(sid\)/.test(body), "pollTurn 还在额外发 status —— 两发串行又回来了");
+  assert.ok(!/await api\.status\(sid\)/.test(body), "轮询还在额外发 status —— 两发串行又回来了");
   assert.match(body, /delay = Math\.max\(80, 300 - \(performance\.now\(\) - requestAt\)\)/,
     "没有按 RTT 自适应下一拍间隔");
+  // 主路径是 SSE；SSE 建不起来才回退 HTTP。
+  assert.match(app, /if \(activeTurnPolls\.has\(sid\)\) return;/, "没有单飞闸（两个循环会写乱同一个显示前缀）");
+  assert.ok(/activeTurnPolls\.add\(sid\)/.test(app) && /activeTurnPolls\.delete\(sid\)/.test(app), "单飞闸没有登记/释放");
+  assert.match(app, /new EventSource\(api\.turnEventsUrl\(sid, 0, 0\)\)/, "主路径没有 SSE");
+  assert.match(app, /await pollTurnEvents\(sid, turnID, my, m\)/, "SSE 入口没接");
+  assert.match(app, /await pollTurnHTTP\(sid, turnID, my, m\)/, "SSE 没有 HTTP 回退");
+  assert.match(app, /st\.message_id !== turnID/, "迟到的旧连接没校验轮次 id");
 });
 
 // ── 域名部署：Host 闸门（2026-11-02）────────────────────────────

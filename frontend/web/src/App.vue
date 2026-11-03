@@ -881,16 +881,12 @@ async function resyncOnForeground() {
     await reloadWindowKeepingScroll();
     if (my !== epoch) return;
     refreshStatusline(st.phase, st.elapsed_ms);
-    refreshStateView(sessionID);
+    // 上下文三 tab 只在**真的在看工作区**时才刷；聊天界面不白拉 /state 与 /outgoing。
+    refreshContextLazy();
     refreshRerolls();
     // 重摇那趟如果还活着 ⇒ 把它的轮询也接回来（不 await：它可能还要摇一阵）。
     resumeRerollIfLive().catch(() => {});
     if (st.phase === "error" && st.error) toast(`上一轮失败了：${st.error}`, "error");
-    if (previewOn() && vueMessages.value.length) {
-      api.outgoingPreview(sessionID, "")
-        .then((w) => { if (my === epoch) payloadbarRef.value?.setWire(w); })
-        .catch(() => {});
-    }
   } finally {
     resyncing = false;
   }
@@ -1313,17 +1309,17 @@ async function boot() {
     return;
   }
   connText = `已连接 · v${health.version ?? "?"}`;
-  // 压缩默认块数 / 消息窗口读实例级 chat 配置（本机单人；远程部署也该在首屏生效）。
-  applyChatConfig(await api.getChat().catch(() => null));
   // 回到"上次在看的那条会话"（2026-10-11 用户定）：刷新 / 被安卓丢弃后重载 ⇒ 不再是一张空草稿。
-  // 记的 id 取不到（删了 / 换人登录 / 别的设备）⇒ 回落草稿 —— 取不到就是取不到，不猜。
+  // chat 配置与 sessions 是两件独立的事 ⇒ **并行**（远程 500–1000ms 下省一个完整 RTT）。
   const last = lastSessionId();
-  if (last) {
-    const sessions = await api.listSessions().catch(() => []);
-    if (sessions.some((s) => s.id === last)) {
-      await enterSession(last, sessions);
-      return;
-    }
+  const [chatCfg, sessions] = await Promise.all([
+    api.getChat().catch(() => null),
+    last ? api.listSessions().catch(() => []) : Promise.resolve([]),
+  ]);
+  applyChatConfig(chatCfg);
+  if (last && sessions.some((s) => s.id === last)) {
+    await enterSession(last, sessions);
+    return;
   }
   await startDraft();
 }
@@ -1352,6 +1348,118 @@ let liveTurnPoll = 0;
 // 两个循环各带各的游标写同一个 streamDisplay ⇒ 字符会重复/跳序。这里是一把**前端单飞闸**。
 const activeTurnPolls = new Set();
 
+// applyTurnStream：把一次 status+slice 并进显示与打字机；返回新游标。
+function applyTurnStream(st, slice, cur, row) {
+  const merged = mergeStreamSlice(
+    { text: vueStream.value.text ?? "", reasoning: vueStream.value.reasoning ?? "" }, cur, slice);
+  vueStream.value.text = merged.text;
+  vueStream.value.reasoning = merged.reasoning;
+  setStreamTarget(merged.text, merged.reasoning);
+  row.reasoning = merged.reasoning;
+  refreshStatusline(st.phase, st.elapsed_ms, { withContext: false });
+  return merged.cur;
+}
+
+// finishTurnStream：一轮落地后的共同收尾（SSE / 轮询回退都走这一处）。
+async function finishTurnStream(sid, st) {
+  if (sessionID !== sid) return;
+  const failed = st.phase === "error";
+  await waitTypewriter();
+  if (sessionID !== sid) return;
+  await reloadWindowKeepingScroll();
+  resetTypewriter();
+  if (sessionID !== sid) return;
+  if (failed) {
+    const errText = `失败：${st.error || "未知"}`;
+    vueMessages.value.push({ who: "助手", role: "assistant", content: errText, id: tmpKey(), noIdx: true });
+    scrollBottom();
+    toast(errText, "error");
+  }
+  refreshStatusline(st.phase, st.elapsed_ms);
+  refreshSessionsBar();
+  refreshStateView(sid);
+  refreshRerolls();
+  if (previewOn()) {
+    api.outgoingPreview(sid, "").then((w) => payloadbarRef.value?.setWire(w))
+      .catch((err) => toast(`预演失败：${err.message}`, "error"));
+  }
+}
+
+// pollTurnEvents：优先走 SSE（远程/CF 少每拍一个 RTT）。返回最终 status；null = 已换代/旧轮次，别回退。
+// 连接建了但 8s 一个事件都没有 ⇒ 抛错，让 pollTurn 回退到 HTTP 轮询（CF 缓冲/旧代理的兜底）。
+async function pollTurnEvents(sid, turnID, my, row) {
+  let cur = { from: 0, thinkFrom: 0 };
+  let es = null;
+  try {
+    return await new Promise((resolve, reject) => {
+      let got = false;
+      const watchdog = setTimeout(() => {
+        if (got) return;
+        es?.close();
+        reject(new Error("SSE 连接超时"));
+      }, 8000);
+      es = new EventSource(api.turnEventsUrl(sid, 0, 0));
+      es.onmessage = (event) => {
+        got = true;
+        clearTimeout(watchdog);
+        if (my !== epoch) { es.close(); resolve(null); return; }
+        let poll;
+        try { poll = JSON.parse(event.data); } catch { return; }
+        const st = poll.status;
+        const slice = poll.slice;
+        if (!st || !slice) return;
+        // 迟到的旧连接拿到的是新一轮：立刻收手，别把新的字写进旧的显示前缀。
+        if (turnID && st.message_id && st.message_id !== turnID && st.phase !== "idle") {
+          es.close(); resolve(null); return;
+        }
+        cur = applyTurnStream(st, slice, cur, row);
+        if (st.phase === "idle" || st.phase === "error") {
+          es.close(); resolve(st);
+        }
+      };
+      es.onerror = () => {
+        // EventSource 自己会带 Last-Event-ID 重连；这里不关它。
+        // 如果从未收到过事件，watchdog 会兜底切 HTTP。
+      };
+    });
+  } finally {
+    es?.close();
+  }
+}
+
+// pollTurnHTTP：SSE 不可用时的回退（也是原来那套 status+增量轮询）。
+async function pollTurnHTTP(sid, turnID, my, row) {
+  let cur = { from: 0, thinkFrom: 0 };
+  let misses = 0;
+  let delay = 200;
+  for (;;) {
+    await new Promise((r) => setTimeout(r, delay));
+    if (my !== epoch) return;
+    let poll;
+    let st;
+    let slice;
+    const requestAt = performance.now();
+    try {
+      poll = await api.turnPoll(sid, cur.from, cur.thinkFrom);
+      st = poll.status;
+      slice = poll.slice;
+      if (turnID && st.message_id && st.message_id !== turnID && st.phase !== "idle") return;
+      misses = 0;
+    } catch (err) {
+      if (++misses > 10) throw err;
+      delay = 200;
+      continue;
+    }
+    delay = Math.max(80, 300 - (performance.now() - requestAt));
+    if (my !== epoch) return;
+    cur = applyTurnStream(st, slice, cur, row);
+    if (st.phase === "idle" || st.phase === "error") {
+      await finishTurnStream(sid, st);
+      return;
+    }
+  }
+}
+
 async function pollTurn(sid, turnID) {
   if (activeTurnPolls.has(sid)) return;
   activeTurnPolls.add(sid);
@@ -1362,76 +1470,21 @@ async function pollTurn(sid, turnID) {
   vueStream.value = { id: turnID, text: "", reasoning: "" };
   resetTypewriter();
   composerRef.value?.setRunning(true);
-  // 受理这一刻用户那句已经进库了 ⇒ 占用本来就变了：问一次（这一发整轮只问这一次，
-  // 轮询里靠 withContext:false 把它省掉；见 refreshStatusline）。
   refreshStatusline("pending");
-  let cur = { from: 0, thinkFrom: 0 };
-  let misses = 0; // 连续几拍没拿到（切后台/断网那几下会这样）
-  let delay = 200;
   try {
-    for (;;) {
-      await new Promise((r) => setTimeout(r, delay));
-      if (my !== epoch) return; // 会话世代变了（切走/回草稿）：这一轮不再往界面上写（库里照旧落）
-      let poll;
-      let st;
-      let slice;
-      const requestAt = performance.now();
+    let finalStatus = null;
+    if (typeof EventSource === "function") {
       try {
-        // 一发改拿 status+增量：CF 链路一来一回 500–1000ms，两个串行请求是半秒到两秒的差距。
-        poll = await api.turnPoll(sid, cur.from, cur.thinkFrom);
-        st = poll.status;
-        slice = poll.slice;
-        // 迟到的旧循环拿到的是新一轮：立刻收手，别把新的字写进旧的显示前缀。
-        if (turnID && st.message_id && st.message_id !== turnID && st.phase !== "idle") return;
-        misses = 0;
-      } catch (err) {
-        // **一拍失败不判死刑**（2026-11-01）：切到后台、手机换网、App 被冻住再醒 ——
-        // 那几拍请求本来就会失败。从前这里直接抛出去 ⇒ 轮询循环当场死掉、而气泡还留在
-        // 列表里 ⇒ 界面就一直"在等待"（用户报的正是这个）。连着十拍都不行才算真不行。
-        if (++misses > 10) throw err;
-        delay = 200;
-        continue;
+        finalStatus = await pollTurnEvents(sid, turnID, my, m);
+      } catch {
+        finalStatus = undefined; // 明确：SSE 没起来，走下面的 HTTP 回退
       }
-      // 本地 RTT 小 ⇒ 仍保持 ~300ms 一拍；远端 RTT 大 ⇒ 不再额外睡满 300ms（单发在飞就够）。
-      delay = Math.max(80, 300 - (performance.now() - requestAt));
-      if (my !== epoch) return;
-      // 游标回退（缓冲被新一轮重置）⇒ 清零重建（mergeStreamSlice 的语义，别在别处再写一份）。
-      const merged = mergeStreamSlice(
-        { text: vueStream.value.text ?? "", reasoning: vueStream.value.reasoning ?? "" }, cur, slice);
-      vueStream.value.text = merged.text;
-      vueStream.value.reasoning = merged.reasoning;
-      setStreamTarget(merged.text, merged.reasoning);
-      m.reasoning = merged.reasoning;
-      cur = merged.cur;
-      // 轮询期间只推相位（本地写，不发请求）；左栏与占用等这一轮落地再刷 ——
-      // 从前这里是每 300ms 一次 GET /sessions + GET /context（一条 30 秒的回复 ≈ 200 个请求，
-      // 且 /context 每次都要全量装配：列消息 + 现演状态 + 拼出站）。见 refreshStatusline 的 withContext。
-      refreshStatusline(st.phase, st.elapsed_ms, { withContext: false });
-      if (st.phase === "idle" || st.phase === "error") {
-        if (my !== epoch) return;
-        const failed = st.phase === "error";
-        await waitTypewriter();
-        if (my !== epoch) return;
-        await reloadWindowKeepingScroll();
-        resetTypewriter();
-        if (my !== epoch) return;
-        if (failed) {
-          // 失败合成一条气泡摆在文末（reloadWindow 会清 vueStream，所以必须摆在它后面）+ toast 兜底。
-          const errText = `失败：${st.error || "未知"}`;
-          vueMessages.value.push({ who: "助手", role: "assistant", content: errText, id: tmpKey(), noIdx: true });
-          scrollBottom();
-          toast(errText, "error");
-        }
-        refreshStatusline(st.phase, st.elapsed_ms);
-        refreshSessionsBar();
-        refreshStateView(sid);
-        refreshRerolls();
-        if (previewOn()) {
-          api.outgoingPreview(sid, "").then((w) => payloadbarRef.value?.setWire(w))
-            .catch((err) => toast(`预演失败：${err.message}`, "error"));
-        }
-        break;
-      }
+      if (finalStatus === null) return; // 世代/旧轮次：已收手，不回退
+    }
+    if (finalStatus) {
+      await finishTurnStream(sid, finalStatus);
+    } else {
+      await pollTurnHTTP(sid, turnID, my, m);
     }
   } finally {
     activeTurnPolls.delete(sid);

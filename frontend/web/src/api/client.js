@@ -150,6 +150,9 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
     // turnPoll：status + 增量一发拿（2026-11-03，远程 500–1000ms 时少一个完整 RTT）。
     turnPoll: (id, from, thinkFrom) =>
       call("GET", `/sessions/${enc(id)}/turn/poll?from=${from}&think_from=${thinkFrom}`),
+    // turnEventsUrl：SSE 端点（原生 EventSource 用；不能带自定义头，所以这里是完整 URL）。
+    turnEventsUrl: (id, from, thinkFrom) =>
+      `${base}/sessions/${enc(id)}/turn/events?from=${from}&think_from=${thinkFrom}`,
     context: (id) => call("GET", `/sessions/${enc(id)}/context`),
     sessionState: (id) => call("GET", `/sessions/${enc(id)}/state`),
     // outgoingPreview：右载荷预演 —— 有字问 (c)（待发追尾），空字问现有历史（与空发 resend 同段）。

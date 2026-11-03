@@ -1,9 +1,12 @@
 package server
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"microchat/internal/store"
 	"microchat/internal/turn"
@@ -110,6 +113,77 @@ func (s *Server) turnPoll(w http.ResponseWriter, r *http.Request) {
 		Status: s.chat.Status(sid),
 		Slice:  s.chat.StreamSince(sid, from, thinkFrom),
 	})
+}
+
+// turnEvents：SSE 版的一轮增量（2026-11-03：远程/CF 下不要每个增量都走一个请求）。
+//
+// 服务端内部 100ms 看一眼 turn 缓冲，只把**变化**写成 SSE 事件；状态最多 500ms 一次，
+// 用来让前端更新耗时。`id:` 是字节游标 `next:think_next`，浏览器断线重连会自动带
+// `Last-Event-ID`，这里优先用它，避免重放旧文字。
+//
+// 这是**只读**流：不消费、不改变 turn；事件里的 slice 与 `/turn/poll` 形状一致。
+func (s *Server) turnEvents(w http.ResponseWriter, r *http.Request) {
+	from, ok := queryInt(w, r, "from")
+	if !ok {
+		return
+	}
+	thinkFrom, ok := queryInt(w, r, "think_from")
+	if !ok {
+		return
+	}
+	if _, ok := s.requireSession(w, r); !ok {
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "internal", "当前连接不支持流式输出")
+		return
+	}
+	if id := r.Header.Get("Last-Event-ID"); id != "" {
+		var a, b int
+		if _, err := fmt.Sscanf(id, "%d:%d", &a, &b); err == nil && a >= 0 && b >= 0 {
+			from, thinkFrom = a, b
+		}
+	}
+	sid := r.PathValue("session_id")
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache, no-transform")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	lastText, lastThink := -1, -1
+	lastPhase := turn.Phase("")
+	var lastStatus time.Time
+	for {
+		status := s.chat.Status(sid)
+		slice := s.chat.StreamSince(sid, from, thinkFrom)
+		changed := slice.Next != lastText || slice.ThinkNext != lastThink || status.Phase != lastPhase
+		if changed || time.Since(lastStatus) >= 500*time.Millisecond {
+			payload, err := json.Marshal(TurnPoll{Status: status, Slice: slice})
+			if err != nil {
+				return
+			}
+			if _, err := fmt.Fprintf(w, "id: %d:%d\ndata: %s\n\n", slice.Next, slice.ThinkNext, payload); err != nil {
+				return
+			}
+			flusher.Flush()
+			from, thinkFrom = slice.Next, slice.ThinkNext
+			lastText, lastThink = slice.Next, slice.ThinkNext
+			lastPhase = status.Phase
+			lastStatus = time.Now()
+		}
+		if !status.Phase.IsBusy() {
+			return
+		}
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 // turnText：这一轮已生成正文的**增量**（两条游标：正文 + 思考）—— 只服务动画。
