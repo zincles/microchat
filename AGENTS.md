@@ -1012,6 +1012,13 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   ⚠ 三块浮板（模型 / Agent 选人 / 上下文环）**互斥**：开一块要关掉另外两块（叠在一起既看不清也点不准）。
   ⚠ 顺带删掉了 `modelSel` / `reapplyValues` 那套补丁 —— 那是给 `<select>` 打的（选项异步到、`value` 先落进
   DOM 会被浏览器换掉）；自己的面板里值就只是数据。
+
+- **进会话时模型名不闪**（2026-11-04 用户报 `dummy/dummy → deepseek/deepseek-v4.1-flash → DeepSeek V4.1 Flash`）：
+  会话加载期间（`loadingSession`）顶栏渲染骨架并禁用模型按钮；模型列表还没到时 `curModelLabelOf` 回
+  「加载模型…」而不是拿 provider/upstream_id 裸串；列表到了才出显示名。`loadingSession` 由 App 传给 TopBar，
+  骨架住 `.model-loading`。
+  ⚠ **`<script setup>` 里 `defineProps` 必须用 `const props =` 接住**：直接写 `props.loading` 编译器不会报错，
+  运行时 `props` 未定义 → computed 抛错被 Vue 吞掉 → 标签**静默空白**（契约测试钉着 `const props = defineProps`）。
 - **模型显示名的版本号**（2026-11-04 用户报 `claude-opus-5-5` 显示成 `Claude Opus 5 5`）：`registry.Prettify` 把两个相邻的**单数字**词合成点号（`5-5 → 5.5`），多位数日期段不拼（`4-5-20251101 → 4.5 20251101`）；用户覆盖与上游名仍优先，prettify 只是第三级回退。
 - **模型名宽度**（2026-11-03 用户：「顶部那个模型名称栏目还能扩大，有空间就完整显示」）：不再一律截断。
   `.model-anchor` 吃满剩余空间、`.model-btn-label` 可收缩；≤1100 收紧顶栏 gap/padding（把空间还给模型名）；

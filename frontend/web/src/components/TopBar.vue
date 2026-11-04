@@ -12,7 +12,7 @@ import { ref, computed, nextTick, watch } from "vue";
 import { ICONS } from "./icons.js";
 import { modelKey, parseModelKey, formatTokens, formatStatusLine, formatDuration, phaseText, contextArc, contextPercentText, contextTitle, contextOverBudget, curModelLabelOf, filterModelGroups } from "../utils/format.js";
 
-defineProps({
+const props = defineProps({
   // leftHidden：左栏收着 ⇒ 顶栏出它那枚开关；栏开着 ⇒ 开关在栏自己头上（按钮跟着它控制的东西走）。
   // （右栏 2026-10-29 搬进上下文工作区 ⇒ 顶栏不再有 [◨] 那枚开关，`rightHidden` 跟着删。）
   leftHidden: { type: Boolean, default: false },
@@ -22,6 +22,8 @@ defineProps({
   // 开关就落在右上角、**绿环左边**（"位于那个绿色圆环左侧"）。放在这一簇而不是别处，
   // 是因为它和环管的是同一件事的两面：环说"占了多少"，工作区说"占的是什么"。
   workspace: { type: String, default: "chat" },
+  // loading：会话正在加载（模型列表也还没就位）⇒ 不拿旧/裸 id 闪一下，直接骨架。
+  loading: { type: Boolean, default: false },
 });
 const emit = defineEmits(["toggle-left", "select-model", "select-agent", "select-workspace", "cancel-queue", "cancel-task"]);
 
@@ -42,7 +44,10 @@ const modelQuery = ref("");
 const modelSearchEl = ref(null);
 const modelActive = ref(-1); // 上下键选中的那一项（在**扁平化**的列表里的下标），-1 = 没选
 
-const curModelLabel = computed(() => curModelLabelOf(modelGroups.value, curModel.value, orphanModel.value));
+const curModelLabel = computed(() => {
+  if (props.loading) return "";
+  return curModelLabelOf(modelGroups.value, curModel.value, orphanModel.value);
+});
 
 // 过滤 + 分组 + 扁平序号都在 `utils/format.js` 的 `filterModelGroups` 里（那边才测得到"搜到了什么"）。
 const filteredGroups = computed(() => filterModelGroups(modelGroups.value, modelQuery.value, orphanModel.value));
@@ -109,7 +114,10 @@ function syncOrphanModel() {
   const cur = curModel.value;
   const known = cur && modelGroups.value.some((g) => (g.items ?? []).some((i) => i.value === cur));
   const parsed = cur ? parseModelKey(cur) : null;
-  orphanModel.value = cur && !known ? { value: cur, label: `${parsed ? `${parsed.provider}/${parsed.model}` : cur}（不在列表）` } : null;
+  // 模型列表还没到时不要造 orphan（那会把 provider/upstream_id 裸串闪到顶栏）。
+  orphanModel.value = modelGroups.value.length && cur && !known
+    ? { value: cur, label: `${parsed ? `${parsed.provider}/${parsed.model}` : cur}（不在列表）` }
+    : null;
 }
 function setSession(info) {
   if (info.provider && info.model) curModel.value = modelKey(info.provider, info.model);
@@ -280,13 +288,16 @@ defineExpose({ setSession, setModels, setAgents, setContext, setStatus, setTasks
       <button
         id="model-btn"
         class="model-btn"
+        :class="{ loading }"
         type="button"
+        :disabled="loading"
         title="改当前会话的模型"
         aria-label="选择模型"
         :aria-expanded="modelOpen ? 'true' : 'false'"
         @click="toggleModel"
       >
-        <span class="model-btn-label">{{ curModelLabel }}</span>
+        <span v-if="loading" class="model-loading" aria-hidden="true"></span>
+        <span v-else class="model-btn-label">{{ curModelLabel }}</span>
         <svg class="model-caret" viewBox="0 0 10 6" aria-hidden="true"><path d="M0 0h10L5 6z" /></svg>
       </button>
       <template v-if="modelOpen">

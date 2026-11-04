@@ -2050,6 +2050,7 @@ onUnmounted(() => {
       ref="topbarRef"
       :left-hidden="leftHidden"
       :workspace="workspace"
+      :loading="loadingSession"
       @select-workspace="selectWorkspace"
       @toggle-left="toggleLeft"
       @select-model="(v) => applyModelValue(v).catch((err) => toast(`换模型失败：${err.message}`, 'error'))"

@@ -1649,16 +1649,22 @@ test("模型面板：当前模型不在列表里 ⇒ 单独一组排最前（别
   assert.ok(!filterModelGroups(MODEL_SAMPLE, "gpt", orphan).some((g) => g.provider === ORPHAN_MODEL_GROUP));
 });
 
-test("模型面板：按钮上那行字（列表里有 → 显示名；没有 → 不在列表；列表还没到 → provider/model）", () => {
+test("模型面板：按钮上那行字（列表里有 → 显示名；没有 → 不在列表；列表还没到 → 加载中）", () => {
   const key = modelKey("openrouter", "openai/gpt-4o");
   assert.equal(curModelLabelOf(MODEL_SAMPLE, key), "GPT-4o");
   assert.equal(
     curModelLabelOf(MODEL_SAMPLE, modelKey("x", "y"), { value: modelKey("x", "y"), label: "x/y（不在列表）" }),
     "x/y（不在列表）",
   );
-  // 列表还没到（异步）也不能空白：空白看着像"没选模型"
-  assert.equal(curModelLabelOf([], modelKey("openrouter", "openai/gpt-4o")), "openrouter/openai/gpt-4o");
+  // 列表还没到（异步）时不要再闪 provider/upstream_id 裸串；用中性的加载占位。
+  assert.equal(curModelLabelOf([], modelKey("openrouter", "openai/gpt-4o")), "加载模型…");
   assert.equal(curModelLabelOf([], ""), "选择模型");
+  const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  assert.match(top, /const props = defineProps\(/, "props 没接住 ⇒ computed 里 props 是未定义、会静默空白");
+  assert.match(top, /if \(props\.loading\) return ""/, "会话加载时没有压住模型名");
+  assert.match(top, /v-if="loading" class="model-loading"/, "会话加载时没有骨架占位");
+  assert.match(app, /:loading="loadingSession"/, "App 没把会话加载态传给顶栏");
 });
 
 test("模型面板：按钮 / 浮板 / emit / App 监听四处接着，且不再有原生 <select>", () => {

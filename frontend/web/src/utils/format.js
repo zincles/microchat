@@ -214,6 +214,7 @@ export function curModelLabelOf(groups, cur, orphan = null) {
     const hit = (g.items ?? []).find((i) => i.value === cur);
     if (hit) return hit.label;
   }
+  if (!(groups ?? []).length) return cur ? "加载模型…" : "选择模型";
   if (orphan) return orphan.label;
   const parsed = cur ? parseModelKey(cur) : null;
   return parsed ? `${parsed.provider}/${parsed.model}` : "选择模型";
