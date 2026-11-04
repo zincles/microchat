@@ -1,15 +1,52 @@
 <script setup>
 // 左会话栏：列表 + 新建 + 置底设置按钮。
-// 每条：标题 + 设置（三横杠 ☰，改名/模型/agent）+ 关闭（×，全屏确认后删）。
-import { ref } from "vue";
+// 每条只有一枚「选项」（竖三点）：设置与删除都收进那块浮板 —— 行内不再挤两枚键。
+import { ref, nextTick, onMounted, onUnmounted } from "vue";
 import { ICONS } from "./icons.js";
 
-defineEmits(["select", "settings", "close", "new", "open-settings", "toggle-left", "open-sessions", "open-providers"]);
+const emit = defineEmits(["select", "settings", "close", "new", "open-settings", "toggle-left", "open-sessions", "open-providers"]);
 
 const sessions = ref([]);
 const currentId = ref(null);
+const menu = ref(null); // { id, left, top } —— Teleport 到 body 的浮板
+const menuEl = ref(null);
 
 function setSessions(list, cur) { sessions.value = list ?? []; currentId.value = cur ?? null; }
+
+function closeMenu() { menu.value = null; }
+function toggleMenu(s, event) {
+  event.stopPropagation();
+  if (menu.value?.id === s.id) { closeMenu(); return; }
+  const rect = event.currentTarget.getBoundingClientRect();
+  const width = 168;
+  const height = 86;
+  const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
+  const top = rect.bottom + 4 + height > window.innerHeight - 8 ? rect.top - height - 4 : rect.bottom + 4;
+  menu.value = { id: s.id, left, top };
+  nextTick(() => menuEl.value?.querySelector("button")?.focus());
+}
+function pickSettings() {
+  const id = menu.value?.id;
+  closeMenu();
+  if (id) emit("settings", id);
+}
+function pickDelete() {
+  const id = menu.value?.id;
+  closeMenu();
+  if (id) emit("close", id);
+}
+function onKey(e) { if (e.key === "Escape") closeMenu(); }
+
+onMounted(() => {
+  document.addEventListener("keydown", onKey);
+  window.addEventListener("resize", closeMenu);
+  window.addEventListener("scroll", closeMenu, true);
+});
+onUnmounted(() => {
+  document.removeEventListener("keydown", onKey);
+  window.removeEventListener("resize", closeMenu);
+  window.removeEventListener("scroll", closeMenu, true);
+});
 
 defineExpose({ setSessions });
 </script>
@@ -46,17 +83,11 @@ defineExpose({ setSessions });
         <button
           class="item-btn"
           type="button"
-          title="会话设置"
-          aria-label="会话设置"
-          @click.stop="$emit('settings', s.id)"
-          v-html="ICONS.settings"
-        ></button>
-        <button
-          class="close"
-          type="button"
-          title="关闭会话"
-          @click.stop="$emit('close', s.id)"
-          v-html="ICONS.x"
+          title="会话选项"
+          aria-label="会话选项"
+          :aria-expanded="menu?.id === s.id ? 'true' : 'false'"
+          @click="toggleMenu(s, $event)"
+          v-html="ICONS.more"
         ></button>
       </div>
     </div>
@@ -94,4 +125,18 @@ defineExpose({ setSessions });
       </button>
     </div>
   </aside>
+  <Teleport to="body">
+    <div v-if="menu" class="session-menu-backdrop" @click="closeMenu"></div>
+    <div
+      v-if="menu"
+      ref="menuEl"
+      class="session-menu"
+      role="menu"
+      :style="{ left: menu.left + 'px', top: menu.top + 'px' }"
+      @click.stop
+    >
+      <button type="button" role="menuitem" @click="pickSettings">会话设置</button>
+      <button type="button" role="menuitem" class="danger" @click="pickDelete">删除会话</button>
+    </div>
+  </Teleport>
 </template>

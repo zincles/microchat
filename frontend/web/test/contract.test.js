@@ -2996,16 +2996,23 @@ test("移动端顶栏：模型名吃剩余空间，不再被挤成一个字母",
   assert.match(app, /--topbar-h/, "App 没有把顶栏高度写进 --topbar-h");
 });
 
-test("会话列表：条数可见、日期不显示，操作键有能点中的尺寸", () => {
+test("会话列表：一行只有一枚选项键，设置/删除收进浮板，上下间距更紧", () => {
   const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   assert.match(bar, /\{\{ s\.title \|\| "新会话" \}\}/, "会话条目没有标题");
   assert.ok(!/s\.messages|relativeTime|updated_at/.test(bar), "会话条目还在显示条数/日期元数据");
-  assert.match(css, /#session-list \{[^}]*padding:\s*0\.25em 0\.45em/, "会话列表没有留边距");
-  assert.match(bar, /v-html="ICONS\.x"/, "关闭键还是纯文本 ×，没换成线性图标");
-  assert.match(bar, /v-html="ICONS\.settings"/, "会话设置键没有图标");
-  assert.match(css, /\.session-item \.close,\s*\.session-item \.item-btn\s*\{[^}]*width:\s*1\.9em/,
-    "会话操作键的命中区又缩回去了");
+  assert.match(css, /#session-list \{[^}]*padding:\s*0\.2em 0\.4em 0\.5em/, "会话列表没有留边距");
+  // 2026-11-04 用户定：不再有 ☰ 与 × 两枚键，只剩一个「选项」。
+  assert.match(bar, /v-html="ICONS\.more"/, "会话选项键没有图标");
+  assert.ok(!/v-html="ICONS\.x"/.test(bar), "行内还留着关闭 ×");
+  assert.ok(!/class="close"/.test(bar), "行内还留着关闭键");
+  assert.match(bar, /class="session-menu"/, "没有会话选项浮板");
+  assert.match(bar, /@click="pickSettings"[^>]*>会话设置/, "浮板里没有会话设置");
+  assert.match(bar, /class="danger"[^>]*@click="pickDelete">删除会话|@click="pickDelete"[^>]*>删除会话/, "浮板里没有删除会话");
+  assert.equal((bar.match(/class="item-btn"/g) || []).length, 1, "一行不该再有多枚操作键");
+  // 上下间距：行 padding 从 0.6em 收到 0.42em；命中区仍 >= 1.8em。
+  assert.match(css, /\.session-item \{[^}]*padding:\s*0\.42em 0\.45em/, "会话行的上下间距没缩小");
+  assert.match(css, /\.session-item \.item-btn\s*\{[^}]*width:\s*1\.8em/, "会话选项键的命中区缩太小了");
 });
 
 test("空输入时的发送键不是向下箭头（那个位置会被读成「滚到底」）", () => {
