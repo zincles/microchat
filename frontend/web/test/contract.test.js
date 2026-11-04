@@ -2462,34 +2462,44 @@ test("撤销压缩：树节点原样搬后端的 undoable / level", () => {
   assert.ok(!leaf.undoable, "消息节点不该带 undoable");
 });
 
-// 创建副本（2026-11-01 用户定：「接下来给前端补上复制对话的办法，在 对话 的配置界面里允许创建副本」）。
-//
-// 背景：后端 `POST /sessions/{id}/copy` **一直是完整实现的**（新会话 + 消息与摘要一并复制、
-// 摘要铸新 id、指针重映射、世界状态不复制），但 web 界面从来没给过入口 ——
-// 于是"线性会话里想分岔"只能靠 TUI 或命令行。TUI 砍了之后，这里是**唯一**入口。
-test("创建副本：会话设置里能复制，复制完进副本", () => {
+// 创建副本 / 导出 JSON 2026-11-04 从会话设置面板挪到左栏「选项」浮板。
+// 会话设置面板只留设置本身；浮板承担四条动作：设置 / 副本 / 导出 / 删除。
+test("左栏浮板：创建副本与导出 JSON 都在这里，会话设置面板不再有它们", () => {
+  const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
   const panel = readFileSync(join(SRC, "components", "SessionSettings.vue"), "utf8");
-  const app = readFileSync(join(SRC, "..", "src", "App.vue"), "utf8");
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
   const api = readFileSync(join(SRC, "api", "client.js"), "utf8");
   const tpl = panel.slice(panel.indexOf("<template>")).replace(/<!--[\s\S]*?-->/g, "");
 
-  // ① 接口：POST .../copy
+  // ① 浮板四项，顺序就是用户说的顺序。
+  const items = ["会话设置", "创建副本", "导出 JSON", "删除会话"];
+  let last = -1;
+  for (const label of items) {
+    const at = bar.indexOf(`>${label}<`);
+    assert.ok(at > last, `浮板缺「${label}」或顺序不对`);
+    last = at;
+  }
+  assert.match(bar, /@click="pickCopy"/, "浮板没有复制动作");
+  assert.match(bar, /@click="pickExport"/, "浮板没有导出动作");
+
+  // ② 接口与 App 接线。
   assert.match(api, /copySession:\s*\(id\) => call\("POST", `\/sessions\/\$\{enc\(id\)\}\/copy`\)/,
     "API 客户端没有 copySession（或路径不对）");
-
-  // ② 面板里只留标题与按钮（2026-11-03 用户：那段三行描述太啰唆，删掉）
-  assert.match(tpl, /<h3>创建副本<\/h3>/, "会话设置里没有「创建副本」那一节");
-  assert.match(tpl, /@click="copySession"/, "「创建副本」按钮没绑处理函数");
-  assert.ok(!tpl.includes("世界状态不复制"), "复制功能的冗长说明又回来了");
-
-  // ③ 复制完**进副本**（停在原会话里会让人以为点了没反应）
-  assert.match(panel, /defineEmits\(\[[^\]]*"copy"/, "SessionSettings 没声明 copy 事件");
-  assert.match(panel, /emit\("copy", fresh\)/, "复制成功后没把新会话交出去");
-  assert.match(app, /@copy="\(fresh\) => \{ sessionSettingsId = null; afterCopy\(fresh\); \}"/,
-    "App 没接 session-copy");
+  assert.match(app, /@copy="copySessionFromBar"/, "App 没接左栏 copy");
+  assert.match(app, /@export="exportSessionFromBar"/, "App 没接左栏 export");
+  assert.match(app, /function copySessionFromBar\(id\)/, "App 没有 copySessionFromBar");
+  assert.match(app, /function exportSessionFromBar\(id\)/, "App 没有 exportSessionFromBar");
+  assert.match(app, /downloadJSON\(doc,/, "导出没有下载 JSON");
   assert.match(app, /function afterCopy\(fresh\)/, "App 没有 afterCopy");
   assert.match(app, /enterSession\(fresh\.id\)/, "复制完之后没进副本");
   assert.match(app, /refreshSessionsBar\(\)/, "复制完之后没刷左栏（副本不出现）");
+
+  // ③ 面板里移除：创建副本那一节、导出按钮、copy 事件都不许留。
+  assert.ok(!tpl.includes("<h3>创建副本</h3>"), "会话设置面板里还有创建副本");
+  assert.ok(!tpl.includes("exportJSON"), "会话设置面板里还有导出按钮");
+  assert.ok(!tpl.includes("导出对话"), "会话设置面板里还有导出按钮");
+  assert.ok(!/emit\("copy"/.test(panel), "SessionSettings 还留着 copy 事件");
+  assert.ok(!/defineEmits\(\[[^\]]*"copy"/.test(panel), "SessionSettings 还声明 copy 事件");
 });
 
 // 2026-11-01 的两个删除：死接口与死字段不许长回来。
@@ -3008,6 +3018,8 @@ test("会话列表：一行只有一枚选项键，设置/删除收进浮板，�
   assert.ok(!/class="close"/.test(bar), "行内还留着关闭键");
   assert.match(bar, /class="session-menu"/, "没有会话选项浮板");
   assert.match(bar, /@click="pickSettings"[^>]*>会话设置/, "浮板里没有会话设置");
+  assert.match(bar, /@click="pickCopy"[^>]*>创建副本/, "浮板里没有创建副本");
+  assert.match(bar, /@click="pickExport"[^>]*>导出 JSON/, "浮板里没有导出 JSON");
   assert.match(bar, /class="danger"[^>]*@click="pickDelete">删除会话|@click="pickDelete"[^>]*>删除会话/, "浮板里没有删除会话");
   assert.equal((bar.match(/class="item-btn"/g) || []).length, 1, "一行不该再有多枚操作键");
   // 上下间距：行 padding 从 0.6em 收到 0.42em；命中区仍 >= 1.8em。

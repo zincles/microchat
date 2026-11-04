@@ -15,6 +15,7 @@ import { applyBackground } from "./utils/background.js";
 import { installViewportFit } from "./utils/viewport.js";
 import { classifyAxis, pickDrag, dragProgress, resolveRelease } from "./utils/swipe.js";
 import { typewriterDuration, revealCount } from "./utils/typewriter.js";
+import { downloadJSON } from "./utils/download.js";
 import { sharedApi, previewOn, payloadPreviewOn, applyTheme, wantsSend, apiBase, apiBaseCandidates, saveNetPrefs, lastSessionId, saveLastSession, commandMenuOn, applyComposerStyle, applyTextScale, chromeHideOn, syncPrefs, saveBarLeftHidden, barLeftHidden } from "./utils/prefs.js";
 import {
   groupModelsByProvider,
@@ -1531,10 +1532,30 @@ function cancelQueue(id) {
     .then(() => refreshTasks())
     .catch((err) => toast(`取消失败：${err.message}`, "error"));
 }
+// 左栏「选项」浮板的两件动作（2026-11-04 从会话设置面板挪过来）：
+// 复制成功后仍走 afterCopy（进副本）；导出仍用同一个 API + downloadJSON。
+async function copySessionFromBar(id) {
+  try {
+    const fresh = await api.copySession(id);
+    afterCopy(fresh);
+  } catch (err) {
+    toast(`复制失败：${err.message}`, "error");
+  }
+}
+async function exportSessionFromBar(id) {
+  try {
+    const doc = await api.exportSession(id);
+    downloadJSON(doc, `${doc.title || "新会话"}.json`);
+    toast(`已导出 ${doc.messages?.length ?? 0} 条`, "ok");
+  } catch (err) {
+    toast(`导出失败：${err.message}`, "error");
+  }
+}
+
 // afterCopy：**创建副本**之后（2026-11-01）—— 刷左栏让它出现，然后直接进副本。
 //
 // 为什么刷了左栏还要再进一次：副本是"接着在这儿往下写"的东西，
-// 停在原会话里会让人以为点了没反应（副本在左栏、视线还在弹窗上）。
+// 停在原会话里会让人以为点了没反应（副本在左栏、视线还在浮板上）。
 function afterCopy(fresh) {
   if (!fresh?.id) { toast("复制完成了，但没拿到新会话 id", "error"); return; }
   toast(`已创建副本「${fresh.title || "未命名"}」`, "ok");
@@ -2037,6 +2058,8 @@ onUnmounted(() => {
         @toggle-left="toggleLeft"
         @select="(id) => { closeLeftDrawer(); backToChat(); enterSession(id).catch((err) => toast(`进会话失败：${err.message}`, 'error')); }"
         @settings="(id) => { sessionSettingsId = id; }"
+        @copy="copySessionFromBar"
+        @export="exportSessionFromBar"
         @close="askDeleteSession"
         @new="newSession"
         @open-settings="openSettings"
@@ -2185,7 +2208,6 @@ onUnmounted(() => {
       :session-id="sessionSettingsId"
       @close="sessionSettingsId = null"
       @renamed="() => { refreshSessionsBar(); if (sessionSettingsId === sessionID) enterSession(sessionID).catch(() => {}); sessionSettingsId = null; }"
-      @copy="(fresh) => { sessionSettingsId = null; afterCopy(fresh); }"
     />
   </div>
 </template>

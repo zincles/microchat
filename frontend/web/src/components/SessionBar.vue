@@ -4,7 +4,7 @@
 import { ref, nextTick, onMounted, onUnmounted } from "vue";
 import { ICONS } from "./icons.js";
 
-const emit = defineEmits(["select", "settings", "close", "new", "open-settings", "toggle-left", "open-sessions", "open-providers"]);
+const emit = defineEmits(["select", "settings", "copy", "export", "close", "new", "open-settings", "toggle-left", "open-sessions", "open-providers"]);
 
 const sessions = ref([]);
 const currentId = ref(null);
@@ -19,7 +19,7 @@ function toggleMenu(s, event) {
   if (menu.value?.id === s.id) { closeMenu(); return; }
   const rect = event.currentTarget.getBoundingClientRect();
   const width = 168;
-  const height = 86;
+  const height = 142;
   const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
   const top = rect.bottom + 4 + height > window.innerHeight - 8 ? rect.top - height - 4 : rect.bottom + 4;
   menu.value = { id: s.id, left, top };
@@ -29,6 +29,16 @@ function pickSettings() {
   const id = menu.value?.id;
   closeMenu();
   if (id) emit("settings", id);
+}
+function pickCopy() {
+  const id = menu.value?.id;
+  closeMenu();
+  if (id) emit("copy", id);
+}
+function pickExport() {
+  const id = menu.value?.id;
+  closeMenu();
+  if (id) emit("export", id);
 }
 function pickDelete() {
   const id = menu.value?.id;
@@ -136,6 +146,8 @@ defineExpose({ setSessions });
       @click.stop
     >
       <button type="button" role="menuitem" @click="pickSettings">会话设置</button>
+      <button type="button" role="menuitem" @click="pickCopy">创建副本</button>
+      <button type="button" role="menuitem" @click="pickExport">导出 JSON</button>
       <button type="button" role="menuitem" class="danger" @click="pickDelete">删除会话</button>
     </div>
   </Teleport>

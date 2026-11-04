@@ -1,13 +1,13 @@
 <script setup>
 // 会话设置弹窗：改名 / 换模型 / 换 Agent / 改会话提示词（PATCH /sessions/{id}，只发改过的格）。
-// 由左栏条目 ☰ 打开，关丢弃（不保存不写）。确认删除走同一套 confirm（全屏中央）。
+// 由左栏条目的「选项」浮板打开，关丢弃（不保存不写）。创建副本 / 导出 / 删除
+// 也都住在那块浮板里（2026-11-04 用户定：面板里只留设置本身）。
 import { ref, onMounted, onUnmounted } from "vue";
 import { sharedApi } from "../utils/prefs.js";
 import { groupModelsByProvider, modelKey, parseModelKey, modelOption, agentOption } from "../utils/format.js";
-import { downloadJSON } from "../utils/download.js";
 
 const props = defineProps({ sessionId: String });
-const emit = defineEmits(["close", "renamed", "copy"]);
+const emit = defineEmits(["close", "renamed"]);
 
 const api = sharedApi();
 
@@ -59,32 +59,6 @@ async function save() {
   } catch (e) { status.value = `保存失败：${e.message}`; }
 }
 
-// 导出对话（JSON，2026-10-11 用户定；2026-10-28 已到 v3）：角色/正文/思考 + 整张摘要金字塔
-// + 这条会话绑的渠道/模型/Agent —— 浏览器直接落一个文件。
-async function exportJSON() {
-  try {
-    const doc = await api.exportSession(props.sessionId);
-    downloadJSON(doc, `${info.value.title || "新会话"}.json`);
-    status.value = `已导出 ${doc.messages.length} 条`;
-  } catch (e) { status.value = `导出失败：${e.message}`; }
-}
-
-// 创建副本（2026-11-01 用户定：「接下来给前端补上复制对话的办法，在 对话 的配置界面里允许创建副本」）。
-//
-// 为什么这个按钮值得有：后端 `POST /sessions/{id}/copy` **一直**是完整实现的
-// （新会话 + 消息与摘要一并复制、摘要铸新 id、指针重映射、世界状态不复制），
-// 但 web 界面从来没给过入口 —— 于是"线性会话里想分岔"只能靠命令行。
-//
-// 复制完**进新会话**（emit copy）：副本的意义就是接着在它上面往下写；
-// 停在原会话里会让人以为"点了没反应"（复制出来的那条在左栏最上面，但视线在弹窗里）。
-async function copySession() {
-  status.value = "复制中…";
-  try {
-    const fresh = await api.copySession(props.sessionId);
-    emit("copy", fresh);
-  } catch (e) { status.value = `复制失败：${e.message}`; }
-}
-
 onMounted(() => {
   load().catch((e) => { status.value = `载入失败：${e.message}`; });
   document.addEventListener("keydown", onKey);
@@ -123,12 +97,7 @@ function onKey(e) {
           <label class="field-block"><span>这条会话的系统提示词（留空 = 使用智能体的设置）</span><textarea v-model="sysPrompt" :placeholder="sysPromptPh" rows="4"></textarea></label>
           <div class="row">
             <button type="button" class="primary" @click="save">保存</button>
-            <button type="button" @click="exportJSON" title="导出这条对话（含全部消息、思考过程和摘要，以及使用的渠道、模型和智能体）">导出对话（JSON）</button>
             <span class="status">{{ status }}</span>
-          </div>
-          <h3>创建副本</h3>
-          <div class="row">
-            <button type="button" @click="copySession">创建副本</button>
           </div>
         </section>
       </div>
