@@ -48,7 +48,7 @@ import {
   whoText,
   sessionTitle,
 } from "../src/utils/format.js";
-import { sendMode, wantsSend, themePref, normalizeTheme, apiBase, defaultApiBase, apiBaseCandidates, THEME_IDS, DEFAULT_THEME, DEFAULT_SEND, composerStyle, applyComposerStyle, saveComposerStyle, DEFAULT_COMPOSER, normalizeTextScale, textScale, applyTextScale, saveTextScale, flushPrefs, TEXT_SCALE_MIN, TEXT_SCALE_MAX, DEFAULT_TEXT_SCALE } from "../src/utils/prefs.js";
+import { sendMode, wantsSend, themePref, normalizeTheme, apiBase, defaultApiBase, apiBaseCandidates, THEME_IDS, DEFAULT_THEME, DEFAULT_SEND, normalizeTextScale, textScale, applyTextScale, saveTextScale, flushPrefs, TEXT_SCALE_MIN, TEXT_SCALE_MAX, DEFAULT_TEXT_SCALE } from "../src/utils/prefs.js";
 
 // 契约测试（无浏览器）：只验纯函数与请求形状。`node --test test/`。
 // 后端真服务验证另走手工（见 README）。
@@ -719,37 +719,19 @@ function stubStorage() {
   };
 }
 
-// 输入栏形态（2026-10-20 用户定：**主题项** —— 要效率还是要美观）。
-// 证伪点：① 默认不是浮空（老用户开机被改成实心）；② 空串/坏值被当成 solid（应回落 float）；
-// ③ 切回 float 时属性没摘掉（CSS 还在按 solid 画，界面"切了没反应"）；④ 值不是 solid 也挂属性。
-test("输入栏形态：默认浮空、只认 solid、切回来要摘掉属性", () => {
+// 输入栏形态（2026-10-20 加、2026-11-04 用户要求**整体删除**）：
+// 不再有「浮动 / 贴底」二选一，也不再往根节点挂 `data-composer`。
+test("输入栏只有一种布局：composer_style / data-composer 已删", () => {
   stubStorage();
-  const root = { attrs: {}, setAttribute(k, v) { this.attrs[k] = v; }, removeAttribute(k) { delete this.attrs[k]; } };
-  const originalDoc = globalThis.document;
-  globalThis.document = { documentElement: root };
-  try {
-    assert.equal(DEFAULT_COMPOSER, "float");
-    assert.equal(composerStyle(), "float");            // 没设过 ⇒ 浮空（既有观感）
-    assert.deepEqual(root.attrs, {});                  // 没调 apply 之前什么都不挂
-
-    applyComposerStyle();                              // 缺省：属性不该出现
-    assert.equal(root.attrs["data-composer"], undefined);
-
-    saveComposerStyle("solid");
-    assert.equal(composerStyle(), "solid");
-    assert.equal(root.attrs["data-composer"], "solid");
-
-    saveComposerStyle("float");                        // 切回来 ⇒ 属性摘掉（CSS 才知道回浮空）
-    assert.equal(composerStyle(), "float");
-    assert.equal(root.attrs["data-composer"], undefined);
-
-    localStorage.setItem("mc_composer_style", "nonsense"); // 坏值 ⇒ 回落默认，不许当 solid
-    assert.equal(composerStyle(), "float");
-    localStorage.setItem("mc_composer_style", "");         // 空串 = 没设过
-    assert.equal(composerStyle(), "float");
-  } finally {
-    globalThis.document = originalDoc;
+  const prefs = readFileSync(join(SRC, "utils", "prefs.js"), "utf8");
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  const pane = readFileSync(join(SRC, "components", "AppearancePane.vue"), "utf8");
+  const backend = readFileSync(join(SRC, "..", "..", "..", "core", "internal", "config", "prefs.go"), "utf8");
+  for (const [name, text] of [["prefs.js", prefs], ["main.css", css], ["App.vue", app], ["AppearancePane", pane], ["prefs.go", backend]]) {
+    assert.ok(!/composer_style|composerStyle|data-composer|DEFAULT_COMPOSER/.test(text), `${name} 还留着输入栏形态`);
   }
+  assert.ok(!pane.includes("输入框样式"), "设置里还有「输入框样式」");
 });
 
 // 背景图的地址怎么拼（2026-11-01 改口径后**唯一**值得钉的地方）：
@@ -2985,20 +2967,18 @@ test("空草稿首屏：有欢迎语与当前助手/模型，不是一整页纯�
   assert.match(css, /\.draft-welcome\s*\{/, "欢迎块没有样式（会与消息列挤在一起）");
 });
 
-test("输入框：按钮住进同一张面板，全屏键在发送键正上方", () => {
+test("输入框：发送键住在面板内，全屏键已取消", () => {
   const composer = readFileSync(join(SRC, "components", "Composer.vue"), "utf8");
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   assert.match(composer, /class="composer-box"/, "输入框与按钮没包在同一张面板里");
   assert.match(composer, /class="composer-actions"/, "按钮列没有容器");
-  const actions = composer.slice(composer.indexOf('class="composer-actions"'), composer.indexOf("</form>"));
-  assert.ok(actions.indexOf('id="expand-btn"') < actions.indexOf('id="send-btn"'), "全屏键不在发送键上方");
-  assert.match(css, /\.composer-actions \{[^}]*flex-direction:\s*column/, "按钮列不是竖排");
+  assert.match(composer, /id="send-btn"/, "没有发送键");
+  assert.ok(!composer.includes('id="expand-btn"'), "全屏键还留着");
+  assert.ok(!composer.includes("composer-fs"), "全屏输入层还留着");
+  assert.ok(!composer.includes("Teleport"), "全屏 Teleport 还留着");
   assert.match(css, /\.composer-box \{[^}]*background:/, "输入面板没有底");
   assert.ok(!/#input \{[^}]*border-radius:\s*var\(--r-shell\)/.test(css), "输入框还自己长着一张卡");
-  assert.match(css, /#composer #expand-btn \{[^}]*width:\s*1\.6em/, "全屏键没有比发送键小一号");
-  assert.match(composer, /class="composer-fs"/, "没有全屏输入层");
-  assert.match(composer, /<Teleport to="#app">/, "全屏层该挂在 #app 里（移动端可视视口才拟合）");
-  assert.match(composer, /@keydown="onFsKeydown"/, "全屏 textarea 没接键盘");
+  assert.ok(!/composer-fs|expand-btn/.test(css), "样式里还留着全屏输入");
 });
 
 test("左栏顶部：没有 MicroChat 字样，改成 对话 / 生图 两个 tab", () => {

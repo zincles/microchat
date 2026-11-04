@@ -295,7 +295,7 @@ delete(AA)           # 删除
 - `prefs.json` — **界面偏好**（2026-11-01 用户定「所有设置均存储在服务器上」）。
   它**由程序写**（不是手写配置，虽然也能手改）：改设置就整份重写，0600。
   形状：`{ "markdown": {"enabled": true, "disabled": ["table","image"]}, "theme": "dark",
-  "text_scale": "1.1", "composer_style": "solid", "background": {"kind":"file","version":"…"},
+  "text_scale": "1.1", "background": {"kind":"file","version":"…"},
   "send": "enter", "preview": true, "payload_preview": true, "command_menu": false, "chrome_hide": true,
   ⚠ **改完立刻刷新不能丢**（2026-11-04 用户报界面缩放总回 115%）：偏好回写有 250ms 防抖，
   但 `flushPrefs()` 会在滑杆 `change`、`pagehide`、`visibilitychange(hidden)` 时取消防抖并**带
@@ -1075,32 +1075,12 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   （`calc(15px * var(--app-text-scale, 1))`）—— 全项目尺寸几乎都是 em、0 处 rem、0 处 px 字号，
   于是改这一格 = 整页等比缩放。范围/步长钉在 `prefs.js` 的 `TEXT_SCALE_MIN/MAX/STEP`（0.85–1.3，5% 一格），
   滑杆在**用户视图 → 外观**，**拖动即生效**（尺寸得看着调）。`--r-*` 圆角与滚动条是 px ⇒ 不跟着缩（OpenWebUI 同样如此）。
-- **输入框只有发送 + 全屏输入**（2026-11-04 用户定：暂时不做附件/模式）：两者都住进 `.composer-box` 这张面板（textarea + 右侧按钮列，一体），全屏键在发送键**正上方**、小一号；`#expand-btn` 打开铺满 `#app` 的 `.composer-fs`，同一份 `text` 两个 textarea 共用；Esc/退出全屏保留已写内容，发送后自动收起。左栏不再放品牌；空草稿保留欢迎块（2026-11-04 用户澄清：新会话可以不是空白）。
+- **输入框只有发送，且在一体面板里**（2026-11-04 用户定：暂时不做附件/模式，也不留全屏键）：`.composer-box` 包住 textarea 与右侧发送键；左栏不再放品牌；空草稿保留欢迎块（新会话可以不是空白）。
 - 输入行 `/` 进命令面板（**只放已有路由的命令**），`resume` 走 picker；`model` 只是重拉顶栏下拉（不弹 picker）；不可逆的走全屏确认。
   **命令菜单默认关**（2026-10-17 用户定：移动端那颗 ☰ 与 `/` 浮层纯碍事）—— 关着时输入框左侧**没有 ☰**、
   输入 `/` **不弹面板**（但 `/name` 回车照旧执行：命令本身没消失，只是没有"菜单"这一层）；
   开回来在**用户视图 → 输入 → 命令菜单**（个人偏好 `mc_cmd_menu`，保存后**即时生效**，不用刷新）。
-- **两种显示模式**（2026-10-20 落地、**2026-10-17 用户定名**：这是"外观"项，不是"输入"项 —— 要效率还是要美观，用户自己挑）：
-  **正常模式** = `float`（**默认**）：输入框是**圆角矩形、浮在消息之上**（栏透明，一颗圆角卡、两侧留白、
-  背景图透得出来），**状态那行小字在输入框上方**；
-  **紧凑模式** = `solid`：输入框**占满整行、方角**（栏自己实心、边到边，外侧没 padding、输入框没圆角没边框没阴影），
-  状态与任务那两行**收进栏里**，更省地方。⚠ 值名沿用 `float`/`solid`（改成 normal/compact 会把已存偏好作废）。
-  载体是**根节点的 `data-composer="solid"` 属性**（照 `applyTheme` 那套）—— CSS 只认属性、组件不传 prop，
-  于是"换形态"只有一个开关（`utils/prefs.js` 的 `applyComposerStyle`，开机第一帧就应用，免得闪一下）。
-  口径与坑（都在 `main.css` 那段注释里）：
-  ① **阅读列那条 `#chat-col > *:not(header):not(#messages-vue)` 是 `[2,0,1]`**（`:not(#messages-vue)` 也贡献一个 id ——
-     别按 1-1-1 估），实心规则得用 `html[data-composer="solid"] #chat-col > #composer`（`[2,1,1]`）才压得过；
-  ② **超预算的红色必须跟着搬进实心规则**：`.statusline.over`（`[0,2,0]`）压不过
-     `html[data-composer="solid"] #composer .statusline`（`[1,2,1]`）⇒ 不补 `...(solid) .statusline.over`，
-     "超预算"就不再变红（警告被静默吃掉）；
-  ③ **那两行「挂在栏外」的小字现在一篇都不剩了** —— 状态行 2026-10-28 搬进环的浮板、
-     后台任务行 2026-11-01 搬进顶栏徽标 ⇒ `data-composer="solid"` 里「进栏」那套规则
-     （`position: static` + `flex: 1 0 100%` + `order` + `flex-wrap: wrap`）连同 `.taskline` 全删了。
-     `#composer` 不再换行 ⇒ 别再照这条去补「进栏」，它没有对象了；
-  ④ **全局没有 `* { box-sizing: border-box }`**：基础 `#composer` 同时有 `left:0; right:0` 与补上的 `width:100%`，
-     content-box 下加 padding 会**横向溢出** ⇒ 实心规则里必须显式写 `box-sizing: border-box`。
-  ⚠ **别给 `applyComposerStyle` 照抄 `applyTheme` 的 TG 守卫**：那条守的是**配色来源**（TG 里颜色由 TG 注入），
-  而输入栏形态是**布局**，Mini App 里照样该由用户挑 —— 两件事。
+- **输入栏只有一种布局**（2026-11-04 用户定：「不允许再设置紧凑和宽松布局」）：删掉 `float`/`solid` 二选一、`composer_style` 偏好、`data-composer` 属性与对应设置项；统一用现在的一体面板（`.composer-box` + 右侧发送键）。
 - **草稿态**（2026-10-09 定，学 DeepSeek 网页版）：点＋/`/new` 只开一张**客户端草稿**（清空消息列与右栏，顶栏显示 `config` defaults 的模型/Agent，改它只改本地 prefs）；草稿**铸一枚 UUIDv7**（`utils/ids.js`）当将来那会话的 id —— **预演走 `POST /outgoing`**（临时会话、头上就是这枚 id）、**首条发送才 `POST /sessions`**（把这枚 id 与改过的 provider/model/agent 一起带上 ⇒ 预演那一发 = 真发那一发；受理失败 ⇒ 删掉刚建的空会话、退回草稿）。⚠ **这是 HACK**（客户端铸 `sessions.id`，全项目唯一的口子 —— 动机与代价见上面 `POST /sessions` 那行；别扩散）。库里不再产生空行 ⇒ 旧"启动编排"（先清空会话再预建真会话）连同一起拿掉。改模型/Agent、回草稿都会**立刻重跑预演**（`previewSeq` 丢弃迟到的旧版）。要会话的命令（`/compact` `/cut` `/reroll` `/switch` `/stop` `/resend` `/delete` `/edit` `/editsum`）在草稿里明确拒绝。（TUI 2026-11-01 已删，那句只作历史记录。）
 - **压缩树默认全收**（2026-11-03 用户定：上下文面板里压缩后的文本默认折叠）：`PayloadBar.setTree` 用 `collapsibleSet` 把有孩子的节点全放进 `treeCollapsed`；摘要行的压缩预览在折叠时不显示，点 ▸ 才展开看摘要/子节点。⚠ 树为了算体积仍读全量消息结构（不是逐摘要懒加载）；聊天里的**摘要卡**原文才是展开才拉。
 - **压缩树**（右栏第三 tab，2026-10-10 加）：把压缩结构画成文件管理器那种树（目录 = 摘要、嵌套 = 嵌套压缩、行底 bar = 子树原文占比）。**后端零改动**：现取 `messages` + `summaries` 两个 GET，`utils/tree.js` 的 `buildCompactTree` 本地建树 —— 口径**逐字复刻 `state.walk`**（左端对齐才用摘要、升到最粗同左端祖先、跳过后不回看），`发` = 装配真跳到它、`脏` = 已过期。树顶一行是 **块数输入 + 压缩按钮**（空 = 用 config 的 `compact_blocks`；与 `/compact` 共用 `compactNow`）。压缩命令受理后 `pollCompact` 盯到收尾（拿受理回执的 `at_ms` 对上——状态位是持久的，别认旧结局）。

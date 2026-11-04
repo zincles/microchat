@@ -545,11 +545,6 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .sk-a { width: 62%; } .sk-b { width: 88%; animation-delay: 120ms; } .sk-c { width: 76%; animation-delay: 240ms; }
 @keyframes sk-breathe { 0%, 100% { opacity: 0.45; } 50% { opacity: 0.9; } }
 @media (prefers-reduced-motion: reduce) { .sk-line { animation: none; opacity: 0.6; } }
-/* 实心形态的底部留白（2026-10-20）：浮空模式那 1.5em 是留给**挂在栏外**的任务行的
- * （它 `bottom: 100%` 浮在输入框上面，不计入 `--composer-h`）；实心模式里这行已经**进栏**、
- * 高度算进了 `--composer-h` ⇒ 再留一截就是白占（与"更高效"相悖）。只留一点呼吸位。
- * 特异性(1,2,0) 压得过下面两个媒体查询里的 `.messages-inner`（0,1,0）—— 窄屏也一并生效。 */
-html[data-composer="solid"] .messages-inner { padding-bottom: calc(var(--composer-h, 4.6em) + 0.7em); }
 /* 抽屉遮罩（只在窄屏显示；点一下 = 收起左栏）：与栏的状态由 CSS 兄弟选择器联动，不用 JS 状态。 */
 /* 2026-10-29：右栏搬进上下文工作区 ⇒ `#scrim-right` 与 ≤1100 那段右抽屉规则一起删了
  * （右抽屉不存在，断点也只剩 700 这一个）。 */
@@ -811,45 +806,6 @@ html[data-composer="solid"] .messages-inner { padding-bottom: calc(var(--compose
 #chat-col > header { transform: translateY(calc(-1 * var(--chrome-top, 0px))); transition: transform 90ms linear; }
 #composer { transform: translateY(var(--chrome-bottom, 0px)); transition: transform 90ms linear; }
 @media (prefers-reduced-motion: reduce) { #chat-col > header, #composer { transition: none; } }
-/* —— 输入栏的两种形态（2026-10-20 用户定：**主题项**，不是输入选项）——————————
- * 载体是根节点的 `data-composer="solid"`（照 applyTheme 那套，见 utils/prefs.js）：
- * CSS 只认属性，组件一个 prop 都不传 —— 于是"换形态"这件事只有一处开关，且**立刻生效**。
- *
- *   ⚠ 用户口径（2026-10-17 定名）：float = **正常模式**、solid = **紧凑模式**（值名不改）。
- *   float（缺省，属性不出现）= 正常：栏透明，里面一颗圆角卡浮在消息列上、两侧留白；
- *   solid                     = 实心贴底：栏自己实心、方角、边到边（外侧没 padding、输入框没圆角）。
- *
- * 实心形态的三条必须覆盖：
- *  1. 阅读列那条 `#chat-col > *:not(header):not(#messages-vue)`（1-1-1）会把栏压成 920 居中、
- *     两侧留出背景 —— 不压过它，"实"不到边。用 `#chat-col > #composer`（2-0-1）赢它。
- *  2. 栏的 padding 归零（外侧没留白 = 用户要的"没 margin"），只留 `env(safe-area-inset-bottom)`
- *     —— 全面屏底下那条 home 指示条会压住输入框，这一个是**安全区**，不是装饰。
- *  3. 状态行/任务行从"浮在消息上方的居中绝对定位小字"改成**栏内的一行**（跟着实心底走）。 */
-html[data-composer="solid"] #chat-col > #composer {
-  max-width: none; margin: 0; width: 100%;
-  background: var(--tg-secondary-bg);
-  border-top: 1px solid var(--line);
-  padding: 0.5em 0.5em calc(0.5em + env(safe-area-inset-bottom, 0px));
-  /* ⚠ 全局**没有** `* { box-sizing: border-box }`（那类 reset 本仓一直不做）——
-   * 而基础规则里 `#composer` 同时有 `left:0; right:0` 与（这里补的）`width:100%`：
-   * content-box 下再加 padding，盒子会比 `#chat-col` **宽出一个左右 padding**（横向溢出、
-   * 出现横向滚动条）。浮空形态没这问题（它 padding 小、又没被撑到 100%），实心形态必须显式写。 */
-  box-sizing: border-box;
-}
-html[data-composer="solid"] #composer .composer-box {
-  background: none; -webkit-backdrop-filter: none; backdrop-filter: none;
-  border: none; border-radius: 0; box-shadow: none; padding: 0;
-}
-html[data-composer="solid"] #composer #input {
-  background: none; -webkit-backdrop-filter: none; backdrop-filter: none;
-  border: none; border-radius: 0; box-shadow: none;
-  padding: 0.35em 0.6em;
-}
-/* 实心栏里输入框没有边框可亮 ⇒ 焦点提示交给**插入符**（别让"点了没反应"发生：光标本来就在闪，
- * 够用；这里不给 focus 画任何框，否则又变成一张卡）。 */
-html[data-composer="solid"] #composer #input:focus { outline: none; border-color: transparent; }
-/* 两颗圆钮在实心栏里保留圆形（它们是按钮，不是"卡"）—— 只把阴影去掉，贴着实心底更干净。 */
-html[data-composer="solid"] #composer button { box-shadow: none; }
 /* ⚠ 这里原本有"任务行进栏"那条规则（`.taskline` 占一整行、`order: -1` 排在输入框上面）
  * 和上面「两个隔间」那段历史。**2026-11-01 整块删掉了**：后台任务已并进顶栏的上下文环（`#ctx-ring`），
  * 输入栏上方不再有任何小字 —— 于是 `flex-wrap` 也没有对象了（`#composer` 不再换行）。
@@ -859,9 +815,7 @@ html[data-composer="solid"] #composer button { box-shadow: none; }
  * 浮板（`#ctx-ring` → `.ctx-menu` 里的"连接 / 助手 / 运行"三行），上下文占用则是环本身。
  * 于是这里没有"一行浮在输入框上方的小字"了 —— 别把它加回来：同一件事住两处，
  * 只会让两处都可能过期（而且那行字要一直挤着对话的底部）。
- * 随它一起没掉的还有两条：实心模式的"状态行 ↔ 输入行"分割线（两个隔间只剩一个了）、
- * 以及那条 `html[data-composer="solid"] #composer .statusline.over`（2026-10-20 的特异性事故：
- * 作用域化的规则特异性更高，样式得跟着搬 —— 这个教训仍然成立）。 */
+ * 随它一起没掉的还有那条状态行与输入行之间的分割线。 */
 /* （2026-11-01：连接门板 / 登录那一整段样式随账号功能删了 —— `ConnectGate.vue` 早没了，
  * 这些规则只会让 `main.css` 里躺着一堆匹配不到的 id。需要时从 git 历史里捡。） */
 /* 空态（会话列）：安静居中 + 一句引导，别像报错。 */
@@ -870,28 +824,7 @@ html[data-composer="solid"] #composer button { box-shadow: none; }
 #composer button { background: var(--tg-button); color: var(--tg-button-text); border: none; border-radius: 50%; width: 2.4em; height: 2.4em; padding: 0; cursor: pointer; align-self: flex-end; display: flex; align-items: center; justify-content: center; flex: none; box-shadow: var(--shadow-1); }
 #composer button:hover { filter: brightness(1.1); }
 #composer button svg { display: block; }
-/* 全屏输入键：与发送键同尺寸，但不是主行动 ⇒ 用次级底色。 */
-#composer #expand-btn { width: 1.6em; height: 1.6em; background: var(--tg-secondary-bg); color: var(--tg-hint); box-shadow: none; opacity: 0.78; }
-#composer #expand-btn:hover { color: var(--tg-text); opacity: 1; }
 #composer #menu-btn { width: 2.1em; height: 2.1em; }
-/* 全屏输入（2026-11-04 用户定）：铺满应用可视区，正文仍是阅读列宽；Esc 退出。 */
-.composer-fs { position: fixed; inset: 0; z-index: 80; background: var(--tg-bg);
-  display: flex; flex-direction: column; gap: 0.8em; box-sizing: border-box;
-  padding: max(1em, env(safe-area-inset-top)) max(1em, env(safe-area-inset-right)) max(1em, env(safe-area-inset-bottom)) max(1em, env(safe-area-inset-left)); }
-.composer-fs > * { width: 100%; max-width: var(--read-col, 840px); margin-left: auto; margin-right: auto; }
-.composer-fs-head { flex: none; display: flex; align-items: center; justify-content: space-between; color: var(--tg-hint); font-size: 0.9em; }
-.composer-fs-close { background: none; border: none; color: var(--tg-hint); cursor: pointer; width: 2.2em; height: 2.2em; border-radius: 50%;
-  display: inline-flex; align-items: center; justify-content: center; }
-.composer-fs-close:hover { background: var(--mix-8); color: var(--tg-text); }
-.composer-fs-input { flex: 1 1 auto; min-height: 0; box-sizing: border-box; resize: none; background: var(--tg-secondary-bg);
-  color: var(--tg-text); border: 1px solid var(--line); border-radius: var(--r-card); padding: 1em; font: inherit;
-  font-size: 1.05em; line-height: 1.7; outline: none; }
-.composer-fs-input:focus { border-color: color-mix(in srgb, var(--tg-link) 65%, transparent); }
-.composer-fs-foot { flex: none; display: flex; justify-content: flex-end; }
-.composer-fs-foot button { background: var(--tg-button); color: var(--tg-button-text); border: none; border-radius: 999px;
-  padding: 0.65em 1.6em; font: inherit; cursor: pointer; }
-.composer-fs-foot button:hover { filter: brightness(1.08); }
-.composer-fs-foot button.stop { background: var(--tg-destructive); }
 /* 停止态：红底（生成中点即停，与发送蓝钮区分）。 */
 #composer button.stop { background: var(--tg-destructive); }
 /* 菜单键：与发送圆钮同形，底栏色（输入框左侧，点开命令面板）。 */

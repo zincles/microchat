@@ -11,8 +11,6 @@ const text = ref("");
 const running = ref(false);
 function setRunning(v) { running.value = !!v; }
 const area = ref(null);
-const fsArea = ref(null);
-const expanded = ref(false);
 const sendSvg = ICONS.send;
 function autosize() {
   nextTick(() => {
@@ -42,24 +40,10 @@ function submit() {
   const t = text.value.trim();
   text.value = "";
   if (area.value) area.value.rows = 1;
-  expanded.value = false;
   emit("submit", t);
 }
 function stop() {
-  expanded.value = false;
   emit("stop");
-}
-function openFullscreen() {
-  expanded.value = true;
-  nextTick(() => fsArea.value?.focus());
-}
-function closeFullscreen() {
-  expanded.value = false;
-  nextTick(() => area.value?.focus());
-}
-function onFsKeydown(e) {
-  if (e.key === "Escape") { e.preventDefault(); closeFullscreen(); return; }
-  onKeydown(e);
 }
 
 function clear() {
@@ -71,7 +55,7 @@ function clear() {
 // 用户点的是"我要说这句"，下一步动作必然是补充或回车，不该再点一次输入框。
 function setText(t) {
   text.value = String(t ?? "");
-  nextTick(() => (expanded.value ? fsArea.value : area.value)?.focus());
+  nextTick(() => area.value?.focus());
 }
 
 defineExpose({ submit, clear, setText, text, setRunning });
@@ -101,14 +85,6 @@ defineExpose({ submit, clear, setText, text, setRunning });
           v-html="ICONS.menu"
         ></button>
         <button
-          type="button"
-          id="expand-btn"
-          title="全屏输入"
-          aria-label="全屏输入"
-          @click="openFullscreen"
-          v-html="ICONS.maximize"
-        ></button>
-        <button
           type="submit"
           id="send-btn"
           :class="{ stop: running }"
@@ -119,25 +95,4 @@ defineExpose({ submit, clear, setText, text, setRunning });
       </div>
     </div>
   </form>
-  <Teleport to="#app">
-    <section v-if="expanded" class="composer-fs" aria-label="全屏输入">
-      <div class="composer-fs-head">
-        <span>输入</span>
-        <button type="button" class="composer-fs-close" title="退出全屏（Esc）" aria-label="退出全屏" @click="closeFullscreen" v-html="ICONS.minimize"></button>
-      </div>
-      <textarea
-        ref="fsArea"
-        v-model="text"
-        class="composer-fs-input"
-        placeholder="输入消息…"
-        @input="onInput"
-        @keydown="onFsKeydown"
-      ></textarea>
-      <div class="composer-fs-foot">
-        <button type="button" id="fs-send-btn" :class="{ stop: running }" @click="running ? stop() : submit()">
-          {{ running ? "停止" : "发送" }}
-        </button>
-      </div>
-    </section>
-  </Teleport>
 </template>

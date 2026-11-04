@@ -2,7 +2,7 @@
 // 外观面板（设置视图的「外观」区）。
 //
 // 这块**原本住在用户视图**（`UserView.vue`）。账号砍掉之后用户视图整个没了 ——
-// 它原来那半：**个人偏好**（主题 / 缩放 / 背景图 / 显示模式 / 滚动收起 / 发送键 /
+// 它原来那半：**个人偏好**（主题 / 缩放 / 背景图 / 滚动收起 / 发送键 /
 // 预演 / 命令菜单）原样搬到这儿；2026-11-01 又加了一区 **markdown 渲染**。
 //
 // 2026-11-01 两件大事：
@@ -23,7 +23,6 @@ import {
   previewOn, savePreview,
   commandMenuOn, saveCommandMenu,
   chromeHideOn, saveChromeHide,
-  composerStyle as composerStylePref, saveComposerStyle,
   textScale as textScalePref, saveTextScale, flushPrefs,
   markdownPrefs, markdownTypes, saveMarkdown, saveBackground,
   refreshPrefs,
@@ -41,10 +40,6 @@ const send = ref("enter");
 const preview = ref(true);
 // 命令菜单（默认关）：输入框左侧那颗 ☰ 与输入 "/" 弹出的面板。移动端碍事 ⇒ 想用的人才开。
 const cmdMenu = ref(false);
-// 显示模式（**外观项**；2026-10-17 用户给这两个形态定了名）：
-//   **正常模式** = float：圆角矩形输入框、浮在消息之上，框上方一行小字报状态；
-//   **紧凑模式** = solid：输入框占满整行、方角贴底，省地方。
-const composerStyle = ref("float");
 // 界面缩放（2026-10-28）：**拖的时候就生效** —— 尺寸这东西得看着调。
 const textScale = ref(1);
 const scaleBounds = { min: TEXT_SCALE_MIN, max: TEXT_SCALE_MAX, step: TEXT_SCALE_STEP };
@@ -96,7 +91,6 @@ function loadFromPrefs() {
   send.value = sendMode();
   preview.value = previewOn();
   cmdMenu.value = commandMenuOn();
-  composerStyle.value = composerStylePref();
   textScale.value = textScalePref();
   chromeHide.value = chromeHideOn();
   const md = markdownPrefs();
@@ -117,7 +111,6 @@ function persist() {
   saveSendMode(send.value);
   savePreview(preview.value);
   saveCommandMenu(cmdMenu.value);
-  saveComposerStyle(composerStyle.value);
   saveTextScale(textScale.value);
   saveChromeHide(chromeHide.value);
   emit("prefs-saved"); // 聊天壳上的活开关立刻跟上（命令菜单那颗 ☰）
@@ -246,14 +239,8 @@ async function clearBg() {
 
     <section class="settings-card">
       <h3>布局</h3>
-      <!-- 输入栏形态（2026-10-20 用户定）：**外观项** —— 要效率还是要美观，自己挑。 -->
-      <label class="field"><span>输入框样式</span><select v-model="composerStyle" @change="persist">
-        <option value="float">浮动输入框（默认）</option>
-        <option value="solid">贴底输入框（更省空间）</option>
-      </select></label>
       <label class="field"><span>滚动时自动收起顶栏/底栏（仅触屏）</span><ToggleSwitch :model-value="chromeHide" @update:model-value="setChromeHide" /></label>
       <p class="hint">向下浏览时顶栏逐步收起，往回看时底栏逐步收起 —— 一次只收一边，反向滚动就放回来；到顶或到底立刻全部放回。只在触屏上生效。</p>
-      <p class="hint"><b>浮动</b> = 输入框是一颗圆角卡、浮在消息上（两侧留白，背景图透得出来）；<b>贴底</b> = 输入框边到边、方角贴底，省出一点空间。</p>
     </section>
 
     <section class="settings-card">

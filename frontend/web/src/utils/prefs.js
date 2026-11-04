@@ -54,7 +54,6 @@ export function normalizeTextScale(value) {
 }
 
 export const DEFAULT_SEND = "enter";
-export const DEFAULT_COMPOSER = "float";
 
 // ── 服务器偏好的本地镜像与内存缓存 ──────────────────────────────────
 //
@@ -72,7 +71,6 @@ const FALLBACK_PREFS = {
   markdown: { enabled: true, disabled: [] },
   theme: "",
   text_scale: "",
-  composer_style: "",
   background: {},
   send: "",
   preview: true,
@@ -147,14 +145,13 @@ function merge(base, incoming) {
 // 只在"三个条件同时成立"时做：镜像不存在、服务器上还是缺省、老键确实存过。
 // 这三个一起成立 ⇒ 就是"这台浏览器从旧版本升级上来、而服务器上还没人设过"。
 // 迁完立刻 PUT 上去，并写镜像；此后永远不再看老键（它们留着无害，也不再读）。
-const LEGACY_KEYS = ["mc_theme", "mc_text_scale", "mc_composer_style", "mc_preview",
+const LEGACY_KEYS = ["mc_theme", "mc_text_scale", "mc_preview",
   "mc_chrome_hide", "mc_cmd_menu", "mc_payload_viz", "mc_bar_left_hidden", "mc_send"];
 
 function legacyPrefs() {
   if (!LEGACY_KEYS.some((key) => localStorage.getItem(key) !== null)) return null;
   const theme = localStorage.getItem("mc_theme");
   const scale = localStorage.getItem("mc_text_scale");
-  const style = localStorage.getItem("mc_composer_style");
   // 旧布尔键有两种相反约定（`!== "0"` 与 `=== "1"`）⇒ 不能一个函数通吃，
   // 由调用处按各自的原意给缺省与判定。
   const notZero = (key, dflt) => {
@@ -165,7 +162,6 @@ function legacyPrefs() {
     markdown: { enabled: true, disabled: [] },
     theme: theme === null ? "" : normalizeTheme(theme),
     text_scale: scale === null ? "" : String(normalizeTextScale(scale)),
-    composer_style: style === "solid" ? "solid" : "",
     background: {},
     send: localStorage.getItem("mc_send") || "",
     preview: notZero("mc_preview", true),
@@ -410,32 +406,6 @@ export function savePayloadViz(on) { setPref("payload_viz", !!on); }
 export function barLeftHidden() { return flagPref("bar_left_hidden", false); }
 export function saveBarLeftHidden(on) { setPref("bar_left_hidden", !!on); }
 
-// —— 输入栏形态（2026-10-20 用户定：这是**主题项**，不是输入选项）——
-// 两种形态，用户自己挑"要效率还是要美观"：
-//   用户口径（2026-10-17 定名）：**正常模式** = float、**紧凑模式** = solid。
-//   float（默认）= 正常：输入框是一颗圆角卡，浮在消息列上、两侧留白（状态小字在框上方）；
-//   solid        = 紧凑：栏自己实心、方角、边到边（外侧没 padding、输入框没圆角）。
-// 值名不改（改用 normal/compact 会把已经存下的偏好作废）。
-// 载体是**根节点的 `data-composer` 属性**（照 applyTheme 那套）—— CSS 只认属性，组件一个 prop 都不用传。
-// ⚠ **不要**跟 `applyTheme` 那条 TG 守卫：它守的是**配色来源**（TG 里颜色由 TG 注入，我们不许覆盖）；
-// 而输入栏形态是**布局**，TG Mini App 里照样该由用户自己挑 —— 两件事，别照抄。
-export function composerStyle() {
-  // 空串 = "没设过" ⇒ 回落默认；真存了 "solid" 就得用 —— 别被 `||` 吞掉。
-  const value = cache.composer_style || localStorage.getItem("mc_composer_style");
-  return value === "solid" ? "solid" : DEFAULT_COMPOSER;
-}
-export function applyComposerStyle(style) {
-  const s = style === undefined ? composerStyle() : style;
-  const root = document.documentElement;
-  if (s === "solid") root.setAttribute("data-composer", "solid");
-  else root.removeAttribute("data-composer"); // 缺省 = float（属性不出现）
-}
-export function saveComposerStyle(style) {
-  const value = style === "solid" ? "solid" : DEFAULT_COMPOSER;
-  setPref("composer_style", value);
-  applyComposerStyle(value);
-}
-
 // —— 发送键三档（App 的 keydown 判定与 Composer 的占位提示同源）——
 
 export function sendMode() {
@@ -495,7 +465,6 @@ export function saveNetPrefs(base) {
 export function applyAll() {
   applyTheme();
   applyTextScale();
-  applyComposerStyle();
 }
 
 // 共享 api 客户端：按 base 缓存 —— 组件与 App 拿的是同一个实例。

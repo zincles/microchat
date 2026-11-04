@@ -191,10 +191,9 @@ type Prefs struct {
 	Markdown MarkdownPrefs `json:"markdown"`
 
 	// —— 外观 ——
-	Theme         string     `json:"theme,omitempty"`
-	TextScale     string     `json:"text_scale,omitempty"`
-	ComposerStyle string     `json:"composer_style,omitempty"`
-	Background    Background `json:"background,omitempty"`
+	Theme      string     `json:"theme,omitempty"`
+	TextScale  string     `json:"text_scale,omitempty"`
+	Background Background `json:"background,omitempty"`
 
 	// —— 输入 ——
 	Send    string `json:"send,omitempty"`
@@ -216,11 +215,10 @@ type Prefs struct {
 // `=== "1"` 的那些 = false）—— 迁移不该悄悄改掉任何人的现状。
 func DefaultPrefs() Prefs {
 	return Prefs{
-		Markdown:      MarkdownPrefs{}, // Enabled 为 nil ⇒ 开；Disabled 空 ⇒ 全开
-		Theme:         "",
-		TextScale:     "",
-		ComposerStyle: "",
-		Send:          "",
+		Markdown:  MarkdownPrefs{}, // Enabled 为 nil ⇒ 开；Disabled 空 ⇒ 全开
+		Theme:     "",
+		TextScale: "",
+		Send:      "",
 		// ⚠ 每一格都要**独立**的指针（2026-11-02 修）。从前写的是 `on := true; off := false`
 		// 然后所有 `&on` / `&off` 共用同一个变量 —— JSON 解码 `command_menu:true` 会把那个
 		// 共享的 `off` 改成 true，连带 `payload_viz` / `bar_left_hidden` 一起变；下一行
