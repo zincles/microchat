@@ -76,6 +76,7 @@ const FALLBACK_PREFS = {
   background: {},
   send: "",
   preview: true,
+  payload_preview: true,
   command_menu: false,
   chrome_hide: true,
   payload_viz: false,
@@ -344,6 +345,10 @@ function flagPref(key, fallback) {
 
 export function previewOn() { return flagPref("preview", true); }
 export function savePreview(on) { setPref("preview", !!on); }
+
+// 载荷面板预览（2026-11-04）：与输入框预演分开。默认开；关掉后载荷 tab 不请求 /outgoing。
+export function payloadPreviewOn() { return flagPref("payload_preview", true); }
+export function savePayloadPreview(on) { setPref("payload_preview", !!on); }
 
 // 滚动隐藏上下栏（2026-10-17 用户定，**默认开**；只在触屏上生效）：跟浏览器一个味道 ——
 // 往下看（内容前进）顶栏按位移**逐步**收起，往回看（内容后退）底栏逐步收起；反方向把对面那栏放回来。

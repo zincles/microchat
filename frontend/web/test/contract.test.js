@@ -3139,3 +3139,15 @@ test("设计系统：tab 统一下划线、设置平铺、圆角收口", () => {
   assert.match(theme, /--r-card:\s*12px/, "卡片圆角没有统一到 12");
   assert.match(css, /#input \{[^}]*border-radius:\s*var\(--r-shell\)/, "输入框还留着 20px 大圆角");
 });
+
+test("载荷预览：面板里可开关；关掉不请求，偏好与输入预演分开", () => {
+  const bar = readFileSync(join(SRC, "components", "PayloadBar.vue"), "utf8");
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  const prefs = readFileSync(join(SRC, "utils", "prefs.js"), "utf8");
+  assert.match(bar, /const preview = ref\(payloadPreviewOn\(\)\)/, "载荷面板没有自己的预览开关");
+  assert.match(bar, /<span class="lbl">预览载荷<\/span>/, "载荷开关没有可见标签");
+  assert.match(bar, /emit\("preview"/, "载荷开关没把变化报给 App");
+  assert.match(app, /payloadPreviewOn\(\)/, "载荷请求没检查载荷预览开关");
+  assert.match(app, /function onPayloadPreview\(on\)/, "App 没接载荷预览开关");
+  assert.match(prefs, /payload_preview: true/, "前端缺省没有 payload_preview（默认应开）");
+});

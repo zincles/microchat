@@ -15,7 +15,7 @@ import { applyBackground } from "./utils/background.js";
 import { installViewportFit } from "./utils/viewport.js";
 import { classifyAxis, pickDrag, dragProgress, resolveRelease } from "./utils/swipe.js";
 import { typewriterDuration, revealCount } from "./utils/typewriter.js";
-import { sharedApi, previewOn, applyTheme, wantsSend, apiBase, apiBaseCandidates, saveNetPrefs, lastSessionId, saveLastSession, commandMenuOn, applyComposerStyle, applyTextScale, chromeHideOn, syncPrefs, saveBarLeftHidden, barLeftHidden } from "./utils/prefs.js";
+import { sharedApi, previewOn, payloadPreviewOn, applyTheme, wantsSend, apiBase, apiBaseCandidates, saveNetPrefs, lastSessionId, saveLastSession, commandMenuOn, applyComposerStyle, applyTextScale, chromeHideOn, syncPrefs, saveBarLeftHidden, barLeftHidden } from "./utils/prefs.js";
 import {
   groupModelsByProvider,
   deletionPlanSummary,
@@ -315,6 +315,11 @@ function onPayloadTab(t) {
   else if (t === "state") refreshStateView(sessionID);
   else refreshHistoryPreview();
 }
+// 载荷面板的「预览载荷」开关：关 ⇒ 清掉旧载荷（不占内存/不显示旧请求）；开 ⇒ 当前 tab 拉一发。
+function onPayloadPreview(on) {
+  if (!on) payloadbarRef.value?.setWire(null);
+  if (workspace.value === "context" && payloadTab === "payload") refreshHistoryPreview();
+}
 async function refreshTree() {
   if (!sessionID || !treeVisible) return;
   const my = epoch;
@@ -331,8 +336,9 @@ async function refreshTree() {
 // 换会话/刷新页面时这是最重的一发，而人可能根本没打开工作区。现在改成按需。
 let historyPreviewSeq = 0;
 async function refreshHistoryPreview() {
-  // 载荷 tab 是用户**显式点开**的上下文：不受输入框预览开关影响；草稿 / 无会话才清空。
-  if (draft || !sessionID) { payloadbarRef.value?.setWire(null); return; }
+  // 载荷 tab 是用户**显式点开**的上下文；预览开关是载荷自己的（2026-11-04 加），
+  // 与输入框的 previewOn 分开。草稿 / 无会话 / 关闭预览都清空、不发请求。
+  if (draft || !sessionID || !payloadPreviewOn()) { payloadbarRef.value?.setWire(null); return; }
   const sid = sessionID;
   const my = epoch;
   const seq = ++historyPreviewSeq;
@@ -2133,6 +2139,7 @@ onUnmounted(() => {
       @compact-payload="previewCompactPayload"
       @tab="onPayloadTab"
       @undo="undoSummary"
+      @preview="onPayloadPreview"
     />
       </section>
       <SettingsModal

@@ -295,7 +295,7 @@ delete(AA)           # 删除
   它**由程序写**（不是手写配置，虽然也能手改）：改设置就整份重写，0600。
   形状：`{ "markdown": {"enabled": true, "disabled": ["table","image"]}, "theme": "dark",
   "text_scale": "1.1", "composer_style": "solid", "background": {"kind":"file","version":"…"},
-  "send": "enter", "preview": true, "command_menu": false, "chrome_hide": true,
+  "send": "enter", "preview": true, "payload_preview": true, "command_menu": false, "chrome_hide": true,
   "payload_viz": false, "bar_left_hidden": false }`
   ⚠ **每一格 `*bool` 的默认值都要独立**（`new(true)` / `new(false)`，Go 1.26）：从前 `DefaultPrefs` 用
   `on := true; off := false` 再 `&on` / `&off`，多格共用同一个变量 ⇒ JSON 解码时互相改写，
@@ -399,7 +399,8 @@ delete(AA)           # 删除
 ⚠ 这些都不会报错、只会"悄悄长回去"（想给某块加分组时，最顺手的就是 border + background + radius
 三件套一上就又变回面板）⇒ 契约测试正面钉住那几条声明。
 **载荷只在用户进入「上下文」面板时拉、分块默认全折叠**（2026-11-04 用户定：远端/恶劣网络省流量）：
-`refreshHistoryPreview` 不再受输入预览开关 `previewOn()` 影响，切进上下文 / 换会话才请求；
+`refreshHistoryPreview` 只受**载荷自己的** `payload_preview` 开关影响（不再是输入框的 `previewOn`），
+切进上下文 / 换会话才请求；载荷工具栏最左是「预览载荷」开关，关掉立即清空且不发 `/outgoing`。
 分块视图与压缩载荷的分块都默认收起。
 **载荷页有「折叠全部」，没有「展开全部」**（2026-10-29 用户定：「我希望有个按钮可以一键折叠全部
 （但没有一键展开的）」）。这个**不对称是刻意的**：折叠是**收拾**（最坏只是"再点开一条"），

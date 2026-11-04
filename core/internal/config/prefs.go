@@ -197,9 +197,12 @@ type Prefs struct {
 	Background    Background `json:"background,omitempty"`
 
 	// —— 输入 ——
-	Send        string `json:"send,omitempty"`
-	Preview     *bool  `json:"preview,omitempty"`
-	CommandMenu *bool  `json:"command_menu,omitempty"`
+	Send    string `json:"send,omitempty"`
+	Preview *bool  `json:"preview,omitempty"`
+	// PayloadPreview：进入上下文载荷 tab 时要不要请求并显示载荷（2026-11-04 加）。
+	// 与输入框的 `Preview` 分开：一个管输入预演，一个管载荷面板；默认都开。
+	PayloadPreview *bool `json:"payload_preview,omitempty"`
+	CommandMenu    *bool `json:"command_menu,omitempty"`
 
 	// —— 聊天 ——
 	ChromeHide    *bool `json:"chrome_hide,omitempty"`
@@ -224,11 +227,12 @@ func DefaultPrefs() Prefs {
 		// `payload_viz:false` 又把它改回来。最终值取决于字段在 JSON 里的顺序，
 		// 表现是"开关怎么点都存不住"（实测：界面 on、服务端 off）。
 		// `new(true)` 每次调用都分配一个新变量（Go 1.26）。
-		Preview:       new(true),
-		CommandMenu:   new(false),
-		ChromeHide:    new(true),
-		PayloadViz:    new(false),
-		BarLeftHidden: new(false),
+		Preview:        new(true),
+		PayloadPreview: new(true),
+		CommandMenu:    new(false),
+		ChromeHide:     new(true),
+		PayloadViz:     new(false),
+		BarLeftHidden:  new(false),
 	}
 }
 

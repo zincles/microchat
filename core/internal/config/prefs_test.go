@@ -51,10 +51,15 @@ func TestPrefsBoolFieldsRoundTripIndependently(t *testing.T) {
 // 否则界面上拨一个开关会顺手把别的开关也改掉。
 func TestDefaultPrefsBoolPointersAreDistinct(t *testing.T) {
 	def := DefaultPrefs()
-	if def.Preview == nil || def.CommandMenu == nil || def.ChromeHide == nil ||
+	if def.Preview == nil || def.PayloadPreview == nil || def.CommandMenu == nil || def.ChromeHide == nil ||
 		def.PayloadViz == nil || def.BarLeftHidden == nil {
 		t.Fatal("默认值里有 nil 的布尔指针")
 	}
+	*def.PayloadPreview = false
+	if !*def.Preview {
+		t.Fatal("payload_preview 与 preview 共用了同一个指针")
+	}
+	*def.PayloadPreview = true
 	*def.Preview = false
 	if !*def.ChromeHide {
 		t.Fatal("preview 与 chrome_hide 共用了同一个指针")

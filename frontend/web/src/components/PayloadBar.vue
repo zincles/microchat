@@ -12,12 +12,12 @@ import CompactTree from "./CompactTree.vue";
 import ToggleSwitch from "./ToggleSwitch.vue";
 import { treeTotals } from "../utils/tree.js";
 import { parseWireMessages, previewBlock } from "../utils/payload.js";
-import { payloadVizOn, savePayloadViz } from "../utils/prefs.js";
+import { payloadPreviewOn, savePayloadPreview, payloadVizOn, savePayloadViz } from "../utils/prefs.js";
 
 defineProps({
   defaultBlocks: { type: Number, default: null }, // chat.compact_blocks（空输入框的默认，只用于提示）
 });
-const emit = defineEmits(["compact", "tab", "compact-payload", "undo"]);
+const emit = defineEmits(["compact", "tab", "compact-payload", "undo", "preview"]);
 
 const tab = ref("payload");
 // 切 tab 报给 App：压缩树看着才拉全量账本（窗口化的内存账，见 App.refreshTree）。
@@ -28,6 +28,13 @@ function doCompact() {
   emit("compact", Number.isFinite(n) && n > 0 ? Math.floor(n) : null);
 }
 const wire = ref(null);
+// 载荷预览开关（2026-11-04 用户定）：关掉后不请求 /outgoing，载荷 tab 只显示"已关闭"。
+const preview = ref(payloadPreviewOn());
+function setPreview(on) {
+  preview.value = !!on;
+  savePayloadPreview(preview.value);
+  emit("preview", preview.value);
+}
 // 分块视图（用户点名 2026-10-11）：开关记忆在 localStorage；开着就把 body.messages 一块块画。
 const viz = ref(payloadVizOn());
 function setViz(v) { viz.value = !!v; savePayloadViz(viz.value); }
@@ -65,9 +72,10 @@ function collapseAll() {
 const tables = ref({});
 const tree = ref(null); // null = 还没数据（不发请求，显示空话）
 
-const payloadText = computed(() =>
-  wire.value ? JSON.stringify(wire.value, null, 2) : "(空：打几个字，这里按真请求预演)",
-);
+const payloadText = computed(() => {
+  if (!preview.value) return "载荷预览已关闭（点上方「预览载荷」打开）";
+  return wire.value ? JSON.stringify(wire.value, null, 2) : "(空：打几个字，这里按真请求预演)";
+});
 const tableNames = computed(() => Object.keys(tables.value ?? {}).sort());
 const totals = computed(() => (tree.value ? treeTotals(tree.value) : null));
 
@@ -185,6 +193,8 @@ defineExpose({ setWire, setTables, setTree, setCompactWire });
     </div>
     <div v-show="tab === 'payload'" id="payload-pane">
       <div class="pv-toolbar">
+        <ToggleSwitch :model-value="preview" @update:model-value="setPreview" />
+        <span class="lbl">预览载荷</span>
         <ToggleSwitch :model-value="viz" @update:model-value="setViz" />
         <span class="lbl">分块视图（按 message 拆开看）</span>
         <!-- 一键折叠全部（2026-10-29 用户定）。**没有反向的"展开全部"** —— 理由写在
