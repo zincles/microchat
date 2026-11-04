@@ -30,22 +30,6 @@ export function whoText(provider, model, fallback = "未知模型") {
 export function sessionTitle(title, isDraft = false) {
   return (title ?? "").trim() || (isDraft ? "新对话" : "新会话");
 }
-// 会话列表的第二行（2026-11-02）：多久以前动过。纯函数、可测 —— 别在组件里现算
-// （两处各算一遍就会一边「刚刚」一边「0 分钟前」）。
-// 入参是**毫秒**（后端 `updated_at` 就是毫秒）；`now` 可注入，测试才不用等时钟。
-export function relativeTime(ms, now = Date.now()) {
-  const t = Number(ms);
-  if (!Number.isFinite(t) || t <= 0) return "";
-  const diff = Math.max(0, Number(now) - t);
-  if (diff < 60_000) return "刚刚";
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`;
-  if (diff < 7 * 86_400_000) return `${Math.floor(diff / 86_400_000)} 天前`;
-  const d = new Date(t);
-  const sameYear = d.getFullYear() === new Date(Number(now)).getFullYear();
-  return sameYear ? `${d.getMonth() + 1}月${d.getDate()}日` : `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
-}
-
 export function formatThinkLabel(reasoningMs) {
   if (reasoningMs == null) return "思考过程";
   return `思考过程（${(reasoningMs / 1000).toFixed(1)}s）`;

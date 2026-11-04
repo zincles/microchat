@@ -46,7 +46,6 @@ import {
   modelLabel,
   whoText,
   sessionTitle,
-  relativeTime,
 } from "../src/utils/format.js";
 import { sendMode, wantsSend, themePref, normalizeTheme, apiBase, defaultApiBase, apiBaseCandidates, THEME_IDS, DEFAULT_THEME, DEFAULT_SEND, composerStyle, applyComposerStyle, saveComposerStyle, DEFAULT_COMPOSER, normalizeTextScale, textScale, applyTextScale, saveTextScale, TEXT_SCALE_MIN, TEXT_SCALE_MAX, DEFAULT_TEXT_SCALE } from "../src/utils/prefs.js";
 
@@ -791,16 +790,7 @@ test("whoText / sessionTitle：两处回退档各就各位", () => {
   assert.equal(sessionTitle("  标题  "), "标题");
 });
 
-test("relativeTime：会话列表第二行（边界 + 时钟倒走不出现负数）", () => {
-  const now = 1_700_000_000_000;
-  assert.equal(relativeTime(0, now), "");
-  assert.equal(relativeTime(null, now), "");
-  assert.equal(relativeTime(now - 30_000, now), "刚刚");
-  assert.equal(relativeTime(now + 5_000, now), "刚刚"); // 时钟偏一点，别显示"-1 分钟前"
-  assert.equal(relativeTime(now - 5 * 60_000, now), "5 分钟前");
-  assert.equal(relativeTime(now - 3 * 3_600_000, now), "3 小时前");
-  assert.equal(relativeTime(now - 2 * 86_400_000, now), "2 天前");
-});
+
 
 test("偏好读取：默认与空串语义（mc_theme 空串 / 认不出的 id 都归默认主题）", () => {
   stubStorage();
@@ -1552,10 +1542,11 @@ test("页签条：设置主栏与 Agent 编辑器用的是同一个组件", () =
   const bar = readFileSync(join(SRC, "components", "TabBar.vue"), "utf8");
   assert.match(settings, /<TabBar v-if="!only" v-model="tab" :tabs="SETTINGS_TABS" \/>/, "设置主栏没用 TabBar");
   assert.match(editor, /<TabBar v-model="tab" :tabs="tabs" \/>/, "Agent 编辑器没用 TabBar");
-  assert.match(bar, /class="settings-nav"/, "TabBar 没复用统一的下划线导航");
-  for (const [name, src] of [["SettingsModal.vue", settings], ["AgentEditor.vue", editor], ["TabBar.vue", bar]]) {
-    assert.ok(!src.includes("tab-thumb"), `${name} 还画着滑动底片`);
-    assert.ok(!src.includes("offsetWidth"), `${name} 还在自己量按钮宽度`);
+  assert.match(bar, /class="settings-nav"/, "TabBar 没复用设置页签壳");
+  assert.match(bar, /class="tab-thumb"/, "TabBar 原来的滑动底片丢了");
+  for (const [name, src] of [["SettingsModal.vue", settings], ["AgentEditor.vue", editor]]) {
+    assert.ok(!src.includes("tab-thumb"), `${name} 自己画了一枚 tab-thumb —— 该交给 TabBar`);
+    assert.ok(!src.includes("offsetWidth"), `${name} 自己在量按钮宽度 —— 该交给 TabBar`);
   }
 });
 
@@ -2942,11 +2933,14 @@ test("移动端顶栏：模型名吃剩余空间，不再被挤成一个字母",
   assert.match(app, /--topbar-h/, "App 没有把顶栏高度写进 --topbar-h");
 });
 
-test("会话列表：条数/时间可见，操作键有能点中的尺寸", () => {
+test("会话列表：条数可见、日期不显示，操作键有能点中的尺寸", () => {
   const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  assert.match(bar, /relativeTime\(s\.updated_at\)/, "会话条目没有最近活动时间");
-  assert.match(bar, /s\.messages/, "会话条目没有消息条数");
+  assert.match(bar, /\{\{ s\.messages \?\? 0 \}\} 条/, "会话条目没有消息条数");
+  assert.ok(!/relativeTime|updated_at/.test(bar), "会话条目还在显示日期元数据");
+  assert.match(css, /#session-list \{[^}]*padding:\s*0\.25em 0\.45em/, "会话列表没有留边距");
+  assert.match(bar, /v-html="ICONS\.x"/, "关闭键还是纯文本 ×，没换成线性图标");
+  assert.match(bar, /v-html="ICONS\.settings"/, "会话设置键没有图标");
   assert.match(css, /\.session-item \.close,\s*\.session-item \.item-btn\s*\{[^}]*width:\s*1\.9em/,
     "会话操作键的命中区又缩回去了");
 });
@@ -3129,12 +3123,12 @@ test("消息窗口：默认 5 段，设置里可改，首屏与加载更多共�
 test("设计系统：tab 统一下划线、设置平铺、圆角收口", () => {
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   const theme = readFileSync(join(SRC, "assets", "theme.css"), "utf8");
-  // 三种 tab 同一种语言：下划线，不再有胶囊/底片
-  assert.match(css, /\.settings-nav \{[^}]*border-bottom:\s*1px solid var\(--line\)/, "设置 tab 不是下划线");
+  // 顶栏 / 上下文是下划线；设置与 Agent 二级页保留原来的胶囊 + 滑动底片。
+  assert.match(css, /\.settings-nav \{[^}]*background:\s*var\(--tg-secondary-bg\)/, "设置 tab 丢了原来的胶囊底");
+  assert.match(css, /\.settings-nav \.tab-thumb \{[^}]*background:/, "设置 tab 丢了滑动底片");
   assert.match(css, /\.ws-switch \{[^}]*border-bottom:\s*1px solid var\(--line\)/, "顶栏 tab 不是下划线");
   assert.match(css, /\.bar-head\.bar-tabs \{[^}]*border-bottom:\s*1px solid var\(--line\)/, "上下文 tab 不是下划线");
   assert.match(css, /\.ws-tab\.sel \{[^}]*border-bottom-color:\s*var\(--tg-link\)/, "顶栏选中态没有下划线");
-  assert.ok(!/tab-thumb/.test(css), "滑动底片又回来了");
   // 设置页：无卡片底、无连体组圆角
   assert.match(css, /\.settings-card \{[^}]*background:\s*none[^}]*padding:\s*0/, "设置分节还带卡片底");
   assert.match(css, /\.settings-cols \.panel \.field[^{]*\{[^}]*background:\s*none/, "设置行还带卡片底");

@@ -3,7 +3,6 @@
 // 每条：标题 + 设置（三横杠 ☰，改名/模型/agent）+ 关闭（×，全屏确认后删）。
 import { ref } from "vue";
 import { ICONS } from "./icons.js";
-import { relativeTime } from "../utils/format.js";
 
 defineEmits(["select", "settings", "close", "new", "open-settings", "toggle-left", "open-sessions", "open-providers"]);
 
@@ -43,9 +42,8 @@ defineExpose({ setSessions });
       >
         <span class="session-main">
           <span class="title">{{ s.title || "新会话" }}</span>
-          <!-- 第二行（2026-11-02）：条数 + 最近活动。翻十条只看得见标题时，
-               根本分不出哪条是刚才那条 —— 时间比标题更能定位。 -->
-          <span class="meta">{{ s.messages ?? 0 }} 条<span class="dot">·</span>{{ relativeTime(s.updated_at) }}</span>
+          <!-- 第二行只留消息条数（2026-11-04 用户定：日期元数据不再显示）。 -->
+          <span class="meta">{{ s.messages ?? 0 }} 条</span>
         </span>
         <button
           class="item-btn"
@@ -53,16 +51,15 @@ defineExpose({ setSessions });
           title="会话设置"
           aria-label="会话设置"
           @click.stop="$emit('settings', s.id)"
-          v-html="ICONS.sliders"
+          v-html="ICONS.settings"
         ></button>
         <button
           class="close"
           type="button"
           title="关闭会话"
           @click.stop="$emit('close', s.id)"
-        >
-          ×
-        </button>
+          v-html="ICONS.x"
+        ></button>
       </div>
     </div>
     <div class="bar-foot">
