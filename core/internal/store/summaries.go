@@ -650,3 +650,64 @@ func messageIDsInOrder(tx *sql.Tx, sessionID string) ([]string, error) {
 	}
 	return ids, rows.Err()
 }
+
+// RecordSummaryBatch：高级压缩的**一次性落库口** —— N 条消息级摘要在**同一个事务**里
+// 插行并回填 messages.summary_id。任何一条校验失败 ⇒ 整批回滚（高级作业要么全成、要么没做过）。
+//
+// 只服务高级压缩的 chunk 批：成员一律是消息、彼此区间必须互不重叠（上层已经按块切好；
+// 这里仍逐条做 coveredCount / alreadyCovered 复核，防调用上游那段时间里别人动过库）。
+func (s *Store) RecordSummaryBatch(summaries []model.Summary) error {
+	if len(summaries) == 0 {
+		return InvalidError("批量落库至少要有一条摘要")
+	}
+	sessionID := summaries[0].SessionID
+	for _, summary := range summaries {
+		if summary.Type != model.TypeMessages {
+			return InvalidError("批量落库只收消息级摘要")
+		}
+		if summary.SessionID != sessionID {
+			return InvalidError("批量落库的摘要必须同属一条会话")
+		}
+		if len(summary.SourceIDs) == 0 {
+			return InvalidError("压缩要盖住至少一条（空区间不落库）")
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// 先整批预检，再统一插/改：这样任何一条撞上"已被覆盖"都能在动 messages 之前回滚。
+	for _, summary := range summaries {
+		covered, err := coveredCount(tx, sessionID, summary.SourceIDs)
+		if err != nil {
+			return err
+		}
+		if covered != len(summary.SourceIDs) {
+			return InvalidError("这段区间里的消息已经不是原来那几条了（被删过 / 换过会话）：重新取一次")
+		}
+		already, err := alreadyCovered(tx, sessionID, summary.SourceIDs)
+		if err != nil {
+			return err
+		}
+		if already != 0 {
+			return InvalidError("这段区间里已经有消息被摘要盖住了：压缩不许覆盖已压缩的区间")
+		}
+	}
+	for _, summary := range summaries {
+		if err := insertSummary(tx, summary); err != nil {
+			return err
+		}
+		updated, err := updateMessageSummary(tx, sessionID, summary.ID, summary.SourceIDs)
+		if err != nil {
+			return err
+		}
+		if updated != len(summary.SourceIDs) {
+			return InvalidError("这段区间里的消息已经不是原来那几条了：整批回滚")
+		}
+	}
+	return tx.Commit()
+}

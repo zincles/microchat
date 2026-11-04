@@ -1007,3 +1007,107 @@ func TestCompactRPPromptCoversRoleplaySpecifics(t *testing.T) {
 		t.Error("RP 版里混进了通用版的开头")
 	}
 }
+
+// waitAdvanced：等一个高级作业收尾（进程内状态；测试每 5ms 看一次）。
+func waitAdvanced(t *testing.T, h *harness, id string) AdvancedJob {
+	t.Helper()
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		job, err := h.service.AdvancedJobStatus(h.sessionID, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if job.State != "running" {
+			return job
+		}
+	}
+	t.Fatal("高级压缩作业没有在 2s 内收尾")
+	return AdvancedJob{}
+}
+
+// 高级压缩第一版：按 step_blocks 切 chunk、并发生成、最后一批单事务落库。
+func TestAdvancedCompactChunksAndCommitsBatch(t *testing.T) {
+	h := newHarness(t, config.AgentsConfig{})
+	for i := 0; i < 6; i++ {
+		h.turn(t, "第 "+strconv.Itoa(i+1)+" 轮")
+	}
+	// 6 块：第 6 块是开着的；1–10 条 = 前 5 块。
+	preview, err := h.service.PreviewAdvanced(h.session, AdvancedRequest{
+		BeginIdx: 1, EndIdx: 10, StepBlocks: 2, Concurrency: 2, MaxAttempts: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.TotalRequests != 3 || preview.TotalBlocks != 5 || len(preview.Chunks) != 3 {
+		t.Fatalf("计划不对：%+v", preview)
+	}
+	want := [][2]int{{1, 4}, {5, 8}, {9, 10}}
+	for i, chunk := range preview.Chunks {
+		if chunk.FromIdx != want[i][0] || chunk.ToIdx != want[i][1] {
+			t.Fatalf("第 %d chunk = %d–%d，想要 %v", i, chunk.FromIdx, chunk.ToIdx, want[i])
+		}
+	}
+	job, err := h.service.StartAdvanced(h.session, AdvancedRequest{
+		BeginIdx: 1, EndIdx: 10, StepBlocks: 2, Concurrency: 2, MaxAttempts: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := waitAdvanced(t, h, job.ID)
+	if done.State != "done" {
+		t.Fatalf("高级压缩该完成：%+v", done)
+	}
+	if len(h.summaries(t)) != 3 {
+		t.Fatalf("三块应该落三行摘要：%+v", h.summaries(t))
+	}
+	after := h.messages(t)
+	for index := 0; index < 10; index++ {
+		if after[index].SummaryID == nil {
+			t.Fatalf("第 %d 条没被盖住：高级压缩留下了洞", index+1)
+		}
+	}
+	if after[10].SummaryID != nil || after[11].SummaryID != nil {
+		t.Fatal("开着的最后一块不该被盖")
+	}
+}
+
+// 修洞：先制造 1–4 与 9–10 两段摘要，5–8 是空洞；修洞只压 5–8，
+// 完成后三段首尾相接，不留洞。
+func TestRepairHolesFillsOnlyGaps(t *testing.T) {
+	h := newHarness(t, config.AgentsConfig{})
+	for i := 0; i < 6; i++ {
+		h.turn(t, "第 "+strconv.Itoa(i+1)+" 轮")
+	}
+	// 先压 1–4（两块）与 9–10（最后一块的前一块）⇒ 5–8 空洞。
+	if _, err := h.service.Compact(context.Background(), h.session, Request{BeginIdx: 1, EndIdx: 4}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.service.Compact(context.Background(), h.session, Request{BeginIdx: 9, EndIdx: 10}); err != nil {
+		t.Fatal(err)
+	}
+	preview, err := h.service.PreviewAdvanced(h.session, AdvancedRequest{Repair: true, StepBlocks: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(preview.Holes) != 1 || preview.Holes[0].FromIdx != 5 || preview.Holes[0].ToIdx != 8 {
+		t.Fatalf("空洞应只有 5–8：%+v", preview.Holes)
+	}
+	if preview.TotalRequests != 2 || len(preview.Chunks) != 2 {
+		t.Fatalf("5–8 应切成两个块 chunk：%+v", preview.Chunks)
+	}
+	job, err := h.service.StartAdvanced(h.session, AdvancedRequest{Repair: true, StepBlocks: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := waitAdvanced(t, h, job.ID)
+	if done.State != "done" {
+		t.Fatalf("修洞该完成：%+v", done)
+	}
+	for index := 0; index < 10; index++ {
+		if h.messages(t)[index].SummaryID == nil {
+			t.Fatalf("修洞后第 %d 条仍有洞", index+1)
+		}
+	}
+	if len(h.summaries(t)) != 4 { // 原有两条 + 修洞两条
+		t.Fatalf("摘要数不对：%+v", h.summaries(t))
+	}
+}

@@ -9,6 +9,7 @@
 // （`.ws-panel` 管圆角与底，panes 管滚动）。开关与抽屉那套随之作废 —— 别再把它接回栏里。
 import { ref, computed, watch } from "vue";
 import CompactTree from "./CompactTree.vue";
+import AdvancedCompact from "./AdvancedCompact.vue";
 import ToggleSwitch from "./ToggleSwitch.vue";
 import { treeTotals } from "../utils/tree.js";
 import { parseWireMessages, previewBlock } from "../utils/payload.js";
@@ -16,8 +17,9 @@ import { payloadPreviewOn, savePayloadPreview, payloadVizOn, savePayloadViz } fr
 
 defineProps({
   defaultBlocks: { type: Number, default: null }, // chat.compact_blocks（空输入框的默认，只用于提示）
+  sessionId: { type: String, default: "" },
 });
-const emit = defineEmits(["compact", "tab", "compact-payload", "undo", "preview"]);
+const emit = defineEmits(["compact", "tab", "compact-payload", "undo", "preview", "advanced-done"]);
 
 const tab = ref("payload");
 // 切 tab 报给 App：压缩树看着才拉全量账本（窗口化的内存账，见 App.refreshTree）。
@@ -189,6 +191,8 @@ defineExpose({ setWire, setTables, setTree, setCompactWire });
       <button type="button" class="tab" :class="{ sel: tab === 'payload' }" @click="selectTab('payload')">载荷</button>
       <button type="button" class="tab" :class="{ sel: tab === 'state' }" @click="selectTab('state')">状态</button>
       <button type="button" class="tab" :class="{ sel: tab === 'tree' }" @click="selectTab('tree')">压缩</button>
+      <button type="button" class="tab" :class="{ sel: tab === 'advanced' }" @click="selectTab('advanced')">高级压缩</button>
+      <button type="button" class="tab" :class="{ sel: tab === 'repair' }" @click="selectTab('repair')">修洞压缩</button>
 
     </div>
     <div v-show="tab === 'payload'" id="payload-pane">
@@ -314,6 +318,12 @@ defineExpose({ setWire, setTables, setTree, setCompactWire });
         />
         <div class="ctree-legend">▾ 折叠 · <i class="ctree-tag">发</i> 这一坨发出的就是它 · <i class="ctree-tag dirty">脏</i> 已过期</div>
       </template>
+    </div>
+    <div v-show="tab === 'advanced'" id="advanced-compact">
+      <AdvancedCompact :session-id="sessionId" @done="emit('advanced-done')" />
+    </div>
+    <div v-show="tab === 'repair'" id="repair-compact">
+      <AdvancedCompact :session-id="sessionId" repair @done="emit('advanced-done')" />
     </div>
   </div>
 </template>

@@ -28,6 +28,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -124,10 +125,17 @@ type Service struct {
 	Paths config.Paths
 	Turns *turn.Registry
 	Tasks *task.Registry
+
+	advMu        sync.Mutex
+	advancedJobs map[string]*AdvancedJob
+	advBySession map[string]string
 }
 
 func New(st *store.Store, paths config.Paths, turns *turn.Registry, tasks *task.Registry) *Service {
-	return &Service{Store: st, Paths: paths, Turns: turns, Tasks: tasks}
+	return &Service{
+		Store: st, Paths: paths, Turns: turns, Tasks: tasks,
+		advancedJobs: map[string]*AdvancedJob{}, advBySession: map[string]string{},
+	}
 }
 
 // ── 两种入口 ────────────────────────────────────────────────────────────────
@@ -1076,9 +1084,26 @@ func (s *Service) call(ctx context.Context, p *prepared) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	text := generated.text
+	summary, sourceIDs, err := s.buildSummary(p, generated)
+	if err != nil {
+		return Result{}, err
+	}
+	if err := s.Store.RecordSummary(summary, sourceIDs); err != nil {
+		return Result{}, storeError(err)
+	}
+	return Result{
+		SessionID: p.session.ID, BeginMessageID: *summary.BeginMessageID, EndMessageID: *summary.EndMessageID,
+		Blocks: p.span.Blocks, Messages: len(p.span.Messages), SummaryID: summary.ID,
+		PromptVersion: summary.PromptVersion, Text: summary.Text,
+		Provider: summary.Provider, Model: summary.Model, Usage: summary.Usage,
+		FromIdx: p.span.Begin + 1, ToIdx: p.span.End + 1, Merged: merge,
+	}, nil
+}
 
-	// 材料来源 → 落库那一份（成员是消息还是摘要）。
+// buildSummary：生成结果 → 一条待落库的摘要。普通压缩与高级压缩共用这一份形状
+// （高级压缩只生成、不落库，最后走 RecordSummaryBatch）。
+func (s *Service) buildSummary(p *prepared, generated generatedText) (model.Summary, []string, error) {
+	merge := len(p.span.Sources) > 0
 	sourceIDs := make([]string, 0, len(p.span.Messages))
 	beginID, endID := "", ""
 	summaryType := model.TypeMessages
@@ -1088,7 +1113,6 @@ func (s *Service) call(ctx context.Context, p *prepared) (Result, error) {
 			sourceIDs = append(sourceIDs, source.ID)
 			dirty = dirty || source.Dirty
 		}
-		// 并集两端 = 第一条孩子的 begin、最后一条孩子的 end（孩子已按区间排序）
 		beginID = *p.span.Sources[0].BeginMessageID
 		endID = *p.span.Sources[len(p.span.Sources)-1].EndMessageID
 		summaryType = model.TypeSummaries
@@ -1099,41 +1123,25 @@ func (s *Service) call(ctx context.Context, p *prepared) (Result, error) {
 		beginID = sourceIDs[0]
 		endID = sourceIDs[len(sourceIDs)-1]
 	}
-
-	// ③ 区间自洽 + ④ 不许覆盖已压缩的区间：落库时在**同一个事务里**再核一遍
-	//    （调用上游那段时间里别人可能动过库 —— `RecordSummary` 的守卫 UPDATE 就是干这个的）
 	summaryID, err := mintSummaryID()
 	if err != nil {
-		return Result{}, err
+		return model.Summary{}, nil, err
 	}
 	summary := model.Summary{
 		ID: summaryID, SessionID: p.session.ID,
 		Type:           summaryType,
 		BeginMessageID: &beginID, EndMessageID: &endID,
-		Text: text,
-		// blocks = 覆盖了几个对话块（显示 + "≥N 块"判定；块本身不入库）；合并级 = 子和
-		Blocks: int64(p.span.Blocks),
-		// tokens = 这条摘要正文的**估算**（上游 usage 可能没有；估算的位置与预算算法同一个口径）
-		Tokens:    int64(s.estimateTokens(p, text)),
+		Text:      generated.text,
+		Blocks:    int64(p.span.Blocks),
+		Tokens:    int64(s.estimateTokens(p, generated.text)),
 		SourceIDs: sourceIDs,
 		Provider:  p.channel.ID, Model: p.model,
-		// ⑤ 落库一并写 prompt_version（**生效模板**的指纹）与 usage
 		PromptVersion: abilities.PromptVersion(p.template),
 		Usage:         generated.usage,
-		// 刚压出来就是干净的；合并级**传播**孩子的脏（父盖着被改过的内容）
-		Dirty:     dirty,
-		CreatedAt: time.Now().UnixMilli(),
+		Dirty:         dirty,
+		CreatedAt:     time.Now().UnixMilli(),
 	}
-	if err := s.Store.RecordSummary(summary, sourceIDs); err != nil {
-		return Result{}, storeError(err)
-	}
-	return Result{
-		SessionID: p.session.ID, BeginMessageID: beginID, EndMessageID: endID,
-		Blocks: p.span.Blocks, Messages: len(p.span.Messages), SummaryID: summaryID,
-		PromptVersion: summary.PromptVersion, Text: text,
-		Provider: summary.Provider, Model: summary.Model, Usage: summary.Usage,
-		FromIdx: p.span.Begin + 1, ToIdx: p.span.End + 1, Merged: merge,
-	}, nil
+	return summary, sourceIDs, nil
 }
 
 // messageIdxs：这段快照里 message id → 1-based 序号（摘要抬头里的"第 a–b 条"按它写）。

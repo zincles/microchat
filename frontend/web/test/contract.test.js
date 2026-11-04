@@ -1995,6 +1995,48 @@ test("上下文工作区：开关在绿环左边，只切内容不切顶栏", ()
 });
 
 // 2026-10-29 第二轮（用户：「要不我们把右侧栏那个上下文给挪过来？」）：
+test("高级压缩 / 修洞压缩：第四、第五 tab，预览 → 并发运行 → 整体状态", () => {
+  const bar = readFileSync(join(SRC, "components", "PayloadBar.vue"), "utf8");
+  const ws = readFileSync(join(SRC, "components", "ContextWorkspace.vue"), "utf8");
+  const adv = readFileSync(join(SRC, "components", "AdvancedCompact.vue"), "utf8");
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  const api = readFileSync(join(SRC, "api", "client.js"), "utf8");
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+
+  // ① 两个 tab 按顺序住在压缩后面；不是另开页面。
+  for (const [label, id] of [["高级压缩", "advanced"], ["修洞压缩", "repair"]]) {
+    assert.ok(bar.includes(`>${label}</button>`), `缺少「${label}」tab`);
+    assert.match(bar, new RegExp(`selectTab\\('${id}'\\)`), `「${label}」没有自己的 pane`);
+  }
+  assert.match(bar, /<AdvancedCompact :session-id="sessionId"/, "高级压缩没拿到会话 id");
+  assert.match(bar, /<AdvancedCompact :session-id="sessionId" repair/, "修洞压缩没打开 repair");
+
+  // ② 参数 / 预览 / 运行 / 取消。
+  for (const field of ["begin_idx", "end_idx", "step_blocks", "concurrency", "max_attempts"]) {
+    assert.ok(adv.includes(field), `高级压缩缺参数 ${field}`);
+  }
+  assert.match(adv, /advancedCompactPreview/, "没有预览请求");
+  assert.match(adv, /advancedCompact\(/, "没有运行请求");
+  assert.match(adv, /advancedCompactStatus/, "没有作业状态轮询");
+  assert.match(adv, /advancedCompactCancel/, "没有取消");
+  assert.match(adv, /preview\.holes/, "预览没显示压缩空洞");
+  assert.match(adv, /emit\("done"\)/, "完成后没通知外层刷新");
+
+  // ③ API 与 App 接线。
+  assert.match(api, /advancedCompactPreview:/, "API 客户端缺 advancedCompactPreview");
+  assert.match(api, /advancedCompact:/, "API 客户端缺 advancedCompact");
+  assert.match(api, /advancedCompactStatus:/, "API 客户端缺 advancedCompactStatus");
+  assert.match(api, /advancedCompactCancel:/, "API 客户端缺 advancedCompactCancel");
+  assert.match(app, /function onAdvancedDone\(\)/, "App 没有高级压缩完成后的刷新");
+  assert.match(app, /@advanced-done="onAdvancedDone"/, "App 没接 advanced-done");
+  assert.match(ws, /@advanced-done=/, "工作区没透传 advanced-done");
+
+  // ④ 并发数 / 单块尝试是参数，不是写死；tab 可横向滚，别把 5 个挤断。
+  assert.match(css, /\.bar-head\.bar-tabs \{[^}]*overflow-x:\s*auto/, "5 个 tab 没有横向滚动");
+  assert.match(adv, /concurrency/, "没有并发参数");
+  assert.match(adv, /max_attempts/, "没有单块尝试参数");
+});
+
 // 右栏那三条 tab（载荷 / 状态 / 压缩）整块搬进上下文工作区，**栏本身删掉**。
 //
 // 这条钉的是"搬干净了"：搬一半最糟 —— 面板在新地方、栏的开关还在顶栏，点了没反应。
@@ -2091,7 +2133,7 @@ test("上下文工作区：切进去 / 换会话时按当前 tab 补拉", () => 
   assert.ok(lazy, "找不到 refreshContextLazy");
   assert.match(lazy, /payloadTab === "tree"\) refreshTree\(\)/, "压缩 tab 没拉树");
   assert.match(lazy, /payloadTab === "state"\) refreshStateView\(sessionID\)/, "状态 tab 没拉状态");
-  assert.match(lazy, /else refreshHistoryPreview\(\)/, "载荷 tab 没拉历史预演");
+  assert.match(lazy, /else if \(payloadTab === "payload"\) refreshHistoryPreview\(\)/, "载荷 tab 没拉历史预演");
   const hp = app.match(/async function refreshHistoryPreview\(\)[\s\S]*?\n\}/)?.[0] ?? "";
   assert.ok(hp, "找不到 refreshHistoryPreview");
   assert.ok(!/previewOn\(\)/.test(hp), "载荷 tab 仍受输入预览开关影响（打开载荷就该拉）");

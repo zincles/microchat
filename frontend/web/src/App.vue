@@ -313,13 +313,21 @@ function onPayloadTab(t) {
   if (workspace.value !== "context") return; // 人不在工作区：等他切过去再由 refreshContextLazy 拉
   if (treeVisible) refreshTree();
   else if (t === "state") refreshStateView(sessionID);
-  else refreshHistoryPreview();
+  else if (t === "payload") refreshHistoryPreview();
 }
 // 载荷面板的「预览载荷」开关：关 ⇒ 清掉旧载荷（不占内存/不显示旧请求）；开 ⇒ 当前 tab 拉一发。
 function onPayloadPreview(on) {
   if (!on) payloadbarRef.value?.setWire(null);
   if (workspace.value === "context" && payloadTab === "payload") refreshHistoryPreview();
 }
+// 高级压缩完成后：消息列、状态视图、压缩树都可能变（一批新摘要 + summary_id 回填）。
+function onAdvancedDone() {
+  if (!sessionID) return;
+  reloadWindow();
+  refreshStateView(sessionID);
+  if (treeVisible) refreshTree();
+}
+
 async function refreshTree() {
   if (!sessionID || !treeVisible) return;
   const my = epoch;
@@ -354,7 +362,7 @@ function refreshContextLazy() {
   if (workspace.value !== "context") return;
   if (payloadTab === "tree") refreshTree();
   else if (payloadTab === "state") refreshStateView(sessionID);
-  else refreshHistoryPreview();
+  else if (payloadTab === "payload") refreshHistoryPreview();
 }
 const lastMsgId = computed(() => [...vueMessages.value].reverse().find((m) => m.messageId)?.messageId ?? null);
 // 最新 AI 回复对应的用户输入（A-B-C-D-E-F ⇒ E）——“编辑最新 Prompt”的入口目标。
@@ -2156,12 +2164,14 @@ onUnmounted(() => {
       v-show="workspace === 'context'"
       ref="payloadbarRef"
       :has-session="!!sessionInfo.id"
+      :session-id="sessionInfo.id"
       :default-blocks="compactDefault"
       @compact="(n) => compactNow(n ?? undefined)"
       @compact-payload="previewCompactPayload"
       @tab="onPayloadTab"
       @undo="undoSummary"
       @preview="onPayloadPreview"
+      @advanced-done="onAdvancedDone"
     />
       </section>
       <SettingsModal

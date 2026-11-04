@@ -293,3 +293,60 @@ func statusForCode(code string) int {
 		return http.StatusInternalServerError
 	}
 }
+
+// ── 高级压缩 / 修洞（2026-11-05）────────────────────────────────────────────
+//
+// 预览与运行共用一套 compact.AdvancedRequest。`repair:true` 走修洞模式；
+// 两者都只产出消息级摘要，并且整批单事务落库（要么全成、要么没做过）。
+
+func (s *Server) advancedCompactPreview(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	var req compact.AdvancedRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.compact.PreviewAdvanced(*session, req)
+	if err != nil {
+		writeCompactError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) advancedCompactStart(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	var req compact.AdvancedRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	job, err := s.compact.StartAdvanced(*session, req)
+	if err != nil {
+		writeCompactError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, job)
+}
+
+func (s *Server) advancedCompactStatus(w http.ResponseWriter, r *http.Request) {
+	job, err := s.compact.AdvancedJobStatus(r.PathValue("session_id"), r.PathValue("job_id"))
+	if err != nil {
+		writeCompactError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, job)
+}
+
+func (s *Server) advancedCompactCancel(w http.ResponseWriter, r *http.Request) {
+	job, err := s.compact.CancelAdvanced(r.PathValue("session_id"), r.PathValue("job_id"))
+	if err != nil {
+		writeCompactError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, job)
+}

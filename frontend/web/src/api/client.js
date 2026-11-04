@@ -171,6 +171,11 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
     // 所以它返回的就是 `LastPayload` 形状（和 outgoingPreview 同一个渲染器能画）。
     compactPayload: (id, blocks) =>
       call("POST", `/sessions/${enc(id)}/compact/payload`, blocks ? { blocks } : {}),
+    // 高级压缩 / 修洞：预览与运行共用 AdvancedRequest；repair=true 时扫空洞。
+    advancedCompactPreview: (id, body) => call("POST", `/sessions/${enc(id)}/compact/advanced/preview`, body),
+    advancedCompact: (id, body) => call("POST", `/sessions/${enc(id)}/compact/advanced`, body),
+    advancedCompactStatus: (id, jobId) => call("GET", `/sessions/${enc(id)}/compact/advanced/${enc(jobId)}`),
+    advancedCompactCancel: (id, jobId) => call("POST", `/sessions/${enc(id)}/compact/advanced/${enc(jobId)}/cancel`, {}),
     stop: (id) => call("POST", `/sessions/${enc(id)}/stop`, {}),
     rerollEnter: (id) => call("POST", `/sessions/${enc(id)}/reroll-message`, {}),
     rerollState: (id) => call("GET", `/sessions/${enc(id)}/reroll-message`),
