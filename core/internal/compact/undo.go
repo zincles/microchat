@@ -2,47 +2,38 @@ package compact
 
 // undo.go —— 「撤销压缩」的**合法性判定**（唯一的权威；界面与接口都读这一份）。
 //
-// 用户 2026-11-01 定的口径（原话带例子）：
+// 2026-11-01 原始口径：只允许撤顶层 + 每层最近一次。
+// 2026-11-05 用户扩展：允许撤更早的压缩，但会**连同同层级比它更晚的压缩一起撤销**。
+// 例子：1–10、11–20、21–30、…、101–110；撤 11–20 ⇒ 11–20 之后同层全部一起消失。
 //
-//	A-B-C-D-E-F-G-H-I
-//	压缩为   AB - CD - EF - GH - I
-//	再压缩为  ABCD - EF - GH - I
-//
-//	「我们既可以撤销 ABCD（第二层的最近一次压缩）也可以撤销 GH（第一层的最近一次压缩）。
-//	 但不能撤销 EF，因为它不是所在层（第一层）的最近一次压缩。」
-//
-// 于是有两条闸，缺一条就会把金字塔弄成一个说不清的状态：
+// 于是规则变成：
 //
 //	① **只算顶层**（`parent_summary_id IS NULL`）。被上层盖住的摘要不能单独撤：
-//	   上层那条的区间还盖着它，撤掉孩子就会在**上层的覆盖范围里留一个洞** ——
-//	   装配按区间 O(1) 跳，跳过去之后那一截既不是原文也不是摘要。
-//	   （想撤被盖住的，先把上层撤了 —— 顺序自然就对了。）
-//	② **每层只允许撤最新的那一个**。撤销是"后悔上一步"，而压缩是一条**栈**：
-//	   每层各自一条。跳过中间那个去撤更早的，剩下的是"一串不连续的历史" ——
-//	   数得出做过几次压缩，却推不出"上一次压的是什么"。
+//	   上层那条的区间还盖着它，撤掉孩子会在上层的覆盖范围里留一个洞。
+//	② **同层按位置形成一条链**：撤其中一条，等于把从它开始到该层末尾的整段历史一起撤掉。
+//	   `Cascade` 就是这条链；界面先用它弹警告，接口再按它一次事务删。
 //
-// ⚠ 这里**不碰库**、不做 IO：纯函数（`[]model.Summary` 进，两张表出）。于是它能在
-// 界面（一次拉全部摘要算一遍）与接口（撤销前再算一遍）**共用同一份判断**，
-// 不会出现"按钮亮着、点下去却被拒"那种两套逻辑打架的事。
+// ⚠ 不碰库、不做 IO：纯函数（摘要进，两张表/链出），界面与接口共用同一份判断。
 
 import (
-	"strconv"
+	"sort"
 
 	"microchat/internal/model"
 )
 
-// UndoPlan：一次算清的"层级 + 谁可以撤"。
+// UndoPlan：一次算清的"层级 + 谁可以撤 + 撤它要连带谁"。
 type UndoPlan struct {
-	// Levels：摘要 id → 层级（**1 = 直接盖消息**，2 = 盖住那一层……）。
-	// 与装配的直觉一致：层号越大离原文越远。
+	// Levels：摘要 id → 层级（1 = 直接盖消息，2 = 盖住那一层……）。
 	Levels map[string]int
-	// Undoable：摘要 id → 现在能不能撤销（上面那两条闸）。
+	// Undoable：顶层摘要都可撤（更早的也可，但会级联；被盖住的孩子不可）。
 	Undoable map[string]bool
-	// Newest：层级 → 该层最新的那条**顶层**摘要（给"为什么不能撤"的报错指路用）。
+	// Cascade：撤这条时**实际要删的摘要 id**（含自己 + 同层更晚的），按位置升序。
+	Cascade map[string][]string
+	// Newest：层级 → 该层最新（按 created_at）的顶层摘要；仅保留给旧读口/说明。
 	Newest map[int]string
 }
 
-// PlanUndo：按上面那两条闸算一遍。**不修改入参**。
+// PlanUndo：按上面的规则算一遍。**不修改入参**。
 func PlanUndo(summaries []model.Summary) UndoPlan {
 	byID := make(map[string]model.Summary, len(summaries))
 	childrenOf := make(map[string][]string, len(summaries))
@@ -57,34 +48,55 @@ func PlanUndo(summaries []model.Summary) UndoPlan {
 	plan := UndoPlan{
 		Levels:   make(map[string]int, len(summaries)),
 		Undoable: make(map[string]bool),
+		Cascade:  make(map[string][]string, len(summaries)),
 		Newest:   make(map[int]string),
 	}
+	topByLevel := make(map[int][]model.Summary)
 	for index := range summaries {
 		summary := summaries[index]
 		level := summaryLevel(summary.ID, childrenOf, memo)
 		plan.Levels[summary.ID] = level
-		// 有爹的那些本来就撤不了，**不参与"最新"的评比** ——
-		// 让它们参与只会把真正能撤的那条挤掉（那是错的：一条被盖住的新摘要，
-		// 不该让同层唯一可撤的那条变成不可撤）。
 		if summary.ParentSummaryID != nil {
 			continue
 		}
+		topByLevel[level] = append(topByLevel[level], summary)
 		current, ok := byID[plan.Newest[level]]
 		if !ok || newerThan(summary, current) {
 			plan.Newest[level] = summary.ID
 		}
 	}
-	for _, id := range plan.Newest {
-		plan.Undoable[id] = true
+	for _, levelEntries := range topByLevel {
+		sort.SliceStable(levelEntries, func(i, j int) bool {
+			return earlierSummary(levelEntries[i], levelEntries[j])
+		})
+		ids := make([]string, len(levelEntries))
+		for index := range levelEntries {
+			ids[index] = levelEntries[index].ID
+		}
+		for index, summary := range levelEntries {
+			plan.Undoable[summary.ID] = true
+			plan.Cascade[summary.ID] = append([]string(nil), ids[index:]...)
+		}
 	}
 	return plan
 }
 
-// newerThan：a 比 b 新吗。
-//
-// 先比 `created_at`（毫秒），相等再比 id —— 摘要 id 是 **UUIDv7**（时间有序），
-// 所以同毫秒的那一批也排得出先后。两步都不能省：只比时间会把同毫秒的几条判成一样新，
-// 于是"每层只有一条能撤"这条规则就同时放行好几条。
+// earlierSummary：按**消息位置**排；缺 BeginIdx 的老数据再退到 begin id / created_at。
+// 不能用 created_at 当主序：用户说“更晚”指的是对话里的位置，不是压缩动作发生的时间。
+func earlierSummary(a, b model.Summary) bool {
+	if a.BeginIdx != nil && b.BeginIdx != nil && *a.BeginIdx != *b.BeginIdx {
+		return *a.BeginIdx < *b.BeginIdx
+	}
+	if a.BeginMessageID != nil && b.BeginMessageID != nil && *a.BeginMessageID != *b.BeginMessageID {
+		return *a.BeginMessageID < *b.BeginMessageID
+	}
+	if a.CreatedAt != b.CreatedAt {
+		return a.CreatedAt < b.CreatedAt
+	}
+	return a.ID < b.ID
+}
+
+// newerThan：a 比 b 新吗（给 Newest 用；不是撤销链的排序依据）。
 func newerThan(a, b model.Summary) bool {
 	if a.CreatedAt != b.CreatedAt {
 		return a.CreatedAt > b.CreatedAt
@@ -94,8 +106,7 @@ func newerThan(a, b model.Summary) bool {
 
 // UndoBlocker：为什么这一条**现在**不能撤？能撤就回空串。
 //
-// 专门给"按钮亮着却被拒"那种局面用 —— 拒绝的时候必须说清是哪条闸拦的，
-// 否则人只会看到"撤销失败"，然后反复点。
+// 顶层摘要一律可撤（更早的是级联撤）；不能撤只有"被上层盖住"和"不存在"两种。
 func UndoBlocker(summaries []model.Summary, summaryID string) string {
 	var target model.Summary
 	found := false
@@ -111,15 +122,7 @@ func UndoBlocker(summaries []model.Summary, summaryID string) string {
 	if target.ParentSummaryID != nil {
 		return "它已经被上层摘要盖住了：先撤上面那层，被盖住的孩子才轮得到"
 	}
-	plan := PlanUndo(summaries)
-	if plan.Undoable[summaryID] {
-		return ""
-	}
-	level := plan.Levels[summaryID]
-	if newestID, ok := plan.Newest[level]; ok && newestID != summaryID {
-		return "它所在的第 " + strconv.Itoa(level) + " 层，最近一次压缩不是它：只能撤最近的那一次"
-	}
-	return "这一条不能撤销"
+	return ""
 }
 
 // UndoSteps：撤销时要做的三步，**顺序就是语义**（别重排）。

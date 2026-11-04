@@ -58,32 +58,32 @@ func TestPlanUndoMatchesTheUsersExample(t *testing.T) {
 		t.Fatalf("ABCD 的层级该是 2，实际 %d", got)
 	}
 
-	// ② 可撤销的**恰好**是 ABCD（第 2 层最新）与 GH（第 1 层最新）。
-	want := map[string]bool{"ABCD": true, "GH": true}
-	if len(plan.Undoable) != len(want) {
-		t.Fatalf("可撤销的该有 %d 条，实际 %d 条：%v", len(want), len(plan.Undoable), plan.Undoable)
-	}
-	for id := range want {
+	// ② 顶层都可撤；被 ABCD 盖住的 AB/CD 不可撤。
+	for _, id := range []string{"ABCD", "EF", "GH"} {
 		if !plan.Undoable[id] {
-			t.Fatalf("%s 该可撤销（用户原话点名了它）", id)
+			t.Fatalf("%s 是顶层，该可撤销", id)
 		}
 	}
-
-	// ③ EF 不可撤（同层更早的一次压缩）。
-	if plan.Undoable["EF"] {
-		t.Fatal("EF 不该可撤销 —— 它不是第 1 层最近的一次压缩")
-	}
-	// ④ AB/CD 不可撤（被 ABCD 盖着）。
 	for _, id := range []string{"AB", "CD"} {
 		if plan.Undoable[id] {
-			t.Fatalf("%s 不该可撤销 —— 它被上层摘要盖住了", id)
+			t.Fatalf("%s 被上层摘要盖住了，不该可撤销", id)
 		}
 	}
 
-	// ⑤ 报错要说清是哪条闸拦的（否则人只会看到"撤销失败"然后反复点）。
-	if reason := UndoBlocker(cleanPyramid(), "EF"); !strings.Contains(reason, "第 1 层") ||
-		!strings.Contains(reason, "最近") {
-		t.Fatalf("EF 的拒绝理由该点名'第 1 层最近一次'，实际：%q", reason)
+	// ③ 更早的 EF 撤销时，连同同层更晚的 GH 一起撤。
+	if got := plan.Cascade["EF"]; len(got) != 2 || got[0] != "EF" || got[1] != "GH" {
+		t.Fatalf("EF 的级联链该是 EF→GH，实际 %v", got)
+	}
+	if got := plan.Cascade["GH"]; len(got) != 1 || got[0] != "GH" {
+		t.Fatalf("GH 是第 1 层最新，级联只该有它自己：%v", got)
+	}
+	if got := plan.Cascade["ABCD"]; len(got) != 1 || got[0] != "ABCD" {
+		t.Fatalf("ABCD 是第 2 层唯一顶层，级联只该有它自己：%v", got)
+	}
+
+	// ④ 报错只拦"被上层盖住"。
+	if reason := UndoBlocker(cleanPyramid(), "EF"); reason != "" {
+		t.Fatalf("EF 现在可撤（会级联 GH），却给了理由：%q", reason)
 	}
 	if reason := UndoBlocker(cleanPyramid(), "AB"); !strings.Contains(reason, "上层摘要盖住") {
 		t.Fatalf("AB 的拒绝理由该说'被上层盖住'，实际：%q", reason)
@@ -104,18 +104,20 @@ func TestPlanUndoAfterUndoingTheTop(t *testing.T) {
 		summary("GH", nil, 4),
 	}
 	plan := PlanUndo(after)
-	if len(plan.Undoable) != 1 || !plan.Undoable["GH"] {
-		t.Fatalf("撤掉 ABCD 之后，只剩 GH（第 1 层最新）该可撤，实际：%v", plan.Undoable)
+	for _, id := range []string{"AB", "CD", "EF", "GH"} {
+		if !plan.Undoable[id] {
+			t.Fatalf("撤掉 ABCD 后 %s 是顶层，该可撤", id)
+		}
 	}
-	if plan.Undoable["CD"] {
-		t.Fatal("CD 不该可撤 —— GH 比它新")
+	if got := plan.Cascade["CD"]; len(got) != 3 || got[0] != "CD" || got[2] != "GH" {
+		t.Fatalf("CD 的级联链该是 CD→EF→GH，实际 %v", got)
 	}
 
-	// 再把 GH 撤了 ⇒ 第 1 层最新变成 EF。
+	// 再把 GH 撤了 ⇒ CD 的级联链缩短到 CD→EF。
 	after2 := after[:3]
 	plan2 := PlanUndo(after2)
-	if len(plan2.Undoable) != 1 || !plan2.Undoable["EF"] {
-		t.Fatalf("撤掉 GH 之后该轮到 EF，实际：%v", plan2.Undoable)
+	if got := plan2.Cascade["CD"]; len(got) != 2 || got[0] != "CD" || got[1] != "EF" {
+		t.Fatalf("撤掉 GH 之后 CD 的链该是 CD→EF，实际 %v", got)
 	}
 }
 
@@ -127,11 +129,12 @@ func TestPlanUndoTieBreaksOnIDWhenCreatedAtIsEqual(t *testing.T) {
 		summary("m00000000-0000-7000-8000-000000000bbb", nil, 7),
 	}
 	plan := PlanUndo(summaries)
-	if len(plan.Undoable) != 1 {
-		t.Fatalf("同毫秒的两条也只该放行一条，实际 %d 条：%v", len(plan.Undoable), plan.Undoable)
+	if !plan.Undoable["m00000000-0000-7000-8000-000000000aaa"] ||
+		!plan.Undoable["m00000000-0000-7000-8000-000000000bbb"] {
+		t.Fatal("两条顶层都可撤；更早的那条会级联撤更晚的")
 	}
-	if !plan.Undoable["m00000000-0000-7000-8000-000000000bbb"] {
-		t.Fatal("id 大的那条才该是最新（UUIDv7 时间有序）")
+	if got := plan.Cascade["m00000000-0000-7000-8000-000000000aaa"]; len(got) != 2 {
+		t.Fatalf("同层两格的级联链该有 2 条，实际 %v", got)
 	}
 }
 

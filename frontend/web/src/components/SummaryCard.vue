@@ -53,13 +53,13 @@ defineEmits(["toggle-raw", "refresh", "edit", "version", "undo"]);
           v-html="ICONS.pencil"
         ></button>
         <!-- 撤销这次压缩（2026-11-01 用户定）：垃圾桶图标，**悬停说'撤销'**。
-             只有合法的能点（`summary.undoable` 由后端算：顶层 + 每层最近那次）。
+             顶层都可点；更早的会级联撤销同层更晚的摘要（App 会先弹警告）。
              不能撤的**留着但禁用** —— 让人看见"这儿本来能撤"，配上说明才不是死按钮。 -->
         <button
           type="button"
           class="edit-btn"
           :disabled="!summary.undoable || (!!reroll && reroll.running)"
-          :title="summary.undoable ? '撤销' : '只有每层最近的那一次压缩可以撤销'"
+          :title="summary.undoable ? '撤销这次压缩（同层更晚的会一并撤销）' : '被上层摘要盖住：先撤上面那层'"
           aria-label="撤销这次压缩"
           @click="$emit('undo')"
           v-html="ICONS.trash"

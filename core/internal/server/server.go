@@ -121,6 +121,7 @@ func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *ch
 	s.mux.HandleFunc("DELETE /api/v1/sessions/{session_id}/messages/{message_id}", s.deleteMessage)
 	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/summaries", s.listSummaries)
 	s.mux.HandleFunc("PATCH /api/v1/sessions/{session_id}/summaries/{summary_id}", s.editSummary)
+	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/summaries/{summary_id}/undo-preview", s.previewUndoSummary)
 	s.mux.HandleFunc("DELETE /api/v1/sessions/{session_id}/summaries/{summary_id}", s.undoSummary)
 	// 删除预览：**只算不动**（安全 ⇒ GET）；DELETE 照同一份计算干
 	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/messages/{message_id}/deletion-preview", s.deletionPreview)

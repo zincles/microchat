@@ -2455,8 +2455,8 @@ test("上下文面板：三个 tab 不小于正文", () => {
 
 // 撤销压缩（2026-11-01 用户定：「增加一个'删除'图标的按钮，悬停会显示为'撤销'」）。
 //
-// 合法性只有一份（后端 `compact.PlanUndo`：顶层 + 每层最近那次），界面**只读不算** ——
-// 所以这里钉的是"数据搬对了、两处都接上了、不能撤时不是死按钮"。
+// 合法性只有一份（后端 `compact.PlanUndo`：顶层都可撤；更早的会级联同层更晚的），
+// 界面**只读不算** —— 这里钉的是"数据搬对了、两处都接上了、不能撤时不是死按钮"。
 test("撤销压缩：树与摘要卡两处按钮，只按后端给的 undoable 亮", () => {
   const tree = readFileSync(join(SRC, "components", "CompactTree.vue"), "utf8");
   const card = readFileSync(join(SRC, "components", "SummaryCard.vue"), "utf8");
@@ -2475,7 +2475,7 @@ test("撤销压缩：树与摘要卡两处按钮，只按后端给的 undoable �
   // ② 树行：垃圾桶图标 + 悬停"撤销" + 禁用系在 undoable 上
   assert.match(treeTpl, /class="ctree-undo"/, "压缩树行没有撤销按钮");
   assert.match(treeTpl, /:disabled="!r\.n\.undoable"/, "树上的撤销按钮没有系在 undoable 上（会变成能点但失败）");
-  assert.match(treeTpl, /'撤销'/, "树上的撤销按钮悬停没写「撤销」");
+  assert.match(treeTpl, /撤销这次压缩/, "树上的撤销按钮悬停没写「撤销」");
   assert.ok(treeTpl.includes("ICONS.trash"), "树上的撤销按钮没用垃圾桶图标");
   // 只有摘要行才有 —— 消息行（叶子）不可撤，别长出一颗灰按钮
   assert.match(treeTpl, /v-if="r\.n\.kind === 'summary'"/, "树上的撤销按钮没有限定在摘要行");
@@ -2483,7 +2483,7 @@ test("撤销压缩：树与摘要卡两处按钮，只按后端给的 undoable �
   // ③ 摘要卡：与刷新/编辑并排
   assert.match(cardTpl, /aria-label="撤销这次压缩"/, "摘要卡没有撤销按钮");
   assert.match(cardTpl, /:disabled="!summary\.undoable/, "摘要卡的撤销按钮没系在 summary.undoable 上");
-  assert.match(cardTpl, /'撤销'/, "摘要卡的撤销按钮悬停没写「撤销」");
+  assert.match(cardTpl, /撤销这次压缩/, "摘要卡的撤销按钮悬停没写「撤销」");
   assert.ok(cardTpl.includes("ICONS.trash"), "摘要卡的撤销按钮没用垃圾桶图标");
 
   // ④ 一路往上报：树 → 面板 → 工作区 → App（少一环就是点了没反应）
@@ -2501,8 +2501,13 @@ test("撤销压缩：树与摘要卡两处按钮，只按后端给的 undoable �
   assert.match(fn, /reloadWindow\(\)/, "撤销后没重拉消息列（装配变长了）");
   assert.match(fn, /refreshStateView\(/, "撤销后没刷新状态视图");
   assert.match(fn, /refreshStatusline\(/, "撤销后没刷新上下文环");
-  // 失败要把后端那句话原样给人看（409 的理由是"第 N 层最近一次"，比"撤销失败"有用）
+  // 失败要把后端那句话原样给人看
   assert.match(fn, /err\.message/, "撤销失败时没显示出后端给的说明");
+  // 更早的压缩要先预览、带级联警告，再删
+  assert.match(fn, /api\.undoPreview\(/, "撤销前没有拿级联预览");
+  assert.match(fn, /confirmAsk\(/, "级联撤销没弹警告");
+  assert.match(fn, /preview\.count > 1/, "没有按级联数量决定是否警告");
+  assert.match(fn, /同时撤销同层更晚/, "警告没解释会连带撤销什么");
 
   // ⑤ 禁用态必须显式压暗（否则是个"看起来能点"的死按钮）
   assert.match(css, /\.ctree-undo:disabled/, "树上撤销按钮没给禁用样式");

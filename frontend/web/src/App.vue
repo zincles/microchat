@@ -784,16 +784,31 @@ async function compactNow(blocks) {
   }
 }
 
-// undoSummary：**撤销一次压缩**（2026-11-01 用户定）。
+// undoSummary：**撤销一次压缩**（2026-11-01 加，2026-11-05 支持级联）。
 //
-// 只允许撤合法的（顶层 + 每层最近那次）—— 判定在**后端**（`compact.PlanUndo`），
-// 界面那颗按钮亮不亮读的也是同一份判断（`summary.undoable` / 树的 `node.undoable`）。
-// 所以正常情况下不会点出 409；真撞上了（比如树是几秒前的快照）就把后端那句话**原样**给人看，
-// 别换成"撤销失败" —— 那句"它所在的第 1 层，最近一次压缩不是它"才是他要知道的。
+// 顶层摘要都可撤；撤更早的一条会连同**同层更晚的压缩**一起删。先问后端要 preview，
+// 超过一条就摊开警告（哪些区间会一起没），绝不静默删一串。
 async function undoSummary(summaryID) {
   const sid = sessionID;
   if (!sid || !summaryID) return;
   const my = epoch;
+  let preview;
+  try {
+    preview = await api.undoPreview(sid, summaryID);
+  } catch (err) {
+    if (my === epoch) toast(`撤销失败：${err.message}`, "error");
+    return;
+  }
+  const items = preview.items ?? [];
+  if (preview.count > 1) {
+    const ranges = items.map((item) => `第 ${item.from_idx}–${item.to_idx} 条`).join("、");
+    const ok = await overlaysRef.value.confirmAsk(
+      `撤销这次压缩会同时撤销同层更晚的 ${preview.count - 1} 次压缩：${ranges}。` +
+      `这些摘要会被删除，对应内容回到原文，不可逆。继续？`,
+    );
+    if (!ok) return;
+  }
+  if (my !== epoch) return;
   try {
     await api.undoSummary(sid, summaryID);
   } catch (err) {
@@ -801,13 +816,13 @@ async function undoSummary(summaryID) {
     return;
   }
   if (my !== epoch) return;
-  toast("已撤销这次压缩", "ok");
-  // 装配会**变长**（那一段回到原文）⇒ 消息列、状态、环上的占用都要重算一遍。
+  toast(preview.count > 1 ? `已撤销 ${preview.count} 次压缩` : "已撤销这次压缩", "ok");
+  // 装配会**变长**（那些段回到原文）⇒ 消息列、状态、环上的占用都要重算一遍。
   await reloadWindow();
   refreshStateView(sid);
   refreshStatusline("idle");
+  if (treeVisible) refreshTree();
 }
-
 // pollCompact：盯一次压缩到收尾（拿受理时的 `at_ms` 对上这一发 —— 状态位是**持久**的，
 // 不认准 at_ms 会被上一次的旧结局骗），完了刷新消息列（装配变短）与压缩树。
 async function pollCompact(sid, atMS) {

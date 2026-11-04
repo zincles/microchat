@@ -89,15 +89,15 @@ func (b *dummySandbox) twoCompressions(t *testing.T) (ab, cd string) {
 	return idAB, idCD
 }
 
-// 只允许撤该层最近那一次；404 / 409 / 204 各就各位。
+// 顶层都可撤；撤更早的一条会级联撤同层更晚的。404 / 200 preview / 204 各就各位。
 func TestUndoSummaryEndpointStatuses(t *testing.T) {
 	b := newDummySandbox(t)
 	idAB, idCD := b.twoCompressions(t)
 
-	// GET /summaries 要带 level / undoable：CD 更新 ⇒ 只有它可撤。
+	// GET /summaries 带 level / undoable：两条都是顶层，都可撤。
 	summaries := b.summariesOf(t)
-	if undoable := undoableMap(summaries); len(undoable) != 1 || !undoable[idCD] {
-		t.Fatalf("该只有 CD 可撤，实际：%v", undoable)
+	if undoable := undoableMap(summaries); len(undoable) != 2 || !undoable[idAB] || !undoable[idCD] {
+		t.Fatalf("两条顶层都该可撤，实际：%v", undoable)
 	}
 	for _, s := range summaries {
 		if s.Level != 1 {
@@ -105,13 +105,17 @@ func TestUndoSummaryEndpointStatuses(t *testing.T) {
 		}
 	}
 
-	// 不是该层最近那次 ⇒ 409（不是 400：请求没毛病，是状态不允许）。
-	recorder := call(b.server, "DELETE", b.path+"/summaries/"+idAB, "")
-	if recorder.Code != http.StatusConflict {
-		t.Fatalf("撤 AB 该 409，得到 %d：%s", recorder.Code, recorder.Body.String())
+	// preview 说清撤 AB 会连带 CD。
+	recorder := call(b.server, "GET", b.path+"/summaries/"+idAB+"/undo-preview", "")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("撤销预览该 200，得到 %d：%s", recorder.Code, recorder.Body.String())
 	}
-	if !strings.Contains(recorder.Body.String(), "层") {
-		t.Fatalf("409 的理由该说清是哪条闸拦的（提到层级），实际：%s", recorder.Body.String())
+	var preview UndoPreview
+	if err := json.Unmarshal(recorder.Body.Bytes(), &preview); err != nil {
+		t.Fatal(err)
+	}
+	if preview.Count != 2 || len(preview.Items) != 2 || preview.Items[0].ID != idAB || preview.Items[1].ID != idCD {
+		t.Fatalf("撤回 AB 的级联预览不对：%+v", preview)
 	}
 
 	// 不存在的 ⇒ 404。
@@ -119,25 +123,18 @@ func TestUndoSummaryEndpointStatuses(t *testing.T) {
 		t.Fatalf("撤一条不存在的该 404，得到 %d", recorder.Code)
 	}
 
-	// 该层最近那次 ⇒ 204，**不回体**。
-	recorder = call(b.server, "DELETE", b.path+"/summaries/"+idCD, "")
+	// 撤更早的 AB ⇒ 204，AB + CD 一起没了。
+	recorder = call(b.server, "DELETE", b.path+"/summaries/"+idAB, "")
 	if recorder.Code != http.StatusNoContent {
-		t.Fatalf("撤 CD 该 204，得到 %d：%s", recorder.Code, recorder.Body.String())
+		t.Fatalf("撤 AB 该 204，得到 %d：%s", recorder.Code, recorder.Body.String())
 	}
 	if recorder.Body.Len() != 0 {
 		t.Fatalf("204 不该有响应体，实际：%q", recorder.Body.String())
 	}
-
-	// 撤完之后 AB 成了该层唯一（也就是最近）⇒ 它变成可撤。
-	summaries = b.summariesOf(t)
-	if len(summaries) != 1 || summaries[0].ID != idAB {
-		t.Fatalf("撤完 CD 该只剩 AB，实际 %+v", summaries)
+	if summaries := b.summariesOf(t); len(summaries) != 0 {
+		t.Fatalf("撤 AB 应级联撤掉同层更晚的 CD，实际还剩 %+v", summaries)
 	}
-	if !undoableMap(summaries)[idAB] {
-		t.Fatal("CD 撤掉之后 AB 该变成可撤（它现在是该层最近的一次）")
-	}
-
-	// 再撤一次同一条 ⇒ 404（已经没了）。
+	// 重复撤 ⇒ 404（已经没了）。
 	if recorder := call(b.server, "DELETE", b.path+"/summaries/"+idCD, ""); recorder.Code != http.StatusNotFound {
 		t.Fatalf("重复撤同一条该 404，得到 %d", recorder.Code)
 	}
@@ -189,7 +186,7 @@ func TestUndoSummaryEndpointRefusesCoveredChild(t *testing.T) {
 			t.Fatalf("%s 的 level 该回到 1，实际 %d", s.ID, s.Level)
 		}
 	}
-	if undoable := undoableMap(summaries); len(undoable) != 1 || !undoable[idCD] {
-		t.Fatalf("撤掉上层之后该只有 CD 可撤，实际：%v", undoable)
+	if undoable := undoableMap(summaries); len(undoable) != 2 || !undoable[idAB] || !undoable[idCD] {
+		t.Fatalf("撤掉上层之后两条孩子都是顶层，都该可撤，实际：%v", undoable)
 	}
 }

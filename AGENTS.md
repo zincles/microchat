@@ -436,16 +436,14 @@ delete(AA)           # 删除
 外加 padding `≥ 0.3em`（触摸目标）。
 **撤销压缩**（2026-11-01 用户定：「增加一个'删除'图标的按钮，悬停会显示为'撤销'」，并给了金字塔的例子）：
 按钮在**两处**（压缩树的摘要行 + 聊天界面的摘要卡，与刷新/编辑并排），图标是垃圾桶、悬停文案「撤销」。
-「合法」是两条闸，**判定只有一份**（`core/internal/compact/undo.go` 的 `PlanUndo` / `UndoBlocker`，
-纯函数）—— 界面亮不亮按钮（`undoable`）与接口拒不拒（409）读的是同一个判断，不会两套打架：
-① **只算顶层**：被上层盖住的摘要不能单独撤，撤了会在上层的覆盖区间里留一个洞（装配按区间 O(1) 跳，
-跳过之后那一截既不是原文也不是摘要）；想撤它就先撤上层。
-② **每层只允许撤最新那一次**（按 `created_at`，同毫秒用 UUIDv7 的 id 序破平）：撤销是"后悔上一步"，
-压缩是一条**栈**、每层各一条；跳过中间去撤更早的，剩下的是"数得出压过几次、推不出上次压了什么"。
-⚠ 不能撤的按钮**留着但禁用**（让人看见这儿本来能撤），禁用态要**显式压暗** + 一句说明 —— 否则又是死按钮。
-⚠ 这个 **不对称**（只折叠不展开、只撤最新不撤任意）是刻意的，不是没做完。
-⚠ 落库三步的顺序是语义：孩子 parent 置空 → 消息 `summary_id` 置空 → 删摘要。反了就是
-`FOREIGN KEY constraint failed`（自引用外键在语句末尾才核，与 `ApplyDeletion` 同一个坑）。
+「合法」**判定只有一份**（`core/internal/compact/undo.go` 的 `PlanUndo` / `UndoBlocker`，纯函数）：
+① **只算顶层**：被上层盖住的摘要不能单独撤，撤了会在上层的覆盖区间里留一个洞；想撤它先撤上层。
+② **同层是一串按位置排的链**：撤更早的压缩，会**连同同层更晚的压缩一起删**（`Cascade`）。
+   理由：只撤中间那条会留下"后面还压着、前面空了"的不连续历史；整段退回同一条时间线才说得清。
+界面在删之前先调 `GET .../summaries/{id}/undo-preview`；`count > 1` 时弹警告，列出会一起没的区间。
+`undoable` = 顶层都可撤（更早的也能，但会级联）；不能撤的按钮**留着但禁用** + 压暗 + 说明。
+⚠ 落库是 `UndoSummaries` 一个事务：批量释放孩子 parent → 批量清消息 `summary_id` → 批量删摘要。
+反了就是 `FOREIGN KEY constraint failed`（自引用外键在语句末尾才核，与 `ApplyDeletion` 同一个坑）。
 ⚠ 撤销会让**装配变长**（那段回到原文）⇒ 前端三处都要重算：消息列、状态视图、上下文档（契约测试钉着）。
 **压缩树的每行带一段原文预览**（2026-10-29 用户定：「条目不是简单的 `#3 你`，而是
 `#3 你 XXXXX…`（原始输入文本的前 n 个字符）」，摘要块同理）。否则翻十条全是"#3 你"，
@@ -673,9 +671,10 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 | POST | `/sessions/{session_id}/compact/advanced` | 同上 | `AdvancedJob` · 202 | **启动高级作业**：一个父 Task，chunk 并发生成（`concurrency`），每块最多 `max_attempts` 次（只重试 upstream）；全部成功才**一个事务**写 N 条摘要，任何一块最终失败 ⇒ 整批不落库。同一个会话仍与普通压缩共用一把闸（跑着 ⇒ 409） |
 | GET | `/sessions/{session_id}/compact/advanced/{job_id}` | — | `AdvancedJob` | 整体状态 `running` / `done` / `failed` / `canceled` + 每块进度与 attempts；进程内状态，重启即失 |
 | POST | `/sessions/{session_id}/compact/advanced/{job_id}/cancel` | — | `AdvancedJob` | 取消整个高级作业（所有子请求共用 ctx）；取消 = 没做过，不落库 |
-| GET | `/sessions/{session_id}/summaries` | — | `[Summary]` | 摘要列表（picker / 消息列折叠 / 分页切段用；按 id 序；空 ⇒ `[]`）。每条带 **`begin_idx` / `end_idx`**（区间两端的**消息序号**，派生 —— 与消息 `idx` 同一把尺；端点悬空/缺 ⇒ 缺省 ⇒ 界面按「不折」处理），以及 2026-11-01 加的两格派生字段 **`level`**（层级：1 = 直接盖消息）与 **`undoable`**（现在能不能撤销）。⚠ 两格都 `omitempty`：**没算的地方不出现**（导出、单条 PATCH 的响应），语义是"这里没算过"而不是"算出来是 false" —— 前端按 `!!s.undoable` 读 |
+| GET | `/sessions/{session_id}/summaries` | — | `[Summary]` | 摘要列表（picker / 消息列折叠 / 分页切段用；按 id 序；空 ⇒ `[]`）。每条带 **`begin_idx` / `end_idx`**（区间两端的**消息序号**，派生 —— 与消息 `idx` 同一把尺；端点悬空/缺 ⇒ 缺省 ⇒ 界面按「不折」处理），以及 2026-11-01 加的两格派生字段 **`level`**（层级：1 = 直接盖消息）与 **`undoable`**（顶层现在都能撤；被上层盖住的为 false）。⚠ 两格都 `omitempty`：**没算的地方不出现**（导出、单条 PATCH 的响应），语义是"这里没算过"而不是"算出来是 false" —— 前端按 `!!s.undoable` 读 |
 | PATCH | `/sessions/{session_id}/summaries/{summary_id}` | `{"text":"…"}`（必填；空 ⇒ 400） | `Summary` | 手改**任意**一条摘要的正文 = 就地换 text（id / 区间 / 指针不动；改孩子 ⇒ 祖先标脏；自己变干净）|
-| DELETE | `/sessions/{session_id}/summaries/{summary_id}` | — | 204 | **撤销一次压缩**（2026-11-01）。只允许撤**合法**的 ⇒ 判定只有一份（`compact.PlanUndo`）：① **顶层**（`parent_summary_id IS NULL`；被上层盖住的不能单独撤，否则上层的覆盖区间破个洞）；② **每层只允许撤最新那一次**。不合法 ⇒ **409**（请求没毛病、是"此刻不行"，理由是一句人话，直接给人看）；没有这条 ⇒ **404**。落库一个事务三步（顺序就是语义，自引用外键在语句末尾才核）：孩子的 parent 置空 → 直接指着它的消息 `summary_id` 置空 → 删这一行。**不回体**（撤销之后该看的是新列表）|
+| GET | `/sessions/{session_id}/summaries/{summary_id}/undo-preview` | — | `{summary_id,level,count,items:[{id,from_idx,to_idx,level}]}` | **撤销预览**：撤这条会连带删哪些同层更晚的摘要。被上层盖住 ⇒ 409；不存在 ⇒ 404。只算不写 |
+| DELETE | `/sessions/{session_id}/summaries/{summary_id}` | — | 204 | **撤销压缩（支持级联）**：顶层都可撤；撤更早的会连同**同层更晚**的一起删。被上层盖住 ⇒ **409**（先撤上层）；没有 ⇒ 404。`UndoSummaries` 一个事务：批量释放孩子 parent → 批量清消息 `summary_id` → 批量删摘要。**不回体** |
 | POST | `/sessions/{session_id}/reroll-message` | — | `{target_message_id, task_id, state}` · **202** | **重摇·消息**：进模式并**立刻摇一次**（已在模式里 ⇒ 再摇一版）。候选（`RerolledMessage`）**只在内存里**、**不进历史** —— 选中才 apply 回那条 Message。尾条必须是 assistant（不是 ⇒ 400 说清那是"重发"）；与生成**共用同一把闸**（在跑 ⇒ 409）。**候选生成走流式**（2026-10-10 起）：deltas 进 `turn` 缓冲（`BeginReroll` 清、`FinishReroll` 清）⇒ 摇的过程中 `/turn/text` 能读到正文在长（web 靠它做气泡内预览）|
 | GET | `/sessions/{session_id}/reroll-message` | — | `{active, target_kind, target_message_id, count, current_idx, running, elapsed_ms, error, items:[…]}` | 重摇状态（**不吐全文**，预览几十字）。没进模式 ⇒ `active: false`（**不是 404**）|
 | POST | `.../reroll-message/switch` | `{"idx": n}` | 同上 | 选中第 `n` 版 ⇒ **就地重建**那条 Message（**UUID 不变**；正文与 usage / 耗时 / 思考一起换；摘要照旧标 `dirty`）|

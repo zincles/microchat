@@ -139,8 +139,9 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
     // listSummaries：这条会话的摘要列表（/editsum 的 picker 用；id + text + dirty 现成）。
     // 2026-11-01 起还带两格**派生**字段：`level`（层级）与 `undoable`（现在能不能撤销）。
     listSummaries: (sid) => call("GET", `/sessions/${enc(sid)}/summaries`),
-    // undoSummary：**撤销一次压缩**。只允许撤合法的（顶层 + 每层最近那次）——
-    // 判定在后端（`compact.PlanUndo`），不合法回 409 并带一句人话，界面请原样显示。
+    // undoPreview：撤销前先问"会连带删哪些"（更早的同层压缩会级联）。
+    undoPreview: (sid, sumid) => call("GET", `/sessions/${enc(sid)}/summaries/${enc(sumid)}/undo-preview`),
+    // undoSummary：**撤销一次压缩**。顶层都可撤；更早的会级联同层更晚的。
     undoSummary: (sid, sumid) => call("DELETE", `/sessions/${enc(sid)}/summaries/${enc(sumid)}`),
     patchSession: (id, body) => call("PATCH", `/sessions/${enc(id)}`, body),
     // copySession：**创建副本**（入口在左栏会话的「选项」浮板，2026-11-04 从会话设置面板挪过来）。

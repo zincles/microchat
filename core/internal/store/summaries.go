@@ -185,10 +185,11 @@ var ErrSummaryNotTopLevel = errors.New("summary_not_top_level")
 
 // UndoResult：撤销一次的账（给测试与日志一个"确实动了东西"的证据）。
 type UndoResult struct {
-	SessionID string `json:"session_id"`
-	SummaryID string `json:"summary_id"`
-	Messages  int    `json:"messages"` // 放回原文的消息条数
-	Children  int    `json:"children"` // 重新变回顶层的子摘要条数
+	SessionID  string   `json:"session_id"`
+	SummaryID  string   `json:"summary_id"`
+	SummaryIDs []string `json:"summary_ids,omitempty"` // 级联撤销时的全部摘要
+	Messages   int      `json:"messages"`              // 放回原文的消息条数
+	Children   int      `json:"children"`              // 重新变回顶层的子摘要条数
 }
 
 // UndoSummary：撤销一次压缩 —— 把一条**顶层**摘要拿掉，并把被它盖住的东西放回来。
@@ -207,7 +208,25 @@ type UndoResult struct {
 // ⚠ 合法性（顶层 + 每层最新）**不在这里判** —— 那是 `compact.PlanUndo` 的纯函数，
 // 界面与接口共用同一份判断。这里只兜住**结构**那条（③上挂着 `parent_summary_id IS NULL`）。
 func (s *Store) UndoSummary(sessionID, summaryID string) (UndoResult, error) {
-	result := UndoResult{SessionID: sessionID, SummaryID: summaryID}
+	return s.UndoSummaries(sessionID, []string{summaryID})
+}
+
+// UndoSummaries：撤销一条或一批顶层摘要，**一个事务**。
+// 高级/级联撤销传 [目标 + 同层更晚的全部]；单条撤销只是长度 1 的特例。
+func (s *Store) UndoSummaries(sessionID string, summaryIDs []string) (UndoResult, error) {
+	ids := make([]string, 0, len(summaryIDs))
+	seen := map[string]bool{}
+	for _, id := range summaryIDs {
+		if id != "" && !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	result := UndoResult{SessionID: sessionID, SummaryIDs: ids}
+	if len(ids) == 0 {
+		return result, InvalidError("撤销至少要给一条摘要")
+	}
+	result.SummaryID = ids[0]
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	tx, err := s.db.Begin()
@@ -215,11 +234,19 @@ func (s *Store) UndoSummary(sessionID, summaryID string) (UndoResult, error) {
 		return result, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	marks := make([]string, len(ids))
+	args := make([]any, 0, len(ids)+1)
+	args = append(args, sessionID)
+	for index, id := range ids {
+		marks[index] = "?" + strconv.Itoa(index+2)
+		args = append(args, id)
+	}
+	inClause := strings.Join(marks, ",")
 
 	// ① 孩子重新变回顶层。
 	released, err := tx.Exec(
-		"UPDATE summaries SET parent_summary_id = NULL WHERE session_id = ?1 AND parent_summary_id = ?2",
-		sessionID, summaryID)
+		"UPDATE summaries SET parent_summary_id = NULL WHERE session_id = ?1 AND parent_summary_id IN ("+inClause+")",
+		args...)
 	if err != nil {
 		return result, err
 	}
@@ -229,8 +256,8 @@ func (s *Store) UndoSummary(sessionID, summaryID string) (UndoResult, error) {
 
 	// ② 消息重新按原文发。
 	unbound, err := tx.Exec(
-		"UPDATE messages SET summary_id = NULL WHERE session_id = ?1 AND summary_id = ?2",
-		sessionID, summaryID)
+		"UPDATE messages SET summary_id = NULL WHERE session_id = ?1 AND summary_id IN ("+inClause+")",
+		args...)
 	if err != nil {
 		return result, err
 	}
@@ -238,10 +265,10 @@ func (s *Store) UndoSummary(sessionID, summaryID string) (UndoResult, error) {
 		result.Messages = int(affected)
 	}
 
-	// ③ 删掉这一条。`parent_summary_id IS NULL` = 结构上就删不掉一条被盖住的摘要。
+	// ③ 删掉这批。`parent_summary_id IS NULL` = 结构上就删不掉仍被盖住的摘要。
 	deleted, err := tx.Exec(
-		"DELETE FROM summaries WHERE id = ?1 AND session_id = ?2 AND parent_summary_id IS NULL",
-		summaryID, sessionID)
+		"DELETE FROM summaries WHERE session_id = ?1 AND id IN ("+inClause+") AND parent_summary_id IS NULL",
+		args...)
 	if err != nil {
 		return result, err
 	}
@@ -249,12 +276,11 @@ func (s *Store) UndoSummary(sessionID, summaryID string) (UndoResult, error) {
 	if err != nil {
 		return result, err
 	}
-	if affected == 0 {
-		// 没删掉只有两种可能，**得分清楚** —— 统一报 404 会把"被盖住的"也说成"没有这条"。
+	if int(affected) != len(ids) {
 		var total int
 		if err := tx.QueryRow(
-			"SELECT COUNT(*) FROM summaries WHERE id = ?1 AND session_id = ?2",
-			summaryID, sessionID).Scan(&total); err != nil {
+			"SELECT COUNT(*) FROM summaries WHERE session_id = ?1 AND id IN ("+inClause+")",
+			args...).Scan(&total); err != nil {
 			return result, err
 		}
 		if total > 0 {

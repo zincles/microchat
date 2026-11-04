@@ -161,7 +161,12 @@ func (s *Server) undoSummary(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "conflict", blocker)
 		return
 	}
-	if _, err := s.store.UndoSummary(session.ID, summaryID); err != nil {
+	plan := compact.PlanUndo(summaries)
+	ids := plan.Cascade[summaryID]
+	if len(ids) == 0 {
+		ids = []string{summaryID}
+	}
+	if _, err := s.store.UndoSummaries(session.ID, ids); err != nil {
 		switch {
 		case errors.Is(err, store.ErrSummaryNotTopLevel):
 			writeError(w, http.StatusConflict, "conflict", "它已经被上层摘要盖住了：先撤上面那层")
@@ -173,6 +178,65 @@ func (s *Server) undoSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// UndoItem / UndoPreview：撤销前的警告用 —— 告诉界面"撤这一条会连带删哪些"。
+type UndoItem struct {
+	ID      string `json:"id"`
+	FromIdx int    `json:"from_idx"`
+	ToIdx   int    `json:"to_idx"`
+	Level   int    `json:"level"`
+}
+type UndoPreview struct {
+	SummaryID string     `json:"summary_id"`
+	Level     int        `json:"level"`
+	Count     int        `json:"count"`
+	Items     []UndoItem `json:"items"`
+}
+
+func (s *Server) previewUndoSummary(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	summaryID := r.PathValue("summary_id")
+	summaries, err := s.store.ListSummaries(session.ID)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	byID := make(map[string]model.Summary, len(summaries))
+	for _, summary := range summaries {
+		byID[summary.ID] = summary
+	}
+	target, found := byID[summaryID]
+	if !found {
+		writeError(w, http.StatusNotFound, "not_found", "这条会话里没有这条摘要")
+		return
+	}
+	if blocker := compact.UndoBlocker(summaries, summaryID); blocker != "" {
+		writeError(w, http.StatusConflict, "conflict", blocker)
+		return
+	}
+	plan := compact.PlanUndo(summaries)
+	ids := plan.Cascade[summaryID]
+	if len(ids) == 0 {
+		ids = []string{summaryID}
+	}
+	out := UndoPreview{SummaryID: summaryID, Level: plan.Levels[summaryID], Count: len(ids), Items: make([]UndoItem, 0, len(ids))}
+	for _, id := range ids {
+		summary := byID[id]
+		item := UndoItem{ID: id, Level: plan.Levels[id]}
+		if summary.BeginIdx != nil {
+			item.FromIdx = *summary.BeginIdx
+		}
+		if summary.EndIdx != nil {
+			item.ToIdx = *summary.EndIdx
+		}
+		out.Items = append(out.Items, item)
+	}
+	_ = target
+	writeJSON(w, http.StatusOK, out)
 }
 
 // compactPreview：`POST /sessions/{session_id}/compact/preview` —— **只算不动**。

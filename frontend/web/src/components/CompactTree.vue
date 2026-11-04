@@ -96,14 +96,14 @@ function barStyle(n, depth) {
         {{ r.n.kind === "summary" ? "→" : "≈" }}{{ r.n.tokens }}
       </span>
       <!-- 撤销这次压缩（2026-11-01 用户定）：图标是垃圾桶，**悬停说'撤销'**。
-           只有合法的能点（顶层 + 该层最近那次）；不能撤的**留着但禁用** ——
+           顶层都可点（更早的会级联同层更晚的）；被上层盖住的留着但禁用 ——
            留着是为了让人看见"这里本来能撤"，禁用配一句说明，才不是个死按钮。 -->
       <button
         v-if="r.n.kind === 'summary'"
         type="button"
         class="ctree-undo"
         :disabled="!r.n.undoable"
-        :title="r.n.undoable ? '撤销' : '只有每层最近的那一次压缩可以撤销'"
+        :title="r.n.undoable ? '撤销这次压缩（同层更晚的会一并撤销）' : '被上层摘要盖住：先撤上面那层'"
         aria-label="撤销这次压缩"
         @click.stop="emit('undo', r.n.id)"
         v-html="ICONS.trash"
