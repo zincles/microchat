@@ -243,16 +243,16 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
  * 高度算式：0.88em × 1.3（line-height）+ 2 × 0.3em × 0.88（上下 padding）= 1.67em，
  * 加容器 0.12em × 2 ⇒ ≈1.91em。**别再往上加**：`.messages-inner` 的顶部留白是 3.2em，
  * 顶栏是悬浮层，超过那个数第一条消息就会被压住。 */
-.ws-switch { flex: none; display: inline-flex; align-items: center; gap: 0.12em;
-  padding: 0.12em; border-radius: 999px;
-  background: var(--mix-8); }
-.ws-tab { flex: none; border-radius: 999px;
+.ws-switch { flex: none; display: inline-flex; align-items: center; gap: 1.05em;
+  padding: 0; border-radius: 0; border-bottom: 1px solid var(--line);
+  background: none; }
+.ws-tab { flex: none; border-radius: 0; border-bottom: 2px solid transparent; margin-bottom: -1px;
   color: var(--tg-hint);
-  font: inherit; font-size: 0.88em; line-height: 1.3; padding: 0.3em 0.8em; white-space: nowrap;
-  transition: background 150ms ease-out, color 150ms ease-out; }
+  font: inherit; font-size: 0.88em; line-height: 1.3; padding: 0.4em 0.1em; white-space: nowrap;
+  transition: color 150ms ease-out, border-color 150ms ease-out; }
 .ws-tab:hover { color: var(--tg-text); }
-/* 选中：底色提亮一档 + 正文色。**不靠加粗**（字重一变按钮宽度就变，整簇会抖）。 */
-.ws-tab.sel { background: var(--mix-18); color: var(--tg-text); }
+/* 选中：下划线 + 正文色。**不靠加粗**（字重一变按钮宽度就变，整簇会抖）。 */
+.ws-tab.sel { background: none; color: var(--tg-text); border-bottom-color: var(--tg-link); }
 .ws-tab:focus-visible { outline: 2px solid color-mix(in srgb, var(--tg-link) 55%, transparent); outline-offset: 1px; }
 /* 窄屏：顶栏那一行本来就挤（头像 + 模型名 + 环），但**不能靠缩字**换空间 ——
  * 那正好把"弄大一点"抵消掉。收的是**横向 padding**（触摸目标靠高度撑着，仍够点），
@@ -272,7 +272,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
   #chat-col > header .model-btn-label { white-space: normal; overflow: visible; text-overflow: clip;
     line-height: 1.15; overflow-wrap: anywhere; }
   #chat-col > header .model-caret { display: none; }
-  .ws-tab { padding: 0.3em 0.5em; }
+  .ws-tab { padding: 0.4em 0.5em; }
 }
 /* 上下文工作区（2026-10-29）：占满消息列那块地方（顶栏是悬浮层，所以顶部要自己留出高度）。
  * **没有输入行** —— 这不是说话的地方，切回来才说。 */
@@ -583,9 +583,11 @@ html[data-composer="solid"] .messages-inner { padding-bottom: calc(var(--compose
  * ⚠ 小心 em 叠乘：`.ws-panel` 自己已经 `font-size: 0.92em`，所以这里的 1.15em 落到根上是
  * 1.15 × 0.92 ≈ **1.06em**。改之前是 0.95em ⇒ 0.87em 根 —— 比正文还小，难怪看着像附注。
  * 契约测试按这个叠乘算一遍，钉住"tab 不小于面板正文（1em）"。 */
-.bar-head.bar-tabs { flex: none; justify-content: flex-start; gap: 1.3em; padding: 0 0 0.1em; }
+.bar-head.bar-tabs { flex: none; justify-content: flex-start; gap: 1.2em; padding: 0;
+  border-bottom: 1px solid var(--line); }
 .bar-head.bar-tabs .tab { flex: none; background: none; border: none; border-bottom: 2px solid transparent;
-  border-radius: 0; color: var(--tg-hint); padding: 0.35em 0; font-size: 1.15em; line-height: 1.3; }
+  border-radius: 0; color: var(--tg-hint); padding: 0.45em 0 0.5em; font-size: 1.15em; line-height: 1.3;
+  margin-bottom: -1px; }
 .bar-head.bar-tabs .tab:hover { color: var(--tg-text); }
 .bar-head.bar-tabs .tab.sel { color: var(--tg-text); border-bottom-color: var(--tg-link); }
 /* 状态表：表名小标题 + 键值行（键暗、值亮）。滚动与 tabs 常驻见上面 #payload-pane 那组规则。 */
@@ -603,7 +605,7 @@ html[data-composer="solid"] .messages-inner { padding-bottom: calc(var(--compose
 .foot-btn .fb-icon { display: inline-flex; }
 .foot-btn .fb-icon svg { width: 1.1em; height: 1.1em; }
 .foot-btn:hover { background: var(--mix-6); color: var(--tg-text); }
-.session-item { display: flex; gap: 0.4em; align-items: center; padding: 0.4em 0.55em; border-radius: var(--r-card); cursor: pointer; white-space: nowrap; overflow: hidden; color: var(--tg-text); line-height: 1.3; }
+.session-item { display: flex; gap: 0.4em; align-items: center; padding: 0.4em 0.55em; border-radius: var(--r-btn); cursor: pointer; white-space: nowrap; overflow: hidden; color: var(--tg-text); line-height: 1.3; }
 .session-item:hover { background: var(--mix-6); }
 .session-item.sel { background: var(--mix-10); color: var(--tg-text); }
 /* 标题 + 第二行（条数/最近活动）。第二行是为了**定位**：十条同标题的会话只看名字分不出来。 */
@@ -775,7 +777,7 @@ html[data-composer="solid"] .messages-inner { padding-bottom: calc(var(--compose
 #composer { position: absolute; bottom: 0; left: 0; right: 0; display: flex; gap: 0.5em; align-items: flex-end; background: none; z-index: 5;
   padding: 0.6em 0.6em calc(0.6em + env(safe-area-inset-bottom, 0px)); }
 /* 输入框独立浮动卡 + 发送钮独立圆钮：逻辑相连、显示分开（TG 底栏就是输入框配外面一颗钮）。 */
-#input { flex: 1; background: color-mix(in srgb, var(--tg-secondary-bg) 88%, transparent); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); color: var(--tg-text); border: 1px solid var(--line); border-radius: 20px; padding: 0.6em 1.1em; font: inherit; resize: none; line-height: 1.5; max-height: calc(1.5em * 6 + 1.2em); overflow-y: auto; box-shadow: var(--shadow-2); }
+#input { flex: 1; background: color-mix(in srgb, var(--tg-secondary-bg) 88%, transparent); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); color: var(--tg-text); border: 1px solid var(--line); border-radius: var(--r-shell); padding: 0.6em 1.1em; font: inherit; resize: none; line-height: 1.5; max-height: calc(1.5em * 6 + 1.2em); overflow-y: auto; box-shadow: var(--shadow-2); }
 #input:focus { outline: none; border-color: var(--tg-link); }
 /* —— 滚动隐藏上下栏（触屏；2026-10-17 用户定，默认开）——
  * JS（App 的 onMessagesScroll）只写根节点上两个 px 变量，这里只做位移：
@@ -923,38 +925,33 @@ html[data-composer="solid"] #composer button { box-shadow: none; }
 #prompt-list td { overflow: hidden; text-overflow: ellipsis; }
 /* 设置里的控件压到 DS 档（36px 上下）：只收纵向内间距，不动字号与横向命中区。 */
 .settings-cols .panel input:not([type="checkbox"]):not([type="radio"]), .settings-cols .panel select { padding-top: 0.3em; padding-bottom: 0.3em; }
-.settings-nav { display: flex; flex-direction: row; gap: 0.2em; margin-bottom: 0.7em; background: var(--tg-secondary-bg); border: none; border-radius: var(--r-card); padding: 0.18em; position: relative; }
-.settings-nav .tab { flex: 1; text-align: center; border-radius: var(--r-md); color: var(--tg-hint); padding: 0.38em 0.3em; font-size: 0.9em; line-height: 1.25; position: relative; z-index: 1; transition: color 150ms ease-out; }
-.settings-nav .tab.sel { color: var(--tg-text); }
-/* 选中块：绝对定位跟随（left/width 由 JS 量，150ms ease-out 滑过去）。 */
-.settings-nav .tab-thumb { position: absolute; top: 0.18em; bottom: 0.18em; border-radius: var(--r-md); background: var(--mix-10); transition: left 170ms ease-out, width 170ms ease-out; z-index: 0; }
+/* 统一 tab 语言（2026-11-04）：设置 / Agent 二级页 / 上下文三 tab / 顶栏聊天·上下文
+ * 全部是**下划线导航** —— 无底片、无胶囊、无 JS 量宽度。 */
+.settings-nav { display: flex; flex-direction: row; gap: 1.2em; margin-bottom: 0.7em;
+  background: none; border: none; border-bottom: 1px solid var(--line); border-radius: 0; padding: 0; }
+.settings-nav .tab { flex: 0 0 auto; text-align: center; border-radius: 0; color: var(--tg-hint);
+  padding: 0.45em 0 0.5em; font-size: 0.9em; line-height: 1.25; border-bottom: 2px solid transparent;
+  margin-bottom: -1px; transition: color 150ms ease-out, border-color 150ms ease-out; }
+.settings-nav .tab.sel { color: var(--tg-text); border-bottom-color: var(--tg-link); }
 /* 面板淡入（切页 120ms，opacity+位移，不碰 layout）。 */
 .settings-cols .panel { animation: panel-in 140ms ease-out; }
 @keyframes panel-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
-@media (prefers-reduced-motion: reduce) { .settings-nav .tab-thumb { transition: none; } .settings-cols .panel { animation: none; } }
-.settings-cols .panel .field, .settings-cols .panel .row { background: var(--tg-secondary-bg); margin: 0; padding: 0.45em 0.9em; line-height: 1.35; }
-.settings-cols .panel .field + .field, .settings-cols .panel .field + .row,
-.settings-cols .panel .row + .field, .settings-cols .panel .row + .row { border-top: 1px solid var(--line); }
-/* 卡片圆角只在组两端：组 = 一个 h3 带起的连续 field/row 串（无 h3 的 panel 整串算一组）。
- * 顶：h3 后首行 / panel 首行；底：h3 前末行 / panel 末行。中间行上下直角。 */
+@media (prefers-reduced-motion: reduce) { .settings-cols .panel { animation: none; } }
+/* 设置页是**平铺列表**（2026-11-04）：行与行只隔一条细线，不再套一层卡片。
+ * h3 后第一行不画顶线；列表末尾也不补圆角 —— 圆角交给真正的卡片（表格/浮层）。 */
+.settings-cols .panel .field, .settings-cols .panel .row {
+  background: none; margin: 0; padding: 0.6em 0.2em; line-height: 1.45;
+  border-top: 1px solid var(--line); border-radius: 0; }
 .settings-cols .panel h3 + .field, .settings-cols .panel h3 + .row,
-.settings-cols .panel > .field:first-child, .settings-cols .panel > .row:first-child { border-radius: var(--r-card) var(--r-card) 0 0; }
-.settings-cols .panel .field:has(+ h3), .settings-cols .panel .row:has(+ h3),
-.settings-cols .panel > .field:last-child, .settings-cols .panel > .row:last-child { border-radius: 0 0 var(--r-card) var(--r-card); }
-.settings-cols .panel h3 + .field:has(+ h3), .settings-cols .panel h3 + .row:has(+ h3) { border-radius: var(--r-card); }
-/* 设置页的分组卡片（2026-11-02）：外观页四张（外观 / 布局 / 输入 / markdown）、
- * 聊天页一张。内容一多，连成一条长条最难扫；卡内行与行之间才用细线。
- * 所有 tab 统一 760 居中（列表页有表格，但切 tab 时宽度不该跳来跳去）。 */
+.settings-cols .panel > .field:first-child, .settings-cols .panel > .row:first-child { border-top: none; }
+/* 设置页统一 760 居中（列表页有表格，但切 tab 时宽度不该跳来跳去）。
+ * `.settings-card` 现在只是分节容器，不再有底色/圆角/内边距 —— 视觉上是一条平铺列表。 */
 #panel-appearance, #panel-chat, #panel-session, #panel-agent, #panel-prompt, #panel-provider {
   max-width: 760px; margin: 0 auto;
 }
-.settings-card { background: var(--tg-secondary-bg); border-radius: var(--r-card); padding: 0.1em 0.95em 0.5em; margin: 0 0 0.8em; }
+.settings-card { background: none; border-radius: 0; padding: 0; margin: 0 0 1.4em; }
 .settings-cols .panel .settings-card h3 { margin: 0.6em 0 0.2em; }
-.settings-cols .panel .settings-card .field,
-.settings-cols .panel .settings-card .row { background: none; margin: 0; padding: 0.55em 0; border-top: 1px solid var(--line); border-radius: 0; }
-.settings-cols .panel .settings-card h3 + .field,
-.settings-cols .panel .settings-card h3 + .row { border-top: none; }
-.settings-cols .panel .settings-card .field { grid-template-columns: 150px 1fr; }
+.settings-cols .panel .settings-card .field { grid-template-columns: 190px 1fr; }
 .settings-cols .panel .settings-card .hint { margin: 0.35em 0 0.3em; }
 /* markdown 两组的「块级 / 行内 + 全关全开」头行：从前只是两段裸文字，挤在字段之间。 */
 #panel-appearance .md-group { margin-top: 0.55em; }
@@ -965,7 +962,6 @@ html[data-composer="solid"] #composer button { box-shadow: none; }
 #panel-appearance .md-row code.md-sample { color: var(--tg-hint); background: var(--mix-6); border-radius: var(--r-xs);
   padding: 0 0.25em; font-size: 0.9em; }
 @media (max-width: 700px) {
-  .settings-card { padding: 0.1em 0.8em 0.45em; }
   .settings-cols .panel .settings-card .field { grid-template-columns: 1fr; gap: 0.3em; }
 }
 /* 导入卡（2026-10-17）：两种"导入"各一张 —— 卡面比面板底亮一档、自带圆角与内边距，

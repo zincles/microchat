@@ -314,16 +314,17 @@ function onKey(e) {
           <section class="settings-card">
             <h3>回复与自动压缩</h3>
             <label class="field"><span>自动标题最多字数</span><input v-model="chat.title_chars" type="number" min="1" /></label>
-            <label class="field"><span>一次能记住多少内容（token 数）</span><input v-model="chat.model_context_tokens" type="number" min="1" /></label>
+            <label class="field"><span>上下文长度（token）</span><input v-model="chat.model_context_tokens" type="number" min="1" /></label>
             <!-- 为什么右上角那枚环的分母常常比这里小：它是**输入预算** = 上下文 − 给回复留的输出额度。
                  移动端没有 hover，所以这句话必须写在这儿（不能只藏在环的 title 里）。 -->
             <p class="hint">右上角那枚环显示的是<b>还能输入多少</b>：这里填的上下文长度减去给回复预留的空间。填 1000000 时通常显示 995904。</p>
             <label class="field"><span>首屏加载多少条消息</span><input v-model="chat.history_window" type="number" min="1" placeholder="留空 = 5" /></label>
             <p class="hint">包含用户与 AI 消息；「加载更多」每页也按这个数量。默认 5，远程部署时首屏更快。</p>
-            <label class="field"><span>每次自动压缩几段对话</span><input v-model="chat.compact_blocks" type="number" min="1" placeholder="留空 = 3" /></label>
-            <label class="field"><span>自动压缩（到 80% 开始，压到 50% 以下）</span><ToggleSwitch v-model="chat.auto_compact" /></label>
-            <label class="field"><span>多少占用时开始压缩（留空 = 80%）</span><input v-model="chat.compact_trigger_tokens" type="number" min="1" placeholder="留空 = 80%" /></label>
-            <label class="field"><span>把思考过程也发给模型（默认关）</span><ToggleSwitch v-model="chat.replay_reasoning" /></label>
+            <label class="field"><span>自动压缩块数</span><input v-model="chat.compact_blocks" type="number" min="1" placeholder="留空 = 3" /></label>
+            <label class="field"><span>自动压缩</span><ToggleSwitch v-model="chat.auto_compact" /></label>
+            <p class="hint">占用到 80% 开始压缩，压到 50% 以下停；关着就只手动压。</p>
+            <label class="field"><span>压缩触发点</span><input v-model="chat.compact_trigger_tokens" type="number" min="1" placeholder="留空 = 80%" /></label>
+            <label class="field"><span>回传思考过程</span><ToggleSwitch v-model="chat.replay_reasoning" /></label>
             <div class="row"><button type="button" class="primary" @click="saveChat">保存</button><span class="status">{{ chatStatus }}</span></div>
           </section>
         </section>

@@ -1545,21 +1545,18 @@ test("上下文环：App 喂 ctx / 环在顶栏画 / 状态行不再报占用", 
   assert.ok(!/\.statusline/.test(css), "main.css 里还留着 .statusline 规则（那一行已经删了）");
 });
 
-// 页签条也是"两处各写一遍"的那种东西（设置主栏五区 + Agent 编辑器的二级页签）。
-// 底片滑动的算法（量 offsetLeft/offsetWidth）抄错一个像素看不出来，抄出两份就会一边顺一边顿，
-// 而且 window resize / 界面缩放滑杆之后两边行为会分叉。⇒ 共用一个 `TabBar`。
+// 页签条：设置主栏与 Agent 编辑器共用 TabBar；2026-11-04 统一为纯 CSS 下划线。
 test("页签条：设置主栏与 Agent 编辑器用的是同一个组件", () => {
   const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
   const editor = readFileSync(join(SRC, "components", "AgentEditor.vue"), "utf8");
   const bar = readFileSync(join(SRC, "components", "TabBar.vue"), "utf8");
   assert.match(settings, /<TabBar v-if="!only" v-model="tab" :tabs="SETTINGS_TABS" \/>/, "设置主栏没用 TabBar");
   assert.match(editor, /<TabBar v-model="tab" :tabs="tabs" \/>/, "Agent 编辑器没用 TabBar");
-  // 手写一套的话会有这些痕迹：nav 里的 tab-thumb、以及自己去量 offsetLeft。
-  for (const [name, src] of [["SettingsModal.vue", settings], ["AgentEditor.vue", editor]]) {
-    assert.ok(!src.includes("tab-thumb"), `${name} 自己画了一枚 tab-thumb —— 该交给 TabBar`);
-    assert.ok(!src.includes("offsetWidth"), `${name} 自己在量按钮宽度 —— 该交给 TabBar`);
+  assert.match(bar, /class="settings-nav"/, "TabBar 没复用统一的下划线导航");
+  for (const [name, src] of [["SettingsModal.vue", settings], ["AgentEditor.vue", editor], ["TabBar.vue", bar]]) {
+    assert.ok(!src.includes("tab-thumb"), `${name} 还画着滑动底片`);
+    assert.ok(!src.includes("offsetWidth"), `${name} 还在自己量按钮宽度`);
   }
-  assert.match(bar, /window\.addEventListener\("resize", moveThumb\)/, "TabBar 没跟窗口缩放（字大小变了底片会错位）");
 });
 
 // 用户 2026-10-28：「在具体某个 Agent 的设置界面里，我们最好也分 TAB，不然的话，全挤在一起很丑。」
@@ -2115,8 +2112,8 @@ test("工作区开关：够大，但没顶穿消息列的顶部留白", () => {
   const font = em(tab, "font-size");
   const line = bare(tab, "line-height");                // 无单位倍数
   const padY = em(tab, "padding");                      // 竖排 padding（简写取第一个）
-  const padBox = em(box, "padding");
-  for (const [n, v] of [["font-size", font], ["line-height", line], ["padding(.ws-tab 竖)", padY], ["padding(.ws-switch)", padBox]]) {
+  const padBox = Number.isFinite(em(box, "padding")) ? em(box, "padding") : 0;
+  for (const [n, v] of [["font-size", font], ["line-height", line], ["padding(.ws-tab 竖)", padY]]) {
     assert.ok(Number.isFinite(v), `.ws-tab / .ws-switch 的 ${n} 不是 em 数字，算不出高度`);
   }
   // em 是**相对自身 font-size** 的：padding 的 em 要先乘回 font，再落到父级那一把尺上。
@@ -3127,4 +3124,22 @@ test("消息窗口：默认 5 段，设置里可改，首屏与加载更多共�
   assert.match(app, /history_window/, "App 没从 chat 配置读 history_window");
   assert.match(settings, /v-model="chat\.history_window"/, "设置里没有首屏消息数输入");
   assert.match(settings, /首屏加载多少条消息/, "设置项没有说人话的标签");
+});
+
+test("设计系统：tab 统一下划线、设置平铺、圆角收口", () => {
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  const theme = readFileSync(join(SRC, "assets", "theme.css"), "utf8");
+  // 三种 tab 同一种语言：下划线，不再有胶囊/底片
+  assert.match(css, /\.settings-nav \{[^}]*border-bottom:\s*1px solid var\(--line\)/, "设置 tab 不是下划线");
+  assert.match(css, /\.ws-switch \{[^}]*border-bottom:\s*1px solid var\(--line\)/, "顶栏 tab 不是下划线");
+  assert.match(css, /\.bar-head\.bar-tabs \{[^}]*border-bottom:\s*1px solid var\(--line\)/, "上下文 tab 不是下划线");
+  assert.match(css, /\.ws-tab\.sel \{[^}]*border-bottom-color:\s*var\(--tg-link\)/, "顶栏选中态没有下划线");
+  assert.ok(!/tab-thumb/.test(css), "滑动底片又回来了");
+  // 设置页：无卡片底、无连体组圆角
+  assert.match(css, /\.settings-card \{[^}]*background:\s*none[^}]*padding:\s*0/, "设置分节还带卡片底");
+  assert.match(css, /\.settings-cols \.panel \.field[^{]*\{[^}]*background:\s*none/, "设置行还带卡片底");
+  assert.ok(!/settings-cols \.panel h3 \+ \.field[^}]*border-radius/.test(css), "设置字段又连成卡片组");
+  // 圆角/输入框收口
+  assert.match(theme, /--r-card:\s*12px/, "卡片圆角没有统一到 12");
+  assert.match(css, /#input \{[^}]*border-radius:\s*var\(--r-shell\)/, "输入框还留着 20px 大圆角");
 });

@@ -100,7 +100,7 @@
    * 2026-10-28 各收 2px：OpenWebUI 的主力圆角是 8px（`rounded-lg` 用了 56 次），
    * 大圆角铺满所有元素读起来"软塌塌"，小圆角才是"精确"。 */
   --r-shell: 12px;
-  --r-card: 10px;
+  --r-card: 12px;
   --r-btn: 8px;
   --r-md: 8px;
   --r-sm: 6px;
