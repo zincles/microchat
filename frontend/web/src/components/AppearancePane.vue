@@ -24,7 +24,7 @@ import {
   commandMenuOn, saveCommandMenu,
   chromeHideOn, saveChromeHide,
   composerStyle as composerStylePref, saveComposerStyle,
-  textScale as textScalePref, saveTextScale,
+  textScale as textScalePref, saveTextScale, flushPrefs,
   markdownPrefs, markdownTypes, saveMarkdown, saveBackground,
   refreshPrefs,
   TEXT_SCALE_MIN, TEXT_SCALE_MAX, TEXT_SCALE_STEP,
@@ -78,6 +78,10 @@ function onScaleInput(event) {
   textScale.value = Number(event.target.value);
   saveTextScale(textScale.value);
   emit("prefs-saved");
+}
+function onScaleCommit() {
+  // 松手就落盘，不等 250ms 防抖（用户可能随后马上刷新）。
+  flushPrefs();
 }
 function resetScale() {
   textScale.value = 1;
@@ -218,6 +222,7 @@ async function clearBg() {
             :step="scaleBounds.step"
             :value="textScale"
             @input="onScaleInput"
+            @change="onScaleCommit"
             aria-label="界面缩放"
           />
           <b class="scale-value">{{ scalePercent }}%</b>

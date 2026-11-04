@@ -67,7 +67,7 @@ function httpError(data, res) {
 }
 
 export function createApi({ base, token = "", fetchFn = fetch }) {
-  async function call(method, path, body) {
+  async function call(method, path, body, opts = {}) {
     const res = await fetchFn(base + path, {
       method,
       headers: {
@@ -75,6 +75,7 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      ...opts,
     });
     if (res.status === 204) return null;
     const data = await readJson(res);
@@ -198,7 +199,7 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
     // —— 界面偏好（2026-11-01 起住服务器，不再住浏览器 localStorage）——
     getPrefs: () => call("GET", "/config/prefs"),
     // putPrefs：**整份**替换（偏好是一组独立开关，客户端手里就有全量；补丁语义只会多出歧义）。
-    putPrefs: (prefs) => call("PUT", "/config/prefs", prefs),
+    putPrefs: (prefs, opts) => call("PUT", "/config/prefs", prefs, opts),
     // 自定义背景图：原始字节进出。`backgroundUrl` 拼的是**给 CSS 用**的地址
     // （带 `v=` 破缓存 —— 图换了但路径不变，只有版本号能让浏览器重取）。
     backgroundUrl: (version) => `${base}/config/prefs/background${version ? `?v=${enc(version)}` : ""}`,

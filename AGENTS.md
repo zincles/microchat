@@ -296,7 +296,10 @@ delete(AA)           # 删除
   形状：`{ "markdown": {"enabled": true, "disabled": ["table","image"]}, "theme": "dark",
   "text_scale": "1.1", "composer_style": "solid", "background": {"kind":"file","version":"…"},
   "send": "enter", "preview": true, "payload_preview": true, "command_menu": false, "chrome_hide": true,
-  "payload_viz": false, "bar_left_hidden": false }`
+  ⚠ **改完立刻刷新不能丢**（2026-11-04 用户报界面缩放总回 115%）：偏好回写有 250ms 防抖，
+  但 `flushPrefs()` 会在滑杆 `change`、`pagehide`、`visibilitychange(hidden)` 时取消防抖并**带
+  `keepalive`** 立刻发；开机 `cache` 先读 `mc_prefs` 镜像铺第一帧，否则服务器答话前会先闪回 100%。
+  115% 不是代码默认（默认是 100%/空串），而是服务器上**上一次成功写入**的值 —— 后来那几次没写进去。
   ⚠ **每一格 `*bool` 的默认值都要独立**（`new(true)` / `new(false)`，Go 1.26）：从前 `DefaultPrefs` 用
   `on := true; off := false` 再 `&on` / `&off`，多格共用同一个变量 ⇒ JSON 解码时互相改写，
   最终值取决于字段顺序；表现是"开关怎么点都存不住"（2026-11-02 实测，见「踩过的坑」）。

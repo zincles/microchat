@@ -134,6 +134,14 @@ function merge(base, incoming) {
   return out;
 }
 
+// 开机第一帧：先用镜像把 cache 铺上（与 `syncPrefs` 的说明一致）。
+// 没有这一句，`applyTextScale()` 在服务器答话前读到的一定是 FALLBACK（100%），
+// 刷新时就会先闪一下默认值 —— 而用户看到的是"我的缩放又丢了"。
+{
+  const mirrored = readMirror();
+  if (mirrored) cache = merge(FALLBACK_PREFS, mirrored);
+}
+
 // —— 迁移：老浏览器里的 `mc_*` 散键 ⇒ 一份完整 Prefs ——
 //
 // 只在"三个条件同时成立"时做：镜像不存在、服务器上还是缺省、老键确实存过。
@@ -199,8 +207,43 @@ export async function syncPrefs(api) {
 }
 
 // 防抖回写：一次交互常常连着改好几格（滑杆拖动），别每一下都发一次 PUT。
+// 但**刷新/切后台不能把最后一格吃掉**：`flushPrefs()` 取消防抖并立刻发；
+// 页面隐藏与卸载时也会自动 flush（fetch 带 keepalive）。
 let putTimer = null;
 let pendingPut = false;
+let flushing = false;
+
+function applyServerPrefs(view) {
+  // 服务器可能把内容归一化了（例如 `disabled` 排序）⇒ 以它回的为准。
+  if (view?.prefs) {
+    cache = merge(merge(FALLBACK_PREFS, view.defaults), view.prefs);
+    writeMirror(cache);
+  }
+}
+
+function sendPrefs({ keepalive = true } = {}) {
+  const snapshot = clone(cache);
+  return sharedApi().putPrefs(snapshot, keepalive ? { keepalive: true } : undefined)
+    .then(applyServerPrefs)
+    .catch((err) => {
+      // 写不进去要让**页面**知道（偏好只在这台浏览器上生效了，刷新就没了）。
+      console.error("保存界面偏好失败：", err);
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("mc-prefs-error", { detail: err }));
+      }
+      throw err;
+    });
+}
+
+// flushPrefs：把还没发出去的那一格立刻发掉（滑杆松手、页面隐藏、刷新前）。
+// 幂等；没有待发内容就什么都不做。
+export function flushPrefs() {
+  if (!pendingPut || flushing) return;
+  pendingPut = false;
+  flushing = true;
+  if (putTimer) { clearTimeout(putTimer); putTimer = null; }
+  sendPrefs({ keepalive: true }).catch(() => {}).finally(() => { flushing = false; });
+}
 
 function schedulePut() {
   pendingPut = true;
@@ -209,21 +252,19 @@ function schedulePut() {
     putTimer = null;
     if (!pendingPut) return;
     pendingPut = false;
-    const snapshot = clone(cache);
-    sharedApi().putPrefs(snapshot).then((view) => {
-      // 服务器可能把内容归一化了（例如 `disabled` 排序）⇒ 以它回的为准。
-      if (view?.prefs) {
-        cache = merge(merge(FALLBACK_PREFS, view.defaults), view.prefs);
-        writeMirror(cache);
-      }
-    }).catch((err) => {
-      // 写不进去要让**页面**知道（偏好只在这台浏览器上生效了，刷新就没了）。
-      console.error("保存界面偏好失败：", err);
-      if (typeof window !== "undefined") {
-        window.dispatchEvent(new CustomEvent("mc-prefs-error", { detail: err }));
-      }
-    });
+    sendPrefs().catch(() => {});
   }, 250);
+}
+
+// 刷新 / 切后台：浏览器可能马上丢掉这一页，最后一格必须带 keepalive 发出去。
+if (typeof window !== "undefined") {
+  const flushOnHide = () => flushPrefs();
+  window.addEventListener("pagehide", flushOnHide);
+  if (typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") flushOnHide();
+    });
+  }
 }
 
 // setPref：改一格并回写（内部用；外部用下面那些具名 save* 函数）。

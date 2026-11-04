@@ -47,7 +47,7 @@ import {
   whoText,
   sessionTitle,
 } from "../src/utils/format.js";
-import { sendMode, wantsSend, themePref, normalizeTheme, apiBase, defaultApiBase, apiBaseCandidates, THEME_IDS, DEFAULT_THEME, DEFAULT_SEND, composerStyle, applyComposerStyle, saveComposerStyle, DEFAULT_COMPOSER, normalizeTextScale, textScale, applyTextScale, saveTextScale, TEXT_SCALE_MIN, TEXT_SCALE_MAX, DEFAULT_TEXT_SCALE } from "../src/utils/prefs.js";
+import { sendMode, wantsSend, themePref, normalizeTheme, apiBase, defaultApiBase, apiBaseCandidates, THEME_IDS, DEFAULT_THEME, DEFAULT_SEND, composerStyle, applyComposerStyle, saveComposerStyle, DEFAULT_COMPOSER, normalizeTextScale, textScale, applyTextScale, saveTextScale, flushPrefs, TEXT_SCALE_MIN, TEXT_SCALE_MAX, DEFAULT_TEXT_SCALE } from "../src/utils/prefs.js";
 
 // 契约测试（无浏览器）：只验纯函数与请求形状。`node --test test/`。
 // 后端真服务验证另走手工（见 README）。
@@ -1435,6 +1435,42 @@ test("界面缩放：存到服务器那份缓存、读回、挂到根节点的 -
   } finally {
     globalThis.document = originalDoc;
   }
+});
+
+test("界面缩放：松手 / 页面隐藏会立刻 flush，不把最后一格留给 250ms 防抖", async () => {
+  stubStorage();
+  const vars = {};
+  const originalDoc = globalThis.document;
+  const originalFetch = globalThis.fetch;
+  globalThis.document = { documentElement: { style: { setProperty: (k, v) => { vars[k] = v; } } } };
+  const calls = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url, init });
+    return { ok: true, status: 200, json: async () => ({ prefs: { text_scale: "1.3" }, defaults: {}, markdown_types: [] }) };
+  };
+  try {
+    // 让 sharedApi 换一个 base => 重建客户端，确保它拿的是下面这枚 stub fetch
+    // （前面测试留下的防抖定时器可能已经用真 fetch 建过客户端）。
+    localStorage.setItem("mc_api", "http://test.invalid/api/v1");
+    saveTextScale(1.3);
+    assert.equal(calls.length, 0, "防抖期不该已经发请求");
+    flushPrefs();
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(calls.length, 1, "flush 没有立刻发 PUT");
+    assert.equal(calls[0].init.keepalive, true, "刷新前那一发必须是 keepalive");
+    assert.equal(vars["--app-text-scale"], "1.3");
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.document = originalDoc;
+  }
+});
+
+test("界面缩放：开机先用镜像铺第一帧（服务器答话前不闪回 100%）", () => {
+  const prefs = readFileSync(join(SRC, "utils", "prefs.js"), "utf8");
+  assert.match(prefs, /const mirrored = readMirror\(\);/);
+  assert.match(prefs, /if \(mirrored\) cache = merge\(FALLBACK_PREFS, mirrored\);/);
+  assert.match(prefs, /addEventListener\("pagehide", flushOnHide\)/);
+  assert.match(prefs, /visibilitychange/);
 });
 
 // —— 外壳色（`<meta name="theme-color">` 与 PWA manifest）——
