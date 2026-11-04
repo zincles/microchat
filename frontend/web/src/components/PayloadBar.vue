@@ -191,8 +191,8 @@ defineExpose({ setWire, setTables, setTree, setCompactWire });
       <button type="button" class="tab" :class="{ sel: tab === 'payload' }" @click="selectTab('payload')">载荷</button>
       <button type="button" class="tab" :class="{ sel: tab === 'state' }" @click="selectTab('state')">状态</button>
       <button type="button" class="tab" :class="{ sel: tab === 'tree' }" @click="selectTab('tree')">压缩</button>
-      <button type="button" class="tab" :class="{ sel: tab === 'advanced' }" @click="selectTab('advanced')">高级压缩</button>
-      <button type="button" class="tab" :class="{ sel: tab === 'repair' }" @click="selectTab('repair')">修洞压缩</button>
+      <button type="button" class="tab" :class="{ sel: tab === 'advanced' }" @click="selectTab('advanced')">分段压缩</button>
+      <button type="button" class="tab" :class="{ sel: tab === 'repair' }" @click="selectTab('repair')">补齐空档</button>
 
     </div>
     <div v-show="tab === 'payload'" id="payload-pane">

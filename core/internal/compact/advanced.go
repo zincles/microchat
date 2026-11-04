@@ -169,7 +169,7 @@ func (s *Service) planAdvanced(session model.Session, req AdvancedRequest) (*adv
 		step = 1
 	}
 	if step > 64 {
-		return nil, invalid("step_blocks 太大：一次最多 64 个块")
+		return nil, invalid("每次压缩的对话段数不能超过 64。")
 	}
 	concurrency := req.Concurrency
 	if concurrency <= 0 {
@@ -193,8 +193,8 @@ func (s *Service) planAdvanced(session model.Session, req AdvancedRequest) (*adv
 			begin, end = 0, len(messages)-1
 		}
 		if begin < 0 || end >= len(messages) || begin > end {
-			return nil, invalid("修洞范围不合法（begin_idx=%d, end_idx=%d；这条会话 %d 条）",
-				req.BeginIdx, req.EndIdx, len(messages))
+			return nil, invalid("待补范围无效：这条对话共 %d 条消息，当前范围是 %d–%d。",
+				len(messages), req.BeginIdx, req.EndIdx)
 		}
 		plan.begin, plan.end = begin, end
 		plan.holes = coverageHoles(messages, summaries, begin, end)
@@ -208,15 +208,15 @@ func (s *Service) planAdvanced(session model.Session, req AdvancedRequest) (*adv
 
 	plan.mode = "normal"
 	if req.BeginIdx <= 0 || req.EndIdx <= 0 {
-		return nil, invalid("高级压缩要两端都给正数序号：begin_idx + end_idx（1-based，0 = 没给）")
+		return nil, invalid("请填写起始和结束的消息序号。")
 	}
 	if req.BeginIdx > len(messages) || req.EndIdx > len(messages) {
-		return nil, invalid("区间越界：这条会话只有 %d 条（begin_idx=%d, end_idx=%d）",
+		return nil, invalid("所选范围超出这条对话：只有 %d 条消息（当前 %d–%d）。",
 			len(messages), req.BeginIdx, req.EndIdx)
 	}
 	begin, end := req.BeginIdx-1, req.EndIdx-1
 	if begin > end {
-		return nil, invalid("区间反了：begin_idx 在 end_idx 之后")
+		return nil, invalid("起始序号不能大于结束序号。")
 	}
 	plan.begin, plan.end = begin, end
 	if err := appendChunks(plan, messages, all, begin, end); err != nil {
@@ -225,7 +225,7 @@ func (s *Service) planAdvanced(session model.Session, req AdvancedRequest) (*adv
 	// 已经压过的区间不允许再走消息级（要合并得走普通合并；第一版高级压缩只吃原文）。
 	for index := begin; index <= end; index++ {
 		if messages[index].SummaryID != nil {
-			return nil, invalid("高级压缩的第一版只压原文：第 %d 条已经被摘要盖住了（可以先用修洞/普通压缩处理）", index+1)
+			return nil, invalid("所选范围包含已压缩内容（第 %d 条）。请换一段未压缩的消息，或先处理已有的摘要。", index+1)
 		}
 	}
 	return plan, nil
@@ -243,16 +243,16 @@ func appendChunks(plan *advancedPlan, messages []model.Message, all []blocks.Blo
 		}
 	}
 	if first < 0 {
-		return invalid("区间的开头不是一个块的开头（块 = assistant → user 交界，块不被劈开）")
+		return invalid("所选范围的起点不在对话段边界上。请调整起止位置（对话段不能被拆开）。")
 	}
 	if last < 0 {
-		return invalid("区间的结尾不是一个块的结尾（块不被劈开）")
+		return invalid("所选范围的结尾不在对话段边界上。请调整起止位置（对话段不能被拆开）。")
 	}
 	if first > last {
 		return invalid("区间的块边界反了")
 	}
 	if last == len(all)-1 {
-		return invalid("最后那个开着的块永不压（对话还在往下长）：等它接上下一轮")
+		return invalid("最后一段对话还在继续，暂时不能压缩。请等它完成后再试。")
 	}
 	for start := first; start <= last; start += plan.stepBlocks {
 		stop := start + plan.stepBlocks - 1
@@ -332,7 +332,7 @@ func (s *Service) StartAdvanced(session model.Session, req AdvancedRequest) (Adv
 		return AdvancedJob{}, err
 	}
 	if len(plan.chunks) == 0 {
-		return AdvancedJob{}, invalid("没有可压的 chunk（修洞模式可能没有空洞）")
+		return AdvancedJob{}, invalid("没有可压缩的内容。")
 	}
 	if _, err := s.Turns.BeginCompact(session.ID, len(plan.chunks), time.Now().UnixMilli()); err != nil {
 		return AdvancedJob{}, busy()
@@ -365,7 +365,7 @@ func (s *Service) AdvancedJobStatus(sessionID, jobID string) (AdvancedJob, error
 	defer s.advMu.Unlock()
 	job := s.advancedJobs[jobID]
 	if job == nil || job.SessionID != sessionID {
-		return AdvancedJob{}, &Error{Code: "not_found", Message: "没有这个高级压缩作业"}
+		return AdvancedJob{}, &Error{Code: "not_found", Message: "找不到这次压缩任务。"}
 	}
 	return snapshotAdvanced(job), nil
 }
@@ -376,7 +376,7 @@ func (s *Service) CancelAdvanced(sessionID, jobID string) (AdvancedJob, error) {
 	job := s.advancedJobs[jobID]
 	if job == nil || job.SessionID != sessionID {
 		s.advMu.Unlock()
-		return AdvancedJob{}, &Error{Code: "not_found", Message: "没有这个高级压缩作业"}
+		return AdvancedJob{}, &Error{Code: "not_found", Message: "找不到这次压缩任务。"}
 	}
 	if job.State == "running" && job.cancel != nil {
 		job.cancel()
@@ -396,7 +396,11 @@ func snapshotAdvanced(job *AdvancedJob) AdvancedJob {
 
 // runAdvanced：一个父 Task 下并发跑 chunk；全部成功才进入 RecordSummaryBatch。
 func (s *Service) runAdvanced(ctx context.Context, session model.Session, plan *advancedPlan, job *AdvancedJob, cancel context.CancelFunc) {
-	guard := s.Tasks.Begin(task.KindCompact, &session.ID, "高级压缩 · 会话 "+shortID(session.ID))
+	title := "分段压缩 · 会话 " + shortID(session.ID)
+	if plan.mode == "repair" {
+		title = "补齐空档 · 会话 " + shortID(session.ID)
+	}
+	guard := s.Tasks.Begin(task.KindCompact, &session.ID, title)
 	defer guard.Interrupted()
 	guard.Cancellable(cancel)
 

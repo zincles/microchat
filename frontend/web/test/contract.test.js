@@ -2004,7 +2004,7 @@ test("渠道最大并发：编辑器可设，0 = 不限，高级压缩会与它�
   assert.match(api, /providerPresets/, "API 客户端丢了预设入口");
 });
 
-test("高级压缩 / 修洞压缩：第四、第五 tab，预览 → 并发运行 → 整体状态", () => {
+test("分段压缩 / 补齐空档：第四、第五 tab，预览 → 并发运行 → 整体状态", () => {
   const bar = readFileSync(join(SRC, "components", "PayloadBar.vue"), "utf8");
   const ws = readFileSync(join(SRC, "components", "ContextWorkspace.vue"), "utf8");
   const adv = readFileSync(join(SRC, "components", "AdvancedCompact.vue"), "utf8");
@@ -2013,22 +2013,29 @@ test("高级压缩 / 修洞压缩：第四、第五 tab，预览 → 并发运�
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 
   // ① 两个 tab 按顺序住在压缩后面；不是另开页面。
-  for (const [label, id] of [["高级压缩", "advanced"], ["修洞压缩", "repair"]]) {
+  for (const [label, id] of [["分段压缩", "advanced"], ["补齐空档", "repair"]]) {
     assert.ok(bar.includes(`>${label}</button>`), `缺少「${label}」tab`);
     assert.match(bar, new RegExp(`selectTab\\('${id}'\\)`), `「${label}」没有自己的 pane`);
   }
-  assert.match(bar, /<AdvancedCompact :session-id="sessionId"/, "高级压缩没拿到会话 id");
-  assert.match(bar, /<AdvancedCompact :session-id="sessionId" repair/, "修洞压缩没打开 repair");
+  assert.match(bar, /<AdvancedCompact :session-id="sessionId"/, "分段压缩没拿到会话 id");
+  assert.match(bar, /<AdvancedCompact :session-id="sessionId" repair/, "补齐空档没打开 repair");
+
+  // ①b 界面说人话：不要把 chunk/block/空洞/作业/idx 这些内部词摆给用户。
+  const advTpl = adv.slice(adv.indexOf("<template>"));
+  for (const word of ["空洞", "作业", "begin_idx", "end_idx"]) {
+    assert.ok(!advTpl.includes(word), `分段压缩界面还露着内部词：${word}`);
+  }
+  assert.ok(bar.includes(">分段压缩</button>") && bar.includes(">补齐空档</button>"), "两个 tab 没改成说人话的名字");
 
   // ② 参数 / 预览 / 运行 / 取消。
   for (const field of ["begin_idx", "end_idx", "step_blocks", "concurrency", "max_attempts"]) {
-    assert.ok(adv.includes(field), `高级压缩缺参数 ${field}`);
+    assert.ok(adv.includes(field), `分段压缩缺参数 ${field}`);
   }
   assert.match(adv, /advancedCompactPreview/, "没有预览请求");
   assert.match(adv, /advancedCompact\(/, "没有运行请求");
   assert.match(adv, /advancedCompactStatus/, "没有作业状态轮询");
   assert.match(adv, /advancedCompactCancel/, "没有取消");
-  assert.match(adv, /preview\.holes/, "预览没显示压缩空洞");
+  assert.match(adv, /preview\.holes/, "预览没显示未覆盖区间");
   assert.match(adv, /emit\("done"\)/, "完成后没通知外层刷新");
 
   // ③ API 与 App 接线。
@@ -2036,7 +2043,7 @@ test("高级压缩 / 修洞压缩：第四、第五 tab，预览 → 并发运�
   assert.match(api, /advancedCompact:/, "API 客户端缺 advancedCompact");
   assert.match(api, /advancedCompactStatus:/, "API 客户端缺 advancedCompactStatus");
   assert.match(api, /advancedCompactCancel:/, "API 客户端缺 advancedCompactCancel");
-  assert.match(app, /function onAdvancedDone\(\)/, "App 没有高级压缩完成后的刷新");
+  assert.match(app, /function onAdvancedDone\(\)/, "App 没有分段压缩完成后的刷新");
   assert.match(app, /@advanced-done="onAdvancedDone"/, "App 没接 advanced-done");
   assert.match(ws, /@advanced-done=/, "工作区没透传 advanced-done");
 

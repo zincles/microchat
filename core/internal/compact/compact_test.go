@@ -248,7 +248,7 @@ func TestCompactRangeMustAlignToWholeBlocks(t *testing.T) {
 	// 从中间那条起（不是块首）⇒ 报错
 	if _, err := h.service.Compact(context.Background(), h.session,
 		Request{BeginIdx: 2, EndIdx: 4}); err == nil ||
-		!strings.Contains(err.Error(), "块") {
+		!strings.Contains(err.Error(), "对话段") {
 		t.Fatalf("劈开块该报错：%v", err)
 	}
 	// 一直盖到最后那条（开着的块）⇒ 报错
@@ -627,7 +627,7 @@ func TestCompactMergeRefusals(t *testing.T) {
 	// 只盖一条摘要
 	refuse("只盖一条", Request{BeginIdx: 1, EndIdx: 2}, "两条同层")
 	// 最后那个开着的块
-	refuse("开着块", Request{BeginIdx: 7, EndIdx: 8}, "开着的块")
+	refuse("开着块", Request{BeginIdx: 7, EndIdx: 8}, "最后一段对话还在继续")
 
 	// 先并出一条 level-2 的父（第 1–4 条），再压出一条 level-1 的兄弟（第 5–6 条）
 	if _, err := h.service.Compact(context.Background(), h.session, Request{BeginIdx: 1, EndIdx: 4}); err != nil {

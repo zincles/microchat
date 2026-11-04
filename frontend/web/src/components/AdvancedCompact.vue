@@ -108,54 +108,54 @@ watch(() => props.sessionId, () => {
 onUnmounted(() => { disposed = true; clearTimeout(pollTimer); });
 
 const stateText = (state) => ({
-  ready: "可压", pending: "排队", running: "生成中", done: "完成", failed: "失败", canceled: "取消",
+  ready: "可压缩", pending: "等待中", running: "正在压缩", done: "已完成", failed: "失败", canceled: "已取消",
 }[state] ?? state);
 </script>
 
 <template>
   <div class="adv-pane">
     <div class="adv-config">
-      <label class="field"><span>{{ repair ? "扫描范围（留空 = 全部）" : "消息区间（1-based）" }}</span>
+      <label class="field"><span>{{ repair ? "检查范围（留空 = 整条对话）" : "消息范围（从第几条到第几条）" }}</span>
         <span class="adv-range">
-          <input v-model="begin" type="number" min="1" placeholder="begin" aria-label="begin_idx" />
+          <input v-model="begin" type="number" min="1" placeholder="begin" aria-label="起始消息序号" />
           <span>–</span>
-          <input v-model="end" type="number" min="1" placeholder="end" aria-label="end_idx" />
+          <input v-model="end" type="number" min="1" placeholder="end" aria-label="结束消息序号" />
         </span>
       </label>
-      <label class="field"><span>每块压几个 block</span><input v-model="step" type="number" min="1" max="64" /></label>
-      <label class="field"><span>并发请求数</span><input v-model="concurrency" type="number" min="1" max="8" /></label>
-      <label class="field"><span>单块最多尝试</span><input v-model="attempts" type="number" min="1" max="10" /></label>
+      <label class="field"><span>每次压缩的对话段数</span><input v-model="step" type="number" min="1" max="64" /></label>
+      <label class="field"><span>同时处理数量</span><input v-model="concurrency" type="number" min="1" max="8" /></label>
+      <label class="field"><span>每段最多尝试次数</span><input v-model="attempts" type="number" min="1" max="10" /></label>
       <div class="row">
-        <button type="button" :disabled="busy" @click="loadPreview">{{ repair ? "扫描空洞" : "预览计划" }}</button>
-        <button type="button" class="primary" :disabled="busy || !preview || !preview.total_requests" @click="start">开始</button>
-        <button v-if="job?.state === 'running'" type="button" class="danger" @click="cancel">取消</button>
+        <button type="button" :disabled="busy" @click="loadPreview">{{ repair ? "检查待补区间" : "查看压缩方案" }}</button>
+        <button type="button" class="primary" :disabled="busy || !preview || !preview.total_requests" @click="start">开始压缩</button>
+        <button v-if="job?.state === 'running'" type="button" class="danger" @click="cancel">取消任务</button>
         <span class="status">{{ error }}</span>
       </div>
     </div>
 
-    <p v-if="!props.sessionId" class="empty">（草稿态没有可压缩的会话）</p>
-    <p v-else-if="!preview && !job" class="empty">{{ repair ? "点「扫描空洞」看看有没有需要补的区间" : "填区间后点「预览计划」；只会算，不会发请求" }}</p>
+    <p v-if="!props.sessionId" class="empty">（尚未创建对话，暂时没有可压缩内容。）</p>
+    <p v-else-if="!preview && !job" class="empty">{{ repair ? "点「检查待补区间」看看有哪些内容还没压缩" : "填写消息范围后点「查看压缩方案」；这一步不会发送请求" }}</p>
 
     <template v-if="preview">
       <div class="adv-summary">
-        <span>共 {{ preview.total_requests }} 次请求</span>
-        <span>{{ preview.total_blocks }} 块 / {{ preview.total_messages }} 条</span>
-        <span>并发 {{ preview.concurrency }} · 单块最多 {{ preview.max_attempts }} 次</span>
+        <span>共 {{ preview.total_requests }} 个分段</span>
+        <span>{{ preview.total_blocks }} 个对话段 · {{ preview.total_messages }} 条消息</span>
+        <span>同时处理 {{ preview.concurrency }} 段 · 每段最多尝试 {{ preview.max_attempts }} 次</span>
       </div>
       <div v-if="preview.holes?.length" class="adv-holes">
-        <b>压缩空洞</b>
+        <b>未覆盖区间</b>
         <span v-for="hole in preview.holes" :key="`${hole.from_idx}-${hole.to_idx}`" class="adv-hole">
           第 {{ hole.from_idx }}–{{ hole.to_idx }} 条
         </span>
-        <p class="hint">{{ repair ? "这些区间会被修洞任务压缩。" : "存在空洞，不能直接跑高级压缩；先去「修洞压缩」补齐。" }}</p>
+        <p class="hint">{{ repair ? "这些区间会在补齐任务中压缩。" : "存在未覆盖区间，不能直接开始分段压缩；请先到「补齐空档」处理。" }}</p>
       </div>
-      <p v-if="!preview.total_requests" class="empty">没有可压的 chunk{{ repair ? "（没有空洞）" : "" }}</p>
+      <p v-if="!preview.total_requests" class="empty">没有可压缩的内容{{ repair ? "（当前没有未覆盖区间）" : "" }}</p>
       <ol v-else class="adv-chunks">
         <li v-for="chunk in preview.chunks" :key="chunk.index" class="adv-chunk">
           <span class="adv-dot" />
           <span class="adv-idx">#{{ chunk.index + 1 }}</span>
           <span>第 {{ chunk.from_idx }}–{{ chunk.to_idx }} 条</span>
-          <span class="adv-meta">{{ chunk.blocks }} 块 · {{ chunk.messages }} 条</span>
+          <span class="adv-meta">{{ chunk.blocks }} 个对话段 · {{ chunk.messages }} 条消息</span>
           <span class="adv-state">{{ stateText(chunk.state) }}</span>
         </li>
       </ol>
@@ -163,8 +163,8 @@ const stateText = (state) => ({
 
     <template v-if="job">
       <div class="adv-summary">
-        <b>作业 {{ job.state === "running" ? "进行中" : stateText(job.state) }}</b>
-        <span>{{ job.chunks.filter((c) => c.state === "done").length }}/{{ job.chunks.length }} 块完成</span>
+        <b>本次任务：{{ job.state === "running" ? "进行中" : stateText(job.state) }}</b>
+        <span>已完成 {{ job.chunks.filter((c) => c.state === "done").length }}/{{ job.chunks.length }} 段</span>
         <span v-if="job.error" class="adv-error">{{ job.error }}</span>
       </div>
       <ol class="adv-chunks">
@@ -172,7 +172,7 @@ const stateText = (state) => ({
           <span class="adv-dot" :class="chunk.state" />
           <span class="adv-idx">#{{ chunk.index + 1 }}</span>
           <span>第 {{ chunk.from_idx }}–{{ chunk.to_idx }} 条</span>
-          <span class="adv-meta">{{ chunk.blocks }} 块 · {{ chunk.messages }} 条</span>
+          <span class="adv-meta">{{ chunk.blocks }} 个对话段 · {{ chunk.messages }} 条消息</span>
           <span class="adv-state">{{ stateText(chunk.state) }}<template v-if="chunk.attempts > 1"> ×{{ chunk.attempts }}</template></span>
         </li>
       </ol>

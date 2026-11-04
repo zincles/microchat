@@ -773,13 +773,13 @@ func messageRangeSpan(messages []model.Message, all []blocks.Block, begin, end i
 		}
 	}
 	if first < 0 {
-		return span{}, invalid("区间的开头不是一个块的开头（块 = 在 assistant → user 交界处切的一段，块不被劈开）")
+		return span{}, invalid("所选范围的起点不在对话段边界上。请调整起止位置（对话段不能被拆开）。")
 	}
 	if last < 0 {
-		return span{}, invalid("区间的结尾不是一个块的结尾（同一条规矩：块不被劈开）")
+		return span{}, invalid("所选范围的结尾不在对话段边界上。请调整起止位置（对话段不能被拆开）。")
 	}
 	if last == len(all)-1 {
-		return span{}, invalid("最后那个开着的块永不压（对话还在往下长）：等它接上下一轮")
+		return span{}, invalid("最后一段对话还在继续，暂时不能压缩。请等它完成后再试。")
 	}
 	if err := ensureUncovered(messages, begin, end); err != nil {
 		return span{}, err
@@ -799,7 +799,7 @@ func messageRangeSpan(messages []model.Message, all []blocks.Block, begin, end i
 // 外加"不碰最后那个开着的块"（沿用消息级那条规矩与文案）。
 func mergeSpan(messages []model.Message, summaries []model.Summary, all []blocks.Block, begin, end int) (span, error) {
 	if len(all) > 0 && end >= all[len(all)-1].Begin {
-		return span{}, invalid("最后那个开着的块永不压（对话还在往下长）：等它接上下一轮")
+		return span{}, invalid("最后一段对话还在继续，暂时不能压缩。请等它完成后再试。")
 	}
 	byID := make(map[string]*model.Summary, len(summaries))
 	for index := range summaries {
