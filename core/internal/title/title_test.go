@@ -290,3 +290,61 @@ func TestTitleRoutesByModelRouteTable(t *testing.T) {
 		t.Fatalf("无行该还是 /chat/completions：path = %q", path)
 	}
 }
+
+// 2026-11-04 用户定的三档标题模型来源：
+//
+//	global  = 跟随全局（全局 title_provider/model）
+//	session = 当前会话模型
+//	agent   = 能力上的 provider/model
+//
+// 旧配置没有 model_source 但填了 provider/model ⇒ 仍按 agent（不能悄悄失效）。
+func TestTitleModelSourceModes(t *testing.T) {
+	stub := stubJSON(t, "山雨欲来", new([]byte))
+	providersConfig := config.ProvidersConfig{Providers: []config.Provider{
+		{ID: "dummy", Kind: "dummy"},
+		{ID: "stub", Kind: "openai-compat", BaseURL: stub.URL, Identity: "bare"},
+	}}
+	run := func(source, provider, model string) Result {
+		t.Helper()
+		agent := &config.Agent{ID: "a", Abilities: map[string]config.AbilityToggle{
+			abilities.Title: {ModelSource: source, Provider: stringPtr(provider), Model: stringPtr(model)},
+		}}
+		h := newHarness(t, providersConfig, agent)
+		cfg := config.DefaultConfig()
+		cfg.Chat.TitleProvider = "stub"
+		cfg.Chat.TitleModel = "global-m"
+		if err := config.SaveJSON(h.paths.Config("config.json"), cfg); err != nil {
+			t.Fatal(err)
+		}
+		h.say(t, "帮我写一段跑团的开幕词", "好的，山雨欲来……")
+		result, err := h.service.Generate(context.Background(), h.session)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	if got := run(abilities.ModelSourceGlobal, "", ""); got.Provider != "stub" || got.Model != "global-m" {
+		t.Fatalf("global 该用全局标题模型：%+v", got)
+	}
+	if got := run(abilities.ModelSourceSession, "", ""); got.Provider != "dummy" || got.Model != "dummy" {
+		t.Fatalf("session 该强制当前会话模型：%+v", got)
+	}
+	if got := run(abilities.ModelSourceAgent, "stub", "agent-m"); got.Provider != "stub" || got.Model != "agent-m" {
+		t.Fatalf("agent 该用能力上的模型：%+v", got)
+	}
+	// 显式 agent 但没填完整 ⇒ 回落 global（不拼一个半截渠道/模型）
+	if got := run(abilities.ModelSourceAgent, "", ""); got.Provider != "stub" || got.Model != "global-m" {
+		t.Fatalf("agent 缺字段该回落 global：%+v", got)
+	}
+	// 旧配置：没有 model_source，只有 provider/model ⇒ 仍是 agent
+	if got := run("", "stub", "legacy-m"); got.Provider != "stub" || got.Model != "legacy-m" {
+		t.Fatalf("旧覆盖该继续按 agent：%+v", got)
+	}
+}
+
+func stringPtr(v string) *string {
+	if v == "" {
+		return nil
+	}
+	return &v
+}

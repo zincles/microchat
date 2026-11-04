@@ -95,7 +95,16 @@ function fillRows(a) {
     const both = one.provider && one.model ? modelKey(one.provider, one.model) : "";
     // segments：能力的追加段（2026-10-28）。老配置没有这一格 ⇒ 空数组（不是 undefined，
     // 否则模板里 `rows[id].segments.length` 会在老数据上炸）。
-    out[id] = { enabled: one.enabled !== false, model: both, prompt: one.prompt ?? "", segments: [...(one.segments ?? [])] };
+    out[id] = {
+      enabled: one.enabled !== false,
+      model: both,
+      // 标题模型来源（2026-11-04）：新/未配置 = global；旧配置有 provider/model = agent（保住旧覆盖）。
+      modelSource: ["global", "session", "agent"].includes(one.model_source)
+        ? one.model_source
+        : (both ? "agent" : "global"),
+      prompt: one.prompt ?? "",
+      segments: [...(one.segments ?? [])],
+    };
   }
   rows.value = out;
 }
@@ -113,6 +122,8 @@ function toPatch() {
       prompt: r.prompt ?? "",
       segments: [...(r.segments ?? [])],
     };
+    // model_source 只有 title 认识（compact 的模型仍只有"跟随会话/指定"两档）。
+    if (id === "title") out[id].model_source = r.modelSource || "global";
   }
   return buildAbilitiesPatch(out);
 }
@@ -211,7 +222,19 @@ function onKey(e) {
 
     <section v-for="id in ABILITY_IDS" v-show="tab === id" :key="id" class="pane-section">
       <label class="field"><span>启用（关闭后这项功能不会运行）</span><ToggleSwitch v-model="rows[id].enabled" /></label>
-      <label class="field"><span>模型</span><select v-model="rows[id].model">
+      <template v-if="id === 'title'">
+        <label class="field"><span>标题模型来源</span><select v-model="rows[id].modelSource">
+          <option value="global">跟随全局设置</option>
+          <option value="session">使用当前模型</option>
+          <option value="agent">跟随 Agent 设置</option>
+        </select></label>
+        <label v-if="rows[id].modelSource === 'agent'" class="field"><span>Agent 模型</span><select v-model="rows[id].model">
+          <option value="">未选择（回落全局）</option>
+          <option v-for="m in modelOptions" :key="m.value" :value="m.value">{{ m.label }}</option>
+        </select></label>
+        <p class="hint">跟随全局设置：用设置 → 聊天 → 标题模型；全局空着就用当前会话模型。Agent 模型两项都填才生效，否则回落全局。</p>
+      </template>
+      <label v-else class="field"><span>模型</span><select v-model="rows[id].model">
         <option value="">跟随会话</option>
         <option v-for="m in modelOptions" :key="m.value" :value="m.value">{{ m.label }}</option>
       </select></label>

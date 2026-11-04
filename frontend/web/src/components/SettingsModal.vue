@@ -15,7 +15,7 @@ import rpPreset from "../../presets/rp-agent.json";
 import ProviderEditor from "./ProviderEditor.vue";
 import { ICONS } from "./icons.js";
 import { sharedApi } from "../utils/prefs.js";
-import { SETTINGS_TABS, groupModelsByProvider, modelOption, providerChoices, modelChoicesFor } from "../utils/format.js";
+import { SETTINGS_TABS, groupModelsByProvider, modelOption, providerChoices, modelChoicesFor, modelKey, parseModelKey } from "../utils/format.js";
 import { downloadJSON } from "../utils/download.js";
 import { buildCartridge, cartridgeAgent } from "../utils/cartridge.js";
 
@@ -41,7 +41,7 @@ const tab = ref(props.only || "chat");
 // 单独入口的页头文字；空串 = 完整设置（显示 TabBar）。
 const onlyTitle = computed(() => (props.only === "session" ? "会话管理" : props.only === "provider" ? "渠道管理" : ""));
 watch(() => props.only, (v) => { tab.value = v || "chat"; });
-const chat = ref({ title_chars: "", model_context_tokens: "", history_window: "", compact_blocks: "", compact_trigger_tokens: "", replay_reasoning: false, auto_compact: true });
+const chat = ref({ title_chars: "", title_model: "", model_context_tokens: "", history_window: "", compact_blocks: "", compact_trigger_tokens: "", replay_reasoning: false, auto_compact: true });
 const chatStatus = ref("");
 const defaults = ref({ provider: "", model: "", agent: "" });
 const defStatus = ref("");
@@ -55,6 +55,9 @@ const segRefs = (id) => agents.value.filter((a) => (a.segments ?? []).includes(i
 const providers = ref([]);
 // 顶栏/会话设置用的是同一份 `GET /models`（跨渠道拍平那一条）：默认值那两格的下拉也从它取。
 const modelGroups = ref([]);
+// 全局标题模型的下拉：跨渠道拍平（显示名带渠道前缀，两个渠道有同名模型时才分得清）。
+const titleModelOptions = computed(() => modelGroups.value.flatMap((g) =>
+  (g.items ?? []).map((item) => ({ value: item.value, label: `${g.provider} / ${item.label}` }))));
 const editProvider = ref(null); // null | 'new' | provider（二级编辑器）
 const routesStatus = ref("");
 
@@ -63,6 +66,7 @@ async function loadChat() {
     const c = await api.getChat();
     chat.value = {
       title_chars: c.title_chars ?? "",
+      title_model: c.title_provider && c.title_model ? modelKey(c.title_provider, c.title_model) : "",
       model_context_tokens: c.model_context_tokens ?? "",
       history_window: c.history_window ?? "",
       compact_blocks: c.compact_blocks ?? "",
@@ -83,8 +87,15 @@ async function saveChat() {
   if (m !== undefined) body.model_context_tokens = m;
   if (b !== undefined) body.compact_blocks = b;
   if (hw !== undefined) body.history_window = hw;
+  const titleModel = parseModelKey(chat.value.title_model ?? "");
   const cur = await api.getChat().catch(() => ({}));
-  const fullBody = { ...cur, ...body, replay_reasoning: !!chat.value.replay_reasoning, auto_compact: !!chat.value.auto_compact };
+  const fullBody = {
+    ...cur, ...body,
+    title_provider: titleModel?.provider ?? "",
+    title_model: titleModel?.model ?? "",
+    replay_reasoning: !!chat.value.replay_reasoning,
+    auto_compact: !!chat.value.auto_compact,
+  };
   if (String(chat.value.compact_trigger_tokens ?? "").trim() === "") delete fullBody.compact_trigger_tokens;
   else fullBody.compact_trigger_tokens = Number(chat.value.compact_trigger_tokens);
   try {
@@ -314,6 +325,11 @@ function onKey(e) {
           <section class="settings-card">
             <h3>回复与自动压缩</h3>
             <label class="field"><span>自动标题最多字数</span><input v-model="chat.title_chars" type="number" min="1" /></label>
+            <label class="field"><span>标题模型</span><select v-model="chat.title_model">
+              <option value="">使用当前模型</option>
+              <option v-for="m in titleModelOptions" :key="m.value" :value="m.value">{{ m.label }}</option>
+            </select></label>
+            <p class="hint">全局的起标题模型。默认「使用当前模型」；Agent 里选「跟随全局设置」时读这里。</p>
             <label class="field"><span>上下文长度（token）</span><input v-model="chat.model_context_tokens" type="number" min="1" /></label>
             <!-- 为什么右上角那枚环的分母常常比这里小：它是**输入预算** = 上下文 − 给回复留的输出额度。
                  移动端没有 hover，所以这句话必须写在这儿（不能只藏在环的 title 里）。 -->

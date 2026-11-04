@@ -140,3 +140,34 @@ func TestEffectiveTemplateAndPromptVersion(t *testing.T) {
 		t.Fatal("不认识的 id 没有默认模板")
 	}
 }
+
+// 标题模型的来源（2026-11-04）：缺字段 = global；旧配置的 provider/model = agent；
+// 显式 session/agent 照写；写错的来源在 Validate 里点名拒绝。
+func TestTitleModelSource(t *testing.T) {
+	bare := Resolve(config.Agent{ID: "a"}, Title)
+	if got := TitleModelSource(bare); got != ModelSourceGlobal {
+		t.Fatalf("缺字段该是 global：%q", got)
+	}
+	legacy := Resolve(config.Agent{ID: "a", Abilities: map[string]config.AbilityToggle{
+		Title: {Provider: new("stub"), Model: new("m")},
+	}}, Title)
+	if got := TitleModelSource(legacy); got != ModelSourceAgent {
+		t.Fatalf("旧配置有 provider/model 该按 agent：%q", got)
+	}
+	for _, source := range []string{ModelSourceGlobal, ModelSourceSession, ModelSourceAgent} {
+		setting := Resolve(config.Agent{ID: "a", Abilities: map[string]config.AbilityToggle{
+			Title: {ModelSource: source},
+		}}, Title)
+		if got := TitleModelSource(setting); got != source {
+			t.Fatalf("%s 被改成了 %q", source, got)
+		}
+	}
+	bad := config.AgentsConfig{Agents: []config.Agent{
+		{ID: "写错的", Abilities: map[string]config.AbilityToggle{
+			Title: {ModelSource: "current"},
+		}},
+	}}
+	if err := Validate(bad); err == nil || !strings.Contains(err.Error(), "model_source") {
+		t.Fatalf("未知来源该点名报错：%v", err)
+	}
+}

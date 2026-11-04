@@ -258,7 +258,8 @@ delete(AA)           # 删除
 
 **`data/config/`** 里是**严格 JSON**（程序整体重写），都可缺失。文件名一律 `.json`：
 
-- `config.json` — `{ "server": { "host": "127.0.0.1", "port": 8787, "refresh_models_on_start": true }, "defaults": { "provider": "dummy", "model": "dummy", "agent": "default" }, "chat": { "model_context_tokens": 131072, "history_window": 5, "compact_trigger_tokens": null, "compact_blocks": 5 } }`
+- `config.json` — `{ "server": { "host": "127.0.0.1", "port": 8787, "refresh_models_on_start": true }, "defaults": { "provider": "dummy", "model": "dummy", "agent": "default" }, "chat": { "model_context_tokens": 131072, "history_window": 5, "compact_trigger_tokens": null, "compact_blocks": 5, "title_provider": "", "title_model": "" } }`
+  （**全局标题模型**：`title_provider` / `title_model` 都空 = **使用当前会话模型**（默认）；都填 = 起标题固定走这一对。只填一个不算数。）
 （`host` **默认 `127.0.0.1`**（2026-11-01 用户定：「我们只允许来自 127.0.0.1 的访问」）——
   账号与鉴权都砍了，所以**端口绑定就是唯一的访问闸门**；改成 `0.0.0.0` 即对 LAN 开放，
   那时**没有任何保护**（同网段任何设备都能改数据）。`host`/`port` 随时改这个文件生效（`-addr host:port` 可临时盖）。
@@ -818,6 +819,11 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
   `config.RetiredAbilityIDs` 记着它，**`config.LoadAgents` 读进来就地摘掉**（与 `display_mode` 同口径：读了不算数、写回去就没有）。
   **退役 ≠ 写错**：老 `agents.json` 里写着 `"judge": {…}` 是历史（现场那份就有四个 agent 带它），报错会让整份人格读不进来、服务起不来；而 `"judgee"` 那种真的写错仍然 400。
   流程与那发的实现**没删**（`internal/judge` + `task.KindJudgement`，见「决策模型（JEV）」）—— 要复活就往 `definitions` 加回一行、再把 `RetiredAbilityIDs` 那条删掉。
+- **标题模型的来源三档**（2026-11-04 用户定）：`abilities.title.model_source` =
+  `"global"`（默认：跟随 `config.json` 的 `chat.title_provider/title_model`，全局空 ⇒ 当前会话模型）/
+  `"session"`（强制当前会话模型）/ `"agent"`（用本能力的 `provider`/`model`，两个都填才生效，否则回落 global）。
+  编辑器在「智能体 → 起标题」；**默认 global**。旧配置没有这一格但填了 provider/model 的，按 **agent** 处理（保住既有覆盖）；
+  未知来源在写入与启动读取时都报错。判定只有一处：`abilities.TitleModelSource`。
 - `abilities.Resolve(agent, id)` 是**唯一**解析处：缺条目 = **默认全开**；`provider`/`model` 空 = 用会话的；`enabled: false` ⇒ 调用方**明确拒绝**执行那一次（不是静默降级）。
 - `judge` 的调用面 = `judge.Service.JudgeFor`（开关 + 选渠道 + `task.KindJudgement` 挂号 + 失败原样返回；state/questions 由调用方拼，产出是材料**不落库**）—— 动态组合术调的就是它。**但能力已退役（2026-10-28）、至今没有调用点**：这段代码还在，接回去时记得先把 `judge` 从 `config.RetiredAbilityIDs` 里拿出来。
 - compact 换模型 / 改提示词**不用写代码**（例子：会话的渠道是 dummy，但压缩单独走 deepseek）：

@@ -219,13 +219,34 @@ func (s *Service) generate(ctx context.Context, session model.Session, stop cont
 		return Result{}, invalid("这条会话还没有可以起名字的正文（前几条消息剔掉 <state> 之后是空的）")
 	}
 
-	// 生效渠道 / 模型：能力上填了就用它，没填就骑会话的
+	// 生效渠道 / 模型（2026-11-04 用户定的三档）：
+	//   global = 跟随全局设置（全局标题模型空 ⇒ 当前会话模型）
+	//   session = 强制当前会话模型
+	//   agent = 用 abilities.title.provider/model（两个都填才生效，否则回落 global）
 	providerID, modelID := session.Provider, session.Model
-	if setting.Provider != "" {
-		providerID = setting.Provider
+	useGlobal := func() {
+		if chatConfig.TitleProvider != "" && chatConfig.TitleModel != "" {
+			providerID, modelID = chatConfig.TitleProvider, chatConfig.TitleModel
+		}
 	}
-	if setting.Model != "" {
-		modelID = setting.Model
+	switch abilities.TitleModelSource(setting) {
+	case abilities.ModelSourceSession:
+		// 已经是会话的 provider/model，什么都不做。
+	case abilities.ModelSourceAgent:
+		// 两个都空 = 这条"Agent 设置"其实没填 ⇒ 回落全局；
+		// 只填一个时按字段覆盖（与旧行为一致：没填的那半继续用会话的）。
+		if setting.Provider == "" && setting.Model == "" {
+			useGlobal()
+		} else {
+			if setting.Provider != "" {
+				providerID = setting.Provider
+			}
+			if setting.Model != "" {
+				modelID = setting.Model
+			}
+		}
+	default: // global（含旧配置的默认）
+		useGlobal()
 	}
 	backend := providers.SelectBackend(providerID, modelID, providersConfig)
 	if backend.Name == providers.BackendFallback {

@@ -533,11 +533,30 @@ test("refresh-routes 回形：{provider, models} 直拼缓存行，error 走失�
   assert.ok(formatRoutesOutcome(out).includes("12"));
   assert.ok(formatRoutesOutcome({ provider: "p1", models: 0, error: "boom" }).includes("boom"));
   assert.deepEqual(buildAbilitiesPatch({ title: { enabled: true, provider: "", model: "m", prompt: "" } }), { title: { enabled: true, model: "m" } });
+  // 标题模型来源（2026-11-04）：三档只有 title 写，空/缺省不落盘（老配置继续按 provider/model 兼容）。
+  assert.deepEqual(
+    buildAbilitiesPatch({ title: { enabled: true, model_source: "session" } }),
+    { title: { enabled: true, model_source: "session" } },
+  );
   // 能力的追加段（2026-10-28）：空清单**不发**（省略 = 没有段），顺序照抄（顺序就是语义）
   assert.deepEqual(
     buildAbilitiesPatch({ compact: { enabled: true, segments: ["b", "", "a", "b"] } }),
     { compact: { enabled: true, segments: ["b", "a", "b"] } },
   );
+});
+
+test("标题模型三档：Agent 里可切全局 / 当前 / Agent，全局默认当前模型", () => {
+  const editor = readFileSync(join(SRC, "components", "AgentEditor.vue"), "utf8");
+  const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
+  const config = readFileSync(join(SRC, "..", "..", "..", "core", "internal", "config", "config.go"), "utf8");
+  for (const label of ["跟随全局设置", "使用当前模型", "跟随 Agent 设置"]) {
+    assert.ok(editor.includes(label), `Agent 编辑器缺 ${label}`);
+  }
+  assert.match(editor, /rows\[id\]\.modelSource === 'agent'/, "Agent 模型下拉没跟着来源出现");
+  assert.ok(settings.includes('<option value="">使用当前模型</option>'), "全局标题模型缺「使用当前模型」");
+  assert.match(settings, /title_provider: titleModel\?\.provider/, "全局标题模型没拆成 provider/model 落盘");
+  assert.match(config, /TitleProvider\s+string `json:"title_provider,omitempty"`/);
+  assert.match(config, /ModelSource\s+string `json:"model_source,omitempty"`/);
 });
 
 // 提示词段的编辑器（agent 级 + 能力级）：`.vue` 里的接线**只能读源码验** —— 少接一环不会报错，

@@ -47,6 +47,33 @@ const (
 	Judge ID = "judge"
 )
 
+// 标题模型的来源（2026-11-04 用户定）。只对 title 有意义：
+//   - global：跟随全局设置（`config.json` 的 `chat.title_provider/title_model`；空 = 当前会话）
+//   - session：强制使用当前会话模型
+//   - agent：使用 `abilities.title.provider/model`
+const (
+	ModelSourceGlobal  = "global"
+	ModelSourceSession = "session"
+	ModelSourceAgent   = "agent"
+)
+
+// TitleModelSource：title 的生效模型来源。**只有这一处**做旧配置兼容：
+// 没有 `model_source` 但填了 provider/model 的老 Agent，按 "agent" 处理（否则它的覆盖会悄悄失效）。
+func TitleModelSource(setting Setting) string {
+	switch setting.ModelSource {
+	case ModelSourceGlobal, ModelSourceSession, ModelSourceAgent:
+		return setting.ModelSource
+	}
+	if setting.Provider != "" || setting.Model != "" {
+		return ModelSourceAgent
+	}
+	return ModelSourceGlobal
+}
+
+func validModelSource(source string) bool {
+	return source == ModelSourceGlobal || source == ModelSourceSession || source == ModelSourceAgent
+}
+
 // retired：**已退役**的能力 id（`config.RetiredAbilityIDs`，住 config 是因为读文件时就要摘掉，
 // 而 config 不能 import 这个包）。这里只借来看一眼：`Validate` 要把"退役"和"写错"分开 ——
 // 老 `agents.json` 里的 `judge` 是历史，不是错，不能让整份人格读不进来。
@@ -213,10 +240,11 @@ func Valid(id string) bool {
 // `Provider` / `Model` 空 ⇒ 用**会话的**渠道与模型（辅助调用本来就要骑同一个会话）；
 // `Prompt` 空 ⇒ 用代码里的默认模板。
 type Setting struct {
-	Enabled  bool
-	Provider string
-	Model    string
-	Prompt   string
+	Enabled     bool
+	Provider    string
+	Model       string
+	ModelSource string
+	Prompt      string
 	// Segments：追加段 id（顺序 = 追加顺序）。2026-10-28 起能力也能拼段 ——
 	// 与 agent 的 `segments` 共用同一个段库与同一条拼装（`state.JoinPrompt`）。
 	Segments []string
@@ -232,11 +260,12 @@ func Resolve(agent config.Agent, id ID) Setting {
 		return Setting{Enabled: true}
 	}
 	setting := Setting{
-		Enabled:  toggle.Enabled == nil || *toggle.Enabled,
-		Provider: trim(toggle.Provider),
-		Model:    trim(toggle.Model),
-		Prompt:   strings.TrimSpace(deref(toggle.Prompt)),
-		Segments: toggle.Segments,
+		Enabled:     toggle.Enabled == nil || *toggle.Enabled,
+		Provider:    trim(toggle.Provider),
+		Model:       trim(toggle.Model),
+		ModelSource: strings.TrimSpace(toggle.ModelSource),
+		Prompt:      strings.TrimSpace(deref(toggle.Prompt)),
+		Segments:    toggle.Segments,
 	}
 	return setting
 }
@@ -253,6 +282,20 @@ func Validate(agents config.AgentsConfig) error {
 		for _, id := range unknownIDs(agent) {
 			return fmt.Errorf("agent %s 上的能力 id 不认识：%q（只认 %s）",
 				describe(agent), id, strings.Join(IDs(), " / "))
+		}
+		for id, toggle := range agent.Abilities {
+			source := strings.TrimSpace(toggle.ModelSource)
+			if source == "" {
+				continue
+			}
+			if id != Title {
+				return fmt.Errorf("agent %s 的能力 %q 不支持 model_source（只有 title 有模型来源）",
+					describe(agent), id)
+			}
+			if !validModelSource(source) {
+				return fmt.Errorf("agent %s 的 title.model_source 不认识：%q（只认 %s / %s / %s）",
+					describe(agent), source, ModelSourceGlobal, ModelSourceSession, ModelSourceAgent)
+			}
 		}
 	}
 	return nil

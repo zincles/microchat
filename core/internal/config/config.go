@@ -155,8 +155,14 @@ func LoadConfig(paths Paths) (Config, error) {
 
 // ChatConfig：`config.json` 的 chat 段（模型上下文 / 摘要触发阈值 / 标题字数 / 默认压几块 / 思考回传）。
 type ChatConfig struct {
-	TitleChars         int `json:"title_chars"`
-	ModelContextTokens int `json:"model_context_tokens"`
+	TitleChars int `json:"title_chars"`
+	// TitleProvider / TitleModel：**全局的标题模型**（2026-11-04 用户定）。
+	// 两个都空 = **使用当前会话的模型**（默认）；都填 = 起标题固定走这一对。
+	// 只填一个不算数（宁可回落会话，也不拼一对跨渠道的 provider/model）。
+	// Agent 的 `abilities.title.model_source = "global"` 读这里。
+	TitleProvider      string `json:"title_provider,omitempty"`
+	TitleModel         string `json:"title_model,omitempty"`
+	ModelContextTokens int    `json:"model_context_tokens"`
 	// AutoCompact：**自动压缩**开关（2026-10-11 用户定）。**缺省 = 关** —— 这套还没实测验证过，
 	// 要用的自己在设置→聊天 里打开。开 ⇒ 一轮翻 idle 之后看占用：到触发线就压，压到退出线以下
 	// （口径见 chat/autocompact.go）。默认关 ⇒ 零值（false）就是诚实值，不需要三态指针。
@@ -194,6 +200,12 @@ type AbilityToggle struct {
 	Enabled  *bool   `json:"enabled,omitempty"`
 	Provider *string `json:"provider,omitempty"`
 	Model    *string `json:"model,omitempty"`
+	// ModelSource：模型从哪儿来。**目前只有 title 用**：
+	//   "" / "global" = 跟随全局设置（默认；全局标题模型空 ⇒ 当前会话模型）
+	//   "session"     = 强制使用当前会话模型
+	//   "agent"       = 用本能力上的 provider/model（两者都填才生效；否则回落全局）
+	// 旧配置没有这一格：Provider/Model 非空时按 "agent" 处理，保住既有行为。
+	ModelSource string `json:"model_source,omitempty"`
 	// Prompt：这个能力的提示词**模板**（流程在代码里，模板可换）。空 = 用代码里的默认。
 	Prompt *string `json:"prompt,omitempty"`
 	// Segments：追加段（段库里的 id 列表，**顺序 = 追加顺序**）—— 与 agent 的 `segments`

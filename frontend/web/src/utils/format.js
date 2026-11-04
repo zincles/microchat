@@ -344,7 +344,7 @@ export function buildAbilitiesPatch(rows) {
     const r = rows?.[id];
     if (!r) continue;
     const one = { enabled: !!r.enabled };
-    for (const k of ["provider", "model", "prompt"]) {
+    for (const k of ["provider", "model", "prompt", "model_source"]) {
       const v = (r[k] ?? "").trim();
       if (v) one[k] = v;
     }
