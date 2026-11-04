@@ -1995,6 +1995,15 @@ test("上下文工作区：开关在绿环左边，只切内容不切顶栏", ()
 });
 
 // 2026-10-29 第二轮（用户：「要不我们把右侧栏那个上下文给挪过来？」）：
+test("渠道最大并发：编辑器可设，0 = 不限，高级压缩会与它取 min", () => {
+  const editor = readFileSync(join(SRC, "components", "ProviderEditor.vue"), "utf8");
+  const api = readFileSync(join(SRC, "api", "client.js"), "utf8");
+  assert.match(editor, /maxConcurrency/, "渠道编辑器没有最大并发状态");
+  assert.match(editor, /max_concurrency/, "保存体里没有 max_concurrency");
+  assert.match(editor, /最大并发（0 = 不限）/, "没有最大并发输入项");
+  assert.match(api, /providerPresets/, "API 客户端丢了预设入口");
+});
+
 test("高级压缩 / 修洞压缩：第四、第五 tab，预览 → 并发运行 → 整体状态", () => {
   const bar = readFileSync(join(SRC, "components", "PayloadBar.vue"), "utf8");
   const ws = readFileSync(join(SRC, "components", "ContextWorkspace.vue"), "utf8");

@@ -266,7 +266,7 @@ delete(AA)           # 删除
   ⚠ 旧配置里若还写着 `0.0.0.0` 与 `jwt_key`：前者**照旧生效**（程序不替人改主意），后者已经没人读（留着无害））
 （`auto_compact` = **自动压缩**开关（**缺字段 = 关**；2026-10-11 用户定——这套未经验证，默认不开，要用的自己去设置里打开；关着就全靠手动 `/compact`）·
   `history_window` = 消息列首屏 / “加载更多”一页多少**段**（默认 **5**；段 = 一条消息或一张顶层摘要卡）；`compact_blocks` = 压缩不给块数时压几个**对话块**（**缺省 3**；2026-10-11 从 5 改 3——小步快跑，每坨原话只嚼一次，且抬头那条路要凑满 N 条同层相邻顶层摘要，N 大常凑不齐直接报无可压缩）；`refresh_models_on_start` = 启动时要不要自动去问每个渠道有哪些模型，**默认 true**，类型是 `*bool` ⇒ 没写就是开）
-- `providers.json` — `{ "providers": [ { "id": "dummy", "vendor": "dummy" }, { "id": "openrouter", "vendor": "openrouter", "api_key": "sk-…", "model_filter": "gpt" }, { "id": "自建", "vendor": "custom", "base_url": "https://…/v1", "api_key": "sk-…" } ] }`（`vendor` 是**唯一必填**；`kind` 只剩存量读入别名，新配置必须写 `vendor`；`protocol` 缺省 `openai-chat-completion`）
+- `providers.json` — `{ "providers": [ { "id": "dummy", "vendor": "dummy" }, { "id": "openrouter", "vendor": "openrouter", "api_key": "sk-…", "model_filter": "gpt" }, { "id": "自建", "vendor": "custom", "base_url": "https://…/v1", "api_key": "sk-…" } ] }`（`vendor` 是**唯一必填**；`kind` 只剩存量读入别名，新配置必须写 `vendor`；`protocol` 缺省 `openai-chat-completion`；`max_concurrency` = 该 endpoint 同时最多几个请求，0/缺 = 不限）
   **密钥就写在这一条里**（空串 = 没配）：整个 `config/` 在忽略范围内；接口一律不回显（只回 `has_key`），调试页读它时先打码；写回权限收紧到 0600。
   **模型筛选器 `model_filter`（2026-10-22 用户定）** = **只有 id 命中任意一条规则的模型才导入**
   （聚合站动辄几百个模型：OpenRouter 实测 470 个，真正常用的就几个）。空 / 纯空白 = **不筛**。
@@ -292,6 +292,9 @@ delete(AA)           # 删除
   换 vendor 时 id 跟着变，**但只在 id 还是自动填的那个时才动**（手填过就不抢方向盘，判据是纯函数
   `providerIdForNextVendor`，住 `frontend/web/src/utils/format.js`）；vendor 下拉按后端的 `primary` 分成
   「常见」/「其它预设」两组；端点那一格留空时会把**真会打到的地址**显示出来（"空"不等于"没有端点"）。
+  渠道上的 **`max_concurrency`**（2026-11-05）：同一 provider id 的全局信号量，0 = 不限；
+  所有真网络 `Chat` / `Complete` 都过它（dummy/本地假上游不占槽）。高级压缩的 `concurrency`
+  是作业上限，最终并发 = min(作业值, 该渠道剩余槽位)。
 - `prefs.json` — **界面偏好**（2026-11-01 用户定「所有设置均存储在服务器上」）。
   它**由程序写**（不是手写配置，虽然也能手改）：改设置就整份重写，0600。
   形状：`{ "markdown": {"enabled": true, "disabled": ["table","image"]}, "theme": "dark",

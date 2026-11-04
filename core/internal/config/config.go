@@ -476,6 +476,9 @@ type Provider struct {
 	// ⚠ 它与"刷新时没见到的删行"是同一套账：改了筛选器**要再刷一次**才生效 —— 刷完不匹配的旧行会被删掉
 	// （模型是可再发现的数据，刷新就回来；但那些行上的用户覆盖（display_name / context_override）也跟着没）。
 	ModelFilter string `json:"model_filter"`
+	// MaxConcurrency：这家 endpoint 的**最大并发请求数**（0 = 不额外限制）。
+	// 高级压缩的作业并发还会再取 min；它保护的是"同一家上游同时最多几个"这个事实。
+	MaxConcurrency int `json:"max_concurrency,omitempty"`
 	// Identity：空 = 跟随服务器默认（最终默认是 pi）。
 	Identity string `json:"identity"`
 	// ClientUAOverride：直接覆写 UA 字符串（默认空）。**优先级最高** —— 高过身份与服务器默认。

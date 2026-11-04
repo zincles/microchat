@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // stubUpstream：一个假上游 —— 把给定的帧原样吐出来，顺便数一下被打了多少次
@@ -426,5 +428,46 @@ func TestCompleteResponseBody(t *testing.T) {
 	}
 	if _, err := completeResponse(200, []byte(`{"output":[]}`)); !errors.Is(err, ErrEmpty) {
 		t.Fatalf("空正文该报 ErrEmpty：%v", err)
+	}
+}
+
+// 同一个渠道的 MaxConcurrency 是**进程级**闸门：两个 Complete 同时发，第二个要排队。
+// 用一个唯一 provider id，避免和别的测试共用 limiter 槽位。
+func TestCompleteRespectsEndpointConcurrency(t *testing.T) {
+	var active, maxActive atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := active.Add(1)
+		for {
+			old := maxActive.Load()
+			if n <= old || maxActive.CompareAndSwap(old, n) {
+				break
+			}
+		}
+		time.Sleep(40 * time.Millisecond)
+		active.Add(-1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+	}))
+	t.Cleanup(server.Close)
+	provider := Provider{ID: "limit-test-unique", Vendor: VendorOpenAICompat, BaseURL: server.URL + "/v1",
+		Identity: IdentityBare, MaxConcurrency: 1}
+	client := NewClient(provider)
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := client.Complete(context.Background(), provider, Request{
+				Model: "m", SessionID: "01a0e965-4156-741d-a8bd-5e16f28eb90d",
+				Messages: []ChatMessage{{Role: "user", Content: "hi"}},
+			}, "")
+			if err != nil {
+				t.Errorf("Complete: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	if got := maxActive.Load(); got != 1 {
+		t.Fatalf("endpoint 最大并发 = %d，想要 1", got)
 	}
 }

@@ -94,6 +94,11 @@ func (c *Client) Chat(ctx context.Context, p Provider, r Request, localReply str
 	if payload, err := Snapshot(request, time.Now()); err == nil {
 		RecordLastPayload(payload)
 	}
+	release, err := acquireEndpoint(ctx, p)
+	if err != nil {
+		return Result{}, err
+	}
+	defer release()
 	// 按 `p.EffectiveProtocol()` 分两路：chat 走老 `streamUpstream`，response 走新解析
 	// （URL/体由 `Build` 按 protocol 拼好 —— Chat 不自己拼 URL）。
 	var result Result
@@ -152,6 +157,11 @@ func (c *Client) Complete(ctx context.Context, p Provider, r Request, localReply
 	if payload, err := Snapshot(request, time.Now()); err == nil {
 		RecordLastPayload(payload)
 	}
+	release, err := acquireEndpoint(ctx, p)
+	if err != nil {
+		return Result{}, err
+	}
+	defer release()
 	response, err := c.Do(request.WithContext(ctx))
 	if err != nil {
 		return Result{}, err // 连不上 / 超时 / 被取消：原样返回（不重试、不吞）

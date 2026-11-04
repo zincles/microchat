@@ -30,6 +30,8 @@ type ProviderView struct {
 	// ModelFilter：模型筛选器（空 = 不筛）。界面要能看见渠道上挂着什么筛选器 ——
 	// 否则"这个渠道怎么只有 12 个模型"会变成一个查不出来的谜。
 	ModelFilter string `json:"model_filter"`
+	// MaxConcurrency：这家 endpoint 的最大并发（0 = 不限）；高级压缩也读它。
+	MaxConcurrency int `json:"max_concurrency"`
 	// Identity：生效的身份（渠道自己的，或服务器级默认）。
 	Identity      string      `json:"identity"`
 	LastRefreshAt *int64      `json:"last_refresh_at"`
@@ -69,7 +71,8 @@ type CreateProviderReq struct {
 	Headers  map[string]string `json:"headers"`
 	APIKey   *string           `json:"api_key"`
 	// ModelFilter：模型筛选器（省略 / 空 = 不筛）。校验在 ValidateModelFilter（坏写法 ⇒ 422）。
-	ModelFilter *string `json:"model_filter"`
+	ModelFilter    *string `json:"model_filter"`
+	MaxConcurrency *int    `json:"max_concurrency"`
 }
 
 type UpdateProviderReq struct {
@@ -81,7 +84,8 @@ type UpdateProviderReq struct {
 	APIKey   *string           `json:"api_key"` // None = 不动；"" = 删除密钥
 	// ModelFilter：None = 不动；"" = 清（不筛）。**改了要再刷一次模型才生效**
 	// （筛选是在发现那一步做的，配置本身不会回头去动已有的行）。
-	ModelFilter *string `json:"model_filter"`
+	ModelFilter    *string `json:"model_filter"`
+	MaxConcurrency *int    `json:"max_concurrency"`
 }
 
 func modelView(row store.ModelRow) ModelView {
@@ -143,6 +147,13 @@ func (s *Server) createProvider(w http.ResponseWriter, r *http.Request) {
 	}
 	provider := config.Provider{ID: req.ID, Kind: "", BaseURL: "", Headers: req.Headers,
 		APIKey: deref(req.APIKey), ModelFilter: deref(req.ModelFilter)}
+	if req.MaxConcurrency != nil {
+		if *req.MaxConcurrency < 0 {
+			writeError(w, http.StatusUnprocessableEntity, "invalid", "max_concurrency 不能是负数")
+			return
+		}
+		provider.MaxConcurrency = *req.MaxConcurrency
+	}
 	if req.Name != nil && *req.Name != "" {
 		provider.Name = *req.Name
 	}
@@ -220,6 +231,13 @@ func (s *Server) updateProvider(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ModelFilter != nil { // None = 不动；"" = 清（不筛）
 		provider.ModelFilter = *req.ModelFilter
+	}
+	if req.MaxConcurrency != nil { // None = 不动；0 = 不限
+		if *req.MaxConcurrency < 0 {
+			writeError(w, http.StatusUnprocessableEntity, "invalid", "max_concurrency 不能是负数")
+			return
+		}
+		provider.MaxConcurrency = *req.MaxConcurrency
 	}
 	// 筛选器坏了在写入时就拦（createProvider 那边同一个口径）
 	if err := registry.ValidateModelFilter(provider.ModelFilter); err != nil {
@@ -491,7 +509,8 @@ func providerView(provider config.Provider) ProviderView {
 		ProtocolOptions: providers.ProtocolOptionsFor(effective),
 		BaseURL:         effective.BaseURL, Headers: provider.Headers,
 		HasKey: provider.APIKey != "", ModelFilter: provider.ModelFilter,
-		Identity: string(effective.Identity), Models: []ModelView{},
+		MaxConcurrency: provider.MaxConcurrency,
+		Identity:       string(effective.Identity), Models: []ModelView{},
 	}
 }
 

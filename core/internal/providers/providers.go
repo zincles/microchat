@@ -127,6 +127,8 @@ type Provider struct {
 	Identity Identity `json:"identity"`
 	// ClientUAOverride：**直接覆写 UA**（默认空）。优先级**高于**身份与服务器默认。
 	ClientUAOverride string `json:"client_ua_override"`
+	// MaxConcurrency：endpoint 并发上限（0 = 不额外限制，由调用方自己控）。
+	MaxConcurrency int `json:"max_concurrency,omitempty"`
 	// SessionHeader：会话 id 透传成哪个头。nil = 按 kind 默认（opencode 系 = `x-opencode-session`）；
 	// "" = 明确不发；其它 = 用这个名字。
 	SessionHeader *string `json:"session_header"`
@@ -881,7 +883,8 @@ func FromConfig(c config.Provider) Provider {
 		ID: c.ID, Name: c.Name, Vendor: Vendor(c.Vendor), Kind: Kind(c.Kind),
 		Protocol: Protocol(c.Protocol), BaseURL: c.BaseURL,
 		Headers: c.Headers, APIKey: c.APIKey, Identity: Identity(c.Identity),
-		ClientUAOverride: c.ClientUAOverride, SessionHeader: c.SessionHeader, ReasoningField: c.ReasoningField,
+		ClientUAOverride: c.ClientUAOverride, MaxConcurrency: c.MaxConcurrency,
+		SessionHeader: c.SessionHeader, ReasoningField: c.ReasoningField,
 		AllowTools: c.AllowTools, ToolResultName: c.ToolResultName,
 		Timeouts:       configTimeouts(c.Timeouts),
 		Stream:         c.Stream,

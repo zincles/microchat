@@ -23,6 +23,8 @@ const key = ref("");
 // 多条规则用**半角逗号**分隔，命中任意一条就算中（2026-10-28 用户定：「deepseek,mimo 会吧
 // deepseek-v4-flash 和 mimo-v2.6-flash 都允许，因为它们分别满足了一个规则」）。
 const filter = ref("");
+// 同一渠道的 endpoint 并发上限（0 = 不限；高级压缩作业并发还会与它取 min）。
+const maxConcurrency = ref(0);
 // baseFilter：**已保存的**筛选器 —— 增量比较的基准。不直接比 props.provider：
 // 改了筛选器会留在原地，而父组件的 editProvider 仍指着旧对象 ⇒ 拿它当基准会把"没改"误判成"改了"。
 const baseFilter = ref("");
@@ -121,6 +123,7 @@ async function load() {
   protocol.value = p.protocol ?? "";
   baseUrl.value = p.base_url ?? "";
   filter.value = p.model_filter ?? "";
+  maxConcurrency.value = p.max_concurrency ?? 0;
   baseFilter.value = filter.value;
   hasKey.value = !!p.has_key;
   models.value = p.models ?? [];
@@ -140,6 +143,7 @@ async function save() {
         ...(baseUrl.value.trim() ? { base_url: baseUrl.value.trim() } : {}),
         api_key: key.value || undefined,
         ...(wanted ? { model_filter: wanted } : {}),
+        ...(Number(maxConcurrency.value) > 0 ? { max_concurrency: Number(maxConcurrency.value) } : {}),
       });
       savedID = id;
     } else {
@@ -149,6 +153,9 @@ async function save() {
       if (baseUrl.value.trim() !== (props.provider.base_url ?? "")) body.base_url = baseUrl.value.trim();
       if (key.value) body.api_key = key.value;
       if (wanted !== baseFilter.value) body.model_filter = wanted;
+      if (Number(maxConcurrency.value) !== Number(props.provider.max_concurrency ?? 0)) {
+        body.max_concurrency = Number(maxConcurrency.value) || 0;
+      }
       if (Object.keys(body).length) await api.patchProvider(props.provider.id, body);
     }
     baseFilter.value = wanted;
@@ -265,6 +272,8 @@ function onKey(e) {
       用半角逗号分隔几个关键词；模型名包含<b>任意一个</b>就会导入，不区分大小写。
       不支持 <code>*</code> 通配符；留空 = 全部导入。
     </p>
+    <label class="field"><span>最大并发（0 = 不限）</span><input v-model="maxConcurrency" type="number" min="0" /></label>
+    <p class="hint">同一渠道同时最多几个请求；高级压缩的作业并发会与它取较小值。</p>
     <div class="row">
       <button type="button" class="primary" @click="save">保存并刷新</button>
       <button type="button" @click="testConnection">测试连通性</button>
