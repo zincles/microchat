@@ -528,16 +528,6 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
  *   所以 2.6em 收到 1.5em = 任务行的 0.3em 间距 + 约 1.2em 行高）。 */
 .messages-inner { max-width: var(--read-col, 840px); margin: 0 auto; box-sizing: border-box;
   padding: 3.2em 56px calc(var(--composer-h, 4.6em) + 1.5em); display: flex; flex-direction: column; gap: 0.8em; }
-/* 空草稿首屏（2026-11-02）：把"一整页纯黑"换成一句人话 + 当前助手/模型。
- * 50vh 的最小高度 + `justify-content:center` 让它在消息区里居中；它不是消息，
- * 所以没有 who/编号/操作行。 */
-.draft-welcome { margin: 0; min-height: 50vh; padding: 2em 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
-  text-align: center; gap: 0.35em; color: var(--tg-text); }
-.draft-welcome h2 { margin: 0; font-size: 1.5em; font-weight: 600; letter-spacing: 0.01em; }
-.dw-sub { margin: 0; color: var(--tg-hint); font-size: 0.9em; word-break: break-word; }
-.dw-sep { margin: 0 0.45em; opacity: 0.55; }
-.dw-hint { margin: 0.45em 0 0; color: var(--tg-hint); font-size: 0.82em; opacity: 0.85; }
-.dw-hint kbd { font: inherit; padding: 0.05em 0.35em; border: 1px solid var(--line); border-radius: var(--r-xs); }
 /* 会话加载骨架（2026-11-02）：三条呼吸的灰条，不画头像/气泡（那会像"已经在加载内容"，
  * 而实际可能只是一次切会话）。进度感靠 opacity，不动 layout。 */
 .chat-skeleton { display: flex; flex-direction: column; gap: 0.9em; padding: 1.2em 0; }
@@ -605,6 +595,8 @@ html[data-composer="solid"] .messages-inner { padding-bottom: calc(var(--compose
 #state-view .v { flex: 1; color: var(--tg-text); word-break: break-word; }
 /* 会话列表自己滚（此前没有任何滚动规则 ⇒ 会话一多直接被裁掉，移动端抽屉里更是够不着）。 */
 #session-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0.2em 0.4em 0.5em; }
+.session-group-head { padding: 0.65em 0.55em 0.22em; color: var(--tg-hint); font-size: 0.72em; letter-spacing: 0.04em; line-height: 1.2; }
+.session-group-head:first-child { padding-top: 0.3em; }
 .bar-foot { padding: 0.5em; border-top: 1px solid var(--line); margin-top: auto; }
 .foot-btn { display: flex; align-items: center; gap: 0.5em; width: 100%; border-radius: var(--r-btn); color: var(--tg-hint); padding: 0.38em 0.7em; line-height: 1.3; }
 /* 左栏底的图标（SVG 替 emoji）：尺寸跟随字号、垂直居中由 flex 管。 */
@@ -850,6 +842,27 @@ html[data-composer="solid"] #composer button { box-shadow: none; }
 #composer button { background: var(--tg-button); color: var(--tg-button-text); border: none; border-radius: 50%; width: 2.6em; height: 2.6em; padding: 0; cursor: pointer; align-self: flex-end; display: flex; align-items: center; justify-content: center; flex: none; box-shadow: var(--shadow-1); }
 #composer button:hover { filter: brightness(1.1); }
 #composer button svg { display: block; }
+/* 全屏输入键：与发送键同尺寸，但不是主行动 ⇒ 用次级底色。 */
+#composer #expand-btn { background: var(--tg-secondary-bg); color: var(--tg-hint); }
+#composer #expand-btn:hover { color: var(--tg-text); }
+/* 全屏输入（2026-11-04 用户定）：铺满应用可视区，正文仍是阅读列宽；Esc 退出。 */
+.composer-fs { position: fixed; inset: 0; z-index: 80; background: var(--tg-bg);
+  display: flex; flex-direction: column; gap: 0.8em; box-sizing: border-box;
+  padding: max(1em, env(safe-area-inset-top)) max(1em, env(safe-area-inset-right)) max(1em, env(safe-area-inset-bottom)) max(1em, env(safe-area-inset-left)); }
+.composer-fs > * { width: 100%; max-width: var(--read-col, 840px); margin-left: auto; margin-right: auto; }
+.composer-fs-head { flex: none; display: flex; align-items: center; justify-content: space-between; color: var(--tg-hint); font-size: 0.9em; }
+.composer-fs-close { background: none; border: none; color: var(--tg-hint); cursor: pointer; width: 2.2em; height: 2.2em; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center; }
+.composer-fs-close:hover { background: var(--mix-8); color: var(--tg-text); }
+.composer-fs-input { flex: 1 1 auto; min-height: 0; box-sizing: border-box; resize: none; background: var(--tg-secondary-bg);
+  color: var(--tg-text); border: 1px solid var(--line); border-radius: var(--r-card); padding: 1em; font: inherit;
+  font-size: 1.05em; line-height: 1.7; outline: none; }
+.composer-fs-input:focus { border-color: color-mix(in srgb, var(--tg-link) 65%, transparent); }
+.composer-fs-foot { flex: none; display: flex; justify-content: flex-end; }
+.composer-fs-foot button { background: var(--tg-button); color: var(--tg-button-text); border: none; border-radius: 999px;
+  padding: 0.65em 1.6em; font: inherit; cursor: pointer; }
+.composer-fs-foot button:hover { filter: brightness(1.08); }
+.composer-fs-foot button.stop { background: var(--tg-destructive); }
 /* 停止态：红底（生成中点即停，与发送蓝钮区分）。 */
 #composer button.stop { background: var(--tg-destructive); }
 /* 菜单键：与发送圆钮同形，底栏色（输入框左侧，点开命令面板）。 */

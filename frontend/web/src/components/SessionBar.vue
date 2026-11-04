@@ -1,13 +1,15 @@
 <script setup>
 // 左会话栏：列表 + 新建 + 置底设置按钮。
 // 每条只有一枚「选项」（竖三点）：设置与删除都收进那块浮板 —— 行内不再挤两枚键。
-import { ref, nextTick, onMounted, onUnmounted } from "vue";
+import { ref, computed, nextTick, onMounted, onUnmounted } from "vue";
 import { ICONS } from "./icons.js";
+import { groupSessions } from "../utils/sessionGroups.js";
 
 const emit = defineEmits(["select", "settings", "copy", "export", "close", "new", "open-settings", "toggle-left", "open-sessions", "open-providers"]);
 
 const sessions = ref([]);
 const currentId = ref(null);
+const groupedSessions = computed(() => groupSessions(sessions.value));
 const menu = ref(null); // { id, left, top } —— Teleport 到 body 的浮板
 const menuEl = ref(null);
 
@@ -80,26 +82,29 @@ defineExpose({ setSessions });
     </button>
     <div id="session-list">
       <div v-if="!sessions.length" class="empty">还没有会话<br /><span class="sub">点上面「＋ 开启新对话」开始</span></div>
-      <div
-        v-for="s in sessions"
-        :key="s.id"
-        class="session-item"
-        :class="{ sel: s.id === currentId }"
-        @click="$emit('select', s.id)"
-      >
-        <span class="session-main">
-          <span class="title">{{ s.title || "新会话" }}</span>
-        </span>
-        <button
-          class="item-btn"
-          type="button"
-          title="会话选项"
-          aria-label="会话选项"
-          :aria-expanded="menu?.id === s.id ? 'true' : 'false'"
-          @click="toggleMenu(s, $event)"
-          v-html="ICONS.more"
-        ></button>
-      </div>
+      <template v-for="group in groupedSessions" :key="group.key">
+        <div class="session-group-head">{{ group.label }}</div>
+        <div
+          v-for="s in group.items"
+          :key="s.id"
+          class="session-item"
+          :class="{ sel: s.id === currentId }"
+          @click="$emit('select', s.id)"
+        >
+          <span class="session-main">
+            <span class="title">{{ s.title || "新会话" }}</span>
+          </span>
+          <button
+            class="item-btn"
+            type="button"
+            title="会话选项"
+            aria-label="会话选项"
+            :aria-expanded="menu?.id === s.id ? 'true' : 'false'"
+            @click="toggleMenu(s, $event)"
+            v-html="ICONS.more"
+          ></button>
+        </div>
+      </template>
     </div>
     <div class="bar-foot">
       <!-- 管理入口（2026-11-02 用户定）：会话 / 渠道从设置里拆出来，各有一个独立入口；
