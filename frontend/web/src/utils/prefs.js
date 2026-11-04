@@ -53,6 +53,18 @@ export function normalizeTextScale(value) {
   return Number((Math.round(clamped / TEXT_SCALE_STEP) * TEXT_SCALE_STEP).toFixed(2));
 }
 
+// 字体（2026-11-04 用户定）：标准字体管全站，等宽字体管代码块；空 = 内置系统字族。
+// 自定义值按 CSS font-family 原文存（逗号分隔的后备字族都保留），应用时在末尾补内置栈。
+export const DEFAULT_FONT_BODY = '-apple-system, BlinkMacSystemFont, "Inter", system-ui, "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif';
+export const DEFAULT_FONT_MONO = 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace';
+
+export function normalizeFontFamily(value) {
+  const text = String(value ?? "").replace(/[\r\n]+/g, " ").trim();
+  // 只挡会破坏声明的字符；引号、逗号、空格、括号（local() 之类）都留给 CSS。
+  if (!text || /[;{}<>]/.test(text)) return "";
+  return text;
+}
+
 export const DEFAULT_SEND = "enter";
 
 // ── 服务器偏好的本地镜像与内存缓存 ──────────────────────────────────
@@ -71,6 +83,8 @@ const FALLBACK_PREFS = {
   markdown: { enabled: true, disabled: [] },
   theme: "",
   text_scale: "",
+  font_body: "",
+  font_mono: "",
   background: {},
   send: "",
   preview: true,
@@ -373,6 +387,35 @@ export function saveTextScale(scale) {
   applyTextScale(s);
 }
 
+// —— 字体（2026-11-04）——
+
+export function fontBody() { return normalizeFontFamily(cache.font_body); }
+export function fontMono() { return normalizeFontFamily(cache.font_mono); }
+
+// 自定义字族放在内置栈**前面**：中文字形或没装的字体仍能落到后面的系统字族，不会整页豆腐块。
+export function applyFonts() {
+  const root = document.documentElement;
+  const body = fontBody();
+  const mono = fontMono();
+  if (body) root.style.setProperty("--app-font-body", `${body}, ${DEFAULT_FONT_BODY}`);
+  else root.style.removeProperty("--app-font-body");
+  if (mono) root.style.setProperty("--app-font-mono", `${mono}, ${DEFAULT_FONT_MONO}`);
+  else root.style.removeProperty("--app-font-mono");
+}
+
+export function saveFontBody(value) {
+  const body = normalizeFontFamily(value);
+  setPref("font_body", body);
+  applyFonts();
+  return body;
+}
+export function saveFontMono(value) {
+  const mono = normalizeFontFamily(value);
+  setPref("font_mono", mono);
+  applyFonts();
+  return mono;
+}
+
 // —— 布尔开关（一律走同一对面）——
 
 function flagPref(key, fallback) {
@@ -465,6 +508,7 @@ export function saveNetPrefs(base) {
 export function applyAll() {
   applyTheme();
   applyTextScale();
+  applyFonts();
 }
 
 // 共享 api 客户端：按 base 缓存 —— 组件与 App 拿的是同一个实例。

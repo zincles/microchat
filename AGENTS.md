@@ -295,7 +295,7 @@ delete(AA)           # 删除
 - `prefs.json` — **界面偏好**（2026-11-01 用户定「所有设置均存储在服务器上」）。
   它**由程序写**（不是手写配置，虽然也能手改）：改设置就整份重写，0600。
   形状：`{ "markdown": {"enabled": true, "disabled": ["table","image"]}, "theme": "dark",
-  "text_scale": "1.1", "background": {"kind":"file","version":"…"},
+  "text_scale": "1.1", "font_body": "", "font_mono": "", "background": {"kind":"file","version":"…"},
   "send": "enter", "preview": true, "payload_preview": true, "command_menu": false, "chrome_hide": true,
   ⚠ **改完立刻刷新不能丢**（2026-11-04 用户报界面缩放总回 115%）：偏好回写有 250ms 防抖，
   但 `flushPrefs()` 会在滑杆 `change`、`pagehide`、`visibilitychange(hidden)` 时取消防抖并**带
@@ -1063,7 +1063,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   ③ **圆角** 用 `--r-xs(4) / --r-sm(6) / --r-md(8) / --r-btn / --r-card / --r-shell / --r-bubble`，不写字面量；
   ④ **等宽数字** 只在 `main.css` 末尾那一组写 `font-variant-numeric: tabular-nums`，新数字元素加进选择器清单，别单写一条。
   契约测试钉着这几条（"CSS 复用：幽灵按钮底座与蒙层 token 只有一处"）—— 抄回去不会报错，只会让下一次调色改不动。
-- **外观两件（2026-10-28 加，照 OpenWebUI）**：
+- **外观三件（2026-10-28 加，照 OpenWebUI）**：
   **① 自托管 Inter**：`frontend/web/public/fonts/Inter-Variable.woff2`（325KB 可变字重 100–900，源是同目录 TTF 转的，
   不再带 TTF）+ `OFL.txt`；`main.css` 顶部一条 `@font-face`，`body` 字族排成
   `-apple-system, BlinkMacSystemFont, "Inter", system-ui, "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif`
@@ -1075,6 +1075,11 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   （`calc(15px * var(--app-text-scale, 1))`）—— 全项目尺寸几乎都是 em、0 处 rem、0 处 px 字号，
   于是改这一格 = 整页等比缩放。范围/步长钉在 `prefs.js` 的 `TEXT_SCALE_MIN/MAX/STEP`（0.85–1.3，5% 一格），
   滑杆在**用户视图 → 外观**，**拖动即生效**（尺寸得看着调）。`--r-*` 圆角与滚动条是 px ⇒ 不跟着缩（OpenWebUI 同样如此）。
+  **③ 自定义字体（2026-11-04 用户定）**：`prefs.json` 的 `font_body` / `font_mono`，空 = 内置系统字族。
+  `applyFonts()` 把自定义值写到根节点 `--app-font-body` / `--app-font-mono`，并**在末尾补内置栈**
+  （中文字形/没装的字体仍能回落）；`body` 读前者，`code, pre, kbd, samp` 读后者。
+  设置 → 外观 有两格自由输入（CSS `font-family` 写法，可逗号分隔）；`normalizeFontFamily` 拒绝
+  `;{}<>`（避免破坏声明），留空/坏值回落系统。
 - **输入框只有发送，且在一体面板里**（2026-11-04 用户定：暂时不做附件/模式，也不留全屏键）：`.composer-box` 包住 textarea 与右侧发送键；左栏不再放品牌；空草稿保留欢迎块（新会话可以不是空白）。
 - 输入行 `/` 进命令面板（**只放已有路由的命令**），`resume` 走 picker；`model` 只是重拉顶栏下拉（不弹 picker）；不可逆的走全屏确认。
   **命令菜单默认关**（2026-10-17 用户定：移动端那颗 ☰ 与 `/` 浮层纯碍事）—— 关着时输入框左侧**没有 ☰**、

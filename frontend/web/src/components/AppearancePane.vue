@@ -24,6 +24,7 @@ import {
   commandMenuOn, saveCommandMenu,
   chromeHideOn, saveChromeHide,
   textScale as textScalePref, saveTextScale, flushPrefs,
+  fontBody as fontBodyPref, fontMono as fontMonoPref, saveFontBody, saveFontMono,
   markdownPrefs, markdownTypes, saveMarkdown, saveBackground,
   refreshPrefs,
   TEXT_SCALE_MIN, TEXT_SCALE_MAX, TEXT_SCALE_STEP,
@@ -44,6 +45,9 @@ const cmdMenu = ref(false);
 const textScale = ref(1);
 const scaleBounds = { min: TEXT_SCALE_MIN, max: TEXT_SCALE_MAX, step: TEXT_SCALE_STEP };
 const scalePercent = computed(() => Math.round(textScale.value * 100));
+// 字体（2026-11-04）：标准字体管全站，等宽字体管代码块；空 = 内置系统字族。
+const fontBody = ref("");
+const fontMono = ref("");
 // 滚动隐藏上下栏（触屏；默认开）。
 const chromeHide = ref(true);
 const bgUrl = ref("");
@@ -92,6 +96,8 @@ function loadFromPrefs() {
   preview.value = previewOn();
   cmdMenu.value = commandMenuOn();
   textScale.value = textScalePref();
+  fontBody.value = fontBodyPref();
+  fontMono.value = fontMonoPref();
   chromeHide.value = chromeHideOn();
   const md = markdownPrefs();
   mdEnabled.value = md.enabled !== false;
@@ -112,6 +118,8 @@ function persist() {
   savePreview(preview.value);
   saveCommandMenu(cmdMenu.value);
   saveTextScale(textScale.value);
+  saveFontBody(fontBody.value);
+  saveFontMono(fontMono.value);
   saveChromeHide(chromeHide.value);
   emit("prefs-saved"); // 聊天壳上的活开关立刻跟上（命令菜单那颗 ☰）
 }
@@ -119,6 +127,17 @@ function persist() {
 // 开关不能写成 `v-model + @update:model-value="persist"`：两个监听同时挂在 update 事件上时，
 // 显式那个**可能先跑** ⇒ `persist()` 读到的是旧值（实测：界面翻成 on，服务端还是 off）。
 // 所以一律"先赋值，再存"——参数就是 ToggleSwitch 给的新值。
+function saveFonts() {
+  // 规范化后的值写回输入框：`A; B` 这种破坏声明的输入会被清成空（回落系统字族）。
+  fontBody.value = saveFontBody(fontBody.value);
+  fontMono.value = saveFontMono(fontMono.value);
+  emit("prefs-saved");
+}
+function resetFonts() {
+  fontBody.value = "";
+  fontMono.value = "";
+  saveFonts();
+}
 function setChromeHide(v) { chromeHide.value = v; persist(); }
 function setPreview(v) { preview.value = v; persist(); }
 function setCmdMenu(v) { cmdMenu.value = v; persist(); }
@@ -225,6 +244,10 @@ async function clearBg() {
         <button type="button" class="link-btn" @click="resetScale">复位 100%</button>
         <span class="status">拖动立即生效；字号和留白会一起等比缩放</span>
       </div>
+      <label class="field"><span>标准字体</span><input v-model="fontBody" @change="saveFonts" placeholder="留空 = 系统默认（CSS font-family）" /></label>
+      <label class="field"><span>等宽字体（代码块）</span><input v-model="fontMono" @change="saveFonts" placeholder="留空 = 系统等宽" /></label>
+      <p class="hint">可按 CSS 写法给多个后备字体，例如 <code>"Noto Sans SC", sans-serif</code>。标准字体用于全站，等宽字体只用于代码块；留空恢复内置系统字族。</p>
+      <div class="row"><button type="button" class="link-btn" @click="resetFonts">恢复默认字体</button></div>
       <label class="field"><span>背景图地址</span><input v-model="bgUrl" placeholder="https://…（跨域也可）" /></label>
       <div class="row">
         <button type="button" class="primary" @click="applyBgUrl">应用地址</button>

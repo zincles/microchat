@@ -48,7 +48,7 @@ import {
   whoText,
   sessionTitle,
 } from "../src/utils/format.js";
-import { sendMode, wantsSend, themePref, normalizeTheme, apiBase, defaultApiBase, apiBaseCandidates, THEME_IDS, DEFAULT_THEME, DEFAULT_SEND, normalizeTextScale, textScale, applyTextScale, saveTextScale, flushPrefs, TEXT_SCALE_MIN, TEXT_SCALE_MAX, DEFAULT_TEXT_SCALE } from "../src/utils/prefs.js";
+import { sendMode, wantsSend, themePref, normalizeTheme, apiBase, defaultApiBase, apiBaseCandidates, THEME_IDS, DEFAULT_THEME, DEFAULT_SEND, normalizeTextScale, textScale, applyTextScale, saveTextScale, flushPrefs, normalizeFontFamily, fontBody, fontMono, applyFonts, saveFontBody, saveFontMono, DEFAULT_FONT_BODY, DEFAULT_FONT_MONO, TEXT_SCALE_MIN, TEXT_SCALE_MAX, DEFAULT_TEXT_SCALE } from "../src/utils/prefs.js";
 
 // 契约测试（无浏览器）：只验纯函数与请求形状。`node --test test/`。
 // 后端真服务验证另走手工（见 README）。
@@ -732,6 +732,39 @@ test("输入栏只有一种布局：composer_style / data-composer 已删", () =
     assert.ok(!/composer_style|composerStyle|data-composer|DEFAULT_COMPOSER/.test(text), `${name} 还留着输入栏形态`);
   }
   assert.ok(!pane.includes("输入框样式"), "设置里还有「输入框样式」");
+});
+
+// 字体（2026-11-04）：标准字体 / 等宽字体都存服务器；空 = 内置字族。
+test("字体：标准 / 等宽分开存，留空回落系统，坏声明清空", () => {
+  stubStorage();
+  const style = new Map();
+  const root = {
+    style: {
+      setProperty: (k, v) => style.set(k, v),
+      removeProperty: (k) => style.delete(k),
+    },
+  };
+  const originalDoc = globalThis.document;
+  globalThis.document = { documentElement: root };
+  try {
+    assert.equal(normalizeFontFamily('  "Noto Sans SC", sans-serif '), '"Noto Sans SC", sans-serif');
+    assert.equal(normalizeFontFamily("A\nB"), "A B");
+    assert.equal(normalizeFontFamily("A; background: red"), "");
+    assert.equal(saveFontBody("Fira Sans"), "Fira Sans");
+    assert.equal(saveFontMono("JetBrains Mono"), "JetBrains Mono");
+    assert.equal(fontBody(), "Fira Sans");
+    assert.equal(fontMono(), "JetBrains Mono");
+    assert.equal(style.get("--app-font-body"), `Fira Sans, ${DEFAULT_FONT_BODY}`);
+    assert.equal(style.get("--app-font-mono"), `JetBrains Mono, ${DEFAULT_FONT_MONO}`);
+    saveFontBody("");
+    saveFontMono("");
+    assert.equal(style.has("--app-font-body"), false);
+    assert.equal(style.has("--app-font-mono"), false);
+    applyFonts();
+    assert.equal(style.has("--app-font-body"), false);
+  } finally {
+    globalThis.document = originalDoc;
+  }
 });
 
 // 背景图的地址怎么拼（2026-11-01 改口径后**唯一**值得钉的地方）：
@@ -2979,6 +3012,11 @@ test("输入框：发送键住在面板内，全屏键已取消", () => {
   assert.match(css, /\.composer-box \{[^}]*background:/, "输入面板没有底");
   assert.ok(!/#input \{[^}]*border-radius:\s*var\(--r-shell\)/.test(css), "输入框还自己长着一张卡");
   assert.ok(!/composer-fs|expand-btn/.test(css), "样式里还留着全屏输入");
+  const pane = readFileSync(join(SRC, "components", "AppearancePane.vue"), "utf8");
+  assert.match(pane, /<span>标准字体<\/span>/, "外观设置没有标准字体");
+  assert.match(pane, /<span>等宽字体（代码块）<\/span>/, "外观设置没有等宽字体");
+  assert.match(pane, /@change="saveFonts"/, "字体输入没接保存");
+  assert.match(pane, /fontBody as fontBodyPref/, "字体值没从服务器偏好读回");
 });
 
 test("左栏顶部：没有 MicroChat 字样，改成 对话 / 生图 两个 tab", () => {

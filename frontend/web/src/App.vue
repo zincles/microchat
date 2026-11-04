@@ -16,7 +16,7 @@ import { installViewportFit } from "./utils/viewport.js";
 import { classifyAxis, pickDrag, dragProgress, resolveRelease } from "./utils/swipe.js";
 import { typewriterDuration, revealCount } from "./utils/typewriter.js";
 import { downloadJSON } from "./utils/download.js";
-import { sharedApi, previewOn, payloadPreviewOn, applyTheme, wantsSend, apiBase, apiBaseCandidates, saveNetPrefs, lastSessionId, saveLastSession, commandMenuOn, applyTextScale, chromeHideOn, syncPrefs, saveBarLeftHidden, barLeftHidden } from "./utils/prefs.js";
+import { sharedApi, previewOn, payloadPreviewOn, applyTheme, wantsSend, apiBase, apiBaseCandidates, saveNetPrefs, lastSessionId, saveLastSession, commandMenuOn, applyTextScale, applyFonts, chromeHideOn, syncPrefs, saveBarLeftHidden, barLeftHidden } from "./utils/prefs.js";
 import {
   groupModelsByProvider,
   deletionPlanSummary,
@@ -48,6 +48,7 @@ applyBackground();
 // 界面缩放（2026-10-28）：同样**开机第一帧就得对** —— 晚一帧就是"字先小一下再变大"的闪。
 // 它写在根节点的 `style` 上（`--app-text-scale`），theme.css 的 body 字号吃这一格。
 applyTextScale();
+applyFonts();
 // 服务器是**偏好的权威**（2026-11-01「所有设置均存储在服务器上」）。
 // 上面那几行先按**本地镜像**把主题/缩放/输入栏形态铺上 —— 那是为了让**第一帧**就是对的
 // （不然会先闪一下默认配色再变）。随后这一发去问服务器，不一致就改过来（并重挂背景图）。

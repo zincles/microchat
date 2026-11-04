@@ -71,8 +71,10 @@ html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
  * 别把 `system-ui` 挪到 Inter 前面，那会让 Linux 又回到 DejaVu。
  * 字号拆出来单独写（不用 `font` 简写）：要吃 `--app-text-scale`，而简写里塞 calc 会把行高也一起吃掉。 */
 body { margin: 0; background: var(--tg-bg); color: var(--tg-text);
-  font-family: -apple-system, BlinkMacSystemFont, "Inter", system-ui, "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif;
+  font-family: var(--app-font-body, -apple-system, BlinkMacSystemFont, "Inter", system-ui, "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif);
   font-size: calc(15px * var(--app-text-scale, 1)); line-height: 1.65; }
+/* 代码 / 预格式文本单独一条字族（2026-11-04）：自定义等宽字体只影响这里与 pre，不污染正文。 */
+code, pre, kbd, samp { font-family: var(--app-font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace); }
 /* 自定义背景图（界面 tab 设：URL 或上传的图片）：整页 fixed 图层，垫在壳（#app，z-index 1）下面 ——
  * 各面板自己有底色，图只从透明处（消息区）透出来。--mc-bg-image 由 utils/background.js 挂/摘；
  * 没设 = none ⇒ 纯平底（2026-10-10 砍掉 doodle 花纹：机制换成这张背景图的接口，美术不再维护）。 */

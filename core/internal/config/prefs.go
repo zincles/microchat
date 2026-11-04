@@ -191,8 +191,12 @@ type Prefs struct {
 	Markdown MarkdownPrefs `json:"markdown"`
 
 	// —— 外观 ——
-	Theme      string     `json:"theme,omitempty"`
-	TextScale  string     `json:"text_scale,omitempty"`
+	Theme     string `json:"theme,omitempty"`
+	TextScale string `json:"text_scale,omitempty"`
+	// FontBody / FontMono：自定义字族（2026-11-04 用户定）。
+	// 标准字体用于全站，等宽字体用于代码块；空 = 用前端内置的系统字族。
+	FontBody   string     `json:"font_body,omitempty"`
+	FontMono   string     `json:"font_mono,omitempty"`
 	Background Background `json:"background,omitempty"`
 
 	// —— 输入 ——
@@ -218,6 +222,8 @@ func DefaultPrefs() Prefs {
 		Markdown:  MarkdownPrefs{}, // Enabled 为 nil ⇒ 开；Disabled 空 ⇒ 全开
 		Theme:     "",
 		TextScale: "",
+		FontBody:  "",
+		FontMono:  "",
 		Send:      "",
 		// ⚠ 每一格都要**独立**的指针（2026-11-02 修）。从前写的是 `on := true; off := false`
 		// 然后所有 `&on` / `&off` 共用同一个变量 —— JSON 解码 `command_menu:true` 会把那个
