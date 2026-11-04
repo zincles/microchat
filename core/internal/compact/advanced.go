@@ -400,6 +400,27 @@ func snapshotAdvanced(job *AdvancedJob) AdvancedJob {
 	return out
 }
 
+// friendlyAdvancedError：高级压缩页/任务面板给人看的失败原因。
+// 参数/区间错误已经是人话；这里主要把网络层原文（dial tcp / connection refused / timeout）
+// 翻成用户能行动的一句话，别把 endpoint URL 和 Go 错误串直接摆在面板上。
+func friendlyAdvancedError(err error) string {
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, context.Canceled) {
+		return "任务已取消。"
+	}
+	text := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(text, "connection refused"), strings.Contains(text, "dial tcp"),
+		strings.Contains(text, "no such host"), strings.Contains(text, "network is unreachable"):
+		return "无法连接上游服务，请检查渠道地址与网络。"
+	case strings.Contains(text, "timeout"), strings.Contains(text, "deadline exceeded"):
+		return "上游请求超时，请稍后重试。"
+	}
+	return err.Error()
+}
+
 // runAdvanced：一个父 Task 下并发跑 chunk；全部成功才进入 RecordSummaryBatch。
 func (s *Service) runAdvanced(ctx context.Context, session model.Session, plan *advancedPlan, job *AdvancedJob, cancel context.CancelCauseFunc) {
 	title := "分段压缩 · 会话 " + shortID(session.ID)
@@ -422,9 +443,10 @@ func (s *Service) runAdvanced(ctx context.Context, session model.Session, plan *
 			s.Turns.FinishCompact(session.ID, "canceled", "", "", 0, 0, 0, false)
 			return
 		}
-		guard.Fail(err.Error())
-		s.finishAdvanced(job, "failed", err.Error(), nil)
-		s.Turns.FinishCompact(session.ID, "error", "", err.Error(), 0, 0, 0, false)
+		message := friendlyAdvancedError(err)
+		guard.Fail(message)
+		s.finishAdvanced(job, "failed", message, nil)
+		s.Turns.FinishCompact(session.ID, "error", "", message, 0, 0, 0, false)
 		return
 	}
 	guard.Succeed()
@@ -524,7 +546,7 @@ func (s *Service) runAdvancedChunk(ctx context.Context, session model.Session, c
 	if errors.Is(context.Cause(ctx), errAdvancedCanceled) {
 		child.Cancel()
 	} else {
-		child.Fail(err.Error())
+		child.Fail(friendlyAdvancedError(err))
 	}
 	return model.Summary{}, err
 }

@@ -28,6 +28,7 @@ const busy = ref(false);
 let pollTimer = null;
 let disposed = false;
 let lastDoneJob = "";
+let pollFailures = 0;
 
 function requestBody() {
   const body = {
@@ -64,6 +65,7 @@ async function start() {
   try {
     job.value = await api.advancedCompact(props.sessionId, requestBody());
     lastDoneJob = "";
+    pollFailures = 0;
     poll();
   } catch (e) {
     error.value = e.message;
@@ -79,6 +81,7 @@ function poll() {
     try {
       const next = await api.advancedCompactStatus(props.sessionId, job.value.id);
       if (disposed) return;
+      pollFailures = 0;
       job.value = next;
       if (next.state === "running") { poll(); return; }
       if (next.state === "done" && lastDoneJob !== next.id) {
@@ -86,7 +89,11 @@ function poll() {
         emit("done");
       }
     } catch (e) {
-      if (!disposed) error.value = e.message;
+      if (disposed) return;
+      // 单拍失败不判死刑：网络抖动/切后台时继续问；连续多次失败才停。
+      pollFailures += 1;
+      error.value = e.message;
+      if (pollFailures < 5) poll();
     }
   }, 800);
 }
