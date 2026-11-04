@@ -9,6 +9,8 @@ const emit = defineEmits(["select", "settings", "copy", "export", "close", "new"
 
 const sessions = ref([]);
 const currentId = ref(null);
+// 左栏顶部的两个空白：对话 / 生图。生图暂未接 API，切过去只改选中态（未来这里放生图列表）。
+const mode = ref("chat");
 const groupedSessions = computed(() => groupSessions(sessions.value));
 const menu = ref(null); // { id, left, top } —— Teleport 到 body 的浮板
 const menuEl = ref(null);
@@ -66,7 +68,13 @@ defineExpose({ setSessions });
 <template>
   <aside id="sessions-bar">
     <div class="bar-head">
-      <span>MicroChat</span>
+      <div class="session-mode-tabs" role="tablist" aria-label="左栏模式">
+        <button type="button" class="session-mode-tab" :class="{ sel: mode === 'chat' }"
+          role="tab" :aria-selected="mode === 'chat' ? 'true' : 'false'" @click="mode = 'chat'">对话</button>
+        <button type="button" class="session-mode-tab" :class="{ sel: mode === 'image' }"
+          role="tab" :aria-selected="mode === 'image' ? 'true' : 'false'" title="生图（暂未接入）"
+          @click="mode = 'image'">生图</button>
+      </div>
       <button
         id="toggle-left"
         class="icon-btn"

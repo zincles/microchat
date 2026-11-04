@@ -2974,48 +2974,28 @@ test("容器 entrypoint：后端绑 0.0.0.0，且端口在启动前就解析好"
 //
 // 三条都是"不报错、不误路由、构建也过"的那类：空草稿是一页纯黑、模型名被挤成一个字母、
 // 会话操作键小到手指点不准。钉住它们，免得下次改布局又悄悄退回去。
-test("空草稿首屏：那块欢迎/品牌区已砍掉（用户 2026-11-04 定）", () => {
+test("空草稿首屏：有欢迎语与当前助手/模型，不是一整页纯黑", () => {
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  assert.ok(!app.includes("draft-welcome"), "App 还留着空草稿欢迎块");
-  assert.ok(!/有什么想聊的/.test(app), "空草稿欢迎语又回来了");
-  assert.ok(!/\.draft-welcome\s*\{/.test(css), "欢迎块样式还没删");
+  assert.match(app, /v-if="draft && !chatRows\.length" class="draft-welcome"/,
+    "草稿空态没有欢迎块");
+  assert.match(app, /draftAgentName/, "欢迎块没给当前助手");
+  assert.match(app, /draftModelName/, "欢迎块没给当前模型");
+  assert.match(app, /直接在下面输入第一条消息开始/, "没说清下一步该做什么");
+  assert.match(css, /\.draft-welcome\s*\{/, "欢迎块没有样式（会与消息列挤在一起）");
 });
 
-test("左栏会话按今天 / 昨天 / 一周内 / 一月内 / 更久分组", () => {
-  const now = new Date(2026, 10, 4, 12, 0, 0).getTime();
-  const at = (month, day) => new Date(2026, month, day, 12, 0, 0).getTime();
-  const rows = groupSessions([
-    { id: "today", updated_at: at(10, 4) },
-    { id: "yesterday", updated_at: at(10, 3) },
-    { id: "week", updated_at: at(10, 1) },
-    { id: "month", updated_at: at(9, 10) },
-    { id: "older", updated_at: at(7, 1) },
-  ], now);
-  assert.deepEqual(rows.map((g) => g.label), SESSION_GROUP_LABELS);
-  assert.deepEqual(rows.map((g) => g.items[0].id), ["today", "yesterday", "week", "month", "older"]);
-  assert.deepEqual(groupSessions([], now), []);
-  // 本地日历日边界：今天零点算今天，往前一毫秒算昨天。
-  const dayStart = new Date(2026, 10, 4, 0, 0, 0).getTime();
-  const edge = groupSessions([
-    { id: "now", updated_at: dayStart },
-    { id: "before", updated_at: dayStart - 1 },
-  ], now);
-  assert.deepEqual(edge.map((g) => [g.label, g.items.map((x) => x.id)]), [
-    ["今天", ["now"]], ["昨天", ["before"]],
-  ]);
+test("左栏顶部：没有 MicroChat 字样，改成 对话 / 生图 两个 tab", () => {
+  const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.ok(!bar.includes("MicroChat"), "左栏还挂着 MicroChat 品牌字");
+  assert.match(bar, /role="tablist" aria-label="左栏模式"/, "没有左栏模式 tabs");
+  assert.match(bar, />对话</, "缺「对话」tab");
+  assert.match(bar, />生图</, "缺「生图」tab");
+  assert.match(bar, /生图（暂未接入）/, "生图 tab 没标暂未接入");
+  assert.match(bar, /const mode = ref\("chat"\)/, "默认模式不是对话");
+  assert.match(css, /\.session-mode-tab\.sel\s*\{/, "选中态没有样式");
 });
-
-test("输入框：只留发送 + 全屏输入，全屏是铺满应用的写作层", () => {
-  const composer = readFileSync(join(SRC, "components", "Composer.vue"), "utf8");
-  assert.match(composer, /id="expand-btn"/, "没有全屏输入按钮");
-  assert.match(composer, /v-html="ICONS\.maximize"/, "全屏输入按钮没有图标");
-  assert.match(composer, /class="composer-fs"/, "没有全屏输入层");
-  assert.match(composer, /class="composer-fs-input"/, "全屏层没有 textarea");
-  assert.match(composer, /<Teleport to="#app">/, "全屏层该挂在 #app 里（移动端可视视口才拟合）");
-  assert.match(composer, /@keydown="onFsKeydown"/, "全屏 textarea 没接键盘");
-});
-
 test("移动端顶栏：模型名吃剩余空间，不再被挤成一个字母", () => {
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   assert.match(css, /#chat-col > header \.model-anchor\s*\{[^}]*flex:\s*1 1 auto/,

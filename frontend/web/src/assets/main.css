@@ -528,6 +528,15 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
  *   所以 2.6em 收到 1.5em = 任务行的 0.3em 间距 + 约 1.2em 行高）。 */
 .messages-inner { max-width: var(--read-col, 840px); margin: 0 auto; box-sizing: border-box;
   padding: 3.2em 56px calc(var(--composer-h, 4.6em) + 1.5em); display: flex; flex-direction: column; gap: 0.8em; }
+/* 空草稿首屏（2026-11-02，2026-11-04 恢复）：把"一整页纯黑"换成一句人话 + 当前助手/模型。
+ * 它只是欢迎块，不是消息 —— 所以没有 who/编号/操作行；左栏的品牌位已删，这里不放品牌。 */
+.draft-welcome { margin: 0; min-height: 50vh; padding: 2em 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  text-align: center; gap: 0.35em; color: var(--tg-text); }
+.draft-welcome h2 { margin: 0; font-size: 1.5em; font-weight: 600; letter-spacing: 0.01em; }
+.dw-sub { margin: 0; color: var(--tg-hint); font-size: 0.9em; word-break: break-word; }
+.dw-sep { margin: 0 0.45em; opacity: 0.55; }
+.dw-hint { margin: 0.45em 0 0; color: var(--tg-hint); font-size: 0.82em; opacity: 0.85; }
+.dw-hint kbd { font: inherit; padding: 0.05em 0.35em; border: 1px solid var(--line); border-radius: var(--r-xs); }
 /* 会话加载骨架（2026-11-02）：三条呼吸的灰条，不画头像/气泡（那会像"已经在加载内容"，
  * 而实际可能只是一次切会话）。进度感靠 opacity，不动 layout。 */
 .chat-skeleton { display: flex; flex-direction: column; gap: 0.9em; padding: 1.2em 0; }
@@ -563,6 +572,12 @@ html[data-composer="solid"] .messages-inner { padding-bottom: calc(var(--compose
 }
 .bar-head { display: flex; justify-content: space-between; align-items: center; padding: 0.7em 0.8em 0.3em; color: var(--tg-hint); font-size: 0.85em; }
 .bar-head .icon-btn { font-size: 1em; padding: 0.2em 0.35em; }
+/* 左栏顶部：对话 / 生图（2026-11-04）。去掉 MicroChat 字样，未来生图列表也住这条栏。 */
+.session-mode-tabs { display: flex; align-items: center; gap: 0.12em; }
+.session-mode-tab { background: none; border: none; border-radius: var(--r-btn); color: var(--tg-hint);
+  padding: 0.35em 0.55em; font: inherit; font-size: 1.05em; line-height: 1.2; cursor: pointer; }
+.session-mode-tab:hover { color: var(--tg-text); }
+.session-mode-tab.sel { color: var(--tg-text); background: var(--mix-8); }
 /* 新对话（DS 味，2026-10-10）：整行大按钮、比栏面亮一档 —— 左栏最显眼的那件东西。 */
 #session-new { display: flex; align-items: center; justify-content: center; gap: 0.45em;
   width: calc(100% - 1.2em); margin: 0.35em 0.6em 0.5em; padding: 0.72em 0.9em;

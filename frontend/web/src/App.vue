@@ -24,6 +24,7 @@ import {
   parseModelKey,
   modelOption,
   agentOption,
+  whoText,
   sessionTitle,
 } from "./utils/format.js";
 import TopBar from "./components/TopBar.vue";
@@ -368,6 +369,11 @@ const agentGreeting = computed(() => {
   const a = vueAgents.value.find((x) => x.id === sessionInfo.agent_id);
   return (a?.first_message ?? "").trim();
 });
+// 空草稿首屏的两格（2026-11-02）：当前助手名 + 会话模型。
+// 模型显示上游 id（顶栏那份是 prettify 后的名字）—— 草稿还没有模型列表可查，
+// 而这一行是"我马上要跟谁说话"，宁可给原始 id 也不留空。
+const draftAgentName = computed(() => agentLabelOf(sessionInfo.agent_id) || "默认助手");
+const draftModelName = computed(() => whoText(sessionInfo.provider, sessionInfo.model, "未选模型"));
 const chatRows = computed(() => {
   // 草稿里把首段**合成气泡先画出来**（发送后它就是库里的 #1，编号顺延天然给它 1；
   // 换 agent 就换首段）。draft 是普通变量 ⇒ 判断放在这儿（chatRows 每次都重算）。
@@ -2084,6 +2090,13 @@ onUnmounted(() => {
             <span class="sk-line sk-a"></span>
             <span class="sk-line sk-b"></span>
             <span class="sk-line sk-c"></span>
+          </div>
+          <!-- 空草稿首屏（2026-11-02）：新会话不是一页纯黑 —— 欢迎语 + 当前助手/模型。
+               左栏的品牌位已删；这里只回答"我马上要跟谁说话"。 -->
+          <div v-if="draft && !chatRows.length" class="draft-welcome">
+            <h2>有什么想聊的？</h2>
+            <p class="dw-sub">{{ draftAgentName }}<span class="dw-sep">·</span>{{ draftModelName }}</p>
+            <p class="dw-hint">直接在下面输入第一条消息开始；也可以用 <kbd>/</kbd> 开头的命令。</p>
           </div>
           <button
             v-if="olderSegments > 0"
