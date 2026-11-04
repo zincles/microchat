@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { createApi, mergeStreamSlice, DEFAULT_API_URL, normalizeApiBase, probeHealth } from "../src/api/client.js";
-import { parseWireMessages, shouldCollapse, previewBlock, LONG_BLOCK_CHARS } from "../src/utils/payload.js";
+import { parseWireMessages, previewBlock } from "../src/utils/payload.js";
 import { assemblePrompt, abilityPrompt, missingSegments } from "../src/utils/prompt.js";
 import { renderMarkdown } from "../src/utils/markdown.js";
 import { buildCartridge, cartridgeAgent } from "../src/utils/cartridge.js";
@@ -289,11 +289,12 @@ test("Markdown 渲染：HTML 一律转义、数学走 KaTeX 占位", () => {
   assert.ok(renderMarkdown("$x^2$").includes("katex"));
 });
 
-test("载荷长块折叠：>500 字默认折叠；预览单行截断（换行压空格）", () => {
-  assert.equal(LONG_BLOCK_CHARS, 500);
-  assert.equal(shouldCollapse("短句"), false);
-  assert.equal(shouldCollapse("x".repeat(500)), false);
-  assert.equal(shouldCollapse("x".repeat(501)), true);
+test("载荷分块：默认全折叠；预览单行截断（换行压空格）", () => {
+  const bar = readFileSync(join(SRC, "components", "PayloadBar.vue"), "utf8");
+  assert.match(bar, /return openMap\.value\.has\(i\) \? openMap\.value\.get\(i\) : false/,
+    "载荷正文分块默认没有全折叠");
+  assert.match(bar, /return cpOpenMap\.value\.has\(i\) \? cpOpenMap\.value\.get\(i\) : false/,
+    "压缩载荷分块默认没有全折叠");
   assert.equal(previewBlock("你好\n世界"), "你好 世界");
   const long = "字".repeat(120);
   const pv = previewBlock(long, 90);
@@ -2014,6 +2015,9 @@ test("上下文工作区：切进去 / 换会话时按当前 tab 补拉", () => 
   assert.match(lazy, /payloadTab === "tree"\) refreshTree\(\)/, "压缩 tab 没拉树");
   assert.match(lazy, /payloadTab === "state"\) refreshStateView\(sessionID\)/, "状态 tab 没拉状态");
   assert.match(lazy, /else refreshHistoryPreview\(\)/, "载荷 tab 没拉历史预演");
+  const hp = app.match(/async function refreshHistoryPreview\(\)[\s\S]*?\n\}/)?.[0] ?? "";
+  assert.ok(hp, "找不到 refreshHistoryPreview");
+  assert.ok(!/previewOn\(\)/.test(hp), "载荷 tab 仍受输入预览开关影响（打开载荷就该拉）");
 
   // 换会话那条：enterSession 落地之后也要按当前 tab 补拉。
   // ⚠ 从前这里用 `summaryMsgs.clear()` 当锚点 —— 它先命中的是 `startDraft`，等于一直在测草稿，
@@ -2142,9 +2146,7 @@ test("载荷：有一键折叠全部，且没有一键展开", () => {
   assert.ok(toolbar.includes("collapse-all"), "「折叠全部」没放在载荷页的工具栏里");
   assert.match(tpl, /@click="collapseAll"/, "按钮没接 collapseAll");
 
-  // ② 折叠的实现：**每一条都显式记成 false**。
-  //    `blockOpen` 的默认值取决于块长短（长块默认折叠），所以"不管当前状态一律收起"必须写显式的 false，
-  //    不能靠"清空 map 让它回默认"—— 那样短块会自己弹开。
+  // ② 折叠的实现：**每一条都显式记成 false**（旧默认是按块长，短块会弹开；现在默认本就全收）。
   const fn = script.match(/function collapseAll\(\)[\s\S]*?\n\}/)?.[0] ?? "";
   assert.ok(fn, "找不到 collapseAll");
   assert.match(fn, /set\(i, false\)|set\([^,]+,\s*false\)/, "折叠时没把每条显式设成 false —— 短块会自己弹开");

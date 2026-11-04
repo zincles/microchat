@@ -331,7 +331,8 @@ async function refreshTree() {
 // 换会话/刷新页面时这是最重的一发，而人可能根本没打开工作区。现在改成按需。
 let historyPreviewSeq = 0;
 async function refreshHistoryPreview() {
-  if (!previewOn() || draft || !sessionID) { payloadbarRef.value?.setWire(null); return; }
+  // 载荷 tab 是用户**显式点开**的上下文：不受输入框预览开关影响；草稿 / 无会话才清空。
+  if (draft || !sessionID) { payloadbarRef.value?.setWire(null); return; }
   const sid = sessionID;
   const my = epoch;
   const seq = ++historyPreviewSeq;

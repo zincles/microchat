@@ -11,7 +11,7 @@ import { ref, computed, watch } from "vue";
 import CompactTree from "./CompactTree.vue";
 import ToggleSwitch from "./ToggleSwitch.vue";
 import { treeTotals } from "../utils/tree.js";
-import { parseWireMessages, shouldCollapse, previewBlock } from "../utils/payload.js";
+import { parseWireMessages, previewBlock } from "../utils/payload.js";
 import { payloadVizOn, savePayloadViz } from "../utils/prefs.js";
 
 defineProps({
@@ -32,12 +32,12 @@ const wire = ref(null);
 const viz = ref(payloadVizOn());
 function setViz(v) { viz.value = !!v; savePayloadViz(viz.value); }
 const vizData = computed(() => (viz.value ? parseWireMessages(wire.value) : null));
-// 每块的开合（2026-10-11）：**长块默认折叠**（system prompt 那种巨块不撑爆面板）；
-// 用户点过的以点过的为准。换一份载荷 ⇒ 状态清空、重按默认来。
+// 每块开合（2026-11-04 用户定）：分块视图**默认全部折叠**（远程部署少铺开、
+// 也少一次重排）；用户点过的以点过的为准。换一份载荷 ⇒ 清空回全折叠。
 const openMap = ref(new Map());
 watch(vizData, () => { openMap.value = new Map(); });
 function blockOpen(m, i) {
-  return openMap.value.has(i) ? openMap.value.get(i) : !shouldCollapse(m.content);
+  return openMap.value.has(i) ? openMap.value.get(i) : false;
 }
 function toggleBlock(m, i) {
   openMap.value.set(i, !blockOpen(m, i));
@@ -148,9 +148,10 @@ const compactStateHint = computed(() => {
   return "";
 });
 // 开合状态独立于上面"载荷"tab 那份（两边都在看同一种形状，但不要互相打断阅读）。
+// 同样**默认全折叠**（2026-11-04）。
 const cpOpenMap = ref(new Map());
 function cpOpen(m, i) {
-  return cpOpenMap.value.has(i) ? cpOpenMap.value.get(i) : !shouldCollapse(m.content);
+  return cpOpenMap.value.has(i) ? cpOpenMap.value.get(i) : false;
 }
 function cpToggle(m, i) { cpOpenMap.value.set(i, !cpOpen(m, i)); }
 // 关掉"这一发压缩的载荷"那块预览。
