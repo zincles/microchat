@@ -30,6 +30,12 @@ func TestDisplayName(t *testing.T) {
 	if got := DisplayName(nil, nil, "deepseek-v4-flash"); got != "Deepseek V4 Flash" {
 		t.Fatalf("回落到 prettify：%q", got)
 	}
+	if got := DisplayName(nil, nil, "claude-opus-5-5"); got != "Claude Opus 5.5" {
+		t.Fatalf("版本号该合成点号：%q", got)
+	}
+	if got := DisplayName(nil, nil, "claude-opus-4-5-20251101"); got != "Claude Opus 4.5 20251101" {
+		t.Fatalf("日期段不该被拼成点号：%q", got)
+	}
 	blank := "  "
 	if got := DisplayName(&blank, &upstream, "deepseek-v4-flash"); got != "上游名" {
 		t.Fatalf("空白覆盖视同没覆盖：%q", got)

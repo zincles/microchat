@@ -2936,8 +2936,8 @@ test("移动端顶栏：模型名吃剩余空间，不再被挤成一个字母",
 test("会话列表：条数可见、日期不显示，操作键有能点中的尺寸", () => {
   const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  assert.match(bar, /\{\{ s\.messages \?\? 0 \}\} 条/, "会话条目没有消息条数");
-  assert.ok(!/relativeTime|updated_at/.test(bar), "会话条目还在显示日期元数据");
+  assert.match(bar, /\{\{ s\.title \|\| "新会话" \}\}/, "会话条目没有标题");
+  assert.ok(!/s\.messages|relativeTime|updated_at/.test(bar), "会话条目还在显示条数/日期元数据");
   assert.match(css, /#session-list \{[^}]*padding:\s*0\.25em 0\.45em/, "会话列表没有留边距");
   assert.match(bar, /v-html="ICONS\.x"/, "关闭键还是纯文本 ×，没换成线性图标");
   assert.match(bar, /v-html="ICONS\.settings"/, "会话设置键没有图标");

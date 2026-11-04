@@ -42,8 +42,6 @@ defineExpose({ setSessions });
       >
         <span class="session-main">
           <span class="title">{{ s.title || "新会话" }}</span>
-          <!-- 第二行只留消息条数（2026-11-04 用户定：日期元数据不再显示）。 -->
-          <span class="meta">{{ s.messages ?? 0 }} 条</span>
         </span>
         <button
           class="item-btn"

@@ -605,13 +605,12 @@ html[data-composer="solid"] .messages-inner { padding-bottom: calc(var(--compose
 .foot-btn .fb-icon { display: inline-flex; }
 .foot-btn .fb-icon svg { width: 1.1em; height: 1.1em; }
 .foot-btn:hover { background: var(--mix-6); color: var(--tg-text); }
-.session-item { display: flex; gap: 0.4em; align-items: center; padding: 0.4em 0.55em; border-radius: var(--r-btn); cursor: pointer; white-space: nowrap; overflow: hidden; color: var(--tg-text); line-height: 1.3; }
+.session-item { display: flex; gap: 0.4em; align-items: center; padding: 0.6em 0.6em; border-radius: var(--r-btn); cursor: pointer; white-space: nowrap; overflow: hidden; color: var(--tg-text); line-height: 1.3; }
 .session-item:hover { background: var(--mix-6); }
 .session-item.sel { background: var(--mix-10); color: var(--tg-text); }
 /* 标题 + 第二行（条数/最近活动）。第二行是为了**定位**：十条同标题的会话只看名字分不出来。 */
-.session-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.08em; }
-.session-main .title { overflow: hidden; text-overflow: ellipsis; }
-.session-main .meta { color: var(--tg-hint); font-size: 0.72em; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; }
+.session-main { flex: 1; min-width: 0; display: flex; align-items: center; }
+.session-main .title { overflow: hidden; text-overflow: ellipsis; line-height: 1.35; }
 /* 行内两枚操作键（☰ / ×）：给足命中区（2026-11-02）。从前 ☰ 只有 24×14px，
  * 手指根本点不准 —— 视觉可以小，可点的盒子不能。 */
 .session-item .close, .session-item .item-btn {
@@ -1080,7 +1079,7 @@ button.toggle.on .knob { transform: translateX(1.1em); }
 /* 等宽数字（2026-11-02）：这一族数字会随流式/滚动变化，宽度不一就会左右跳。
  * 以前 14 条规则各写一遍 `font-variant-numeric`，现在只在这里写一次。 */
 .model-group-count, .task-time, .task-progress, .ctx-used, .ctx-pct,
-.ctx-row dd, .pv-idx, .session-main .meta, .msg .msg-idx, .msg .msg-foot,
+.ctx-row dd, .pv-idx, .msg .msg-idx, .msg .msg-foot,
 .sum-range, .sum-pos, .scale-value { font-variant-numeric: tabular-nums; }
 
 /* 窄屏模型名换行后顶栏会变高（见上）：这条必须写在所有 `.messages-inner` 规则之后，

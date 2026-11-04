@@ -28,12 +28,26 @@ type ModelsResponse struct {
 
 // Prettify：`deepseek-v4-flash` → `Deepseek V4 Flash`（照旧版逐字一致）。
 // 取 `/` 后的尾巴，按 `-`/`_` 切词，每词首字母大写，空格相连。
+//
+// 版本号：两个**单数字**相邻时合成点号（`claude-opus-5-5` → `Claude Opus 5.5`）。
+// 日期这种多位数段不动（`...-4-5-20251101` → `4.5 20251101`），避免把 2025-11-01 拼成
+// 一个看不懂的 2025.11.01。
 func Prettify(upstreamID string) string {
 	tail := upstreamID
 	if index := strings.LastIndexByte(upstreamID, '/'); index >= 0 {
 		tail = upstreamID[index+1:]
 	}
 	words := strings.FieldsFunc(tail, func(r rune) bool { return r == '-' || r == '_' })
+	merged := make([]string, 0, len(words))
+	for i := 0; i < len(words); i++ {
+		if i+1 < len(words) && singleDigit(words[i]) && singleDigit(words[i+1]) {
+			merged = append(merged, words[i]+"."+words[i+1])
+			i++
+			continue
+		}
+		merged = append(merged, words[i])
+	}
+	words = merged
 	for index, word := range words {
 		if word == "" {
 			continue
@@ -41,6 +55,10 @@ func Prettify(upstreamID string) string {
 		words[index] = strings.ToUpper(word[:1]) + word[1:]
 	}
 	return strings.Join(words, " ")
+}
+
+func singleDigit(word string) bool {
+	return len(word) == 1 && word[0] >= '0' && word[0] <= '9'
 }
 
 // DisplayName：**三级回退**（用户覆盖 → 上游名 → prettify）。只在这里做。
