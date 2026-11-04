@@ -582,3 +582,32 @@ func TestTurnEventsSendsIdleEvent(t *testing.T) {
 		t.Fatalf("不是 SSE 帧：%s", recorder.Body.String())
 	}
 }
+
+// messages/batch：一次取多个区间（前端在摘要切开时只发一发）。
+func TestMessagesBatchEndpoint(t *testing.T) {
+	box := newDummySandbox(t)
+	ids := []string{
+		"01a00000-0000-7000-8000-000000000011",
+		"01a00000-0000-7000-8000-000000000012",
+		"01a00000-0000-7000-8000-000000000013",
+		"01a00000-0000-7000-8000-000000000014",
+	}
+	for _, id := range ids {
+		if _, err := box.store.InsertMessage(model.Message{
+			ID: id, SessionID: box.sessionID, Role: model.RoleUser, Content: "m",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	recorder := call(box.server, "POST", box.path+"/messages/batch", `{"ranges":[[1,2],[4,4]]}`)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("批量取消息该 200，得到 %d：%s", recorder.Code, recorder.Body.String())
+	}
+	var got []model.Message
+	if err := json.Unmarshal(recorder.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 || got[0].Idx != 1 || got[1].Idx != 2 || got[2].Idx != 4 {
+		t.Fatalf("批量结果不对：%+v", got)
+	}
+}

@@ -522,3 +522,28 @@ func TestUpdateMessageEditsContentAndReasoningSeparately(t *testing.T) {
 		t.Fatalf("不存在的消息该 NotFound：%v", err)
 	}
 }
+
+// 批量区间：一次取多个闭区间，按整条会话顺序返回并去重；to=0 = 到末尾。
+func TestListMessageRangesBatchesAndDeduplicates(t *testing.T) {
+	st := openTemp(t)
+	ids := []string{
+		"01a00000-0000-7000-8000-000000000001",
+		"01a00000-0000-7000-8000-000000000002",
+		"01a00000-0000-7000-8000-000000000003",
+		"01a00000-0000-7000-8000-000000000004",
+		"01a00000-0000-7000-8000-000000000005",
+	}
+	seedSession(t, st, "01a00000-0000-7000-8000-0000000000ff", ids...)
+	got, err := st.ListMessageRanges("01a00000-0000-7000-8000-0000000000ff", [][2]int{{1, 2}, {2, 4}, {5, 0}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 5 {
+		t.Fatalf("批量区间该去重并取到 5 条，得到 %d", len(got))
+	}
+	for index, message := range got {
+		if message.ID != ids[index] {
+			t.Fatalf("第 %d 条 = %s，想要 %s", index, message.ID, ids[index])
+		}
+	}
+}

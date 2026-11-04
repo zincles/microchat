@@ -125,6 +125,8 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
     listMessagesTail: (id, fromIdx) =>
       call("GET", `/sessions/${enc(id)}/messages?from_idx=${fromIdx}`),
     listMessagesLast: (id, n) => call("GET", `/sessions/${enc(id)}/messages?last=${n}`),
+    // messageRanges：一次取多个闭区间（to=0 = 到末尾）；把摘要切开的几段压成一发。
+    messageRanges: (id, ranges) => call("POST", `/sessions/${enc(id)}/messages/batch`, { ranges }),
     // sendMessage：发一句话（202 受理 + 后台跑；预演调的不是这条，别混）。
     sendMessage: (id, content) => call("POST", `/sessions/${enc(id)}/messages`, { content }),
     // resend：重发历史（不落新消息，拿现有历史再跑一轮；空会话 400）。

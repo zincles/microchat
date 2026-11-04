@@ -3151,3 +3151,16 @@ test("载荷预览：面板里可开关；关掉不请求，偏好与输入预�
   assert.match(app, /function onPayloadPreview\(on\)/, "App 没接载荷预览开关");
   assert.match(prefs, /payload_preview: true/, "前端缺省没有 payload_preview（默认应开）");
 });
+
+test("消息窗口批量取：摘要切出的多个区间压成一发 POST", () => {
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  const api = readFileSync(join(SRC, "api", "client.js"), "utf8");
+  assert.match(api, /messageRanges:\s*\(id, ranges\) => call\("POST", `\/sessions\/\$\{enc\(id\)\}\/messages\/batch`/,
+    "API 客户端没有 messageRanges");
+  assert.match(app, /function batchRanges\(runs\)/, "没有把 Infinity 尾段转成 to=0 的纯函数");
+  assert.match(app, /b === Infinity \? 0 : b/, "批量区间没有处理尾部");
+  assert.equal((app.match(/api\.messageRanges\(sid, batchRanges\(runs\)\)/g) ?? []).length, 2,
+    "首屏与加载更多没有都走批量接口");
+  assert.ok(!/for \(const \[a, b\] of runs\)[\s\S]{0,120}await api\.listMessages/.test(app),
+    "还在按区间循环发请求（RTT 会乘以区间数）");
+});

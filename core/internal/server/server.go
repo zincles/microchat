@@ -125,6 +125,8 @@ func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *ch
 	// 删除预览：**只算不动**（安全 ⇒ GET）；DELETE 照同一份计算干
 	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/messages/{message_id}/deletion-preview", s.deletionPreview)
 	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/messages", s.listMessages)
+	// 批量区间：消息列被摘要切开时一发拿全，别一个区间一个 RTT（2026-11-04）。
+	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/messages/batch", s.listMessagesBatch)
 	// 一轮生成：**受理与生成分开**（202 + 轮询）—— 状态 / 游标读 / 停止 / 上下文占用
 	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/messages", s.sendMessage)
 	// 重发历史：**不落新消息**，拿现有历史再跑一轮（尾 user 没回复 / 尾 assistant 想再要一版都行）
@@ -256,7 +258,41 @@ func (s *Server) listMessages(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, messages)
 }
 
-// messageWindow：把三个查询参数解析 + 校验成窗口（**参数层的错一律 400**，错误体固定）。
+// MessageRangesReq：`{"ranges":[[1,5],[8,10]]}`；`to=0` 表示到末尾。
+// 区间是 1-based **消息序号**，与 `/messages?from_idx=&to_idx=` 同一把尺。
+type MessageRangesReq struct {
+	Ranges [][2]int `json:"ranges"`
+}
+
+// listMessagesBatch：一次取多个消息区间（远程/高延迟下把 N 个 GET 压成一发）。
+// 所有区间先验完再动库；返回仍是按 id 升序、去重后的数组。
+func (s *Server) listMessagesBatch(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireSession(w, r); !ok {
+		return
+	}
+	var req MessageRangesReq
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if len(req.Ranges) == 0 {
+		writeJSON(w, http.StatusOK, []model.Message{})
+		return
+	}
+	for _, span := range req.Ranges {
+		if span[0] < 1 || span[1] < 0 || (span[1] > 0 && span[1] < span[0]) {
+			writeError(w, http.StatusUnprocessableEntity, "invalid", "ranges 要是 [from,to] 且 from >= 1、to 为 0（到末尾）或 >= from")
+			return
+		}
+	}
+	messages, err := s.store.ListMessageRanges(r.PathValue("session_id"), req.Ranges)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, messages)
+}
+
+// messageWindow：把三个查询参数解析 + 校验成窗口（**参数层的错一律 400**，错误体固定）。// messageWindow：把三个查询参数解析 + 校验成窗口（**参数层的错一律 400**，错误体固定）。
 //
 // `last` 与 `from_idx`/`to_idx` **不许混用**：一个说"取尾部几条"、一个说"取第几条到第几条"，
 // 同时给就是调用方没想清（宁可说清，也不猜谁赢）。

@@ -164,6 +164,39 @@ func (s *Store) ListMessagesWindow(sessionID string, window MessageWindow) ([]mo
 	return windowSlice(messages, window), nil
 }
 
+// ListMessageRanges：一次取多个 1-based 闭区间（`to=0` = 到末尾）。
+// 消息列被摘要切成好几段时，前端只发一发请求，而不是每个区间一个 RTT。
+// 仍按整条会话的 id 顺序返回并去重；越界按 windowSlice 同一语义夹住。
+func (s *Store) ListMessageRanges(sessionID string, ranges [][2]int) ([]model.Message, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	messages, err := s.allMessages(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	picked := make([]bool, len(messages))
+	for _, span := range ranges {
+		begin := max(span[0], 1)
+		end := span[1]
+		if end <= 0 || end > len(messages) {
+			end = len(messages)
+		}
+		if begin > end {
+			continue
+		}
+		for i := begin - 1; i < end; i++ {
+			picked[i] = true
+		}
+	}
+	out := make([]model.Message, 0)
+	for i, message := range messages {
+		if picked[i] {
+			out = append(out, message)
+		}
+	}
+	return out, nil
+}
+
 // windowSlice：**唯一一处**按窗口切消息 —— 切出来的仍是 id 升序、仍是同一条会话里的 `idx`。
 func windowSlice(messages []model.Message, window MessageWindow) []model.Message {
 	if window.Last > 0 {

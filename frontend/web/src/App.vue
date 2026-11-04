@@ -202,6 +202,11 @@ function toRow(m) {
   };
 }
 
+// batchRanges：runsToFetch 的 Infinity 尾段 → 批量接口的 to=0。
+function batchRanges(runs) {
+  return runs.map(([a, b]) => [a, b === Infinity ? 0 : b]);
+}
+
 // loadWindow：把窗口 [windowFrom..尾] 的消息取回来 —— **只按消息段拉**（runsToFetch）：
 // 被摘要盖住的 idx 一个字节都不取（想看原文 ⇒ 摘要卡展开时另拉）。
 // reset ⇒ 重新按"最后 N 段"定窗口；否则保持起点（先对回段边界：压缩/删除会改结构）。
@@ -218,11 +223,8 @@ async function loadWindow({ reset = false, scroll = true } = {}) {
     ? windowStart(segments, windowLimit.value)
     : alignWindowFrom(segments, windowFrom.value, windowLimit.value);
   const runs = runsToFetch(segments, windowFrom.value, Infinity);
-  const got = [];
-  for (const [a, b] of runs) {
-    const part = b === Infinity ? await api.listMessagesTail(sid, a) : await api.listMessagesRange(sid, a, b);
-    got.push(...part);
-  }
+  // 一个区间请求一次会把摘要切出来的段数直接乘成 RTT；批量一发拿全。
+  const got = runs.length ? await api.messageRanges(sid, batchRanges(runs)) : [];
   if (my !== epoch) return false;
   vueSegments.value = segments;
   vueMessages.value = got.sort((x, y) => x.idx - y.idx).map(toRow);
@@ -265,8 +267,7 @@ async function loadMore() {
   const older = prevWindowStart(vueSegments.value, windowFrom.value, windowLimit.value);
   if (!sid || older >= windowFrom.value) return;
   const runs = runsToFetch(vueSegments.value, older, windowFrom.value - 1);
-  const got = [];
-  for (const [a, b] of runs) got.push(...await api.listMessagesRange(sid, a, b));
+  const got = runs.length ? await api.messageRanges(sid, batchRanges(runs)) : [];
   if (my !== epoch) return;
   const el = document.getElementById("messages-vue");
   const beforeH = el ? el.scrollHeight : 0;
