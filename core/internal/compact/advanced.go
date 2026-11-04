@@ -11,6 +11,7 @@ package compact
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -25,6 +26,10 @@ import (
 
 	"github.com/google/uuid"
 )
+
+// errAdvancedCanceled：用户按停的 sentinel —— 用来把"用户取消"与"某一块真失败后
+// 内部掐断其他块"分开。没有它，第一个连接错误会被报成"已取消"，掩盖真正的失败原因。
+var errAdvancedCanceled = errors.New("advanced compact canceled by user")
 
 // AdvancedRequest：高级压缩/修洞的参数。
 //
@@ -349,13 +354,14 @@ func (s *Service) StartAdvanced(session model.Session, req AdvancedRequest) (Adv
 			Blocks: chunk.blocks, Messages: chunk.messages, State: "pending",
 		})
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancelCause := context.WithCancelCause(context.Background())
+	cancel := func() { cancelCause(errAdvancedCanceled) }
 	job.cancel = cancel
 	s.advMu.Lock()
 	s.advancedJobs[job.ID] = job
 	s.advBySession[session.ID] = job.ID
 	s.advMu.Unlock()
-	go s.runAdvanced(ctx, session, plan, job, cancel)
+	go s.runAdvanced(ctx, session, plan, job, cancelCause)
 	return snapshotAdvanced(job), nil
 }
 
@@ -395,21 +401,21 @@ func snapshotAdvanced(job *AdvancedJob) AdvancedJob {
 }
 
 // runAdvanced：一个父 Task 下并发跑 chunk；全部成功才进入 RecordSummaryBatch。
-func (s *Service) runAdvanced(ctx context.Context, session model.Session, plan *advancedPlan, job *AdvancedJob, cancel context.CancelFunc) {
+func (s *Service) runAdvanced(ctx context.Context, session model.Session, plan *advancedPlan, job *AdvancedJob, cancel context.CancelCauseFunc) {
 	title := "分段压缩 · 会话 " + shortID(session.ID)
 	if plan.mode == "repair" {
 		title = "补齐空档 · 会话 " + shortID(session.ID)
 	}
-	guard := s.Tasks.Begin(task.KindCompact, &session.ID, title)
+	guard := s.Tasks.Begin(task.KindCompactJob, &session.ID, title)
 	defer guard.Interrupted()
-	guard.Cancellable(cancel)
+	guard.Cancellable(func() { cancel(errAdvancedCanceled) })
 
-	summaries, err := s.generateAdvanced(ctx, session, plan, job, cancel)
+	summaries, err := s.generateAdvanced(ctx, session, plan, job, cancel, guard.ID())
 	if err == nil {
 		err = s.Store.RecordSummaryBatch(summaries)
 	}
 	if err != nil {
-		canceled := errors.Is(ctx.Err(), context.Canceled)
+		canceled := errors.Is(context.Cause(ctx), errAdvancedCanceled)
 		if canceled {
 			guard.Cancel()
 			s.finishAdvanced(job, "canceled", "", nil)
@@ -458,7 +464,7 @@ func (s *Service) finishAdvanced(job *AdvancedJob, state, message string, summar
 	_ = summaries
 }
 
-func (s *Service) generateAdvanced(ctx context.Context, session model.Session, plan *advancedPlan, job *AdvancedJob, cancel context.CancelFunc) ([]model.Summary, error) {
+func (s *Service) generateAdvanced(ctx context.Context, session model.Session, plan *advancedPlan, job *AdvancedJob, cancel context.CancelCauseFunc, parentID string) ([]model.Summary, error) {
 	results := make([]model.Summary, len(plan.chunks))
 	var next int64
 	var firstErr error
@@ -478,13 +484,13 @@ func (s *Service) generateAdvanced(ctx context.Context, session model.Session, p
 					return
 				}
 				s.setChunkState(job, index, "running", 0, "")
-				summary, err := s.generateChunkWithRetry(ctx, session, plan.chunks[index], job, index, plan.maxAttempts)
+				summary, err := s.runAdvancedChunk(ctx, session, plan.chunks[index], job, index, plan.maxAttempts, parentID)
 				if err != nil {
 					s.setChunkState(job, index, "failed", 0, err.Error())
 					errMu.Lock()
 					if firstErr == nil {
 						firstErr = err
-						cancel()
+						cancel(err)
 					}
 					errMu.Unlock()
 					return
@@ -502,6 +508,25 @@ func (s *Service) generateAdvanced(ctx context.Context, session model.Session, p
 		return nil, ctx.Err()
 	}
 	return results, nil
+}
+
+// runAdvancedChunk：一个 chunk 在父 Job 下挂一个**子 Task**（面板里 Job + 3 Task 的来源）。
+// 子 Task 只管这一发上游请求；取消仍由父 Job 的 ctx 统一裁决。
+func (s *Service) runAdvancedChunk(ctx context.Context, session model.Session, chunk advancedChunkPlan, job *AdvancedJob, index, maxAttempts int, parentID string) (model.Summary, error) {
+	child := s.Tasks.BeginChild(task.KindCompact, &session.ID,
+		fmt.Sprintf("压缩第 %d 段 · 第 %d–%d 条", index+1, chunk.begin+1, chunk.end+1), parentID)
+	defer child.Interrupted()
+	summary, err := s.generateChunkWithRetry(ctx, session, chunk, job, index, maxAttempts)
+	if err == nil {
+		child.Succeed()
+		return summary, nil
+	}
+	if errors.Is(context.Cause(ctx), errAdvancedCanceled) {
+		child.Cancel()
+	} else {
+		child.Fail(err.Error())
+	}
+	return model.Summary{}, err
 }
 
 func (s *Service) generateChunkWithRetry(ctx context.Context, session model.Session, chunk advancedChunkPlan, job *AdvancedJob, index, maxAttempts int) (model.Summary, error) {

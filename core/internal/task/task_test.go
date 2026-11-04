@@ -219,3 +219,29 @@ func TestBeginFillsGroup(t *testing.T) {
 	}
 	t.Fatal("面板里没有刚挂的那一条")
 }
+
+// 子 Task 要带父 Job id：面板据此把 Job 与下面 3 个 Task 画成两层，而不是平铺。
+func TestBeginChildKeepsParentID(t *testing.T) {
+	r := NewRegistry()
+	session := "01a0e965-4156-741d-a8bd-5e16f28eb90d"
+	parent := r.Begin(KindCompactJob, &session, "分段压缩 · 会话 x")
+	child := r.BeginChild(KindCompact, &session, "压缩第 1 段", parent.ID())
+	board := r.Board()
+	if len(board.Tasks) != 2 {
+		t.Fatalf("该有父 Job + 子 Task 两行：%+v", board.Tasks)
+	}
+	var found *Record
+	for index := range board.Tasks {
+		if board.Tasks[index].ID == child.ID() {
+			found = &board.Tasks[index]
+		}
+	}
+	if found == nil || found.ParentID != parent.ID() {
+		t.Fatalf("子 Task 的 parent_id 没保住：%+v", found)
+	}
+	child.Succeed()
+	parent.Succeed()
+	if board := r.Board(); board.Running != 0 {
+		t.Fatalf("收尾后不该还在跑：%+v", board)
+	}
+}

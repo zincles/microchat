@@ -212,6 +212,10 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--tg-text); }
 .task-time { flex: none; font-size: 0.85em; color: var(--tg-hint); }
+/* Job / Task 的层级：父 Job 一行，子 Task 缩进；角色牌只用来区分两层，不抢任务名。 */
+.task-role { flex: none; font-size: 0.7em; line-height: 1.5; padding: 0 0.35em; border-radius: var(--r-xs);
+  color: var(--tg-link); border: 1px solid color-mix(in srgb, var(--tg-link) 45%, transparent); }
+.task-row.child { padding-left: 1.55em; border-left: 2px solid var(--mix-10); margin-left: 0.45em; }
 /* 已结束的压暗一档（它还在这张表里只是"刚发生"，不是在跑）；失败的整行点名（红字）。 */
 .task-row.done { opacity: 0.6; }
 .task-row.failed .task-label { color: var(--tg-destructive); }
@@ -608,6 +612,8 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
   padding: 0.45em 0; color: var(--tg-hint); font-size: 0.9em; border-bottom: 1px solid var(--line); }
 .adv-summary b { color: var(--tg-text); }
 .adv-error { color: var(--tg-destructive); }
+.adv-progress { height: 0.28em; margin: 0 0 0.65em; border-radius: 999px; background: var(--mix-10); overflow: hidden; }
+.adv-progress i { display: block; height: 100%; background: var(--tg-link); transition: width 180ms linear; }
 .adv-holes { margin: 0.4em 0 0.7em; padding: 0.45em 0.65em; border-left: 2px solid var(--tg-destructive);
   color: var(--tg-hint); font-size: 0.9em; }
 .adv-holes b { color: var(--tg-text); margin-right: 0.5em; }

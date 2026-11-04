@@ -1060,6 +1060,19 @@ test("后台任务面板：队列单独一栏（带进度与取消），原子�
   }
 });
 
+test("任务面板：分段压缩显示一个 Job 和它下面的子 Task，不是平铺一个任务", () => {
+  const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  const tpl = top.slice(top.indexOf("<template>"));
+  assert.match(top, /compact_job: "分段压缩"/, "任务种类表没有 compact_job");
+  assert.match(top, /const taskRows = computed/, "没有按 parent_id 组任务行");
+  assert.match(top, /t\.parent_id/, "任务面板没看父 Job id");
+  assert.match(top, /t\.depth > 0/, "子 Task 没有缩进层级");
+  assert.match(top, /taskRoleText\(t\)/, "没有 Job / 任务角色牌");
+  assert.match(tpl, /class="task-role"/, "任务行没有角色牌");
+  assert.match(css, /\.task-row\.child\s*\{[^}]*padding-left/, "子 Task 没有缩进样式");
+});
+
 test("顶栏是不透明的（消息滚到栏底下要被挡住）", () => {
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   const rule = css.match(/#chat-col > header \{[^}]*\}/g)?.find((r) => /position:\s*absolute/.test(r));

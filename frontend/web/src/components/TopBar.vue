@@ -222,9 +222,35 @@ const taskTitle = computed(() => {
 const GROUP_LABELS = { llm: "模型调用", plain: "其他任务" };
 // 任务种类的人话名（原始 kind 是给机器看的，`refresh_models` 这种不该出现在面板里）。
 const TASK_KIND_LABELS = {
-  refresh_models: "刷新模型", turn: "对话", compact: "压缩", title: "起标题",
-  reroll: "重摇", judgement: "判断",
+  refresh_models: "刷新模型", turn: "对话", compact: "压缩", compact_job: "分段压缩",
+  title: "起标题", reroll: "重摇", judgement: "判断",
 };
+// 复合作业的面板层级：父 Job 一行，子 Task 缩进挂在下面。
+// 只按 parent_id 排；不做“猜测式”归并（父不在这一屏就把它当独立行，别丢）。
+const taskRows = computed(() => {
+  const list = taskRecords.value;
+  const ids = new Set(list.map((t) => t.id));
+  const children = new Map();
+  for (const t of list) {
+    if (t.parent_id && ids.has(t.parent_id)) {
+      if (!children.has(t.parent_id)) children.set(t.parent_id, []);
+      children.get(t.parent_id).push(t);
+    }
+  }
+  const out = [];
+  const walk = (t, depth) => {
+    out.push({ ...t, depth });
+    for (const child of children.get(t.id) ?? []) walk(child, depth + 1);
+  };
+  for (const t of list) {
+    if (!t.parent_id || !ids.has(t.parent_id)) walk(t, 0);
+  }
+  return out;
+});
+function taskRoleText(t) {
+  if (t.kind === "compact_job") return "Job";
+  return t.parent_id ? "任务" : "";
+}
 // 标题常常已经以种类名开头（"刷新模型 · opendesign"）⇒ 别把同一个词在行首再印一遍。
 function taskKindText(t) {
   const label = TASK_KIND_LABELS[t.kind] || "任务";
@@ -232,7 +258,7 @@ function taskKindText(t) {
 }
 const taskGroups = computed(() => {
   const buckets = new Map();
-  for (const t of taskRecords.value) {
+  for (const t of taskRows.value) {
     const key = t.group || "plain";
     if (!buckets.has(key)) buckets.set(key, { key, label: GROUP_LABELS[key] || key, items: [] });
     buckets.get(key).items.push(t);
@@ -479,8 +505,9 @@ defineExpose({ setSession, setModels, setAgents, setContext, setStatus, setTasks
                   v-for="t in g.items"
                   :key="t.id"
                   class="task-row"
-                  :class="{ failed: !!t.error }"
+                  :class="{ failed: !!t.error, child: t.depth > 0 }"
                 >
+                  <span v-if="taskRoleText(t)" class="task-role">{{ taskRoleText(t) }}</span>
                   <span v-if="taskKindText(t)" class="task-kind">{{ taskKindText(t) }}</span>
                   <span class="task-label" :title="t.title">{{ t.title || "任务" }}</span>
                   <button

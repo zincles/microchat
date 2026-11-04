@@ -6,7 +6,7 @@
 //
 // 一条硬口径：整体只有 running / done / failed / canceled；每块的 state 只是进度，
 // 不是"这一块成功就算整体成功"。
-import { ref, watch, onUnmounted } from "vue";
+import { ref, computed, watch, onUnmounted } from "vue";
 import { sharedApi } from "../utils/prefs.js";
 
 const props = defineProps({
@@ -107,6 +107,11 @@ watch(() => props.sessionId, () => {
 });
 onUnmounted(() => { disposed = true; clearTimeout(pollTimer); });
 
+const doneChunks = computed(() => (job.value?.chunks ?? []).filter((c) => c.state === "done").length);
+const failedChunks = computed(() => (job.value?.chunks ?? []).filter((c) => c.state === "failed").length);
+const totalChunks = computed(() => job.value?.chunks?.length ?? 0);
+const runningChunk = computed(() => (job.value?.chunks ?? []).find((c) => c.state === "running"));
+const progressPct = computed(() => totalChunks.value ? Math.round((doneChunks.value / totalChunks.value) * 100) : 0);
 const stateText = (state) => ({
   ready: "可压缩", pending: "等待中", running: "正在压缩", done: "已完成", failed: "失败", canceled: "已取消",
 }[state] ?? state);
@@ -164,9 +169,12 @@ const stateText = (state) => ({
     <template v-if="job">
       <div class="adv-summary">
         <b>本次任务：{{ job.state === "running" ? "进行中" : stateText(job.state) }}</b>
-        <span>已完成 {{ job.chunks.filter((c) => c.state === "done").length }}/{{ job.chunks.length }} 段</span>
+        <span>已完成 {{ doneChunks }}/{{ totalChunks }} 段</span>
+        <span v-if="runningChunk">正在处理第 {{ runningChunk.from_idx }}–{{ runningChunk.to_idx }} 条</span>
+        <span v-if="failedChunks" class="adv-error">失败 {{ failedChunks }} 段</span>
         <span v-if="job.error" class="adv-error">{{ job.error }}</span>
       </div>
+      <div class="adv-progress" :aria-label="`已完成 ${progressPct}%`"><i :style="{ width: progressPct + '%' }" /></div>
       <ol class="adv-chunks">
         <li v-for="chunk in job.chunks" :key="chunk.index" class="adv-chunk">
           <span class="adv-dot" :class="chunk.state" />

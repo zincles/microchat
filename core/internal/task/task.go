@@ -25,6 +25,7 @@ const (
 	KindTurn          Kind = "turn"           // 前台：某个会话的一轮生成
 	KindReroll        Kind = "reroll"         // 前台：把最后那条 assistant 回复重摇一版（**对话型调用**，不是能力）
 	KindCompact       Kind = "compact"        // 后台：把最老的 N 个对话块收成一条摘要
+	KindCompactJob    Kind = "compact_job"    // 后台：一次分段压缩作业（父，下面挂多个 KindCompact）
 	KindTitle         Kind = "title"          // 后台：给一条会话起标题（首次拿到回复之后自动一次）
 	KindJudgement     Kind = "judgement"      // 后台：JEV 决策（一段上游调用，骑会话 id）
 	KindRefreshModels Kind = "refresh_models" // 后台：从上游拉某个渠道的模型列表
@@ -51,7 +52,7 @@ const (
 // Group：这个 kind 属于哪一类。**未知的 kind 一律算一般**（保守：不会把它误挂进"烧钱"那组）。
 func (k Kind) Group() Group {
 	switch k {
-	case KindTurn, KindReroll, KindCompact, KindTitle, KindJudgement:
+	case KindTurn, KindReroll, KindCompact, KindCompactJob, KindTitle, KindJudgement:
 		return GroupLLM
 	}
 	return GroupPlain
@@ -65,7 +66,7 @@ func (k Kind) Group() Group {
 //
 // `reroll` 也在这里：它是**对话型调用**（与 `turn` 同类，只是产出先当候选）⇒ 一样骑本会话 id。
 func needsSession(kind Kind) bool {
-	return kind == KindTurn || kind == KindReroll || kind == KindCompact || kind == KindTitle || kind == KindJudgement
+	return kind == KindTurn || kind == KindReroll || kind == KindCompact || kind == KindCompactJob || kind == KindTitle || kind == KindJudgement
 }
 
 // State：Task 的五个状态（**这套词只属于 Task** —— `idle`/`pending` 那套是 turn 的，别混）。
@@ -88,6 +89,8 @@ func (k Kind) Label() string {
 		return "重摇"
 	case KindCompact:
 		return "压缩"
+	case KindCompactJob:
+		return "分段压缩"
 	case KindTitle:
 		return "起标题"
 	case KindJudgement:
@@ -120,6 +123,9 @@ type Record struct {
 	// 由任务自己在 `Guard.Cancellable(...)` 时置位：手上有 ctx / 有 stop 口的那些能停，
 	// 纯本地一口气跑完的（`refresh_models`）不能 —— 它快到没必要，也没有可断的地方。
 	Cancelable bool `json:"cancelable,omitempty"`
+	// ParentID：分段压缩这类复合作业的子任务指向父 Job；普通任务为空。
+	// 面板据此缩进显示（Job 一行，下面挂它正在跑的 Task），而不是把子任务摊成平级。
+	ParentID string `json:"parent_id,omitempty"`
 }
 
 func (r Record) Running() bool { return r.FinishedAt == nil }
@@ -166,6 +172,11 @@ type Guard struct {
 //
 // **会调模型的作业必须带会话 id** ⇒ 缺了**当场炸**（见 `needsSession`）。
 func (r *Registry) Begin(kind Kind, sessionID *string, title string) *Guard {
+	return r.BeginChild(kind, sessionID, title, "")
+}
+
+// BeginChild：挂一个子 Task（高级压缩的每个 chunk）。parentID 只影响面板缩进，不影响生死。
+func (r *Registry) BeginChild(kind Kind, sessionID *string, title, parentID string) *Guard {
 	if needsSession(kind) && (sessionID == nil || strings.TrimSpace(*sessionID) == "") {
 		panic("task: " + kind.Label() + " 必须带会话 id（会调模型的作业要骑同一个会话 id）")
 	}
@@ -174,7 +185,7 @@ func (r *Registry) Begin(kind Kind, sessionID *string, title string) *Guard {
 	defer r.mu.Unlock()
 	r.records[id] = Record{
 		ID: id, Kind: kind, Group: kind.Group(), Session: sessionID, Title: title,
-		StartedAt: time.Now().UnixMilli(), Outcome: StateRunning,
+		StartedAt: time.Now().UnixMilli(), Outcome: StateRunning, ParentID: parentID,
 	}
 	r.order = append(r.order, id)
 	return &Guard{registry: r, id: id}
