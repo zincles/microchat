@@ -2985,6 +2985,22 @@ test("空草稿首屏：有欢迎语与当前助手/模型，不是一整页纯�
   assert.match(css, /\.draft-welcome\s*\{/, "欢迎块没有样式（会与消息列挤在一起）");
 });
 
+test("输入框：按钮住进同一张面板，全屏键在发送键正上方", () => {
+  const composer = readFileSync(join(SRC, "components", "Composer.vue"), "utf8");
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.match(composer, /class="composer-box"/, "输入框与按钮没包在同一张面板里");
+  assert.match(composer, /class="composer-actions"/, "按钮列没有容器");
+  const actions = composer.slice(composer.indexOf('class="composer-actions"'), composer.indexOf("</form>"));
+  assert.ok(actions.indexOf('id="expand-btn"') < actions.indexOf('id="send-btn"'), "全屏键不在发送键上方");
+  assert.match(css, /\.composer-actions \{[^}]*flex-direction:\s*column/, "按钮列不是竖排");
+  assert.match(css, /\.composer-box \{[^}]*background:/, "输入面板没有底");
+  assert.ok(!/#input \{[^}]*border-radius:\s*var\(--r-shell\)/.test(css), "输入框还自己长着一张卡");
+  assert.match(css, /#composer #expand-btn \{[^}]*width:\s*1\.6em/, "全屏键没有比发送键小一号");
+  assert.match(composer, /class="composer-fs"/, "没有全屏输入层");
+  assert.match(composer, /<Teleport to="#app">/, "全屏层该挂在 #app 里（移动端可视视口才拟合）");
+  assert.match(composer, /@keydown="onFsKeydown"/, "全屏 textarea 没接键盘");
+});
+
 test("左栏顶部：没有 MicroChat 字样，改成 对话 / 生图 两个 tab", () => {
   const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
@@ -3229,7 +3245,8 @@ test("设计系统：tab 统一下划线、设置平铺、圆角收口", () => {
   assert.ok(!/settings-cols \.panel h3 \+ \.field[^}]*border-radius/.test(css), "设置字段又连成卡片组");
   // 圆角/输入框收口
   assert.match(theme, /--r-card:\s*12px/, "卡片圆角没有统一到 12");
-  assert.match(css, /#input \{[^}]*border-radius:\s*var\(--r-shell\)/, "输入框还留着 20px 大圆角");
+  assert.match(css, /\.composer-box \{[^}]*border-radius:\s*var\(--r-shell\)/, "输入面板没有统一圆角");
+  assert.ok(!/#input \{[^}]*border-radius:\s*var\(--r-shell\)/.test(css), "输入框自己还留着独立圆角");
 });
 
 test("载荷预览：面板里可开关；关掉不请求，偏好与输入预演分开", () => {

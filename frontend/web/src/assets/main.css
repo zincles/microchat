@@ -790,11 +790,20 @@ html[data-composer="solid"] .messages-inner { padding-bottom: calc(var(--compose
 /* 重摇位次牌（气泡下 ◀ 2/3 ▶ 的中间那块）。 */
 .msg-ops .reroll-pos { font-size: 0.75em; color: var(--tg-hint); padding: 0.1em 0.15em; }
 .msg-ops .prompt-edit-btn { font-size: 0.75em; white-space: nowrap; color: var(--tg-link); }
-#composer { position: absolute; bottom: 0; left: 0; right: 0; display: flex; gap: 0.5em; align-items: flex-end; background: none; z-index: 5;
+#composer { position: absolute; bottom: 0; left: 0; right: 0; display: block; background: none; z-index: 5;
   padding: 0.6em 0.6em calc(0.6em + env(safe-area-inset-bottom, 0px)); }
-/* 输入框独立浮动卡 + 发送钮独立圆钮：逻辑相连、显示分开（TG 底栏就是输入框配外面一颗钮）。 */
-#input { flex: 1; background: color-mix(in srgb, var(--tg-secondary-bg) 88%, transparent); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); color: var(--tg-text); border: 1px solid var(--line); border-radius: var(--r-shell); padding: 0.6em 1.1em; font: inherit; resize: none; line-height: 1.5; max-height: calc(1.5em * 6 + 1.2em); overflow-y: auto; box-shadow: var(--shadow-2); }
-#input:focus { outline: none; border-color: var(--tg-link); }
+/* 一整块输入面板（2026-11-04 用户定）：textarea 与按钮同住一张圆角卡里，不再"输入框 + 外面一颗钮"。
+ * 按钮竖排在右缘：全屏在上、发送在最下（发送仍是主行动，全屏小一号不抢）。 */
+.composer-box { display: flex; align-items: stretch; gap: 0.35em; box-sizing: border-box;
+  background: color-mix(in srgb, var(--tg-secondary-bg) 88%, transparent);
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+  border: 1px solid var(--line); border-radius: var(--r-shell); padding: 0.42em 0.42em 0.42em 0.95em;
+  box-shadow: var(--shadow-2); }
+#input { flex: 1; min-width: 0; background: none; color: var(--tg-text); border: none; border-radius: 0;
+  padding: 0.45em 0; font: inherit; resize: none; line-height: 1.5; outline: none;
+  max-height: calc(1.5em * 6 + 0.9em); overflow-y: auto; }
+#input:focus { outline: none; border-color: transparent; }
+.composer-actions { flex: none; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 0.2em; }
 /* —— 滚动隐藏上下栏（触屏；2026-10-17 用户定，默认开）——
  * JS（App 的 onMessagesScroll）只写根节点上两个 px 变量，这里只做位移：
  * 往下看顶栏往上让位、往回看底栏往下让位，**进度与位移成正比**（不是到阈值才啪一下）。
@@ -827,6 +836,10 @@ html[data-composer="solid"] #chat-col > #composer {
    * 出现横向滚动条）。浮空形态没这问题（它 padding 小、又没被撑到 100%），实心形态必须显式写。 */
   box-sizing: border-box;
 }
+html[data-composer="solid"] #composer .composer-box {
+  background: none; -webkit-backdrop-filter: none; backdrop-filter: none;
+  border: none; border-radius: 0; box-shadow: none; padding: 0;
+}
 html[data-composer="solid"] #composer #input {
   background: none; -webkit-backdrop-filter: none; backdrop-filter: none;
   border: none; border-radius: 0; box-shadow: none;
@@ -854,12 +867,13 @@ html[data-composer="solid"] #composer button { box-shadow: none; }
 /* 空态（会话列）：安静居中 + 一句引导，别像报错。 */
 #session-list .empty { padding: 1.6em 0.8em; text-align: center; color: var(--tg-hint); font-size: 0.9em; line-height: 1.9; }
 #session-list .empty .sub { font-size: 0.9em; opacity: 0.8; }
-#composer button { background: var(--tg-button); color: var(--tg-button-text); border: none; border-radius: 50%; width: 2.6em; height: 2.6em; padding: 0; cursor: pointer; align-self: flex-end; display: flex; align-items: center; justify-content: center; flex: none; box-shadow: var(--shadow-1); }
+#composer button { background: var(--tg-button); color: var(--tg-button-text); border: none; border-radius: 50%; width: 2.4em; height: 2.4em; padding: 0; cursor: pointer; align-self: flex-end; display: flex; align-items: center; justify-content: center; flex: none; box-shadow: var(--shadow-1); }
 #composer button:hover { filter: brightness(1.1); }
 #composer button svg { display: block; }
 /* 全屏输入键：与发送键同尺寸，但不是主行动 ⇒ 用次级底色。 */
-#composer #expand-btn { background: var(--tg-secondary-bg); color: var(--tg-hint); }
-#composer #expand-btn:hover { color: var(--tg-text); }
+#composer #expand-btn { width: 1.6em; height: 1.6em; background: var(--tg-secondary-bg); color: var(--tg-hint); box-shadow: none; opacity: 0.78; }
+#composer #expand-btn:hover { color: var(--tg-text); opacity: 1; }
+#composer #menu-btn { width: 2.1em; height: 2.1em; }
 /* 全屏输入（2026-11-04 用户定）：铺满应用可视区，正文仍是阅读列宽；Esc 退出。 */
 .composer-fs { position: fixed; inset: 0; z-index: 80; background: var(--tg-bg);
   display: flex; flex-direction: column; gap: 0.8em; box-sizing: border-box;

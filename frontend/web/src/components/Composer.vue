@@ -79,41 +79,45 @@ defineExpose({ submit, clear, setText, text, setRunning });
 
 <template>
   <form id="composer" @submit.prevent="running ? stop() : submit()">
-    <button
-      v-if="props.menuOn"
-      type="button"
-      id="menu-btn"
-      title="命令菜单"
-      aria-label="命令菜单"
-      @click="$emit('menu')"
-      v-html="ICONS.menu"
-    ></button>
-    <textarea
-      id="input"
-      ref="area"
-      v-model="text"
-      rows="1"
-      autocomplete="off"
-      placeholder="输入消息…"
-      @input="onInput"
-      @keydown="onKeydown"
-    ></textarea>
-    <button
-      type="button"
-      id="expand-btn"
-      title="全屏输入"
-      aria-label="全屏输入"
-      @click="openFullscreen"
-      v-html="ICONS.maximize"
-    ></button>
-    <button
-      type="submit"
-      id="send-btn"
-      :class="{ stop: running }"
-      :title="running ? '停止' : text.trim() ? '发送' : '续写（重发历史）'"
-      :aria-label="running ? '停止' : text.trim() ? '发送' : '续写（重发历史）'"
-      v-html="running ? ICONS.stop : text.trim() ? sendSvg : ICONS.cont"
-    ></button>
+    <div class="composer-box">
+      <textarea
+        id="input"
+        ref="area"
+        v-model="text"
+        rows="1"
+        autocomplete="off"
+        placeholder="输入消息…"
+        @input="onInput"
+        @keydown="onKeydown"
+      ></textarea>
+      <div class="composer-actions">
+        <button
+          v-if="props.menuOn"
+          type="button"
+          id="menu-btn"
+          title="命令菜单"
+          aria-label="命令菜单"
+          @click="$emit('menu')"
+          v-html="ICONS.menu"
+        ></button>
+        <button
+          type="button"
+          id="expand-btn"
+          title="全屏输入"
+          aria-label="全屏输入"
+          @click="openFullscreen"
+          v-html="ICONS.maximize"
+        ></button>
+        <button
+          type="submit"
+          id="send-btn"
+          :class="{ stop: running }"
+          :title="running ? '停止' : text.trim() ? '发送' : '续写（重发历史）'"
+          :aria-label="running ? '停止' : text.trim() ? '发送' : '续写（重发历史）'"
+          v-html="running ? ICONS.stop : text.trim() ? sendSvg : ICONS.cont"
+        ></button>
+      </div>
+    </div>
   </form>
   <Teleport to="#app">
     <section v-if="expanded" class="composer-fs" aria-label="全屏输入">
