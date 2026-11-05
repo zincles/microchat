@@ -4,7 +4,6 @@
 import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from "vue";
 import { createApi, mergeStreamSlice, probeHealth } from "./api/client.ts";
 import { parseCommand, filterCommands, COMMAND_META } from "./utils/commands.ts";
-import { resetChrome as resetChromeState, stepChrome } from "./utils/chrome.ts";
 import { uuidv7 } from "./utils/ids.ts";
 import { buildCompactTree } from "./utils/tree.ts";
 import {
@@ -44,6 +43,7 @@ import { registerPWA, onUpdateReady, startUpdate } from "./utils/pwa.ts";
 import { useTypewriter } from "./composables/useTypewriter.ts";
 import { useTasks } from "./composables/useTasks.ts";
 import { useSidePanels } from "./composables/useSidePanels.ts";
+import { useChrome } from "./composables/useChrome.ts";
 
 const api = sharedApi();
 applyTheme();
@@ -107,6 +107,8 @@ const {
   isOverlayOpen: () => !!(overlaysRef.value?.isPaletteOpen() || overlaysRef.value?.isPickerOpen()),
   onWorkspaceContext: refreshContextLazy,
 });
+
+const { resetChrome, onMessagesScroll } = useChrome();
 // askConfirm：给设置/子编辑器用的全局确认框（与左栏删除同一个口 —— "不可逆的删除先摊开"）。
 function askConfirm(text) {
   return overlaysRef.value?.confirmAsk(text) ?? Promise.resolve(false);
@@ -1893,39 +1895,6 @@ function onComposerSubmit(text) {
 //   往回看（`scrollTop` ↓）⇒ **底栏**逐步收起，顶栏放回来。
 // 一次只藏一边（藏起来的那边由反向滚动放回）；到顶/见底立刻全放回（浏览器也这样）。
 // 载体只有两个 CSS 变量（px），CSS 只做 translateY ⇒ 这里永远不碰布局。
-const CHROME_JUMP = 200; // 一次跳这么多 ⇒ 不是手指，是切会话/贴底 ⇒ 重置，别把栏收走
-let chrome = resetChromeState();
-const coarsePointer = window.matchMedia?.("(pointer: coarse)") ?? null;
-function applyChrome() {
-  const root = document.documentElement.style;
-  root.setProperty("--chrome-top", `${Math.round(chrome.top)}px`);
-  root.setProperty("--chrome-bottom", `${Math.round(chrome.bottom)}px`);
-}
-function resetChrome(el) {
-  chrome = resetChromeState(el?.scrollTop ?? 0);
-  applyChrome();
-}
-// 判据在 utils/chrome.ts（纯函数、契约测试钉着）；这里只喂数字 + 写两个 CSS 变量。
-function onMessagesScroll() {
-  const el = document.querySelector("#messages-vue");
-  if (!el) return;
-  if (!chromeHideOn() || !coarsePointer?.matches) {
-    if (chrome.top || chrome.bottom) resetChrome(el);
-    else chrome.last = el.scrollTop;
-    return;
-  }
-  const y = el.scrollTop;
-  const dy = y - chrome.last;
-  if (Math.abs(dy) > CHROME_JUMP) { resetChrome(el); return; }
-  chrome = stepChrome(chrome, {
-    dy,
-    scrollTop: y,
-    headerH: document.querySelector("#chat-col > header")?.offsetHeight ?? 40,
-    composerH: document.querySelector("#composer")?.offsetHeight ?? 64,
-  });
-  applyChrome();
-}
-
 // —— 设置视图（与对话同级，2026-10-10） ——
 // 窄屏：进/出设置都把左抽屉归位（手机上别让它压着视图）；宽屏：不动侧栏（并排看没问题）。
 function openSettings() {
