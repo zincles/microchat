@@ -3735,6 +3735,8 @@ test("浮层 MD3：dialog / menu / snackbar / banner，全局按钮与字段", (
   assert.match(css, /\.toast \{[^}]*background:\s*var\(--md-inverse-surface\)/, "toast 不是 MD3 snackbar");
   assert.match(css, /\.toast::before/, "toast 没有语义点");
   assert.match(css, /#update-bar \{[^}]*var\(--md-surface-container-high\)/, "更新条不是 MD3 面");
+  assert.match(css, /#update-bar \{[^}]*position:\s*fixed/, "更新条不是悬浮层（会占布局）");
+  assert.match(css, /#update-bar \{[^}]*bottom:\s*calc\(var\(--composer-h/, "更新条没有悬浮在输入栏上方");
   assert.match(css, /@keyframes md-dialog-in/, "对话框没有进场动画");
 });
 

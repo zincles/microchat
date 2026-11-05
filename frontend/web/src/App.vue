@@ -2303,8 +2303,8 @@ onUnmounted(() => {
 
 <template>
   <div id="app">
-    <!-- 更新条：放在 columns **之前**，作为 #app 的顶部流内横幅 —— 从前的 fixed 会压在顶栏
-         与上下文 tabs 上（2026-11-06 截图实见）。只有检测到新版本时才有这一条。 -->
+    <!-- 更新条：**悬浮**在输入栏上方（fixed + bottom: --composer-h + 0.5em），不占布局。
+         从前试过流内横幅：它会把整个应用往下推、独自占掉一大段；用户 2026-11-06 要求改回悬浮。 -->
     <UpdateBar v-if="updateReady" ref="updateRef" @update="applyUpdate" />
     <div id="columns">
       <SessionBar

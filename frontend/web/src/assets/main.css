@@ -318,12 +318,15 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
  * ⚠ 它是 `position: fixed` —— 而 `#app` 一带 `transform`（viewport.js 的 --vvt 拟合）就会
  * 收编 fixed 的包含块（见 main.css 顶部那条注释），所以这里跟着 #app 走、不会被键盘顶飞，
  * 这是**想要的**（更新条不该浮在键盘上方）。 */
-#update-bar { position: relative; flex: none; z-index: 55; display: flex; align-items: center; gap: 0.6em; width: min(30em, 92vw); margin: 0.55em auto 0; box-sizing: border-box; background: var(--md-surface-container-high); color: var(--md-on-surface); border: none; border-radius: var(--md-shape-md); padding: 0.55em 0.7em 0.55em 1em; box-shadow: var(--md-elev-2); animation: md-dialog-in var(--md-dur-250) var(--md-ease-emphasized); }
+/* 更新条：**悬浮**在输入栏上方的小胶囊（不占布局）。
+ * fixed + left/right 0 + width max-content + auto margins 居中（不用 translateX，
+ * 否则 md-dialog-in 结束时的 transform: none 会把居中抵消、跳一下）。 */
+#update-bar { position: fixed; left: 0; right: 0; bottom: calc(var(--composer-h, 4.6em) + env(safe-area-inset-bottom, 0px) + 0.5em); top: auto; z-index: 55; display: flex; align-items: center; gap: 0.5em; width: max-content; max-width: min(30em, 92vw); margin: 0 auto; box-sizing: border-box; background: var(--md-surface-container-high); color: var(--md-on-surface); border: none; border-radius: var(--md-shape-full); padding: 0.35em 0.4em 0.35em 0.95em; box-shadow: var(--md-elev-2); font-size: var(--md-type-label-medium); animation: md-dialog-in var(--md-dur-250) var(--md-ease-emphasized); }
 #update-bar .ub-text { flex: 1; min-width: 0; word-break: break-word; }
-#update-bar .ub-go { flex: none; background: var(--md-primary); color: var(--md-on-primary); border: none; border-radius: var(--md-shape-full); min-height: 2.5em; padding: 0 1em; font: inherit; font-size: var(--md-type-label-large); font-weight: 500; cursor: pointer; }
+#update-bar .ub-go { flex: none; background: var(--md-primary); color: var(--md-on-primary); border: none; border-radius: var(--md-shape-full); min-height: 2.25em; padding: 0 0.85em; font: inherit; font-size: var(--md-type-label-medium); font-weight: 500; cursor: pointer; }
 #update-bar .ub-go:hover:not(:disabled) { filter: brightness(1.1); }
 #update-bar .ub-go:disabled { opacity: 0.65; cursor: default; }
-#update-bar .ub-x { flex: none; color: var(--md-on-surface-variant); border-radius: var(--md-shape-full); width: 2.5em; height: 2.5em; display: inline-flex; align-items: center; justify-content: center; }
+#update-bar .ub-x { flex: none; color: var(--md-on-surface-variant); border-radius: var(--md-shape-full); width: 2.25em; height: 2.25em; display: inline-flex; align-items: center; justify-content: center; }
 #update-bar .ub-x:hover { color: var(--tg-text); }
 @media (prefers-reduced-motion: reduce) { #update-bar { animation: none; } }
 /* 侧栏滑入滑出（TG 味 = 200ms ease-out；只动 transform/opacity，宽用 max-width 过渡不跳）。 */
@@ -1368,5 +1371,5 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .confirm { padding: 1.15em; }
 .palette-item, .picker-item { min-height: 2.5em; }
 .toast { padding: 0.6em 0.85em; }
-#update-bar { padding: 0.45em 0.6em 0.45em 0.8em; margin-top: 0.4em; }
+#update-bar { padding: 0.35em 0.4em 0.35em 0.95em; }
 .draft-welcome { min-height: 40vh; padding: 1.4em 0; }
