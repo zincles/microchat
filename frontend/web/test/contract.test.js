@@ -1277,7 +1277,7 @@ test("最新 Prompt：A-B-C-D-E-F 指向 E；只在尾条 AI 上给按钮", () =
     "没把 Prompt id 交给尾条 AI");
   assert.match(app, /@edit-prompt="onBubbleEditPrompt"/, "没接「编辑最新 Prompt」");
   assert.match(bubble, /v-if="role !== 'user' && isLast && promptId"/, "按钮不该出现在非尾条/用户消息上");
-  assert.match(bubble, /\$emit\('edit-prompt', promptId\)/, "按钮没把 Prompt id 报上去");
+  assert.match(bubble, /\$?emit\('edit-prompt', promptId\)/, "按钮没把 Prompt id 报上去");
   assert.match(bubble, /v-html="ICONS\.notebookPen"/, "「编辑最新 Prompt」还是纯文字按钮，没换成记事本+笔图标");
   assert.ok(!/>编辑最新 Prompt</.test(bubble), "按钮里还留着纯文字");
 });
@@ -2877,8 +2877,8 @@ test("消息编辑：应用内模态，不就地改气泡", () => {
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8");
   assert.ok(!/inline-edit|inline-input/.test(bubble), "气泡里还留着就地编辑的 textarea");
   assert.ok(!/window\.prompt/.test(app), "/edit 还在用原生 prompt");
-  assert.match(bubble, /\$emit\('edit', messageId, 'content'\)/, "改正文按钮没打开编辑器");
-  assert.match(bubble, /\$emit\('edit', messageId, 'reasoning'\)/, "改思考按钮没打开编辑器");
+  assert.match(bubble, /\$?emit\('edit', messageId, 'content'\)/, "改正文按钮没打开编辑器");
+  assert.match(bubble, /\$?emit\('edit', messageId, 'reasoning'\)/, "改思考按钮没打开编辑器");
   assert.match(app, /<MessageEditor/, "App 没挂消息编辑器");
   assert.match(app, /@edit="onBubbleEdit"/, "气泡的 edit 事件没接上");
   assert.match(app, /function onBubbleEdit\(mid, kind\)/, "没有 onBubbleEdit");
@@ -2915,7 +2915,7 @@ test("重摇：没多出版就不切版本（取消 ≠ 换一版）", () => {
   assert.match(app, /async function rerollNow\(targetId = null\)/, "rerollNow 没接收被点气泡的 id");
   assert.match(app, /const target = targetId \|\| lastMsgId\.value/, "rerollNow 没优先用被点气泡的 id");
   const bubble = readFileSync(join(SRC, "components", "MessageBubble.vue"), "utf8");
-  assert.match(bubble, /\$emit\('reroll', messageId\)/, "重摇按钮没把目标 id 报上去");
+  assert.match(bubble, /\$?emit\('reroll', messageId\)/, "重摇按钮没把目标 id 报上去");
 
   for (const [enter, switchCall, refresh] of [
     ["async function rerollNow(targetId = null)", "await switchReroll(sid, st.count)", "refreshReroll()"],

@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // 高级压缩 / 修洞压缩（2026-11-05 用户定：上下文工作区第四、第五个 tab）。
 //
 // 两个 tab 共用这一个组件：`repair` 只是把请求里的 repair 打开。真正怎么切块、有没有洞、
@@ -8,12 +8,16 @@
 // 不是"这一块成功就算整体成功"。
 import { ref, computed, watch, onUnmounted } from "vue";
 import { sharedApi } from "../utils/prefs.ts";
+import type { AdvancedChunk, AdvancedJob, AdvancedPreview, AdvancedRequest } from "../api/types.ts";
 
-const props = defineProps({
-  sessionId: { type: String, default: "" },
-  repair: { type: Boolean, default: false },
+const props = withDefaults(defineProps<{
+  sessionId?: string;
+  repair?: boolean;
+}>(), {
+  sessionId: "",
+  repair: false,
 });
-const emit = defineEmits(["done"]);
+const emit = defineEmits<{ done: [] }>();
 const api = sharedApi();
 
 const begin = ref("");
@@ -21,17 +25,17 @@ const end = ref("");
 const step = ref(1);
 const concurrency = ref(2);
 const attempts = ref(5);
-const preview = ref(null);
-const job = ref(null);
+const preview = ref<AdvancedPreview | null>(null);
+const job = ref<AdvancedJob | null>(null);
 const error = ref("");
 const busy = ref(false);
-let pollTimer = null;
+let pollTimer: ReturnType<typeof setTimeout> | null = null;
 let disposed = false;
 let lastDoneJob = "";
 let pollFailures = 0;
 
-function requestBody() {
-  const body = {
+function requestBody(): AdvancedRequest {
+  const body: AdvancedRequest = {
     step_blocks: Number(step.value) || 1,
     concurrency: Number(concurrency.value) || 2,
     max_attempts: Number(attempts.value) || 5,
@@ -43,22 +47,22 @@ function requestBody() {
   return body;
 }
 
-async function loadPreview() {
+async function loadPreview(): Promise<void> {
   if (!props.sessionId) return;
   busy.value = true;
   error.value = "";
   try {
     preview.value = await api.advancedCompactPreview(props.sessionId, requestBody());
     job.value = null;
-  } catch (e) {
+  } catch (e: unknown) {
     preview.value = null;
-    error.value = e.message;
+    error.value = e instanceof Error ? e.message : String(e);
   } finally {
     busy.value = false;
   }
 }
 
-async function start() {
+async function start(): Promise<void> {
   if (!props.sessionId || job.value?.state === "running") return;
   busy.value = true;
   error.value = "";
@@ -67,19 +71,19 @@ async function start() {
     lastDoneJob = "";
     pollFailures = 0;
     poll();
-  } catch (e) {
-    error.value = e.message;
+  } catch (e: unknown) {
+    error.value = e instanceof Error ? e.message : String(e);
   } finally {
     busy.value = false;
   }
 }
 
-function poll() {
-  clearTimeout(pollTimer);
+function poll(): void {
+  clearTimeout(pollTimer ?? undefined);
   if (!job.value?.id || disposed) return;
   pollTimer = setTimeout(async () => {
     try {
-      const next = await api.advancedCompactStatus(props.sessionId, job.value.id);
+      const next = await api.advancedCompactStatus(props.sessionId, job.value!.id);
       if (disposed) return;
       pollFailures = 0;
       job.value = next;
@@ -88,38 +92,38 @@ function poll() {
         lastDoneJob = next.id;
         emit("done");
       }
-    } catch (e) {
+    } catch (e: unknown) {
       if (disposed) return;
       // 单拍失败不判死刑：网络抖动/切后台时继续问；连续多次失败才停。
       pollFailures += 1;
-      error.value = e.message;
+      error.value = e instanceof Error ? e.message : String(e);
       if (pollFailures < 5) poll();
     }
   }, 800);
 }
 
-async function cancel() {
+async function cancel(): Promise<void> {
   if (!job.value?.id || job.value.state !== "running") return;
   try {
     job.value = await api.advancedCompactCancel(props.sessionId, job.value.id);
     poll();
-  } catch (e) { error.value = e.message; }
+  } catch (e: unknown) { error.value = e instanceof Error ? e.message : String(e); }
 }
 
 watch(() => props.sessionId, () => {
-  clearTimeout(pollTimer);
+  clearTimeout(pollTimer ?? undefined);
   preview.value = null;
   job.value = null;
   error.value = "";
 });
-onUnmounted(() => { disposed = true; clearTimeout(pollTimer); });
+onUnmounted(() => { disposed = true; clearTimeout(pollTimer ?? undefined); });
 
 const doneChunks = computed(() => (job.value?.chunks ?? []).filter((c) => c.state === "done").length);
 const failedChunks = computed(() => (job.value?.chunks ?? []).filter((c) => c.state === "failed").length);
 const totalChunks = computed(() => job.value?.chunks?.length ?? 0);
 const runningChunk = computed(() => (job.value?.chunks ?? []).find((c) => c.state === "running"));
 const progressPct = computed(() => totalChunks.value ? Math.round((doneChunks.value / totalChunks.value) * 100) : 0);
-const stateText = (state) => ({
+const stateText = (state: AdvancedChunk["state"] | AdvancedJob["state"] | string): string => ({
   ready: "可压缩", pending: "等待中", running: "正在压缩", done: "已完成", failed: "失败", canceled: "已取消",
 }[state] ?? state);
 </script>

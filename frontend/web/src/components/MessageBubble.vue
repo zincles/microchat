@@ -1,26 +1,54 @@
-<script setup>
+<script setup lang="ts">
 // 消息气泡：正文 markdown 渲染 + <state> 块独立容器（状态变化单列，不混进正文）。
 import { ref, computed, watch, onMounted, nextTick } from "vue";
 import { ICONS } from "./icons.js";
 import { formatThinkLabel, usageFoot, usageFootTitle } from "../utils/format.ts";
+import type { UsageLike } from "../utils/format.ts";
 import { renderMarkdown, splitState } from "../utils/markdown.ts";
-const props = defineProps({
-  who: String,
-  idx: { type: [Number, String], default: null }, // 显示编号（真消息=服务端 idx；库外的按后缀顺延）
-  role: String,
-  content: String,
-  reasoning: String,
-  reasoningMs: Number,
-  messageId: String,
-  promptId: { type: String, default: null }, // 最新 AI 回复对应的用户输入（仅尾条 assistant 有）
-  isLast: Boolean,
-  streaming: Boolean, // 生成中（还没落库的那条）：等首字节时给三点呼吸动画
-  reroll: { type: Object, default: null }, // 重摇状态（本条是目标时才非 null）：{active,count,current_idx,running}
+
+interface RerollLike {
+  active?: boolean;
+  count: number;
+  current_idx: number;
+  running?: boolean;
+}
+
+const props = withDefaults(defineProps<{
+  who?: string;
+  idx?: number | string | null; // 显示编号（真消息=服务端 idx；库外的按后缀顺延）
+  role?: string;
+  content?: string;
+  reasoning?: string;
+  reasoningMs?: number | null;
+  messageId?: string | null;
+  promptId?: string | null; // 最新 AI 回复对应的用户输入（仅尾条 assistant 有）
+  isLast?: boolean;
+  streaming?: boolean; // 生成中（还没落库的那条）：等首字节时给三点呼吸动画
+  reroll?: RerollLike | null; // 重摇状态（本条是目标时才非 null）：{active,count,current_idx,running}
   // usage：上游报的用量（归一化后的那几格；2026-10-20 起气泡脚注就用它）。
   // 只有聚合站（OpenRouter）会带 cost_usd；直连渠道没有 ⇒ 脚注不显示价格。
-  usage: { type: Object, default: null },
+  usage?: UsageLike | null;
+}>(), {
+  who: "",
+  idx: null,
+  role: "",
+  content: "",
+  reasoning: "",
+  reasoningMs: null,
+  messageId: null,
+  promptId: null,
+  isLast: false,
+  streaming: false,
+  reroll: null,
+  usage: null,
 });
-defineEmits(["edit", "edit-prompt", "delete", "reroll", "reroll-go"]);
+const emit = defineEmits<{
+  edit: [messageId: string | null | undefined, kind: "content" | "reasoning"];
+  "edit-prompt": [promptId: string];
+  delete: [messageId: string | null | undefined, isLast: boolean];
+  reroll: [messageId: string | null | undefined];
+  "reroll-go": [delta: number];
+}>();
 
 // 脚注：token 用量 + 成本（纯函数在 utils/format.ts，契约测试钉着）。
 // 没用量（生成中 / 库外那条 / 上游没报）⇒ 空串 ⇒ 整行不渲染。
@@ -38,31 +66,31 @@ const parts = computed(() => splitState(props.content));
 const bodyHtml = computed(() => renderMarkdown(parts.value.cleaned));
 // 公式比列宽时给右缘一道内阴影（2026-11-02）：手机上原本是"一刀切"，看不出还能往右滑。
 // `overflow-x: auto` 之外再标一个类 —— 只有真的溢出才提示，短公式不受影响。
-const textEl = ref(null);
-const msgEl = ref(null);
-let cursorEl = null;
-function markMathOverflow() {
+const textEl = ref<HTMLElement | null>(null);
+const msgEl = ref<HTMLElement | null>(null);
+let cursorEl: HTMLSpanElement | null = null;
+function markMathOverflow(): void {
   const root = textEl.value;
   if (!root) return;
-  for (const el of root.querySelectorAll(".katex-display")) {
+  for (const el of root.querySelectorAll<HTMLElement>(".katex-display")) {
     el.classList.toggle("scroll-x", el.scrollWidth > el.clientWidth + 1);
   }
 }
 // 流式期间的终端光标：v-html 每帧会重写正文，所以每帧在**最后一个有字的文本节点**后面
 // 插一个光标（不塞进 Markdown 源，免得落进代码块/公式被转义）。它只是装饰，aria-hidden。
-function clearStreamCursor() {
+function clearStreamCursor(): void {
   cursorEl?.remove();
   cursorEl = null;
 }
-function placeStreamCursor() {
+function placeStreamCursor(): void {
   const box = msgEl.value;
   if (!props.streaming || !textEl.value || !box) { clearStreamCursor(); return; }
   const walker = document.createTreeWalker(textEl.value, NodeFilter.SHOW_TEXT, {
-    acceptNode(node) {
+    acceptNode(node: Node): number {
       return node.nodeValue && node.nodeValue.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
     },
   });
-  let last = null;
+  let last: Node | null = null;
   while (walker.nextNode()) last = walker.currentNode;
   if (!last) { clearStreamCursor(); return; }
   // 光标挂在 `.msg`（不在 v-html 里）⇒ Markdown 每帧重写正文也不会把动画重建成"常亮"；
@@ -74,9 +102,10 @@ function placeStreamCursor() {
     box.appendChild(cursorEl);
   }
   const range = document.createRange();
+  const end = last.nodeValue?.length ?? 0;
   range.selectNodeContents(last);
-  range.setStart(last, last.nodeValue.length);
-  range.setEnd(last, last.nodeValue.length);
+  range.setStart(last, end);
+  range.setEnd(last, end);
   const rect = range.getBoundingClientRect();
   const host = box.getBoundingClientRect();
   if (!rect.height) { clearStreamCursor(); return; }
@@ -133,7 +162,7 @@ watch(() => props.streaming, (s) => nextTick(() => {
         class="edit-btn"
         title="改正文"
         aria-label="改正文"
-        @click="$emit('edit', messageId, 'content')"
+        @click="emit('edit', messageId, 'content')"
         v-html="ICONS.pencil"
       ></button>
       <button
@@ -142,7 +171,7 @@ watch(() => props.streaming, (s) => nextTick(() => {
         class="edit-btn"
         title="改思考"
         aria-label="改思考"
-        @click="$emit('edit', messageId, 'reasoning')"
+        @click="emit('edit', messageId, 'reasoning')"
         v-html="ICONS.brain"
       ></button>
       <button
@@ -151,7 +180,7 @@ watch(() => props.streaming, (s) => nextTick(() => {
         class="edit-btn prompt-edit-btn"
         title="编辑最新 Prompt（编辑这条回复对应的用户输入）"
         aria-label="编辑最新 Prompt"
-        @click="$emit('edit-prompt', promptId)"
+        @click="emit('edit-prompt', promptId)"
         v-html="ICONS.notebookPen"
       ></button>
       <button
@@ -160,20 +189,20 @@ watch(() => props.streaming, (s) => nextTick(() => {
         class="edit-btn"
         title="重摇（摇新的一版并切过去）"
         aria-label="重摇（摇新的一版并切过去）"
-        @click="$emit('reroll', messageId)"
+        @click="emit('reroll', messageId)"
         v-html="ICONS.refresh"
       ></button>
       <template v-if="role !== 'user' && isLast && reroll && reroll.active">
-        <button type="button" class="edit-btn" title="上一版" aria-label="上一版" @click="$emit('reroll-go', -1)">◀</button>
+        <button type="button" class="edit-btn" title="上一版" aria-label="上一版" @click="emit('reroll-go', -1)">◀</button>
         <span class="reroll-pos">{{ reroll.running ? `${reroll.current_idx}→${reroll.count}` : `${reroll.current_idx}/${reroll.count}` }}</span>
-        <button type="button" class="edit-btn" title="下一版（到最右再按 = 再摇一版）" aria-label="下一版" @click="$emit('reroll-go', 1)">▶</button>
+        <button type="button" class="edit-btn" title="下一版（到最右再按 = 再摇一版）" aria-label="下一版" @click="emit('reroll-go', 1)">▶</button>
       </template>
       <button
         type="button"
         class="edit-btn danger"
         title="删除这条及之后"
         aria-label="删除这条及之后"
-        @click="$emit('delete', messageId, isLast)"
+        @click="emit('delete', messageId, isLast)"
         v-html="ICONS.trash"
       ></button>
     </div>
