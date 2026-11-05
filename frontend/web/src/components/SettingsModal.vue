@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // 设置**视图**（2026-10-10 起与对话同级，不再是弹窗 —— OpenWebUI 那种）：占满左栏右边的整块区域，
 // 自带小头（[◧] 左栏开关 · 设置 · [×] 返回对话）。子编辑器（Agent/Provider）改为对应 tab 内的二级页（列表 ⇄ 详情就地切换）。
 // 「外观」那族的个人偏好（主题/缩放/背景图/发送键/预演）住在**本视图的「外观」区**
@@ -16,23 +16,38 @@ import ProviderEditor from "./ProviderEditor.vue";
 import { ICONS } from "./icons.ts";
 import { sharedApi } from "../utils/prefs.ts";
 import { SETTINGS_TABS, groupModelsByProvider, modelOption, providerChoices, modelChoicesFor, modelKey, parseModelKey } from "../utils/format.ts";
+import type { ModelGroup } from "../utils/format.ts";
 import { downloadJSON } from "../utils/download.ts";
 import { buildCartridge, cartridgeAgent } from "../utils/cartridge.ts";
+import type { Agent, ChatConfig, DefaultsConfig, ProviderView, Segment, SessionView } from "../api/types.ts";
 
 // models-changed：渠道/模型那摊变了（删除渠道会连模型一起没）⇒ 让 App 重拉顶栏的模型下拉。
 // 与会话左栏那个 sessions-changed 是**两件事**，别合并（各自的读口不同）。
-const emit = defineEmits(["close", "toggle-left", "sessions-changed", "models-changed", "goto-session", "prefs-saved"]);
+const emit = defineEmits<{
+  close: [];
+  "toggle-left": [];
+  "sessions-changed": [];
+  "models-changed": [];
+  "goto-session": [id: string];
+  "prefs-saved": [];
+  "chat-saved": [];
+}>();
 // ask：全局确认框（App 的 Overlays.confirmAsk）—— 设置里的删除（会话/渠道/Agent）也必须先摊开再点头。
 // escBlocked：外面临时弹窗（会话设置）开着时，Esc 归它 —— 一次按键不许关两层。
-const props = defineProps({
-  ask: { type: Function, default: null },
-  escBlocked: { type: Boolean, default: false },
+const props = withDefaults(defineProps<{
+  ask?: ((text: string) => Promise<boolean>) | null;
+  escBlocked?: boolean;
   // only：单独入口（"session" / "provider"）—— 只显示那一页、不渲染设置页签；
   // 空串 = 完整设置。两者共用同一份数据加载与同一套 panel。
-  only: { type: String, default: "" },
+  only?: string;
+}>(), {
+  ask: null,
+  escBlocked: false,
+  only: "",
 });
 
 const api = sharedApi();
+const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 const leftSvg = ICONS.panelLeft;
 
 // 四个设置区 + 两个独立管理页（会话 / 渠道）。
@@ -41,27 +56,27 @@ const tab = ref(props.only || "chat");
 // 单独入口的页头文字；空串 = 完整设置（显示 TabBar）。
 const onlyTitle = computed(() => (props.only === "session" ? "会话管理" : props.only === "provider" ? "渠道管理" : ""));
 watch(() => props.only, (v) => { tab.value = v || "chat"; });
-const chat = ref({ title_chars: "", title_model: "", model_context_tokens: "", history_window: "", compact_blocks: "", compact_trigger_tokens: "", replay_reasoning: false, auto_compact: true });
+const chat = ref<Record<string, any>>({ title_chars: "", title_model: "", model_context_tokens: "", history_window: "", compact_blocks: "", compact_trigger_tokens: "", replay_reasoning: false, auto_compact: true });
 const chatStatus = ref("");
-const defaults = ref({ provider: "", model: "", agent: "" });
+const defaults = ref<Record<string, any>>({ provider: "", model: "", agent: "" });
 const defStatus = ref("");
-const agents = ref([]);
-const segmentsLib = ref([]); // 提示词段库（随 GET /agents 一起给）
+const agents = ref<Agent[]>([]);
+const segmentsLib = ref<Segment[]>([]); // 提示词段库（随 GET /agents 一起给）
 const curDefault = ref("");
-const editAgent = ref(null); // null | 'new' | agent（二级编辑器）
-const editSeg = ref(null); // null | 'new' | segment（「提示词」tab 内的二级页）
+const editAgent = ref<any>(null); // null | 'new' | agent（二级编辑器）
+const editSeg = ref<any>(null); // null | 'new' | segment（「提示词」tab 内的二级页）
 // 谁引用了这个段（「提示词」tab 列表与编辑器共用）。
-const segRefs = (id) => agents.value.filter((a) => (a.segments ?? []).includes(id)).map((a) => a.name || a.id);
-const providers = ref([]);
+const segRefs = (id: string): string[] => agents.value.filter((a) => (a.segments ?? []).includes(id)).map((a) => a.name || a.id);
+const providers = ref<ProviderView[]>([]);
 // 顶栏/会话设置用的是同一份 `GET /models`（跨渠道拍平那一条）：默认值那两格的下拉也从它取。
-const modelGroups = ref([]);
+const modelGroups = ref<ModelGroup[]>([]);
 // 全局标题模型的下拉：跨渠道拍平（显示名带渠道前缀，两个渠道有同名模型时才分得清）。
-const titleModelOptions = computed(() => modelGroups.value.flatMap((g) =>
+const titleModelOptions = computed<Array<{ value: string; label: string }>>(() => modelGroups.value.flatMap((g) =>
   (g.items ?? []).map((item) => ({ value: item.value, label: `${g.provider} / ${item.label}` }))));
-const editProvider = ref(null); // null | 'new' | provider（二级编辑器）
+const editProvider = ref<any>(null); // null | 'new' | provider（二级编辑器）
 const routesStatus = ref("");
 
-async function loadChat() {
+async function loadChat(): Promise<void> {
   try {
     const c = await api.getChat();
     chat.value = {
@@ -76,9 +91,9 @@ async function loadChat() {
     };
   } catch {}
 }
-async function saveChat() {
-  const num = (v) => (String(v ?? "").trim() === "" ? undefined : Number(v));
-  const body = {};
+async function saveChat(): Promise<void> {
+  const num = (v: unknown): number | undefined => (String(v ?? "").trim() === "" ? undefined : Number(v));
+  const body: Partial<ChatConfig> = {};
   const t = num(chat.value.title_chars);
   const m = num(chat.value.model_context_tokens);
   const b = num(chat.value.compact_blocks);
@@ -88,8 +103,9 @@ async function saveChat() {
   if (b !== undefined) body.compact_blocks = b;
   if (hw !== undefined) body.history_window = hw;
   const titleModel = parseModelKey(chat.value.title_model ?? "");
-  const cur = await api.getChat().catch(() => ({}));
-  const fullBody = {
+  const cur = await api.getChat().catch(() => null);
+  if (!cur) { chatStatus.value = "保存失败：拿不到当前配置"; return; }
+  const fullBody: ChatConfig = {
     ...cur, ...body,
     title_provider: titleModel?.provider ?? "",
     title_model: titleModel?.model ?? "",
@@ -102,39 +118,40 @@ async function saveChat() {
     await api.putChat(fullBody);
     chatStatus.value = "已保存";
     emit("chat-saved");
-  } catch (e) { chatStatus.value = `保存失败：${e.message}`; }
+  } catch (e) { chatStatus.value = `保存失败：${errMsg(e)}`; }
 }
 
-async function loadDefaults() {
+async function loadDefaults(): Promise<void> {
   try {
     const d = await api.getDefaults();
     defaults.value = { provider: d.provider ?? "", model: d.model ?? "", agent: d.agent ?? "" };
   } catch {}
 }
-async function saveDefaults() {
+async function saveDefaults(): Promise<void> {
   try {
     await api.putDefaults({ ...defaults.value });
     defStatus.value = "已保存";
-  } catch (e) { defStatus.value = `保存失败：${e.message}`; }
+  } catch (e) { defStatus.value = `保存失败：${errMsg(e)}`; }
 }
 
 // 会话行导出（2026-10-11）：与 ☰ 里那颗同一支笔（GET /sessions/{id}/export → 下载）。
-async function exportSessionRow(s) {
+async function exportSessionRow(s: SessionView): Promise<void> {
   try {
     const doc = await api.exportSession(s.id);
     downloadJSON(doc, `${s.title || "新会话"}.json`);
     // v3 起文件里还有整张摘要金字塔 ⇒ 说一声"压缩状态一起走了"，不然用户不知道它带没带。
     const packed = doc.summaries?.length ? `，压缩块 ${doc.summaries.length} 个` : "";
     sessionMgrStatus.value = `已导出 ${doc.messages.length} 条${packed}：${s.title || "新会话"}`;
-  } catch (e) { sessionMgrStatus.value = `导出失败：${e.message}`; }
+  } catch (e) { sessionMgrStatus.value = `导出失败：${errMsg(e)}`; }
 }
 
 // Agent 卡带导入（2026-10-11）：卡带 = agent + 它引用到的用户段（id+原文）。
 // 合并规则（用户定）：系统里已有同 id 的段（用户段或内置）⇒ **丢弃卡带那份**；没有 ⇒ 建（打「导入」标记）。
-const cartridgeInput = ref(null);
+const cartridgeInput = ref<HTMLInputElement | null>(null);
 const cartridgeStatus = ref("");
-async function importCartridge(event) {
-  const file = event.target.files?.[0];
+async function importCartridge(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
   if (!file) return;
   cartridgeStatus.value = "导入中…";
   try {
@@ -151,18 +168,19 @@ async function importCartridge(event) {
     const made = await api.createAgent(card.agent);
     cartridgeStatus.value = `已导入「${made.name}」（段：新建 ${created} / 复用 ${skipped}）`;
     await loadAgents();
-  } catch (e) { cartridgeStatus.value = `导入失败：${e.message}`; }
-  event.target.value = "";
+  } catch (e) { cartridgeStatus.value = `导入失败：${errMsg(e)}`; }
+  input.value = "";
 }
 
 // JSON 对话导入（2026-10-11）：与 ST 导入同口径 —— 文件框 → POST /sessions/import-json → 刷列表。
 const jsonStatus = ref("");
-async function importJSONFile(event) {
-  const file = event.target.files?.[0];
+async function importJSONFile(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
   if (!file) return;
   jsonStatus.value = "导入中…";
   try {
-    const doc = JSON.parse(await file.text());
+    const doc = JSON.parse(await file.text()) as Record<string, unknown>;
     const out = await api.importJson(doc);
     const bits = [`已导入 ${out.messages} 条：${out.session?.title || "新会话"}`];
     // v3 起文件可能带着整张摘要金字塔（含被压缩消息的摘要，任意层级）。
@@ -177,17 +195,18 @@ async function importJSONFile(event) {
     jsonStatus.value = bits.join(" · ");
     await loadSessions();
     emit("sessions-changed");
-  } catch (e) { jsonStatus.value = `导入失败：${e.message}`; }
-  event.target.value = "";
+  } catch (e) { jsonStatus.value = `导入失败：${errMsg(e)}`; }
+  input.value = "";
 }
 
 // 已有对话管理器：ST 导入（文件框 → POST /sessions/import-st，导完刷会话 tab + 左栏）。
 const importTitle = ref("");
 const importStatus = ref("");
-const stInput = ref(null);   // ST 的隐藏文件框（按钮负责长相，见下）
-const jsonInput = ref(null); // 对话 JSON 的隐藏文件框
-async function importSTFile(event) {
-  const file = event.target.files?.[0];
+const stInput = ref<HTMLInputElement | null>(null);   // ST 的隐藏文件框（按钮负责长相，见下）
+const jsonInput = ref<HTMLInputElement | null>(null); // 对话 JSON 的隐藏文件框
+async function importSTFile(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
   if (!file) return;
   importStatus.value = "导入中…";
   try {
@@ -196,14 +215,14 @@ async function importSTFile(event) {
     importStatus.value = `已导入 ${out.messages} 条（跳过 ${out.skipped} 行）`;
     await loadSessions();
     emit("sessions-changed");
-  } catch (e) { importStatus.value = `导入失败：${e.message}`; }
-  event.target.value = "";
+  } catch (e) { importStatus.value = `导入失败：${errMsg(e)}`; }
+  input.value = "";
 }
 // 会话 tab：列表 + 新建/进入/删除（编辑走左栏 ☰ 二级）。
-const sessions = ref([]);
+const sessions = ref<SessionView[]>([]);
 const sessionMgrStatus = ref("");
 
-async function loadAgents() {
+async function loadAgents(): Promise<void> {
   try {
     const data = await api.agents();
     curDefault.value = data.default_agent ?? "";
@@ -214,7 +233,7 @@ async function loadAgents() {
 
 // 预设模板（随 git 走：presets/*.json）：长提示词不硬编码，前端不存第二份真相。
 const presetPick = ref("");
-function presetNew() {
+function presetNew(): void {
   const kind = presetPick.value;
   presetPick.value = "";
   if (!kind) return;
@@ -231,16 +250,19 @@ const modelOpts = computed(() => modelChoicesFor(modelGroups.value, defaults.val
 // 换渠道时**把配不上的模型清掉**：留着上一家的 model id，新建会话就会拿一对
 // "渠道 A + 只存在于 B 的模型" 去发 —— 那正是这套下拉要消灭的那种错误。
 // 清成空 = 回落内置默认（dummy），比静默发错强。
-function pickDefaultProvider(next) {
+function pickDefaultProvider(next: string): void {
   defaults.value.provider = next;
   const stillThere = modelChoicesFor(modelGroups.value, next).some((c) => c.value === defaults.value.model);
   if (!stillThere) defaults.value.model = "";
 }
+function onDefaultProviderChange(event: Event): void {
+  pickDefaultProvider((event.target as HTMLSelectElement).value);
+}
 
-async function loadProviders() {
+async function loadProviders(): Promise<void> {
   try {
     providers.value = (await api.providers()) ?? [];
-  } catch (e) { routesStatus.value = `渠道列表失败：${e.message}`; }
+  } catch (e) { routesStatus.value = `渠道列表失败：${errMsg(e)}`; }
   // 模型清单另一个读口（`/models` 跨渠道拍平）：拉失败不该拖垮渠道列表 ⇒ 单独 catch。
   try {
     const models = await api.models();
@@ -254,7 +276,7 @@ async function loadProviders() {
 // onProviderSaved：保存回执带 id —— **改名之后必须换成新对象**。
 // 旧 props 的 id 已经不存在了，编辑器留在原地的话下一次保存（哪怕是清密钥）必 404。
 // 顶栏的模型下拉也吃 `/models`（按渠道分组），改名后分组名要跟着换 ⇒ 通知 App 重拉。
-async function onProviderSaved(id) {
+async function onProviderSaved(id: string): Promise<void> {
   await loadProviders();
   if (id && editProvider.value && editProvider.value !== "new") {
     editProvider.value = providers.value.find((p) => p.id === id) ?? null;
@@ -262,7 +284,7 @@ async function onProviderSaved(id) {
   emit("models-changed");
 }
 
-async function askDeleteProvider(id) {
+async function askDeleteProvider(id: string): Promise<void> {
   // 文案要说清"模型也一起没"（2026-10-22）：从前删渠道只删配置、模型留在列表里仍可选中，
   // 用户以为删干净了；现在真的连模型一起删 —— 那就得在确认框里说出来，别让人删完才发现。
   if (props.ask && !(await props.ask(`删除渠道「${id}」？密钥与它发现到的模型会一起删掉，不可逆。`))) return;
@@ -274,25 +296,25 @@ async function askDeleteProvider(id) {
     // ⚠ `sessions-changed` 是**会话左栏**的刷新（App 里只挂到 refreshSessionsBar）——
     // 别拿它冒充"模型列表已刷新"，那是两件事（我一开始就这么写错了，核过 App 才发现）。
     emit("models-changed");
-  } catch (e) { routesStatus.value = `删除失败：${e.message}`; }
+  } catch (e) { routesStatus.value = `删除失败：${errMsg(e)}`; }
 }
 
 // 会话 tab 动作：进会话关设置面板（App 切；删除也要先确认 —— 与左栏同一个口）。
-async function loadSessions() {
+async function loadSessions(): Promise<void> {
   try {
     sessions.value = await api.listSessions();
-  } catch (e) { sessionMgrStatus.value = `拉列表失败：${e.message}`; }
+  } catch (e) { sessionMgrStatus.value = `拉列表失败：${errMsg(e)}`; }
 }
-function gotoSession(id) {
+function gotoSession(id: string): void {
   emit("goto-session", id);
 }
-async function askDropSession(id, title) {
+async function askDropSession(id: string, title: string): Promise<void> {
   if (props.ask && !(await props.ask(`删除会话「${title || "新会话"}」？消息与摘要一并删，不可逆。`))) return;
   try {
     await api.deleteSession(id);
     await loadSessions();
     emit("sessions-changed");
-  } catch (e) { sessionMgrStatus.value = `删除失败：${e.message}`; }
+  } catch (e) { sessionMgrStatus.value = `删除失败：${errMsg(e)}`; }
 }
 
 onMounted(() => {
@@ -304,7 +326,7 @@ onMounted(() => {
   document.addEventListener("keydown", onKey);
 });
 onUnmounted(() => document.removeEventListener("keydown", onKey));
-function onKey(e) {
+function onKey(e: KeyboardEvent): void {
   if (e.key !== "Escape") return;
   // 二级页（Agent/渠道详情）或外面临时弹窗开着 ⇒ Esc 归它们；一次按键只关一层（踩过：双关）。
   if (editAgent.value || editSeg.value || editProvider.value || props.escBlocked) return;
@@ -364,7 +386,7 @@ function onKey(e) {
                「填错不会报错，只会在发送时回落成『未配置模型』」—— 那是把校验推给用户。
                现在能选出来的都真实存在；当前值即使不在列表里（渠道被删、手改过配置文件、
                或 dummy 这种永远发现不到模型的渠道）也会补一条并标明，**不许**静默丢掉。 -->
-          <label class="field"><span>渠道</span><select :value="defaults.provider" @change="pickDefaultProvider($event.target.value)">
+          <label class="field"><span>渠道</span><select :value="defaults.provider" @change="onDefaultProviderChange">
             <option value="">内置默认（本地示例）</option>
             <option v-for="c in providerOpts" :key="c.value" :value="c.value">{{ c.label }}</option>
           </select></label>
@@ -463,7 +485,7 @@ function onKey(e) {
         </section>
         <!-- 外观（2026-11-01 从删掉的用户视图搬来）：主题 / 缩放 / 背景图 / 显示模式 /
              滚动收起 / 发送键 / 预演 / 命令菜单。全部即时生效，改了就存。 -->
-        <AppearancePane v-show="tab === 'appearance'" @prefs-saved="(v) => emit('prefs-saved', v)" />
+        <AppearancePane v-show="tab === 'appearance'" @prefs-saved="emit('prefs-saved')" />
         <section v-show="tab === 'prompt'" id="panel-prompt" class="panel">
           <template v-if="!editSeg">
             <div class="panel-head">

@@ -1940,7 +1940,7 @@ test("设置页签：四区 + 会话/渠道独立入口", () => {
   // 独立入口：左栏底两枚按钮 + App 用 :only 打开同一个视图。
   assert.match(bar, /@click="\$emit\('open-sessions'\)"/, "左栏没有「会话」入口");
   assert.match(bar, /@click="\$emit\('open-providers'\)"/, "左栏没有「渠道」入口");
-  assert.match(settings, /only: \{ type: String, default: "" \}/, "SettingsModal 没有独立入口的 only 参数");
+  assert.match(settings, /only\??:\s*string/, "SettingsModal 没有独立入口的 only 参数");
   assert.match(settings, /<h2 v-else class="settings-title">/, "独立入口没有页头标题");
   assert.match(settings, /<TabBar v-if="!only"/, "独立入口仍渲染设置 TabBar");
 });
@@ -1952,7 +1952,7 @@ test("设置：新会话默认值的渠道/模型是下拉，不是手打 id", (
   const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
   assert.match(settings, /providerOpts/, "渠道那格没走 providerChoices");
   assert.match(settings, /modelOpts/, "模型那格没走 modelChoicesFor");
-  assert.match(settings, /@change="pickDefaultProvider\(\$event\.target\.value\)"/,
+  assert.match(settings, /@change="onDefaultProviderChange"/,
     "换渠道时不重算模型 —— 会留下「渠道 A + 只存在于 B 的模型」这种配不上的对");
   // 旧的"手填、填错不报错"那套说法不该再出现在界面上
   assert.ok(!/渠道与模型是手填的 id/.test(settings), "hint 还写着「渠道与模型是手填的 id」");
@@ -3405,7 +3405,7 @@ test("渠道标识可改：编辑态输入框可用、保存发 new_id、成功�
   assert.match(editor, /改名会一起改掉已绑定这条渠道的会话/, "编辑态没有说清改名的后果");
 
   assert.match(settings, /@saved="onProviderSaved"/, "父组件没接带 id 的保存回执");
-  assert.match(settings, /function onProviderSaved\(id\)/, "没有 onProviderSaved");
+  assert.match(settings, /function onProviderSaved\(id[^)]*\)/, "没有 onProviderSaved");
   assert.match(settings, /editProvider\.value = providers\.value\.find\(/, "改名后没把编辑器指向新对象");
   assert.match(settings, /emit\("models-changed"\)/, "改名后没通知顶栏重拉模型分组");
 });

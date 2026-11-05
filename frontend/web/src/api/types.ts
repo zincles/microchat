@@ -461,6 +461,7 @@ export interface Segment {
   id: string;
   text: string;
   imported?: boolean;
+  builtin?: boolean;
 }
 
 export interface AgentsConfig {
@@ -492,6 +493,7 @@ export interface UpdateAgentRequest {
 export interface CreateSegmentRequest {
   id: string;
   text: string;
+  imported?: boolean;
 }
 
 export interface UpdateSegmentRequest {
@@ -505,7 +507,7 @@ export interface ChatConfig {
   title_model?: string;
   model_context_tokens: number;
   auto_compact?: boolean;
-  compact_trigger_tokens: number | null;
+  compact_trigger_tokens?: number | null;
   compact_blocks: number;
   history_window: number;
   replay_reasoning?: boolean;

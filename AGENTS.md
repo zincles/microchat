@@ -1018,9 +1018,10 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   与 **21 个组件**（`ToggleSwitch` / `UpdateBar` / `Toast` / `TabBar` / `SummaryEditor` / `SegmentList` /
   `Composer` / `SummaryCard` / `MessageEditor` / `SegmentEditor` / `ContextWorkspace` / `CompactTree` /
   `SessionSettings` / `Overlays` / `MessageBubble` / `AdvancedCompact` / `SessionBar` / `TopBar` /
-  `AppearancePane` / `AgentEditor` / `ProviderEditor`），加上入口 `main.ts` 与图标表 `icons.ts` 已迁 TS。`tsconfig.json` 已把 `.vue` 纳入检查（`allowJs` + `checkJs:false`
+  `AppearancePane` / `AgentEditor` / `ProviderEditor` / `SettingsModal`），加上入口 `main.ts`
+  与图标表 `icons.ts` 已迁 TS。`tsconfig.json` 已把 `.vue` 纳入检查（`allowJs` + `checkJs:false`
   仍保护未迁的 JS 组件）；`npm run typecheck`（`vue-tsc --noEmit`）必须绿。`npm test` 走 `tsx`。
-  剩余：重组件（`PayloadBar` / `SettingsModal`）→ `App.vue` 拆 composables。
+  剩余：`PayloadBar` → `App.vue` 拆 composables。
   迁移期别把 TS 与视觉/行为改版混在一个提交里。
 - **门板/登录的视觉**（2026-10-14 用户定"更好看"）：玻璃卡（`backdrop-filter`）+ 品牌头（**内联 SVG** 标 —— 无外部资源，离线 SW 照旧）+ 主题色光晕 + 入场动画（尊重 `prefers-reduced-motion`）；**底自己铺 `--mc-bg-image`**（就是用户背景图那枚变量）+ 一层跟主题走的面纱 —— 门板在 `#app` 里、够不着 `body::before` 的图层，想要"透出背景图"**别用透明**（会把聊天壳一起透出来，实测截图里左栏顶栏全露馅）。
 - **连接门板**（2026-10-10 加）：启动自检探不通后端（新设备第一次打开/地址没填对）⇒ 不开破界面，先给全屏"连接到 microchat 后端"面板：填地址（裸写 `192.168.0.110:8787` 也行 —— `normalizeApiBase` 自动补 `http://` 与 `/api/v1`）→ 过 ⇒ `saveNetPrefs` 存 **JWT** + **刷新页面**进聊天（沿用"改完刷新生效"）。**地址栏只在"探不通"时出现**（2026-10-14 用户定）：探通 ⇒ 收起，登录界面只有用户名/口令（单容器部署里浏览器永远同源，不该再问地址）；中途又断了 ⇒ 地址栏自动放回来。**2026-10-10 多用户改造**：启动自检探开放口 `/auth/status`——探不通 ⇒ 门板带原因；`needs_setup:true` ⇒ 「初始化 root」（**uid 0 恒在**，只设口令+确认；名字固定 root）；已初始化 ⇒ 登录（地址 / 用户名 / 口令）。探针两道闸照旧（`normalizeApiBase` + 必须回 `status:"ok"`）。
