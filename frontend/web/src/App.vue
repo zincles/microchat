@@ -44,6 +44,8 @@ import { useTypewriter } from "./composables/useTypewriter.ts";
 import { useTasks } from "./composables/useTasks.ts";
 import { useSidePanels } from "./composables/useSidePanels.ts";
 import { useChrome } from "./composables/useChrome.ts";
+import { useOverlayLayout } from "./composables/useOverlayLayout.ts";
+import { useSettingsView } from "./composables/useSettingsView.ts";
 
 const api = sharedApi();
 applyTheme();
@@ -108,7 +110,11 @@ const {
   onWorkspaceContext: refreshContextLazy,
 });
 
+const { settingsOpen, settingsOnly, openSettings, openManage, closeSettings, backToChat } = useSettingsView({ closeLeftDrawer });
+
 const { resetChrome, onMessagesScroll } = useChrome();
+
+const { liftOverlays, install: installOverlayLayout, uninstall: uninstallOverlayLayout } = useOverlayLayout(overlaysRef);
 // askConfirm：给设置/子编辑器用的全局确认框（与左栏删除同一个口 —— "不可逆的删除先摊开"）。
 function askConfirm(text) {
   return overlaysRef.value?.confirmAsk(text) ?? Promise.resolve(false);
@@ -180,10 +186,8 @@ const windowFrom = ref(1); // 窗口起点（段对齐；1 = 已到最老）
 const summaryMsgs = reactive(new Map()); // 摘要 id → {state:"loading"|"ready", rows}（只有展开过的才有）
 const openSummaries = new Set(); // 哪些卡正展开着（reload 后补拉新鲜的）
 const vueAgents = ref([]); // 生效 agent 列表（草稿首段的合成气泡看它；显示形态本身已无开关）
-const settingsOpen = ref(false);
 // 设置视图的"单独入口"："" = 完整设置（四个 tab）；"session" / "provider" = 只显示那一页，
 // 从左侧栏底部的「会话 / 渠道」进来。两者共用同一个视图与同一份数据加载。
-const settingsOnly = ref("");
 // **设置 = root 专属**（用户定，2026-10-10）：`is_admin` 才给进设置；其他用户的入口按钮也不给。
 const compactDefault = ref(null); // chat.compact_blocks（压缩面板输入框的占位提示）
 // windowLimit：消息列首屏/加载更多一页多少段（chat.history_window；默认 5）。
@@ -1578,25 +1582,6 @@ function refreshStateView(id) {
 }
 
 // —— 命令 ——
-function liftOverlays() {
-  // 输入框自身就是 #composer（组件根）——"#composer-vue" 那层包装早没了，别再查它。
-  const form = document.querySelector("#composer");
-  if (!form) return;
-  const h = form.getBoundingClientRect().height;
-  // 量不到就别写（2026-10-29）：切到上下文工作区时输入行是 `display:none`，量出来是 0 ——
-  // 那不是"输入行 0 高"，是"这一下没在量"。照写会让 `--composer-h` 掉到 0，
-  // 切回聊天时消息列底部的留白先塌一下、等 ResizeObserver 回调再补回来（一帧的跳动，
-  // 眼睛看得见、代码看不出来）。
-  if (h <= 0) return;
-  overlaysRef.value?.lift(Math.max(0, h - 60));
-  // 输入行现在是**悬浮层**（绝对定位）⇒ 消息列底部留白得知道它多高（textarea 会长高，写死会错位）。
-  document.getElementById("chat-col")?.style.setProperty("--composer-h", `${Math.round(h)}px`);
-}
-// 输入框高度是异步变的（autosize 在 nextTick 里长高）⇒ 量一次不够，盯住它本身。
-let composerRO = null;
-// 顶栏高度（2026-11-02）：窄屏模型名允许换行后栏会变高，消息列顶部留白必须跟着量，
-// 否则第一行消息会被顶栏盖住（和 composerRO 同一个道理）。
-let topbarRO = null;
 // 命令执行器：键与 commands.js 的 COMMAND_META **同一份命令表**（说明在表里、动作在这里；
 // 启动时对账，两边对不上立刻 console.error，不静默）。“要真会话”由表上的 needsSession 决定。
 const COMMAND_RUNNERS = {
@@ -1897,19 +1882,6 @@ function onComposerSubmit(text) {
 // 载体只有两个 CSS 变量（px），CSS 只做 translateY ⇒ 这里永远不碰布局。
 // —— 设置视图（与对话同级，2026-10-10） ——
 // 窄屏：进/出设置都把左抽屉归位（手机上别让它压着视图）；宽屏：不动侧栏（并排看没问题）。
-function openSettings() {
-  // 2026-11-01：账号砍了 ⇒ 没有"只有管理员能进"这回事（本机单人使用）。
-  settingsOnly.value = "";
-  settingsOpen.value = true;
-  closeLeftDrawer();
-}
-// openManage：左栏底部的「会话 / 渠道」—— 同一个视图、只显示那一页（不经过设置 tab）。
-function openManage(pane) {
-  settingsOnly.value = pane === "provider" ? "provider" : "session";
-  settingsOpen.value = true;
-  closeLeftDrawer();
-}
-// 外观那一区改完偏好 ⇒ 聊天壳上活着的开关立刻跟上（命令菜单是唯一现在就长短不一的那个）。
 async function onChatSaved() {
   const before = windowLimit.value;
   applyChatConfig(await api.getChat().catch(() => null));
@@ -1921,23 +1893,6 @@ function onPrefsSaved() {
   cmdMenu.value = commandMenuOn();
   if (!chromeHideOn()) resetChrome(document.querySelector("#messages-vue")); // 关掉这功能 ⇒ 栏立刻回来
   if (!cmdMenu.value) overlaysRef.value?.hidePalette();
-}
-function closeSettings() {
-  settingsOpen.value = false;
-  settingsOnly.value = "";
-  closeLeftDrawer();
-}
-// backToChat：**侧栏动作要把人带回对话区**（点会话 / 点＋新对话 / 当前会话被删）—— 唯一出口。
-//
-// 为什么要有它（2026-10-20 用户报："设置里点左侧会话会退出设置进对话，用户视图点了没反应"）：
-// 2026-11-01 之前这里是"设置与用户视图两块的让位"（那个 bug：`closeUserView()` 定义了却
-// 从没被调用，于是侧栏动作在用户视图里全失灵）。用户视图随账号一起删了 ⇒ 只剩设置要让位，
-// 但**这道出口留着**：往后再加"与对话平级的视图"时，别再成对地手写两个 close。
-//
-// ⚠ 只给**侧栏动作**用它：命令面板（`/resume` `/new` `/delete` 那些）与启动恢复路径**不需要** ——
-// 命令面板挂在聊天壳里（`#chat-col` 有 `v-show`），那两个视图开着时根本触发不到。
-function backToChat() {
-  closeSettings();
 }
 // —— 拖拽调宽 ——
 let uninstallViewportFit = null;
@@ -1964,24 +1919,7 @@ onMounted(() => {
   document.addEventListener("visibilitychange", resyncOnForeground);
   window.addEventListener("focus", resyncOnForeground);
   window.addEventListener("pageshow", resyncOnForeground);
-  if (typeof ResizeObserver !== "undefined" && !composerRO) {
-    composerRO = new ResizeObserver(() => liftOverlays());
-    const form = document.querySelector("#composer");
-    if (form) composerRO.observe(form);
-  }
-  if (typeof ResizeObserver !== "undefined" && !topbarRO) {
-    const bar = document.querySelector("#chat-col > header");
-    if (bar) {
-      const sync = () => {
-        const h = bar.getBoundingClientRect().height;
-        // 量不到（切工作区等）就别写 0 —— 那会让消息列顶到栏里去。
-        if (h > 0) document.getElementById("chat-col")?.style.setProperty("--topbar-h", `${Math.round(h)}px`);
-      };
-      topbarRO = new ResizeObserver(sync);
-      topbarRO.observe(bar);
-      sync();
-    }
-  }
+  installOverlayLayout();
   boot().catch((err) => {
     connText = "未连接";
     loadingSession.value = false;
@@ -1994,10 +1932,7 @@ onUnmounted(() => {
   uninstallViewportFit = null;
 
   stopTasksPolling();
-  composerRO?.disconnect();
-  composerRO = null;
-  topbarRO?.disconnect();
-  topbarRO = null;
+  uninstallOverlayLayout();
   uninstallSidePanels();
   document.removeEventListener("visibilitychange", resyncOnForeground);
   window.removeEventListener("focus", resyncOnForeground);

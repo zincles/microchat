@@ -2140,8 +2140,8 @@ test("上下文工作区：草稿态要说明为什么是空的", () => {
 // 那不是"输入行 0 高"，是"这一下没在量"：照写会让 `--composer-h` 掉到 0，
 // 切回聊天时消息列底部留白先塌一帧再补回来（眼睛看得见，代码看不出来）。
 test("工作区：量不到输入行高度时不写 --composer-h", () => {
-  const app = readFileSync(join(SRC, "..", "src", "App.vue"), "utf8");
-  const fn = app.match(/function liftOverlays\(\)[\s\S]*?\n\}/)?.[0] ?? "";
+  const app = readFileSync(join(SRC, "composables", "useOverlayLayout.ts"), "utf8");
+  const fn = app.match(/function liftOverlays\(\)[\s\S]*?\n  \}/)?.[0] ?? "";
   assert.ok(fn, "找不到 liftOverlays");
   assert.match(fn, /if \(h <= 0\) return;/, "量到 0 时没提前返回 —— 隐藏态会把 --composer-h 写成 0");
   // 守卫必须在**真正的写入**之前（别用 indexOf("--composer-h")：注释里先提到它，
@@ -3136,9 +3136,9 @@ test("移动端顶栏：模型名吃剩余空间，不再被挤成一个字母",
     "极窄屏仍不换行（只能截断）");
   assert.match(css, /\.messages-inner \{[^}]*padding-top:\s*max\([^)]*--topbar-h,/s,
     "换行后的顶栏高度没有从消息列留白里让出来");
-  const app = readFileSync(join(SRC, "App.vue"), "utf8");
-  assert.match(app, /topbarRO = new ResizeObserver\(sync\)/, "App 没有观察顶栏高度");
-  assert.match(app, /--topbar-h/, "App 没有把顶栏高度写进 --topbar-h");
+  const layout = readFileSync(join(SRC, "composables", "useOverlayLayout.ts"), "utf8");
+  assert.match(layout, /topbarRO = new ResizeObserver\(sync\)/, "App 没有观察顶栏高度");
+  assert.match(layout, /--topbar-h/, "App 没有把顶栏高度写进 --topbar-h");
 });
 
 test("会话列表：一行只有一枚选项键，设置/删除收进浮板，上下间距更紧", () => {
