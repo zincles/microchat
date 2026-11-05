@@ -97,13 +97,12 @@ defineExpose({ setSessions });
 <template>
   <aside id="sessions-bar">
     <div class="bar-head">
-      <div class="session-mode-tabs" role="tablist" aria-label="左栏模式">
-        <button type="button" class="session-mode-tab" :class="{ sel: mode === 'chat' }"
-          role="tab" :aria-selected="mode === 'chat' ? 'true' : 'false'" @click="mode = 'chat'">对话</button>
-        <button type="button" class="session-mode-tab" :class="{ sel: mode === 'image' }"
-          role="tab" :aria-selected="mode === 'image' ? 'true' : 'false'" title="生图（暂未接入）"
-          @click="mode = 'image'">生图</button>
-      </div>
+      <!-- Brand Title（2026-11-06 用户定）：原来放大 tab 的位置换作品牌；
+           下面依次是新对话 → 对话/生图 → 会话列表（Gemini 式左侧栏）。 -->
+      <span class="brand">
+        <span class="brand-mark" aria-hidden="true" v-html="ICONS.spark"></span>
+        <span class="brand-name">MicroChat</span>
+      </span>
       <button
         id="toggle-left"
         class="icon-btn"
@@ -118,6 +117,13 @@ defineExpose({ setSessions });
     <button id="session-new" type="button" title="开启新对话（草稿：首句才建会话）" @click="$emit('new')">
       <span class="plus" aria-hidden="true" v-html="ICONS.plus"></span><span class="label">开启新对话</span>
     </button>
+    <div class="session-mode-tabs" role="tablist" aria-label="左栏模式">
+      <button type="button" class="session-mode-tab" :class="{ sel: mode === 'chat' }"
+        role="tab" :aria-selected="mode === 'chat' ? 'true' : 'false'" @click="mode = 'chat'">对话</button>
+      <button type="button" class="session-mode-tab" :class="{ sel: mode === 'image' }"
+        role="tab" :aria-selected="mode === 'image' ? 'true' : 'false'" title="生图（暂未接入）"
+        @click="mode = 'image'">生图</button>
+    </div>
     <div id="session-list" :aria-busy="loading && !sessions.length ? 'true' : 'false'">
       <div v-if="loading && !sessions.length" class="session-skeleton">
         <div v-for="(w, i) in skeletonWidths" :key="i" class="skeleton-row" :style="{ '--w': w }"></div>

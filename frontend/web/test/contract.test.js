@@ -3098,16 +3098,22 @@ test("输入框：发送键住在面板内，全屏键已取消", () => {
   assert.match(pane, /fontBody as fontBodyPref/, "字体值没从服务器偏好读回");
 });
 
-test("左栏顶部：没有 MicroChat 字样，改成 对话 / 生图 两个 tab", () => {
+test("左栏顶部：Brand Title 在顶，新对话在中间，对话/生图在下方（Gemini 式）", () => {
   const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  assert.ok(!bar.includes("MicroChat"), "左栏还挂着 MicroChat 品牌字");
+  assert.match(bar, /class="brand-name">MicroChat</, "左栏顶部缺 Brand Title");
+  assert.match(bar, /class="brand-mark"/, "品牌标题没有标");
+  const newAt = bar.indexOf('id="session-new"');
+  const tabsAt = bar.indexOf('class="session-mode-tabs"');
+  assert.ok(newAt > 0 && tabsAt > 0, "找不到新对话 / tabs");
+  assert.ok(newAt < tabsAt, "对话/生图应该在新对话下方");
   assert.match(bar, /role="tablist" aria-label="左栏模式"/, "没有左栏模式 tabs");
   assert.match(bar, />对话</, "缺「对话」tab");
   assert.match(bar, />生图</, "缺「生图」tab");
   assert.match(bar, /生图（暂未接入）/, "生图 tab 没标暂未接入");
   assert.match(bar, /const mode = ref\("chat"\)/, "默认模式不是对话");
   assert.match(css, /\.session-mode-tab\.sel\s*\{/, "选中态没有样式");
+  assert.match(css, /#sessions-bar \.brand-name \{[^}]*font-size:\s*1\.05em/, "品牌标题没有独立字号");
 });
 test("移动端顶栏：模型名吃剩余空间，不再被挤成一个字母", () => {
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");

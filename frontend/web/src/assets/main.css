@@ -1395,3 +1395,12 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .settings-nav .tab > .md-ripple-layer { inset: 0.2em 0; }
 .ws-switch .ws-tab > .md-ripple-layer { inset: 0.4em 0.3em; }
 .bar-head.bar-tabs .tab > .md-ripple-layer { inset: 0.35em 0.3em; }
+
+/* 左栏品牌头（Gemini 式）：品牌标题在顶，下面依次是新对话、对话/生图、列表。
+ * 品牌标用 primary 的小星芒；标题 title-small 量级，不抢新对话按钮。 */
+#sessions-bar .brand { display: flex; align-items: center; gap: 0.55em; min-width: 0; color: var(--md-on-surface); }
+#sessions-bar .brand-mark { display: inline-flex; flex: none; color: var(--md-primary); }
+#sessions-bar .brand-mark svg { width: 1.35em; height: 1.35em; display: block; }
+#sessions-bar .brand-name { font-size: 1.05em; font-weight: 500; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#sessions-bar .session-mode-tabs { align-self: flex-start; margin: 0.05em 0.55em 0.55em; }
+#sessions-bar #session-new { margin-bottom: 0.35em; }

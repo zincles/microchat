@@ -32,6 +32,9 @@ export const ICONS = {
   menu:
     '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h16"/></svg>',
   // 会话条目的「选项」：竖排三点。一个入口装下设置与删除，别再让行内挤两枚键。
+  // 品牌标（左栏顶，Gemini 式的小星芒）。四角星 + 一颗小星。
+  spark:
+    '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 2.6l2.2 6.2 6.2 2.2-6.2 2.2L12 19.4l-2.2-6.2L3.6 11l6.2-2.2z"/><path d="M19 15.2l1 2.8 2.8 1-2.8 1-1 2.8-1-2.8-2.8-1 2.8-1z"/></svg>',
   // MD3 的 plus（新建对话的 extended FAB 用；线条风与全站图标一致）。
   plus:
     '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>',
