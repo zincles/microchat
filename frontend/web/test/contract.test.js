@@ -3214,10 +3214,11 @@ test("设置页：标题只有一套语言，设置与会话/渠道管理页同�
 
 test("开机请求：会话/Agent 不重复，重活按需，加载有骨架", () => {
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  const modelsSrc = readFileSync(join(SRC, "composables", "useModelsAgents.ts"), "utf8");
   // Agent 列表同一拍共享一发（顶栏 + 草稿首段/状态行都要它）。
-  assert.match(app, /function fetchAgentsOnce\(\)/, "没有 Agent 请求去重");
+  assert.match(modelsSrc, /function fetchAgentsOnce\(\)/, "没有 Agent 请求去重");
   for (const fn of ["refreshAgents", "fillAgentSelect"]) {
-    const body = app.match(new RegExp(`(?:async )?function ${fn}\\([^)]*\\)[\\s\\S]*?\\n\\}`))?.[0] ?? "";
+    const body = modelsSrc.match(new RegExp(`(?:async )?function ${fn}\\([^)]*\\)[\\s\\S]*?\\n  \\}`))?.[0] ?? "";
     assert.match(body, /fetchAgentsOnce\(\)/, `${fn} 没走去重后的 Agent 请求`);
   }
   // boot 已经拉过 /sessions ⇒ enterSession 直接吃现成的。
@@ -3471,6 +3472,7 @@ test("窗口取数：尾部种子已覆盖时不再补发", () => {
 
 test("高延迟：发送先上屏、失败撤回；切会话不先拉列表；窗口并行带种子", () => {
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  const modelsSrc = readFileSync(join(SRC, "composables", "useModelsAgents.ts"), "utf8");
 
   // ① 乐观发送：addMessage 必须在 await 之前；失败要把文字还回输入框
   const sendStart = app.indexOf("async function send(content)");
@@ -3499,7 +3501,7 @@ test("高延迟：发送先上屏、失败撤回；切会话不先拉列表；�
   assert.match(load, /seededMissingRuns\(runs, recent\)/, "没按种子算缺口（会把已取到的再要一遍）");
 
   // ⑤ 模型清单缓存先画后对（切会话不再闪「加载模型…」）
-  assert.match(app, /if \(modelsCache\) paintModelOptions\(modelsCache\)/, "模型清单没有先画缓存");
+  assert.match(modelsSrc, /if \(modelsCache\) paintModelOptions\(modelsCache\)/, "模型清单没有先画缓存");
 
   // ⑥ 编辑消息：PATCH 回来先就地换正文，再对账（别让旧字多挂一个 RTT）
   const editor = readFileSync(join(SRC, "components", "MessageEditor.vue"), "utf8");

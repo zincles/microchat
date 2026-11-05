@@ -46,6 +46,7 @@ import { useSidePanels } from "./composables/useSidePanels.ts";
 import { useChrome } from "./composables/useChrome.ts";
 import { useOverlayLayout } from "./composables/useOverlayLayout.ts";
 import { useSettingsView } from "./composables/useSettingsView.ts";
+import { useModelsAgents } from "./composables/useModelsAgents.ts";
 
 const api = sharedApi();
 applyTheme();
@@ -112,6 +113,8 @@ const {
 
 const { settingsOpen, settingsOnly, openSettings, openManage, closeSettings, backToChat } = useSettingsView({ closeLeftDrawer });
 
+
+
 const { resetChrome, onMessagesScroll } = useChrome();
 
 const { liftOverlays, install: installOverlayLayout, uninstall: uninstallOverlayLayout } = useOverlayLayout(overlaysRef);
@@ -169,6 +172,29 @@ const sessionInfo = reactive({});
 let draft = false;
 let draftPrefs = { provider: "", model: "", agent: "" };
 let draftId = null;
+
+const {
+  vueAgents,
+  statusAgent,
+  paintSessionHeader,
+  fillModelSelect,
+  applyModelValue,
+  fillAgentSelect,
+  agentLabelOf,
+  applyAgentValue,
+  refreshAgents,
+} = useModelsAgents({
+  api,
+  toast,
+  topbarRef,
+  getEpoch: () => epoch,
+  getSessionID: () => sessionID,
+  isDraft: () => draft,
+  sessionInfo,
+  draftPrefs,
+  onRefreshStatusline: refreshStatusline,
+  onRefreshPreview: refreshPreview,
+});
 const vueMessages = ref([]);
 // 会话加载中的骨架（2026-11-02）：进会话会先清空消息列，再等 /sessions + 消息窗口；
 // 远端部署时那是两三个 RTT 的空白。给一层静态骨架，至少让人知道"在加载"而不是"坏了"。
@@ -185,7 +211,6 @@ const windowLimit = ref(5);
 const windowFrom = ref(1); // 窗口起点（段对齐；1 = 已到最老）
 const summaryMsgs = reactive(new Map()); // 摘要 id → {state:"loading"|"ready", rows}（只有展开过的才有）
 const openSummaries = new Set(); // 哪些卡正展开着（reload 后补拉新鲜的）
-const vueAgents = ref([]); // 生效 agent 列表（草稿首段的合成气泡看它；显示形态本身已无开关）
 // 设置视图的"单独入口"："" = 完整设置（四个 tab）；"session" / "provider" = 只显示那一页，
 // 从左侧栏底部的「会话 / 渠道」进来。两者共用同一个视图与同一份数据加载。
 // **设置 = root 专属**（用户定，2026-10-10）：`is_admin` 才给进设置；其他用户的入口按钮也不给。
@@ -1000,118 +1025,6 @@ async function resumeRerollIfLive() {
   else refreshRerollSummary();
 }
 
-// —— 顶栏 ——
-function paintSessionHeader() {
-  topbarRef.value?.setSession(sessionInfo, draft);
-  document.title = sessionInfo.title ? `${sessionInfo.title} - MicroChat` : "MicroChat";
-}
-// 模型清单缓存（2026-11-05，高延迟优化）：这玩意只在渠道刷新时变，却原来每进一次会话
-// 都重拉一遍 —— 远端 1s+ 时顶栏每次都先显示"加载模型…"。现在先画上一份、后台再对一次
-// （`models-changed` 那条路照旧会触发一次刷新，不靠 TTL 猜）。
-let modelsCache = null;
-let modelsInflight = null;
-function paintModelOptions(models) {
-  const groups = groupModelsByProvider(models ?? []).map((g) => ({
-    provider: g.provider,
-    items: g.items.map(modelOption),
-  }));
-  const cur = sessionInfo.provider && sessionInfo.model ? modelKey(sessionInfo.provider, sessionInfo.model) : "";
-  topbarRef.value?.setModels(groups, cur);
-}
-function fillModelSelect() {
-  const my = epoch;
-  if (modelsCache) paintModelOptions(modelsCache);
-  if (!modelsInflight) modelsInflight = api.models().finally(() => { modelsInflight = null; });
-  modelsInflight.then((models) => {
-    modelsCache = models;
-    if (my === epoch) paintModelOptions(models);
-  }).catch((err) => {
-    if (my === epoch && !modelsCache) toast(`模型列表失败：${err.message}`, "error");
-  });
-}
-async function applyModelValue(value) {
-  const mp = parseModelKey(value);
-  if (!mp) return;
-  const { provider, model } = mp;
-  if (draft) {
-    // 草稿：改动只活在客户端，建会话时随 POST /sessions 一起带上。
-    draftPrefs.provider = provider;
-    draftPrefs.model = model;
-    Object.assign(sessionInfo, { provider, model });
-    paintSessionHeader();
-    refreshStatusline("idle");
-    refreshPreview(); // 面板不许停在旧渠道那一发上
-    return;
-  }
-  const my = epoch;
-  const updated = await api.patchSession(sessionID, { provider, model });
-  if (my !== epoch) return;
-  Object.assign(sessionInfo, updated);
-  paintSessionHeader();
-  refreshStatusline("idle");
-  refreshPreview();
-}
-// Agent 列表在"进会话"这一拍会被两条路同时要（顶栏选人 + 草稿首段/状态行）：
-// 从前各发一次 GET /agents（实测同一毫秒两发、每发 42KB）。这里让同一拍共享一发。
-let agentsInflight = null;
-function fetchAgentsOnce() {
-  if (!agentsInflight) {
-    agentsInflight = api.agents().finally(() => { agentsInflight = null; });
-  }
-  return agentsInflight;
-}
-function fillAgentSelect() {
-  const my = epoch;
-  fetchAgentsOnce().then((data) => {
-    if (my !== epoch) return;
-    const list = (data.agents ?? []).map(agentOption);
-    // 顶栏的圆头像 = Agent 入口（2026-10-14）；状态行小字里那份是"显示"。
-    topbarRef.value?.setAgents(list, sessionInfo.agent_id);
-    statusAgent.value = list.find((a) => a.id === sessionInfo.agent_id)?.label ?? sessionInfo.agent_id ?? "";
-    // 这一发只更新"助手"那格；上下文环由 enterSession 的 refreshStatusline 统一问一次
-    //（从前这里也带 withContext，实测同一拍发两次 GET /context）。
-    refreshStatusline("idle", undefined, { withContext: false });
-    // 没 agent 时别猜 list[0]：后端认的是 default_agent。
-    if (!sessionInfo.agent_id && list.length) applyAgentValue(data.default_agent || list[0].id);
-  }).catch((err) => { if (my === epoch) toast(`Agent 列表失败：${err.message}`, "error"); });
-}
-// 状态行那格"当前助手"的标签（顶栏那份交给圆头像了；这格只管显示）。
-// 换人要当场重算 —— 它原来只在"进会话"时算过一次，换完留着旧名字（2026-10-14 实测咬到）。
-function agentLabelOf(id) {
-  return vueAgents.value.find((a) => a.id === id)?.name || id || "";
-}
-async function applyAgentValue(id) {
-  if (!id) return;
-  if (draft) {
-    draftPrefs.agent = id;
-    Object.assign(sessionInfo, { agent_id: id });
-    paintSessionHeader();
-    refreshAgents();
-    statusAgent.value = agentLabelOf(id);
-    refreshStatusline("idle");
-    refreshPreview();
-    return;
-  }
-  const my = epoch;
-  const updated = await api.patchSession(sessionID, { agent_id: id });
-  if (my !== epoch) return;
-  Object.assign(sessionInfo, updated);
-  paintSessionHeader();
-  refreshAgents();
-  statusAgent.value = agentLabelOf(id);
-  refreshStatusline("idle");
-  refreshPreview();
-}
-// refreshAgents：拉生效 agent 列表（**只为草稿的首段对话**与状态行的助手名 —— 从前它顺带算
-// "显示模式"，2026-10-27 那个开关没了 ⇒ 更名收窄，别再往这儿加显示相关的东西）。
-async function refreshAgents() {
-  const my = epoch;
-  try {
-    const data = await fetchAgentsOnce();
-    if (my !== epoch) return;
-    vueAgents.value = data.agents ?? [];
-  } catch { /* 拿不到就空着：草稿不画首段、状态行回落到 agent id */ }
-}
 async function askDeleteSession(id) {
   // 高延迟下别为了一个标题先等一个 RTT：左栏缓存里就有它。
   let title = sessionsCache.value.find((s) => s.id === id)?.title;
@@ -1521,8 +1434,6 @@ async function pollTurn(sid, turnID) {
   }
 }
 let connText = "未连接";
-// statusAgent：当前助手的显示名（顶栏去壳后，它住在状态行小字里；数据在进会话时现取）。
-const statusAgent = ref("");
 // 左栏「选项」浮板的两件动作（2026-11-04 从会话设置面板挪过来）：
 // 复制成功后仍走 afterCopy（进副本）；导出仍用同一个 API + downloadJSON。
 async function copySessionFromBar(id) {
