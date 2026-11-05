@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // 上下文面板：载荷 / 状态 / 压缩 三 tab。
 // 载荷 = 真请求直放（method/url/headers/体 JSON）；状态 = 截至末条现演（tables 按表分组）；
 // 压缩 = 压缩树（buildCompactTree 的产出：文件管理器那种看体积的树）。
@@ -12,43 +12,56 @@ import CompactTree from "./CompactTree.vue";
 import AdvancedCompact from "./AdvancedCompact.vue";
 import ToggleSwitch from "./ToggleSwitch.vue";
 import { treeTotals } from "../utils/tree.ts";
+import type { TreeNode } from "../utils/tree.ts";
 import { parseWireMessages, previewBlock } from "../utils/payload.ts";
+import type { ParsedWireMessage } from "../utils/payload.ts";
 import { payloadPreviewOn, savePayloadPreview, payloadVizOn, savePayloadViz } from "../utils/prefs.ts";
+import type { LastPayload, PayloadPreview } from "../api/types.ts";
 
-defineProps({
-  defaultBlocks: { type: Number, default: null }, // chat.compact_blocks（空输入框的默认，只用于提示）
-  sessionId: { type: String, default: "" },
+const props = withDefaults(defineProps<{
+  defaultBlocks?: number | null; // chat.compact_blocks（空输入框的默认，只用于提示）
+  sessionId?: string;
+}>(), {
+  defaultBlocks: null,
+  sessionId: "",
 });
-const emit = defineEmits(["compact", "tab", "compact-payload", "undo", "preview", "advanced-done"]);
+const emit = defineEmits<{
+  compact: [blocks: number | null];
+  tab: [tab: string];
+  "compact-payload": [blocks: number | null];
+  undo: [id: string];
+  preview: [on: boolean];
+  "advanced-done": [];
+}>();
 
 const tab = ref("payload");
 // 切 tab 报给 App：压缩树看着才拉全量账本（窗口化的内存账，见 App.refreshTree）。
-function selectTab(t) { tab.value = t; emit("tab", t); }
+function selectTab(t: string): void { tab.value = t; emit("tab", t); }
 const blocks = ref(""); // 压缩面板上的块数输入（空 = 用配置默认）
-function doCompact() {
+function doCompact(): void {
   const n = Number(blocks.value);
   emit("compact", Number.isFinite(n) && n > 0 ? Math.floor(n) : null);
 }
-const wire = ref(null);
+const wire = ref<LastPayload | null>(null);
 // 载荷预览开关（2026-11-04 用户定）：关掉后不请求 /outgoing，载荷 tab 只显示"已关闭"。
 const preview = ref(payloadPreviewOn());
-function setPreview(on) {
+function setPreview(on: boolean): void {
   preview.value = !!on;
   savePayloadPreview(preview.value);
   emit("preview", preview.value);
 }
 // 分块视图（用户点名 2026-10-11）：开关记忆在 localStorage；开着就把 body.messages 一块块画。
 const viz = ref(payloadVizOn());
-function setViz(v) { viz.value = !!v; savePayloadViz(viz.value); }
+function setViz(v: boolean): void { viz.value = !!v; savePayloadViz(viz.value); }
 const vizData = computed(() => (viz.value ? parseWireMessages(wire.value) : null));
 // 每块开合（2026-11-04 用户定）：分块视图**默认全部折叠**（远程部署少铺开、
 // 也少一次重排）；用户点过的以点过的为准。换一份载荷 ⇒ 清空回全折叠。
-const openMap = ref(new Map());
+const openMap = ref<Map<number, boolean>>(new Map());
 watch(vizData, () => { openMap.value = new Map(); });
-function blockOpen(m, i) {
-  return openMap.value.has(i) ? openMap.value.get(i) : false;
+function blockOpen(m: ParsedWireMessage, i: number): boolean {
+  return openMap.value.has(i) ? openMap.value.get(i)! : false;
 }
-function toggleBlock(m, i) {
+function toggleBlock(m: ParsedWireMessage, i: number): void {
   openMap.value.set(i, !blockOpen(m, i));
 }
 // 一键折叠全部（2026-10-29 用户点名要），**并且明确不要"一键展开"**。
@@ -62,17 +75,17 @@ const allCollapsed = computed(() => {
   const messages = vizData.value?.messages ?? [];
   return messages.length > 0 && messages.every((m, i) => !blockOpen(m, i));
 });
-function collapseAll() {
+function collapseAll(): void {
   const messages = vizData.value?.messages ?? [];
   if (!messages.length) return;
   // 整张表换新（而不是逐条 set）：逐条改也触发更新，但换新一个 Map 只走一次刷新，
   // 而且"全部收起"就是一张干净的表 —— 没有中间态。
-  const next = new Map();
+  const next = new Map<number, boolean>();
   messages.forEach((_, i) => next.set(i, false));
   openMap.value = next;
 }
-const tables = ref({});
-const tree = ref(null); // null = 还没数据（不发请求，显示空话）
+const tables = ref<Record<string, Record<string, string>>>({});
+const tree = ref<TreeNode[] | null>(null); // null = 还没数据（不发请求，显示空话）
 
 const payloadText = computed(() => {
   if (!preview.value) return "载荷预览已关闭（点上方「预览载荷」打开）";
@@ -81,12 +94,12 @@ const payloadText = computed(() => {
 const tableNames = computed(() => Object.keys(tables.value ?? {}).sort());
 const totals = computed(() => (tree.value ? treeTotals(tree.value) : null));
 
-function setWire(w) { wire.value = w ?? null; }
-function setTables(t) { tables.value = t ?? {}; }
+function setWire(w?: LastPayload | null): void { wire.value = w ?? null; }
+function setTables(t?: Record<string, Record<string, string>> | null): void { tables.value = t ?? {}; }
 // 折叠集合：只收**有孩子的节点**（叶子折了没意义）。
-function collapsibleSet(nodes) {
-  const out = new Set();
-  const walk = (ns) => {
+function collapsibleSet(nodes?: TreeNode[] | null): Set<string> {
+  const out = new Set<string>();
+  const walk = (ns?: TreeNode[] | null): void => {
     for (const n of ns ?? []) {
       if (n.children?.length) out.add(n.id);
       walk(n.children);
@@ -95,7 +108,7 @@ function collapsibleSet(nodes) {
   walk(nodes);
   return out;
 }
-function setTree(t) {
+function setTree(t?: TreeNode[] | null): void {
   tree.value = t ?? null;
   // 换一棵树（换会话 / 重新拉全量）时**默认全部收起**（2026-11-03 用户定：
   // 上下文面板里压缩后的文本默认折叠；点开才看这一段的摘要/原文）。
@@ -106,11 +119,11 @@ function setTree(t) {
 // —— 压缩页的「折叠全部」（2026-10-29 用户：「在"压缩"里，也请准备一键折叠的按钮吧」）——
 // 折叠状态**住在这一层**而不是 CompactTree 里：那个按钮要一次改到底，还要能算"已经全收了吗"
 // 来禁用自己 —— 状态留在子组件里，这两件事都得靠 ref + 约定去摸，难看且易错。
-const treeCollapsed = ref(new Set());
+const treeCollapsed = ref<Set<string>>(new Set());
 // 可折叠的 = **有孩子的节点**（叶子折叠了没有意义，它本来就没有下文）。
-const collapsibleIds = computed(() => {
-  const ids = [];
-  const walk = (ns) => {
+const collapsibleIds = computed<string[]>(() => {
+  const ids: string[] = [];
+  const walk = (ns?: TreeNode[] | null): void => {
     for (const n of ns ?? []) {
       if (n.children?.length) ids.push(n.id);
       walk(n.children);
@@ -126,11 +139,11 @@ const compactAllCollapsed = computed(() => {
   const cpDone = compactMessages.value.every((m, i) => !cpOpen(m, i));
   return treeDone && cpDone;
 });
-function collapseCompact() {
+function collapseCompact(): void {
   treeCollapsed.value = collapsibleSet(tree.value);
   // 压缩载荷那几块一起收。**显式全设 false**，不是 `= new Map()` ——
   // 那个类的默认值取决于块长短（短块默认展开），清空会让短块自己弹开（载荷页踩过同一个坑）。
-  const cpNext = new Map();
+  const cpNext = new Map<number, boolean>();
   compactMessages.value.forEach((_, i) => cpNext.set(i, false));
   cpOpenMap.value = cpNext;
 }
@@ -139,10 +152,10 @@ function collapseCompact() {
 // 用户问的是"能不能预览**即将被压缩的文本**"。答：能，而且给的是**整发请求** ——
 // 后端的 `POST .../compact/payload` 与真压走同一段拼装（同一个 `wireFor`），所以这里画出来的
 // 就是真会发出去的那一发（合同测试逐字节钉着）。App 拉回来经 `setCompactWire` 塞进来。
-const compactInfo = ref({});
-const compactWire = computed(() => compactInfo.value.payload ?? null);
+const compactInfo = ref<Partial<PayloadPreview>>({});
+const compactWire = computed<LastPayload | null>(() => compactInfo.value.payload ?? null);
 const compactViz = computed(() => (compactWire.value ? parseWireMessages(compactWire.value) : null));
-const compactMeta = computed(() => compactViz.value?.meta ?? {});
+const compactMeta = computed(() => compactViz.value?.meta ?? { method: "", url: "", model: "", stream: false, tools: 0 });
 const compactMessages = computed(() => compactViz.value?.messages ?? []);
 const compactRange = computed(() => {
   const info = compactInfo.value;
@@ -159,25 +172,25 @@ const compactStateHint = computed(() => {
 });
 // 开合状态独立于上面"载荷"tab 那份（两边都在看同一种形状，但不要互相打断阅读）。
 // 同样**默认全折叠**（2026-11-04）。
-const cpOpenMap = ref(new Map());
-function cpOpen(m, i) {
-  return cpOpenMap.value.has(i) ? cpOpenMap.value.get(i) : false;
+const cpOpenMap = ref<Map<number, boolean>>(new Map());
+function cpOpen(m: ParsedWireMessage, i: number): boolean {
+  return cpOpenMap.value.has(i) ? cpOpenMap.value.get(i)! : false;
 }
-function cpToggle(m, i) { cpOpenMap.value.set(i, !cpOpen(m, i)); }
+function cpToggle(m: ParsedWireMessage, i: number): void { cpOpenMap.value.set(i, !cpOpen(m, i)); }
 // 关掉"这一发压缩的载荷"那块预览。
 // ⚠ 从前模板里写的是 `@click="closeCompactPayload"` —— 而 `compactWire` 是 **computed（只读）**，
 // 那个赋值在浏览器里只会打一条 "computed value is readonly" 警告、什么都不发生
 // （按钮点下去毫无反应，还看不出是坏了）。要改的是它背后的来源 `compactInfo`。
-function closeCompactPayload() {
+function closeCompactPayload(): void {
   compactInfo.value = {};
   cpOpenMap.value = new Map();
 }
-function setCompactWire(result) {
+function setCompactWire(result?: PayloadPreview | null): void {
   compactInfo.value = result ?? {};
   cpOpenMap.value = new Map(); // 换一发 ⇒ 开合回到默认（长块默认折叠）
 }
 // previewCompact：把面板上那个块数（空 = 用配置默认）交给 App 去问后端。
-function previewCompact() {
+function previewCompact(): void {
   const n = Number(blocks.value);
   emit("compact-payload", Number.isFinite(n) && n > 0 ? Math.floor(n) : null);
 }

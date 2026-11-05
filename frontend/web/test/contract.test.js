@@ -295,9 +295,9 @@ test("Markdown 渲染：HTML 一律转义、数学走 KaTeX 占位", () => {
 
 test("载荷分块：默认全折叠；预览单行截断（换行压空格）", () => {
   const bar = readFileSync(join(SRC, "components", "PayloadBar.vue"), "utf8");
-  assert.match(bar, /return openMap\.value\.has\(i\) \? openMap\.value\.get\(i\) : false/,
+  assert.match(bar, /return openMap\.value\.has\(i\) \? openMap\.value\.get\(i\)!? : false/,
     "载荷正文分块默认没有全折叠");
-  assert.match(bar, /return cpOpenMap\.value\.has\(i\) \? cpOpenMap\.value\.get\(i\) : false/,
+  assert.match(bar, /return cpOpenMap\.value\.has\(i\) \? cpOpenMap\.value\.get\(i\)!? : false/,
     "压缩载荷分块默认没有全折叠");
   assert.equal(previewBlock("你好\n世界"), "你好 世界");
   const long = "字".repeat(120);
@@ -2427,7 +2427,7 @@ test("压缩：有一键折叠全部，树与分块一起收，且没有一键�
   // ⑤ 换树要**默认全部收起**（2026-11-03 用户定：压缩后的文本默认折叠，点开才看）
   const setTree = script.match(/function setTree\([\s\S]*?\n\}/)?.[0] ?? "";
   assert.ok(setTree, "找不到 setTree");
-  assert.match(script, /function collapsibleSet\(nodes\)/, "没有收集可折叠节点 id 的纯函数");
+  assert.match(script, /function collapsibleSet\(nodes[^)]*\)/, "没有收集可折叠节点 id 的纯函数");
   assert.match(setTree, /treeCollapsed\.value = collapsibleSet\(tree\.value\)/, "换树没默认全收起");
   const treeTpl = tree.slice(tree.indexOf("<template>"));
   assert.match(treeTpl, /r\.n\.kind !== 'summary' \|\| !collapsed\.has\(r\.n\.id\)/,

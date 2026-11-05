@@ -34,8 +34,8 @@ const props = withDefaults(defineProps<{
 // 压缩树要"看着才拉全量"（App 的 treeVisible），压缩与预演也得让 App 去发请求。
 const emit = defineEmits<{
   tab: [tab: string];
-  compact: [blocks: number];
-  "compact-payload": [blocks: number];
+  compact: [blocks: number | null];
+  "compact-payload": [blocks: number | null];
   undo: [id: string];
   preview: [value: unknown];
   "advanced-done": [];
