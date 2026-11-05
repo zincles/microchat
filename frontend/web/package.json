@@ -2,17 +2,21 @@
   "name": "microchat-web",
   "version": "0.1.0",
   "scripts": {
-    "test": "node --test test/*.test.js",
+    "test": "node --import tsx --test test/*.test.js",
     "dev": "vite --port 5173 --strictPort",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "typecheck": "vue-tsc --noEmit"
   },
   "type": "module",
   "private": "true",
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.10",
+    "tsx": "^4.23.15",
+    "typescript": "^6.0.3",
     "vite": "^7.3.6",
-    "vite-plugin-pwa": "^2.0.0"
+    "vite-plugin-pwa": "^2.0.0",
+    "vue-tsc": "^3.3.14"
   },
   "dependencies": {
     "katex": "^0.16.47",

@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { createApi, mergeStreamSlice, DEFAULT_API_URL, normalizeApiBase, probeHealth } from "../src/api/client.js";
+import { createApi, mergeStreamSlice, DEFAULT_API_URL, normalizeApiBase, probeHealth } from "../src/api/client.ts";
 import { parseWireMessages, previewBlock } from "../src/utils/payload.js";
 import { assemblePrompt, abilityPrompt, missingSegments } from "../src/utils/prompt.js";
 import { renderMarkdown } from "../src/utils/markdown.js";
@@ -1029,7 +1029,7 @@ test("上下文环：圆心是后台任务数，有任务时转动，面板里�
 test("后台任务面板：队列单独一栏（带进度与取消），原子任务按大类分组", () => {
   const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
   const app = readFileSync(join(SRC, "..", "src", "App.vue"), "utf8");
-  const api = readFileSync(join(SRC, "api", "client.js"), "utf8");
+  const api = readFileSync(join(SRC, "api", "client.ts"), "utf8");
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   const tpl = top.slice(top.indexOf("<template>")).replace(/<!--[\s\S]*?-->/g, "");
 
@@ -1045,7 +1045,7 @@ test("后台任务面板：队列单独一栏（带进度与取消），原子�
   assert.match(app, /function cancelQueue\(id\)/, "App 没有 cancelQueue");
   // 取消完要**立刻**刷一次面板（别等那 2 秒的节拍）
   assert.match(app, /api\.cancelQueue\(id\)[\s\S]{0,80}refreshTasks\(\)/, "取消之后没补刷面板");
-  assert.match(api, /cancelQueue:\s*\(queueId\) => call\("POST", `\/tasks\/queues\/\$\{enc\(queueId\)\}\/cancel`\)/,
+  assert.match(api, /cancelQueue:\s*\(queueId[^)]*\)\s*=>\s*call<[^>]+>\("POST", `\/tasks\/queues\/\$\{enc\(queueId\)\}\/cancel`\)/,
     "API 客户端的 cancelQueue 路径不对");
 
   // ③ 大类：按**后端给的 `group`** 分，前端不按 kind 猜
@@ -1120,17 +1120,17 @@ test("probeHealth：先规范化再探 /health；非 microchat 的 200 拒绝", 
 // 鉴权与账号**已经砍掉**了（2026-11-01 用户定：只允许来自 127.0.0.1 的访问）。
 // 这条守着"别把 Bearer / 门板 / 用户管理悄悄加回来" —— 前后端一起删过一轮，加回来就是倒退。
 test("鉴权与账号已经砍掉：没有 token、没有门板、没有用户管理", () => {
-  const api = readFileSync(join(SRC, "api", "client.js"), "utf8");
+  const api = readFileSync(join(SRC, "api", "client.ts"), "utf8");
   const prefs = readFileSync(join(SRC, "utils", "prefs.js"), "utf8");
   const app = readFileSync(join(SRC, "..", "src", "App.vue"), "utf8");
   const srcDir = join(SRC, "..", "src");
 
   // ① API 客户端：没有登录/登出/用户管理那几个口
   for (const gone of ["authLogin", "authSetup", "probeAuthStatus", "authPost"]) {
-    assert.ok(!api.includes(gone), `api/client.js 还留着 ${gone}`);
+    assert.ok(!api.includes(gone), `api/client.ts 还留着 ${gone}`);
   }
   for (const gone of ["me: () =>", "logout: () =>", "createUser", "deleteUser", "setUserPassword"]) {
-    assert.ok(!api.includes(gone), `api/client.js 还留着 ${gone}`);
+    assert.ok(!api.includes(gone), `api/client.ts 还留着 ${gone}`);
   }
 
   // ② 没有凭据存槽
@@ -1566,8 +1566,8 @@ test("压缩载荷预演：按钮 / 事件 / App 监听 / 接口四处都接着"
   assert.match(app, /function previewCompactPayload/, "App 里没有 previewCompactPayload");
   assert.match(app, /api\.compactPayload\(/, "App 没有调 api.compactPayload");
 
-  const client = readFileSync(join(SRC, "api", "client.js"), "utf8");
-  assert.match(client, /compactPayload:\s*\(id, blocks\)/, "api 里没有 compactPayload");
+  const client = readFileSync(join(SRC, "api", "client.ts"), "utf8");
+  assert.match(client, /compactPayload:\s*\(id[^)]*\)/, "api 里没有 compactPayload");
   assert.match(client, /\/compact\/payload/, "api 打错了路径（该是 /compact/payload）");
 });
 
@@ -2013,7 +2013,7 @@ test("上下文工作区：开关在绿环左边，只切内容不切顶栏", ()
 // 2026-10-29 第二轮（用户：「要不我们把右侧栏那个上下文给挪过来？」）：
 test("渠道最大并发：编辑器可设，0 = 不限，高级压缩会与它取 min", () => {
   const editor = readFileSync(join(SRC, "components", "ProviderEditor.vue"), "utf8");
-  const api = readFileSync(join(SRC, "api", "client.js"), "utf8");
+  const api = readFileSync(join(SRC, "api", "client.ts"), "utf8");
   assert.match(editor, /maxConcurrency/, "渠道编辑器没有最大并发状态");
   assert.match(editor, /max_concurrency/, "保存体里没有 max_concurrency");
   assert.match(editor, /最大并发（0 = 不限）/, "没有最大并发输入项");
@@ -2025,7 +2025,7 @@ test("分段压缩 / 补齐空档：第四、第五 tab，预览 → 并发运�
   const ws = readFileSync(join(SRC, "components", "ContextWorkspace.vue"), "utf8");
   const adv = readFileSync(join(SRC, "components", "AdvancedCompact.vue"), "utf8");
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
-  const api = readFileSync(join(SRC, "api", "client.js"), "utf8");
+  const api = readFileSync(join(SRC, "api", "client.ts"), "utf8");
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 
   // ① 两个 tab 按顺序住在压缩后面；不是另开页面。
@@ -2479,13 +2479,13 @@ test("撤销压缩：树与摘要卡两处按钮，只按后端给的 undoable �
   const bar = readFileSync(join(SRC, "components", "PayloadBar.vue"), "utf8");
   const ws = readFileSync(join(SRC, "components", "ContextWorkspace.vue"), "utf8");
   const app = readFileSync(join(SRC, "..", "src", "App.vue"), "utf8");
-  const api = readFileSync(join(SRC, "api", "client.js"), "utf8");
+  const api = readFileSync(join(SRC, "api", "client.ts"), "utf8");
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   const treeTpl = tree.slice(tree.indexOf("<template>")).replace(/<!--[\s\S]*?-->/g, "");
   const cardTpl = card.slice(card.indexOf("<template>")).replace(/<!--[\s\S]*?-->/g, "");
 
   // ① 接口：DELETE 到 summaries/{id}
-  assert.match(api, /undoSummary:\s*\(sid, sumid\) => call\("DELETE", `\/sessions\/\$\{enc\(sid\)\}\/summaries\/\$\{enc\(sumid\)\}`/,
+  assert.match(api, /undoSummary:\s*\(sid[^)]*\)\s*=>\s*call<[^>]+>\("DELETE", `\/sessions\/\$\{enc\(sid\)\}\/summaries\/\$\{enc\(sumid\)\}`/,
     "API 客户端没有 undoSummary（或方法/路径不对）");
 
   // ② 树行：垃圾桶图标 + 悬停"撤销" + 禁用系在 undoable 上
@@ -2563,7 +2563,7 @@ test("左栏浮板：创建副本与导出 JSON 都在这里，会话设置面�
   const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
   const panel = readFileSync(join(SRC, "components", "SessionSettings.vue"), "utf8");
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
-  const api = readFileSync(join(SRC, "api", "client.js"), "utf8");
+  const api = readFileSync(join(SRC, "api", "client.ts"), "utf8");
   const tpl = panel.slice(panel.indexOf("<template>")).replace(/<!--[\s\S]*?-->/g, "");
 
   // ① 浮板四项，顺序就是用户说的顺序。
@@ -2578,7 +2578,7 @@ test("左栏浮板：创建副本与导出 JSON 都在这里，会话设置面�
   assert.match(bar, /@click="pickExport"/, "浮板没有导出动作");
 
   // ② 接口与 App 接线。
-  assert.match(api, /copySession:\s*\(id\) => call\("POST", `\/sessions\/\$\{enc\(id\)\}\/copy`\)/,
+  assert.match(api, /copySession:\s*\(id[^)]*\)\s*=>\s*call<[^>]+>\("POST", `\/sessions\/\$\{enc\(id\)\}\/copy`\)/,
     "API 客户端没有 copySession（或路径不对）");
   assert.match(app, /@copy="copySessionFromBar"/, "App 没接左栏 copy");
   assert.match(app, /@export="exportSessionFromBar"/, "App 没接左栏 export");
@@ -2803,10 +2803,10 @@ test("顶栏有向下阴影（替边框干活），且仍不描线", () => {
 test("任务面板：能停的任务有取消按钮，按不动的不画", () => {
   const bar = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
-  const api = readFileSync(join(SRC, "api", "client.js"), "utf8");
+  const api = readFileSync(join(SRC, "api", "client.ts"), "utf8");
 
   // ① 接口：POST /tasks/{id}/cancel
-  assert.match(api, /cancelTask:\s*\(id\) => call\("POST", `\/tasks\/\$\{enc\(id\)\}\/cancel`\)/,
+  assert.match(api, /cancelTask:\s*\(id[^)]*\)\s*=>\s*call<[^>]+>\("POST", `\/tasks\/\$\{enc\(id\)\}\/cancel`\)/,
     "API 客户端没有 cancelTask（或路径不对）");
 
   // ② 按钮：列表只含正在跑的任务，所以只看 `cancelable`。
@@ -2983,8 +2983,8 @@ test("回到前台会跟后端对齐（三条事件都接）", () => {
 // 后台切回来那几拍请求本来就会失败；从前一抛出去循环就没了，而合成气泡还留在列表里
 // ⇒ 界面一直"在等待"。现在单拍失败继续下一拍，连着十拍不行才认栽。
 test("一轮的轮询：单拍失败继续，不判死刑", () => {
-  const api = readFileSync(join(SRC, "api", "client.js"), "utf8");
-  assert.match(api, /turnPoll:\s*\(id, from, thinkFrom\) =>/, "API 客户端没有 turnPoll");
+  const api = readFileSync(join(SRC, "api", "client.ts"), "utf8");
+  assert.match(api, /turnPoll:\s*\(id[^)]*\)/, "API 客户端没有 turnPoll");
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
   const start = app.indexOf("async function pollTurnHTTP(sid, turnID, my, row)");
   assert.ok(start > 0);
@@ -3376,8 +3376,8 @@ test("载荷预览：面板里可开关；关掉不请求，偏好与输入预�
 
 test("消息窗口批量取：摘要切出的多个区间压成一发 POST", () => {
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
-  const api = readFileSync(join(SRC, "api", "client.js"), "utf8");
-  assert.match(api, /messageRanges:\s*\(id, ranges\) => call\("POST", `\/sessions\/\$\{enc\(id\)\}\/messages\/batch`/,
+  const api = readFileSync(join(SRC, "api", "client.ts"), "utf8");
+  assert.match(api, /messageRanges:\s*\(id[^)]*\)\s*=>\s*call<[^>]+>\("POST", `\/sessions\/\$\{enc\(id\)\}\/messages\/batch`/,
     "API 客户端没有 messageRanges");
   assert.match(app, /function batchRanges\(runs\)/, "没有把 Infinity 尾段转成 to=0 的纯函数");
   assert.match(app, /b === Infinity \? 0 : b/, "批量区间没有处理尾部");
@@ -3582,7 +3582,7 @@ test("弱网：GET 带超时且网络失败重试一次，POST 不套上限", as
 test("悬停预取与开屏并行：意图触发、单飞、上限、warm 用首选候选", () => {
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
   const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
-  const client = readFileSync(join(SRC, "api", "client.js"), "utf8");
+  const client = readFileSync(join(SRC, "api", "client.ts"), "utf8");
 
   assert.match(bar, /@pointerenter="prefetchHover\(s, \$event\)"/, "会话行没有悬停预取");
   assert.match(bar, /setTimeout\(\(\) => emit\("prefetch", s\.id\), 140\)/, "悬停没有 140ms 意图判定");

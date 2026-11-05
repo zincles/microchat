@@ -1,0 +1,28 @@
+{
+  // 自包含：不 extends 类型专用包 —— Vite 构建会读 tsconfig，生产构建不该依赖只用于 typecheck 的包。
+  // 分阶段迁移：现在只检查 .ts / .d.ts；.vue 里的 JS 保持 checkJs=false。
+  "compilerOptions": {
+    "target": "ESNext",
+    "useDefineForClassFields": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "noImplicitThis": true,
+    "jsx": "preserve",
+    "jsxImportSource": "vue",
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
+    "moduleDetection": "force",
+    "verbatimModuleSyntax": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "skipLibCheck": true,
+    "noEmit": true,
+    "allowJs": true,
+    "checkJs": false,
+    "types": ["vite/client", "vite-plugin-pwa/client"]
+  },
+  "include": ["src/**/*.ts", "src/**/*.d.ts"],
+  "exclude": ["node_modules", "dist"]
+}

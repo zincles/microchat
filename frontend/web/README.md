@@ -10,7 +10,8 @@
 # 或在本目录：
 npm ci            # 从锁文件重装（node_modules 永不入库）
 npm run dev       # vite :5173（/api 由 vite 代理到后端 —— 地址读后端自己的配置，见下）
-npm test          # node 原生 test runner：纯函数与请求形状的契约测试
+npm test          # tsx + node 原生 test runner：纯函数与请求形状的契约测试
+npm run typecheck # vue-tsc --noEmit（当前只检查 .ts；api/ 已迁 TS）
 npm run build     # 产出 dist/（不入库，部署时现打）
 ```
 
@@ -26,6 +27,8 @@ Docker 部署（单容器、只公开 8788）见根目录 `docker-compose.yml`�
 
 `vue@3.5`（框架）+ `marked`（markdown 渲染：`**粗**`/`*斜*`/`__下划线__`→`<u>`/行内码/`~~删~~`/引述块）+ `katex`（数学）；构建用 `vite` + `@vitejs/plugin-vue`。
 运行时没有自造传输层（`fetch` 直调）。**加依赖先问**；`node_modules/`、`dist/` 永不进库。
+开发依赖另有 `typescript` / `vue-tsc` / `tsx`：`api/` 已先迁 TS（`client.ts` + `types.ts`），
+其余仍是 JS；`tsconfig` 的 `allowJs`/`checkJs:false` 是分阶段迁移的闸，别急着一次全改。
 
 ## 现在能干什么
 
@@ -44,6 +47,6 @@ Docker 部署（单容器、只公开 8788）见根目录 `docker-compose.yml`�
 - **两种显示模式**（**用户视图 → 外观**；2026-10-17 定名）：`正常模式`（默认，`float` —— 圆角浮空输入框、状态小字在它上方）⇄ `紧凑模式`（`solid` —— 输入框占满整行、方角贴底，状态/任务两行收进栏里，省地方）。载体是根节点的 `data-composer` 属性，保存后**即时生效**；默认不挂属性 ⇒ 老界面一个像素都不变
 - **状态行数字是人话格式**（`formatTokens`：9.8K / 995K / 1.04M，向下取整）；分母是**输入预算**
   （上下文 − 输出预留）而不是模型上下文 —— 悬停有算式、设置 → 聊天里有一句同样的说明
-- **共享层**：`utils/prefs.js`（界面偏好 + `sharedApi()` + 发送键判定/主题应用，含 TG 守卫）· `api/client.js` 的 `mergeStreamSlice`（流式合并唯一规则）· 错误带 `code`/`status`（按 code 分支）· `format.js` 的 modelKey/modelLabel/whoText/sessionTitle（键与标签唯一出口）
+- **共享层**：`utils/prefs.js`（界面偏好 + `sharedApi()` + 发送键判定/主题应用，含 TG 守卫）· `api/client.ts` 的 `mergeStreamSlice`（流式合并唯一规则）· 错误带 `code`/`status`（按 code 分支）· `format.js` 的 modelKey/modelLabel/whoText/sessionTitle（键与标签唯一出口）
 
 口径、路由表与"为什么这么设计"全在根目录 `AGENTS.md`。

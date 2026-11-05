@@ -2,7 +2,7 @@
 // App.vue —— 三栏骨架 + 全部接线（原 main.js + 九个桥，合一）。
 // 组件直接挂模板，ref 直调实例方法，不再经 *-vue.js 桥 / mount.js。
 import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from "vue";
-import { createApi, mergeStreamSlice, probeHealth } from "./api/client.js";
+import { createApi, mergeStreamSlice, probeHealth } from "./api/client.ts";
 import { parseCommand, filterCommands, COMMAND_META } from "./utils/commands.js";
 import { resetChrome as resetChromeState, stepChrome } from "./utils/chrome.js";
 import { uuidv7 } from "./utils/ids.js";

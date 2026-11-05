@@ -12,7 +12,7 @@
 // 为什么所有 getter 仍是**同步**的：调用点遍布 App 与各组件（`previewOn()` 在渲染路径上）。
 // 若改成 async，半个应用要跟着改成 await —— 换来的只是"改成从服务器读"这一个结果。
 // 所以：内存缓存（`cache`）是读取的唯一来源，`syncPrefs()` 负责把它与服务器对齐。
-import { createApi, DEFAULT_API_URL, normalizeApiBase } from "../api/client.js";
+import { createApi, DEFAULT_API_URL, normalizeApiBase } from "../api/client.ts";
 
 // 主题（2026-10-28 用户定：「只保留 亮色 / 暗色 / Breeze 三种风格，不保留TG风格」）。
 // `THEME_IDS` 是**唯一权威**：theme.css 的 `html[data-theme]` 与设置页那个下拉都只能取这三个，

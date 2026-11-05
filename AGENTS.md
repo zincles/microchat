@@ -1013,7 +1013,12 @@ DeepSeek / OpenCode GO 直连**确实不报**，所以那一格在那儿永远�
 像正文被裁掉了，影子才读成「栏在内容上面」⇒ 阴影在这儿**替边框干活**，所以仍然不描线。
 ⚠ 阴影的几何别照抄侧栏那道：`-6px` 的负扩散会把渐变大半缩到栏背后，露出只剩一截（读起来是脏边）；现在是
 offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#131313`，黑影在近黑底上本来就淡 ⇒ 浓度取到 34% 那档的上限。2026-10-14 那版是「全透明 + 双层柔影」，试过 mask 渐隐的毛玻璃，撤了），输入行自己就是浮卡；消息列底部留白 = `--composer-h`（输入行实测高，`composerRO` 现量现写，textarea 长高不脱节）。⚠ CSS 里 `#chat-col > *:not(header)`（1-0-1）会压过 `#composer`（1-0-0）的 position —— 那条共享规则**别写 position/z-index**，踩过）与**设置视图**互斥切换；右载荷栏（**tabs 常驻顶部，三个面板各自滚动**（2026-10-17 用户定/修）；三 tab：真请求直放（裸 JSON ⇄ **分块视图**——把 `body.messages` 一块块画成卡片，开关记忆在 `mc_payload_viz`；**整行可点开合、>500 字的块默认折叠**（system prompt 那种巨块不撑爆面板；折叠态给单行预览）；展开不设嵌套滚动——面板整体滚，触摸纵向手势按轴锁归浏览器（2026-10-11）/ 世界状态 / **压缩树**）随对话一起让位。**设置不再弹窗**：占满左栏右侧整块、顶部是**一行式工具栏** `[◧][五区 tabs][×]`（不设"顶部卡"、无标题；Esc 返回）。**窄屏（断点即身份，2026-10-10）**：≤1100 右载荷栏、≤700 左会话栏改**覆盖式抽屉**（`collapsed` = 关着；[◧][◨] 调出/收起 + 遮罩点击收起 + 选中会话/开新对话自动收）；窄屏**不读不写**桌面偏好（`mc_bar_*_hidden`），跨断点时两侧统一先关（不然会"啪"地盖上来）。遮罩的显隐由 CSS 兄弟选择器跟栏的类联动，不用 JS 状态。
-- 接线全在 `src/App.vue`（SFC 直接挂模板）；`src/api/client.js` 只调 `/api/v1`；`src/utils/` 放纯函数（contract 测试钉住请求形状）。
+- 接线全在 `src/App.vue`（SFC 直接挂模板）；`src/api/client.ts` 只调 `/api/v1`；`src/utils/` 放纯函数（contract 测试钉住请求形状）。
+- **TypeScript 迁移（2026-11-06 起，分阶段）**：`api/` 已迁（`client.ts` + `types.ts`，响应/请求形状的唯一类型处），
+  其余 `utils/` 与 `.vue` 仍是 JS。`tsconfig.json` 用 `allowJs: true` + `checkJs: false`，当前只检查 `.ts`/`.d.ts`；
+  `npm run typecheck`（`vue-tsc --noEmit`）必须绿。`npm test` 走 `tsx`（Node 不能直接 import `.ts`）。
+  后续阶段：utils 纯函数 → 叶子组件（`defineProps<T>()` / `defineEmits<T>()`）→ 重组件 + `App.vue` 拆 composables。
+  迁移期别把 TS 与视觉/行为改版混在一个提交里。
 - **门板/登录的视觉**（2026-10-14 用户定"更好看"）：玻璃卡（`backdrop-filter`）+ 品牌头（**内联 SVG** 标 —— 无外部资源，离线 SW 照旧）+ 主题色光晕 + 入场动画（尊重 `prefers-reduced-motion`）；**底自己铺 `--mc-bg-image`**（就是用户背景图那枚变量）+ 一层跟主题走的面纱 —— 门板在 `#app` 里、够不着 `body::before` 的图层，想要"透出背景图"**别用透明**（会把聊天壳一起透出来，实测截图里左栏顶栏全露馅）。
 - **连接门板**（2026-10-10 加）：启动自检探不通后端（新设备第一次打开/地址没填对）⇒ 不开破界面，先给全屏"连接到 microchat 后端"面板：填地址（裸写 `192.168.0.110:8787` 也行 —— `normalizeApiBase` 自动补 `http://` 与 `/api/v1`）→ 过 ⇒ `saveNetPrefs` 存 **JWT** + **刷新页面**进聊天（沿用"改完刷新生效"）。**地址栏只在"探不通"时出现**（2026-10-14 用户定）：探通 ⇒ 收起，登录界面只有用户名/口令（单容器部署里浏览器永远同源，不该再问地址）；中途又断了 ⇒ 地址栏自动放回来。**2026-10-10 多用户改造**：启动自检探开放口 `/auth/status`——探不通 ⇒ 门板带原因；`needs_setup:true` ⇒ 「初始化 root」（**uid 0 恒在**，只设口令+确认；名字固定 root）；已初始化 ⇒ 登录（地址 / 用户名 / 口令）。探针两道闸照旧（`normalizeApiBase` + 必须回 `status:"ok"`）。
 - **模型选择器**（2026-10-28 用户定：「既然助手切换器和上下文使用率指示器都有漂亮得点击后显示的面板，可否把模型的那个选择器也改成这种自定义面板，按 Provider 分类的（接近 openwebui 风格）」）：
@@ -1064,7 +1069,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   ⚠ 数字只从 `/tasks` 的 `running` 与 `queues` 推（取 max，见上），别在前端自己 `filter` 数一遍 —— 前端时钟与「什么算在跑」都跟后端不一致时，环心的数与面板里的行数会打架。
   App 仍每 2s 拉一次 `/tasks`（进程内面板、零成本），受理类动作（发送/重发/压缩/重摇两族）后**立刻补刷一次**不等节拍；喂数只有一处（`topbarRef.setTasks(board)`，取不到就 `null`）。
   ⚠ 从前那行小字与 2026-11-01 的独立任务徽标都已删：**同一个数字住两处，只会让两处都可能过期**。
-- **共享层（2026-10-10 审计整改）**：`utils/prefs.js` = 界面偏好与共享 api 客户端的唯一出口（主题应用含 TG 守卫 —— TG 里 data-theme 根本不设；发送键判定/提示、apiBase/Token、`sharedApi()` 按偏好缓存）；`api/client.js` 的 `mergeStreamSlice` = 流式合并唯一规则（游标回退 ⇒ 清零重建）；api 错误统一带 `code`/`status`（分支按 code，别猜文案）；`format.js` 的 modelKey/modelLabel/whoText/sessionTitle = 键与标签的唯一出口；`COMMAND_META`（commands.js）与 App 执行器启动对账。
+- **共享层（2026-10-10 审计整改）**：`utils/prefs.js` = 界面偏好与共享 api 客户端的唯一出口（主题应用含 TG 守卫 —— TG 里 data-theme 根本不设；发送键判定/提示、apiBase/Token、`sharedApi()` 按偏好缓存）；`api/client.ts` 的 `mergeStreamSlice` = 流式合并唯一规则（游标回退 ⇒ 清零重建）；api 错误统一带 `code`/`status`（分支按 code，别猜文案）；`format.js` 的 modelKey/modelLabel/whoText/sessionTitle = 键与标签的唯一出口；`COMMAND_META`（commands.js）与 App 执行器启动对账。
 - **CSS 复用基线（2026-11-02，用户定「减少 CSS 的使用量、多复用少重写」）**：全站仍是手写 CSS（不引 Tailwind —— 它与 em 缩放/大量状态选择器不合，且会把 CSS 搬进模板）。复用只有四处，新样式照此写：
   ① **幽灵按钮底座** `main.css` 那一组（`.icon-btn / .foot-btn / .edit-btn / .link-btn / .cp-close / .ctree-tw / .ctree-undo / .collapse-all / .session-item 的两枚 / 模型与 Agent 菜单项 / tabs`）= `background:none; border:none; cursor:pointer` **只写一次**，具体规则只写颜色/尺寸/圆角；
   ② **文字蒙层** 用 `theme.css` 的 `--mix-6 / 8 / 10 / 13 / 18`（加已有的 `--hover` = 7%），别再在 `main.css` 里现写 `color-mix(... N%, transparent)`；
