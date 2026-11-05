@@ -48,8 +48,13 @@ export function normalizeApiBase(v) {
 // 2026-11-01：鉴权砍了，原来的 `/auth/status` 也没了 ⇒ 换成 `/health`（它本来就要鉴权，现在不用了）。
 // 两道闸照旧（都是踩过的坑）：地址先 `normalizeApiBase`（裸地址会被 fetch 当相对路径、
 // 被 vite 的 200 HTML 骗过）；回体必须是 JSON 且 `status:"ok"`（挡住"随便一个 web 服务回 200"）。
-export async function probeHealth(base, { fetchFn = fetch } = {}) {
-  const res = await fetchFn(`${normalizeApiBase(base)}/health`);
+export async function probeHealth(base, { fetchFn = fetch, timeout = 8000 } = {}) {
+  // 8 秒上限：黑洞地址（DROP / 路由不可达）上 fetch 可能挂很久，启动不该被它按住。
+  const opts = {};
+  if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+    opts.signal = AbortSignal.timeout(timeout);
+  }
+  const res = await fetchFn(`${normalizeApiBase(base)}/health`, opts);
   let data = null;
   try { data = await res.json(); } catch { /* 非 JSON 体 */ }
   if (!res.ok) throw httpError(data, res);
@@ -67,8 +72,13 @@ function httpError(data, res) {
 }
 
 export function createApi({ base, token = "", fetchFn = fetch }) {
-  async function call(method, path, body, opts = {}) {
-    const res = await fetchFn(base + path, {
+  // GET 的超时与一次网络重试（2026-11-05，高延迟/弱网）：
+  //   · 本地/反代都可能在链路上"挂住"而不是报错 —— 不设上限时，进会话会永远停在骨架；
+  //   · GET 是幂等的，网络层失败（不是超时）重试一次很划算；超时**不**重试（那等于把等待翻倍）。
+  // POST/其它方法可能触发上游长活（刷新模型、导入），不套这个上限。
+  const GET_TIMEOUT_MS = 20000;
+  function callInit(method, body, opts) {
+    return {
       method,
       headers: {
         "Content-Type": "application/json",
@@ -76,7 +86,21 @@ export function createApi({ base, token = "", fetchFn = fetch }) {
       },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
       ...opts,
-    });
+    };
+  }
+  async function call(method, path, body, opts = {}) {
+    const init = callInit(method, body, opts);
+    if (method === "GET" && !init.signal && typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+      init.signal = AbortSignal.timeout(GET_TIMEOUT_MS);
+    }
+    let res;
+    try {
+      res = await fetchFn(base + path, init);
+    } catch (err) {
+      if (method !== "GET" || err?.name === "AbortError") throw err;
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      res = await fetchFn(base + path, init);
+    }
     if (res.status === 204) return null;
     const data = await readJson(res);
     if (!res.ok) throw httpError(data, res);

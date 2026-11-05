@@ -3321,7 +3321,8 @@ test("消息窗口：默认 5 段，设置里可改，首屏与加载更多共�
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
   const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
   assert.match(app, /const windowLimit = ref\(5\)/, "消息窗口默认不是 5");
-  assert.match(app, /windowStart\(segments, windowLimit\.value\)/, "首屏没用可配置窗口");
+  assert.match(app, /windowStart\(segments, limit\)/, "首屏没用可配置窗口");
+  assert.match(app, /limit = windowLimit\.value/, "窗口取数没有默认取 history_window");
   assert.match(app, /prevWindowStart\(vueSegments\.value, windowFrom\.value, windowLimit\.value\)/, "加载更多没用可配置窗口");
   assert.match(app, /history_window/, "App 没从 chat 配置读 history_window");
   assert.match(settings, /v-model="chat\.history_window"/, "设置里没有首屏消息数输入");
@@ -3475,8 +3476,8 @@ test("高延迟：发送先上屏、失败撤回；切会话不先拉列表；�
   assert.match(enter, /sessionsFetchedAt > SESSIONS_FRESH_MS/, "列表缓存没有后台保鲜（会一直用旧标题）");
 
   // ④ 窗口第一拍就带"最后 N 条"，摘要没横跨时第二拍为空
-  const load = app.slice(app.indexOf("async function loadWindow"), app.indexOf("async function reloadWindow"));
-  assert.match(load, /api\.listMessagesLast\(sid, windowLimit\.value\)/, "第一拍没带尾部种子");
+  const load = app.slice(app.indexOf("async function fetchWindowNow"), app.indexOf("async function loadWindow"));
+  assert.match(load, /api\.listMessagesLast\(id, limit\)/, "第一拍没带尾部种子");
   assert.match(load, /seededMissingRuns\(runs, recent\)/, "没按种子算缺口（会把已取到的再要一遍）");
 
   // ⑤ 模型清单缓存先画后对（切会话不再闪「加载模型…」）
@@ -3538,4 +3539,47 @@ test("回看缓存接到切会话：先画缓存再对账；对账期间本地�
   assert.match(load, /onlyIfUnchanged && \(rev !== localRev \|\| pendingSends > 0\)/, "后台对账没有和本地动作/在飞发送对账");
   assert.match(app, /localRev\+\+/, "本地动作没有推进 localRev");
   assert.match(app, /forgetWindow\(windowCache, id\)/, "删会话没清它的缓存");
+});
+
+// 弱网兜底（2026-11-05）：GET 有超时、网络层失败重试一次；POST 不套这个上限
+// （刷新模型/导入这类会打上游长活，套 20 秒会把正常的长请求剪断）。
+test("弱网：GET 带超时且网络失败重试一次，POST 不套上限", async () => {
+  const seen = [];
+  let calls = 0;
+  const fetchFn = async (url, opts) => {
+    seen.push({ url, opts });
+    calls++;
+    if (calls === 1) throw new TypeError("fetch failed");
+    return { status: 204, ok: true, json: async () => null };
+  };
+  const api = createApi({ base: "http://x/api/v1", fetchFn });
+  await api.listSessions();
+  assert.equal(seen.length, 2, "GET 网络失败没有重试一次");
+  assert.ok(seen[0].opts.signal, "GET 没有超时信号");
+  assert.ok(seen[1].opts.signal, "重试丢了超时信号");
+  await api.sendMessage("s1", "hi");
+  assert.equal(seen[seen.length - 1].opts.signal, undefined, "POST 不该套 GET 超时");
+});
+
+// 悬停/触摸预取 + 开屏并行（2026-11-05）：
+//   · 桌面停 140ms 才算意图（扫过列表不乱发）；触屏/键盘立即；
+//   · 同一屏单飞（悬停后马上点下去只发一遍）；并发最多 3；
+//   · boot 的探活与首批 chat/sessions 并行，且 warm 用的是**第一个候选**（不是 apiBase() 的 8787 默认）。
+test("悬停预取与开屏并行：意图触发、单飞、上限、warm 用首选候选", () => {
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
+  const client = readFileSync(join(SRC, "api", "client.js"), "utf8");
+
+  assert.match(bar, /@pointerenter="prefetchHover\(s, \$event\)"/, "会话行没有悬停预取");
+  assert.match(bar, /setTimeout\(\(\) => emit\("prefetch", s\.id\), 140\)/, "悬停没有 140ms 意图判定");
+  assert.match(bar, /@touchstart\.passive="prefetchNow\(s\)"/, "触屏没有预取");
+  assert.match(bar, /@focusin="prefetchNow\(s\)"/, "键盘 focus 没有预取");
+  assert.match(app, /@prefetch="prefetchSession"/, "App 没接预取事件");
+  assert.match(app, /function prefetchSession\(id\)/, "没有 prefetchSession");
+  assert.match(app, /PREFETCH_MAX_ACTIVE/, "预取没有并发上限");
+  assert.match(app, /const tailInflight = new Map\(\)/, "同一屏没有单飞（悬停后马上点会发两遍）");
+  assert.match(app, /const warmApi = createApi\(\{ base: firstBase \}\)/, "boot 没有并行预热首批数据");
+  assert.match(app, /if \(winner === firstBase\) \{\s*\[chatCfg, sessions\] = await warm;/, "warm 结果没被用上（或候选没对上就吃了错误基址的数据）");
+  assert.match(client, /timeout = 8000/, "探活没有超时（黑洞地址会把启动按住）");
+  assert.match(client, /GET_TIMEOUT_MS = 20000/, "GET 没有超时上限");
 });

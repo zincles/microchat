@@ -2,7 +2,7 @@
 // App.vue —— 三栏骨架 + 全部接线（原 main.js + 九个桥，合一）。
 // 组件直接挂模板，ref 直调实例方法，不再经 *-vue.js 桥 / mount.js。
 import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from "vue";
-import { mergeStreamSlice, probeHealth } from "./api/client.js";
+import { createApi, mergeStreamSlice, probeHealth } from "./api/client.js";
 import { parseCommand, filterCommands, COMMAND_META } from "./utils/commands.js";
 import { resetChrome as resetChromeState, stepChrome } from "./utils/chrome.js";
 import { uuidv7 } from "./utils/ids.js";
@@ -111,6 +111,13 @@ let localRev = 0;
 // pendingSends：正在等 202 的发送数。乐观气泡已经上屏、但服务端还没落库 ——
 // 这时候落到屏上的窗口快照可能**还没有**那句，必须把它判成"旧"。
 let pendingSends = 0;
+// 悬停/触摸预取（2026-11-05）：会话行被"意图"指到就把它的窗口先拉进缓存，
+// 点下去就是 0 RTT。并发上限 3 —— 手指扫过整列时别把每一条都排上队。
+const PREFETCH_MAX_ACTIVE = 3;
+const PREFETCH_FRESH_MS = 30_000;
+const prefetching = new Set();
+const prefetchedAt = new Map();
+let prefetchActive = 0;
 // 会话世代：进会话/回草稿就 +1。所有会话域的异步续写都在 await 后核对本世代，对不上就丢 ——
 // 没有这道闸，快速切会话时迟到的 A 续写会覆掉已切到的 B 的抬头与消息列（实测复现过：
 // 顶栏 A、高亮 B、气泡 A —— 界面被撕成三份）。
@@ -240,6 +247,43 @@ function batchRanges(runs) {
   return runs.map(([a, b]) => [a, b === Infinity ? 0 : b]);
 }
 
+// fetchWindow：拉一屏窗口（摘要 + 尾部种子 + 必要的老段）并算好行/段/起点 —— **不碰界面**。
+//
+// loadWindow（进会话 / 对账）与"悬停预取"共用它：预取只把结果塞进 windowCache，
+// 绝不许改当前消息列。`from = null` ⇒ 按"最后 N 段"起；否则保持起点（压缩/删除后对回段边界）。
+// 尾部那一屏做单飞：悬停后马上点下去，两边拿的是同一个 Promise，不会发两遍。
+const tailInflight = new Map();
+function fetchWindow(id, { from = null, limit = windowLimit.value } = {}) {
+  if (from !== null) return fetchWindowNow(id, { from, limit });
+  const key = id + ":" + limit;
+  const hit = tailInflight.get(key);
+  if (hit) return hit;
+  const p = fetchWindowNow(id, { from, limit }).finally(() => tailInflight.delete(key));
+  tailInflight.set(key, p);
+  return p;
+}
+async function fetchWindowNow(id, { from, limit }) {
+  const [sums, recent] = await Promise.all([
+    api.listSummaries(id),
+    // 总数与"窗口可能正好要的那几条"一起拿：`?last=N` 的末条 idx 就是总数。
+    // 没有摘要横跨窗口时，最后 N 条正好就是窗口要的全部 ⇒ 第二拍是空的。
+    api.listMessagesLast(id, limit),
+  ]);
+  const total = recent.length ? recent[recent.length - 1].idx : 0;
+  const segments = computeSegments(total, sums);
+  const windowFrom = from === null ? windowStart(segments, limit) : alignWindowFrom(segments, from, limit);
+  const runs = runsToFetch(segments, windowFrom, Infinity);
+  // 只有"窗口比尾部种子更老"才补一发（典型：摘要把窗口起点推到很前面）。
+  const missing = seededMissingRuns(runs, recent);
+  const rest = missing.length ? await api.messageRanges(id, batchRanges(missing)) : [];
+  return {
+    // 种子可能多带了几条（被摘要盖住 / 落在窗口外）—— buildChatRows 本来就只画段里的。
+    rows: [...recent, ...rest].sort((x, y) => x.idx - y.idx).map(toRow),
+    segments,
+    windowFrom,
+  };
+}
+
 // loadWindow：把窗口 [windowFrom..尾] 的消息取回来 —— **只按消息段拉**（runsToFetch）：
 // 被摘要盖住的 idx 一个字节都不取（想看原文 ⇒ 摘要卡展开时另拉）。
 // reset ⇒ 重新按"最后 N 段"定窗口；否则保持起点（先对回段边界：压缩/删除会改结构）。
@@ -248,32 +292,18 @@ async function loadWindow({ reset = false, scroll = true, onlyIfUnchanged = fals
   const my = epoch;
   const rev = onlyIfUnchanged ? localRev : -1;
   if (!sid) return false;
-  const [sums, recent] = await Promise.all([
-    api.listSummaries(sid),
-    // 总数与"窗口可能正好要的那几条"一起拿：`?last=N` 的末条 idx 就是总数。
-    // 从前这里只要 1 条，第二拍再按区间拉消息 —— 高延迟（1s+）下那是**两个**来回。
-    // 没有摘要横跨窗口时，最后 N 条正好就是窗口要的全部 ⇒ 第二拍是空的（见 seededMissingRuns）。
-    api.listMessagesLast(sid, windowLimit.value),
-  ]);
-  if (my !== epoch) return false;
-  // 总数 = 最后一条的 idx（拿"尾几行"问，比会话列表里的计数新鲜；空会话 = 0）。
-  const total = recent.length ? recent[recent.length - 1].idx : 0;
-  const segments = computeSegments(total, sums);
-  windowFrom.value = reset
-    ? windowStart(segments, windowLimit.value)
-    : alignWindowFrom(segments, windowFrom.value, windowLimit.value);
-  const runs = runsToFetch(segments, windowFrom.value, Infinity);
-  // 只有"窗口比尾部种子更老"才补一发（典型：摘要把窗口起点推到很前面）。
-  const missing = seededMissingRuns(runs, recent);
-  const rest = missing.length ? await api.messageRanges(sid, batchRanges(missing)) : [];
+  const snap = await fetchWindow(sid, {
+    from: reset ? null : windowFrom.value,
+    limit: windowLimit.value,
+  });
   if (my !== epoch) return false;
   // 后台对账专用闸：等待期间人已经动了消息列（发送/编辑/删除…）⇒ 这一发是旧快照，丢掉。
   // 不丢的话，切回缓存会话后马上打字发送，1 秒后那份"还没含新消息"的窗口会把乐观气泡冲掉。
   if (onlyIfUnchanged && (rev !== localRev || pendingSends > 0)) return false;
+  const { segments } = snap;
   vueSegments.value = segments;
-  // 种子可能多带了几条（被摘要盖住 / 落在窗口外）—— buildChatRows 本来就只画段里的，
-  // 这里照原样合并即可；**别再按窗口过滤一遍**（那会是第二份"哪些该显示"的判据）。
-  vueMessages.value = [...recent, ...rest].sort((x, y) => x.idx - y.idx).map(toRow);
+  windowFrom.value = snap.windowFrom;
+  vueMessages.value = snap.rows;
   // 摘要缓存：卡没了的清掉；还开着的补拉新鲜的一份（结构或正文可能刚变过）。
   const alive = new Set(segments.filter((seg) => seg.kind === "summary").map((seg) => seg.id));
   for (const key of [...summaryMsgs.keys()]) if (!alive.has(key)) summaryMsgs.delete(key);
@@ -306,6 +336,27 @@ async function reloadWindowKeepingScroll({ onlyIfUnchanged = false } = {}) {
     else next.scrollTop = Math.min(top, Math.max(0, next.scrollHeight - next.clientHeight));
   }
   return ok;
+}
+
+// prefetchSession：把一条会话的窗口悄悄取进缓存（不动界面、不抢当前会话的轮询）。
+//
+// 触发点在 SessionBar：桌面 140ms 悬停意图 / 键盘 focus / 触屏 touchstart。
+// 已有缓存或正在取的同一条直接跳过；取失败就算了（点下去还有正常路径）。
+function prefetchSession(id) {
+  if (!id || id === sessionID || draft) return;
+  if (windowCache.has(id) || prefetching.has(id)) return;
+  if (Date.now() - (prefetchedAt.get(id) ?? 0) < PREFETCH_FRESH_MS) return;
+  if (prefetchActive >= PREFETCH_MAX_ACTIVE) return;
+  prefetchActive++;
+  prefetching.add(id);
+  fetchWindow(id).then((snap) => {
+    // 期间人可能已经进了这条会话（loadWindow 会写自己那一份）—— 只在还没有缓存时补。
+    if (!windowCache.has(id)) rememberWindow(windowCache, id, snap);
+    prefetchedAt.set(id, Date.now());
+  }).catch(() => {}).finally(() => {
+    prefetchActive--;
+    prefetching.delete(id);
+  });
 }
 
 // loadMore：往回一页（windowLimit 段）。插入新行前记高度，插完把滚动位置补回去（锚住视野）。
@@ -1419,11 +1470,23 @@ async function enterSession(id, preloaded = null) {
   }
 }
 async function boot() {
-  // 自检按候选顺序探（没存过地址时：先"跟页面同主机的 8787"，再"同源 /api/v1"兜底反代部署）。
+  // 自检按候选顺序探（没存过地址时先同源 `/api/v1` —— 单容器与 dev 都靠 vite 代理；
+  // 兜底才是同主机的 8787，给"前端被别的静态服务器端出来"的场合）。
   //
   // 2026-11-01：探的口从 `/auth/status` 换成 `/health`（鉴权砍了，那个口也没了）。
   // 判据照旧两道（都是踩过的坑）：地址先 `normalizeApiBase`（裸地址会被 fetch 当相对路径、
   // 被 vite 的 200 HTML 骗过）；回体必须是 JSON 且 `status:"ok"`。
+  //
+  // 2026-11-05：探活与**开屏数据并行**（探活要一个 RTT，chat/sessions 本来也要一个；
+  // 串着做等于白等一秒）。warm 用**第一个候选**发 —— 不是 apiBase()：单容器里 apiBase()
+  // 默认的 :8787 对外不可达，真正的基址是同源代理。候选没赢就丢掉这份 warm。
+  const last = lastSessionId();
+  const firstBase = apiBaseCandidates()[0];
+  const warmApi = createApi({ base: firstBase });
+  const warm = Promise.all([
+    warmApi.getChat().catch(() => null),
+    last ? warmApi.listSessions().catch(() => []) : Promise.resolve([]),
+  ]);
   let health = null;
   let lastErr = null;
   let winner = "";
@@ -1454,12 +1517,16 @@ async function boot() {
   }
   connText = `已连接 · v${health.version ?? "?"}`;
   // 回到"上次在看的那条会话"（2026-10-11 用户定）：刷新 / 被安卓丢弃后重载 ⇒ 不再是一张空草稿。
-  // chat 配置与 sessions 是两件独立的事 ⇒ **并行**（远程 500–1000ms 下省一个完整 RTT）。
-  const last = lastSessionId();
-  const [chatCfg, sessions] = await Promise.all([
-    api.getChat().catch(() => null),
-    last ? api.listSessions().catch(() => []) : Promise.resolve([]),
-  ]);
+  // 首选候选赢 ⇒ 直接吃与探活并行拉回来的那份；它没赢（例如同源代理不存在、回落到 8787）就现拉。
+  let chatCfg, sessions;
+  if (winner === firstBase) {
+    [chatCfg, sessions] = await warm;
+  } else {
+    [chatCfg, sessions] = await Promise.all([
+      api.getChat().catch(() => null),
+      last ? api.listSessions().catch(() => []) : Promise.resolve([]),
+    ]);
+  }
   // 这趟就是"刚拉过"的会话列表 ⇒ 记下时间，别让 enterSession 立刻又在后台补一次。
   if (last) sessionsFetchedAt = Date.now();
   applyChatConfig(chatCfg);
@@ -2229,6 +2296,7 @@ onUnmounted(() => {
       <SessionBar
         ref="sessionbarRef"
         :busy-ids="busyIds"
+        @prefetch="prefetchSession"
         @toggle-left="toggleLeft"
         @select="(id) => { closeLeftDrawer(); backToChat(); enterSession(id).catch((err) => toast(`进会话失败：${err.message}`, 'error')); }"
         @settings="(id) => { sessionSettingsId = id; }"

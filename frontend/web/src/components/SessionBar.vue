@@ -5,7 +5,7 @@ import { ref, computed, nextTick, onMounted, onUnmounted } from "vue";
 import { ICONS } from "./icons.js";
 import { groupSessions } from "../utils/sessionGroups.js";
 
-const emit = defineEmits(["select", "settings", "copy", "export", "close", "new", "open-settings", "toggle-left", "open-sessions", "open-providers"]);
+const emit = defineEmits(["select", "settings", "copy", "export", "close", "new", "open-settings", "toggle-left", "open-sessions", "open-providers", "prefetch"]);
 
 // busyIds：App 从 `/tasks` 那一拍算出来的"此刻有任务在跑的会话"（判定在 `utils/tasks.js`）。
 // 行内环只吃这一处 —— 别在组件里再 filter 一遍任务表（两处判据一分岔，同一时刻会显示两个答案）。
@@ -56,12 +56,28 @@ function pickDelete() {
 }
 function onKey(e) { if (e.key === "Escape") closeMenu(); }
 
+// 预取（2026-11-05）：鼠标在会话行上**停 140ms** 才算"想点它"（扫过列表不算），
+// 触屏 touchstart / 键盘 focus 立即 —— 这三种之后紧跟着的多半就是点击。
+// 真正的去重、并发上限、缓存判断都在 App 的 prefetchSession 里。
+let hoverTimer = null;
+function prefetchHover(s, e) {
+  if (e?.pointerType && e.pointerType !== "mouse") return;
+  clearTimeout(hoverTimer);
+  hoverTimer = setTimeout(() => emit("prefetch", s.id), 140);
+}
+function prefetchNow(s) {
+  clearTimeout(hoverTimer);
+  emit("prefetch", s.id);
+}
+function prefetchEnd() { clearTimeout(hoverTimer); }
+
 onMounted(() => {
   document.addEventListener("keydown", onKey);
   window.addEventListener("resize", closeMenu);
   window.addEventListener("scroll", closeMenu, true);
 });
 onUnmounted(() => {
+  clearTimeout(hoverTimer);
   document.removeEventListener("keydown", onKey);
   window.removeEventListener("resize", closeMenu);
   window.removeEventListener("scroll", closeMenu, true);
@@ -103,6 +119,10 @@ defineExpose({ setSessions });
           class="session-item"
           :class="{ sel: s.id === currentId }"
           @click="$emit('select', s.id)"
+          @pointerenter="prefetchHover(s, $event)"
+          @pointerleave="prefetchEnd"
+          @focusin="prefetchNow(s)"
+          @touchstart.passive="prefetchNow(s)"
         >
           <span class="session-main">
             <span class="title">{{ s.title || "新会话" }}</span>
