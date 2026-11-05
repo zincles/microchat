@@ -3,7 +3,7 @@
 // 行元素：▸/▾ 折叠 | 行底 bar（宽度 = 子树原文占比，du 式）| 标签（区间/角色 + 标记）| 右侧体积。
 // 标记：`发` = 装配真的跳到它（这一坨就发这份）；`脏` = 摘要被覆盖的消息改过、已过期（装配照用）。
 import { computed } from "vue";
-import { ICONS } from "./icons.js";
+import { ICONS } from "./icons.ts";
 import type { TreeNode } from "../utils/tree.ts";
 
 const props = withDefaults(defineProps<{

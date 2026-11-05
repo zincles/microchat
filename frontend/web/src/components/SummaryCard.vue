@@ -4,7 +4,7 @@
 // `查看未压缩文本` 展开被盖住的原始气泡 —— 带着各自的操作（编辑/删除照常可用，
 // 不然被折住的消息在界面上就没有入口了）。
 import MessageBubble from "./MessageBubble.vue";
-import { ICONS } from "./icons.js";
+import { ICONS } from "./icons.ts";
 
 interface SummaryLike {
   id: string;

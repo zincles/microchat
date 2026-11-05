@@ -1,4 +1,5 @@
 // microchat web 入口：挂 App.vue（接线全在 App 里）。契约见 AGENTS.md API 表。
+// 2026-11-06：入口与图标表也迁 TS；src 下不再有 .js 入口。
 import { createApp } from "vue";
 import App from "./App.vue";
 import "katex/dist/katex.min.css";

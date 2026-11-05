@@ -13,7 +13,7 @@ import SegmentEditor from "./SegmentEditor.vue";
 import assistantPreset from "../../presets/assistant.json";
 import rpPreset from "../../presets/rp-agent.json";
 import ProviderEditor from "./ProviderEditor.vue";
-import { ICONS } from "./icons.js";
+import { ICONS } from "./icons.ts";
 import { sharedApi } from "../utils/prefs.ts";
 import { SETTINGS_TABS, groupModelsByProvider, modelOption, providerChoices, modelChoicesFor, modelKey, parseModelKey } from "../utils/format.ts";
 import { downloadJSON } from "../utils/download.ts";

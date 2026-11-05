@@ -5,7 +5,7 @@
 // 只 PATCH 这一条消息的 content 或 reasoning；保存成功后由父组件重拉消息与状态。
 import { ref, computed, nextTick, onMounted, onUnmounted } from "vue";
 import { sharedApi } from "../utils/prefs.ts";
-import { ICONS } from "./icons.js";
+import { ICONS } from "./icons.ts";
 import type { EditMessageRequest, Message } from "../api/types.ts";
 
 interface EditableMessage {

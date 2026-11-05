@@ -3111,7 +3111,7 @@ test("左栏顶部：Brand Title 在顶，新对话在中间，对话/生图在�
   assert.match(bar, />对话</, "缺「对话」tab");
   assert.match(bar, />生图</, "缺「生图」tab");
   assert.match(bar, /生图（暂未接入）/, "生图 tab 没标暂未接入");
-  assert.match(bar, /const mode = ref\("chat"\)/, "默认模式不是对话");
+  assert.match(bar, /const mode = ref(?:<[^>]+>)?\("chat"\)/, "默认模式不是对话");
   assert.match(css, /\.session-mode-tab\.sel\s*\{/, "选中态没有样式");
   assert.match(css, /#sessions-bar \.brand-name \{[^}]*font-size:\s*1\.05em/, "品牌标题没有独立字号");
 });
@@ -3161,7 +3161,7 @@ test("会话列表：一行只有一枚选项键，设置/删除收进浮板，�
 });
 
 test("空输入时的发送键不是向下箭头（那个位置会被读成「滚到底」）", () => {
-  const icons = readFileSync(join(SRC, "components", "icons.js"), "utf8");
+  const icons = readFileSync(join(SRC, "components", "icons.ts"), "utf8");
   const cont = icons.slice(icons.indexOf("cont:"), icons.indexOf("menu:"));
   assert.ok(!cont.includes("M12 5v14"), "续写图标又变回向下箭头");
   assert.match(cont, /M3 12a9 9/, "续写图标应是回转箭头");
@@ -3799,7 +3799,7 @@ test("波纹：触点 → 圆（纯函数），委托安装一次，reduce 下�
   assert.ok(RIPPLE_SELECTOR.includes(".session-item"), "会话行没接波纹");
   assert.ok(RIPPLE_SELECTOR.includes("button"), "按钮没接波纹");
 
-  const main = readFileSync(join(SRC, "..", "src", "main.js"), "utf8");
+  const main = readFileSync(join(SRC, "..", "src", "main.ts"), "utf8");
   const ripple = readFileSync(join(SRC, "utils", "ripple.ts"), "utf8");
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8");
   assert.match(main, /installRipple\(\)/, "main.js 没装波纹");

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 消息气泡：正文 markdown 渲染 + <state> 块独立容器（状态变化单列，不混进正文）。
 import { ref, computed, watch, onMounted, nextTick } from "vue";
-import { ICONS } from "./icons.js";
+import { ICONS } from "./icons.ts";
 import { formatThinkLabel, usageFoot, usageFootTitle } from "../utils/format.ts";
 import type { UsageLike } from "../utils/format.ts";
 import { renderMarkdown, splitState } from "../utils/markdown.ts";

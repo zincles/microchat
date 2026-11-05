@@ -2,7 +2,7 @@
 // 底栏输入（TG 底栏味）：textarea 回车换行 + 自增高 1..6 行 + 发送键三档 + 纸飞机圆钮。
 // 生成中（running）⇒ 圆钮变停止键（■），点即停。挂载点还是 #composer（CSS 照旧命中）。
 import { ref, watch, nextTick } from "vue";
-import { ICONS } from "./icons.js";
+import { ICONS } from "./icons.ts";
 
 const emit = defineEmits<{
   "input-text": [text: string];
