@@ -17,6 +17,7 @@ import { classifyAxis, pickDrag, dragProgress, resolveRelease } from "./utils/sw
 import { typewriterDuration, revealCount } from "./utils/typewriter.js";
 import { downloadJSON } from "./utils/download.js";
 import { busySessionIds } from "./utils/tasks.js";
+import { rememberWindow, recallWindow, forgetWindow } from "./utils/windowcache.js";
 import { sharedApi, previewOn, payloadPreviewOn, applyTheme, wantsSend, apiBase, apiBaseCandidates, saveNetPrefs, lastSessionId, saveLastSession, commandMenuOn, applyTextScale, applyFonts, chromeHideOn, syncPrefs, saveBarLeftHidden, barLeftHidden } from "./utils/prefs.js";
 import {
   groupModelsByProvider,
@@ -101,6 +102,15 @@ let sessionID = null;
 const sessionsCache = ref([]);
 let sessionsFetchedAt = 0;
 const SESSIONS_FRESH_MS = 10_000;
+// 回看缓存（2026-11-05 用户定）：每条会话上一屏的窗口快照（LRU、最多 8 条）。
+// 切回去先把这屏画出来（0 RTT），再后台对账 —— 见 enterSession 与 windowcache.js。
+const windowCache = new Map();
+// localRev：本地的"消息列已经变了"计数（乐观发送 / 编辑 / 删除…）。
+// 后台对账在落屏前比一次：期间人动过 ⇒ 这一发作废，别拿旧快照覆盖刚画上去的字。
+let localRev = 0;
+// pendingSends：正在等 202 的发送数。乐观气泡已经上屏、但服务端还没落库 ——
+// 这时候落到屏上的窗口快照可能**还没有**那句，必须把它判成"旧"。
+let pendingSends = 0;
 // 会话世代：进会话/回草稿就 +1。所有会话域的异步续写都在 await 后核对本世代，对不上就丢 ——
 // 没有这道闸，快速切会话时迟到的 A 续写会覆掉已切到的 B 的抬头与消息列（实测复现过：
 // 顶栏 A、高亮 B、气泡 A —— 界面被撕成三份）。
@@ -233,9 +243,10 @@ function batchRanges(runs) {
 // loadWindow：把窗口 [windowFrom..尾] 的消息取回来 —— **只按消息段拉**（runsToFetch）：
 // 被摘要盖住的 idx 一个字节都不取（想看原文 ⇒ 摘要卡展开时另拉）。
 // reset ⇒ 重新按"最后 N 段"定窗口；否则保持起点（先对回段边界：压缩/删除会改结构）。
-async function loadWindow({ reset = false, scroll = true } = {}) {
+async function loadWindow({ reset = false, scroll = true, onlyIfUnchanged = false } = {}) {
   const sid = sessionID;
   const my = epoch;
+  const rev = onlyIfUnchanged ? localRev : -1;
   if (!sid) return false;
   const [sums, recent] = await Promise.all([
     api.listSummaries(sid),
@@ -256,6 +267,9 @@ async function loadWindow({ reset = false, scroll = true } = {}) {
   const missing = seededMissingRuns(runs, recent);
   const rest = missing.length ? await api.messageRanges(sid, batchRanges(missing)) : [];
   if (my !== epoch) return false;
+  // 后台对账专用闸：等待期间人已经动了消息列（发送/编辑/删除…）⇒ 这一发是旧快照，丢掉。
+  // 不丢的话，切回缓存会话后马上打字发送，1 秒后那份"还没含新消息"的窗口会把乐观气泡冲掉。
+  if (onlyIfUnchanged && (rev !== localRev || pendingSends > 0)) return false;
   vueSegments.value = segments;
   // 种子可能多带了几条（被摘要盖住 / 落在窗口外）—— buildChatRows 本来就只画段里的，
   // 这里照原样合并即可；**别再按窗口过滤一遍**（那会是第二份"哪些该显示"的判据）。
@@ -264,14 +278,16 @@ async function loadWindow({ reset = false, scroll = true } = {}) {
   const alive = new Set(segments.filter((seg) => seg.kind === "summary").map((seg) => seg.id));
   for (const key of [...summaryMsgs.keys()]) if (!alive.has(key)) summaryMsgs.delete(key);
   for (const id of openSummaries) if (alive.has(id)) refreshSummaryMsgs(id);
+  // 记下这一屏：切走再切回时先画它（0 RTT），后台再对账。
+  rememberWindow(windowCache, sid, { rows: vueMessages.value, segments, windowFrom: windowFrom.value });
   if (scroll) scrollBottom();
   if (treeVisible) refreshTree(); // 树看着就让它的全量账本跟着换
   return true;
 }
 
 // reloadWindow：把当前窗口按服务端最新状态重拉（一轮结束 / 编辑 / 删除 / 压缩 / 切版之后）。
-async function reloadWindow({ scroll = true } = {}) {
-  return loadWindow({ reset: false, scroll });
+async function reloadWindow({ scroll = true, onlyIfUnchanged = false } = {}) {
+  return loadWindow({ reset: false, scroll, onlyIfUnchanged });
 }
 // foreground / 落库后的重拉：**人没在底部就别把人拽回底部**（2026-11-03 用户报：
 // 出去截图再回来，滚动条自己跳回最新一条）。贴底才继续贴底；否则恢复原来的 scrollTop。
@@ -279,11 +295,11 @@ const SCROLL_STICK_PX = 48;
 function nearBottom(el) {
   return !el || el.scrollHeight - el.scrollTop - el.clientHeight <= SCROLL_STICK_PX;
 }
-async function reloadWindowKeepingScroll() {
+async function reloadWindowKeepingScroll({ onlyIfUnchanged = false } = {}) {
   const el = document.getElementById("messages-vue");
   const stick = nearBottom(el);
   const top = el?.scrollTop ?? 0;
-  const ok = await reloadWindow({ scroll: false });
+  const ok = await reloadWindow({ scroll: false, onlyIfUnchanged });
   const next = document.getElementById("messages-vue");
   if (next) {
     if (stick) next.scrollTop = next.scrollHeight;
@@ -306,6 +322,9 @@ async function loadMore() {
   const beforeTop = el ? el.scrollTop : 0;
   vueMessages.value = [...got.sort((x, y) => x.idx - y.idx).map(toRow), ...vueMessages.value];
   windowFrom.value = older;
+  rememberWindow(windowCache, sid, {
+    rows: vueMessages.value, segments: vueSegments.value, windowFrom: windowFrom.value,
+  });
   await nextTick();
   if (el) el.scrollTop = beforeTop + (el.scrollHeight - beforeH);
 }
@@ -446,6 +465,7 @@ async function deleteMessagesFlow(sid, mid, confirmTextFor) {
     if (!(await overlaysRef.value.confirmAsk(confirmTextFor(plan)))) return false;
     try {
       await api.deleteMessages(sid, mid, plan.last_deleted_message_id);
+      localRev++; // 删完消息列已经变了（等这一发重新拉窗口）
     } catch (err) {
       if (err.code === "conflict" && i < 2) { toast("末尾变了：重新预览一眼再删", "error"); continue; }
       toast(`删除失败：${err.message}`, "error");
@@ -691,6 +711,7 @@ async function onMessageEdited(result = {}) {
   messageEditTarget.value = null;
   // 先就地把这一行换成 PATCH 回来的正文（高延迟下别让旧字多挂一个来回），
   // 再重拉一次窗口对账（摘要的 dirty / 区间可能跟着变了）。滚动位置保住。
+  localRev++; // 编辑也是本地先改：在飞的对账作废
   const updated = result?.message;
   if (updated) {
     const row = vueMessages.value.find((r) => (r.messageId ?? r.id) === updated.id);
@@ -820,6 +841,7 @@ async function compactNow(blocks) {
   if (!sid) { toast("先发一句话：草稿里还没有会话可压"); return; }
   try {
     const accepted = await api.compact(sid, blocks);
+    localRev++; // 压缩会改摘要/段结构：在飞的后台对账别把旧结构盖回去
     refreshTasks();
     toast(`压缩已受理${blocks ? `（${blocks} 块）` : ""}`, "ok");
     pollCompact(sid, accepted?.at_ms).catch(() => {});
@@ -1246,8 +1268,13 @@ function settleDrag(useVelocity) {
 function onTouchEnd() { settleDrag(true); }
 function onTouchCancel() { settleDrag(false); }
 async function askDeleteSession(id) {
-  const list = await api.listSessions().catch(() => []);
-  const name = sessionTitle(list.find((s) => s.id === id)?.title);
+  // 高延迟下别为了一个标题先等一个 RTT：左栏缓存里就有它。
+  let title = sessionsCache.value.find((s) => s.id === id)?.title;
+  if (title === undefined) {
+    const list = await api.listSessions().catch(() => []);
+    title = list.find((s) => s.id === id)?.title;
+  }
+  const name = sessionTitle(title);
   if (!(await overlaysRef.value.confirmAsk(`删除会话「${name}」？不可逆。`))) return;
   try {
     await api.deleteSession(id);
@@ -1255,6 +1282,7 @@ async function askDeleteSession(id) {
     toast(`关闭失败：${err.message}`, "error");
     return; // 删失败就别切会话（catch 回调里的 return 不是这个函数的 return）
   }
+  forgetWindow(windowCache, id);
   if (id === sessionID) {
     backToChat(); // 被删的是当前会话 ⇒ 接下来要去草稿：**两个视图都让位**（哪边开着都回对话区）
     await startDraft(); // 删掉当前会话 ⇒ 回到草稿（不再预建空会话 —— 那正是被拿掉的旧行为）
@@ -1352,8 +1380,19 @@ async function enterSession(id, preloaded = null) {
   // 手里这份列表可能是几分钟前的（别的设备改了标题、新建了会话）—— 后台补一次，
   // 不挡这一屏（有 10 秒保鲜期，切来切去不会每点一下发一个请求）。
   if (Date.now() - sessionsFetchedAt > SESSIONS_FRESH_MS) refreshSessionsBar();
-  const ok = await loadWindow({ reset: true });
-  if (my !== epoch || !ok) return;
+  // 回看缓存（2026-11-05 用户定）：这条会话上一屏还留着 ⇒ 先原样画出来，**不挂骨架**，
+  // 等 status 说空闲再在后台对一次账。1s+ 延迟下，切回来是"几乎是瞬间"而不是先白一秒。
+  const cached = recallWindow(windowCache, id);
+  if (cached) {
+    vueSegments.value = cached.segments;
+    windowFrom.value = cached.windowFrom;
+    vueMessages.value = cached.rows;
+    loadingSession.value = false; // 一屏已经在了，骨架没有意义
+    nextTick(scrollBottom);
+  } else {
+    const ok = await loadWindow({ reset: true });
+    if (my !== epoch || !ok) return;
+  }
   refreshStatusline("idle");
   refreshRerolls();
   // 载荷/状态/树都只在"人正看着工作区"时才拉（2026-11-02）：换会话时从前无条件
@@ -1369,7 +1408,11 @@ async function enterSession(id, preloaded = null) {
     if (my !== epoch) return;
     if (st?.phase === "pending" || st?.phase === "streaming") {
       if (!vueMessages.value.some((m) => m.stream)) pollTurn(id, st.message_id).catch(() => {});
+      // 轮询收尾会自己重拉窗口 ⇒ 别再叠一次后台对账跟它抢着写消息列。
+      return;
     }
+    // 缓存那一屏是旧的：空闲时后台对一次（等待期间人动过消息列 ⇒ 这一发作废）。
+    if (cached) reloadWindowKeepingScroll({ onlyIfUnchanged: true }).catch(() => {});
   }).catch(() => {});
   } finally {
     if (my === epoch) loadingSession.value = false;
@@ -1432,15 +1475,20 @@ async function send(content) {
   const sid = sessionID;
   // 乐观上屏：远端 1s+ 时，等 202 再画那句会让人以为"按了没反应"。
   const optimistic = addMessage("你", content, "user");
+  localRev++; // 消息列已经变了：在飞的后台对账不许拿旧快照覆盖它
   let accepted;
+  pendingSends++;
   try {
     accepted = await api.sendMessage(sid, content);
   } catch (err) {
     dropOptimistic(optimistic);
     composerRef.value?.setText(content); // 发失败别把那句话吞掉
     throw err;
+  } finally {
+    pendingSends--;
   }
   settleOptimisticUser(optimistic, accepted?.user);
+  localRev++; // 服务端那条已经落库：在飞的对账（可能早于落库取的快照）到此为止
   refreshTasks();
   await pollTurn(sid, accepted.turn.message_id);
 }
@@ -1962,6 +2010,7 @@ async function sendFromDraft(text) {
   // 草稿这条路是**两个** back-to-back 请求（建会话 → 受理）⇒ 远端 1s+ 时足足两秒没反应。
   // 先画再说：建会话失败就撤掉并退回草稿（连输入框里的字一起还回去）。
   const optimistic = addMessage("你", text, "user");
+  localRev++;
   let s;
   try {
     s = await api.createSession(body);
@@ -1977,6 +2026,7 @@ async function sendFromDraft(text) {
   paintSessionHeader();
   refreshSessionsBar();
   let accepted;
+  pendingSends++;
   try {
     accepted = await api.sendMessage(s.id, text);
     refreshTasks();
@@ -1985,8 +2035,11 @@ async function sendFromDraft(text) {
     await startDraft();
     composerRef.value?.setText(text);
     throw err;
+  } finally {
+    pendingSends--;
   }
   settleOptimisticUser(optimistic, accepted?.user);
+  localRev++;
   await pollTurn(s.id, accepted.turn.message_id);
 }
 function stopCurrent() {

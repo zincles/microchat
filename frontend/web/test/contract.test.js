@@ -49,6 +49,7 @@ import {
   sessionTitle,
 } from "../src/utils/format.js";
 import { busySessionIds } from "../src/utils/tasks.js";
+import { rememberWindow, recallWindow, forgetWindow, WINDOW_CACHE_MAX, WINDOW_CACHE_ROWS_MAX } from "../src/utils/windowcache.js";
 import { sendMode, wantsSend, themePref, normalizeTheme, apiBase, defaultApiBase, apiBaseCandidates, THEME_IDS, DEFAULT_THEME, DEFAULT_SEND, normalizeTextScale, textScale, applyTextScale, saveTextScale, flushPrefs, normalizeFontFamily, fontBody, fontMono, applyFonts, saveFontBody, saveFontMono, DEFAULT_FONT_BODY, DEFAULT_FONT_MONO, TEXT_SCALE_MIN, TEXT_SCALE_MAX, DEFAULT_TEXT_SCALE } from "../src/utils/prefs.js";
 
 // 契约测试（无浏览器）：只验纯函数与请求形状。`node --test test/`。
@@ -3300,7 +3301,7 @@ test("聊天布局：16px / 1.7 行高、840 阅读列、更松的消息间距",
 
 test("回到前台重拉消息列时，用户没在底部就保留原来的滚动位置", () => {
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
-  assert.match(app, /async function reloadWindowKeepingScroll\(\)/, "没有保留滚动位置的重拉函数");
+  assert.match(app, /async function reloadWindowKeepingScroll\(\{[^)]*\} = \{\}\)/, "没有保留滚动位置的重拉函数");
   assert.match(app, /const stick = nearBottom\(el\)/, "没判断重拉前是否贴底");
   assert.match(app, /if \(stick\) next\.scrollTop = next\.scrollHeight/, "贴底时没继续贴底");
   assert.match(app, /next\.scrollTop = Math\.min\(top,/, "不在底部时没恢复原位置");
@@ -3486,4 +3487,55 @@ test("高延迟：发送先上屏、失败撤回；切会话不先拉列表；�
   assert.match(editor, /emit\("saved", \{ reroll, message: updated \}\)/, "编辑器没把更新后的消息带回来");
   const edited = app.slice(app.indexOf("async function onMessageEdited"), app.indexOf("async function rerollNow"));
   assert.ok(edited.indexOf("row.content = updated.content") < edited.indexOf("reloadWindowKeepingScroll"), "编辑后不是先本地生效再对账");
+});
+
+// 回看缓存（2026-11-05 用户定：「切换不同对话时，最好也预留缓存吧」）。
+//
+// 存的是"上一屏"（消息行 + 段 + 窗口起点）；切回时 0 RTT 画出来，再后台对账。
+// 三个必须成立的性质：命中不脏缓存（存/取都拷贝）、LRU 有上限、删会话能清掉。
+test("回看缓存：拷贝进出、LRU 上限、可遗忘", () => {
+  const cache = new Map();
+  const rows = [{ id: "m1" }, { id: "m2" }];
+  rememberWindow(cache, "a", { rows, segments: [{ kind: "msg", idx: 1 }], windowFrom: 1 });
+  // 改动传进去的原数组不该改到缓存（remember 拷贝）
+  rows.push({ id: "m3" });
+  // recall 返回副本
+  const got = recallWindow(cache, "a");
+  assert.equal(got.rows.length, 2, "remember 没做拷贝");
+  got.rows.push({ id: "x" });
+  assert.equal(recallWindow(cache, "a").rows.length, 2, "recall 没做拷贝");
+  assert.equal(recallWindow(cache, "nope"), null, "未命中的会话该回 null");
+
+  // LRU：填满上限后最老的被挤掉；命中会触碰（重新排到最新）
+  for (let i = 0; i < WINDOW_CACHE_MAX; i++) rememberWindow(cache, `k${i}`, { rows: [], segments: [], windowFrom: 1 });
+  recallWindow(cache, "k0"); // 触碰 => k1 变成最老
+  rememberWindow(cache, "brand-new", { rows: [], segments: [], windowFrom: 1 });
+  assert.equal(recallWindow(cache, "k1"), null, "超上限没有淘汰最老的");
+  assert.ok(recallWindow(cache, "k0"), "命中触碰之后仍被误淘汰");
+
+  forgetWindow(cache, "k0");
+  assert.equal(recallWindow(cache, "k0"), null, "forgetWindow 没删掉");
+
+  // 翻过上百页的长会话不缓存（几 MB 正文挂内存里不值当，而且只存后半段会让窗口起点对不上）
+  const big = new Map();
+  rememberWindow(big, "big", {
+    rows: Array.from({ length: WINDOW_CACHE_ROWS_MAX + 1 }, (_, i) => ({ id: String(i) })),
+    segments: [], windowFrom: 1,
+  });
+  assert.equal(recallWindow(big, "big"), null, "超长窗口不该缓存");
+});
+
+test("回看缓存接到切会话：先画缓存再对账；对账期间本地动过就作废", () => {
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  const enter = app.slice(app.indexOf("async function enterSession"), app.indexOf("async function boot"));
+  const load = app.slice(app.indexOf("async function loadWindow"), app.indexOf("async function reloadWindow"));
+
+  assert.match(enter, /const cached = recallWindow\(windowCache, id\)/, "切会话没查回看缓存");
+  assert.ok(enter.indexOf("recallWindow(windowCache, id)") < enter.indexOf("await loadWindow"), "缓存命中时仍然先等网络");
+  assert.match(enter, /loadingSession\.value = false; \/\/ 一屏已经在了/, "缓存命中还挂着骨架");
+  assert.match(enter, /reloadWindowKeepingScroll\(\{ onlyIfUnchanged: true \}\)/, "缓存命中后没有后台对账（或没带防覆盖闸）");
+  assert.match(load, /rememberWindow\(windowCache, sid/, "loadWindow 成功后没把这一屏记进缓存");
+  assert.match(load, /onlyIfUnchanged && \(rev !== localRev \|\| pendingSends > 0\)/, "后台对账没有和本地动作/在飞发送对账");
+  assert.match(app, /localRev\+\+/, "本地动作没有推进 localRev");
+  assert.match(app, /forgetWindow\(windowCache, id\)/, "删会话没清它的缓存");
 });

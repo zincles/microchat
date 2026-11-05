@@ -1148,7 +1148,14 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   `models-changed` 那条路照旧会触发刷新，不靠 TTL 猜。
   ⑤ **编辑消息先本地生效**：`PATCH` 回执带回新消息，`onMessageEdited` 先换那一行正文，再
   `reloadWindowKeepingScroll()` 对账（摘要 dirty / 区间可能变）；滚动位置保住。
-  ⑥ **上下文环在切会话时先清空**（`setContext(null)`）：1s+ 下旧会话的占比会挂满一个 RTT，
+  ⑥ **回看缓存**（2026-11-05 用户定：「切换不同对话时，最好也预留缓存吧」）：`utils/windowcache.js` 的
+  `rememberWindow` / `recallWindow` / `forgetWindow` 管一个 `Map<sessionId, {rows, segments, windowFrom}>`
+  （LRU、上限 8）。`loadWindow` 成功后写、`loadMore` 扩窗后也写；`enterSession` 命中就**先画出来、
+  不挂骨架**，等 `status` 说空闲再 `reloadWindowKeepingScroll({ onlyIfUnchanged: true })` 后台对账。
+  存/取都拷贝（切走后的乐观消息不会改脏缓存）；对账落屏前比 `localRev` / `pendingSends`：期间发送/编辑/删除/压缩过，或有发送还没等到 202
+  ⇒ 这一发作废，绝不拿旧快照覆盖刚画上去的字。回合在跑时（status= pending/streaming）不做对账，
+  交给轮询收尾自己重拉。删会话时 `forgetWindow`。
+  ⑦ **上下文环在切会话时先清空**（`setContext(null)`）：1s+ 下旧会话的占比会挂满一个 RTT，
   看起来像新会话的账 —— 那是"旧数据住在新语境里"。
   ⚠ 契约测试钉着这些顺序（`高延迟：发送先上屏…` 那条），改回"先 await 再画"会红。
 - **设置（⚙）谁都能进**（2026-11-01 起：账号砍了 ⇒ 没有"root 专属"）。左栏底那枚 `👤 用户` **删了** ——
