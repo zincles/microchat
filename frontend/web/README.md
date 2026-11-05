@@ -11,7 +11,7 @@
 npm ci            # 从锁文件重装（node_modules 永不入库）
 npm run dev       # vite :5173（/api 由 vite 代理到后端 —— 地址读后端自己的配置，见下）
 npm test          # tsx + node 原生 test runner：纯函数与请求形状的契约测试
-npm run typecheck # vue-tsc --noEmit（当前只检查 .ts；api/ 与 utils/ 已迁 TS）
+npm run typecheck # vue-tsc --noEmit（.ts 与 .vue 都查；JS 组件受 checkJs=false 保护）
 npm run build     # 产出 dist/（不入库，部署时现打）
 ```
 
@@ -27,8 +27,8 @@ Docker 部署（单容器、只公开 8788）见根目录 `docker-compose.yml`�
 
 `vue@3.5`（框架）+ `marked`（markdown 渲染：`**粗**`/`*斜*`/`__下划线__`→`<u>`/行内码/`~~删~~`/引述块）+ `katex`（数学）；构建用 `vite` + `@vitejs/plugin-vue`。
 运行时没有自造传输层（`fetch` 直调）。**加依赖先问**；`node_modules/`、`dist/` 永不进库。
-开发依赖另有 `typescript` / `vue-tsc` / `tsx`：`api/` 与 `utils/` 已迁 TS（`client.ts` + `types.ts`），
-其余 `.vue` 仍是 JS；`tsconfig` 的 `allowJs`/`checkJs:false` 是分阶段迁移的闸，别急着一次全改。
+开发依赖另有 `typescript` / `vue-tsc` / `tsx`：`api/`、`utils/` 与 14 个叶子组件已迁 TS；
+剩余重组件仍是 JS；`tsconfig` 的 `allowJs`/`checkJs:false` 是分阶段迁移的闸，别急着一次全改。
 
 ## 现在能干什么
 

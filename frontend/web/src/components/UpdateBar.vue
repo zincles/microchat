@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // 更新条（2026-10-20 用户定）：检测到新版本时挂在顶上的一条 —— **不自动消失**，
 // 由用户点「刷新」才切过去（切的动作在 utils/pwa.ts，这里只管长相与按钮）。
 //
@@ -6,17 +6,17 @@
 // 3 秒后消失等于没通知（人没看见就错过了，而这正是这次要治的病）。
 import { ref } from "vue";
 
-const emit = defineEmits(["update"]);
+const emit = defineEmits<{ update: [] }>();
 
 const busy = ref(false); // 点了之后禁用按钮 —— 别让人重复点（切换要等新 SW 接管）
 const hidden = ref(false); // 用户不想现在更（×）：先收起来，下次开机还会再提示
 
-function go() {
+function go(): void {
   if (busy.value) return;
   busy.value = true;
   emit("update");
 }
-defineExpose({ show: () => { busy.value = false; hidden.value = false; } });
+defineExpose({ show: (): void => { busy.value = false; hidden.value = false; } });
 </script>
 
 <template>

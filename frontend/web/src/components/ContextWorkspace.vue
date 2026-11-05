@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // 上下文工作区（2026-10-29 用户定）：一次会话分**两块**——「聊天」与「上下文」。
 // 顶栏右端那颗两段开关切换（就落在绿环左边），聊天区的消息列与输入行整个让位给它。
 //
@@ -12,26 +12,44 @@
 import { ref } from "vue";
 import PayloadBar from "./PayloadBar.vue";
 
-const props = defineProps({
+export interface PayloadBarApi {
+  setWire: (wire: unknown) => void;
+  setTables: (tables: unknown) => void;
+  setTree: (tree: unknown) => void;
+  setCompactWire: (wire: unknown) => void;
+}
+
+const props = withDefaults(defineProps<{
   // hasSession：草稿态（还没建会话）时没有上下文可谈 —— 那句话要说，别让人以为坏了。
-  hasSession: { type: Boolean, default: false },
-  sessionId: { type: String, default: "" },
+  hasSession?: boolean;
+  sessionId?: string;
   // defaultBlocks：chat.compact_blocks（压缩面板空输入框的占位提示；原样转给面板）。
-  defaultBlocks: { type: Number, default: null },
+  defaultBlocks?: number | null;
+}>(), {
+  hasSession: false,
+  sessionId: "",
+  defaultBlocks: null,
 });
 // tab / compact / compact-payload：面板那三件事照旧往上报 ——
 // 压缩树要"看着才拉全量"（App 的 treeVisible），压缩与预演也得让 App 去发请求。
-const emit = defineEmits(["tab", "compact", "compact-payload", "undo", "preview", "advanced-done"]);
+const emit = defineEmits<{
+  tab: [tab: string];
+  compact: [blocks: number];
+  "compact-payload": [blocks: number];
+  undo: [id: string];
+  preview: [value: unknown];
+  "advanced-done": [];
+}>();
 
 // inner：真正的面板。四个 setter 由 App 通过本组件的 expose 一路打到它身上
 // （载荷 / 状态表 / 压缩树 / 压缩那一发的载荷）。
-const inner = ref(null);
+const inner = ref<PayloadBarApi | null>(null);
 
 defineExpose({
-  setWire: (w) => inner.value?.setWire(w),
-  setTables: (t) => inner.value?.setTables(t),
-  setTree: (t) => inner.value?.setTree(t),
-  setCompactWire: (w) => inner.value?.setCompactWire(w),
+  setWire: (w: unknown): void => inner.value?.setWire(w),
+  setTables: (t: unknown): void => inner.value?.setTables(t),
+  setTree: (t: unknown): void => inner.value?.setTree(t),
+  setCompactWire: (w: unknown): void => inner.value?.setCompactWire(w),
 });
 </script>
 
@@ -44,7 +62,7 @@ defineExpose({
     </p>
     <PayloadBar
       ref="inner"
-      :default-blocks="props.defaultBlocks"
+      :default-blocks="props.defaultBlocks ?? undefined"
       :session-id="props.sessionId"
       @tab="(t) => emit('tab', t)"
       @compact="(n) => emit('compact', n)"

@@ -2406,7 +2406,7 @@ test("压缩：有一键折叠全部，树与分块一起收，且没有一键�
   // ② 折叠状态提到了父组件：树变成**受控**的
   //    留在子组件里的话，父组件要么摸不进去、要么得靠 defineExpose 约定 —— 而且"全收了吗"
   //    这个判断会变成跨组件读取，禁用条件就没法算。
-  assert.match(tree, /collapsed:\s*\{[^}]*type:\s*Object/, "CompactTree 的折叠状态没提成 prop");
+  assert.match(tree, /collapsed\??:\s*(?:Set<string>|\{[^}]*type:\s*Object)/, "CompactTree 的折叠状态没提成 prop");
   assert.match(tree, /emit\("update:collapsed"/, "CompactTree 没发 update:collapsed（父组件改不动它）");
   assert.match(tpl, /v-model:collapsed="treeCollapsed"/, "树没接上 v-model:collapsed");
   // ⚠ 发新 Set、不改传进来的那份（就地改 prop 等于绕过 update 约定）
@@ -2503,11 +2503,11 @@ test("撤销压缩：树与摘要卡两处按钮，只按后端给的 undoable �
   assert.ok(cardTpl.includes("ICONS.trash"), "摘要卡的撤销按钮没用垃圾桶图标");
 
   // ④ 一路往上报：树 → 面板 → 工作区 → App（少一环就是点了没反应）
-  assert.match(tree, /defineEmits\(\[[^\]]*"undo"/, "CompactTree 没声明 undo 事件");
+  assert.match(tree, /defineEmits(?:\(\[[^\]]*"undo"|<\{[^}]*undo:)/, "CompactTree 没声明 undo 事件");
   assert.match(bar, /@undo="\(id\) => emit\('undo', id\)"/, "面板没把树的 undo 往上报");
-  assert.match(bar, /defineEmits\(\[[^\]]*"undo"/, "面板没声明 undo");
+  assert.match(bar, /defineEmits(?:\(\[[^\]]*"undo"|<\{[^}]*undo:)/, "面板没声明 undo");
   assert.match(ws, /@undo="\(id\) => emit\('undo', id\)"/, "工作区没把 undo 往上报");
-  assert.match(ws, /defineEmits\(\[[^\]]*"undo"/, "工作区没声明 undo");
+  assert.match(ws, /defineEmits(?:\(\[[^\]]*"undo"|<\{[^}]*undo:)/, "工作区没声明 undo");
   // App：两处都接上（摘要卡给自己那条 id；工作区把 id 透传给同一个处理函数）
   assert.match(app, /@undo="undoSummary\(row\.summary\.id\)"/, "App 没接摘要卡的 undo");
   assert.match(app, /@undo="undoSummary"/, "App 没接工作区的 undo");

@@ -1,6 +1,6 @@
 {
   // 自包含：不 extends 类型专用包 —— Vite 构建会读 tsconfig，生产构建不该依赖只用于 typecheck 的包。
-  // 分阶段迁移：现在只检查 .ts / .d.ts；.vue 里的 JS 保持 checkJs=false。
+  // 分阶段迁移：.ts 全查；.vue 已纳入类型检查（JS 组件仍受 checkJs=false 约束）。
   "compilerOptions": {
     "target": "ESNext",
     "useDefineForClassFields": true,
@@ -23,6 +23,6 @@
     "checkJs": false,
     "types": ["vite/client", "vite-plugin-pwa/client"]
   },
-  "include": ["src/**/*.ts", "src/**/*.d.ts"],
+  "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.vue"],
   "exclude": ["node_modules", "dist"]
 }

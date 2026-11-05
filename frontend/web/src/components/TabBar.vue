@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // 分段页签：一条 nav + 一枚滑动的底片（设置视图的主栏与 Agent 编辑器里的二级页签**共用这一个**）。
 //
 // 为什么抽成组件：这东西在**两处**都要（2026-10-28 的教训 —— 同一个东西写两遍必然长歪，
@@ -7,23 +7,25 @@
 // （不用 id：两处同时挂在 DOM 上时 id 会撞，而 element id 是全局的）。
 import { ref, watch, onMounted, onUnmounted, nextTick } from "vue";
 
-const props = defineProps({
-  tabs: { type: Array, required: true }, // [{ id, label }]（顺序 = 显示顺序）
-  modelValue: { type: String, required: true },
-});
-const emit = defineEmits(["update:modelValue"]);
+export interface TabItem {
+  id: string;
+  label: string;
+}
 
-const navEl = ref(null);
+const props = defineProps<{ tabs: TabItem[]; modelValue: string }>();
+const emit = defineEmits<{ "update:modelValue": [value: string] }>();
+
+const navEl = ref<HTMLElement | null>(null);
 const thumbLeft = ref(0);
 const thumbWidth = ref(0);
 
-function moveThumb() {
+function moveThumb(): void {
   nextTick(() => {
     const nav = navEl.value;
     if (!nav) return;
     const index = props.tabs.findIndex((t) => t.id === props.modelValue);
     if (index < 0) return;
-    const btn = nav.querySelectorAll(".tab")[index];
+    const btn = nav.querySelectorAll<HTMLButtonElement>(".tab")[index];
     if (!btn) return;
     thumbLeft.value = btn.offsetLeft;
     thumbWidth.value = btn.offsetWidth;

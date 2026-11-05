@@ -1,19 +1,26 @@
-<script setup>
+<script setup lang="ts">
 // Toast：右上通知（TG 安卓味）—— kind: "" 信息（蓝条）/ "ok" / "error"（红条）。
 // 3s 自动消；点一下提前消。挂载点还是 #toasts（CSS 照旧命中），条目画法照 main.js。
 import { ref } from "vue";
 
-const items = ref([]);
+interface ToastItem {
+  id: number;
+  text: string;
+  kind: string;
+  leaving?: boolean;
+}
+
+const items = ref<ToastItem[]>([]);
 let seq = 0;
 
-function push(text, kind = "") {
+function push(text: string, kind = ""): void {
   const id = ++seq;
   items.value.push({ id, text, kind });
   while (items.value.length > 4) items.value.shift(); // 最多攒 4 条，老的顶掉
   setTimeout(() => dismiss(id), 3000);
 }
 
-function dismiss(id) {
+function dismiss(id: number): void {
   const it = items.value.find((x) => x.id === id);
   if (!it) return;
   it.leaving = true;

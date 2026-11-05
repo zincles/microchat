@@ -1,33 +1,45 @@
-<script setup>
+<script setup lang="ts">
 // CompactTree：压缩树（文件管理器那种一眼看体积的树）—— 缩进行 + 行底容量条。
 // 行元素：▸/▾ 折叠 | 行底 bar（宽度 = 子树原文占比，du 式）| 标签（区间/角色 + 标记）| 右侧体积。
 // 标记：`发` = 装配真的跳到它（这一坨就发这份）；`脏` = 摘要被覆盖的消息改过、已过期（装配照用）。
 import { computed } from "vue";
 import { ICONS } from "./icons.js";
+import type { TreeNode } from "../utils/tree.ts";
 
-const props = defineProps({
-  nodes: { type: Array, default: () => [] }, // buildCompactTree 的产出
+const props = withDefaults(defineProps<{
+  nodes?: TreeNode[];
   // 折叠状态由**外面**持有（2026-10-29）：压缩页要有个"一键折叠全部"，那得有个人能一次改到底。
   // 状态留在这个组件里的话，外面只能靠 ref+defineExpose 摸进来 —— 那是不对称的（谁能读、谁能写
   // 全靠约定），而且"全收起来了吗"这个判断会变成跨组件的字符串比较。
   // 现在：父组件拿着 Set，这里只负责「按 Set 渲染」+「点一下发新的 Set」。
-  collapsed: { type: Object, default: () => new Set() },
+  collapsed?: Set<string>;
+}>(), {
+  nodes: () => [],
+  collapsed: () => new Set(),
 });
-const emit = defineEmits(["update:collapsed", "undo"]);
+const emit = defineEmits<{
+  "update:collapsed": [collapsed: Set<string>];
+  undo: [id: string];
+}>();
 
 // ⚠ 每次都发**新的 Set**，不改传进来的那份：prop 是父组件的 state，
 // 就地改它等于绕过 `update:` 约定（父组件那边可能还有别的读者）。
-function toggle(id) {
+function toggle(id: string): void {
   const s = new Set(props.collapsed);
   if (s.has(id)) s.delete(id);
   else s.add(id);
   emit("update:collapsed", s);
 }
 
+interface TreeRow {
+  n: TreeNode;
+  depth: number;
+}
+
 // 展平成行（带 depth）：渲染与"bar 基准"共用一份遍历。
-const rows = computed(() => {
-  const out = [];
-  const walk = (ns, depth) => {
+const rows = computed<TreeRow[]>(() => {
+  const out: TreeRow[] = [];
+  const walk = (ns: TreeNode[], depth: number): void => {
     for (const n of ns) {
       out.push({ n, depth });
       if (!props.collapsed.has(n.id)) walk(n.children, depth + 1);
@@ -36,9 +48,9 @@ const rows = computed(() => {
   walk(props.nodes, 0);
   return out;
 });
-const maxRaw = computed(() => {
+const maxRaw = computed<number>(() => {
   let m = 1;
-  const walk = (ns) => {
+  const walk = (ns: TreeNode[]): void => {
     for (const n of ns) {
       m = Math.max(m, n.rawChars);
       walk(n.children);
@@ -49,11 +61,11 @@ const maxRaw = computed(() => {
 });
 // 缩进：**每层 1.8em**（1em 时 340px 面板里几乎看不出层级，2026-10-10 用户点名要更明显）。
 const INDENT_EM = 1.8;
-function indentStyle(depth) {
+function indentStyle(depth: number): { paddingLeft: string } {
   return { paddingLeft: `calc(0.15em + ${depth * INDENT_EM}em)` };
 }
 // 容量条从**缩进起点**画起（都从最左起会把层级感抹平）：宽度 = 行宽的占比 × 剩余空间。
-function barStyle(n, depth) {
+function barStyle(n: TreeNode, depth: number): { left: string; width: string } {
   const pct = Math.max(0.02, n.rawChars / maxRaw.value);
   const indent = depth * INDENT_EM;
   return {

@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // 提示词段清单 —— **一个组件，两处用**（agent 的 base 后面 / 能力的模板后面）。
 //
 // 为什么抽出来（2026-10-28 用户：「不协调。总觉得和编辑系统提示词的有区别。」）：
@@ -10,34 +10,46 @@
 import { computed, ref } from "vue";
 import { missingSegments } from "../utils/prompt.ts";
 
-const props = defineProps({
-  ids: { type: Array, default: () => [] }, // 已挑的段 id（顺序 = 拼接顺序）
-  segments: { type: Array, default: () => [] }, // 段库（随 GET /agents 一起给）
-  assembled: { type: String, default: "" }, // 拼装结果（只做预览；权威在后端）
-  heading: { type: String, required: true },
-  hint: { type: String, default: "" }, // 一行补充说明（能力那块用；agent 级传空）
+export interface SegmentItem {
+  id: string;
+  text: string;
+  builtin?: boolean;
+  imported?: boolean;
+}
+
+const props = withDefaults(defineProps<{
+  ids?: string[];
+  segments?: SegmentItem[];
+  assembled?: string;
+  heading: string;
+  hint?: string;
+}>(), {
+  ids: () => [],
+  segments: () => [],
+  assembled: "",
+  hint: "",
 });
-const emit = defineEmits(["update:ids"]);
+const emit = defineEmits<{ "update:ids": [ids: string[]] }>();
 
 const pick = ref("");
-const segText = (id) => props.segments.find((s) => s.id === id)?.text ?? "";
-const segMissing = (id) => !props.segments.some((s) => s.id === id);
+const segText = (id: string): string => props.segments.find((s) => s.id === id)?.text ?? "";
+const segMissing = (id: string): boolean => !props.segments.some((s) => s.id === id);
 const missing = computed(() => missingSegments(props.ids, props.segments));
-const commit = (next) => emit("update:ids", next);
+const commit = (next: string[]): void => { emit("update:ids", next); };
 
-function add() {
+function add(): void {
   if (pick.value && !props.ids.includes(pick.value)) commit([...props.ids, pick.value]);
   pick.value = "";
 }
-function move(index, delta) {
+function move(index: number, delta: number): void {
   const target = index + delta;
   if (target < 0 || target >= props.ids.length) return;
   const next = [...props.ids];
   [next[index], next[target]] = [next[target], next[index]];
   commit(next);
 }
-function drop(index) { commit(props.ids.filter((_, at) => at !== index)); }
-function optionLabel(segment) {
+function drop(index: number): void { commit(props.ids.filter((_, at) => at !== index)); }
+function optionLabel(segment: SegmentItem): string {
   const marks = `${segment.builtin ? "（内置）" : ""}${segment.imported ? "（导入）" : ""}`;
   return `${segment.id}${marks} —— ${segment.text.slice(0, 30)}`;
 }

@@ -1,14 +1,17 @@
-<script setup>
+<script setup lang="ts">
 // 摘要正文编辑器（应用内模态）：替掉 /editsum 与卡上 ✎ 的原生 window.prompt。
 // 只改 text（PATCH /summaries/{id}：就地换正文，id / 区间 / 指针不动；空文本后端会 400，这里先拦）。
 import { ref, onMounted, onUnmounted } from "vue";
 import { sharedApi } from "../utils/prefs.ts";
+import type { Summary } from "../api/types.ts";
 
-const props = defineProps({
-  sessionId: { type: String, required: true },
-  summary: { type: Object, required: true }, // {id, text, begin_idx?, end_idx?}
-});
-const emit = defineEmits(["close", "saved"]);
+type EditableSummary = Pick<Summary, "id" | "text" | "begin_idx" | "end_idx">;
+
+const props = defineProps<{
+  sessionId: string;
+  summary: EditableSummary;
+}>();
+const emit = defineEmits<{ close: []; saved: [] }>();
 const api = sharedApi();
 const text = ref(props.summary.text ?? "");
 const status = ref("");
@@ -16,18 +19,18 @@ const busy = ref(false);
 const range = props.summary.begin_idx && props.summary.end_idx
   ? ` #${props.summary.begin_idx}-${props.summary.end_idx}` : "";
 
-async function save() {
+async function save(): Promise<void> {
   if (!text.value.trim()) { status.value = "不许空（空摘要没有意义）"; return; }
   busy.value = true;
   try {
     await api.editSummary(props.sessionId, props.summary.id, text.value);
     emit("saved");
-  } catch (e) {
-    status.value = `保存失败：${e.message}`;
+  } catch (e: unknown) {
+    status.value = `保存失败：${e instanceof Error ? e.message : String(e)}`;
   }
   busy.value = false;
 }
-function onKey(e) { if (e.key === "Escape") emit("close"); }
+function onKey(e: KeyboardEvent): void { if (e.key === "Escape") emit("close"); }
 onMounted(() => document.addEventListener("keydown", onKey));
 onUnmounted(() => document.removeEventListener("keydown", onKey));
 </script>

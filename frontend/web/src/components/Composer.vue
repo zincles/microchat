@@ -1,18 +1,24 @@
-<script setup>
+<script setup lang="ts">
 // 底栏输入（TG 底栏味）：textarea 回车换行 + 自增高 1..6 行 + 发送键三档 + 纸飞机圆钮。
 // 生成中（running）⇒ 圆钮变停止键（■），点即停。挂载点还是 #composer（CSS 照旧命中）。
 import { ref, watch, nextTick } from "vue";
 import { ICONS } from "./icons.js";
 
-const emit = defineEmits(["input-text", "keydown", "submit", "stop", "menu"]);
+const emit = defineEmits<{
+  "input-text": [text: string];
+  keydown: [event: KeyboardEvent, text: string];
+  submit: [text: string];
+  stop: [];
+  menu: [];
+}>();
 // menuOn：命令菜单开不开（用户视图 → 输入；缺省关 —— 移动端那颗 ☰ 纯碍事）。
-const props = defineProps({ menuOn: { type: Boolean, default: false } });
+const props = withDefaults(defineProps<{ menuOn?: boolean }>(), { menuOn: false });
 const text = ref("");
 const running = ref(false);
-function setRunning(v) { running.value = !!v; }
-const area = ref(null);
+function setRunning(v: unknown): void { running.value = !!v; }
+const area = ref<HTMLTextAreaElement | null>(null);
 const sendSvg = ICONS.send;
-function autosize() {
+function autosize(): void {
   nextTick(() => {
     if (!area.value) return;
     const el = area.value;
@@ -28,32 +34,32 @@ function autosize() {
 }
 watch(text, autosize);
 
-function onInput(e) {
+function onInput(): void {
   emit("input-text", text.value);
 }
 
-function onKeydown(e) {
+function onKeydown(e: KeyboardEvent): void {
   emit("keydown", e, text.value);
 }
 
-function submit() {
+function submit(): void {
   const t = text.value.trim();
   text.value = "";
   if (area.value) area.value.rows = 1;
   emit("submit", t);
 }
-function stop() {
+function stop(): void {
   emit("stop");
 }
 
-function clear() {
+function clear(): void {
   text.value = "";
   if (area.value) area.value.rows = 1;
 }
 
 // setText：空草稿的示例句点一下就填进来（App 调）。聚焦放在同一拍 ——
 // 用户点的是"我要说这句"，下一步动作必然是补充或回车，不该再点一次输入框。
-function setText(t) {
+function setText(t?: string): void {
   text.value = String(t ?? "");
   nextTick(() => area.value?.focus());
 }
