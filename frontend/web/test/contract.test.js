@@ -3189,8 +3189,8 @@ test("Inter 字体是子集（别把 300KB 全量塞回首屏）", () => {
 test("设置页：标题只有一套语言，设置与会话/渠道管理页同宽", () => {
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   // 所有 panel 的 h3 统一：正文色半粗 + 蓝色竖条；卡片不许再单独定义一份。
-  assert.match(css, /\.settings-cols \.panel h3\s*\{[^}]*color:\s*var\(--tg-text\)/, "h3 不是正文色半粗");
-  assert.match(css, /\.settings-cols \.panel h3::before\s*\{[^}]*background:\s*var\(--tg-link\)/, "h3 没有统一的蓝色竖条");
+  assert.match(css, /\.settings-cols \.panel h3\s*\{[^}]*color:\s*var\(--md-on-surface\)/, "h3 不是 MD3 正文色");
+  assert.match(css, /\.settings-cols \.panel h3::before\s*\{[^}]*background:\s*var\(--md-primary\)/, "h3 没有统一的 MD3 竖条");
   assert.ok(!/\.settings-card h3::before/.test(css), "卡片又给 h3 单独定义了一套竖条");
   // 六个 tab 的宽度必须一起写，切 tab 不能忽宽忽窄。
   const width = css.match(/#panel-appearance\s*,[^{]*#panel-provider\s*\{[^}]*max-width:\s*760px/);
@@ -3334,8 +3334,8 @@ test("设计系统：tab 统一下划线、设置平铺、圆角收口", () => {
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   const theme = readFileSync(join(SRC, "assets", "theme.css"), "utf8");
   // 顶栏 / 上下文是下划线；设置与 Agent 二级页保留原来的胶囊 + 滑动底片。
-  assert.match(css, /\.settings-nav \{[^}]*background:\s*var\(--tg-secondary-bg\)/, "设置 tab 丢了原来的胶囊底");
-  assert.match(css, /\.settings-nav \.tab-thumb \{[^}]*background:/, "设置 tab 丢了滑动底片");
+  assert.match(css, /\.settings-nav \{[^}]*background:\s*var\(--md-surface-container-low\)/, "设置 tab 不是 MD3 容器底");
+  assert.match(css, /\.settings-nav \.tab-thumb \{[^}]*background:\s*var\(--md-secondary-container\)/, "设置 tab 丢了 MD3 滑动底片");
   // 2026-11-05 MD3：顶栏换成 primary tabs 的 3dp 圆角 indicator（不再是整条下划线）；
   // 上下文工作区那组仍是旧的整条下划线，别混。
   assert.match(css, /\.ws-tab::after \{[^}]*background:\s*var\(--md-primary\)/, "顶栏 tab 没有 MD3 indicator");
@@ -3700,4 +3700,39 @@ test("消息区 MD3：tonal 用户气泡 / 32dp 操作 / 思考容器 / 卡片�
   assert.match(css, /\.msg \.typing span \{[^}]*background:\s*var\(--md-primary\)/, "等首字节的三点不是 primary");
   assert.match(css, /\.stream-cursor \{[^}]*background:\s*var\(--md-primary\)/, "流式光标不是 primary");
   assert.match(css, /#load-more \{[^}]*border:\s*1px solid var\(--md-outline-variant\)/, "加载更多不是 MD3 outlined 按钮");
+});
+
+// MD3 第四刀（2026-11-05）：设置页 + 浮层 + 全局控件。
+test("设置页 MD3：segmented tab / 平铺行 / 表格 / 字段标签", () => {
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.match(css, /\.settings-nav \{[^}]*background:\s*var\(--md-surface-container-low\)/, "设置 tab 不是 MD3 容器");
+  assert.match(css, /\.settings-nav \{[^}]*border-radius:\s*var\(--md-shape-full\)/, "设置 tab 不是 full 圆角");
+  assert.match(css, /\.settings-nav \.tab-thumb \{[^}]*background:\s*var\(--md-secondary-container\)/, "滑动底片不是 secondary-container");
+  assert.match(css, /\.settings-nav \.tab-thumb \{[^}]*--md-ease-emphasized/, "滑动底片不是 MD3 曲线");
+  assert.match(css, /\.settings-cols \.panel h3::before \{[^}]*var\(--md-primary\)/, "h3 竖条不是 primary");
+  assert.match(css, /\.settings-cols \.panel \.field, \.settings-cols \.panel \.row \{[^}]*var\(--md-outline-variant\)/, "设置行分隔线不是 outline-variant");
+  assert.match(css, /#settings-view \.field > span \{[^}]*var\(--md-on-surface-variant\)/, "字段标签不是 on-surface-variant");
+  assert.match(css, /#settings-view \.plist th[^{]*\{[^}]*var\(--md-on-surface-variant\)/, "表头不是 on-surface-variant");
+  assert.match(css, /\.settings-cols \.panel table\.plist \{[^}]*var\(--md-surface-container-low\)/, "表格不是 MD3 容器");
+});
+
+test("浮层 MD3：dialog / menu / snackbar / banner，全局按钮与字段", () => {
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.match(css, /button \{[^}]*background:\s*var\(--md-secondary-container\)/, "默认按钮不是 MD3 tonal");
+  assert.match(css, /button \{[^}]*border-radius:\s*var\(--md-shape-full\)/, "按钮不是 full 圆角");
+  assert.match(css, /button\.primary \{[^}]*background:\s*var\(--md-primary\)/, "主按钮不是 filled primary");
+  assert.match(css, /button\.danger \{[^}]*color:\s*var\(--md-error\)/, "危险按钮不是 error 色");
+  assert.match(css, /input:not\(\[type="checkbox"\]\)[^{]*\{[^}]*border:\s*1px solid var\(--md-outline\)/, "输入框不是 MD3 outlined 字段");
+  assert.match(css, /input:not\(\[type="checkbox"\]\)[^{]*:focus[^{]*\{[^}]*var\(--md-primary\)/, "输入框 focus 不是 primary");
+  assert.match(css, /button\.toggle\.on \{[^}]*background:\s*var\(--md-primary\)/, "开关开态不是 primary");
+  assert.match(css, /button\.toggle \{[^}]*border:\s*2px solid var\(--md-outline\)/, "开关轨道不是 MD3 描边");
+  assert.match(css, /\.modal-box \{[^}]*background:\s*var\(--md-surface-container-high\)[^}]*border-radius:\s*var\(--md-shape-xl\)/, "对话框不是 MD3 dialog");
+  assert.match(css, /\.modal-box \{[^}]*box-shadow:\s*var\(--md-elev-3\)/, "对话框没有 elevation 3");
+  assert.match(css, /\.palette, \.picker \{[^}]*background:\s*var\(--md-surface-container\)/, "命令面板不是 MD3 菜单面");
+  assert.match(css, /\.palette-item, \.picker-item \{[^}]*min-height:\s*3em/, "命令项不是 48dp");
+  assert.match(css, /\.palette-item\.sel, \.picker-item\.sel \{[^}]*secondary-container/, "选中项不是 secondary-container");
+  assert.match(css, /\.toast \{[^}]*background:\s*var\(--md-inverse-surface\)/, "toast 不是 MD3 snackbar");
+  assert.match(css, /\.toast::before/, "toast 没有语义点");
+  assert.match(css, /#update-bar \{[^}]*var\(--md-surface-container-high\)/, "更新条不是 MD3 面");
+  assert.match(css, /@keyframes md-dialog-in/, "对话框没有进场动画");
 });

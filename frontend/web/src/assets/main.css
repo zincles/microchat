@@ -37,25 +37,20 @@ body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; 
 ::-webkit-scrollbar-corner { background: transparent; }
 
 /* —— 输入框统一基线（TG 味 = 无边框底色块 + focus 下蓝线；select 自绘箭头 ▾） —— */
-input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, textarea {
-  background: var(--tg-bg); color: var(--tg-text); border: none;
-  border-bottom: 2px solid transparent; border-radius: 8px 8px 0 0;
-  padding: 0.45em 0.6em; font: inherit; box-sizing: border-box;
-  outline: none; transition: border-color 150ms ease-out, background 150ms ease-out;
-}
-input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):hover, select:hover, textarea:hover { background-color: color-mix(in srgb, var(--tg-text) 4%, transparent); }
-input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus, select:focus, textarea:focus { border-bottom-color: var(--tg-link); background-color: var(--mix-6); }
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, textarea { background: transparent; color: var(--md-on-surface); border: 1px solid var(--md-outline); border-radius: var(--md-shape-xs); padding: 0.55em 0.8em; font: inherit; box-sizing: border-box; outline: none; transition: border-color var(--md-dur-150) var(--md-ease-standard), box-shadow var(--md-dur-150) var(--md-ease-standard), background-color var(--md-dur-150) var(--md-ease-standard); }
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):hover, select:hover, textarea:hover { background-color: color-mix(in srgb, var(--md-on-surface) 4%, transparent); border-color: var(--md-on-surface); }
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus, select:focus, textarea:focus { border-color: var(--md-primary); box-shadow: inset 0 0 0 1px var(--md-primary); background-color: transparent; }
 input[type="number"] { text-align: right; -moz-appearance: textfield; }
 /* 复选框：跟主题走（accent-color 染原生勾选框：勾/点用 TG 蓝，底跟系统）。 */
 input[type="checkbox"], input[type="radio"] { accent-color: var(--tg-link); width: 1.1em; height: 1.1em; cursor: pointer; }
 /* 滑杆（界面缩放在用）：**不吃上面那条输入框基线** —— 给 range 加下边框会长出一条压在轨道上的蓝线。
  * 轨道/拇指自己画：颜色全从 --tg-* 派生，深浅三套自动对（原生滑杆在暗色下是白底，很跳）。 */
-input[type="range"] { appearance: none; -webkit-appearance: none; width: 100%; height: 1.4em; background: none; border: none; padding: 0; cursor: pointer; }
-input[type="range"]::-webkit-slider-runnable-track { height: 3px; border-radius: 999px; background: var(--mix-18); }
-input[type="range"]::-moz-range-track { height: 3px; border-radius: 999px; background: var(--mix-18); }
-input[type="range"]::-webkit-slider-thumb { appearance: none; -webkit-appearance: none; width: 0.9em; height: 0.9em; margin-top: -0.34em; border-radius: 999px; background: var(--tg-text); border: none; }
-input[type="range"]::-moz-range-thumb { width: 0.9em; height: 0.9em; border: none; border-radius: 999px; background: var(--tg-text); }
-input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px color-mix(in srgb, var(--tg-link) 45%, transparent); }
+input[type="range"] { appearance: none; -webkit-appearance: none; width: 100%; height: 2em; background: none; border: none; padding: 0; cursor: pointer; }
+input[type="range"]::-webkit-slider-runnable-track { height: 4px; border-radius: 999px; background: var(--md-outline-variant); }
+input[type="range"]::-moz-range-track { height: 4px; border-radius: 999px; background: var(--md-outline-variant); }
+input[type="range"]::-webkit-slider-thumb { appearance: none; -webkit-appearance: none; width: 1em; height: 1em; margin-top: -0.3em; border-radius: 50%; background: var(--md-primary); border: none; box-shadow: 0 0 0 0 color-mix(in srgb, var(--md-primary) 20%, transparent); transition: box-shadow var(--md-dur-150) var(--md-ease-standard); }
+input[type="range"]::-moz-range-thumb { width: 1em; height: 1em; border: none; border-radius: 50%; background: var(--md-primary); }
+input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 0.5em color-mix(in srgb, var(--md-primary) 20%, transparent); }
 select { appearance: none; -webkit-appearance: none; padding-right: 1.8em;
   background-image: linear-gradient(45deg, transparent 50%, var(--tg-hint) 50%), linear-gradient(135deg, var(--tg-hint) 50%, transparent 50%);
   background-position: calc(100% - 1.1em) 55%, calc(100% - 0.75em) 55%;
@@ -308,7 +303,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .ctx-rows-status .ctx-row { padding: 0.16em 0; }
 /* Toast 通知（右上堆叠，TG 安卓 toast 味：深底白字圆角 + 左色条区分 Plumbing/错误）。 */
 #toasts { position: fixed; top: 4.2em; right: 0.8em; display: flex; flex-direction: column; gap: 0.5em; z-index: 50; max-width: min(22em, 80vw); }
-.toast { background: var(--tg-float); color: var(--tg-text); border-radius: var(--r-card); padding: 0.6em 0.9em 0.6em 0.8em; font-size: 0.88em; box-shadow: var(--shadow-3); border-left: 3px solid var(--tg-link); animation: toast-in 180ms ease-out; word-break: break-word; }
+.toast { background: var(--md-inverse-surface); color: var(--md-inverse-on-surface); border-radius: var(--md-shape-xs); padding: 0.8em 1em 0.8em 0.9em; font-size: var(--md-type-label-large); box-shadow: var(--md-elev-3); border-left: none; display: flex; align-items: center; gap: 0.6em; animation: toast-in var(--md-dur-250) var(--md-ease-emphasized); word-break: break-word; }
 .toast.error { border-left-color: var(--tg-destructive); }
 .toast.ok { border-left-color: var(--tg-button); }
 @keyframes toast-in { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
@@ -322,21 +317,12 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
  * ⚠ 它是 `position: fixed` —— 而 `#app` 一带 `transform`（viewport.js 的 --vvt 拟合）就会
  * 收编 fixed 的包含块（见 main.css 顶部那条注释），所以这里跟着 #app 走、不会被键盘顶飞，
  * 这是**想要的**（更新条不该浮在键盘上方）。 */
-#update-bar { position: fixed; top: 0.6em; left: 50%; transform: translateX(-50%); z-index: 55;
-  display: flex; align-items: center; gap: 0.6em;
-  max-width: min(30em, 92vw); box-sizing: border-box;
-  background: var(--tg-float); color: var(--tg-text);
-  border: 1px solid var(--line); border-left: 3px solid var(--tg-button);
-  border-radius: var(--r-card); padding: 0.5em 0.7em 0.5em 0.85em;
-  font-size: 0.88em; box-shadow: var(--shadow-3);
-  animation: toast-in 180ms ease-out; }
+#update-bar { position: fixed; top: 0.85em; left: 50%; transform: translateX(-50%); z-index: 55; display: flex; align-items: center; gap: 0.6em; max-width: min(30em, 92vw); box-sizing: border-box; background: var(--md-surface-container-high); color: var(--md-on-surface); border: none; border-radius: var(--md-shape-md); padding: 0.55em 0.7em 0.55em 1em; box-shadow: var(--md-elev-2); animation: md-dialog-in var(--md-dur-250) var(--md-ease-emphasized); }
 #update-bar .ub-text { flex: 1; min-width: 0; word-break: break-word; }
-#update-bar .ub-go { flex: none; background: var(--tg-button); color: var(--tg-button-text);
-  border: none; border-radius: var(--r-btn); padding: 0.25em 0.85em; font: inherit; line-height: 1.3; cursor: pointer; }
+#update-bar .ub-go { flex: none; background: var(--md-primary); color: var(--md-on-primary); border: none; border-radius: var(--md-shape-full); min-height: 2.5em; padding: 0 1em; font: inherit; font-size: var(--md-type-label-large); font-weight: 500; cursor: pointer; }
 #update-bar .ub-go:hover:not(:disabled) { filter: brightness(1.1); }
 #update-bar .ub-go:disabled { opacity: 0.65; cursor: default; }
-#update-bar .ub-x { flex: none; color: var(--tg-hint);
-  font-size: 1.15em; line-height: 1; padding: 0 0.15em; }
+#update-bar .ub-x { flex: none; color: var(--md-on-surface-variant); border-radius: var(--md-shape-full); width: 2.5em; height: 2.5em; display: inline-flex; align-items: center; justify-content: center; }
 #update-bar .ub-x:hover { color: var(--tg-text); }
 @media (prefers-reduced-motion: reduce) { #update-bar { animation: none; } }
 /* 侧栏滑入滑出（TG 味 = 200ms ease-out；只动 transform/opacity，宽用 max-width 过渡不跳）。 */
@@ -860,19 +846,16 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .msg .typing span:nth-child(3) { animation-delay: 0.3s; }
 @keyframes typing-pulse { 0%, 60%, 100% { opacity: 0.25; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-0.18em); } }
 @media (prefers-reduced-motion: reduce) { .msg .typing span { animation: none; opacity: 0.6; } }
-.palette, .picker { position: fixed; left: 50%; transform: translateX(-50%); bottom: 5em; background: var(--tg-float); border: none; border-radius: var(--r-shell); padding: 0.5em; width: min(649px, 90%); margin-left: -40px; z-index: 10; box-sizing: border-box; box-shadow: var(--shadow-3);
-  /* 限高：百分比解析的是**包含块**（现在被 #app 的 transform 收编）⇒ 键盘把盒子缩矮时自动跟着缩，
-   * 小屏也不会顶出视口外（实测过 617px 面板在 500px 视口里 top≈-192 的裸奔）。内容自己滚。 */
-  max-height: calc(100% - 7em); overflow-y: auto; overscroll-behavior: contain; }
+.palette, .picker { position: fixed; left: 50%; transform: translateX(-50%); bottom: 5em; background: var(--md-surface-container); border: none; border-radius: var(--md-shape-md); padding: 0.5em; width: min(649px, 90%); margin-left: -40px; z-index: 10; box-sizing: border-box; box-shadow: var(--md-elev-3); color: var(--md-on-surface); animation: md-dialog-in var(--md-dur-250) var(--md-ease-emphasized); }
 /* 确认框：全屏中央（与 modal 同级遮罩：背后加深，只留中央小窗）。 */
-.confirm-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / 60%); z-index: 30; display: flex; align-items: center; justify-content: center; }
+.confirm-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / 45%); z-index: 30; display: flex; align-items: center; justify-content: center; animation: md-scrim-in var(--md-dur-200) var(--md-ease-standard); }
 /* 命令面板遮罩：透明（只吃点击关面板，不加深，面板自己 z=10 浮在上）。 */
 .palette-backdrop { position: fixed; inset: 0; z-index: 9; }
-.confirm { background: var(--tg-float); border: none; border-radius: var(--r-shell); padding: 1em 1.2em; max-width: 480px; width: 90%; box-shadow: var(--shadow-4); }
+.confirm { background: var(--md-surface-container-high); border: none; border-radius: var(--md-shape-xl); padding: 1.5em; max-width: 480px; width: 90%; box-shadow: var(--md-elev-3); color: var(--md-on-surface); animation: md-dialog-in var(--md-dur-250) var(--md-ease-emphasized); }
 .confirm-btns { display: flex; gap: 0.6em; justify-content: flex-end; margin-top: 0.8em; }
-.palette-item, .picker-item { padding: 0.55em 0.8em; cursor: pointer; border-radius: var(--r-btn); }
-.palette-item:hover, .picker-item:hover { background: var(--mix-6); }
-.palette-item.sel, .picker-item.sel { color: var(--tg-link); }
+.palette-item, .picker-item { padding: 0 1em; min-height: 3em; display: flex; align-items: center; cursor: pointer; border-radius: var(--md-shape-full); color: var(--md-on-surface); font-size: var(--md-type-label-large); transition: background-color var(--md-dur-150) var(--md-ease-standard), color var(--md-dur-150) var(--md-ease-standard); }
+.palette-item:hover, .picker-item:hover { background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); }
+.palette-item.sel, .picker-item.sel { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
 /* 命令面板：名左 + 说明右（说明暗色，选中跟名同色）。 */
 .palette-item { display: flex; gap: 0.8em; align-items: baseline; }
 .palette-item .cmd-name { flex: none; }
@@ -880,11 +863,11 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .palette-item.sel .cmd-desc { color: inherit; opacity: 0.75; }
 /* 设置 modal（分组卡片，不是左右分栏 —— TG 设置页就是一组一组的圆角块）。 */
 .hidden { display: none; }
-.modal { position: fixed; inset: 0; background: rgb(0 0 0 / 60%); z-index: 20; display: flex; align-items: center; justify-content: center; }
-.modal-box { background: var(--tg-bg); border: none; border-radius: var(--r-shell); width: 94vw; max-width: 960px; height: 92vh; overflow-y: auto; overscroll-behavior: contain; padding: 1em 1.2em; box-sizing: border-box; box-shadow: var(--shadow-4); }
+.modal { position: fixed; inset: 0; background: rgb(0 0 0 / 45%); z-index: 20; display: flex; align-items: center; justify-content: center; animation: md-scrim-in var(--md-dur-200) var(--md-ease-standard); }
+.modal-box { background: var(--md-surface-container-high); border: none; border-radius: var(--md-shape-xl); width: 94vw; max-width: 960px; height: 92vh; overflow-y: auto; overscroll-behavior: contain; padding: 1.5em; box-sizing: border-box; box-shadow: var(--md-elev-3); color: var(--md-on-surface); animation: md-dialog-in var(--md-dur-250) var(--md-ease-emphasized); }
 /* 紧凑对话框（会话设置这种小表单）：宽够用、高随内容 —— 别用 92vh 的空盒子。 */
 .modal-box.compact { width: min(560px, 94vw); max-width: 560px; height: auto; max-height: 88vh; }
-.modal-head { display: flex; justify-content: space-between; align-items: center; font-size: 1.1em; margin-bottom: 0.5em; }
+.modal-head { display: flex; justify-content: space-between; align-items: center; font-size: var(--md-type-title-medium); font-weight: 500; color: var(--md-on-surface); margin-bottom: 0.6em; }
 .modal-head .head-btns { display: flex; gap: 0.2em; align-items: center; }
 .message-edit-box .full-btn { font-size: 0.82em; }
 /* 图标按钮通用（× ＋ 这种）：去边框去底色，hover 才显底 —— 原生感就这么来。 */
@@ -897,26 +880,25 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .icon-btn:hover { color: var(--tg-text); background: var(--mix-8); }
 /* —— 设置视图（与对话同级；左栏右边那一整块，不是弹窗）—— */
 /* 一行式工具栏：去掉"悬浮卡"造型与"设置"标题（全屏页不需要它俩，tabs 自己就是路标）。 */
-#settings-view { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 0.5em 0.6em 0; }
+#settings-view { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 0.5em 0.6em 0; background: var(--md-surface); color: var(--md-on-surface); }
 .settings-bar { display: flex; align-items: center; gap: 0.4em; max-width: 960px; width: 100%; margin: 0 auto; }
 /* 单独入口（会话 / 渠道）的页头：没有 TabBar，标题吃掉中间空档。 */
-.settings-title { flex: 1 1 auto; min-width: 0; margin: 0; font-size: 1em; font-weight: 600; color: var(--tg-text); }
+.settings-title { flex: 1 1 auto; min-width: 0; margin: 0; font-size: var(--md-type-title-small); font-weight: 500; color: var(--md-on-surface); }
 .settings-bar .settings-nav { flex: 1 1 auto; min-width: 0; margin-bottom: 0; }
 .settings-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0.55em 0.2em 1.5em; }
 .settings-box { max-width: 960px; margin: 0 auto; }
 /* 分组标题（2026-11-02）：所有设置页（含二级编辑器）统一一种样子 —— 正文色半粗 + 左侧蓝色短竖条。
  * 从前只有卡片里的 h3 带竖条，其它 tab 的 h3 是裸文字 ⇒ 同一页两套标题语言（用户指出）。
  * 竖条用 `::before` 而不是 border-left：换行时它只跟第一行，不会把整段框起来。 */
-.settings-cols .panel h3 { color: var(--tg-text); font-size: 0.9em; font-weight: 600; letter-spacing: 0.01em; margin: 1em 0 0.3em; }
-.settings-cols .panel h3::before { content: ""; display: inline-block; width: 3px; height: 0.9em; border-radius: 2px;
-  background: var(--tg-link); margin-right: 0.5em; vertical-align: -0.08em; }
+.settings-cols .panel h3 { color: var(--md-on-surface); font-size: var(--md-type-title-small); font-weight: 500; letter-spacing: 0.006em; margin: 1em 0 0.3em; }
+.settings-cols .panel h3::before { content: ""; display: inline-block; width: 3px; height: 0.9em; border-radius: 2px; background: var(--md-primary); margin-right: 0.5em; vertical-align: -0.08em; }
 .settings-cols .panel h3:first-child, .panel-head h3 { margin-top: 0.15em; }
 .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 0.6em; margin: 0.15em 0 0.3em; }
 .panel-head h3 { margin-bottom: 0; }
-.status { color: var(--tg-hint); font-size: 0.85em; }
-.hint { color: var(--tg-hint); font-size: 0.85em; margin: 0.4em 0 0; }
+.status { color: var(--md-on-surface-variant); font-size: var(--md-type-label-medium); }
+.hint { color: var(--md-on-surface-variant); font-size: var(--md-type-label-medium); margin: 0.4em 0 0; }
 /* 列表（会话/Agent/渠道）：与会话卡片同一张"底"，窄屏可横滚。 */
-.settings-cols .panel table.plist { background: var(--tg-secondary-bg); border-radius: var(--r-card); margin: 0 0 0.5em; }
+.settings-cols .panel table.plist { background: var(--md-surface-container-low); border-radius: var(--md-shape-md); margin: 0 0 0.5em; border-collapse: separate; border-spacing: 0; overflow: hidden; }
 #session-mgr-list, #agent-list, #provider-list, #prompt-list { overflow-x: auto; }
 /* 提示词片段表三列：名称 / 内容预览 / 谁在用 —— 定宽 + 省略号，
  * 不然长预览会把「谁在用」挤出卡片（看起来像被裁掉了）。 */
@@ -929,25 +911,18 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .settings-cols .panel input:not([type="checkbox"]):not([type="radio"]), .settings-cols .panel select { padding-top: 0.3em; padding-bottom: 0.3em; }
 /* 设置 / Agent 二级页保留原来的**分段胶囊 + 滑动底片**（2026-11-04 用户：
  * 「我不觉得原来的 TabBar 有什么问题」）。上下文三 tab 与顶栏聊天/上下文仍是下划线。 */
-.settings-nav { display: flex; flex-direction: row; gap: 0.2em; margin-bottom: 0.7em;
-  background: var(--tg-secondary-bg); border: none; border-radius: var(--r-card);
-  padding: 0.18em; position: relative; }
-.settings-nav .tab { flex: 1; text-align: center; border-radius: var(--r-md); color: var(--tg-hint);
-  padding: 0.38em 0.3em; font-size: 0.9em; line-height: 1.25; position: relative; z-index: 1;
-  transition: color 150ms ease-out; }
-.settings-nav .tab.sel { color: var(--tg-text); }
+.settings-nav { display: flex; flex-direction: row; gap: 0.15em; margin-bottom: 0.7em; background: var(--md-surface-container-low); border: none; border-radius: var(--md-shape-full); padding: 0.2em; position: relative; }
+.settings-nav .tab { flex: 1; text-align: center; border-radius: var(--md-shape-full); color: var(--md-on-surface-variant); min-height: 2.75em; padding: 0.45em 0.3em; font-size: var(--md-type-label-large); font-weight: 500; line-height: 1.25; position: relative; z-index: 1; transition: color var(--md-dur-200) var(--md-ease-standard); }
+.settings-nav .tab.sel { color: var(--md-on-secondary-container); }
 /* 选中块：绝对定位跟随（left/width 由 TabBar 的 JS 量）。 */
-.settings-nav .tab-thumb { position: absolute; top: 0.18em; bottom: 0.18em; border-radius: var(--r-md);
-  background: var(--mix-10); transition: left 170ms ease-out, width 170ms ease-out; z-index: 0; }
+.settings-nav .tab-thumb { position: absolute; top: 0.2em; bottom: 0.2em; border-radius: var(--md-shape-full); background: var(--md-secondary-container); transition: left var(--md-dur-300) var(--md-ease-emphasized), width var(--md-dur-300) var(--md-ease-emphasized); z-index: 0; }
 /* 面板淡入（切页 120ms，opacity+位移，不碰 layout）。 */
 .settings-cols .panel { animation: panel-in 140ms ease-out; }
 @keyframes panel-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .settings-nav .tab-thumb { transition: none; } .settings-cols .panel { animation: none; } }
 /* 设置页是**平铺列表**（2026-11-04）：行与行只隔一条细线，不再套一层卡片。
  * h3 后第一行不画顶线；列表末尾也不补圆角 —— 圆角交给真正的卡片（表格/浮层）。 */
-.settings-cols .panel .field, .settings-cols .panel .row {
-  background: none; margin: 0; padding: 0.6em 0.2em; line-height: 1.45;
-  border-top: 1px solid var(--line); border-radius: 0; }
+.settings-cols .panel .field, .settings-cols .panel .row { background: none; margin: 0; padding: 0.7em 0.2em; line-height: 1.45; border-top: 1px solid var(--md-outline-variant); border-radius: 0; }
 .settings-cols .panel h3 + .field, .settings-cols .panel h3 + .row,
 .settings-cols .panel > .field:first-child, .settings-cols .panel > .row:first-child { border-top: none; }
 /* 设置页统一 760 居中（列表页有表格，但切 tab 时宽度不该跳来跳去）。
@@ -973,10 +948,10 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 /* 导入卡（2026-10-17）：两种"导入"各一张 —— 卡面比面板底亮一档、自带圆角与内边距，
  * 卡里的 .field/.row 把面板那套"连体行"背景与分隔线**脱掉**（不然卡里又长出条纹，还是分不清谁是谁）。 */
 .io-cards { display: flex; flex-direction: column; gap: 0.5em; }
-.io-card { background: color-mix(in srgb, var(--tg-text) 5%, transparent); border: 1px solid var(--line); border-radius: var(--r-card); padding: 0.55em 0.9em 0.6em; }
+.io-card { background: var(--md-surface-container-low); border: 1px solid var(--md-outline-variant); border-radius: var(--md-shape-md); padding: 0.7em 1em 0.75em; }
 .io-head { display: flex; align-items: baseline; gap: 0.5em; }
 .io-head b { color: var(--tg-text); font-weight: 500; font-size: 0.95em; }
-.io-tag { font-style: normal; font-size: 0.78em; color: var(--tg-hint); border: 1px solid var(--line); border-radius: var(--r-xs); padding: 0 0.3em; margin-left: 0.35em; }
+.io-tag { font-style: normal; font-size: var(--md-type-label-small); color: var(--md-on-surface-variant); border: 1px solid var(--md-outline-variant); border-radius: var(--md-shape-full); padding: 0 0.45em; margin-left: 0.35em; }
 .io-card .hint { margin: 0.25em 0 0.5em; }
 /* ⚠ 必须带上 `.settings-cols .panel` 前缀：面板那套连体行规则是 (0,3,0)，两层的选择器压不过它。 */
 .settings-cols .panel .io-card .field, .settings-cols .panel .io-card .row { background: none; padding: 0.3em 0; border-top: none; border-radius: 0; }
@@ -989,8 +964,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 
 /* 键盘可达性：Tab 到按钮/开关/链接时给个可见轮廓（鼠标点不给 —— `:focus-visible` 的语义）。
  * 输入框不掺和：它们本来就有 focus 样式。 */
-button:focus-visible, a:focus-visible, select:focus-visible, [tabindex]:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--tg-link) 75%, transparent); outline-offset: 2px; }
+button:focus-visible, a:focus-visible, select:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px; }
 
 /* —— 按钮默认主题（全页兜底：裸 button 不再是浏览器灰框） ——
  * 三档：默认（淡淡一层色，无边框）/ .primary（蓝底白字，主动作）/ .danger（红字，删除）。
@@ -1008,10 +982,9 @@ button:focus-visible, a:focus-visible, select:focus-visible, [tabindex]:focus-vi
  *     浅色主题里也自动反过来（旧写法在浅色主题里同样是错的，见 theme.css 的注释）。
  *   - 悬停/按下用**换底色**，不再用 `filter: brightness()` —— filter 会把文字和底色一起拉，
  *     遇到深底反而越悬停越糊。 */
-button { background: var(--hover); color: var(--tg-text); border: none; border-radius: var(--r-btn); padding: 0.35em 0.85em; font: inherit; line-height: 1.3; cursor: pointer;
-  transition: background-color 120ms ease-out, color 120ms ease-out; }
-button:hover { background: var(--mix-13); }
-button:active { background: color-mix(in srgb, var(--tg-text) 17%, transparent); }
+button { background: var(--md-secondary-container); color: var(--md-on-secondary-container); border: none; border-radius: var(--md-shape-full); min-height: 2.5em; padding: 0 0.95em; font: inherit; font-size: var(--md-type-label-large); font-weight: 500; letter-spacing: 0.006em; line-height: 1.3; cursor: pointer; transition: background-color var(--md-dur-150) var(--md-ease-standard), color var(--md-dur-150) var(--md-ease-standard), box-shadow var(--md-dur-150) var(--md-ease-standard); }
+button:hover { background: color-mix(in srgb, var(--md-on-secondary-container) 8%, var(--md-secondary-container)); }
+button:active { background: color-mix(in srgb, var(--md-on-secondary-container) 10%, var(--md-secondary-container)); }
 /* 幽灵按钮底座（2026-11-02）：图标键 / 文字键 / 列表操作键这一族只差颜色、尺寸、圆角，
  * 但 `background:none; border:none; cursor:pointer` 在十几处各抄了一遍。
  * 只收这三条 —— **颜色不在这里**：`.link-btn` 是蓝的、`.collapse-all` 也是蓝的，
@@ -1024,17 +997,20 @@ button:active { background: color-mix(in srgb, var(--tg-text) 17%, transparent);
   background: none;
   border: none;
   cursor: pointer;
+  /* 幽灵族不吃全局按钮的 40dp 下限：各自的尺寸由具体规则给（图标键 32/40dp、tab 44dp…）。
+   * 不摘掉的话，`#toggle-left`（2em）会被撑成 2.5em 高的椭圆。 */
+  min-height: 0;
 }
-button.primary { background: var(--tg-button); color: var(--tg-button-text); }
-button.primary:hover { background: color-mix(in srgb, var(--tg-button) 86%, var(--tg-text)); }
-button.danger { background: none; color: var(--tg-destructive); }
-button.danger:hover { text-decoration: underline; }
+button.primary { background: var(--md-primary); color: var(--md-on-primary); }
+button.primary:hover { background: color-mix(in srgb, var(--md-on-primary) 8%, var(--md-primary)); }
+button.danger { background: none; color: var(--md-error); border-radius: var(--md-shape-full); }
+button.danger:hover { background: color-mix(in srgb, var(--md-error) 8%, transparent); text-decoration: none; }
 /* 开关滑块（TG 风）：轨道 + 圆钮，150ms 位移 + 底色过渡；开态 TG 蓝。 */
-button.toggle { width: 2.6em; height: 1.5em; padding: 0; border: none; border-radius: 999px; background: color-mix(in srgb, var(--tg-text) 15%, transparent); position: relative; flex: none; filter: none; }
-button.toggle:hover { filter: brightness(1.2); }
-button.toggle .knob { position: absolute; top: 0.15em; left: 0.15em; width: 1.2em; height: 1.2em; border-radius: 50%; background: #fff; transition: transform 150ms ease-out; box-shadow: var(--shadow-1); }
-button.toggle.on { background: var(--tg-link); }
-button.toggle.on .knob { transform: translateX(1.1em); }
+button.toggle { width: 3.25em; height: 2em; padding: 0; box-sizing: border-box; border: 2px solid var(--md-outline); border-radius: 999px; background: var(--md-surface-container-highest); position: relative; flex: none; cursor: pointer; transition: background-color var(--md-dur-200) var(--md-ease-standard), border-color var(--md-dur-200) var(--md-ease-standard); }
+button.toggle:hover { border-color: var(--md-on-surface); background: var(--md-surface-container-high); }
+button.toggle .knob { position: absolute; top: 50%; left: 0.35em; width: 1.1em; height: 1.1em; margin-top: -0.55em; border-radius: 50%; background: var(--md-outline); transition: left var(--md-dur-200) var(--md-ease-emphasized), width var(--md-dur-200) var(--md-ease-emphasized), height var(--md-dur-200) var(--md-ease-emphasized), margin-top var(--md-dur-200) var(--md-ease-emphasized), background-color var(--md-dur-200) var(--md-ease-standard); box-shadow: none; }
+button.toggle.on { background: var(--md-primary); border-color: var(--md-primary); }
+button.toggle.on .knob { left: calc(100% - 1.55em); width: 1.5em; height: 1.5em; margin-top: -0.75em; background: var(--md-on-primary); }
 @media (prefers-reduced-motion: reduce) { button.toggle .knob { transition: none; } }
 .empty { color: var(--tg-hint); padding: 0.8em 0.6em; font-size: 0.9em; }
 /* 大段输入框独占一行：label 在上、框在下（跟右边挤一格没法看）。 */
@@ -1272,3 +1248,23 @@ button.toggle.on .knob { transform: translateX(1.1em); }
 .msg .think[open] summary::before { content: "▾ "; }
 .msg .think summary:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px; border-radius: var(--md-shape-xs); }
 .msg-ops .edit-btn:active { background: color-mix(in srgb, var(--md-on-surface) 10%, transparent); }
+
+/* 浮层进场（MD3 emphasized decelerate）+ 遮罩淡入。 */
+@keyframes md-dialog-in { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: none; } }
+@keyframes md-scrim-in { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .modal, .modal-box, .confirm-backdrop, .confirm, .palette, .picker, #update-bar { animation: none; }
+}
+/* Toast 的语义点（MD3 snackbar 不描边：用前导点区分 ok / error）。 */
+.toast::before { content: ""; flex: none; width: 0.6em; height: 0.6em; border-radius: 50%; background: var(--md-primary); }
+.toast.error::before { background: var(--md-error); }
+.toast.ok::before { background: var(--md-primary); }
+.toast.error { border-left: none; }
+.toast.ok { border-left: none; }
+
+/* 设置页字段标签 / 表格：MD3 排版（标签 on-surface-variant、表头 label-small、行分隔 outline-variant）。 */
+#settings-view .field > span { color: var(--md-on-surface-variant); }
+#settings-view .plist th, #settings-view .plist td { border-bottom: 1px solid var(--md-outline-variant); padding: 0.75em 0.9em; }
+#settings-view .plist th { color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); font-weight: 500; letter-spacing: 0.04em; }
+#settings-view .plist tr.clickable:hover td { background: color-mix(in srgb, var(--md-on-surface) 6%, transparent); }
+#settings-view .plist tr:last-child td { border-bottom: none; }

@@ -1167,6 +1167,19 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   代码块 = surface-container-low + outline-variant 描边；等首字节三点与流式光标都用 primary；
   「加载更多」= MD3 outlined 按钮（outline-variant 描边、full 圆角、状态层）。
   ⚠ 用户气泡里的 `who` / `foot` 仍有旧规则的 `color: inherit; opacity` 覆盖（气泡内语义色继承是对的，别删）。
+  **设置页 + 浮层 + 全局控件**（2026-11-05 第四刀）：
+  全局 `button` = MD3 tonal 按钮（secondary-container、full 圆角、40dp），`.primary` = filled primary，
+  `.danger` = text error；幽灵按钮族追加 `min-height: 0`（不吃 40dp 下限，否则 2em 的图标键被撑成椭圆）。
+  全局输入框/select/textarea = MD3 outlined 字段（outline 1px、4dp 圆角、focus 1px primary 内环）；
+  range = MD3 轨道（4px outline-variant）+ primary 圆钮；ToggleSwitch = MD3 switch（52×32 轨道、
+  outline 描边、开态 primary + 24dp 滑块）。
+  设置页：`#settings-view` = surface；`TabBar` = MD3 segmented（surface-container-low 底、
+  secondary-container 滑动底片、emphasized 300ms）；h3 竖条改 primary；字段行分隔线 outline-variant；
+  `plist` = surface-container-low 卡片、表头 label-small、行 hover 状态层；`.io-card` = outlined 卡片。
+  浮层：`.modal` / `.confirm` / `.palette` / `.picker` = MD3 dialog/menu（surface-container-high、
+  28dp / 12dp、elevation 3、scrim 45%、`md-dialog-in` 进场）；toast = snackbar（inverse-surface、
+  4dp、elevation 3、语义点替代左边框）；更新条 = surface-container-high 面 + 主按钮。
+  ⚠ 输入框的全局基线特异性很高（`input:not(...):not(...)`），组件要改样式仍得加前缀/ID（模型搜索那条踩过）。
   ⚠ 字体暂时还是 Inter：MD3 官方是 Roboto，但换字体是全站的事，等 MD3 铺到聊天区再一起定。
 - **高延迟（1s+ RTT）下的界面口径**（2026-11-05 用户定：「优化服务器和用户之间存在 1000ms 以上延迟的极端场景」）：
   目标不是"让网络变快"，而是**别让等待凭空多出一个来回**，也别让旧数据挂在新语境里。
