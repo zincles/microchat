@@ -2,7 +2,10 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
+	"log"
 	"net/http"
+	"strings"
 
 	"microchat/internal/config"
 	"microchat/internal/providers"
@@ -76,6 +79,10 @@ type CreateProviderReq struct {
 }
 
 type UpdateProviderReq struct {
+	// NewID：改**渠道标识**（2026-11-05 用户定「渠道标识要能改」）。None = 不动。
+	// 改名会一并搬库里的引用（会话 / 模型 / 路由 / 上次刷新 / 摘要审计列）——
+	// 只改 `providers.json` 会让会话指向一个不存在的渠道，发消息静默回落 fallback。
+	NewID    *string           `json:"new_id"`
 	Vendor   *string           `json:"vendor"`   // None = 不动；"" = 清（回落到 Kind 别名）
 	Protocol *string           `json:"protocol"` // None = 不动；"" = 清（回落到缺省 chat）
 	BaseURL  *string           `json:"base_url"`
@@ -249,10 +256,51 @@ func (s *Server) updateProvider(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "invalid", err.Error())
 		return
 	}
+	// 渠道标识可以改（2026-11-05 用户定：「渠道标识为啥不能修改了？要修改啊！」）。
+	// 三个分支说清：同 id = 没改；撞别的渠道 = 409；库里有旧标识的数据 = 409（不合并，见 RenameProvider）。
+	oldID := provider.ID
+	renamed := false
+	if req.NewID != nil {
+		newID := strings.TrimSpace(*req.NewID)
+		if newID == "" {
+			writeError(w, http.StatusUnprocessableEntity, "invalid", "渠道标识不能为空")
+			return
+		}
+		if newID != oldID {
+			if _, exists := configs.Get(newID); exists {
+				writeError(w, http.StatusConflict, "conflict", "已经有同名渠道")
+				return
+			}
+			provider.ID = newID
+			renamed = true
+		}
+	}
 	configs.Providers[index] = provider
+	// **先写配置、再搬库**：配置是权威，写失败 ⇒ 什么都没发生（最干净）；
+	// 库搬失败 ⇒ 把配置改回去。两个写操作跨 SQLite 与 JSON，只能选一种失败残留，
+	// 这里选"失败后回到原样"，与 deleteProvider 的顺序（先库后配置）不同 —— 那边删库失败
+	// ⇒ 渠道还在、模型没了可以刷新自愈；改名失败没有"自愈"这回事，只能整体退回。
 	if err := s.saveProviders(configs); err != nil {
 		writeStoreError(w, err)
 		return
+	}
+	if renamed {
+		if err := s.store.RenameProvider(oldID, provider.ID); err != nil {
+			configs.Providers[index].ID = oldID
+			if revertErr := s.saveProviders(configs); revertErr != nil {
+				log.Printf("渠道「%s」改名后回滚配置失败（库里已是「%s」）：%v", oldID, provider.ID, revertErr)
+				writeError(w, http.StatusInternalServerError, "internal",
+					"改名失败，且配置没能改回去（库与配置不一致，请检查 data/config/providers.json）")
+				return
+			}
+			if errors.Is(err, store.ErrProviderDataConflict) {
+				writeError(w, http.StatusConflict, "conflict",
+					"标识「"+provider.ID+"」在库里已有数据（会话 / 模型 / 摘要），换一个标识")
+				return
+			}
+			writeStoreError(w, err)
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, providerView(provider))
 }

@@ -324,12 +324,11 @@ func (s *Store) DeleteProviderData(provider string) error {
 	}
 	// `model_route` 不住 001（`refresh-routes` 按需建）⇒ 没建过时这表根本不存在。
 	// 用 sqlite_master **问一句**再删，别拿错误文案去猜（"no such table" 的措辞不属于契约）。
-	var exists int
-	if err := tx.QueryRow(
-		"SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'model_route'").Scan(&exists); err != nil {
+	hasRoute, err := tableExists(tx, "model_route")
+	if err != nil {
 		return err
 	}
-	if exists > 0 {
+	if hasRoute {
 		if _, err := tx.Exec("DELETE FROM model_route WHERE provider = ?1", provider); err != nil {
 			return err
 		}
@@ -338,4 +337,70 @@ func (s *Store) DeleteProviderData(provider string) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+// ErrProviderDataConflict：改渠道标识时，目标标识在库里已经有数据。
+//
+// 不做"合并"：`models` 的主键是 `(provider, upstream_id)`，两家渠道很可能有同名模型
+// （`deepseek-chat` 这种到处都是），合起来要么撞主键、要么悄悄丢掉一家的用户覆盖/参数。
+// 直接拒绝，让用户换一个标识 —— 这比"看起来改成功了、其实模型混在一起"诚实得多。
+var ErrProviderDataConflict = errors.New("provider_data_conflict")
+
+// RenameProvider：把一条渠道在库里的**全部引用**从旧标识搬到新标识（同一事务）。
+//
+// 为什么必须搬（2026-11-05 用户定「渠道标识要能改」）：
+//   - `sessions.provider` 是**活引用**：不搬 ⇒ 会话指向一个不存在的渠道 ⇒ `SelectBackend`
+//     静默回落 `BackendFallback`（发消息回"未配置模型"），用户只会觉得"改名之后全坏了"；
+//   - `models` / `model_route` / `provider_state` 不搬 ⇒ 改名后渠道详情里一个模型都没有
+//     （还得再手动刷一次才长回来），用户覆盖列（显示名 / 上下文 / 参数）也跟着丢；
+//   - `summaries.provider` 是审计列（哪家渠道压的），但它记的是**同一条渠道的旧名字** ⇒ 一起搬，
+//     否则导出里会出现"会话说 ds、摘要说 deepseek"这种自相矛盾。
+//
+// **不合并**：目标标识已有数据 ⇒ `ErrProviderDataConflict`（见上）。
+// 表名是常量、不是外部输入，所以可以拼进 SQL；`model_route` 可能还没建（按需建）。
+func (s *Store) RenameProvider(oldID, newID string) error {
+	if oldID == newID {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	tables := []string{"models", "provider_state", "summaries", "sessions"}
+	hasRoute, err := tableExists(tx, "model_route")
+	if err != nil {
+		return err
+	}
+	if hasRoute {
+		tables = append(tables, "model_route")
+	}
+	for _, table := range tables {
+		var count int
+		if err := tx.QueryRow("SELECT COUNT(*) FROM "+table+" WHERE provider = ?1", newID).Scan(&count); err != nil {
+			return err
+		}
+		if count > 0 {
+			return ErrProviderDataConflict
+		}
+	}
+	for _, table := range tables {
+		if _, err := tx.Exec("UPDATE "+table+" SET provider = ?2 WHERE provider = ?1", oldID, newID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// tableExists：sqlite_master 问一句"这张表建过吗"（按需建的表不能拿错误文案去猜）。
+func tableExists(tx *sql.Tx, name string) (bool, error) {
+	var count int
+	if err := tx.QueryRow(
+		"SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1", name).Scan(&count); err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }

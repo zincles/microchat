@@ -251,6 +251,17 @@ async function loadProviders() {
   } catch {}
 }
 
+// onProviderSaved：保存回执带 id —— **改名之后必须换成新对象**。
+// 旧 props 的 id 已经不存在了，编辑器留在原地的话下一次保存（哪怕是清密钥）必 404。
+// 顶栏的模型下拉也吃 `/models`（按渠道分组），改名后分组名要跟着换 ⇒ 通知 App 重拉。
+async function onProviderSaved(id) {
+  await loadProviders();
+  if (id && editProvider.value && editProvider.value !== "new") {
+    editProvider.value = providers.value.find((p) => p.id === id) ?? null;
+  }
+  emit("models-changed");
+}
+
 async function askDeleteProvider(id) {
   // 文案要说清"模型也一起没"（2026-10-22）：从前删渠道只删配置、模型留在列表里仍可选中，
   // 用户以为删干净了；现在真的连模型一起删 —— 那就得在确认框里说出来，别让人删完才发现。
@@ -505,7 +516,7 @@ function onKey(e) {
             v-else
             :provider="editProvider === 'new' ? null : editProvider"
             @close="editProvider = null"
-            @saved="loadProviders"
+            @saved="onProviderSaved"
           />
         </section>
       </div>

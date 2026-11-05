@@ -3368,3 +3368,26 @@ test("消息窗口批量取：摘要切出的多个区间压成一发 POST", () 
   assert.ok(!/for \(const \[a, b\] of runs\)[\s\S]{0,120}await api\.listMessages/.test(app),
     "还在按区间循环发请求（RTT 会乘以区间数）");
 });
+
+// 渠道标识可改（2026-11-05 用户定：「渠道标识为啥不能修改了？要修改啊！」）。
+//
+// 钉四件事，缺一件就"看着能改、其实改不动/改一半"：
+// ① 编辑态那一格**不再 disabled**；② 保存时把新标识以 `new_id` 发出去；
+// ③ 回执带上 id —— 父组件要拿它换对象（否则改名后再保存会打到已不存在的旧 id）；
+// ④ 父组件真的会把 editProvider 换成新对象，并通知顶栏重拉模型分组。
+test("渠道标识可改：编辑态输入框可用、保存发 new_id、成功后父组件换对象", () => {
+  const editor = readFileSync(join(SRC, "components", "ProviderEditor.vue"), "utf8");
+  const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
+
+  const idField = editor.match(/<span>渠道标识<\/span><input[^>]*>/);
+  assert.ok(idField, "找不到渠道标识那一格");
+  assert.ok(!/:disabled=/.test(idField[0]), "编辑态仍然禁用了渠道标识（用户明确要能改）");
+  assert.match(editor, /body\.new_id = nextID/, "保存时没有把新标识发出去");
+  assert.match(editor, /emit\("saved", savedID\)/, "保存回执没带 id");
+  assert.match(editor, /改名会一起改掉已绑定这条渠道的会话/, "编辑态没有说清改名的后果");
+
+  assert.match(settings, /@saved="onProviderSaved"/, "父组件没接带 id 的保存回执");
+  assert.match(settings, /function onProviderSaved\(id\)/, "没有 onProviderSaved");
+  assert.match(settings, /editProvider\.value = providers\.value\.find\(/, "改名后没把编辑器指向新对象");
+  assert.match(settings, /emit\("models-changed"\)/, "改名后没通知顶栏重拉模型分组");
+});

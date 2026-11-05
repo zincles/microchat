@@ -671,3 +671,55 @@ func TestTestProviderEndpoint(t *testing.T) {
 		t.Fatalf("缺端点的 custom 该回 ok:false + error，得到 %+v", got)
 	}
 }
+
+// 渠道标识可以改（2026-11-05 用户定：「渠道标识为啥不能修改了？要修改啊！」）。
+//
+// 这条钉的是**跨两个存储的一致**：`providers.json` 换名 + 库里的引用（会话 / 模型 / 路由 /
+// 上次刷新 / 摘要）一起搬。只改配置的话，会话会指向一个不存在的渠道 —— 发消息静默回落
+// `BackendFallback`（"改名之后全坏了"），而测试全绿，因为没人在断言这条链。
+func TestRenameProviderViaPatch(t *testing.T) {
+	server, st := newProvidersServer(t, `{"providers":[{"id":"a","vendor":"dummy"},{"id":"b","vendor":"dummy"}]}`)
+	session, err := st.CreateSession("a", "m", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := call(server, "PATCH", "/api/v1/providers/a", `{"new_id":"a-renamed"}`)
+	if rec.Code != 200 {
+		t.Fatalf("改名该 200，得到 %d：%s", rec.Code, rec.Body.String())
+	}
+	view := decodeBody[ProviderView](t, rec)
+	if view.ID != "a-renamed" {
+		t.Fatalf("回执的 id = %q", view.ID)
+	}
+	// 配置真的写回去了（不是只在内存里改了）
+	if _, ok := server.loadProviders().Get("a-renamed"); !ok {
+		t.Fatal("providers.json 里没有新标识")
+	}
+	if _, ok := server.loadProviders().Get("a"); ok {
+		t.Fatal("providers.json 里还留着旧标识")
+	}
+	// 库里的活引用跟着搬
+	if got, err := st.GetSession(session.ID); err != nil || got.Provider != "a-renamed" {
+		t.Fatalf("会话没跟着改名：%+v %v", got, err)
+	}
+	// 旧标识现在 404（改名之后它不再是任何渠道）
+	if rec := call(server, "PATCH", "/api/v1/providers/a", `{"vendor":"dummy"}`); rec.Code != 404 {
+		t.Fatalf("旧标识该 404，得到 %d", rec.Code)
+	}
+
+	// 撞已有渠道 ⇒ 409（不合并）
+	if rec := call(server, "PATCH", "/api/v1/providers/a-renamed", `{"new_id":"b"}`); rec.Code != 409 {
+		t.Fatalf("撞名该 409，得到 %d：%s", rec.Code, rec.Body.String())
+	}
+	// 空 / 纯空白 ⇒ 422
+	for _, body := range []string{`{"new_id":""}`, `{"new_id":"   "}`} {
+		if rec := call(server, "PATCH", "/api/v1/providers/a-renamed", body); rec.Code != 422 {
+			t.Fatalf("%s 该 422，得到 %d", body, rec.Code)
+		}
+	}
+	// 拒绝之后渠道还在原标识下（没被半途改掉）
+	if _, ok := server.loadProviders().Get("a-renamed"); !ok {
+		t.Fatal("被拒绝的改名把渠道弄丢了")
+	}
+}

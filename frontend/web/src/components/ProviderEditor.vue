@@ -147,7 +147,12 @@ async function save() {
       });
       savedID = id;
     } else {
+      const nextID = pid.value.trim();
+      if (!nextID) { status.value = "渠道标识不能为空"; return; }
       const body = {};
+      // 改名（2026-11-05 用户定）：只发改过的格 —— 没动就不带 new_id，
+      // 免得每次保存都走一遍"配置 + 库"那两段写。
+      if (nextID !== props.provider.id) body.new_id = nextID;
       if (vendor.value !== (props.provider.vendor ?? "")) body.vendor = vendor.value;
       if (protocol.value !== (props.provider.protocol ?? "")) body.protocol = protocol.value;
       if (baseUrl.value.trim() !== (props.provider.base_url ?? "")) body.base_url = baseUrl.value.trim();
@@ -157,9 +162,12 @@ async function save() {
         body.max_concurrency = Number(maxConcurrency.value) || 0;
       }
       if (Object.keys(body).length) await api.patchProvider(props.provider.id, body);
+      if (body.new_id) savedID = body.new_id;
     }
     baseFilter.value = wanted;
-    emit("saved");
+    // 带上 id：父组件要拿它把 editProvider 换成新对象（改名之后旧 props 的 id 已经不存在，
+    // 留在原地再点保存会 404）。新建那条照旧用返回的 id。
+    emit("saved", savedID);
     // 「保存并刷新」：保存完**总是**再拉一次模型（不是只在筛选器变了时）。
     // 新建的渠道刷新完就回列表（这个二级页的 isNew 是挂载时定的常量，留着再点保存会 409）；
     // 已有的留在原地，结果直接写在状态行里。
@@ -251,8 +259,9 @@ function onKey(e) {
       </optgroup>
     </select></label>
     <p v-if="vendorHint" class="hint">{{ vendorHint }}</p>
-    <label class="field"><span>渠道标识</span><input v-model="pid" :disabled="!isNew" placeholder="新建时自动生成" @input="touchId" /></label>
+    <label class="field"><span>渠道标识</span><input v-model="pid" placeholder="新建时自动生成" @input="touchId" /></label>
     <p v-if="isNew" class="hint">这个标识是渠道在本机的名字，会出现在模型列表和配置文件里。换服务商时会自动跟着变；你手改过之后就不再自动改。</p>
+    <p v-else class="hint">改名会一起改掉已绑定这条渠道的会话与模型清单；库里已有同名数据时会被拒绝（不合并两个渠道）。</p>
     <label class="field"><span>接口类型</span><select v-model="protocol">
       <option value="">用默认（对话补全）</option>
       <option v-for="option in protocolChoices" :key="option.protocol" :value="option.protocol" :title="option.protocol">
