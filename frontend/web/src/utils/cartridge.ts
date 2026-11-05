@@ -30,7 +30,9 @@ export interface CartridgeSegment extends Segment {
 }
 
 // buildCartridge：agent（`GET /agents` 的形状）+ 段库 ⇒ 卡带对象。
-export function buildCartridge(agent: Agent, segments?: CartridgeSegment[] | null): Cartridge {
+type CartridgeSource = Pick<Agent, "name" | "system_prompt" | "segments" | "first_message" | "abilities" | "prepend_state">;
+
+export function buildCartridge(agent: CartridgeSource, segments?: CartridgeSegment[] | null): Cartridge {
   const refs = (agent.segments ?? []).map((x) => String(x));
   // 能力也能引用段（2026-10-28）⇒ 打包时**一并收**：只收 agent 自己那份的话，
   // 卡带导到另一台机器上，能力的段引用会指向不存在的段（后端写入时直接 400）。
