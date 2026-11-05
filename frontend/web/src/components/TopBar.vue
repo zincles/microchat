@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // 顶栏（2026-10-14 用户定，去壳版）：**全透明**，左上角 = **圆头像（当前 Agent，点开换）** + **当前模型平铺字**；
 // 右侧只在某一侧栏收着时才出它的开关（栏开着 ⇒ 开关在栏自己头上，见 App 的 applySideToggle）。
 //
@@ -10,28 +10,73 @@
 // 会话抬头不在顶栏（左栏列表高亮 + 状态行都有它）。
 import { ref, computed, nextTick, watch } from "vue";
 import { ICONS } from "./icons.ts";
-import { modelKey, parseModelKey, formatTokens, formatStatusLine, formatDuration, phaseText, contextArc, contextPercentText, contextTitle, contextOverBudget, curModelLabelOf, filterModelGroups } from "../utils/format.ts";
+import {
+  formatTokens,
+  formatStatusLine,
+  formatDuration,
+  phaseText,
+  contextArc,
+  contextPercentText,
+  contextTitle,
+  contextOverBudget,
+  curModelLabelOf,
+  filterModelGroups,
+  modelKey,
+  parseModelKey,
+} from "../utils/format.ts";
+import type { ModelChoice, ModelGroup } from "../utils/format.ts";
+import type { ContextUsage, Queue, Session, TaskBoard, TaskRecord } from "../api/types.ts";
 
-const props = defineProps({
+interface AgentOption {
+  id: string;
+  label: string;
+}
+interface SessionInfo {
+  provider?: string;
+  model?: string;
+  agent_id?: string;
+}
+interface StatusInfo {
+  conn?: string;
+  agent?: string;
+  phase?: string | null;
+  elapsedMs?: number | null;
+}
+interface TaskRow extends TaskRecord {
+  depth: number;
+}
+
+const props = withDefaults(defineProps<{
   // leftHidden：左栏收着 ⇒ 顶栏出它那枚开关；栏开着 ⇒ 开关在栏自己头上（按钮跟着它控制的东西走）。
   // （右栏 2026-10-29 搬进上下文工作区 ⇒ 顶栏不再有 [◨] 那枚开关，`rightHidden` 跟着删。）
-  leftHidden: { type: Boolean, default: false },
+  leftHidden?: boolean;
   // workspace：这一下要显示哪块工作区（"chat" | "context"）。
   //
   // 2026-10-29 用户定：「每个对话分为俩部分：对话界面 和 上下文工作区 界面」，
   // 开关就落在右上角、**绿环左边**（"位于那个绿色圆环左侧"）。放在这一簇而不是别处，
   // 是因为它和环管的是同一件事的两面：环说"占了多少"，工作区说"占的是什么"。
-  workspace: { type: String, default: "chat" },
+  workspace?: string;
   // loading：会话正在加载（模型列表也还没就位）⇒ 不拿旧/裸 id 闪一下，直接骨架。
-  loading: { type: Boolean, default: false },
+  loading?: boolean;
+}>(), {
+  leftHidden: false,
+  workspace: "chat",
+  loading: false,
 });
-const emit = defineEmits(["toggle-left", "select-model", "select-agent", "select-workspace", "cancel-queue", "cancel-task"]);
+const emit = defineEmits<{
+  "toggle-left": [];
+  "select-model": [value: string];
+  "select-agent": [id: string];
+  "select-workspace": [workspace: string];
+  "cancel-queue": [id: string];
+  "cancel-task": [id: string];
+}>();
 
-const modelGroups = ref([]); // [{provider, items:[{value,label,provider_name,upstream_id}]}]
+const modelGroups = ref<ModelGroup[]>([]); // [{provider, items:[{value,label,provider_name,upstream_id}]}]
 const curModel = ref("");
 // 会话绑的模型不在列表里（渠道被删、模型下架）⇒ 补一条"不在列表"，别让它看起来像没选
 // —— 那是有值，只是列表里没有（显示谎言比多一行丑得多）。
-const orphanModel = ref(null);
+const orphanModel = ref<ModelChoice | null>(null);
 // —— 模型选择器（2026-10-28 用户定）——
 // 从前这儿是个静默 `<select>`：**原生选项**在 470 个模型的聚合站上是一条滚不完的长菜单，
 // 同一渠道的模型还不挨在一起、也没法搜。现在点开一块与 Agent 选人同族的浮板：
@@ -41,7 +86,7 @@ const orphanModel = ref(null);
 //   选项异步到、`value` 先落进 DOM 会被浏览器换掉。既然是自己的面板，值就只是数据。
 const modelOpen = ref(false);
 const modelQuery = ref("");
-const modelSearchEl = ref(null);
+const modelSearchEl = ref<HTMLInputElement | null>(null);
 const modelActive = ref(-1); // 上下键选中的那一项（在**扁平化**的列表里的下标），-1 = 没选
 
 const curModelLabel = computed(() => {
@@ -53,7 +98,7 @@ const curModelLabel = computed(() => {
 const filteredGroups = computed(() => filterModelGroups(modelGroups.value, modelQuery.value, orphanModel.value));
 const modelFlatCount = computed(() => filteredGroups.value.reduce((n, g) => n + g.items.length, 0));
 
-function toggleModel() {
+function toggleModel(): void {
   modelOpen.value = !modelOpen.value;
   if (!modelOpen.value) return;
   agentOpen.value = false;
@@ -63,24 +108,24 @@ function toggleModel() {
   // 打开就聚焦搜索框：几百个模型，第一次动作必然是打字。
   nextTick(() => modelSearchEl.value?.focus());
 }
-function pickModel(value) {
+function pickModel(value?: string | null): void {
   modelOpen.value = false;
   // 点当前那一项 = 什么都不做（别为了一次误点发一个 PATCH）。
   if (value && value !== curModel.value) emit("select-model", value);
 }
-function flatItemAt(index) {
+function flatItemAt(index: number): ModelChoice | null {
   for (const g of filteredGroups.value) {
     for (const m of g.items) if (m.flat === index) return m;
   }
   return null;
 }
-function moveActive(delta) {
+function moveActive(delta: number): void {
   const n = modelFlatCount.value;
   if (!n) return;
   const next = modelActive.value + delta;
   modelActive.value = next < 0 ? 0 : next >= n ? n - 1 : next;
 }
-function pickActive() {
+function pickActive(): void {
   const hit = flatItemAt(modelActive.value);
   if (hit) pickModel(hit.value);
 }
@@ -90,10 +135,10 @@ watch(modelQuery, () => { modelActive.value = -1; });
 const leftSvg = ICONS.panelLeft;
 
 // —— Agent 头像 + 选人菜单 ——
-const agents = ref([]); // [{id,label}]
+const agents = ref<AgentOption[]>([]);
 const curAgent = ref("");
 const agentOpen = ref(false);
-const agentItems = computed(() => {
+const agentItems = computed<AgentOption[]>(() => {
   const list = [...agents.value];
   // 会话绑的 agent 不在列表里（改过名/删了）⇒ 补一条，别让头像"没有对应的人"。
   if (curAgent.value && !list.some((a) => a.id === curAgent.value)) list.unshift({ id: curAgent.value, label: `${curAgent.value}（不在列表）` });
@@ -102,30 +147,42 @@ const agentItems = computed(() => {
 const curAgentLabel = computed(() => agentItems.value.find((a) => a.id === curAgent.value)?.label ?? curAgent.value ?? "助手");
 const agentInitial = computed(() => Array.from(curAgentLabel.value.trim())[0] ?? "?");
 // agentHue：id → 色相（同一 id 永远同一个色；纯派生，无存储）。
-function agentHue(id) {
+function agentHue(id?: string | null): number {
   let h = 0;
-  for (const ch of String(id ?? "")) h = (h * 31 + ch.codePointAt(0)) % 360;
+  for (const ch of String(id ?? "")) h = (h * 31 + (ch.codePointAt(0) ?? 0)) % 360;
   return h;
 }
-function agentDotStyle(id) { return { background: `hsl(${agentHue(id)} 42% 46%)` }; }
-function pickAgent(id) { agentOpen.value = false; emit("select-agent", id); }
+function agentDotStyle(id?: string | null): { background: string } { return { background: `hsl(${agentHue(id)} 42% 46%)` }; }
+function pickAgent(id: string): void { agentOpen.value = false; emit("select-agent", id); }
 
-function syncOrphanModel() {
+function syncOrphanModel(): void {
   const cur = curModel.value;
   const known = cur && modelGroups.value.some((g) => (g.items ?? []).some((i) => i.value === cur));
   const parsed = cur ? parseModelKey(cur) : null;
   // 模型列表还没到时不要造 orphan（那会把 provider/upstream_id 裸串闪到顶栏）。
   orphanModel.value = modelGroups.value.length && cur && !known
-    ? { value: cur, label: `${parsed ? `${parsed.provider}/${parsed.model}` : cur}（不在列表）` }
+    ? {
+        value: cur,
+        label: `${parsed ? `${parsed.provider}/${parsed.model}` : cur}（不在列表）`,
+        provider_name: parsed?.provider ?? "",
+        upstream_id: parsed?.model ?? "",
+      }
     : null;
 }
-function setSession(info) {
+function setSession(info: SessionInfo | Partial<Session>): void {
   if (info.provider && info.model) curModel.value = modelKey(info.provider, info.model);
   if (info.agent_id) curAgent.value = info.agent_id;
   syncOrphanModel();
 }
-function setModels(groups, cur) { modelGroups.value = groups; if (cur !== undefined) curModel.value = cur; syncOrphanModel(); }
-function setAgents(list, cur) { agents.value = list ?? []; if (cur !== undefined) curAgent.value = cur; }
+function setModels(groups: ModelGroup[], cur?: string): void {
+  modelGroups.value = groups;
+  if (cur !== undefined) curModel.value = cur;
+  syncOrphanModel();
+}
+function setAgents(list?: AgentOption[] | null, cur?: string): void {
+  agents.value = list ?? [];
+  if (cur !== undefined) curAgent.value = cur;
+}
 
 // —— 上下文占比环（2026-10-28 用户定）——
 // 从前"上下文 344/1.04M"住在输入框上面那行状态小字里（紧贴着对话）；用户要求它搬这儿：
@@ -135,19 +192,19 @@ function setAgents(list, cur) { agents.value = list ?? []; if (cur !== undefined
 //   三档色在同一亮度下分不出深浅；而"超预算"这个信号从前在状态行上有，不能悄悄丢掉。
 // ⚠ 弧长用 `pathLength="100"` 把周长**归一化**成 100 ⇒ dasharray 直接写百分数，
 //   不必在 JS 里算 2πr（r 改了也不用改代码）。
-const ctx = ref(null);
+const ctx = ref<ContextUsage | null>(null);
 const ctxOpen = ref(false);
 // 环面板的两个 tab（2026-11-02 用户定）：上下文状态 / 正在运行的任务。
-const ctxTab = ref("context");
+const ctxTab = ref<"context" | "tasks">("context");
 // 弧长（含"用了就得看得见"的最小弧）在 `utils/format.ts` 的 `contextArc` 里 —— 那边才测得到。
 const ctxArc = computed(() => contextArc(ctx.value));
 // dasharray="a b" 且 a+b=100 ⇒ 正好一道弧、没有第二道。
 const ctxDash = computed(() => `${ctxArc.value} ${100 - ctxArc.value}`);
 const ctxOver = computed(() => contextOverBudget(ctx.value));
-const ctxRows = computed(() => {
+const ctxRows = computed<Array<[string, string]>>(() => {
   const c = ctx.value;
   if (!c) return [];
-  const rows = [
+  const rows: Array<[string, string]> = [
     ["剩余可用", `${formatTokens(c.remaining_tokens)} tokens`],
     ["自动压缩阈值", c.trigger_tokens != null ? `${formatTokens(c.trigger_tokens)} tokens` : "未启用"],
   ];
@@ -159,15 +216,15 @@ const ctxRows = computed(() => {
 const ctxBudgetNote = computed(() => {
   const c = ctx.value;
   if (!c) return "";
-  const num = (v) => Number(v ?? 0).toLocaleString("en-US");
+  const num = (v?: number | null): string => Number(v ?? 0).toLocaleString("en-US");
   return `输入预算 ${num(c.budget_tokens)} tokens = 上下文上限 ${num(c.ctx_len)} − 输出预留 ${num(c.max_output)}。`;
 });
 // closeMenus：Esc 一次收起所有顶栏浮板（MD3 menu 的常规行为；从前只有模型菜单接 Esc）。
-function closeMenus() { modelOpen.value = false; agentOpen.value = false; ctxOpen.value = false; }
-function toggleCtx() { ctxOpen.value = !ctxOpen.value; if (ctxOpen.value) { agentOpen.value = false; modelOpen.value = false; } }
-function toggleAgent() { agentOpen.value = !agentOpen.value; if (agentOpen.value) { ctxOpen.value = false; modelOpen.value = false; } }
+function closeMenus(): void { modelOpen.value = false; agentOpen.value = false; ctxOpen.value = false; }
+function toggleCtx(): void { ctxOpen.value = !ctxOpen.value; if (ctxOpen.value) { agentOpen.value = false; modelOpen.value = false; } }
+function toggleAgent(): void { agentOpen.value = !agentOpen.value; if (agentOpen.value) { ctxOpen.value = false; modelOpen.value = false; } }
 // setContext：App 每轮 refreshStatusline 喂一次（草稿态传 null）。
-function setContext(c) { ctx.value = c ?? null; }
+function setContext(c?: ContextUsage | null): void { ctx.value = c ?? null; }
 
 // —— 后台任务（2026-11-01 用户定：「把后台任务也做成右上角那个圆环一样的东西……显示一个数字，
 //     按下就在一个小面板里（类似那个绿色的上下文栏）显示有多少后台任务」）——
@@ -178,14 +235,14 @@ function setContext(c) { ctx.value = c ?? null; }
 // ⚠ 这格是 `/tasks` 的**唯一**落点（从前输入框上方那行小字**已经删掉**）：同一个数字住两处，
 //   只会让两处都可能过期 —— 那是 2026-10-28 状态行搬进环的浮板时定下的规矩，别再犯。
 // ⚠ 0 个时环心不显示数字（2026-11-02 用户定），环本身仍在、不转；有任务才出现数字。
-const tasks = ref(null);
+const tasks = ref<TaskBoard | null>(null);
 const taskRunning = computed(() => tasks.value?.running ?? 0);
 // 浮板只列**正在跑**的（2026-11-02 用户定：这个 tab 是「正在运行的任务」）。
 // 后端已把跑着的排前面；最多 12 条，避免面板被历史记录撑长。
 const TASK_ROWS = 12;
-const taskRecords = computed(() => (tasks.value?.tasks ?? []).filter((t) => !t.finished_at).slice(0, TASK_ROWS));
+const taskRecords = computed<TaskRecord[]>(() => (tasks.value?.tasks ?? []).filter((t) => !t.finished_at).slice(0, TASK_ROWS));
 // taskElapsed：跑了多久 / 一共跑了多久。`now` 用**后端**那一份（前端时钟与它不一致也照样对）。
-function taskElapsed(t) {
+function taskElapsed(t: TaskRecord): string {
   const now = tasks.value?.now ?? Date.now();
   const ms = (now - (t.started_at ?? now));
   return formatDuration(ms);
@@ -194,7 +251,7 @@ function taskElapsed(t) {
 //
 // 一个队列 = 一串**串行**跑的同种原子任务（现在只有压缩）。面板上它是**单独一栏**：
 // 队列说"这一大批跑到第几步"，下面的原子任务说"此刻在跑哪一发" —— 两层东西，别塞一个列表。
-const queues = computed(() => tasks.value?.queues ?? []);
+const queues = computed<Queue[]>(() => tasks.value?.queues ?? []);
 // 只留还没结束的队列：结束的跑完就消失，别在「正在运行」里冒充活人。
 const runningQueues = computed(() => queues.value.filter((q) => !q.finished_at));
 const queueRunning = computed(() => runningQueues.value.length);
@@ -221,26 +278,26 @@ const taskTitle = computed(() => {
 
 // 大类的中文名 —— **只有这一份**。后端给 `group`（llm / plain），前端不按 kind 猜：
 // 猜就会与 `task.Kind.Group()` 分岔，而且不报错，只是"某类任务挂到了错的组里"。
-const GROUP_LABELS = { llm: "模型调用", plain: "其他任务" };
+const GROUP_LABELS: Record<string, string> = { llm: "模型调用", plain: "其他任务" };
 // 任务种类的人话名（原始 kind 是给机器看的，`refresh_models` 这种不该出现在面板里）。
-const TASK_KIND_LABELS = {
+const TASK_KIND_LABELS: Record<string, string> = {
   refresh_models: "刷新模型", turn: "对话", compact: "压缩", compact_job: "分段压缩",
   title: "起标题", reroll: "重摇", judgement: "判断",
 };
 // 复合作业的面板层级：父 Job 一行，子 Task 缩进挂在下面。
 // 只按 parent_id 排；不做“猜测式”归并（父不在这一屏就把它当独立行，别丢）。
-const taskRows = computed(() => {
+const taskRows = computed<TaskRow[]>(() => {
   const list = taskRecords.value;
   const ids = new Set(list.map((t) => t.id));
-  const children = new Map();
+  const children = new Map<string, TaskRecord[]>();
   for (const t of list) {
     if (t.parent_id && ids.has(t.parent_id)) {
       if (!children.has(t.parent_id)) children.set(t.parent_id, []);
-      children.get(t.parent_id).push(t);
+      children.get(t.parent_id)!.push(t);
     }
   }
-  const out = [];
-  const walk = (t, depth) => {
+  const out: TaskRow[] = [];
+  const walk = (t: TaskRecord, depth: number): void => {
     out.push({ ...t, depth });
     for (const child of children.get(t.id) ?? []) walk(child, depth + 1);
   };
@@ -249,40 +306,40 @@ const taskRows = computed(() => {
   }
   return out;
 });
-function taskRoleText(t) {
+function taskRoleText(t: TaskRecord): string {
   if (t.kind === "compact_job") return "Job";
   return t.parent_id ? "任务" : "";
 }
 // 标题常常已经以种类名开头（"刷新模型 · opendesign"）⇒ 别把同一个词在行首再印一遍。
-function taskKindText(t) {
+function taskKindText(t: { kind: string; title?: string }): string {
   const label = TASK_KIND_LABELS[t.kind] || "任务";
   return t.title && t.title.startsWith(label) ? "" : label;
 }
-const taskGroups = computed(() => {
-  const buckets = new Map();
+const taskGroups = computed<Array<{ key: string; label: string; items: TaskRow[] }>>(() => {
+  const buckets = new Map<string, { key: string; label: string; items: TaskRow[] }>();
   for (const t of taskRows.value) {
     const key = t.group || "plain";
     if (!buckets.has(key)) buckets.set(key, { key, label: GROUP_LABELS[key] || key, items: [] });
-    buckets.get(key).items.push(t);
+    buckets.get(key)!.items.push(t);
   }
   // LLM 那组排前面：烧钱的那几发比"刷模型"更值得一眼看见。
   return [...buckets.values()].sort((a, b) => (a.key === "llm" ? 0 : 1) - (b.key === "llm" ? 0 : 1));
 });
 
 // setTasks：App 轮询 `/tasks` 喂进来（取不到就传 null ⇒ 帽子归 0、浮板说"读不到"）。
-function setTasks(board) { tasks.value = board ?? null; }
+function setTasks(board?: TaskBoard | null): void { tasks.value = board ?? null; }
 
 // —— 连接 / 助手 / 相位（2026-10-28 用户定："已连接 v0.1.0｜默认助手｜idle 这个也塞那个环的面板里"）——
 // 从前它是输入框上方那行小字。搬进面板之后**分三行**给（而不是拼成一句话）：
 // 面板里每一格都是"标签 → 值"，拼成一行再拆出差错，也没必要（`formatStatusLine` 仍用来做悬停解释）。
-const status = ref(null);
-const statusRows = computed(() => {
+const status = ref<StatusInfo | null>(null);
+const statusRows = computed<Array<[string, string]>>(() => {
   const s = status.value;
   if (!s) return [];
   const phase = `${phaseText(s.phase)}${s.elapsedMs != null ? ` · ${formatDuration(s.elapsedMs)}` : ""}`;
   return [["连接状态", s.conn || "未连接"], ["当前助手", s.agent || "?"], ["运行状态", phase]];
 });
-function setStatus(s) { status.value = s ?? null; }
+function setStatus(s?: StatusInfo | null): void { status.value = s ?? null; }
 // 悬停解释 = 状态一句 + 预算一句（两处都是"一眼看不清、要解释"的东西）。
 const ringTitle = computed(() => [formatStatusLine(status.value ?? {}), contextTitle(ctx.value), taskTitle.value].filter(Boolean).join("\n"));
 

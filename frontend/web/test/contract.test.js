@@ -980,7 +980,7 @@ test("上下文环：圆心是后台任务数，有任务时转动，面板里�
   assert.match(top, /输入预算 .* tokens = 上下文上限 .* − 输出预留/, "预算口径没有写清楚");
   assert.match(css, /\.ctx-row dt \{[^}]*width:\s*6\.8em/, "标签列太窄（「自动压缩阈值」「上次实际用量」会换行）");
   assert.ok(!/还能装|给回复留的地方|没有在跑的任务|上次用了/.test(top), "面板里还留着口语化文案");
-  assert.match(top, /const ctxTab = ref\("context"\)/, "面板没有 tab 状态");
+  assert.match(top, /const ctxTab = ref(?:<[^>]+>)?\("context"\)/, "面板没有 tab 状态");
   assert.match(tpl, /role="tablist"/, "面板没有 tablist");
   assert.match(tpl, /ctxTab = 'context'/, "没有上下文 tab");
   assert.match(tpl, /ctxTab = 'tasks'/, "没有任务 tab");
@@ -1040,7 +1040,7 @@ test("后台任务面板：队列单独一栏（带进度与取消），原子�
   // ② 取消按钮：列表本来就只含在跑的，点了把 id 报上去（App 去发请求）
   assert.match(tpl, /class="task-cancel"/, "队列行没有取消按钮");
   assert.match(tpl, /@click\.stop="emit\('cancel-queue', q\.id\)"/, "取消按钮没把队列 id 报上去");
-  assert.match(top, /defineEmits\(\[[^\]]*"cancel-queue"/, "TopBar 没声明 cancel-queue");
+  assert.match(top, /defineEmits(?:\(\[[^\]]*"cancel-queue"|<\{[^}]*"cancel-queue")/, "TopBar 没声明 cancel-queue");
   assert.match(app, /@cancel-queue="cancelQueue"/, "App 没接 cancel-queue");
   assert.match(app, /function cancelQueue\(id\)/, "App 没有 cancelQueue");
   // 取消完要**立刻**刷一次面板（别等那 2 秒的节拍）
@@ -1050,7 +1050,7 @@ test("后台任务面板：队列单独一栏（带进度与取消），原子�
 
   // ③ 大类：按**后端给的 `group`** 分，前端不按 kind 猜
   assert.match(top, /const key = t\.group \|\| "plain"/, "分组没读后端给的 group（按 kind 猜会分岔）");
-  assert.match(top, /GROUP_LABELS = \{ llm: "模型调用", plain: "其他任务" \}/,
+  assert.match(top, /GROUP_LABELS(?:\s*:\s*Record<[^>]+>)?\s*=\s*\{ llm: "模型调用", plain: "其他任务" \}/,
     "两个大类的名字不规范（模型调用 / 其他任务）");
   assert.match(tpl, /class="task-group-head"/, "分组没有小标题");
 
@@ -1617,7 +1617,7 @@ test("上下文环：App 喂 ctx / 环在顶栏画 / 状态行不再报占用", 
   assert.ok(!composer.includes("setStatus"), "Composer 还暴露着 setStatus（状态归顶栏）");
   assert.match(app, /topbarRef\.value\?\.setStatus\(/, "App 没把连接/助手/相位喂给顶栏");
   assert.ok(!app.includes("composerRef.value?.setStatus"), "App 还在往 Composer 塞状态行");
-  assert.match(top, /function setStatus\(s\)/, "TopBar 没有 setStatus");
+  assert.match(top, /function setStatus\(s[^)]*\)/, "TopBar 没有 setStatus");
   assert.match(top, /const statusRows = computed/, "浮板里没有连接/助手/运行那三行");
   assert.match(top, /ctx-rows-status/, "浮板里那三行没接样式");
   assert.ok(!/\.statusline/.test(css), "main.css 里还留着 .statusline 规则（那一行已经删了）");
@@ -1748,7 +1748,7 @@ test("模型面板：按钮上那行字（列表里有 → 显示名；没有 �
   assert.equal(curModelLabelOf([], ""), "选择模型");
   const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
-  assert.match(top, /const props = defineProps\(/, "props 没接住 ⇒ computed 里 props 是未定义、会静默空白");
+  assert.match(top, /const props = (?:withDefaults\()?defineProps/, "props 没接住 ⇒ computed 里 props 是未定义、会静默空白");
   assert.match(top, /if \(props\.loading\) return ""/, "会话加载时没有压住模型名");
   assert.match(top, /v-if="loading" class="model-loading"/, "会话加载时没有骨架占位");
   assert.match(app, /:loading="loadingSession"/, "App 没把会话加载态传给顶栏");
@@ -2815,7 +2815,7 @@ test("任务面板：能停的任务有取消按钮，按不动的不画", () =>
     "任务行没有那颗取消按钮（或条件写漏了）");
 
   // ③ 事件一路接到 App（emit → 模板 → 处理函数 → 接口）。
-  assert.match(bar, /defineEmits\(\[[^\]]*"cancel-task"/, "TopBar 没声明 cancel-task 事件");
+  assert.match(bar, /defineEmits(?:\(\[[^\]]*"cancel-task"|<\{[^}]*"cancel-task")/, "TopBar 没声明 cancel-task 事件");
   assert.match(app, /@cancel-task="cancelTask"/, "App 没接 TopBar 的 cancel-task");
   assert.match(app, /function cancelTask\(id\)/, "App 没有 cancelTask");
   assert.match(app, /api\.cancelTask\(id\)/, "cancelTask 没调接口");

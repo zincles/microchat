@@ -1015,12 +1015,12 @@ DeepSeek / OpenCode GO 直连**确实不报**，所以那一格在那儿永远�
 offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#131313`，黑影在近黑底上本来就淡 ⇒ 浓度取到 34% 那档的上限。2026-10-14 那版是「全透明 + 双层柔影」，试过 mask 渐隐的毛玻璃，撤了），输入行自己就是浮卡；消息列底部留白 = `--composer-h`（输入行实测高，`composerRO` 现量现写，textarea 长高不脱节）。⚠ CSS 里 `#chat-col > *:not(header)`（1-0-1）会压过 `#composer`（1-0-0）的 position —— 那条共享规则**别写 position/z-index**，踩过）与**设置视图**互斥切换；右载荷栏（**tabs 常驻顶部，三个面板各自滚动**（2026-10-17 用户定/修）；三 tab：真请求直放（裸 JSON ⇄ **分块视图**——把 `body.messages` 一块块画成卡片，开关记忆在 `mc_payload_viz`；**整行可点开合、>500 字的块默认折叠**（system prompt 那种巨块不撑爆面板；折叠态给单行预览）；展开不设嵌套滚动——面板整体滚，触摸纵向手势按轴锁归浏览器（2026-10-11）/ 世界状态 / **压缩树**）随对话一起让位。**设置不再弹窗**：占满左栏右侧整块、顶部是**一行式工具栏** `[◧][五区 tabs][×]`（不设"顶部卡"、无标题；Esc 返回）。**窄屏（断点即身份，2026-10-10）**：≤1100 右载荷栏、≤700 左会话栏改**覆盖式抽屉**（`collapsed` = 关着；[◧][◨] 调出/收起 + 遮罩点击收起 + 选中会话/开新对话自动收）；窄屏**不读不写**桌面偏好（`mc_bar_*_hidden`），跨断点时两侧统一先关（不然会"啪"地盖上来）。遮罩的显隐由 CSS 兄弟选择器跟栏的类联动，不用 JS 状态。
 - 接线全在 `src/App.vue`（SFC 直接挂模板）；`src/api/client.ts` 只调 `/api/v1`；`src/utils/` 放纯函数（contract 测试钉住请求形状）。
 - **TypeScript 迁移（2026-11-06 起，分阶段）**：`api/`（`client.ts` + `types.ts`）、`utils/`（21 个纯函数/工具）
-  与 **17 个组件**（`ToggleSwitch` / `UpdateBar` / `Toast` / `TabBar` / `SummaryEditor` / `SegmentList` /
+  与 **18 个组件**（`ToggleSwitch` / `UpdateBar` / `Toast` / `TabBar` / `SummaryEditor` / `SegmentList` /
   `Composer` / `SummaryCard` / `MessageEditor` / `SegmentEditor` / `ContextWorkspace` / `CompactTree` /
-  `SessionSettings` / `Overlays` / `MessageBubble` / `AdvancedCompact` / `SessionBar`），加上入口
-  `main.ts` 与图标表 `icons.ts` 已迁 TS。`tsconfig.json` 已把 `.vue` 纳入检查（`allowJs` + `checkJs:false`
+  `SessionSettings` / `Overlays` / `MessageBubble` / `AdvancedCompact` / `SessionBar` / `TopBar`），
+  加上入口 `main.ts` 与图标表 `icons.ts` 已迁 TS。`tsconfig.json` 已把 `.vue` 纳入检查（`allowJs` + `checkJs:false`
   仍保护未迁的 JS 组件）；`npm run typecheck`（`vue-tsc --noEmit`）必须绿。`npm test` 走 `tsx`。
-  剩余：重组件（`TopBar` / `PayloadBar` / `SettingsModal` / `AgentEditor` / `ProviderEditor` / `AppearancePane`）
+  剩余：重组件（`PayloadBar` / `SettingsModal` / `AgentEditor` / `ProviderEditor` / `AppearancePane`）
   → `App.vue` 拆 composables。
   迁移期别把 TS 与视觉/行为改版混在一个提交里。
 - **门板/登录的视觉**（2026-10-14 用户定"更好看"）：玻璃卡（`backdrop-filter`）+ 品牌头（**内联 SVG** 标 —— 无外部资源，离线 SW 照旧）+ 主题色光晕 + 入场动画（尊重 `prefers-reduced-motion`）；**底自己铺 `--mc-bg-image`**（就是用户背景图那枚变量）+ 一层跟主题走的面纱 —— 门板在 `#app` 里、够不着 `body::before` 的图层，想要"透出背景图"**别用透明**（会把聊天壳一起透出来，实测截图里左栏顶栏全露馅）。

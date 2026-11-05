@@ -27,7 +27,7 @@ Docker 部署（单容器、只公开 8788）见根目录 `docker-compose.yml`�
 
 `vue@3.5`（框架）+ `marked`（markdown 渲染：`**粗**`/`*斜*`/`__下划线__`→`<u>`/行内码/`~~删~~`/引述块）+ `katex`（数学）；构建用 `vite` + `@vitejs/plugin-vue`。
 运行时没有自造传输层（`fetch` 直调）。**加依赖先问**；`node_modules/`、`dist/` 永不进库。
-开发依赖另有 `typescript` / `vue-tsc` / `tsx`：`api/`、`utils/`、入口与 17 个组件已迁 TS；
+开发依赖另有 `typescript` / `vue-tsc` / `tsx`：`api/`、`utils/`、入口与 18 个组件已迁 TS；
 剩余重组件仍是 JS；`tsconfig` 的 `allowJs`/`checkJs:false` 是分阶段迁移的闸，别急着一次全改。
 
 ## 现在能干什么
