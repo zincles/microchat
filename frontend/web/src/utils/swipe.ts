@@ -6,17 +6,34 @@
 // 方向约定：左滑（dx<0）出右栏、右滑（dx>0）出左栏；已有一扇开着 ⇒ **先关后开**：
 // 只有"朝它关回去"的方向才认（反方向忽略），关的过程同样跟手。
 
+export type Axis = "h" | "v";
+export type Bar = "left" | "right";
+export type OpenState = "open" | "close";
+
 // classifyAxis：先到先得的轴向锁 —— 越过 slop 后：横占优归 "h"（我们接管），
 // 否则归 "v"（放给浏览器滚列表；这一整个手势都不再管）。
-export function classifyAxis(dx, dy, slop = 6) {
+export function classifyAxis(dx: number, dy: number, slop = 6): Axis | null {
   if (Math.abs(dx) < slop && Math.abs(dy) < slop) return null;
   return Math.abs(dx) > Math.abs(dy) ? "h" : "v";
+}
+
+export interface PickDragInput {
+  dx: number;
+  leftDrawer: boolean;
+  rightDrawer: boolean;
+  leftOpen: boolean;
+  rightOpen: boolean;
+}
+
+export interface Drag {
+  bar: Bar;
+  base: number;
 }
 
 // pickDrag：这横向手势拖哪扇、从哪个位置起。
 //   都没开：朝哪边拖就拖哪扇（base=0，从边缘出来）；
 //   有一扇开着：只认"朝它关回去"的方向（base=1，跟手关）；同向忽略（不许两扇同开）。
-export function pickDrag({ dx, leftDrawer, rightDrawer, leftOpen, rightOpen }) {
+export function pickDrag({ dx, leftDrawer, rightDrawer, leftOpen, rightOpen }: PickDragInput): Drag | null {
   if (leftOpen) return dx < 0 ? { bar: "left", base: 1 } : null;
   if (rightOpen) return dx > 0 ? { bar: "right", base: 1 } : null;
   if (dx > 0 && leftDrawer) return { bar: "left", base: 0 };
@@ -25,10 +42,16 @@ export function pickDrag({ dx, leftDrawer, rightDrawer, leftOpen, rightOpen }) {
 }
 
 // dragProgress：手指位移 → 0..1 的开度（left 向右为开、right 向左为开）。
-export function dragProgress(base, dx, width, bar) {
+export function dragProgress(base: number, dx: number, width: number, bar: Bar): number {
   const w = width > 0 ? width : 1;
   const p = base + ((bar === "left" ? dx : -dx) / w);
   return Math.min(1, Math.max(0, p));
+}
+
+export interface ReleaseOptions {
+  mid?: number;
+  flickV?: number;
+  flickAt?: number;
 }
 
 // resolveRelease：松手吸附（三个来源，谁先命中算谁）：
@@ -40,7 +63,11 @@ export function dragProgress(base, dx, width, bar) {
 //     曾经写死 0.5（≈2ms 甩完整个抽屉）⇒ "快甩也开"从没生效过，手感发木。
 //   · 一开始只有"朝开"的 flick ⇒ **快关手势全落回"必须拖过 60%"**，关闭发涩
 //     （2026-10-10 真机反馈："关闭一样的不顺手"）。对称补上"朝关"的 flick。
-export function resolveRelease(p, v = 0, { mid = 0.5, flickV = 0.0025, flickAt = 0.06 } = {}) {
+export function resolveRelease(
+  p: number,
+  v = 0,
+  { mid = 0.5, flickV = 0.0025, flickAt = 0.06 }: ReleaseOptions = {},
+): OpenState {
   if (v >= flickV && p >= flickAt) return "open";        // 快甩：朝开
   if (v <= -flickV && p <= 1 - flickAt) return "close";  // 快甩：朝关
   return p >= mid ? "open" : "close";                    // 慢拖：中点吸附

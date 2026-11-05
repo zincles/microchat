@@ -3,11 +3,11 @@
 // 每条只有一枚「选项」（竖三点）：设置与删除都收进那块浮板 —— 行内不再挤两枚键。
 import { ref, computed, nextTick, onMounted, onUnmounted } from "vue";
 import { ICONS } from "./icons.js";
-import { groupSessions } from "../utils/sessionGroups.js";
+import { groupSessions } from "../utils/sessionGroups.ts";
 
 const emit = defineEmits(["select", "settings", "copy", "export", "close", "new", "open-settings", "toggle-left", "open-sessions", "open-providers", "prefetch"]);
 
-// busyIds：App 从 `/tasks` 那一拍算出来的"此刻有任务在跑的会话"（判定在 `utils/tasks.js`）。
+// busyIds：App 从 `/tasks` 那一拍算出来的"此刻有任务在跑的会话"（判定在 `utils/tasks.ts`）。
 // 行内环只吃这一处 —— 别在组件里再 filter 一遍任务表（两处判据一分岔，同一时刻会显示两个答案）。
 const props = defineProps({
   busyIds: { type: Array, default: () => [] },

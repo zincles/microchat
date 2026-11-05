@@ -5,20 +5,31 @@
 // 但它们属于两天，分组该跟人看到的日子一致。
 export const SESSION_GROUP_LABELS = ["今天", "昨天", "一周内", "一月内", "更久"];
 
-function startOfDay(ms, dayOffset = 0) {
+export interface SessionLike {
+  updated_at?: number | string | null;
+}
+
+export interface SessionGroup<T> {
+  key: string;
+  label: string;
+  items: T[];
+}
+
+function startOfDay(ms: number, dayOffset = 0): number {
   const date = new Date(ms);
   date.setHours(0, 0, 0, 0);
   date.setDate(date.getDate() + dayOffset);
   return date.getTime();
 }
 
-export function groupSessions(sessions, now = Date.now()) {
+export function groupSessions<T extends SessionLike>(sessions: T[] | null | undefined, now = Date.now()): SessionGroup<T>[] {
   const today = startOfDay(now);
   const yesterday = startOfDay(now, -1);
   const week = startOfDay(now, -7);
   const month = startOfDay(now, -30);
-  const buckets = SESSION_GROUP_LABELS.map((label, index) => ({
-    key: ["today", "yesterday", "week", "month", "older"][index],
+  const keys = ["today", "yesterday", "week", "month", "older"];
+  const buckets: SessionGroup<T>[] = SESSION_GROUP_LABELS.map((label, index) => ({
+    key: keys[index] ?? "older",
     label,
     items: [],
   }));

@@ -1,16 +1,26 @@
 // 命令解析 + 命令表（输入框 / 开头用；与网络无关，纯函数）。
+export interface ParsedCommand {
+  name: string;
+  args: string[];
+}
+
 // 命令解析："/name arg1 arg2" → {name, args}；非 / 开头 → null。
-export function parseCommand(input) {
+export function parseCommand(input: string): ParsedCommand | null {
   if (!input.startsWith("/")) return null;
   const parts = input.slice(1).trim().split(/\s+/).filter(Boolean);
   if (!parts.length) return { name: "", args: [] };
   return { name: parts[0], args: parts.slice(1) };
 }
 
+export interface CommandMeta {
+  desc: string;
+  needsSession?: boolean;
+}
+
 // 命令表：name → {desc, needsSession?}。**唯一一份**：
 // 面板（/ 浮层）从这里取说明，App 的执行器按同一份键分发、按 needsSession 拦草稿。
 // 表里有的命令 App 必须有执行器（App 侧启动时对账，漏了会 console.error，别静默）。
-export const COMMAND_META = {
+export const COMMAND_META: Record<string, CommandMeta> = {
   resume: { desc: "选会话进入" },
   model: { desc: "换模型（顶栏下拉）" },
   providers: { desc: "看渠道列表" },
@@ -27,8 +37,13 @@ export const COMMAND_META = {
   editsum: { desc: "手改摘要正文", needsSession: true },
 };
 
+export interface CommandChoice {
+  name: string;
+  desc: string;
+}
+
 // 前缀过滤（/ 开头输入用；空名回全部）：返回 [{name, desc}]（面板直接渲染它）。
-export function filterCommands(name) {
+export function filterCommands(name?: string): CommandChoice[] {
   const q = (name ?? "").toLowerCase();
   return Object.entries(COMMAND_META)
     .filter(([n]) => n.startsWith(q))

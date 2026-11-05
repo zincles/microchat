@@ -1,19 +1,19 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { createApi, mergeStreamSlice, DEFAULT_API_URL, normalizeApiBase, probeHealth } from "../src/api/client.ts";
-import { parseWireMessages, previewBlock } from "../src/utils/payload.js";
-import { assemblePrompt, abilityPrompt, missingSegments } from "../src/utils/prompt.js";
-import { renderMarkdown } from "../src/utils/markdown.js";
-import { buildCartridge, cartridgeAgent } from "../src/utils/cartridge.js";
-import { parseCommand, filterCommands, COMMAND_META } from "../src/utils/commands.js";
-import { uuidv7 } from "../src/utils/ids.js";
-import { groupSessions, SESSION_GROUP_LABELS } from "../src/utils/sessionGroups.js";
-import { buildCompactTree, treeTotals } from "../src/utils/tree.js";
-import { buildChatRows, rerollTargetLive, bubbleText, editRerollTarget, latestPromptFor, seededMissingRuns } from "../src/utils/chatrows.js";
-import { resetChrome, stepChrome } from "../src/utils/chrome.js";
-import { typewriterDuration, revealCount, TYPEWRITER_DEFAULT_MS, TYPEWRITER_MIN_MS, TYPEWRITER_MAX_MS } from "../src/utils/typewriter.js";
-import { computeViewportFit } from "../src/utils/viewport.js";
-import { classifyAxis, pickDrag, dragProgress, resolveRelease } from "../src/utils/swipe.js";
+import { parseWireMessages, previewBlock } from "../src/utils/payload.ts";
+import { assemblePrompt, abilityPrompt, missingSegments } from "../src/utils/prompt.ts";
+import { renderMarkdown } from "../src/utils/markdown.ts";
+import { buildCartridge, cartridgeAgent } from "../src/utils/cartridge.ts";
+import { parseCommand, filterCommands, COMMAND_META } from "../src/utils/commands.ts";
+import { uuidv7 } from "../src/utils/ids.ts";
+import { groupSessions, SESSION_GROUP_LABELS } from "../src/utils/sessionGroups.ts";
+import { buildCompactTree, treeTotals } from "../src/utils/tree.ts";
+import { buildChatRows, rerollTargetLive, bubbleText, editRerollTarget, latestPromptFor, seededMissingRuns } from "../src/utils/chatrows.ts";
+import { resetChrome, stepChrome } from "../src/utils/chrome.ts";
+import { typewriterDuration, revealCount, TYPEWRITER_DEFAULT_MS, TYPEWRITER_MIN_MS, TYPEWRITER_MAX_MS } from "../src/utils/typewriter.ts";
+import { computeViewportFit } from "../src/utils/viewport.ts";
+import { classifyAxis, pickDrag, dragProgress, resolveRelease } from "../src/utils/swipe.ts";
 import {
   formatThinkLabel,
   formatStatusLine,
@@ -47,11 +47,11 @@ import {
   modelLabel,
   whoText,
   sessionTitle,
-} from "../src/utils/format.js";
-import { busySessionIds } from "../src/utils/tasks.js";
-import { rippleSpec, RIPPLE_SELECTOR } from "../src/utils/ripple.js";
-import { rememberWindow, recallWindow, forgetWindow, WINDOW_CACHE_MAX, WINDOW_CACHE_ROWS_MAX } from "../src/utils/windowcache.js";
-import { sendMode, wantsSend, themePref, normalizeTheme, apiBase, defaultApiBase, apiBaseCandidates, THEME_IDS, DEFAULT_THEME, DEFAULT_SEND, normalizeTextScale, textScale, applyTextScale, saveTextScale, flushPrefs, normalizeFontFamily, fontBody, fontMono, applyFonts, saveFontBody, saveFontMono, DEFAULT_FONT_BODY, DEFAULT_FONT_MONO, TEXT_SCALE_MIN, TEXT_SCALE_MAX, DEFAULT_TEXT_SCALE } from "../src/utils/prefs.js";
+} from "../src/utils/format.ts";
+import { busySessionIds } from "../src/utils/tasks.ts";
+import { rippleSpec, RIPPLE_SELECTOR } from "../src/utils/ripple.ts";
+import { rememberWindow, recallWindow, forgetWindow, WINDOW_CACHE_MAX, WINDOW_CACHE_ROWS_MAX } from "../src/utils/windowcache.ts";
+import { sendMode, wantsSend, themePref, normalizeTheme, apiBase, defaultApiBase, apiBaseCandidates, THEME_IDS, DEFAULT_THEME, DEFAULT_SEND, normalizeTextScale, textScale, applyTextScale, saveTextScale, flushPrefs, normalizeFontFamily, fontBody, fontMono, applyFonts, saveFontBody, saveFontMono, DEFAULT_FONT_BODY, DEFAULT_FONT_MONO, TEXT_SCALE_MIN, TEXT_SCALE_MAX, DEFAULT_TEXT_SCALE } from "../src/utils/prefs.ts";
 
 // 契约测试（无浏览器）：只验纯函数与请求形状。`node --test test/`。
 // 后端真服务验证另走手工（见 README）。
@@ -710,8 +710,8 @@ test("importSt 端点形状：POST /sessions/import-st 原文体 + ?title=", asy
 });
 
 
-// —— 背景图（utils/background.js）：2026-11-01 起**住服务器**（不再是 localStorage 的一枚 data URL）。
-import { describeBackground, backgroundCssUrl } from "../src/utils/background.js";
+// —— 背景图（utils/background.ts）：2026-11-01 起**住服务器**（不再是 localStorage 的一枚 data URL）。
+import { describeBackground, backgroundCssUrl } from "../src/utils/background.ts";
 
 function stubStorage() {
   const m = new Map();
@@ -726,7 +726,7 @@ function stubStorage() {
 // 不再有「浮动 / 贴底」二选一，也不再往根节点挂 `data-composer`。
 test("输入栏只有一种布局：composer_style / data-composer 已删", () => {
   stubStorage();
-  const prefs = readFileSync(join(SRC, "utils", "prefs.js"), "utf8");
+  const prefs = readFileSync(join(SRC, "utils", "prefs.ts"), "utf8");
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
   const pane = readFileSync(join(SRC, "components", "AppearancePane.vue"), "utf8");
@@ -860,7 +860,7 @@ test("发送键判定：三档 + 修饰键（App 与 Composer 同一把尺）", 
 // —— 消息列渲染行 v2（2026-10-10：窗口/分段/摘要折叠，摘要原文展开才拉） ——
 import {
   computeSegments, windowStart, prevWindowStart, alignWindowFrom, olderCount, runsToFetch,
-} from "../src/utils/chatrows.js";
+} from "../src/utils/chatrows.ts";
 
 const sum = (id, b, e, parent = null, dirty = false) => ({
   id, parent_summary_id: parent, begin_idx: b, end_idx: e, text: `S${id}`, dirty,
@@ -952,7 +952,7 @@ test("上下文环：圆心是后台任务数，有任务时转动，面板里�
   const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
   const app = readFileSync(join(SRC, "..", "src", "App.vue"), "utf8");
   const composer = readFileSync(join(SRC, "components", "Composer.vue"), "utf8");
-  const fmt = readFileSync(join(SRC, "utils", "format.js"), "utf8");
+  const fmt = readFileSync(join(SRC, "utils", "format.ts"), "utf8");
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   const tpl = top.slice(top.indexOf("<template>")).replace(/<!--[\s\S]*?-->/g, "");
 
@@ -1121,7 +1121,7 @@ test("probeHealth：先规范化再探 /health；非 microchat 的 200 拒绝", 
 // 这条守着"别把 Bearer / 门板 / 用户管理悄悄加回来" —— 前后端一起删过一轮，加回来就是倒退。
 test("鉴权与账号已经砍掉：没有 token、没有门板、没有用户管理", () => {
   const api = readFileSync(join(SRC, "api", "client.ts"), "utf8");
-  const prefs = readFileSync(join(SRC, "utils", "prefs.js"), "utf8");
+  const prefs = readFileSync(join(SRC, "utils", "prefs.ts"), "utf8");
   const app = readFileSync(join(SRC, "..", "src", "App.vue"), "utf8");
   const srcDir = join(SRC, "..", "src");
 
@@ -1356,7 +1356,7 @@ test("滚动隐藏：反向不足 slop 当抖动；上滑到顶全放回顶栏",
 });
 
 // —— 主题 id 的一致性守卫（2026-10-28 加，同日随「只留三套」收紧）——
-// 主题 id 在**三处**各写一遍：`src/utils/prefs.js` 的 `THEME_IDS`、`src/assets/theme.css` 的
+// 主题 id 在**三处**各写一遍：`src/utils/prefs.ts` 的 `THEME_IDS`、`src/assets/theme.css` 的
 // `html[data-theme="…"]` 规则、`UserView.vue` 那个下拉的 option。改了一处忘了另一处**不会报错**
 // —— 页面只是安静地退回默认配色（或者让人选到一个没有规则的 id）。
 // 所以把三张表钉死：THEME_IDS 是唯一权威，另外两处必须**正好**是它（顺序也一样）。
@@ -1517,7 +1517,7 @@ test("界面缩放：松手 / 页面隐藏会立刻 flush，不把最后一格�
 });
 
 test("界面缩放：开机先用镜像铺第一帧（服务器答话前不闪回 100%）", () => {
-  const prefs = readFileSync(join(SRC, "utils", "prefs.js"), "utf8");
+  const prefs = readFileSync(join(SRC, "utils", "prefs.ts"), "utf8");
   assert.match(prefs, /const mirrored = readMirror\(\);/);
   assert.match(prefs, /if \(mirrored\) cache = merge\(FALLBACK_PREFS, mirrored\);/);
   assert.match(prefs, /addEventListener\("pagehide", flushOnHide\)/);
@@ -2379,12 +2379,12 @@ test("压缩树：每行带原文预览（剥状态块 / 压平空白 / 截断�
 // 预览的**唯一权威**：剥状态块必须复用 markdown.js 的 splitState，
 // 不许在 tree.js 里另写一条正则 —— 两份实现一分岔，预览和气泡就对不上，而且没人知道该信谁。
 test("压缩树：预览剥状态块复用 splitState（不另写正则）", () => {
-  const tree = readFileSync(join(SRC, "utils", "tree.js"), "utf8");
-  assert.match(tree, /import\s*\{[^}]*splitState[^}]*\}\s*from\s*"\.\/markdown\.js"/,
+  const tree = readFileSync(join(SRC, "utils", "tree.ts"), "utf8");
+  assert.match(tree, /import\s*\{[^}]*splitState[^}]*\}\s*from\s*"\.\/markdown\.ts"/,
     "没复用 splitState —— 预览和气泡会各剥各的");
   // 不许出现第二条 state 正则（`state` 出现在正则里就说明自己另写了一套）
   const code = tree.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-  assert.ok(!/<\/state|state\|current_state/.test(code), "tree.js 里另写了一条状态块正则 —— 该用 splitState");
+  assert.ok(!/<\/state|state\|current_state/.test(code), "tree.ts 里另写了一条状态块正则 —— 该用 splitState");
 });
 
 // 压缩页也要「折叠全部」（2026-10-29 用户：「在"压缩"里，也请准备一键折叠的按钮吧」）。
@@ -2744,7 +2744,7 @@ test("markdown 类型清单：前端的 FALLBACK 与后端 MarkdownTypes 对得�
   assert.ok(ids.length >= 10, `后端类型清单看起来没解析出来：${ids}`);
 
   // `renderMarkdown` 认识的每一类（BLOCK_TYPES / INLINE_TYPES 的键 + 这几个特例）
-  const js = readFileSync(join(SRC, "utils", "markdown.js"), "utf8");
+  const js = readFileSync(join(SRC, "utils", "markdown.ts"), "utf8");
   const blockKeys = [...js.slice(js.indexOf("const BLOCK_TYPES"), js.indexOf("// 行内语法"))
     .matchAll(/^\s{2}(\w+):\s*"/gm)].map((m) => m[1]);
   const inlineKeys = [...js.slice(js.indexOf("const INLINE_TYPES"), js.indexOf("// buildMarked"))
@@ -3193,7 +3193,7 @@ test("Roboto Flex 是 MD3 默认字体，且是子集（别把全量塞回首屏
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8");
   assert.match(css, /font-family:\s*"Roboto Flex"/, "没有 @font-face Roboto Flex");
   assert.match(css, /font-family:\s*var\(--app-font-body,\s*"Roboto Flex"/, "body 没把 Roboto Flex 排第一");
-  const prefs = readFileSync(join(SRC, "utils", "prefs.js"), "utf8");
+  const prefs = readFileSync(join(SRC, "utils", "prefs.ts"), "utf8");
   assert.match(prefs, /DEFAULT_FONT_BODY = '"?Roboto Flex|DEFAULT_FONT_BODY = '"Roboto Flex/, "默认字体栈不是 Roboto Flex");
 });
 
@@ -3235,7 +3235,7 @@ test("开机请求：会话/Agent 不重复，重活按需，加载有骨架", (
 // 「安装说明」删掉；左栏底改成 会话 / 渠道 / 设置。会话与渠道走同一个设置视图的
 // `:only` 模式，不再占设置 tab。
 test("左栏：有会话/渠道/设置，没有安装说明", () => {
-  const pwa = readFileSync(join(SRC, "utils", "pwa.js"), "utf8");
+  const pwa = readFileSync(join(SRC, "utils", "pwa.ts"), "utf8");
   const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
 
@@ -3365,7 +3365,7 @@ test("设计系统：tab 统一下划线、设置平铺、圆角收口", () => {
 test("载荷预览：面板里可开关；关掉不请求，偏好与输入预演分开", () => {
   const bar = readFileSync(join(SRC, "components", "PayloadBar.vue"), "utf8");
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
-  const prefs = readFileSync(join(SRC, "utils", "prefs.js"), "utf8");
+  const prefs = readFileSync(join(SRC, "utils", "prefs.ts"), "utf8");
   assert.match(bar, /const preview = ref\(payloadPreviewOn\(\)\)/, "载荷面板没有自己的预览开关");
   assert.match(bar, /<span class="lbl">预览载荷<\/span>/, "载荷开关没有可见标签");
   assert.match(bar, /emit\("preview"/, "载荷开关没把变化报给 App");
@@ -3412,7 +3412,7 @@ test("渠道标识可改：编辑态输入框可用、保存发 new_id、成功�
 
 // 左栏行内环（2026-11-05 用户定）：一条会话有任务在跑，会话列表那一行就得有反应。
 //
-// 判定只在一处（`utils/tasks.js`）：顶栏环心、任务面板、左栏行内环吃同一份 `/tasks` 快照。
+// 判定只在一处（`utils/tasks.ts`）：顶栏环心、任务面板、左栏行内环吃同一份 `/tasks` 快照。
 // 这条钉两件最容易错的事：**已完成的不算**（面板还会把它列一阵子）、**队列踩着的会话也算**
 // （两步之间服务端可能短暂地没有原子任务，只看 tasks 会让环一闪一闪）。
 test("忙碌会话：只认还在跑的任务，队列当前那一步也算", () => {
@@ -3800,7 +3800,7 @@ test("波纹：触点 → 圆（纯函数），委托安装一次，reduce 下�
   assert.ok(RIPPLE_SELECTOR.includes("button"), "按钮没接波纹");
 
   const main = readFileSync(join(SRC, "..", "src", "main.js"), "utf8");
-  const ripple = readFileSync(join(SRC, "utils", "ripple.js"), "utf8");
+  const ripple = readFileSync(join(SRC, "utils", "ripple.ts"), "utf8");
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8");
   assert.match(main, /installRipple\(\)/, "main.js 没装波纹");
   assert.match(ripple, /pointerdown/, "没有指针按下入口");

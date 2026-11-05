@@ -2,7 +2,7 @@
 // 摘要正文编辑器（应用内模态）：替掉 /editsum 与卡上 ✎ 的原生 window.prompt。
 // 只改 text（PATCH /summaries/{id}：就地换正文，id / 区间 / 指针不动；空文本后端会 400，这里先拦）。
 import { ref, onMounted, onUnmounted } from "vue";
-import { sharedApi } from "../utils/prefs.js";
+import { sharedApi } from "../utils/prefs.ts";
 
 const props = defineProps({
   sessionId: { type: String, required: true },

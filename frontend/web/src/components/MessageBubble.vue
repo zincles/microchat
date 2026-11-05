@@ -2,8 +2,8 @@
 // 消息气泡：正文 markdown 渲染 + <state> 块独立容器（状态变化单列，不混进正文）。
 import { ref, computed, watch, onMounted, nextTick } from "vue";
 import { ICONS } from "./icons.js";
-import { formatThinkLabel, usageFoot, usageFootTitle } from "../utils/format.js";
-import { renderMarkdown, splitState } from "../utils/markdown.js";
+import { formatThinkLabel, usageFoot, usageFootTitle } from "../utils/format.ts";
+import { renderMarkdown, splitState } from "../utils/markdown.ts";
 const props = defineProps({
   who: String,
   idx: { type: [Number, String], default: null }, // 显示编号（真消息=服务端 idx；库外的按后缀顺延）
@@ -22,7 +22,7 @@ const props = defineProps({
 });
 defineEmits(["edit", "edit-prompt", "delete", "reroll", "reroll-go"]);
 
-// 脚注：token 用量 + 成本（纯函数在 utils/format.js，契约测试钉着）。
+// 脚注：token 用量 + 成本（纯函数在 utils/format.ts，契约测试钉着）。
 // 没用量（生成中 / 库外那条 / 上游没报）⇒ 空串 ⇒ 整行不渲染。
 const foot = computed(() => usageFoot(props.usage));
 const footTitle = computed(() => usageFootTitle(props.usage));

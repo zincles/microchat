@@ -6,7 +6,7 @@
 // 预演 / 命令菜单）原样搬到这儿；2026-11-01 又加了一区 **markdown 渲染**。
 //
 // 2026-11-01 两件大事：
-//   ① **全部偏好搬到服务器**（`data/config/prefs.json`，见 `utils/prefs.js` 顶上的说明）。
+//   ① **全部偏好搬到服务器**（`data/config/prefs.json`，见 `utils/prefs.ts` 顶上的说明）。
 //      背景图那张也搬了：从前是一枚 data URL 躺在 localStorage、5MB 配额说满就满；
 //      现在落服务器上，换设备也在。
 //   ② **markdown 逐类型开关**（用户口径：「所有的会被 Markdown 解析的非 <div> HTML 块，
@@ -28,11 +28,11 @@ import {
   markdownPrefs, markdownTypes, saveMarkdown, saveBackground,
   refreshPrefs,
   TEXT_SCALE_MIN, TEXT_SCALE_MAX, TEXT_SCALE_STEP,
-} from "../utils/prefs.js";
+} from "../utils/prefs.ts";
 import {
   currentBackground, backgroundCssUrl, applyBackground, describeBackground,
   uploadBackground, clearBackground,
-} from "../utils/background.js";
+} from "../utils/background.ts";
 
 const emit = defineEmits(["prefs-saved"]);
 

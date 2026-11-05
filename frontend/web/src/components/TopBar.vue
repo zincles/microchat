@@ -10,7 +10,7 @@
 // 会话抬头不在顶栏（左栏列表高亮 + 状态行都有它）。
 import { ref, computed, nextTick, watch } from "vue";
 import { ICONS } from "./icons.js";
-import { modelKey, parseModelKey, formatTokens, formatStatusLine, formatDuration, phaseText, contextArc, contextPercentText, contextTitle, contextOverBudget, curModelLabelOf, filterModelGroups } from "../utils/format.js";
+import { modelKey, parseModelKey, formatTokens, formatStatusLine, formatDuration, phaseText, contextArc, contextPercentText, contextTitle, contextOverBudget, curModelLabelOf, filterModelGroups } from "../utils/format.ts";
 
 const props = defineProps({
   // leftHidden：左栏收着 ⇒ 顶栏出它那枚开关；栏开着 ⇒ 开关在栏自己头上（按钮跟着它控制的东西走）。
@@ -49,7 +49,7 @@ const curModelLabel = computed(() => {
   return curModelLabelOf(modelGroups.value, curModel.value, orphanModel.value);
 });
 
-// 过滤 + 分组 + 扁平序号都在 `utils/format.js` 的 `filterModelGroups` 里（那边才测得到"搜到了什么"）。
+// 过滤 + 分组 + 扁平序号都在 `utils/format.ts` 的 `filterModelGroups` 里（那边才测得到"搜到了什么"）。
 const filteredGroups = computed(() => filterModelGroups(modelGroups.value, modelQuery.value, orphanModel.value));
 const modelFlatCount = computed(() => filteredGroups.value.reduce((n, g) => n + g.items.length, 0));
 
@@ -139,7 +139,7 @@ const ctx = ref(null);
 const ctxOpen = ref(false);
 // 环面板的两个 tab（2026-11-02 用户定）：上下文状态 / 正在运行的任务。
 const ctxTab = ref("context");
-// 弧长（含"用了就得看得见"的最小弧）在 `utils/format.js` 的 `contextArc` 里 —— 那边才测得到。
+// 弧长（含"用了就得看得见"的最小弧）在 `utils/format.ts` 的 `contextArc` 里 —— 那边才测得到。
 const ctxArc = computed(() => contextArc(ctx.value));
 // dasharray="a b" 且 a+b=100 ⇒ 正好一道弧、没有第二道。
 const ctxDash = computed(() => `${ctxArc.value} ${100 - ctxArc.value}`);

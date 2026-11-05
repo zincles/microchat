@@ -22,22 +22,22 @@ import { registerSW } from "virtual:pwa-register";
 // 更新条的状态：`onUpdateReady` 由调用方（App.vue）挂进来 —— 这里只管"何时该弹"。
 //
 // 回调在**页面加载后异步**触发（SW 装完才回调），所以调用方得在启动时就把钩子挂好。
-let notify = () => {};
-export function onUpdateReady(handler) { notify = handler; }
+let notify: () => void = () => {};
+export function onUpdateReady(handler: () => void): void { notify = handler; }
 
 // updateSW：点了更新条 ⇒ 切到新版本。
 //   1. 先把"正在切"喊出去（更新条自己改成"更新中…"、按钮禁用）—— 别让你重复点；
 //   2. `updateServiceWorker(true)` 发 skipWaiting ⇒ 新 SW 接管 ⇒ controlling ⇒
 //      回调里 `window.location.reload()`（这是 vite-plugin-pwa 内建行为，不是我们写的）。
 // 参数 `true` 是"要 reload"（0.13.2+ 起这个参数虽不再参与判断，但传着与官方示例一致）。
-let updateSW = null;
-export function startUpdate() {
-  if (!updateSW) return;
+let updateSW: ((reloadPage?: boolean) => Promise<void>) | null = null;
+export function startUpdate(): Promise<void> | undefined {
+  if (!updateSW) return undefined;
   return updateSW(true);
 }
 
 // registerPWA：开机调一次 —— 装下 `onNeedRefresh` 回调，拿到 `updateSW`。
-export function registerPWA() {
+export function registerPWA(): void {
   updateSW = registerSW({
     // 检测到新版本（新 SW 装好、在等）⇒ 弹条。**不自动切**：切换由用户点。
     onNeedRefresh() { notify(); },

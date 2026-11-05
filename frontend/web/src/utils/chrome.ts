@@ -10,15 +10,31 @@
 
 export const CHROME_SLOP = 6;
 
+export interface ChromeState {
+  top: number;
+  bottom: number;
+  last: number;
+  dir: number;
+  acc: number;
+}
+
+export interface ChromeStep {
+  dy: number;
+  scrollTop: number;
+  headerH: number;
+  composerH: number;
+  slop?: number;
+}
+
 // 初始/复位状态。`last` = 上一次看到的 scrollTop（调用方在挂监听时对齐）。
-export function resetChrome(scrollTop = 0) {
+export function resetChrome(scrollTop = 0): ChromeState {
   return { top: 0, bottom: 0, last: scrollTop, dir: 0, acc: 0 };
 }
 
 // stepChrome(state, { dy, scrollTop, headerH, composerH, slop? }) ⇒ 新状态（不修改入参）。
 // 返回的 top/bottom 是**已收起的像素**（0 = 完全展开，等于栏高 = 完全收起）。
-export function stepChrome(state, { dy, scrollTop, headerH, composerH, slop = CHROME_SLOP }) {
-  const next = { ...state, last: scrollTop };
+export function stepChrome(state: ChromeState, { dy, scrollTop, headerH, composerH, slop = CHROME_SLOP }: ChromeStep): ChromeState {
+  const next: ChromeState = { ...state, last: scrollTop };
   if (!dy) return next;
   if (scrollTop <= 0) {
     // 到顶：顶栏一定展开；底栏往回让多少就收多少（不是"啪"地全放 —— 那一下很跳）。

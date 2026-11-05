@@ -12,16 +12,28 @@
 // "滚动 → offsetTop 变大 → 再平移 → transform 撑大可滚动区域"会正反馈成真机上的
 // "页面还能延展、往上滑不完"（2026-10-10 踩过）。这里的平移只该跟 iOS 的键盘上推走。
 
+export interface ViewportFitInput {
+  height?: number;
+  offsetTop?: number;
+  scale?: number;
+}
+
+export interface ViewportFit {
+  h: number;
+  y: number;
+}
+
 // computeViewportFit：纯函数（好钉）—— 给 {height, offsetTop, scale} 算 {h, y}；
 // 拿不到有效高（或不该拟合）⇒ null（调用方把变量撤掉，CSS 回落 100dvh）。
-export function computeViewportFit({ height, offsetTop = 0, scale = 1 } = {}) {
-  if (!Number.isFinite(height) || height <= 0) return null;
+export function computeViewportFit({ height, offsetTop = 0, scale = 1 }: ViewportFitInput = {}): ViewportFit | null {
+  const h = Number(height);
+  if (!Number.isFinite(h) || h <= 0) return null;
   if (scale > 1.05) return null;
-  return { h: Math.round(height), y: Math.max(0, Math.round(offsetTop || 0)) };
+  return { h: Math.round(h), y: Math.max(0, Math.round(offsetTop || 0)) };
 }
 
 // installViewportFit：挂上监听并立即拟合一次；返回卸载函数（App 卸载时调）。
-export function installViewportFit() {
+export function installViewportFit(): () => void {
   const vv = typeof window !== "undefined" ? window.visualViewport : null;
   if (!vv) return () => {};
   const root = document.documentElement;

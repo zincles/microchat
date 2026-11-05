@@ -7,7 +7,7 @@
 // 一条硬口径：整体只有 running / done / failed / canceled；每块的 state 只是进度，
 // 不是"这一块成功就算整体成功"。
 import { ref, computed, watch, onUnmounted } from "vue";
-import { sharedApi } from "../utils/prefs.js";
+import { sharedApi } from "../utils/prefs.ts";
 
 const props = defineProps({
   sessionId: { type: String, default: "" },

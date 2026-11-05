@@ -1,19 +1,44 @@
 // 纯函数（无 DOM）：测试直引这里。DOM 构造已迁 MessageBubble.vue。
+import type { ContextUsage, DeletionPlan, ModelListItem, ProviderView } from "../api/types.ts";
 
 // —— 模型/Agent 的键与标签（唯一出口，别在组件里手拼） ——
 // 模型键 `provider|||upstream_id`：下拉 <option> 的 value 用它（分隔符是 magic 串，解析只在这里）。
-export function modelKey(provider, model) { return `${provider}|||${model}`; }
-export function parseModelKey(v) {
+export function modelKey(provider?: string | null, model?: string | null): string { return `${provider}|||${model}`; }
+export function parseModelKey(v?: string | null): { provider: string; model: string } | null {
   const i = (v ?? "").indexOf("|||");
   if (i < 0) return null;
-  return { provider: v.slice(0, i), model: v.slice(i + 3) };
+  return { provider: v!.slice(0, i), model: v!.slice(i + 3) };
 }
+
+export interface ModelLike {
+  display_name?: string | null;
+  name?: string | null;
+  upstream_id?: string;
+}
+
 // 显示名三级回退（与后端两列同义：用户覆盖 → 上游名 → 上游 id）。
-export function modelLabel(m) { return m?.display_name || m?.name || m?.upstream_id || ""; }
+export function modelLabel(m?: ModelLike | null): string { return m?.display_name || m?.name || m?.upstream_id || ""; }
+
+export interface ModelChoice {
+  value: string;
+  label: string;
+  provider_name: string;
+  upstream_id: string;
+  flat?: number;
+  [key: string]: unknown;
+}
+
+export interface ModelGroup {
+  provider: string;
+  providerName?: string;
+  items: ModelChoice[];
+  [key: string]: unknown;
+}
+
 // 下拉项（`/models` 的行 → {value,label}）。
 // 2026-10-28：顶栏的模型选择器换成自定义面板之后，每项还带着 `provider_name` / `upstream_id` ——
 // 面板要按渠道分组、搜索要能按渠道名与上游 id 命中（label 只是显示名，常常不含渠道信息）。
-export function modelOption(m) {
+export function modelOption(m: ModelListItem): ModelChoice {
   return {
     value: modelKey(m.provider, m.upstream_id),
     label: modelLabel(m),
@@ -21,28 +46,31 @@ export function modelOption(m) {
     upstream_id: m.upstream_id,
   };
 }
-export function agentOption(a) { return { id: a.id, label: a.name || a.id }; }
+export function agentOption(a: { id: string; name?: string }): { id: string; label: string } {
+  return { id: a.id, label: a.name || a.id };
+}
 // 谁在答（状态行与草稿共用；fallback 两处不同：会话里"未知模型"、草稿"未选模型"）。
-export function whoText(provider, model, fallback = "未知模型") {
+export function whoText(provider?: string | null, model?: string | null, fallback = "未知模型"): string {
   return [provider, model].filter(Boolean).join("/") || fallback;
 }
 // 会话抬头：空标题按草稿/真会话两态回退（TopBar/SessionBar/设置列表/删除确认共用）。
-export function sessionTitle(title, isDraft = false) {
+export function sessionTitle(title?: string | null, isDraft = false): string {
   return (title ?? "").trim() || (isDraft ? "新对话" : "新会话");
 }
-export function formatThinkLabel(reasoningMs) {
+export function formatThinkLabel(reasoningMs?: number | null): string {
   if (reasoningMs == null) return "思考过程";
   return `思考过程（${(reasoningMs / 1000).toFixed(1)}s）`;
 }
 
 // phaseText：把后端的相位词翻成人话（面板与悬停共用）。
-export function phaseText(phase) {
-  return { idle: "空闲", pending: "等待响应", streaming: "生成中", error: "出错" }[phase] ?? "空闲";
+export function phaseText(phase?: string | null): string {
+  const labels: Record<string, string> = { idle: "空闲", pending: "等待响应", streaming: "生成中", error: "出错" };
+  return labels[phase ?? ""] ?? "空闲";
 }
 
 // formatDuration：耗时说人话（面板与悬停共用）。毫秒只在不到一秒时出现。
-export function formatDuration(ms) {
-  if (ms == null || !Number.isFinite(ms) || ms < 0) return "";
+export function formatDuration(ms?: number | null): string {
+  if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return "";
   if (ms < 1000) return `${Math.max(0.1, Math.round(ms / 100) / 10)} 秒`;
   if (ms < 60000) return `${(ms / 1000).toFixed(1)} 秒`;
   const m = Math.floor(ms / 60000);
@@ -53,7 +81,7 @@ export function formatDuration(ms) {
 // 状态行：当前助手 + 这一轮在干什么/多久。
 // ⚠ 上下文占用**不在这一行**（2026-10-28 用户定）：它挪到右上角那枚小环（TopBar 的 `#ctx-ring`），
 // 点开才看明细。所以这里不接 ctx —— 同一个数字住两处，只会让两处都可能过期。
-export function formatStatusLine({ phase, elapsedMs, agent }) {
+export function formatStatusLine({ phase, elapsedMs, agent }: { phase?: string | null; elapsedMs?: number | null; agent?: string | null }): string {
   // 2026-10-14：中间那格从"渠道/模型"换成"当前助手" —— 模型住顶栏左上（别两处重复），
   // 助手住这儿（顶栏已无 Agent 下拉）。
   const t = elapsedMs != null ? ` ${formatDuration(elapsedMs)}` : "";
@@ -62,7 +90,7 @@ export function formatStatusLine({ phase, elapsedMs, agent }) {
 
 // contextRatio：已用 / 输入预算，夹到 0..1（分母缺失或为 0 ⇒ 0）。
 // 分母是**输入预算**不是模型上下文（见 contextTitle）—— 这就是"填了 1 000 000 却显示 995904"的来由。
-export function contextRatio(ctx) {
+export function contextRatio(ctx?: ContextUsage | null): number {
   const used = Number(ctx?.used_tokens ?? 0);
   const budget = Number(ctx?.budget_tokens ?? 0);
   if (!(budget > 0) || !Number.isFinite(used)) return 0;
@@ -72,7 +100,7 @@ export function contextRatio(ctx) {
 // contextPercentText：给人看的占比。
 // 一上来就是 344/1.04M 这种小占比 ⇒ 整数会显示成 0%（看起来像"坏了"），所以 10% 以下带一位小数、
 // 0.1% 以下单说。**向下取整**（与 formatTokens 同一个理由：别把用量说大）。
-export function contextPercentText(ctx) {
+export function contextPercentText(ctx?: ContextUsage | null): string {
   const used = Number(ctx?.used_tokens ?? 0);
   if (!(used > 0)) return "0%";
   const r = contextRatio(ctx) * 100;
@@ -88,7 +116,7 @@ export function contextPercentText(ctx) {
 export const CONTEXT_MIN_ARC = 2;
 
 // contextArc：环该画多少（0..100 的百分比，直接喂 SVG 的 stroke-dasharray）。
-export function contextArc(ctx) {
+export function contextArc(ctx?: ContextUsage | null): number {
   const used = Number(ctx?.used_tokens ?? 0);
   if (!(used > 0)) return 0;
   return Math.max(CONTEXT_MIN_ARC, Math.min(100, Math.round(contextRatio(ctx) * 100)));
@@ -97,12 +125,12 @@ export function contextArc(ctx) {
 // formatTokens：上下文数字的人话格式（2026-10-17 用户点名）：9857 → 9.8K、995904 → 995K、
 // 1048576 → 1.04M。**一律向下取整**（不四舍五入）：这两个数里有一个是"我用了多少"，
 // 向上取整会把用量说大；而且 995904 报成"996K"会让人以为分母真是 996K ✗。
-export function formatTokens(n) {
-  if (n == null || !Number.isFinite(n)) return "?";
+export function formatTokens(n?: number | null): string {
+  if (typeof n !== "number" || !Number.isFinite(n)) return "?";
   const sign = n < 0 ? "-" : "";
   const abs = Math.abs(n);
-  const floored = (v, digits) => { const f = 10 ** digits; return Math.floor(v * f + 1e-9) / f; };
-  const trim = (s) => (s.includes(".") ? s.replace(/\.?0+$/, "") : s);
+  const floored = (v: number, digits: number): number => { const f = 10 ** digits; return Math.floor(v * f + 1e-9) / f; };
+  const trim = (s: string): string => (s.includes(".") ? s.replace(/\.?0+$/, "") : s);
   if (abs < 1000) return sign + String(abs);
   if (abs < 10000) return sign + trim(floored(abs / 1000, 1).toFixed(1)) + "K"; // 9.8K
   if (abs < 1000000) return sign + String(floored(abs / 1000, 0)) + "K";       // 995K
@@ -111,9 +139,9 @@ export function formatTokens(n) {
 
 // contextTitle：上下文环的悬停解释（桌面才有 hover；移动端靠环点开的浮板，两处都写同一句话）。
 // 分母是**输入预算**不是模型上下文 —— 这是"填了 1 000 000 却显示 995904"的来由。
-export function contextTitle(ctx) {
+export function contextTitle(ctx?: ContextUsage | null): string {
   if (!ctx) return "上下文占用（还没有会话）";
-  const num = (v) => Number(v ?? 0).toLocaleString("en-US");
+  const num = (v?: number | null): string => Number(v ?? 0).toLocaleString("en-US");
   return `输入预算 ${num(ctx.budget_tokens)} tokens = 上下文上限 ${num(ctx.ctx_len)} − 输出预留 ${num(ctx.max_output)}`;
 }
 
@@ -123,11 +151,20 @@ export function contextTitle(ctx) {
 // 其余给 2 位；**恰好 0 ⇒ $0**（免费模型是真的 0，不是"没数据"）。
 // `null`/`undefined` ⇒ 空串 —— 直连渠道（DeepSeek / OpenCode GO）不报 cost，
 // 那时**什么都不显示**，绝不显示成 $0.00（那是"免费"的意思，会说谎）。
-export function formatCost(usd) {
-  if (usd == null || !Number.isFinite(usd)) return "";
+export function formatCost(usd?: number | null): string {
+  if (typeof usd !== "number" || !Number.isFinite(usd)) return "";
   if (usd === 0) return "$0";
   if (usd < 0.01) return `$${usd.toFixed(4)}`;
   return `$${usd.toFixed(2)}`;
+}
+
+export interface UsageLike {
+  prompt_tokens?: number | null;
+  completion_tokens?: number | null;
+  cached_tokens?: number | null;
+  reasoning_tokens?: number | null;
+  cost_usd?: number | null;
+  [key: string]: unknown;
 }
 
 // usageFoot：气泡下面那行小字（token 用量 + 成本）。
@@ -135,20 +172,20 @@ export function formatCost(usd) {
 // 口径（AGENTS.md「用量两处别混」）：单位是 token，`reasoning_tokens` 是
 // `completion_tokens` 的**子集**（不是另加）；未命中 = prompt − cached（推导，不另存）。
 // 空（没用量）⇒ 空串，调用方据此不渲染这一行。
-export function usageFoot(usage) {
+export function usageFoot(usage?: UsageLike | null): string {
   if (!usage || usage.prompt_tokens == null) return "";
   const prompt = formatTokens(usage.prompt_tokens);
   const completion = formatTokens(usage.completion_tokens);
   const parts = [`${prompt}→${completion}`];
-  if (usage.cached_tokens > 0) parts.push(`缓存命中 ${formatTokens(usage.cached_tokens)}`);
-  if (usage.reasoning_tokens > 0) parts.push(`思考 ${formatTokens(usage.reasoning_tokens)}`);
+  if (Number(usage.cached_tokens ?? 0) > 0) parts.push(`缓存命中 ${formatTokens(Number(usage.cached_tokens))}`);
+  if (Number(usage.reasoning_tokens ?? 0) > 0) parts.push(`思考 ${formatTokens(Number(usage.reasoning_tokens))}`);
   const cost = formatCost(usage.cost_usd);
   if (cost) parts.push(cost);
   return parts.join(" · ");
 }
 
 // usageFootTitle：那行小字的悬停解释（说清哪个数是子集、cost 是谁报的）。
-export function usageFootTitle(usage) {
+export function usageFootTitle(usage?: UsageLike | null): string {
   if (!usage || usage.prompt_tokens == null) return "";
   const lines = [
     `输入 ${usage.prompt_tokens} tok（其中缓存命中 ${usage.cached_tokens ?? 0}）`,
@@ -159,7 +196,7 @@ export function usageFootTitle(usage) {
 }
 
 // contextOverBudget：超预算 ⇒ 环变红（从前是状态行那行小字变红，信号不能丢）。
-export function contextOverBudget(ctx) {
+export function contextOverBudget(ctx?: ContextUsage | null): boolean {
   return !!ctx?.over_budget;
 }
 
@@ -168,7 +205,7 @@ export function contextOverBudget(ctx) {
 // 判据只有一条：**id 还是自动填的那个**才动它。用户手打过 `我的渠道`，再改 vendor 就把它冲掉
 // 等于抢方向盘；而新建时一路点下来（id 还没落地）就该省掉那一格。
 // 纯函数是为了能测：这段逻辑出错不会报错，只会静默地把人填好的名字换掉。
-export function providerIdForNextVendor(currentId, autoId, vendor) {
+export function providerIdForNextVendor(currentId?: string | null, autoId?: string | null, vendor?: string | null): string {
   const current = String(currentId ?? "").trim();
   const auto = String(autoId ?? "");
   // 手填过（当前值既非空、又不是上次自动填的那个）⇒ 一个字符都不碰。
@@ -183,18 +220,18 @@ export const ORPHAN_MODEL_GROUP = "\u0000orphan";
 
 // 一条模型匹配不匹配查询词：显示名 / 渠道名 / 上游 id 三者任一含它即算。
 // 上游 id 必须参与 —— 显示名常常不含渠道信息（"GPT-4o" 是哪家的？），而人恰恰按它找。
-export function modelMatches(m, query) {
+export function modelMatches(m: ModelChoice, query?: string | null): boolean {
   const q = String(query ?? "").trim().toLowerCase();
   if (!q) return true;
-  return [m?.label, m?.provider_name, m?.upstream_id].filter(Boolean).join(" ").toLowerCase().includes(q);
+  return [m.label, m.provider_name, m.upstream_id].filter(Boolean).join(" ").toLowerCase().includes(q);
 }
 
 // 过滤 + 分组 + 扁平序号：面板的上下键要能一条条走完整个可见列表，
 // 所以每项带 `flat`（在本列表里的下标；分组顺序 = 传入顺序，组内 = 原顺序）。
 // 分完是空的组直接丢（搜索之后留一堆空组头只会让人以为没搜到）。
 // `orphan` = 当前值不在列表里那一条（渠道删了 / 模型下架）：它排最前 —— 那是"我现在在哪"。
-export function filterModelGroups(groups, query, orphan = null) {
-  const out = [];
+export function filterModelGroups(groups?: ModelGroup[] | null, query?: string | null, orphan: ModelChoice | null = null): ModelGroup[] {
+  const out: ModelGroup[] = [];
   let flat = 0;
   if (orphan && modelMatches(orphan, query)) {
     out.push({ provider: ORPHAN_MODEL_GROUP, providerName: "当前（不在列表）", items: [{ ...orphan, flat: flat++ }] });
@@ -209,7 +246,7 @@ export function filterModelGroups(groups, query, orphan = null) {
 
 // 顶栏按钮上那行字：列表里找到就用显示名；找不到用"不在列表"那条；再找不到（列表还没到）
 // 就把 key 拆开拼个 provider/model —— 总比空白强（空白看着像"没选模型"）。
-export function curModelLabelOf(groups, cur, orphan = null) {
+export function curModelLabelOf(groups?: ModelGroup[] | null, cur?: string | null, orphan: ModelChoice | null = null): string {
   for (const g of groups ?? []) {
     const hit = (g.items ?? []).find((i) => i.value === cur);
     if (hit) return hit.label;
@@ -220,14 +257,20 @@ export function curModelLabelOf(groups, cur, orphan = null) {
   return parsed ? `${parsed.provider}/${parsed.model}` : "选择模型";
 }
 
-export function groupModelsByProvider(models) {
-  const groups = new Map();
+export function groupModelsByProvider(models?: ModelListItem[] | null): Array<{ provider: string; items: ModelListItem[] }> {
+  const groups = new Map<string, ModelListItem[]>();
   for (const m of models ?? []) {
     const k = m.provider ?? "unknown";
     if (!groups.has(k)) groups.set(k, []);
-    groups.get(k).push(m);
+    groups.get(k)!.push(m);
   }
   return [...groups.entries()].map(([provider, items]) => ({ provider, items }));
+}
+
+export interface Choice {
+  value: string;
+  label: string;
+  missing?: boolean;
 }
 
 // providerChoices / modelChoicesFor：设置里**「新会话默认值」那两格**的下拉选项。
@@ -238,8 +281,8 @@ export function groupModelsByProvider(models) {
 // 但**当前值必须始终在里面**：它可能是一个已经不存在的渠道（手改过 providers.json / 删过渠道），
 // 也可能是一条还没发现模型的渠道（`dummy` 就是这种 —— 它不联网，永远不会有一行模型）。
 // 不在列表里就补一条并说清"不在列表里"：悄悄丢掉它 = 一保存就把人配好的默认值换成别的。
-export function providerChoices(providers, cur = "") {
-  const items = (providers ?? []).map((p) => {
+export function providerChoices(providers?: ProviderView[] | null, cur = ""): Choice[] {
+  const items: Choice[] = (providers ?? []).map((p) => {
     // 默认值下拉要能区分同服务商的多条渠道（OpenRouter 可以挂两条不同端点），
     // 所以「服务商中文名 + 渠道标识」都留着；dummy 是内置示例，不摆内部 id。
     const label = p.id === "dummy"
@@ -256,8 +299,12 @@ export function providerChoices(providers, cur = "") {
 // ⚠ 值是 **upstream_id**（裸模型 id），不是 `modelKey(...)` 拼的 `provider/model`：
 // `config.json` 的 `defaults.model` 存的就是裸 id（后端 `Defaults.Model = "dummy"`）。
 // 两处用同一把尺，才不会在"渠道换了但模型没换"的时候静默错位。
-export function modelChoicesFor(groups, provider, cur = "") {
-  const items = [];
+export function modelChoicesFor(
+  groups: Array<{ provider: string; items: Array<{ upstream_id: string; label: string }> }> | null | undefined,
+  provider: string,
+  cur = "",
+): Choice[] {
+  const items: Choice[] = [];
   for (const g of groups ?? []) {
     if (g.provider !== provider) continue;
     for (const item of g.items ?? []) items.push({ value: item.upstream_id, label: item.label });
@@ -272,7 +319,7 @@ export function modelChoicesFor(groups, provider, cur = "") {
   return items;
 }
 
-export function deletionPlanSummary(plan) {
+export function deletionPlanSummary(plan?: DeletionPlan | null): string {
   const nm = plan?.deleted_message_ids?.length ?? 0;
   const ns = plan?.deleted_summary_ids?.length ?? 0;
   const nu = plan?.unlinked_message_ids?.length ?? 0;
@@ -280,6 +327,11 @@ export function deletionPlanSummary(plan) {
 }
 
 // ---- 设置 modal 纯逻辑（无 DOM，测试直引） ----
+
+export interface SettingsTab {
+  id: string;
+  label: string;
+}
 
 // SETTINGS_TABS：设置视图四区（顺序固定）—— **id 与中文名同一份**（按钮标签、panel id 都从它来）。
 // 2026-11-02 用户「设置面板塞了太多东西」：**会话 / 渠道** 不再住设置 tab，
@@ -293,7 +345,7 @@ export function deletionPlanSummary(plan) {
 // 让人填 —— 正常部署里这格一辈子用不到。更糟的是它的「保存」按钮绑的 `saveNet` 在重构时丢了，
 // 点下去直接抛错。留着只会让人以为"我得自己配点什么"。
 // 「提示词」= 可复用提示词段（system prompt segment）的库；「智能体」里逐段引用（2026-10-11 用户定）。
-export const SETTINGS_TABS = [
+export const SETTINGS_TABS: SettingsTab[] = [
   { id: "chat", label: "聊天" },
   { id: "agent", label: "智能体" },
   { id: "prompt", label: "提示词" },
@@ -301,7 +353,7 @@ export const SETTINGS_TABS = [
 ];
 
 // formatRoutesOutcome：刷路由回形 {provider, models, error?} ⇒ 缓存行文案。
-export function formatRoutesOutcome(o) {
+export function formatRoutesOutcome(o?: { provider?: string; models?: number; error?: string } | null): string {
   if (!o || typeof o !== "object") return "未刷新";
   if (o.error) return `${o.provider ?? "?"}：刷新失败（${o.error}）`;
   return `${o.provider ?? "?"}：${o.models ?? 0} 个模型`;
@@ -318,7 +370,7 @@ export const ABILITY_IDS = ["title", "compact"];
 // 能力的中文名（页签 / 标题用）。**与后端 `abilities.definitions` 的 `Label` 逐字相同** ——
 // 它是给人看的那一层，两处叫法不同不会报错，只会让人疑惑"这是不是两个东西"。
 // 契约测试从 `core/internal/abilities/abilities.go` 里读 `Label: "…"` 来对。
-export const ABILITY_LABELS = { title: "起标题", compact: "压缩" };
+export const ABILITY_LABELS: Record<string, string> = { title: "起标题", compact: "压缩" };
 
 // 能力的**模板住在哪几条内置段**（2026-10-28：模板都搬进了段库；压缩有两条 —— 通用版与 RP 版）。
 //
@@ -330,23 +382,42 @@ export const ABILITY_LABELS = { title: "起标题", compact: "压缩" };
 // `config.TitleTemplateSegmentID` 必须逐字相同 —— 写错不报错，只是预览里少一段
 // （真正的模板仍由后端拼）。契约测试从 `core/internal/config/config.go` 里读常量与内置段清单来对。
 // 每个在册能力都必须在这张表里（没有模板的能力，是因为它连流程都没有 —— 那就不该在册）。
-export const ABILITY_TEMPLATE_SEGMENTS = {
+export const ABILITY_TEMPLATE_SEGMENTS: Record<string, string[]> = {
   compact: ["压缩提示词", "RP压缩提示词"],
   title: ["起标题提示词"],
 };
 
+export interface AbilityRow {
+  enabled?: boolean;
+  provider?: string;
+  model?: string;
+  prompt?: string;
+  model_source?: string;
+  segments?: string[];
+}
+
+export interface AbilityPatch {
+  enabled: boolean;
+  provider?: string;
+  model?: string;
+  prompt?: string;
+  model_source?: string;
+  segments?: string[];
+}
+
 // buildAbilitiesPatch：Agent 右详情 → PATCH 整段 abilities（给了就整段替换；nil=不动）。
 // 每能力：checkbox 开关 + provider/model/prompt 三覆盖格（空串=不覆盖）+ 追加段 id 列表
 // （2026-10-28 加：`segments` 与 agent 的 `segments` 同一套 —— 顺序 = 拼接顺序）。
-export function buildAbilitiesPatch(rows) {
-  const out = {};
+export function buildAbilitiesPatch(rows?: Record<string, AbilityRow> | null): Record<string, AbilityPatch> {
+  const out: Record<string, AbilityPatch> = {};
   for (const id of ABILITY_IDS) {
     const r = rows?.[id];
     if (!r) continue;
-    const one = { enabled: !!r.enabled };
-    for (const k of ["provider", "model", "prompt", "model_source"]) {
-      const v = (r[k] ?? "").trim();
-      if (v) one[k] = v;
+    const one: AbilityPatch = { enabled: !!r.enabled };
+    const keys = ["provider", "model", "prompt", "model_source"] as const;
+    for (const k of keys) {
+      const v = String(r[k] ?? "").trim();
+      if (v) (one as unknown as Record<string, unknown>)[k] = v;
     }
     // 段：空清单**不发**（省略 = 没有段，与 `enabled` 之下的空串同理）；
     // 去掉空串并保持顺序 —— 顺序就是语义，别去重排序。
@@ -356,4 +427,3 @@ export function buildAbilitiesPatch(rows) {
   }
   return out;
 }
-

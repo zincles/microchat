@@ -68,12 +68,12 @@ body { margin: 0; background: var(--tg-bg); color: var(--tg-text);
 /* 代码 / 预格式文本单独一条字族（2026-11-04）：自定义等宽字体只影响这里与 pre，不污染正文。 */
 code, pre, kbd, samp { font-family: var(--app-font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace); }
 /* 自定义背景图（界面 tab 设：URL 或上传的图片）：整页 fixed 图层，垫在壳（#app，z-index 1）下面 ——
- * 各面板自己有底色，图只从透明处（消息区）透出来。--mc-bg-image 由 utils/background.js 挂/摘；
+ * 各面板自己有底色，图只从透明处（消息区）透出来。--mc-bg-image 由 utils/background.ts 挂/摘；
  * 没设 = none ⇒ 纯平底（2026-10-10 砍掉 doodle 花纹：机制换成这张背景图的接口，美术不再维护）。 */
 body::before { content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none;
   background-image: var(--mc-bg-image, none);
   background-size: cover; background-position: center; background-repeat: no-repeat; }
-/* 高度跟**视觉视口**走（utils/viewport.js 写 --vvh/--vvt）：键盘弹出时整盒变矮 ⇒ 输入框永远在
+/* 高度跟**视觉视口**走（utils/viewport.ts 写 --vvh/--vvt）：键盘弹出时整盒变矮 ⇒ 输入框永远在
  * 键盘上方；translateY 跟 iOS 的"可视窗上推"；顺带 #app 一带 transform 就收编了所有 fixed 浮层
  * （命令面板/picker/确认框/toast/门板都以它为准 ⇒ 自动钉在键盘上沿）。没有 JS/var 时回落 100dvh→100vh。 */
 #app { display: flex; flex-direction: column; height: 100vh; height: var(--vvh, 100dvh); transform: translateY(var(--vvt, 0px)); gap: 0; padding: 0; box-sizing: border-box; position: relative; z-index: 1; }
@@ -630,7 +630,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 /* 行内环（2026-11-05 用户定）：这条会话此刻有任务在跑。
  * 用边框旋转而不是 SVG —— 尺寸只由字号决定（外框定宽高，不会因为 line-height 变形成椭圆），
  * 深浅主题也不用第二套颜色。与「选项」键并存：环是状态、键是入口，别拿一个替掉另一个。
- * 与顶栏那颗环同一个 `/tasks` 快照、同一处判定（`utils/tasks.js`）。 */
+ * 与顶栏那颗环同一个 `/tasks` 快照、同一处判定（`utils/tasks.ts`）。 */
 .session-item .session-busy {
   flex: none; box-sizing: border-box; width: 0.8em; height: 0.8em; border-radius: 50%;
   border: 2px solid var(--mix-13); border-top-color: var(--accent);
@@ -1304,7 +1304,7 @@ button.toggle.on .knob { left: calc(100% - 1.55em); width: 1.5em; height: 1.5em;
   .pv-content, .pv-extra { animation: none; }
 }
 
-/* ═══ MD3 按下波纹（utils/ripple.js 的事件委托）═══
+/* ═══ MD3 按下波纹（utils/ripple.ts 的事件委托）═══
  * 宿主只加两项：position: relative（给绝对定位的圆做坐标）与 overflow: hidden（裁圆）。
  * 圆本身用 currentColor —— 主按钮上就是 on-primary 的暗波纹、普通按钮上是正文色淡波纹。 */
 .md-ripple-host { position: relative; overflow: hidden; }

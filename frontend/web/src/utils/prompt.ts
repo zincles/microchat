@@ -1,8 +1,13 @@
 // 系统提示词拼装（与后端 `state.AssembleSystemPrompt` **同一规则**，2026-10-11 用户定）：
 // base + 追加段，逐段拼接、段间空行（`\n\n`）；空 base / 空段 / 缺段都跳过。
 // 前端只拿它做**预览** —— 权威在后端（`GET /sessions/{id}/prompt` 回拼装结果）。
-export function assemblePrompt(base, ids, segments) {
-  const parts = [];
+export interface PromptSegment {
+  id: string;
+  text?: string | null;
+}
+
+export function assemblePrompt(base?: string | null, ids?: string[] | null, segments?: PromptSegment[] | null): string {
+  const parts: string[] = [];
   const trimmed = String(base ?? "").trim();
   if (trimmed) parts.push(trimmed);
   for (const id of ids ?? []) {
@@ -24,7 +29,12 @@ export function assemblePrompt(base, ids, segments) {
 //   3. 段按列表顺序追加在 base 后面，段间空行。
 //
 // 前端只拿它做**预览** —— 权威在后端（点「看载荷」看到的是真发的那一发）。
-export function abilityPrompt(base, ids, segments, templateSegmentIDs) {
+export function abilityPrompt(
+  base?: string | null,
+  ids?: string[] | null,
+  segments?: PromptSegment[] | null,
+  templateSegmentIDs?: string[] | null,
+): string {
   const list = ids ?? [];
   const candidates = templateSegmentIDs ?? [];
   let head = String(base ?? "").trim();
@@ -37,7 +47,7 @@ export function abilityPrompt(base, ids, segments, templateSegmentIDs) {
 }
 
 // missingSegments：引用了、但库里没有的段 id（界面标红用；正常路径由后端写入/启动校验挡掉）。
-export function missingSegments(ids, segments) {
+export function missingSegments(ids?: string[] | null, segments?: PromptSegment[] | null): string[] {
   const have = new Set((segments ?? []).map((s) => s.id));
   return (ids ?? []).filter((id) => !have.has(id));
 }

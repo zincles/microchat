@@ -11,9 +11,9 @@ import { ref, computed, watch } from "vue";
 import CompactTree from "./CompactTree.vue";
 import AdvancedCompact from "./AdvancedCompact.vue";
 import ToggleSwitch from "./ToggleSwitch.vue";
-import { treeTotals } from "../utils/tree.js";
-import { parseWireMessages, previewBlock } from "../utils/payload.js";
-import { payloadPreviewOn, savePayloadPreview, payloadVizOn, savePayloadViz } from "../utils/prefs.js";
+import { treeTotals } from "../utils/tree.ts";
+import { parseWireMessages, previewBlock } from "../utils/payload.ts";
+import { payloadPreviewOn, savePayloadPreview, payloadVizOn, savePayloadViz } from "../utils/prefs.ts";
 
 defineProps({
   defaultBlocks: { type: Number, default: null }, // chat.compact_blocks（空输入框的默认，只用于提示）

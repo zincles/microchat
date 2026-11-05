@@ -3,8 +3,8 @@
 // 由左栏条目的「选项」浮板打开，关丢弃（不保存不写）。创建副本 / 导出 / 删除
 // 也都住在那块浮板里（2026-11-04 用户定：面板里只留设置本身）。
 import { ref, onMounted, onUnmounted } from "vue";
-import { sharedApi } from "../utils/prefs.js";
-import { groupModelsByProvider, modelKey, parseModelKey, modelOption, agentOption } from "../utils/format.js";
+import { sharedApi } from "../utils/prefs.ts";
+import { groupModelsByProvider, modelKey, parseModelKey, modelOption, agentOption } from "../utils/format.ts";
 
 const props = defineProps({ sessionId: String });
 const emit = defineEmits(["close", "renamed"]);

@@ -6,11 +6,11 @@
 // ⇒ 一条长滚动拆成页签：基本 / 系统提示词 / 每个能力一页（页签条用 `TabBar`，与设置主栏同一个组件）。
 // 保存一行留在页签**外面**（哪一页都能保存；翻页不丢已填的东西，状态都在 ref 里）。
 import { ref, computed, onMounted, onUnmounted } from "vue";
-import { sharedApi } from "../utils/prefs.js";
-import { ABILITY_IDS, ABILITY_LABELS, ABILITY_TEMPLATE_SEGMENTS, buildAbilitiesPatch, modelKey, parseModelKey, modelLabel } from "../utils/format.js";
-import { assemblePrompt, abilityPrompt } from "../utils/prompt.js";
-import { buildCartridge } from "../utils/cartridge.js";
-import { downloadJSON } from "../utils/download.js";
+import { sharedApi } from "../utils/prefs.ts";
+import { ABILITY_IDS, ABILITY_LABELS, ABILITY_TEMPLATE_SEGMENTS, buildAbilitiesPatch, modelKey, parseModelKey, modelLabel } from "../utils/format.ts";
+import { assemblePrompt, abilityPrompt } from "../utils/prompt.ts";
+import { buildCartridge } from "../utils/cartridge.ts";
+import { downloadJSON } from "../utils/download.ts";
 import ToggleSwitch from "./ToggleSwitch.vue";
 import SegmentList from "./SegmentList.vue";
 import TabBar from "./TabBar.vue";

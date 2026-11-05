@@ -2,7 +2,7 @@
 // 提示词段编辑器（设置 →「提示词」tab 内的二级页，列表 ⇄ 详情就地切换）：
 // id（改名 = 所有 agent 的引用一起搬）/ 正文 / 被谁引用 / 删除（有引用 ⇒ 后端拒，先摘引用）。
 import { ref, onMounted, onUnmounted } from "vue";
-import { sharedApi } from "../utils/prefs.js";
+import { sharedApi } from "../utils/prefs.ts";
 
 const props = defineProps({
   segment: { type: Object, default: null }, // null = 新建

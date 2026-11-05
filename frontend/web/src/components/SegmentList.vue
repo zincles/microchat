@@ -8,7 +8,7 @@
 // 这些都不是功能差异，纯粹是"忘了同步"。所以顺序 / 挑段 / 缺段警告 / 拼装预览
 // **只留这一份实现**：改一处，两处一起变。
 import { computed, ref } from "vue";
-import { missingSegments } from "../utils/prompt.js";
+import { missingSegments } from "../utils/prompt.ts";
 
 const props = defineProps({
   ids: { type: Array, default: () => [] }, // 已挑的段 id（顺序 = 拼接顺序）

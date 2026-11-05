@@ -8,14 +8,15 @@
 // 于是提供了一个额外的好处：**换设备也在**（从前换个浏览器就没了）。
 //
 // 本文件只负责三件事：① 把图压到能上"服务器"的大小；② 上传/删除；③ 把它挂到 CSS 上。
-import { sharedApi, prefsSnapshot } from "./prefs.js";
+import type { Background } from "../api/types.ts";
+import { sharedApi, prefsSnapshot } from "./prefs.ts";
 
 const MAX_EDGE = 1920; // 长边上限（1920px JPEG 一般 300–700KB —— 服务器的上限是 4MB，够）
 const QUALITY = 0.85;
 const KEEP_AS_IS = 400 * 1024; // 本来就小而长边不超限：原样传（保 PNG 透明、GIF 首帧之类）
 
 // currentBackground：当前的背景设置（`{}` = 没设）。
-export function currentBackground() {
+export function currentBackground(): Background | null {
   const bg = prefsSnapshot().background ?? {};
   if (bg.kind !== "url" && bg.kind !== "file") return null;
   return bg;
@@ -25,23 +26,23 @@ export function currentBackground() {
 //
 // `url` 档就是用户填的地址；`file` 档拼到我们自己的端点上，并带 `v=` 破缓存
 // —— 图换了但路径不变，只有版本号能让浏览器重取（见后端 `getBackground` 的 ETag 那段）。
-export function backgroundCssUrl(bg) {
+export function backgroundCssUrl(bg?: Background | null): string {
   if (!bg) return "";
-  if (bg.kind === "url") return bg.value;
+  if (bg.kind === "url") return bg.value ?? "";
   // 只认 file：坏 kind（既不 url 也不 file）当没设 —— 别拼出一个指向不知道哪儿的地址。
   if (bg.kind === "file") return sharedApi().backgroundUrl(bg.version);
   return "";
 }
 
 // 挂/摘图层：值用 JSON.stringify 包成带引号的 CSS 字符串（URL 里的怪字符不至于把声明撕坏）。
-export function applyBackground() {
+export function applyBackground(): void {
   const url = backgroundCssUrl(currentBackground());
   const el = document.documentElement;
   if (url) el.style.setProperty("--mc-bg-image", `url(${JSON.stringify(url)})`);
   else el.style.removeProperty("--mc-bg-image");
 }
 
-export function describeBackground(bg) {
+export function describeBackground(bg?: Background | null): string {
   if (!bg) return "未设置（纯色背景）";
   if (bg.kind === "url") {
     const u = bg.value ?? "";
@@ -55,14 +56,17 @@ export function describeBackground(bg) {
 //
 // 为什么要压：服务器上限 4MB，而手机拍的照片动辄 5–8MB；压过之后一般 300–700KB。
 // 为什么返回 Blob 而不是 data URL：现在它是**要传上去的字节流**，不是要塞进 localStorage 的字符串。
-export async function fileToBlob(file, { maxEdge = MAX_EDGE, quality = QUALITY } = {}) {
-  const direct = await new Promise((ok, no) => {
+export async function fileToBlob(
+  file: File,
+  { maxEdge = MAX_EDGE, quality = QUALITY }: { maxEdge?: number; quality?: number } = {},
+): Promise<{ blob: Blob; width: number; height: number }> {
+  const direct = await new Promise<string>((ok, no) => {
     const r = new FileReader();
-    r.onload = () => ok(r.result);
+    r.onload = () => ok(String(r.result));
     r.onerror = () => no(new Error("读文件失败"));
     r.readAsDataURL(file);
   });
-  const img = await new Promise((ok, no) => {
+  const img = await new Promise<HTMLImageElement>((ok, no) => {
     const i = new Image();
     i.onload = () => ok(i);
     i.onerror = () => no(new Error("这个文件不是浏览器认的图片"));
@@ -80,20 +84,22 @@ export async function fileToBlob(file, { maxEdge = MAX_EDGE, quality = QUALITY }
   const canvas = document.createElement("canvas");
   canvas.width = w;
   canvas.height = h;
-  canvas.getContext("2d").drawImage(img, 0, 0, w, h);
-  const blob = await new Promise((ok, no) => {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("浏览器不支持 canvas 2d");
+  ctx.drawImage(img, 0, 0, w, h);
+  const blob = await new Promise<Blob>((ok, no) => {
     canvas.toBlob((b) => (b ? ok(b) : no(new Error("压缩失败"))), "image/jpeg", quality);
   });
   return { blob, width: w, height: h };
 }
 
 // uploadBackground：压好传上去（后端回登记好的 `Background`；前端随后要**重新同步偏好**才能拿到它）。
-export async function uploadBackground(file) {
+export async function uploadBackground(file: File): Promise<Background> {
   const { blob } = await fileToBlob(file);
   return sharedApi().uploadBackground(blob);
 }
 
 // clearBackground：删掉服务器上那张（`url` 档也走这里 —— 后端只删文件、清元信息）。
-export async function clearBackground() {
+export async function clearBackground(): Promise<null> {
   return sharedApi().deleteBackground();
 }

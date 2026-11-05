@@ -3,22 +3,22 @@
 // 组件直接挂模板，ref 直调实例方法，不再经 *-vue.js 桥 / mount.js。
 import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from "vue";
 import { createApi, mergeStreamSlice, probeHealth } from "./api/client.ts";
-import { parseCommand, filterCommands, COMMAND_META } from "./utils/commands.js";
-import { resetChrome as resetChromeState, stepChrome } from "./utils/chrome.js";
-import { uuidv7 } from "./utils/ids.js";
-import { buildCompactTree } from "./utils/tree.js";
+import { parseCommand, filterCommands, COMMAND_META } from "./utils/commands.ts";
+import { resetChrome as resetChromeState, stepChrome } from "./utils/chrome.ts";
+import { uuidv7 } from "./utils/ids.ts";
+import { buildCompactTree } from "./utils/tree.ts";
 import {
   buildChatRows, computeSegments, windowStart, prevWindowStart, alignWindowFrom, olderCount, runsToFetch, seededMissingRuns,
   rerollTargetLive, bubbleText, editRerollTarget, latestPromptFor,
-} from "./utils/chatrows.js";
-import { applyBackground } from "./utils/background.js";
-import { installViewportFit } from "./utils/viewport.js";
-import { classifyAxis, pickDrag, dragProgress, resolveRelease } from "./utils/swipe.js";
-import { typewriterDuration, revealCount } from "./utils/typewriter.js";
-import { downloadJSON } from "./utils/download.js";
-import { busySessionIds } from "./utils/tasks.js";
-import { rememberWindow, recallWindow, forgetWindow } from "./utils/windowcache.js";
-import { sharedApi, previewOn, payloadPreviewOn, applyTheme, wantsSend, apiBase, apiBaseCandidates, saveNetPrefs, lastSessionId, saveLastSession, commandMenuOn, applyTextScale, applyFonts, chromeHideOn, syncPrefs, saveBarLeftHidden, barLeftHidden } from "./utils/prefs.js";
+} from "./utils/chatrows.ts";
+import { applyBackground } from "./utils/background.ts";
+import { installViewportFit } from "./utils/viewport.ts";
+import { classifyAxis, pickDrag, dragProgress, resolveRelease } from "./utils/swipe.ts";
+import { typewriterDuration, revealCount } from "./utils/typewriter.ts";
+import { downloadJSON } from "./utils/download.ts";
+import { busySessionIds } from "./utils/tasks.ts";
+import { rememberWindow, recallWindow, forgetWindow } from "./utils/windowcache.ts";
+import { sharedApi, previewOn, payloadPreviewOn, applyTheme, wantsSend, apiBase, apiBaseCandidates, saveNetPrefs, lastSessionId, saveLastSession, commandMenuOn, applyTextScale, applyFonts, chromeHideOn, syncPrefs, saveBarLeftHidden, barLeftHidden } from "./utils/prefs.ts";
 import {
   groupModelsByProvider,
   deletionPlanSummary,
@@ -28,7 +28,7 @@ import {
   agentOption,
   whoText,
   sessionTitle,
-} from "./utils/format.js";
+} from "./utils/format.ts";
 import TopBar from "./components/TopBar.vue";
 import SessionBar from "./components/SessionBar.vue";
 import MessageBubble from "./components/MessageBubble.vue";
@@ -42,7 +42,7 @@ import SettingsModal from "./components/SettingsModal.vue";
 import SessionSettings from "./components/SessionSettings.vue";
 import Overlays from "./components/Overlays.vue";
 import UpdateBar from "./components/UpdateBar.vue";
-import { registerPWA, onUpdateReady, startUpdate } from "./utils/pwa.js";
+import { registerPWA, onUpdateReady, startUpdate } from "./utils/pwa.ts";
 
 const api = sharedApi();
 applyTheme();
@@ -156,7 +156,7 @@ const cancelFrame = (id) => {
   if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(id);
   else clearTimeout(id);
 };
-// 消息窗口（分页 + 折叠；口径与全套算法在 utils/chatrows.js）：
+// 消息窗口（分页 + 折叠；口径与全套算法在 utils/chatrows.ts）：
 // 只挂最后 N 段（默认 5，来自 chat.history_window）；更老的按"加载更多"一页一页往回；
 // 被摘要盖住的原文**展开才拉**（这里当缓存）。
 const windowLimit = ref(5);
@@ -410,7 +410,7 @@ function onSummaryToggle(id, open) {
 }
 
 // 压缩树（右栏"压缩"tab）：**看着才拉全量**消息 + 摘要建树 ——
-// 树要的是整条账本（原文占比、嵌套），而消息列走的是窗口（见 utils/chatrows.js）；
+// 树要的是整条账本（原文占比、嵌套），而消息列走的是窗口（见 utils/chatrows.ts）；
 // "树 tab 开着"就是用户显式说"给我看全量"。
 let treeVisible = false;
 let payloadTab = "payload"; // PayloadBar 的默认页；它切页时 onPayloadTab 会更新
@@ -474,7 +474,7 @@ function refreshContextLazy() {
 const lastMsgId = computed(() => [...vueMessages.value].reverse().find((m) => m.messageId)?.messageId ?? null);
 // 最新 AI 回复对应的用户输入（A-B-C-D-E-F ⇒ E）——“编辑最新 Prompt”的入口目标。
 const latestPromptId = computed(() => latestPromptFor(vueMessages.value));
-// 渲染行：气泡（带编号）+ 被顶层摘要折起来的卡（口径见 utils/chatrows.js）。
+// 渲染行：气泡（带编号）+ 被顶层摘要折起来的卡（口径见 utils/chatrows.ts）。
 // 当前 agent 的"首段对话"（`first_message`，2026-10-11 用户定）—— **computed 只看响应式的两格**
 // （vueAgents + sessionInfo.agent_id）。⚠ 别把它写成"先看普通变量 draft 再早退"：早退分支不碰任何
 // 响应式依赖 ⇒ computed 没依赖、缓存住空串**永不重算**（踩过）。
@@ -561,7 +561,7 @@ function clearRerollPreview() { rerollPreview.value = { text: "", reasoning: "" 
 // rerollStarting：**刚点下 ⟳ 的那一刻**（状态还没回来）就记下目标 —— 让那条气泡立刻切成空白 +
 // 「正在输出…」（2026-10-17 用户定：旧正文一直挂到第一帧才换掉很难看）。状态回来后交给 rerollState。
 const rerollStarting = ref(null);
-// 判据都在 utils/chatrows.js（纯函数、契约测试钉着）：这条是不是"正在摇的那条"、该显示什么。
+// 判据都在 utils/chatrows.ts（纯函数、契约测试钉着）：这条是不是"正在摇的那条"、该显示什么。
 // —— 流式打字机（2026-11-03 用户定：「不是每隔 0.5s 全冒出来，而是在这 0.5s 里平滑打出来」）——
 // 轮询每次到一大块（后端 buffer 增量），这里按 typewriterDuration 把它摊到几帧里逐字露出；
 // 下一拍来了就把剩余字符重新计时，永远追着最新目标走。
@@ -1233,7 +1233,7 @@ function closeLeftDrawer() { if (narrowLeft()) applySideToggle("sessions-bar", t
 // 拖到哪儿面板停哪儿（**半开也维持**，不用等松手）；松手按"过半 + 速度"吸附开/关。
 // 方向：左滑出右栏、右滑出左栏；已有一扇开着 ⇒ 先关后开（只认朝它关回去的方向）。
 // 最终仍落在同一个 collapsed 类上（手势 = [◧]/[◨] 的替身，不另造开合状态）。
-// 判定全在 utils/swipe.js（纯函数）；这里只碰 DOM：跟手期间写内联 transform（transition 先掐掉），
+// 判定全在 utils/swipe.ts（纯函数）；这里只碰 DOM：跟手期间写内联 transform（transition 先掐掉），
 // 松手把内联清掉、按结果落类 —— 由 CSS 自己的 200ms 过渡完成吸附动画。
 // 只剩左抽屉（右栏 2026-10-29 搬进上下文工作区）⇒ 不再按 `bar` 分派：
 // 两个 helper 一起收掉，直接写死左栏那两枚 id。
@@ -2070,7 +2070,7 @@ function onComposerKeydown(e, value) {
     overlaysRef.value?.hidePalette();
     overlaysRef.value?.hidePicker();
   } else if (e.key === "Enter") {
-    // 三档判定与 Composer 的提示同源（utils/prefs.js）。
+    // 三档判定与 Composer 的提示同源（utils/prefs.ts）。
     if (wantsSend(e)) {
       e.preventDefault();
       composerRef.value?.submit();
@@ -2162,7 +2162,7 @@ function resetChrome(el) {
   chrome = resetChromeState(el?.scrollTop ?? 0);
   applyChrome();
 }
-// 判据在 utils/chrome.js（纯函数、契约测试钉着）；这里只喂数字 + 写两个 CSS 变量。
+// 判据在 utils/chrome.ts（纯函数、契约测试钉着）；这里只喂数字 + 写两个 CSS 变量。
 function onMessagesScroll() {
   const el = document.querySelector("#messages-vue");
   if (!el) return;
@@ -2233,7 +2233,7 @@ onMounted(() => {
   applySideStates();
   refreshTasks();
   tasksTimer = setInterval(refreshTasks, TASKS_POLL_MS);
-  // 键盘遮挡：整盒跟着视觉视口拟合（见 utils/viewport.js）；键盘一开，如果人正在输入，
+  // 键盘遮挡：整盒跟着视觉视口拟合（见 utils/viewport.ts）；键盘一开，如果人正在输入，
   // 顺手把消息列贴回底部（矮了一截后最新一条不该被挤出视野）。
   uninstallViewportFit = installViewportFit();
   const vv = window.visualViewport;

@@ -10,56 +10,111 @@
 // tokens = **发出去时这份的估算大小**：message ≈ 估算（`ceil(字数/1.3)`，与后端
 // `state.EstimateTokens` 同一把尺；模型级 tokenizer 覆盖估不到，所以标 ≈），
 // summary = 落库的 `tokens`（压缩那一发的产出，本来就是估的）。
-import { splitState } from "./markdown.js";
+import { splitState } from "./markdown.ts";
 
 const RATIO = 1.3; // 与后端 DefaultTokenizerRatio 同值
-const runes = (text) => [...(text ?? "")].length;
+const runes = (text?: string | null): number => [...(text ?? "")].length;
+
+export interface TreeMessage {
+  id: string;
+  idx: number;
+  role: string;
+  content: string;
+  summary_id?: string;
+}
+
+export interface TreeSummary {
+  id: string;
+  parent_summary_id?: string;
+  text: string;
+  blocks?: number;
+  tokens?: number;
+  dirty?: boolean;
+  undoable?: boolean;
+  level?: number;
+  begin_message_id?: string;
+  end_message_id?: string;
+}
+
+export interface TreeNodeBase {
+  id: string;
+  preview: string;
+  rawChars: number;
+  tokens: number;
+  dirty: boolean;
+  used: boolean;
+  children: TreeNode[];
+}
+
+export interface TreeMessageNode extends TreeNodeBase {
+  kind: "message";
+  idx: number;
+  role: string;
+}
+
+export interface TreeSummaryNode extends TreeNodeBase {
+  kind: "summary";
+  undoable: boolean;
+  level: number;
+  fromIdx: number | null;
+  toIdx: number | null;
+  blocks: number;
+}
+
+export type TreeNode = TreeMessageNode | TreeSummaryNode;
+
 // previewOf：每行开头那段"一眼能认出是哪一条"的原文（2026-10-29 用户定：
 // 「条目不是简单的 #3 你，而是 #3 你 XXXXX…（XXXXX 为你原始输入文本的前 n 个字符）」）。
 // 三个讲究，缺一个就没法定位：
 //   ① **先剥 `<state>` 块**：RP 的消息常以状态块开头，不剥的话每一行预览都是 "state …"，
 //      长得一模一样，等于没有。⚠ 复用 markdown.js 的 `splitState`（"什么算状态块"的唯一权威），
-//      不在这儿另写一条正则 —— 两份实现一旦分岔，预览和气泡会对不上，而且没人知道该信谁。
+//      不在这儿另写一条正则 —— 两份实现一旦分岔，预览和气泡就对不上，而且没人知道该信谁。
 //   ② **压平空白**：换行、连续空格全压成一个空格（这是单行预览，不是正文）。
 //   ③ 截断加 `…`：只留开头 PREVIEW_CHARS 个字，再长的交给 CSS 的 ellipsis。
 const PREVIEW_CHARS = 40;
-function previewOf(text) {
+function previewOf(text?: string | null): string {
   const flat = splitState(text).cleaned.replace(/\s+/g, " ").trim();
   if (!flat) return "";
   const chars = [...flat];
   return chars.length > PREVIEW_CHARS ? `${chars.slice(0, PREVIEW_CHARS).join("")}…` : flat;
 }
-const approx = (text) => (runes(text) ? Math.max(1, Math.ceil(runes(text) / RATIO)) : 0);
+const approx = (text?: string | null): number => (runes(text) ? Math.max(1, Math.ceil(runes(text) / RATIO)) : 0);
 
 // buildCompactTree(messages, summaries) → 顶层节点数组（按 idx 顺序的"森林"）。
 // messages 需要 {id, idx, role, content}（idx ≤ 0 的合成项会被丢）；summaries 就是
 // `GET /sessions/{id}/summaries` 的原样 [{id, parent_summary_id, **type**（不是 source_kind ——
 // 那是 DB 列名的历史，接口只发 type）,
 // begin_message_id, end_message_id, blocks, tokens, dirty, …}]。
-export function buildCompactTree(messages, summaries) {
+export function buildCompactTree(
+  messages?: TreeMessage[] | null,
+  summaries?: TreeSummary[] | null,
+): TreeNode[] {
   const msgs = (messages ?? []).filter((m) => m.idx > 0);
-  const pos = new Map(msgs.map((m, i) => [m.id, i])); // message id → 数组下标
+  const pos = new Map<string, number>(msgs.map((m, i) => [m.id, i])); // message id → 数组下标
   const all = summaries ?? [];
-  const byId = new Map(all.map((s) => [s.id, s]));
-  const span = (s) => {
+  const byId = new Map<string, TreeSummary>(all.map((s) => [s.id, s]));
+  const span = (s?: TreeSummary | null): [number, number] | null => {
     if (!s) return null;
-    const b = pos.get(s.begin_message_id);
-    const e = pos.get(s.end_message_id);
+    const begin = s.begin_message_id;
+    const end = s.end_message_id;
+    if (!begin || !end) return null;
+    const b = pos.get(begin);
+    const e = pos.get(end);
     if (b === undefined || e === undefined || e < b) return null;
     return [b, e];
   };
-  const kidsOf = new Map();
+  const kidsOf = new Map<string, TreeSummary[]>();
   for (const s of all) {
     if (s.parent_summary_id && byId.has(s.parent_summary_id)) {
       if (!kidsOf.has(s.parent_summary_id)) kidsOf.set(s.parent_summary_id, []);
-      kidsOf.get(s.parent_summary_id).push(s);
+      kidsOf.get(s.parent_summary_id)!.push(s);
     }
   }
 
   // used：装配时真正"跳"到的那些摘要 —— **逐字复刻 state.walk**：走到的位置若左端对齐就升到
   // 最粗同左端祖先、跳到它的右端之后（跳过的消息不再回看 —— 别对每条消息独立判断，那会把
   // 已被上层吞掉的孩子（s2）也标成"发它"）。
-  const used = new Set();
+  const used = new Set<string>();
   for (let i = 0; i < msgs.length; ) {
     const m = msgs[i];
     const s0 = m.summary_id ? byId.get(m.summary_id) : null;
@@ -80,18 +135,18 @@ export function buildCompactTree(messages, summaries) {
     i++;
   }
 
-  const msgNode = (m) => ({
+  const msgNode = (m: TreeMessage): TreeMessageNode => ({
     kind: "message", id: m.id, idx: m.idx, role: m.role,
     preview: previewOf(m.content),
     rawChars: runes(m.content), tokens: approx(m.content),
     dirty: false, used: false, children: [],
   });
-  const sumNode = (s) => {
+  const sumNode = (s: TreeSummary): TreeSummaryNode => {
     const sp = span(s);
     const ordered = (kidsOf.get(s.id) ?? [])
       .slice()
       .sort((a, b) => ((span(a) ?? [0])[0]) - ((span(b) ?? [0])[0]));
-    const kids = [];
+    const kids: TreeNode[] = [];
     if (ordered.length) {
       for (const c of ordered) kids.push(sumNode(c));
     } else if (sp) {
@@ -114,7 +169,7 @@ export function buildCompactTree(messages, summaries) {
     };
   };
 
-  const roots = [];
+  const roots: TreeNode[] = [];
   let i = 0;
   while (i < msgs.length) {
     const m = msgs[i];
@@ -122,7 +177,7 @@ export function buildCompactTree(messages, summaries) {
     const heads = all.filter((s) => s.begin_message_id === m.id && (!s.parent_summary_id || !byId.has(s.parent_summary_id)));
     if (heads.length) {
       let end = i;
-      for (const s of heads) end = Math.max(end, (span(s) ?? [i])[1]);
+      for (const s of heads) end = Math.max(end, span(s)?.[1] ?? i);
       for (const s of heads) roots.push(sumNode(s));
       i = end + 1;
       continue;
@@ -136,7 +191,7 @@ export function buildCompactTree(messages, summaries) {
 // treeTotals：树顶那行小账（原文多少字 / 发出去大约多少 tok）。
 // **只数顶层**：每行的 rawChars 是"子树和"，从上往下加起来会把同一段原文数好几遍；
 // 顶层节点本身就是对全部消息的一个划分。sent 同理（压过的部分发的是摘要那份，不再发原文）。
-export function treeTotals(nodes) {
+export function treeTotals(nodes?: TreeNode[] | null): { rawChars: number; sent: number } {
   let rawChars = 0;
   let sent = 0;
   for (const n of nodes ?? []) {

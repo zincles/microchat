@@ -11,7 +11,7 @@
 npm ci            # 从锁文件重装（node_modules 永不入库）
 npm run dev       # vite :5173（/api 由 vite 代理到后端 —— 地址读后端自己的配置，见下）
 npm test          # tsx + node 原生 test runner：纯函数与请求形状的契约测试
-npm run typecheck # vue-tsc --noEmit（当前只检查 .ts；api/ 已迁 TS）
+npm run typecheck # vue-tsc --noEmit（当前只检查 .ts；api/ 与 utils/ 已迁 TS）
 npm run build     # 产出 dist/（不入库，部署时现打）
 ```
 
@@ -27,8 +27,8 @@ Docker 部署（单容器、只公开 8788）见根目录 `docker-compose.yml`�
 
 `vue@3.5`（框架）+ `marked`（markdown 渲染：`**粗**`/`*斜*`/`__下划线__`→`<u>`/行内码/`~~删~~`/引述块）+ `katex`（数学）；构建用 `vite` + `@vitejs/plugin-vue`。
 运行时没有自造传输层（`fetch` 直调）。**加依赖先问**；`node_modules/`、`dist/` 永不进库。
-开发依赖另有 `typescript` / `vue-tsc` / `tsx`：`api/` 已先迁 TS（`client.ts` + `types.ts`），
-其余仍是 JS；`tsconfig` 的 `allowJs`/`checkJs:false` 是分阶段迁移的闸，别急着一次全改。
+开发依赖另有 `typescript` / `vue-tsc` / `tsx`：`api/` 与 `utils/` 已迁 TS（`client.ts` + `types.ts`），
+其余 `.vue` 仍是 JS；`tsconfig` 的 `allowJs`/`checkJs:false` 是分阶段迁移的闸，别急着一次全改。
 
 ## 现在能干什么
 
@@ -39,7 +39,7 @@ Docker 部署（单容器、只公开 8788）见根目录 `docker-compose.yml`�
 - **登录 / 初始化**：第一次打开是「初始化 root」（uid 0 是建库种子，setup 只给它设口令、**只开一次** —— 不是注册制），之后是登录（JWT 存 `mc_token`，全请求带 `Authorization: Bearer`）；登出在用户视图
 - **用户视图**（与设置平级，左栏底 `👤 用户`，人人可进）：身份（名字 · 管理员 · 退出登录）+ **改口令（自己）**（改完当场重登换票）+（**admin 才有**的）**用户管理**：列表 / 加人 / 行内改名、改口令 / 删人（两步确认："会话转给 root / 连会话一起删"）+ 个人偏好 —— 主题七套（默认 `deepseek`，色值实测对齐 chat.deepseek.com）· **背景图**（URL 或上传，本地存；没设 = 纯平底）· 发送键 · 输入预演
 - **滑动面板**（触屏**跟手**）：左滑出右栏、右滑出左栏，半开维持、松手吸附；先关后开
-- **滚动隐藏上下栏**（触屏默认开，用户视图 → 外观 可关）：往下看顶栏按位移逐步收起、往回看底栏逐步收起，与位移成正比、一次只藏一边，到顶立刻全放回（浏览器那股味；判据在 `utils/chrome.js`）
+- **滚动隐藏上下栏**（触屏默认开，用户视图 → 外观 可关）：往下看顶栏按位移逐步收起、往回看底栏逐步收起，与位移成正比、一次只藏一边，到顶立刻全放回（浏览器那股味；判据在 `utils/chrome.ts`）
 - **移动端键盘不遮输入框**：visualViewport 拟合应用盒（浮层随键盘抬、命令面板限高不顶出小视口）
 - **PWA（可"安装为应用"）**：`vite-plugin-pwa`（v2）。**只在 build/preview 开 SW**（dev 不开——免得开发时吃到旧缓存）。SW **只预缓存壳**（HTML/JS/CSS/图标/字体）：离线打开能进"连接门板"；`/api` 一概不碰（数据必须现取 —— 现在 `/api` 走 vite 代理、与页面同源，SW 是**够得着**它的，所以这条不是"管不着"而是**刻意不接**：不许写 runtimeCaching）。**安装的前提在来源：HTTPS 或 localhost** —— 局域网 `http://<IP>:8788` 装不了（不是安全上下文，连 SW 都不会注册）；云端形态（反代终结 TLS，如 Cloudflare）天然满足。图标 `public/pwa-192.png` / `pwa-512.png` / `pwa-maskable-512.png` / `apple-touch-icon.png`（由 `favicon.svg` 栅格化）。桌面/安卓 Chrome：地址栏装或菜单"安装应用"；iOS 16.4+：分享菜单"添加到主屏幕"。**更新由用户点**（2026-10-20 起）：检测到新版本 ⇒ 顶上弹一条**不自动消失**的更新条（`components/UpdateBar.vue`）⇒ 点「刷新」才切过去。**别再用"再刷一次就是新的"来理解它** —— 从前是 `autoUpdate`，它**静默**自己 reload 且从不告诉你"此刻看的是旧的"（2026-10-20 因此对着一个"文件是新的、界面却是旧的"白排查一轮，最后靠清站点数据才揭穿是 SW 缓存的旧壳）
 - **连接门板**：进前端第一眼 —— 探通后端后它只用来**初始化 root / 登录**；探不通才是全屏"连接"面板（探针候选：**同源 `/api/v1` 优先**，其次跟页面同主机的 `<该主机>:8787`；裸地址自动补 `http://` 与 `/api/v1`；探通即存偏好刷新进聊天）。**地址栏只在探不通时出现**（2026-10-14）：同源部署（vite 代理/单容器）里登录界面不会让你填后端地址；中途连接又断了，地址栏会自动放回来
@@ -47,6 +47,6 @@ Docker 部署（单容器、只公开 8788）见根目录 `docker-compose.yml`�
 - **两种显示模式**（**用户视图 → 外观**；2026-10-17 定名）：`正常模式`（默认，`float` —— 圆角浮空输入框、状态小字在它上方）⇄ `紧凑模式`（`solid` —— 输入框占满整行、方角贴底，状态/任务两行收进栏里，省地方）。载体是根节点的 `data-composer` 属性，保存后**即时生效**；默认不挂属性 ⇒ 老界面一个像素都不变
 - **状态行数字是人话格式**（`formatTokens`：9.8K / 995K / 1.04M，向下取整）；分母是**输入预算**
   （上下文 − 输出预留）而不是模型上下文 —— 悬停有算式、设置 → 聊天里有一句同样的说明
-- **共享层**：`utils/prefs.js`（界面偏好 + `sharedApi()` + 发送键判定/主题应用，含 TG 守卫）· `api/client.ts` 的 `mergeStreamSlice`（流式合并唯一规则）· 错误带 `code`/`status`（按 code 分支）· `format.js` 的 modelKey/modelLabel/whoText/sessionTitle（键与标签唯一出口）
+- **共享层**：`utils/prefs.ts`（界面偏好 + `sharedApi()` + 发送键判定/主题应用，含 TG 守卫）· `api/client.ts` 的 `mergeStreamSlice`（流式合并唯一规则）· 错误带 `code`/`status`（按 code 分支）· `format.ts` 的 modelKey/modelLabel/whoText/sessionTitle（键与标签唯一出口）
 
 口径、路由表与"为什么这么设计"全在根目录 `AGENTS.md`。

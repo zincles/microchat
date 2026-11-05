@@ -3,8 +3,8 @@
 // isNew（boolean）：无 provider 快照=新建（空表单）；有=编辑（带入 provider，只发改过的格；key 另填=换，不填=不动）。
 // 内置刷新模型列表 + 刷路由（编辑时直接点，不用退回一级）。
 import { ref, computed, onMounted, onUnmounted } from "vue";
-import { sharedApi } from "../utils/prefs.js";
-import { formatTokens, providerIdForNextVendor } from "../utils/format.js";
+import { sharedApi } from "../utils/prefs.ts";
+import { formatTokens, providerIdForNextVendor } from "../utils/format.ts";
 
 const props = defineProps({ provider: { type: Object, default: null } });
 const emit = defineEmits(["close", "saved"]);

@@ -15,8 +15,18 @@ export const WINDOW_CACHE_MAX = 8;
 // 也不要把几 MB 正文挂在内存里，更不能只存后半段 —— 那会让窗口起点与实际内容对不上）。
 export const WINDOW_CACHE_ROWS_MAX = 400;
 
+export interface WindowSnapshot<Row = unknown, Segment = unknown> {
+  rows: Row[];
+  segments: Segment[];
+  windowFrom: number;
+}
+
 // rememberWindow：记下一条会话的窗口快照（覆盖旧快照并排到最新）。
-export function rememberWindow(cache, id, snapshot) {
+export function rememberWindow<Row, Segment>(
+  cache: Map<string, WindowSnapshot<Row, Segment>> | null | undefined,
+  id: string | null | undefined,
+  snapshot: WindowSnapshot<Row, Segment> | null | undefined,
+): void {
   if (!cache || !id || !snapshot) return;
   const rows = Array.isArray(snapshot.rows) ? snapshot.rows : [];
   cache.delete(id);
@@ -28,17 +38,21 @@ export function rememberWindow(cache, id, snapshot) {
   });
   while (cache.size > WINDOW_CACHE_MAX) {
     const oldest = cache.keys().next().value;
+    if (oldest === undefined) break;
     cache.delete(oldest);
   }
 }
 
 // recallWindow：取一条会话的窗口快照；没有 ⇒ null。命中会把它排到最新（LRU 触碰）。
 // 返回的是**副本**（rows 再拷一层）—— 调用方拿它当当前消息列用，怎么改都不脏缓存。
-export function recallWindow(cache, id) {
-  const cached = cache?.get?.(id);
+export function recallWindow<Row, Segment>(
+  cache: Map<string, WindowSnapshot<Row, Segment>> | null | undefined,
+  id: string,
+): WindowSnapshot<Row, Segment> | null {
+  const cached = cache?.get(id);
   if (!cached) return null;
-  cache.delete(id);
-  cache.set(id, cached);
+  cache!.delete(id);
+  cache!.set(id, cached);
   return {
     rows: cached.rows.slice(),
     segments: cached.segments.slice(),
@@ -47,6 +61,9 @@ export function recallWindow(cache, id) {
 }
 
 // forgetWindow：会话删了就把它那一份丢掉（否则会占着 LRU 名额，直到被挤出去）。
-export function forgetWindow(cache, id) {
+export function forgetWindow<Row, Segment>(
+  cache: Map<string, WindowSnapshot<Row, Segment>> | null | undefined,
+  id?: string,
+): void {
   if (cache && id) cache.delete(id);
 }

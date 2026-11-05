@@ -290,7 +290,7 @@ delete(AA)           # 删除
   表把它们摆进下拉，那是递给人一个按下去必炸的选项。
   **新建渠道的流程**（2026-10-28）：先问「服务商」再问「渠道标识」（标识会跟着服务商变，先填等于白填）——
   换 vendor 时 id 跟着变，**但只在 id 还是自动填的那个时才动**（手填过就不抢方向盘，判据是纯函数
-  `providerIdForNextVendor`，住 `frontend/web/src/utils/format.js`）；vendor 下拉按后端的 `primary` 分成
+  `providerIdForNextVendor`，住 `frontend/web/src/utils/format.ts`）；vendor 下拉按后端的 `primary` 分成
   「常见」/「其它预设」两组；端点那一格留空时会把**真会打到的地址**显示出来（"空"不等于"没有端点"）。
   渠道上的 **`max_concurrency`**（2026-11-05）：同一 provider id 的全局信号量，0 = 不限；
   所有真网络 `Chat` / `Complete` 都过它（dummy/本地假上游不占槽）。高级压缩的 `concurrency`
@@ -368,8 +368,8 @@ delete(AA)           # 删除
   ③ 段按列表顺序追加在 base 后（走 `state.JoinPrompt`，与 agent 提示词同一条规则）。`prompt_version` 从**拼完的**模板算。
   ⚠ 只挑普通段、两条模板都没碰 ⇒ **照旧垫默认**（否则"我加了一条风格段，流程说明却没了"）。
   ⚠ 从前 `title` 用的是裸 `abilities.Template`（**不拼段**）⇒ 编辑器让你给 title 挑段、后端一个字都不读（静默无效）；已修。
-  ⚠ 这条规则前端有一份镜像（`utils/prompt.js` 的 `abilityPrompt`，模板 id 表是
-  `utils/format.js` 的 `ABILITY_TEMPLATE_SEGMENTS`，同样是"第一条 = 默认"）只做预览；这些 id 由契约测试
+  ⚠ 这条规则前端有一份镜像（`utils/prompt.ts` 的 `abilityPrompt`，模板 id 表是
+  `utils/format.ts` 的 `ABILITY_TEMPLATE_SEGMENTS`，同样是"第一条 = 默认"）只做预览；这些 id 由契约测试
   对着 `core/internal/config/config.go` 的常量和内置段清单核 —— 写错不报错、只会让预览少一段
   （清单里挂着一条库里没有的 id 更糟：挑它时后端默默跳过，界面照挑不误）。
   `prepend_state`（agent 上的开关，缺省关）= 把当前状态渲染成 `<current_state>` 贴到
@@ -447,7 +447,7 @@ delete(AA)           # 删除
 ⚠ 撤销会让**装配变长**（那段回到原文）⇒ 前端三处都要重算：消息列、状态视图、上下文档（契约测试钉着）。
 **压缩树的每行带一段原文预览**（2026-10-29 用户定：「条目不是简单的 `#3 你`，而是
 `#3 你 XXXXX…`（原始输入文本的前 n 个字符）」，摘要块同理）。否则翻十条全是"#3 你"，
-根本定位不到是哪一条。`utils/tree.js` 的 `previewOf` 三个讲究，缺一个就没法定位：
+根本定位不到是哪一条。`utils/tree.ts` 的 `previewOf` 三个讲究，缺一个就没法定位：
 ① **先剥 `<state>` 块**（RP 消息常以状态块开头，不剥则每行都是 "state …"）；
 ⚠ 复用 `markdown.js` 的 `splitState` 这个唯一权威，**不许**在 tree.js 里另写一条正则
 （两份一分岔，预览和气泡就对不上，而且没人知道该信谁 —— 契约测试钉着）；
@@ -561,7 +561,7 @@ Markdown 解析的非 <div> HTML 块，我们为每个类型都加个开关。�
 总开关关掉 ⇒ 整条消息一个字都不解析（但**换行留着** —— `.msg .text` 没有 `white-space: pre-wrap`，
 不留换行就挤成一坨）。
 
-实现（`utils/markdown.js`）：**每次渲染建一个 `new Marked()` 实例**，只给"关掉的那几类"挂
+实现（`utils/markdown.ts`）：**每次渲染建一个 `new Marked()` 实例**，只给"关掉的那几类"挂
 渲染器覆盖（覆盖体 = 把 `token.raw` 转义后原样吐出）；开着的类型一个都不覆盖 ⇒ 走 marked 自己的
 默认渲染。这样既不重写渲染器（那必然与上游行为分岔），也不必手搓解析。
 ⚠ 三处踩过的坑，都写了测试钉着：
@@ -780,7 +780,7 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 - 给前端的是**游标读**（`?from=N&think_from=M`，正文与思考各一条）：多个客户端与断线重连各拿各的，互不偷；`done` 表示这轮结束，结束后仍可补拉尾巴。
 - **前端打字机**（2026-11-03 用户定：「后端一块一块到，前端要在 0.5s 里平滑打出来」）：轮询到的整块不直接上屏。
   `vueStream` 仍是后端的完整目标，`streamDisplay` 是打字机当前露出的前缀；每拍 `setStreamTarget` 把新字符按
-  `utils/typewriter.js` 的节奏摊开（`typewriterDuration(gapMs)`：用**上一包到这一包的实测间隔**当这一拍的时长，内容/间隔决定速度；第一包无上一包 ⇒ 默认 300ms，下限 80ms、上限 1200ms；`revealCount` 线性推进）。rAF 每帧推进，但**限到 ~30fps**（每帧重排 markdown 会吃满 CPU；30 与 60 肉眼无差）。
+  `utils/typewriter.ts` 的节奏摊开（`typewriterDuration(gapMs)`：用**上一包到这一包的实测间隔**当这一拍的时长，内容/间隔决定速度；第一包无上一包 ⇒ 默认 300ms，下限 80ms、上限 1200ms；`revealCount` 线性推进）。rAF 每帧推进，但**限到 ~30fps**（每帧重排 markdown 会吃满 CPU；30 与 60 肉眼无差）。
   一轮收尾 `await waitTypewriter()` 再 `reloadWindow`（rAF 在后台被冻住时超时 flush，不无限等）。
   ⚠ 正文与思考各走各的前缀；`bubbleReasoning` **不许回落到 `m.reasoning`** —— 那会让思考整块瞬间冒出。
   重摇候选流也走这套（`pollReroll` 把候选增量 `setStreamTarget`；气泡 live 读 `streamDisplay`，切版前 `waitTypewriter`）—— 两条流共用同一个打字机（同一时刻只可能有一条在跑）。
@@ -845,7 +845,7 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
   **导入合并规则**：系统里已有同 id 的段（用户段或内置）⇒ **丢弃卡带那份**（用本地的——id 即认同，
   同 id 不同文本时也以本地为准）；没有 ⇒ 建它并打上 **`imported: true`**（来源标记，界面显示「导入」徽标；
   记的是"从哪来"，编辑不清标）。v1 老卡带（提示词已拼平、无 segments 数组）照样能导。
-  **不另开路由**：拼/拆在客户端（`utils/cartridge.js`），落库用现有 `POST /segments` + `POST /agents` ✓。
+  **不另开路由**：拼/拆在客户端（`utils/cartridge.ts`），落库用现有 `POST /segments` + `POST /agents` ✓。
 - **占位符**（`{{…}}`）：白名单 = 枚举（`{{system_time}}` / `{{state_before}}` / `{{state_after}}` / `{{range}}` / `{{blocks}}`）；**不认识的 `{{foo}}` 原样留着**；**只扫一遍**（替换进去的值不再当模板扫）；**会话 Agent 的提示词永不替换**（它一变，前缀缓存每轮全废）。（`template` 模块本身还没建 ✗。）
 
 ## 数据模型
@@ -910,7 +910,7 @@ DeepSeek / OpenCode GO 直连**确实不报**，所以那一格在那儿永远�
 **成本还有一道渠道能力闸**（2026-11-02 用户报的 bug）：`presets[].supportsCost` 只有 OpenRouter 为真；
 不支持的渠道即使上游回了 `cost: 0`，也由 `Provider.costAwareUsage` 在**归一化之后、返回之前**摘掉 `cost_usd`
 （不是显示成 `$0`，是整格不出现）。从前只看"有没有这一格"，于是不支持费用的渠道回个 0 就会被画成 $0。
-气泡脚注 = `utils/format.js` 的 `usageFoot`（token + 成本；契约测试钉着）。
+气泡脚注 = `utils/format.ts` 的 `usageFoot`（token + 成本；契约测试钉着）。
 ⚠ **别拿 `top_provider.max_completion_tokens` 当输出预留**（2026-10-20 踩过并回退）：OpenRouter 的
 `max_completion_tokens` 是"这个模型**最多能吐多长**"（deepseek-v4.1-flash 是 943718），
 而 `chat.ContextUsage` 要的是"**给回复留多少额度**"（Pi 的 `reserveTokens`，缺省 16384）——
@@ -991,7 +991,7 @@ DeepSeek / OpenCode GO 直连**确实不报**，所以那一格在那儿永远�
 - **当前会话认 `id`、不认位置** ✗：`GET /sessions` 按 `updated_at` 排，发一句话就会重排 —— 存下标必然指到别人身上。
 - **不可逆的删除先摊开、等人点头**：消息级删除必须先看删除预览（`GET .../deletion-preview`）并让用户确认，再带 `last_deleted_message_id` 发 DELETE；删整条会话同理。
 - **旧数据认会话**：context / reroll / prompt 各记自己属于哪条会话，对不上就不许拿来画（换会话时旧的那份还留着）。
-- **状态行的两个数是「人话格式」**（2026-10-17 用户点名）：`formatTokens`（`format.js`，唯一出口）——
+- **状态行的两个数是「人话格式」**（2026-10-17 用户点名）：`formatTokens`（`format.ts`，唯一出口）——
   `9857 ⇒ 9.8K`、`995904 ⇒ 995K`、`1048576 ⇒ 1.04M`，**一律向下取整**（这两个数里有一个是「我用了多少」，
   向上取整会把用量说大；把 995904 写成 996K 还会让人以为分母真是 996K）。状态行**分母 = 输入预算**
   （`ctx_len − max_output`，**不是**模型上下文）—— 悬停给算式（`statusLineTitle`），移动端没有 hover ⇒
@@ -1008,16 +1008,16 @@ DeepSeek / OpenCode GO 直连**确实不报**，所以那一格在那儿永远�
 
 - 布局：左会话栏（**2026-11-06 起 Gemini 式**：顶部 **Brand Title「MicroChat」+ 星芒标**，
   其下「＋开启新对话」，再下面才是「对话 / 生图」两个 tab（生图暂未接 API，切过去只改选中态）；
-  原「 tabs 在顶、没有品牌」的口径已反转；高亮当前；列表按**今天 / 昨天 / 一周内 / 一月内 / 更久**五组（2026-11-04 用户定；`utils/sessionGroups.js` 纯函数，本地日历日边界）；每行**只有一枚「选项」浮板**（会话设置 / 创建副本 / 导出 JSON / 删除会话，2026-11-04 用户定）；标题字号 0.92em、行 padding 0.32em（用户定：再小一点、再紧凑一点））｜`#content` = **对话与设置同级**（2026-10-10，OpenWebUI 式）—— 对话（顶栏（2026-10-14 用户定，**去壳版**）= **透明底**（无外框线；小字压背景图用双层柔影 + 提亮一档的 hint 色）+ 左上角 = **圆头像（当前 Agent，点开选人；名字首字 + id 派生色，2026-10-14 用户定）+ 当前模型平铺字**（点开是按渠道分组的浮板，见下面「模型选择器」那条）+ 两侧开关（**只有某侧栏收着时才出现**：左在左端、右吃 margin-left:auto 贴右端；栏开着时开关在栏自己头上 —— 左栏头右端、右栏 tabs 行**左端**（各指向自己缩回去的方向，2026-10-14 用户定））；**会话抬头不在顶栏**（左栏列表高亮 + 状态行都有它）、**Agent 的"选"就在那头像上**（切换 = 点头像掉浮板；"显示"在状态行小字里）—— 消息列 + 输入行（**滚动容器占满整个对话区**（滚动条贴最右缘，2026-10-14 用户定）—— 阅读列约束（`--read-col`，**920**，2026-10-15 从 760 放宽；输入行共用同一个变量）落在里面的 `.messages-inner`，气泡不拉长）；**顶栏与输入行都是悬浮层**（2026-10-14 用户定：盖在消息列上、消息从底下滑过，不再与它分地盘 —— 顶栏**不透明**（2026-11-01 用户定：「然后顶栏是不透明的比较好吧」—— 从前是 `background: none`，消息滚到栏底下能透出来，读顶栏那行字是隔着文字读的；现在用页面底色 `var(--tg-bg)` 铺满，**但栏上没有边框、没有分隔线**：要的是「挡住」，不是把栏画成一个盒子；
+  原「 tabs 在顶、没有品牌」的口径已反转；高亮当前；列表按**今天 / 昨天 / 一周内 / 一月内 / 更久**五组（2026-11-04 用户定；`utils/sessionGroups.ts` 纯函数，本地日历日边界）；每行**只有一枚「选项」浮板**（会话设置 / 创建副本 / 导出 JSON / 删除会话，2026-11-04 用户定）；标题字号 0.92em、行 padding 0.32em（用户定：再小一点、再紧凑一点））｜`#content` = **对话与设置同级**（2026-10-10，OpenWebUI 式）—— 对话（顶栏（2026-10-14 用户定，**去壳版**）= **透明底**（无外框线；小字压背景图用双层柔影 + 提亮一档的 hint 色）+ 左上角 = **圆头像（当前 Agent，点开选人；名字首字 + id 派生色，2026-10-14 用户定）+ 当前模型平铺字**（点开是按渠道分组的浮板，见下面「模型选择器」那条）+ 两侧开关（**只有某侧栏收着时才出现**：左在左端、右吃 margin-left:auto 贴右端；栏开着时开关在栏自己头上 —— 左栏头右端、右栏 tabs 行**左端**（各指向自己缩回去的方向，2026-10-14 用户定））；**会话抬头不在顶栏**（左栏列表高亮 + 状态行都有它）、**Agent 的"选"就在那头像上**（切换 = 点头像掉浮板；"显示"在状态行小字里）—— 消息列 + 输入行（**滚动容器占满整个对话区**（滚动条贴最右缘，2026-10-14 用户定）—— 阅读列约束（`--read-col`，**920**，2026-10-15 从 760 放宽；输入行共用同一个变量）落在里面的 `.messages-inner`，气泡不拉长）；**顶栏与输入行都是悬浮层**（2026-10-14 用户定：盖在消息列上、消息从底下滑过，不再与它分地盘 —— 顶栏**不透明**（2026-11-01 用户定：「然后顶栏是不透明的比较好吧」—— 从前是 `background: none`，消息滚到栏底下能透出来，读顶栏那行字是隔着文字读的；现在用页面底色 `var(--tg-bg)` 铺满，**但栏上没有边框、没有分隔线**：要的是「挡住」，不是把栏画成一个盒子；
 再补一道**向下阴影**（2026-11-01 用户定：「顶部栏有阴影」—— `--shadow-top`）：不透明之后那条边是齐刷刷一刀切，
 像正文被裁掉了，影子才读成「栏在内容上面」⇒ 阴影在这儿**替边框干活**，所以仍然不描线。
 ⚠ 阴影的几何别照抄侧栏那道：`-6px` 的负扩散会把渐变大半缩到栏背后，露出只剩一截（读起来是脏边）；现在是
 offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#131313`，黑影在近黑底上本来就淡 ⇒ 浓度取到 34% 那档的上限。2026-10-14 那版是「全透明 + 双层柔影」，试过 mask 渐隐的毛玻璃，撤了），输入行自己就是浮卡；消息列底部留白 = `--composer-h`（输入行实测高，`composerRO` 现量现写，textarea 长高不脱节）。⚠ CSS 里 `#chat-col > *:not(header)`（1-0-1）会压过 `#composer`（1-0-0）的 position —— 那条共享规则**别写 position/z-index**，踩过）与**设置视图**互斥切换；右载荷栏（**tabs 常驻顶部，三个面板各自滚动**（2026-10-17 用户定/修）；三 tab：真请求直放（裸 JSON ⇄ **分块视图**——把 `body.messages` 一块块画成卡片，开关记忆在 `mc_payload_viz`；**整行可点开合、>500 字的块默认折叠**（system prompt 那种巨块不撑爆面板；折叠态给单行预览）；展开不设嵌套滚动——面板整体滚，触摸纵向手势按轴锁归浏览器（2026-10-11）/ 世界状态 / **压缩树**）随对话一起让位。**设置不再弹窗**：占满左栏右侧整块、顶部是**一行式工具栏** `[◧][五区 tabs][×]`（不设"顶部卡"、无标题；Esc 返回）。**窄屏（断点即身份，2026-10-10）**：≤1100 右载荷栏、≤700 左会话栏改**覆盖式抽屉**（`collapsed` = 关着；[◧][◨] 调出/收起 + 遮罩点击收起 + 选中会话/开新对话自动收）；窄屏**不读不写**桌面偏好（`mc_bar_*_hidden`），跨断点时两侧统一先关（不然会"啪"地盖上来）。遮罩的显隐由 CSS 兄弟选择器跟栏的类联动，不用 JS 状态。
 - 接线全在 `src/App.vue`（SFC 直接挂模板）；`src/api/client.ts` 只调 `/api/v1`；`src/utils/` 放纯函数（contract 测试钉住请求形状）。
-- **TypeScript 迁移（2026-11-06 起，分阶段）**：`api/` 已迁（`client.ts` + `types.ts`，响应/请求形状的唯一类型处），
-  其余 `utils/` 与 `.vue` 仍是 JS。`tsconfig.json` 用 `allowJs: true` + `checkJs: false`，当前只检查 `.ts`/`.d.ts`；
+- **TypeScript 迁移（2026-11-06 起，分阶段）**：`api/`（`client.ts` + `types.ts`）与 `utils/`（21 个纯函数/工具）
+  已迁 TS；其余 `.vue` 仍是 JS。`tsconfig.json` 用 `allowJs: true` + `checkJs: false`，当前只检查 `.ts`/`.d.ts`；
   `npm run typecheck`（`vue-tsc --noEmit`）必须绿。`npm test` 走 `tsx`（Node 不能直接 import `.ts`）。
-  后续阶段：utils 纯函数 → 叶子组件（`defineProps<T>()` / `defineEmits<T>()`）→ 重组件 + `App.vue` 拆 composables。
+  后续阶段：叶子组件（`defineProps<T>()` / `defineEmits<T>()`）→ 重组件 + `App.vue` 拆 composables。
   迁移期别把 TS 与视觉/行为改版混在一个提交里。
 - **门板/登录的视觉**（2026-10-14 用户定"更好看"）：玻璃卡（`backdrop-filter`）+ 品牌头（**内联 SVG** 标 —— 无外部资源，离线 SW 照旧）+ 主题色光晕 + 入场动画（尊重 `prefers-reduced-motion`）；**底自己铺 `--mc-bg-image`**（就是用户背景图那枚变量）+ 一层跟主题走的面纱 —— 门板在 `#app` 里、够不着 `body::before` 的图层，想要"透出背景图"**别用透明**（会把聊天壳一起透出来，实测截图里左栏顶栏全露馅）。
 - **连接门板**（2026-10-10 加）：启动自检探不通后端（新设备第一次打开/地址没填对）⇒ 不开破界面，先给全屏"连接到 microchat 后端"面板：填地址（裸写 `192.168.0.110:8787` 也行 —— `normalizeApiBase` 自动补 `http://` 与 `/api/v1`）→ 过 ⇒ `saveNetPrefs` 存 **JWT** + **刷新页面**进聊天（沿用"改完刷新生效"）。**地址栏只在"探不通"时出现**（2026-10-14 用户定）：探通 ⇒ 收起，登录界面只有用户名/口令（单容器部署里浏览器永远同源，不该再问地址）；中途又断了 ⇒ 地址栏自动放回来。**2026-10-10 多用户改造**：启动自检探开放口 `/auth/status`——探不通 ⇒ 门板带原因；`needs_setup:true` ⇒ 「初始化 root」（**uid 0 恒在**，只设口令+确认；名字固定 root）；已初始化 ⇒ 登录（地址 / 用户名 / 口令）。探针两道闸照旧（`normalizeApiBase` + 必须回 `status:"ok"`）。
@@ -1028,7 +1028,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   **搜索框**（命中显示名 / 渠道名 / 上游 id —— 上游 id 必须参与，显示名常常不含渠道信息）+
   **按渠道分组**（组头 = 渠道显示名 + 条数）+ 当前项打勾 + 上下键与回车。静息**仍然只有字**
   （顶栏是透明的，栏面上不该长出一颗按钮），悬停给一层薄底说"这能点"。
-  ⚠ **过滤 / 分组 / 扁平序号是纯函数**，住 `frontend/web/src/utils/format.js`
+  ⚠ **过滤 / 分组 / 扁平序号是纯函数**，住 `frontend/web/src/utils/format.ts`
   （`filterModelGroups` / `curModelLabelOf` / `modelMatches`）—— 住组件里就只能靠正则钉源码，
   钉不出"搜到了什么"。
   ⚠ 三块浮板（模型 / Agent 选人 / 上下文环）**互斥**：开一块要关掉另外两块（叠在一起既看不清也点不准）。
@@ -1049,15 +1049,15 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   `padding-top: max(2.8em, var(--topbar-h) + 0.6em)` 让位（这条必须写在所有 `.messages-inner` 规则之后，
   不然会被 `padding: 2.8em ...` 的简写覆盖）。实测 800px 宽长名单行、390px 两行，两者都不再省略。
 - **默认后端地址跟着"你从哪儿打开页面"走**（2026-10-10 加；2026-10-14 改候选序）：没存过 `mc_api` 时启动自检按候选探：`apiBaseCandidates()` = 存过 ⇒ 只认存的；没存过 ⇒ [**同源 `/api/v1`（首选）**，`location.hostname:8787`]—— 同源优先是因为 vite 现在把 `/api` **代理**给后端（见「Docker 部署」），dev 与单容器部署都走它 ⇒ 浏览器**永远同源、零地址配置**；同主机 8787 退为兜底（前端被别的静态服务器端出来、没有代理时，手机从 `192.168.0.110:8788` 打开就直接连 `192.168.0.110:8787`）。非首选胜出 ⇒ 存下来 + 刷新一次（`sharedApi` 等一切读的都是 `apiBase()`，不存会指错）。推导只读不写 —— 不偷偷存。
-- **滑动面板**（2026-10-10 加，触屏**跟手拖拽**）：左滑出右栏、右滑出左栏 —— **拖到哪儿面板停哪儿**（半开也维持着，不用等松手），松手才吸附（CSS 的 200ms 过渡演动画）：**中点吸附 + 两个方向的快甩都认**（`|v| ≥ 0.0025 开度/ms` 且已拖 6%）。⚠ 三条实测修正：① 只写"朝开"的 flick ⇒ 快关全落回"必须拖过 60%"，真机"关闭发涩"——对称补上"朝关"；② 速度样本有 **120ms 保鲜期**（甩完停住手再松手按位置算，不然历史峰值把"拖一半停手"也弹成开）；③ `v` 的单位是**开度/ms**（真实手速 0.002–0.01，写 0.5 = 死弦）。**先关后开**：已有一扇开着 ⇒ 只认"朝它关回去"的方向（跟手关，同样半开）——同向忽略，不许两扇同开。判定在 `utils/swipe.js`（纯函数：`classifyAxis` 先到先得的轴向锁 / `pickDrag` 拖哪扇从哪起 / `dragProgress` 位移→开度 / `resolveRelease` 松手吸附）；DOM 只做三件：跟手写内联 transform（transition 先掐）、松手清内联落 `collapsed` 类、scrim 透明度跟开度。不接管的场合：输入框/下拉、`pre`（自己的横向滚 —— 但**抽屉自己身上一律接管**，`pre` 也不例外：右栏载荷 tab 整块是 `pre`，早先被这条吞掉，真机表现"在面板上滑没反应"）、命令面板与 picker、设置视图、模态开着时；平板宽度（700–1100）上左栏是**常驻列** ⇒ 不算"该先关"、右滑也不动它。⚠ 坑（都实测咬过）：① 锁轴后**必须记住 axis**（漏了每枚 touchmove 都重进锁轴分支，第二枚就被自己摘掉的 `collapsed` 骗死）；② 锁轴时要**把 `d.p` 初始化成起点开度**（开=0/关=1），且**别动 `d.lastT`**（它在 touchstart 起表；重置会让第一枚 move 的 dt≈0、速度样本作废）；③ 速度阈值的单位是**开度/ms**（真实手速 0.002–0.01，早期写成 0.5 = 死弦）。
+- **滑动面板**（2026-10-10 加，触屏**跟手拖拽**）：左滑出右栏、右滑出左栏 —— **拖到哪儿面板停哪儿**（半开也维持着，不用等松手），松手才吸附（CSS 的 200ms 过渡演动画）：**中点吸附 + 两个方向的快甩都认**（`|v| ≥ 0.0025 开度/ms` 且已拖 6%）。⚠ 三条实测修正：① 只写"朝开"的 flick ⇒ 快关全落回"必须拖过 60%"，真机"关闭发涩"——对称补上"朝关"；② 速度样本有 **120ms 保鲜期**（甩完停住手再松手按位置算，不然历史峰值把"拖一半停手"也弹成开）；③ `v` 的单位是**开度/ms**（真实手速 0.002–0.01，写 0.5 = 死弦）。**先关后开**：已有一扇开着 ⇒ 只认"朝它关回去"的方向（跟手关，同样半开）——同向忽略，不许两扇同开。判定在 `utils/swipe.ts`（纯函数：`classifyAxis` 先到先得的轴向锁 / `pickDrag` 拖哪扇从哪起 / `dragProgress` 位移→开度 / `resolveRelease` 松手吸附）；DOM 只做三件：跟手写内联 transform（transition 先掐）、松手清内联落 `collapsed` 类、scrim 透明度跟开度。不接管的场合：输入框/下拉、`pre`（自己的横向滚 —— 但**抽屉自己身上一律接管**，`pre` 也不例外：右栏载荷 tab 整块是 `pre`，早先被这条吞掉，真机表现"在面板上滑没反应"）、命令面板与 picker、设置视图、模态开着时；平板宽度（700–1100）上左栏是**常驻列** ⇒ 不算"该先关"、右滑也不动它。⚠ 坑（都实测咬过）：① 锁轴后**必须记住 axis**（漏了每枚 touchmove 都重进锁轴分支，第二枚就被自己摘掉的 `collapsed` 骗死）；② 锁轴时要**把 `d.p` 初始化成起点开度**（开=0/关=1），且**别动 `d.lastT`**（它在 touchstart 起表；重置会让第一枚 move 的 dt≈0、速度样本作废）；③ 速度阈值的单位是**开度/ms**（真实手速 0.002–0.01，早期写成 0.5 = 死弦）。
 - **滚动隐藏上下栏**（2026-10-17 用户定：**触屏默认开**，用户视图 → 外观 可关）：跟浏览器一个味道 ——
   **往下看（内容前进）顶栏按位移逐步收起，往回看底栏逐步收起**，进度与位移**成正比**（不是"过阈值啪一下"，
   那是开关不是体验）；**一次只藏一边**（反向滚动把对面那栏放回来），到顶/见底立刻全放回；
   反向不足 6px 算抖动（真手指的滚动是一串正负交替小步，不滤会把栏抖出重影）；一次跳 >200px 视为切会话/贴底 ⇒ 重置。
-  判据是纯函数 `utils/chrome.js` 的 `stepChrome`（契约测试钉着），App 只把算出的两个像素数写成根节点的
+  判据是纯函数 `utils/chrome.ts` 的 `stepChrome`（契约测试钉着），App 只把算出的两个像素数写成根节点的
   `--chrome-top` / `--chrome-bottom`，CSS 只做 `translateY`（90ms linear 抹抖，reduced-motion 里关过渡）。
   触屏判定 = `(pointer: coarse)` ⇒ 鼠标滚轮不参与（桌面滚不隐藏）。
-- **移动端键盘不遮输入框**（2026-10-10 加）：`utils/viewport.js` 用 **visualViewport** 把应用盒拟合过去 —— `#app` 高 = `vv.height`、`translateY(vv.offsetTop)`（iOS 的"可视窗上推"跟着走；捏合缩放 scale>1 时不拟合）。`#app` 一带 transform 就成了其内全部 `fixed` 浮层（命令面板 / picker / 确认框 / toast / 连接门板）的**包含块** ⇒ 浮层自动钉在**键盘上沿**；命令面板/picker 限高 `calc(100% - 7em)`（百分比按包含块解析 ⇒ 键盘缩盒时自动跟着缩，小屏不顶出视口，内容自己滚 —— 实测过 617px 面板裸奔出视口）。`index.html` 的 `interactive-widget=resizes-content` 给 Chromium 系先缩布局视口（与 vv 拟合叠加不打架，都以 vv 为准）。配套的**文档锁死**（`html, body { height: 100%; overflow: hidden; overscroll-behavior: none }`）缺不得 —— 见踩过的坑「页面还能延展」；`#session-list` 也终于有自己的滚动（此前没有任何滚动规则，会话一多直接被裁）。
+- **移动端键盘不遮输入框**（2026-10-10 加）：`utils/viewport.ts` 用 **visualViewport** 把应用盒拟合过去 —— `#app` 高 = `vv.height`、`translateY(vv.offsetTop)`（iOS 的"可视窗上推"跟着走；捏合缩放 scale>1 时不拟合）。`#app` 一带 transform 就成了其内全部 `fixed` 浮层（命令面板 / picker / 确认框 / toast / 连接门板）的**包含块** ⇒ 浮层自动钉在**键盘上沿**；命令面板/picker 限高 `calc(100% - 7em)`（百分比按包含块解析 ⇒ 键盘缩盒时自动跟着缩，小屏不顶出视口，内容自己滚 —— 实测过 617px 面板裸奔出视口）。`index.html` 的 `interactive-widget=resizes-content` 给 Chromium 系先缩布局视口（与 vv 拟合叠加不打架，都以 vv 为准）。配套的**文档锁死**（`html, body { height: 100%; overflow: hidden; overscroll-behavior: none }`）缺不得 —— 见踩过的坑「页面还能延展」；`#session-list` 也终于有自己的滚动（此前没有任何滚动规则，会话一多直接被裁）。
 - **用户视图**（2026-10-10 加，与设置**平级**的另一半）：左栏底 `👤 用户` 打开它 —— **设置管实例/服务器**（聊天参数、渠道、Agent、会话），**用户管登录者自己**—— 身份（`/auth/me`：名字 + 管理员标记 + **退出登录**）与个人偏好（主题 / 背景图 / 发送键 / 输入预演）；**用户管理（加人/踢人/改口令）下一步做**。两块**互斥**（一屏只开一个，互相打开时对方让位）；视图口径同设置：`[◧] 用户 [×]`、Esc 一次只关一层；设置视图因此从六区缩成**五区**（原「界面」区整块搬走，`SETTINGS_TABS` 在 format.js）。
 - **上下文环（2026-11-02 合并后台任务）**：用户定「以上下文指示器的绿色圈圈为主体。中央原本空着的区域，放入代表活跃后台任务数量的数字。在后台任务运行时，绿色圈圈会转动」。
   ⇒ 顶栏只留 `#ctx-ring`：环长仍是已用 / 输入预算；**环心**是还在跑的条数（`max(/tasks.running, 未结束队列数)`；队列当前那一步与队列本身是同一件事，取 max 避免重复；`finished_at` 有值的不算）；`taskBusy`（原子任务或队列在跑）时整个 SVG 转（`@keyframes ctx-ring-spin`，1.1s 线性无限；`prefers-reduced-motion` 下不转，但数字仍在）。
@@ -1069,7 +1069,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   ⚠ 数字只从 `/tasks` 的 `running` 与 `queues` 推（取 max，见上），别在前端自己 `filter` 数一遍 —— 前端时钟与「什么算在跑」都跟后端不一致时，环心的数与面板里的行数会打架。
   App 仍每 2s 拉一次 `/tasks`（进程内面板、零成本），受理类动作（发送/重发/压缩/重摇两族）后**立刻补刷一次**不等节拍；喂数只有一处（`topbarRef.setTasks(board)`，取不到就 `null`）。
   ⚠ 从前那行小字与 2026-11-01 的独立任务徽标都已删：**同一个数字住两处，只会让两处都可能过期**。
-- **共享层（2026-10-10 审计整改）**：`utils/prefs.js` = 界面偏好与共享 api 客户端的唯一出口（主题应用含 TG 守卫 —— TG 里 data-theme 根本不设；发送键判定/提示、apiBase/Token、`sharedApi()` 按偏好缓存）；`api/client.ts` 的 `mergeStreamSlice` = 流式合并唯一规则（游标回退 ⇒ 清零重建）；api 错误统一带 `code`/`status`（分支按 code，别猜文案）；`format.js` 的 modelKey/modelLabel/whoText/sessionTitle = 键与标签的唯一出口；`COMMAND_META`（commands.js）与 App 执行器启动对账。
+- **共享层（2026-10-10 审计整改）**：`utils/prefs.ts` = 界面偏好与共享 api 客户端的唯一出口（主题应用含 TG 守卫 —— TG 里 data-theme 根本不设；发送键判定/提示、apiBase/Token、`sharedApi()` 按偏好缓存）；`api/client.ts` 的 `mergeStreamSlice` = 流式合并唯一规则（游标回退 ⇒ 清零重建）；api 错误统一带 `code`/`status`（分支按 code，别猜文案）；`format.ts` 的 modelKey/modelLabel/whoText/sessionTitle = 键与标签的唯一出口；`COMMAND_META`（commands.js）与 App 执行器启动对账。
 - **CSS 复用基线（2026-11-02，用户定「减少 CSS 的使用量、多复用少重写」）**：全站仍是手写 CSS（不引 Tailwind —— 它与 em 缩放/大量状态选择器不合，且会把 CSS 搬进模板）。复用只有四处，新样式照此写：
   ① **幽灵按钮底座** `main.css` 那一组（`.icon-btn / .foot-btn / .edit-btn / .link-btn / .cp-close / .ctree-tw / .ctree-undo / .collapse-all / .session-item 的两枚 / 模型与 Agent 菜单项 / tabs`）= `background:none; border:none; cursor:pointer` **只写一次**，具体规则只写颜色/尺寸/圆角；
   ② **文字蒙层** 用 `theme.css` 的 `--mix-6 / 8 / 10 / 13 / 18`（加已有的 `--hover` = 7%），别再在 `main.css` 里现写 `color-mix(... N%, transparent)`；
@@ -1101,23 +1101,23 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   输入 `/` **不弹面板**（但 `/name` 回车照旧执行：命令本身没消失，只是没有"菜单"这一层）；
   开回来在**用户视图 → 输入 → 命令菜单**（个人偏好 `mc_cmd_menu`，保存后**即时生效**，不用刷新）。
 - **输入栏只有一种布局**（2026-11-04 用户定：「不允许再设置紧凑和宽松布局」）：删掉 `float`/`solid` 二选一、`composer_style` 偏好、`data-composer` 属性与对应设置项；统一用现在的一体面板（`.composer-box` + 右侧发送键）。
-- **草稿态**（2026-10-09 定，学 DeepSeek 网页版）：点＋/`/new` 只开一张**客户端草稿**（清空消息列与右栏，顶栏显示 `config` defaults 的模型/Agent，改它只改本地 prefs）；草稿**铸一枚 UUIDv7**（`utils/ids.js`）当将来那会话的 id —— **预演走 `POST /outgoing`**（临时会话、头上就是这枚 id）、**首条发送才 `POST /sessions`**（把这枚 id 与改过的 provider/model/agent 一起带上 ⇒ 预演那一发 = 真发那一发；受理失败 ⇒ 删掉刚建的空会话、退回草稿）。⚠ **这是 HACK**（客户端铸 `sessions.id`，全项目唯一的口子 —— 动机与代价见上面 `POST /sessions` 那行；别扩散）。库里不再产生空行 ⇒ 旧"启动编排"（先清空会话再预建真会话）连同一起拿掉。改模型/Agent、回草稿都会**立刻重跑预演**（`previewSeq` 丢弃迟到的旧版）。要会话的命令（`/compact` `/cut` `/reroll` `/switch` `/stop` `/resend` `/delete` `/edit` `/editsum`）在草稿里明确拒绝。（TUI 2026-11-01 已删，那句只作历史记录。）
+- **草稿态**（2026-10-09 定，学 DeepSeek 网页版）：点＋/`/new` 只开一张**客户端草稿**（清空消息列与右栏，顶栏显示 `config` defaults 的模型/Agent，改它只改本地 prefs）；草稿**铸一枚 UUIDv7**（`utils/ids.ts`）当将来那会话的 id —— **预演走 `POST /outgoing`**（临时会话、头上就是这枚 id）、**首条发送才 `POST /sessions`**（把这枚 id 与改过的 provider/model/agent 一起带上 ⇒ 预演那一发 = 真发那一发；受理失败 ⇒ 删掉刚建的空会话、退回草稿）。⚠ **这是 HACK**（客户端铸 `sessions.id`，全项目唯一的口子 —— 动机与代价见上面 `POST /sessions` 那行；别扩散）。库里不再产生空行 ⇒ 旧"启动编排"（先清空会话再预建真会话）连同一起拿掉。改模型/Agent、回草稿都会**立刻重跑预演**（`previewSeq` 丢弃迟到的旧版）。要会话的命令（`/compact` `/cut` `/reroll` `/switch` `/stop` `/resend` `/delete` `/edit` `/editsum`）在草稿里明确拒绝。（TUI 2026-11-01 已删，那句只作历史记录。）
 - **压缩树默认全收**（2026-11-03 用户定：上下文面板里压缩后的文本默认折叠）：`PayloadBar.setTree` 用 `collapsibleSet` 把有孩子的节点全放进 `treeCollapsed`；摘要行的压缩预览在折叠时不显示，点 ▸ 才展开看摘要/子节点。⚠ 树为了算体积仍读全量消息结构（不是逐摘要懒加载）；聊天里的**摘要卡**原文才是展开才拉。
-- **压缩树**（上下文工作区「压缩」tab，2026-10-10 加）：把压缩结构画成文件管理器那种树（目录 = 摘要、嵌套 = 嵌套压缩、行底 bar = 子树原文占比）。**后端零改动**：现取 `messages` + `summaries` 两个 GET，`utils/tree.js` 的 `buildCompactTree` 本地建树 —— 口径**逐字复刻 `state.walk`**（左端对齐才用摘要、升到最粗同左端祖先、跳过后不回看），`发` = 装配真跳到它、`脏` = 已过期。树顶一行是 **块数输入 + 压缩按钮**（空 = 用 config 的 `compact_blocks`；与 `/compact` 共用 `compactNow`）。压缩命令受理后 `pollCompact` 盯到收尾（拿受理回执的 `at_ms` 对上——状态位是持久的，别认旧结局）。
+- **压缩树**（上下文工作区「压缩」tab，2026-10-10 加）：把压缩结构画成文件管理器那种树（目录 = 摘要、嵌套 = 嵌套压缩、行底 bar = 子树原文占比）。**后端零改动**：现取 `messages` + `summaries` 两个 GET，`utils/tree.ts` 的 `buildCompactTree` 本地建树 —— 口径**逐字复刻 `state.walk`**（左端对齐才用摘要、升到最粗同左端祖先、跳过后不回看），`发` = 装配真跳到它、`脏` = 已过期。树顶一行是 **块数输入 + 压缩按钮**（空 = 用 config 的 `compact_blocks`；与 `/compact` 共用 `compactNow`）。压缩命令受理后 `pollCompact` 盯到收尾（拿受理回执的 `at_ms` 对上——状态位是持久的，别认旧结局）。
 - **分段压缩 / 补齐空档（2026-11-05）**：上下文工作区第四、第五 tab，组件 `AdvancedCompact.vue` 共用（`repair` prop 区分）。参数 `begin_idx/end_idx`、`step_blocks`、`concurrency`、`max_attempts`；先调 `/compact/advanced/preview` 看 chunk、空洞、总请求，再启动。整体只有 running/done/failed/canceled；chunk 在一个父 Task 下并发生成，全部成功才 `RecordSummaryBatch` 单事务落库；修洞模式只把同层已封段之间的空洞转成 chunk（尾部 open tail 不算洞）。
-- **消息列编号与摘要卡**（2026-10-10 加）：气泡头 `你 #2` / `助手 #4` —— 真消息用服务端 `idx`；库外的（乐观用户句、生成中那一发）按**后缀顺延**（线性追加 ⇒ 顺延号就是将来的真号）；纯合成的"失败"气泡不给号。被**顶层摘要**（没爹的那层 —— 金字塔只露最外）盖住的一段折成**四面圆角卡**（不是气泡）：头 `Summary #a-b`（+`脏`）、正文 = 摘要文本（发给模型的就是这份）、`查看未压缩文本` 展开原始气泡（**只读、无操作行** —— 用户定：展开里不许编辑/修改）。口径全在 `utils/chatrows.js`（纯函数，契约测试钉住）；端点悬空/不在场 ⇒ 不折（宁可露原文）。卡头右侧三件（2026-10-10 加）：`⟳` 刷新 = 摘要重摇 —— **当前那版先占第 1 版、不丢**（seedSummary 的规矩），摇完自动切最新版；生成走 compact 的"只生成、不落库"半程、**非流式**（卡头标「刷新中…」，没有流式预览）；`✎` 编辑 = 应用内模态编辑器（`/editsum` 同一条路 —— 原生 `window.prompt` 退休）；重摇模式活着时 `◀ n/N ▶`（与气泡同一套语义，最右 ▶ 再按 = 再摇一版）。消息/摘要两族共用一把闸：一族在跑，另一族进模式 ⇒ 后端 409、前端 toast。候选只在内存（发新消息 / 切会话 / 重启就散 —— 应用的那版已在库里）。
-- **消息编辑是独立模态**（2026-11-02 用户定：「打开一个新窗口而不是直接在旧的对话气泡里修改文本」）：气泡上的「改正文 / 改思考」只 `emit('edit', messageId, kind)`，由 `MessageEditor.vue` 开 `modal-box message-edit-box`（96vw × 92vh，接近全屏；大 textarea 撑满剩余高度、取消/保存/保存并重摇固定在**底部右侧**、Esc 关闭）；不再把气泡就地换成 textarea，/edit 也不再走原生 `window.prompt`。保存 PATCH 后父组件 `reloadWindow()` + `refreshStateView()`。**保存并重摇**的合法位置只有两种（`utils/chatrows.js` 的 `editRerollTarget`）：尾条 assistant 自己，或**紧挨着它前面的那条 user**（user2 后面只剩 AI2 ⇒ 编辑 user2 也能重摇 AI2）。其它位置不画，避免按了必败；先 PATCH 保存，再 `rerollNow(rerollTargetId)`。尾条 assistant 的底栏还有**「编辑最新 Prompt」**（2026-11-02 用户定）：A-B-C-D-E-F 时直接开 E 的编辑器，不用翻回去点 E（按钮是 `ICONS.notebookPen` **记事本+笔图标**，不是纯文字大按钮；aria/title 仍写明）；目标由 `latestPromptFor` 算（最新 assistant 之前最近的一条 user），只在 `isLast` 的 assistant 上画。右上角还有**网页全屏**切换（2026-11-03 用户定：不要浏览器 Fullscreen API、不占用户整块屏幕）：`expanded` class 把 `.message-edit-box` 从 96vw × 92vh 铺成 `#app` 的 100% × 100%，图标用 `ICONS.maximize` / `ICONS.minimize`，不再有「全屏」两个字。
+- **消息列编号与摘要卡**（2026-10-10 加）：气泡头 `你 #2` / `助手 #4` —— 真消息用服务端 `idx`；库外的（乐观用户句、生成中那一发）按**后缀顺延**（线性追加 ⇒ 顺延号就是将来的真号）；纯合成的"失败"气泡不给号。被**顶层摘要**（没爹的那层 —— 金字塔只露最外）盖住的一段折成**四面圆角卡**（不是气泡）：头 `Summary #a-b`（+`脏`）、正文 = 摘要文本（发给模型的就是这份）、`查看未压缩文本` 展开原始气泡（**只读、无操作行** —— 用户定：展开里不许编辑/修改）。口径全在 `utils/chatrows.ts`（纯函数，契约测试钉住）；端点悬空/不在场 ⇒ 不折（宁可露原文）。卡头右侧三件（2026-10-10 加）：`⟳` 刷新 = 摘要重摇 —— **当前那版先占第 1 版、不丢**（seedSummary 的规矩），摇完自动切最新版；生成走 compact 的"只生成、不落库"半程、**非流式**（卡头标「刷新中…」，没有流式预览）；`✎` 编辑 = 应用内模态编辑器（`/editsum` 同一条路 —— 原生 `window.prompt` 退休）；重摇模式活着时 `◀ n/N ▶`（与气泡同一套语义，最右 ▶ 再按 = 再摇一版）。消息/摘要两族共用一把闸：一族在跑，另一族进模式 ⇒ 后端 409、前端 toast。候选只在内存（发新消息 / 切会话 / 重启就散 —— 应用的那版已在库里）。
+- **消息编辑是独立模态**（2026-11-02 用户定：「打开一个新窗口而不是直接在旧的对话气泡里修改文本」）：气泡上的「改正文 / 改思考」只 `emit('edit', messageId, kind)`，由 `MessageEditor.vue` 开 `modal-box message-edit-box`（96vw × 92vh，接近全屏；大 textarea 撑满剩余高度、取消/保存/保存并重摇固定在**底部右侧**、Esc 关闭）；不再把气泡就地换成 textarea，/edit 也不再走原生 `window.prompt`。保存 PATCH 后父组件 `reloadWindow()` + `refreshStateView()`。**保存并重摇**的合法位置只有两种（`utils/chatrows.ts` 的 `editRerollTarget`）：尾条 assistant 自己，或**紧挨着它前面的那条 user**（user2 后面只剩 AI2 ⇒ 编辑 user2 也能重摇 AI2）。其它位置不画，避免按了必败；先 PATCH 保存，再 `rerollNow(rerollTargetId)`。尾条 assistant 的底栏还有**「编辑最新 Prompt」**（2026-11-02 用户定）：A-B-C-D-E-F 时直接开 E 的编辑器，不用翻回去点 E（按钮是 `ICONS.notebookPen` **记事本+笔图标**，不是纯文字大按钮；aria/title 仍写明）；目标由 `latestPromptFor` 算（最新 assistant 之前最近的一条 user），只在 `isLast` 的 assistant 上画。右上角还有**网页全屏**切换（2026-11-03 用户定：不要浏览器 Fullscreen API、不占用户整块屏幕）：`expanded` class 把 `.message-edit-box` 从 96vw × 92vh 铺成 `#app` 的 100% × 100%，图标用 `ICONS.maximize` / `ICONS.minimize`，不再有「全屏」两个字。
 - **聊天阅读排版**（2026-11-03 用户定：「布局不专业」的整改）：阅读列 `--read-col` 从 920 收到 **840**；
   聊天正文 `font-size: calc(16px * --app-text-scale)`、`line-height: 1.7`；消息之间 `gap: .8em`、
   assistant 上下 `padding: .45em 0`、段落 `margin-bottom: .7em`；用量脚注 `.7em`、略提对比度但仍是小字。
   ⚠ 编号 `#idx` 与操作行是**用户明确要求常显**的（2026-11-03）：五个按钮（改正文/改思考/编辑最新 Prompt/重摇/删除）任何时候都显示，`.msg-ops` 常驻 opacity **0.72**、hover 才到 1；`.hover-only` 已删。别按"OpenWebUI 都 hover"去藏。
   改回 920/15px 之前先量中文行宽（~60 字一行太长）。
 - **会话列表只留标题**（2026-11-04 用户定：「除了标题，其他啥元数据也不需要」）：`#session-list` 自己留 `0.25em 0.45em` 内边距；条目**只显示标题**（消息条数、相对时间都删了；`relativeTime` 纯函数也删）；关闭/设置两枚按钮改成线性图标（`ICONS.x` / `ICONS.settings`），圆形幽灵按钮、hover 才给底。
-  **有任务在跑的行，标题右侧一枚小环**（2026-11-05 用户定：「如果一个对话有正在运行的 TASK，那么这个对话在左侧对话列表里，就应该有些反应」）：判定在 `utils/tasks.js` 的 `busySessionIds`（唯一处）—— 取 `/tasks` 同一拍的快照里 `finished_at` 为空且带 `session` 的原子任务，外加队列 `current.session_id`（两步之间可能短暂没有原子任务）；**已完成的不算**（面板还会把记录列一阵子，那是账不是状态）。App 在 `refreshTasks` 里算好、经 `:busy-ids` 传给 `SessionBar`；读不到 `/tasks` 就清空（别留一条永远转的假象）。样式 `.session-busy`：边框旋转、尺寸随字号、`prefers-reduced-motion` 下停转但保留缺口环。
+  **有任务在跑的行，标题右侧一枚小环**（2026-11-05 用户定：「如果一个对话有正在运行的 TASK，那么这个对话在左侧对话列表里，就应该有些反应」）：判定在 `utils/tasks.ts` 的 `busySessionIds`（唯一处）—— 取 `/tasks` 同一拍的快照里 `finished_at` 为空且带 `session` 的原子任务，外加队列 `current.session_id`（两步之间可能短暂没有原子任务）；**已完成的不算**（面板还会把记录列一阵子，那是账不是状态）。App 在 `refreshTasks` 里算好、经 `:busy-ids` 传给 `SessionBar`；读不到 `/tasks` 就清空（别留一条永远转的假象）。样式 `.session-busy`：边框旋转、尺寸随字号、`prefers-reduced-motion` 下停转但保留缺口环。
 - **消息列只挂窗口**（2026-10-10 加，防浏览器被撑炸）：进入会话只拉**最后 `history_window` 段**（默认 **5**；段 = 一条消息或**一张顶层摘要卡**，所以原始消息通常 ≤5）；更老的按 `↑ 加载更多历史` 一页一页往回（一页也这么多；值来自 `chat.history_window`，设置 → 聊天可改；插入前记高度、插完补回滚动锚）。**被摘要盖住的原文一个字节都不取**（按"消息段"拼连续区间，走 `POST /messages/batch` 一发拿全；摘要段整段跳过）；`查看未压缩文本` **按下才拉**（每次按下都拉新的一版，不吃旧缓存）。总数拿 `?last=1` 问尾条（比会话列表计数新鲜）；`reloadWindow` = 按最新段布局重拉当前窗口（一轮结束/编辑/删除/压缩/切版后），起点先 `alignWindowFrom` 对回段边界。**压缩树 tab 是例外**：看着它才拉**全量**消息+摘要建树（分析视图 = 用户显式要全量）。
 - **PWA（可安装，2026-10-11 用户点名）**：`vite-plugin-pwa`（build/preview 开 SW、dev 关）——壳预缓存（离线开门板）、`/api` 永不缓存。**安装前提 = HTTPS 或 localhost**：局域网 `http://<IP>` 装不了（非安全上下文）；云端反代终结 TLS 即满足。图标在 `public/`（favicon 栅格化）。实测：localhost 下 manifest/SW/图标全过，`beforeinstallprompt` 真触发。**应用内安装入口 2026-11-02 删掉**（用户定；左栏底改成 会话/渠道/设置）——浏览器自带的安装菜单/地址栏图标仍可用，PWA 能力本身没动。
 - **新版本由用户点（2026-10-20 用户定，从 `autoUpdate` 改成 `prompt`）**：`registerType: "prompt"`
-  + 一条**常驻更新条**（`components/UpdateBar.vue`，注册在 `utils/pwa.js` 调 `virtual:pwa-register`）。
+  + 一条**常驻更新条**（`components/UpdateBar.vue`，注册在 `utils/pwa.ts` 调 `virtual:pwa-register`）。
   **为什么改**（真踩过）：`autoUpdate` 在新 SW `activated` 时**自己** `location.reload()` ——
   它**静默**（你没看那标签页时刷新悄悄发生），且**从不告诉你"此刻看的是旧的"**。2026-10-20 因此白排查一轮：
   服务器上三份 bundle（宿主 dist / 容器 `/build` / 8788 服务）**逐字节相同**且都含新代码，界面上却看不到新加的选项，
@@ -1203,7 +1203,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   快修（2026-11-06）：草稿欢迎页（title-large / body-medium / label kbd chip）、
   全局空态（on-surface-variant）、细滚动条（outline-variant）、
   思考/摘要原文/载荷块展开的 `md-fade-in`（reduced-motion 关闭）。
-  **按下波纹**（2026-11-06 用户定「把按钮波纹做好」）：`utils/ripple.js` 在 `main.js` 装一次
+  **按下波纹**（2026-11-06 用户定「把按钮波纹做好」）：`utils/ripple.ts` 在 `main.js` 装一次
   事件委托（`pointerdown` + 键盘 Enter/Space），给 `button / .session-item / .model-item /
   .agent-item / .palette-item / .picker-item` 在触点位置放一枚 `currentColor` 半透明圆，
   动画 `md-ripple` 结束自删；宿主临时加 `.md-ripple-host`（relative + overflow hidden）。
@@ -1235,7 +1235,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   `models-changed` 那条路照旧会触发刷新，不靠 TTL 猜。
   ⑤ **编辑消息先本地生效**：`PATCH` 回执带回新消息，`onMessageEdited` 先换那一行正文，再
   `reloadWindowKeepingScroll()` 对账（摘要 dirty / 区间可能变）；滚动位置保住。
-  ⑥ **回看缓存**（2026-11-05 用户定：「切换不同对话时，最好也预留缓存吧」）：`utils/windowcache.js` 的
+  ⑥ **回看缓存**（2026-11-05 用户定：「切换不同对话时，最好也预留缓存吧」）：`utils/windowcache.ts` 的
   `rememberWindow` / `recallWindow` / `forgetWindow` 管一个 `Map<sessionId, {rows, segments, windowFrom}>`
   （LRU、上限 8）。`loadWindow` 成功后写、`loadMore` 扩窗后也写；`enterSession` 命中就**先画出来、
   不挂骨架**，等 `status` 说空闲再 `reloadWindowKeepingScroll({ onlyIfUnchanged: true })` 后台对账。
@@ -1279,8 +1279,8 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   保存后总是重拉一次模型；测试走 `POST /providers/{id}/test`，只拉 `/models`、不落库、可带未保存的表单值
   （API Key 留空 = 用已存的），返回 200 + `ok:false` 表示连不上（不是接口挂了）。「清密钥」保留为小号文字按钮。
 - **开机回到上次的会话**（2026-10-11 用户定）：刷新 / 被安卓丢弃后重载 ⇒ **进回"上次在看的那条会话"**（`mc_last_session`，住 localStorage —— 纯本地偏好，与 cookie / 服务端无关），不再是一张空草稿；取不到（删了 / 换人登录 / 别的设备）⇒ 回落草稿（不猜、不串人）。人在草稿 ⇒ 该键清空，开机也回草稿。
-- **背景图**（用户视图，2026-10-10 加；原先在设置→界面，随"用户"视图一起搬家）：**花纹整套砍掉**（用户定）—— doodle.svg / `--tg-pattern` 删净，`body::before` 改挂**自定义背景图**：URL（浏览器直接加载，跨域无妨）或**上传**（canvas 压到长边 1920 / JPEG 0.85，配额满降档 1280/0.75 重试一次；小图原样存保 PNG；住 localStorage `mc_bg`，**不上后端** —— 纯本地偏好）。没设 = `none` 纯平底。口径与工具在 `utils/background.js`（App 开机 `applyBackground()`）。设置里**即时生效**（不吃 saveUi 的保存键：上传是异步的，攒着容易对不上账）。
-- 交互照 Pi：CJK 宽度对齐 / markdown 渲染（marked + KaTeX）。**渲染口径**（`utils/markdown.js`，2026-10-11）：
+- **背景图**（用户视图，2026-10-10 加；原先在设置→界面，随"用户"视图一起搬家）：**花纹整套砍掉**（用户定）—— doodle.svg / `--tg-pattern` 删净，`body::before` 改挂**自定义背景图**：URL（浏览器直接加载，跨域无妨）或**上传**（canvas 压到长边 1920 / JPEG 0.85，配额满降档 1280/0.75 重试一次；小图原样存保 PNG；住 localStorage `mc_bg`，**不上后端** —— 纯本地偏好）。没设 = `none` 纯平底。口径与工具在 `utils/background.ts`（App 开机 `applyBackground()`）。设置里**即时生效**（不吃 saveUi 的保存键：上传是异步的，攒着容易对不上账）。
+- 交互照 Pi：CJK 宽度对齐 / markdown 渲染（marked + KaTeX）。**渲染口径**（`utils/markdown.ts`，2026-10-11）：
   **不能换行的内容用满整列**（2026-10-15：`装 .katex-display / pre 的消息` `:has` 抬到 100% —— 此前被气泡的 70%/80% 上限按住，公式在列里放得下却出横滚 ✗；真比整列宽的仍横滚，那是兜底）；
   `**粗**` / `*斜*`（`_斜_` 同）/ **`__下划线__` ⇒ `<u>`**（marked 默认当 bold —— RP 模型惯用 `__` 表下划线，
   行内扩展改掉它，**代码段里不转换**：`` `__init__` `` 原样）/ 行内码 / `~~删~~` / 引述块 `> OOC`。

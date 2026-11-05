@@ -1,4 +1,4 @@
-// ids.js —— 客户端铸 id。
+// ids.ts —— 客户端铸 id。
 //
 // ⚠ **HACK（刻意，全项目唯一）**：id 一向由服务端铸（消息 / 摘要 / agent），客户端能铸的只有
 // **草稿的会话 id** 这一枚 —— 理由只有"预演 = 真发"这一条：草稿里会话还不存在，但预演那一发的
@@ -8,7 +8,7 @@
 // **别把这里扩散成"客户端都能铸 id"**。
 //
 // 形状必须与后端 `uuid.NewV7()` 逐字节同构：48 位毫秒 + version 7 + variant + 随机位。
-export function uuidv7(now = Date.now()) {
+export function uuidv7(now = Date.now()): string {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
   let ts = BigInt(now);

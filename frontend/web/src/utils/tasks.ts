@@ -4,6 +4,7 @@
 // 左侧对话列表里，就应该有些反应」）。判断必须只在这一处 —— 顶栏环心那个数字、任务面板
 // 的分组、左栏的行内环，谁要"在不在跑"都从这里推，别各自 filter 一遍（三处的时钟与
 // 对"什么算在跑"的理解一旦分岔，同一时刻会显示两个答案）。
+import type { TaskBoard } from "../api/types.ts";
 
 // busySessionIds：此刻有任务在跑的会话 id（去重、无顺序语义）。
 //
@@ -15,8 +16,8 @@
 //     会让左栏在队列里一闪一闪。
 //   - 已完成的不算：`finished_at` 有值就是收尾了（面板还会把它列一阵子，那是给人看的账，
 //     不是"还在跑"）。**别拿 outcome 判**：`取消` / `中断` 也是完成，而 `进行中` 才是活的。
-export function busySessionIds(board) {
-  const ids = new Set();
+export function busySessionIds(board: TaskBoard | null | undefined): string[] {
+  const ids = new Set<string>();
   for (const task of board?.tasks ?? []) {
     if (!task?.finished_at && task?.session) ids.add(task.session);
   }

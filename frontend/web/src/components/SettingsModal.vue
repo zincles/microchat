@@ -14,10 +14,10 @@ import assistantPreset from "../../presets/assistant.json";
 import rpPreset from "../../presets/rp-agent.json";
 import ProviderEditor from "./ProviderEditor.vue";
 import { ICONS } from "./icons.js";
-import { sharedApi } from "../utils/prefs.js";
-import { SETTINGS_TABS, groupModelsByProvider, modelOption, providerChoices, modelChoicesFor, modelKey, parseModelKey } from "../utils/format.js";
-import { downloadJSON } from "../utils/download.js";
-import { buildCartridge, cartridgeAgent } from "../utils/cartridge.js";
+import { sharedApi } from "../utils/prefs.ts";
+import { SETTINGS_TABS, groupModelsByProvider, modelOption, providerChoices, modelChoicesFor, modelKey, parseModelKey } from "../utils/format.ts";
+import { downloadJSON } from "../utils/download.ts";
+import { buildCartridge, cartridgeAgent } from "../utils/cartridge.ts";
 
 // models-changed：渠道/模型那摊变了（删除渠道会连模型一起没）⇒ 让 App 重拉顶栏的模型下拉。
 // 与会话左栏那个 sessions-changed 是**两件事**，别合并（各自的读口不同）。
