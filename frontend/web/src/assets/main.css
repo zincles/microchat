@@ -1388,3 +1388,10 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
   margin-top: 0.15em;
   border-top: 1px solid color-mix(in srgb, var(--md-outline-variant) 55%, transparent);
 }
+
+/* 分段 tab / 顶栏 tab 的波纹收进"看得见的那块"：
+ * 它们的按钮框比视觉上的胶囊大（设置 tab 的 thumb 上下各留 0.2em；顶栏 tab 只有文字 + 下划线，
+ * 按钮还带着 0.4em 内边距），波纹铺满整框就会在胶囊/文字外溢出来。按 tab 的实际视觉高度缩裁剪层。 */
+.settings-nav .tab > .md-ripple-layer { inset: 0.2em 0; }
+.ws-switch .ws-tab > .md-ripple-layer { inset: 0.4em 0.3em; }
+.bar-head.bar-tabs .tab > .md-ripple-layer { inset: 0.35em 0.3em; }

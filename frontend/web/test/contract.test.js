@@ -3803,6 +3803,9 @@ test("波纹：触点 → 圆（纯函数），委托安装一次，reduce 下�
   assert.match(css, /\.md-ripple-host \{[^}]*overflow:\s*hidden/, "波纹宿主没裁剪");
   assert.match(ripple, /md-ripple-layer/, "没有独立裁剪层");
   assert.match(css, /\.md-ripple-host > \.md-ripple-layer \{[^}]*border-radius:\s*inherit/, "裁剪层没继承宿主圆角");
+  assert.match(css, /\.settings-nav \.tab > \.md-ripple-layer \{[^}]*inset:\s*0\.2em 0/, "设置 tab 的波纹没收到 thumb 高度");
+  assert.match(css, /\.ws-switch \.ws-tab > \.md-ripple-layer \{[^}]*inset:\s*0\.4em 0\.3em/, "顶栏 tab 的波纹没收到文字区");
+  assert.match(css, /\.bar-head\.bar-tabs \.tab > \.md-ripple-layer \{[^}]*inset:\s*0\.35em 0\.3em/, "上下文 tab 的波纹没收到文字区");
   assert.match(css, /prefers-reduced-motion[\s\S]{0,160}\.md-ripple/, "reduce 下没兜底");
 });
 

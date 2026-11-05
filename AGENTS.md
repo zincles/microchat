@@ -1201,6 +1201,10 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   ⚠ 波纹圆挂在宿主内的 **`.md-ripple-layer`**（absolute inset 0 + `border-radius: inherit` +
   overflow hidden）上，不是直接挂宿主：某些按钮/列表行的绝对定位子元素会逃出宿主的圆角裁剪
   （用户报「波纹扩散到按钮外部」），独立裁剪层是确定性的兜底。
+  ⚠ **tab 类要再收一档**：设置 tab 的按钮框比视觉 thumb 高 0.2em×2、顶栏/上下文 tab 只有
+  文字 + 下划线却带着 0.4em 内边距 —— 波纹铺满按钮框会从视觉胶囊/文字外溢。三处的裁剪层
+  额外 `inset`（`.settings-nav .tab` / `.ws-switch .ws-tab` / `.bar-head.bar-tabs .tab`）收进
+  "看得见的那块"。
   `prefers-reduced-motion` 下**整个不做**。⚠ 圆心 left/top 是**相对宿主**的，
   `rippleSpec` 必须减 `rect.left/top`（漏过：圆画到视口坐标、被裁掉 ⇒ 像没生效）。
   **密度**（2026-11-06 用户：「MD3 padding 太浪费」）：`main.css` 末尾一块密度覆盖 ——
