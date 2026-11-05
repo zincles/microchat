@@ -267,11 +267,12 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
  * （`#payload-pane` / `#state-view` / `#compact-tree`，各带 `overscroll-behavior: contain`）。
  * 两层都滚会让 contain 把链式滚动断在"滚不动的那一层"上（2026-10-17 在右栏踩过同样的坑）。 */
 #context-workspace { flex: 1; min-height: 0; display: flex; flex-direction: column;
-  padding: 3em 0.8em 0.7em; gap: 0.4em; }
+  /* 3em → 4.2em（2026-11-06）：顶栏 MD3 化后是 56dp（+padding ≈ 60px），
+   * 原来的 48px 顶部留白会让 tabs 有 12px 藏在顶栏下面。与 .messages-inner 同一个数。 */
+  padding: 4.2em 0.8em 0.7em; gap: 0.4em; }
 /* 草稿态那句提示：**平铺一行小字**（2026-10-29 用户：「不需要面板…完全可以平铺」——
  * 连这条提示也不该是一块虚线框；它不是内容，是一句说明）。 */
-.ws-draft-note { flex: none; margin: 0 auto; max-width: var(--read-col, 840px); width: 100%;
-  box-sizing: border-box; color: var(--tg-hint); font-size: 0.85em; line-height: 1.6; padding: 0; }
+.ws-draft-note { flex: none; margin: 0 auto 0.6em; max-width: var(--read-col, 840px); width: 100%; box-sizing: border-box; background: var(--md-surface-container-low); color: var(--md-on-surface-variant); border-radius: var(--md-shape-md); padding: 1em 1.2em; font-size: var(--md-type-body-medium); line-height: 1.6; }
 /* 浮板：与 Agent 选人同一族（同底、同阴影、同圆角），只是从右边缘掉下来。 */
 .ctx-menu { left: auto; right: 0.35em; min-width: 18em; max-width: min(24em, calc(100vw - 2em)); padding: 0.7em 0.8em 0.6em; border-radius: var(--md-shape-md); box-shadow: var(--md-elev-3);
   max-height: min(76vh, 38em); overflow-y: auto; overscroll-behavior: contain; }
@@ -317,7 +318,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
  * ⚠ 它是 `position: fixed` —— 而 `#app` 一带 `transform`（viewport.js 的 --vvt 拟合）就会
  * 收编 fixed 的包含块（见 main.css 顶部那条注释），所以这里跟着 #app 走、不会被键盘顶飞，
  * 这是**想要的**（更新条不该浮在键盘上方）。 */
-#update-bar { position: fixed; top: 0.85em; left: 50%; transform: translateX(-50%); z-index: 55; display: flex; align-items: center; gap: 0.6em; max-width: min(30em, 92vw); box-sizing: border-box; background: var(--md-surface-container-high); color: var(--md-on-surface); border: none; border-radius: var(--md-shape-md); padding: 0.55em 0.7em 0.55em 1em; box-shadow: var(--md-elev-2); animation: md-dialog-in var(--md-dur-250) var(--md-ease-emphasized); }
+#update-bar { position: relative; flex: none; z-index: 55; display: flex; align-items: center; gap: 0.6em; width: min(30em, 92vw); margin: 0.55em auto 0; box-sizing: border-box; background: var(--md-surface-container-high); color: var(--md-on-surface); border: none; border-radius: var(--md-shape-md); padding: 0.55em 0.7em 0.55em 1em; box-shadow: var(--md-elev-2); animation: md-dialog-in var(--md-dur-250) var(--md-ease-emphasized); }
 #update-bar .ub-text { flex: 1; min-width: 0; word-break: break-word; }
 #update-bar .ub-go { flex: none; background: var(--md-primary); color: var(--md-on-primary); border: none; border-radius: var(--md-shape-full); min-height: 2.5em; padding: 0 1em; font: inherit; font-size: var(--md-type-label-large); font-weight: 500; cursor: pointer; }
 #update-bar .ub-go:hover:not(:disabled) { filter: brightness(1.1); }
@@ -372,8 +373,8 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .seg-assembled pre { white-space: pre-wrap; word-break: break-word; max-height: 20em; overflow-y: auto;
   background: var(--hover); padding: 0.5em 0.6em; border-radius: var(--r-sm); }
 /* 载荷栏"分块视图"（用户点名 2026-10-11）：body.messages 一块块矩形画出来（角色徽标 + 内容）。 */
-.pv-toolbar { display: flex; align-items: center; gap: 0.5em; margin: 0 0 0.5em; color: var(--tg-hint); }
-.pv-toolbar .lbl { font-size: 0.9em; }
+.pv-toolbar { display: flex; align-items: center; gap: 0.5em; margin: 0 0 0.6em; color: var(--md-on-surface-variant); }
+.pv-toolbar .lbl { font-size: var(--md-type-label-medium); }
 /* 「折叠全部」（2026-10-29 用户定）。**平铺的手感**：没有边框、没有底色，只是一行可点的字 ——
  * 与 .pv-role / .pv-chip 那套一致（这三页现在都是裸文本 + 细线，不放盒子）。
  * margin-left:auto 把它推到行的右端：它是"收拾"动作，不抢左边那些控件的位置。
@@ -389,42 +390,41 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
  * 点下去什么都没发生 —— 那是"死按钮"的老毛病。 */
 .collapse-all:disabled { color: var(--tg-hint); opacity: 0.55; cursor: default; text-decoration: none; }
 .collapse-all:focus-visible { outline: 2px solid color-mix(in srgb, var(--tg-link) 55%, transparent); outline-offset: 2px; }
-.pv-meta { display: flex; flex-wrap: wrap; gap: 0.35em; align-items: center; margin: 0 0 0.5em; font-size: 0.85em; color: var(--tg-hint); }
-.pv-method { color: var(--tg-text); font-weight: bold; }
-.pv-url { color: var(--tg-link); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.pv-meta { display: flex; flex-wrap: wrap; gap: 0.35em; align-items: center; margin: 0 0 0.6em; font-size: var(--md-type-label-small); color: var(--md-on-surface-variant); }
+.pv-method { color: var(--md-primary); font-weight: 500; }
+.pv-url { color: var(--md-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 /* 元信息（模型 / 条数 / tools / stream）：从前每个是带框的小 chip。整块平铺之后框就没伴了，
  * 改成**裸文字 + 前置分隔点**（`::before`），读起来是一行说明而不是一排标签。 */
-.pv-chip { border: none; border-radius: 0; padding: 0; font-size: 0.85em; color: var(--tg-hint); }
+.pv-chip { border: none; border-radius: 0; padding: 0; font-size: var(--md-type-label-small); color: var(--md-on-surface-variant); }
 .pv-chip + .pv-chip::before, .pv-url + .pv-chip::before { content: "·"; margin-right: 0.35em; opacity: 0.6; }
 /* 载荷的分块（2026-10-29）：从前每块是一个带边框的小卡片（"气泡"），用户点名不要。
  * 现在块与块之间只用**一条细线**分开 —— 与状态表 `.state-row` 同一个手法，
  * 于是三页看起来是同一族东西（都是裸文本 + 细线），不再是三种盒子。 */
 .pv-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
-.pv-msg { border: none; border-radius: 0; background: none; padding: 0.4em 0;
-  border-bottom: 1px solid var(--line); }
+.pv-msg { border: none; border-radius: 0; background: none; padding: 0.5em 0; border-bottom: 1px solid var(--line); }
 .pv-msg:last-child { border-bottom: none; }
-.pv-head { display: flex; align-items: center; gap: 0.4em; margin: 0 0 0.3em; width: 100%; background: none; border: none; color: inherit; font: inherit; line-height: 1.3; text-align: left; cursor: pointer; padding: 0.15em 0; -webkit-tap-highlight-color: transparent; user-select: none; }
-.pv-tw { flex: none; width: 1em; color: var(--tg-hint); }
-.pv-preview { color: var(--tg-hint); font-size: 0.9em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pv-head { display: flex; align-items: center; gap: 0.4em; margin: 0 0 0.35em; width: 100%; min-height: 2.5em; background: none; border: none; border-radius: var(--md-shape-sm); color: var(--md-on-surface); font: inherit; line-height: 1.3; text-align: left; cursor: pointer; padding: 0.15em 0.35em; -webkit-tap-highlight-color: transparent; user-select: none; transition: background-color var(--md-dur-150) var(--md-ease-standard); }
+.pv-tw { flex: none; width: 1em; color: var(--md-on-surface-variant); }
+.pv-preview { color: var(--md-on-surface-variant); font-size: var(--md-type-body-small); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* role 不再是彩色药丸 —— 聊天里那一行本来也只是"助手 #3"几个字（`.msg .who`）。
  * 现在靠**字色**区分：user 正文色、assistant 链接色、tool 提示色。 */
-.pv-role { font-size: 0.8em; font-weight: bold; border: none; border-radius: 0; padding: 0; color: var(--tg-hint); }
-.pv-msg.role-user .pv-role { color: var(--tg-text); }
-.pv-msg.role-assistant .pv-role { color: var(--tg-link); }
-.pv-idx { color: var(--tg-hint); font-size: 0.8em; }
-.pv-chars { margin-left: auto; color: var(--tg-hint); font-size: 0.78em; }
-.pv-content { white-space: pre-wrap; word-break: break-word; color: var(--tg-text); font-size: 0.9em; }
-.pv-content.pv-empty { color: var(--tg-hint); }
-.pv-extra { margin-top: 0.3em; padding-top: 0.3em; border-top: 1px dashed var(--line); color: var(--tg-hint); font-size: 0.85em; white-space: pre-wrap; word-break: break-word; }
+.pv-role { border: none; border-radius: 0; padding: 0; font-size: var(--md-type-label-small); font-weight: 500; letter-spacing: 0.04em; color: var(--md-on-surface-variant); }
+.pv-msg.role-user .pv-role { color: var(--md-on-surface); }
+.pv-msg.role-assistant .pv-role { color: var(--md-primary); }
+.pv-idx { color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); font-variant-numeric: tabular-nums; }
+.pv-chars { margin-left: auto; color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
+.pv-content { white-space: pre-wrap; word-break: break-word; color: var(--md-on-surface); font-size: var(--md-type-body-medium); line-height: 1.55; }
+.pv-content.pv-empty { color: var(--md-on-surface-variant); }
+.pv-extra { margin-top: 0.35em; padding-top: 0.35em; border-top: 1px solid var(--md-outline-variant); color: var(--md-on-surface-variant); font-size: var(--md-type-body-small); white-space: pre-wrap; word-break: break-word; }
 /* 压缩树（文件管理器那种看体积的树）：缩进行 + 行底容量条（du 味）。 */
 #compact-tree { font-size: 0.92em; }
 /* 压缩面板的"块数 + 压缩"一行。 */
-.ctree-actions { display: flex; gap: 0.4em; margin: 0.2em 0 0.6em; }
+.ctree-actions { display: flex; gap: 0.4em; margin: 0.2em 0 0.7em; }
 .ctree-actions input { flex: 1; min-width: 0; }
 .ctree-actions button { flex: none; }
 /* 压缩页顶上那行：左边是总量，右边是「折叠全部」（2026-10-29）。 */
-.ctree-head { display: flex; align-items: baseline; gap: 0.5em; margin: 0.2em 0 0.5em; }
-.ctree-total { color: var(--tg-text); }
+.ctree-head { display: flex; align-items: baseline; gap: 0.5em; margin: 0.2em 0 0.6em; }
+.ctree-total { color: var(--md-on-surface); font-size: var(--md-type-label-medium); }
 /* 压缩那发的载荷（「看载荷」按钮拉回来的那一发）—— 复用 .pv-* 那套渲染，只补它自己的头。
    放"载荷 tab"里也行，但那是**这一轮要发的**；压缩是另一发，混在一起会让人认错。 */
 #compact-payload { margin: 0 0 0.7em; padding: 0.5em 0 0; border: none; border-top: 1px solid var(--line); border-radius: 0; background: none; }
@@ -432,38 +432,35 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .cp-title { flex: 1; color: var(--tg-text); font-size: 0.9em; }
 .cp-close { flex: none; color: var(--tg-hint); font-size: 1.1em; line-height: 1; padding: 0 0.2em; }
 .cp-close:hover { color: var(--tg-text); }
-.ctree-legend { color: var(--tg-hint); font-size: 0.85em; margin-top: 0.6em; }
-.ctree-row { position: relative; display: flex; align-items: center; gap: 0.25em; padding: 0.22em 0.2em; border-radius: var(--r-sm); overflow: hidden; }
-.ctree-row:hover { background: var(--mix-6); }
-.ctree-bar { position: absolute; left: 0; top: 0; bottom: 0; background: var(--hover); border-radius: var(--r-sm); pointer-events: none; }
-.ctree-row.sum .ctree-bar { background: color-mix(in srgb, var(--tg-link) 22%, transparent); }
-.ctree-row.used .ctree-label { color: var(--tg-link); }
-.ctree-tw { flex: none; width: 1.2em; color: var(--tg-hint); padding: 0; font-size: 0.9em; }
+.ctree-legend { color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); margin-top: 0.7em; }
+.ctree-row { position: relative; display: flex; align-items: center; gap: 0.35em; min-height: 2.4em; padding: 0.25em 0.35em; border-radius: var(--md-shape-sm); overflow: hidden; transition: background-color var(--md-dur-150) var(--md-ease-standard); }
+.ctree-row:hover { background: color-mix(in srgb, var(--md-on-surface) 6%, transparent); }
+.ctree-bar { position: absolute; left: 0; top: 0; bottom: 0; background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); border-radius: var(--md-shape-sm); pointer-events: none; }
+.ctree-row.sum .ctree-bar { background: color-mix(in srgb, var(--md-primary) 18%, transparent); }
+.ctree-row.used .ctree-label { color: var(--md-primary); }
+.ctree-tw { flex: none; width: 1.2em; color: var(--md-on-surface-variant); padding: 0; font-size: 0.9em; }
 /* 标签 = 名字（`#3 你` / `#3–12 摘要×2`）+ 一行原文预览（2026-10-29 用户定：
  * 「条目不是简单的 #3 你，而是 #3 你 XXXXX…（原文前 n 个字符）」，为了能一眼定位）。
  * **名字永不截断**（编号就是锚），被截的只能是预览那半 —— 所以拆成两个 flex 子项，
  * 而不是让外层一个 ellipsis 把名字也吃掉。`position: relative` 留着：容量条是绝对定位的底层。 */
-.ctree-label { position: relative; flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 0.35em; color: var(--tg-text); }
+.ctree-label { position: relative; flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 0.35em; color: var(--md-on-surface); }
 .ctree-name { flex: none; white-space: nowrap; }
 /* 预览：提示色 + 小一档（它是线索，不是正文），超宽就省略号。
  * 前面一个小圆点是分隔符 —— 不靠它的话 "你 你推开门…" 会读成两个"你"连在一起。 */
-.ctree-preview { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  color: var(--tg-hint); font-size: 0.9em; }
+.ctree-preview { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--md-on-surface-variant); }
 .ctree-preview::before { content: "·"; margin-right: 0.3em; opacity: 0.55; }
-.ctree-tag { flex: none; font-style: normal; font-size: 0.78em; color: var(--tg-link); border: 1px solid currentColor; border-radius: var(--r-xs); padding: 0 0.25em; }
-.ctree-tag.dirty { color: var(--tg-destructive); }
-.ctree-size { position: relative; flex: none; color: var(--tg-hint); font-size: 0.85em; }
+.ctree-tag { flex: none; font-style: normal; font-size: var(--md-type-label-small); color: var(--md-primary); border: 1px solid currentColor; border-radius: var(--md-shape-full); padding: 0 0.35em; }
+.ctree-tag.dirty { color: var(--md-error); }
+.ctree-size { position: relative; flex: none; color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); font-variant-numeric: tabular-nums; }
 /* 树行的「撤销」（2026-11-01 用户定：垃圾桶图标、**悬停说'撤销'**）。
  * 平铺口径：没有边框没有底色，就是个图标 —— 与 .ctree-tw（折叠箭头）同一族。
  * 不能撤的**留着但禁用**（让人看见这儿本来能撤），禁用态要**显式压暗**，
  * 否则它会看起来照样能点，点下去什么都没发生（"死按钮"的老毛病）。
  * `position: relative` 是必需的：容量条 `.ctree-bar` 是绝对定位的底层，不抬起来会被它盖住。 */
-.ctree-undo { position: relative; flex: none; display: inline-flex; align-items: center; justify-content: center;
-  width: 1.5em; height: 1.5em; padding: 0; border-radius: var(--r-xs);
-  color: var(--tg-hint); -webkit-tap-highlight-color: transparent; }
-.ctree-undo:hover:not(:disabled) { color: var(--tg-destructive); background: color-mix(in srgb, var(--tg-destructive) 12%, transparent); }
-.ctree-undo:disabled { opacity: 0.28; cursor: default; }
-.ctree-undo:focus-visible { outline: 2px solid color-mix(in srgb, var(--tg-destructive) 55%, transparent); outline-offset: 1px; }
+.ctree-undo { position: relative; flex: none; display: inline-flex; align-items: center; justify-content: center; width: 2em; height: 2em; padding: 0; border-radius: var(--md-shape-full); color: var(--md-on-surface-variant); transition: background-color var(--md-dur-150) var(--md-ease-standard), color var(--md-dur-150) var(--md-ease-standard); }
+.ctree-undo:hover:not(:disabled) { color: var(--md-error); background: color-mix(in srgb, var(--md-error) 10%, transparent); }
+.ctree-undo:disabled { opacity: 0.3; cursor: default; }
+.ctree-undo:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 1px; }
 .ctree-undo svg { display: block; }
 #chat-col { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; margin: 0 auto; width: 100%; max-width: 100%; position: relative; background: transparent; border-radius: 0; overflow: hidden; padding: 0; }
 /* 阅读列约束（760px 居中）：只管**消息列与输入行**；顶栏豁免 —— 它是贴边的平栏
@@ -560,50 +557,44 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
  * ⚠ 小心 em 叠乘：`.ws-panel` 自己已经 `font-size: 0.92em`，所以这里的 1.15em 落到根上是
  * 1.15 × 0.92 ≈ **1.06em**。改之前是 0.95em ⇒ 0.87em 根 —— 比正文还小，难怪看着像附注。
  * 契约测试按这个叠乘算一遍，钉住"tab 不小于面板正文（1em）"。 */
-.bar-head.bar-tabs { flex: none; justify-content: flex-start; gap: 1.2em; padding: 0;
-  border-bottom: 1px solid var(--line); overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; }
+.bar-head.bar-tabs { flex: none; justify-content: flex-start; gap: 0.35em; padding: 0; border-bottom: none; overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; }
 .bar-head.bar-tabs::-webkit-scrollbar { display: none; }
-.bar-head.bar-tabs .tab { flex: none; background: none; border: none; border-bottom: 2px solid transparent;
-  border-radius: 0; color: var(--tg-hint); padding: 0.45em 0 0.5em; font-size: 1.15em; line-height: 1.3;
-  margin-bottom: -1px; }
-.bar-head.bar-tabs .tab:hover { color: var(--tg-text); }
-.bar-head.bar-tabs .tab.sel { color: var(--tg-text); border-bottom-color: var(--tg-link); }
+.bar-head.bar-tabs .tab { flex: none; position: relative; background: none; border: none; border-radius: var(--md-shape-full); color: var(--md-on-surface-variant); padding: 0.5em 0.7em; font-size: 1.15em; line-height: 1.3; cursor: pointer; transition: color var(--md-dur-200) var(--md-ease-standard), background-color var(--md-dur-200) var(--md-ease-standard); }
+.bar-head.bar-tabs .tab:hover { color: var(--md-on-surface); background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); }
+.bar-head.bar-tabs .tab.sel { color: var(--md-primary); background: none; }
 /* 高级压缩 / 修洞（2026-11-05）：配置 + 计划 + 作业进度，都是平铺文本，不做卡片。 */
 .adv-pane { padding: 0.2em 0 1em; }
 .adv-config { margin-bottom: 0.6em; }
 .adv-range { display: flex; align-items: center; gap: 0.35em; }
 .adv-range input { width: 5.2em; }
-.adv-summary { display: flex; flex-wrap: wrap; gap: 0.35em 0.9em; align-items: baseline;
-  padding: 0.45em 0; color: var(--tg-hint); font-size: 0.9em; border-bottom: 1px solid var(--line); }
-.adv-summary b { color: var(--tg-text); }
-.adv-error { color: var(--tg-destructive); }
-.adv-progress { height: 0.28em; margin: 0 0 0.65em; border-radius: 999px; background: var(--mix-10); overflow: hidden; }
-.adv-progress i { display: block; height: 100%; background: var(--tg-link); transition: width 180ms linear; }
-.adv-holes { margin: 0.4em 0 0.7em; padding: 0.45em 0.65em; border-left: 2px solid var(--tg-destructive);
-  color: var(--tg-hint); font-size: 0.9em; }
-.adv-holes b { color: var(--tg-text); margin-right: 0.5em; }
-.adv-hole { display: inline-block; margin-right: 0.55em; color: var(--tg-destructive); }
+.adv-summary { display: flex; flex-wrap: wrap; gap: 0.35em 0.9em; align-items: baseline; padding: 0.55em 0; color: var(--md-on-surface-variant); font-size: var(--md-type-label-medium); border-bottom: 1px solid var(--md-outline-variant); }
+.adv-summary b { color: var(--md-on-surface); }
+.adv-error { color: var(--md-error); }
+.adv-progress { height: 4px; margin: 0 0 0.7em; border-radius: var(--md-shape-full); background: var(--md-surface-container-highest); overflow: hidden; }
+.adv-progress i { display: block; height: 100%; border-radius: inherit; background: var(--md-primary); transition: width var(--md-dur-300) var(--md-ease-standard); }
+.adv-holes { margin: 0.4em 0 0.8em; padding: 0.65em 0.85em; border-left: none; border-radius: var(--md-shape-sm); background: var(--md-error-container); color: var(--md-on-error-container); font-size: var(--md-type-body-small); }
+.adv-holes b { color: var(--md-on-error-container); margin-right: 0.5em; }
+.adv-hole { display: inline-block; margin-right: 0.55em; color: var(--md-on-error-container); }
 .adv-chunks { list-style: none; padding: 0; margin: 0.4em 0 0; }
-.adv-chunk { display: flex; align-items: baseline; gap: 0.55em; padding: 0.38em 0;
-  border-bottom: 1px solid var(--line); font-size: 0.9em; }
+.adv-chunk { display: flex; align-items: baseline; gap: 0.55em; min-height: 2.5em; padding: 0.45em 0.2em; border-bottom: 1px solid var(--md-outline-variant); font-size: var(--md-type-body-small); }
 .adv-chunk:last-child { border-bottom: none; }
-.adv-index, .adv-idx { color: var(--tg-hint); flex: none; }
-.adv-meta { color: var(--tg-hint); margin-left: auto; }
-.adv-state { flex: none; min-width: 4.2em; text-align: right; color: var(--tg-hint); }
-.adv-dot { width: 0.55em; height: 0.55em; border-radius: 50%; background: var(--tg-hint); flex: none; }
-.adv-dot.running { background: var(--tg-link); animation: adv-pulse 1s ease-in-out infinite; }
+.adv-index, .adv-idx { color: var(--md-on-surface-variant); flex: none; font-variant-numeric: tabular-nums; }
+.adv-meta { color: var(--md-on-surface-variant); margin-left: auto; }
+.adv-state { flex: none; min-width: 4.2em; text-align: right; color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
+.adv-dot { width: 0.55em; height: 0.55em; border-radius: 50%; background: var(--md-outline); flex: none; }
+.adv-dot.running { background: var(--md-primary); animation: adv-pulse 1s var(--md-ease-standard) infinite; }
 .adv-dot.done { background: var(--tg-ok, #1f8a4c); }
-.adv-dot.failed { background: var(--tg-destructive); }
-.adv-dot.canceled { background: var(--tg-hint); opacity: 0.5; }
+.adv-dot.failed { background: var(--md-error); }
+.adv-dot.canceled { background: var(--md-outline); opacity: 0.5; }
 @keyframes adv-pulse { 50% { opacity: 0.35; } }
 @media (prefers-reduced-motion: reduce) { .adv-dot.running { animation: none; } }
 /* 状态表：表名小标题 + 键值行（键暗、值亮）。滚动与 tabs 常驻见上面 #payload-pane 那组规则。 */
-#state-view .state-table { margin: 0 0 0.8em; }
-#state-view h4 { color: var(--tg-link); font-size: 0.78em; font-weight: normal; margin: 0.6em 0 0.2em; }
-#state-view .state-row { display: flex; gap: 0.6em; padding: 0.25em 0; border-bottom: 1px solid var(--line); }
+#state-view .state-table { margin: 0 0 0.9em; }
+#state-view h4 { color: var(--md-primary); font-size: var(--md-type-label-medium); font-weight: 500; letter-spacing: 0.04em; margin: 0.7em 0 0.25em; }
+#state-view .state-row { display: flex; gap: 0.6em; padding: 0.35em 0.2em; border-bottom: 1px solid var(--md-outline-variant); }
 #state-view .state-row:last-child { border-bottom: none; }
-#state-view .k { flex: none; color: var(--tg-hint); }
-#state-view .v { flex: 1; color: var(--tg-text); word-break: break-word; }
+#state-view .k { flex: none; color: var(--md-on-surface-variant); }
+#state-view .v { flex: 1; color: var(--md-on-surface); word-break: break-word; }
 /* 会话列表自己滚（此前没有任何滚动规则 ⇒ 会话一多直接被裁掉，移动端抽屉里更是够不着）。 */
 #session-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0.15em 0.35em 0.45em; }
 .session-group-head { padding: 0.5em 0.5em 0.15em; color: var(--tg-hint); font-size: 0.68em; letter-spacing: 0.04em; line-height: 1.2; }
@@ -1268,3 +1259,22 @@ button.toggle.on .knob { left: calc(100% - 1.55em); width: 1.5em; height: 1.5em;
 #settings-view .plist th { color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); font-weight: 500; letter-spacing: 0.04em; }
 #settings-view .plist tr.clickable:hover td { background: color-mix(in srgb, var(--md-on-surface) 6%, transparent); }
 #settings-view .plist tr:last-child td { border-bottom: none; }
+
+/* 上下文面板的 MD3 tab indicator（3dp 圆角短条；横向滚动条里也成立）。 */
+.bar-head.bar-tabs .tab::after { content: ""; position: absolute; left: 50%; bottom: 0.1em; width: 0; height: 3px;
+  border-radius: 3px; background: var(--md-primary); transform: translateX(-50%);
+  transition: width var(--md-dur-300) var(--md-ease-emphasized); }
+.bar-head.bar-tabs .tab.sel::after { width: 1.6em; }
+@media (prefers-reduced-motion: reduce) { .bar-head.bar-tabs .tab::after { transition: none; } }
+
+.pv-head:hover { background: color-mix(in srgb, var(--md-on-surface) 6%, transparent); }
+.pv-head:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 1px; }
+/* 上下文工作区收尾：原始载荷用 MD3 代码容器；空态用 on-surface-variant；
+ * 高级压缩的表单改成"标签在上、控件在下"（中文标签长，140px 一列会折成两行）。 */
+#outgoing-raw { margin: 0; padding: 1em; background: var(--md-surface-container-low); color: var(--md-on-surface);
+  border: 1px solid var(--md-outline-variant); border-radius: var(--md-shape-md);
+  font-size: var(--md-type-body-small); line-height: 1.55; overflow-x: auto; }
+#payload-pane .empty, #state-view .empty, #compact-tree .empty { color: var(--md-on-surface-variant); padding: 0.8em 0.2em; }
+.adv-config .field { grid-template-columns: 1fr; gap: 0.3em; align-items: start; }
+.adv-config .field > span { color: var(--md-on-surface-variant); font-size: var(--md-type-label-medium); }
+.adv-range { width: 100%; }

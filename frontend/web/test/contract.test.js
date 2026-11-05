@@ -3340,7 +3340,7 @@ test("设计系统：tab 统一下划线、设置平铺、圆角收口", () => {
   // 上下文工作区那组仍是旧的整条下划线，别混。
   assert.match(css, /\.ws-tab::after \{[^}]*background:\s*var\(--md-primary\)/, "顶栏 tab 没有 MD3 indicator");
   assert.match(css, /\.ws-tab\.sel::after \{[^}]*width:\s*1\.6em/, "顶栏选中态 indicator 不显示");
-  assert.match(css, /\.bar-head\.bar-tabs \{[^}]*border-bottom:\s*1px solid var\(--line\)/, "上下文 tab 不是下划线");
+  assert.match(css, /\.bar-head\.bar-tabs \.tab::after \{[^}]*background:\s*var\(--md-primary\)/, "上下文 tab 没有 MD3 indicator");
   // 设置页：无卡片底、无连体组圆角
   assert.match(css, /\.settings-card \{[^}]*background:\s*none[^}]*padding:\s*0/, "设置分节还带卡片底");
   assert.match(css, /\.settings-cols \.panel \.field[^{]*\{[^}]*background:\s*none/, "设置行还带卡片底");
@@ -3735,4 +3735,32 @@ test("浮层 MD3：dialog / menu / snackbar / banner，全局按钮与字段", (
   assert.match(css, /\.toast::before/, "toast 没有语义点");
   assert.match(css, /#update-bar \{[^}]*var\(--md-surface-container-high\)/, "更新条不是 MD3 面");
   assert.match(css, /@keyframes md-dialog-in/, "对话框没有进场动画");
+});
+
+// MD3 第五刀（2026-11-06）：上下文工作区（载荷 / 状态 / 压缩 / 分段 / 修洞）。
+test("上下文工作区 MD3：primary tabs / 载荷行 / 状态 / 压缩树 / 高级压缩", () => {
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+
+  assert.match(css, /\.bar-head\.bar-tabs \.tab \{/, "找不到上下文 tab 规则");
+  assert.match(css, /\.bar-head\.bar-tabs \.tab::after \{[^}]*background:\s*var\(--md-primary\)/, "上下文 tab 没有 MD3 indicator");
+  assert.match(css, /\.bar-head\.bar-tabs \.tab\.sel \{[^}]*color:\s*var\(--md-primary\)/, "选中 tab 不是 primary");
+
+  assert.match(css, /\.pv-head \{[^}]*min-height:\s*2\.5em/, "载荷行头不是 40dp");
+  assert.match(css, /\.pv-head:hover \{[^}]*--md-on-surface[^}]*6%/, "载荷行头没有状态层");
+  assert.match(css, /\.pv-role \{[^}]*font-size:\s*var\(--md-type-label-small\)/, "role 标签不是 label-small");
+  assert.match(css, /\.pv-content \{[^}]*font-size:\s*var\(--md-type-body-medium\)/, "载荷正文不是 body-medium");
+
+  assert.match(css, /#state-view h4 \{[^}]*color:\s*var\(--md-primary\)/, "状态表名不是 primary");
+  assert.match(css, /#state-view \.state-row \{[^}]*var\(--md-outline-variant\)/, "状态行分隔线不是 outline-variant");
+
+  assert.match(css, /\.ctree-row \{[^}]*border-radius:\s*var\(--md-shape-sm\)/, "压缩树行不是 MD3 圆角");
+  assert.match(css, /\.ctree-row\.sum \.ctree-bar \{[^}]*var\(--md-primary\)/, "摘要容量条不是 primary 色调");
+  assert.match(css, /\.ctree-undo \{[^}]*width:\s*2em[^}]*border-radius:\s*var\(--md-shape-full\)/, "撤销键不是 32dp 圆形");
+
+  assert.match(css, /\.adv-progress \{[^}]*height:\s*4px[^}]*var\(--md-surface-container-highest\)/, "高级压缩进度条不是 MD3");
+  assert.match(css, /\.adv-progress i \{[^}]*background:\s*var\(--md-primary\)/, "进度填充不是 primary");
+  assert.match(css, /\.adv-holes \{[^}]*background:\s*var\(--md-error-container\)/, "空洞提示不是 error-container");
+  assert.match(css, /\.adv-chunk \{[^}]*min-height:\s*2\.5em/, "chunk 行不是 40dp");
+  assert.match(css, /\.adv-dot\.running \{[^}]*background:\s*var\(--md-primary\)/, "运行中点不是 primary");
+  assert.match(css, /\.ws-draft-note \{[^}]*background:\s*var\(--md-surface-container-low\)/, "草稿提示不是 MD3 容器");
 });

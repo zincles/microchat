@@ -2303,6 +2303,9 @@ onUnmounted(() => {
 
 <template>
   <div id="app">
+    <!-- 更新条：放在 columns **之前**，作为 #app 的顶部流内横幅 —— 从前的 fixed 会压在顶栏
+         与上下文 tabs 上（2026-11-06 截图实见）。只有检测到新版本时才有这一条。 -->
+    <UpdateBar v-if="updateReady" ref="updateRef" @update="applyUpdate" />
     <div id="columns">
       <SessionBar
         ref="sessionbarRef"
@@ -2440,7 +2443,6 @@ onUnmounted(() => {
     </div>
     <Toast ref="toastRef" />
     <!-- 更新条：只在检测到新版本时出现（挂根层 —— 设置视图开着也该看得见）。 -->
-    <UpdateBar v-if="updateReady" ref="updateRef" @update="applyUpdate" />
     <!-- Overlays 挂根层（不在聊天视图里）：设置视图开着时"确认"也要能弹（fixed 定位照旧）。 -->
     <Overlays ref="overlaysRef" @run-command="(n) => runCommand(n, []).catch((err) => toast(`命令失败：${err.message}`, 'error'))" @pick="onPickAction" />
     <SummaryEditor

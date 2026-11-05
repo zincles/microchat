@@ -1178,7 +1178,18 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   `plist` = surface-container-low 卡片、表头 label-small、行 hover 状态层；`.io-card` = outlined 卡片。
   浮层：`.modal` / `.confirm` / `.palette` / `.picker` = MD3 dialog/menu（surface-container-high、
   28dp / 12dp、elevation 3、scrim 45%、`md-dialog-in` 进场）；toast = snackbar（inverse-surface、
-  4dp、elevation 3、语义点替代左边框）；更新条 = surface-container-high 面 + 主按钮。
+  4dp、elevation 3、语义点替代左边框）；更新条 = surface-container-high 面 + 主按钮，
+  且已改成 **#app 里的流内横幅**（2026-11-06：从 fixed 改成 columns 之前的 flex 子项 ——
+  fixed 会压在顶栏与上下文 tabs 上，截图实见）。
+  **上下文工作区**（2026-11-06 第五刀）：五 tab 改 MD3 primary tabs（3dp 圆角 indicator、无整条底线）；
+  载荷行头 40dp + 状态层、role/idx/chars 用 label-small、正文 body-medium；状态表名 primary、
+  行分隔 outline-variant；压缩树行 = 8dp 圆角 + hover 状态层 + primary 容量条、
+  撤销键 32dp 圆形；高级压缩进度条 = 4px primary、空洞提示 = error-container、
+  chunk 行 40dp、运行中圆点 primary；草稿提示 = surface-container-low 卡片；
+  原始载荷 = MD3 代码容器（surface-container-low + outline-variant）；
+  `#context-workspace` 顶部留白 **4.2em**（与 `.messages-inner` 同数，让开 56dp 顶栏）。
+  ⚠ 载荷页的**平铺**口径仍然有效：`.pv-msg` 依旧无边框/无底色/无圆角、块间一条细线，
+  role 与 chip 仍是裸文字（契约测试钉着；MD3 只换排版与颜色，不加回卡片）。
   ⚠ 输入框的全局基线特异性很高（`input:not(...):not(...)`），组件要改样式仍得加前缀/ID（模型搜索那条踩过）。
   ⚠ 字体暂时还是 Inter：MD3 官方是 Roboto，但换字体是全站的事，等 MD3 铺到聊天区再一起定。
 - **高延迟（1s+ RTT）下的界面口径**（2026-11-05 用户定：「优化服务器和用户之间存在 1000ms 以上延迟的极端场景」）：
