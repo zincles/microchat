@@ -3764,3 +3764,14 @@ test("上下文工作区 MD3：primary tabs / 载荷行 / 状态 / 压缩树 / �
   assert.match(css, /\.adv-dot\.running \{[^}]*background:\s*var\(--md-primary\)/, "运行中点不是 primary");
   assert.match(css, /\.ws-draft-note \{[^}]*background:\s*var\(--md-surface-container-low\)/, "草稿提示不是 MD3 容器");
 });
+
+// MD3 快修（2026-11-06）：草稿欢迎页 / 空态 / 滚动条 / 展开淡入。
+test("MD3 快修：草稿欢迎 / 空态 / 滚动条 / 展开动画", () => {
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.match(css, /\.draft-welcome h2 \{[^}]*font-size:\s*var\(--md-type-title-large\)/, "草稿标题不是 MD3 title-large");
+  assert.match(css, /\.dw-hint kbd \{[^}]*var\(--md-surface-container-high\)/, "kbd 不是 MD3 容器");
+  assert.match(css, /\.empty \{[^}]*var\(--md-on-surface-variant\)/, "空态不是 on-surface-variant");
+  assert.match(css, /\*::-webkit-scrollbar-thumb \{[^}]*var\(--md-outline-variant\)/, "滚动条不是 outline-variant");
+  assert.match(css, /@keyframes md-fade-in/, "展开没有淡入动画");
+  assert.match(css, /prefers-reduced-motion[\s\S]{0,200}md-fade-in|md-fade-in[\s\S]{0,400}prefers-reduced-motion/, "淡入没有 reduced-motion 兜底");
+});

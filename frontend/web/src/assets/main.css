@@ -498,13 +498,12 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
   padding: 4.2em 56px calc(var(--composer-h, 4.6em) + 1.5em); display: flex; flex-direction: column; gap: 0.8em; }
 /* 空草稿首屏（2026-11-02，2026-11-04 恢复）：把"一整页纯黑"换成一句人话 + 当前助手/模型。
  * 它只是欢迎块，不是消息 —— 所以没有 who/编号/操作行；左栏的品牌位已删，这里不放品牌。 */
-.draft-welcome { margin: 0; min-height: 50vh; padding: 2em 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
-  text-align: center; gap: 0.35em; color: var(--tg-text); }
-.draft-welcome h2 { margin: 0; font-size: 1.5em; font-weight: 600; letter-spacing: 0.01em; }
-.dw-sub { margin: 0; color: var(--tg-hint); font-size: 0.9em; word-break: break-word; }
+.draft-welcome { margin: 0; min-height: 50vh; padding: 2em 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 0.45em; color: var(--md-on-surface); }
+.draft-welcome h2 { margin: 0; font-size: var(--md-type-title-large); font-weight: 500; letter-spacing: -0.01em; color: var(--md-on-surface); }
+.dw-sub { margin: 0; color: var(--md-on-surface-variant); font-size: var(--md-type-body-medium); word-break: break-word; }
 .dw-sep { margin: 0 0.45em; opacity: 0.55; }
-.dw-hint { margin: 0.45em 0 0; color: var(--tg-hint); font-size: 0.82em; opacity: 0.85; }
-.dw-hint kbd { font: inherit; padding: 0.05em 0.35em; border: 1px solid var(--line); border-radius: var(--r-xs); }
+.dw-hint { margin: 0.55em 0 0; color: var(--md-outline); font-size: var(--md-type-label-medium); }
+.dw-hint kbd { font: inherit; font-size: var(--md-type-label-small); padding: 0.1em 0.4em; background: var(--md-surface-container-high); color: var(--md-on-surface-variant); border: 1px solid var(--md-outline-variant); border-radius: var(--md-shape-xs); }
 /* 会话加载骨架（2026-11-02）：三条呼吸的灰条，不画头像/气泡（那会像"已经在加载内容"，
  * 而实际可能只是一次切会话）。进度感靠 opacity，不动 layout。 */
 .chat-skeleton { display: flex; flex-direction: column; gap: 0.9em; padding: 1.2em 0; }
@@ -1003,7 +1002,7 @@ button.toggle .knob { position: absolute; top: 50%; left: 0.35em; width: 1.1em; 
 button.toggle.on { background: var(--md-primary); border-color: var(--md-primary); }
 button.toggle.on .knob { left: calc(100% - 1.55em); width: 1.5em; height: 1.5em; margin-top: -0.75em; background: var(--md-on-primary); }
 @media (prefers-reduced-motion: reduce) { button.toggle .knob { transition: none; } }
-.empty { color: var(--tg-hint); padding: 0.8em 0.6em; font-size: 0.9em; }
+.empty { color: var(--md-on-surface-variant); padding: 0.9em 0.6em; font-size: var(--md-type-body-medium); line-height: 1.6; }
 /* 大段输入框独占一行：label 在上、框在下（跟右边挤一格没法看）。 */
 .field-block { display: block; margin: 0; padding: 0.45em 0; color: var(--tg-text); border-bottom: 1px solid var(--line); }
 .field-block:last-child { border-bottom: none; }
@@ -1278,3 +1277,20 @@ button.toggle.on .knob { left: calc(100% - 1.55em); width: 1.5em; height: 1.5em;
 .adv-config .field { grid-template-columns: 1fr; gap: 0.3em; align-items: start; }
 .adv-config .field > span { color: var(--md-on-surface-variant); font-size: var(--md-type-label-medium); }
 .adv-range { width: 100%; }
+
+/* 滚动条也跟主题走：细、outline-variant 滑块，不抢视线（MD3 的滚动条是"能用就行"）。 */
+* { scrollbar-width: thin; scrollbar-color: var(--md-outline-variant) transparent; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb { background: var(--md-outline-variant); border-radius: 999px; }
+*::-webkit-scrollbar-track { background: transparent; }
+
+/* 展开内容用 MD3 fade（思考 / 摘要原文 / 载荷块）——不改变高度，只让"打开"这一下有反馈。 */
+@keyframes md-fade-in { from { opacity: 0; transform: translateY(-2px); } to { opacity: 1; transform: none; } }
+.msg .think[open] .think-body,
+.sum-raw[open] > summary + div,
+.pv-content,
+.pv-extra { animation: md-fade-in var(--md-dur-200) var(--md-ease-emphasized); }
+@media (prefers-reduced-motion: reduce) {
+  .msg .think[open] .think-body, .sum-raw[open] > summary + div,
+  .pv-content, .pv-extra { animation: none; }
+}
