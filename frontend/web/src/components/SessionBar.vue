@@ -7,6 +7,11 @@ import { groupSessions } from "../utils/sessionGroups.js";
 
 const emit = defineEmits(["select", "settings", "copy", "export", "close", "new", "open-settings", "toggle-left", "open-sessions", "open-providers"]);
 
+// busyIds：App 从 `/tasks` 那一拍算出来的"此刻有任务在跑的会话"（判定在 `utils/tasks.js`）。
+// 行内环只吃这一处 —— 别在组件里再 filter 一遍任务表（两处判据一分岔，同一时刻会显示两个答案）。
+const props = defineProps({ busyIds: { type: Array, default: () => [] } });
+const busySet = computed(() => new Set(props.busyIds ?? []));
+
 const sessions = ref([]);
 const currentId = ref(null);
 // 左栏顶部的两个空白：对话 / 生图。生图暂未接 API，切过去只改选中态（未来这里放生图列表）。
@@ -102,6 +107,15 @@ defineExpose({ setSessions });
           <span class="session-main">
             <span class="title">{{ s.title || "新会话" }}</span>
           </span>
+          <!-- 行内环：这条会话此刻有任务在跑（生成 / 压缩 / 重摇 / 起标题 / 队列踩到它）。
+               与「选项」键并存 —— 它是状态，不是入口，所以不抢那枚按钮的位置。 -->
+          <span
+            v-if="busySet.has(s.id)"
+            class="session-busy"
+            role="status"
+            title="正在运行任务"
+            aria-label="正在运行任务"
+          ></span>
           <button
             class="item-btn"
             type="button"

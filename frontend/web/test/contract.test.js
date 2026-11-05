@@ -48,6 +48,7 @@ import {
   whoText,
   sessionTitle,
 } from "../src/utils/format.js";
+import { busySessionIds } from "../src/utils/tasks.js";
 import { sendMode, wantsSend, themePref, normalizeTheme, apiBase, defaultApiBase, apiBaseCandidates, THEME_IDS, DEFAULT_THEME, DEFAULT_SEND, normalizeTextScale, textScale, applyTextScale, saveTextScale, flushPrefs, normalizeFontFamily, fontBody, fontMono, applyFonts, saveFontBody, saveFontMono, DEFAULT_FONT_BODY, DEFAULT_FONT_MONO, TEXT_SCALE_MIN, TEXT_SCALE_MAX, DEFAULT_TEXT_SCALE } from "../src/utils/prefs.js";
 
 // 契约测试（无浏览器）：只验纯函数与请求形状。`node --test test/`。
@@ -3390,4 +3391,43 @@ test("渠道标识可改：编辑态输入框可用、保存发 new_id、成功�
   assert.match(settings, /function onProviderSaved\(id\)/, "没有 onProviderSaved");
   assert.match(settings, /editProvider\.value = providers\.value\.find\(/, "改名后没把编辑器指向新对象");
   assert.match(settings, /emit\("models-changed"\)/, "改名后没通知顶栏重拉模型分组");
+});
+
+// 左栏行内环（2026-11-05 用户定）：一条会话有任务在跑，会话列表那一行就得有反应。
+//
+// 判定只在一处（`utils/tasks.js`）：顶栏环心、任务面板、左栏行内环吃同一份 `/tasks` 快照。
+// 这条钉两件最容易错的事：**已完成的不算**（面板还会把它列一阵子）、**队列踩着的会话也算**
+// （两步之间服务端可能短暂地没有原子任务，只看 tasks 会让环一闪一闪）。
+test("忙碌会话：只认还在跑的任务，队列当前那一步也算", () => {
+  const board = {
+    running: 3,
+    tasks: [
+      { id: "t1", session: "a", finished_at: null }, // 跑着 ⇒ a
+      { id: "t2", session: "b", finished_at: 123 },  // 已收尾 ⇒ 不算
+      { id: "t3", session: null, finished_at: null }, // refresh_models 不绑会话 ⇒ 不算
+      { id: "t4", session: "a", finished_at: null }, // 同一条会话两个任务 ⇒ 去重
+    ],
+    queues: [
+      { id: "q1", state: "进行中", current: { session_id: "c" } },
+      { id: "q2", state: "成功", current: { session_id: "d" }, finished_at: 9 }, // 已结束 ⇒ 不算
+      { id: "q3", state: "进行中" }, // 两步之间没有 current ⇒ 不硬加
+    ],
+  };
+  assert.deepEqual(busySessionIds(board).sort(), ["a", "c"]);
+  assert.deepEqual(busySessionIds(null), [], "读不到面板 ⇒ 空，不是崩溃");
+  assert.deepEqual(busySessionIds({}), [], "空面板 ⇒ 空");
+});
+
+test("忙碌会话接到左栏：同一拍、读不到就清空、行上有环且会转", () => {
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8");
+
+  assert.match(app, /busyIds\.value = busySessionIds\(board\)/, "App 没把 /tasks 快照算成忙碌会话");
+  assert.match(app, /busyIds\.value = \[\]/, "任务读不到时没清空（会留下永远转的假象）");
+  assert.match(app, /:busy-ids="busyIds"/, "没把忙碌会话传给左栏");
+  assert.match(bar, /v-if="busySet\.has\(s\.id\)"/, "行上没有按会话 id 判断");
+  assert.match(bar, /class="session-busy"/, "没有行内环元素");
+  assert.match(css, /@keyframes session-busy-spin/, "环没有转起来的动画");
+  assert.match(css, /prefers-reduced-motion[\s\S]{0,300}session-busy[\s\S]{0,120}animation: none/, "reduced-motion 下没关动画");
 });

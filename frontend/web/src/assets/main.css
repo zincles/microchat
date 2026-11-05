@@ -665,6 +665,20 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .session-item .item-btn:hover, .session-item .item-btn:focus-visible { background: var(--mix-8); color: var(--tg-text); opacity: 1; }
 .session-item.sel .item-btn { opacity: 0.8; }
 .session-item .item-btn svg { display: block; }
+/* 行内环（2026-11-05 用户定）：这条会话此刻有任务在跑。
+ * 用边框旋转而不是 SVG —— 尺寸只由字号决定（外框定宽高，不会因为 line-height 变形成椭圆），
+ * 深浅主题也不用第二套颜色。与「选项」键并存：环是状态、键是入口，别拿一个替掉另一个。
+ * 与顶栏那颗环同一个 `/tasks` 快照、同一处判定（`utils/tasks.js`）。 */
+.session-item .session-busy {
+  flex: none; box-sizing: border-box; width: 0.8em; height: 0.8em; border-radius: 50%;
+  border: 2px solid var(--mix-13); border-top-color: var(--accent);
+  animation: session-busy-spin 0.9s linear infinite;
+}
+@keyframes session-busy-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  /* 不转也得看得出"它在忙"：留一道静止的缺口环。 */
+  .session-item .session-busy { animation: none; }
+}
 /* 会话选项浮板：Teleport 到 body + fixed 定位（#session-list 自己会滚，absolute 会被裁）。 */
 .session-menu-backdrop { position: fixed; inset: 0; z-index: 70; }
 .session-menu {

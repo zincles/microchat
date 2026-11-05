@@ -16,6 +16,7 @@ import { installViewportFit } from "./utils/viewport.js";
 import { classifyAxis, pickDrag, dragProgress, resolveRelease } from "./utils/swipe.js";
 import { typewriterDuration, revealCount } from "./utils/typewriter.js";
 import { downloadJSON } from "./utils/download.js";
+import { busySessionIds } from "./utils/tasks.js";
 import { sharedApi, previewOn, payloadPreviewOn, applyTheme, wantsSend, apiBase, apiBaseCandidates, saveNetPrefs, lastSessionId, saveLastSession, commandMenuOn, applyTextScale, applyFonts, chromeHideOn, syncPrefs, saveBarLeftHidden, barLeftHidden } from "./utils/prefs.js";
 import {
   groupModelsByProvider,
@@ -71,6 +72,9 @@ const toastRef = ref(null);
 const topbarRef = ref(null);
 const sessionbarRef = ref(null);
 const payloadbarRef = ref(null);
+// busyIds：此刻有任务在跑的会话（左栏每行那枚环）。数据来自 `/tasks` 的同一拍
+// （`busySessionIds` 是判定唯一处）—— 别另起一条轮询，同一个事实住两处只会两处都过期。
+const busyIds = ref([]);
 const composerRef = ref(null);
 const overlaysRef = ref(null);
 // 命令菜单（输入框左侧 ☰ 与 "/" 浮层）：默认关（移动端碍事，2026-10-17 用户定）；
@@ -1588,7 +1592,13 @@ async function refreshTasks() {
   try {
     const board = await api.tasks();
     topbarRef.value?.setTasks(board);
-  } catch { topbarRef.value?.setTasks(null); }
+    // 左栏的行内环：哪条会话此刻有任务在跑（与顶栏环心同一个快照）。
+    busyIds.value = busySessionIds(board);
+  } catch {
+    // 读不到 ⇒ 面板说"读不到"，左栏**不能**继续挂着上一拍的环（那会是一条永远转的假象）。
+    topbarRef.value?.setTasks(null);
+    busyIds.value = [];
+  }
 }
 // refreshStatusline：连接 / 助手 / 相位 / 上下文 —— 全都喂给右上角那枚环（2026-10-28 用户定）。
 //
@@ -2076,6 +2086,7 @@ onUnmounted(() => {
     <div id="columns">
       <SessionBar
         ref="sessionbarRef"
+        :busy-ids="busyIds"
         @toggle-left="toggleLeft"
         @select="(id) => { closeLeftDrawer(); backToChat(); enterSession(id).catch((err) => toast(`进会话失败：${err.message}`, 'error')); }"
         @settings="(id) => { sessionSettingsId = id; }"
