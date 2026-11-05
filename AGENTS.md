@@ -1160,6 +1160,13 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   （否则会顺手改掉上下文工作区，且契约测试只钉了一部分）。
   ⚠ **全局 input 基线的特异性 (0,4)**（`input:not(...):not(...)`）会压掉 `.model-search` 这类单类选择器 ——
   搜索栏的 full 圆角 / 无下划线 / focus 环必须写成 `#chat-col > header .model-search`（踩过：蓝下划线又回来了）。
+  **消息区**（2026-11-05 第三刀）：用户气泡 = `secondary-container` / `on-secondary-container`、
+  16dp 圆角 + 4dp 尾巴；AI 仍是纯文本（不包气泡，保留既有形态）。消息头 = label-medium / on-surface-variant；
+  操作行 = 32dp MD3 icon button（状态层 / danger 用 error）；思考折叠 = surface-container-low 圆角容器，
+  summary 带 ▸/▾ 与 focus 环；摘要卡 = MD3 card（surface-container-low、12dp、elevation 1、dirty 用 error-container）；
+  代码块 = surface-container-low + outline-variant 描边；等首字节三点与流式光标都用 primary；
+  「加载更多」= MD3 outlined 按钮（outline-variant 描边、full 圆角、状态层）。
+  ⚠ 用户气泡里的 `who` / `foot` 仍有旧规则的 `color: inherit; opacity` 覆盖（气泡内语义色继承是对的，别删）。
   ⚠ 字体暂时还是 Inter：MD3 官方是 Roboto，但换字体是全站的事，等 MD3 铺到聊天区再一起定。
 - **高延迟（1s+ RTT）下的界面口径**（2026-11-05 用户定：「优化服务器和用户之间存在 1000ms 以上延迟的极端场景」）：
   目标不是"让网络变快"，而是**别让等待凭空多出一个来回**，也别让旧数据挂在新语境里。

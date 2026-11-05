@@ -3295,7 +3295,7 @@ test("聊天布局：16px / 1.7 行高、840 阅读列、更松的消息间距",
   assert.match(css, /#?messages-inner \{[^}]*gap:\s*0\.8em/, "消息之间还是挤在一起");
   assert.match(css, /\.msg-wrap\.assistant \.msg \{[^}]*padding:\s*0\.45em 0/, "assistant 上下仍太挤");
   assert.match(css, /\.msg \.text p \{[^}]*margin:\s*0 0 0\.7em/, "段落间距没放宽");
-  assert.match(css, /\.msg \.msg-foot \{[^}]*font-size:\s*0\.7em/, "用量脚注没有收成更小的一档");
+  assert.match(css, /\.msg \.msg-foot \{[^}]*font-size:\s*var\(--md-type-label-small\)/, "用量脚注没有收成 MD3 label-small");
   assert.match(css, /\.icon-btn, \.edit-btn, button:has\(> svg\)[^{]*\{[^}]*align-items:\s*center/, "图标按钮没有统一 flex 居中");
   assert.match(css, /button > svg \{[^}]*display:\s*block/, "SVG 还按 inline 基线落（会偏下）");
 });
@@ -3682,4 +3682,22 @@ test("输入区 MD3：搜索栏式 composer / 48dp 发送 / 焦点环 / 停止�
   assert.match(css, /#composer button:p?active \{[^}]*transform:\s*scale\(0\.96\)/, "发送键按下没有 MD3 scale");
   assert.match(css, /#composer button\.stop \{[^}]*background:\s*var\(--md-error-container\)/, "停止键不是 error-container");
   assert.match(css, /#input::placeholder \{[^}]*var\(--md-on-surface-variant\)/, "占位符不是 on-surface-variant");
+});
+
+// MD3 第三刀（2026-11-05）：消息区（气泡 / 思考 / 摘要卡 / 操作行 / 代码块）。
+test("消息区 MD3：tonal 用户气泡 / 32dp 操作 / 思考容器 / 卡片摘要 / 代码容器", () => {
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+
+  assert.match(css, /\.msg\.user \{[^}]*background:\s*var\(--md-secondary-container\)/, "用户气泡不是 MD3 tonal 容器");
+  assert.match(css, /\.msg\.user \{[^}]*border-radius:\s*var\(--md-shape-lg\) var\(--md-shape-lg\) var\(--md-shape-xs\)/, "用户气泡不是 16dp/4dp 尾巴圆角");
+  assert.match(css, /\.msg-ops \.edit-btn \{[^}]*min-width:\s*2em[^}]*min-height:\s*2em/, "操作键不是 32dp");
+  assert.match(css, /\.msg-ops \.edit-btn:hover \{[^}]*--md-on-surface[^}]*8%/, "操作键没有状态层");
+  assert.match(css, /\.msg \.think \{[^}]*background:\s*var\(--md-surface-container-low\)/, "思考折叠不是 MD3 容器");
+  assert.match(css, /\.sum-block \{[^}]*background:\s*var\(--md-surface-container-low\)/, "摘要卡不是 MD3 卡片");
+  assert.match(css, /\.sum-block \{[^}]*box-shadow:\s*var\(--md-elev-1\)/, "摘要卡没有 elevation 1");
+  assert.match(css, /\.msg \.text code \{[^}]*background:\s*var\(--md-surface-container-high\)/, "行内代码不是 MD3 容器色");
+  assert.match(css, /\.msg \.text pre \{[^}]*border:\s*1px solid var\(--md-outline-variant\)/, "代码块没有 MD3 描边");
+  assert.match(css, /\.msg \.typing span \{[^}]*background:\s*var\(--md-primary\)/, "等首字节的三点不是 primary");
+  assert.match(css, /\.stream-cursor \{[^}]*background:\s*var\(--md-primary\)/, "流式光标不是 primary");
+  assert.match(css, /#load-more \{[^}]*border:\s*1px solid var\(--md-outline-variant\)/, "加载更多不是 MD3 outlined 按钮");
 });

@@ -347,7 +347,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 @media (prefers-reduced-motion: reduce) { #sessions-bar { transition: none; } }
 /* —— 动效（TG 味 = 快而短：150–200ms，ease-out；只动 opacity/translate，不碰 layout） —— */
 @keyframes msg-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-.msg { position: relative; font-size: calc(16px * var(--app-text-scale, 1)); line-height: 1.7; animation: msg-in 160ms ease-out; }
+.msg { position: relative; font-size: calc(16px * var(--app-text-scale, 1)); line-height: 1.7; animation: msg-in var(--md-dur-250) var(--md-ease-emphasized); }
 @media (prefers-reduced-motion: reduce) { .msg { animation: none; } }
 .palette, .picker, .confirm, .modal-box { transition: opacity 150ms ease-out, transform 150ms ease-out; }
 .hidden { transition: none; }
@@ -683,51 +683,49 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
  * 圆角也放大一档（气泡比控件圆，才不像一块色卡）。
  * ⚠ 从前这里还有一句 `border-bottom-right-radius: 4px`（TG 那种小尾巴）写在 `border-radius`
  * **前面** —— 简写会把它重置掉，从来没生效过（死值，已删）。 */
-.msg.user { align-self: flex-end; background: var(--mix-10); color: var(--tg-text);
-  padding: 0.45em 0.7em; border-radius: var(--r-bubble); }
+.msg.user { align-self: flex-end; background: var(--md-secondary-container); color: var(--md-on-secondary-container); padding: 0.6em 0.9em; border-radius: var(--md-shape-lg) var(--md-shape-lg) var(--md-shape-xs) var(--md-shape-lg); }
 .msg.user .who, .msg.user .edit-btn { color: inherit; opacity: 0.75; }
 .msg.assistant { align-self: flex-start; }
-.msg .msg-head { display: flex; justify-content: space-between; align-items: center; gap: 0.6em; margin-bottom: 0.25em; }
-.msg .who { font-weight: bold; font-size: 0.85em; color: var(--tg-link); }
+.msg .msg-head { display: flex; justify-content: space-between; align-items: center; gap: 0.6em; margin-bottom: 0.3em; }
+.msg .who { font-weight: 500; font-size: var(--md-type-label-medium); letter-spacing: 0.04em; color: var(--md-on-surface-variant); }
 .msg.user .who { color: inherit; }
 /* 气泡头上的编号：收在名字里、淡一点（你 #2 / 助手 #4）。 */
-.msg .msg-idx { margin-left: 0.35em; font-weight: normal; opacity: 0.6; }
+.msg .msg-idx { margin-left: 0.35em; font-weight: 400; opacity: 0.7; font-variant-numeric: tabular-nums; }
 /* 气泡脚注（2026-10-20）：这一发用了多少 token、花了多少钱（上游 usage 报的）。
  * 贴着正文底部、比正文小一档、暗色 —— 它是**事后账**，不该抢正文的视线。
  * 用户气泡（蓝底）用继承色 + 降透明度，跟 `.who` 同一个待遇。 */
-.msg .msg-foot { margin-top: 0.3em; font-size: 0.7em; line-height: 1.4; letter-spacing: 0.01em;
-  color: color-mix(in srgb, var(--tg-hint) 86%, var(--tg-text)); opacity: 1; }
+.msg .msg-foot { margin-top: 0.4em; font-size: var(--md-type-label-small); line-height: 1.4; letter-spacing: 0.01em; color: var(--md-on-surface-variant); opacity: 1; }
 .msg.user .msg-foot { color: inherit; opacity: 0.7; }
 /* "加载更多历史"：窗口化消息列顶上的那枚按钮（还有更老的一页时才挂）。 */
-#load-more { align-self: center; margin: 0.5em auto 0.7em; background: none; border: 1px dashed var(--line); color: var(--tg-hint); border-radius: 999px; padding: 0.3em 1em; cursor: pointer; font-size: 0.85em; }
-#load-more:hover { color: var(--tg-text); border-color: var(--tg-hint); }
+#load-more { align-self: center; margin: 0.5em auto 0.7em; background: none; border: 1px solid var(--md-outline-variant); color: var(--md-on-surface-variant); border-radius: var(--md-shape-full); min-height: 2.5em; padding: 0 1.1em; cursor: pointer; font-size: var(--md-type-label-large); font-weight: 500; transition: background-color var(--md-dur-150) var(--md-ease-standard), color var(--md-dur-150) var(--md-ease-standard), border-color var(--md-dur-150) var(--md-ease-standard); }
+#load-more:hover { background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); color: var(--md-on-surface); border-color: var(--md-outline); }
 /* —— 摘要卡（2026-10-10）：一段被压过的对话在消息列里的样子 ——
  * 四面圆角矩形（不是气泡、没有尾巴、不跟左右）；头行 Summary #a-b；正文 = 摘要文本
  * （发给模型的就是这份）；`查看未压缩文本` 展开原始气泡（带着各自的操作）。 */
-.sum-block { align-self: stretch; margin: 0.15em 0; border: 1px solid var(--line); border-radius: var(--r-card); background: var(--tg-float); overflow: hidden; flex-shrink: 0; }
+.sum-block { align-self: stretch; margin: 0.15em 0; border: none; border-radius: var(--md-shape-md); background: var(--md-surface-container-low); box-shadow: var(--md-elev-1); overflow: hidden; flex-shrink: 0; }
 /* ⚠ flex-shrink: 0 是**必须的**：overflow: hidden（为圆角）会让 flex 项的自动最小高度失效 ⇒ 不加这句，卡会被压得比内容矮（展开的原文被裁掉一截、还会把别的卡一起压扁 —— 2026-10-10 踩过）。 */
-.sum-head { display: flex; gap: 0.45em; align-items: baseline; padding: 0.45em 0.8em 0.1em; font-size: 0.85em; }
-.sum-name { color: var(--tg-link); font-weight: bold; }
-.sum-range { color: var(--tg-hint); }
-.sum-tag { color: var(--tg-destructive); border: 1px solid currentColor; border-radius: var(--r-xs); padding: 0 0.3em; font-size: 0.9em; }
-.sum-text { padding: 0.15em 0.8em 0.5em; white-space: pre-wrap; word-break: break-word; }
-.sum-raw { border-top: 1px solid var(--line); }
-.sum-raw > summary { list-style: none; cursor: pointer; padding: 0.35em 0.8em; color: var(--tg-link); font-size: 0.85em; }
+.sum-head { display: flex; gap: 0.45em; align-items: baseline; padding: 0.6em 0.9em 0.15em; font-size: var(--md-type-label-medium); }
+.sum-name { color: var(--md-primary); font-weight: 500; letter-spacing: 0.04em; }
+.sum-range { color: var(--md-on-surface-variant); font-variant-numeric: tabular-nums; }
+.sum-tag { color: var(--md-on-error-container); background: var(--md-error-container); border: none; border-radius: var(--md-shape-full); padding: 0 0.45em; font-size: var(--md-type-label-small); }
+.sum-text { padding: 0.2em 0.9em 0.7em; white-space: pre-wrap; word-break: break-word; font-size: var(--md-type-body-medium); line-height: 1.6; }
+.sum-raw { border-top: 1px solid var(--md-outline-variant); }
+.sum-raw > summary { list-style: none; cursor: pointer; padding: 0.55em 0.9em; color: var(--md-primary); font-size: var(--md-type-label-large); font-weight: 500; }
 .sum-raw > summary::-webkit-details-marker { display: none; }
 .sum-raw > summary::before { content: "▸ "; }
 .sum-raw[open] > summary::before { content: "▾ "; }
-.sum-originals { display: flex; flex-direction: column; gap: 0.1em; padding: 0.2em 0.4em 0.5em 0.7em; border-left: 2px solid var(--line); margin: 0 0.4em 0.5em; }
+.sum-originals { display: flex; flex-direction: column; gap: 0.1em; padding: 0.2em 0.4em 0.6em 0.8em; border-left: 2px solid var(--md-outline-variant); margin: 0 0.4em 0.6em; }
 /* 卡里的原文气泡：比主列略宽（卡本身就窄了一圈，沿用 70%/80% 会显得挤）。 */
 .sum-originals .msg-wrap { max-width: 80%; }
 .sum-originals .msg-wrap.assistant { width: 92%; max-width: 92%; }
-.sum-loading { padding: 0.3em 0.8em 0.6em; color: var(--tg-hint); font-size: 0.9em; }
+.sum-loading { padding: 0.3em 0.9em 0.6em; color: var(--md-on-surface-variant); font-size: var(--md-type-body-medium); }
 /* 卡头右侧的操作（⟳ 刷新 / ✎ 编辑 / ◀ n/N ▶ 位次）—— 与气泡操作行同一副脸。 */
-.sum-ops { margin-left: auto; display: flex; gap: 0.15em; align-items: center; }
-.sum-ops .edit-btn { color: var(--tg-hint); font-size: 0.85em; padding: 0.1em 0.3em; border-radius: var(--r-xs); }
-.sum-ops .edit-btn:hover { color: var(--tg-text); }
-.sum-ops .edit-btn:disabled { opacity: 0.4; cursor: default; }
-.sum-pos { color: var(--tg-hint); font-size: 0.95em; }
-.sum-busy { color: var(--tg-hint); font-size: 0.95em; margin-left: 0.2em; }
+.sum-ops { margin-left: auto; display: flex; gap: 0.1em; align-items: center; }
+.sum-ops .edit-btn { color: var(--md-on-surface-variant); font-size: 0.8em; min-width: 2em; min-height: 2em; display: inline-flex; align-items: center; justify-content: center; padding: 0; border-radius: var(--md-shape-full); transition: background-color var(--md-dur-150) var(--md-ease-standard), color var(--md-dur-150) var(--md-ease-standard); }
+.sum-ops .edit-btn:hover { background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); color: var(--md-on-surface); }
+.sum-ops .edit-btn:disabled { opacity: 0.4; cursor: default; background: none; }
+.sum-pos { color: var(--md-on-surface-variant); font-size: var(--md-type-label-large); font-variant-numeric: tabular-nums; }
+.sum-busy { color: var(--md-on-surface-variant); font-size: var(--md-type-label-medium); margin-left: 0.2em; }
 .sum-edit-field, .message-edit-field { width: 100%; box-sizing: border-box; }
 /* 消息编辑接近全屏（2026-11-02 用户定：560px 的小窗不够用）：宽几乎占满视口、高 92vh，
    文本框吃掉剩余高度（不再固定 14 行），保存/取消固定在底部。 */
@@ -748,20 +746,18 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 /* 气泡正文：markdown 渲染（marked 生成的 p/code/pre/longtable 走这里收敛）。 */
 .msg .text { word-break: break-word; }
 /* 流式末尾的终端光标：实心方块 + 老式终端那种硬切闪烁；只服务"正在写"的观感。 */
-.stream-cursor { position: absolute; width: 0.42em; height: 1em; margin-left: 0.09em;
-  background: currentColor; border-radius: 1px; opacity: 0.8;
-  pointer-events: none; animation: stream-cursor-blink 1.05s steps(1, end) infinite; }
+.stream-cursor { position: absolute; width: 0.42em; height: 1em; margin-left: 0.09em; background: var(--md-primary); border-radius: 2px; opacity: 0.9; pointer-events: none; animation: stream-cursor-blink 1.05s steps(1, end) infinite; }
 @keyframes stream-cursor-blink { 0%, 46% { opacity: 0.8; } 50%, 100% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) {
   .stream-cursor { animation: none; opacity: 0.7; }
 }
 .msg .text p { margin: 0 0 0.7em; }
 .msg .text p:last-child { margin-bottom: 0; }
-.msg .text code { background: rgb(0 0 0 / 25%); border-radius: var(--r-xs); padding: 0.1em 0.35em; font-size: 0.88em; }
-.msg .text pre { background: rgb(0 0 0 / 25%); border-radius: var(--r-md); padding: 0.6em 0.8em; margin: 0.6em 0; overflow-x: auto; }
+.msg .text code { background: var(--md-surface-container-high); border-radius: var(--md-shape-xs); padding: 0.1em 0.35em; font-size: 0.88em; }
+.msg .text pre { background: var(--md-surface-container-low); border: 1px solid var(--md-outline-variant); border-radius: var(--md-shape-sm); padding: 0.6em 0.8em; margin: 0.6em 0; overflow-x: auto; }
 .msg .text pre code { background: none; padding: 0; }
 .msg .text ul, .msg .text ol { margin: 0 0 0.7em; padding-left: 1.4em; }
-.msg .text blockquote { margin: 0 0 0.7em; padding-left: 0.7em; border-left: 2px solid var(--tg-link); opacity: 0.8; }
+.msg .text blockquote { margin: 0 0 0.7em; padding-left: 0.7em; border-left: 2px solid var(--md-primary); opacity: 0.85; }
 .msg .text h1, .msg .text h2, .msg .text h3 { margin: 0.4em 0 0.3em; font-size: 1.05em; }
 /* KaTeX：色跟气泡走（默认黑，暗底看不见），显示块横滚。
  * 2026-11-02：此前只写了 `overflow-x:auto` —— 手机屏幕上公式比整列宽时右缘一刀切，
@@ -782,10 +778,10 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
  * 给它 `width: fit-content` 反而是往回缩（从前两边都是气泡时这条是全局的）。 */
 .msg-wrap.user:has(.katex-display), .msg-wrap.user:has(pre) { max-width: 100%; width: fit-content; }
 .msg .state-blocks { margin-top: 0.5em; display: flex; flex-direction: column; gap: 0.4em; }
-.msg .state-block { background: rgb(0 0 0 / 20%); border-radius: var(--r-md); padding: 0.45em 0.65em; font-size: 0.85em; }
-.msg .state-block.current { border-left: 2px solid var(--tg-link); }
-.msg .state-table-name { color: var(--tg-link); font-size: 0.85em; margin-bottom: 0.15em; }
-.msg .state-line { white-space: pre-wrap; word-break: break-word; opacity: 0.9; }
+.msg .state-block { background: var(--md-surface-container-high); border-radius: var(--md-shape-sm); padding: 0.5em 0.7em; font-size: var(--md-type-body-small); }
+.msg .state-block.current { border-left: 3px solid var(--md-primary); }
+.msg .state-table-name { color: var(--md-primary); font-size: var(--md-type-label-small); font-weight: 500; margin-bottom: 0.15em; }
+.msg .state-line { white-space: pre-wrap; word-break: break-word; color: var(--md-on-surface-variant); }
 /* 气泡外操作行（deepseek/grok 味）：气泡下方一小排图标，不占气泡底色；
  * 默认半透明，hover 整行显形；删除 hover 变红。user 行右对齐、assistant 行左对齐。
  * 宽窄对齐由 .msg-wrap 承担（.msg 的 max-width 搬上来，气泡本身 max-width:100%）。 */
@@ -804,16 +800,15 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .msg.assistant .msg-foot { color: var(--tg-hint); }
 .msg-ops { display: flex; gap: 0.2em; margin-top: 0.2em; opacity: 0.72; }
 .msg-ops:hover { opacity: 1; }
-.msg-ops .edit-btn { color: var(--tg-hint); font-size: 0.8em; min-width: 2.3em; min-height: 2.3em;
-  display: inline-flex; align-items: center; justify-content: center; padding: 0.2em; border-radius: var(--r-sm); }
+.msg-ops .edit-btn { color: var(--md-on-surface-variant); font-size: 0.8em; min-width: 2em; min-height: 2em; display: inline-flex; align-items: center; justify-content: center; padding: 0; border-radius: var(--md-shape-full); transition: background-color var(--md-dur-150) var(--md-ease-standard), color var(--md-dur-150) var(--md-ease-standard); }
 .msg-wrap.user .msg-ops .edit-btn { color: var(--tg-hint); }
-.msg-ops .edit-btn:hover { filter: brightness(1.3); }
-.msg-ops .edit-btn.danger:hover { color: var(--tg-destructive); }
+.msg-ops .edit-btn:hover { background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); color: var(--md-on-surface); }
+.msg-ops .edit-btn.danger:hover { color: var(--md-error); background: color-mix(in srgb, var(--md-error) 10%, transparent); }
 /* 操作行常显（2026-11-03 用户定：编辑/思考/重摇/删除都不许只在 hover 时出现）。
  * 整行 0.72 的底噪，hover 整行才提到 1；按钮本身不再单独藏。 */
 /* 重摇位次牌（气泡下 ◀ 2/3 ▶ 的中间那块）。 */
-.msg-ops .reroll-pos { font-size: 0.75em; color: var(--tg-hint); padding: 0.1em 0.15em; }
-.msg-ops .prompt-edit-btn { font-size: 0.75em; white-space: nowrap; color: var(--tg-link); }
+.msg-ops .reroll-pos { font-size: var(--md-type-label-small); color: var(--md-on-surface-variant); padding: 0 0.2em; font-variant-numeric: tabular-nums; }
+.msg-ops .prompt-edit-btn { color: var(--md-primary); white-space: nowrap; }
 #composer { position: absolute; bottom: 0; left: 0; right: 0; display: block; background: none; z-index: 5;
   padding: 0.6em 0.6em calc(0.6em + env(safe-area-inset-bottom, 0px)); }
 /* 一整块输入面板（2026-11-04 用户定）：textarea 与按钮同住一张圆角卡里，不再"输入框 + 外面一颗钮"。
@@ -853,14 +848,14 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 /* 菜单键：与发送圆钮同形，底栏色（输入框左侧，点开命令面板）。 */
 #composer #menu-btn { background: var(--tg-secondary-bg); color: var(--tg-hint); }
 #composer #menu-btn:hover { background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); color: var(--md-on-surface); }
-.msg .think { color: var(--tg-hint); font-size: 0.82em; opacity: 0.65; }
-.msg .think-body { white-space: pre-wrap; word-break: break-word; }
+.msg .think { color: var(--md-on-surface-variant); font-size: var(--md-type-body-medium); background: var(--md-surface-container-low); border-radius: var(--md-shape-sm); padding: 0.5em 0.8em; margin: 0.1em 0 0.5em; opacity: 1; }
+.msg .think-body { white-space: pre-wrap; word-break: break-word; margin-top: 0.4em; color: var(--md-on-surface-variant); line-height: 1.5; }
 /* 等首字节的三点呼吸（生成中且还没有任何字）：别让气泡只剩一个"助手"抬头。 */
 .msg .typing { display: flex; gap: 0.28em; align-items: center; padding: 0.4em 0; }
 /* 标签（2026-10-17 用户点名"显示 正在输出 之类的东西"）：三点呼吸 + 一句暗字，说明这气泡在干活
  * —— 只有点没有字，静太小、也说不清是在输出还是在等。 */
-.msg .typing .typing-hint { font-style: normal; margin-left: 0.35em; color: var(--tg-hint); font-size: 0.85em; }
-.msg .typing span { width: 0.42em; height: 0.42em; border-radius: 50%; background: var(--tg-hint); animation: typing-pulse 1.2s ease-in-out infinite; }
+.msg .typing .typing-hint { font-style: normal; margin-left: 0.4em; color: var(--md-on-surface-variant); font-size: var(--md-type-label-medium); }
+.msg .typing span { width: 0.42em; height: 0.42em; border-radius: 50%; background: var(--md-primary); animation: typing-pulse 1.2s var(--md-ease-standard) infinite; }
 .msg .typing span:nth-child(2) { animation-delay: 0.15s; }
 .msg .typing span:nth-child(3) { animation-delay: 0.3s; }
 @keyframes typing-pulse { 0%, 60%, 100% { opacity: 0.25; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-0.18em); } }
@@ -1268,3 +1263,12 @@ button.toggle.on .knob { transform: translateX(1.1em); }
   background: var(--md-surface-container-high); padding: 0 1em; }
 #chat-col > header .model-search:focus { background: var(--md-surface-container-highest);
   border-bottom-color: transparent; box-shadow: inset 0 0 0 2px var(--md-primary); }
+
+/* 思考折叠的 summary / 展开箭头（MD3 可展开列表）。 */
+.msg .think summary { cursor: pointer; list-style: none; color: var(--md-on-surface-variant);
+  font-size: var(--md-type-label-medium); font-weight: 500; letter-spacing: 0.02em; }
+.msg .think summary::-webkit-details-marker { display: none; }
+.msg .think summary::before { content: "▸ "; }
+.msg .think[open] summary::before { content: "▾ "; }
+.msg .think summary:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px; border-radius: var(--md-shape-xs); }
+.msg-ops .edit-btn:active { background: color-mix(in srgb, var(--md-on-surface) 10%, transparent); }
