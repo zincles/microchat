@@ -49,6 +49,7 @@ import {
   sessionTitle,
 } from "../src/utils/format.js";
 import { busySessionIds } from "../src/utils/tasks.js";
+import { rippleSpec, RIPPLE_SELECTOR } from "../src/utils/ripple.js";
 import { rememberWindow, recallWindow, forgetWindow, WINDOW_CACHE_MAX, WINDOW_CACHE_ROWS_MAX } from "../src/utils/windowcache.js";
 import { sendMode, wantsSend, themePref, normalizeTheme, apiBase, defaultApiBase, apiBaseCandidates, THEME_IDS, DEFAULT_THEME, DEFAULT_SEND, normalizeTextScale, textScale, applyTextScale, saveTextScale, flushPrefs, normalizeFontFamily, fontBody, fontMono, applyFonts, saveFontBody, saveFontMono, DEFAULT_FONT_BODY, DEFAULT_FONT_MONO, TEXT_SCALE_MIN, TEXT_SCALE_MAX, DEFAULT_TEXT_SCALE } from "../src/utils/prefs.js";
 
@@ -3147,7 +3148,7 @@ test("会话列表：一行只有一枚选项键，设置/删除收进浮板，�
   assert.match(bar, /class="danger"[^>]*@click="pickDelete">删除会话|@click="pickDelete"[^>]*>删除会话/, "浮板里没有删除会话");
   assert.equal((bar.match(/class="item-btn"/g) || []).length, 1, "一行不该再有多枚操作键");
   // 2026-11-05 MD3：48dp 行、full 圆角、label-large 字号、40dp 图标按钮。
-  assert.match(css, /\.session-item \{[^}]*min-height:\s*3\.2em/, "会话行不是 MD3 的 48dp 行高");
+  assert.match(css, /#sessions-bar \.session-item \{[^}]*min-height:\s*2\.75em/, "会话行不是密度化后的 44dp");
   assert.match(css, /\.session-item \{[^}]*border-radius:\s*var\(--md-shape-full\)/, "会话行不是 full 圆角");
   assert.match(css, /\.session-item \{[^}]*font-size:\s*var\(--md-type-label-large\)/, "会话标题不是 MD3 label-large");
   assert.match(css, /\.session-item \.item-btn \{[^}]*width:\s*2\.667em/, "会话选项键不是 40dp 触控盒");
@@ -3652,7 +3653,7 @@ test("顶栏 MD3：surface 容器 / 40dp 文本按钮 / MD3 菜单 / 两段 tab 
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   const header = css.match(/#chat-col > header \{(?=[^}]*position:\s*absolute)[^}]*\}/)?.[0] ?? "";
   assert.match(header, /background:\s*var\(--md-surface-container-low\)/, "顶栏不是 MD3 surface 容器");
-  assert.match(header, /min-height:\s*3\.5em/, "顶栏不是 56dp（3.5em）");
+  assert.match(css, /#chat-col > header \{ min-height:\s*3em; padding:\s*0\.3em 0\.7em;/, "顶栏不是密度化后的 48dp");
   assert.match(header, /box-shadow:\s*var\(--shadow-top\)/, "顶栏丢了向下阴影（用户 2026-11-01 定）");
   assert.match(css, /\.model-btn \{[^}]*min-height:\s*2\.5em/, "模型按钮不是 40dp");
   assert.match(css, /\.model-btn \{[^}]*border-radius:\s*var\(--md-shape-full\)/, "模型按钮不是 full 圆角");
@@ -3677,7 +3678,7 @@ test("输入区 MD3：搜索栏式 composer / 48dp 发送 / 焦点环 / 停止�
   assert.match(css, /\.composer-box \{[^}]*background:\s*var\(--md-surface-container-high\)/, "输入面板不是 MD3 容器色");
   assert.match(css, /\.composer-box \{[^}]*border-radius:\s*var\(--md-shape-xl\)/, "输入面板不是 28dp 圆角");
   assert.match(css, /\.composer-box:focus-within \{[^}]*--md-primary/, "聚焦时没有 primary 环");
-  assert.match(css, /#composer button \{[^}]*width:\s*3em/, "发送键不是 48dp");
+  assert.match(css, /#composer button \{[^}]*width:\s*2\.75em/, "发送键不是密度化后的 44dp");
   assert.match(css, /#composer button \{[^}]*background:\s*var\(--md-primary\)/, "发送键不是 primary");
   assert.match(css, /#composer button:p?active \{[^}]*transform:\s*scale\(0\.96\)/, "发送键按下没有 MD3 scale");
   assert.match(css, /#composer button\.stop \{[^}]*background:\s*var\(--md-error-container\)/, "停止键不是 error-container");
@@ -3774,4 +3775,37 @@ test("MD3 快修：草稿欢迎 / 空态 / 滚动条 / 展开动画", () => {
   assert.match(css, /\*::-webkit-scrollbar-thumb \{[^}]*var\(--md-outline-variant\)/, "滚动条不是 outline-variant");
   assert.match(css, /@keyframes md-fade-in/, "展开没有淡入动画");
   assert.match(css, /prefers-reduced-motion[\s\S]{0,200}md-fade-in|md-fade-in[\s\S]{0,400}prefers-reduced-motion/, "淡入没有 reduced-motion 兜底");
+});
+
+// MD3 波纹（2026-11-06 用户定）与密度（用户：「padding 太浪费」）。
+test("波纹：触点 → 圆（纯函数），委托安装一次，reduce 下不做", () => {
+  const spec = rippleSpec({ width: 100, height: 40, left: 0, top: 0 }, 10, 20);
+  assert.equal(Math.round(spec.size), 220);  // 长边 100 * 2.2
+  assert.equal(Math.round(spec.left), -100); // 10 - 110
+  assert.equal(Math.round(spec.top), -90);   // 20 - 110
+  assert.ok(RIPPLE_SELECTOR.includes(".session-item"), "会话行没接波纹");
+  assert.ok(RIPPLE_SELECTOR.includes("button"), "按钮没接波纹");
+
+  const main = readFileSync(join(SRC, "..", "src", "main.js"), "utf8");
+  const ripple = readFileSync(join(SRC, "utils", "ripple.js"), "utf8");
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8");
+  assert.match(main, /installRipple\(\)/, "main.js 没装波纹");
+  assert.match(ripple, /pointerdown/, "没有指针按下入口");
+  assert.match(ripple, /prefers-reduced-motion/, "reduce 下没禁用");
+  assert.match(css, /@keyframes md-ripple/, "没有波纹动画");
+  assert.match(css, /\.md-ripple-host \{[^}]*overflow:\s*hidden/, "波纹宿主没裁剪");
+  assert.match(css, /prefers-reduced-motion[\s\S]{0,160}\.md-ripple/, "reduce 下没兜底");
+});
+
+test("密度：行高/顶栏/FAB/输入/设置/消息间距都收了一档", () => {
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.match(css, /#sessions-bar \.session-item \{[^}]*min-height:\s*2\.75em/, "会话行没收到 44dp");
+  assert.match(css, /#sessions-bar #session-new \{[^}]*min-height:\s*3em/, "FAB 没收到 48dp");
+  assert.match(css, /#chat-col > header \{ min-height:\s*3em/, "顶栏没收到 48dp");
+  assert.match(css, /\.messages-inner \{[^}]*gap:\s*0\.55em/, "消息间距没收到 0.55em");
+  assert.match(css, /#composer button \{[^}]*width:\s*2\.75em/, "发送键没收到 44dp");
+  assert.match(css, /\.settings-cols \.panel \.field, \.settings-cols \.panel \.row \{[^}]*padding:\s*0\.45em/, "设置行没收到 0.45em");
+  assert.match(css, /\.settings-nav \.tab \{[^}]*min-height:\s*2\.4em/, "设置 tab 没收到 38dp");
+  assert.match(css, /\.agent-item, \.model-item \{[^}]*min-height:\s*2\.5em/, "菜单项没收到 40dp");
+  assert.match(css, /#input \{[^}]*padding:\s*0\.3em 0/, "输入框没收到 0.3em");
 });

@@ -1194,6 +1194,15 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   快修（2026-11-06）：草稿欢迎页（title-large / body-medium / label kbd chip）、
   全局空态（on-surface-variant）、细滚动条（outline-variant）、
   思考/摘要原文/载荷块展开的 `md-fade-in`（reduced-motion 关闭）。
+  **按下波纹**（2026-11-06 用户定「把按钮波纹做好」）：`utils/ripple.js` 在 `main.js` 装一次
+  事件委托（`pointerdown` + 键盘 Enter/Space），给 `button / .session-item / .model-item /
+  .agent-item / .palette-item / .picker-item` 在触点位置放一枚 `currentColor` 半透明圆，
+  动画 `md-ripple` 结束自删；宿主临时加 `.md-ripple-host`（relative + overflow hidden）。
+  `prefers-reduced-motion` 下**整个不做**。⚠ 圆心 left/top 是**相对宿主**的，
+  `rippleSpec` 必须减 `rect.left/top`（漏过：圆画到视口坐标、被裁掉 ⇒ 像没生效）。
+  **密度**（2026-11-06 用户：「MD3 padding 太浪费」）：`main.css` 末尾一块密度覆盖 ——
+  会话行 48→44、顶栏 56→48、FAB 56→48、输入框 ~69→55、菜单 48→40、设置行 0.7→0.45em、
+  消息间距 0.8→0.55em；只改尺寸不改语义。要整体调松/调紧只改这一块。
   ⚠ 字体暂时还是 Inter：MD3 官方是 Roboto，但换字体是全站的事，等 MD3 铺到聊天区再一起定。
 - **高延迟（1s+ RTT）下的界面口径**（2026-11-05 用户定：「优化服务器和用户之间存在 1000ms 以上延迟的极端场景」）：
   目标不是"让网络变快"，而是**别让等待凭空多出一个来回**，也别让旧数据挂在新语境里。

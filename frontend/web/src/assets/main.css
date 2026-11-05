@@ -1294,3 +1294,77 @@ button.toggle.on .knob { left: calc(100% - 1.55em); width: 1.5em; height: 1.5em;
   .msg .think[open] .think-body, .sum-raw[open] > summary + div,
   .pv-content, .pv-extra { animation: none; }
 }
+
+/* ═══ MD3 按下波纹（utils/ripple.js 的事件委托）═══
+ * 宿主只加两项：position: relative（给绝对定位的圆做坐标）与 overflow: hidden（裁圆）。
+ * 圆本身用 currentColor —— 主按钮上就是 on-primary 的暗波纹、普通按钮上是正文色淡波纹。 */
+.md-ripple-host { position: relative; overflow: hidden; }
+.md-ripple { position: absolute; border-radius: 50%; background: currentColor; opacity: 0.18;
+  pointer-events: none; transform: scale(0); animation: md-ripple 0.45s var(--md-ease-emphasized) forwards; }
+@keyframes md-ripple { to { transform: scale(1); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .md-ripple { display: none; } }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * 密度（2026-11-06 用户：「MD3 布局太浪费空间，每个组件之间的 padding 太大」）
+ *
+ * MD3 默认的 48/56/40dp 是**触摸优先**；桌面/长文阅读场景下它显得松。这一层只压尺寸、
+ * 不改语义：行高 48→44、顶栏 56→48、FAB 56→48、输入框 69→约 55、菜单 48→40、
+ * 设置行 0.7em→0.45em、消息间距 0.8→0.55em。触摸目标仍保持 ≥40dp 的量级
+ * （图标键 2.667em≈43px、列表行 44px、设置 tab 38px 是桌面密度，触屏有抽屉）。
+ * 放在文件最后，按选择器覆盖前面的 MD3 尺寸；要整体调松/调紧只改这一块。
+ * ═══════════════════════════════════════════════════════════════════════════ */
+#sessions-bar .session-item { min-height: 2.75em; padding: 0.3em 0.4em 0.3em 0.75em; }
+#sessions-bar .session-group-head { padding: 0.75em 0.8em 0.3em; }
+#sessions-bar #session-new { min-height: 3em; margin: 0.1em 0.55em 0.4em; }
+#sessions-bar .bar-foot .foot-btn { min-height: 2.75em; }
+#sessions-bar #session-list { padding: 0.25em 0.45em 0.6em; }
+
+#chat-col > header { min-height: 3em; padding: 0.3em 0.7em; gap: 0.4em; }
+.agent-btn { width: 2.5em; height: 2.5em; }
+#ctx-ring { width: 2.25em; height: 2.25em; }
+.model-btn { min-height: 2.25em; }
+.ws-tab { min-height: 2.25em; padding: 0.4em 0.6em; }
+.messages-inner { padding-top: 3.5em; gap: 0.55em; }
+#context-workspace { padding-top: 3.5em; }
+.msg-wrap.assistant .msg { padding: 0.25em 0; }
+.msg.user { padding: 0.45em 0.75em; }
+.msg .msg-head { margin-bottom: 0.2em; }
+.msg-ops { margin-top: 0.1em; }
+.sum-block { margin: 0.1em 0; }
+.sum-head { padding: 0.45em 0.8em 0.1em; }
+.sum-text { padding: 0.15em 0.8em 0.5em; }
+
+.composer-box { padding: 0.32em 0.32em 0.32em 0.85em; }
+#composer button { width: 2.75em; height: 2.75em; }
+#composer #menu-btn { width: 2.25em; height: 2.25em; }
+#input { padding: 0.3em 0; }
+#composer { padding: 0.45em 0.5em calc(0.45em + env(safe-area-inset-bottom, 0px)); }
+
+.agent-menu { padding: 0.25em 0; }
+.agent-item, .model-item { min-height: 2.5em; padding: 0.4em 0.8em; }
+.model-search { min-height: 2.5em; }
+.model-group-head { margin: 0.45em 0.8em 0.15em; }
+
+.settings-nav { padding: 0.15em; margin-bottom: 0.5em; }
+.settings-nav .tab { min-height: 2.4em; padding: 0.3em 0.25em; }
+.settings-cols .panel .field, .settings-cols .panel .row { padding: 0.45em 0.2em; }
+.settings-cols .panel h3 { margin: 0.8em 0 0.2em; }
+#settings-view { padding: 0.4em 0.5em 0; }
+.settings-body { padding: 0.45em 0.2em 1.2em; }
+#settings-view .plist th, #settings-view .plist td { padding: 0.5em 0.7em; }
+.field { gap: 0.5em; }
+button { min-height: 2.25em; padding: 0 0.8em; }
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, textarea { padding: 0.42em 0.65em; }
+
+.pv-msg { padding: 0.35em 0; }
+.pv-head { min-height: 2.1em; }
+.ctree-row { min-height: 2.1em; padding: 0.2em 0.3em; }
+.adv-chunk { min-height: 2.1em; padding: 0.35em 0.2em; }
+.bar-head.bar-tabs .tab { padding: 0.4em 0.6em; }
+
+.modal-box { padding: 1.15em; }
+.confirm { padding: 1.15em; }
+.palette-item, .picker-item { min-height: 2.5em; }
+.toast { padding: 0.6em 0.85em; }
+#update-bar { padding: 0.45em 0.6em 0.45em 0.8em; margin-top: 0.4em; }
+.draft-welcome { min-height: 40vh; padding: 1.4em 0; }
