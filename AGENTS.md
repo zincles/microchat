@@ -1134,6 +1134,23 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   切会话时消息列不再是一段纯黑空白。
   ⚠ `vite preview` 只做 gzip、HTTP/1.1，**不是生产级静态服务器**；公网/反代部署应由 Caddy / nginx /
   Cloudflare 终结 TLS 并开 brotli + HTTP/2（缓存头已经由上面的中间件给出，不会被吃掉）。
+- **MD3 风格层（2026-11-05 用户定：「目标是完美的 MD3 风格 + 动画 + 加载效果」，先改左栏）**：
+  `theme.css` 底部新增 `--md-*` token 层（与 `--tg-*` **并存**）：MD3 颜色角色（primary / secondary-container /
+  surface 容器层级 / outline / error）、shape scale、elevation 1–3、motion（standard / emphasized + 时长）、
+  state layer（hover 8% / focus 10% / pressed 10%）、字体角色（**一律 em**：跟随 `--app-text-scale`，不写 px）。
+  暗色/亮色取 MD3 baseline 色板，Breeze 用它的桌面蓝生成同构角色 —— 三套主题都是同一套语义。
+  **落点先只有左栏**：MD3 规则全部以 `#sessions-bar` 前缀收口（`.bar-head` / `.foot-btn` / `.empty` 是共享类，
+  直接改会波及上下文工作区）。左栏结构 = MD3 navigation drawer：
+  顶部 segmented button（对话/生图）+ 标准 icon button；新建 = **extended FAB**（primary-container、elevation 1→2、按下 scale）；
+  列表 = 48dp 行、full 圆角、选中 secondary-container、`::after` 状态层（内容 z-index 压在它上面）；
+  底部 = navigation drawer item；选项浮板 = MD3 menu（surface-container / 4dp 圆角 / elevation 2 / 48dp 行）。
+  **忙碌环**改成 MD3 circular progress indicator：SVG 双圆（track 18% + arc），旋转 + dash 伸缩（`session-busy-dash`），
+  reduced-motion 停转但保留缺口弧。**加载效果**：`sessionsLoading` → 6 条 shimmer 骨架（`aria-busy` 同步），
+  `sessionsRefreshing` → header 下 3dp indeterminate linear progress。行进场 = `session-item-in`（200ms emphasized），
+  reduced-motion 不跑。
+  ⚠ 共享类暂时还是旧样式：`.bar-head.bar-tabs`、`.foot-btn` 基座、`.empty` 等**不要**在没加 `#sessions-bar` 前缀时改
+  （否则会顺手改掉上下文工作区，且契约测试只钉了一部分）。
+  ⚠ 字体暂时还是 Inter：MD3 官方是 Roboto，但换字体是全站的事，等 MD3 铺到聊天区再一起定。
 - **高延迟（1s+ RTT）下的界面口径**（2026-11-05 用户定：「优化服务器和用户之间存在 1000ms 以上延迟的极端场景」）：
   目标不是"让网络变快"，而是**别让等待凭空多出一个来回**，也别让旧数据挂在新语境里。
   ① **发送先上屏**：`send` / `sendFromDraft` 先 `addMessage("你", …)` 再等 202；回来用服务端 `user` 换掉

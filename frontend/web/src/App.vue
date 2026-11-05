@@ -100,6 +100,10 @@ let sessionID = null;
 // 才轮到消息窗口 —— 远端 1s+ 时那一整个 RTT 什么也没画，而列表本来就在屏幕上。
 // 缓存只当"先用着的快照"：进会话后按需在后台补一次（见 enterSession），不拿它当真相。
 const sessionsCache = ref([]);
+// 左栏的加载态（MD3）：首次拿列表画骨架；后台补列表时顶部一条 linear progress。
+// 从前空列表与"还没加载"在界面上分不出来 —— boot 的那两秒会写"还没有会话"，那是假话。
+const sessionsLoading = ref(true);
+const sessionsRefreshing = ref(false);
 let sessionsFetchedAt = 0;
 const SESSIONS_FRESH_MS = 10_000;
 // 回看缓存（2026-11-05 用户定）：每条会话上一屏的窗口快照（LRU、最多 8 条）。
@@ -1386,14 +1390,20 @@ function newSession() {
 }
 function renderSessions(sessions) {
   sessionsCache.value = sessions ?? [];
+  sessionsLoading.value = false;
   sessionbarRef.value?.setSessions(sessions, sessionID);
 }
 async function refreshSessionsBar() {
+  sessionsRefreshing.value = true;
   try {
     const sessions = await api.listSessions();
     sessionsFetchedAt = Date.now();
     renderSessions(sessions);
   } catch (err) { toast(`刷会话栏失败：${err.message}`, "error"); }
+  finally {
+    sessionsRefreshing.value = false;
+    sessionsLoading.value = false;
+  }
 }
 async function enterSession(id, preloaded = null) {
   const my = ++epoch;
@@ -1506,6 +1516,7 @@ async function boot() {
     toast(`连不上后端（${String(lastErr?.message ?? lastErr)}）。检查它起没起、地址对不对。`, "error");
     connText = "未连接";
     loadingSession.value = false;
+    sessionsLoading.value = false;
     return;
   }
   if (winner && winner !== apiBase()) {
@@ -2296,6 +2307,8 @@ onUnmounted(() => {
       <SessionBar
         ref="sessionbarRef"
         :busy-ids="busyIds"
+        :loading="sessionsLoading"
+        :refreshing="sessionsRefreshing"
         @prefetch="prefetchSession"
         @toggle-left="toggleLeft"
         @select="(id) => { closeLeftDrawer(); backToChat(); enterSession(id).catch((err) => toast(`进会话失败：${err.message}`, 'error')); }"

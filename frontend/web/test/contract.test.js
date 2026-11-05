@@ -3135,7 +3135,7 @@ test("会话列表：一行只有一枚选项键，设置/删除收进浮板，�
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   assert.match(bar, /\{\{ s\.title \|\| "新会话" \}\}/, "会话条目没有标题");
   assert.ok(!/s\.messages|relativeTime|updated_at/.test(bar), "会话条目还在显示条数/日期元数据");
-  assert.match(css, /#session-list \{[^}]*padding:\s*0\.15em 0\.35em 0\.45em/, "会话列表没有留边距");
+  assert.match(css, /#session-list \{[^}]*padding:\s*0\.35em 0\.55em 0\.8em/, "会话列表没有留边距");
   // 2026-11-04 用户定：不再有 ☰ 与 × 两枚键，只剩一个「选项」。
   assert.match(bar, /v-html="ICONS\.more"/, "会话选项键没有图标");
   assert.ok(!/v-html="ICONS\.x"/.test(bar), "行内还留着关闭 ×");
@@ -3146,10 +3146,11 @@ test("会话列表：一行只有一枚选项键，设置/删除收进浮板，�
   assert.match(bar, /@click="pickExport"[^>]*>导出 JSON/, "浮板里没有导出 JSON");
   assert.match(bar, /class="danger"[^>]*@click="pickDelete">删除会话|@click="pickDelete"[^>]*>删除会话/, "浮板里没有删除会话");
   assert.equal((bar.match(/class="item-btn"/g) || []).length, 1, "一行不该再有多枚操作键");
-  // 上下间距：行 padding 从 0.6em 收到 0.42em、再收到 0.32em；字号也小一档。
-  assert.match(css, /\.session-item \{[^}]*padding:\s*0\.32em 0\.4em/, "会话行的上下间距没缩小");
-  assert.match(css, /\.session-item \{[^}]*font-size:\s*0\.92em/, "会话标题字号没变小");
-  assert.match(css, /\.session-item \.item-btn\s*\{[^}]*width:\s*1\.8em/, "会话选项键的命中区缩太小了");
+  // 2026-11-05 MD3：48dp 行、full 圆角、label-large 字号、40dp 图标按钮。
+  assert.match(css, /\.session-item \{[^}]*min-height:\s*3\.2em/, "会话行不是 MD3 的 48dp 行高");
+  assert.match(css, /\.session-item \{[^}]*border-radius:\s*var\(--md-shape-full\)/, "会话行不是 full 圆角");
+  assert.match(css, /\.session-item \{[^}]*font-size:\s*var\(--md-type-label-large\)/, "会话标题不是 MD3 label-large");
+  assert.match(css, /\.session-item \.item-btn \{[^}]*width:\s*2\.667em/, "会话选项键不是 40dp 触控盒");
 });
 
 test("空输入时的发送键不是向下箭头（那个位置会被读成「滚到底」）", () => {
@@ -3582,4 +3583,64 @@ test("悬停预取与开屏并行：意图触发、单飞、上限、warm 用首
   assert.match(app, /if \(winner === firstBase\) \{\s*\[chatCfg, sessions\] = await warm;/, "warm 结果没被用上（或候选没对上就吃了错误基址的数据）");
   assert.match(client, /timeout = 8000/, "探活没有超时（黑洞地址会把启动按住）");
   assert.match(client, /GET_TIMEOUT_MS = 20000/, "GET 没有超时上限");
+});
+
+// MD3 改版（2026-11-05 用户定：「目标是完美的 MD3 风格 + 动画 + 加载效果」）。
+// 先落左侧会话栏：token 层先立起来，后面的页面才有一致语言可复用。
+test("MD3 token 层：颜色/形状/动效/字体角色都在，三套主题各有角色", () => {
+  const theme = readFileSync(join(SRC, "assets", "theme.css"), "utf8");
+  for (const token of ["--md-primary", "--md-on-primary-container", "--md-secondary-container",
+    "--md-surface-container-low", "--md-on-surface-variant", "--md-outline-variant", "--md-error"]) {
+    assert.ok(theme.includes(`${token}:`), `缺 MD3 颜色角色 ${token}`);
+  }
+  for (const token of ["--md-shape-full", "--md-shape-lg", "--md-ease-emphasized", "--md-dur-300",
+    "--md-state-hover", "--md-type-label-large", "--md-elev-2"]) {
+    assert.ok(theme.includes(`${token}:`), `缺 MD3 工艺 token ${token}`);
+  }
+  // 亮色与 Breeze 都要覆盖角色（否则换主题只有暗色是 MD3）
+  assert.match(theme, /html\[data-theme="light"\]\s*\{[\s\S]*--md-primary:/, "亮色没有 MD3 角色");
+  assert.match(theme, /html\[data-theme="breeze"\]\s*\{[\s\S]*--md-primary:/, "Breeze 没有 MD3 角色");
+  // 字体角色必须是 em（跟随 --app-text-scale），不能写 px
+  assert.ok(!/--md-type-[a-z-]+:\s*\d+px/.test(theme), "MD3 字体角色写成了 px（界面缩放会对它失效）");
+});
+
+test("左栏 MD3：分段按钮 / extended FAB / 48dp 行 / 状态层 / MD3 忙碌环", () => {
+  const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+
+  // 分段按钮（对话/生图）与 extended FAB
+  assert.match(css, /\.session-mode-tabs \{[^}]*border:\s*1px solid var\(--md-outline\)/, "模式切换不是 MD3 分段按钮");
+  assert.match(css, /\.session-mode-tab\.sel \{[^}]*background:\s*var\(--md-secondary-container\)/, "分段按钮选中态不是 secondary-container");
+  assert.match(css, /#session-new \{[^}]*background:\s*var\(--md-primary-container\)/, "新建不是 MD3 extended FAB");
+  assert.match(css, /#session-new \{[^}]*box-shadow:\s*var\(--md-elev-1\)/, "FAB 没有 elevation 1");
+  assert.match(css, /#session-new:hover \{[^}]*box-shadow:\s*var\(--md-elev-2\)/, "FAB 悬停没有升到 elevation 2");
+
+  // 行：48dp、full 圆角、状态层、选中 tonal
+  assert.match(css, /\.session-item \{[^}]*min-height:\s*3\.2em/, "会话行不是 48dp");
+  assert.match(css, /\.session-item::after \{[^}]*opacity:\s*0/, "会话行没有状态层");
+  assert.match(css, /\.session-item:hover::after \{[^}]*--md-state-hover/, "没有 MD3 hover 状态层");
+  assert.match(css, /\.session-item\.sel \{[^}]*background:\s*var\(--md-secondary-container\)/, "选中行不是 secondary-container");
+
+  // 忙碌环：SVG + 旋转 + dash（MD3 indeterminate），reduced-motion 停转
+  assert.match(bar, /<svg[\s\S]{0,200}class="session-busy"/, "忙碌态不是 SVG 环");
+  assert.match(bar, /session-busy-arc/, "忙碌环没有 dash 弧");
+  assert.match(css, /@keyframes session-busy-dash/, "忙碌环没有 dash 动画");
+  assert.match(css, /prefers-reduced-motion[\s\S]{0,400}session-busy[\s\S]{0,160}animation:\s*none/, "reduced-motion 下没关忙碌环");
+
+  // 加载：骨架 + 顶部 linear progress，且 App 真的喂了状态
+  assert.match(bar, /v-if="loading && !sessions\.length" class="session-skeleton"/, "首次加载没有骨架");
+  assert.match(css, /@keyframes session-skeleton-shimmer/, "骨架没有 shimmer");
+  assert.match(bar, /v-if="refreshing" class="md-linear-progress"/, "后台刷新没有 linear progress");
+  assert.match(css, /@keyframes md-linear-progress/, "linear progress 没有动画");
+  assert.match(css, /@keyframes session-item-in/, "列表项没有进场动画");
+  assert.match(bar, /v-html="ICONS\.plus"/, "新建按钮没有用图标（还是文字加号）");
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  assert.match(app, /const sessionsLoading = ref\(true\)/, "App 没有首次加载态");
+  assert.match(app, /const sessionsRefreshing = ref\(false\)/, "App 没有后台刷新态");
+  assert.match(app, /:loading="sessionsLoading"/, "没把加载态传给左栏");
+  assert.match(app, /:refreshing="sessionsRefreshing"/, "没把刷新态传给左栏");
+
+  // 浮板也是 MD3 menu
+  assert.match(css, /\.session-menu \{[^}]*background:\s*var\(--md-surface-container\)/, "会话浮板不是 MD3 menu");
+  assert.match(css, /\.session-menu \{[^}]*border-radius:\s*var\(--md-shape-xs\)/, "MD3 menu 圆角不是 4dp");
 });

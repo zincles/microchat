@@ -9,8 +9,16 @@ const emit = defineEmits(["select", "settings", "copy", "export", "close", "new"
 
 // busyIds：App 从 `/tasks` 那一拍算出来的"此刻有任务在跑的会话"（判定在 `utils/tasks.js`）。
 // 行内环只吃这一处 —— 别在组件里再 filter 一遍任务表（两处判据一分岔，同一时刻会显示两个答案）。
-const props = defineProps({ busyIds: { type: Array, default: () => [] } });
+const props = defineProps({
+  busyIds: { type: Array, default: () => [] },
+  // loading：首次拿会话列表（boot）—— 画骨架，别显示"还没有会话"（那是假话）。
+  loading: { type: Boolean, default: false },
+  // refreshing：后台在补一次列表（10 秒保鲜期外）—— 顶部一条 MD3 linear progress。
+  refreshing: { type: Boolean, default: false },
+});
 const busySet = computed(() => new Set(props.busyIds ?? []));
+// 骨架行的宽度（错落一点，别像一张表格）。
+const skeletonWidths = ["72%", "54%", "64%", "46%", "58%", "50%"];
 
 const sessions = ref([]);
 const currentId = ref(null);
@@ -106,11 +114,15 @@ defineExpose({ setSessions });
         v-html="ICONS.panelLeft"
       ></button>
     </div>
+    <div v-if="refreshing" class="md-linear-progress" role="progressbar" aria-label="正在刷新会话列表"><span></span></div>
     <button id="session-new" type="button" title="开启新对话（草稿：首句才建会话）" @click="$emit('new')">
-      <span class="plus">＋</span>开启新对话
+      <span class="plus" aria-hidden="true" v-html="ICONS.plus"></span><span class="label">开启新对话</span>
     </button>
-    <div id="session-list">
-      <div v-if="!sessions.length" class="empty">还没有会话<br /><span class="sub">点上面「＋ 开启新对话」开始</span></div>
+    <div id="session-list" :aria-busy="loading && !sessions.length ? 'true' : 'false'">
+      <div v-if="loading && !sessions.length" class="session-skeleton">
+        <div v-for="(w, i) in skeletonWidths" :key="i" class="skeleton-row" :style="{ '--w': w }"></div>
+      </div>
+      <div v-else-if="!sessions.length" class="empty">还没有会话<br /><span class="sub">点上面「＋ 开启新对话」开始</span></div>
       <template v-for="group in groupedSessions" :key="group.key">
         <div class="session-group-head">{{ group.label }}</div>
         <div
@@ -129,13 +141,17 @@ defineExpose({ setSessions });
           </span>
           <!-- 行内环：这条会话此刻有任务在跑（生成 / 压缩 / 重摇 / 起标题 / 队列踩到它）。
                与「选项」键并存 —— 它是状态，不是入口，所以不抢那枚按钮的位置。 -->
-          <span
+          <svg
             v-if="busySet.has(s.id)"
             class="session-busy"
+            viewBox="0 0 24 24"
             role="status"
-            title="正在运行任务"
             aria-label="正在运行任务"
-          ></span>
+          >
+            <title>正在运行任务</title>
+            <circle class="session-busy-track" cx="12" cy="12" r="9"></circle>
+            <circle class="session-busy-arc" cx="12" cy="12" r="9"></circle>
+          </svg>
           <button
             class="item-btn"
             type="button"
