@@ -1178,9 +1178,10 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   `plist` = surface-container-low 卡片、表头 label-small、行 hover 状态层；`.io-card` = outlined 卡片。
   浮层：`.modal` / `.confirm` / `.palette` / `.picker` = MD3 dialog/menu（surface-container-high、
   28dp / 12dp、elevation 3、scrim 45%、`md-dialog-in` 进场）；toast = snackbar（inverse-surface、
-  4dp、elevation 3、语义点替代左边框）；更新条 = surface-container-high 面 + 主按钮，
-  且是**悬浮在输入栏上方的胶囊**（`position: fixed; bottom: calc(--composer-h + 0.5em)`，
-  不占布局；2026-11-06 用户要求「悬浮而不是独自占一大段空间」）。
+  4dp、elevation 3、语义点替代左边框）；更新条 = **顶部独立占位的大横幅**
+  （`#app` 里 columns 之前的 flex 子项、primary-container 底、**占满整个顶部左右宽度**、
+  大号刷新键；2026-11-06 用户定：「在顶部单独占据一个位置，文本+按钮，要显眼，方便快速切换」
+  「占据整个顶部的左右宽度」——出现时把应用整体往下推，不压顶栏/tabs）。
   **上下文工作区**（2026-11-06 第五刀）：五 tab 改 MD3 primary tabs（3dp 圆角 indicator、无整条底线）；
   载荷行头 40dp + 状态层、role/idx/chars 用 label-small、正文 body-medium；状态表名 primary、
   行分隔 outline-variant；压缩树行 = 8dp 圆角 + hover 状态层 + primary 容量条、
