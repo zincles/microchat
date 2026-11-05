@@ -217,7 +217,7 @@ type Generated struct {
 //
 // 材料与当初那次压缩**同源**：`type=message`（DB 列名是历史：`source_kind`）⇒ 那段消息的**当前**正文；
 // `type=summary` ⇒ 它的孩子摘要（按区间排序）。目标必须：在本会话、`parent_summary_id IS NULL`、
-// 区间两端都在（口径见 `TODO.md` 第 8 条）。
+// 区间两端都在（口径见 `DEFINE.md` 的「重摇（Re-roll）」）。
 //
 // 生效渠道 / 模型 / 模板 / 本地假上游与 `prepare` 同一套；产出过同一套验证（剔 `<state>`、非空），
 // 不行就报错（code 同一套词）；`Tokens` 与落库那条路同一个估算口径。
