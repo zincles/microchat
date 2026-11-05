@@ -3816,3 +3816,9 @@ test("左栏底：会话/渠道/设置上方有一条 outline-variant 分隔线"
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   assert.match(css, /#sessions-bar \.bar-foot \{[^}]*border-top:\s*1px solid var\(--md-outline-variant\)/, "底部管理入口上方没有分隔线");
 });
+
+test("会话分组标题：更大间距 + 非首组淡分隔线", () => {
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.match(css, /#sessions-bar \.session-group-head \{[^}]*padding:\s*1\.05em 0\.85em 0\.42em/, "分组标题没有放大间距");
+  assert.match(css, /#sessions-bar \.session-group-head:not\(:first-child\) \{[^}]*border-top:\s*1px solid color-mix\(in srgb, var\(--md-outline-variant\) 55%/, "非首组没有淡分隔线");
+});

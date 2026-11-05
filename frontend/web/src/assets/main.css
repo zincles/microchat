@@ -1373,3 +1373,13 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .toast { padding: 0.6em 0.85em; }
 #update-bar { padding: 0.35em 0.4em 0.35em 0.95em; }
 .draft-welcome { min-height: 40vh; padding: 1.4em 0; }
+
+/* 会话分组标题（今天 / 昨天 / 一周内…）放大间距 + 淡分隔线：
+ * 原先 0.75em 顶部，视觉上贴着上一组最后一条；加一条 55% outline-variant 的发丝线，
+ * 只画在非第一组上（第一组紧贴“开启新对话”，不需要线）。 */
+#sessions-bar .session-group-head { padding: 1.05em 0.85em 0.42em; }
+#sessions-bar .session-group-head:first-child { padding-top: 0.65em; }
+#sessions-bar .session-group-head:not(:first-child) {
+  margin-top: 0.15em;
+  border-top: 1px solid color-mix(in srgb, var(--md-outline-variant) 55%, transparent);
+}
