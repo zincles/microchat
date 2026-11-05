@@ -1878,7 +1878,7 @@ test("渠道列表：列名说人话，筛选器并进模型数", () => {
 // 渠道详情里的模型清单（2026-11-02 用户定）：能看见这个渠道导入了什么，但**不能编辑**。
 test("渠道详情：只读列出这个渠道导入的模型", () => {
   const editor = readFileSync(join(SRC, "components", "ProviderEditor.vue"), "utf8");
-  assert.match(editor, /const models = ref\(\[\]\)/, "编辑器没有模型列表状态");
+  assert.match(editor, /const models = ref(?:<[^>]+>)?\(\[\]\)/, "编辑器没有模型列表状态");
   assert.match(editor, /models\.value = p\.models \?\? \[\]/, "打开详情时没带出已有模型");
   assert.match(editor, /models\.value = view\?\.models \?\? \[\]/, "保存并刷新后没更新模型列表");
   for (const label of ["模型", "上下文"]) {

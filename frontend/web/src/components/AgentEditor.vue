@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // Agent 编辑器（设置视图 Agent tab 内的二级页，列表 ⇄ 详情就地切换）：新建 / 改 id·名 / 提示词 / 能力开关 / 设默认 / 删除。
 // isNew（boolean）：无 agent 快照=新建（空表单）；有=编辑（带入快照，保存后父重拉，id 变了也对得上）。关即销毁。
 //
@@ -8,26 +8,55 @@
 import { ref, computed, onMounted, onUnmounted } from "vue";
 import { sharedApi } from "../utils/prefs.ts";
 import { ABILITY_IDS, ABILITY_LABELS, ABILITY_TEMPLATE_SEGMENTS, buildAbilitiesPatch, modelKey, parseModelKey, modelLabel } from "../utils/format.ts";
+import type { AbilityRow } from "../utils/format.ts";
 import { assemblePrompt, abilityPrompt } from "../utils/prompt.ts";
 import { buildCartridge } from "../utils/cartridge.ts";
 import { downloadJSON } from "../utils/download.ts";
 import ToggleSwitch from "./ToggleSwitch.vue";
 import SegmentList from "./SegmentList.vue";
+import type { SegmentItem } from "./SegmentList.vue";
 import TabBar from "./TabBar.vue";
+import type { AbilityToggle, Agent, CreateAgentRequest, UpdateAgentRequest } from "../api/types.ts";
 
-const props = defineProps({
-  agent: { type: Object, default: null },
-  isDefault: { type: Boolean, default: false },
-  template: { type: Object, default: null }, // 新建模板 {name, system_prompt, prepend_state, abilities}
-  segments: { type: Array, default: () => [] }, // 段库（picker 用；随 GET /agents 一起给）
-  ask: { type: Function, default: null }, // 全局确认框（删除前先摊开）
+interface AgentTemplate {
+  name?: string;
+  system_prompt?: string;
+  first_message?: string;
+  prepend_state?: boolean;
+  abilities?: Record<string, AbilityToggle>;
+  segments?: string[];
+}
+interface AbilityDraft {
+  enabled: boolean;
+  model: string;
+  modelSource: "global" | "session" | "agent";
+  prompt: string;
+  segments: string[];
+}
+interface ModelOption {
+  value: string;
+  label: string;
+}
+
+const props = withDefaults(defineProps<{
+  agent?: Agent | null;
+  isDefault?: boolean;
+  template?: AgentTemplate | null; // 新建模板 {name, system_prompt, prepend_state, abilities}
+  segments?: SegmentItem[]; // 段库（picker 用；随 GET /agents 一起给）
+  ask?: ((text: string) => Promise<boolean>) | null; // 全局确认框（删除前先摊开）
+}>(), {
+  agent: null,
+  isDefault: false,
+  template: null,
+  segments: () => [],
+  ask: null,
 });
-const emit = defineEmits(["close", "saved"]);
+const emit = defineEmits<{ close: []; saved: [] }>();
 
 const api = sharedApi();
 const isNew = !props.agent;
 // 页签：基本 → 系统提示词 → 每个能力一页（顺序跟着 `ABILITY_IDS` 走，加能力就自动多一页）。
-const tabs = [
+const tabs: Array<{ id: string; label: string }> = [
   { id: "base", label: "基本" },
   { id: "prompt", label: "系统提示词" },
   ...ABILITY_IDS.map((id) => ({ id, label: ABILITY_LABELS[id] ?? id })),
@@ -37,13 +66,13 @@ const aid = ref(props.agent?.id ?? "");
 const name = ref(props.agent?.name ?? props.template?.name ?? "");
 const prompt = ref(props.agent?.system_prompt ?? props.template?.system_prompt ?? "");
 const firstMsg = ref(props.agent?.first_message ?? props.template?.first_message ?? "");
-const rows = ref({});
+const rows = ref<Record<string, AbilityDraft>>({});
 const prepend = ref(!!(props.agent?.prepend_state ?? props.template?.prepend_state));
 // 追加段（顺序 = 拼接顺序）。段库在 `props.segments`；挑 / 排 / 删与预览都在
 // `SegmentList` 里（与能力那块**同一个组件** —— 用户 2026-10-28：「不协调」）。
-const segs = ref([...(props.agent?.segments ?? props.template?.segments ?? [])]);
+const segs = ref<string[]>([...(props.agent?.segments ?? props.template?.segments ?? [])]);
 const assembled = computed(() => assemblePrompt(prompt.value, segs.value, props.segments));
-const modelOptions = ref([]);
+const modelOptions = ref<ModelOption[]>([]);
 const status = ref("");
 
 // —— 能力里的提示词段（2026-10-28 用户定："用于 Compact 的提示词段"也要能自由组合）——
@@ -52,16 +81,16 @@ const status = ref("");
 // 这能力**真正会发出去**的提示词（模板 + 段）。模板 = 你填的覆盖 ?: 那条内置模板段。
 // 压缩的默认模板 2026-10-28 搬进段库（`压缩提示词`）⇒ 前端终于能把它显示全了
 // （从前它在 Go 的常量里，预览只能显示"段"，不敢报总量）。
-function abilityAssembled(id) {
-  const r = rows.value[id] ?? {};
+function abilityAssembled(id: string): string {
+  const r = rows.value[id] ?? { prompt: "", segments: [] };
   return abilityPrompt(r.prompt, r.segments ?? [], props.segments, ABILITY_TEMPLATE_SEGMENTS[id]);
 }
 // 这个能力有没有"模板"（覆盖或内置段）：没有 ⇒ 预览要提醒"这一发只有你挑的段"
-function abilityHasTemplate(id) {
-  const r = rows.value[id] ?? {};
+function abilityHasTemplate(id: string): boolean {
+  const r = rows.value[id] ?? { prompt: "", segments: [] };
   if (String(r.prompt ?? "").trim()) return true;
   const candidates = ABILITY_TEMPLATE_SEGMENTS[id] ?? [];
-  return candidates.some((id) => (r.segments ?? []).includes(id));
+  return candidates.some((candidate) => (r.segments ?? []).includes(candidate));
 }
 // 段清单上面那一行说明（`SegmentList` 的 hint）：只在"用户可能误判"的地方说一句。
 //
@@ -71,10 +100,10 @@ function abilityHasTemplate(id) {
 //
 // 有多个候选时要**说清是替换不是叠加**（压缩有通用版与 RP 版）：不说的话，用户挑两条
 // 只会得到一份自相矛盾的提示词 —— 一份写"不要复述原文"，另一份写"细节不能丢"。
-function abilitySegHint(id) {
+function abilitySegHint(id: string): string {
   const candidates = ABILITY_TEMPLATE_SEGMENTS[id] ?? [];
   if (!candidates.length) return "";
-  const r = rows.value[id] ?? {};
+  const r = rows.value[id] ?? { prompt: "", segments: [] };
   const others = candidates.slice(1);
   if (!(r.segments ?? []).length) {
     const more = others.length ? `；想换成「${others.join("」/「")}」就从下面挑它 —— 会整份替换默认模板，不会叠加。` : "";
@@ -87,21 +116,22 @@ function abilitySegHint(id) {
   return "";
 }
 
-function fillRows(a) {
+function fillRows(a?: Agent | AgentTemplate | null): void {
   const ab = a?.abilities ?? {};
-  const out = {};
+  const out: Record<string, AbilityDraft> = {};
   for (const id of ABILITY_IDS) {
     const one = ab[id] ?? {};
     const both = one.provider && one.model ? modelKey(one.provider, one.model) : "";
+    const source = ["global", "session", "agent"].includes(one.model_source ?? "")
+      ? one.model_source as "global" | "session" | "agent"
+      : (both ? "agent" : "global");
     // segments：能力的追加段（2026-10-28）。老配置没有这一格 ⇒ 空数组（不是 undefined，
     // 否则模板里 `rows[id].segments.length` 会在老数据上炸）。
     out[id] = {
       enabled: one.enabled !== false,
       model: both,
       // 标题模型来源（2026-11-04）：新/未配置 = global；旧配置有 provider/model = agent（保住旧覆盖）。
-      modelSource: ["global", "session", "agent"].includes(one.model_source)
-        ? one.model_source
-        : (both ? "agent" : "global"),
+      modelSource: source,
       prompt: one.prompt ?? "",
       segments: [...(one.segments ?? [])],
     };
@@ -110,10 +140,10 @@ function fillRows(a) {
 }
 fillRows(props.agent ?? props.template);
 
-function toPatch() {
-  const out = {};
+function toPatch(): Record<string, AbilityRow> {
+  const out: Record<string, AbilityRow> = {};
   for (const id of ABILITY_IDS) {
-    const r = rows.value[id] ?? {};
+    const r = rows.value[id] ?? { enabled: true, model: "", modelSource: "global", prompt: "", segments: [] };
     const parsed = parseModelKey(r.model ?? "");
     out[id] = {
       enabled: !!r.enabled,
@@ -125,29 +155,44 @@ function toPatch() {
     // model_source 只有 title 认识（compact 的模型仍只有"跟随会话/指定"两档）。
     if (id === "title") out[id].model_source = r.modelSource || "global";
   }
-  return buildAbilitiesPatch(out);
+  return out;
 }
 
-async function save() {
+async function save(): Promise<void> {
   if (!name.value.trim()) { status.value = "给个名字"; return; }
+  const patch = buildAbilitiesPatch(toPatch());
   try {
     if (isNew) {
-      await api.createAgent({ name: name.value.trim(), system_prompt: prompt.value, first_message: firstMsg.value, segments: segs.value, abilities: toPatch(), prepend_state: prepend.value || undefined });
+      const body: CreateAgentRequest = {
+        name: name.value.trim(),
+        system_prompt: prompt.value,
+        first_message: firstMsg.value,
+        segments: segs.value,
+        abilities: patch,
+        ...(prepend.value ? { prepend_state: true } : {}),
+      };
+      await api.createAgent(body);
     } else {
-      const body = { system_prompt: prompt.value, first_message: firstMsg.value, segments: segs.value, abilities: toPatch() };
-      if (!!prepend.value !== !!props.agent.prepend_state) body.prepend_state = prepend.value;
-      if (name.value.trim() !== props.agent.name) body.name = name.value.trim();
-      if (aid.value.trim() && aid.value.trim() !== props.agent.id) body.new_id = aid.value.trim();
-      await api.patchAgent(props.agent.id, body);
+      const agent = props.agent!;
+      const body: UpdateAgentRequest = {
+        system_prompt: prompt.value,
+        first_message: firstMsg.value,
+        segments: segs.value,
+        abilities: patch,
+      };
+      if (!!prepend.value !== !!agent.prepend_state) body.prepend_state = prepend.value;
+      if (name.value.trim() !== agent.name) body.name = name.value.trim();
+      if (aid.value.trim() && aid.value.trim() !== agent.id) body.new_id = aid.value.trim();
+      await api.patchAgent(agent.id, body);
     }
     emit("saved");
     emit("close");
-  } catch (e) { status.value = `保存失败：${e.message}`; }
+  } catch (e: unknown) { status.value = `保存失败：${e instanceof Error ? e.message : String(e)}`; }
 }
 
 // 导出卡带（2026-10-11 用户定）：**只导 agent 自己** —— 用到的段**拼平**进 system_prompt、
 // 不留引用（免除依赖，方便再分发；导入后要不要拆段由人后续处理）。
-function exportCartridge() {
+function exportCartridge(): void {
   const doc = buildCartridge({
     name: name.value.trim() || "未命名",
     system_prompt: prompt.value,
@@ -160,23 +205,24 @@ function exportCartridge() {
   status.value = "已导出智能体文件";
 }
 
-async function makeDefault() {
+async function makeDefault(): Promise<void> {
   if (isNew) return;
   try {
-    await api.patchAgent(props.agent.id, { make_default: true });
+    await api.patchAgent(props.agent!.id, { make_default: true });
     emit("saved");
     emit("close");
-  } catch (e) { status.value = `设默认失败：${e.message}`; }
+  } catch (e: unknown) { status.value = `设默认失败：${e instanceof Error ? e.message : String(e)}`; }
 }
 
-async function remove() {
+async function remove(): Promise<void> {
   if (isNew) return;
-  if (props.ask && !(await props.ask(`删除 Agent「${props.agent.name || props.agent.id}」？不可逆。`))) return;
+  const agent = props.agent!;
+  if (props.ask && !(await props.ask(`删除 Agent「${agent.name || agent.id}」？不可逆。`))) return;
   try {
-    await api.deleteAgent(props.agent.id);
+    await api.deleteAgent(agent.id);
     emit("saved");
     emit("close");
-  } catch (e) { status.value = `删除失败：${e.message}`; }
+  } catch (e: unknown) { status.value = `删除失败：${e instanceof Error ? e.message : String(e)}`; }
 }
 
 onMounted(async () => {
@@ -190,7 +236,7 @@ onMounted(async () => {
   document.addEventListener("keydown", onKey);
 });
 onUnmounted(() => document.removeEventListener("keydown", onKey));
-function onKey(e) {
+function onKey(e: KeyboardEvent): void {
   if (e.key === "Escape") emit("close");
 }
 </script>
@@ -199,8 +245,8 @@ function onKey(e) {
   <!-- 二级页（2026-10-10 起不再是弹窗）：嵌在设置视图的 Agent tab 里，列表 ⇄ 详情就地切换。 -->
   <div class="detail-pane">
     <div class="panel-head">
-      <button class="icon-btn" type="button" title="返回列表（Esc）" @click="$emit('close')">←</button>
-      <span class="status">{{ isNew ? "新建智能体" : `编辑「${props.agent.name}」` }}{{ !isNew && isDefault ? "（默认）" : "" }}</span>
+      <button class="icon-btn" type="button" title="返回列表（Esc）" @click="emit('close')">←</button>
+      <span class="status">{{ isNew ? "新建智能体" : `编辑「${props.agent?.name ?? ""}」` }}{{ !isNew && isDefault ? "（默认）" : "" }}</span>
     </div>
     <TabBar v-model="tab" :tabs="tabs" />
 

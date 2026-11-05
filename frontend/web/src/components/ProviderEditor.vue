@@ -1,13 +1,22 @@
-<script setup>
+<script setup lang="ts">
 // Provider 编辑器（设置视图 Provider tab 内的二级页，列表 ⇄ 详情就地切换）：新建 / 改 vendor/protocol/端点/key。
 // isNew（boolean）：无 provider 快照=新建（空表单）；有=编辑（带入 provider，只发改过的格；key 另填=换，不填=不动）。
 // 内置刷新模型列表 + 刷路由（编辑时直接点，不用退回一级）。
 import { ref, computed, onMounted, onUnmounted } from "vue";
 import { sharedApi } from "../utils/prefs.ts";
 import { formatTokens, providerIdForNextVendor } from "../utils/format.ts";
+import type {
+  CreateProviderRequest,
+  ModelView,
+  PresetInfo,
+  ProtocolOption,
+  ProviderView,
+  TestProviderRequest,
+  UpdateProviderRequest,
+} from "../api/types.ts";
 
-const props = defineProps({ provider: { type: Object, default: null } });
-const emit = defineEmits(["close", "saved"]);
+const props = withDefaults(defineProps<{ provider?: ProviderView | null }>(), { provider: null });
+const emit = defineEmits<{ close: []; saved: [id: string] }>();
 
 const api = sharedApi();
 
@@ -34,9 +43,9 @@ const baseFilter = ref("");
 // 现在全从 `GET /providers/presets` 的 `protocol_options` 来（后端是唯一权威，契约测试钉着）。
 const hasKey = ref(false);
 // 模型列表**只读**：渠道页能看见"这次刷新导入了什么"，不在这里编辑。
-const models = ref([]);
+const models = ref<ModelView[]>([]);
 const modelCount = computed(() => models.value.length);
-const presets = ref([]);
+const presets = ref<PresetInfo[]>([]);
 const status = ref("");
 
 // 预设分两组：`primary`（后端说的"主选三种"）在前，其余便利预设殿后。
@@ -55,8 +64,8 @@ const curPreset = computed(() => presets.value.find((p) => p.vendor === vendor.v
 // 两处来源合并：① 当前 vendor 的 `protocol_options`（后端按兼容矩阵给）；
 // ② 这条渠道**自己正在用的**那条 —— 老配置里可能是手写的、或 vendor 换了而协议还留着。
 // 不把 ② 补进来，下拉会在"暂时没选"的瞬间把用户手写的那条显示成空白，一保存就悄悄换掉协议。
-const protocolChoices = computed(() => {
-  const list = [...(curPreset.value?.protocol_options ?? [])];
+const protocolChoices = computed<ProtocolOption[]>(() => {
+  const list: ProtocolOption[] = [...(curPreset.value?.protocol_options ?? [])];
   if (!protocol.value) return list;
   if (list.some((option) => option.protocol === protocol.value)) return list;
   const known = (props.provider?.protocol_options ?? []).find((option) => option.protocol === protocol.value);
@@ -78,7 +87,7 @@ const effectiveBase = computed(() => {
 });
 
 // modelContext：模型列表里那格"上下文" —— 用户覆盖优先，没配过就显示上游报的。
-function modelContext(m) {
+function modelContext(m: ModelView): string {
   const n = m?.context_override ?? m?.context_length;
   return n == null ? "—" : formatTokens(n);
 }
@@ -87,7 +96,7 @@ function modelContext(m) {
 const vendorHint = computed(() => {
   const preset = curPreset.value;
   if (!preset) return "";
-  const bits = [];
+  const bits: string[] = [];
   if (preset.base_url) bits.push(`默认地址：${preset.base_url}`);
   bits.push(preset.needs_key ? "需要 API Key" : "不需要 API Key");
   return bits.join(" · ");
@@ -98,26 +107,30 @@ const vendorHint = computed(() => {
 // 这条判据是整段的关键：用户已经手打了 `我的渠道`，再改 vendor 就把它冲掉，那是抢方向盘。
 // 判"是不是自动填的"用 `autoId` 记住上一次自动填进去的值（空 = 从没自动填过 ⇒ 用户填的）。
 const autoId = ref("");
-function pickVendor(next) {
+function pickVendor(next: string): void {
   vendor.value = next;
   if (!isNew) return;
   pid.value = providerIdForNextVendor(pid.value, autoId.value, next);
   autoId.value = pid.value;
 }
+function onVendorChange(event: Event): void {
+  pickVendor((event.target as HTMLSelectElement).value);
+}
 // 手打了 id 就不再当它是自动值（之后改 vendor 不该覆盖）。
-function touchId() {
+function touchId(): void {
   if (pid.value === autoId.value) return;
   autoId.value = "";
 }
 
-async function load() {
+async function load(): Promise<void> {
   const pres = await api.providerPresets().catch(() => []);
   presets.value = pres ?? [];
   if (isNew) {
-    if (presets.value[0]) pickVendor(presets.value[0].vendor);
+    const first = presets.value[0];
+    if (first) pickVendor(first.vendor);
     return;
   }
-  const p = props.provider;
+  const p = props.provider!;
   pid.value = p.id;
   vendor.value = p.vendor ?? "";
   protocol.value = p.protocol ?? "";
@@ -129,39 +142,41 @@ async function load() {
   models.value = p.models ?? [];
 }
 
-async function save() {
+async function save(): Promise<void> {
   const wanted = filter.value.trim();
   try {
     let savedID = props.provider?.id ?? "";
     if (isNew) {
       const id = pid.value.trim();
       if (!id) { status.value = "给个渠道 id"; return; }
-      await api.createProvider({
+      const body: CreateProviderRequest = {
         id,
-        vendor: vendor.value || undefined,
+        ...(vendor.value ? { vendor: vendor.value } : {}),
         ...(protocol.value ? { protocol: protocol.value } : {}),
         ...(baseUrl.value.trim() ? { base_url: baseUrl.value.trim() } : {}),
-        api_key: key.value || undefined,
+        ...(key.value ? { api_key: key.value } : {}),
         ...(wanted ? { model_filter: wanted } : {}),
         ...(Number(maxConcurrency.value) > 0 ? { max_concurrency: Number(maxConcurrency.value) } : {}),
-      });
+      };
+      await api.createProvider(body);
       savedID = id;
     } else {
+      const p = props.provider!;
       const nextID = pid.value.trim();
       if (!nextID) { status.value = "渠道标识不能为空"; return; }
-      const body = {};
+      const body: UpdateProviderRequest = {};
       // 改名（2026-11-05 用户定）：只发改过的格 —— 没动就不带 new_id，
       // 免得每次保存都走一遍"配置 + 库"那两段写。
-      if (nextID !== props.provider.id) body.new_id = nextID;
-      if (vendor.value !== (props.provider.vendor ?? "")) body.vendor = vendor.value;
-      if (protocol.value !== (props.provider.protocol ?? "")) body.protocol = protocol.value;
-      if (baseUrl.value.trim() !== (props.provider.base_url ?? "")) body.base_url = baseUrl.value.trim();
+      if (nextID !== p.id) body.new_id = nextID;
+      if (vendor.value !== (p.vendor ?? "")) body.vendor = vendor.value;
+      if (protocol.value !== (p.protocol ?? "")) body.protocol = protocol.value;
+      if (baseUrl.value.trim() !== (p.base_url ?? "")) body.base_url = baseUrl.value.trim();
       if (key.value) body.api_key = key.value;
       if (wanted !== baseFilter.value) body.model_filter = wanted;
-      if (Number(maxConcurrency.value) !== Number(props.provider.max_concurrency ?? 0)) {
+      if (Number(maxConcurrency.value) !== Number(p.max_concurrency ?? 0)) {
         body.max_concurrency = Number(maxConcurrency.value) || 0;
       }
-      if (Object.keys(body).length) await api.patchProvider(props.provider.id, body);
+      if (Object.keys(body).length) await api.patchProvider(p.id, body);
       if (body.new_id) savedID = body.new_id;
     }
     baseFilter.value = wanted;
@@ -173,15 +188,17 @@ async function save() {
     // 已有的留在原地，结果直接写在状态行里。
     await reloadModels(savedID);
     if (isNew) emit("close");
-  } catch (e) { status.value = `保存失败：${e.message}`; }
+  } catch (e: unknown) {
+    status.value = `保存失败：${e instanceof Error ? e.message : String(e)}`;
+  }
 }
 
 // reloadModels：按当前配置重拉该渠道的模型清单（「保存并刷新」的刷新半程）。
-async function reloadModels(id) {
+async function reloadModels(id: string): Promise<void> {
   // dummy 没有上游可拉：保存成功就够了，别报一条看起来像失败的刷新错误。
   if (vendor.value === "dummy") {
     status.value = "已保存（本地示例：不联网，没有模型可刷新）";
-    emit("saved");
+    emit("saved", id);
     return;
   }
   try {
@@ -189,24 +206,27 @@ async function reloadModels(id) {
     models.value = view?.models ?? [];
     status.value = `已保存并刷新：导入 ${modelCount.value} 个模型` +
       (baseFilter.value ? `（筛选：${baseFilter.value}）` : "");
-    emit("saved");
-  } catch (e) { status.value = `已保存，但刷新失败：${e.message}`; }
+    emit("saved", id);
+  } catch (e: unknown) {
+    status.value = `已保存，但刷新失败：${e instanceof Error ? e.message : String(e)}`;
+  }
 }
 
 // testConnection：只拉一次 /models，**不保存、不落库**。测的是表单里此刻的值，
 // 所以新建/改到一半也能先测；后端给 15 秒短上限。
-async function testConnection() {
+async function testConnection(): Promise<void> {
   const id = pid.value.trim();
   if (!id) { status.value = "先填渠道 id 再测"; return; }
   status.value = "测试中…（最多 15 秒）";
   try {
-    const body = {
+    const body: TestProviderRequest = {
       vendor: vendor.value,
       protocol: protocol.value,
       base_url: baseUrl.value.trim(),
       model_filter: filter.value.trim(),
     };
     if (key.value) body.api_key = key.value;
+    status.value = "测试中…（最多 15 秒）";
     const out = await api.testProvider(id, body);
     if (out?.ok) {
       status.value = `连接成功：${out.models} 个模型` +
@@ -215,25 +235,27 @@ async function testConnection() {
     } else {
       status.value = `连接失败：${out?.error || "未知原因"}`;
     }
-  } catch (e) { status.value = `测试失败：${e.message}`; }
+  } catch (e: unknown) {
+    status.value = `测试失败：${e instanceof Error ? e.message : String(e)}`;
+  }
 }
 
-async function clearKey() {
+async function clearKey(): Promise<void> {
   if (isNew) { key.value = ""; return; }
   try {
-    await api.patchProvider(props.provider.id, { api_key: "" });
+    await api.patchProvider(props.provider!.id, { api_key: "" });
     hasKey.value = false;
     key.value = "";
     status.value = "密钥已清";
-  } catch (e) { status.value = `清密钥失败：${e.message}`; }
+  } catch (e: unknown) { status.value = `清密钥失败：${e instanceof Error ? e.message : String(e)}`; }
 }
 
 onMounted(() => {
-  load().catch((e) => { status.value = `载入失败：${e.message}`; });
+  load().catch((e: unknown) => { status.value = `载入失败：${e instanceof Error ? e.message : String(e)}`; });
   document.addEventListener("keydown", onKey);
 });
 onUnmounted(() => document.removeEventListener("keydown", onKey));
-function onKey(e) {
+function onKey(e: KeyboardEvent): void {
   if (e.key === "Escape") emit("close");
 }
 </script>
@@ -242,7 +264,7 @@ function onKey(e) {
   <!-- 二级页（2026-10-10 起不再是弹窗）：嵌在设置视图的 Provider tab 里，列表 ⇄ 详情就地切换。 -->
   <div class="detail-pane">
     <div class="panel-head">
-      <button class="icon-btn" type="button" title="返回列表（Esc）" @click="$emit('close')">←</button>
+      <button class="icon-btn" type="button" title="返回列表（Esc）" @click="emit('close')">←</button>
       <span class="status">{{ isNew ? "新建渠道" : `渠道「${pid}」（${modelCount} 个模型）` }}</span>
     </div>
     <h3>基本</h3>
@@ -250,7 +272,7 @@ function onKey(e) {
          改 vendor 时它还会跟着变，先填等于白填。 -->
     <!-- vendor / protocol 一律**中文名在前、内部 id 附后**（2026-10-28 用户：「应该用中文化的名字吧」）。
          id 不藏起来：手改 config/providers.json 的人得能对上号，出错信息里也打的是 id。 -->
-    <label class="field"><span>服务商</span><select :value="vendor" @change="pickVendor($event.target.value)">
+    <label class="field"><span>服务商</span><select :value="vendor" @change="onVendorChange">
       <optgroup label="常见">
         <option v-for="p in primaryPresets" :key="p.vendor" :value="p.vendor" :title="p.vendor">{{ p.name }}</option>
       </optgroup>
