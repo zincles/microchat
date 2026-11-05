@@ -21,12 +21,28 @@ export function rippleSpec(rect, x, y) {
   return { size, left: x - rect.left - size / 2, top: y - rect.top - size / 2 };
 }
 
+// ensureLayer：给宿主一层**自己的裁剪层**（absolute inset 0 + border-radius: inherit + overflow hidden）。
+// 为什么不只靠宿主自己的 overflow？按钮/列表行在部分浏览器或某些样式组合下，绝对定位的
+// 子元素会逃出宿主的圆角裁剪（实测用户看到波纹溢到按钮外）；多这一层是确定性的兜底。
+function ensureLayer(host) {
+  let layer = host.querySelector(":scope > .md-ripple-layer");
+  if (!layer) {
+    layer = document.createElement("span");
+    layer.className = "md-ripple-layer";
+    layer.setAttribute("aria-hidden", "true");
+    host.appendChild(layer);
+  }
+  return layer;
+}
+
 function spawn(host, clientX, clientY) {
-  const rect = host.getBoundingClientRect();
-  if (!rect.width || !rect.height) return;
   host.classList.add("md-ripple-host");
+  const layer = ensureLayer(host);
+  // 坐标以**裁剪层**为准（inset: 0，等于宿主的 padding box）：宿主有边框时也不会偏。
+  const rect = layer.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
   // 同一个宿主上只留最新的一枚（快速连点不叠成一坨）。
-  const old = host.querySelector(":scope > .md-ripple");
+  const old = layer.querySelector(".md-ripple");
   if (old) old.remove();
   const spec = rippleSpec(rect, clientX, clientY);
   const dot = document.createElement("span");
@@ -37,7 +53,7 @@ function spawn(host, clientX, clientY) {
   dot.style.left = `${spec.left}px`;
   dot.style.top = `${spec.top}px`;
   dot.addEventListener("animationend", () => dot.remove(), { once: true });
-  host.appendChild(dot);
+  layer.appendChild(dot);
 }
 
 // installRipple：在 main.js 挂载后调用一次。

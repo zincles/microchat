@@ -1308,6 +1308,8 @@ button.toggle.on .knob { left: calc(100% - 1.55em); width: 1.5em; height: 1.5em;
  * 宿主只加两项：position: relative（给绝对定位的圆做坐标）与 overflow: hidden（裁圆）。
  * 圆本身用 currentColor —— 主按钮上就是 on-primary 的暗波纹、普通按钮上是正文色淡波纹。 */
 .md-ripple-host { position: relative; overflow: hidden; }
+/* 宿主的专用裁剪层：即使宿主自己的 overflow 在某些组合下失效，这一层也会按圆角把波纹切掉。 */
+.md-ripple-host > .md-ripple-layer { position: absolute; inset: 0; border-radius: inherit; overflow: hidden; pointer-events: none; }
 .md-ripple { position: absolute; border-radius: 50%; background: currentColor; opacity: 0.18;
   pointer-events: none; transform: scale(0); animation: md-ripple 0.45s var(--md-ease-emphasized) forwards; }
 @keyframes md-ripple { to { transform: scale(1); opacity: 0; } }

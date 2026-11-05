@@ -3801,6 +3801,8 @@ test("波纹：触点 → 圆（纯函数），委托安装一次，reduce 下�
   assert.match(ripple, /prefers-reduced-motion/, "reduce 下没禁用");
   assert.match(css, /@keyframes md-ripple/, "没有波纹动画");
   assert.match(css, /\.md-ripple-host \{[^}]*overflow:\s*hidden/, "波纹宿主没裁剪");
+  assert.match(ripple, /md-ripple-layer/, "没有独立裁剪层");
+  assert.match(css, /\.md-ripple-host > \.md-ripple-layer \{[^}]*border-radius:\s*inherit/, "裁剪层没继承宿主圆角");
   assert.match(css, /prefers-reduced-motion[\s\S]{0,160}\.md-ripple/, "reduce 下没兜底");
 });
 
