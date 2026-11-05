@@ -42,8 +42,8 @@ async function save(reroll = false) {
   status.value = "";
   try {
     const body = props.kind === "reasoning" ? { reasoning: text.value } : { content: text.value };
-    await api.editMessage(props.sessionId, props.message.id, body);
-    emit("saved", { reroll });
+    const updated = await api.editMessage(props.sessionId, props.message.id, body);
+    emit("saved", { reroll, message: updated });
   } catch (e) {
     status.value = `保存失败：${e.message}`;
   }

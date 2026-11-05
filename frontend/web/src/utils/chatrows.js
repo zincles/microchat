@@ -86,6 +86,25 @@ export function runsToFetch(segments, from, to) {
   return runs;
 }
 
+// seededMissingRuns：窗口要的那几段里，**第一拍带回来的尾部消息还没覆盖**的部分。
+//
+// 高延迟下的省 RTT（2026-11-05）：取数时把"最后 windowLimit 条消息"与摘要、总数**并行**
+// 取回 —— 没有摘要横跨窗口时，那几条正好就是窗口要的全部 ⇒ 第二拍不用发。
+// 只有窗口比"最后 N 条"更老（摘要把窗口切成很大的段、或加载更多）才需要补一发。
+// seeded 必须按 idx 升序；b === Infinity 表示"到末尾"，而 seeded 本来就盖住了末尾。
+export function seededMissingRuns(runs, seeded) {
+  if (!seeded?.length) return runs;
+  const first = seeded[0].idx;
+  const last = seeded[seeded.length - 1].idx;
+  const missing = [];
+  for (const [a, b] of runs) {
+    const end = Math.min(b === Infinity ? last : b, first - 1);
+    if (a <= end) missing.push([a, end]);
+  }
+  return missing;
+}
+
+
 // buildChatRows({segments, windowFrom, messages, summaryMsgs})：渲染行（旧→新）。
 //   messages：已取回的消息（展示形状：who/idx/content/…；含窗口外的与库外的尾巴，都按需过滤）；
 //   summaryMsgs：Map<摘要id, {state:"loading"|"ready", rows}> —— 展开才有的那份。

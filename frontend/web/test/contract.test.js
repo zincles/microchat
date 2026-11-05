@@ -9,7 +9,7 @@ import { parseCommand, filterCommands, COMMAND_META } from "../src/utils/command
 import { uuidv7 } from "../src/utils/ids.js";
 import { groupSessions, SESSION_GROUP_LABELS } from "../src/utils/sessionGroups.js";
 import { buildCompactTree, treeTotals } from "../src/utils/tree.js";
-import { buildChatRows, rerollTargetLive, bubbleText, editRerollTarget, latestPromptFor } from "../src/utils/chatrows.js";
+import { buildChatRows, rerollTargetLive, bubbleText, editRerollTarget, latestPromptFor, seededMissingRuns } from "../src/utils/chatrows.js";
 import { resetChrome, stepChrome } from "../src/utils/chrome.js";
 import { typewriterDuration, revealCount, TYPEWRITER_DEFAULT_MS, TYPEWRITER_MIN_MS, TYPEWRITER_MAX_MS } from "../src/utils/typewriter.js";
 import { computeViewportFit } from "../src/utils/viewport.js";
@@ -3205,7 +3205,8 @@ test("开机请求：会话/Agent 不重复，重活按需，加载有骨架", (
   }
   // boot 已经拉过 /sessions ⇒ enterSession 直接吃现成的。
   assert.match(app, /enterSession\(last, sessions\)/, "开机恢复没把已拉到的会话列表传进去");
-  assert.match(app, /const sessions = preloaded \?\? await api\.listSessions\(\)/, "enterSession 仍无条件再拉一次 /sessions");
+  // 2026-11-05：列表在屏幕上就直接用（高延迟下省一个完整 RTT），缓存没有才真去拉。
+  assert.match(app, /let sessions = preloaded \?\? sessionsCache\.value/, "enterSession 仍无条件再拉一次 /sessions");
   // 进会话不再无条件 POST /outgoing / GET /state：只在工作区看得见时按 tab 拉。
   const enter = app.match(/async function enterSession\(id, preloaded = null\)[\s\S]*?\n\}/)?.[0] ?? "";
   assert.ok(enter, "找不到 enterSession");
@@ -3364,7 +3365,7 @@ test("消息窗口批量取：摘要切出的多个区间压成一发 POST", () 
     "API 客户端没有 messageRanges");
   assert.match(app, /function batchRanges\(runs\)/, "没有把 Infinity 尾段转成 to=0 的纯函数");
   assert.match(app, /b === Infinity \? 0 : b/, "批量区间没有处理尾部");
-  assert.equal((app.match(/api\.messageRanges\(sid, batchRanges\(runs\)\)/g) ?? []).length, 2,
+  assert.equal((app.match(/api\.messageRanges\(/g) ?? []).length, 2,
     "首屏与加载更多没有都走批量接口");
   assert.ok(!/for \(const \[a, b\] of runs\)[\s\S]{0,120}await api\.listMessages/.test(app),
     "还在按区间循环发请求（RTT 会乘以区间数）");
@@ -3430,4 +3431,59 @@ test("忙碌会话接到左栏：同一拍、读不到就清空、行上有环�
   assert.match(bar, /class="session-busy"/, "没有行内环元素");
   assert.match(css, /@keyframes session-busy-spin/, "环没有转起来的动画");
   assert.match(css, /prefers-reduced-motion[\s\S]{0,300}session-busy[\s\S]{0,120}animation: none/, "reduced-motion 下没关动画");
+});
+
+// —— 高延迟（1s+ RTT）下的界面口径（2026-11-05）——
+// 目标不是"让网络变快"，而是**别让等待凭空多出一个来回**，也别让旧数据在新语境里挂着。
+
+test("窗口取数：尾部种子已覆盖时不再补发", () => {
+  const seeded = [{ idx: 6 }, { idx: 7 }, { idx: 8 }];
+  // 窗口正好是最后几条（最常见的形状）⇒ 第二拍是空的
+  assert.deepEqual(seededMissingRuns([[6, Infinity]], seeded), []);
+  assert.deepEqual(seededMissingRuns([[6, 8]], seeded), []);
+  // 窗口比种子更老 ⇒ 只补老的一段，别把种子覆盖的部分再要一遍
+  assert.deepEqual(seededMissingRuns([[1, Infinity]], seeded), [[1, 5]]);
+  assert.deepEqual(seededMissingRuns([[1, 5], [6, 8]], seeded), [[1, 5]]);
+  // 没有种子（加载更多那条路）⇒ 原样要
+  assert.deepEqual(seededMissingRuns([[1, 3]], []), [[1, 3]]);
+  assert.deepEqual(seededMissingRuns([[4, Infinity]], []), [[4, Infinity]]);
+});
+
+test("高延迟：发送先上屏、失败撤回；切会话不先拉列表；窗口并行带种子", () => {
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+
+  // ① 乐观发送：addMessage 必须在 await 之前；失败要把文字还回输入框
+  const sendStart = app.indexOf("async function send(content)");
+  const sendEnd = app.indexOf("async function resend()");
+  const send = app.slice(sendStart, sendEnd);
+  assert.ok(sendStart > 0 && sendEnd > sendStart, "找不到 send()");
+  assert.ok(send.indexOf('addMessage("你", content, "user")') < send.indexOf("await api.sendMessage"), "发送不是先上屏再等 202");
+  assert.match(send, /dropOptimistic\(optimistic\)/, "发送失败没撤掉乐观气泡");
+  assert.match(send, /setText\(content\)/, "发送失败没把输入的文字还回去");
+  assert.match(send, /settleOptimisticUser\(optimistic, accepted\?\.user\)/, "202 回来后没换成服务端那条（编号/编辑都要真 id）");
+
+  // ② 草稿那条是两个 back-to-back 请求（建会话 → 受理），同样先上屏
+  const draft = app.slice(app.indexOf("async function sendFromDraft"), app.indexOf("function stopCurrent"));
+  assert.ok(draft.indexOf('addMessage("你", text, "user")') < draft.indexOf("await api.createSession"), "草稿首句不是先上屏再建会话");
+  assert.match(draft, /setText\(text\)/, "草稿发送失败没把文字还回去");
+
+  // ③ 切会话：列表在屏幕上就直接用，别先 GET /sessions 再画
+  const enter = app.slice(app.indexOf("async function enterSession"), app.indexOf("async function boot"));
+  assert.match(enter, /let sessions = preloaded \?\? sessionsCache\.value/, "切会话还是在无条件拉列表");
+  assert.match(enter, /if \(!sessions\.some\(\(s\) => s\.id === id\)\)/, "缓存里没有时没有兜底去拉");
+  assert.match(enter, /sessionsFetchedAt > SESSIONS_FRESH_MS/, "列表缓存没有后台保鲜（会一直用旧标题）");
+
+  // ④ 窗口第一拍就带"最后 N 条"，摘要没横跨时第二拍为空
+  const load = app.slice(app.indexOf("async function loadWindow"), app.indexOf("async function reloadWindow"));
+  assert.match(load, /api\.listMessagesLast\(sid, windowLimit\.value\)/, "第一拍没带尾部种子");
+  assert.match(load, /seededMissingRuns\(runs, recent\)/, "没按种子算缺口（会把已取到的再要一遍）");
+
+  // ⑤ 模型清单缓存先画后对（切会话不再闪「加载模型…」）
+  assert.match(app, /if \(modelsCache\) paintModelOptions\(modelsCache\)/, "模型清单没有先画缓存");
+
+  // ⑥ 编辑消息：PATCH 回来先就地换正文，再对账（别让旧字多挂一个 RTT）
+  const editor = readFileSync(join(SRC, "components", "MessageEditor.vue"), "utf8");
+  assert.match(editor, /emit\("saved", \{ reroll, message: updated \}\)/, "编辑器没把更新后的消息带回来");
+  const edited = app.slice(app.indexOf("async function onMessageEdited"), app.indexOf("async function rerollNow"));
+  assert.ok(edited.indexOf("row.content = updated.content") < edited.indexOf("reloadWindowKeepingScroll"), "编辑后不是先本地生效再对账");
 });

@@ -1134,6 +1134,23 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   切会话时消息列不再是一段纯黑空白。
   ⚠ `vite preview` 只做 gzip、HTTP/1.1，**不是生产级静态服务器**；公网/反代部署应由 Caddy / nginx /
   Cloudflare 终结 TLS 并开 brotli + HTTP/2（缓存头已经由上面的中间件给出，不会被吃掉）。
+- **高延迟（1s+ RTT）下的界面口径**（2026-11-05 用户定：「优化服务器和用户之间存在 1000ms 以上延迟的极端场景」）：
+  目标不是"让网络变快"，而是**别让等待凭空多出一个来回**，也别让旧数据挂在新语境里。
+  ① **发送先上屏**：`send` / `sendFromDraft` 先 `addMessage("你", …)` 再等 202；回来用服务端 `user` 换掉
+  （真 id/idx，编号与编辑/删除都认它），失败就撤掉并把文字 `setText` 还回输入框 —— 绝不留下假装发过的气泡。
+  ② **切会话不再先拉列表**：`sessionsCache`（`renderSessions` 写、`refreshSessionsBar` 记时间）直接用；
+  只有缓存里没有才 `GET /sessions`，之后 10 秒保鲜期外才在后台补一次（不挡这一屏）。
+  ③ **窗口取数压到 1 个 RTT**：第一拍并行取 `listSummaries` + `?last=windowLimit` 尾部消息（末条 idx 就是总数），
+  再算段；`seededMissingRuns` 只补"种子没盖住的老段"—— 没有摘要横跨窗口时第二拍是空的。
+  ⚠ `GET /messages?last=N` 会带出被摘要盖住的消息，这是**故意**的：`buildChatRows` 只画段里的，
+  别再加第二份"哪些该显示"的过滤。
+  ④ **模型清单缓存先画后对**：`modelsCache` + `modelsInflight`，切会话不再先闪一下「加载模型…」；
+  `models-changed` 那条路照旧会触发刷新，不靠 TTL 猜。
+  ⑤ **编辑消息先本地生效**：`PATCH` 回执带回新消息，`onMessageEdited` 先换那一行正文，再
+  `reloadWindowKeepingScroll()` 对账（摘要 dirty / 区间可能变）；滚动位置保住。
+  ⑥ **上下文环在切会话时先清空**（`setContext(null)`）：1s+ 下旧会话的占比会挂满一个 RTT，
+  看起来像新会话的账 —— 那是"旧数据住在新语境里"。
+  ⚠ 契约测试钉着这些顺序（`高延迟：发送先上屏…` 那条），改回"先 await 再画"会红。
 - **设置（⚙）谁都能进**（2026-11-01 起：账号砍了 ⇒ 没有"root 专属"）。左栏底那枚 `👤 用户` **删了** ——
   它原来是"登录者自己的事"，而登录者这个概念没了；里面两块：**身份 / 用户管理**跟着账号一起删，
   **外观 / 输入**整块搬进设置的「外观」区（`AppearancePane.vue`，四区里的最后一个）。

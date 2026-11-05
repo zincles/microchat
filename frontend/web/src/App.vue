@@ -8,7 +8,7 @@ import { resetChrome as resetChromeState, stepChrome } from "./utils/chrome.js";
 import { uuidv7 } from "./utils/ids.js";
 import { buildCompactTree } from "./utils/tree.js";
 import {
-  buildChatRows, computeSegments, windowStart, prevWindowStart, alignWindowFrom, olderCount, runsToFetch,
+  buildChatRows, computeSegments, windowStart, prevWindowStart, alignWindowFrom, olderCount, runsToFetch, seededMissingRuns,
   rerollTargetLive, bubbleText, editRerollTarget, latestPromptFor,
 } from "./utils/chatrows.js";
 import { applyBackground } from "./utils/background.js";
@@ -95,6 +95,12 @@ function onPickAction(action, item) {
 
 // —— 会话状态 ——
 let sessionID = null;
+// 会话列表缓存（2026-11-05，高延迟优化）：从前每点一条会话都要先 `GET /sessions`
+// 才轮到消息窗口 —— 远端 1s+ 时那一整个 RTT 什么也没画，而列表本来就在屏幕上。
+// 缓存只当"先用着的快照"：进会话后按需在后台补一次（见 enterSession），不拿它当真相。
+const sessionsCache = ref([]);
+let sessionsFetchedAt = 0;
+const SESSIONS_FRESH_MS = 10_000;
 // 会话世代：进会话/回草稿就 +1。所有会话域的异步续写都在 await 后核对本世代，对不上就丢 ——
 // 没有这道闸，快速切会话时迟到的 A 续写会覆掉已切到的 B 的抬头与消息列（实测复现过：
 // 顶栏 A、高亮 B、气泡 A —— 界面被撕成三份）。
@@ -162,7 +168,7 @@ function scrollBottom() {
   });
 }
 function addMessage(who, text, cls, think, messageId) {
-  vueMessages.value.push({
+  const row = {
     id: tmpKey(),
     who,
     role: cls === "user" ? "user" : "assistant",
@@ -170,8 +176,22 @@ function addMessage(who, text, cls, think, messageId) {
     reasoning: typeof think === "string" ? think : think?.text,
     reasoningMs: think?.ms,
     messageId,
-  });
+  };
+  vueMessages.value.push(row);
   scrollBottom();
+  return row;
+}
+// 乐观上屏的那句用户消息（2026-11-05，高延迟优化）：先画，等 202 回来再换成服务端那条
+// （换的是**同一条消息**：服务端回的 `user` 带真 id/idx，编号与后续编辑/删除都认它）。
+// 失败就撤掉，绝不留在屏幕上假装发过 —— "看到的"和"真发出去的"分家比慢更糟。
+function settleOptimisticUser(row, user) {
+  if (!user) return;
+  const at = vueMessages.value.indexOf(row);
+  if (at >= 0) vueMessages.value.splice(at, 1, toRow(user));
+}
+function dropOptimistic(row) {
+  const at = vueMessages.value.indexOf(row);
+  if (at >= 0) vueMessages.value.splice(at, 1);
 }
 // 打开消息编辑器（新窗口，2026-11-02 用户定）：不再在气泡里就地换 textarea。
 // message 可以是消息列里的行，也可以是 /edit 从 vueMessages 里挑的原对象。
@@ -217,20 +237,29 @@ async function loadWindow({ reset = false, scroll = true } = {}) {
   const sid = sessionID;
   const my = epoch;
   if (!sid) return false;
-  const [sums, tail] = await Promise.all([api.listSummaries(sid), api.listMessagesLast(sid, 1)]);
+  const [sums, recent] = await Promise.all([
+    api.listSummaries(sid),
+    // 总数与"窗口可能正好要的那几条"一起拿：`?last=N` 的末条 idx 就是总数。
+    // 从前这里只要 1 条，第二拍再按区间拉消息 —— 高延迟（1s+）下那是**两个**来回。
+    // 没有摘要横跨窗口时，最后 N 条正好就是窗口要的全部 ⇒ 第二拍是空的（见 seededMissingRuns）。
+    api.listMessagesLast(sid, windowLimit.value),
+  ]);
   if (my !== epoch) return false;
-  // 总数 = 最后一条的 idx（拿"尾一行"问，比会话列表里的计数新鲜；空会话 = 0）。
-  const total = tail.length ? tail[tail.length - 1].idx : 0;
+  // 总数 = 最后一条的 idx（拿"尾几行"问，比会话列表里的计数新鲜；空会话 = 0）。
+  const total = recent.length ? recent[recent.length - 1].idx : 0;
   const segments = computeSegments(total, sums);
   windowFrom.value = reset
     ? windowStart(segments, windowLimit.value)
     : alignWindowFrom(segments, windowFrom.value, windowLimit.value);
   const runs = runsToFetch(segments, windowFrom.value, Infinity);
-  // 一个区间请求一次会把摘要切出来的段数直接乘成 RTT；批量一发拿全。
-  const got = runs.length ? await api.messageRanges(sid, batchRanges(runs)) : [];
+  // 只有"窗口比尾部种子更老"才补一发（典型：摘要把窗口起点推到很前面）。
+  const missing = seededMissingRuns(runs, recent);
+  const rest = missing.length ? await api.messageRanges(sid, batchRanges(missing)) : [];
   if (my !== epoch) return false;
   vueSegments.value = segments;
-  vueMessages.value = got.sort((x, y) => x.idx - y.idx).map(toRow);
+  // 种子可能多带了几条（被摘要盖住 / 落在窗口外）—— buildChatRows 本来就只画段里的，
+  // 这里照原样合并即可；**别再按窗口过滤一遍**（那会是第二份"哪些该显示"的判据）。
+  vueMessages.value = [...recent, ...rest].sort((x, y) => x.idx - y.idx).map(toRow);
   // 摘要缓存：卡没了的清掉；还开着的补拉新鲜的一份（结构或正文可能刚变过）。
   const alive = new Set(segments.filter((seg) => seg.kind === "summary").map((seg) => seg.id));
   for (const key of [...summaryMsgs.keys()]) if (!alive.has(key)) summaryMsgs.delete(key);
@@ -660,7 +689,18 @@ async function onMessageEdited(result = {}) {
   const sid = sessionID;
   const target = messageEditTarget.value;
   messageEditTarget.value = null;
-  await reloadWindow();
+  // 先就地把这一行换成 PATCH 回来的正文（高延迟下别让旧字多挂一个来回），
+  // 再重拉一次窗口对账（摘要的 dirty / 区间可能跟着变了）。滚动位置保住。
+  const updated = result?.message;
+  if (updated) {
+    const row = vueMessages.value.find((r) => (r.messageId ?? r.id) === updated.id);
+    if (row) {
+      row.content = updated.content;
+      row.reasoning = updated.reasoning ?? "";
+      row.reasoningMs = updated.reasoning_ms ?? null;
+    }
+  }
+  await reloadWindowKeepingScroll();
   refreshStateView(sid);
   if (result.reroll && target?.rerollTargetId) {
     // 先保存、再摇：保存已经落库，随后走正常重摇路径（旧正文立刻清空）。
@@ -954,17 +994,29 @@ function paintSessionHeader() {
   topbarRef.value?.setSession(sessionInfo, draft);
   document.title = sessionInfo.title ? `${sessionInfo.title} - MicroChat` : "MicroChat";
 }
-async function fillModelSelect() {
+// 模型清单缓存（2026-11-05，高延迟优化）：这玩意只在渠道刷新时变，却原来每进一次会话
+// 都重拉一遍 —— 远端 1s+ 时顶栏每次都先显示"加载模型…"。现在先画上一份、后台再对一次
+// （`models-changed` 那条路照旧会触发一次刷新，不靠 TTL 猜）。
+let modelsCache = null;
+let modelsInflight = null;
+function paintModelOptions(models) {
+  const groups = groupModelsByProvider(models ?? []).map((g) => ({
+    provider: g.provider,
+    items: g.items.map(modelOption),
+  }));
+  const cur = sessionInfo.provider && sessionInfo.model ? modelKey(sessionInfo.provider, sessionInfo.model) : "";
+  topbarRef.value?.setModels(groups, cur);
+}
+function fillModelSelect() {
   const my = epoch;
-  api.models().then((models) => {
-    if (my !== epoch) return;
-    const groups = groupModelsByProvider(models).map((g) => ({
-      provider: g.provider,
-      items: g.items.map(modelOption),
-    }));
-    const cur = sessionInfo.provider && sessionInfo.model ? modelKey(sessionInfo.provider, sessionInfo.model) : "";
-    topbarRef.value?.setModels(groups, cur);
-  }).catch((err) => { if (my === epoch) toast(`模型列表失败：${err.message}`, "error"); });
+  if (modelsCache) paintModelOptions(modelsCache);
+  if (!modelsInflight) modelsInflight = api.models().finally(() => { modelsInflight = null; });
+  modelsInflight.then((models) => {
+    modelsCache = models;
+    if (my === epoch) paintModelOptions(models);
+  }).catch((err) => {
+    if (my === epoch && !modelsCache) toast(`模型列表失败：${err.message}`, "error");
+  });
 }
 async function applyModelValue(value) {
   const mp = parseModelKey(value);
@@ -1254,11 +1306,14 @@ function newSession() {
   startDraft().catch((err) => toast(`新建失败：${err.message}`, "error"));
 }
 function renderSessions(sessions) {
+  sessionsCache.value = sessions ?? [];
   sessionbarRef.value?.setSessions(sessions, sessionID);
 }
 async function refreshSessionsBar() {
   try {
-    renderSessions(await api.listSessions());
+    const sessions = await api.listSessions();
+    sessionsFetchedAt = Date.now();
+    renderSessions(sessions);
   } catch (err) { toast(`刷会话栏失败：${err.message}`, "error"); }
 }
 async function enterSession(id, preloaded = null) {
@@ -1275,16 +1330,28 @@ async function enterSession(id, preloaded = null) {
   resetTypewriter();
   summaryMsgs.clear();
   openSummaries.clear();
+  // 上一会话的上下文占用不许挂在新会话上（高延迟下它会挂满一个 RTT 才被新数覆盖 ——
+  // 那正好是"看起来像新会话的账、其实是旧的"最难受的一秒）。
+  topbarRef.value?.setContext(null);
   // 开机恢复那条路已经拉过一次 `/sessions`（boot），别在同一毫秒再要一遍 ——
   // 远端部署时那是一整个 RTT + 一份完整会话列表。
-  const sessions = preloaded ?? await api.listSessions();
-  if (my !== epoch) return; // 迟到的上一发：整段丢掉（切会话竞态的唯一守卫）
+  // 同理，点左栏切会话时列表**就在屏幕上**（sessionsCache）⇒ 直接用，别先问一遍再画：
+  // 高延迟下那等于把"进会话"硬生生推迟一个来回。缓存里没有（冷启动/别处新建）才真去拉。
+  let sessions = preloaded ?? sessionsCache.value;
+  if (!sessions.some((s) => s.id === id)) {
+    sessions = await api.listSessions();
+    if (my !== epoch) return; // 迟到的上一发：整段丢掉（切会话竞态的唯一守卫）
+    sessionsFetchedAt = Date.now();
+  }
   Object.assign(sessionInfo, sessions.find((s) => s.id === id) ?? {});
   paintSessionHeader();
   refreshAgents();
   fillModelSelect();
   fillAgentSelect();
   renderSessions(sessions);
+  // 手里这份列表可能是几分钟前的（别的设备改了标题、新建了会话）—— 后台补一次，
+  // 不挡这一屏（有 10 秒保鲜期，切来切去不会每点一下发一个请求）。
+  if (Date.now() - sessionsFetchedAt > SESSIONS_FRESH_MS) refreshSessionsBar();
   const ok = await loadWindow({ reset: true });
   if (my !== epoch || !ok) return;
   refreshStatusline("idle");
@@ -1350,6 +1417,8 @@ async function boot() {
     api.getChat().catch(() => null),
     last ? api.listSessions().catch(() => []) : Promise.resolve([]),
   ]);
+  // 这趟就是"刚拉过"的会话列表 ⇒ 记下时间，别让 enterSession 立刻又在后台补一次。
+  if (last) sessionsFetchedAt = Date.now();
   applyChatConfig(chatCfg);
   if (last && sessions.some((s) => s.id === last)) {
     await enterSession(last, sessions);
@@ -1361,9 +1430,18 @@ async function boot() {
 // —— 发送 / 轮询 ——
 async function send(content) {
   const sid = sessionID;
-  const accepted = await api.sendMessage(sid, content);
+  // 乐观上屏：远端 1s+ 时，等 202 再画那句会让人以为"按了没反应"。
+  const optimistic = addMessage("你", content, "user");
+  let accepted;
+  try {
+    accepted = await api.sendMessage(sid, content);
+  } catch (err) {
+    dropOptimistic(optimistic);
+    composerRef.value?.setText(content); // 发失败别把那句话吞掉
+    throw err;
+  }
+  settleOptimisticUser(optimistic, accepted?.user);
   refreshTasks();
-  addMessage("你", content, "user");
   await pollTurn(sid, accepted.turn.message_id);
 }
 async function resend() {
@@ -1881,7 +1959,17 @@ async function sendFromDraft(text) {
   if (draftPrefs.provider) body.provider = draftPrefs.provider;
   if (draftPrefs.model) body.model = draftPrefs.model;
   if (draftPrefs.agent) body.agent_id = draftPrefs.agent;
-  const s = await api.createSession(body);
+  // 草稿这条路是**两个** back-to-back 请求（建会话 → 受理）⇒ 远端 1s+ 时足足两秒没反应。
+  // 先画再说：建会话失败就撤掉并退回草稿（连输入框里的字一起还回去）。
+  const optimistic = addMessage("你", text, "user");
+  let s;
+  try {
+    s = await api.createSession(body);
+  } catch (err) {
+    dropOptimistic(optimistic);
+    composerRef.value?.setText(text);
+    throw err;
+  }
   draft = false;
   sessionID = s.id;
   saveLastSession(s.id); // 草稿转真会话：从现在起"在看的就是它"
@@ -1895,9 +1983,10 @@ async function sendFromDraft(text) {
   } catch (err) {
     await api.deleteSession(s.id).catch(() => {});
     await startDraft();
+    composerRef.value?.setText(text);
     throw err;
   }
-  addMessage("你", text, "user");
+  settleOptimisticUser(optimistic, accepted?.user);
   await pollTurn(s.id, accepted.turn.message_id);
 }
 function stopCurrent() {
