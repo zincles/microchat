@@ -3809,3 +3809,8 @@ test("密度：行高/顶栏/FAB/输入/设置/消息间距都收了一档", () 
   assert.match(css, /\.agent-item, \.model-item \{[^}]*min-height:\s*2\.5em/, "菜单项没收到 40dp");
   assert.match(css, /#input \{[^}]*padding:\s*0\.3em 0/, "输入框没收到 0.3em");
 });
+
+test("左栏底：会话/渠道/设置上方有一条 outline-variant 分隔线", () => {
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.match(css, /#sessions-bar \.bar-foot \{[^}]*border-top:\s*1px solid var\(--md-outline-variant\)/, "底部管理入口上方没有分隔线");
+});

@@ -1109,7 +1109,9 @@ button.toggle.on .knob { left: calc(100% - 1.55em); width: 1.5em; height: 1.5em;
 #sessions-bar .session-group-head { padding: 1.05em 0.95em 0.4em; color: var(--md-on-surface-variant);
   font-size: var(--md-type-label-medium); font-weight: 500; letter-spacing: 0.04em; line-height: 1.2; }
 #sessions-bar .session-group-head:first-child { padding-top: 0.55em; }
-#sessions-bar .bar-foot { margin-top: auto; padding: 0.45em 0.55em 0.55em; border-top: none; display: flex; flex-direction: column; gap: 0.1em; }
+/* 底部三项（会话/渠道/设置）上方的分隔线：MD3 outline-variant 发丝线，横贯整条栏。
+ * 它跟栏面是同一层，不画盒；线只是把"管理入口"与上面的会话列表分开。 */
+#sessions-bar .bar-foot { margin-top: auto; padding: 0.55em 0.55em 0.55em; border-top: 1px solid var(--md-outline-variant); display: flex; flex-direction: column; gap: 0.1em; }
 #sessions-bar .bar-foot .foot-btn { display: flex; align-items: center; gap: 0.85em; width: 100%; min-height: 3.2em; padding: 0 0.95em;
   border-radius: var(--md-shape-full); background: none; color: var(--md-on-surface-variant);
   font-size: var(--md-type-label-large); font-weight: 500; letter-spacing: 0.006em; line-height: 1.3;
