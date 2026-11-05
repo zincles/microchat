@@ -1006,8 +1006,8 @@ test("上下文环：圆心是后台任务数，有任务时转动，面板里�
   assert.match(css, /\.ctx-ring-n \{[^}]*font-size:\s*0\.68em/, "环心数字没有字号（会与 width 叠乘）");
 
   // ④ 喂数只有一处；输入框上方那行小字连尸首都不许留。
-  assert.match(app, /topbarRef\.value\?\.setTasks\(board\)/, "App 没把任务账本喂给顶栏");
-  assert.match(app, /topbarRef\.value\?\.setTasks\(null\)/, "取不到任务时该喂 null（环心归 0）");
+  assert.match(readFileSync(join(SRC, "composables", "useTasks.ts"), "utf8"), /topbarRef\.value\?\.setTasks\(board\)/, "App 没把任务账本喂给顶栏");
+  assert.match(readFileSync(join(SRC, "composables", "useTasks.ts"), "utf8"), /topbarRef\.value\?\.setTasks\(null\)/, "取不到任务时该喂 null（环心归 0）");
   assert.ok(!/setTaskLine/.test(composer), "Composer 还留着 setTaskLine");
   assert.ok(!/taskline/.test(composer), "Composer 还留着 .taskline 那行");
   assert.ok(!/taskLineText/.test(fmt), "format.js 还留着 taskLineText（没有调用方了）");
@@ -1042,9 +1042,9 @@ test("后台任务面板：队列单独一栏（带进度与取消），原子�
   assert.match(tpl, /@click\.stop="emit\('cancel-queue', q\.id\)"/, "取消按钮没把队列 id 报上去");
   assert.match(top, /defineEmits(?:\(\[[^\]]*"cancel-queue"|<\{[^}]*"cancel-queue")/, "TopBar 没声明 cancel-queue");
   assert.match(app, /@cancel-queue="cancelQueue"/, "App 没接 cancel-queue");
-  assert.match(app, /function cancelQueue\(id\)/, "App 没有 cancelQueue");
+  assert.match(readFileSync(join(SRC, "composables", "useTasks.ts"), "utf8"), /function cancelQueue\(id[^)]*\)/, "App 没有 cancelQueue");
   // 取消完要**立刻**刷一次面板（别等那 2 秒的节拍）
-  assert.match(app, /api\.cancelQueue\(id\)[\s\S]{0,80}refreshTasks\(\)/, "取消之后没补刷面板");
+  assert.match(readFileSync(join(SRC, "composables", "useTasks.ts"), "utf8"), /api\.cancelQueue\(id\)[\s\S]{0,80}refreshTasks\(\)/, "取消之后没补刷面板");
   assert.match(api, /cancelQueue:\s*\(queueId[^)]*\)\s*=>\s*call<[^>]+>\("POST", `\/tasks\/queues\/\$\{enc\(queueId\)\}\/cancel`\)/,
     "API 客户端的 cancelQueue 路径不对");
 
@@ -2157,10 +2157,12 @@ test("工作区：量不到输入行高度时不写 --composer-h", () => {
 //（载荷 / 状态 / 压缩树）—— 换会话时无条件的 outgoing + state 是远端部署的主要延迟来源。
 test("上下文工作区：切进去 / 换会话时按当前 tab 补拉", () => {
   const app = readFileSync(join(SRC, "..", "src", "App.vue"), "utf8");
-  const fn = app.match(/function selectWorkspace\(next\)[\s\S]*?\n\}/)?.[0] ?? "";
+  const side = readFileSync(join(SRC, "composables", "useSidePanels.ts"), "utf8");
+  const fn = side.match(/function selectWorkspace\(next[^)]*\)[\s\S]*?\n  \}/)?.[0] ?? "";
   assert.ok(fn, "找不到 selectWorkspace");
-  assert.match(fn, /workspace\.value === "context"\) refreshContextLazy\(\)/,
+  assert.match(fn, /workspace\.value === "context"\) onWorkspaceContext\(\)/,
     "切进工作区时没补拉当前 tab");
+  assert.match(app, /onWorkspaceContext:\s*refreshContextLazy/, "App 没把 refreshContextLazy 接给工作区");
   // 懒加载的分派只此一处：三种 tab 各管各的。
   const lazy = app.match(/function refreshContextLazy\(\)[\s\S]*?\n\}/)?.[0] ?? "";
   assert.ok(lazy, "找不到 refreshContextLazy");
@@ -2818,8 +2820,8 @@ test("任务面板：能停的任务有取消按钮，按不动的不画", () =>
   // ③ 事件一路接到 App（emit → 模板 → 处理函数 → 接口）。
   assert.match(bar, /defineEmits(?:\(\[[^\]]*"cancel-task"|<\{[^}]*"cancel-task")/, "TopBar 没声明 cancel-task 事件");
   assert.match(app, /@cancel-task="cancelTask"/, "App 没接 TopBar 的 cancel-task");
-  assert.match(app, /function cancelTask\(id\)/, "App 没有 cancelTask");
-  assert.match(app, /api\.cancelTask\(id\)/, "cancelTask 没调接口");
+  assert.match(readFileSync(join(SRC, "composables", "useTasks.ts"), "utf8"), /function cancelTask\(id[^)]*\)/, "App 没有 cancelTask");
+  assert.match(readFileSync(join(SRC, "composables", "useTasks.ts"), "utf8"), /api\.cancelTask\(id\)/, "cancelTask 没调接口");
 
   // ④ 被取消的压缩**不是失败也不是完成** —— 界面上得说清"一条都没写，重提交还是压同一段"。
   //    不加这一支，`canceled` 会掉进"压缩完成"那条分支（因为它非 running 非 error），
@@ -2862,9 +2864,10 @@ test("重摇轮询：状态没了也要写回（否则取消后界面一直等�
   }
 
   // 面板按停之后要顺手对齐两族状态（不一定有轮询在跑）。
-  const cancel = app.slice(app.indexOf("function cancelTask(id)"), app.indexOf("// cancelQueue"));
-  assert.match(cancel, /refreshReroll\(\)/, "cancelTask 没对齐消息族重摇状态");
-  assert.match(cancel, /refreshRerollSummary\(\)/, "cancelTask 没对齐摘要族重摇状态");
+  const tasksSrc = readFileSync(join(SRC, "composables", "useTasks.ts"), "utf8");
+  assert.match(tasksSrc, /onCanceled\?\.\(\)/, "cancelTask 没调用 onCanceled 回调");
+  assert.match(app, /onCanceled:\s*\(\)\s*=>\s*\{[\s\S]*?refreshReroll\(\)/, "App 没在 onCanceled 里对齐消息族重摇状态");
+  assert.match(app, /onCanceled:\s*\(\)\s*=>\s*\{[\s\S]*?refreshRerollSummary\(\)/, "App 没在 onCanceled 里对齐摘要族重摇状态");
 });
 
 // 按停**不许偷偷换版**：摇完只有"真的多出一版"才切过去。
@@ -3441,8 +3444,8 @@ test("忙碌会话接到左栏：同一拍、读不到就清空、行上有环�
   const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8");
 
-  assert.match(app, /busyIds\.value = busySessionIds\(board\)/, "App 没把 /tasks 快照算成忙碌会话");
-  assert.match(app, /busyIds\.value = \[\]/, "任务读不到时没清空（会留下永远转的假象）");
+  assert.match(readFileSync(join(SRC, "composables", "useTasks.ts"), "utf8"), /busyIds\.value = busySessionIds\(board\)/, "App 没把 /tasks 快照算成忙碌会话");
+  assert.match(readFileSync(join(SRC, "composables", "useTasks.ts"), "utf8"), /busyIds\.value = \[\]/, "任务读不到时没清空（会留下永远转的假象）");
   assert.match(app, /:busy-ids="busyIds"/, "没把忙碌会话传给左栏");
   assert.match(bar, /v-if="busySet\.has\(s\.id\)"/, "行上没有按会话 id 判断");
   assert.match(bar, /class="session-busy"/, "没有行内环元素");

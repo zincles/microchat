@@ -13,11 +13,10 @@ import {
 } from "./utils/chatrows.ts";
 import { applyBackground } from "./utils/background.ts";
 import { installViewportFit } from "./utils/viewport.ts";
-import { classifyAxis, pickDrag, dragProgress, resolveRelease } from "./utils/swipe.ts";
 import { downloadJSON } from "./utils/download.ts";
 import { busySessionIds } from "./utils/tasks.ts";
 import { rememberWindow, recallWindow, forgetWindow } from "./utils/windowcache.ts";
-import { sharedApi, previewOn, payloadPreviewOn, applyTheme, wantsSend, apiBase, apiBaseCandidates, saveNetPrefs, lastSessionId, saveLastSession, commandMenuOn, applyTextScale, applyFonts, chromeHideOn, syncPrefs, saveBarLeftHidden, barLeftHidden } from "./utils/prefs.ts";
+import { sharedApi, previewOn, payloadPreviewOn, applyTheme, wantsSend, apiBase, apiBaseCandidates, saveNetPrefs, lastSessionId, saveLastSession, commandMenuOn, applyTextScale, applyFonts, chromeHideOn, syncPrefs } from "./utils/prefs.ts";
 import {
   groupModelsByProvider,
   deletionPlanSummary,
@@ -43,6 +42,8 @@ import Overlays from "./components/Overlays.vue";
 import UpdateBar from "./components/UpdateBar.vue";
 import { registerPWA, onUpdateReady, startUpdate } from "./utils/pwa.ts";
 import { useTypewriter } from "./composables/useTypewriter.ts";
+import { useTasks } from "./composables/useTasks.ts";
+import { useSidePanels } from "./composables/useSidePanels.ts";
 
 const api = sharedApi();
 applyTheme();
@@ -73,15 +74,39 @@ const toastRef = ref(null);
 const topbarRef = ref(null);
 const sessionbarRef = ref(null);
 const payloadbarRef = ref(null);
-// busyIds：此刻有任务在跑的会话（左栏每行那枚环）。数据来自 `/tasks` 的同一拍
-// （`busySessionIds` 是判定唯一处）—— 别另起一条轮询，同一个事实住两处只会两处都过期。
-const busyIds = ref([]);
 const composerRef = ref(null);
 const overlaysRef = ref(null);
 // 命令菜单（输入框左侧 ☰ 与 "/" 浮层）：默认关（移动端碍事，2026-10-17 用户定）；
 // 设置 → 外观里改了立刻生效（不刷新）—— 偏好住服务器（`prefs.json`），这里是它的活视图。
 const cmdMenu = ref(commandMenuOn());
 const toast = (t, k) => toastRef.value?.push(t, k);
+// 任务面板轮询：busyIds 给左栏、setTasks 给顶栏环心；取消按钮回调里对齐重摇两族。
+const {
+  busyIds,
+  refreshTasks,
+  cancelTask,
+  cancelQueue,
+  startPolling: startTasksPolling,
+  stopPolling: stopTasksPolling,
+} = useTasks({
+  api,
+  toast,
+  topbarRef,
+  onCanceled: () => { refreshReroll(); refreshRerollSummary(); },
+});
+
+const {
+  leftHidden,
+  workspace,
+  selectWorkspace,
+  toggleLeft,
+  closeLeftDrawer,
+  install: installSidePanels,
+  uninstall: uninstallSidePanels,
+} = useSidePanels({
+  isOverlayOpen: () => !!(overlaysRef.value?.isPaletteOpen() || overlaysRef.value?.isPickerOpen()),
+  onWorkspaceContext: refreshContextLazy,
+});
 // askConfirm：给设置/子编辑器用的全局确认框（与左栏删除同一个口 —— "不可逆的删除先摊开"）。
 function askConfirm(text) {
   return overlaysRef.value?.confirmAsk(text) ?? Promise.resolve(false);
@@ -1081,150 +1106,6 @@ async function refreshAgents() {
     vueAgents.value = data.agents ?? [];
   } catch { /* 拿不到就空着：草稿不画首段、状态行回落到 agent id */ }
 }
-// leftHidden：左栏收没收的**响应式镜像**（真实状态仍是 DOM 类 + 服务器偏好；
-// 2026-10-14 用户定：栏开着时顶栏不渲染那一侧的开关 —— 按钮跟着它控制的东西走）。
-// （右栏 2026-10-29 搬进上下文工作区 ⇒ 没有"右侧栏收没收"这回事了。）
-const leftHidden = ref(false);
-
-// —— 工作区（2026-10-29 用户定）——
-// 「每个对话分为俩部分：对话界面 和 上下文工作区 界面」，顶栏右上角（绿环左边）那颗两段开关切。
-//
-// **不存进 localStorage**：它是"这一下要看哪块"，不是外观偏好。存下来的话，下次打开
-// 直接落在空白的工作区里、以为会话是空的 —— 那种"我的消息没了"的惊吓比省一次点击贵得多。
-// 换会话也不重置：人正在对照两份上下文时，切会话不该把他弹出工作区。
-const workspace = ref("chat");
-function selectWorkspace(next) {
-  // 只认这两个值：调用方（按钮）本来只发这两个，但这儿再挡一道 ——
-  // 将来加了第三块，漏改某处会得到一个**空白区**（v-show 谁都不匹配），那是最难查的一类。
-  workspace.value = next === "context" ? "context" : "chat";
-  // 面板是 `v-show` 常驻的 ⇒ 里面选中的 tab 会留着（这是对的：回头再看还是那一页），
-  // 但"看着压缩 tab"这件事 App 只在 **切 tab 那一下** 知道（`onPayloadTab`）。
-  // 于是从聊天切回工作区时，树/状态/载荷都不会自己重拉 —— 按当前 tab 补一发。
-  if (workspace.value === "context") refreshContextLazy();
-}
-function applySideToggle(barID, hidden) {
-  document.getElementById(barID)?.classList.toggle("collapsed", hidden);
-  if (barID === "sessions-bar") leftHidden.value = hidden;
-}
-
-// —— 会话 ——
-// —— 侧栏/抽屉（2026-10-10 移动端）—— 同一对按钮两种身份：
-// 宽屏 = 布局里的栏（collapsed = 收起）；窄屏 = 覆盖式抽屉（collapsed = 关着）。
-// 窄屏一律默认关、不读不写偏好 —— 抽屉的开合是瞬时的事，那是桌面偏好的账。
-// 响应式断点：与 main.css 的 @media **同源**（700 = 左栏改抽屉），
-// CSS 里没法读 JS 常量，改一处要改两处。
-//
-// 2026-10-29：右栏搬进上下文工作区（用户：「把右侧栏那个上下文给挪过来」）⇒ **只剩左抽屉**。
-// `BP.rightBar` / `mqlRight` / `narrowRight` / `mc_bar_right_hidden` 一起删了 ——
-// 留着它们就是留着一条永远走不到的分支（拖拽那边同理，见 `rightDrawer: false` 的注释）。
-const BP = { leftDrawer: 700 };
-const mqlLeft = window.matchMedia?.(`(max-width: ${BP.leftDrawer}px)`) ?? null;
-function narrowLeft() { return !!mqlLeft?.matches; }
-function applySideStates() {
-  applySideToggle("sessions-bar", narrowLeft() ? true : barLeftHidden());
-}
-function toggleLeft() {
-  const bar = document.getElementById("sessions-bar");
-  const hidden = !bar?.classList.contains("collapsed");
-  if (!narrowLeft()) saveBarLeftHidden(hidden);
-  applySideToggle("sessions-bar", hidden);
-}
-// 窄屏里"人去了别处"就得把左抽屉收回去（选会话 / 开新对话）。
-function closeLeftDrawer() { if (narrowLeft()) applySideToggle("sessions-bar", true); }
-
-// —— 滑动面板（触屏**跟手拖拽**；2026-10-10 用户定/细化）——
-// 拖到哪儿面板停哪儿（**半开也维持**，不用等松手）；松手按"过半 + 速度"吸附开/关。
-// 方向：左滑出右栏、右滑出左栏；已有一扇开着 ⇒ 先关后开（只认朝它关回去的方向）。
-// 最终仍落在同一个 collapsed 类上（手势 = [◧]/[◨] 的替身，不另造开合状态）。
-// 判定全在 utils/swipe.ts（纯函数）；这里只碰 DOM：跟手期间写内联 transform（transition 先掐掉），
-// 松手把内联清掉、按结果落类 —— 由 CSS 自己的 200ms 过渡完成吸附动画。
-// 只剩左抽屉（右栏 2026-10-29 搬进上下文工作区）⇒ 不再按 `bar` 分派：
-// 两个 helper 一起收掉，直接写死左栏那两枚 id。
-// 为什么不留着通用版：它们指向的 DOM（`#payload-bar` / `#scrim-right`）已经不存在了，
-// 留着就是两条永远拿到 null 的分支 —— 而 null 是静默的（拖拽照样跑，只是什么都不动）。
-// `pickDrag` 本身仍是通用纯函数（有它自己的测试），我们只是永远不给它"右边能开"的输入。
-let panelDrag = null;
-
-function swipeBlocked(target) {
-  if (overlaysRef.value?.isPaletteOpen() || overlaysRef.value?.isPickerOpen()) return true;
-  if (document.querySelector("#settings-view") || document.querySelector(".modal")) return true;
-  // 抽屉自己身上 ⇒ 一律接管（pre 也不例外）："把抽屉拖走"在这儿就该能用 ——
-  // 右栏的载荷 tab 整块就是个 <pre>，早先被 pre 例外吞掉，真机上表现为"在面板上滑没反应"。
-  if (target?.closest?.("#sessions-bar")) return false;
-  return !!target?.closest?.("textarea, input, select, pre, .palette, .picker, .modal, #settings-view");
-}
-function paintDrag(d, p) {
-  const off = d.pick.bar === "left" ? -102 : 102; // 与 CSS 的 collapsed 位移一致
-  d.el.style.transform = `translateX(${off * (1 - p)}%)`;
-  if (d.scrim) d.scrim.style.opacity = String(p);
-}
-function onTouchStart(e) {
-  panelDrag = null;
-  if (e.touches.length !== 1 || swipeBlocked(e.target)) return;
-  const t = e.touches[0];
-  panelDrag = {
-    x0: t.clientX, y0: t.clientY, axis: null, pick: null,
-    el: null, scrim: null, w: 0, p: 0, lastT: Date.now(), v: 0,
-  };
-}
-function onTouchMove(e) {
-  const d = panelDrag;
-  if (!d || e.touches.length !== 1) return;
-  const t = e.touches[0];
-  const dx = t.clientX - d.x0;
-  const dy = t.clientY - d.y0;
-  if (!d.axis) {
-    const axis = classifyAxis(dx, dy);
-    if (!axis) return;
-    if (axis === "v") { panelDrag = null; return; } // 归浏览器滚列表
-    const left = document.getElementById("sessions-bar");
-    const pick = pickDrag({
-      dx,
-      leftDrawer: narrowLeft(),
-      // 右栏已经没了（2026-10-29 搬进上下文工作区）⇒ 永远"没有右抽屉、也没开着"。
-      // 写死这两格而不是删参数：`pickDrag` 是通用纯函数（有自己的测试），
-      // 这两格是**它的输入**，不是它的 identity —— 将来真要再加一根右栏，改回来就是。
-      rightDrawer: false,
-      leftOpen: !!left && !left.classList.contains("collapsed"),
-      rightOpen: false,
-    });
-    if (!pick) { panelDrag = null; return; }
-    d.axis = axis; // ⚠ 必须记住：不然每次 touchmove 都重进这里，第二枚就被自己摘掉的 collapsed 骗死
-    d.pick = pick;
-    d.p = pick.base; // ⚠ 起点开度（开=0 / 关=1）：不初始化，第一枚 move 的速度会算出天文数字、
-    //   被"快甩"规则误判成弹回（实测咬过一次）。⚠ **别动 d.lastT**：它在 touchstart 起表，
-    //   重置成此刻的话第一枚 move 的 dt≈0、速度样本直接作废（快甩失灵，也实测咬过）。
-    d.el = pick.bar === "left" ? left : right;
-    d.scrim = document.getElementById("scrim-left");
-    d.w = d.el.getBoundingClientRect().width || 300;
-    d.el.style.transition = "none"; // 跟手期间不许有过渡
-    if (d.scrim) d.scrim.style.transition = "none";
-    applySideToggle("sessions-bar", false); // 拖起来先亮出来，位置全由内联管
-  }
-  e.preventDefault(); // 这手势归我们了：别让页面跟着滚
-  const p = dragProgress(d.pick.base, dx, d.w, d.pick.bar);
-  const now = Date.now();
-  const dt = now - d.lastT;
-  if (dt > 0) d.v = (p - d.p) / dt; // 开度速度（朝开为正）
-  d.lastT = now;
-  d.p = p;
-  paintDrag(d, p);
-}
-function settleDrag(useVelocity) {
-  const d = panelDrag;
-  panelDrag = null;
-  if (!d || !d.axis || !d.pick) return;
-  // 速度样本要有**保鲜期**：甩完停住手再松（>120ms 没有新 move）就按位置吸附 ——
-  // 不然照着历史峰值走，拖到一半停手也会被当快甩弹开（实测咬过一次）。
-  const fresh = Date.now() - d.lastT <= 120;
-  const open = resolveRelease(d.p, useVelocity && fresh ? d.v : 0) === "open";
-  d.el.style.transition = ""; // 先还 CSS 过渡，再清内联 —— 吸附动画由它完成
-  d.el.style.transform = "";
-  if (d.scrim) { d.scrim.style.transition = ""; d.scrim.style.opacity = ""; }
-  applySideToggle("sessions-bar", !open);
-}
-function onTouchEnd() { settleDrag(true); }
-function onTouchCancel() { settleDrag(false); }
 async function askDeleteSession(id) {
   // 高延迟下别为了一个标题先等一个 RTT：左栏缓存里就有它。
   let title = sessionsCache.value.find((s) => s.id === id)?.title;
@@ -1636,34 +1517,6 @@ async function pollTurn(sid, turnID) {
 let connText = "未连接";
 // statusAgent：当前助手的显示名（顶栏去壳后，它住在状态行小字里；数据在进会话时现取）。
 const statusAgent = ref("");
-// 后台任务行（/tasks 是进程内事实；2s 一拉 —— 端点零成本，也别等太久看不见压缩/标题这些短命任务）。
-const TASKS_POLL_MS = 2000;
-// cancelTask：按停**一个**原子任务（2026-11-01 用户定：「任务菜单里，我希望有办法取消任务」）。
-//
-// `canceled:false` 不是错误：面板轮询里那些 id 随时可能"刚好跑完"。这种时候什么都不说
-// （补刷一次面板，那一行自己就消失了）—— 弹一条"取消失败"只会让人以为自己点慢了。
-//
-// ⚠ 按下之后**不立刻**从面板上抹掉那一行：真正停不停由那一发自己决定（ctx 取消是**请求**）。
-// 我们只是补刷一次，让它按真实状态变（多半下一秒就翻成"取消"）。
-function cancelTask(id) {
-  api.cancelTask(id)
-    .then((res) => {
-      if (!res?.canceled) toast("这一发已经结束了");
-      refreshTasks();
-      // 按停的可能是一趟重摇 ⇒ 两族的界面状态也当场对齐（别等轮询或者下一次进会话）。
-      // 轮询那两条路自己会写回，但"面板按停"不一定有轮询在跑（例如换了标签页回来才点的）。
-      refreshReroll();
-      refreshRerollSummary();
-    })
-    .catch((err) => toast(`按停失败：${err.message}`, "error"));
-}
-// cancelQueue：取消一个**队列任务**（2026-11-01）—— 在飞的那一发会被一起掐断。
-// 取消完立刻补刷一次面板，别等那 2 秒的节拍（人按了按钮就该马上看见变化）。
-function cancelQueue(id) {
-  api.cancelQueue(id)
-    .then(() => refreshTasks())
-    .catch((err) => toast(`取消失败：${err.message}`, "error"));
-}
 // 左栏「选项」浮板的两件动作（2026-11-04 从会话设置面板挪过来）：
 // 复制成功后仍走 afterCopy（进副本）；导出仍用同一个 API + downloadJSON。
 async function copySessionFromBar(id) {
@@ -1693,19 +1546,6 @@ function afterCopy(fresh) {
   toast(`已创建副本「${fresh.title || "未命名"}」`, "ok");
   refreshSessionsBar();
   enterSession(fresh.id).catch((err) => toast(`进副本失败：${err.message}`, "error"));
-}
-let tasksTimer = null;
-async function refreshTasks() {
-  try {
-    const board = await api.tasks();
-    topbarRef.value?.setTasks(board);
-    // 左栏的行内环：哪条会话此刻有任务在跑（与顶栏环心同一个快照）。
-    busyIds.value = busySessionIds(board);
-  } catch {
-    // 读不到 ⇒ 面板说"读不到"，左栏**不能**继续挂着上一拍的环（那会是一条永远转的假象）。
-    topbarRef.value?.setTasks(null);
-    busyIds.value = [];
-  }
 }
 // refreshStatusline：连接 / 助手 / 相位 / 上下文 —— 全都喂给右上角那枚环（2026-10-28 用户定）。
 //
@@ -2092,13 +1932,13 @@ function openSettings() {
   // 2026-11-01：账号砍了 ⇒ 没有"只有管理员能进"这回事（本机单人使用）。
   settingsOnly.value = "";
   settingsOpen.value = true;
-  if (narrowLeft()) applySideToggle("sessions-bar", true);
+  closeLeftDrawer();
 }
 // openManage：左栏底部的「会话 / 渠道」—— 同一个视图、只显示那一页（不经过设置 tab）。
 function openManage(pane) {
   settingsOnly.value = pane === "provider" ? "provider" : "session";
   settingsOpen.value = true;
-  if (narrowLeft()) applySideToggle("sessions-bar", true);
+  closeLeftDrawer();
 }
 // 外观那一区改完偏好 ⇒ 聊天壳上活着的开关立刻跟上（命令菜单是唯一现在就长短不一的那个）。
 async function onChatSaved() {
@@ -2116,7 +1956,7 @@ function onPrefsSaved() {
 function closeSettings() {
   settingsOpen.value = false;
   settingsOnly.value = "";
-  if (narrowLeft()) applySideToggle("sessions-bar", true);
+  closeLeftDrawer();
 }
 // backToChat：**侧栏动作要把人带回对话区**（点会话 / 点＋新对话 / 当前会话被删）—— 唯一出口。
 //
@@ -2133,9 +1973,8 @@ function backToChat() {
 // —— 拖拽调宽 ——
 let uninstallViewportFit = null;
 onMounted(() => {
-  applySideStates();
-  refreshTasks();
-  tasksTimer = setInterval(refreshTasks, TASKS_POLL_MS);
+  installSidePanels();
+  startTasksPolling();
   // 键盘遮挡：整盒跟着视觉视口拟合（见 utils/viewport.ts）；键盘一开，如果人正在输入，
   // 顺手把消息列贴回底部（矮了一截后最新一条不该被挤出视野）。
   uninstallViewportFit = installViewportFit();
@@ -2145,13 +1984,10 @@ onMounted(() => {
   // 滚动隐藏上下栏（触屏）：passive 监听，只写两个 CSS 变量。
   document.querySelector("#messages-vue")?.addEventListener("scroll", onMessagesScroll, { passive: true });
   // 滑动面板：跟手拖拽。touchmove 必须非 passive（接管后要 preventDefault 压住页面滚）。
-  document.addEventListener("touchstart", onTouchStart, { passive: true });
-  document.addEventListener("touchmove", onTouchMove, { passive: false });
-  document.addEventListener("touchend", onTouchEnd, { passive: true });
-  document.addEventListener("touchcancel", onTouchCancel, { passive: true });
+
   // 跨断点（桌面 ⇄ 抽屉）时把状态重算一遍：变成抽屉就一律先关掉，不然会"啪"地盖上来。
   // 只剩左栏这一个断点（右栏 2026-10-29 搬进上下文工作区）。
-  mqlLeft?.addEventListener?.("change", applySideStates);
+
   // 回到前台就对齐（2026-11-01 用户定）。三条都要：
   //   visibilitychange —— 切标签页/切 App（手机最常见的那条路）；
   //   pageshow         —— 从 bfcache 里恢复（安卓丢页面再回来常走这条，那时 visibilitychange 可能不响）；
@@ -2187,17 +2023,13 @@ onMounted(() => {
 onUnmounted(() => {
   uninstallViewportFit?.();
   uninstallViewportFit = null;
-  document.removeEventListener("touchstart", onTouchStart);
-  document.removeEventListener("touchmove", onTouchMove);
-  document.removeEventListener("touchend", onTouchEnd);
-  document.removeEventListener("touchcancel", onTouchCancel);
-  if (tasksTimer) clearInterval(tasksTimer);
-  tasksTimer = null;
+
+  stopTasksPolling();
   composerRO?.disconnect();
   composerRO = null;
   topbarRO?.disconnect();
   topbarRO = null;
-  mqlLeft?.removeEventListener?.("change", applySideStates);
+  uninstallSidePanels();
   document.removeEventListener("visibilitychange", resyncOnForeground);
   window.removeEventListener("focus", resyncOnForeground);
   window.removeEventListener("pageshow", resyncOnForeground);
