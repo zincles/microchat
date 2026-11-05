@@ -1407,7 +1407,7 @@ test("外观页：发送键 / 预演 / 命令菜单三格都在（搬用户视�
   // 开关必须"先赋值、再存"：`v-model + @update:model-value="persist"` 两个监听同挂 update 时，
   // 显式那个可能先跑 ⇒ 存的是旧值（实测：界面 on、服务端 off）。
   for (const fn of ["setPreview", "setCmdMenu", "setChromeHide", "setMdEnabled"]) {
-    assert.match(vue, new RegExp(`function ${fn}\\(v\\)`), `${fn} 不存在（又会存成旧值）`);
+    assert.match(vue, new RegExp(`function ${fn}\\(v[^)]*\\)`), `${fn} 不存在（又会存成旧值）`);
   }
   assert.ok(!/v-model="(preview|cmdMenu|chromeHide|mdEnabled)"[^>]*@update:model-value="persist/.test(vue),
     "开关又用回了 v-model + @update:model-value=\"persist\"（会存旧值）");

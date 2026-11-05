@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // 外观面板（设置视图的「外观」区）。
 //
 // 这块**原本住在用户视图**（`UserView.vue`）。账号砍掉之后用户视图整个没了 ——
@@ -33,8 +33,9 @@ import {
   currentBackground, backgroundCssUrl, applyBackground, describeBackground,
   uploadBackground, clearBackground,
 } from "../utils/background.ts";
+import type { MarkdownType } from "../api/types.ts";
 
-const emit = defineEmits(["prefs-saved"]);
+const emit = defineEmits<{ "prefs-saved": [] }>();
 
 const theme = ref("");
 const send = ref("enter");
@@ -58,13 +59,13 @@ const bgPreview = ref("");
 const mdEnabled = ref(true);
 // 关掉的那些类型（id 集合；后端口径是"记住关掉的"，不是"记住开着的"——
 // 这样新加的语法类型自动跟着开，加一条 `MarkdownTypes` 不用改任何文件）。
-const mdDisabled = ref([]);
-const mdTypes = ref([]);
+const mdDisabled = ref<string[]>([]);
+const mdTypes = ref<MarkdownType[]>([]);
 // 按 block / inline 分组（顺序沿用后端清单的顺序，界面不自己排）。
-const mdGroups = computed(() => {
+const mdGroups = computed<Array<{ kind: string; title: string; items: MarkdownType[] }>>(() => {
   const groups = [
-    { kind: "block", title: "整段格式", items: [] },
-    { kind: "inline", title: "文字里的格式", items: [] },
+    { kind: "block", title: "整段格式", items: [] as MarkdownType[] },
+    { kind: "inline", title: "文字里的格式", items: [] as MarkdownType[] },
   ];
   for (const item of mdTypes.value) {
     const group = groups.find((g) => g.kind === item.kind) ?? groups[1];
@@ -73,16 +74,16 @@ const mdGroups = computed(() => {
   return groups.filter((g) => g.items.length);
 });
 
-function onScaleInput(event) {
-  textScale.value = Number(event.target.value);
+function onScaleInput(event: Event): void {
+  textScale.value = Number((event.target as HTMLInputElement).value);
   saveTextScale(textScale.value);
   emit("prefs-saved");
 }
-function onScaleCommit() {
+function onScaleCommit(): void {
   // 松手就落盘，不等 250ms 防抖（用户可能随后马上刷新）。
   flushPrefs();
 }
-function resetScale() {
+function resetScale(): void {
   textScale.value = 1;
   saveTextScale(1);
   emit("prefs-saved");
@@ -90,7 +91,7 @@ function resetScale() {
 
 // loadFromPrefs：把内存里的偏好灌进这些 ref。
 // 每次同步完都要重跑一次（服务器可能改过东西，例如迁移、或另一个标签页改的）。
-function loadFromPrefs() {
+function loadFromPrefs(): void {
   theme.value = themePref();
   send.value = sendMode();
   preview.value = previewOn();
@@ -104,7 +105,7 @@ function loadFromPrefs() {
   mdDisabled.value = [...(md.disabled ?? [])];
   mdTypes.value = markdownTypes();
   const bg = currentBackground();
-  bgUrl.value = bg?.kind === "url" ? bg.value : "";
+  bgUrl.value = bg?.kind === "url" ? (bg.value ?? "") : "";
   bgPreview.value = backgroundCssUrl(bg);
   bgStatus.value = describeBackground(bg);
 }
@@ -112,7 +113,7 @@ function loadFromPrefs() {
 onMounted(loadFromPrefs);
 
 // —— 每一项改了就落盘（服务器），并喊一声让聊天壳跟上 ——
-function persist() {
+function persist(): void {
   saveTheme(theme.value);
   saveSendMode(send.value);
   savePreview(preview.value);
@@ -127,27 +128,27 @@ function persist() {
 // 开关不能写成 `v-model + @update:model-value="persist"`：两个监听同时挂在 update 事件上时，
 // 显式那个**可能先跑** ⇒ `persist()` 读到的是旧值（实测：界面翻成 on，服务端还是 off）。
 // 所以一律"先赋值，再存"——参数就是 ToggleSwitch 给的新值。
-function saveFonts() {
+function saveFonts(): void {
   // 规范化后的值写回输入框：`A; B` 这种破坏声明的输入会被清成空（回落系统字族）。
   fontBody.value = saveFontBody(fontBody.value);
   fontMono.value = saveFontMono(fontMono.value);
   emit("prefs-saved");
 }
-function resetFonts() {
+function resetFonts(): void {
   fontBody.value = "";
   fontMono.value = "";
   saveFonts();
 }
-function setChromeHide(v) { chromeHide.value = v; persist(); }
-function setPreview(v) { preview.value = v; persist(); }
-function setCmdMenu(v) { cmdMenu.value = v; persist(); }
-function setMdEnabled(v) { mdEnabled.value = v; persistMarkdown(); }
+function setChromeHide(v: boolean): void { chromeHide.value = v; persist(); }
+function setPreview(v: boolean): void { preview.value = v; persist(); }
+function setCmdMenu(v: boolean): void { cmdMenu.value = v; persist(); }
+function setMdEnabled(v: boolean): void { mdEnabled.value = v; persistMarkdown(); }
 
 // —— markdown ——
-function persistMarkdown() {
+function persistMarkdown(): void {
   saveMarkdown({ enabled: mdEnabled.value, disabled: mdDisabled.value });
 }
-function toggleType(id, on) {
+function toggleType(id: string, on: boolean): void {
   const set = new Set(mdDisabled.value);
   if (on) set.delete(id);
   else set.add(id);
@@ -155,21 +156,21 @@ function toggleType(id, on) {
   mdDisabled.value = mdTypes.value.map((t) => t.id).filter((x) => set.has(x));
   persistMarkdown();
 }
-function typeOn(id) {
+function typeOn(id: string): boolean {
   return !mdDisabled.value.includes(id);
 }
 // 全部关掉 / 全部打开（也走同一个落盘口）。
-function disableAll() {
+function disableAll(): void {
   mdDisabled.value = mdTypes.value.map((t) => t.id);
   persistMarkdown();
 }
-function enableAll() {
+function enableAll(): void {
   mdDisabled.value = [];
   persistMarkdown();
 }
 
 // —— 背景图（外观）：URL / 上传二选一，**即时生效** ——
-function applyBgUrl() {
+function applyBgUrl(): void {
   const value = bgUrl.value.trim();
   if (!value) {
     bgStatus.value = "先填图片地址（或改用上传）";
@@ -182,8 +183,9 @@ function applyBgUrl() {
   emit("prefs-saved");
 }
 
-async function pickBgFile(event) {
-  const file = event.target.files?.[0];
+async function pickBgFile(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
   if (!file) return;
   bgStatus.value = "上传中…";
   try {
@@ -192,21 +194,21 @@ async function pickBgFile(event) {
     loadFromPrefs();
     applyBackground();
     emit("prefs-saved");
-  } catch (e) {
-    bgStatus.value = `上传失败：${e.message}`;
+  } catch (e: unknown) {
+    bgStatus.value = `上传失败：${e instanceof Error ? e.message : String(e)}`;
   }
-  event.target.value = "";
+  input.value = "";
 }
 
-async function clearBg() {
+async function clearBg(): Promise<void> {
   try {
     await clearBackground();
     await refreshPrefs();
     loadFromPrefs();
     applyBackground();
     emit("prefs-saved");
-  } catch (e) {
-    bgStatus.value = `清除失败：${e.message}`;
+  } catch (e: unknown) {
+    bgStatus.value = `清除失败：${e instanceof Error ? e.message : String(e)}`;
   }
 }
 </script>
@@ -215,7 +217,7 @@ async function clearBg() {
   <section id="panel-appearance" class="panel">
     <section class="settings-card">
       <h3>外观</h3>
-      <!-- 只有三套（2026-10-28 用户定）。id 必须与 prefs.js 的 THEME_IDS 逐个对得上，
+      <!-- 只有三套（2026-10-28 用户定）。id 必须与 prefs.ts 的 THEME_IDS 逐个对得上，
            contract.test.js 钉着 —— 这里多一个少一个都不会报错，只会让人选到没规则的主题。 -->
       <label class="field"><span>主题</span><select v-model="theme" @change="persist">
         <option value="light">亮色</option>
