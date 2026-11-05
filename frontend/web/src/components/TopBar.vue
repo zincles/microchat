@@ -162,6 +162,8 @@ const ctxBudgetNote = computed(() => {
   const num = (v) => Number(v ?? 0).toLocaleString("en-US");
   return `输入预算 ${num(c.budget_tokens)} tokens = 上下文上限 ${num(c.ctx_len)} − 输出预留 ${num(c.max_output)}。`;
 });
+// closeMenus：Esc 一次收起所有顶栏浮板（MD3 menu 的常规行为；从前只有模型菜单接 Esc）。
+function closeMenus() { modelOpen.value = false; agentOpen.value = false; ctxOpen.value = false; }
 function toggleCtx() { ctxOpen.value = !ctxOpen.value; if (ctxOpen.value) { agentOpen.value = false; modelOpen.value = false; } }
 function toggleAgent() { agentOpen.value = !agentOpen.value; if (agentOpen.value) { ctxOpen.value = false; modelOpen.value = false; } }
 // setContext：App 每轮 refreshStatusline 喂一次（草稿态传 null）。
@@ -288,7 +290,7 @@ defineExpose({ setSession, setModels, setAgents, setContext, setStatus, setTasks
 </script>
 
 <template>
-  <header>
+  <header @keydown.esc="closeMenus">
     <button
       v-if="leftHidden"
       id="toggle-left"

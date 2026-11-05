@@ -1080,7 +1080,7 @@ test("顶栏是不透明的（消息滚到栏底下要被挡住）", () => {
   const rule = css.match(/#chat-col > header \{[^}]*\}/g)?.find((r) => /position:\s*absolute/.test(r));
   assert.ok(rule, "找不到 #chat-col > header 的定位规则");
   assert.ok(!/background:\s*none/.test(rule), "顶栏还是透明的（background: none）");
-  assert.match(rule, /background:\s*var\(--tg-bg\)/, "顶栏底色该用页面底色铺满");
+  assert.match(rule, /background:\s*var\(--md-surface-container-low\)/, "顶栏底色该用 MD3 surface 容器铺满");
   // 「不透明」要的是挡住，不是把栏画成一个盒子 —— 别顺手加边框/分隔线。
   assert.ok(!/border-bottom/.test(rule), "顶栏加了分隔线（用户只说不透明）");
 });
@@ -3336,16 +3336,18 @@ test("设计系统：tab 统一下划线、设置平铺、圆角收口", () => {
   // 顶栏 / 上下文是下划线；设置与 Agent 二级页保留原来的胶囊 + 滑动底片。
   assert.match(css, /\.settings-nav \{[^}]*background:\s*var\(--tg-secondary-bg\)/, "设置 tab 丢了原来的胶囊底");
   assert.match(css, /\.settings-nav \.tab-thumb \{[^}]*background:/, "设置 tab 丢了滑动底片");
-  assert.match(css, /\.ws-switch \{[^}]*border-bottom:\s*1px solid var\(--line\)/, "顶栏 tab 不是下划线");
+  // 2026-11-05 MD3：顶栏换成 primary tabs 的 3dp 圆角 indicator（不再是整条下划线）；
+  // 上下文工作区那组仍是旧的整条下划线，别混。
+  assert.match(css, /\.ws-tab::after \{[^}]*background:\s*var\(--md-primary\)/, "顶栏 tab 没有 MD3 indicator");
+  assert.match(css, /\.ws-tab\.sel::after \{[^}]*width:\s*1\.6em/, "顶栏选中态 indicator 不显示");
   assert.match(css, /\.bar-head\.bar-tabs \{[^}]*border-bottom:\s*1px solid var\(--line\)/, "上下文 tab 不是下划线");
-  assert.match(css, /\.ws-tab\.sel \{[^}]*border-bottom-color:\s*var\(--tg-link\)/, "顶栏选中态没有下划线");
   // 设置页：无卡片底、无连体组圆角
   assert.match(css, /\.settings-card \{[^}]*background:\s*none[^}]*padding:\s*0/, "设置分节还带卡片底");
   assert.match(css, /\.settings-cols \.panel \.field[^{]*\{[^}]*background:\s*none/, "设置行还带卡片底");
   assert.ok(!/settings-cols \.panel h3 \+ \.field[^}]*border-radius/.test(css), "设置字段又连成卡片组");
   // 圆角/输入框收口
   assert.match(theme, /--r-card:\s*12px/, "卡片圆角没有统一到 12");
-  assert.match(css, /\.composer-box \{[^}]*border-radius:\s*var\(--r-shell\)/, "输入面板没有统一圆角");
+  assert.match(css, /\.composer-box \{[^}]*border-radius:\s*var\(--md-shape-xl\)/, "输入面板不是 MD3 圆角");
   assert.ok(!/#input \{[^}]*border-radius:\s*var\(--r-shell\)/.test(css), "输入框自己还留着独立圆角");
 });
 
@@ -3643,4 +3645,41 @@ test("左栏 MD3：分段按钮 / extended FAB / 48dp 行 / 状态层 / MD3 忙�
   // 浮板也是 MD3 menu
   assert.match(css, /\.session-menu \{[^}]*background:\s*var\(--md-surface-container\)/, "会话浮板不是 MD3 menu");
   assert.match(css, /\.session-menu \{[^}]*border-radius:\s*var\(--md-shape-xs\)/, "MD3 menu 圆角不是 4dp");
+});
+
+// MD3 第二刀（2026-11-05）：顶栏 + 输入区。
+test("顶栏 MD3：surface 容器 / 40dp 文本按钮 / MD3 菜单 / 两段 tab indicator", () => {
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  const header = css.match(/#chat-col > header \{(?=[^}]*position:\s*absolute)[^}]*\}/)?.[0] ?? "";
+  assert.match(header, /background:\s*var\(--md-surface-container-low\)/, "顶栏不是 MD3 surface 容器");
+  assert.match(header, /min-height:\s*3\.5em/, "顶栏不是 56dp（3.5em）");
+  assert.match(header, /box-shadow:\s*var\(--shadow-top\)/, "顶栏丢了向下阴影（用户 2026-11-01 定）");
+  assert.match(css, /\.model-btn \{[^}]*min-height:\s*2\.5em/, "模型按钮不是 40dp");
+  assert.match(css, /\.model-btn \{[^}]*border-radius:\s*var\(--md-shape-full\)/, "模型按钮不是 full 圆角");
+  assert.match(css, /\.agent-menu \{[^}]*background:\s*var\(--md-surface-container\)/, "菜单不是 MD3 surface-container");
+  assert.match(css, /\.agent-menu \{[^}]*border-radius:\s*var\(--md-shape-xs\)/, "菜单不是 4dp 圆角");
+  assert.match(css, /@keyframes md-menu-in/, "菜单没有进场动画");
+  assert.match(css, /\.model-search \{[^}]*border-radius:\s*var\(--md-shape-full\)/, "模型搜索不是 MD3 搜索栏");
+  // 全局 input 基线特异性 0,4 会压掉单类选择器 —— 必须有一条 `#chat-col > header` 作用域的覆盖。
+  assert.match(css, /#chat-col > header \.model-search \{[^}]*border-radius:\s*var\(--md-shape-full\)/, "模型搜索没拿回 MD3 圆角（会被全局 input 基线压掉）");
+  const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
+  assert.match(top, /@keydown\.esc="closeMenus"/, "顶栏浮板没有 Esc 统一收起");
+  assert.match(top, /function closeMenus\(\)/, "没有 closeMenus");
+  assert.match(css, /\.model-item \{[^}]*min-height:\s*3em/, "模型项不是 48dp");
+  assert.match(css, /\.ws-tab::after \{[^}]*background:\s*var\(--md-primary\)/, "顶栏 tab 没有 MD3 indicator");
+  assert.match(css, /#ctx-ring \{[^}]*width:\s*2\.5em/, "上下文环没有 40dp 触控盒");
+  assert.match(css, /\.ctx-ring-track \{[^}]*var\(--md-outline-variant\)/, "环轨道不是 outline-variant");
+  assert.match(css, /\.ctx-ring-fill \{[^}]*stroke:\s*var\(--tg-ok\)/, "环的正常色不该丢（绿=正常）");
+});
+
+test("输入区 MD3：搜索栏式 composer / 48dp 发送 / 焦点环 / 停止态", () => {
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.match(css, /\.composer-box \{[^}]*background:\s*var\(--md-surface-container-high\)/, "输入面板不是 MD3 容器色");
+  assert.match(css, /\.composer-box \{[^}]*border-radius:\s*var\(--md-shape-xl\)/, "输入面板不是 28dp 圆角");
+  assert.match(css, /\.composer-box:focus-within \{[^}]*--md-primary/, "聚焦时没有 primary 环");
+  assert.match(css, /#composer button \{[^}]*width:\s*3em/, "发送键不是 48dp");
+  assert.match(css, /#composer button \{[^}]*background:\s*var\(--md-primary\)/, "发送键不是 primary");
+  assert.match(css, /#composer button:p?active \{[^}]*transform:\s*scale\(0\.96\)/, "发送键按下没有 MD3 scale");
+  assert.match(css, /#composer button\.stop \{[^}]*background:\s*var\(--md-error-container\)/, "停止键不是 error-container");
+  assert.match(css, /#input::placeholder \{[^}]*var\(--md-on-surface-variant\)/, "占位符不是 on-surface-variant");
 });

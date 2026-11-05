@@ -100,19 +100,15 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
  * ⚠ 外壳 `.model-anchor` 是给浮板定位用的：浮板贴**按钮**掉，不贴栏的左内边距
  *   —— 顶栏左边还有头像与开关，写死一个 left 迟早对不上。 */
 .model-anchor { position: relative; flex: 1 1 auto; min-width: 0; display: inline-flex; }
-.model-btn { flex: 0 1 auto; min-width: 0; max-width: 100%; display: inline-flex; align-items: center; gap: 0.25em;
-  border-radius: var(--r-btn); margin-left: -0.4em; padding: 0.12em 0.3em;
-  font: inherit; line-height: 1.3; color: var(--tg-text); }
-.model-btn:hover { background: var(--mix-8); }
+.model-btn { flex: 0 1 auto; min-width: 0; max-width: 100%; display: inline-flex; align-items: center; gap: 0.3em; min-height: 2.5em; border: none; background: none; border-radius: var(--md-shape-full); margin-left: -0.3em; padding: 0 0.7em; font: inherit; font-size: var(--md-type-title-small); font-weight: 500; letter-spacing: 0.006em; line-height: 1.3; color: var(--md-on-surface); cursor: pointer; transition: background-color var(--md-dur-150) var(--md-ease-standard); }
+.model-btn:hover { background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); }
 .model-btn.loading { cursor: default; }
-.model-loading { display: inline-block; width: 6.5em; height: 0.82em; border-radius: 999px;
-  background: linear-gradient(90deg, var(--mix-8) 25%, var(--mix-18) 50%, var(--mix-8) 75%);
-  background-size: 200% 100%; animation: model-loading 1.1s linear infinite; }
+.model-loading { display: inline-block; width: 6.5em; height: 0.82em; border-radius: var(--md-shape-full); background: linear-gradient(90deg, var(--md-surface-container-high) 25%, var(--md-surface-container-highest) 50%, var(--md-surface-container-high) 75%); background-size: 200% 100%; animation: model-loading 1.1s linear infinite; }
 @keyframes model-loading { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 @media (prefers-reduced-motion: reduce) { .model-loading { animation: none; } }
-.model-btn:focus-visible { outline: 2px solid color-mix(in srgb, var(--tg-link) 55%, transparent); outline-offset: 1px; }
+.model-btn:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 1px; }
 .model-btn-label { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.model-caret { flex: none; width: 0.45em; height: 0.3em; fill: currentColor; opacity: 0.45; }
+.model-caret { flex: none; width: 0.45em; height: 0.3em; fill: currentColor; opacity: 0.55; }
 /* 顶栏里那颗开关（2026-10-17 用户定"加个底"）：栏收着时它孤零零浮在消息列上 ——
  * 透明底在滚动内容/背景图前根本看不清。给一层栏底色的小圆片（与输入行那颗 ☰ 同一个色），
  * 悬停只提亮、不丢底（`.icon-btn:hover` 那层半透明白会把底"洗掉"⇒ 这里显式覆盖回来）。
@@ -132,46 +128,37 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 }
 /* Agent 头像（顶栏左上、模型字左边，2026-10-14 用户定）：圆形首字标，底色由 id 派生
  * （同一 id 永远同一个色，纯计算无存储）；点开 = 选人浮板。 */
-.agent-btn { flex: none; width: 1.95em; height: 1.95em; padding: 0; border: none; border-radius: 50%; cursor: pointer;
-  display: flex; align-items: center; justify-content: center; color: #fff; font-size: 0.85em; font-weight: 600;
-  box-shadow: var(--shadow-1); }
-.agent-btn:hover { filter: brightness(1.12); }
+.agent-btn { position: relative; flex: none; width: 2.78em; height: 2.78em; padding: 0; border: none; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 0.9em; font-weight: 600; box-shadow: none; outline: 1px solid color-mix(in srgb, #fff 18%, transparent); transition: transform var(--md-dur-100) var(--md-ease-standard); }
+.agent-btn:hover { transform: scale(1.03); }
 /* 菜单：贴着头像往下掉（--tg-float 浮板，与命令面板同族）；背后一层透明遮罩，点哪儿都收。 */
 .agent-menu-backdrop { position: fixed; inset: 0; z-index: 1; }
-.agent-menu { position: absolute; z-index: 2; top: calc(100% + 0.35em); left: 1em; min-width: 11em; max-width: 20em;
-  max-height: 60vh; overflow-y: auto; overscroll-behavior: contain;
-  background: var(--tg-float); border-radius: var(--r-shell); padding: 0.35em; box-shadow: var(--shadow-3); }
-.agent-item { display: flex; align-items: center; gap: 0.55em; width: 100%; box-sizing: border-box; text-align: left;
-  border-radius: var(--r-btn); padding: 0.3em 0.55em; color: var(--tg-text); font: inherit; line-height: 1.3; }
-.agent-item:hover { background: var(--mix-6); }
+.agent-menu { position: absolute; z-index: 2; top: calc(100% + 0.4em); left: 1em; min-width: 12em; max-width: 20em; max-height: 60vh; overflow-y: auto; overscroll-behavior: contain; background: var(--md-surface-container); color: var(--md-on-surface); border-radius: var(--md-shape-xs); padding: 0.35em 0; box-shadow: var(--md-elev-2); transform-origin: top left; animation: md-menu-in var(--md-dur-150) var(--md-ease-emphasized); }
+.agent-item { display: flex; align-items: center; gap: 0.6em; width: 100%; box-sizing: border-box; text-align: left; border-radius: 0; min-height: 3em; padding: 0.6em 1em; color: var(--md-on-surface); font: inherit; font-size: var(--md-type-label-large); line-height: 1.3; background: none; border: none; cursor: pointer; transition: background-color var(--md-dur-150) var(--md-ease-standard); }
+.agent-item:hover { background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); }
 .agent-item .agent-dot { flex: none; width: 1.6em; height: 1.6em; border-radius: 50%; display: flex; align-items: center;
   justify-content: center; color: #fff; font-size: 0.8em; font-weight: 600; }
 .agent-item .agent-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.agent-item .agent-check { color: var(--tg-link); }
-.agent-empty { margin: 0.4em 0.6em; color: var(--tg-hint); font-size: 0.9em; }
+.agent-item .agent-check { color: var(--md-primary); }
+.agent-empty { margin: 0.4em 1em; color: var(--md-on-surface-variant); font-size: var(--md-type-body-medium); }
 /* —— 模型选择浮板（2026-10-28 用户定：按渠道分组，接近 OpenWebUI 那种）——
  * 壳子直接借 `.agent-menu`（--tg-float / --shadow-3 / --r-shell），这里只改三件事：
  * ① 定位贴按钮（`left: 0`，父级是 `.model-anchor`）；② 滚动交给列表 —— 搜索框必须留在
  * 上面不跟着滚；③ 宽一点（渠道名 + 模型名一行要放得下，20em 太窄会切掉模型名）。
  * 为什么要有搜索框：聚合站动辄几百个模型（OpenRouter 实测 470），一条原生长菜单里
  * 既搜不了、同一渠道的模型也不挨在一起。 */
-.model-menu { left: 0; min-width: 17em; max-width: 24em; max-height: none; overflow: visible;
-  display: flex; flex-direction: column; gap: 0.2em; }
-.model-search { width: 100%; margin: 0; }
+.model-menu { left: 0; min-width: 18em; max-width: 26em; max-height: none; overflow: visible; display: flex; flex-direction: column; gap: 0.35em; padding: 0.5em 0; }
+.model-search { width: calc(100% - 1em); margin: 0 0.5em; box-sizing: border-box; min-height: 3em; padding: 0 1em; border: none; border-radius: var(--md-shape-full); background: var(--md-surface-container-high); color: var(--md-on-surface); font: inherit; font-size: var(--md-type-body-medium); outline: none; transition: background-color var(--md-dur-150) var(--md-ease-standard), box-shadow var(--md-dur-150) var(--md-ease-standard); }
 .model-list { overflow-y: auto; max-height: 46vh; overscroll-behavior: contain; }
-.model-group-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.6em;
-  margin: 0.4em 0.55em 0.1em; color: var(--tg-hint); font-size: 0.82em; letter-spacing: 0.02em; }
+.model-group-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.6em; margin: 0.6em 1em 0.2em; color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); font-weight: 500; letter-spacing: 0.05em; }
 .model-group-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-group-count { flex: none; opacity: 0.75; }
-.model-item { display: flex; align-items: center; gap: 0.5em; width: 100%; box-sizing: border-box; text-align: left;
-  border-radius: var(--r-btn); padding: 0.28em 0.55em; color: var(--tg-text);
-  font: inherit; line-height: 1.3; }
-.model-item:hover, .model-item.active { background: var(--hover); }
+.model-item { display: flex; align-items: center; gap: 0.6em; width: 100%; box-sizing: border-box; text-align: left; min-height: 3em; border: none; background: none; border-radius: 0; padding: 0.55em 1em; color: var(--md-on-surface); font: inherit; font-size: var(--md-type-label-large); line-height: 1.3; cursor: pointer; transition: background-color var(--md-dur-150) var(--md-ease-standard); }
+.model-item:hover, .model-item.active { background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); }
 /* 当前这一项：只染字与勾，不填底色 —— 底色是"你正指着它"（hover / 上下键）的信号，
  * 两个都用同一种填色会分不清"我选了哪个"和"我指着哪个"。 */
-.model-item.sel { color: var(--tg-link); }
+.model-item.sel { color: var(--md-primary); }
 .model-item .model-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.model-item .model-check { flex: none; color: var(--tg-link); }
+.model-item .model-check { flex: none; color: var(--md-primary); }
 
 /* —— 上下文占比环（右上角，2026-10-28 用户定）——
  * 从前这数字是输入框上方那行状态小字里的"上下文 344/1.04M"，紧贴着对话；用户要求搬这儿：
@@ -179,10 +166,9 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
  * 尺寸 1.8em（顶栏那两枚开关是 2em）—— 环是**仪表**，不该比开关更抢眼。
  * ⚠ 弧长不在 CSS 里算：TopBar 的 `<circle pathLength="100">` 把周长归一化成 100，
  *   dasharray 直接写百分数 ⇒ 改 r 也不用改代码。这里只管描边。 */
-#ctx-ring { flex: none; position: relative; width: 1.8em; height: 1.8em; padding: 0; border: none; border-radius: 50%;
-  background: none; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
-#ctx-ring:hover { background: var(--mix-8); }
-#ctx-ring svg { display: block; width: 100%; height: 100%; transform: rotate(-90deg); } /* 起点转到 12 点方向 */
+#ctx-ring { flex: none; position: relative; width: 2.5em; height: 2.5em; padding: 0; border: none; border-radius: 50%; background: none; color: var(--md-on-surface); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: background-color var(--md-dur-150) var(--md-ease-standard); }
+#ctx-ring:hover { background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); }
+#ctx-ring svg { display: block; width: 1.8em; height: 1.8em; transform: rotate(-90deg); } /* 起点转到 12 点方向 */
 #ctx-ring circle { fill: none; stroke-width: 3.2; }
 /* 环心数字（2026-11-02 合并后台任务）：还在跑的条数。尺寸跟环走，字号单独一层 ——
  * 不跟 width 写在同一个元素上（em 叠乘会让数字缩成一行附注）。 */
@@ -193,11 +179,10 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 #ctx-ring.busy svg { animation: ctx-ring-spin 1.1s linear infinite; }
 @keyframes ctx-ring-spin { from { transform: rotate(-90deg); } to { transform: rotate(270deg); } }
 @media (prefers-reduced-motion: reduce) { #ctx-ring.busy svg { animation: none; } }
-.ctx-ring-track { stroke: color-mix(in srgb, var(--tg-text) 14%, transparent); }
+.ctx-ring-track { stroke: var(--md-outline-variant); }
 /* 绿 = 正常占用、红 = 超预算。**只有两档**：27px 的环上分不出第三种深浅，
  * 而"超预算"这个信号从前在状态行上有（整行变红），不能丢。 */
-.ctx-ring-fill { stroke: var(--tg-ok); stroke-linecap: round;
-  transition: stroke-dasharray 240ms ease-out, stroke 160ms linear; }
+.ctx-ring-fill { stroke: var(--tg-ok); stroke-linecap: round; transition: stroke-dasharray var(--md-dur-300) var(--md-ease-standard), stroke var(--md-dur-150) linear; }
 #ctx-ring.over .ctx-ring-fill { stroke: var(--tg-destructive); }
 #ctx-ring.idle .ctx-ring-fill { stroke: none; }
 /* 后台任务明细现在住上下文环的浮板里（2026-11-02 合并）；任务行的样式继续用下面这组。 */
@@ -255,17 +240,12 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
  * 高度算式：0.88em × 1.3（line-height）+ 2 × 0.3em × 0.88（上下 padding）= 1.67em，
  * 加容器 0.12em × 2 ⇒ ≈1.91em。**别再往上加**：`.messages-inner` 的顶部留白是 3.2em，
  * 顶栏是悬浮层，超过那个数第一条消息就会被压住。 */
-.ws-switch { flex: none; display: inline-flex; align-items: center; gap: 1.05em;
-  padding: 0; border-radius: 0; border-bottom: 1px solid var(--line);
-  background: none; }
-.ws-tab { flex: none; border-radius: 0; border-bottom: 2px solid transparent; margin-bottom: -1px;
-  color: var(--tg-hint);
-  font: inherit; font-size: 0.88em; line-height: 1.3; padding: 0.4em 0.1em; white-space: nowrap;
-  transition: color 150ms ease-out, border-color 150ms ease-out; }
-.ws-tab:hover { color: var(--tg-text); }
+.ws-switch { flex: none; display: inline-flex; align-items: center; gap: 0.35em; padding: 0; border: none; border-radius: 0; background: none; }
+.ws-tab { position: relative; flex: none; min-height: 2.5em; border: none; border-radius: var(--md-shape-full); background: none; color: var(--md-on-surface-variant); font: inherit; font-size: 0.875em; font-weight: 500; letter-spacing: 0.006em; line-height: 1.3; padding: 0.5em 0.7em; white-space: nowrap; cursor: pointer; transition: color var(--md-dur-200) var(--md-ease-standard), background-color var(--md-dur-200) var(--md-ease-standard); }
+.ws-tab:hover { color: var(--md-on-surface); background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); }
 /* 选中：下划线 + 正文色。**不靠加粗**（字重一变按钮宽度就变，整簇会抖）。 */
-.ws-tab.sel { background: none; color: var(--tg-text); border-bottom-color: var(--tg-link); }
-.ws-tab:focus-visible { outline: 2px solid color-mix(in srgb, var(--tg-link) 55%, transparent); outline-offset: 1px; }
+.ws-tab.sel { color: var(--md-primary); background: none; }
+.ws-tab:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 1px; }
 /* 窄屏：顶栏那一行本来就挤（头像 + 模型名 + 环），但**不能靠缩字**换空间 ——
  * 那正好把"弄大一点"抵消掉。收的是**横向 padding**（触摸目标靠高度撑着，仍够点），
  * 字与高度保持不动。 */
@@ -298,7 +278,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .ws-draft-note { flex: none; margin: 0 auto; max-width: var(--read-col, 840px); width: 100%;
   box-sizing: border-box; color: var(--tg-hint); font-size: 0.85em; line-height: 1.6; padding: 0; }
 /* 浮板：与 Agent 选人同一族（同底、同阴影、同圆角），只是从右边缘掉下来。 */
-.ctx-menu { left: auto; right: 0.35em; min-width: 18em; max-width: min(24em, calc(100vw - 2em)); padding: 0.6em 0.7em 0.55em;
+.ctx-menu { left: auto; right: 0.35em; min-width: 18em; max-width: min(24em, calc(100vw - 2em)); padding: 0.7em 0.8em 0.6em; border-radius: var(--md-shape-md); box-shadow: var(--md-elev-3);
   max-height: min(76vh, 38em); overflow-y: auto; overscroll-behavior: contain; }
 /* 环面板的两个 tab（2026-11-02）：上下文状态 / 任务。两堆东西不再上下叠。 */
 .ctx-tabs { align-self: flex-start; margin-bottom: 0.45em; }
@@ -523,8 +503,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
  * 像正文被裁掉了；有了阴影才读成"栏在内容**上面**"。所以阴影在这儿不只是装饰，
  * 它在替**边框**干活：要的是"挡住 + 浮起"，不是"画个盒子"，所以仍然**不描线**。
  * 值住在 `theme.css` 的 `--shadow-top`（不写死色值 —— 那是那条"组件一律用 token"的规矩）。 */
-#chat-col > header { position: absolute; top: 0; left: 0; right: 0; z-index: 6; background: var(--tg-bg);
-  box-shadow: var(--shadow-top); }
+#chat-col > header { position: absolute; top: 0; left: 0; right: 0; z-index: 6; background: var(--md-surface-container-low); color: var(--md-on-surface); min-height: 3.5em; padding: 0.4em 0.8em; box-sizing: border-box; gap: 0.5em; text-shadow: none; box-shadow: var(--shadow-top); }
 /* 消息列：flex:1 撑满 + 两侧 56px 头像位 + 上下给浮动输入栏留位；底部留空让尾条操作行不被输入框盖住。 */
 #messages-vue { flex: 1; overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
 /* 阅读列（气泡/摘要卡/加载更多都住这里）：--read-col（840，2026-11-03 用户定：920 一行太长；保持公式仍有空间）
@@ -533,7 +512,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
  * + 任务行那一行小字的位置（2026-10-28 起只剩它一行：状态行搬进右上角的环了，
  *   所以 2.6em 收到 1.5em = 任务行的 0.3em 间距 + 约 1.2em 行高）。 */
 .messages-inner { max-width: var(--read-col, 840px); margin: 0 auto; box-sizing: border-box;
-  padding: 3.2em 56px calc(var(--composer-h, 4.6em) + 1.5em); display: flex; flex-direction: column; gap: 0.8em; }
+  padding: 4.2em 56px calc(var(--composer-h, 4.6em) + 1.5em); display: flex; flex-direction: column; gap: 0.8em; }
 /* 空草稿首屏（2026-11-02，2026-11-04 恢复）：把"一整页纯黑"换成一句人话 + 当前助手/模型。
  * 它只是欢迎块，不是消息 —— 所以没有 who/编号/操作行；左栏的品牌位已删，这里不放品牌。 */
 .draft-welcome { margin: 0; min-height: 50vh; padding: 2em 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -839,14 +818,8 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
   padding: 0.6em 0.6em calc(0.6em + env(safe-area-inset-bottom, 0px)); }
 /* 一整块输入面板（2026-11-04 用户定）：textarea 与按钮同住一张圆角卡里，不再"输入框 + 外面一颗钮"。
  * 按钮竖排在右缘：全屏在上、发送在最下（发送仍是主行动，全屏小一号不抢）。 */
-.composer-box { display: flex; align-items: stretch; gap: 0.35em; box-sizing: border-box;
-  background: color-mix(in srgb, var(--tg-secondary-bg) 88%, transparent);
-  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
-  border: 1px solid var(--line); border-radius: var(--r-shell); padding: 0.42em 0.42em 0.42em 0.95em;
-  box-shadow: var(--shadow-2); }
-#input { flex: 1; min-width: 0; background: none; color: var(--tg-text); border: none; border-radius: 0;
-  padding: 0.45em 0; font: inherit; resize: none; line-height: 1.5; outline: none;
-  max-height: calc(1.5em * 6 + 0.9em); overflow-y: auto; }
+.composer-box { display: flex; align-items: stretch; gap: 0.35em; box-sizing: border-box; background: var(--md-surface-container-high); -webkit-backdrop-filter: none; backdrop-filter: none; border: none; border-radius: var(--md-shape-xl); padding: 0.5em 0.5em 0.5em 1.1em; box-shadow: var(--md-elev-1); transition: box-shadow var(--md-dur-200) var(--md-ease-standard), background-color var(--md-dur-200) var(--md-ease-standard); }
+#input { flex: 1; min-width: 0; background: none; color: var(--md-on-surface); border: none; border-radius: 0; padding: 0.45em 0; font: inherit; font-size: var(--md-type-body-large); resize: none; line-height: 1.5; outline: none; caret-color: var(--md-primary); max-height: calc(1.5em * 6 + 0.9em); overflow-y: auto; }
 #input:focus { outline: none; border-color: transparent; }
 .composer-actions { flex: none; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 0.2em; }
 /* —— 滚动隐藏上下栏（触屏；2026-10-17 用户定，默认开）——
@@ -871,15 +844,15 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 /* 空态（会话列）：安静居中 + 一句引导，别像报错。 */
 #session-list .empty { padding: 1.6em 0.8em; text-align: center; color: var(--tg-hint); font-size: 0.9em; line-height: 1.9; }
 #session-list .empty .sub { font-size: 0.9em; opacity: 0.8; }
-#composer button { background: var(--tg-button); color: var(--tg-button-text); border: none; border-radius: 50%; width: 2.4em; height: 2.4em; padding: 0; cursor: pointer; align-self: flex-end; display: flex; align-items: center; justify-content: center; flex: none; box-shadow: var(--shadow-1); }
-#composer button:hover { filter: brightness(1.1); }
+#composer button { background: var(--md-primary); color: var(--md-on-primary); border: none; border-radius: 50%; width: 3em; height: 3em; padding: 0; cursor: pointer; align-self: flex-end; display: flex; align-items: center; justify-content: center; flex: none; box-shadow: var(--md-elev-1); transition: box-shadow var(--md-dur-150) var(--md-ease-standard), transform var(--md-dur-100) var(--md-ease-standard), background-color var(--md-dur-200) var(--md-ease-standard); }
+#composer button:hover { box-shadow: var(--md-elev-2); }
 #composer button svg { display: block; }
-#composer #menu-btn { width: 2.1em; height: 2.1em; }
+#composer #menu-btn { width: 2.5em; height: 2.5em; background: none; color: var(--md-on-surface-variant); box-shadow: none; }
 /* 停止态：红底（生成中点即停，与发送蓝钮区分）。 */
-#composer button.stop { background: var(--tg-destructive); }
+#composer button.stop { background: var(--md-error-container); color: var(--md-on-error-container); }
 /* 菜单键：与发送圆钮同形，底栏色（输入框左侧，点开命令面板）。 */
 #composer #menu-btn { background: var(--tg-secondary-bg); color: var(--tg-hint); }
-#composer #menu-btn:hover { color: var(--tg-text); }
+#composer #menu-btn:hover { background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); color: var(--md-on-surface); }
 .msg .think { color: var(--tg-hint); font-size: 0.82em; opacity: 0.65; }
 .msg .think-body { white-space: pre-wrap; word-break: break-word; }
 /* 等首字节的三点呼吸（生成中且还没有任何字）：别让气泡只剩一个"助手"抬头。 */
@@ -1268,3 +1241,30 @@ button.toggle.on .knob { transform: translateX(1.1em); }
  * 切选中态不会重播）；reduced-motion 直接不跑。 */
 @keyframes session-item-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { #sessions-bar .session-item { animation: none; } }
+
+/* MD3 primary tabs 的 active indicator（3dp 圆角短条，宽度过渡）。 */
+.ws-tab::after { content: ""; position: absolute; left: 50%; bottom: 0.15em; width: 0; height: 3px; border-radius: 3px;
+  background: var(--md-primary); transform: translateX(-50%);
+  transition: width var(--md-dur-300) var(--md-ease-emphasized), opacity var(--md-dur-200) var(--md-ease-standard); }
+.ws-tab.sel::after { width: 1.6em; }
+@media (prefers-reduced-motion: reduce) { .ws-tab::after { transition: none; } }
+/* 顶栏菜单的进场（MD3 emphasized decelerate：从锚点轻放大 + 淡入）。 */
+@keyframes md-menu-in { from { opacity: 0; transform: scale(0.94) translateY(-4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .agent-menu { animation: none; } }
+
+/* 上面那批 MD3 规则里"原本不存在"的状态，在这里补：
+ * 焦点态用 primary 环、按下 scale、菜单/搜索的 hover 与 focus。 */
+.agent-btn:active { transform: scale(0.96); }
+.agent-item:active { background: color-mix(in srgb, var(--md-on-surface) 10%, transparent); }
+.model-search:focus { outline: none; }
+.composer-box:focus-within { box-shadow: var(--md-elev-2), inset 0 0 0 2px var(--md-primary); }
+#composer button:active { transform: scale(0.96); box-shadow: var(--md-elev-1); }
+/* 输入框占位符用 on-surface-variant（MD3 支持文本色）。 */
+#input::placeholder { color: var(--md-on-surface-variant); opacity: 1; }
+
+/* 模型搜索栏：全局 input 基线（`input:not(…):not(…)`，特异性 0,4）会压掉类选择器 ——
+ * 必须带 `#chat-col > header` 才拿得回 MD3 的 full 圆角 / 无下划线 / focus 环。 */
+#chat-col > header .model-search { border: none; border-bottom: none; border-radius: var(--md-shape-full);
+  background: var(--md-surface-container-high); padding: 0 1em; }
+#chat-col > header .model-search:focus { background: var(--md-surface-container-highest);
+  border-bottom-color: transparent; box-shadow: inset 0 0 0 2px var(--md-primary); }

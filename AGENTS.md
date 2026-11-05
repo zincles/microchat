@@ -1139,8 +1139,8 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   surface 容器层级 / outline / error）、shape scale、elevation 1–3、motion（standard / emphasized + 时长）、
   state layer（hover 8% / focus 10% / pressed 10%）、字体角色（**一律 em**：跟随 `--app-text-scale`，不写 px）。
   暗色/亮色取 MD3 baseline 色板，Breeze 用它的桌面蓝生成同构角色 —— 三套主题都是同一套语义。
-  **落点先只有左栏**：MD3 规则全部以 `#sessions-bar` 前缀收口（`.bar-head` / `.foot-btn` / `.empty` 是共享类，
-  直接改会波及上下文工作区）。左栏结构 = MD3 navigation drawer：
+  **落点先左栏 + 顶栏 + 输入区**（2026-11-05 第二刀）：左栏规则以 `#sessions-bar` 前缀收口
+  （`.bar-head` / `.foot-btn` / `.empty` 是共享类，直接改会波及上下文工作区）。左栏结构 = MD3 navigation drawer：
   顶部 segmented button（对话/生图）+ 标准 icon button；新建 = **extended FAB**（primary-container、elevation 1→2、按下 scale）；
   列表 = 48dp 行、full 圆角、选中 secondary-container、`::after` 状态层（内容 z-index 压在它上面）；
   底部 = navigation drawer item；选项浮板 = MD3 menu（surface-container / 4dp 圆角 / elevation 2 / 48dp 行）。
@@ -1148,8 +1148,18 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   reduced-motion 停转但保留缺口弧。**加载效果**：`sessionsLoading` → 6 条 shimmer 骨架（`aria-busy` 同步），
   `sessionsRefreshing` → header 下 3dp indeterminate linear progress。行进场 = `session-item-in`（200ms emphasized），
   reduced-motion 不跑。
+  **顶栏**（2026-11-05 第二刀）：`#chat-col > header` = MD3 top app bar（surface-container-low、56dp、
+  保留用户要的向下阴影、不描线）；模型按钮 = 40dp full 圆角 text button；Agent 头像 = 40dp avatar（状态层 / 按下 scale）；
+  模型/Agent/上下文浮板 = MD3 menu（surface-container、4dp 圆角、elevation 2、48dp 行）+ `md-menu-in` 进场，
+  顶栏整体接 `@keydown.esc`（一次收起所有浮板）；工作区 聊天/上下文 = MD3 primary tabs（3dp 圆角 indicator，宽度过渡）；
+  上下文环 = 40dp 触控盒、track 用 outline-variant、弧仍是 `--tg-ok`（绿=正常 / 红=超预算）。
+  **输入区**（2026-11-05 第二刀）：`.composer-box` = MD3 搜索栏（surface-container-high、28dp 圆角、focus-within 2px primary 环
+  + elevation 2）；发送键 48dp primary 圆、按下 scale .96；停止态用 error-container；菜单键 40dp 透明 icon button；
+  占位符 on-surface-variant。`.messages-inner` 顶部留白跟着顶栏从 3.2em 提到 **4.2em**（顶栏 3.5em + 间隙）。
   ⚠ 共享类暂时还是旧样式：`.bar-head.bar-tabs`、`.foot-btn` 基座、`.empty` 等**不要**在没加 `#sessions-bar` 前缀时改
   （否则会顺手改掉上下文工作区，且契约测试只钉了一部分）。
+  ⚠ **全局 input 基线的特异性 (0,4)**（`input:not(...):not(...)`）会压掉 `.model-search` 这类单类选择器 ——
+  搜索栏的 full 圆角 / 无下划线 / focus 环必须写成 `#chat-col > header .model-search`（踩过：蓝下划线又回来了）。
   ⚠ 字体暂时还是 Inter：MD3 官方是 Roboto，但换字体是全站的事，等 MD3 铺到聊天区再一起定。
 - **高延迟（1s+ RTT）下的界面口径**（2026-11-05 用户定：「优化服务器和用户之间存在 1000ms 以上延迟的极端场景」）：
   目标不是"让网络变快"，而是**别让等待凭空多出一个来回**，也别让旧数据挂在新语境里。
