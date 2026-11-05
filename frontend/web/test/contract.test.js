@@ -1224,16 +1224,17 @@ test("打字机：按前后两包的到达间隔决定这一拍的速度；线�
   assert.equal(revealCount(40, 100, 999, 300), 100);
 
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
-  assert.match(app, /const streamDisplay = ref\(/, "没有打字机显示状态");
+  const tw = readFileSync(join(SRC, "composables", "useTypewriter.ts"), "utf8");
+  assert.match(tw, /const streamDisplay = ref\(/, "没有打字机显示状态");
   assert.match(app, /setStreamTarget\(merged\.text, merged\.reasoning\)/, "轮询到字后没进打字机");
   assert.match(app, /streamText: streamDisplay\.value\.text/, "气泡还在直接吞整块");
-  assert.match(app, /const gap = twLastAt \? start - twLastAt : 0/, "没有按上一包到这一包的真实间隔计时");
-  assert.match(app, /duration: typewriterDuration\(gap\)/, "打字时长不是按包间隔算的");
+  assert.match(tw, /const gap = twLastAt \? start - twLastAt : 0/, "没有按上一包到这一包的真实间隔计时");
+  assert.match(tw, /duration: typewriterDuration\(gap\)/, "打字时长不是按包间隔算的");
   assert.match(app, /await waitTypewriter\(\)/, "收尾没等打字机放完（会跳一下）");
   assert.ok((app.match(/setStreamTarget\(/g) ?? []).length >= 2, "重摇候选流没接打字机");
   assert.match(app, /previewText: streamDisplay\.value\.text/, "重摇气泡没读打字机前缀");
   assert.match(app, /await waitTypewriter\(\);[\s\S]{0,100}await switchReroll/, "重摇切版前没等最后一块放完");
-  assert.match(app, /requestAnimationFrame|requestFrame/, "没有逐帧推进");
+  assert.match(tw, /requestAnimationFrame|requestFrame/, "没有逐帧推进");
   assert.ok(!/streamDisplay\.value\.reasoning \|\| m\.reasoning/.test(app),
     "思考还回落到完整 target —— 会整块瞬间冒出");
   const bubble = readFileSync(join(SRC, "components", "MessageBubble.vue"), "utf8");

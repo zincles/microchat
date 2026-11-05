@@ -14,7 +14,6 @@ import {
 import { applyBackground } from "./utils/background.ts";
 import { installViewportFit } from "./utils/viewport.ts";
 import { classifyAxis, pickDrag, dragProgress, resolveRelease } from "./utils/swipe.ts";
-import { typewriterDuration, revealCount } from "./utils/typewriter.ts";
 import { downloadJSON } from "./utils/download.ts";
 import { busySessionIds } from "./utils/tasks.ts";
 import { rememberWindow, recallWindow, forgetWindow } from "./utils/windowcache.ts";
@@ -43,6 +42,7 @@ import SessionSettings from "./components/SessionSettings.vue";
 import Overlays from "./components/Overlays.vue";
 import UpdateBar from "./components/UpdateBar.vue";
 import { registerPWA, onUpdateReady, startUpdate } from "./utils/pwa.ts";
+import { useTypewriter } from "./composables/useTypewriter.ts";
 
 const api = sharedApi();
 applyTheme();
@@ -144,18 +144,7 @@ const vueSegments = ref([]); // 整条会话的段布局（computeSegments 的�
 const vueStream = ref({ id: null, text: "", reasoning: "" });
 // 流式显字（2026-11-03）：`vueStream` 是后端的完整目标；`streamDisplay` 是打字机当前露出的前缀。
 // 每帧只改 streamDisplay，轮询与合并仍只认 vueStream（两个状态别互相镜像）。
-const streamDisplay = ref({ text: "", reasoning: "" });
-let twState = null;
-let twFrame = 0;
-let twLastAt = 0;
-const twWaiters = [];
-const nowMs = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
-const requestFrame = (cb) => (typeof requestAnimationFrame === "function"
-  ? requestAnimationFrame(cb) : setTimeout(() => cb(nowMs()), 16));
-const cancelFrame = (id) => {
-  if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(id);
-  else clearTimeout(id);
-};
+const { streamDisplay, setStreamTarget, waitTypewriter, resetTypewriter, flushTypewriter } = useTypewriter();
 // 消息窗口（分页 + 折叠；口径与全套算法在 utils/chatrows.ts）：
 // 只挂最后 N 段（默认 5，来自 chat.history_window）；更老的按"加载更多"一页一页往回；
 // 被摘要盖住的原文**展开才拉**（这里当缓存）。
@@ -562,92 +551,6 @@ function clearRerollPreview() { rerollPreview.value = { text: "", reasoning: "" 
 // 「正在输出…」（2026-10-17 用户定：旧正文一直挂到第一帧才换掉很难看）。状态回来后交给 rerollState。
 const rerollStarting = ref(null);
 // 判据都在 utils/chatrows.ts（纯函数、契约测试钉着）：这条是不是"正在摇的那条"、该显示什么。
-// —— 流式打字机（2026-11-03 用户定：「不是每隔 0.5s 全冒出来，而是在这 0.5s 里平滑打出来」）——
-// 轮询每次到一大块（后端 buffer 增量），这里按 typewriterDuration 把它摊到几帧里逐字露出；
-// 下一拍来了就把剩余字符重新计时，永远追着最新目标走。
-function settleTwWaiters() {
-  const list = twWaiters.splice(0);
-  for (const resolve of list) resolve();
-}
-function resetTypewriter() {
-  if (twFrame) cancelFrame(twFrame);
-  twFrame = 0;
-  twState = null;
-  twLastAt = 0;
-  streamDisplay.value = { text: "", reasoning: "" };
-  settleTwWaiters();
-}
-function flushTypewriter() {
-  if (twFrame) cancelFrame(twFrame);
-  twFrame = 0;
-  const state = twState;
-  twState = null;
-  if (state) streamDisplay.value = { text: state.targetText, reasoning: state.targetReasoning };
-  settleTwWaiters();
-}
-function twTick(ts) {
-  const s = twState;
-  if (!s) { twFrame = 0; return; }
-  const at = typeof ts === "number" ? ts : nowMs();
-  const p = s.duration > 0 ? Math.min(1, (at - s.start) / s.duration) : 1;
-  // 30fps 就够了：每帧都重排 markdown 会把 CPU 吃满，而肉眼也看不出 30 与 60 的区别。
-  if (p < 1 && at - (s.lastPaint ?? s.start) < 32) {
-    twFrame = requestFrame(twTick);
-    return;
-  }
-  s.lastPaint = at;
-  const textEnd = revealCount(s.fromText, s.toText, p * s.duration, s.duration);
-  const thinkEnd = revealCount(s.fromReason, s.toReason, p * s.duration, s.duration);
-  streamDisplay.value = {
-    text: s.targetText.slice(0, textEnd),
-    reasoning: s.targetReasoning.slice(0, thinkEnd),
-  };
-  if (p < 1) {
-    twFrame = requestFrame(twTick);
-  } else {
-    twFrame = 0;
-    twState = null;
-    settleTwWaiters();
-  }
-}
-function setStreamTarget(text, reasoning) {
-  const targetText = text ?? "";
-  const targetReasoning = reasoning ?? "";
-  const shown = streamDisplay.value;
-  let fromText = shown.text.length;
-  let fromReason = shown.reasoning.length;
-  // 缓冲被重置 / 换了目标（不是前缀）⇒ 从空白重新开始；否则接着当前前缀往后露。
-  if (!targetText.startsWith(shown.text) || !targetReasoning.startsWith(shown.reasoning)) {
-    fromText = 0;
-    fromReason = 0;
-    twLastAt = 0;
-    streamDisplay.value = { text: "", reasoning: "" };
-  }
-  const toText = targetText.length;
-  const toReason = targetReasoning.length;
-  if (toText <= fromText && toReason <= fromReason) return;
-  const start = nowMs();
-  // 这一拍的时长 = **上一个数据包到这一拍的实测间隔**；第一拍没有上一拍 ⇒ 默认 300ms。
-  const gap = twLastAt ? start - twLastAt : 0;
-  twLastAt = start;
-  twState = {
-    targetText, targetReasoning, fromText, fromReason, toText, toReason,
-    start, lastPaint: start, duration: typewriterDuration(gap),
-  };
-  if (!twFrame) twFrame = requestFrame(twTick);
-}
-// waitTypewriter：一轮收尾时先把最后一块放完再 reloadWindow（顶栏/消息别在最后一跳时换掉）。
-// rAF 在后台标签页可能被冻住 ⇒ 超时兜底 flush，不无限等。
-function waitTypewriter(maxMs = 0) {
-  if (!twState) return Promise.resolve();
-  const limit = maxMs > 0 ? maxMs : Math.min(2000, twState.duration + 100);
-  return new Promise((resolve) => {
-    let done = false;
-    const finish = () => { if (done) return; done = true; clearTimeout(timer); resolve(); };
-    const timer = setTimeout(() => { flushTypewriter(); finish(); }, limit);
-    twWaiters.push(finish);
-  });
-}
 const isLive = (m) => rerollTargetLive(m, { startingId: rerollStarting.value, state: rerollState.value });
 function bubbleContent(m) {
   return bubbleText(m, { field: "content", live: isLive(m), streamText: streamDisplay.value.text, previewText: streamDisplay.value.text });
