@@ -1070,12 +1070,12 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   ④ **等宽数字** 只在 `main.css` 末尾那一组写 `font-variant-numeric: tabular-nums`，新数字元素加进选择器清单，别单写一条。
   契约测试钉着这几条（"CSS 复用：幽灵按钮底座与蒙层 token 只有一处"）—— 抄回去不会报错，只会让下一次调色改不动。
 - **外观三件（2026-10-28 加，照 OpenWebUI）**：
-  **① 自托管 Inter**：`frontend/web/public/fonts/Inter-Variable.woff2`（325KB 可变字重 100–900，源是同目录 TTF 转的，
-  不再带 TTF）+ `OFL.txt`；`main.css` 顶部一条 `@font-face`，`body` 字族排成
-  `-apple-system, BlinkMacSystemFont, "Inter", system-ui, "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif`
-  —— **顺序是平台分流不是随手排**：macOS/iOS 命中 `-apple-system` 用系统 SF，其余平台跳过它落 Inter
-  （`system-ui` 在 Linux 常落到 DejaVu Sans，西文数字明显差一档）。别把 `system-ui` 挪到 Inter 前面。
-  中文 Inter 没有字形 ⇒ 自然落到后面两个中文字族，那正是要的。PWA 预缓存会带上它（离线也有字）。
+  **① 自托管 Roboto Flex**（2026-11-06 起，MD3 官方默认字体）：`frontend/web/public/fonts/RobotoFlex-Latin.woff2`
+  （84KB 可变字重 100–900 + opsz，只含拉丁/标点/常用符号）+ `RobotoFlex-OFL.txt`；`main.css` 顶部一条
+  `@font-face`，`body` 字族排成 `"Roboto Flex", "Roboto", -apple-system, BlinkMacSystemFont, system-ui,
+  "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif` —— **Roboto Flex 第一**是 MD3 的口径；
+  中文没有拉丁字形 ⇒ 自然落到后面两个中文字族。PWA 预缓存会带上它（离线也有字）。
+  旧 Inter（81KB）已删：两套都带只会让首屏多背一份用不到的字。
   **② 界面缩放**：`theme.css` 的 `--app-text-scale`（根节点 inline style，`prefs.js` 的
   `applyTextScale`/`saveTextScale`，开机第一帧就应用）。它**只乘 body 的 `font-size`**
   （`calc(15px * var(--app-text-scale, 1))`）—— 全项目尺寸几乎都是 em、0 处 rem、0 处 px 字号，
@@ -1120,9 +1120,8 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   ⚠ **别再手写 `injectRegister`**：插件检测到 `virtual:pwa-register` 的 import 后会自己把它转成 `false`
   （不再往 index.html 塞那段没有回调的 `registerSW.js`）——手写会跟它的自动检测打架。
 - **生产交付性能（2026-11-02，用户报"部署后前端响应慢、没有缓冲"）**：
-  ① **字体子集**：`public/fonts/Inter-Variable.woff2` 从 318KB 子集到 **81KB**（保留 wght/slnt 可变轴；
-  只留拉丁、标点、常用箭头/符号；中文本来就落系统字族）。重做用 `pyftsubset`（命令见 git 记录），
-  `contract.test.js` 钉着 <150KB + wOF2 魔数。
+  ① **字体子集**：`public/fonts/RobotoFlex-Latin.woff2` **84KB**（可变 wght 100–900 + opsz；
+  只留拉丁、标点、常用箭头/符号；中文本来就落系统字族）。`contract.test.js` 钉着 <150KB + wOF2 魔数。
   ② **缓存头**：`vite.config.js` 的 `assetCacheHeaders()` —— `/assets/*-<hash>.js/css` 与 `workbox-*.js`
   给 `public, max-age=31536000, immutable`；字体 1 周；index / manifest / sw / 图标仍 `no-cache`。
   从前全是 `no-cache`，内容寻址的包每次刷新都要多一个 304 往返。
@@ -1204,7 +1203,8 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   **密度**（2026-11-06 用户：「MD3 padding 太浪费」）：`main.css` 末尾一块密度覆盖 ——
   会话行 48→44、顶栏 56→48、FAB 56→48、输入框 ~69→55、菜单 48→40、设置行 0.7→0.45em、
   消息间距 0.8→0.55em；只改尺寸不改语义。要整体调松/调紧只改这一块。
-  ⚠ 字体暂时还是 Inter：MD3 官方是 Roboto，但换字体是全站的事，等 MD3 铺到聊天区再一起定。
+  ⚠ 字体：2026-11-06 已按 MD3 换成自托管 **Roboto Flex**（旧 Inter 删除）；`--app-font-body` 的自定义
+  字体仍排第一，没配时落 Roboto Flex → 系统 → 中文字族。
 - **高延迟（1s+ RTT）下的界面口径**（2026-11-05 用户定：「优化服务器和用户之间存在 1000ms 以上延迟的极端场景」）：
   目标不是"让网络变快"，而是**别让等待凭空多出一个来回**，也别让旧数据挂在新语境里。
   ① **发送先上屏**：`send` / `sendFromDraft` 先 `addMessage("你", …)` 再等 202；回来用服务端 `user` 换掉

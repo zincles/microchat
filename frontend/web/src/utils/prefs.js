@@ -55,7 +55,7 @@ export function normalizeTextScale(value) {
 
 // 字体（2026-11-04 用户定）：标准字体管全站，等宽字体管代码块；空 = 内置系统字族。
 // 自定义值按 CSS font-family 原文存（逗号分隔的后备字族都保留），应用时在末尾补内置栈。
-export const DEFAULT_FONT_BODY = '-apple-system, BlinkMacSystemFont, "Inter", system-ui, "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif';
+export const DEFAULT_FONT_BODY = '"Roboto Flex", "Roboto", -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif';
 export const DEFAULT_FONT_MONO = 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace';
 
 export function normalizeFontFamily(value) {

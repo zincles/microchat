@@ -3180,11 +3180,15 @@ test("静态产物缓存：哈希 assets immutable，入口/SW 仍 no-cache", ()
   assert.match(vite, /path\.startsWith\("\/fonts\/"\)/, "字体与哈希资源没分开");
 });
 
-test("Inter 字体是子集（别把 300KB 全量塞回首屏）", () => {
-  const font = readFileSync(join(SRC, "..", "public", "fonts", "Inter-Variable.woff2"));
-  assert.ok(font.length < 150 * 1024, `Inter-Variable.woff2 是 ${font.length} 字节，子集应小于 150KB`);
-  // woff2 魔数（wOF2）—— 防的是有人把 TTF 改个后缀塞进来。
+test("Roboto Flex 是 MD3 默认字体，且是子集（别把全量塞回首屏）", () => {
+  const font = readFileSync(join(SRC, "..", "public", "fonts", "RobotoFlex-Latin.woff2"));
+  assert.ok(font.length < 150 * 1024, `RobotoFlex-Latin.woff2 是 ${font.length} 字节，子集应小于 150KB`);
   assert.equal(font.toString("ascii", 0, 4), "wOF2", "不是 WOFF2");
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8");
+  assert.match(css, /font-family:\s*"Roboto Flex"/, "没有 @font-face Roboto Flex");
+  assert.match(css, /font-family:\s*var\(--app-font-body,\s*"Roboto Flex"/, "body 没把 Roboto Flex 排第一");
+  const prefs = readFileSync(join(SRC, "utils", "prefs.js"), "utf8");
+  assert.match(prefs, /DEFAULT_FONT_BODY = '"?Roboto Flex|DEFAULT_FONT_BODY = '"Roboto Flex/, "默认字体栈不是 Roboto Flex");
 });
 
 test("设置页：标题只有一套语言，设置与会话/渠道管理页同宽", () => {

@@ -3,20 +3,18 @@
  * 现在是**中性灰阶 + 发丝分隔 + 无边框按钮**（参考 OpenWebUI）。下面注释里还留着不少"TG 味"的
  * 历史说明 —— 讲的是**形状**（气泡/分组列表），配色相关的以 theme.css 为准。 */
 
-/* —— 字体：自托管 Inter（2026-10-28，照 OpenWebUI）——
- * 为什么自带一份：`system-ui` 在 Linux 上常常落到 DejaVu Sans / Cantarell 上，西文与数字的
- * 字形比 macOS 的 SF 差一截，而"廉价感"有一半是字给的。macOS / iOS 仍然优先用系统 SF
- * （见下面 body 的字族顺序：-apple-system 在前面先命中），所以这份只兜底别的平台。
- * 只带 WOFF2（**2026-11-02 子集化后 81KB**；原文件 318KB）：保留 wght 100–900 + slnt 可变轴，
- * 只留拉丁/标点/常用符号 —— 中文字形本来就不在 Inter 里（自然落到 PingFang SC / Noto Sans SC），
- * 全量那 200 多 KB 的拉丁扩展与冷门符号在这套界面里用不到，却要跟着首屏一起下载。
- * 许可：SIL OFL 1.1，全文在 `public/fonts/OFL.txt`。 */
+/* —— 字体：自托管 Roboto Flex（MD3 官方默认字体，2026-11-06 从 Inter 切换）——
+ * `public/fonts/RobotoFlex-Latin.woff2`：84KB 可变字体（wght 100–900 + opsz），
+ * 只含拉丁/标点/常用符号；中文字形本来就不在 Roboto 里（自然落到 PingFang SC / Noto Sans SC）。
+ * 许可：SIL OFL 1.1，全文在 `public/fonts/RobotoFlex-OFL.txt`。
+ * 旧 Inter（81KB）已删：两套都带只会让首屏多背一份用不到的字。 */
 @font-face {
-  font-family: "Inter";
+  font-family: "Roboto Flex";
   /* 用 `woff2` 而不是 `woff2-variations`：后者是早期写法，认不出它的浏览器会**整条 src 跳过**
    * （字体静默不生效，页面悄悄退回 system-ui）；可变轴靠下面的 font-weight 区间表达即可。 */
-  src: url("/fonts/Inter-Variable.woff2") format("woff2");
+  src: url("/fonts/RobotoFlex-Latin.woff2") format("woff2");
   font-weight: 100 900;
+  font-stretch: 100%;
   font-style: normal;
   font-display: swap;
 }
@@ -61,12 +59,11 @@ textarea { resize: vertical; }
  * → transform 又撑大可滚动区域 → 越滚越"延展"（2026-10-10 真机症状）。overscroll-behavior
  * 一并掐掉回弹与下拉刷新。 */
 html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
-/* 字族顺序 = 平台分流，不是随便排的：macOS/iOS 命中 `-apple-system`/`BlinkMacSystemFont` 用系统 SF；
- * 其余平台（Linux/Windows/Android）跳过它们直接落 **Inter** —— 这正是 2026-10-28 加自托管字体的目的，
- * 别把 `system-ui` 挪到 Inter 前面，那会让 Linux 又回到 DejaVu。
+/* 字族顺序 = MD3 优先：**Roboto Flex 排第一**（自托管，所有平台一致）；
+ * 之后的 `-apple-system`/`system-ui` 只是没有拉丁字形时的兜底（中文落 PingFang/Noto）。
  * 字号拆出来单独写（不用 `font` 简写）：要吃 `--app-text-scale`，而简写里塞 calc 会把行高也一起吃掉。 */
 body { margin: 0; background: var(--tg-bg); color: var(--tg-text);
-  font-family: var(--app-font-body, -apple-system, BlinkMacSystemFont, "Inter", system-ui, "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif);
+  font-family: var(--app-font-body, "Roboto Flex", "Roboto", -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif);
   font-size: calc(15px * var(--app-text-scale, 1)); line-height: 1.65; }
 /* 代码 / 预格式文本单独一条字族（2026-11-04）：自定义等宽字体只影响这里与 pre，不污染正文。 */
 code, pre, kbd, samp { font-family: var(--app-font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace); }
