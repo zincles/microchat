@@ -557,7 +557,7 @@ test("标题模型三档：Agent 里可切全局 / 当前 / Agent，全局默认
     assert.ok(editor.includes(label), `Agent 编辑器缺 ${label}`);
   }
   assert.match(editor, /rows\[id\]\.modelSource === 'agent'/, "Agent 模型下拉没跟着来源出现");
-  assert.ok(settings.includes('<option value="">使用当前模型</option>'), "全局标题模型缺「使用当前模型」");
+  assert.match(settings, /titleSelectOptions = computed\(\(\) => \[\{ label: "使用当前模型", value: "" \}/, "全局标题模型缺「使用当前模型」");
   assert.match(settings, /title_provider: titleModel\?\.provider/, "全局标题模型没拆成 provider/model 落盘");
   assert.match(config, /TitleProvider\s+string `json:"title_provider,omitempty"`/);
   assert.match(config, /ModelSource\s+string `json:"model_source,omitempty"`/);
@@ -1362,7 +1362,7 @@ test("滚动隐藏：反向不足 slop 当抖动；上滑到顶全放回顶栏",
 // —— 页面只是安静地退回默认配色（或者让人选到一个没有规则的 id）。
 // 所以把三张表钉死：THEME_IDS 是唯一权威，另外两处必须**正好**是它（顺序也一样）。
 // 读文件比对，不引 CSS/Vue 解析器。
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -1384,22 +1384,21 @@ test("主题：theme.css 与下拉必须正好是 THEME_IDS 这三套", () => {
   // 下拉：顺序也照 THEME_IDS（"亮色/暗色/Breeze" 是用户点名的顺序，别在界面上乱换）
   // 2026-11-01：这块从删掉的 UserView 搬到了 AppearancePane（设置里的「外观」区）。
   const vue = readFileSync(join(SRC, "components", "AppearancePane.vue"), "utf8");
-  // ⚠ 必须**只取主题那个 select**：这一页还有别的下拉（显示模式、发送键），
-  // 广撒网会把 "float" 这种非主题值捞进来（第一版就是这么挂的）。
-  // ⚠ 现在这个 select 上多了一个 `@change="persist"`（改了就存，没有保存按钮），
-  // 所以正则要容得下它 —— 钉得太死的写法会在加了事件时误报成下拉没了（刚踩过）。
-  const sel = vue.match(/<select v-model="theme"[^>]*>([\s\S]*?)<\/select>/);
-  assert.ok(sel, '没找到 v-model="theme" 那个下拉');
-  const chosen = [...sel[1].matchAll(/<option value="([^"]*)">/g)].map((m) => m[1]);
-  assert.deepEqual(chosen, THEME_IDS, "主题下拉的 option 与 THEME_IDS 对不上");
+  // VSelect：选项在 themeOptions 数组里，顺序照 THEME_IDS。
+  assert.match(vue, /<VSelect[^>]*:model-value="theme"[^>]*:items="themeOptions"/, "没找到主题 VSelect");
+  const opts = vue.match(/const themeOptions = \[([\s\S]*?)\];/);
+  assert.ok(opts, "没找到 themeOptions");
+  const chosen = [...opts[1].matchAll(/value: "([^"]*)"/g)].map((m) => m[1]);
+  assert.deepEqual(chosen, THEME_IDS, "主题下拉的选项与 THEME_IDS 对不上");
 });
 
 test("外观页：发送键 / 预演 / 命令菜单三格都在（搬用户视图时丢过）", () => {
   const vue = readFileSync(join(SRC, "components", "AppearancePane.vue"), "utf8");
   // 发送键的三档必须与 `prefs.js` 的 `wantsSend` 完全一致（多一档 = 选了不生效）。
-  const sel = vue.match(/<select v-model="send"[^>]*>([\s\S]*?)<\/select>/);
-  assert.ok(sel, '没找到 v-model="send" 那个下拉 —— 发送键入口又丢了');
-  const options = [...sel[1].matchAll(/<option value="([^"]*)">/g)].map((m) => m[1]);
+  assert.match(vue, /<VSelect[^>]*:model-value="send"[^>]*:items="sendOptions"/, "没找到发送方式 VSelect —— 入口又丢了");
+  const opts = vue.match(/const sendOptions = \[([\s\S]*?)\];/);
+  assert.ok(opts, "没找到 sendOptions");
+  const options = [...opts[1].matchAll(/value: "([^"]*)"/g)].map((m) => m[1]);
   assert.deepEqual(options, ["enter", "shift-enter", "button"], "发送键三档与 wantsSend 对不上");
 
   assert.match(vue, /:model-value="preview"/, "「输入时预演载荷」开关没了");
@@ -1800,14 +1799,12 @@ test("渠道编辑器：协议下拉来自后端，界面不自己列协议表",
   }
   // ③ 选项确实来自后端给的那一份
   assert.match(code, /curPreset\.value\?\.protocol_options/, "协议选项没接后端的 protocol_options");
-  assert.match(code, /v-for="option in protocolChoices"/, "下拉没渲染 protocolChoices");
+  assert.match(code, /protocolChoices\.value\.map\(\(option\) => \(\{ label: option\.label, value: option\.protocol \}\)\)/, "下拉没渲染 protocolChoices");
   // ④ 选了之后要有一句人话（下拉一关就只剩 id，用户没法判断区别）
   assert.match(code, /\{\{ protocolHint \}\}/, "选中的协议没有一句人话");
-  // ⑤ 显示只用中文名；内部 id 挪到 option 的 title（悬停能看到，不占正文）
-  assert.match(code, /\{\{ p\.name \}\}/, "服务商没显示中文名");
-  assert.match(code, /:title="p\.vendor"/, "服务商的内部 id 没留在 title 上");
-  assert.match(code, /\{\{ option\.label \}\}/, "接口类型没显示中文名");
-  assert.match(code, /:title="option\.protocol"/, "接口类型的内部 id 没留在 title 上");
+  // ⑤ 显示只用中文名；内部 id 附在显示名里（VSelect 没有 option 的 title）
+  assert.match(code, /label: p\.name \+ \(p\.vendor \?/, "服务商没显示中文名 / 内部 id");
+  assert.match(code, /label: option\.label, value: option\.protocol/, "接口类型没显示中文名");
 });
 
 test("渠道列表：服务商打中文名，内部 id 挂在 title 上", () => {
@@ -1816,10 +1813,9 @@ test("渠道列表：服务商打中文名，内部 id 挂在 title 上", () => 
   assert.match(settings, /p\.vendor_name/, "列表没显示 vendor 的中文名");
   // 协议列已从列表移除（用户说"说什么话"看不懂）；它只在编辑器里，用中文名 + id 附后。
   assert.ok(!/p\.protocol_name/.test(settings), "列表又把 protocol 那列加回来了");
-  assert.match(editor, /\{\{ option\.label \}\}/, "编辑器里的接口类型没显示中文名");
-  assert.match(editor, /:title="option\.protocol"/, "接口类型的内部 id 没留在 title 上");
+  assert.match(editor, /label: option\.label, value: option\.protocol/, "编辑器里的接口类型没显示中文名");
   // id 不能丢：手改 providers.json 的人得能对上号
-  assert.match(settings, /:title="p\.vendor"/, "vendor 的内部 id 没留在 title 上");
+  assert.match(editor, /label: p\.name \+ \(p\.vendor \?/, "vendor 的内部 id 没跟着显示名");
 });
 
 // 新建渠道时"换 vendor 要不要跟着换 id"（2026-10-28）。
@@ -1847,7 +1843,7 @@ test("渠道编辑器：vendor 分组 / 先 vendor 后 id / 端点给出实际�
 
   // ① vendor 按后端给的 primary 分组，而不是平铺 11 个
   assert.match(code, /primaryPresets/, "vendor 没按 primary 分组");
-  assert.match(code, /<optgroup label="常见">/, "没有「常见」那一组");
+  assert.match(code, /vendorOptions = computed\(\(\) => \[\.\.\.primaryPresets\.value, \.\.\.otherPresets\.value\]/, "vendor 没按 primary/other 合并成 VSelect 选项");
   // ② 顺序：服务商在 id 前面（id 是改服务商时会跟着变的格，先填等于白填）
   const vendorAt = code.indexOf("<span>服务商</span>");
   const idAt = code.indexOf("<span>渠道标识</span>");
@@ -1955,7 +1951,7 @@ test("设置：新会话默认值的渠道/模型是下拉，不是手打 id", (
   const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
   assert.match(settings, /providerOpts/, "渠道那格没走 providerChoices");
   assert.match(settings, /modelOpts/, "模型那格没走 modelChoicesFor");
-  assert.match(settings, /@change="onDefaultProviderChange"/,
+  assert.match(settings, /@update:model-value="onDefaultProviderChange"/,
     "换渠道时不重算模型 —— 会留下「渠道 A + 只存在于 B 的模型」这种配不上的对");
   // 旧的"手填、填错不报错"那套说法不该再出现在界面上
   assert.ok(!/渠道与模型是手填的 id/.test(settings), "hint 还写着「渠道与模型是手填的 id」");
@@ -3411,9 +3407,9 @@ test("渠道标识可改：编辑态输入框可用、保存发 new_id、成功�
   const editor = readFileSync(join(SRC, "components", "ProviderEditor.vue"), "utf8");
   const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
 
-  const idField = editor.match(/<span>渠道标识<\/span><input[^>]*>/);
+  const idField = editor.match(/<span>渠道标识<\/span><VTextField[^>]*>/);
   assert.ok(idField, "找不到渠道标识那一格");
-  assert.ok(!/:disabled=/.test(idField[0]), "编辑态仍然禁用了渠道标识（用户明确要能改）");
+  assert.ok(!/disabled/.test(idField[0]), "编辑态仍然禁用了渠道标识（用户明确要能改）");
   assert.match(editor, /body\.new_id = nextID/, "保存时没有把新标识发出去");
   assert.match(editor, /emit\("saved", savedID\)/, "保存回执没带 id");
   assert.match(editor, /改名会一起改掉已绑定这条渠道的会话/, "编辑态没有说清改名的后果");
@@ -3760,8 +3756,8 @@ test("浮层 MD3：dialog / menu / snackbar / banner，全局按钮与字段", (
   assert.match(css, /button\.danger \{[^}]*color:\s*var\(--md-error\)/, "危险按钮不是 error 色");
   assert.match(css, /input:not\(\[type="checkbox"\]\)[^{]*\{[^}]*border:\s*1px solid var\(--md-outline\)/, "输入框不是 MD3 outlined 字段");
   assert.match(css, /input:not\(\[type="checkbox"\]\)[^{]*:focus[^{]*\{[^}]*var\(--md-primary\)/, "输入框 focus 不是 primary");
-  assert.match(css, /button\.toggle\.on \{[^}]*background:\s*var\(--md-primary\)/, "开关开态不是 primary");
-  assert.match(css, /button\.toggle \{[^}]*border:\s*2px solid var\(--md-outline\)/, "开关轨道不是 MD3 描边");
+  const appearance = readFileSync(join(SRC, "components", "AppearancePane.vue"), "utf8");
+  assert.match(appearance, /<VSwitch[\s\S]*?color="primary"/, "开关开态不是 primary");
   assert.match(css, /\.modal-box \{[^}]*background:\s*var\(--md-surface-container-high\)[^}]*border-radius:\s*var\(--md-shape-xl\)/, "对话框不是 MD3 dialog");
   assert.match(css, /\.modal-box \{[^}]*box-shadow:\s*var\(--md-elev-3\)/, "对话框没有 elevation 3");
   assert.match(css, /\.palette, \.picker \{[^}]*background:\s*var\(--md-surface-container\)/, "命令面板不是 MD3 菜单面");
@@ -3883,4 +3879,30 @@ test("思考档位：Session 字段 + 发送键左侧 Vuetify 菜单", () => {
   const types = readFileSync(join(SRC, "api/types.ts"), "utf8");
   assert.match(types, /thinking_level: string/, "Session 类型没带 thinking_level");
   assert.match(types, /thinking_levels: string\[\]/, "模型清单没带思考能力");
+});
+
+
+// 设置界面控件（2026-11-06 用户定）：可见按钮/下拉/多行输入全部 Vuetify；
+// 只允许保留隐藏的 file input（原生文件框的触发器是 VBtn）。
+test("设置界面：可见控件全部 Vuetify，旧 ToggleSwitch/TabBar 已删", () => {
+  const files = ["SettingsModal", "AgentEditor", "ProviderEditor", "SegmentEditor", "SegmentList", "AppearancePane", "SessionSettings"];
+  for (const f of files) {
+    const code = readFileSync(join(SRC, "components", `${f}.vue`), "utf8")
+      .replace(/<!--[\s\S]*?-->/g, "")
+      .replace(/<input\b[^>]*type="file"[^>]*>/g, "");
+    assert.ok(!/<button\b/.test(code), `${f}.vue 还有原生 button`);
+    assert.ok(!/<select\b/.test(code), `${f}.vue 还有原生 select`);
+    assert.ok(!/<textarea\b/.test(code), `${f}.vue 还有原生 textarea`);
+    assert.ok(!/<input\b/.test(code), `${f}.vue 还有可见的原生 input`);
+  }
+  assert.ok(!existsSync(join(SRC, "components", "ToggleSwitch.vue")), "旧 ToggleSwitch.vue 还在");
+  assert.ok(!existsSync(join(SRC, "components", "TabBar.vue")), "旧 TabBar.vue 还在");
+});
+
+test("主题：Vuetify theme 是唯一色值源，theme.css 只做映射", () => {
+  const plugin = readFileSync(join(SRC, "plugins", "vuetify.ts"), "utf8");
+  const theme = readFileSync(join(SRC, "assets", "theme.css"), "utf8");
+  assert.match(plugin, /primary: "#2563eb"/, "Vuetify 强调色不是专业蓝");
+  assert.match(theme, /--md-primary:\s*rgb\(var\(--v-theme-primary\)\)/, "theme.css 没把强调色映射到 Vuetify");
+  assert.ok(!/--md-primary:\s*#d0bcff/.test(theme), "theme.css 还留着旧的紫色硬编码");
 });

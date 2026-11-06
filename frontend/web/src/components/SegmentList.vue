@@ -8,6 +8,7 @@
 // 这些都不是功能差异，纯粹是"忘了同步"。所以顺序 / 挑段 / 缺段警告 / 拼装预览
 // **只留这一份实现**：改一处，两处一起变。
 import { computed, ref } from "vue";
+import { VBtn, VSelect } from "vuetify/components";
 import { missingSegments } from "../utils/prompt.ts";
 
 export interface SegmentItem {
@@ -35,6 +36,9 @@ const pick = ref("");
 const segText = (id: string): string => props.segments.find((s) => s.id === id)?.text ?? "";
 const segMissing = (id: string): boolean => !props.segments.some((s) => s.id === id);
 const missing = computed(() => missingSegments(props.ids, props.segments));
+const pickOptions = computed(() => props.segments
+  .filter((s) => !props.ids.includes(s.id))
+  .map((s) => ({ label: optionLabel(s), value: s.id })));
 const commit = (next: string[]): void => { emit("update:ids", next); };
 
 function add(): void {
@@ -60,18 +64,15 @@ function optionLabel(segment: SegmentItem): string {
   <p v-if="hint" class="status">{{ hint }}</p>
   <div v-if="!ids.length" class="status">（还没有片段 —— 从下面挑一个加进来）</div>
   <div v-for="(sid, i) in ids" :key="sid" class="seg-row" :class="{ missing: segMissing(sid) }">
-    <button type="button" class="icon-btn" title="上移" :disabled="i === 0" @click="move(i, -1)">↑</button>
-    <button type="button" class="icon-btn" title="下移" :disabled="i === ids.length - 1" @click="move(i, 1)">↓</button>
+    <VBtn icon variant="text" size="small" type="button" title="上移" :disabled="i === 0" @click="move(i, -1)">↑</VBtn>
+    <VBtn icon variant="text" size="small" type="button" title="下移" :disabled="i === ids.length - 1" @click="move(i, 1)">↓</VBtn>
     <span class="seg-id">{{ sid }}<template v-if="segMissing(sid)"> ⚠ 不存在</template></span>
     <span class="seg-preview">{{ segText(sid).slice(0, 48) }}</span>
-    <button type="button" class="icon-btn danger" title="移除（不会删除片段本身）" @click="drop(i)">✕</button>
+    <VBtn icon variant="text" size="small" type="button" title="移除（不会删除片段本身）" @click="drop(i)">✕</VBtn>
   </div>
   <div class="row">
-    <select v-model="pick" title="从提示词片段里挑一个">
-      <option value="">从提示词片段里挑一个…</option>
-      <option v-for="s in segments" :key="s.id" :value="s.id" :disabled="ids.includes(s.id)">{{ optionLabel(s) }}</option>
-    </select>
-    <button type="button" :disabled="!pick" @click="add">添加片段</button>
+    <VSelect v-model="pick" :items="pickOptions" item-title="label" item-value="value" placeholder="从提示词片段里挑一个…" density="compact" variant="outlined" hide-details class="seg-pick" />
+    <VBtn variant="text" size="small" type="button" :disabled="!pick" @click="add">添加片段</VBtn>
     <span v-if="missing.length" class="status">引用了不存在的片段：{{ missing.join("、") }}（保存会被拒绝）</span>
   </div>
   <details class="seg-assembled">

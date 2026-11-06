@@ -12,10 +12,9 @@ import type { AbilityRow } from "../utils/format.ts";
 import { assemblePrompt, abilityPrompt } from "../utils/prompt.ts";
 import { buildCartridge } from "../utils/cartridge.ts";
 import { downloadJSON } from "../utils/download.ts";
-import ToggleSwitch from "./ToggleSwitch.vue";
 import SegmentList from "./SegmentList.vue";
 import type { SegmentItem } from "./SegmentList.vue";
-import { VTab, VTabs, VTabsWindow, VTabsWindowItem } from "vuetify/components";
+import { VTab, VTabs, VTabsWindow, VTabsWindowItem, VSwitch, VBtn, VTextField, VTextarea, VSelect } from "vuetify/components";
 import type { AbilityToggle, Agent, CreateAgentRequest, UpdateAgentRequest } from "../api/types.ts";
 
 interface AgentTemplate {
@@ -61,6 +60,13 @@ const tabs: Array<{ id: string; label: string }> = [
   { id: "prompt", label: "系统提示词" },
   ...ABILITY_IDS.map((id) => ({ id, label: ABILITY_LABELS[id] ?? id })),
 ];
+const modelSourceOptions = [
+  { label: "跟随全局设置", value: "global" },
+  { label: "使用当前模型", value: "session" },
+  { label: "跟随 Agent 设置", value: "agent" },
+];
+const agentModelOptions = computed(() => [{ label: "未选择（回落全局）", value: "" }, ...modelOptions.value]);
+const sessionModelOptions = computed(() => [{ label: "跟随会话", value: "" }, ...modelOptions.value]);
 const tab = ref("base");
 const aid = ref(props.agent?.id ?? "");
 const name = ref(props.agent?.name ?? props.template?.name ?? "");
@@ -245,7 +251,7 @@ function onKey(e: KeyboardEvent): void {
   <!-- 二级页（2026-10-10 起不再是弹窗）：嵌在设置视图的 Agent tab 里，列表 ⇄ 详情就地切换。 -->
   <div class="detail-pane">
     <div class="panel-head">
-      <button class="icon-btn" type="button" title="返回列表（Esc）" @click="emit('close')">←</button>
+      <VBtn icon variant="text" size="small" type="button" title="返回列表（Esc）" @click="emit('close')">←</VBtn>
       <span class="status">{{ isNew ? "新建智能体" : `编辑「${props.agent?.name ?? ""}」` }}{{ !isNew && isDefault ? "（默认）" : "" }}</span>
     </div>
     <VTabs
@@ -260,16 +266,16 @@ function onKey(e: KeyboardEvent): void {
     <VTabsWindow v-model="tab" class="agent-window">
     <VTabsWindowItem value="base">
     <section class="pane-section">
-      <label class="field"><span>标识（改名会同步所有引用）</span><input v-model="aid" :disabled="isNew" placeholder="新建时自动生成" /></label>
-      <label class="field"><span>名称</span><input v-model="name" placeholder="例如：跑团主持人" /></label>
-      <label class="field-block"><span>开场白（新会话里的第一条回复；留空 = 不启用）</span><textarea v-model="firstMsg" rows="3" placeholder="例如：你好，我是……（可以包含状态块来设置初始状态）"></textarea></label>
-      <label class="field"><span>在消息开头附上当前状态（角色扮演建议开启）</span><ToggleSwitch v-model="prepend" /></label>
+      <label class="field"><span>标识（改名会同步所有引用）</span><VTextField density="compact" variant="outlined" hide-details v-model="aid" :disabled="isNew" placeholder="新建时自动生成" /></label>
+      <label class="field"><span>名称</span><VTextField density="compact" variant="outlined" hide-details v-model="name" placeholder="例如：跑团主持人" /></label>
+      <label class="field-block"><span>开场白（新会话里的第一条回复；留空 = 不启用）</span><VTextarea v-model="firstMsg" rows="3" density="compact" variant="outlined" hide-details placeholder="例如：你好，我是……（可以包含状态块来设置初始状态）" /></label>
+      <label class="field"><span>在消息开头附上当前状态（角色扮演建议开启）</span><VSwitch v-model="prepend" color="primary" density="compact" hide-details /></label>
     </section>
     </VTabsWindowItem>
 
     <VTabsWindowItem value="prompt">
     <section class="pane-section">
-      <label class="field-block"><span>系统提示词（基础人设）</span><textarea v-model="prompt" rows="6" placeholder="写这个智能体的基础设定…"></textarea></label>
+      <label class="field-block"><span>系统提示词（基础人设）</span><VTextarea v-model="prompt" rows="6" density="compact" variant="outlined" hide-details placeholder="写这个智能体的基础设定…" /></label>
       <SegmentList
         v-model:ids="segs"
         :segments="props.segments"
@@ -280,24 +286,14 @@ function onKey(e: KeyboardEvent): void {
 
     <VTabsWindowItem v-for="id in ABILITY_IDS" :key="id" :value="id">
     <section class="pane-section">
-      <label class="field"><span>启用（关闭后这项功能不会运行）</span><ToggleSwitch v-model="rows[id].enabled" /></label>
+      <label class="field"><span>启用（关闭后这项功能不会运行）</span><VSwitch v-model="rows[id].enabled" color="primary" density="compact" hide-details /></label>
       <template v-if="id === 'title'">
-        <label class="field"><span>标题模型来源</span><select v-model="rows[id].modelSource">
-          <option value="global">跟随全局设置</option>
-          <option value="session">使用当前模型</option>
-          <option value="agent">跟随 Agent 设置</option>
-        </select></label>
-        <label v-if="rows[id].modelSource === 'agent'" class="field"><span>Agent 模型</span><select v-model="rows[id].model">
-          <option value="">未选择（回落全局）</option>
-          <option v-for="m in modelOptions" :key="m.value" :value="m.value">{{ m.label }}</option>
-        </select></label>
+        <label class="field"><span>标题模型来源</span><VSelect v-model="rows[id].modelSource" :items="modelSourceOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
+        <label v-if="rows[id].modelSource === 'agent'" class="field"><span>Agent 模型</span><VSelect v-model="rows[id].model" :items="agentModelOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
         <p class="hint">跟随全局设置：用设置 → 聊天 → 标题模型；全局空着就用当前会话模型。Agent 模型两项都填才生效，否则回落全局。</p>
       </template>
-      <label v-else class="field"><span>模型</span><select v-model="rows[id].model">
-        <option value="">跟随会话</option>
-        <option v-for="m in modelOptions" :key="m.value" :value="m.value">{{ m.label }}</option>
-      </select></label>
-      <label class="field-block"><span>自定义提示词（留空 = 使用默认模板）</span><textarea v-model="rows[id].prompt" rows="3"></textarea></label>
+      <label v-else class="field"><span>模型</span><VSelect v-model="rows[id].model" :items="sessionModelOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
+      <label class="field-block"><span>自定义提示词（留空 = 使用默认模板）</span><VTextarea v-model="rows[id].prompt" rows="3" density="compact" variant="outlined" hide-details /></label>
       <!-- 提示词段：追加在（覆盖 ?: 默认）模板**后面**，顺序 = 这里的顺序。
            改了模板不必把段里的字抄进来 —— 抄进来就是两份，改一处忘一处。
            编辑器就是 agent 级那一个 `SegmentList`（同一个组件 ⇒ 不会各长一样）。 -->
@@ -312,10 +308,10 @@ function onKey(e: KeyboardEvent): void {
     </VTabsWindow>
 
     <div class="row">
-      <button type="button" class="primary" @click="save">保存</button>
-      <button type="button" @click="exportCartridge" title="导出智能体文件（JSON；提示词片段会展开成完整提示词）">导出智能体</button>
-      <button v-if="!isNew && !isDefault" type="button" @click="makeDefault">设为默认</button>
-      <button v-if="!isNew" type="button" class="danger" @click="remove">删除</button>
+      <VBtn color="primary" variant="flat" size="small" type="button" @click="save">保存</VBtn>
+      <VBtn variant="text" size="small" type="button" @click="exportCartridge" title="导出智能体文件（JSON；提示词片段会展开成完整提示词）">导出智能体</VBtn>
+      <VBtn variant="text" size="small" v-if="!isNew && !isDefault" type="button" @click="makeDefault">设为默认</VBtn>
+      <VBtn color="error" variant="text" size="small" v-if="!isNew" type="button" @click="remove">删除</VBtn>
       <span class="status">{{ status }}</span>
     </div>
   </div>

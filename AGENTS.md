@@ -1014,7 +1014,7 @@ DeepSeek / OpenCode GO 直连**确实不报**，所以那一格在那儿永远�
 ⚠ 阴影的几何别照抄侧栏那道：`-6px` 的负扩散会把渐变大半缩到栏背后，露出只剩一截（读起来是脏边）；现在是
 offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#131313`，黑影在近黑底上本来就淡 ⇒ 浓度取到 34% 那档的上限。2026-10-14 那版是「全透明 + 双层柔影」，试过 mask 渐隐的毛玻璃，撤了），输入行自己就是浮卡；消息列底部留白 = `--composer-h`（输入行实测高，`composerRO` 现量现写，textarea 长高不脱节）。⚠ CSS 里 `#chat-col > *:not(header)`（1-0-1）会压过 `#composer`（1-0-0）的 position —— 那条共享规则**别写 position/z-index**，踩过）与**设置视图**互斥切换；右载荷栏（**tabs 常驻顶部，三个面板各自滚动**（2026-10-17 用户定/修）；三 tab：真请求直放（裸 JSON ⇄ **分块视图**——把 `body.messages` 一块块画成卡片，开关记忆在 `mc_payload_viz`；**整行可点开合、>500 字的块默认折叠**（system prompt 那种巨块不撑爆面板；折叠态给单行预览）；展开不设嵌套滚动——面板整体滚，触摸纵向手势按轴锁归浏览器（2026-10-11）/ 世界状态 / **压缩树**）随对话一起让位。**设置不再弹窗**：占满左栏右侧整块、顶部是**一行式工具栏** `[◧][五区 tabs][×]`（不设"顶部卡"、无标题；Esc 返回）。**窄屏（断点即身份，2026-10-10）**：≤1100 右载荷栏、≤700 左会话栏改**覆盖式抽屉**（`collapsed` = 关着；[◧][◨] 调出/收起 + 遮罩点击收起 + 选中会话/开新对话自动收）；窄屏**不读不写**桌面偏好（`mc_bar_*_hidden`），跨断点时两侧统一先关（不然会"啪"地盖上来）。遮罩的显隐由 CSS 兄弟选择器跟栏的类联动，不用 JS 状态。
 - 接线全在 `src/App.vue`（SFC 直接挂模板）；`src/api/client.ts` 只调 `/api/v1`；`src/utils/` 放纯函数（contract 测试钉住请求形状）。
-- **TypeScript 迁移（2026-11-06，完成）**：`src/` 下**已经没有 `.js`**，24 个 `.vue` 全部
+- **TypeScript 迁移（2026-11-06，完成）**：`src/` 下**已经没有 `.js`**，23 个 `.vue` 全部
   `lang="ts"`；`api/`、`utils/`、组件、入口与 `App.vue` 都是 TS。严格档 `tsconfig.json`
   检查除 `App.vue`/`main.ts` 外的全部源码；`App.vue`/`main.ts` 由 `tsconfig.app.json`
   以宽松档检查（App 仍是 2000 行组装根，类型收紧随后续拆 composables 继续）。
@@ -1072,7 +1072,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   App 仍每 2s 拉一次 `/tasks`（进程内面板、零成本），受理类动作（发送/重发/压缩/重摇两族）后**立刻补刷一次**不等节拍；喂数只有一处（`topbarRef.setTasks(board)`，取不到就 `null`）。
   ⚠ 从前那行小字与 2026-11-01 的独立任务徽标都已删：**同一个数字住两处，只会让两处都可能过期**。
 - **共享层（2026-10-10 审计整改）**：`utils/prefs.ts` = 界面偏好与共享 api 客户端的唯一出口（主题应用含 TG 守卫 —— TG 里 data-theme 根本不设；发送键判定/提示、apiBase/Token、`sharedApi()` 按偏好缓存）；`api/client.ts` 的 `mergeStreamSlice` = 流式合并唯一规则（游标回退 ⇒ 清零重建）；api 错误统一带 `code`/`status`（分支按 code，别猜文案）；`format.ts` 的 modelKey/modelLabel/whoText/sessionTitle = 键与标签的唯一出口；`COMMAND_META`（commands.js）与 App 执行器启动对账。
-- **CSS 复用基线（2026-11-02，用户定「减少 CSS 的使用量、多复用少重写」）**：除底部输入栏（2026-11-06 起用 Vuetify 4）外，全站仍是手写 CSS（不引 Tailwind —— 它与 em 缩放/大量状态选择器不合，且会把 CSS 搬进模板）。复用只有四处，新样式照此写：
+- **CSS 复用基线（2026-11-02，用户定「减少 CSS 的使用量、多复用少重写」）**：除底部输入栏与设置界面控件（2026-11-06 起用 Vuetify 4）外，全站仍是手写 CSS（不引 Tailwind —— 它与 em 缩放/大量状态选择器不合，且会把 CSS 搬进模板）。复用只有四处，新样式照此写：
   ① **幽灵按钮底座** `main.css` 那一组（`.icon-btn / .edit-btn / .link-btn / .cp-close / .ctree-tw / .ctree-undo / .collapse-all / .session-item 的两枚 / 模型与 Agent 菜单项 / tabs`）= `background:none; border:none; cursor:pointer` **只写一次**，具体规则只写颜色/尺寸/圆角；
      （底部三个管理入口 2026-11-06 换 Vuetify `VBtn(stacked)` 后已退出这张表）
   ② **文字蒙层** 用 `theme.css` 的 `--mix-6 / 8 / 10 / 13 / 18`（加已有的 `--hover` = 7%），别再在 `main.css` 里现写 `color-mix(... N%, transparent)`；
@@ -1117,7 +1117,8 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
 - **输入栏只有一种布局**（2026-11-04 用户定：「不允许再设置紧凑和宽松布局」）：删掉 `float`/`solid` 二选一、`composer_style` 偏好、`data-composer` 属性与对应设置项；统一用 Vuetify MD3 输入栏（`VTextarea` + 右侧 VBtn）。
 - **Vuetify 4 渐进接入**（2026-11-06 用户定：「可以逐渐替换吗？」「使用 Vuetify 内置 MD3 主题，而不是手搓 CSS」）：
   第一块只有 **Composer + ThinkingMenu**，不套 `VApp`/QLayout 壳。`src/plugins/vuetify.ts`：
-  `blueprint: md3` + 三套主题（dark/light/breeze，色值直接从现有 MD3 token 喂给 Vuetify）；
+  `blueprint: md3` + 三套主题（dark/light/breeze）；**颜色唯一权威是 Vuetify theme**，
+  `theme.css` 的 `--md-*` 只是 `rgb(var(--v-theme-*))` 的映射（不再维护第二套色值）；
   `installVuetifyThemeBridge` 用 MutationObserver 跟 `data-theme`。
   ⚠ Vuetify 4 的样式在 CSS `@layer` 里，本项目旧 CSS 未分层 ⇒ 旧 `button`/`input` 基线会压过 VBtn/VField；
   `main.css` 里只对 `#app .v-btn, .v-overlay-container .v-btn, #app .v-field__input` 做 `all: revert-layer` 的逃生门。
@@ -1166,10 +1167,10 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   ⚠ `vite preview` 只做 gzip、HTTP/1.1，**不是生产级静态服务器**；公网/反代部署应由 Caddy / nginx /
   Cloudflare 终结 TLS 并开 brotli + HTTP/2（缓存头已经由上面的中间件给出，不会被吃掉）。
 - **MD3 风格层（2026-11-05 用户定：「目标是完美的 MD3 风格 + 动画 + 加载效果」，先改左栏）**：
-  `theme.css` 底部新增 `--md-*` token 层（与 `--tg-*` **并存**）：MD3 颜色角色（primary / secondary-container /
-  surface 容器层级 / outline / error）、shape scale、elevation 1–3、motion（standard / emphasized + 时长）、
-  state layer（hover 8% / focus 10% / pressed 10%）、字体角色（**一律 em**：跟随 `--app-text-scale`，不写 px）。
-  暗色/亮色取 MD3 baseline 色板，Breeze 用它的桌面蓝生成同构角色 —— 三套主题都是同一套语义。
+  **颜色角色不再由 `theme.css` 定义**（2026-11-06 用户定「Vuetify 控制主题强调色」）：`plugins/vuetify.ts`
+  的 dark/light/breeze 是**唯一色值源**；`theme.css` 只把 `--md-primary` 等映射成
+  `rgb(var(--v-theme-*))`，shape scale、elevation 1–3、motion、state layer、字体角色（一律 em）仍住这里。
+  Breeze 用桌面蓝生成同构角色，三套主题都是同一套语义。
   **落点先左栏 + 顶栏 + 输入区**（2026-11-05 第二刀）：左栏规则以 `#sessions-bar` 前缀收口
   （`.bar-head` / `.empty` 是共享类，直接改会波及上下文工作区）。左栏结构 = MD3 navigation drawer：
   顶部 segmented button（对话/生图）+ 标准 icon button；新建 = **extended FAB**（primary-container、elevation 1→2、按下 scale）；
@@ -1184,6 +1185,9 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   模型/Agent/上下文浮板 = MD3 menu（surface-container、4dp 圆角、elevation 2、48dp 行）+ `md-menu-in` 进场，
   顶栏整体接 `@keydown.esc`（一次收起所有浮板）；工作区 聊天/上下文 = MD3 primary tabs（3dp 圆角 indicator，宽度过渡）；
   上下文环 = 40dp 触控盒、track 用 outline-variant、弧仍是 `--tg-ok`（绿=正常 / 红=超预算）。
+  **设置界面控件**（2026-11-06 用户定「按钮和组件也全换成 Vuetify」）：`VTextField` / `VSelect` / `VTextarea` /
+  `VSwitch` / `VBtn` / `VTable`；旧 `ToggleSwitch.vue` 与 `TabBar.vue` 已删，原生可见控件（button/select/textarea/input）
+  在设置页里不再出现（隐藏的 file input 保留，触发键是 VBtn）。
   **输入区**（2026-11-06 起 Vuetify 4）：`VTextarea`（`solo-filled` / `comfortable` / `rounded=xl` / `bg-surface-container-high`）
   + `VBtn`（发送 primary、停止 error、思考 text）；旧的 `.composer-box` / `#input` / `#composer button` 手写样式已删。
   `.messages-inner` 顶部留白跟着顶栏从 3.2em 提到 **4.2em**（顶栏 3.5em + 间隙）。

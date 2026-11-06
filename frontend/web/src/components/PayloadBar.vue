@@ -7,10 +7,10 @@
 // 带一枚 [◨] 开关、窄屏变抽屉），现在整块搬进**上下文工作区**，三条 tab 一个不少。
 // 于是这个组件不再是"栏"：外壳交给 `ContextWorkspace.vue`，它只交出一块能自适应的面板
 // （`.ws-panel` 管圆角与底，panes 管滚动）。开关与抽屉那套随之作废 —— 别再把它接回栏里。
+import { VSwitch } from "vuetify/components";
 import { ref, computed, watch } from "vue";
 import CompactTree from "./CompactTree.vue";
 import AdvancedCompact from "./AdvancedCompact.vue";
-import ToggleSwitch from "./ToggleSwitch.vue";
 import { treeTotals } from "../utils/tree.ts";
 import type { TreeNode } from "../utils/tree.ts";
 import { parseWireMessages, previewBlock } from "../utils/payload.ts";
@@ -210,9 +210,9 @@ defineExpose({ setWire, setTables, setTree, setCompactWire });
     </div>
     <div v-show="tab === 'payload'" id="payload-pane">
       <div class="pv-toolbar">
-        <ToggleSwitch :model-value="preview" @update:model-value="setPreview" />
+        <VSwitch :model-value="preview" @update:model-value="(v) => setPreview(v === true)" color="primary" density="compact" hide-details />
         <span class="lbl">预览载荷</span>
-        <ToggleSwitch :model-value="viz" @update:model-value="setViz" />
+        <VSwitch :model-value="viz" @update:model-value="(v) => setViz(v === true)" color="primary" density="compact" hide-details />
         <span class="lbl">分块视图（按 message 拆开看）</span>
         <!-- 一键折叠全部（2026-10-29 用户定）。**没有反向的"展开全部"** —— 理由写在
              `collapseAll` 上面：折叠是收拾，展开是倾泻。全收起来了就禁用，别给人一个

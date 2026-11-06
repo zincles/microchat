@@ -7,6 +7,9 @@
  * 中性灰阶（参考 OpenWebUI）：TG 深夜蓝在 9% 明度上挂 40% 饱和度，出来是浑浊的藏青；
  * 中性灰只靠明度分层，同样的暗度读起来干净得多。
  *
+ * 2026-11-06：**颜色角色唯一权威搬到 Vuetify theme**（plugins/vuetify.ts）；本文件只保留
+ * `--tg-*` 语义槽、shape/elevation/motion/字体，以及文件末尾的 `--md-* → --v-theme-*` 映射。
+ *
  * 只有三套主题（2026-10-28 用户定：「主题只保留 亮色 / 暗色 / Breeze 三种风格，不保留TG风格」）：
  * `html[data-theme=…]` 三选一，id 的**唯一权威**是 `utils/prefs.ts` 的 `THEME_IDS`
  * （`contract.test.js` 钉着这里、下拉、常量三方一致）。
@@ -203,90 +206,46 @@ html[data-theme="breeze"] {
   --md-elev-3: 0 4px 8px 3px rgb(0 0 0 / 15%), 0 1px 3px rgb(0 0 0 / 30%);
 
   /* —— 暗色（baseline）角色。默认主题就是暗色 ⇒ 这里也当兜底 —— */
-  --md-primary: #d0bcff;
-  --md-on-primary: #381e72;
-  --md-primary-container: #4f378b;
-  --md-on-primary-container: #eaddff;
-  --md-secondary: #ccc2dc;
-  --md-on-secondary: #332d41;
-  --md-secondary-container: #4a4458;
-  --md-on-secondary-container: #e8def8;
-  --md-surface: #141218;
-  --md-surface-dim: #141218;
-  --md-surface-bright: #3b383e;
-  --md-surface-container-lowest: #0f0d13;
-  --md-surface-container-low: #1d1b20;
-  --md-surface-container: #211f26;
-  --md-surface-container-high: #2b2930;
-  --md-surface-container-highest: #36343b;
-  --md-on-surface: #e6e0e9;
-  --md-on-surface-variant: #cac4d0;
-  --md-outline: #938f99;
-  --md-outline-variant: #49454f;
-  --md-inverse-surface: #e6e0e9;
-  --md-inverse-on-surface: #322f35;
-  --md-error: #f2b8b5;
-  --md-on-error: #601410;
-  --md-error-container: #8c1d18;
-  --md-on-error-container: #f9dedc;
 }
 
 /* 亮色（baseline）：紫调 surface，而不是纯白 —— MD3 的"层次"靠 surface 容器层级。 */
 html[data-theme="light"] {
-  --md-primary: #6750a4;
-  --md-on-primary: #ffffff;
-  --md-primary-container: #eaddff;
-  --md-on-primary-container: #21005d;
-  --md-secondary: #625b71;
-  --md-on-secondary: #ffffff;
-  --md-secondary-container: #e8def8;
-  --md-on-secondary-container: #1d192b;
-  --md-surface: #fef7ff;
-  --md-surface-dim: #ded8e1;
-  --md-surface-bright: #fef7ff;
-  --md-surface-container-lowest: #ffffff;
-  --md-surface-container-low: #f7f2fa;
-  --md-surface-container: #f3edf7;
-  --md-surface-container-high: #ece6f0;
-  --md-surface-container-highest: #e6e0e9;
-  --md-on-surface: #1d1b20;
-  --md-on-surface-variant: #49454f;
-  --md-outline: #79747e;
-  --md-outline-variant: #cac4d0;
-  --md-inverse-surface: #322f35;
-  --md-inverse-on-surface: #f5eff7;
-  --md-error: #b3261e;
-  --md-on-error: #ffffff;
-  --md-error-container: #f9dedc;
-  --md-on-error-container: #410e0b;
 }
 
 /* Breeze：同一套 MD3 语义，色相跟 Breeze 的桌面蓝；surface 更灰一档。 */
 html[data-theme="breeze"] {
-  --md-primary: #2470a2;
-  --md-on-primary: #ffffff;
-  --md-primary-container: #d3e7f5;
-  --md-on-primary-container: #0a3a55;
-  --md-secondary: #4f6675;
-  --md-on-secondary: #ffffff;
-  --md-secondary-container: #dbe9f3;
-  --md-on-secondary-container: #16394d;
-  --md-surface: #f6f8fa;
-  --md-surface-dim: #dde3e9;
-  --md-surface-bright: #ffffff;
-  --md-surface-container-lowest: #ffffff;
-  --md-surface-container-low: #f2f5f8;
-  --md-surface-container: #eef2f5;
-  --md-surface-container-high: #e8edf1;
-  --md-surface-container-highest: #e1e7ec;
-  --md-on-surface: #232629;
-  --md-on-surface-variant: #4f5b65;
-  --md-outline: #7a858f;
-  --md-outline-variant: #c9d1d8;
-  --md-inverse-surface: #2b363d;
-  --md-inverse-on-surface: #eef3f7;
-  --md-error: #b3261e;
-  --md-on-error: #ffffff;
-  --md-error-container: #f9dedc;
-  --md-on-error-container: #410e0b;
+}
+
+
+/* —— 主题色：唯一权威 = Vuetify（plugins/vuetify.ts 的 dark/light/breeze）——
+ * 这里只把 Vuetify 生成的 RGB 三元组映射回项目历史 token 名；不再维护第二套色值。
+ * 强调色/中性面/描边改 Vuetify theme 即可，全站自定义 CSS 与 Vuetify 组件同时变。
+ */
+:root {
+  --md-primary: rgb(var(--v-theme-primary));
+  --md-on-primary: rgb(var(--v-theme-on-primary));
+  --md-primary-container: rgb(var(--v-theme-primary-container));
+  --md-on-primary-container: rgb(var(--v-theme-on-primary-container));
+  --md-secondary: rgb(var(--v-theme-secondary));
+  --md-on-secondary: rgb(var(--v-theme-on-secondary));
+  --md-secondary-container: rgb(var(--v-theme-secondary-container));
+  --md-on-secondary-container: rgb(var(--v-theme-on-secondary-container));
+  --md-surface: rgb(var(--v-theme-surface));
+  --md-surface-dim: rgb(var(--v-theme-surface-dim));
+  --md-surface-bright: rgb(var(--v-theme-surface-bright));
+  --md-surface-container-lowest: rgb(var(--v-theme-surface-container-lowest));
+  --md-surface-container-low: rgb(var(--v-theme-surface-container-low));
+  --md-surface-container: rgb(var(--v-theme-surface-container));
+  --md-surface-container-high: rgb(var(--v-theme-surface-container-high));
+  --md-surface-container-highest: rgb(var(--v-theme-surface-container-highest));
+  --md-on-surface: rgb(var(--v-theme-on-surface));
+  --md-on-surface-variant: rgb(var(--v-theme-on-surface-variant));
+  --md-outline: rgb(var(--v-theme-outline));
+  --md-outline-variant: rgb(var(--v-theme-outline-variant));
+  --md-error: rgb(var(--v-theme-error));
+  --md-on-error: rgb(var(--v-theme-on-error));
+  --md-error-container: rgb(var(--v-theme-error-container));
+  --md-on-error-container: rgb(var(--v-theme-on-error-container));
+  --md-inverse-surface: rgb(var(--v-theme-inverse-surface));
+  --md-inverse-on-surface: rgb(var(--v-theme-inverse-on-surface));
 }

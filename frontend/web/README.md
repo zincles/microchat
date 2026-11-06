@@ -25,7 +25,7 @@ Docker 部署（单容器、只公开 8788）见根目录 `docker-compose.yml`�
 
 ## 依赖
 
-`vue@3.5`（框架）+ `marked`（markdown 渲染）+ `katex`（数学）+ `vuetify@4`（**只用于底部输入栏/思考菜单**，渐进接入）；构建用 `vite` + `@vitejs/plugin-vue` + `vite-plugin-vuetify`。
+`vue@3.5`（框架）+ `marked`（markdown 渲染）+ `katex`（数学）+ `vuetify@4`（**底部输入栏 + 设置界面控件**，渐进接入；主题色由 Vuetify theme 控制）；构建用 `vite` + `@vitejs/plugin-vue` + `vite-plugin-vuetify`。
 运行时没有自造传输层（`fetch` 直调）。**加依赖先问**；`node_modules/`、`dist/` 永不进库。
 开发依赖另有 `typescript` / `vue-tsc` / `tsx`；`src/` 下已全部 TS（App 组装根用宽松档检查）。
 

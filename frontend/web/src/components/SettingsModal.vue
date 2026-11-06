@@ -5,8 +5,7 @@
 //（2026-11-01 从删掉的用户视图整块搬进来，由 `AppearancePane.vue` 渲染）。
 // 关走 close（Esc/×）—— 视图不卸载就丢状态的口径照旧：v-if 挂载，进视图拉一次。
 import { ref, computed, watch, onMounted, onUnmounted } from "vue";
-import ToggleSwitch from "./ToggleSwitch.vue";
-import { VTab, VTabs, VTabsWindow, VTabsWindowItem } from "vuetify/components";
+import { VTab, VTabs, VTabsWindow, VTabsWindowItem, VSwitch, VBtn, VTextField, VSelect, VTable } from "vuetify/components";
 import AgentEditor from "./AgentEditor.vue";
 import AppearancePane from "./AppearancePane.vue";
 import SegmentEditor from "./SegmentEditor.vue";
@@ -233,8 +232,8 @@ async function loadAgents(): Promise<void> {
 
 // 预设模板（随 git 走：presets/*.json）：长提示词不硬编码，前端不存第二份真相。
 const presetPick = ref("");
-function presetNew(): void {
-  const kind = presetPick.value;
+function presetNew(value?: unknown): void {
+  const kind = value === undefined ? presetPick.value : String(value ?? "");
   presetPick.value = "";
   if (!kind) return;
   // 名字清空等你起；其余（提示词/prepend/能力）照模板带。
@@ -246,6 +245,15 @@ function presetNew(): void {
 // 模型跟着渠道走：换了渠道却留着上一家的模型 id，等于存了一对配不上的值。
 const providerOpts = computed(() => providerChoices(providers.value, defaults.value.provider));
 const modelOpts = computed(() => modelChoicesFor(modelGroups.value, defaults.value.provider, defaults.value.model));
+const titleSelectOptions = computed(() => [{ label: "使用当前模型", value: "" }, ...titleModelOptions.value]);
+const providerSelectOptions = computed(() => [{ label: "内置默认（本地示例）", value: "" }, ...providerOpts.value]);
+const modelSelectOptions = computed(() => [{ label: "内置默认（本地示例）", value: "" }, ...modelOpts.value]);
+const agentSelectOptions = computed(() => [{ label: "内置默认", value: "" }, ...agents.value.map((a) => ({ label: a.name || a.id, value: a.id }))]);
+const presetOptions = [
+  { label: "从模板创建…", value: "" },
+  { label: "通用助手", value: "assistant" },
+  { label: "角色扮演助手", value: "rp" },
+];
 
 // 换渠道时**把配不上的模型清掉**：留着上一家的 model id，新建会话就会拿一对
 // "渠道 A + 只存在于 B 的模型" 去发 —— 那正是这套下拉要消灭的那种错误。
@@ -255,8 +263,8 @@ function pickDefaultProvider(next: string): void {
   const stillThere = modelChoicesFor(modelGroups.value, next).some((c) => c.value === defaults.value.model);
   if (!stillThere) defaults.value.model = "";
 }
-function onDefaultProviderChange(event: Event): void {
-  pickDefaultProvider((event.target as HTMLSelectElement).value);
+function onDefaultProviderChange(value: unknown): void {
+  pickDefaultProvider(String(value ?? ""));
 }
 
 async function loadProviders(): Promise<void> {
@@ -337,14 +345,11 @@ function onKey(e: KeyboardEvent): void {
 <template>
   <section id="settings-view">
     <div class="settings-bar">
-      <button
-        class="icon-btn"
-        type="button"
+      <VBtn variant="text" size="small" type="button"
         title="显示/隐藏会话栏"
         aria-label="显示/隐藏会话栏"
         @click="$emit('toggle-left')"
-        v-html="leftSvg"
-      ></button>
+        v-html="leftSvg"></VBtn>
       <VTabs
         v-if="!only"
         v-model="tab"
@@ -355,9 +360,9 @@ function onKey(e: KeyboardEvent): void {
         <VTab v-for="t in SETTINGS_TABS" :key="t.id" :value="t.id" @focus="tab = t.id">{{ t.label }}</VTab>
       </VTabs>
       <h2 v-else class="settings-title">{{ onlyTitle }}</h2>
-      <button id="settings-close" class="icon-btn" type="button" title="退出设置（Esc）" aria-label="退出设置" @click="$emit('close')">
+      <VBtn icon variant="text" size="small" id="settings-close" type="button" title="退出设置（Esc）" aria-label="退出设置" @click="$emit('close')">
         ×
-      </button>
+      </VBtn>
     </div>
     <div class="settings-body">
       <div class="settings-box">
@@ -367,24 +372,21 @@ function onKey(e: KeyboardEvent): void {
         <section id="panel-chat" class="panel">
           <section class="settings-card">
             <h3>回复与自动压缩</h3>
-            <label class="field"><span>自动标题最多字数</span><input v-model="chat.title_chars" type="number" min="1" /></label>
-            <label class="field"><span>标题模型</span><select v-model="chat.title_model">
-              <option value="">使用当前模型</option>
-              <option v-for="m in titleModelOptions" :key="m.value" :value="m.value">{{ m.label }}</option>
-            </select></label>
+            <label class="field"><span>自动标题最多字数</span><VTextField density="compact" variant="outlined" hide-details v-model="chat.title_chars" type="number" min="1" /></label>
+            <label class="field"><span>标题模型</span><VSelect v-model="chat.title_model" :items="titleSelectOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
             <p class="hint">全局的起标题模型。默认「使用当前模型」；Agent 里选「跟随全局设置」时读这里。</p>
-            <label class="field"><span>上下文长度（token）</span><input v-model="chat.model_context_tokens" type="number" min="1" /></label>
+            <label class="field"><span>上下文长度（token）</span><VTextField density="compact" variant="outlined" hide-details v-model="chat.model_context_tokens" type="number" min="1" /></label>
             <!-- 为什么右上角那枚环的分母常常比这里小：它是**输入预算** = 上下文 − 给回复留的输出额度。
                  移动端没有 hover，所以这句话必须写在这儿（不能只藏在环的 title 里）。 -->
             <p class="hint">右上角那枚环显示的是<b>还能输入多少</b>：这里填的上下文长度减去给回复预留的空间。填 1000000 时通常显示 995904。</p>
-            <label class="field"><span>首屏加载多少条消息</span><input v-model="chat.history_window" type="number" min="1" placeholder="留空 = 5" /></label>
+            <label class="field"><span>首屏加载多少条消息</span><VTextField density="compact" variant="outlined" hide-details v-model="chat.history_window" type="number" min="1" placeholder="留空 = 5" /></label>
             <p class="hint">包含用户与 AI 消息；「加载更多」每页也按这个数量。默认 5，远程部署时首屏更快。</p>
-            <label class="field"><span>自动压缩块数</span><input v-model="chat.compact_blocks" type="number" min="1" placeholder="留空 = 3" /></label>
-            <label class="field"><span>自动压缩</span><ToggleSwitch v-model="chat.auto_compact" /></label>
+            <label class="field"><span>自动压缩块数</span><VTextField density="compact" variant="outlined" hide-details v-model="chat.compact_blocks" type="number" min="1" placeholder="留空 = 3" /></label>
+            <label class="field"><span>自动压缩</span><VSwitch v-model="chat.auto_compact" color="primary" density="compact" hide-details /></label>
             <p class="hint">占用到 80% 开始压缩，压到 50% 以下停；关着就只手动压。</p>
-            <label class="field"><span>压缩触发点</span><input v-model="chat.compact_trigger_tokens" type="number" min="1" placeholder="留空 = 80%" /></label>
-            <label class="field"><span>回传思考过程</span><ToggleSwitch v-model="chat.replay_reasoning" /></label>
-            <div class="row"><button type="button" class="primary" @click="saveChat">保存</button><span class="status">{{ chatStatus }}</span></div>
+            <label class="field"><span>压缩触发点</span><VTextField density="compact" variant="outlined" hide-details v-model="chat.compact_trigger_tokens" type="number" min="1" placeholder="留空 = 80%" /></label>
+            <label class="field"><span>回传思考过程</span><VSwitch v-model="chat.replay_reasoning" color="primary" density="compact" hide-details /></label>
+            <div class="row"><VBtn color="primary" variant="flat" size="small" type="button" @click="saveChat">保存</VBtn><span class="status">{{ chatStatus }}</span></div>
           </section>
         </section>
         </VTabsWindowItem>
@@ -398,35 +400,26 @@ function onKey(e: KeyboardEvent): void {
                「填错不会报错，只会在发送时回落成『未配置模型』」—— 那是把校验推给用户。
                现在能选出来的都真实存在；当前值即使不在列表里（渠道被删、手改过配置文件、
                或 dummy 这种永远发现不到模型的渠道）也会补一条并标明，**不许**静默丢掉。 -->
-          <label class="field"><span>渠道</span><select :value="defaults.provider" @change="onDefaultProviderChange">
-            <option value="">内置默认（本地示例）</option>
-            <option v-for="c in providerOpts" :key="c.value" :value="c.value">{{ c.label }}</option>
-          </select></label>
-          <label class="field"><span>模型</span><select v-model="defaults.model">
-            <option value="">内置默认（本地示例）</option>
-            <option v-for="c in modelOpts" :key="c.value" :value="c.value">{{ c.label }}</option>
-          </select></label>
-          <label class="field"><span>智能体</span><select v-model="defaults.agent">
-            <option value="">内置默认</option>
-            <option v-for="a in agents" :key="a.id" :value="a.id">{{ a.name }}</option>
-          </select></label>
-          <div class="row"><button type="button" class="primary" @click="saveDefaults">保存默认值</button><span class="status">{{ defStatus }}</span></div>
+          <label class="field"><span>渠道</span><VSelect :model-value="defaults.provider" :items="providerSelectOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details @update:model-value="onDefaultProviderChange" /></label>
+          <label class="field"><span>模型</span><VSelect v-model="defaults.model" :items="modelSelectOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
+          <label class="field"><span>智能体</span><VSelect v-model="defaults.agent" :items="agentSelectOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
+          <div class="row"><VBtn color="primary" variant="flat" size="small" type="button" @click="saveDefaults">保存默认值</VBtn><span class="status">{{ defStatus }}</span></div>
           <p class="hint" v-if="!modelOpts.length">这个渠道还没有拉到任何模型 —— 可以先留空用内置默认，或去「渠道」里点「保存并刷新」。</p>
           <p class="hint">新建会话时使用这三项；留空 = 内置默认（本地示例模型，不联网，开箱就能回话）。</p>
           <h3>已有会话（{{ sessions.length }} 条，点击打开）</h3>
           <div id="session-mgr-list">
-            <table class="plist">
+            <VTable class="plist">
               <thead><tr><th>标题</th><th>消息数</th><th>模型</th><th></th></tr></thead>
               <tbody><tr v-for="s in sessions" :key="s.id" class="clickable" @click="gotoSession(s.id)">
                 <td>{{ s.title || "新会话" }}</td>
                 <td>{{ s.messages }}</td>
                 <td :title="`${s.provider}/${s.model}`">{{ s.model || "—" }}</td>
                 <td class="ops">
-                  <button type="button" class="link-btn" @click.stop="exportSessionRow(s)" title="导出这条对话（含全部消息、摘要，以及使用的渠道、模型和智能体）">导出</button>
-                  <button type="button" class="link-btn danger" @click.stop="askDropSession(s.id, s.title)">删除</button>
+                  <VBtn variant="text" size="small" type="button" @click.stop="exportSessionRow(s)" title="导出这条对话（含全部消息、摘要，以及使用的渠道、模型和智能体）">导出</VBtn>
+                  <VBtn color="error" variant="text" size="small" type="button" @click.stop="askDropSession(s.id, s.title)">删除</VBtn>
                 </td>
               </tr></tbody>
-            </table>
+            </VTable>
           </div>
           <div class="row" v-if="sessionMgrStatus"><span class="status">{{ sessionMgrStatus }}</span></div>
           <!-- 导入区（2026-10-17 用户点名「混在一起、都乱了」）：两种格式各一张卡 ——
@@ -438,17 +431,17 @@ function onKey(e: KeyboardEvent): void {
               <div class="io-head"><b>SillyTavern 聊天记录</b><i class="io-tag">.jsonl</i></div>
               <p class="hint">SillyTavern 导出的聊天记录（一行一条）。只读取说话人、正文、思考过程和时间，其余内容会丢掉。</p>
               <div class="row">
-                <button type="button" class="primary" @click="stInput?.click()">选择 .jsonl 文件…</button>
+                <VBtn color="primary" variant="flat" size="small" type="button" @click="stInput?.click()">选择 .jsonl 文件…</VBtn>
                 <input ref="stInput" type="file" accept=".jsonl,.json,.txt" hidden @change="importSTFile" />
                 <span class="status">{{ importStatus }}</span>
               </div>
-              <label class="field"><span>标题</span><input v-model="importTitle" placeholder="留空 = 用第一句话自动起名" /></label>
+              <label class="field"><span>标题</span><VTextField density="compact" variant="outlined" hide-details v-model="importTitle" placeholder="留空 = 用第一句话自动起名" /></label>
             </div>
             <div class="io-card">
               <div class="io-head"><b>MicroChat 对话记录</b><i class="io-tag">.json</i></div>
               <p class="hint">本应用导出的对话记录：标题、每条消息的说话人和正文（消息里的状态块会保留，导回去后状态照常重算），以及这条会话当时使用的渠道、模型和智能体（本机没有那个智能体会提示，人设回落到内置默认）。</p>
               <div class="row">
-                <button type="button" class="primary" @click="jsonInput?.click()">选择 .json 文件…</button>
+                <VBtn color="primary" variant="flat" size="small" type="button" @click="jsonInput?.click()">选择 .json 文件…</VBtn>
                 <input ref="jsonInput" type="file" accept=".json" hidden @change="importJSONFile" />
                 <span class="status">{{ jsonStatus }}</span>
               </div>
@@ -463,26 +456,22 @@ function onKey(e: KeyboardEvent): void {
             <div class="panel-head">
               <h3>已有智能体（点击编辑）</h3>
               <span class="head-btns">
-                <button type="button" @click="cartridgeInput?.click()" title="导入智能体文件（JSON；提示词片段会一起带进来）">导入智能体…</button>
+                <VBtn variant="text" size="small" type="button" @click="cartridgeInput?.click()" title="导入智能体文件（JSON；提示词片段会一起带进来）">导入智能体…</VBtn>
                 <input ref="cartridgeInput" type="file" accept=".json" hidden @change="importCartridge" />
-                <button type="button" class="primary" @click="editAgent = 'new'">新建</button>
-                <select v-model="presetPick" @change="presetNew" title="从模板创建">
-                  <option value="">从模板创建…</option>
-                  <option value="assistant">通用助手</option>
-                  <option value="rp">角色扮演助手</option>
-                </select>
+                <VBtn color="primary" variant="flat" size="small" type="button" @click="editAgent = 'new'">新建</VBtn>
+                <VSelect v-model="presetPick" :items="presetOptions" item-title="label" item-value="value" title="从模板创建" density="compact" variant="outlined" hide-details @update:model-value="presetNew" />
               </span>
             </div>
             <div class="row"><span class="status">{{ cartridgeStatus }}</span></div>
             <div id="agent-list">
-              <table class="plist">
+              <VTable class="plist">
                 <thead><tr><th>名称</th><th>标识</th><th>默认使用</th></tr></thead>
                 <tbody><tr v-for="a in agents" :key="a.id" class="clickable" @click="editAgent = a">
                   <td>{{ a.name }}</td>
                   <td>{{ a.id }}</td>
                   <td>{{ a.id === curDefault ? "✓" : "" }}</td>
                 </tr></tbody>
-              </table>
+              </VTable>
             </div>
           </template>
           <AgentEditor
@@ -508,17 +497,17 @@ function onKey(e: KeyboardEvent): void {
           <template v-if="!editSeg">
             <div class="panel-head">
               <h3>提示词片段（可复用的文本，在智能体里按顺序引用）</h3>
-              <span class="head-btns"><button type="button" class="primary" @click="editSeg = 'new'">新建</button></span>
+              <span class="head-btns"><VBtn color="primary" variant="flat" size="small" type="button" @click="editSeg = 'new'">新建</VBtn></span>
             </div>
             <div id="prompt-list" v-if="segmentsLib.length">
-              <table class="plist">
+              <VTable class="plist">
                 <thead><tr><th>名称</th><th>内容预览</th><th>谁在用</th></tr></thead>
                 <tbody><tr v-for="s in segmentsLib" :key="s.id" class="clickable" @click="editSeg = s">
                   <td>{{ s.id }}<i v-if="s.builtin" class="builtin-tag">内置</i><i v-if="s.imported" class="builtin-tag imported">导入</i></td>
                   <td>{{ s.text.slice(0, 40) }}</td>
                   <td>{{ segRefs(s.id).join("、") || "—" }}</td>
                 </tr></tbody>
-              </table>
+              </VTable>
             </div>
             <div v-else class="status">（还没有片段 —— 点「新建」创建一个，例如教模型写状态块、数学公式或联网规则）</div>
           </template>
@@ -538,19 +527,19 @@ function onKey(e: KeyboardEvent): void {
             <h3>渠道</h3>
             <p class="hint">一条渠道 = 用哪个服务商、哪个密钥、哪些模型。点一行编辑；模型数是上次刷新到的数量。</p>
             <div id="provider-list">
-              <table class="plist">
+              <VTable class="plist">
                 <thead><tr><th>渠道</th><th>服务商</th><th>模型</th><th>密钥</th><th></th></tr></thead>
                 <tbody><tr v-for="p in providers" :key="p.id" class="clickable" @click="editProvider = p">
                   <td :title="p.name || p.id">{{ p.id }}</td>
                   <td :title="p.vendor">{{ p.vendor_name || p.vendor || "?" }}</td>
                   <td>{{ p.models?.length ?? 0 }} 个<i v-if="p.model_filter" class="io-tag" :title="`只导入匹配：${p.model_filter}`">筛选</i></td>
                   <td>{{ p.has_key ? "已配置" : "未配置" }}</td>
-                  <td class="ops"><button type="button" class="link-btn danger" @click.stop="askDeleteProvider(p.id)">删除</button></td>
+                  <td class="ops"><VBtn color="error" variant="text" size="small" type="button" @click.stop="askDeleteProvider(p.id)">删除</VBtn></td>
                 </tr></tbody>
-              </table>
+              </VTable>
             </div>
             <div class="row">
-              <button type="button" class="primary" @click="editProvider = 'new'">新建</button>
+              <VBtn color="primary" variant="flat" size="small" type="button" @click="editProvider = 'new'">新建</VBtn>
               <span class="status">{{ routesStatus }}</span>
             </div>
           </template>

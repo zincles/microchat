@@ -994,12 +994,7 @@ button.primary:hover { background: color-mix(in srgb, var(--md-on-primary) 8%, v
 button.danger { background: none; color: var(--md-error); border-radius: var(--md-shape-full); }
 button.danger:hover { background: color-mix(in srgb, var(--md-error) 8%, transparent); text-decoration: none; }
 /* 开关滑块（TG 风）：轨道 + 圆钮，150ms 位移 + 底色过渡；开态 TG 蓝。 */
-button.toggle { width: 3.25em; height: 2em; padding: 0; box-sizing: border-box; border: 2px solid var(--md-outline); border-radius: 999px; background: var(--md-surface-container-highest); position: relative; flex: none; cursor: pointer; transition: background-color var(--md-dur-200) var(--md-ease-standard), border-color var(--md-dur-200) var(--md-ease-standard); }
-button.toggle:hover { border-color: var(--md-on-surface); background: var(--md-surface-container-high); }
-button.toggle .knob { position: absolute; top: 50%; left: 0.35em; width: 1.1em; height: 1.1em; margin-top: -0.55em; border-radius: 50%; background: var(--md-outline); transition: left var(--md-dur-200) var(--md-ease-emphasized), width var(--md-dur-200) var(--md-ease-emphasized), height var(--md-dur-200) var(--md-ease-emphasized), margin-top var(--md-dur-200) var(--md-ease-emphasized), background-color var(--md-dur-200) var(--md-ease-standard); box-shadow: none; }
-button.toggle.on { background: var(--md-primary); border-color: var(--md-primary); }
-button.toggle.on .knob { left: calc(100% - 1.55em); width: 1.5em; height: 1.5em; margin-top: -0.75em; background: var(--md-on-primary); }
-@media (prefers-reduced-motion: reduce) { button.toggle .knob { transition: none; } }
+
 .empty { color: var(--md-on-surface-variant); padding: 0.9em 0.6em; font-size: var(--md-type-body-medium); line-height: 1.6; }
 /* 大段输入框独占一行：label 在上、框在下（跟右边挤一格没法看）。 */
 .field-block { display: block; margin: 0; padding: 0.45em 0; color: var(--tg-text); border-bottom: 1px solid var(--line); }

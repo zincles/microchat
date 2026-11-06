@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 提示词段编辑器（设置 →「提示词」tab 内的二级页，列表 ⇄ 详情就地切换）：
 // id（改名 = 所有 agent 的引用一起搬）/ 正文 / 被谁引用 / 删除（有引用 ⇒ 后端拒，先摘引用）。
+import { VBtn, VTextField, VTextarea } from "vuetify/components";
 import { ref, onMounted, onUnmounted } from "vue";
 import { sharedApi } from "../utils/prefs.ts";
 import type { Agent, Segment, UpdateSegmentRequest } from "../api/types.ts";
@@ -85,20 +86,20 @@ function onKey(e: KeyboardEvent): void { if (e.key === "Escape") emit("close"); 
 <template>
   <div class="detail-pane">
     <div class="panel-head">
-      <button class="icon-btn" type="button" title="返回列表（Esc）" @click="emit('close')">←</button>
+      <VBtn icon variant="text" size="small" type="button" title="返回列表（Esc）" @click="emit('close')">←</VBtn>
       <span class="status">{{ isNew ? "新建提示词片段" : isBuiltin ? `内置片段「${props.segment!.id}」（只读）` : `编辑「${props.segment!.id}」${props.segment!.imported ? "（导入）" : ""}` }}</span>
     </div>
-    <label class="field"><span>名称（改名会同步所有引用）</span><input v-model="id" :readonly="isBuiltin" placeholder="例如：状态语法 / 数学公式 / 联网规则" /></label>
-    <label class="field-block"><span>内容（会原样追加到提示词末尾）</span><textarea v-model="text" rows="12" :readonly="isBuiltin" placeholder="这段提示词的内容…"></textarea></label>
+    <label class="field"><span>名称（改名会同步所有引用）</span><VTextField density="compact" variant="outlined" hide-details v-model="id" :readonly="isBuiltin" placeholder="例如：状态语法 / 数学公式 / 联网规则" /></label>
+    <label class="field-block"><span>内容（会原样追加到提示词末尾）</span><VTextarea v-model="text" rows="12" :readonly="isBuiltin" placeholder="这段提示词的内容…" density="compact" variant="outlined" hide-details /></label>
     <div v-if="!isNew" class="status">谁在用：{{ refs().join("、") || "（没人用）" }}</div>
     <div v-if="isBuiltin" class="row">
       <span class="status">内置片段随应用提供：只读、删不掉。想改就复制一份：</span>
-      <input v-model="copyID" placeholder="新片段的名称" />
-      <button type="button" class="primary" @click="copyToCustom">复制一份来改</button>
+      <VTextField density="compact" variant="outlined" hide-details v-model="copyID" placeholder="新片段的名称" />
+      <VBtn color="primary" variant="flat" size="small" type="button" @click="copyToCustom">复制一份来改</VBtn>
     </div>
     <div v-else class="row">
-      <button type="button" class="primary" @click="save">保存</button>
-      <button v-if="!isNew" type="button" class="danger" @click="remove">删除</button>
+      <VBtn color="primary" variant="flat" size="small" type="button" @click="save">保存</VBtn>
+      <VBtn color="error" variant="text" size="small" v-if="!isNew" type="button" @click="remove">删除</VBtn>
     </div>
     <div class="row"><span class="status">{{ status }}</span></div>
   </div>

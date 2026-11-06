@@ -2,6 +2,7 @@
 // Provider 编辑器（设置视图 Provider tab 内的二级页，列表 ⇄ 详情就地切换）：新建 / 改 vendor/protocol/端点/key。
 // isNew（boolean）：无 provider 快照=新建（空表单）；有=编辑（带入 provider，只发改过的格；key 另填=换，不填=不动）。
 // 内置刷新模型列表 + 刷路由（编辑时直接点，不用退回一级）。
+import { VBtn, VTextField, VSelect, VTable } from "vuetify/components";
 import { ref, computed, onMounted, onUnmounted } from "vue";
 import { sharedApi } from "../utils/prefs.ts";
 import { formatTokens, providerIdForNextVendor } from "../utils/format.ts";
@@ -55,6 +56,10 @@ const status = ref("");
 // 分组是后端给的 `primary` 标记，不是前端另拍一套。
 const primaryPresets = computed(() => presets.value.filter((p) => p.primary));
 const otherPresets = computed(() => presets.value.filter((p) => !p.primary));
+const vendorOptions = computed(() => [...primaryPresets.value, ...otherPresets.value].map((p) => ({
+  label: p.name + (p.vendor ? `（${p.vendor}）` : ""),
+  value: p.vendor,
+})));
 
 // 当前 vendor 的预设（vendor 一改，可选协议就跟着换）。
 const curPreset = computed(() => presets.value.find((p) => p.vendor === vendor.value) ?? null);
@@ -73,6 +78,10 @@ const protocolChoices = computed<ProtocolOption[]>(() => {
 });
 
 // protocolHint：选中那一条的一句人话 —— 下拉关起来之后，人只剩 id 可看。
+const protocolSelectOptions = computed(() => [
+  { label: "用默认（对话补全）", value: "" },
+  ...protocolChoices.value.map((option) => ({ label: option.label, value: option.protocol })),
+]);
 const protocolHint = computed(() =>
   protocolChoices.value.find((option) => option.protocol === protocol.value)?.hint ??
   "留空 = 使用默认接口（对话补全）",
@@ -113,8 +122,8 @@ function pickVendor(next: string): void {
   pid.value = providerIdForNextVendor(pid.value, autoId.value, next);
   autoId.value = pid.value;
 }
-function onVendorChange(event: Event): void {
-  pickVendor((event.target as HTMLSelectElement).value);
+function onVendorChange(value: unknown): void {
+  pickVendor(String(value ?? ""));
 }
 // 手打了 id 就不再当它是自动值（之后改 vendor 不该覆盖）。
 function touchId(): void {
@@ -264,7 +273,7 @@ function onKey(e: KeyboardEvent): void {
   <!-- 二级页（2026-10-10 起不再是弹窗）：嵌在设置视图的 Provider tab 里，列表 ⇄ 详情就地切换。 -->
   <div class="detail-pane">
     <div class="panel-head">
-      <button class="icon-btn" type="button" title="返回列表（Esc）" @click="emit('close')">←</button>
+      <VBtn icon variant="text" size="small" type="button" title="返回列表（Esc）" @click="emit('close')">←</VBtn>
       <span class="status">{{ isNew ? "新建渠道" : `渠道「${pid}」（${modelCount} 个模型）` }}</span>
     </div>
     <h3>基本</h3>
@@ -272,43 +281,31 @@ function onKey(e: KeyboardEvent): void {
          改 vendor 时它还会跟着变，先填等于白填。 -->
     <!-- vendor / protocol 一律**中文名在前、内部 id 附后**（2026-10-28 用户：「应该用中文化的名字吧」）。
          id 不藏起来：手改 config/providers.json 的人得能对上号，出错信息里也打的是 id。 -->
-    <label class="field"><span>服务商</span><select :value="vendor" @change="onVendorChange">
-      <optgroup label="常见">
-        <option v-for="p in primaryPresets" :key="p.vendor" :value="p.vendor" :title="p.vendor">{{ p.name }}</option>
-      </optgroup>
-      <optgroup v-if="otherPresets.length" label="其它预设">
-        <option v-for="p in otherPresets" :key="p.vendor" :value="p.vendor" :title="p.vendor">{{ p.name }}</option>
-      </optgroup>
-    </select></label>
+    <label class="field"><span>服务商</span><VSelect :model-value="vendor" :items="vendorOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details @update:model-value="onVendorChange" /></label>
     <p v-if="vendorHint" class="hint">{{ vendorHint }}</p>
-    <label class="field"><span>渠道标识</span><input v-model="pid" placeholder="新建时自动生成" @input="touchId" /></label>
+    <label class="field"><span>渠道标识</span><VTextField density="compact" variant="outlined" hide-details v-model="pid" placeholder="新建时自动生成" @update:model-value="touchId" /></label>
     <p v-if="isNew" class="hint">这个标识是渠道在本机的名字，会出现在模型列表和配置文件里。换服务商时会自动跟着变；你手改过之后就不再自动改。</p>
     <p v-else class="hint">改名会一起改掉已绑定这条渠道的会话与模型清单；库里已有同名数据时会被拒绝（不合并两个渠道）。</p>
-    <label class="field"><span>接口类型</span><select v-model="protocol">
-      <option value="">用默认（对话补全）</option>
-      <option v-for="option in protocolChoices" :key="option.protocol" :value="option.protocol" :title="option.protocol">
-        {{ option.label }}
-      </option>
-    </select></label>
+    <label class="field"><span>接口类型</span><VSelect v-model="protocol" :items="protocolSelectOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
     <p class="hint">{{ protocolHint }}</p>
-    <label class="field"><span>接口地址</span><input v-model="baseUrl" :placeholder="effectiveBase" /></label>
+    <label class="field"><span>接口地址</span><VTextField density="compact" variant="outlined" hide-details v-model="baseUrl" :placeholder="effectiveBase" /></label>
     <p class="hint">实际请求地址：<code>{{ effectiveBase }}</code></p>
     <h3>密钥</h3>
-    <label class="field"><span>{{ hasKey ? "API Key（留空=不改）" : "API Key（可空）" }}</span><input v-model="key" placeholder="API Key" type="password" /></label>
+    <label class="field"><span>{{ hasKey ? "API Key（留空=不改）" : "API Key（可空）" }}</span><VTextField density="compact" variant="outlined" hide-details v-model="key" placeholder="API Key" type="password" /></label>
     <h3>模型筛选（可选）</h3>
     <label class="field"><span>只导入匹配的模型</span>
-      <input v-model="filter" placeholder="留空 = 全部（例如：deepseek,mimo）" />
+      <VTextField density="compact" variant="outlined" hide-details v-model="filter" placeholder="留空 = 全部（例如：deepseek,mimo）" />
     </label>
     <p class="hint">
       用半角逗号分隔几个关键词；模型名包含<b>任意一个</b>就会导入，不区分大小写。
       不支持 <code>*</code> 通配符；留空 = 全部导入。
     </p>
-    <label class="field"><span>最大并发（0 = 不限）</span><input v-model="maxConcurrency" type="number" min="0" /></label>
+    <label class="field"><span>最大并发（0 = 不限）</span><VTextField density="compact" variant="outlined" hide-details v-model="maxConcurrency" type="number" min="0" /></label>
     <p class="hint">同一渠道同时最多几个请求；高级压缩的作业并发会与它取较小值。</p>
     <div class="row">
-      <button type="button" class="primary" @click="save">保存并刷新</button>
-      <button type="button" @click="testConnection">测试连通性</button>
-      <button v-if="!isNew && (hasKey || key)" type="button" class="link-btn danger" @click="clearKey">清密钥</button>
+      <VBtn color="primary" variant="flat" size="small" type="button" @click="save">保存并刷新</VBtn>
+      <VBtn variant="text" size="small" type="button" @click="testConnection">测试连通性</VBtn>
+      <VBtn color="error" variant="text" size="small" v-if="!isNew && (hasKey || key)" type="button" @click="clearKey">清密钥</VBtn>
       <span class="status">{{ status }}</span>
     </div>
     <!-- 模型列表（2026-11-02 用户定）：渠道详情里要看得见「这个渠道导入了哪些模型」。
@@ -319,7 +316,7 @@ function onKey(e: KeyboardEvent): void {
       {{ isNew ? "新建渠道保存并刷新后，导入的模型会出现在这里。" : "还没有导入模型 —— 点「保存并刷新」试试。" }}
     </div>
     <div v-else class="provider-models">
-      <table class="plist">
+      <VTable class="plist">
         <thead><tr><th>模型</th><th>上下文</th></tr></thead>
         <tbody><tr v-for="m in models" :key="m.upstream_id">
           <td :title="m.display_name || m.name || m.upstream_id">
@@ -328,7 +325,7 @@ function onKey(e: KeyboardEvent): void {
           </td>
           <td>{{ modelContext(m) }}</td>
         </tr></tbody>
-      </table>
+      </VTable>
     </div>
   </div>
 </template>

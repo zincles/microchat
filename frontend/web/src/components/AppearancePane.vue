@@ -16,8 +16,8 @@
 //
 // ⚠ 全部**即时生效**，没有"保存"按钮：改外观就该当场看见。`emit("prefs-saved")` 保留 ——
 //   聊天壳上有活开关（命令菜单那颗 ☰）要跟着变。
+import { VSwitch, VBtn, VTextField, VSelect, VSlider } from "vuetify/components";
 import { ref, computed, onMounted } from "vue";
-import ToggleSwitch from "./ToggleSwitch.vue";
 import {
   themePref, saveTheme, sendMode, saveSendMode,
   previewOn, savePreview,
@@ -54,6 +54,17 @@ const chromeHide = ref(true);
 const bgUrl = ref("");
 const bgStatus = ref("");
 const bgPreview = ref("");
+const themeOptions = [
+  { label: "亮色", value: "light" },
+  { label: "暗色（默认）", value: "dark" },
+  { label: "Breeze", value: "breeze" },
+];
+const sendOptions = [
+  { label: "按回车发送（Shift+回车换行）", value: "enter" },
+  { label: "按 Shift+回车发送", value: "shift-enter" },
+  { label: "只用发送按钮（回车换行）", value: "button" },
+];
+const bgFile = ref<HTMLInputElement | null>(null);
 
 // —— markdown 开关 ——
 const mdEnabled = ref(true);
@@ -74,10 +85,18 @@ const mdGroups = computed<Array<{ kind: string; title: string; items: MarkdownTy
   return groups.filter((g) => g.items.length);
 });
 
-function onScaleInput(event: Event): void {
-  textScale.value = Number((event.target as HTMLInputElement).value);
+function onScaleInput(value: number | string): void {
+  textScale.value = Number(value);
   saveTextScale(textScale.value);
   emit("prefs-saved");
+}
+function onTheme(value: unknown): void {
+  theme.value = String(value ?? "");
+  persist();
+}
+function onSend(value: unknown): void {
+  send.value = String(value ?? "");
+  persist();
 }
 function onScaleCommit(): void {
   // 松手就落盘，不等 250ms 防抖（用户可能随后马上刷新）。
@@ -127,7 +146,7 @@ function persist(): void {
 
 // 开关不能写成 `v-model + @update:model-value="persist"`：两个监听同时挂在 update 事件上时，
 // 显式那个**可能先跑** ⇒ `persist()` 读到的是旧值（实测：界面翻成 on，服务端还是 off）。
-// 所以一律"先赋值，再存"——参数就是 ToggleSwitch 给的新值。
+// 所以一律"先赋值，再存"——参数就是 VSwitch 给的新值。
 function saveFonts(): void {
   // 规范化后的值写回输入框：`A; B` 这种破坏声明的输入会被清成空（回落系统字族）。
   fontBody.value = saveFontBody(fontBody.value);
@@ -219,44 +238,41 @@ async function clearBg(): Promise<void> {
       <h3>外观</h3>
       <!-- 只有三套（2026-10-28 用户定）。id 必须与 prefs.ts 的 THEME_IDS 逐个对得上，
            contract.test.js 钉着 —— 这里多一个少一个都不会报错，只会让人选到没规则的主题。 -->
-      <label class="field"><span>主题</span><select v-model="theme" @change="persist">
-        <option value="light">亮色</option>
-        <option value="dark">暗色（默认）</option>
-        <option value="breeze">Breeze</option>
-      </select></label>
+      <label class="field"><span>主题</span><VSelect :model-value="theme" :items="themeOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details @update:model-value="onTheme" /></label>
       <!-- 界面缩放（2026-10-28，照 OpenWebUI 的 UI Scale）：**拖动即生效**，不用点保存。
            `.field` 是两列网格（label | 控件）：滑杆与百分比必须包成**一个**子元素，
            否则百分比会被挤到第二行第一列去。 -->
       <label class="field"><span>界面缩放</span>
         <span class="scale-wrap">
-          <input
-            type="range"
+          <VSlider
+            :model-value="textScale"
             :min="scaleBounds.min"
             :max="scaleBounds.max"
             :step="scaleBounds.step"
-            :value="textScale"
-            @input="onScaleInput"
-            @change="onScaleCommit"
+            color="primary"
+            density="compact"
+            hide-details
             aria-label="界面缩放"
+            @update:model-value="onScaleInput"
+            @end="onScaleCommit"
           />
           <b class="scale-value">{{ scalePercent }}%</b>
         </span>
       </label>
       <div class="row">
-        <button type="button" class="link-btn" @click="resetScale">复位 100%</button>
+        <VBtn variant="text" size="small" type="button" @click="resetScale">复位 100%</VBtn>
         <span class="status">拖动立即生效；字号和留白会一起等比缩放</span>
       </div>
-      <label class="field"><span>标准字体</span><input v-model="fontBody" @change="saveFonts" placeholder="留空 = 系统默认（CSS font-family）" /></label>
-      <label class="field"><span>等宽字体（代码块）</span><input v-model="fontMono" @change="saveFonts" placeholder="留空 = 系统等宽" /></label>
+      <label class="field"><span>标准字体</span><VTextField density="compact" variant="outlined" hide-details v-model="fontBody" @change="saveFonts" placeholder="留空 = 系统默认（CSS font-family）" /></label>
+      <label class="field"><span>等宽字体（代码块）</span><VTextField density="compact" variant="outlined" hide-details v-model="fontMono" @change="saveFonts" placeholder="留空 = 系统等宽" /></label>
       <p class="hint">可按 CSS 写法给多个后备字体，例如 <code>"Noto Sans SC", sans-serif</code>。标准字体用于全站，等宽字体只用于代码块；留空恢复内置系统字族。</p>
-      <div class="row"><button type="button" class="link-btn" @click="resetFonts">恢复默认字体</button></div>
-      <label class="field"><span>背景图地址</span><input v-model="bgUrl" placeholder="https://…（跨域也可）" /></label>
+      <div class="row"><VBtn variant="text" size="small" type="button" @click="resetFonts">恢复默认字体</VBtn></div>
+      <label class="field"><span>背景图地址</span><VTextField density="compact" variant="outlined" hide-details v-model="bgUrl" placeholder="https://…（跨域也可）" /></label>
       <div class="row">
-        <button type="button" class="primary" @click="applyBgUrl">应用地址</button>
-        <label class="link-btn" style="cursor: pointer">上传图片…
-          <input type="file" accept="image/*" hidden @change="pickBgFile" />
-        </label>
-        <button type="button" class="link-btn danger" @click="clearBg">清除</button>
+        <VBtn color="primary" variant="flat" size="small" type="button" @click="applyBgUrl">应用地址</VBtn>
+        <VBtn variant="text" size="small" type="button" @click="bgFile?.click()">上传图片…</VBtn>
+        <input ref="bgFile" type="file" accept="image/*" hidden @change="pickBgFile" />
+        <VBtn color="error" variant="text" size="small" type="button" @click="clearBg">清除</VBtn>
       </div>
       <div class="row"><span class="status">当前背景：{{ bgStatus }}</span></div>
       <p v-if="bgPreview" class="hint">背景图保存在服务器上 —— 换设备也在。</p>
@@ -264,19 +280,15 @@ async function clearBg(): Promise<void> {
 
     <section class="settings-card">
       <h3>布局</h3>
-      <label class="field"><span>滚动时自动收起顶栏/底栏（仅触屏）</span><ToggleSwitch :model-value="chromeHide" @update:model-value="setChromeHide" /></label>
+      <label class="field"><span>滚动时自动收起顶栏/底栏（仅触屏）</span><VSwitch :model-value="chromeHide" @update:model-value="(v) => setChromeHide(v === true)" color="primary" density="compact" hide-details /></label>
       <p class="hint">向下浏览时顶栏逐步收起，往回看时底栏逐步收起 —— 一次只收一边，反向滚动就放回来；到顶或到底立刻全部放回。只在触屏上生效。</p>
     </section>
 
     <section class="settings-card">
       <h3>输入</h3>
-      <label class="field"><span>发送方式</span><select v-model="send" @change="persist">
-        <option value="enter">按回车发送（Shift+回车换行）</option>
-        <option value="shift-enter">按 Shift+回车发送</option>
-        <option value="button">只用发送按钮（回车换行）</option>
-      </select></label>
-      <label class="field"><span>输入时预览将要发送的内容</span><ToggleSwitch :model-value="preview" @update:model-value="setPreview" /></label>
-      <label class="field"><span>命令菜单</span><ToggleSwitch :model-value="cmdMenu" @update:model-value="setCmdMenu" /></label>
+      <label class="field"><span>发送方式</span><VSelect :model-value="send" :items="sendOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details @update:model-value="onSend" /></label>
+      <label class="field"><span>输入时预览将要发送的内容</span><VSwitch :model-value="preview" @update:model-value="(v) => setPreview(v === true)" color="primary" density="compact" hide-details /></label>
+      <label class="field"><span>命令菜单</span><VSwitch :model-value="cmdMenu" @update:model-value="(v) => setCmdMenu(v === true)" color="primary" density="compact" hide-details /></label>
       <p class="hint">发送方式决定回车怎么用；预览会在输入时先算一遍会发给模型的内容（可在上下文工作区查看）；打开命令菜单后，输入框左侧会出现 ☰，输入 <code>/</code> 会弹出命令列表。</p>
     </section>
 
@@ -285,7 +297,7 @@ async function clearBg(): Promise<void> {
            用户口径：「不然瞎解析不好」⇒ 每一类都能单独关掉，关掉的含义是**原样显示**
            （把 `**粗**` 照字面画出来，而不是悄悄变成"粗"、更不是吃掉标记）。 -->
       <h3>文本格式（Markdown）</h3>
-      <label class="field"><span>解析 Markdown 格式</span><ToggleSwitch :model-value="mdEnabled" @update:model-value="setMdEnabled" /></label>
+      <label class="field"><span>解析 Markdown 格式</span><VSwitch :model-value="mdEnabled" @update:model-value="(v) => setMdEnabled(v === true)" color="primary" density="compact" hide-details /></label>
       <p class="hint">
         关闭后，整条消息按<b>原文显示</b>（标记不转换，但换行保留）。
         开启时，下面每一类格式还能单独关闭 —— 关闭的那一类同样按原文显示。
@@ -296,8 +308,8 @@ async function clearBg(): Promise<void> {
         <div class="md-group-head">
           <span>{{ group.title }}</span>
           <span class="md-group-ops">
-            <button type="button" class="link-btn" :disabled="!mdEnabled" @click="disableAll">全部关闭</button>
-            <button type="button" class="link-btn" :disabled="!mdEnabled" @click="enableAll">全部开启</button>
+            <VBtn variant="text" size="small" type="button" :disabled="!mdEnabled" @click="disableAll">全部关闭</VBtn>
+            <VBtn variant="text" size="small" type="button" :disabled="!mdEnabled" @click="enableAll">全部开启</VBtn>
           </span>
         </div>
         <label v-for="item in group.items" :key="item.id" class="field md-row">
@@ -305,7 +317,7 @@ async function clearBg(): Promise<void> {
             {{ item.name }}
             <code class="md-sample">{{ item.sample }}</code>
           </span>
-          <ToggleSwitch :model-value="typeOn(item.id)" :disabled="!mdEnabled" @update:model-value="(on) => toggleType(item.id, on)" />
+          <VSwitch :model-value="typeOn(item.id)" :disabled="!mdEnabled" @update:model-value="(on) => toggleType(item.id, on === true)" color="primary" density="compact" hide-details />
         </label>
       </div>
       <p v-if="!mdEnabled" class="hint">总开关关闭时，下面的单项开关不生效（设置会保留，重新打开就恢复）。</p>
