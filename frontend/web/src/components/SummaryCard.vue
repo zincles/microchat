@@ -8,10 +8,11 @@ import { ICONS } from "./icons.ts";
 
 interface SummaryLike {
   id: string;
-  text: string;
+  text?: string;
   dirty?: boolean;
   tokens?: number;
   undoable?: boolean;
+  [key: string]: unknown;
 }
 interface SummaryRowMsg {
   id?: string;
@@ -36,9 +37,9 @@ const props = withDefaults(defineProps<{
   summary: SummaryLike;
   fromIdx?: number | string | null;
   toIdx?: number | string | null;
-  rows?: SummaryRow[] | null;
+  rows?: any[] | null;
   loading?: boolean;
-  reroll?: SummaryReroll | null;
+  reroll?: any;
 }>(), {
   fromIdx: null,
   toIdx: null,

@@ -6,7 +6,7 @@
     "dev": "vite --port 5173 --strictPort",
     "build": "vite build",
     "preview": "vite preview",
-    "typecheck": "vue-tsc --noEmit"
+    "typecheck": "vue-tsc --noEmit && vue-tsc -p tsconfig.app.json --noEmit"
   },
   "type": "module",
   "private": "true",

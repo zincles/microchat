@@ -2641,7 +2641,7 @@ test("设置 → 外观改完，聊天壳上的活开关跟手（@prefs-saved �
 // 现在：相位每拍照推（纯本地），列表与占用等翻 idle 再刷。
 test("生成轮询不刷全量：withContext:false + 列表只在收尾刷", () => {
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
-  assert.match(app, /function refreshStatusline\(phase, elapsedMs, \{ withContext = true \} = \{\}\)/,
+  assert.match(app, /function refreshStatusline\(phase, elapsedMs = null, \{ withContext = true \} = \{\}\)/,
     "refreshStatusline 没有 withContext 开关");
 
   const start = app.indexOf("function applyTurnStream");
@@ -3498,7 +3498,7 @@ test("高延迟：发送先上屏、失败撤回；切会话不先拉列表；�
   // ④ 窗口第一拍就带"最后 N 条"，摘要没横跨时第二拍为空
   const load = app.slice(app.indexOf("async function fetchWindowNow"), app.indexOf("async function loadWindow"));
   assert.match(load, /api\.listMessagesLast\(id, limit\)/, "第一拍没带尾部种子");
-  assert.match(load, /seededMissingRuns\(runs, recent\)/, "没按种子算缺口（会把已取到的再要一遍）");
+  assert.match(load, /seededMissingRuns\(runs, recent(?: as any)?\)/, "没按种子算缺口（会把已取到的再要一遍）");
 
   // ⑤ 模型清单缓存先画后对（切会话不再闪「加载模型…」）
   assert.match(modelsSrc, /if \(modelsCache\) paintModelOptions\(modelsCache\)/, "模型清单没有先画缓存");

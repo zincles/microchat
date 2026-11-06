@@ -27,8 +27,11 @@ export interface ChatMessage {
   messageId?: string;
   idx?: number | null;
   role?: string;
+  who?: string;
   content?: string;
   reasoning?: string;
+  reasoningMs?: number | null;
+  usage?: Record<string, unknown> | null;
   stream?: boolean;
   noIdx?: boolean;
   [key: string]: unknown;

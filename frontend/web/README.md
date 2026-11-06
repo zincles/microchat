@@ -11,7 +11,7 @@
 npm ci            # 从锁文件重装（node_modules 永不入库）
 npm run dev       # vite :5173（/api 由 vite 代理到后端 —— 地址读后端自己的配置，见下）
 npm test          # tsx + node 原生 test runner：纯函数与请求形状的契约测试
-npm run typecheck # vue-tsc --noEmit（.ts 与 .vue 都查；JS 组件受 checkJs=false 保护）
+npm run typecheck # 严格档 + App 宽松档双检查（src 下已无 .js）
 npm run build     # 产出 dist/（不入库，部署时现打）
 ```
 

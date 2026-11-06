@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // App.vue —— 三栏骨架 + 全部接线（原 main.js + 九个桥，合一）。
 // 组件直接挂模板，ref 直调实例方法，不再经 *-vue.js 桥 / mount.js。
 import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from "vue";
@@ -65,7 +65,7 @@ syncPrefs()
 // —— 新版本提示（PWA 更新条，2026-10-20 用户定）——
 // 从 `autoUpdate` 改成 `prompt`：新版本**等用户点**才切，而不是悄悄自己 reload。
 // 勾子必须在**开机**就挂（SW 装完是异步回调 —— 挂晚了那一次提示就丢了）。
-const updateRef = ref(null);
+const updateRef = ref<any>(null);
 const updateReady = ref(false);
 onUpdateReady(() => { updateReady.value = true; });
 registerPWA();
@@ -73,16 +73,16 @@ registerPWA();
 function applyUpdate() { startUpdate(); }
 
 // —— 组件 refs（直调实例方法，替代桥） ——
-const toastRef = ref(null);
-const topbarRef = ref(null);
-const sessionbarRef = ref(null);
-const payloadbarRef = ref(null);
-const composerRef = ref(null);
-const overlaysRef = ref(null);
+const toastRef = ref<any>(null);
+const topbarRef = ref<any>(null);
+const sessionbarRef = ref<any>(null);
+const payloadbarRef = ref<any>(null);
+const composerRef = ref<any>(null);
+const overlaysRef = ref<any>(null);
 // 命令菜单（输入框左侧 ☰ 与 "/" 浮层）：默认关（移动端碍事，2026-10-17 用户定）；
 // 设置 → 外观里改了立刻生效（不刷新）—— 偏好住服务器（`prefs.json`），这里是它的活视图。
 const cmdMenu = ref(commandMenuOn());
-const toast = (t, k) => toastRef.value?.push(t, k);
+const toast = (t: string, k = "") => toastRef.value?.push(t, k);
 // 任务面板轮询：busyIds 给左栏、setTasks 给顶栏环心；取消按钮回调里对齐重摇两族。
 const {
   busyIds,
@@ -131,7 +131,7 @@ function onPickAction(action, item) {
 }
 
 // —— 会话状态 ——
-let sessionID = null;
+let sessionID: any = null;
 // 会话列表缓存（2026-11-05，高延迟优化）：从前每点一条会话都要先 `GET /sessions`
 // 才轮到消息窗口 —— 远端 1s+ 时那一整个 RTT 什么也没画，而列表本来就在屏幕上。
 // 缓存只当"先用着的快照"：进会话后按需在后台补一次（见 enterSession），不拿它当真相。
@@ -162,7 +162,7 @@ let prefetchActive = 0;
 // 没有这道闸，快速切会话时迟到的 A 续写会覆掉已切到的 B 的抬头与消息列（实测复现过：
 // 顶栏 A、高亮 B、气泡 A —— 界面被撕成三份）。
 let epoch = 0;
-const sessionInfo = reactive({});
+const sessionInfo = reactive<any>({});
 // 草稿态（DeepSeek 网页版行为，2026-10-09 定）：＋/开机/`/new` 只开一张**客户端草稿**，库里没有行；
 // 首条发送才 POST /sessions（带上草稿里选好的 provider/model/agent）。
 // ⚠ HACK（刻意，全项目唯一的口子）：草稿**铸一枚 UUIDv7** 当将来那会话的 id —— 预演
@@ -170,8 +170,8 @@ const sessionInfo = reactive({});
 // ⇒ 预演的那一发给真发的那一发逐字节一致。别扩散（消息/摘要的 id 仍是服务端铸）。
 // 要会话的命令（compact/cut/reroll…）在草稿里明确拒绝（needsSession 标在 commands.js 的表上）。
 let draft = false;
-let draftPrefs = { provider: "", model: "", agent: "" };
-let draftId = null;
+let draftPrefs: any = { provider: "", model: "", agent: "" };
+let draftId: any = null;
 
 const {
   vueAgents,
@@ -195,11 +195,11 @@ const {
   onRefreshStatusline: refreshStatusline,
   onRefreshPreview: refreshPreview,
 });
-const vueMessages = ref([]);
+const vueMessages = ref<any[]>([]);
 // 会话加载中的骨架（2026-11-02）：进会话会先清空消息列，再等 /sessions + 消息窗口；
 // 远端部署时那是两三个 RTT 的空白。给一层静态骨架，至少让人知道"在加载"而不是"坏了"。
 const loadingSession = ref(true);
-const vueSegments = ref([]); // 整条会话的段布局（computeSegments 的产出）：窗口/折叠/编号都认它
+const vueSegments = ref<any[]>([]); // 整条会话的段布局（computeSegments 的产出）：窗口/折叠/编号都认它
 const vueStream = ref({ id: null, text: "", reasoning: "" });
 // 流式显字（2026-11-03）：`vueStream` 是后端的完整目标；`streamDisplay` 是打字机当前露出的前缀。
 // 每帧只改 streamDisplay，轮询与合并仍只认 vueStream（两个状态别互相镜像）。
@@ -209,8 +209,8 @@ const { streamDisplay, setStreamTarget, waitTypewriter, resetTypewriter, flushTy
 // 被摘要盖住的原文**展开才拉**（这里当缓存）。
 const windowLimit = ref(5);
 const windowFrom = ref(1); // 窗口起点（段对齐；1 = 已到最老）
-const summaryMsgs = reactive(new Map()); // 摘要 id → {state:"loading"|"ready", rows}（只有展开过的才有）
-const openSummaries = new Set(); // 哪些卡正展开着（reload 后补拉新鲜的）
+const summaryMsgs = reactive<any>(new Map()); // 摘要 id → {state:"loading"|"ready", rows}（只有展开过的才有）
+const openSummaries = new Set<string>(); // 哪些卡正展开着（reload 后补拉新鲜的）
 // 设置视图的"单独入口"："" = 完整设置（四个 tab）；"session" / "provider" = 只显示那一页，
 // 从左侧栏底部的「会话 / 渠道」进来。两者共用同一个视图与同一份数据加载。
 // **设置 = root 专属**（用户定，2026-10-10）：`is_admin` 才给进设置；其他用户的入口按钮也不给。
@@ -233,7 +233,7 @@ function scrollBottom() {
     if (el) el.scrollTop = el.scrollHeight;
   });
 }
-function addMessage(who, text, cls, think, messageId) {
+function addMessage(who, text, cls, think = undefined, messageId = undefined) {
   const row = {
     id: tmpKey(),
     who,
@@ -319,11 +319,11 @@ async function fetchWindowNow(id, { from, limit }) {
     api.listMessagesLast(id, limit),
   ]);
   const total = recent.length ? recent[recent.length - 1].idx : 0;
-  const segments = computeSegments(total, sums);
+  const segments = computeSegments(total, sums as any);
   const windowFrom = from === null ? windowStart(segments, limit) : alignWindowFrom(segments, from, limit);
   const runs = runsToFetch(segments, windowFrom, Infinity);
   // 只有"窗口比尾部种子更老"才补一发（典型：摘要把窗口起点推到很前面）。
-  const missing = seededMissingRuns(runs, recent);
+  const missing = seededMissingRuns(runs, recent as any);
   const rest = missing.length ? await api.messageRanges(id, batchRanges(missing)) : [];
   return {
     // 种子可能多带了几条（被摘要盖住 / 落在窗口外）—— buildChatRows 本来就只画段里的。
@@ -486,7 +486,7 @@ async function refreshTree() {
   try {
     const [msgs, sums] = await Promise.all([api.listMessages(sessionID), api.listSummaries(sessionID)]);
     if (my !== epoch) return;
-    payloadbarRef.value?.setTree(buildCompactTree(msgs, sums));
+    payloadbarRef.value?.setTree(buildCompactTree(msgs as any, sums as any));
   } catch {
     if (my === epoch) payloadbarRef.value?.setTree(null);
   }
@@ -596,10 +596,10 @@ async function onBubbleDelete(mid, isLast) {
 //
 // 交互（2026-10-10 用户定）：⟳ = 摇新一版并**立刻切到最新那版**（无论当前看着哪一版），
 // 结果就地换正文；模式活着期间气泡下出现 `◀ n/N ▶`：◀▶ 翻版，**最右的 ▶ = 再摇一版**。
-const rerollState = ref({ active: false });
-const summaryReroll = ref({ active: false }); // 摘要重摇（另一族；与消息族共用同一把闸 —— 进错族 409）
-const summaryEditTarget = ref(null); // 编辑中的摘要（SummaryEditor 模态）
-const messageEditTarget = ref(null); // 编辑中的消息（MessageEditor 模态）
+const rerollState = ref<any>({ active: false });
+const summaryReroll = ref<any>({ active: false }); // 摘要重摇（另一族；与消息族共用同一把闸 —— 进错族 409）
+const summaryEditTarget = ref<any>(null); // 编辑中的摘要（SummaryEditor 模态）
+const messageEditTarget = ref<any>(null); // 编辑中的消息（MessageEditor 模态）
 // 候选流预览（就地显示在目标气泡里）：running 期间靠 `/turn/text` 攒；任何一次落地/切版都清掉。
 const rerollPreview = ref({ text: "", reasoning: "" });
 function clearRerollPreview() { rerollPreview.value = { text: "", reasoning: "" }; }
@@ -719,7 +719,7 @@ async function onSummaryEdited() {
   if (treeVisible) refreshTree();
   toast("摘要已改", "ok");
 }
-async function onMessageEdited(result = {}) {
+async function onMessageEdited(result: any = {}) {
   const sid = sessionID;
   const target = messageEditTarget.value;
   messageEditTarget.value = null;
@@ -1052,7 +1052,7 @@ async function startDraft() {
   sessionID = null;
   saveLastSession(""); // 人在草稿 ⇒ 开机也该回草稿（别把人拽回上次那条会话）
   draftId = uuidv7(); // 这张草稿将来那会话的 id（预演与建会话都用它）
-  const d = await api.getDefaults().catch(() => ({}));
+  const d = await api.getDefaults().catch(() => ({} as any));
   draftPrefs = { provider: d.provider ?? "", model: d.model ?? "", agent: d.agent ?? "" };
   // `id: ""` 是必须的：`Object.assign` **不清旧键**，从一条真会话切到草稿时
   // `sessionInfo.id` 会留着上一条的 id —— 于是"这是草稿吗"就答错了（曾经就没人读它，
@@ -1473,7 +1473,7 @@ function afterCopy(fresh) {
 // 生成 / 重摇 / 摘要刷新这些轮询每秒要问好几次，而占用在一轮落地前根本不变 ⇒ 轮询里传 false，
 // 只在翻 idle 那一拍（以及进会话/换模型这些"事情真的变了"的时刻）按默认 true 问一次。
 // 少掉的是请求与装配，不是显示：环在轮询期间保持上一拍的数（那正是此刻真实的占用）。
-function refreshStatusline(phase, elapsedMs, { withContext = true } = {}) {
+function refreshStatusline(phase, elapsedMs = null, { withContext = true } = {}) {
   // 连接 + 助手 + 相位：草稿态也要报（"没连上"跟有没有会话无关）。
   topbarRef.value?.setStatus({ conn: connText, agent: statusAgent.value, phase, elapsedMs });
   if (draft || !sessionID) {
@@ -1486,7 +1486,7 @@ function refreshStatusline(phase, elapsedMs, { withContext = true } = {}) {
     topbarRef.value?.setContext(ctx);
   }).catch((err) => toast(`上下文占用读取失败：${err.message}`, "error"));
 }
-function refreshStateView(id) {
+function refreshStateView(id = null) {
   if (draft || !(id ?? sessionID)) return; // 草稿：没有会话可问状态（右栏保持空话）
   const my = epoch;
   api.sessionState(id ?? sessionID).then((v) => { if (my === epoch) payloadbarRef.value?.setTables(v?.tables); }).catch(() => {});
@@ -1515,7 +1515,7 @@ const COMMAND_RUNNERS = {
   },
   agents: async () => {
     const data = await api.agents();
-    const rows = data.agents ?? data;
+    const rows = Array.isArray(data) ? data : (data.agents ?? []);
     overlaysRef.value?.showPicker("agents", rows.map((r) => ({ label: r.name ?? r.id, value: r })), () => {});
   },
   compact: async (args) => {
@@ -1721,7 +1721,7 @@ function onComposerKeydown(e, value) {
 // sendFromDraft：草稿的第一句 —— 建会话（带草稿里选的 model/agent）→ 受理 → 轮询。
 // 只有"受理"失败才回滚（删掉刚建的空会话、退回草稿）；轮询掉线不回滚（消息已入库）。
 async function sendFromDraft(text) {
-  const body = {};
+  const body: any = {};
   if (draftId) body.id = draftId; // 预演头上那个 id —— 真会话必须落同一个
   if (draftPrefs.provider) body.provider = draftPrefs.provider;
   if (draftPrefs.model) body.model = draftPrefs.model;
@@ -1806,7 +1806,7 @@ function onPrefsSaved() {
   if (!cmdMenu.value) overlaysRef.value?.hidePalette();
 }
 // —— 拖拽调宽 ——
-let uninstallViewportFit = null;
+let uninstallViewportFit: (() => void) | null = null;
 onMounted(() => {
   installSidePanels();
   startTasksPolling();
