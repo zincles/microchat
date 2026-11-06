@@ -81,12 +81,6 @@ defineExpose({ submit, clear, setText, text, setRunning });
 <template>
   <form id="composer" @submit.prevent="running ? stop() : submit()">
     <div class="composer-box">
-      <ThinkingMenu
-        v-if="props.thinkingOptions.length"
-        :model-value="props.thinking"
-        :options="props.thinkingOptions"
-        @update:model-value="$emit('thinking', $event)"
-      />
       <textarea
         id="input"
         ref="area"
@@ -107,6 +101,12 @@ defineExpose({ submit, clear, setText, text, setRunning });
           @click="$emit('menu')"
           v-html="ICONS.menu"
         ></button>
+        <ThinkingMenu
+          v-if="props.thinkingOptions.length"
+          :model-value="props.thinking"
+          :options="props.thinkingOptions"
+          @update:model-value="$emit('thinking', $event)"
+        />
         <button
           type="submit"
           id="send-btn"

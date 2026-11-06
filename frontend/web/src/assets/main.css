@@ -796,10 +796,10 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
   padding: 0.6em 0.6em calc(0.6em + env(safe-area-inset-bottom, 0px)); }
 /* 一整块输入面板（2026-11-04 用户定）：textarea 与按钮同住一张圆角卡里，不再"输入框 + 外面一颗钮"。
  * 按钮竖排在右缘：全屏在上、发送在最下（发送仍是主行动，全屏小一号不抢）。 */
-.composer-box { display: flex; align-items: stretch; gap: 0.35em; box-sizing: border-box; background: var(--md-surface-container-high); -webkit-backdrop-filter: none; backdrop-filter: none; border: none; border-radius: var(--md-shape-xl); padding: 0.5em 0.5em 0.5em 0.55em; box-shadow: var(--md-elev-1); transition: box-shadow var(--md-dur-200) var(--md-ease-standard), background-color var(--md-dur-200) var(--md-ease-standard); }
+.composer-box { display: flex; align-items: stretch; gap: 0.35em; box-sizing: border-box; background: var(--md-surface-container-high); -webkit-backdrop-filter: none; backdrop-filter: none; border: none; border-radius: var(--md-shape-xl); padding: 0.5em 0.5em 0.5em 1.1em; box-shadow: var(--md-elev-1); transition: box-shadow var(--md-dur-200) var(--md-ease-standard), background-color var(--md-dur-200) var(--md-ease-standard); }
 #input { flex: 1; min-width: 0; background: none; color: var(--md-on-surface); border: none; border-radius: 0; padding: 0.45em 0; font: inherit; font-size: var(--md-type-body-large); resize: none; line-height: 1.5; outline: none; caret-color: var(--md-primary); max-height: calc(1.5em * 6 + 0.9em); overflow-y: auto; }
 #input:focus { outline: none; border-color: transparent; }
-.composer-actions { flex: none; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 0.2em; }
+.composer-actions { flex: none; display: flex; flex-direction: row; align-items: flex-end; justify-content: flex-end; gap: 0.25em; }
 /* —— 滚动隐藏上下栏（触屏；2026-10-17 用户定，默认开）——
  * JS（App 的 onMessagesScroll）只写根节点上两个 px 变量，这里只做位移：
  * 往下看顶栏往上让位、往回看底栏往下让位，**进度与位移成正比**（不是到阈值才啪一下）。
@@ -844,10 +844,11 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 #composer .thinking-btn:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 1px; }
 #composer .thinking-btn svg { width: 14px; height: 14px; }
 .thinking-icon { display: flex; align-items: center; }
-.thinking-menu { position: absolute; left: 0; bottom: calc(100% + 0.45em); z-index: 30; min-width: 10em;
+.thinking-menu { position: absolute; right: 0; bottom: calc(100% + 0.45em); z-index: 30; min-width: 10em;
   max-height: 50vh; overflow-y: auto; overscroll-behavior: contain; padding: 0.35em 0;
   background: var(--md-surface-container); color: var(--md-on-surface); border-radius: var(--md-shape-md);
-  box-shadow: var(--md-elev-2); animation: md-menu-in var(--md-dur-150) var(--md-ease-emphasized); }
+  box-shadow: var(--md-elev-2); transform-origin: bottom right;
+  animation: md-menu-in var(--md-dur-150) var(--md-ease-emphasized); }
 .thinking-menu-title { padding: 0.35em 0.9em 0.45em; color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
 #composer .thinking-item { width: 100%; height: auto; min-height: 2.5em; padding: 0.35em 0.9em; border-radius: 0;
   background: none; color: var(--md-on-surface); box-shadow: none; justify-content: space-between;

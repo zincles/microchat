@@ -3857,13 +3857,12 @@ test("思考档位：Session 字段 + 输入左侧紧凑面板", () => {
 
   const composer = readFileSync(join(SRC, "components/Composer.vue"), "utf8");
   const menuAt = composer.indexOf("<ThinkingMenu");
-  const inputAt = composer.indexOf('id="input"');
   const actionsAt = composer.indexOf('class="composer-actions"');
-  assert.ok(menuAt > 0 && menuAt < inputAt, "思考按钮该在输入框左侧");
-  assert.ok(menuAt < actionsAt, "思考按钮不该挤进右侧发送按钮列");
+  const sendAt = composer.indexOf('id="send-btn"');
+  assert.ok(menuAt > actionsAt && menuAt < sendAt, "思考按钮该在操作行里、发送键左边");
 
   const css = readFileSync(join(SRC, "assets/main.css"), "utf8");
-  assert.match(css, /\.thinking-menu \{[^}]*bottom: calc\(100% \+ 0\.45em\)/, "菜单该向上弹（输入行贴底）");
+  assert.match(css, /\.thinking-menu \{[^}]*right: 0[^}]*bottom: calc\(100% \+ 0\.45em\)/, "菜单该向上、向左侧弹（按钮贴右缘）");
   assert.match(css, /#composer \.thinking-btn \{[^}]*width: auto/, "思考按钮该是紧凑药丸，不是 3em 圆钮");
   assert.match(css, /#composer \.thinking-btn \{[^}]*background: none/, "思考按钮不该抢发送键的主色");
 
