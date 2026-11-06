@@ -134,8 +134,10 @@ type Session struct {
 	Provider     string `json:"provider"`      // 软引用
 	Model        string `json:"model"`
 	AgentID      string `json:"agent_id"` // 软引用
-	CreatedAt    int64  `json:"created_at"`
-	UpdatedAt    int64  `json:"updated_at"`
+	// ThinkingLevel：会话级思考档位（空串 = 跟随模型默认）。取值见 providers.ThinkingLevels。
+	ThinkingLevel string `json:"thinking_level"`
+	CreatedAt     int64  `json:"created_at"`
+	UpdatedAt     int64  `json:"updated_at"`
 }
 
 // TurnPhase：一轮生成的状态（Rust 版在 turn.rs 的进程内登记表里）。

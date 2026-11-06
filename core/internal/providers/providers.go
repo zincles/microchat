@@ -194,8 +194,10 @@ type Request struct {
 	CacheRetention CacheRetention
 	MaxTokens      int
 	Temperature    *float64
-	// ReasoningEffort：推理强度（"low"/"medium"/"high"/"max"）—— 各家的取值集合不同，
-	// 所以**原样透传**，不做映射；没给就不发。
+	// ThinkingLevel：**统一七档**（off/minimal/low/medium/high/xhigh/max；空串 = 跟随模型默认）。
+	// 由这里按 vendor/model 映射成各家真正认识的字段（见 applyThinking）；别把厂商字符串带出这一层。
+	ThinkingLevel string
+	// ReasoningEffort：旧透传口（保留给已有调用/测试）；ThinkingLevel 非空时以它为准。
 	ReasoningEffort *string
 	// ReasoningSummary：思考摘要的档位（Pi 的 `reasoningSummary`）—— **原样透传**，没给就不发。
 	// 只进 Response 协议的 `reasoning.summary`；chat 体不发它。
@@ -519,6 +521,195 @@ func headersFor(p Provider, r Request) map[string]string {
 	return headers
 }
 
+// thinkingLevelOrder：统一七档，顺序 = UI 从低到高。
+var thinkingLevelOrder = []string{"off", "minimal", "low", "medium", "high", "xhigh", "max"}
+
+// ThinkingLevels：这个模型**能安全收到**哪些档位（UI 据此裁剪，别把不支持的选项摆出来）。
+// 未知模型回全部七档：自定义渠道可能自己认；已知家族按官方模型表裁。
+func ThinkingLevels(model string) []string {
+	key := normalizeThinkingModel(model)
+	switch {
+	case strings.Contains(key, "deepseek"):
+		return append([]string(nil), thinkingLevelOrder...)
+	case strings.Contains(key, "gemini-2-5-pro"):
+		return []string{"minimal", "low", "medium", "high"}
+	case strings.Contains(key, "gemini-2-5"):
+		return []string{"off", "minimal", "low", "medium", "high"}
+	case strings.Contains(key, "gemini-3-8"):
+		return []string{"low", "medium", "high"}
+	case strings.Contains(key, "gemini-3-1-pro"):
+		return []string{"low", "medium", "high"}
+	case strings.Contains(key, "gemini-3-pro"):
+		return []string{"low", "high"}
+	case strings.Contains(key, "gemini-3-1-flash-lite-image"):
+		return []string{"minimal", "high"}
+	case strings.Contains(key, "gemini-4"):
+		return []string{"low", "medium", "high"}
+	case strings.Contains(key, "gemini-3"):
+		return []string{"minimal", "low", "medium", "high"}
+	case strings.Contains(key, "claude") && (strings.Contains(key, "4-6") || strings.Contains(key, "4-5")):
+		return []string{"low", "medium", "high", "max"}
+	case strings.Contains(key, "claude"):
+		return []string{"low", "medium", "high", "xhigh", "max"}
+	case strings.Contains(key, "glm-5-3"):
+		return []string{"low", "high", "max"}
+	case strings.Contains(key, "glm-5-2"):
+		return append([]string(nil), thinkingLevelOrder...)
+	case strings.Contains(key, "gpt-5-5"):
+		return []string{"off", "low", "medium", "high", "xhigh"}
+	case strings.Contains(key, "gpt-5-6"):
+		return []string{"off", "low", "medium", "high", "xhigh", "max"}
+	case strings.Contains(key, "gpt-6"):
+		return []string{"low", "medium", "high", "xhigh", "max"}
+	default:
+		return append([]string(nil), thinkingLevelOrder...)
+	}
+}
+
+// normalizeThinkingModel：模型名的小写归一化（去 `[test]` 前缀、去 `vendor/` 前缀、点号换横线），
+// 只服务能力判定；不改真实模型名。
+func normalizeThinkingModel(model string) string {
+	s := strings.ToLower(strings.TrimSpace(model))
+	for strings.HasPrefix(s, "[") {
+		end := strings.Index(s, "]")
+		if end < 0 {
+			break
+		}
+		s = strings.TrimSpace(s[end+1:])
+	}
+	if slash := strings.LastIndex(s, "/"); slash >= 0 {
+		s = s[slash+1:]
+	}
+	return strings.ReplaceAll(s, ".", "-")
+}
+
+// thinkingEffortFor：统一档 → 这一家真正接受的 reasoning_effort。ok=false = 什么都不发。
+// 已知家族里"降级映射"是刻意的（官方 API 有别名/上限），未知模型原样透传。
+func thinkingEffortFor(p Provider, model, level string) (string, bool) {
+	key := normalizeThinkingModel(model)
+	vendor := p.EffectiveVendor()
+	switch vendor {
+	case VendorDeepseek:
+		switch level {
+		case "off":
+			return "none", true
+		case "minimal", "low":
+			return "low", true
+		case "medium", "high", "xhigh":
+			return "high", true
+		case "max":
+			return "max", true
+		}
+	case VendorDummy:
+		return "", false
+	}
+	switch {
+	case strings.Contains(key, "gemini"):
+		switch level {
+		case "off":
+			// 只有 2.5 Flash / Lite 能关；Pro 与 3/4 不能。UI 已裁剪，这里兜底成最低档。
+			if strings.Contains(key, "2-5") && !strings.Contains(key, "2-5-pro") {
+				return "none", true
+			}
+			return "minimal", true
+		case "minimal":
+			if strings.Contains(key, "gemini-4") || strings.Contains(key, "gemini-2-5") {
+				return "low", true
+			}
+			return "minimal", true
+		case "low", "medium", "high":
+			return level, true
+		case "xhigh", "max":
+			return "high", true
+		}
+	case strings.Contains(key, "claude"):
+		switch level {
+		case "off", "minimal":
+			return "low", true // 无原生对应；UI 已裁剪，兜底不静默变成"关"
+		case "low", "medium", "high", "xhigh", "max":
+			return level, true
+		}
+	case strings.Contains(key, "glm-5-3"):
+		switch level {
+		case "off", "minimal":
+			return "low", true // 5.3 不能关；UI 已裁剪
+		case "low", "high", "max":
+			return level, true
+		case "medium":
+			return "high", true
+		case "xhigh":
+			return "max", true
+		}
+	case strings.Contains(key, "glm-5-2"):
+		switch level {
+		case "off":
+			return "none", true
+		case "minimal", "low", "medium", "high", "xhigh", "max":
+			return level, true
+		}
+	case strings.Contains(key, "gpt-5-5"):
+		switch level {
+		case "off":
+			return "none", true
+		case "minimal":
+			return "low", true
+		case "low", "medium", "high", "xhigh":
+			return level, true
+		case "max":
+			return "xhigh", true
+		}
+	case strings.Contains(key, "gpt-5-6"):
+		switch level {
+		case "off":
+			return "none", true
+		case "minimal":
+			return "low", true
+		case "low", "medium", "high", "xhigh", "max":
+			return level, true
+		}
+	case strings.Contains(key, "gpt-6"):
+		switch level {
+		case "off", "minimal":
+			return "low", true // 6.x 不接受 none/minimal；UI 已裁剪
+		case "low", "medium", "high", "xhigh", "max":
+			return level, true
+		}
+	}
+	if level == "off" {
+		return "none", true
+	}
+	return level, true
+}
+
+// applyThinking：把统一档写进请求体。各家字段不同，**只有这一处**拼。
+//   - DeepSeek：thinking.type 控开关；reasoning_effort 控深度
+//   - OpenRouter：reasoning.effort（不是顶层 reasoning_effort）
+//   - 其余 OpenAI 兼容：顶层 reasoning_effort
+func applyThinking(body map[string]any, p Provider, r Request) {
+	if r.ThinkingLevel != "" {
+		level := strings.ToLower(strings.TrimSpace(r.ThinkingLevel))
+		if p.EffectiveVendor() == VendorDeepseek {
+			mode := "enabled"
+			if level == "off" {
+				mode = "disabled"
+			}
+			body["thinking"] = map[string]any{"type": mode}
+		}
+		if effort, ok := thinkingEffortFor(p, r.Model, level); ok {
+			if p.EffectiveVendor() == VendorOpenRouter {
+				body["reasoning"] = map[string]any{"effort": effort}
+			} else {
+				body["reasoning_effort"] = effort
+			}
+		}
+		return
+	}
+	// 旧透传口（没有统一档时）：原样发，不映射。
+	if r.ReasoningEffort != nil && *r.ReasoningEffort != "" {
+		body["reasoning_effort"] = *r.ReasoningEffort
+	}
+}
+
 // bodyFor：**体的唯一拼装处**（照 Pi 的 `openai-completions` 逐项对齐）。
 func bodyFor(p Provider, r Request) map[string]any {
 	preset := presets[p.EffectiveVendor()]
@@ -559,10 +750,8 @@ func bodyFor(p Provider, r Request) map[string]any {
 	if r.Temperature != nil {
 		body["temperature"] = *r.Temperature
 	}
-	// reasoning_effort：推理强度（omp 发 `max`、Pi 发 `high`）—— 只在我们显式给了时才发
-	if r.ReasoningEffort != nil && *r.ReasoningEffort != "" {
-		body["reasoning_effort"] = *r.ReasoningEffort
-	}
+	// 思考档位：统一七档 → 各家字段（见 applyThinking）。
+	applyThinking(body, p, r)
 	// 工具定义：**只在渠道允许透传时才发**（不认识的字段有些上游会 400）。
 	if toolsAllowed(p) && len(r.Tools) > 0 {
 		body["tools"] = r.Tools
@@ -723,9 +912,14 @@ func buildResponse(p Provider, r Request) (*http.Request, error) {
 		"input":  input,
 		"stream": r.Stream,
 	}
-	if r.ReasoningEffort != nil && *r.ReasoningEffort != "" || r.ReasoningSummary != nil && *r.ReasoningSummary != "" {
+	if r.ThinkingLevel != "" || r.ReasoningEffort != nil && *r.ReasoningEffort != "" ||
+		r.ReasoningSummary != nil && *r.ReasoningSummary != "" {
 		reasoning := map[string]any{}
-		if r.ReasoningEffort != nil && *r.ReasoningEffort != "" {
+		if r.ThinkingLevel != "" {
+			if effort, ok := thinkingEffortFor(p, r.Model, strings.ToLower(strings.TrimSpace(r.ThinkingLevel))); ok {
+				reasoning["effort"] = effort
+			}
+		} else if r.ReasoningEffort != nil && *r.ReasoningEffort != "" {
 			reasoning["effort"] = *r.ReasoningEffort
 		}
 		if r.ReasoningSummary != nil && *r.ReasoningSummary != "" {

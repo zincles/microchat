@@ -24,12 +24,14 @@ interface SessionInfoLike {
   provider?: string;
   model?: string;
   agent_id?: string;
+  thinking_level?: string;
   [key: string]: unknown;
 }
 interface DraftPrefs {
   provider: string;
   model: string;
   agent: string;
+  thinking_level?: string;
 }
 interface UseModelsAgentsOptions {
   api: ModelsAgentsApi;
@@ -57,6 +59,8 @@ export function useModelsAgents({
   onRefreshPreview,
 }: UseModelsAgentsOptions) {
   const vueAgents = ref<Agent[]>([]);
+  // vueModels：模型清单的 UI 镜像 —— 思考档位能力也从这里读（别在前端另抄一张模型表）。
+  const vueModels = ref<ModelListItem[]>([]);
   const statusAgent = ref("");
   let modelsCache: ModelListItem[] | null = null;
   let modelsInflight: Promise<ModelListItem[]> | null = null;
@@ -68,6 +72,7 @@ export function useModelsAgents({
   }
 
   function paintModelOptions(models: ModelListItem[]): void {
+    vueModels.value = models;
     const groups = groupModelsByProvider(models ?? []).map((g) => ({
       provider: g.provider,
       items: g.items.map(modelOption),
@@ -182,6 +187,7 @@ export function useModelsAgents({
 
   return {
     vueAgents,
+    vueModels,
     statusAgent,
     paintSessionHeader,
     fillModelSelect,

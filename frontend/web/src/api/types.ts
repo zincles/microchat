@@ -56,6 +56,7 @@ export interface Session {
   provider: string;
   model: string;
   agent_id: string;
+  thinking_level: string;
   created_at: number;
   updated_at: number;
 }
@@ -383,6 +384,7 @@ export interface ModelListItem {
   upstream_id: string;
   name: string;
   display_name: string | null;
+  thinking_levels: string[];
 }
 
 export interface ProtocolOption {
@@ -568,6 +570,7 @@ export interface CreateSessionRequest {
   model?: string;
   agent_id?: string;
   system_prompt?: string;
+  thinking_level?: string;
 }
 
 export interface UpdateSessionRequest {
@@ -576,6 +579,7 @@ export interface UpdateSessionRequest {
   model?: string;
   agent_id?: string;
   system_prompt?: string | null;
+  thinking_level?: string;
 }
 
 export interface EditMessageRequest {
@@ -588,6 +592,7 @@ export interface DraftOutgoingRequest {
   provider?: string;
   model?: string;
   agent_id?: string;
+  thinking_level?: string;
   content: string;
 }
 

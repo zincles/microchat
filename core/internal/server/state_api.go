@@ -126,7 +126,9 @@ type DraftOutgoingReq struct {
 	Provider *string `json:"provider"`
 	Model    *string `json:"model"`
 	AgentID  *string `json:"agent_id"`
-	Content  *string `json:"content"`
+	// ThinkingLevel：统一七档；空 = 跟随模型默认。
+	ThinkingLevel *string `json:"thinking_level"`
+	Content       *string `json:"content"`
 }
 
 // postDraftOutgoing：草稿的第一句"真会发出去的那一发" —— 与 (c) 同一支笔（`chat.PreviewWire`），
@@ -163,6 +165,14 @@ func (s *Server) postDraftOutgoing(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
+	}
+	if req.ThinkingLevel != nil {
+		level, ok := normalizeThinkingLevel(seed.Model, *req.ThinkingLevel)
+		if !ok {
+			writeError(w, http.StatusUnprocessableEntity, "invalid", thinkingError(seed.Model, *req.ThinkingLevel))
+			return
+		}
+		seed.ThinkingLevel = level
 	}
 	payload, err := s.chat.PreviewWire(seed, *req.Content)
 	if err != nil {

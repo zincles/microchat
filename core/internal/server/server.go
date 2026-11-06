@@ -17,6 +17,7 @@ import (
 	"microchat/internal/compact"
 	"microchat/internal/config"
 	"microchat/internal/model"
+	"microchat/internal/providers"
 	"microchat/internal/queue"
 	"microchat/internal/reroll"
 	"microchat/internal/store"
@@ -361,6 +362,8 @@ type CreateSessionReq struct {
 	Model        *string `json:"model"`
 	AgentID      *string `json:"agent_id"`
 	SystemPrompt string  `json:"system_prompt"`
+	// ThinkingLevel：统一七档（off/minimal/low/medium/high/xhigh/max）；空 = 跟随模型默认。
+	ThinkingLevel *string `json:"thinking_level"`
 }
 
 // UpdateSessionReq：只改给出来的那些。
@@ -378,6 +381,8 @@ type UpdateSessionReq struct {
 	Model        *string `json:"model"`
 	AgentID      *string `json:"agent_id"`
 	SystemPrompt *string `json:"system_prompt"`
+	// ThinkingLevel：nil = 不动；"" = 清掉覆盖（跟随模型默认）；非空 = 统一七档之一。
+	ThinkingLevel *string `json:"thinking_level"`
 }
 
 // normalizeUUIDv7：校验 + 规范化（小写带横线）。`sessions.id` 的 v7 形状由这一处守
@@ -417,6 +422,27 @@ func (s *Server) newSessionSeed(id string, provider, modelID, agentID *string) (
 	return model.Session{ID: id, Provider: p, Model: m, AgentID: a}, nil
 }
 
+// normalizeThinkingLevel：统一档的唯一校验处。空串合法（跟随模型默认）；
+// 非空必须在该模型的能力集合里（providers.ThinkingLevels）——否则别写进库，界面也别摆这个选项。
+func normalizeThinkingLevel(model, raw string) (string, bool) {
+	level := strings.ToLower(strings.TrimSpace(raw))
+	if level == "" {
+		return "", true
+	}
+	for _, allowed := range providers.ThinkingLevels(model) {
+		if level == allowed {
+			return level, true
+		}
+	}
+	return "", false
+}
+
+// thinkingError：422 文案点名"这个模型能收什么"，别只说"非法"。
+func thinkingError(model, level string) string {
+	return "模型 " + model + " 不支持思考档位 " + strconv.Quote(level) +
+		"（可用：" + strings.Join(providers.ThinkingLevels(model), " / ") + "）"
+}
+
 // createSession：省略字段时取 config.json 的 defaults；
 // agent 缺省 → `agents.json` 的 default_agent（**不然新会话永远带着内置 default**，
 // agent 的提示词与世界状态底子对任何新会话都不生效 —— 这条踩过）。
@@ -451,6 +477,14 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
+	if req.ThinkingLevel != nil {
+		level, ok := normalizeThinkingLevel(seed.Model, *req.ThinkingLevel)
+		if !ok {
+			writeError(w, http.StatusUnprocessableEntity, "invalid", thinkingError(seed.Model, *req.ThinkingLevel))
+			return
+		}
+		seed.ThinkingLevel = level
+	}
 	title := ""
 	if req.Title != nil {
 		title = *req.Title
@@ -466,6 +500,14 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		session.AgentID = seed.AgentID
+	}
+	if seed.ThinkingLevel != "" {
+		if err := s.store.SetSessionThinking(session.ID, seed.ThinkingLevel); err != nil {
+			_ = s.store.DeleteSession(session.ID)
+			writeStoreError(w, err)
+			return
+		}
+		session.ThinkingLevel = seed.ThinkingLevel
 	}
 	// 首段对话（`agent.first_message`，2026-10-11 用户定）：新会话把它插成**第一条 assistant 消息**
 	// （idx 1）。插失败就把刚建的会话删掉（草稿铸的 id 还能重试），不留半截会话。
@@ -541,6 +583,33 @@ func (s *Server) updateSession(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
+	// 先把要校验的字段一次读完、验完，再落任何写 —— 否则"标题改了、档位非法"会留下半截更新。
+	var session *model.Session
+	if req.ThinkingLevel != nil || req.Provider != nil || req.Model != nil {
+		current, err := s.store.GetSession(id)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		if current == nil {
+			writeError(w, http.StatusNotFound, "not_found", "会话不存在")
+			return
+		}
+		session = current
+	}
+	var thinking *string
+	if req.ThinkingLevel != nil {
+		targetModel := session.Model
+		if req.Model != nil {
+			targetModel = *req.Model
+		}
+		level, ok := normalizeThinkingLevel(targetModel, *req.ThinkingLevel)
+		if !ok {
+			writeError(w, http.StatusUnprocessableEntity, "invalid", thinkingError(targetModel, *req.ThinkingLevel))
+			return
+		}
+		thinking = &level
+	}
 	if req.Title != nil {
 		if err := s.store.UpdateTitle(id, *req.Title); err != nil {
 			writeStoreError(w, err)
@@ -548,15 +617,6 @@ func (s *Server) updateSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if req.Provider != nil || req.Model != nil {
-		session, err := s.store.GetSession(id)
-		if err != nil {
-			writeStoreError(w, err)
-			return
-		}
-		if session == nil {
-			writeError(w, http.StatusNotFound, "not_found", "会话不存在")
-			return
-		}
 		provider, modelID := session.Provider, session.Model
 		if req.Provider != nil {
 			provider = *req.Provider
@@ -582,16 +642,22 @@ func (s *Server) updateSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	session, err := s.store.GetSession(id)
+	if thinking != nil {
+		if err := s.store.SetSessionThinking(id, *thinking); err != nil {
+			writeStoreError(w, err)
+			return
+		}
+	}
+	updated, err := s.store.GetSession(id)
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
-	if session == nil {
+	if updated == nil {
 		writeError(w, http.StatusNotFound, "not_found", "会话不存在")
 		return
 	}
-	writeJSON(w, http.StatusOK, session)
+	writeJSON(w, http.StatusOK, updated)
 }
 
 func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {

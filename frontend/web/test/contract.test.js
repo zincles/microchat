@@ -3844,3 +3844,30 @@ test("会话分组标题：更大间距 + 非首组淡分隔线", () => {
   assert.match(css, /#sessions-bar \.session-group-head \{[^}]*padding:\s*1\.05em 0\.85em 0\.42em/, "分组标题没有放大间距");
   assert.match(css, /#sessions-bar \.session-group-head:not\(:first-child\) \{[^}]*border-top:\s*1px solid color-mix\(in srgb, var\(--md-outline-variant\) 55%/, "非首组没有淡分隔线");
 });
+
+
+// 思考档位（2026-11-06）：Session 字段 + 输入框左侧的紧凑面板。
+// 位置是刻意的：发送侧已经有发送/停止，再塞一颗会变成按钮墙；放在输入文字左侧。
+test("思考档位：Session 字段 + 输入左侧紧凑面板", () => {
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  assert.match(app, /:thinking="currentThinking"/, "Composer 没接思考档位");
+  assert.match(app, /@thinking="setThinking"/, "Composer 没把档位变化接回来");
+  assert.match(app, /thinking_level: draftPrefs\.thinking_level/, "草稿预演没带思考档位");
+  assert.match(app, /if \(draftPrefs\.thinking_level\) body\.thinking_level = draftPrefs\.thinking_level/, "建会话没带思考档位");
+
+  const composer = readFileSync(join(SRC, "components/Composer.vue"), "utf8");
+  const menuAt = composer.indexOf("<ThinkingMenu");
+  const inputAt = composer.indexOf('id="input"');
+  const actionsAt = composer.indexOf('class="composer-actions"');
+  assert.ok(menuAt > 0 && menuAt < inputAt, "思考按钮该在输入框左侧");
+  assert.ok(menuAt < actionsAt, "思考按钮不该挤进右侧发送按钮列");
+
+  const css = readFileSync(join(SRC, "assets/main.css"), "utf8");
+  assert.match(css, /\.thinking-menu \{[^}]*bottom: calc\(100% \+ 0\.45em\)/, "菜单该向上弹（输入行贴底）");
+  assert.match(css, /#composer \.thinking-btn \{[^}]*width: auto/, "思考按钮该是紧凑药丸，不是 3em 圆钮");
+  assert.match(css, /#composer \.thinking-btn \{[^}]*background: none/, "思考按钮不该抢发送键的主色");
+
+  const types = readFileSync(join(SRC, "api/types.ts"), "utf8");
+  assert.match(types, /thinking_level: string/, "Session 类型没带 thinking_level");
+  assert.match(types, /thinking_levels: string\[\]/, "模型清单没带思考能力");
+});

@@ -20,6 +20,7 @@
 | 名称 | 人类句柄；空串 = 还没起名 | `sessions.title` | ✓ 已有 |
 | Agent 的 id | 这个会话用哪份人格 + 开关 | `sessions.agent_id` | ✓ 已有（**软引用**：找不到就回落内置默认那句，不回空） |
 | 当前模型 | 用哪个渠道的哪个模型 | `sessions.provider` + `sessions.model` | ✓ 已有 —— **两个字段，不许合成一个** ✗ |
+| 思考档位 | 这个会话显式选的推理强度；空串 = 跟随模型默认 | `sessions.thinking_level` | ✓ 已有（统一七档 `off/minimal/low/medium/high/xhigh/max`；模型级能力集由 `providers.ThinkingLevels` 裁） |
 | —（你没列，但有） | 会话自己的系统提示词；空串 = 没覆盖 ⇒ 用 agent 的（**base + 追加段拼装**，见「系统提示词的拼装」） | `sessions.system_prompt` | ✓ 已有 |
 | —（你没列，但有） | 列表按 `updated_at` 排序 | `sessions.created_at` / `updated_at` | ✓ 已有 |
 | —（你没列，但有） | 这一轮在不在跑（**进程内**，不进库） | turn 登记表 | ✓ 已有 |

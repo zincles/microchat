@@ -74,7 +74,25 @@ func (s *Store) migrate() error {
 			return err
 		}
 	}
-	return s.dropRetired()
+	if err := s.dropRetired(); err != nil {
+		return err
+	}
+	return s.ensureSessionThinking()
+}
+
+// ensureSessionThinking：老库（user_version 已经是 1）不会重跑 001.sql ⇒ 补这一列。
+// 幂等：先查 pragma_table_info；新库本来就有。只加列，不碰任何数据。
+func (s *Store) ensureSessionThinking() error {
+	var hasColumn int
+	if err := s.db.QueryRow(
+		"SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'thinking_level'").Scan(&hasColumn); err != nil {
+		return err
+	}
+	if hasColumn > 0 {
+		return nil
+	}
+	_, err := s.db.Exec("ALTER TABLE sessions ADD COLUMN thinking_level TEXT NOT NULL DEFAULT ''")
+	return err
 }
 
 // dropRetired：把**已经不用的老结构**顺手清掉（幂等，每次打开都跑一遍）。
@@ -85,7 +103,8 @@ func (s *Store) migrate() error {
 // 所以这里补一把：只删"那一列/那张表在不在都行"的东西，**绝不碰会话、消息、摘要的数据**。
 //
 // ⚠ 两步都要判存在：`DROP COLUMN` 在 SQLite 3.35+ 才有，`DROP TABLE IF EXISTS` 则一直都有；
-//   万一某天它已经在别处删过了，这里再跑一次也不能报错（每次打开都跑）。
+//
+//	万一某天它已经在别处删过了，这里再跑一次也不能报错（每次打开都跑）。
 func (s *Store) dropRetired() error {
 	if _, err := s.db.Exec("DROP TABLE IF EXISTS users"); err != nil {
 		return err

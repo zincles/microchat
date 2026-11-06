@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // App.vue —— 三栏骨架 + 全部接线（原 main.js + 九个桥，合一）。
 // 组件直接挂模板，ref 直调实例方法，不再经 *-vue.js 桥 / mount.js。
-import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from "vue";
+import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import { createApi, mergeStreamSlice, probeHealth } from "./api/client.ts";
 import { parseCommand, filterCommands, COMMAND_META } from "./utils/commands.ts";
 import { uuidv7 } from "./utils/ids.ts";
@@ -14,6 +14,7 @@ import { applyBackground } from "./utils/background.ts";
 import { installViewportFit } from "./utils/viewport.ts";
 import { downloadJSON } from "./utils/download.ts";
 import { busySessionIds } from "./utils/tasks.ts";
+import { thinkingOptions, thinkingLevelsForModel } from "./utils/thinking.ts";
 import { rememberWindow, recallWindow, forgetWindow } from "./utils/windowcache.ts";
 import { sharedApi, previewOn, payloadPreviewOn, applyTheme, wantsSend, apiBase, apiBaseCandidates, saveNetPrefs, lastSessionId, saveLastSession, commandMenuOn, applyTextScale, applyFonts, chromeHideOn, syncPrefs } from "./utils/prefs.ts";
 import {
@@ -170,11 +171,12 @@ const sessionInfo = reactive<any>({});
 // ⇒ 预演的那一发给真发的那一发逐字节一致。别扩散（消息/摘要的 id 仍是服务端铸）。
 // 要会话的命令（compact/cut/reroll…）在草稿里明确拒绝（needsSession 标在 commands.js 的表上）。
 let draft = false;
-let draftPrefs: any = { provider: "", model: "", agent: "" };
+let draftPrefs: any = { provider: "", model: "", agent: "", thinking_level: "" };
 let draftId: any = null;
 
 const {
   vueAgents,
+  vueModels,
   statusAgent,
   paintSessionHeader,
   fillModelSelect,
@@ -194,6 +196,47 @@ const {
   draftPrefs,
   onRefreshStatusline: refreshStatusline,
   onRefreshPreview: refreshPreview,
+});
+// 思考档位：Session 上的显式值（空 = 跟随模型默认）。能选哪些档由模型清单里的
+// `thinking_levels` 决定（后端 providers.ThinkingLevels 的唯一权威）—— 前端不另抄模型表。
+const thinkingLevels = computed(() => {
+  if (sessionInfo.provider === "dummy") return [];
+  return thinkingLevelsForModel(vueModels.value, sessionInfo.provider, sessionInfo.model);
+});
+const thinkingChoices = computed(() => {
+  const levels = thinkingLevels.value;
+  return levels.length ? thinkingOptions(levels) : [];
+});
+const currentThinking = computed(() => {
+  const raw = draft ? draftPrefs.thinking_level : sessionInfo.thinking_level;
+  return typeof raw === "string" ? raw : "";
+});
+async function setThinking(level: string): Promise<void> {
+  const next = typeof level === "string" ? level : "";
+  if (draft) {
+    draftPrefs.thinking_level = next;
+    sessionInfo.thinking_level = next;
+    refreshPreview();
+    return;
+  }
+  if (!sessionID) return;
+  const prev = sessionInfo.thinking_level ?? "";
+  if (next === prev) return;
+  sessionInfo.thinking_level = next; // 先上屏（1s+ RTT：别让人以为没点动）
+  try {
+    const updated = await api.patchSession(sessionID, { thinking_level: next });
+    Object.assign(sessionInfo, updated);
+    refreshPreview();
+  } catch (err) {
+    sessionInfo.thinking_level = prev;
+    toast(`思考等级保存失败：${err.message}`, "error");
+  }
+}
+// 换模型后旧档位可能不在新模型的能力集里 ⇒ 清回"跟随默认"（后端也只会接受能力集里的值）。
+watch(thinkingLevels, (levels) => {
+  const cur = currentThinking.value;
+  if (!cur || !levels.length) return;
+  if (!levels.includes(cur)) setThinking("");
 });
 const vueMessages = ref<any[]>([]);
 // 会话加载中的骨架（2026-11-02）：进会话会先清空消息列，再等 /sessions + 消息窗口；
@@ -1053,13 +1096,16 @@ async function startDraft() {
   saveLastSession(""); // 人在草稿 ⇒ 开机也该回草稿（别把人拽回上次那条会话）
   draftId = uuidv7(); // 这张草稿将来那会话的 id（预演与建会话都用它）
   const d = await api.getDefaults().catch(() => ({} as any));
-  draftPrefs = { provider: d.provider ?? "", model: d.model ?? "", agent: d.agent ?? "" };
+  draftPrefs = {
+    provider: d.provider ?? "", model: d.model ?? "", agent: d.agent ?? "",
+    thinking_level: "",
+  };
   // `id: ""` 是必须的：`Object.assign` **不清旧键**，从一条真会话切到草稿时
   // `sessionInfo.id` 会留着上一条的 id —— 于是"这是草稿吗"就答错了（曾经就没人读它，
   // 所以一直没露；上下文工作区要读它才露出来）。
   Object.assign(sessionInfo, {
     id: "", title: "", provider: draftPrefs.provider, model: draftPrefs.model,
-    agent_id: draftPrefs.agent, system_prompt: "",
+    agent_id: draftPrefs.agent, thinking_level: "", system_prompt: "",
   });
   vueMessages.value = [];
   loadingSession.value = false;
@@ -1135,7 +1181,7 @@ async function enterSession(id, preloaded = null) {
     if (my !== epoch) return; // 迟到的上一发：整段丢掉（切会话竞态的唯一守卫）
     sessionsFetchedAt = Date.now();
   }
-  Object.assign(sessionInfo, sessions.find((s) => s.id === id) ?? {});
+  Object.assign(sessionInfo, { thinking_level: "" }, sessions.find((s) => s.id === id) ?? {});
   paintSessionHeader();
   refreshAgents();
   fillModelSelect();
@@ -1615,7 +1661,7 @@ async function previewPayload(v) {
     const out = draft
       ? await api.draftOutgoing({
         id: draftId, provider: draftPrefs.provider, model: draftPrefs.model,
-        agent_id: draftPrefs.agent, content: v,
+        agent_id: draftPrefs.agent, thinking_level: draftPrefs.thinking_level || undefined, content: v,
       })
       : await api.outgoingPreview(sessionID, v);
     if (seq !== previewSeq || my !== epoch) return; // 有更新的一发/换了会话：旧的丢掉
@@ -1726,6 +1772,7 @@ async function sendFromDraft(text) {
   if (draftPrefs.provider) body.provider = draftPrefs.provider;
   if (draftPrefs.model) body.model = draftPrefs.model;
   if (draftPrefs.agent) body.agent_id = draftPrefs.agent;
+  if (draftPrefs.thinking_level) body.thinking_level = draftPrefs.thinking_level;
   // 草稿这条路是**两个** back-to-back 请求（建会话 → 受理）⇒ 远端 1s+ 时足足两秒没反应。
   // 先画再说：建会话失败就撤掉并退回草稿（连输入框里的字一起还回去）。
   const optimistic = addMessage("你", text, "user");
@@ -1954,6 +2001,9 @@ onUnmounted(() => {
       v-show="workspace === 'chat'"
       ref="composerRef"
       :menu-on="cmdMenu"
+      :thinking="currentThinking"
+      :thinking-options="thinkingChoices"
+      @thinking="setThinking"
       @input-text="onComposerInput"
       @keydown="onComposerKeydown"
       @submit="onComposerSubmit"

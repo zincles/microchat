@@ -205,9 +205,10 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 	// 配置 → 线上形状只有这一条路（`FromConfig`）：手搓字面量漏一个字段就是静默失效
 	wire := providers.FromConfig(chosen.Provider)
 	result, err := providers.NewClient(wire).Chat(ctx, wire, providers.Request{
-		Model:     session.Model,
-		Messages:  wireMessages(outgoing, reasoningByID),
-		SessionID: sessionID,
+		Model:         session.Model,
+		Messages:      wireMessages(outgoing, reasoningByID),
+		SessionID:     sessionID,
+		ThinkingLevel: session.ThinkingLevel,
 	}, localReply(chosen), func(delta providers.Delta) {
 		if delta.Text != "" {
 			if firstTextAt.IsZero() {
@@ -428,10 +429,11 @@ func (s *Service) buildWire(session model.Session, outgoing []state.Outgoing, re
 	}
 	wire := providers.FromConfig(chosen.Provider)
 	request, err := providers.Build(wire, providers.Request{
-		Model:     session.Model,
-		Messages:  wireMessages(outgoing, reasoningByID),
-		SessionID: session.ID,
-		Stream:    true,
+		Model:         session.Model,
+		Messages:      wireMessages(outgoing, reasoningByID),
+		SessionID:     session.ID,
+		ThinkingLevel: session.ThinkingLevel,
+		Stream:        true,
 	})
 	if err != nil {
 		return providers.LastPayload{}, err

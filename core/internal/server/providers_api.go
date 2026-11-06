@@ -62,6 +62,8 @@ type ModelListItem struct {
 	UpstreamID   string  `json:"upstream_id"`
 	Name         string  `json:"name"`
 	DisplayName  *string `json:"display_name"`
+	// ThinkingLevels：这个模型能安全收到的统一档位（UI 只摆这些；空 = 不显示思考选择器）。
+	ThinkingLevels []string `json:"thinking_levels"`
 }
 
 type CreateProviderReq struct {
@@ -492,9 +494,10 @@ func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
 	for _, row := range rows {
 		items = append(items, ModelListItem{
 			Provider: row.Provider, ProviderName: names[row.Provider],
-			UpstreamID:  row.UpstreamID,
-			Name:        registry.DisplayName(row.DisplayName, row.UpstreamName, row.UpstreamID),
-			DisplayName: row.DisplayName,
+			UpstreamID:     row.UpstreamID,
+			Name:           registry.DisplayName(row.DisplayName, row.UpstreamName, row.UpstreamID),
+			DisplayName:    row.DisplayName,
+			ThinkingLevels: providers.ThinkingLevels(row.UpstreamID),
 		})
 	}
 	writeJSON(w, http.StatusOK, items)

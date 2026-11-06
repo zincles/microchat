@@ -3,6 +3,8 @@
 // 生成中（running）⇒ 圆钮变停止键（■），点即停。挂载点还是 #composer（CSS 照旧命中）。
 import { ref, watch, nextTick } from "vue";
 import { ICONS } from "./icons.ts";
+import ThinkingMenu from "./ThinkingMenu.vue";
+import type { ThinkingOption } from "../utils/thinking.ts";
 
 const emit = defineEmits<{
   "input-text": [text: string];
@@ -10,9 +12,18 @@ const emit = defineEmits<{
   submit: [text: string];
   stop: [];
   menu: [];
+  thinking: [value: string];
 }>();
 // menuOn：命令菜单开不开（用户视图 → 输入；缺省关 —— 移动端那颗 ☰ 纯碍事）。
-const props = withDefaults(defineProps<{ menuOn?: boolean }>(), { menuOn: false });
+const props = withDefaults(defineProps<{
+  menuOn?: boolean;
+  thinking?: string;
+  thinkingOptions?: ThinkingOption[];
+}>(), {
+  menuOn: false,
+  thinking: "",
+  thinkingOptions: () => [],
+});
 const text = ref("");
 const running = ref(false);
 function setRunning(v: unknown): void { running.value = !!v; }
@@ -70,6 +81,12 @@ defineExpose({ submit, clear, setText, text, setRunning });
 <template>
   <form id="composer" @submit.prevent="running ? stop() : submit()">
     <div class="composer-box">
+      <ThinkingMenu
+        v-if="props.thinkingOptions.length"
+        :model-value="props.thinking"
+        :options="props.thinkingOptions"
+        @update:model-value="$emit('thinking', $event)"
+      />
       <textarea
         id="input"
         ref="area"

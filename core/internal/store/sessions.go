@@ -24,7 +24,7 @@ func (e InvalidError) Error() string { return string(e) }
 func nowMS() int64 { return time.Now().UnixMilli() }
 
 // sessionColumns：会话自己的列（**没有 current_leaf**：线性会话不需要"停在哪儿"）。
-const sessionColumns = "id, title, system_prompt, provider, model, agent_id, created_at, updated_at"
+const sessionColumns = "id, title, system_prompt, provider, model, agent_id, thinking_level, created_at, updated_at"
 
 // 一个最小的扫描接口：sql.Row 与 sql.Rows 都满足它。
 type scanner interface{ Scan(dest ...any) error }
@@ -33,7 +33,7 @@ func scanSession(row scanner) (model.Session, error) {
 	var session model.Session
 	err := row.Scan(
 		&session.ID, &session.Title, &session.SystemPrompt,
-		&session.Provider, &session.Model, &session.AgentID,
+		&session.Provider, &session.Model, &session.AgentID, &session.ThinkingLevel,
 		&session.CreatedAt, &session.UpdatedAt,
 	)
 	return session, err
@@ -64,7 +64,7 @@ func (s *Store) session(id string) (*model.Session, error) {
 func (s *Store) ListSessions() ([]model.Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows, err := s.db.Query("SELECT "+sessionColumns+
+	rows, err := s.db.Query("SELECT " + sessionColumns +
 		" FROM sessions ORDER BY updated_at DESC, id DESC")
 	if err != nil {
 		return nil, err
@@ -154,6 +154,11 @@ func (s *Store) SetSessionModel(id, provider, model string) error {
 
 func (s *Store) SetSessionAgent(id, agentID string) error {
 	return s.execTouch("UPDATE sessions SET agent_id = ?1 WHERE id = ?2", agentID, id)
+}
+
+// SetSessionThinking：写会话级思考档位（空串 = 清掉覆盖 ⇒ 跟随模型默认）。
+func (s *Store) SetSessionThinking(id, level string) error {
+	return s.execTouch("UPDATE sessions SET thinking_level = ?1 WHERE id = ?2", level, id)
 }
 
 // SetSessionSystemPrompt：写会话级提示词覆盖（空串 = **清掉覆盖** ⇒ 解析回落到 agent 的）。
@@ -263,7 +268,8 @@ func (s *Store) CopySession(sessionID string) (model.Session, error) {
 	copied := model.Session{
 		ID: newSessionID, Title: source.Title, SystemPrompt: source.SystemPrompt,
 		Provider: source.Provider, Model: source.Model, AgentID: source.AgentID,
-		CreatedAt: now, UpdatedAt: now,
+		ThinkingLevel: source.ThinkingLevel,
+		CreatedAt:     now, UpdatedAt: now,
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -271,10 +277,10 @@ func (s *Store) CopySession(sessionID string) (model.Session, error) {
 	}
 	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.Exec(
-		`INSERT INTO sessions (id, title, system_prompt, provider, model, agent_id, created_at, updated_at)
-		 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
+		`INSERT INTO sessions (id, title, system_prompt, provider, model, agent_id, thinking_level, created_at, updated_at)
+		 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`,
 		copied.ID, copied.Title, copied.SystemPrompt, copied.Provider, copied.Model,
-		copied.AgentID, copied.CreatedAt, copied.UpdatedAt); err != nil {
+		copied.AgentID, copied.ThinkingLevel, copied.CreatedAt, copied.UpdatedAt); err != nil {
 		return model.Session{}, err
 	}
 	// 摘要先插（消息的 `summary_id` 外键指着它）；父指针由 `insertSummary` 先留 NULL、插完回填。

@@ -989,3 +989,107 @@ func TestStreamOptionsOnlyWhenStreaming(t *testing.T) {
 		t.Fatalf("非流式不该带它：%s", body)
 	}
 }
+
+// 统一七档 → 各家字段：能力裁剪 + 线上映射（2026-11-06）。
+func TestThinkingLevelsCapability(t *testing.T) {
+	cases := []struct {
+		model string
+		want  []string
+	}{
+		{"deepseek-v4-pro", thinkingLevelOrder},
+		{"[test]gemini-4-argon", []string{"low", "medium", "high"}},
+		{"gemini-3-pro-preview", []string{"low", "high"}},
+		{"gemini-3.1-pro-preview", []string{"low", "medium", "high"}},
+		{"gemini-3.8-flash", []string{"low", "medium", "high"}},
+		{"gemini-2.5-pro", []string{"minimal", "low", "medium", "high"}},
+		{"gemini-2.5-flash", []string{"off", "minimal", "low", "medium", "high"}},
+		{"claude-opus-5-5", []string{"low", "medium", "high", "xhigh", "max"}},
+		{"claude-sonnet-4-6", []string{"low", "medium", "high", "max"}},
+		{"glm-5.2", thinkingLevelOrder},
+		{"glm-5.3-flash", []string{"low", "high", "max"}},
+		{"gpt-5.5", []string{"off", "low", "medium", "high", "xhigh"}},
+		{"gpt-5.6", []string{"off", "low", "medium", "high", "xhigh", "max"}},
+		{"gpt-6-astra", []string{"low", "medium", "high", "xhigh", "max"}},
+		{"unknown-model", thinkingLevelOrder},
+	}
+	for _, tc := range cases {
+		got := ThinkingLevels(tc.model)
+		if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+			t.Errorf("%s: %v，想要 %v", tc.model, got, tc.want)
+		}
+	}
+}
+
+func thinkingBody(t *testing.T, p Provider, req Request) map[string]any {
+	t.Helper()
+	httpReq, err := Build(p, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := io.ReadAll(httpReq.Body)
+	var body map[string]any
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatal(err)
+	}
+	return body
+}
+
+func TestThinkingWireMapping(t *testing.T) {
+	// DeepSeek：thinking.type 管开关，reasoning_effort 管深度；medium 映射 high。
+	deepseek := Provider{ID: "ds", Vendor: VendorDeepseek}
+	body := thinkingBody(t, deepseek, Request{Model: "deepseek-flash", SessionID: "s", ThinkingLevel: "medium"})
+	thinking, _ := body["thinking"].(map[string]any)
+	if thinking["type"] != "enabled" || body["reasoning_effort"] != "high" {
+		t.Fatalf("DeepSeek medium = %+v", body)
+	}
+	body = thinkingBody(t, deepseek, Request{Model: "deepseek-flash", SessionID: "s", ThinkingLevel: "off"})
+	thinking, _ = body["thinking"].(map[string]any)
+	if thinking["type"] != "disabled" || body["reasoning_effort"] != "none" {
+		t.Fatalf("DeepSeek off = %+v", body)
+	}
+
+	// OpenRouter：统一档走 reasoning.effort，不是顶层 reasoning_effort。
+	openrouter := Provider{ID: "or", Vendor: VendorOpenRouter}
+	body = thinkingBody(t, openrouter, Request{Model: "claude-opus-5-5", SessionID: "s", ThinkingLevel: "high"})
+	reasoning, _ := body["reasoning"].(map[string]any)
+	if reasoning["effort"] != "high" {
+		t.Fatalf("OpenRouter reasoning = %+v", body)
+	}
+	if _, exists := body["reasoning_effort"]; exists {
+		t.Fatal("OpenRouter 不该发顶层 reasoning_effort")
+	}
+
+	// OpenAI 兼容的 Gemini：xhigh/max 降到 high；off 只在 2.5 Flash 上发 none。
+	custom := Provider{ID: "x", Vendor: VendorCustom, BaseURL: "https://example.test/v1"}
+	body = thinkingBody(t, custom, Request{Model: "gemini-4-argon", SessionID: "s", ThinkingLevel: "max"})
+	if body["reasoning_effort"] != "high" {
+		t.Fatalf("Gemini 4 max = %+v", body)
+	}
+	body = thinkingBody(t, custom, Request{Model: "gemini-2.5-flash", SessionID: "s", ThinkingLevel: "off"})
+	if body["reasoning_effort"] != "none" {
+		t.Fatalf("Gemini 2.5 Flash off = %+v", body)
+	}
+
+	// GLM 5.3：只有 low/high/max；medium 映射 high。
+	body = thinkingBody(t, custom, Request{Model: "glm-5.3-flash", SessionID: "s", ThinkingLevel: "medium"})
+	if body["reasoning_effort"] != "high" {
+		t.Fatalf("GLM 5.3 medium = %+v", body)
+	}
+
+	// Responses 协议：reasoning.effort 在嵌套对象里。
+	responseProvider := opencodeProvider()
+	responseProvider.Protocol = "openai-response"
+	httpReq, err := Build(responseProvider, Request{Model: "m", SessionID: "s", ThinkingLevel: "high"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := io.ReadAll(httpReq.Body)
+	var responseBody map[string]any
+	if err := json.Unmarshal(raw, &responseBody); err != nil {
+		t.Fatal(err)
+	}
+	nested, _ := responseBody["reasoning"].(map[string]any)
+	if nested["effort"] != "high" {
+		t.Fatalf("Responses thinking = %+v", responseBody)
+	}
+}
