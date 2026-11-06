@@ -541,12 +541,6 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 }
 .bar-head { display: flex; justify-content: space-between; align-items: center; padding: 0.7em 0.8em 0.3em; color: var(--tg-hint); font-size: 0.85em; }
 .bar-head .icon-btn { font-size: 1em; padding: 0.2em 0.35em; }
-/* 左栏顶部：对话 / 生图（2026-11-04）。去掉 MicroChat 字样，未来生图列表也住这条栏。 */
-.session-mode-tabs { display: flex; align-items: center; gap: 0.12em; }
-.session-mode-tab { background: none; border: none; border-radius: var(--r-btn); color: var(--tg-hint);
-  padding: 0.35em 0.55em; font: inherit; font-size: 1.05em; line-height: 1.2; cursor: pointer; }
-.session-mode-tab:hover { color: var(--tg-text); }
-.session-mode-tab.sel { color: var(--tg-text); background: var(--mix-8); }
 /* 新对话（DS 味，2026-10-10）：整行大按钮、比栏面亮一档 —— 左栏最显眼的那件东西。 */
 #session-new { display: flex; align-items: center; justify-content: center; gap: 0.45em;
   width: calc(100% - 1.2em); margin: 0.35em 0.6em 0.5em; padding: 0.72em 0.9em;
@@ -1063,19 +1057,22 @@ button.danger:hover { background: color-mix(in srgb, var(--md-error) 8%, transpa
 #sessions-bar .bar-head .icon-btn:hover { background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); color: var(--md-on-surface); }
 #sessions-bar .bar-head .icon-btn:active { background: color-mix(in srgb, var(--md-on-surface) 10%, transparent); }
 
-/* 对话 / 生图：MD3 segmented button（40dp 高、outline 外框、选中 secondary-container）。 */
-#sessions-bar .session-mode-tabs { display: inline-flex; align-items: stretch; height: 2.667em;
-  border: 1px solid var(--md-outline); border-radius: var(--md-shape-full); overflow: hidden; }
-#sessions-bar .session-mode-tab { position: relative; min-height: 2.667em; padding: 0 0.9em; border: none; background: none;
-  color: var(--md-on-surface); font: inherit; font-size: var(--md-type-label-large); font-weight: 500; letter-spacing: 0.006em;
-  line-height: 1; cursor: pointer;
+/* 对话 / 生图：左栏模式切换（VBtnToggle，full width）。**不是内容 tab** ——
+ * 生图面板还没接，切过去只是选中态；等它有独立列表再升级 VTabs。
+ * Vuetify 只负责按键组行为（roving tabindex / mandatory / divided），
+ * 皮仍是 MD3：outline 外框 + secondary-container 选中底。 */
+#sessions-bar .session-mode-tabs { display: flex; width: calc(100% - 1.1em); margin: 0.05em 0.55em 0.55em;
+  border: 1px solid var(--md-outline); border-radius: var(--md-shape-full); overflow: hidden; background: transparent; }
+#sessions-bar .session-mode-tabs .v-btn { flex: 1 1 0; min-width: 0; min-height: 2.667em; border: 0; border-radius: 0;
+  padding: 0 0.9em; background: transparent; color: var(--md-on-surface); text-transform: none;
+  font-size: var(--md-type-label-large); font-weight: 500; letter-spacing: 0.006em;
   transition: background-color var(--md-dur-200) var(--md-ease-standard), color var(--md-dur-200) var(--md-ease-standard); }
-#sessions-bar .session-mode-tab + .session-mode-tab { border-left: 1px solid var(--md-outline); }
-#sessions-bar .session-mode-tab:hover { background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); }
-#sessions-bar .session-mode-tab:active { background: color-mix(in srgb, var(--md-on-surface) 10%, transparent); }
-#sessions-bar .session-mode-tab.sel { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
-#sessions-bar .session-mode-tab.sel:hover { background: color-mix(in srgb, var(--md-on-secondary-container) 8%, var(--md-secondary-container)); }
-#sessions-bar .session-mode-tab:focus-visible { outline: 2px solid var(--md-primary); outline-offset: -4px; }
+#sessions-bar .session-mode-tabs .v-btn + .v-btn { border-left: 1px solid var(--md-outline); }
+#sessions-bar .session-mode-tabs .v-btn:hover { background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); }
+#sessions-bar .session-mode-tabs .v-btn:active { background: color-mix(in srgb, var(--md-on-surface) 10%, transparent); }
+#sessions-bar .session-mode-tabs .v-btn.v-btn--active { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+#sessions-bar .session-mode-tabs .v-btn.v-btn--active:hover { background: color-mix(in srgb, var(--md-on-secondary-container) 8%, var(--md-secondary-container)); }
+#sessions-bar .session-mode-tabs .v-btn:focus-visible { outline: 2px solid var(--md-primary); outline-offset: -4px; }
 
 /* 新建对话：MD3 extended FAB（primary-container + elevation 1 → 2）。 */
 #sessions-bar #session-new { position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; gap: 0.55em;
@@ -1372,5 +1369,4 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 #sessions-bar .brand-mark { display: inline-flex; flex: none; color: var(--md-primary); }
 #sessions-bar .brand-mark svg { width: 1.35em; height: 1.35em; display: block; }
 #sessions-bar .brand-name { font-size: 1.05em; font-weight: 500; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#sessions-bar .session-mode-tabs { align-self: flex-start; margin: 0.05em 0.55em 0.55em; }
 #sessions-bar #session-new { margin-bottom: 0.35em; }

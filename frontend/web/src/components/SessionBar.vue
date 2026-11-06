@@ -2,7 +2,7 @@
 // 左会话栏：列表 + 新建 + 置底设置按钮。
 // 每条只有一枚「选项」（竖三点）：设置与删除都收进那块浮板 —— 行内不再挤两枚键。
 import { ref, computed, nextTick, onMounted, onUnmounted } from "vue";
-import { VBtn } from "vuetify/components";
+import { VBtn, VBtnToggle } from "vuetify/components";
 import { ICONS } from "./icons.ts";
 import { groupSessions } from "../utils/sessionGroups.ts";
 import type { SessionView } from "../api/types.ts";
@@ -138,13 +138,21 @@ defineExpose({ setSessions });
     <button id="session-new" type="button" title="开启新对话（草稿：首句才建会话）" @click="$emit('new')">
       <span class="plus" aria-hidden="true" v-html="ICONS.plus"></span><span class="label">开启新对话</span>
     </button>
-    <div class="session-mode-tabs" role="tablist" aria-label="左栏模式">
-      <button type="button" class="session-mode-tab" :class="{ sel: mode === 'chat' }"
-        role="tab" :aria-selected="mode === 'chat' ? 'true' : 'false'" @click="mode = 'chat'">对话</button>
-      <button type="button" class="session-mode-tab" :class="{ sel: mode === 'image' }"
-        role="tab" :aria-selected="mode === 'image' ? 'true' : 'false'" title="生图（暂未接入）"
-        @click="mode = 'image'">生图</button>
-    </div>
+    <!-- 左栏模式切换，不是内容 tab：生图面板还没接，切过去只是选中态。
+         用 VBtnToggle 做全宽分段按钮；等生图有独立列表再升级成 VTabs。 -->
+    <VBtnToggle
+      v-model="mode"
+      class="session-mode-tabs"
+      mandatory
+      divided
+      density="compact"
+      color="primary"
+      role="group"
+      aria-label="左栏模式"
+    >
+      <VBtn value="chat" title="对话" :aria-pressed="mode === 'chat'">对话</VBtn>
+      <VBtn value="image" title="生图（暂未接入）" :aria-pressed="mode === 'image'">生图</VBtn>
+    </VBtnToggle>
     <div id="session-list" :aria-busy="loading && !sessions.length ? 'true' : 'false'">
       <div v-if="loading && !sessions.length" class="session-skeleton">
         <div v-for="(w, i) in skeletonWidths" :key="i" class="skeleton-row" :style="{ '--w': w }"></div>

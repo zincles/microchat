@@ -3110,12 +3110,15 @@ test("左栏顶部：Brand Title 在顶，新对话在中间，对话/生图在�
   const tabsAt = bar.indexOf('class="session-mode-tabs"');
   assert.ok(newAt > 0 && tabsAt > 0, "找不到新对话 / tabs");
   assert.ok(newAt < tabsAt, "对话/生图应该在新对话下方");
-  assert.match(bar, /role="tablist" aria-label="左栏模式"/, "没有左栏模式 tabs");
-  assert.match(bar, />对话</, "缺「对话」tab");
-  assert.match(bar, />生图</, "缺「生图」tab");
-  assert.match(bar, /生图（暂未接入）/, "生图 tab 没标暂未接入");
+  assert.match(bar, /<VBtnToggle[\s\S]*?v-model="mode"/, "左栏模式不是 VBtnToggle");
+  assert.match(bar, /mandatory/, "模式切换不是 mandatory（能取消到无选中）");
+  assert.match(bar, /:aria-pressed="mode === 'chat'"/, "对话按钮没有 pressed 状态");
+  assert.match(bar, />对话</, "缺「对话」按钮");
+  assert.match(bar, />生图</, "缺「生图」按钮");
+  assert.match(bar, /生图（暂未接入）/, "生图按钮没标暂未接入");
   assert.match(bar, /const mode = ref(?:<[^>]+>)?\("chat"\)/, "默认模式不是对话");
-  assert.match(css, /\.session-mode-tab\.sel\s*\{/, "选中态没有样式");
+  assert.match(css, /#sessions-bar \.session-mode-tabs \{[^}]*width:\s*calc\(100% - 1\.1em\)/, "模式切换没有占满栏宽");
+  assert.match(css, /#sessions-bar \.session-mode-tabs \.v-btn \{[^}]*flex:\s*1 1 0/, "两个按钮没有均分栏宽");
   assert.match(css, /#sessions-bar \.brand-name \{[^}]*font-size:\s*1\.05em/, "品牌标题没有独立字号");
 });
 test("移动端顶栏：模型名吃剩余空间，不再被挤成一个字母", () => {
@@ -3634,7 +3637,7 @@ test("左栏 MD3：分段按钮 / extended FAB / 48dp 行 / 状态层 / MD3 忙�
 
   // 分段按钮（对话/生图）与 extended FAB
   assert.match(css, /\.session-mode-tabs \{[^}]*border:\s*1px solid var\(--md-outline\)/, "模式切换不是 MD3 分段按钮");
-  assert.match(css, /\.session-mode-tab\.sel \{[^}]*background:\s*var\(--md-secondary-container\)/, "分段按钮选中态不是 secondary-container");
+  assert.match(css, /\.session-mode-tabs \.v-btn\.v-btn--active \{[^}]*background:\s*var\(--md-secondary-container\)/, "分段按钮选中态不是 secondary-container");
   assert.match(css, /#session-new \{[^}]*background:\s*var\(--md-primary-container\)/, "新建不是 MD3 extended FAB");
   assert.match(css, /#session-new \{[^}]*box-shadow:\s*var\(--md-elev-1\)/, "FAB 没有 elevation 1");
   assert.match(css, /#session-new:hover \{[^}]*box-shadow:\s*var\(--md-elev-2\)/, "FAB 悬停没有升到 elevation 2");
