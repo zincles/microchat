@@ -490,11 +490,6 @@ function onKey(e: KeyboardEvent): void {
 
         </section>
         </VTabsWindowItem>
-        <!-- 外观（2026-11-01 从删掉的用户视图搬来）：主题 / 缩放 / 背景图 / 显示模式 /
-             滚动收起 / 发送键 / 预演 / 命令菜单。全部即时生效，改了就存。 -->
-        <VTabsWindowItem value="appearance">
-          <AppearancePane @prefs-saved="emit('prefs-saved')" />
-        </VTabsWindowItem>
         <VTabsWindowItem value="prompt">
         <section id="panel-prompt" class="panel">
           <template v-if="!editSeg">
@@ -523,6 +518,11 @@ function onKey(e: KeyboardEvent): void {
             @saved="loadAgents"
           />
         </section>
+        </VTabsWindowItem>
+        <!-- 外观（2026-11-01 从删掉的用户视图搬来）：主题 / 缩放 / 背景图 / 显示模式 /
+             滚动收起 / 发送键 / 预演 / 命令菜单。全部即时生效，改了就存。 -->
+        <VTabsWindowItem value="appearance">
+          <AppearancePane @prefs-saved="emit('prefs-saved')" />
         </VTabsWindowItem>
         <VTabsWindowItem value="provider">
         <section id="panel-provider" class="panel">

@@ -3920,3 +3920,12 @@ test("会话/渠道管理页不跑设置 tab 滑入（页面切换不是 tab）"
   const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
   assert.match(settings, /<VTabsWindow[^>]*:key="props\.only \|\| 'settings'"/, "管理页没有按 only 重挂载 window，tab 滑入还会反向");
 });
+
+// 设置页签的 window item 顺序必须与 SETTINGS_TABS 一致：Vuetify 的滑入方向按
+// window item 注册顺序算，不是按 tab 标签顺序算（2026-11-06 用户报「行为不太对」）。
+test("设置页签顺序：window item 与标签顺序一致（提示词在外观前）", () => {
+  const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
+  const items = [...settings.matchAll(/<VTabsWindowItem value="([^"]+)"/g)].map((m) => m[1]);
+  const visible = items.filter((id) => ["chat", "agent", "prompt", "appearance"].includes(id));
+  assert.deepEqual(visible, ["chat", "agent", "prompt", "appearance"], "设置 window item 顺序与标签顺序不一致，滑入方向会反");
+});
