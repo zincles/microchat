@@ -9,3 +9,13 @@ export function downloadJSON(doc: unknown, name?: string): void {
   a.click();
   URL.revokeObjectURL(url);
 }
+
+/** 下载**已有字节**（酒馆原始 JSON 等）—— 不经过 JSON.parse/stringify。 */
+export function downloadBlob(blob: Blob, name?: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = String(name ?? "download.bin").replace(/[\\/:*?"<>|]/g, "_");
+  a.click();
+  URL.revokeObjectURL(url);
+}

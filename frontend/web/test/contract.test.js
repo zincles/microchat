@@ -3911,3 +3911,18 @@ test("酒馆：第五个设置 tab，ST 聊天记录导入搬到这里", () => {
   const session = settings.slice(settings.indexOf('<VTabsWindowItem value="session">'), settings.indexOf('<VTabsWindowItem value="agent">'));
   assert.ok(!/SillyTavern/.test(session), "ST 导入还留在会话管理页");
 });
+
+// 酒馆原始存档（2026-11-06）：只存字节；前端上传/下载都不走 JSON 重写。
+test("酒馆原始 JSON：上传走原始 body，导出走 Blob（不 JSON 重写）", () => {
+  const client = readFileSync(join(SRC, "api", "client.ts"), "utf8");
+  const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
+  const dl = readFileSync(join(SRC, "utils", "download.ts"), "utf8");
+  assert.match(client, /uploadTavernPreset:\s*\(file: File\)/, "没有原始上传方法");
+  assert.match(client, /callBytes<TavernPreset>\("POST", `\/tavern\/presets\?name=/, "上传没走 raw body");
+  const dlSrc = client.slice(client.indexOf("downloadTavernPreset:"));
+  assert.match(dlSrc.slice(0, 600), /return res\.blob\(\)/, "下载没保持 Blob");
+  assert.match(settings, /importTavernPresetFile/, "酒馆没有原始 JSON 导入");
+  assert.match(settings, /downloadTavernPreset\(p\)/, "酒馆没有原始导出");
+  assert.match(settings, /原始字节/, "界面没说明原样存储");
+  assert.match(dl, /export function downloadBlob/, "没有 Blob 下载工具");
+});

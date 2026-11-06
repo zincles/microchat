@@ -2,6 +2,7 @@
 // 摘要正文编辑器（应用内模态）：替掉 /editsum 与卡上 ✎ 的原生 window.prompt。
 // 只改 text（PATCH /summaries/{id}：就地换正文，id / 区间 / 指针不动；空文本后端会 400，这里先拦）。
 import { ref, onMounted, onUnmounted } from "vue";
+import { VBtn } from "vuetify/components";
 import { sharedApi } from "../utils/prefs.ts";
 import type { Summary } from "../api/types.ts";
 
@@ -41,13 +42,13 @@ onUnmounted(() => document.removeEventListener("keydown", onKey));
       <div class="modal-head">
         <span>编辑摘要{{ range }}</span>
         <span class="head-btns">
-          <button class="icon-btn" type="button" title="关闭（不保存）" @click="$emit('close')">×</button>
+          <VBtn icon variant="text" size="small" title="关闭（不保存）" aria-label="关闭" @click="$emit('close')">×</VBtn>
         </span>
       </div>
       <textarea v-model="text" class="sum-edit-field" rows="10" placeholder="摘要正文"></textarea>
       <div class="row">
-        <button type="button" class="primary" :disabled="busy" @click="save">保存</button>
-        <button type="button" @click="$emit('close')">取消</button>
+        <VBtn color="primary" variant="flat" size="small" :disabled="busy" @click="save">保存</VBtn>
+        <VBtn variant="text" size="small" @click="$emit('close')">取消</VBtn>
         <span class="status">{{ status }}</span>
       </div>
     </div>

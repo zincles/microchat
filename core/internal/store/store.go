@@ -77,7 +77,23 @@ func (s *Store) migrate() error {
 	if err := s.dropRetired(); err != nil {
 		return err
 	}
-	return s.ensureSessionThinking()
+	if err := s.ensureSessionThinking(); err != nil {
+		return err
+	}
+	return s.ensureTavernPresets()
+}
+
+// ensureTavernPresets：老库（user_version 已经是 1）不会重跑 001.sql ⇒ 补这张表。
+// 幂等；只建表，不碰任何已有数据。新库 001 里也有同一张表。
+func (s *Store) ensureTavernPresets() error {
+	_, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS tavern_presets (
+  id         TEXT PRIMARY KEY,
+  filename   TEXT NOT NULL,
+  size       INTEGER NOT NULL,
+  data       BLOB NOT NULL,
+  created_at INTEGER NOT NULL
+)`)
+	return err
 }
 
 // ensureSessionThinking：老库（user_version 已经是 1）不会重跑 001.sql ⇒ 补这一列。

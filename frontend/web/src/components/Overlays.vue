@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 浮层三件（命令面板 / picker / 确认框）：挂 #overlays-vue，DOM 照旧
 // （.palette/.picker/.confirm + 各条目类），行为照 main.js。
+import { VBtn } from "vuetify/components";
 import { ref } from "vue";
 
 export interface PaletteItem {
@@ -136,8 +137,8 @@ function lift(px?: number | null): void { liftPx.value = Math.max(0, px ?? 0); }
       <div class="confirm">
         <div id="confirm-text">{{ confirmText }}</div>
         <div class="confirm-btns">
-          <button id="confirm-yes" class="primary" type="button" @click="confirmDone(true)">确认</button>
-          <button id="confirm-no" type="button" @click="confirmDone(false)">取消</button>
+          <VBtn id="confirm-yes" color="primary" variant="flat" size="small" @click="confirmDone(true)">确认</VBtn>
+          <VBtn id="confirm-no" variant="text" size="small" @click="confirmDone(false)">取消</VBtn>
         </div>
       </div>
     </div>

@@ -83,6 +83,11 @@ func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *ch
 	s.mux.HandleFunc("PATCH /api/v1/segments/{segment_id}", s.updateSegment)
 	s.mux.HandleFunc("DELETE /api/v1/segments/{segment_id}", s.deleteSegment)
 	// **界面偏好**（2026-11-01：住服务器，不再住浏览器 localStorage）
+	// 酒馆（2026-11-06）：原始 JSON 存 BLOB，导出逐字节原样；解析是后续独立步骤。
+	s.mux.HandleFunc("GET /api/v1/tavern/presets", s.listTavernPresets)
+	s.mux.HandleFunc("POST /api/v1/tavern/presets", s.createTavernPreset)
+	s.mux.HandleFunc("GET /api/v1/tavern/presets/{preset_id}", s.getTavernPreset)
+	s.mux.HandleFunc("DELETE /api/v1/tavern/presets/{preset_id}", s.deleteTavernPreset)
 	s.mux.HandleFunc("GET /api/v1/config/prefs", s.getPrefs)
 	s.mux.HandleFunc("PUT /api/v1/config/prefs", s.putPrefs)
 	// 自定义背景图：原始字节进出（它是张图，不是 JSON）

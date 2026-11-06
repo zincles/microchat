@@ -4,6 +4,7 @@
 //
 // 只 PATCH 这一条消息的 content 或 reasoning；保存成功后由父组件重拉消息与状态。
 import { ref, computed, nextTick, onMounted, onUnmounted } from "vue";
+import { VBtn } from "vuetify/components";
 import { sharedApi } from "../utils/prefs.ts";
 import { ICONS } from "./icons.ts";
 import type { EditMessageRequest, Message } from "../api/types.ts";
@@ -79,12 +80,12 @@ onUnmounted(() => document.removeEventListener("keydown", onKey));
       <div class="modal-head">
         <span>{{ heading }}</span>
         <span class="head-btns">
-          <button class="icon-btn full-btn" type="button"
+          <VBtn icon variant="text" size="small" class="full-btn"
             :title="expanded ? '退出网页全屏' : '网页全屏'"
             :aria-label="expanded ? '退出网页全屏' : '网页全屏'"
             :aria-pressed="expanded ? 'true' : 'false'"
-            @click="toggleExpanded" v-html="expanded ? ICONS.minimize : ICONS.maximize"></button>
-          <button class="icon-btn" type="button" title="关闭（不保存）" @click="close">×</button>
+            @click="toggleExpanded" v-html="expanded ? ICONS.minimize : ICONS.maximize" />
+          <VBtn icon variant="text" size="small" title="关闭（不保存）" aria-label="关闭" @click="close">×</VBtn>
         </span>
       </div>
       <textarea
@@ -97,9 +98,9 @@ onUnmounted(() => document.removeEventListener("keydown", onKey));
       <div class="modal-foot">
         <span class="status">{{ status }}</span>
         <div class="modal-actions">
-          <button type="button" @click="close">取消</button>
-          <button type="button" class="primary" :disabled="busy" @click="save(false)">保存</button>
-          <button v-if="rerollable" type="button" :disabled="busy" @click="save(true)">保存并重摇</button>
+          <VBtn variant="text" size="small" @click="close">取消</VBtn>
+          <VBtn color="primary" variant="flat" size="small" :disabled="busy" @click="save(false)">保存</VBtn>
+          <VBtn v-if="rerollable" variant="tonal" size="small" :disabled="busy" @click="save(true)">保存并重摇</VBtn>
         </div>
       </div>
     </div>

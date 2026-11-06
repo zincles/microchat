@@ -694,3 +694,11 @@ export interface ApiError extends Error {
   code: string | null;
   status: number;
 }
+
+/** 酒馆原始导入：只存原始字节的元数据；正文从下载口按字节取。 */
+export interface TavernPreset {
+  id: string;
+  filename: string;
+  size: number;
+  created_at: number;
+}

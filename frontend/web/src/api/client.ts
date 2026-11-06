@@ -53,6 +53,7 @@ import type {
   StreamCursor,
   StreamSlice,
   Summary,
+  TavernPreset,
   TaskBoard,
   TestProviderRequest,
   TestProviderResult,
@@ -293,6 +294,21 @@ export function createApi({ base, token = "", fetchFn = fetch }: CreateApiOption
     // 新会话 + 消息与摘要一并复制（摘要新 id、指针重映射）；**世界状态不复制**（它本来就从正文现演）。
     copySession: (id: string) => call<Session>("POST", `/sessions/${enc(id)}/copy`),
     deleteProvider: (id: string) => call<null>("DELETE", `/providers/${enc(id)}`),
+    // 酒馆：原始 JSON 只存字节，列表/删除走 JSON；上传/下载走原始 body（不 JSON 重写）。
+    listTavernPresets: () => call<TavernPreset[]>("GET", "/tavern/presets"),
+    uploadTavernPreset: (file: File) => {
+      const name = file.name || "preset.json";
+      return callBytes<TavernPreset>("POST", `/tavern/presets?name=${enc(name)}`, file);
+    },
+    deleteTavernPreset: (id: string) => call<null>("DELETE", `/tavern/presets/${enc(id)}`),
+    downloadTavernPreset: async (id: string): Promise<Blob> => {
+      const res = await fetchFn(`${base}/tavern/presets/${enc(id)}`);
+      if (!res.ok) {
+        const data = await readJson(res);
+        throw httpError(data, res);
+      }
+      return res.blob();
+    },
     status: (id: string) => call<SessionStatus>("GET", `/sessions/${enc(id)}/status`),
     turnText: (id: string, from: number, thinkFrom: number) =>
       call<StreamSlice>("GET", `/sessions/${enc(id)}/turn/text?from=${from}&think_from=${thinkFrom}`),

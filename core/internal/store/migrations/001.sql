@@ -57,6 +57,15 @@ CREATE TABLE provider_state (
   provider        TEXT PRIMARY KEY,
   last_refresh_at INTEGER NOT NULL
 );
+-- 酒馆原始导入（2026-11-06）：只存**原始字节**（BLOB）+ 文件名，不解析。
+-- 导出必须逐字节原样；解析是后续独立的只读步骤。
+CREATE TABLE tavern_presets (
+  id         TEXT PRIMARY KEY,
+  filename   TEXT NOT NULL,
+  size       INTEGER NOT NULL,
+  data       BLOB NOT NULL,
+  created_at INTEGER NOT NULL
+);
 CREATE TABLE summaries (
   id                TEXT PRIMARY KEY,
   session_id   TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,

@@ -16,9 +16,9 @@ import { ICONS } from "./icons.ts";
 import { sharedApi } from "../utils/prefs.ts";
 import { SETTINGS_TABS, groupModelsByProvider, modelOption, providerChoices, modelChoicesFor, modelKey, parseModelKey } from "../utils/format.ts";
 import type { ModelGroup } from "../utils/format.ts";
-import { downloadJSON } from "../utils/download.ts";
+import { downloadJSON, downloadBlob } from "../utils/download.ts";
 import { buildCartridge, cartridgeAgent } from "../utils/cartridge.ts";
-import type { Agent, ChatConfig, DefaultsConfig, ProviderView, Segment, SessionView } from "../api/types.ts";
+import type { Agent, ChatConfig, DefaultsConfig, ProviderView, Segment, SessionView, TavernPreset } from "../api/types.ts";
 
 // models-changed：渠道/模型那摊变了（删除渠道会连模型一起没）⇒ 让 App 重拉顶栏的模型下拉。
 // 与会话左栏那个 sessions-changed 是**两件事**，别合并（各自的读口不同）。
@@ -217,6 +217,45 @@ async function importSTFile(event: Event): Promise<void> {
   } catch (e) { importStatus.value = `导入失败：${errMsg(e)}`; }
   input.value = "";
 }
+// 酒馆原始导入（2026-11-06）：只存原始字节；列表/删除/下载，不解析。
+const tavernPresets = ref<TavernPreset[]>([]);
+const tavernStatus = ref("");
+const tavernInput = ref<HTMLInputElement | null>(null);
+function sizeText(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(2)} MB`;
+}
+function timeText(ms: number): string { return new Date(ms).toLocaleString(); }
+async function loadTavernPresets(): Promise<void> {
+  try { tavernPresets.value = await api.listTavernPresets(); }
+  catch (e) { tavernStatus.value = `读取酒馆导入失败：${errMsg(e)}`; }
+}
+async function importTavernPresetFile(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+  tavernStatus.value = `保存 ${file.name} 中…`;
+  try {
+    const p = await api.uploadTavernPreset(file);
+    tavernStatus.value = `已原样保存：${p.filename}（${sizeText(p.size)}）`;
+    await loadTavernPresets();
+  } catch (e) { tavernStatus.value = `保存失败：${errMsg(e)}`; }
+  input.value = "";
+}
+async function downloadTavernPreset(p: TavernPreset): Promise<void> {
+  try { downloadBlob(await api.downloadTavernPreset(p.id), p.filename); }
+  catch (e) { tavernStatus.value = `导出失败：${errMsg(e)}`; }
+}
+async function removeTavernPreset(p: TavernPreset): Promise<void> {
+  if (props.ask && !(await props.ask(`删除原始预设「${p.filename}」？不可逆。`))) return;
+  try {
+    await api.deleteTavernPreset(p.id);
+    tavernStatus.value = `已删除：${p.filename}`;
+    await loadTavernPresets();
+  } catch (e) { tavernStatus.value = `删除失败：${errMsg(e)}`; }
+}
+
 // 会话 tab：列表 + 新建/进入/删除（编辑走左栏 ☰ 二级）。
 const sessions = ref<SessionView[]>([]);
 const sessionMgrStatus = ref("");
@@ -331,6 +370,7 @@ onMounted(() => {
   loadAgents().catch(() => {});
   loadProviders().catch(() => {});
   loadSessions().catch(() => {});
+  loadTavernPresets().catch(() => {});
   document.addEventListener("keydown", onKey);
 });
 onUnmounted(() => document.removeEventListener("keydown", onKey));
@@ -518,6 +558,30 @@ function onKey(e: KeyboardEvent): void {
         <section id="panel-tavern" class="panel">
           <h3>酒馆</h3>
           <p class="hint">专门处理 SillyTavern 的预设、角色卡与聊天记录：这里负责把它们转换成 MicroChat 的智能体 / 提示词片段 / 会话。预设与角色卡转换还没接；聊天记录导入已经可用。</p>
+          <section class="settings-card">
+            <h3>原始 JSON 存档</h3>
+            <p class="hint">只保存文件的原始字节，不解析、不改写；导出时逐字节原样返回。预设 / 角色卡的解析与转换以后再做。</p>
+            <div class="row">
+              <VBtn color="primary" variant="flat" size="small" type="button" @click="tavernInput?.click()">导入原始 JSON…</VBtn>
+              <input ref="tavernInput" type="file" accept=".json,application/json" hidden @change="importTavernPresetFile" />
+              <span class="status">{{ tavernStatus }}</span>
+            </div>
+            <div v-if="tavernPresets.length" id="tavern-file-list">
+              <VTable class="plist">
+                <thead><tr><th>文件</th><th>大小</th><th>导入时间</th><th></th></tr></thead>
+                <tbody><tr v-for="p in tavernPresets" :key="p.id">
+                  <td :title="p.filename">{{ p.filename }}</td>
+                  <td>{{ sizeText(p.size) }}</td>
+                  <td>{{ timeText(p.created_at) }}</td>
+                  <td class="ops">
+                    <VBtn variant="text" size="small" type="button" @click="downloadTavernPreset(p)">导出</VBtn>
+                    <VBtn color="error" variant="text" size="small" type="button" @click="removeTavernPreset(p)">删除</VBtn>
+                  </td>
+                </tr></tbody>
+              </VTable>
+            </div>
+            <p v-else class="hint">还没有导入原始文件。</p>
+          </section>
           <h3>导入 SillyTavern 聊天记录</h3>
             <div class="io-card">
               <div class="io-head"><b>SillyTavern 聊天记录</b><i class="io-tag">.jsonl</i></div>
