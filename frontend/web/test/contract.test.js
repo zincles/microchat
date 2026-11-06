@@ -2313,10 +2313,10 @@ test("载荷：有一键折叠全部，且没有一键展开", () => {
   assert.match(tpl, /:disabled="allCollapsed"/, "全折叠后按钮没禁用（会变成点不动的死按钮）");
 
   // ⑤ 平铺样式：这个按钮也不许长成"盒子"。
-  //    2026-11-02 起底色/边框收进共享的「幽灵按钮底座」（.icon-btn/.foot-btn/.edit-btn…），
+  //    2026-11-02 起底色/边框收进共享的「幽灵按钮底座」（.icon-btn/.edit-btn…），
   //    所以这里同时钉两件事：底座确实去底去边框；`.collapse-all` 自己**没有**再上一套。
   const rule = css.match(/(?:^|\n)\.collapse-all\s*\{([^}]*)\}/)?.[1] ?? "";
-  const base = css.match(/\.icon-btn,\s*\.foot-btn,[\s\S]*?\{([^}]*)\}/)?.[1] ?? "";
+  const base = css.match(/\.icon-btn,\s*\.edit-btn,\s*\.link-btn,[\s\S]*?\{([^}]*)\}/)?.[1] ?? "";
   assert.ok(rule, "找不到 .collapse-all 样式");
   assert.ok(base, "找不到幽灵按钮底座（background:none/border:none 应该只有一处）");
   assert.match(base, /background:\s*none/, "幽灵按钮底座没有去底色");
@@ -3248,6 +3248,12 @@ test("左栏：有会话/渠道/设置，没有安装说明", () => {
   assert.match(bar, /id="sessions-manage"/, "左栏没有会话入口");
   assert.match(bar, /id="providers-manage"/, "左栏没有渠道入口");
   assert.match(bar, /id="settings-open"/, "左栏没有设置入口");
+  // 三个入口并排 + Vuetify MD3：不再手写 .foot-btn 竖排
+  assert.match(bar, /<VBtn[\s\S]*class="bar-action"[\s\S]*stacked/, "底部入口不是 Vuetify VBtn(stacked)");
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.match(css, /#sessions-bar \.bar-foot \{[^}]*flex-direction: row/, "底部入口没有并排");
+  assert.match(css, /#sessions-bar \.bar-foot \.bar-action \{[^}]*flex: 1 1 0/, "三个入口没等宽");
+  assert.ok(!/foot-btn/.test(bar), "还留着旧 .foot-btn");
   for (const dead of ["install-app", "安装说明", "installable", "standalone", "download"]) {
     assert.ok(!bar.includes(dead), `左栏还留着安装入口的 ${dead}`);
   }
@@ -3282,14 +3288,14 @@ test("CSS 复用：幽灵按钮底座与蒙层 token 只有一处", () => {
   const theme = readFileSync(join(SRC, "assets", "theme.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 
   // ① 底座只能有一份，且三件事齐全。
-  const base = css.match(/\.icon-btn,\s*\.foot-btn,[\s\S]*?\{([^}]*)\}/)?.[1] ?? "";
+  const base = css.match(/\.icon-btn,\s*\.edit-btn,\s*\.link-btn,[\s\S]*?\{([^}]*)\}/)?.[1] ?? "";
   assert.ok(base, "找不到幽灵按钮底座");
   assert.match(base, /background:\s*none/, "底座没有去底色");
   assert.match(base, /border:\s*none/, "底座没有去边框");
   assert.match(base, /cursor:\s*pointer/, "底座没有指针样式");
 
   // ② 具体按钮不许再把这三条抄回来（只查最典型的四个）。
-  for (const sel of [".icon-btn", ".foot-btn", ".msg \\.edit-btn", ".link-btn"]) {
+  for (const sel of [".icon-btn", ".msg \\.edit-btn", ".link-btn"]) {
     const rule = css.match(new RegExp(`${sel}\\s*\\{([^}]*)\\}`))?.[1] ?? "";
     assert.ok(rule, `找不到 ${sel} 的规则`);
     assert.ok(!/background:\s*none/.test(rule), `${sel} 又自己写了一遍 background:none（应复用底座）`);

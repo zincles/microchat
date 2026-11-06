@@ -1073,7 +1073,8 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   ⚠ 从前那行小字与 2026-11-01 的独立任务徽标都已删：**同一个数字住两处，只会让两处都可能过期**。
 - **共享层（2026-10-10 审计整改）**：`utils/prefs.ts` = 界面偏好与共享 api 客户端的唯一出口（主题应用含 TG 守卫 —— TG 里 data-theme 根本不设；发送键判定/提示、apiBase/Token、`sharedApi()` 按偏好缓存）；`api/client.ts` 的 `mergeStreamSlice` = 流式合并唯一规则（游标回退 ⇒ 清零重建）；api 错误统一带 `code`/`status`（分支按 code，别猜文案）；`format.ts` 的 modelKey/modelLabel/whoText/sessionTitle = 键与标签的唯一出口；`COMMAND_META`（commands.js）与 App 执行器启动对账。
 - **CSS 复用基线（2026-11-02，用户定「减少 CSS 的使用量、多复用少重写」）**：除底部输入栏（2026-11-06 起用 Vuetify 4）外，全站仍是手写 CSS（不引 Tailwind —— 它与 em 缩放/大量状态选择器不合，且会把 CSS 搬进模板）。复用只有四处，新样式照此写：
-  ① **幽灵按钮底座** `main.css` 那一组（`.icon-btn / .foot-btn / .edit-btn / .link-btn / .cp-close / .ctree-tw / .ctree-undo / .collapse-all / .session-item 的两枚 / 模型与 Agent 菜单项 / tabs`）= `background:none; border:none; cursor:pointer` **只写一次**，具体规则只写颜色/尺寸/圆角；
+  ① **幽灵按钮底座** `main.css` 那一组（`.icon-btn / .edit-btn / .link-btn / .cp-close / .ctree-tw / .ctree-undo / .collapse-all / .session-item 的两枚 / 模型与 Agent 菜单项 / tabs`）= `background:none; border:none; cursor:pointer` **只写一次**，具体规则只写颜色/尺寸/圆角；
+     （底部三个管理入口 2026-11-06 换 Vuetify `VBtn(stacked)` 后已退出这张表）
   ② **文字蒙层** 用 `theme.css` 的 `--mix-6 / 8 / 10 / 13 / 18`（加已有的 `--hover` = 7%），别再在 `main.css` 里现写 `color-mix(... N%, transparent)`；
   ③ **圆角** 用 `--r-xs(4) / --r-sm(6) / --r-md(8) / --r-btn / --r-card / --r-shell / --r-bubble`，不写字面量；
   ④ **等宽数字** 只在 `main.css` 末尾那一组写 `font-variant-numeric: tabular-nums`，新数字元素加进选择器清单，别单写一条。
@@ -1170,7 +1171,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   state layer（hover 8% / focus 10% / pressed 10%）、字体角色（**一律 em**：跟随 `--app-text-scale`，不写 px）。
   暗色/亮色取 MD3 baseline 色板，Breeze 用它的桌面蓝生成同构角色 —— 三套主题都是同一套语义。
   **落点先左栏 + 顶栏 + 输入区**（2026-11-05 第二刀）：左栏规则以 `#sessions-bar` 前缀收口
-  （`.bar-head` / `.foot-btn` / `.empty` 是共享类，直接改会波及上下文工作区）。左栏结构 = MD3 navigation drawer：
+  （`.bar-head` / `.empty` 是共享类，直接改会波及上下文工作区）。左栏结构 = MD3 navigation drawer：
   顶部 segmented button（对话/生图）+ 标准 icon button；新建 = **extended FAB**（primary-container、elevation 1→2、按下 scale）；
   列表 = 48dp 行、full 圆角、选中 secondary-container、`::after` 状态层（内容 z-index 压在它上面）；
   底部 = navigation drawer item；选项浮板 = MD3 menu（surface-container / 4dp 圆角 / elevation 2 / 48dp 行）。
@@ -1186,7 +1187,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   **输入区**（2026-11-06 起 Vuetify 4）：`VTextarea`（`solo-filled` / `comfortable` / `rounded=xl` / `bg-surface-container-high`）
   + `VBtn`（发送 primary、停止 error、思考 text）；旧的 `.composer-box` / `#input` / `#composer button` 手写样式已删。
   `.messages-inner` 顶部留白跟着顶栏从 3.2em 提到 **4.2em**（顶栏 3.5em + 间隙）。
-  ⚠ 共享类暂时还是旧样式：`.bar-head.bar-tabs`、`.foot-btn` 基座、`.empty` 等**不要**在没加 `#sessions-bar` 前缀时改
+  ⚠ 共享类暂时还是旧样式：`.bar-head.bar-tabs`、`.empty` 等**不要**在没加 `#sessions-bar` 前缀时改
   （否则会顺手改掉上下文工作区，且契约测试只钉了一部分）。
   ⚠ **全局 input 基线的特异性 (0,4)**（`input:not(...):not(...)`）会压掉 `.model-search` 这类单类选择器 ——
   搜索栏的 full 圆角 / 无下划线 / focus 环必须写成 `#chat-col > header .model-search`（踩过：蓝下划线又回来了）。
@@ -1283,7 +1284,8 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   它原来是"登录者自己的事"，而登录者这个概念没了；里面两块：**身份 / 用户管理**跟着账号一起删，
   **外观 / 输入**整块搬进设置的「外观」区（`AppearancePane.vue`，四区里的最后一个）。
   **左栏底 = 会话 / 渠道 / 设置**（2026-11-02 用户定：设置面板太满，把会话与渠道拆成独立入口；
-  原来的「安装说明」删掉）。会话 / 渠道与设置共用同一个视图：`SettingsModal` 的 `:only`
+  原来的「安装说明」删掉）。**2026-11-06 起三个入口并排**（用户定「并排，改善移动体验」）：
+  Vuetify `VBtn(stacked)` 三等分一行，图标在文字上方；旧的竖排 `.foot-btn` 样式已删。会话 / 渠道与设置共用同一个视图：`SettingsModal` 的 `:only`
   只显示那一页、隐藏 TabBar，页头写「会话管理 / 渠道管理」；退出仍走同一个 close。
 - 设置四 tab：**聊天 / 智能体 / 提示词 / 外观**（2026-11-02 起；会话与渠道不再是设置 tab）。聊天 / 智能体 / 提示词/外观的编辑都是 **tab 内二级页**（列表 ⇄ 详情就地切换，`[←]` 返回 —— 2026-10-10 从弹窗改过来，弹窗叠视图的账清了）；**Agent 编辑器的二级页自己也分页签**（2026-10-28 用户：「全挤在一起很丑」）——「基本」（id / 名称 / 首段对话 / 句首贴状态）/「系统提示词」（base + 它的段）/ **每个能力一页**（启用 / Model / 提示词覆盖 / 它的段，页面由 `ABILITY_IDS` 生成 ⇒ 加能力自动多一页），页签条与保存行：**保存那一行在页签外面**（哪一页都能存；藏在某一页里的那种，翻到别的页就找不到保存了）。页签条本身是 `frontend/web/src/components/TabBar.vue`，设置主栏那四区用的**同一个组件** —— 底片滑动的算法（量 `offsetLeft` / `offsetWidth`，还要跟 `window.resize` 与界面缩放滑杆）只有一份，契约测试钉着两处都不许自己画 `tab-thumb`、不许自己量宽度；「会话设置」（左栏 ☰）是**紧凑对话框**（560px、高随内容）。**Esc 一次只关一层**：二级页开着时设置视图不响应 Esc、会话设置弹窗开着时同理（踩过：两边各监听 document，一下关两层）。**会话管理页**（左栏「会话」入口）= 新会话默认值 + 列表（点进）+ 删除 + 尾部**导入对话**区（`POST /sessions/import-st` 与 `/sessions/import-json` 各一张卡：一句说明 + 按钮 + 隐藏文件框 —— 2026-10-17 用户点名「两种导入混在一起、都乱了」，改成两卡分开、原生 file 框换按钮）。
 - **渠道详情里的模型清单**（2026-11-02 用户定：「具体某个模型的界面里，应该能看到当前这个渠道导入的模型的列表（虽然不能编辑）」）：
