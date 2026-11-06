@@ -981,9 +981,9 @@ test("上下文环：圆心是后台任务数，有任务时转动，面板里�
   assert.match(css, /\.ctx-row dt \{[^}]*width:\s*6\.8em/, "标签列太窄（「自动压缩阈值」「上次实际用量」会换行）");
   assert.ok(!/还能装|给回复留的地方|没有在跑的任务|上次用了/.test(top), "面板里还留着口语化文案");
   assert.match(top, /const ctxTab = ref(?:<[^>]+>)?\("context"\)/, "面板没有 tab 状态");
-  assert.match(tpl, /role="tablist"/, "面板没有 tablist");
-  assert.match(tpl, /ctxTab = 'context'/, "没有上下文 tab");
-  assert.match(tpl, /ctxTab = 'tasks'/, "没有任务 tab");
+  assert.match(tpl, /<VBtnToggle v-model="ctxTab"/, "面板不是 VBtnToggle");
+  assert.match(tpl, /<VBtn value="context">上下文<\/VBtn>/, "没有上下文 tab");
+  assert.match(tpl, /<VBtn value="tasks">任务/, "没有任务 tab");
   assert.match(tpl, /v-if="ctxTab === 'context'"/, "上下文内容没有按 tab 切换");
   assert.match(top, /filter\(\(t\) => !t\.finished_at\)/, "任务 tab 没滤掉已结束的任务（它叫「正在运行」）");
   assert.match(top, /const runningQueues = computed\(\(\) => queues\.value\.filter\(\(q\) => !q\.finished_at\)\)/,
@@ -1924,18 +1924,18 @@ test("设置：没有「连接」页，也没有绑不存在的 saveNet", () => 
 // 页签条与 SETTINGS_TABS 是同一份；会话/渠道的 panel 还在，但**不再住设置 tab** ——
 // 它们由左栏底部的独立入口用 `:only` 打开。这条同时钉住两头，防止"只删 tab、
 // panel 变成永远进不去的死页"或"又偷偷塞回设置里"。
-test("设置页签：四区 + 会话/渠道独立入口", () => {
+test("设置页签：五区 + 会话/渠道独立入口", () => {
   const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
   const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
   const panels = [...settings.matchAll(/<VTabsWindowItem value="([a-z]+)"/g)].map((m) => m[1]);
   // 六个 panel 都在真正的 tabpanel 里（session/provider 由独立入口打开）。
-  assert.deepEqual([...panels].sort(), ["agent", "appearance", "chat", "prompt", "provider", "session"],
+  assert.deepEqual([...panels].sort(), ["agent", "appearance", "chat", "prompt", "provider", "session", "tavern"],
     `panel 不齐：${panels.join(", ")}`);
   // 键盘焦点即激活（VSlideGroup 的 ArrowLeft/Right 只搬焦点，@focus 补上 WAI-ARIA 自动激活）
   assert.match(settings, /@focus="tab = t\.id"/, "设置 VTabs 没在焦点时激活");
-  // 设置主栏只剩四个 tab。
-  assert.deepEqual(SETTINGS_TABS.map((t) => t.id), ["chat", "agent", "prompt", "appearance"],
-    "SETTINGS_TABS 又塞回了会话/渠道，或顺序变了");
+  // 设置主栏五个 tab：酒馆负责 ST 导入/转换。
+  assert.deepEqual(SETTINGS_TABS.map((t) => t.id), ["chat", "agent", "prompt", "appearance", "tavern"],
+    "SETTINGS_TABS 少/多了区，或顺序变了");
   // 独立入口：左栏底两枚按钮 + App 用 :only 打开同一个视图。
   assert.match(bar, /@click="\$emit\('open-sessions'\)"/, "左栏没有「会话」入口");
   assert.match(bar, /@click="\$emit\('open-providers'\)"/, "左栏没有「渠道」入口");
@@ -2029,8 +2029,8 @@ test("分段压缩 / 补齐空档：第四、第五 tab，预览 → 并发运�
 
   // ① 两个 tab 按顺序住在压缩后面；不是另开页面。
   for (const [label, id] of [["分段压缩", "advanced"], ["补齐空档", "repair"]]) {
-    assert.ok(bar.includes(`>${label}</button>`), `缺少「${label}」tab`);
-    assert.match(bar, new RegExp(`selectTab\\('${id}'\\)`), `「${label}」没有自己的 pane`);
+    assert.ok(bar.includes(`value="${id}">${label}</VTab>`), `缺少「${label}」tab`);
+    assert.match(bar, new RegExp(`v-show="tab === '${id}'"`), `「${label}」没有自己的 pane`);
   }
   assert.match(bar, /<AdvancedCompact :session-id="sessionId"/, "分段压缩没拿到会话 id");
   assert.match(bar, /<AdvancedCompact :session-id="sessionId" repair/, "补齐空档没打开 repair");
@@ -2040,7 +2040,7 @@ test("分段压缩 / 补齐空档：第四、第五 tab，预览 → 并发运�
   for (const word of ["空洞", "作业", "begin_idx", "end_idx"]) {
     assert.ok(!advTpl.includes(word), `分段压缩界面还露着内部词：${word}`);
   }
-  assert.ok(bar.includes(">分段压缩</button>") && bar.includes(">补齐空档</button>"), "两个 tab 没改成说人话的名字");
+  assert.ok(bar.includes(">分段压缩</VTab>") && bar.includes(">补齐空档</VTab>"), "两个 tab 没改成说人话的名字");
 
   // ② 参数 / 预览 / 运行 / 取消。
   for (const field of ["begin_idx", "end_idx", "step_blocks", "concurrency", "max_attempts"]) {
@@ -2063,7 +2063,7 @@ test("分段压缩 / 补齐空档：第四、第五 tab，预览 → 并发运�
   assert.match(ws, /@advanced-done=/, "工作区没透传 advanced-done");
 
   // ④ 并发数 / 单块尝试是参数，不是写死；tab 可横向滚，别把 5 个挤断。
-  assert.match(css, /\.bar-head\.bar-tabs \{[^}]*overflow-x:\s*auto/, "5 个 tab 没有横向滚动");
+  assert.match(css, /\.context-tabs \{/, "5 个 tab 没有 Vuetify 容器");
   assert.match(adv, /concurrency/, "没有并发参数");
   assert.match(adv, /max_attempts/, "没有单块尝试参数");
 });
@@ -2091,7 +2091,7 @@ test("上下文工作区：右栏三 tab 搬进来了，栏本身删干净", () 
 
   // ② 三条 tab 一个不少
   for (const t of ["payload", "state", "tree"]) {
-    assert.match(bar, new RegExp(`selectTab\\('${t}'\\)`), `面板里少了 ${t} 那一页`);
+    assert.match(bar, new RegExp(`v-show="tab === '${t}'"`), `面板里少了 ${t} 那一页`);
   }
 
   // ③ 栏真的没了：它那些"栏才有的东西"一处都不许剩。
@@ -2235,48 +2235,16 @@ test("上下文工作区：平铺，不许再长出卡片和气泡", () => {
 // padding-top）是唯一给它让位的东西。所以"放大"这件事有个硬上限：
 // **总高不能超过那截留白**，否则第一条消息会被压在开关底下（不报错，只是看不见）。
 // 这条按实际声明**算一遍**，两头都钉：够大（别悄悄改小）、又没顶到天花板。
-test("工作区开关：够大，但没顶穿消息列的顶部留白", () => {
+test("工作区开关：VBtnToggle，尺寸仍在顶栏内", () => {
+  const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  const rule = (sel) => {
-    const m = css.match(new RegExp(`(^|\\n)${sel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\{([^}]*)\\}`));
-    return m ? m[2] : "";
-  };
-  // ⚠ 别一律要求 `em` 单位：`line-height: 1.3` 是**无单位倍数**（相对自身 font-size），
-  // 而 `font-size` / `padding` 在这儿都写成 em。按名字分两种取法，取不到就 NaN（下面会报）。
-  const em = (text, name) => {
-    const m = text.match(new RegExp(`${name}:\\s*([\\d.]+)em`));
-    return m ? Number(m[1]) : NaN;
-  };
-  const bare = (text, name) => {
-    const m = text.match(new RegExp(`${name}:\\s*([\\d.]+)\\s*(?:;|$)`));
-    return m ? Number(m[1]) : NaN;
-  };
-
-  const tab = rule(".ws-tab");
-  const box = rule(".ws-switch");
-  assert.ok(tab && box, "找不到 .ws-tab / .ws-switch");
-
-  const font = em(tab, "font-size");
-  const line = bare(tab, "line-height");                // 无单位倍数
-  const padY = em(tab, "padding");                      // 竖排 padding（简写取第一个）
-  const padBox = Number.isFinite(em(box, "padding")) ? em(box, "padding") : 0;
-  for (const [n, v] of [["font-size", font], ["line-height", line], ["padding(.ws-tab 竖)", padY]]) {
-    assert.ok(Number.isFinite(v), `.ws-tab / .ws-switch 的 ${n} 不是 em 数字，算不出高度`);
-  }
-  // em 是**相对自身 font-size** 的：padding 的 em 要先乘回 font，再落到父级那一把尺上。
-  const height = font * line + 2 * padY * font + 2 * padBox;
-
-  // ① 够大：至少与旁边那枚环（1.8em）同量级 —— 用户要的是"说得出口的控件"，不是一行小字。
-  //    从前的 0.78em/0.16em 0.55em 只有 ≈1.35em，正是被嫌弃的那个尺寸。
-  assert.ok(height >= 1.8, `开关太小了（算出来 ${height.toFixed(2)}em，至少 1.8em）`);
-
-  // ② 没顶穿：消息列顶部留白是它唯一让位的东西。
-  const inner = rule(".messages-inner");
-  const reserve = em(inner, "padding");
-  assert.ok(Number.isFinite(reserve), "读不出 .messages-inner 的顶部留白");
-  assert.ok(height < reserve - 0.5,
-    `开关 ${height.toFixed(2)}em 快顶到消息列顶部留白 ${reserve}em 了 —— 再大就会压住第一条消息`);
+  assert.match(top, /<VBtnToggle[\s\S]*?class="ws-switch"/, "工作区开关不是 VBtnToggle");
+  assert.match(top, /<VBtn value="chat"[^>]*>聊天<\/VBtn>/, "缺「聊天」");
+  assert.match(top, /<VBtn value="context"[^>]*>上下文<\/VBtn>/, "缺「上下文」");
+  assert.match(css, /\.ws-switch \.v-btn \{[^}]*min-height:\s*2\.25em/, "工作区键没有高度");
+  assert.match(css, /\.ws-switch \.v-btn \{[^}]*font-size:\s*0\.875em/, "工作区键字号丢了");
 });
+
 
 // 载荷面板的「折叠全部」（2026-10-29 用户定：「我希望有个按钮可以一键折叠全部（但没有一键展开的）」）。
 //
@@ -2314,7 +2282,7 @@ test("载荷：有一键折叠全部，且没有一键展开", () => {
   //    2026-11-02 起底色/边框收进共享的「幽灵按钮底座」（.icon-btn/.edit-btn…），
   //    所以这里同时钉两件事：底座确实去底去边框；`.collapse-all` 自己**没有**再上一套。
   const rule = css.match(/(?:^|\n)\.collapse-all\s*\{([^}]*)\}/)?.[1] ?? "";
-  const base = css.match(/\.icon-btn,\s*\.edit-btn,\s*\.link-btn,[\s\S]*?\{([^}]*)\}/)?.[1] ?? "";
+  const base = css.match(/\.icon-btn,\s*\.link-btn,\s*\.cp-close,[\s\S]*?\{([^}]*)\}/)?.[1] ?? "";
   assert.ok(rule, "找不到 .collapse-all 样式");
   assert.ok(base, "找不到幽灵按钮底座（background:none/border:none 应该只有一处）");
   assert.match(base, /background:\s*none/, "幽灵按钮底座没有去底色");
@@ -2457,8 +2425,8 @@ test("上下文面板：三个 tab 不小于正文", () => {
   };
 
   const panel = em(rule(".ws-panel"), "font-size");
-  const tab = em(rule(".bar-head.bar-tabs .tab"), "font-size");
-  assert.ok(Number.isFinite(panel) && Number.isFinite(tab), "读不出 .ws-panel / .bar-head.bar-tabs .tab 的 font-size");
+  const tab = em(rule(".context-tabs .v-tab"), "font-size");
+  assert.ok(Number.isFinite(panel) && Number.isFinite(tab), "读不出 .ws-panel / .context-tabs .v-tab 的 font-size");
 
   const effective = panel * tab; // 落到根上的有效字号
   assert.ok(effective >= 0.98,
@@ -2466,7 +2434,7 @@ test("上下文面板：三个 tab 不小于正文", () => {
   // 也别大得离谱（把 tab 做得比正文大两档就是另一种失衡）
   assert.ok(effective <= 1.35, `tab 有效字号 ${effective.toFixed(2)}em 太大了 —— 这排字是导航，不该压过内容`);
   // 点击区域也要够（纵向 padding 撑高度，别只靠字号）
-  const pad = em(rule(".bar-head.bar-tabs .tab"), "padding");
+  const pad = em(rule(".context-tabs .v-tab"), "padding");
   assert.ok(pad >= 0.3, `tab 纵向 padding 只有 ${pad}em —— 触摸目标太小`);
 });
 
@@ -3289,14 +3257,14 @@ test("CSS 复用：幽灵按钮底座与蒙层 token 只有一处", () => {
   const theme = readFileSync(join(SRC, "assets", "theme.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 
   // ① 底座只能有一份，且三件事齐全。
-  const base = css.match(/\.icon-btn,\s*\.edit-btn,\s*\.link-btn,[\s\S]*?\{([^}]*)\}/)?.[1] ?? "";
+  const base = css.match(/\.icon-btn,\s*\.link-btn,\s*\.cp-close,[\s\S]*?\{([^}]*)\}/)?.[1] ?? "";
   assert.ok(base, "找不到幽灵按钮底座");
   assert.match(base, /background:\s*none/, "底座没有去底色");
   assert.match(base, /border:\s*none/, "底座没有去边框");
   assert.match(base, /cursor:\s*pointer/, "底座没有指针样式");
 
   // ② 具体按钮不许再把这三条抄回来（只查最典型的四个）。
-  for (const sel of [".icon-btn", ".msg \\.edit-btn", ".link-btn"]) {
+  for (const sel of [".icon-btn", ".link-btn", ".msg-ops \\.v-btn"]) {
     const rule = css.match(new RegExp(`${sel}\\s*\\{([^}]*)\\}`))?.[1] ?? "";
     assert.ok(rule, `找不到 ${sel} 的规则`);
     assert.ok(!/background:\s*none/.test(rule), `${sel} 又自己写了一遍 background:none（应复用底座）`);
@@ -3320,7 +3288,7 @@ test("聊天布局：16px / 1.7 行高、840 阅读列、更松的消息间距",
   assert.match(css, /\.msg-wrap\.assistant \.msg \{[^}]*padding:\s*0\.45em 0/, "assistant 上下仍太挤");
   assert.match(css, /\.msg \.text p \{[^}]*margin:\s*0 0 0\.7em/, "段落间距没放宽");
   assert.match(css, /\.msg \.msg-foot \{[^}]*font-size:\s*var\(--md-type-label-small\)/, "用量脚注没有收成 MD3 label-small");
-  assert.match(css, /\.icon-btn, \.edit-btn, button:has\(> svg\)[^{]*\{[^}]*align-items:\s*center/, "图标按钮没有统一 flex 居中");
+  assert.match(css, /\.icon-btn, \.link-btn, button:has\(> svg\)[^{]*\{[^}]*align-items:\s*center/, "图标按钮没有统一 flex 居中");
   assert.match(css, /button > svg \{[^}]*display:\s*block/, "SVG 还按 inline 基线落（会偏下）");
 });
 
@@ -3359,11 +3327,11 @@ test("设计系统：tab 统一下划线、设置平铺、圆角收口", () => {
   const theme = readFileSync(join(SRC, "assets", "theme.css"), "utf8");
   // 设置 / Agent 用 Vuetify VTabs（MD3 primary tabs）；顶栏/上下文仍各用自带 indicator。
   assert.ok(!/\.settings-nav/.test(css), "旧 TabBar 的 .settings-nav 样式还留着");
-  // 2026-11-05 MD3：顶栏换成 primary tabs 的 3dp 圆角 indicator（不再是整条下划线）；
-  // 上下文工作区那组仍是旧的整条下划线，别混。
-  assert.match(css, /\.ws-tab::after \{[^}]*background:\s*var\(--md-primary\)/, "顶栏 tab 没有 MD3 indicator");
-  assert.match(css, /\.ws-tab\.sel::after \{[^}]*width:\s*1\.6em/, "顶栏选中态 indicator 不显示");
-  assert.match(css, /\.bar-head\.bar-tabs \.tab::after \{[^}]*background:\s*var\(--md-primary\)/, "上下文 tab 没有 MD3 indicator");
+  // 顶栏/上下文都换成了 Vuetify 组件，indicator 由 VBtnToggle / VTabs 自己画。
+  const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
+  const bar = readFileSync(join(SRC, "components", "PayloadBar.vue"), "utf8");
+  assert.match(top, /<VBtnToggle[\s\S]*?class="ws-switch"/, "顶栏工作区不是 VBtnToggle");
+  assert.match(bar, /<VTabs[\s\S]*?class="context-tabs"/, "上下文 tab 不是 VTabs");
   // 设置页：无卡片底、无连体组圆角
   assert.match(css, /\.settings-card \{[^}]*background:\s*none[^}]*padding:\s*0/, "设置分节还带卡片底");
   assert.match(css, /\.settings-cols \.panel \.field[^{]*\{[^}]*background:\s*none/, "设置行还带卡片底");
@@ -3677,7 +3645,7 @@ test("顶栏 MD3：surface 容器 / 40dp 文本按钮 / MD3 菜单 / 两段 tab 
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   const header = css.match(/#chat-col > header \{(?=[^}]*position:\s*absolute)[^}]*\}/)?.[0] ?? "";
   assert.match(header, /background:\s*var\(--md-surface-container-low\)/, "顶栏不是 MD3 surface 容器");
-  assert.match(css, /#chat-col > header \{ min-height:\s*3em; padding:\s*0\.3em 0\.7em;/, "顶栏不是密度化后的 48dp");
+  assert.match(css, /#chat-col > header \{ min-height:\s*3\.05em; height:\s*3\.05em; padding:\s*0\.2em 0\.7em;/, "顶栏没有在 48dp 上再缩 20%");
   assert.match(header, /box-shadow:\s*var\(--shadow-top\)/, "顶栏丢了向下阴影（用户 2026-11-01 定）");
   assert.match(css, /\.model-btn \{[^}]*min-height:\s*2\.5em/, "模型按钮不是 40dp");
   assert.match(css, /\.model-btn \{[^}]*border-radius:\s*var\(--md-shape-full\)/, "模型按钮不是 full 圆角");
@@ -3691,7 +3659,7 @@ test("顶栏 MD3：surface 容器 / 40dp 文本按钮 / MD3 菜单 / 两段 tab 
   assert.match(top, /@keydown\.esc="closeMenus"/, "顶栏浮板没有 Esc 统一收起");
   assert.match(top, /function closeMenus\(\)/, "没有 closeMenus");
   assert.match(css, /\.model-item \{[^}]*min-height:\s*3em/, "模型项不是 48dp");
-  assert.match(css, /\.ws-tab::after \{[^}]*background:\s*var\(--md-primary\)/, "顶栏 tab 没有 MD3 indicator");
+  assert.match(top, /<VBtnToggle[\s\S]*?class="ws-switch"/, "顶栏工作区不是 VBtnToggle");
   assert.match(css, /#ctx-ring \{[^}]*width:\s*2\.5em/, "上下文环没有 40dp 触控盒");
   assert.match(css, /\.ctx-ring-track \{[^}]*var\(--md-outline-variant\)/, "环轨道不是 outline-variant");
   assert.match(css, /\.ctx-ring-fill \{[^}]*stroke:\s*var\(--tg-ok\)/, "环的正常色不该丢（绿=正常）");
@@ -3729,8 +3697,9 @@ test("消息区 MD3：中性灰用户气泡 / 32dp 操作 / 思考容器 / 卡�
   assert.match(css, /\.msg\.user \{[^}]*background:\s*var\(--md-surface-container-high\)/, "用户气泡不是 Gemini 中性灰容器");
   assert.match(css, /\.msg\.user \{[^}]*color:\s*var\(--md-on-surface\)/, "用户气泡正文色不是 on-surface");
   assert.match(css, /\.msg\.user \{[^}]*border-radius:\s*var\(--md-shape-lg\) var\(--md-shape-lg\) var\(--md-shape-xs\)/, "用户气泡不是 16dp/4dp 尾巴圆角");
-  assert.match(css, /\.msg-ops \.edit-btn \{[^}]*min-width:\s*2em[^}]*min-height:\s*2em/, "操作键不是 32dp");
-  assert.match(css, /\.msg-ops \.edit-btn:hover \{[^}]*--md-on-surface[^}]*8%/, "操作键没有状态层");
+  assert.match(css, /\.msg-ops \.v-btn \{[^}]*width:\s*2em[^}]*height:\s*2em/, "操作键不是 32dp VBtn");
+  const bubble = readFileSync(join(SRC, "components", "MessageBubble.vue"), "utf8");
+  assert.match(bubble, /<VBtn[^>]*variant="text"[^>]*title="改正文"/, "操作键不是 VBtn");
   assert.match(css, /\.msg \.think \{[^}]*background:\s*var\(--md-surface-container-low\)/, "思考折叠不是 MD3 容器");
   assert.match(css, /\.sum-block \{[^}]*background:\s*var\(--md-surface-container-low\)/, "摘要卡不是 MD3 卡片");
   assert.match(css, /\.sum-block \{[^}]*box-shadow:\s*var\(--md-elev-1\)/, "摘要卡没有 elevation 1");
@@ -3738,7 +3707,8 @@ test("消息区 MD3：中性灰用户气泡 / 32dp 操作 / 思考容器 / 卡�
   assert.match(css, /\.msg \.text pre \{[^}]*border:\s*1px solid var\(--md-outline-variant\)/, "代码块没有 MD3 描边");
   assert.match(css, /\.msg \.typing span \{[^}]*background:\s*var\(--md-primary\)/, "等首字节的三点不是 primary");
   assert.match(css, /\.stream-cursor \{[^}]*background:\s*var\(--md-primary\)/, "流式光标不是 primary");
-  assert.match(css, /#load-more \{[^}]*border:\s*1px solid var\(--md-outline-variant\)/, "加载更多不是 MD3 outlined 按钮");
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  assert.match(app, /<VBtn[\s\S]*?id="load-more"[\s\S]*?variant="outlined"/, "加载更多不是 VBtn outlined");
 });
 
 // MD3 第四刀（2026-11-05）：设置页 + 浮层 + 全局控件。
@@ -3780,9 +3750,9 @@ test("浮层 MD3：dialog / menu / snackbar / banner，全局按钮与字段", (
 test("上下文工作区 MD3：primary tabs / 载荷行 / 状态 / 压缩树 / 高级压缩", () => {
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 
-  assert.match(css, /\.bar-head\.bar-tabs \.tab \{/, "找不到上下文 tab 规则");
-  assert.match(css, /\.bar-head\.bar-tabs \.tab::after \{[^}]*background:\s*var\(--md-primary\)/, "上下文 tab 没有 MD3 indicator");
-  assert.match(css, /\.bar-head\.bar-tabs \.tab\.sel \{[^}]*color:\s*var\(--md-primary\)/, "选中 tab 不是 primary");
+  const bar = readFileSync(join(SRC, "components", "PayloadBar.vue"), "utf8");
+  assert.match(bar, /<VTabs[\s\S]*?class="context-tabs"/, "上下文 tab 不是 VTabs");
+  assert.match(css, /\.context-tabs \.v-tab \{/, "找不到上下文 tab 规则");
 
   assert.match(css, /\.pv-head \{[^}]*min-height:\s*2\.5em/, "载荷行头不是 40dp");
   assert.match(css, /\.pv-head:hover \{[^}]*--md-on-surface[^}]*6%/, "载荷行头没有状态层");
@@ -3834,8 +3804,7 @@ test("波纹：触点 → 圆（纯函数），委托安装一次，reduce 下�
   assert.match(css, /\.md-ripple-host \{[^}]*overflow:\s*hidden/, "波纹宿主没裁剪");
   assert.match(ripple, /md-ripple-layer/, "没有独立裁剪层");
   assert.match(css, /\.md-ripple-host > \.md-ripple-layer \{[^}]*border-radius:\s*inherit/, "裁剪层没继承宿主圆角");
-  assert.match(css, /\.ws-switch \.ws-tab > \.md-ripple-layer \{[^}]*inset:\s*0\.4em 0\.3em/, "顶栏 tab 的波纹没收到文字区");
-  assert.match(css, /\.bar-head\.bar-tabs \.tab > \.md-ripple-layer \{[^}]*inset:\s*0\.35em 0\.3em/, "上下文 tab 的波纹没收到文字区");
+  assert.match(css, /\.md-ripple-host/, "Vuetify 键没有波纹宿主");
   assert.match(css, /prefers-reduced-motion[\s\S]{0,160}\.md-ripple/, "reduce 下没兜底");
 });
 
@@ -3843,7 +3812,7 @@ test("密度：行高/顶栏/FAB/输入/设置/消息间距都收了一档", () 
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   assert.match(css, /#sessions-bar \.session-item \{[^}]*min-height:\s*2\.75em/, "会话行没收到 44dp");
   assert.match(css, /#sessions-bar #session-new \{[^}]*min-height:\s*3em/, "FAB 没收到 48dp");
-  assert.match(css, /#chat-col > header \{ min-height:\s*3em/, "顶栏没收到 48dp");
+  assert.match(css, /#chat-col > header \{ min-height:\s*3\.05em/, "顶栏没有在 48dp 上再缩 20%");
   assert.match(css, /\.messages-inner \{[^}]*gap:\s*0\.55em/, "消息间距没收到 0.55em");
   assert.match(css, /\.settings-cols \.panel \.field, \.settings-cols \.panel \.row \{[^}]*padding:\s*0\.45em/, "设置行没收到 0.45em");
   assert.match(css, /\.agent-item, \.model-item \{[^}]*min-height:\s*2\.5em/, "菜单项没收到 40dp");
@@ -3928,4 +3897,17 @@ test("设置页签顺序：window item 与标签顺序一致（提示词在外�
   const items = [...settings.matchAll(/<VTabsWindowItem value="([^"]+)"/g)].map((m) => m[1]);
   const visible = items.filter((id) => ["chat", "agent", "prompt", "appearance"].includes(id));
   assert.deepEqual(visible, ["chat", "agent", "prompt", "appearance"], "设置 window item 顺序与标签顺序不一致，滑入方向会反");
+});
+
+
+// 酒馆（2026-11-06 用户定）：第五个设置 tab，专门放 ST 预设/角色卡/聊天记录的导入与转换。
+test("酒馆：第五个设置 tab，ST 聊天记录导入搬到这里", () => {
+  const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
+  assert.match(settings, /<VTabsWindowItem value="tavern">/, "没有酒馆 pane");
+  const tavern = settings.slice(settings.indexOf('<VTabsWindowItem value="tavern">'), settings.indexOf('<VTabsWindowItem value="provider">'));
+  assert.match(tavern, /SillyTavern 聊天记录/, "酒馆里没有 ST 聊天记录导入");
+  assert.match(tavern, /@change="importSTFile"/, "酒馆没接 ST 导入");
+  assert.match(tavern, /预设|角色卡/, "酒馆没说明预设/角色卡转换职责");
+  const session = settings.slice(settings.indexOf('<VTabsWindowItem value="session">'), settings.indexOf('<VTabsWindowItem value="agent">'));
+  assert.ok(!/SillyTavern/.test(session), "ST 导入还留在会话管理页");
 });

@@ -118,6 +118,11 @@ const breezeTheme = {
 export const vuetify = createVuetify({
   // MD3 blueprint = Vuetify 官方的 Material Design 3 预设（组件默认 / shape）。
   blueprint: md3,
+  // MD3 默认形状：Vuetify 4 的 md3 blueprint 管组件内部，这里补一个全局胶囊按钮；
+  // 具体组件写了 rounded 的仍以自己为准。
+  defaults: {
+    VBtn: { rounded: "pill" },
+  },
   theme: {
     defaultTheme: "dark",
     themes: { dark: darkTheme, light: lightTheme, breeze: breezeTheme },

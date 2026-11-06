@@ -1008,6 +1008,7 @@ DeepSeek / OpenCode GO 直连**确实不报**，所以那一格在那儿永远�
 
 - 布局：左会话栏（**2026-11-06 起 Gemini 式**：顶部 **Brand Title「MicroChat」+ 星芒标**，
   其下「＋开启新对话」，再下面才是**占满栏宽的「对话 / 生图」模式切换**（VBtnToggle，2026-11-06 用户定；生图暂未接 API，切过去只改选中态 —— 所以现在**不是真 tab**，等生图有独立列表再升级 VTabs）；
+  ⚠ 左栏外壳仍是 `<aside>`（布局壳）：`VNavigationDrawer` 必须配 `VApp/VMain`；直接把它塞进现有多栏 flex 会把整栏吞掉（2026-11-06 实测，已回滚）。要换先整体拆 App 壳，不要在栏内硬塞。
   原「 tabs 在顶、没有品牌」的口径已反转；高亮当前；列表按**今天 / 昨天 / 一周内 / 一月内 / 更久**五组（2026-11-04 用户定；`utils/sessionGroups.ts` 纯函数，本地日历日边界）；每行**只有一枚「选项」浮板**（会话设置 / 创建副本 / 导出 JSON / 删除会话，2026-11-04 用户定）；标题字号 0.92em、行 padding 0.32em（用户定：再小一点、再紧凑一点））｜`#content` = **对话与设置同级**（2026-10-10，OpenWebUI 式）—— 对话（顶栏（2026-10-14 用户定，**去壳版**）= **透明底**（无外框线；小字压背景图用双层柔影 + 提亮一档的 hint 色）+ 左上角 = **圆头像（当前 Agent，点开选人；名字首字 + id 派生色，2026-10-14 用户定）+ 当前模型平铺字**（点开是按渠道分组的浮板，见下面「模型选择器」那条）+ 两侧开关（**只有某侧栏收着时才出现**：左在左端、右吃 margin-left:auto 贴右端；栏开着时开关在栏自己头上 —— 左栏头右端、右栏 tabs 行**左端**（各指向自己缩回去的方向，2026-10-14 用户定））；**会话抬头不在顶栏**（左栏列表高亮 + 状态行都有它）、**Agent 的"选"就在那头像上**（切换 = 点头像掉浮板；"显示"在状态行小字里）—— 消息列 + 输入行（**滚动容器占满整个对话区**（滚动条贴最右缘，2026-10-14 用户定）—— 阅读列约束（`--read-col`，**920**，2026-10-15 从 760 放宽；输入行共用同一个变量）落在里面的 `.messages-inner`，气泡不拉长）；**顶栏与输入行都是悬浮层**（2026-10-14 用户定：盖在消息列上、消息从底下滑过，不再与它分地盘 —— 顶栏**不透明**（2026-11-01 用户定：「然后顶栏是不透明的比较好吧」—— 从前是 `background: none`，消息滚到栏底下能透出来，读顶栏那行字是隔着文字读的；现在用页面底色 `var(--tg-bg)` 铺满，**但栏上没有边框、没有分隔线**：要的是「挡住」，不是把栏画成一个盒子；
 再补一道**向下阴影**（2026-11-01 用户定：「顶部栏有阴影」—— `--shadow-top`）：不透明之后那条边是齐刷刷一刀切，
 像正文被裁掉了，影子才读成「栏在内容上面」⇒ 阴影在这儿**替边框干活**，所以仍然不描线。
@@ -1175,7 +1176,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   正文 `#e3e3e3`、次要文字 `#c4c7c5`、主色 `#a8c7fa`、on-primary `#062e6f`、错误 `#f2b8b5`。
   自定义 CSS 的 `--tg-*` 暗色值同步对齐（bg / secondary-bg / float / text / hint / link / button / button-text）；
   亮色与 Breeze 不动。三套主题仍共用同一套 MD3 语义。
-  **落点先左栏 + 顶栏 + 输入区**（2026-11-05 第二刀）：左栏规则以 `#sessions-bar` 前缀收口
+  **落点先左栏 + 顶栏 + 输入区**（2026-11-05 第二刀；2026-11-06 起上下文五 tab 用 VTabs、顶栏工作区用 VBtnToggle、消息/摘要操作键用 VBtn）：左栏规则以 `#sessions-bar` 前缀收口
   （`.bar-head` / `.empty` 是共享类，直接改会波及上下文工作区）。左栏结构 = MD3 navigation drawer：
   顶部**占满栏宽**的 segmented button（对话/生图，VBtnToggle）+ 标准 icon button；新建 = **extended FAB**（primary-container、elevation 1→2、按下 scale）；
   列表 = 48dp 行、full 圆角、选中 secondary-container、`::after` 状态层（内容 z-index 压在它上面）；
@@ -1184,8 +1185,8 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   reduced-motion 停转但保留缺口弧。**加载效果**：`sessionsLoading` → 6 条 shimmer 骨架（`aria-busy` 同步），
   `sessionsRefreshing` → header 下 3dp indeterminate linear progress。行进场 = `session-item-in`（200ms emphasized），
   reduced-motion 不跑。
-  **顶栏**（2026-11-05 第二刀）：`#chat-col > header` = MD3 top app bar（surface-container-low、56dp、
-  保留用户要的向下阴影、不描线）；模型按钮 = 40dp full 圆角 text button；Agent 头像 = 40dp avatar（状态层 / 按下 scale）；
+  **顶栏**（2026-11-05 第二刀；2026-11-06 再缩 20%）：`#chat-col > header` = MD3 top app bar
+  （surface-container-low、`3.05em` ≈ 45.75px、保留向下的阴影、不描线）；模型按钮 = 40dp full 圆角 text button；Agent 头像 = 40dp avatar（状态层 / 按下 scale）；
   模型/Agent/上下文浮板 = MD3 menu（surface-container、4dp 圆角、elevation 2、48dp 行）+ `md-menu-in` 进场，
   顶栏整体接 `@keydown.esc`（一次收起所有浮板）；工作区 聊天/上下文 = MD3 primary tabs（3dp 圆角 indicator，宽度过渡）；
   上下文环 = 40dp 触控盒、track 用 outline-variant、弧仍是 `--tg-ok`（绿=正常 / 红=超预算）。
@@ -1298,8 +1299,11 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   只显示那一页、隐藏 VTabs，页头写「会话管理 / 渠道管理」；退出仍走同一个 close。
   ⚠ 这两个管理页是**页面切换，不是设置 tab**：`VTabsWindow` 的 `:key` 跟着 `only` 变 ⇒
   重挂载、不跑 tab 滑入（2026-11-06 用户报「有 Tab 效果，而且顺序是错的」——
-  根因是 provider→chat 在 window item 顺序里是反向；只有完整设置的四个 tab 仍保留过渡）。
-- 设置四 tab：**聊天 / 智能体 / 提示词 / 外观**（2026-11-02 起；会话与渠道不再是设置 tab）。聊天 / 智能体 / 提示词/外观的编辑都是 **tab 内二级页**（列表 ⇄ 详情就地切换，`[←]` 返回 —— 2026-10-10 从弹窗改过来，弹窗叠视图的账清了）；**Agent 编辑器的二级页自己也分页签**（2026-10-28 用户：「全挤在一起很丑」）——「基本」（id / 名称 / 首段对话 / 句首贴状态）/「系统提示词」（base + 它的段）/ **每个能力一页**（启用 / Model / 提示词覆盖 / 它的段，页面由 `ABILITY_IDS` 生成 ⇒ 加能力自动多一页），页签条与保存行：**保存那一行在页签外面**（哪一页都能存；藏在某一页里的那种，翻到别的页就找不到保存了）。页签条 **2026-11-06 起是 Vuetify `VTabs`/`VTab` + `VTabsWindow`/`VTabsWindowItem`**（真正的 tabpanel；旧手写 `TabBar.vue` 已删）：设置主栏与 Agent 编辑器同一个模式，`@focus="tab = t.id"` 补上"方向键搬焦点即激活"（Vuetify 的 slide group 只搬焦点，不激活）。「会话设置」（左栏 ☰）是**紧凑对话框**（560px、高随内容）。**Esc 一次只关一层**：二级页开着时设置视图不响应 Esc、会话设置弹窗开着时同理（踩过：两边各监听 document，一下关两层）。**会话管理页**（左栏「会话」入口）= 新会话默认值 + 列表（点进）+ 删除 + 尾部**导入对话**区（`POST /sessions/import-st` 与 `/sessions/import-json` 各一张卡：一句说明 + 按钮 + 隐藏文件框 —— 2026-10-17 用户点名「两种导入混在一起、都乱了」，改成两卡分开、原生 file 框换按钮）。
+  根因是 provider→chat 在 window item 顺序里是反向；只有完整设置的五个 tab 仍保留过渡）。
+  **酒馆**（2026-11-06 用户定）：专门放 SillyTavern 预设 / 角色卡 / 聊天记录的导入与转换；
+  目前只有 ST 聊天记录导入（`POST /sessions/import-st`），预设/角色卡转换是空位。原本在「会话管理」里的
+  ST 导入卡已整块搬到这里（会话管理只留 MicroChat JSON 导入）。
+- 设置五 tab：**聊天 / 智能体 / 提示词 / 外观 / 酒馆**（2026-11-02 起；会话与渠道不再是设置 tab；酒馆 2026-11-06 加）。聊天 / 智能体 / 提示词/外观的编辑都是 **tab 内二级页**（列表 ⇄ 详情就地切换，`[←]` 返回 —— 2026-10-10 从弹窗改过来，弹窗叠视图的账清了）；**Agent 编辑器的二级页自己也分页签**（2026-10-28 用户：「全挤在一起很丑」）——「基本」（id / 名称 / 首段对话 / 句首贴状态）/「系统提示词」（base + 它的段）/ **每个能力一页**（启用 / Model / 提示词覆盖 / 它的段，页面由 `ABILITY_IDS` 生成 ⇒ 加能力自动多一页），页签条与保存行：**保存那一行在页签外面**（哪一页都能存；藏在某一页里的那种，翻到别的页就找不到保存了）。页签条 **2026-11-06 起是 Vuetify `VTabs`/`VTab` + `VTabsWindow`/`VTabsWindowItem`**（真正的 tabpanel；旧手写 `TabBar.vue` 已删）：设置主栏与 Agent 编辑器同一个模式，`@focus="tab = t.id"` 补上"方向键搬焦点即激活"（Vuetify 的 slide group 只搬焦点，不激活）。「会话设置」（左栏 ☰）是**紧凑对话框**（560px、高随内容）。**Esc 一次只关一层**：二级页开着时设置视图不响应 Esc、会话设置弹窗开着时同理（踩过：两边各监听 document，一下关两层）。**会话管理页**（左栏「会话」入口）= 新会话默认值 + 列表（点进）+ 删除 + 尾部**导入对话**区（`POST /sessions/import-st` 与 `/sessions/import-json` 各一张卡：一句说明 + 按钮 + 隐藏文件框 —— 2026-10-17 用户点名「两种导入混在一起、都乱了」，改成两卡分开、原生 file 框换按钮）。
 - **设置页签顺序有第二个约束**（2026-11-06 用户报「标签页切换行为不太对」）：
   `SETTINGS_TABS` 的显示顺序必须与 `VTabsWindowItem` 的 DOM 顺序一致
   （chat / agent / prompt / appearance）—— Vuetify 的滑入方向按 **window item 注册顺序**算，

@@ -2,6 +2,7 @@
 // CompactTree：压缩树（文件管理器那种一眼看体积的树）—— 缩进行 + 行底容量条。
 // 行元素：▸/▾ 折叠 | 行底 bar（宽度 = 子树原文占比，du 式）| 标签（区间/角色 + 标记）| 右侧体积。
 // 标记：`发` = 装配真的跳到它（这一坨就发这份）；`脏` = 摘要被覆盖的消息改过、已过期（装配照用）。
+import { VBtn } from "vuetify/components";
 import { computed } from "vue";
 import { ICONS } from "./icons.ts";
 import type { TreeNode } from "../utils/tree.ts";
@@ -85,13 +86,15 @@ function barStyle(n: TreeNode, depth: number): { left: string; width: string } {
       :style="indentStyle(r.depth)"
     >
       <span class="ctree-bar" :style="barStyle(r.n, r.depth)"></span>
-      <button
+      <VBtn
         v-if="r.n.children.length"
+        icon
+        variant="text"
+        size="x-small"
         class="ctree-tw"
-        type="button"
         :title="collapsed.has(r.n.id) ? '展开' : '折叠'"
         @click="toggle(r.n.id)"
-      >{{ collapsed.has(r.n.id) ? "▸" : "▾" }}</button>
+      >{{ collapsed.has(r.n.id) ? "▸" : "▾" }}</VBtn>
       <span v-else class="ctree-tw"></span>
       <span class="ctree-label" :title="r.n.kind === 'summary' ? `摘要 ${r.n.id}` : `消息 ${r.n.id}`">
         <!-- 名字（编号 + 角色 / 区间 + 层数）**永不截断** —— 它就是定位用的锚。
@@ -110,16 +113,18 @@ function barStyle(n: TreeNode, depth: number): { left: string; width: string } {
       <!-- 撤销这次压缩（2026-11-01 用户定）：图标是垃圾桶，**悬停说'撤销'**。
            顶层都可点（更早的会级联同层更晚的）；被上层盖住的留着但禁用 ——
            留着是为了让人看见"这里本来能撤"，禁用配一句说明，才不是个死按钮。 -->
-      <button
+      <VBtn
         v-if="r.n.kind === 'summary'"
-        type="button"
+        icon
+        variant="text"
+        size="x-small"
         class="ctree-undo"
         :disabled="!r.n.undoable"
         :title="r.n.undoable ? '撤销这次压缩（同层更晚的会一并撤销）' : '被上层摘要盖住：先撤上面那层'"
         aria-label="撤销这次压缩"
         @click.stop="emit('undo', r.n.id)"
         v-html="ICONS.trash"
-      ></button>
+      />
     </div>
   </div>
 </template>

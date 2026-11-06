@@ -96,26 +96,28 @@ defineExpose({ submit, clear, setText, text, setRunning });
       >
         <span v-html="ICONS.menu"></span>
       </VBtn>
-      <ThinkingMenu
-        v-if="props.thinkingOptions.length"
-        :model-value="props.thinking"
-        :options="props.thinkingOptions"
-        @update:model-value="$emit('thinking', $event)"
-      />
-      <VBtn
-        id="send-btn"
-        type="button"
-        icon
-        variant="flat"
-        rounded="circle"
-        :color="running ? 'error' : 'primary'"
-        class="composer-send-btn"
-        :title="running ? '停止' : text.trim() ? '发送' : '续写（重发历史）'"
-        :aria-label="running ? '停止' : text.trim() ? '发送' : '续写（重发历史）'"
-        @click="running ? stop() : submit()"
-      >
-        <span v-html="running ? ICONS.stop : text.trim() ? sendSvg : ICONS.cont"></span>
-      </VBtn>
+      <div class="composer-send-stack">
+        <ThinkingMenu
+          v-if="props.thinkingOptions.length"
+          :model-value="props.thinking"
+          :options="props.thinkingOptions"
+          @update:model-value="$emit('thinking', $event)"
+        />
+        <VBtn
+          id="send-btn"
+          type="button"
+          icon
+          variant="flat"
+          rounded="circle"
+          :color="running ? 'error' : 'primary'"
+          class="composer-send-btn"
+          :title="running ? '停止' : text.trim() ? '发送' : '续写（重发历史）'"
+          :aria-label="running ? '停止' : text.trim() ? '发送' : '续写（重发历史）'"
+          @click="running ? stop() : submit()"
+        >
+          <span v-html="running ? ICONS.stop : text.trim() ? sendSvg : ICONS.cont"></span>
+        </VBtn>
+      </div>
     </div>
   </form>
 </template>

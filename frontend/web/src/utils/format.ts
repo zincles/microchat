@@ -350,6 +350,7 @@ export const SETTINGS_TABS: SettingsTab[] = [
   { id: "agent", label: "智能体" },
   { id: "prompt", label: "提示词" },
   { id: "appearance", label: "外观" },
+  { id: "tavern", label: "酒馆" },
 ];
 
 // formatRoutesOutcome：刷路由回形 {provider, models, error?} ⇒ 缓存行文案。

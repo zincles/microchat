@@ -2,6 +2,7 @@
 // App.vue —— 三栏骨架 + 全部接线（原 main.js + 九个桥，合一）。
 // 组件直接挂模板，ref 直调实例方法，不再经 *-vue.js 桥 / mount.js。
 import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
+import { VBtn } from "vuetify/components";
 import { createApi, mergeStreamSlice, probeHealth } from "./api/client.ts";
 import { parseCommand, filterCommands, COMMAND_META } from "./utils/commands.ts";
 import { uuidv7 } from "./utils/ids.ts";
@@ -1953,12 +1954,13 @@ onUnmounted(() => {
             <p class="dw-sub">{{ draftAgentName }}<span class="dw-sep">·</span>{{ draftModelName }}</p>
             <p class="dw-hint">直接在下面输入第一条消息开始；也可以用 <kbd>/</kbd> 开头的命令。</p>
           </div>
-          <button
+          <VBtn
             v-if="olderSegments > 0"
             id="load-more"
-            type="button"
+            variant="outlined"
+            size="small"
             @click="loadMore().catch((err) => toast(`加载更多失败：${err.message}`, 'error'))"
-          >↑ 加载更多历史（还有 {{ olderSegments }} 段）</button>
+          >↑ 加载更多历史（还有 {{ olderSegments }} 段）</VBtn>
           <template v-for="row in chatRows" :key="row.key">
             <SummaryCard
               v-if="row.kind === 'summary'"

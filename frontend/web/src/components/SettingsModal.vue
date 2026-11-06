@@ -428,18 +428,8 @@ function onKey(e: KeyboardEvent): void {
           <!-- 导入区（2026-10-17 用户点名「混在一起、都乱了」）：两种格式各一张卡 ——
                各有一句「这是哪种文件、导进去会怎样」，动作都是按钮 + 隐藏文件框（原生 file 框太丑，
                而且两张卡长一样 ⇒ 分不清谁是谁）。 -->
-          <h3>导入对话</h3>
+          <h3>导入 MicroChat 对话</h3>
           <div class="io-cards">
-            <div class="io-card">
-              <div class="io-head"><b>SillyTavern 聊天记录</b><i class="io-tag">.jsonl</i></div>
-              <p class="hint">SillyTavern 导出的聊天记录（一行一条）。只读取说话人、正文、思考过程和时间，其余内容会丢掉。</p>
-              <div class="row">
-                <VBtn color="primary" variant="flat" size="small" type="button" @click="stInput?.click()">选择 .jsonl 文件…</VBtn>
-                <input ref="stInput" type="file" accept=".jsonl,.json,.txt" hidden @change="importSTFile" />
-                <span class="status">{{ importStatus }}</span>
-              </div>
-              <label class="field"><span>标题</span><VTextField density="compact" variant="outlined" hide-details v-model="importTitle" placeholder="留空 = 用第一句话自动起名" /></label>
-            </div>
             <div class="io-card">
               <div class="io-head"><b>MicroChat 对话记录</b><i class="io-tag">.json</i></div>
               <p class="hint">本应用导出的对话记录：标题、每条消息的说话人和正文（消息里的状态块会保留，导回去后状态照常重算），以及这条会话当时使用的渠道、模型和智能体（本机没有那个智能体会提示，人设回落到内置默认）。</p>
@@ -523,6 +513,23 @@ function onKey(e: KeyboardEvent): void {
              滚动收起 / 发送键 / 预演 / 命令菜单。全部即时生效，改了就存。 -->
         <VTabsWindowItem value="appearance">
           <AppearancePane @prefs-saved="emit('prefs-saved')" />
+        </VTabsWindowItem>
+        <VTabsWindowItem value="tavern">
+        <section id="panel-tavern" class="panel">
+          <h3>酒馆</h3>
+          <p class="hint">专门处理 SillyTavern 的预设、角色卡与聊天记录：这里负责把它们转换成 MicroChat 的智能体 / 提示词片段 / 会话。预设与角色卡转换还没接；聊天记录导入已经可用。</p>
+          <h3>导入 SillyTavern 聊天记录</h3>
+            <div class="io-card">
+              <div class="io-head"><b>SillyTavern 聊天记录</b><i class="io-tag">.jsonl</i></div>
+              <p class="hint">SillyTavern 导出的聊天记录（一行一条）。只读取说话人、正文、思考过程和时间，其余内容会丢掉。</p>
+              <div class="row">
+                <VBtn color="primary" variant="flat" size="small" type="button" @click="stInput?.click()">选择 .jsonl 文件…</VBtn>
+                <input ref="stInput" type="file" accept=".jsonl,.json,.txt" hidden @change="importSTFile" />
+                <span class="status">{{ importStatus }}</span>
+              </div>
+              <label class="field"><span>标题</span><VTextField density="compact" variant="outlined" hide-details v-model="importTitle" placeholder="留空 = 用第一句话自动起名" /></label>
+            </div>
+        </section>
         </VTabsWindowItem>
         <VTabsWindowItem value="provider">
         <section id="panel-provider" class="panel">

@@ -7,6 +7,7 @@
 // 一条硬口径：整体只有 running / done / failed / canceled；每块的 state 只是进度，
 // 不是"这一块成功就算整体成功"。
 import { ref, computed, watch, onUnmounted } from "vue";
+import { VBtn, VTextField } from "vuetify/components";
 import { sharedApi } from "../utils/prefs.ts";
 import type { AdvancedChunk, AdvancedJob, AdvancedPreview, AdvancedRequest } from "../api/types.ts";
 
@@ -133,18 +134,18 @@ const stateText = (state: AdvancedChunk["state"] | AdvancedJob["state"] | string
     <div class="adv-config">
       <label class="field"><span>{{ repair ? "检查范围（留空 = 整条对话）" : "消息范围（从第几条到第几条）" }}</span>
         <span class="adv-range">
-          <input v-model="begin" type="number" min="1" placeholder="begin" aria-label="起始消息序号" />
+          <VTextField v-model="begin" class="adv-input" type="number" min="1" placeholder="begin" aria-label="起始消息序号" density="compact" variant="outlined" hide-details />
           <span>–</span>
-          <input v-model="end" type="number" min="1" placeholder="end" aria-label="结束消息序号" />
+          <VTextField v-model="end" class="adv-input" type="number" min="1" placeholder="end" aria-label="结束消息序号" density="compact" variant="outlined" hide-details />
         </span>
       </label>
-      <label class="field"><span>每次压缩的对话段数</span><input v-model="step" type="number" min="1" max="64" /></label>
-      <label class="field"><span>同时处理数量</span><input v-model="concurrency" type="number" min="1" max="8" /></label>
-      <label class="field"><span>每段最多尝试次数</span><input v-model="attempts" type="number" min="1" max="10" /></label>
+      <label class="field"><span>每次压缩的对话段数</span><VTextField v-model="step" class="adv-input" type="number" min="1" max="64" density="compact" variant="outlined" hide-details /></label>
+      <label class="field"><span>同时处理数量</span><VTextField v-model="concurrency" class="adv-input" type="number" min="1" max="8" density="compact" variant="outlined" hide-details /></label>
+      <label class="field"><span>每段最多尝试次数</span><VTextField v-model="attempts" class="adv-input" type="number" min="1" max="10" density="compact" variant="outlined" hide-details /></label>
       <div class="row">
-        <button type="button" :disabled="busy" @click="loadPreview">{{ repair ? "检查待补区间" : "查看压缩方案" }}</button>
-        <button type="button" class="primary" :disabled="busy || !preview || !preview.total_requests" @click="start">开始压缩</button>
-        <button v-if="job?.state === 'running'" type="button" class="danger" @click="cancel">取消任务</button>
+        <VBtn variant="tonal" size="small" :disabled="busy" @click="loadPreview">{{ repair ? "检查待补区间" : "查看压缩方案" }}</VBtn>
+        <VBtn color="primary" variant="flat" size="small" :disabled="busy || !preview || !preview.total_requests" @click="start">开始压缩</VBtn>
+        <VBtn v-if="job?.state === 'running'" color="error" variant="text" size="small" @click="cancel">取消任务</VBtn>
         <span class="status">{{ error }}</span>
       </div>
     </div>

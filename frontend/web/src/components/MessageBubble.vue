@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 消息气泡：正文 markdown 渲染 + <state> 块独立容器（状态变化单列，不混进正文）。
 import { ref, computed, watch, onMounted, nextTick } from "vue";
+import { VBtn } from "vuetify/components";
 import { ICONS } from "./icons.ts";
 import { formatThinkLabel, usageFoot, usageFootTitle } from "../utils/format.ts";
 import type { UsageLike } from "../utils/format.ts";
@@ -157,54 +158,16 @@ watch(() => props.streaming, (s) => nextTick(() => {
       <div v-if="foot" class="msg-foot" :title="footTitle">{{ foot }}</div>
     </div>
     <div v-if="canEdit" class="msg-ops">
-      <button
-        type="button"
-        class="edit-btn"
-        title="改正文"
-        aria-label="改正文"
-        @click="emit('edit', messageId, 'content')"
-        v-html="ICONS.pencil"
-      ></button>
-      <button
-        v-if="role !== 'user'"
-        type="button"
-        class="edit-btn"
-        title="改思考"
-        aria-label="改思考"
-        @click="emit('edit', messageId, 'reasoning')"
-        v-html="ICONS.brain"
-      ></button>
-      <button
-        v-if="role !== 'user' && isLast && promptId"
-        type="button"
-        class="edit-btn prompt-edit-btn"
-        title="编辑最新 Prompt（编辑这条回复对应的用户输入）"
-        aria-label="编辑最新 Prompt"
-        @click="emit('edit-prompt', promptId)"
-        v-html="ICONS.notebookPen"
-      ></button>
-      <button
-        v-if="role !== 'user' && isLast"
-        type="button"
-        class="edit-btn"
-        title="重摇（摇新的一版并切过去）"
-        aria-label="重摇（摇新的一版并切过去）"
-        @click="emit('reroll', messageId)"
-        v-html="ICONS.refresh"
-      ></button>
+      <VBtn icon variant="text" size="small" title="改正文" aria-label="改正文" @click="emit('edit', messageId, 'content')" v-html="ICONS.pencil" />
+      <VBtn v-if="role !== 'user'" icon variant="text" size="small" title="改思考" aria-label="改思考" @click="emit('edit', messageId, 'reasoning')" v-html="ICONS.brain" />
+      <VBtn v-if="role !== 'user' && isLast && promptId" icon variant="text" size="small" color="primary" class="prompt-edit-btn" title="编辑最新 Prompt（编辑这条回复对应的用户输入）" aria-label="编辑最新 Prompt" @click="emit('edit-prompt', promptId)" v-html="ICONS.notebookPen" />
+      <VBtn v-if="role !== 'user' && isLast" icon variant="text" size="small" title="重摇（摇新的一版并切过去）" aria-label="重摇（摇新的一版并切过去）" @click="emit('reroll', messageId)" v-html="ICONS.refresh" />
       <template v-if="role !== 'user' && isLast && reroll && reroll.active">
-        <button type="button" class="edit-btn" title="上一版" aria-label="上一版" @click="emit('reroll-go', -1)">◀</button>
+        <VBtn icon variant="text" size="small" title="上一版" aria-label="上一版" @click="emit('reroll-go', -1)">◀</VBtn>
         <span class="reroll-pos">{{ reroll.running ? `${reroll.current_idx}→${reroll.count}` : `${reroll.current_idx}/${reroll.count}` }}</span>
-        <button type="button" class="edit-btn" title="下一版（到最右再按 = 再摇一版）" aria-label="下一版" @click="emit('reroll-go', 1)">▶</button>
+        <VBtn icon variant="text" size="small" title="下一版（到最右再按 = 再摇一版）" aria-label="下一版" @click="emit('reroll-go', 1)">▶</VBtn>
       </template>
-      <button
-        type="button"
-        class="edit-btn danger"
-        title="删除这条及之后"
-        aria-label="删除这条及之后"
-        @click="emit('delete', messageId, isLast)"
-        v-html="ICONS.trash"
-      ></button>
+      <VBtn icon variant="text" size="small" color="error" title="删除这条及之后" aria-label="删除这条及之后" @click="emit('delete', messageId, isLast)" v-html="ICONS.trash" />
     </div>
   </div>
 </template>

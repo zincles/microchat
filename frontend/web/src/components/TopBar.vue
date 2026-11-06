@@ -9,6 +9,7 @@
 // （同一个人永远同一个色）；点开掉出浮板选人。状态行小字里那个助手名管"显示"，头像管"选"。
 // 会话抬头不在顶栏（左栏列表高亮 + 状态行都有它）。
 import { ref, computed, nextTick, watch } from "vue";
+import { VBtn, VBtnToggle } from "vuetify/components";
 import { ICONS } from "./icons.ts";
 import {
   formatTokens,
@@ -71,6 +72,9 @@ const emit = defineEmits<{
   "cancel-queue": [id: string];
   "cancel-task": [id: string];
 }>();
+function setWorkspace(v: unknown): void {
+  if (v === "chat" || v === "context") emit("select-workspace", v);
+}
 
 const modelGroups = ref<ModelGroup[]>([]); // [{provider, items:[{value,label,provider_name,upstream_id}]}]
 const curModel = ref("");
@@ -425,26 +429,17 @@ defineExpose({ setSession, setModels, setAgents, setContext, setStatus, setTasks
     </span>
     <span class="header-right">
       <!-- 聊天 / 上下文（2026-10-29 用户定）：开关在环左边；环说"占了多少"，这块说"占的是什么"。 -->
-      <span class="ws-switch" role="tablist" aria-label="工作区">
-        <button
-          type="button"
-          class="ws-tab"
-          role="tab"
-          :class="{ sel: workspace === 'chat' }"
-          :aria-selected="workspace === 'chat' ? 'true' : 'false'"
-          title="对话本身"
-          @click="$emit('select-workspace', 'chat')"
-        >聊天</button>
-        <button
-          type="button"
-          class="ws-tab"
-          role="tab"
-          :class="{ sel: workspace === 'context' }"
-          :aria-selected="workspace === 'context' ? 'true' : 'false'"
-          title="上下文工作区（压缩出来的前情提要、层级、状态、真发出去的载荷）"
-          @click="$emit('select-workspace', 'context')"
-        >上下文</button>
-      </span>
+      <VBtnToggle
+        :model-value="workspace"
+        class="ws-switch"
+        mandatory
+        variant="text"
+        aria-label="工作区"
+        @update:model-value="setWorkspace"
+      >
+        <VBtn value="chat" title="对话本身">聊天</VBtn>
+        <VBtn value="context" title="上下文工作区（压缩出来的前情提要、层级、状态、真发出去的载荷）">上下文</VBtn>
+      </VBtnToggle>
       <!-- 顺序是**环在左、开关在右**（2026-10-28 用户定）：开关是"控制栏的按钮"，
            它是这一簇的锚，位置稳定；环是随状态变的仪表，挂在它左边不抢锚点。 -->
       <!-- 上下文占比环（2026-11-02 合并后台任务）：环长 = 已用 / 输入预算；绿正常、红超预算。
@@ -488,13 +483,10 @@ defineExpose({ setSession, setModels, setAgents, setContext, setStatus, setTasks
     <template v-if="ctxOpen">
       <div class="agent-menu-backdrop" @click="ctxOpen = false"></div>
       <div class="agent-menu ctx-menu" :class="{ over: ctxOver }" role="dialog" aria-label="上下文与任务">
-        <div class="ws-switch ctx-tabs" role="tablist" aria-label="上下文与任务">
-          <button type="button" class="ws-tab" role="tab" :aria-selected="ctxTab === 'context'"
-            :class="{ sel: ctxTab === 'context' }" @click="ctxTab = 'context'">上下文</button>
-          <button type="button" class="ws-tab" role="tab" :aria-selected="ctxTab === 'tasks'"
-            :class="{ sel: ctxTab === 'tasks' }" @click="ctxTab = 'tasks'">任务<span
-              v-if="activeTaskCount > 0" class="ctx-tab-count">{{ taskCountText }}</span></button>
-        </div>
+        <VBtnToggle v-model="ctxTab" class="ws-switch ctx-tabs" mandatory variant="text" aria-label="上下文与任务">
+          <VBtn value="context">上下文</VBtn>
+          <VBtn value="tasks">任务<span v-if="activeTaskCount > 0" class="ctx-tab-count">{{ taskCountText }}</span></VBtn>
+        </VBtnToggle>
         <template v-if="ctxTab === 'context'">
         <template v-if="ctx">
           <div class="ctx-head">

@@ -3,6 +3,7 @@
 // 头行 `Summary #a-b`（+ `脏` 徽标）；正文 = **摘要文本**（发给模型的就是这份，折叠态就看它）；
 // `查看未压缩文本` 展开被盖住的原始气泡 —— 带着各自的操作（编辑/删除照常可用，
 // 不然被折住的消息在界面上就没有入口了）。
+import { VBtn } from "vuetify/components";
 import MessageBubble from "./MessageBubble.vue";
 import { ICONS } from "./icons.ts";
 
@@ -66,40 +67,16 @@ const emit = defineEmits<{
       <span v-if="summary.dirty" class="sum-tag" title="所辖消息被编辑过：摘要可能过期（装配照用）">脏</span>
       <span class="sum-ops">
         <template v-if="reroll">
-          <button type="button" class="edit-btn" title="上一版" aria-label="上一版" @click="emit('version', -1)">◀</button>
+          <VBtn icon variant="text" size="small" title="上一版" aria-label="上一版" @click="emit('version', -1)">◀</VBtn>
           <span class="sum-pos">{{ reroll.running ? `${reroll.current_idx}→${reroll.count}` : `${reroll.current_idx}/${reroll.count}` }}</span>
-          <button type="button" class="edit-btn" title="下一版（到最右再按 = 再摇一版）" aria-label="下一版" @click="emit('version', 1)">▶</button>
+          <VBtn icon variant="text" size="small" title="下一版（到最右再按 = 再摇一版）" aria-label="下一版" @click="emit('version', 1)">▶</VBtn>
         </template>
-        <button
-          type="button"
-          class="edit-btn"
-          :disabled="!!reroll && reroll.running"
-          title="刷新（摇新一版；当前这版留在位次里，不丢）"
-          aria-label="刷新摘要"
-          @click="emit('refresh')"
-          v-html="ICONS.refresh"
-        ></button>
-        <button
-          type="button"
-          class="edit-btn"
-          :disabled="!!reroll && reroll.running"
-          title="编辑摘要正文"
-          aria-label="编辑摘要"
-          @click="emit('edit')"
-          v-html="ICONS.pencil"
-        ></button>
+        <VBtn icon variant="text" size="small" :disabled="!!reroll && reroll.running" title="刷新（摇新一版；当前这版留在位次里，不丢）" aria-label="刷新摘要" @click="emit('refresh')" v-html="ICONS.refresh" />
+        <VBtn icon variant="text" size="small" :disabled="!!reroll && reroll.running" title="编辑摘要正文" aria-label="编辑摘要" @click="emit('edit')" v-html="ICONS.pencil" />
         <!-- 撤销这次压缩（2026-11-01 用户定）：垃圾桶图标，**悬停说'撤销'**。
              顶层都可点；更早的会级联撤销同层更晚的摘要（App 会先弹警告）。
              不能撤的**留着但禁用** —— 让人看见"这儿本来能撤"，配上说明才不是死按钮。 -->
-        <button
-          type="button"
-          class="edit-btn"
-          :disabled="!summary.undoable || (!!reroll && reroll.running)"
-          :title="summary.undoable ? '撤销这次压缩（同层更晚的会一并撤销）' : '被上层摘要盖住：先撤上面那层'"
-          aria-label="撤销这次压缩"
-          @click="emit('undo')"
-          v-html="ICONS.trash"
-        ></button>
+        <VBtn icon variant="text" size="small" :disabled="!summary.undoable || (!!reroll && reroll.running)" :title="summary.undoable ? '撤销这次压缩（同层更晚的会一并撤销）' : '被上层摘要盖住：先撤上面那层'" aria-label="撤销这次压缩" @click="emit('undo')" v-html="ICONS.trash" />
         <span v-if="reroll && reroll.running" class="sum-busy">刷新中…</span>
       </span>
     </div>

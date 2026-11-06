@@ -7,7 +7,7 @@
 // 带一枚 [◨] 开关、窄屏变抽屉），现在整块搬进**上下文工作区**，三条 tab 一个不少。
 // 于是这个组件不再是"栏"：外壳交给 `ContextWorkspace.vue`，它只交出一块能自适应的面板
 // （`.ws-panel` 管圆角与底，panes 管滚动）。开关与抽屉那套随之作废 —— 别再把它接回栏里。
-import { VSwitch } from "vuetify/components";
+import { VBtn, VSwitch, VTab, VTabs } from "vuetify/components";
 import { ref, computed, watch } from "vue";
 import CompactTree from "./CompactTree.vue";
 import AdvancedCompact from "./AdvancedCompact.vue";
@@ -36,7 +36,7 @@ const emit = defineEmits<{
 
 const tab = ref("payload");
 // 切 tab 报给 App：压缩树看着才拉全量账本（窗口化的内存账，见 App.refreshTree）。
-function selectTab(t: string): void { tab.value = t; emit("tab", t); }
+function selectTab(t: unknown): void { tab.value = String(t ?? ""); emit("tab", tab.value); }
 const blocks = ref(""); // 压缩面板上的块数输入（空 = 用配置默认）
 function doCompact(): void {
   const n = Number(blocks.value);
@@ -200,14 +200,19 @@ defineExpose({ setWire, setTables, setTree, setCompactWire });
 
 <template>
   <div class="ws-panel">
-    <div class="bar-head bar-tabs">
-      <button type="button" class="tab" :class="{ sel: tab === 'payload' }" @click="selectTab('payload')">载荷</button>
-      <button type="button" class="tab" :class="{ sel: tab === 'state' }" @click="selectTab('state')">状态</button>
-      <button type="button" class="tab" :class="{ sel: tab === 'tree' }" @click="selectTab('tree')">压缩</button>
-      <button type="button" class="tab" :class="{ sel: tab === 'advanced' }" @click="selectTab('advanced')">分段压缩</button>
-      <button type="button" class="tab" :class="{ sel: tab === 'repair' }" @click="selectTab('repair')">补齐空档</button>
-
-    </div>
+    <VTabs
+      :model-value="tab"
+      class="context-tabs"
+      density="compact"
+      color="primary"
+      @update:model-value="selectTab"
+    >
+      <VTab value="payload">载荷</VTab>
+      <VTab value="state">状态</VTab>
+      <VTab value="tree">压缩</VTab>
+      <VTab value="advanced">分段压缩</VTab>
+      <VTab value="repair">补齐空档</VTab>
+    </VTabs>
     <div v-show="tab === 'payload'" id="payload-pane">
       <div class="pv-toolbar">
         <VSwitch :model-value="preview" @update:model-value="(v) => setPreview(v === true)" color="primary" density="compact" hide-details />
@@ -217,14 +222,15 @@ defineExpose({ setWire, setTables, setTree, setCompactWire });
         <!-- 一键折叠全部（2026-10-29 用户定）。**没有反向的"展开全部"** —— 理由写在
              `collapseAll` 上面：折叠是收拾，展开是倾泻。全收起来了就禁用，别给人一个
              "点了没反应"的错觉。 -->
-        <button
+        <VBtn
           v-if="viz && vizData && vizData.messages.length"
-          type="button"
+          variant="text"
+          size="small"
           class="collapse-all"
           :disabled="allCollapsed"
           :title="allCollapsed ? '已经全部折叠了' : '把每一条都收起来，只看骨架'"
           @click="collapseAll"
-        >折叠全部</button>
+        >折叠全部</VBtn>
       </div>
       <div v-if="viz && vizData" id="payload-viz">
         <div class="pv-meta">
@@ -271,21 +277,25 @@ defineExpose({ setWire, setTables, setTree, setCompactWire });
     </div>
     <div v-show="tab === 'tree'" id="compact-tree">
       <div class="ctree-actions">
-        <input
+        <VTextField
           v-model="blocks"
+          class="blocks-input"
           type="number"
           min="1"
+          density="compact"
+          variant="outlined"
+          hide-details
           :placeholder="defaultBlocks ? `块数（默认 ${defaultBlocks}）` : '块数（空=默认）'"
           @keydown.enter.prevent="doCompact"
         />
-        <button type="button" class="primary" title="压缩 N 个块（空 = 用配置的 compact_blocks）" @click="doCompact">压缩</button>
+        <VBtn color="primary" variant="flat" size="small" title="压缩 N 个块（空 = 用配置的 compact_blocks）" @click="doCompact">压缩</VBtn>
         <!-- 压缩那发的载荷预演（2026-10-28 用户点名要）：只算不发，看得见"即将被嚼的文本" -->
-        <button type="button" title="预览这一次压缩真会发出去的请求（不联网、不落库）" @click="previewCompact">看载荷</button>
+        <VBtn variant="text" size="small" title="预览这一次压缩真会发出去的请求（不联网、不落库）" @click="previewCompact">看载荷</VBtn>
       </div>
       <div v-if="compactWire" id="compact-payload">
         <div class="cp-head">
           <span class="cp-title">这一发压缩的载荷</span>
-          <button type="button" class="cp-close" title="收起" aria-label="收起" @click="closeCompactPayload">×</button>
+          <VBtn icon variant="text" size="small" class="cp-close" title="收起" aria-label="收起" @click="closeCompactPayload">×</VBtn>
         </div>
         <div class="pv-meta">
           <span class="pv-method">{{ compactMeta.method }}</span>
@@ -315,14 +325,15 @@ defineExpose({ setWire, setTables, setTree, setCompactWire });
           <!-- 一键折叠（2026-10-29 用户定）。**只折叠、没有展开** —— 与载荷页同一个口径：
                收起是收拾，铺开是倾泻（这一页里常有一整份 system prompt 压出来的摘要）。
                全收起来了就禁用，不留一个"点了没反应"的样子。 -->
-          <button
+          <VBtn
             v-if="tree || compactWire"
-            type="button"
+            variant="text"
+            size="small"
             class="collapse-all"
             :disabled="compactAllCollapsed"
             :title="compactAllCollapsed ? '已经全部折叠了' : '把树和下面的分块都收起来'"
             @click="collapseCompact"
-          >折叠全部</button>
+          >折叠全部</VBtn>
         </div>
         <CompactTree
           v-model:collapsed="treeCollapsed"
