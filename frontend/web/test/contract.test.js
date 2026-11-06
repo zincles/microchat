@@ -1624,37 +1624,37 @@ test("上下文环：App 喂 ctx / 环在顶栏画 / 状态行不再报占用", 
   assert.ok(!/\.statusline/.test(css), "main.css 里还留着 .statusline 规则（那一行已经删了）");
 });
 
-// 页签条：设置主栏与 Agent 编辑器共用 TabBar；2026-11-04 统一为纯 CSS 下划线。
-test("页签条：设置主栏与 Agent 编辑器用的是同一个组件", () => {
+// 页签条：设置主栏与 Agent 编辑器改用 Vuetify 的 VTabs + VTabsWindowItem。
+test("页签条：设置与 Agent 都用 Vuetify VTabs/VTabsWindow", () => {
   const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
   const editor = readFileSync(join(SRC, "components", "AgentEditor.vue"), "utf8");
-  const bar = readFileSync(join(SRC, "components", "TabBar.vue"), "utf8");
-  assert.match(settings, /<TabBar v-if="!only" v-model="tab" :tabs="SETTINGS_TABS" \/>/, "设置主栏没用 TabBar");
-  assert.match(editor, /<TabBar v-model="tab" :tabs="tabs" \/>/, "Agent 编辑器没用 TabBar");
-  assert.match(bar, /class="settings-nav"/, "TabBar 没复用设置页签壳");
-  assert.match(bar, /class="tab-thumb"/, "TabBar 原来的滑动底片丢了");
+  assert.match(settings, /<VTabs[\s\S]*v-model="tab"[\s\S]*<VTab v-for="t in SETTINGS_TABS"[\s\S]*@focus="tab = t\.id"/, "设置主栏没用 VTabs/VTab（或缺自动激活）");
+  assert.match(editor, /<VTabs[\s\S]*v-model="tab"[\s\S]*<VTab v-for="t in tabs"[\s\S]*@focus="tab = t\.id"/, "Agent 编辑器没用 VTabs/VTab（或缺自动激活）");
+  assert.match(settings, /<VTabsWindow v-model="tab"[\s\S]*<VTabsWindowItem value="chat"/, "设置没有真正的 tabpanel");
+  assert.match(editor, /<VTabsWindow v-model="tab"[\s\S]*<VTabsWindowItem value="base"/, "Agent 编辑器没有真正的 tabpanel");
   for (const [name, src] of [["SettingsModal.vue", settings], ["AgentEditor.vue", editor]]) {
-    assert.ok(!src.includes("tab-thumb"), `${name} 自己画了一枚 tab-thumb —— 该交给 TabBar`);
-    assert.ok(!src.includes("offsetWidth"), `${name} 自己在量按钮宽度 —— 该交给 TabBar`);
+    assert.ok(!src.includes("TabBar"), `${name} 还引用旧 TabBar`);
+    assert.ok(!src.includes("tab-thumb"), `${name} 还自己画滑动底片`);
+    assert.ok(!src.includes("offsetWidth"), `${name} 还自己在量按钮宽度`);
   }
 });
 
 // 用户 2026-10-28：「在具体某个 Agent 的设置界面里，我们最好也分 TAB，不然的话，全挤在一起很丑。」
-// 分页签这件事**两个地方都要**：TabBar 在，且每个能力各占一页（加能力自动多一页，
+// 分页签这件事**两个地方都要**：VTabs 在，且每个能力各占一页（加能力自动多一页，
 // 别写成硬编码的两页 —— 硬编码的那种，加第三个能力时那个能力的开关会悄悄挤在最后一页里）。
 test("Agent 编辑器分页签：基本 / 系统提示词 / 每个能力各一页", () => {
   const editor = readFileSync(join(SRC, "components", "AgentEditor.vue"), "utf8");
   assert.match(editor, /\{ id: "base", label: "基本" \}/, "没有「基本」那一页");
   assert.match(editor, /\.\.\.ABILITY_IDS\.map\(\(id\) => \(\{ id, label: ABILITY_LABELS\[id\] \?\? id \}\)\)/,
     "能力那几页该由 ABILITY_IDS 生成（加能力自动多一页）");
-  // 三个分区都在（v-show 切换：翻页不丢已填的东西）
-  assert.match(editor, /v-show="tab === 'base'"/, "基本那一页没有分区");
-  assert.match(editor, /v-show="tab === 'prompt'"/, "系统提示词那一页没有分区");
-  assert.match(editor, /v-for="id in ABILITY_IDS" v-show="tab === id"/, "能力那几页没有分区");
+  // 三个分区都在真正的 VTabsWindowItem 里（翻页不丢已填的东西）
+  assert.match(editor, /<VTabsWindowItem value="base">/, "基本那一页没有 tabpanel");
+  assert.match(editor, /<VTabsWindowItem value="prompt">/, "系统提示词那一页没有 tabpanel");
+  assert.match(editor, /<VTabsWindowItem v-for="id in ABILITY_IDS" :key="id" :value="id">/, "能力那几页没有 tabpanel");
   // 保存行在页签**外面**：哪一页都能存（藏在某一页里的那种，翻到别的页就找不到保存了）
   const saveAt = editor.indexOf(">保存<");
-  const lastSectionEnd = editor.lastIndexOf("</section>");
-  assert.ok(saveAt > lastSectionEnd, "保存行该在页签分区外面（否则只在某一页能看见）");
+  const windowEnd = editor.indexOf("</VTabsWindow>");
+  assert.ok(saveAt > windowEnd, "保存行该在页签分区外面（否则只在某一页能看见）");
 });
 
 // 能力的**中文名**同样是"两处各写一遍"：前端 `ABILITY_LABELS`（页签名）与后端
@@ -1931,10 +1931,12 @@ test("设置：没有「连接」页，也没有绑不存在的 saveNet", () => 
 test("设置页签：四区 + 会话/渠道独立入口", () => {
   const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
   const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
-  const panels = [...settings.matchAll(/v-show="tab === '([a-z]+)'"/g)].map((m) => m[1]);
-  // 六个 panel 都还在（session/provider 由独立入口打开）。
+  const panels = [...settings.matchAll(/<VTabsWindowItem value="([a-z]+)"/g)].map((m) => m[1]);
+  // 六个 panel 都在真正的 tabpanel 里（session/provider 由独立入口打开）。
   assert.deepEqual([...panels].sort(), ["agent", "appearance", "chat", "prompt", "provider", "session"],
     `panel 不齐：${panels.join(", ")}`);
+  // 键盘焦点即激活（VSlideGroup 的 ArrowLeft/Right 只搬焦点，@focus 补上 WAI-ARIA 自动激活）
+  assert.match(settings, /@focus="tab = t\.id"/, "设置 VTabs 没在焦点时激活");
   // 设置主栏只剩四个 tab。
   assert.deepEqual(SETTINGS_TABS.map((t) => t.id), ["chat", "agent", "prompt", "appearance"],
     "SETTINGS_TABS 又塞回了会话/渠道，或顺序变了");
@@ -1943,7 +1945,7 @@ test("设置页签：四区 + 会话/渠道独立入口", () => {
   assert.match(bar, /@click="\$emit\('open-providers'\)"/, "左栏没有「渠道」入口");
   assert.match(settings, /only\??:\s*string/, "SettingsModal 没有独立入口的 only 参数");
   assert.match(settings, /<h2 v-else class="settings-title">/, "独立入口没有页头标题");
-  assert.match(settings, /<TabBar v-if="!only"/, "独立入口仍渲染设置 TabBar");
+  assert.match(settings, /<VTabs[\s\S]*v-if="!only"/, "独立入口仍渲染设置 VTabs");
 });
 
 // 「新会话默认值」那两格从前是**手打 id 的文本框**，说明文自己都写着
@@ -3356,9 +3358,8 @@ test("消息窗口：默认 5 段，设置里可改，首屏与加载更多共�
 test("设计系统：tab 统一下划线、设置平铺、圆角收口", () => {
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   const theme = readFileSync(join(SRC, "assets", "theme.css"), "utf8");
-  // 顶栏 / 上下文是下划线；设置与 Agent 二级页保留原来的胶囊 + 滑动底片。
-  assert.match(css, /\.settings-nav \{[^}]*background:\s*var\(--md-surface-container-low\)/, "设置 tab 不是 MD3 容器底");
-  assert.match(css, /\.settings-nav \.tab-thumb \{[^}]*background:\s*var\(--md-secondary-container\)/, "设置 tab 丢了 MD3 滑动底片");
+  // 设置 / Agent 用 Vuetify VTabs（MD3 primary tabs）；顶栏/上下文仍各用自带 indicator。
+  assert.ok(!/\.settings-nav/.test(css), "旧 TabBar 的 .settings-nav 样式还留着");
   // 2026-11-05 MD3：顶栏换成 primary tabs 的 3dp 圆角 indicator（不再是整条下划线）；
   // 上下文工作区那组仍是旧的整条下划线，别混。
   assert.match(css, /\.ws-tab::after \{[^}]*background:\s*var\(--md-primary\)/, "顶栏 tab 没有 MD3 indicator");
@@ -3717,7 +3718,7 @@ test("输入区：Vuetify 4 MD3 接管 input/send/think", () => {
   assert.match(plugin, /installVuetifyThemeBridge/, "没把 data-theme 桥到 Vuetify");
 
   // 旧未分层 CSS 不能改写 Vuetify 组件
-  assert.match(css, /#app \.v-btn, \.v-overlay-container \.v-btn, #app \.v-field__input \{ all: revert-layer; \}/, "Vuetify 组件还会被旧按钮/输入样式压住");
+  assert.match(css, /#app \.v-btn, \.v-overlay-container \.v-btn, #app \.v-field__input, #app \.v-tab \{ all: revert-layer; \}/, "Vuetify 组件还会被旧按钮/输入样式压住");
   assert.ok(!/#composer button \{/.test(css), "旧的 #composer button 样式还留着");
   assert.ok(!/#input \{/.test(css), "旧的 #input 样式还留着");
 });
@@ -3743,10 +3744,7 @@ test("消息区 MD3：tonal 用户气泡 / 32dp 操作 / 思考容器 / 卡片�
 // MD3 第四刀（2026-11-05）：设置页 + 浮层 + 全局控件。
 test("设置页 MD3：segmented tab / 平铺行 / 表格 / 字段标签", () => {
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  assert.match(css, /\.settings-nav \{[^}]*background:\s*var\(--md-surface-container-low\)/, "设置 tab 不是 MD3 容器");
-  assert.match(css, /\.settings-nav \{[^}]*border-radius:\s*var\(--md-shape-full\)/, "设置 tab 不是 full 圆角");
-  assert.match(css, /\.settings-nav \.tab-thumb \{[^}]*background:\s*var\(--md-secondary-container\)/, "滑动底片不是 secondary-container");
-  assert.match(css, /\.settings-nav \.tab-thumb \{[^}]*--md-ease-emphasized/, "滑动底片不是 MD3 曲线");
+  assert.ok(!/\.settings-nav/.test(css), "旧 TabBar 的 .settings-nav 样式还留着");
   assert.match(css, /\.settings-cols \.panel h3::before \{[^}]*var\(--md-primary\)/, "h3 竖条不是 primary");
   assert.match(css, /\.settings-cols \.panel \.field, \.settings-cols \.panel \.row \{[^}]*var\(--md-outline-variant\)/, "设置行分隔线不是 outline-variant");
   assert.match(css, /#settings-view \.field > span \{[^}]*var\(--md-on-surface-variant\)/, "字段标签不是 on-surface-variant");
@@ -3836,7 +3834,6 @@ test("波纹：触点 → 圆（纯函数），委托安装一次，reduce 下�
   assert.match(css, /\.md-ripple-host \{[^}]*overflow:\s*hidden/, "波纹宿主没裁剪");
   assert.match(ripple, /md-ripple-layer/, "没有独立裁剪层");
   assert.match(css, /\.md-ripple-host > \.md-ripple-layer \{[^}]*border-radius:\s*inherit/, "裁剪层没继承宿主圆角");
-  assert.match(css, /\.settings-nav \.tab > \.md-ripple-layer \{[^}]*inset:\s*0\.2em 0/, "设置 tab 的波纹没收到 thumb 高度");
   assert.match(css, /\.ws-switch \.ws-tab > \.md-ripple-layer \{[^}]*inset:\s*0\.4em 0\.3em/, "顶栏 tab 的波纹没收到文字区");
   assert.match(css, /\.bar-head\.bar-tabs \.tab > \.md-ripple-layer \{[^}]*inset:\s*0\.35em 0\.3em/, "上下文 tab 的波纹没收到文字区");
   assert.match(css, /prefers-reduced-motion[\s\S]{0,160}\.md-ripple/, "reduce 下没兜底");
@@ -3849,7 +3846,6 @@ test("密度：行高/顶栏/FAB/输入/设置/消息间距都收了一档", () 
   assert.match(css, /#chat-col > header \{ min-height:\s*3em/, "顶栏没收到 48dp");
   assert.match(css, /\.messages-inner \{[^}]*gap:\s*0\.55em/, "消息间距没收到 0.55em");
   assert.match(css, /\.settings-cols \.panel \.field, \.settings-cols \.panel \.row \{[^}]*padding:\s*0\.45em/, "设置行没收到 0.45em");
-  assert.match(css, /\.settings-nav \.tab \{[^}]*min-height:\s*2\.4em/, "设置 tab 没收到 38dp");
   assert.match(css, /\.agent-item, \.model-item \{[^}]*min-height:\s*2\.5em/, "菜单项没收到 40dp");
 });
 

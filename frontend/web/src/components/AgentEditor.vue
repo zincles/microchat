@@ -3,7 +3,7 @@
 // isNew（boolean）：无 agent 快照=新建（空表单）；有=编辑（带入快照，保存后父重拉，id 变了也对得上）。关即销毁。
 //
 // 2026-10-28 用户：「在具体某个 Agent 的设置界面里，我们最好也分 TAB，不然的话，全挤在一起很丑。」
-// ⇒ 一条长滚动拆成页签：基本 / 系统提示词 / 每个能力一页（页签条用 `TabBar`，与设置主栏同一个组件）。
+// ⇒ 一条长滚动拆成页签：基本 / 系统提示词 / 每个能力一页（页签条用 Vuetify `VTabs`，与设置主栏同一套）。
 // 保存一行留在页签**外面**（哪一页都能保存；翻页不丢已填的东西，状态都在 ref 里）。
 import { ref, computed, onMounted, onUnmounted } from "vue";
 import { sharedApi } from "../utils/prefs.ts";
@@ -15,7 +15,7 @@ import { downloadJSON } from "../utils/download.ts";
 import ToggleSwitch from "./ToggleSwitch.vue";
 import SegmentList from "./SegmentList.vue";
 import type { SegmentItem } from "./SegmentList.vue";
-import TabBar from "./TabBar.vue";
+import { VTab, VTabs, VTabsWindow, VTabsWindowItem } from "vuetify/components";
 import type { AbilityToggle, Agent, CreateAgentRequest, UpdateAgentRequest } from "../api/types.ts";
 
 interface AgentTemplate {
@@ -248,16 +248,27 @@ function onKey(e: KeyboardEvent): void {
       <button class="icon-btn" type="button" title="返回列表（Esc）" @click="emit('close')">←</button>
       <span class="status">{{ isNew ? "新建智能体" : `编辑「${props.agent?.name ?? ""}」` }}{{ !isNew && isDefault ? "（默认）" : "" }}</span>
     </div>
-    <TabBar v-model="tab" :tabs="tabs" />
+    <VTabs
+      v-model="tab"
+      class="agent-tabs"
+      density="compact"
+      align-tabs="start"
+    >
+      <VTab v-for="t in tabs" :key="t.id" :value="t.id" @focus="tab = t.id">{{ t.label }}</VTab>
+    </VTabs>
 
-    <section v-show="tab === 'base'" class="pane-section">
+    <VTabsWindow v-model="tab" class="agent-window">
+    <VTabsWindowItem value="base">
+    <section class="pane-section">
       <label class="field"><span>标识（改名会同步所有引用）</span><input v-model="aid" :disabled="isNew" placeholder="新建时自动生成" /></label>
       <label class="field"><span>名称</span><input v-model="name" placeholder="例如：跑团主持人" /></label>
       <label class="field-block"><span>开场白（新会话里的第一条回复；留空 = 不启用）</span><textarea v-model="firstMsg" rows="3" placeholder="例如：你好，我是……（可以包含状态块来设置初始状态）"></textarea></label>
       <label class="field"><span>在消息开头附上当前状态（角色扮演建议开启）</span><ToggleSwitch v-model="prepend" /></label>
     </section>
+    </VTabsWindowItem>
 
-    <section v-show="tab === 'prompt'" class="pane-section">
+    <VTabsWindowItem value="prompt">
+    <section class="pane-section">
       <label class="field-block"><span>系统提示词（基础人设）</span><textarea v-model="prompt" rows="6" placeholder="写这个智能体的基础设定…"></textarea></label>
       <SegmentList
         v-model:ids="segs"
@@ -265,8 +276,10 @@ function onKey(e: KeyboardEvent): void {
         :assembled="assembled"
         heading="提示词片段（追加在基础提示词后面，顺序就是拼接顺序）" />
     </section>
+    </VTabsWindowItem>
 
-    <section v-for="id in ABILITY_IDS" v-show="tab === id" :key="id" class="pane-section">
+    <VTabsWindowItem v-for="id in ABILITY_IDS" :key="id" :value="id">
+    <section class="pane-section">
       <label class="field"><span>启用（关闭后这项功能不会运行）</span><ToggleSwitch v-model="rows[id].enabled" /></label>
       <template v-if="id === 'title'">
         <label class="field"><span>标题模型来源</span><select v-model="rows[id].modelSource">
@@ -295,6 +308,8 @@ function onKey(e: KeyboardEvent): void {
         :hint="abilitySegHint(id)"
         heading="提示词片段（追加在模板后面，顺序就是拼接顺序）" />
     </section>
+    </VTabsWindowItem>
+    </VTabsWindow>
 
     <div class="row">
       <button type="button" class="primary" @click="save">保存</button>

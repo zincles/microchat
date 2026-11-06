@@ -1014,7 +1014,7 @@ DeepSeek / OpenCode GO 直连**确实不报**，所以那一格在那儿永远�
 ⚠ 阴影的几何别照抄侧栏那道：`-6px` 的负扩散会把渐变大半缩到栏背后，露出只剩一截（读起来是脏边）；现在是
 offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#131313`，黑影在近黑底上本来就淡 ⇒ 浓度取到 34% 那档的上限。2026-10-14 那版是「全透明 + 双层柔影」，试过 mask 渐隐的毛玻璃，撤了），输入行自己就是浮卡；消息列底部留白 = `--composer-h`（输入行实测高，`composerRO` 现量现写，textarea 长高不脱节）。⚠ CSS 里 `#chat-col > *:not(header)`（1-0-1）会压过 `#composer`（1-0-0）的 position —— 那条共享规则**别写 position/z-index**，踩过）与**设置视图**互斥切换；右载荷栏（**tabs 常驻顶部，三个面板各自滚动**（2026-10-17 用户定/修）；三 tab：真请求直放（裸 JSON ⇄ **分块视图**——把 `body.messages` 一块块画成卡片，开关记忆在 `mc_payload_viz`；**整行可点开合、>500 字的块默认折叠**（system prompt 那种巨块不撑爆面板；折叠态给单行预览）；展开不设嵌套滚动——面板整体滚，触摸纵向手势按轴锁归浏览器（2026-10-11）/ 世界状态 / **压缩树**）随对话一起让位。**设置不再弹窗**：占满左栏右侧整块、顶部是**一行式工具栏** `[◧][五区 tabs][×]`（不设"顶部卡"、无标题；Esc 返回）。**窄屏（断点即身份，2026-10-10）**：≤1100 右载荷栏、≤700 左会话栏改**覆盖式抽屉**（`collapsed` = 关着；[◧][◨] 调出/收起 + 遮罩点击收起 + 选中会话/开新对话自动收）；窄屏**不读不写**桌面偏好（`mc_bar_*_hidden`），跨断点时两侧统一先关（不然会"啪"地盖上来）。遮罩的显隐由 CSS 兄弟选择器跟栏的类联动，不用 JS 状态。
 - 接线全在 `src/App.vue`（SFC 直接挂模板）；`src/api/client.ts` 只调 `/api/v1`；`src/utils/` 放纯函数（contract 测试钉住请求形状）。
-- **TypeScript 迁移（2026-11-06，完成）**：`src/` 下**已经没有 `.js`**，25 个 `.vue` 全部
+- **TypeScript 迁移（2026-11-06，完成）**：`src/` 下**已经没有 `.js`**，24 个 `.vue` 全部
   `lang="ts"`；`api/`、`utils/`、组件、入口与 `App.vue` 都是 TS。严格档 `tsconfig.json`
   检查除 `App.vue`/`main.ts` 外的全部源码；`App.vue`/`main.ts` 由 `tsconfig.app.json`
   以宽松档检查（App 仍是 2000 行组装根，类型收紧随后续拆 composables 继续）。
@@ -1204,8 +1204,9 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   全局输入框/select/textarea = MD3 outlined 字段（outline 1px、4dp 圆角、focus 1px primary 内环）；
   range = MD3 轨道（4px outline-variant）+ primary 圆钮；ToggleSwitch = MD3 switch（52×32 轨道、
   outline 描边、开态 primary + 24dp 滑块）。
-  设置页：`#settings-view` = surface；`TabBar` = MD3 segmented（surface-container-low 底、
-  secondary-container 滑动底片、emphasized 300ms）；h3 竖条改 primary；字段行分隔线 outline-variant；
+  设置页：`#settings-view` = surface；页签用 Vuetify `VTabs`/`VTab` + `VTabsWindow`/`VTabsWindowItem`
+  （MD3 primary tabs；Vuetify 自带 slider / role=tab / tabpanel；旧手写 `TabBar` 已删）；
+  h3 竖条改 primary；字段行分隔线 outline-variant；
   `plist` = surface-container-low 卡片、表头 label-small、行 hover 状态层；`.io-card` = outlined 卡片。
   浮层：`.modal` / `.confirm` / `.palette` / `.picker` = MD3 dialog/menu（surface-container-high、
   28dp / 12dp、elevation 3、scrim 45%、`md-dialog-in` 进场）；toast = snackbar（inverse-surface、
@@ -1235,8 +1236,8 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   （用户报「波纹扩散到按钮外部」），独立裁剪层是确定性的兜底。
   ⚠ **tab 类要再收一档**：设置 tab 的按钮框比视觉 thumb 高 0.2em×2、顶栏/上下文 tab 只有
   文字 + 下划线却带着 0.4em 内边距 —— 波纹铺满按钮框会从视觉胶囊/文字外溢。三处的裁剪层
-  额外 `inset`（`.settings-nav .tab` / `.ws-switch .ws-tab` / `.bar-head.bar-tabs .tab`）收进
-  "看得见的那块"。
+  额外 `inset`（`.ws-switch .ws-tab` / `.bar-head.bar-tabs .tab`）收进"看得见的那块"；
+  设置/Agent 的 VTabs 用自己的 `v-tab` 状态层，不在这张表里。
   `prefers-reduced-motion` 下**整个不做**。⚠ 圆心 left/top 是**相对宿主**的，
   `rippleSpec` 必须减 `rect.left/top`（漏过：圆画到视口坐标、被裁掉 ⇒ 像没生效）。
   **密度**（2026-11-06 用户：「MD3 padding 太浪费」）：`main.css` 末尾一块密度覆盖 ——
@@ -1286,13 +1287,14 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   **左栏底 = 会话 / 渠道 / 设置**（2026-11-02 用户定：设置面板太满，把会话与渠道拆成独立入口；
   原来的「安装说明」删掉）。**2026-11-06 起三个入口并排**（用户定「并排，改善移动体验」）：
   Vuetify `VBtn(stacked)` 三等分一行，图标在文字上方；旧的竖排 `.foot-btn` 样式已删。会话 / 渠道与设置共用同一个视图：`SettingsModal` 的 `:only`
-  只显示那一页、隐藏 TabBar，页头写「会话管理 / 渠道管理」；退出仍走同一个 close。
-- 设置四 tab：**聊天 / 智能体 / 提示词 / 外观**（2026-11-02 起；会话与渠道不再是设置 tab）。聊天 / 智能体 / 提示词/外观的编辑都是 **tab 内二级页**（列表 ⇄ 详情就地切换，`[←]` 返回 —— 2026-10-10 从弹窗改过来，弹窗叠视图的账清了）；**Agent 编辑器的二级页自己也分页签**（2026-10-28 用户：「全挤在一起很丑」）——「基本」（id / 名称 / 首段对话 / 句首贴状态）/「系统提示词」（base + 它的段）/ **每个能力一页**（启用 / Model / 提示词覆盖 / 它的段，页面由 `ABILITY_IDS` 生成 ⇒ 加能力自动多一页），页签条与保存行：**保存那一行在页签外面**（哪一页都能存；藏在某一页里的那种，翻到别的页就找不到保存了）。页签条本身是 `frontend/web/src/components/TabBar.vue`，设置主栏那四区用的**同一个组件** —— 底片滑动的算法（量 `offsetLeft` / `offsetWidth`，还要跟 `window.resize` 与界面缩放滑杆）只有一份，契约测试钉着两处都不许自己画 `tab-thumb`、不许自己量宽度；「会话设置」（左栏 ☰）是**紧凑对话框**（560px、高随内容）。**Esc 一次只关一层**：二级页开着时设置视图不响应 Esc、会话设置弹窗开着时同理（踩过：两边各监听 document，一下关两层）。**会话管理页**（左栏「会话」入口）= 新会话默认值 + 列表（点进）+ 删除 + 尾部**导入对话**区（`POST /sessions/import-st` 与 `/sessions/import-json` 各一张卡：一句说明 + 按钮 + 隐藏文件框 —— 2026-10-17 用户点名「两种导入混在一起、都乱了」，改成两卡分开、原生 file 框换按钮）。
+  只显示那一页、隐藏 VTabs，页头写「会话管理 / 渠道管理」；退出仍走同一个 close。
+- 设置四 tab：**聊天 / 智能体 / 提示词 / 外观**（2026-11-02 起；会话与渠道不再是设置 tab）。聊天 / 智能体 / 提示词/外观的编辑都是 **tab 内二级页**（列表 ⇄ 详情就地切换，`[←]` 返回 —— 2026-10-10 从弹窗改过来，弹窗叠视图的账清了）；**Agent 编辑器的二级页自己也分页签**（2026-10-28 用户：「全挤在一起很丑」）——「基本」（id / 名称 / 首段对话 / 句首贴状态）/「系统提示词」（base + 它的段）/ **每个能力一页**（启用 / Model / 提示词覆盖 / 它的段，页面由 `ABILITY_IDS` 生成 ⇒ 加能力自动多一页），页签条与保存行：**保存那一行在页签外面**（哪一页都能存；藏在某一页里的那种，翻到别的页就找不到保存了）。页签条 **2026-11-06 起是 Vuetify `VTabs`/`VTab` + `VTabsWindow`/`VTabsWindowItem`**（真正的 tabpanel；旧手写 `TabBar.vue` 已删）：设置主栏与 Agent 编辑器同一个模式，`@focus="tab = t.id"` 补上"方向键搬焦点即激活"（Vuetify 的 slide group 只搬焦点，不激活）。「会话设置」（左栏 ☰）是**紧凑对话框**（560px、高随内容）。**Esc 一次只关一层**：二级页开着时设置视图不响应 Esc、会话设置弹窗开着时同理（踩过：两边各监听 document，一下关两层）。**会话管理页**（左栏「会话」入口）= 新会话默认值 + 列表（点进）+ 删除 + 尾部**导入对话**区（`POST /sessions/import-st` 与 `/sessions/import-json` 各一张卡：一句说明 + 按钮 + 隐藏文件框 —— 2026-10-17 用户点名「两种导入混在一起、都乱了」，改成两卡分开、原生 file 框换按钮）。
 - **渠道详情里的模型清单**（2026-11-02 用户定：「具体某个模型的界面里，应该能看到当前这个渠道导入的模型的列表（虽然不能编辑）」）：
   `ProviderEditor` 底部「模型（N）」一张**只读**表 —— 模型名 + 上游 id（小字并排）+ 上下文；数据直接取 `GET /providers` 的 `models`，
   保存并刷新后用回执里的 `models` 更新（`models` 是唯一状态，数量由它派生）。条目多，表在 `.provider-models` 里内部滚动。
   不摆编辑入口（显示名/覆盖是模型自己的事）；空态说清「保存并刷新后会出现在这里」。
-- **设置页平铺列表**（2026-11-04 统一设计系统）：`.settings-card` 只剩分节容器（无底色/圆角/内边距），字段行之间一条 `--line`；不再“卡片套卡片”。**tab 分两族**（2026-11-04 用户复核：「原来的 TabBar 没问题」）：设置 / Agent 二级页保留胶囊 + 滑动底片（`TabBar`），上下文这些 tab 与顶栏聊天·上下文是下划线；不要为了“统一”把用户认可的底片再删掉。**设置四 tab 与会话/渠道管理页统一 760 居中**（列表页有表格，但切页时宽度不该跳来跳去）。**所有 `h3` 统一一种标题语言**：正文色半粗 + 左侧蓝色短竖条（从前只有卡片里的 h3 有竖条，其它 tab 是裸文字 —— 用户指出不一致）。「输入」卡里是 **发送方式（`enter` / `shift-enter` / `button`）**、输入时预览、命令菜单 —— 这三格在 2026-11-01 从用户视图搬进 `AppearancePane` 时 **refs 与 persist 都搬了、模板整段漏了**（界面上找不到，2026-11-02 补回）。开关一律 `:model-value` + `setX(v) { ref = v; persist(); }`，**别写 `v-model + @update:model-value="persist"`** —— 两个监听同挂 update 时显式那个可能先跑，存进去的是旧值（实测：界面 on、服务端 off）。
+- **设置页平铺列表**（2026-11-04 统一设计系统）：`.settings-card` 只剩分节容器（无底色/圆角/内边距），字段行之间一条 `--line`；不再“卡片套卡片”。**tab 分两族**（2026-11-06 用户定「用真正的 Vuetify TabBar/TabItem」）：设置 / Agent 二级页用 Vuetify `VTabs`（MD3 primary tabs + slider + tabpanel）；上下文这些 tab 与顶栏聊天·上下文仍是手写下划线。窄屏把设置/Agent 的 `v-tab` 压到 `min-width:0`，四个都放得下（不再靠 show-arrows 吃 104px）。
+**设置四 tab 与会话/渠道管理页统一 760 居中**（列表页有表格，但切页时宽度不该跳来跳去）。**所有 `h3` 统一一种标题语言**：正文色半粗 + 左侧蓝色短竖条（从前只有卡片里的 h3 有竖条，其它 tab 是裸文字 —— 用户指出不一致）。「输入」卡里是 **发送方式（`enter` / `shift-enter` / `button`）**、输入时预览、命令菜单 —— 这三格在 2026-11-01 从用户视图搬进 `AppearancePane` 时 **refs 与 persist 都搬了、模板整段漏了**（界面上找不到，2026-11-02 补回）。开关一律 `:model-value` + `setX(v) { ref = v; persist(); }`，**别写 `v-model + @update:model-value="persist"`** —— 两个监听同挂 update 时显式那个可能先跑，存进去的是旧值（实测：界面 on、服务端 off）。
   **文案一律说人话**（2026-11-02 用户「审计设计界面里有哪些不说人话的部分」）：可见标签不再用 `Agent` / `vendor` / `protocol` / `载荷` / `卡带` / `提示词段` 这类内部词 ——
   `Agent → 智能体`、`发送键 → 发送方式`、`预演载荷 → 输入时预览`、`提示词段 → 提示词片段`、`卡带 → 智能体文件`、`首段对话 → 开场白`、`句首贴状态 → 在消息开头附上当前状态`、`走哪家/说什么话 → 服务商/接口类型`。
   内部 id（渠道标识、片段名称）仍可在编辑器里看到（手改配置要对得上号），但只放在输入框/表格里，不写进说明文；`token` 只在“上下文长度”一处保留并加括号解释。

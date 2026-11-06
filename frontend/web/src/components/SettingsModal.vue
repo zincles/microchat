@@ -6,7 +6,7 @@
 // 关走 close（Esc/×）—— 视图不卸载就丢状态的口径照旧：v-if 挂载，进视图拉一次。
 import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import ToggleSwitch from "./ToggleSwitch.vue";
-import TabBar from "./TabBar.vue";
+import { VTab, VTabs, VTabsWindow, VTabsWindowItem } from "vuetify/components";
 import AgentEditor from "./AgentEditor.vue";
 import AppearancePane from "./AppearancePane.vue";
 import SegmentEditor from "./SegmentEditor.vue";
@@ -53,7 +53,7 @@ const leftSvg = ICONS.panelLeft;
 // 四个设置区 + 两个独立管理页（会话 / 渠道）。
 // （「连接」那一区 2026-10-28 删了 —— 理由写在 format.js 的 SETTINGS_TABS 上。）
 const tab = ref(props.only || "chat");
-// 单独入口的页头文字；空串 = 完整设置（显示 TabBar）。
+// 单独入口的页头文字；空串 = 完整设置（显示 VTabs）。
 const onlyTitle = computed(() => (props.only === "session" ? "会话管理" : props.only === "provider" ? "渠道管理" : ""));
 watch(() => props.only, (v) => { tab.value = v || "chat"; });
 const chat = ref<Record<string, any>>({ title_chars: "", title_model: "", model_context_tokens: "", history_window: "", compact_blocks: "", compact_trigger_tokens: "", replay_reasoning: false, auto_compact: true });
@@ -345,7 +345,15 @@ function onKey(e: KeyboardEvent): void {
         @click="$emit('toggle-left')"
         v-html="leftSvg"
       ></button>
-      <TabBar v-if="!only" v-model="tab" :tabs="SETTINGS_TABS" />
+      <VTabs
+        v-if="!only"
+        v-model="tab"
+        class="settings-tabs"
+        density="compact"
+        align-tabs="start"
+      >
+        <VTab v-for="t in SETTINGS_TABS" :key="t.id" :value="t.id" @focus="tab = t.id">{{ t.label }}</VTab>
+      </VTabs>
       <h2 v-else class="settings-title">{{ onlyTitle }}</h2>
       <button id="settings-close" class="icon-btn" type="button" title="退出设置（Esc）" aria-label="退出设置" @click="$emit('close')">
         ×
@@ -354,7 +362,9 @@ function onKey(e: KeyboardEvent): void {
     <div class="settings-body">
       <div class="settings-box">
         <div class="settings-cols">
-        <section v-show="tab === 'chat'" id="panel-chat" class="panel">
+        <VTabsWindow v-model="tab" class="settings-window">
+        <VTabsWindowItem value="chat">
+        <section id="panel-chat" class="panel">
           <section class="settings-card">
             <h3>回复与自动压缩</h3>
             <label class="field"><span>自动标题最多字数</span><input v-model="chat.title_chars" type="number" min="1" /></label>
@@ -377,7 +387,9 @@ function onKey(e: KeyboardEvent): void {
             <div class="row"><button type="button" class="primary" @click="saveChat">保存</button><span class="status">{{ chatStatus }}</span></div>
           </section>
         </section>
-        <section v-show="tab === 'session'" id="panel-session" class="panel">
+        </VTabsWindowItem>
+        <VTabsWindowItem value="session">
+        <section id="panel-session" class="panel">
           <!-- 文案（2026-10-28 用户提）：「缺省」是技术圈黑话，普通用户读不出"默认值"。
                一律说「默认」；「会话」留着 —— 它是 DEFINE.md 的词（左栏、导出、删除确认都这么说），
                一块面板里混用「对话/会话」只会更乱。 -->
@@ -444,7 +456,9 @@ function onKey(e: KeyboardEvent): void {
           </div>
           <p class="hint">两种导入都会<b>新建一条会话</b>，不会改动现有会话；导入完成后左栏马上能看到。</p>
         </section>
-        <section v-show="tab === 'agent'" id="panel-agent" class="panel">
+        </VTabsWindowItem>
+        <VTabsWindowItem value="agent">
+        <section id="panel-agent" class="panel">
           <template v-if="!editAgent">
             <div class="panel-head">
               <h3>已有智能体（点击编辑）</h3>
@@ -483,10 +497,14 @@ function onKey(e: KeyboardEvent): void {
           />
 
         </section>
+        </VTabsWindowItem>
         <!-- 外观（2026-11-01 从删掉的用户视图搬来）：主题 / 缩放 / 背景图 / 显示模式 /
              滚动收起 / 发送键 / 预演 / 命令菜单。全部即时生效，改了就存。 -->
-        <AppearancePane v-show="tab === 'appearance'" @prefs-saved="emit('prefs-saved')" />
-        <section v-show="tab === 'prompt'" id="panel-prompt" class="panel">
+        <VTabsWindowItem value="appearance">
+          <AppearancePane @prefs-saved="emit('prefs-saved')" />
+        </VTabsWindowItem>
+        <VTabsWindowItem value="prompt">
+        <section id="panel-prompt" class="panel">
           <template v-if="!editSeg">
             <div class="panel-head">
               <h3>提示词片段（可复用的文本，在智能体里按顺序引用）</h3>
@@ -513,7 +531,9 @@ function onKey(e: KeyboardEvent): void {
             @saved="loadAgents"
           />
         </section>
-        <section v-show="tab === 'provider'" id="panel-provider" class="panel">
+        </VTabsWindowItem>
+        <VTabsWindowItem value="provider">
+        <section id="panel-provider" class="panel">
           <template v-if="!editProvider">
             <h3>渠道</h3>
             <p class="hint">一条渠道 = 用哪个服务商、哪个密钥、哪些模型。点一行编辑；模型数是上次刷新到的数量。</p>
@@ -541,6 +561,8 @@ function onKey(e: KeyboardEvent): void {
             @saved="onProviderSaved"
           />
         </section>
+        </VTabsWindowItem>
+        </VTabsWindow>
       </div>
       </div>
     </div>
