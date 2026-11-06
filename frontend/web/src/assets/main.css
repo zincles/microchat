@@ -654,14 +654,14 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
  * 从前这里还写着 `max-width: 70%; min-width: 9em;` —— 前者被 `.msg-wrap .msg { max-width: 100% }`
  * 按特异性恒压（永不生效的死值），后者与父级重复（`.msg` 被 stretch 撑满）。删掉是对的，
  * 别再往 `.msg` 上加宽高：那会让"气泡多宽"有两个来源。 */
-/* 用户气泡（2026-10-28 改中性灰）：从前是 `--tg-button` 亮蓝底 + 白字 —— 那是**即时通讯**
- * 的形状，不是 AI 对话的形状。参考 OpenWebUI：用户那句是一枚中性灰气泡（`dark:bg-gray-850`），
- * 颜色留给"动作"（发送钮、链接、开关），不拿来当聊天气泡。
- * 底色从文字色派生 ⇒ 深色里是浅一档的灰、浅色里是深一档的灰，两套主题都不用各写一遍。
+/* 用户气泡（2026-11-06 改 Gemini 中性灰）：Gemini 的 `response-container-flipped`
+ * 暗色是 #222327 —— 一枚中性灰气泡，不是蓝色，也不是即时通讯那种亮色。
+ * 这里取同一套 GM3 的 `surface-container-high`（#282a2c，最接近的一档），
+ * 动作色（发送钮、链接、选中项）才用 secondary-container 深蓝。
  * 圆角也放大一档（气泡比控件圆，才不像一块色卡）。
  * ⚠ 从前这里还有一句 `border-bottom-right-radius: 4px`（TG 那种小尾巴）写在 `border-radius`
  * **前面** —— 简写会把它重置掉，从来没生效过（死值，已删）。 */
-.msg.user { align-self: flex-end; background: var(--md-secondary-container); color: var(--md-on-secondary-container); padding: 0.6em 0.9em; border-radius: var(--md-shape-lg) var(--md-shape-lg) var(--md-shape-xs) var(--md-shape-lg); }
+.msg.user { align-self: flex-end; background: var(--md-surface-container-high); color: var(--md-on-surface); padding: 0.6em 0.9em; border-radius: var(--md-shape-lg) var(--md-shape-lg) var(--md-shape-xs) var(--md-shape-lg); }
 .msg.user .who, .msg.user .edit-btn { color: inherit; opacity: 0.75; }
 .msg.assistant { align-self: flex-start; }
 .msg .msg-head { display: flex; justify-content: space-between; align-items: center; gap: 0.6em; margin-bottom: 0.3em; }

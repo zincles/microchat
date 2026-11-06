@@ -3720,10 +3720,11 @@ test("输入区：Vuetify 4 MD3 接管 input/send/think", () => {
 });
 
 // MD3 第三刀（2026-11-05）：消息区（气泡 / 思考 / 摘要卡 / 操作行 / 代码块）。
-test("消息区 MD3：tonal 用户气泡 / 32dp 操作 / 思考容器 / 卡片摘要 / 代码容器", () => {
+test("消息区 MD3：中性灰用户气泡 / 32dp 操作 / 思考容器 / 卡片摘要 / 代码容器", () => {
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 
-  assert.match(css, /\.msg\.user \{[^}]*background:\s*var\(--md-secondary-container\)/, "用户气泡不是 MD3 tonal 容器");
+  assert.match(css, /\.msg\.user \{[^}]*background:\s*var\(--md-surface-container-high\)/, "用户气泡不是 Gemini 中性灰容器");
+  assert.match(css, /\.msg\.user \{[^}]*color:\s*var\(--md-on-surface\)/, "用户气泡正文色不是 on-surface");
   assert.match(css, /\.msg\.user \{[^}]*border-radius:\s*var\(--md-shape-lg\) var\(--md-shape-lg\) var\(--md-shape-xs\)/, "用户气泡不是 16dp/4dp 尾巴圆角");
   assert.match(css, /\.msg-ops \.edit-btn \{[^}]*min-width:\s*2em[^}]*min-height:\s*2em/, "操作键不是 32dp");
   assert.match(css, /\.msg-ops \.edit-btn:hover \{[^}]*--md-on-surface[^}]*8%/, "操作键没有状态层");
@@ -3902,7 +3903,10 @@ test("设置界面：可见控件全部 Vuetify，旧 ToggleSwitch/TabBar 已删
 test("主题：Vuetify theme 是唯一色值源，theme.css 只做映射", () => {
   const plugin = readFileSync(join(SRC, "plugins", "vuetify.ts"), "utf8");
   const theme = readFileSync(join(SRC, "assets", "theme.css"), "utf8");
-  assert.match(plugin, /primary: "#2563eb"/, "Vuetify 强调色不是专业蓝");
+  assert.match(plugin, /const darkTheme = \{[\s\S]*?background: "#131314"/, "暗色底不是 Gemini #131314");
+  assert.match(plugin, /const darkTheme = \{[\s\S]*?"surface-container": "#1e1f20"/, "暗色容器不是 Gemini #1e1f20");
+  assert.match(plugin, /const darkTheme = \{[\s\S]*?primary: "#a8c7fa"/, "暗色强调色不是 Gemini #a8c7fa");
+  assert.match(theme, /html\[data-theme="dark"\] \{[\s\S]*?--tg-bg: #131314[\s\S]*?--tg-link: #a8c7fa/, "theme.css 的暗色语义槽没跟上 Gemini");
   assert.match(theme, /--md-primary:\s*rgb\(var\(--v-theme-primary\)\)/, "theme.css 没把强调色映射到 Vuetify");
   assert.ok(!/--md-primary:\s*#d0bcff/.test(theme), "theme.css 还留着旧的紫色硬编码");
 });

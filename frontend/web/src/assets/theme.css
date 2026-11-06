@@ -3,9 +3,9 @@
  * 语义槽还是七个（沿用 TG themeParams 的名字，见 core.telegram.org/bots/webapps）：
  *   bg / secondary_bg / text / hint / link / button / button_text
  * 外加 destructive（删会话/删渠道那种红）与 float（浮层）。
- * 名字是历史包袱（变量名不值当全项目改一遍），**值不再是 TG 那套** —— 2026-10-28 换成
- * 中性灰阶（参考 OpenWebUI）：TG 深夜蓝在 9% 明度上挂 40% 饱和度，出来是浑浊的藏青；
- * 中性灰只靠明度分层，同样的暗度读起来干净得多。
+ * 名字是历史包袱（变量名不值当全项目改一遍），**值不再是 TG 那套** —— 2026-11-06 暗色
+ * 换成 Gemini 的 GM3 暗色板（bg #131314 / 容器 #1e1f20 / 主色 #a8c7fa）：Google 的中性
+ * 灰面 + 浅蓝强调色，比 OpenWebUI 那版更接近 Gemini 的实际观感。
  *
  * 2026-11-06：**颜色角色唯一权威搬到 Vuetify theme**（plugins/vuetify.ts）；本文件只保留
  * `--tg-*` 语义槽、shape/elevation/motion/字体，以及文件末尾的 `--md-* → --v-theme-*` 映射。
@@ -41,18 +41,18 @@
    * 它们不跟着缩 —— 放大到 130% 时圆角显得略小，可接受（OpenWebUI 同样如此）。 */
   --app-text-scale: 1;
 
-  --tg-bg: var(--tg-theme-bg-color, #131313);           /* 页面底 / 对话区 */
-  --tg-secondary-bg: var(--tg-theme-secondary-bg-color, #1c1c1c); /* 左栏、右栏、顶栏、输入框 */
-  --tg-text: var(--tg-theme-text-color, #ebebeb);
-  --tg-hint: var(--tg-theme-hint-color, #9b9b9b);
-  --tg-link: var(--tg-theme-link-color, #60a5fa);
-  --tg-button: var(--tg-theme-button-color, #2563eb);
-  --tg-button-text: var(--tg-theme-button-text-color, #ffffff);
-  --tg-destructive: #f87171;
+  --tg-bg: var(--tg-theme-bg-color, #131314);           /* 页面底 / 对话区 */
+  --tg-secondary-bg: var(--tg-theme-secondary-bg-color, #1e1f20); /* 左栏、右栏、顶栏、输入框 */
+  --tg-text: var(--tg-theme-text-color, #e3e3e3);
+  --tg-hint: var(--tg-theme-hint-color, #c4c7c5);
+  --tg-link: var(--tg-theme-link-color, #a8c7fa);
+  --tg-button: var(--tg-theme-button-color, #a8c7fa);
+  --tg-button-text: var(--tg-theme-button-text-color, #062e6f);
+  --tg-destructive: #f2b8b5;
   /* 绿：只在右上角那枚上下文环上用（正常占用）。**不是装饰色** ——
    * 环变红（--tg-destructive）才是"超预算"，别拿它做别的"正确/成功"提示。 */
-  --tg-ok: #4ade80;
-  --tg-float: #262626;                                  /* 弹窗、菜单、浮板 */
+  --tg-ok: #6dd58c;
+  --tg-float: #282a2c;                                  /* 弹窗、菜单、浮板 */
 }
 
 /* —— 第 2 层：与配色无关的工艺 token。
@@ -92,7 +92,7 @@
    * （栏浮起来而不是贴在上面）。模糊半径比侧栏那道大，因为它是**常驻**的：
    * 窄而浓的影天天挂在屏顶会像一条脏边，宽而淡的才读成"上面还有一层"。
    *
-   * 为什么浓度取到 34% 这一档的上限：深色主题底是 #131313，黑影在近黑底上本来就淡 ——
+   * 为什么浓度取到 34% 这一档的上限：深色主题底是 #131314，黑影在近黑底上本来就淡 ——
    * 按浅色主题的观感调低，深色下就等于没有（而那正是默认主题）。 */
   /* ⚠ 几何别照抄侧栏那道（`0 4px 16px -6px`）：负扩散会把渐变的大半缩到**栏背后**去，
    * 露在下面的只剩窄窄一截 —— 常驻的画面上那读起来是"一条脏边"，不是影子。
@@ -117,12 +117,14 @@
  * 而 TG 里 data-theme 根本不设（`applyTheme` 判了 `window.Telegram.WebApp`），两者永不同时生效，
  * 所以这里不需要 !important。 */
 
-/* 暗色（默认）：中性灰阶，chroma 全 0 —— 色值 = OpenWebUI 的灰阶（oklch L 换算成 sRGB）。
- * 三层明度 19 / 28 / 38，步长一致。文字 #ebebeb 在 #131313 上 15.6:1。 */
+/* 暗色（默认）：Gemini 暗色板（GM3 system colors，2026-11-06 用户定）。
+ * bg #131314 / surface-container #1e1f20 / 浮层 #282a2c / 正文 #e3e3e3 /
+ * 次要文字 #c4c7c5 / 主色 #a8c7fa（浅蓝，深色底上配 #062e6f 深字）。
+ * 语义槽与 Vuetify dark theme 同源；改色只改 plugins/vuetify.ts，这里跟着对齐。 */
 html[data-theme="dark"] {
-  --tg-bg: #131313; --tg-secondary-bg: #1c1c1c; --tg-float: #262626; --tg-text: #ebebeb;
-  --tg-hint: #9b9b9b; --tg-link: #60a5fa; --tg-button: #2563eb; --tg-button-text: #ffffff;
-  --tg-destructive: #f87171; --tg-ok: #4ade80; color-scheme: dark;
+  --tg-bg: #131314; --tg-secondary-bg: #1e1f20; --tg-float: #282a2c; --tg-text: #e3e3e3;
+  --tg-hint: #c4c7c5; --tg-link: #a8c7fa; --tg-button: #a8c7fa; --tg-button-text: #062e6f;
+  --tg-destructive: #f2b8b5; --tg-ok: #6dd58c; color-scheme: dark;
 }
 /* 亮色：同一套中性灰阶的浅色端。正文 18.1:1、hint 5.3:1。 */
 html[data-theme="light"] {
@@ -154,8 +156,8 @@ html[data-theme="breeze"] {
  * 新界面用 `--md-*` 这套 MD3 角色（primary / secondary-container / surface 容器层级 /
  * outline / 状态层 / 形状 / 高度 / 动效 / 字体角色）。两边都不写死色值。
  *
- * 颜色取的是 MD3 **baseline** 色板（暗色 / 亮色），Breeze 用它自己的蓝（#2470a2）
- * 生成同构的角色 —— 三套主题都还是"同一套 MD3 语义"。
+ * 颜色角色（暗色 = Gemini 暗色板 / 亮色 / Breeze）全部由 `plugins/vuetify.ts` 定义；
+ * 本文件只保留 `--md-* → --v-theme-*` 映射。三套主题都还是"同一套 MD3 语义"。
  *
  * ⚠ 字体角色一律用 **em**（相对 body 的 `15px × --app-text-scale`），不写 px：
  *   否则「界面缩放」那个滑杆对 MD3 的部分失效，一屏里会出现两种缩放比例。
@@ -205,10 +207,10 @@ html[data-theme="breeze"] {
   --md-elev-2: 0 1px 2px rgb(0 0 0 / 30%), 0 2px 6px 2px rgb(0 0 0 / 15%);
   --md-elev-3: 0 4px 8px 3px rgb(0 0 0 / 15%), 0 1px 3px rgb(0 0 0 / 30%);
 
-  /* —— 暗色（baseline）角色。默认主题就是暗色 ⇒ 这里也当兜底 —— */
+  /* —— 暗色（Gemini）角色由 plugins/vuetify.ts 定义；这里不重复色值 —— */
 }
 
-/* 亮色（baseline）：紫调 surface，而不是纯白 —— MD3 的"层次"靠 surface 容器层级。 */
+/* 亮色：中性 surface，而不是纯白 —— MD3 的"层次"靠 surface 容器层级。 */
 html[data-theme="light"] {
 }
 
