@@ -3913,3 +3913,10 @@ test("主题：Vuetify theme 是唯一色值源，theme.css 只做映射", () =>
   assert.match(theme, /--md-primary:\s*rgb\(var\(--v-theme-primary\)\)/, "theme.css 没把强调色映射到 Vuetify");
   assert.ok(!/--md-primary:\s*#d0bcff/.test(theme), "theme.css 还留着旧的紫色硬编码");
 });
+
+// 2026-11-06 用户报：左下角 会话→渠道→设置 切换时有 tab 滑入，且「渠道→设置」方向是反的。
+// 根因是三个管理页共用了设置内部的 VTabsWindow，window item 顺序与底部入口顺序不一致。
+test("会话/渠道管理页不跑设置 tab 滑入（页面切换不是 tab）", () => {
+  const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
+  assert.match(settings, /<VTabsWindow[^>]*:key="props\.only \|\| 'settings'"/, "管理页没有按 only 重挂载 window，tab 滑入还会反向");
+});

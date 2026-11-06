@@ -367,7 +367,10 @@ function onKey(e: KeyboardEvent): void {
     <div class="settings-body">
       <div class="settings-box">
         <div class="settings-cols">
-        <VTabsWindow v-model="tab" class="settings-window">
+        <!-- 会话/渠道是**页面切换**，不是设置页签：key 随 only 变 ⇒ 重挂载、不跑 tab 滑入。
+             否则「渠道 → 设置」会从最后一个 window item 跳回 chat，方向反着走
+             （2026-11-06 用户报「有 Tab 效果，而且顺序是错的」）。 -->
+        <VTabsWindow v-model="tab" :key="props.only || 'settings'" class="settings-window">
         <VTabsWindowItem value="chat">
         <section id="panel-chat" class="panel">
           <section class="settings-card">
