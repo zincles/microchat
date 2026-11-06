@@ -25,10 +25,9 @@ Docker 部署（单容器、只公开 8788）见根目录 `docker-compose.yml`�
 
 ## 依赖
 
-`vue@3.5`（框架）+ `marked`（markdown 渲染：`**粗**`/`*斜*`/`__下划线__`→`<u>`/行内码/`~~删~~`/引述块）+ `katex`（数学）；构建用 `vite` + `@vitejs/plugin-vue`。
+`vue@3.5`（框架）+ `marked`（markdown 渲染）+ `katex`（数学）+ `vuetify@4`（**只用于底部输入栏/思考菜单**，渐进接入）；构建用 `vite` + `@vitejs/plugin-vue` + `vite-plugin-vuetify`。
 运行时没有自造传输层（`fetch` 直调）。**加依赖先问**；`node_modules/`、`dist/` 永不进库。
-开发依赖另有 `typescript` / `vue-tsc` / `tsx`：`api/`、`utils/`、入口与 23 个组件已迁 TS；
-剩余重组件仍是 JS；`tsconfig` 的 `allowJs`/`checkJs:false` 是分阶段迁移的闸，别急着一次全改。
+开发依赖另有 `typescript` / `vue-tsc` / `tsx`；`src/` 下已全部 TS（App 组装根用宽松档检查）。
 
 ## 现在能干什么
 
@@ -43,8 +42,7 @@ Docker 部署（单容器、只公开 8788）见根目录 `docker-compose.yml`�
 - **移动端键盘不遮输入框**：visualViewport 拟合应用盒（浮层随键盘抬、命令面板限高不顶出小视口）
 - **PWA（可"安装为应用"）**：`vite-plugin-pwa`（v2）。**只在 build/preview 开 SW**（dev 不开——免得开发时吃到旧缓存）。SW **只预缓存壳**（HTML/JS/CSS/图标/字体）：离线打开能进"连接门板"；`/api` 一概不碰（数据必须现取 —— 现在 `/api` 走 vite 代理、与页面同源，SW 是**够得着**它的，所以这条不是"管不着"而是**刻意不接**：不许写 runtimeCaching）。**安装的前提在来源：HTTPS 或 localhost** —— 局域网 `http://<IP>:8788` 装不了（不是安全上下文，连 SW 都不会注册）；云端形态（反代终结 TLS，如 Cloudflare）天然满足。图标 `public/pwa-192.png` / `pwa-512.png` / `pwa-maskable-512.png` / `apple-touch-icon.png`（由 `favicon.svg` 栅格化）。桌面/安卓 Chrome：地址栏装或菜单"安装应用"；iOS 16.4+：分享菜单"添加到主屏幕"。**更新由用户点**（2026-10-20 起）：检测到新版本 ⇒ 顶上弹一条**不自动消失**的更新条（`components/UpdateBar.vue`）⇒ 点「刷新」才切过去。**别再用"再刷一次就是新的"来理解它** —— 从前是 `autoUpdate`，它**静默**自己 reload 且从不告诉你"此刻看的是旧的"（2026-10-20 因此对着一个"文件是新的、界面却是旧的"白排查一轮，最后靠清站点数据才揭穿是 SW 缓存的旧壳）
 - **连接门板**：进前端第一眼 —— 探通后端后它只用来**初始化 root / 登录**；探不通才是全屏"连接"面板（探针候选：**同源 `/api/v1` 优先**，其次跟页面同主机的 `<该主机>:8787`；裸地址自动补 `http://` 与 `/api/v1`；探通即存偏好刷新进聊天）。**地址栏只在探不通时出现**（2026-10-14）：同源部署（vite 代理/单容器）里登录界面不会让你填后端地址；中途连接又断了，地址栏会自动放回来
-- **命令面板**（**默认关**，用户视图 → 输入 里开）：`/` 进（`/resume` `/compact` `/cut` `/reroll` `/edit` `/editsum` …，只放已有路由的命令）与输入框左侧那颗 ☰。关着时两者都不出现 —— 但直接打 `/name` 回车照样执行
-- **两种显示模式**（**用户视图 → 外观**；2026-10-17 定名）：`正常模式`（默认，`float` —— 圆角浮空输入框、状态小字在它上方）⇄ `紧凑模式`（`solid` —— 输入框占满整行、方角贴底，状态/任务两行收进栏里，省地方）。载体是根节点的 `data-composer` 属性，保存后**即时生效**；默认不挂属性 ⇒ 老界面一个像素都不变
+- **命令面板**（**默认关**，用户视图 → 输入 里开）：`/` 进（`/resume` `/compact` `/cut` `/reroll` `/edit` `/editsum` …，只放已有路由的命令）与输入行右侧那颗 ☰。关着时两者都不出现 —— 但直接打 `/name` 回车照样执行
 - **状态行数字是人话格式**（`formatTokens`：9.8K / 995K / 1.04M，向下取整）；分母是**输入预算**
   （上下文 − 输出预留）而不是模型上下文 —— 悬停有算式、设置 → 聊天里有一句同样的说明
 - **共享层**：`utils/prefs.ts`（界面偏好 + `sharedApi()` + 发送键判定/主题应用，含 TG 守卫）· `api/client.ts` 的 `mergeStreamSlice`（流式合并唯一规则）· 错误带 `code`/`status`（按 code 分支）· `format.ts` 的 modelKey/modelLabel/whoText/sessionTitle（键与标签唯一出口）

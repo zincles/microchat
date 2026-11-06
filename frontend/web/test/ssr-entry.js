@@ -22,11 +22,13 @@ export async function run() {
     localStorage: { getItem: () => null, setItem: noop, removeItem: noop },
     ResizeObserver: class { observe() {} unobserve() {} disconnect() {} },
     getComputedStyle: () => ({ getPropertyValue: () => "" }),
+    navigator: { userAgent: "node", language: "zh-CN", onLine: true, maxTouchPoints: 0 },
+    CSS: { supports: () => false },
     setTimeout: () => 0, clearTimeout: noop, setInterval: () => 0, clearInterval: noop,
     requestAnimationFrame: () => 0, cancelAnimationFrame: noop,
   };
   globalThis.document = {
-    documentElement: el(), body: el(),
+    documentElement: el(), body: el(), head: el(),
     getElementById: () => null, querySelector: () => null, querySelectorAll: () => [],
     createElement: el, addEventListener: noop, removeEventListener: noop,
     title: "", visibilityState: "visible",
@@ -35,6 +37,7 @@ export async function run() {
   globalThis.localStorage = globalThis.window.localStorage;
   globalThis.ResizeObserver = globalThis.window.ResizeObserver;
   globalThis.matchMedia = stub;
+  globalThis.CSS = { supports: () => false };
   globalThis.getComputedStyle = globalThis.window.getComputedStyle;
   globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => "" });
   // Node 24 自带只读的 `navigator` ⇒ 直接赋值会抛 "only a getter"。要改就用 defineProperty。
@@ -48,5 +51,10 @@ export async function run() {
   // `vue/dist/vue.esm-bundler.js`，子路径会被拼成 `…esm-bundler.js/server-renderer`（不存在）。
   const { renderToString } = await import("@vue/server-renderer");
   const App = (await import("/home/zincles/microchat/frontend/web/src/App.vue")).default;
-  return await renderToString(createSSRApp(App));
+  // Vuetify 只用于输入栏，但它是 app-level 插件；不装的话 VBtn/VTextarea 在 SSR 里
+  // 拿不到 theme/默认值。SSR 用的也是 main.ts 那一份（md3 blueprint）。
+  const { vuetify } = await import("/home/zincles/microchat/frontend/web/src/plugins/vuetify.ts");
+  const app = createSSRApp(App);
+  app.use(vuetify);
+  return await renderToString(app);
 }

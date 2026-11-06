@@ -4,7 +4,11 @@ import { createApp } from "vue";
 import App from "./App.vue";
 import "katex/dist/katex.min.css";
 import { installRipple } from "./utils/ripple.ts";
+import { installVuetifyThemeBridge, vuetify } from "./plugins/vuetify.ts";
 
-createApp(App).mount("#app");
+const app = createApp(App);
+app.use(vuetify);
+installVuetifyThemeBridge();
+app.mount("#app");
 // MD3 波纹：事件委托装一次（新按钮/列表行自动生效，不需要逐个接线）。
 installRipple();

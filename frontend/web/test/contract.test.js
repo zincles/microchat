@@ -3083,17 +3083,18 @@ test("空草稿首屏：有欢迎语与当前助手/模型，不是一整页纯�
   assert.match(css, /\.draft-welcome\s*\{/, "欢迎块没有样式（会与消息列挤在一起）");
 });
 
-test("输入框：发送键住在面板内，全屏键已取消", () => {
+test("输入框：Vuetify MD3 输入栏 + 发送键", () => {
   const composer = readFileSync(join(SRC, "components", "Composer.vue"), "utf8");
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  assert.match(composer, /class="composer-box"/, "输入框与按钮没包在同一张面板里");
+  assert.match(composer, /import \{ VBtn, VTextarea \} from "vuetify\/components"/, "输入栏没用 Vuetify 组件");
+  assert.match(composer, /<VTextarea[\s\S]*variant="solo-filled"/, "输入框不是 Vuetify MD3 filled 形态");
+  assert.match(composer, /bg-color="surface-container-high"/, "输入框没用 MD3 容器色");
   assert.match(composer, /class="composer-actions"/, "按钮列没有容器");
   assert.match(composer, /id="send-btn"/, "没有发送键");
   assert.ok(!composer.includes('id="expand-btn"'), "全屏键还留着");
   assert.ok(!composer.includes("composer-fs"), "全屏输入层还留着");
   assert.ok(!composer.includes("Teleport"), "全屏 Teleport 还留着");
-  assert.match(css, /\.composer-box \{[^}]*background:/, "输入面板没有底");
-  assert.ok(!/#input \{[^}]*border-radius:\s*var\(--r-shell\)/.test(css), "输入框还自己长着一张卡");
+  assert.ok(!/\.composer-box/.test(css), "旧手写输入面板样式还留着");
   assert.ok(!/composer-fs|expand-btn/.test(css), "样式里还留着全屏输入");
   const pane = readFileSync(join(SRC, "components", "AppearancePane.vue"), "utf8");
   assert.match(pane, /<span>标准字体<\/span>/, "外观设置没有标准字体");
@@ -3363,8 +3364,9 @@ test("设计系统：tab 统一下划线、设置平铺、圆角收口", () => {
   assert.ok(!/settings-cols \.panel h3 \+ \.field[^}]*border-radius/.test(css), "设置字段又连成卡片组");
   // 圆角/输入框收口
   assert.match(theme, /--r-card:\s*12px/, "卡片圆角没有统一到 12");
-  assert.match(css, /\.composer-box \{[^}]*border-radius:\s*var\(--md-shape-xl\)/, "输入面板不是 MD3 圆角");
-  assert.ok(!/#input \{[^}]*border-radius:\s*var\(--r-shell\)/.test(css), "输入框自己还留着独立圆角");
+  const composer = readFileSync(join(SRC, "components", "Composer.vue"), "utf8");
+  assert.match(composer, /rounded="xl"/, "输入框没走 Vuetify 的 MD3 shape");
+  assert.ok(!/#input \{/.test(css), "旧 #input 样式还留着");
 });
 
 test("载荷预览：面板里可开关；关掉不请求，偏好与输入预演分开", () => {
@@ -3689,16 +3691,29 @@ test("顶栏 MD3：surface 容器 / 40dp 文本按钮 / MD3 菜单 / 两段 tab 
   assert.match(css, /\.ctx-ring-fill \{[^}]*stroke:\s*var\(--tg-ok\)/, "环的正常色不该丢（绿=正常）");
 });
 
-test("输入区 MD3：搜索栏式 composer / 48dp 发送 / 焦点环 / 停止态", () => {
+test("输入区：Vuetify 4 MD3 接管 input/send/think", () => {
+  const composer = readFileSync(join(SRC, "components", "Composer.vue"), "utf8");
+  const thinking = readFileSync(join(SRC, "components/ThinkingMenu.vue"), "utf8");
+  const plugin = readFileSync(join(SRC, "plugins/vuetify.ts"), "utf8");
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  assert.match(css, /\.composer-box \{[^}]*background:\s*var\(--md-surface-container-high\)/, "输入面板不是 MD3 容器色");
-  assert.match(css, /\.composer-box \{[^}]*border-radius:\s*var\(--md-shape-xl\)/, "输入面板不是 28dp 圆角");
-  assert.match(css, /\.composer-box:focus-within \{[^}]*--md-primary/, "聚焦时没有 primary 环");
-  assert.match(css, /#composer button \{[^}]*width:\s*2\.75em/, "发送键不是密度化后的 44dp");
-  assert.match(css, /#composer button \{[^}]*background:\s*var\(--md-primary\)/, "发送键不是 primary");
-  assert.match(css, /#composer button:p?active \{[^}]*transform:\s*scale\(0\.96\)/, "发送键按下没有 MD3 scale");
-  assert.match(css, /#composer button\.stop \{[^}]*background:\s*var\(--md-error-container\)/, "停止键不是 error-container");
-  assert.match(css, /#input::placeholder \{[^}]*var\(--md-on-surface-variant\)/, "占位符不是 on-surface-variant");
+
+  // 组件：Vuetify 自己的输入/按钮/菜单，不再手写 .composer-box / #send-btn 外形
+  assert.match(composer, /<VTextarea[\s\S]*variant="solo-filled"/, "输入框不是 Vuetify MD3");
+  assert.match(composer, /<VBtn[\s\S]*id="send-btn"/, "发送键不是 Vuetify VBtn");
+  assert.match(composer, /:color="running \? 'error' : 'primary'"/, "停止态不是 MD3 error");
+  assert.match(thinking, /<VMenu[\s\S]*location="top end"/, "思考菜单不是 Vuetify VMenu 向上弹");
+  assert.match(thinking, /<VList/, "思考选项不是 Vuetify VList");
+  assert.match(thinking, /<VBtn/, "思考入口不是 Vuetify VBtn");
+
+  // 主题：MD3 blueprint + 三套应用色（不是 Vuetify 默认 Material 蓝）
+  assert.match(plugin, /blueprint: md3/, "没启用 Vuetify MD3 blueprint");
+  assert.match(plugin, /themes: \{ dark: darkTheme, light: lightTheme, breeze: breezeTheme \}/, "Vuetify 主题没跟上应用三套主题");
+  assert.match(plugin, /installVuetifyThemeBridge/, "没把 data-theme 桥到 Vuetify");
+
+  // 旧未分层 CSS 不能改写 Vuetify 组件
+  assert.match(css, /#app \.v-btn, \.v-overlay-container \.v-btn, #app \.v-field__input \{ all: revert-layer; \}/, "Vuetify 组件还会被旧按钮/输入样式压住");
+  assert.ok(!/#composer button \{/.test(css), "旧的 #composer button 样式还留着");
+  assert.ok(!/#input \{/.test(css), "旧的 #input 样式还留着");
 });
 
 // MD3 第三刀（2026-11-05）：消息区（气泡 / 思考 / 摘要卡 / 操作行 / 代码块）。
@@ -3827,11 +3842,9 @@ test("密度：行高/顶栏/FAB/输入/设置/消息间距都收了一档", () 
   assert.match(css, /#sessions-bar #session-new \{[^}]*min-height:\s*3em/, "FAB 没收到 48dp");
   assert.match(css, /#chat-col > header \{ min-height:\s*3em/, "顶栏没收到 48dp");
   assert.match(css, /\.messages-inner \{[^}]*gap:\s*0\.55em/, "消息间距没收到 0.55em");
-  assert.match(css, /#composer button \{[^}]*width:\s*2\.75em/, "发送键没收到 44dp");
   assert.match(css, /\.settings-cols \.panel \.field, \.settings-cols \.panel \.row \{[^}]*padding:\s*0\.45em/, "设置行没收到 0.45em");
   assert.match(css, /\.settings-nav \.tab \{[^}]*min-height:\s*2\.4em/, "设置 tab 没收到 38dp");
   assert.match(css, /\.agent-item, \.model-item \{[^}]*min-height:\s*2\.5em/, "菜单项没收到 40dp");
-  assert.match(css, /#input \{[^}]*padding:\s*0\.3em 0/, "输入框没收到 0.3em");
 });
 
 test("左栏底：会话/渠道/设置上方有一条 outline-variant 分隔线", () => {
@@ -3846,9 +3859,8 @@ test("会话分组标题：更大间距 + 非首组淡分隔线", () => {
 });
 
 
-// 思考档位（2026-11-06）：Session 字段 + 输入框左侧的紧凑面板。
-// 位置是刻意的：发送侧已经有发送/停止，再塞一颗会变成按钮墙；放在输入文字左侧。
-test("思考档位：Session 字段 + 输入左侧紧凑面板", () => {
+// 思考档位（2026-11-06）：Session 字段 + 发送键左边的 Vuetify 菜单。
+test("思考档位：Session 字段 + 发送键左侧 Vuetify 菜单", () => {
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
   assert.match(app, /:thinking="currentThinking"/, "Composer 没接思考档位");
   assert.match(app, /@thinking="setThinking"/, "Composer 没把档位变化接回来");
@@ -3861,10 +3873,10 @@ test("思考档位：Session 字段 + 输入左侧紧凑面板", () => {
   const sendAt = composer.indexOf('id="send-btn"');
   assert.ok(menuAt > actionsAt && menuAt < sendAt, "思考按钮该在操作行里、发送键左边");
 
-  const css = readFileSync(join(SRC, "assets/main.css"), "utf8");
-  assert.match(css, /\.thinking-menu \{[^}]*right: 0[^}]*bottom: calc\(100% \+ 0\.45em\)/, "菜单该向上、向左侧弹（按钮贴右缘）");
-  assert.match(css, /#composer \.thinking-btn \{[^}]*width: auto/, "思考按钮该是紧凑药丸，不是 3em 圆钮");
-  assert.match(css, /#composer \.thinking-btn \{[^}]*background: none/, "思考按钮不该抢发送键的主色");
+  const thinking = readFileSync(join(SRC, "components/ThinkingMenu.vue"), "utf8");
+  assert.match(thinking, /<VMenu[\s\S]*location="top end"[\s\S]*origin="bottom end"/, "菜单没向上弹");
+  assert.match(thinking, /<VListItem/, "菜单项不是 Vuetify 的 MD3 list item");
+  assert.match(thinking, /thinkingLabel\(props\.modelValue\)/, "未知档位没有中文回退");
 
   const types = readFileSync(join(SRC, "api/types.ts"), "utf8");
   assert.match(types, /thinking_level: string/, "Session 类型没带 thinking_level");

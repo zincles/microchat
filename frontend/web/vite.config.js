@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
+import vuetify from "vite-plugin-vuetify";
 import { VitePWA } from "vite-plugin-pwa";
 import fs from "node:fs";
 import path from "node:path";
@@ -93,6 +94,9 @@ function assetCacheHeaders() {
 export default defineConfig({
   plugins: [
     vue(),
+    // Vuetify 4：只给底部输入栏用（渐进替换的第一块）。autoImport 只处理用到的组件；
+    // 样式仍是全局的 `vuetify/styles`（CSS 分层，见 main.css 里的 `.v-btn` 逃生门）。
+    vuetify({ autoImport: true }),
     assetCacheHeaders(),
     // PWA（2026-10-11 用户点名）：可"安装为应用"。三件事 —— manifest / 图标 / 一个最小 SW。
     //   · SW **只预缓存壳**（HTML/JS/CSS/图标）：/api 一概不碰（数据必须现取；别写

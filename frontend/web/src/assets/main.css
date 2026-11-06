@@ -480,7 +480,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 #chat-col > *:not(header):not(#messages-vue) { max-width: var(--read-col, 840px); margin-left: auto; margin-right: auto; width: 100%; box-sizing: border-box; }
 /* 顶栏 = **悬浮层**，且**全透明**（2026-10-14 用户定：不折腾模糊了 —— 无毛玻璃、无渐隐，
  * 就一层浮字；滑过的内容照原样透过去，字靠双层柔影读清，见 header 的 text-shadow）。
- * 底部输入栏的模糊保留（那是 #input 自己的浮卡底，见下）。 */
+ * 底部输入栏现在交给 Vuetify 的 VTextarea 浮卡底（见下方 `.composer-input`）。 */
 /* 顶栏**不透明**（2026-11-01 用户定：「然后顶栏是不透明的比较好吧」）。
  * 从前它是 `background: none` —— 消息滚到栏底下时能透出来，读顶栏那行字是隔着文字读的。
  * 现在用页面底色铺满：栏底下滚过去的东西被实实在在挡住，栏本身仍**没有边框、没有分隔线**
@@ -792,14 +792,21 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 /* 重摇位次牌（气泡下 ◀ 2/3 ▶ 的中间那块）。 */
 .msg-ops .reroll-pos { font-size: var(--md-type-label-small); color: var(--md-on-surface-variant); padding: 0 0.2em; font-variant-numeric: tabular-nums; }
 .msg-ops .prompt-edit-btn { color: var(--md-primary); white-space: nowrap; }
-#composer { position: absolute; bottom: 0; left: 0; right: 0; display: block; background: none; z-index: 5;
-  padding: 0.6em 0.6em calc(0.6em + env(safe-area-inset-bottom, 0px)); }
-/* 一整块输入面板（2026-11-04 用户定）：textarea 与按钮同住一张圆角卡里，不再"输入框 + 外面一颗钮"。
- * 按钮竖排在右缘：全屏在上、发送在最下（发送仍是主行动，全屏小一号不抢）。 */
-.composer-box { display: flex; align-items: stretch; gap: 0.35em; box-sizing: border-box; background: var(--md-surface-container-high); -webkit-backdrop-filter: none; backdrop-filter: none; border: none; border-radius: var(--md-shape-xl); padding: 0.5em 0.5em 0.5em 1.1em; box-shadow: var(--md-elev-1); transition: box-shadow var(--md-dur-200) var(--md-ease-standard), background-color var(--md-dur-200) var(--md-ease-standard); }
-#input { flex: 1; min-width: 0; background: none; color: var(--md-on-surface); border: none; border-radius: 0; padding: 0.45em 0; font: inherit; font-size: var(--md-type-body-large); resize: none; line-height: 1.5; outline: none; caret-color: var(--md-primary); max-height: calc(1.5em * 6 + 0.9em); overflow-y: auto; }
-#input:focus { outline: none; border-color: transparent; }
-.composer-actions { flex: none; display: flex; flex-direction: row; align-items: flex-end; justify-content: flex-end; gap: 0.25em; }
+#composer { position: absolute; bottom: 0; left: 0; right: 0; display: flex; align-items: flex-end; gap: 0.5em;
+  background: none; z-index: 5; padding: 0.6em 0.6em calc(0.6em + env(safe-area-inset-bottom, 0px)); }
+/* Vuetify 只负责控件外观；这里只做布局（输入占满、按钮贴底一行）。 */
+.composer-input { flex: 1 1 auto; min-width: 0; }
+.composer-actions { flex: none; display: flex; align-items: flex-end; gap: 0.25em; }
+.thinking-icon { display: flex; align-items: center; }
+.thinking-label { margin-left: 0.25em; white-space: nowrap; }
+
+/* —— Vuetify 逃生门（2026-11-06）——
+ * Vuetify 4 的样式在 CSS `@layer` 里；本项目旧 CSS 是**未分层**的，按层叠规则会压过 Vuetify。
+ * 只对 Vuetify 自己的组件回退到它所在的层：旧 `button` / `input` / `textarea` 基线不再改写
+ * VBtn / VField；其余旧控件照旧。菜单传送到 body（`.v-overlay-container`），一并覆盖。
+ */
+#app .v-btn, .v-overlay-container .v-btn, #app .v-field__input { all: revert-layer; }
+
 /* —— 滚动隐藏上下栏（触屏；2026-10-17 用户定，默认开）——
  * JS（App 的 onMessagesScroll）只写根节点上两个 px 变量，这里只做位移：
  * 往下看顶栏往上让位、往回看底栏往下让位，**进度与位移成正比**（不是到阈值才啪一下）。
@@ -822,41 +829,6 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 /* 空态（会话列）：安静居中 + 一句引导，别像报错。 */
 #session-list .empty { padding: 1.6em 0.8em; text-align: center; color: var(--tg-hint); font-size: 0.9em; line-height: 1.9; }
 #session-list .empty .sub { font-size: 0.9em; opacity: 0.8; }
-#composer button { background: var(--md-primary); color: var(--md-on-primary); border: none; border-radius: 50%; width: 3em; height: 3em; padding: 0; cursor: pointer; align-self: flex-end; display: flex; align-items: center; justify-content: center; flex: none; box-shadow: var(--md-elev-1); transition: box-shadow var(--md-dur-150) var(--md-ease-standard), transform var(--md-dur-100) var(--md-ease-standard), background-color var(--md-dur-200) var(--md-ease-standard); }
-#composer button:hover { box-shadow: var(--md-elev-2); }
-#composer button svg { display: block; }
-#composer #menu-btn { width: 2.5em; height: 2.5em; background: none; color: var(--md-on-surface-variant); box-shadow: none; }
-/* 停止态：红底（生成中点即停，与发送蓝钮区分）。 */
-#composer button.stop { background: var(--md-error-container); color: var(--md-on-error-container); }
-/* 菜单键：与发送圆钮同形，底栏色（输入框左侧，点开命令面板）。 */
-#composer #menu-btn { background: var(--tg-secondary-bg); color: var(--tg-hint); }
-#composer #menu-btn:hover { background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); color: var(--md-on-surface); }
-/* —— 思考档位（2026-11-06）：输入框左侧的紧凑药丸 + 向上菜单 ——
- * 放输入左侧而不是发送键左边：右侧已有发送/停止，再叠一颗会变成按钮墙；
- * 左侧只有文字，一枚"脑图标 + 1~2 个汉字"最省地方，也不会挤掉输入行。 */
-.thinking-anchor { position: relative; flex: none; align-self: flex-end; }
-#composer .thinking-btn { width: auto; height: 2.75em; padding: 0 0.55em; border-radius: var(--md-shape-full);
-  background: none; color: var(--md-on-surface-variant); box-shadow: none; gap: 0.3em;
-  font-size: var(--md-type-label-medium); font-weight: 500; white-space: nowrap; }
-#composer .thinking-btn:hover { background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); color: var(--md-on-surface); box-shadow: none; }
-#composer .thinking-btn.on { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
-#composer .thinking-btn:active { transform: scale(0.96); }
-#composer .thinking-btn:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 1px; }
-#composer .thinking-btn svg { width: 14px; height: 14px; }
-.thinking-icon { display: flex; align-items: center; }
-.thinking-menu { position: absolute; right: 0; bottom: calc(100% + 0.45em); z-index: 30; min-width: 10em;
-  max-height: 50vh; overflow-y: auto; overscroll-behavior: contain; padding: 0.35em 0;
-  background: var(--md-surface-container); color: var(--md-on-surface); border-radius: var(--md-shape-md);
-  box-shadow: var(--md-elev-2); transform-origin: bottom right;
-  animation: md-menu-in var(--md-dur-150) var(--md-ease-emphasized); }
-.thinking-menu-title { padding: 0.35em 0.9em 0.45em; color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
-#composer .thinking-item { width: 100%; height: auto; min-height: 2.5em; padding: 0.35em 0.9em; border-radius: 0;
-  background: none; color: var(--md-on-surface); box-shadow: none; justify-content: space-between;
-  font-size: var(--md-type-body-medium); font-weight: 400; }
-#composer .thinking-item:hover { background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); box-shadow: none; }
-#composer .thinking-item.sel { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
-#composer .thinking-item:focus-visible { background: color-mix(in srgb, var(--md-on-surface) 12%, transparent); outline: none; }
-.thinking-check { color: var(--md-primary); font-weight: 600; }
 .msg .think { color: var(--md-on-surface-variant); font-size: var(--md-type-body-medium); background: var(--md-surface-container-low); border-radius: var(--md-shape-sm); padding: 0.5em 0.8em; margin: 0.1em 0 0.5em; opacity: 1; }
 .msg .think-body { white-space: pre-wrap; word-break: break-word; margin-top: 0.4em; color: var(--md-on-surface-variant); line-height: 1.5; }
 /* 等首字节的三点呼吸（生成中且还没有任何字）：别让气泡只剩一个"助手"抬头。 */
@@ -1253,10 +1225,7 @@ button.toggle.on .knob { left: calc(100% - 1.55em); width: 1.5em; height: 1.5em;
 .agent-btn:active { transform: scale(0.96); }
 .agent-item:active { background: color-mix(in srgb, var(--md-on-surface) 10%, transparent); }
 .model-search:focus { outline: none; }
-.composer-box:focus-within { box-shadow: var(--md-elev-2), inset 0 0 0 2px var(--md-primary); }
-#composer button:active { transform: scale(0.96); box-shadow: var(--md-elev-1); }
 /* 输入框占位符用 on-surface-variant（MD3 支持文本色）。 */
-#input::placeholder { color: var(--md-on-surface-variant); opacity: 1; }
 
 /* 模型搜索栏：全局 input 基线（`input:not(…):not(…)`，特异性 0,4）会压掉类选择器 ——
  * 必须带 `#chat-col > header` 才拿得回 MD3 的 full 圆角 / 无下划线 / focus 环。 */
@@ -1371,10 +1340,6 @@ button.toggle.on .knob { left: calc(100% - 1.55em); width: 1.5em; height: 1.5em;
 .sum-head { padding: 0.45em 0.8em 0.1em; }
 .sum-text { padding: 0.15em 0.8em 0.5em; }
 
-.composer-box { padding: 0.32em 0.32em 0.32em 0.85em; }
-#composer button { width: 2.75em; height: 2.75em; }
-#composer #menu-btn { width: 2.25em; height: 2.25em; }
-#input { padding: 0.3em 0; }
 #composer { padding: 0.45em 0.5em calc(0.45em + env(safe-area-inset-bottom, 0px)); }
 
 .agent-menu { padding: 0.25em 0; }
