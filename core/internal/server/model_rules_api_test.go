@@ -25,7 +25,7 @@ func TestModelRulesApplyToModelViews(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &items); err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 1 || items[0].Brand != "xAI" || items[0].Icon != "xai" {
+	if len(items) != 1 || items[0].Brand != "xAI" || items[0].Icon != "grok" {
 		t.Fatalf("默认 grok 规则没生效：%+v", items)
 	}
 	if items[0].ThinkingLevels == nil {
@@ -41,13 +41,13 @@ func TestModelRulesApplyToModelViews(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &providers); err != nil {
 		t.Fatal(err)
 	}
-	if len(providers) != 1 || len(providers[0].Models) != 1 || providers[0].Models[0].Icon != "xai" {
+	if len(providers) != 1 || len(providers[0].Models) != 1 || providers[0].Models[0].Icon != "grok" {
 		t.Fatalf("渠道模型视图没带派生画像：%+v", providers)
 	}
 
 	// 覆写：后命中的规则覆盖品牌，并把 thinking_levels 整组替换。
 	body := `{"model_define_rules":[
-		{"id":"xai","match_contains":"grok","brand":"xAI","icon":"xai","thinking_levels":["low","high"]},
+		{"id":"xai","match_contains":"grok","brand":"xAI","icon":"grok","thinking_levels":["low","high"]},
 		{"id":"xai-final","match_contains":"grok","is_final":true,"brand":"Grok!"}
 	]}`
 	recorder = call(server, "PUT", "/api/v1/config/model-rules", body)
@@ -80,7 +80,7 @@ func TestModelRulesApplyToModelViews(t *testing.T) {
 // 渠道规则：存在 providers.json 里，应用在全局之后，优先覆盖；视图要能回读。
 func TestProviderRulesOverrideGlobal(t *testing.T) {
 	server, st := newProvidersServer(t, `{"providers":[{"id":"xai","vendor":"xai","model_define_rules":[
-		{"id":"custom","match_contains":"grok","brand":"渠道自定义","icon":"xai"}
+		{"id":"custom","match_contains":"grok","brand":"渠道自定义","icon":"grok"}
 	]}]}`)
 	if _, _, _, err := st.RefreshDiscovered("xai", []store.Discovered{{UpstreamID: "grok-4.7"}}, time.Now().UnixMilli()); err != nil {
 		t.Fatal(err)
@@ -106,7 +106,7 @@ func TestProviderRulesOverrideGlobal(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &items); err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 1 || items[0].Brand != "渠道自定义" || items[0].Icon != "xai" {
+	if len(items) != 1 || items[0].Brand != "渠道自定义" || items[0].Icon != "grok" {
 		t.Fatalf("渠道规则没覆盖全局：%+v", items)
 	}
 }

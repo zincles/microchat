@@ -8,6 +8,7 @@ import { VBtn, VSelect, VSwitch, VTextField } from "vuetify/components";
 import HelpTip from "./HelpTip.vue";
 import { sharedApi } from "../utils/prefs.ts";
 import { THINKING_LEVELS, thinkingLabel } from "../utils/thinking.ts";
+import { MODEL_ICON_OPTIONS } from "../utils/modelIcons.ts";
 import type { ModelDefineRule } from "../api/types.ts";
 
 const props = withDefaults(defineProps<{
@@ -40,6 +41,7 @@ const status = ref("");
 const busy = ref(false);
 
 const levelOptions = THINKING_LEVELS.map((value) => ({ title: thinkingLabel(value), value }));
+const iconOptions = MODEL_ICON_OPTIONS.map((option) => ({ title: option.label, value: option.value }));
 const levelText = (value: string): string => thinkingLabel(value);
 
 function cloneRules(source: ModelDefineRule[]): ModelDefineRule[] {
@@ -112,7 +114,7 @@ function buildRule(): ModelDefineRule | null {
     return null;
   }
   const brand = draft.brand.trim();
-  const icon = draft.icon.trim();
+  const icon = (draft.icon ?? "").trim();
   if (!thinkingOn.value && !brand && !icon) {
     status.value = "至少填一个覆写字段（思考档位 / 品牌 / 图标）";
     return null;
@@ -247,7 +249,7 @@ onMounted(() => { load().catch(() => {}); });
       <section class="rule-section">
         <h5>修改</h5>
         <label class="field"><span>品牌<HelpTip text="模型家族显示名，例如 OpenAI / xAI；只影响界面，不改变请求。" /></span><VTextField v-model="draft.brand" density="compact" variant="outlined" hide-details placeholder="例如 xAI" /></label>
-        <label class="field"><span>图标<HelpTip text="图标 slug，例如 openai / xai；不认识的 slug 会退化为品牌首字。" /></span><VTextField v-model="draft.icon" density="compact" variant="outlined" hide-details placeholder="例如 xai / openai" /></label>
+        <label class="field"><span>图标<HelpTip text="只能从固定选项里挑：gpt / gemini / grok / claude / deepseek / mimo / glm / kimi；留空 = 不设置。" /></span><VSelect v-model="draft.icon" :items="iconOptions" item-title="title" item-value="value" clearable density="compact" variant="outlined" hide-details placeholder="不设置" /></label>
         <div class="switch-row"><VSwitch v-model="thinkingOn" density="compact" hide-details label="覆写思考档位" /><HelpTip text="关闭 = 不碰模型原有档位；打开后用选中的档位整组替换。" /></div>
         <label v-if="thinkingOn" class="field"><span>思考档位<HelpTip text="模型只会收到这些档位；一个都不选 = 明确清空（例如图像模型）。" /></span>
           <VSelect v-model="levels" :items="levelOptions" item-title="title" item-value="value" multiple density="compact" variant="outlined" hide-details />

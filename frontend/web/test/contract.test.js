@@ -52,6 +52,7 @@ import {
 import { busySessionIds } from "../src/utils/tasks.ts";
 import { rippleSpec, RIPPLE_SELECTOR } from "../src/utils/ripple.ts";
 import { rememberWindow, recallWindow, forgetWindow, WINDOW_CACHE_MAX, WINDOW_CACHE_ROWS_MAX } from "../src/utils/windowcache.ts";
+import { MODEL_ICON_OPTIONS } from "../src/utils/modelIcons.ts";
 import { sendMode, wantsSend, themePref, normalizeTheme, apiBase, defaultApiBase, apiBaseCandidates, THEME_IDS, DEFAULT_THEME, DEFAULT_SEND, normalizeTextScale, textScale, applyTextScale, saveTextScale, flushPrefs, normalizeFontFamily, fontBody, fontMono, applyFonts, saveFontBody, saveFontMono, DEFAULT_FONT_BODY, DEFAULT_FONT_MONO, TEXT_SCALE_MIN, TEXT_SCALE_MAX, DEFAULT_TEXT_SCALE } from "../src/utils/prefs.ts";
 
 // 契约测试（无浏览器）：只验纯函数与请求形状。`node --test test/`。
@@ -1686,6 +1687,15 @@ test("能力中文名：前端 ABILITY_LABELS 与后端 definitions 的 Label �
   assert.deepEqual(ABILITY_LABELS, goLabels, "前端能力名与后端 Label 对不上");
 });
 
+test("模型图标：前端选项与后端封闭集合一致", () => {
+  const go = readFileSync(join(REPO, "core", "internal", "config", "model_rules.go"), "utf8");
+  const match = go.match(/ModelIconIDs = \[\]string\{([^}]*)\}/);
+  assert.ok(match, "找不到后端 ModelIconIDs");
+  const ids = [...match[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(MODEL_ICON_OPTIONS.map((option) => option.value), ids,
+    "前端图标选项与后端允许列表不一致");
+});
+
 // 模型规则：结构化编辑器（不是让用户裸改 JSON）。规则有顺序，必须能移动。
 test("模型规则编辑器：结构化控件 + 顺序调整，不是 JSON textarea", () => {
   const editor = readFileSync(join(SRC, "components", "ModelRulesEditor.vue"), "utf8");
@@ -1694,6 +1704,7 @@ test("模型规则编辑器：结构化控件 + 顺序调整，不是 JSON texta
   assert.match(editor, /moveRule/, "缺少规则顺序调整");
   assert.match(editor, /VSwitch/, "缺少 is_final / thinking 开关");
   assert.match(editor, /HelpTip/, "属性旁缺少问号注释");
+  assert.match(editor, /MODEL_ICON_OPTIONS/, "图标该是固定选项，不是自由输入");
   const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
   assert.match(settings, /<VTab value="global">全局模型规则<\/VTab>/, "全局规则该和渠道列表同级");
   const provider = readFileSync(join(SRC, "components", "ProviderEditor.vue"), "utf8");

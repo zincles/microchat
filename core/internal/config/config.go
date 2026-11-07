@@ -154,6 +154,7 @@ func LoadConfig(paths Paths) (Config, error) {
 	if config.Defaults.Agent == "" {
 		config.Defaults.Agent = DefaultAgentID
 	}
+	normalizeLegacyModelIcons(config.ModelDefineRules)
 	if err := ValidateModelDefineRules(config.ModelDefineRules); err != nil {
 		return config, err
 	}
@@ -631,9 +632,10 @@ func LoadProviders(paths Paths) (ProvidersConfig, error) {
 	if err := json.Unmarshal(raw, &providers); err != nil {
 		return ProvidersConfig{}, err
 	}
-	for _, provider := range providers.Providers {
-		if err := ValidateModelDefineRules(provider.ModelDefineRules); err != nil {
-			return ProvidersConfig{}, fmt.Errorf("providers.json[%s]：%w", provider.ID, err)
+	for index := range providers.Providers {
+		normalizeLegacyModelIcons(providers.Providers[index].ModelDefineRules)
+		if err := ValidateModelDefineRules(providers.Providers[index].ModelDefineRules); err != nil {
+			return ProvidersConfig{}, fmt.Errorf("providers.json[%s]：%w", providers.Providers[index].ID, err)
 		}
 	}
 	return providers, nil

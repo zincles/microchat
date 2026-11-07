@@ -10,13 +10,13 @@ func TestModelDefineRulesOverrideAndFinal(t *testing.T) {
 	levels := []string{"low", "high"}
 	cfg := Config{ModelDefineRules: []ModelDefineRule{
 		{ID: "brand", MatchContains: "grok", Brand: stringPtr("xAI")},
-		{ID: "icon", MatchContains: "grok", Icon: stringPtr("xai")},
+		{ID: "icon", MatchContains: "grok", Icon: stringPtr("grok")},
 		{ID: "thinking", MatchContains: "grok", ThinkingLevels: &levels},
 		{ID: "stop", MatchContains: "grok", IsFinal: true, Brand: stringPtr("stop")},
 		{ID: "late", MatchContains: "grok", Brand: stringPtr("late")},
 	}}
 	got := cfg.ModelProfile("xai", "x-ai/grok-4.7", ModelProfile{ThinkingLevels: []string{"off", "max"}})
-	if got.Brand != "stop" || got.Icon != "xai" {
+	if got.Brand != "stop" || got.Icon != "grok" {
 		t.Fatalf("覆盖顺序不对：%+v", got)
 	}
 	if !reflect.DeepEqual(got.ThinkingLevels, levels) {
@@ -80,10 +80,10 @@ func TestModelDefineRulesEmptyThinkingLevels(t *testing.T) {
 // 默认规则：gpt/grok 各自有品牌和图标；用户可以写 [] 关掉。
 func TestDefaultModelDefineRules(t *testing.T) {
 	cfg := DefaultConfig()
-	if got := cfg.ModelProfile("openai", "gpt-5", ModelProfile{}); got.Brand != "OpenAI" || got.Icon != "openai" {
+	if got := cfg.ModelProfile("openai", "gpt-5", ModelProfile{}); got.Brand != "OpenAI" || got.Icon != "gpt" {
 		t.Fatalf("gpt 默认规则 = %+v", got)
 	}
-	if got := cfg.ModelProfile("xai", "grok-4.7", ModelProfile{}); got.Brand != "xAI" || got.Icon != "xai" {
+	if got := cfg.ModelProfile("xai", "grok-4.7", ModelProfile{}); got.Brand != "xAI" || got.Icon != "grok" {
 		t.Fatalf("grok 默认规则 = %+v", got)
 	}
 	// 图像模型也带 grok：默认规则要清空思考档，而不是露出七档。
@@ -93,6 +93,28 @@ func TestDefaultModelDefineRules(t *testing.T) {
 	}
 	if err := ValidateModelDefineRules(cfg.ModelDefineRules); err != nil {
 		t.Fatalf("默认规则该合法：%v", err)
+	}
+}
+
+func TestModelIconsAreClosedSetAndLegacyIsNormalized(t *testing.T) {
+	for _, icon := range ModelIconIDs {
+		if !ValidModelIcon(icon) {
+			t.Fatalf("%q 该是合法图标", icon)
+		}
+	}
+	if ValidModelIcon("openai") || ValidModelIcon("xai") {
+		t.Fatal("旧图标名不该再是合法写入值")
+	}
+	old := []ModelDefineRule{
+		{Icon: stringPtr("openai")},
+		{Icon: stringPtr("xai")},
+	}
+	normalizeLegacyModelIcons(old)
+	if *old[0].Icon != "gpt" || *old[1].Icon != "grok" {
+		t.Fatalf("旧图标没归一化：%+v", old)
+	}
+	if err := ValidateModelDefineRules([]ModelDefineRule{{MatchContains: "x", Icon: stringPtr("openai")}}); err == nil {
+		t.Fatal("未知图标该报错")
 	}
 }
 

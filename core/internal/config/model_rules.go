@@ -52,18 +52,47 @@ type ModelRulesConfig struct {
 	Rules []ModelDefineRule `json:"model_define_rules"`
 }
 
+// ModelIconIDs：允许写进规则里的图标 id（**封闭集合**，前端只出这些选项）。
+// 只影响展示；新增品牌要同时在 ModelIcon.vue / modelIcons.ts 里加图形。
+var ModelIconIDs = []string{"gpt", "gemini", "grok", "claude", "deepseek", "mimo", "glm", "kimi"}
+
+func ValidModelIcon(icon string) bool {
+	for _, id := range ModelIconIDs {
+		if id == icon {
+			return true
+		}
+	}
+	return false
+}
+
+// normalizeLegacyModelIcons：旧版本默认规则写的是 openai/xai；读入时就地换成新 id。
+// 只救存量配置，不把旧值当成合法写入值（PUT 仍然会 422）。
+func normalizeLegacyModelIcons(rules []ModelDefineRule) {
+	for index := range rules {
+		if rules[index].Icon == nil {
+			continue
+		}
+		switch *rules[index].Icon {
+		case "openai":
+			*rules[index].Icon = "gpt"
+		case "xai":
+			*rules[index].Icon = "grok"
+		}
+	}
+}
+
 // DefaultModelDefineRules：开箱的三条品牌规则（不含 tool use；grok-imagine 是图像模型，清空思考档）。
 //
 // 它们只影响显示，不改变请求；用户把整个数组写成 `[]` 就能关掉。
 func DefaultModelDefineRules() []ModelDefineRule {
 	noThinking := []string{}
 	return []ModelDefineRule{
-		{ID: "openai", MatchContains: "gpt", Brand: stringPtr("OpenAI"), Icon: stringPtr("openai")},
+		{ID: "openai", MatchContains: "gpt", Brand: stringPtr("OpenAI"), Icon: stringPtr("gpt")},
 		// 图像模型也带 “grok”，但它不是聊天模型：先把思考档位清空并停止，
 		// 免得界面对它摆出一排它根本收不到的 off/minimal/...。
 		{ID: "xai-image", MatchContains: "grok-imagine", IsFinal: true,
-			Brand: stringPtr("xAI"), Icon: stringPtr("xai"), ThinkingLevels: &noThinking},
-		{ID: "xai", MatchContains: "grok", Brand: stringPtr("xAI"), Icon: stringPtr("xai")},
+			Brand: stringPtr("xAI"), Icon: stringPtr("grok"), ThinkingLevels: &noThinking},
+		{ID: "xai", MatchContains: "grok", Brand: stringPtr("xAI"), Icon: stringPtr("grok")},
 	}
 }
 
@@ -96,6 +125,9 @@ func (r ModelDefineRule) validate() error {
 	}
 	if r.ThinkingLevels == nil && r.Brand == nil && r.Icon == nil {
 		return fmt.Errorf("规则没有任何要覆写的字段（thinking_levels / brand / icon）")
+	}
+	if r.Icon != nil && strings.TrimSpace(*r.Icon) != "" && !ValidModelIcon(*r.Icon) {
+		return fmt.Errorf("未知图标 %q（只能是 %s）", *r.Icon, strings.Join(ModelIconIDs, " / "))
 	}
 	if r.ThinkingLevels != nil {
 		seen := map[string]bool{}

@@ -262,7 +262,10 @@ delete(AA)           # 删除
   （**全局标题模型**：`title_provider` / `title_model` 都空 = **使用当前会话模型**（默认）；都填 = 起标题固定走这一对。只填一个不算数。）
   **`model_define_rules`（2026-11-07）** = 一组**纯数据 override**，按模型 raw `upstream_id` 覆写展示/能力画像：
   `{ "id": "xai", "match_contains": "grok", "match_exact": "", "match_provider": "", "is_final": false,
-    "thinking_levels": ["low","medium","high","max"], "brand": "xAI", "icon": "xai" }`。
+    "thinking_levels": ["low","medium","high","max"], "brand": "xAI", "icon": "grok" }`。
+  **`icon` 是封闭集合**：`gpt / gemini / grok / claude / deepseek / mimo / glm / kimi`
+  （前端只出这些选项；旧 `openai` / `xai` 只在读存量配置时归一化成 `gpt` / `grok`，
+  新写入会被 422 拒绝）。
   规则按数组顺序匹配；命中的字段覆盖前面的，没写的字段继承；`is_final` 应用完就停。
   `thinking_levels` 整组替换（`[]` = 明确没有档位，缺字段 = 不动）；`brand`/`icon` 只影响展示，
   **不改 wire 协议、不执行代码、不碰 tool use**。默认三条：`gpt → OpenAI`、`grok → xAI`、
