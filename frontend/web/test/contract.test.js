@@ -1693,6 +1693,7 @@ test("模型规则编辑器：结构化控件 + 顺序调整，不是 JSON texta
   assert.match(editor, /新增规则/, "缺少新增规则入口");
   assert.match(editor, /moveRule/, "缺少规则顺序调整");
   assert.match(editor, /VSwitch/, "缺少 is_final / thinking 开关");
+  assert.match(editor, /HelpTip/, "属性旁缺少问号注释");
   const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
   assert.match(settings, /<VTab value="global">全局模型规则<\/VTab>/, "全局规则该和渠道列表同级");
   const provider = readFileSync(join(SRC, "components", "ProviderEditor.vue"), "utf8");

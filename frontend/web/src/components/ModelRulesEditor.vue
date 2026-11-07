@@ -5,6 +5,7 @@
 // global = 所有渠道共享；provider = 当前渠道自己的列表，应用在全局之后、优先。
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { VBtn, VSelect, VSwitch, VTextField } from "vuetify/components";
+import HelpTip from "./HelpTip.vue";
 import { sharedApi } from "../utils/prefs.ts";
 import { THINKING_LEVELS, thinkingLabel } from "../utils/thinking.ts";
 import type { ModelDefineRule } from "../api/types.ts";
@@ -234,18 +235,18 @@ onMounted(() => { load().catch(() => {}); });
     <div v-if="editing !== null" class="rule-editor">
       <h4>{{ editing === "new" ? "新增规则" : "编辑规则" }}</h4>
       <div class="rule-form">
-        <label class="field"><span>规则 id（可选）</span><VTextField v-model="draft.id" density="compact" variant="outlined" hide-details placeholder="例如 xai-grok" /></label>
-        <label class="field"><span>匹配：包含</span><VTextField v-model="draft.match_contains" density="compact" variant="outlined" hide-details placeholder="例如 grok" /></label>
-        <label class="field"><span>匹配：精确</span><VTextField v-model="draft.match_exact" density="compact" variant="outlined" hide-details placeholder="例如 grok-4.7" /></label>
-        <label class="field"><span>匹配：渠道（可选）</span><VTextField v-model="draft.match_provider" density="compact" variant="outlined" hide-details placeholder="例如 xai；留空 = 所有渠道" /></label>
-        <label class="field"><span>品牌</span><VTextField v-model="draft.brand" density="compact" variant="outlined" hide-details placeholder="例如 xAI" /></label>
-        <label class="field"><span>图标</span><VTextField v-model="draft.icon" density="compact" variant="outlined" hide-details placeholder="例如 xai / openai" /></label>
+        <label class="field"><span>规则 id（可选）<HelpTip text="可选。用于 matched_rules 里标识来源；不填会显示 #序号。" /></span><VTextField v-model="draft.id" density="compact" variant="outlined" hide-details placeholder="例如 xai-grok" /></label>
+        <label class="field"><span>匹配：包含<HelpTip text="对模型原始 upstream_id 做不区分大小写的子串匹配；例如 grok 会命中 grok-4.7。" /></span><VTextField v-model="draft.match_contains" density="compact" variant="outlined" hide-details placeholder="例如 grok" /></label>
+        <label class="field"><span>匹配：精确<HelpTip text="原始模型 id 必须完全相等；和「包含」同时填时，两者都要满足。" /></span><VTextField v-model="draft.match_exact" density="compact" variant="outlined" hide-details placeholder="例如 grok-4.7" /></label>
+        <label class="field"><span>匹配：渠道（可选）<HelpTip text="只对某个渠道 id 生效；留空 = 所有渠道。渠道级规则通常不用再填这一格。" /></span><VTextField v-model="draft.match_provider" density="compact" variant="outlined" hide-details placeholder="例如 xai；留空 = 所有渠道" /></label>
+        <label class="field"><span>品牌<HelpTip text="模型家族显示名，例如 OpenAI / xAI；只影响界面，不改变请求。" /></span><VTextField v-model="draft.brand" density="compact" variant="outlined" hide-details placeholder="例如 xAI" /></label>
+        <label class="field"><span>图标<HelpTip text="图标 slug，例如 openai / xai；不认识的 slug 会退化为品牌首字。" /></span><VTextField v-model="draft.icon" density="compact" variant="outlined" hide-details placeholder="例如 xai / openai" /></label>
       </div>
       <div class="rule-switches">
-        <VSwitch v-model="thinkingOn" density="compact" hide-details label="覆写思考档位" />
-        <VSwitch v-model="draft.is_final" density="compact" hide-details label="命中后停止继续匹配" />
+        <span class="switch-row"><VSwitch v-model="thinkingOn" density="compact" hide-details label="覆写思考档位" /><HelpTip text="关闭 = 不碰模型原有档位；打开后用选中的档位整组替换。" /></span>
+        <span class="switch-row"><VSwitch v-model="draft.is_final" density="compact" hide-details label="命中后停止继续匹配" /><HelpTip text="本规则应用后停止继续匹配同一层列表；全局的 final 不会挡住渠道层覆盖。" /></span>
       </div>
-      <label v-if="thinkingOn" class="field"><span>思考档位</span>
+      <label v-if="thinkingOn" class="field"><span>思考档位<HelpTip text="模型只会收到这些档位；一个都不选 = 明确清空（例如图像模型）。" /></span>
         <VSelect v-model="levels" :items="levelOptions" item-title="title" item-value="value" multiple density="compact" variant="outlined" hide-details />
       </label>
       <p v-if="thinkingOn" class="hint">一个都不选 = 明确清空（例如图像模型）。</p>
@@ -279,6 +280,7 @@ onMounted(() => { load().catch(() => {}); });
 .rule-editor h4 { margin: 0 0 0.6em; font-size: var(--md-type-title-small); font-weight: 500; }
 .rule-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.4em 0.8em; }
 .rule-switches { display: flex; gap: 1.2em; flex-wrap: wrap; margin: 0.5em 0 0.2em; }
+.switch-row { display: inline-flex; align-items: center; }
 .rule-actions { display: flex; justify-content: flex-end; gap: 0.4em; margin-top: 0.6em; }
 .rules-save { margin-top: 0.7em; }
 @media (max-width: 700px) {
