@@ -288,6 +288,15 @@ test("Markdown：行内代码/代码块里的 $$ 不参与块级公式配对", (
   assert.ok(cjk.includes("只有当"), "后半句被误当成公式吞掉");
 });
 
+// DeepSeek 一类模型写的是 LaTeX display 定界符 \[...\]，不是 $$。
+// 最后那个 \boxed{...} 是 KaTeX 原生命令（boxpad/fbox），不是 CSS 卡片。
+test("Markdown：\\[...\\] 也是块级公式，\\boxed 走 KaTeX 原生边框", () => {
+  const html = renderMarkdown("\\[\\boxed{x^2}\\]");
+  assert.match(html, /katex-display/, "\\[...\\] 没被识别成 display math");
+  assert.match(html, /boxpad|fbox/, "\\boxed 没被 KaTeX 渲染成框");
+  assert.ok(!html.includes("\\["), "字面 \\[ 还露在输出里");
+});
+
 test("Markdown 渲染：HTML 一律转义、数学走 KaTeX 占位", () => {
   const h = renderMarkdown("<script>alert(1)</script>");
   assert.ok(!h.includes("<script>"));

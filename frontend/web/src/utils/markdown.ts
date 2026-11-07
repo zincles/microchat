@@ -206,6 +206,12 @@ export function renderMarkdown(text?: string | null, options: RenderOptions = {}
     stash.push({ body, display: true, open: "$$", close: "$$" });
     return `\u0000MATH${stash.length - 1}\u0000`;
   });
+  // LaTeX 的 display 定界符 `\[...\]`：DeepSeek 等模型默认就写这个，不是 `$$`。
+  // 它和 `$$…$$` 等价（都是 displayMode），必须一起抽，否则整段会以字面 `\[` 露出来。
+  tmp = tmp.replace(/\\\[([\s\S]+?)\\\]/g, (_m: string, body: string) => {
+    stash.push({ body, display: true, open: "\\[", close: "\\]" });
+    return `\u0000MATH${stash.length - 1}\u0000`;
+  });
   tmp = tmp.replace(/\\\((.+?)\\\)/g, (_m: string, body: string) => {
     stash.push({ body, display: false, open: "\\(", close: "\\)" });
     return `\u0000MATH${stash.length - 1}\u0000`;
