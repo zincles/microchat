@@ -11,14 +11,16 @@ const props = withDefaults(defineProps<{ icon?: string | null; brand?: string | 
 const icon = computed(() => (props.icon || "").trim().toLowerCase());
 const known = computed(() => MODEL_ICON_IDS.includes(icon.value));
 const initial = computed(() => {
-  const source = (props.brand || props.icon || "?").trim();
-  return source ? source.slice(0, 1).toUpperCase() : "?";
+  // 没有匹配到图标规则时**什么都不画**，别用问号占位：
+  // 问号既不是品牌信息，也会在 flex 容器里被拉成一条。
+  const source = (props.brand || "").trim();
+  return source ? source.slice(0, 1).toUpperCase() : "";
 });
 </script>
 
 <template>
   <span v-if="known" class="model-icon model-glyph" :class="`mi-${icon}`" aria-hidden="true"></span>
-  <span v-else class="model-icon model-icon-letter" aria-hidden="true">{{ initial }}</span>
+  <span v-else-if="initial" class="model-icon model-icon-letter" aria-hidden="true">{{ initial }}</span>
 </template>
 
 <style scoped>
@@ -52,8 +54,6 @@ const initial = computed(() => {
 .mi-glm { -webkit-mask-image: url("/model-icons/glm.svg"); mask-image: url("/model-icons/glm.svg"); }
 .mi-kimi { -webkit-mask-image: url("/model-icons/kimi.svg"); mask-image: url("/model-icons/kimi.svg"); }
 .model-icon-letter {
-  width: 100%;
-  height: 100%;
   border: 1px solid currentColor;
   border-radius: 50%;
 }

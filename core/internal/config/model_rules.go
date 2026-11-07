@@ -81,18 +81,24 @@ func normalizeLegacyModelIcons(rules []ModelDefineRule) {
 	}
 }
 
-// DefaultModelDefineRules：开箱的三条品牌规则（不含 tool use；grok-imagine 是图像模型，清空思考档）。
+// DefaultModelDefineRules：开箱的九条品牌规则（不含 tool use；grok-imagine 是图像模型，清空思考档）。
 //
 // 它们只影响显示，不改变请求；用户把整个数组写成 `[]` 就能关掉。
 func DefaultModelDefineRules() []ModelDefineRule {
 	noThinking := []string{}
 	return []ModelDefineRule{
-		{ID: "openai", MatchContains: "gpt", Brand: stringPtr("OpenAI"), Icon: stringPtr("gpt")},
+		{ID: "gpt", MatchContains: "gpt", Brand: stringPtr("OpenAI"), Icon: stringPtr("gpt")},
 		// 图像模型也带 “grok”，但它不是聊天模型：先把思考档位清空并停止，
 		// 免得界面对它摆出一排它根本收不到的 off/minimal/...。
 		{ID: "xai-image", MatchContains: "grok-imagine", IsFinal: true,
 			Brand: stringPtr("xAI"), Icon: stringPtr("grok"), ThinkingLevels: &noThinking},
-		{ID: "xai", MatchContains: "grok", Brand: stringPtr("xAI"), Icon: stringPtr("grok")},
+		{ID: "grok", MatchContains: "grok", Brand: stringPtr("xAI"), Icon: stringPtr("grok")},
+		{ID: "gemini", MatchContains: "gemini", Brand: stringPtr("Google"), Icon: stringPtr("gemini")},
+		{ID: "claude", MatchContains: "claude", Brand: stringPtr("Anthropic"), Icon: stringPtr("claude")},
+		{ID: "deepseek", MatchContains: "deepseek", Brand: stringPtr("DeepSeek"), Icon: stringPtr("deepseek")},
+		{ID: "mimo", MatchContains: "mimo", Brand: stringPtr("Xiaomi"), Icon: stringPtr("mimo")},
+		{ID: "glm", MatchContains: "glm", Brand: stringPtr("Zhipu"), Icon: stringPtr("glm")},
+		{ID: "kimi", MatchContains: "kimi", Brand: stringPtr("Moonshot"), Icon: stringPtr("kimi")},
 	}
 }
 

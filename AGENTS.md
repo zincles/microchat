@@ -268,8 +268,9 @@ delete(AA)           # 删除
   新写入会被 422 拒绝）。
   规则按数组顺序匹配；命中的字段覆盖前面的，没写的字段继承；`is_final` 应用完就停。
   `thinking_levels` 整组替换（`[]` = 明确没有档位，缺字段 = 不动）；`brand`/`icon` 只影响展示，
-  **不改 wire 协议、不执行代码、不碰 tool use**。默认三条：`gpt → OpenAI`、`grok → xAI`、
-  `grok-imagine → xAI 且思考档位清空`；写 `[]` 即关闭。未知档位、空匹配、空定义、重复 id 在写入与
+  **不改 wire 协议、不执行代码、不碰 tool use**。默认九条：`gpt → OpenAI`、`grok → xAI`、
+  `grok-imagine → xAI 且思考档位清空`、`gemini → Google`、`claude → Anthropic`、
+  `deepseek → DeepSeek`、`mimo → Xiaomi`、`glm → Zhipu`、`kimi → Moonshot`；写 `[]` 即关闭。未知档位、空匹配、空定义、重复 id 在写入与
   `LoadConfig` 时都报错。匹配只认 raw id（大小写不敏感）+ 可选 `match_exact` / `match_provider`，
   不认用户改过的 `display_name`。
   **渠道自己的 `model_define_rules`**（`providers.json` 每条渠道上的同名字段）会在全局规则**之后**

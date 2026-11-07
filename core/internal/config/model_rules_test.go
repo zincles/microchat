@@ -91,6 +91,21 @@ func TestDefaultModelDefineRules(t *testing.T) {
 		len(got.MatchedRules) != 1 || got.MatchedRules[0] != "global:xai-image" {
 		t.Fatalf("grok-imagine 默认规则 = %+v", got)
 	}
+	for _, tc := range []struct {
+		model string
+		icon  string
+	}{
+		{"gemini-4-argon", "gemini"},
+		{"claude-opus-5-5", "claude"},
+		{"deepseek-v4-flash", "deepseek"},
+		{"mimo-v2.6-flash", "mimo"},
+		{"glm-5.2", "glm"},
+		{"kimi-k2", "kimi"},
+	} {
+		if got := cfg.ModelProfile("p", tc.model, ModelProfile{}); got.Icon != tc.icon {
+			t.Fatalf("%s 默认图标 = %q，想要 %q", tc.model, got.Icon, tc.icon)
+		}
+	}
 	if err := ValidateModelDefineRules(cfg.ModelDefineRules); err != nil {
 		t.Fatalf("默认规则该合法：%v", err)
 	}
