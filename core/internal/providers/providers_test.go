@@ -438,6 +438,41 @@ func TestDeepseekBuild(t *testing.T) {
 	}
 }
 
+// xAI（Grok）：OpenAI 兼容端点 + XAI_API_KEY + reasoning_content；流式用量照发。
+func TestXAIPreset(t *testing.T) {
+	t.Setenv("XAI_API_KEY", "sk-test")
+	wire := ApplyPreset(Provider{ID: "xai", Vendor: VendorXAI})
+	if wire.BaseURL != "https://api.x.ai/v1" {
+		t.Fatalf("xAI 端点该从预设来：%q", wire.BaseURL)
+	}
+	if wire.APIKey != "sk-test" {
+		t.Fatalf("xAI 密钥该从 XAI_API_KEY 来：%q", wire.APIKey)
+	}
+	if err := wire.Validate(); err != nil {
+		t.Fatalf("xAI 预设该通过验证：%v", err)
+	}
+	if got := wire.EffectiveVendor().VendorName(); got != "xAI（Grok）" {
+		t.Fatalf("xAI 中文名不对：%q", got)
+	}
+	request, err := Build(wire, Request{Model: "grok-4", SessionID: "s", Stream: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := request.URL.String(); got != "https://api.x.ai/v1/chat/completions" {
+		t.Fatalf("xAI chat URL 不对：%q", got)
+	}
+	body, _ := io.ReadAll(request.Body)
+	var parsed struct {
+		StreamOptions map[string]bool `json:"stream_options"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if parsed.StreamOptions["include_usage"] != true {
+		t.Fatalf("xAI 流式该带 stream_options.include_usage：%s", body)
+	}
+}
+
 // 旧命名（`openai-compat`）必须仍按 OpenAI 兼容对待 —— 否则老配置会静默失去 stream_options。
 func TestLegacyOpenAICompatKind(t *testing.T) {
 	request, err := Build(Provider{ID: "old", Vendor: VendorOpenAICompat, BaseURL: "https://example.invalid/v1"},
