@@ -1694,6 +1694,13 @@ test("模型图标：前端选项与后端封闭集合一致", () => {
   const ids = [...match[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
   assert.deepEqual(MODEL_ICON_OPTIONS.map((option) => option.value), ids,
     "前端图标选项与后端允许列表不一致");
+  // 图标必须本地托管（models.dev 下载到 public/），不能运行时打外链。
+  const iconComponent = readFileSync(join(SRC, "components", "ModelIcon.vue"), "utf8");
+  assert.ok(!/https?:\/\/models\.dev/.test(iconComponent), "模型图标不该走外链");
+  for (const option of MODEL_ICON_OPTIONS) {
+    assert.ok(existsSync(join(REPO, "frontend", "web", "public", "model-icons", `${option.value}.svg`)),
+      `缺少本地图标 ${option.value}.svg`);
+  }
 });
 
 // 模型规则：结构化编辑器（不是让用户裸改 JSON）。规则有顺序，必须能移动。
