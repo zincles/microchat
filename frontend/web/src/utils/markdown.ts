@@ -169,9 +169,9 @@ export function renderMarkdown(text?: string | null, options: RenderOptions = {}
   tmp = tmp.replace(/(^|\n)(```[\s\S]*?```|~~~[\s\S]*?~~~)(?=\n|$)/g,
     (_m: string, lead: string, block: string) => lead + protectCode(block));
   tmp = tmp.replace(/(`+)([^`]*?)\1/g, (m: string) => protectCode(m));
-  tmp = tmp.replace(/(^|\n)((?: {4}|\t)[^\n]*(?:\n(?: {4}|\t)[^\n]*)*)/g,
-    (_m: string, lead: string, block: string) => lead + protectCode(block));
-
+  // ⚠ **不把"缩进 4 格"当代码块**（2026-11-07 用户报）：列表项里的续行也常是 4 格缩进，
+  // 把它们先当代码 stash 会把列表里的 $$…$$ 整块吞进 <pre><code>，KaTeX 永远收不到。
+  // 缩进代码块交给 marked 自己判断；围栏代码块与行内代码已在上面保护。
   interface MathStash {
     body: string;
     display: boolean;

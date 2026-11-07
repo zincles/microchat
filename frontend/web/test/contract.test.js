@@ -3926,3 +3926,14 @@ test("酒馆原始 JSON：上传走原始 body，导出走 Blob（不 JSON 重�
   assert.match(settings, /原始字节/, "界面没说明原样存储");
   assert.match(dl, /export function downloadBlob/, "没有 Blob 下载工具");
 });
+
+// 2026-11-07 用户报：列表项里的 `$$…$$` 块解析成 raw `$$`。
+// 根因是"缩进 4 格先当代码块保护"把列表续行吞了；缩进代码交给 marked 自己判断。
+test("Markdown：列表项里缩进的 $$ 块进入 KaTeX，而不是 <pre><code>", () => {
+  const html = renderMarkdown("*   **情况 A**\n    若曲线 $L$ 为 $x=1$：\n    $$\n    \\int_L f(x,y) \\, ds = 1\n    $$\n    注：$a<b$");
+  assert.match(html, /<ul>\s*<li>/, "列表项没解析");
+  assert.ok(!html.includes("$$"), "raw $$ 还留在输出里");
+  assert.ok(!/<pre><code>/.test(html), "列表续行被吞成代码块");
+  assert.match(html, /katex-display/, "display 公式没有走 KaTeX");
+  assert.match(html, /katex/, "行内公式没有走 KaTeX");
+});
