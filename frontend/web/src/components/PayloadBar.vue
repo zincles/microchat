@@ -7,7 +7,7 @@
 // 带一枚 [◨] 开关、窄屏变抽屉），现在整块搬进**上下文工作区**，三条 tab 一个不少。
 // 于是这个组件不再是"栏"：外壳交给 `ContextWorkspace.vue`，它只交出一块能自适应的面板
 // （`.ws-panel` 管圆角与底，panes 管滚动）。开关与抽屉那套随之作废 —— 别再把它接回栏里。
-import { VBtn, VSwitch, VTab, VTabs } from "vuetify/components";
+import { VBtn, VSwitch, VTab, VTabs, VTabsWindow, VTabsWindowItem } from "vuetify/components";
 import { ref, computed, watch } from "vue";
 import CompactTree from "./CompactTree.vue";
 import AdvancedCompact from "./AdvancedCompact.vue";
@@ -213,7 +213,9 @@ defineExpose({ setWire, setTables, setTree, setCompactWire });
       <VTab value="advanced">分段压缩</VTab>
       <VTab value="repair">补齐空档</VTab>
     </VTabs>
-    <div v-show="tab === 'payload'" id="payload-pane">
+    <VTabsWindow v-model="tab" class="context-window">
+    <VTabsWindowItem value="payload">
+    <div id="payload-pane">
       <div class="pv-toolbar">
         <VSwitch :model-value="preview" @update:model-value="(v) => setPreview(v === true)" color="primary" density="compact" hide-details />
         <span class="lbl">预览载荷</span>
@@ -265,7 +267,9 @@ defineExpose({ setWire, setTables, setTree, setCompactWire });
         <pre id="outgoing-raw">{{ payloadText }}</pre>
       </div>
     </div>
-    <div v-show="tab === 'state'" id="state-view">
+    </VTabsWindowItem>
+    <VTabsWindowItem value="state">
+    <div id="state-view">
       <div v-if="!tableNames.length" class="empty">（发一句话后这里显示世界状态）</div>
       <section v-for="name in tableNames" :key="name" class="state-table">
         <h4>{{ name }}</h4>
@@ -275,7 +279,9 @@ defineExpose({ setWire, setTables, setTree, setCompactWire });
         <div v-if="!Object.keys(tables[name] ?? {}).length" class="empty">（空）</div>
       </section>
     </div>
-    <div v-show="tab === 'tree'" id="compact-tree">
+    </VTabsWindowItem>
+    <VTabsWindowItem value="tree">
+    <div id="compact-tree">
       <div class="ctree-actions">
         <VTextField
           v-model="blocks"
@@ -343,11 +349,17 @@ defineExpose({ setWire, setTables, setTree, setCompactWire });
         <div class="ctree-legend">▾ 折叠 · <i class="ctree-tag">发</i> 这一坨发出的就是它 · <i class="ctree-tag dirty">脏</i> 已过期</div>
       </template>
     </div>
-    <div v-show="tab === 'advanced'" id="advanced-compact">
+    </VTabsWindowItem>
+    <VTabsWindowItem value="advanced">
+    <div id="advanced-compact">
       <AdvancedCompact :session-id="sessionId" @done="emit('advanced-done')" />
     </div>
-    <div v-show="tab === 'repair'" id="repair-compact">
+    </VTabsWindowItem>
+    <VTabsWindowItem value="repair">
+    <div id="repair-compact">
       <AdvancedCompact :session-id="sessionId" repair @done="emit('advanced-done')" />
     </div>
+    </VTabsWindowItem>
+    </VTabsWindow>
   </div>
 </template>

@@ -2032,7 +2032,7 @@ test("分段压缩 / 补齐空档：第四、第五 tab，预览 → 并发运�
   // ① 两个 tab 按顺序住在压缩后面；不是另开页面。
   for (const [label, id] of [["分段压缩", "advanced"], ["补齐空档", "repair"]]) {
     assert.ok(bar.includes(`value="${id}">${label}</VTab>`), `缺少「${label}」tab`);
-    assert.match(bar, new RegExp(`v-show="tab === '${id}'"`), `「${label}」没有自己的 pane`);
+    assert.match(bar, new RegExp(`<VTabsWindowItem value="${id}">`), `「${label}」没有自己的 tabpanel`);
   }
   assert.match(bar, /<AdvancedCompact :session-id="sessionId"/, "分段压缩没拿到会话 id");
   assert.match(bar, /<AdvancedCompact :session-id="sessionId" repair/, "补齐空档没打开 repair");
@@ -2091,9 +2091,10 @@ test("上下文工作区：右栏三 tab 搬进来了，栏本身删干净", () 
   assert.match(ws, /emit\('compact'/, "压缩没往上报");
   assert.match(ws, /emit\('compact-payload'/, "载荷预演没往上报");
 
-  // ② 三条 tab 一个不少
+  // ② 三条 tab 一个不少（真 tabpanel，不是 v-show）
+  assert.match(bar, /<VTabsWindow v-model="tab" class="context-window"/, "上下文没有 VTabsWindow");
   for (const t of ["payload", "state", "tree"]) {
-    assert.match(bar, new RegExp(`v-show="tab === '${t}'"`), `面板里少了 ${t} 那一页`);
+    assert.match(bar, new RegExp(`<VTabsWindowItem value="${t}">`), `面板里少了 ${t} 那一页`);
   }
 
   // ③ 栏真的没了：它那些"栏才有的东西"一处都不许剩。

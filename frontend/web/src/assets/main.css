@@ -575,6 +575,12 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
  * 说"你在哪一页"，与整块平铺的观感一致。下划线用 padding 撑、不占额外高度。 */
 /* 上下文五 tab：Vuetify VTabs；高度与下方内容分开，面板自己滚。 */
 .context-tabs { flex: none; margin: 0 0 0.15em; border-bottom: 1px solid var(--md-outline-variant); }
+/* 上下文五 tab 的真 tabpanel：VWindow 负责左右滑动；高度必须钉死，否则内容撑破面板。 */
+.context-window { flex: 1 1 auto; min-height: 0; }
+.context-window > .v-window__container { height: 100% !important; min-height: 0; }
+.context-window .v-window-item { height: 100% !important; min-height: 0; }
+#payload-pane, #state-view, #compact-tree, #advanced-compact, #repair-compact { height: 100%; box-sizing: border-box; }
+#advanced-compact, #repair-compact { overflow-y: auto; overscroll-behavior: contain; }
 .context-tabs .v-tab { min-width: 0 !important; padding: 0.4em 0.65em !important; text-transform: none; font-size: 1.15em !important; font-weight: 500 !important; letter-spacing: 0.006em; }
 
 /* 高级压缩 / 修洞（2026-11-05）：配置 + 计划 + 作业进度，都是平铺文本，不做卡片。 */
