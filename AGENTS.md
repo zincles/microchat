@@ -1363,7 +1363,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   模型配置是模型清单 + **当前渠道自己的 `model_define_rules`** 结构化编辑器（跟着「保存渠道」
   落进 `providers.json`；后端的校验挡住坏规则）。图标资源本地托管在
   `frontend/web/public/model-icons/*.svg`（models.dev 的 provider logo；`ModelIcon.vue` 用 CSS mask
-  继承 `currentColor`，PWA 的 svg glob 会预缓存）。每行「编辑」打开 `ModelEditor.vue`，
+  + 品牌色（`--model-icon-color`），PWA 的 svg glob 会预缓存）。每行「编辑」打开 `ModelEditor.vue`，
   改该模型自己的**用户列**（显示名 / 上下文覆盖 / JSON 参数）——
   规则（`model_define_rules`）是家族默认，这里是对单个 `(provider, upstream_id)` 的精确覆盖。空态说清「保存并刷新后会出现在这里」。
 - **设置页平铺列表**（2026-11-04 统一设计系统）：`.settings-card` 只剩分节容器（无底色/圆角/内边距），字段行之间一条 `--line`；不再“卡片套卡片”。**tab 分两族**（2026-11-06 用户定「用真正的 Vuetify TabBar/TabItem」）：设置 / Agent 二级页用 Vuetify `VTabs`（MD3 primary tabs + slider + tabpanel）；上下文五 tab 与顶栏聊天·上下文也是 Vuetify `VTabs`；两边都由 `VTabsWindow` 做左右滑动（上下文五个 `VTabsWindowItem`，顶栏两个）。窄屏把 `v-tab` 压到 `min-width:0`，放得下（不再靠 show-arrows 吃 104px）。

@@ -1,12 +1,17 @@
 <script setup lang="ts">
 // 模型家族小图标。图标资源在 `public/model-icons/`（来自 models.dev 的 provider logo，
-// 本地托管，不走外链）；用 CSS mask 让它们继承 currentColor，亮/暗主题都能看。
+// 本地托管，不走外链）；用 CSS mask + 品牌色，亮/暗主题都能看。
 import { computed } from "vue";
 import { MODEL_ICON_IDS } from "../utils/modelIcons.ts";
 
-const props = withDefaults(defineProps<{ icon?: string | null; brand?: string | null }>(), {
+const props = withDefaults(defineProps<{
+  icon?: string | null;
+  brand?: string | null;
+  size?: "sm" | "md" | "lg";
+}>(), {
   icon: "",
   brand: "",
+  size: "md",
 });
 const icon = computed(() => (props.icon || "").trim().toLowerCase());
 const known = computed(() => MODEL_ICON_IDS.includes(icon.value));
@@ -19,8 +24,8 @@ const initial = computed(() => {
 </script>
 
 <template>
-  <span v-if="known" class="model-icon model-glyph" :class="`mi-${icon}`" aria-hidden="true"></span>
-  <span v-else-if="initial" class="model-icon model-icon-letter" aria-hidden="true">{{ initial }}</span>
+  <span v-if="known" class="model-icon model-glyph" :class="[`mi-${icon}`, `size-${size}`]" aria-hidden="true"></span>
+  <span v-else-if="initial" class="model-icon model-icon-letter" :class="`size-${size}`" aria-hidden="true">{{ initial }}</span>
 </template>
 
 <style scoped>
@@ -28,16 +33,18 @@ const initial = computed(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.15em;
-  height: 1.15em;
+  width: 1.5em;
+  height: 1.5em;
   flex: none;
   color: var(--md-on-surface-variant, currentColor);
-  font-size: 0.78em;
+  font-size: 1em;
   font-weight: 700;
   line-height: 1;
 }
+.size-sm { width: 1.2em; height: 1.2em; }
+.size-lg { width: 2em; height: 2em; }
 .model-glyph {
-  background-color: currentColor;
+  background-color: var(--model-icon-color, currentColor);
   -webkit-mask-repeat: no-repeat;
   mask-repeat: no-repeat;
   -webkit-mask-position: center;
@@ -45,14 +52,14 @@ const initial = computed(() => {
   -webkit-mask-size: contain;
   mask-size: contain;
 }
-.mi-gpt { -webkit-mask-image: url("/model-icons/gpt.svg"); mask-image: url("/model-icons/gpt.svg"); }
-.mi-gemini { -webkit-mask-image: url("/model-icons/gemini.svg"); mask-image: url("/model-icons/gemini.svg"); }
-.mi-grok { -webkit-mask-image: url("/model-icons/grok.svg"); mask-image: url("/model-icons/grok.svg"); }
-.mi-claude { -webkit-mask-image: url("/model-icons/claude.svg"); mask-image: url("/model-icons/claude.svg"); }
-.mi-deepseek { -webkit-mask-image: url("/model-icons/deepseek.svg"); mask-image: url("/model-icons/deepseek.svg"); }
-.mi-mimo { -webkit-mask-image: url("/model-icons/mimo.svg"); mask-image: url("/model-icons/mimo.svg"); }
-.mi-glm { -webkit-mask-image: url("/model-icons/glm.svg"); mask-image: url("/model-icons/glm.svg"); }
-.mi-kimi { -webkit-mask-image: url("/model-icons/kimi.svg"); mask-image: url("/model-icons/kimi.svg"); }
+.mi-gpt { --model-icon-color: #10a37f; -webkit-mask-image: url("/model-icons/gpt.svg"); mask-image: url("/model-icons/gpt.svg"); }
+.mi-gemini { --model-icon-color: #4285f4; -webkit-mask-image: url("/model-icons/gemini.svg"); mask-image: url("/model-icons/gemini.svg"); }
+.mi-grok { --model-icon-color: currentColor; -webkit-mask-image: url("/model-icons/grok.svg"); mask-image: url("/model-icons/grok.svg"); }
+.mi-claude { --model-icon-color: #d97757; -webkit-mask-image: url("/model-icons/claude.svg"); mask-image: url("/model-icons/claude.svg"); }
+.mi-deepseek { --model-icon-color: #4d6bfe; -webkit-mask-image: url("/model-icons/deepseek.svg"); mask-image: url("/model-icons/deepseek.svg"); }
+.mi-mimo { --model-icon-color: #ff6900; -webkit-mask-image: url("/model-icons/mimo.svg"); mask-image: url("/model-icons/mimo.svg"); }
+.mi-glm { --model-icon-color: #3b82f6; -webkit-mask-image: url("/model-icons/glm.svg"); mask-image: url("/model-icons/glm.svg"); }
+.mi-kimi { --model-icon-color: #7c3aed; -webkit-mask-image: url("/model-icons/kimi.svg"); mask-image: url("/model-icons/kimi.svg"); }
 .model-icon-letter {
   border: 1px solid currentColor;
   border-radius: 50%;

@@ -404,7 +404,7 @@ defineExpose({ setSession, setModels, setAgents, setContext, setStatus, setTasks
       >
         <span v-if="loading" class="model-loading" aria-hidden="true"></span>
         <template v-else>
-          <ModelIcon v-if="curModelChoice" :icon="curModelChoice.icon" :brand="curModelChoice.brand" />
+          <ModelIcon v-if="curModelChoice" :icon="curModelChoice.icon" :brand="curModelChoice.brand" size="lg" />
           <span class="model-btn-label">{{ curModelLabel }}</span>
         </template>
         <svg class="model-caret" viewBox="0 0 10 6" aria-hidden="true"><path d="M0 0h10L5 6z" /></svg>
@@ -438,7 +438,7 @@ defineExpose({ setSession, setModels, setAgents, setContext, setStatus, setTasks
                 :title="`${g.providerName} / ${m.upstream_id || m.label}`"
                 @click="pickModel(m.value)"
               >
-                <ModelIcon :icon="m.icon" :brand="m.brand" />
+                <ModelIcon :icon="m.icon" :brand="m.brand" size="lg" />
                 <span class="model-name">{{ m.label }}</span>
                 <span v-if="m.value === curModel" class="model-check">✓</span>
               </button>
