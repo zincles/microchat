@@ -1119,7 +1119,7 @@ button.danger:hover { background: color-mix(in srgb, var(--md-error) 8%, transpa
   --md-state-color: var(--md-on-secondary-container); }
 #sessions-bar .session-main { position: relative; z-index: 1; flex: 1; min-width: 0; display: flex; align-items: center; gap: 0.4em; }
 #sessions-bar .session-main .title { overflow: hidden; text-overflow: ellipsis; line-height: 1.35; }
-#sessions-bar .session-item .item-btn { position: relative; z-index: 1; flex: none; width: 2.667em; height: 2.667em; padding: 0; opacity: 1;
+#sessions-bar .session-item .item-btn { position: relative; z-index: 1; flex: none; width: 2.4em; height: 2.4em; padding: 0; opacity: 1;
   display: inline-flex; align-items: center; justify-content: center; border: none; background: none;
   color: var(--md-on-surface-variant); border-radius: var(--md-shape-full); cursor: pointer;
   transition: background-color var(--md-dur-150) var(--md-ease-standard), color var(--md-dur-150) var(--md-ease-standard); }
@@ -1278,13 +1278,14 @@ button.danger:hover { background: color-mix(in srgb, var(--md-error) 8%, transpa
  * MD3 默认的 48/56/40dp 是**触摸优先**；桌面/长文阅读场景下它显得松。这一层只压尺寸、
  * 不改语义：行高 48→44、顶栏 56→48、FAB 56→48、输入框 69→约 55、菜单 48→40、
  * 设置行 0.7em→0.45em、消息间距 0.8→0.55em。触摸目标仍保持 ≥40dp 的量级
- * （图标键 2.667em≈43px、列表行 44px、设置 tab 38px 是桌面密度，触屏有抽屉）。
+ * （图标键 2.4em≈34px、列表行 ≈39px、设置 tab 38px 是桌面密度，触屏有抽屉）。
  * 放在文件最后，按选择器覆盖前面的 MD3 尺寸；要整体调松/调紧只改这一块。
  * ═══════════════════════════════════════════════════════════════════════════ */
-#sessions-bar .session-item { min-height: 2.75em; padding: 0.3em 0.4em 0.3em 0.75em; }
+/* MD3 dense：40dp 行距；圆角 / state layer / secondary-container 选中态都不动。 */
+#sessions-bar .session-item { min-height: 2.4em; padding: 0.2em 0.3em 0.2em 0.65em; gap: 0.3em; }
 #sessions-bar .session-group-head { padding: 0.75em 0.8em 0.3em; }
 #sessions-bar #session-new { min-height: 3em; margin: 0.1em 0.55em 0.4em; }
-#sessions-bar #session-list { padding: 0.25em 0.45em 0.6em; }
+#sessions-bar #session-list { padding: 0.12em 0.3em 0.4em; }
 
 #chat-col > header { min-height: 3.05em; height: 3.05em; padding: 0.2em 0.7em; gap: 0.4em; }
 .agent-btn { width: 2.5em; height: 2.5em; }
@@ -1328,13 +1329,12 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .toast { padding: 0.6em 0.85em; }
 .draft-welcome { min-height: 40vh; padding: 1.4em 0; }
 
-/* 会话分组标题（今天 / 昨天 / 一周内…）放大间距 + 淡分隔线：
- * 原先 0.75em 顶部，视觉上贴着上一组最后一条；加一条 55% outline-variant 的发丝线，
- * 只画在非第一组上（第一组紧贴“开启新对话”，不需要线）。 */
-#sessions-bar .session-group-head { padding: 1.05em 0.85em 0.42em; }
-#sessions-bar .session-group-head:first-child { padding-top: 0.65em; }
+/* 会话分组标题（今天 / 昨天 / 一周内…）紧凑间距 + 淡分隔线：
+ * 只留足够把组分开的 0.55em 顶部；55% outline-variant 发丝线只画在非第一组上。 */
+#sessions-bar .session-group-head { padding: 0.55em 0.75em 0.2em; }
+#sessions-bar .session-group-head:first-child { padding-top: 0.32em; }
 #sessions-bar .session-group-head:not(:first-child) {
-  margin-top: 0.15em;
+  margin-top: 0.1em;
   border-top: 1px solid color-mix(in srgb, var(--md-outline-variant) 55%, transparent);
 }
 

@@ -3127,11 +3127,11 @@ test("会话列表：一行只有一枚选项键，设置/删除收进浮板，�
   assert.match(bar, /@click="pickExport"[^>]*>导出 JSON/, "浮板里没有导出 JSON");
   assert.match(bar, /class="danger"[^>]*@click="pickDelete">删除会话|@click="pickDelete"[^>]*>删除会话/, "浮板里没有删除会话");
   assert.equal((bar.match(/class="item-btn"/g) || []).length, 1, "一行不该再有多枚操作键");
-  // 2026-11-05 MD3：48dp 行、full 圆角、label-large 字号、40dp 图标按钮。
-  assert.match(css, /#sessions-bar \.session-item \{[^}]*min-height:\s*2\.75em/, "会话行不是密度化后的 44dp");
+  // MD3 紧凑列表：2.4em 行、full 圆角、label-large 字号、2.4em 图标按钮。
+  assert.match(css, /#sessions-bar \.session-item \{[^}]*min-height:\s*2\.4em/, "会话行不是紧凑密度（2.4em）");
   assert.match(css, /\.session-item \{[^}]*border-radius:\s*var\(--md-shape-full\)/, "会话行不是 full 圆角");
   assert.match(css, /\.session-item \{[^}]*font-size:\s*var\(--md-type-label-large\)/, "会话标题不是 MD3 label-large");
-  assert.match(css, /\.session-item \.item-btn \{[^}]*width:\s*2\.667em/, "会话选项键不是 40dp 触控盒");
+  assert.match(css, /\.session-item \.item-btn \{[^}]*width:\s*2\.4em/, "会话选项键不是紧凑尺寸");
 });
 
 test("空输入时的发送键不是向下箭头（那个位置会被读成「滚到底」）", () => {
@@ -3810,7 +3810,7 @@ test("波纹：触点 → 圆（纯函数），委托安装一次，reduce 下�
 
 test("密度：行高/顶栏/FAB/输入/设置/消息间距都收了一档", () => {
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  assert.match(css, /#sessions-bar \.session-item \{[^}]*min-height:\s*2\.75em/, "会话行没收到 44dp");
+  assert.match(css, /#sessions-bar \.session-item \{[^}]*min-height:\s*2\.4em/, "会话行没收到紧凑密度（2.4em）");
   assert.match(css, /#sessions-bar #session-new \{[^}]*min-height:\s*3em/, "FAB 没收到 48dp");
   assert.match(css, /#chat-col > header \{ min-height:\s*3\.05em/, "顶栏没有在 48dp 上再缩 20%");
   assert.match(css, /\.messages-inner \{[^}]*gap:\s*0\.55em/, "消息间距没收到 0.55em");
@@ -3825,7 +3825,7 @@ test("左栏底：会话/渠道/设置上方有一条 outline-variant 分隔线"
 
 test("会话分组标题：更大间距 + 非首组淡分隔线", () => {
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  assert.match(css, /#sessions-bar \.session-group-head \{[^}]*padding:\s*1\.05em 0\.85em 0\.42em/, "分组标题没有放大间距");
+  assert.match(css, /#sessions-bar \.session-group-head \{[^}]*padding:\s*0\.55em 0\.75em 0\.2em/, "分组标题没有收紧");
   assert.match(css, /#sessions-bar \.session-group-head:not\(:first-child\) \{[^}]*border-top:\s*1px solid color-mix\(in srgb, var\(--md-outline-variant\) 55%/, "非首组没有淡分隔线");
 });
 
