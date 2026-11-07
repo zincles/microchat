@@ -6,6 +6,8 @@ import { VBtn, VTextField, VSelect, VTable } from "vuetify/components";
 import { ref, computed, onMounted, onUnmounted } from "vue";
 import { sharedApi } from "../utils/prefs.ts";
 import { formatTokens, providerIdForNextVendor } from "../utils/format.ts";
+import ModelEditor from "./ModelEditor.vue";
+import ModelIcon from "./ModelIcon.vue";
 import type {
   CreateProviderRequest,
   ModelView,
@@ -17,7 +19,7 @@ import type {
 } from "../api/types.ts";
 
 const props = withDefaults(defineProps<{ provider?: ProviderView | null }>(), { provider: null });
-const emit = defineEmits<{ close: []; saved: [id: string] }>();
+const emit = defineEmits<{ close: []; saved: [id: string]; "model-saved": [] }>();
 
 const api = sharedApi();
 
@@ -43,8 +45,9 @@ const baseFilter = ref("");
 // （anthropic-messages / gemini-generate-content）摆进下拉 —— 那是递给人一个按下去必炸的选项。
 // 现在全从 `GET /providers/presets` 的 `protocol_options` 来（后端是唯一权威，契约测试钉着）。
 const hasKey = ref(false);
-// 模型列表**只读**：渠道页能看见"这次刷新导入了什么"，不在这里编辑。
+// 模型列表：能看见"这次刷新导入了什么"，点每行可编辑该模型的用户列。
 const models = ref<ModelView[]>([]);
+const editingModel = ref<ModelView | null>(null);
 const modelCount = computed(() => models.value.length);
 const presets = ref<PresetInfo[]>([]);
 const status = ref("");
@@ -265,8 +268,16 @@ onMounted(() => {
 });
 onUnmounted(() => document.removeEventListener("keydown", onKey));
 function onKey(e: KeyboardEvent): void {
-  if (e.key === "Escape") emit("close");
+  // 模型编辑弹窗开着时，Esc 只关弹窗；别一下退到渠道列表（两层一起关）。
+  if (e.key === "Escape" && !editingModel.value) emit("close");
 }
+function onModelSaved(updated: ModelView): void {
+  models.value = models.value.map((item) => item.upstream_id === updated.upstream_id ? updated : item);
+  editingModel.value = null;
+  // 顶栏模型下拉读的是另一个口（/models）：显示名/图标改完要让它重拉。
+  emit("model-saved");
+}
+
 </script>
 
 <template>
@@ -309,23 +320,31 @@ function onKey(e: KeyboardEvent): void {
       <span class="status">{{ status }}</span>
     </div>
     <!-- 模型列表（2026-11-02 用户定）：渠道详情里要看得见「这个渠道导入了哪些模型」。
-         只读 —— 编辑模型（显示名 / 上下文 / 参数）不是这一页的事。 -->
+         2026-11-07：每行可编辑模型自己的用户列（显示名 / 上下文 / 参数）。 -->
     <h3>模型（{{ modelCount }}）</h3>
-    <p class="hint">这个渠道从上游导入的模型；这里只读，不能编辑。</p>
+    <p class="hint">这个渠道从上游导入的模型；点「编辑」改显示名、上下文覆盖或采样参数。</p>
     <div v-if="isNew || !modelCount" class="status">
       {{ isNew ? "新建渠道保存并刷新后，导入的模型会出现在这里。" : "还没有导入模型 —— 点「保存并刷新」试试。" }}
     </div>
     <div v-else class="provider-models">
       <VTable class="plist">
-        <thead><tr><th>模型</th><th>上下文</th></tr></thead>
+        <thead><tr><th>模型</th><th>上下文</th><th></th></tr></thead>
         <tbody><tr v-for="m in models" :key="m.upstream_id">
           <td :title="m.display_name || m.name || m.upstream_id">
-            {{ m.name || m.upstream_id }}
-            <div class="model-upstream" :title="m.upstream_id">{{ m.upstream_id }}</div>
+            <span class="model-name-line"><ModelIcon :icon="m.icon" :brand="m.brand" />{{ m.name || m.upstream_id }}</span>
+            <div class="model-upstream" :title="m.upstream_id">{{ m.upstream_id }}<template v-if="m.matched_rules?.length"> · {{ m.matched_rules.join(" / ") }}</template></div>
           </td>
           <td>{{ modelContext(m) }}</td>
+          <td class="ops"><VBtn variant="text" size="small" type="button" @click="editingModel = m">编辑</VBtn></td>
         </tr></tbody>
       </VTable>
     </div>
+    <ModelEditor
+      v-if="editingModel"
+      :provider="pid"
+      :model="editingModel"
+      @close="editingModel = null"
+      @saved="onModelSaved"
+    />
   </div>
 </template>

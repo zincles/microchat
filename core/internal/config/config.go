@@ -63,6 +63,9 @@ type Config struct {
 	Server   ServerConfig   `json:"server"`
 	Defaults DefaultsConfig `json:"defaults"`
 	Chat     ChatConfig     `json:"chat"`
+	// ModelDefineRules：按模型 raw id 覆写展示/能力画像的纯数据规则（2026-11-07）。
+	// 模型行会被刷新删掉，规则不会；它不执行代码，也不改 wire 协议。
+	ModelDefineRules []ModelDefineRule `json:"model_define_rules,omitempty"`
 }
 
 type ServerConfig struct {
@@ -115,9 +118,10 @@ func DefaultConfig() Config {
 		// 为什么不是 0.0.0.0：账号与鉴权都砍了，后端一旦对局域网开放，同网段任何设备
 		// 都能直接改数据（删会话、读 API key、花 token）。绑回环是**唯一真能挡住**的办法。
 		// 要放开就显式把 config.json 的 server.host 改成 0.0.0.0（那时就没有这道保护了）。
-		Server:   ServerConfig{Host: "127.0.0.1", Port: 8787},
-		Defaults: DefaultsConfig{Provider: "dummy", Model: DummyModelID, Agent: DefaultAgentID},
-		Chat:     DefaultChat(),
+		Server:           ServerConfig{Host: "127.0.0.1", Port: 8787},
+		Defaults:         DefaultsConfig{Provider: "dummy", Model: DummyModelID, Agent: DefaultAgentID},
+		Chat:             DefaultChat(),
+		ModelDefineRules: DefaultModelDefineRules(),
 	}
 }
 
@@ -149,6 +153,9 @@ func LoadConfig(paths Paths) (Config, error) {
 	}
 	if config.Defaults.Agent == "" {
 		config.Defaults.Agent = DefaultAgentID
+	}
+	if err := ValidateModelDefineRules(config.ModelDefineRules); err != nil {
+		return config, err
 	}
 	return config, nil
 }

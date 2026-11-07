@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"microchat/internal/config"
+	"microchat/internal/model"
 )
 
 // Vendor：渠道背后是**找谁**（哪家上游）。它决定 base_url、必需头、以及几家特有的兼容开关。
@@ -524,8 +525,8 @@ func headersFor(p Provider, r Request) map[string]string {
 	return headers
 }
 
-// thinkingLevelOrder：统一七档，顺序 = UI 从低到高。
-var thinkingLevelOrder = []string{"off", "minimal", "low", "medium", "high", "xhigh", "max"}
+// thinkingLevelOrder：统一七档，顺序 = UI 从低到高（规范清单住 model，避免 config 再抄一份）。
+var thinkingLevelOrder = model.ThinkingLevelOrder
 
 // ThinkingLevels：这个模型**能安全收到**哪些档位（UI 据此裁剪，别把不支持的选项摆出来）。
 // 未知模型回全部七档：自定义渠道可能自己认；已知家族按官方模型表裁。

@@ -45,6 +45,7 @@ import {
   modelKey,
   parseModelKey,
   modelLabel,
+  modelOption,
   whoText,
   sessionTitle,
 } from "../src/utils/format.ts";
@@ -812,6 +813,24 @@ test("模型键往返：provider 里带 / 也不歧义；无分隔符 → null",
   assert.equal(k, "自建/代理|||deepseek/chat");
   assert.deepEqual(parseModelKey(k), { provider: "自建/代理", model: "deepseek/chat" });
   assert.equal(parseModelKey("没有分隔符"), null);
+});
+
+test("模型选项带 brand/icon：选择器能画家族图标，不把 family 当渠道", () => {
+  const choice = modelOption({
+    provider: "xai",
+    provider_name: "xAI",
+    upstream_id: "grok-4.7",
+    name: "Grok 4.7",
+    display_name: null,
+    thinking_levels: ["low", "high"],
+    brand: "xAI",
+    icon: "xai",
+    matched_rules: ["xai"],
+  });
+  assert.equal(choice.value, modelKey("xai", "grok-4.7"));
+  assert.equal(choice.brand, "xAI");
+  assert.equal(choice.icon, "xai");
+  assert.equal(choice.provider_name, "xAI");
 });
 
 test("modelLabel 三级回退：用户覆盖 → 上游名 → 上游 id", () => {

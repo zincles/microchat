@@ -54,6 +54,8 @@ export function thinkingLevelsForModel(
 ): string[] {
   if (!provider || !model) return [...THINKING_LEVELS];
   const hit = models.find((m) => m.provider === provider && m.upstream_id === model);
-  const levels = hit?.thinking_levels;
-  return levels && levels.length ? [...levels] : [...THINKING_LEVELS];
+  // **空数组是明确“没有档位”**（例如图像模型），不能回落成七档；
+  // 只有“清单里没有这个模型”才回全部（后端仍会收口）。
+  if (hit) return Array.isArray(hit.thinking_levels) ? [...hit.thinking_levels] : [];
+  return [...THINKING_LEVELS];
 }

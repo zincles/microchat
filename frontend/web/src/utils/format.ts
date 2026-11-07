@@ -24,6 +24,8 @@ export interface ModelChoice {
   label: string;
   provider_name: string;
   upstream_id: string;
+  brand?: string;
+  icon?: string;
   flat?: number;
   [key: string]: unknown;
 }
@@ -44,6 +46,8 @@ export function modelOption(m: ModelListItem): ModelChoice {
     label: modelLabel(m),
     provider_name: m.provider_name || m.provider,
     upstream_id: m.upstream_id,
+    brand: m.brand,
+    icon: m.icon,
   };
 }
 export function agentOption(a: { id: string; name?: string }): { id: string; label: string } {

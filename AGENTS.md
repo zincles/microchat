@@ -260,6 +260,14 @@ delete(AA)           # 删除
 
 - `config.json` — `{ "server": { "host": "127.0.0.1", "port": 8787, "refresh_models_on_start": true }, "defaults": { "provider": "dummy", "model": "dummy", "agent": "default" }, "chat": { "model_context_tokens": 131072, "history_window": 5, "compact_trigger_tokens": null, "compact_blocks": 5, "title_provider": "", "title_model": "" } }`
   （**全局标题模型**：`title_provider` / `title_model` 都空 = **使用当前会话模型**（默认）；都填 = 起标题固定走这一对。只填一个不算数。）
+  **`model_define_rules`（2026-11-07）** = 一组**纯数据 override**，按模型 raw `upstream_id` 覆写展示/能力画像：
+  `{ "id": "xai", "match_contains": "grok", "match_exact": "", "match_provider": "", "is_final": false,
+    "thinking_levels": ["low","medium","high","max"], "brand": "xAI", "icon": "xai" }`。
+  规则按数组顺序匹配；命中的字段覆盖前面的，没写的字段继承；`is_final` 应用完就停。
+  `thinking_levels` 整组替换（`[]` = 明确没有档位，缺字段 = 不动）；`brand`/`icon` 只影响展示，
+  **不改 wire 协议、不执行代码、不碰 tool use**。默认两条 `gpt → OpenAI` / `grok → xAI`；
+  写 `[]` 即关闭。未知档位、空匹配、空定义、重复 id 在写入与 `LoadConfig` 时都报错。
+  匹配只认 raw id（大小写不敏感）+ 可选 `match_exact` / `match_provider`，不认用户改过的 `display_name`。
 （`host` **默认 `127.0.0.1`**（2026-11-01 用户定：「我们只允许来自 127.0.0.1 的访问」）——
   账号与鉴权都砍了，所以**端口绑定就是唯一的访问闸门**；改成 `0.0.0.0` 即对 LAN 开放，
   那时**没有任何保护**（同网段任何设备都能改数据）。`host`/`port` 随时改这个文件生效（`-addr host:port` 可临时盖）。
@@ -729,8 +737,10 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 | POST | `/providers/{provider_id}/test` | 可选 `{vendor,protocol,base_url,api_key,model_filter}` | `{ok,models,filtered,note?,error?}` | **测试连通性**（2026-11-02）：只拉一次 `/models`，**不落库、不保存**；请求体可带编辑器里尚未保存的值（api_key 空 = 用已存的）。返回 200 + `ok:false` 表示"连不上"（不是接口 500）；dummy 直接回 ok+note |
 | POST | `/providers/{provider_id}/refresh-routes` | — | `{provider, models}` | 只刷路由表：拉 models.dev 快照 ⇒ `model_route` 落库（只认聚合站；**启动时不跑**，一周手跑一次）|
 | GET | `/providers/{provider_id}/usage` | — | `ProviderUsageView` | **套餐余量**（只读）：**只对 `vendor = opencode-go` 的渠道有义** ⇒ 别的 vendor **400**（`invalid`）、没配 key 也 **400**；上游错原样传（`upstream`）。形状 = `plan` / `windows[].label/percent/resets_at` + `provider_id`（`-debug usage` 就是它；web 界面还没入口） |
-| GET | `/models` | — | `[ModelListItem]` | 跨 provider 拍平（"渠道 / 模型"下拉用）。每项带 **`thinking_levels`**（该模型能安全收到的统一档位；前端只摆这些；未知模型回全部七档）|
-| PATCH | `/models` | `{provider, upstream_id, context_override}` | `ModelView` | 设/清上下文覆盖（`null` = 清）。**刷新永不覆盖用户列** |
+| GET | `/models` | — | `[ModelListItem]` | 跨 provider 拍平（"渠道 / 模型"下拉用）。每项带 **`thinking_levels`**（该模型能安全收到的统一档位；前端只摆这些；未知模型回全部七档），以及 `model_define_rules` 派生的 **`brand` / `icon` / `matched_rules`**（不落库）|
+| PATCH | `/models` | `{provider, upstream_id, context_override, display_name, params}` | `ModelView` | 设/清模型的用户列（上下文覆盖 `null` = 清；显示名；采样参数）。**刷新永不覆盖用户列**；模型行被刷新删掉时这些覆盖也会没（规则不受影响） |
+| GET | `/config/model-rules` | — | `{model_define_rules:[…]}` | 读 `config.json` 的模型定义规则（见「配置文件」）。返回派生前的**规则原文** |
+| PUT | `/config/model-rules` | `{model_define_rules:[…]}` | 同上 | **整份替换**；空数组 = 清空。先校验后落盘；坏规则 422 且一个字不写。写成功后 `GET /models` 立刻按新规则派生 |
 | GET | `/agents` | — | `AgentsConfig` | 生效列表（含内置默认 agent）|
 | POST | `/agents` | `CreateAgentReq` | `Agent` · 201 | 收 `name` / `system_prompt` / **`segments`（追加段 id 列表）** / `abilities` / `prepend_state`；id 由后端生成。**没有 `display_mode`** ✗（2026-10-27 删：从前 `chat` 双边气泡 / `roleplay` 用户气泡+AI 纯文本二选一，现在**只剩后者**、不再是开关。老 `agents.json` / 老卡带里写着它**照常能读**，只是成了不认识的键、下次整份重写自己没掉） |
 | PATCH | `/agents/{agent_id}` | `UpdateAgentReq` | `Agent` | `new_id` = 重命名（搬 `default_agent` 与会话引用）；`make_default` = 设默认；`segments` / `abilities` / `prepend_state` 整段替换（语义同 POST；`segments: []` = 清空）|
@@ -1333,10 +1343,11 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   （chat / agent / prompt / appearance）—— Vuetify 的滑入方向按 **window item 注册顺序**算，
   不是按标签顺序算。提示词与外观曾写反（标签是 prompt→appearance，DOM 是 appearance→prompt）
   ⇒ 提示词→外观滑入反向；契约测试现在钉住两者一致。
-- **渠道详情里的模型清单**（2026-11-02 用户定：「具体某个模型的界面里，应该能看到当前这个渠道导入的模型的列表（虽然不能编辑）」）：
-  `ProviderEditor` 底部「模型（N）」一张**只读**表 —— 模型名 + 上游 id（小字并排）+ 上下文；数据直接取 `GET /providers` 的 `models`，
+- **渠道详情里的模型清单**（2026-11-02 用户定：「具体某个模型的界面里，应该能看到当前这个渠道导入的模型的列表」）：
+  `ProviderEditor` 底部「模型（N）」表 —— 家族图标 + 模型名 + 上游 id / `matched_rules` + 上下文；数据直接取 `GET /providers` 的 `models`，
   保存并刷新后用回执里的 `models` 更新（`models` 是唯一状态，数量由它派生）。条目多，表在 `.provider-models` 里内部滚动。
-  不摆编辑入口（显示名/覆盖是模型自己的事）；空态说清「保存并刷新后会出现在这里」。
+  **2026-11-07**：每行「编辑」打开 `ModelEditor.vue`，改该模型自己的**用户列**（显示名 / 上下文覆盖 / JSON 参数）——
+  规则（`model_define_rules`）是家族默认，这里是对单个 `(provider, upstream_id)` 的精确覆盖。空态说清「保存并刷新后会出现在这里」。
 - **设置页平铺列表**（2026-11-04 统一设计系统）：`.settings-card` 只剩分节容器（无底色/圆角/内边距），字段行之间一条 `--line`；不再“卡片套卡片”。**tab 分两族**（2026-11-06 用户定「用真正的 Vuetify TabBar/TabItem」）：设置 / Agent 二级页用 Vuetify `VTabs`（MD3 primary tabs + slider + tabpanel）；上下文五 tab 与顶栏聊天·上下文也是 Vuetify `VTabs`；两边都由 `VTabsWindow` 做左右滑动（上下文五个 `VTabsWindowItem`，顶栏两个）。窄屏把 `v-tab` 压到 `min-width:0`，放得下（不再靠 show-arrows 吃 104px）。
 **设置四 tab 与会话/渠道管理页统一 760 居中**（列表页有表格，但切页时宽度不该跳来跳去）。**所有 `h3` 统一一种标题语言**：正文色半粗 + 左侧蓝色短竖条（从前只有卡片里的 h3 有竖条，其它 tab 是裸文字 —— 用户指出不一致）。「输入」卡里是 **发送方式（`enter` / `shift-enter` / `button`）**、输入时预览、命令菜单 —— 这三格在 2026-11-01 从用户视图搬进 `AppearancePane` 时 **refs 与 persist 都搬了、模板整段漏了**（界面上找不到，2026-11-02 补回）。开关一律 `:model-value` + `setX(v) { ref = v; persist(); }`，**别写 `v-model + @update:model-value="persist"`** —— 两个监听同挂 update 时显式那个可能先跑，存进去的是旧值（实测：界面 on、服务端 off）。
   **文案一律说人话**（2026-11-02 用户「审计设计界面里有哪些不说人话的部分」）：可见标签不再用 `Agent` / `vendor` / `protocol` / `载荷` / `卡带` / `提示词段` 这类内部词 ——

@@ -33,6 +33,8 @@ import type {
   MergedStream,
   Message,
   ModelListItem,
+  ModelView,
+  SetModelRequest,
   PayloadPreview,
   Prefs,
   PrefsView,
@@ -389,6 +391,8 @@ export function createApi({ base, token = "", fetchFn = fetch }: CreateApiOption
     putChat: (body: ChatConfig) => call<ChatConfig>("PUT", "/config/chat", body),
     // models：跨 provider 拍平（`{provider, upstream_id, name}` —— 下拉选项就打它）。
     models: () => call<ModelListItem[]>("GET", "/models"),
+    // 模型用户列（显示名 / 上下文覆盖 / 参数）。刷新模型时后端永不动这三格。
+    setModel: (body: SetModelRequest) => call<ModelView>("PATCH", "/models", body),
     agents: () => call<AgentsConfig>("GET", "/agents"),
     // 对话记录导出/导入（JSON，2026-10-11）：只带 role+content+标题（不含 system prompt / agent）。
     // 导出 = 会话域（owner 自己就能导）；导入 = 设置面（admin，与 ST 导入一致）。

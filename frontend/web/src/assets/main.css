@@ -1027,6 +1027,7 @@ button.danger:hover { background: color-mix(in srgb, var(--md-error) 8%, transpa
 .provider-models { max-height: 22em; overflow: auto; overscroll-behavior: contain; border-radius: var(--r-card); }
 .provider-models table.plist { margin: 0; }
 .model-upstream { color: var(--tg-hint); font-size: 0.85em; white-space: normal; word-break: break-all; }
+.model-name-line { display: inline-flex; align-items: center; gap: 0.4em; min-width: 0; }
 .plist { width: 100%; border-collapse: collapse; }
 .plist th, .plist td { text-align: left; padding: 0.3em 0.6em; border-bottom: 1px solid var(--line); white-space: nowrap; line-height: 1.35; }
 .plist th { color: var(--tg-hint); font-weight: normal; font-size: 0.85em; }

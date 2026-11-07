@@ -376,6 +376,11 @@ export interface ModelView {
   display_name?: string | null;
   params?: unknown;
   upstream_params?: unknown;
+  // model_define_rules 的派生结果（后端算，不落库）。
+  brand?: string;
+  icon?: string;
+  thinking_levels?: string[];
+  matched_rules?: string[];
 }
 
 export interface ModelListItem {
@@ -385,6 +390,21 @@ export interface ModelListItem {
   name: string;
   display_name: string | null;
   thinking_levels: string[];
+  brand?: string;
+  icon?: string;
+  matched_rules?: string[];
+}
+
+export interface SetModelRequest {
+  provider: string;
+  upstream_id: string;
+  display_name?: string | null;
+  context_override?: number | null;
+  params?: unknown;
+}
+
+export interface ModelRulesConfig {
+  model_define_rules: Array<Record<string, unknown>>;
 }
 
 export interface ProtocolOption {

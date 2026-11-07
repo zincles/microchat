@@ -11,6 +11,7 @@
 import { ref, computed, nextTick, watch } from "vue";
 import { VBtn, VBtnToggle, VTab, VTabs } from "vuetify/components";
 import ThinkingMenu from "./ThinkingMenu.vue";
+import ModelIcon from "./ModelIcon.vue";
 import type { ThinkingOption } from "../utils/thinking.ts";
 import { ICONS } from "./icons.ts";
 import {
@@ -107,6 +108,14 @@ const curModelLabel = computed(() => {
 });
 
 // 过滤 + 分组 + 扁平序号都在 `utils/format.ts` 的 `filterModelGroups` 里（那边才测得到"搜到了什么"）。
+const curModelChoice = computed<ModelChoice | null>(() => {
+  for (const group of modelGroups.value) {
+    const hit = (group.items ?? []).find((item) => item.value === curModel.value);
+    if (hit) return hit;
+  }
+  return orphanModel.value;
+});
+
 const filteredGroups = computed(() => filterModelGroups(modelGroups.value, modelQuery.value, orphanModel.value));
 const modelFlatCount = computed(() => filteredGroups.value.reduce((n, g) => n + g.items.length, 0));
 
@@ -394,7 +403,10 @@ defineExpose({ setSession, setModels, setAgents, setContext, setStatus, setTasks
         @click="toggleModel"
       >
         <span v-if="loading" class="model-loading" aria-hidden="true"></span>
-        <span v-else class="model-btn-label">{{ curModelLabel }}</span>
+        <template v-else>
+          <ModelIcon v-if="curModelChoice" :icon="curModelChoice.icon" :brand="curModelChoice.brand" />
+          <span class="model-btn-label">{{ curModelLabel }}</span>
+        </template>
         <svg class="model-caret" viewBox="0 0 10 6" aria-hidden="true"><path d="M0 0h10L5 6z" /></svg>
       </button>
       <template v-if="modelOpen">
@@ -426,6 +438,7 @@ defineExpose({ setSession, setModels, setAgents, setContext, setStatus, setTasks
                 :title="`${g.providerName} / ${m.upstream_id || m.label}`"
                 @click="pickModel(m.value)"
               >
+                <ModelIcon :icon="m.icon" :brand="m.brand" />
                 <span class="model-name">{{ m.label }}</span>
                 <span v-if="m.value === curModel" class="model-check">✓</span>
               </button>

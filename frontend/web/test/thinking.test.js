@@ -21,8 +21,11 @@ test("思考档位：标签与选项顺序（默认在最前）", () => {
 test("思考档位：从模型清单取能力，缺项回全部七档", () => {
   const models = [
     { provider: "p", upstream_id: "claude-opus-5-5", thinking_levels: ["low", "medium", "high"] },
+    { provider: "p", upstream_id: "image-model", thinking_levels: [] },
   ];
   assert.deepEqual(thinkingLevelsForModel(models, "p", "claude-opus-5-5"), ["low", "medium", "high"]);
+  // 空数组 = 明确没有档位（图像模型）；不能回落成七档。
+  assert.deepEqual(thinkingLevelsForModel(models, "p", "image-model"), []);
   assert.deepEqual(thinkingLevelsForModel(models, "p", "not-in-list"), [...THINKING_LEVELS]);
   assert.deepEqual(thinkingLevelsForModel([], "p", "m"), [...THINKING_LEVELS]);
 });

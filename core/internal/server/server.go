@@ -88,6 +88,8 @@ func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *ch
 	s.mux.HandleFunc("POST /api/v1/tavern/presets", s.createTavernPreset)
 	s.mux.HandleFunc("GET /api/v1/tavern/presets/{preset_id}", s.getTavernPreset)
 	s.mux.HandleFunc("DELETE /api/v1/tavern/presets/{preset_id}", s.deleteTavernPreset)
+	s.mux.HandleFunc("GET /api/v1/config/model-rules", s.getModelRules)
+	s.mux.HandleFunc("PUT /api/v1/config/model-rules", s.putModelRules)
 	s.mux.HandleFunc("GET /api/v1/config/prefs", s.getPrefs)
 	s.mux.HandleFunc("PUT /api/v1/config/prefs", s.putPrefs)
 	// 自定义背景图：原始字节进出（它是张图，不是 JSON）

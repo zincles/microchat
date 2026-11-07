@@ -622,6 +622,7 @@ function onKey(e: KeyboardEvent): void {
             :provider="editProvider === 'new' ? null : editProvider"
             @close="editProvider = null"
             @saved="onProviderSaved"
+            @model-saved="emit('models-changed')"
           />
         </section>
         </VTabsWindowItem>

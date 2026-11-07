@@ -53,6 +53,12 @@ type ModelView struct {
 	DisplayName     *string         `json:"display_name"`
 	Params          json.RawMessage `json:"params"`
 	UpstreamParams  json.RawMessage `json:"upstream_params"`
+	// 下面四样是 model_define_rules 的**派生结果**（不落库）：品牌/图标给界面，
+	// thinking_levels 是统一档位的合法集合，matched_rules 用来解释“为什么是这个画像”。
+	Brand          string   `json:"brand,omitempty"`
+	Icon           string   `json:"icon,omitempty"`
+	ThinkingLevels []string `json:"thinking_levels,omitempty"`
+	MatchedRules   []string `json:"matched_rules,omitempty"`
 }
 
 // ModelListItem：`GET /models` 的一项（跨 provider 拍平；"渠道 / 模型"下拉用）。
@@ -64,6 +70,10 @@ type ModelListItem struct {
 	DisplayName  *string `json:"display_name"`
 	// ThinkingLevels：这个模型能安全收到的统一档位（UI 只摆这些；空 = 不显示思考选择器）。
 	ThinkingLevels []string `json:"thinking_levels"`
+	// model_define_rules 的派生结果（不落库）。
+	Brand        string   `json:"brand,omitempty"`
+	Icon         string   `json:"icon,omitempty"`
+	MatchedRules []string `json:"matched_rules,omitempty"`
 }
 
 type CreateProviderReq struct {
@@ -97,7 +107,10 @@ type UpdateProviderReq struct {
 	MaxConcurrency *int    `json:"max_concurrency"`
 }
 
-func modelView(row store.ModelRow) ModelView {
+func (s *Server) modelView(row store.ModelRow) ModelView {
+	profile := s.config.ModelProfile(row.Provider, row.UpstreamID, config.ModelProfile{
+		ThinkingLevels: providers.ThinkingLevels(row.UpstreamID),
+	})
 	return ModelView{
 		UpstreamID:      row.UpstreamID,
 		Name:            registry.DisplayName(row.DisplayName, row.UpstreamName, row.UpstreamID),
@@ -109,6 +122,10 @@ func modelView(row store.ModelRow) ModelView {
 		DisplayName:     row.DisplayName,
 		Params:          rawOrEmptyObject(row.Params),
 		UpstreamParams:  rawOrEmptyObject(row.UpstreamParams),
+		Brand:           profile.Brand,
+		Icon:            profile.Icon,
+		ThinkingLevels:  profile.ThinkingLevels,
+		MatchedRules:    profile.MatchedRules,
 	}
 }
 
@@ -492,12 +509,16 @@ func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
 	}
 	items := make([]ModelListItem, 0, len(rows))
 	for _, row := range rows {
+		view := s.modelView(row)
 		items = append(items, ModelListItem{
 			Provider: row.Provider, ProviderName: names[row.Provider],
-			UpstreamID:     row.UpstreamID,
-			Name:           registry.DisplayName(row.DisplayName, row.UpstreamName, row.UpstreamID),
-			DisplayName:    row.DisplayName,
-			ThinkingLevels: providers.ThinkingLevels(row.UpstreamID),
+			UpstreamID:     view.UpstreamID,
+			Name:           view.Name,
+			DisplayName:    view.DisplayName,
+			ThinkingLevels: view.ThinkingLevels,
+			Brand:          view.Brand,
+			Icon:           view.Icon,
+			MatchedRules:   view.MatchedRules,
 		})
 	}
 	writeJSON(w, http.StatusOK, items)
@@ -533,7 +554,7 @@ func (s *Server) setModelOverride(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, row := range rows {
 		if row.UpstreamID == req.UpstreamID {
-			writeJSON(w, http.StatusOK, modelView(row))
+			writeJSON(w, http.StatusOK, s.modelView(row))
 			return
 		}
 	}
@@ -583,7 +604,7 @@ func (s *Server) providerViewWithModels(provider config.Provider) ProviderView {
 	}
 	items := make([]ModelView, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, modelView(row))
+		items = append(items, s.modelView(row))
 	}
 	view := providerView(provider)
 	view.Models = items
