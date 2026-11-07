@@ -3057,6 +3057,9 @@ test("vite：Host 默认不限制，设了名单才收窄", () => {
   // ② 名单来自环境变量（不是写死域名，也不是塞进 config.json —— 那个文件后端会整体重写，
   //    塞进去的自定义键会在下一次改设置时悄悄消失）。
   assert.match(body, /process\.env\.MICROCHAT_ALLOWED_HOSTS/, "没读 MICROCHAT_ALLOWED_HOSTS");
+  // podman-compose 未设置 `${VAR:-}` 时会把字面量塞进容器 —— 必须当空，否则 Host 闸门收窄成
+  // 一个不存在的域名，域名部署全 403（2026-11-08 重建容器时实踩）。
+  assert.match(body, /isEnvPlaceholder/, "没识别 podman-compose 留下的 ${...} 占位符");
   assert.ok(!/config\.json[\s\S]{0,200}allowed_hosts/.test(body),
     "把允许的 Host 塞进了 config.json —— 后端整体重写会把它抹掉");
   assert.ok(!/allowedHosts:\s*\[\s*"/.test(body), "值写死成了字面量数组");
@@ -3090,6 +3093,11 @@ test("容器 entrypoint：后端绑 0.0.0.0，且端口在启动前就解析好"
   const startAt = body.indexOf("-addr");
   assert.ok(portAt > 0, "没有 `PORT=${PORT:-8787}` 这个兜底");
   assert.ok(portAt < startAt, "端口在起后端之后才解析 —— 那时 $PORT 还是空的");
+  // 依赖卷跨容器持久：只判断 vite 在不在会漏掉新插件（VPS 实踩 vite-plugin-vuetify）。
+  assert.match(body, /npm ci/, "entrypoint 没有安装前端依赖");
+  assert.match(body, /\.microchat-lock/, "没有用 lock 哈希标记 installed 状态");
+  assert.ok(!/\[ -d node_modules\/vite \] \|\| npm ci/.test(body),
+    "还在用「vite 在就算装好了」的旧判据");
 });
 
 // ── 前端可用性收尾（2026-11-02：实看 390px 截图后补的）──────────────

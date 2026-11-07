@@ -51,11 +51,20 @@ echo "[entrypoint] 后端就绪：127.0.0.1:$PORT（不对外发布，只有本�
 #   ② 就算挂得住也不该跟宿主共用 node_modules —— 宿主多半是 glibc、容器是 musl，
 #      rollup 的原生包不通用（实测：直接 `MODULE_NOT_FOUND` 崩在 vite build）。
 # 拷到 bind 之外后：依赖卷（/build/web/node_modules）没人盖得住 ✓ 两边彻底隔离 ✓ 宿主 dev 不受影响 ✓。
-# 依赖只装一次（**改了 package.json 的话**：删掉那个卷——`microchat_microchat-node-modules`——再 up）。
+# 依赖卷跨容器持久；用 package.json + package-lock.json 的哈希当安装标记，
+# lock/依赖变了或安装不完整就自动 npm ci（2026-11-08 VPS 缺 vite-plugin-vuetify 实踩）。
 mkdir -p /build/web
 (cd /app/frontend/web && tar cf - --exclude=node_modules --exclude=dist .) | (cd /build/web && tar xf -)
 cd /build/web
-[ -d node_modules/vite ] || npm ci
+# 依赖卷是**跨容器持久**的：只判断 `node_modules/vite` 在不在会漏掉新加的插件
+# （2026-11-08 VPS 实踩：vite 在、vite-plugin-vuetify 不在 ⇒ 每次 build 都崩）。
+# 用「package.json + package-lock.json 的哈希」当安装标记：lock/依赖变了或安装不完整就重装。
+LOCK_HASH=$(sha256sum package.json package-lock.json | sha256sum | cut -d' ' -f1)
+if [ ! -d node_modules/vite ] || [ "$(cat node_modules/.microchat-lock 2>/dev/null || true)" != "$LOCK_HASH" ]; then
+  echo "[entrypoint] 安装前端依赖（node_modules 与 lock 不一致或未完成）"
+  npm ci
+  printf '%s\n' "$LOCK_HASH" > node_modules/.microchat-lock
+fi
 npm run build
 npm run preview &
 FRONT=$!

@@ -195,6 +195,9 @@ podman compose restart                                    # ← **每次提交�
   **默认按"跑在远处（VPS / 反代后面）"配**（那里 rebinding 没有意义），
   **本机跑又在意的**，把名单设成 localhost 那几个。
   ⚠ 生效值会打一行日志（`[vite] allowedHosts = …`）—— 部署时"到底生效没有"不该靠猜。
+  ⚠ **podman-compose 不展开 `${VAR:-}`**：变量没设时它会把字面量 `${MICROCHAT_ALLOWED_HOSTS:-}`
+  原样塞进容器（2026-11-08 删容器重建后实测：日志里就是这串，域名全 403）。
+  `vite.config.js` 把这种整串 `${…}` 当"没设"；**别把那条 fallback 去掉**。
   ⚠ 名单**不塞 `config.json`**：那个文件后端会整体重写（`SaveJSON` 只写它认识的字段），
   塞进去的自定义键会在下一次改设置时**悄悄消失**。
 - **后端地址的唯一权威 = 后端自己的 `data/config/config.json`**（`server.host/port`）：vite 启动时读它算代理目标
@@ -202,9 +205,10 @@ podman compose restart                                    # ← **每次提交�
   （2026-11-01：原来还有个「连接门板」让人填地址/口令，**整块删了** —— 没有要填的东西了。）
 - **版本全部钉死**（用户定）：`Dockerfile` 两个 base 按 **digest** 锁死（`golang:1.26.9-alpine3.24` +
   `node:24.19.0-alpine3.24` 的 `/usr/local` COPY 进前者 —— 同一个 alpine/musl，二进制互相认）；
-  npm 依赖走 `package-lock.json`（entrypoint 一律 `npm ci`）；Go 依赖走 `go.mod/go.sum`。
+  npm 依赖走 `package-lock.json`（entrypoint 按 package.json + lock 的哈希决定要不要 `npm ci`；
+  依赖卷跨容器持久，不能只看 `node_modules/vite` 在不在）；Go 依赖走 `go.mod/go.sum`。
 - **一切现场编译**（`docker/entrypoint.sh`）：先后端（`go build` 到 /tmp → 按配置端口等它就绪）→ 后前端
-  （源码拷到容器内 `/build` → `npm ci`（只一次，卷住 `/build/web/node_modules`）→ `vite build` → `vite preview`）。
+  （源码拷到容器内 `/build` → 按 lock 哈希决定 `npm ci`（卷住 `/build/web/node_modules`）→ `vite build` → `vite preview`）。
   **为什么前端要拷到 `/build`**：① 别在 bind 底下挂命名卷 —— podman-compose 把 bind 排在卷之后、
   整个盖住嵌套卷（实测踩过）；② 就算挂得住，宿主 glibc / 容器 musl 的 `node_modules` 也不通用
   （rollup 原生包，实测直接崩）⇒ 依赖必须与宿主隔离。`/go` 是命名卷（模块 + 编译缓存，重启不用重编）；

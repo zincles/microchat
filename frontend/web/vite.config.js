@@ -49,7 +49,11 @@ const apiProxy = { "/api": { target: backendOrigin() } };
 //   攻击者够得着的话直接打就行，用不着骗浏览器）；本机跑、又在意这个的，把名单设成 localhost 那几个。
 // ⚠ 为什么不用 `config.json` 存这份名单：那个文件后端会**整体重写**（`SaveJSON` 只写它认识的
 //   字段），塞进去的自定义键会在下一次改设置时**悄悄消失**。
-const allowedHosts = (process.env.MICROCHAT_ALLOWED_HOSTS || "")
+const rawAllowedHosts = (process.env.MICROCHAT_ALLOWED_HOSTS || "").trim();
+// podman-compose 不会展开 `${VAR:-}`：变量没设时它会把字面量原样塞进容器。
+// 那不是 Host 名单（也不该把域名挡在 403 外面），当成"没设"。
+const isEnvPlaceholder = /^\$\{[^}]+\}$/.test(rawAllowedHosts);
+const allowedHosts = (isEnvPlaceholder ? "" : rawAllowedHosts)
   .split(",")
   .map((host) => host.trim())
   .filter(Boolean);
