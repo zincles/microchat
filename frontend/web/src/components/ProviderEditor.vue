@@ -11,6 +11,7 @@ import ModelIcon from "./ModelIcon.vue";
 import ModelRulesEditor from "./ModelRulesEditor.vue";
 import type {
   CreateProviderRequest,
+  ModelDefineRule,
   ModelView,
   PresetInfo,
   ProtocolOption,
@@ -49,6 +50,9 @@ const hasKey = ref(false);
 // 模型列表：能看见"这次刷新导入了什么"，点每行可编辑该模型的用户列。
 const models = ref<ModelView[]>([]);
 const editingModel = ref<ModelView | null>(null);
+// 当前渠道自己的规则；全局规则由 ModelRulesEditor(scope=global) 直接读写。
+const customRules = ref<ModelDefineRule[]>([]);
+const baseCustomRules = ref("[]");
 // 渠道详情分两页：上游（服务商/端点/密钥）与模型配置（模型清单 + 规则）。
 const tab = ref<"upstream" | "models">("upstream");
 const modelCount = computed(() => models.value.length);
@@ -155,6 +159,8 @@ async function load(): Promise<void> {
   baseFilter.value = filter.value;
   hasKey.value = !!p.has_key;
   models.value = p.models ?? [];
+  customRules.value = p.model_define_rules ?? [];
+  baseCustomRules.value = JSON.stringify(customRules.value);
 }
 
 async function save(): Promise<void> {
@@ -172,6 +178,7 @@ async function save(): Promise<void> {
         ...(key.value ? { api_key: key.value } : {}),
         ...(wanted ? { model_filter: wanted } : {}),
         ...(Number(maxConcurrency.value) > 0 ? { max_concurrency: Number(maxConcurrency.value) } : {}),
+        ...(customRules.value.length ? { model_define_rules: customRules.value } : {}),
       };
       await api.createProvider(body);
       savedID = id;
@@ -191,10 +198,14 @@ async function save(): Promise<void> {
       if (Number(maxConcurrency.value) !== Number(p.max_concurrency ?? 0)) {
         body.max_concurrency = Number(maxConcurrency.value) || 0;
       }
+      if (JSON.stringify(customRules.value) !== baseCustomRules.value) {
+        body.model_define_rules = customRules.value;
+      }
       if (Object.keys(body).length) await api.patchProvider(p.id, body);
       if (body.new_id) savedID = body.new_id;
     }
     baseFilter.value = wanted;
+    baseCustomRules.value = JSON.stringify(customRules.value);
     // 带上 id：父组件要拿它把 editProvider 换成新对象（改名之后旧 props 的 id 已经不存在，
     // 留在原地再点保存会 404）。新建那条照旧用返回的 id。
     emit("saved", savedID);
@@ -281,6 +292,12 @@ function onModelSaved(updated: ModelView): void {
   emit("model-saved");
 }
 
+function onCustomRulesSaved(rules: ModelDefineRule[]): void {
+  customRules.value = rules;
+  // 渠道级规则属于 providers.json：跟着「保存渠道」一起落盘（新建时也一起创建）。
+  save().catch((e: unknown) => { status.value = `保存失败：${e instanceof Error ? e.message : String(e)}`; });
+}
+
 </script>
 
 <template>
@@ -350,7 +367,8 @@ function onModelSaved(updated: ModelView): void {
         </tr></tbody>
       </VTable>
     </div>
-    <ModelRulesEditor />
+    <ModelRulesEditor @saved="emit('model-saved')" />
+    <ModelRulesEditor scope="provider" :rules="customRules" @save="onCustomRulesSaved" />
     <ModelEditor
       v-if="editingModel"
       :provider="pid"

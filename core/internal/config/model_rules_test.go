@@ -22,9 +22,29 @@ func TestModelDefineRulesOverrideAndFinal(t *testing.T) {
 	if !reflect.DeepEqual(got.ThinkingLevels, levels) {
 		t.Fatalf("thinking_levels 该整组替换：%+v", got.ThinkingLevels)
 	}
-	want := []string{"brand", "icon", "thinking", "stop"}
+	want := []string{"global:brand", "global:icon", "global:thinking", "global:stop"}
 	if !reflect.DeepEqual(got.MatchedRules, want) {
 		t.Fatalf("matched_rules = %v，想要 %v", got.MatchedRules, want)
+	}
+}
+
+// 全局先、渠道后；全局的 is_final 不能挡住渠道覆盖。
+func TestProviderRulesWinOverGlobal(t *testing.T) {
+	globalLevels := []string{"low"}
+	providerLevels := []string{"high", "max"}
+	cfg := Config{ModelDefineRules: []ModelDefineRule{
+		{ID: "global", MatchContains: "grok", IsFinal: true, Brand: stringPtr("global"),
+			ThinkingLevels: &globalLevels},
+	}}
+	got := cfg.ModelProfileWithRules("xai", "grok-4.7", ModelProfile{}, []ModelDefineRule{
+		{ID: "custom", MatchContains: "grok", Brand: stringPtr("custom"),
+			ThinkingLevels: &providerLevels},
+	})
+	if got.Brand != "custom" || !reflect.DeepEqual(got.ThinkingLevels, providerLevels) {
+		t.Fatalf("渠道规则该覆盖全局：%+v", got)
+	}
+	if !reflect.DeepEqual(got.MatchedRules, []string{"global:global", "provider:custom"}) {
+		t.Fatalf("matched_rules = %v", got.MatchedRules)
 	}
 }
 
@@ -68,7 +88,7 @@ func TestDefaultModelDefineRules(t *testing.T) {
 	}
 	// 图像模型也带 grok：默认规则要清空思考档，而不是露出七档。
 	if got := cfg.ModelProfile("xai", "grok-imagine-image-2.0", ModelProfile{ThinkingLevels: []string{"low"}}); len(got.ThinkingLevels) != 0 ||
-		len(got.MatchedRules) != 1 || got.MatchedRules[0] != "xai-image" {
+		len(got.MatchedRules) != 1 || got.MatchedRules[0] != "global:xai-image" {
 		t.Fatalf("grok-imagine 默认规则 = %+v", got)
 	}
 	if err := ValidateModelDefineRules(cfg.ModelDefineRules); err != nil {

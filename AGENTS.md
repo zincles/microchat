@@ -265,16 +265,22 @@ delete(AA)           # 删除
     "thinking_levels": ["low","medium","high","max"], "brand": "xAI", "icon": "xai" }`。
   规则按数组顺序匹配；命中的字段覆盖前面的，没写的字段继承；`is_final` 应用完就停。
   `thinking_levels` 整组替换（`[]` = 明确没有档位，缺字段 = 不动）；`brand`/`icon` 只影响展示，
-  **不改 wire 协议、不执行代码、不碰 tool use**。默认两条 `gpt → OpenAI` / `grok → xAI`；
-  写 `[]` 即关闭。未知档位、空匹配、空定义、重复 id 在写入与 `LoadConfig` 时都报错。
-  匹配只认 raw id（大小写不敏感）+ 可选 `match_exact` / `match_provider`，不认用户改过的 `display_name`。
+  **不改 wire 协议、不执行代码、不碰 tool use**。默认三条：`gpt → OpenAI`、`grok → xAI`、
+  `grok-imagine → xAI 且思考档位清空`；写 `[]` 即关闭。未知档位、空匹配、空定义、重复 id 在写入与
+  `LoadConfig` 时都报错。匹配只认 raw id（大小写不敏感）+ 可选 `match_exact` / `match_provider`，
+  不认用户改过的 `display_name`。
+  **渠道自己的 `model_define_rules`**（`providers.json` 每条渠道上的同名字段）会在全局规则**之后**
+  应用，因此永远优先；`is_final` 只在各自那一层停止，不会挡住另一层。`matched_rules` 用
+  `global:` / `provider:` 前缀标出来源。
 （`host` **默认 `127.0.0.1`**（2026-11-01 用户定：「我们只允许来自 127.0.0.1 的访问」）——
   账号与鉴权都砍了，所以**端口绑定就是唯一的访问闸门**；改成 `0.0.0.0` 即对 LAN 开放，
   那时**没有任何保护**（同网段任何设备都能改数据）。`host`/`port` 随时改这个文件生效（`-addr host:port` 可临时盖）。
   ⚠ 旧配置里若还写着 `0.0.0.0` 与 `jwt_key`：前者**照旧生效**（程序不替人改主意），后者已经没人读（留着无害））
 （`auto_compact` = **自动压缩**开关（**缺字段 = 关**；2026-10-11 用户定——这套未经验证，默认不开，要用的自己去设置里打开；关着就全靠手动 `/compact`）·
   `history_window` = 消息列首屏 / “加载更多”一页多少**段**（默认 **5**；段 = 一条消息或一张顶层摘要卡）；`compact_blocks` = 压缩不给块数时压几个**对话块**（**缺省 3**；2026-10-11 从 5 改 3——小步快跑，每坨原话只嚼一次，且抬头那条路要凑满 N 条同层相邻顶层摘要，N 大常凑不齐直接报无可压缩）；`refresh_models_on_start` = 启动时要不要自动去问每个渠道有哪些模型，**默认 true**，类型是 `*bool` ⇒ 没写就是开）
-- `providers.json` — `{ "providers": [ { "id": "dummy", "vendor": "dummy" }, { "id": "openrouter", "vendor": "openrouter", "api_key": "sk-…", "model_filter": "gpt" }, { "id": "自建", "vendor": "custom", "base_url": "https://…/v1", "api_key": "sk-…" } ] }`（`vendor` 是**唯一必填**；`kind` 只剩存量读入别名，新配置必须写 `vendor`；`protocol` 缺省 `openai-chat-completion`；`max_concurrency` = 该 endpoint 同时最多几个请求，0/缺 = 不限）
+- `providers.json` — `{ "providers": [ { "id": "dummy", "vendor": "dummy" }, { "id": "openrouter", "vendor": "openrouter", "api_key": "sk-…", "model_filter": "gpt" }, { "id": "自建", "vendor": "custom", "base_url": "https://…/v1", "api_key": "sk-…" } ] }`
+  （每条渠道可选 `"model_define_rules": [ … ]` = 该渠道自己的覆盖列表，应用在全局之后、优先；
+  见上面 `config.json` 的规则口径。`vendor` 是**唯一必填**；`kind` 只剩存量读入别名，新配置必须写 `vendor`；`protocol` 缺省 `openai-chat-completion`；`max_concurrency` = 该 endpoint 同时最多几个请求，0/缺 = 不限）
   **密钥就写在这一条里**（空串 = 没配）：整个 `config/` 在忽略范围内；接口一律不回显（只回 `has_key`），调试页读它时先打码；写回权限收紧到 0600。
   **模型筛选器 `model_filter`（2026-10-22 用户定）** = **只有 id 命中任意一条规则的模型才导入**
   （聚合站动辄几百个模型：OpenRouter 实测 470 个，真正常用的就几个）。空 / 纯空白 = **不筛**。
@@ -1347,8 +1353,9 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   `ProviderEditor` 底部「模型（N）」表 —— 家族图标 + 模型名 + 上游 id / `matched_rules` + 上下文；数据直接取 `GET /providers` 的 `models`，
   保存并刷新后用回执里的 `models` 更新（`models` 是唯一状态，数量由它派生）。条目多，表在 `.provider-models` 里内部滚动。
   **2026-11-07**：渠道详情拆成「上游」/「模型配置」两个 tab —— 上游是服务商/端点/密钥/筛选器/并发，
-  模型配置是模型清单 + 全局 `model_define_rules` 的 JSON 编辑器（`ModelRulesEditor.vue`，调用
-  `GET/PUT /config/model-rules`；后端的校验挡住坏规则）。每行「编辑」打开 `ModelEditor.vue`，
+  模型配置是模型清单 + **全局 `model_define_rules`** 与**当前渠道自己的 `model_define_rules`** 两个
+  JSON 编辑器（`ModelRulesEditor.vue`：全局直接调 `GET/PUT /config/model-rules`，渠道级跟着
+  「保存并刷新」落进 `providers.json`；后端的校验挡住坏规则）。每行「编辑」打开 `ModelEditor.vue`，
   改该模型自己的**用户列**（显示名 / 上下文覆盖 / JSON 参数）——
   规则（`model_define_rules`）是家族默认，这里是对单个 `(provider, upstream_id)` 的精确覆盖。空态说清「保存并刷新后会出现在这里」。
 - **设置页平铺列表**（2026-11-04 统一设计系统）：`.settings-card` 只剩分节容器（无底色/圆角/内边距），字段行之间一条 `--line`；不再“卡片套卡片”。**tab 分两族**（2026-11-06 用户定「用真正的 Vuetify TabBar/TabItem」）：设置 / Agent 二级页用 Vuetify `VTabs`（MD3 primary tabs + slider + tabpanel）；上下文五 tab 与顶栏聊天·上下文也是 Vuetify `VTabs`；两边都由 `VTabsWindow` 做左右滑动（上下文五个 `VTabsWindowItem`，顶栏两个）。窄屏把 `v-tab` 压到 `min-width:0`，放得下（不再靠 show-arrows 吃 104px）。

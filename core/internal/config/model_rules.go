@@ -112,17 +112,32 @@ func (r ModelDefineRule) validate() error {
 	return nil
 }
 
-// ModelProfile：按顺序把命中的规则覆盖到 fallback 画像上。
+// ModelProfile：按顺序把命中的**全局**规则覆盖到 fallback 画像上。
 //
 // fallback.ThinkingLevels 是代码里的默认能力（providers.ThinkingLevels）；
 // 规则没有写 thinking_levels 时保留它。Brand/Icon 留空 = 界面自己回退。
 func (c Config) ModelProfile(providerID, upstreamID string, fallback ModelProfile) ModelProfile {
+	return c.ModelProfileWithRules(providerID, upstreamID, fallback, nil)
+}
+
+// ModelProfileWithRules：全局规则先、渠道规则后（渠道永远优先）。
+//
+// `is_final` 只在各自那一层里停止：全局规则 final 不会挡住渠道自定义规则，
+// 否则“渠道覆盖全局”就不成立了。matched_rules 带 `global:` / `provider:` 前缀，
+// 方便界面解释这条画像到底是谁给的。
+func (c Config) ModelProfileWithRules(providerID, upstreamID string, fallback ModelProfile, providerRules []ModelDefineRule) ModelProfile {
 	profile := ModelProfile{
 		Brand:          fallback.Brand,
 		Icon:           fallback.Icon,
 		ThinkingLevels: append([]string{}, fallback.ThinkingLevels...),
 	}
-	for index, rule := range c.ModelDefineRules {
+	profile = applyModelRules(profile, c.ModelDefineRules, providerID, upstreamID, "global")
+	profile = applyModelRules(profile, providerRules, providerID, upstreamID, "provider")
+	return profile
+}
+
+func applyModelRules(profile ModelProfile, rules []ModelDefineRule, providerID, upstreamID, scope string) ModelProfile {
+	for index, rule := range rules {
 		if !rule.matches(providerID, upstreamID) {
 			continue
 		}
@@ -139,7 +154,7 @@ func (c Config) ModelProfile(providerID, upstreamID string, fallback ModelProfil
 		if label == "" {
 			label = fmt.Sprintf("#%d", index+1)
 		}
-		profile.MatchedRules = append(profile.MatchedRules, label)
+		profile.MatchedRules = append(profile.MatchedRules, scope+":"+label)
 		if rule.IsFinal {
 			break
 		}

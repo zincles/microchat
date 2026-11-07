@@ -505,6 +505,11 @@ type Provider struct {
 	// Endpoints：预设专用（protocol → 整条 URL 的端点表）；只透传，校验在 providers 侧 ——
 	// 配置里写了会被忽略+log（不断老配置）。
 	Endpoints map[string]string `json:"endpoints,omitempty"`
+	// ModelDefineRules：**这条渠道自己的**模型定义规则（可选）。
+	//
+	// 应用顺序：全局 config.model_define_rules 先，渠道的这张表后；后者只负责覆盖前者，
+	// 所以渠道规则永远优先。`is_final` 只在各自那一层里停止，不会挡住另一层。
+	ModelDefineRules []ModelDefineRule `json:"model_define_rules,omitempty"`
 }
 
 type Timeouts struct {
@@ -625,6 +630,11 @@ func LoadProviders(paths Paths) (ProvidersConfig, error) {
 	var providers ProvidersConfig
 	if err := json.Unmarshal(raw, &providers); err != nil {
 		return ProvidersConfig{}, err
+	}
+	for _, provider := range providers.Providers {
+		if err := ValidateModelDefineRules(provider.ModelDefineRules); err != nil {
+			return ProvidersConfig{}, fmt.Errorf("providers.json[%s]：%w", provider.ID, err)
+		}
 	}
 	return providers, nil
 }

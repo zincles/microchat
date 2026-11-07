@@ -455,6 +455,8 @@ export interface ProviderView {
   identity: string;
   last_refresh_at: number | null;
   models: ModelView[];
+  // 当前渠道自己的覆盖规则（应用在全局规则之后，优先）。
+  model_define_rules?: ModelDefineRule[];
 }
 
 export interface TestProviderResult {
@@ -638,6 +640,7 @@ export interface CreateProviderRequest {
   api_key?: string;
   model_filter?: string;
   max_concurrency?: number;
+  model_define_rules?: ModelDefineRule[];
 }
 
 export interface UpdateProviderRequest {
@@ -650,6 +653,7 @@ export interface UpdateProviderRequest {
   api_key?: string;
   model_filter?: string;
   max_concurrency?: number;
+  model_define_rules?: ModelDefineRule[];
 }
 
 export interface TestProviderRequest {

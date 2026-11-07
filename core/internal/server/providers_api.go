@@ -39,6 +39,8 @@ type ProviderView struct {
 	Identity      string      `json:"identity"`
 	LastRefreshAt *int64      `json:"last_refresh_at"`
 	Models        []ModelView `json:"models"`
+	// ModelDefineRules：这条渠道自己的覆盖规则（全局规则不在这一格；前端模型配置页要能编辑它）。
+	ModelDefineRules []config.ModelDefineRule `json:"model_define_rules,omitempty"`
 }
 
 // ModelView：一个模型的全貌（发现列 + 用户列；`name` 已是三级回退后的结果）。
@@ -88,6 +90,8 @@ type CreateProviderReq struct {
 	// ModelFilter：模型筛选器（省略 / 空 = 不筛）。校验在 ValidateModelFilter（坏写法 ⇒ 422）。
 	ModelFilter    *string `json:"model_filter"`
 	MaxConcurrency *int    `json:"max_concurrency"`
+	// ModelDefineRules：新建时可带的渠道级规则（应用在全局规则之后）。
+	ModelDefineRules []config.ModelDefineRule `json:"model_define_rules,omitempty"`
 }
 
 type UpdateProviderReq struct {
@@ -105,12 +109,14 @@ type UpdateProviderReq struct {
 	// （筛选是在发现那一步做的，配置本身不会回头去动已有的行）。
 	ModelFilter    *string `json:"model_filter"`
 	MaxConcurrency *int    `json:"max_concurrency"`
+	// ModelDefineRules：nil = 不动；[] = 清空。应用在全局规则之后（优先）。
+	ModelDefineRules *[]config.ModelDefineRule `json:"model_define_rules"`
 }
 
-func (s *Server) modelView(row store.ModelRow) ModelView {
-	profile := s.config.ModelProfile(row.Provider, row.UpstreamID, config.ModelProfile{
+func (s *Server) modelView(row store.ModelRow, providerRules []config.ModelDefineRule) ModelView {
+	profile := s.config.ModelProfileWithRules(row.Provider, row.UpstreamID, config.ModelProfile{
 		ThinkingLevels: providers.ThinkingLevels(row.UpstreamID),
-	})
+	}, providerRules)
 	return ModelView{
 		UpstreamID:      row.UpstreamID,
 		Name:            registry.DisplayName(row.DisplayName, row.UpstreamName, row.UpstreamID),
@@ -172,7 +178,7 @@ func (s *Server) createProvider(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	provider := config.Provider{ID: req.ID, Kind: "", BaseURL: "", Headers: req.Headers,
-		APIKey: deref(req.APIKey), ModelFilter: deref(req.ModelFilter)}
+		APIKey: deref(req.APIKey), ModelFilter: deref(req.ModelFilter), ModelDefineRules: req.ModelDefineRules}
 	if req.MaxConcurrency != nil {
 		if *req.MaxConcurrency < 0 {
 			writeError(w, http.StatusUnprocessableEntity, "invalid", "max_concurrency 不能是负数")
@@ -202,6 +208,10 @@ func (s *Server) createProvider(w http.ResponseWriter, r *http.Request) {
 	// 筛选器坏了在**写入时**就拦（同 abilities / segments 的"写入即报错"口径）：
 	// 让它落进文件再去刷新，就会出现"刷新失败/筛空"这种隔了一层才知道的错。
 	if err := registry.ValidateModelFilter(provider.ModelFilter); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "invalid", err.Error())
+		return
+	}
+	if err := config.ValidateModelDefineRules(provider.ModelDefineRules); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "invalid", err.Error())
 		return
 	}
@@ -265,8 +275,15 @@ func (s *Server) updateProvider(w http.ResponseWriter, r *http.Request) {
 		}
 		provider.MaxConcurrency = *req.MaxConcurrency
 	}
+	if req.ModelDefineRules != nil { // None = 不动；[] = 清空
+		provider.ModelDefineRules = *req.ModelDefineRules
+	}
 	// 筛选器坏了在写入时就拦（createProvider 那边同一个口径）
 	if err := registry.ValidateModelFilter(provider.ModelFilter); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "invalid", err.Error())
+		return
+	}
+	if err := config.ValidateModelDefineRules(provider.ModelDefineRules); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "invalid", err.Error())
 		return
 	}
@@ -498,9 +515,11 @@ func (s *Server) listProviderPresets(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
 	configs := s.loadProviders()
 	names := map[string]*string{}
+	rulesByProvider := map[string][]config.ModelDefineRule{}
 	for _, provider := range configs.Providers {
 		view := providerView(provider)
 		names[provider.ID] = view.Name
+		rulesByProvider[provider.ID] = provider.ModelDefineRules
 	}
 	rows, err := s.store.ListModels("")
 	if err != nil {
@@ -509,7 +528,7 @@ func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
 	}
 	items := make([]ModelListItem, 0, len(rows))
 	for _, row := range rows {
-		view := s.modelView(row)
+		view := s.modelView(row, rulesByProvider[row.Provider])
 		items = append(items, ModelListItem{
 			Provider: row.Provider, ProviderName: names[row.Provider],
 			UpstreamID:     view.UpstreamID,
@@ -552,9 +571,13 @@ func (s *Server) setModelOverride(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
+	providerRules := []config.ModelDefineRule(nil)
+	if provider, ok := s.providerByID(req.Provider); ok {
+		providerRules = provider.ModelDefineRules
+	}
 	for _, row := range rows {
 		if row.UpstreamID == req.UpstreamID {
-			writeJSON(w, http.StatusOK, s.modelView(row))
+			writeJSON(w, http.StatusOK, s.modelView(row, providerRules))
 			return
 		}
 	}
@@ -583,6 +606,7 @@ func providerView(provider config.Provider) ProviderView {
 		HasKey: provider.APIKey != "", ModelFilter: provider.ModelFilter,
 		MaxConcurrency: provider.MaxConcurrency,
 		Identity:       string(effective.Identity), Models: []ModelView{},
+		ModelDefineRules: provider.ModelDefineRules,
 	}
 }
 
@@ -604,7 +628,7 @@ func (s *Server) providerViewWithModels(provider config.Provider) ProviderView {
 	}
 	items := make([]ModelView, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, s.modelView(row))
+		items = append(items, s.modelView(row, provider.ModelDefineRules))
 	}
 	view := providerView(provider)
 	view.Models = items
