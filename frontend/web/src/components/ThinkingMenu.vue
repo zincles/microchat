@@ -1,10 +1,9 @@
 <script setup lang="ts">
-// 思考档位选择器（Vuetify 4 MD3）：VMenu + VBtn + VList，菜单/焦点/键盘/点外关闭都由
-// Vuetify 处理；这里只保留"当前档位"与"选中哪个"的业务逻辑。
+// 思考档位选择器（Vuetify 4 MD3）：VMenu + VBtn + VList。
+// 2026-11-07 用户定：从输入栏挪到顶栏模型选择器右边；显示未格式化的 ASCII 档位
+// （default / low / medium / …），不要中文标签。
 import { computed } from "vue";
 import { VBtn, VList, VListItem, VListItemTitle, VMenu } from "vuetify/components";
-import { ICONS } from "./icons.ts";
-import { thinkingLabel } from "../utils/thinking.ts";
 import type { ThinkingOption } from "../utils/thinking.ts";
 
 const props = defineProps<{
@@ -13,9 +12,8 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{ "update:modelValue": [value: string] }>();
 
-const current = computed(
-  () => props.options.find((o) => o.value === props.modelValue) ?? { value: props.modelValue, label: thinkingLabel(props.modelValue) },
-);
+const current = computed(() => props.modelValue || "default");
+const raw = (option: ThinkingOption): string => option.value || "default";
 
 function pick(value: string): void {
   if (value !== props.modelValue) emit("update:modelValue", value);
@@ -23,24 +21,18 @@ function pick(value: string): void {
 </script>
 
 <template>
-  <VMenu
-    location="top end"
-    origin="bottom end"
-    :offset="[0, 8]"
-    :width="180"
-    max-height="50vh"
-  >
+  <VMenu location="bottom end" origin="top end" :offset="[0, 8]" :width="150" max-height="50vh">
     <template #activator="{ props: activatorProps }">
       <VBtn
         v-bind="activatorProps"
         variant="text"
         rounded="xl"
+        size="small"
         class="thinking-btn"
-        :title="`思考等级：${current.label}`"
-        :aria-label="`思考等级：${current.label}`"
+        :title="`thinking: ${current}`"
+        :aria-label="`thinking: ${current}`"
       >
-        <span class="thinking-icon" v-html="ICONS.brain"></span>
-        <span class="thinking-label">{{ current.label }}</span>
+        <span class="thinking-label">{{ current }}</span>
       </VBtn>
     </template>
     <VList
@@ -56,7 +48,7 @@ function pick(value: string): void {
         :active="option.value === modelValue"
         @click="pick(option.value)"
       >
-        <VListItemTitle>{{ option.label }}</VListItemTitle>
+        <VListItemTitle>{{ raw(option) }}</VListItemTitle>
       </VListItem>
     </VList>
   </VMenu>

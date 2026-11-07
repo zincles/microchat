@@ -10,6 +10,8 @@
 // 会话抬头不在顶栏（左栏列表高亮 + 状态行都有它）。
 import { ref, computed, nextTick, watch } from "vue";
 import { VBtn, VBtnToggle, VTab, VTabs } from "vuetify/components";
+import ThinkingMenu from "./ThinkingMenu.vue";
+import type { ThinkingOption } from "../utils/thinking.ts";
 import { ICONS } from "./icons.ts";
 import {
   formatTokens,
@@ -57,11 +59,15 @@ const props = withDefaults(defineProps<{
   // 开关就落在右上角、**绿环左边**（"位于那个绿色圆环左侧"）。放在这一簇而不是别处，
   // 是因为它和环管的是同一件事的两面：环说"占了多少"，工作区说"占的是什么"。
   workspace?: string;
+  thinking?: string;
+  thinkingOptions?: ThinkingOption[];
   // loading：会话正在加载（模型列表也还没就位）⇒ 不拿旧/裸 id 闪一下，直接骨架。
   loading?: boolean;
 }>(), {
   leftHidden: false,
   workspace: "chat",
+  thinking: "",
+  thinkingOptions: () => [],
   loading: false,
 });
 const emit = defineEmits<{
@@ -69,12 +75,14 @@ const emit = defineEmits<{
   "select-model": [value: string];
   "select-agent": [id: string];
   "select-workspace": [workspace: string];
+  "select-thinking": [value: string];
   "cancel-queue": [id: string];
   "cancel-task": [id: string];
 }>();
 function setWorkspace(v: unknown): void {
   if (v === "chat" || v === "context") emit("select-workspace", v);
 }
+function selectThinking(v: string): void { emit("select-thinking", v); }
 
 const modelGroups = ref<ModelGroup[]>([]); // [{provider, items:[{value,label,provider_name,upstream_id}]}]
 const curModel = ref("");
@@ -426,6 +434,13 @@ defineExpose({ setSession, setModels, setAgents, setContext, setStatus, setTasks
           </div>
         </div>
       </template>
+      <ThinkingMenu
+        v-if="thinkingOptions.length"
+        class="top-thinking"
+        :model-value="thinking"
+        :options="thinkingOptions"
+        @update:model-value="selectThinking"
+      />
     </span>
     <span class="header-right">
       <!-- 聊天 / 上下文（2026-10-29 用户定）：开关在环左边；环说"占了多少"，这块说"占的是什么"。 -->

@@ -6,8 +6,6 @@
 import { ref, nextTick } from "vue";
 import { VBtn, VTextarea } from "vuetify/components";
 import { ICONS } from "./icons.ts";
-import ThinkingMenu from "./ThinkingMenu.vue";
-import type { ThinkingOption } from "../utils/thinking.ts";
 
 const emit = defineEmits<{
   "input-text": [text: string];
@@ -15,17 +13,12 @@ const emit = defineEmits<{
   submit: [text: string];
   stop: [];
   menu: [];
-  thinking: [value: string];
 }>();
 
 const props = withDefaults(defineProps<{
   menuOn?: boolean;
-  thinking?: string;
-  thinkingOptions?: ThinkingOption[];
 }>(), {
   menuOn: false,
-  thinking: "",
-  thinkingOptions: () => [],
 });
 
 const text = ref("");
@@ -96,28 +89,20 @@ defineExpose({ submit, clear, setText, text, setRunning });
       >
         <span v-html="ICONS.menu"></span>
       </VBtn>
-      <div class="composer-send-stack">
-        <ThinkingMenu
-          v-if="props.thinkingOptions.length"
-          :model-value="props.thinking"
-          :options="props.thinkingOptions"
-          @update:model-value="$emit('thinking', $event)"
-        />
-        <VBtn
-          id="send-btn"
-          type="button"
-          icon
-          variant="flat"
-          rounded="circle"
-          :color="running ? 'error' : 'primary'"
-          class="composer-send-btn"
-          :title="running ? '停止' : text.trim() ? '发送' : '续写（重发历史）'"
-          :aria-label="running ? '停止' : text.trim() ? '发送' : '续写（重发历史）'"
-          @click="running ? stop() : submit()"
-        >
-          <span v-html="running ? ICONS.stop : text.trim() ? sendSvg : ICONS.cont"></span>
-        </VBtn>
-      </div>
+      <VBtn
+        id="send-btn"
+        type="button"
+        icon
+        variant="flat"
+        rounded="circle"
+        :color="running ? 'error' : 'primary'"
+        class="composer-send-btn"
+        :title="running ? '停止' : text.trim() ? '发送' : '续写（重发历史）'"
+        :aria-label="running ? '停止' : text.trim() ? '发送' : '续写（重发历史）'"
+        @click="running ? stop() : submit()"
+      >
+        <span v-html="running ? ICONS.stop : text.trim() ? sendSvg : ICONS.cont"></span>
+      </VBtn>
     </div>
   </form>
 </template>

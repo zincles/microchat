@@ -795,13 +795,15 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 /* Vuetify 只负责控件外观；这里只做布局（输入占满、按钮贴底一行）。 */
 .composer-input { flex: 1 1 auto; min-width: 0; }
 .composer-actions { flex: none; display: flex; align-items: flex-end; gap: 0.25em; }
-/* 思考档位在发送键**上方**（2026-11-06 用户定）：右侧一列，发送键永远贴底。 */
-.composer-send-stack { display: flex; flex-direction: column; align-items: flex-end; gap: 0.25em; }
 /* 发送图标按 SVG 的几何中心对齐；VBtn 的 content 默认被 inline 基线撑高，箭头会偏上一截。 */
 .composer-send-btn .v-btn__content { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; margin: 0; }
 .composer-send-btn .v-btn__content > span { display: flex; align-items: center; justify-content: center; line-height: 0; }
-.thinking-icon { display: flex; align-items: center; }
-.thinking-label { margin-left: 0.25em; white-space: nowrap; }
+/* 思考档位（2026-11-07 用户定）：模型选择器右边；只显示 raw ASCII 档位。 */
+#chat-col > header .thinking-btn { min-width: 0 !important; height: 2em !important; min-height: 2em !important;
+  padding: 0 0.35em !important; font-size: 0.75em !important; color: var(--md-on-surface-variant);
+  text-transform: none !important; }
+#chat-col > header .thinking-btn:hover { color: var(--md-on-surface); background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); }
+.thinking-label { margin: 0; white-space: nowrap; }
 
 /* —— Vuetify 逃生门（2026-11-06）——
  * Vuetify 4 的样式在 CSS `@layer` 里；本项目旧 CSS 是**未分层**的，按层叠规则会压过 Vuetify。

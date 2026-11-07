@@ -1112,10 +1112,11 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   设置 → 外观 有两格自由输入（CSS `font-family` 写法，可逗号分隔）；`normalizeFontFamily` 拒绝
   `;{}<>`（避免破坏声明），留空/坏值回落系统。
 - **输入框只有发送，且在一体面板里**（2026-11-04 用户定：暂时不做附件/模式，也不留全屏键）：底部现在是 **Vuetify 4 的 `VTextarea` + `VBtn`**（`variant="solo-filled"` / `density="comfortable"` / `rounded="xl"`），不再有 `.composer-box` 那层手写卡；空草稿保留欢迎块。
-- **思考档位放在发送键左边**（2026-11-06 用户定：「和发送按钮摆在一起，摆发送按钮左边」）：
-  `.composer-actions` 是**横向一行**（`菜单? / 思考 / 发送`），思考入口是 Vuetify `VBtn`（`variant="text"`），
-  菜单是 `VMenu`（`location="top end"` / `width=180`）+ `VList`/`VListItem`；不再是手写浮层。
-  输入框从左侧一直用到按钮组前。
+- **思考档位在顶栏模型选择器右边**（2026-11-07 用户定：「挪到顶部栏模型选择器右边，挨着」）：
+  模型名后面紧跟 Vuetify `VBtn`，只显示**未格式化的 ASCII 档位**（`default` / `low` / `medium` / `high` / `xhigh` / `max`，
+  没有中文；空档位显示 `default`）；菜单是 `VMenu`（`location="bottom end"`）+ `VList`/`VListItem`，
+  **从顶栏向下弹**。Composer 不再持有 ThinkingMenu，输入行只剩 `菜单? / 发送`。
+  Session 级字段与后端校验不变（见下）。
   **Session 级**：`sessions.thinking_level`（空 = 跟随模型默认；非空 = `off/minimal/low/medium/high/xhigh/max`），
   建会话 / PATCH / Copy / 草稿预演 / 真发全部带着它；`POST /sessions` 与 `PATCH /sessions/{id}` 都会校验目标模型的能力集。
   **能力集由后端给**（`GET /models` 的 `thinking_levels`，唯一实现 `providers.ThinkingLevels`）—— 前端只摆这些，
@@ -1131,7 +1132,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   开回来在**用户视图 → 输入 → 命令菜单**（个人偏好 `mc_cmd_menu`，保存后**即时生效**，不用刷新）。
 - **输入栏只有一种布局**（2026-11-04 用户定：「不允许再设置紧凑和宽松布局」）：删掉 `float`/`solid` 二选一、`composer_style` 偏好、`data-composer` 属性与对应设置项；统一用 Vuetify MD3 输入栏（`VTextarea` + 右侧 VBtn）。
 - **Vuetify 4 渐进接入**（2026-11-06 用户定：「可以逐渐替换吗？」「使用 Vuetify 内置 MD3 主题，而不是手搓 CSS」）：
-  第一块只有 **Composer + ThinkingMenu**，不套 `VApp`/QLayout 壳。`src/plugins/vuetify.ts`：
+  第一块是 **Composer + 顶栏控件**，不套 VMain/QLayout 壳（2026-11-07 起顶栏也用 VNavigationDrawer/VTabs）。`src/plugins/vuetify.ts`：
   `blueprint: md3` + 三套主题（dark/light/breeze）；**颜色唯一权威是 Vuetify theme**，
   `theme.css` 的 `--md-*` 只是 `rgb(var(--v-theme-*))` 的映射（不再维护第二套色值）；
   `installVuetifyThemeBridge` 用 MutationObserver 跟 `data-theme`。
