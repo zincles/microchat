@@ -3937,3 +3937,10 @@ test("Markdown：列表项里缩进的 $$ 块进入 KaTeX，而不是 <pre><code
   assert.match(html, /katex-display/, "display 公式没有走 KaTeX");
   assert.match(html, /katex/, "行内公式没有走 KaTeX");
 });
+
+// 2026-11-07：中文里 `都**“引号内容”**` 不满足 CommonMark flanking，会露出 raw **。
+test("Markdown：中文标点前的 ** 粗体也能解析", () => {
+  const html = renderMarkdown('无论是哪一类，计算的核心思想都是**“化曲为直，转化为定积分”**。');
+  assert.ok(!html.includes("**"), "还露着 raw **");
+  assert.match(html, /<strong>“化曲为直，转化为定积分”<\/strong>/, "中文引号粗体没解析");
+});

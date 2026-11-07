@@ -44,6 +44,27 @@ function literalInline(raw: unknown): string {
 //
 // 写成 marked 的**行内扩展**：只在"该位置真以 __ 开头"时命中，进了反引号就是 code 的地盘
 // ⇒ `__init__` 这类代码段**保持原样**（盲替换正则会把它也吃掉 ✗）。内容不吃下划线、不跨行。
+// strongCJK：CommonMark 的 flanking 规则会让「都**“引号”**」解析不出粗体
+// （`**` 前是汉字、后是标点，既不算左 flanking 也不算右 flanking）——中文写作里很常见。
+// 只接住「开 ** 紧跟着中文引号/括号」这一种形状，其余 bold 仍交给 marked 默认解析。
+const strongCJKExtension: TokenizerAndRendererExtension = {
+  name: "strongCJK",
+  level: "inline",
+  start(src: string): number | undefined {
+    const m = /\*\*(?=[“”‘’「」『』《》〈〉（）【】])/.exec(src);
+    return m ? m.index : undefined;
+  },
+  tokenizer(src: string) {
+    const m = /^\*\*(?=[“”‘’「」『』《》〈〉（）【】])([^\n]*?[^\s])\*\*/.exec(src);
+    if (!m) return undefined;
+    return { type: "strongCJK", raw: m[0], tokens: this.lexer.inlineTokens(m[1]) };
+  },
+  renderer(token) {
+    if (!on("bold")) return literalInline(token.raw);
+    return `<strong>${this.parser.parseInline(token.tokens ?? [])}</strong>`;
+  },
+};
+
 const underlineExtension: TokenizerAndRendererExtension = {
   name: "underline",
   level: "inline",
@@ -97,7 +118,7 @@ function buildMarked(): Marked {
     breaks: on("breaks"),
     gfm: true,
   });
-  instance.use({ extensions: [underlineExtension] });
+  instance.use({ extensions: [underlineExtension, strongCJKExtension] });
 
   type AnyRenderer = (token: Tokens.Generic) => string;
   const renderer: Record<string, AnyRenderer> = {};
