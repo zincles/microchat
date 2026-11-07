@@ -403,8 +403,19 @@ export interface SetModelRequest {
   params?: unknown;
 }
 
+export interface ModelDefineRule {
+  id?: string;
+  match_contains?: string;
+  match_exact?: string;
+  match_provider?: string;
+  is_final?: boolean;
+  thinking_levels?: string[];
+  brand?: string;
+  icon?: string;
+}
+
 export interface ModelRulesConfig {
-  model_define_rules: Array<Record<string, unknown>>;
+  model_define_rules: ModelDefineRule[];
 }
 
 export interface ProtocolOption {

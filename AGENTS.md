@@ -1346,7 +1346,10 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
 - **渠道详情里的模型清单**（2026-11-02 用户定：「具体某个模型的界面里，应该能看到当前这个渠道导入的模型的列表」）：
   `ProviderEditor` 底部「模型（N）」表 —— 家族图标 + 模型名 + 上游 id / `matched_rules` + 上下文；数据直接取 `GET /providers` 的 `models`，
   保存并刷新后用回执里的 `models` 更新（`models` 是唯一状态，数量由它派生）。条目多，表在 `.provider-models` 里内部滚动。
-  **2026-11-07**：每行「编辑」打开 `ModelEditor.vue`，改该模型自己的**用户列**（显示名 / 上下文覆盖 / JSON 参数）——
+  **2026-11-07**：渠道详情拆成「上游」/「模型配置」两个 tab —— 上游是服务商/端点/密钥/筛选器/并发，
+  模型配置是模型清单 + 全局 `model_define_rules` 的 JSON 编辑器（`ModelRulesEditor.vue`，调用
+  `GET/PUT /config/model-rules`；后端的校验挡住坏规则）。每行「编辑」打开 `ModelEditor.vue`，
+  改该模型自己的**用户列**（显示名 / 上下文覆盖 / JSON 参数）——
   规则（`model_define_rules`）是家族默认，这里是对单个 `(provider, upstream_id)` 的精确覆盖。空态说清「保存并刷新后会出现在这里」。
 - **设置页平铺列表**（2026-11-04 统一设计系统）：`.settings-card` 只剩分节容器（无底色/圆角/内边距），字段行之间一条 `--line`；不再“卡片套卡片”。**tab 分两族**（2026-11-06 用户定「用真正的 Vuetify TabBar/TabItem」）：设置 / Agent 二级页用 Vuetify `VTabs`（MD3 primary tabs + slider + tabpanel）；上下文五 tab 与顶栏聊天·上下文也是 Vuetify `VTabs`；两边都由 `VTabsWindow` 做左右滑动（上下文五个 `VTabsWindowItem`，顶栏两个）。窄屏把 `v-tab` 压到 `min-width:0`，放得下（不再靠 show-arrows 吃 104px）。
 **设置四 tab 与会话/渠道管理页统一 760 居中**（列表页有表格，但切页时宽度不该跳来跳去）。**所有 `h3` 统一一种标题语言**：正文色半粗 + 左侧蓝色短竖条（从前只有卡片里的 h3 有竖条，其它 tab 是裸文字 —— 用户指出不一致）。「输入」卡里是 **发送方式（`enter` / `shift-enter` / `button`）**、输入时预览、命令菜单 —— 这三格在 2026-11-01 从用户视图搬进 `AppearancePane` 时 **refs 与 persist 都搬了、模板整段漏了**（界面上找不到，2026-11-02 补回）。开关一律 `:model-value` + `setX(v) { ref = v; persist(); }`，**别写 `v-model + @update:model-value="persist"`** —— 两个监听同挂 update 时显式那个可能先跑，存进去的是旧值（实测：界面 on、服务端 off）。

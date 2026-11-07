@@ -2,12 +2,13 @@
 // Provider 编辑器（设置视图 Provider tab 内的二级页，列表 ⇄ 详情就地切换）：新建 / 改 vendor/protocol/端点/key。
 // isNew（boolean）：无 provider 快照=新建（空表单）；有=编辑（带入 provider，只发改过的格；key 另填=换，不填=不动）。
 // 内置刷新模型列表 + 刷路由（编辑时直接点，不用退回一级）。
-import { VBtn, VTextField, VSelect, VTable } from "vuetify/components";
+import { VBtn, VTextField, VSelect, VTable, VTab, VTabs, VTabsWindow, VTabsWindowItem } from "vuetify/components";
 import { ref, computed, onMounted, onUnmounted } from "vue";
 import { sharedApi } from "../utils/prefs.ts";
 import { formatTokens, providerIdForNextVendor } from "../utils/format.ts";
 import ModelEditor from "./ModelEditor.vue";
 import ModelIcon from "./ModelIcon.vue";
+import ModelRulesEditor from "./ModelRulesEditor.vue";
 import type {
   CreateProviderRequest,
   ModelView,
@@ -48,6 +49,8 @@ const hasKey = ref(false);
 // 模型列表：能看见"这次刷新导入了什么"，点每行可编辑该模型的用户列。
 const models = ref<ModelView[]>([]);
 const editingModel = ref<ModelView | null>(null);
+// 渠道详情分两页：上游（服务商/端点/密钥）与模型配置（模型清单 + 规则）。
+const tab = ref<"upstream" | "models">("upstream");
 const modelCount = computed(() => models.value.length);
 const presets = ref<PresetInfo[]>([]);
 const status = ref("");
@@ -287,6 +290,12 @@ function onModelSaved(updated: ModelView): void {
       <VBtn icon variant="text" size="small" type="button" title="返回列表（Esc）" @click="emit('close')">←</VBtn>
       <span class="status">{{ isNew ? "新建渠道" : `渠道「${pid}」（${modelCount} 个模型）` }}</span>
     </div>
+    <VTabs v-model="tab" class="agent-tabs" density="compact" align-tabs="start">
+      <VTab value="upstream">上游</VTab>
+      <VTab value="models">模型配置</VTab>
+    </VTabs>
+    <VTabsWindow v-model="tab" class="agent-window">
+    <VTabsWindowItem value="upstream">
     <h3>基本</h3>
     <!-- 先问"服务商"、再问 id（2026-10-28）：从前 id 排在最前面，可它恰恰是**最不该让人自己想**的那格 ——
          改 vendor 时它还会跟着变，先填等于白填。 -->
@@ -319,6 +328,8 @@ function onModelSaved(updated: ModelView): void {
       <VBtn color="error" variant="text" size="small" v-if="!isNew && (hasKey || key)" type="button" @click="clearKey">清密钥</VBtn>
       <span class="status">{{ status }}</span>
     </div>
+    </VTabsWindowItem>
+    <VTabsWindowItem value="models">
     <!-- 模型列表（2026-11-02 用户定）：渠道详情里要看得见「这个渠道导入了哪些模型」。
          2026-11-07：每行可编辑模型自己的用户列（显示名 / 上下文 / 参数）。 -->
     <h3>模型（{{ modelCount }}）</h3>
@@ -339,6 +350,7 @@ function onModelSaved(updated: ModelView): void {
         </tr></tbody>
       </VTable>
     </div>
+    <ModelRulesEditor />
     <ModelEditor
       v-if="editingModel"
       :provider="pid"
@@ -346,5 +358,7 @@ function onModelSaved(updated: ModelView): void {
       @close="editingModel = null"
       @saved="onModelSaved"
     />
+    </VTabsWindowItem>
+    </VTabsWindow>
   </div>
 </template>

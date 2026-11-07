@@ -33,6 +33,7 @@ import type {
   MergedStream,
   Message,
   ModelListItem,
+  ModelRulesConfig,
   ModelView,
   SetModelRequest,
   PayloadPreview,
@@ -393,6 +394,9 @@ export function createApi({ base, token = "", fetchFn = fetch }: CreateApiOption
     models: () => call<ModelListItem[]>("GET", "/models"),
     // 模型用户列（显示名 / 上下文覆盖 / 参数）。刷新模型时后端永不动这三格。
     setModel: (body: SetModelRequest) => call<ModelView>("PATCH", "/models", body),
+    // 模型定义规则（全局）：读/整份写。规则只覆写展示与思考档位，不执行代码。
+    modelRules: () => call<ModelRulesConfig>("GET", "/config/model-rules"),
+    saveModelRules: (body: ModelRulesConfig) => call<ModelRulesConfig>("PUT", "/config/model-rules", body),
     agents: () => call<AgentsConfig>("GET", "/agents"),
     // 对话记录导出/导入（JSON，2026-10-11）：只带 role+content+标题（不含 system prompt / agent）。
     // 导出 = 会话域（owner 自己就能导）；导入 = 设置面（admin，与 ST 导入一致）。
