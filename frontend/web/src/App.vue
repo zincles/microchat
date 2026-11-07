@@ -2,7 +2,7 @@
 // App.vue —— 三栏骨架 + 全部接线（原 main.js + 九个桥，合一）。
 // 组件直接挂模板，ref 直调实例方法，不再经 *-vue.js 桥 / mount.js。
 import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
-import { VBtn } from "vuetify/components";
+import { VApp, VBtn } from "vuetify/components";
 import { createApi, mergeStreamSlice, probeHealth } from "./api/client.ts";
 import { parseCommand, filterCommands, COMMAND_META } from "./utils/commands.ts";
 import { uuidv7 } from "./utils/ids.ts";
@@ -1900,7 +1900,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div id="app">
+  <VApp>
     <!-- 更新条：**悬浮**在输入栏上方（fixed + bottom: --composer-h + 0.5em），不占布局。
          从前试过流内横幅：它会把整个应用往下推、独自占掉一大段；用户 2026-11-06 要求改回悬浮。 -->
     <UpdateBar v-if="updateReady" ref="updateRef" @update="applyUpdate" />
@@ -2069,5 +2069,5 @@ onUnmounted(() => {
       @close="sessionSettingsId = null"
       @renamed="() => { refreshSessionsBar(); if (sessionSettingsId === sessionID) enterSession(sessionID).catch(() => {}); sessionSettingsId = null; }"
     />
-  </div>
+  </VApp>
 </template>

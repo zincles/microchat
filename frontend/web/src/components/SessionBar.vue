@@ -2,7 +2,7 @@
 // 左会话栏：列表 + 新建 + 置底设置按钮。
 // 每条只有一枚「选项」（竖三点）：设置与删除都收进那块浮板 —— 行内不再挤两枚键。
 import { ref, computed, nextTick, onMounted, onUnmounted } from "vue";
-import { VBtn, VBtnToggle } from "vuetify/components";
+import { VBtn, VBtnToggle, VNavigationDrawer } from "vuetify/components";
 import { ICONS } from "./icons.ts";
 import { groupSessions } from "../utils/sessionGroups.ts";
 import type { SessionView } from "../api/types.ts";
@@ -116,7 +116,7 @@ defineExpose({ setSessions });
 </script>
 
 <template>
-  <aside id="sessions-bar">
+  <VNavigationDrawer id="sessions-bar" :model-value="true" permanent :width="280" :scrim="false" :touchless="true" class="sessions-drawer">
     <div class="bar-head">
       <!-- Brand Title（2026-11-06 用户定）：原来放大 tab 的位置换作品牌；
            下面依次是新对话 → 对话/生图 → 会话列表（Gemini 式左侧栏）。 -->
@@ -244,7 +244,7 @@ defineExpose({ setSessions });
         设置
       </VBtn>
     </div>
-  </aside>
+  </VNavigationDrawer>
   <Teleport to="body">
     <div v-if="menu" class="session-menu-backdrop" @click="closeMenu"></div>
     <div

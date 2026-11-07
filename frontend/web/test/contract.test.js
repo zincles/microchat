@@ -3944,3 +3944,17 @@ test("Markdown：中文标点前的 ** 粗体也能解析", () => {
   assert.ok(!html.includes("**"), "还露着 raw **");
   assert.match(html, /<strong>“化曲为直，转化为定积分”<\/strong>/, "中文引号粗体没解析");
 });
+
+// 2026-11-07 用户定：左栏用 Vuetify 原生 VNavigationDrawer；VApp 只作 layout provider。
+test("左栏：VApp + VNavigationDrawer（桌面是布局列，移动端是抽屉）", () => {
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.match(app, /<VApp>/, "App 根不是 VApp");
+  assert.match(bar, /<VNavigationDrawer[^>]*id="sessions-bar"/, "左栏不是 VNavigationDrawer");
+  assert.match(bar, /:model-value="true"[^>]*permanent/, "左栏没有 permanent");
+  assert.match(bar, /:scrim="false"/, "左栏用了 Vuetify 自己的遮罩（我们仍有 #scrim-left）");
+  assert.match(css, /#sessions-bar\.v-navigation-drawer \{[^}]*position:\s*relative !important/, "桌面抽屉没变成布局列");
+  assert.match(css, /#sessions-bar > \.v-navigation-drawer__content \{[^}]*display:\s*flex[^}]*flex-direction:\s*column/, "抽屉内容没接上旧 flex 布局");
+  assert.match(css, /#sessions-bar\.collapsed \{[^}]*translateX\(-102%\) !important/, "移动端收起没有滑出（被 inline transform 压住）");
+});

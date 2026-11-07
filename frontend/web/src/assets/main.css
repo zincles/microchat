@@ -350,7 +350,14 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 #columns { flex: 1; display: flex; gap: 0; min-height: 0; min-width: 0; }
 /* #content = 左栏右边那一整块：对话 / 设置**同级**（OpenWebUI 那种；2026-10-10 起设置不再是弹窗）。 */
 #content { flex: 1 1 auto; display: flex; min-width: 0; min-height: 0; }
+/* VApp 只作为 VNavigationDrawer 的 layout provider；#app 仍是自己的 flex 壳。
+   ⚠ VApp 自己会渲染 .v-application，别再给它 id="app"（外层挂载点已经有 id=app，会重复）。 */
+#app > .v-application { flex: 1 1 auto; min-height: 0; }
+#app > .v-application > .v-application__wrap { min-height: 0; height: 100%; }
 #sessions-bar { width: 280px; flex: none; align-self: stretch; max-height: 100%; background: var(--md-surface-container-low); color: var(--md-on-surface); border-radius: 0; display: flex; flex-direction: column; overflow: hidden; min-height: 0; box-sizing: border-box; border-right: none; }
+/* VNavigationDrawer 作为**布局里的左栏**，不是 fixed overlay；移动端仍由下面的断点改回 fixed。 */
+#sessions-bar.v-navigation-drawer { position: relative !important; inset: auto !important; height: auto !important; max-height: 100%; width: 280px !important; flex: none; transform: none; z-index: auto; }
+#sessions-bar > .v-navigation-drawer__content { display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: hidden; }
 /* 上下文面板（2026-10-29 从右栏搬进工作区）：**tabs 常驻顶部**，三个面板各自是**滚动子界面** ——
  * 面板本身不滚。这条形状是 2026-10-17 竖起来的，别改回去：从前面板自己滚、又没有高度约束
  * （永远滚不动），而 `overscroll-behavior: contain` 把链式滚动**断在"滚不动的自己"身上** ⇒
@@ -527,7 +534,8 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 /* 断点 700 与 App.vue 的 BP 常量同源，改一处要改两处。 */
 @media (max-width: 700px) {
   #sessions-bar { position: fixed; inset: 0 auto 0 0; z-index: 16; width: min(86vw, 340px); max-height: none; border-right: 1px solid var(--line); transform: none; opacity: 1; visibility: visible; transition: transform var(--md-dur-300) var(--md-ease-emphasized), visibility 0s linear var(--md-dur-300); box-shadow: var(--md-elev-3); }
-  #sessions-bar.collapsed { transform: translateX(-102%); max-width: none; opacity: 1; visibility: hidden; }
+  #sessions-bar.v-navigation-drawer { position: fixed !important; inset: 0 auto 0 0 !important; width: min(86vw, 340px) !important; height: 100% !important; max-height: none; }
+  #sessions-bar.collapsed { transform: translateX(-102%) !important; max-width: none; opacity: 1; visibility: hidden; }
   #scrim-left { display: block; position: fixed; inset: 0; z-index: 15; background: rgb(0 0 0 / 45%); opacity: 0; pointer-events: none; transition: opacity 180ms ease-out; }
   #sessions-bar:not(.collapsed) ~ #scrim-left { opacity: 1; pointer-events: auto; }
   /* 底部留白别砍光（砍光过：滚到底时最后一条会滑到任务行底下，像被底栏"挡"住）——
