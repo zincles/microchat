@@ -3952,6 +3952,8 @@ test("左栏：VApp + VNavigationDrawer（桌面是布局列，移动端是抽�
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   assert.match(app, /<VApp>/, "App 根不是 VApp");
   assert.match(bar, /<VNavigationDrawer[^>]*id="sessions-bar"/, "左栏不是 VNavigationDrawer");
+  assert.match(app, /<SessionBar[\s\S]*?:collapsed="leftHidden"/, "左栏 collapsed 没跟响应式 leftHidden 绑定");
+  assert.match(bar, /:class="\{ collapsed: props\.collapsed \}"/, "VNavigationDrawer 自己没绑 collapsed（外部 classList 会被重渲染抹掉）");
   assert.match(bar, /:model-value="true"[^>]*permanent/, "左栏没有 permanent");
   assert.match(bar, /:scrim="false"/, "左栏用了 Vuetify 自己的遮罩（我们仍有 #scrim-left）");
   assert.match(css, /#sessions-bar\.v-navigation-drawer \{[^}]*position:\s*relative !important/, "桌面抽屉没变成布局列");

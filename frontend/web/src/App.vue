@@ -1907,6 +1907,7 @@ onUnmounted(() => {
     <div id="columns">
       <SessionBar
         ref="sessionbarRef"
+        :collapsed="leftHidden"
         :busy-ids="busyIds"
         :loading="sessionsLoading"
         :refreshing="sessionsRefreshing"

@@ -24,12 +24,14 @@ const emit = defineEmits<{
 // busyIds：App 从 `/tasks` 那一拍算出来的"此刻有任务在跑的会话"（判定在 `utils/tasks.ts`）。
 // 行内环只吃这一处 —— 别在组件里再 filter 一遍任务表（两处判据一分岔，同一时刻会显示两个答案）。
 const props = withDefaults(defineProps<{
+  collapsed?: boolean;
   busyIds?: string[];
   // loading：首次拿会话列表（boot）—— 画骨架，别显示"还没有会话"（那是假话）。
   loading?: boolean;
   // refreshing：后台在补一次列表（10 秒保鲜期外）—— 顶部一条 MD3 linear progress。
   refreshing?: boolean;
 }>(), {
+  collapsed: false,
   busyIds: () => [],
   loading: false,
   refreshing: false,
@@ -116,7 +118,16 @@ defineExpose({ setSessions });
 </script>
 
 <template>
-  <VNavigationDrawer id="sessions-bar" :model-value="true" permanent :width="280" :scrim="false" :touchless="true" class="sessions-drawer">
+  <VNavigationDrawer
+    id="sessions-bar"
+    :model-value="true"
+    permanent
+    :width="280"
+    :scrim="false"
+    :touchless="true"
+    class="sessions-drawer"
+    :class="{ collapsed: props.collapsed }"
+  >
     <div class="bar-head">
       <!-- Brand Title（2026-11-06 用户定）：原来放大 tab 的位置换作品牌；
            下面依次是新对话 → 对话/生图 → 会话列表（Gemini 式左侧栏）。 -->
