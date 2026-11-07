@@ -50,7 +50,7 @@ const hasKey = ref(false);
 // 模型列表：能看见"这次刷新导入了什么"，点每行可编辑该模型的用户列。
 const models = ref<ModelView[]>([]);
 const editingModel = ref<ModelView | null>(null);
-// 当前渠道自己的规则；全局规则由 ModelRulesEditor(scope=global) 直接读写。
+// 当前渠道自己的规则；全局规则在「设置 → 渠道 → 全局模型规则」那一页。
 const customRules = ref<ModelDefineRule[]>([]);
 const baseCustomRules = ref("[]");
 // 渠道详情分两页：上游（服务商/端点/密钥）与模型配置（模型清单 + 规则）。
@@ -367,7 +367,6 @@ function onCustomRulesSaved(rules: ModelDefineRule[]): void {
         </tr></tbody>
       </VTable>
     </div>
-    <ModelRulesEditor @saved="emit('model-saved')" />
     <ModelRulesEditor scope="provider" :rules="customRules" @save="onCustomRulesSaved" />
     <ModelEditor
       v-if="editingModel"

@@ -12,6 +12,7 @@ import SegmentEditor from "./SegmentEditor.vue";
 import assistantPreset from "../../presets/assistant.json";
 import rpPreset from "../../presets/rp-agent.json";
 import ProviderEditor from "./ProviderEditor.vue";
+import ModelRulesEditor from "./ModelRulesEditor.vue";
 import { ICONS } from "./icons.ts";
 import { sharedApi } from "../utils/prefs.ts";
 import { SETTINGS_TABS, groupModelsByProvider, modelOption, providerChoices, modelChoicesFor, modelKey, parseModelKey } from "../utils/format.ts";
@@ -73,6 +74,8 @@ const modelGroups = ref<ModelGroup[]>([]);
 const titleModelOptions = computed<Array<{ value: string; label: string }>>(() => modelGroups.value.flatMap((g) =>
   (g.items ?? []).map((item) => ({ value: item.value, label: `${g.provider} / ${item.label}` }))));
 const editProvider = ref<any>(null); // null | 'new' | provider（二级编辑器）
+// 渠道页本身也分两页：列表 / 全局模型规则（后者与列表同级，不塞进单个渠道的详情）。
+const providerTab = ref<"list" | "global">("list");
 const routesStatus = ref("");
 
 async function loadChat(): Promise<void> {
@@ -598,6 +601,12 @@ function onKey(e: KeyboardEvent): void {
         <VTabsWindowItem value="provider">
         <section id="panel-provider" class="panel">
           <template v-if="!editProvider">
+            <VTabs v-model="providerTab" class="agent-tabs" density="compact" align-tabs="start">
+              <VTab value="list">渠道列表</VTab>
+              <VTab value="global">全局模型规则</VTab>
+            </VTabs>
+            <VTabsWindow v-model="providerTab" class="agent-window">
+            <VTabsWindowItem value="list">
             <h3>渠道</h3>
             <p class="hint">一条渠道 = 用哪个服务商、哪个密钥、哪些模型。点一行编辑；模型数是上次刷新到的数量。</p>
             <div id="provider-list">
@@ -616,6 +625,11 @@ function onKey(e: KeyboardEvent): void {
               <VBtn color="primary" variant="flat" size="small" type="button" @click="editProvider = 'new'">新建</VBtn>
               <span class="status">{{ routesStatus }}</span>
             </div>
+            </VTabsWindowItem>
+            <VTabsWindowItem value="global">
+              <ModelRulesEditor @saved="emit('models-changed')" />
+            </VTabsWindowItem>
+            </VTabsWindow>
           </template>
           <ProviderEditor
             v-else

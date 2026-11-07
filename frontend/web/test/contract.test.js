@@ -1946,7 +1946,10 @@ test("设置：没有「连接」页，也没有绑不存在的 saveNet", () => 
 test("设置页签：五区 + 会话/渠道独立入口", () => {
   const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
   const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
-  const panels = [...settings.matchAll(/<VTabsWindowItem value="([a-z]+)"/g)].map((m) => m[1]);
+  // 渠道页内部还有「渠道列表 / 全局模型规则」两个二级页签（list/global），
+  // 它们不在设置主栏里；这里只取真正的设置 panel。
+  const panels = [...settings.matchAll(/<VTabsWindowItem value="([a-z]+)"/g)]
+    .map((m) => m[1]).filter((id) => id !== "list" && id !== "global");
   // 六个 panel 都在真正的 tabpanel 里（session/provider 由独立入口打开）。
   assert.deepEqual([...panels].sort(), ["agent", "appearance", "chat", "prompt", "provider", "session", "tavern"],
     `panel 不齐：${panels.join(", ")}`);
