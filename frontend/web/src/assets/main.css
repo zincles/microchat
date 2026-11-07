@@ -237,6 +237,19 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .ws-switch .v-btn { min-width: 0 !important; height: 2.25em !important; min-height: 2.25em !important;
   padding: 0.4em 0.65em !important; border-radius: var(--md-shape-full);
   color: var(--md-on-surface-variant); text-transform: none; font-size: 0.875em !important; font-weight: 500; letter-spacing: 0.006em; }
+/* 顶栏工作区 tab 条：两枚短 tab，别让 Vuetify 的 90px min-width 把顶栏撑宽。 */
+#chat-col > header .workspace-tabs { flex: none; height: 2.1em !important; min-height: 2.1em !important; }
+#chat-col > header .workspace-tabs .v-tab { min-width: 0 !important; height: 2.1em !important; min-height: 2.1em !important;
+  padding: 0 0.55em !important; text-transform: none !important; font-size: 0.875em !important; font-weight: 500 !important;
+  letter-spacing: 0.006em; color: var(--md-on-surface-variant); }
+#chat-col > header .workspace-tabs .v-tab.v-tab--selected { color: var(--md-primary); }
+/* 工作区窗口：聊天与上下文共用一块，由 VTabsWindow 做左右滑动。 */
+.workspace-window { flex: 1 1 auto; min-height: 0; width: 100%; }
+/* VWindow 的 container/item 高度必须显式钉死，否则 #messages-vue 会被内容撑到 2000px。 */
+.workspace-window > .v-window__container { height: 100% !important; min-height: 0; }
+.workspace-window .v-window-item { height: 100% !important; min-height: 0; }
+.workspace-pane { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.workspace-pane > #messages-vue, .workspace-pane > #context-workspace { flex: 1 1 auto; min-height: 0; }
 .ws-switch .v-btn.v-btn--active { color: var(--md-primary); }
 .ws-switch .v-btn:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 1px; }
 /* 窄屏：顶栏那一行本来就挤（头像 + 模型名 + 环），但**不能靠缩字**换空间 ——
@@ -484,7 +497,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
  * `#composer{position:absolute}`(1-0-0)，输入行的悬浮层会被它悄悄扳回 relative（2026-10-14 踩过）。
  * `#messages-vue` 也豁免：它要**占满整个对话区**（滚动条贴最右缘），阅读列约束落在里面的
  * `.messages-inner`（2026-10-14 用户定：滚动条离右边一段空白看得难受）。 */
-#chat-col > *:not(header):not(#messages-vue) { max-width: var(--read-col, 840px); margin-left: auto; margin-right: auto; width: 100%; box-sizing: border-box; }
+#chat-col > *:not(header):not(#messages-vue):not(.workspace-window) { max-width: var(--read-col, 840px); margin-left: auto; margin-right: auto; width: 100%; box-sizing: border-box; }
 /* 顶栏 = **悬浮层**，且**全透明**（2026-10-14 用户定：不折腾模糊了 —— 无毛玻璃、无渐隐，
  * 就一层浮字；滑过的内容照原样透过去，字靠双层柔影读清，见 header 的 text-shadow）。
  * 底部输入栏现在交给 Vuetify 的 VTextarea 浮卡底（见下方 `.composer-input`）。 */
@@ -1287,13 +1300,14 @@ button.danger:hover { background: color-mix(in srgb, var(--md-error) 8%, transpa
 #sessions-bar #session-new { min-height: 3em; margin: 0.1em 0.55em 0.4em; }
 #sessions-bar #session-list { padding: 0.12em 0.3em 0.4em; }
 
-#chat-col > header { min-height: 3.05em; height: 3.05em; padding: 0.2em 0.7em; gap: 0.4em; }
-.agent-btn { width: 2.5em; height: 2.5em; }
-#ctx-ring { width: 2.25em; height: 2.25em; }
-.model-btn { min-height: 2.25em; }
+#chat-col > header { min-height: 2.65em; height: 2.65em; padding: 0.15em 0.6em; gap: 0.3em; }
+@media (max-width: 700px) { #chat-col > header { height: auto; } }
+.agent-btn { width: 2.2em; height: 2.2em; }
+#ctx-ring { width: 2em; height: 2em; }
+.model-btn { min-height: 2em; }
 
-.messages-inner { padding-top: 3.5em; gap: 0.55em; }
-#context-workspace { padding-top: 3.5em; }
+.messages-inner { padding-top: 3.15em; gap: 0.55em; }
+#context-workspace { padding-top: 3.15em; }
 .msg-wrap.assistant .msg { padding: 0.25em 0; }
 .msg.user { padding: 0.45em 0.75em; }
 .msg .msg-head { margin-bottom: 0.2em; }

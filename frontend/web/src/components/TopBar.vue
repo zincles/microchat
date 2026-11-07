@@ -9,7 +9,7 @@
 // （同一个人永远同一个色）；点开掉出浮板选人。状态行小字里那个助手名管"显示"，头像管"选"。
 // 会话抬头不在顶栏（左栏列表高亮 + 状态行都有它）。
 import { ref, computed, nextTick, watch } from "vue";
-import { VBtn, VBtnToggle } from "vuetify/components";
+import { VBtn, VBtnToggle, VTab, VTabs } from "vuetify/components";
 import { ICONS } from "./icons.ts";
 import {
   formatTokens,
@@ -429,17 +429,17 @@ defineExpose({ setSession, setModels, setAgents, setContext, setStatus, setTasks
     </span>
     <span class="header-right">
       <!-- 聊天 / 上下文（2026-10-29 用户定）：开关在环左边；环说"占了多少"，这块说"占的是什么"。 -->
-      <VBtnToggle
+      <VTabs
         :model-value="workspace"
-        class="ws-switch"
-        mandatory
-        variant="text"
+        class="ws-switch workspace-tabs"
+        density="compact"
+        color="primary"
         aria-label="工作区"
         @update:model-value="setWorkspace"
       >
-        <VBtn value="chat" title="对话本身">聊天</VBtn>
-        <VBtn value="context" title="上下文工作区（压缩出来的前情提要、层级、状态、真发出去的载荷）">上下文</VBtn>
-      </VBtnToggle>
+        <VTab value="chat" title="对话本身">聊天</VTab>
+        <VTab value="context" title="上下文工作区（压缩出来的前情提要、层级、状态、真发出去的载荷）">上下文</VTab>
+      </VTabs>
       <!-- 顺序是**环在左、开关在右**（2026-10-28 用户定）：开关是"控制栏的按钮"，
            它是这一簇的锚，位置稳定；环是随状态变的仪表，挂在它左边不抢锚点。 -->
       <!-- 上下文占比环（2026-11-02 合并后台任务）：环长 = 已用 / 输入预算；绿正常、红超预算。

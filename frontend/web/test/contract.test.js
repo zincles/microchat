@@ -1989,18 +1989,20 @@ test("上下文工作区：开关在绿环左边，只切内容不切顶栏", ()
   const app = readFileSync(join(SRC, "..", "src", "App.vue"), "utf8").replace(/<!--[\s\S]*?-->/g, "");
 
   // ① 顺序：ws-switch 出现在 ctx-ring 之前，且都在 .header-right 里
-  const switchAt = top.indexOf('class="ws-switch"');
+  const switchAt = top.indexOf('class="ws-switch workspace-tabs"');
   const ringAt = top.indexOf('id="ctx-ring"');
   const rightAt = top.indexOf('class="header-right"');
   assert.ok(switchAt > 0 && ringAt > 0 && rightAt > 0, "找不到 ws-switch / ctx-ring / header-right");
   assert.ok(rightAt < switchAt, "两段开关该在 .header-right 里（与环同一簇）");
   assert.ok(switchAt < ringAt, "开关该在绿环**左边**（用户原话），现在顺序反了");
 
-  // ② 顶栏不在切换范围内：只有消息列 / 输入行 / 工作区三处带 v-show
-  assert.match(app, /<main id="messages-vue" v-show="workspace === 'chat'"/, "消息列没跟着工作区切");
-  assert.match(app, /<Composer\s+v-show="workspace === 'chat'"/, "输入行没跟着工作区切");
-  // 标签现在是多行的（它接了 ref / 三个事件）⇒ 用 [\s\S] 跨行，别指望它一行写完。
-  assert.match(app, /<ContextWorkspace\s+v-show="workspace === 'context'"/, "工作区没挂上");
+  // ② 顶栏不在切换范围内：聊天 / 上下文住在 VTabsWindow 里；顶栏不许有 v-show/v-if
+  assert.match(app, /<VTabsWindow v-model="workspace" class="workspace-window"/, "工作区没有被 VTabsWindow 接住");
+  assert.match(app, /<VTabsWindowItem value="chat">[\s\S]*?<main id="messages-vue">/, "聊天页不在 window item 里");
+  assert.match(app, /<VTabsWindowItem value="context">[\s\S]*?<ContextWorkspace/, "上下文页不在 window item 里");
+  assert.ok(!/<main id="messages-vue" v-show/.test(app), "消息列还在用 v-show");
+  assert.ok(!/<Composer\s+v-show/.test(app), "输入行还在用 v-show");
+  assert.ok(!/<ContextWorkspace\s+v-show/.test(app), "上下文还在用 v-show");
   // 顶栏那行不许出现 workspace 的 v-show/v-if（切掉它 = 再也切不回来）
   const topbarTag = app.match(/<TopBar[\s\S]*?\/>/)?.[0] ?? "";
   assert.ok(!/v-show=|v-if=/.test(topbarTag), "顶栏被绑上了显示条件 —— 切到上下文就再也切不回来");
@@ -2235,14 +2237,15 @@ test("上下文工作区：平铺，不许再长出卡片和气泡", () => {
 // padding-top）是唯一给它让位的东西。所以"放大"这件事有个硬上限：
 // **总高不能超过那截留白**，否则第一条消息会被压在开关底下（不报错，只是看不见）。
 // 这条按实际声明**算一遍**，两头都钉：够大（别悄悄改小）、又没顶到天花板。
-test("工作区开关：VBtnToggle，尺寸仍在顶栏内", () => {
+test("工作区开关：VTabs，尺寸仍在顶栏内", () => {
   const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  assert.match(top, /<VBtnToggle[\s\S]*?class="ws-switch"/, "工作区开关不是 VBtnToggle");
-  assert.match(top, /<VBtn value="chat"[^>]*>聊天<\/VBtn>/, "缺「聊天」");
-  assert.match(top, /<VBtn value="context"[^>]*>上下文<\/VBtn>/, "缺「上下文」");
-  assert.match(css, /\.ws-switch \.v-btn \{[^}]*min-height:\s*2\.25em/, "工作区键没有高度");
-  assert.match(css, /\.ws-switch \.v-btn \{[^}]*font-size:\s*0\.875em/, "工作区键字号丢了");
+  assert.match(top, /<VTabs[\s\S]*?class="ws-switch workspace-tabs"/, "工作区开关不是 VTabs");
+  assert.match(top, /<VTab value="chat"[^>]*>聊天<\/VTab>/, "缺「聊天」");
+  assert.match(top, /<VTab value="context"[^>]*>上下文<\/VTab>/, "缺「上下文」");
+  assert.match(css, /#chat-col > header \.workspace-tabs \.v-tab \{[^}]*height:\s*2\.1em/, "工作区 tab 没有高度");
+  assert.match(css, /#chat-col > header \.workspace-tabs \.v-tab \{[^}]*font-size:\s*0\.875em/, "工作区 tab 字号丢了");
+  assert.match(css, /#chat-col > header \.workspace-tabs \.v-tab\.v-tab--selected/, "工作区选中 tab 没有 primary 色");
 });
 
 
@@ -3330,7 +3333,7 @@ test("设计系统：tab 统一下划线、设置平铺、圆角收口", () => {
   // 顶栏/上下文都换成了 Vuetify 组件，indicator 由 VBtnToggle / VTabs 自己画。
   const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
   const bar = readFileSync(join(SRC, "components", "PayloadBar.vue"), "utf8");
-  assert.match(top, /<VBtnToggle[\s\S]*?class="ws-switch"/, "顶栏工作区不是 VBtnToggle");
+  assert.match(top, /<VTabs[\s\S]*?class="ws-switch workspace-tabs"/, "顶栏工作区不是 VTabs");
   assert.match(bar, /<VTabs[\s\S]*?class="context-tabs"/, "上下文 tab 不是 VTabs");
   // 设置页：无卡片底、无连体组圆角
   assert.match(css, /\.settings-card \{[^}]*background:\s*none[^}]*padding:\s*0/, "设置分节还带卡片底");
@@ -3645,9 +3648,9 @@ test("顶栏 MD3：surface 容器 / 40dp 文本按钮 / MD3 菜单 / 两段 tab 
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   const header = css.match(/#chat-col > header \{(?=[^}]*position:\s*absolute)[^}]*\}/)?.[0] ?? "";
   assert.match(header, /background:\s*var\(--md-surface-container-low\)/, "顶栏不是 MD3 surface 容器");
-  assert.match(css, /#chat-col > header \{ min-height:\s*3\.05em; height:\s*3\.05em; padding:\s*0\.2em 0\.7em;/, "顶栏没有在 48dp 上再缩 20%");
+  assert.match(css, /#chat-col > header \{ min-height:\s*2\.65em; height:\s*2\.65em; padding:\s*0\.15em 0\.6em;/, "顶栏没有再收窄到 2.65em");
   assert.match(header, /box-shadow:\s*var\(--shadow-top\)/, "顶栏丢了向下阴影（用户 2026-11-01 定）");
-  assert.match(css, /\.model-btn \{[^}]*min-height:\s*2\.5em/, "模型按钮不是 40dp");
+  assert.match(css, /\.model-btn \{[^}]*min-height:\s*2em/, "模型按钮没有收窄到 2em");
   assert.match(css, /\.model-btn \{[^}]*border-radius:\s*var\(--md-shape-full\)/, "模型按钮不是 full 圆角");
   assert.match(css, /\.agent-menu \{[^}]*background:\s*var\(--md-surface-container\)/, "菜单不是 MD3 surface-container");
   assert.match(css, /\.agent-menu \{[^}]*border-radius:\s*var\(--md-shape-xs\)/, "菜单不是 4dp 圆角");
@@ -3659,8 +3662,8 @@ test("顶栏 MD3：surface 容器 / 40dp 文本按钮 / MD3 菜单 / 两段 tab 
   assert.match(top, /@keydown\.esc="closeMenus"/, "顶栏浮板没有 Esc 统一收起");
   assert.match(top, /function closeMenus\(\)/, "没有 closeMenus");
   assert.match(css, /\.model-item \{[^}]*min-height:\s*3em/, "模型项不是 48dp");
-  assert.match(top, /<VBtnToggle[\s\S]*?class="ws-switch"/, "顶栏工作区不是 VBtnToggle");
-  assert.match(css, /#ctx-ring \{[^}]*width:\s*2\.5em/, "上下文环没有 40dp 触控盒");
+  assert.match(top, /<VTabs[\s\S]*?class="ws-switch workspace-tabs"/, "顶栏工作区不是 VTabs");
+  assert.match(css, /#ctx-ring \{[^}]*width:\s*2em/, "上下文环没有收窄到 2em");
   assert.match(css, /\.ctx-ring-track \{[^}]*var\(--md-outline-variant\)/, "环轨道不是 outline-variant");
   assert.match(css, /\.ctx-ring-fill \{[^}]*stroke:\s*var\(--tg-ok\)/, "环的正常色不该丢（绿=正常）");
 });
@@ -3812,8 +3815,9 @@ test("密度：行高/顶栏/FAB/输入/设置/消息间距都收了一档", () 
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   assert.match(css, /#sessions-bar \.session-item \{[^}]*min-height:\s*2\.4em/, "会话行没收到紧凑密度（2.4em）");
   assert.match(css, /#sessions-bar #session-new \{[^}]*min-height:\s*3em/, "FAB 没收到 48dp");
-  assert.match(css, /#chat-col > header \{ min-height:\s*3\.05em/, "顶栏没有在 48dp 上再缩 20%");
+  assert.match(css, /#chat-col > header \{ min-height:\s*2\.65em/, "顶栏没有再收窄到 2.65em");
   assert.match(css, /\.messages-inner \{[^}]*gap:\s*0\.55em/, "消息间距没收到 0.55em");
+  assert.match(css, /\.messages-inner \{[^}]*padding-top:\s*3\.15em/, "消息列顶部留白没跟着顶栏收");
   assert.match(css, /\.settings-cols \.panel \.field, \.settings-cols \.panel \.row \{[^}]*padding:\s*0\.45em/, "设置行没收到 0.45em");
   assert.match(css, /\.agent-item, \.model-item \{[^}]*min-height:\s*2\.5em/, "菜单项没收到 40dp");
 });

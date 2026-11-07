@@ -376,8 +376,9 @@ delete(AA)           # 删除
   **最后一条用户消息**句首（历史不动；前缀缓存友好）。
 
 **上下文工作区**（2026-10-29 用户定：「每个对话分为俩部分：对话界面 和 上下文工作区 界面」）：
-顶栏右上角、**绿环左边**一颗两段开关（`.ws-switch`，`role=tablist`）切 `聊天 / 上下文`；
-切的是 `#messages-vue` + `#composer` 与 `ContextWorkspace.vue`（三处 `v-show`）。
+顶栏右上角、**绿环左边**一组 `VTabs`（`.workspace-tabs`）切 `聊天 / 上下文`；
+下面用 `VTabsWindow` 装两个 `VTabsWindowItem`（chat / context），**左右滑动动画由 VWindow 负责**。
+聊天页里是 `#messages-vue` + `#composer`，上下文页里是 `ContextWorkspace.vue`；不再用 `v-show`。
 **顶栏不在切换范围内**（它自己带着开关，切掉就再也点不回来 —— 死锁）；**状态不写 localStorage**
 （存下来下次打开直接落在空白工作区，人会以为消息没了）；换会话也不重置（正对照上下文时不该被弹出去）。
 2026-10-29 第二轮（用户：「要不我们把右侧栏那个上下文给挪过来？」）：**右侧载荷栏整块搬进工作区** ——
@@ -1189,7 +1190,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   正文 `#e3e3e3`、次要文字 `#c4c7c5`、主色 `#a8c7fa`、on-primary `#062e6f`、错误 `#f2b8b5`。
   自定义 CSS 的 `--tg-*` 暗色值同步对齐（bg / secondary-bg / float / text / hint / link / button / button-text）；
   亮色与 Breeze 不动。三套主题仍共用同一套 MD3 语义。
-  **落点先左栏 + 顶栏 + 输入区**（2026-11-05 第二刀；2026-11-06 起上下文五 tab 用 VTabs、顶栏工作区用 VBtnToggle、消息/摘要操作键用 VBtn）：左栏规则以 `#sessions-bar` 前缀收口
+  **落点先左栏 + 顶栏 + 输入区**（2026-11-05 第二刀；2026-11-06 起上下文五 tab 用 VTabs、顶栏工作区用 VTabs + VTabsWindow、消息/摘要操作键用 VBtn）：左栏规则以 `#sessions-bar` 前缀收口
   （`.bar-head` / `.empty` 是共享类，直接改会波及上下文工作区）。左栏结构 = MD3 navigation drawer：
   顶部**占满栏宽**的 segmented button（对话/生图，VBtnToggle）+ 标准 icon button；新建 = **extended FAB**（primary-container、elevation 1→2、按下 scale）；
   列表 = 48dp 行、full 圆角、选中 secondary-container、`::after` 状态层（内容 z-index 压在它上面）；
@@ -1198,8 +1199,9 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   reduced-motion 停转但保留缺口弧。**加载效果**：`sessionsLoading` → 6 条 shimmer 骨架（`aria-busy` 同步），
   `sessionsRefreshing` → header 下 3dp indeterminate linear progress。行进场 = `session-item-in`（200ms emphasized），
   reduced-motion 不跑。
-  **顶栏**（2026-11-05 第二刀；2026-11-06 再缩 20%）：`#chat-col > header` = MD3 top app bar
-  （surface-container-low、`3.05em` ≈ 45.75px、保留向下的阴影、不描线）；模型按钮 = 40dp full 圆角 text button；Agent 头像 = 40dp avatar（状态层 / 按下 scale）；
+  **顶栏**（2026-11-05 第二刀；2026-11-06 再缩 20%；2026-11-07 再收窄）：`#chat-col > header` = MD3 top app bar
+  （surface-container-low、`2.65em` ≈ 39.75px、保留向下的阴影、不描线；≤700px 高度 auto，长模型名换行时自己长高）；
+  模型按钮 = 2em full 圆角 text button；Agent 头像 = 2.2em avatar（状态层 / 按下 scale）；
   模型/Agent/上下文浮板 = MD3 menu（surface-container、4dp 圆角、elevation 2、48dp 行）+ `md-menu-in` 进场，
   顶栏整体接 `@keydown.esc`（一次收起所有浮板）；工作区 聊天/上下文 = MD3 primary tabs（3dp 圆角 indicator，宽度过渡）；
   上下文环 = 40dp 触控盒、track 用 outline-variant、弧仍是 `--tg-ok`（绿=正常 / 红=超预算）。
@@ -1256,16 +1258,14 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   ⚠ 波纹圆挂在宿主内的 **`.md-ripple-layer`**（absolute inset 0 + `border-radius: inherit` +
   overflow hidden）上，不是直接挂宿主：某些按钮/列表行的绝对定位子元素会逃出宿主的圆角裁剪
   （用户报「波纹扩散到按钮外部」），独立裁剪层是确定性的兜底。
-  ⚠ **tab 类要再收一档**：设置 tab 的按钮框比视觉 thumb 高 0.2em×2、顶栏/上下文 tab 只有
-  文字 + 下划线却带着 0.4em 内边距 —— 波纹铺满按钮框会从视觉胶囊/文字外溢。三处的裁剪层
-  额外 `inset`（`.ws-switch .ws-tab` / `.bar-head.bar-tabs .tab`）收进"看得见的那块"；
-  设置/Agent 的 VTabs 用自己的 `v-tab` 状态层，不在这张表里。
+  ⚠ **tab 类不在这张表里**：设置 / Agent / 顶栏工作区 / 上下文五 tab 都已用 Vuetify `VTabs`，
+  状态层与波纹由 `v-tab` 自己管；旧 `.ws-tab` / `.bar-head.bar-tabs .tab` 已删。
   `prefers-reduced-motion` 下**整个不做**。⚠ 圆心 left/top 是**相对宿主**的，
   `rippleSpec` 必须减 `rect.left/top`（漏过：圆画到视口坐标、被裁掉 ⇒ 像没生效）。
   **密度**（2026-11-06 用户：「MD3 padding 太浪费」；2026-11-07 会话列表再收紧）：
   `main.css` 末尾一块密度覆盖 —— 会话行 48→**≈37px**（`min-height:2.4em`，图标键同步 2.4em）、
   分组标题 `0.55em/0.75em/0.2em`（首组 0.32em）、列表内边距 `0.12em/0.3em/0.4em`、
-  顶栏 56→45.75、FAB 56→48、输入框 ~69→55、菜单 48→40、设置行 0.7→0.45em、
+  顶栏 56→39.75、FAB 56→48、输入框 ~69→55、菜单 48→40、设置行 0.7→0.45em、
   消息间距 0.8→0.55em。**只改尺寸不改语义**：8dp 圆角、state layer、secondary-container 选中态、
   label-large 字号全部保留；要整体调松/调紧只改这一块。
   ⚠ 字体：2026-11-06 已按 MD3 换成自托管 **Roboto Flex**（旧 Inter 删除）；`--app-font-body` 的自定义
@@ -1329,7 +1329,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   `ProviderEditor` 底部「模型（N）」一张**只读**表 —— 模型名 + 上游 id（小字并排）+ 上下文；数据直接取 `GET /providers` 的 `models`，
   保存并刷新后用回执里的 `models` 更新（`models` 是唯一状态，数量由它派生）。条目多，表在 `.provider-models` 里内部滚动。
   不摆编辑入口（显示名/覆盖是模型自己的事）；空态说清「保存并刷新后会出现在这里」。
-- **设置页平铺列表**（2026-11-04 统一设计系统）：`.settings-card` 只剩分节容器（无底色/圆角/内边距），字段行之间一条 `--line`；不再“卡片套卡片”。**tab 分两族**（2026-11-06 用户定「用真正的 Vuetify TabBar/TabItem」）：设置 / Agent 二级页用 Vuetify `VTabs`（MD3 primary tabs + slider + tabpanel）；上下文这些 tab 与顶栏聊天·上下文仍是手写下划线。窄屏把设置/Agent 的 `v-tab` 压到 `min-width:0`，四个都放得下（不再靠 show-arrows 吃 104px）。
+- **设置页平铺列表**（2026-11-04 统一设计系统）：`.settings-card` 只剩分节容器（无底色/圆角/内边距），字段行之间一条 `--line`；不再“卡片套卡片”。**tab 分两族**（2026-11-06 用户定「用真正的 Vuetify TabBar/TabItem」）：设置 / Agent 二级页用 Vuetify `VTabs`（MD3 primary tabs + slider + tabpanel）；上下文五 tab 与顶栏聊天·上下文也是 Vuetify `VTabs`；顶栏那组由 `VTabsWindow` 做左右滑动。窄屏把 `v-tab` 压到 `min-width:0`，放得下（不再靠 show-arrows 吃 104px）。
 **设置四 tab 与会话/渠道管理页统一 760 居中**（列表页有表格，但切页时宽度不该跳来跳去）。**所有 `h3` 统一一种标题语言**：正文色半粗 + 左侧蓝色短竖条（从前只有卡片里的 h3 有竖条，其它 tab 是裸文字 —— 用户指出不一致）。「输入」卡里是 **发送方式（`enter` / `shift-enter` / `button`）**、输入时预览、命令菜单 —— 这三格在 2026-11-01 从用户视图搬进 `AppearancePane` 时 **refs 与 persist 都搬了、模板整段漏了**（界面上找不到，2026-11-02 补回）。开关一律 `:model-value` + `setX(v) { ref = v; persist(); }`，**别写 `v-model + @update:model-value="persist"`** —— 两个监听同挂 update 时显式那个可能先跑，存进去的是旧值（实测：界面 on、服务端 off）。
   **文案一律说人话**（2026-11-02 用户「审计设计界面里有哪些不说人话的部分」）：可见标签不再用 `Agent` / `vendor` / `protocol` / `载荷` / `卡带` / `提示词段` 这类内部词 ——
   `Agent → 智能体`、`发送键 → 发送方式`、`预演载荷 → 输入时预览`、`提示词段 → 提示词片段`、`卡带 → 智能体文件`、`首段对话 → 开场白`、`句首贴状态 → 在消息开头附上当前状态`、`走哪家/说什么话 → 服务商/接口类型`。

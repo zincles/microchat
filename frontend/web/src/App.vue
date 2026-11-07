@@ -2,7 +2,7 @@
 // App.vue —— 三栏骨架 + 全部接线（原 main.js + 九个桥，合一）。
 // 组件直接挂模板，ref 直调实例方法，不再经 *-vue.js 桥 / mount.js。
 import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
-import { VApp, VBtn } from "vuetify/components";
+import { VApp, VBtn, VTabsWindow, VTabsWindowItem } from "vuetify/components";
 import { createApi, mergeStreamSlice, probeHealth } from "./api/client.ts";
 import { parseCommand, filterCommands, COMMAND_META } from "./utils/commands.ts";
 import { uuidv7 } from "./utils/ids.ts";
@@ -1938,7 +1938,11 @@ onUnmounted(() => {
       @cancel-queue="cancelQueue"
       @cancel-task="cancelTask"
     />
-        <main id="messages-vue" v-show="workspace === 'chat'">
+        <!-- 聊天 / 上下文：VTabsWindow 真正负责左右滑动；顶栏的 VTabs 只管 tab 条。 -->
+        <VTabsWindow v-model="workspace" class="workspace-window">
+        <VTabsWindowItem value="chat">
+        <div class="workspace-pane">
+        <main id="messages-vue">
           <!-- 滚动容器（#messages-vue）现在**占满整个对话区**（滚动条因此贴最右缘，2026-10-14 用户定）；
                阅读列约束（760 居中、两侧 56px、上下留白）落在这一层 —— 气泡别拉成整屏长句。 -->
           <div class="messages-inner">
@@ -2001,7 +2005,6 @@ onUnmounted(() => {
           </div>
         </main>
     <Composer
-      v-show="workspace === 'chat'"
       ref="composerRef"
       :menu-on="cmdMenu"
       :thinking="currentThinking"
@@ -2013,10 +2016,13 @@ onUnmounted(() => {
       @stop="stopCurrent"
       @menu="() => overlaysRef?.showPalette(filterCommands(''))"
     />
+        </div>
+        </VTabsWindowItem>
     <!-- 上下文工作区（2026-10-29 用户定）：与消息列 + 输入行互斥 —— 同一块地方换个视角看。
          顶栏不在切换范围内（它自己带着那颗开关，切掉就找不回来了）。 -->
+    <VTabsWindowItem value="context">
+    <div class="workspace-pane">
     <ContextWorkspace
-      v-show="workspace === 'context'"
       ref="payloadbarRef"
       :has-session="!!sessionInfo.id"
       :session-id="sessionInfo.id"
@@ -2028,6 +2034,9 @@ onUnmounted(() => {
       @preview="onPayloadPreview"
       @advanced-done="onAdvancedDone"
     />
+    </div>
+    </VTabsWindowItem>
+        </VTabsWindow>
       </section>
       <SettingsModal
         v-if="settingsOpen"
