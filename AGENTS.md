@@ -1112,6 +1112,11 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   设置 → 外观 有两格自由输入（CSS `font-family` 写法，可逗号分隔）；`normalizeFontFamily` 拒绝
   `;{}<>`（避免破坏声明），留空/坏值回落系统。
 - **输入框只有发送，且在一体面板里**（2026-11-04 用户定：暂时不做附件/模式，也不留全屏键）：底部现在是 **Vuetify 4 的 `VTextarea` + `VBtn`**（`variant="solo-filled"` / `density="comfortable"` / `rounded="xl"`），不再有 `.composer-box` 那层手写卡；空草稿保留欢迎块。
+  **宽度与正文一致**（2026-11-07 用户定）：`#composer` 不再是 `left:0;right:0` 全宽，而是
+  `width: min(calc(100% - 1.2em), var(--read-col, 840px))` + `left:50%` / `translateX(-50%)`；
+  桌面宽 840 与 `.messages-inner` 对齐，手机两侧留 0.6em。
+  **颜色降亮**：输入框 `bg-color="surface-container"`（不是 high）；发送键 `primary-container`
+  （深蓝底 + on-primary-container 图标），不再用亮 `primary` 大圆。
 - **思考档位在顶栏模型选择器右边**（2026-11-07 用户定：「挪到顶部栏模型选择器右边，挨着」）：
   模型名后面紧跟 Vuetify `VBtn`，只显示**未格式化的 ASCII 档位**（`default` / `low` / `medium` / `high` / `xhigh` / `max`，
   没有中文；空档位显示 `default`）；菜单是 `VMenu`（`location="bottom end"`）+ `VList`/`VListItem`，

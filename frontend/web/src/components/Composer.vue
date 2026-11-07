@@ -64,7 +64,7 @@ defineExpose({ submit, clear, setText, text, setRunning });
       :model-value="text"
       variant="solo-filled"
       density="comfortable"
-      bg-color="surface-container-high"
+      bg-color="surface-container"
       flat
       hide-details
       auto-grow
@@ -95,7 +95,7 @@ defineExpose({ submit, clear, setText, text, setRunning });
         icon
         variant="flat"
         rounded="circle"
-        :color="running ? 'error' : 'primary'"
+        :color="running ? 'error' : 'primary-container'"
         class="composer-send-btn"
         :title="running ? '停止' : text.trim() ? '发送' : '续写（重发历史）'"
         :aria-label="running ? '停止' : text.trim() ? '发送' : '续写（重发历史）'"

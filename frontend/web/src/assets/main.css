@@ -790,8 +790,9 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
  * 整行 0.72 的底噪，hover 整行才提到 1；按钮本身不再单独藏。 */
 /* 重摇位次牌（气泡下 ◀ 2/3 ▶ 的中间那块）。 */
 .msg-ops .reroll-pos { font-size: var(--md-type-label-small); color: var(--md-on-surface-variant); padding: 0 0.2em; font-variant-numeric: tabular-nums; }
-#composer { position: absolute; bottom: 0; left: 0; right: 0; display: flex; align-items: flex-end; gap: 0.5em;
-  background: none; z-index: 5; padding: 0.6em 0.6em calc(0.6em + env(safe-area-inset-bottom, 0px)); }
+#composer { position: absolute; bottom: 0; left: 50%; right: auto; width: min(calc(100% - 1.2em), var(--read-col, 840px));
+  display: flex; align-items: flex-end; gap: 0.5em; background: none; z-index: 5;
+  padding: 0.6em 0.6em calc(0.6em + env(safe-area-inset-bottom, 0px)); }
 /* Vuetify 只负责控件外观；这里只做布局（输入占满、按钮贴底一行）。 */
 .composer-input { flex: 1 1 auto; min-width: 0; }
 .composer-actions { flex: none; display: flex; align-items: flex-end; gap: 0.25em; }
@@ -817,7 +818,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
  * 往下看顶栏往上让位、往回看底栏往下让位，**进度与位移成正比**（不是到阈值才啪一下）。
  * 短过渡只为把抖动抹平（浏览器工具栏也是这个味道）；reduced-motion 里关掉。 */
 #chat-col > header { transform: translateY(calc(-1 * var(--chrome-top, 0px))); transition: transform 90ms linear; }
-#composer { transform: translateY(var(--chrome-bottom, 0px)); transition: transform 90ms linear; }
+#composer { transform: translateX(-50%) translateY(var(--chrome-bottom, 0px)); transition: transform 90ms linear; }
 @media (prefers-reduced-motion: reduce) { #chat-col > header, #composer { transition: none; } }
 /* ⚠ 这里原本有"任务行进栏"那条规则（`.taskline` 占一整行、`order: -1` 排在输入框上面）
  * 和上面「两个隔间」那段历史。**2026-11-01 整块删掉了**：后台任务已并进顶栏的上下文环（`#ctx-ring`），

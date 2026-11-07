@@ -3058,7 +3058,10 @@ test("输入框：Vuetify MD3 输入栏 + 发送键", () => {
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   assert.match(composer, /import \{ VBtn, VTextarea \} from "vuetify\/components"/, "输入栏没用 Vuetify 组件");
   assert.match(composer, /<VTextarea[\s\S]*variant="solo-filled"/, "输入框不是 Vuetify MD3 filled 形态");
-  assert.match(composer, /bg-color="surface-container-high"/, "输入框没用 MD3 容器色");
+  assert.match(composer, /bg-color="surface-container"/, "输入框没用 MD3 容器色");
+  assert.match(css, /#composer \{[^}]*width:\s*min\(calc\(100% - 1\.2em\), var\(--read-col, 840px\)\)/, "输入栏没有与正文同宽");
+  assert.match(css, /#composer \{[^}]*left:\s*50%/, "输入栏没有居中");
+  assert.match(css, /#composer \{[^}]*transform:\s*translateX\(-50%\)/, "输入栏居中位移没接上");
   assert.match(composer, /class="composer-actions"/, "按钮列没有容器");
   assert.match(composer, /id="send-btn"/, "没有发送键");
   assert.ok(!composer.includes('id="expand-btn"'), "全屏键还留着");
@@ -3678,7 +3681,7 @@ test("输入区：Vuetify 4 MD3 接管 input/send/think", () => {
   // 组件：Vuetify 自己的输入/按钮/菜单，不再手写 .composer-box / #send-btn 外形
   assert.match(composer, /<VTextarea[\s\S]*variant="solo-filled"/, "输入框不是 Vuetify MD3");
   assert.match(composer, /<VBtn[\s\S]*id="send-btn"/, "发送键不是 Vuetify VBtn");
-  assert.match(composer, /:color="running \? 'error' : 'primary'"/, "停止态不是 MD3 error");
+  assert.match(composer, /:color="running \? 'error' : 'primary-container'"/, "发送键不是低亮 primary-container");
   assert.match(thinking, /<VMenu[\s\S]*location="bottom end"/, "思考菜单不是顶栏向下弹");
   assert.match(thinking, /<VList/, "思考选项不是 Vuetify VList");
   assert.match(thinking, /<VBtn/, "思考入口不是 Vuetify VBtn");
