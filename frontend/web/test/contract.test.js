@@ -1686,6 +1686,19 @@ test("能力中文名：前端 ABILITY_LABELS 与后端 definitions 的 Label �
   assert.deepEqual(ABILITY_LABELS, goLabels, "前端能力名与后端 Label 对不上");
 });
 
+// 模型规则：结构化编辑器（不是让用户裸改 JSON）。规则有顺序，必须能移动。
+test("模型规则编辑器：结构化控件 + 顺序调整，不是 JSON textarea", () => {
+  const editor = readFileSync(join(SRC, "components", "ModelRulesEditor.vue"), "utf8");
+  assert.ok(!/<textarea/i.test(editor), "模型规则编辑器不该是裸 JSON textarea");
+  assert.match(editor, /新增规则/, "缺少新增规则入口");
+  assert.match(editor, /moveRule/, "缺少规则顺序调整");
+  assert.match(editor, /VSwitch/, "缺少 is_final / thinking 开关");
+  const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
+  assert.match(settings, /<VTab value="global">全局模型规则<\/VTab>/, "全局规则该和渠道列表同级");
+  const provider = readFileSync(join(SRC, "components", "ProviderEditor.vue"), "utf8");
+  assert.match(provider, /<ModelRulesEditor scope="provider"/, "渠道详情该有自己的覆盖规则编辑器");
+});
+
 // —— 顶栏的模型选择浮板（2026-10-28 用户定：「可否把模型的那个选择器也改成这种自定义的面板，
 // 按 Provider 分类的（接近 openwebui 风格的）面板？」）——
 // 从前是个静默 `<select>`。换成自己的面板之后有两块要能验：
