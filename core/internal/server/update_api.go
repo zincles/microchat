@@ -35,11 +35,14 @@ func (s *Server) updateStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	// 远端查询单独短超时：没网/私有仓库也不该让本地版本面板转 8 秒。
 	remoteCtx, cancelRemote := context.WithTimeout(r.Context(), 6*time.Second)
-	remote := update.ReadRemote(remoteCtx, status.Branch)
+	remote := update.ReadRemote(remoteCtx, status.Branch, status.Commit)
 	cancelRemote()
 	status.RemoteCommit = remote.Commit
 	status.RemoteShort = remote.Short
 	status.RemoteError = remote.Error
+	status.RemoteRelation = remote.Relation
+	status.Ahead = remote.Ahead
+	status.Behind = remote.Behind
 	writeJSON(w, http.StatusOK, status)
 }
 

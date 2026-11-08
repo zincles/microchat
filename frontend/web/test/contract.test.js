@@ -3364,7 +3364,8 @@ test("更新面板：显示提交 + 拉取并重启（由 entrypoint 接手）",
   assert.match(pane, /GitHub 最新版本/, "没有 GitHub 最新版本区块");
   assert.match(pane, /status\.remote_short/, "更新面板没显示 GitHub 最新提交");
   assert.match(pane, /status\.remote_commit === status\.commit/, "没有把当前提交和远端最新匹配");
-  assert.match(pane, /remote_error/, "读不到远端时没有说明");
+  assert.match(pane, /remote_relation === 'ahead'/, "没有区分本地领先远端");
+  assert.match(pane, /remote_relation === 'behind'/, "没有区分本地落后远端");
   assert.match(pane, /pullUpdate/, "更新面板没有拉取动作");
   assert.match(pane, /started_at !== baseline/, "重启后没有等新进程（会被旧进程骗过去）");
   assert.match(pane, /restart_supported/, "没区分容器部署与宿主二进制");

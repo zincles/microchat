@@ -134,7 +134,17 @@ onMounted(() => { load().catch(() => {}); });
             <p v-if="status.remote_commit" class="update-compare"
               :class="status.remote_commit === status.commit ? 'update-ok' : 'update-warn'"
               :title="status.remote_commit">
-              {{ status.remote_commit === status.commit ? "✓ 已是最新提交" : "远端有新提交，可拉取并重启" }}
+              <template v-if="status.remote_commit === status.commit">✓ 已是最新提交</template>
+              <template v-else-if="status.remote_relation === 'ahead'">
+                本地领先远端 {{ status.ahead || 0 }} 个提交（尚未推送）
+              </template>
+              <template v-else-if="status.remote_relation === 'behind'">
+                远端有新提交 {{ status.behind || 0 }} 个，可拉取并重启
+              </template>
+              <template v-else-if="status.remote_relation === 'diverged'">
+                本地与远端已分叉，先处理再拉取
+              </template>
+              <template v-else>远端有新提交，可拉取并重启</template>
             </p>
             <p v-else-if="status.remote_error" class="hint update-warn">
               无法读取 GitHub 最新提交：{{ status.remote_error }}

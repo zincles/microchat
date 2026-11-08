@@ -11,10 +11,12 @@ package update
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -37,21 +39,27 @@ type Status struct {
 	RestartSupported bool `json:"restart_supported"`
 	// RemoteCommit / RemoteShort：origin 上目标分支的最新提交（git ls-remote）。
 	// 读不到（没网/没 origin/私有仓库要凭据）只填 RemoteError，不让整个面板失败。
-	RemoteCommit string `json:"remote_commit,omitempty"`
-	RemoteShort  string `json:"remote_short,omitempty"`
-	RemoteError  string `json:"remote_error,omitempty"`
+	RemoteCommit   string `json:"remote_commit,omitempty"`
+	RemoteShort    string `json:"remote_short,omitempty"`
+	RemoteError    string `json:"remote_error,omitempty"`
+	RemoteRelation string `json:"remote_relation,omitempty"` // same / ahead / behind / diverged / unknown
+	Ahead          int    `json:"ahead,omitempty"`           // 本地领先远端
+	Behind         int    `json:"behind,omitempty"`          // 本地落后远端
 }
 
 // Remote：origin 上某个分支的最新提交。只查远端，不改本地 refs（不 fetch）。
 type Remote struct {
-	Commit string
-	Short  string
-	Error  string
+	Commit   string
+	Short    string
+	Error    string
+	Relation string
+	Ahead    int
+	Behind   int
 }
 
 // ReadRemote：`git ls-remote origin refs/heads/<branch>`。5 秒不够就报错，
 // 不把更新面板按住（本地面板仍可用）。
-func ReadRemote(ctx context.Context, branch string) Remote {
+func ReadRemote(ctx context.Context, branch string, local string) Remote {
 	ref := "HEAD"
 	if strings.TrimSpace(branch) != "" {
 		ref = "refs/heads/" + branch
@@ -69,7 +77,62 @@ func ReadRemote(ctx context.Context, branch string) Remote {
 	if len(short) > 7 {
 		short = short[:7]
 	}
-	return Remote{Commit: commit, Short: short}
+	remote := Remote{Commit: commit, Short: short}
+	if strings.TrimSpace(local) == "" {
+		remote.Relation = "unknown"
+		return remote
+	}
+	if local == commit {
+		remote.Relation = "same"
+		return remote
+	}
+	// 远端是本地祖先 ⇒ 本地领先（有未推送提交）。反之本地是远端祖先 ⇒ 落后。
+	code, _ := gitExitCode(ctx, RepoRoot(), "merge-base", "--is-ancestor", commit, local)
+	switch code {
+	case 0:
+		remote.Relation = "ahead"
+		remote.Ahead = revCount(ctx, commit, local)
+	case 1:
+		code, _ = gitExitCode(ctx, RepoRoot(), "merge-base", "--is-ancestor", local, commit)
+		if code == 0 {
+			remote.Relation = "behind"
+			remote.Behind = revCount(ctx, local, commit)
+		} else if code == 1 {
+			remote.Relation = "diverged"
+		} else {
+			remote.Relation = "unknown"
+		}
+	default:
+		// 远端对象本地没有（还没 fetch）—— 说不出领先/落后，但确实不同。
+		remote.Relation = "unknown"
+	}
+	return remote
+}
+
+func revCount(ctx context.Context, from, to string) int {
+	out, err := git(ctx, RepoRoot(), "rev-list", "--count", from+".."+to)
+	if err != nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(strings.TrimSpace(out))
+	return n
+}
+
+// gitExitCode：需要区分“命令成功 / 条件为假 / 真失败”时用（merge-base --is-ancestor）。
+func gitExitCode(ctx context.Context, root string, args ...string) (int, string) {
+	full := append([]string{"-c", "safe.directory=*", "-C", root}, args...)
+	cmd := exec.CommandContext(ctx, "git", full...)
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	out, err := cmd.CombinedOutput()
+	text := strings.TrimSpace(string(out))
+	if err == nil {
+		return 0, text
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode(), text
+	}
+	return -1, text
 }
 
 // PullResult 是 POST /update/pull 的响应。

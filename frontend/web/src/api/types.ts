@@ -732,6 +732,9 @@ export interface UpdateStatus {
   remote_commit?: string;
   remote_short?: string;
   remote_error?: string;
+  remote_relation?: "same" | "ahead" | "behind" | "diverged" | "unknown";
+  ahead?: number;
+  behind?: number;
 }
 
 /** 拉取结果：前后两颗提交 + git 原文 + 是否已请求重启。 */
