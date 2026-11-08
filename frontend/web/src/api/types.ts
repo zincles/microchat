@@ -386,6 +386,8 @@ export interface ModelView {
 export interface ModelListItem {
   provider: string;
   provider_name: string | null;
+  // 渠道别名（空 = 没有别名）；模型选择器的组头优先显示它。
+  alias?: string;
   upstream_id: string;
   name: string;
   display_name: string | null;
@@ -440,6 +442,8 @@ export interface PresetInfo {
 
 export interface ProviderView {
   id: string;
+  // 显示别名（空 = 沿用 name / id 的旧回退）。id 才是唯一标识，别名不参与匹配。
+  alias: string;
   name: string | null;
   kind: string;
   vendor: string;
@@ -633,6 +637,7 @@ export interface DraftOutgoingRequest {
 export interface CreateProviderRequest {
   id: string;
   name?: string;
+  alias?: string;
   kind?: string;
   vendor?: string;
   protocol?: string;
@@ -647,6 +652,7 @@ export interface CreateProviderRequest {
 export interface UpdateProviderRequest {
   new_id?: string;
   name?: string;
+  alias?: string;
   vendor?: string;
   protocol?: string;
   base_url?: string;

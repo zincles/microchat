@@ -35,6 +35,8 @@ const emit = defineEmits<{
 }>();
 
 const tab = ref("payload");
+// 压缩 tab 内的三个子 tab（2026-11-09 用户定）：预览 / 分段压缩 / 补齐空档。
+const compactTab = ref("preview");
 // 切 tab 报给 App：压缩树看着才拉全量账本（窗口化的内存账，见 App.refreshTree）。
 function selectTab(t: unknown): void { tab.value = String(t ?? ""); emit("tab", tab.value); }
 const blocks = ref(""); // 压缩面板上的块数输入（空 = 用配置默认）
@@ -210,8 +212,6 @@ defineExpose({ setWire, setTables, setTree, setCompactWire });
       <VTab value="payload">载荷</VTab>
       <VTab value="state">状态</VTab>
       <VTab value="tree">压缩</VTab>
-      <VTab value="advanced">分段压缩</VTab>
-      <VTab value="repair">补齐空档</VTab>
     </VTabs>
     <VTabsWindow v-model="tab" class="context-window">
     <VTabsWindowItem value="payload">
@@ -281,7 +281,15 @@ defineExpose({ setWire, setTables, setTree, setCompactWire });
     </div>
     </VTabsWindowItem>
     <VTabsWindowItem value="tree">
-    <div id="compact-tree">
+    <div id="compact-tree" class="compact-shell">
+      <VTabs v-model="compactTab" class="compact-subtabs" density="compact" color="primary">
+        <VTab value="preview">预览</VTab>
+        <VTab value="advanced">分段压缩</VTab>
+        <VTab value="repair">补齐空档</VTab>
+      </VTabs>
+      <VTabsWindow v-model="compactTab" class="compact-subwindow">
+        <VTabsWindowItem value="preview">
+          <div class="compact-preview-pane">
       <div class="ctree-actions">
         <VTextField
           v-model="blocks"
@@ -348,16 +356,19 @@ defineExpose({ setWire, setTables, setTree, setCompactWire });
         />
         <div class="ctree-legend">▾ 折叠 · <i class="ctree-tag">发</i> 这一坨发出的就是它 · <i class="ctree-tag dirty">脏</i> 已过期</div>
       </template>
-    </div>
-    </VTabsWindowItem>
-    <VTabsWindowItem value="advanced">
-    <div id="advanced-compact">
-      <AdvancedCompact :session-id="sessionId" @done="emit('advanced-done')" />
-    </div>
-    </VTabsWindowItem>
-    <VTabsWindowItem value="repair">
-    <div id="repair-compact">
-      <AdvancedCompact :session-id="sessionId" repair @done="emit('advanced-done')" />
+          </div>
+        </VTabsWindowItem>
+        <VTabsWindowItem value="advanced">
+          <div id="advanced-compact">
+            <AdvancedCompact :session-id="sessionId" @done="emit('advanced-done')" />
+          </div>
+        </VTabsWindowItem>
+        <VTabsWindowItem value="repair">
+          <div id="repair-compact">
+            <AdvancedCompact :session-id="sessionId" repair @done="emit('advanced-done')" />
+          </div>
+        </VTabsWindowItem>
+          </VTabsWindow>
     </div>
     </VTabsWindowItem>
     </VTabsWindow>

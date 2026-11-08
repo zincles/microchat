@@ -28,6 +28,9 @@ const api = sharedApi();
 
 const isNew = !props.provider;
 const pid = ref("");
+// alias：渠道在界面上的显示别名（空 = 沿用 name / id 的旧回退）。
+// 它**只影响显示** —— id 仍是会话 / 模型 / 路由引用的键，改名才走 new_id 那条路。
+const alias = ref("");
 const vendor = ref("");
 const protocol = ref("");
 const baseUrl = ref("");
@@ -151,6 +154,7 @@ async function load(): Promise<void> {
   }
   const p = props.provider!;
   pid.value = p.id;
+  alias.value = p.alias ?? "";
   vendor.value = p.vendor ?? "";
   protocol.value = p.protocol ?? "";
   baseUrl.value = p.base_url ?? "";
@@ -172,6 +176,7 @@ async function save(): Promise<void> {
       if (!id) { status.value = "给个渠道 id"; return; }
       const body: CreateProviderRequest = {
         id,
+        ...(alias.value.trim() ? { alias: alias.value.trim() } : {}),
         ...(vendor.value ? { vendor: vendor.value } : {}),
         ...(protocol.value ? { protocol: protocol.value } : {}),
         ...(baseUrl.value.trim() ? { base_url: baseUrl.value.trim() } : {}),
@@ -190,6 +195,7 @@ async function save(): Promise<void> {
       // 改名（2026-11-05 用户定）：只发改过的格 —— 没动就不带 new_id，
       // 免得每次保存都走一遍"配置 + 库"那两段写。
       if (nextID !== p.id) body.new_id = nextID;
+      if (alias.value.trim() !== (p.alias ?? "")) body.alias = alias.value.trim();
       if (vendor.value !== (p.vendor ?? "")) body.vendor = vendor.value;
       if (protocol.value !== (p.protocol ?? "")) body.protocol = protocol.value;
       if (baseUrl.value.trim() !== (p.base_url ?? "")) body.base_url = baseUrl.value.trim();
@@ -323,6 +329,8 @@ function onCustomRulesSaved(rules: ModelDefineRule[]): void {
     <label class="field"><span>渠道标识</span><VTextField density="compact" variant="outlined" hide-details v-model="pid" placeholder="新建时自动生成" @update:model-value="touchId" /></label>
     <p v-if="isNew" class="hint">这个标识是渠道在本机的名字，会出现在模型列表和配置文件里。换服务商时会自动跟着变；你手改过之后就不再自动改。</p>
     <p v-else class="hint">改名会一起改掉已绑定这条渠道的会话与模型清单；库里已有同名数据时会被拒绝（不合并两个渠道）。</p>
+    <label class="field"><span>显示别名（可选）</span><VTextField density="compact" variant="outlined" hide-details v-model="alias" placeholder="例如：OpenCode GO" /></label>
+    <p class="hint">只影响界面显示（渠道列表、模型选择器）；留空 = 沿用原来的名字。真正的渠道标识仍是上面的 id，别名不会改掉它。</p>
     <label class="field"><span>接口类型</span><VSelect v-model="protocol" :items="protocolSelectOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
     <p class="hint">{{ protocolHint }}</p>
     <label class="field"><span>接口地址</span><VTextField density="compact" variant="outlined" hide-details v-model="baseUrl" :placeholder="effectiveBase" /></label>

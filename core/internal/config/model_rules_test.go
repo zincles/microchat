@@ -101,10 +101,33 @@ func TestDefaultModelDefineRules(t *testing.T) {
 		{"mimo-v2.6-flash", "mimo"},
 		{"glm-5.2", "glm"},
 		{"kimi-k2", "kimi"},
+		{"LongCat-2.5-Preview", "longcat"},
+		{"mistral-large-2512", "mistral"},
+		{"Qwen3-Coder-Plus", "qwen"},
+		{"MiniMax-M2.5", "minimax"},
+		{"hunyuan-t1", "tencent"},
+		{"hy3-preview", "tencent"},
+		{"hy4", "tencent"},
+		{"hy-mt2-plus", "tencent"},
+		{"llama-4-scout-17b-16e-instruct", "meta"},
+		{"muse-spark-1.3", "meta"},
+		{"stepfun-ai/step-3.5-flash", "stepfun"},
+		{"step-3.5-flash", "stepfun"},
+		{"doubao-seed-1-6-251015", "bytedance"},
+		{"seed-oss-36b-instruct", "bytedance"},
 	} {
 		if got := cfg.ModelProfile("p", tc.model, ModelProfile{}); got.Icon != tc.icon {
 			t.Fatalf("%s 默认图标 = %q，想要 %q", tc.model, got.Icon, tc.icon)
 		}
+	}
+	// 保守匹配：裸 hy / volcengine 前缀不能抢走别的家族。
+	for _, model := range []string{"hymba-1.5b", "hybrid-model-x"} {
+		if got := cfg.ModelProfile("p", model, ModelProfile{}); got.Icon != "" {
+			t.Fatalf("%s 不该被 Hy 规则匹配，得到 %q", model, got.Icon)
+		}
+	}
+	if got := cfg.ModelProfile("volcengine", "volcengine/deepseek-v4-pro", ModelProfile{}); got.Icon != "deepseek" {
+		t.Fatalf("volcengine 上的 deepseek 被抢成 %q", got.Icon)
 	}
 	if err := ValidateModelDefineRules(cfg.ModelDefineRules); err != nil {
 		t.Fatalf("默认规则该合法：%v", err)
@@ -153,5 +176,32 @@ func TestValidateModelDefineRules(t *testing.T) {
 	}
 	if err := ValidateModelDefineRules(nil); err != nil {
 		t.Fatalf("空规则集是合法清空：%v", err)
+	}
+}
+
+func TestEnsureModelRuleDefaultsMigratesOldDefaultSet(t *testing.T) {
+	old := []ModelDefineRule{
+		{ID: "gpt", MatchContains: "gpt"},
+		{ID: "xai-image", MatchContains: "grok-imagine"},
+		{ID: "grok", MatchContains: "grok"},
+		{ID: "gemini", MatchContains: "gemini"},
+		{ID: "claude", MatchContains: "claude"},
+		{ID: "deepseek", MatchContains: "deepseek"},
+		{ID: "mimo", MatchContains: "mimo"},
+		{ID: "glm", MatchContains: "glm"},
+		{ID: "kimi", MatchContains: "kimi"},
+	}
+	got := ensureModelRuleDefaults(old)
+	if len(got) != len(DefaultModelDefineRules()) {
+		t.Fatalf("旧默认规则没有补齐：got %d want %d", len(got), len(DefaultModelDefineRules()))
+	}
+	ids := map[string]bool{}
+	for _, r := range got {
+		ids[r.ID] = true
+	}
+	for _, r := range DefaultModelDefineRules() {
+		if !ids[r.ID] {
+			t.Fatalf("缺少新默认规则 %s", r.ID)
+		}
 	}
 }

@@ -54,7 +54,8 @@ type ModelRulesConfig struct {
 
 // ModelIconIDs：允许写进规则里的图标 id（**封闭集合**，前端只出这些选项）。
 // 只影响展示；新增品牌要同时在 ModelIcon.vue / modelIcons.ts 里加图形。
-var ModelIconIDs = []string{"gpt", "gemini", "grok", "claude", "deepseek", "mimo", "glm", "kimi"}
+var ModelIconIDs = []string{"gpt", "gemini", "grok", "claude", "deepseek", "mimo", "glm", "kimi",
+	"longcat", "mistral", "qwen", "minimax", "tencent", "meta", "stepfun", "bytedance"}
 
 func ValidModelIcon(icon string) bool {
 	for _, id := range ModelIconIDs {
@@ -81,7 +82,36 @@ func normalizeLegacyModelIcons(rules []ModelDefineRule) {
 	}
 }
 
-// DefaultModelDefineRules：开箱的九条品牌规则（不含 tool use；grok-imagine 是图像模型，清空思考档）。
+// legacyDefaultModelRuleIDs：2026-11-07 那版开箱规则的 id。
+//
+// config.json 一旦落过盘就**整体覆盖**默认值；老部署的 model_define_rules 里只有这 9 条，
+// 新加的 longcat/mistral/qwen/... 永远不会出现。这里只在“现有规则全是旧默认 id”时
+// 补上新增默认规则（用户若加了自己的规则就不动，避免把自定义规则盖掉/复活被删的规则）。
+var legacyDefaultModelRuleIDs = map[string]bool{
+	"gpt": true, "xai-image": true, "grok": true, "gemini": true, "claude": true,
+	"deepseek": true, "mimo": true, "glm": true, "kimi": true,
+}
+
+func ensureModelRuleDefaults(rules []ModelDefineRule) []ModelDefineRule {
+	if len(rules) == 0 {
+		return rules // 显式清空，不复活
+	}
+	seen := make(map[string]bool, len(rules))
+	for _, rule := range rules {
+		if !legacyDefaultModelRuleIDs[rule.ID] {
+			return rules // 用户/渠道有自定义规则：尊重现状
+		}
+		seen[rule.ID] = true
+	}
+	for _, def := range DefaultModelDefineRules() {
+		if !seen[def.ID] {
+			rules = append(rules, def)
+		}
+	}
+	return rules
+}
+
+// DefaultModelDefineRules：开箱的品牌规则（不含 tool use；grok-imagine 是图像模型，清空思考档）。
 //
 // 它们只影响显示，不改变请求；用户把整个数组写成 `[]` 就能关掉。
 func DefaultModelDefineRules() []ModelDefineRule {
@@ -99,6 +129,25 @@ func DefaultModelDefineRules() []ModelDefineRule {
 		{ID: "mimo", MatchContains: "mimo", Brand: stringPtr("Xiaomi"), Icon: stringPtr("mimo")},
 		{ID: "glm", MatchContains: "glm", Brand: stringPtr("Zhipu"), Icon: stringPtr("glm")},
 		{ID: "kimi", MatchContains: "kimi", Brand: stringPtr("Moonshot"), Icon: stringPtr("kimi")},
+		// 以下家族同样只按 raw id 的大小写不敏感子串匹配。
+		{ID: "longcat", MatchContains: "longcat", Brand: stringPtr("LongCat"), Icon: stringPtr("longcat")},
+		{ID: "mistral", MatchContains: "mistral", Brand: stringPtr("Mistral"), Icon: stringPtr("mistral")},
+		{ID: "qwen", MatchContains: "qwen", Brand: stringPtr("Qwen"), Icon: stringPtr("qwen")},
+		{ID: "minimax", MatchContains: "minimax", Brand: stringPtr("MiniMax"), Icon: stringPtr("minimax")},
+		{ID: "tencent-hunyuan", MatchContains: "hunyuan", Brand: stringPtr("Tencent"), Icon: stringPtr("tencent")},
+		// Hy 系列：只用 hy3/hy4/hy-mt 这类足够长的 token。裸 “hy” 会顺手抓走
+		// Hymba / “*-hybrid” 这些别的家族，所以不放宽；以后 hyN 需要各加一条。
+		{ID: "tencent-hy-mt", MatchContains: "hy-mt", Brand: stringPtr("Tencent"), Icon: stringPtr("tencent")},
+		{ID: "tencent-hy3", MatchContains: "hy3", Brand: stringPtr("Tencent"), Icon: stringPtr("tencent")},
+		{ID: "tencent-hy4", MatchContains: "hy4", Brand: stringPtr("Tencent"), Icon: stringPtr("tencent")},
+		{ID: "meta-llama", MatchContains: "llama", Brand: stringPtr("Meta"), Icon: stringPtr("meta")},
+		{ID: "meta-muse", MatchContains: "muse", Brand: stringPtr("Meta"), Icon: stringPtr("meta")},
+		// StepFun 的 raw id 是 step-3.5-flash 这类；第三方前缀里还会出现 stepfun。
+		{ID: "stepfun", MatchContains: "stepfun", Brand: stringPtr("StepFun"), Icon: stringPtr("stepfun")},
+		{ID: "stepfun-step", MatchContains: "step-", Brand: stringPtr("StepFun"), Icon: stringPtr("stepfun")},
+		// 不使用 “volcengine”：这个平台也转卖 deepseek/glm，会抢走别的家族。
+		{ID: "bytedance-doubao", MatchContains: "doubao", Brand: stringPtr("ByteDance"), Icon: stringPtr("bytedance")},
+		{ID: "bytedance-seed", MatchContains: "seed", Brand: stringPtr("ByteDance"), Icon: stringPtr("bytedance")},
 	}
 }
 

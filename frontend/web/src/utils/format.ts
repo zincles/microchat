@@ -19,10 +19,18 @@ export interface ModelLike {
 // 显示名三级回退（与后端两列同义：用户覆盖 → 上游名 → 上游 id）。
 export function modelLabel(m?: ModelLike | null): string { return m?.display_name || m?.name || m?.upstream_id || ""; }
 
+// providerDisplayName：渠道在界面上的显示名 —— **别名优先**，空则沿用旧回退（name → id）。
+// 它只负责显示 / 搜索；会话、模型、路由、请求参数里永远还是 `id`。
+export function providerDisplayName(p?: { alias?: string | null; name?: string | null; id?: string | null } | null): string {
+  return String(p?.alias ?? "").trim() || String(p?.name ?? "").trim() || String(p?.id ?? "");
+}
+
 export interface ModelChoice {
   value: string;
   label: string;
   provider_name: string;
+  // alias：渠道的显示别名（空 = 没有）；模型面板的组头优先显示它，但它**不是**键。
+  alias?: string;
   upstream_id: string;
   brand?: string;
   icon?: string;
@@ -45,6 +53,8 @@ export function modelOption(m: ModelListItem): ModelChoice {
     value: modelKey(m.provider, m.upstream_id),
     label: modelLabel(m),
     provider_name: m.provider_name || m.provider,
+    // 别名只是显示层；`value` 仍由 provider id + upstream_id 拼成。
+    alias: String(m.alias ?? "").trim(),
     upstream_id: m.upstream_id,
     brand: m.brand,
     icon: m.icon,
@@ -171,31 +181,84 @@ export interface UsageLike {
   [key: string]: unknown;
 }
 
-// usageFoot：气泡下面那行小字（token 用量 + 成本）。
+export interface FootMeta {
+  idx?: number | string | null;
+  reasoningMs?: number | null;
+  durationMs?: number | null;
+}
+
+// identityLabel：气泡外那行身份（用户消息 hover 才出现）：`你 #3`。
+// 没有编号（乐观上屏 / 还没落库）⇒ 只留名字，绝不显示成 `你 #undefined`。
+export function identityLabel(who?: string | null, idx?: number | string | null): string {
+  const w = String(who ?? "").trim();
+  const n = idx === null || idx === undefined ? "" : String(idx).trim();
+  if (!n) return w;
+  return w ? `${w} #${n}` : `#${n}`;
+}
+
+// formatLatency：首字延迟（后端 `reasoning_ms`：受理 → 第一段正文），秒、两位小数。
+// 没这一格（没存思考的渠道 / 还没有正文 / 生成中）⇒ 空串 ⇒ 脚注省掉这段。
+export function formatLatency(ms?: number | null): string {
+  if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return "";
+  return `${(ms / 1000).toFixed(1)} s`;
+}
+
+// formatSpeed：输出速度（tps）＝ completion_tokens ÷ 整发墙钟时间。
+//
+// 不再按 reasoning_ms 拆分子分母：上游的 reasoning_tokens 有时**大于** completion_tokens
+// （实测 deepseek 4.1：completion 12 / reasoning 66），拆出来的生成窗只剩 13ms、token 为负，
+// 结果要么不显示、要么几百 tps 的假数。直接用总输出 / 总耗时更诚实，也和用户举例一致。
+export function formatSpeed(usage?: UsageLike | null, _reasoningMs?: number | null, durationMs?: number | null): string {
+  const completion = Number(usage?.completion_tokens ?? NaN);
+  const duration = Number(durationMs ?? NaN);
+  if (!Number.isFinite(completion) || completion <= 0) return "";
+  if (!Number.isFinite(duration) || duration <= 0) return "";
+  const tps = completion / (duration / 1000);
+  return `${Number(tps.toFixed(1))} tps`;
+}
+
+// usageFoot：气泡下面那行**紧凑身份脚注**（2026-11-09 用户定：编号/用量/延迟/速度合成一行）。
 //
 // 口径（AGENTS.md「用量两处别混」）：单位是 token，`reasoning_tokens` 是
 // `completion_tokens` 的**子集**（不是另加）；未命中 = prompt − cached（推导，不另存）。
-// 空（没用量）⇒ 空串，调用方据此不渲染这一行。
-export function usageFoot(usage?: UsageLike | null): string {
-  if (!usage || usage.prompt_tokens == null) return "";
-  const prompt = formatTokens(usage.prompt_tokens);
-  const completion = formatTokens(usage.completion_tokens);
-  const parts = [`输入：${prompt} Token, 输出：${completion} Token`];
-  if (Number(usage.cached_tokens ?? 0) > 0) parts.push(`缓存命中 ${formatTokens(Number(usage.cached_tokens))}`);
-  if (Number(usage.reasoning_tokens ?? 0) > 0) parts.push(`思考 ${formatTokens(Number(usage.reasoning_tokens))}`);
-  const cost = formatCost(usage.cost_usd);
-  if (cost) parts.push(cost);
-  return parts.join(" · ");
+// 各段都是**有才写**：没编号省 IDX、没用量省用量、没时长省延迟/速度 —— 空 ⇒ 整个脚注不渲染。
+// 缓存命中留在悬停说明里（脚注要短）。
+export function usageFoot(usage?: UsageLike | null, meta?: FootMeta | null): string {
+  const parts: string[] = [];
+  const idx = meta?.idx;
+  if (idx !== null && idx !== undefined && String(idx).trim() !== "") parts.push(`#${idx}`);
+  if (usage && usage.prompt_tokens != null) {
+    const completion = `输出：${formatTokens(usage.completion_tokens)}`;
+    const reasoning = Number(usage.reasoning_tokens ?? 0);
+    const withThink = reasoning > 0 ? `${completion}（思考 ${formatTokens(reasoning)}）` : completion;
+    const cached = Number(usage.cached_tokens ?? 0);
+    const withCache = cached > 0 ? `（已缓存：${formatTokens(cached)}）` : "";
+    parts.push(`输入：${formatTokens(usage.prompt_tokens)}${withCache}， ${withThink}`);
+  }
+  const cost = usage ? formatCost(usage.cost_usd) : "";
+  if (cost) parts.push(`成本 ${cost}`);
+  const latency = formatLatency(meta?.reasoningMs);
+  if (latency) parts.push(`首字延迟： ${latency}`);
+  const speed = formatSpeed(usage, meta?.reasoningMs, meta?.durationMs);
+  if (speed) parts.push(`速度： ${speed}`);
+  return parts.length ? `${parts.join("， ")}。` : "";
 }
 
-// usageFootTitle：那行小字的悬停解释（说清哪个数是子集、cost 是谁报的）。
-export function usageFootTitle(usage?: UsageLike | null): string {
-  if (!usage || usage.prompt_tokens == null) return "";
-  const lines = [
-    `输入 ${usage.prompt_tokens} tok（其中缓存命中 ${usage.cached_tokens ?? 0}）`,
-    `输出 ${usage.completion_tokens ?? 0} tok（其中思考 ${usage.reasoning_tokens ?? 0} —— 是输出的子集，不另加）`,
-  ];
-  if (usage.cost_usd != null) lines.push(`成本 ${formatCost(usage.cost_usd)}：上游报的实扣金额`);
+// usageFootTitle：那行小字的悬停解释（说清哪个数是子集、cost/延迟/速度怎么来的）。
+export function usageFootTitle(usage?: UsageLike | null, meta?: FootMeta | null): string {
+  const lines: string[] = [];
+  if (usage && usage.prompt_tokens != null) {
+    lines.push(
+      `输入 ${usage.prompt_tokens} tok（其中缓存命中 ${usage.cached_tokens ?? 0}）`,
+      `输出 ${usage.completion_tokens ?? 0} tok（其中思考 ${usage.reasoning_tokens ?? 0} —— 是输出的子集，不另加）`,
+    );
+    if (usage.cost_usd != null) lines.push(`成本 ${formatCost(usage.cost_usd)}：上游报的实扣金额`);
+  }
+  const latency = formatLatency(meta?.reasoningMs);
+  if (latency) lines.push(`首字延迟 ${latency}：受理 → 第一段正文`);
+  const speed = formatSpeed(usage, meta?.reasoningMs, meta?.durationMs);
+  if (speed) lines.push(`速度 ${speed}：输出 token ÷ 整发耗时`);
+  if (meta?.idx !== null && meta?.idx !== undefined) lines.push(`IDX ${meta.idx}：这条消息在会话里的序号`);
   return lines.join("\n");
 }
 
@@ -227,7 +290,7 @@ export const ORPHAN_MODEL_GROUP = "\u0000orphan";
 export function modelMatches(m: ModelChoice, query?: string | null): boolean {
   const q = String(query ?? "").trim().toLowerCase();
   if (!q) return true;
-  return [m.label, m.provider_name, m.upstream_id].filter(Boolean).join(" ").toLowerCase().includes(q);
+  return [m.label, m.alias, m.provider_name, m.upstream_id].filter(Boolean).join(" ").toLowerCase().includes(q);
 }
 
 // 过滤 + 分组 + 扁平序号：面板的上下键要能一条条走完整个可见列表，
@@ -243,7 +306,7 @@ export function filterModelGroups(groups?: ModelGroup[] | null, query?: string |
   for (const g of groups ?? []) {
     const items = (g.items ?? []).filter((m) => modelMatches(m, query)).map((m) => ({ ...m, flat: flat++ }));
     if (!items.length) continue;
-    out.push({ provider: g.provider, providerName: items[0].provider_name || g.provider, items });
+    out.push({ provider: g.provider, providerName: items[0].alias || items[0].provider_name || g.provider, items });
   }
   return out;
 }
@@ -289,9 +352,11 @@ export function providerChoices(providers?: ProviderView[] | null, cur = ""): Ch
   const items: Choice[] = (providers ?? []).map((p) => {
     // 默认值下拉要能区分同服务商的多条渠道（OpenRouter 可以挂两条不同端点），
     // 所以「服务商中文名 + 渠道标识」都留着；dummy 是内置示例，不摆内部 id。
-    const label = p.id === "dummy"
+    // 别名优先（它本来就是给人看的那一格），空则完全沿用原来的回退。
+    const alias = String(p.alias ?? "").trim();
+    const label = alias || (p.id === "dummy"
       ? "本地示例（不联网）"
-      : (p.name || (p.vendor_name ? `${p.vendor_name}（${p.id}）` : p.id));
+      : (p.name || (p.vendor_name ? `${p.vendor_name}（${p.id}）` : p.id)));
     return { value: p.id, label };
   });
   if (cur && !items.some((i) => i.value === cur)) {

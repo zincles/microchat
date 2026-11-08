@@ -375,6 +375,7 @@ function toRow(m) {
     content: m.content,
     reasoning: m.reasoning,
     reasoningMs: m.reasoning_ms,
+    durationMs: m.duration_ms ?? null, // 脚注的速度要用它（与 reasoning_ms 配对）
     messageId: m.id,
     id: m.id,
     // usage：气泡脚注用它（token + 成本）。上游没报就是 null ⇒ 脚注整行不渲染。
@@ -706,6 +707,13 @@ function bubbleContent(m) {
 function bubbleReasoning(m) {
   // 思考多一层回落：库里没思考、合成流也没有 ⇒ 照旧用 m.reasoning（与从前一致）。
   return bubbleText(m, { field: "reasoning", live: isLive(m), streamText: streamDisplay.value.reasoning, previewText: streamDisplay.value.reasoning });
+}
+// rowDuration：消息行的 `duration_ms` 收窄成气泡脚注要的 number|null。
+// ChatMessage 的索引签名是 unknown，而 `Number(undefined/null)` 不是"0 秒"——那会让速度公式
+// 除出无穷大；所以只放行真的大于 0 的有限数。
+function rowDuration(m) {
+  const n = Number(m?.durationMs);
+  return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 // refreshReroll：问一次重摇状态（进会话 / 一轮结束 / 删改之后都要对齐 —— 候选只在内存里，
@@ -2080,6 +2088,7 @@ onUnmounted(() => {
               :content="bubbleContent(row.msg)"
               :reasoning="bubbleReasoning(row.msg)"
               :reasoning-ms="row.msg.reasoningMs"
+              :duration-ms="rowDuration(row.msg)"
               :message-id="row.msg.messageId"
               :prompt-id="row.msg.messageId === lastMsgId ? latestPromptId : null"
               :is-last="!!row.msg.messageId && row.msg.messageId === lastMsgId"

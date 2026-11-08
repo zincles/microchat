@@ -329,3 +329,53 @@ defineExpose({ setSessions });
     </div>
   </Teleport>
 </template>
+
+<style scoped>
+/* 左栏模式 tab 的垂直几何钉死（2026-11-09）。
+ * 病灶有两层，都在测量里看得到：
+ *  1) VBtnGroup 的 compact 规则给了整条胶囊 `height: 36px`，而按钮自己的
+ *     `min-height: 2.667em`（label-large 下 = 37.33px）比它更高 —— 按钮永远溢出
+ *     1.33px，靠 `overflow: hidden` 裁掉，所以"按钮高度"和"胶囊高度"本来就对不上。
+ *  2) 抽屉内容是 column flex，这条胶囊是 `flex: 0 1 auto` 的普通子项，会被挤。
+ *     对话模式下列表内容更高 → 胶囊被压到 25.14px；生图/库存是占位面板 → 不压，36px。
+ *     于是切换模式时同一个控件高矮变了 10.9px。
+ * 修法：胶囊不参与伸缩（flex: none）、高度交给按钮（height: auto），
+ * 按钮统一 min-height = 2.667em + border-box。三格都走同一条规则，选中/焦点只改
+ * 颜色与 outline，不再碰尺寸。 */
+/* 注意：这里不能用 `:deep()` —— SessionBar 的根是 Fragment（抽屉 + Teleport），
+ * 作用域属性不会挂到抽屉根上，`:deep()` 编译出的 `[data-v-x] .x` 找不到祖先。
+ * 但 VBtnToggle / VBtn 的根元素自己带着本组件的 `data-v-x`，普通作用域选择器就够。 */
+.session-mode-tabs {
+  flex: none;
+  height: auto;
+  box-sizing: border-box;
+  align-items: stretch;
+}
+.session-mode-tabs .v-btn {
+  height: auto;
+  min-height: 2.667em;
+  max-height: none;
+  box-sizing: border-box;
+  align-self: stretch;
+}
+
+/* 字面墨迹居中（2026-11-09 逐像素复测，取代 main.css 的 `-0.16em`）。
+ * 旧的 `-0.16em` 是在**被裁掉**的胶囊上量的：那时可见带只有 25.14px、窗口偏上，
+ * 字往下压才显得居中；胶囊高度修好后按钮 37.33px 完整可见，同一偏移就偏高。
+ * 实测（截屏取字面 ink 亮度质心，非行盒中心）：不偏移时墨迹中心本来就在按钮中心
+ * **上方 0.5px 左右**（字体固有，Noto Sans CJK 的 ink 比行盒几何中心高）；旧 `-0.16em`
+ * 再往上推 2.24px，于是实际高约 2.7–3.3px —— 这就是"字偏上"的全部来源。
+ * 目标：墨迹质心 = 按钮中心 → 需要**往下**约 0.7px，即 +0.05em（13.9995px 字号下 = 0.70px）。
+ * 注意 Chrome 把字形竖直位置吸附到设备像素，所以不同 dpr 的残差是 0.8/1/0.5px 一档：
+ *   dpr 1.25 / 2 / 4 实测质心残差 +0.04…+0.34 / -0.24…+0.06 / +0.06…+0.42px；
+ *   dpr 1 只能落在 ±0.5px 的档上（+0.33…+0.70px）。三个 tab 同值，选中/未选中一致。
+ * 选 0.05em 而不是恰好补到 0（0.0757em）：后者在 dpr 4 会掉到下一档，残差反而 +0.5…+0.7px；
+ * 0.05em 在四个 dpr 上都是最靠中的那一档。
+ * 选择器必须盖过 main.css 的 `#sessions-bar .session-mode-tabs .v-btn__content`
+ * （1 id + 2 类）：带上 id 再 `:deep()` → `#sessions-bar .session-mode-tabs
+ * .v-btn[data-v] .v-btn__content`（1 id + 4 类）。作用域属性挂在按钮根上（slot 内容
+ * 归父组件所有），不能锚在抽屉根上（它是 Fragment，没有本组件的作用域属性）。 */
+#sessions-bar .session-mode-tabs .v-btn :deep(.v-btn__content) {
+  transform: translateY(0.05em);
+}
+</style>

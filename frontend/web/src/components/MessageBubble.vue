@@ -3,7 +3,7 @@
 import { ref, computed, watch, onMounted, nextTick } from "vue";
 import { VBtn } from "vuetify/components";
 import { ICONS } from "./icons.ts";
-import { formatThinkLabel, usageFoot, usageFootTitle } from "../utils/format.ts";
+import { formatThinkLabel, identityLabel, usageFoot, usageFootTitle } from "../utils/format.ts";
 import type { UsageLike } from "../utils/format.ts";
 import { renderMarkdown, splitState } from "../utils/markdown.ts";
 
@@ -21,6 +21,7 @@ const props = withDefaults(defineProps<{
   content?: string;
   reasoning?: string;
   reasoningMs?: number | null;
+  durationMs?: number | null; // 这一发的总耗时（受理 → 收尾），与 reasoningMs 一起算速度
   messageId?: string | null;
   promptId?: string | null; // 最新 AI 回复对应的用户输入（仅尾条 assistant 有）
   isLast?: boolean;
@@ -38,6 +39,7 @@ const props = withDefaults(defineProps<{
   content: "",
   reasoning: "",
   reasoningMs: null,
+  durationMs: null,
   messageId: null,
   promptId: null,
   isLast: false,
@@ -54,10 +56,22 @@ const emit = defineEmits<{
   "reroll-go": [delta: number];
 }>();
 
-// 脚注：token 用量 + 成本（纯函数在 utils/format.ts，契约测试钉着）。
-// 没用量（生成中 / 库外那条 / 上游没报）⇒ 空串 ⇒ 整行不渲染。
-const foot = computed(() => usageFoot(props.usage));
-const footTitle = computed(() => usageFootTitle(props.usage));
+// 脚注 = 身份 + 用量 + 首字延迟 + 速度（纯函数在 utils/format.ts，契约测试钉着）。
+// 各段有才写；什么都没有（生成中 / 库外那条）⇒ 空串 ⇒ 整行不渲染。
+//
+// 生成中（含重摇候选流）只留编号：那一发还没落库，行上挂的 `usage` / 时长是**上一版**的，
+// 拿它算延迟/速度等于给新候选配旧账 —— 宁可空着。落库重拉之后这些数才属于当前这一版。
+const footMeta = computed(() => ({
+  idx: props.idx,
+  reasoningMs: props.reasoningMs,
+  durationMs: props.durationMs,
+}));
+const footUsage = computed(() => (props.streaming ? null : props.usage));
+const footTiming = computed(() => (props.streaming ? { idx: props.idx } : footMeta.value));
+const foot = computed(() => usageFoot(footUsage.value, footTiming.value));
+const footTitle = computed(() => usageFootTitle(footUsage.value, footTiming.value));
+// 用户身份（`你 #3`）：气泡**外面**那一行，CSS 里只在 hover 时显形。
+const ident = computed(() => identityLabel(props.who, props.idx));
 
 // 流式期间还没正文 ⇒ 标签说"思考中…"；落库后才是"思考过程（2.1s）"（那会儿才有用时）。
 const typingHint = computed(() =>
@@ -136,9 +150,6 @@ watch(() => props.streaming, (s) => nextTick(() => {
        所以不再有条件类 —— 形态本身写在 CSS 的 `.msg.assistant` / `.msg-wrap.assistant` 里。 -->
   <div :class="`msg-wrap ${role === 'user' ? 'user' : 'assistant'}`">
     <div ref="msgEl" :class="`msg ${role === 'user' ? 'user' : 'assistant'}`">
-      <div class="msg-head">
-        <span class="who">{{ who }}<span v-if="idx !== null && idx !== undefined" class="msg-idx">#{{ idx }}</span></span>
-      </div>
       <details v-if="reasoning" class="think">
         <summary>{{ thinkLabel }}</summary>
         <div class="think-body">{{ reasoning }}</div>
@@ -159,11 +170,15 @@ watch(() => props.streaming, (s) => nextTick(() => {
           <div v-for="(ln, j) in b.lines" :key="j" class="state-line">{{ ln }}</div>
         </div>
       </div>
-      <!-- 脚注（2026-10-20）：这一发实际用了多少 token、花了多少钱（上游报的）。
-           只在**落库后的**消息上有（生成中那条没有用量）；直连渠道不报 cost ⇒ 这里只有 token。 -->
-      <div v-if="foot" class="msg-foot" :title="footTitle">{{ foot }}</div>
+      <!-- 脚注（2026-11-09 用户定）：编号 + 用量 + 首字延迟 + 速度合成一行，贴着正文底部。
+           只在 assistant 这边；用户消息的身份在气泡外（下面那行，hover 才显形）。
+           生成中 / 库外那条没有这些数 ⇒ `foot` 为空 ⇒ 整行不渲染。 -->
+      <div v-if="role !== 'user' && foot" class="msg-foot" :title="footTitle">{{ foot }}</div>
     </div>
     <div v-if="canEdit" class="msg-ops">
+      <!-- 用户身份（2026-11-09 用户定）：从气泡里挪到**气泡外的动作行**，CSS 里只在 hover 时显形。
+           放在这里而不是单独一行：单独占位会在每条你说的话下面永远留一道空行。 -->
+      <span v-if="role === 'user' && ident" class="msg-ident">{{ ident }}</span>
       <VBtn icon variant="text" size="small" title="改正文" aria-label="改正文" @click="emit('edit', messageId, 'content')" v-html="ICONS.pencil" />
       <VBtn v-if="role !== 'user'" icon variant="text" size="small" title="改思考" aria-label="改思考" @click="emit('edit', messageId, 'reasoning')" v-html="ICONS.brain" />
       <VBtn v-if="role !== 'user' && isLast && promptId" icon variant="text" size="small" color="primary" class="prompt-edit-btn" title="编辑最新 Prompt（编辑这条回复对应的用户输入）" aria-label="编辑最新 Prompt" @click="emit('edit-prompt', promptId)" v-html="ICONS.notebookPen" />

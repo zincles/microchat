@@ -24,6 +24,9 @@ export const ICONS: Record<string, string> = {
     '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/></svg>',
   send:
     '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.714 3.048a.498.498 0 0 0-.683.627l2.843 7.627a2 2 0 0 1 0 1.396l-2.842 7.627a.498.498 0 0 0 .682.627l18-8.5a.5.5 0 0 0 0-.904z"/><path d="M6 12h16"/></svg>',
+  // 空输入 = 续写/重发历史：用户要求用**向下箭头**，别再用回转箭头（容易被读成刷新）。
+  down:
+    '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="m5 12 7 7 7-7"/></svg>',
   stop:
     '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>',
   // cont（空输入时的"续写 / 重发历史"）：用**回转箭头**而不是向下箭头 ——
@@ -62,5 +65,5 @@ export const ICONS: Record<string, string> = {
     '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>',
   // Lucide sun-moon：太阳 + 月亮并排，别再用“半填充的太阳”冒充自动（视觉上仍像太阳）。
   themeAuto:
-    '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8a2.83 2.83 0 0 0 4 4 4 4 0 1 1-4-4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.9 4.9 1.4 1.4"/><path d="m17.7 17.7 1.4 1.4"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.3 17.7-1.4 1.4"/><path d="m19.1 4.9-1.4 1.4"/></svg>',
+    '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.2" cy="12" r="2.4"/><path d="M7.2 6.2v1M7.2 16.8v1M1.4 12h1M11 12h1M3.1 8.1l.7.7M10.2 15.2l.7.7M3.1 15.9l.7-.7M10.2 8.8l.7-.7"/><path d="M18.6 7.5a4.5 4.5 0 1 0 0 9 5.5 5.5 0 0 1 0-9z" fill="currentColor" stroke="none"/></svg>',
 };

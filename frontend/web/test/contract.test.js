@@ -27,6 +27,9 @@ import {
   formatCost,
   usageFoot,
   usageFootTitle,
+  identityLabel,
+  formatLatency,
+  formatSpeed,
   groupModelsByProvider,
   providerChoices,
   modelChoicesFor,
@@ -46,6 +49,7 @@ import {
   parseModelKey,
   modelLabel,
   modelOption,
+  providerDisplayName,
   whoText,
   sessionTitle,
 } from "../src/utils/format.ts";
@@ -181,28 +185,99 @@ test("formatCost：便宜模型给 4 位小数；没数据回空串（不是 $0.
   assert.equal(formatCost("0.5"), "");            // 不是数字 ⇒ 当没有
 });
 
-test("usageFoot：token 用量 + 成本；没用量整行为空", () => {
+test("usageFoot：身份脚注（IDX + 用量）；没用量/没编号整行为空", () => {
   const foot = usageFoot({ prompt_tokens: 6585, completion_tokens: 945, cached_tokens: 0, reasoning_tokens: 333, cost_usd: 0.0012 });
-  assert.ok(foot.includes("输入：6.5K Token, 输出：945 Token")); // 向下取整：6585 ⇒ 6.5K
-  assert.ok(foot.includes("思考 333"));
-  assert.ok(foot.includes("$0.0012"));
-  assert.ok(!foot.includes("缓存命中"));          // 0 命中不啰嗦
-
-  const withCache = usageFoot({ prompt_tokens: 100000, completion_tokens: 50, cached_tokens: 96000 });
-  assert.ok(withCache.includes("缓存命中 96K"));
-  assert.ok(!withCache.includes("$"));            // 没 cost ⇒ 没有价格那一格
-
+  assert.ok(foot.includes("输入：6.5K， 输出：945（思考 333）")); // 向下取整：6585 ⇒ 6.5K
+  assert.ok(foot.includes("成本 $0.0012"));
+  assert.ok(!foot.includes("缓存命中") && !foot.includes("已缓存")); // 0 命中不啰嗦
+  assert.ok(!foot.includes("首字延迟"));          // 没有时长 ⇒ 不编
+  assert.ok(!foot.includes("速度"));
   assert.equal(usageFoot(null), "");              // 生成中 / 库外那条
   assert.equal(usageFoot({}), "");                // 上游没报
   assert.equal(usageFootTitle(null), "");
+
+  // 缓存命中只进悬停说明（脚注要短），同一份用量两边不重复罗列。
+  const withCache = usageFoot({ prompt_tokens: 100000, completion_tokens: 50, cached_tokens: 96000 });
+  assert.ok(withCache.includes("输入：100K（已缓存：96K）"));
+  assert.ok(!withCache.includes("$"));            // 没 cost ⇒ 没有价格那一格
+  assert.ok(usageFootTitle({ prompt_tokens: 100000, completion_tokens: 50, cached_tokens: 96000 }).includes("缓存命中 96000"));
 });
 
-test("usageFoot 的悬停说明：点明思考是输出的子集、成本是上游报的", () => {
-  const title = usageFootTitle({ prompt_tokens: 100, completion_tokens: 40, cached_tokens: 80, reasoning_tokens: 30, cost_usd: 0.0004 });
+test("身份脚注：IDX/用量/首字延迟/速度齐全；缺哪格就省哪段", () => {
+  // reasoning_ms = 受理 → 第一段正文（首字延迟）；duration_ms = 整发的墙钟时间。
+  const full = usageFoot(
+    { prompt_tokens: 1126, completion_tokens: 1229, reasoning_tokens: 900 },
+    { idx: 4, reasoningMs: 1234, durationMs: 10000 },
+  );
+  assert.match(full, /^#4， 输入：1\.1K， 输出：1\.2K（思考 900）/);
+  assert.ok(full.includes("首字延迟： 1.2 s"));
+  // 生成窗口 = 10 − 1.234 = 8.766 s；生成 token = 1229 − 900 = 329 ⇒ 37.5 tps（≥10 收成整数 = 37）。
+  assert.ok(full.includes("速度： 122.9 tps"));
+  assert.ok(full.endsWith("。"));
+
+  // 没有 reasoning_ms：整段算速度（100 token / 2 s = 50 tps），也没有首字延迟这一段。
+  const noThink = usageFoot({ prompt_tokens: 10, completion_tokens: 100 }, { idx: 7, durationMs: 2000 });
+  assert.ok(noThink.startsWith("#7， "));
+  assert.ok(!noThink.includes("首字延迟"));
+  assert.ok(noThink.includes("速度： 50 tps"));
+
+  // 只有编号（生成中 / 库外那条）：脚注就只是编号，绝不编出 0 token。
+  assert.equal(usageFoot(null, { idx: 3 }), "#3。");
+  assert.equal(usageFoot(null, { idx: null }), "");
+
+  assert.equal(identityLabel("你", 3), "你 #3");
+  assert.equal(identityLabel("你", null), "你");       // 乐观句还没编号
+  assert.equal(identityLabel("", 3), "#3");
+  assert.equal(identityLabel("你", undefined), "你");
+
+  assert.equal(formatLatency(1234), "1.2 s");
+  assert.equal(formatLatency(null), "");
+  assert.equal(formatSpeed({ completion_tokens: 50 }, null, 1000), "50 tps");
+  assert.equal(formatSpeed({ completion_tokens: 50 }, null, 0), "");   // 生成窗为 0 ⇒ 不算
+  assert.equal(formatSpeed({ completion_tokens: 0 }, null, 1000), "");
+  assert.equal(formatSpeed({ completion_tokens: 50, reasoning_tokens: 50 }, 900, 1000), "50 tps"); // 总输出 / 总耗时，不拆思考窗
+  assert.equal(formatSpeed({ completion_tokens: 12, reasoning_tokens: 66 }, 2574, 2587), "4.6 tps"); // 上游 reasoning_tokens > completion 也不出负数
+});
+
+test("usageFoot 的悬停说明：点明思考是输出的子集、成本/延迟/速度的来源", () => {
+  const title = usageFootTitle(
+    { prompt_tokens: 100, completion_tokens: 40, cached_tokens: 80, reasoning_tokens: 30, cost_usd: 0.0004 },
+    { idx: 2, reasoningMs: 800, durationMs: 4000 },
+  );
   assert.ok(title.includes("输入 100 tok（其中缓存命中 80）"));
   assert.ok(title.includes("子集"));              // 别让人把 reasoning 再加一遍
   assert.ok(title.includes("$0.0004"));
   assert.ok(title.includes("上游报的"));
+  assert.ok(title.includes("受理 → 第一段正文"));
+  assert.ok(title.includes("输出 token ÷ 整发耗时"));
+  assert.ok(title.includes("IDX 2"));
+});
+
+test("消息头已移除：assistant 身份只在脚注；user 身份在气泡外且 hover 才显形", () => {
+  const bubble = readFileSync(join(SRC, "components", "MessageBubble.vue"), "utf8");
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.ok(!/msg-head/.test(bubble), "气泡顶部还留着身份头");
+  assert.ok(!/msg-idx/.test(bubble), "气泡里还留着 #编号");
+  assert.ok(!/<span class="who">/.test(bubble), "气泡里还渲染 who");
+  assert.ok(!/\.msg \.msg-head/.test(css), "CSS 还留着消息头规则");
+  assert.ok(!/\.msg \.who\b/.test(css), "CSS 还留着 who 规则");
+  assert.ok(!/\.msg \.msg-idx\b/.test(css), "CSS 还留着气泡内编号规则");
+
+  // assistant：脚注一行，含身份/用量/延迟/速度的拼装出口。
+  assert.match(bubble, /v-if="role !== 'user' && foot" class="msg-foot"/, "assistant 脚注不该回到用户气泡里");
+  assert.match(bubble, /usageFoot\(footUsage\.value, footTiming\.value\)/, "脚注没带上编号/时长");
+  assert.match(bubble, /durationMs: props\.durationMs/, "脚注没接 durationMs");
+  assert.match(bubble, /props\.streaming \? null : props\.usage/, "生成中没把上一版的用量摘掉");
+  assert.match(app, /durationMs: m\.duration_ms \?\? null/, "toRow 没带 duration_ms");
+  assert.match(app, /:duration-ms="rowDuration\(row\.msg\)"/, "App 没把 duration_ms 喂给气泡");
+
+  // user：身份在 `.msg` 的**外面**（`</div>` 之后），且 CSS 默认透明、hover 才 1。
+  const identAt = bubble.indexOf('class="msg-ident"');
+  const msgCloseAt = bubble.indexOf("</div>", bubble.indexOf('class="text"'));
+  assert.ok(identAt > msgCloseAt, "用户身份还留在气泡里面");
+  assert.match(css, /\.msg-ident \{[^}]*opacity:\s*0/, "用户身份默认没藏起来");
+  assert.match(css, /\.msg-wrap\.user:hover \.msg-ident[^{]*\{[^}]*opacity:\s*1/, "用户身份 hover 不显形");
 });
 
 test("状态行：助手 + phase/耗时；上下文占用不在这行（2026-10-28 挪去右上角的环）", () => {
@@ -829,6 +904,7 @@ test("模型选项带 brand/icon：选择器能画家族图标，不把 family �
   const choice = modelOption({
     provider: "xai",
     provider_name: "xAI",
+    alias: "xAI 主渠道",
     upstream_id: "grok-4.7",
     name: "Grok 4.7",
     display_name: null,
@@ -837,10 +913,31 @@ test("模型选项带 brand/icon：选择器能画家族图标，不把 family �
     icon: "xai",
     matched_rules: ["xai"],
   });
+  // value 仍是 provider id + upstream_id —— 别名绝不参与键。
   assert.equal(choice.value, modelKey("xai", "grok-4.7"));
   assert.equal(choice.brand, "xAI");
   assert.equal(choice.icon, "xai");
   assert.equal(choice.provider_name, "xAI");
+  assert.equal(choice.alias, "xAI 主渠道");
+  // 组头优先别名，搜索也能按别名命中。
+  const groups = filterModelGroups([{ provider: "xai", items: [choice] }], "");
+  assert.equal(groups[0].providerName, "xAI 主渠道");
+  assert.equal(filterModelGroups([{ provider: "xai", items: [choice] }], "主渠道").length, 1);
+});
+
+test("providerDisplayName：别名优先，空则沿用 name → id", () => {
+  assert.equal(providerDisplayName({ id: "opencode-go-2", name: null, alias: "OpenCode GO" }), "OpenCode GO");
+  assert.equal(providerDisplayName({ id: "opencode-go-2", name: null, alias: "  " }), "opencode-go-2");
+  assert.equal(providerDisplayName({ id: "opencode-go-2", name: "旧显示名", alias: "" }), "旧显示名");
+});
+
+test("渠道分隔：管理列表行间与模型选择器组头之间都有发丝线", () => {
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  // 管理列表：关掉基类的下边线，只留行与行之间的上边线（避免双线）。
+  assert.match(css, /#provider-list \.plist tbody td\s*\{[^}]*border-bottom:\s*none/);
+  assert.match(css, /#provider-list \.plist tbody tr \+ tr td\s*\{[^}]*border-top/);
+  // 模型选择器：非首组的组头画线。
+  assert.match(css, /\.model-group-head:not\(:first-child\)\s*\{[^}]*border-top/);
 });
 
 test("modelLabel 三级回退：用户覆盖 → 上游名 → 上游 id", () => {
@@ -1426,6 +1523,30 @@ test("主题：theme.css 与下拉必须正好是 THEME_IDS 这三套", () => {
   assert.deepEqual(chosen, THEME_IDS, "主题下拉的选项与 THEME_IDS 对不上");
 });
 
+test("外观缩放：拖动只改草稿，点保存缩放才应用", () => {
+  const pane = readFileSync(join(SRC, "components", "AppearancePane.vue"), "utf8");
+  assert.match(pane, /scaleDirty/, "没有未保存状态");
+  assert.match(pane, /function onScaleInput[\s\S]{0,220}scaleDirty\.value = true/, "拖动没有只改草稿");
+  assert.match(pane, /function saveScale[\s\S]{0,220}saveTextScale\(textScale\.value\)/, "没有保存缩放动作");
+  assert.match(pane, /:disabled="!scaleDirty"[\s\S]*保存缩放/, "保存缩放按钮没接未保存状态");
+  assert.match(pane, /@click="saveScale"/, "保存缩放按钮没动作");
+  assert.ok(!/function onScaleInput[\s\S]{0,220}saveTextScale/.test(pane), "拖动仍然立即保存/应用");
+  assert.ok(!/flushPrefs/.test(pane), "缩放还保留松手立即落盘");
+});
+
+test("设置-聊天：新会话默认设置在最上面", () => {
+  const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
+  const chatAt = settings.indexOf('<section id="panel-chat"');
+  const sessionAt = settings.indexOf('<section id="panel-session"');
+  assert.ok(chatAt > 0 && sessionAt > chatAt, "找不到聊天/会话面板");
+  const defaultsAt = settings.indexOf("<h3>新会话默认设置</h3>");
+  const replyAt = settings.indexOf("<h3>回复与自动压缩</h3>");
+  assert.ok(defaultsAt > chatAt && defaultsAt < sessionAt && defaultsAt < replyAt,
+    "新会话默认设置不在 设置-聊天 顶部");
+  const sessionPart = settings.slice(sessionAt, settings.indexOf("</VTabsWindowItem>", sessionAt));
+  assert.ok(!sessionPart.includes("新会话默认设置"), "会话管理里还留着新会话默认设置");
+});
+
 test("外观页：发送键 / 预演 / 命令菜单三格都在（搬用户视图时丢过）", () => {
   const vue = readFileSync(join(SRC, "components", "AppearancePane.vue"), "utf8");
   // 发送键的三档必须与 `prefs.js` 的 `wantsSend` 完全一致（多一档 = 选了不生效）。
@@ -1727,6 +1848,8 @@ test("模型图标：前端选项与后端封闭集合一致", () => {
   for (const option of MODEL_ICON_OPTIONS) {
     assert.ok(existsSync(join(REPO, "frontend", "web", "public", "model-icons", `${option.value}.svg`)),
       `缺少本地图标 ${option.value}.svg`);
+    assert.match(iconComponent, new RegExp(`\\.mi-${option.value}\\b`),
+      `ModelIcon.vue 缺少 .mi-${option.value} 的遮罩样式（图标会静默不显示）`);
   }
 });
 
@@ -2049,6 +2172,13 @@ test("设置默认值：当前值不在列表里也要留住，并说明白", ()
   assert.ok(tail.missing, "没标出来它不在列表里");
   assert.equal(providerChoices([{ id: "a" }], "a").length, 1, "在列表里就不该重复补一条");
 
+  // 别名优先显示，但选项值仍是 id（默认值保存 / 发消息都用它）。
+  const aliased = providerChoices([{ id: "opencode-go-2", alias: "OpenCode GO", vendor_name: "OpenCode Go" }]);
+  assert.equal(aliased[0].label, "OpenCode GO");
+  assert.equal(aliased[0].value, "opencode-go-2");
+  // 空别名完全回落到旧行为（vendor_name（id））。
+  assert.equal(providerChoices([{ id: "b", alias: "", vendor_name: "乙" }])[0].label, "乙（b）");
+
   // 模型那格的值是**裸 upstream_id**（不是 provider/model）：config.json 里存的就是裸 id，
   // 两处用两把尺会静默错位。
   const groups = [{ provider: "a", items: [{ upstream_id: "m1", label: "M1" }] }];
@@ -2111,11 +2241,13 @@ test("分段压缩 / 补齐空档：第四、第五 tab，预览 → 并发运�
   const api = readFileSync(join(SRC, "api", "client.ts"), "utf8");
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 
-  // ① 两个 tab 按顺序住在压缩后面；不是另开页面。
-  for (const [label, id] of [["分段压缩", "advanced"], ["补齐空档", "repair"]]) {
-    assert.ok(bar.includes(`value="${id}">${label}</VTab>`), `缺少「${label}」tab`);
+  // ① 三个子 tab 住在「压缩」这一页里（2026-11-09 合并），不是顶层 tab。
+  assert.match(bar, /class="compact-subtabs"/, "压缩页没有子 tab");
+  for (const [label, id] of [["预览", "preview"], ["分段压缩", "advanced"], ["补齐空档", "repair"]]) {
+    assert.ok(bar.includes(`value="${id}">${label}</VTab>`), `缺少「${label}」子 tab`);
     assert.match(bar, new RegExp(`<VTabsWindowItem value="${id}">`), `「${label}」没有自己的 tabpanel`);
   }
+  assert.ok(bar.indexOf('class="compact-subtabs"') < bar.indexOf('VTabsWindowItem value="advanced"'), "子 tab 不在压缩页里");
   assert.match(bar, /<AdvancedCompact :session-id="sessionId"/, "分段压缩没拿到会话 id");
   assert.match(bar, /<AdvancedCompact :session-id="sessionId" repair/, "补齐空档没打开 repair");
 
@@ -3251,6 +3383,24 @@ test("会话列表：一行只有一枚选项键，设置/删除收进浮板，�
   assert.match(css, /\.session-item \.item-btn \{[^}]*width:\s*2\.4em/, "会话选项键不是紧凑尺寸");
 });
 
+test("会话行选项键：桌面悬停/选中/键盘焦点才现身，触屏常驻", () => {
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  // 触屏没有 hover：藏起来等于没有入口。三个点只在能 hover 的设备上收，且收起只用不占位的属性。
+  const hoverBlock = css.match(/@media \(hover: hover\) \{([\s\S]*?)\n\}/);
+  assert.ok(hoverBlock, "没有用 @media (hover: hover) 区分触屏（触屏上三个点必须常驻）");
+  assert.match(hoverBlock[1], /#sessions-bar \.session-item \.item-btn \{[^}]*opacity:\s*0[^}]*pointer-events:\s*none/,
+    "未悬停/未选中的行没有收起选项键（应保留盒子，用 opacity + pointer-events 而不是 display:none）");
+  assert.match(hoverBlock[1],
+    /#sessions-bar \.session-item:hover \.item-btn,[\s\S]*?#sessions-bar \.session-item:focus-within \.item-btn,[\s\S]*?#sessions-bar \.session-item \.item-btn:focus-visible,[\s\S]*?#sessions-bar \.session-item\.sel \.item-btn \{[^}]*opacity:\s*1[^}]*pointer-events:\s*auto/,
+    "悬停/键盘焦点/选中行没有把选项键点亮");
+  // 收起规则只能在 hover 媒体块里；漏到全局就是触屏用户没入口。
+  const outside = css.replace(/@media \(hover: hover\) \{[\s\S]*?\n\}/, "");
+  assert.ok(!/#sessions-bar \.session-item[^{]*\.item-btn \{[^}]*opacity:\s*0/.test(outside),
+    "选项键在触屏（无 hover）上也被藏了");
+  assert.ok(!/#sessions-bar \.session-item[^{]*\.item-btn \{[^}]*display:\s*none/.test(css),
+    "选项键不能用 display:none 收起（会连焦点和命中区一起丢掉）");
+});
+
 test("空输入时的发送键不是向下箭头（那个位置会被读成「滚到底」）", () => {
   const icons = readFileSync(join(SRC, "components", "icons.ts"), "utf8");
   const cont = icons.slice(icons.indexOf("cont:"), icons.indexOf("menu:"));
@@ -3570,6 +3720,19 @@ test("渠道标识可改：编辑态输入框可用、保存发 new_id、成功�
   assert.match(settings, /function onProviderSaved\(id[^)]*\)/, "没有 onProviderSaved");
   assert.match(settings, /editProvider\.value = providers\.value\.find\(/, "改名后没把编辑器指向新对象");
   assert.match(settings, /emit\("models-changed"\)/, "改名后没通知顶栏重拉模型分组");
+});
+
+// 渠道别名（2026-11-09）：显示别名与渠道标识是**两件事** ——
+// 别名只走 alias 字段（空 = 清），id 只走 new_id；别让改别名把会话 / 模型引用一起搬走。
+test("渠道别名：编辑框可填、保存发 alias，不碰 new_id", () => {
+  const editor = readFileSync(join(SRC, "components", "ProviderEditor.vue"), "utf8");
+  assert.match(editor, /<span>显示别名（可选）<\/span><VTextField[^>]*v-model="alias"/, "找不到别名那一格");
+  assert.match(editor, /alias\.value = p\.alias \?\? ""/, "编辑态没带入已保存的别名");
+  assert.match(editor, /body\.alias = alias\.value\.trim\(\)/, "保存时没有把别名发出去");
+  assert.ok(!/body\.new_id = alias/.test(editor), "别名被当成渠道标识发了");
+  const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
+  assert.match(settings, /providerDisplayName\(p\)/, "渠道列表没显示别名");
+  assert.match(settings, /provider-id/, "渠道列表的别名旁没保留真实 id");
 });
 
 // 左栏行内环（2026-11-05 用户定）：一条会话有任务在跑，会话列表那一行就得有反应。
@@ -3995,7 +4158,7 @@ test("密度：行高/顶栏/FAB/输入/设置/消息间距都收了一档", () 
   assert.match(css, /#sessions-bar \.session-item \{[^}]*min-height:\s*2\.4em/, "会话行没收到紧凑密度（2.4em）");
   assert.match(css, /#sessions-bar #session-new \{[^}]*min-height:\s*3em/, "FAB 没收到 48dp");
   assert.match(css, /#chat-col > header \{ min-height:\s*2\.65em/, "顶栏没有再收窄到 2.65em");
-  assert.match(css, /\.messages-inner \{[^}]*gap:\s*0\.55em/, "消息间距没收到 0.55em");
+  assert.match(css, /\.messages-inner \{[^}]*gap:\s*0\.75em/, "消息间距没放大到 0.75em");
   assert.match(css, /\.messages-inner \{[^}]*padding-top:\s*3\.15em/, "消息列顶部留白没跟着顶栏收");
   assert.match(css, /\.settings-cols \.panel \.field, \.settings-cols \.panel \.row \{[^}]*padding:\s*0\.45em/, "设置行没收到 0.45em");
   assert.match(css, /\.agent-item, \.model-item \{[^}]*min-height:\s*2\.5em/, "菜单项没收到 40dp");
@@ -4008,8 +4171,12 @@ test("左栏底：会话/渠道/设置上方有一条 outline-variant 分隔线"
 
 test("会话分组标题：更大间距 + 非首组淡分隔线", () => {
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  assert.match(css, /#sessions-bar \.session-group-head \{[^}]*padding:\s*0\.55em 0\.75em 0\.2em/, "分组标题没有收紧");
-  assert.match(css, /#sessions-bar \.session-group-head:not\(:first-child\) \{[^}]*border-top:\s*1px solid color-mix\(in srgb, var\(--md-outline-variant\) 55%/, "非首组没有淡分隔线");
+  // 以文件末尾最后一次定义为准：同特异性下它就是真正生效的规则。
+  const tail = css.slice(css.lastIndexOf("#sessions-bar .session-group-head {"));
+  assert.match(tail, /^#sessions-bar \.session-group-head \{ padding: 1em 0\.75em 0\.3em/, "分组标题内边距不是最终生效值");
+  assert.match(tail, /#sessions-bar \.session-group-head:first-child \{ padding-top: 0\.45em/, "首组顶部留白不是最终生效值");
+  assert.match(tail, /#sessions-bar \.session-group-head:not\(:first-child\) \{[^}]*margin-top:\s*1em/, "组间外边距没有放大到 1em");
+  assert.match(tail, /#sessions-bar \.session-group-head:not\(:first-child\) \{[^}]*border-top:\s*1px solid color-mix\(in srgb, var\(--md-outline-variant\) 55%/, "非首组没有淡分隔线");
 });
 
 

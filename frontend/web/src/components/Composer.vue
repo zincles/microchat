@@ -121,7 +121,7 @@ defineExpose({ submit, clear, setText, text, setRunning });
         :aria-label="running ? '停止' : text.trim() ? '发送' : '续写（重发历史）'"
         @click="running ? stop() : submit()"
       >
-        <span v-html="running ? ICONS.stop : text.trim() ? sendSvg : ICONS.cont"></span>
+        <span v-html="running ? ICONS.stop : text.trim() ? sendSvg : ICONS.down"></span>
       </VBtn>
     </div>
     </div>

@@ -14,6 +14,14 @@ export const MODEL_ICON_OPTIONS: ModelIconOption[] = [
   { value: "mimo", label: "MiMo" },
   { value: "glm", label: "GLM" },
   { value: "kimi", label: "Kimi" },
+  { value: "longcat", label: "LongCat" },
+  { value: "mistral", label: "Mistral" },
+  { value: "qwen", label: "Qwen" },
+  { value: "minimax", label: "MiniMax" },
+  { value: "tencent", label: "Tencent" },
+  { value: "meta", label: "Meta" },
+  { value: "stepfun", label: "StepFun" },
+  { value: "bytedance", label: "ByteDance" },
 ];
 
 export const MODEL_ICON_IDS = MODEL_ICON_OPTIONS.map((option) => option.value);

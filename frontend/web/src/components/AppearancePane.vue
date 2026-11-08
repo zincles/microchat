@@ -23,7 +23,7 @@ import {
   previewOn, savePreview,
   commandMenuOn, saveCommandMenu,
   chromeHideOn, saveChromeHide,
-  textScale as textScalePref, saveTextScale, flushPrefs,
+  textScale as textScalePref, saveTextScale,
   fontBody as fontBodyPref, fontMono as fontMonoPref, saveFontBody, saveFontMono,
   markdownPrefs, markdownTypes, saveMarkdown, saveBackground,
   refreshPrefs,
@@ -44,6 +44,7 @@ const preview = ref(true);
 const cmdMenu = ref(false);
 // 界面缩放（2026-10-28）：**拖的时候就生效** —— 尺寸这东西得看着调。
 const textScale = ref(1);
+const scaleDirty = ref(false);
 const scaleBounds = { min: TEXT_SCALE_MIN, max: TEXT_SCALE_MAX, step: TEXT_SCALE_STEP };
 const scalePercent = computed(() => Math.round(textScale.value * 100));
 // 字体（2026-11-04）：标准字体管全站，等宽字体管代码块；空 = 内置系统字族。
@@ -86,9 +87,9 @@ const mdGroups = computed<Array<{ kind: string; title: string; items: MarkdownTy
 });
 
 function onScaleInput(value: number | string): void {
+  // 只改草稿值，**不应用**；点「保存缩放」才落盘 + 改 CSS 变量。
   textScale.value = Number(value);
-  saveTextScale(textScale.value);
-  emit("prefs-saved");
+  scaleDirty.value = true;
 }
 function onTheme(value: unknown): void {
   theme.value = String(value ?? "");
@@ -98,14 +99,14 @@ function onSend(value: unknown): void {
   send.value = String(value ?? "");
   persist();
 }
-function onScaleCommit(): void {
-  // 松手就落盘，不等 250ms 防抖（用户可能随后马上刷新）。
-  flushPrefs();
+function saveScale(): void {
+  saveTextScale(textScale.value);
+  scaleDirty.value = false;
+  emit("prefs-saved");
 }
 function resetScale(): void {
   textScale.value = 1;
-  saveTextScale(1);
-  emit("prefs-saved");
+  scaleDirty.value = true;
 }
 
 // loadFromPrefs：把内存里的偏好灌进这些 ref。
@@ -116,6 +117,7 @@ function loadFromPrefs(): void {
   preview.value = previewOn();
   cmdMenu.value = commandMenuOn();
   textScale.value = textScalePref();
+  scaleDirty.value = false;
   fontBody.value = fontBodyPref();
   fontMono.value = fontMonoPref();
   chromeHide.value = chromeHideOn();
@@ -137,7 +139,6 @@ function persist(): void {
   saveSendMode(send.value);
   savePreview(preview.value);
   saveCommandMenu(cmdMenu.value);
-  saveTextScale(textScale.value);
   saveFontBody(fontBody.value);
   saveFontMono(fontMono.value);
   saveChromeHide(chromeHide.value);
@@ -254,14 +255,14 @@ async function clearBg(): Promise<void> {
             hide-details
             aria-label="界面缩放"
             @update:model-value="onScaleInput"
-            @end="onScaleCommit"
           />
           <b class="scale-value">{{ scalePercent }}%</b>
         </span>
       </label>
       <div class="row">
+        <VBtn color="primary" variant="flat" size="small" type="button" :disabled="!scaleDirty" @click="saveScale">保存缩放</VBtn>
         <VBtn variant="text" size="small" type="button" @click="resetScale">复位 100%</VBtn>
-        <span class="status">拖动立即生效；字号和留白会一起等比缩放</span>
+        <span class="status">{{ scaleDirty ? "未保存：点「保存缩放」后才会应用" : "字号和留白会一起等比缩放" }}</span>
       </div>
       <label class="field"><span>标准字体</span><VTextField density="compact" variant="outlined" hide-details v-model="fontBody" @change="saveFonts" placeholder="留空 = 系统默认（CSS font-family）" /></label>
       <label class="field"><span>等宽字体（代码块）</span><VTextField density="compact" variant="outlined" hide-details v-model="fontMono" @change="saveFonts" placeholder="留空 = 系统等宽" /></label>

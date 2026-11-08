@@ -15,7 +15,9 @@ import (
 
 // ProviderView：`GET /providers` 的一项。**绝不含密钥内容**（只回 `has_key`）。
 type ProviderView struct {
-	ID       string  `json:"id"`
+	ID string `json:"id"`
+	// Alias：界面显示用的别名（空 = 沿用 name / id 的旧回退）。`id` 永远是唯一标识。
+	Alias    string  `json:"alias"`
 	Name     *string `json:"name"`
 	Kind     string  `json:"kind"`
 	Vendor   string  `json:"vendor"`
@@ -67,9 +69,11 @@ type ModelView struct {
 type ModelListItem struct {
 	Provider     string  `json:"provider"`
 	ProviderName *string `json:"provider_name"`
-	UpstreamID   string  `json:"upstream_id"`
-	Name         string  `json:"name"`
-	DisplayName  *string `json:"display_name"`
+	// Alias：渠道别名（空 = 没有别名）。模型选择器的组头用它优先显示。
+	Alias       string  `json:"alias"`
+	UpstreamID  string  `json:"upstream_id"`
+	Name        string  `json:"name"`
+	DisplayName *string `json:"display_name"`
 	// ThinkingLevels：这个模型能安全收到的统一档位（UI 只摆这些；空 = 不显示思考选择器）。
 	ThinkingLevels []string `json:"thinking_levels"`
 	// model_define_rules 的派生结果（不落库）。
@@ -81,6 +85,7 @@ type ModelListItem struct {
 type CreateProviderReq struct {
 	ID       string            `json:"id"`
 	Name     *string           `json:"name"`
+	Alias    *string           `json:"alias"` // 显示别名（省略 / 空 = 没有别名）
 	Kind     *string           `json:"kind"`
 	Vendor   *string           `json:"vendor"`
 	Protocol *string           `json:"protocol"`
@@ -102,7 +107,8 @@ type UpdateProviderReq struct {
 	Vendor   *string           `json:"vendor"`   // None = 不动；"" = 清（回落到 Kind 别名）
 	Protocol *string           `json:"protocol"` // None = 不动；"" = 清（回落到缺省 chat）
 	BaseURL  *string           `json:"base_url"`
-	Name     *string           `json:"name"` // None = 不动；"" = 清显示名
+	Name     *string           `json:"name"`  // None = 不动；"" = 清显示名
+	Alias    *string           `json:"alias"` // None = 不动；"" = 清别名（回落到 name / id）
 	Headers  map[string]string `json:"headers"`
 	APIKey   *string           `json:"api_key"` // None = 不动；"" = 删除密钥
 	// ModelFilter：None = 不动；"" = 清（不筛）。**改了要再刷一次模型才生效**
@@ -189,6 +195,10 @@ func (s *Server) createProvider(w http.ResponseWriter, r *http.Request) {
 	if req.Name != nil && *req.Name != "" {
 		provider.Name = *req.Name
 	}
+	if req.Alias != nil {
+		// 纯空白当没写：否则界面会显示一格看起来"有值"、实际什么都不像的别名。
+		provider.Alias = strings.TrimSpace(*req.Alias)
+	}
 	if req.Kind != nil {
 		provider.Kind = *req.Kind
 	}
@@ -258,6 +268,9 @@ func (s *Server) updateProvider(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Name != nil { // None = 不动；"" = 清显示名
 		provider.Name = *req.Name
+	}
+	if req.Alias != nil { // None = 不动；"" = 清别名（回落到 name / id）
+		provider.Alias = strings.TrimSpace(*req.Alias)
 	}
 	if req.Headers != nil {
 		provider.Headers = req.Headers
@@ -515,10 +528,12 @@ func (s *Server) listProviderPresets(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
 	configs := s.loadProviders()
 	names := map[string]*string{}
+	aliases := map[string]string{}
 	rulesByProvider := map[string][]config.ModelDefineRule{}
 	for _, provider := range configs.Providers {
 		view := providerView(provider)
 		names[provider.ID] = view.Name
+		aliases[provider.ID] = view.Alias
 		rulesByProvider[provider.ID] = provider.ModelDefineRules
 	}
 	rows, err := s.store.ListModels("")
@@ -530,7 +545,7 @@ func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
 	for _, row := range rows {
 		view := s.modelView(row, rulesByProvider[row.Provider])
 		items = append(items, ModelListItem{
-			Provider: row.Provider, ProviderName: names[row.Provider],
+			Provider: row.Provider, ProviderName: names[row.Provider], Alias: aliases[row.Provider],
 			UpstreamID:     view.UpstreamID,
 			Name:           view.Name,
 			DisplayName:    view.DisplayName,
@@ -598,7 +613,7 @@ func providerView(provider config.Provider) ProviderView {
 		effective.Identity = providers.IdentityPi // 视图给"生效值"，别让界面猜（默认 = pi）
 	}
 	return ProviderView{
-		ID: provider.ID, Name: name, Kind: provider.Kind,
+		ID: provider.ID, Alias: strings.TrimSpace(provider.Alias), Name: name, Kind: provider.Kind,
 		Vendor: string(effective.EffectiveVendor()), Protocol: string(effective.EffectiveProtocol()),
 		VendorName: effective.EffectiveVendor().VendorName(), ProtocolName: providers.ProtocolLabel(effective.EffectiveProtocol()),
 		ProtocolOptions: providers.ProtocolOptionsFor(effective),

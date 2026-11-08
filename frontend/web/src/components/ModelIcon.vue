@@ -60,6 +60,14 @@ const initial = computed(() => {
 .mi-mimo { --model-icon-color: #ff6900; -webkit-mask-image: url("/model-icons/mimo.svg"); mask-image: url("/model-icons/mimo.svg"); }
 .mi-glm { --model-icon-color: #3b82f6; -webkit-mask-image: url("/model-icons/glm.svg"); mask-image: url("/model-icons/glm.svg"); }
 .mi-kimi { --model-icon-color: #7c3aed; -webkit-mask-image: url("/model-icons/kimi.svg"); mask-image: url("/model-icons/kimi.svg"); }
+.mi-longcat { --model-icon-color: #1f2937; -webkit-mask-image: url("/model-icons/longcat.svg"); mask-image: url("/model-icons/longcat.svg"); }
+.mi-mistral { --model-icon-color: #ff7000; -webkit-mask-image: url("/model-icons/mistral.svg"); mask-image: url("/model-icons/mistral.svg"); }
+.mi-qwen { --model-icon-color: #615ced; -webkit-mask-image: url("/model-icons/qwen.svg"); mask-image: url("/model-icons/qwen.svg"); }
+.mi-minimax { --model-icon-color: #e73562; -webkit-mask-image: url("/model-icons/minimax.svg"); mask-image: url("/model-icons/minimax.svg"); }
+.mi-tencent { --model-icon-color: #0052d9; -webkit-mask-image: url("/model-icons/tencent.svg"); mask-image: url("/model-icons/tencent.svg"); }
+.mi-meta { --model-icon-color: #0866ff; -webkit-mask-image: url("/model-icons/meta.svg"); mask-image: url("/model-icons/meta.svg"); }
+.mi-stepfun { --model-icon-color: #1677ff; -webkit-mask-image: url("/model-icons/stepfun.svg"); mask-image: url("/model-icons/stepfun.svg"); }
+.mi-bytedance { --model-icon-color: #1664ff; -webkit-mask-image: url("/model-icons/bytedance.svg"); mask-image: url("/model-icons/bytedance.svg"); }
 .model-icon-letter {
   border: 1px solid currentColor;
   border-radius: 50%;

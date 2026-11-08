@@ -16,7 +16,7 @@ import ModelRulesEditor from "./ModelRulesEditor.vue";
 import UpdatePane from "./UpdatePane.vue";
 import { ICONS } from "./icons.ts";
 import { sharedApi } from "../utils/prefs.ts";
-import { SETTINGS_TABS, groupModelsByProvider, modelOption, providerChoices, modelChoicesFor, modelKey, parseModelKey } from "../utils/format.ts";
+import { SETTINGS_TABS, groupModelsByProvider, modelOption, providerChoices, modelChoicesFor, modelKey, parseModelKey, providerDisplayName } from "../utils/format.ts";
 import type { ModelGroup } from "../utils/format.ts";
 import { downloadJSON, downloadBlob } from "../utils/download.ts";
 import { buildCartridge, cartridgeAgent } from "../utils/cartridge.ts";
@@ -423,6 +423,22 @@ function onKey(e: KeyboardEvent): void {
         <VTabsWindowItem value="chat">
         <section id="panel-chat" class="panel">
           <section class="settings-card">
+          <!-- 文案（2026-10-28 用户提）：「缺省」是技术圈黑话，普通用户读不出"默认值"。
+               一律说「默认」；「会话」留着 —— 它是 DEFINE.md 的词（左栏、导出、删除确认都这么说），
+               一块面板里混用「对话/会话」只会更乱。 -->
+          <h3>新会话默认设置</h3>
+          <!-- 三格都是**下拉**（2026-10-28）：从前渠道/模型是手打 id 的文本框，说明文自己都写着
+               「填错不会报错，只会在发送时回落成『未配置模型』」—— 那是把校验推给用户。
+               现在能选出来的都真实存在；当前值即使不在列表里（渠道被删、手改过配置文件、
+               或 dummy 这种永远发现不到模型的渠道）也会补一条并标明，**不许**静默丢掉。 -->
+          <label class="field"><span>渠道</span><VSelect :model-value="defaults.provider" :items="providerSelectOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details @update:model-value="onDefaultProviderChange" /></label>
+          <label class="field"><span>模型</span><VSelect v-model="defaults.model" :items="modelSelectOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
+          <label class="field"><span>智能体</span><VSelect v-model="defaults.agent" :items="agentSelectOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
+          <div class="row"><VBtn color="primary" variant="flat" size="small" type="button" @click="saveDefaults">保存默认值</VBtn><span class="status">{{ defStatus }}</span></div>
+          <p class="hint" v-if="!modelOpts.length">这个渠道还没有拉到任何模型 —— 可以先留空用内置默认，或去「渠道」里点「保存并刷新」。</p>
+          <p class="hint">新建会话时使用这三项；留空 = 内置默认（本地示例模型，不联网，开箱就能回话）。</p>
+          </section>
+          <section class="settings-card">
             <h3>回复与自动压缩</h3>
             <label class="field"><span>自动标题最多字数</span><VTextField density="compact" variant="outlined" hide-details v-model="chat.title_chars" type="number" min="1" /></label>
             <label class="field"><span>标题模型</span><VSelect v-model="chat.title_model" :items="titleSelectOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
@@ -444,20 +460,6 @@ function onKey(e: KeyboardEvent): void {
         </VTabsWindowItem>
         <VTabsWindowItem value="session">
         <section id="panel-session" class="panel">
-          <!-- 文案（2026-10-28 用户提）：「缺省」是技术圈黑话，普通用户读不出"默认值"。
-               一律说「默认」；「会话」留着 —— 它是 DEFINE.md 的词（左栏、导出、删除确认都这么说），
-               一块面板里混用「对话/会话」只会更乱。 -->
-          <h3>新会话默认设置</h3>
-          <!-- 三格都是**下拉**（2026-10-28）：从前渠道/模型是手打 id 的文本框，说明文自己都写着
-               「填错不会报错，只会在发送时回落成『未配置模型』」—— 那是把校验推给用户。
-               现在能选出来的都真实存在；当前值即使不在列表里（渠道被删、手改过配置文件、
-               或 dummy 这种永远发现不到模型的渠道）也会补一条并标明，**不许**静默丢掉。 -->
-          <label class="field"><span>渠道</span><VSelect :model-value="defaults.provider" :items="providerSelectOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details @update:model-value="onDefaultProviderChange" /></label>
-          <label class="field"><span>模型</span><VSelect v-model="defaults.model" :items="modelSelectOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
-          <label class="field"><span>智能体</span><VSelect v-model="defaults.agent" :items="agentSelectOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
-          <div class="row"><VBtn color="primary" variant="flat" size="small" type="button" @click="saveDefaults">保存默认值</VBtn><span class="status">{{ defStatus }}</span></div>
-          <p class="hint" v-if="!modelOpts.length">这个渠道还没有拉到任何模型 —— 可以先留空用内置默认，或去「渠道」里点「保存并刷新」。</p>
-          <p class="hint">新建会话时使用这三项；留空 = 内置默认（本地示例模型，不联网，开箱就能回话）。</p>
           <h3>已有会话（{{ sessions.length }} 条，点击打开）</h3>
           <div id="session-mgr-list">
             <VTable class="plist">
@@ -619,7 +621,11 @@ function onKey(e: KeyboardEvent): void {
               <VTable class="plist">
                 <thead><tr><th>渠道</th><th>服务商</th><th>模型</th><th>密钥</th><th></th></tr></thead>
                 <tbody><tr v-for="p in providers" :key="p.id" class="clickable" @click="editProvider = p">
-                  <td :title="p.name || p.id">{{ p.id }}</td>
+                  <td :title="p.name ? `${p.name}（${p.id}）` : p.id">
+                    <span class="provider-alias">{{ providerDisplayName(p) }}</span>
+                    <!-- 别名之下保留真实 id：列表显示的是人话，但改配置 / 对日志时得能一眼对回内部标识。 -->
+                    <code v-if="providerDisplayName(p) !== p.id" class="provider-id">{{ p.id }}</code>
+                  </td>
                   <td :title="p.vendor">{{ p.vendor_name || p.vendor || "?" }}</td>
                   <td>{{ p.models?.length ?? 0 }} 个<i v-if="p.model_filter" class="io-tag" :title="`只导入匹配：${p.model_filter}`">筛选</i></td>
                   <td>{{ p.has_key ? "已配置" : "未配置" }}</td>

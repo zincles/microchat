@@ -155,6 +155,7 @@ func LoadConfig(paths Paths) (Config, error) {
 		config.Defaults.Agent = DefaultAgentID
 	}
 	normalizeLegacyModelIcons(config.ModelDefineRules)
+	config.ModelDefineRules = ensureModelRuleDefaults(config.ModelDefineRules)
 	if err := ValidateModelDefineRules(config.ModelDefineRules); err != nil {
 		return config, err
 	}
@@ -458,8 +459,12 @@ func (c AgentsConfig) Resolve(id string) (Agent, bool) {
 // `Vendor`（找谁）× `Protocol`（说什么话）优先；`Kind` 是废弃的只读入别名
 // （老配置/旧字面量照常读，包内 `EffectiveVendor` 收敛；`Vendor` 非空时 `Kind` 被忽略）。
 type Provider struct {
-	ID       string            `json:"id"`
-	Name     string            `json:"name"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// Alias：渠道在界面上的**别名**（可选，2026-11-09 用户定）。
+	// 空 = 沿用原有的显示回退（name → vendor_name / id）；它**只管显示** ——
+	// 会话、模型、路由引用的一直是 `id`，别名不参与任何匹配，也不许拿来当 id。
+	Alias    string            `json:"alias,omitempty"`
 	Kind     string            `json:"kind"`     // deprecated：只读入；Vendor 非空时忽略
 	Vendor   string            `json:"vendor"`   // 新口径：找谁（空 = 看 Kind）
 	Protocol string            `json:"protocol"` // 新口径：说什么话（空 = 缺省 chat）

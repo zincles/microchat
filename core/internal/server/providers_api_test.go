@@ -74,7 +74,7 @@ func TestProvidersNeverEchoSecrets(t *testing.T) {
 func TestProviderViewShape(t *testing.T) {
 	server, _ := newProvidersServer(t, `{"providers":[{"id":"ocgo","kind":"opencode-go","base_url":"https://opencode.ai/zen/go/v1","headers":{"X-Extra":"1"}}]}`)
 	recorder := call(server, "GET", "/api/v1/providers", "")
-	want := `[{"id":"ocgo","name":null,"kind":"opencode-go","vendor":"opencode-go","protocol":"openai-chat-completion",` +
+	want := `[{"id":"ocgo","alias":"","name":null,"kind":"opencode-go","vendor":"opencode-go","protocol":"openai-chat-completion",` +
 		`"vendor_name":"OpenCode Go","protocol_name":"对话补全",` +
 		`"protocol_options":[{"protocol":"openai-chat-completion","label":"对话补全","hint":"最常用，绝大多数服务商都支持"},` +
 		`{"protocol":"openai-response","label":"应答接口","hint":"另一种接口格式；部分服务商支持"}],` +
@@ -517,6 +517,72 @@ func TestProviderModelFilterRoundTrip(t *testing.T) {
 	}
 	if view.ModelFilter != "" {
 		t.Fatalf("该被清空，得到 %q", view.ModelFilter)
+	}
+}
+
+// 别名（2026-11-09）：`alias` 只是**显示层** —— id 不变、会话 / 模型引用不变，
+// 但 `GET /providers`、`GET /models` 与 providers.json 三处都要能带上它。
+func TestProviderAliasRoundTrip(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" {
+			w.WriteHeader(404)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"gpt-5"}]}`))
+	}))
+	defer upstream.Close()
+
+	server, _ := newProvidersServer(t, `{"providers":[]}`)
+	recorder := call(server, "POST", "/api/v1/providers",
+		`{"id":"opencode-go-2","vendor":"openai","base_url":"`+upstream.URL+`","alias":"  OpenCode GO  "}`)
+	if recorder.Code != 201 {
+		t.Fatalf("建渠道：%d %s", recorder.Code, recorder.Body.String())
+	}
+	view := decodeBody[ProviderView](t, recorder)
+	// 首尾空白吃掉（纯空白的别名等于没写）；id 一个字符都不许动。
+	if view.Alias != "OpenCode GO" || view.ID != "opencode-go-2" {
+		t.Fatalf("视图 = alias %q / id %q", view.Alias, view.ID)
+	}
+
+	// 配置真的落盘了（别名不参与 id，只多一格）
+	configs, err := config.LoadProviders(config.Paths{ConfigDir: server.paths.ConfigDir, DataDir: server.paths.DataDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, ok := configs.Get("opencode-go-2")
+	if !ok || stored.Alias != "OpenCode GO" {
+		t.Fatalf("providers.json = %+v", configs.Providers)
+	}
+
+	// 刷一次模型，`GET /models` 的每一项都该带渠道别名（模型选择器组头用）。
+	if recorder = call(server, "POST", "/api/v1/providers/opencode-go-2/refresh", ""); recorder.Code != 200 {
+		t.Fatalf("刷新：%d %s", recorder.Code, recorder.Body.String())
+	}
+	var items []ModelListItem
+	if err := json.Unmarshal(call(server, "GET", "/api/v1/models", "").Body.Bytes(), &items); err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].Provider != "opencode-go-2" || items[0].Alias != "OpenCode GO" {
+		t.Fatalf("拍平列表 = %+v", items)
+	}
+
+	// PATCH 不带 alias = 不动
+	if recorder = call(server, "PATCH", "/api/v1/providers/opencode-go-2", `{"name":"顺手改个名"}`); recorder.Code != 200 {
+		t.Fatalf("PATCH：%d", recorder.Code)
+	}
+	view = decodeBody[ProviderView](t, recorder)
+	if view.Alias != "OpenCode GO" || view.ID != "opencode-go-2" {
+		t.Fatalf("没给 alias 就不该动它：%+v", view)
+	}
+
+	// PATCH 给 "" = 清别名（id 仍然不变）
+	if recorder = call(server, "PATCH", "/api/v1/providers/opencode-go-2", `{"alias":""}`); recorder.Code != 200 {
+		t.Fatalf("PATCH 清别名：%d", recorder.Code)
+	}
+	view = decodeBody[ProviderView](t, recorder)
+	if view.Alias != "" || view.ID != "opencode-go-2" {
+		t.Fatalf("清别名后 = %+v", view)
 	}
 }
 
