@@ -161,7 +161,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 #ctx-ring { flex: none; position: relative; width: 2.5em; height: 2.5em; padding: 0; border: none; border-radius: 50%; background: none; color: var(--md-on-surface); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: background-color var(--md-dur-150) var(--md-ease-standard); }
 #ctx-ring:hover { background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); }
 #ctx-ring svg { display: block; width: 1.8em; height: 1.8em; transform: rotate(-90deg); } /* 起点转到 12 点方向 */
-#ctx-ring circle { fill: none; stroke-width: 3.2; }
+#ctx-ring circle { fill: none; stroke-width: 4.0; }
 /* 环心数字（2026-11-02 合并后台任务）：还在跑的条数。尺寸跟环走，字号单独一层 ——
  * 不跟 width 写在同一个元素上（em 叠乘会让数字缩成一行附注）。 */
 .ctx-ring-n { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
@@ -182,8 +182,12 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
   padding: 0.3em 0.55em 0.45em; border-bottom: 1px solid var(--mix-10); }
 .task-head b { font-weight: 600; color: var(--tg-text); }
 .task-total { flex: none; font-size: 0.85em; color: var(--tg-hint); }
-.task-list { list-style: none; margin: 0.25em 0 0; padding: 0; }
-.task-row { display: flex; align-items: baseline; gap: 0.5em; padding: 0.25em 0.55em; border-radius: var(--r-btn); }
+.task-list.v-list { margin: 0.25em 0 0; padding: 0; }
+.task-row.v-list-item { min-height: 0; padding: 0.25em 0.55em; border-radius: var(--r-btn);
+  display: flex; align-items: baseline; gap: 0.5em; }
+.task-row .v-list-item__content { display: flex; align-items: baseline; gap: 0.5em; padding: 0; overflow: visible; }
+.task-row-inner { display: flex; align-items: baseline; gap: 0.5em; width: 100%; min-width: 0; }
+.task-row .v-list-item__append { margin-inline-start: 0.5em; padding: 0; display: flex; align-items: center; }
 .task-row:hover { background: var(--mix-6); }
 .task-kind { flex: none; width: 4.6em; font-size: 0.85em; color: var(--tg-hint);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -212,14 +216,8 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 取消：一颗**小而不抢眼**的按钮 —— 它在每一行右边，不能比任务名还重。
  * 触屏上给够 1.6em 的高度，否则点不准（点不中的按钮比没有更糟）。 */
-.task-cancel { flex: none; min-height: 1.6em; padding: 0 0.5em; border-radius: var(--r-btn);
-  background: none; border: 1px solid var(--mix-18);
-  color: var(--tg-hint); font: inherit; font-size: 0.85em; cursor: pointer; line-height: 1;
-  -webkit-tap-highlight-color: transparent; }
-.task-cancel:hover { color: var(--tg-destructive);
-  border-color: color-mix(in srgb, var(--tg-destructive) 45%, transparent);
-  background: color-mix(in srgb, var(--tg-destructive) 10%, transparent); }
-.task-cancel:focus-visible { outline: 2px solid color-mix(in srgb, var(--tg-destructive) 55%, transparent); outline-offset: 1px; }
+.task-cancel.v-btn { flex: none; min-height: 1.6em; height: auto; padding: 0 0.45em;
+  font-size: 0.8em; text-transform: none; letter-spacing: 0; }
 /* 已结束的队列那格显示结局（成功 / 取消 / 失败）—— 与原子任务的时长同一列。 */
 .task-queue.done { opacity: 0.7; }
 /* 聊天 / 上下文 两段开关（2026-10-29 用户定）：落在绿环左边，切的是**这一下看哪块视图**。
@@ -285,34 +283,37 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
  * 连这条提示也不该是一块虚线框；它不是内容，是一句说明）。 */
 .ws-draft-note { flex: none; margin: 0 auto 0.6em; max-width: var(--read-col, 840px); width: 100%; box-sizing: border-box; background: var(--md-surface-container-low); color: var(--md-on-surface-variant); border-radius: var(--md-shape-md); padding: 1em 1.2em; font-size: var(--md-type-body-medium); line-height: 1.6; }
 /* 浮板：与 Agent 选人同一族（同底、同阴影、同圆角），只是从右边缘掉下来。 */
-.ctx-menu { left: auto; right: 0.35em; min-width: 18em; max-width: min(24em, calc(100vw - 2em)); padding: 0.7em 0.8em 0.6em; border-radius: var(--md-shape-md); box-shadow: var(--md-elev-3);
-  max-height: min(76vh, 38em); overflow-y: auto; overscroll-behavior: contain; }
-/* 环面板的两个 tab（2026-11-02）：上下文状态 / 任务。两堆东西不再上下叠。 */
-.ctx-tabs { align-self: flex-start; margin-bottom: 0.45em; }
+.ctx-menu { left: auto; right: 0.35em; width: min(24em, calc(100vw - 2em));
+  max-width: min(24em, calc(100vw - 2em)); height: min(23.5em, calc(100vh - 6em));
+  padding: 1em; border-radius: var(--md-shape-md);
+  box-shadow: var(--md-elev-3); display: flex; flex-direction: column; overflow: hidden; box-sizing: border-box; }
+/* 环面板的两个 tab（2026-11-02）：上下文状态 / 任务。两堆东西不再上下叠。
+ * 2026-11-09：换成 Vuetify VTabs + VWindow；窗口高度钉死，切 tab 不再让浮板跳高矮。 */
+.ctx-tabs { flex: none; align-self: stretch; margin: -0.35em 0 0.45em; }
 .ctx-tab-count { margin-left: 0.35em; font-size: 0.86em; opacity: 0.8; font-variant-numeric: tabular-nums; }
+.ctx-window { flex: 1 1 auto; min-height: 0; }
+.ctx-window > .v-window__container { height: 100% !important; min-height: 0; }
+.ctx-window .v-window-item { height: 100% !important; min-height: 0; }
+.ctx-pane { height: 100%; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-right: 0.15em; }
 .ctx-tasks { padding-top: 0.1em; }
 .ctx-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.6em; }
 .ctx-used { font-size: 1.05em; font-weight: 600; }
-.ctx-sep { margin: 0 0.12em; color: var(--tg-hint); font-weight: 400; }
 .ctx-pct { color: var(--tg-ok); font-weight: 600; }
 .ctx-pct.over { color: var(--tg-destructive); }
-.ctx-bar { height: 3px; margin: 0.5em 0 0.55em; border-radius: 999px; overflow: hidden;
-  background: color-mix(in srgb, var(--tg-text) 12%, transparent); }
-.ctx-bar > i { display: block; height: 100%; border-radius: inherit; background: var(--tg-ok);
-  transition: width 240ms ease-out; }
-.ctx-menu.over .ctx-bar > i { background: var(--tg-destructive); }
-/* 明细：左标签右数值（数值等宽数字，滚动刷新时不会左右抖）。 */
-.ctx-rows { margin: 0; }
-.ctx-row { display: flex; align-items: baseline; gap: 0.6em; padding: 0.22em 0; }
-.ctx-row dt { flex: none; width: 6.8em; color: var(--tg-hint); }
-.ctx-row dd { flex: 1; margin: 0; text-align: right; word-break: break-word; }
+.ctx-progress { margin: 0.5em 0 0.6em; }
+.ctx-list { margin: 0; padding: 0; }
+.ctx-row.v-list-item { min-height: 0; padding: 0.18em 0.55em; border-radius: var(--r-btn); }
+.ctx-row-inner { display: flex; align-items: baseline; gap: 0.6em; width: 100%; }
+.ctx-key { flex: none; width: 6.8em; color: var(--tg-hint); }
+.ctx-val { flex: 1; margin: 0; text-align: right; word-break: break-word; }
 .ctx-note { margin: 0.5em 0 0; padding-top: 0.45em; border-top: 1px solid var(--line);
   color: var(--tg-hint); font-size: 0.85em; line-height: 1.4; }
-/* 「连接 / 助手 / 运行」三行（2026-10-28 从输入框上方那行小字搬进来）。
- * 与上面那组上下文数字之间**画一条分隔**：它们是两件事（"占了多大"是仪表读数，
- * "连没连上、在不在跑"是运行状态），混成一张表会让人以为"运行"也是 Token 数。 */
-.ctx-rows-status { margin-top: 0.45em; padding-top: 0.4em; border-top: 1px solid var(--line); }
-.ctx-rows-status .ctx-row { padding: 0.16em 0; }
+/* 「连接 / 助手 / 运行」三行：与上下文数字之间画一条分隔（两件事，别混成一张表）。 */
+.ctx-list-status { margin-top: 0.45em; padding-top: 0.4em; border-top: 1px solid var(--line); }
+.ctx-list-status .ctx-row.v-list-item { padding: 0.14em 0.55em; }
+/* `.agent-menu` 在后面还有一条 `padding: 0.25em 0`；VCard 复用那个类，
+ * 单类 `.ctx-menu` 会被它覆盖。这里用双类把这层 padding 拿回来。 */
+.agent-menu.ctx-menu { padding: 1em; }
 /* Toast 通知（右上堆叠，TG 安卓 toast 味：深底白字圆角 + 左色条区分 Plumbing/错误）。 */
 #toasts { position: fixed; top: 4.2em; right: 0.8em; display: flex; flex-direction: column; gap: 0.5em; z-index: 50; max-width: min(22em, 80vw); }
 .toast { background: var(--md-inverse-surface); color: var(--md-inverse-on-surface); border-radius: var(--md-shape-xs); padding: 0.8em 1em 0.8em 0.9em; font-size: var(--md-type-label-large); box-shadow: var(--md-elev-3); border-left: none; display: flex; align-items: center; gap: 0.6em; animation: toast-in var(--md-dur-250) var(--md-ease-emphasized); word-break: break-word; }
@@ -1072,7 +1073,7 @@ button.danger:hover { background: color-mix(in srgb, var(--md-error) 8%, transpa
 /* 等宽数字（2026-11-02）：这一族数字会随流式/滚动变化，宽度不一就会左右跳。
  * 以前 14 条规则各写一遍 `font-variant-numeric`，现在只在这里写一次。 */
 .model-group-count, .task-time, .task-progress, .ctx-used, .ctx-pct,
-.ctx-row dd, .pv-idx, .msg .msg-idx, .msg .msg-foot,
+.ctx-val, .pv-idx, .msg .msg-idx, .msg .msg-foot,
 .sum-range, .sum-pos, .scale-value { font-variant-numeric: tabular-nums; }
 
 /* 窄屏模型名换行后顶栏会变高（见上）：这条必须写在所有 `.messages-inner` 规则之后，

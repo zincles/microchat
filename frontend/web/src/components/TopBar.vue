@@ -9,7 +9,10 @@
 // （同一个人永远同一个色）；点开掉出浮板选人。状态行小字里那个助手名管"显示"，头像管"选"。
 // 会话抬头不在顶栏（左栏列表高亮 + 状态行都有它）。
 import { ref, computed, nextTick, watch } from "vue";
-import { VBtn, VBtnToggle, VTab, VTabs } from "vuetify/components";
+import {
+  VBtn, VCard, VList, VListItem, VListSubheader, VProgressLinear,
+  VTab, VTabs, VWindow, VWindowItem,
+} from "vuetify/components";
 import ModelIcon from "./ModelIcon.vue";
 import { ICONS } from "./icons.ts";
 import {
@@ -494,100 +497,123 @@ defineExpose({ setSession, setModels, setAgents, setContext, setStatus, setTasks
     </template>
     <template v-if="ctxOpen">
       <div class="agent-menu-backdrop" @click="ctxOpen = false"></div>
-      <div class="agent-menu ctx-menu" :class="{ over: ctxOver }" role="dialog" aria-label="上下文与任务">
-        <VBtnToggle v-model="ctxTab" class="ws-switch ctx-tabs" mandatory variant="text" aria-label="上下文与任务">
-          <VBtn value="context">上下文</VBtn>
-          <VBtn value="tasks">任务<span v-if="activeTaskCount > 0" class="ctx-tab-count">{{ taskCountText }}</span></VBtn>
-        </VBtnToggle>
-        <template v-if="ctxTab === 'context'">
-        <template v-if="ctx">
-          <div class="ctx-head">
-            <b class="ctx-used">已用 {{ formatTokens(ctx.used_tokens) }} / {{ formatTokens(ctx.budget_tokens) }}</b>
-            <b class="ctx-pct" :class="{ over: ctxOver }">{{ ctxOver ? "超出预算" : contextPercentText(ctx) }}</b>
-          </div>
-          <div class="ctx-bar"><i :style="{ width: `${ctxArc}%` }"></i></div>
-          <dl class="ctx-rows">
-            <div v-for="[k, v] in ctxRows" :key="k" class="ctx-row">
-              <dt>{{ k }}</dt>
-              <dd>{{ v }}</dd>
+      <VCard class="agent-menu ctx-menu" :class="{ over: ctxOver }" role="dialog" aria-label="上下文与任务">
+        <VTabs
+          v-model="ctxTab"
+          class="ctx-tabs"
+          density="compact"
+          color="primary"
+          align-tabs="start"
+          aria-label="上下文与任务"
+        >
+          <VTab value="context">上下文</VTab>
+          <VTab value="tasks">任务<span v-if="activeTaskCount > 0" class="ctx-tab-count">{{ taskCountText }}</span></VTab>
+        </VTabs>
+        <VWindow v-model="ctxTab" class="ctx-window">
+          <VWindowItem value="context">
+            <div class="ctx-pane">
+              <template v-if="ctx">
+                <div class="ctx-head">
+                  <b class="ctx-used">已用 {{ formatTokens(ctx.used_tokens) }} / {{ formatTokens(ctx.budget_tokens) }}</b>
+                  <b class="ctx-pct" :class="{ over: ctxOver }">{{ ctxOver ? "超出预算" : contextPercentText(ctx) }}</b>
+                </div>
+                <VProgressLinear
+                  class="ctx-progress"
+                  :model-value="ctxArc"
+                  :color="ctxOver ? 'error' : 'success'"
+                  rounded
+                  height="6"
+                />
+                <VList density="compact" class="ctx-list">
+                  <VListItem v-for="[k, v] in ctxRows" :key="k" class="ctx-row">
+                    <div class="ctx-row-inner"><span class="ctx-key">{{ k }}</span><span class="ctx-val">{{ v }}</span></div>
+                  </VListItem>
+                </VList>
+                <p class="ctx-note">{{ ctxBudgetNote }}</p>
+              </template>
+              <p v-else class="agent-empty">当前会话暂无上下文数据。</p>
+              <VList v-if="statusRows.length" density="compact" class="ctx-list ctx-list-status">
+                <VListItem v-for="[k, v] in statusRows" :key="k" class="ctx-row">
+                  <div class="ctx-row-inner"><span class="ctx-key">{{ k }}</span><span class="ctx-val">{{ v }}</span></div>
+                </VListItem>
+              </VList>
             </div>
-          </dl>
-          <p class="ctx-note">{{ ctxBudgetNote }}</p>
-        </template>
-        <p v-else class="agent-empty">当前会话暂无上下文数据。</p>
-        <dl v-if="statusRows.length" class="ctx-rows ctx-rows-status">
-          <div v-for="[k, v] in statusRows" :key="k" class="ctx-row">
-            <dt>{{ k }}</dt>
-            <dd>{{ v }}</dd>
-          </div>
-        </dl>
-        </template>
-        <template v-else>
-        <!-- 正在运行的任务（2026-11-02 分 tab）：队列单独一栏，原子任务按大类分组。
-             结束的立刻消失 —— 这个 tab 的名字就是"正在运行"。取消按钮只在还能停时画。 -->
-        <div class="ctx-tasks">
-          <div class="task-head">
-            <b>{{ taskBusy ? "运行中" : "当前无运行任务" }}</b>
-            <span v-if="taskBusy" class="task-total">
-              {{ taskRunning }} 个任务<template v-if="queueRunning"> · {{ queueRunning }} 个队列</template>运行中
-            </span>
-          </div>
-          <p v-if="!tasks" class="agent-empty">无法读取任务状态（服务未响应）。</p>
-          <p v-else-if="!taskBusy" class="agent-empty">
-            对话生成、上下文压缩、模型列表刷新等任务会显示在这里。
-          </p>
-          <template v-else>
-            <template v-if="runningQueues.length">
-              <div class="task-group-head">队列</div>
-              <ul class="task-list">
-                <li
-                  v-for="q in runningQueues"
-                  :key="q.id"
-                  class="task-row task-queue"
-                  :class="{ failed: !!q.error }"
-                >
-                  <span class="task-kind">{{ taskKindText(q) || "队列" }}</span>
-                  <span class="task-label" :title="q.title || '队列'">
-                    {{ q.title || "队列" }}
-                    <b class="task-progress">第 {{ q.index }} / {{ q.total }} 步</b>
-                    <span v-if="q.error" class="task-why">{{ q.error }}</span>
-                  </span>
-                  <button
-                    type="button"
-                    class="task-cancel"
-                    title="取消这个队列（在飞的那一发也一起掐断）"
-                    @click.stop="emit('cancel-queue', q.id)"
-                  >取消</button>
-                </li>
-              </ul>
-            </template>
-            <template v-for="g in taskGroups" :key="g.key">
-              <div class="task-group-head">{{ g.label }}</div>
-              <ul class="task-list">
-                <li
-                  v-for="t in g.items"
-                  :key="t.id"
-                  class="task-row"
-                  :class="{ failed: !!t.error, child: t.depth > 0 }"
-                >
-                  <span v-if="taskRoleText(t)" class="task-role">{{ taskRoleText(t) }}</span>
-                  <span v-if="taskKindText(t)" class="task-kind">{{ taskKindText(t) }}</span>
-                  <span class="task-label" :title="t.title">{{ t.title || "任务" }}</span>
-                  <button
-                    v-if="t.cancelable"
-                    type="button"
-                    class="task-cancel"
-                    title="按停这个任务（已经写下的东西不受影响：取消 = 没做过）"
-                    @click.stop="emit('cancel-task', t.id)"
-                  >取消</button>
-                  <span v-else class="task-time">{{ taskElapsed(t) }}</span>
-                </li>
-              </ul>
-            </template>
-          </template>
-        </div>
-        </template>
-      </div>
+          </VWindowItem>
+          <VWindowItem value="tasks">
+            <div class="ctx-pane ctx-tasks">
+              <div class="task-head">
+                <b>{{ taskBusy ? "运行中" : "当前无运行任务" }}</b>
+                <span v-if="taskBusy" class="task-total">
+                  {{ taskRunning }} 个任务<template v-if="queueRunning"> · {{ queueRunning }} 个队列</template>运行中
+                </span>
+              </div>
+              <p v-if="!tasks" class="agent-empty">无法读取任务状态（服务未响应）。</p>
+              <p v-else-if="!taskBusy" class="agent-empty">
+                对话生成、上下文压缩、模型列表刷新等任务会显示在这里。
+              </p>
+              <template v-else>
+                <VList v-if="runningQueues.length" density="compact" class="task-list">
+                  <VListSubheader>队列</VListSubheader>
+                  <VListItem
+                    v-for="q in runningQueues"
+                    :key="q.id"
+                    class="task-row task-queue"
+                    :class="{ failed: !!q.error }"
+                  >
+                    <div class="task-row-inner">
+                      <span class="task-kind">{{ taskKindText(q) || "队列" }}</span>
+                      <span class="task-label" :title="q.title || '队列'">
+                        {{ q.title || "队列" }}
+                        <b class="task-progress">第 {{ q.index }} / {{ q.total }} 步</b>
+                        <span v-if="q.error" class="task-why">{{ q.error }}</span>
+                      </span>
+                    </div>
+                    <template #append>
+                      <VBtn
+                        class="task-cancel"
+                        variant="text"
+                        color="error"
+                        size="x-small"
+                        title="取消这个队列（在飞的那一发也一起掐断）"
+                        @click.stop="emit('cancel-queue', q.id)"
+                      >取消</VBtn>
+                    </template>
+                  </VListItem>
+                </VList>
+                <template v-for="g in taskGroups" :key="g.key">
+                  <div class="task-group-head">{{ g.label }}</div>
+                  <VList density="compact" class="task-list">
+                    <VListItem
+                      v-for="t in g.items"
+                      :key="t.id"
+                      class="task-row"
+                      :class="{ failed: !!t.error, child: t.depth > 0 }"
+                    >
+                      <div class="task-row-inner">
+                        <span v-if="taskRoleText(t)" class="task-role">{{ taskRoleText(t) }}</span>
+                        <span v-if="taskKindText(t)" class="task-kind">{{ taskKindText(t) }}</span>
+                        <span class="task-label" :title="t.title">{{ t.title || "任务" }}</span>
+                      </div>
+                      <template #append>
+                        <VBtn
+                          v-if="t.cancelable"
+                          class="task-cancel"
+                          variant="text"
+                          color="error"
+                          size="x-small"
+                          title="按停这个任务（已经写下的东西不受影响：取消 = 没做过）"
+                          @click.stop="emit('cancel-task', t.id)"
+                        >取消</VBtn>
+                        <span v-else class="task-time">{{ taskElapsed(t) }}</span>
+                      </template>
+                    </VListItem>
+                  </VList>
+                </template>
+              </template>
+            </div>
+          </VWindowItem>
+        </VWindow>
+      </VCard>
     </template>
   </header>
 </template>

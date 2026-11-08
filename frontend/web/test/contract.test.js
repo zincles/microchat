@@ -1007,17 +1007,19 @@ test("上下文环：圆心是后台任务数，有任务时转动，面板里�
   assert.match(top, /\["连接状态", s\.conn/, "状态行没有连接状态");
   assert.match(top, /\["运行状态", phase/, "状态行没有运行状态");
   assert.match(top, /输入预算 .* tokens = 上下文上限 .* − 输出预留/, "预算口径没有写清楚");
-  assert.match(css, /\.ctx-row dt \{[^}]*width:\s*6\.8em/, "标签列太窄（「自动压缩阈值」「上次实际用量」会换行）");
+  assert.match(css, /\.ctx-key \{[^}]*width:\s*6\.8em/, "标签列太窄（「自动压缩阈值」「上次实际用量」会换行）");
   assert.ok(!/还能装|给回复留的地方|没有在跑的任务|上次用了/.test(top), "面板里还留着口语化文案");
   assert.match(top, /const ctxTab = ref(?:<[^>]+>)?\("context"\)/, "面板没有 tab 状态");
-  assert.match(tpl, /<VBtnToggle v-model="ctxTab"/, "面板不是 VBtnToggle");
-  assert.match(tpl, /<VBtn value="context">上下文<\/VBtn>/, "没有上下文 tab");
-  assert.match(tpl, /<VBtn value="tasks">任务/, "没有任务 tab");
-  assert.match(tpl, /v-if="ctxTab === 'context'"/, "上下文内容没有按 tab 切换");
+  assert.match(tpl, /<VTabs[\s\S]*?v-model="ctxTab"/, "面板不是 Vuetify VTabs");
+  assert.match(tpl, /<VTab value="context">上下文<\/VTab>/, "没有上下文 tab");
+  assert.match(tpl, /<VTab value="tasks">任务/, "没有任务 tab");
+  assert.match(tpl, /<VWindow v-model="ctxTab"/, "面板内容没有用 Vuetify VWindow 切换");
+  assert.match(tpl, /<VWindowItem value="context">/, "上下文内容没有挂在 context 窗口");
+  assert.match(tpl, /<VWindowItem value="tasks">/, "任务内容没有挂在 tasks 窗口");
   assert.match(top, /filter\(\(t\) => !t\.finished_at\)/, "任务 tab 没滤掉已结束的任务（它叫「正在运行」）");
   assert.match(top, /const runningQueues = computed\(\(\) => queues\.value\.filter\(\(q\) => !q\.finished_at\)\)/,
     "任务 tab 的队列没滤掉已结束的");
-  assert.ok(/v-if="ctxTab === 'context'"/.test(tpl) && /<template v-else>\s*<div class="ctx-tasks">/.test(tpl),
+  assert.match(tpl, /<VWindowItem value="tasks">[\s\S]*?class="[^"]*ctx-tasks"/,
     "任务内容没有挂在任务 tab 下");
 
   // ② 数字 = **在跑**的条数（finished_at 有值的不算）；这个口径只有一处。
@@ -1088,7 +1090,7 @@ test("后台任务面板：队列单独一栏（带进度与取消），原子�
 
   // ⑤ 样式：队列行 / 进度 / 取消按钮都得有
   for (const cls of [".task-queue", ".task-progress", ".task-cancel"]) {
-    assert.ok(css.includes(cls + " "), `缺少 ${cls} 的样式`);
+    assert.ok(css.includes(cls), `缺少 ${cls} 的样式`);
   }
 });
 
@@ -1612,10 +1614,23 @@ test("上下文环：App 喂 ctx / 环在顶栏画 / 状态行不再报占用", 
   assert.ok(!app.includes("statusOverBudget"), "App 还在用状态行的超预算（已经搬去环上了）");
 
   const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
+  const tpl = top.slice(top.indexOf("<template>")).replace(/<!--[\s\S]*?-->/g, "");
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   assert.match(top, /id="ctx-ring"/, "顶栏里没有那枚环");
   assert.match(top, /pathLength="100"/, "弧长没走 pathLength 归一化（dasharray 会被当成绝对长度）");
   assert.match(top, /setContext/, "TopBar 没有暴露 setContext");
   assert.match(top, /class="agent-menu ctx-menu"/, "浮板没有复用 Agent 选人那套底（--tg-float / shadow-3）");
+  // 2026-11-09 用户定：环稍微加粗；两个 tab 切换时浮板尺寸不能跳；外围留 padding；
+  // 面板尽量用 Vuetify 原生组件。
+  assert.match(tpl, /<VCard class="agent-menu ctx-menu"/, "浮板不是 Vuetify VCard");
+  assert.match(tpl, /<VTabs[\s\S]*?v-model="ctxTab"/, "浮板 tab 不是 Vuetify VTabs");
+  assert.match(tpl, /<VWindow v-model="ctxTab"/, "浮板内容没有用 VWindow");
+  assert.match(tpl, /<VProgressLinear/, "上下文占用条不是 Vuetify VProgressLinear");
+  assert.match(tpl, /<VList[\s\S]*?class="ctx-list"/, "上下文明细不是 Vuetify VList");
+  assert.match(css, /#ctx-ring circle \{[^}]*stroke-width:\s*4/, "环没有加粗");
+  assert.match(css, /\.ctx-menu \{[^}]*width:\s*min\(24em/, "浮板宽度没钉死（切 tab 会变宽窄）");
+  assert.match(css, /\.ctx-menu \{[^}]*height:\s*min\(23\.5em/, "浮板高度没钉死（切 tab 会跳高矮）");
+  assert.match(css, /\.agent-menu\.ctx-menu \{[^}]*padding:\s*1em/, "浮板外围没有 padding（被 .agent-menu 的 0.25em 覆盖了）");
   // 顺序：2026-10-28 定的是「环在左、载荷栏开关在右」—— 那是**栏还在**时的锚点关系。
   // 2026-10-29 右栏搬进上下文工作区后那枚开关没了，锚点换成**工作区两段开关**：
   // 它排在环左边（用户原话「就位于那个绿色圆环左侧」），环仍然是簇里最靠里的那枚仪表。
@@ -1629,7 +1644,6 @@ test("上下文环：App 喂 ctx / 环在顶栏画 / 状态行不再报占用", 
 
   // 判规则时要**先剥掉注释**：这次的教训就写在一条注释里（"从前这里有 .statusline.over"），
   // 不剥的话字面匹配会把注释当成规则 —— 守卫测试自己先误报，比漏报更浪费人。
-  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   assert.match(css, /\.ctx-ring-fill \{ stroke: var\(--tg-ok\)/, "环没用 --tg-ok");
   // 三套主题都得有绿色，否则换主题后环就没了颜色（CSS 变量缺失 ⇒ stroke 回 initial = 黑）
   const theme = readFileSync(join(SRC, "assets", "theme.css"), "utf8");
@@ -1648,7 +1662,7 @@ test("上下文环：App 喂 ctx / 环在顶栏画 / 状态行不再报占用", 
   assert.ok(!app.includes("composerRef.value?.setStatus"), "App 还在往 Composer 塞状态行");
   assert.match(top, /function setStatus\(s[^)]*\)/, "TopBar 没有 setStatus");
   assert.match(top, /const statusRows = computed/, "浮板里没有连接/助手/运行那三行");
-  assert.match(top, /ctx-rows-status/, "浮板里那三行没接样式");
+  assert.match(top, /ctx-list-status/, "浮板里那三行没接样式");
   assert.ok(!/\.statusline/.test(css), "main.css 里还留着 .statusline 规则（那一行已经删了）");
 });
 
@@ -2848,7 +2862,7 @@ test("任务面板：能停的任务有取消按钮，按不动的不画", () =>
 
   // ② 按钮：列表只含正在跑的任务，所以只看 `cancelable`。
   //    ⚠ 不能停的任务（refresh_models）按了没反应 —— 不给它画按钮。
-  assert.match(bar, /v-if="t\.cancelable"[\s\S]{0,200}@click\.stop="emit\('cancel-task', t\.id\)"/,
+  assert.match(bar, /v-if="t\.cancelable"[\s\S]{0,400}@click\.stop="emit\('cancel-task', t\.id\)"/,
     "任务行没有那颗取消按钮（或条件写漏了）");
 
   // ③ 事件一路接到 App（emit → 模板 → 处理函数 → 接口）。
