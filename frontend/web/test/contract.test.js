@@ -3753,7 +3753,7 @@ test("输入区：Vuetify 4 MD3 接管 input/send/think", () => {
   assert.match(composer, /<VTextarea[\s\S]*variant="solo-filled"/, "输入框不是 Vuetify MD3");
   assert.match(composer, /<VBtn[\s\S]*id="send-btn"/, "发送键不是 Vuetify VBtn");
   assert.match(composer, /:color="running \? 'error' : 'primary-container'"/, "发送键不是低亮 primary-container");
-  assert.match(thinking, /<VMenu[\s\S]*location="bottom end"/, "思考菜单不是顶栏向下弹");
+  assert.match(thinking, /<VMenu[\s\S]*location="top end"/, "思考菜单不是从输入栏向上弹");
   assert.match(thinking, /<VList/, "思考选项不是 Vuetify VList");
   assert.match(thinking, /<VBtn/, "思考入口不是 Vuetify VBtn");
 
@@ -3909,8 +3909,8 @@ test("会话分组标题：更大间距 + 非首组淡分隔线", () => {
 });
 
 
-// 思考档位（2026-11-06）：Session 字段 + 发送键左边的 Vuetify 菜单。
-test("思考档位：Session 字段 + 顶栏模型右侧 Vuetify 菜单", () => {
+// 思考档位（2026-11-08）：Session 字段 + 输入栏正上方按钮区的 Vuetify 菜单。
+test("思考档位：Session 字段 + 输入栏上方 Vuetify 菜单", () => {
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
   assert.match(app, /:thinking="currentThinking"/, "TopBar 没接思考档位");
   assert.match(app, /@select-thinking="setThinking"/, "TopBar 没把档位变化接回来");
@@ -3918,16 +3918,17 @@ test("思考档位：Session 字段 + 顶栏模型右侧 Vuetify 菜单", () => 
   assert.match(app, /if \(draftPrefs\.thinking_level\) body\.thinking_level = draftPrefs\.thinking_level/, "建会话没带思考档位");
 
   const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
-  const modelAt = top.indexOf('id="model-btn"');
-  const menuAt = top.indexOf("<ThinkingMenu");
-  const rightAt = top.indexOf('class="header-right"');
-  assert.ok(modelAt > 0 && menuAt > modelAt && menuAt < rightAt, "思考按钮该在模型选择器右边、header-right 之前");
+  assert.ok(!/ThinkingMenu|thinking-options|select-thinking/.test(top), "顶栏里还留着思考菜单");
 
-  const composer = readFileSync(join(SRC, "components/Composer.vue"), "utf8");
-  assert.ok(!/ThinkingMenu|thinking-options|@thinking/.test(composer), "Composer 里还留着思考菜单");
+  const composer = readFileSync(join(SRC, "components", "Composer.vue"), "utf8");
+  assert.match(composer, /class="composer-toolbar"/, "输入栏上方没有按钮区");
+  assert.match(composer, /<ThinkingMenu/, "按钮区里没有思考档位");
+  const toolbarAt = composer.indexOf('class="composer-toolbar"');
+  const textareaAt = composer.indexOf("<VTextarea", toolbarAt);
+  assert.ok(toolbarAt > 0 && textareaAt > toolbarAt, "按钮区不在输入框正上方");
 
   const thinking = readFileSync(join(SRC, "components/ThinkingMenu.vue"), "utf8");
-  assert.match(thinking, /<VMenu[\s\S]*location="bottom end"[\s\S]*origin="top end"/, "菜单没从顶栏向下弹");
+  assert.match(thinking, /<VMenu[\s\S]*location="top end"[\s\S]*origin="bottom end"/, "菜单没从输入栏向上弹");
   assert.match(thinking, /<VListItem/, "菜单项不是 Vuetify 的 MD3 list item");
   assert.match(thinking, /props\.modelValue \|\| "default"/, "空档位没有显示 default");
   assert.match(thinking, /const raw = \(option: ThinkingOption\): string => option\.value \|\| "default"/, "菜单项不是未格式化 ASCII 档位");

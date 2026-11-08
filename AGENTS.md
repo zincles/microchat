@@ -1142,10 +1142,12 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   桌面宽 840 与 `.messages-inner` 对齐，手机两侧留 0.6em。
   **颜色降亮**：输入框 `bg-color="surface-container"`（不是 high）；发送键 `primary-container`
   （深蓝底 + on-primary-container 图标），不再用亮 `primary` 大圆。
-- **思考档位在顶栏模型选择器右边**（2026-11-07 用户定：「挪到顶部栏模型选择器右边，挨着」）：
-  模型名后面紧跟 Vuetify `VBtn`，只显示**未格式化的 ASCII 档位**（`default` / `low` / `medium` / `high` / `xhigh` / `max`，
-  没有中文；空档位显示 `default`）；菜单是 `VMenu`（`location="bottom end"`）+ `VList`/`VListItem`，
-  **从顶栏向下弹**。Composer 不再持有 ThinkingMenu，输入行只剩 `菜单? / 发送`。
+- **思考档位在输入栏正上方的按钮区**（2026-11-08 用户定：把输入框正上方的一小条留给按钮）：
+  `#composer` 改成纵向 flex（`.composer-toolbar` 在上、`.composer-row` 在下），
+  `ThinkingMenu` 住在 toolbar 里；将来工具、MCP 列表也往这里放。只显示**未格式化的 ASCII 档位**
+  （`default` / `low` / `medium` / `high` / `xhigh` / `max`，没有中文；空档位显示 `default`）；
+  `VMenu` 是 `location="top end"` + `VList`/`VListItem`，**从输入栏向上弹**。
+  TopBar 不再持有 ThinkingMenu；输入行只剩 `菜单? / 发送`。
   Session 级字段与后端校验不变（见下）。
   **Session 级**：`sessions.thinking_level`（空 = 跟随模型默认；非空 = `off/minimal/low/medium/high/xhigh/max`），
   建会话 / PATCH / Copy / 草稿预演 / 真发全部带着它；`POST /sessions` 与 `PATCH /sessions/{id}` 都会校验目标模型的能力集。

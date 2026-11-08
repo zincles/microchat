@@ -6,6 +6,8 @@
 import { ref, nextTick } from "vue";
 import { VBtn, VTextarea } from "vuetify/components";
 import { ICONS } from "./icons.ts";
+import ThinkingMenu from "./ThinkingMenu.vue";
+import type { ThinkingOption } from "../utils/thinking.ts";
 
 const emit = defineEmits<{
   "input-text": [text: string];
@@ -13,12 +15,17 @@ const emit = defineEmits<{
   submit: [text: string];
   stop: [];
   menu: [];
+  "select-thinking": [value: string];
 }>();
 
 const props = withDefaults(defineProps<{
   menuOn?: boolean;
+  thinking?: string;
+  thinkingOptions?: ThinkingOption[];
 }>(), {
   menuOn: false,
+  thinking: "",
+  thinkingOptions: () => [],
 });
 
 const text = ref("");
@@ -44,6 +51,9 @@ function submit(): void {
 function stop(): void {
   emit("stop");
 }
+function selectThinking(value: string): void {
+  emit("select-thinking", value);
+}
 function clear(): void {
   text.value = "";
 }
@@ -57,6 +67,16 @@ defineExpose({ submit, clear, setText, text, setRunning });
 
 <template>
   <form id="composer" class="composer-vuetify" @submit.prevent="running ? stop() : submit()">
+    <div v-if="$slots.toolbar || thinkingOptions.length" class="composer-toolbar">
+      <slot name="toolbar" />
+      <ThinkingMenu
+        v-if="thinkingOptions.length"
+        :model-value="thinking"
+        :options="thinkingOptions"
+        @update:model-value="selectThinking"
+      />
+    </div>
+    <div class="composer-row">
     <VTextarea
       id="composer-input"
       ref="area"
@@ -103,6 +123,7 @@ defineExpose({ submit, clear, setText, text, setRunning });
       >
         <span v-html="running ? ICONS.stop : text.trim() ? sendSvg : ICONS.cont"></span>
       </VBtn>
+    </div>
     </div>
   </form>
 </template>

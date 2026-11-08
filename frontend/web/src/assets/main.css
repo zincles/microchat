@@ -791,19 +791,22 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 /* 重摇位次牌（气泡下 ◀ 2/3 ▶ 的中间那块）。 */
 .msg-ops .reroll-pos { font-size: var(--md-type-label-small); color: var(--md-on-surface-variant); padding: 0 0.2em; font-variant-numeric: tabular-nums; }
 #composer { position: absolute; bottom: 0; left: 50%; right: auto; width: min(calc(100% - 1.2em), var(--read-col, 840px));
-  display: flex; align-items: flex-end; gap: 0.5em; background: none; z-index: 5;
+  display: flex; flex-direction: column; align-items: stretch; gap: 0.3em; background: none; z-index: 5;
   padding: 0.6em 0.6em calc(0.6em + env(safe-area-inset-bottom, 0px)); }
+/* 输入栏正上方的按钮区（思考 / 后续工具、MCP…）：不占输入卡的面，只放一排小按钮。 */
+.composer-toolbar { display: flex; align-items: center; gap: 0.35em; min-height: 1.9em; padding: 0 0.35em; flex-wrap: wrap; }
+.composer-row { display: flex; align-items: flex-end; gap: 0.5em; width: 100%; }
 /* Vuetify 只负责控件外观；这里只做布局（输入占满、按钮贴底一行）。 */
 .composer-input { flex: 1 1 auto; min-width: 0; }
 .composer-actions { flex: none; display: flex; align-items: flex-end; gap: 0.25em; }
 /* 发送图标按 SVG 的几何中心对齐；VBtn 的 content 默认被 inline 基线撑高，箭头会偏上一截。 */
 .composer-send-btn .v-btn__content { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; margin: 0; }
 .composer-send-btn .v-btn__content > span { display: flex; align-items: center; justify-content: center; line-height: 0; }
-/* 思考档位（2026-11-07 用户定）：模型选择器右边；只显示 raw ASCII 档位。 */
-#chat-col > header .thinking-btn { min-width: 0 !important; height: 2em !important; min-height: 2em !important;
-  padding: 0 0.35em !important; font-size: 0.75em !important; color: var(--md-on-surface-variant);
+/* 思考档位（2026-11-08 用户定）：输入栏上方的按钮区；只显示 raw ASCII 档位。 */
+.composer-toolbar .thinking-btn { min-width: 0 !important; height: 1.9em !important; min-height: 1.9em !important;
+  padding: 0 0.55em !important; font-size: 0.75em !important; color: var(--md-on-surface-variant);
   text-transform: none !important; }
-#chat-col > header .thinking-btn:hover { color: var(--md-on-surface); background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); }
+.composer-toolbar .thinking-btn:hover { color: var(--md-on-surface); background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); }
 .thinking-label { margin: 0; white-space: nowrap; }
 
 /* —— Vuetify 逃生门（2026-11-06）——
@@ -821,9 +824,9 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 #composer { transform: translateX(-50%) translateY(var(--chrome-bottom, 0px)); transition: transform 90ms linear; }
 @media (prefers-reduced-motion: reduce) { #chat-col > header, #composer { transition: none; } }
 /* ⚠ 这里原本有"任务行进栏"那条规则（`.taskline` 占一整行、`order: -1` 排在输入框上面）
- * 和上面「两个隔间」那段历史。**2026-11-01 整块删掉了**：后台任务已并进顶栏的上下文环（`#ctx-ring`），
- * 输入栏上方不再有任何小字 —— 于是 `flex-wrap` 也没有对象了（`#composer` 不再换行）。
- * 别把它加回来：同一个数字住两处，只会让两处都可能过期。
+ * 和上面「两个隔间」那段历史。**2026-11-01 整块删掉了**：后台任务已并进顶栏的上下文环（`#ctx-ring`）。
+ * 输入栏上方现在是 `.composer-toolbar` 按钮区（思考档位 / 将来的工具、MCP），不是状态行；
+ * 别再往这里塞第二份任务数字。
  */
 /* ⚠ 状态行（`.statusline`）2026-10-28 **整条删掉**了：连接 / 助手 / 相位搬进右上角那枚环的
  * 浮板（`#ctx-ring` → `.ctx-menu` 里的"连接 / 助手 / 运行"三行），上下文占用则是环本身。
