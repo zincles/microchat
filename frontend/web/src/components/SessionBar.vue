@@ -42,8 +42,9 @@ const skeletonWidths = ["72%", "54%", "64%", "46%", "58%", "50%"];
 
 const sessions = ref<SessionView[]>([]);
 const currentId = ref<string | null>(null);
-// 左栏顶部的两个空白：对话 / 生图。生图暂未接 API，切过去只改选中态（未来这里放生图列表）。
-const mode = ref<"chat" | "image">("chat");
+// 左栏顶部的三个空白：对话 / 生图 / 库存。生图与库存暂未接 API，切过去只改选中态
+// （未来这里放各自的列表）。
+const mode = ref<"chat" | "image" | "inventory">("chat");
 const groupedSessions = computed(() => groupSessions(sessions.value));
 const menu = ref<{ id: string; left: number; top: number } | null>(null); // Teleport 到 body 的浮板
 const menuEl = ref<HTMLElement | null>(null);
@@ -149,8 +150,8 @@ defineExpose({ setSessions });
     <button id="session-new" type="button" title="开启新对话（草稿：首句才建会话）" @click="$emit('new')">
       <span class="plus" aria-hidden="true" v-html="ICONS.plus"></span><span class="label">开启新对话</span>
     </button>
-    <!-- 左栏模式切换，不是内容 tab：生图面板还没接，切过去只是选中态。
-         用 VBtnToggle 做全宽分段按钮；等生图有独立列表再升级成 VTabs。 -->
+    <!-- 左栏模式切换，不是内容 tab：生图与库存面板还没接，切过去只是选中态。
+         用 VBtnToggle 做全宽分段按钮；等它们有独立列表再升级成 VTabs。 -->
     <VBtnToggle
       v-model="mode"
       class="session-mode-tabs"
@@ -163,6 +164,7 @@ defineExpose({ setSessions });
     >
       <VBtn value="chat" title="对话" :aria-pressed="mode === 'chat'">对话</VBtn>
       <VBtn value="image" title="生图（暂未接入）" :aria-pressed="mode === 'image'">生图</VBtn>
+      <VBtn value="inventory" title="库存（暂未接入）" :aria-pressed="mode === 'inventory'">库存</VBtn>
     </VBtnToggle>
     <div id="session-list" :aria-busy="loading && !sessions.length ? 'true' : 'false'">
       <div v-if="loading && !sessions.length" class="session-skeleton">

@@ -1039,7 +1039,8 @@ DeepSeek / OpenCode GO 直连**确实不报**，所以那一格在那儿永远�
 ### Web（当前主力，`frontend/web/`，Vue 3 + Vite）
 
 - 布局：左会话栏（**2026-11-06 起 Gemini 式**：顶部 **Brand Title「MicroChat」+ 星芒标**，
-  其下「＋开启新对话」，再下面才是**占满栏宽的「对话 / 生图」模式切换**（VBtnToggle，2026-11-06 用户定；生图暂未接 API，切过去只改选中态 —— 所以现在**不是真 tab**，等生图有独立列表再升级 VTabs）；
+  其下「＋开启新对话」，再下面才是**占满栏宽的「对话 / 生图 / 库存」模式切换**（VBtnToggle，2026-11-06 用户定；2026-11-09 加「库存」。
+生图与库存都还没接 API，切过去只改选中态 —— 所以现在**不是真 tab**，等它们有独立列表再升级 VTabs）；
   **左栏外壳 = Vuetify `VApp` + `VNavigationDrawer`**（2026-11-07）：App 根是 `<VApp>`（外层挂载点已经有 `#app`；VApp 再带 id 会产生重复 id），
   `SessionBar` 根是 `VNavigationDrawer`（`:model-value="true" permanent :scrim="false" :touchless="true"`）——
   VApp 只作 layout provider，不引入 VMain。桌面用 CSS 把抽屉改成 `position: relative !important` 的 280px 布局列，
@@ -1226,7 +1227,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   亮色与 Breeze 不动。三套主题仍共用同一套 MD3 语义。
   **落点先左栏 + 顶栏 + 输入区**（2026-11-05 第二刀；2026-11-06 起上下文五 tab 用 VTabs、顶栏工作区用 VTabs + VTabsWindow、消息/摘要操作键用 VBtn）：左栏规则以 `#sessions-bar` 前缀收口
   （`.bar-head` / `.empty` 是共享类，直接改会波及上下文工作区）。左栏结构 = MD3 navigation drawer：
-  顶部**占满栏宽**的 segmented button（对话/生图，VBtnToggle）+ 标准 icon button；新建 = **extended FAB**（primary-container、elevation 1→2、按下 scale）；
+  顶部**占满栏宽**的 segmented button（对话/生图/库存，VBtnToggle）+ 标准 icon button；新建 = **extended FAB**（primary-container、elevation 1→2、按下 scale）；
   列表 = 48dp 行、full 圆角、选中 secondary-container、`::after` 状态层（内容 z-index 压在它上面）；
   底部 = navigation drawer item；选项浮板 = MD3 menu（surface-container / 4dp 圆角 / elevation 2 / 48dp 行）。
   **忙碌环**改成 MD3 circular progress indicator：SVG 双圆（track 18% + arc），旋转 + dash 伸缩（`session-busy-dash`），

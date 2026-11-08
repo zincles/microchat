@@ -3156,7 +3156,7 @@ test("输入框：Vuetify MD3 输入栏 + 发送键", () => {
   assert.match(pane, /fontBody as fontBodyPref/, "字体值没从服务器偏好读回");
 });
 
-test("左栏顶部：Brand Title 在顶，新对话在中间，对话/生图在下方（Gemini 式）", () => {
+test("左栏顶部：Brand Title 在顶，新对话在中间，对话/生图/库存 在下方（Gemini 式）", () => {
   const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   assert.match(bar, /class="brand-name">MicroChat</, "左栏顶部缺 Brand Title");
@@ -3164,16 +3164,19 @@ test("左栏顶部：Brand Title 在顶，新对话在中间，对话/生图在�
   const newAt = bar.indexOf('id="session-new"');
   const tabsAt = bar.indexOf('class="session-mode-tabs"');
   assert.ok(newAt > 0 && tabsAt > 0, "找不到新对话 / tabs");
-  assert.ok(newAt < tabsAt, "对话/生图应该在新对话下方");
+  assert.ok(newAt < tabsAt, "对话/生图/库存 应该在新对话下方");
   assert.match(bar, /<VBtnToggle[\s\S]*?v-model="mode"/, "左栏模式不是 VBtnToggle");
   assert.match(bar, /mandatory/, "模式切换不是 mandatory（能取消到无选中）");
   assert.match(bar, /:aria-pressed="mode === 'chat'"/, "对话按钮没有 pressed 状态");
   assert.match(bar, />对话</, "缺「对话」按钮");
   assert.match(bar, />生图</, "缺「生图」按钮");
   assert.match(bar, /生图（暂未接入）/, "生图按钮没标暂未接入");
+  assert.match(bar, />库存</, "缺「库存」按钮");
+  assert.match(bar, /库存（暂未接入）/, "库存按钮没标暂未接入");
+  assert.match(bar, /:aria-pressed="mode === 'inventory'"/, "库存按钮没有 pressed 状态");
   assert.match(bar, /const mode = ref(?:<[^>]+>)?\("chat"\)/, "默认模式不是对话");
   assert.match(css, /#sessions-bar \.session-mode-tabs \{[^}]*width:\s*calc\(100% - 1\.1em\)/, "模式切换没有占满栏宽");
-  assert.match(css, /#sessions-bar \.session-mode-tabs \.v-btn \{[^}]*flex:\s*1 1 0/, "两个按钮没有均分栏宽");
+  assert.match(css, /#sessions-bar \.session-mode-tabs \.v-btn \{[^}]*flex:\s*1 1 0/, "三个按钮没有均分栏宽");
   assert.match(css, /#sessions-bar \.brand-name \{[^}]*font-size:\s*1\.05em/, "品牌标题没有独立字号");
 });
 test("移动端顶栏：模型名吃剩余空间，不再被挤成一个字母", () => {
