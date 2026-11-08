@@ -1097,6 +1097,9 @@ button.danger:hover { background: color-mix(in srgb, var(--md-error) 8%, transpa
 #sessions-bar .session-mode-tabs .v-btn.v-btn--active { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
 #sessions-bar .session-mode-tabs .v-btn.v-btn--active:hover { background: color-mix(in srgb, var(--md-on-secondary-container) 8%, var(--md-secondary-container)); }
 #sessions-bar .session-mode-tabs .v-btn:focus-visible { outline: 2px solid var(--md-primary); outline-offset: -4px; }
+/* Vuetify 4 的按钮行盒把 CJK 字形放在几何中心偏下（内容盒是居中的，但字面 ink 偏低）。
+ * 这里只抬字面，不动按钮几何：实测 -0.16em 才与胶囊中心对齐。 */
+#sessions-bar .session-mode-tabs .v-btn__content { transform: translateY(-0.16em); }
 
 /* 新建对话：MD3 extended FAB（primary-container + elevation 1 → 2）。 */
 #sessions-bar #session-new { position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; gap: 0.55em;
