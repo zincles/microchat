@@ -725,14 +725,29 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .sum-pos { color: var(--md-on-surface-variant); font-size: var(--md-type-label-large); font-variant-numeric: tabular-nums; }
 .sum-busy { color: var(--md-on-surface-variant); font-size: var(--md-type-label-medium); margin-left: 0.2em; }
 .sum-edit-field, .message-edit-field { width: 100%; box-sizing: border-box; }
-/* 消息编辑接近全屏（2026-11-02 用户定：560px 的小窗不够用）：宽几乎占满视口、高 92vh，
-   文本框吃掉剩余高度（不再固定 14 行），保存/取消固定在底部。 */
-.modal-box.message-edit-box { width: 96vw; max-width: 96vw; height: 92vh; max-height: 92vh;
-  display: flex; flex-direction: column; overflow: hidden; }
-.message-edit-field { flex: 1 1 auto; min-height: 0; resize: none; font: inherit; line-height: 1.55; overflow-y: auto; }
+/* 消息编辑（2026-11-09 起 VDialog/VCard/VTextarea）：
+   接近全屏：宽几乎占满视口、高 92vh，文本框吃掉剩余高度，保存/取消固定在底部。
+   VDialog 的 overlay 层级由 Vuetify 管，终于不会被左侧栏压住。 */
+.message-edit-dialog .v-overlay__content { width: 96vw; max-width: 96vw; height: 92vh; max-height: 92vh; margin: 0; }
+.message-edit-card { display: flex; flex-direction: column; width: 100%; height: 100%; min-height: 0;
+  overflow: hidden; background: var(--md-surface-container-high); color: var(--md-on-surface);
+  border-radius: var(--md-shape-xl); }
+.message-edit-title { display: flex; align-items: center; justify-content: space-between; gap: 0.8em;
+  padding: 0.9em 1.1em 0.55em; font-size: var(--md-type-title-medium); font-weight: 500; }
+.message-edit-title .head-btns { display: flex; align-items: center; gap: 0.2em; flex: none; }
+.message-edit-body { flex: 1 1 auto; min-height: 0; display: flex; padding: 0 1.1em; }
+.message-edit-field { flex: 1 1 auto; min-height: 0; height: 100%; }
+.message-edit-field .v-input__control,
+.message-edit-field .v-field,
+.message-edit-field .v-field__field { height: 100%; min-height: 0; }
+.message-edit-field .v-field__input { height: 100%; min-height: 0; overflow-y: auto; resize: none;
+  font: inherit; line-height: 1.55; }
+.message-edit-foot { display: flex; align-items: center; gap: 0.6em; padding: 0.65em 1.1em 0.9em; }
+.message-edit-foot .status { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 /* 网页全屏：铺满 #app（不是浏览器 Fullscreen API），仍然只是页面内的一块模态。 */
-.modal-box.message-edit-box.expanded { width: 100%; max-width: 100%; height: 100%; max-height: 100%; border-radius: 0; }
-.message-edit-box .full-btn { display: inline-flex; align-items: center; justify-content: center;
+.message-edit-dialog.expanded .v-overlay__content { width: 100%; max-width: 100%; height: 100%; max-height: 100%; }
+.message-edit-dialog.expanded .message-edit-card { border-radius: 0; }
+.message-edit-title .full-btn { display: inline-flex; align-items: center; justify-content: center;
   width: 2em; height: 2em; padding: 0; }
 /* 操作区固定在底部右侧（2026-11-02 用户定）：状态在左、按钮组在右；窄屏按钮也靠右。 */
 .modal-foot { display: flex; align-items: center; gap: 0.6em; margin-top: 0.6em; }
@@ -884,7 +899,6 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .modal-box.compact { width: min(560px, 94vw); max-width: 560px; height: auto; max-height: 88vh; }
 .modal-head { display: flex; justify-content: space-between; align-items: center; font-size: var(--md-type-title-medium); font-weight: 500; color: var(--md-on-surface); margin-bottom: 0.6em; }
 .modal-head .head-btns { display: flex; gap: 0.2em; align-items: center; }
-.message-edit-box .full-btn { font-size: 0.82em; }
 /* 图标按钮通用（× ＋ 这种）：去边框去底色，hover 才显底 —— 原生感就这么来。 */
 .icon-btn { color: var(--tg-hint); padding: 0.35em 0.55em; border-radius: var(--r-md); font-size: 1.1em; line-height: 1; }
 /* 图标按钮统一居中（2026-11-03 用户报：图标有时偏下）：SVG 是 inline 元素，默认按基线落，
@@ -945,6 +959,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 /* 更新页：版本号用等宽数字，git 原文单独滚动。 */
 .update-version { margin: 0.7em 0 0.2em; display: flex; flex-direction: column; gap: 0.15em; }
 .update-block { display: flex; flex-direction: column; gap: 0.15em; }
+.pwa-block { margin: 0.7em 0 0.2em; }
 .update-section-title { margin: 0 0 0.35em; font-size: var(--md-type-title-small); font-weight: 600; color: var(--md-on-surface); }
 .update-divider { margin: 1em 0; }
 .update-auto { display: flex; align-items: center; justify-content: space-between; gap: 1em; margin: 0.9em 0 0.2em; color: var(--md-on-surface); }
@@ -1423,23 +1438,22 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 #sessions-bar .brand-name { font-size: 1.05em; font-weight: 500; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #sessions-bar #session-new { margin-bottom: 0.35em; }
 
-/* —— 会话行「选项」键：桌面悬停 / 选中 / 键盘焦点才现身（2026-11-09 用户定，要 DeepSeek 网页版那种手感）——
+/* —— 会话行「选项」键：未悬停 / 未选中 / 未聚焦就隐藏（2026-11-09 用户定，触屏也一样）——
  * 收起用 opacity + pointer-events，**不用 display:none**：盒子仍留在流里 ⇒ 行高与标题宽度不动，
  * 悬停时不会把标题挤一下再弹回（长列表里那一下非常扎眼）；键也仍可被 Tab 聚焦。
- * 整段只包在 `@media (hover: hover)` 里：触屏没有 hover 概念，藏起来等于没有入口 ⇒ 触屏上三个点常驻。
- * 键盘：`:focus-within`（焦点落在键上）与键自己的 `:focus-visible` 都把行点亮；
- *       `:focus-within` 同时覆盖"行内将来可能出现别的可聚焦件"。
- * 选中行常亮 —— 那是"我正在这儿"的锚点，不该要求悬停才看得见操作。
- * 放在文件最后：与 `#sessions-bar .session-item .item-btn` 同特异性，靠顺序压过它的 opacity:1。 */
+ * **触屏没有 hover ⇒ 只有当前这条会话（.sel）常亮**；想操作别的会话先点行选中它，再点三个点。
+ * ⚠ 别再用 `@media (hover: none)` 放宽成"触屏常驻"—— PWA / 触屏报 hover 能力不一致时，
+ *   那正是"所有三个点都显示"的形状（2026-11-09 用户实报）。
+ * 悬停只在 `@media (hover: hover)` 里认；选中与键盘焦点是无条件规则。 */
+#sessions-bar .session-item .item-btn { opacity: 0; pointer-events: none;
+  transition: opacity var(--md-dur-150) var(--md-ease-standard),
+    background-color var(--md-dur-150) var(--md-ease-standard),
+    color var(--md-dur-150) var(--md-ease-standard); }
+#sessions-bar .session-item.sel .item-btn,
+#sessions-bar .session-item .item-btn:focus-visible { opacity: 1; pointer-events: auto; }
 @media (hover: hover) {
-  #sessions-bar .session-item .item-btn { opacity: 0; pointer-events: none;
-    transition: opacity var(--md-dur-150) var(--md-ease-standard),
-      background-color var(--md-dur-150) var(--md-ease-standard),
-      color var(--md-dur-150) var(--md-ease-standard); }
   #sessions-bar .session-item:hover .item-btn,
-  #sessions-bar .session-item:focus-within .item-btn,
-  #sessions-bar .session-item .item-btn:focus-visible,
-  #sessions-bar .session-item.sel .item-btn { opacity: 1; pointer-events: auto; }
+  #sessions-bar .session-item:focus-within .item-btn { opacity: 1; pointer-events: auto; }
 }
 @media (prefers-reduced-motion: reduce) {
   #sessions-bar .session-item .item-btn { transition: none; }

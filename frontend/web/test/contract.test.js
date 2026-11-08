@@ -3073,8 +3073,11 @@ test("消息编辑：应用内模态，不就地改气泡", () => {
   assert.match(modal, /api\.editMessage\(props\.sessionId, props\.message\.id, body\)/, "模态保存没走消息编辑接口");
   assert.match(modal, /props\.kind === "reasoning" \? \{ reasoning: text\.value \} : \{ content: text\.value \}/,
     "模态没按正文/思考分别提交");
-  assert.match(modal, /class="modal-box message-edit-box"/, "消息编辑还是小窗口（没用接近全屏的壳）");
-  assert.match(modal, /class="modal-foot"/, "保存/退出没有独立底栏");
+  assert.match(modal, /<VDialog/, "消息编辑没有用 Vuetify VDialog（会被左侧栏压住）");
+  assert.match(modal, /attach="#app"/, "VDialog 没挂到 #app（全屏/移动端包含块会错）");
+  assert.match(modal, /<VCard/, "消息编辑没有用 Vuetify 卡片壳");
+  assert.match(modal, /<VTextarea/, "正文/思考输入没有用 Vuetify VTextarea");
+  assert.match(modal, /class="message-edit-foot"/, "保存/退出没有独立底栏");
   assert.match(modal, /保存并重摇/, "没有「保存并重摇」");
   assert.match(modal, /const expanded = ref\(false\)/, "没有网页全屏状态");
   assert.match(modal, /function toggleExpanded\(\)/, "没有网页全屏切换");
@@ -3087,9 +3090,9 @@ test("消息编辑：应用内模态，不就地改气泡", () => {
   assert.match(app, /rerollable: !!rerollTargetId/, "没有把可重摇状态带给编辑器");
   assert.match(app, /:rerollable="messageEditTarget\.rerollable"/, "没把 rerollable 传给编辑器");
   assert.match(app, /if \(result\.reroll && target\?\.rerollTargetId\)[\s\S]{0,200}rerollNow\(target\.rerollTargetId\)/, "保存并重摇没接到重摇目标");
-  assert.match(css, /\.modal-box\.message-edit-box \{[^}]*width:\s*96vw[^}]*height:\s*92vh/s,
+  assert.match(css, /\.message-edit-dialog \.v-overlay__content \{[^}]*width:\s*96vw[^}]*height:\s*92vh/s,
     "消息编辑窗口没有接近全屏（96vw × 92vh）");
-  assert.match(css, /\.modal-box\.message-edit-box\.expanded \{[^}]*width:\s*100%[^}]*height:\s*100%/s,
+  assert.match(css, /\.message-edit-dialog\.expanded \.v-overlay__content \{[^}]*width:\s*100%[^}]*height:\s*100%/s,
     "网页全屏没有铺满 #app（不是浏览器全屏）");
   assert.match(css, /\.message-edit-field \{[^}]*flex:\s*1 1 auto[^}]*min-height:\s*0/s,
     "文本框没有撑满剩余高度");
@@ -3383,20 +3386,21 @@ test("会话列表：一行只有一枚选项键，设置/删除收进浮板，�
   assert.match(css, /\.session-item \.item-btn \{[^}]*width:\s*2\.4em/, "会话选项键不是紧凑尺寸");
 });
 
-test("会话行选项键：桌面悬停/选中/键盘焦点才现身，触屏常驻", () => {
+test("会话行选项键：未选中隐藏；悬停/键盘焦点/当前会话才显示（触屏同规则）", () => {
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  // 触屏没有 hover：藏起来等于没有入口。三个点只在能 hover 的设备上收，且收起只用不占位的属性。
+  // 收起必须是**全局**规则：不能在 hover 媒体里才算数 —— PWA/触屏对 hover 能力的报告不可靠。
+  assert.match(css, /#sessions-bar \.session-item \.item-btn \{[^}]*opacity:\s*0[^}]*pointer-events:\s*none/,
+    "未悬停/未选中的行没有收起选项键（应保留盒子，用 opacity + pointer-events）");
+  assert.match(css, /#sessions-bar \.session-item\.sel \.item-btn,[\s\S]*?opacity:\s*1[^}]*pointer-events:\s*auto/,
+    "当前会话那行没有常亮选项键");
+  assert.match(css, /#sessions-bar \.session-item \.item-btn:focus-visible[\s\S]*?opacity:\s*1[^}]*pointer-events:\s*auto/,
+    "键盘焦点没有点亮选项键");
   const hoverBlock = css.match(/@media \(hover: hover\) \{([\s\S]*?)\n\}/);
-  assert.ok(hoverBlock, "没有用 @media (hover: hover) 区分触屏（触屏上三个点必须常驻）");
-  assert.match(hoverBlock[1], /#sessions-bar \.session-item \.item-btn \{[^}]*opacity:\s*0[^}]*pointer-events:\s*none/,
-    "未悬停/未选中的行没有收起选项键（应保留盒子，用 opacity + pointer-events 而不是 display:none）");
-  assert.match(hoverBlock[1],
-    /#sessions-bar \.session-item:hover \.item-btn,[\s\S]*?#sessions-bar \.session-item:focus-within \.item-btn,[\s\S]*?#sessions-bar \.session-item \.item-btn:focus-visible,[\s\S]*?#sessions-bar \.session-item\.sel \.item-btn \{[^}]*opacity:\s*1[^}]*pointer-events:\s*auto/,
-    "悬停/键盘焦点/选中行没有把选项键点亮");
-  // 收起规则只能在 hover 媒体块里；漏到全局就是触屏用户没入口。
-  const outside = css.replace(/@media \(hover: hover\) \{[\s\S]*?\n\}/, "");
-  assert.ok(!/#sessions-bar \.session-item[^{]*\.item-btn \{[^}]*opacity:\s*0/.test(outside),
-    "选项键在触屏（无 hover）上也被藏了");
+  assert.ok(hoverBlock, "没有保留鼠标悬停的 @media (hover: hover) 规则");
+  assert.match(hoverBlock[1], /#sessions-bar \.session-item:hover \.item-btn,[\s\S]*?opacity:\s*1[^}]*pointer-events:\s*auto/,
+    "鼠标悬停没有点亮选项键");
+  assert.ok(!/@media \(hover: none\)[\s\S]*?\.item-btn/.test(css),
+    "又给触屏开了「三个点常驻」的例外");
   assert.ok(!/#sessions-bar \.session-item[^{]*\.item-btn \{[^}]*display:\s*none/.test(css),
     "选项键不能用 display:none 收起（会连焦点和命中区一起丢掉）");
 });
@@ -3538,6 +3542,31 @@ test("更新面板：显示提交 + 拉取并重启（由 entrypoint 接手）",
   assert.match(pane, /restart_supported/, "没区分容器部署与宿主二进制");
   assert.match(client, /getUpdateStatus: \(\) => call<UpdateStatus>\("GET", "\/update"\)/, "API 客户端没有 GET /update");
   assert.match(client, /pullUpdate: \(\) => call<UpdatePullResult>\("POST", "\/update\/pull"\)/, "API 客户端没有 POST /update/pull");
+});
+
+// PWA 小工具（2026-11-09 用户定）：更新面板里核对当前壳是否最新，并能直接切换。
+test("更新面板：PWA 前端壳核对与切换", () => {
+  const pane = readFileSync(join(SRC, "components", "UpdatePane.vue"), "utf8");
+  const pwa = readFileSync(join(SRC, "utils", "pwa.ts"), "utf8");
+  const vite = readFileSync(join(SRC, "..", "vite.config.js"), "utf8");
+
+  assert.match(pane, /PWA \/ 已安装应用/, "更新面板里没有 PWA 区块");
+  assert.match(pane, /__BUILD_ID__/, "没有读当前页面的构建身份");
+  assert.match(pane, /fetchLatestBuild/, "没有读服务器上的 build.json");
+  assert.match(pane, /checkPwaUpdate/, "没有手动检查 Service Worker 更新");
+  assert.match(pane, /applyPwaUpdate/, "没有切换 PWA 的动作");
+  assert.match(pane, /forceReloadPwa/, "没有强制重新加载的兜底");
+  assert.match(pane, /v-if="pwaUpdateAvailable"/, "发现更新时没有「更新并刷新」入口");
+  assert.match(pane, /Service Worker/, "没有显示 Service Worker 状态");
+  assert.match(pwa, /getRegistration/, "没有读当前 Service Worker 注册");
+  assert.match(pwa, /\.update\(\)/, "检查更新没有调用 registration.update()");
+  assert.match(pwa, /waiting/, "没有识别等待切换的新版本");
+  assert.match(pwa, /startUpdate/, "切换 PWA 没走既有的 skipWaiting 路径");
+  assert.match(pwa, /caches\.delete/, "强制重新加载没有清 Cache Storage");
+  assert.match(vite, /buildInfoPlugin/, "Vite 没生成前端构建身份");
+  assert.match(vite, /fileName:\s*"build\.json"/, "没有写出 dist/build.json");
+  assert.match(vite, /__BUILD_ID__/, "构建身份没注入到 JS");
+  assert.ok(!/globPatterns:\s*\[[^\]]*json/.test(vite), "build.json 不该进 Service Worker 预缓存");
 });
 
 // 左栏三面板 + 主题循环键（2026-11-09 用户定）。

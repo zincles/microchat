@@ -8,6 +8,14 @@ import { computed, onMounted, ref } from "vue";
 import { VBtn, VDivider, VSwitch } from "vuetify/components";
 import { sharedApi, saveUpdateAutoCheck, updateAutoCheckOn } from "../utils/prefs.ts";
 import { waitForRestart } from "../utils/update.ts";
+import {
+  applyPwaUpdate,
+  checkPwaUpdate,
+  fetchLatestBuild,
+  forceReloadPwa,
+  readPwaSnapshot,
+} from "../utils/pwa.ts";
+import type { PwaBuild, PwaSnapshot } from "../utils/pwa.ts";
 import type { UpdateStatus } from "../api/types.ts";
 
 const props = withDefaults(defineProps<{
@@ -25,7 +33,47 @@ const log = ref("");
 // 自动检查更新：App 每 5 分钟拉一次 /update；这个开关只负责写偏好并通知 App。
 const autoCheck = ref(updateAutoCheckOn());
 
+// PWA 前端壳：当前页面构建身份（构建时注入） vs 服务器 build.json。
+const pageBuildId = typeof __BUILD_ID__ !== "undefined" ? __BUILD_ID__ : "";
+const pwaSnapshot = ref<PwaSnapshot | null>(null);
+const latestBuild = ref<PwaBuild | null>(null);
+const pwaBusy = ref(false);
+const pwaError = ref("");
+
 const supported = computed(() => !!status.value?.restart_supported);
+const currentBuildLabel = computed(() => buildLabel(pageBuildId, "未知（开发模式）"));
+const latestBuildLabel = computed(() => latestBuild.value
+  ? buildLabel(latestBuild.value.built_at || latestBuild.value.build_id, "未知")
+  : "读取中…");
+const pwaBuildMatch = computed(() => !!(latestBuild.value && pageBuildId
+  && latestBuild.value.build_id === pageBuildId));
+const pwaUpdateAvailable = computed(() => !!(pwaSnapshot.value?.waiting
+  || (latestBuild.value && pageBuildId && latestBuild.value.build_id !== pageBuildId)));
+const pwaOk = computed(() => pwaBuildMatch.value && !pwaSnapshot.value?.waiting);
+const pwaSwLabel = computed(() => {
+  const s = pwaSnapshot.value;
+  if (!s) return "读取中…";
+  if (s.error) return "读取失败";
+  if (!s.supported) return "不支持";
+  if (!s.secure) return "非安全上下文";
+  if (s.waiting) return "新版本等待切换";
+  if (s.installing) return "正在安装新版本";
+  if (s.controlled) return "已接管";
+  if (s.registered) return "已注册（当前页未受控）";
+  return "未注册";
+});
+const pwaStatus = computed(() => {
+  const s = pwaSnapshot.value;
+  if (!s) return "正在读取 PWA 状态…";
+  if (s.error) return "读取 PWA 状态失败。";
+  if (!s.supported) return "此浏览器不支持 Service Worker；只能核对构建版本。";
+  if (!s.secure) return "非安全上下文：PWA 不会注册（需要 HTTPS 或 localhost）。";
+  if (pwaUpdateAvailable.value) {
+    return s.waiting ? "发现新版本，可以立即切换。" : "服务器前端已有新版本，点「更新并刷新」。";
+  }
+  if (pwaBuildMatch.value) return "当前页面与服务器构建一致。";
+  return "无法确认服务器前端版本（可能不是构建产物）。";
+});
 const buttonText = computed(() => {
   if (phase.value === "pulling") return "正在拉取…";
   if (phase.value === "restarting") return "正在重启…";
@@ -34,6 +82,12 @@ const buttonText = computed(() => {
 
 function errText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
+}
+
+function buildLabel(value: string, fallback: string): string {
+  if (!value) return fallback;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? value : d.toLocaleString("zh-CN", { hour12: false });
 }
 
 function setAutoCheck(value: boolean | null): void {
@@ -53,6 +107,50 @@ async function load(): Promise<void> {
     error.value = `读取当前版本失败：${errText(e)}`;
   } finally {
     loading.value = false;
+  }
+}
+
+async function loadPwa(forceCheck = false): Promise<void> {
+  if (pwaBusy.value) return;
+  pwaBusy.value = true;
+  pwaError.value = "";
+  try {
+    latestBuild.value = await fetchLatestBuild().catch((e) => {
+      pwaError.value = `读取服务器前端版本失败：${errText(e)}`;
+      return null;
+    });
+    pwaSnapshot.value = forceCheck ? await checkPwaUpdate() : await readPwaSnapshot();
+  } catch (e) {
+    pwaError.value = `PWA 状态读取失败：${errText(e)}`;
+  } finally {
+    pwaBusy.value = false;
+  }
+}
+
+async function applyPwa(): Promise<void> {
+  if (pwaBusy.value) return;
+  pwaBusy.value = true;
+  pwaError.value = "";
+  try {
+    await applyPwaUpdate();
+  } catch (e) {
+    pwaError.value = `PWA 更新失败：${errText(e)}`;
+  } finally {
+    pwaBusy.value = false;
+  }
+}
+
+async function forceReload(): Promise<void> {
+  if (pwaBusy.value) return;
+  if (props.ask && !(await props.ask("会注销 Service Worker 并清空前端缓存，然后重新加载页面。继续吗？"))) return;
+  pwaBusy.value = true;
+  pwaError.value = "";
+  try {
+    await forceReloadPwa();
+  } catch (e) {
+    pwaError.value = `强制重新加载失败：${errText(e)}`;
+  } finally {
+    pwaBusy.value = false;
   }
 }
 
@@ -88,7 +186,10 @@ async function pullAndRestart(): Promise<void> {
   }
 }
 
-onMounted(() => { load().catch(() => {}); });
+onMounted(() => {
+  load().catch(() => {});
+  loadPwa().catch(() => {});
+});
 </script>
 
 <template>
@@ -108,6 +209,32 @@ onMounted(() => { load().catch(() => {}); });
         />
       </div>
       <p class="hint">开启后每 5 分钟检查一次 GitHub；本地落后时顶部会出现「GitHub 有新提交」更新条。</p>
+      <VDivider class="update-divider" />
+
+      <section class="update-block pwa-block">
+        <h4 class="update-section-title">PWA / 已安装应用</h4>
+        <p class="hint">核对当前页面与服务器上的前端构建；如果安装的 PWA 还显示旧界面，用这里直接检查并切换。</p>
+        <div class="update-row"><span>当前页面</span><code :title="pageBuildId">{{ currentBuildLabel }}</code></div>
+        <div class="update-row"><span>服务器最新</span><code :title="latestBuild?.build_id">{{ latestBuildLabel }}</code></div>
+        <div class="update-row"><span>Service Worker</span><span>{{ pwaSwLabel }}</span></div>
+        <p class="update-compare"
+          :class="pwaUpdateAvailable ? 'update-warn' : (pwaOk ? 'update-ok' : '')">{{ pwaStatus }}</p>
+        <div class="row">
+          <VBtn color="primary" variant="flat" size="small" type="button"
+            :loading="pwaBusy" :disabled="pwaBusy" @click="loadPwa(true)">
+            检查 PWA 更新
+          </VBtn>
+          <VBtn v-if="pwaUpdateAvailable" color="primary" variant="tonal" size="small" type="button"
+            :disabled="pwaBusy" @click="applyPwa">
+            更新并刷新
+          </VBtn>
+          <VBtn variant="text" size="small" type="button" :disabled="pwaBusy" @click="forceReload">
+            强制重新加载
+          </VBtn>
+        </div>
+        <p v-if="pwaError" class="hint update-warn">{{ pwaError }}</p>
+      </section>
+
       <VDivider class="update-divider" />
 
       <div v-if="loading" class="hint">读取当前版本…</div>

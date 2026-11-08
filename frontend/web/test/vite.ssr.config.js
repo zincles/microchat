@@ -26,5 +26,6 @@ export default defineConfig({
   // Vuetify 是 external 时 Node 会直接 import 它的 `.css`；noExternal 让 Vite 处理它。
   ssr: { noExternal: ["vuetify"] },
   build: { ssr: true, outDir: "node_modules/.cache/mc-ssr", emptyOutDir: true, minify: false },
+  define: { __BUILD_ID__: JSON.stringify("ssr-test") },
   logLevel: "warn",
 });

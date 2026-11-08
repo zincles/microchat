@@ -33,6 +33,32 @@ function backendOrigin() {
 }
 const apiProxy = { "/api": { target: backendOrigin() } };
 
+// 前端构建身份（2026-11-09）：PWA 面板拿它核对「当前页面」与「服务器上的最新壳」。
+// 构建时写进 JS（define）与 dist/build.json（同一个 id）；build.json **不进 Service Worker 预缓存**
+//（workbox 的 globPatterns 不含 json）⇒ 每次检查都能拿到服务器当前那一份，而不是缓存里的旧壳。
+const buildId = new Date().toISOString();
+const buildInfo = { build_id: buildId, built_at: buildId };
+function buildInfoPlugin() {
+  return {
+    name: "microchat-build-info",
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        if ((req.url || "").split("?")[0] !== "/build.json") return next();
+        res.setHeader("Content-Type", "application/json; charset=utf-8");
+        res.setHeader("Cache-Control", "no-cache");
+        res.end(JSON.stringify(buildInfo));
+      });
+    },
+    generateBundle() {
+      this.emitFile({
+        type: "asset",
+        fileName: "build.json",
+        source: JSON.stringify(buildInfo),
+      });
+    },
+  };
+}
+
 // ── 允许哪些 Host（2026-11-02）────────────────────────────────────────────────
 //
 // **默认不限制**（`allowedHosts: true`）：域名部署、反代、内网 IP、diag 隧道 —— 全都直接能用，
@@ -101,6 +127,7 @@ export default defineConfig({
     // Vuetify 4：只给底部输入栏用（渐进替换的第一块）。autoImport 只处理用到的组件；
     // 样式仍是全局的 `vuetify/styles`（CSS 分层，见 main.css 里的 `.v-btn` 逃生门）。
     vuetify({ autoImport: true }),
+    buildInfoPlugin(),
     assetCacheHeaders(),
     // PWA（2026-10-11 用户点名）：可"安装为应用"。三件事 —— manifest / 图标 / 一个最小 SW。
     //   · SW **只预缓存壳**（HTML/JS/CSS/图标）：/api 一概不碰（数据必须现取；别写
@@ -146,6 +173,7 @@ export default defineConfig({
       },
     }),
   ],
+  define: { __BUILD_ID__: JSON.stringify(buildId) },
   resolve: { alias: { "vue": "vue/dist/vue.esm-bundler.js" } },
   // dev 用 5173、preview 用 8788：**8788 是部署口**（docker 容器发布它）——两者分开，
   // 同一台机器上"dev 服务器 + 容器"才能并存（实测踩过：都用 8788 ⇒ 容器起不来，端口被自家 dev 占着）。
