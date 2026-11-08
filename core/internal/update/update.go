@@ -35,6 +35,41 @@ type Status struct {
 	// RestartSupported = 当前部署有 entrypoint 看家循环（容器）。宿主二进制只拉取，
 	// 没法替人重启 —— 前端据此不要假装“马上回来”。
 	RestartSupported bool `json:"restart_supported"`
+	// RemoteCommit / RemoteShort：origin 上目标分支的最新提交（git ls-remote）。
+	// 读不到（没网/没 origin/私有仓库要凭据）只填 RemoteError，不让整个面板失败。
+	RemoteCommit string `json:"remote_commit,omitempty"`
+	RemoteShort  string `json:"remote_short,omitempty"`
+	RemoteError  string `json:"remote_error,omitempty"`
+}
+
+// Remote：origin 上某个分支的最新提交。只查远端，不改本地 refs（不 fetch）。
+type Remote struct {
+	Commit string
+	Short  string
+	Error  string
+}
+
+// ReadRemote：`git ls-remote origin refs/heads/<branch>`。5 秒不够就报错，
+// 不把更新面板按住（本地面板仍可用）。
+func ReadRemote(ctx context.Context, branch string) Remote {
+	ref := "HEAD"
+	if strings.TrimSpace(branch) != "" {
+		ref = "refs/heads/" + branch
+	}
+	out, err := git(ctx, RepoRoot(), "ls-remote", "--exit-code", "origin", ref)
+	if err != nil {
+		return Remote{Error: err.Error()}
+	}
+	fields := strings.Fields(out)
+	if len(fields) == 0 {
+		return Remote{Error: "git ls-remote 没有返回提交"}
+	}
+	commit := fields[0]
+	short := commit
+	if len(short) > 7 {
+		short = short[:7]
+	}
+	return Remote{Commit: commit, Short: short}
 }
 
 // PullResult 是 POST /update/pull 的响应。

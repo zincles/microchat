@@ -728,6 +728,10 @@ export interface UpdateStatus {
   started_at: string;
   /** 当前部署是否有 entrypoint 看家循环（容器）。 */
   restart_supported: boolean;
+  /** origin 目标分支最新提交；读不到时只有 remote_error。 */
+  remote_commit?: string;
+  remote_short?: string;
+  remote_error?: string;
 }
 
 /** 拉取结果：前后两颗提交 + git 原文 + 是否已请求重启。 */

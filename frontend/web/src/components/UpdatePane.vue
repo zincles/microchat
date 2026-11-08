@@ -115,9 +115,18 @@ onMounted(() => { load().catch(() => {}); });
       <template v-else-if="status">
         <div class="update-version">
           <div class="update-row"><span>当前提交</span><code>{{ status.short || status.commit }}</code></div>
+          <div class="update-row"><span>GitHub 最新</span><code>{{ status.remote_short || "—" }}</code></div>
           <div class="update-row"><span>分支</span><code>{{ status.branch || "（detached）" }}</code></div>
           <div v-if="status.subject" class="update-subject">{{ status.subject }}</div>
           <div class="update-hash" :title="status.commit">{{ status.commit }}</div>
+          <p v-if="status.remote_commit" class="update-compare"
+            :class="status.remote_commit === status.commit ? 'update-ok' : 'update-warn'"
+            :title="status.remote_commit">
+            {{ status.remote_commit === status.commit ? "✓ 已是最新提交" : "远端有新提交，可拉取并重启" }}
+          </p>
+          <p v-else-if="status.remote_error" class="hint update-warn">
+            无法读取 GitHub 最新提交：{{ status.remote_error }}
+          </p>
         </div>
         <p v-if="status.dirty" class="hint update-warn">
           工作区有 {{ status.changed_files }} 个未提交改动；<code>git pull --ff-only</code> 可能因此失败，失败时不会重启。

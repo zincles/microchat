@@ -943,6 +943,8 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .update-subject { color: var(--md-on-surface-variant); font-size: var(--md-type-body-small); margin-top: 0.15em; }
 .update-hash { color: var(--md-on-surface-variant); font-family: var(--app-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
   font-size: var(--md-type-label-small); overflow-wrap: anywhere; }
+.update-compare { margin: 0.25em 0 0; font-size: var(--md-type-body-small); }
+.update-ok { color: var(--md-primary); }
 .update-warn { color: var(--md-error); }
 .update-error { color: var(--md-error); white-space: pre-wrap; }
 .update-log { margin: 0.6em 0 0; padding: 0.7em 0.9em; max-height: 16em; overflow: auto; overscroll-behavior: contain;
