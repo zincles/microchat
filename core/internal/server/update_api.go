@@ -39,6 +39,7 @@ func (s *Server) updateStatus(w http.ResponseWriter, r *http.Request) {
 	cancelRemote()
 	status.RemoteCommit = remote.Commit
 	status.RemoteShort = remote.Short
+	status.RemoteSubject = remote.Subject
 	status.RemoteError = remote.Error
 	status.RemoteRelation = remote.Relation
 	status.Ahead = remote.Ahead

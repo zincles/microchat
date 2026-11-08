@@ -41,6 +41,7 @@ type Status struct {
 	// 读不到（没网/没 origin/私有仓库要凭据）只填 RemoteError，不让整个面板失败。
 	RemoteCommit   string `json:"remote_commit,omitempty"`
 	RemoteShort    string `json:"remote_short,omitempty"`
+	RemoteSubject  string `json:"remote_subject,omitempty"`
 	RemoteError    string `json:"remote_error,omitempty"`
 	RemoteRelation string `json:"remote_relation,omitempty"` // same / ahead / behind / diverged / unknown
 	Ahead          int    `json:"ahead,omitempty"`           // 本地领先远端
@@ -51,6 +52,7 @@ type Status struct {
 type Remote struct {
 	Commit   string
 	Short    string
+	Subject  string
 	Error    string
 	Relation string
 	Ahead    int
@@ -77,7 +79,7 @@ func ReadRemote(ctx context.Context, branch string, local string) Remote {
 	if len(short) > 7 {
 		short = short[:7]
 	}
-	remote := Remote{Commit: commit, Short: short}
+	remote := Remote{Commit: commit, Short: short, Subject: remoteSubject(ctx, RepoRoot(), commit, branch)}
 	if strings.TrimSpace(local) == "" {
 		remote.Relation = "unknown"
 		return remote
@@ -107,6 +109,27 @@ func ReadRemote(ctx context.Context, branch string, local string) Remote {
 		remote.Relation = "unknown"
 	}
 	return remote
+}
+
+// remoteSubject：远程最新提交的标题。对象本地已有就直接读；没有就先 fetch 这个
+// 分支的浅对象（只为了显示一句 commit message，不 merge、不改本地分支）。
+func remoteSubject(ctx context.Context, root, commit, branch string) string {
+	out, err := git(ctx, root, "show", "-s", "--format=%s", commit)
+	if err == nil {
+		return out
+	}
+	ref := "HEAD"
+	if strings.TrimSpace(branch) != "" {
+		ref = branch
+	}
+	if _, ferr := git(ctx, root, "fetch", "--quiet", "--depth=1", "--no-tags", "origin", ref); ferr != nil {
+		return ""
+	}
+	out, err = git(ctx, root, "show", "-s", "--format=%s", commit)
+	if err != nil {
+		return ""
+	}
+	return out
 }
 
 func revCount(ctx context.Context, from, to string) int {

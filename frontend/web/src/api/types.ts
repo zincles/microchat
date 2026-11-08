@@ -732,6 +732,7 @@ export interface UpdateStatus {
   /** origin 目标分支最新提交；读不到时只有 remote_error。 */
   remote_commit?: string;
   remote_short?: string;
+  remote_subject?: string;
   remote_error?: string;
   remote_relation?: "same" | "ahead" | "behind" | "diverged" | "unknown";
   ahead?: number;

@@ -788,7 +788,7 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 | 方法 | 路径 | 响应 | 说明 |
 |---|---|---|---|
 | GET | `/health` | `{"status","version"}` | 探针；**没有鉴权** |
-| GET | `/update` | `UpdateStatus` | **当前提交**：`commit` / `short` / `branch` / `subject` / `dirty` / `changed_files` / `started_at` / `restart_supported`；另外 `remote_commit` / `remote_short` / `remote_error` = **origin 目标分支最新提交**（`git ls-remote`，6s 超时；读不到只填 `remote_error`，不拖垮本地面板），`remote_relation` / `ahead` / `behind` = 本地与远端关系（`same` / `ahead` / `behind` / `diverged` / `unknown`；用 `merge-base --is-ancestor` + `rev-list --count`）。前端把 `remote_commit` 与 `commit` 比对，分「已是最新 / 本地领先 N / 远端有新提交 N / 已分叉」|
+| GET | `/update` | `UpdateStatus` | **当前提交**：`commit` / `short` / `branch` / `subject` / `dirty` / `changed_files` / `started_at` / `restart_supported`；另外 `remote_commit` / `remote_short` / `remote_subject` / `remote_error` = **origin 目标分支最新提交及标题**（`git ls-remote`，6s 超时；读不到只填 `remote_error`，不拖垮本地面板），`remote_relation` / `ahead` / `behind` = 本地与远端关系（`same` / `ahead` / `behind` / `diverged` / `unknown`；用 `merge-base --is-ancestor` + `rev-list --count`）。前端把 `remote_commit` 与 `commit` 比对，分「已是最新 / 本地领先 N / 远端有新提交 N / 已分叉」|
 | POST | `/update/pull` | `UpdatePullResult` · **202** | **拉取最新代码并请求重启**（2026-11-09 用户定）：只走 `git pull --ff-only`（不自动 merge、不 stash；脏工作区/分叉由 git 拒绝并原样回错），成功后写 `data/.restart-request` 让容器 entrypoint 重新编译并重启前后端。**要求同源**（Origin 的 host 必须等于 Host / X-Forwarded-Host；curl 无 Origin 放行）；宿主二进制没有 entrypoint ⇒ **409**，`restart_supported:false` 时界面不假装会自己回来 |
 | POST | `/tasks/{task_id}/cancel` | — | `{canceled}` | **按停一个任务**（2026-11-01 用户定：「任务菜单里，我希望有办法取消任务」）。<br>按的是 **TaskID** —— 面板上只有那个 id，它够不到任务自己的 ctx，所以这条路是必需的。<br>⚠ `canceled:false` **不是错误**，三种情况都回 **200**：没这个 id（早被 trim 掉了）、已经收尾、或者它压根不能停（`refresh_models` 那种纯本地的活 —— 它的 `cancelable` 是 false，界面据此**不画**按钮）。<br>⚠ 回 `true` 也**不等于它现在已经停了**：ctx 的取消是**请求**，真正停下要等任务自己走到下一个检查点（面板看到它翻成「取消」才算数）|
 | GET | `/tasks` | `TaskBoard` | **任务面板**：进程内的事实（`running` + 在跑的在前的 `tasks` + 2026-11-01 加的 `queues`；与 `-debug tasks` 同一份 `Board`，不进库）。轮询用（状态指示器就问它）。重启就没 —— "没有在跑的"是诚实的事实。**没有权限过滤**（2026-11-01 账号砍了；面板就是"这台机器上此刻在跑什么"）。<br>2026-11-01 加两格：每条 `task` 带 **`group`**（`llm` / `plain` —— 界面显示「模型调用」与「其它任务」，由 `task.Kind.Group()` 这一处判定，界面**只读不猜**）；`queues` 是队列任务那一层（见下两条）。2026-11-05 起每条 task 还带 **`parent_id`**：分段压缩父 Job（`kind=compact_job`）下挂多个 `kind=compact` 子 Task；面板按它缩进显示，而不是平铺 |
@@ -1053,8 +1053,9 @@ DeepSeek / OpenCode GO 直连**确实不报**，所以那一格在那儿永远�
 
 - 布局：左会话栏（**2026-11-06 起 Gemini 式**：顶部 **Brand Title「MicroChat」+ 星芒标**，
   其下「＋开启新对话」，再下面才是**占满栏宽的「对话 / 生图 / 库存」三面板切换**（VBtnToggle，2026-11-06 用户定；2026-11-09 加「库存」并做成真面板）。
-  切换会真的换下面那块：对话面板 = 原有会话列表 + 新建；生图/库存面板 = 各自的空态，暂未接 API/数据。
-  **品牌右侧、收起键左侧**还有一颗三态主题键（太阳=亮色 / 月亮=暗色 / 半太阳=自动），无文字、按下立即切换；
+  切换会真的换下面那块：对话面板 = 原有会话列表 + 「开启新对话」；生图面板 = 空态 + 「新绘图任务」（点击只提示暂未接入）；
+  库存面板 = 空态 + 「暂定」按钮（disabled，不可点）。三处按钮位置/尺寸不变，只换文案。
+  **品牌右侧、收起键左侧**还有一颗三态主题键（太阳=亮色 / 月亮=暗色 / sun-moon=自动），无文字、**无背景**、按下立即切换；
   **左栏外壳 = Vuetify `VApp` + `VNavigationDrawer`**（2026-11-07）：App 根是 `<VApp>`（外层挂载点已经有 `#app`；VApp 再带 id 会产生重复 id），
   `SessionBar` 根是 `VNavigationDrawer`（`:model-value="true" permanent :scrim="false" :touchless="true"`）——
   VApp 只作 layout provider，不引入 VMain。桌面用 CSS 把抽屉改成 `position: relative !important` 的 280px 布局列，

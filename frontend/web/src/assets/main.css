@@ -940,7 +940,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .update-block { display: flex; flex-direction: column; gap: 0.15em; }
 .update-section-title { margin: 0 0 0.35em; font-size: var(--md-type-title-small); font-weight: 600; color: var(--md-on-surface); }
 .update-divider { margin: 1em 0; }
-.update-auto { display: flex; align-items: center; justify-content: space-between; gap: 1em; margin-top: 1em; color: var(--md-on-surface); }
+.update-auto { display: flex; align-items: center; justify-content: space-between; gap: 1em; margin: 0.9em 0 0.2em; color: var(--md-on-surface); }
 .update-row { display: flex; align-items: baseline; gap: 0.55em; font-size: var(--md-type-body-medium); }
 .update-row > span { color: var(--md-on-surface-variant); }
 .update-row code { font-family: var(--app-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); }
@@ -1097,8 +1097,8 @@ button.danger:hover { background: color-mix(in srgb, var(--md-error) 8%, transpa
  * ═══════════════════════════════════════════════════════════════════════════ */
 #sessions-bar .bar-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5em; padding: 0.55em 0.55em 0.35em; flex: none; }
 #sessions-bar .bar-head-actions { display: flex; align-items: center; gap: 0.15em; margin-left: auto; }
-#sessions-bar .theme-toggle { color: var(--md-primary); background: var(--md-primary-container); }
-#sessions-bar .theme-toggle:hover { background: color-mix(in srgb, var(--md-on-primary-container) 10%, var(--md-primary-container)); color: var(--md-on-primary-container); }
+#sessions-bar .theme-toggle { color: var(--md-primary); background: none; }
+#sessions-bar .theme-toggle:hover { background: color-mix(in srgb, var(--md-primary) 10%, transparent); color: var(--md-primary); }
 #sessions-bar .bar-head .icon-btn { width: 2.667em; height: 2.667em; padding: 0; display: inline-flex; align-items: center; justify-content: center;
   border-radius: var(--md-shape-full); color: var(--md-on-surface-variant);
   transition: background-color var(--md-dur-150) var(--md-ease-standard), color var(--md-dur-150) var(--md-ease-standard); }
@@ -1132,6 +1132,8 @@ button.danger:hover { background: color-mix(in srgb, var(--md-error) 8%, transpa
   font: inherit; font-size: var(--md-type-label-large); font-weight: 500; letter-spacing: 0.006em;
   box-shadow: var(--md-elev-1); cursor: pointer;
   transition: box-shadow var(--md-dur-200) var(--md-ease-standard), transform var(--md-dur-100) var(--md-ease-standard); }
+#sessions-bar #session-new:disabled { opacity: 0.55; cursor: default; box-shadow: var(--md-elev-1); }
+#sessions-bar #session-new:disabled:hover { box-shadow: var(--md-elev-1); }
 #sessions-bar #session-new:hover { box-shadow: var(--md-elev-2); }
 #sessions-bar #session-new::before { content: ""; position: absolute; inset: 0; background: var(--md-on-primary-container); opacity: 0;
   transition: opacity var(--md-dur-150) var(--md-ease-standard); pointer-events: none; }

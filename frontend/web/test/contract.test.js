@@ -3368,6 +3368,7 @@ test("更新面板：显示提交 + 拉取并重启（由 entrypoint 接手）",
   assert.match(pane, /当前本地版本/, "没有本地版本区块");
   assert.match(pane, /GitHub 最新版本/, "没有 GitHub 最新版本区块");
   assert.match(pane, /status\.remote_short/, "更新面板没显示 GitHub 最新提交");
+  assert.match(pane, /status\.remote_subject/, "更新面板没显示 GitHub 最新提交说明");
   assert.match(pane, /status\.remote_commit === status\.commit/, "没有把当前提交和远端最新匹配");
   assert.match(pane, /remote_relation === 'ahead'/, "没有区分本地领先远端");
   assert.match(pane, /remote_relation === 'behind'/, "没有区分本地落后远端");
@@ -3376,6 +3377,8 @@ test("更新面板：显示提交 + 拉取并重启（由 entrypoint 接手）",
   assert.match(pane, /saveUpdateAutoCheck/, "更新面板没有自动检查开关");
   assert.match(pane, /update_auto_check|updateAutoCheckOn/, "自动检查开关没接偏好");
   assert.match(pane, /<VSwitch/, "自动检查不是 Vuetify 开关");
+  assert.ok(pane.indexOf('class="update-auto"') < pane.indexOf('class="update-version"'), "自动检查不在顶部两块之上");
+  assert.ok(pane.indexOf('class="update-auto"') < pane.indexOf('class="update-divider"'), "自动检查与下面两块之间没有分隔符");
   const updateBar = readFileSync(join(SRC, "components", "UpdateBar.vue"), "utf8");
   assert.match(updateBar, /backend/, "顶部更新条不认识后端更新");
   assert.match(updateBar, /update-backend/, "顶部更新条没有更新前后端的动作");
@@ -3393,6 +3396,8 @@ test("左栏：对话/生图/库存三面板；主题三态按钮在品牌与收
   assert.match(bar, /id="theme-toggle"/, "左栏没有主题按钮");
   assert.match(bar, /THEME_IDS/, "主题按钮没读唯一权威的主题清单");
   assert.match(bar, /ICONS\.sun[\s\S]*ICONS\.moon[\s\S]*ICONS\.themeAuto/, "主题按钮缺三态图标");
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.match(css, /#sessions-bar \.theme-toggle \{[^}]*background:\s*none/, "主题按钮不该有背景");
   const brandAt = bar.indexOf('class="brand"');
   const themeAt = bar.indexOf('id="theme-toggle"');
   const toggleAt = bar.indexOf('id="toggle-left"');
@@ -3400,6 +3405,10 @@ test("左栏：对话/生图/库存三面板；主题三态按钮在品牌与收
   assert.match(bar, /v-if="mode === 'chat'"[\s\S]*id="session-list"/, "对话列表没有只在对话面板显示");
   assert.match(bar, /v-else-if="mode === 'image'"[\s\S]*生图/, "没有生图面板");
   assert.match(bar, /v-else[\s\S]*库存/, "没有库存面板");
+  assert.match(bar, /mode\.value === "image" \? "新绘图任务"/, "生图模式的新建按钮文案没变");
+  assert.match(bar, /mode\.value === "inventory" \? "暂定"/, "库存模式的新建按钮文案没变");
+  assert.match(bar, /:disabled="mode === 'inventory'"/, "库存模式的暂定按钮还能点");
+  assert.ok(bar.indexOf('id="session-new"') < bar.indexOf('class="session-mode-tabs"'), "新按钮不在分段切换上方");
 });
 
 test("PWA 图标：尺寸对、换掉了纸飞机", () => {

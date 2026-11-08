@@ -15,6 +15,7 @@ const emit = defineEmits<{
   export: [id: string];
   close: [id: string];
   new: [];
+  "new-image": [];
   "open-settings": [];
   "toggle-left": [];
   "open-sessions": [];
@@ -48,6 +49,12 @@ const theme = ref(themePref());
 const themeLabels: Record<string, string> = { light: "亮色", dark: "暗色", auto: "自动" };
 const themeIcon = computed(() => (theme.value === "light" ? ICONS.sun : theme.value === "dark" ? ICONS.moon : ICONS.themeAuto));
 const themeLabel = computed(() => themeLabels[theme.value] ?? "自动");
+const newLabel = computed(() => (mode.value === "image" ? "新绘图任务" : mode.value === "inventory" ? "暂定" : "开启新对话"));
+const newTitle = computed(() => (mode.value === "image" ? "新绘图任务（生图功能暂未接入）" : mode.value === "inventory" ? "暂定" : "开启新对话（草稿：首句才建会话）"));
+function onNew(): void {
+  if (mode.value === "chat") emit("new");
+  else if (mode.value === "image") emit("new-image");
+}
 function cycleTheme(): void {
   const at = THEME_IDS.indexOf(theme.value);
   theme.value = THEME_IDS[(at + 1) % THEME_IDS.length] ?? "auto";
@@ -175,8 +182,8 @@ defineExpose({ setSessions });
       </span>
     </div>
     <div v-if="refreshing" class="md-linear-progress" role="progressbar" aria-label="正在刷新会话列表"><span></span></div>
-    <button v-if="mode === 'chat'" id="session-new" type="button" title="开启新对话（草稿：首句才建会话）" @click="$emit('new')">
-      <span class="plus" aria-hidden="true" v-html="ICONS.plus"></span><span class="label">开启新对话</span>
+    <button id="session-new" type="button" :title="newTitle" :disabled="mode === 'inventory'" @click="onNew">
+      <span class="plus" aria-hidden="true" v-html="ICONS.plus"></span><span class="label">{{ newLabel }}</span>
     </button>
     <!-- 左栏模式切换，不是内容 tab：生图与库存面板还没接，切过去只是选中态。
          用 VBtnToggle 做全宽分段按钮；等它们有独立列表再升级成 VTabs。 -->

@@ -97,6 +97,19 @@ onMounted(() => { load().catch(() => {}); });
       <h3>版本更新</h3>
       <p class="hint">拉取仓库最新提交（只走 <code>git pull --ff-only</code>），成功后由容器 entrypoint 重新编译并重启前后端。</p>
 
+      <div class="update-auto">
+        <span>自动检查更新</span>
+        <VSwitch
+          :model-value="autoCheck"
+          color="primary"
+          density="compact"
+          hide-details
+          @update:model-value="setAutoCheck"
+        />
+      </div>
+      <p class="hint">开启后每 5 分钟检查一次 GitHub；本地落后时顶部会出现「GitHub 有新提交」更新条。</p>
+      <VDivider class="update-divider" />
+
       <div v-if="loading" class="hint">读取当前版本…</div>
       <template v-else-if="status">
         <div class="update-version">
@@ -116,6 +129,7 @@ onMounted(() => { load().catch(() => {}); });
           <section class="update-block">
             <h4 class="update-section-title">GitHub 最新版本</h4>
             <div class="update-row"><span>提交</span><code>{{ status.remote_short || "—" }}</code></div>
+            <div v-if="status.remote_subject" class="update-subject">{{ status.remote_subject }}</div>
             <div v-if="status.remote_commit" class="update-hash" :title="status.remote_commit">{{ status.remote_commit }}</div>
             <p v-if="status.remote_commit" class="update-compare"
               :class="status.remote_commit === status.commit ? 'update-ok' : 'update-warn'"
@@ -141,17 +155,6 @@ onMounted(() => { load().catch(() => {}); });
           当前不是容器部署（没有 <code>MICROCHAT_RESTART_FILE</code>）：拉取后不会自动重启。
         </p>
 
-        <div class="update-auto">
-          <span>自动检查更新</span>
-          <VSwitch
-            :model-value="autoCheck"
-            color="primary"
-            density="compact"
-            hide-details
-            @update:model-value="setAutoCheck"
-          />
-        </div>
-        <p class="hint">开启后每 5 分钟检查一次 GitHub；本地落后时顶部会出现「GitHub 有新提交」更新条。</p>
 
         <div class="row">
           <VBtn color="primary" variant="flat" size="small" type="button"
