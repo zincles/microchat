@@ -1,5 +1,7 @@
 # AGENTS.md — 工作须知
 
+对外说明见 **`README.md`**（定位、技术栈、部署与内置更新）；本文件是内部工作须知。
+
 microchat：轻量 SillyTavern 替代（RPG 向）。三层，边界要清楚：
 
 | 层 | 位置 | 状态 |
@@ -1126,7 +1128,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
 - **共享层（2026-10-10 审计整改）**：`utils/prefs.ts` = 界面偏好与共享 api 客户端的唯一出口（主题应用含 TG 守卫 —— TG 里 data-theme 根本不设；发送键判定/提示、apiBase/Token、`sharedApi()` 按偏好缓存）；`api/client.ts` 的 `mergeStreamSlice` = 流式合并唯一规则（游标回退 ⇒ 清零重建）；api 错误统一带 `code`/`status`（分支按 code，别猜文案）；`format.ts` 的 modelKey/modelLabel/whoText/sessionTitle = 键与标签的唯一出口；`COMMAND_META`（commands.js）与 App 执行器启动对账。
 - **CSS 复用基线（2026-11-02，用户定「减少 CSS 的使用量、多复用少重写」）**：除底部输入栏与设置界面控件（2026-11-06 起用 Vuetify 4）外，全站仍是手写 CSS（不引 Tailwind —— 它与 em 缩放/大量状态选择器不合，且会把 CSS 搬进模板）。复用只有四处，新样式照此写：
   ① **幽灵按钮底座** `main.css` 那一组（`.icon-btn / .edit-btn / .link-btn / .cp-close / .ctree-tw / .ctree-undo / .collapse-all / .session-item 的两枚 / 模型与 Agent 菜单项 / tabs`）= `background:none; border:none; cursor:pointer` **只写一次**，具体规则只写颜色/尺寸/圆角；
-     （底部三个管理入口 2026-11-06 换 Vuetify `VBtn(stacked)` 后已退出这张表）
+     （底部管理入口 2026-11-06 换 Vuetify `VBtn(stacked)` 后已退出这张表）
   ② **文字蒙层** 用 `theme.css` 的 `--mix-6 / 8 / 10 / 13 / 18`（加已有的 `--hover` = 7%），别再在 `main.css` 里现写 `color-mix(... N%, transparent)`；
   ③ **圆角** 用 `--r-xs(4) / --r-sm(6) / --r-md(8) / --r-btn / --r-card / --r-shell / --r-bubble`，不写字面量；
   ④ **等宽数字** 只在 `main.css` 末尾那一组写 `font-variant-numeric: tabular-nums`，新数字元素加进选择器清单，别单写一条。
@@ -1369,9 +1371,12 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   **外观 / 输入**整块搬进设置的「外观」区（`AppearancePane.vue`，四区里的最后一个）。
   **左栏底 = 会话 / 渠道 / 设置 / 更新**（2026-11-02 用户定：设置面板太满，把会话与渠道拆成独立入口；
   2026-11-09 加「更新」：显示当前提交，一键拉取并让 entrypoint 重启前后端；
-  原来的「安装说明」删掉）。**2026-11-06 起三个入口并排**（用户定「并排，改善移动体验」）：
-  Vuetify `VBtn(stacked)` 三等分一行，图标在文字上方；旧的竖排 `.foot-btn` 样式已删。会话 / 渠道与设置共用同一个视图：`SettingsModal` 的 `:only`
-  只显示那一页、隐藏 VTabs，页头写「会话管理 / 渠道管理」；退出仍走同一个 close。
+  原来的「安装说明」删掉）。**2026-11-06 起四个入口并排**（用户定「并排，改善移动体验」）：
+  Vuetify `VBtn(stacked)` 四等分一行，图标在文字上方；旧的竖排 `.foot-btn` 样式已删。会话 / 渠道 / 更新与设置共用同一个视图：`SettingsModal` 的 `:only`
+  只显示那一页、隐藏 VTabs，页头写「会话管理 / 渠道管理 / 更新」；退出仍走同一个 close。
+  **更新面板**（`UpdatePane.vue`，2026-11-09）：两块用 `VDivider` 分开 —— 上「当前本地版本」（提交 / 分支 / 标题 / 完整 hash / 脏工作区），
+  下「GitHub 最新版本」（远端 short/full + `remote_relation` 人话：已是最新 / 本地领先 N（未推送）/ 远端有新提交 N / 已分叉）。
+  `GET /update` 的 `git ls-remote` 有 6s 超时；读不到只填 `remote_error`，不影响本地区块。
   ⚠ 这两个管理页是**页面切换，不是设置 tab**：`VTabsWindow` 的 `:key` 跟着 `only` 变 ⇒
   重挂载、不跑 tab 滑入（2026-11-06 用户报「有 Tab 效果，而且顺序是错的」——
   根因是 provider→chat 在 window item 顺序里是反向；只有完整设置的五个 tab 仍保留过渡）。
