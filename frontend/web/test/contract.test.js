@@ -1272,7 +1272,10 @@ test("打字机：按前后两包的到达间隔决定这一拍的速度；线�
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8");
   assert.match(bubble, /(className = "stream-cursor"|class="stream-cursor")/, "流式正文没有终端光标");
   assert.match(bubble, /createTreeWalker\(textEl\.value, NodeFilter\.SHOW_TEXT/, "光标没贴在最后一个文字节点后");
-  assert.match(bubble, /aria-hidden\),?\s*"true"|setAttribute\("aria-hidden", "true"\)/, "光标没对读屏隐藏");
+  assert.match(bubble, /正在向后端发送请求/, "没有发送中状态");
+  assert.match(bubble, /等待 Provider 响应/, "没有等待 Provider 状态");
+  assert.match(app, /startSendingBubble/, "没有先画发送中助手占位");
+  assert.match(app, /phase = "waiting"/, "202 后没切到等待 Provider");
   assert.match(css, /\.stream-cursor \{[^}]*position:\s*absolute[^}]*animation:\s*stream-cursor-blink/, "终端光标不是绝对定位的稳定覆盖层/不闪");
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]{0,160}\.stream-cursor/, "减少动效时没兜底");
 });
