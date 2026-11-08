@@ -84,6 +84,14 @@ stop_tree() {
   done
   kill "$pid" 2>/dev/null || true
 }
+stop_tree_force() {
+  pid=$1
+  [ -n "$pid" ] || return 0
+  for child in $(pgrep -P "$pid" 2>/dev/null || true); do
+    stop_tree_force "$child"
+  done
+  kill -KILL "$pid" 2>/dev/null || true
+}
 
 # 任一方退出 ⇒ 容器跟着退（restart: unless-stopped 会整个重来）。
 trap 'stop_tree "$BACK"; stop_tree "$FRONT"; exit 0' TERM INT
@@ -94,6 +102,11 @@ while kill -0 "$BACK" 2>/dev/null && kill -0 "$FRONT" 2>/dev/null; do
     rm -f "$RESTART_FILE"
     stop_tree "$BACK"
     stop_tree "$FRONT"
+    # npm 会吞掉 TERM（实测：只发 SIGTERM 时 wait "$FRONT" 永远不回，
+    # 重启就卡死在这一行）⇒ 一秒后补 SIGKILL；Go 后端也被一并保证收干净。
+    sleep 1
+    stop_tree_force "$BACK"
+    stop_tree_force "$FRONT"
     wait "$BACK" 2>/dev/null || true
     wait "$FRONT" 2>/dev/null || true
     exec sh /app/docker/entrypoint.sh
