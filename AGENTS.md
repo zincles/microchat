@@ -1220,6 +1220,10 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   前端构建、preview 启动；Vite 7 时代是 16s+）。PWA 仍由 `vite-plugin-pwa` 生成，
   `vite-plugin-vuetify` 与 `@vitejs/plugin-vue` 均实测兼容。
   ⚠ Node 必须是 20.19+ / 22.12+（Dockerfile 的 Node 24.19 没问题）。
+  entrypoint 另有**两份源码哈希缓存**（`/build/.microchat-go-hash` / `.microchat-web-hash`）：
+  `core/` 与 `frontend/web`（排除 node_modules/dist/test/.vite）各自算哈希；没变就跳过 Go build /
+  Vite build，只改哪边就只重建哪边。`restart` 实测 **2.96s**（Vite 8 + 缓存；旧 Vite 7 是 16s+）。
+  `up -d` 重建容器会丢 `/build` 缓存（首次重新构建），但数据与依赖卷不受影响。
 - **生产交付性能（2026-11-02，用户报"部署后前端响应慢、没有缓冲"）**：
   ① **字体子集**：`public/fonts/RobotoFlex-Latin.woff2` **84KB**（可变 wght 100–900 + opsz；
   只留拉丁、标点、常用箭头/符号；中文本来就落系统字族）。`contract.test.js` 钉着 <150KB + wOF2 魔数。

@@ -3121,6 +3121,11 @@ test("容器 entrypoint：后端绑 0.0.0.0，且端口在启动前就解析好"
   // 旧镜像兼容：Dockerfile 已装 git，但早于这次改动的镜像不会因 restart 重建。
   assert.match(body, /apk add --no-cache git/, "没有旧镜像缺 git 的兜底安装");
   assert.match(body, /go build -buildvcs=false/, "go build 没关 VCS stamping（镜像缺 git 时会 128 起不来）");
+  // 源码未变时跳过 Go / Vite 构建（2026-11-09）：两份哈希分开，只改一侧只重建一侧。
+  assert.match(body, /GO_HASH_FILE|go_source_hash/, "没有后端源码哈希缓存");
+  assert.match(body, /WEB_HASH_FILE|web_source_hash/, "没有前端源码哈希缓存");
+  assert.match(body, /复用已有二进制/, "后端没有跳过构建的分支");
+  assert.match(body, /复用已有 dist/, "前端没有跳过构建的分支");
   assert.match(body, /npm ci/, "entrypoint 没有安装前端依赖");
   assert.match(body, /\.microchat-lock/, "没有用 lock 哈希标记 installed 状态");
   assert.ok(!/\[ -d node_modules\/vite \] \|\| npm ci/.test(body),

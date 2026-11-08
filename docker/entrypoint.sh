@@ -1,5 +1,6 @@
 #!/bin/sh
-# microchat 容器的启动脚本：**先后端、后前端**，两个都在"现场编译"。
+# microchat 容器的启动脚本：**先后端、后前端**，默认现场编译；
+# 源码哈希没变时复用上次的 Go 二进制 / 前端 dist（2026-11-09）。
 # 两个进程都往 stdout/stderr 打日志（非 TTY ⇒ 后端日志不落文件，`docker logs` 直接看）。
 #
 # 为什么先后端：vite 的代理目标读的是后端自己的配置文件（data/config/config.json），
@@ -25,6 +26,26 @@ CONFIG_DIR=${MICROCHAT_CONFIG_DIR:-$DATA_DIR/config}
 RESTART_FILE=${MICROCHAT_RESTART_FILE:-$DATA_DIR/.restart-request}
 rm -f "$RESTART_FILE"
 
+# ── 构建缓存（2026-11-09）──────────────────────────────────────────────────
+# 容器重启/更新 re-exec 时，源码经常一点没变；别每次都把 Go 和 Vite 重新跑一遍。
+# 两份缓存分开：只改后端就只编后端，只改前端就只 build 前端；test/ 与 dist/ 不进哈希。
+# 缓存住 /build（不是 bind）；同一容器 restart / update re-exec 都还在，up -d 重建就自然失效。
+mkdir -p /build
+GO_HASH_FILE=/build/.microchat-go-hash
+WEB_HASH_FILE=/build/.microchat-web-hash
+go_source_hash() {
+  (find core -type f -print | sort | xargs sha256sum) | sha256sum | cut -d' ' -f1
+}
+web_source_hash() {
+  (find frontend/web \
+    \( -type d \( -name node_modules -o -name dist -o -name .vite -o -name test \) -prune \) -o \
+    -type f -print | sort | xargs sha256sum) | sha256sum | cut -d' ' -f1
+}
+GO_HASH=$(go_source_hash)
+WEB_HASH=$(web_source_hash)
+CACHED_GO_HASH=$(cat "$GO_HASH_FILE" 2>/dev/null || true)
+CACHED_WEB_HASH=$(cat "$WEB_HASH_FILE" 2>/dev/null || true)
+
 # pid 锁不用管：容器有**自己的 PID 名字空间** —— 锁文件里要么是宿主的 pid、要么是上一个容器的 pid，
 # 在这个名字空间里都**不存在**（kill 探活 = ESRCH ⇒ 当成陈旧锁覆盖 ✓）。后端又是本容器的第一个子进程
 # （npm/vite 都还没起），陈旧 pid 撞上无辜进程的可能只有 pid 1（= 本脚本），而锁从不由 pid 1 写 ⇒ 不会误杀。
@@ -37,7 +58,14 @@ rm -f "$RESTART_FILE"
 # `-buildvcs=false`：容器里没有 git / 仓库属主不对时，Go 默认会尝试做 VCS
 # stamping，git 一失败整条 build 就 128（用户 2026-11-09 实踩）；我们不需要把
 # commit 焊进二进制（版本由更新面板现读 git），关掉它。
-(cd /app/core && CGO_ENABLED=0 go build -buildvcs=false -o /tmp/microchat-server .)
+if [ "$GO_HASH" = "$CACHED_GO_HASH" ] && [ -x /tmp/microchat-server ]; then
+  echo "[entrypoint] 后端源码未变，复用已有二进制"
+else
+  echo "[entrypoint] 后端源码有变化，重新编译"
+  rm -f "$GO_HASH_FILE"
+  (cd /app/core && CGO_ENABLED=0 go build -buildvcs=false -o /tmp/microchat-server .)
+  printf '%s\n' "$GO_HASH" > "$GO_HASH_FILE"
+fi
 
 # 端口：从配置读（改过 server.port 也等得对）；文件还没生成（首次启动）⇒ 8787 缺省。
 # ⚠ 必须**起后端之前**读出来 —— 下面要用它拼 `-addr`。
@@ -82,7 +110,14 @@ if [ ! -d node_modules/vite ] || [ "$(cat node_modules/.microchat-lock 2>/dev/nu
   npm ci
   printf '%s\n' "$LOCK_HASH" > node_modules/.microchat-lock
 fi
-npm run build
+if [ "$WEB_HASH" = "$CACHED_WEB_HASH" ] && [ -f /build/web/dist/index.html ]; then
+  echo "[entrypoint] 前端源码未变，复用已有 dist"
+else
+  echo "[entrypoint] 前端源码有变化，重新构建"
+  rm -f "$WEB_HASH_FILE"
+  npm run build
+  printf '%s\n' "$WEB_HASH" > "$WEB_HASH_FILE"
+fi
 npm run preview &
 FRONT=$!
 echo "[entrypoint] 前端起来了：http://0.0.0.0:8788（/api 由 vite 代理给本容器后端）"
