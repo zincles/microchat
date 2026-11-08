@@ -3113,6 +3113,15 @@ test("容器 entrypoint：后端绑 0.0.0.0，且端口在启动前就解析好"
 //
 // 三条都是"不报错、不误路由、构建也过"的那类：空草稿是一页纯黑、模型名被挤成一个字母、
 // 会话操作键小到手指点不准。钉住它们，免得下次改布局又悄悄退回去。
+test("草稿：defaults 不覆盖已选模型（draftPrefs 必须保持同一对象引用）", () => {
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  assert.match(app, /Object\.assign\(draftPrefs,/, "startDraft 没有就地重置 draftPrefs");
+  assert.ok(!/^\s*draftPrefs\s*=\s*\{/m.test(app),
+    "startDraft 又给 draftPrefs 重新赋值了 → composable 改旧对象、sendFromDraft 读新对象");
+  assert.match(app, /if \(!draftPrefs\.provider && !draftPrefs\.model\)/,
+    "defaults 回来时没有保护用户已经选过的模型");
+});
+
 test("空草稿首屏：有欢迎语与当前助手/模型，不是一整页纯黑", () => {
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");

@@ -209,7 +209,9 @@ const thinkingChoices = computed(() => {
   return levels.length ? thinkingOptions(levels) : [];
 });
 const currentThinking = computed(() => {
-  const raw = draft ? draftPrefs.thinking_level : sessionInfo.thinking_level;
+  // 草稿与真会话都把当前档位放在 sessionInfo 上（setThinking 两边一起写），
+  // 别在这里读普通对象 draftPrefs —— 它不是响应式的，菜单标签不会更新。
+  const raw = sessionInfo.thinking_level;
   return typeof raw === "string" ? raw : "";
 });
 async function setThinking(level: string): Promise<void> {
@@ -1091,22 +1093,33 @@ async function askDeleteSession(id) {
   } else refreshSessionsBar();
 }
 async function startDraft() {
-  ++epoch;
+  const my = ++epoch;
   draft = true;
   sessionID = null;
   saveLastSession(""); // 人在草稿 ⇒ 开机也该回草稿（别把人拽回上次那条会话）
   draftId = uuidv7(); // 这张草稿将来那会话的 id（预演与建会话都用它）
-  const d = await api.getDefaults().catch(() => ({} as any));
-  draftPrefs = {
-    provider: d.provider ?? "", model: d.model ?? "", agent: d.agent ?? "",
-    thinking_level: "",
-  };
+  // ⚠ **不要 `draftPrefs = {...}`**：composable 在创建时捕获了同一个对象引用，
+  // 重新赋值会让 applyModelValue/applyAgentValue 改到旧对象，sendFromDraft 却读新对象
+  // ⇒ 草稿里选的模型/Agent 到建会话时退回 defaults（2026-11-08 用户报 dummy/dummy）。
+  Object.assign(draftPrefs, { provider: "", model: "", agent: "", thinking_level: "" });
   // `id: ""` 是必须的：`Object.assign` **不清旧键**，从一条真会话切到草稿时
   // `sessionInfo.id` 会留着上一条的 id —— 于是"这是草稿吗"就答错了（曾经就没人读它，
   // 所以一直没露；上下文工作区要读它才露出来）。
   Object.assign(sessionInfo, {
-    id: "", title: "", provider: draftPrefs.provider, model: draftPrefs.model,
-    agent_id: draftPrefs.agent, thinking_level: "", system_prompt: "",
+    id: "", title: "", provider: "", model: "", agent_id: "", thinking_level: "", system_prompt: "",
+  });
+  paintSessionHeader();
+  const d = await api.getDefaults().catch(() => ({} as any));
+  if (my !== epoch || !draft) return; // 期间切去别的会话/又开了新草稿：这一发作废
+  // 用户在默认值回来之前已经选过模型/Agent ⇒ 不覆盖那些格；只补没选过的。
+  if (!draftPrefs.provider && !draftPrefs.model) {
+    draftPrefs.provider = d.provider ?? "";
+    draftPrefs.model = d.model ?? "";
+  }
+  if (!draftPrefs.agent) draftPrefs.agent = d.agent ?? "";
+  Object.assign(sessionInfo, {
+    provider: draftPrefs.provider, model: draftPrefs.model,
+    agent_id: draftPrefs.agent, thinking_level: draftPrefs.thinking_level,
   });
   vueMessages.value = [];
   loadingSession.value = false;
