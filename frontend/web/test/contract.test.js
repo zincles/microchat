@@ -3912,8 +3912,8 @@ test("会话分组标题：更大间距 + 非首组淡分隔线", () => {
 // 思考档位（2026-11-08）：Session 字段 + 输入栏正上方按钮区的 Vuetify 菜单。
 test("思考档位：Session 字段 + 输入栏上方 Vuetify 菜单", () => {
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
-  assert.match(app, /:thinking="currentThinking"/, "TopBar 没接思考档位");
-  assert.match(app, /@select-thinking="setThinking"/, "TopBar 没把档位变化接回来");
+  assert.match(app, /:thinking="currentThinking"/, "Composer 没接思考档位");
+  assert.match(app, /@select-thinking="setThinking"/, "Composer 没把档位变化接回来");
   assert.match(app, /thinking_level: draftPrefs\.thinking_level/, "草稿预演没带思考档位");
   assert.match(app, /if \(draftPrefs\.thinking_level\) body\.thinking_level = draftPrefs\.thinking_level/, "建会话没带思考档位");
 
@@ -3930,9 +3930,10 @@ test("思考档位：Session 字段 + 输入栏上方 Vuetify 菜单", () => {
   const thinking = readFileSync(join(SRC, "components/ThinkingMenu.vue"), "utf8");
   assert.match(thinking, /<VMenu[\s\S]*location="top end"[\s\S]*origin="bottom end"/, "菜单没从输入栏向上弹");
   assert.match(thinking, /<VListItem/, "菜单项不是 Vuetify 的 MD3 list item");
-  assert.match(thinking, /props\.modelValue \|\| "default"/, "空档位没有显示 default");
-  assert.match(thinking, /const raw = \(option: ThinkingOption\): string => option\.value \|\| "default"/, "菜单项不是未格式化 ASCII 档位");
-  assert.ok(!/thinkingLabel/.test(thinking), "思考菜单还在用中文 label");
+  assert.match(thinking, /推理等级：/, "按钮没有显示「推理等级：…」");
+  assert.match(thinking, /thinkingLabel/, "按钮没用中文档位名");
+  assert.match(thinking, /option\.label/, "菜单项没有中文名");
+  assert.match(thinking, /thinking-raw/, "菜单项没有附上原始 ASCII 档位");
 
   const types = readFileSync(join(SRC, "api/types.ts"), "utf8");
   assert.match(types, /thinking_level: string/, "Session 类型没带 thinking_level");

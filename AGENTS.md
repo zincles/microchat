@@ -1144,8 +1144,9 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   （深蓝底 + on-primary-container 图标），不再用亮 `primary` 大圆。
 - **思考档位在输入栏正上方的按钮区**（2026-11-08 用户定：把输入框正上方的一小条留给按钮）：
   `#composer` 改成纵向 flex（`.composer-toolbar` 在上、`.composer-row` 在下），
-  `ThinkingMenu` 住在 toolbar 里；将来工具、MCP 列表也往这里放。只显示**未格式化的 ASCII 档位**
-  （`default` / `low` / `medium` / `high` / `xhigh` / `max`，没有中文；空档位显示 `default`）；
+  `ThinkingMenu` 住在 toolbar 里；将来工具、MCP 列表也往这里放。按钮显示
+  **「推理等级：默认」**（中文档位名）；菜单项显示 **「低 low / 中 medium / 高 high / 最高 max」**
+  （中文 + 原始 ASCII）；空档位是「默认 default」。
   `VMenu` 是 `location="top end"` + `VList`/`VListItem`，**从输入栏向上弹**。
   TopBar 不再持有 ThinkingMenu；输入行只剩 `菜单? / 发送`。
   Session 级字段与后端校验不变（见下）。

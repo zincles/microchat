@@ -804,10 +804,13 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .composer-send-btn .v-btn__content > span { display: flex; align-items: center; justify-content: center; line-height: 0; }
 /* 思考档位（2026-11-08 用户定）：输入栏上方的按钮区；只显示 raw ASCII 档位。 */
 .composer-toolbar .thinking-btn { min-width: 0 !important; height: 1.9em !important; min-height: 1.9em !important;
-  padding: 0 0.55em !important; font-size: 0.75em !important; color: var(--md-on-surface-variant);
+  padding: 0 0.65em !important; border: 1px solid var(--md-outline-variant) !important;
+  background: transparent !important; box-shadow: none !important;
+  font-size: 0.75em !important; color: var(--md-on-surface-variant);
   text-transform: none !important; }
 .composer-toolbar .thinking-btn:hover { color: var(--md-on-surface); background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); }
 .thinking-label { margin: 0; white-space: nowrap; }
+.thinking-raw { margin-left: 0.4em; color: var(--md-on-surface-variant); font-size: 0.88em; opacity: 0.8; }
 
 /* —— Vuetify 逃生门（2026-11-06）——
  * Vuetify 4 的样式在 CSS `@layer` 里；本项目旧 CSS 是**未分层**的，按层叠规则会压过 Vuetify。

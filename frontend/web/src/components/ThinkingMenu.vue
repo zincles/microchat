@@ -1,9 +1,11 @@
 <script setup lang="ts">
 // 思考档位选择器（Vuetify 4 MD3）：VMenu + VBtn + VList。
-// 2026-11-08 用户定：住在输入栏正上方的按钮区（不是顶栏）；显示未格式化的 ASCII 档位
-// （default / low / medium / …），不要中文标签。菜单向上展开，避免盖住输入框。
+// 2026-11-08 用户定：住在输入栏正上方的按钮区（不是顶栏）。
+// 按钮显示「推理等级：默认」这样的完整中文；菜单项显示「低 low / 中 medium / …」。
+// 菜单向上展开，避免盖住输入框。
 import { computed } from "vue";
 import { VBtn, VList, VListItem, VListItemTitle, VMenu } from "vuetify/components";
+import { thinkingLabel } from "../utils/thinking.ts";
 import type { ThinkingOption } from "../utils/thinking.ts";
 
 const props = defineProps<{
@@ -12,8 +14,8 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{ "update:modelValue": [value: string] }>();
 
-const current = computed(() => props.modelValue || "default");
-const raw = (option: ThinkingOption): string => option.value || "default";
+const current = computed(() => thinkingLabel(props.modelValue));
+const currentText = computed(() => `推理等级：${current.value}`);
 
 function pick(value: string): void {
   if (value !== props.modelValue) emit("update:modelValue", value);
@@ -30,10 +32,10 @@ function pick(value: string): void {
         rounded="xl"
         size="small"
         class="thinking-btn"
-        :title="`thinking: ${current}`"
-        :aria-label="`thinking: ${current}`"
+        :title="currentText"
+        :aria-label="currentText"
       >
-        <span class="thinking-label">{{ current }}</span>
+        <span class="thinking-label">{{ currentText }}</span>
       </VBtn>
     </template>
     <VList
@@ -49,7 +51,10 @@ function pick(value: string): void {
         :active="option.value === modelValue"
         @click="pick(option.value)"
       >
-        <VListItemTitle>{{ raw(option) }}</VListItemTitle>
+        <VListItemTitle>
+          <span>{{ option.label }}</span>
+          <span class="thinking-raw">{{ option.value || "default" }}</span>
+        </VListItemTitle>
       </VListItem>
     </VList>
   </VMenu>
