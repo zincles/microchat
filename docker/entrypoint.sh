@@ -10,6 +10,10 @@ cd /app
 # 数据/配置目录：与后端同一套环境变量（默认 /app/data —— 随 bind 持久化在宿主机仓库里）。
 DATA_DIR=${MICROCHAT_DATA_DIR:-/app/data}
 CONFIG_DIR=${MICROCHAT_CONFIG_DIR:-$DATA_DIR/config}
+# 后端「更新」按钮写这个标记；entrypoint 看见就原地重编译、重启两个进程。
+# 不用重启整个容器：端口发布、卷、PID 名字空间都保持不变。
+RESTART_FILE=${MICROCHAT_RESTART_FILE:-$DATA_DIR/.restart-request}
+rm -f "$RESTART_FILE"
 
 # pid 锁不用管：容器有**自己的 PID 名字空间** —— 锁文件里要么是宿主的 pid、要么是上一个容器的 pid，
 # 在这个名字空间里都**不存在**（kill 探活 = ESRCH ⇒ 当成陈旧锁覆盖 ✓）。后端又是本容器的第一个子进程
@@ -71,9 +75,29 @@ FRONT=$!
 echo "[entrypoint] 前端起来了：http://0.0.0.0:8788（/api 由 vite 代理给本容器后端）"
 
 # ── 看家 ────────────────────────────────────────────────────────────────────
+# 收掉一棵进程树：npm 会再起 node（vite），只 kill npm 会留下占着 8788 的孤儿。
+stop_tree() {
+  pid=$1
+  [ -n "$pid" ] || return 0
+  for child in $(pgrep -P "$pid" 2>/dev/null || true); do
+    stop_tree "$child"
+  done
+  kill "$pid" 2>/dev/null || true
+}
+
 # 任一方退出 ⇒ 容器跟着退（restart: unless-stopped 会整个重来）。
-trap 'kill "$BACK" "$FRONT" 2>/dev/null || true; exit 0' TERM INT
+trap 'stop_tree "$BACK"; stop_tree "$FRONT"; exit 0' TERM INT
 while kill -0 "$BACK" 2>/dev/null && kill -0 "$FRONT" 2>/dev/null; do
+  # 更新按钮的标记：收掉旧进程，exec 自己 ⇒ 重新读源码 / 依赖锁 / 重编译。
+  if [ -f "$RESTART_FILE" ]; then
+    echo "[entrypoint] 收到更新重启请求，重新编译前后端"
+    rm -f "$RESTART_FILE"
+    stop_tree "$BACK"
+    stop_tree "$FRONT"
+    wait "$BACK" 2>/dev/null || true
+    wait "$FRONT" 2>/dev/null || true
+    exec sh /app/docker/entrypoint.sh
+  fi
   sleep 2
 done
 echo "[entrypoint] 有进程退出了，容器跟着退（restart 策略接管）"

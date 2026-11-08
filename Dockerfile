@@ -13,7 +13,7 @@ COPY --from=node:24.19.0-alpine3.24@sha256:d32cdf619f63fe0471182d08996dd516c6275
 #   libstdc++ —— 官方 node 的 alpine 构建链着 C++ 标准库（golang 镜像里没有；少了就是
 #                `Error relocating /usr/local/bin/node: _ZSt4cerr: symbol not found`，实测踩过）
 #   ca-certificates —— 后端要连上游 HTTPS（golang 镜像自带，显式补一行防换底后翻车）
-RUN apk add --no-cache libstdc++ ca-certificates
+RUN apk add --no-cache libstdc++ ca-certificates git
 
 # 构建期自检：Node 搬进来必须当场能跑（上面两样缺任何一样，这一行就炸在 build 时，不留到运行时）
 RUN node --version && npm --version

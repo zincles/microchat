@@ -18,6 +18,7 @@ const emit = defineEmits<{
   "toggle-left": [];
   "open-sessions": [];
   "open-providers": [];
+  "open-update": [];
   prefetch: [id: string];
 }>();
 
@@ -255,6 +256,19 @@ defineExpose({ setSessions });
       >
         <template #prepend><span class="fb-icon" v-html="ICONS.settings"></span></template>
         设置
+      </VBtn>
+      <VBtn
+        id="update-open"
+        class="bar-action"
+        type="button"
+        variant="text"
+        color="on-surface-variant"
+        stacked
+        title="更新（git pull + 重启前后端）"
+        @click="$emit('open-update')"
+      >
+        <template #prepend><span class="fb-icon" v-html="ICONS.refresh"></span></template>
+        更新
       </VBtn>
     </div>
   </VNavigationDrawer>

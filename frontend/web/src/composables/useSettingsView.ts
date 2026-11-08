@@ -6,7 +6,7 @@ import { ref } from "vue";
 
 export function useSettingsView({ closeLeftDrawer }: { closeLeftDrawer: () => void }) {
   const settingsOpen = ref(false);
-  // "" = 完整设置（四个 tab）；"session" / "provider" = 只显示那一页。
+  // "" = 完整设置（四个 tab）；"session" / "provider" / "update" = 只显示那一页。
   const settingsOnly = ref("");
 
   // 2026-11-01：账号砍了 ⇒ 没有"只有管理员能进"这回事（本机单人使用）。
@@ -17,7 +17,7 @@ export function useSettingsView({ closeLeftDrawer }: { closeLeftDrawer: () => vo
   }
 
   function openManage(pane: string): void {
-    settingsOnly.value = pane === "provider" ? "provider" : "session";
+    settingsOnly.value = pane === "provider" || pane === "update" ? pane : "session";
     settingsOpen.value = true;
     closeLeftDrawer();
   }

@@ -215,6 +215,10 @@ podman compose restart                                    # ← **每次提交�
   `./` bind 进 `/app` ⇒ `data/`（库 + 配置）就落在宿主机仓库里，`down` 不丢。
 - **改了代码怎么生效**：源码是 bind 的 ⇒ `docker compose restart`（podman：`podman compose restart`）即可
   （entrypoint 每次启动都现编译：前端源码先拷进 `/build`、再装/构建）—— 实测 **10 秒**就绪；改 `Dockerfile`/依赖层才要 `up -d --build`。
+  **界面里的「更新」**（2026-11-09）走另一条路：后端 `git pull --ff-only` 后写 `data/.restart-request`，
+  entrypoint 的看家循环看见标记就收掉 Go / vite 两棵进程树、`exec` 自己重编译 **不退出容器**
+  （端口发布与卷都不动）。环境变量 `MICROCHAT_RESTART_FILE` 是这条路的开关；compose 已给 `/app/data/.restart-request`，
+  宿主二进制没有它 ⇒ 更新页会说明“不会自动重启”。⚠ 拉取需要容器里装 `git`（Dockerfile 已补）。
 - **热重载**：**Go 没有任何内建热重载**（标准库不监视文件；生态里是 air 那类第三方工具）——我们的口径就是"`restart` = 重编译"。
   前端要 **HMR** 用宿主 `./node_modules/.bin/vite`（:5173）：它读同一份后端配置、代理到 `127.0.0.1:8787`
   —— 那正是容器的**回环口**（见上）⇒ 改前端文件即时热更新，而数据只有容器一个写者、宿主 node_modules 也不受影响。
@@ -776,7 +780,9 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 
 | 方法 | 路径 | 响应 | 说明 |
 |---|---|---|---|
-| GET | `/health` | `{"status","version"}` | 探针；**也过鉴权** |
+| GET | `/health` | `{"status","version"}` | 探针；**没有鉴权** |
+| GET | `/update` | `UpdateStatus` | **当前提交**：`commit` / `short` / `branch` / `subject` / `dirty` / `changed_files` / `started_at` / `restart_supported`。`started_at` 是**进程**启动时间，前端用它判断“重启后回来的已经是新进程”（别只看 /health，旧进程还没被收掉时会骗过去）|
+| POST | `/update/pull` | `UpdatePullResult` · **202** | **拉取最新代码并请求重启**（2026-11-09 用户定）：只走 `git pull --ff-only`（不自动 merge、不 stash；脏工作区/分叉由 git 拒绝并原样回错），成功后写 `data/.restart-request` 让容器 entrypoint 重新编译并重启前后端。**要求同源**（Origin 的 host 必须等于 Host / X-Forwarded-Host；curl 无 Origin 放行）；宿主二进制没有 entrypoint ⇒ **409**，`restart_supported:false` 时界面不假装会自己回来 |
 | POST | `/tasks/{task_id}/cancel` | — | `{canceled}` | **按停一个任务**（2026-11-01 用户定：「任务菜单里，我希望有办法取消任务」）。<br>按的是 **TaskID** —— 面板上只有那个 id，它够不到任务自己的 ctx，所以这条路是必需的。<br>⚠ `canceled:false` **不是错误**，三种情况都回 **200**：没这个 id（早被 trim 掉了）、已经收尾、或者它压根不能停（`refresh_models` 那种纯本地的活 —— 它的 `cancelable` 是 false，界面据此**不画**按钮）。<br>⚠ 回 `true` 也**不等于它现在已经停了**：ctx 的取消是**请求**，真正停下要等任务自己走到下一个检查点（面板看到它翻成「取消」才算数）|
 | GET | `/tasks` | `TaskBoard` | **任务面板**：进程内的事实（`running` + 在跑的在前的 `tasks` + 2026-11-01 加的 `queues`；与 `-debug tasks` 同一份 `Board`，不进库）。轮询用（状态指示器就问它）。重启就没 —— "没有在跑的"是诚实的事实。**没有权限过滤**（2026-11-01 账号砍了；面板就是"这台机器上此刻在跑什么"）。<br>2026-11-01 加两格：每条 `task` 带 **`group`**（`llm` / `plain` —— 界面显示「模型调用」与「其它任务」，由 `task.Kind.Group()` 这一处判定，界面**只读不猜**）；`queues` 是队列任务那一层（见下两条）。2026-11-05 起每条 task 还带 **`parent_id`**：分段压缩父 Job（`kind=compact_job`）下挂多个 `kind=compact` 子 Task；面板按它缩进显示，而不是平铺 |
 | POST | `/tasks/queues` | `{kind?,title?,steps?}` 或 `{kind?,title?,session_id,blocks?,times?}` | `Queue` · 201 | **排一个队列任务**（2026-11-01 用户定）：把 N 步排成**一个**串行队列，立刻开跑。**两种给法二选一**（都给 ⇒ 400）：`steps`（显式列表，每步 `{session_id, blocks}`，跨会话也走它）或 `session_id + blocks + times`（同一个会话重复 N 次 —— 用户那句「这条对话连压 100 次」就是它）。`kind` 缺省 `compact`（现在也只有它）；`blocks` 缺省 0 = 用 `chat.compact_blocks`。<br>**三条规矩**：① **严格串行**（上一步收尾才开下一步）；② **一步失败 ⇒ 整个队列结束**（不跳过、不重试、不接着跑剩下的）；③ **可随时取消**（在飞的那一发一起掐断）。校验（会话在不在、步数、times）全在**开跑之前**做完 ⇒ 排错的队列当场被拒，不会跑到第 87 步才发现 id 写错。**不要凭据** |
@@ -1345,7 +1351,8 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
 - **设置（⚙）谁都能进**（2026-11-01 起：账号砍了 ⇒ 没有"root 专属"）。左栏底那枚 `👤 用户` **删了** ——
   它原来是"登录者自己的事"，而登录者这个概念没了；里面两块：**身份 / 用户管理**跟着账号一起删，
   **外观 / 输入**整块搬进设置的「外观」区（`AppearancePane.vue`，四区里的最后一个）。
-  **左栏底 = 会话 / 渠道 / 设置**（2026-11-02 用户定：设置面板太满，把会话与渠道拆成独立入口；
+  **左栏底 = 会话 / 渠道 / 设置 / 更新**（2026-11-02 用户定：设置面板太满，把会话与渠道拆成独立入口；
+  2026-11-09 加「更新」：显示当前提交，一键拉取并让 entrypoint 重启前后端；
   原来的「安装说明」删掉）。**2026-11-06 起三个入口并排**（用户定「并排，改善移动体验」）：
   Vuetify `VBtn(stacked)` 三等分一行，图标在文字上方；旧的竖排 `.foot-btn` 样式已删。会话 / 渠道与设置共用同一个视图：`SettingsModal` 的 `:only`
   只显示那一页、隐藏 VTabs，页头写「会话管理 / 渠道管理」；退出仍走同一个 close。

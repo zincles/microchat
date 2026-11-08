@@ -13,6 +13,7 @@ import assistantPreset from "../../presets/assistant.json";
 import rpPreset from "../../presets/rp-agent.json";
 import ProviderEditor from "./ProviderEditor.vue";
 import ModelRulesEditor from "./ModelRulesEditor.vue";
+import UpdatePane from "./UpdatePane.vue";
 import { ICONS } from "./icons.ts";
 import { sharedApi } from "../utils/prefs.ts";
 import { SETTINGS_TABS, groupModelsByProvider, modelOption, providerChoices, modelChoicesFor, modelKey, parseModelKey } from "../utils/format.ts";
@@ -54,7 +55,10 @@ const leftSvg = ICONS.panelLeft;
 // （「连接」那一区 2026-10-28 删了 —— 理由写在 format.js 的 SETTINGS_TABS 上。）
 const tab = ref(props.only || "chat");
 // 单独入口的页头文字；空串 = 完整设置（显示 VTabs）。
-const onlyTitle = computed(() => (props.only === "session" ? "会话管理" : props.only === "provider" ? "渠道管理" : ""));
+const onlyTitle = computed(() => (props.only === "session" ? "会话管理"
+  : props.only === "provider" ? "渠道管理"
+  : props.only === "update" ? "更新"
+  : ""));
 watch(() => props.only, (v) => { tab.value = v || "chat"; });
 const chat = ref<Record<string, any>>({ title_chars: "", title_model: "", model_context_tokens: "", history_window: "", compact_blocks: "", compact_trigger_tokens: "", replay_reasoning: false, auto_compact: true });
 const chatStatus = ref("");
@@ -368,13 +372,15 @@ async function askDropSession(id: string, title: string): Promise<void> {
 }
 
 onMounted(() => {
+  document.addEventListener("keydown", onKey);
+  // 更新页自带 GET /update；别为它白拉设置页那六份数据。
+  if (props.only === "update") return;
   loadChat().catch(() => {});
   loadDefaults().catch(() => {});
   loadAgents().catch(() => {});
   loadProviders().catch(() => {});
   loadSessions().catch(() => {});
   loadTavernPresets().catch(() => {});
-  document.addEventListener("keydown", onKey);
 });
 onUnmounted(() => document.removeEventListener("keydown", onKey));
 function onKey(e: KeyboardEvent): void {
@@ -639,6 +645,9 @@ function onKey(e: KeyboardEvent): void {
             @model-saved="emit('models-changed')"
           />
         </section>
+        </VTabsWindowItem>
+        <VTabsWindowItem value="update">
+          <UpdatePane :ask="ask" />
         </VTabsWindowItem>
         </VTabsWindow>
       </div>

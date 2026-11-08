@@ -47,6 +47,9 @@ func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *ch
 		rerolls: rerollService, tasks: tasks, queues: queues, mux: http.NewServeMux()}
 	// Go 1.22+ 的 ServeMux 原生支持 `GET /x/{id}` 这种模式 —— 连路由库都不需要。
 	s.mux.HandleFunc("GET /api/v1/health", s.health)
+	// 版本更新（2026-11-09）：左栏「更新」入口 —— 读当前提交、拉取并请求重启。
+	s.mux.HandleFunc("GET /api/v1/update", s.updateStatus)
+	s.mux.HandleFunc("POST /api/v1/update/pull", s.updatePull)
 	// 鉴权（DEFINE「用户与鉴权」）：status/login/register 是**仅有的三处开放口**
 	// （register 另有"还没有用户"的闸）；其余一切都要有效凭据。
 	s.mux.HandleFunc("GET /api/v1/sessions", s.listSessions)

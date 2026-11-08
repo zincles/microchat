@@ -934,6 +934,20 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
   max-width: 760px; margin: 0 auto;
 }
 .settings-card { background: none; border-radius: 0; padding: 0; margin: 0 0 1.4em; }
+/* 更新页：版本号用等宽数字，git 原文单独滚动。 */
+.update-version { margin: 0.7em 0 0.2em; display: flex; flex-direction: column; gap: 0.15em; }
+.update-row { display: flex; align-items: baseline; gap: 0.55em; font-size: var(--md-type-body-medium); }
+.update-row > span { color: var(--md-on-surface-variant); }
+.update-row code { font-family: var(--app-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); }
+.update-subject { color: var(--md-on-surface-variant); font-size: var(--md-type-body-small); margin-top: 0.15em; }
+.update-hash { color: var(--md-on-surface-variant); font-family: var(--app-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: var(--md-type-label-small); overflow-wrap: anywhere; }
+.update-warn { color: var(--md-error); }
+.update-error { color: var(--md-error); white-space: pre-wrap; }
+.update-log { margin: 0.6em 0 0; padding: 0.7em 0.9em; max-height: 16em; overflow: auto; overscroll-behavior: contain;
+  background: var(--md-surface-container-low); color: var(--md-on-surface); border: 1px solid var(--md-outline-variant);
+  border-radius: var(--md-shape-sm); font-family: var(--app-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: var(--md-type-label-small); white-space: pre-wrap; }
 .settings-cols .panel .settings-card h3 { margin: 0.6em 0 0.2em; }
 .settings-cols .panel .settings-card .field { grid-template-columns: 190px 1fr; }
 .settings-cols .panel .settings-card .hint { margin: 0.35em 0 0.3em; }

@@ -66,6 +66,8 @@ import type {
   UpdateProviderRequest,
   UpdateSegmentRequest,
   UpdateSessionRequest,
+  UpdatePullResult,
+  UpdateStatus,
 } from "./types.ts";
 
 export const DEFAULT_API_URL = "http://127.0.0.1:8787/api/v1";
@@ -255,6 +257,10 @@ export function createApi({ base, token = "", fetchFn = fetch }: CreateApiOption
   const enc = encodeURIComponent;
   return {
     call,
+    // 版本更新：当前提交 / 拉取并请求重启（2026-11-09）。
+    // 拉取走 POST；它可能跑一会儿（git 网络），后端自己 90s 超时。
+    getUpdateStatus: () => call<UpdateStatus>("GET", "/update"),
+    pullUpdate: () => call<UpdatePullResult>("POST", "/update/pull"),
     listSessions: () => call<SessionView[]>("GET", "/sessions"),
     createSession: (body: CreateSessionRequest = {}) => call<Session>("POST", "/sessions", body),
     // deleteSession：删整条会话（后端不代建 —— 删完进哪条由调用方定）。

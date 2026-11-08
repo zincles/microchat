@@ -716,6 +716,29 @@ export interface HealthResponse {
   version: string;
 }
 
+/** 版本更新：当前提交 / 分支 / 工作区状态。 */
+export interface UpdateStatus {
+  commit: string;
+  short: string;
+  branch: string;
+  subject: string;
+  dirty: boolean;
+  changed_files: number;
+  /** 本进程启动时间；重启后用它判断“回来的已经是新进程”。 */
+  started_at: string;
+  /** 当前部署是否有 entrypoint 看家循环（容器）。 */
+  restart_supported: boolean;
+}
+
+/** 拉取结果：前后两颗提交 + git 原文 + 是否已请求重启。 */
+export interface UpdatePullResult {
+  before: UpdateStatus;
+  after: UpdateStatus;
+  output: string;
+  changed: boolean;
+  restarting: boolean;
+}
+
 export interface StopResult {
   stopped: boolean;
 }
