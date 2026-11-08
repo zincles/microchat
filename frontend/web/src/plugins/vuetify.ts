@@ -10,7 +10,7 @@ import { md3 } from "vuetify/blueprints";
 // 色值直接取自 gemini.google.com 的 GM3 system colors（surface / surface-container-* /
 // primary / secondary / error），不是另调的一版近似色：
 //   bg #131314 · 容器 #1b1b1b/#1e1f20/#282a2c/#333537 · 主色 #a8c7fa · on-primary #062e6f
-// 亮色与 Breeze 保持原样；用户这次点名的是暗色。
+// 亮色保持原样；Breeze 已于 2026-11-09 删除。
 const darkTheme = {
   dark: true,
   colors: {
@@ -81,39 +81,7 @@ const lightTheme = {
     "inverse-on-surface": "#f8fafc",
   },
 };
-const breezeTheme = {
-  dark: false,
-  colors: {
-    background: "#f6f8fa",
-    surface: "#ffffff",
-    "surface-dim": "#dde3e9",
-    "surface-bright": "#ffffff",
-    "surface-variant": "#c9d1d8",
-    "on-surface": "#232629",
-    "on-surface-variant": "#4f5b65",
-    "surface-container-lowest": "#ffffff",
-    "surface-container-low": "#f2f5f8",
-    "surface-container": "#eef2f5",
-    "surface-container-high": "#e8edf1",
-    "surface-container-highest": "#e1e7ec",
-    outline: "#7a858f",
-    "outline-variant": "#c9d1d8",
-    primary: "#0369a1",
-    "on-primary": "#ffffff",
-    "primary-container": "#e0f2fe",
-    "on-primary-container": "#0c4a6e",
-    secondary: "#475569",
-    "on-secondary": "#ffffff",
-    "secondary-container": "#e2e8f0",
-    "on-secondary-container": "#1e293b",
-    error: "#dc2626",
-    "on-error": "#ffffff",
-    "error-container": "#fee2e2",
-    "on-error-container": "#7f1d1d",
-    "inverse-surface": "#2b363d",
-    "inverse-on-surface": "#eef3f7",
-  },
-};
+
 
 export const vuetify = createVuetify({
   // MD3 blueprint = Vuetify 官方的 Material Design 3 预设（组件默认 / shape）。
@@ -125,21 +93,23 @@ export const vuetify = createVuetify({
   },
   theme: {
     defaultTheme: "dark",
-    themes: { dark: darkTheme, light: lightTheme, breeze: breezeTheme },
+    themes: { dark: darkTheme, light: lightTheme },
   },
 });
 
-// installVuetifyThemeBridge：应用主题是 data-theme（dark/light/breeze），Vuetify 主题是
-// 同名三档。Vuetify 组件只用于输入栏/设置控件，先做**单向桥接**：data-theme 变化 ⇒
-// 切 Vuetify theme；theme.css 的 --md-* 全部映射到 --v-theme-*，所以全站强调色跟着走。
+// installVuetifyThemeBridge：应用主题是 data-theme（light/dark/auto），Vuetify
+// 只有 light/dark 两档。auto 用 matchMedia 跟随系统；data-theme 或系统偏好变化都重算。
 export function installVuetifyThemeBridge(): void {
+  const mql = window.matchMedia("(prefers-color-scheme: light)");
   const apply = (): void => {
-    const id = document.documentElement.getAttribute("data-theme") || "dark";
-    vuetify.theme.global.name.value = id === "breeze" ? "breeze" : id === "light" ? "light" : "dark";
+    const id = document.documentElement.getAttribute("data-theme") || "auto";
+    const resolved = id === "auto" ? (mql.matches ? "light" : "dark") : id === "light" ? "light" : "dark";
+    vuetify.theme.global.name.value = resolved;
   };
   new MutationObserver(apply).observe(document.documentElement, {
     attributes: true,
     attributeFilter: ["data-theme"],
   });
+  mql.addEventListener("change", apply);
   apply();
 }

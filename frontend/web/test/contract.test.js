@@ -1452,7 +1452,7 @@ test("外观页：发送键 / 预演 / 命令菜单三格都在（搬用户视�
 test("主题：删掉的老 id 都能搬到现存的一档（不许让人主题凭空变样）", () => {
   // 这些 id 曾经写进过别人的 localStorage。删主题时如果只删 CSS 规则，他们匹配不到任何规则
   // ⇒ 页面退回默认配色，用户看到的是"我的主题自己变了"。
-  const LEGACY = ["graphite", "deepseek", "midnight", "wine", "forest", "paper", "breeze-dark"];
+  const LEGACY = ["graphite", "deepseek", "midnight", "wine", "forest", "paper", "breeze", "breeze-dark"];
   for (const id of LEGACY) {
     const moved = normalizeTheme(id);
     assert.ok(THEME_IDS.includes(moved), `老主题「${id}」被搬到了「${moved}」，那不是一个现存的主题`);
@@ -1461,7 +1461,8 @@ test("主题：删掉的老 id 都能搬到现存的一档（不许让人主题�
   // 深夜蓝/酒红/森绿都是深色 ⇒ 归暗色；日间白 ⇒ 亮色；Breeze Dark ⇒ Breeze。钉住这几条映射。
   assert.equal(normalizeTheme("midnight"), "dark");
   assert.equal(normalizeTheme("paper"), "light");
-  assert.equal(normalizeTheme("breeze-dark"), "breeze");
+  assert.equal(normalizeTheme("breeze"), "light");
+  assert.equal(normalizeTheme("breeze-dark"), "dark");
   // 认不出的（含老版本的"跟随系统"空串）⇒ 默认，不再摘掉 data-theme。
   for (const junk of ["", null, undefined, "随便填的", "Dark"]) {
     assert.equal(normalizeTheme(junk), DEFAULT_THEME);
@@ -1648,7 +1649,7 @@ test("上下文环：App 喂 ctx / 环在顶栏画 / 状态行不再报占用", 
   // 三套主题都得有绿色，否则换主题后环就没了颜色（CSS 变量缺失 ⇒ stroke 回 initial = 黑）
   const theme = readFileSync(join(SRC, "assets", "theme.css"), "utf8");
   const okCount = (theme.match(/--tg-ok:/g) ?? []).length;
-  assert.equal(okCount, 4, `--tg-ok 该在 :root + 三套预设里各一条，实际 ${okCount} 条`);
+  assert.equal(okCount, 5, `--tg-ok 该在 :root + light/dark 各一条 + auto 两条，实际 ${okCount} 条`);
 
   // —— 2026-10-28 用户定：「已连接 v0.1.0｜默认助手｜idle 这个也塞那个环的面板里」——
   // 于是输入框上方那行小字整条没了：连接 / 助手 / 运行改住环的浮板。四处联动，少一环都不会报错、
@@ -3383,6 +3384,21 @@ test("更新面板：显示提交 + 拉取并重启（由 entrypoint 接手）",
   assert.match(client, /pullUpdate: \(\) => call<UpdatePullResult>\("POST", "\/update\/pull"\)/, "API 客户端没有 POST /update/pull");
 });
 
+// 左栏三面板 + 主题循环键（2026-11-09 用户定）。
+test("左栏：对话/生图/库存三面板；主题三态按钮在品牌与收起键之间", () => {
+  const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
+  assert.match(bar, /id="theme-toggle"/, "左栏没有主题按钮");
+  assert.match(bar, /THEME_IDS/, "主题按钮没读唯一权威的主题清单");
+  assert.match(bar, /ICONS\.sun[\s\S]*ICONS\.moon[\s\S]*ICONS\.themeAuto/, "主题按钮缺三态图标");
+  const brandAt = bar.indexOf('class="brand"');
+  const themeAt = bar.indexOf('id="theme-toggle"');
+  const toggleAt = bar.indexOf('id="toggle-left"');
+  assert.ok(brandAt < themeAt && themeAt < toggleAt, "主题按钮不在品牌右侧、收起键左侧");
+  assert.match(bar, /v-if="mode === 'chat'"[\s\S]*id="session-list"/, "对话列表没有只在对话面板显示");
+  assert.match(bar, /v-else-if="mode === 'image'"[\s\S]*生图/, "没有生图面板");
+  assert.match(bar, /v-else[\s\S]*库存/, "没有库存面板");
+});
+
 test("PWA 图标：尺寸对、换掉了纸飞机", () => {
   const dir = join(SRC, "..", "public");
   const sizeOf = (name) => {
@@ -3745,9 +3761,9 @@ test("MD3 token 层：颜色/形状/动效/字体角色都在，三套主题各�
     "--md-state-hover", "--md-type-label-large", "--md-elev-2"]) {
     assert.ok(theme.includes(`${token}:`), `缺 MD3 工艺 token ${token}`);
   }
-  // 亮色与 Breeze 都要覆盖角色（否则换主题只有暗色是 MD3）
-  assert.match(theme, /html\[data-theme="light"\]\s*\{[\s\S]*--md-primary:/, "亮色没有 MD3 角色");
-  assert.match(theme, /html\[data-theme="breeze"\]\s*\{[\s\S]*--md-primary:/, "Breeze 没有 MD3 角色");
+  // auto 的语义色跟随系统；MD3 角色本身由 Vuetify light/dark 两档提供。
+  assert.match(theme, /html\[data-theme="auto"\]\s*\{[\s\S]*--tg-bg:/, "auto 没有语义色");
+  assert.match(theme, /@media \(prefers-color-scheme: light\)[\s\S]*html\[data-theme="auto"\]/, "auto 不跟随系统亮色");
   // 字体角色必须是 em（跟随 --app-text-scale），不能写 px
   assert.ok(!/--md-type-[a-z-]+:\s*\d+px/.test(theme), "MD3 字体角色写成了 px（界面缩放会对它失效）");
 });
@@ -3834,8 +3850,9 @@ test("输入区：Vuetify 4 MD3 接管 input/send/think", () => {
 
   // 主题：MD3 blueprint + 三套应用色（不是 Vuetify 默认 Material 蓝）
   assert.match(plugin, /blueprint: md3/, "没启用 Vuetify MD3 blueprint");
-  assert.match(plugin, /themes: \{ dark: darkTheme, light: lightTheme, breeze: breezeTheme \}/, "Vuetify 主题没跟上应用三套主题");
+  assert.match(plugin, /themes: \{ dark: darkTheme, light: lightTheme \}/, "Vuetify 主题没跟上 light/dark");
   assert.match(plugin, /installVuetifyThemeBridge/, "没把 data-theme 桥到 Vuetify");
+  assert.match(plugin, /prefers-color-scheme: light/, "auto 没桥到系统亮色");
 
   // 旧未分层 CSS 不能改写 Vuetify 组件
   assert.match(css, /#app \.v-btn, \.v-overlay-container \.v-btn, #app \.v-field__input, #app \.v-tab \{ all: revert-layer; \}/, "Vuetify 组件还会被旧按钮/输入样式压住");

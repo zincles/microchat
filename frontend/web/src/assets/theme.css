@@ -11,7 +11,7 @@
  * `--tg-*` 语义槽、shape/elevation/motion/字体，以及文件末尾的 `--md-* → --v-theme-*` 映射。
  *
  * 只有三套主题（2026-10-28 用户定：「主题只保留 亮色 / 暗色 / Breeze 三种风格，不保留TG风格」）：
- * `html[data-theme=…]` 三选一，id 的**唯一权威**是 `utils/prefs.ts` 的 `THEME_IDS`
+ * `html[data-theme=…]` 三选一（light / dark / auto），id 的**唯一权威**是 `utils/prefs.ts` 的 `THEME_IDS`
  * （`contract.test.js` 钉着这里、下拉、常量三方一致）。
  * 从前那一批（midnight 深夜蓝 / wine / forest / paper / graphite / breeze-dark / deepseek）
  * **全删了** —— 主题多不是"可选"，是"没人知道它本该长什么样"。
@@ -132,21 +132,19 @@ html[data-theme="light"] {
   --tg-hint: #6b6b6b; --tg-link: #2563eb; --tg-button: #2563eb; --tg-button-text: #ffffff;
   --tg-destructive: #dc2626; --tg-ok: #16a34a; color-scheme: light;
 }
-/* Breeze：KDE 经典配色（色值取自 /usr/share/color-schemes/BreezeLight.colors）。
- * 映射：bg=View.BackgroundNormal / secondary=Window.BackgroundNormal / text=View.ForegroundNormal /
- * hint=View.ForegroundInactive / link=View.ForegroundLink / button=Selection.BackgroundNormal /
- * destructive=View.ForegroundNegative / float=View.BackgroundAlternate。
- * Breeze 的底色比「亮色」更灰一档（#eff0f1 vs #f5f5f5），蓝也更"桌面色"（#3daee9）——
- * 这两条就是它跟「亮色」的区别，不是换汤不换药。 */
-html[data-theme="breeze"] {
-  --tg-bg: #ffffff; --tg-secondary-bg: #eff0f1; --tg-text: #232629;
-  /* ⚠ 有三个值**故意**偏离 BreezeLight.colors —— 它原样那套过不了 AA，白底上读不清：
-   *   hint  #707d8a → #646f7b   4.21 → 5.12（面板上 4.49）
-   *   link  #2980b9 → #2470a2   4.30 → 5.36（面板上 4.70）
-   *   button_text #ffffff → #161616  2.49 → 7.26（白字压在 #3daee9 上，发送钮图标会糊）
-   * 色相照旧（灰蓝 / 桌面蓝 / Breeze 蓝），只是压深一档。 */
-  --tg-hint: #646f7b; --tg-link: #2470a2; --tg-button: #3daee9; --tg-button-text: #161616;
-  --tg-destructive: #da4453; --tg-ok: #1f8a4c; --tg-float: #f7f7f7; color-scheme: light;
+/* 自动：跟随系统。默认按暗色渲染；系统偏好亮色时覆盖成亮色。
+ * 对应的 Vuetify theme 由 plugins/vuetify.ts 的 bridge 用 matchMedia 选 light/dark。 */
+html[data-theme="auto"] {
+  --tg-bg: #131314; --tg-secondary-bg: #1e1f20; --tg-float: #282a2c; --tg-text: #e3e3e3;
+  --tg-hint: #c4c7c5; --tg-link: #a8c7fa; --tg-button: #a8c7fa; --tg-button-text: #062e6f;
+  --tg-destructive: #f2b8b5; --tg-ok: #6dd58c; color-scheme: light dark;
+}
+@media (prefers-color-scheme: light) {
+  html[data-theme="auto"] {
+    --tg-bg: #ffffff; --tg-secondary-bg: #f5f5f5; --tg-float: #ffffff; --tg-text: #161616;
+    --tg-hint: #6b6b6b; --tg-link: #2563eb; --tg-button: #2563eb; --tg-button-text: #ffffff;
+    --tg-destructive: #dc2626; --tg-ok: #16a34a; color-scheme: light;
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -214,12 +212,10 @@ html[data-theme="breeze"] {
 html[data-theme="light"] {
 }
 
-/* Breeze：同一套 MD3 语义，色相跟 Breeze 的桌面蓝；surface 更灰一档。 */
-html[data-theme="breeze"] {
-}
+/* 自动的主题色由 plugins/vuetify.ts 的 light/dark 两档决定。 */
 
 
-/* —— 主题色：唯一权威 = Vuetify（plugins/vuetify.ts 的 dark/light/breeze）——
+/* —— 主题色：唯一权威 = Vuetify（plugins/vuetify.ts 的 dark/light）——
  * 这里只把 Vuetify 生成的 RGB 三元组映射回项目历史 token 名；不再维护第二套色值。
  * 强调色/中性面/描边改 Vuetify theme 即可，全站自定义 CSS 与 Vuetify 组件同时变。
  */

@@ -5,6 +5,7 @@ import { ref, computed, nextTick, onMounted, onUnmounted } from "vue";
 import { VBtn, VBtnToggle, VNavigationDrawer } from "vuetify/components";
 import { ICONS } from "./icons.ts";
 import { groupSessions } from "../utils/sessionGroups.ts";
+import { saveTheme, themePref, THEME_IDS } from "../utils/prefs.ts";
 import type { SessionView } from "../api/types.ts";
 
 const emit = defineEmits<{
@@ -42,6 +43,17 @@ const busySet = computed(() => new Set(props.busyIds ?? []));
 const skeletonWidths = ["72%", "54%", "64%", "46%", "58%", "50%"];
 
 const sessions = ref<SessionView[]>([]);
+// 主题三态：亮色 / 暗色 / 自动。按钮只显示图标，按下立刻落 prefs + 改 data-theme。
+const theme = ref(themePref());
+const themeLabels: Record<string, string> = { light: "亮色", dark: "暗色", auto: "自动" };
+const themeIcon = computed(() => (theme.value === "light" ? ICONS.sun : theme.value === "dark" ? ICONS.moon : ICONS.themeAuto));
+const themeLabel = computed(() => themeLabels[theme.value] ?? "自动");
+function cycleTheme(): void {
+  const at = THEME_IDS.indexOf(theme.value);
+  theme.value = THEME_IDS[(at + 1) % THEME_IDS.length] ?? "auto";
+  saveTheme(theme.value);
+}
+
 const currentId = ref<string | null>(null);
 // 左栏顶部的三个空白：对话 / 生图 / 库存。生图与库存暂未接 API，切过去只改选中态
 // （未来这里放各自的列表）。
@@ -104,16 +116,20 @@ function prefetchNow(s: SessionView): void {
 }
 function prefetchEnd(): void { clearTimeout(hoverTimer ?? undefined); }
 
+function syncTheme(): void { theme.value = themePref(); }
 onMounted(() => {
+  syncTheme();
   document.addEventListener("keydown", onKey);
   window.addEventListener("resize", closeMenu);
   window.addEventListener("scroll", closeMenu, true);
+  window.addEventListener("mc-theme-changed", syncTheme);
 });
 onUnmounted(() => {
   clearTimeout(hoverTimer ?? undefined);
   document.removeEventListener("keydown", onKey);
   window.removeEventListener("resize", closeMenu);
   window.removeEventListener("scroll", closeMenu, true);
+  window.removeEventListener("mc-theme-changed", syncTheme);
 });
 
 defineExpose({ setSessions });
@@ -137,18 +153,29 @@ defineExpose({ setSessions });
         <span class="brand-mark" aria-hidden="true" v-html="ICONS.spark"></span>
         <span class="brand-name">MicroChat</span>
       </span>
-      <button
-        id="toggle-left"
-        class="icon-btn"
-        type="button"
-        title="收起会话栏"
-        aria-label="收起会话栏"
-        @click="$emit('toggle-left')"
-        v-html="ICONS.panelLeft"
-      ></button>
+      <span class="bar-head-actions">
+        <button
+          id="theme-toggle"
+          class="icon-btn theme-toggle"
+          type="button"
+          :title="`切换主题（当前：${themeLabel}）`"
+          :aria-label="`切换主题（当前：${themeLabel}）`"
+          @click="cycleTheme"
+          v-html="themeIcon"
+        ></button>
+        <button
+          id="toggle-left"
+          class="icon-btn"
+          type="button"
+          title="收起会话栏"
+          aria-label="收起会话栏"
+          @click="$emit('toggle-left')"
+          v-html="ICONS.panelLeft"
+        ></button>
+      </span>
     </div>
     <div v-if="refreshing" class="md-linear-progress" role="progressbar" aria-label="正在刷新会话列表"><span></span></div>
-    <button id="session-new" type="button" title="开启新对话（草稿：首句才建会话）" @click="$emit('new')">
+    <button v-if="mode === 'chat'" id="session-new" type="button" title="开启新对话（草稿：首句才建会话）" @click="$emit('new')">
       <span class="plus" aria-hidden="true" v-html="ICONS.plus"></span><span class="label">开启新对话</span>
     </button>
     <!-- 左栏模式切换，不是内容 tab：生图与库存面板还没接，切过去只是选中态。
@@ -167,7 +194,7 @@ defineExpose({ setSessions });
       <VBtn value="image" title="生图（暂未接入）" :aria-pressed="mode === 'image'">生图</VBtn>
       <VBtn value="inventory" title="库存（暂未接入）" :aria-pressed="mode === 'inventory'">库存</VBtn>
     </VBtnToggle>
-    <div id="session-list" :aria-busy="loading && !sessions.length ? 'true' : 'false'">
+    <div v-if="mode === 'chat'" id="session-list" :aria-busy="loading && !sessions.length ? 'true' : 'false'">
       <div v-if="loading && !sessions.length" class="session-skeleton">
         <div v-for="(w, i) in skeletonWidths" :key="i" class="skeleton-row" :style="{ '--w': w }"></div>
       </div>
@@ -212,6 +239,12 @@ defineExpose({ setSessions });
           ></button>
         </div>
       </template>
+    </div>
+    <div v-else-if="mode === 'image'" class="mode-panel" aria-label="生图">
+      <div class="empty">生图<br /><span class="sub">功能尚未接入；这里将来放生图会话列表</span></div>
+    </div>
+    <div v-else class="mode-panel" aria-label="库存">
+      <div class="empty">库存<br /><span class="sub">功能尚未接入；这里将来放库存列表</span></div>
     </div>
     <div class="bar-foot">
       <!-- 管理入口（2026-11-02 用户定）：会话 / 渠道从设置里拆出来，各有一个独立入口；

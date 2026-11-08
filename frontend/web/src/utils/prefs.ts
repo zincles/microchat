@@ -15,17 +15,16 @@
 import type { Background, MarkdownPrefs, MarkdownType, Prefs, PrefsView } from "../api/types.ts";
 import { createApi, DEFAULT_API_URL, normalizeApiBase } from "../api/client.ts";
 
-// 主题（2026-10-28 用户定：「只保留 亮色 / 暗色 / Breeze 三种风格，不保留TG风格」）。
-// `THEME_IDS` 是**唯一权威**：theme.css 的 `html[data-theme]` 与设置页那个下拉都只能取这三个，
-// `contract.test.js` 钉着三处一致 —— 改一处忘另一处不会报错，只是页面安静退回默认配色。
-export const THEME_IDS = ["light", "dark", "breeze"];
-export const DEFAULT_THEME = "dark";
+// 主题（2026-11-09 用户定：「只留 亮色 / 暗色 / 自动 三种」）。
+// auto = 跟随操作系统 prefers-color-scheme；THEME_IDS 是唯一权威，theme.css 与下拉都取它。
+export const THEME_IDS = ["light", "dark", "auto"];
+export const DEFAULT_THEME = "auto";
 // 老 id → 新 id。**删主题不能只是删规则**：那些 id 还躺在别人的 localStorage 里，
 // 匹配不到规则 = 页面退回默认 ⇒ 用户会发现"我的主题自己变了"。
 // 搬到最接近的那套：深夜蓝/酒红/森绿/石墨 都是深色 ⇒ 暗色；日间白 ⇒ 亮色；Breeze Dark ⇒ Breeze。
 const THEME_ALIASES: Record<string, string> = {
   graphite: "dark", deepseek: "dark", midnight: "dark", wine: "dark", forest: "dark",
-  paper: "light", "breeze-dark": "breeze",
+  paper: "light", breeze: "light", "breeze-dark": "dark",
 };
 // 归一化：给什么 id 都换成 THEME_IDS 里的一个（认不出 ⇒ 默认）。
 // 老版本的空串（"跟随系统"）也走这儿 —— 那个选项已经没了，空串现在就是"没设过"。
@@ -365,13 +364,19 @@ export function applyTheme(theme?: string): void {
     syncThemeColor();
     return;
   }
-  document.documentElement.setAttribute("data-theme", theme === undefined ? themePref() : normalizeTheme(theme));
+  const next = theme === undefined ? themePref() : normalizeTheme(theme);
+  document.documentElement.setAttribute("data-theme", next);
   syncThemeColor();
+  // 左栏那颗主题键要跟着 data-theme 走（设置页下拉、syncPrefs 的 applyAll 都会走到这里）。
+  if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
+    window.dispatchEvent(new CustomEvent("mc-theme-changed", { detail: next }));
+  }
 }
 
 export function saveTheme(theme: string): void {
-  setPref("theme", normalizeTheme(theme));
-  applyTheme(theme);
+  const next = normalizeTheme(theme);
+  setPref("theme", next);
+  applyTheme(next);
 }
 
 // 手机状态栏 / PWA 标题栏那根 `<meta name="theme-color">`：**写死不行** —— 三套主题底色不同，

@@ -56,8 +56,8 @@ const bgStatus = ref("");
 const bgPreview = ref("");
 const themeOptions = [
   { label: "亮色", value: "light" },
-  { label: "暗色（默认）", value: "dark" },
-  { label: "Breeze", value: "breeze" },
+  { label: "暗色", value: "dark" },
+  { label: "自动（跟随系统）", value: "auto" },
 ];
 const sendOptions = [
   { label: "按回车发送（Shift+回车换行）", value: "enter" },

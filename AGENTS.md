@@ -1041,19 +1041,20 @@ DeepSeek / OpenCode GO 直连**确实不报**，所以那一格在那儿永远�
   向上取整会把用量说大；把 995904 写成 996K 还会让人以为分母真是 996K）。状态行**分母 = 输入预算**
   （`ctx_len − max_output`，**不是**模型上下文）—— 悬停给算式（`statusLineTitle`），移动端没有 hover ⇒
   **设置 → 聊天 → 模型上下文 tokens** 底下把同一句话写了一遍（「填 1000000 时显示 995904」就是这么来的 ✓）。
-- **用量两处别混**：卡片脚注的单位是 token（上游 `usage` 报的；`reasoning_tokens` 是 `completion_tokens` 的子集，不是另加）；生成中气泡等首字节显示三点呼吸、思考先到则折叠框标签「思考中…」（**不显示字数**；流式帧里没有 token 数，字符数也没在气泡上展示）。
+- **用量两处别混**：卡片脚注的单位是 token（上游 `usage` 报的；`reasoning_tokens` 是 `completion_tokens` 的子集，不是另加）。脚注格式是 **`输入：47 Token, 输出：1K Token`**（`usageFoot`，2026-11-09 从 `47→1K` 改；后面才接缓存/思考/成本）。生成中气泡等首字节显示三点呼吸、思考先到则折叠框标签「思考中…」（**不显示字数**；流式帧里没有 token 数，字符数也没在气泡上展示）。
 - **分岔 = 复制会话**（`POST /sessions/{session_id}/copy`）：没有"切分支"这回事 ✗（`current_leaf` 已删）。
 - **重摇的位次与退出**（消息 / 摘要两家族同一套闸与位次）：进模式并摇一版；`switch <n>` 就地换正文（消息 UUID / 摘要 id 不变）；`delete <n>` 删一版（删到只剩一条 ⇒ 退出且不 apply）；`off` 显式退出。**候选只在内存里** ⇒ 发新消息 / 删目标 / 切会话 / 重启后端 ⇒ 自然消失。
 - **web 的重摇入口**（2026-10-10 定，尾条气泡下）：`⟳` = 摇新一版并**自动切到最新那版**（**点下那一刻就把那条气泡切成空白 +「正在输出…」**，随候选流长字 —— 2026-10-17 用户定：旧正文一直挂到第一帧才被换掉"有点丑"；空白不等于丢内容，旧版就是候选 #1，切回去/摇失败照旧回来。判据是纯函数 `chatrows.rerollTargetLive`/`bubbleText`（`startingId` 刚落手 ∥ 后端 `running`），契约测试钉着；气泡的 ⟳ 会把**被点那条的 messageId**一起 emit，`rerollNow(targetId)` 优先用它置 `startingId`（命令/版本导航没有 id 才回落 `lastMsgId`）—— 别只靠"尾条 id"猜，猜错时那一拍不会立刻隐藏；摇完切版时**预览与 starting 同一拍清**，不然会闪一帧空白）（无论当前看着哪一版；`/reroll` 命令同一条路）；`◀ n/N ▶` = 翻版，**最右的 ▶ 再按 = 再摇一版**；摇的过程中候选流**就地预览在目标气泡里**（游标读 `/turn/text`，摇完/切版/失效即清），位次牌摇时显示 `n→N`。**位次是 1-based**（`Idx: 1` 是首发候选；`current_idx`/`items[].idx` 同基准 —— 别拿数组下标当位次传 `switch`，踩过：旧 `/reroll` 命令因此切版必错）。
 - **`/rename` 只改名**：走已有的 `PATCH /sessions/{session_id}`，**不新增路由**；空名字 ⇒ 拒绝。用户改过名 ⇒ 后端自动起名永不再覆盖（不变量在后端，客户端不多事）。
-- **生成中那条回复是合成的**（库里还没有它；等首字节时气泡给三点呼吸 **+「正在输出…」**，2026-10-17 用户点名要一句字 —— 只有点没有字既小又说不清是在输出还是在等）：数据来自 SSE `GET .../turn/events`（status + 游标读；断线重连带 Last-Event-ID；8s 没事件回落 `/turn/poll`），`idle`/`error` 才重拉消息；收到 `idle` 顺带刷一次会话列表（自动起的标题在翻 idle **之前**写好，不刷就一直停在"还没起名"）。等首字节那段气泡显示**三点呼吸**（正文与思考都还没来）；推理先到则换成思考折叠框、标签说「思考中…」（落库后才是「思考过程（2.1s）」）。
+- **生成中那条回复是合成的**（库里还没有它；发送时就先画助手空气泡：POST 受理前标 **「正在向后端发送请求…」**，202 回来后改成 **「等待 Provider 响应…」**；2026-11-09 细化，旧的「正在输出…」退休）：数据来自 SSE `GET .../turn/events`（status + 游标读；断线重连带 Last-Event-ID；8s 没事件回落 `/turn/poll`），`idle`/`error` 才重拉消息；收到 `idle` 顺带刷一次会话列表（自动起的标题在翻 idle **之前**写好，不刷就一直停在"还没起名"）。等首字节那段气泡显示**三点呼吸**（正文与思考都还没来）；推理先到则换成思考折叠框、标签说「思考中…」（落库后才是「思考过程（2.1s）」）。
 - **设置页要的数据只从一处发**（连上 / 刷新 / 进设置页都走它）——两处各写一份，新字段只进一条路 ⇒ 设置页永远"加载中"（见「踩过的坑」）。
 
 ### Web（当前主力，`frontend/web/`，Vue 3 + Vite）
 
 - 布局：左会话栏（**2026-11-06 起 Gemini 式**：顶部 **Brand Title「MicroChat」+ 星芒标**，
-  其下「＋开启新对话」，再下面才是**占满栏宽的「对话 / 生图 / 库存」模式切换**（VBtnToggle，2026-11-06 用户定；2026-11-09 加「库存」。
-生图与库存都还没接 API，切过去只改选中态 —— 所以现在**不是真 tab**，等它们有独立列表再升级 VTabs）；
+  其下「＋开启新对话」，再下面才是**占满栏宽的「对话 / 生图 / 库存」三面板切换**（VBtnToggle，2026-11-06 用户定；2026-11-09 加「库存」并做成真面板）。
+  切换会真的换下面那块：对话面板 = 原有会话列表 + 新建；生图/库存面板 = 各自的空态，暂未接 API/数据。
+  **品牌右侧、收起键左侧**还有一颗三态主题键（太阳=亮色 / 月亮=暗色 / 半太阳=自动），无文字、按下立即切换；
   **左栏外壳 = Vuetify `VApp` + `VNavigationDrawer`**（2026-11-07）：App 根是 `<VApp>`（外层挂载点已经有 `#app`；VApp 再带 id 会产生重复 id），
   `SessionBar` 根是 `VNavigationDrawer`（`:model-value="true" permanent :scrim="false" :touchless="true"`）——
   VApp 只作 layout provider，不引入 VMain。桌面用 CSS 把抽屉改成 `position: relative !important` 的 280px 布局列，
@@ -1181,7 +1182,8 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
 - **输入栏只有一种布局**（2026-11-04 用户定：「不允许再设置紧凑和宽松布局」）：删掉 `float`/`solid` 二选一、`composer_style` 偏好、`data-composer` 属性与对应设置项；统一用 Vuetify MD3 输入栏（`VTextarea` + 右侧 VBtn）。
 - **Vuetify 4 渐进接入**（2026-11-06 用户定：「可以逐渐替换吗？」「使用 Vuetify 内置 MD3 主题，而不是手搓 CSS」）：
   第一块是 **Composer + 顶栏控件**，不套 VMain/QLayout 壳（2026-11-07 起顶栏也用 VNavigationDrawer/VTabs）。`src/plugins/vuetify.ts`：
-  `blueprint: md3` + 三套主题（dark/light/breeze）；**颜色唯一权威是 Vuetify theme**，
+  `blueprint: md3` + 两档 Vuetify 主题（dark/light；应用的 `auto` 由 bridge 用 `prefers-color-scheme` 解析）；
+  **颜色唯一权威是 Vuetify theme**，
   `theme.css` 的 `--md-*` 只是 `rgb(var(--v-theme-*))` 的映射（不再维护第二套色值）；
   `installVuetifyThemeBridge` 用 MutationObserver 跟 `data-theme`。
   ⚠ Vuetify 4 的样式在 CSS `@layer` 里，本项目旧 CSS 未分层 ⇒ 旧 `button`/`input` 基线会压过 VBtn/VField；
@@ -1243,13 +1245,13 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   Cloudflare 终结 TLS 并开 brotli + HTTP/2（缓存头已经由上面的中间件给出，不会被吃掉）。
 - **MD3 风格层（2026-11-05 用户定：「目标是完美的 MD3 风格 + 动画 + 加载效果」，先改左栏）**：
   **颜色角色不再由 `theme.css` 定义**（2026-11-06 用户定「Vuetify 控制主题强调色」）：`plugins/vuetify.ts`
-  的 dark/light/breeze 是**唯一色值源**；`theme.css` 只把 `--md-primary` 等映射成
+  的 dark/light 是**唯一色值源**（应用层的 auto 只选这两档）；`theme.css` 只把 `--md-primary` 等映射成
   `rgb(var(--v-theme-*))`，shape scale、elevation 1–3、motion、state layer、字体角色（一律 em）仍住这里。
   **暗色 = Gemini 暗色板**（2026-11-06 用户定「改成 gemini 的主题配色（暗色）」）：色值取自
   gemini.google.com 的 GM3 system colors —— bg `#131314` / 容器 `#1b1b1b`/`#1e1f20`/`#282a2c`/`#333537`、
   正文 `#e3e3e3`、次要文字 `#c4c7c5`、主色 `#a8c7fa`、on-primary `#062e6f`、错误 `#f2b8b5`。
   自定义 CSS 的 `--tg-*` 暗色值同步对齐（bg / secondary-bg / float / text / hint / link / button / button-text）；
-  亮色与 Breeze 不动。三套主题仍共用同一套 MD3 语义。
+  亮色不动；Breeze 已于 2026-11-09 删除。light / dark / auto 共用同一套 MD3 语义。
   **落点先左栏 + 顶栏 + 输入区**（2026-11-05 第二刀；2026-11-06 起上下文五 tab 用 VTabs、顶栏工作区用 VTabs + VTabsWindow、消息/摘要操作键用 VBtn）：左栏规则以 `#sessions-bar` 前缀收口
   （`.bar-head` / `.empty` 是共享类，直接改会波及上下文工作区）。左栏结构 = MD3 navigation drawer：
   顶部**占满栏宽**的 segmented button（对话/生图/库存，VBtnToggle）+ 标准 icon button；新建 = **extended FAB**（primary-container、elevation 1→2、按下 scale）；
@@ -1378,6 +1380,9 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   **更新面板**（`UpdatePane.vue`，2026-11-09）：两块用 `VDivider` 分开 —— 上「当前本地版本」（提交 / 分支 / 标题 / 完整 hash / 脏工作区），
   下「GitHub 最新版本」（远端 short/full + `remote_relation` 人话：已是最新 / 本地领先 N（未推送）/ 远端有新提交 N / 已分叉）。
   `GET /update` 的 `git ls-remote` 有 6s 超时；读不到只填 `remote_error`，不影响本地区块。
+  面板里还有 **「自动检查更新」开关**（`prefs.json` 的 `update_auto_check`，默认开）：App 每 5 分钟查一次，
+  发现本地落后时顶部出现 **GitHub 更新条**（可一键同一个 `git pull` + 重启）；它和 PWA 更新条共存，
+  但后端更新优先（重启后前端 SW 会再提示）。顶部更新条不再只认 PWA。
   ⚠ 这两个管理页是**页面切换，不是设置 tab**：`VTabsWindow` 的 `:key` 跟着 `only` 变 ⇒
   重挂载、不跑 tab 滑入（2026-11-06 用户报「有 Tab 效果，而且顺序是错的」——
   根因是 provider→chat 在 window item 顺序里是反向；只有完整设置的五个 tab 仍保留过渡）。

@@ -18,7 +18,10 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 export async function checkBackendUpdate(api: UpdateApi = sharedApi()): Promise<boolean> {
   try {
     const status = await api.getUpdateStatus();
-    return status.remote_relation === "behind" && Number(status.behind ?? 0) > 0;
+    if (!status.remote_commit || status.remote_commit === status.commit) return false;
+    // 远端对象本地还没有时 relation=unknown，但那也意味着“远端不是当前这个提交”；
+    // 本地领先（ahead）/分叉（diverged）不该提示“可更新”—— 前者是未推送，后者拉不动。
+    return status.remote_relation === "behind" || status.remote_relation === "unknown";
   } catch {
     return false;
   }

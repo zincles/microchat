@@ -1096,6 +1096,9 @@ button.danger:hover { background: color-mix(in srgb, var(--md-error) 8%, transpa
  * `--md-*` token，三套主题自动跟着走。
  * ═══════════════════════════════════════════════════════════════════════════ */
 #sessions-bar .bar-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5em; padding: 0.55em 0.55em 0.35em; flex: none; }
+#sessions-bar .bar-head-actions { display: flex; align-items: center; gap: 0.15em; margin-left: auto; }
+#sessions-bar .theme-toggle { color: var(--md-primary); background: var(--md-primary-container); }
+#sessions-bar .theme-toggle:hover { background: color-mix(in srgb, var(--md-on-primary-container) 10%, var(--md-primary-container)); color: var(--md-on-primary-container); }
 #sessions-bar .bar-head .icon-btn { width: 2.667em; height: 2.667em; padding: 0; display: inline-flex; align-items: center; justify-content: center;
   border-radius: var(--md-shape-full); color: var(--md-on-surface-variant);
   transition: background-color var(--md-dur-150) var(--md-ease-standard), color var(--md-dur-150) var(--md-ease-standard); }
@@ -1141,6 +1144,7 @@ button.danger:hover { background: color-mix(in srgb, var(--md-error) 8%, transpa
 #sessions-bar #session-new .plus svg { width: 1.5em; height: 1.5em; display: block; }
 
 /* 会话列表：MD3 list —— 行高 48dp、full 圆角、状态层、选中 secondary-container。 */
+#sessions-bar .mode-panel { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 1.2em 0.8em; }
 #sessions-bar #session-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
   padding: 0.35em 0.55em 0.8em; scrollbar-color: var(--md-outline-variant) transparent; }
 #sessions-bar .session-group-head { padding: 1.05em 0.95em 0.4em; color: var(--md-on-surface-variant);
