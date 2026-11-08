@@ -211,6 +211,11 @@ type Prefs struct {
 	ChromeHide    *bool `json:"chrome_hide,omitempty"`
 	PayloadViz    *bool `json:"payload_viz,omitempty"`
 	BarLeftHidden *bool `json:"bar_left_hidden,omitempty"`
+
+	// —— 更新 ——
+	// UpdateAutoCheck：每 5 分钟查一次 GitHub 最新提交；发现落后时顶部出现更新条。
+	// 缺字段 = 开（旧 prefs.json 不用改）。
+	UpdateAutoCheck *bool `json:"update_auto_check,omitempty"`
 }
 
 // DefaultPrefs：**全默认**（文件缺失时就是它）。
@@ -231,12 +236,13 @@ func DefaultPrefs() Prefs {
 		// `payload_viz:false` 又把它改回来。最终值取决于字段在 JSON 里的顺序，
 		// 表现是"开关怎么点都存不住"（实测：界面 on、服务端 off）。
 		// `new(true)` 每次调用都分配一个新变量（Go 1.26）。
-		Preview:        new(true),
-		PayloadPreview: new(true),
-		CommandMenu:    new(false),
-		ChromeHide:     new(true),
-		PayloadViz:     new(false),
-		BarLeftHidden:  new(false),
+		Preview:         new(true),
+		PayloadPreview:  new(true),
+		CommandMenu:     new(false),
+		ChromeHide:      new(true),
+		PayloadViz:      new(false),
+		BarLeftHidden:   new(false),
+		UpdateAutoCheck: new(true),
 	}
 }
 

@@ -95,6 +95,7 @@ const FALLBACK_PREFS: Prefs = {
   chrome_hide: true,
   payload_viz: false,
   bar_left_hidden: false,
+  update_auto_check: true,
 };
 
 // 内存缓存。读取的唯一来源（同步）。
@@ -461,6 +462,11 @@ export function savePayloadViz(on: boolean): void { setPref("payload_viz", !!on)
 // 左栏收着没有（2026-11-01 起住服务器：换设备也该是同一个工作台）。
 export function barLeftHidden(): boolean { return flagPref("bar_left_hidden", false); }
 export function saveBarLeftHidden(on: boolean): void { setPref("bar_left_hidden", !!on); }
+
+// 自动检查 GitHub 更新（2026-11-09 用户定，默认开）：App 里每 5 分钟拉一次
+// `/update`，发现 remote_relation=behind 时顶部出现「GitHub 有新提交」。
+export function updateAutoCheckOn(): boolean { return flagPref("update_auto_check", true); }
+export function saveUpdateAutoCheck(on: boolean): void { setPref("update_auto_check", !!on); }
 
 // —— 发送键三档（App 的 keydown 判定与 Composer 的占位提示同源）——
 

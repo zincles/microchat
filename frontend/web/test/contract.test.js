@@ -183,7 +183,7 @@ test("formatCost：便宜模型给 4 位小数；没数据回空串（不是 $0.
 
 test("usageFoot：token 用量 + 成本；没用量整行为空", () => {
   const foot = usageFoot({ prompt_tokens: 6585, completion_tokens: 945, cached_tokens: 0, reasoning_tokens: 333, cost_usd: 0.0012 });
-  assert.ok(foot.includes("6.5K→945"));           // 向下取整：6585 ⇒ 6.5K
+  assert.ok(foot.includes("输入：6.5K Token, 输出：945 Token")); // 向下取整：6585 ⇒ 6.5K
   assert.ok(foot.includes("思考 333"));
   assert.ok(foot.includes("$0.0012"));
   assert.ok(!foot.includes("缓存命中"));          // 0 命中不啰嗦
@@ -3350,6 +3350,7 @@ test("更新面板：显示提交 + 拉取并重启（由 entrypoint 接手）",
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
   const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
   const pane = readFileSync(join(SRC, "components", "UpdatePane.vue"), "utf8");
+  const upd = readFileSync(join(SRC, "utils", "update.ts"), "utf8");
   const view = readFileSync(join(SRC, "composables", "useSettingsView.ts"), "utf8");
   const client = readFileSync(join(SRC, "api", "client.ts"), "utf8");
 
@@ -3367,7 +3368,16 @@ test("更新面板：显示提交 + 拉取并重启（由 entrypoint 接手）",
   assert.match(pane, /remote_relation === 'ahead'/, "没有区分本地领先远端");
   assert.match(pane, /remote_relation === 'behind'/, "没有区分本地落后远端");
   assert.match(pane, /pullUpdate/, "更新面板没有拉取动作");
-  assert.match(pane, /started_at !== baseline/, "重启后没有等新进程（会被旧进程骗过去）");
+  assert.match(upd, /started_at !== baseline/, "重启后没有等新进程（会被旧进程骗过去）");
+  assert.match(pane, /saveUpdateAutoCheck/, "更新面板没有自动检查开关");
+  assert.match(pane, /update_auto_check|updateAutoCheckOn/, "自动检查开关没接偏好");
+  assert.match(pane, /<VSwitch/, "自动检查不是 Vuetify 开关");
+  const updateBar = readFileSync(join(SRC, "components", "UpdateBar.vue"), "utf8");
+  assert.match(updateBar, /backend/, "顶部更新条不认识后端更新");
+  assert.match(updateBar, /update-backend/, "顶部更新条没有更新前后端的动作");
+  assert.match(app, /checkBackendUpdate/, "App 没有自动检查 GitHub");
+  assert.match(app, /mc-update-auto-check/, "更新面板开关没通知 App");
+  assert.match(app, /:backend="backendUpdate"/, "顶部更新条没接后端更新状态");
   assert.match(pane, /restart_supported/, "没区分容器部署与宿主二进制");
   assert.match(client, /getUpdateStatus: \(\) => call<UpdateStatus>\("GET", "\/update"\)/, "API 客户端没有 GET /update");
   assert.match(client, /pullUpdate: \(\) => call<UpdatePullResult>\("POST", "\/update\/pull"\)/, "API 客户端没有 POST /update/pull");

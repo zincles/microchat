@@ -1,31 +1,57 @@
 <script setup lang="ts">
-// 更新条（2026-10-20 用户定）：检测到新版本时挂在顶上的一条 —— **不自动消失**，
-// 由用户点「刷新」才切过去（切的动作在 utils/pwa.ts，这里只管长相与按钮）。
+// 顶部更新条（2026-10-20 用户定 PWA；2026-11-09 加后端 GitHub 更新）。
 //
-// 为什么不复用 Toast：Toast 3 秒自动消 —— 对"点我一下"这种要求用户行动的通知，
-// 3 秒后消失等于没通知（人没看见就错过了，而这正是这次要治的病）。
+// 两种来源：
+//   - pwa：浏览器里旧的 Service Worker 发现新壳，需要「刷新」；
+//   - backend：自动检查发现本地落后 GitHub，需要「更新」（git pull + 重启前后端）。
+// **不自动消失**：这是要求用户行动的通知；消失等于没通知。
+import { computed, ref, watch } from "vue";
 import { VBtn } from "vuetify/components";
-import { ref } from "vue";
 
-const emit = defineEmits<{ update: [] }>();
+const props = withDefaults(defineProps<{
+  pwa?: boolean;
+  backend?: boolean;
+  busy?: boolean;
+}>(), {
+  pwa: false,
+  backend: false,
+  busy: false,
+});
+const emit = defineEmits<{ update: []; "update-backend": [] }>();
 
-const busy = ref(false); // 点了之后禁用按钮 —— 别让人重复点（切换要等新 SW 接管）
-const hidden = ref(false); // 用户不想现在更（×）：先收起来，下次开机还会再提示
+const pwaBusy = ref(false); // PWA 刷新中（等新 SW 接管）
+const hidden = ref(false); // 用户不想现在更（×）：先收起来
+const busy = computed(() => pwaBusy.value || props.busy);
+
+// 后端更新出现时强行放出来：即使之前把 PWA 提示收起来过，也别吞掉新的更新。
+watch(() => props.backend, (on) => { if (on) hidden.value = false; });
 
 function go(): void {
   if (busy.value) return;
-  busy.value = true;
+  pwaBusy.value = true;
   emit("update");
 }
-defineExpose({ show: (): void => { busy.value = false; hidden.value = false; } });
+function updateBackend(): void {
+  if (busy.value) return;
+  emit("update-backend");
+}
+defineExpose({ show: (): void => { pwaBusy.value = false; hidden.value = false; } });
 </script>
 
 <template>
-  <div v-if="!hidden" id="update-bar" role="status">
-    <span class="ub-text">有新版本可用{{ busy ? "，正在更新…" : "" }}</span>
-    <VBtn class="ub-go" color="primary" variant="flat" size="small" :disabled="busy" @click="go">
+  <div v-if="backend || !hidden" id="update-bar" role="status">
+    <span class="ub-text">
+      <template v-if="backend">GitHub 有新提交，可更新前后端</template>
+      <template v-else>有新版本可用</template>
+      <template v-if="backend && pwa">；前端也有新版本</template>
+      <template v-if="busy">，正在更新…</template>
+    </span>
+    <VBtn v-if="backend" class="ub-go" color="primary" variant="flat" size="small" :disabled="busy" @click="updateBackend">
+      {{ busy ? "更新中…" : "更新" }}
+    </VBtn>
+    <VBtn v-else class="ub-go" color="primary" variant="flat" size="small" :disabled="busy" @click="go">
       {{ busy ? "更新中…" : "刷新" }}
     </VBtn>
-    <VBtn class="ub-x" icon variant="text" size="small" title="先不更新" aria-label="先不更新" :disabled="busy" @click="hidden = true">×</VBtn>
+    <VBtn v-if="!backend" class="ub-x" icon variant="text" size="small" title="先不更新" aria-label="先不更新" :disabled="busy" @click="hidden = true">×</VBtn>
   </div>
 </template>

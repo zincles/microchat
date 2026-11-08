@@ -180,7 +180,7 @@ export function usageFoot(usage?: UsageLike | null): string {
   if (!usage || usage.prompt_tokens == null) return "";
   const prompt = formatTokens(usage.prompt_tokens);
   const completion = formatTokens(usage.completion_tokens);
-  const parts = [`${prompt}→${completion}`];
+  const parts = [`输入：${prompt} Token, 输出：${completion} Token`];
   if (Number(usage.cached_tokens ?? 0) > 0) parts.push(`缓存命中 ${formatTokens(Number(usage.cached_tokens))}`);
   if (Number(usage.reasoning_tokens ?? 0) > 0) parts.push(`思考 ${formatTokens(Number(usage.reasoning_tokens))}`);
   const cost = formatCost(usage.cost_usd);

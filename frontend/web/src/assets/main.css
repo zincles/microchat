@@ -940,6 +940,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .update-block { display: flex; flex-direction: column; gap: 0.15em; }
 .update-section-title { margin: 0 0 0.35em; font-size: var(--md-type-title-small); font-weight: 600; color: var(--md-on-surface); }
 .update-divider { margin: 1em 0; }
+.update-auto { display: flex; align-items: center; justify-content: space-between; gap: 1em; margin-top: 1em; color: var(--md-on-surface); }
 .update-row { display: flex; align-items: baseline; gap: 0.55em; font-size: var(--md-type-body-medium); }
 .update-row > span { color: var(--md-on-surface-variant); }
 .update-row code { font-family: var(--app-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); }

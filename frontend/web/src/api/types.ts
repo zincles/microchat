@@ -581,6 +581,7 @@ export interface Prefs {
   chrome_hide?: boolean;
   payload_viz?: boolean;
   bar_left_hidden?: boolean;
+  update_auto_check?: boolean;
 }
 
 export interface MarkdownType {

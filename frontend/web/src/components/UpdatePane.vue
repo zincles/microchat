@@ -5,9 +5,9 @@
 //（重新编译 Go、重新构建 vite、再把两个进程拉起来）。前端在这里等新进程的
 // `started_at` 变了才刷新 —— 只看 /health 会被尚未被收掉的旧进程骗过去。
 import { computed, onMounted, ref } from "vue";
-import { VBtn, VDivider } from "vuetify/components";
-import { probeHealth } from "../api/client.ts";
-import { apiBase, sharedApi } from "../utils/prefs.ts";
+import { VBtn, VDivider, VSwitch } from "vuetify/components";
+import { sharedApi, saveUpdateAutoCheck, updateAutoCheckOn } from "../utils/prefs.ts";
+import { waitForRestart } from "../utils/update.ts";
 import type { UpdateStatus } from "../api/types.ts";
 
 const props = withDefaults(defineProps<{
@@ -22,6 +22,8 @@ const phase = ref<"idle" | "pulling" | "restarting">("idle");
 const message = ref("");
 const error = ref("");
 const log = ref("");
+// 自动检查更新：App 每 5 分钟拉一次 /update；这个开关只负责写偏好并通知 App。
+const autoCheck = ref(updateAutoCheckOn());
 
 const supported = computed(() => !!status.value?.restart_supported);
 const buttonText = computed(() => {
@@ -32,6 +34,12 @@ const buttonText = computed(() => {
 
 function errText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
+}
+
+function setAutoCheck(value: boolean | null): void {
+  autoCheck.value = !!value;
+  saveUpdateAutoCheck(autoCheck.value);
+  window.dispatchEvent(new Event("mc-update-auto-check"));
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -46,28 +54,6 @@ async function load(): Promise<void> {
   } finally {
     loading.value = false;
   }
-}
-
-async function waitForRestart(baseline: string): Promise<void> {
-  // entrypoint 每 2 秒看一次标记；先留出一拍，别拿还没被收掉的旧进程当“新版本”。
-  await sleep(2400);
-  const deadline = Date.now() + 60000;
-  while (Date.now() < deadline) {
-    try {
-      const next = await api.getUpdateStatus();
-      status.value = next;
-      if (next.started_at && next.started_at !== baseline) {
-        // API 已经能穿过前端代理 ⇒ 新的 Vite preview 也起来了；再给静态资源半拍。
-        await sleep(700);
-        await probeHealth(apiBase(), { timeout: 2000 });
-        return;
-      }
-    } catch {
-      // 重启窗口里连不上是正常的，继续等。
-    }
-    await sleep(1000);
-  }
-  throw new Error("重启后 60 秒内没有连上新进程；看容器日志（docker/podman logs microchat）");
 }
 
 async function pullAndRestart(): Promise<void> {
@@ -90,7 +76,7 @@ async function pullAndRestart(): Promise<void> {
       ? `已拉取到 ${result.after.short || result.after.commit.slice(0, 7)}，正在重启前后端…`
       : "已经是最新提交，正在重启前后端…";
     phase.value = "restarting";
-    await waitForRestart(result.before.started_at);
+    await waitForRestart(result.before.started_at, api);
     message.value = "前后端已重启，正在刷新…";
     await sleep(600);
     location.reload();
@@ -154,6 +140,18 @@ onMounted(() => { load().catch(() => {}); });
         <p v-if="!supported" class="hint update-warn">
           当前不是容器部署（没有 <code>MICROCHAT_RESTART_FILE</code>）：拉取后不会自动重启。
         </p>
+
+        <div class="update-auto">
+          <span>自动检查更新</span>
+          <VSwitch
+            :model-value="autoCheck"
+            color="primary"
+            density="compact"
+            hide-details
+            @update:model-value="setAutoCheck"
+          />
+        </div>
+        <p class="hint">开启后每 5 分钟检查一次 GitHub；本地落后时顶部会出现「GitHub 有新提交」更新条。</p>
 
         <div class="row">
           <VBtn color="primary" variant="flat" size="small" type="button"

@@ -25,6 +25,8 @@ const props = withDefaults(defineProps<{
   promptId?: string | null; // 最新 AI 回复对应的用户输入（仅尾条 assistant 有）
   isLast?: boolean;
   streaming?: boolean; // 生成中（还没落库的那条）：等首字节时给三点呼吸动画
+  // phase：sending = 正在向后端发送请求；waiting = 202 已受理、等 Provider 首字节。
+  phase?: "sending" | "waiting" | string | null;
   reroll?: RerollLike | null; // 重摇状态（本条是目标时才非 null）：{active,count,current_idx,running}
   // usage：上游报的用量（归一化后的那几格；2026-10-20 起气泡脚注就用它）。
   // 只有聚合站（OpenRouter）会带 cost_usd；直连渠道没有 ⇒ 脚注不显示价格。
@@ -40,6 +42,7 @@ const props = withDefaults(defineProps<{
   promptId: null,
   isLast: false,
   streaming: false,
+  phase: null,
   reroll: null,
   usage: null,
 });
@@ -57,6 +60,9 @@ const foot = computed(() => usageFoot(props.usage));
 const footTitle = computed(() => usageFootTitle(props.usage));
 
 // 流式期间还没正文 ⇒ 标签说"思考中…"；落库后才是"思考过程（2.1s）"（那会儿才有用时）。
+const typingHint = computed(() =>
+  props.phase === "sending" ? "正在向后端发送请求…" : "等待 Provider 响应…",
+);
 const thinkLabel = computed(() =>
   props.streaming && !props.content ? "思考中…" : formatThinkLabel(props.reasoningMs),
 );
@@ -140,7 +146,7 @@ watch(() => props.streaming, (s) => nextTick(() => {
       <div ref="textEl" class="text" v-html="bodyHtml"></div>
       <div v-if="streaming && !content && !reasoning" class="typing" aria-label="正在生成">
         <span></span><span></span><span></span>
-        <i class="typing-hint">正在输出…</i>
+        <i class="typing-hint">{{ typingHint }}</i>
       </div>
       <div v-if="parts.blocks.length" class="state-blocks">
         <div

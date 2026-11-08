@@ -17,7 +17,7 @@ import { downloadJSON } from "./utils/download.ts";
 import { busySessionIds } from "./utils/tasks.ts";
 import { thinkingOptions, thinkingLevelsForModel } from "./utils/thinking.ts";
 import { rememberWindow, recallWindow, forgetWindow } from "./utils/windowcache.ts";
-import { sharedApi, previewOn, payloadPreviewOn, applyTheme, wantsSend, apiBase, apiBaseCandidates, saveNetPrefs, lastSessionId, saveLastSession, commandMenuOn, applyTextScale, applyFonts, chromeHideOn, syncPrefs } from "./utils/prefs.ts";
+import { sharedApi, previewOn, payloadPreviewOn, applyTheme, wantsSend, apiBase, apiBaseCandidates, saveNetPrefs, lastSessionId, saveLastSession, commandMenuOn, applyTextScale, applyFonts, chromeHideOn, syncPrefs, updateAutoCheckOn } from "./utils/prefs.ts";
 import {
   groupModelsByProvider,
   deletionPlanSummary,
@@ -42,6 +42,7 @@ import SessionSettings from "./components/SessionSettings.vue";
 import Overlays from "./components/Overlays.vue";
 import UpdateBar from "./components/UpdateBar.vue";
 import { registerPWA, onUpdateReady, startUpdate } from "./utils/pwa.ts";
+import { checkBackendUpdate, waitForRestart } from "./utils/update.ts";
 import { useTypewriter } from "./composables/useTypewriter.ts";
 import { useTasks } from "./composables/useTasks.ts";
 import { useSidePanels } from "./composables/useSidePanels.ts";
@@ -63,16 +64,52 @@ applyFonts();
 // 失败只 toast：连不上后端时页面照样能用，只是偏好停在镜像那一份。
 syncPrefs()
   .then(() => { applyBackground(); cmdMenu.value = commandMenuOn(); })
-  .catch((err) => toast(`界面偏好读取失败：${err.message}`, "error"));
+  .catch((err) => toast(`界面偏好读取失败：${err.message}`, "error"))
+  .finally(() => { startUpdatePolling(); });
 // —— 新版本提示（PWA 更新条，2026-10-20 用户定）——
 // 从 `autoUpdate` 改成 `prompt`：新版本**等用户点**才切，而不是悄悄自己 reload。
 // 勾子必须在**开机**就挂（SW 装完是异步回调 —— 挂晚了那一次提示就丢了）。
 const updateRef = ref<any>(null);
 const updateReady = ref(false);
+const backendUpdate = ref(false);
+const backendUpdating = ref(false);
+let updatePollTimer: ReturnType<typeof setInterval> | null = null;
 onUpdateReady(() => { updateReady.value = true; });
 registerPWA();
 // 点「刷新」⇒ 发 skipWaiting，新 SW 接管后由 vite-plugin-pwa 内建回调 reload 这一页。
 function applyUpdate() { startUpdate(); }
+
+// 自动检查 GitHub：只有 remote_relation=behind 才算“有可拉取的更新”；
+// 本地领先 / 分叉 / 读不到都不打扰。开关在更新面板，事件通知这里重启定时器。
+async function refreshBackendUpdate(): Promise<void> {
+  if (!updateAutoCheckOn()) { backendUpdate.value = false; return; }
+  backendUpdate.value = await checkBackendUpdate(api);
+}
+function stopUpdatePolling(): void {
+  if (updatePollTimer !== null) { window.clearInterval(updatePollTimer); updatePollTimer = null; }
+}
+function startUpdatePolling(): void {
+  stopUpdatePolling();
+  // SSR / 测试环境没有 window；别留一个 setInterval 把 Node 测试进程吊住。
+  if (typeof window === "undefined") return;
+  if (!updateAutoCheckOn()) { backendUpdate.value = false; return; }
+  void refreshBackendUpdate();
+  updatePollTimer = window.setInterval(() => { void refreshBackendUpdate(); }, 5 * 60 * 1000);
+}
+async function runBackendUpdate(): Promise<void> {
+  if (backendUpdating.value) return;
+  if (!(await askConfirm("会拉取远程最新代码并重启前后端，期间约 10–20 秒不可用。继续吗？"))) return;
+  backendUpdating.value = true;
+  try {
+    const result = await api.pullUpdate();
+    backendUpdate.value = false;
+    await waitForRestart(result.before.started_at, api);
+    location.reload();
+  } catch (e) {
+    backendUpdating.value = false;
+    toast(`更新失败：${e instanceof Error ? e.message : String(e)}`, "error");
+  }
+}
 
 // —— 组件 refs（直调实例方法，替代桥） ——
 const toastRef = ref<any>(null);
@@ -280,7 +317,7 @@ function scrollBottom() {
   });
 }
 function addMessage(who, text, cls, think = undefined, messageId = undefined) {
-  const row = {
+  const row: any = {
     id: tmpKey(),
     who,
     role: cls === "user" ? "user" : "assistant",
@@ -291,6 +328,15 @@ function addMessage(who, text, cls, think = undefined, messageId = undefined) {
   };
   vueMessages.value.push(row);
   scrollBottom();
+  return row;
+}
+// startSendingBubble：2026-11-09 用户要的两段状态。
+// 在 POST 受理之前就画助手的空气泡并标 “sending”（正在向后端发送请求）；
+// 202 回来 / pollTurn 接手时改成 “waiting”（等待 Provider 响应）。
+function startSendingBubble() {
+  const row = addMessage("助手", "", "assistant");
+  row.stream = true;
+  row.phase = "sending";
   return row;
 }
 // 乐观上屏的那句用户消息（2026-11-05，高延迟优化）：先画，等 202 回来再换成服务端那条
@@ -1316,6 +1362,7 @@ async function send(content) {
   const sid = sessionID;
   // 乐观上屏：远端 1s+ 时，等 202 再画那句会让人以为"按了没反应"。
   const optimistic = addMessage("你", content, "user");
+  const live = startSendingBubble();
   localRev++; // 消息列已经变了：在飞的后台对账不许拿旧快照覆盖它
   let accepted;
   pendingSends++;
@@ -1323,21 +1370,31 @@ async function send(content) {
     accepted = await api.sendMessage(sid, content);
   } catch (err) {
     dropOptimistic(optimistic);
+    dropOptimistic(live);
     composerRef.value?.setText(content); // 发失败别把那句话吞掉
     throw err;
   } finally {
     pendingSends--;
   }
   settleOptimisticUser(optimistic, accepted?.user);
+  live.phase = "waiting";
   localRev++; // 服务端那条已经落库：在飞的对账（可能早于落库取的快照）到此为止
   refreshTasks();
-  await pollTurn(sid, accepted.turn.message_id);
+  await pollTurn(sid, accepted.turn.message_id, live);
 }
 async function resend() {
   const sid = sessionID;
-  const accepted = await api.resend(sid);
+  const live = startSendingBubble();
+  let accepted;
+  try {
+    accepted = await api.resend(sid);
+  } catch (err) {
+    dropOptimistic(live);
+    throw err;
+  }
+  live.phase = "waiting";
   refreshTasks();
-  await pollTurn(sid, accepted.turn.message_id);
+  await pollTurn(sid, accepted.turn.message_id, live);
 }
 // liveTurnPoll：**本地此刻有几条轮询循环真的在跑**（0 或 1）。
 //
@@ -1461,13 +1518,17 @@ async function pollTurnHTTP(sid, turnID, my, row) {
   }
 }
 
-async function pollTurn(sid, turnID) {
+async function pollTurn(sid, turnID, existing = null) {
   if (activeTurnPolls.has(sid)) return;
   activeTurnPolls.add(sid);
   const my = epoch;
   liveTurnPoll++;
-  const m = { who: "助手", role: "assistant", _stream: true, stream: true, content: "", reasoning: "", id: tmpKey() };
-  vueMessages.value.push(m);
+  const m = existing && vueMessages.value.includes(existing)
+    ? existing
+    : { who: "助手", role: "assistant", _stream: true, stream: true, content: "", reasoning: "", id: tmpKey() };
+  if (!m.stream) m.stream = true;
+  m.phase = "waiting";
+  if (!vueMessages.value.includes(m)) vueMessages.value.push(m);
   vueStream.value = { id: turnID, text: "", reasoning: "" };
   resetTypewriter();
   composerRef.value?.setRunning(true);
@@ -1790,12 +1851,14 @@ async function sendFromDraft(text) {
   // 草稿这条路是**两个** back-to-back 请求（建会话 → 受理）⇒ 远端 1s+ 时足足两秒没反应。
   // 先画再说：建会话失败就撤掉并退回草稿（连输入框里的字一起还回去）。
   const optimistic = addMessage("你", text, "user");
+  const live = startSendingBubble();
   localRev++;
   let s;
   try {
     s = await api.createSession(body);
   } catch (err) {
     dropOptimistic(optimistic);
+    dropOptimistic(live);
     composerRef.value?.setText(text);
     throw err;
   }
@@ -1813,14 +1876,16 @@ async function sendFromDraft(text) {
   } catch (err) {
     await api.deleteSession(s.id).catch(() => {});
     await startDraft();
+    dropOptimistic(live);
     composerRef.value?.setText(text);
     throw err;
   } finally {
     pendingSends--;
   }
   settleOptimisticUser(optimistic, accepted?.user);
+  live.phase = "waiting";
   localRev++;
-  await pollTurn(s.id, accepted.turn.message_id);
+  await pollTurn(s.id, accepted.turn.message_id, live);
 }
 function stopCurrent() {
   if (!sessionID) return; // 草稿没有会话可停
@@ -1891,6 +1956,7 @@ onMounted(() => {
   document.addEventListener("visibilitychange", resyncOnForeground);
   window.addEventListener("focus", resyncOnForeground);
   window.addEventListener("pageshow", resyncOnForeground);
+  window.addEventListener("mc-update-auto-check", startUpdatePolling);
   installOverlayLayout();
   boot().catch((err) => {
     connText = "未连接";
@@ -1904,11 +1970,13 @@ onUnmounted(() => {
   uninstallViewportFit = null;
 
   stopTasksPolling();
+  stopUpdatePolling();
   uninstallOverlayLayout();
   uninstallSidePanels();
   document.removeEventListener("visibilitychange", resyncOnForeground);
   window.removeEventListener("focus", resyncOnForeground);
   window.removeEventListener("pageshow", resyncOnForeground);
+  window.removeEventListener("mc-update-auto-check", startUpdatePolling);
 });
 </script>
 
@@ -1916,7 +1984,15 @@ onUnmounted(() => {
   <VApp>
     <!-- 更新条：**悬浮**在输入栏上方（fixed + bottom: --composer-h + 0.5em），不占布局。
          从前试过流内横幅：它会把整个应用往下推、独自占掉一大段；用户 2026-11-06 要求改回悬浮。 -->
-    <UpdateBar v-if="updateReady" ref="updateRef" @update="applyUpdate" />
+    <UpdateBar
+      v-if="updateReady || backendUpdate || backendUpdating"
+      ref="updateRef"
+      :pwa="updateReady"
+      :backend="backendUpdate"
+      :busy="backendUpdating"
+      @update="applyUpdate"
+      @update-backend="runBackendUpdate"
+    />
     <div id="columns">
       <SessionBar
         ref="sessionbarRef"
@@ -2007,6 +2083,7 @@ onUnmounted(() => {
               :prompt-id="row.msg.messageId === lastMsgId ? latestPromptId : null"
               :is-last="!!row.msg.messageId && row.msg.messageId === lastMsgId"
               :streaming="!!row.msg.stream || isLive(row.msg)"
+              :phase="String(row.msg.phase || '')"
               :usage="row.msg.usage"
               :reroll="row.msg.messageId && rerollState.active && rerollState.target_message_id === row.msg.messageId ? rerollState : null"
               @edit="onBubbleEdit"
