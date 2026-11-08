@@ -3359,6 +3359,9 @@ test("更新面板：显示提交 + 拉取并重启（由 entrypoint 接手）",
   assert.match(settings, /<UpdatePane :ask="ask"/, "设置视图里没有更新面板");
   assert.match(settings, /props\.only === "update" \? "更新"/, "更新页没有独立页头");
   assert.match(settings, /if \(props\.only === "update"\) return;/, "更新页还在白拉设置页数据");
+  assert.match(pane, /<VDivider class="update-divider"/, "本地/远端两块之间没有分隔符");
+  assert.match(pane, /当前本地版本/, "没有本地版本区块");
+  assert.match(pane, /GitHub 最新版本/, "没有 GitHub 最新版本区块");
   assert.match(pane, /status\.remote_short/, "更新面板没显示 GitHub 最新提交");
   assert.match(pane, /status\.remote_commit === status\.commit/, "没有把当前提交和远端最新匹配");
   assert.match(pane, /remote_error/, "读不到远端时没有说明");

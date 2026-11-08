@@ -5,7 +5,7 @@
 //（重新编译 Go、重新构建 vite、再把两个进程拉起来）。前端在这里等新进程的
 // `started_at` 变了才刷新 —— 只看 /health 会被尚未被收掉的旧进程骗过去。
 import { computed, onMounted, ref } from "vue";
-import { VBtn } from "vuetify/components";
+import { VBtn, VDivider } from "vuetify/components";
 import { probeHealth } from "../api/client.ts";
 import { apiBase, sharedApi } from "../utils/prefs.ts";
 import type { UpdateStatus } from "../api/types.ts";
@@ -114,23 +114,33 @@ onMounted(() => { load().catch(() => {}); });
       <div v-if="loading" class="hint">读取当前版本…</div>
       <template v-else-if="status">
         <div class="update-version">
-          <div class="update-row"><span>当前提交</span><code>{{ status.short || status.commit }}</code></div>
-          <div class="update-row"><span>GitHub 最新</span><code>{{ status.remote_short || "—" }}</code></div>
-          <div class="update-row"><span>分支</span><code>{{ status.branch || "（detached）" }}</code></div>
-          <div v-if="status.subject" class="update-subject">{{ status.subject }}</div>
-          <div class="update-hash" :title="status.commit">{{ status.commit }}</div>
-          <p v-if="status.remote_commit" class="update-compare"
-            :class="status.remote_commit === status.commit ? 'update-ok' : 'update-warn'"
-            :title="status.remote_commit">
-            {{ status.remote_commit === status.commit ? "✓ 已是最新提交" : "远端有新提交，可拉取并重启" }}
-          </p>
-          <p v-else-if="status.remote_error" class="hint update-warn">
-            无法读取 GitHub 最新提交：{{ status.remote_error }}
-          </p>
+          <section class="update-block">
+            <h4 class="update-section-title">当前本地版本</h4>
+            <div class="update-row"><span>提交</span><code>{{ status.short || status.commit }}</code></div>
+            <div class="update-row"><span>分支</span><code>{{ status.branch || "（detached）" }}</code></div>
+            <div v-if="status.subject" class="update-subject">{{ status.subject }}</div>
+            <div class="update-hash" :title="status.commit">{{ status.commit }}</div>
+            <p v-if="status.dirty" class="hint update-warn">
+              工作区有 {{ status.changed_files }} 个未提交改动；<code>git pull --ff-only</code> 可能因此失败，失败时不会重启。
+            </p>
+          </section>
+
+          <VDivider class="update-divider" />
+
+          <section class="update-block">
+            <h4 class="update-section-title">GitHub 最新版本</h4>
+            <div class="update-row"><span>提交</span><code>{{ status.remote_short || "—" }}</code></div>
+            <div v-if="status.remote_commit" class="update-hash" :title="status.remote_commit">{{ status.remote_commit }}</div>
+            <p v-if="status.remote_commit" class="update-compare"
+              :class="status.remote_commit === status.commit ? 'update-ok' : 'update-warn'"
+              :title="status.remote_commit">
+              {{ status.remote_commit === status.commit ? "✓ 已是最新提交" : "远端有新提交，可拉取并重启" }}
+            </p>
+            <p v-else-if="status.remote_error" class="hint update-warn">
+              无法读取 GitHub 最新提交：{{ status.remote_error }}
+            </p>
+          </section>
         </div>
-        <p v-if="status.dirty" class="hint update-warn">
-          工作区有 {{ status.changed_files }} 个未提交改动；<code>git pull --ff-only</code> 可能因此失败，失败时不会重启。
-        </p>
         <p v-if="!supported" class="hint update-warn">
           当前不是容器部署（没有 <code>MICROCHAT_RESTART_FILE</code>）：拉取后不会自动重启。
         </p>

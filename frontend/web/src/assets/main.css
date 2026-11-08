@@ -937,6 +937,9 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .settings-card { background: none; border-radius: 0; padding: 0; margin: 0 0 1.4em; }
 /* 更新页：版本号用等宽数字，git 原文单独滚动。 */
 .update-version { margin: 0.7em 0 0.2em; display: flex; flex-direction: column; gap: 0.15em; }
+.update-block { display: flex; flex-direction: column; gap: 0.15em; }
+.update-section-title { margin: 0 0 0.35em; font-size: var(--md-type-title-small); font-weight: 600; color: var(--md-on-surface); }
+.update-divider { margin: 1em 0; }
 .update-row { display: flex; align-items: baseline; gap: 0.55em; font-size: var(--md-type-body-medium); }
 .update-row > span { color: var(--md-on-surface-variant); }
 .update-row code { font-family: var(--app-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); }
