@@ -1213,6 +1213,13 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   于是"curl 验证通过"与"用户看到的还是旧的"**可以同时成立**。要验缓存层必须用真浏览器（或清站点数据后看）。
   ⚠ **别再手写 `injectRegister`**：插件检测到 `virtual:pwa-register` 的 import 后会自己把它转成 `false`
   （不再往 index.html 塞那段没有回调的 `registerSW.js`）——手写会跟它的自动检测打架。
+- **Vite 8（Rolldown，2026-11-09 用户定）**：`frontend/web` 的 `vite` 从 7.3.6 升到 **8.3.6**。
+  Vite 8 内部用 **Rolldown**（Rust 版 Rollup）做生产打包，不再需要 `rolldown-vite` 迁移包。
+  本机 `npm run build` 整条脚本从 **10.4s** 降到 **3.9s**（日志里 `built in` 约 1.3s）；
+  容器冷重启首次要 `npm ci` 装 Vite 8 依赖（约 16s），之后 restart 约 **7–8s**（含 Go 编译、
+  前端构建、preview 启动；Vite 7 时代是 16s+）。PWA 仍由 `vite-plugin-pwa` 生成，
+  `vite-plugin-vuetify` 与 `@vitejs/plugin-vue` 均实测兼容。
+  ⚠ Node 必须是 20.19+ / 22.12+（Dockerfile 的 Node 24.19 没问题）。
 - **生产交付性能（2026-11-02，用户报"部署后前端响应慢、没有缓冲"）**：
   ① **字体子集**：`public/fonts/RobotoFlex-Latin.woff2` **84KB**（可变 wght 100–900 + opsz；
   只留拉丁、标点、常用箭头/符号；中文本来就落系统字族）。`contract.test.js` 钉着 <150KB + wOF2 魔数。
