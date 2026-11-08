@@ -3120,6 +3120,7 @@ test("容器 entrypoint：后端绑 0.0.0.0，且端口在启动前就解析好"
   // 依赖卷跨容器持久：只判断 vite 在不在会漏掉新插件（VPS 实踩 vite-plugin-vuetify）。
   // 旧镜像兼容：Dockerfile 已装 git，但早于这次改动的镜像不会因 restart 重建。
   assert.match(body, /apk add --no-cache git/, "没有旧镜像缺 git 的兜底安装");
+  assert.match(body, /go build -buildvcs=false/, "go build 没关 VCS stamping（镜像缺 git 时会 128 起不来）");
   assert.match(body, /npm ci/, "entrypoint 没有安装前端依赖");
   assert.match(body, /\.microchat-lock/, "没有用 lock 哈希标记 installed 状态");
   assert.ok(!/\[ -d node_modules\/vite \] \|\| npm ci/.test(body),

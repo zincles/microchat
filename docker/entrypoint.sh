@@ -13,7 +13,8 @@ cd /app
 #（服务照跑，更新页会报错让它去看日志）。
 if ! command -v git >/dev/null 2>&1; then
   echo "[entrypoint] 镜像里没有 git，尝试安装（旧镜像兼容路径）"
-  apk add --no-cache git >/dev/null 2>&1 || echo "[entrypoint] git 安装失败：更新功能暂时不可用"
+  # 不吞输出：装不上时要能看见是网络、apk 源还是只读层的问题。
+  apk add --no-cache git || echo "[entrypoint] git 安装失败：更新功能暂时不可用（服务本身照常启动）"
 fi
 
 # 数据/配置目录：与后端同一套环境变量（默认 /app/data —— 随 bind 持久化在宿主机仓库里）。
@@ -33,7 +34,10 @@ rm -f "$RESTART_FILE"
 # 编译到 /tmp（不往 bind 进来的仓库里丢二进制）。⚠ **编译用子 shell，别 cd 走**：
 # 后端的默认数据目录 = CWD/data —— 曾经 cd 进 core 再起 ⇒ 数据落进 /app/core/data（仓库里凭空多一份影子库 ✗，
 # 实测咬过：needs_setup 说"全新库"，说的是那个影子）。二进制始终从 /app 起 ⇒ 数据在 /app/data ✓。
-(cd /app/core && CGO_ENABLED=0 go build -o /tmp/microchat-server .)
+# `-buildvcs=false`：容器里没有 git / 仓库属主不对时，Go 默认会尝试做 VCS
+# stamping，git 一失败整条 build 就 128（用户 2026-11-09 实踩）；我们不需要把
+# commit 焊进二进制（版本由更新面板现读 git），关掉它。
+(cd /app/core && CGO_ENABLED=0 go build -buildvcs=false -o /tmp/microchat-server .)
 
 # 端口：从配置读（改过 server.port 也等得对）；文件还没生成（首次启动）⇒ 8787 缺省。
 # ⚠ 必须**起后端之前**读出来 —— 下面要用它拼 `-addr`。
