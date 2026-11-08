@@ -7,6 +7,15 @@
 set -eu
 cd /app
 
+# 旧镜像兼容（2026-11-09）：Dockerfile 已经装 git，但**重启不会重建镜像** ——
+# 早于这条改动做出来的 Alpine 镜像里没有 git，更新按钮会直接失败。
+# entrypoint 脚本是 bind 进来的，所以先在这里现场补一次；装不上不阻塞启动
+#（服务照跑，更新页会报错让它去看日志）。
+if ! command -v git >/dev/null 2>&1; then
+  echo "[entrypoint] 镜像里没有 git，尝试安装（旧镜像兼容路径）"
+  apk add --no-cache git >/dev/null 2>&1 || echo "[entrypoint] git 安装失败：更新功能暂时不可用"
+fi
+
 # 数据/配置目录：与后端同一套环境变量（默认 /app/data —— 随 bind 持久化在宿主机仓库里）。
 DATA_DIR=${MICROCHAT_DATA_DIR:-/app/data}
 CONFIG_DIR=${MICROCHAT_CONFIG_DIR:-$DATA_DIR/config}

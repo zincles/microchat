@@ -218,7 +218,9 @@ podman compose restart                                    # ← **每次提交�
   **界面里的「更新」**（2026-11-09）走另一条路：后端 `git pull --ff-only` 后写 `data/.restart-request`，
   entrypoint 的看家循环看见标记就收掉 Go / vite 两棵进程树、`exec` 自己重编译 **不退出容器**
   （端口发布与卷都不动）。环境变量 `MICROCHAT_RESTART_FILE` 是这条路的开关；compose 已给 `/app/data/.restart-request`，
-  宿主二进制没有它 ⇒ 更新页会说明“不会自动重启”。⚠ 拉取需要容器里装 `git`（Dockerfile 已补）。
+  宿主二进制没有它 ⇒ 更新页会说明“不会自动重启”。⚠ 拉取需要容器里装 `git`（Dockerfile 已补）；
+  `restart` **不会重建镜像**，老 Alpine 镜像第一次要么 `up -d --build`，要么靠 entrypoint 的
+  “旧镜像兼容路径”现场 `apk add --no-cache git`（脚本是 bind 的，所以源码更新后 restart 就能补）。
 - **热重载**：**Go 没有任何内建热重载**（标准库不监视文件；生态里是 air 那类第三方工具）——我们的口径就是"`restart` = 重编译"。
   前端要 **HMR** 用宿主 `./node_modules/.bin/vite`（:5173）：它读同一份后端配置、代理到 `127.0.0.1:8787`
   —— 那正是容器的**回环口**（见上）⇒ 改前端文件即时热更新，而数据只有容器一个写者、宿主 node_modules 也不受影响。
