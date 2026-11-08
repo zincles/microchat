@@ -805,10 +805,10 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 /* 思考档位（2026-11-08 用户定）：输入栏上方的按钮区；只显示 raw ASCII 档位。 */
 .composer-toolbar .thinking-btn { min-width: 0 !important; height: 1.9em !important; min-height: 1.9em !important;
   padding: 0 0.65em !important; border: 1px solid var(--md-outline-variant) !important;
-  background: transparent !important; box-shadow: none !important;
+  background: var(--md-surface-container) !important; box-shadow: none !important;
   font-size: 0.75em !important; color: var(--md-on-surface-variant);
   text-transform: none !important; }
-.composer-toolbar .thinking-btn:hover { color: var(--md-on-surface); background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); }
+.composer-toolbar .thinking-btn:hover { color: var(--md-on-surface); background: color-mix(in srgb, var(--md-on-surface) 8%, var(--md-surface-container)) !important; }
 .thinking-label { margin: 0; white-space: nowrap; }
 .thinking-raw { margin-left: 0.4em; color: var(--md-on-surface-variant); font-size: 0.88em; opacity: 0.8; }
 
