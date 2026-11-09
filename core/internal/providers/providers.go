@@ -136,8 +136,9 @@ type Provider struct {
 	SessionHeader *string `json:"session_header"`
 	// ReasoningField：**回传思考**用哪个字段名。nil = 按 kind 默认；"" = 不回传。
 	ReasoningField *string `json:"reasoning_field"`
-	// AllowTools：**允许工具透传**（默认关）。开了才把 `tools` / `tool_calls` 原样发给上游 ——
-	// 不认识的字段有些上游会直接 400，所以默认不发。
+	// AllowTools：**允许 function tool 透传**（默认关）。开了才把客户端 function 工具与原样回程发给上游 ——
+	// 不认识的字段有些上游会直接 400，所以默认不发。provider-native 服务端工具（只有 type）不靠这格：
+	// 它们由模型规则 + Responses 协议显式声明，属于已知能力。
 	AllowTools *bool `json:"allow_tools"`
 	// ToolResultName：工具结果消息里带不带函数名（Pi 的 `requiresToolResultName`）。
 	ToolResultName *bool     `json:"tool_result_name"`
@@ -175,9 +176,15 @@ type ChatMessage struct {
 }
 
 // Tool：一个工具声明 —— **只进请求体顶层的 `tools` 数组**（不是提示词文本）。
+//
+// 两种形状共用这一格：
+//   - provider-native 服务端工具（`x_search` / `web_search` / `code_execution`）只有 `type`；
+//   - 客户端 function tool 是 `{type:"function", function:{…}}`。
+//
+// `Function` 必须是指针：服务端工具没有 function 字段，零值序列化会多发一个空对象。
 type Tool struct {
-	Type     string       `json:"type"` // "function"
-	Function ToolFunction `json:"function"`
+	Type     string        `json:"type"`
+	Function *ToolFunction `json:"function,omitempty"`
 }
 
 type ToolFunction struct {
@@ -257,12 +264,26 @@ var presets = map[Vendor]preset{
 // 查表键是**渠道 id**（`model_route` 按渠道刷新：同一个 vendor 配两条渠道时各有各的表，
 // 拿 vendor 查会串台）。Zen 写死表已删（路由唯一真相 = model_route 表，见 registry 的快照链路）。
 func ResolveProtocol(lookup func(providerID, upstreamID string) (string, bool), providerID, model string) Protocol {
-	// store 里存的是 models.dev 口径（"openai-responses"，复数，见 registry.NpmToAPI）；
-	// providers.Protocol 是单数（"openai-response"）—— 这里认复数那一侧。
+	return ResolveProtocolFor(lookup, providerID, model, "")
+}
+
+// ResolveProtocolFor：路由表**有行**时以它为准；**没有行**时用渠道配置的 protocol 兜底。
+//
+// 为什么要有兜底：`providers.json` 的 `protocol` 是用户明确选择（例如 xAI 必须走 Responses），
+// 而 `model_route` 是发现数据、可能没刷/没这一行；没有行就把用户的选择丢回 chat，
+// 等于让“界面上选的是 response、实际发的是 chat”这种静默错配长期存在。
+// 反过来：路由表有行但不是 openai-responses（例如 anthropic-messages），我们没有那套协议，仍回落 chat。
+func ResolveProtocolFor(lookup func(providerID, upstreamID string) (string, bool), providerID, model string, fallback Protocol) Protocol {
 	if lookup != nil {
-		if api, ok := lookup(providerID, model); ok && api == "openai-responses" {
-			return ProtocolOpenAIResponse
+		if api, ok := lookup(providerID, model); ok {
+			if api == "openai-responses" {
+				return ProtocolOpenAIResponse
+			}
+			return ProtocolChatCompletion
 		}
+	}
+	if fallback != "" {
+		return fallback
 	}
 	return ProtocolChatCompletion
 }
@@ -457,7 +478,7 @@ func reasoningFieldForModel(p Provider, model string) string {
 	return presets[vendor].reasoningField
 }
 
-// toolsAllowed：这个渠道允许工具透传吗（默认**关** —— 宁可少发，也别让上游因为不认识的字段 400）。
+// toolsAllowed：这个渠道允许 **function tool** 透传吗（默认**关** —— 宁可少发，也别让上游因为不认识的字段 400）。
 func toolsAllowed(p Provider) bool { return p.AllowTools != nil && *p.AllowTools }
 
 // toolResultNameFor：工具结果消息带不带函数名（默认不带）。
@@ -915,6 +936,15 @@ func buildResponse(p Provider, r Request) (*http.Request, error) {
 		"model":  r.Model,
 		"input":  input,
 		"stream": r.Stream,
+	}
+	// 服务端工具（只有 type）是 Responses 的已知能力，不靠 AllowTools；function tool 仍要显式打开。
+	if len(r.Tools) > 0 && (toolsAllowed(p) || allServerTools(r.Tools)) {
+		body["tools"] = r.Tools
+		if len(r.ToolChoice) > 0 {
+			body["tool_choice"] = r.ToolChoice
+		}
+	} else if hasToolHistory(r.Messages) {
+		body["tools"] = []Tool{}
 	}
 	if r.ThinkingLevel != "" || r.ReasoningEffort != nil && *r.ReasoningEffort != "" ||
 		r.ReasoningSummary != nil && *r.ReasoningSummary != "" {

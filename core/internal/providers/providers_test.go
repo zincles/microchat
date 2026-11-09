@@ -898,7 +898,7 @@ func TestToolPassthrough(t *testing.T) {
 	yes := true
 	tools := []Tool{{
 		Type: "function",
-		Function: ToolFunction{
+		Function: &ToolFunction{
 			Name: "roll_dice", Description: "掷骰子",
 			Parameters: json.RawMessage(`{"type":"object","properties":{"sides":{"type":"integer"}}}`),
 		},

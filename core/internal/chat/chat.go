@@ -173,12 +173,12 @@ func (s *Service) launch(session model.Session, replyID string, token uint64, pr
 	}
 	chosen := providers.SelectBackend(session.Provider, session.Model, providersConfig)
 	// 发之前查表定这次说什么话：`model_route` 有行且 api=="openai-responses" ⇒
-	// response；其余（含没有行）⇒ chat 缺省。只覆盖进 wire.Protocol（别改 session、别落库）。
+	// response；没有行时用渠道配置的 protocol 兜底。只覆盖进 wire.Protocol（别改 session、别落库）。
 	// 查表键是**渠道 id**（`chosen.Provider.ID`）：`model_route` 是按渠道刷新的，
 	// 同一个 vendor 配两条渠道时各有各的表 —— 拿 vendor 查会串台。
 	// compact/title/reroll-message 走同一条查表（各调 Complete 之前），见三包对应调用点。
 	if model := session.Model; chosen.Name != providers.BackendFallback && chosen.Name != providers.BackendDummy {
-		chosen.Provider.Protocol = string(providers.ResolveProtocol(s.Store.ModelRoute, chosen.Provider.ID, model))
+		chosen.Provider.Protocol = string(providers.ResolveProtocolFor(s.Store.ModelRoute, chosen.Provider.ID, model, providers.Protocol(chosen.Provider.Protocol)))
 	}
 	go s.run(session, replyID, token, chosen, outgoing, reasoningByID, time.Now())
 	return Accepted{
@@ -209,6 +209,7 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 		Messages:      wireMessages(outgoing, reasoningByID),
 		SessionID:     sessionID,
 		ThinkingLevel: session.ThinkingLevel,
+		Tools:         s.availableTools(session, chosen),
 	}, localReply(chosen), func(delta providers.Delta) {
 		if delta.Text != "" {
 			if firstTextAt.IsZero() {
@@ -425,7 +426,7 @@ func (s *Service) PreviewHistoryWire(session model.Session) (providers.LastPaylo
 func (s *Service) buildWire(session model.Session, outgoing []state.Outgoing, reasoningByID map[string]string, providersConfig config.ProvidersConfig) (providers.LastPayload, error) {
 	chosen := providers.SelectBackend(session.Provider, session.Model, providersConfig)
 	if model := session.Model; chosen.Name != providers.BackendFallback && chosen.Name != providers.BackendDummy {
-		chosen.Provider.Protocol = string(providers.ResolveProtocol(s.Store.ModelRoute, chosen.Provider.ID, model))
+		chosen.Provider.Protocol = string(providers.ResolveProtocolFor(s.Store.ModelRoute, chosen.Provider.ID, model, providers.Protocol(chosen.Provider.Protocol)))
 	}
 	wire := providers.FromConfig(chosen.Provider)
 	request, err := providers.Build(wire, providers.Request{
@@ -433,12 +434,46 @@ func (s *Service) buildWire(session model.Session, outgoing []state.Outgoing, re
 		Messages:      wireMessages(outgoing, reasoningByID),
 		SessionID:     session.ID,
 		ThinkingLevel: session.ThinkingLevel,
+		Tools:         s.availableTools(session, chosen),
 		Stream:        true,
 	})
 	if err != nil {
 		return providers.LastPayload{}, err
 	}
 	return providers.Snapshot(request, time.Now())
+}
+
+// availableTools：这一轮请求体顶层要带的工具声明。
+//
+// 只从**模型规则派生画像**取 `server_tools`（provider 侧执行），并扣掉会话里手动关掉的；
+// 服务端工具是 Responses 的已知能力，不依赖 `allow_tools`。`local_tools` 目前只是配置候选，
+// 还没有工具注册表/执行器 ⇒ 不发，等定义落地后再在这里接 function tool 声明。
+func (s *Service) availableTools(session model.Session, chosen providers.Backend) []providers.Tool {
+	if chosen.Name == providers.BackendFallback || chosen.Name == providers.BackendDummy {
+		return nil
+	}
+	// 服务端工具只有 OpenAI Response 协议能表达（chat completion 的 tools 是 function 形状）。
+	if providers.Protocol(chosen.Provider.Protocol) != providers.ProtocolOpenAIResponse {
+		return nil
+	}
+	cfg, err := config.LoadConfig(s.Paths)
+	if err != nil {
+		return nil
+	}
+	profile := cfg.ModelProfileWithRulesFor(
+		chosen.Provider.ID, session.Model, chosen.Provider.Protocol,
+		config.ModelProfile{}, chosen.Provider.ModelDefineRules)
+	disabled := make(map[string]bool, len(session.NativeToolsDisabled))
+	for _, id := range session.NativeToolsDisabled {
+		disabled[id] = true
+	}
+	ids := make([]string, 0, len(profile.ServerTools))
+	for _, id := range profile.ServerTools {
+		if !disabled[id] {
+			ids = append(ids, id)
+		}
+	}
+	return providers.ServerTools(ids)
 }
 
 // wireMessages：出站消息 → 上游形状（正文照抄，只把思考贴回 assistant 那几条）。

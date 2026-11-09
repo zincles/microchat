@@ -981,6 +981,7 @@ DeepSeek / OpenCode GO 直连**确实不报**，所以那一格在那儿永远�
   缓存按**内容前缀**算、与 session id 无关 ⇒ 别为缓存分子会话；也别为"拒绝缓存"发明 header（Pi 的 `cacheRetention: "none"` 对 OpenCode GO 是 no-op）。
 - 思考回传用 `reasoning_content`（网关照收；deepseek 系没思考补空串、别的系不塞）；`reasoning_effort` 关不掉（下限 low）。
 - **工具不在提示词里**：请求体顶层 `tools` 数组；回话是助手消息里的 `tool_calls`，结果以 `{role:"tool", tool_call_id}` 回填。两条铁律：历史里出现过工具 ⇒ `tools` 参数必须在（哪怕 `[]`）；不认识的字段默认不发。形状/开关/实测见 `reminder/tool-calls.md`。
+  **服务端工具已接**（2026-11-09）：模型规则派生的 `server_tools` 在 Responses 协议下作为 `{"type":"x_search"}` 这类声明进请求体，命中会话 `native_tools_disabled` 的扣掉；它们不靠 `allow_tools`（那是给任意 function tool 的默认关闸）。`local_tools` 仍是配置候选 —— 没有工具注册表/执行器，暂不进请求体。
 - **`/debug/last-payload` 必须连请求头一起回显**（打码）—— 不然"为什么 403"只能靠猜。
 
 ### 内建 provider 预设（2026-10-01 起按 `vendor` × `protocol` 两轴；`kind` 只剩废弃读入）
@@ -999,7 +1000,7 @@ DeepSeek / OpenCode GO 直连**确实不报**，所以那一格在那儿永远�
 | `typesafe`（JEV 决策） | `https://api.typesafe.ai/v1/systemone`（**verbatim 整条 URL，原样 POST，不拼路径**） | `TYPESAFE_API_KEY`（备 `JEV_API_KEY`） | 只有 `Content-Type` + `Accept: application/json` + `Authorization`（无会话头：上下文在 state 里自带） |
 - **两轴**：`vendor` = 找谁（端点预设 + key env + 内建头）；`protocol` = 说什么话（`openai-chat-completion` 缺省 / `openai-response` / `systemone` / 占位中的 `anthropic-messages` 等）。
   渐进式配置：先选 `protocol`（干什么），再按兼容矩阵选 `vendor`（找谁），有预设的只输 `api_key`，只有 `custom` 才要 `base_url`。
-- **兼容矩阵即校验表**（`Provider.Validate`，错配 loud error）：chat-completion ← 除 typesafe 外全部 vendor（含 xai）；`openai-response` ← opencode-go/opencode/openrouter/custom/xai（`bd27768` 打通，muse 真测 ✓；xAI 为 `x_search`/`web_search`/`code_execution` 服务端工具预留）；systemone ← `typesafe` / `openrouter` / `custom`；
+- **兼容矩阵即校验表**（`Provider.Validate`，错配 loud error）：chat-completion ← 除 typesafe 外全部 vendor（含 xai）；`openai-response` ← opencode-go/opencode/openrouter/custom/xai（`bd27768` 打通，muse 真测 ✓；xAI 的 `x_search`/`web_search`/`code_execution` 服务端工具已接进请求体）；systemone ← `typesafe` / `openrouter` / `custom`；
   占位只剩 `anthropic-messages` / `gemini-generate-content`（选了就报"暂不支持"）。
 - **不需要搬它们的模型目录** ✓：模型列表是**发现**来的（`GET /models` ⇒ `registry`）；内建预设只提供
   **端点 + 头 + 认证从哪取**，每家十几行。**systemone 例外**：JEV 没有统一 `/models` 口径 ⇒ `refresh` 直接跳过（不算错）。
@@ -1181,8 +1182,9 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   （中文 + 原始 ASCII）；空档位是「默认 default」。工具状态是**可点击按钮**：
   点开列出模型规则给出的 native tools，自绘勾选框（Vuetify 默认 MDI checkbox 字体没装，会空白）；
   逐项取消/恢复，存进 `sessions.native_tools_disabled`（草稿存 `draftPrefs`，建会话时带上）。
-  数字只算**已启用**；全部关掉显示「工具：无」，但菜单仍能重新勾回。真正的 tools 请求体与执行循环
-  仍是下一步；MCP 将来单独列，不混进这个数字。
+  数字只算**已启用**；全部关掉显示「工具：无」，但菜单仍能重新勾回。**请求体已带**这些服务端工具
+  （`{"type":"x_search"}` 等，见上面「工具不在提示词里」）；工具执行由 xAI 服务端完成。
+  本地 function tool 的执行循环仍没做；MCP 将来单独列，不混进这个数字。
   `VMenu` 是 `location="top end"` + `VList`/`VListItem`，**从输入栏向上弹**。
   TopBar 不再持有 ThinkingMenu；输入行只剩 `菜单? / 发送`。
   Session 级字段与后端校验不变（见下）。

@@ -36,7 +36,7 @@
 
 | 字段 | 默认 | 作用 | 对应 Pi 的什么 |
 |---|---|---|---|
-| `allow_tools` | **关** | 开才把 `tools` / `tool_choice` 原样发给上游 | —— |
+| `allow_tools` | **关** | 开才把**客户端 function tool**（`{type:"function",…}`）与 `tool_choice` 原样发给上游；provider-native 服务端工具（只有 `type`）不靠这格 | —— |
 | `tool_result_name` | 关 | 工具结果消息里带 `name` | `requiresToolResultName` |
 
 **为什么默认关**：不认识的字段，有些上游**直接 400**；宁可少发，让用户显式打开。
@@ -78,8 +78,14 @@
 
 ## 五、还没做（将来看需要）
 
+- **服务端工具已接**（2026-11-09）：模型规则派生的 `server_tools` 在 OpenAI **Response** 协议下
+  作为 `{"type":"x_search"}` / `{"type":"web_search"}` / `{"type":"code_execution"}` 进请求体；
+  命中会话 `native_tools_disabled` 的扣掉。xAI 真发实测 200（2026-11-09），服务端自己执行；
+  这些工具**不靠** `allow_tools`（那格只挡任意 function tool）。生成的 `tools` 字段在 `/outgoing` 预演里就能看见。
+- **本地 function tool**：配置里的 `local_tools` 还只是候选 id —— 没有工具注册表/JSON Schema/执行器，
+  **暂不进请求体**；等定义落地后再走 `{type:"function",function:{…}}`（`allow_tools` 仍默认关）。
 - **流式里 `tool_calls` 的分片拼装**：`delta.tool_calls[]` 是**按 index 累加**的（arguments 一段一段来），
-  Pi 用 `partial-json` 边收边解析；我们目前只在**非流式**下验证过工具，流式要做时照 Pi 的累加逻辑写 ✓；
+  Pi 用 `partial-json` 边收边解析；我们目前只在**非流式**下验证过 function 工具，流式要做时照 Pi 的累加逻辑写 ✓；
 - **工具的执行**：那是**上层**的事（谁定义工具、谁执行、结果怎么落档），`providers` 只负责"原样透传"；
 - 若将来把工具调用**落档**（现在的 `messages` 表没有工具列），需要一次迁移 + 回放时要保证
   `tool_calls` 与结果消息**成对**出现（否则上游会拒）。

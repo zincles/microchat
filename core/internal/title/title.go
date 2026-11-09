@@ -269,8 +269,8 @@ func (s *Service) generate(ctx context.Context, session model.Session, stop cont
 	// 从前这里是裸 `abilities.Template`，于是编辑器让你给 title 挑段、这一发却一个字都不拼（静默无效）。
 	template := abilities.AssemblePrompt(setting, abilities.Title, agents)
 	wire := providers.FromConfig(backend.Provider)
-	// 与 chat.go Accept 同一条查表：有行且 api=="openai-responses" ⇒ 走 /responses，否则 chat 缺省。
-	wire.Protocol = providers.ResolveProtocol(s.Store.ModelRoute, backend.Provider.ID, modelID)
+	// 与 chat.go Accept 同一条查表：有行且 api=="openai-responses" ⇒ /responses；没有行时用渠道自己的 protocol。
+	wire.Protocol = providers.ResolveProtocolFor(s.Store.ModelRoute, backend.Provider.ID, modelID, providers.Protocol(backend.Provider.Protocol))
 	completion, err := providers.NewClient(wire).Complete(ctx, wire, providers.Request{
 		Model: modelID,
 		Messages: []providers.ChatMessage{

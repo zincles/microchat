@@ -186,3 +186,39 @@ func TestFromConfigIgnoresEndpoints(t *testing.T) {
 		t.Fatalf("URL = %q", resp.URL.String())
 	}
 }
+
+func TestResponseServerToolsShape(t *testing.T) {
+	provider := Provider{ID: "x", Vendor: VendorXAI, Protocol: ProtocolOpenAIResponse, BaseURL: "https://api.x.ai/v1"}
+	request, err := Build(provider, Request{
+		Model: "grok-4.7", SessionID: "s",
+		Tools: ServerTools([]string{"x_search", "web_search"}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	tools, ok := body["tools"].([]any)
+	if !ok || len(tools) != 2 {
+		t.Fatalf("tools = %#v", body["tools"])
+	}
+	first := tools[0].(map[string]any)
+	if first["type"] != "x_search" {
+		t.Fatalf("服务端工具 type = %#v", first["type"])
+	}
+	if _, exists := first["function"]; exists {
+		t.Fatalf("服务端工具不该带 function 字段：%#v", first)
+	}
+}
+
+func TestResolveProtocolFallsBackToConfiguredProtocol(t *testing.T) {
+	if got := ResolveProtocolFor(nil, "xai", "grok-4.7", ProtocolOpenAIResponse); got != ProtocolOpenAIResponse {
+		t.Fatalf("没有路由行时该用渠道 protocol：%q", got)
+	}
+	route := func(string, string) (string, bool) { return "anthropic-messages", true }
+	if got := ResolveProtocolFor(route, "xai", "grok-4.7", ProtocolOpenAIResponse); got != ProtocolChatCompletion {
+		t.Fatalf("路由行说别的协议时要回落 chat：%q", got)
+	}
+}

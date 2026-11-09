@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -456,4 +457,44 @@ func TestAcceptStripsUserStateInjection(t *testing.T) {
 		t.Fatalf("库里不该有用户的块：%+v", messages)
 	}
 	h.settle(t)
+}
+
+// 请求体顶层要带上模型规则派生的服务端工具；会话里手动关掉的不带。
+func TestPreviewWireCarriesServerTools(t *testing.T) {
+	h := newHarness(t, config.ProvidersConfig{Providers: []config.Provider{{
+		ID: "xai", Vendor: "xai", Protocol: "openai-response",
+	}}}, "xai", "grok-4.7")
+	payload, err := h.service.PreviewWire(h.session, "你好")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(payload.Body, &body); err != nil {
+		t.Fatal(err)
+	}
+	tools, ok := body["tools"].([]any)
+	if !ok || len(tools) != 3 {
+		t.Fatalf("tools = %#v", body["tools"])
+	}
+	if got := tools[0].(map[string]any)["type"]; got != "x_search" {
+		t.Fatalf("第一件服务端工具 = %#v", got)
+	}
+	if _, exists := tools[0].(map[string]any)["function"]; exists {
+		t.Fatal("服务端工具不该带 function")
+	}
+
+	h.session.NativeToolsDisabled = []string{"web_search"}
+	payload, err = h.service.PreviewWire(h.session, "你好")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = map[string]any{}
+	if err := json.Unmarshal(payload.Body, &body); err != nil {
+		t.Fatal(err)
+	}
+	tools = body["tools"].([]any)
+	if len(tools) != 2 || tools[0].(map[string]any)["type"] != "x_search" ||
+		tools[1].(map[string]any)["type"] != "code_execution" {
+		t.Fatalf("关掉 web_search 后 tools = %#v", tools)
+	}
 }

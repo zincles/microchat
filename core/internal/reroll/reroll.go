@@ -536,8 +536,8 @@ func (s *Service) roll(ctx context.Context, prepared *roll) {
 	started := time.Now()
 	var firstTextAt time.Time
 	wire := providers.FromConfig(prepared.channel)
-	// 与 chat.go Accept 同一条查表：有行且 api=="openai-responses" ⇒ 走 /responses，否则 chat 缺省。
-	wire.Protocol = providers.ResolveProtocol(s.Store.ModelRoute, prepared.channel.ID, prepared.model)
+	// 与 chat.go Accept 同一条查表：有行且 api=="openai-responses" ⇒ /responses；没有行时用渠道自己的 protocol。
+	wire.Protocol = providers.ResolveProtocolFor(s.Store.ModelRoute, prepared.channel.ID, prepared.model, providers.Protocol(prepared.channel.Protocol))
 	result, err := providers.NewClient(wire).Chat(ctx, wire, providers.Request{
 		Model:     prepared.model,
 		Messages:  messages,
