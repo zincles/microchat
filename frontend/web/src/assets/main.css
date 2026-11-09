@@ -845,19 +845,19 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 /* 发送图标按 SVG 的几何中心对齐；VBtn 的 content 默认被 inline 基线撑高，箭头会偏上一截。 */
 .composer-send-btn .v-btn__content { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; margin: 0; }
 .composer-send-btn .v-btn__content > span { display: flex; align-items: center; justify-content: center; line-height: 0; }
-/* 思考档位（2026-11-08 用户定）：输入栏上方的按钮区；只显示 raw ASCII 档位。 */
-.composer-toolbar .thinking-btn { min-width: 0 !important; height: 1.9em !important; min-height: 1.9em !important;
+/* 输入栏上方的按钮区（2026-11-10 用户定：推理等级与工具必须同一尺寸/风格）。
+   两者共用同一套 MD3 outlined 小按钮：高度/字号/内边距/边框/底色只写这一处。 */
+.composer-toolbar .thinking-btn,
+.composer-toolbar .tools-btn { min-width: 0 !important; height: 1.9em !important; min-height: 1.9em !important;
   padding: 0 0.65em !important; border: 1px solid var(--md-outline-variant) !important;
   background: var(--md-surface-container) !important; box-shadow: none !important;
-  font-size: 0.75em !important; color: var(--md-on-surface-variant);
+  font-size: 0.75em !important; line-height: 1.9em !important; color: var(--md-on-surface-variant);
   text-transform: none !important; }
-.composer-toolbar .thinking-btn:hover { color: var(--md-on-surface); background: color-mix(in srgb, var(--md-on-surface) 8%, var(--md-surface-container)) !important; }
-.thinking-label { margin: 0; white-space: nowrap; }
-/* 输入栏上方的工具数状态：只在**有工具**时带「+内置」；没有就写「工具：无」，不编 0。 */
-.composer-toolbar .tools-btn { min-width: 0 !important; height: 1.9em !important; min-height: 1.9em !important;
-  padding: 0 0.45em !important; color: var(--md-on-surface-variant); }
+.composer-toolbar .thinking-btn:hover,
 .composer-toolbar .tools-btn:hover { color: var(--md-on-surface); background: color-mix(in srgb, var(--md-on-surface) 8%, var(--md-surface-container)) !important; }
-.tools-label { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.thinking-label,
+.tools-label { margin: 0; white-space: nowrap; font-size: inherit; line-height: inherit; }
+.tools-label { font-variant-numeric: tabular-nums; }
 /* 自绘勾选框：Vuetify 默认 checkbox 图标走 MDI 字体，本项目没装 —— 会画成空白。 */
 .tool-check { width: 1.15em; height: 1.15em; flex: none; margin-inline-end: 0.45em;
   border: 1.5px solid var(--md-outline); border-radius: var(--r-xs); box-sizing: border-box;

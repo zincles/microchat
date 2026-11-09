@@ -4474,3 +4474,9 @@ test("工具卡和来源都在正文上方；每个工具卡自己折叠来源",
   assert.ok(bubble.includes('<details v-for="(tool, i) in tools"'), "工具卡必须是 details");
   assert.ok(bubble.includes('v-else-if="sources.length"'), "live 来源兜底仍在");
 });
+
+test("输入栏的推理等级/工具按钮共用同一套尺寸与风格", () => {
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8");
+  assert.match(css, /\.composer-toolbar \.thinking-btn,\s*\.composer-toolbar \.tools-btn\s*\{/);
+  assert.match(css, /\.thinking-label,\s*\.tools-label\s*\{/);
+});
