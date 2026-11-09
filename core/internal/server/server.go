@@ -50,6 +50,7 @@ func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *ch
 	// 版本更新（2026-11-09）：左栏「更新」入口 —— 读当前提交、拉取并请求重启。
 	s.mux.HandleFunc("GET /api/v1/update", s.updateStatus)
 	s.mux.HandleFunc("POST /api/v1/update/pull", s.updatePull)
+	s.mux.HandleFunc("POST /api/v1/update/rebase", s.updateRebase)
 	// 鉴权（DEFINE「用户与鉴权」）：status/login/register 是**仅有的三处开放口**
 	// （register 另有"还没有用户"的闸）；其余一切都要有效凭据。
 	s.mux.HandleFunc("GET /api/v1/sessions", s.listSessions)

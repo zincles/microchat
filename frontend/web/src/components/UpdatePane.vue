@@ -41,6 +41,7 @@ const pwaBusy = ref(false);
 const pwaError = ref("");
 
 const supported = computed(() => !!status.value?.restart_supported);
+const needsRebase = computed(() => status.value?.remote_relation === "diverged");
 const currentBuildLabel = computed(() => buildLabel(pageBuildId, "未知（开发模式）"));
 const latestBuildLabel = computed(() => latestBuild.value
   ? buildLabel(latestBuild.value.built_at || latestBuild.value.build_id, "未知")
@@ -75,9 +76,9 @@ const pwaStatus = computed(() => {
   return "无法确认服务器前端版本（可能不是构建产物）。";
 });
 const buttonText = computed(() => {
-  if (phase.value === "pulling") return "正在拉取…";
+  if (phase.value === "pulling") return needsRebase.value ? "正在变基…" : "正在拉取…";
   if (phase.value === "restarting") return "正在重启…";
-  return "拉取并重启";
+  return needsRebase.value ? "变基并重启" : "拉取并重启";
 });
 
 function errText(e: unknown): string {
@@ -154,24 +155,27 @@ async function forceReload(): Promise<void> {
   }
 }
 
-async function pullAndRestart(): Promise<void> {
+async function pullAndRestart(rebase = false): Promise<void> {
   if (busy.value) return;
   if (!supported.value) {
     error.value = "当前不是容器部署：可以拉取，但没有 entrypoint 能自动重启。请手动重启服务。";
     return;
   }
-  if (props.ask && !(await props.ask("会拉取远程最新代码并重启前后端，期间约 10–20 秒不可用。继续吗？"))) return;
+  const confirm = rebase
+    ? "会把本地尚未推送的提交变基到远端最新提交上（冲突会自动中止并恢复），然后重启前后端，期间约 10–20 秒不可用。继续吗？"
+    : "会拉取远程最新代码并重启前后端，期间约 10–20 秒不可用。继续吗？";
+  if (props.ask && !(await props.ask(confirm))) return;
   busy.value = true;
   error.value = "";
   message.value = "";
   log.value = "";
   phase.value = "pulling";
   try {
-    const result = await api.pullUpdate();
+    const result = rebase ? await api.rebaseUpdate() : await api.pullUpdate();
     status.value = result.after;
     log.value = result.output || "";
     message.value = result.changed
-      ? `已拉取到 ${result.after.short || result.after.commit.slice(0, 7)}，正在重启前后端…`
+      ? `已${rebase ? "变基" : "拉取"}到 ${result.after.short || result.after.commit.slice(0, 7)}，正在重启前后端…`
       : "已经是最新提交，正在重启前后端…";
     phase.value = "restarting";
     await waitForRestart(result.before.started_at, api);
@@ -269,7 +273,7 @@ onMounted(() => {
                 远端有新提交 {{ status.behind || 0 }} 个，可拉取并重启
               </template>
               <template v-else-if="status.remote_relation === 'diverged'">
-                本地与远端已分叉，先处理再拉取
+                本地与远端已分叉，可「变基并重启」
               </template>
               <template v-else>远端有新提交，可拉取并重启</template>
             </p>
@@ -286,7 +290,7 @@ onMounted(() => {
         <div class="row">
           <VBtn color="primary" variant="flat" size="small" type="button"
             :loading="phase !== 'idle'" :disabled="phase !== 'idle' || !supported"
-            @click="pullAndRestart">
+            @click="pullAndRestart(needsRebase)">
             {{ buttonText }}
           </VBtn>
           <VBtn variant="text" size="small" type="button" :disabled="busy" @click="load">刷新状态</VBtn>

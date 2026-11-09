@@ -3540,8 +3540,13 @@ test("更新面板：显示提交 + 拉取并重启（由 entrypoint 接手）",
   assert.match(app, /mc-update-auto-check/, "更新面板开关没通知 App");
   assert.match(app, /:backend="backendUpdate"/, "顶部更新条没接后端更新状态");
   assert.match(pane, /restart_supported/, "没区分容器部署与宿主二进制");
+  assert.match(pane, /needsRebase/, "没识别分叉需要变基");
+  assert.match(pane, /rebaseUpdate/, "没有变基动作");
+  assert.match(pane, /pullAndRestart\(needsRebase\)/, "分叉时主按钮没切到变基");
+  assert.match(pane, /变基并重启/, "界面没有「变基并重启」");
   assert.match(client, /getUpdateStatus: \(\) => call<UpdateStatus>\("GET", "\/update"\)/, "API 客户端没有 GET /update");
   assert.match(client, /pullUpdate: \(\) => call<UpdatePullResult>\("POST", "\/update\/pull"\)/, "API 客户端没有 POST /update/pull");
+  assert.match(client, /rebaseUpdate: \(\) => call<UpdatePullResult>\("POST", "\/update\/rebase"\)/, "API 客户端没有 POST /update/rebase");
 });
 
 // PWA 小工具（2026-11-09 用户定）：更新面板里核对当前壳是否最新，并能直接切换。

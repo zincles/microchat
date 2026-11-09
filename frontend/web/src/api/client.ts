@@ -261,6 +261,7 @@ export function createApi({ base, token = "", fetchFn = fetch }: CreateApiOption
     // 拉取走 POST；它可能跑一会儿（git 网络），后端自己 90s 超时。
     getUpdateStatus: () => call<UpdateStatus>("GET", "/update"),
     pullUpdate: () => call<UpdatePullResult>("POST", "/update/pull"),
+    rebaseUpdate: () => call<UpdatePullResult>("POST", "/update/rebase"),
     listSessions: () => call<SessionView[]>("GET", "/sessions"),
     createSession: (body: CreateSessionRequest = {}) => call<Session>("POST", "/sessions", body),
     // deleteSession：删整条会话（后端不代建 —— 删完进哪条由调用方定）。

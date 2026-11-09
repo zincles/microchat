@@ -47,7 +47,18 @@ func (s *Server) updateStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, status)
 }
 
+type updateAction func(context.Context) (update.PullResult, error)
+
 func (s *Server) updatePull(w http.ResponseWriter, r *http.Request) {
+	s.runUpdate(w, r, update.Pull, "拉取失败")
+}
+
+// updateRebase：用户明确选择"分叉时变基"（默认 pull 仍是 --ff-only）。
+func (s *Server) updateRebase(w http.ResponseWriter, r *http.Request) {
+	s.runUpdate(w, r, update.Rebase, "变基失败")
+}
+
+func (s *Server) runUpdate(w http.ResponseWriter, r *http.Request, action updateAction, failPrefix string) {
 	if !sameOrigin(r) {
 		writeError(w, http.StatusForbidden, "invalid", "更新只允许从当前页面发起（Origin 不匹配）")
 		return
@@ -61,10 +72,15 @@ func (s *Server) updatePull(w http.ResponseWriter, r *http.Request) {
 	defer updateMu.Unlock()
 	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 	defer cancel()
-	result, err := update.Pull(ctx)
+	result, err := action(ctx)
 	if err != nil {
+		msg := failPrefix + "：" + err.Error()
+		// rebase 冲突会先 abort 回原状；把 abort 的输出也带上，别让人以为工作区停在半截。
+		if result.Output != "" && !strings.Contains(msg, result.Output) {
+			msg += "\n" + result.Output
+		}
 		// 把 git 原文一起回给前端（工作区脏、分叉、没网、没装 git 都要能看懂）。
-		writeError(w, http.StatusInternalServerError, "internal", "拉取失败："+err.Error())
+		writeError(w, http.StatusInternalServerError, "internal", msg)
 		return
 	}
 	result.Restarting = true

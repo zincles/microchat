@@ -214,12 +214,27 @@ func ReadStatus(ctx context.Context) (Status, error) {
 // Pull：只走 `git pull --ff-only`（绝不自动 merge、绝不 stash）。
 // 工作区脏 / 本地提交与远端分叉时让 git 自己拒绝，把原文交给前端看。
 func Pull(ctx context.Context) (PullResult, error) {
+	return runPull(ctx, false)
+}
+
+// Rebase：`git pull --rebase`，把本地尚未推送的提交重放到远端最新提交上。
+// 只在用户明确点「变基并重启」时调用（默认 Pull 仍拒绝自动 merge/rebase）。
+// 失败时尽力 `git rebase --abort` 回到原状：半截 rebase 比拉取失败更难收拾。
+func Rebase(ctx context.Context) (PullResult, error) {
+	return runPull(ctx, true)
+}
+
+func runPull(ctx context.Context, rebase bool) (PullResult, error) {
 	root := RepoRoot()
 	before, err := ReadStatus(ctx)
 	if err != nil {
 		return PullResult{Before: before}, err
 	}
-	out, pullErr := git(ctx, root, "pull", "--ff-only")
+	args := []string{"pull", "--ff-only"}
+	if rebase {
+		args = []string{"pull", "--rebase"}
+	}
+	out, pullErr := git(ctx, root, args...)
 	after, afterErr := ReadStatus(ctx)
 	result := PullResult{
 		Before:  before,
@@ -228,6 +243,15 @@ func Pull(ctx context.Context) (PullResult, error) {
 		Changed: before.Commit != "" && after.Commit != "" && before.Commit != after.Commit,
 	}
 	if pullErr != nil {
+		if rebase {
+			// pull --rebase 冲突会停在 rebase 中间态；不要把它留给下一次更新。
+			if abortOut, abortErr := git(ctx, root, "rebase", "--abort"); abortErr == nil {
+				if strings.TrimSpace(abortOut) != "" {
+					result.Output = strings.TrimSpace(out + "\n" + abortOut)
+				}
+				result.After, _ = ReadStatus(ctx)
+			}
+		}
 		return result, pullErr
 	}
 	if afterErr != nil {
