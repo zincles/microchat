@@ -2146,6 +2146,7 @@ onUnmounted(() => {
               :kind="row.msg.kind || 'chat'"
               :tool="row.msg.tool"
               :sources="row.msg.sources"
+              :tools="row.msg.tools"
               :usage="row.msg.usage"
               :reroll="row.msg.messageId && rerollState.active && rerollState.target_message_id === row.msg.messageId ? rerollState : null"
               @edit="onBubbleEdit"

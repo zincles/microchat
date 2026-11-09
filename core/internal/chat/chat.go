@@ -300,6 +300,7 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 			localToolRecords = append(localToolRecords, model.MessageTool{
 				Source: "client", ToolName: call.Name, ItemID: call.ID,
 				Arguments: call.Arguments, Result: content, Sources: sources, Status: status,
+				Queries: localToolQueries(call),
 			})
 			chatMessages = append(chatMessages, providers.ChatMessage{
 				Role: "tool", Content: content, ToolCallID: call.ID, Name: call.Name,
@@ -360,6 +361,28 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 	if s.Compactor != nil {
 		go s.MaybeAutoCompact(session)
 	}
+}
+
+// localToolQueries：给界面卡片显示的一小段检索词/URL（完整参数仍留 Arguments）。
+func localToolQueries(call providers.ToolCall) []string {
+	var args struct {
+		Query string `json:"query"`
+		URL   string `json:"url"`
+	}
+	if json.Unmarshal([]byte(call.Arguments), &args) != nil {
+		return nil
+	}
+	switch call.Name {
+	case "web_search":
+		if strings.TrimSpace(args.Query) != "" {
+			return []string{strings.TrimSpace(args.Query)}
+		}
+	case "web_fetch":
+		if strings.TrimSpace(args.URL) != "" {
+			return []string{strings.TrimSpace(args.URL)}
+		}
+	}
+	return nil
 }
 
 // toolCallsJSON：把客户端 function calls 拼成 assistant 消息的 wire 形状。

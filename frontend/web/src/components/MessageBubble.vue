@@ -3,7 +3,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import { VBtn } from "vuetify/components";
 import { ICONS } from "./icons.ts";
-import { assistantIdentity, formatThinkLabel, identityLabel, sourceLabel, toolRunHint, usageFoot, usageFootTitle } from "../utils/format.ts";
+import { assistantIdentity, formatThinkLabel, identityLabel, nativeToolLabel, sourceLabel, toolRunHint, usageFoot, usageFootTitle } from "../utils/format.ts";
 import type { UsageLike } from "../utils/format.ts";
 import { renderMarkdown, splitState } from "../utils/markdown.ts";
 import { renderMermaidIn } from "../utils/mermaid.ts";
@@ -33,6 +33,14 @@ const props = withDefaults(defineProps<{
   // tool：当前服务端工具（xAI web_search / x_search / code_execution）；只服务生成中的提示。
   tool?: { kind: string; state: string } | null;
   sources?: { type?: string; url: string; title?: string }[];
+  tools?: {
+    id?: string;
+    source?: string;
+    tool_name?: string;
+    queries?: string[];
+    sources?: { type?: string; url: string; title?: string }[];
+    status?: string;
+  }[];
   reroll?: RerollLike | null; // 重摇状态（本条是目标时才非 null）：{active,count,current_idx,running}
   // usage：上游报的用量（归一化后的那几格；2026-10-20 起气泡脚注就用它）。
   // 只有聚合站（OpenRouter）会带 cost_usd；直连渠道没有 ⇒ 脚注不显示价格。
@@ -53,6 +61,7 @@ const props = withDefaults(defineProps<{
   phase: null,
   tool: null,
   sources: () => [],
+  tools: () => [],
   reroll: null,
   usage: null,
 });
@@ -185,6 +194,14 @@ watch(() => props.streaming, (s) => nextTick(() => {
       <div v-if="streaming && !content && !reasoning && !toolHint" class="typing" aria-label="正在生成">
         <span></span><span></span><span></span>
         <i class="typing-hint">{{ typingHint }}</i>
+      </div>
+      <div v-if="tools.length" class="tool-cards" aria-label="工具调用">
+        <div v-for="(tool, i) in tools" :key="tool.id || i" class="tool-card">
+          <span class="tool-card-name">{{ nativeToolLabel(tool.tool_name) }}</span>
+          <span v-if="tool.source" class="tool-card-source">{{ tool.source === "client" ? "本地" : "服务端" }}</span>
+          <span v-if="tool.queries?.length" class="tool-card-query">{{ tool.queries.join(" / ") }}</span>
+          <span v-if="tool.sources?.length" class="tool-card-count">{{ tool.sources.length }} 条来源</span>
+        </div>
       </div>
       <div v-if="sources.length" class="tool-sources" aria-label="搜索结果">
         <div class="tool-sources-title">来源 {{ sources.length }}</div>

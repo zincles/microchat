@@ -36,6 +36,8 @@ export interface ChatMessage {
     tool_name?: string;
     item_id?: string;
     queries?: string[];
+    arguments?: string;
+    result?: string;
     sources?: { type?: string; url: string; title?: string }[];
     status?: string;
   }[];
