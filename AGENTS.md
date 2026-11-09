@@ -918,7 +918,7 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 
 ### `messages` —— 一条消息，**线性会话里的一格**
 
-`id`（生成回复时**受理那一刻**就算好；**顺序就是它**）· `session_id`（FK CASCADE）· `role`（`CHECK IN ('user','assistant')`）· **`kind`**（`chat` / `tool_run`，实际发生过工具调用才 `tool_run`）· **`status`**（`done` / `canceled` / `failed` / `interrupted`）· **`tools_snapshot`**（生成时可用工具名的 JSON 数组，不表示实际调用）· `content`（**存档本体**，`<state>` 块原样留着）· `created_at`
+`id`（生成回复时**受理那一刻**就算好；**顺序就是它**）· `session_id`（FK CASCADE）· `role`（`CHECK IN ('user','assistant')`）· **`kind`**（`chat` / `tool_run`，实际发生过工具调用才 `tool_run`）· **`status`**（`done` / `canceled` / `failed` / `interrupted`）· **`run_id`**（同一次用户输入产生的多条 assistant 共用的 id；老消息/非多消息为空）· **`tools_snapshot`**（生成时可用工具名的 JSON 数组，不表示实际调用）· `content`（**存档本体**，`<state>` 块原样留着）· `created_at`
 后四列**只服务显示**（出站/状态/编辑一律不看）：`reasoning` · `reasoning_ms`（受理 → 第一段正文）· `duration_ms` · `usage`（归一化后的 JSON）
 `GET /messages` 的每条还带 **`tools`**（该消息实际发生的工具调用，不占 `idx`、不参与世界状态；来源 UI 刷新后也靠它）。
 
@@ -991,7 +991,7 @@ DeepSeek / OpenCode GO 直连**确实不报**，所以那一格在那儿永远�
 - 思考回传用 `reasoning_content`（网关照收；deepseek 系没思考补空串、别的系不塞）；`reasoning_effort` 关不掉（下限 low）。
 - **工具不在提示词里**：请求体顶层 `tools` 数组；回话是助手消息里的 `tool_calls`，结果以 `{role:"tool", tool_call_id}` 回填。两条铁律：历史里出现过工具 ⇒ `tools` 参数必须在（哪怕 `[]`）；不认识的字段默认不发。形状/开关/实测见 `reminder/tool-calls.md`。
   **服务端工具已接**（2026-11-09）：模型规则派生的 `server_tools` 在 Responses 协议下作为 `{"type":"x_search"}` 这类声明进请求体，命中会话 `native_tools_disabled` 的扣掉；它们不靠 `allow_tools`（那是给任意 function tool 的默认关闸）。
-  **本地工具已接**（2026-11-10）：DeepSeek 默认规则 `deepseek-web` 给 `web_search` / `web_fetch` 两个 function 声明；`chat` 做客户端 tool loop（最多 4 轮），执行 `/v1/tools/search` / `/v1/tools/fetch`，工具结果以 `role:"tool"` 回填，最终落一条 assistant 消息 + `message_tools`（`source=client`）。工具结果/来源刷新后仍在。
+  **本地工具已接**（2026-11-10）：DeepSeek 默认规则 `deepseek-web` 给 `web_search` / `web_fetch` 两个 function 声明；`chat` 做客户端 tool loop（最多 4 轮），执行 `/v1/tools/search` / `/v1/tools/fetch`，工具结果以 `role:"tool"` 回填。每轮 tool-call 落一条**中间 assistant 消息**（`kind=tool_run`，`message_tools.source=client` 挂它身上），最终正文另落一条 `kind=chat`；同一轮消息共享 `run_id`。工具结果/来源刷新后仍在。
   **DeepSeek 服务端 `web_search` 不接**：只支持 v4-pro、只有 queries 没有 sources；flash 会忽略并吐 `<tool_call>` 文本。`availableTools` 对 DeepSeek 只返回本地工具（按 `native_tools_disabled` 过滤）。
   ⚠ **xAI 的服务端工具只有 `/responses`**（2026-11-09 真 key 实测）：`/chat/completions` 对 `{"type":"web_search"}` / `{"type":"x_search"}` 直接 **422**（只认 `function` 或 `live_search`），而 `live_search` 虽能过 schema，实际回 **410 "Live search is deprecated. Please switch to the Agent Tools API"**；`/responses` 对三种 Agent Tools 都是 200。
 - **`/debug/last-payload` 必须连请求头一起回显**（打码）—— 不然"为什么 403"只能靠猜。

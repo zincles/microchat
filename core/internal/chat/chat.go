@@ -72,6 +72,8 @@ func New(st *store.Store, paths config.Paths, turns *turn.Registry, tasks *task.
 const (
 	dummyReply    = "（测试用空模型）"
 	fallbackReply = "未配置模型"
+	// 一次用户输入最多几轮客户端工具调用（不含最终 assistant）。
+	maxToolRounds = 4
 )
 
 // localReply：这一发要不要走本地假上游、吐哪句话（非空 ⇒ 不联网）。
@@ -104,12 +106,13 @@ type Accepted struct {
 // 用户消息在后端失败时也留在库里（用户的话不该丢，换个模型接着聊）。
 func (s *Service) Accept(session model.Session, content string) (Accepted, error) {
 	_, _, providersConfig := s.files()
-	// 两个 id 一口气铸完**排序后**发：用户那句必须在回复前面（线性会话的顺序就是 id）
-	ids, err := store.MintOrderedIDs(2)
+	// 预留多条 assistant 消息的 id：用户那句在最前、最终回复在最后；中间留给工具轮。
+	ids, err := store.MintOrderedIDs(2 + maxToolRounds)
 	if err != nil {
 		return Accepted{}, err
 	}
-	userID, replyID := ids[0], ids[1]
+	userID, replyID := ids[0], ids[len(ids)-1]
+	assistantIDs := ids[1 : len(ids)-1]
 
 	// **唯一的并发闸门**：同会话已经在跑 ⇒ 直接拒（不排队）
 	token, err := s.Turns.Begin(session.ID, replyID)
@@ -119,7 +122,8 @@ func (s *Service) Accept(session model.Session, content string) (Accepted, error
 
 	user, err := s.Store.InsertMessage(model.Message{
 		// 用户 `<state>` 注入一律剔除再入库（只 system prompt 与 assistant 的块算数）。
-		ID: userID, SessionID: session.ID, Role: model.RoleUser, Content: statelang.Scan(content).Cleaned,
+		ID: userID, SessionID: session.ID, Role: model.RoleUser, RunID: userID,
+		Content: statelang.Scan(content).Cleaned,
 	})
 	if err != nil {
 		s.Turns.Stop(session.ID) // 登记了却写不进去 ⇒ 摘掉，别留下一个假的"在跑"
@@ -132,7 +136,7 @@ func (s *Service) Accept(session model.Session, content string) (Accepted, error
 	}
 	// 起标题**不在这儿**：它是 title 能力的事（`title.Service.Auto`，在拿到回复之后起）——
 	// 这里只落用户那句（用户的话不该丢，换个模型接着聊）。
-	accepted, err := s.launch(session, replyID, token, providersConfig)
+	accepted, err := s.launch(session, replyID, token, providersConfig, assistantIDs, userID)
 	if err != nil {
 		return Accepted{}, err
 	}
@@ -153,20 +157,23 @@ func (s *Service) Resend(session model.Session) (Accepted, error) {
 	if len(messages) == 0 {
 		return Accepted{}, store.InvalidError("空会话没有历史可重发：先说一句话")
 	}
-	replyID, err := store.MintOrderedIDs(1)
+	ids, err := store.MintOrderedIDs(1 + maxToolRounds)
 	if err != nil {
 		return Accepted{}, err
 	}
+	replyID := ids[len(ids)-1]
+	assistantIDs := ids[:len(ids)-1]
 	// **唯一的并发闸门**：同会话已经在跑 ⇒ 直接拒（不排队，与 Accept 同一把）
-	token, err := s.Turns.Begin(session.ID, replyID[0])
+	token, err := s.Turns.Begin(session.ID, replyID)
 	if err != nil {
 		return Accepted{}, err
 	}
-	return s.launch(session, replyID[0], token, providersConfig)
+	return s.launch(session, replyID, token, providersConfig, assistantIDs, replyID)
 }
 
 // launch：出站定稿 + 选后端 + 丢给后台跑。调用方已登记（Begin 过了）⇒ 失败摘登记。
-func (s *Service) launch(session model.Session, replyID string, token uint64, providersConfig config.ProvidersConfig) (Accepted, error) {
+func (s *Service) launch(session model.Session, replyID string, token uint64, providersConfig config.ProvidersConfig,
+	assistantIDs []string, runID string) (Accepted, error) {
 	// 出站**此刻定稿**（受理时捕获的上文）：后台不再重算，期间别人改了库也不影响这一轮
 	outgoing, reasoningByID, err := s.outgoingFor(session)
 	if err != nil {
@@ -182,7 +189,7 @@ func (s *Service) launch(session model.Session, replyID string, token uint64, pr
 	if model := session.Model; chosen.Name != providers.BackendFallback && chosen.Name != providers.BackendDummy {
 		chosen.Provider.Protocol = string(providers.ResolveProtocolFor(s.Store.ModelRoute, chosen.Provider.ID, model, providers.Protocol(chosen.Provider.Protocol)))
 	}
-	go s.run(session, replyID, token, chosen, outgoing, reasoningByID, time.Now())
+	go s.run(session, replyID, token, chosen, outgoing, reasoningByID, time.Now(), assistantIDs, runID)
 	return Accepted{
 		Backend: chosen.Name,
 		Turn:    statusView(s.Turns.Status(session.ID)),
@@ -191,7 +198,7 @@ func (s *Service) launch(session model.Session, replyID string, token uint64, pr
 
 // run：后台那半程 —— **整段拿到才 INSERT**（用受理时定好的 id）。
 func (s *Service) run(session model.Session, replyID string, token uint64, chosen providers.Backend,
-	outgoing []state.Outgoing, reasoningByID map[string]string, started time.Time) {
+	outgoing []state.Outgoing, reasoningByID map[string]string, started time.Time, assistantIDs []string, runID string) {
 	sessionID := session.ID
 	// 挂号：前台这一轮也是任务（会调模型的作业必带会话 id ⇒ Begin 自己会断言）
 	guard := s.Tasks.Begin(task.KindTurn, &sessionID, "生成 · 会话 "+shortID(sessionID))
@@ -209,10 +216,10 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 	client := providers.NewClient(wire)
 	tools := s.availableTools(session, chosen)
 	chatMessages := wireMessages(outgoing, reasoningByID)
-	toolsUsed := false
 	toolOrder := []string{}
 	toolEvents := map[string]providers.ToolEvent{}
-	localToolRecords := []model.MessageTool{}
+	assistantMessages := []model.Message{}
+	nextAssistant := 0
 	var result providers.Result
 	var err error
 	const maxToolRounds = 4
@@ -225,7 +232,6 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 			Tools:         tools,
 		}, localReply(chosen), func(delta providers.Delta) {
 			if delta.Tool != nil {
-				toolsUsed = true
 				s.Turns.SetTool(sessionID, token, delta.Tool.Kind, delta.Tool.State)
 				if delta.Tool.ItemID != "" {
 					event, exists := toolEvents[delta.Tool.ItemID]
@@ -275,11 +281,11 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 		if len(result.ToolCalls) == 0 {
 			break
 		}
-		toolsUsed = true
 		chatMessages = append(chatMessages, providers.ChatMessage{
 			Role: "assistant", Content: result.Text, Reasoning: result.Reasoning,
 			ToolCalls: toolCallsJSON(result.ToolCalls),
 		})
+		roundTools := make([]model.MessageTool, 0, len(result.ToolCalls))
 		for _, call := range result.ToolCalls {
 			s.Turns.SetTool(sessionID, token, call.Name, "in_progress")
 			content, sources, toolErr := runLocalTool(ctx, chosen.Provider, call)
@@ -297,7 +303,7 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 				}
 				s.Turns.AddSources(sessionID, token, turnSources)
 			}
-			localToolRecords = append(localToolRecords, model.MessageTool{
+			roundTools = append(roundTools, model.MessageTool{
 				Source: "client", ToolName: call.Name, ItemID: call.ID,
 				Arguments: call.Arguments, Result: content, Sources: sources, Status: status,
 				Queries: localToolQueries(call),
@@ -306,6 +312,13 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 				Role: "tool", Content: content, ToolCallID: call.ID, Name: call.Name,
 			})
 		}
+		if nextAssistant >= len(assistantIDs) {
+			err = fmt.Errorf("assistant 消息 id 预留不足")
+			break
+		}
+		assistantMessages = append(assistantMessages, s.roundMessage(
+			session, assistantIDs[nextAssistant], chosen, result, roundTools, toolNames(tools), runID))
+		nextAssistant++
 		if round == maxToolRounds-1 {
 			err = fmt.Errorf("工具调用超过 %d 轮", maxToolRounds)
 			break
@@ -327,10 +340,7 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 		return
 	}
 	kind := model.MessageKindChat
-	if toolsUsed {
-		kind = model.MessageKindToolRun
-	}
-	messageTools := append([]model.MessageTool{}, localToolRecords...)
+	messageTools := []model.MessageTool{}
 	for _, itemID := range toolOrder {
 		event := toolEvents[itemID]
 		sources := make([]model.MessageToolSource, 0, len(event.Sources))
@@ -342,8 +352,12 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 			Queries: event.Queries, Sources: sources, Status: "done",
 		})
 	}
-	message := s.assistantMessage(session, replyID, token, chosen, result, firstTextAt, started, kind, toolNames(tools), messageTools)
-	if _, err := s.Store.InsertMessageWithTools(message, messageTools); err != nil {
+	if len(messageTools) > 0 {
+		kind = model.MessageKindToolRun
+	}
+	message := s.assistantMessage(session, replyID, token, chosen, result, firstTextAt, started, kind, toolNames(tools), messageTools, runID)
+	assistantMessages = append(assistantMessages, message)
+	if _, err := s.Store.InsertMessagesWithTools(assistantMessages); err != nil {
 		s.Turns.Finish(sessionID, token, err.Error())
 		guard.Fail(err.Error())
 		return
@@ -398,16 +412,33 @@ func toolCallsJSON(calls []providers.ToolCall) json.RawMessage {
 	return raw
 }
 
+// roundMessage：客户端工具循环里的**中间 assistant 消息**（通常只有 tool_calls，
+// 正文可能为空）；它和最终回复同属一个 run，工具记录挂在它自己身上。
+func (s *Service) roundMessage(session model.Session, id string, chosen providers.Backend,
+	result providers.Result, tools []model.MessageTool, snapshot []string, runID string) model.Message {
+	message := model.Message{
+		ID: id, SessionID: session.ID, Role: model.RoleAssistant,
+		Kind: model.MessageKindToolRun, Status: model.MessageStatusDone, RunID: runID,
+		ToolsSnapshot: snapshot, Tools: tools, Content: result.Text,
+		Usage: result.Usage,
+	}
+	if chosen.StoresReasoning() && strings.TrimSpace(result.Reasoning) != "" {
+		message.Reasoning = result.Reasoning
+	}
+	return message
+}
+
 // assistantMessage：把这一轮的产出拼成要落库的那一行。
 //
 // 思考**留不留档**由渠道的 `store_reasoning` 决定：它只服务动画与回看，不参与任何计算；
 // 关掉它时连 `reasoning_ms` 一起不写（没有"这个思考"可言）。
 func (s *Service) assistantMessage(session model.Session, replyID string, token uint64, chosen providers.Backend,
-	result providers.Result, firstTextAt time.Time, started time.Time, kind model.MessageKind, tools []string, messageTools []model.MessageTool) model.Message {
+	result providers.Result, firstTextAt time.Time, started time.Time, kind model.MessageKind, tools []string,
+	messageTools []model.MessageTool, runID string) model.Message {
 	durationMS := time.Since(started).Milliseconds()
 	message := model.Message{
 		ID: replyID, SessionID: session.ID, Role: model.RoleAssistant,
-		Kind: kind, Status: model.MessageStatusDone, ToolsSnapshot: tools,
+		Kind: kind, Status: model.MessageStatusDone, RunID: runID, ToolsSnapshot: tools,
 		Tools:   messageTools,
 		Content: result.Text, DurationMS: &durationMS, Usage: result.Usage,
 	}

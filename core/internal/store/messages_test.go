@@ -606,3 +606,28 @@ func TestMessageMetadataRoundTrip(t *testing.T) {
 		t.Fatalf("copy tools = %+v", copiedAssistant)
 	}
 }
+
+func TestInsertMessagesWithToolsBatch(t *testing.T) {
+	st := openTemp(t)
+	seedSession(t, st, "s2", "u1")
+	messages, err := st.InsertMessagesWithTools([]model.Message{
+		{ID: "u2", SessionID: "s2", Role: model.RoleAssistant, Kind: model.MessageKindToolRun,
+			RunID: "run1", Content: "", Tools: []model.MessageTool{{Source: "client", ToolName: "web_search", Status: "done"}}},
+		{ID: "u3", SessionID: "s2", Role: model.RoleAssistant, Kind: model.MessageKindChat,
+			RunID: "run1", Content: "最终"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 2 || messages[0].RunID != "run1" || messages[1].RunID != "run1" {
+		t.Fatalf("messages = %+v", messages)
+	}
+	got, err := st.ListMessages("s2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 || got[1].Kind != model.MessageKindToolRun || len(got[1].Tools) != 1 ||
+		got[2].Kind != model.MessageKindChat || got[2].RunID != "run1" {
+		t.Fatalf("got = %+v", got)
+	}
+}

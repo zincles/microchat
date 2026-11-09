@@ -13,16 +13,16 @@ import (
 )
 
 // messageColumns：这条会话的消息列（**没有 parent_message_id**：线性会话没有父指针）。
-const messageColumns = "id, session_id, role, kind, status, tools_snapshot, content, created_at, updated_at, " +
+const messageColumns = "id, session_id, role, kind, status, run_id, tools_snapshot, content, created_at, updated_at, " +
 	"reasoning, reasoning_ms, duration_ms, usage, summary_id"
 
 func scanMessage(row scanner) (model.Message, error) {
 	var message model.Message
-	var kind, status, toolsSnapshot, reasoning, summaryID sql.NullString
+	var kind, status, runID, toolsSnapshot, reasoning, summaryID sql.NullString
 	var usage []byte
 	var reasoningMS, durationMS sql.NullInt64
 	err := row.Scan(
-		&message.ID, &message.SessionID, &message.Role, &kind, &status, &toolsSnapshot, &message.Content,
+		&message.ID, &message.SessionID, &message.Role, &kind, &status, &runID, &toolsSnapshot, &message.Content,
 		&message.CreatedAt, &message.UpdatedAt,
 		&reasoning, &reasoningMS, &durationMS, &usage, &summaryID,
 	)
@@ -34,6 +34,9 @@ func scanMessage(row scanner) (model.Message, error) {
 	}
 	if status.Valid && status.String != "" {
 		message.Status = model.MessageStatus(status.String)
+	}
+	if runID.Valid {
+		message.RunID = runID.String
 	}
 	if toolsSnapshot.Valid && toolsSnapshot.String != "" {
 		_ = json.Unmarshal([]byte(toolsSnapshot.String), &message.ToolsSnapshot)
@@ -308,9 +311,9 @@ func (s *Store) InsertMessageWithTools(message model.Message, tools []model.Mess
 	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.Exec(
 		`INSERT INTO messages
-		   (id, session_id, role, kind, status, tools_snapshot, content, created_at, updated_at, reasoning, reasoning_ms, duration_ms, usage, summary_id)
-		 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9, ?10, ?11, ?12, NULL)`,
-		message.ID, message.SessionID, string(message.Role), string(message.Kind), string(message.Status),
+		   (id, session_id, role, kind, status, run_id, tools_snapshot, content, created_at, updated_at, reasoning, reasoning_ms, duration_ms, usage, summary_id)
+		 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9, ?10, ?11, ?12, ?13, NULL)`,
+		message.ID, message.SessionID, string(message.Role), string(message.Kind), string(message.Status), message.RunID,
 		mustJSON(message.ToolsSnapshot), message.Content, message.CreatedAt,
 		message.Reasoning, message.ReasoningMS, message.DurationMS, usageArg(message.Usage)); err != nil {
 		return model.Message{}, err
@@ -352,6 +355,73 @@ func nullableText(value string) any {
 		return nil
 	}
 	return value
+}
+
+// InsertMessagesWithTools：一次把同一轮的多条 assistant 消息 + 它们的工具记录
+// 写进**一个事务**（多 assistant Message 的原子落库）。
+func (s *Store) InsertMessagesWithTools(messages []model.Message) ([]model.Message, error) {
+	if len(messages) == 0 {
+		return messages, nil
+	}
+	now := nowMS()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for index := range messages {
+		message := &messages[index]
+		if message.CreatedAt == 0 {
+			message.CreatedAt = now
+		}
+		if message.Kind == "" {
+			message.Kind = model.MessageKindChat
+		}
+		if message.Status == "" {
+			message.Status = model.MessageStatusDone
+		}
+		message.UpdatedAt = message.CreatedAt
+		if _, err := tx.Exec(
+			`INSERT INTO messages
+			   (id, session_id, role, kind, status, run_id, tools_snapshot, content, created_at, updated_at, reasoning, reasoning_ms, duration_ms, usage, summary_id)
+			 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9, ?10, ?11, ?12, ?13, NULL)`,
+			message.ID, message.SessionID, string(message.Role), string(message.Kind), string(message.Status), message.RunID,
+			mustJSON(message.ToolsSnapshot), message.Content, message.CreatedAt,
+			message.Reasoning, message.ReasoningMS, message.DurationMS, usageArg(message.Usage)); err != nil {
+			return nil, err
+		}
+		for toolIndex := range message.Tools {
+			tool := &message.Tools[toolIndex]
+			if tool.ID == "" {
+				tool.ID = fmt.Sprintf("%s-tool-%d", message.ID, toolIndex+1)
+			}
+			tool.MessageID = message.ID
+			if tool.Seq <= 0 {
+				tool.Seq = toolIndex + 1
+			}
+			if tool.CreatedAt == 0 {
+				tool.CreatedAt = message.CreatedAt
+			}
+			if _, err := tx.Exec(
+				`INSERT INTO message_tools
+				   (id, message_id, seq, source, tool_name, item_id, queries, sources, arguments, result, status, created_at)
+				 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)`,
+				tool.ID, tool.MessageID, tool.Seq, tool.Source, tool.ToolName, nullableText(tool.ItemID),
+				mustJSON(tool.Queries), mustJSON(tool.Sources), tool.Arguments, tool.Result, tool.Status, tool.CreatedAt); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if err := execTouchLocked(tx, "UPDATE sessions SET updated_at = ?1 WHERE id = ?2",
+		now, messages[0].SessionID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return messages, nil
 }
 
 // MessageEdit：改一条消息的字段（nil = 不动）。
@@ -641,6 +711,7 @@ func (s *Store) ensureMessageMetadata() error {
 		{"kind", "TEXT NOT NULL DEFAULT 'chat'"},
 		{"status", "TEXT NOT NULL DEFAULT 'done'"},
 		{"tools_snapshot", "TEXT NOT NULL DEFAULT '[]'"},
+		{"run_id", "TEXT NOT NULL DEFAULT ''"},
 	}
 	for _, column := range columns {
 		var count int

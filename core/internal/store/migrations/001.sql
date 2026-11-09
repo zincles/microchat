@@ -31,6 +31,8 @@ CREATE TABLE messages (
   kind        TEXT NOT NULL DEFAULT 'chat',
   -- done / canceled / failed / interrupted
   status      TEXT NOT NULL DEFAULT 'done',
+  -- 同一次用户输入产生的多条 assistant 共用的 run id
+  run_id      TEXT NOT NULL DEFAULT '',
   -- 生成时可用工具名的 JSON 数组；实际调用在 message_tools
   tools_snapshot TEXT NOT NULL DEFAULT '[]',
   content     TEXT NOT NULL,

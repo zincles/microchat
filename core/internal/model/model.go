@@ -74,6 +74,8 @@ type Message struct {
 	// Kind：storage/display 类型（role 仍是 wire 的 user/assistant）。
 	Kind   MessageKind   `json:"kind,omitempty"`
 	Status MessageStatus `json:"status,omitempty"`
+	// RunID：同一次用户输入产生的多条 assistant 消息共用一个 run（空 = 老消息 / 非多消息）。
+	RunID string `json:"run_id,omitempty"`
 	// ToolsSnapshot：生成这一条时**可用**的工具名（server + local），不表示实际调用。
 	ToolsSnapshot []string `json:"tools_snapshot,omitempty"`
 	// Tools：实际发生的工具调用（服务端 / 客户端）；不占 idx。

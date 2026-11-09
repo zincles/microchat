@@ -110,7 +110,7 @@
   来源只有 URL，没有摘要/正文 —— 摘要要从最终回答的 citation/正文里看。
 
 - **DeepSeek 的两套搜索不同**（2026-11-10 实测）：
-  - 独立 `POST /v1/tools/search` / `/v1/tools/fetch`：客户端 API，返回 `results[]`（title/url/snippet/summary/content/date/authority）。**已接成本地 function tool**：模型发起 `web_search` / `web_fetch`，chat 执行后以 `role:"tool"` 回填，最终 assistant 消息的 `message_tools`（source=client）保存查询/来源。
+  - 独立 `POST /v1/tools/search` / `/v1/tools/fetch`：客户端 API，返回 `results[]`（title/url/snippet/summary/content/date/authority）。**已接成本地 function tool**：模型发起 `web_search` / `web_fetch`，chat 执行后以 `role:"tool"` 回填；每轮 tool-call 落一条中间 assistant 消息（`message_tools.source=client`），最终正文另落一条，同一 run_id。
   - Responses 的 `tools:[{"type":"web_search"}]`：服务端工具，仅 `deepseek-v4-pro` 生效；`action` 是 `queries[]`，**没有 sources**；`deepseek-flash` 会忽略它并把 `<tool_call>` 当正文吐出来。
   - `/chat/completions` 不接受 `web_search`（422，只认 function）。
   - 因此 `availableTools` 对 DeepSeek 只返回**本地** function tools（`web_search` / `web_fetch`），服务端 `web_search` 一律不发。
