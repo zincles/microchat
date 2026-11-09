@@ -372,7 +372,38 @@ function startSendingBubble() {
   const row = addMessage("助手", "", "assistant");
   row.stream = true;
   row.phase = "sending";
+  row.step = 1;
   return row;
+}
+
+// finishLiveRow：进入下一 step 时把当前 live 行钉成普通消息（不靠数据库）。
+function finishLiveRow(row) {
+  row.stream = false;
+  row.phase = "";
+  row.content = vueStream.value.text ?? "";
+  row.reasoning = vueStream.value.reasoning ?? "";
+  row.tool = null;
+  row.sources = [];
+}
+
+// startLiveStep：一轮 run 的第 N 个 assistant 模型轮 -> 新气泡。
+function startLiveStep(step) {
+  const row = addMessage("助手", "", "assistant");
+  row.stream = true;
+  row.phase = "waiting";
+  row.step = step;
+  return row;
+}
+
+// advanceLiveStep：status.step 变了才切；返回新 row / 归零游标。
+function advanceLiveStep(st, row, cur) {
+  const step = Number(st?.step || 0);
+  if (!step || !row || step === Number(row.step || 0)) return null;
+  finishLiveRow(row);
+  const next = startLiveStep(step);
+  vueStream.value = { id: vueStream.value.id, text: "", reasoning: "" };
+  resetTypewriter();
+  return { row: next, cur: { from: 0, thinkFrom: 0 } };
 }
 // 乐观上屏的那句用户消息（2026-11-05，高延迟优化）：先画，等 202 回来再换成服务端那条
 // （换的是**同一条消息**：服务端回的 `user` 带真 id/idx，编号与后续编辑/删除都认它）。
@@ -1457,6 +1488,7 @@ const activeTurnPolls = new Set();
 
 // applyTurnStream：把一次 status+slice 并进显示与打字机；返回新游标。
 function applyTurnStream(st, slice, cur, row) {
+  if (st.step) row.step = st.step;
   row.tool = st.tool ?? null;
   row.sources = st.sources ?? [];
   if (row.tool || row.sources.length) row.kind = "tool_run";
@@ -1499,6 +1531,7 @@ async function finishTurnStream(sid, st) {
 // 连接建了但 8s 一个事件都没有 ⇒ 抛错，让 pollTurn 回退到 HTTP 轮询（CF 缓冲/旧代理的兜底）。
 async function pollTurnEvents(sid, turnID, my, row) {
   let cur = { from: 0, thinkFrom: 0 };
+  let liveRow = row;
   let es = null;
   try {
     return await new Promise((resolve, reject) => {
@@ -1522,7 +1555,9 @@ async function pollTurnEvents(sid, turnID, my, row) {
         if (turnID && st.message_id && st.message_id !== turnID && st.phase !== "idle") {
           es.close(); resolve(null); return;
         }
-        cur = applyTurnStream(st, slice, cur, row);
+        const advanced = advanceLiveStep(st, liveRow, cur);
+        if (advanced) { liveRow = advanced.row; cur = advanced.cur; }
+        cur = applyTurnStream(st, slice, cur, liveRow);
         if (st.phase === "idle" || st.phase === "error") {
           es.close(); resolve(st);
         }
@@ -1540,6 +1575,7 @@ async function pollTurnEvents(sid, turnID, my, row) {
 // pollTurnHTTP：SSE 不可用时的回退（也是原来那套 status+增量轮询）。
 async function pollTurnHTTP(sid, turnID, my, row) {
   let cur = { from: 0, thinkFrom: 0 };
+  let liveRow = row;
   let misses = 0;
   let delay = 200;
   for (;;) {
@@ -1562,7 +1598,9 @@ async function pollTurnHTTP(sid, turnID, my, row) {
     }
     delay = Math.max(80, 300 - (performance.now() - requestAt));
     if (my !== epoch) return;
-    cur = applyTurnStream(st, slice, cur, row);
+    const advanced = advanceLiveStep(st, liveRow, cur);
+    if (advanced) { liveRow = advanced.row; cur = advanced.cur; }
+    cur = applyTurnStream(st, slice, cur, liveRow);
     if (st.phase === "idle" || st.phase === "error") {
       await finishTurnStream(sid, st);
       return;
@@ -1582,6 +1620,7 @@ async function pollTurn(sid, turnID, existing = null) {
   m.phase = "waiting";
   m.tool = null;
   m.sources = [];
+  m.step = 1;
   if (!vueMessages.value.includes(m)) vueMessages.value.push(m);
   vueStream.value = { id: turnID, text: "", reasoning: "" };
   resetTypewriter();

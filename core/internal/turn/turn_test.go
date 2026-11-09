@@ -266,3 +266,18 @@ func TestAddSourcesDedupesAndSurvivesText(t *testing.T) {
 		t.Fatalf("收尾后来源该清掉：%+v", got)
 	}
 }
+
+func TestNextStepResetsStream(t *testing.T) {
+	registry := NewRegistry()
+	token, _ := registry.Begin("s", "m")
+	if !registry.AppendContent("s", token, "第一段") {
+		t.Fatal("append")
+	}
+	if !registry.NextStep("s", token) {
+		t.Fatal("NextStep")
+	}
+	status := registry.Status("s")
+	if status.Step != 2 || status.Chars != 0 || status.Phase != PhasePending {
+		t.Fatalf("status = %+v", status)
+	}
+}

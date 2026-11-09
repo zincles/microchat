@@ -222,8 +222,10 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 	nextAssistant := 0
 	var result providers.Result
 	var err error
-	const maxToolRounds = 4
-	for round := 0; round < maxToolRounds; round++ {
+	for round := 0; round <= maxToolRounds; round++ {
+		if round > 0 {
+			s.Turns.NextStep(sessionID, token)
+		}
 		result, err = client.Chat(ctx, wire, providers.Request{
 			Model:         session.Model,
 			Messages:      chatMessages,
@@ -319,7 +321,7 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 		assistantMessages = append(assistantMessages, s.roundMessage(
 			session, assistantIDs[nextAssistant], chosen, result, roundTools, toolNames(tools), runID))
 		nextAssistant++
-		if round == maxToolRounds-1 {
+		if round == maxToolRounds {
 			err = fmt.Errorf("工具调用超过 %d 轮", maxToolRounds)
 			break
 		}

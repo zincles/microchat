@@ -79,7 +79,9 @@ type Source struct {
 
 // Status：`GET /sessions/{id}/status` 的响应（字段顺序即契约）。
 type Status struct {
-	Phase         Phase          `json:"phase"`
+	Phase Phase `json:"phase"`
+	// Step：一轮 run 里的第几个 assistant 模型轮（从 1 开始；客户端据此切 live 气泡）。
+	Step          int            `json:"step,omitempty"`
 	MessageID     *string        `json:"message_id,omitempty"`
 	ElapsedMS     int64          `json:"elapsed_ms"`
 	Chars         int            `json:"chars"`
@@ -102,6 +104,7 @@ type StreamSlice struct {
 
 type entry struct {
 	phase     Phase
+	step      int
 	messageID *string
 	started   time.Time
 	elapsed   time.Duration // 结束后的定格时长（error 态回报它）
@@ -145,7 +148,7 @@ func (r *Registry) Status(sessionID string) Status {
 		return Status{Phase: PhaseIdle}
 	}
 	status := Status{
-		Phase: item.phase, MessageID: item.messageID,
+		Phase: item.phase, Step: item.step, MessageID: item.messageID,
 		Chars: item.text.Len(), ThinkingChars: item.thinking.Len(),
 		Error: item.err, Compact: item.compact,
 	}
@@ -189,7 +192,7 @@ func (r *Registry) Begin(sessionID, messageID string) (uint64, error) {
 	}
 	r.nextToken++
 	r.entries[sessionID] = &entry{
-		phase: PhasePending, messageID: &messageID, started: time.Now(), token: r.nextToken,
+		phase: PhasePending, step: 1, messageID: &messageID, started: time.Now(), token: r.nextToken,
 	}
 	return r.nextToken, nil
 }
@@ -326,6 +329,24 @@ func (r *Registry) IsMine(sessionID string, token uint64) bool {
 	defer r.mu.Unlock()
 	item := r.lookup(sessionID)
 	return item != nil && item.token == token
+}
+
+// NextStep：客户端工具循环进入下一条 assistant 模型轮。**同一个 token**，只把
+// 当前轮的文字/思考/工具/来源清空并抬 step —— 客户端据此收掉上一个 live 气泡、开新的。
+func (r *Registry) NextStep(sessionID string, token uint64) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	item := r.lookup(sessionID)
+	if item == nil || item.token != token {
+		return false
+	}
+	item.step++
+	item.text.Reset()
+	item.thinking.Reset()
+	item.tool = nil
+	item.sources = nil
+	item.phase = PhasePending
+	return true
 }
 
 // AppendContent：增量进缓冲区，顺手把 `pending` 抬成 `streaming`。令牌对不上就不收。

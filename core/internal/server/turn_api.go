@@ -156,11 +156,18 @@ func (s *Server) turnEvents(w http.ResponseWriter, r *http.Request) {
 	defer ticker.Stop()
 	lastText, lastThink := -1, -1
 	lastPhase := turn.Phase("")
+	lastStep := 0
 	lastTool := ""
 	lastSources := ""
 	var lastStatus time.Time
 	for {
 		status := s.chat.Status(sid)
+		stepChanged := status.Step != lastStep
+		if stepChanged {
+			from, thinkFrom = 0, 0
+			lastText, lastThink = -1, -1
+			lastStep = status.Step
+		}
 		slice := s.chat.StreamSince(sid, from, thinkFrom)
 		toolKey := ""
 		if status.Tool != nil {
@@ -171,7 +178,7 @@ func (s *Server) turnEvents(w http.ResponseWriter, r *http.Request) {
 			sourceKey += source.URL + "\x00"
 		}
 		changed := slice.Next != lastText || slice.ThinkNext != lastThink ||
-			status.Phase != lastPhase || toolKey != lastTool || sourceKey != lastSources
+			status.Phase != lastPhase || stepChanged || toolKey != lastTool || sourceKey != lastSources
 		if changed || time.Since(lastStatus) >= 500*time.Millisecond {
 			payload, err := json.Marshal(TurnPoll{Status: status, Slice: slice})
 			if err != nil {

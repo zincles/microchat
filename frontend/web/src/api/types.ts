@@ -78,6 +78,7 @@ export interface SearchSource {
 
 export interface TurnStatus {
   phase: TurnPhase;
+  step?: number;
   message_id?: string;
   elapsed_ms: number;
   chars: number;
