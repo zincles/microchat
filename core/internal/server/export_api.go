@@ -18,6 +18,8 @@ import (
 //   **再加三个软引用** —— `provider` / `model` / `agent_id`（+ `agent_name` 只为报错时说得出口）。
 //   就这三个：它们是会话自己的三格绑定（`sessions.provider/model/agent_id`），导回去"这条对话
 //   当初是谁在什么模型上说的"就齐了。
+// v4（2026-11-10）：消息再带 `kind`/`status`/`run_id` + `tools`（message_tools），
+//   保证多 assistant Message 与工具轨迹一起搬家。v3 及更早文件没有这些字段 ⇒ 按普通消息读。
 // v3（2026-10-28 用户定："我们要完整的把那个金字塔结构导出出来，或者导入进去。必须做到"）：
 //   **再加 `summaries`** —— 整张摘要金字塔（任意层级），外加每条消息的 `reasoning`。
 //   为什么不带就"还原不了"：摘要正文是**模型写的**，再压一遍得到的是另一段字（`reroll-summary`
@@ -59,6 +61,23 @@ type exportMessage struct {
 	Content string `json:"content"`
 	// Reasoning：v3 起。模型的思考（界面折在那条回复下面那截）。老文件没有 ⇒ 空。
 	Reasoning string `json:"reasoning,omitempty"`
+	// v4：消息级类型/状态/run 与工具轨迹（message_tools）。老文件没有 ⇒ 普通 done 消息。
+	Kind   string       `json:"kind,omitempty"`
+	Status string       `json:"status,omitempty"`
+	RunID  string       `json:"run_id,omitempty"`
+	Tools  []exportTool `json:"tools,omitempty"`
+}
+
+type exportTool struct {
+	Source    string                    `json:"source,omitempty"`
+	ToolName  string                    `json:"tool_name"`
+	ItemID    string                    `json:"item_id,omitempty"`
+	Queries   []string                  `json:"queries,omitempty"`
+	Sources   []model.MessageToolSource `json:"sources,omitempty"`
+	Arguments string                    `json:"arguments,omitempty"`
+	Result    string                    `json:"result,omitempty"`
+	Status    string                    `json:"status,omitempty"`
+	Seq       int                       `json:"seq,omitempty"`
 }
 
 // exportSummary：金字塔里的一条。
@@ -103,16 +122,25 @@ func (s *Server) exportSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := sessionExport{
-		Version: 3, Title: session.Title,
+		Version: 4, Title: session.Title,
 		Provider: session.Provider, Model: session.Model, AgentID: session.AgentID,
 		AgentName: s.agentName(session.AgentID),
 		Messages:  make([]exportMessage, 0, len(messages)),
 		Summaries: make([]exportSummary, 0, len(summaries)),
 	}
 	for _, m := range messages {
-		out.Messages = append(out.Messages, exportMessage{
+		exported := exportMessage{
 			Role: string(m.Role), Content: m.Content, Reasoning: m.Reasoning,
-		})
+			Kind: string(m.Kind), Status: string(m.Status), RunID: m.RunID,
+		}
+		for _, tool := range m.Tools {
+			exported.Tools = append(exported.Tools, exportTool{
+				Source: tool.Source, ToolName: tool.ToolName, ItemID: tool.ItemID,
+				Queries: tool.Queries, Sources: tool.Sources, Arguments: tool.Arguments,
+				Result: tool.Result, Status: tool.Status, Seq: tool.Seq,
+			})
+		}
+		out.Messages = append(out.Messages, exported)
 	}
 	// 摘要：`Key` 直接用它自己的 id（文件内的句柄，导回去会换新 id）。
 	// `ListSummaries` 已经按 id 升序 ⇒ 父必然排在子**后面**（父是后压出来的）。导入不依赖这个顺序
@@ -144,9 +172,9 @@ func (s *Server) importJSON(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if req.Version > 3 {
+	if req.Version > 4 {
 		writeError(w, http.StatusBadRequest, "invalid",
-			fmt.Sprintf("这份文件的 version = %d 比本程序认识的（3）新：请升级后再导入", req.Version))
+			fmt.Sprintf("这份文件的 version = %d 比本程序认识的（4）新：请升级后再导入", req.Version))
 		return
 	}
 	if len(req.Messages) == 0 {
@@ -161,9 +189,18 @@ func (s *Server) importJSON(w http.ResponseWriter, r *http.Request) {
 				fmt.Sprintf("第 %d 条的 role 只许 user / assistant（得到 %q）", index+1, m.Role))
 			return
 		}
-		parsed = append(parsed, store.ImportMessage{
+		item := store.ImportMessage{
 			IsUser: role == "user", Content: m.Content, Reasoning: m.Reasoning,
-		})
+			Kind: m.Kind, Status: m.Status, RunID: m.RunID,
+		}
+		for _, tool := range m.Tools {
+			item.Tools = append(item.Tools, model.MessageTool{
+				Source: tool.Source, ToolName: tool.ToolName, ItemID: tool.ItemID,
+				Queries: tool.Queries, Sources: tool.Sources, Arguments: tool.Arguments,
+				Result: tool.Result, Status: tool.Status, Seq: tool.Seq,
+			})
+		}
+		parsed = append(parsed, item)
 	}
 	// v3 的摘要：**在这里就验完**（铸新 id、重映射父子、挡环、挡越界）。
 	// 放在建会话之前 —— 一份坏文件不该在库里留下一条空壳会话再让人自己去删。

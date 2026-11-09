@@ -1111,3 +1111,20 @@ func TestRepairHolesFillsOnlyGaps(t *testing.T) {
 		t.Fatalf("摘要数不对：%+v", h.summaries(t))
 	}
 }
+
+func TestMaterialOfIncludesToolCalls(t *testing.T) {
+	got := materialOf([]model.Message{{
+		Role: model.RoleAssistant, Content: "",
+		Tools: []model.MessageTool{{
+			Source: "client", ToolName: "web_search",
+			Queries: []string{"xAI news"},
+			Sources: []model.MessageToolSource{{URL: "https://example.com/a"}},
+			Result:  "结果正文",
+		}},
+	}})
+	for _, want := range []string{"[工具 web_search", "client", "xAI news", "结果正文", "https://example.com/a"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("材料没有 %q：%s", want, got)
+		}
+	}
+}

@@ -263,8 +263,8 @@ func TestSecondAcceptIsRefusedAndWritesNothing(t *testing.T) {
 	h.settle(t)
 }
 
-// 中途按停 ⇒ **库里半条都没有**；task 记「取消」（不是失败：用户按停是正常操作）。
-func TestStopLeavesNoHalfMessage(t *testing.T) {
+// 中途按停 ⇒ 用户句 + 一条 status=canceled 的 assistant；task 记「取消」。
+func TestStopKeepsCanceledMessage(t *testing.T) {
 	h := newHarness(t, dummyProviders(), "dummy", "dummy")
 	accepted, err := h.service.Accept(h.session, "这句会被打断")
 	if err != nil {
@@ -280,19 +280,20 @@ func TestStopLeavesNoHalfMessage(t *testing.T) {
 	if h.service.Stop(h.session.ID) {
 		t.Fatal("幂等：没在跑 ⇒ false")
 	}
-	// 后台那一轮发现令牌对不上，直接把结果丢掉
-	messages := h.settle(t)
-	if len(messages) != 1 || messages[0].ID != accepted.User.ID {
-		t.Fatalf("被打断的那一轮不许留下半条：%+v", messages)
-	}
+	// 等后台真正收尾（Stop 会先摘 turn 登记，取消消息是后台随后落的）
 	if record := h.turnTask(t); record.Outcome != task.StateCanceled || record.Error != "" {
 		t.Fatalf("按停该记成「取消」且没有失败原因：%+v", record)
+	}
+	messages := h.settle(t)
+	if len(messages) != 2 || messages[0].ID != accepted.User.ID ||
+		messages[1].Status != model.MessageStatusCanceled {
+		t.Fatalf("按停该留用户句 + canceled assistant：%+v", messages)
 	}
 	// 停完还能接着发（登记表摘干净了，没有僵尸在跑）
 	if _, err := h.service.Accept(h.session, "接着聊"); err != nil {
 		t.Fatalf("停完之后该能接着发：%v", err)
 	}
-	if messages := h.settle(t); len(messages) != 3 {
+	if messages := h.settle(t); len(messages) != 4 {
 		t.Fatalf("该多出用户那句与回复：%+v", messages)
 	}
 }

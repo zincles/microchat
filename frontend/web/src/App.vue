@@ -2183,6 +2183,7 @@ onUnmounted(() => {
               :streaming="!!row.msg.stream || isLive(row.msg)"
               :phase="String(row.msg.phase || '')"
               :kind="row.msg.kind || 'chat'"
+              :status="row.msg.status || 'done'"
               :tool="row.msg.tool"
               :sources="row.msg.sources"
               :tools="row.msg.tools"

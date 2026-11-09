@@ -211,6 +211,7 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 	defer cancel()
 
 	var firstTextAt time.Time
+	var partialText, partialReasoning strings.Builder
 	// 配置 → 线上形状只有这一条路（`FromConfig`）：手搓字面量漏一个字段就是静默失效
 	wire := providers.FromConfig(chosen.Provider)
 	client := providers.NewClient(wire)
@@ -271,9 +272,11 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 				if firstTextAt.IsZero() {
 					firstTextAt = time.Now()
 				}
+				partialText.WriteString(delta.Text)
 				s.Turns.AppendContent(sessionID, token, delta.Text)
 			}
 			if delta.Reasoning != "" {
+				partialReasoning.WriteString(delta.Reasoning)
 				s.Turns.AppendReasoning(sessionID, token, delta.Reasoning)
 			}
 		})
@@ -318,8 +321,13 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 			err = fmt.Errorf("assistant 消息 id 预留不足")
 			break
 		}
-		assistantMessages = append(assistantMessages, s.roundMessage(
-			session, assistantIDs[nextAssistant], chosen, result, roundTools, toolNames(tools), runID))
+		roundMessage := s.roundMessage(
+			session, assistantIDs[nextAssistant], chosen, result, roundTools, toolNames(tools), runID)
+		if _, err := s.Store.InsertMessageWithTools(roundMessage, roundMessage.Tools); err != nil {
+			s.Turns.Finish(sessionID, token, err.Error())
+			guard.Fail(err.Error())
+			return
+		}
 		nextAssistant++
 		if round == maxToolRounds {
 			err = fmt.Errorf("工具调用超过 %d 轮", maxToolRounds)
@@ -328,7 +336,17 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 	}
 	if err != nil {
 		if !s.Turns.IsMine(sessionID, token) {
-			// 被按停 / 被顶掉：**正常操作**，不是失败；库里本来就没有东西要收拾
+			// 被按停 / 被顶掉：已完成的中途 tool-call 消息已经落库（保留），
+			// 当前这条以 canceled 落一条空/半截消息 —— 取消不是"整轮消失"。
+			canceled := model.Message{
+				ID: replyID, SessionID: sessionID, Role: model.RoleAssistant,
+				Kind: model.MessageKindChat, Status: model.MessageStatusCanceled, RunID: runID,
+				Content: partialText.String(), DurationMS: ptrInt64(time.Since(started).Milliseconds()),
+			}
+			if chosen.StoresReasoning() && strings.TrimSpace(partialReasoning.String()) != "" {
+				canceled.Reasoning = partialReasoning.String()
+			}
+			_, _ = s.Store.InsertMessageWithTools(canceled, nil)
 			guard.Cancel()
 			return
 		}
@@ -456,6 +474,8 @@ func (s *Service) assistantMessage(session model.Session, replyID string, token 
 	}
 	return message
 }
+
+func ptrInt64(value int64) *int64 { return &value }
 
 // toolNames：请求里工具声明的名字（server 工具用 type，function 工具用 name），
 // 存进消息的 tools_snapshot —— 记录"生成时可用什么"，不表示实际调用。

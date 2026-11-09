@@ -488,6 +488,10 @@ type ImportMessage struct {
 	Content   string
 	Reasoning string
 	CreatedAt int64
+	Kind      string
+	Status    string
+	RunID     string
+	Tools     []model.MessageTool
 }
 
 // ParseSTLines：逐行解 ST，返回（要落的，跳过的行数）。
@@ -546,10 +550,12 @@ func (s *Store) ImportMessages(sessionID string, parsed []ImportMessage) error {
 		if item.IsUser {
 			role = model.RoleUser
 		}
-		if _, err := s.InsertMessage(model.Message{
+		if _, err := s.InsertMessageWithTools(model.Message{
 			ID: ids[index], SessionID: sessionID, Role: role,
-			Content: item.Content, Reasoning: item.Reasoning, CreatedAt: item.CreatedAt,
-		}); err != nil {
+			Kind: model.MessageKind(item.Kind), Status: model.MessageStatus(item.Status),
+			RunID: item.RunID, Content: item.Content, Reasoning: item.Reasoning,
+			CreatedAt: item.CreatedAt, Tools: item.Tools,
+		}, item.Tools); err != nil {
 			return err
 		}
 	}

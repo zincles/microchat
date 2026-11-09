@@ -20,6 +20,7 @@ const props = withDefaults(defineProps<{
   idx?: number | string | null; // 显示编号（真消息=服务端 idx；库外的按后缀顺延）
   role?: string;
   kind?: "chat" | "tool_run" | string | null;
+  status?: "done" | "canceled" | "failed" | "interrupted" | string | null;
   content?: string;
   reasoning?: string;
   reasoningMs?: number | null;
@@ -50,6 +51,7 @@ const props = withDefaults(defineProps<{
   idx: null,
   role: "",
   kind: "chat",
+  status: "done",
   content: "",
   reasoning: "",
   reasoningMs: null,
@@ -90,6 +92,14 @@ const footTitle = computed(() => usageFootTitle(footUsage.value, footTiming.valu
 // 用户身份（`你 #3`）：气泡**外面**那一行，CSS 里只在 hover 时显形。
 const ident = computed(() => identityLabel(props.who, props.idx));
 const assistantIdent = computed(() => assistantIdentity(props.who, props.kind, props.idx));
+const statusText = computed(() => {
+  switch (props.status) {
+    case "canceled": return "已取消";
+    case "failed": return "失败";
+    case "interrupted": return "已中断";
+    default: return "";
+  }
+});
 
 // 流式期间还没正文 ⇒ 标签说"思考中…"；落库后才是"思考过程（2.1s）"（那会儿才有用时）。
 const typingHint = computed(() =>
@@ -181,7 +191,7 @@ watch(() => props.streaming, (s) => nextTick(() => {
        所以不再有条件类 —— 形态本身写在 CSS 的 `.msg.assistant` / `.msg-wrap.assistant` 里。 -->
   <div :class="`msg-wrap ${role === 'user' ? 'user' : 'assistant'}`">
     <div ref="msgEl" :class="`msg ${role === 'user' ? 'user' : 'assistant'}`">
-      <div v-if="role !== 'user' && assistantIdent" class="msg-head">{{ assistantIdent }}</div>
+      <div v-if="role !== 'user' && assistantIdent" class="msg-head">{{ assistantIdent }}<span v-if="statusText" class="msg-status"> · {{ statusText }}</span></div>
       <details v-if="reasoning" class="think">
         <summary>{{ thinkLabel }}</summary>
         <div class="think-body">{{ reasoning }}</div>

@@ -360,8 +360,8 @@ func TestSendWhileRunningConflicts(t *testing.T) {
 	call(box.server, "POST", box.path+"/stop", "")
 }
 
-// 中途按停 ⇒ **库里半条都没有**（生成中的回复不在库里）。
-func TestStopLeavesNoHalfMessage(t *testing.T) {
+// 中途按停 ⇒ 用户句 + 一条 status=canceled 的 assistant。
+func TestStopKeepsCanceledMessage(t *testing.T) {
 	box := newDummySandbox(t)
 	box.send(t, "这句会被打断")
 	box.waitPhase(t, box.sessionID, "streaming")
@@ -370,9 +370,18 @@ func TestStopLeavesNoHalfMessage(t *testing.T) {
 		t.Fatalf("停止该回 {"+"\"stopped\":true}"+"：%d %s", recorder.Code, recorder.Body.String())
 	}
 	box.waitPhase(t, box.sessionID, "idle")
-	messages := box.messages(t)
-	if len(messages) != 1 || messages[0].Role != model.RoleUser {
-		t.Fatalf("被打断的那一轮不许留下半条：%+v", messages)
+	var messages []model.Message
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		messages = box.messages(t)
+		if len(messages) >= 2 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(messages) != 2 || messages[0].Role != model.RoleUser ||
+		messages[1].Status != model.MessageStatusCanceled {
+		t.Fatalf("被打断的那一轮该留 user + canceled assistant：%+v", messages)
 	}
 	// 幂等：没在跑也 200（false）
 	again := call(box.server, "POST", box.path+"/stop", "")
@@ -382,7 +391,7 @@ func TestStopLeavesNoHalfMessage(t *testing.T) {
 	// 停完之后还能接着发（登记表已经摘干净，没有"僵尸在跑"）
 	box.send(t, "接着聊")
 	box.waitPhase(t, box.sessionID, "idle")
-	if messages := box.messages(t); len(messages) != 3 {
+	if messages := box.messages(t); len(messages) != 4 {
 		t.Fatalf("停完之后该能接着发：%+v", messages)
 	}
 }

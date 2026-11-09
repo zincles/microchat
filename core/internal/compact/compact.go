@@ -1193,15 +1193,23 @@ func deref(value *string) string {
 	return *value
 }
 
-// materialOf：把这一段正文拼成材料 —— **每条消息都过 `statelang.Scan(...).Cleaned`**
+// materialOf：把这一段正文 + 工具轨迹拼成材料 —— **每条消息正文都过 `statelang.Scan(...).Cleaned`**
 // （混进去的 `<state>` 块要剔掉；剔完全空的那条直接不要，别给模型留一行空话）。
 //
 // 思考（reasoning）不进材料：它只服务显示与回传上游，不是"说过的话"。
+// 工具记录必须进：中间 assistant 消息正文常常为空，只有 tool call；漏了就把这一整轮抹掉。
 func materialOf(messages []model.Message) string {
 	var builder strings.Builder
 	for _, message := range messages {
 		text := strings.TrimSpace(statelang.Scan(message.Content).Cleaned)
-		if text == "" {
+		parts := make([]string, 0, 1+len(message.Tools))
+		if text != "" {
+			parts = append(parts, text)
+		}
+		for _, tool := range message.Tools {
+			parts = append(parts, toolMaterial(tool))
+		}
+		if len(parts) == 0 {
 			continue
 		}
 		label := "用户"
@@ -1210,10 +1218,46 @@ func materialOf(messages []model.Message) string {
 		}
 		builder.WriteString(label)
 		builder.WriteString("：")
-		builder.WriteString(text)
+		builder.WriteString(strings.Join(parts, "\n"))
 		builder.WriteString("\n\n")
 	}
 	return strings.TrimSpace(builder.String())
+}
+
+func toolMaterial(tool model.MessageTool) string {
+	var builder strings.Builder
+	builder.WriteString("[工具 ")
+	builder.WriteString(tool.ToolName)
+	if tool.Source != "" {
+		builder.WriteString(" / ")
+		builder.WriteString(tool.Source)
+	}
+	builder.WriteString("]")
+	if len(tool.Queries) > 0 {
+		builder.WriteString(" 查询：")
+		builder.WriteString(strings.Join(tool.Queries, " | "))
+	}
+	if tool.Result != "" {
+		builder.WriteString("\n结果：")
+		builder.WriteString(truncateMaterial(tool.Result, 2000))
+	}
+	if len(tool.Sources) > 0 {
+		builder.WriteString("\n来源：")
+		urls := make([]string, 0, len(tool.Sources))
+		for _, source := range tool.Sources {
+			urls = append(urls, source.URL)
+		}
+		builder.WriteString(strings.Join(urls, " | "))
+	}
+	return builder.String()
+}
+
+func truncateMaterial(text string, max int) string {
+	runes := []rune(text)
+	if len(runes) <= max {
+		return text
+	}
+	return string(runes[:max]) + "…"
 }
 
 // sortedKeysOf：map 键排序（`state.sortedKeys` 不导出，这里各排各的）。

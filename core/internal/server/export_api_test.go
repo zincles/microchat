@@ -41,7 +41,7 @@ func TestSessionExportImportRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(exported.Body.Bytes(), &doc); err != nil {
 		t.Fatal(err)
 	}
-	if doc.Version != 3 || len(doc.Messages) != 4 || doc.Title != "导出测试会话" {
+	if doc.Version != 4 || len(doc.Messages) != 4 || doc.Title != "导出测试会话" {
 		t.Fatalf("导出形状不对：%+v", doc)
 	}
 	// v2 的三格软引用：渠道/模型/agent 都要带（导出那一刻会话绑的是谁）
@@ -161,8 +161,8 @@ func TestSessionImportKeepsUnknownBindings(t *testing.T) {
 func TestSessionImportRejectsNewerVersion(t *testing.T) {
 	box := newDummySandboxWith(t, true)
 	rec := authCall(box.server, "POST", "/api/v1/sessions/import-json",
-		`{"version":4,"messages":[{"role":"user","content":"a"}]}`, testSysToken)
-	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "version = 4") {
+		`{"version":5,"messages":[{"role":"user","content":"a"}]}`, testSysToken)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "version = 5") {
 		t.Fatalf("更新的 version 该 400 并说清：%d（%s）", rec.Code, rec.Body.String())
 	}
 }

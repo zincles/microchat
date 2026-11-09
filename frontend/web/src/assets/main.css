@@ -690,6 +690,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .msg.assistant { align-self: flex-start; }
 /* 助手身份放正文顶部（2026-11-09 用户定）；底部脚注只留用量/延迟/速度。 */
 .msg .msg-head { margin-bottom: 0.35em; font-size: var(--md-type-label-small); line-height: 1.4; letter-spacing: 0.01em; color: var(--md-on-surface-variant); opacity: 0.9; }
+.msg .msg-head .msg-status { color: var(--md-error); }
 /* 气泡脚注（2026-11-09 用户定）：编号 + 用量 + 首字延迟 + 速度收成**气泡底部的一行小字**。
  * 贴着正文底部、比正文小一档、暗色 —— 它是事后账，不该抢正文的视线。
  * （用户消息没有这一行：TA 的身份在气泡外，见 `.msg-ident`。） */

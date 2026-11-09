@@ -89,8 +89,8 @@ func TestExportV3CarriesTheWholePyramid(t *testing.T) {
 	if err := json.Unmarshal(exported.Body.Bytes(), &doc); err != nil {
 		t.Fatal(err)
 	}
-	if doc.Version != 3 {
-		t.Fatalf("v3 的 version 该是 3，得到 %d", doc.Version)
+	if doc.Version != 4 {
+		t.Fatalf("v4 的 version 该是 4，得到 %d", doc.Version)
 	}
 	// **被压过的消息一条都不能少**（压缩在库里只写 summary_id，不动正文）。
 	if len(doc.Messages) != len(messages) {
