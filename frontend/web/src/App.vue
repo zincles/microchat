@@ -29,6 +29,7 @@ import {
   sessionTitle,
 } from "./utils/format.ts";
 import TopBar from "./components/TopBar.vue";
+import AgentMenu from "./components/AgentMenu.vue";
 import SessionBar from "./components/SessionBar.vue";
 import MessageBubble from "./components/MessageBubble.vue";
 import SummaryCard from "./components/SummaryCard.vue";
@@ -2121,7 +2122,6 @@ onUnmounted(() => {
       @select-workspace="selectWorkspace"
       @toggle-left="toggleLeft"
       @select-model="(v) => applyModelValue(v).catch((err) => toast(`换模型失败：${err.message}`, 'error'))"
-      @select-agent="(id) => applyAgentValue(id).catch((err) => toast(`换 Agent 失败：${err.message}`, 'error'))"
       @cancel-queue="cancelQueue"
       @cancel-task="cancelTask"
     />
@@ -2212,7 +2212,15 @@ onUnmounted(() => {
       @submit="onComposerSubmit"
       @stop="stopCurrent"
       @menu="() => overlaysRef?.showPalette(filterCommands(''))"
-    />
+    >
+      <template #toolbar>
+        <AgentMenu
+          :agents="vueAgents"
+          :model-value="sessionInfo.agent_id || ''"
+          @select="(id) => applyAgentValue(id).catch((err) => toast(`换 Agent 失败：${err.message}`, 'error'))"
+        />
+      </template>
+    </Composer>
         </div>
         </VTabsWindowItem>
     <!-- 上下文工作区（2026-10-29 用户定）：与消息列 + 输入行互斥 —— 同一块地方换个视角看。

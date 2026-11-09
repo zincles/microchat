@@ -1,12 +1,13 @@
 <script setup lang="ts">
-// 顶栏（2026-10-14 用户定，去壳版）：**全透明**，左上角 = **圆头像（当前 Agent，点开换）** + **当前模型平铺字**；
-// 右侧只在某一侧栏收着时才出它的开关（栏开着 ⇒ 开关在栏自己头上，见 App 的 applySideToggle）。
+// 顶栏（2026-10-14 用户定，去壳版；2026-11-10 头像搬到输入栏上方）：
+// 左上角只剩**当前模型平铺字**；右侧只在某一侧栏收着时才出它的开关。
+// Agent 入口在 Composer 的 toolbar slot 最左端（AgentMenu.vue）。
 //
 // 模型选择器（2026-10-28 用户定）：从静默 `<select>` 换成自定义浮板（按渠道分组 + 搜索），
 // 与 Agent 选人、上下文环那两个浮板同一族。
 //
-// 头像（2026-10-14 用户定）：圆形小图标就是**新的 Agent 入口** —— 里头是名字首字、底色由 id 派生
-// （同一个人永远同一个色）；点开掉出浮板选人。状态行小字里那个助手名管"显示"，头像管"选"。
+// Agent 入口（2026-11-10 用户定）：从顶栏挪到输入栏上方、推理/工具按钮左侧；
+// 圆形头像 = 选人（AgentMenu.vue），状态行小字里那个助手名仍管"显示"。
 // 会话抬头不在顶栏（左栏列表高亮 + 状态行都有它）。
 import { ref, computed, nextTick, watch } from "vue";
 import {
@@ -32,10 +33,6 @@ import {
 import type { ModelChoice, ModelGroup } from "../utils/format.ts";
 import type { ContextUsage, Queue, Session, TaskBoard, TaskRecord } from "../api/types.ts";
 
-interface AgentOption {
-  id: string;
-  label: string;
-}
 interface SessionInfo {
   provider?: string;
   model?: string;
@@ -71,7 +68,6 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   "toggle-left": [];
   "select-model": [value: string];
-  "select-agent": [id: string];
   "select-workspace": [workspace: string];
   "cancel-queue": [id: string];
   "cancel-task": [id: string];
@@ -116,7 +112,6 @@ const modelFlatCount = computed(() => filteredGroups.value.reduce((n, g) => n + 
 function toggleModel(): void {
   modelOpen.value = !modelOpen.value;
   if (!modelOpen.value) return;
-  agentOpen.value = false;
   ctxOpen.value = false;
   modelQuery.value = "";
   modelActive.value = -1;
@@ -149,27 +144,6 @@ watch(modelQuery, () => { modelActive.value = -1; });
 
 const leftSvg = ICONS.panelLeft;
 
-// —— Agent 头像 + 选人菜单 ——
-const agents = ref<AgentOption[]>([]);
-const curAgent = ref("");
-const agentOpen = ref(false);
-const agentItems = computed<AgentOption[]>(() => {
-  const list = [...agents.value];
-  // 会话绑的 agent 不在列表里（改过名/删了）⇒ 补一条，别让头像"没有对应的人"。
-  if (curAgent.value && !list.some((a) => a.id === curAgent.value)) list.unshift({ id: curAgent.value, label: `${curAgent.value}（不在列表）` });
-  return list;
-});
-const curAgentLabel = computed(() => agentItems.value.find((a) => a.id === curAgent.value)?.label ?? curAgent.value ?? "助手");
-const agentInitial = computed(() => Array.from(curAgentLabel.value.trim())[0] ?? "?");
-// agentHue：id → 色相（同一 id 永远同一个色；纯派生，无存储）。
-function agentHue(id?: string | null): number {
-  let h = 0;
-  for (const ch of String(id ?? "")) h = (h * 31 + (ch.codePointAt(0) ?? 0)) % 360;
-  return h;
-}
-function agentDotStyle(id?: string | null): { background: string } { return { background: `hsl(${agentHue(id)} 42% 46%)` }; }
-function pickAgent(id: string): void { agentOpen.value = false; emit("select-agent", id); }
-
 function syncOrphanModel(): void {
   const cur = curModel.value;
   const known = cur && modelGroups.value.some((g) => (g.items ?? []).some((i) => i.value === cur));
@@ -186,17 +160,12 @@ function syncOrphanModel(): void {
 }
 function setSession(info: SessionInfo | Partial<Session>): void {
   if (info.provider && info.model) curModel.value = modelKey(info.provider, info.model);
-  if (info.agent_id) curAgent.value = info.agent_id;
   syncOrphanModel();
 }
 function setModels(groups: ModelGroup[], cur?: string): void {
   modelGroups.value = groups;
   if (cur !== undefined) curModel.value = cur;
   syncOrphanModel();
-}
-function setAgents(list?: AgentOption[] | null, cur?: string): void {
-  agents.value = list ?? [];
-  if (cur !== undefined) curAgent.value = cur;
 }
 
 // —— 上下文占比环（2026-10-28 用户定）——
@@ -235,9 +204,8 @@ const ctxBudgetNote = computed(() => {
   return `输入预算 ${num(c.budget_tokens)} tokens = 上下文上限 ${num(c.ctx_len)} − 输出预留 ${num(c.max_output)}。`;
 });
 // closeMenus：Esc 一次收起所有顶栏浮板（MD3 menu 的常规行为；从前只有模型菜单接 Esc）。
-function closeMenus(): void { modelOpen.value = false; agentOpen.value = false; ctxOpen.value = false; }
-function toggleCtx(): void { ctxOpen.value = !ctxOpen.value; if (ctxOpen.value) { agentOpen.value = false; modelOpen.value = false; } }
-function toggleAgent(): void { agentOpen.value = !agentOpen.value; if (agentOpen.value) { ctxOpen.value = false; modelOpen.value = false; } }
+function closeMenus(): void { modelOpen.value = false; ctxOpen.value = false; }
+function toggleCtx(): void { ctxOpen.value = !ctxOpen.value; if (ctxOpen.value) { modelOpen.value = false; } }
 // setContext：App 每轮 refreshStatusline 喂一次（草稿态传 null）。
 function setContext(c?: ContextUsage | null): void { ctx.value = c ?? null; }
 
@@ -358,7 +326,7 @@ function setStatus(s?: StatusInfo | null): void { status.value = s ?? null; }
 // 悬停解释 = 状态一句 + 预算一句（两处都是"一眼看不清、要解释"的东西）。
 const ringTitle = computed(() => [formatStatusLine(status.value ?? {}), contextTitle(ctx.value), taskTitle.value].filter(Boolean).join("\n"));
 
-defineExpose({ setSession, setModels, setAgents, setContext, setStatus, setTasks });
+defineExpose({ setSession, setModels, setContext, setStatus, setTasks });
 </script>
 
 <template>
@@ -373,15 +341,6 @@ defineExpose({ setSession, setModels, setAgents, setContext, setStatus, setTasks
       @click="$emit('toggle-left')"
       v-html="leftSvg"
     ></button>
-    <button
-      id="agent-btn"
-      class="agent-btn"
-      type="button"
-      :style="agentDotStyle(curAgent)"
-      :title="`当前助手：${curAgentLabel}（点击切换）`"
-      aria-label="切换 Agent"
-      @click="toggleAgent"
-    >{{ agentInitial }}</button>
     <!-- 当前模型（2026-10-28 用户定：换成自定义面板，按渠道分组）。
          外壳 `span` 只管定位（浮板要贴着按钮掉，而不是贴着栏的左内边距）。 -->
     <span class="model-anchor">
@@ -477,24 +436,6 @@ defineExpose({ setSession, setModels, setAgents, setContext, setStatus, setTasks
         <span v-if="activeTaskCount > 0" class="ctx-ring-n">{{ taskCountText }}</span>
       </button>
     </span>
-    <template v-if="agentOpen">
-      <div class="agent-menu-backdrop" @click="agentOpen = false"></div>
-      <div class="agent-menu" role="menu">
-        <button
-          v-for="a in agentItems"
-          :key="a.id"
-          type="button"
-          class="agent-item"
-          :class="{ sel: a.id === curAgent }"
-          @click="pickAgent(a.id)"
-        >
-          <span class="agent-dot" :style="agentDotStyle(a.id)">{{ Array.from(a.label.trim())[0] ?? "?" }}</span>
-          <span class="agent-name">{{ a.label }}</span>
-          <span v-if="a.id === curAgent" class="agent-check">✓</span>
-        </button>
-        <p v-if="!agentItems.length" class="agent-empty">没有可选的 Agent</p>
-      </div>
-    </template>
     <template v-if="ctxOpen">
       <div class="agent-menu-backdrop" @click="ctxOpen = false"></div>
       <VCard class="agent-menu ctx-menu" :class="{ over: ctxOver }" role="dialog" aria-label="上下文与任务">

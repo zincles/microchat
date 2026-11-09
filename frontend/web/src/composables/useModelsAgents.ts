@@ -1,4 +1,4 @@
-// 顶栏的模型 / Agent 选择、会话抬头与标题。
+// 顶栏的模型选择、Agent 列表/状态、会话抬头与标题。Agent 的选人 UI 在 Composer 的 toolbar slot。
 //
 // 依赖会话域的四个活值（sessionID / epoch / draft / sessionInfo），但自身没有会话窗口逻辑；
 // 用 getter 传进来，避免把整个 App 状态对象塞进来。
@@ -16,7 +16,6 @@ interface ModelsAgentsApi {
 interface TopbarModels {
   setSession(info: Record<string, unknown>, draft: boolean): void;
   setModels(groups: ModelGroup[], cur: string): void;
-  setAgents(list: Array<{ id: string; label: string }>, cur?: string): void;
 }
 interface SessionInfoLike {
   id?: string;
@@ -137,9 +136,9 @@ export function useModelsAgents({
     const my = getEpoch();
     fetchAgentsOnce().then((data) => {
       if (my !== getEpoch()) return;
+      vueAgents.value = data.agents ?? [];
       const list = (data.agents ?? []).map(agentOption);
-      // 顶栏的圆头像 = Agent 入口（2026-10-14）；状态行小字里那份是"显示"。
-      topbarRef.value?.setAgents(list, sessionInfo.agent_id);
+      // 助手入口住在输入栏上方；这里只更新状态行那份“当前是谁”。
       statusAgent.value = list.find((a) => a.id === sessionInfo.agent_id)?.label ?? sessionInfo.agent_id ?? "";
       // 这一发只更新"助手"那格；上下文环由 enterSession 的 refreshStatusline 统一问一次。
       onRefreshStatusline("idle", undefined, { withContext: false });

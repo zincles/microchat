@@ -2008,8 +2008,13 @@ test("模型面板：按钮 / 浮板 / emit / App 监听四处接着，且不再
   assert.match(top, /function toggleModel\(/, "TopBar 没有 toggleModel");
   assert.match(top, /emit\("select-model", value\)/, "面板选完没 emit select-model");
   assert.match(app, /@select-model=/, "App 没有监听 select-model（点了不会换模型）");
-  // 三个浮板互斥：开模型面板要把 Agent 与上下文那两块关掉（否则叠在一起）
-  assert.match(top, /agentOpen\.value = false;[\s\S]{0,80}ctxOpen\.value = false;/, "打开模型面板时没有关掉另外两块浮板");
+  // 顶栏剩下模型/上下文两块浮板；Agent 已搬到输入栏上方，由 AgentMenu 自己管。
+  assert.match(top, /if \(!modelOpen\.value\) return;[\s\S]{0,60}ctxOpen\.value = false;/, "打开模型面板时没有关掉上下文浮板");
+  const agentMenu = readFileSync(join(SRC, "components", "AgentMenu.vue"), "utf8");
+  assert.match(agentMenu, /class="agent-btn"/, "AgentMenu 没有头像按钮");
+  assert.match(agentMenu, /class="agent-menu agent-picker"/, "AgentMenu 没有选人浮板");
+  assert.match(app, /<template #toolbar>[\s\S]{0,300}<AgentMenu/, "Composer 的 toolbar slot 没有放 AgentMenu");
+  assert.match(app, /:model-value="sessionInfo\.agent_id \|\| ''"/, "AgentMenu 没有接当前 agent");
 
   // 旧的静默下拉必须彻底删掉：留着 CSS 就是死码（chrome 里也不该再有这个 id）
   assert.ok(!top.includes('id="session-model"'), "TopBar 里还留着 #session-model");

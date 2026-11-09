@@ -847,6 +847,9 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .composer-send-btn .v-btn__content > span { display: flex; align-items: center; justify-content: center; line-height: 0; }
 /* 输入栏上方的按钮区（2026-11-10 用户定：推理等级与工具必须同一尺寸/风格）。
    两者共用同一套 MD3 outlined 小按钮：高度/字号/内边距/边框/底色只写这一处。 */
+.composer-toolbar .agent-anchor { display: inline-flex; flex: none; position: relative; }
+.composer-toolbar .agent-btn { width: 2em; height: 2em; min-width: 2em; min-height: 2em; font-size: 0.82em; outline: 1px solid var(--md-outline-variant); }
+.composer-toolbar .agent-menu { top: auto; bottom: calc(100% + 0.4em); left: 0; transform-origin: bottom left; }
 .composer-toolbar .thinking-btn,
 .composer-toolbar .tools-btn { min-width: 0 !important; height: 2em !important; min-height: 2em !important;
   padding: 0 0.8em !important; border: 1px solid var(--md-outline-variant) !important;
