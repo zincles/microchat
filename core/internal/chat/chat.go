@@ -14,7 +14,9 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -204,62 +206,110 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 	var firstTextAt time.Time
 	// 配置 → 线上形状只有这一条路（`FromConfig`）：手搓字面量漏一个字段就是静默失效
 	wire := providers.FromConfig(chosen.Provider)
+	client := providers.NewClient(wire)
 	tools := s.availableTools(session, chosen)
+	chatMessages := wireMessages(outgoing, reasoningByID)
 	toolsUsed := false
 	toolOrder := []string{}
 	toolEvents := map[string]providers.ToolEvent{}
-	result, err := providers.NewClient(wire).Chat(ctx, wire, providers.Request{
-		Model:         session.Model,
-		Messages:      wireMessages(outgoing, reasoningByID),
-		SessionID:     sessionID,
-		ThinkingLevel: session.ThinkingLevel,
-		Tools:         tools,
-	}, localReply(chosen), func(delta providers.Delta) {
-		if delta.Tool != nil {
-			toolsUsed = true
-			s.Turns.SetTool(sessionID, token, delta.Tool.Kind, delta.Tool.State)
-			if delta.Tool.ItemID != "" {
-				event, exists := toolEvents[delta.Tool.ItemID]
-				if !exists {
-					toolOrder = append(toolOrder, delta.Tool.ItemID)
-					event = *delta.Tool
-				} else {
-					if delta.Tool.Kind != "" {
-						event.Kind = delta.Tool.Kind
+	localToolRecords := []model.MessageTool{}
+	var result providers.Result
+	var err error
+	const maxToolRounds = 4
+	for round := 0; round < maxToolRounds; round++ {
+		result, err = client.Chat(ctx, wire, providers.Request{
+			Model:         session.Model,
+			Messages:      chatMessages,
+			SessionID:     sessionID,
+			ThinkingLevel: session.ThinkingLevel,
+			Tools:         tools,
+		}, localReply(chosen), func(delta providers.Delta) {
+			if delta.Tool != nil {
+				toolsUsed = true
+				s.Turns.SetTool(sessionID, token, delta.Tool.Kind, delta.Tool.State)
+				if delta.Tool.ItemID != "" {
+					event, exists := toolEvents[delta.Tool.ItemID]
+					if !exists {
+						toolOrder = append(toolOrder, delta.Tool.ItemID)
+						event = *delta.Tool
+					} else {
+						if delta.Tool.Kind != "" {
+							event.Kind = delta.Tool.Kind
+						}
+						if delta.Tool.State != "" {
+							event.State = delta.Tool.State
+						}
+						if delta.Tool.Query != "" {
+							event.Query = delta.Tool.Query
+						}
+						if len(delta.Tool.Queries) > 0 {
+							event.Queries = append([]string{}, delta.Tool.Queries...)
+						}
+						if len(delta.Tool.Sources) > 0 {
+							event.Sources = append([]providers.ToolSource{}, delta.Tool.Sources...)
+						}
 					}
-					if delta.Tool.State != "" {
-						event.State = delta.Tool.State
-					}
-					if delta.Tool.Query != "" {
-						event.Query = delta.Tool.Query
-					}
-					if len(delta.Tool.Queries) > 0 {
-						event.Queries = append([]string{}, delta.Tool.Queries...)
-					}
-					if len(delta.Tool.Sources) > 0 {
-						event.Sources = append([]providers.ToolSource{}, delta.Tool.Sources...)
-					}
+					toolEvents[delta.Tool.ItemID] = event
 				}
-				toolEvents[delta.Tool.ItemID] = event
-			}
-			if len(delta.Tool.Sources) > 0 {
-				sources := make([]turn.Source, 0, len(delta.Tool.Sources))
-				for _, source := range delta.Tool.Sources {
-					sources = append(sources, turn.Source{Type: source.Type, URL: source.URL, Title: source.Title})
+				if len(delta.Tool.Sources) > 0 {
+					sources := make([]turn.Source, 0, len(delta.Tool.Sources))
+					for _, source := range delta.Tool.Sources {
+						sources = append(sources, turn.Source{Type: source.Type, URL: source.URL, Title: source.Title})
+					}
+					s.Turns.AddSources(sessionID, token, sources)
 				}
-				s.Turns.AddSources(sessionID, token, sources)
 			}
-		}
-		if delta.Text != "" {
-			if firstTextAt.IsZero() {
-				firstTextAt = time.Now()
+			if delta.Text != "" {
+				if firstTextAt.IsZero() {
+					firstTextAt = time.Now()
+				}
+				s.Turns.AppendContent(sessionID, token, delta.Text)
 			}
-			s.Turns.AppendContent(sessionID, token, delta.Text)
+			if delta.Reasoning != "" {
+				s.Turns.AppendReasoning(sessionID, token, delta.Reasoning)
+			}
+		})
+		if err != nil {
+			break
 		}
-		if delta.Reasoning != "" {
-			s.Turns.AppendReasoning(sessionID, token, delta.Reasoning)
+		if len(result.ToolCalls) == 0 {
+			break
 		}
-	})
+		toolsUsed = true
+		chatMessages = append(chatMessages, providers.ChatMessage{
+			Role: "assistant", Content: result.Text, Reasoning: result.Reasoning,
+			ToolCalls: toolCallsJSON(result.ToolCalls),
+		})
+		for _, call := range result.ToolCalls {
+			s.Turns.SetTool(sessionID, token, call.Name, "in_progress")
+			content, sources, toolErr := runLocalTool(ctx, chosen.Provider, call)
+			status := "done"
+			if toolErr != nil {
+				status = "failed"
+				errJSON, _ := json.Marshal(map[string]string{"error": toolErr.Error()})
+				content = string(errJSON)
+			}
+			s.Turns.SetTool(sessionID, token, call.Name, status)
+			if len(sources) > 0 {
+				turnSources := make([]turn.Source, 0, len(sources))
+				for _, source := range sources {
+					turnSources = append(turnSources, turn.Source{Type: source.Type, URL: source.URL, Title: source.Title})
+				}
+				s.Turns.AddSources(sessionID, token, turnSources)
+			}
+			localToolRecords = append(localToolRecords, model.MessageTool{
+				Source: "client", ToolName: call.Name, ItemID: call.ID,
+				Arguments: call.Arguments, Result: content, Sources: sources, Status: status,
+			})
+			chatMessages = append(chatMessages, providers.ChatMessage{
+				Role: "tool", Content: content, ToolCallID: call.ID, Name: call.Name,
+			})
+		}
+		if round == maxToolRounds-1 {
+			err = fmt.Errorf("工具调用超过 %d 轮", maxToolRounds)
+			break
+		}
+	}
 	if err != nil {
 		if !s.Turns.IsMine(sessionID, token) {
 			// 被按停 / 被顶掉：**正常操作**，不是失败；库里本来就没有东西要收拾
@@ -279,7 +329,7 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 	if toolsUsed {
 		kind = model.MessageKindToolRun
 	}
-	messageTools := make([]model.MessageTool, 0, len(toolOrder))
+	messageTools := append([]model.MessageTool{}, localToolRecords...)
 	for _, itemID := range toolOrder {
 		event := toolEvents[itemID]
 		sources := make([]model.MessageToolSource, 0, len(event.Sources))
@@ -310,6 +360,19 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 	if s.Compactor != nil {
 		go s.MaybeAutoCompact(session)
 	}
+}
+
+// toolCallsJSON：把客户端 function calls 拼成 assistant 消息的 wire 形状。
+func toolCallsJSON(calls []providers.ToolCall) json.RawMessage {
+	out := make([]map[string]any, 0, len(calls))
+	for _, call := range calls {
+		out = append(out, map[string]any{
+			"id": call.ID, "type": "function",
+			"function": map[string]any{"name": call.Name, "arguments": call.Arguments},
+		})
+	}
+	raw, _ := json.Marshal(out)
+	return raw
 }
 
 // assistantMessage：把这一轮的产出拼成要落库的那一行。
@@ -528,7 +591,22 @@ func (s *Service) availableTools(session model.Session, chosen providers.Backend
 	// DeepSeek 的 Responses web_search 只支持 v4-pro，而且只给 queries 不给 sources；
 	// flash 会忽略它并把工具调用当正文吐出来。统一不走服务端工具，搜索走客户端 Search API。
 	if chosen.Provider.Vendor == "deepseek" || chosen.Provider.Kind == "deepseek" {
-		return nil
+		disabled := make(map[string]bool, len(session.NativeToolsDisabled))
+		for _, id := range session.NativeToolsDisabled {
+			disabled[id] = true
+		}
+		out := deepseekLocalTools()
+		kept := out[:0]
+		for _, tool := range out {
+			name := tool.Type
+			if tool.Function != nil {
+				name = tool.Function.Name
+			}
+			if !disabled[name] {
+				kept = append(kept, tool)
+			}
+		}
+		return kept
 	}
 	// 服务端工具只有 OpenAI Response 协议能表达。
 	// xAI 实测：/chat/completions 对 web_search/x_search 直接 422（只认 function/live_search），

@@ -109,10 +109,10 @@
   来源只有 URL，没有摘要/正文 —— 摘要要从最终回答的 citation/正文里看。
 
 - **DeepSeek 的两套搜索不同**（2026-11-10 实测）：
-  - 独立 `POST /v1/tools/search` / `/v1/tools/fetch`：客户端 API，返回 `results[]`（title/url/snippet/summary/content/date/authority）；适合做本地 `web_search` 工具。
+  - 独立 `POST /v1/tools/search` / `/v1/tools/fetch`：客户端 API，返回 `results[]`（title/url/snippet/summary/content/date/authority）。**已接成本地 function tool**：模型发起 `web_search` / `web_fetch`，chat 执行后以 `role:"tool"` 回填，最终 assistant 消息的 `message_tools`（source=client）保存查询/来源。
   - Responses 的 `tools:[{"type":"web_search"}]`：服务端工具，仅 `deepseek-v4-pro` 生效；`action` 是 `queries[]`，**没有 sources**；`deepseek-flash` 会忽略它并把 `<tool_call>` 当正文吐出来。
   - `/chat/completions` 不接受 `web_search`（422，只认 function）。
-  - 因此 `availableTools` 对 DeepSeek 返回空；要联网就接客户端 Search/Fetch。
+  - 因此 `availableTools` 对 DeepSeek 只返回**本地** function tools（`web_search` / `web_fetch`），服务端 `web_search` 一律不发。
 - 来源与工具状态都是**流细节**：正文到了工具行消失，来源留到一轮收尾；不落库。
 
 ### 工具执行状态（2026-11-09 接进界面）
@@ -138,8 +138,8 @@ response.code_interpreter_call.in_progress / .interpreting / .completed
   作为 `{"type":"x_search"}` / `{"type":"web_search"}` / `{"type":"code_execution"}` 进请求体；
   命中会话 `native_tools_disabled` 的扣掉。xAI 真发实测 200（2026-11-09），服务端自己执行；
   这些工具**不靠** `allow_tools`（那格只挡任意 function tool）。生成的 `tools` 字段在 `/outgoing` 预演里就能看见。
-- **本地 function tool**：配置里的 `local_tools` 还只是候选 id —— 没有工具注册表/JSON Schema/执行器，
-  **暂不进请求体**；等定义落地后再走 `{type:"function",function:{…}}`（`allow_tools` 仍默认关）。
+- **本地 function tool**：`web_search` / `web_fetch` 已接（DeepSeek `deepseek-web` 默认规则）；
+  chat 做 ≤4 轮 tool loop，结果以 `role:"tool"` 回填，最终落 `message_tools(source=client)`。
 - **流式里 `tool_calls` 的分片拼装**：`delta.tool_calls[]` 是**按 index 累加**的（arguments 一段一段来），
   Pi 用 `partial-json` 边收边解析；我们目前只在**非流式**下验证过 function 工具，流式要做时照 Pi 的累加逻辑写 ✓；
 - **工具的执行**：那是**上层**的事（谁定义工具、谁执行、结果怎么落档），`providers` 只负责"原样透传"；

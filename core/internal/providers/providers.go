@@ -185,6 +185,8 @@ type ChatMessage struct {
 type Tool struct {
 	Type     string        `json:"type"`
 	Function *ToolFunction `json:"function,omitempty"`
+	// Local：由我们客户端执行（不是 provider 的服务端工具）。不序列化。
+	Local bool `json:"-"`
 }
 
 type ToolFunction struct {
@@ -778,7 +780,7 @@ func bodyFor(p Provider, r Request) map[string]any {
 	// 思考档位：统一七档 → 各家字段（见 applyThinking）。
 	applyThinking(body, p, r)
 	// 工具定义：**只在渠道允许透传时才发**（不认识的字段有些上游会 400）。
-	if toolsAllowed(p) && len(r.Tools) > 0 {
+	if (toolsAllowed(p) || allLocalTools(r.Tools)) && len(r.Tools) > 0 {
 		body["tools"] = r.Tools
 		if len(r.ToolChoice) > 0 {
 			body["tool_choice"] = r.ToolChoice

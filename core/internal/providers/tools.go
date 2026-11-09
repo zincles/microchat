@@ -20,9 +20,22 @@ func ServerTools(ids []string) []Tool {
 
 // FunctionTool：客户端 function tool 的声明（目前由后续工具注册表调用）。
 func FunctionTool(name, description string, parameters json.RawMessage) Tool {
-	return Tool{Type: "function", Function: &ToolFunction{
+	return Tool{Type: "function", Local: true, Function: &ToolFunction{
 		Name: name, Description: description, Parameters: parameters,
 	}}
+}
+
+// allLocalTools：这批工具是否全部由客户端执行（function tool）。
+func allLocalTools(tools []Tool) bool {
+	if len(tools) == 0 {
+		return false
+	}
+	for _, tool := range tools {
+		if !tool.Local || tool.Function == nil {
+			return false
+		}
+	}
+	return true
 }
 
 // allServerTools：这批工具是不是**全部**为服务端工具（没有 function 字段）。

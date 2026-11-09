@@ -471,3 +471,24 @@ func TestCompleteRespectsEndpointConcurrency(t *testing.T) {
 		t.Fatalf("endpoint 最大并发 = %d，想要 1", got)
 	}
 }
+
+func TestReadStreamAccumulatesToolCalls(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"choices":[{"delta":{"role":"assistant","reasoning_content":"想"}}]}`,
+		`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"web_search","arguments":"{\"query\":"}}]}}]}`,
+		`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"xAI\"}"}}]}}]}`,
+		`data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`,
+		`data: [DONE]`,
+	}, "\n\n") + "\n\n"
+	result, err := readStream(200, strings.NewReader(body), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("tool calls = %+v", result.ToolCalls)
+	}
+	call := result.ToolCalls[0]
+	if call.ID != "call_1" || call.Name != "web_search" || call.Arguments != `{"query":"xAI"}` {
+		t.Fatalf("call = %+v", call)
+	}
+}

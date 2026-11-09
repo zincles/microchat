@@ -685,7 +685,7 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 
 | 方法 | 路径 | 请求体 | 响应 | 说明 |
 |---|---|---|---|---|
-| GET | `/sessions` | — | `[SessionView]` | 每项 = 会话 + `messages`（**这条会话有几条消息** —— 客户端的启动编排据此认定"空会话"，不必逐条会话再拉一次消息）+ `turn`（客户端据此标"生成中"）。会话自身含 **`thinking_level`**（空 = 跟随模型默认；非空 = `off/minimal/low/medium/high/xhigh/max`）与 **`native_tools_disabled`**（**历史字段名**；语义 = 用户手动关掉的 `server_tools`，规则新增的工具默认仍启用；本地工具有自己的开关时另立）|
+| GET | `/sessions` | — | `[SessionView]` | 每项 = 会话 + `messages`（**这条会话有几条消息** —— 客户端的启动编排据此认定"空会话"，不必逐条会话再拉一次消息）+ `turn`（客户端据此标"生成中"）。会话自身含 **`thinking_level`**（空 = 跟随模型默认；非空 = `off/minimal/low/medium/high/xhigh/max`）与 **`native_tools_disabled`**（**历史字段名**；语义 = 用户手动关掉的 `server_tools` / 本地工具 id，规则新增的工具默认仍启用）|
 | GET | `/sessions/{session_id}/export` | — | `{version:3,title,provider,model,agent_id,agent_name,messages:[{role,content,reasoning}],summaries:[…]}` | **对话记录导出**（JSON；2026-10-11 起，10-17 扩成 v2，**10-28 扩成 v3**）：标题 + 每条 role/content（正文原样，`<state>` 块留着 ⇒ 导回去状态照常现演）+ **这条会话当初绑的渠道 / 模型 / Agent 三格软引用**（`agent_name` 只为"本机没有也能说清是谁"）+ **v3：整张摘要金字塔 + 每条消息的 `reasoning`**。<br>**消息一条不少**：压缩在库里从不改 `messages`（`RecordSummary` 只写 `summary_id`）⇒ 被摘要盖住的原文照旧全导。<br>**摘要必须带**：它是模型写的字，**不可重算**（重压得到另一段 —— `reroll-summary` 的存在就是证据），从前导回来等于"从没压过"。形状：`{key, parent_key?, type, begin_idx?, end_idx?, text, blocks, tokens, provider, model, prompt_version, usage, dirty, created_at}` —— `key`/`parent_key` 只是**文件内的句柄**（父子关系），`begin_idx`/`end_idx` 是 **1-based 消息序号**（不用消息 id：导入后 id 全换新）。<br>**仍不带**：system prompt / 消息 id / 消息的思考耗时与用量 / 摘要的 `source_ids`（导入时按真实成员重建）；**Agent 的定义也不带**（人设搬家走卡带）。**不要凭据**（没鉴权了） |
 | POST | `/sessions/import-json` | 上面那个导出格式（v1/v2 也收） | `{session, messages, summaries, agent_missing}` · 201 | **JSON 导入**：建新会话 + 按序落库（id 批铸排序）；role 只许 user/assistant（坏 ⇒ 400 点名第几条）、空 messages ⇒ 400、`version > 3` ⇒ 400；标题没给 ⇒ 首条 user 起。**v2 的三格照抄**（`provider`/`model`/`agent_id` —— 本机没有也照抄、不静默换缺省；文件没点名 agent 才用 `default_agent`），agent 本机没有 ⇒ `agent_missing: true`（界面提示"人设回落内置默认、要人设导卡带"）。**v3 的金字塔**：摘要**全部铸新 id** 再重映射父子（照抄旧 id 让同一个文件导两次会撞主键）⇒ `store.RestoreSummaries` 一个事务写进去，并回填 `messages.summary_id`（重叠区间在那一层当场变错误）。形状/成环/越界**在动库之前**验完 ⇒ 坏文件不留空壳会话；真写失败则把刚建的会话删掉（**半成品比失败更糟**：用户以为导进来了）。**不经过** `POST /sessions` ⇒ 不插首段对话 |
 | POST | `/sessions/import-st` | JSONL 原文（`?title=` 可选） | `{session, messages, skipped}` · 201 | **不要凭据**（设置面）。**ST 导入**：SillyTavern JSONL（一行一条）→ 建会话 + 按序落库；只认四样（is_user/mes/reasoning/send_date），其余全丢；空文件 ⇒ 400 |
@@ -912,7 +912,7 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 
 ### `sessions`
 
-`id` · `title`（首句自动生成；空串 = 还没起名）· `system_prompt`（**空串 = 没覆盖** ⇒ 用 agent 的拼装结果）· `provider` / `model` / `agent_id`（都是**软引用**，无外键）· **`thinking_level`**（空串 = 跟随模型默认；否则是统一七档之一）· **`native_tools_disabled`**（JSON 数组；历史字段名，语义 = 规则派生的 `server_tools` 里用户手动关掉的 id，新规则工具默认仍启用）· `created_at` / `updated_at`（界面按 `updated_at` 排序）
+`id` · `title`（首句自动生成；空串 = 还没起名）· `system_prompt`（**空串 = 没覆盖** ⇒ 用 agent 的拼装结果）· `provider` / `model` / `agent_id`（都是**软引用**，无外键）· **`thinking_level`**（空串 = 跟随模型默认；否则是统一七档之一）· **`native_tools_disabled`**（JSON 数组；历史字段名，语义 = 规则派生的 `server_tools` / 本地工具里用户手动关掉的 id，新规则工具默认仍启用）· `created_at` / `updated_at`（界面按 `updated_at` 排序）
 
 （**没有 `current_leaf`**：线性会话不需要"停在哪儿"，"最新一条" = `ORDER BY id DESC LIMIT 1`。）
 
@@ -989,8 +989,9 @@ DeepSeek / OpenCode GO 直连**确实不报**，所以那一格在那儿永远�
   缓存按**内容前缀**算、与 session id 无关 ⇒ 别为缓存分子会话；也别为"拒绝缓存"发明 header（Pi 的 `cacheRetention: "none"` 对 OpenCode GO 是 no-op）。
 - 思考回传用 `reasoning_content`（网关照收；deepseek 系没思考补空串、别的系不塞）；`reasoning_effort` 关不掉（下限 low）。
 - **工具不在提示词里**：请求体顶层 `tools` 数组；回话是助手消息里的 `tool_calls`，结果以 `{role:"tool", tool_call_id}` 回填。两条铁律：历史里出现过工具 ⇒ `tools` 参数必须在（哪怕 `[]`）；不认识的字段默认不发。形状/开关/实测见 `reminder/tool-calls.md`。
-  **服务端工具已接**（2026-11-09）：模型规则派生的 `server_tools` 在 Responses 协议下作为 `{"type":"x_search"}` 这类声明进请求体，命中会话 `native_tools_disabled` 的扣掉；它们不靠 `allow_tools`（那是给任意 function tool 的默认关闸）。`local_tools` 仍是配置候选 —— 没有工具注册表/执行器，暂不进请求体。
-  **DeepSeek 例外**：`availableTools` 对 DeepSeek 直接返回空（其 Responses `web_search` 只支持 v4-pro、只有 queries 没有 sources；flash 会忽略并吐 `<tool_call>` 文本）。要搜索走客户端 `/v1/tools/search` + `/v1/tools/fetch`。
+  **服务端工具已接**（2026-11-09）：模型规则派生的 `server_tools` 在 Responses 协议下作为 `{"type":"x_search"}` 这类声明进请求体，命中会话 `native_tools_disabled` 的扣掉；它们不靠 `allow_tools`（那是给任意 function tool 的默认关闸）。
+  **本地工具已接**（2026-11-10）：DeepSeek 默认规则 `deepseek-web` 给 `web_search` / `web_fetch` 两个 function 声明；`chat` 做客户端 tool loop（最多 4 轮），执行 `/v1/tools/search` / `/v1/tools/fetch`，工具结果以 `role:"tool"` 回填，最终落一条 assistant 消息 + `message_tools`（`source=client`）。工具结果/来源刷新后仍在。
+  **DeepSeek 服务端 `web_search` 不接**：只支持 v4-pro、只有 queries 没有 sources；flash 会忽略并吐 `<tool_call>` 文本。`availableTools` 对 DeepSeek 只返回本地工具（按 `native_tools_disabled` 过滤）。
   ⚠ **xAI 的服务端工具只有 `/responses`**（2026-11-09 真 key 实测）：`/chat/completions` 对 `{"type":"web_search"}` / `{"type":"x_search"}` 直接 **422**（只认 `function` 或 `live_search`），而 `live_search` 虽能过 schema，实际回 **410 "Live search is deprecated. Please switch to the Agent Tools API"**；`/responses` 对三种 Agent Tools 都是 200。
 - **`/debug/last-payload` 必须连请求头一起回显**（打码）—— 不然"为什么 403"只能靠猜。
 
@@ -1186,15 +1187,15 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
 - **思考档位在输入栏正上方的按钮区**（2026-11-08 用户定：把输入框正上方的一小条留给按钮）：
   `#composer` 改成纵向 flex（`.composer-toolbar` 在上、`.composer-row` 在下），
   `ThinkingMenu` 住在 toolbar 里，紧挨它右边是**工具状态**：`工具：无` 或
-  `工具：3（+内置）`（数量来自 `GET /models` 的 `server_tools`，也就是模型规则派生值；
-  没有工具不编 0，也不带「+内置」；悬停列出 `X 搜索 / 网页搜索 / 代码执行`）。
+  `工具：2` / `工具：3（+内置）`（数量来自 `GET /models` 的 `server_tools` + `local_tools`；
+  没有工具不编 0；悬停列出中文名）。
   按钮显示 **「推理等级：默认」**（中文档位名）；菜单项显示 **「低 low / 中 medium / 高 high / 最高 max」**
   （中文 + 原始 ASCII）；空档位是「默认 default」。工具状态是**可点击按钮**：
   点开列出模型规则给出的 native tools，自绘勾选框（Vuetify 默认 MDI checkbox 字体没装，会空白）；
   逐项取消/恢复，存进 `sessions.native_tools_disabled`（草稿存 `draftPrefs`，建会话时带上）。
-  数字只算**已启用**；全部关掉显示「工具：无」，但菜单仍能重新勾回。**请求体已带**这些服务端工具
-  （`{"type":"x_search"}` 等，见上面「工具不在提示词里」）；工具执行由 xAI 服务端完成。
-  本地 function tool 的执行循环仍没做；MCP 将来单独列，不混进这个数字。
+  数字只算**已启用**；全部关掉显示「工具：无」，但菜单仍能重新勾回。服务端工具（xAI）
+  以 `{"type":"x_search"}` 进请求体；本地工具有 `web_search` / `web_fetch` 的客户端执行循环
+  （DeepSeek Search/Fetch）。MCP 将来单独列，不混进这个数字。
   `VMenu` 是 `location="top end"` + `VList`/`VListItem`，**从输入栏向上弹**。
   TopBar 不再持有 ThinkingMenu；输入行只剩 `菜单? / 发送`。
   Session 级字段与后端校验不变（见下）。
@@ -1449,7 +1450,8 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   改该模型自己的**用户列**（显示名 / 上下文覆盖 / JSON 参数）——
   规则（`model_define_rules`）是家族默认，这里是对单个 `(provider, upstream_id)` 的精确覆盖。
   规则编辑器支持匹配协议（`match_protocol`）与**分别追加服务端 / 本地工具**（`server_tools` / `local_tools`）；
-  `grok-4 × response` 的内置默认会显示成「追加 x_search / web_search / code_execution」。空态说清「保存并刷新后会出现在这里」。
+  `grok-4 × response` 的内置默认会显示成「追加 x_search / web_search / code_execution」；
+  DeepSeek 默认追加 `web_search` / `web_fetch`（本地执行）。空态说清「保存并刷新后会出现在这里」。
 - **设置页平铺列表**（2026-11-04 统一设计系统）：`.settings-card` 只剩分节容器（无底色/圆角/内边距），字段行之间一条 `--line`；不再“卡片套卡片”。**tab 分两族**（2026-11-06 用户定「用真正的 Vuetify TabBar/TabItem」）：设置 / Agent 二级页用 Vuetify `VTabs`（MD3 primary tabs + slider + tabpanel）；上下文三 tab（压缩内再三个子 tab）与顶栏聊天·上下文也是 Vuetify `VTabs`；都由 `VTabsWindow` 做左右滑动。窄屏把 `v-tab` 压到 `min-width:0`，放得下（不再靠 show-arrows 吃 104px）。
 **设置四 tab 与会话/渠道管理页统一 760 居中**（列表页有表格，但切页时宽度不该跳来跳去）。**所有 `h3` 统一一种标题语言**：正文色半粗 + 左侧蓝色短竖条（从前只有卡片里的 h3 有竖条，其它 tab 是裸文字 —— 用户指出不一致）。「输入」卡里是 **发送方式（`enter` / `shift-enter` / `button`）**、输入时预览、命令菜单 —— 这三格在 2026-11-01 从用户视图搬进 `AppearancePane` 时 **refs 与 persist 都搬了、模板整段漏了**（界面上找不到，2026-11-02 补回）。开关一律 `:model-value` + `setX(v) { ref = v; persist(); }`，**别写 `v-model + @update:model-value="persist"`** —— 两个监听同挂 update 时显式那个可能先跑，存进去的是旧值（实测：界面 on、服务端 off）。
   **文案一律说人话**（2026-11-02 用户「审计设计界面里有哪些不说人话的部分」）：可见标签不再用 `Agent` / `vendor` / `protocol` / `载荷` / `卡带` / `提示词段` 这类内部词 ——

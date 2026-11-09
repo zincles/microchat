@@ -23,6 +23,7 @@ export function modelLabel(m?: ModelLike | null): string { return m?.display_nam
 export const NATIVE_TOOL_LABELS: Record<string, string> = {
   x_search: "X 搜索",
   web_search: "网页搜索",
+  web_fetch: "网页抓取",
   code_execution: "代码执行",
 };
 

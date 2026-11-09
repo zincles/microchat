@@ -53,11 +53,19 @@ type ToolEvent struct {
 	Sources []ToolSource
 }
 
-// Result：一次流式调用的结局 —— **整段**正文 + 整段思考 + 归一化后的用量。
+// ToolCall：模型发起的一次客户端 function call（流式里按 index 累积）。
+type ToolCall struct {
+	ID        string
+	Name      string
+	Arguments string
+}
+
+// Result：一次流式调用的结局 —— **整段**正文 + 整段思考 + 归一化后的用量 + 工具调用。
 type Result struct {
 	Text      string
 	Reasoning string
 	Usage     json.RawMessage
+	ToolCalls []ToolCall
 }
 
 // UpstreamError：上游报的错（非 2xx，或 200 开着流却在帧里报 error 对象）。
@@ -272,10 +280,21 @@ type streamChunk struct {
 // streamDelta：增量。正文一个字段，**思考认三种字段名**（发送侧用哪个由 `reasoning_field` 决定，
 // 接收侧一律全认 —— 各家写法不同：OpenRouter 系 `reasoning`、DeepSeek 官方 `reasoning_content`）。
 type streamDelta struct {
-	Content          string  `json:"content"`
-	Reasoning        *string `json:"reasoning"`
-	ReasoningContent *string `json:"reasoning_content"`
-	ReasoningText    *string `json:"reasoning_text"`
+	Content          string          `json:"content"`
+	Reasoning        *string         `json:"reasoning"`
+	ReasoningContent *string         `json:"reasoning_content"`
+	ReasoningText    *string         `json:"reasoning_text"`
+	ToolCalls        []toolCallDelta `json:"tool_calls"`
+}
+
+type toolCallDelta struct {
+	Index    int    `json:"index"`
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
 }
 
 func (d streamDelta) thinking() string {
@@ -292,6 +311,8 @@ func (d streamDelta) thinking() string {
 // 解析不了的帧（心跳、注释、别家塞的私货）跳过，不打断整条流；`[DONE]` 收工。
 func readStream(status int, body io.Reader, onDelta func(Delta)) (Result, error) {
 	var result Result
+	calls := map[int]*ToolCall{}
+	callOrder := []int{}
 	for event, err := range sse.Read(body, &sse.ReadConfig{MaxEventSize: maxEventSize}) {
 		if err != nil {
 			return Result{}, fmt.Errorf("providers: 解析流失败：%w", err)
@@ -315,6 +336,21 @@ func readStream(status int, body io.Reader, onDelta func(Delta)) (Result, error)
 			result.Usage = usage
 		}
 		for _, choice := range chunk.Choices {
+			for _, delta := range choice.Delta.ToolCalls {
+				call, exists := calls[delta.Index]
+				if !exists {
+					call = &ToolCall{}
+					calls[delta.Index] = call
+					callOrder = append(callOrder, delta.Index)
+				}
+				if delta.ID != "" {
+					call.ID = delta.ID
+				}
+				if delta.Function.Name != "" {
+					call.Name = delta.Function.Name
+				}
+				call.Arguments += delta.Function.Arguments
+			}
 			if thinking := choice.Delta.thinking(); thinking != "" {
 				result.Reasoning += thinking
 				if onDelta != nil {
@@ -329,7 +365,10 @@ func readStream(status int, body io.Reader, onDelta func(Delta)) (Result, error)
 			}
 		}
 	}
-	if result.Text == "" {
+	for _, index := range callOrder {
+		result.ToolCalls = append(result.ToolCalls, *calls[index])
+	}
+	if result.Text == "" && len(result.ToolCalls) == 0 {
 		return Result{}, ErrEmpty
 	}
 	return result, nil
