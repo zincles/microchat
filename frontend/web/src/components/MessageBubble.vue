@@ -196,14 +196,11 @@ watch(() => props.streaming, (s) => nextTick(() => {
         <summary>{{ thinkLabel }}</summary>
         <div class="think-body">{{ reasoning }}</div>
       </details>
-      <div ref="textEl" class="text" v-html="bodyHtml"></div>
+      <!-- 工具调用发生在正文之前（xAI 的 web_search_call 也是先于最终 text）；卡片必须在上方。
+           来源链接仍留在正文下方，作为引用清单，避免 30 条链接把答案顶走。 -->
       <div v-if="streaming && toolHint" class="tool-status" aria-live="polite">
         <span class="tool-dot" aria-hidden="true"></span>
         <i>{{ toolHint }}</i>
-      </div>
-      <div v-if="streaming && !content && !reasoning && !toolHint" class="typing" aria-label="正在生成">
-        <span></span><span></span><span></span>
-        <i class="typing-hint">{{ typingHint }}</i>
       </div>
       <div v-if="tools.length" class="tool-cards" aria-label="工具调用">
         <div v-for="(tool, i) in tools" :key="tool.id || i" class="tool-card">
@@ -212,6 +209,11 @@ watch(() => props.streaming, (s) => nextTick(() => {
           <span v-if="tool.queries?.length" class="tool-card-query">{{ tool.queries.join(" / ") }}</span>
           <span v-if="tool.sources?.length" class="tool-card-count">{{ tool.sources.length }} 条来源</span>
         </div>
+      </div>
+      <div ref="textEl" class="text" v-html="bodyHtml"></div>
+      <div v-if="streaming && !content && !reasoning && !toolHint" class="typing" aria-label="正在生成">
+        <span></span><span></span><span></span>
+        <i class="typing-hint">{{ typingHint }}</i>
       </div>
       <div v-if="sources.length" class="tool-sources" aria-label="搜索结果">
         <div class="tool-sources-title">来源 {{ sources.length }}</div>

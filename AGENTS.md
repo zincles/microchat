@@ -929,7 +929,8 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 
 **它不是消息**：不占 `idx`、不参与世界状态、不单独进摘要区间。多条工具调用 = 多条本表行；不要建 `_before` / `_after` 两张表（顺序用 `seq`）。
 xAI 的 `web_search_call` 落这里；DeepSeek 服务端 `web_search` 不接（只支持 v4-pro、无 sources），搜索走客户端 Search/Fetch。
-界面在正文上方画**工具卡**：工具名 + `queries`（本地 web_fetch 显示 URL）+ 来源条数；来源列表在卡片下方，多轮搜索按 URL 去重。
+界面在**正文上方**画**工具卡**：工具名 + `queries`（本地 web_fetch 显示 URL）+ 来源条数；
+来源链接清单留在**正文下方**（避免几十条链接把答案顶走），多轮搜索按 URL 去重。
 
 ### `models` —— 发现所得 + 用户覆盖（PK `(provider, upstream_id)`）
 

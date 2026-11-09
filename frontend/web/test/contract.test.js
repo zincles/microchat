@@ -4464,3 +4464,13 @@ test("工具来源：多次搜索合并时按 URL 去重", () => {
   assert.equal(sources[0].title, "A");
   assert.deepEqual(toolSources(null), []);
 });
+
+test("工具卡在正文上方，来源清单在正文下方", () => {
+  const bubble = readFileSync(join(SRC, "components", "MessageBubble.vue"), "utf8");
+  const cardAt = bubble.indexOf('class="tool-cards"');
+  const textAt = bubble.indexOf('ref="textEl" class="text"');
+  const sourcesAt = bubble.indexOf('class="tool-sources"');
+  assert.ok(cardAt > 0 && textAt > 0 && sourcesAt > 0);
+  assert.ok(cardAt < textAt, "工具卡必须先于正文");
+  assert.ok(sourcesAt > textAt, "来源清单留在正文下方");
+});
