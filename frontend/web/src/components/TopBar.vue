@@ -34,9 +34,11 @@ import type { ModelChoice, ModelGroup } from "../utils/format.ts";
 import type { ContextUsage, Queue, Session, TaskBoard, TaskRecord } from "../api/types.ts";
 
 interface SessionInfo {
+  id?: string;
   provider?: string;
   model?: string;
   agent_id?: string;
+  request_overrides?: Record<string, unknown>;
 }
 interface StatusInfo {
   conn?: string;
@@ -69,6 +71,7 @@ const emit = defineEmits<{
   "toggle-left": [];
   "select-model": [value: string];
   "select-workspace": [workspace: string];
+  "save-overrides": [overrides: Record<string, unknown>];
   "cancel-queue": [id: string];
   "cancel-task": [id: string];
 }>();
@@ -160,6 +163,7 @@ function syncOrphanModel(): void {
 }
 function setSession(info: SessionInfo | Partial<Session>): void {
   if (info.provider && info.model) curModel.value = modelKey(info.provider, info.model);
+  setSessionOverrides(info as SessionInfo);
   syncOrphanModel();
 }
 function setModels(groups: ModelGroup[], cur?: string): void {
@@ -179,7 +183,65 @@ function setModels(groups: ModelGroup[], cur?: string): void {
 const ctx = ref<ContextUsage | null>(null);
 const ctxOpen = ref(false);
 // 环面板的两个 tab（2026-11-02 用户定）：上下文状态 / 正在运行的任务。
-const ctxTab = ref<"context" | "tasks">("context");
+const ctxTab = ref<"context" | "tasks" | "overrides">("context");
+// —— 请求体覆盖（2026-11-10 用户定）——
+// 内容省略外层 {}：包装后再 JSON.parse；保存发给 App 做 PATCH。
+const overridesSessionId = ref("");
+const savedOverrides = ref<Record<string, unknown>>({});
+const overridesText = ref("");
+const overridesDirty = ref(false);
+const overridesError = ref("");
+const overridesNotice = ref("");
+
+function formatOverrides(value?: Record<string, unknown> | null): string {
+  const raw = JSON.stringify(value ?? {}, null, 2);
+  return raw === "{}" ? "" : raw.slice(1, -1).trim();
+}
+function parseOverrides(text: string): Record<string, unknown> {
+  const trimmed = text.trim();
+  if (!trimmed) return {};
+  // 省略外层花括号是界面约定；用户贴完整对象也照样接受。
+  const wrapped = trimmed.startsWith("{") ? trimmed : `{${trimmed}}`;
+  const value = JSON.parse(wrapped);
+  if (!value || Array.isArray(value) || typeof value !== "object") {
+    throw new Error("必须是一个 JSON 对象");
+  }
+  return value as Record<string, unknown>;
+}
+function validateOverrides(): Record<string, unknown> | null {
+  try {
+    const parsed = parseOverrides(overridesText.value);
+    overridesError.value = "";
+    overridesNotice.value = "JSON 合法";
+    return parsed;
+  } catch (err) {
+    overridesError.value = `JSON 不合法：${err instanceof Error ? err.message : String(err)}`;
+    return null;
+  }
+}
+function saveOverrides(): void {
+  if (!overridesSessionId.value) {
+    overridesError.value = "先建立会话，才能保存请求体覆盖";
+    return;
+  }
+  const parsed = validateOverrides();
+  if (!parsed) return;
+  emit("save-overrides", parsed);
+}
+function setOverridesSaved(value?: Record<string, unknown> | null): void {
+  savedOverrides.value = value ?? {};
+  overridesText.value = formatOverrides(savedOverrides.value);
+  overridesDirty.value = false;
+  overridesError.value = "";
+  overridesNotice.value = "";
+}
+function setSessionOverrides(info: SessionInfo): void {
+  const sid = String(info.id ?? "");
+  if (sid !== overridesSessionId.value || !overridesDirty.value) {
+    overridesSessionId.value = sid;
+    setOverridesSaved(info.request_overrides ?? {});
+  }
+}
 // 弧长（含"用了就得看得见"的最小弧）在 `utils/format.ts` 的 `contextArc` 里 —— 那边才测得到。
 const ctxArc = computed(() => contextArc(ctx.value));
 // dasharray="a b" 且 a+b=100 ⇒ 正好一道弧、没有第二道。
@@ -326,7 +388,7 @@ function setStatus(s?: StatusInfo | null): void { status.value = s ?? null; }
 // 悬停解释 = 状态一句 + 预算一句（两处都是"一眼看不清、要解释"的东西）。
 const ringTitle = computed(() => [formatStatusLine(status.value ?? {}), contextTitle(ctx.value), taskTitle.value].filter(Boolean).join("\n"));
 
-defineExpose({ setSession, setModels, setContext, setStatus, setTasks });
+defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverridesSaved });
 </script>
 
 <template>
@@ -449,6 +511,7 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks });
         >
           <VTab value="context">上下文</VTab>
           <VTab value="tasks">任务<span v-if="activeTaskCount > 0" class="ctx-tab-count">{{ taskCountText }}</span></VTab>
+          <VTab value="overrides">请求体覆盖</VTab>
         </VTabs>
         <VWindow v-model="ctxTab" class="ctx-window">
           <VWindowItem value="context">
@@ -551,6 +614,23 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks });
                   </VList>
                 </template>
               </template>
+            </div>
+          </VWindowItem>
+          <VWindowItem value="overrides">
+            <div class="ctx-pane ctx-overrides">
+              <p class="ctx-note">顶层 JSON 键值，省略外层花括号；保存后在每次对话请求体最后写入（允许覆盖任何 key）。</p>
+              <textarea
+                v-model="overridesText"
+                class="ctx-overrides-input"
+                spellcheck="false"
+                placeholder='"think": false'
+                @input="overridesDirty = true; overridesError = ''; overridesNotice = ''"
+              ></textarea>
+              <div class="ctx-overrides-actions">
+                <VBtn type="button" variant="text" size="small" @click="validateOverrides">验证</VBtn>
+                <VBtn type="button" variant="flat" color="primary" size="small" :disabled="!overridesSessionId" @click="saveOverrides">保存</VBtn>
+                <span class="ctx-overrides-state" :class="{ error: !!overridesError }">{{ overridesError || overridesNotice || (overridesDirty ? "未保存" : "已保存") }}</span>
+              </div>
             </div>
           </VWindowItem>
         </VWindow>

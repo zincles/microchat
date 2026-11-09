@@ -24,18 +24,18 @@ func (e InvalidError) Error() string { return string(e) }
 func nowMS() int64 { return time.Now().UnixMilli() }
 
 // sessionColumns：会话自己的列（**没有 current_leaf**：线性会话不需要"停在哪儿"）。
-const sessionColumns = "id, title, system_prompt, provider, model, agent_id, thinking_level, native_tools_disabled, created_at, updated_at"
+const sessionColumns = "id, title, system_prompt, provider, model, agent_id, thinking_level, native_tools_disabled, request_overrides, created_at, updated_at"
 
 // 一个最小的扫描接口：sql.Row 与 sql.Rows 都满足它。
 type scanner interface{ Scan(dest ...any) error }
 
 func scanSession(row scanner) (model.Session, error) {
 	var session model.Session
-	var disabledJSON string
+	var disabledJSON, overridesJSON string
 	err := row.Scan(
 		&session.ID, &session.Title, &session.SystemPrompt,
 		&session.Provider, &session.Model, &session.AgentID, &session.ThinkingLevel,
-		&disabledJSON, &session.CreatedAt, &session.UpdatedAt,
+		&disabledJSON, &overridesJSON, &session.CreatedAt, &session.UpdatedAt,
 	)
 	if err != nil {
 		return session, err
@@ -47,6 +47,12 @@ func scanSession(row scanner) (model.Session, error) {
 	}
 	if session.NativeToolsDisabled == nil {
 		session.NativeToolsDisabled = []string{}
+	}
+	if overridesJSON != "" {
+		_ = json.Unmarshal([]byte(overridesJSON), &session.RequestOverrides)
+	}
+	if session.RequestOverrides == nil {
+		session.RequestOverrides = map[string]json.RawMessage{}
 	}
 	return session, nil
 }
@@ -122,6 +128,7 @@ func (s *Store) CreateSessionWithID(id, provider, modelID, systemPrompt, title s
 		Provider: provider, Model: modelID,
 		AgentID:             "default", // 内置默认，server 再按 agents.json 覆盖
 		NativeToolsDisabled: []string{},
+		RequestOverrides:    map[string]json.RawMessage{},
 		CreatedAt:           now, UpdatedAt: now,
 	}
 	_, err := s.db.Exec(
@@ -180,6 +187,14 @@ func (s *Store) SetSessionNativeToolsDisabled(id string, disabled []string) erro
 		disabled = []string{}
 	}
 	return s.execTouch("UPDATE sessions SET native_tools_disabled = ?1 WHERE id = ?2", mustJSON(disabled), id)
+}
+
+// SetSessionRequestOverrides：写请求体顶层覆盖（原样 JSON 对象；空 map = 清空）。
+func (s *Store) SetSessionRequestOverrides(id string, overrides map[string]json.RawMessage) error {
+	if overrides == nil {
+		overrides = map[string]json.RawMessage{}
+	}
+	return s.execTouch("UPDATE sessions SET request_overrides = ?1 WHERE id = ?2", mustJSON(overrides), id)
 }
 
 func mustJSON(value any) string {
@@ -296,6 +311,7 @@ func (s *Store) CopySession(sessionID string) (model.Session, error) {
 		Provider: source.Provider, Model: source.Model, AgentID: source.AgentID,
 		ThinkingLevel:       source.ThinkingLevel,
 		NativeToolsDisabled: append([]string{}, source.NativeToolsDisabled...),
+		RequestOverrides:    source.RequestOverrides,
 		CreatedAt:           now, UpdatedAt: now,
 	}
 	tx, err := s.db.Begin()
@@ -304,10 +320,10 @@ func (s *Store) CopySession(sessionID string) (model.Session, error) {
 	}
 	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.Exec(
-		`INSERT INTO sessions (id, title, system_prompt, provider, model, agent_id, thinking_level, native_tools_disabled, created_at, updated_at)
-		 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)`,
+		`INSERT INTO sessions (id, title, system_prompt, provider, model, agent_id, thinking_level, native_tools_disabled, request_overrides, created_at, updated_at)
+		 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`,
 		copied.ID, copied.Title, copied.SystemPrompt, copied.Provider, copied.Model,
-		copied.AgentID, copied.ThinkingLevel, mustJSON(copied.NativeToolsDisabled), copied.CreatedAt, copied.UpdatedAt); err != nil {
+		copied.AgentID, copied.ThinkingLevel, mustJSON(copied.NativeToolsDisabled), mustJSON(copied.RequestOverrides), copied.CreatedAt, copied.UpdatedAt); err != nil {
 		return model.Session{}, err
 	}
 	// 摘要先插（消息的 `summary_id` 外键指着它）；父指针由 `insertSummary` 先留 NULL、插完回填。

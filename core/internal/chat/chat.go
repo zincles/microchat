@@ -233,6 +233,7 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 			SessionID:     sessionID,
 			ThinkingLevel: session.ThinkingLevel,
 			Tools:         tools,
+			Override:      session.RequestOverrides,
 		}, localReply(chosen), func(delta providers.Delta) {
 			if delta.Tool != nil {
 				s.Turns.SetTool(sessionID, token, delta.Tool.Kind, delta.Tool.State)
@@ -647,6 +648,7 @@ func (s *Service) buildWire(session model.Session, outgoing []state.Outgoing, re
 		SessionID:     session.ID,
 		ThinkingLevel: session.ThinkingLevel,
 		Tools:         s.availableTools(session, chosen),
+		Override:      session.RequestOverrides,
 		Stream:        true,
 	})
 	if err != nil {

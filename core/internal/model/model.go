@@ -191,8 +191,10 @@ type Session struct {
 	// NativeToolsDisabled：本条会话手动关掉的 provider-native tool id（规则给默认，用户可取消）。
 	// 只影响后续请求；模型规则变化后新工具仍会自动出现（除非再次手动关闭）。
 	NativeToolsDisabled []string `json:"native_tools_disabled"`
-	CreatedAt           int64    `json:"created_at"`
-	UpdatedAt           int64    `json:"updated_at"`
+	// RequestOverrides：请求体顶层覆盖（原样 JSON 值；最后写入，允许覆盖任何 key）。
+	RequestOverrides map[string]json.RawMessage `json:"request_overrides"`
+	CreatedAt        int64                      `json:"created_at"`
+	UpdatedAt        int64                      `json:"updated_at"`
 }
 
 // TurnPhase：一轮生成的状态（Rust 版在 turn.rs 的进程内登记表里）。

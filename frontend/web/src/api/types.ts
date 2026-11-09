@@ -61,6 +61,7 @@ export interface Session {
   agent_id: string;
   thinking_level: string;
   native_tools_disabled: string[];
+  request_overrides: Record<string, unknown>;
   created_at: number;
   updated_at: number;
 }
@@ -637,6 +638,7 @@ export interface CreateSessionRequest {
   system_prompt?: string;
   thinking_level?: string;
   native_tools_disabled?: string[];
+  request_overrides?: Record<string, unknown> | null;
 }
 
 export interface UpdateSessionRequest {
@@ -647,6 +649,7 @@ export interface UpdateSessionRequest {
   system_prompt?: string | null;
   thinking_level?: string;
   native_tools_disabled?: string[];
+  request_overrides?: Record<string, unknown> | null;
 }
 
 export interface EditMessageRequest {

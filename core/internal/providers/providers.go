@@ -216,7 +216,9 @@ type Request struct {
 	// Tools / ToolChoice：**工具透传**（原样进请求体；空 = 不发）。
 	Tools      []Tool
 	ToolChoice json.RawMessage
-	Stream     bool
+	// Override：请求体顶层**最后**写入的覆盖（原样 JSON 值；允许覆盖任何 key）。
+	Override map[string]json.RawMessage
+	Stream   bool
 }
 
 // presets：vendor 的内建定义。**只放端点和兼容开关，不搬模型目录**（模型是发现来的）。
@@ -791,7 +793,16 @@ func bodyFor(p Provider, r Request) map[string]any {
 		// `tools: []` 要防的情况。（回放历史本身也照旧：它是存档的一部分。）
 		body["tools"] = []Tool{}
 	}
+	applyOverride(body, r.Override)
 	return body
+}
+
+// applyOverride：会话级请求体覆盖 —— **最后写**，允许覆盖任何 key（包括 model/stream/tools）。
+// 用户明确要求允许覆盖；坏处由用户承担（这是调试口，不是安全边界）。
+func applyOverride(body map[string]any, override map[string]json.RawMessage) {
+	for key, value := range override {
+		body[key] = value
+	}
 }
 
 // wireMessages：把消息拼成要发出去的形状。
@@ -983,6 +994,7 @@ func buildResponse(p Provider, r Request) (*http.Request, error) {
 			body["prompt_cache_key"] = clampPromptCacheKey(r.SessionID)
 		}
 	}
+	applyOverride(body, r.Override)
 	raw, err := json.Marshal(body)
 	if err != nil {
 		return nil, err

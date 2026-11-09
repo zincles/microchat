@@ -398,6 +398,8 @@ type UpdateSessionReq struct {
 	ThinkingLevel *string `json:"thinking_level"`
 	// NativeToolsDisabled：nil = 不动；[] = 全部恢复；非空 = 关闭这些 native tool。
 	NativeToolsDisabled *[]string `json:"native_tools_disabled"`
+	// RequestOverrides：nil = 不动；{} = 清空；对象 = 整份替换。允许覆盖任何 key。
+	RequestOverrides *map[string]json.RawMessage `json:"request_overrides"`
 }
 
 // normalizeUUIDv7：校验 + 规范化（小写带横线）。`sessions.id` 的 v7 形状由这一处守
@@ -675,6 +677,16 @@ func (s *Server) updateSession(w http.ResponseWriter, r *http.Request) {
 	if req.NativeToolsDisabled != nil {
 		disabled := append([]string{}, (*req.NativeToolsDisabled)...)
 		if err := s.store.SetSessionNativeToolsDisabled(id, disabled); err != nil {
+			writeStoreError(w, err)
+			return
+		}
+	}
+	if req.RequestOverrides != nil {
+		overrides := map[string]json.RawMessage{}
+		for key, value := range *req.RequestOverrides {
+			overrides[key] = value
+		}
+		if err := s.store.SetSessionRequestOverrides(id, overrides); err != nil {
 			writeStoreError(w, err)
 			return
 		}

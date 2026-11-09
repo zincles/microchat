@@ -1518,3 +1518,15 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 @media (prefers-reduced-motion: reduce) {
   #sessions-bar .session-item .item-btn { transition: none; }
 }
+
+
+/* 请求体覆盖（上下文圆环面板第三 tab，2026-11-10） */
+.ctx-overrides { display: flex; flex-direction: column; gap: 0.55em; }
+.ctx-overrides-input { width: 100%; box-sizing: border-box; min-height: 12em; resize: vertical;
+  padding: 0.6em 0.7em; border: 1px solid var(--md-outline-variant); border-radius: var(--r-sm);
+  background: var(--md-surface-container-high); color: var(--md-on-surface);
+  font-family: var(--app-font-mono, ui-monospace, monospace); font-size: 0.82em; line-height: 1.5; }
+.ctx-overrides-input:focus { outline: 1px solid var(--md-primary); outline-offset: 0; }
+.ctx-overrides-actions { display: flex; align-items: center; gap: 0.35em; }
+.ctx-overrides-state { margin-left: auto; color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
+.ctx-overrides-state.error { color: var(--md-error); }

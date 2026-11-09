@@ -4485,3 +4485,15 @@ test("输入栏的推理等级/工具按钮共用同一套尺寸与风格", () =
   assert.match(css, /\.composer-toolbar \.thinking-btn,\s*\.composer-toolbar \.tools-btn\s*\{/);
   assert.match(css, /\.thinking-label,\s*\.tools-label\s*\{/);
 });
+
+test("上下文圆环的请求体覆盖面板：无外层花括号、验证/保存、App 落库", () => {
+  const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  assert.match(top, /value="overrides">请求体覆盖/, "圆环面板没有请求体覆盖 tab");
+  assert.match(top, /class="ctx-overrides-input"/, "没有 JSON 输入框");
+  assert.match(top, /省略外层花括号/, "没有说明不用花括号");
+  assert.match(top, /function parseOverrides\(/, "没有本地解析");
+  assert.match(top, /emit\("save-overrides", parsed\)/, "保存没有 emit");
+  assert.match(app, /@save-overrides="saveRequestOverrides"/, "App 没有接保存事件");
+  assert.match(app, /request_overrides: overrides/, "保存没有 PATCH request_overrides");
+});

@@ -83,6 +83,9 @@ func (s *Store) migrate() error {
 	if err := s.ensureSessionNativeTools(); err != nil {
 		return err
 	}
+	if err := s.ensureSessionRequestOverrides(); err != nil {
+		return err
+	}
 	if err := s.ensureMessageMetadata(); err != nil {
 		return err
 	}
@@ -190,4 +193,16 @@ func (s *Store) ensureMessageTools() error {
 	}
 	_, err = s.db.Exec("CREATE INDEX IF NOT EXISTS message_tools_by_message ON message_tools(message_id, seq)")
 	return err
+}
+
+func (s *Store) ensureSessionRequestOverrides() error {
+	var count int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'request_overrides'").Scan(&count); err != nil {
+		return err
+	}
+	if count == 0 {
+		_, err := s.db.Exec("ALTER TABLE sessions ADD COLUMN request_overrides TEXT NOT NULL DEFAULT '{}'")
+		return err
+	}
+	return nil
 }

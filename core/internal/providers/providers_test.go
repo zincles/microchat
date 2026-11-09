@@ -1128,3 +1128,24 @@ func TestThinkingWireMapping(t *testing.T) {
 		t.Fatalf("Responses thinking = %+v", responseBody)
 	}
 }
+
+func TestRequestOverrideAppliedLast(t *testing.T) {
+	provider := Provider{ID: "x", Vendor: VendorCustom, Protocol: ProtocolChatCompletion, BaseURL: "https://example.com/v1"}
+	request, err := Build(provider, Request{
+		Model: "m", Messages: []ChatMessage{{Role: "user", Content: "hi"}}, SessionID: "s", Stream: true,
+		Override: map[string]json.RawMessage{
+			"think": json.RawMessage("false"),
+			"model": json.RawMessage(`"overridden"`),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body["model"] != "overridden" || body["think"] != false {
+		t.Fatalf("override 没最后生效：%#v", body)
+	}
+}

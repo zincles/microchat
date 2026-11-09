@@ -1232,7 +1232,7 @@ async function startDraft() {
   // `sessionInfo.id` 会留着上一条的 id —— 于是"这是草稿吗"就答错了（曾经就没人读它，
   // 所以一直没露；上下文工作区要读它才露出来）。
   Object.assign(sessionInfo, {
-    id: "", title: "", provider: "", model: "", agent_id: "", thinking_level: "", system_prompt: "", native_tools_disabled: [],
+    id: "", title: "", provider: "", model: "", agent_id: "", thinking_level: "", system_prompt: "", native_tools_disabled: [], request_overrides: {},
   });
   paintSessionHeader();
   const d = await api.getDefaults().catch(() => ({} as any));
@@ -1649,6 +1649,24 @@ async function pollTurn(sid, turnID, existing = null) {
   }
 }
 let connText = "未连接";
+// saveRequestOverrides：Agent/请求体覆盖面板的“保存”（2026-11-10）。
+// 存到会话上；保存后立刻重跑载荷预演，让「上下文 → 载荷」看到附加字段。
+async function saveRequestOverrides(overrides: Record<string, unknown>) {
+  if (draft || !sessionID) {
+    toast("先建立会话，才能保存请求体覆盖", "error");
+    return;
+  }
+  try {
+    const updated = await api.patchSession(sessionID, { request_overrides: overrides });
+    Object.assign(sessionInfo, updated);
+    topbarRef.value?.setOverridesSaved(updated.request_overrides ?? {});
+    refreshPreview();
+    toast("请求体覆盖已保存", "ok");
+  } catch (err) {
+    toast(`保存请求体覆盖失败：${err.message}`, "error");
+  }
+}
+
 // 左栏「选项」浮板的两件动作（2026-11-04 从会话设置面板挪过来）：
 // 复制成功后仍走 afterCopy（进副本）；导出仍用同一个 API + downloadJSON。
 async function copySessionFromBar(id) {
@@ -2120,6 +2138,7 @@ onUnmounted(() => {
       :workspace="workspace"
       :loading="loadingSession"
       @select-workspace="selectWorkspace"
+      @save-overrides="saveRequestOverrides"
       @toggle-left="toggleLeft"
       @select-model="(v) => applyModelValue(v).catch((err) => toast(`换模型失败：${err.message}`, 'error'))"
       @cancel-queue="cancelQueue"

@@ -21,7 +21,9 @@ CREATE TABLE sessions (
   -- 思考档位（空串 = 跟随模型默认）；取值校验在 server / providers
   thinking_level TEXT NOT NULL DEFAULT '',
   -- 手动关闭的 provider-native tool id（JSON 数组；规则给默认，用户可取消）
-  native_tools_disabled TEXT NOT NULL DEFAULT '[]'
+  native_tools_disabled TEXT NOT NULL DEFAULT '[]',
+  -- 请求体顶层覆盖（JSON 对象；最后写入，允许覆盖任何 key）
+  request_overrides TEXT NOT NULL DEFAULT '{}'
 );
 CREATE TABLE messages (
   id          TEXT PRIMARY KEY,
