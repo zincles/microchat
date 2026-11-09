@@ -2972,11 +2972,11 @@ test("markdown 转义：关掉任何类型都不影响 XSS 那道门", () => {
 });
 
 // 前端渲染用的类型清单必须与后端**逐个对上**（多一个不触发、少一个点了没反应）。
-test("工具状态：无/1/2/3（+内置），标题列出工具", () => {
+test("工具状态：无/1/2/3，标题列出工具", () => {
   assert.equal(nativeToolsLabel([]), "工具：无");
   assert.equal(nativeToolsLabel(undefined), "工具：无");
-  assert.equal(nativeToolsLabel(["x_search"]), "工具：1（+内置）");
-  assert.equal(nativeToolsLabel(["x_search", "web_search", "code_execution"]), "工具：3（+内置）");
+  assert.equal(nativeToolsLabel(["x_search"]), "工具：1");
+  assert.equal(nativeToolsLabel(["x_search", "web_search", "code_execution"]), "工具：3");
   assert.equal(nativeToolLabel("x_search"), "X 搜索");
   assert.equal(nativeToolLabel("unknown_tool"), "unknown_tool");
   assert.ok(nativeToolsTitle(["x_search", "web_search"]).includes("X 搜索"));

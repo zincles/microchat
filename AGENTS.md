@@ -1191,7 +1191,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
 - **思考档位在输入栏正上方的按钮区**（2026-11-08 用户定：把输入框正上方的一小条留给按钮）：
   `#composer` 改成纵向 flex（`.composer-toolbar` 在上、`.composer-row` 在下），
   `ThinkingMenu` 住在 toolbar 里，紧挨它右边是**工具状态**：`工具：无` 或
-  `工具：2` / `工具：3（+内置）`（数量来自 `GET /models` 的 `server_tools` + `local_tools`；
+  `工具：2` / `工具：3`（数量来自 `GET /models` 的 `server_tools` + `local_tools`；
   没有工具不编 0；悬停列出中文名）。
   按钮显示 **「推理等级：默认」**（中文档位名）；菜单项显示 **「低 low / 中 medium / 高 high / 最高 max」**
   （中文 + 原始 ASCII）；空档位是「默认 default」。工具状态是**可点击按钮**：

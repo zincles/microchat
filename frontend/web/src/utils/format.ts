@@ -32,11 +32,11 @@ export function nativeToolLabel(id?: string | null): string {
   return NATIVE_TOOL_LABELS[key] || key;
 }
 
-// nativeToolsLabel：输入栏上方那枚「工具：3（+内置）」状态。
+// nativeToolsLabel：输入栏上方那枚「工具：3」状态。
 // 工具数来自模型规则派生的 native_tools；没有就是「工具：无」，不编 0。
 export function nativeToolsLabel(ids?: string[] | null): string {
   const count = Array.isArray(ids) ? ids.length : 0;
-  return count ? `工具：${count}（+内置）` : "工具：无";
+  return count ? `工具：${count}` : "工具：无";
 }
 
 export function nativeToolsTitle(ids?: string[] | null): string {
