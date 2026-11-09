@@ -547,3 +547,33 @@ func TestListMessageRangesBatchesAndDeduplicates(t *testing.T) {
 		}
 	}
 }
+
+func TestMessageMetadataRoundTrip(t *testing.T) {
+	st := openTemp(t)
+	seedSession(t, st, "s1", "m1")
+	inserted, err := st.InsertMessage(model.Message{
+		ID: "a1", SessionID: "s1", Role: model.RoleAssistant,
+		Kind: model.MessageKindToolRun, Status: model.MessageStatusDone,
+		ToolsSnapshot: []string{"web_search"}, Content: "结果",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inserted.Kind != model.MessageKindToolRun || inserted.Status != model.MessageStatusDone {
+		t.Fatalf("inserted = %+v", inserted)
+	}
+	messages, err := st.ListMessages("s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got model.Message
+	for _, message := range messages {
+		if message.ID == "a1" {
+			got = message
+		}
+	}
+	if got.Kind != model.MessageKindToolRun || got.Status != model.MessageStatusDone ||
+		len(got.ToolsSnapshot) != 1 || got.ToolsSnapshot[0] != "web_search" {
+		t.Fatalf("got = %+v", got)
+	}
+}

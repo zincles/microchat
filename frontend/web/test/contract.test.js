@@ -28,6 +28,7 @@ import {
   usageFoot,
   usageFootTitle,
   identityLabel,
+  assistantIdentity,
   formatLatency,
   formatSpeed,
   nativeToolLabel,
@@ -190,7 +191,7 @@ test("formatCost：便宜模型给 4 位小数；没数据回空串（不是 $0.
   assert.equal(formatCost("0.5"), "");            // 不是数字 ⇒ 当没有
 });
 
-test("usageFoot：身份脚注（IDX + 用量）；没用量/没编号整行为空", () => {
+test("usageFoot：底部只留用量/延迟/速度；没用量整行为空", () => {
   const foot = usageFoot({ prompt_tokens: 6585, completion_tokens: 945, cached_tokens: 0, reasoning_tokens: 333, cost_usd: 0.0012 });
   assert.ok(foot.includes("输入：6.5K， 输出：945（思考 333）")); // 向下取整：6585 ⇒ 6.5K
   assert.ok(foot.includes("成本 $0.0012"));
@@ -214,7 +215,7 @@ test("身份脚注：IDX/用量/首字延迟/速度齐全；缺哪格就省哪�
     { prompt_tokens: 1126, completion_tokens: 1229, reasoning_tokens: 900 },
     { idx: 4, reasoningMs: 1234, durationMs: 10000 },
   );
-  assert.match(full, /^助手#4， 输入：1\.1K， 输出：1\.2K（思考 900）/);
+  assert.match(full, /^输入：1\.1K， 输出：1\.2K（思考 900）/);
   assert.ok(full.includes("首字延迟： 1.2 s"));
   // 生成窗口 = 10 − 1.234 = 8.766 s；生成 token = 1229 − 900 = 329 ⇒ 37.5 tps（≥10 收成整数 = 37）。
   assert.ok(full.includes("速度： 122.9 tps"));
@@ -222,18 +223,22 @@ test("身份脚注：IDX/用量/首字延迟/速度齐全；缺哪格就省哪�
 
   // 没有 reasoning_ms：整段算速度（100 token / 2 s = 50 tps），也没有首字延迟这一段。
   const noThink = usageFoot({ prompt_tokens: 10, completion_tokens: 100 }, { idx: 7, durationMs: 2000 });
-  assert.ok(noThink.startsWith("助手#7， "));
+  assert.ok(noThink.startsWith("输入：10， "));
   assert.ok(!noThink.includes("首字延迟"));
   assert.ok(noThink.includes("速度： 50 tps"));
 
   // 只有编号（生成中 / 库外那条）：脚注就只是编号，绝不编出 0 token。
-  assert.equal(usageFoot(null, { idx: 3 }), "助手#3。");
+  assert.equal(usageFoot(null, { idx: 3 }), ""); // 身份在顶部；底部没有用量就不出现
   assert.equal(usageFoot(null, { idx: null }), "");
 
   assert.equal(identityLabel("你", 3), "你 #3");
   assert.equal(identityLabel("你", null), "你");       // 乐观句还没编号
   assert.equal(identityLabel("", 3), "#3");
   assert.equal(identityLabel("你", undefined), "你");
+  assert.equal(assistantIdentity("助手", "chat", 2), "助手-对话#2");
+  assert.equal(assistantIdentity("助手", "tool_run", 3), "助手-工具#3");
+  assert.equal(assistantIdentity("主持人", "tool_run", 4), "主持人#4");
+  assert.equal(assistantIdentity("助手", "chat", null), "助手-对话");
 
   assert.equal(formatLatency(1234), "1.2 s");
   assert.equal(formatLatency(null), "");
@@ -255,23 +260,24 @@ test("usageFoot 的悬停说明：点明思考是输出的子集、成本/延迟
   assert.ok(title.includes("上游报的"));
   assert.ok(title.includes("受理 → 第一段正文"));
   assert.ok(title.includes("输出 token ÷ 整发耗时"));
-  assert.ok(title.includes("IDX 2"));
+
 });
 
-test("消息头已移除：assistant 身份只在脚注；user 身份在气泡外且 hover 才显形", () => {
+test("消息头：assistant 身份在正文顶部；user 身份在气泡外且 hover 才显形", () => {
   const bubble = readFileSync(join(SRC, "components", "MessageBubble.vue"), "utf8");
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  assert.ok(!/msg-head/.test(bubble), "气泡顶部还留着身份头");
+  assert.match(bubble, /v-if="role !== 'user' && assistantIdent" class="msg-head"/, "assistant 身份不在顶部");
+  assert.match(bubble, /assistantIdentity\(props\.who, props\.kind, props\.idx\)/, "顶部身份没接 kind");
   assert.ok(!/msg-idx/.test(bubble), "气泡里还留着 #编号");
   assert.ok(!/<span class="who">/.test(bubble), "气泡里还渲染 who");
-  assert.ok(!/\.msg \.msg-head/.test(css), "CSS 还留着消息头规则");
+  assert.match(css, /\.msg \.msg-head/, "CSS 没有消息头规则");
   assert.ok(!/\.msg \.who\b/.test(css), "CSS 还留着 who 规则");
   assert.ok(!/\.msg \.msg-idx\b/.test(css), "CSS 还留着气泡内编号规则");
 
   // assistant：脚注一行，含身份/用量/延迟/速度的拼装出口。
   assert.match(bubble, /v-if="role !== 'user' && foot" class="msg-foot"/, "assistant 脚注不该回到用户气泡里");
-  assert.match(bubble, /usageFoot\(footUsage\.value, footTiming\.value\)/, "脚注没带上编号/时长");
+  assert.match(bubble, /usageFoot\(footUsage\.value, footTiming\.value\)/, "脚注没带上时长");
   assert.match(bubble, /durationMs: props\.durationMs/, "脚注没接 durationMs");
   assert.match(bubble, /props\.streaming \? null : props\.usage/, "生成中没把上一版的用量摘掉");
   assert.match(app, /durationMs: m\.duration_ms \?\? null/, "toRow 没带 duration_ms");

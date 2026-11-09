@@ -27,6 +27,12 @@ CREATE TABLE messages (
   id          TEXT PRIMARY KEY,
   session_id  TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   role        TEXT NOT NULL CHECK (role IN ('user','assistant')),
+  -- 存储/展示类型（不是 wire 的 role）：chat / tool_run
+  kind        TEXT NOT NULL DEFAULT 'chat',
+  -- done / canceled / failed / interrupted
+  status      TEXT NOT NULL DEFAULT 'done',
+  -- 生成时可用工具名的 JSON 数组；实际调用在 message_tools
+  tools_snapshot TEXT NOT NULL DEFAULT '[]',
   content     TEXT NOT NULL,
   created_at  INTEGER NOT NULL,
   -- 修改时（毫秒）：新建时 = created_at；改正文时刷成当前毫秒。

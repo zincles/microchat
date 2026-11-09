@@ -7,6 +7,9 @@
 
 export type Usage = Record<string, unknown>;
 export type Role = "user" | "assistant";
+export type MessageKind = "chat" | "tool_run";
+export type MessageStatus = "done" | "canceled" | "failed" | "interrupted";
+
 export type TurnPhase = "idle" | "pending" | "streaming" | "error";
 export type SummaryType = "message" | "summary";
 

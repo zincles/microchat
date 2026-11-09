@@ -21,6 +21,25 @@ const (
 	RoleAssistant Role = "assistant"
 )
 
+// MessageKind：消息的**存储/展示类型**（不是 wire 的 role）。
+// `tool_run` = 这条 assistant 消息实际发生过工具调用；只看“工具当时可用”不算。
+type MessageKind string
+
+const (
+	MessageKindChat    MessageKind = "chat"
+	MessageKindToolRun MessageKind = "tool_run"
+)
+
+// MessageStatus：消息的完成状态。普通消息一般只有 done；工具循环/中断需要区分。
+type MessageStatus string
+
+const (
+	MessageStatusDone        MessageStatus = "done"
+	MessageStatusCanceled    MessageStatus = "canceled"
+	MessageStatusFailed      MessageStatus = "failed"
+	MessageStatusInterrupted MessageStatus = "interrupted"
+)
+
 // Message：一条消息 —— **线性会话里的一格**（没有父指针：顺序由 `id` 定）。
 //
 // **字段顺序照抄 Rust 版**（serde 按声明顺序输出 ⇒ 顺序不同 = 字节不同 = 前端可能踩坑）。
@@ -28,7 +47,12 @@ type Message struct {
 	ID        string `json:"id"`
 	SessionID string `json:"session_id"`
 	Role      Role   `json:"role"`
-	Content   string `json:"content"` // 存档本体：<state> 块原样留着
+	// Kind：storage/display 类型（role 仍是 wire 的 user/assistant）。
+	Kind   MessageKind   `json:"kind,omitempty"`
+	Status MessageStatus `json:"status,omitempty"`
+	// ToolsSnapshot：生成这一条时**可用**的工具名（server + local），不表示实际调用。
+	ToolsSnapshot []string `json:"tools_snapshot,omitempty"`
+	Content       string   `json:"content"` // 存档本体：<state> 块原样留着
 
 	// 下面四样只服务显示（出站 / 世界状态一律不看它们）
 	Reasoning   string `json:"reasoning,omitempty"`

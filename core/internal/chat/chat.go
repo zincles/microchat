@@ -204,14 +204,17 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 	var firstTextAt time.Time
 	// 配置 → 线上形状只有这一条路（`FromConfig`）：手搓字面量漏一个字段就是静默失效
 	wire := providers.FromConfig(chosen.Provider)
+	tools := s.availableTools(session, chosen)
+	toolsUsed := false
 	result, err := providers.NewClient(wire).Chat(ctx, wire, providers.Request{
 		Model:         session.Model,
 		Messages:      wireMessages(outgoing, reasoningByID),
 		SessionID:     sessionID,
 		ThinkingLevel: session.ThinkingLevel,
-		Tools:         s.availableTools(session, chosen),
+		Tools:         tools,
 	}, localReply(chosen), func(delta providers.Delta) {
 		if delta.Tool != nil {
+			toolsUsed = true
 			s.Turns.SetTool(sessionID, token, delta.Tool.Kind, delta.Tool.State)
 			if len(delta.Tool.Sources) > 0 {
 				sources := make([]turn.Source, 0, len(delta.Tool.Sources))
@@ -246,7 +249,11 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 		guard.Cancel()
 		return
 	}
-	message := s.assistantMessage(session, replyID, token, chosen, result, firstTextAt, started)
+	kind := model.MessageKindChat
+	if toolsUsed {
+		kind = model.MessageKindToolRun
+	}
+	message := s.assistantMessage(session, replyID, token, chosen, result, firstTextAt, started, kind, toolNames(tools))
 	if _, err := s.Store.InsertMessage(message); err != nil {
 		s.Turns.Finish(sessionID, token, err.Error())
 		guard.Fail(err.Error())
@@ -272,10 +279,11 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 // 思考**留不留档**由渠道的 `store_reasoning` 决定：它只服务动画与回看，不参与任何计算；
 // 关掉它时连 `reasoning_ms` 一起不写（没有"这个思考"可言）。
 func (s *Service) assistantMessage(session model.Session, replyID string, token uint64, chosen providers.Backend,
-	result providers.Result, firstTextAt time.Time, started time.Time) model.Message {
+	result providers.Result, firstTextAt time.Time, started time.Time, kind model.MessageKind, tools []string) model.Message {
 	durationMS := time.Since(started).Milliseconds()
 	message := model.Message{
 		ID: replyID, SessionID: session.ID, Role: model.RoleAssistant,
+		Kind: kind, Status: model.MessageStatusDone, ToolsSnapshot: tools,
 		Content: result.Text, DurationMS: &durationMS, Usage: result.Usage,
 	}
 	if chosen.StoresReasoning() {
@@ -289,6 +297,22 @@ func (s *Service) assistantMessage(session model.Session, replyID string, token 
 		}
 	}
 	return message
+}
+
+// toolNames：请求里工具声明的名字（server 工具用 type，function 工具用 name），
+// 存进消息的 tools_snapshot —— 记录"生成时可用什么"，不表示实际调用。
+func toolNames(tools []providers.Tool) []string {
+	names := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		name := tool.Type
+		if tool.Function != nil && tool.Function.Name != "" {
+			name = tool.Function.Name
+		}
+		if name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 // assemble：历史（+ 可选的"还没进库的那一句"）→ 真会发出去的东西。

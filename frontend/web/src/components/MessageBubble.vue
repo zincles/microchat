@@ -3,7 +3,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import { VBtn } from "vuetify/components";
 import { ICONS } from "./icons.ts";
-import { formatThinkLabel, identityLabel, sourceLabel, toolRunHint, usageFoot, usageFootTitle } from "../utils/format.ts";
+import { assistantIdentity, formatThinkLabel, identityLabel, sourceLabel, toolRunHint, usageFoot, usageFootTitle } from "../utils/format.ts";
 import type { UsageLike } from "../utils/format.ts";
 import { renderMarkdown, splitState } from "../utils/markdown.ts";
 import { renderMermaidIn } from "../utils/mermaid.ts";
@@ -19,6 +19,7 @@ const props = withDefaults(defineProps<{
   who?: string;
   idx?: number | string | null; // 显示编号（真消息=服务端 idx；库外的按后缀顺延）
   role?: string;
+  kind?: "chat" | "tool_run" | string | null;
   content?: string;
   reasoning?: string;
   reasoningMs?: number | null;
@@ -40,6 +41,7 @@ const props = withDefaults(defineProps<{
   who: "",
   idx: null,
   role: "",
+  kind: "chat",
   content: "",
   reasoning: "",
   reasoningMs: null,
@@ -78,6 +80,7 @@ const foot = computed(() => usageFoot(footUsage.value, footTiming.value));
 const footTitle = computed(() => usageFootTitle(footUsage.value, footTiming.value));
 // 用户身份（`你 #3`）：气泡**外面**那一行，CSS 里只在 hover 时显形。
 const ident = computed(() => identityLabel(props.who, props.idx));
+const assistantIdent = computed(() => assistantIdentity(props.who, props.kind, props.idx));
 
 // 流式期间还没正文 ⇒ 标签说"思考中…"；落库后才是"思考过程（2.1s）"（那会儿才有用时）。
 const typingHint = computed(() =>
@@ -169,6 +172,7 @@ watch(() => props.streaming, (s) => nextTick(() => {
        所以不再有条件类 —— 形态本身写在 CSS 的 `.msg.assistant` / `.msg-wrap.assistant` 里。 -->
   <div :class="`msg-wrap ${role === 'user' ? 'user' : 'assistant'}`">
     <div ref="msgEl" :class="`msg ${role === 'user' ? 'user' : 'assistant'}`">
+      <div v-if="role !== 'user' && assistantIdent" class="msg-head">{{ assistantIdent }}</div>
       <details v-if="reasoning" class="think">
         <summary>{{ thinkLabel }}</summary>
         <div class="think-body">{{ reasoning }}</div>

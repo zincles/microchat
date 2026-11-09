@@ -27,6 +27,9 @@ export interface ChatMessage {
   messageId?: string;
   idx?: number | null;
   role?: string;
+  kind?: "chat" | "tool_run";
+  status?: "done" | "canceled" | "failed" | "interrupted";
+  tools_snapshot?: string[];
   who?: string;
   content?: string;
   reasoning?: string;

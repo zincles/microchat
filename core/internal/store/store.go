@@ -83,6 +83,9 @@ func (s *Store) migrate() error {
 	if err := s.ensureSessionNativeTools(); err != nil {
 		return err
 	}
+	if err := s.ensureMessageMetadata(); err != nil {
+		return err
+	}
 	return s.ensureTavernPresets()
 }
 

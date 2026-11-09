@@ -402,6 +402,9 @@ function openMessageEditor(message, kind) {
 function toRow(m) {
   return {
     who: m.role === "user" ? "你" : "助手",
+    kind: m.kind || "chat",
+    status: m.status || "done",
+    tools_snapshot: m.tools_snapshot || [],
     idx: m.idx, // 服务端派生的序号（编号就认它）
     role: m.role,
     content: m.content,
@@ -1451,6 +1454,7 @@ const activeTurnPolls = new Set();
 function applyTurnStream(st, slice, cur, row) {
   row.tool = st.tool ?? null;
   row.sources = st.sources ?? [];
+  if (row.tool || row.sources.length) row.kind = "tool_run";
   const merged = mergeStreamSlice(
     { text: vueStream.value.text ?? "", reasoning: vueStream.value.reasoning ?? "" }, cur, slice);
   vueStream.value.text = merged.text;
@@ -2134,6 +2138,7 @@ onUnmounted(() => {
               :is-last="!!row.msg.messageId && row.msg.messageId === lastMsgId"
               :streaming="!!row.msg.stream || isLive(row.msg)"
               :phase="String(row.msg.phase || '')"
+              :kind="row.msg.kind || 'chat'"
               :tool="row.msg.tool"
               :sources="row.msg.sources"
               :usage="row.msg.usage"

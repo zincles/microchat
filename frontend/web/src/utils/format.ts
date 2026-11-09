@@ -281,6 +281,21 @@ export function identityLabel(who?: string | null, idx?: number | string | null)
   return w ? `${w} #${n}` : `#${n}`;
 }
 
+// assistantIdentity：助手消息顶部身份。`kind` 是实际用过工具（tool_run）还是普通对话。
+// 不用「智能体」：Agent 是人格/能力的词，不是消息类型；`助手-工具` 说的就是这条消息做了什么。
+export function assistantIdentity(
+  who?: string | null,
+  kind?: string | null,
+  idx?: number | string | null,
+): string {
+  const w = String(who ?? "").trim();
+  const n = idx === null || idx === undefined ? "" : String(idx).trim();
+  let label = w;
+  if (w === "助手") label = kind === "tool_run" ? "助手-工具" : "助手-对话";
+  if (!n) return label;
+  return label ? `${label}#${n}` : `#${n}`;
+}
+
 // formatLatency：首字延迟（后端 `reasoning_ms`：受理 → 第一段正文），秒、两位小数。
 // 没这一格（没存思考的渠道 / 还没有正文 / 生成中）⇒ 空串 ⇒ 脚注省掉这段。
 export function formatLatency(ms?: number | null): string {
@@ -302,16 +317,14 @@ export function formatSpeed(usage?: UsageLike | null, _reasoningMs?: number | nu
   return `${Number(tps.toFixed(1))} tps`;
 }
 
-// usageFoot：气泡下面那行**紧凑身份脚注**（2026-11-09 用户定：编号/用量/延迟/速度合成一行）。
+// usageFoot：气泡底部只留用量/延迟/速度（身份已挪到消息顶部）。
 //
 // 口径（AGENTS.md「用量两处别混」）：单位是 token，`reasoning_tokens` 是
 // `completion_tokens` 的**子集**（不是另加）；未命中 = prompt − cached（推导，不另存）。
-// 各段都是**有才写**：没编号省 IDX、没用量省用量、没时长省延迟/速度 —— 空 ⇒ 整个脚注不渲染。
+// 各段都是**有才写**：没用量省用量、没时长省延迟/速度 —— 空 ⇒ 整个脚注不渲染。
 // 缓存命中留在悬停说明里（脚注要短）。
 export function usageFoot(usage?: UsageLike | null, meta?: FootMeta | null): string {
   const parts: string[] = [];
-  const idx = meta?.idx;
-  if (idx !== null && idx !== undefined && String(idx).trim() !== "") parts.push(`助手#${idx}`);
   if (usage && usage.prompt_tokens != null) {
     const completion = `输出：${formatTokens(usage.completion_tokens)}`;
     const reasoning = Number(usage.reasoning_tokens ?? 0);
@@ -343,7 +356,6 @@ export function usageFootTitle(usage?: UsageLike | null, meta?: FootMeta | null)
   if (latency) lines.push(`首字延迟 ${latency}：受理 → 第一段正文`);
   const speed = formatSpeed(usage, meta?.reasoningMs, meta?.durationMs);
   if (speed) lines.push(`速度 ${speed}：输出 token ÷ 整发耗时`);
-  if (meta?.idx !== null && meta?.idx !== undefined) lines.push(`IDX ${meta.idx}：这条消息在会话里的序号`);
   return lines.join("\n");
 }
 

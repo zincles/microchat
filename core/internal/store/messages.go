@@ -12,21 +12,30 @@ import (
 )
 
 // messageColumns：这条会话的消息列（**没有 parent_message_id**：线性会话没有父指针）。
-const messageColumns = "id, session_id, role, content, created_at, updated_at, " +
+const messageColumns = "id, session_id, role, kind, status, tools_snapshot, content, created_at, updated_at, " +
 	"reasoning, reasoning_ms, duration_ms, usage, summary_id"
 
 func scanMessage(row scanner) (model.Message, error) {
 	var message model.Message
-	var reasoning, summaryID sql.NullString
+	var kind, status, toolsSnapshot, reasoning, summaryID sql.NullString
 	var usage []byte
 	var reasoningMS, durationMS sql.NullInt64
 	err := row.Scan(
-		&message.ID, &message.SessionID, &message.Role, &message.Content,
+		&message.ID, &message.SessionID, &message.Role, &kind, &status, &toolsSnapshot, &message.Content,
 		&message.CreatedAt, &message.UpdatedAt,
 		&reasoning, &reasoningMS, &durationMS, &usage, &summaryID,
 	)
 	if err != nil {
 		return message, err
+	}
+	if kind.Valid && kind.String != "" {
+		message.Kind = model.MessageKind(kind.String)
+	}
+	if status.Valid && status.String != "" {
+		message.Status = model.MessageStatus(status.String)
+	}
+	if toolsSnapshot.Valid && toolsSnapshot.String != "" {
+		_ = json.Unmarshal([]byte(toolsSnapshot.String), &message.ToolsSnapshot)
 	}
 	if reasoning.Valid {
 		message.Reasoning = reasoning.String
@@ -228,6 +237,12 @@ func (s *Store) InsertMessage(message model.Message) (model.Message, error) {
 	if message.CreatedAt == 0 {
 		message.CreatedAt = nowMS()
 	}
+	if message.Kind == "" {
+		message.Kind = model.MessageKindChat
+	}
+	if message.Status == "" {
+		message.Status = model.MessageStatusDone
+	}
 	// 新建时 updated_at = created_at（没改过的两者相等）。
 	message.UpdatedAt = message.CreatedAt
 	s.mu.Lock()
@@ -240,9 +255,10 @@ func (s *Store) InsertMessage(message model.Message) (model.Message, error) {
 	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.Exec(
 		`INSERT INTO messages
-		   (id, session_id, role, content, created_at, updated_at, reasoning, reasoning_ms, duration_ms, usage, summary_id)
-		 VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6, ?7, ?8, ?9, NULL)`,
-		message.ID, message.SessionID, string(message.Role), message.Content, message.CreatedAt,
+		   (id, session_id, role, kind, status, tools_snapshot, content, created_at, updated_at, reasoning, reasoning_ms, duration_ms, usage, summary_id)
+		 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9, ?10, ?11, ?12, NULL)`,
+		message.ID, message.SessionID, string(message.Role), string(message.Kind), string(message.Status),
+		mustJSON(message.ToolsSnapshot), message.Content, message.CreatedAt,
 		message.Reasoning, message.ReasoningMS, message.DurationMS, usageArg(message.Usage)); err != nil {
 		return model.Message{}, err
 	}
@@ -534,4 +550,27 @@ func deleteBatch(tx *sql.Tx, table, sessionID string, ids []string) error {
 	_, err := tx.Exec("DELETE FROM "+table+" WHERE session_id = ?1 AND id IN ("+
 		strings.Join(marks, ",")+")", args...)
 	return err
+}
+
+// ensureMessageMetadata：老库补消息元数据列（幂等；新库 001 本来就有）。
+func (s *Store) ensureMessageMetadata() error {
+	type column struct{ name, definition string }
+	columns := []column{
+		{"kind", "TEXT NOT NULL DEFAULT 'chat'"},
+		{"status", "TEXT NOT NULL DEFAULT 'done'"},
+		{"tools_snapshot", "TEXT NOT NULL DEFAULT '[]'"},
+	}
+	for _, column := range columns {
+		var count int
+		if err := s.db.QueryRow(
+			"SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = ?1", column.name).Scan(&count); err != nil {
+			return err
+		}
+		if count == 0 {
+			if _, err := s.db.Exec("ALTER TABLE messages ADD COLUMN " + column.name + " " + column.definition); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
