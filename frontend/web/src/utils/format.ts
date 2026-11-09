@@ -50,16 +50,44 @@ export function nativeToolsTitle(ids?: string[] | null): string {
 export type ToolRun = { kind: string; state: string } | null | undefined;
 const TOOL_KIND_LABEL: Record<string, string> = {
   web_search: "网页搜索",
+  web_fetch: "网页抓取",
+  webfetch: "网页抓取",
   x_search: "X 搜索",
   code_interpreter: "代码执行",
   code_execution: "代码执行",
+  file_search: "文件搜索",
+  collections_search: "集合搜索",
+  image_generation: "图像生成",
+  mcp: "MCP 工具",
+  shell: "命令行",
+  tool_search: "工具搜索",
 };
 const TOOL_KIND_VERB: Record<string, string> = {
   web_search: "搜索网页",
+  web_fetch: "抓取网页",
+  webfetch: "抓取网页",
   x_search: "搜索 X",
   code_interpreter: "执行代码",
   code_execution: "执行代码",
+  file_search: "搜索文件",
+  collections_search: "搜索集合",
+  image_generation: "生成图像",
+  mcp: "调用 MCP",
+  shell: "执行命令",
+  tool_search: "搜索工具",
 };
+// sourceLabel：来源标题；xAI 的 web_search 标题常常只是 "1"（引用序号），
+// 那种就退回域名，别在界面上显示一行没有信息量的数字。
+export function sourceLabel(url: string, title?: string | null): string {
+  const text = String(title ?? "").trim();
+  if (text && !/^\d+$/.test(text)) return text;
+  try {
+    return new URL(url).hostname.replace(/^www\./, "") || url;
+  } catch {
+    return url;
+  }
+}
+
 export function toolRunHint(tool?: ToolRun): string {
   const kind = String(tool?.kind ?? "").trim();
   if (!kind) return "";

@@ -157,6 +157,7 @@ func (s *Server) turnEvents(w http.ResponseWriter, r *http.Request) {
 	lastText, lastThink := -1, -1
 	lastPhase := turn.Phase("")
 	lastTool := ""
+	lastSources := ""
 	var lastStatus time.Time
 	for {
 		status := s.chat.Status(sid)
@@ -165,8 +166,12 @@ func (s *Server) turnEvents(w http.ResponseWriter, r *http.Request) {
 		if status.Tool != nil {
 			toolKey = status.Tool.Kind + "\x00" + status.Tool.State
 		}
+		sourceKey := ""
+		for _, source := range status.Sources {
+			sourceKey += source.URL + "\x00"
+		}
 		changed := slice.Next != lastText || slice.ThinkNext != lastThink ||
-			status.Phase != lastPhase || toolKey != lastTool
+			status.Phase != lastPhase || toolKey != lastTool || sourceKey != lastSources
 		if changed || time.Since(lastStatus) >= 500*time.Millisecond {
 			payload, err := json.Marshal(TurnPoll{Status: status, Slice: slice})
 			if err != nil {
@@ -180,6 +185,7 @@ func (s *Server) turnEvents(w http.ResponseWriter, r *http.Request) {
 			lastText, lastThink = slice.Next, slice.ThinkNext
 			lastPhase = status.Phase
 			lastTool = toolKey
+			lastSources = sourceKey
 			lastStatus = time.Now()
 		}
 		if !status.Phase.IsBusy() {

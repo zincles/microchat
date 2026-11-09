@@ -93,6 +93,21 @@
 
 所以：**不要在 chat/completions 上发 xAI 的 `web_search`/`x_search`/`code_execution`**；它们只在 Responses 端点有效。我们的 `availableTools` 也只在 `openai-response` 协议下生成，chat 协议不发。
 
+### 其他服务端工具与来源（2026-11-09）
+
+- **状态解析是通用的**：`response.<kind>_call.<state>` 不写死 kind/state。`web_search`、`x_search`、
+  `code_interpreter`（工具 id 为 `code_execution`）、`image_generation`、`mcp`、`shell` 等只要沿用这套事件名
+  都能进 `status.tool`；前端有中文标签，未知 kind 原样显示（不吞）。
+- **`web_fetch` 不是 xAI 的服务端工具**（2026-11-09 实测 `/responses` 直接 422，expected 里没有它）。
+  别把它写进 xAI 的 `server_tools`；前端给了标签只是为将来/别的渠道留口，不等于能发。
+  xAI 当前 expected 集合：`web_search` / `x_search` / `image_generation` / `collections_search` /
+  `file_search` / `code_execution` / `code_interpreter` / `mcp` / `shell` / `tool_search`。
+  其中需要额外参数的工具（file_search/mcp 等）不能只发 `{type}`，我们仍只开放已知可裸发的三件。
+- **搜索结果可以显示**：`response.output_item.done` 的 `web_search_call.action.sources` 带 URL
+  （实测；x_search 同理），解析成 `status.sources`，气泡下方列「来源 N」链接；URL 按去重、只收 http(s)。
+  来源只有 URL，没有摘要/正文 —— 摘要要从最终回答的 citation/正文里看。
+- 来源与工具状态都是**流细节**：正文到了工具行消失，来源留到一轮收尾；不落库。
+
 ### 工具执行状态（2026-11-09 接进界面）
 
 xAI 在 Agent Tools 执行期间会发一串状态事件（实测 SSE）：

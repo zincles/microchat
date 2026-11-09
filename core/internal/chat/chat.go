@@ -213,6 +213,13 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 	}, localReply(chosen), func(delta providers.Delta) {
 		if delta.Tool != nil {
 			s.Turns.SetTool(sessionID, token, delta.Tool.Kind, delta.Tool.State)
+			if len(delta.Tool.Sources) > 0 {
+				sources := make([]turn.Source, 0, len(delta.Tool.Sources))
+				for _, source := range delta.Tool.Sources {
+					sources = append(sources, turn.Source{Type: source.Type, URL: source.URL, Title: source.Title})
+				}
+				s.Turns.AddSources(sessionID, token, sources)
+			}
 		}
 		if delta.Text != "" {
 			if firstTextAt.IsZero() {

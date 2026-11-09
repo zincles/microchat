@@ -260,8 +260,26 @@ func TestResponseStreamReportsServerToolStates(t *testing.T) {
 		t.Fatalf("工具事件 = %+v，想要 %+v", events, want)
 	}
 	for i := range want {
-		if events[i] != want[i] {
+		if events[i].Kind != want[i].Kind || events[i].State != want[i].State {
 			t.Fatalf("第 %d 个工具事件 = %+v，想要 %+v", i, events[i], want[i])
 		}
+	}
+}
+
+func TestResponseStreamCollectsSearchSources(t *testing.T) {
+	item := `{"type":"response.output_item.done","item":{"id":"ws_1","type":"web_search_call","status":"completed","action":{"type":"search","query":"xAI news","sources":[{"type":"url","url":"https://example.com/a"},{"type":"url","url":"javascript:alert(1)"}]}}}`
+	sseBody := "data: " + item + "\n\n" +
+		"data: {\"type\":\"response.output_text.delta\",\"delta\":\"好\"}\n\n" +
+		"data: {\"type\":\"response.completed\",\"response\":{}}\n\n"
+	var got *ToolEvent
+	if _, err := readResponseStream(200, strings.NewReader(sseBody), func(delta Delta) {
+		if delta.Tool != nil && len(delta.Tool.Sources) > 0 {
+			got = delta.Tool
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || len(got.Sources) != 1 || got.Sources[0].URL != "https://example.com/a" {
+		t.Fatalf("sources = %+v（javascript: 必须被过滤）", got)
 	}
 }

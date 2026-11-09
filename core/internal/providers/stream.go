@@ -34,11 +34,20 @@ type Delta struct {
 	Tool *ToolEvent
 }
 
+// ToolSource：服务端搜索工具拿回来的一个来源（xAI 的 web_search / x_search 都有）。
+type ToolSource struct {
+	Type  string `json:"type,omitempty"`
+	URL   string `json:"url"`
+	Title string `json:"title,omitempty"`
+}
+
 // ToolEvent：服务端工具的一次状态变化（xAI Responses 的 *_call.in_progress/searching/completed）。
 // `Kind` 用上游事件里的名字（web_search / x_search / code_interpreter …），界面负责翻成人话。
+// Sources 只在 output_item.done 那一帧有值（action.sources）。
 type ToolEvent struct {
-	Kind  string
-	State string
+	Kind    string
+	State   string
+	Sources []ToolSource
 }
 
 // Result：一次流式调用的结局 —— **整段**正文 + 整段思考 + 归一化后的用量。
@@ -325,30 +334,69 @@ func readStream(status int, body io.Reader, onDelta func(Delta)) (Result, error)
 
 // toolEventFromType：从 `response.<kind>_call.<state>` 认出服务端工具状态。
 //
-// xAI 实测（2026-11-09）：
-//   - web_search: response.web_search_call.in_progress / .searching / .completed
-//   - code_execution: 事件名是 response.code_interpreter_call.*（kind 原样报 code_interpreter）
-//
-// 只认以点结尾的三段式，别把 `response.completed` / `..._call_code.delta` 误认成工具。
+// 不写死 kind/state：xAI 的工具列表会变（web_search / x_search / code_interpreter /
+// image_generation / mcp / shell …），只要上游沿用 `*_call.<state>` 这一套，就能显示。
+// 只认以 `.` 分开的两段，别把 `response.completed` 或 `..._call_code.delta` 误认成工具。
 func toolEventFromType(eventType string) *ToolEvent {
 	const prefix = "response."
 	if !strings.HasPrefix(eventType, prefix) {
 		return nil
 	}
 	rest := strings.TrimPrefix(eventType, prefix)
-	for _, state := range []string{"in_progress", "searching", "interpreting", "completed"} {
-		suffix := "." + state
-		if !strings.HasSuffix(rest, suffix) {
-			continue
-		}
-		kind := strings.TrimSuffix(rest, suffix)
-		kind = strings.TrimSuffix(kind, "_call")
-		if kind == "" || kind == "reasoning" || kind == "message" {
-			return nil
-		}
-		return &ToolEvent{Kind: kind, State: state}
+	dot := strings.LastIndexByte(rest, '.')
+	if dot <= 0 || dot == len(rest)-1 {
+		return nil
 	}
-	return nil
+	kindPart, state := rest[:dot], rest[dot+1:]
+	if !strings.HasSuffix(kindPart, "_call") {
+		return nil
+	}
+	kind := strings.TrimSuffix(kindPart, "_call")
+	if kind == "" || kind == "reasoning" || kind == "message" {
+		return nil
+	}
+	return &ToolEvent{Kind: kind, State: state}
+}
+
+// toolEventFromOutputItem：`response.output_item.done` 里的 web_search_call 带
+// `action.query` 与 `action.sources`（实测）；把来源收成一条工具事件，供界面列出来。
+//
+// 没有 sources 的 item（reasoning / message / code）返回 nil。
+func toolEventFromOutputItem(raw string) *ToolEvent {
+	var frame struct {
+		Item struct {
+			Type   string `json:"type"`
+			Status string `json:"status"`
+			Action struct {
+				Type    string `json:"type"`
+				Query   string `json:"query"`
+				Sources []struct {
+					Type  string `json:"type"`
+					URL   string `json:"url"`
+					Title string `json:"title"`
+				} `json:"sources"`
+			} `json:"action"`
+		} `json:"item"`
+	}
+	if json.Unmarshal([]byte(raw), &frame) != nil || frame.Item.Status != "completed" {
+		return nil
+	}
+	kind := strings.TrimSuffix(frame.Item.Type, "_call")
+	if kind == "" || len(frame.Item.Action.Sources) == 0 {
+		return nil
+	}
+	sources := make([]ToolSource, 0, len(frame.Item.Action.Sources))
+	for _, source := range frame.Item.Action.Sources {
+		url := strings.TrimSpace(source.URL)
+		if !strings.HasPrefix(url, "https://") && !strings.HasPrefix(url, "http://") {
+			continue // 不把 javascript: / data: 一类的 URL 交给界面
+		}
+		sources = append(sources, ToolSource{Type: source.Type, URL: url, Title: source.Title})
+	}
+	if len(sources) == 0 {
+		return nil
+	}
+	return &ToolEvent{Kind: kind, State: "completed", Sources: sources}
 }
 
 // readResponseStream：Response 协议的 SSE 解析（照 Pi `processResponsesStream` 全套事件，
@@ -404,6 +452,13 @@ func readResponseStream(status int, body io.Reader, onDelta func(Delta)) (Result
 			return Result{}, &UpstreamError{Status: status, Body: snippet("response.refusal：" + data)}
 		case "response.failed", "response.error", "error":
 			return Result{}, &UpstreamError{Status: status, Body: snippet(envelope.Type + "：" + data)}
+		case "response.output_item.done":
+			if event := toolEventFromOutputItem(data); event != nil {
+				if onDelta != nil {
+					onDelta(Delta{Tool: event})
+				}
+				continue
+			}
 		case "response.completed", "response.incomplete":
 			var frame struct {
 				Response struct {

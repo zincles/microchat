@@ -67,6 +67,12 @@ export interface ToolStatus {
   state: string;
 }
 
+export interface SearchSource {
+  type?: string;
+  url: string;
+  title?: string;
+}
+
 export interface TurnStatus {
   phase: TurnPhase;
   message_id?: string;
@@ -76,6 +82,8 @@ export interface TurnStatus {
   error?: string;
   /** 当前服务端工具（xAI web_search / x_search / code_execution），只服务生成中的提示。 */
   tool?: ToolStatus;
+  /** 服务端搜索工具拿回来的来源（按 URL 去重）。 */
+  sources?: SearchSource[];
 }
 
 export interface CompactStatus {

@@ -3,7 +3,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import { VBtn } from "vuetify/components";
 import { ICONS } from "./icons.ts";
-import { formatThinkLabel, identityLabel, toolRunHint, usageFoot, usageFootTitle } from "../utils/format.ts";
+import { formatThinkLabel, identityLabel, sourceLabel, toolRunHint, usageFoot, usageFootTitle } from "../utils/format.ts";
 import type { UsageLike } from "../utils/format.ts";
 import { renderMarkdown, splitState } from "../utils/markdown.ts";
 import { renderMermaidIn } from "../utils/mermaid.ts";
@@ -31,6 +31,7 @@ const props = withDefaults(defineProps<{
   phase?: "sending" | "waiting" | string | null;
   // tool：当前服务端工具（xAI web_search / x_search / code_execution）；只服务生成中的提示。
   tool?: { kind: string; state: string } | null;
+  sources?: { type?: string; url: string; title?: string }[];
   reroll?: RerollLike | null; // 重摇状态（本条是目标时才非 null）：{active,count,current_idx,running}
   // usage：上游报的用量（归一化后的那几格；2026-10-20 起气泡脚注就用它）。
   // 只有聚合站（OpenRouter）会带 cost_usd；直连渠道没有 ⇒ 脚注不显示价格。
@@ -49,6 +50,7 @@ const props = withDefaults(defineProps<{
   streaming: false,
   phase: null,
   tool: null,
+  sources: () => [],
   reroll: null,
   usage: null,
 });
@@ -179,6 +181,12 @@ watch(() => props.streaming, (s) => nextTick(() => {
       <div v-if="streaming && !content && !reasoning && !toolHint" class="typing" aria-label="正在生成">
         <span></span><span></span><span></span>
         <i class="typing-hint">{{ typingHint }}</i>
+      </div>
+      <div v-if="sources.length" class="tool-sources" aria-label="搜索结果">
+        <div class="tool-sources-title">来源 {{ sources.length }}</div>
+        <a v-for="source in sources" :key="source.url" :href="source.url" target="_blank" rel="noopener noreferrer">
+          {{ sourceLabel(source.url, source.title) }}
+        </a>
       </div>
       <div v-if="parts.blocks.length" class="state-blocks">
         <div

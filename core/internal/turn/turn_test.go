@@ -245,3 +245,24 @@ func TestToolStatusLifecycle(t *testing.T) {
 		t.Fatalf("正文一到工具状态就该清掉：%+v", got)
 	}
 }
+
+func TestAddSourcesDedupesAndSurvivesText(t *testing.T) {
+	registry := NewRegistry()
+	token, _ := registry.Begin("s", "m")
+	if !registry.AddSources("s", token, []Source{
+		{URL: "https://a.example/1"}, {URL: "https://a.example/1"}, {URL: "https://b.example/2"},
+	}) {
+		t.Fatal("AddSources 该收下当前令牌")
+	}
+	if !registry.AppendContent("s", token, "正文") {
+		t.Fatal("AppendContent 该收下当前令牌")
+	}
+	status := registry.Status("s")
+	if len(status.Sources) != 2 {
+		t.Fatalf("sources = %+v", status.Sources)
+	}
+	registry.Finish("s", token, "")
+	if got := registry.Status("s").Sources; len(got) != 0 {
+		t.Fatalf("收尾后来源该清掉：%+v", got)
+	}
+}

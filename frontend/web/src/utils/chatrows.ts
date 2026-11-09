@@ -35,6 +35,7 @@ export interface ChatMessage {
   stream?: boolean;
   noIdx?: boolean;
   tool?: { kind: string; state: string } | null;
+  sources?: { type?: string; url: string; title?: string }[];
   [key: string]: unknown;
 }
 

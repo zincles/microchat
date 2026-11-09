@@ -34,6 +34,7 @@ import {
   nativeToolsLabel,
   nativeToolsTitle,
   toolRunHint,
+  sourceLabel,
   groupModelsByProvider,
   providerChoices,
   modelChoicesFor,
@@ -4438,4 +4439,10 @@ test("工具状态：上游 kind/state 翻成一句人话", () => {
   assert.equal(toolRunHint({ kind: "code_interpreter", state: "interpreting" }), "正在执行代码…");
   assert.equal(toolRunHint({ kind: "code_execution", state: "in_progress" }), "正在调用代码执行…");
   assert.equal(toolRunHint(null), "");
+});
+
+test("来源标签：引用序号退回域名，正常标题照用", () => {
+  assert.equal(sourceLabel("https://www.example.com/a", "1"), "example.com");
+  assert.equal(sourceLabel("https://example.com/a", "Example News"), "Example News");
+  assert.equal(sourceLabel("not-a-url"), "not-a-url");
 });

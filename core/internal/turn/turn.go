@@ -70,6 +70,13 @@ type ToolStatus struct {
 	State string `json:"state"`
 }
 
+// Source：服务端搜索工具拿回来的来源（web_search / x_search 的 action.sources）。
+type Source struct {
+	Type  string `json:"type,omitempty"`
+	URL   string `json:"url"`
+	Title string `json:"title,omitempty"`
+}
+
 // Status：`GET /sessions/{id}/status` 的响应（字段顺序即契约）。
 type Status struct {
 	Phase         Phase          `json:"phase"`
@@ -79,6 +86,7 @@ type Status struct {
 	ThinkingChars int            `json:"thinking_chars"`
 	Error         string         `json:"error,omitempty"`
 	Tool          *ToolStatus    `json:"tool,omitempty"`
+	Sources       []Source       `json:"sources,omitempty"`
 	Compact       *CompactStatus `json:"compact,omitempty"`
 	Reroll        *RerollStatus  `json:"reroll,omitempty"`
 }
@@ -103,6 +111,8 @@ type entry struct {
 	compact   *CompactStatus
 	// tool：当前服务端工具（同一时刻只显示最近一个；上游串行调用时后面的会覆盖前面的）。
 	tool *ToolStatus
+	// sources：这一轮搜索工具拿回来的来源（按 URL 去重，界面上列“来源”）。
+	sources []Source
 	// reroll：这个会话此刻有没有在摇（**与轮次共用同一把闸**：一方在跑，另一方就进不来）。
 	reroll        *RerollStatus
 	rerollStarted time.Time
@@ -142,6 +152,9 @@ func (r *Registry) Status(sessionID string) Status {
 	if item.tool != nil {
 		tool := *item.tool
 		status.Tool = &tool
+	}
+	if len(item.sources) > 0 {
+		status.Sources = append([]Source(nil), item.sources...)
 	}
 	if item.phase.IsBusy() {
 		status.ElapsedMS = time.Since(item.started).Milliseconds()
@@ -203,6 +216,7 @@ func (r *Registry) BeginReroll(sessionID string) (uint64, error) {
 	item.text.Reset()
 	item.thinking.Reset()
 	item.tool = nil
+	item.sources = nil
 	item.reroll = &RerollStatus{State: "running"}
 	item.rerollStarted = time.Now()
 	item.token = r.nextToken
@@ -225,6 +239,7 @@ func (r *Registry) FinishReroll(sessionID string, token uint64, failure string) 
 	item.text.Reset()
 	item.thinking.Reset()
 	item.tool = nil
+	item.sources = nil
 	if failure == "" {
 		item.reroll.State = "done"
 		item.reroll.Error = ""
@@ -340,6 +355,32 @@ func (r *Registry) SetTool(sessionID string, token uint64, kind, state string) b
 	return true
 }
 
+// AddSources：把搜索工具刚拿到的来源并进这一轮（按 URL 去重，最多 50 条）。
+// 正文到了不清它们（用户还要看来源）；一轮收尾才清。
+func (r *Registry) AddSources(sessionID string, token uint64, sources []Source) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	item := r.lookup(sessionID)
+	if item == nil || item.token != token {
+		return false
+	}
+	if item.phase == PhaseIdle && !item.reroll.IsRunning() {
+		return false
+	}
+	seen := make(map[string]bool, len(item.sources)+len(sources))
+	for _, source := range item.sources {
+		seen[source.URL] = true
+	}
+	for _, source := range sources {
+		if source.URL == "" || seen[source.URL] || len(item.sources) >= 50 {
+			continue
+		}
+		item.sources = append(item.sources, source)
+		seen[source.URL] = true
+	}
+	return true
+}
+
 func (r *Registry) append(sessionID string, token uint64, delta string, thinking bool) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -407,6 +448,7 @@ func (r *Registry) Finish(sessionID string, token uint64, failure string) {
 	item.elapsed = time.Since(item.started)
 	item.cancel = nil
 	item.tool = nil
+	item.sources = nil
 	if failure == "" {
 		item.phase = PhaseIdle
 		item.err = ""
