@@ -380,6 +380,7 @@ export interface ModelView {
   brand?: string;
   icon?: string;
   thinking_levels?: string[];
+  native_tools?: string[];
   matched_rules?: string[];
 }
 
@@ -394,6 +395,7 @@ export interface ModelListItem {
   thinking_levels: string[];
   brand?: string;
   icon?: string;
+  native_tools?: string[];
   matched_rules?: string[];
 }
 
@@ -410,10 +412,12 @@ export interface ModelDefineRule {
   match_contains?: string;
   match_exact?: string;
   match_provider?: string;
+  match_protocol?: string;
   is_final?: boolean;
   thinking_levels?: string[];
   brand?: string;
   icon?: string;
+  native_tools?: string[];
 }
 
 export interface ModelRulesConfig {

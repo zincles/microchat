@@ -320,7 +320,7 @@ func (p Provider) Validate() error {
 		return fmt.Errorf("providers: protocol %q 暂不支持", protocol)
 	case ProtocolOpenAIResponse:
 		switch vendor {
-		case VendorOpenCodeGo, VendorOpenCode, VendorOpenRouter, VendorCustom:
+		case VendorOpenCodeGo, VendorOpenCode, VendorOpenRouter, VendorCustom, VendorXAI:
 		default:
 			return fmt.Errorf("providers: vendor %q 不支持 protocol %q", vendor, protocol)
 		}
@@ -1167,7 +1167,7 @@ func vendorProtocols(vendor Vendor) []Protocol {
 		return []Protocol{ProtocolSystemOne}
 	case VendorOpenRouter, VendorCustom:
 		return []Protocol{ProtocolChatCompletion, ProtocolOpenAIResponse, ProtocolSystemOne}
-	case VendorOpenCodeGo, VendorOpenCode:
+	case VendorOpenCodeGo, VendorOpenCode, VendorXAI:
 		return []Protocol{ProtocolChatCompletion, ProtocolOpenAIResponse}
 	default:
 		return []Protocol{ProtocolChatCompletion}

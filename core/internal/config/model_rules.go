@@ -21,6 +21,9 @@ import (
 //
 // `ThinkingLevels` / `Brand` / `Icon` 都是指针：nil = 这条规则不碰该字段；
 // 空数组（`[]`）与空串是明确的“覆写成空”，与“没写”不是一回事。
+//
+// `NativeTools` 是**追加**语义：命中的规则把列出的 provider-native tool 并进画像，
+// 不是替换。多个规则命中按顺序去重追加；下游发请求时再按 provider/协议能力展开/校验。
 type ModelDefineRule struct {
 	ID string `json:"id,omitempty"`
 	// MatchContains / MatchExact：对 raw upstream_id 做大小写不敏感匹配。
@@ -29,6 +32,9 @@ type ModelDefineRule struct {
 	MatchExact    string `json:"match_exact,omitempty"`
 	// MatchProvider：可选，按 provider id 限定（例如只对 xai 渠道生效）。
 	MatchProvider string `json:"match_provider,omitempty"`
+	// MatchProtocol：可选，限定渠道当前协议（openai-chat-completion / openai-response）；
+	// 空 = 不限制。`chat` / `response` 是写入时可接受的简写。
+	MatchProtocol string `json:"match_protocol,omitempty"`
 	// IsFinal：命中并应用本规则后停止继续匹配。宽匹配 + final 会遮蔽后面的具体规则，
 	// 所以内置规则一律不 final。
 	IsFinal bool `json:"is_final,omitempty"`
@@ -36,6 +42,9 @@ type ModelDefineRule struct {
 	ThinkingLevels *[]string `json:"thinking_levels,omitempty"`
 	Brand          *string   `json:"brand,omitempty"`
 	Icon           *string   `json:"icon,omitempty"`
+	// NativeTools：provider-native tool id（如 x_search / web_search / code_execution）。
+	// **追加**到 profile.native_tools，不替换；实际请求是否支持由 provider 层校验。
+	NativeTools *[]string `json:"native_tools,omitempty"`
 }
 
 // ModelProfile：一个模型经过规则覆写后的展示/能力画像（派生结果，不落库）。
@@ -43,6 +52,8 @@ type ModelProfile struct {
 	Brand          string   `json:"brand,omitempty"`
 	Icon           string   `json:"icon,omitempty"`
 	ThinkingLevels []string `json:"thinking_levels,omitempty"`
+	// NativeTools：规则追加的 provider-native tool id（按规则顺序去重）。
+	NativeTools []string `json:"native_tools,omitempty"`
 	// MatchedRules：命中的规则 id（没写 id 的用 `#1` 这种序号）。给界面解释“为什么”。
 	MatchedRules []string `json:"matched_rules,omitempty"`
 }
@@ -56,6 +67,48 @@ type ModelRulesConfig struct {
 // 只影响展示；新增品牌要同时在 ModelIcon.vue / modelIcons.ts 里加图形。
 var ModelIconIDs = []string{"gpt", "gemini", "grok", "claude", "deepseek", "mimo", "glm", "kimi",
 	"longcat", "mistral", "qwen", "minimax", "tencent", "meta", "stepfun", "bytedance"}
+
+// NativeToolIDs：规则里允许追加的 provider-native tool id（封闭集合）。
+// 真正可发不可发还要看 provider/协议/模型；这里只保证规则文件不写出错字。
+var NativeToolIDs = []string{"x_search", "web_search", "code_execution"}
+
+// ModelRuleProtocols：MatchProtocol 可写的协议 id（空串 = 不限制）。
+var ModelRuleProtocols = []string{"openai-chat-completion", "openai-response"}
+
+func NormalizeModelRuleProtocol(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "any":
+		return ""
+	case "chat", "openai-chat-completion":
+		return "openai-chat-completion"
+	case "response", "openai-response":
+		return "openai-response"
+	default:
+		return strings.TrimSpace(value)
+	}
+}
+
+func validModelRuleProtocol(value string) bool {
+	value = NormalizeModelRuleProtocol(value)
+	if value == "" {
+		return true
+	}
+	for _, allowed := range ModelRuleProtocols {
+		if strings.EqualFold(value, allowed) {
+			return true
+		}
+	}
+	return false
+}
+
+func validNativeToolID(value string) bool {
+	for _, id := range NativeToolIDs {
+		if value == id {
+			return true
+		}
+	}
+	return false
+}
 
 func ValidModelIcon(icon string) bool {
 	for _, id := range ModelIconIDs {
@@ -111,9 +164,11 @@ func ensureModelRuleDefaults(rules []ModelDefineRule) []ModelDefineRule {
 	return rules
 }
 
-// DefaultModelDefineRules：开箱的品牌规则（不含 tool use；grok-imagine 是图像模型，清空思考档）。
+// DefaultModelDefineRules：开箱的品牌规则（含 grok-4 × response 的 xAI native tool 默认值；
+// grok-imagine 是图像模型，先清空思考档并停止）。
 //
-// 它们只影响显示，不改变请求；用户把整个数组写成 `[]` 就能关掉。
+// native tool 规则只追加**候选**；请求构造时仍要经过 provider/协议/模型能力校验。
+// 用户把整个数组写成 `[]` 就能关掉。
 func DefaultModelDefineRules() []ModelDefineRule {
 	noThinking := []string{}
 	return []ModelDefineRule{
@@ -123,6 +178,10 @@ func DefaultModelDefineRules() []ModelDefineRule {
 		{ID: "xai-image", MatchContains: "grok-imagine", IsFinal: true,
 			Brand: stringPtr("xAI"), Icon: stringPtr("grok"), ThinkingLevels: &noThinking},
 		{ID: "grok", MatchContains: "grok", Brand: stringPtr("xAI"), Icon: stringPtr("grok")},
+		// 2026-11-09 用户定：grok-4.x 且走 Responses（不区分 vendor）时，默认追加 xAI 的
+		// 服务端工具。是否真的能发仍由 provider/模型能力闸决定；这里只负责规则画像。
+		{ID: "xai-grok-4-native", MatchContains: "grok-4", MatchProtocol: "openai-response",
+			NativeTools: stringSlicePtr("x_search", "web_search", "code_execution")},
 		{ID: "gemini", MatchContains: "gemini", Brand: stringPtr("Google"), Icon: stringPtr("gemini")},
 		{ID: "claude", MatchContains: "claude", Brand: stringPtr("Anthropic"), Icon: stringPtr("claude")},
 		{ID: "deepseek", MatchContains: "deepseek", Brand: stringPtr("DeepSeek"), Icon: stringPtr("deepseek")},
@@ -156,6 +215,11 @@ func stringPtr(value string) *string {
 	return &copy
 }
 
+func stringSlicePtr(values ...string) *[]string {
+	copy := append([]string{}, values...)
+	return &copy
+}
+
 // ValidateModelDefineRules：规则集合的校验（写入与 LoadConfig 同一口径）。
 func ValidateModelDefineRules(rules []ModelDefineRule) error {
 	seen := map[string]bool{}
@@ -178,8 +242,30 @@ func (r ModelDefineRule) validate() error {
 		strings.TrimSpace(r.MatchProvider) == "" {
 		return fmt.Errorf("规则至少需要一个匹配条件（match_contains / match_exact / match_provider）")
 	}
-	if r.ThinkingLevels == nil && r.Brand == nil && r.Icon == nil {
-		return fmt.Errorf("规则没有任何要覆写的字段（thinking_levels / brand / icon）")
+	if r.ThinkingLevels == nil && r.Brand == nil && r.Icon == nil &&
+		(r.NativeTools == nil || len(*r.NativeTools) == 0) {
+		return fmt.Errorf("规则没有任何要覆写的字段（thinking_levels / brand / icon / native_tools）")
+	}
+	if r.MatchProtocol != "" && !validModelRuleProtocol(r.MatchProtocol) {
+		return fmt.Errorf("未知匹配协议 %q（只能是空 / openai-chat-completion / openai-response）", r.MatchProtocol)
+	}
+	if r.NativeTools != nil && (r.Brand != nil || r.Icon != nil || r.ThinkingLevels != nil) {
+		return fmt.Errorf("追加工具与品牌/图标/思考不能写在同一条规则里（拆成两条）")
+	}
+	if r.NativeTools != nil {
+		if len(*r.NativeTools) == 0 {
+			return fmt.Errorf("native_tools 不能是空数组（不想追加就整格省略）")
+		}
+		seenTools := map[string]bool{}
+		for _, id := range *r.NativeTools {
+			if !validNativeToolID(id) {
+				return fmt.Errorf("未知 native tool %q（只能是 %s）", id, strings.Join(NativeToolIDs, " / "))
+			}
+			if seenTools[id] {
+				return fmt.Errorf("native tool %q 重复", id)
+			}
+			seenTools[id] = true
+		}
 	}
 	if r.Icon != nil && strings.TrimSpace(*r.Icon) != "" && !ValidModelIcon(*r.Icon) {
 		return fmt.Errorf("未知图标 %q（只能是 %s）", *r.Icon, strings.Join(ModelIconIDs, " / "))
@@ -204,7 +290,13 @@ func (r ModelDefineRule) validate() error {
 // fallback.ThinkingLevels 是代码里的默认能力（providers.ThinkingLevels）；
 // 规则没有写 thinking_levels 时保留它。Brand/Icon 留空 = 界面自己回退。
 func (c Config) ModelProfile(providerID, upstreamID string, fallback ModelProfile) ModelProfile {
-	return c.ModelProfileWithRules(providerID, upstreamID, fallback, nil)
+	return c.ModelProfileFor(providerID, upstreamID, "", fallback)
+}
+
+// ModelProfileFor：带渠道协议（openai-chat-completion / openai-response）的画像。
+// 带 `match_protocol` 的规则只在这里生效；老调用方 ModelProfile 传空协议 = 不匹配这类规则。
+func (c Config) ModelProfileFor(providerID, upstreamID, protocol string, fallback ModelProfile) ModelProfile {
+	return c.ModelProfileWithRulesFor(providerID, upstreamID, protocol, fallback, nil)
 }
 
 // ModelProfileWithRules：全局规则先、渠道规则后（渠道永远优先）。
@@ -213,19 +305,24 @@ func (c Config) ModelProfile(providerID, upstreamID string, fallback ModelProfil
 // 否则“渠道覆盖全局”就不成立了。matched_rules 带 `global:` / `provider:` 前缀，
 // 方便界面解释这条画像到底是谁给的。
 func (c Config) ModelProfileWithRules(providerID, upstreamID string, fallback ModelProfile, providerRules []ModelDefineRule) ModelProfile {
+	return c.ModelProfileWithRulesFor(providerID, upstreamID, "", fallback, providerRules)
+}
+
+func (c Config) ModelProfileWithRulesFor(providerID, upstreamID, protocol string, fallback ModelProfile, providerRules []ModelDefineRule) ModelProfile {
 	profile := ModelProfile{
 		Brand:          fallback.Brand,
 		Icon:           fallback.Icon,
 		ThinkingLevels: append([]string{}, fallback.ThinkingLevels...),
+		NativeTools:    append([]string{}, fallback.NativeTools...),
 	}
-	profile = applyModelRules(profile, c.ModelDefineRules, providerID, upstreamID, "global")
-	profile = applyModelRules(profile, providerRules, providerID, upstreamID, "provider")
+	profile = applyModelRules(profile, c.ModelDefineRules, providerID, upstreamID, protocol, "global")
+	profile = applyModelRules(profile, providerRules, providerID, upstreamID, protocol, "provider")
 	return profile
 }
 
-func applyModelRules(profile ModelProfile, rules []ModelDefineRule, providerID, upstreamID, scope string) ModelProfile {
+func applyModelRules(profile ModelProfile, rules []ModelDefineRule, providerID, upstreamID, protocol, scope string) ModelProfile {
 	for index, rule := range rules {
-		if !rule.matches(providerID, upstreamID) {
+		if !rule.matches(providerID, upstreamID, protocol) {
 			continue
 		}
 		if rule.ThinkingLevels != nil {
@@ -236,6 +333,18 @@ func applyModelRules(profile ModelProfile, rules []ModelDefineRule, providerID, 
 		}
 		if rule.Icon != nil {
 			profile.Icon = *rule.Icon
+		}
+		if rule.NativeTools != nil {
+			seen := make(map[string]bool, len(profile.NativeTools)+len(*rule.NativeTools))
+			for _, id := range profile.NativeTools {
+				seen[id] = true
+			}
+			for _, id := range *rule.NativeTools {
+				if !seen[id] {
+					profile.NativeTools = append(profile.NativeTools, id)
+					seen[id] = true
+				}
+			}
 		}
 		label := rule.ID
 		if label == "" {
@@ -249,8 +358,12 @@ func applyModelRules(profile ModelProfile, rules []ModelDefineRule, providerID, 
 	return profile
 }
 
-func (r ModelDefineRule) matches(providerID, upstreamID string) bool {
+func (r ModelDefineRule) matches(providerID, upstreamID, protocol string) bool {
 	if value := strings.TrimSpace(r.MatchProvider); value != "" && providerID != value {
+		return false
+	}
+	if value := NormalizeModelRuleProtocol(r.MatchProtocol); value != "" &&
+		!strings.EqualFold(value, NormalizeModelRuleProtocol(protocol)) {
 		return false
 	}
 	if value := strings.TrimSpace(r.MatchExact); value != "" && !strings.EqualFold(upstreamID, value) {

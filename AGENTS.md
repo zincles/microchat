@@ -276,18 +276,23 @@ delete(AA)           # 删除
 - `config.json` — `{ "server": { "host": "127.0.0.1", "port": 8787, "refresh_models_on_start": true }, "defaults": { "provider": "dummy", "model": "dummy", "agent": "default" }, "chat": { "model_context_tokens": 131072, "history_window": 5, "compact_trigger_tokens": null, "compact_blocks": 5, "title_provider": "", "title_model": "" } }`
   （**全局标题模型**：`title_provider` / `title_model` 都空 = **使用当前会话模型**（默认）；都填 = 起标题固定走这一对。只填一个不算数。）
   **`model_define_rules`（2026-11-07）** = 一组**纯数据 override**，按模型 raw `upstream_id` 覆写展示/能力画像：
-  `{ "id": "xai", "match_contains": "grok", "match_exact": "", "match_provider": "", "is_final": false,
-    "thinking_levels": ["low","medium","high","max"], "brand": "xAI", "icon": "grok" }`。
+  `{ "id": "xai", "match_contains": "grok", "match_exact": "", "match_provider": "",
+    "match_protocol": "", "is_final": false,
+    "thinking_levels": ["low","medium","high","max"], "brand": "xAI", "icon": "grok",
+    "native_tools": ["x_search"] }`。
   **`icon` 是封闭集合**：`gpt / gemini / grok / claude / deepseek / mimo / glm / kimi`
   （前端只出这些选项；旧 `openai` / `xai` 只在读存量配置时归一化成 `gpt` / `grok`，
   新写入会被 422 拒绝）。
   规则按数组顺序匹配；命中的字段覆盖前面的，没写的字段继承；`is_final` 应用完就停。
   `thinking_levels` 整组替换（`[]` = 明确没有档位，缺字段 = 不动）；`brand`/`icon` 只影响展示，
-  **不改 wire 协议、不执行代码、不碰 tool use**。默认九条：`gpt → OpenAI`、`grok → xAI`、
-  `grok-imagine → xAI 且思考档位清空`、`gemini → Google`、`claude → Anthropic`、
-  `deepseek → DeepSeek`、`mimo → Xiaomi`、`glm → Zhipu`、`kimi → Moonshot`；写 `[]` 即关闭。未知档位、空匹配、空定义、重复 id 在写入与
-  `LoadConfig` 时都报错。匹配只认 raw id（大小写不敏感）+ 可选 `match_exact` / `match_provider`，
-  不认用户改过的 `display_name`。
+  **不改 wire 协议、不执行代码**。`native_tools` 是**追加**语义（provider-native tool id，
+  按规则顺序去重）；它只把候选写进画像，真正发请求前还要经过 provider/协议/模型能力闸。
+  `match_protocol` 可限定 `openai-chat-completion` / `openai-response`（`chat` / `response` 是写入简写）。
+  开箱规则含：gpt / grok / 各类品牌图标 / `grok-imagine` 清空思考档；另有
+  **`xai-grok-4-native`：`grok-4` + `openai-response`（不区分 vendor）默认追加
+  `x_search` / `web_search` / `code_execution`**。写 `[]` 即关闭。未知档位、空匹配、空定义、
+  未知图标/协议/native tool、重复 id 在写入与 `LoadConfig` 时都报错。匹配只认 raw id（大小写不敏感）
+  + 可选 `match_exact` / `match_provider` / `match_protocol`，不认用户改过的 `display_name`。
   **渠道自己的 `model_define_rules`**（`providers.json` 每条渠道上的同名字段）会在全局规则**之后**
   应用，因此永远优先；`is_final` 只在各自那一层停止，不会挡住另一层。`matched_rules` 用
   `global:` / `provider:` 前缀标出来源。
@@ -768,7 +773,7 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 | POST | `/providers/{provider_id}/test` | 可选 `{vendor,protocol,base_url,api_key,model_filter}` | `{ok,models,filtered,note?,error?}` | **测试连通性**（2026-11-02）：只拉一次 `/models`，**不落库、不保存**；请求体可带编辑器里尚未保存的值（api_key 空 = 用已存的）。返回 200 + `ok:false` 表示"连不上"（不是接口 500）；dummy 直接回 ok+note |
 | POST | `/providers/{provider_id}/refresh-routes` | — | `{provider, models}` | 只刷路由表：拉 models.dev 快照 ⇒ `model_route` 落库（只认聚合站；**启动时不跑**，一周手跑一次）|
 | GET | `/providers/{provider_id}/usage` | — | `ProviderUsageView` | **套餐余量**（只读）：**只对 `vendor = opencode-go` 的渠道有义** ⇒ 别的 vendor **400**（`invalid`）、没配 key 也 **400**；上游错原样传（`upstream`）。形状 = `plan` / `windows[].label/percent/resets_at` + `provider_id`（`-debug usage` 就是它；web 界面还没入口） |
-| GET | `/models` | — | `[ModelListItem]` | 跨 provider 拍平（"渠道 / 模型"下拉用）。每项带 **`thinking_levels`**（该模型能安全收到的统一档位；前端只摆这些；未知模型回全部七档），以及 `model_define_rules` 派生的 **`brand` / `icon` / `matched_rules`**（不落库）|
+| GET | `/models` | — | `[ModelListItem]` | 跨 provider 拍平（"渠道 / 模型"下拉用）。每项带 **`thinking_levels`**（该模型能安全收到的统一档位；前端只摆这些；未知模型回全部七档），以及 `model_define_rules` 派生的 **`brand` / `icon` / `native_tools` / `matched_rules`**（不落库；`native_tools` 只是候选，发请求前仍要能力校验）|
 | PATCH | `/models` | `{provider, upstream_id, context_override, display_name, params}` | `ModelView` | 设/清模型的用户列（上下文覆盖 `null` = 清；显示名；采样参数）。**刷新永不覆盖用户列**；模型行被刷新删掉时这些覆盖也会没（规则不受影响） |
 | GET | `/config/model-rules` | — | `{model_define_rules:[…]}` | 读 `config.json` 的模型定义规则（见「配置文件」）。返回派生前的**规则原文** |
 | PUT | `/config/model-rules` | `{model_define_rules:[…]}` | 同上 | **整份替换**；空数组 = 清空。先校验后落盘；坏规则 422 且一个字不写。写成功后 `GET /models` 立刻按新规则派生 |
@@ -993,7 +998,7 @@ DeepSeek / OpenCode GO 直连**确实不报**，所以那一格在那儿永远�
 | `typesafe`（JEV 决策） | `https://api.typesafe.ai/v1/systemone`（**verbatim 整条 URL，原样 POST，不拼路径**） | `TYPESAFE_API_KEY`（备 `JEV_API_KEY`） | 只有 `Content-Type` + `Accept: application/json` + `Authorization`（无会话头：上下文在 state 里自带） |
 - **两轴**：`vendor` = 找谁（端点预设 + key env + 内建头）；`protocol` = 说什么话（`openai-chat-completion` 缺省 / `openai-response` / `systemone` / 占位中的 `anthropic-messages` 等）。
   渐进式配置：先选 `protocol`（干什么），再按兼容矩阵选 `vendor`（找谁），有预设的只输 `api_key`，只有 `custom` 才要 `base_url`。
-- **兼容矩阵即校验表**（`Provider.Validate`，错配 loud error）：chat-completion ← 除 typesafe 外全部 vendor（含 xai）；`openai-response` ← opencode-go/opencode/openrouter/custom（`bd27768` 打通，muse 真测 ✓）；systemone ← `typesafe` / `openrouter` / `custom`；
+- **兼容矩阵即校验表**（`Provider.Validate`，错配 loud error）：chat-completion ← 除 typesafe 外全部 vendor（含 xai）；`openai-response` ← opencode-go/opencode/openrouter/custom/xai（`bd27768` 打通，muse 真测 ✓；xAI 为 `x_search`/`web_search`/`code_execution` 服务端工具预留）；systemone ← `typesafe` / `openrouter` / `custom`；
   占位只剩 `anthropic-messages` / `gemini-generate-content`（选了就报"暂不支持"）。
 - **不需要搬它们的模型目录** ✓：模型列表是**发现**来的（`GET /models` ⇒ `registry`）；内建预设只提供
   **端点 + 头 + 认证从哪取**，每家十几行。**systemone 例外**：JEV 没有统一 `/models` 口径 ⇒ `refresh` 直接跳过（不算错）。
@@ -1423,7 +1428,9 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   `frontend/web/public/model-icons/*.svg`（models.dev 的 provider logo；`ModelIcon.vue` 用 CSS mask
   + 品牌色（`--model-icon-color`），PWA 的 svg glob 会预缓存）。每行「编辑」打开 `ModelEditor.vue`，
   改该模型自己的**用户列**（显示名 / 上下文覆盖 / JSON 参数）——
-  规则（`model_define_rules`）是家族默认，这里是对单个 `(provider, upstream_id)` 的精确覆盖。空态说清「保存并刷新后会出现在这里」。
+  规则（`model_define_rules`）是家族默认，这里是对单个 `(provider, upstream_id)` 的精确覆盖。
+  规则编辑器支持匹配协议（`match_protocol`）与**追加 provider-native tool**（`native_tools`）；
+  `grok-4 × response` 的内置默认会显示成「追加 x_search / web_search / code_execution」。空态说清「保存并刷新后会出现在这里」。
 - **设置页平铺列表**（2026-11-04 统一设计系统）：`.settings-card` 只剩分节容器（无底色/圆角/内边距），字段行之间一条 `--line`；不再“卡片套卡片”。**tab 分两族**（2026-11-06 用户定「用真正的 Vuetify TabBar/TabItem」）：设置 / Agent 二级页用 Vuetify `VTabs`（MD3 primary tabs + slider + tabpanel）；上下文三 tab（压缩内再三个子 tab）与顶栏聊天·上下文也是 Vuetify `VTabs`；都由 `VTabsWindow` 做左右滑动。窄屏把 `v-tab` 压到 `min-width:0`，放得下（不再靠 show-arrows 吃 104px）。
 **设置四 tab 与会话/渠道管理页统一 760 居中**（列表页有表格，但切页时宽度不该跳来跳去）。**所有 `h3` 统一一种标题语言**：正文色半粗 + 左侧蓝色短竖条（从前只有卡片里的 h3 有竖条，其它 tab 是裸文字 —— 用户指出不一致）。「输入」卡里是 **发送方式（`enter` / `shift-enter` / `button`）**、输入时预览、命令菜单 —— 这三格在 2026-11-01 从用户视图搬进 `AppearancePane` 时 **refs 与 persist 都搬了、模板整段漏了**（界面上找不到，2026-11-02 补回）。开关一律 `:model-value` + `setX(v) { ref = v; persist(); }`，**别写 `v-model + @update:model-value="persist"`** —— 两个监听同挂 update 时显式那个可能先跑，存进去的是旧值（实测：界面 on、服务端 off）。
   **文案一律说人话**（2026-11-02 用户「审计设计界面里有哪些不说人话的部分」）：可见标签不再用 `Agent` / `vendor` / `protocol` / `载荷` / `卡带` / `提示词段` 这类内部词 ——

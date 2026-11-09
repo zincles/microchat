@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"reflect"
 	"testing"
 )
@@ -202,6 +203,110 @@ func TestEnsureModelRuleDefaultsMigratesOldDefaultSet(t *testing.T) {
 	for _, r := range DefaultModelDefineRules() {
 		if !ids[r.ID] {
 			t.Fatalf("缺少新默认规则 %s", r.ID)
+		}
+	}
+}
+
+// 2026-11-09：grok-4.x + Response 默认追加 xAI native tools；协议不对/不是 grok-4 不追加。
+func TestDefaultGrok4NativeToolRule(t *testing.T) {
+	cfg := DefaultConfig()
+	cases := []struct {
+		name     string
+		provider string
+		model    string
+		protocol string
+		want     []string
+	}{
+		{"response 4.7 任意 vendor", "openrouter", "x-ai/grok-4.7", "openai-response", []string{"x_search", "web_search", "code_execution"}},
+		{"response 4.6", "xai", "grok-4.6", "openai-response", []string{"x_search", "web_search", "code_execution"}},
+		{"response 4.x", "custom", "grok-4.20-0309", "openai-response", []string{"x_search", "web_search", "code_execution"}},
+		{"chat 不追加", "xai", "grok-4.7", "openai-chat-completion", nil},
+		{"grok-3 不追加", "xai", "grok-3", "openai-response", nil},
+		{"图像模型不追加", "xai", "grok-imagine-image-2.0", "openai-response", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := cfg.ModelProfileFor(tc.provider, tc.model, tc.protocol, ModelProfile{})
+			if len(got.NativeTools) != len(tc.want) {
+				t.Fatalf("native_tools = %v，想要 %v", got.NativeTools, tc.want)
+			}
+			for i := range tc.want {
+				if got.NativeTools[i] != tc.want[i] {
+					t.Fatalf("native_tools = %v，想要 %v", got.NativeTools, tc.want)
+				}
+			}
+		})
+	}
+}
+
+func TestNativeToolsAppendAndDedupe(t *testing.T) {
+	cfg := Config{ModelDefineRules: []ModelDefineRule{
+		{ID: "one", MatchContains: "grok", MatchProtocol: "response", NativeTools: stringSlicePtr("x_search", "web_search")},
+		{ID: "two", MatchContains: "grok", MatchProtocol: "response", NativeTools: stringSlicePtr("web_search", "code_execution")},
+	}}
+	got := cfg.ModelProfileFor("p", "grok-4.7", "openai-response", ModelProfile{})
+	want := []string{"x_search", "web_search", "code_execution"}
+	if !reflect.DeepEqual(got.NativeTools, want) {
+		t.Fatalf("追加/去重 = %v，想要 %v", got.NativeTools, want)
+	}
+	if !reflect.DeepEqual(got.MatchedRules, []string{"global:one", "global:two"}) {
+		t.Fatalf("matched_rules = %v", got.MatchedRules)
+	}
+}
+
+func TestValidateNativeToolRules(t *testing.T) {
+	valid := []ModelDefineRule{{MatchContains: "x", NativeTools: stringSlicePtr("x_search")}}
+	if err := ValidateModelDefineRules(valid); err != nil {
+		t.Fatalf("只追加 native tool 的规则该合法：%v", err)
+	}
+	for name, rule := range map[string]ModelDefineRule{
+		"未知工具":  {MatchContains: "x", NativeTools: stringSlicePtr("nope")},
+		"重复工具":  {MatchContains: "x", NativeTools: stringSlicePtr("x_search", "x_search")},
+		"空工具数组": {MatchContains: "x", NativeTools: stringSlicePtr()},
+		"未知协议":  {MatchContains: "x", MatchProtocol: "grpc", NativeTools: stringSlicePtr("x_search")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := ValidateModelDefineRules([]ModelDefineRule{rule}); err == nil {
+				t.Fatalf("该报错：%+v", rule)
+			}
+		})
+	}
+}
+
+// 回归：解码进 DefaultConfig 的已有 slice 时，JSON 不会清零结构体字段。若不清空
+// ModelDefineRules，gemini（旧配置第 4 条）会继承默认列表第 4 条 xai-grok-4-native
+// 的 match_protocol / native_tools —— 2026-11-09 实测到的静默串值。
+func TestLoadConfigDoesNotMergeDefaultRuleFields(t *testing.T) {
+	dir := t.TempDir()
+	old := `{"model_define_rules":[
+		{"id":"gpt","match_contains":"gpt","brand":"OpenAI","icon":"gpt"},
+		{"id":"xai-image","match_contains":"grok-imagine","is_final":true,"thinking_levels":[]},
+		{"id":"grok","match_contains":"grok","brand":"xAI","icon":"grok"},
+		{"id":"gemini","match_contains":"gemini","brand":"Google","icon":"gemini"},
+		{"id":"claude","match_contains":"claude","brand":"Anthropic","icon":"claude"},
+		{"id":"deepseek","match_contains":"deepseek","brand":"DeepSeek","icon":"deepseek"},
+		{"id":"mimo","match_contains":"mimo","brand":"Xiaomi","icon":"mimo"},
+		{"id":"glm","match_contains":"glm","brand":"Zhipu","icon":"glm"},
+		{"id":"kimi","match_contains":"kimi","brand":"Moonshot","icon":"kimi"}
+	]}`
+	paths := Paths{ConfigDir: dir}
+	if err := os.WriteFile(paths.Config("config.json"), []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rule := range cfg.ModelDefineRules {
+		switch rule.ID {
+		case "gemini":
+			if rule.MatchProtocol != "" || (rule.NativeTools != nil && len(*rule.NativeTools) != 0) {
+				t.Fatalf("gemini 串到了默认 native 规则字段：%+v", rule)
+			}
+		case "xai-grok-4-native":
+			if rule.NativeTools == nil || len(*rule.NativeTools) != 3 {
+				t.Fatalf("新默认 native 规则没补上：%+v", rule)
+			}
 		}
 	}
 }

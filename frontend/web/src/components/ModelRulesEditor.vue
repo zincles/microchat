@@ -31,9 +31,11 @@ const draft = reactive({
   match_contains: "",
   match_exact: "",
   match_provider: "",
+  match_protocol: "",
   is_final: false,
   brand: "",
   icon: "",
+  native_tools: [] as string[],
 });
 const thinkingOn = ref(false);
 const levels = ref<string[]>([]);
@@ -42,6 +44,16 @@ const busy = ref(false);
 
 const levelOptions = THINKING_LEVELS.map((value) => ({ title: thinkingLabel(value), value }));
 const iconOptions = MODEL_ICON_OPTIONS.map((option) => ({ title: option.label, value: option.value }));
+const protocolOptions = [
+  { title: "不限制", value: "" },
+  { title: "对话补全（chat）", value: "openai-chat-completion" },
+  { title: "应答接口（response）", value: "openai-response" },
+];
+const nativeToolOptions = [
+  { title: "X 搜索（x_search）", value: "x_search" },
+  { title: "网页搜索（web_search）", value: "web_search" },
+  { title: "代码执行（code_execution）", value: "code_execution" },
+];
 const levelText = (value: string): string => thinkingLabel(value);
 
 function cloneRules(source: ModelDefineRule[]): ModelDefineRule[] {
@@ -53,9 +65,11 @@ function resetDraft(): void {
   draft.match_contains = "";
   draft.match_exact = "";
   draft.match_provider = "";
+  draft.match_protocol = "";
   draft.is_final = false;
   draft.brand = "";
   draft.icon = "";
+  draft.native_tools = [];
   thinkingOn.value = false;
   levels.value = [];
 }
@@ -91,9 +105,11 @@ function openEdit(index: number): void {
   draft.match_contains = rule.match_contains ?? "";
   draft.match_exact = rule.match_exact ?? "";
   draft.match_provider = rule.match_provider ?? "";
+  draft.match_protocol = rule.match_protocol ?? "";
   draft.is_final = rule.is_final === true;
   draft.brand = rule.brand ?? "";
   draft.icon = rule.icon ?? "";
+  draft.native_tools = [...(rule.native_tools ?? [])];
   thinkingOn.value = Array.isArray(rule.thinking_levels);
   levels.value = [...(rule.thinking_levels ?? [])];
   editing.value = index;
@@ -115,8 +131,12 @@ function buildRule(): ModelDefineRule | null {
   }
   const brand = draft.brand.trim();
   const icon = (draft.icon ?? "").trim();
-  if (!thinkingOn.value && !brand && !icon) {
-    status.value = "至少填一个覆写字段（思考档位 / 品牌 / 图标）";
+  if (!thinkingOn.value && !brand && !icon && draft.native_tools.length === 0) {
+    status.value = "至少填一个覆写字段（思考档位 / 品牌 / 图标 / 追加工具）";
+    return null;
+  }
+  if (draft.native_tools.length > 0 && (thinkingOn.value || brand || icon)) {
+    status.value = "追加工具不要和品牌 / 图标 / 思考写在同一规则里（拆成两条）";
     return null;
   }
   const rule: ModelDefineRule = { is_final: draft.is_final };
@@ -125,7 +145,9 @@ function buildRule(): ModelDefineRule | null {
   if (matchContains) rule.match_contains = matchContains;
   if (matchExact) rule.match_exact = matchExact;
   if (matchProvider) rule.match_provider = matchProvider;
+  if (draft.match_protocol) rule.match_protocol = draft.match_protocol;
   if (thinkingOn.value) rule.thinking_levels = [...levels.value];
+  if (draft.native_tools.length) rule.native_tools = [...draft.native_tools];
   if (brand) rule.brand = brand;
   if (icon) rule.icon = icon;
   return rule;
@@ -185,6 +207,7 @@ function conditionText(rule: ModelDefineRule): string {
   if (rule.match_contains) bits.push(`包含 ${rule.match_contains}`);
   if (rule.match_exact) bits.push(`等于 ${rule.match_exact}`);
   if (rule.match_provider) bits.push(`渠道 ${rule.match_provider}`);
+  if (rule.match_protocol) bits.push(`协议 ${rule.match_protocol}`);
   return bits.join(" · ");
 }
 
@@ -195,6 +218,7 @@ function defineText(rule: ModelDefineRule): string {
   }
   if (rule.brand) bits.push(`品牌 ${rule.brand}`);
   if (rule.icon) bits.push(`图标 ${rule.icon}`);
+  if (rule.native_tools?.length) bits.push(`追加 ${rule.native_tools.join(" / ")}`);
   if (rule.is_final) bits.push("命中即停");
   return bits.join(" · ");
 }
@@ -243,6 +267,7 @@ onMounted(() => { load().catch(() => {}); });
         <label class="field"><span>包含<HelpTip text="对模型原始 upstream_id 做不区分大小写的子串匹配；例如 grok 会命中 grok-4.7。" /></span><VTextField v-model="draft.match_contains" density="compact" variant="outlined" hide-details placeholder="例如 grok" /></label>
         <label class="field"><span>精确<HelpTip text="原始模型 id 必须完全相等；和「包含」同时填时，两者都要满足。" /></span><VTextField v-model="draft.match_exact" density="compact" variant="outlined" hide-details placeholder="例如 grok-4.7" /></label>
         <label class="field"><span>渠道（可选）<HelpTip text="只对某个渠道 id 生效；留空 = 所有渠道。渠道级规则通常不用再填这一格。" /></span><VTextField v-model="draft.match_provider" density="compact" variant="outlined" hide-details placeholder="例如 xai；留空 = 所有渠道" /></label>
+        <label class="field"><span>协议（可选）<HelpTip text="只对当前渠道协议生效；例如只对 Response 接口追加服务端工具。" /></span><VSelect v-model="draft.match_protocol" :items="protocolOptions" item-title="title" item-value="value" density="compact" variant="outlined" hide-details /></label>
         <div class="switch-row"><VSwitch v-model="draft.is_final" density="compact" hide-details label="命中后停止继续匹配" /><HelpTip text="本规则应用后停止继续匹配同一层列表；全局的 final 不会挡住渠道层覆盖。" /></div>
       </section>
 
@@ -255,6 +280,7 @@ onMounted(() => { load().catch(() => {}); });
           <VSelect v-model="levels" :items="levelOptions" item-title="title" item-value="value" multiple density="compact" variant="outlined" hide-details />
         </label>
         <p v-if="thinkingOn" class="hint">一个都不选 = 明确清空（例如图像模型）。</p>
+        <label class="field"><span>追加工具<HelpTip text="provider-native tool id，只会追加到模型画像；真正发请求前还要经过渠道/协议能力校验。" /></span><VSelect v-model="draft.native_tools" :items="nativeToolOptions" item-title="title" item-value="value" multiple density="compact" variant="outlined" hide-details placeholder="不追加" /></label>
       </section>
 
       <div class="rule-actions">

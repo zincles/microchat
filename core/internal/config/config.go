@@ -133,8 +133,16 @@ const (
 // LoadConfig：读 `config.json`，缺字段用默认值（`#[serde(default)]` 的等价物）。
 func LoadConfig(paths Paths) (Config, error) {
 	config := DefaultConfig()
+	// ⚠ 先把默认规则清空再解码：encoding/json 解码进**已有 slice** 时不会清零结构体字段，
+	// 用户配置里第 N 条规则会悄悄继承默认列表第 N 条的指针字段（2026-11-09 实测：
+	// gemini 继承了 xai-grok-4-native 的 match_protocol / native_tools）。
+	config.ModelDefineRules = nil
 	if err := loadJSON(paths.Config("config.json"), &config); err != nil {
 		return config, err
+	}
+	if config.ModelDefineRules == nil {
+		// 文件不存在 / 没写这一格 ⇒ 用开箱默认；显式 `[]` 是空的非 nil slice，不会被复活。
+		config.ModelDefineRules = DefaultModelDefineRules()
 	}
 	if config.Chat.TitleChars == 0 {
 		config.Chat.TitleChars = 32

@@ -92,7 +92,7 @@ func TestBuildResponse(t *testing.T) {
 
 // Validate 矩阵：response ← opencode-go/opencode/openrouter/custom；deepseek+response 报错。
 func TestValidateResponseMatrix(t *testing.T) {
-	for _, vendor := range []Vendor{VendorOpenCodeGo, VendorOpenCode, VendorOpenRouter, VendorCustom} {
+	for _, vendor := range []Vendor{VendorOpenCodeGo, VendorOpenCode, VendorOpenRouter, VendorCustom, VendorXAI} {
 		provider := Provider{ID: "p", Vendor: vendor, Protocol: ProtocolOpenAIResponse, BaseURL: "https://x.invalid/v1"}
 		if err := provider.Validate(); err != nil {
 			t.Fatalf("vendor %q × response 该过：%v", vendor, err)

@@ -62,6 +62,7 @@ type ModelView struct {
 	Brand          string   `json:"brand,omitempty"`
 	Icon           string   `json:"icon,omitempty"`
 	ThinkingLevels []string `json:"thinking_levels,omitempty"`
+	NativeTools    []string `json:"native_tools,omitempty"`
 	MatchedRules   []string `json:"matched_rules,omitempty"`
 }
 
@@ -79,6 +80,7 @@ type ModelListItem struct {
 	// model_define_rules 的派生结果（不落库）。
 	Brand        string   `json:"brand,omitempty"`
 	Icon         string   `json:"icon,omitempty"`
+	NativeTools  []string `json:"native_tools,omitempty"`
 	MatchedRules []string `json:"matched_rules,omitempty"`
 }
 
@@ -119,8 +121,8 @@ type UpdateProviderReq struct {
 	ModelDefineRules *[]config.ModelDefineRule `json:"model_define_rules"`
 }
 
-func (s *Server) modelView(row store.ModelRow, providerRules []config.ModelDefineRule) ModelView {
-	profile := s.config.ModelProfileWithRules(row.Provider, row.UpstreamID, config.ModelProfile{
+func (s *Server) modelView(row store.ModelRow, protocol string, providerRules []config.ModelDefineRule) ModelView {
+	profile := s.config.ModelProfileWithRulesFor(row.Provider, row.UpstreamID, protocol, config.ModelProfile{
 		ThinkingLevels: providers.ThinkingLevels(row.UpstreamID),
 	}, providerRules)
 	return ModelView{
@@ -137,6 +139,7 @@ func (s *Server) modelView(row store.ModelRow, providerRules []config.ModelDefin
 		Brand:           profile.Brand,
 		Icon:            profile.Icon,
 		ThinkingLevels:  profile.ThinkingLevels,
+		NativeTools:     profile.NativeTools,
 		MatchedRules:    profile.MatchedRules,
 	}
 }
@@ -529,11 +532,13 @@ func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
 	configs := s.loadProviders()
 	names := map[string]*string{}
 	aliases := map[string]string{}
+	protocols := map[string]string{}
 	rulesByProvider := map[string][]config.ModelDefineRule{}
 	for _, provider := range configs.Providers {
 		view := providerView(provider)
 		names[provider.ID] = view.Name
 		aliases[provider.ID] = view.Alias
+		protocols[provider.ID] = view.Protocol
 		rulesByProvider[provider.ID] = provider.ModelDefineRules
 	}
 	rows, err := s.store.ListModels("")
@@ -543,7 +548,7 @@ func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
 	}
 	items := make([]ModelListItem, 0, len(rows))
 	for _, row := range rows {
-		view := s.modelView(row, rulesByProvider[row.Provider])
+		view := s.modelView(row, protocols[row.Provider], rulesByProvider[row.Provider])
 		items = append(items, ModelListItem{
 			Provider: row.Provider, ProviderName: names[row.Provider], Alias: aliases[row.Provider],
 			UpstreamID:     view.UpstreamID,
@@ -552,6 +557,7 @@ func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
 			ThinkingLevels: view.ThinkingLevels,
 			Brand:          view.Brand,
 			Icon:           view.Icon,
+			NativeTools:    view.NativeTools,
 			MatchedRules:   view.MatchedRules,
 		})
 	}
@@ -587,12 +593,14 @@ func (s *Server) setModelOverride(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	providerRules := []config.ModelDefineRule(nil)
+	protocol := ""
 	if provider, ok := s.providerByID(req.Provider); ok {
 		providerRules = provider.ModelDefineRules
+		protocol = string(providers.FromConfig(provider).Normalize().EffectiveProtocol())
 	}
 	for _, row := range rows {
 		if row.UpstreamID == req.UpstreamID {
-			writeJSON(w, http.StatusOK, s.modelView(row, providerRules))
+			writeJSON(w, http.StatusOK, s.modelView(row, protocol, providerRules))
 			return
 		}
 	}
@@ -642,8 +650,9 @@ func (s *Server) providerViewWithModels(provider config.Provider) ProviderView {
 		return providerView(provider)
 	}
 	items := make([]ModelView, 0, len(rows))
+	protocol := string(providers.FromConfig(provider).Normalize().EffectiveProtocol())
 	for _, row := range rows {
-		items = append(items, s.modelView(row, provider.ModelDefineRules))
+		items = append(items, s.modelView(row, protocol, provider.ModelDefineRules))
 	}
 	view := providerView(provider)
 	view.Models = items
