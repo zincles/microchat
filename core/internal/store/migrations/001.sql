@@ -19,7 +19,9 @@ CREATE TABLE sessions (
   updated_at    INTEGER NOT NULL,
   agent_id      TEXT NOT NULL DEFAULT 'default',
   -- 思考档位（空串 = 跟随模型默认）；取值校验在 server / providers
-  thinking_level TEXT NOT NULL DEFAULT ''
+  thinking_level TEXT NOT NULL DEFAULT '',
+  -- 手动关闭的 provider-native tool id（JSON 数组；规则给默认，用户可取消）
+  native_tools_disabled TEXT NOT NULL DEFAULT '[]'
 );
 CREATE TABLE messages (
   id          TEXT PRIMARY KEY,

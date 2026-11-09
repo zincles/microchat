@@ -375,6 +375,8 @@ type CreateSessionReq struct {
 	SystemPrompt string  `json:"system_prompt"`
 	// ThinkingLevel：统一七档（off/minimal/low/medium/high/xhigh/max）；空 = 跟随模型默认。
 	ThinkingLevel *string `json:"thinking_level"`
+	// NativeToolsDisabled：规则派生的 native tool 里手动关掉的 id；nil = 默认全开。
+	NativeToolsDisabled *[]string `json:"native_tools_disabled"`
 }
 
 // UpdateSessionReq：只改给出来的那些。
@@ -394,6 +396,8 @@ type UpdateSessionReq struct {
 	SystemPrompt *string `json:"system_prompt"`
 	// ThinkingLevel：nil = 不动；"" = 清掉覆盖（跟随模型默认）；非空 = 统一七档之一。
 	ThinkingLevel *string `json:"thinking_level"`
+	// NativeToolsDisabled：nil = 不动；[] = 全部恢复；非空 = 关闭这些 native tool。
+	NativeToolsDisabled *[]string `json:"native_tools_disabled"`
 }
 
 // normalizeUUIDv7：校验 + 规范化（小写带横线）。`sessions.id` 的 v7 形状由这一处守
@@ -519,6 +523,15 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		session.ThinkingLevel = seed.ThinkingLevel
+	}
+	if req.NativeToolsDisabled != nil {
+		disabled := append([]string{}, (*req.NativeToolsDisabled)...)
+		if err := s.store.SetSessionNativeToolsDisabled(session.ID, disabled); err != nil {
+			_ = s.store.DeleteSession(session.ID)
+			writeStoreError(w, err)
+			return
+		}
+		session.NativeToolsDisabled = disabled
 	}
 	// 首段对话（`agent.first_message`，2026-10-11 用户定）：新会话把它插成**第一条 assistant 消息**
 	// （idx 1）。插失败就把刚建的会话删掉（草稿铸的 id 还能重试），不留半截会话。
@@ -655,6 +668,13 @@ func (s *Server) updateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if thinking != nil {
 		if err := s.store.SetSessionThinking(id, *thinking); err != nil {
+			writeStoreError(w, err)
+			return
+		}
+	}
+	if req.NativeToolsDisabled != nil {
+		disabled := append([]string{}, (*req.NativeToolsDisabled)...)
+		if err := s.store.SetSessionNativeToolsDisabled(id, disabled); err != nil {
 			writeStoreError(w, err)
 			return
 		}

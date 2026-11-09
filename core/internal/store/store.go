@@ -80,7 +80,24 @@ func (s *Store) migrate() error {
 	if err := s.ensureSessionThinking(); err != nil {
 		return err
 	}
+	if err := s.ensureSessionNativeTools(); err != nil {
+		return err
+	}
 	return s.ensureTavernPresets()
+}
+
+// ensureSessionNativeTools：老库补 `native_tools_disabled` 列（幂等；默认 []）。
+func (s *Store) ensureSessionNativeTools() error {
+	var hasColumn int
+	if err := s.db.QueryRow(
+		"SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'native_tools_disabled'").Scan(&hasColumn); err != nil {
+		return err
+	}
+	if hasColumn > 0 {
+		return nil
+	}
+	_, err := s.db.Exec("ALTER TABLE sessions ADD COLUMN native_tools_disabled TEXT NOT NULL DEFAULT '[]'")
+	return err
 }
 
 // ensureTavernPresets：老库（user_version 已经是 1）不会重跑 001.sql ⇒ 补这张表。

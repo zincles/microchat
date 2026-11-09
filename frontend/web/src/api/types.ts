@@ -57,6 +57,7 @@ export interface Session {
   model: string;
   agent_id: string;
   thinking_level: string;
+  native_tools_disabled: string[];
   created_at: number;
   updated_at: number;
 }
@@ -613,6 +614,7 @@ export interface CreateSessionRequest {
   agent_id?: string;
   system_prompt?: string;
   thinking_level?: string;
+  native_tools_disabled?: string[];
 }
 
 export interface UpdateSessionRequest {
@@ -622,6 +624,7 @@ export interface UpdateSessionRequest {
   agent_id?: string;
   system_prompt?: string | null;
   thinking_level?: string;
+  native_tools_disabled?: string[];
 }
 
 export interface EditMessageRequest {

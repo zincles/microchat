@@ -24,19 +24,31 @@ func (e InvalidError) Error() string { return string(e) }
 func nowMS() int64 { return time.Now().UnixMilli() }
 
 // sessionColumns：会话自己的列（**没有 current_leaf**：线性会话不需要"停在哪儿"）。
-const sessionColumns = "id, title, system_prompt, provider, model, agent_id, thinking_level, created_at, updated_at"
+const sessionColumns = "id, title, system_prompt, provider, model, agent_id, thinking_level, native_tools_disabled, created_at, updated_at"
 
 // 一个最小的扫描接口：sql.Row 与 sql.Rows 都满足它。
 type scanner interface{ Scan(dest ...any) error }
 
 func scanSession(row scanner) (model.Session, error) {
 	var session model.Session
+	var disabledJSON string
 	err := row.Scan(
 		&session.ID, &session.Title, &session.SystemPrompt,
 		&session.Provider, &session.Model, &session.AgentID, &session.ThinkingLevel,
-		&session.CreatedAt, &session.UpdatedAt,
+		&disabledJSON, &session.CreatedAt, &session.UpdatedAt,
 	)
-	return session, err
+	if err != nil {
+		return session, err
+	}
+	if disabledJSON == "" {
+		session.NativeToolsDisabled = []string{}
+	} else if err := json.Unmarshal([]byte(disabledJSON), &session.NativeToolsDisabled); err != nil {
+		return session, err
+	}
+	if session.NativeToolsDisabled == nil {
+		session.NativeToolsDisabled = []string{}
+	}
+	return session, nil
 }
 
 func (s *Store) GetSession(id string) (*model.Session, error) {
@@ -108,8 +120,9 @@ func (s *Store) CreateSessionWithID(id, provider, modelID, systemPrompt, title s
 	session := model.Session{
 		ID: id, Title: title, SystemPrompt: systemPrompt,
 		Provider: provider, Model: modelID,
-		AgentID:   "default", // 内置默认，server 再按 agents.json 覆盖
-		CreatedAt: now, UpdatedAt: now,
+		AgentID:             "default", // 内置默认，server 再按 agents.json 覆盖
+		NativeToolsDisabled: []string{},
+		CreatedAt:           now, UpdatedAt: now,
 	}
 	_, err := s.db.Exec(
 		`INSERT INTO sessions (id, title, system_prompt, provider, model, agent_id, created_at, updated_at)
@@ -159,6 +172,19 @@ func (s *Store) SetSessionAgent(id, agentID string) error {
 // SetSessionThinking：写会话级思考档位（空串 = 清掉覆盖 ⇒ 跟随模型默认）。
 func (s *Store) SetSessionThinking(id, level string) error {
 	return s.execTouch("UPDATE sessions SET thinking_level = ?1 WHERE id = ?2", level, id)
+}
+
+// SetSessionNativeToolsDisabled：写本条会话手动关闭的 native tool id（JSON 数组）。
+func (s *Store) SetSessionNativeToolsDisabled(id string, disabled []string) error {
+	if disabled == nil {
+		disabled = []string{}
+	}
+	return s.execTouch("UPDATE sessions SET native_tools_disabled = ?1 WHERE id = ?2", mustJSON(disabled), id)
+}
+
+func mustJSON(value any) string {
+	raw, _ := json.Marshal(value)
+	return string(raw)
 }
 
 // SetSessionSystemPrompt：写会话级提示词覆盖（空串 = **清掉覆盖** ⇒ 解析回落到 agent 的）。
@@ -268,8 +294,9 @@ func (s *Store) CopySession(sessionID string) (model.Session, error) {
 	copied := model.Session{
 		ID: newSessionID, Title: source.Title, SystemPrompt: source.SystemPrompt,
 		Provider: source.Provider, Model: source.Model, AgentID: source.AgentID,
-		ThinkingLevel: source.ThinkingLevel,
-		CreatedAt:     now, UpdatedAt: now,
+		ThinkingLevel:       source.ThinkingLevel,
+		NativeToolsDisabled: append([]string{}, source.NativeToolsDisabled...),
+		CreatedAt:           now, UpdatedAt: now,
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -277,10 +304,10 @@ func (s *Store) CopySession(sessionID string) (model.Session, error) {
 	}
 	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.Exec(
-		`INSERT INTO sessions (id, title, system_prompt, provider, model, agent_id, thinking_level, created_at, updated_at)
-		 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`,
+		`INSERT INTO sessions (id, title, system_prompt, provider, model, agent_id, thinking_level, native_tools_disabled, created_at, updated_at)
+		 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)`,
 		copied.ID, copied.Title, copied.SystemPrompt, copied.Provider, copied.Model,
-		copied.AgentID, copied.ThinkingLevel, copied.CreatedAt, copied.UpdatedAt); err != nil {
+		copied.AgentID, copied.ThinkingLevel, mustJSON(copied.NativeToolsDisabled), copied.CreatedAt, copied.UpdatedAt); err != nil {
 		return model.Session{}, err
 	}
 	// 摘要先插（消息的 `summary_id` 外键指着它）；父指针由 `insertSummary` 先留 NULL、插完回填。

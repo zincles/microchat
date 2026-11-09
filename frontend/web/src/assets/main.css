@@ -851,8 +851,17 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .composer-toolbar .thinking-btn:hover { color: var(--md-on-surface); background: color-mix(in srgb, var(--md-on-surface) 8%, var(--md-surface-container)) !important; }
 .thinking-label { margin: 0; white-space: nowrap; }
 /* 输入栏上方的工具数状态：只在**有工具**时带「+内置」；没有就写「工具：无」，不编 0。 */
-.composer-tools { margin-left: 0.1em; color: var(--md-on-surface-variant); font-size: var(--md-type-label-medium);
-  white-space: nowrap; font-variant-numeric: tabular-nums; }
+.composer-toolbar .tools-btn { min-width: 0 !important; height: 1.9em !important; min-height: 1.9em !important;
+  padding: 0 0.45em !important; color: var(--md-on-surface-variant); }
+.composer-toolbar .tools-btn:hover { color: var(--md-on-surface); background: color-mix(in srgb, var(--md-on-surface) 8%, var(--md-surface-container)) !important; }
+.tools-label { white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* 自绘勾选框：Vuetify 默认 checkbox 图标走 MDI 字体，本项目没装 —— 会画成空白。 */
+.tool-check { width: 1.15em; height: 1.15em; flex: none; margin-inline-end: 0.45em;
+  border: 1.5px solid var(--md-outline); border-radius: var(--r-xs); box-sizing: border-box;
+  display: inline-flex; align-items: center; justify-content: center; color: var(--md-on-primary);
+  background: transparent; transition: background-color 150ms, border-color 150ms; }
+.tool-check.on { background: var(--md-primary); border-color: var(--md-primary); }
+.tool-check svg { width: 0.8em; height: 0.8em; display: block; }
 .thinking-raw { margin-left: 0.4em; color: var(--md-on-surface-variant); font-size: 0.88em; opacity: 0.8; }
 
 /* —— Vuetify 逃生门（2026-11-06）——

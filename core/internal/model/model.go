@@ -136,8 +136,11 @@ type Session struct {
 	AgentID      string `json:"agent_id"` // 软引用
 	// ThinkingLevel：会话级思考档位（空串 = 跟随模型默认）。取值见 providers.ThinkingLevels。
 	ThinkingLevel string `json:"thinking_level"`
-	CreatedAt     int64  `json:"created_at"`
-	UpdatedAt     int64  `json:"updated_at"`
+	// NativeToolsDisabled：本条会话手动关掉的 provider-native tool id（规则给默认，用户可取消）。
+	// 只影响后续请求；模型规则变化后新工具仍会自动出现（除非再次手动关闭）。
+	NativeToolsDisabled []string `json:"native_tools_disabled"`
+	CreatedAt           int64    `json:"created_at"`
+	UpdatedAt           int64    `json:"updated_at"`
 }
 
 // TurnPhase：一轮生成的状态（Rust 版在 turn.rs 的进程内登记表里）。

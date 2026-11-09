@@ -7,7 +7,7 @@ import { ref, nextTick } from "vue";
 import { VBtn, VTextarea } from "vuetify/components";
 import { ICONS } from "./icons.ts";
 import ThinkingMenu from "./ThinkingMenu.vue";
-import { nativeToolsLabel, nativeToolsTitle } from "../utils/format.ts";
+import ToolsMenu from "./ToolsMenu.vue";
 import type { ThinkingOption } from "../utils/thinking.ts";
 
 const emit = defineEmits<{
@@ -17,6 +17,7 @@ const emit = defineEmits<{
   stop: [];
   menu: [];
   "select-thinking": [value: string];
+  "toggle-native-tool": [id: string, enabled: boolean];
 }>();
 
 const props = withDefaults(defineProps<{
@@ -24,11 +25,13 @@ const props = withDefaults(defineProps<{
   thinking?: string;
   thinkingOptions?: ThinkingOption[];
   nativeTools?: string[];
+  nativeToolsDisabled?: string[];
 }>(), {
   menuOn: false,
   thinking: "",
   thinkingOptions: () => [],
   nativeTools: () => [],
+  nativeToolsDisabled: () => [],
 });
 
 const text = ref("");
@@ -78,7 +81,11 @@ defineExpose({ submit, clear, setText, text, setRunning });
         :options="thinkingOptions"
         @update:model-value="selectThinking"
       />
-      <span class="composer-tools" :title="nativeToolsTitle(nativeTools)">{{ nativeToolsLabel(nativeTools) }}</span>
+      <ToolsMenu
+        :available="nativeTools"
+        :disabled="nativeToolsDisabled"
+        @toggle="(id, on) => $emit('toggle-native-tool', id, on)"
+      />
     </div>
     <div class="composer-row">
     <VTextarea

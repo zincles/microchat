@@ -209,7 +209,7 @@ const sessionInfo = reactive<any>({});
 // ⇒ 预演的那一发给真发的那一发逐字节一致。别扩散（消息/摘要的 id 仍是服务端铸）。
 // 要会话的命令（compact/cut/reroll…）在草稿里明确拒绝（needsSession 标在 commands.js 的表上）。
 let draft = false;
-let draftPrefs: any = { provider: "", model: "", agent: "", thinking_level: "" };
+let draftPrefs: any = { provider: "", model: "", agent: "", thinking_level: "", native_tools_disabled: [] };
 let draftId: any = null;
 
 const {
@@ -247,13 +247,36 @@ const thinkingChoices = computed(() => {
 });
 // 当前模型可用的 provider-native 工具数（来自 GET /models 的 model_define_rules 派生）。
 // 草稿与真会话都读 sessionInfo；模型清单未到时显示「工具：无」，不猜。
-const currentNativeTools = computed<string[]>(() => {
+const currentModelRow = computed(() => {
   const provider = String(sessionInfo.provider ?? "");
   const model = String(sessionInfo.model ?? "");
-  if (!provider || !model) return [];
-  const row = vueModels.value.find((m) => m.provider === provider && m.upstream_id === model);
-  return (row?.native_tools ?? []).filter(Boolean);
+  if (!provider || !model) return null;
+  return vueModels.value.find((m) => m.provider === provider && m.upstream_id === model) ?? null;
 });
+// 规则给的是**可用**工具；会话里的 native_tools_disabled 是用户手动关掉的。
+const currentAllNativeTools = computed<string[]>(() => (currentModelRow.value?.native_tools ?? []).filter(Boolean));
+async function toggleNativeTool(id: string, enabled: boolean): Promise<void> {
+  if (!id) return;
+  const next = (sessionInfo.native_tools_disabled ?? []).filter((x: string) => x !== id);
+  if (!enabled) next.push(id);
+  if (draft) {
+    draftPrefs.native_tools_disabled = [...next];
+    sessionInfo.native_tools_disabled = [...next];
+    refreshPreview();
+    return;
+  }
+  if (!sessionID) return;
+  const prev = [...(sessionInfo.native_tools_disabled ?? [])];
+  sessionInfo.native_tools_disabled = [...next];
+  try {
+    const updated = await api.patchSession(sessionID, { native_tools_disabled: next });
+    Object.assign(sessionInfo, updated);
+    refreshPreview();
+  } catch (err) {
+    sessionInfo.native_tools_disabled = prev;
+    toast(`工具选择保存失败：${err instanceof Error ? err.message : String(err)}`, "error");
+  }
+}
 const currentThinking = computed(() => {
   // 草稿与真会话都把当前档位放在 sessionInfo 上（setThinking 两边一起写），
   // 别在这里读普通对象 draftPrefs —— 它不是响应式的，菜单标签不会更新。
@@ -1164,12 +1187,12 @@ async function startDraft() {
   // ⚠ **不要 `draftPrefs = {...}`**：composable 在创建时捕获了同一个对象引用，
   // 重新赋值会让 applyModelValue/applyAgentValue 改到旧对象，sendFromDraft 却读新对象
   // ⇒ 草稿里选的模型/Agent 到建会话时退回 defaults（2026-11-08 用户报 dummy/dummy）。
-  Object.assign(draftPrefs, { provider: "", model: "", agent: "", thinking_level: "" });
+  Object.assign(draftPrefs, { provider: "", model: "", agent: "", thinking_level: "", native_tools_disabled: [] });
   // `id: ""` 是必须的：`Object.assign` **不清旧键**，从一条真会话切到草稿时
   // `sessionInfo.id` 会留着上一条的 id —— 于是"这是草稿吗"就答错了（曾经就没人读它，
   // 所以一直没露；上下文工作区要读它才露出来）。
   Object.assign(sessionInfo, {
-    id: "", title: "", provider: "", model: "", agent_id: "", thinking_level: "", system_prompt: "",
+    id: "", title: "", provider: "", model: "", agent_id: "", thinking_level: "", system_prompt: "", native_tools_disabled: [],
   });
   paintSessionHeader();
   const d = await api.getDefaults().catch(() => ({} as any));
@@ -1183,6 +1206,7 @@ async function startDraft() {
   Object.assign(sessionInfo, {
     provider: draftPrefs.provider, model: draftPrefs.model,
     agent_id: draftPrefs.agent, thinking_level: draftPrefs.thinking_level,
+    native_tools_disabled: draftPrefs.native_tools_disabled,
   });
   vueMessages.value = [];
   loadingSession.value = false;
@@ -1865,6 +1889,9 @@ async function sendFromDraft(text) {
   if (draftPrefs.model) body.model = draftPrefs.model;
   if (draftPrefs.agent) body.agent_id = draftPrefs.agent;
   if (draftPrefs.thinking_level) body.thinking_level = draftPrefs.thinking_level;
+  if (Array.isArray(draftPrefs.native_tools_disabled) && draftPrefs.native_tools_disabled.length) {
+    body.native_tools_disabled = draftPrefs.native_tools_disabled;
+  }
   // 草稿这条路是**两个** back-to-back 请求（建会话 → 受理）⇒ 远端 1s+ 时足足两秒没反应。
   // 先画再说：建会话失败就撤掉并退回草稿（连输入框里的字一起还回去）。
   const optimistic = addMessage("你", text, "user");
@@ -2119,8 +2146,10 @@ onUnmounted(() => {
       :menu-on="cmdMenu"
       :thinking="currentThinking"
       :thinking-options="thinkingChoices"
-      :native-tools="currentNativeTools"
+      :native-tools="currentAllNativeTools"
+      :native-tools-disabled="sessionInfo.native_tools_disabled ?? []"
       @select-thinking="setThinking"
+      @toggle-native-tool="toggleNativeTool"
       @input-text="onComposerInput"
       @keydown="onComposerKeydown"
       @submit="onComposerSubmit"

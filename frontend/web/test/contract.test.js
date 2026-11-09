@@ -2968,6 +2968,16 @@ test("工具状态：无/1/2/3（+内置），标题列出工具", () => {
   assert.equal(nativeToolLabel("unknown_tool"), "unknown_tool");
   assert.ok(nativeToolsTitle(["x_search", "web_search"]).includes("X 搜索"));
   assert.ok(nativeToolsTitle([]).includes("没有可用"));
+
+  const tools = readFileSync(join(SRC, "components", "ToolsMenu.vue"), "utf8");
+  const composer = readFileSync(join(SRC, "components", "Composer.vue"), "utf8");
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  assert.match(tools, /tool-check/, "工具菜单没有勾选框");
+  assert.match(tools, /emit\("toggle"/, "工具菜单没有切换事件");
+  assert.match(composer, /nativeToolsDisabled/, "Composer 没接已关闭工具");
+  assert.match(app, /toggleNativeTool/, "App 没有保存工具选择");
+  assert.match(app, /native_tools_disabled/, "App 没读会话的工具开关");
+  assert.match(app, /patchSession\(sessionID, \{ native_tools_disabled/, "工具选择没有 PATCH 到会话");
 });
 
 test("markdown 类型清单：前端的 FALLBACK 与后端 MarkdownTypes 对得上", () => {

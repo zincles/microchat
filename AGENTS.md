@@ -684,7 +684,7 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 
 | 方法 | 路径 | 请求体 | 响应 | 说明 |
 |---|---|---|---|---|
-| GET | `/sessions` | — | `[SessionView]` | 每项 = 会话 + `messages`（**这条会话有几条消息** —— 客户端的启动编排据此认定"空会话"，不必逐条会话再拉一次消息）+ `turn`（客户端据此标"生成中"）。会话自身含 **`thinking_level`**（空 = 跟随模型默认；非空 = `off/minimal/low/medium/high/xhigh/max`）|
+| GET | `/sessions` | — | `[SessionView]` | 每项 = 会话 + `messages`（**这条会话有几条消息** —— 客户端的启动编排据此认定"空会话"，不必逐条会话再拉一次消息）+ `turn`（客户端据此标"生成中"）。会话自身含 **`thinking_level`**（空 = 跟随模型默认；非空 = `off/minimal/low/medium/high/xhigh/max`）与 **`native_tools_disabled`**（用户手动关掉的 provider-native tool id；规则新增的工具默认仍启用）|
 | GET | `/sessions/{session_id}/export` | — | `{version:3,title,provider,model,agent_id,agent_name,messages:[{role,content,reasoning}],summaries:[…]}` | **对话记录导出**（JSON；2026-10-11 起，10-17 扩成 v2，**10-28 扩成 v3**）：标题 + 每条 role/content（正文原样，`<state>` 块留着 ⇒ 导回去状态照常现演）+ **这条会话当初绑的渠道 / 模型 / Agent 三格软引用**（`agent_name` 只为"本机没有也能说清是谁"）+ **v3：整张摘要金字塔 + 每条消息的 `reasoning`**。<br>**消息一条不少**：压缩在库里从不改 `messages`（`RecordSummary` 只写 `summary_id`）⇒ 被摘要盖住的原文照旧全导。<br>**摘要必须带**：它是模型写的字，**不可重算**（重压得到另一段 —— `reroll-summary` 的存在就是证据），从前导回来等于"从没压过"。形状：`{key, parent_key?, type, begin_idx?, end_idx?, text, blocks, tokens, provider, model, prompt_version, usage, dirty, created_at}` —— `key`/`parent_key` 只是**文件内的句柄**（父子关系），`begin_idx`/`end_idx` 是 **1-based 消息序号**（不用消息 id：导入后 id 全换新）。<br>**仍不带**：system prompt / 消息 id / 消息的思考耗时与用量 / 摘要的 `source_ids`（导入时按真实成员重建）；**Agent 的定义也不带**（人设搬家走卡带）。**不要凭据**（没鉴权了） |
 | POST | `/sessions/import-json` | 上面那个导出格式（v1/v2 也收） | `{session, messages, summaries, agent_missing}` · 201 | **JSON 导入**：建新会话 + 按序落库（id 批铸排序）；role 只许 user/assistant（坏 ⇒ 400 点名第几条）、空 messages ⇒ 400、`version > 3` ⇒ 400；标题没给 ⇒ 首条 user 起。**v2 的三格照抄**（`provider`/`model`/`agent_id` —— 本机没有也照抄、不静默换缺省；文件没点名 agent 才用 `default_agent`），agent 本机没有 ⇒ `agent_missing: true`（界面提示"人设回落内置默认、要人设导卡带"）。**v3 的金字塔**：摘要**全部铸新 id** 再重映射父子（照抄旧 id 让同一个文件导两次会撞主键）⇒ `store.RestoreSummaries` 一个事务写进去，并回填 `messages.summary_id`（重叠区间在那一层当场变错误）。形状/成环/越界**在动库之前**验完 ⇒ 坏文件不留空壳会话；真写失败则把刚建的会话删掉（**半成品比失败更糟**：用户以为导进来了）。**不经过** `POST /sessions` ⇒ 不插首段对话 |
 | POST | `/sessions/import-st` | JSONL 原文（`?title=` 可选） | `{session, messages, skipped}` · 201 | **不要凭据**（设置面）。**ST 导入**：SillyTavern JSONL（一行一条）→ 建会话 + 按序落库；只认四样（is_user/mes/reasoning/send_date），其余全丢；空文件 ⇒ 400 |
@@ -692,8 +692,8 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 | GET | `/tavern/presets` | — | `[TavernPreset]` | 列表只回元数据（id/filename/size/created_at），**不带正文** |
 | GET | `/tavern/presets/{preset_id}` | — | 原始字节 | **逐字节原样**下载；`Content-Disposition: attachment` + 原文件名；不存在 ⇒ 404 |
 | DELETE | `/tavern/presets/{preset_id}` | — | 204 | 删除原始存档；不存在 ⇒ 404 |
-| POST | `/sessions` | `CreateSessionReq` | `Session` · 201 | **配了 `first_message` 的 agent ⇒ 顺手把首段插成第一条 assistant（idx 1）**。省略字段时取 `config.json` 的 `defaults`；`thinking_level` 可选（空 = 跟随模型默认；非空必须在该模型 `thinking_levels` 里，否则 **422**）；`title` **真生效**（建一条已命名的会话，不必再多发一次 `PATCH`）—— 不给 / `""` ⇒ 标题空着（等首条用户消息自动起名）。**`id`（可选，2026-10-09）**：客户端铸的 UUIDv7 —— 草稿态（web）靠它把"预演的那一发"与"真发的那一发"钉成同一个会话键；给了就用（先校形状 ⇒ 非 v7 **400**、已有 ⇒ **409**），不给 ⇒ 服务端现铸。⚠ **HACK（刻意，全项目唯一允许客户端铸 id 的口子）** —— 动机只有草稿预演那一条，别扩散（消息/摘要的 id 一律服务端铸） |
-| PATCH | `/sessions/{session_id}` | `UpdateSessionReq` | `Session` | 标题 / 模型 / agent / **提示词** / **思考档位**（`system_prompt` 与 `thinking_level` 都是**指针** ⇒ 没给或 `null` = 不动、`""` = 清掉覆盖/跟随模型默认、非空 = 写入；档位必须在目标模型的 `thinking_levels` 里，否则 **422**）|
+| POST | `/sessions` | `CreateSessionReq` | `Session` · 201 | **配了 `first_message` 的 agent ⇒ 顺手把首段插成第一条 assistant（idx 1）**。省略字段时取 `config.json` 的 `defaults`；`thinking_level` 可选（空 = 跟随模型默认；非空必须在该模型 `thinking_levels` 里，否则 **422**）；`native_tools_disabled` 可选（[]/省略 = 全按规则启用）；`title` **真生效**（建一条已命名的会话，不必再多发一次 `PATCH`）—— 不给 / `""` ⇒ 标题空着（等首条用户消息自动起名）。**`id`（可选，2026-10-09）**：客户端铸的 UUIDv7 —— 草稿态（web）靠它把"预演的那一发"与"真发的那一发"钉成同一个会话键；给了就用（先校形状 ⇒ 非 v7 **400**、已有 ⇒ **409**），不给 ⇒ 服务端现铸。⚠ **HACK（刻意，全项目唯一允许客户端铸 id 的口子）** —— 动机只有草稿预演那一条，别扩散（消息/摘要的 id 一律服务端铸） |
+| PATCH | `/sessions/{session_id}` | `UpdateSessionReq` | `Session` | 标题 / 模型 / agent / **提示词** / **思考档位** / **`native_tools_disabled`**（`system_prompt` 与 `thinking_level` 都是**指针** ⇒ 没给或 `null` = 不动、`""` = 清掉覆盖/跟随模型默认、非空 = 写入；档位必须在目标模型的 `thinking_levels` 里，否则 **422**；`native_tools_disabled: []` 恢复规则默认，非空 = 关闭这些工具）|
 | DELETE | `/sessions/{session_id}` | — | 204 | 不存在 → 404 |
 | POST | `/sessions/{session_id}/copy` | — | `Session` · 201 | **Copy**（线性会话里的"分岔"）：新 id、消息与摘要一并复制、摘要新 id 且指针重映射；**世界状态不复制**。入口在左栏会话的「选项」浮板（2026-11-04 从会话设置面板挪过来）；面板里不再有它 |
 | GET | `/sessions/{session_id}/messages` | — | `[Message]` | **按 `id` 升序的整条会话**（线性 ⇒ 没有"当前路径"）。三条查询参数（**都不给 = 全部**，语义不变）：`?from_idx=5&to_idx=10` **闭区间**（含两端；缺一端补默认：起点 1 / 终点末尾）、`?last=20` **取尾**。**参数错 ⇒ 400**（`last` 与区间混用、非正整数、区间反了）；**越界不是错** ⇒ 给现有的那几条（起点在末尾之后 ⇒ 空数组）。响应仍是**数组** ✗（不换成对象）。每条带 `idx`：**0 = 合成的系统提示词；1..N = 真消息** —— 它是**派生的**（= 按 `id` 排第几条）、**不落库**、**永不改变**（只删后缀 ⇒ 不留洞；不往中间插；编辑/重摇不改 `id`）|
@@ -911,7 +911,7 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 
 ### `sessions`
 
-`id` · `title`（首句自动生成；空串 = 还没起名）· `system_prompt`（**空串 = 没覆盖** ⇒ 用 agent 的拼装结果）· `provider` / `model` / `agent_id`（都是**软引用**，无外键）· **`thinking_level`**（空串 = 跟随模型默认；否则是统一七档之一）· `created_at` / `updated_at`（界面按 `updated_at` 排序）
+`id` · `title`（首句自动生成；空串 = 还没起名）· `system_prompt`（**空串 = 没覆盖** ⇒ 用 agent 的拼装结果）· `provider` / `model` / `agent_id`（都是**软引用**，无外键）· **`thinking_level`**（空串 = 跟随模型默认；否则是统一七档之一）· **`native_tools_disabled`**（JSON 数组；规则派生的 native tool 里用户手动关掉的 id，新规则工具默认仍启用）· `created_at` / `updated_at`（界面按 `updated_at` 排序）
 
 （**没有 `current_leaf`**：线性会话不需要"停在哪儿"，"最新一条" = `ORDER BY id DESC LIMIT 1`。）
 
@@ -1177,8 +1177,11 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   `工具：3（+内置）`（数量来自 `GET /models` 的 `native_tools`，也就是模型规则派生值；
   没有工具不编 0，也不带「+内置」；悬停列出 `X 搜索 / 网页搜索 / 代码执行`）。
   按钮显示 **「推理等级：默认」**（中文档位名）；菜单项显示 **「低 low / 中 medium / 高 high / 最高 max」**
-  （中文 + 原始 ASCII）；空档位是「默认 default」。工具状态目前只是**指示**，
-  真正的 tools 请求体与执行循环是下一步；MCP 将来单独列，不混进这个数字。
+  （中文 + 原始 ASCII）；空档位是「默认 default」。工具状态是**可点击按钮**：
+  点开列出模型规则给出的 native tools，自绘勾选框（Vuetify 默认 MDI checkbox 字体没装，会空白）；
+  逐项取消/恢复，存进 `sessions.native_tools_disabled`（草稿存 `draftPrefs`，建会话时带上）。
+  数字只算**已启用**；全部关掉显示「工具：无」，但菜单仍能重新勾回。真正的 tools 请求体与执行循环
+  仍是下一步；MCP 将来单独列，不混进这个数字。
   `VMenu` 是 `location="top end"` + `VList`/`VListItem`，**从输入栏向上弹**。
   TopBar 不再持有 ThinkingMenu；输入行只剩 `菜单? / 发送`。
   Session 级字段与后端校验不变（见下）。
