@@ -209,7 +209,7 @@ test("身份脚注：IDX/用量/首字延迟/速度齐全；缺哪格就省哪�
     { prompt_tokens: 1126, completion_tokens: 1229, reasoning_tokens: 900 },
     { idx: 4, reasoningMs: 1234, durationMs: 10000 },
   );
-  assert.match(full, /^#4， 输入：1\.1K， 输出：1\.2K（思考 900）/);
+  assert.match(full, /^助手#4， 输入：1\.1K， 输出：1\.2K（思考 900）/);
   assert.ok(full.includes("首字延迟： 1.2 s"));
   // 生成窗口 = 10 − 1.234 = 8.766 s；生成 token = 1229 − 900 = 329 ⇒ 37.5 tps（≥10 收成整数 = 37）。
   assert.ok(full.includes("速度： 122.9 tps"));
@@ -217,12 +217,12 @@ test("身份脚注：IDX/用量/首字延迟/速度齐全；缺哪格就省哪�
 
   // 没有 reasoning_ms：整段算速度（100 token / 2 s = 50 tps），也没有首字延迟这一段。
   const noThink = usageFoot({ prompt_tokens: 10, completion_tokens: 100 }, { idx: 7, durationMs: 2000 });
-  assert.ok(noThink.startsWith("#7， "));
+  assert.ok(noThink.startsWith("助手#7， "));
   assert.ok(!noThink.includes("首字延迟"));
   assert.ok(noThink.includes("速度： 50 tps"));
 
   // 只有编号（生成中 / 库外那条）：脚注就只是编号，绝不编出 0 token。
-  assert.equal(usageFoot(null, { idx: 3 }), "#3。");
+  assert.equal(usageFoot(null, { idx: 3 }), "助手#3。");
   assert.equal(usageFoot(null, { idx: null }), "");
 
   assert.equal(identityLabel("你", 3), "你 #3");

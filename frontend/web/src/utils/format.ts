@@ -226,7 +226,7 @@ export function formatSpeed(usage?: UsageLike | null, _reasoningMs?: number | nu
 export function usageFoot(usage?: UsageLike | null, meta?: FootMeta | null): string {
   const parts: string[] = [];
   const idx = meta?.idx;
-  if (idx !== null && idx !== undefined && String(idx).trim() !== "") parts.push(`#${idx}`);
+  if (idx !== null && idx !== undefined && String(idx).trim() !== "") parts.push(`助手#${idx}`);
   if (usage && usage.prompt_tokens != null) {
     const completion = `输出：${formatTokens(usage.completion_tokens)}`;
     const reasoning = Number(usage.reasoning_tokens ?? 0);
