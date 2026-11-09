@@ -752,6 +752,46 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .message-edit-dialog.expanded .message-edit-card { border-radius: 0; }
 .message-edit-title .full-btn { display: inline-flex; align-items: center; justify-content: center;
   width: 2em; height: 2em; padding: 0; }
+/* JSON 阅读器（酒馆原始预设的“查看”）：只读树；根展开、子节点点开一层。
+   1.5MB 预设不能一次铺满 DOM，这一块的折叠/缩进就是性能边界。 */
+.json-viewer-dialog .v-overlay__content { width: 96vw; max-width: 1200px; height: 92vh; max-height: 92vh; margin: 0; }
+.json-viewer-card { display: flex; flex-direction: column; width: 100%; height: 100%; min-height: 0;
+  overflow: hidden; background: var(--md-surface-container-high); color: var(--md-on-surface);
+  border-radius: var(--md-shape-xl); }
+.json-viewer-head { display: flex; align-items: center; justify-content: space-between; gap: 1em;
+  padding: 0.9em 1.1em 0.55em; font-size: var(--md-type-title-medium); font-weight: 500; }
+.json-viewer-head .head-btns { display: flex; align-items: center; gap: 0.2em; flex: none; }
+.json-viewer-title { display: flex; flex-direction: column; min-width: 0; gap: 0.1em; }
+.json-viewer-file { color: var(--md-on-surface-variant); font-size: var(--md-type-label-small);
+  font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.json-viewer-body { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain;
+  padding: 0.2em 0.8em 1em; font-family: var(--app-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: var(--md-type-body-small); line-height: 1.55; }
+.json-viewer-state { display: flex; align-items: center; gap: 0.5em; padding: 1.2em 0.6em; color: var(--md-on-surface-variant); }
+.json-viewer-state.error { color: var(--md-error); white-space: pre-wrap; overflow-wrap: anywhere; }
+.json-tree { min-width: 0; padding-bottom: 0.6em; }
+.json-line { display: flex; align-items: baseline; gap: 0.3em; width: 100%; min-height: 0;
+  box-sizing: border-box; padding: 0.08em 0.35em; border: 0; border-radius: var(--r-xs);
+  background: none; color: inherit; font: inherit; text-align: left; white-space: normal;
+  overflow-wrap: anywhere; }
+.json-line:hover { background: var(--hover); }
+.json-line:focus-visible { outline: 2px solid var(--md-primary); outline-offset: -2px; }
+.json-branch { cursor: pointer; }
+.json-twisty { flex: none; width: 1em; color: var(--md-on-surface-variant); text-align: center; }
+.json-label { color: var(--md-primary); }
+.json-index { color: var(--md-on-surface-variant); }
+.json-colon, .json-punct, .json-count { color: var(--md-on-surface-variant); }
+.json-count { font-size: 0.92em; }
+.json-value { min-width: 0; overflow-wrap: anywhere; }
+.json-string { color: var(--md-secondary); }
+.json-number { color: var(--md-primary); }
+.json-boolean { color: var(--md-error); }
+.json-null { color: var(--md-on-surface-variant); font-style: italic; }
+.json-long-toggle { flex: none; padding: 0 0.2em; font-size: 0.88em; }
+.json-close-line { color: var(--md-on-surface-variant); line-height: 1.55; }
+.json-full-string { margin: 0.15em 0 0.45em; padding: 0.45em 0.6em; border-left: 2px solid var(--md-outline-variant);
+  background: var(--md-surface-container-low); border-radius: var(--r-xs); white-space: pre-wrap;
+  overflow-wrap: anywhere; max-height: 30em; overflow: auto; font-size: 0.95em; }
 /* 操作区固定在底部右侧（2026-11-02 用户定）：状态在左、按钮组在右；窄屏按钮也靠右。 */
 .modal-foot { display: flex; align-items: center; gap: 0.6em; margin-top: 0.6em; }
 .modal-foot .status { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }

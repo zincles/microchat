@@ -14,6 +14,7 @@ import rpPreset from "../../presets/rp-agent.json";
 import ProviderEditor from "./ProviderEditor.vue";
 import ModelRulesEditor from "./ModelRulesEditor.vue";
 import UpdatePane from "./UpdatePane.vue";
+import TavernJsonViewer from "./TavernJsonViewer.vue";
 import { ICONS } from "./icons.ts";
 import { sharedApi } from "../utils/prefs.ts";
 import { SETTINGS_TABS, groupModelsByProvider, modelOption, providerChoices, modelChoicesFor, modelKey, parseModelKey, providerDisplayName } from "../utils/format.ts";
@@ -228,6 +229,8 @@ async function importSTFile(event: Event): Promise<void> {
 const tavernPresets = ref<TavernPreset[]>([]);
 const tavernStatus = ref("");
 const tavernInput = ref<HTMLInputElement | null>(null);
+// 查看只把元数据交给阅读器；原始字节由阅读器按需下载，列表不背 1.5MB 的正文。
+const viewingPreset = ref<TavernPreset | null>(null);
 function sizeText(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
@@ -249,6 +252,9 @@ async function importTavernPresetFile(event: Event): Promise<void> {
     await loadTavernPresets();
   } catch (e) { tavernStatus.value = `保存失败：${errMsg(e)}`; }
   input.value = "";
+}
+function viewTavernPreset(p: TavernPreset): void {
+  viewingPreset.value = p;
 }
 async function downloadTavernPreset(p: TavernPreset): Promise<void> {
   try { downloadBlob(await api.downloadTavernPreset(p.id), p.filename); }
@@ -585,6 +591,7 @@ function onKey(e: KeyboardEvent): void {
                   <td>{{ sizeText(p.size) }}</td>
                   <td>{{ timeText(p.created_at) }}</td>
                   <td class="ops">
+                    <VBtn variant="text" size="small" type="button" @click="viewTavernPreset(p)">查看</VBtn>
                     <VBtn variant="text" size="small" type="button" @click="downloadTavernPreset(p)">导出</VBtn>
                     <VBtn color="error" variant="text" size="small" type="button" @click="removeTavernPreset(p)">删除</VBtn>
                   </td>
@@ -659,5 +666,6 @@ function onKey(e: KeyboardEvent): void {
       </div>
       </div>
     </div>
+    <TavernJsonViewer v-if="viewingPreset" :preset="viewingPreset" @close="viewingPreset = null" />
   </section>
 </template>
