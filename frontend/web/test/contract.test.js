@@ -4465,13 +4465,12 @@ test("工具来源：多次搜索合并时按 URL 去重", () => {
   assert.deepEqual(toolSources(null), []);
 });
 
-test("工具卡与可折叠来源都在正文上方", () => {
+test("工具卡和来源都在正文上方；每个工具卡自己折叠来源", () => {
   const bubble = readFileSync(join(SRC, "components", "MessageBubble.vue"), "utf8");
   const cardAt = bubble.indexOf('class="tool-cards"');
-  const sourcesAt = bubble.indexOf('class="tool-sources"');
   const textAt = bubble.indexOf('ref="textEl" class="text"');
-  assert.ok(cardAt > 0 && textAt > 0 && sourcesAt > 0);
+  assert.ok(cardAt > 0 && textAt > 0);
   assert.ok(cardAt < textAt, "工具卡必须先于正文");
-  assert.ok(sourcesAt < textAt, "来源摘要必须在正文上方");
-  assert.ok(/<details[^>]+class="tool-sources"/.test(bubble), "来源必须默认折叠");
+  assert.ok(bubble.includes('<details v-for="(tool, i) in tools"'), "工具卡必须是 details");
+  assert.ok(bubble.includes('v-else-if="sources.length"'), "live 来源兜底仍在");
 });

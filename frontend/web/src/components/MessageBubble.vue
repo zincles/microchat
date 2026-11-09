@@ -203,14 +203,19 @@ watch(() => props.streaming, (s) => nextTick(() => {
         <i>{{ toolHint }}</i>
       </div>
       <div v-if="tools.length" class="tool-cards" aria-label="工具调用">
-        <div v-for="(tool, i) in tools" :key="tool.id || i" class="tool-card">
-          <span class="tool-card-name">{{ nativeToolLabel(tool.tool_name) }}</span>
-          <span v-if="tool.source" class="tool-card-source">{{ tool.source === "client" ? "本地" : "服务端" }}</span>
-          <span v-if="tool.queries?.length" class="tool-card-query">{{ tool.queries.join(" / ") }}</span>
-          <span v-if="tool.sources?.length" class="tool-card-count">{{ tool.sources.length }} 条来源</span>
-        </div>
+        <details v-for="(tool, i) in tools" :key="tool.id || i" class="tool-card">
+          <summary>
+            <span class="tool-card-name">{{ nativeToolLabel(tool.tool_name) }}</span>
+            <span v-if="tool.source" class="tool-card-source">{{ tool.source === "client" ? "本地" : "服务端" }}</span>
+            <span v-if="tool.queries?.length" class="tool-card-query">{{ tool.queries.join(" / ") }}</span>
+            <span v-if="tool.sources?.length" class="tool-card-count">{{ tool.sources.length }} 条来源</span>
+          </summary>
+          <a v-for="source in tool.sources || []" :key="source.url" :href="source.url" target="_blank" rel="noopener noreferrer">
+            {{ sourceLabel(source.url, source.title) }}
+          </a>
+        </details>
       </div>
-      <details v-if="sources.length" class="tool-sources" aria-label="搜索结果">
+      <details v-else-if="sources.length" class="tool-sources" aria-label="搜索结果">
         <summary class="tool-sources-title">来源 {{ sources.length }}</summary>
         <a v-for="source in sources" :key="source.url" :href="source.url" target="_blank" rel="noopener noreferrer">
           {{ sourceLabel(source.url, source.title) }}

@@ -105,8 +105,8 @@
   其中需要额外参数的工具（file_search/mcp 等）不能只发 `{type}`，我们仍只开放已知可裸发的三件。
 - **搜索结果可以显示并落库**：`response.output_item.done` 的 `web_search_call.action.sources` 带 URL
   （实测；x_search 同理），解析成 `message_tools.sources`；气泡下方列「来源 N」链接，刷新后仍在。
-  一张 `message_tools` 表存所有调用（`seq` 排序），不要 before/after 两张表；界面卡片显示
-  `tool_name + queries + sources 条数`，来源清单是可折叠 details，放在正文上方。
+  一张 `message_tools` 表存所有调用（`seq` 排序），不要 before/after 两张表；界面每个工具卡
+  是独立 details（`tool_name + queries + sources 条数`），展开显示该工具自己的来源，放在正文上方。
   来源只有 URL，没有摘要/正文 —— 摘要要从最终回答的 citation/正文里看。
 
 - **DeepSeek 的两套搜索不同**（2026-11-10 实测）：
