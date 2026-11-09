@@ -452,7 +452,9 @@ func (s *Service) availableTools(session model.Session, chosen providers.Backend
 	if chosen.Name == providers.BackendFallback || chosen.Name == providers.BackendDummy {
 		return nil
 	}
-	// 服务端工具只有 OpenAI Response 协议能表达（chat completion 的 tools 是 function 形状）。
+	// 服务端工具只有 OpenAI Response 协议能表达。
+	// xAI 实测：/chat/completions 对 web_search/x_search 直接 422（只认 function/live_search），
+	// live_search 又已 410 废弃；/responses 才认 Agent Tools。
 	if providers.Protocol(chosen.Provider.Protocol) != providers.ProtocolOpenAIResponse {
 		return nil
 	}

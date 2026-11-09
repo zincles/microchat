@@ -78,6 +78,21 @@
 
 ## 五、还没做（将来看需要）
 
+## 六、xAI 端点矩阵（2026-11-09 真 key 实测，grok-4.7）
+
+结论先说：**Agent Tools 只有 `/responses` 能用**；`/chat/completions` 只接受客户端 `function`，以及已废弃的 `live_search`。
+
+| 请求 | `/chat/completions` | `/responses` |
+|---|---|---|
+| 无 tools | 200 | 200 |
+| `tools:[{"type":"web_search"}]` | **422** `unknown variant web_search, expected function or live_search` | **200** |
+| `tools:[{"type":"x_search"}]` | **422** 同上 | **200** |
+| `tools:[{"type":"code_execution"}]` | **422** 同上（实测） | **200** |
+| `tools:[{"type":"function",…}]` | **200**（客户端 function tool 可用） | schema 接受 `function`（未作产品化） |
+| `tools:[{"type":"live_search","sources":[{"type":"web"}]}]` | **410** `Live search is deprecated. Please switch to the Agent Tools API`（缺 `sources` 先 422） | **422** `unknown variant live_search` |
+
+所以：**不要在 chat/completions 上发 xAI 的 `web_search`/`x_search`/`code_execution`**；它们只在 Responses 端点有效。我们的 `availableTools` 也只在 `openai-response` 协议下生成，chat 协议不发。
+
 - **服务端工具已接**（2026-11-09）：模型规则派生的 `server_tools` 在 OpenAI **Response** 协议下
   作为 `{"type":"x_search"}` / `{"type":"web_search"}` / `{"type":"code_execution"}` 进请求体；
   命中会话 `native_tools_disabled` 的扣掉。xAI 真发实测 200（2026-11-09），服务端自己执行；
