@@ -38,6 +38,23 @@ function literalInline(raw: unknown): string {
   return esc(String(raw));
 }
 
+// fencedCode：普通围栏代码块（Mermaid 关掉 / 代码块关掉时的兜底）。
+function fencedCode(code: string, lang = "mermaid"): string {
+  return `<pre><code class="language-${esc(lang)}">${esc(code)}</code></pre>`;
+}
+
+// mermaidFigure：Mermaid 的**延迟渲染占位**。正文先输出源码（没有 JS / 正在流式时也能读），
+// MessageBubble 挂载/收流后由 utils/mermaid.ts 把 `.mermaid-diagram` 换成 SVG，再把源码收起来。
+// 源码在 HTML 里已经 `esc` 过；Mermaid 只在浏览器里从 `textContent` 取回原文。
+function mermaidFigure(code: string): string {
+  return `<div class="mermaid-figure" data-mermaid>`
+    + `<div class="mermaid-head"><span class="mermaid-label">Mermaid</span><span class="mermaid-status">待渲染</span></div>`
+    + `<div class="mermaid-diagram"></div>`
+    + `<pre class="mermaid-source"><code>${esc(code)}</code></pre>`
+    + `<div class="mermaid-error" role="alert"></div>`
+    + `</div>`;
+}
+
 // underline 扩展：__下划线__ ⇒ <u>…</u>（2026-10-11 用户定）。标准 Markdown 把 `__x__`
 // 当 **bold**，但 RP 模型（Discord 味）惯用它表示**下划线** —— 契约（内置段
 // `Markdown RolePlay相关`）里明确列的是 `**bold**` 与 `*italics*`，`__x__` 留给下划线。
@@ -182,6 +199,16 @@ export function renderMarkdown(text?: string | null, options: RenderOptions = {}
   // 最后一大段 Markdown/正文被当成一条畸形的 KaTeX 公式 ⇒ 整块 `.katex-error` 红字。
   // 代码块/行内代码换成占位符，抽完数学后原样还原，再交给 marked 解析。
   let tmp = src;
+
+  // Mermaid 围栏**先摘出来**：它不该参与 KaTeX 的 `$` 配对，也不该被 marked 当普通代码块；
+  // 解析完再替换成延迟渲染的占位。关闭 mermaid / code_block 时在最后退化成普通代码块或原文。
+  const mermaidStash: Array<{ code: string; fence: string }> = [];
+  tmp = tmp.replace(/(^|\n)(```|~~~)[ \t]*mermaid[^\n]*\r?\n([\s\S]*?)\r?\n\2[ \t]*(?=\n|$)/gi,
+    (_m: string, lead: string, fence: string, body: string) => {
+      mermaidStash.push({ code: body.replace(/\r\n/g, "\n").trim(), fence });
+      return `${lead}\u0000MERMAID${mermaidStash.length - 1}\u0000`;
+    });
+
   const codeStash: string[] = [];
   const protectCode = (raw: string): string => {
     codeStash.push(raw);
@@ -247,6 +274,22 @@ export function renderMarkdown(text?: string | null, options: RenderOptions = {}
     // 直接传字符串会把 `$$x^2$$` 吃成 `$x^2$` —— 不报错，只是内容悄悄少了一半。
     const needle = `\u0000MATH${i}\u0000`;
     html = html.replace(needle, () => rendered);
+  }
+
+  // Mermaid 占位：段首的 `<p>\0MERMAIDn\0</p>` 换成块级图；嵌在别处的退化成原位替换。
+  const mermaidOn = on("mermaid");
+  const codeBlockOn = on("code_block");
+  for (let i = 0; i < mermaidStash.length; i++) {
+    const { code, fence } = mermaidStash[i];
+    let rendered: string;
+    if (!codeBlockOn) rendered = literalBlock(`${fence}mermaid\n${code}\n${fence}`);
+    else if (!mermaidOn) rendered = fencedCode(code);
+    else rendered = mermaidFigure(code);
+    const needle = `\u0000MERMAID${i}\u0000`;
+    const wrapped = `<p>${needle}</p>`;
+    html = html.includes(wrapped)
+      ? html.replace(wrapped, () => rendered)
+      : html.replace(needle, () => rendered);
   }
   return html;
 }

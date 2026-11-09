@@ -342,6 +342,39 @@ test("Markdown 渲染：加粗/斜体/下划线/行内码/删除线/引述；代
   assert.match(renderMarkdown("> OOC：题外话"), /<blockquote>/);
 });
 
+test("Mermaid：围栏输出延迟渲染占位；关掉 mermaid/代码块能退化", () => {
+  const html = renderMarkdown("```mermaid\ngraph TD\nA-->B\n```");
+  assert.match(html, /class="mermaid-figure"/, "Mermaid 围栏没有输出图占位");
+  assert.ok(html.includes("graph TD"), "Mermaid 源码没保留（流式/无 JS 时要能读）");
+  assert.ok(!html.includes("language-mermaid"), "Mermaid 还被当普通代码块");
+  assert.ok(!html.includes("\u0000MERMAID"), "占位符漏进 HTML");
+
+  const noMermaid = renderMarkdown("```mermaid\ngraph TD\nA-->B\n```", { typeOn: (id) => id !== "mermaid" });
+  assert.match(noMermaid, /<pre><code class="language-mermaid">/, "关掉 Mermaid 应退化成普通代码块");
+  assert.ok(noMermaid.includes("graph TD"));
+
+  const noCode = renderMarkdown("```mermaid\ngraph TD\nA-->B\n```", { typeOn: (id) => id !== "code_block" });
+  assert.ok(noCode.includes("```mermaid"), "关掉代码块应把围栏原样画出来");
+
+  const withMath = renderMarkdown("```mermaid\ngraph TD\nA[$x$]-->B\n```\n\n$$y^2$$");
+  assert.ok(withMath.includes("A[$x$]"), "Mermaid 源码里的 $ 不该被 KaTeX 抽走");
+  assert.match(withMath, /katex/, "围栏外的公式仍要渲染");
+});
+
+test("Mermaid：动态 import、strict、主题重绘与气泡接线", () => {
+  const renderer = readFileSync(join(SRC, "utils", "mermaid.ts"), "utf8");
+  const bubble = readFileSync(join(SRC, "components", "MessageBubble.vue"), "utf8");
+  const vite = readFileSync(join(SRC, "..", "vite.config.js"), "utf8");
+  assert.match(renderer, /import\("mermaid"\)/, "Mermaid 没走动态 import（会压进首屏包）");
+  assert.match(renderer, /securityLevel:\s*"strict"/, "Mermaid 没开 strict");
+  assert.match(renderer, /htmlLabels:\s*false/, "Mermaid 没关 HTML labels");
+  assert.match(renderer, /mermaid\.render/, "没有调用 mermaid.render");
+  assert.match(bubble, /renderMermaidIn/, "气泡没接 Mermaid 渲染");
+  assert.match(bubble, /mc-theme-changed/, "主题切了没重绘 Mermaid");
+  assert.match(vite, /globIgnores/, "Mermaid 可选 chunk 没从 PWA 预缓存排除");
+  assert.match(vite, /runtimeCaching/, "排除的 Mermaid chunk 没有运行时缓存");
+});
+
 // 2026-11-03 用户报的红色块：模型在正文里写「用 `$$` 包裹」—— 反引号里的 $$ 不是公式开头。
 // 旧实现先抓 $$ 再做 Markdown，导致后续所有 $$ 配对错位，最后一大段正文被当成一条畸形公式，
 // KaTeX 用 .katex-error 把整段涂红。代码必须先保护，再抽数学定界符。
@@ -2937,7 +2970,7 @@ test("markdown 类型清单：前端的 FALLBACK 与后端 MarkdownTypes 对得�
   const inlineKeys = [...js.slice(js.indexOf("const INLINE_TYPES"), js.indexOf("// buildMarked"))
     .matchAll(/^\s{2}(\w+):\s*"/gm)].map((m) => m[1]);
   const handled = new Set([...blockKeys, ...inlineKeys,
-    "breaks", "katex", "underline", "link", "autolink"]);
+    "breaks", "katex", "underline", "link", "autolink", "mermaid"]);
 
   for (const id of ids) {
     assert.ok(handled.has(id), `后端有类型 ${id}，但 markdown.js 不认识它（那个开关点了没反应）`);

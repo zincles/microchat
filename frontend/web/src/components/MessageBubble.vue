@@ -1,11 +1,12 @@
 <script setup lang="ts">
 // 消息气泡：正文 markdown 渲染 + <state> 块独立容器（状态变化单列，不混进正文）。
-import { ref, computed, watch, onMounted, nextTick } from "vue";
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import { VBtn } from "vuetify/components";
 import { ICONS } from "./icons.ts";
 import { formatThinkLabel, identityLabel, usageFoot, usageFootTitle } from "../utils/format.ts";
 import type { UsageLike } from "../utils/format.ts";
 import { renderMarkdown, splitState } from "../utils/markdown.ts";
+import { renderMermaidIn } from "../utils/mermaid.ts";
 
 interface RerollLike {
   active?: boolean;
@@ -97,6 +98,11 @@ function markMathOverflow(): void {
     el.classList.toggle("scroll-x", el.scrollWidth > el.clientWidth + 1);
   }
 }
+// Mermaid：流式期间不画（代码块每帧都在长，画一次废一次）；收流/挂载后再交给延迟加载的 mermaid。
+function paintMermaid(): void {
+  if (props.streaming || !textEl.value) return;
+  void renderMermaidIn(textEl.value);
+}
 // 流式期间的终端光标：v-html 每帧会重写正文，所以每帧在**最后一个有字的文本节点**后面
 // 插一个光标（不塞进 Markdown 源，免得落进代码块/公式被转义）。它只是装饰，aria-hidden。
 function clearStreamCursor(): void {
@@ -134,13 +140,20 @@ function placeStreamCursor(): void {
   cursorEl.style.top = `${rect.top - host.top}px`;
   cursorEl.style.height = `${rect.height}px`;
 }
-onMounted(() => nextTick(() => { markMathOverflow(); placeStreamCursor(); }));
+onMounted(() => {
+  nextTick(() => { markMathOverflow(); placeStreamCursor(); paintMermaid(); });
+  window.addEventListener("mc-theme-changed", paintMermaid);
+});
+onUnmounted(() => window.removeEventListener("mc-theme-changed", paintMermaid));
 // 流式期间正文每来一段就重算一次 —— 那时不扫公式（每帧扫一遍是白烧 CPU）；
-// 但光标要跟着最后一个字走。收尾那一拍去掉光标再扫公式。
-watch(bodyHtml, () => { if (props.streaming) nextTick(placeStreamCursor); else nextTick(markMathOverflow); });
+// 但光标要跟着最后一个字走。收尾那一拍去掉光标、扫公式并画 Mermaid。
+watch(bodyHtml, () => {
+  if (props.streaming) nextTick(placeStreamCursor);
+  else nextTick(() => { markMathOverflow(); paintMermaid(); });
+});
 watch(() => props.streaming, (s) => nextTick(() => {
   if (s) placeStreamCursor();
-  else { clearStreamCursor(); markMathOverflow(); }
+  else { clearStreamCursor(); markMathOverflow(); paintMermaid(); }
 }));
 </script>
 

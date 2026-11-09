@@ -168,6 +168,27 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ["**/*.{js,css,html,svg,png,woff2,woff,ttf}"],
+        // Mermaid 是**按需**的：源码里没有图的人不该在装 PWA 时先下 5MB 图引擎。
+        // 这些 chunk 首次渲染时由 runtimeCaching 收进 SW 缓存；离线且从没渲染过 Mermaid
+        // 时只显示源码（占位本来就带着源码，不会白屏）。
+        globIgnores: [
+          "**/mermaid*",
+          "**/*Diagram*",
+          "**/chunk-*",
+          "**/d3-*",
+          "**/dagre-*",
+          "**/cose-*",
+          "**/cytoscape*",
+          "**/elk-*",
+        ],
+        runtimeCaching: [{
+          urlPattern: /\/assets\/.*\.(?:js|css|woff2?|ttf|svg|png)$/,
+          handler: "CacheFirst",
+          options: {
+            cacheName: "microchat-assets",
+            expiration: { maxEntries: 120, maxAgeSeconds: 60 * 60 * 24 * 30 },
+          },
+        }],
         navigateFallback: "index.html",
         cleanupOutdatedCaches: true,
       },

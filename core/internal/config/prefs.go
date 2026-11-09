@@ -49,6 +49,7 @@ var MarkdownTypes = []MarkdownType{
 	{ID: "list", Name: "列表", Kind: "block", Sample: "- 一项"},
 	{ID: "blockquote", Name: "引用", Kind: "block", Sample: "> 引文"},
 	{ID: "code_block", Name: "代码块", Kind: "block", Sample: "```"},
+	{ID: "mermaid", Name: "Mermaid 图", Kind: "block", Sample: "```mermaid\nflowchart TD\nA-->B\n```"},
 	{ID: "table", Name: "表格", Kind: "block", Sample: "| a | b |"},
 	{ID: "bold", Name: "粗体", Kind: "inline", Sample: "**粗**"},
 	{ID: "italic", Name: "斜体", Kind: "inline", Sample: "*斜*"},

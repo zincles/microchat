@@ -588,9 +588,14 @@ JS 字符串长度自己推。
 
 **markdown 渲染是逐类型可关的**（2026-11-01 用户定：「增加 markdown 渲染开关 …… 所有的会被
 Markdown 解析的非 <div> HTML 块，我们为每个类型都加个开关。不然瞎解析不好。」）：
-设置 → 外观的最下面一区，一个**总开关** + 十六类**逐类型开关**（按 `块级`/`行内` 分两组，
+设置 → 外观的最下面一区，一个**总开关** + 十七类**逐类型开关**（按 `块级`/`行内` 分两组，
 每组带「全关 / 全开」）。类型清单**由后端给**（`GET /config/prefs` 的 `markdown_types`），
 前端不另抄一张表 —— 少一条就留个点不动的死开关，多一条就是个后端不认识的选项。
+**Mermaid 是其中一类**（`mermaid`，块级）：`utils/markdown.ts` 先把 ```mermaid 围栏摘成
+`.mermaid-figure`（源码可见），`utils/mermaid.ts` 在挂载/收流/主题变化后动态 `import("mermaid")`，
+用 `securityLevel:"strict"` + `htmlLabels:false` 把 `.mermaid-diagram` 换成 SVG；失败保留源码并显示错误。
+它的 chunk **不进 PWA 预缓存**（`globIgnores`），首次在线渲染后由 runtime cache 收着；离线且从没渲染过
+Mermaid 时只显示源码，不会拖大安装包。
 
 **关掉的含义 = 原样显示**，不是"渲染成别的"、更不是"吃掉标记"：关掉粗体就看见 `**粗**` 本身。
 总开关关掉 ⇒ 整条消息一个字都不解析（但**换行留着** —— `.msg .text` 没有 `white-space: pre-wrap`，
@@ -1213,6 +1218,8 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   **前端构建身份 / `build.json`（2026-11-09）**：Vite 每次构建把同一枚 `build_id`（ISO 时间）写进 JS（`define: __BUILD_ID__`）与 `dist/build.json`（`buildInfoPlugin`）；`/build.json` 是**静态文件、不进 Workbox 预缓存**（`globPatterns` 不含 json）且响应 `no-cache` ⇒ 更新面板能拿服务器当前那一份来比当前页面的壳。**别把它塞进 `globPatterns`**：塞进去就永远读到旧值，工具会失去意义。
 - **新版本由用户点（2026-10-20 用户定，从 `autoUpdate` 改成 `prompt`）**：`registerType: "prompt"`
   + 一条**常驻更新条**（`components/UpdateBar.vue`，注册在 `utils/pwa.ts` 调 `virtual:pwa-register`）。
+  Mermaid 的可选 chunk（`mermaid*` / `*Diagram*` / `chunk-*` 等）由 `globIgnores` 排除在预缓存外，
+  改由 runtime cache 在首次渲染时收；别把它们塞回 `globPatterns`（会让安装包从 ~3.3MB 涨到 ~7.7MB）。
   **为什么改**（真踩过）：`autoUpdate` 在新 SW `activated` 时**自己** `location.reload()` ——
   它**静默**（你没看那标签页时刷新悄悄发生），且**从不告诉你"此刻看的是旧的"**。2026-10-20 因此白排查一轮：
   服务器上三份 bundle（宿主 dist / 容器 `/build` / 8788 服务）**逐字节相同**且都含新代码，界面上却看不到新加的选项，
