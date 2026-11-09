@@ -19,6 +19,31 @@ export interface ModelLike {
 // 显示名三级回退（与后端两列同义：用户覆盖 → 上游名 → 上游 id）。
 export function modelLabel(m?: ModelLike | null): string { return m?.display_name || m?.name || m?.upstream_id || ""; }
 
+// provider-native tool 的中文名：id 是契约，标签只给界面。未知 id 原样显示（不要悄悄吞掉）。
+export const NATIVE_TOOL_LABELS: Record<string, string> = {
+  x_search: "X 搜索",
+  web_search: "网页搜索",
+  code_execution: "代码执行",
+};
+
+export function nativeToolLabel(id?: string | null): string {
+  const key = String(id ?? "").trim();
+  return NATIVE_TOOL_LABELS[key] || key;
+}
+
+// nativeToolsLabel：输入栏上方那枚「工具：3（+内置）」状态。
+// 工具数来自模型规则派生的 native_tools；没有就是「工具：无」，不编 0。
+export function nativeToolsLabel(ids?: string[] | null): string {
+  const count = Array.isArray(ids) ? ids.length : 0;
+  return count ? `工具：${count}（+内置）` : "工具：无";
+}
+
+export function nativeToolsTitle(ids?: string[] | null): string {
+  const list = Array.isArray(ids) ? ids.filter(Boolean) : [];
+  if (!list.length) return "当前模型没有可用的内置工具（可在模型规则里追加）";
+  return `内置工具：${list.map(nativeToolLabel).join("、")}`;
+}
+
 // providerDisplayName：渠道在界面上的显示名 —— **别名优先**，空则沿用旧回退（name → id）。
 // 它只负责显示 / 搜索；会话、模型、路由、请求参数里永远还是 `id`。
 export function providerDisplayName(p?: { alias?: string | null; name?: string | null; id?: string | null } | null): string {

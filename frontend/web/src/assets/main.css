@@ -850,6 +850,9 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
   text-transform: none !important; }
 .composer-toolbar .thinking-btn:hover { color: var(--md-on-surface); background: color-mix(in srgb, var(--md-on-surface) 8%, var(--md-surface-container)) !important; }
 .thinking-label { margin: 0; white-space: nowrap; }
+/* 输入栏上方的工具数状态：只在**有工具**时带「+内置」；没有就写「工具：无」，不编 0。 */
+.composer-tools { margin-left: 0.1em; color: var(--md-on-surface-variant); font-size: var(--md-type-label-medium);
+  white-space: nowrap; font-variant-numeric: tabular-nums; }
 .thinking-raw { margin-left: 0.4em; color: var(--md-on-surface-variant); font-size: 0.88em; opacity: 0.8; }
 
 /* —— Vuetify 逃生门（2026-11-06）——

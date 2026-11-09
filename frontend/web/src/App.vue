@@ -245,6 +245,15 @@ const thinkingChoices = computed(() => {
   const levels = thinkingLevels.value;
   return levels.length ? thinkingOptions(levels) : [];
 });
+// 当前模型可用的 provider-native 工具数（来自 GET /models 的 model_define_rules 派生）。
+// 草稿与真会话都读 sessionInfo；模型清单未到时显示「工具：无」，不猜。
+const currentNativeTools = computed<string[]>(() => {
+  const provider = String(sessionInfo.provider ?? "");
+  const model = String(sessionInfo.model ?? "");
+  if (!provider || !model) return [];
+  const row = vueModels.value.find((m) => m.provider === provider && m.upstream_id === model);
+  return (row?.native_tools ?? []).filter(Boolean);
+});
 const currentThinking = computed(() => {
   // 草稿与真会话都把当前档位放在 sessionInfo 上（setThinking 两边一起写），
   // 别在这里读普通对象 draftPrefs —— 它不是响应式的，菜单标签不会更新。
@@ -2110,6 +2119,7 @@ onUnmounted(() => {
       :menu-on="cmdMenu"
       :thinking="currentThinking"
       :thinking-options="thinkingChoices"
+      :native-tools="currentNativeTools"
       @select-thinking="setThinking"
       @input-text="onComposerInput"
       @keydown="onComposerKeydown"

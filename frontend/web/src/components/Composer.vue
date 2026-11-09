@@ -7,6 +7,7 @@ import { ref, nextTick } from "vue";
 import { VBtn, VTextarea } from "vuetify/components";
 import { ICONS } from "./icons.ts";
 import ThinkingMenu from "./ThinkingMenu.vue";
+import { nativeToolsLabel, nativeToolsTitle } from "../utils/format.ts";
 import type { ThinkingOption } from "../utils/thinking.ts";
 
 const emit = defineEmits<{
@@ -22,10 +23,12 @@ const props = withDefaults(defineProps<{
   menuOn?: boolean;
   thinking?: string;
   thinkingOptions?: ThinkingOption[];
+  nativeTools?: string[];
 }>(), {
   menuOn: false,
   thinking: "",
   thinkingOptions: () => [],
+  nativeTools: () => [],
 });
 
 const text = ref("");
@@ -67,7 +70,7 @@ defineExpose({ submit, clear, setText, text, setRunning });
 
 <template>
   <form id="composer" class="composer-vuetify" @submit.prevent="running ? stop() : submit()">
-    <div v-if="$slots.toolbar || thinkingOptions.length" class="composer-toolbar">
+    <div class="composer-toolbar">
       <slot name="toolbar" />
       <ThinkingMenu
         v-if="thinkingOptions.length"
@@ -75,6 +78,7 @@ defineExpose({ submit, clear, setText, text, setRunning });
         :options="thinkingOptions"
         @update:model-value="selectThinking"
       />
+      <span class="composer-tools" :title="nativeToolsTitle(nativeTools)">{{ nativeToolsLabel(nativeTools) }}</span>
     </div>
     <div class="composer-row">
     <VTextarea

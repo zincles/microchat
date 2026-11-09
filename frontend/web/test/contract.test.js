@@ -30,6 +30,9 @@ import {
   identityLabel,
   formatLatency,
   formatSpeed,
+  nativeToolLabel,
+  nativeToolsLabel,
+  nativeToolsTitle,
   groupModelsByProvider,
   providerChoices,
   modelChoicesFor,
@@ -2956,6 +2959,17 @@ test("markdown 转义：关掉任何类型都不影响 XSS 那道门", () => {
 });
 
 // 前端渲染用的类型清单必须与后端**逐个对上**（多一个不触发、少一个点了没反应）。
+test("工具状态：无/1/2/3（+内置），标题列出工具", () => {
+  assert.equal(nativeToolsLabel([]), "工具：无");
+  assert.equal(nativeToolsLabel(undefined), "工具：无");
+  assert.equal(nativeToolsLabel(["x_search"]), "工具：1（+内置）");
+  assert.equal(nativeToolsLabel(["x_search", "web_search", "code_execution"]), "工具：3（+内置）");
+  assert.equal(nativeToolLabel("x_search"), "X 搜索");
+  assert.equal(nativeToolLabel("unknown_tool"), "unknown_tool");
+  assert.ok(nativeToolsTitle(["x_search", "web_search"]).includes("X 搜索"));
+  assert.ok(nativeToolsTitle([]).includes("没有可用"));
+});
+
 test("markdown 类型清单：前端的 FALLBACK 与后端 MarkdownTypes 对得上", () => {
   const go = readFileSync(join(SRC, "..", "..", "..", "core", "internal", "config", "prefs.go"), "utf8");
   const registry = go.slice(go.indexOf("var MarkdownTypes = []MarkdownType{")
