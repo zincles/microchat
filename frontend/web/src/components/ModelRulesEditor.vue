@@ -35,7 +35,8 @@ const draft = reactive({
   is_final: false,
   brand: "",
   icon: "",
-  native_tools: [] as string[],
+  server_tools: [] as string[],
+  local_tools_text: "",
 });
 const thinkingOn = ref(false);
 const levels = ref<string[]>([]);
@@ -49,7 +50,7 @@ const protocolOptions = [
   { title: "对话补全（chat）", value: "openai-chat-completion" },
   { title: "应答接口（response）", value: "openai-response" },
 ];
-const nativeToolOptions = [
+const serverToolOptions = [
   { title: "X 搜索（x_search）", value: "x_search" },
   { title: "网页搜索（web_search）", value: "web_search" },
   { title: "代码执行（code_execution）", value: "code_execution" },
@@ -69,7 +70,8 @@ function resetDraft(): void {
   draft.is_final = false;
   draft.brand = "";
   draft.icon = "";
-  draft.native_tools = [];
+  draft.server_tools = [];
+  draft.local_tools_text = "";
   thinkingOn.value = false;
   levels.value = [];
 }
@@ -109,7 +111,8 @@ function openEdit(index: number): void {
   draft.is_final = rule.is_final === true;
   draft.brand = rule.brand ?? "";
   draft.icon = rule.icon ?? "";
-  draft.native_tools = [...(rule.native_tools ?? [])];
+  draft.server_tools = [...(rule.server_tools ?? [])];
+  draft.local_tools_text = (rule.local_tools ?? []).join(", ");
   thinkingOn.value = Array.isArray(rule.thinking_levels);
   levels.value = [...(rule.thinking_levels ?? [])];
   editing.value = index;
@@ -131,11 +134,12 @@ function buildRule(): ModelDefineRule | null {
   }
   const brand = draft.brand.trim();
   const icon = (draft.icon ?? "").trim();
-  if (!thinkingOn.value && !brand && !icon && draft.native_tools.length === 0) {
+  const localTools = draft.local_tools_text.split(",").map((x) => x.trim()).filter(Boolean);
+  if (!thinkingOn.value && !brand && !icon && draft.server_tools.length === 0 && localTools.length === 0) {
     status.value = "至少填一个覆写字段（思考档位 / 品牌 / 图标 / 追加工具）";
     return null;
   }
-  if (draft.native_tools.length > 0 && (thinkingOn.value || brand || icon)) {
+  if ((draft.server_tools.length > 0 || localTools.length > 0) && (thinkingOn.value || brand || icon)) {
     status.value = "追加工具不要和品牌 / 图标 / 思考写在同一规则里（拆成两条）";
     return null;
   }
@@ -147,7 +151,8 @@ function buildRule(): ModelDefineRule | null {
   if (matchProvider) rule.match_provider = matchProvider;
   if (draft.match_protocol) rule.match_protocol = draft.match_protocol;
   if (thinkingOn.value) rule.thinking_levels = [...levels.value];
-  if (draft.native_tools.length) rule.native_tools = [...draft.native_tools];
+  if (draft.server_tools.length) rule.server_tools = [...draft.server_tools];
+  if (localTools.length) rule.local_tools = localTools;
   if (brand) rule.brand = brand;
   if (icon) rule.icon = icon;
   return rule;
@@ -218,7 +223,8 @@ function defineText(rule: ModelDefineRule): string {
   }
   if (rule.brand) bits.push(`品牌 ${rule.brand}`);
   if (rule.icon) bits.push(`图标 ${rule.icon}`);
-  if (rule.native_tools?.length) bits.push(`追加 ${rule.native_tools.join(" / ")}`);
+  if (rule.server_tools?.length) bits.push(`服务端 ${rule.server_tools.join(" / ")}`);
+  if (rule.local_tools?.length) bits.push(`本地 ${rule.local_tools.join(" / ")}`);
   if (rule.is_final) bits.push("命中即停");
   return bits.join(" · ");
 }
@@ -280,7 +286,8 @@ onMounted(() => { load().catch(() => {}); });
           <VSelect v-model="levels" :items="levelOptions" item-title="title" item-value="value" multiple density="compact" variant="outlined" hide-details />
         </label>
         <p v-if="thinkingOn" class="hint">一个都不选 = 明确清空（例如图像模型）。</p>
-        <label class="field"><span>追加工具<HelpTip text="provider-native tool id，只会追加到模型画像；真正发请求前还要经过渠道/协议能力校验。" /></span><VSelect v-model="draft.native_tools" :items="nativeToolOptions" item-title="title" item-value="value" multiple density="compact" variant="outlined" hide-details placeholder="不追加" /></label>
+        <label class="field"><span>服务端工具<HelpTip text="provider 侧执行的原生工具 id；只会追加到模型画像，真正发请求前还要经过渠道/协议能力校验。" /></span><VSelect v-model="draft.server_tools" :items="serverToolOptions" item-title="title" item-value="value" multiple density="compact" variant="outlined" hide-details placeholder="不追加" /></label>
+        <label class="field"><span>本地工具<HelpTip text="客户端自己执行的 function tool id，逗号分隔；暂未内置具体工具，先留好配置口。" /></span><VTextField v-model="draft.local_tools_text" density="compact" variant="outlined" hide-details placeholder="例如 roll_dice, lookup" /></label>
       </section>
 
       <div class="rule-actions">

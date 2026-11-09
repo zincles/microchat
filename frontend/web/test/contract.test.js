@@ -3607,21 +3607,23 @@ test("更新面板：显示提交 + 拉取并重启（由 entrypoint 接手）",
 });
 
 // 模型规则：grok-4 × response 默认追加 xAI native tools（2026-11-09 用户定）。
-test("模型规则：支持 match_protocol 与追加 native_tools", () => {
+test("模型规则：支持 match_protocol 与追加 server_tools / local_tools", () => {
   const editor = readFileSync(join(SRC, "components", "ModelRulesEditor.vue"), "utf8");
   const types = readFileSync(join(SRC, "api", "types.ts"), "utf8");
   const go = readFileSync(join(SRC, "..", "..", "..", "core", "internal", "config", "model_rules.go"), "utf8");
   assert.match(editor, /match_protocol/, "规则编辑器没有协议条件");
   assert.match(editor, /openai-response/, "协议选项里没有 response");
-  assert.match(editor, /native_tools/, "规则编辑器没有追加工具");
-  assert.match(editor, /nativeToolOptions/, "没有 native tool 选项");
+  assert.match(editor, /server_tools/, "规则编辑器没有服务端工具");
+  assert.match(editor, /local_tools/, "规则编辑器没有本地工具");
+  assert.match(editor, /serverToolOptions/, "没有 native tool 选项");
   assert.match(editor, /x_search/, "native tool 选项里没有 x_search");
   assert.match(types, /match_protocol\?/, "API 类型没有 match_protocol");
-  assert.match(types, /native_tools\?/, "API 类型没有 native_tools");
+  assert.match(types, /server_tools\?/, "API 类型没有 server_tools");
+  assert.match(types, /local_tools\?/, "API 类型没有 local_tools");
   assert.match(go, /xai-grok-4-native/, "默认规则没有 grok-4 × response 条目");
   assert.match(go, /MatchProtocol:\s*"openai-response"/, "默认规则没限定 response");
-  assert.match(go, /NativeTools:\s*stringSlicePtr\("x_search", "web_search", "code_execution"\)/,
-    "默认规则没有追加 xAI native tools");
+  assert.match(go, /ServerTools:\s*stringSlicePtr\("x_search", "web_search", "code_execution"\)/,
+    "默认规则没有追加 xAI 服务端 tools");
 });
 
 // PWA 小工具（2026-11-09 用户定）：更新面板里核对当前壳是否最新，并能直接切换。

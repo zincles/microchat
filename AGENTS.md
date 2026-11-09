@@ -279,18 +279,19 @@ delete(AA)           # 删除
   `{ "id": "xai", "match_contains": "grok", "match_exact": "", "match_provider": "",
     "match_protocol": "", "is_final": false,
     "thinking_levels": ["low","medium","high","max"], "brand": "xAI", "icon": "grok",
-    "native_tools": ["x_search"] }`。
+    "server_tools": ["x_search"], "local_tools": ["roll_dice"] }`。
   **`icon` 是封闭集合**：`gpt / gemini / grok / claude / deepseek / mimo / glm / kimi`
   （前端只出这些选项；旧 `openai` / `xai` 只在读存量配置时归一化成 `gpt` / `grok`，
   新写入会被 422 拒绝）。
   规则按数组顺序匹配；命中的字段覆盖前面的，没写的字段继承；`is_final` 应用完就停。
   `thinking_levels` 整组替换（`[]` = 明确没有档位，缺字段 = 不动）；`brand`/`icon` 只影响展示，
-  **不改 wire 协议、不执行代码**。`native_tools` 是**追加**语义（provider-native tool id，
-  按规则顺序去重）；它只把候选写进画像，真正发请求前还要经过 provider/协议/模型能力闸。
+  **不改 wire 协议、不执行代码**。`server_tools`（provider 侧执行）与 `local_tools`
+  （客户端执行）是**两个独立字段**，都是**追加**语义、各自按规则顺序去重；它们只把候选写进画像，
+  真正发请求前还要经过 provider/协议/模型能力闸。
   `match_protocol` 可限定 `openai-chat-completion` / `openai-response`（`chat` / `response` 是写入简写）。
   开箱规则含：gpt / grok / 各类品牌图标 / `grok-imagine` 清空思考档；另有
   **`xai-grok-4-native`：`grok-4` + `openai-response`（不区分 vendor）默认追加
-  `x_search` / `web_search` / `code_execution`**。写 `[]` 即关闭。未知档位、空匹配、空定义、
+  `server_tools`：`x_search` / `web_search` / `code_execution`**。写 `[]` 即关闭。未知档位、空匹配、空定义、
   未知图标/协议/native tool、重复 id 在写入与 `LoadConfig` 时都报错。匹配只认 raw id（大小写不敏感）
   + 可选 `match_exact` / `match_provider` / `match_protocol`，不认用户改过的 `display_name`。
   **渠道自己的 `model_define_rules`**（`providers.json` 每条渠道上的同名字段）会在全局规则**之后**
@@ -684,7 +685,7 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 
 | 方法 | 路径 | 请求体 | 响应 | 说明 |
 |---|---|---|---|---|
-| GET | `/sessions` | — | `[SessionView]` | 每项 = 会话 + `messages`（**这条会话有几条消息** —— 客户端的启动编排据此认定"空会话"，不必逐条会话再拉一次消息）+ `turn`（客户端据此标"生成中"）。会话自身含 **`thinking_level`**（空 = 跟随模型默认；非空 = `off/minimal/low/medium/high/xhigh/max`）与 **`native_tools_disabled`**（用户手动关掉的 provider-native tool id；规则新增的工具默认仍启用）|
+| GET | `/sessions` | — | `[SessionView]` | 每项 = 会话 + `messages`（**这条会话有几条消息** —— 客户端的启动编排据此认定"空会话"，不必逐条会话再拉一次消息）+ `turn`（客户端据此标"生成中"）。会话自身含 **`thinking_level`**（空 = 跟随模型默认；非空 = `off/minimal/low/medium/high/xhigh/max`）与 **`native_tools_disabled`**（**历史字段名**；语义 = 用户手动关掉的 `server_tools`，规则新增的工具默认仍启用；本地工具有自己的开关时另立）|
 | GET | `/sessions/{session_id}/export` | — | `{version:3,title,provider,model,agent_id,agent_name,messages:[{role,content,reasoning}],summaries:[…]}` | **对话记录导出**（JSON；2026-10-11 起，10-17 扩成 v2，**10-28 扩成 v3**）：标题 + 每条 role/content（正文原样，`<state>` 块留着 ⇒ 导回去状态照常现演）+ **这条会话当初绑的渠道 / 模型 / Agent 三格软引用**（`agent_name` 只为"本机没有也能说清是谁"）+ **v3：整张摘要金字塔 + 每条消息的 `reasoning`**。<br>**消息一条不少**：压缩在库里从不改 `messages`（`RecordSummary` 只写 `summary_id`）⇒ 被摘要盖住的原文照旧全导。<br>**摘要必须带**：它是模型写的字，**不可重算**（重压得到另一段 —— `reroll-summary` 的存在就是证据），从前导回来等于"从没压过"。形状：`{key, parent_key?, type, begin_idx?, end_idx?, text, blocks, tokens, provider, model, prompt_version, usage, dirty, created_at}` —— `key`/`parent_key` 只是**文件内的句柄**（父子关系），`begin_idx`/`end_idx` 是 **1-based 消息序号**（不用消息 id：导入后 id 全换新）。<br>**仍不带**：system prompt / 消息 id / 消息的思考耗时与用量 / 摘要的 `source_ids`（导入时按真实成员重建）；**Agent 的定义也不带**（人设搬家走卡带）。**不要凭据**（没鉴权了） |
 | POST | `/sessions/import-json` | 上面那个导出格式（v1/v2 也收） | `{session, messages, summaries, agent_missing}` · 201 | **JSON 导入**：建新会话 + 按序落库（id 批铸排序）；role 只许 user/assistant（坏 ⇒ 400 点名第几条）、空 messages ⇒ 400、`version > 3` ⇒ 400；标题没给 ⇒ 首条 user 起。**v2 的三格照抄**（`provider`/`model`/`agent_id` —— 本机没有也照抄、不静默换缺省；文件没点名 agent 才用 `default_agent`），agent 本机没有 ⇒ `agent_missing: true`（界面提示"人设回落内置默认、要人设导卡带"）。**v3 的金字塔**：摘要**全部铸新 id** 再重映射父子（照抄旧 id 让同一个文件导两次会撞主键）⇒ `store.RestoreSummaries` 一个事务写进去，并回填 `messages.summary_id`（重叠区间在那一层当场变错误）。形状/成环/越界**在动库之前**验完 ⇒ 坏文件不留空壳会话；真写失败则把刚建的会话删掉（**半成品比失败更糟**：用户以为导进来了）。**不经过** `POST /sessions` ⇒ 不插首段对话 |
 | POST | `/sessions/import-st` | JSONL 原文（`?title=` 可选） | `{session, messages, skipped}` · 201 | **不要凭据**（设置面）。**ST 导入**：SillyTavern JSONL（一行一条）→ 建会话 + 按序落库；只认四样（is_user/mes/reasoning/send_date），其余全丢；空文件 ⇒ 400 |
@@ -773,7 +774,7 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 | POST | `/providers/{provider_id}/test` | 可选 `{vendor,protocol,base_url,api_key,model_filter}` | `{ok,models,filtered,note?,error?}` | **测试连通性**（2026-11-02）：只拉一次 `/models`，**不落库、不保存**；请求体可带编辑器里尚未保存的值（api_key 空 = 用已存的）。返回 200 + `ok:false` 表示"连不上"（不是接口 500）；dummy 直接回 ok+note |
 | POST | `/providers/{provider_id}/refresh-routes` | — | `{provider, models}` | 只刷路由表：拉 models.dev 快照 ⇒ `model_route` 落库（只认聚合站；**启动时不跑**，一周手跑一次）|
 | GET | `/providers/{provider_id}/usage` | — | `ProviderUsageView` | **套餐余量**（只读）：**只对 `vendor = opencode-go` 的渠道有义** ⇒ 别的 vendor **400**（`invalid`）、没配 key 也 **400**；上游错原样传（`upstream`）。形状 = `plan` / `windows[].label/percent/resets_at` + `provider_id`（`-debug usage` 就是它；web 界面还没入口） |
-| GET | `/models` | — | `[ModelListItem]` | 跨 provider 拍平（"渠道 / 模型"下拉用）。每项带 **`thinking_levels`**（该模型能安全收到的统一档位；前端只摆这些；未知模型回全部七档），以及 `model_define_rules` 派生的 **`brand` / `icon` / `native_tools` / `matched_rules`**（不落库；`native_tools` 只是候选，发请求前仍要能力校验）|
+| GET | `/models` | — | `[ModelListItem]` | 跨 provider 拍平（"渠道 / 模型"下拉用）。每项带 **`thinking_levels`**（该模型能安全收到的统一档位；前端只摆这些；未知模型回全部七档），以及 `model_define_rules` 派生的 **`brand` / `icon` / `server_tools` / `local_tools` / `matched_rules`**（不落库；工具只是候选，发请求前仍要能力校验）|
 | PATCH | `/models` | `{provider, upstream_id, context_override, display_name, params}` | `ModelView` | 设/清模型的用户列（上下文覆盖 `null` = 清；显示名；采样参数）。**刷新永不覆盖用户列**；模型行被刷新删掉时这些覆盖也会没（规则不受影响） |
 | GET | `/config/model-rules` | — | `{model_define_rules:[…]}` | 读 `config.json` 的模型定义规则（见「配置文件」）。返回派生前的**规则原文** |
 | PUT | `/config/model-rules` | `{model_define_rules:[…]}` | 同上 | **整份替换**；空数组 = 清空。先校验后落盘；坏规则 422 且一个字不写。写成功后 `GET /models` 立刻按新规则派生 |
@@ -911,7 +912,7 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 
 ### `sessions`
 
-`id` · `title`（首句自动生成；空串 = 还没起名）· `system_prompt`（**空串 = 没覆盖** ⇒ 用 agent 的拼装结果）· `provider` / `model` / `agent_id`（都是**软引用**，无外键）· **`thinking_level`**（空串 = 跟随模型默认；否则是统一七档之一）· **`native_tools_disabled`**（JSON 数组；规则派生的 native tool 里用户手动关掉的 id，新规则工具默认仍启用）· `created_at` / `updated_at`（界面按 `updated_at` 排序）
+`id` · `title`（首句自动生成；空串 = 还没起名）· `system_prompt`（**空串 = 没覆盖** ⇒ 用 agent 的拼装结果）· `provider` / `model` / `agent_id`（都是**软引用**，无外键）· **`thinking_level`**（空串 = 跟随模型默认；否则是统一七档之一）· **`native_tools_disabled`**（JSON 数组；历史字段名，语义 = 规则派生的 `server_tools` 里用户手动关掉的 id，新规则工具默认仍启用）· `created_at` / `updated_at`（界面按 `updated_at` 排序）
 
 （**没有 `current_leaf`**：线性会话不需要"停在哪儿"，"最新一条" = `ORDER BY id DESC LIMIT 1`。）
 
@@ -1174,7 +1175,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
 - **思考档位在输入栏正上方的按钮区**（2026-11-08 用户定：把输入框正上方的一小条留给按钮）：
   `#composer` 改成纵向 flex（`.composer-toolbar` 在上、`.composer-row` 在下），
   `ThinkingMenu` 住在 toolbar 里，紧挨它右边是**工具状态**：`工具：无` 或
-  `工具：3（+内置）`（数量来自 `GET /models` 的 `native_tools`，也就是模型规则派生值；
+  `工具：3（+内置）`（数量来自 `GET /models` 的 `server_tools`，也就是模型规则派生值；
   没有工具不编 0，也不带「+内置」；悬停列出 `X 搜索 / 网页搜索 / 代码执行`）。
   按钮显示 **「推理等级：默认」**（中文档位名）；菜单项显示 **「低 low / 中 medium / 高 high / 最高 max」**
   （中文 + 原始 ASCII）；空档位是「默认 default」。工具状态是**可点击按钮**：
@@ -1435,7 +1436,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   + 品牌色（`--model-icon-color`），PWA 的 svg glob 会预缓存）。每行「编辑」打开 `ModelEditor.vue`，
   改该模型自己的**用户列**（显示名 / 上下文覆盖 / JSON 参数）——
   规则（`model_define_rules`）是家族默认，这里是对单个 `(provider, upstream_id)` 的精确覆盖。
-  规则编辑器支持匹配协议（`match_protocol`）与**追加 provider-native tool**（`native_tools`）；
+  规则编辑器支持匹配协议（`match_protocol`）与**分别追加服务端 / 本地工具**（`server_tools` / `local_tools`）；
   `grok-4 × response` 的内置默认会显示成「追加 x_search / web_search / code_execution」。空态说清「保存并刷新后会出现在这里」。
 - **设置页平铺列表**（2026-11-04 统一设计系统）：`.settings-card` 只剩分节容器（无底色/圆角/内边距），字段行之间一条 `--line`；不再“卡片套卡片”。**tab 分两族**（2026-11-06 用户定「用真正的 Vuetify TabBar/TabItem」）：设置 / Agent 二级页用 Vuetify `VTabs`（MD3 primary tabs + slider + tabpanel）；上下文三 tab（压缩内再三个子 tab）与顶栏聊天·上下文也是 Vuetify `VTabs`；都由 `VTabsWindow` 做左右滑动。窄屏把 `v-tab` 压到 `min-width:0`，放得下（不再靠 show-arrows 吃 104px）。
 **设置四 tab 与会话/渠道管理页统一 760 居中**（列表页有表格，但切页时宽度不该跳来跳去）。**所有 `h3` 统一一种标题语言**：正文色半粗 + 左侧蓝色短竖条（从前只有卡片里的 h3 有竖条，其它 tab 是裸文字 —— 用户指出不一致）。「输入」卡里是 **发送方式（`enter` / `shift-enter` / `button`）**、输入时预览、命令菜单 —— 这三格在 2026-11-01 从用户视图搬进 `AppearancePane` 时 **refs 与 persist 都搬了、模板整段漏了**（界面上找不到，2026-11-02 补回）。开关一律 `:model-value` + `setX(v) { ref = v; persist(); }`，**别写 `v-model + @update:model-value="persist"`** —— 两个监听同挂 update 时显式那个可能先跑，存进去的是旧值（实测：界面 on、服务端 off）。

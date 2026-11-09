@@ -22,7 +22,7 @@ import (
 // `ThinkingLevels` / `Brand` / `Icon` 都是指针：nil = 这条规则不碰该字段；
 // 空数组（`[]`）与空串是明确的“覆写成空”，与“没写”不是一回事。
 //
-// `NativeTools` 是**追加**语义：命中的规则把列出的 provider-native tool 并进画像，
+// `ServerTools` 是**追加**语义：命中的规则把列出的 provider-native tool 并进画像，
 // 不是替换。多个规则命中按顺序去重追加；下游发请求时再按 provider/协议能力展开/校验。
 type ModelDefineRule struct {
 	ID string `json:"id,omitempty"`
@@ -42,9 +42,11 @@ type ModelDefineRule struct {
 	ThinkingLevels *[]string `json:"thinking_levels,omitempty"`
 	Brand          *string   `json:"brand,omitempty"`
 	Icon           *string   `json:"icon,omitempty"`
-	// NativeTools：provider-native tool id（如 x_search / web_search / code_execution）。
-	// **追加**到 profile.native_tools，不替换；实际请求是否支持由 provider 层校验。
-	NativeTools *[]string `json:"native_tools,omitempty"`
+	// ServerTools：provider 侧执行的 tool id（如 x_search / web_search / code_execution）。
+	// **追加**到 profile.server_tools，不替换；实际请求是否支持由 provider 层校验。
+	ServerTools *[]string `json:"server_tools,omitempty"`
+	// LocalTools：客户端本地执行的 tool id。与 ServerTools 分开存；具体工具定义在后续工具注册表。
+	LocalTools *[]string `json:"local_tools,omitempty"`
 }
 
 // ModelProfile：一个模型经过规则覆写后的展示/能力画像（派生结果，不落库）。
@@ -52,8 +54,9 @@ type ModelProfile struct {
 	Brand          string   `json:"brand,omitempty"`
 	Icon           string   `json:"icon,omitempty"`
 	ThinkingLevels []string `json:"thinking_levels,omitempty"`
-	// NativeTools：规则追加的 provider-native tool id（按规则顺序去重）。
-	NativeTools []string `json:"native_tools,omitempty"`
+	// ServerTools / LocalTools：规则追加的工具 id（按规则顺序去重）。
+	ServerTools []string `json:"server_tools,omitempty"`
+	LocalTools  []string `json:"local_tools,omitempty"`
 	// MatchedRules：命中的规则 id（没写 id 的用 `#1` 这种序号）。给界面解释“为什么”。
 	MatchedRules []string `json:"matched_rules,omitempty"`
 }
@@ -68,9 +71,9 @@ type ModelRulesConfig struct {
 var ModelIconIDs = []string{"gpt", "gemini", "grok", "claude", "deepseek", "mimo", "glm", "kimi",
 	"longcat", "mistral", "qwen", "minimax", "tencent", "meta", "stepfun", "bytedance"}
 
-// NativeToolIDs：规则里允许追加的 provider-native tool id（封闭集合）。
+// ServerToolIDs：规则里允许追加的 provider-native tool id（封闭集合）。
 // 真正可发不可发还要看 provider/协议/模型；这里只保证规则文件不写出错字。
-var NativeToolIDs = []string{"x_search", "web_search", "code_execution"}
+var ServerToolIDs = []string{"x_search", "web_search", "code_execution"}
 
 // ModelRuleProtocols：MatchProtocol 可写的协议 id（空串 = 不限制）。
 var ModelRuleProtocols = []string{"openai-chat-completion", "openai-response"}
@@ -101,8 +104,8 @@ func validModelRuleProtocol(value string) bool {
 	return false
 }
 
-func validNativeToolID(value string) bool {
-	for _, id := range NativeToolIDs {
+func validServerToolID(value string) bool {
+	for _, id := range ServerToolIDs {
 		if value == id {
 			return true
 		}
@@ -181,7 +184,7 @@ func DefaultModelDefineRules() []ModelDefineRule {
 		// 2026-11-09 用户定：grok-4.x 且走 Responses（不区分 vendor）时，默认追加 xAI 的
 		// 服务端工具。是否真的能发仍由 provider/模型能力闸决定；这里只负责规则画像。
 		{ID: "xai-grok-4-native", MatchContains: "grok-4", MatchProtocol: "openai-response",
-			NativeTools: stringSlicePtr("x_search", "web_search", "code_execution")},
+			ServerTools: stringSlicePtr("x_search", "web_search", "code_execution")},
 		{ID: "gemini", MatchContains: "gemini", Brand: stringPtr("Google"), Icon: stringPtr("gemini")},
 		{ID: "claude", MatchContains: "claude", Brand: stringPtr("Anthropic"), Icon: stringPtr("claude")},
 		{ID: "deepseek", MatchContains: "deepseek", Brand: stringPtr("DeepSeek"), Icon: stringPtr("deepseek")},
@@ -243,23 +246,25 @@ func (r ModelDefineRule) validate() error {
 		return fmt.Errorf("规则至少需要一个匹配条件（match_contains / match_exact / match_provider）")
 	}
 	if r.ThinkingLevels == nil && r.Brand == nil && r.Icon == nil &&
-		(r.NativeTools == nil || len(*r.NativeTools) == 0) {
-		return fmt.Errorf("规则没有任何要覆写的字段（thinking_levels / brand / icon / native_tools）")
+		(r.ServerTools == nil || len(*r.ServerTools) == 0) &&
+		(r.LocalTools == nil || len(*r.LocalTools) == 0) {
+		return fmt.Errorf("规则没有任何要覆写的字段（thinking_levels / brand / icon / server_tools / local_tools）")
 	}
 	if r.MatchProtocol != "" && !validModelRuleProtocol(r.MatchProtocol) {
 		return fmt.Errorf("未知匹配协议 %q（只能是空 / openai-chat-completion / openai-response）", r.MatchProtocol)
 	}
-	if r.NativeTools != nil && (r.Brand != nil || r.Icon != nil || r.ThinkingLevels != nil) {
+	if (r.ServerTools != nil || r.LocalTools != nil) &&
+		(r.Brand != nil || r.Icon != nil || r.ThinkingLevels != nil) {
 		return fmt.Errorf("追加工具与品牌/图标/思考不能写在同一条规则里（拆成两条）")
 	}
-	if r.NativeTools != nil {
-		if len(*r.NativeTools) == 0 {
-			return fmt.Errorf("native_tools 不能是空数组（不想追加就整格省略）")
+	if r.ServerTools != nil {
+		if len(*r.ServerTools) == 0 {
+			return fmt.Errorf("server_tools 不能是空数组（不想追加就整格省略）")
 		}
 		seenTools := map[string]bool{}
-		for _, id := range *r.NativeTools {
-			if !validNativeToolID(id) {
-				return fmt.Errorf("未知 native tool %q（只能是 %s）", id, strings.Join(NativeToolIDs, " / "))
+		for _, id := range *r.ServerTools {
+			if !validServerToolID(id) {
+				return fmt.Errorf("未知 native tool %q（只能是 %s）", id, strings.Join(ServerToolIDs, " / "))
 			}
 			if seenTools[id] {
 				return fmt.Errorf("native tool %q 重复", id)
@@ -313,7 +318,8 @@ func (c Config) ModelProfileWithRulesFor(providerID, upstreamID, protocol string
 		Brand:          fallback.Brand,
 		Icon:           fallback.Icon,
 		ThinkingLevels: append([]string{}, fallback.ThinkingLevels...),
-		NativeTools:    append([]string{}, fallback.NativeTools...),
+		ServerTools:    append([]string{}, fallback.ServerTools...),
+		LocalTools:     append([]string{}, fallback.LocalTools...),
 	}
 	profile = applyModelRules(profile, c.ModelDefineRules, providerID, upstreamID, protocol, "global")
 	profile = applyModelRules(profile, providerRules, providerID, upstreamID, protocol, "provider")
@@ -334,14 +340,27 @@ func applyModelRules(profile ModelProfile, rules []ModelDefineRule, providerID, 
 		if rule.Icon != nil {
 			profile.Icon = *rule.Icon
 		}
-		if rule.NativeTools != nil {
-			seen := make(map[string]bool, len(profile.NativeTools)+len(*rule.NativeTools))
-			for _, id := range profile.NativeTools {
+		if rule.ServerTools != nil {
+			seen := make(map[string]bool, len(profile.ServerTools)+len(*rule.ServerTools))
+			for _, id := range profile.ServerTools {
 				seen[id] = true
 			}
-			for _, id := range *rule.NativeTools {
+			for _, id := range *rule.ServerTools {
 				if !seen[id] {
-					profile.NativeTools = append(profile.NativeTools, id)
+					profile.ServerTools = append(profile.ServerTools, id)
+					seen[id] = true
+				}
+			}
+		}
+		if rule.LocalTools != nil {
+			seen := make(map[string]bool, len(profile.LocalTools)+len(*rule.LocalTools))
+			for _, id := range profile.LocalTools {
+				seen[id] = true
+			}
+			for _, id := range *rule.LocalTools {
+				id = strings.TrimSpace(id)
+				if id != "" && !seen[id] {
+					profile.LocalTools = append(profile.LocalTools, id)
 					seen[id] = true
 				}
 			}

@@ -62,7 +62,8 @@ type ModelView struct {
 	Brand          string   `json:"brand,omitempty"`
 	Icon           string   `json:"icon,omitempty"`
 	ThinkingLevels []string `json:"thinking_levels,omitempty"`
-	NativeTools    []string `json:"native_tools,omitempty"`
+	ServerTools    []string `json:"server_tools,omitempty"`
+	LocalTools     []string `json:"local_tools,omitempty"`
 	MatchedRules   []string `json:"matched_rules,omitempty"`
 }
 
@@ -80,7 +81,8 @@ type ModelListItem struct {
 	// model_define_rules 的派生结果（不落库）。
 	Brand        string   `json:"brand,omitempty"`
 	Icon         string   `json:"icon,omitempty"`
-	NativeTools  []string `json:"native_tools,omitempty"`
+	ServerTools  []string `json:"server_tools,omitempty"`
+	LocalTools   []string `json:"local_tools,omitempty"`
 	MatchedRules []string `json:"matched_rules,omitempty"`
 }
 
@@ -139,7 +141,8 @@ func (s *Server) modelView(row store.ModelRow, protocol string, providerRules []
 		Brand:           profile.Brand,
 		Icon:            profile.Icon,
 		ThinkingLevels:  profile.ThinkingLevels,
-		NativeTools:     profile.NativeTools,
+		ServerTools:     profile.ServerTools,
+		LocalTools:      profile.LocalTools,
 		MatchedRules:    profile.MatchedRules,
 	}
 }
@@ -557,7 +560,8 @@ func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
 			ThinkingLevels: view.ThinkingLevels,
 			Brand:          view.Brand,
 			Icon:           view.Icon,
-			NativeTools:    view.NativeTools,
+			ServerTools:    view.ServerTools,
+			LocalTools:     view.LocalTools,
 			MatchedRules:   view.MatchedRules,
 		})
 	}

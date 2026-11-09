@@ -254,7 +254,7 @@ const currentModelRow = computed(() => {
   return vueModels.value.find((m) => m.provider === provider && m.upstream_id === model) ?? null;
 });
 // 规则给的是**可用**工具；会话里的 native_tools_disabled 是用户手动关掉的。
-const currentAllNativeTools = computed<string[]>(() => (currentModelRow.value?.native_tools ?? []).filter(Boolean));
+const currentAllServerTools = computed<string[]>(() => (currentModelRow.value?.server_tools ?? []).filter(Boolean));
 async function toggleNativeTool(id: string, enabled: boolean): Promise<void> {
   if (!id) return;
   const next = (sessionInfo.native_tools_disabled ?? []).filter((x: string) => x !== id);
@@ -2146,7 +2146,7 @@ onUnmounted(() => {
       :menu-on="cmdMenu"
       :thinking="currentThinking"
       :thinking-options="thinkingChoices"
-      :native-tools="currentAllNativeTools"
+      :native-tools="currentAllServerTools"
       :native-tools-disabled="sessionInfo.native_tools_disabled ?? []"
       @select-thinking="setThinking"
       @toggle-native-tool="toggleNativeTool"

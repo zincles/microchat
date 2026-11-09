@@ -227,27 +227,27 @@ func TestDefaultGrok4NativeToolRule(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := cfg.ModelProfileFor(tc.provider, tc.model, tc.protocol, ModelProfile{})
-			if len(got.NativeTools) != len(tc.want) {
-				t.Fatalf("native_tools = %v，想要 %v", got.NativeTools, tc.want)
+			if len(got.ServerTools) != len(tc.want) {
+				t.Fatalf("server_tools = %v，想要 %v", got.ServerTools, tc.want)
 			}
 			for i := range tc.want {
-				if got.NativeTools[i] != tc.want[i] {
-					t.Fatalf("native_tools = %v，想要 %v", got.NativeTools, tc.want)
+				if got.ServerTools[i] != tc.want[i] {
+					t.Fatalf("server_tools = %v，想要 %v", got.ServerTools, tc.want)
 				}
 			}
 		})
 	}
 }
 
-func TestNativeToolsAppendAndDedupe(t *testing.T) {
+func TestServerToolsAppendAndDedupe(t *testing.T) {
 	cfg := Config{ModelDefineRules: []ModelDefineRule{
-		{ID: "one", MatchContains: "grok", MatchProtocol: "response", NativeTools: stringSlicePtr("x_search", "web_search")},
-		{ID: "two", MatchContains: "grok", MatchProtocol: "response", NativeTools: stringSlicePtr("web_search", "code_execution")},
+		{ID: "one", MatchContains: "grok", MatchProtocol: "response", ServerTools: stringSlicePtr("x_search", "web_search")},
+		{ID: "two", MatchContains: "grok", MatchProtocol: "response", ServerTools: stringSlicePtr("web_search", "code_execution")},
 	}}
 	got := cfg.ModelProfileFor("p", "grok-4.7", "openai-response", ModelProfile{})
 	want := []string{"x_search", "web_search", "code_execution"}
-	if !reflect.DeepEqual(got.NativeTools, want) {
-		t.Fatalf("追加/去重 = %v，想要 %v", got.NativeTools, want)
+	if !reflect.DeepEqual(got.ServerTools, want) {
+		t.Fatalf("追加/去重 = %v，想要 %v", got.ServerTools, want)
 	}
 	if !reflect.DeepEqual(got.MatchedRules, []string{"global:one", "global:two"}) {
 		t.Fatalf("matched_rules = %v", got.MatchedRules)
@@ -255,15 +255,15 @@ func TestNativeToolsAppendAndDedupe(t *testing.T) {
 }
 
 func TestValidateNativeToolRules(t *testing.T) {
-	valid := []ModelDefineRule{{MatchContains: "x", NativeTools: stringSlicePtr("x_search")}}
+	valid := []ModelDefineRule{{MatchContains: "x", ServerTools: stringSlicePtr("x_search")}}
 	if err := ValidateModelDefineRules(valid); err != nil {
 		t.Fatalf("只追加 native tool 的规则该合法：%v", err)
 	}
 	for name, rule := range map[string]ModelDefineRule{
-		"未知工具":  {MatchContains: "x", NativeTools: stringSlicePtr("nope")},
-		"重复工具":  {MatchContains: "x", NativeTools: stringSlicePtr("x_search", "x_search")},
-		"空工具数组": {MatchContains: "x", NativeTools: stringSlicePtr()},
-		"未知协议":  {MatchContains: "x", MatchProtocol: "grpc", NativeTools: stringSlicePtr("x_search")},
+		"未知工具":  {MatchContains: "x", ServerTools: stringSlicePtr("nope")},
+		"重复工具":  {MatchContains: "x", ServerTools: stringSlicePtr("x_search", "x_search")},
+		"空工具数组": {MatchContains: "x", ServerTools: stringSlicePtr()},
+		"未知协议":  {MatchContains: "x", MatchProtocol: "grpc", ServerTools: stringSlicePtr("x_search")},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := ValidateModelDefineRules([]ModelDefineRule{rule}); err == nil {
@@ -275,7 +275,7 @@ func TestValidateNativeToolRules(t *testing.T) {
 
 // 回归：解码进 DefaultConfig 的已有 slice 时，JSON 不会清零结构体字段。若不清空
 // ModelDefineRules，gemini（旧配置第 4 条）会继承默认列表第 4 条 xai-grok-4-native
-// 的 match_protocol / native_tools —— 2026-11-09 实测到的静默串值。
+// 的 match_protocol / server_tools —— 2026-11-09 实测到的静默串值。
 func TestLoadConfigDoesNotMergeDefaultRuleFields(t *testing.T) {
 	dir := t.TempDir()
 	old := `{"model_define_rules":[
@@ -300,13 +300,27 @@ func TestLoadConfigDoesNotMergeDefaultRuleFields(t *testing.T) {
 	for _, rule := range cfg.ModelDefineRules {
 		switch rule.ID {
 		case "gemini":
-			if rule.MatchProtocol != "" || (rule.NativeTools != nil && len(*rule.NativeTools) != 0) {
+			if rule.MatchProtocol != "" || (rule.ServerTools != nil && len(*rule.ServerTools) != 0) {
 				t.Fatalf("gemini 串到了默认 native 规则字段：%+v", rule)
 			}
 		case "xai-grok-4-native":
-			if rule.NativeTools == nil || len(*rule.NativeTools) != 3 {
+			if rule.ServerTools == nil || len(*rule.ServerTools) != 3 {
 				t.Fatalf("新默认 native 规则没补上：%+v", rule)
 			}
 		}
+	}
+}
+
+func TestLocalToolsAreSeparateFromServerTools(t *testing.T) {
+	cfg := Config{ModelDefineRules: []ModelDefineRule{
+		{ID: "local", MatchContains: "grok", MatchProtocol: "response", LocalTools: stringSlicePtr("roll_dice", "roll_dice", "lookup")},
+		{ID: "server", MatchContains: "grok", MatchProtocol: "response", ServerTools: stringSlicePtr("x_search")},
+	}}
+	got := cfg.ModelProfileFor("p", "grok-4.7", "openai-response", ModelProfile{})
+	if !reflect.DeepEqual(got.LocalTools, []string{"roll_dice", "lookup"}) {
+		t.Fatalf("local_tools = %v", got.LocalTools)
+	}
+	if !reflect.DeepEqual(got.ServerTools, []string{"x_search"}) {
+		t.Fatalf("server_tools = %v", got.ServerTools)
 	}
 }

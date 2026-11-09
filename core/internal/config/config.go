@@ -135,7 +135,7 @@ func LoadConfig(paths Paths) (Config, error) {
 	config := DefaultConfig()
 	// ⚠ 先把默认规则清空再解码：encoding/json 解码进**已有 slice** 时不会清零结构体字段，
 	// 用户配置里第 N 条规则会悄悄继承默认列表第 N 条的指针字段（2026-11-09 实测：
-	// gemini 继承了 xai-grok-4-native 的 match_protocol / native_tools）。
+	// gemini 继承了 xai-grok-4-native 的 match_protocol / server_tools）。
 	config.ModelDefineRules = nil
 	if err := loadJSON(paths.Config("config.json"), &config); err != nil {
 		return config, err
