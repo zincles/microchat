@@ -837,7 +837,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
   display: flex; flex-direction: column; align-items: stretch; gap: 0.3em; background: none; z-index: 5;
   padding: 0.6em 0.6em calc(0.6em + env(safe-area-inset-bottom, 0px)); }
 /* 输入栏正上方的按钮区（思考 / 后续工具、MCP…）：不占输入卡的面，只放一排小按钮。 */
-.composer-toolbar { display: flex; align-items: center; gap: 0.35em; min-height: 1.9em; padding: 0 0.35em; flex-wrap: wrap; }
+.composer-toolbar { display: flex; align-items: center; gap: 0.35em; min-height: 2em; padding: 0 0.35em; flex-wrap: wrap; }
 .composer-row { display: flex; align-items: flex-end; gap: 0.5em; width: 100%; }
 /* Vuetify 只负责控件外观；这里只做布局（输入占满、按钮贴底一行）。 */
 .composer-input { flex: 1 1 auto; min-width: 0; }
@@ -848,10 +848,10 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 /* 输入栏上方的按钮区（2026-11-10 用户定：推理等级与工具必须同一尺寸/风格）。
    两者共用同一套 MD3 outlined 小按钮：高度/字号/内边距/边框/底色只写这一处。 */
 .composer-toolbar .thinking-btn,
-.composer-toolbar .tools-btn { min-width: 0 !important; height: 1.9em !important; min-height: 1.9em !important;
-  padding: 0 0.65em !important; border: 1px solid var(--md-outline-variant) !important;
+.composer-toolbar .tools-btn { min-width: 0 !important; height: 2em !important; min-height: 2em !important;
+  padding: 0 0.8em !important; border: 1px solid var(--md-outline-variant) !important;
   background: var(--md-surface-container) !important; box-shadow: none !important;
-  font-size: 0.75em !important; line-height: 1.9em !important; color: var(--md-on-surface-variant);
+  font-size: 0.82em !important; line-height: 2em !important; color: var(--md-on-surface-variant);
   text-transform: none !important; }
 .composer-toolbar .thinking-btn:hover,
 .composer-toolbar .tools-btn:hover { color: var(--md-on-surface); background: color-mix(in srgb, var(--md-on-surface) 8%, var(--md-surface-container)) !important; }
