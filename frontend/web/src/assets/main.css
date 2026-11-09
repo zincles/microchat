@@ -897,6 +897,10 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .msg .think-body { white-space: pre-wrap; word-break: break-word; margin-top: 0.4em; color: var(--md-on-surface-variant); line-height: 1.5; }
 /* 等首字节的三点呼吸（生成中且还没有任何字）：别让气泡只剩一个"助手"抬头。 */
 .msg .typing { display: flex; gap: 0.28em; align-items: center; padding: 0.4em 0; }
+/* 服务端工具状态（2026-11-09）：生成中显示“正在搜索网页 / 搜索完成，正在整理结果”。 */
+.msg .tool-status { display: flex; gap: 0.4em; align-items: center; padding: 0.4em 0; color: var(--md-primary); font-size: var(--md-type-body-medium); }
+.msg .tool-status .tool-dot { width: 0.5em; height: 0.5em; border-radius: 50%; background: currentColor; animation: tool-pulse 1s var(--md-ease-standard) infinite; }
+@keyframes tool-pulse { 0%, 100% { opacity: 0.35; transform: scale(0.85); } 50% { opacity: 1; transform: scale(1); } }
 /* 标签（2026-10-17 用户点名"显示 正在输出 之类的东西"）：三点呼吸 + 一句暗字，说明这气泡在干活
  * —— 只有点没有字，静太小、也说不清是在输出还是在等。 */
 .msg .typing .typing-hint { font-style: normal; margin-left: 0.4em; color: var(--md-on-surface-variant); font-size: var(--md-type-label-medium); }
@@ -904,7 +908,10 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .msg .typing span:nth-child(2) { animation-delay: 0.15s; }
 .msg .typing span:nth-child(3) { animation-delay: 0.3s; }
 @keyframes typing-pulse { 0%, 60%, 100% { opacity: 0.25; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-0.18em); } }
-@media (prefers-reduced-motion: reduce) { .msg .typing span { animation: none; opacity: 0.6; } }
+@media (prefers-reduced-motion: reduce) {
+  .msg .typing span { animation: none; opacity: 0.6; }
+  .msg .tool-status .tool-dot { animation: none; opacity: 0.8; }
+}
 .palette, .picker { position: fixed; left: 50%; transform: translateX(-50%); bottom: 5em; background: var(--md-surface-container); border: none; border-radius: var(--md-shape-md); padding: 0.5em; width: min(649px, 90%); margin-left: -40px; z-index: 10; box-sizing: border-box; box-shadow: var(--md-elev-3); color: var(--md-on-surface); animation: md-dialog-in var(--md-dur-250) var(--md-ease-emphasized); }
 /* 确认框：全屏中央（与 modal 同级遮罩：背后加深，只留中央小窗）。 */
 .confirm-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / 45%); z-index: 30; display: flex; align-items: center; justify-content: center; animation: md-scrim-in var(--md-dur-200) var(--md-ease-standard); }

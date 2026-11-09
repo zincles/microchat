@@ -34,6 +34,7 @@ export interface ChatMessage {
   usage?: Record<string, unknown> | null;
   stream?: boolean;
   noIdx?: boolean;
+  tool?: { kind: string; state: string } | null;
   [key: string]: unknown;
 }
 

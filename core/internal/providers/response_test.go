@@ -222,3 +222,46 @@ func TestResolveProtocolFallsBackToConfiguredProtocol(t *testing.T) {
 		t.Fatalf("路由行说别的协议时要回落 chat：%q", got)
 	}
 }
+
+func TestResponseStreamReportsServerToolStates(t *testing.T) {
+	sseBody := strings.Join([]string{
+		"data: {\"type\":\"response.web_search_call.in_progress\"}",
+		"",
+		"data: {\"type\":\"response.web_search_call.searching\"}",
+		"",
+		"data: {\"type\":\"response.web_search_call.completed\"}",
+		"",
+		"data: {\"type\":\"response.code_interpreter_call.interpreting\"}",
+		"",
+		"data: {\"type\":\"response.output_text.delta\",\"delta\":\"好\"}",
+		"",
+		"data: {\"type\":\"response.completed\",\"response\":{}}",
+		"",
+	}, "\n")
+	var events []ToolEvent
+	result, err := readResponseStream(200, strings.NewReader(sseBody), func(delta Delta) {
+		if delta.Tool != nil {
+			events = append(events, *delta.Tool)
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Text != "好" {
+		t.Fatalf("text = %q", result.Text)
+	}
+	want := []ToolEvent{
+		{Kind: "web_search", State: "in_progress"},
+		{Kind: "web_search", State: "searching"},
+		{Kind: "web_search", State: "completed"},
+		{Kind: "code_interpreter", State: "interpreting"},
+	}
+	if len(events) != len(want) {
+		t.Fatalf("工具事件 = %+v，想要 %+v", events, want)
+	}
+	for i := range want {
+		if events[i] != want[i] {
+			t.Fatalf("第 %d 个工具事件 = %+v，想要 %+v", i, events[i], want[i])
+		}
+	}
+}

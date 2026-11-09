@@ -33,6 +33,7 @@ import {
   nativeToolLabel,
   nativeToolsLabel,
   nativeToolsTitle,
+  toolRunHint,
   groupModelsByProvider,
   providerChoices,
   modelChoicesFor,
@@ -4427,4 +4428,14 @@ test("左栏：VApp + VNavigationDrawer（桌面是布局列，移动端是抽�
   assert.match(css, /#sessions-bar\.v-navigation-drawer \{[^}]*position:\s*relative !important/, "桌面抽屉没变成布局列");
   assert.match(css, /#sessions-bar > \.v-navigation-drawer__content \{[^}]*display:\s*flex[^}]*flex-direction:\s*column/, "抽屉内容没接上旧 flex 布局");
   assert.match(css, /#sessions-bar\.collapsed \{[^}]*translateX\(-102%\) !important/, "移动端收起没有滑出（被 inline transform 压住）");
+});
+
+test("工具状态：上游 kind/state 翻成一句人话", () => {
+  assert.equal(toolRunHint({ kind: "web_search", state: "searching" }), "正在搜索网页…");
+  assert.equal(toolRunHint({ kind: "web_search", state: "completed" }), "网页搜索完成，正在整理结果…");
+  assert.equal(toolRunHint({ kind: "x_search", state: "searching" }), "正在搜索 X…");
+  // xAI 的代码执行事件名是 code_interpreter，工具 id 是 code_execution。
+  assert.equal(toolRunHint({ kind: "code_interpreter", state: "interpreting" }), "正在执行代码…");
+  assert.equal(toolRunHint({ kind: "code_execution", state: "in_progress" }), "正在调用代码执行…");
+  assert.equal(toolRunHint(null), "");
 });

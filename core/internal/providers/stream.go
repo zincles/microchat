@@ -30,6 +30,15 @@ import (
 type Delta struct {
 	Text      string
 	Reasoning string
+	// Tool：服务端工具的状态变化（只有 kind/state，不产生正文）。ok=nil 表示这帧不是工具事件。
+	Tool *ToolEvent
+}
+
+// ToolEvent：服务端工具的一次状态变化（xAI Responses 的 *_call.in_progress/searching/completed）。
+// `Kind` 用上游事件里的名字（web_search / x_search / code_interpreter …），界面负责翻成人话。
+type ToolEvent struct {
+	Kind  string
+	State string
 }
 
 // Result：一次流式调用的结局 —— **整段**正文 + 整段思考 + 归一化后的用量。
@@ -314,6 +323,34 @@ func readStream(status int, body io.Reader, onDelta func(Delta)) (Result, error)
 	return result, nil
 }
 
+// toolEventFromType：从 `response.<kind>_call.<state>` 认出服务端工具状态。
+//
+// xAI 实测（2026-11-09）：
+//   - web_search: response.web_search_call.in_progress / .searching / .completed
+//   - code_execution: 事件名是 response.code_interpreter_call.*（kind 原样报 code_interpreter）
+//
+// 只认以点结尾的三段式，别把 `response.completed` / `..._call_code.delta` 误认成工具。
+func toolEventFromType(eventType string) *ToolEvent {
+	const prefix = "response."
+	if !strings.HasPrefix(eventType, prefix) {
+		return nil
+	}
+	rest := strings.TrimPrefix(eventType, prefix)
+	for _, state := range []string{"in_progress", "searching", "interpreting", "completed"} {
+		suffix := "." + state
+		if !strings.HasSuffix(rest, suffix) {
+			continue
+		}
+		kind := strings.TrimSuffix(rest, suffix)
+		kind = strings.TrimSuffix(kind, "_call")
+		if kind == "" || kind == "reasoning" || kind == "message" {
+			return nil
+		}
+		return &ToolEvent{Kind: kind, State: state}
+	}
+	return nil
+}
+
 // readResponseStream：Response 协议的 SSE 解析（照 Pi `processResponsesStream` 全套事件，
 // **先只做文本**：`response.output_text.delta` → 正文）。
 //
@@ -382,6 +419,14 @@ func readResponseStream(status int, body io.Reader, onDelta func(Delta)) (Result
 				log.Printf("providers: response incomplete（照 completed 收工，原因见帧）")
 			}
 		default:
+			// 工具调用：response.web_search_call.in_progress / .searching / .completed
+			// （X 搜索同理；代码执行的上游事件名是 code_interpreter_call）。
+			if event := toolEventFromType(envelope.Type); event != nil {
+				if onDelta != nil {
+					onDelta(Delta{Tool: event})
+				}
+				continue
+			}
 			// created/output_item.added/part.done/function_call_arguments/custom_tool_call_input/
 			// output_item.done 等：现在只做文本，别的都跳过。
 		}

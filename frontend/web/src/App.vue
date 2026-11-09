@@ -1449,6 +1449,7 @@ const activeTurnPolls = new Set();
 
 // applyTurnStream：把一次 status+slice 并进显示与打字机；返回新游标。
 function applyTurnStream(st, slice, cur, row) {
+  row.tool = st.tool ?? null;
   const merged = mergeStreamSlice(
     { text: vueStream.value.text ?? "", reasoning: vueStream.value.reasoning ?? "" }, cur, slice);
   vueStream.value.text = merged.text;
@@ -1569,6 +1570,7 @@ async function pollTurn(sid, turnID, existing = null) {
     : { who: "助手", role: "assistant", _stream: true, stream: true, content: "", reasoning: "", id: tmpKey() };
   if (!m.stream) m.stream = true;
   m.phase = "waiting";
+  m.tool = null;
   if (!vueMessages.value.includes(m)) vueMessages.value.push(m);
   vueStream.value = { id: turnID, text: "", reasoning: "" };
   resetTypewriter();
@@ -2130,6 +2132,7 @@ onUnmounted(() => {
               :is-last="!!row.msg.messageId && row.msg.messageId === lastMsgId"
               :streaming="!!row.msg.stream || isLive(row.msg)"
               :phase="String(row.msg.phase || '')"
+              :tool="row.msg.tool"
               :usage="row.msg.usage"
               :reroll="row.msg.messageId && rerollState.active && rerollState.target_message_id === row.msg.messageId ? rerollState : null"
               @edit="onBubbleEdit"

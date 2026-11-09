@@ -211,6 +211,9 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 		ThinkingLevel: session.ThinkingLevel,
 		Tools:         s.availableTools(session, chosen),
 	}, localReply(chosen), func(delta providers.Delta) {
+		if delta.Tool != nil {
+			s.Turns.SetTool(sessionID, token, delta.Tool.Kind, delta.Tool.State)
+		}
 		if delta.Text != "" {
 			if firstTextAt.IsZero() {
 				firstTextAt = time.Now()

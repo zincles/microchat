@@ -44,6 +44,38 @@ export function nativeToolsTitle(ids?: string[] | null): string {
   return `内置工具：${list.map(nativeToolLabel).join("、")}`;
 }
 
+// toolRunHint：生成过程中“此刻在执行哪个服务端工具”的一句话。
+// 后端只给上游原样的 kind/state；翻人话只在这里（与 nativeToolLabel 同一层）。
+// xAI 的代码执行事件名是 code_interpreter（工具 id 是 code_execution），两种都认。
+export type ToolRun = { kind: string; state: string } | null | undefined;
+const TOOL_KIND_LABEL: Record<string, string> = {
+  web_search: "网页搜索",
+  x_search: "X 搜索",
+  code_interpreter: "代码执行",
+  code_execution: "代码执行",
+};
+const TOOL_KIND_VERB: Record<string, string> = {
+  web_search: "搜索网页",
+  x_search: "搜索 X",
+  code_interpreter: "执行代码",
+  code_execution: "执行代码",
+};
+export function toolRunHint(tool?: ToolRun): string {
+  const kind = String(tool?.kind ?? "").trim();
+  if (!kind) return "";
+  const label = TOOL_KIND_LABEL[kind] || kind;
+  const verb = TOOL_KIND_VERB[kind] || `调用 ${label}`;
+  switch (String(tool?.state ?? "")) {
+    case "searching":
+    case "interpreting":
+      return `正在${verb}…`;
+    case "completed":
+      return `${label}完成，正在整理结果…`;
+    default:
+      return `正在调用${label}…`;
+  }
+}
+
 // providerDisplayName：渠道在界面上的显示名 —— **别名优先**，空则沿用旧回退（name → id）。
 // 它只负责显示 / 搜索；会话、模型、路由、请求参数里永远还是 `id`。
 export function providerDisplayName(p?: { alias?: string | null; name?: string | null; id?: string | null } | null): string {

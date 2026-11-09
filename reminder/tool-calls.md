@@ -93,6 +93,25 @@
 
 所以：**不要在 chat/completions 上发 xAI 的 `web_search`/`x_search`/`code_execution`**；它们只在 Responses 端点有效。我们的 `availableTools` 也只在 `openai-response` 协议下生成，chat 协议不发。
 
+### 工具执行状态（2026-11-09 接进界面）
+
+xAI 在 Agent Tools 执行期间会发一串状态事件（实测 SSE）：
+
+```text
+response.web_search_call.in_progress
+response.web_search_call.searching
+response.web_search_call.completed
+response.code_interpreter_call.in_progress / .interpreting / .completed
+```
+
+（X 搜索同理，类型名是 `x_search_call`；代码执行在工具 id 上叫 `code_execution`，事件名却是 `code_interpreter_call`。）
+
+`providers.readResponseStream` 把它们折成 `Delta.Tool{kind,state}`，`chat` 写进 `turn`，于是
+`GET /status` 与 `/turn/events` 的 `status.tool` 在正文还没到时就有值；气泡把它翻成
+「正在搜索网页… / 网页搜索完成，正在整理结果…」。正文第一段一到，`AppendContent` 就清掉这格
+（不是等整轮结束）。这解决的是「上游在搜，界面像卡住几十秒」。
+
+
 - **服务端工具已接**（2026-11-09）：模型规则派生的 `server_tools` 在 OpenAI **Response** 协议下
   作为 `{"type":"x_search"}` / `{"type":"web_search"}` / `{"type":"code_execution"}` 进请求体；
   命中会话 `native_tools_disabled` 的扣掉。xAI 真发实测 200（2026-11-09），服务端自己执行；

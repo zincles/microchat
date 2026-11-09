@@ -60,6 +60,16 @@ type RerollStatus struct {
 
 func (s *RerollStatus) IsRunning() bool { return s != nil && s.State == "running" }
 
+// ToolStatus：这一轮此刻在调用哪个**服务端工具**（xAI 的 web_search / x_search / code_execution）。
+//
+// 只有服务端工具会有它（客户端 function tool 的调用要落历史，不在这里）；它是**流细节**，
+// 与正文一样只服务界面，不进库。`state` 是上游原样给的那几个词（in_progress / searching /
+// interpreting / completed），前端负责翻成人话。
+type ToolStatus struct {
+	Kind  string `json:"kind"`
+	State string `json:"state"`
+}
+
 // Status：`GET /sessions/{id}/status` 的响应（字段顺序即契约）。
 type Status struct {
 	Phase         Phase          `json:"phase"`
@@ -68,6 +78,7 @@ type Status struct {
 	Chars         int            `json:"chars"`
 	ThinkingChars int            `json:"thinking_chars"`
 	Error         string         `json:"error,omitempty"`
+	Tool          *ToolStatus    `json:"tool,omitempty"`
 	Compact       *CompactStatus `json:"compact,omitempty"`
 	Reroll        *RerollStatus  `json:"reroll,omitempty"`
 }
@@ -90,6 +101,8 @@ type entry struct {
 	thinking  strings.Builder
 	err       string
 	compact   *CompactStatus
+	// tool：当前服务端工具（同一时刻只显示最近一个；上游串行调用时后面的会覆盖前面的）。
+	tool *ToolStatus
 	// reroll：这个会话此刻有没有在摇（**与轮次共用同一把闸**：一方在跑，另一方就进不来）。
 	reroll        *RerollStatus
 	rerollStarted time.Time
@@ -125,6 +138,10 @@ func (r *Registry) Status(sessionID string) Status {
 		Phase: item.phase, MessageID: item.messageID,
 		Chars: item.text.Len(), ThinkingChars: item.thinking.Len(),
 		Error: item.err, Compact: item.compact,
+	}
+	if item.tool != nil {
+		tool := *item.tool
+		status.Tool = &tool
 	}
 	if item.phase.IsBusy() {
 		status.ElapsedMS = time.Since(item.started).Milliseconds()
@@ -185,6 +202,7 @@ func (r *Registry) BeginReroll(sessionID string) (uint64, error) {
 	}
 	item.text.Reset()
 	item.thinking.Reset()
+	item.tool = nil
 	item.reroll = &RerollStatus{State: "running"}
 	item.rerollStarted = time.Now()
 	item.token = r.nextToken
@@ -206,6 +224,7 @@ func (r *Registry) FinishReroll(sessionID string, token uint64, failure string) 
 	// 候选流的缓冲到此为止（客户端在 running 翻 false 时收工；留着只会误导下一次读）。
 	item.text.Reset()
 	item.thinking.Reset()
+	item.tool = nil
 	if failure == "" {
 		item.reroll.State = "done"
 		item.reroll.Error = ""
@@ -304,6 +323,23 @@ func (r *Registry) AppendReasoning(sessionID string, token uint64, delta string)
 	return r.append(sessionID, token, delta, true)
 }
 
+// SetTool：记下当前正在调用的服务端工具（令牌对不上 / 已经收工就不收）。
+//
+// 同一时刻只保留最近一个：上游的搜索/代码调用是串行的，界面上只需要知道"现在在干什么"。
+func (r *Registry) SetTool(sessionID string, token uint64, kind, state string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	item := r.lookup(sessionID)
+	if item == nil || item.token != token {
+		return false
+	}
+	if item.phase == PhaseIdle && !item.reroll.IsRunning() {
+		return false
+	}
+	item.tool = &ToolStatus{Kind: kind, State: state}
+	return true
+}
+
 func (r *Registry) append(sessionID string, token uint64, delta string, thinking bool) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -319,6 +355,8 @@ func (r *Registry) append(sessionID string, token uint64, delta string, thinking
 		item.thinking.WriteString(delta)
 	} else {
 		item.text.WriteString(delta)
+		// 正文一到，工具状态这一格就收工（"网页搜索完成，正在整理结果"到此为止）。
+		item.tool = nil
 	}
 	if item.phase == PhasePending {
 		item.phase = PhaseStreaming
@@ -368,6 +406,7 @@ func (r *Registry) Finish(sessionID string, token uint64, failure string) {
 	}
 	item.elapsed = time.Since(item.started)
 	item.cancel = nil
+	item.tool = nil
 	if failure == "" {
 		item.phase = PhaseIdle
 		item.err = ""

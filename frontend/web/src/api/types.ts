@@ -62,6 +62,11 @@ export interface Session {
   updated_at: number;
 }
 
+export interface ToolStatus {
+  kind: string;
+  state: string;
+}
+
 export interface TurnStatus {
   phase: TurnPhase;
   message_id?: string;
@@ -69,6 +74,8 @@ export interface TurnStatus {
   chars: number;
   thinking_chars: number;
   error?: string;
+  /** 当前服务端工具（xAI web_search / x_search / code_execution），只服务生成中的提示。 */
+  tool?: ToolStatus;
 }
 
 export interface CompactStatus {

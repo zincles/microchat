@@ -156,11 +156,17 @@ func (s *Server) turnEvents(w http.ResponseWriter, r *http.Request) {
 	defer ticker.Stop()
 	lastText, lastThink := -1, -1
 	lastPhase := turn.Phase("")
+	lastTool := ""
 	var lastStatus time.Time
 	for {
 		status := s.chat.Status(sid)
 		slice := s.chat.StreamSince(sid, from, thinkFrom)
-		changed := slice.Next != lastText || slice.ThinkNext != lastThink || status.Phase != lastPhase
+		toolKey := ""
+		if status.Tool != nil {
+			toolKey = status.Tool.Kind + "\x00" + status.Tool.State
+		}
+		changed := slice.Next != lastText || slice.ThinkNext != lastThink ||
+			status.Phase != lastPhase || toolKey != lastTool
 		if changed || time.Since(lastStatus) >= 500*time.Millisecond {
 			payload, err := json.Marshal(TurnPoll{Status: status, Slice: slice})
 			if err != nil {
@@ -173,6 +179,7 @@ func (s *Server) turnEvents(w http.ResponseWriter, r *http.Request) {
 			from, thinkFrom = slice.Next, slice.ThinkNext
 			lastText, lastThink = slice.Next, slice.ThinkNext
 			lastPhase = status.Phase
+			lastTool = toolKey
 			lastStatus = time.Now()
 		}
 		if !status.Phase.IsBusy() {

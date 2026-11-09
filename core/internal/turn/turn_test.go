@@ -224,3 +224,24 @@ func TestAttachOnLiveTurnDoesNotCancel(t *testing.T) {
 		t.Fatal("挂上之后这一趟还是自己的")
 	}
 }
+
+func TestToolStatusLifecycle(t *testing.T) {
+	registry := NewRegistry()
+	token, err := registry.Begin("s", "m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !registry.SetTool("s", token, "web_search", "searching") {
+		t.Fatal("SetTool 该收下当前令牌")
+	}
+	status := registry.Status("s")
+	if status.Tool == nil || status.Tool.Kind != "web_search" || status.Tool.State != "searching" {
+		t.Fatalf("status.tool = %+v", status.Tool)
+	}
+	if !registry.AppendContent("s", token, "好了") {
+		t.Fatal("AppendContent 该收下当前令牌")
+	}
+	if got := registry.Status("s").Tool; got != nil {
+		t.Fatalf("正文一到工具状态就该清掉：%+v", got)
+	}
+}
