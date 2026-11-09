@@ -551,11 +551,16 @@ func TestListMessageRangesBatchesAndDeduplicates(t *testing.T) {
 func TestMessageMetadataRoundTrip(t *testing.T) {
 	st := openTemp(t)
 	seedSession(t, st, "s1", "m1")
-	inserted, err := st.InsertMessage(model.Message{
+	inserted, err := st.InsertMessageWithTools(model.Message{
 		ID: "a1", SessionID: "s1", Role: model.RoleAssistant,
 		Kind: model.MessageKindToolRun, Status: model.MessageStatusDone,
 		ToolsSnapshot: []string{"web_search"}, Content: "结果",
-	})
+	}, []model.MessageTool{{
+		Source: "server", ToolName: "web_search", ItemID: "ws_1",
+		Queries: []string{"xAI news"},
+		Sources: []model.MessageToolSource{{Type: "url", URL: "https://example.com/a", Title: "A"}},
+		Status:  "done",
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -575,5 +580,29 @@ func TestMessageMetadataRoundTrip(t *testing.T) {
 	if got.Kind != model.MessageKindToolRun || got.Status != model.MessageStatusDone ||
 		len(got.ToolsSnapshot) != 1 || got.ToolsSnapshot[0] != "web_search" {
 		t.Fatalf("got = %+v", got)
+	}
+	if len(got.Tools) != 1 || got.Tools[0].ItemID != "ws_1" || len(got.Tools[0].Sources) != 1 {
+		t.Fatalf("tools = %+v", got.Tools)
+	}
+	if got.Tools[0].Sources[0].URL != "https://example.com/a" {
+		t.Fatalf("source = %+v", got.Tools[0].Sources[0])
+	}
+	copied, err := st.CopySession("s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	copiedMessages, err := st.ListMessages(copied.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var copiedAssistant model.Message
+	for _, message := range copiedMessages {
+		if message.Role == model.RoleAssistant {
+			copiedAssistant = message
+		}
+	}
+	if copiedAssistant.Kind != model.MessageKindToolRun || len(copiedAssistant.Tools) != 1 ||
+		copiedAssistant.Tools[0].Sources[0].URL != "https://example.com/a" {
+		t.Fatalf("copy tools = %+v", copiedAssistant)
 	}
 }

@@ -9,7 +9,7 @@ import { uuidv7 } from "./utils/ids.ts";
 import { buildCompactTree } from "./utils/tree.ts";
 import {
   buildChatRows, computeSegments, windowStart, prevWindowStart, alignWindowFrom, olderCount, runsToFetch, seededMissingRuns,
-  rerollTargetLive, bubbleText, editRerollTarget, latestPromptFor,
+  rerollTargetLive, bubbleText, editRerollTarget, latestPromptFor, toolSources,
 } from "./utils/chatrows.ts";
 import { applyBackground } from "./utils/background.ts";
 import { installViewportFit } from "./utils/viewport.ts";
@@ -405,6 +405,8 @@ function toRow(m) {
     kind: m.kind || "chat",
     status: m.status || "done",
     tools_snapshot: m.tools_snapshot || [],
+    tools: m.tools || [],
+    sources: toolSources(m.tools),
     idx: m.idx, // 服务端派生的序号（编号就认它）
     role: m.role,
     content: m.content,

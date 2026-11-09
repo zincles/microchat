@@ -86,6 +86,9 @@ func (s *Store) migrate() error {
 	if err := s.ensureMessageMetadata(); err != nil {
 		return err
 	}
+	if err := s.ensureMessageTools(); err != nil {
+		return err
+	}
 	return s.ensureTavernPresets()
 }
 
@@ -164,4 +167,27 @@ func (s *Store) UserVersion() (int, error) {
 		return 0, err
 	}
 	return version, nil
+}
+
+// ensureMessageTools：老库补 message_tools 表（幂等；新库 001 里也有）。
+func (s *Store) ensureMessageTools() error {
+	_, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS message_tools (
+  id         TEXT PRIMARY KEY,
+  message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  seq        INTEGER NOT NULL,
+  source     TEXT NOT NULL DEFAULT 'server',
+  tool_name  TEXT NOT NULL,
+  item_id    TEXT,
+  queries    TEXT NOT NULL DEFAULT '[]',
+  sources    TEXT NOT NULL DEFAULT '[]',
+  arguments  TEXT NOT NULL DEFAULT '',
+  result     TEXT NOT NULL DEFAULT '',
+  status     TEXT NOT NULL DEFAULT 'done',
+  created_at INTEGER NOT NULL
+)`)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec("CREATE INDEX IF NOT EXISTS message_tools_by_message ON message_tools(message_id, seq)")
+	return err
 }

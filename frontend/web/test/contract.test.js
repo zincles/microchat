@@ -9,7 +9,7 @@ import { parseCommand, filterCommands, COMMAND_META } from "../src/utils/command
 import { uuidv7 } from "../src/utils/ids.ts";
 import { groupSessions, SESSION_GROUP_LABELS } from "../src/utils/sessionGroups.ts";
 import { buildCompactTree, treeTotals } from "../src/utils/tree.ts";
-import { buildChatRows, rerollTargetLive, bubbleText, editRerollTarget, latestPromptFor, seededMissingRuns } from "../src/utils/chatrows.ts";
+import { buildChatRows, rerollTargetLive, bubbleText, editRerollTarget, latestPromptFor, seededMissingRuns, toolSources } from "../src/utils/chatrows.ts";
 import { resetChrome, stepChrome } from "../src/utils/chrome.ts";
 import { typewriterDuration, revealCount, TYPEWRITER_DEFAULT_MS, TYPEWRITER_MIN_MS, TYPEWRITER_MAX_MS } from "../src/utils/typewriter.ts";
 import { computeViewportFit } from "../src/utils/viewport.ts";
@@ -4451,4 +4451,16 @@ test("来源标签：引用序号退回域名，正常标题照用", () => {
   assert.equal(sourceLabel("https://www.example.com/a", "1"), "example.com");
   assert.equal(sourceLabel("https://example.com/a", "Example News"), "Example News");
   assert.equal(sourceLabel("not-a-url"), "not-a-url");
+});
+
+test("工具来源：多次搜索合并时按 URL 去重", () => {
+  const sources = toolSources([
+    { sources: [{ url: "https://a.example/1", title: "A" }, { url: "https://b.example/2" }] },
+    { sources: [{ url: "https://a.example/1", title: "A2" }, { url: "https://c.example/3" }] },
+  ]);
+  assert.deepEqual(sources.map((source) => source.url), [
+    "https://a.example/1", "https://b.example/2", "https://c.example/3",
+  ]);
+  assert.equal(sources[0].title, "A");
+  assert.deepEqual(toolSources(null), []);
 });

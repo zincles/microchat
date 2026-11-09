@@ -358,6 +358,20 @@ func (s *Store) CopySession(sessionID string) (model.Session, error) {
 			remapID(message.SummaryID, summaryIDOf)); err != nil {
 			return model.Session{}, err
 		}
+		for _, tool := range message.Tools {
+			toolID, err := newID()
+			if err != nil {
+				return model.Session{}, err
+			}
+			if _, err := tx.Exec(
+				`INSERT INTO message_tools
+				   (id, message_id, seq, source, tool_name, item_id, queries, sources, arguments, result, status, created_at)
+				 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)`,
+				toolID, messageIDs[index], tool.Seq, tool.Source, tool.ToolName, nullableText(tool.ItemID),
+				mustJSON(tool.Queries), mustJSON(tool.Sources), tool.Arguments, tool.Result, tool.Status, tool.CreatedAt); err != nil {
+				return model.Session{}, err
+			}
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return model.Session{}, err

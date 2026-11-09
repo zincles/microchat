@@ -30,6 +30,15 @@ export interface ChatMessage {
   kind?: "chat" | "tool_run";
   status?: "done" | "canceled" | "failed" | "interrupted";
   tools_snapshot?: string[];
+  tools?: {
+    id?: string;
+    source?: string;
+    tool_name?: string;
+    item_id?: string;
+    queries?: string[];
+    sources?: { type?: string; url: string; title?: string }[];
+    status?: string;
+  }[];
   who?: string;
   content?: string;
   reasoning?: string;
@@ -40,6 +49,22 @@ export interface ChatMessage {
   tool?: { kind: string; state: string } | null;
   sources?: { type?: string; url: string; title?: string }[];
   [key: string]: unknown;
+}
+
+// toolSources：把一条消息的多个工具来源摊平并按 URL 去重（多次搜索常返回同一批站点）。
+export function toolSources(tools?: {
+  sources?: { type?: string; url: string; title?: string }[];
+}[] | null): { type?: string; url: string; title?: string }[] {
+  const seen = new Set<string>();
+  const out: { type?: string; url: string; title?: string }[] = [];
+  for (const tool of tools || []) {
+    for (const source of tool.sources || []) {
+      if (!source?.url || seen.has(source.url)) continue;
+      seen.add(source.url);
+      out.push(source);
+    }
+  }
+  return out;
 }
 
 export interface ChatSummaryEntry {

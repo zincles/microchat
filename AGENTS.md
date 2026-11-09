@@ -920,6 +920,14 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 
 `id`（生成回复时**受理那一刻**就算好；**顺序就是它**）· `session_id`（FK CASCADE）· `role`（`CHECK IN ('user','assistant')`）· **`kind`**（`chat` / `tool_run`，实际发生过工具调用才 `tool_run`）· **`status`**（`done` / `canceled` / `failed` / `interrupted`）· **`tools_snapshot`**（生成时可用工具名的 JSON 数组，不表示实际调用）· `content`（**存档本体**，`<state>` 块原样留着）· `created_at`
 后四列**只服务显示**（出站/状态/编辑一律不看）：`reasoning` · `reasoning_ms`（受理 → 第一段正文）· `duration_ms` · `usage`（归一化后的 JSON）
+`GET /messages` 的每条还带 **`tools`**（该消息实际发生的工具调用，不占 `idx`、不参与世界状态；来源 UI 刷新后也靠它）。
+
+### `message_tools` —— 一条消息内部的工具调用
+
+`id` · `message_id`（FK CASCADE）· `seq`（消息内部顺序）· `source`（`server` / `client`）· `tool_name` · `item_id`（上游 output item）· `queries`（JSON 数组）· `sources`（JSON 数组：`type/url/title`）· `arguments` / `result` / `status`（`done/canceled/unknown`）· `created_at`
+
+**它不是消息**：不占 `idx`、不参与世界状态、不单独进摘要区间。多条工具调用 = 多条本表行；不要建 `_before` / `_after` 两张表（顺序用 `seq`）。
+xAI 的 `web_search_call` 落这里；DeepSeek 服务端 `web_search` 不接（只支持 v4-pro、无 sources），搜索走客户端 Search/Fetch。
 
 ### `models` —— 发现所得 + 用户覆盖（PK `(provider, upstream_id)`）
 
@@ -982,6 +990,7 @@ DeepSeek / OpenCode GO 直连**确实不报**，所以那一格在那儿永远�
 - 思考回传用 `reasoning_content`（网关照收；deepseek 系没思考补空串、别的系不塞）；`reasoning_effort` 关不掉（下限 low）。
 - **工具不在提示词里**：请求体顶层 `tools` 数组；回话是助手消息里的 `tool_calls`，结果以 `{role:"tool", tool_call_id}` 回填。两条铁律：历史里出现过工具 ⇒ `tools` 参数必须在（哪怕 `[]`）；不认识的字段默认不发。形状/开关/实测见 `reminder/tool-calls.md`。
   **服务端工具已接**（2026-11-09）：模型规则派生的 `server_tools` 在 Responses 协议下作为 `{"type":"x_search"}` 这类声明进请求体，命中会话 `native_tools_disabled` 的扣掉；它们不靠 `allow_tools`（那是给任意 function tool 的默认关闸）。`local_tools` 仍是配置候选 —— 没有工具注册表/执行器，暂不进请求体。
+  **DeepSeek 例外**：`availableTools` 对 DeepSeek 直接返回空（其 Responses `web_search` 只支持 v4-pro、只有 queries 没有 sources；flash 会忽略并吐 `<tool_call>` 文本）。要搜索走客户端 `/v1/tools/search` + `/v1/tools/fetch`。
   ⚠ **xAI 的服务端工具只有 `/responses`**（2026-11-09 真 key 实测）：`/chat/completions` 对 `{"type":"web_search"}` / `{"type":"x_search"}` 直接 **422**（只认 `function` 或 `live_search`），而 `live_search` 虽能过 schema，实际回 **410 "Live search is deprecated. Please switch to the Agent Tools API"**；`/responses` 对三种 Agent Tools 都是 200。
 - **`/debug/last-payload` 必须连请求头一起回显**（打码）—— 不然"为什么 403"只能靠猜。
 

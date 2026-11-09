@@ -40,6 +40,30 @@ const (
 	MessageStatusInterrupted MessageStatus = "interrupted"
 )
 
+// MessageTool：一条 assistant 消息实际发生的一次工具调用（服务端工具或客户端工具）。
+// 它**不是**一条消息：不占 idx、不参与世界状态；`seq` 是消息内部顺序。
+type MessageTool struct {
+	ID        string              `json:"id"`
+	MessageID string              `json:"message_id"`
+	Seq       int                 `json:"seq"`
+	Source    string              `json:"source"` // server / client
+	ToolName  string              `json:"tool_name"`
+	ItemID    string              `json:"item_id,omitempty"`
+	Queries   []string            `json:"queries,omitempty"`
+	Sources   []MessageToolSource `json:"sources,omitempty"`
+	Arguments string              `json:"arguments,omitempty"`
+	Result    string              `json:"result,omitempty"`
+	Status    string              `json:"status,omitempty"`
+	CreatedAt int64               `json:"created_at"`
+}
+
+// MessageToolSource：工具返回的来源（xAI 的 action.sources；DeepSeek 直连 Search 也有）。
+type MessageToolSource struct {
+	Type  string `json:"type,omitempty"`
+	URL   string `json:"url"`
+	Title string `json:"title,omitempty"`
+}
+
 // Message：一条消息 —— **线性会话里的一格**（没有父指针：顺序由 `id` 定）。
 //
 // **字段顺序照抄 Rust 版**（serde 按声明顺序输出 ⇒ 顺序不同 = 字节不同 = 前端可能踩坑）。
@@ -52,7 +76,9 @@ type Message struct {
 	Status MessageStatus `json:"status,omitempty"`
 	// ToolsSnapshot：生成这一条时**可用**的工具名（server + local），不表示实际调用。
 	ToolsSnapshot []string `json:"tools_snapshot,omitempty"`
-	Content       string   `json:"content"` // 存档本体：<state> 块原样留着
+	// Tools：实际发生的工具调用（服务端 / 客户端）；不占 idx。
+	Tools   []MessageTool `json:"tools,omitempty"`
+	Content string        `json:"content"` // 存档本体：<state> 块原样留着
 
 	// 下面四样只服务显示（出站 / 世界状态一律不看它们）
 	Reasoning   string `json:"reasoning,omitempty"`

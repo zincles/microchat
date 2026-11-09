@@ -45,6 +45,22 @@ CREATE TABLE messages (
 );
 -- (session_id, id) = 这条会话的顺序（线性会话里"整条会话"就等于它）+ 取最新一条走它
 CREATE INDEX messages_by_session ON messages(session_id, id);
+-- 一次 assistant 消息内部的工具调用（server / client）；不占消息 idx、不参与世界状态。
+CREATE TABLE message_tools (
+  id         TEXT PRIMARY KEY,
+  message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  seq        INTEGER NOT NULL,
+  source     TEXT NOT NULL DEFAULT 'server',
+  tool_name  TEXT NOT NULL,
+  item_id    TEXT,
+  queries    TEXT NOT NULL DEFAULT '[]',
+  sources    TEXT NOT NULL DEFAULT '[]',
+  arguments  TEXT NOT NULL DEFAULT '',
+  result     TEXT NOT NULL DEFAULT '',
+  status     TEXT NOT NULL DEFAULT 'done',
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX message_tools_by_message ON message_tools(message_id, seq);
 CREATE TABLE models (
   provider        TEXT NOT NULL,
   upstream_id     TEXT NOT NULL,

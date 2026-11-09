@@ -45,8 +45,11 @@ type ToolSource struct {
 // `Kind` 用上游事件里的名字（web_search / x_search / code_interpreter …），界面负责翻成人话。
 // Sources 只在 output_item.done 那一帧有值（action.sources）。
 type ToolEvent struct {
+	ItemID  string
 	Kind    string
 	State   string
+	Query   string
+	Queries []string
 	Sources []ToolSource
 }
 
@@ -365,11 +368,13 @@ func toolEventFromType(eventType string) *ToolEvent {
 func toolEventFromOutputItem(raw string) *ToolEvent {
 	var frame struct {
 		Item struct {
+			ID     string `json:"id"`
 			Type   string `json:"type"`
 			Status string `json:"status"`
 			Action struct {
-				Type    string `json:"type"`
-				Query   string `json:"query"`
+				Type    string   `json:"type"`
+				Query   string   `json:"query"`
+				Queries []string `json:"queries"`
 				Sources []struct {
 					Type  string `json:"type"`
 					URL   string `json:"url"`
@@ -382,7 +387,7 @@ func toolEventFromOutputItem(raw string) *ToolEvent {
 		return nil
 	}
 	kind := strings.TrimSuffix(frame.Item.Type, "_call")
-	if kind == "" || len(frame.Item.Action.Sources) == 0 {
+	if kind == "" {
 		return nil
 	}
 	sources := make([]ToolSource, 0, len(frame.Item.Action.Sources))
@@ -393,10 +398,17 @@ func toolEventFromOutputItem(raw string) *ToolEvent {
 		}
 		sources = append(sources, ToolSource{Type: source.Type, URL: url, Title: source.Title})
 	}
-	if len(sources) == 0 {
+	queries := append([]string{}, frame.Item.Action.Queries...)
+	if strings.TrimSpace(frame.Item.Action.Query) != "" {
+		queries = append([]string{frame.Item.Action.Query}, queries...)
+	}
+	if len(sources) == 0 && len(queries) == 0 {
 		return nil
 	}
-	return &ToolEvent{Kind: kind, State: "completed", Sources: sources}
+	return &ToolEvent{
+		ItemID: strings.TrimSpace(frame.Item.ID), Kind: kind, State: "completed",
+		Query: strings.TrimSpace(frame.Item.Action.Query), Queries: queries, Sources: sources,
+	}
 }
 
 // readResponseStream：Response 协议的 SSE 解析（照 Pi `processResponsesStream` 全套事件，

@@ -206,6 +206,8 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 	wire := providers.FromConfig(chosen.Provider)
 	tools := s.availableTools(session, chosen)
 	toolsUsed := false
+	toolOrder := []string{}
+	toolEvents := map[string]providers.ToolEvent{}
 	result, err := providers.NewClient(wire).Chat(ctx, wire, providers.Request{
 		Model:         session.Model,
 		Messages:      wireMessages(outgoing, reasoningByID),
@@ -216,6 +218,30 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 		if delta.Tool != nil {
 			toolsUsed = true
 			s.Turns.SetTool(sessionID, token, delta.Tool.Kind, delta.Tool.State)
+			if delta.Tool.ItemID != "" {
+				event, exists := toolEvents[delta.Tool.ItemID]
+				if !exists {
+					toolOrder = append(toolOrder, delta.Tool.ItemID)
+					event = *delta.Tool
+				} else {
+					if delta.Tool.Kind != "" {
+						event.Kind = delta.Tool.Kind
+					}
+					if delta.Tool.State != "" {
+						event.State = delta.Tool.State
+					}
+					if delta.Tool.Query != "" {
+						event.Query = delta.Tool.Query
+					}
+					if len(delta.Tool.Queries) > 0 {
+						event.Queries = append([]string{}, delta.Tool.Queries...)
+					}
+					if len(delta.Tool.Sources) > 0 {
+						event.Sources = append([]providers.ToolSource{}, delta.Tool.Sources...)
+					}
+				}
+				toolEvents[delta.Tool.ItemID] = event
+			}
 			if len(delta.Tool.Sources) > 0 {
 				sources := make([]turn.Source, 0, len(delta.Tool.Sources))
 				for _, source := range delta.Tool.Sources {
@@ -253,8 +279,20 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 	if toolsUsed {
 		kind = model.MessageKindToolRun
 	}
-	message := s.assistantMessage(session, replyID, token, chosen, result, firstTextAt, started, kind, toolNames(tools))
-	if _, err := s.Store.InsertMessage(message); err != nil {
+	messageTools := make([]model.MessageTool, 0, len(toolOrder))
+	for _, itemID := range toolOrder {
+		event := toolEvents[itemID]
+		sources := make([]model.MessageToolSource, 0, len(event.Sources))
+		for _, source := range event.Sources {
+			sources = append(sources, model.MessageToolSource{Type: source.Type, URL: source.URL, Title: source.Title})
+		}
+		messageTools = append(messageTools, model.MessageTool{
+			Source: "server", ToolName: event.Kind, ItemID: event.ItemID,
+			Queries: event.Queries, Sources: sources, Status: "done",
+		})
+	}
+	message := s.assistantMessage(session, replyID, token, chosen, result, firstTextAt, started, kind, toolNames(tools), messageTools)
+	if _, err := s.Store.InsertMessageWithTools(message, messageTools); err != nil {
 		s.Turns.Finish(sessionID, token, err.Error())
 		guard.Fail(err.Error())
 		return
@@ -279,11 +317,12 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 // 思考**留不留档**由渠道的 `store_reasoning` 决定：它只服务动画与回看，不参与任何计算；
 // 关掉它时连 `reasoning_ms` 一起不写（没有"这个思考"可言）。
 func (s *Service) assistantMessage(session model.Session, replyID string, token uint64, chosen providers.Backend,
-	result providers.Result, firstTextAt time.Time, started time.Time, kind model.MessageKind, tools []string) model.Message {
+	result providers.Result, firstTextAt time.Time, started time.Time, kind model.MessageKind, tools []string, messageTools []model.MessageTool) model.Message {
 	durationMS := time.Since(started).Milliseconds()
 	message := model.Message{
 		ID: replyID, SessionID: session.ID, Role: model.RoleAssistant,
 		Kind: kind, Status: model.MessageStatusDone, ToolsSnapshot: tools,
+		Tools:   messageTools,
 		Content: result.Text, DurationMS: &durationMS, Usage: result.Usage,
 	}
 	if chosen.StoresReasoning() {
@@ -484,6 +523,11 @@ func (s *Service) buildWire(session model.Session, outgoing []state.Outgoing, re
 // 还没有工具注册表/执行器 ⇒ 不发，等定义落地后再在这里接 function tool 声明。
 func (s *Service) availableTools(session model.Session, chosen providers.Backend) []providers.Tool {
 	if chosen.Name == providers.BackendFallback || chosen.Name == providers.BackendDummy {
+		return nil
+	}
+	// DeepSeek 的 Responses web_search 只支持 v4-pro，而且只给 queries 不给 sources；
+	// flash 会忽略它并把工具调用当正文吐出来。统一不走服务端工具，搜索走客户端 Search API。
+	if chosen.Provider.Vendor == "deepseek" || chosen.Provider.Kind == "deepseek" {
 		return nil
 	}
 	// 服务端工具只有 OpenAI Response 协议能表达。

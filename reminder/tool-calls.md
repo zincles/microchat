@@ -103,9 +103,16 @@
   xAI 当前 expected 集合：`web_search` / `x_search` / `image_generation` / `collections_search` /
   `file_search` / `code_execution` / `code_interpreter` / `mcp` / `shell` / `tool_search`。
   其中需要额外参数的工具（file_search/mcp 等）不能只发 `{type}`，我们仍只开放已知可裸发的三件。
-- **搜索结果可以显示**：`response.output_item.done` 的 `web_search_call.action.sources` 带 URL
-  （实测；x_search 同理），解析成 `status.sources`，气泡下方列「来源 N」链接；URL 按去重、只收 http(s)。
+- **搜索结果可以显示并落库**：`response.output_item.done` 的 `web_search_call.action.sources` 带 URL
+  （实测；x_search 同理），解析成 `message_tools.sources`；气泡下方列「来源 N」链接，刷新后仍在。
+  一张 `message_tools` 表存所有调用（`seq` 排序），不要 before/after 两张表。
   来源只有 URL，没有摘要/正文 —— 摘要要从最终回答的 citation/正文里看。
+
+- **DeepSeek 的两套搜索不同**（2026-11-10 实测）：
+  - 独立 `POST /v1/tools/search` / `/v1/tools/fetch`：客户端 API，返回 `results[]`（title/url/snippet/summary/content/date/authority）；适合做本地 `web_search` 工具。
+  - Responses 的 `tools:[{"type":"web_search"}]`：服务端工具，仅 `deepseek-v4-pro` 生效；`action` 是 `queries[]`，**没有 sources**；`deepseek-flash` 会忽略它并把 `<tool_call>` 当正文吐出来。
+  - `/chat/completions` 不接受 `web_search`（422，只认 function）。
+  - 因此 `availableTools` 对 DeepSeek 返回空；要联网就接客户端 Search/Fetch。
 - 来源与工具状态都是**流细节**：正文到了工具行消失，来源留到一轮收尾；不落库。
 
 ### 工具执行状态（2026-11-09 接进界面）

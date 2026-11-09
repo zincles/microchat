@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -93,7 +94,52 @@ func (s *Store) allMessages(sessionID string) ([]model.Message, error) {
 		return nil, err
 	}
 	IndexMessages(messages)
+	if err := s.attachToolsLocked(sessionID, messages); err != nil {
+		return nil, err
+	}
 	return messages, nil
+}
+
+// attachToolsLocked：一次查完整条会话的工具记录，按 message_id 挂到消息上（调用方持锁）。
+// 工具记录**不是消息**：不占 idx、不参与状态；这里只给显示/压缩/导出用。
+func (s *Store) attachToolsLocked(sessionID string, messages []model.Message) error {
+	if len(messages) == 0 {
+		return nil
+	}
+	rows, err := s.db.Query(
+		`SELECT t.id, t.message_id, t.seq, t.source, t.tool_name, t.item_id,
+		        t.queries, t.sources, t.arguments, t.result, t.status, t.created_at
+		   FROM message_tools t
+		   JOIN messages m ON m.id = t.message_id
+		  WHERE m.session_id = ?1
+		  ORDER BY t.message_id, t.seq`, sessionID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	byMessage := map[string][]model.MessageTool{}
+	for rows.Next() {
+		var tool model.MessageTool
+		var itemID sql.NullString
+		var queries, sources []byte
+		if err := rows.Scan(&tool.ID, &tool.MessageID, &tool.Seq, &tool.Source, &tool.ToolName, &itemID,
+			&queries, &sources, &tool.Arguments, &tool.Result, &tool.Status, &tool.CreatedAt); err != nil {
+			return err
+		}
+		if itemID.Valid {
+			tool.ItemID = itemID.String
+		}
+		_ = json.Unmarshal(queries, &tool.Queries)
+		_ = json.Unmarshal(sources, &tool.Sources)
+		byMessage[tool.MessageID] = append(byMessage[tool.MessageID], tool)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for index := range messages {
+		messages[index].Tools = byMessage[messages[index].ID]
+	}
+	return nil
 }
 
 // ListMessages：这条会话的**全部消息**，按 id 升序。
@@ -233,7 +279,14 @@ func windowSlice(messages []model.Message, window MessageWindow) []model.Message
 // 地址由调用方铸好（**受理那一刻**就发给客户端；顺序也由它定）⇒ 这里不自作主张生成 id。
 // 与 copy 的插入同一条路：同一个事务里插消息 + 把会话的 `updated_at` 往前推
 // （改了内容就该在列表最上面）。
+// InsertMessage：只插消息（工具记录为空）。内部走 InsertMessageWithTools，保持一条写入路径。
 func (s *Store) InsertMessage(message model.Message) (model.Message, error) {
+	return s.InsertMessageWithTools(message, nil)
+}
+
+// InsertMessageWithTools：消息 + 它的工具记录在**同一个事务**里落库。
+// 工具记录不是消息；`message.Tools` 只在返回/显示时挂回。
+func (s *Store) InsertMessageWithTools(message model.Message, tools []model.MessageTool) (model.Message, error) {
 	if message.CreatedAt == 0 {
 		message.CreatedAt = nowMS()
 	}
@@ -262,6 +315,27 @@ func (s *Store) InsertMessage(message model.Message) (model.Message, error) {
 		message.Reasoning, message.ReasoningMS, message.DurationMS, usageArg(message.Usage)); err != nil {
 		return model.Message{}, err
 	}
+	for index := range tools {
+		tool := &tools[index]
+		if tool.ID == "" {
+			tool.ID = fmt.Sprintf("%s-tool-%d", message.ID, index+1)
+		}
+		tool.MessageID = message.ID
+		if tool.Seq <= 0 {
+			tool.Seq = index + 1
+		}
+		if tool.CreatedAt == 0 {
+			tool.CreatedAt = message.CreatedAt
+		}
+		if _, err := tx.Exec(
+			`INSERT INTO message_tools
+			   (id, message_id, seq, source, tool_name, item_id, queries, sources, arguments, result, status, created_at)
+			 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)`,
+			tool.ID, tool.MessageID, tool.Seq, tool.Source, tool.ToolName, nullableText(tool.ItemID),
+			mustJSON(tool.Queries), mustJSON(tool.Sources), tool.Arguments, tool.Result, tool.Status, tool.CreatedAt); err != nil {
+			return model.Message{}, err
+		}
+	}
 	if err := execTouchLocked(tx, "UPDATE sessions SET updated_at = ?1 WHERE id = ?2",
 		message.CreatedAt, message.SessionID); err != nil {
 		return model.Message{}, err
@@ -269,7 +343,15 @@ func (s *Store) InsertMessage(message model.Message) (model.Message, error) {
 	if err := tx.Commit(); err != nil {
 		return model.Message{}, err
 	}
+	message.Tools = tools
 	return message, nil
+}
+
+func nullableText(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
 }
 
 // MessageEdit：改一条消息的字段（nil = 不动）。
