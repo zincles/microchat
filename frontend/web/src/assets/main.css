@@ -912,9 +912,10 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .msg .tool-card-query { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .msg .tool-card-count { margin-left: auto; white-space: nowrap; }
 /* 搜索来源：工具拿回来的 URL；不是正文 citation 的替代，只是让结果可见。 */
-.msg .tool-sources { display: flex; flex-direction: column; gap: 0.18em; margin: 0.2em 0 0.45em; padding-left: 0.85em; border-left: 2px solid var(--md-outline-variant); }
-.msg .tool-sources-title { color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
-.msg .tool-sources a { color: var(--md-primary); font-size: var(--md-type-label-medium); text-decoration: none; overflow-wrap: anywhere; }
+.msg .tool-sources { margin: 0.2em 0 0.45em; padding-left: 0.85em; border-left: 2px solid var(--md-outline-variant); }
+.msg .tool-sources-title { cursor: pointer; color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
+.msg .tool-sources[open] .tool-sources-title { margin-bottom: 0.18em; }
+.msg .tool-sources a { display: block; color: var(--md-primary); font-size: var(--md-type-label-medium); text-decoration: none; overflow-wrap: anywhere; }
 .msg .tool-sources a:hover { text-decoration: underline; }
 /* 标签（2026-10-17 用户点名"显示 正在输出 之类的东西"）：三点呼吸 + 一句暗字，说明这气泡在干活
  * —— 只有点没有字，静太小、也说不清是在输出还是在等。 */

@@ -106,7 +106,7 @@
 - **搜索结果可以显示并落库**：`response.output_item.done` 的 `web_search_call.action.sources` 带 URL
   （实测；x_search 同理），解析成 `message_tools.sources`；气泡下方列「来源 N」链接，刷新后仍在。
   一张 `message_tools` 表存所有调用（`seq` 排序），不要 before/after 两张表；界面卡片显示
-  `tool_name + queries + sources 条数`。
+  `tool_name + queries + sources 条数`，来源清单是可折叠 details，放在正文上方。
   来源只有 URL，没有摘要/正文 —— 摘要要从最终回答的 citation/正文里看。
 
 - **DeepSeek 的两套搜索不同**（2026-11-10 实测）：

@@ -210,17 +210,18 @@ watch(() => props.streaming, (s) => nextTick(() => {
           <span v-if="tool.sources?.length" class="tool-card-count">{{ tool.sources.length }} 条来源</span>
         </div>
       </div>
+      <details v-if="sources.length" class="tool-sources" aria-label="搜索结果">
+        <summary class="tool-sources-title">来源 {{ sources.length }}</summary>
+        <a v-for="source in sources" :key="source.url" :href="source.url" target="_blank" rel="noopener noreferrer">
+          {{ sourceLabel(source.url, source.title) }}
+        </a>
+      </details>
       <div ref="textEl" class="text" v-html="bodyHtml"></div>
       <div v-if="streaming && !content && !reasoning && !toolHint" class="typing" aria-label="正在生成">
         <span></span><span></span><span></span>
         <i class="typing-hint">{{ typingHint }}</i>
       </div>
-      <div v-if="sources.length" class="tool-sources" aria-label="搜索结果">
-        <div class="tool-sources-title">来源 {{ sources.length }}</div>
-        <a v-for="source in sources" :key="source.url" :href="source.url" target="_blank" rel="noopener noreferrer">
-          {{ sourceLabel(source.url, source.title) }}
-        </a>
-      </div>
+
       <div v-if="parts.blocks.length" class="state-blocks">
         <div
           v-for="(b, i) in parts.blocks"
