@@ -33,6 +33,9 @@ const (
 	// PromptFromBuiltin：会话没写、会话的 agent 也没给出提示词（agent 悬空 / 没写 / 只写了空白）
 	// ⇒ 用内置默认 agent 的那句。
 	PromptFromBuiltin PromptSource = "builtin"
+	// PromptFromPreset：Agent 绑定了酒馆预设 ⇒ 生效的 base 不是 Agent 的（预设 entries 自己带 system）。
+	// 会话自己显式写的 system_prompt 仍会覆盖成 PromptFromSession。
+	PromptFromPreset PromptSource = "preset"
 )
 
 // ResolveSystemPrompt：**生效的系统提示词** —— 全仓**唯一一处**解析（会话覆盖 → agent 的（base+段拼装）→ 内置默认）。

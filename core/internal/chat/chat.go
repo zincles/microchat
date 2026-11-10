@@ -803,6 +803,13 @@ func wireMessages(outgoing []state.Outgoing, reasoningByID map[string]string) []
 // 解析本身在 `state.ResolveSystemPrompt`（唯一实现，**永不返回空串**）；这里只是把现读的
 // agent 配置喂给它，没有第二份算法。
 func (s *Service) EffectiveSystemPrompt(session model.Session) (string, state.PromptSource) {
+	// 绑定预设时，Agent 的 base/段不参与；会话自己的显式 system_prompt 仍最高。
+	if _, presetActive := s.promptEntries(session); presetActive {
+		if own := strings.TrimSpace(session.SystemPrompt); own != "" {
+			return own, state.PromptFromSession
+		}
+		return "", state.PromptFromPreset
+	}
 	_, agents, _ := s.files()
 	return state.ResolveSystemPrompt(session, agents)
 }

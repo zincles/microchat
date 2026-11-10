@@ -14,7 +14,7 @@ import (
 // 不变的就是这个形状（`text` + `type`）。
 type promptView struct {
 	Text string `json:"text"`
-	// Type ∈ conversation / agent / builtin：
+	// Type ∈ conversation / agent / preset / builtin：
 	//   conversation = 会话自己写了（`sessions.system_prompt`，覆盖了 agent 的）
 	//   agent        = 用 `agents.json` 里那个 agent 的
 	//   builtin      = 上面两级都没有 ⇒ 代码里的内置默认（`config.BuiltinDefaultAgent`）
@@ -31,6 +31,8 @@ func promptSourceLabel(source state.PromptSource) string {
 		return "conversation"
 	case state.PromptFromAgent:
 		return "agent"
+	case state.PromptFromPreset:
+		return "preset"
 	default:
 		return "builtin"
 	}
