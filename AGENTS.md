@@ -714,6 +714,7 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 | POST | `/tavern/presets` | 原始 JSON 字节（`?name=文件名`） | `TavernPreset` · 201 | **酒馆原始存档**：只校验 `json.Valid`，**绝不 Unmarshal→Marshal**；BLOB 原样落库，导出逐字节一致；上限 32MB；坏 JSON ⇒ 422（不保存） |
 | GET | `/tavern/presets` | — | `[TavernPreset]` | 列表只回元数据（id/filename/size/created_at），**不带正文** |
 | GET | `/tavern/presets/{preset_id}` | — | 原始字节 | **逐字节原样**下载；`Content-Disposition: attachment` + 原文件名；不存在 ⇒ 404 |
+| GET | `/tavern/presets/{preset_id}/preview` | — | `TavernPreview` | **只读解析预览**（2026-11-10）：按 `prompt_order` 展开，回 relative/absolute 条目、跳过原因、未知宏统计；**不建 Agent、不写库、不执行 setvar/getvar** |
 | DELETE | `/tavern/presets/{preset_id}` | — | 204 | 删除原始存档；不存在 ⇒ 404 |
 | POST | `/sessions` | `CreateSessionReq` | `Session` · 201 | **配了 `first_message` 的 agent ⇒ 顺手把首段插成第一条 assistant（idx 1）**。省略字段时取 `config.json` 的 `defaults`；`thinking_level` 可选（空 = 跟随模型默认；非空必须在该模型 `thinking_levels` 里，否则 **422**）；`native_tools_disabled` 可选（[]/省略 = 全按规则启用）；`title` **真生效**（建一条已命名的会话，不必再多发一次 `PATCH`）—— 不给 / `""` ⇒ 标题空着（等首条用户消息自动起名）。**`id`（可选，2026-10-09）**：客户端铸的 UUIDv7 —— 草稿态（web）靠它把"预演的那一发"与"真发的那一发"钉成同一个会话键；给了就用（先校形状 ⇒ 非 v7 **400**、已有 ⇒ **409**），不给 ⇒ 服务端现铸。⚠ **HACK（刻意，全项目唯一允许客户端铸 id 的口子）** —— 动机只有草稿预演那一条，别扩散（消息/摘要的 id 一律服务端铸） |
 | PATCH | `/sessions/{session_id}` | `UpdateSessionReq` | `Session` | 标题 / 模型 / agent / **提示词** / **思考档位** / **`native_tools_disabled`**（`system_prompt` 与 `thinking_level` 都是**指针** ⇒ 没给或 `null` = 不动、`""` = 清掉覆盖/跟随模型默认、非空 = 写入；档位必须在目标模型的 `thinking_levels` 里，否则 **422**；`native_tools_disabled: []` 恢复规则默认，非空 = 关闭这些工具）|
@@ -1459,7 +1460,9 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   ST 导入卡已整块搬到这里（会话管理只留 MicroChat JSON 导入）。
   原始 JSON 存档每行有 **查看**（2026-11-10 加）：只读树形阅读器（`JsonNode` / `TavernJsonViewer`），
   下载原始字节 → 去 BOM → `JSON.parse`，根展开、子节点按需展开；1.5MB 预设不一次铺满 DOM。
-  **仍然只是“看”**：不改写、不转换、不落库；转换器仍是空位。
+  每行还有 **解析预览**：调 `GET /tavern/presets/{id}/preview`，按 `prompt_order` 标出 relative/absolute、
+  depth/order、跳过原因和未知宏；**只算不动**（不建 Agent、不写库、不执行 ST 变量）。
+  **仍然只是“看/预演”**：不改写、不落库；真正的 PromptEntry + Inject 运行时仍是下一步。
 - 设置五 tab：**聊天 / 智能体 / 提示词 / 外观 / 酒馆**（新会话默认设置 2026-11-09 移到「聊天」顶部，不再在会话管理）（2026-11-02 起；会话与渠道不再是设置 tab；酒馆 2026-11-06 加）。聊天 / 智能体 / 提示词/外观的编辑都是 **tab 内二级页**（列表 ⇄ 详情就地切换，`[←]` 返回 —— 2026-10-10 从弹窗改过来，弹窗叠视图的账清了）；**Agent 编辑器的二级页自己也分页签**（2026-10-28 用户：「全挤在一起很丑」）——「基本」（id / 名称 / 首段对话 / 句首贴状态）/「系统提示词」（base + 它的段）/ **每个能力一页**（启用 / Model / 提示词覆盖 / 它的段，页面由 `ABILITY_IDS` 生成 ⇒ 加能力自动多一页），页签条与保存行：**保存那一行在页签外面**（哪一页都能存；藏在某一页里的那种，翻到别的页就找不到保存了）。页签条 **2026-11-06 起是 Vuetify `VTabs`/`VTab` + `VTabsWindow`/`VTabsWindowItem`**（真正的 tabpanel；旧手写 `TabBar.vue` 已删）：设置主栏与 Agent 编辑器同一个模式，`@focus="tab = t.id"` 补上"方向键搬焦点即激活"（Vuetify 的 slide group 只搬焦点，不激活）。「会话设置」（左栏 ☰）是**紧凑对话框**（560px、高随内容）。**Esc 一次只关一层**：二级页开着时设置视图不响应 Esc、会话设置弹窗开着时同理（踩过：两边各监听 document，一下关两层）。**会话管理页**（左栏「会话」入口）= 新会话默认值 + 列表（点进）+ 删除 + 尾部**导入对话**区（`POST /sessions/import-st` 与 `/sessions/import-json` 各一张卡：一句说明 + 按钮 + 隐藏文件框 —— 2026-10-17 用户点名「两种导入混在一起、都乱了」，改成两卡分开、原生 file 框换按钮）。
 - **设置页签顺序有第二个约束**（2026-11-06 用户报「标签页切换行为不太对」）：
   `SETTINGS_TABS` 的显示顺序必须与 `VTabsWindowItem` 的 DOM 顺序一致

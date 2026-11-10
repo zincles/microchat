@@ -57,6 +57,7 @@ import type {
   StreamCursor,
   StreamSlice,
   Summary,
+  TavernPreview,
   TavernPreset,
   TaskBoard,
   TestProviderRequest,
@@ -307,6 +308,7 @@ export function createApi({ base, token = "", fetchFn = fetch }: CreateApiOption
     deleteProvider: (id: string) => call<null>("DELETE", `/providers/${enc(id)}`),
     // 酒馆：原始 JSON 只存字节，列表/删除走 JSON；上传/下载走原始 body（不 JSON 重写）。
     listTavernPresets: () => call<TavernPreset[]>("GET", "/tavern/presets"),
+    tavernPreview: (id: string) => call<TavernPreview>("GET", `/tavern/presets/${enc(id)}/preview`),
     uploadTavernPreset: (file: File) => {
       const name = file.name || "preset.json";
       return callBytes<TavernPreset>("POST", `/tavern/presets?name=${enc(name)}`, file);

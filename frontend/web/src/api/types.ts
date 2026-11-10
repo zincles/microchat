@@ -827,3 +827,36 @@ export interface TavernPreset {
   size: number;
   created_at: number;
 }
+
+export interface TavernPreviewEntry {
+  identifier: string;
+  name: string;
+  role: string;
+  content: string;
+  system_prompt: boolean;
+  position: "relative" | "absolute";
+  depth?: number;
+  order?: number;
+}
+
+export interface TavernPreviewSkipped {
+  identifier: string;
+  name?: string;
+  reason: string;
+}
+
+export interface TavernPreview {
+  name: string;
+  prompt_count: number;
+  order_groups: number;
+  order_character_id?: string;
+  order_entries: number;
+  enabled: number;
+  with_content: number;
+  relative: number;
+  absolute: number;
+  entries: TavernPreviewEntry[];
+  skipped: TavernPreviewSkipped[];
+  macros: MacroUsage[];
+  warnings?: string[];
+}

@@ -90,6 +90,7 @@ func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *ch
 	// 酒馆（2026-11-06）：原始 JSON 存 BLOB，导出逐字节原样；解析是后续独立步骤。
 	s.mux.HandleFunc("GET /api/v1/tavern/presets", s.listTavernPresets)
 	s.mux.HandleFunc("POST /api/v1/tavern/presets", s.createTavernPreset)
+	s.mux.HandleFunc("GET /api/v1/tavern/presets/{preset_id}/preview", s.previewTavernPreset)
 	s.mux.HandleFunc("GET /api/v1/tavern/presets/{preset_id}", s.getTavernPreset)
 	s.mux.HandleFunc("DELETE /api/v1/tavern/presets/{preset_id}", s.deleteTavernPreset)
 	s.mux.HandleFunc("GET /api/v1/config/model-rules", s.getModelRules)
