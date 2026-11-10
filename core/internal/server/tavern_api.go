@@ -9,6 +9,8 @@ import (
 	"path"
 	"strconv"
 	"strings"
+
+	"microchat/internal/config"
 )
 
 // 酒馆原始导入：**只存原始字节**，导出时逐字节原样写出。
@@ -84,12 +86,70 @@ func (s *Server) getTavernPreset(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(data)
 }
 
+// deleteTavernPreset：删原始预设。
+//
+// 2026-11-11 用户定：从有效内容导入的提示词片段带 `preset_id` 来源；删预设时**提醒并可选**
+// 一并删除它们。`?segments=delete` 才删段，`?segments=keep` 明确保留；不带参数且有导入段
+// ⇒ 409（客户端先问用户，别让服务端替人做不可逆决定）。
+// 段还被 Agent / 能力引用 ⇒ 拒绝 —— 删预设不该顺手改别人的人格。
 func (s *Server) deleteTavernPreset(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("preset_id")
+	// 先确认预设真的在：不存在的 id 不该因为遗留的 preset_id 引用而顺手删掉别的数据。
+	preset, _, err := s.store.GetTavernPreset(id)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if preset == nil {
+		writeError(w, http.StatusNotFound, "not_found", "没有这个酒馆预设")
+		return
+	}
+	agents := s.loadAgents()
 	// Agent 绑定的是原始 preset id：删掉会让它静默回落 Agent 提示词 —— 先列出引用者，拒绝。
-	for _, agent := range s.loadAgents().Effective() {
+	for _, agent := range agents.Effective() {
 		if agent.PresetID == id {
 			writeError(w, http.StatusBadRequest, "invalid", "这个预设还被 Agent 引用："+agent.Name)
+			return
+		}
+	}
+	imported := make([]string, 0)
+	for _, segment := range agents.Segments {
+		if segment.Imported && segment.PresetID == id {
+			imported = append(imported, segment.ID)
+		}
+	}
+	mode := strings.TrimSpace(r.URL.Query().Get("segments"))
+	if len(imported) > 0 {
+		switch mode {
+		case "":
+			writeError(w, http.StatusConflict, "conflict",
+				"这个预设导入了 "+strconv.Itoa(len(imported))+" 个提示词片段；用 ?segments=delete 一并删除，或 ?segments=keep 保留")
+			return
+		case "delete":
+			if users := segmentUsers(agents, imported); len(users) > 0 {
+				writeError(w, http.StatusBadRequest, "invalid",
+					"导入的提示词片段还被 Agent 引用（"+strings.Join(users, "、")+"）—— 先摘引用再删")
+				return
+			}
+			keep := make([]config.Segment, 0, len(agents.Segments))
+			drop := make(map[string]bool, len(imported))
+			for _, sid := range imported {
+				drop[sid] = true
+			}
+			for _, segment := range agents.Segments {
+				if !drop[segment.ID] {
+					keep = append(keep, segment)
+				}
+			}
+			agents.Segments = keep
+			if err := s.saveAgents(agents); err != nil {
+				writeStoreError(w, err)
+				return
+			}
+		case "keep":
+			// 保留片段；PresetID/PresetName 是来源快照，留着仍能说清从哪来。
+		default:
+			writeError(w, http.StatusBadRequest, "invalid", "segments 只能是 delete 或 keep")
 			return
 		}
 	}
@@ -103,4 +163,48 @@ func (s *Server) deleteTavernPreset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// segmentUsers：哪些 Agent（基座或能力追加段）引用了这些提示词段。名字优先，空名字回 id。
+func segmentUsers(agents config.AgentsConfig, ids []string) []string {
+	wanted := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		wanted[id] = true
+	}
+	users := make([]string, 0)
+	seen := make(map[string]bool)
+	for _, agent := range agents.Agents {
+		used := false
+		for _, ref := range agent.Segments {
+			if wanted[ref] {
+				used = true
+				break
+			}
+		}
+		if !used {
+			for _, ability := range agent.Abilities {
+				for _, ref := range ability.Segments {
+					if wanted[ref] {
+						used = true
+						break
+					}
+				}
+				if used {
+					break
+				}
+			}
+		}
+		if !used {
+			continue
+		}
+		name := agent.Name
+		if name == "" {
+			name = agent.ID
+		}
+		if !seen[name] {
+			seen[name] = true
+			users = append(users, name)
+		}
+	}
+	return users
 }

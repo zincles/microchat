@@ -400,7 +400,8 @@ delete(AA)           # 删除
   **没有 `abilities.json`** ✗（口子就在 agent 上 —— 于是"能力只能覆盖、不能造"自然成立）。
   **agent 上也没有 `params` / `prompt_order`** ✗（2026-09-30 **删掉**的两个死字段：声明了、没人读、用途未定 ——
   要用再加。老文件里写了它们也**不报错**，只是**下次整份重写时**会没掉：开发阶段可接受 ✓ 记得别依赖它）。
-  **提示词段（system prompt segment，2026-10-11 用户定）**：顶层 `segments` 是**可复用文本库**（`{ "id": "katex", "text": "…" }`），
+  **提示词段（system prompt segment，2026-10-11 用户定）**：顶层 `segments` 是**可复用文本库**（`{ "id": "katex", "text": "…" }`）；
+  从 ST 预设有效内容导入的段带 `imported: true` + `preset_id` + `preset_name`（文件名快照）—— 用来区分自编写与导入，删预设时可据此找出关联段（2026-11-11 用户定）。
   agent 用 `"segments": ["katex", "mcp"]` 引用（**顺序 = 追加顺序**）。拼装 = base（`system_prompt`）+ 逐段
   **纯字符串拼接**（段间空行 `\n\n`；无替换、无递归、无运行时语义 —— 同一形状永远拼出同一结果）。
   段 id 非空且唯一；引用（agent 的、能力的）必须落地（**写入与启动读取都报错**，同 abilities 口径）；删段有守卫（还被引用 ⇒ 400 列出引用者）；
@@ -727,7 +728,7 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 | GET | `/tavern/presets/{preset_id}` | — | 原始字节 | **逐字节原样**下载；`Content-Disposition: attachment` + 原文件名；不存在 ⇒ 404 |
 | GET | `/tavern/presets/{preset_id}/preview` | — | `TavernPreview` | **只读解析预览**（2026-11-10）：按 `prompt_order` 展开，回 relative/absolute 条目、跳过原因、未知宏统计；**不建 Agent、不写库、不执行 setvar/getvar** |
 | GET | `/tavern/presets/{preset_id}/effective` | — | `TavernEffective` | **提取有效内容**（2026-11-11）：按 prompt_order 执行 ST 控制宏，丢弃求值为空的条目，回真正留下的 entries + 变量 + 未解析宏；可选 `last_user_message` / `agent_id`。只读 |
-| DELETE | `/tavern/presets/{preset_id}` | — | 204 | 删除原始存档；不存在 ⇒ 404；**仍被某个 Agent 的 `preset_id` 引用 ⇒ 400**（先解绑，别静默回落） |
+| DELETE | `/tavern/presets/{preset_id}` | — | 204 | 删除原始存档；不存在 ⇒ 404；**仍被某个 Agent 的 `preset_id` 引用 ⇒ 400**（先解绑，别静默回落）。`?segments=delete` 一并删从该预设导入的提示词片段（被引用 ⇒ 400 并点名）、`?segments=keep` 明确保留；**两者都不给且有导入段 ⇒ 409**（界面先问人）|
 | POST | `/sessions` | `CreateSessionReq` | `Session` · 201 | **配了 `first_message` 的 agent ⇒ 顺手把首段插成第一条 assistant（idx 1）**。省略字段时取 `config.json` 的 `defaults`；`thinking_level` 可选（空 = 跟随模型默认；非空必须在该模型 `thinking_levels` 里，否则 **422**）；`native_tools_disabled` 可选（[]/省略 = 全按规则启用）；`title` **真生效**（建一条已命名的会话，不必再多发一次 `PATCH`）—— 不给 / `""` ⇒ 标题空着（等首条用户消息自动起名）。**`id`（可选，2026-10-09）**：客户端铸的 UUIDv7 —— 草稿态（web）靠它把"预演的那一发"与"真发的那一发"钉成同一个会话键；给了就用（先校形状 ⇒ 非 v7 **400**、已有 ⇒ **409**），不给 ⇒ 服务端现铸。⚠ **HACK（刻意，全项目唯一允许客户端铸 id 的口子）** —— 动机只有草稿预演那一条，别扩散（消息/摘要的 id 一律服务端铸） |
 | PATCH | `/sessions/{session_id}` | `UpdateSessionReq` | `Session` | 标题 / 模型 / agent / **提示词** / **思考档位** / **`native_tools_disabled`**（`system_prompt` 与 `thinking_level` 都是**指针** ⇒ 没给或 `null` = 不动、`""` = 清掉覆盖/跟随模型默认、非空 = 写入；档位必须在目标模型的 `thinking_levels` 里，否则 **422**；`native_tools_disabled: []` 恢复规则默认，非空 = 关闭这些工具）|
 | DELETE | `/sessions/{session_id}` | — | 204 | 不存在 → 404 |
@@ -818,9 +819,9 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 | GET | `/agents` | — | `AgentsConfig` | 生效列表（含内置默认 agent）|
 | POST | `/agents` | `CreateAgentReq` | `Agent` · 201 | 收 `name` / `system_prompt` / **`segments`（追加段 id 列表）** / `abilities` / `prepend_state`；id 由后端生成。**没有 `display_mode`** ✗（2026-10-27 删：从前 `chat` 双边气泡 / `roleplay` 用户气泡+AI 纯文本二选一，现在**只剩后者**、不再是开关。老 `agents.json` / 老卡带里写着它**照常能读**，只是成了不认识的键、下次整份重写自己没掉） |
 | PATCH | `/agents/{agent_id}` | `UpdateAgentReq` | `Agent` | `new_id` = 重命名（搬 `default_agent` 与会话引用）；`make_default` = 设默认；`segments` / `abilities` / `prepend_state` 整段替换（语义同 POST；`segments: []` = 清空）|
-| POST | `/segments` | `{id,text}` | `Segment` · 201 | 建提示词段（id 非空唯一、≤64 字 ⇒ 重名 409；**与内置撞名 ⇒ 409**）|
+| POST | `/segments` | `{id,text,imported?,preset_id?}` | `Segment` · 201 | 建提示词段（id 非空唯一、≤64 字 ⇒ 重名 409；**与内置撞名 ⇒ 409**）。`preset_id` = 从哪份 ST 预设导入（服务端校验存在，并快照文件名进 `preset_name`；带它就强制 `imported:true`）|
 | PATCH | `/segments/{segment_id}` | `{new_id?,text?}` | `Segment`| 改内容 / 改名（改名 = 所有 agent 的引用一起搬）；**内置段 ⇒ 400（只读）**|
-| DELETE | `/segments/{segment_id}` | — | 204 | 删段；**还被引用 ⇒ 400（列出引用者）**、**内置段 ⇒ 400（删不掉）**。读口不另开 —— 段库随 `GET /agents` 一起给（内置带 `builtin` 标记）|
+| DELETE | `/segments/{segment_id}` | — | 204 | 删段；**还被 Agent（基座或能力追加段）引用 ⇒ 400（列出引用者）**、**内置段 ⇒ 400（删不掉）**。读口不另开 —— 段库随 `GET /agents` 一起给（内置带 `builtin` 标记；ST 导入段带 `preset_id` / `preset_name`）|
 | DELETE | `/agents/{agent_id}` | — | 204 | 内置默认 agent 不可删 |
 | GET | `/config/prefs` | — | `{prefs, markdown_types, defaults}` | **界面偏好**（2026-11-01 起住服务器）。<br>**`markdown_types` 是语法清单的唯一权威**（`[{id,name,kind,sample}]`）—— 界面据此排开关，**不许前端另抄一张**（少一条就留个点不动的死开关，多一条就是个后端不认识的选项）。<br>`defaults` = 出厂值（界面"恢复默认"与前端缺省都读它）。<br>⚠ 文件坏了（未知类型 / 坏背景）**直接报错**，不悄悄回落全默认 —— 那等于"用户的开关自己全开了"而他一点线索都没有 |
 | PUT | `/config/prefs` | `Prefs` | 同上 | **整份替换**（偏好是一组独立开关，客户端手里就有全量；补丁语义只会多出"没给的算不动还是算清空"这类歧义）。<br>⚠ **`background` 单开指针语义**：没传 = **不动它**；要清空得显式给 `"background": {}`（否则"只改主题"的客户端会顺手抹掉壁纸 —— 静默的数据丢失，与 `PATCH /sessions` 的 `system_prompt` 同一条规矩）。<br>未知 `markdown.disabled` id ⇒ **422 并点名**（先验后写：坏请求一个字都不落盘）|
@@ -1471,14 +1472,19 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   **酒馆**（2026-11-06 用户定）：专门放 SillyTavern 预设 / 角色卡 / 聊天记录的导入与转换；
   目前只有 ST 聊天记录导入（`POST /sessions/import-st`），预设/角色卡转换是空位。原本在「会话管理」里的
   ST 导入卡已整块搬到这里（会话管理只留 MicroChat JSON 导入）。
-  原始 JSON 存档每行有 **查看**（2026-11-10 加）：只读树形阅读器（`JsonNode` / `TavernJsonViewer`），
-  下载原始字节 → 去 BOM → `JSON.parse`，根展开、子节点按需展开；1.5MB 预设不一次铺满 DOM。
+  原始 JSON 存档每行有 **内容**（2026-11-11 用户定：把原来的「查看」与「提取」合并成一个弹窗两个 tab）：
+  - **有效内容**：`GET /tavern/presets/{id}/effective` 按 prompt_order 执行 setvar/getvar/trim/注释，
+    丢掉空结果，展示真正留下的 entries / 变量 / 未解析宏；每条可 **导入为片段**（带 `preset_id` +
+    文件名快照；带 `{{…}}` 动态宏的条目不导 —— 段是静态文本）。
+  - **原始 JSON**：只读树（`JsonNode`），按需下载 → 去 BOM → `JSON.parse`，根展开、子节点按需展开；
+    1.5MB 预设不一次铺满 DOM。
+
   每行还有 **解析预览**：调 `GET /tavern/presets/{id}/preview`，按 `prompt_order` 标出 relative/absolute、
   depth/order、跳过原因和未知宏；**只算不动**（不建 Agent、不写库、不执行 ST 变量）。
-  行内还有 **提取**：`GET /tavern/presets/{id}/effective` 按 prompt_order 执行 setvar/getvar/trim/注释，
-  丢掉空结果，展示真正留下的 entries / 变量 / 未解析宏；只读，不写 Agent。
   **真正使用**不走“导入成 Agent”：在 Agent 编辑器的「提示词方案」里选这份原始预设（`preset_id`），
   运行时现读现提取（`tavern.Extract`）；预设原件是唯一来源，不复制 54 条 entries。
+  **删预设时**：若存在从它导入的片段，先问是否一并删除（`?segments=delete` / `?segments=keep`）；
+  被 Agent 引用的片段拒绝一并删。
 - 设置五 tab：**聊天 / 智能体 / 提示词 / 外观 / 酒馆**（新会话默认设置 2026-11-09 移到「聊天」顶部，不再在会话管理）（2026-11-02 起；会话与渠道不再是设置 tab；酒馆 2026-11-06 加）。聊天 / 智能体 / 提示词/外观的编辑都是 **tab 内二级页**（列表 ⇄ 详情就地切换，`[←]` 返回 —— 2026-10-10 从弹窗改过来，弹窗叠视图的账清了）；**Agent 编辑器的二级页自己也分页签**（2026-10-28 用户：「全挤在一起很丑」）——「基本」（id / 名称 / 首段对话 / 句首贴状态）/「系统提示词」（base + 它的段）/ **每个能力一页**（启用 / Model / 提示词覆盖 / 它的段，页面由 `ABILITY_IDS` 生成 ⇒ 加能力自动多一页），页签条与保存行：**保存那一行在页签外面**（哪一页都能存；藏在某一页里的那种，翻到别的页就找不到保存了）。页签条 **2026-11-06 起是 Vuetify `VTabs`/`VTab` + `VTabsWindow`/`VTabsWindowItem`**（真正的 tabpanel；旧手写 `TabBar.vue` 已删）：设置主栏与 Agent 编辑器同一个模式，`@focus="tab = t.id"` 补上"方向键搬焦点即激活"（Vuetify 的 slide group 只搬焦点，不激活）。「会话设置」（左栏 ☰）是**紧凑对话框**（560px、高随内容）。**Esc 一次只关一层**：二级页开着时设置视图不响应 Esc、会话设置弹窗开着时同理（踩过：两边各监听 document，一下关两层）。**会话管理页**（左栏「会话」入口）= 新会话默认值 + 列表（点进）+ 删除 + 尾部**导入对话**区（`POST /sessions/import-st` 与 `/sessions/import-json` 各一张卡：一句说明 + 按钮 + 隐藏文件框 —— 2026-10-17 用户点名「两种导入混在一起、都乱了」，改成两卡分开、原生 file 框换按钮）。
 - **设置页签顺序有第二个约束**（2026-11-06 用户报「标签页切换行为不太对」）：
   `SETTINGS_TABS` 的显示顺序必须与 `VTabsWindowItem` 的 DOM 顺序一致

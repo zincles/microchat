@@ -14,9 +14,8 @@ import rpPreset from "../../presets/rp-agent.json";
 import ProviderEditor from "./ProviderEditor.vue";
 import ModelRulesEditor from "./ModelRulesEditor.vue";
 import UpdatePane from "./UpdatePane.vue";
-import TavernJsonViewer from "./TavernJsonViewer.vue";
 import TavernPreview from "./TavernPreview.vue";
-import TavernEffective from "./TavernEffective.vue";
+import TavernInspector from "./TavernInspector.vue";
 import { ICONS } from "./icons.ts";
 import { sharedApi } from "../utils/prefs.ts";
 import { SETTINGS_TABS, groupModelsByProvider, modelOption, providerChoices, modelChoicesFor, modelKey, parseModelKey, providerDisplayName } from "../utils/format.ts";
@@ -231,10 +230,9 @@ async function importSTFile(event: Event): Promise<void> {
 const tavernPresets = ref<TavernPreset[]>([]);
 const tavernStatus = ref("");
 const tavernInput = ref<HTMLInputElement | null>(null);
-// 查看只把元数据交给阅读器；原始字节由阅读器按需下载，列表不背 1.5MB 的正文。
-const viewingPreset = ref<TavernPreset | null>(null);
+// 「内容」只把元数据交给查看器；原始字节由查看器按需下载，列表不背 1.5MB 的正文。
+const inspectingPreset = ref<TavernPreset | null>(null);
 const previewingPreset = ref<TavernPreset | null>(null);
-const effectivePreset = ref<TavernPreset | null>(null);
 function sizeText(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
@@ -257,14 +255,23 @@ async function importTavernPresetFile(event: Event): Promise<void> {
   } catch (e) { tavernStatus.value = `保存失败：${errMsg(e)}`; }
   input.value = "";
 }
-function viewTavernPreset(p: TavernPreset): void {
-  viewingPreset.value = p;
+function inspectTavernPreset(p: TavernPreset): void {
+  inspectingPreset.value = p;
 }
 function previewTavernPreset(p: TavernPreset): void {
   previewingPreset.value = p;
 }
-function extractTavernPreset(p: TavernPreset): void {
-  effectivePreset.value = p;
+// 导入片段后刷新段库；Agent 编辑器的段下拉也读这一份。
+function onPresetSegmentImported(): void {
+  loadAgents().catch(() => {});
+}
+function presetLabel(id?: string): string {
+  if (!id) return "";
+  return tavernPresets.value.find((p) => p.id === id)?.filename || id;
+}
+function segmentSource(segment: Segment): string {
+  if (!segment.preset_id) return "导入";
+  return `导入自 ST 预设：${segment.preset_name || presetLabel(segment.preset_id)}`;
 }
 async function downloadTavernPreset(p: TavernPreset): Promise<void> {
   try { downloadBlob(await api.downloadTavernPreset(p.id), p.filename); }
@@ -272,10 +279,24 @@ async function downloadTavernPreset(p: TavernPreset): Promise<void> {
 }
 async function removeTavernPreset(p: TavernPreset): Promise<void> {
   if (props.ask && !(await props.ask(`删除原始预设「${p.filename}」？不可逆。`))) return;
+  const linked = segmentsLib.value.filter((s) => s.imported && s.preset_id === p.id);
+  // 有导入片段时再问一次：删预设不等于删片段，两者都可以是用户想要的。
+  let mode: "delete" | "keep" | undefined;
+  if (linked.length) {
+    const also = props.ask ? await props.ask(
+      `这个预设导入了 ${linked.length} 个提示词片段。要一并删除它们吗？
+
+选「取消」会保留片段、只删预设。`,
+    ) : false;
+    mode = also ? "delete" : "keep";
+  }
   try {
-    await api.deleteTavernPreset(p.id);
-    tavernStatus.value = `已删除：${p.filename}`;
+    await api.deleteTavernPreset(p.id, mode);
+    tavernStatus.value = mode === "delete"
+      ? `已删除预设与 ${linked.length} 个导入片段：${p.filename}`
+      : `已删除：${p.filename}`;
     await loadTavernPresets();
+    if (mode === "delete") await loadAgents();
   } catch (e) { tavernStatus.value = `删除失败：${errMsg(e)}`; }
 }
 
@@ -559,7 +580,7 @@ function onKey(e: KeyboardEvent): void {
               <VTable class="plist">
                 <thead><tr><th>名称</th><th>内容预览</th><th>谁在用</th></tr></thead>
                 <tbody><tr v-for="s in segmentsLib" :key="s.id" class="clickable" @click="editSeg = s">
-                  <td>{{ s.id }}<i v-if="s.builtin" class="builtin-tag">内置</i><i v-if="s.imported" class="builtin-tag imported">导入</i></td>
+                  <td>{{ s.id }}<i v-if="s.builtin" class="builtin-tag">内置</i><i v-if="s.imported" class="builtin-tag imported" :title="segmentSource(s)">导入</i></td>
                   <td>{{ s.text.slice(0, 40) }}</td>
                   <td>{{ segRefs(s.id).join("、") || "—" }}</td>
                 </tr></tbody>
@@ -602,9 +623,8 @@ function onKey(e: KeyboardEvent): void {
                   <td>{{ sizeText(p.size) }}</td>
                   <td>{{ timeText(p.created_at) }}</td>
                   <td class="ops">
-                    <VBtn variant="text" size="small" type="button" title="提取有效内容（执行 ST 变量后只留有正文的条目）" @click="extractTavernPreset(p)">提取</VBtn>
+                    <VBtn variant="text" size="small" type="button" title="原始 JSON 与求值后的有效内容（两个 tab）" @click="inspectTavernPreset(p)">内容</VBtn>
                     <VBtn variant="text" size="small" type="button" @click="previewTavernPreset(p)">解析预览</VBtn>
-                    <VBtn variant="text" size="small" type="button" @click="viewTavernPreset(p)">查看</VBtn>
                     <VBtn variant="text" size="small" type="button" @click="downloadTavernPreset(p)">导出</VBtn>
                     <VBtn color="error" variant="text" size="small" type="button" @click="removeTavernPreset(p)">删除</VBtn>
                   </td>
@@ -679,8 +699,13 @@ function onKey(e: KeyboardEvent): void {
       </div>
       </div>
     </div>
-    <TavernJsonViewer v-if="viewingPreset" :preset="viewingPreset" @close="viewingPreset = null" />
+    <TavernInspector
+      v-if="inspectingPreset"
+      :preset="inspectingPreset"
+      :segments="segmentsLib"
+      @close="inspectingPreset = null"
+      @imported="onPresetSegmentImported"
+    />
     <TavernPreview v-if="previewingPreset" :preset="previewingPreset" @close="previewingPreset = null" />
-    <TavernEffective v-if="effectivePreset" :preset="effectivePreset" @close="effectivePreset = null" />
   </section>
 </template>

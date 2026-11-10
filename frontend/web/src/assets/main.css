@@ -811,23 +811,8 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .message-edit-dialog.expanded .message-edit-card { border-radius: 0; }
 .message-edit-title .full-btn { display: inline-flex; align-items: center; justify-content: center;
   width: 2em; height: 2em; padding: 0; }
-/* JSON 阅读器（酒馆原始预设的“查看”）：只读树；根展开、子节点点开一层。
+/* JSON 树：ST 预设「原始 JSON」tab 的只读树；根展开、子节点点开一层。
    1.5MB 预设不能一次铺满 DOM，这一块的折叠/缩进就是性能边界。 */
-.json-viewer-dialog .v-overlay__content { width: 96vw; max-width: 1200px; height: 92vh; max-height: 92vh; margin: 0; }
-.json-viewer-card { display: flex; flex-direction: column; width: 100%; height: 100%; min-height: 0;
-  overflow: hidden; background: var(--md-surface-container-high); color: var(--md-on-surface);
-  border-radius: var(--md-shape-xl); }
-.json-viewer-head { display: flex; align-items: center; justify-content: space-between; gap: 1em;
-  padding: 0.9em 1.1em 0.55em; font-size: var(--md-type-title-medium); font-weight: 500; }
-.json-viewer-head .head-btns { display: flex; align-items: center; gap: 0.2em; flex: none; }
-.json-viewer-title { display: flex; flex-direction: column; min-width: 0; gap: 0.1em; }
-.json-viewer-file { color: var(--md-on-surface-variant); font-size: var(--md-type-label-small);
-  font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.json-viewer-body { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain;
-  padding: 0.2em 0.8em 1em; font-family: var(--app-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  font-size: var(--md-type-body-small); line-height: 1.55; }
-.json-viewer-state { display: flex; align-items: center; gap: 0.5em; padding: 1.2em 0.6em; color: var(--md-on-surface-variant); }
-.json-viewer-state.error { color: var(--md-error); white-space: pre-wrap; overflow-wrap: anywhere; }
 .json-tree { min-width: 0; padding-bottom: 0.6em; }
 .json-line { display: flex; align-items: baseline; gap: 0.3em; width: 100%; min-height: 0;
   box-sizing: border-box; padding: 0.08em 0.35em; border: 0; border-radius: var(--r-xs);
@@ -903,6 +888,16 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .tavern-preview-skip { display: flex; gap: 0.6em; padding: 0.2em 0; font-size: var(--md-type-body-small); }
 .tavern-preview-skip b { flex: none; max-width: 20em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tavern-preview-skip span { color: var(--md-on-surface-variant); }
+/* 预设内容：原来的「查看」与「提取」合并成一个弹窗的两个 tab（2026-11-11）。 */
+.tavern-inspector-dialog .v-overlay__content { width: 96vw; max-width: 1200px; height: 92vh; max-height: 92vh; margin: 0; }
+.tavern-inspector-tabs { display: flex; gap: 0.15em; padding: 0.1em 1.1em 0; border-bottom: 1px solid var(--md-outline-variant); }
+.tavern-inspector-tab { min-height: 2.4em; padding: 0.35em 0.8em; border: 0; border-bottom: 3px solid transparent;
+  border-radius: var(--r-sm) var(--r-sm) 0 0; background: none; color: var(--md-on-surface-variant);
+  font: inherit; font-size: var(--md-type-label-large); cursor: pointer; }
+.tavern-inspector-tab:hover { background: var(--hover); }
+.tavern-inspector-tab.active { color: var(--md-primary); border-bottom-color: var(--md-primary); }
+.tavern-inspector-tab:focus-visible { outline: 2px solid var(--md-primary); outline-offset: -2px; }
+.tavern-inspector-actions { display: flex; justify-content: flex-end; align-items: center; gap: 0.5em; margin-top: 0.35em; }
 @media (max-width: 700px) { .tavern-preview-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 /* 操作区固定在底部右侧（2026-11-02 用户定）：状态在左、按钮组在右；窄屏按钮也靠右。 */
 .modal-foot { display: flex; align-items: center; gap: 0.6em; margin-top: 0.6em; }

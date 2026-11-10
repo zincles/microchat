@@ -92,6 +92,7 @@ function onKey(e: KeyboardEvent): void { if (e.key === "Escape") emit("close"); 
     <label class="field"><span>名称（改名会同步所有引用）</span><VTextField density="compact" variant="outlined" hide-details v-model="id" :readonly="isBuiltin" placeholder="例如：状态语法 / 数学公式 / 联网规则" /></label>
     <label class="field-block"><span>内容（会原样追加到提示词末尾）</span><VTextarea v-model="text" rows="12" :readonly="isBuiltin" placeholder="这段提示词的内容…" density="compact" variant="outlined" hide-details /></label>
     <div v-if="!isNew" class="status">谁在用：{{ refs().join("、") || "（没人用）" }}</div>
+    <div v-if="props.segment?.preset_id" class="status">来源：ST 预设「{{ props.segment.preset_name || props.segment.preset_id }}」</div>
     <div v-if="isBuiltin" class="row">
       <span class="status">内置片段随应用提供：只读、删不掉。想改就复制一份：</span>
       <VTextField density="compact" variant="outlined" hide-details v-model="copyID" placeholder="新片段的名称" />

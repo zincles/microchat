@@ -550,6 +550,10 @@ export interface Segment {
   id: string;
   text: string;
   imported?: boolean;
+  /** 从 SillyTavern 预设的有效内容导入时的来源预设 id（卡带导入 / 手写段为空）。 */
+  preset_id?: string;
+  /** 导入当时的预设文件名快照（预设后来删了也还知道从哪来）。 */
+  preset_name?: string;
   builtin?: boolean;
 }
 
@@ -587,6 +591,8 @@ export interface CreateSegmentRequest {
   id: string;
   text: string;
   imported?: boolean;
+  /** 从 ST 预设导入时带上；服务端校验预设存在并快照文件名。 */
+  preset_id?: string;
 }
 
 export interface UpdateSegmentRequest {

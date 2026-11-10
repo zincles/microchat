@@ -293,9 +293,15 @@ type Agent struct {
 type Segment struct {
 	ID   string `json:"id"`
 	Text string `json:"text"`
-	// Imported：**来源标记**（2026-10-11 用户定）—— true = 这条是"卡带导入"带进来的
-	// （界面显示「导入」徽标）。记的是**从哪来**，用户编辑不清标；删掉就是删掉。
+	// Imported：**来源标记**（2026-10-11 用户定）—— true = 这条是从别处导入的
+	// （卡带或 ST 预设；界面显示「导入」徽标）。记的是**从哪来**，用户编辑不清标；
+	// 删掉就是删掉。
 	Imported bool `json:"imported,omitempty"`
+	// PresetID / PresetName：从 SillyTavern 预设的「有效内容」逐条导入时记下来源
+	// （2026-11-11 用户定：「用于区分自编写和导入的模板」）。卡带导入没有预设，留空。
+	// PresetName 是导入当时的文件名快照 —— 预设后来被删掉，也还知道这段从哪来。
+	PresetID   string `json:"preset_id,omitempty"`
+	PresetName string `json:"preset_name,omitempty"`
 }
 
 type AgentsConfig struct {

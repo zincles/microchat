@@ -321,7 +321,10 @@ export function createApi({ base, token = "", fetchFn = fetch }: CreateApiOption
       const name = file.name || "preset.json";
       return callBytes<TavernPreset>("POST", `/tavern/presets?name=${enc(name)}`, file);
     },
-    deleteTavernPreset: (id: string) => call<null>("DELETE", `/tavern/presets/${enc(id)}`),
+    // deleteTavernPreset：segments = "delete" 一并删从该预设导入的提示词片段；
+    // "keep" 明确保留；省略且有导入段 ⇒ 后端 409（让界面先问人）。
+    deleteTavernPreset: (id: string, segments?: "delete" | "keep") =>
+      call<null>("DELETE", `/tavern/presets/${enc(id)}${segments ? `?segments=${segments}` : ""}`),
     downloadTavernPreset: async (id: string): Promise<Blob> => {
       const res = await fetchFn(`${base}/tavern/presets/${enc(id)}`);
       if (!res.ok) {
