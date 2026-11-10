@@ -85,7 +85,15 @@ func (s *Server) getTavernPreset(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteTavernPreset(w http.ResponseWriter, r *http.Request) {
-	ok, err := s.store.DeleteTavernPreset(r.PathValue("preset_id"))
+	id := r.PathValue("preset_id")
+	// Agent 绑定的是原始 preset id：删掉会让它静默回落 Agent 提示词 —— 先列出引用者，拒绝。
+	for _, agent := range s.loadAgents().Effective() {
+		if agent.PresetID == id {
+			writeError(w, http.StatusBadRequest, "invalid", "这个预设还被 Agent 引用："+agent.Name)
+			return
+		}
+	}
+	ok, err := s.store.DeleteTavernPreset(id)
 	if err != nil {
 		writeStoreError(w, err)
 		return

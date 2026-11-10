@@ -267,7 +267,10 @@ type Agent struct {
 	// 拼装 = base（`system_prompt`）+ 逐段 `"\n\n"` 拼接 —— **纯字符串拼接**，
 	// 无替换无递归（`state.AssembleSystemPrompt`，唯一实现处）。
 	Segments []string `json:"segments,omitempty"`
-	// PromptEntries：ST 导入的提示词计划（为空 = 老行为：base + segments）。
+	// PresetID：这个 Agent 绑定的 ST 原始预设（tavern_presets.id）。空 = 用 PromptEntries/base。
+	// 绑定后由 chat 在出站装配时现读原始 JSON → tavern.Parse；不复制条目。
+	PresetID string `json:"preset_id,omitempty"`
+	// PromptEntries：手工/高级提示词计划（为空 = 老行为：base + segments）。
 	PromptEntries []PromptEntry            `json:"prompt_entries,omitempty"`
 	Abilities     map[string]AbilityToggle `json:"abilities,omitempty"`
 	// PrependState：出站时把当前状态表渲染成 `<current_state>` 块，贴到用户句首。

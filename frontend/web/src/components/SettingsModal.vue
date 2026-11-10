@@ -534,6 +534,7 @@ function onKey(e: KeyboardEvent): void {
             :agent="editAgent === 'new' || editAgent?.template ? null : editAgent"
             :template="editAgent?.template ?? null"
             :segments="segmentsLib"
+            :presets="tavernPresets"
             :is-default="editAgent !== 'new' && editAgent?.id === curDefault"
             :ask="ask"
             @close="editAgent = null"

@@ -532,6 +532,7 @@ export interface Agent {
   first_message?: string;
   segments?: string[];
   prompt_entries?: PromptEntry[];
+  preset_id?: string;
   abilities?: Record<string, AbilityToggle>;
   prepend_state?: boolean;
 }
@@ -555,6 +556,7 @@ export interface CreateAgentRequest {
   first_message?: string;
   segments?: string[];
   prompt_entries?: PromptEntry[];
+  preset_id?: string;
   abilities?: Record<string, AbilityToggle>;
   prepend_state?: boolean;
 }
@@ -567,6 +569,7 @@ export interface UpdateAgentRequest {
   first_message?: string;
   segments?: string[];
   prompt_entries?: PromptEntry[];
+  preset_id?: string;
   abilities?: Record<string, AbilityToggle>;
   prepend_state?: boolean;
 }

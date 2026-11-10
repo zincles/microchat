@@ -15,6 +15,7 @@ package chat
 
 import (
 	"encoding/json"
+	"strings"
 
 	"microchat/internal/model"
 	"microchat/internal/registry"
@@ -52,10 +53,14 @@ func (s *Service) ContextUsage(session model.Session) (ContextUsage, error) {
 		return ContextUsage{}, err
 	}
 	prompt, _ := s.EffectiveSystemPrompt(session)
+	entries, presetActive := s.promptEntries(session)
+	if presetActive {
+		prompt = strings.TrimSpace(session.SystemPrompt)
+	}
 	tables := state.FromSources(session.ID, messages).Tables
 	// 与真发出去的那一份**同一个拼装**（用 /outgoing 核对时不该出现第二份答案）
 	outgoing := s.renderMacros(session, state.BuildOutgoingWithPromptEntries(
-		prompt, messages, summaries, tables, false, s.promptEntries(session)))
+		prompt, messages, summaries, tables, false, entries))
 
 	row, err := s.Store.GetModel(session.Provider, session.Model)
 	if err != nil {

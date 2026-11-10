@@ -15,7 +15,7 @@ import { downloadJSON } from "../utils/download.ts";
 import SegmentList from "./SegmentList.vue";
 import type { SegmentItem } from "./SegmentList.vue";
 import { VTab, VTabs, VTabsWindow, VTabsWindowItem, VSwitch, VBtn, VTextField, VTextarea, VSelect } from "vuetify/components";
-import type { AbilityToggle, Agent, CreateAgentRequest, UpdateAgentRequest } from "../api/types.ts";
+import type { AbilityToggle, Agent, CreateAgentRequest, TavernPreset, UpdateAgentRequest } from "../api/types.ts";
 
 interface AgentTemplate {
   name?: string;
@@ -42,12 +42,14 @@ const props = withDefaults(defineProps<{
   isDefault?: boolean;
   template?: AgentTemplate | null; // 新建模板 {name, system_prompt, prepend_state, abilities}
   segments?: SegmentItem[]; // 段库（picker 用；随 GET /agents 一起给）
+  presets?: TavernPreset[]; // 酒馆原始预设（绑定用）
   ask?: ((text: string) => Promise<boolean>) | null; // 全局确认框（删除前先摊开）
 }>(), {
   agent: null,
   isDefault: false,
   template: null,
   segments: () => [],
+  presets: () => [],
   ask: null,
 });
 const emit = defineEmits<{ close: []; saved: [] }>();
@@ -77,6 +79,7 @@ const prepend = ref(!!(props.agent?.prepend_state ?? props.template?.prepend_sta
 // 追加段（顺序 = 拼接顺序）。段库在 `props.segments`；挑 / 排 / 删与预览都在
 // `SegmentList` 里（与能力那块**同一个组件** —— 用户 2026-10-28：「不协调」）。
 const segs = ref<string[]>([...(props.agent?.segments ?? props.template?.segments ?? [])]);
+const presetId = ref(props.agent?.preset_id ?? "");
 const assembled = computed(() => assemblePrompt(prompt.value, segs.value, props.segments));
 const modelOptions = ref<ModelOption[]>([]);
 const status = ref("");
@@ -174,6 +177,7 @@ async function save(): Promise<void> {
         system_prompt: prompt.value,
         first_message: firstMsg.value,
         segments: segs.value,
+        preset_id: presetId.value,
         abilities: patch,
         ...(prepend.value ? { prepend_state: true } : {}),
       };
@@ -184,6 +188,7 @@ async function save(): Promise<void> {
         system_prompt: prompt.value,
         first_message: firstMsg.value,
         segments: segs.value,
+        preset_id: presetId.value,
         abilities: patch,
       };
       if (!!prepend.value !== !!agent.prepend_state) body.prepend_state = prepend.value;
@@ -270,6 +275,8 @@ function onKey(e: KeyboardEvent): void {
       <label class="field"><span>名称</span><VTextField density="compact" variant="outlined" hide-details v-model="name" placeholder="例如：跑团主持人" /></label>
       <label class="field-block"><span>开场白（新会话里的第一条回复；留空 = 不启用）</span><VTextarea v-model="firstMsg" rows="3" density="compact" variant="outlined" hide-details placeholder="例如：你好，我是……（可以包含状态块来设置初始状态）" /></label>
       <label class="field"><span>在消息开头附上当前状态（角色扮演建议开启）</span><VSwitch v-model="prepend" color="primary" density="compact" hide-details /></label>
+      <label class="field"><span>提示词方案（酒馆预设）</span><VSelect v-model="presetId" :items="[{ title: '不使用（用本 Agent 的提示词）', value: '' }, ...presets.map(p => ({ title: p.filename, value: p.id }))]" density="compact" variant="outlined" hide-details placeholder="不使用" /></label>
+      <p class="hint">绑定后该 Agent 的会话使用原始预设的提示词计划；Agent 的 base / 段不参与。预设原件删掉后会回落。</p>
     </section>
     </VTabsWindowItem>
 

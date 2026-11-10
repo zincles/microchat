@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 	"microchat/internal/statelang"
 	"microchat/internal/store"
 	"microchat/internal/task"
+	"microchat/internal/tavern"
 	"microchat/internal/title"
 	"microchat/internal/turn"
 )
@@ -523,17 +525,47 @@ func (s *Service) assembleMessages(session model.Session, messages []model.Messa
 		return nil, nil, err
 	}
 	prompt, _ := s.EffectiveSystemPrompt(session)
+	entries, presetActive := s.promptEntries(session)
+	if presetActive {
+		// 预设是完整的提示词方案：Agent 的 base/段不参与；会话自己的 system_prompt 仍最高。
+		prompt = strings.TrimSpace(session.SystemPrompt)
+	}
 	tables := state.FromSources(session.ID, messages).Tables
-	return state.BuildOutgoingWithPromptEntries(prompt, messages, summaries, tables, s.prependState(session), s.promptEntries(session)), messages, nil
+	return state.BuildOutgoingWithPromptEntries(prompt, messages, summaries, tables, s.prependState(session), entries), messages, nil
 }
 
-// promptEntries：当前会话 Agent 上挂的 ST 提示词计划（空 = 老行为）。
-func (s *Service) promptEntries(session model.Session) []config.PromptEntry {
+// promptEntries：当前会话的提示词计划。
+//
+// Agent 绑定了 preset_id ⇒ 每次现读原始 JSON → tavern.Parse（不复制条目；预设是唯一来源）。
+// 没有绑定 ⇒ 用手工/高级 PromptEntries（空 = 老行为）。
+// 第二个返回值 = 预设是否生效；调用方据此决定 Agent base/段要不要让位。
+func (s *Service) promptEntries(session model.Session) ([]config.PromptEntry, bool) {
 	_, agents, _ := s.files()
-	if agent, ok := agents.Get(session.AgentID); ok {
-		return agent.PromptEntries
+	agent, ok := agents.Get(session.AgentID)
+	if !ok {
+		return nil, false
 	}
-	return nil
+	if strings.TrimSpace(agent.PresetID) == "" {
+		return agent.PromptEntries, false
+	}
+	preset, data, err := s.Store.GetTavernPreset(agent.PresetID)
+	if err != nil || preset == nil {
+		log.Printf("会话 %s 的 Agent 预设 %q 读不到（回落 Agent 提示词）：%v", shortID(session.ID), agent.PresetID, err)
+		return agent.PromptEntries, false
+	}
+	preview, err := tavern.Parse(data)
+	if err != nil {
+		log.Printf("会话 %s 的 Agent 预设 %q 解析失败（回落 Agent 提示词）：%v", shortID(session.ID), agent.PresetID, err)
+		return agent.PromptEntries, false
+	}
+	entries := make([]config.PromptEntry, 0, len(preview.Entries))
+	for _, entry := range preview.Entries {
+		entries = append(entries, config.PromptEntry{
+			ID: entry.Identifier, Name: entry.Name, Content: entry.Content, Role: entry.Role,
+			Position: entry.Position, Depth: entry.Depth, Order: entry.Order, SystemPrompt: entry.SystemPrompt,
+		})
+	}
+	return entries, true
 }
 
 // prependState：这个会话的 Agent 开了 `prepend_state` 才往用户句首贴 `<current_state>`。

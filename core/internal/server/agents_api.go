@@ -24,7 +24,9 @@ type CreateAgentReq struct {
 	// Segments：追加段（段库里的 id 列表，顺序 = 追加顺序；拼装见 `state.AssembleSystemPrompt`）。
 	// 引用的段必须在库里 ⇒ 400。
 	Segments []string `json:"segments,omitempty"`
-	// PromptEntries：ST 预设导入的提示词计划（可选；空 = base + segments）。
+	// PresetID：绑定到酒馆原始预设（tavern_presets.id）；空 = 不绑定。
+	PresetID string `json:"preset_id,omitempty"`
+	// PromptEntries：手工/高级提示词计划（可选；空 = base + segments）。
 	PromptEntries []config.PromptEntry `json:"prompt_entries,omitempty"`
 	// Abilities：能力开关（键 = 能力 id）。**缺省 = 默认全开**；未知的 id ⇒ 400。
 	Abilities    map[string]config.AbilityToggle `json:"abilities,omitempty"`
@@ -40,6 +42,8 @@ type UpdateAgentReq struct {
 	FirstMessage *string `json:"first_message"`
 	// Segments：给了就**整段替换**这串引用（nil = 不动；`[]` = 清空）。引用的段必须在库里 ⇒ 400。
 	Segments []string `json:"segments,omitempty"`
+	// PresetID：nil = 不动；"" = 解绑；非空 = 绑定。
+	PresetID *string `json:"preset_id,omitempty"`
 	// PromptEntries：nil = 不动；[] = 清空；非空 = 整段替换。
 	PromptEntries *[]config.PromptEntry `json:"prompt_entries,omitempty"`
 	// Abilities：给了就**整段替换**这张映射（与 `system_prompt` 一个语义；nil = 不动）。
@@ -110,6 +114,7 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		SystemPrompt:  req.SystemPrompt,
 		FirstMessage:  req.FirstMessage,
 		Segments:      req.Segments,
+		PresetID:      req.PresetID,
 		PromptEntries: req.PromptEntries,
 		Abilities:     req.Abilities,
 		PrependState:  req.PrependState,
@@ -211,6 +216,9 @@ func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Segments != nil {
 		agents.Agents[index].Segments = req.Segments
+	}
+	if req.PresetID != nil {
+		agents.Agents[index].PresetID = strings.TrimSpace(*req.PresetID)
 	}
 	if req.PromptEntries != nil {
 		agents.Agents[index].PromptEntries = *req.PromptEntries
