@@ -878,7 +878,23 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .tavern-preview-skipped { margin-top: 1.1em; border-top: 1px solid var(--md-outline-variant); padding-top: 0.5em; }
 .tavern-preview-skipped > summary { cursor: pointer; color: var(--md-primary); font-size: var(--md-type-label-large); }
 .tavern-preview-skipped > summary { cursor: pointer; color: var(--md-primary); font-size: var(--md-type-label-large); }
-.tavern-effective-entry { padding: 0.6em 0 0.8em; border-bottom: 1px solid var(--md-outline-variant); }
+.tavern-effective-entry { padding: 0.55em 0 0.7em; border-bottom: 1px solid var(--md-outline-variant); }
+.tavern-effective-head { align-items: center; row-gap: 0.25em; }
+.tavern-effective-toggle { display: inline-flex; align-items: center; gap: 0.35em; min-width: 0;
+  padding: 0.1em 0.2em; border: 0; border-radius: var(--r-xs); background: none;
+  color: var(--md-on-surface); font: inherit; text-align: left; cursor: pointer; }
+.tavern-effective-toggle:hover { background: var(--hover); }
+.tavern-effective-toggle:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 1px; }
+.tavern-effective-toggle b { overflow-wrap: anywhere; }
+.tavern-effective-twisty { flex: none; color: var(--md-on-surface-variant); }
+.tavern-effective-spacer { flex: 1 1 auto; min-width: 0.5em; }
+.tavern-effective-expand { align-self: flex-start; margin-top: 0.35em; padding: 0.1em 0;
+  border: 0; background: none; color: var(--md-primary); font: inherit;
+  font-size: var(--md-type-label-medium); cursor: pointer; }
+.tavern-effective-expand:hover { text-decoration: underline; }
+.tavern-effective-collapse-all { flex: none; padding: 0.05em 0; border: 0; background: none;
+  color: var(--md-primary); font: inherit; font-size: var(--md-type-label-medium); cursor: pointer; }
+.tavern-effective-collapse-all:hover { text-decoration: underline; }
 .tavern-effective-content { margin: 0.45em 0 0; padding: 0.55em 0.7em; background: var(--md-surface-container-low);
   border-left: 2px solid var(--md-outline-variant); border-radius: var(--r-xs); white-space: pre-wrap;
   overflow-wrap: anywhere; font-size: 0.82em; line-height: 1.55; color: var(--md-on-surface); }
@@ -896,7 +912,6 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .tavern-inspector-tab:hover { background: var(--hover); }
 .tavern-inspector-tab.active { color: var(--md-primary); border-bottom-color: var(--md-primary); }
 .tavern-inspector-tab:focus-visible { outline: 2px solid var(--md-primary); outline-offset: -2px; }
-.tavern-inspector-actions { display: flex; justify-content: flex-end; align-items: center; gap: 0.5em; margin-top: 0.35em; }
 @media (max-width: 700px) { .tavern-preview-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 /* 操作区固定在底部右侧（2026-11-02 用户定）：状态在左、按钮组在右；窄屏按钮也靠右。 */
 .modal-foot { display: flex; align-items: center; gap: 0.6em; margin-top: 0.6em; }

@@ -4431,6 +4431,11 @@ test("ST 预设内容：解析预览/有效内容/原始 JSON 合并成一个面
   assert.ok(!/previewingPreset|previewTavernPreset/.test(settings), "旧的解析预览弹窗还留着");
   assert.match(inspector, /preset_id:\s*props\.preset\.id/, "导入片段没记来源预设");
   assert.match(inspector, /dynamicMacro/, "没有拦动态宏（静态段会留下不替换的占位符）");
+  assert.match(inspector, /openEntries/, "有效条目没有折叠状态");
+  assert.match(inspector, /v-if="entryOpen\(entry, index\)"/, "正文不是展开时才挂进 DOM");
+  const entry = inspector.slice(inspector.indexOf('class="tavern-effective-entry"'), inspector.indexOf("</article>", inspector.indexOf('class="tavern-effective-entry"')));
+  assert.ok(entry.indexOf("导入为片段") >= 0 && entry.indexOf("导入为片段") < entry.indexOf("tavern-effective-content"),
+    "导入按钮还在正文下面，不在标题右侧");
   assert.match(inspector, /createSegment\(/, "没有导入为片段的动作");
   assert.match(client, /deleteTavernPreset:\s*\(id: string, segments\?: "delete" \| "keep"\)/, "删预设没有 segments 参数");
   assert.match(settings, /deleteTavernPreset\(p\.id, mode\)/, "界面没有把 keep/delete 传给后端");
@@ -4447,7 +4452,8 @@ test("品牌标志可点击跳更新；更新页底部有项目介绍与 GitHub 
   assert.match(app, /@open-update="\(\) => openManage\('update'\)"/, "App 没接 open-update");
   assert.match(pane, /关于 MicroChat/, "更新页没有项目介绍");
   assert.match(pane, /Zincles/, "没有作者 Zincles");
-  assert.match(pane, /DeepSeekV4\.1Flash（你）/, "没有作者 DeepSeekV4.1Flash");
+  assert.match(pane, /DeepSeekV4\.1Flash/, "没有作者 DeepSeekV4.1Flash");
+  assert.ok(!/DeepSeekV4\.1Flash（你）/.test(pane), "作者后面不该再带（你）");
   assert.match(pane, /https:\/\/github\.com\/zincles\/microchat/, "没有 GitHub 链接");
 });
 

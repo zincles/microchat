@@ -123,6 +123,9 @@ const importedKeys = ref<string[]>([]);
 const importedIDs = ref<string[]>([]);
 const importingKeys = ref<string[]>([]);
 const importStatus = ref("");
+// 条目默认折叠：有效内容可能是一整份几千字的提示词，全部展开会让远程实例的 DOM
+// 和首屏渲染直接爆炸。正文只在展开时挂进 DOM（数据仍在同一个响应里）。
+const openEntries = ref<string[]>([]);
 
 const entryKey = (entry: TavernEffectiveEntry, index: number): string =>
   `${entry.identifier || entry.name || "entry"}#${index}`;
@@ -133,6 +136,15 @@ const isImporting = (entry: TavernEffectiveEntry, index: number): boolean =>
   importingKeys.value.includes(entryKey(entry, index));
 const canImport = (entry: TavernEffectiveEntry): boolean =>
   !!entry.content.trim() && !dynamicMacro(entry.content);
+const entryOpen = (entry: TavernEffectiveEntry, index: number): boolean =>
+  openEntries.value.includes(entryKey(entry, index));
+function toggleEntry(entry: TavernEffectiveEntry, index: number): void {
+  const key = entryKey(entry, index);
+  openEntries.value = entryOpen(entry, index)
+    ? openEntries.value.filter((k) => k !== key)
+    : [...openEntries.value, key];
+}
+function collapseEntries(): void { openEntries.value = []; }
 
 function fitID(raw: string): string {
   const cleaned = raw.trim().replace(/\s+/g, "-") || "st-entry";
@@ -188,6 +200,7 @@ watch(() => props.preset.id, () => {
   importedKeys.value = [];
   importedIDs.value = [];
   importingKeys.value = [];
+  openEntries.value = [];
   importStatus.value = "";
   rawLoaded.value = false;
   rawLoading.value = false;
@@ -328,17 +341,30 @@ watch(() => props.preset.id, () => {
               <div><b>{{ unknownMacros.length }}</b><span>未解析宏</span></div>
             </div>
 
-            <div class="tavern-preview-section-title">有效条目 <span>{{ data.entries.length }}</span></div>
+            <div class="tavern-preview-section-title">
+              <span>有效条目 <span>{{ data.entries.length }}</span></span>
+              <button v-if="openEntries.length" class="tavern-effective-collapse-all" type="button" @click="collapseEntries">全部收起</button>
+            </div>
             <p v-if="!data.entries.length" class="tavern-preview-empty">没有留下任何正文。</p>
-            <article v-for="(entry, index) in data.entries" :key="entry.identifier" class="tavern-effective-entry">
-              <div class="tavern-preview-entry-head">
-                <b>{{ entry.name || entry.identifier }}</b>
+            <article
+              v-for="(entry, index) in data.entries"
+              :key="entry.identifier"
+              class="tavern-effective-entry"
+              :class="{ open: entryOpen(entry, index) }"
+            >
+              <div class="tavern-preview-entry-head tavern-effective-head">
+                <button
+                  class="tavern-effective-toggle" type="button"
+                  :aria-expanded="entryOpen(entry, index)"
+                  :title="entryOpen(entry, index) ? '收起正文' : '展开正文'"
+                  @click="toggleEntry(entry, index)"
+                >
+                  <span class="tavern-effective-twisty" aria-hidden="true">{{ entryOpen(entry, index) ? "▾" : "▸" }}</span>
+                  <b>{{ entry.name || entry.identifier }}</b>
+                </button>
                 <span class="tavern-preview-tag">{{ entry.role }}</span>
                 <span class="tavern-preview-meta">{{ meta(entry) }}</span>
-              </div>
-              <div class="tavern-preview-id">{{ entry.identifier }}</div>
-              <pre class="tavern-effective-content">{{ entry.content }}</pre>
-              <div class="tavern-inspector-actions">
+                <span class="tavern-effective-spacer"></span>
                 <VBtn
                   v-if="canImport(entry)"
                   variant="text" size="small" type="button"
@@ -346,8 +372,15 @@ watch(() => props.preset.id, () => {
                   :title="`导入为提示词片段（来源：${preset.filename}）`"
                   @click="importEntry(entry, index)"
                 >{{ isImported(entry, index) ? "已导入" : isImporting(entry, index) ? "导入中…" : "导入为片段" }}</VBtn>
-                <span v-else class="tavern-preview-meta">含动态宏，不能导入为静态片段</span>
+                <span v-else class="tavern-preview-meta">含动态宏</span>
               </div>
+              <div class="tavern-preview-id">{{ entry.identifier }}</div>
+              <template v-if="entryOpen(entry, index)">
+                <pre class="tavern-effective-content">{{ entry.content }}</pre>
+              </template>
+              <button v-else class="tavern-effective-expand" type="button" @click="toggleEntry(entry, index)">
+                展开正文（{{ entry.content.length }} 字）
+              </button>
             </article>
             <p v-if="importStatus" class="status" role="status">{{ importStatus }}</p>
 
