@@ -1159,6 +1159,11 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 /* 按钮旁的一句话（保存范围、是否落库、是否影响已有数据）：比底部大段 hint 更贴动作。 */
 .action-note { color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); line-height: 1.4; }
 .action-row { align-items: center; }
+/* 破坏性/接管型选项的警示：比普通 hint 更显眼，但仍是页面内说明，不是弹窗。 */
+.field-warning { margin: 0.45em 0 0.2em; padding: 0.55em 0.7em; border-left: 3px solid var(--md-error);
+  border-radius: 0 var(--r-sm) var(--r-sm) 0; background: var(--md-error-container);
+  color: var(--md-on-error-container); font-size: var(--md-type-body-small); line-height: 1.55; }
+.field-warning b { font-weight: 600; }
 /* 列表（会话/Agent/渠道）：与会话卡片同一张"底"，窄屏可横滚。 */
 .settings-cols .panel table.plist { background: var(--md-surface-container-low); border-radius: var(--md-shape-md); margin: 0 0 0.5em; border-collapse: separate; border-spacing: 0; overflow: hidden; }
 #session-mgr-list, #agent-list, #provider-list, #prompt-list { overflow-x: auto; }

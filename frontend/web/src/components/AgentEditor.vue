@@ -276,7 +276,15 @@ function onKey(e: KeyboardEvent): void {
       <label class="field-block"><span>开场白（新会话里的第一条回复；留空 = 不启用）</span><VTextarea v-model="firstMsg" rows="3" density="compact" variant="outlined" hide-details placeholder="例如：你好，我是……（可以包含状态块来设置初始状态）" /></label>
       <label class="field"><span>在消息开头附上当前状态（角色扮演建议开启）</span><VSwitch v-model="prepend" color="primary" density="compact" hide-details /></label>
       <label class="field"><span>提示词方案（酒馆预设）</span><VSelect v-model="presetId" :items="[{ title: '不使用（用本 Agent 的提示词）', value: '' }, ...presets.map(p => ({ title: p.filename, value: p.id }))]" density="compact" variant="outlined" hide-details placeholder="不使用" /></label>
-      <p class="hint">绑定后该 Agent 的会话使用原始预设的提示词计划；Agent 的 base / 段不参与。预设原件删掉后会回落。</p>
+      <p v-if="presetId" class="field-warning">
+        <b>注意：</b>启用后，这份酒馆预设会接管该 Agent 的对话提示词。
+        Agent 自己的<b>系统提示词</b>、<b>追加片段</b>和<b>手工提示词方案</b>都不再参与装配；
+        所有使用这个 Agent 的会话都会从下一轮起改用预设。
+        只有会话自己的「自定义提示词」仍然优先；模型、能力开关和状态注入不受影响。
+        这些设置不会丢，选「不使用」并保存即可恢复。
+      </p>
+      <p v-else class="hint">不选择时，使用这个 Agent 自己的系统提示词与片段。</p>
+      <p class="hint">预设是每轮现读现算；只有原始文件被删掉或解析失败时，才回落到 Agent 自己的方案。</p>
     </section>
     </VTabsWindowItem>
 

@@ -376,8 +376,11 @@ delete(AA)           # 删除
 - `agents.json` — `{ "default_agent": "跑团", "agents": [ { "id": "跑团", "name": "跑团主持人", "system_prompt": "你是跑团主持人。", "first_message": "你好！我是跑团主持人。", "preset_id": "" } ] }`
   **`preset_id`（2026-11-10）**：绑定一份 `tavern_presets` 原始预设（空 = 不绑定）。绑定时
   Agent 的会话在出站装配里**现读原始 JSON → `tavern.Extract`**（执行 setvar/getvar/trim/注释，
-  丢掉空结果），用真正的 relative/absolute 有效条目；**Agent 的 base/段不参与**（会话自己的 `system_prompt` 仍最高）。不复制条目 ⇒
+  丢掉空结果），用真正的 relative/absolute 有效条目；**Agent 的 base、段与 `prompt_entries` 全部不参与**
+  （会话自己的 `system_prompt` 仍最高；模型、能力开关、状态注入不变）。不复制条目 ⇒
   预设是唯一来源。预设被删/读不出时回落 Agent 提示词（并记日志），但删除口会先拒绝仍被引用的预设。
+  ⚠ Agent 编辑器里选中预设时显示 `field-warning`：这是**接管整套对话提示词**，不是追加一段；
+  底层 base/段/prompt_entries 不会被删除，选「不使用」即恢复。
   每个 agent 可以带 **`prompt_entries`**（2026-11-10，手工/高级提示词计划；空 = 老行为）：
   `[{ "id":"main", "name":"主提示词", "content":"…", "role":"system", "position":"relative",
   "depth":0, "order":0, "system_prompt":true }]` —— `role` 只能是 system/user/assistant；

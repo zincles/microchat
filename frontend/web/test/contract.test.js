@@ -1878,6 +1878,16 @@ test("Agent 编辑器分页签：基本 / 系统提示词 / 每个能力各一�
   assert.ok(saveAt > windowEnd, "保存行该在页签分区外面（否则只在某一页能看见）");
 });
 
+// 2026-11-11 用户：酒馆预设会接管整套提示词，必须把“忽略了什么”写在选项旁边。
+test("Agent 酒馆预设：选中时警告说明会接管哪些提示词", () => {
+  const editor = readFileSync(join(SRC, "components", "AgentEditor.vue"), "utf8");
+  assert.match(editor,  /提示词方案（酒馆预设）/, "预设字段没有提醒会接管");
+  assert.match(editor, /class="field-warning"/, "没有显眼的警告块");
+  for (const text of ["系统提示词", "追加片段", "手工提示词方案", "会话自己的「自定义提示词」", "选「不使用」"]) {
+    assert.ok(editor.includes(text), `警告缺了：${text}`);
+  }
+});
+
 // 能力的**中文名**同样是"两处各写一遍"：前端 `ABILITY_LABELS`（页签名）与后端
 // `abilities.definitions` 的 `Label`。叫法不一致不会报错，只会让人以为是两个东西。
 test("能力中文名：前端 ABILITY_LABELS 与后端 definitions 的 Label 一致", () => {
