@@ -647,16 +647,19 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
                 <span>可用宏</span>
                 <span class="macro-section-count">{{ macroReport?.macros?.length ?? 0 }}</span>
               </div>
-              <div class="macro-list">
-                <div v-for="m in macroReport?.macros ?? []" :key="m.name" class="macro-item">
-                  <div class="macro-item-main">
-                    <code class="macro-name" v-text="macroLabel(m.name)"></code>
-                    <span v-if="m.aliases?.length" class="macro-alias">别名 {{ m.aliases.join(" / ") }}</span>
-                  </div>
-                  <span class="macro-value">{{ m.value || "—" }}</span>
-                  <div class="macro-description">{{ m.description }}</div>
-                </div>
-              </div>
+              <table class="macro-table macro-table-available">
+                <thead><tr><th>宏</th><th>当前值</th><th>说明</th></tr></thead>
+                <tbody>
+                  <tr v-for="m in macroReport?.macros ?? []" :key="m.name">
+                    <td>
+                      <code class="macro-name" v-text="macroLabel(m.name)"></code>
+                      <span v-if="m.aliases?.length" class="macro-alias">{{ m.aliases.join(" / ") }}</span>
+                    </td>
+                    <td><span class="macro-value">{{ m.value || "—" }}</span></td>
+                    <td class="macro-description">{{ m.description }}</td>
+                  </tr>
+                </tbody>
+              </table>
 
               <div class="macro-section-title">
                 <span>本会话使用</span>
@@ -669,13 +672,16 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
                   <span>在提示词或消息里写 <code v-text="'{{user_name}}'"></code> 就会出现在这里。</span>
                 </div>
               </div>
-              <div v-else class="macro-usage-list">
-                <div v-for="u in macroReport.usage" :key="u.name" class="macro-usage-item">
-                  <code class="macro-name" v-text="macroLabel(u.name)"></code>
-                  <span v-if="!u.known" class="macro-unknown">未注册</span>
-                  <span class="macro-count">×{{ u.count }}</span>
-                </div>
-              </div>
+              <table v-else class="macro-table macro-table-usage">
+                <thead><tr><th>宏</th><th>次数</th><th>状态</th></tr></thead>
+                <tbody>
+                  <tr v-for="u in macroReport.usage" :key="u.name">
+                    <td><code class="macro-name" v-text="macroLabel(u.name)"></code></td>
+                    <td class="macro-count">×{{ u.count }}</td>
+                    <td><span v-if="!u.known" class="macro-unknown">未注册</span><span v-else class="macro-known">已注册</span></td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
           </VWindowItem>
         </VWindow>

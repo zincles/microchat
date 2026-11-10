@@ -327,25 +327,30 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .macro-section-title:first-of-type { margin-top: 0.35em; }
 .macro-section-count { color: var(--tg-hint); background: var(--md-surface-container-low); border-radius: var(--md-shape-full);
   padding: 0 0.45em; font-size: 0.82em; font-weight: 400; font-variant-numeric: tabular-nums; }
-.macro-list, .macro-usage-list { display: flex; flex-direction: column; }
-.macro-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.15em 0.55em;
-  padding: 0.5em 0.1em; border-bottom: 1px solid var(--line); }
-.macro-item:last-child { border-bottom: 0; }
-.macro-item-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.4em; min-width: 0; }
-.macro-name { color: var(--md-primary); font-size: 0.82em; background: none; padding: 0;
+.macro-table { width: 100%; border-collapse: collapse; table-layout: fixed; margin: 0; }
+.macro-table th { padding: 0.3em 0.35em; border-bottom: 1px solid var(--line);
+  color: var(--tg-hint); font-size: 0.72em; font-weight: 500; text-align: left; letter-spacing: 0.02em; }
+.macro-table td { padding: 0.45em 0.35em; border-bottom: 1px solid var(--line);
+  vertical-align: top; font-size: 0.78em; line-height: 1.35; overflow-wrap: anywhere; }
+.macro-table tbody tr:last-child td { border-bottom: 0; }
+.macro-table tbody tr:hover td { background: var(--hover); }
+.macro-table-available th:nth-child(1) { width: 32%; }
+.macro-table-available th:nth-child(2) { width: 34%; }
+.macro-table-available th:nth-child(3) { width: 34%; }
+.macro-table-usage th:nth-child(1) { width: 62%; }
+.macro-table-usage th:nth-child(2) { width: 16%; }
+.macro-table-usage th:nth-child(3) { width: 22%; }
+.macro-name { color: var(--md-primary); font-size: 1em; background: none; padding: 0;
   white-space: normal; overflow-wrap: anywhere; }
-.macro-alias { color: var(--tg-hint); font-size: 0.74em; font-weight: 400; }
-.macro-value { align-self: start; max-width: 9em; color: var(--md-on-secondary-container);
+.macro-alias { display: block; margin-top: 0.15em; color: var(--tg-hint); font-size: 0.88em; font-weight: 400; }
+.macro-value { display: inline-block; max-width: 100%; color: var(--md-on-secondary-container);
   background: var(--md-secondary-container); border-radius: var(--r-xs); padding: 0.08em 0.45em;
-  font-size: 0.8em; line-height: 1.35; text-align: right; overflow-wrap: anywhere; }
-.macro-description { grid-column: 1 / -1; color: var(--tg-hint); font-size: 0.76em; line-height: 1.35; }
-.macro-usage-item { display: flex; align-items: baseline; gap: 0.45em; padding: 0.34em 0.1em;
-  border-bottom: 1px solid var(--line); }
-.macro-usage-item:last-child { border-bottom: 0; }
-.macro-usage-item .macro-name { flex: 1 1 auto; min-width: 0; }
-.macro-count { color: var(--md-on-surface-variant); font-size: 0.8em; font-variant-numeric: tabular-nums; }
+  font-size: 0.95em; line-height: 1.35; text-align: left; overflow-wrap: anywhere; box-sizing: border-box; }
+.macro-description { color: var(--tg-hint); font-size: 0.95em; line-height: 1.35; }
+.macro-count { color: var(--md-on-surface-variant); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .macro-unknown { color: var(--md-on-error-container); background: var(--md-error-container);
-  border-radius: var(--md-shape-full); padding: 0 0.35em; font-size: 0.76em; }
+  border-radius: var(--md-shape-full); padding: 0 0.35em; font-size: 0.9em; white-space: nowrap; }
+.macro-known { color: var(--tg-hint); font-size: 0.9em; white-space: nowrap; }
 .macro-empty { display: flex; align-items: flex-start; gap: 0.65em; padding: 0.75em 0.15em 0.35em;
   color: var(--tg-hint); font-size: 0.78em; line-height: 1.4; }
 .macro-empty-icon { flex: none; color: var(--tg-hint); font-size: 1.25em; line-height: 1; }
