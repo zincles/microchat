@@ -4235,6 +4235,15 @@ test("浮层 MD3：dialog / menu / snackbar / banner，全局按钮与字段", (
   assert.match(css, /@keyframes md-dialog-in/, "对话框没有进场动画");
 });
 
+// 2026-11-11 用户报：上下文工作区里载荷与状态两个 tab 不能上下滚，压缩可以。
+// 根因是这两个 pane 只写了 overscroll-behavior、没写 overflow-y；压缩的滚动者是最内层
+// `.compact-preview-pane`，所以只有它正常。
+test("上下文工作区：载荷/状态面板自己滚，压缩交给最内层 pane", () => {
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.match(css, /#payload-pane,\s*#state-view\s*\{[^}]*overflow-y:\s*auto/, "载荷/状态没有自己的纵向滚动");
+  assert.match(css, /#compact-tree\s*\{[^}]*overflow:\s*hidden/, "压缩面板不该自己滚（内层 pane 才是滚动者）");
+});
+
 // MD3 第五刀（2026-11-06）：上下文工作区（载荷 / 状态 / 压缩 / 分段 / 修洞）。
 test("上下文工作区 MD3：primary tabs / 载荷行 / 状态 / 压缩树 / 高级压缩", () => {
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");

@@ -432,9 +432,11 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
   max-width: var(--read-col, 840px); width: 100%; margin: 0 auto;
   background: none; border-radius: 0; padding: 0;
   font-size: 0.92em; color: var(--tg-text); box-sizing: border-box; }
-/* 三个面板：占满 tabs 以下的空间、自己滚（`contain` 在这儿才有意义 —— 它就是那个滚动者）。 */
-#payload-pane, #state-view, #compact-tree { flex: 1 1 auto; min-height: 0; overscroll-behavior: contain; }
-#compact-tree { display: flex; flex-direction: column; overflow: hidden; }
+/* 三个面板：占满 tabs 以下的空间、自己滚（`contain` 在这儿才有意义 —— 它就是那个滚动者）。
+ * 载荷/状态是普通长文，必须自己 `overflow-y: auto`；压缩面板里面还有一层子窗口，
+ * 真正的滚动者是最内层的 `.compact-preview-pane`，所以它自己反而 `overflow: hidden`。 */
+#payload-pane, #state-view { height: 100%; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+#compact-tree { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; overscroll-behavior: contain; }
 .compact-subtabs { flex: none; align-self: flex-start; margin: 0 0 0.25em; }
 .compact-subwindow { flex: 1 1 auto; min-height: 0; }
 .compact-subwindow > .v-window__container { height: 100% !important; min-height: 0; }
