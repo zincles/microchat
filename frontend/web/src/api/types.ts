@@ -886,3 +886,23 @@ export interface TavernPreview {
   macros: MacroUsage[];
   warnings?: string[];
 }
+
+export interface TavernEffectiveEntry {
+  identifier: string;
+  name: string;
+  role: string;
+  content: string;
+  position: "relative" | "absolute";
+  depth?: number;
+  order?: number;
+  system_prompt?: boolean;
+}
+
+export interface TavernEffective {
+  name: string;
+  entries: TavernEffectiveEntry[];
+  dropped: TavernPreviewSkipped[];
+  variables: Record<string, string>;
+  macros: MacroUsage[];
+  warnings?: string[];
+}

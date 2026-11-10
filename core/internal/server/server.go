@@ -91,6 +91,7 @@ func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *ch
 	s.mux.HandleFunc("GET /api/v1/tavern/presets", s.listTavernPresets)
 	s.mux.HandleFunc("POST /api/v1/tavern/presets", s.createTavernPreset)
 	s.mux.HandleFunc("GET /api/v1/tavern/presets/{preset_id}/preview", s.previewTavernPreset)
+	s.mux.HandleFunc("GET /api/v1/tavern/presets/{preset_id}/effective", s.effectiveTavernPreset)
 	s.mux.HandleFunc("GET /api/v1/tavern/presets/{preset_id}", s.getTavernPreset)
 	s.mux.HandleFunc("DELETE /api/v1/tavern/presets/{preset_id}", s.deleteTavernPreset)
 	s.mux.HandleFunc("GET /api/v1/config/model-rules", s.getModelRules)

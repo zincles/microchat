@@ -57,6 +57,7 @@ import type {
   StreamCursor,
   StreamSlice,
   Summary,
+  TavernEffective,
   TavernPreview,
   TavernPreset,
   TaskBoard,
@@ -309,6 +310,13 @@ export function createApi({ base, token = "", fetchFn = fetch }: CreateApiOption
     // 酒馆：原始 JSON 只存字节，列表/删除走 JSON；上传/下载走原始 body（不 JSON 重写）。
     listTavernPresets: () => call<TavernPreset[]>("GET", "/tavern/presets"),
     tavernPreview: (id: string) => call<TavernPreview>("GET", `/tavern/presets/${enc(id)}/preview`),
+    tavernEffective: (id: string, opts?: { lastUserMessage?: string; agentId?: string }) => {
+      const q = new URLSearchParams();
+      if (opts?.lastUserMessage !== undefined) q.set("last_user_message", opts.lastUserMessage);
+      if (opts?.agentId) q.set("agent_id", opts.agentId);
+      const suffix = q.toString() ? `?${q}` : "";
+      return call<TavernEffective>("GET", `/tavern/presets/${enc(id)}/effective${suffix}`);
+    },
     uploadTavernPreset: (file: File) => {
       const name = file.name || "preset.json";
       return callBytes<TavernPreset>("POST", `/tavern/presets?name=${enc(name)}`, file);

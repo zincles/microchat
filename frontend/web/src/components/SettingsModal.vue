@@ -16,6 +16,7 @@ import ModelRulesEditor from "./ModelRulesEditor.vue";
 import UpdatePane from "./UpdatePane.vue";
 import TavernJsonViewer from "./TavernJsonViewer.vue";
 import TavernPreview from "./TavernPreview.vue";
+import TavernEffective from "./TavernEffective.vue";
 import { ICONS } from "./icons.ts";
 import { sharedApi } from "../utils/prefs.ts";
 import { SETTINGS_TABS, groupModelsByProvider, modelOption, providerChoices, modelChoicesFor, modelKey, parseModelKey, providerDisplayName } from "../utils/format.ts";
@@ -233,6 +234,7 @@ const tavernInput = ref<HTMLInputElement | null>(null);
 // 查看只把元数据交给阅读器；原始字节由阅读器按需下载，列表不背 1.5MB 的正文。
 const viewingPreset = ref<TavernPreset | null>(null);
 const previewingPreset = ref<TavernPreset | null>(null);
+const effectivePreset = ref<TavernPreset | null>(null);
 function sizeText(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
@@ -260,6 +262,9 @@ function viewTavernPreset(p: TavernPreset): void {
 }
 function previewTavernPreset(p: TavernPreset): void {
   previewingPreset.value = p;
+}
+function extractTavernPreset(p: TavernPreset): void {
+  effectivePreset.value = p;
 }
 async function downloadTavernPreset(p: TavernPreset): Promise<void> {
   try { downloadBlob(await api.downloadTavernPreset(p.id), p.filename); }
@@ -597,6 +602,7 @@ function onKey(e: KeyboardEvent): void {
                   <td>{{ sizeText(p.size) }}</td>
                   <td>{{ timeText(p.created_at) }}</td>
                   <td class="ops">
+                    <VBtn variant="text" size="small" type="button" title="提取有效内容（执行 ST 变量后只留有正文的条目）" @click="extractTavernPreset(p)">提取</VBtn>
                     <VBtn variant="text" size="small" type="button" @click="previewTavernPreset(p)">解析预览</VBtn>
                     <VBtn variant="text" size="small" type="button" @click="viewTavernPreset(p)">查看</VBtn>
                     <VBtn variant="text" size="small" type="button" @click="downloadTavernPreset(p)">导出</VBtn>
@@ -675,5 +681,6 @@ function onKey(e: KeyboardEvent): void {
     </div>
     <TavernJsonViewer v-if="viewingPreset" :preset="viewingPreset" @close="viewingPreset = null" />
     <TavernPreview v-if="previewingPreset" :preset="previewingPreset" @close="previewingPreset = null" />
+    <TavernEffective v-if="effectivePreset" :preset="effectivePreset" @close="effectivePreset = null" />
   </section>
 </template>
