@@ -100,6 +100,7 @@ function onKey(e: KeyboardEvent): void { if (e.key === "Escape") emit("close"); 
     </div>
     <div v-else class="row">
       <VBtn color="primary" variant="flat" size="small" type="button" @click="save">保存</VBtn>
+      <span class="action-note">保存后，引用它的智能体从下一轮开始使用新文本。</span>
       <VBtn color="error" variant="text" size="small" v-if="!isNew" type="button" @click="remove">删除</VBtn>
     </div>
     <div class="row"><span class="status">{{ status }}</span></div>

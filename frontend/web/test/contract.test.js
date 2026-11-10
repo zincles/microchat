@@ -1587,17 +1587,17 @@ test("外观缩放：拖动只改草稿，点保存缩放才应用", () => {
   assert.ok(!/flushPrefs/.test(pane), "缩放还保留松手立即落盘");
 });
 
-test("设置-聊天：新会话默认设置在最上面", () => {
+test("设置-聊天：默认值 → 上下文 → 压缩 → 生成，顺序固定", () => {
   const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
   const chatAt = settings.indexOf('<section id="panel-chat"');
   const sessionAt = settings.indexOf('<section id="panel-session"');
   assert.ok(chatAt > 0 && sessionAt > chatAt, "找不到聊天/会话面板");
-  const defaultsAt = settings.indexOf("<h3>新会话默认设置</h3>");
-  const replyAt = settings.indexOf("<h3>回复与自动压缩</h3>");
-  assert.ok(defaultsAt > chatAt && defaultsAt < sessionAt && defaultsAt < replyAt,
-    "新会话默认设置不在 设置-聊天 顶部");
+  const heads = ["新会话默认", "上下文与加载", "自动压缩", "生成与标题"].map((h) => settings.indexOf(`<h3>${h}</h3>`, chatAt));
+  assert.ok(heads.every((at) => at > chatAt && at < sessionAt), "聊天设置有分区标题缺失");
+  assert.ok(heads.every((at, i) => i === 0 || at > heads[i - 1]), "聊天设置分区顺序不对");
+  assert.ok(!settings.includes("<h3>回复与自动压缩</h3>"), "旧的“回复与自动压缩”还留着");
   const sessionPart = settings.slice(sessionAt, settings.indexOf("</VTabsWindowItem>", sessionAt));
-  assert.ok(!sessionPart.includes("新会话默认设置"), "会话管理里还留着新会话默认设置");
+  assert.ok(!sessionPart.includes("新会话默认"), "会话管理里还留着新会话默认设置");
 });
 
 test("外观页：发送键 / 预演 / 命令菜单三格都在（搬用户视图时丢过）", () => {

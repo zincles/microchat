@@ -244,6 +244,7 @@ async function clearBg(): Promise<void> {
 
 <template>
   <section id="panel-appearance" class="panel">
+    <p class="settings-lead">外观改动<b>立即生效并保存到服务器</b>，换设备或清缓存不会丢；这一页没有单独的保存按钮。</p>
     <section class="settings-card">
       <h3>外观</h3>
       <!-- 只有三套（2026-10-28 用户定）。id 必须与 prefs.ts 的 THEME_IDS 逐个对得上，

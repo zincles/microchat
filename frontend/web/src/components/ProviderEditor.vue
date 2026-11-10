@@ -350,6 +350,7 @@ function onCustomRulesSaved(rules: ModelDefineRule[]): void {
     <div class="row">
       <VBtn color="primary" variant="flat" size="small" type="button" @click="save">保存并刷新</VBtn>
       <VBtn variant="text" size="small" type="button" @click="testConnection">测试连通性</VBtn>
+      <span class="action-note">保存会写配置并重新拉取模型；测试只连一次、不保存，也不会改动已有模型。</span>
       <VBtn color="error" variant="text" size="small" v-if="!isNew && (hasKey || key)" type="button" @click="clearKey">清密钥</VBtn>
       <span class="status">{{ status }}</span>
     </div>

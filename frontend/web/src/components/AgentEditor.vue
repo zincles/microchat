@@ -316,6 +316,7 @@ function onKey(e: KeyboardEvent): void {
 
     <div class="row">
       <VBtn color="primary" variant="flat" size="small" type="button" @click="save">保存</VBtn>
+      <span class="action-note">保存后，新会话与后续轮次使用新设定；不会改写已有消息。</span>
       <VBtn variant="text" size="small" type="button" @click="exportCartridge" title="导出智能体文件（JSON；提示词片段会展开成完整提示词）">导出智能体</VBtn>
       <VBtn variant="text" size="small" v-if="!isNew && !isDefault" type="button" @click="makeDefault">设为默认</VBtn>
       <VBtn color="error" variant="text" size="small" v-if="!isNew" type="button" @click="remove">删除</VBtn>
