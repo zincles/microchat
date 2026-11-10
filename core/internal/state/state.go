@@ -304,6 +304,11 @@ type Outgoing struct {
 	// Children：只在 GET/POST /outgoing 里填（`ExpandChildren` 现算一层）—— 真发那一发保持扁平。
 	// 摘要的成员是哪些 id（消息 child 只给 id+idx，不给正文；摘要 child 再带它自己的范围）。
 	Children []Outgoing `json:"children,omitempty"`
+	// PromptID / Depth / Order：只给 PromptEntry 生成的临时项（prompt / injection）用；
+	// 普通消息不带。`Type` = "prompt"（relative）或 "injection"（absolute）。
+	PromptID string `json:"prompt_id,omitempty"`
+	Depth    *int   `json:"depth,omitempty"`
+	Order    *int   `json:"order,omitempty"`
 }
 
 // BuildOutgoing：组装**真正要发出去的东西** —— 系统提示词（+ 当前变量表）+ 历史
@@ -315,6 +320,16 @@ type Outgoing struct {
 // prependState：Agent 开了 `prepend_state` 时，把当前状态表渲染成 `<current_state>` 块
 // 贴到**最后一条用户消息**开头（只贴待发那句，历史不动）。关 ⇒ 老样子。
 func BuildOutgoing(systemPrompt string, messages []model.Message, summaries []model.Summary, tables Tables, prependState bool) []Outgoing {
+	return BuildOutgoingWithPromptEntries(systemPrompt, messages, summaries, tables, prependState, nil)
+}
+
+// BuildOutgoingWithPromptEntries：在同一个装配里接上 ST 导入的提示词计划。
+//
+// relative 条目按数组顺序放在系统提示词之后、历史之前；absolute 条目按 depth 插进历史
+// （0 = 最后一条之后，1 = 最后一条之前……），同 depth 按 order 升序。
+// 它们都是**临时出站项**，不落库、不占消息 idx、不参与世界状态。
+func BuildOutgoingWithPromptEntries(systemPrompt string, messages []model.Message, summaries []model.Summary,
+	tables Tables, prependState bool, entries []config.PromptEntry) []Outgoing {
 	// 系统提示词**原样出站**（2026-10-11 改）：它是说明文，不是状态来源（底子层早已删）——
 	// 从前这里也剔块，把提示词里的语法示例剪得七零八落（实测："块长这样（…）：" 后面空空如也）。
 	// 剔块只对**消息正文**做（那儿才是块的家）。
@@ -332,6 +347,20 @@ func BuildOutgoing(systemPrompt string, messages []model.Message, summaries []mo
 		zero := 0
 		outgoing = append(outgoing, Outgoing{Role: RoleSystem, Content: system, Type: "system", Idx: &zero})
 	}
+	// relative PromptEntry：按数组顺序插在系统提示词之后、历史之前（role 保留）。
+	for _, entry := range entries {
+		if strings.TrimSpace(entry.Content) == "" {
+			continue
+		}
+		position := strings.TrimSpace(entry.Position)
+		if position != "" && position != "relative" {
+			continue
+		}
+		outgoing = append(outgoing, Outgoing{
+			Role: promptRole(entry.Role), Content: entry.Content, Type: "prompt", PromptID: entry.ID,
+		})
+	}
+	historyStart := len(outgoing)
 	// 序号是**派生**的（`store.IndexMessages` 按排序编好）⇒ 这里只查表，不重算。
 	// 摘要不是消息、没有自己的 idx ⇒ 它只带"替代了第几条到第几条"。
 	idxByID := make(map[string]int, len(messages))
@@ -398,7 +427,74 @@ func BuildOutgoing(systemPrompt string, messages []model.Message, summaries []mo
 			}
 		}
 	}
+	// absolute PromptEntry：按 depth 插进历史；同 depth 按 order 升序。
+	// 先把索引都按**插完之前的**长度算好，再逐位置拼 —— 连续插入会互相改下标。
+	type injection struct {
+		index int
+		seq   int
+		item  Outgoing
+	}
+	injections := make([]injection, 0)
+	for seq, entry := range entries {
+		if strings.TrimSpace(entry.Content) == "" || strings.TrimSpace(entry.Position) != "absolute" {
+			continue
+		}
+		depth, order := entry.Depth, entry.Order
+		if depth < 0 {
+			depth = 0
+		}
+		if order < 0 {
+			order = 100
+		}
+		index := len(outgoing) - depth
+		if index < historyStart {
+			index = historyStart
+		}
+		if index > len(outgoing) {
+			index = len(outgoing)
+		}
+		d, o := depth, order
+		injections = append(injections, injection{index: index, seq: seq, item: Outgoing{
+			Role: promptRole(entry.Role), Content: entry.Content, Type: "injection", PromptID: entry.ID,
+			Depth: &d, Order: &o,
+		}})
+	}
+	if len(injections) > 0 {
+		sort.SliceStable(injections, func(i, j int) bool {
+			if injections[i].index != injections[j].index {
+				return injections[i].index < injections[j].index
+			}
+			if injections[i].item.Order != injections[j].item.Order {
+				return *injections[i].item.Order < *injections[j].item.Order
+			}
+			return injections[i].seq < injections[j].seq
+		})
+		merged := make([]Outgoing, 0, len(outgoing)+len(injections))
+		at := 0
+		for index := 0; index <= len(outgoing); index++ {
+			for at < len(injections) && injections[at].index == index {
+				merged = append(merged, injections[at].item)
+				at++
+			}
+			if index < len(outgoing) {
+				merged = append(merged, outgoing[index])
+			}
+		}
+		outgoing = merged
+	}
 	return outgoing
+}
+
+// promptRole：PromptEntry 的 role → wire role（未知 role 已在 config 校验时拒绝）。
+func promptRole(role string) OutgoingRole {
+	switch strings.TrimSpace(role) {
+	case "user":
+		return RoleUser
+	case "assistant":
+		return RoleAssistant
+	default:
+		return RoleSystem
+	}
 }
 
 // RenderCurrentState：状态表 → `<current_state>` 块文本（global 不写表名，命名表写表名）。

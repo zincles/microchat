@@ -54,7 +54,8 @@ func (s *Service) ContextUsage(session model.Session) (ContextUsage, error) {
 	prompt, _ := s.EffectiveSystemPrompt(session)
 	tables := state.FromSources(session.ID, messages).Tables
 	// 与真发出去的那一份**同一个拼装**（用 /outgoing 核对时不该出现第二份答案）
-	outgoing := s.renderMacros(session, state.BuildOutgoing(prompt, messages, summaries, tables, false))
+	outgoing := s.renderMacros(session, state.BuildOutgoingWithPromptEntries(
+		prompt, messages, summaries, tables, false, s.promptEntries(session)))
 
 	row, err := s.Store.GetModel(session.Provider, session.Model)
 	if err != nil {

@@ -239,6 +239,22 @@ type AbilityToggle struct {
 //
 // `Abilities` 的键 = 能力 id（**枚举，写在代码里**，见 `internal/abilities`）；
 // 未知的键在写入与启动读取时都**报清楚**（不静默忽略 —— 写了不生效最难查）。
+// PromptEntry：ST 预设导入后的**提示词计划条目**（2026-11-10）。
+//
+// 与 segment 的区别：segment 是纯 system prompt 文本；PromptEntry 还带 role / position /
+// depth / order —— relative 按数组顺序进提示词前缀，absolute 按 depth 插进聊天历史。
+// 原始 preset 的 identifier/name/system_prompt 原样保留，便于回看来源。
+type PromptEntry struct {
+	ID           string `json:"id"`
+	Name         string `json:"name,omitempty"`
+	Content      string `json:"content"`
+	Role         string `json:"role"`            // system / user / assistant
+	Position     string `json:"position"`        // relative / absolute
+	Depth        int    `json:"depth,omitempty"` // absolute：0 = 最后一条之后
+	Order        int    `json:"order,omitempty"` // absolute：同 depth 下小的先发
+	SystemPrompt bool   `json:"system_prompt,omitempty"`
+}
+
 type Agent struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`
@@ -250,8 +266,10 @@ type Agent struct {
 	// Segments：追加段（段库里的 id 列表，**顺序 = 追加顺序**）。
 	// 拼装 = base（`system_prompt`）+ 逐段 `"\n\n"` 拼接 —— **纯字符串拼接**，
 	// 无替换无递归（`state.AssembleSystemPrompt`，唯一实现处）。
-	Segments  []string                 `json:"segments,omitempty"`
-	Abilities map[string]AbilityToggle `json:"abilities,omitempty"`
+	Segments []string `json:"segments,omitempty"`
+	// PromptEntries：ST 导入的提示词计划（为空 = 老行为：base + segments）。
+	PromptEntries []PromptEntry            `json:"prompt_entries,omitempty"`
+	Abilities     map[string]AbilityToggle `json:"abilities,omitempty"`
 	// PrependState：出站时把当前状态表渲染成 `<current_state>` 块，贴到用户句首。
 	// 缺省 = 关（只有 RP 这类 Agent 需要；一般问答用不到）。
 	PrependState *bool `json:"prepend_state,omitempty"`
@@ -405,6 +423,45 @@ func (c AgentsConfig) ValidateSegments() error {
 						return fmt.Errorf("agent %q 的能力 %q 引用了不存在的提示词段：%s", agent.ID, id, ref)
 					}
 				}
+			}
+		}
+	}
+	return nil
+}
+
+// ValidatePromptEntries：PromptEntry 的写入/启动校验（与段引用同一条纪律：写了不生效要当场报）。
+func (c AgentsConfig) ValidatePromptEntries() error {
+	for _, agent := range c.Agents {
+		seen := map[string]bool{}
+		for index, entry := range agent.PromptEntries {
+			id := strings.TrimSpace(entry.ID)
+			if id == "" {
+				return fmt.Errorf("agent %q 的 prompt_entries[%d] 没有 id", agent.ID, index)
+			}
+			if seen[id] {
+				return fmt.Errorf("agent %q 的 prompt_entries id 重复：%s", agent.ID, id)
+			}
+			seen[id] = true
+			switch strings.TrimSpace(entry.Role) {
+			case "system", "user", "assistant":
+			default:
+				return fmt.Errorf("agent %q 的 prompt_entries[%s] role 不认识：%q（只能是 system / user / assistant）", agent.ID, id, entry.Role)
+			}
+			position := strings.TrimSpace(entry.Position)
+			if position == "" {
+				position = "relative"
+			}
+			switch position {
+			case "relative":
+			case "absolute":
+				if entry.Depth < 0 || entry.Order < 0 {
+					return fmt.Errorf("agent %q 的 prompt_entries[%s] depth/order 不能为负", agent.ID, id)
+				}
+			default:
+				return fmt.Errorf("agent %q 的 prompt_entries[%s] position 不认识：%q（只能是 relative / absolute）", agent.ID, id, entry.Position)
+			}
+			if strings.TrimSpace(entry.Content) == "" {
+				return fmt.Errorf("agent %q 的 prompt_entries[%s] 正文为空", agent.ID, id)
 			}
 		}
 	}

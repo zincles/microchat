@@ -24,6 +24,8 @@ type CreateAgentReq struct {
 	// Segments：追加段（段库里的 id 列表，顺序 = 追加顺序；拼装见 `state.AssembleSystemPrompt`）。
 	// 引用的段必须在库里 ⇒ 400。
 	Segments []string `json:"segments,omitempty"`
+	// PromptEntries：ST 预设导入的提示词计划（可选；空 = base + segments）。
+	PromptEntries []config.PromptEntry `json:"prompt_entries,omitempty"`
 	// Abilities：能力开关（键 = 能力 id）。**缺省 = 默认全开**；未知的 id ⇒ 400。
 	Abilities    map[string]config.AbilityToggle `json:"abilities,omitempty"`
 	PrependState *bool                           `json:"prepend_state,omitempty"`
@@ -38,6 +40,8 @@ type UpdateAgentReq struct {
 	FirstMessage *string `json:"first_message"`
 	// Segments：给了就**整段替换**这串引用（nil = 不动；`[]` = 清空）。引用的段必须在库里 ⇒ 400。
 	Segments []string `json:"segments,omitempty"`
+	// PromptEntries：nil = 不动；[] = 清空；非空 = 整段替换。
+	PromptEntries *[]config.PromptEntry `json:"prompt_entries,omitempty"`
 	// Abilities：给了就**整段替换**这张映射（与 `system_prompt` 一个语义；nil = 不动）。
 	// 未知的能力 id ⇒ 400（写了不生效是最难查的一类问题，不许静默忽略）。
 	Abilities map[string]config.AbilityToggle `json:"abilities,omitempty"`
@@ -101,13 +105,14 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	agents := s.loadAgents()
 	agent := config.Agent{
-		ID:           uuid.Must(uuid.NewV7()).String(),
-		Name:         name,
-		SystemPrompt: req.SystemPrompt,
-		FirstMessage: req.FirstMessage,
-		Segments:     req.Segments,
-		Abilities:    req.Abilities,
-		PrependState: req.PrependState,
+		ID:            uuid.Must(uuid.NewV7()).String(),
+		Name:          name,
+		SystemPrompt:  req.SystemPrompt,
+		FirstMessage:  req.FirstMessage,
+		Segments:      req.Segments,
+		PromptEntries: req.PromptEntries,
+		Abilities:     req.Abilities,
+		PrependState:  req.PrependState,
 	}
 	// 未知的能力 id 写进去只会"配了不生效" ⇒ 当场拒（口径见 `internal/abilities`）
 	if err := abilities.Validate(config.AgentsConfig{Agents: []config.Agent{agent}}); err != nil {
@@ -116,6 +121,10 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	// 段引用同理：不在库里 ⇒ 400（启动读取还会再报一次，同一个口径）
 	if err := (config.AgentsConfig{Segments: agents.Segments, Agents: []config.Agent{agent}}).ValidateSegments(); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid", err.Error())
+		return
+	}
+	if err := (config.AgentsConfig{Agents: []config.Agent{agent}}).ValidatePromptEntries(); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid", err.Error())
 		return
 	}
@@ -203,6 +212,9 @@ func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request) {
 	if req.Segments != nil {
 		agents.Agents[index].Segments = req.Segments
 	}
+	if req.PromptEntries != nil {
+		agents.Agents[index].PromptEntries = *req.PromptEntries
+	}
 	if req.Abilities != nil {
 		agents.Agents[index].Abilities = req.Abilities
 	}
@@ -215,6 +227,10 @@ func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := (config.AgentsConfig{Segments: agents.Segments, Agents: []config.Agent{agents.Agents[index]}}).ValidateSegments(); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid", err.Error())
+		return
+	}
+	if err := (config.AgentsConfig{Agents: []config.Agent{agents.Agents[index]}}).ValidatePromptEntries(); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid", err.Error())
 		return
 	}

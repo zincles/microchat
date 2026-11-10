@@ -60,6 +60,9 @@ func main() {
 	if err := agents.ValidateSegments(); err != nil {
 		fatal("agents.json 的提示词段不合法: %v", err)
 	}
+	if err := agents.ValidatePromptEntries(); err != nil {
+		fatal("agents.json 的 prompt_entries 不合法: %v", err)
+	}
 	// 给了 -debug 就**只干这一件事**：在监听端口之前就退出（也别进 TUI）。
 	if *debugMode {
 		os.Exit(runDebug(paths, cfg, flag.Args()))

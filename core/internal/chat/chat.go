@@ -524,7 +524,16 @@ func (s *Service) assembleMessages(session model.Session, messages []model.Messa
 	}
 	prompt, _ := s.EffectiveSystemPrompt(session)
 	tables := state.FromSources(session.ID, messages).Tables
-	return state.BuildOutgoing(prompt, messages, summaries, tables, s.prependState(session)), messages, nil
+	return state.BuildOutgoingWithPromptEntries(prompt, messages, summaries, tables, s.prependState(session), s.promptEntries(session)), messages, nil
+}
+
+// promptEntries：当前会话 Agent 上挂的 ST 提示词计划（空 = 老行为）。
+func (s *Service) promptEntries(session model.Session) []config.PromptEntry {
+	_, agents, _ := s.files()
+	if agent, ok := agents.Get(session.AgentID); ok {
+		return agent.PromptEntries
+	}
+	return nil
 }
 
 // prependState：这个会话的 Agent 开了 `prepend_state` 才往用户句首贴 `<current_state>`。

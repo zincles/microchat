@@ -514,12 +514,24 @@ export interface AbilityToggle {
   segments?: string[];
 }
 
+export interface PromptEntry {
+  id: string;
+  name?: string;
+  content: string;
+  role: "system" | "user" | "assistant";
+  position: "relative" | "absolute";
+  depth?: number;
+  order?: number;
+  system_prompt?: boolean;
+}
+
 export interface Agent {
   id: string;
   name: string;
   system_prompt: string;
   first_message?: string;
   segments?: string[];
+  prompt_entries?: PromptEntry[];
   abilities?: Record<string, AbilityToggle>;
   prepend_state?: boolean;
 }
@@ -542,6 +554,7 @@ export interface CreateAgentRequest {
   system_prompt?: string;
   first_message?: string;
   segments?: string[];
+  prompt_entries?: PromptEntry[];
   abilities?: Record<string, AbilityToggle>;
   prepend_state?: boolean;
 }
@@ -553,6 +566,7 @@ export interface UpdateAgentRequest {
   system_prompt?: string;
   first_message?: string;
   segments?: string[];
+  prompt_entries?: PromptEntry[];
   abilities?: Record<string, AbilityToggle>;
   prepend_state?: boolean;
 }

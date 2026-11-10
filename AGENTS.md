@@ -63,7 +63,7 @@ reminder/                  ← 专题参考（`tool-calls.md` 工具调用 / `je
 | `config` | `config/` 五个文件 | 可缺失；整体重写；密钥不回显 |
 | `registry` | 模型口径 | 身份 `(provider, upstream_id)`；发现与覆盖分列，刷新不动用户列 |
 | `providers` | **只有它碰网络** | 只走成熟库；超时必配；**选后端**（哪条渠道来答）也只有这一处 |
-| `state` | **只有它拼出站文本** | 发出去的**正文**剔标签、改注入当前状态（**提示词原样出站**）；提示词拼装（base + 追加段）也在这儿（`AssembleSystemPrompt`） |
+| `state` | **只有它拼出站文本** | 发出去的**正文**剔标签、改注入当前状态（**提示词原样出站**）；提示词拼装（base + 追加段）也在这儿（`AssembleSystemPrompt`）；`BuildOutgoingWithPromptEntries` 把 relative/absolute prompt entries 插成 `prompt`/`injection` 临时项（不落库、不占 idx） |
 | `blocks` | 块切分 | 块是推导的、不入库；不许劈开；开着的那块永不压 |
 | `compact` | 摘要唯一入口 | **只往 summaries 插行**；消息级不许覆盖已压缩的区间（**合并级相反**：只吃同层顶层摘要）；失败不阻塞一轮 |
 | `abilities` | 能力身份（枚举） | 产出不进历史/树/变量；失败不阻塞一轮；**缺条目 = 默认全开** |
@@ -374,6 +374,13 @@ delete(AA)           # 删除
   **不悄悄回落全默认**（那等于"用户的开关自己全开了"，而他一点线索都没有）。
   写出的 `disabled` 按类型清单排序 ⇒ 同一个状态永远写同一份文件。
 - `agents.json` — `{ "default_agent": "跑团", "agents": [ { "id": "跑团", "name": "跑团主持人", "system_prompt": "你是跑团主持人。", "first_message": "你好！我是跑团主持人。" } ] }`
+  每个 agent 可以带 **`prompt_entries`**（2026-11-10，ST 预设将来导入的提示词计划；空 = 老行为）：
+  `[{ "id":"main", "name":"主提示词", "content":"…", "role":"system", "position":"relative",
+  "depth":0, "order":0, "system_prompt":true }]` —— `role` 只能是 system/user/assistant；
+  `position=relative` 按数组顺序插在系统提示词之后、历史之前；`position=absolute` 按 `depth`
+  插进聊天历史（0 = 最后一条之后，1 = 最后一条之前……），同 depth 按 `order` 升序。
+  它们都是**临时出站项**（`Type: prompt/injection`），不占消息 idx、不落库、不参与世界状态；
+  正文仍走只读宏替换。id 非空且唯一、role/position 封闭、depth/order 非负 —— 写入与启动都报。
   每个 agent 可以带 **`first_message`（首段对话，2026-10-11 用户定）**：以它**新建**会话时，这段文本作为
   **第一条 assistant 消息（idx 1）**落库（正文**原样存档** ⇒ 可带 `<state>` 设初始状态）；空 = 不启用。
   草稿预演（`POST /outgoing`）把它**模拟**进去（"预演 = 真发"）；Copy 不重复插、ST 导入不受影响、改 agent 不追溯。
