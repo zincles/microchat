@@ -525,7 +525,7 @@ func (s *Service) assembleMessages(session model.Session, messages []model.Messa
 		return nil, nil, err
 	}
 	prompt, _ := s.EffectiveSystemPrompt(session)
-	entries, presetActive := s.promptEntries(session)
+	entries, presetActive := s.promptEntries(session, messages)
 	if presetActive {
 		// 预设是完整的提示词方案：Agent 的 base/段不参与；会话自己的 system_prompt 仍最高。
 		prompt = strings.TrimSpace(session.SystemPrompt)
@@ -539,7 +539,7 @@ func (s *Service) assembleMessages(session model.Session, messages []model.Messa
 // Agent 绑定了 preset_id ⇒ 每次现读原始 JSON → tavern.Parse（不复制条目；预设是唯一来源）。
 // 没有绑定 ⇒ 用手工/高级 PromptEntries（空 = 老行为）。
 // 第二个返回值 = 预设是否生效；调用方据此决定 Agent base/段要不要让位。
-func (s *Service) promptEntries(session model.Session) ([]config.PromptEntry, bool) {
+func (s *Service) promptEntries(session model.Session, messages []model.Message) ([]config.PromptEntry, bool) {
 	_, agents, _ := s.files()
 	agent, ok := agents.Get(session.AgentID)
 	if !ok {
@@ -553,13 +553,25 @@ func (s *Service) promptEntries(session model.Session) ([]config.PromptEntry, bo
 		log.Printf("会话 %s 的 Agent 预设 %q 读不到（回落 Agent 提示词）：%v", shortID(session.ID), agent.PresetID, err)
 		return agent.PromptEntries, false
 	}
-	preview, err := tavern.Parse(data)
+	// 真正进模型的不是原始 entries，而是执行 setvar/getvar/trim/注释后留下的那 24 条。
+	// lastUserMessage 用这一轮的最后一条 user（pending 已包含），于是 User_Input 段也是活的。
+	var lastUser *string
+	for index := len(messages) - 1; index >= 0; index-- {
+		if messages[index].Role == model.RoleUser {
+			text := strings.TrimSpace(statelang.Scan(messages[index].Content).Cleaned)
+			lastUser = &text
+			break
+		}
+	}
+	extracted, err := tavern.Extract(data, tavern.ExtractOptions{
+		Values: s.MacroValues(session), LastUserMessage: lastUser,
+	})
 	if err != nil {
-		log.Printf("会话 %s 的 Agent 预设 %q 解析失败（回落 Agent 提示词）：%v", shortID(session.ID), agent.PresetID, err)
+		log.Printf("会话 %s 的 Agent 预设 %q 求值失败（回落 Agent 提示词）：%v", shortID(session.ID), agent.PresetID, err)
 		return agent.PromptEntries, false
 	}
-	entries := make([]config.PromptEntry, 0, len(preview.Entries))
-	for _, entry := range preview.Entries {
+	entries := make([]config.PromptEntry, 0, len(extracted.Entries))
+	for _, entry := range extracted.Entries {
 		entries = append(entries, config.PromptEntry{
 			ID: entry.Identifier, Name: entry.Name, Content: entry.Content, Role: entry.Role,
 			Position: entry.Position, Depth: entry.Depth, Order: entry.Order, SystemPrompt: entry.SystemPrompt,
@@ -830,7 +842,7 @@ func wireMessages(outgoing []state.Outgoing, reasoningByID map[string]string) []
 // agent 配置喂给它，没有第二份算法。
 func (s *Service) EffectiveSystemPrompt(session model.Session) (string, state.PromptSource) {
 	// 绑定预设时，Agent 的 base/段不参与；会话自己的显式 system_prompt 仍最高。
-	if _, presetActive := s.promptEntries(session); presetActive {
+	if _, presetActive := s.promptEntries(session, nil); presetActive {
 		if own := strings.TrimSpace(session.SystemPrompt); own != "" {
 			return own, state.PromptFromSession
 		}

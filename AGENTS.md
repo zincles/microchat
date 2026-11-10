@@ -375,8 +375,8 @@ delete(AA)           # 删除
   写出的 `disabled` 按类型清单排序 ⇒ 同一个状态永远写同一份文件。
 - `agents.json` — `{ "default_agent": "跑团", "agents": [ { "id": "跑团", "name": "跑团主持人", "system_prompt": "你是跑团主持人。", "first_message": "你好！我是跑团主持人。", "preset_id": "" } ] }`
   **`preset_id`（2026-11-10）**：绑定一份 `tavern_presets` 原始预设（空 = 不绑定）。绑定时
-  Agent 的会话在出站装配里**现读原始 JSON → `tavern.Parse`**，用解析出的 relative/absolute
-  entries；**Agent 的 base/段不参与**（会话自己的 `system_prompt` 仍最高）。不复制条目 ⇒
+  Agent 的会话在出站装配里**现读原始 JSON → `tavern.Extract`**（执行 setvar/getvar/trim/注释，
+  丢掉空结果），用真正的 relative/absolute 有效条目；**Agent 的 base/段不参与**（会话自己的 `system_prompt` 仍最高）。不复制条目 ⇒
   预设是唯一来源。预设被删/读不出时回落 Agent 提示词（并记日志），但删除口会先拒绝仍被引用的预设。
   每个 agent 可以带 **`prompt_entries`**（2026-11-10，手工/高级提示词计划；空 = 老行为）：
   `[{ "id":"main", "name":"主提示词", "content":"…", "role":"system", "position":"relative",
@@ -1478,7 +1478,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   行内还有 **提取**：`GET /tavern/presets/{id}/effective` 按 prompt_order 执行 setvar/getvar/trim/注释，
   丢掉空结果，展示真正留下的 entries / 变量 / 未解析宏；只读，不写 Agent。
   **真正使用**不走“导入成 Agent”：在 Agent 编辑器的「提示词方案」里选这份原始预设（`preset_id`），
-  运行时现读现解析；预设原件是唯一来源，不复制 54 条 entries。
+  运行时现读现提取（`tavern.Extract`）；预设原件是唯一来源，不复制 54 条 entries。
 - 设置五 tab：**聊天 / 智能体 / 提示词 / 外观 / 酒馆**（新会话默认设置 2026-11-09 移到「聊天」顶部，不再在会话管理）（2026-11-02 起；会话与渠道不再是设置 tab；酒馆 2026-11-06 加）。聊天 / 智能体 / 提示词/外观的编辑都是 **tab 内二级页**（列表 ⇄ 详情就地切换，`[←]` 返回 —— 2026-10-10 从弹窗改过来，弹窗叠视图的账清了）；**Agent 编辑器的二级页自己也分页签**（2026-10-28 用户：「全挤在一起很丑」）——「基本」（id / 名称 / 首段对话 / 句首贴状态）/「系统提示词」（base + 它的段）/ **每个能力一页**（启用 / Model / 提示词覆盖 / 它的段，页面由 `ABILITY_IDS` 生成 ⇒ 加能力自动多一页），页签条与保存行：**保存那一行在页签外面**（哪一页都能存；藏在某一页里的那种，翻到别的页就找不到保存了）。页签条 **2026-11-06 起是 Vuetify `VTabs`/`VTab` + `VTabsWindow`/`VTabsWindowItem`**（真正的 tabpanel；旧手写 `TabBar.vue` 已删）：设置主栏与 Agent 编辑器同一个模式，`@focus="tab = t.id"` 补上"方向键搬焦点即激活"（Vuetify 的 slide group 只搬焦点，不激活）。「会话设置」（左栏 ☰）是**紧凑对话框**（560px、高随内容）。**Esc 一次只关一层**：二级页开着时设置视图不响应 Esc、会话设置弹窗开着时同理（踩过：两边各监听 document，一下关两层）。**会话管理页**（左栏「会话」入口）= 新会话默认值 + 列表（点进）+ 删除 + 尾部**导入对话**区（`POST /sessions/import-st` 与 `/sessions/import-json` 各一张卡：一句说明 + 按钮 + 隐藏文件框 —— 2026-10-17 用户点名「两种导入混在一起、都乱了」，改成两卡分开、原生 file 框换按钮）。
 - **设置页签顺序有第二个约束**（2026-11-06 用户报「标签页切换行为不太对」）：
   `SETTINGS_TABS` 的显示顺序必须与 `VTabsWindowItem` 的 DOM 顺序一致

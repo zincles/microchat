@@ -53,7 +53,7 @@ func (s *Service) ContextUsage(session model.Session) (ContextUsage, error) {
 		return ContextUsage{}, err
 	}
 	prompt, _ := s.EffectiveSystemPrompt(session)
-	entries, presetActive := s.promptEntries(session)
+	entries, presetActive := s.promptEntries(session, messages)
 	if presetActive {
 		prompt = strings.TrimSpace(session.SystemPrompt)
 	}
