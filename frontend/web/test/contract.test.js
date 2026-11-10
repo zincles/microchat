@@ -1789,15 +1789,16 @@ test("上下文环：App 喂 ctx / 环在顶栏画 / 状态行不再报占用", 
   assert.match(top, /pathLength="100"/, "弧长没走 pathLength 归一化（dasharray 会被当成绝对长度）");
   assert.match(top, /setContext/, "TopBar 没有暴露 setContext");
   assert.match(top, /class="agent-menu ctx-menu"/, "浮板没有复用 Agent 选人那套底（--tg-float / shadow-3）");
-  // 2026-11-09 用户定：环稍微加粗；两个 tab 切换时浮板尺寸不能跳；外围留 padding；
-  // 面板尽量用 Vuetify 原生组件。
+  // 2026-11-09 用户定：环稍微加粗；切 tab 时浮板尺寸不能跳；外围留 padding；
+  // 2026-11-10：四 tab 要全部可见（放宽 + 取消 Vuetify 的 90px 最小宽）。
   assert.match(tpl, /<VCard class="agent-menu ctx-menu"/, "浮板不是 Vuetify VCard");
   assert.match(tpl, /<VTabs[\s\S]*?v-model="ctxTab"/, "浮板 tab 不是 Vuetify VTabs");
   assert.match(tpl, /<VWindow v-model="ctxTab"/, "浮板内容没有用 VWindow");
   assert.match(tpl, /<VProgressLinear/, "上下文占用条不是 Vuetify VProgressLinear");
   assert.match(tpl, /<VList[\s\S]*?class="ctx-list"/, "上下文明细不是 Vuetify VList");
   assert.match(css, /#ctx-ring circle \{[^}]*stroke-width:\s*4/, "环没有加粗");
-  assert.match(css, /\.ctx-menu \{[^}]*width:\s*min\(24em/, "浮板宽度没钉死（切 tab 会变宽窄）");
+  assert.match(css, /\.ctx-menu \{[^}]*width:\s*min\(30em/, "浮板宽度没钉死（切 tab 会变宽窄）");
+  assert.match(css, /\.ctx-tabs \.v-tab \{[^}]*min-width:\s*0/, "四个 tab 会被 Vuetify 默认 90px 最小宽挤掉");
   assert.match(css, /\.ctx-menu \{[^}]*height:\s*min\(23\.5em/, "浮板高度没钉死（切 tab 会跳高矮）");
   assert.match(css, /\.agent-menu\.ctx-menu \{[^}]*padding:\s*1em/, "浮板外围没有 padding（被 .agent-menu 的 0.25em 覆盖了）");
   // 顺序：2026-10-28 定的是「环在左、载荷栏开关在右」—— 那是**栏还在**时的锚点关系。

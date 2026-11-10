@@ -274,6 +274,7 @@ function setContext(c?: ContextUsage | null): void { ctx.value = c ?? null; }
 // “已注册宏”面板：后端把注册表 + 本会话全文使用次数一起算好（这里只管画）。
 const macroReport = ref<MacroReport | null>(null);
 function setMacros(report?: MacroReport | null): void { macroReport.value = report ?? null; }
+function macroLabel(name: string): string { return `{{${name}}}`; }
 
 // —— 后台任务（2026-11-01 用户定：「把后台任务也做成右上角那个圆环一样的东西……显示一个数字，
 //     按下就在一个小面板里（类似那个绿色的上下文栏）显示有多少后台任务」）——
@@ -640,27 +641,41 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
           </VWindowItem>
           <VWindowItem value="macros">
             <div class="ctx-pane ctx-macros">
-              <p class="ctx-note">存储保留 <code v-text="'{{…}}'"></code> 原文；只有后端出站与界面显示时替换。</p>
-              <div class="macro-section-title">可用宏</div>
-              <VList density="compact" class="ctx-list">
-                <VListItem v-for="m in macroReport?.macros ?? []" :key="m.name" class="ctx-row">
-                  <div class="ctx-row-inner">
-                    <span class="ctx-key"><span>{{ m.name }}</span><span v-if="m.aliases?.length" class="macro-aliases">{{ m.aliases.join(" / ") }}</span></span>
-                    <span class="ctx-val macro-value">{{ m.value || "（空）" }}</span>
+              <p class="macro-note">存储保留 <code v-text="'{{…}}'"></code> 原文；只有后端出站与界面显示时替换。</p>
+
+              <div class="macro-section-title">
+                <span>可用宏</span>
+                <span class="macro-section-count">{{ macroReport?.macros?.length ?? 0 }}</span>
+              </div>
+              <div class="macro-list">
+                <div v-for="m in macroReport?.macros ?? []" :key="m.name" class="macro-item">
+                  <div class="macro-item-main">
+                    <code class="macro-name" v-text="macroLabel(m.name)"></code>
+                    <span v-if="m.aliases?.length" class="macro-alias">别名 {{ m.aliases.join(" / ") }}</span>
                   </div>
-                  <div class="macro-desc">{{ m.description }}</div>
-                </VListItem>
-              </VList>
-              <div class="macro-section-title">本会话使用 <span class="macro-total">{{ macroReport?.total ?? 0 }} 次</span></div>
-              <p v-if="!macroReport?.usage?.length" class="agent-empty">本会话正文与系统提示词里还没有出现宏。</p>
-              <VList v-else density="compact" class="ctx-list">
-                <VListItem v-for="u in macroReport.usage" :key="u.name" class="ctx-row">
-                  <div class="ctx-row-inner">
-                    <span class="ctx-key">{{ u.name }}<span v-if="!u.known" class="macro-unknown">未注册</span></span>
-                    <span class="ctx-val">×{{ u.count }}</span>
-                  </div>
-                </VListItem>
-              </VList>
+                  <span class="macro-value">{{ m.value || "—" }}</span>
+                  <div class="macro-description">{{ m.description }}</div>
+                </div>
+              </div>
+
+              <div class="macro-section-title">
+                <span>本会话使用</span>
+                <span class="macro-section-count">{{ macroReport?.total ?? 0 }} 次</span>
+              </div>
+              <div v-if="!macroReport?.usage?.length" class="macro-empty">
+                <span class="macro-empty-icon" aria-hidden="true">∅</span>
+                <div>
+                  <b>还没有使用宏</b>
+                  <span>在提示词或消息里写 <code v-text="'{{user_name}}'"></code> 就会出现在这里。</span>
+                </div>
+              </div>
+              <div v-else class="macro-usage-list">
+                <div v-for="u in macroReport.usage" :key="u.name" class="macro-usage-item">
+                  <code class="macro-name" v-text="macroLabel(u.name)"></code>
+                  <span v-if="!u.known" class="macro-unknown">未注册</span>
+                  <span class="macro-count">×{{ u.count }}</span>
+                </div>
+              </div>
             </div>
           </VWindowItem>
         </VWindow>
