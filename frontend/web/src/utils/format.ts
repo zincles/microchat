@@ -297,6 +297,16 @@ export function assistantIdentity(
   return label ? `${label}#${n}` : `#${n}`;
 }
 
+// depthText：ST 的 injection_depth 人话解释。只对 absolute 有效；
+// 0 = 最后一条之后，1 = 最后一条之前，2 = 倒数第二条之前。
+export function depthText(depth?: number | null): string {
+  const n = Number(depth);
+  if (!Number.isFinite(n) || n < 0) return "";
+  if (n === 0) return "最后一条之后";
+  if (n === 1) return "最后一条之前";
+  return `倒数第${n}条之前`;
+}
+
 // formatLatency：首字延迟（后端 `reasoning_ms`：受理 → 第一段正文），秒、两位小数。
 // 没这一格（没存思考的渠道 / 还没有正文 / 生成中）⇒ 空串 ⇒ 脚注省掉这段。
 export function formatLatency(ms?: number | null): string {

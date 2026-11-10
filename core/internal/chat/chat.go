@@ -725,7 +725,33 @@ func (s *Service) buildWire(session model.Session, outgoing []state.Outgoing, re
 	if err != nil {
 		return providers.LastPayload{}, err
 	}
-	return providers.Snapshot(request, time.Now())
+	payload, err := providers.Snapshot(request, time.Now())
+	if err != nil {
+		return providers.LastPayload{}, err
+	}
+	payload.Annotations = messageAnnotations(outgoing)
+	return payload, nil
+}
+
+// messageAnnotations：把 relative prompt / absolute injection 标在 body.messages 的对应下标上。
+func messageAnnotations(outgoing []state.Outgoing) []providers.MessageAnnotation {
+	out := make([]providers.MessageAnnotation, 0)
+	for index, item := range outgoing {
+		if item.Type != "prompt" && item.Type != "injection" {
+			continue
+		}
+		annotation := providers.MessageAnnotation{Index: index, Type: item.Type, PromptID: item.PromptID}
+		if item.Depth != nil {
+			depth := *item.Depth
+			annotation.Depth = &depth
+		}
+		if item.Order != nil {
+			order := *item.Order
+			annotation.Order = &order
+		}
+		out = append(out, annotation)
+	}
+	return out
 }
 
 // availableTools：这一轮请求体顶层要带的工具声明。

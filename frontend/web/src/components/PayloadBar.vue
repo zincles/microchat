@@ -14,6 +14,7 @@ import AdvancedCompact from "./AdvancedCompact.vue";
 import { treeTotals } from "../utils/tree.ts";
 import type { TreeNode } from "../utils/tree.ts";
 import { parseWireMessages, previewBlock } from "../utils/payload.ts";
+import { depthText } from "../utils/format.ts";
 import type { ParsedWireMessage } from "../utils/payload.ts";
 import { payloadPreviewOn, savePayloadPreview, payloadVizOn, savePayloadViz } from "../utils/prefs.ts";
 import type { LastPayload, PayloadPreview } from "../api/types.ts";
@@ -244,7 +245,7 @@ defineExpose({ setWire, setTables, setTree, setCompactWire });
           <span v-if="vizData.meta.stream" class="pv-chip">stream</span>
         </div>
         <ol class="pv-list">
-          <li v-for="(m, i) in vizData.messages" :key="i" class="pv-msg" :class="`role-${m.role}`">
+          <li v-for="(m, i) in vizData.messages" :key="i" class="pv-msg" :class="[`role-${m.role}`, { injected: m.annotation?.type === 'injection', 'preset-entry': m.annotation?.type === 'prompt' }]">
             <!-- 整行可点开合（触摸友好：大目标）—— 长块默认折叠，点开才铺全文（面板整体滚，不做嵌套滚动） -->
             <button type="button" class="pv-head" :aria-expanded="blockOpen(m, i)" @click="toggleBlock(m, i)">
               <span class="pv-tw">{{ blockOpen(m, i) ? "▾" : "▸" }}</span>
@@ -253,6 +254,13 @@ defineExpose({ setWire, setTables, setTree, setCompactWire });
               <span v-if="m.name" class="pv-chip">{{ m.name }}</span>
               <span class="pv-chars">{{ m.chars }} 字</span>
             </button>
+            <div v-if="m.annotation" class="pv-src-line">
+              <span class="pv-src" :class="m.annotation.type || 'synthetic'">{{ m.annotation.type === "injection" ? "注入" : m.annotation.type === "prompt" ? "预设" : "合成" }}</span>
+              <span v-if="m.annotation.depth != null" class="pv-depth"
+                :title="`depth ${m.annotation.depth}：${depthText(m.annotation.depth)}${m.annotation.order != null ? `；order ${m.annotation.order}` : ''}`"
+              >depth {{ m.annotation.depth }} · {{ depthText(m.annotation.depth) }}</span>
+              <code v-if="m.annotation.promptId" class="pv-prompt-id" v-text="m.annotation.promptId"></code>
+            </div>
             <div v-if="!blockOpen(m, i) && m.content" class="pv-preview">{{ previewBlock(m.content) }}</div>
             <div v-if="blockOpen(m, i) && m.reasoning" class="pv-extra">思考（reasoning_content）：{{ m.reasoning }}</div>
             <div v-if="blockOpen(m, i) && m.content" class="pv-content">{{ m.content }}</div>

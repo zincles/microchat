@@ -486,6 +486,20 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .pv-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 .pv-msg { border: none; border-radius: 0; background: none; padding: 0.5em 0; border-bottom: 1px solid var(--line); }
 .pv-msg:last-child { border-bottom: none; }
+.pv-msg:last-child { border-bottom: none; }
+/* 载荷里“不是历史消息”的项：relative prompt 细边，absolute injection 整块淡底。
+   这不是装饰：预演里必须一眼看出哪条是程序插进去的，而不是用户/模型真说过的话。 */
+.pv-msg.preset-entry { border-left: 2px solid var(--md-outline-variant); padding-left: 0.5em; }
+.pv-msg.injected { border-left: 3px solid var(--md-primary);
+  background: color-mix(in srgb, var(--md-primary) 8%, transparent);
+  border-radius: 0 var(--r-sm) var(--r-sm) 0; padding-left: 0.55em; }
+.pv-src-line { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35em; margin: 0 0 0.3em; }
+.pv-src { border-radius: var(--md-shape-full); padding: 0 0.45em; font-size: var(--md-type-label-small); line-height: 1.6; }
+.pv-src.injection { color: var(--md-on-primary-container); background: var(--md-primary-container); }
+.pv-src.prompt { color: var(--md-on-secondary-container); background: var(--md-secondary-container); }
+.pv-src.synthetic { color: var(--tg-hint); background: var(--md-surface-container-low); }
+.pv-depth { color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); cursor: help; }
+.pv-prompt-id { color: var(--tg-hint); font-size: var(--md-type-label-small); background: none; padding: 0; }
 .pv-head { display: flex; align-items: center; gap: 0.4em; margin: 0 0 0.35em; width: 100%; min-height: 2.5em; background: none; border: none; border-radius: var(--md-shape-sm); color: var(--md-on-surface); font: inherit; line-height: 1.3; text-align: left; cursor: pointer; padding: 0.15em 0.35em; -webkit-tap-highlight-color: transparent; user-select: none; transition: background-color var(--md-dur-150) var(--md-ease-standard); }
 .pv-tw { flex: none; width: 1em; color: var(--md-on-surface-variant); }
 .pv-preview { color: var(--md-on-surface-variant); font-size: var(--md-type-body-small); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -860,6 +874,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
   padding-bottom: 0.2em; border-bottom: 1px solid var(--md-outline-variant); font-weight: 600; }
 .tavern-preview-section-title span { color: var(--md-on-surface-variant); font-weight: 400; font-size: var(--md-type-label-medium); }
 .tavern-preview-empty { color: var(--md-on-surface-variant); font-size: var(--md-type-body-small); }
+.tavern-preview-depth-note { margin: -0.2em 0 0.45em; color: var(--md-on-surface-variant); font-size: var(--md-type-body-small); line-height: 1.5; }
 .tavern-preview-entry { padding: 0.5em 0; border-bottom: 1px solid var(--outline-variant); }
 .tavern-preview-entry-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.45em; }
 .tavern-preview-entry-head b { font-weight: 600; }

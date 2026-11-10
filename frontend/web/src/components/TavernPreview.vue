@@ -6,6 +6,7 @@
 import { computed, ref, shallowRef, watch } from "vue";
 import { VBtn, VCard, VCardText, VCardTitle, VDialog, VProgressCircular } from "vuetify/components";
 import { sharedApi } from "../utils/prefs.ts";
+import { depthText } from "../utils/format.ts";
 import { ICONS } from "./icons.ts";
 import type { TavernPreset, TavernPreview } from "../api/types.ts";
 
@@ -85,12 +86,13 @@ watch(() => props.preset.id, load, { immediate: true });
           </div>
 
           <div class="tavern-preview-section-title">绝对注入 <span>{{ absoluteEntries.length }}</span></div>
+          <p class="tavern-preview-depth-note">depth 从聊天历史末尾往前数：0 = 最后一条之后，1 = 最后一条之前，2 = 倒数第二条之前。</p>
           <p v-if="!absoluteEntries.length" class="tavern-preview-empty">没有 absolute 条目。</p>
           <article v-for="entry in absoluteEntries" :key="entry.identifier" class="tavern-preview-entry">
             <div class="tavern-preview-entry-head">
               <b>{{ entry.name || entry.identifier }}</b>
               <span class="tavern-preview-tag">{{ entry.role }}</span>
-              <span class="tavern-preview-meta">depth {{ entry.depth }} · order {{ entry.order }}</span>
+              <span class="tavern-preview-meta" :title="`depth ${entry.depth}：${depthText(entry.depth)}`">depth {{ entry.depth }} · {{ depthText(entry.depth) }} · order {{ entry.order }}</span>
             </div>
             <div class="tavern-preview-id">{{ entry.identifier }}<span v-if="entry.system_prompt"> · system_prompt</span></div>
             <p class="tavern-preview-content">{{ previewOf(entry.content) }}</p>

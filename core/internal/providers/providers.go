@@ -1080,6 +1080,18 @@ type LastPayload struct {
 	Headers map[string]string `json:"headers"`
 	Body    json.RawMessage   `json:"body"`
 	At      int64             `json:"at"`
+	// Annotations：body.messages 里哪些不是历史消息（prompt / injection），以及注入的 depth/order。
+	// 只在 chat 的预演快照上填；record 的“真发”快照没有这层语义，省略。
+	Annotations []MessageAnnotation `json:"annotations,omitempty"`
+}
+
+// MessageAnnotation：与 body.messages **同下标**的一条来源注释。
+type MessageAnnotation struct {
+	Index    int    `json:"index"`
+	Type     string `json:"type"` // prompt / injection
+	PromptID string `json:"prompt_id,omitempty"`
+	Depth    *int   `json:"depth,omitempty"`
+	Order    *int   `json:"order,omitempty"`
 }
 
 // Snapshot：把一发请求记成可回显的形状（密钥打码）。

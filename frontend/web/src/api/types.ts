@@ -186,12 +186,21 @@ export interface StateView {
   tables: Record<string, Record<string, string>>;
 }
 
+export interface PayloadAnnotation {
+  index: number;
+  type: "prompt" | "injection" | string;
+  prompt_id?: string;
+  depth?: number;
+  order?: number;
+}
+
 export interface LastPayload {
   method: string;
   url: string;
   headers: Record<string, string>;
   body: unknown;
   at: number;
+  annotations?: PayloadAnnotation[];
 }
 
 export interface PreviewResult {

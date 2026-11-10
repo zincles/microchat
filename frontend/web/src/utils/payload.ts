@@ -9,6 +9,15 @@ export interface WireLike {
   method?: unknown;
   url?: unknown;
   body?: unknown;
+  annotations?: unknown;
+}
+
+export interface ParsedAnnotation {
+  index: number;
+  type: string;
+  promptId: string;
+  depth?: number;
+  order?: number;
 }
 
 export interface ParsedWireMessage {
@@ -19,6 +28,7 @@ export interface ParsedWireMessage {
   reasoning: string;
   toolCallId: string;
   toolCalls: string;
+  annotation: ParsedAnnotation | null;
 }
 
 export interface ParsedWire {
@@ -49,6 +59,23 @@ export function parseWireMessages(wire: WireLike | null | undefined): ParsedWire
   if (!body || typeof body !== "object") return null;
   const b = body as Record<string, unknown>;
   if (!Array.isArray(b.messages)) return null;
+  const annotations = new Map<number, ParsedAnnotation>();
+  if (Array.isArray(wire?.annotations)) {
+    for (const raw of wire.annotations) {
+      const item: Record<string, unknown> = raw !== null && typeof raw === "object" ? raw as Record<string, unknown> : {};
+      const index = Number(item.index);
+      if (!Number.isInteger(index) || index < 0) continue;
+      const depth = Number(item.depth);
+      const order = Number(item.order);
+      annotations.set(index, {
+        index,
+        type: typeof item.type === "string" ? item.type : "",
+        promptId: typeof item.prompt_id === "string" ? item.prompt_id : "",
+        depth: Number.isFinite(depth) ? depth : undefined,
+        order: Number.isFinite(order) ? order : undefined,
+      });
+    }
+  }
   return {
     meta: {
       method: typeof wire?.method === "string" ? wire.method : "",
@@ -57,7 +84,7 @@ export function parseWireMessages(wire: WireLike | null | undefined): ParsedWire
       stream: b.stream === true,
       tools: Array.isArray(b.tools) ? b.tools.length : 0,
     },
-    messages: b.messages.map((raw): ParsedWireMessage => {
+    messages: b.messages.map((raw, index): ParsedWireMessage => {
       const m: Record<string, unknown> = raw !== null && typeof raw === "object" ? raw : {};
       const rawContent = m.content;
       const content = typeof rawContent === "string" ? rawContent : rawContent == null ? "" : (JSON.stringify(rawContent) ?? "");
@@ -69,6 +96,7 @@ export function parseWireMessages(wire: WireLike | null | undefined): ParsedWire
         chars: runeLen(content),
         reasoning: typeof m.reasoning_content === "string" ? m.reasoning_content : "",
         toolCallId: typeof m.tool_call_id === "string" ? m.tool_call_id : "",
+        annotation: annotations.get(index) ?? null,
         toolCalls: rawCalls
           .map((t) => {
             const call: Record<string, unknown> = t !== null && typeof t === "object" ? t : {};

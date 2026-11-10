@@ -552,6 +552,15 @@ test("载荷分块：parseWireMessages 只认形状（messages 数组），边�
   assert.equal(p.messages[3].toolCalls, "get_weather");
   assert.equal(p.messages[4].toolCallId, "call_1");
   assert.equal(p.messages[4].name, "get_weather");
+  // annotations：与 messages 同下标；只标记 prompt / injection，不猜历史。
+  const annotated = parseWireMessages({
+    body: { messages: [{ role: "user", content: "历史" }, { role: "system", content: "注入" }] },
+    annotations: [{ index: 1, type: "injection", prompt_id: "style", depth: 2, order: 100 }],
+  });
+  assert.equal(annotated.messages[0].annotation, null);
+  assert.deepEqual(annotated.messages[1].annotation, {
+    index: 1, type: "injection", promptId: "style", depth: 2, order: 100,
+  });
   // 不是这个形状 ⇒ null（调用方退回裸 JSON）
   assert.equal(parseWireMessages(null), null);
   assert.equal(parseWireMessages({ body: "字符串" }), null);
