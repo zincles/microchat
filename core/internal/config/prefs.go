@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"microchat/internal/macro"
 )
 
 // ── 界面偏好（UI prefs）────────────────────────────────────────────
@@ -199,6 +201,9 @@ type Prefs struct {
 	FontBody   string     `json:"font_body,omitempty"`
 	FontMono   string     `json:"font_mono,omitempty"`
 	Background Background `json:"background,omitempty"`
+	// UserName：`{{user_name}}` / `{{user}}` 的替换值（2026-11-10 用户定）。
+	// 账号已经砍了，所以这是**这台机器上的使用者**自己起的名字；空 = 用 “你”。
+	UserName string `json:"user_name,omitempty"`
 
 	// —— 输入 ——
 	Send    string `json:"send,omitempty"`
@@ -230,6 +235,7 @@ func DefaultPrefs() Prefs {
 		TextScale: "",
 		FontBody:  "",
 		FontMono:  "",
+		UserName:  macro.DefaultUserName,
 		Send:      "",
 		// ⚠ 每一格都要**独立**的指针（2026-11-02 修）。从前写的是 `on := true; off := false`
 		// 然后所有 `&on` / `&off` 共用同一个变量 —— JSON 解码 `command_menu:true` 会把那个

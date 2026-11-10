@@ -129,6 +129,7 @@ func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *ch
 	s.mux.HandleFunc("POST /api/v1/outgoing", s.postDraftOutgoing)
 	// 生效的系统提示词（三级解析的**结果** + 来源）—— 调试用：客户端摆在消息区最上方
 	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/prompt", s.getSessionPrompt)
+	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/macros", s.sessionMacros)
 	s.mux.HandleFunc("PATCH /api/v1/sessions/{session_id}/messages/{message_id}", s.editMessage)
 	s.mux.HandleFunc("DELETE /api/v1/sessions/{session_id}/messages/{message_id}", s.deleteMessage)
 	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/summaries", s.listSummaries)

@@ -31,7 +31,7 @@ import {
   parseModelKey,
 } from "../utils/format.ts";
 import type { ModelChoice, ModelGroup } from "../utils/format.ts";
-import type { ContextUsage, Queue, Session, TaskBoard, TaskRecord } from "../api/types.ts";
+import type { ContextUsage, MacroReport, Queue, Session, TaskBoard, TaskRecord } from "../api/types.ts";
 
 interface SessionInfo {
   id?: string;
@@ -74,6 +74,7 @@ const emit = defineEmits<{
   "save-overrides": [overrides: Record<string, unknown>];
   "cancel-queue": [id: string];
   "cancel-task": [id: string];
+  "refresh-macros": [];
 }>();
 function setWorkspace(v: unknown): void {
   if (v === "chat" || v === "context") emit("select-workspace", v);
@@ -183,7 +184,7 @@ function setModels(groups: ModelGroup[], cur?: string): void {
 const ctx = ref<ContextUsage | null>(null);
 const ctxOpen = ref(false);
 // 环面板的两个 tab（2026-11-02 用户定）：上下文状态 / 正在运行的任务。
-const ctxTab = ref<"context" | "tasks" | "overrides">("context");
+const ctxTab = ref<"context" | "tasks" | "overrides" | "macros">("context");
 // —— 请求体覆盖（2026-11-10 用户定）——
 // 内容省略外层 {}：包装后再 JSON.parse；保存发给 App 做 PATCH。
 const overridesSessionId = ref("");
@@ -267,9 +268,12 @@ const ctxBudgetNote = computed(() => {
 });
 // closeMenus：Esc 一次收起所有顶栏浮板（MD3 menu 的常规行为；从前只有模型菜单接 Esc）。
 function closeMenus(): void { modelOpen.value = false; ctxOpen.value = false; }
-function toggleCtx(): void { ctxOpen.value = !ctxOpen.value; if (ctxOpen.value) { modelOpen.value = false; } }
+function toggleCtx(): void { ctxOpen.value = !ctxOpen.value; if (ctxOpen.value) { modelOpen.value = false; emit("refresh-macros"); } }
 // setContext：App 每轮 refreshStatusline 喂一次（草稿态传 null）。
 function setContext(c?: ContextUsage | null): void { ctx.value = c ?? null; }
+// “已注册宏”面板：后端把注册表 + 本会话全文使用次数一起算好（这里只管画）。
+const macroReport = ref<MacroReport | null>(null);
+function setMacros(report?: MacroReport | null): void { macroReport.value = report ?? null; }
 
 // —— 后台任务（2026-11-01 用户定：「把后台任务也做成右上角那个圆环一样的东西……显示一个数字，
 //     按下就在一个小面板里（类似那个绿色的上下文栏）显示有多少后台任务」）——
@@ -388,7 +392,7 @@ function setStatus(s?: StatusInfo | null): void { status.value = s ?? null; }
 // 悬停解释 = 状态一句 + 预算一句（两处都是"一眼看不清、要解释"的东西）。
 const ringTitle = computed(() => [formatStatusLine(status.value ?? {}), contextTitle(ctx.value), taskTitle.value].filter(Boolean).join("\n"));
 
-defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverridesSaved });
+defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverridesSaved, setMacros });
 </script>
 
 <template>
@@ -512,6 +516,7 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
           <VTab value="context">上下文</VTab>
           <VTab value="tasks">任务<span v-if="activeTaskCount > 0" class="ctx-tab-count">{{ taskCountText }}</span></VTab>
           <VTab value="overrides">请求体覆盖</VTab>
+          <VTab value="macros">已注册宏</VTab>
         </VTabs>
         <VWindow v-model="ctxTab" class="ctx-window">
           <VWindowItem value="context">
@@ -631,6 +636,31 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
                 <VBtn type="button" variant="flat" color="primary" size="small" :disabled="!overridesSessionId" @click="saveOverrides">保存</VBtn>
                 <span class="ctx-overrides-state" :class="{ error: !!overridesError }">{{ overridesError || overridesNotice || (overridesDirty ? "未保存" : "已保存") }}</span>
               </div>
+            </div>
+          </VWindowItem>
+          <VWindowItem value="macros">
+            <div class="ctx-pane ctx-macros">
+              <p class="ctx-note">存储保留 <code v-text="'{{…}}'"></code> 原文；只有后端出站与界面显示时替换。</p>
+              <div class="macro-section-title">可用宏</div>
+              <VList density="compact" class="ctx-list">
+                <VListItem v-for="m in macroReport?.macros ?? []" :key="m.name" class="ctx-row">
+                  <div class="ctx-row-inner">
+                    <span class="ctx-key"><span>{{ m.name }}</span><span v-if="m.aliases?.length" class="macro-aliases">{{ m.aliases.join(" / ") }}</span></span>
+                    <span class="ctx-val macro-value">{{ m.value || "（空）" }}</span>
+                  </div>
+                  <div class="macro-desc">{{ m.description }}</div>
+                </VListItem>
+              </VList>
+              <div class="macro-section-title">本会话使用 <span class="macro-total">{{ macroReport?.total ?? 0 }} 次</span></div>
+              <p v-if="!macroReport?.usage?.length" class="agent-empty">本会话正文与系统提示词里还没有出现宏。</p>
+              <VList v-else density="compact" class="ctx-list">
+                <VListItem v-for="u in macroReport.usage" :key="u.name" class="ctx-row">
+                  <div class="ctx-row-inner">
+                    <span class="ctx-key">{{ u.name }}<span v-if="!u.known" class="macro-unknown">未注册</span></span>
+                    <span class="ctx-val">×{{ u.count }}</span>
+                  </div>
+                </VListItem>
+              </VList>
             </div>
           </VWindowItem>
         </VWindow>

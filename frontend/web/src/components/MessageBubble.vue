@@ -6,6 +6,7 @@ import { ICONS } from "./icons.ts";
 import { assistantIdentity, formatThinkLabel, identityLabel, nativeToolLabel, sourceLabel, toolRunHint, usageFoot, usageFootTitle } from "../utils/format.ts";
 import type { UsageLike } from "../utils/format.ts";
 import { renderMarkdown, splitState } from "../utils/markdown.ts";
+import type { MacroMap } from "../utils/macros.ts";
 import { renderMermaidIn } from "../utils/mermaid.ts";
 
 interface RerollLike {
@@ -34,6 +35,7 @@ const props = withDefaults(defineProps<{
   // tool：当前服务端工具（xAI web_search / x_search / code_execution）；只服务生成中的提示。
   tool?: { kind: string; state: string } | null;
   sources?: { type?: string; url: string; title?: string }[];
+  macros?: MacroMap;
   tools?: {
     id?: string;
     source?: string;
@@ -63,6 +65,7 @@ const props = withDefaults(defineProps<{
   phase: null,
   tool: null,
   sources: () => [],
+  macros: () => ({}),
   tools: () => [],
   reroll: null,
   usage: null,
@@ -113,7 +116,7 @@ const canEdit = computed(() => !!props.messageId);
 
 // 正文拆说话/状态：说话走 markdown，状态块进独立容器。
 const parts = computed(() => splitState(props.content));
-const bodyHtml = computed(() => renderMarkdown(parts.value.cleaned));
+const bodyHtml = computed(() => renderMarkdown(parts.value.cleaned, { macros: props.macros }));
 // 公式比列宽时给右缘一道内阴影（2026-11-02）：手机上原本是"一刀切"，看不出还能往右滑。
 // `overflow-x: auto` 之外再标一个类 —— 只有真的溢出才提示，短公式不受影响。
 const textEl = ref<HTMLElement | null>(null);

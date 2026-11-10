@@ -31,6 +31,7 @@ import (
 
 	"microchat/internal/abilities"
 	"microchat/internal/config"
+	"microchat/internal/macro"
 	"microchat/internal/model"
 	"microchat/internal/providers"
 	"microchat/internal/statelang"
@@ -218,6 +219,8 @@ func (s *Service) generate(ctx context.Context, session model.Session, stop cont
 	if material == "" {
 		return Result{}, invalid("这条会话还没有可以起名字的正文（前几条消息剔掉 <state> 之后是空的）")
 	}
+	values := macroValues(s.Paths, session, agents)
+	material = macro.Render(material, values)
 
 	// 生效渠道 / 模型（2026-11-04 用户定的三档）：
 	//   global = 跟随全局设置（全局标题模型空 ⇒ 当前会话模型）
@@ -268,13 +271,14 @@ func (s *Service) generate(ctx context.Context, session model.Session, stop cont
 	// 模板 + 追加段：**与压缩同一个拼装**（`abilities.AssemblePrompt`）——
 	// 从前这里是裸 `abilities.Template`，于是编辑器让你给 title 挑段、这一发却一个字都不拼（静默无效）。
 	template := abilities.AssemblePrompt(setting, abilities.Title, agents)
+	renderedTemplate := macro.Render(template, values)
 	wire := providers.FromConfig(backend.Provider)
 	// 与 chat.go Accept 同一条查表：有行且 api=="openai-responses" ⇒ /responses；没有行时用渠道自己的 protocol。
 	wire.Protocol = providers.ResolveProtocolFor(s.Store.ModelRoute, backend.Provider.ID, modelID, providers.Protocol(backend.Provider.Protocol))
 	completion, err := providers.NewClient(wire).Complete(ctx, wire, providers.Request{
 		Model: modelID,
 		Messages: []providers.ChatMessage{
-			{Role: "system", Content: template},
+			{Role: "system", Content: renderedTemplate},
 			{Role: "user", Content: materialHeader + material},
 		},
 		// 骑**同一个会话 id**（网关按它路由、缓存按前缀算；缺了会被上游拒）
@@ -357,6 +361,21 @@ func agentLabel(agent config.Agent) string {
 }
 
 // shortID：日志与状态行里认得出是哪个就够。
+func macroValues(paths config.Paths, session model.Session, agents config.AgentsConfig) map[string]string {
+	prefs, err := config.LoadPrefs(paths)
+	if err != nil {
+		prefs = config.DefaultPrefs()
+	}
+	agentName := ""
+	if agent, ok := agents.Get(session.AgentID); ok {
+		agentName = agent.Name
+		if strings.TrimSpace(agentName) == "" {
+			agentName = agent.ID
+		}
+	}
+	return macro.Values(prefs.UserName, agentName, session.Model)
+}
+
 func shortID(id string) string {
 	if len(id) > 8 {
 		return id[:8]

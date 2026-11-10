@@ -17,7 +17,8 @@ import { downloadJSON } from "./utils/download.ts";
 import { busySessionIds } from "./utils/tasks.ts";
 import { thinkingOptions, thinkingLevelsForModel } from "./utils/thinking.ts";
 import { rememberWindow, recallWindow, forgetWindow } from "./utils/windowcache.ts";
-import { sharedApi, previewOn, payloadPreviewOn, applyTheme, wantsSend, apiBase, apiBaseCandidates, saveNetPrefs, lastSessionId, saveLastSession, commandMenuOn, applyTextScale, applyFonts, chromeHideOn, syncPrefs, updateAutoCheckOn } from "./utils/prefs.ts";
+import { sharedApi, previewOn, payloadPreviewOn, applyTheme, wantsSend, apiBase, apiBaseCandidates, saveNetPrefs, lastSessionId, saveLastSession, commandMenuOn, applyTextScale, applyFonts, chromeHideOn, syncPrefs, updateAutoCheckOn, userName as macroUserName } from "./utils/prefs.ts";
+import { macroMap } from "./utils/macros.ts";
 import {
   groupModelsByProvider,
   deletionPlanSummary,
@@ -64,7 +65,7 @@ applyFonts();
 // （不然会先闪一下默认配色再变）。随后这一发去问服务器，不一致就改过来（并重挂背景图）。
 // 失败只 toast：连不上后端时页面照样能用，只是偏好停在镜像那一份。
 syncPrefs()
-  .then(() => { applyBackground(); cmdMenu.value = commandMenuOn(); })
+  .then(() => { applyBackground(); cmdMenu.value = commandMenuOn(); macroRev.value += 1; })
   .catch((err) => toast(`界面偏好读取失败：${err.message}`, "error"))
   .finally(() => { startUpdatePolling(); });
 // —— 新版本提示（PWA 更新条，2026-10-20 用户定）——
@@ -122,6 +123,8 @@ const overlaysRef = ref<any>(null);
 // 命令菜单（输入框左侧 ☰ 与 "/" 浮层）：默认关（移动端碍事，2026-10-17 用户定）；
 // 设置 → 外观里改了立刻生效（不刷新）—— 偏好住服务器（`prefs.json`），这里是它的活视图。
 const cmdMenu = ref(commandMenuOn());
+// 宏值变化后让消息列与顶栏面板重算（prefs 缓存不是 Vue 响应式）。
+const macroRev = ref(0);
 const toast = (t: string, k = "") => toastRef.value?.push(t, k);
 // 任务面板轮询：busyIds 给左栏、setTasks 给顶栏环心；取消按钮回调里对齐重摇两族。
 const {
@@ -675,6 +678,11 @@ async function refreshHistoryPreview() {
   }
 }
 // 工作区按当前 tab 懒加载：切进上下文 / 换会话时只拉"此刻真要看的那一页"。
+async function refreshMacros() {
+  if (!sessionID) { topbarRef.value?.setMacros(null); return; }
+  try { topbarRef.value?.setMacros(await api.sessionMacros(sessionID)); }
+  catch { topbarRef.value?.setMacros(null); }
+}
 function refreshContextLazy() {
   if (workspace.value !== "context") return;
   if (payloadTab === "tree") refreshTree();
@@ -696,6 +704,10 @@ const agentGreeting = computed(() => {
 // 模型显示上游 id（顶栏那份是 prettify 后的名字）—— 草稿还没有模型列表可查，
 // 而这一行是"我马上要跟谁说话"，宁可给原始 id 也不留空。
 const draftAgentName = computed(() => agentLabelOf(sessionInfo.agent_id) || "默认助手");
+const macroValues = computed(() => {
+  macroRev.value; // 依赖：prefs/agent 变化时重算
+  return macroMap(macroUserName(), agentLabelOf(sessionInfo.agent_id), sessionInfo.model);
+});
 const draftModelName = computed(() => whoText(sessionInfo.provider, sessionInfo.model, "未选模型"));
 const chatRows = computed(() => {
   // 草稿里把首段**合成气泡先画出来**（发送后它就是库里的 #1，编号顺延天然给它 1；
@@ -1312,6 +1324,7 @@ async function enterSession(id, preloaded = null) {
   // 上一会话的上下文占用不许挂在新会话上（高延迟下它会挂满一个 RTT 才被新数覆盖 ——
   // 那正好是"看起来像新会话的账、其实是旧的"最难受的一秒）。
   topbarRef.value?.setContext(null);
+  topbarRef.value?.setMacros(null);
   // 开机恢复那条路已经拉过一次 `/sessions`（boot），别在同一毫秒再要一遍 ——
   // 远端部署时那是一整个 RTT + 一份完整会话列表。
   // 同理，点左栏切会话时列表**就在屏幕上**（sessionsCache）⇒ 直接用，别先问一遍再画：
@@ -1510,6 +1523,7 @@ async function finishTurnStream(sid, st) {
   await waitTypewriter();
   if (sessionID !== sid) return;
   await reloadWindowKeepingScroll();
+  refreshMacros();
   resetTypewriter();
   if (sessionID !== sid) return;
   if (failed) {
@@ -1717,6 +1731,7 @@ function refreshStatusline(phase, elapsedMs = null, { withContext = true } = {})
   if (!withContext) return;
   api.context(sessionID).catch(() => null).then((ctx) => {
     topbarRef.value?.setContext(ctx);
+  refreshMacros();
   }).catch((err) => toast(`上下文占用读取失败：${err.message}`, "error"));
 }
 function refreshStateView(id = null) {
@@ -2042,6 +2057,8 @@ async function onChatSaved() {
   }
 }
 function onPrefsSaved() {
+  macroRev.value += 1;
+  refreshMacros();
   cmdMenu.value = commandMenuOn();
   if (!chromeHideOn()) resetChrome(document.querySelector("#messages-vue")); // 关掉这功能 ⇒ 栏立刻回来
   if (!cmdMenu.value) overlaysRef.value?.hidePalette();
@@ -2143,6 +2160,7 @@ onUnmounted(() => {
       @select-model="(v) => applyModelValue(v).catch((err) => toast(`换模型失败：${err.message}`, 'error'))"
       @cancel-queue="cancelQueue"
       @cancel-task="cancelTask"
+      @refresh-macros="refreshMacros"
     />
         <!-- 聊天 / 上下文：VTabsWindow 真正负责左右滑动；顶栏的 VTabs 只管 tab 条。 -->
         <VTabsWindow v-model="workspace" class="workspace-window">
@@ -2207,6 +2225,7 @@ onUnmounted(() => {
               :sources="row.msg.sources"
               :tools="row.msg.tools"
               :usage="row.msg.usage"
+              :macros="macroValues"
               :reroll="row.msg.messageId && rerollState.active && rerollState.target_message_id === row.msg.messageId ? rerollState : null"
               @edit="onBubbleEdit"
               @edit-prompt="onBubbleEditPrompt"

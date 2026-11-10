@@ -314,6 +314,20 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 /* 「连接 / 助手 / 运行」三行：与上下文数字之间画一条分隔（两件事，别混成一张表）。 */
 .ctx-list-status { margin-top: 0.45em; padding-top: 0.4em; border-top: 1px solid var(--line); }
 .ctx-list-status .ctx-row.v-list-item { padding: 0.14em 0.55em; }
+/* —— 已注册宏（2026-11-10）：注册表 + 本会话全文使用次数 —— */
+.macro-section-title { display: flex; align-items: baseline; justify-content: space-between; gap: 0.6em;
+  margin: 0.65em 0 0.15em; color: var(--md-on-surface); font-size: var(--md-type-label-large); font-weight: 600; }
+.macro-section-title:first-of-type { margin-top: 0.2em; }
+.macro-total { color: var(--tg-hint); font-size: var(--md-type-label-medium); font-weight: 400; font-variant-numeric: tabular-nums; }
+.ctx-macros .ctx-key { width: 8.6em; }
+.macro-aliases { display: block; color: var(--tg-hint); font-size: 0.78em; font-weight: 400; line-height: 1.2; }
+.macro-value { color: var(--md-primary); }
+.macro-desc { margin: -0.05em 0 0.25em 9.2em; color: var(--tg-hint); font-size: 0.8em; }
+.macro-unknown { margin-left: 0.35em; color: var(--md-on-error-container); background: var(--md-error-container);
+  border-radius: var(--md-shape-full); padding: 0 0.35em; font-size: 0.78em; }
+/* 正文里的宏 chip：显示当前值，悬停回原文。值本身由 utils/macros.ts 先转义再进 HTML。 */
+.macro-chip { background: var(--md-secondary-container); color: var(--md-on-secondary-container);
+  border-radius: var(--r-xs); padding: 0 0.28em; cursor: help; }
 /* `.agent-menu` 在后面还有一条 `padding: 0.25em 0`；VCard 复用那个类，
  * 单类 `.ctx-menu` 会被它覆盖。这里用双类把这层 padding 拿回来。 */
 .agent-menu.ctx-menu { padding: 1em; }

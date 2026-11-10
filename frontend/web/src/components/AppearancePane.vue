@@ -25,6 +25,7 @@ import {
   chromeHideOn, saveChromeHide,
   textScale as textScalePref, saveTextScale,
   fontBody as fontBodyPref, fontMono as fontMonoPref, saveFontBody, saveFontMono,
+  userName as userNamePref, saveUserName,
   markdownPrefs, markdownTypes, saveMarkdown, saveBackground,
   refreshPrefs,
   TEXT_SCALE_MIN, TEXT_SCALE_MAX, TEXT_SCALE_STEP,
@@ -50,6 +51,8 @@ const scalePercent = computed(() => Math.round(textScale.value * 100));
 // 字体（2026-11-04）：标准字体管全站，等宽字体管代码块；空 = 内置系统字族。
 const fontBody = ref("");
 const fontMono = ref("");
+// 用户名称：{{user_name}} / {{user}} 的值（只服务宏替换，不是账号）。
+const userName = ref("");
 // 滚动隐藏上下栏（触屏；默认开）。
 const chromeHide = ref(true);
 const bgUrl = ref("");
@@ -120,6 +123,7 @@ function loadFromPrefs(): void {
   scaleDirty.value = false;
   fontBody.value = fontBodyPref();
   fontMono.value = fontMonoPref();
+  userName.value = userNamePref();
   chromeHide.value = chromeHideOn();
   const md = markdownPrefs();
   mdEnabled.value = md.enabled !== false;
@@ -152,6 +156,11 @@ function saveFonts(): void {
   // 规范化后的值写回输入框：`A; B` 这种破坏声明的输入会被清成空（回落系统字族）。
   fontBody.value = saveFontBody(fontBody.value);
   fontMono.value = saveFontMono(fontMono.value);
+  emit("prefs-saved");
+}
+function saveName(): void {
+  userName.value = String(userName.value ?? "").trim();
+  saveUserName(userName.value);
   emit("prefs-saved");
 }
 function resetFonts(): void {
@@ -264,6 +273,8 @@ async function clearBg(): Promise<void> {
         <VBtn variant="text" size="small" type="button" @click="resetScale">复位 100%</VBtn>
         <span class="status">{{ scaleDirty ? "未保存：点「保存缩放」后才会应用" : "字号和留白会一起等比缩放" }}</span>
       </div>
+      <label class="field"><span>用户名称</span><VTextField density="compact" variant="outlined" hide-details v-model="userName" @change="saveName" placeholder="留空 = 你" /></label>
+      <p class="hint">用于提示词与消息里的 <code v-text="'{{user_name}}'"></code> / <code v-text="'{{user}}'"></code> 宏；只做替换，不影响世界状态。</p>
       <label class="field"><span>标准字体</span><VTextField density="compact" variant="outlined" hide-details v-model="fontBody" @change="saveFonts" placeholder="留空 = 系统默认（CSS font-family）" /></label>
       <label class="field"><span>等宽字体（代码块）</span><VTextField density="compact" variant="outlined" hide-details v-model="fontMono" @change="saveFonts" placeholder="留空 = 系统等宽" /></label>
       <p class="hint">可按 CSS 写法给多个后备字体，例如 <code>"Noto Sans SC", sans-serif</code>。标准字体用于全站，等宽字体只用于代码块；留空恢复内置系统字族。</p>

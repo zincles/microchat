@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"microchat/internal/config"
+	"microchat/internal/macro"
 	"microchat/internal/model"
 	"microchat/internal/providers"
 	"microchat/internal/state"
@@ -569,7 +570,36 @@ func (s *Service) outgoingFor(session model.Session) ([]state.Outgoing, map[stri
 	if err != nil {
 		return nil, nil, err
 	}
-	return outgoing, s.reasoningTable(messages), nil
+	return s.renderMacros(session, outgoing), s.reasoningTable(messages), nil
+}
+
+// MacroValues：当前会话可用的**只读替换宏**的值（user_name / char_name / model …）。
+//
+// 与 `<state>` 完全分开：宏没有 setter、没有作用域、没有历史；只在这里供出站/预览查表。
+func (s *Service) MacroValues(session model.Session) map[string]string {
+	prefs, err := config.LoadPrefs(s.Paths)
+	if err != nil {
+		prefs = config.DefaultPrefs()
+	}
+	_, agents, _ := s.files()
+	agentName := ""
+	if agent, ok := agents.Get(session.AgentID); ok {
+		agentName = agent.Name
+		if strings.TrimSpace(agentName) == "" {
+			agentName = agent.ID
+		}
+	}
+	return macro.Values(prefs.UserName, agentName, session.Model)
+}
+
+// renderMacros：**只在这里**（以及 ContextUsage）把出站文本里的宏换成值。
+// 存库、接口回包、前端编辑框都保持 `{{...}}` 原文 —— 这是“原文进库”的唯一口径。
+func (s *Service) renderMacros(session model.Session, outgoing []state.Outgoing) []state.Outgoing {
+	values := s.MacroValues(session)
+	for index := range outgoing {
+		outgoing[index].Content = macro.Render(outgoing[index].Content, values)
+	}
+	return outgoing
 }
 
 // reasoningTable：思考回传表。`chat.replay_reasoning` 开才收，否则空表（`wireMessages` 贴不上思考）。
@@ -613,7 +643,7 @@ func (s *Service) PreviewWire(session model.Session, content string) (providers.
 	if err != nil {
 		return providers.LastPayload{}, err
 	}
-	return s.buildWire(session, outgoing, s.reasoningTable(messages), providersConfig)
+	return s.buildWire(session, s.renderMacros(session, outgoing), s.reasoningTable(messages), providersConfig)
 }
 
 // PreviewHistoryWire："空输入点发送"会发出去的真请求 —— 现有历史、不追新句。

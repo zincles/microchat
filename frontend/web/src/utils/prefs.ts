@@ -86,6 +86,7 @@ const FALLBACK_PREFS: Prefs = {
   text_scale: "",
   font_body: "",
   font_mono: "",
+  user_name: "你",
   background: {},
   send: "",
   preview: true,
@@ -410,6 +411,14 @@ export function saveTextScale(scale: number | string): void {
 
 export function fontBody(): string { return normalizeFontFamily(cache.font_body); }
 export function fontMono(): string { return normalizeFontFamily(cache.font_mono); }
+
+// 用户名称：只给 `{{user_name}}` / `{{user}}` 用；空 = “你”。
+export function userName(): string {
+  return String(cache.user_name ?? "").trim() || "你";
+}
+export function saveUserName(value?: string): void {
+  setPref("user_name", String(value ?? "").trim());
+}
 
 // 自定义字族放在内置栈**前面**：中文字形或没装的字体仍能落到后面的系统字族，不会整页豆腐块。
 export function applyFonts(): void {

@@ -30,6 +30,7 @@ import type {
   ImportJsonResult,
   ImportStResult,
   LastPayload,
+  MacroReport,
   MergedStream,
   Message,
   ModelListItem,
@@ -329,6 +330,8 @@ export function createApi({ base, token = "", fetchFn = fetch }: CreateApiOption
     turnEventsUrl: (id: string, from: number, thinkFrom: number) =>
       `${base}/sessions/${enc(id)}/turn/events?from=${from}&think_from=${thinkFrom}`,
     context: (id: string) => call<ContextUsage>("GET", `/sessions/${enc(id)}/context`),
+    // 已注册宏 + 本会话全文的使用统计（上下文环的“已注册宏”tab）。
+    sessionMacros: (id: string) => call<MacroReport>("GET", `/sessions/${enc(id)}/macros`),
     sessionState: (id: string) => call<StateView>("GET", `/sessions/${enc(id)}/state`),
     // outgoingPreview：右载荷预演 —— 有字问 (c)（待发追尾），空字问现有历史（与空发 resend 同段）。
     // 空会话空字 ⇒ 后端 400（与 resend 同错），调用方吞掉保持空话。

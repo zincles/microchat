@@ -35,6 +35,7 @@ import (
 	"microchat/internal/abilities"
 	"microchat/internal/blocks"
 	"microchat/internal/config"
+	"microchat/internal/macro"
 	"microchat/internal/model"
 	"microchat/internal/providers"
 	"microchat/internal/state"
@@ -1045,6 +1046,25 @@ func (s *Service) generateText(ctx context.Context, p *prepared) (generatedText,
 //
 // 第三个返回值是**材料正文**（不含抬头、不含附上的两份状态）：预演要报"这次要嚼多少字"，
 // 而那是拼装的副产品 —— 让调用方自己再拼一遍就等于开了第二个口径。
+func (s *Service) macroValues(session model.Session, modelID string) map[string]string {
+	prefs, err := config.LoadPrefs(s.Paths)
+	if err != nil {
+		prefs = config.DefaultPrefs()
+	}
+	agents, err := config.LoadAgents(s.Paths)
+	if err != nil {
+		agents = config.AgentsConfig{}
+	}
+	agentName := ""
+	if agent, ok := agents.Get(session.AgentID); ok {
+		agentName = agent.Name
+		if strings.TrimSpace(agentName) == "" {
+			agentName = agent.ID
+		}
+	}
+	return macro.Values(prefs.UserName, agentName, modelID)
+}
+
 func (s *Service) wireFor(p *prepared) (providers.Provider, providers.Request, string, error) {
 	// 材料：消息级 = 这段对话正文；合并级 = 各段已有梗概（带轻抬头），外面套一句"这不是对话"。
 	material := ""
@@ -1061,13 +1081,16 @@ func (s *Service) wireFor(p *prepared) (providers.Provider, providers.Request, s
 		return providers.Provider{}, providers.Request{}, "",
 			invalid("这一段剔掉 <state> 之后没有正文可压（整段都是状态块）")
 	}
+	values := s.macroValues(p.session, p.model)
+	template := macro.Render(p.template, values)
+	material = macro.Render(material, values)
 	wire := providers.FromConfig(p.channel)
 	// 与 chat.go Accept 同一条查表：有行且 api=="openai-responses" ⇒ /responses；没有行时用渠道自己的 protocol。
 	wire.Protocol = providers.ResolveProtocolFor(s.Store.ModelRoute, p.channel.ID, p.model, providers.Protocol(p.channel.Protocol))
 	return wire, providers.Request{
 		Model: p.model,
 		Messages: []providers.ChatMessage{
-			{Role: "system", Content: p.template},
+			{Role: "system", Content: template},
 			{Role: "user", Content: header + withStatePair(material, p.stateBefore, p.stateSection)},
 		},
 		// 骑**同一个会话 id**（网关按它路由、缓存按前缀算；缺了会被上游拒）

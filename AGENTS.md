@@ -58,6 +58,7 @@ reminder/                  ← 专题参考（`tool-calls.md` 工具调用 / `je
 |---|---|---|
 | `model` | 纯结构 | 无依赖 |
 | `statelang` | `<state>` 语法 | 零依赖纯函数；**解析即验证**；`Cleaned` 里**永不出现标签**（fuzz 守着）；写回（`Format`）**带表名**（丢了就悄悄落回 `global`）|
+| `macro` | 只读替换宏 | 零依赖纯函数；**只替换注册表里的简单宏**（别名同值）；未知宏原样；**不递归**；**原文进库，只有后端出站与前端显示时替换**；不碰 `<state>` |
 | `store` | **只有它碰 SQL** | 正文/提示词原样存档；变量不落库；会话是**线性**的（顺序在 `id` 上，没有父指针/leaf）；摘要盖的是**一段**（`begin/end`）；生成中不写正式正文，取消时当前消息以 `status=canceled` 落库（已完成中间 tool 消息保留）；消息序号 `idx` **派生**（按 `id` 排第几条，不落库）|
 | `config` | `config/` 五个文件 | 可缺失；整体重写；密钥不回显 |
 | `registry` | 模型口径 | 身份 `(provider, upstream_id)`；发现与覆盖分列，刷新不动用户列 |
@@ -269,6 +270,26 @@ delete(AA)           # 删除
 - **截至第 N 条的现演**（`GET /state?at_idx=N`）：正文只 fold 到第 N 条（含）——`0` ⇒ 空状态、越界 ⇒ 当作到最后一条。
   口径与实现见 `AGENTS.md` 的 API 表与 `DEFINE.md` 的「世界状态」。
 
+## 只读替换宏（`{{…}}`，2026-11-10）
+
+**和 `<state>` 是两件事**：状态是从历史现演的世界事实；宏只是名字/型号这类**提示词与显示插值**。
+没有 setter、没有作用域、没有历史；**原文进库**。
+
+- **存储/接口/导出永远是原文**：消息、Agent 提示词、段、摘要、导出里都保留 `{{user_name}}` 这类字面量；
+  编辑器也显示原文。
+- **只有后端 → LLM API 的出站请求替换**（聊天、压缩、起标题、预检；`ContextUsage` 也按替换后的长度算）。
+  **后端 → 浏览器的 API 不替换**；浏览器 → 后端也不替换。
+- **前端显示替换**只做展示：值 + 带背景的 `.macro-chip`，悬停 `title` 显示原始宏；不回写。
+  Markdown 里先用占位符替换，再过 marked/KaTeX，最后还原成经过 HTML 转义的 `<span>`（防 XSS）。
+- **注册表与别名（第一版）**：
+  `{{user_name}}` / `{{user}}` → `prefs.user_name`（空 = “你”）；
+  `{{char_name}}` / `{{char}}` / `{{agent_name}}` → 当前 Agent 的 `name`（空 = “助手”）；
+  `{{model}}` → 当前会话模型。
+- **未知宏原样保留**，不猜、不吞（将来的 `{{getvar::…}}` 归模板变量引擎，不归这里）；**不递归**展开。
+- **`<state>` 块里不替换、不 chip**；状态计算完全看不到宏。宏值里即使含 `<state>` 也不参与 fold。
+- **面板**：上下文环的「已注册宏」tab；`GET /sessions/{id}/macros` 返回可用宏 + 当前值，
+  以及**生效系统提示词 + 全部消息正文**里的使用次数（未知宏也保留，标 `known:false`）。
+
 ## 配置文件长什么样
 
 **`data/config/`** 里是**严格 JSON**（程序整体重写），都可缺失。文件名一律 `.json`：
@@ -338,7 +359,7 @@ delete(AA)           # 删除
 - `prefs.json` — **界面偏好**（2026-11-01 用户定「所有设置均存储在服务器上」）。
   它**由程序写**（不是手写配置，虽然也能手改）：改设置就整份重写，0600。
   形状：`{ "markdown": {"enabled": true, "disabled": ["table","image"]}, "theme": "dark",
-  "text_scale": "1.1", "font_body": "", "font_mono": "", "background": {"kind":"file","version":"…"},
+  "text_scale": "1.1", "font_body": "", "font_mono": "", "user_name": "你", "background": {"kind":"file","version":"…"},
   "send": "enter", "preview": true, "payload_preview": true, "command_menu": false, "chrome_hide": true,
   ⚠ **改完立刻刷新不能丢**（2026-11-04 用户报界面缩放总回 115%）：偏好回写有 250ms 防抖，
   但 `flushPrefs()` 会在滑杆 `change`、`pagehide`、`visibilitychange(hidden)` 时取消防抖并**带
@@ -710,6 +731,7 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 | POST | `/outgoing` | `{"id?","provider?","model?","agent_id?","thinking_level?","content"}` | `LastPayload` | **草稿预演**（2026-10-09 加，web 草稿态用）：**还没有会话**时的第一句 —— 临时种子会话（零行、无历史）走同一个 `chat.PreviewWire`，**一条会话都不建**。`id` = 客户端（草稿）铸的 UUIDv7 ⇒ 进请求头（`x-opencode-session` 那类）就是将来真会话要用的那个；省略 ⇒ 服务端现铸。`provider/model/agent_id` 省略 ⇒ 与 `POST /sessions` **同一处口径**（config defaults + `default_agent`）。空 `content` ⇒ **400**（草稿没有历史可续写）。**agent 配了 `first_message` 时把它模拟成一条 assistant 垫在用户句前**（真会话会带它 ⇒ 预演 = 真发） |
 | GET | `/sessions/{session_id}/context` | — | `ContextUsage` | 只有数字：`used_tokens`（估算）/ `budget_tokens` / `trigger_tokens` / `remaining_tokens` / `ctx_len` / `max_output` / `ratio` / `estimated` / `last_prompt_tokens` / `over_budget` |
 | GET | `/sessions/{session_id}/prompt` | — | `{"text","type"}` | **生效的系统提示词**（三级解析的**结果**，与出站拼装读同一处）：`type` = `conversation`（会话自己写了 `sessions.system_prompt`）/ `agent`（`agents.json` 里那个 agent 的）/ `builtin`（两级都没有 ⇒ 代码里的内置默认）。**永不给空**：解析全落空（典型：会话的 `agent_id` 软引用**悬空**）也退内置那句、`type` 报 `builtin`。**回拼装后的结果**（base + 追加段，见 agents.json 的 `segments`）|
+| GET | `/sessions/{session_id}/macros` | — | `{macros:[{name,aliases,description,value}], usage:[{name,count,known}], total}` | **已注册宏面板**（2026-11-10）：`macros` = 可用宏 + 当前值；`usage` = **生效系统提示词 + 全部消息正文**里每个 `{{…}}` 的出现次数（未知宏保留在统计里，`known:false`）。只读，不改任何东西 |
 | GET | `/sessions/{session_id}/status` | — | `TurnStatus` | `phase`（`idle`/`pending`/`streaming`/`error`）+ **`step`**（一轮 run 内第几个 assistant 模型轮，客户端据此切 live 气泡）+ `message_id` + `elapsed_ms` + `chars` + `thinking_chars` + `error` + **`tool`**（当前服务端工具 `{kind,state}`，正文一到就清）+ **`sources`**（搜索工具的 `action.sources`，按 URL 去重、正文到了也留着）。另搭两档**与轮次无关**的活状态：`compact`（`state`=`running`/`done`/`error` + `blocks`/`compacted`/`summary_id`/`from_idx`/`to_idx`/`merged` + `error`）与 `reroll`（`state` + `elapsed_ms` + `error`）|
 | GET | `/sessions/{session_id}/turn/text?from=N&think_from=M` | — | `StreamSlice` | 流式增量的**游标读**（正文与思考各一条游标，`from` = 第几个字符）：只服务动画 |
 | GET | `/sessions/{session_id}/turn/poll?from=N&think_from=M` | — | `{status, slice}` | **2026-11-03**：`status` 与 `turn/text` 合并成一发（远程/CF 少一个完整 RTT）。web 的 `pollTurn` 用它；`/status` 与 `/turn/text` 仍保留（重摇/前台对齐等旧调用） |
@@ -1148,8 +1170,8 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
 - **用户视图**（2026-10-10 加，与设置**平级**的另一半）：左栏底 `👤 用户` 打开它 —— **设置管实例/服务器**（聊天参数、渠道、Agent、会话），**用户管登录者自己**—— 身份（`/auth/me`：名字 + 管理员标记 + **退出登录**）与个人偏好（主题 / 背景图 / 发送键 / 输入预演）；**用户管理（加人/踢人/改口令）下一步做**。两块**互斥**（一屏只开一个，互相打开时对方让位）；视图口径同设置：`[◧] 用户 [×]`、Esc 一次只关一层；设置视图因此从六区缩成**五区**（原「界面」区整块搬走，`SETTINGS_TABS` 在 format.js）。
 - **上下文环（2026-11-02 合并后台任务）**：用户定「以上下文指示器的绿色圈圈为主体。中央原本空着的区域，放入代表活跃后台任务数量的数字。在后台任务运行时，绿色圈圈会转动」。
   ⇒ 顶栏只留 `#ctx-ring`：环长仍是已用 / 输入预算；**环心**是还在跑的条数（`max(/tasks.running, 未结束队列数)`；队列当前那一步与队列本身是同一件事，取 max 避免重复；`finished_at` 有值的不算）；`taskBusy`（原子任务或队列在跑）时整个 SVG 转（`@keyframes ctx-ring-spin`，1.1s 线性无限；`prefers-reduced-motion` 下不转，但数字仍在）。
-  点环打开的面板分**两个 tab**（2026-11-02 用户定：「上下文状态 和 正在运行的任务，分为俩TAB」）：「上下文」= 数字、连接/助手/运行三行；「任务」= **只列正在跑的**队列 + 原子任务（进度、时长、失败红字、取消；结束的立刻消失）—— 取消仍走 `@cancel-task` / `@cancel-queue`。tab 状态是 `ctxTab`（默认上下文），不写 localStorage。
-  2026-11-09（用户定）：环描边 3.2 → 4.0（稍微加粗）；浮板换成 **Vuetify `VCard` + `VTabs` + `VWindow` + `VProgressLinear` + `VList`**，宽度/高度都钉死（`min(24em, …)` / `min(23.5em, …)`）⇒ 切两个 tab 尺寸不变；外围 `padding: 1em`（`.agent-menu.ctx-menu` 双类，单类会被后文 `.agent-menu` 的 `0.25em 0` 盖掉）。内容超出时由 `VWindowItem` 里的 `.ctx-pane` 自己滚。
+  点环打开的面板分**四个 tab**（2026-11-02 用户定：「上下文状态 和 正在运行的任务，分为俩TAB」；后加「请求体覆盖」与「已注册宏」）：「上下文」= 数字、连接/助手/运行三行；「任务」= **只列正在跑的**队列 + 原子任务（进度、时长、失败红字、取消；结束的立刻消失）—— 取消仍走 `@cancel-task` / `@cancel-queue`；「请求体覆盖」= JSON 覆盖编辑；「已注册宏」= 可用宏 + 当前值 + 本会话全文使用次数（`GET /sessions/{id}/macros`）。tab 状态是 `ctxTab`（默认上下文），不写 localStorage。
+  2026-11-09（用户定）：环描边 3.2 → 4.0（稍微加粗）；浮板换成 **Vuetify `VCard` + `VTabs` + `VWindow` + `VProgressLinear` + `VList`**，宽度/高度都钉死（`min(24em, …)` / `min(23.5em, …)`）⇒ 切 tab 尺寸不变；外围 `padding: 1em`（`.agent-menu.ctx-menu` 双类，单类会被后文 `.agent-menu` 的 `0.25em 0` 盖掉）。内容超出时由 `VWindowItem` 里的 `.ctx-pane` 自己滚。
   面板文案要**严谨、专业**（2026-11-02 用户最终定：先嫌太机器，后嫌"还能装 / 给回复留的地方"太口语）：「请求体覆盖」页：JSON 输入省略外层 `{}`，`验证` 只本地检查，`保存` PATCH 到 `request_overrides`；每次主对话请求在**最后**浅合并（允许覆盖任何 key），上下文工作区的载荷预演与真发共用。
   「上下文」页用标准口径 —— `已用 766 / 995K`、`不到 0.1%`、`剩余可用`、`自动压缩阈值`、`上次实际用量`（数值带 `tokens`），预算一行写成 `输入预算 995,904 tokens = 上下文上限 1,000,000 − 输出预留 4,096`；状态行 `连接状态 / 当前助手 / 运行状态`，相位 `空闲 / 等待响应 / 生成中 / 出错`；任务种类 `刷新模型 / 对话 / 压缩 / 分段压缩 / 起标题 / 重摇 / 判断`（原始 `refresh_models` 不上屏），耗时 `0.4 秒 / 1 分 20 秒`，分组 `模型调用 / 其他任务`；空态 `当前无运行任务`。不写"还能装 / 给回复留的地方 / 没在跑"这类口语。
   没有上下文但有任务时，环给一小段 `18 82` 的弧（`ringDash`），否则空环转起来看不出来。

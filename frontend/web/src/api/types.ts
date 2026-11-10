@@ -599,12 +599,32 @@ export interface MarkdownPrefs {
   disabled?: string[];
 }
 
+export interface MacroView {
+  name: string;
+  aliases?: string[];
+  description: string;
+  value: string;
+}
+
+export interface MacroUsage {
+  name: string;
+  count: number;
+  known: boolean;
+}
+
+export interface MacroReport {
+  macros: MacroView[];
+  usage: MacroUsage[];
+  total: number;
+}
+
 export interface Prefs {
   markdown: MarkdownPrefs;
   theme?: string;
   text_scale?: string;
   font_body?: string;
   font_mono?: string;
+  user_name?: string;
   background?: Background;
   send?: string;
   preview?: boolean;

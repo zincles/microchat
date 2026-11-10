@@ -18,6 +18,7 @@ import { Marked } from "marked";
 import type { RendererObject, TokenizerAndRendererExtension, Tokens } from "marked";
 import katex from "katex";
 import { markdownPrefs, markdownTypeOn, markdownTypes } from "./prefs.ts";
+import { restoreMacros, stashMacros, type MacroMap } from "./macros.ts";
 
 // 只转义 `&` 与 `<`：没有 `<` 就造不出标签（XSS 的门在这儿）——**`>` 必须留着**，
 // 行首的它正是**引述块**的记号；从前连 `>` 一起转，引述块从来没渲染过（2026-10-11 修）。
@@ -177,6 +178,8 @@ function buildMarked(): Marked {
 export interface RenderOptions {
   typeOn?: TypeOn;
   enabled?: boolean;
+  // 只读替换宏；不给就不替换（编辑器/内部调试）。
+  macros?: MacroMap | null;
 }
 
 // renderMarkdown：正文 → 安全 HTML。
@@ -187,18 +190,20 @@ export interface RenderOptions {
 // `options.enabled` 可覆盖总开关（同上）。
 export function renderMarkdown(text?: string | null, options: RenderOptions = {}): string {
   const src = text ?? "";
+  const macroStash = stashMacros(src, options.macros);
+  const source = macroStash.text;
   const typeOn = options.typeOn ?? markdownTypeOn;
   const masterOn = options.enabled ?? markdownEnabled();
   on = (id) => (masterOn ? typeOn(id) : false);
 
   // 总开关关着 ⇒ 什么都不解析，整段原文（但换行要留住 —— 见 `literalBlock` 的注释）。
-  if (!masterOn) return literalBlock(src);
+  if (!masterOn) return restoreMacros(literalBlock(source), macroStash.tokens);
 
   // **先把代码保护起来再找数学定界符**（2026-11-03）：模型会写「用 `$$` 包裹」这种说明，
   // 其中反引号里的 `$$` 不是块级公式的开头。不保护的话它会把后续所有 `$$` 的配对整体错位，
   // 最后一大段 Markdown/正文被当成一条畸形的 KaTeX 公式 ⇒ 整块 `.katex-error` 红字。
   // 代码块/行内代码换成占位符，抽完数学后原样还原，再交给 marked 解析。
-  let tmp = src;
+  let tmp = source;
 
   // Mermaid 围栏**先摘出来**：它不该参与 KaTeX 的 `$` 配对，也不该被 marked 当普通代码块；
   // 解析完再替换成延迟渲染的占位。关闭 mermaid / code_block 时在最后退化成普通代码块或原文。
@@ -291,7 +296,7 @@ export function renderMarkdown(text?: string | null, options: RenderOptions = {}
       ? html.replace(wrapped, () => rendered)
       : html.replace(needle, () => rendered);
   }
-  return html;
+  return restoreMacros(html, macroStash.tokens);
 }
 
 // markdownEnabled：总开关（单独抽出来，是为了让 `renderMarkdown` 的缺省值读得到）。
