@@ -1456,7 +1456,9 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   原来的「安装说明」删掉）。**2026-11-06 起四个入口并排**（用户定「并排，改善移动体验」）：
   Vuetify `VBtn(stacked)` 四等分一行，图标在文字上方；旧的竖排 `.foot-btn` 样式已删。会话 / 渠道 / 更新与设置共用同一个视图：`SettingsModal` 的 `:only`
   只显示那一页、隐藏 VTabs，页头写「会话管理 / 渠道管理 / 更新」；退出仍走同一个 close。
-  **更新面板**（`UpdatePane.vue`，2026-11-09）：PWA 区块 + 后端两块，用 `VDivider` 分开。
+  **更新面板**（`UpdatePane.vue`，2026-11-09）：PWA 区块 + 后端两块，用 `VDivider` 分开；
+  底部是 **关于 MicroChat**（项目一句话 + 作者 Zincles / DeepSeekV4.1Flash（你） + GitHub 链接）。
+  **左上角品牌头可点击**（2026-11-11 用户定）：点它直接 `openManage('update')`，与左栏「更新」同一入口。
   **PWA / 已安装应用**：显示当前页面构建时间（`__BUILD_ID__`）、服务器最新（`GET /build.json`，`cache: no-store`）与
   Service Worker 状态；「检查 PWA 更新」调 `registration.update()` 并等 waiting，「更新并刷新」走既有 `startUpdate()`
   （skipWaiting → controlling → reload），另有「强制重新加载」（注销 SW + 清 Cache Storage + reload，先确认）。
@@ -1472,15 +1474,14 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   **酒馆**（2026-11-06 用户定）：专门放 SillyTavern 预设 / 角色卡 / 聊天记录的导入与转换；
   目前只有 ST 聊天记录导入（`POST /sessions/import-st`），预设/角色卡转换是空位。原本在「会话管理」里的
   ST 导入卡已整块搬到这里（会话管理只留 MicroChat JSON 导入）。
-  原始 JSON 存档每行有 **内容**（2026-11-11 用户定：把原来的「查看」与「提取」合并成一个弹窗两个 tab）：
+  原始 JSON 存档每行有 **解析与导入**（2026-11-11 用户定：把「解析预览」「提取」「查看」合并成一个弹窗）：
   - **有效内容**：`GET /tavern/presets/{id}/effective` 按 prompt_order 执行 setvar/getvar/trim/注释，
     丢掉空结果，展示真正留下的 entries / 变量 / 未解析宏；每条可 **导入为片段**（带 `preset_id` +
     文件名快照；带 `{{…}}` 动态宏的条目不导 —— 段是静态文本）。
+  - **解析预览**：`GET /tavern/presets/{id}/preview`，按 `prompt_order` 标出 relative/absolute、
+    depth/order、跳过原因和未知宏；**只算不动**（不建 Agent、不写库、不执行 ST 变量）。
   - **原始 JSON**：只读树（`JsonNode`），按需下载 → 去 BOM → `JSON.parse`，根展开、子节点按需展开；
-    1.5MB 预设不一次铺满 DOM。
-
-  每行还有 **解析预览**：调 `GET /tavern/presets/{id}/preview`，按 `prompt_order` 标出 relative/absolute、
-  depth/order、跳过原因和未知宏；**只算不动**（不建 Agent、不写库、不执行 ST 变量）。
+    1.5MB 预设不一次铺满 DOM。后两个 tab 都按需加载，不抢默认的第一屏。
   **真正使用**不走“导入成 Agent”：在 Agent 编辑器的「提示词方案」里选这份原始预设（`preset_id`），
   运行时现读现提取（`tavern.Extract`）；预设原件是唯一来源，不复制 54 条 entries。
   **删预设时**：若存在从它导入的片段，先问是否一并删除（`?segments=delete` / `?segments=keep`）；

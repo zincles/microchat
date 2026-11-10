@@ -4420,14 +4420,15 @@ test("酒馆原始 JSON：上传走原始 body，导出走 Blob（不 JSON 重�
 
 // 2026-11-11 用户定：ST 预设的「查看」与「提取」合并成一个弹窗两个 tab；
 // 每个有效条目可导入为提示词片段，并记下来源预设。删预设时问是否一并删关联片段。
-test("ST 预设内容：查看/提取合并为两 tab，有效条目可导入为片段", () => {
+test("ST 预设内容：解析预览/有效内容/原始 JSON 合并成一个面板", () => {
   const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
   const inspector = readFileSync(join(SRC, "components", "TavernInspector.vue"), "utf8");
   const client = readFileSync(join(SRC, "api", "client.ts"), "utf8");
   assert.ok(!/\bviewingPreset\b|\beffectivePreset\b|extractTavernPreset|\bviewTavernPreset\b/.test(settings),
     "旧的查看/提取两个弹窗还留着");
   assert.match(settings, /<TavernInspector/, "没有接合并后的内容面板");
-  assert.match(inspector, /role="tab"[\s\S]*有效内容[\s\S]*role="tab"[\s\S]*原始 JSON/, "两个 tab 没接");
+  assert.match(inspector, /role="tab"[\s\S]*有效内容[\s\S]*role="tab"[\s\S]*解析预览[\s\S]*role="tab"[\s\S]*原始 JSON/, "三个 tab 没接全");
+  assert.ok(!/previewingPreset|previewTavernPreset/.test(settings), "旧的解析预览弹窗还留着");
   assert.match(inspector, /preset_id:\s*props\.preset\.id/, "导入片段没记来源预设");
   assert.match(inspector, /dynamicMacro/, "没有拦动态宏（静态段会留下不替换的占位符）");
   assert.match(inspector, /createSegment\(/, "没有导入为片段的动作");
@@ -4435,6 +4436,19 @@ test("ST 预设内容：查看/提取合并为两 tab，有效条目可导入为
   assert.match(settings, /deleteTavernPreset\(p\.id, mode\)/, "界面没有把 keep/delete 传给后端");
   assert.match(settings, /一并删除它们吗/, "删预设没有提醒关联片段");
   assert.match(settings, /segmentSource/, "段列表没有显示导入来源");
+});
+
+// 2026-11-11 用户定：左上角品牌标志可点击，跳到更新面板；更新页底部介绍项目与作者。
+test("品牌标志可点击跳更新；更新页底部有项目介绍与 GitHub 链接", () => {
+  const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  const pane = readFileSync(join(SRC, "components", "UpdatePane.vue"), "utf8");
+  assert.match(bar, /<button[\s\S]*class="brand"[\s\S]*@click="\$emit\('open-update'\)"/, "品牌标志不是跳更新面板的按钮");
+  assert.match(app, /@open-update="\(\) => openManage\('update'\)"/, "App 没接 open-update");
+  assert.match(pane, /关于 MicroChat/, "更新页没有项目介绍");
+  assert.match(pane, /Zincles/, "没有作者 Zincles");
+  assert.match(pane, /DeepSeekV4\.1Flash（你）/, "没有作者 DeepSeekV4.1Flash");
+  assert.match(pane, /https:\/\/github\.com\/zincles\/microchat/, "没有 GitHub 链接");
 });
 
 // 2026-11-07 用户报：列表项里的 `$$…$$` 块解析成 raw `$$`。

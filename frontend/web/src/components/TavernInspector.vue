@@ -15,7 +15,7 @@ import { depthText } from "../utils/format.ts";
 import { parseJsonText, type JsonValue } from "../utils/json.ts";
 import { ICONS } from "./icons.ts";
 import JsonNode from "./JsonNode.vue";
-import type { Segment, TavernEffective, TavernEffectiveEntry, TavernPreset } from "../api/types.ts";
+import type { Segment, TavernEffective, TavernEffectiveEntry, TavernPreset, TavernPreview } from "../api/types.ts";
 
 const props = withDefaults(defineProps<{
   preset: TavernPreset;
@@ -27,7 +27,7 @@ const emit = defineEmits<{ close: []; imported: [segment: Segment] }>();
 const api = sharedApi();
 
 const open = ref(true);
-const tab = ref<"effective" | "raw">("effective");
+const tab = ref<"effective" | "preview" | "raw">("effective");
 
 // —— 原始 JSON（按需加载：1.5MB 的预设不该在打开有效内容时先 parse 一遍）——
 const rawLoading = ref(false);
@@ -85,6 +85,35 @@ const variablesText = computed(() => {
   if (!keys.length) return "";
   return keys.map((key) => `${key} = ${vars[key]}`).join("\n");
 });
+
+// —— 解析预览（只读；按需加载，和原始 JSON 一样不抢默认视图的第一屏）——
+const previewLoading = ref(false);
+const previewLoaded = ref(false);
+const previewError = ref("");
+const preview = shallowRef<TavernPreview | null>(null);
+
+async function loadPreview(): Promise<void> {
+  if (previewLoading.value || previewLoaded.value) return;
+  previewLoading.value = true;
+  previewError.value = "";
+  try {
+    preview.value = await api.tavernPreview(props.preset.id);
+    previewLoaded.value = true;
+  } catch (e) {
+    previewError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    previewLoading.value = false;
+  }
+}
+function previewOf(text: string): string {
+  const flat = String(text ?? "").replace(/\s+/g, " ").trim();
+  return flat.length > 220 ? `${flat.slice(0, 220)}…` : flat;
+}
+const absoluteEntries = computed(() => (preview.value?.entries ?? []).filter((entry) => entry.position === "absolute"));
+const relativeEntries = computed(() => (preview.value?.entries ?? []).filter((entry) => entry.position === "relative"));
+const unknownPreviewMacros = computed(() => (preview.value?.macros ?? []).filter((item) =>
+  !item.known && !item.name.startsWith("//") && item.name !== "trim"));
+const knownPreviewMacros = computed(() => (preview.value?.macros ?? []).filter((item) => item.known));
 
 // —— 逐条导入为提示词片段 ——
 // 静态段不能承载动态宏：只要正文里还有 {{...}} 就拒绝（有效提取通常会解析掉已知宏，
@@ -151,7 +180,10 @@ async function importEntry(entry: TavernEffectiveEntry, index: number): Promise<
 
 function close(): void { open.value = false; }
 watch(open, (value) => { if (!value) emit("close"); });
-watch(tab, (value) => { if (value === "raw") void loadRaw(); });
+watch(tab, (value) => {
+  if (value === "raw") void loadRaw();
+  if (value === "preview") void loadPreview();
+});
 watch(() => props.preset.id, () => {
   importedKeys.value = [];
   importedIDs.value = [];
@@ -161,8 +193,13 @@ watch(() => props.preset.id, () => {
   rawLoading.value = false;
   rawError.value = "";
   tree.value = null;
+  previewLoaded.value = false;
+  previewLoading.value = false;
+  previewError.value = "";
+  preview.value = null;
   void loadEffective();
   if (tab.value === "raw") void loadRaw();
+  if (tab.value === "preview") void loadPreview();
 }, { immediate: true });
 </script>
 
@@ -171,7 +208,7 @@ watch(() => props.preset.id, () => {
     <VCard class="tavern-preview-card" elevation="3">
       <VCardTitle class="tavern-preview-head">
         <div class="tavern-preview-title">
-          <span>预设内容</span>
+          <span>解析与导入</span>
           <span class="tavern-preview-file">{{ preset.filename }}</span>
         </div>
         <div class="head-btns">
@@ -180,12 +217,17 @@ watch(() => props.preset.id, () => {
         </div>
       </VCardTitle>
 
-      <div class="tavern-inspector-tabs" role="tablist" aria-label="预设内容视图">
+      <div class="tavern-inspector-tabs" role="tablist" aria-label="解析与导入视图">
         <button
           type="button" role="tab" class="tavern-inspector-tab"
           :class="{ active: tab === 'effective' }" :aria-selected="tab === 'effective'"
           @click="tab = 'effective'"
-        >有效内容</button>
+        >有效内容<template v-if="data"> · {{ data.entries.length }}</template></button>
+        <button
+          type="button" role="tab" class="tavern-inspector-tab"
+          :class="{ active: tab === 'preview' }" :aria-selected="tab === 'preview'"
+          @click="tab = 'preview'"
+        >解析预览</button>
         <button
           type="button" role="tab" class="tavern-inspector-tab"
           :class="{ active: tab === 'raw' }" :aria-selected="tab === 'raw'"
@@ -194,6 +236,67 @@ watch(() => props.preset.id, () => {
       </div>
 
       <VCardText class="tavern-preview-body">
+        <template v-if="tab === 'preview'">
+          <div v-if="previewLoading" class="tavern-preview-state" role="status">
+            <VProgressCircular indeterminate size="22" color="primary" />
+            <span>解析中…</span>
+          </div>
+          <div v-else-if="previewError" class="tavern-preview-state error" role="alert">{{ previewError }}</div>
+          <template v-else-if="preview">
+            <p class="tavern-preview-note">
+              只读预览：按 <code>prompt_order</code> 展开；不写 Agent、不执行 <code>setvar/getvar</code>。
+            </p>
+            <div class="tavern-preview-stats">
+              <div><b>{{ preview.name }}</b><span>预设名</span></div>
+              <div><b>{{ preview.prompt_count }}</b><span>prompts</span></div>
+              <div><b>{{ preview.order_entries }}</b><span>order 条目</span></div>
+              <div><b>{{ preview.enabled }}</b><span>启用</span></div>
+              <div><b>{{ preview.with_content }}</b><span>有正文</span></div>
+              <div><b>{{ preview.relative }} / {{ preview.absolute }}</b><span>relative / absolute</span></div>
+            </div>
+            <div v-if="preview.warnings?.length" class="tavern-preview-warnings">
+              <div class="tavern-preview-section-title">提醒</div>
+              <ul><li v-for="(warning, index) in preview.warnings" :key="index">{{ warning }}</li></ul>
+            </div>
+            <div class="tavern-preview-section-title">绝对注入 <span>{{ absoluteEntries.length }}</span></div>
+            <p class="tavern-preview-depth-note">depth 从聊天历史末尾往前数：0 = 最后一条之后，1 = 最后一条之前，2 = 倒数第二条之前。</p>
+            <p v-if="!absoluteEntries.length" class="tavern-preview-empty">没有 absolute 条目。</p>
+            <article v-for="entry in absoluteEntries" :key="entry.identifier" class="tavern-preview-entry">
+              <div class="tavern-preview-entry-head">
+                <b>{{ entry.name || entry.identifier }}</b>
+                <span class="tavern-preview-tag">{{ entry.role }}</span>
+                <span class="tavern-preview-meta" :title="`depth ${entry.depth}：${depthText(entry.depth)}`">depth {{ entry.depth }} · {{ depthText(entry.depth) }} · order {{ entry.order }}</span>
+              </div>
+              <div class="tavern-preview-id">{{ entry.identifier }}<span v-if="entry.system_prompt"> · system_prompt</span></div>
+              <p class="tavern-preview-content">{{ previewOf(entry.content) }}</p>
+            </article>
+            <div class="tavern-preview-section-title">相对条目 <span>{{ relativeEntries.length }}</span></div>
+            <p v-if="!relativeEntries.length" class="tavern-preview-empty">没有 relative 条目。</p>
+            <article v-for="entry in relativeEntries" :key="entry.identifier" class="tavern-preview-entry">
+              <div class="tavern-preview-entry-head">
+                <b>{{ entry.name || entry.identifier }}</b>
+                <span class="tavern-preview-tag">{{ entry.role }}</span>
+                <span v-if="entry.system_prompt" class="tavern-preview-meta">system_prompt</span>
+              </div>
+              <div class="tavern-preview-id">{{ entry.identifier }}</div>
+              <p class="tavern-preview-content">{{ previewOf(entry.content) }}</p>
+            </article>
+            <div class="tavern-preview-section-title">未注册宏 <span>{{ unknownPreviewMacros.length }} 种</span></div>
+            <p v-if="!unknownPreviewMacros.length" class="tavern-preview-empty">没有发现需要变量引擎的宏。</p>
+            <div v-else class="tavern-preview-macros">
+              <span v-for="item in unknownPreviewMacros" :key="item.name" class="tavern-preview-macro unknown">{{ item.name }} ×{{ item.count }}</span>
+            </div>
+            <p v-if="knownPreviewMacros.length" class="tavern-preview-note">已注册宏会在出站/显示时替换；未注册宏保持原文，后续由 ST 变量引擎处理。</p>
+            <details v-if="preview.skipped.length" class="tavern-preview-skipped">
+              <summary>跳过 {{ preview.skipped.length }} 条</summary>
+              <div v-for="(item, index) in preview.skipped" :key="`${item.identifier}-${index}`" class="tavern-preview-skip">
+                <b>{{ item.name || item.identifier || "（空 id）" }}</b>
+                <span>{{ item.reason }}</span>
+              </div>
+            </details>
+          </template>
+        </template>
+
         <template v-if="tab === 'raw'">
           <div v-if="rawLoading" class="tavern-preview-state" role="status">
             <VProgressCircular indeterminate size="22" color="primary" />
@@ -205,7 +308,7 @@ watch(() => props.preset.id, () => {
           </div>
         </template>
 
-        <template v-else>
+        <template v-if="tab === 'effective'">
           <div v-if="loading" class="tavern-preview-state" role="status">
             <VProgressCircular indeterminate size="22" color="primary" />
             <span>求值中…</span>

@@ -156,10 +156,16 @@ defineExpose({ setSessions });
     <div class="bar-head">
       <!-- Brand Title（2026-11-06 用户定）：原来放大 tab 的位置换作品牌；
            下面依次是新对话 → 对话/生图 → 会话列表（Gemini 式左侧栏）。 -->
-      <span class="brand">
+      <button
+        class="brand"
+        type="button"
+        title="关于 MicroChat 与版本更新"
+        aria-label="关于 MicroChat 与版本更新"
+        @click="$emit('open-update')"
+      >
         <span class="brand-mark" aria-hidden="true" v-html="ICONS.spark"></span>
         <span class="brand-name">MicroChat</span>
-      </span>
+      </button>
       <span class="bar-head-actions">
         <button
           id="theme-toggle"

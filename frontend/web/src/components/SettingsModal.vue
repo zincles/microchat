@@ -14,7 +14,6 @@ import rpPreset from "../../presets/rp-agent.json";
 import ProviderEditor from "./ProviderEditor.vue";
 import ModelRulesEditor from "./ModelRulesEditor.vue";
 import UpdatePane from "./UpdatePane.vue";
-import TavernPreview from "./TavernPreview.vue";
 import TavernInspector from "./TavernInspector.vue";
 import { ICONS } from "./icons.ts";
 import { sharedApi } from "../utils/prefs.ts";
@@ -232,7 +231,6 @@ const tavernStatus = ref("");
 const tavernInput = ref<HTMLInputElement | null>(null);
 // 「内容」只把元数据交给查看器；原始字节由查看器按需下载，列表不背 1.5MB 的正文。
 const inspectingPreset = ref<TavernPreset | null>(null);
-const previewingPreset = ref<TavernPreset | null>(null);
 function sizeText(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
@@ -257,9 +255,6 @@ async function importTavernPresetFile(event: Event): Promise<void> {
 }
 function inspectTavernPreset(p: TavernPreset): void {
   inspectingPreset.value = p;
-}
-function previewTavernPreset(p: TavernPreset): void {
-  previewingPreset.value = p;
 }
 // 导入片段后刷新段库；Agent 编辑器的段下拉也读这一份。
 function onPresetSegmentImported(): void {
@@ -623,8 +618,7 @@ function onKey(e: KeyboardEvent): void {
                   <td>{{ sizeText(p.size) }}</td>
                   <td>{{ timeText(p.created_at) }}</td>
                   <td class="ops">
-                    <VBtn variant="text" size="small" type="button" title="原始 JSON 与求值后的有效内容（两个 tab）" @click="inspectTavernPreset(p)">内容</VBtn>
-                    <VBtn variant="text" size="small" type="button" @click="previewTavernPreset(p)">解析预览</VBtn>
+                    <VBtn variant="text" size="small" type="button" title="解析预览 / 有效内容与导入 / 原始 JSON" @click="inspectTavernPreset(p)">解析与导入</VBtn>
                     <VBtn variant="text" size="small" type="button" @click="downloadTavernPreset(p)">导出</VBtn>
                     <VBtn color="error" variant="text" size="small" type="button" @click="removeTavernPreset(p)">删除</VBtn>
                   </td>
@@ -706,6 +700,5 @@ function onKey(e: KeyboardEvent): void {
       @close="inspectingPreset = null"
       @imported="onPresetSegmentImported"
     />
-    <TavernPreview v-if="previewingPreset" :preset="previewingPreset" @close="previewingPreset = null" />
   </section>
 </template>

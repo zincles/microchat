@@ -300,6 +300,18 @@ onMounted(() => {
         <pre v-if="log" class="update-log">{{ log }}</pre>
       </template>
       <p v-else-if="error" class="hint update-error">{{ error }}</p>
+
+      <section class="project-about">
+        <h3>关于 MicroChat</h3>
+        <p>
+          MicroChat 是一个轻量、可自托管的 SillyTavern 替代品，面向角色扮演与长对话：
+          Go 后端负责上下文、压缩与状态，Vue 前端负责阅读与编辑体验。基础功能不依赖外部账号，数据落在自己的 <code>data/</code> 目录。
+        </p>
+        <p class="project-authors">作者：Zincles、DeepSeekV4.1Flash（你）</p>
+        <p class="project-link">
+          <a href="https://github.com/zincles/microchat" target="_blank" rel="noopener noreferrer">github.com/zincles/microchat</a>
+        </p>
+      </section>
     </section>
   </section>
 </template>
