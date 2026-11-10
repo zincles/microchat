@@ -2199,6 +2199,7 @@ onUnmounted(() => {
               :rows="row.rows"
               :loading="row.loading"
               :reroll="summaryReroll.active && summaryReroll.target_summary_id === row.summary.id ? summaryReroll : null"
+              :macros="macroValues"
               @toggle-raw="(open) => onSummaryToggle(row.summary.id, open)"
               @refresh="summaryRefresh(row.summary.id)"
               @edit="openSummaryEdit(row.summary)"

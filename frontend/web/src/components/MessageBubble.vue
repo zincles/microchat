@@ -6,7 +6,7 @@ import { ICONS } from "./icons.ts";
 import { assistantIdentity, formatThinkLabel, identityLabel, nativeToolLabel, sourceLabel, toolRunHint, usageFoot, usageFootTitle } from "../utils/format.ts";
 import type { UsageLike } from "../utils/format.ts";
 import { renderMarkdown, splitState } from "../utils/markdown.ts";
-import type { MacroMap } from "../utils/macros.ts";
+import { renderMacroHtml, type MacroMap } from "../utils/macros.ts";
 import { renderMermaidIn } from "../utils/mermaid.ts";
 
 interface RerollLike {
@@ -117,6 +117,7 @@ const canEdit = computed(() => !!props.messageId);
 // 正文拆说话/状态：说话走 markdown，状态块进独立容器。
 const parts = computed(() => splitState(props.content));
 const bodyHtml = computed(() => renderMarkdown(parts.value.cleaned, { macros: props.macros }));
+const reasoningHtml = computed(() => renderMacroHtml(props.reasoning, props.macros));
 // 公式比列宽时给右缘一道内阴影（2026-11-02）：手机上原本是"一刀切"，看不出还能往右滑。
 // `overflow-x: auto` 之外再标一个类 —— 只有真的溢出才提示，短公式不受影响。
 const textEl = ref<HTMLElement | null>(null);
@@ -197,7 +198,7 @@ watch(() => props.streaming, (s) => nextTick(() => {
       <div v-if="role !== 'user' && assistantIdent" class="msg-head">{{ assistantIdent }}<span v-if="statusText" class="msg-status"> · {{ statusText }}</span></div>
       <details v-if="reasoning" class="think">
         <summary>{{ thinkLabel }}</summary>
-        <div class="think-body">{{ reasoning }}</div>
+        <div class="think-body" v-html="reasoningHtml"></div>
       </details>
       <!-- 工具调用发生在正文之前（xAI 的 web_search_call 也是先于最终 text）；卡片必须在上方。
            来源链接仍留在正文下方，作为引用清单，避免 30 条链接把答案顶走。 -->

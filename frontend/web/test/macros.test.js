@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { macroMap, restoreMacros, stashMacros } from "../src/utils/macros.ts";
+import { macroMap, renderMacroHtml, restoreMacros, stashMacros } from "../src/utils/macros.ts";
 import { renderMarkdown } from "../src/utils/markdown.ts";
 
 const allOn = () => true;
@@ -37,4 +37,11 @@ test("宏：markdown 渲染后仍是安全 chip", () => {
   assert.match(html, /<strong>/);
   assert.match(html, /class="macro-chip"/);
   assert.match(html, /A&lt;B/);
+});
+
+test("宏：纯文本渲染也走安全 chip", () => {
+  const html = renderMacroHtml("甲 {{user_name}}\n乙 <x>", macroMap("A<B", "旁白"));
+  assert.match(html, /class="macro-chip"/);
+  assert.match(html, /A&lt;B/);
+  assert.match(html, /&lt;x&gt;/);
 });

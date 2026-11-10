@@ -51,6 +51,13 @@ export function restoreMacros(html: string, tokens: MacroToken[]): string {
   return out;
 }
 
+// renderMacroHtml：纯文本（非 Markdown）里的宏 —— 思考框/摘要卡用。
+// 除宏之外的文本一律转义；换行交给容器的 `white-space: pre-wrap`。
+export function renderMacroHtml(text: string, values?: MacroMap | null): string {
+  const stash = stashMacros(text, values);
+  return restoreMacros(escapeMacroHtml(stash.text), stash.tokens);
+}
+
 // macroMap：把后端/前端当前值摊平成别名表；与 Go `macro.Values` 同口径。
 export function macroMap(userName: string, agentName: string, model = ""): MacroMap {
   const user = String(userName ?? "").trim() || "你";
