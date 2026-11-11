@@ -6,8 +6,8 @@
 // 两条属于 FlowAgent 的硬约束在数据层（utils/flow.ts）与这里一起做：
 //   · 只能调用传统 Agent，不能嵌套 FlowAgent；
 //   · 第一版只允许 DAG，且恰好一个输入、一个输出。
-import { computed, nextTick, onMounted, ref, watch } from "vue";
-import { VueFlow, useVueFlow, type Connection } from "@vue-flow/core";
+import { computed, nextTick, onMounted, provide, ref, watch } from "vue";
+import { ConnectionMode, VueFlow, useVueFlow, type Connection, type OnConnectStartParams } from "@vue-flow/core";
 import { Background } from "@vue-flow/background";
 import { Controls } from "@vue-flow/controls";
 import "@vue-flow/core/dist/style.css";
@@ -54,22 +54,40 @@ const edges = ref<any[]>(initial.edges.map((e) => ({ ...e, class: edgeClass(e.so
 
 
 const issues = computed(() => flowIssues(toGraph()));
-const debugOpen = ref(false);
+const panelOpen = ref(false);
+const panelTab = ref<"test" | "debug" | "nodes">("debug");
 const debugSteps = computed(() => flowDebugSteps(toGraph()));
-const debugNodeList = computed(() => nodes.value.map((n) => ({
-  id: String(n.id),
-  type: String(n.type),
-  label: ({ input: "输入", history: "历史", llm: "LLM", join: "拼接", output: "输出" } as Record<string, string>)[String(n.type)] ?? String(n.type),
-})));
-function selectNode(id: string): void {
-  nodes.value = nodes.value.map((n) => ({ ...n, selected: n.id === id }));
-}
-const testOpen = ref(false);
 const testMessage = ref("");
 const testStatus = ref("");
 const testing = ref(false);
-// 打开/关闭调试会让画布变窄/变宽；和全屏一样要重新 fit，否则节点会跑到画布外。
-watch(debugOpen, fitAfterResize);
+const nodeRows = computed(() => nodes.value.map((n) => ({
+  id: String(n.id),
+  type: String(n.type),
+  label: ({ input: "输入", history: "历史", llm: "LLM", join: "拼接", output: "输出" } as Record<string, string>)[String(n.type)] ?? String(n.type),
+  incoming: edges.value.filter((e) => e.target === n.id),
+  outgoing: edges.value.filter((e) => e.source === n.id),
+})));
+function nodeLabel(id: string): string {
+  const node = nodes.value.find((n) => n.id === id);
+  return node ? (({ input: "输入", history: "历史", llm: "LLM", join: "拼接", output: "输出" } as Record<string, string>)[String(node.type)] ?? String(node.type)) : id;
+}
+function openPanel(tab: "test" | "debug" | "nodes"): void {
+  if (panelOpen.value && panelTab.value === tab) { panelOpen.value = false; return; }
+  panelTab.value = tab;
+  panelOpen.value = true;
+}
+function selectNode(id: string): void {
+  nodes.value = nodes.value.map((n) => ({ ...n, selected: n.id === id }));
+}
+function removeEdge(id: string): void {
+  edges.value = edges.value.filter((e) => e.id !== id);
+}
+// 删除节点时**同一条事务里**把相连的边一起删掉，避免留下“指向不存在节点”的悬空边。
+function removeNode(id: string): void {
+  edges.value = edges.value.filter((e) => e.source !== id && e.target !== id);
+  nodes.value = nodes.value.filter((n) => n.id !== id);
+}
+provide("flowRemoveNode", removeNode);
 onMounted(fitAfterResize);
 const inputExists = computed(() => nodes.value.some((n) => n.type === "input"));
 const outputExists = computed(() => nodes.value.some((n) => n.type === "output"));
@@ -118,11 +136,6 @@ function addNode(type: "input" | "history" | "llm" | "join" | "output"): void {
   fitAfterResize();
 }
 
-function isHandleUsed(direction: "source" | "target", nodeID: string, handle: string): boolean {
-  return edges.value.some((e) => direction === "source"
-    ? e.source === nodeID && (e.sourceHandle || "out") === handle
-    : e.target === nodeID && (e.targetHandle || "in") === handle);
-}
 function isValidConnection(connection: Connection): boolean {
   if (!connection.source || !connection.target || connection.source === connection.target) return false;
   const source = nodes.value.find((n) => n.id === connection.source);
@@ -132,13 +145,30 @@ function isValidConnection(connection: Connection): boolean {
   const st = flowSourceType(source, sourceHandle);
   const tt = flowTargetType(target, targetHandle);
   if (!st || !tt || st !== tt) return false;
-  // 一个端点只允许一条线；需要多路输入时用 join 节点的多个输入孔。
-  if (isHandleUsed("source", connection.source, sourceHandle)) return false;
-  if (isHandleUsed("target", connection.target, targetHandle)) return false;
+  // 端点占用不在这里拒绝：拖到已占用的端点应当**替换旧线**。
   return true;
+}
+const pendingReconnect = ref<string | null>(null);
+const connectSucceeded = ref(false);
+
+// 从一个已连接的口子开始拖：先记住旧边；放开到空白就删掉它，落到别处则在 onConnect 里替换。
+function onConnectStart(params: OnConnectStartParams): void {
+  connectSucceeded.value = false;
+  const handle = params.handleId || "";
+  const edge = edges.value.find((e) => params.handleType === "source"
+    ? e.source === params.nodeId && (e.sourceHandle || "out") === handle
+    : e.target === params.nodeId && (e.targetHandle || "in") === handle);
+  pendingReconnect.value = edge?.id ?? null;
 }
 function onConnect(connection: Connection): void {
   if (!isValidConnection(connection)) return;
+  connectSucceeded.value = true;
+  const sourceHandle = connection.sourceHandle || "out";
+  const targetHandle = connection.targetHandle || "in";
+  // 替换语义：同一个出口或入口上的旧线先删掉，再落这条新线。
+  edges.value = edges.value.filter((e) =>
+    !(e.source === connection.source && (e.sourceHandle || "out") === sourceHandle)
+    && !(e.target === connection.target && (e.targetHandle || "in") === targetHandle));
   const id = `edge-${Date.now().toString(36)}-${++seq}`;
   edges.value = [...edges.value, {
     id,
@@ -148,6 +178,14 @@ function onConnect(connection: Connection): void {
     ...(connection.sourceHandle ? { sourceHandle: connection.sourceHandle } : {}),
     ...(connection.targetHandle ? { targetHandle: connection.targetHandle } : {}),
   }];
+  pendingReconnect.value = null;
+}
+function onConnectEnd(): void {
+  // 拖回空白：没有产生新连接 ⇒ 把开始拖的那条旧线删掉。
+  if (pendingReconnect.value && !connectSucceeded.value) {
+    removeEdge(pendingReconnect.value);
+  }
+  pendingReconnect.value = null;
 }
 
 async function runTest(): Promise<void> {
@@ -165,7 +203,8 @@ async function runTest(): Promise<void> {
       return { ...n, data };
     });
     testStatus.value = result.output ? `完成：${result.output.slice(0, 80)}` : "完成";
-    debugOpen.value = true;
+    panelTab.value = "test";
+    panelOpen.value = true;
   } catch (e) {
     testStatus.value = `测试失败：${e instanceof Error ? e.message : String(e)}`;
   } finally {
@@ -187,18 +226,18 @@ watch([nodes, edges], () => emit("update:graph", toGraph()), { deep: true });
       <VBtn variant="tonal" size="small" type="button" @click="addNode('join')">拼接</VBtn>
       <VBtn variant="tonal" size="small" type="button" :disabled="outputExists" @click="addNode('output')">输出</VBtn>
       <span class="flow-toolbar-spacer"></span>
-      <VBtn
-        variant="text" size="small" type="button"
-        :aria-pressed="testOpen ? 'true' : 'false'"
-        :color="testOpen ? 'primary' : undefined"
-        @click="testOpen = !testOpen"
-      >测试</VBtn>
-      <VBtn
-        variant="text" size="small" type="button"
-        :aria-pressed="debugOpen ? 'true' : 'false'"
-        :color="debugOpen ? 'primary' : undefined"
-        @click="debugOpen = !debugOpen"
-      >调试</VBtn>
+      <VBtn variant="text" size="small" type="button"
+        :aria-pressed="panelOpen && panelTab === 'test' ? 'true' : 'false'"
+        :color="panelOpen && panelTab === 'test' ? 'primary' : undefined"
+        @click="openPanel('test')">测试</VBtn>
+      <VBtn variant="text" size="small" type="button"
+        :aria-pressed="panelOpen && panelTab === 'debug' ? 'true' : 'false'"
+        :color="panelOpen && panelTab === 'debug' ? 'primary' : undefined"
+        @click="openPanel('debug')">调试</VBtn>
+      <VBtn variant="text" size="small" type="button"
+        :aria-pressed="panelOpen && panelTab === 'nodes' ? 'true' : 'false'"
+        :color="panelOpen && panelTab === 'nodes' ? 'primary' : undefined"
+        @click="openPanel('nodes')">节点</VBtn>
       <VBtn
         icon variant="text" size="small" type="button" class="flow-fullscreen-btn"
         :title="expanded ? '退出网页全屏' : '网页全屏'"
@@ -208,21 +247,6 @@ watch([nodes, edges], () => emit("update:graph", toGraph()), { deep: true });
       />
     </div>
     <div class="flow-main">
-      <div v-if="testOpen" class="flow-test-bar" :class="{ 'debug-open': debugOpen }">
-        <VTextField
-          v-model="testMessage"
-          density="compact" variant="outlined" hide-details
-          class="flow-test-input"
-          placeholder="输入一条测试消息…"
-          @keydown.enter.prevent="runTest"
-        />
-        <VBtn
-          color="primary" variant="flat" size="small" type="button"
-          :loading="testing" :disabled="testing || !agentId"
-          @click="runTest"
-        >发送测试</VBtn>
-        <span class="status">{{ testStatus || (agentId ? "" : "先保存 FlowAgent，再回来测试") }}</span>
-      </div>
       <div class="flow-canvas">
         <VueFlow
           v-model:nodes="nodes"
@@ -232,49 +256,89 @@ watch([nodes, edges], () => emit("update:graph", toGraph()), { deep: true });
           :min-zoom="0.35"
           :max-zoom="1.8"
           fit-view-on-init
+          :connection-mode="ConnectionMode.Loose"
+          @connect-start="onConnectStart"
           @connect="onConnect"
+          @connect-end="onConnectEnd"
           @node-resize="fitAfterResize"
         >
           <Background :gap="18" :size="1" />
           <Controls position="bottom-right" />
         </VueFlow>
       </div>
-      <aside v-if="debugOpen" class="flow-debug" aria-label="流程调试">
-        <div class="flow-debug-head">
-          <b>结构调试</b>
-          <VBtn icon variant="text" size="small" type="button" title="关闭调试" aria-label="关闭调试" @click="debugOpen = false">×</VBtn>
-        </div>
-        <p class="hint">只做结构预演，不调用模型；用占位文本看连线和数据流。</p>
-        <div class="flow-debug-nodes">
-          <div class="flow-debug-section">节点 <span>{{ debugNodeList.length }}</span></div>
-          <button v-for="node in debugNodeList" :key="node.id" type="button"
-            class="flow-debug-node" :title="node.id" @click="selectNode(node.id)">
-            <span>{{ node.label }}</span><code>{{ node.id }}</code>
-          </button>
-        </div>
-        <div v-if="issues.length" class="flow-debug-issues">
-          <b>还不能运行：</b>
-          <ul><li v-for="issue in issues" :key="issue">{{ issue }}</li></ul>
-        </div>
-        <div v-for="(step, i) in debugSteps" :key="step.id" class="flow-debug-step">
-          <div class="flow-debug-step-head">
-            <span class="flow-debug-index">{{ i + 1 }}</span>
-            <b>{{ step.label }}</b>
-            <code>{{ step.type }}</code>
+      <aside v-if="panelOpen" class="flow-debug" aria-label="流程面板">
+        <div class="flow-panel-head">
+          <div class="flow-panel-tabs" role="tablist">
+            <button type="button" :class="{ active: panelTab === 'test' }" @click="panelTab = 'test'">测试</button>
+            <button type="button" :class="{ active: panelTab === 'debug' }" @click="panelTab = 'debug'">调试</button>
+            <button type="button" :class="{ active: panelTab === 'nodes' }" @click="panelTab = 'nodes'">节点</button>
           </div>
-          <div v-if="step.inputs.length" class="flow-debug-inputs">
-            <span>输入</span>
-            <code v-for="(input, j) in step.inputs" :key="j">{{ input }}</code>
-          </div>
-          <div v-if="step.reasoning" class="flow-debug-reasoning">思考：{{ step.reasoning }}</div>
-          <pre class="flow-debug-output">{{ step.output }}</pre>
+          <VBtn icon variant="text" size="small" type="button" title="关闭面板" aria-label="关闭面板" @click="panelOpen = false">×</VBtn>
         </div>
+
+        <div v-if="panelTab === 'test'" class="flow-panel-test">
+          <p class="hint">输入一条测试消息；真实调用 LLM 后，悬停节点可看每步输入输出。</p>
+          <VTextField v-model="testMessage" density="compact" variant="outlined" hide-details
+            placeholder="输入一条测试消息…" @keydown.enter.prevent="runTest" />
+          <div class="row">
+            <VBtn color="primary" variant="flat" size="small" type="button"
+              :loading="testing" :disabled="testing || !agentId" @click="runTest">发送测试</VBtn>
+            <span class="status">{{ testStatus || (agentId ? "" : "先保存 FlowAgent，再回来测试") }}</span>
+          </div>
+        </div>
+
+        <template v-else-if="panelTab === 'debug'">
+          <p class="hint">只做结构预演，不调用模型；用占位文本看连线和数据流。</p>
+          <div v-if="issues.length" class="flow-debug-issues">
+            <b>还不能运行：</b>
+            <ul><li v-for="issue in issues" :key="issue">{{ issue }}</li></ul>
+          </div>
+          <div v-for="(step, i) in debugSteps" :key="step.id" class="flow-debug-step">
+            <div class="flow-debug-step-head">
+              <span class="flow-debug-index">{{ i + 1 }}</span>
+              <b>{{ step.label }}</b>
+              <code>{{ step.type }}</code>
+            </div>
+            <div v-if="step.inputs.length" class="flow-debug-inputs">
+              <span>输入</span>
+              <code v-for="(input, j) in step.inputs" :key="j">{{ input }}</code>
+            </div>
+            <div v-if="step.reasoning" class="flow-debug-reasoning">思考：{{ step.reasoning }}</div>
+            <pre class="flow-debug-output">{{ step.output }}</pre>
+          </div>
+        </template>
+
+        <template v-else>
+          <p class="hint">像图层一样查看节点和连接；断开或删除都只改当前图。</p>
+          <div v-for="row in nodeRows" :key="row.id" class="flow-node-row">
+            <div class="flow-node-row-head">
+              <span><b>{{ row.label }}</b><code>{{ row.id }}</code></span>
+              <VBtn color="error" variant="text" size="x-small" type="button" @click="removeNode(row.id)">删除</VBtn>
+            </div>
+            <div v-if="row.incoming.length" class="flow-conn-section">
+              <span class="flow-conn-label">输入</span>
+              <div v-for="edge in row.incoming" :key="edge.id" class="flow-conn-row">
+                <span :title="edge.id">{{ nodeLabel(edge.source) }} · {{ edge.sourceHandle || "out" }} → {{ edge.targetHandle || "in" }}</span>
+                <button type="button" class="flow-conn-x" @click="removeEdge(edge.id)">断开</button>
+              </div>
+            </div>
+            <div v-if="row.outgoing.length" class="flow-conn-section">
+              <span class="flow-conn-label">输出</span>
+              <div v-for="edge in row.outgoing" :key="edge.id" class="flow-conn-row">
+                <span :title="edge.id">{{ edge.sourceHandle || "out" }} → {{ nodeLabel(edge.target) }} · {{ edge.targetHandle || "in" }}</span>
+                <button type="button" class="flow-conn-x" @click="removeEdge(edge.id)">断开</button>
+              </div>
+            </div>
+            <div v-if="!row.incoming.length && !row.outgoing.length" class="flow-conn-empty">（还没有连接）</div>
+          </div>
+          <p v-if="!nodeRows.length" class="flow-conn-empty">（图里还没有节点）</p>
+        </template>
       </aside>
     </div>
     <p class="hint">拖动节点移动位置，从右侧端口拖到左侧端口连线。删除节点/连线用选中后按 Delete。</p>
-    <p v-if="issues.length && !debugOpen" class="field-warning flow-issues">
+    <p v-if="issues.length && !panelOpen" class="field-warning flow-issues">
       <b>还不能运行：</b>{{ issues.join("；") }}
     </p>
-    <p v-else-if="!issues.length && !debugOpen" class="hint flow-ok">结构检查通过：恰好一个输入/输出，没有嵌套 FlowAgent。</p>
+    <p v-else-if="!issues.length && !panelOpen" class="hint flow-ok">结构检查通过：恰好一个输入/输出，没有嵌套 FlowAgent。</p>
   </section>
 </template>

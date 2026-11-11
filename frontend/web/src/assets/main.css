@@ -1743,7 +1743,6 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
   height: 100%; padding: 1em 1.1em; background: var(--md-surface); overflow: hidden; }
 /* 全屏时画布吃掉剩余高度：toolbar/test bar/hints 是 flex:none，flow-main 才是 flex:1。 */
 .flow-editor.expanded > .flow-toolbar,
-.flow-editor.expanded > .flow-test-bar,
 .flow-editor.expanded > .hint,
 .flow-editor.expanded > .flow-issues,
 .flow-editor.expanded > .flow-ok { flex: none; }
@@ -1752,7 +1751,6 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 @media (max-width: 900px) {
   .flow-debug { top: auto; left: 0.5em; right: 0.5em; bottom: 0.5em; width: auto;
     height: min(15em, 48%); }
-  .flow-test-bar { width: calc(100% - 1em); max-width: none; }
 }
 .flow-main { position: relative; display: flex; align-items: stretch; gap: 0.7em; min-height: 0; }
 .flow-main .flow-canvas { flex: 1 1 auto; min-width: 0; }
@@ -1847,24 +1845,30 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-node-test-label { display: block; margin-top: 0.25em; color: var(--md-on-surface-variant); }
 .flow-node-test pre { margin: 0.15em 0 0; padding: 0.25em 0.35em; border-radius: var(--r-xs);
   background: var(--md-surface-container-low); white-space: pre-wrap; overflow-wrap: anywhere; }
-/* 测试输入栏也浮在画布上方，不再占一行高度。 */
-.flow-test-bar { position: absolute; top: 0.5em; left: 0.5em; z-index: 31;
-  display: flex; align-items: center; gap: 0.45em; flex-wrap: wrap;
-  width: min(36em, calc(100% - 1em)); padding: 0.45em 0.55em;
-  border: 1px solid var(--md-outline-variant); border-radius: var(--r-md);
-  background: var(--md-surface-container-high); box-shadow: var(--md-elev-2); }
-.flow-test-bar.debug-open { max-width: calc(100% - 22em); }
-.flow-test-input { flex: 1 1 16em; min-width: 10em; }
-.flow-debug-nodes { margin: 0.45em 0 0.2em; }
-.flow-debug-section { display: flex; justify-content: space-between; color: var(--md-on-surface-variant);
-  font-size: var(--md-type-label-small); border-bottom: 1px solid var(--md-outline-variant);
-  padding-bottom: 0.2em; margin-bottom: 0.2em; }
-.flow-debug-node { display: flex; justify-content: space-between; gap: 0.5em; width: 100%;
-  padding: 0.28em 0.2em; border: 0; border-radius: var(--r-xs); background: none;
-  color: var(--md-on-surface); font: inherit; text-align: left; cursor: pointer; }
-.flow-debug-node:hover { background: var(--hover); }
-.flow-debug-node code { color: var(--md-on-surface-variant); overflow: hidden;
-  text-overflow: ellipsis; white-space: nowrap; max-width: 10em; }
+.flow-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5em; }
+.flow-panel-tabs { display: flex; gap: 0.15em; }
+.flow-panel-tabs button { padding: 0.3em 0.6em; border: 0; border-bottom: 2px solid transparent;
+  border-radius: var(--r-xs) var(--r-xs) 0 0; background: none; color: var(--md-on-surface-variant);
+  font: inherit; font-size: var(--md-type-label-large); cursor: pointer; }
+.flow-panel-tabs button:hover { background: var(--hover); }
+.flow-panel-tabs button.active { color: var(--md-primary); border-bottom-color: var(--md-primary); }
+.flow-panel-test { display: flex; flex-direction: column; gap: 0.45em; padding-top: 0.5em; }
+.flow-panel-test .row { margin: 0; padding: 0; border-top: 0; }
+.flow-node-row { padding: 0.55em 0; border-top: 1px solid var(--md-outline-variant); }
+.flow-node-row:first-of-type { border-top: 0; }
+.flow-node-row-head { display: flex; align-items: center; justify-content: space-between; gap: 0.4em; }
+.flow-node-row-head > span { min-width: 0; display: flex; align-items: baseline; gap: 0.4em; }
+.flow-node-row-head code { color: var(--md-on-surface-variant); font-size: var(--md-type-label-small);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flow-conn-section { margin-top: 0.25em; }
+.flow-conn-label { display: block; color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
+.flow-conn-row { display: flex; align-items: baseline; justify-content: space-between; gap: 0.45em;
+  padding: 0.15em 0; font-size: var(--md-type-label-small); }
+.flow-conn-row > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flow-conn-x { flex: none; padding: 0 0.1em; border: 0; background: none; color: var(--md-error);
+  font: inherit; font-size: var(--md-type-label-small); cursor: pointer; }
+.flow-conn-x:hover { text-decoration: underline; }
+.flow-conn-empty { padding: 0.3em 0; color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
 .flow-issues { margin-top: 0.2em; }
 .flow-ok { margin-top: 0.15em; }
 @media (max-width: 700px) { .flow-canvas { height: 48vh; min-height: 260px; } }

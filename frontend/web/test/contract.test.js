@@ -496,7 +496,7 @@ test("FlowAgent：端口有类型，且每个端点只许一条线", () => {
   assert.ok(flowIssues(graph).some((x) => x.includes("一个入口只能接一条线")));
 });
 
-test("FlowAgent：新建菜单两种类型，流程编辑器有输入/输出/Agent/拼接节点", () => {
+test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接节点", () => {
   const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
   const editor = readFileSync(join(SRC, "components", "AgentEditor.vue"), "utf8");
   const flow = readFileSync(join(SRC, "components", "FlowEditor.vue"), "utf8");
@@ -527,8 +527,9 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/输出/Age
   assert.match(css, /\.flow-editor\.expanded \{[^}]*position:\s*fixed/, "网页全屏没有铺满 #app");
   assert.match(css, /\.flow-editor\.expanded \.flow-main \{[^}]*flex:\s*1 1 auto/, "全屏时 flow-main 没有吃掉剩余高度");
   assert.match(css, /\.flow-debug \{[^}]*position:\s*absolute/, "调试栏仍占画布宽度");
-  assert.match(css, /\.flow-test-bar \{[^}]*position:\s*absolute/, "测试输入栏仍占画布高度");
-  assert.match(flow, /flow-debug-node/, "调试栏没有节点列表");
+  assert.match(css, /\.flow-panel-test \{[^}]*display:\s*flex/, "测试面板没有独立内容区");
+  assert.match(flow, /flow-node-row/, "节点面板没有节点列表");
+  assert.match(flow, /flow-panel-tabs/, "面板没有 测试/调试/节点 tabs");
   for (const type of ["input", "history", "llm", "join", "output"]) {
     assert.ok(flow.includes(`addNode('${type}')`) || flow.includes(`addNode("${type}")`), `流程编辑器缺 ${type} 节点`);
   }
