@@ -44,10 +44,13 @@ function toggleExpanded(): void {
   // 画布尺寸变了，Vue Flow 不会自动重新 fit；不重算的话全屏后节点会跑到视口外。
   if (expanded.value) fitAfterResize();
 }
-const nodeTypes = { input: FlowNode, llm: FlowNode, join: FlowNode, output: FlowNode } as any;
+const nodeTypes = { input: FlowNode, history: FlowNode, llm: FlowNode, join: FlowNode, output: FlowNode } as any;
 const initial = normalizeFlowGraph(props.graph ?? emptyFlowGraph());
 const nodes = ref<any[]>(initial.nodes.map((n) => ({ ...n, data: { ...(n.data ?? {}) } })));
-const edges = ref<any[]>(initial.edges.map((e) => ({ ...e })));
+const historyExists = computed(() => nodes.value.some((n) => n.type === "history"));
+const edgeClass = (sourceId: string, nodeList: any[] = nodes.value): string =>
+  nodeList.find((n) => n.id === sourceId)?.type === "history" ? "flow-edge-history" : "flow-edge-text";
+const edges = ref<any[]>(initial.edges.map((e) => ({ ...e, class: edgeClass(e.source, initial.nodes) })));
 
 
 const issues = computed(() => flowIssues(toGraph()));
@@ -87,8 +90,9 @@ function toGraph(): FlowGraph {
   };
 }
 
-function addNode(type: "input" | "llm" | "join" | "output"): void {
+function addNode(type: "input" | "history" | "llm" | "join" | "output"): void {
   if (type === "input" && inputExists.value) return;
+  if (type === "history" && historyExists.value) return;
   if (type === "output" && outputExists.value) return;
   seq += 1;
   const id = `${type}-${Date.now().toString(36)}-${seq}`;
@@ -109,6 +113,7 @@ function addNode(type: "input" | "llm" | "join" | "output"): void {
 function allowed(sourceType?: string, targetType?: string): boolean {
   const map: Record<string, string[]> = {
     input: ["llm", "join"],
+    history: ["llm"],
     llm: ["llm", "join", "output"],
     join: ["llm", "output"],
   };
@@ -127,6 +132,7 @@ function onConnect(connection: Connection): void {
     id,
     source: connection.source,
     target: connection.target,
+    class: edgeClass(connection.source),
     ...(connection.sourceHandle ? { sourceHandle: connection.sourceHandle } : {}),
     ...(connection.targetHandle ? { targetHandle: connection.targetHandle } : {}),
   }];
@@ -164,6 +170,7 @@ watch([nodes, edges], () => emit("update:graph", toGraph()), { deep: true });
     <div class="flow-toolbar">
       <span class="flow-toolbar-label">添加节点：</span>
       <VBtn variant="tonal" size="small" type="button" :disabled="inputExists" @click="addNode('input')">输入</VBtn>
+      <VBtn variant="tonal" size="small" type="button" color="warning" :disabled="historyExists" @click="addNode('history')">历史数据</VBtn>
       <VBtn variant="tonal" size="small" type="button" @click="addNode('llm')">调用 LLM</VBtn>
       <VBtn variant="tonal" size="small" type="button" @click="addNode('join')">拼接</VBtn>
       <VBtn variant="tonal" size="small" type="button" :disabled="outputExists" @click="addNode('output')">输出</VBtn>

@@ -381,8 +381,13 @@ delete(AA)           # 删除
   `input / llm / join / output`；编辑器用 Vue Flow（`@vue-flow/core`）。
   **LLM 节点不绑定 Agent**：它内部是一张手动组装的消息列表，每个 Prompt 条目有
   `role`（system / user / assistant）、手写正文，以及一个自己的左侧输入孔；
-  多条 Prompt 的左边可以分别接不同上游。LLM 节点右侧有**两个出口**：
+  多条 Prompt 的左边可以分别接不同上游。LLM 节点顶部另有 **history 输入**（黄色，
+  接 `history` 节点输出的 messages[]），右侧有**两个出口**：
   `reasoning`（思考）与 `text`（正文），下游可以分别接线。
+  数据类型的颜色是硬约定：**蓝色 = 裸字符串**（输入/拼接/输出与 Prompt 输入），
+  **黄色 = 历史 messages[]**（history 节点与它的边、LLM 的 history 端口）。
+  history 是显式节点而不是隐式上下文：测试接口没有会话上下文，所以 history 节点
+  在测试里输出明确的占位，不伪造历史。
   编辑器有 **网页全屏**、**调试** 与 **测试**：调试是结构预演（不调模型）；测试会调
   `POST /agents/{id}/flow/test`，按 Prompt 条目真实组装 messages 并调用上游，返回每步输入/输出（含 reasoning），
   鼠标悬停节点即可看该节点的测试 I/O。测试不建会话、不落库；真正会话语义尚未接线，

@@ -20,12 +20,14 @@ interface PromptEntry {
 const hovered = ref(false);
 const label = computed(() => ({
   input: "输入",
+  history: "历史数据",
   llm: "调用 LLM",
   join: "拼接",
   output: "输出",
 }[props.type] ?? props.type));
 const hint = computed(() => ({
-  input: "本轮用户消息 + 会话上下文",
+  input: "裸字符串：本轮用户输入",
+  history: "messages[]：当前会话历史",
   llm: "手动组装 messages",
   join: "把多路输出合成一段文本",
   output: "最终结果写入聊天",
@@ -56,6 +58,10 @@ function removePrompt(id: string): void {
     <div class="flow-node-head">
       <span class="flow-node-title">{{ label }}</span>
       <span class="flow-node-hint">{{ hint }}</span>
+    </div>
+    <div v-if="type === 'llm'" class="flow-history-input">
+      <Handle id="history" type="target" :position="Position.Left" />
+      <span>历史消息</span>
     </div>
     <div v-if="type === 'llm'" class="flow-prompt-list">
       <div v-for="prompt in prompts" :key="prompt.id" class="flow-prompt-row">
@@ -89,6 +95,7 @@ function removePrompt(id: string): void {
       </div>
       <VBtn variant="text" size="small" type="button" class="flow-add-prompt nodrag nopan" @click="addPrompt">＋ 添加 Prompt</VBtn>
     </div>
+    <div v-if="type === 'history'" class="flow-node-body">来自真实会话的历史 messages</div>
     <div v-if="type === 'join'" class="flow-node-body">多路文本 → 一段文本</div>
     <div v-if="hovered && data.test" class="flow-node-test" role="tooltip">
       <b>测试 I/O</b>

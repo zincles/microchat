@@ -487,11 +487,13 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/输出/Age
   assert.match(flow, /api\.testFlow/, "测试发送没接后端");
   assert.match(flowNode, /class="flow-node-test"/, "节点悬停没有测试 I/O 浮层");
   assert.match(flowNode, /id="reasoning"/, "LLM 节点没有思考出口");
+  assert.match(flowNode, /id="history"/, "LLM 节点没有 history 输入");
+  assert.match(flowNode, /class="flow-history-input"/, "history 输入没有独立标签/端口");
   assert.match(flowNode, /id="text"/, "LLM 节点没有正文出口");
   assert.match(flowNode, /每行自己的左侧输入孔|prompt-\$\{prompt\.id\}/, "Prompt 条目没有独立输入孔");
   assert.ok(flowDebugSteps(emptyFlowGraph()).length >= 2, "空图没有调试步骤");
   assert.match(css, /\.flow-editor\.expanded \{[^}]*position:\s*fixed/, "网页全屏没有铺满 #app");
-  for (const type of ["input", "llm", "join", "output"]) {
+  for (const type of ["input", "history", "llm", "join", "output"]) {
     assert.ok(flow.includes(`addNode('${type}')`) || flow.includes(`addNode("${type}")`), `流程编辑器缺 ${type} 节点`);
   }
   const empty = emptyFlowGraph();

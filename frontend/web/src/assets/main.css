@@ -1772,7 +1772,8 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-debug-output { margin: 0.3em 0 0; padding: 0.4em 0.5em; border-radius: var(--r-xs);
   background: var(--md-surface-container-high); color: var(--md-on-surface);
   font-size: var(--md-type-label-small); line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
-.flow-canvas { height: min(54vh, 560px); min-height: 300px; border: 1px solid var(--md-outline-variant);
+.flow-canvas { --flow-string: var(--md-primary); --flow-history: #d9b44a;
+  height: min(54vh, 560px); min-height: 300px; border: 1px solid var(--md-outline-variant);
   border-radius: var(--md-shape-md); overflow: hidden; background: var(--md-surface-container-low); }
 .flow-canvas .vue-flow { background: var(--md-surface-container-low); }
 /* Vue Flow 的 theme-default 会给 input/output 节点头套白底、白边、固定 150px 和居中对齐；
@@ -1787,7 +1788,9 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-canvas .vue-flow__node:focus-visible .flow-node {
   border-color: var(--md-primary); box-shadow: 0 0 0 2px var(--md-primary);
 }
-.flow-canvas .vue-flow__edge-path { stroke: var(--md-outline); stroke-width: 1.5; }
+.flow-canvas .vue-flow__edge-path { stroke: var(--flow-string); stroke-width: 1.5; }
+.flow-canvas .flow-edge-history .vue-flow__edge-path { stroke: var(--flow-history) !important; }
+.flow-canvas .flow-edge-text .vue-flow__edge-path { stroke: var(--flow-string) !important; }
 .flow-canvas .vue-flow__connection-path { stroke: var(--md-primary); stroke-width: 2; }
 /* Controls 默认是白底大圆角按钮，和 MD3 主题格格不入；压成面板里的一组小图标键。 */
 .flow-canvas .vue-flow__controls { box-shadow: var(--md-elev-2); border-radius: var(--r-md); overflow: hidden; }
@@ -1809,8 +1812,11 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-node-select { margin-top: 0.4em; }
 .flow-node-select .v-field { font-size: var(--md-type-label-medium); }
 /* 入口/出口在卡片边上给一点方向色；默认主题会给 input/output 的 handle 染色，必须压住。 */
-.flow-node-input { border-left: 3px solid var(--md-primary); }
-.flow-node-output { border-right: 3px solid var(--md-primary); }
+.flow-node-input, .flow-node-join { border-left: 3px solid var(--flow-string); }
+.flow-node-output { border-right: 3px solid var(--flow-string); }
+.flow-node-history { border-left: 3px solid var(--flow-history); }
+.flow-canvas .flow-node-history .vue-flow__handle { background: var(--flow-history) !important; }
+.flow-canvas .flow-node .flow-history-input .vue-flow__handle { background: var(--flow-history) !important; }
 .flow-canvas .flow-node .vue-flow__handle { width: 10px; height: 10px;
   border: 2px solid var(--md-surface-container-high); background: var(--md-primary) !important; }
 .flow-canvas .flow-node .vue-flow__handle:hover { background: var(--md-secondary) !important; }
@@ -1847,6 +1853,10 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-prompt-del:hover { color: var(--md-error); }
 .flow-add-prompt { align-self: flex-start; margin-top: 0.1em; }
 .flow-prompt-row .vue-flow__handle-left { left: 0; }
+/* LLM 节点顶部的 history 输入：黄色，接受 messages[] 而不是裸字符串。 */
+.flow-history-input { position: relative; display: flex; align-items: center; margin-top: 0.45em;
+  padding-left: 0.8em; color: var(--flow-history); font-size: var(--md-type-label-small); }
+.flow-history-input .vue-flow__handle-left { left: 0; }
 /* LLM 的两个出口：思考 / 正文。Handle 放在各自行尾，连线不会叠在同一个点上。 */
 .flow-llm-outputs { margin-top: 0.45em; border-top: 1px solid var(--md-outline-variant); padding-top: 0.25em; }
 .flow-llm-output-row { position: relative; display: flex; justify-content: flex-end; align-items: center;

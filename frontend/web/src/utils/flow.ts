@@ -1,12 +1,12 @@
 // FlowAgent 图的前端纯数据层：空图、归一化、保存前检查。
 //
 // 这一层不认识 Vue Flow，也不认识运行时；它只认 `FlowGraph` 的 JSON。
-// 节点类型先保持最小集合：input / llm / join / output。
+// 节点类型先保持最小集合：input（字符串）/ history（messages[]）/ llm / join / output。
 // 以后加 template / condition 时，先在这里扩白名单，再改编辑器与运行时。
 import type { FlowEdge, FlowGraph, FlowNode } from "../api/types.ts";
 
 export const FLOW_VERSION = 1;
-export const FLOW_NODE_TYPES = ["input", "llm", "join", "output"] as const;
+export const FLOW_NODE_TYPES = ["input", "history", "llm", "join", "output"] as const;
 export type FlowNodeType = (typeof FLOW_NODE_TYPES)[number];
 
 export function emptyFlowGraph(): FlowGraph {
@@ -55,6 +55,9 @@ export function flowIssues(graph: FlowGraph): string[] {
   if (counts("output") !== 1) issues.push("需要恰好一个输出节点");
   for (const node of nodes) {
     if (!FLOW_NODE_TYPES.includes(node.type as FlowNodeType)) issues.push(`不认识的节点类型：${node.type}`);
+    if (node.type === "history" && !edges.some((e) => e.source === node.id)) {
+      issues.push("历史数据节点还没有接到 LLM 的 history 输入");
+    }
     if (node.type === "llm") {
       const prompts = Array.isArray(node.data?.prompts) ? node.data.prompts : [];
       if (!prompts.length) issues.push("有 LLM 节点还没有 Prompt 条目");
@@ -135,7 +138,7 @@ export function flowDebugSteps(graph: FlowGraph): FlowDebugStep[] {
   const nodes = flowNodeOrder(graph);
   const edges = graph.edges ?? [];
   const values = new Map<string, { text: string; reasoning: string }>();
-  const labels: Record<string, string> = { input: "输入", llm: "调用 LLM", join: "拼接", output: "输出" };
+  const labels: Record<string, string> = { input: "输入", history: "历史数据", llm: "调用 LLM", join: "拼接", output: "输出" };
   const source = (edge: { source: string; sourceHandle?: string }): string => {
     const handle = edge.sourceHandle || "out";
     const value = values.get(`${edge.source}\0${handle}`) ?? values.get(`${edge.source}\0out`) ?? values.get(`${edge.source}\0text`);
@@ -150,6 +153,8 @@ export function flowDebugSteps(graph: FlowGraph): FlowDebugStep[] {
     let label = labels[node.type] ?? node.type;
     if (node.type === "input") {
       output = "[本轮用户输入]";
+    } else if (node.type === "history") {
+      output = "[会话历史 messages]";
     } else if (node.type === "llm") {
       label = "调用 LLM";
       output = "[LLM 正文]";
