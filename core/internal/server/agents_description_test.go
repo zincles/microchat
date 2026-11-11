@@ -120,3 +120,31 @@ func TestFlowAgentTestSend(t *testing.T) {
 		t.Fatalf("agent 输入没接上：%+v", got.Steps[1])
 	}
 }
+
+// 拼接和复制节点的多个输出口都复制同一段拼接结果。
+func TestFlowJoinCopiesToOutputPorts(t *testing.T) {
+	box := newDummySandboxWith(t, true)
+	flow := `{"version":1,"nodes":[
+	  {"id":"in","type":"input","position":{"x":0,"y":0},"data":{}},
+	  {"id":"j","type":"join","position":{"x":1,"y":0},"data":{"inputs":["in-1"],"outputs":["out-1","out-2"]}},
+	  {"id":"out","type":"output","position":{"x":2,"y":0},"data":{}}
+	],"edges":[{"id":"e1","source":"in","sourceHandle":"out","target":"j","targetHandle":"in-1"},{"id":"e2","source":"j","sourceHandle":"out-2","target":"out","targetHandle":"in"}]}`
+	body, _ := json.Marshal(map[string]any{"name": "拼接复制", "kind": "flow", "flow": json.RawMessage(flow)})
+	rec := authCall(box.server, "POST", "/api/v1/agents", string(body), testSysToken)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("建 FlowAgent = %d（%s）", rec.Code, rec.Body.String())
+	}
+	made := decodeBody[struct {
+		ID string `json:"id"`
+	}](t, rec)
+	rec = authCall(box.server, "POST", "/api/v1/agents/"+made.ID+"/flow/test", `{"message":"复制我","provider":"dummy","model":"dummy"}`, testSysToken)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("测试复制 = %d（%s）", rec.Code, rec.Body.String())
+	}
+	got := decodeBody[struct {
+		Output string `json:"output"`
+	}](t, rec)
+	if got.Output != "复制我" {
+		t.Fatalf("out-2 没拿到复制值：%q", got.Output)
+	}
+}

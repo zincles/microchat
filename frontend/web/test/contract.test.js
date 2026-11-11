@@ -476,6 +476,7 @@ test("FlowAgent：端口有类型，且每个端点只许一条线", () => {
   assert.equal(flowSourceType(history, "out"), "messages");
   assert.equal(flowSourceType(llm, "reasoning"), "string");
   assert.equal(flowSourceType(llm, "text"), "string");
+  assert.equal(flowSourceType(join, "out-1"), "string");
   assert.equal(flowTargetType(llm, "history"), "messages");
   assert.equal(flowTargetType(llm, "prompt-p1"), "string");
   assert.equal(flowTargetType(join, "in-1"), "string");
@@ -521,6 +522,8 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(flowNode, /拼接和复制/, "拼接节点没有改名为拼接和复制");
   assert.match(flowNode, /class="flow-join-inputs"/, "拼接和复制节点没有多输入端口");
   assert.match(flowNode, /addJoinInput/, "拼接节点不能增加输入端口");
+  assert.match(flowNode, /addJoinOutput/, "拼接节点不能增加输出端口");
+  assert.match(flowNode, /class="flow-join-outputs"/, "拼接节点没有输出端口区");
   assert.match(flowNode, /class="flow-history-input"/, "history 输入没有独立标签/端口");
   assert.match(flowNode, /id="text"/, "LLM 节点没有正文出口");
   assert.match(flowNode, /每行自己的左侧输入孔|prompt-\$\{prompt\.id\}/, "Prompt 条目没有独立输入孔");

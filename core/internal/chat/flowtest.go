@@ -133,6 +133,11 @@ func (s *Service) TestFlow(ctx context.Context, flowAgent config.Agent, message,
 			return FlowTestResult{Steps: steps}, err
 		}
 		values[flowKey(node.ID, "out")] = flowValue{Text: step.Output, Reasoning: step.Reasoning}
+		if node.Type == "join" {
+			for _, port := range flowJoinOutputs(node) {
+				values[flowKey(node.ID, port)] = flowValue{Text: step.Output}
+			}
+		}
 		if node.Type == "llm" {
 			values[flowKey(node.ID, "text")] = flowValue{Text: step.Output}
 			values[flowKey(node.ID, "reasoning")] = flowValue{Reasoning: step.Reasoning}
@@ -234,6 +239,19 @@ func (s *Service) testLLMCall(ctx context.Context, node flowNode, edges []flowEd
 	return strings.TrimSpace(result.Text), strings.TrimSpace(result.Reasoning), nil
 }
 
+func flowJoinOutputs(node flowNode) []string {
+	raw, ok := node.Data["outputs"]
+	if !ok {
+		return []string{"out-1"}
+	}
+	data, _ := json.Marshal(raw)
+	var outputs []string
+	if json.Unmarshal(data, &outputs) != nil || len(outputs) == 0 {
+		return []string{"out-1"}
+	}
+	return outputs
+}
+
 func validateTestGraph(graph flowGraph) error {
 	if len(graph.Nodes) == 0 {
 		return errors.New("流程图是空的")
@@ -254,6 +272,17 @@ func validateTestGraph(graph flowGraph) error {
 		return errors.New("流程图需要恰好一个输出节点")
 	}
 	for _, node := range graph.Nodes {
+		if node.Type == "join" {
+			outputs := flowJoinOutputs(node)
+			seenPorts := map[string]bool{}
+			for _, port := range outputs {
+				port = strings.TrimSpace(port)
+				if port == "" || seenPorts[port] {
+					return fmt.Errorf("拼接节点 %s 有空的或重复的输出端口", node.ID)
+				}
+				seenPorts[port] = true
+			}
+		}
 		if node.Type != "llm" {
 			continue
 		}

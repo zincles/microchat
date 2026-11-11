@@ -38,6 +38,9 @@ const prompts = computed<PromptEntry[]>(() => Array.isArray(props.data.prompts) 
 const joinInputs = computed<string[]>(() => Array.isArray(props.data.inputs) && props.data.inputs.length
   ? props.data.inputs
   : ["in-1", "in-2"]);
+const joinOutputs = computed<string[]>(() => Array.isArray(props.data.outputs) && props.data.outputs.length
+  ? props.data.outputs
+  : ["out-1"]);
 const roles = [
   { title: "system", value: "system" },
   { title: "user", value: "user" },
@@ -55,6 +58,12 @@ function addJoinInput(): void {
   let n = inputs.length + 1;
   while (inputs.includes(`in-${n}`)) n++;
   props.data.inputs = [...inputs, `in-${n}`];
+}
+function addJoinOutput(): void {
+  const outputs = [...joinOutputs.value];
+  let n = outputs.length + 1;
+  while (outputs.includes(`out-${n}`)) n++;
+  props.data.outputs = [...outputs, `out-${n}`];
 }
 </script>
 
@@ -134,6 +143,13 @@ function addJoinInput(): void {
         <span>正文</span>
         <Handle id="text" type="source" :position="Position.Right" />
       </div>
+    </div>
+    <div v-if="type === 'join'" class="flow-join-outputs">
+      <div v-for="(output, i) in joinOutputs" :key="output" class="flow-join-output-row">
+        <span>输出 {{ i + 1 }}</span>
+        <Handle :id="output" type="source" :position="Position.Right" />
+      </div>
+      <VBtn variant="text" size="small" type="button" class="flow-add-join nodrag nopan" @click="addJoinOutput">＋ 添加输出</VBtn>
     </div>
     <Handle v-else-if="type !== 'output'" id="out" type="source" :position="Position.Right" />
   </div>

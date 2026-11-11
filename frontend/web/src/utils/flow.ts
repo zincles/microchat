@@ -19,7 +19,7 @@ export function flowSourceType(node: FlowNode | undefined, handle?: string): Flo
   switch (node.type) {
     case "input":
     case "join":
-      return h === "out" ? "string" : null;
+      return h === "out" || /^out-\d+$/.test(h) ? "string" : null;
     case "history":
       return h === "out" ? "messages" : null;
     case "llm":
@@ -118,6 +118,14 @@ export function flowIssues(graph: FlowGraph): string[] {
         seenInputs.add(id);
       }
       if (!inputs.length) issues.push("拼接节点至少需要一个输入端口");
+      const outputs = Array.isArray(node.data?.outputs) ? node.data.outputs : ["out-1"];
+      const seenOutputs = new Set<string>();
+      for (const output of outputs) {
+        const id = String(output ?? "").trim();
+        if (!id || seenOutputs.has(id)) issues.push("拼接节点有空的或重复的输出端口");
+        seenOutputs.add(id);
+      }
+      if (!outputs.length) issues.push("拼接节点至少需要一个输出端口");
     }
   }
   const usedSources = new Set<string>();
@@ -229,6 +237,10 @@ export function flowDebugSteps(graph: FlowGraph): FlowDebugStep[] {
       output = "[未知节点]";
     }
     values.set(`${node.id}\0out`, { text: output, reasoning });
+    if (node.type === "join") {
+      const outputs = Array.isArray(node.data?.outputs) ? node.data.outputs : ["out-1"];
+      for (const port of outputs) values.set(`${node.id}\0${port}`, { text: output, reasoning: "" });
+    }
     if (node.type === "llm") {
       values.set(`${node.id}\0text`, { text: output, reasoning: "" });
       values.set(`${node.id}\0reasoning`, { text: "", reasoning });
