@@ -1917,9 +1917,11 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-prompt-head { display: flex; align-items: center; gap: 0.3em; }
 .flow-prompt-role-label { flex: none; color: var(--md-on-surface-variant);
   font-size: var(--md-type-label-small); }
-.flow-prompt-role { flex: 0 0 6.2em; width: 6.2em; min-width: 0; }
-.flow-prompt-role .v-field { font-size: var(--md-type-label-small); min-height: 1.8em; height: 1.8em; }
-.flow-prompt-role .v-field__input { min-height: 1.8em; padding-top: 0; padding-bottom: 0; }
+.flow-prompt-role { flex: 0 0 6.2em; width: 6.2em; height: 1.8em; min-width: 0;
+  padding: 0 0.35em; border: 1px solid var(--md-outline-variant); border-radius: var(--r-sm);
+  background: var(--md-surface-container); color: var(--md-on-surface);
+  font: inherit; font-size: var(--md-type-label-small); line-height: 1.2; cursor: pointer; }
+.flow-prompt-role:focus { outline: 1px solid var(--md-primary); outline-offset: 0; }
 .flow-prompt-content { margin-top: 0.25em; }
 .flow-prompt-content .v-field__input { font-size: var(--md-type-label-small); line-height: 1.45; }
 .flow-prompt-del { flex: none; color: var(--md-on-surface-variant); }

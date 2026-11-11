@@ -578,7 +578,7 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(flowNode, /flow-node-resizer/, "LLM 节点没有尺寸调节柄");
   assert.match(flowNode, /flow-prompt-role-label[^>]*>Role:</, "Role 前面没有标签");
   assert.match(css, /\.flow-prompt-role \{[^}]*width:\s*6\.2em/, "Role 选择器没有收窄");
-  assert.match(css, /\.flow-prompt-role \.v-field \{[^}]*min-height:\s*1\.8em/, "Role 选择器纵向没有收窄");
+  assert.match(css, /\.flow-prompt-role \{[^}]*height:\s*1\.8em/, "Role 选择器纵向没有收窄");
   assert.match(css, /\.flow-node-llm \.flow-prompt-list \{[^}]*max-height:\s*none/, "Prompt 列表没有占满卡片");
   assert.match(css, /\.flow-llm-outputs \{[^}]*margin-top:\s*auto/, "思考/正文没有贴到卡片底部");
   const composer = readFileSync(join(SRC, "components", "Composer.vue"), "utf8");

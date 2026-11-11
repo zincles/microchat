@@ -230,8 +230,10 @@ function addJoinOutput(): void {
         <template v-else>
           <div class="flow-prompt-head">
             <span class="flow-prompt-role-label">Role:</span>
-            <VSelect v-model="prompt.role" class="flow-prompt-role nodrag nopan"
-              :items="roles" density="compact" variant="outlined" hide-details />
+            <select v-model="prompt.role" class="flow-prompt-role nodrag nopan"
+              title="Prompt Role" aria-label="Prompt Role">
+              <option v-for="role in roles" :key="role.value" :value="role.value">{{ role.title }}</option>
+            </select>
             <VBtn icon variant="text" size="x-small" type="button" class="flow-prompt-del nodrag nopan"
               title="删除这条 Prompt" aria-label="删除这条 Prompt" @click="removePrompt(prompt.id)">×</VBtn>
           </div>
