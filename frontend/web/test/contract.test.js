@@ -516,6 +516,7 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(flow, /发送测试/, "流程编辑器没有测试发送按钮");
   assert.match(flow, /api\.testFlow/, "测试发送没接后端");
   assert.match(flowNode, /class="flow-node-test"/, "节点悬停没有测试 I/O 浮层");
+  assert.match(flowNode, /hovered \|\| selected/, "选中节点时调试信息不会持久显示");
   assert.match(flowNode, /class="flow-node-delete/, "节点没有删除按钮");
   assert.match(flowNode, /id="reasoning"/, "LLM 节点没有思考出口");
   assert.match(flowNode, /id="history"/, "LLM 节点没有 history 输入");

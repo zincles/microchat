@@ -8,6 +8,7 @@ import { VBtn, VSelect, VTextarea } from "vuetify/components";
 const props = defineProps<{
   id: string;
   type: string;
+  selected?: boolean;
   data: Record<string, any>;
 }>();
 
@@ -125,7 +126,7 @@ function addJoinOutput(): void {
       </div>
       <VBtn variant="text" size="small" type="button" class="flow-add-join nodrag nopan" @click="addJoinInput">＋ 添加输入</VBtn>
     </div>
-    <div v-if="hovered && data.test" class="flow-node-test" role="tooltip">
+    <div v-if="(hovered || selected) && data.test" class="flow-node-test" role="tooltip">
       <b>测试 I/O</b>
       <span class="flow-node-test-label">输入</span>
       <pre>{{ (data.test.inputs ?? []).join("\n---\n") || "（无输入）" }}</pre>
