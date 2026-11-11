@@ -17,7 +17,7 @@ import { VBtn, VList, VListItem, VMenu, VTextField } from "vuetify/components";
 import { ICONS } from "./icons.ts";
 import { sharedApi } from "../utils/prefs.ts";
 import FlowNode from "./FlowNode.vue";
-import { emptyFlowGraph, flowDebugSteps, flowIssues, flowSourceType, flowTargetType, normalizeFlowGraph } from "../utils/flow.ts";
+import { emptyFlowGraph, flowDebugSteps, flowIssues, flowSourceType, flowTargetType, formatFlowText, normalizeFlowGraph } from "../utils/flow.ts";
 import type { FlowEdge, FlowGraph, FlowNode as FlowNodeData, ModelListItem } from "../api/types.ts";
 
 const props = withDefaults(defineProps<{
@@ -59,10 +59,12 @@ const edges = ref<any[]>(initial.edges.map((e) => ({ ...e, class: edgeClass(e, i
 const issues = computed(() => flowIssues(toGraph()));
 // 右侧节点侧栏 / 底部测试调试栏都是**浮在画布上的**，不参与画布宽度分配。
 const nodesOpen = ref(false);
+const sidebarTab = ref<"nodes" | "text">("nodes");
 const bottomOpen = ref(false);
 const bottomTab = ref<"test" | "debug">("debug");
 const selectedNodeId = ref("");
 const debugSteps = computed(() => flowDebugSteps(toGraph()));
+const flowText = computed(() => formatFlowText(toGraph()));
 const testMessage = ref("");
 const testStatus = ref("");
 const testing = ref(false);
@@ -80,7 +82,12 @@ function nodeLabel(id: string): string {
   const node = nodes.value.find((n) => n.id === id);
   return node ? (({ input: "输入", history: "历史", trim: "裁剪", merge: "拼接 messages", rewrite: "覆写用户输入", llm: "LLM", join: "拼接和复制", output: "输出" } as Record<string, string>)[String(node.type)] ?? String(node.type)) : id;
 }
-function toggleNodes(): void { nodesOpen.value = !nodesOpen.value; }
+function toggleSidebar(tab: "nodes" | "text"): void {
+  if (nodesOpen.value && sidebarTab.value === tab) { nodesOpen.value = false; return; }
+  sidebarTab.value = tab;
+  nodesOpen.value = true;
+}
+function toggleNodes(): void { toggleSidebar("nodes"); }
 function toggleBottom(tab: "test" | "debug"): void {
   if (bottomOpen.value && bottomTab.value === tab) { bottomOpen.value = false; return; }
   bottomTab.value = tab;
@@ -310,8 +317,10 @@ watch([nodes, edges], () => emit("update:graph", toGraph()), { deep: true });
             variant="text" size="small" type="button" title="测试" @click="toggleBottom('test')">测试</VBtn>
           <VBtn class="flow-canvas-action" :class="{ active: bottomOpen && bottomTab === 'debug' }"
             variant="text" size="small" type="button" title="调试" @click="toggleBottom('debug')">调试</VBtn>
-          <VBtn class="flow-canvas-action" :class="{ active: nodesOpen }"
+          <VBtn class="flow-canvas-action" :class="{ active: nodesOpen && sidebarTab === 'nodes' }"
             variant="text" size="small" type="button" title="节点与连接" @click="toggleNodes">节点</VBtn>
+          <VBtn class="flow-canvas-action" :class="{ active: nodesOpen && sidebarTab === 'text' }"
+            variant="text" size="small" type="button" title="文本视图" @click="toggleSidebar('text')">文本</VBtn>
           <VBtn
             icon variant="text" size="small" type="button" class="flow-fullscreen-btn flow-canvas-action"
             :title="expanded ? '退出网页全屏' : '网页全屏'"
@@ -324,10 +333,18 @@ watch([nodes, edges], () => emit("update:graph", toGraph()), { deep: true });
         <!-- 右侧：节点与连接（PS 图层面板式，浮在画布上）。 -->
         <aside v-if="nodesOpen" class="flow-node-sidebar" aria-label="节点与连接" @wheel="onPanelWheel">
           <div class="flow-panel-head">
-            <b>节点与连接</b>
+            <div class="flow-panel-tabs" role="tablist">
+              <button type="button" :class="{ active: sidebarTab === 'nodes' }" @click="sidebarTab = 'nodes'">节点与连接</button>
+              <button type="button" :class="{ active: sidebarTab === 'text' }" @click="sidebarTab = 'text'">文本</button>
+            </div>
             <VBtn icon variant="text" size="small" type="button" title="关闭节点面板"
               aria-label="关闭节点面板" @click="nodesOpen = false">×</VBtn>
           </div>
+          <template v-if="sidebarTab === 'text'">
+            <p class="hint">用文本核对节点、端口和连接；内容随当前图实时更新。</p>
+            <pre class="flow-text-outline">{{ flowText }}</pre>
+          </template>
+          <template v-else>
           <p class="hint">像图层一样查看节点和连接；断开或删除都只改当前图。</p>
           <div v-for="row in nodeRows" :key="row.id" class="flow-node-row"
             :class="{ selected: row.id === selectedNodeId, active: row.id === activeNodeId }" @click="selectNode(row.id)">
@@ -353,6 +370,7 @@ watch([nodes, edges], () => emit("update:graph", toGraph()), { deep: true });
             <div v-if="!row.incoming.length && !row.outgoing.length" class="flow-conn-empty">（还没有连接）</div>
           </div>
           <p v-if="!nodeRows.length" class="flow-conn-empty">（图里还没有节点）</p>
+          </template>
         </aside>
 
         <!-- 底部：测试 / 调试，浮在画布上。 -->

@@ -374,6 +374,8 @@ delete(AA)           # 删除
   **不悄悄回落全默认**（那等于"用户的开关自己全开了"，而他一点线索都没有）。
   写出的 `disabled` 按类型清单排序 ⇒ 同一个状态永远写同一份文件。
 - `agents.json` — `{ "default_agent": "跑团", "agents": [ { "id": "跑团", "name": "跑团主持人", "description": "负责旁白与 NPC", "kind": "prompt", "system_prompt": "你是跑团主持人。", "first_message": "你好！我是跑团主持人。", "preset_id": "" } ] }`
+  **存储**：`agents.json` 的 `flow` 原样保存节点表；每个节点有 `position {x,y}` 与 `data`（LLM 的 `data.height` 是用户调的高度；宽度固定，不落库），
+  每条边有 `source/target` 与 `sourceHandle/targetHandle`。所以后端本来就能还原完整连接；节点侧栏的「文本」tab 是给人和日志看的可读视图。
   **`kind` / `flow`（2026-11-11）**：`kind` 空 / `prompt` = 传统提示词 Agent；`flow` = FlowAgent
   （逻辑由 `flow` 的节点图驱动）。`flow` 是编辑器产出的
   `{version, nodes:[{id,type,position,data}], edges:[{id,source,target,...}]}`；
@@ -1556,8 +1558,9 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   **新建**是菜单二选一：传统智能体 / FlowAgent；FlowAgent 暂时只打开**「流程 / 基本」**
   （流程是最左、也是默认页；起标题/压缩等能力页签对 FlowAgent 关闭，高级能力暂不参与；
   传统 Agent 仍是「基本 / 系统提示词 / 能力」）。
-  「流程」是 Vue Flow 画布；画布左上角是「添加节点」，右上角是测试 / 调试 / 节点 / 全屏开关；
+  「流程」是 Vue Flow 画布；画布左上角是「添加节点」，右上角是测试 / 调试 / 节点 / 文本 / 全屏开关；
   右侧是可开合的**节点与连接**侧栏（PS 图层式，浮在画布上、不挤画布），
+  侧栏第二个 tab 是**纯文本视图**（节点 id/类型/坐标/高度 + 每个端口去向，随图实时更新）；
   底部是可开合的**测试 / 调试**栏（同样浮在画布上）。
   输入 / 覆写用户输入 / 调用 LLM / 裁剪 messages / 拼接 messages / 拼接和复制 / 输出。LLM 节点内是 Prompt 列表（role + 左侧输入孔 + 手写正文）。
   **`rewrite`（覆写用户输入）**：输入一个 string、输出一个 string；配置里的 `prompt` 是模板，

@@ -2167,3 +2167,9 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-node-llm:hover .flow-node-resizer, .flow-node.resizing .flow-node-resizer { opacity: 0.7; }
 .flow-node-resizer:hover { opacity: 1; }
 .flow-node.resizing { user-select: none; }
+
+/* 节点侧栏的文本视图：无画布时也能核对 id / 端口 / 连接。 */
+.flow-text-outline { margin: 0.5em 0 0; padding: 0.6em 0.7em; border: 1px solid var(--md-outline-variant);
+  border-radius: var(--r-sm); background: var(--md-surface-container-low); color: var(--md-on-surface);
+  font-family: var(--app-font-mono, ui-monospace, monospace); font-size: 0.78em; line-height: 1.55;
+  white-space: pre-wrap; overflow-wrap: normal; overflow-x: auto; }

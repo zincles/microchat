@@ -5,7 +5,7 @@ import { parseWireMessages, previewBlock } from "../src/utils/payload.ts";
 import { assemblePrompt, abilityPrompt, missingSegments } from "../src/utils/prompt.ts";
 import { renderMarkdown } from "../src/utils/markdown.ts";
 import { buildCartridge, cartridgeAgent } from "../src/utils/cartridge.ts";
-import { emptyFlowGraph, flowDebugSteps, flowIssues, flowSourceType, flowTargetType, normalizeFlowGraph, trimMessages } from "../src/utils/flow.ts";
+import { emptyFlowGraph, flowDebugSteps, flowIssues, flowSourceType, flowTargetType, formatFlowText, normalizeFlowGraph, trimMessages } from "../src/utils/flow.ts";
 import { parseCommand, filterCommands, COMMAND_META } from "../src/utils/commands.ts";
 import { uuidv7 } from "../src/utils/ids.ts";
 import { groupSessions, SESSION_GROUP_LABELS } from "../src/utils/sessionGroups.ts";
@@ -481,6 +481,9 @@ test("FlowAgent：端口有类型，且每个端点只许一条线", () => {
   assert.equal(flowSourceType(merge, "out"), "messages");
   assert.equal(flowSourceType({ id: "rw", type: "rewrite", data: {} }, "out"), "string");
   assert.equal(flowTargetType({ id: "rw", type: "rewrite", data: {} }, "in"), "string");
+  const textView = formatFlowText({ version: 1, nodes: [input, llm, { id: "out", type: "output", position: { x: 3, y: 4 }, data: {} }], edges: [{ id: "te", source: "l", sourceHandle: "text", target: "out", targetHandle: "text" }] });
+  assert.match(textView, /l \[调用 LLM\]/, "文本视图缺节点");
+  assert.match(textView, /text → out:text/, "文本视图缺连接");
   assert.equal(flowTargetType(merge, "in-1"), "messages");
   assert.equal(flowSourceType(llm, "reasoning"), "string");
   assert.equal(flowSourceType(llm, "text"), "string");
@@ -546,6 +549,8 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(flow, /class="flow-canvas-add"/, "画布左上没有添加节点按钮");
   assert.match(flow, /class="flow-canvas-actions"/, "画布右上没有面板开关");
   assert.match(flow, /class="flow-node-sidebar"/, "没有右侧节点侧栏");
+  assert.match(flow, /formatFlowText/, "节点侧栏没有文本视图");
+  assert.match(flow, /flow-text-outline/, "文本视图没有渲染区域");
   assert.match(flow, /:class="\{ selected: row\.id === selectedNodeId, active: row\.id === activeNodeId \}"/, "节点侧栏没有活跃节点态");
   assert.match(flow, /class="flow-bottom"/, "没有底部调试栏");
   assert.match(flow, /@click="toggleBottom\('test'\)"/, "底栏按钮没有接测试面板");

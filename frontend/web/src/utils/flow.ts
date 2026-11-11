@@ -86,6 +86,39 @@ export function trimMessages<T>(messages: readonly T[], mode: TrimMode, count: n
   }
 }
 
+const FLOW_TEXT_LABELS: Record<string, string> = {
+  input: "输入", history: "历史数据", trim: "裁剪 messages", merge: "拼接 messages",
+  rewrite: "覆写用户输入", llm: "调用 LLM", join: "拼接和复制", output: "输出",
+};
+
+// formatFlowText：图的纯文本视图。用 id + 类型 + 位置 + 每个端口的去向，
+// 方便在没有画布的地方（日志、聊天、code review）核对连接。
+export function formatFlowText(graph?: FlowGraph | null): string {
+  const nodes = graph?.nodes ?? [];
+  const edges = graph?.edges ?? [];
+  const byID = new Map(nodes.map((node) => [node.id, node]));
+  const lines: string[] = [`AgentFlow · ${nodes.length} nodes / ${edges.length} edges`];
+  for (const node of nodes) {
+    const label = FLOW_TEXT_LABELS[node.type] ?? node.type;
+    const x = Math.round(Number(node.position?.x ?? 0));
+    const y = Math.round(Number(node.position?.y ?? 0));
+    const height = Number(node.data?.height);
+    const size = Number.isFinite(height) && height > 0 ? ` h=${Math.round(height)}px` : "";
+    lines.push(`${node.id} [${label}] @ (${x}, ${y})${size}`);
+    const outgoing = edges.filter((edge) => edge.source === node.id);
+    if (!outgoing.length) {
+      lines.push("  （无输出连接）");
+      continue;
+    }
+    for (const edge of outgoing) {
+      const target = byID.get(edge.target);
+      const targetLabel = target ? FLOW_TEXT_LABELS[target.type] ?? target.type : "?";
+      lines.push(`  ${edge.sourceHandle || "out"} → ${edge.target}:${edge.targetHandle || "in"} [${targetLabel}]`);
+    }
+  }
+  return lines.join("\n");
+}
+
 export function emptyFlowGraph(): FlowGraph {
   return {
     version: FLOW_VERSION,
