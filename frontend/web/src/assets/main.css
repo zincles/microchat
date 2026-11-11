@@ -1946,3 +1946,73 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
   border: 1px solid var(--md-outline-variant); border-radius: var(--md-shape-md);
   color: var(--md-on-surface-variant); background: var(--md-surface-container-low); }
 .flow-context-placeholder p { margin: 0.35em 0; }
+
+/* ── FlowAgent 视觉层（2026-11-11）────────────────────────────────────────
+ * 节点卡片和右侧节点清单原来都是“表单 + 边框”，信息没有层级。这里只做视觉：
+ * 类型徽标 / 标题层级 / 更松的留白 / 卡片式连接清单；不改变任何节点语义。 */
+.flow-node {
+  --flow-node-accent: var(--md-primary);
+  --flow-node-soft: color-mix(in srgb, var(--md-primary) 14%, transparent);
+  min-width: 200px; max-width: 260px; padding: 0.7em 0.75em 0.65em;
+  border: 1px solid var(--md-outline-variant); border-left: 3px solid var(--flow-node-accent);
+  border-radius: var(--md-shape-md); background: var(--md-surface-container);
+  box-shadow: var(--md-elev-1);
+}
+.flow-node-llm { min-width: 300px; max-width: 350px; }
+.flow-node-output { border-left-color: var(--flow-node-accent); border-right: 1px solid var(--md-outline-variant); }
+.flow-node-history, .flow-node-trim, .flow-node-merge {
+  --flow-node-accent: var(--flow-history);
+  --flow-node-soft: color-mix(in srgb, var(--flow-history) 16%, transparent);
+}
+.flow-node-head {
+  display: flex; align-items: flex-start; gap: 0.5em; padding-right: 1.5em;
+}
+.flow-node-badge {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  min-width: 2.1em; height: 1.6em; padding: 0 0.35em; border-radius: var(--r-sm);
+  background: var(--flow-node-soft, var(--md-surface-container-highest));
+  color: var(--flow-node-accent, var(--md-primary)); font-size: 0.68em; font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.flow-node-heading { display: flex; flex-direction: column; gap: 0.16em; min-width: 0; }
+.flow-node-title { font-size: 0.95em; line-height: 1.25; }
+.flow-node-hint { line-height: 1.4; }
+.flow-node-delete { top: 0.45em; right: 0.45em; }
+.flow-node-body { margin-top: 0.5em; }
+.flow-node .v-field { border-radius: var(--r-sm); }
+.flow-node .v-field__outline { --v-field-border-opacity: 0.55; }
+.flow-llm-model { margin-top: 0.55em; }
+.flow-prompt-list { gap: 0.4em; margin-top: 0.55em; padding-right: 0.1em; }
+.flow-prompt-row, .flow-prompt-history {
+  padding: 0.4em 0.45em 0.45em 0.7em; border: 1px solid var(--md-outline-variant);
+  border-radius: var(--r-sm); background: var(--md-surface-container-low);
+}
+.flow-prompt-history { min-height: 2.4em; border-color: color-mix(in srgb, var(--flow-history) 45%, var(--md-outline-variant)); }
+.flow-prompt-row:first-child, .flow-prompt-history:first-child { border-top: 1px solid var(--md-outline-variant); }
+.flow-prompt-head { gap: 0.35em; }
+.flow-prompt-add-row { margin-top: 0.1em; }
+.flow-add-prompt, .flow-add-join, .flow-add-merge { color: var(--md-primary); }
+.flow-output-row, .flow-llm-output-row, .flow-join-output-row, .flow-merge-row, .flow-join-row {
+  min-height: 1.8em; border-radius: var(--r-xs); padding-top: 0.1em; padding-bottom: 0.1em;
+}
+.flow-output-row:hover, .flow-llm-output-row:hover, .flow-join-output-row:hover,
+.flow-merge-row:hover, .flow-join-row:hover { background: var(--hover); }
+.flow-port-del { border-radius: var(--r-xs); }
+.flow-node-row {
+  margin: 0.45em 0; padding: 0.55em 0.6em; border: 1px solid var(--md-outline-variant);
+  border-radius: var(--r-sm); background: var(--md-surface-container);
+}
+.flow-node-row:first-of-type { border-top: 1px solid var(--md-outline-variant); }
+.flow-node-row-head { gap: 0.5em; }
+.flow-node-row-id { flex-wrap: wrap; gap: 0.35em; }
+.flow-node-row-id .flow-node-badge { min-width: 1.9em; height: 1.45em; }
+.flow-node-row-id b { font-size: 0.92em; }
+.flow-node-row-head code { font-size: 0.7em; }
+.flow-conn-section { margin-top: 0.4em; padding-top: 0.3em; border-top: 1px dashed var(--md-outline-variant); }
+.flow-conn-label { font-size: 0.72em; letter-spacing: 0.04em; text-transform: uppercase; }
+.flow-conn-row { gap: 0.5em; padding: 0.22em 0; }
+.flow-conn-x { padding: 0.1em 0.25em; border-radius: var(--r-xs); text-decoration: none; }
+.flow-conn-x:hover { background: var(--md-error-container); text-decoration: none; }
+.flow-debug { background: var(--md-surface-container); }
+.flow-panel-tabs { gap: 0.2em; }
+.flow-panel-tabs button { padding: 0.32em 0.7em; border-radius: var(--r-sm) var(--r-sm) 0 0; }

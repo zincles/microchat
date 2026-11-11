@@ -67,6 +67,7 @@ const nodeRows = computed(() => nodes.value.map((n) => ({
   id: String(n.id),
   type: String(n.type),
   label: ({ input: "输入", history: "历史", trim: "裁剪", merge: "拼接 messages", llm: "LLM", join: "拼接和复制", output: "输出" } as Record<string, string>)[String(n.type)] ?? String(n.type),
+  badge: ({ input: "IN", history: "H", trim: "TR", merge: "MG", llm: "AI", join: "J", output: "OUT" } as Record<string, string>)[String(n.type)] ?? "·",
   incoming: edges.value.filter((e) => e.target === n.id),
   outgoing: edges.value.filter((e) => e.source === n.id),
 })));
@@ -357,8 +358,9 @@ watch([nodes, edges], () => emit("update:graph", toGraph()), { deep: true });
           <p class="hint">像图层一样查看节点和连接；断开或删除都只改当前图。</p>
           <div v-for="row in nodeRows" :key="row.id" class="flow-node-row">
             <div class="flow-node-row-head">
-              <span><b>{{ row.label }}</b><code>{{ row.id }}</code></span>
-              <VBtn color="error" variant="text" size="x-small" type="button" @click="removeNode(row.id)">删除</VBtn>
+              <span class="flow-node-row-id"><span class="flow-node-badge" aria-hidden="true">{{ row.badge }}</span><b>{{ row.label }}</b><code>{{ row.id }}</code></span>
+              <VBtn icon variant="text" size="x-small" type="button" title="删除节点" aria-label="删除节点"
+                @click="removeNode(row.id)"><span v-html="ICONS.trash"></span></VBtn>
             </div>
             <div v-if="row.incoming.length" class="flow-conn-section">
               <span class="flow-conn-label">输入</span>

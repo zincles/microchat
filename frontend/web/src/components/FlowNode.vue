@@ -35,6 +35,9 @@ const label = computed(() => ({
   join: "拼接和复制",
   output: "输出",
 }[props.type] ?? props.type));
+const badge = computed(() => ({
+  input: "IN", history: "H", trim: "TR", merge: "MG", llm: "AI", join: "J", output: "OUT",
+}[props.type] ?? "·"));
 const hint = computed(() => ({
   input: "裸字符串：本轮用户输入",
   history: "messages[]：当前会话历史",
@@ -160,10 +163,13 @@ function addJoinOutput(): void {
   >
     <Handle v-if="type === 'trim'" id="in" type="target" :position="Position.Left" />
     <div class="flow-node-head">
-      <span class="flow-node-title">{{ label }}</span>
+      <span class="flow-node-badge" aria-hidden="true">{{ badge }}</span>
+      <div class="flow-node-heading">
+        <span class="flow-node-title">{{ label }}</span>
+        <span class="flow-node-hint">{{ hint }}</span>
+      </div>
       <button class="flow-node-delete nodrag nopan" type="button" title="删除节点" aria-label="删除节点"
         @click.stop="removeNode(id)">×</button>
-      <span class="flow-node-hint">{{ hint }}</span>
     </div>
     <label v-if="type === 'llm'" class="flow-llm-model nodrag nopan">
       <span>AI 模型</span>
