@@ -486,27 +486,26 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/输出/Age
   assert.match(flow, /发送测试/, "流程编辑器没有测试发送按钮");
   assert.match(flow, /api\.testFlow/, "测试发送没接后端");
   assert.match(flowNode, /class="flow-node-test"/, "节点悬停没有测试 I/O 浮层");
-  assert.ok(flowDebugSteps(emptyFlowGraph(), []).length >= 2, "空图没有调试步骤");
+  assert.ok(flowDebugSteps(emptyFlowGraph()).length >= 2, "空图没有调试步骤");
   assert.match(css, /\.flow-editor\.expanded \{[^}]*position:\s*fixed/, "网页全屏没有铺满 #app");
-  for (const type of ["input", "agent", "join", "output"]) {
+  for (const type of ["input", "llm", "join", "output"]) {
     assert.ok(flow.includes(`addNode('${type}')`) || flow.includes(`addNode("${type}")`), `流程编辑器缺 ${type} 节点`);
   }
   const empty = emptyFlowGraph();
-  assert.ok(flowIssues(empty, []).some((x) => x.includes("输出节点还没有输入")), "空图没有输出连线警告");
-  const nested = {
+  assert.ok(flowIssues(empty).some((x) => x.includes("输出节点还没有输入")), "空图没有输出连线警告");
+  const badPrompt = {
     version: 1,
     nodes: [
       { id: "in", type: "input", position: { x: 0, y: 0 }, data: {} },
-      { id: "a", type: "agent", position: { x: 1, y: 1 }, data: { agent_id: "nested" } },
+      { id: "a", type: "llm", position: { x: 1, y: 1 }, data: { prompts: [{ id: "p1", role: "tool", content: "x" }] } },
       { id: "out", type: "output", position: { x: 2, y: 2 }, data: {} },
     ],
     edges: [
-      { id: "e1", source: "in", target: "a" },
+      { id: "e1", source: "in", target: "a", targetHandle: "prompt-p1" },
       { id: "e2", source: "a", target: "out" },
     ],
   };
-  assert.ok(flowIssues(nested, [{ id: "nested", kind: "flow" }]).some((x) => x.includes("不能调用另一个 FlowAgent")),
-    "没有拦住嵌套 FlowAgent");
+  assert.ok(flowIssues(badPrompt).some((x) => x.includes("role 只能是")), "没有拦住非法的 Prompt role");
 });
 
 test("agent 卡带 v2：带引用段（内置不带）、结构不拼平；v1 老卡带照收；导入侧校验", () => {

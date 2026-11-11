@@ -10,16 +10,14 @@ import (
 	"github.com/google/uuid"
 
 	"microchat/internal/config"
-	"microchat/internal/model"
 	"microchat/internal/providers"
-	"microchat/internal/state"
 )
 
 // FlowTest 是 FlowAgent 编辑器的「测试发送」：**只跑一次图，不落库、不建会话**。
 //
 // 这是运行时的最小验证器，不是完整 FlowAgent 运行时：
-//   - DAG、单 input/output、agent 节点只能指向传统 Agent；
-//   - 每个 agent 节点用一次性临时会话走现有提示词拼装 + Complete；
+//   - DAG、单 input/output；LLM 节点内部是手写的 Prompt 列表；
+//   - 每个 LLM 节点按 role/content + 对应输入孔组装 messages 后走 Complete；
 //   - 输入节点吃测试消息，join/output 只拼上游文本；
 //   - 中间结果只回给编辑器，不碰 messages / summaries / 世界状态。
 type FlowTestStep struct {
@@ -47,9 +45,16 @@ type flowNode struct {
 	Data map[string]any `json:"data"`
 }
 type flowEdge struct {
-	ID     string `json:"id"`
-	Source string `json:"source"`
-	Target string `json:"target"`
+	ID           string `json:"id"`
+	Source       string `json:"source"`
+	Target       string `json:"target"`
+	TargetHandle string `json:"targetHandle,omitempty"`
+}
+
+type flowPrompt struct {
+	ID      string `json:"id"`
+	Role    string `json:"role"`
+	Content string `json:"content"`
 }
 
 // TestFlow：执行一次编辑器测试。provider/model 空 ⇒ 读 config.json 的 defaults。
@@ -68,7 +73,7 @@ func (s *Service) TestFlow(ctx context.Context, flowAgent config.Agent, message,
 	if err != nil {
 		return FlowTestResult{}, err
 	}
-	_, agents, providersConfig := s.files()
+	_, _, providersConfig := s.files()
 	if strings.TrimSpace(provider) == "" {
 		provider = cfg.Defaults.Provider
 	}
@@ -99,23 +104,9 @@ func (s *Service) TestFlow(ctx context.Context, flowAgent config.Agent, message,
 		case "output":
 			step.Label = "输出"
 			step.Output = joinFlowInputs(inputs)
-		case "agent":
-			agentID := strings.TrimSpace(fmt.Sprint(node.Data["agent_id"]))
-			agent, ok := agents.Resolve(agentID)
-			if !ok {
-				err = fmt.Errorf("节点 %s 指向的智能体不存在：%s", node.ID, agentID)
-				step.Error = err.Error()
-				steps = append(steps, step)
-				return FlowTestResult{Steps: steps}, err
-			}
-			step.Label = "调用 " + agent.Name
-			if agent.Kind == "flow" {
-				err = errors.New("FlowAgent 不能调用另一个 FlowAgent")
-				step.Error = err.Error()
-				steps = append(steps, step)
-				return FlowTestResult{Steps: steps}, err
-			}
-			text, callErr := s.testAgentCall(ctx, agent, joinFlowInputs(inputs), provider, modelID, providersConfig)
+		case "llm":
+			step.Label = "调用 LLM"
+			text, callErr := s.testLLMCall(ctx, node, graph.Edges, values, provider, modelID, providersConfig)
 			if callErr != nil {
 				step.Error = callErr.Error()
 				steps = append(steps, step)
@@ -150,21 +141,54 @@ func joinFlowInputs(inputs []string) string {
 	return strings.Join(parts, "\n\n---\n\n")
 }
 
-// testAgentCall：用一次性临时会话走一遍真正的提示词拼装 + 上游 Complete。
-func (s *Service) testAgentCall(ctx context.Context, agent config.Agent, input, provider, modelID string, providersConfig config.ProvidersConfig) (string, error) {
-	sid := uuid.NewString()
-	session := model.Session{ID: sid, Provider: provider, Model: modelID, AgentID: agent.ID}
-	messages := []model.Message{{ID: uuid.NewString(), SessionID: sid, Role: model.RoleUser, Content: input}}
-	prompt, _ := s.EffectiveSystemPrompt(session)
-	entries, presetActive := s.promptEntries(session, messages)
-	if presetActive {
-		prompt = strings.TrimSpace(session.SystemPrompt)
+// testLLMCall：把 LLM 节点里手写的 Prompt 条目按顺序变成 messages，再真正调用上游。
+// 每个 Prompt 条目自己的左侧输入孔（targetHandle = prompt-<id>）只喂那一条；
+// 手写内容和上游内容同时存在时，按“手写在前、上游在后”用空行隔开。
+func (s *Service) testLLMCall(ctx context.Context, node flowNode, edges []flowEdge,
+	values map[string]string, provider, modelID string, providersConfig config.ProvidersConfig) (string, error) {
+	raw, ok := node.Data["prompts"]
+	if !ok {
+		return "", errors.New("LLM 节点没有 Prompt 条目")
 	}
-	outgoing := state.BuildOutgoingWithPromptEntries(prompt, messages, nil, nil, false, entries)
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return "", err
+	}
+	var prompts []flowPrompt
+	if err := json.Unmarshal(data, &prompts); err != nil {
+		return "", fmt.Errorf("Prompt 条目解析失败：%w", err)
+	}
+	messages := make([]providers.ChatMessage, 0, len(prompts))
+	for _, prompt := range prompts {
+		role := strings.TrimSpace(prompt.Role)
+		if role != "system" && role != "user" && role != "assistant" {
+			return "", fmt.Errorf("Prompt %s 的 role 不合法：%s", prompt.ID, prompt.Role)
+		}
+		parts := []string{}
+		if strings.TrimSpace(prompt.Content) != "" {
+			parts = append(parts, strings.TrimSpace(prompt.Content))
+		}
+		handle := "prompt-" + prompt.ID
+		for _, edge := range edges {
+			if edge.Target == node.ID && edge.TargetHandle == handle {
+				if text := strings.TrimSpace(values[edge.Source]); text != "" {
+					parts = append(parts, text)
+				}
+			}
+		}
+		content := strings.Join(parts, "\n\n")
+		if content == "" {
+			continue
+		}
+		messages = append(messages, providers.ChatMessage{Role: role, Content: content})
+	}
+	if len(messages) == 0 {
+		return "", errors.New("LLM 节点没有任何非空 Prompt")
+	}
 	chosen := providers.SelectBackend(provider, modelID, providersConfig)
 	wire := providers.FromConfig(chosen.Provider)
 	result, err := providers.NewClient(wire).Complete(ctx, wire, providers.Request{
-		Model: modelID, Messages: wireMessages(outgoing, nil), SessionID: sid,
+		Model: modelID, Messages: messages, SessionID: uuid.NewString(),
 	}, localReply(chosen))
 	if err != nil {
 		return "", err
@@ -190,6 +214,30 @@ func validateTestGraph(graph flowGraph) error {
 	}
 	if counts["output"] != 1 {
 		return errors.New("流程图需要恰好一个输出节点")
+	}
+	for _, node := range graph.Nodes {
+		if node.Type != "llm" {
+			continue
+		}
+		raw, ok := node.Data["prompts"]
+		if !ok {
+			return fmt.Errorf("LLM 节点 %s 没有 Prompt 条目", node.ID)
+		}
+		data, _ := json.Marshal(raw)
+		var prompts []flowPrompt
+		if err := json.Unmarshal(data, &prompts); err != nil || len(prompts) == 0 {
+			return fmt.Errorf("LLM 节点 %s 的 Prompt 条目为空或格式不对", node.ID)
+		}
+		seenPrompts := map[string]bool{}
+		for _, prompt := range prompts {
+			if strings.TrimSpace(prompt.ID) == "" || seenPrompts[prompt.ID] {
+				return fmt.Errorf("LLM 节点 %s 有空的或重复的 Prompt id", node.ID)
+			}
+			seenPrompts[prompt.ID] = true
+			if prompt.Role != "system" && prompt.Role != "user" && prompt.Role != "assistant" {
+				return fmt.Errorf("Prompt %s 的 role 只能是 system / user / assistant", prompt.ID)
+			}
+		}
 	}
 	for _, e := range graph.Edges {
 		if !seen[e.Source] || !seen[e.Target] {

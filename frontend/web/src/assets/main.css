@@ -1828,3 +1828,20 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-issues { margin-top: 0.2em; }
 .flow-ok { margin-top: 0.15em; }
 @media (max-width: 700px) { .flow-canvas { height: 48vh; min-height: 260px; } }
+
+/* LLM 节点：一张 messages 列表，每条 Prompt 自己带 role 和左侧输入孔。 */
+.flow-node-llm { min-width: 280px; max-width: 330px; }
+.flow-prompt-list { margin-top: 0.45em; display: flex; flex-direction: column; gap: 0.35em;
+  max-height: 19em; overflow-y: auto; overscroll-behavior: contain; }
+.flow-prompt-row { position: relative; padding: 0.35em 0.1em 0.4em 0.8em;
+  border-top: 1px solid var(--md-outline-variant); }
+.flow-prompt-row:first-child { border-top: 0; }
+.flow-prompt-head { display: flex; align-items: center; gap: 0.25em; }
+.flow-prompt-role { flex: 1 1 auto; min-width: 0; }
+.flow-prompt-role .v-field { font-size: var(--md-type-label-small); }
+.flow-prompt-content { margin-top: 0.25em; }
+.flow-prompt-content .v-field__input { font-size: var(--md-type-label-small); line-height: 1.45; }
+.flow-prompt-del { flex: none; color: var(--md-on-surface-variant); }
+.flow-prompt-del:hover { color: var(--md-error); }
+.flow-add-prompt { align-self: flex-start; margin-top: 0.1em; }
+.flow-prompt-row .vue-flow__handle-left { left: 0; }

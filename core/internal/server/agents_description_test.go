@@ -90,9 +90,9 @@ func TestFlowAgentTestSend(t *testing.T) {
 	box := newDummySandboxWith(t, true)
 	flow := `{"version":1,"nodes":[
 	  {"id":"in","type":"input","position":{"x":0,"y":0},"data":{}},
-	  {"id":"a","type":"agent","position":{"x":1,"y":0},"data":{"agent_id":"default"}},
+	  {"id":"a","type":"llm","position":{"x":1,"y":0},"data":{"prompts":[{"id":"p1","role":"system","content":"你是测试助手"}]}},
 	  {"id":"out","type":"output","position":{"x":2,"y":0},"data":{}}
-	],"edges":[{"id":"e1","source":"in","target":"a"},{"id":"e2","source":"a","target":"out"}]}`
+	],"edges":[{"id":"e1","source":"in","target":"a","targetHandle":"prompt-p1"},{"id":"e2","source":"a","target":"out"}]}`
 	body, _ := json.Marshal(map[string]any{"name": "测试图", "kind": "flow", "flow": json.RawMessage(flow)})
 	rec := authCall(box.server, "POST", "/api/v1/agents", string(body), testSysToken)
 	if rec.Code != http.StatusCreated {

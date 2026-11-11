@@ -46,7 +46,6 @@ const props = withDefaults(defineProps<{
   isDefault?: boolean;
   template?: AgentTemplate | null; // 新建模板 {name, system_prompt, prepend_state, abilities}
   kind?: "prompt" | "flow"; // 新建时选择的类型；编辑时以 agent.kind 为准
-  agents?: Agent[]; // FlowEditor 的 agent_call 节点只能选传统 Agent
   segments?: SegmentItem[]; // 段库（picker 用；随 GET /agents 一起给）
   presets?: TavernPreset[]; // 酒馆原始预设（绑定用）
   ask?: ((text: string) => Promise<boolean>) | null; // 全局确认框（删除前先摊开）
@@ -55,7 +54,6 @@ const props = withDefaults(defineProps<{
   isDefault: false,
   template: null,
   kind: "prompt",
-  agents: () => [],
   segments: () => [],
   presets: () => [],
   ask: null,
@@ -326,7 +324,7 @@ function onKey(e: KeyboardEvent): void {
 
     <VTabsWindowItem v-if="agentKind === 'flow'" value="flow">
       <p class="hint flow-stage-note">当前阶段先做流程编排与保存；运行时尚未接线，FlowAgent 暂不出现在会话的助手选择器里。</p>
-      <FlowEditor v-model:graph="flowGraph" :agents="props.agents" :agent-id="props.agent?.id ?? ''" />
+      <FlowEditor v-model:graph="flowGraph" :agent-id="props.agent?.id ?? ''" />
     </VTabsWindowItem>
 
     <VTabsWindowItem v-for="id in ABILITY_IDS" :key="id" :value="id">

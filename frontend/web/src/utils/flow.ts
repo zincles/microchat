@@ -1,12 +1,12 @@
 // FlowAgent 图的前端纯数据层：空图、归一化、保存前检查。
 //
 // 这一层不认识 Vue Flow，也不认识运行时；它只认 `FlowGraph` 的 JSON。
-// 节点类型先保持最小集合：input / agent / join / output。
+// 节点类型先保持最小集合：input / llm / join / output。
 // 以后加 template / condition 时，先在这里扩白名单，再改编辑器与运行时。
 import type { FlowEdge, FlowGraph, FlowNode } from "../api/types.ts";
 
 export const FLOW_VERSION = 1;
-export const FLOW_NODE_TYPES = ["input", "agent", "join", "output"] as const;
+export const FLOW_NODE_TYPES = ["input", "llm", "join", "output"] as const;
 export type FlowNodeType = (typeof FLOW_NODE_TYPES)[number];
 
 export function emptyFlowGraph(): FlowGraph {
@@ -26,7 +26,7 @@ export function normalizeFlowGraph(graph?: FlowGraph | null): FlowGraph {
     .filter((n) => n && typeof n.id === "string" && n.id)
     .map((n) => ({
       id: n.id,
-      type: String(n.type ?? "agent"),
+      type: String(n.type ?? "llm"),
       position: { x: Number(n.position?.x ?? 0), y: Number(n.position?.y ?? 0) },
       data: n.data && typeof n.data === "object" ? { ...n.data } : {},
     }));
@@ -44,8 +44,8 @@ export function normalizeFlowGraph(graph?: FlowGraph | null): FlowGraph {
 }
 
 // 保存前检查：不阻止保存草稿，但编辑器要把问题摆出来。
-// 第一条硬规矩：**FlowAgent 不允许再调用 FlowAgent** —— 这里的 agent 节点只能指向传统 Agent。
-export function flowIssues(graph: FlowGraph, agents: Array<{ id: string; name?: string; kind?: string }>): string[] {
+// 第一版只允许 LLM 节点手动组装 messages；不引用 Agent，所以不存在嵌套 FlowAgent。
+export function flowIssues(graph: FlowGraph): string[] {
   const issues: string[] = [];
   const nodes = graph.nodes ?? [];
   const edges = graph.edges ?? [];
@@ -55,13 +55,17 @@ export function flowIssues(graph: FlowGraph, agents: Array<{ id: string; name?: 
   if (counts("output") !== 1) issues.push("需要恰好一个输出节点");
   for (const node of nodes) {
     if (!FLOW_NODE_TYPES.includes(node.type as FlowNodeType)) issues.push(`不认识的节点类型：${node.type}`);
-    if (node.type === "agent") {
-      const id = String(node.data?.agent_id ?? "").trim();
-      if (!id) issues.push("有 Agent 节点还没选智能体");
-      else {
-        const target = agents.find((a) => a.id === id);
-        if (!target) issues.push(`Agent 节点指向不存在的智能体：${id}`);
-        else if (target.kind === "flow") issues.push("FlowAgent 不能调用另一个 FlowAgent");
+    if (node.type === "llm") {
+      const prompts = Array.isArray(node.data?.prompts) ? node.data.prompts : [];
+      if (!prompts.length) issues.push("有 LLM 节点还没有 Prompt 条目");
+      const seen = new Set<string>();
+      for (const prompt of prompts) {
+        const id = String(prompt?.id ?? "").trim();
+        if (!id || seen.has(id)) issues.push("LLM 节点里有空 id 或重复的 Prompt");
+        seen.add(id);
+        if (!["system", "user", "assistant"].includes(String(prompt?.role ?? ""))) {
+          issues.push("Prompt 条目的 role 只能是 system / user / assistant");
+        }
       }
     }
   }
@@ -126,11 +130,11 @@ export function flowNodeOrder(graph: FlowGraph): FlowNode[] {
 
 // 结构预演：不调用模型，只把“上游输出”当占位文本往下传。
 // 目的是看连线有没有接对、每个节点会收到几路输入；不是假装真跑。
-export function flowDebugSteps(graph: FlowGraph, agents: Array<{ id: string; name?: string; kind?: string }>): FlowDebugStep[] {
+export function flowDebugSteps(graph: FlowGraph): FlowDebugStep[] {
   const nodes = flowNodeOrder(graph);
   const edges = graph.edges ?? [];
   const values = new Map<string, string>();
-  const labels: Record<string, string> = { input: "输入", agent: "调用智能体", join: "拼接", output: "输出" };
+  const labels: Record<string, string> = { input: "输入", llm: "调用 LLM", join: "拼接", output: "输出" };
   const steps: FlowDebugStep[] = [];
   for (const node of nodes) {
     const incoming = edges.filter((e) => e.target === node.id).map((e) => values.get(e.source) ?? "（上游未产出）");
@@ -138,11 +142,9 @@ export function flowDebugSteps(graph: FlowGraph, agents: Array<{ id: string; nam
     let label = labels[node.type] ?? node.type;
     if (node.type === "input") {
       output = "[本轮用户输入]";
-    } else if (node.type === "agent") {
-      const id = String(node.data?.agent_id ?? "").trim();
-      const agent = agents.find((a) => a.id === id);
-      label = agent?.name ? `调用 ${agent.name}` : "调用智能体（未选择）";
-      output = agent ? `[${agent.name || agent.id} 的输出]` : "[未选择智能体]";
+    } else if (node.type === "llm") {
+      label = "调用 LLM";
+      output = "[LLM 输出]";
     } else if (node.type === "join") {
       output = incoming.length ? incoming.join("\n---\n") : "[没有输入]";
     } else if (node.type === "output") {

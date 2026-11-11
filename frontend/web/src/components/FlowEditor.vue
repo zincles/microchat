@@ -2,11 +2,11 @@
 // FlowAgent 的第一版节点编辑器（Vue Flow）。
 //
 // 职责边界：它只产出/读入 `FlowGraph` JSON；不执行、不调模型。
-// 节点先保持最小集合：input / agent / join / output。
+// 节点先保持最小集合：input / llm / join / output。
 // 两条属于 FlowAgent 的硬约束在数据层（utils/flow.ts）与这里一起做：
 //   · 只能调用传统 Agent，不能嵌套 FlowAgent；
 //   · 第一版只允许 DAG，且恰好一个输入、一个输出。
-import { computed, nextTick, provide, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { VueFlow, useVueFlow, type Connection } from "@vue-flow/core";
 import { Background } from "@vue-flow/background";
 import { Controls } from "@vue-flow/controls";
@@ -18,15 +18,13 @@ import { ICONS } from "./icons.ts";
 import { sharedApi } from "../utils/prefs.ts";
 import FlowNode from "./FlowNode.vue";
 import { emptyFlowGraph, flowDebugSteps, flowIssues, normalizeFlowGraph } from "../utils/flow.ts";
-import type { Agent, FlowEdge, FlowGraph, FlowNode as FlowNodeData } from "../api/types.ts";
+import type { FlowEdge, FlowGraph, FlowNode as FlowNodeData } from "../api/types.ts";
 
 const props = withDefaults(defineProps<{
   graph?: FlowGraph | null;
-  agents?: Agent[];
   agentId?: string;
 }>(), {
   graph: null,
-  agents: () => [],
   agentId: "",
 });
 const emit = defineEmits<{ "update:graph": [graph: FlowGraph] }>();
@@ -46,16 +44,15 @@ function toggleExpanded(): void {
   // 画布尺寸变了，Vue Flow 不会自动重新 fit；不重算的话全屏后节点会跑到视口外。
   if (expanded.value) fitAfterResize();
 }
-const nodeTypes = { input: FlowNode, agent: FlowNode, join: FlowNode, output: FlowNode } as any;
+const nodeTypes = { input: FlowNode, llm: FlowNode, join: FlowNode, output: FlowNode } as any;
 const initial = normalizeFlowGraph(props.graph ?? emptyFlowGraph());
 const nodes = ref<any[]>(initial.nodes.map((n) => ({ ...n, data: { ...(n.data ?? {}) } })));
 const edges = ref<any[]>(initial.edges.map((e) => ({ ...e })));
-// 节点里的 VSelect 要拿到可选的传统 Agent；inject 比把 agents 往每个 node.data 里塞干净。
-provide("flowAgents", computed(() => props.agents ?? []));
 
-const issues = computed(() => flowIssues(toGraph(), props.agents ?? []));
+
+const issues = computed(() => flowIssues(toGraph()));
 const debugOpen = ref(false);
-const debugSteps = computed(() => flowDebugSteps(toGraph(), props.agents ?? []));
+const debugSteps = computed(() => flowDebugSteps(toGraph()));
 const testOpen = ref(false);
 const testMessage = ref("");
 const testStatus = ref("");
@@ -74,7 +71,7 @@ function toGraph(): FlowGraph {
       delete data.test; // 测试结果只活在编辑器里，绝不写回 Graph
       return {
         id: String(n.id),
-        type: String(n.type ?? "agent"),
+        type: String(n.type ?? "llm"),
         position: { x: Number(n.position?.x ?? 0), y: Number(n.position?.y ?? 0) },
         data,
       };
@@ -89,27 +86,29 @@ function toGraph(): FlowGraph {
   };
 }
 
-function addNode(type: "input" | "agent" | "join" | "output"): void {
+function addNode(type: "input" | "llm" | "join" | "output"): void {
   if (type === "input" && inputExists.value) return;
   if (type === "output" && outputExists.value) return;
   seq += 1;
   const id = `${type}-${Date.now().toString(36)}-${seq}`;
-  // 两列、按行递增：新节点不叠在已有节点上（FlowAgent 的 agent 节点比输入/输出宽，
+  // 两列、按行递增：新节点不叠在已有节点上（LLM 节点比输入/输出宽，
   // 只按 x 递增很容易把输出盖住）。
   const index = nodes.value.length;
   nodes.value = [...nodes.value, {
     id,
     type,
     position: { x: 40 + (index % 2) * 240, y: 80 + Math.floor(index / 2) * 160 },
-    data: type === "agent" ? { agent_id: "" } : {},
+    data: type === "llm"
+      ? { prompts: [{ id: `p-${Date.now().toString(36)}`, role: "system", content: "" }] }
+      : {},
   }];
 }
 
 function allowed(sourceType?: string, targetType?: string): boolean {
   const map: Record<string, string[]> = {
-    input: ["agent", "join"],
-    agent: ["agent", "join", "output"],
-    join: ["agent", "output"],
+    input: ["llm", "join"],
+    llm: ["llm", "join", "output"],
+    join: ["llm", "output"],
   };
   return !!sourceType && !!targetType && (map[sourceType]?.includes(targetType) ?? false);
 }
@@ -154,7 +153,7 @@ async function runTest(): Promise<void> {
   }
 }
 
-// 位置、连线、节点内 agent_id 都是深层数据；一有变化就把整张图交回 AgentEditor。
+// 位置、连线、节点内 Prompt 条目都是深层数据；一有变化就把整张图交回 AgentEditor。
 watch([nodes, edges], () => emit("update:graph", toGraph()), { deep: true });
 </script>
 
@@ -163,7 +162,7 @@ watch([nodes, edges], () => emit("update:graph", toGraph()), { deep: true });
     <div class="flow-toolbar">
       <span class="flow-toolbar-label">添加节点：</span>
       <VBtn variant="tonal" size="small" type="button" :disabled="inputExists" @click="addNode('input')">输入</VBtn>
-      <VBtn variant="tonal" size="small" type="button" @click="addNode('agent')">调用智能体</VBtn>
+      <VBtn variant="tonal" size="small" type="button" @click="addNode('llm')">调用 LLM</VBtn>
       <VBtn variant="tonal" size="small" type="button" @click="addNode('join')">拼接</VBtn>
       <VBtn variant="tonal" size="small" type="button" :disabled="outputExists" @click="addNode('output')">输出</VBtn>
       <span class="flow-toolbar-spacer"></span>
@@ -215,7 +214,7 @@ watch([nodes, edges], () => emit("update:graph", toGraph()), { deep: true });
           @connect="onConnect"
         >
           <Background :gap="18" :size="1" />
-          <Controls />
+          <Controls position="bottom-right" />
         </VueFlow>
       </div>
       <aside v-if="debugOpen" class="flow-debug" aria-label="流程调试">

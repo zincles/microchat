@@ -1,38 +1,48 @@
 <script setup lang="ts">
-// FlowAgent 编辑器的节点外壳：输入 / 调用智能体 / 拼接 / 输出。
-// 节点内部用 Vuetify 控件；画布、连线、拖拽由 Vue Flow 负责。
-import { computed, inject, ref, type Ref } from "vue";
+// FlowAgent 编辑器的节点外壳：输入 / 调用 LLM / 拼接 / 输出。
+// LLM 节点内部是一张 **messages 列表**：每个 Prompt 条目有自己的 role 和左侧输入孔。
+import { computed, ref } from "vue";
 import { Handle, Position } from "@vue-flow/core";
-import { VSelect } from "vuetify/components";
-
-interface FlowAgentOption {
-  id: string;
-  name?: string;
-  kind?: string;
-}
+import { VBtn, VSelect, VTextarea } from "vuetify/components";
 
 const props = defineProps<{
   id: string;
   type: string;
   data: Record<string, any>;
 }>();
+
+interface PromptEntry {
+  id: string;
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+
 const hovered = ref(false);
-const agents = inject<Ref<FlowAgentOption[]>>("flowAgents", ref([]));
-const agentOptions = computed(() => agents.value
-  .filter((a) => a.kind !== "flow")
-  .map((a) => ({ title: a.name || a.id, value: a.id })));
 const label = computed(() => ({
   input: "输入",
-  agent: "调用智能体",
+  llm: "调用 LLM",
   join: "拼接",
   output: "输出",
 }[props.type] ?? props.type));
 const hint = computed(() => ({
   input: "本轮用户消息 + 会话上下文",
-  agent: "只允许传统智能体",
+  llm: "手动组装 messages",
   join: "把多路输出合成一段文本",
   output: "最终结果写入聊天",
 }[props.type] ?? ""));
+const prompts = computed<PromptEntry[]>(() => Array.isArray(props.data.prompts) ? props.data.prompts : []);
+const roles = [
+  { title: "system", value: "system" },
+  { title: "user", value: "user" },
+  { title: "assistant", value: "assistant" },
+];
+function addPrompt(): void {
+  if (!Array.isArray(props.data.prompts)) props.data.prompts = [];
+  props.data.prompts.push({ id: `p-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`, role: "system", content: "" });
+}
+function removePrompt(id: string): void {
+  props.data.prompts = (props.data.prompts ?? []).filter((p: PromptEntry) => p.id !== id);
+}
 </script>
 
 <template>
@@ -42,23 +52,43 @@ const hint = computed(() => ({
     @mouseenter="hovered = true"
     @mouseleave="hovered = false"
   >
-    <Handle v-if="type !== 'input'" id="in" type="target" :position="Position.Left" />
+    <Handle v-if="type === 'join' || type === 'output'" id="in" type="target" :position="Position.Left" />
     <div class="flow-node-head">
       <span class="flow-node-title">{{ label }}</span>
       <span class="flow-node-hint">{{ hint }}</span>
     </div>
-    <VSelect
-      v-if="type === 'agent'"
-      v-model="data.agent_id"
-      class="flow-node-select nodrag nopan"
-      :items="agentOptions"
-      item-title="title"
-      item-value="value"
-      density="compact"
-      variant="outlined"
-      hide-details
-      placeholder="选择一个传统智能体…"
-    />
+    <div v-if="type === 'llm'" class="flow-prompt-list">
+      <div v-for="prompt in prompts" :key="prompt.id" class="flow-prompt-row">
+        <Handle
+          :id="`prompt-${prompt.id}`"
+          type="target"
+          :position="Position.Left"
+          :style="{ top: '50%' }"
+        />
+        <div class="flow-prompt-head">
+          <VSelect
+            v-model="prompt.role"
+            class="flow-prompt-role nodrag nopan"
+            :items="roles"
+            density="compact"
+            variant="outlined"
+            hide-details
+          />
+          <VBtn icon variant="text" size="x-small" type="button" class="flow-prompt-del nodrag nopan"
+            title="删除这条 Prompt" aria-label="删除这条 Prompt" @click="removePrompt(prompt.id)">×</VBtn>
+        </div>
+        <VTextarea
+          v-model="prompt.content"
+          class="flow-prompt-content nodrag nopan"
+          rows="2"
+          density="compact"
+          variant="outlined"
+          hide-details
+          placeholder="手写这段 Prompt（也可以只接上游）"
+        />
+      </div>
+      <VBtn variant="text" size="small" type="button" class="flow-add-prompt nodrag nopan" @click="addPrompt">＋ 添加 Prompt</VBtn>
+    </div>
     <div v-if="type === 'join'" class="flow-node-body">多路文本 → 一段文本</div>
     <div v-if="hovered && data.test" class="flow-node-test" role="tooltip">
       <b>测试 I/O</b>
