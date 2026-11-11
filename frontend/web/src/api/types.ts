@@ -594,6 +594,7 @@ export interface FlowRunTrace {
   session_id: string;
   status: "running" | "done" | "error" | "canceled";
   active_node_id?: string;
+  active_llm_calls?: number;
   final?: string;
   started_at: number;
   duration_ms: number;

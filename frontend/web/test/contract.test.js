@@ -582,7 +582,9 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(readFileSync(join(SRC, "App.vue"), "utf8"), /:flow="currentAgentIsFlow"/, "App 没把 FlowAgent 状态传给输入栏");
   const topbar = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
   assert.match(topbar, /flow\?:\s*boolean/, "顶栏没有 FlowAgent 开关");
-  assert.match(topbar, /v-if="!flow"[\s\S]*id="ctx-ring"/, "FlowAgent 模式下绿色环没有停用");
+  assert.match(topbar, /flowCalls\?:\s*number/, "顶栏没有 FlowAgent 活跃调用数");
+  assert.match(topbar, /flowCallCount/, "环心没有使用活跃 LLM 调用数");
+  assert.match(readFileSync(join(SRC, "App.vue"), "utf8"), /:flow-calls="flowCalls"/, "App 没把活跃调用数传给顶栏");
   assert.match(readFileSync(join(SRC, "App.vue"), "utf8"), /:flow="currentAgentIsFlow"/, "App 没把 FlowAgent 状态传给顶栏");
   const workspace = readFileSync(join(SRC, "components", "ContextWorkspace.vue"), "utf8");
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
@@ -1334,8 +1336,8 @@ test("上下文环：圆心是后台任务数，有任务时转动，面板里�
   assert.match(tpl, /v-if="activeTaskCount > 0"/, "环心数字没有按任务数显示/隐藏");
   assert.match(tpl, /\{\{ taskCountText \}\}/, "环心没有后台任务数字");
   assert.match(tpl, /class="ctx-ring-n"/, "环心数字没有独立样式层（em 叠乘会缩水）");
-  assert.match(tpl, /:class="\{ over: ctxOver, idle: !ctx, busy: taskBusy \}"/, "环没有 busy 态");
-  assert.match(tpl, /aria-label="上下文占用与后台任务"/, "环的无障碍名没包含后台任务");
+  assert.match(tpl, /:class="\{ over: !flow && ctxOver, idle: !flow && !ctx, busy: ringBusy, flow \}"/, "环没有 busy / flow 态");
+  assert.match(tpl, /flow \? '正在运行的 LLM 调用' : '上下文占用与后台任务'/, "环的无障碍名没区分 FlowAgent");
   assert.match(tpl, /:title="ringTitle"/, "环的 title 没合并任务信息");
 
   // ①b 面板分两个 tab（2026-11-02 用户定）：上下文状态 / 运行任务，不再上下叠。

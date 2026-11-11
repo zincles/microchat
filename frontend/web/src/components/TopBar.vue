@@ -64,11 +64,13 @@ const props = withDefaults(defineProps<{
   loading?: boolean;
   // flow：FlowAgent 暂不共用普通 Agent 的上下文面板 ⇒ 绿色环也停用（连任务浮板一起收）。
   flow?: boolean;
+  flowCalls?: number;
 }>(), {
   leftHidden: false,
   workspace: "chat",
   loading: false,
   flow: false,
+  flowCalls: 0,
 });
 const emit = defineEmits<{
   "toggle-left": [];
@@ -251,6 +253,10 @@ const ctxArc = computed(() => contextArc(ctx.value));
 // dasharray="a b" 且 a+b=100 ⇒ 正好一道弧、没有第二道。
 const ctxDash = computed(() => `${ctxArc.value} ${100 - ctxArc.value}`);
 const ctxOver = computed(() => contextOverBudget(ctx.value));
+const flowCallCount = computed(() => props.flow ? Math.max(0, Number(props.flowCalls ?? 0)) : 0);
+const ringBusy = computed(() => props.flow ? flowCallCount.value > 0 : taskBusy.value);
+const ringCount = computed(() => props.flow ? flowCallCount.value : activeTaskCount.value);
+const ringCountText = computed(() => ringCount.value > 99 ? "99+" : String(ringCount.value));
 const ctxRows = computed<Array<[string, string]>>(() => {
   const c = ctx.value;
   if (!c) return [];
@@ -318,6 +324,7 @@ const taskCountText = computed(() => (activeTaskCount.value > 99 ? "99+" : Strin
 // 环的可见弧：正常跟上下文占用；有任务在跑时至少留一小段，让"在转"看得见
 //（否则占用很低时只有 2/100，或者草稿完全没有弧，转起来跟没转一样）。
 const ringDash = computed(() => {
+  if (props.flow) return flowCallCount.value > 0 ? "18 82" : "0 100";
   if (!taskBusy.value) return ctxDash.value;
   // 有任务在跑时至少留一小段可见的弧：占用很低时原本只有 2/100，转起来像没转。
   const arc = Math.max(ctxArc.value, 18);
@@ -325,6 +332,9 @@ const ringDash = computed(() => {
 });
 // 环的 title / aria：把"在跑什么"和上下文占用一起说清。
 const taskTitle = computed(() => {
+  if (props.flow) {
+    return flowCallCount.value > 0 ? `FlowAgent：${flowCallCount.value} 个 LLM 调用运行中` : "FlowAgent：当前没有 LLM 调用";
+  }
   if (!taskBusy.value) return "后台任务：当前无运行任务";
   const q = queueRunning.value ? ` · ${queueRunning.value} 个队列` : "";
   return `后台任务：${taskRunning.value} 个运行中${q}`;
@@ -395,7 +405,14 @@ const statusRows = computed<Array<[string, string]>>(() => {
 });
 function setStatus(s?: StatusInfo | null): void { status.value = s ?? null; }
 // 悬停解释 = 状态一句 + 预算一句（两处都是"一眼看不清、要解释"的东西）。
-const ringTitle = computed(() => [formatStatusLine(status.value ?? {}), contextTitle(ctx.value), taskTitle.value].filter(Boolean).join("\n"));
+const ringTitle = computed(() => {
+  if (props.flow) return taskTitle.value;
+  return [formatStatusLine(status.value ?? {}), contextTitle(ctx.value), taskTitle.value].filter(Boolean).join("\n");
+});
+function clickRing(): void {
+  if (props.flow) { emit("select-workspace", "context"); return; }
+  toggleCtx();
+}
 
 defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverridesSaved, setMacros });
 </script>
@@ -491,21 +508,20 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
            圆心放**还在跑的后台任务数**；有任务时整个环转起来。点开是同一块面板，
            两个 tab：上下文数字 / 运行任务明细。 -->
       <button
-        v-if="!flow"
         id="ctx-ring"
         class="ctx-ring"
-        :class="{ over: ctxOver, idle: !ctx, busy: taskBusy }"
+        :class="{ over: !flow && ctxOver, idle: !flow && !ctx, busy: ringBusy, flow }"
         type="button"
         :title="ringTitle"
-        aria-label="上下文占用与后台任务"
-        :aria-expanded="ctxOpen ? 'true' : 'false'"
-        @click="toggleCtx"
+        :aria-label="flow ? '正在运行的 LLM 调用' : '上下文占用与后台任务'"
+        :aria-expanded="!flow && ctxOpen ? 'true' : 'false'"
+        @click="clickRing"
       >
         <svg viewBox="0 0 32 32" aria-hidden="true">
           <circle class="ctx-ring-track" cx="16" cy="16" r="13" />
           <circle class="ctx-ring-fill" cx="16" cy="16" r="13" pathLength="100" :stroke-dasharray="ringDash" />
         </svg>
-        <span v-if="activeTaskCount > 0" class="ctx-ring-n">{{ taskCountText }}</span>
+        <span v-if="ringCount > 0" class="ctx-ring-n">{{ ringCountText }}</span>
       </button>
     </span>
     <template v-if="!flow && ctxOpen">

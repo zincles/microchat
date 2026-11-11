@@ -705,6 +705,18 @@ const agentGreeting = computed(() => {
 // FlowAgent 暂不共用普通 Agent 的上下文面板；新的节点面板另行设计。
 const currentAgent = computed(() => vueAgents.value.find((x) => x.id === sessionInfo.agent_id) ?? null);
 const currentAgentIsFlow = computed(() => currentAgent.value?.kind === "flow");
+const flowCalls = ref(0);
+let flowCallsTimer: ReturnType<typeof setInterval> | null = null;
+async function refreshFlowCalls(): Promise<void> {
+  if (draft || !sessionID || !currentAgentIsFlow.value) { flowCalls.value = 0; return; }
+  const sid = sessionID;
+  try {
+    const trace = await api.flowRun(sid);
+    if (sid === sessionID) flowCalls.value = Number(trace?.active_llm_calls ?? (trace?.active_node_id ? 1 : 0));
+  } catch {
+    if (sid === sessionID) flowCalls.value = 0;
+  }
+}
 // 空草稿首屏的两格（2026-11-02）：当前助手名 + 会话模型。
 // 模型显示上游 id（顶栏那份是 prettify 后的名字）—— 草稿还没有模型列表可查，
 // 而这一行是"我马上要跟谁说话"，宁可给原始 id 也不留空。
@@ -1277,6 +1289,7 @@ async function startDraft() {
   payloadbarRef.value?.setTables({});
   payloadbarRef.value?.setCompactWire(null);
   refreshStatusline("idle");
+  void refreshFlowCalls();
   refreshSessionsBar();
   refreshRerolls();
   // 窗口/树/懒加载缓存一起清（草稿没有会话可问）。
@@ -2073,6 +2086,8 @@ let uninstallViewportFit: (() => void) | null = null;
 onMounted(() => {
   installSidePanels();
   startTasksPolling();
+  flowCallsTimer = window.setInterval(() => { void refreshFlowCalls(); }, 700);
+  void refreshFlowCalls();
   // 键盘遮挡：整盒跟着视觉视口拟合（见 utils/viewport.ts）；键盘一开，如果人正在输入，
   // 顺手把消息列贴回底部（矮了一截后最新一条不该被挤出视野）。
   uninstallViewportFit = installViewportFit();
@@ -2107,6 +2122,7 @@ onUnmounted(() => {
   uninstallViewportFit = null;
 
   stopTasksPolling();
+  if (flowCallsTimer !== null) { clearInterval(flowCallsTimer); flowCallsTimer = null; }
   stopUpdatePolling();
   uninstallOverlayLayout();
   uninstallSidePanels();
@@ -2161,6 +2177,7 @@ onUnmounted(() => {
       :workspace="workspace"
       :loading="loadingSession"
       :flow="currentAgentIsFlow"
+      :flow-calls="flowCalls"
       @select-workspace="selectWorkspace"
       @save-overrides="saveRequestOverrides"
       @toggle-left="toggleLeft"

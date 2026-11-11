@@ -86,18 +86,25 @@ func (s *Service) runFlow(session model.Session, replyID string, token uint64, r
 	started := time.Now()
 	trace := FlowRunTrace{SessionID: sessionID, Status: "running", StartedAt: started.UnixMilli()}
 	s.setFlowTrace(trace)
-	onNode := func(id, phase string) {
+	onNode := func(id, nodeType, phase string) {
+		if nodeType != "llm" {
+			return
+		}
 		if phase == "start" {
+			trace.ActiveLLMCalls++
 			trace.ActiveNodeID = id
 		} else if trace.ActiveNodeID == id {
 			trace.ActiveNodeID = ""
+			if trace.ActiveLLMCalls > 0 {
+				trace.ActiveLLMCalls--
+			}
 		}
 		trace.StartedAt = started.UnixMilli()
 		s.setFlowTrace(trace)
 	}
 	failTrace := func(err error) {
 		s.setFlowTrace(FlowRunTrace{
-			SessionID: sessionID, Status: "error", ActiveNodeID: "", Error: err.Error(),
+			SessionID: sessionID, Status: "error", ActiveNodeID: "", ActiveLLMCalls: 0, Error: err.Error(),
 			StartedAt: started.UnixMilli(), DurationMS: time.Since(started).Milliseconds(),
 		})
 	}
@@ -128,14 +135,14 @@ func (s *Service) runFlow(session model.Session, replyID string, token uint64, r
 	if err != nil {
 		if !s.Turns.IsMine(sessionID, token) {
 			s.setFlowTrace(FlowRunTrace{
-				SessionID: sessionID, Status: "canceled", ActiveNodeID: "", Steps: outcome.Result.Steps,
+				SessionID: sessionID, Status: "canceled", ActiveNodeID: "", ActiveLLMCalls: 0, Steps: outcome.Result.Steps,
 				StartedAt: started.UnixMilli(), DurationMS: time.Since(started).Milliseconds(),
 			})
 			guard.Cancel()
 			return
 		}
 		s.setFlowTrace(FlowRunTrace{
-			SessionID: sessionID, Status: "error", ActiveNodeID: "", Error: err.Error(), Steps: outcome.Result.Steps,
+			SessionID: sessionID, Status: "error", ActiveNodeID: "", ActiveLLMCalls: 0, Error: err.Error(), Steps: outcome.Result.Steps,
 			StartedAt: started.UnixMilli(), DurationMS: time.Since(started).Milliseconds(),
 		})
 		s.Turns.Finish(sessionID, token, err.Error())
@@ -169,6 +176,7 @@ func (s *Service) runFlow(session model.Session, replyID string, token uint64, r
 	}
 	trace.Status = "done"
 	trace.ActiveNodeID = ""
+	trace.ActiveLLMCalls = 0
 	trace.Final = outcome.Final.Text
 	trace.Steps = outcome.Result.Steps
 	trace.DurationMS = time.Since(started).Milliseconds()
@@ -181,14 +189,15 @@ func (s *Service) runFlow(session model.Session, replyID string, token uint64, r
 // FlowRunTrace：最近一次 FlowAgent 图执行（进程内，覆盖式）。它是“整次图执行”的留档，
 // 而不是普通 Agent 那种一个 LastPayload —— 一张图可能有多个上游请求。
 type FlowRunTrace struct {
-	SessionID    string         `json:"session_id"`
-	Status       string         `json:"status"` // running / done / error / canceled
-	ActiveNodeID string         `json:"active_node_id,omitempty"`
-	Final        string         `json:"final,omitempty"`
-	StartedAt    int64          `json:"started_at"`
-	DurationMS   int64          `json:"duration_ms"`
-	Error        string         `json:"error,omitempty"`
-	Steps        []FlowTestStep `json:"steps"`
+	SessionID      string         `json:"session_id"`
+	Status         string         `json:"status"` // running / done / error / canceled
+	ActiveNodeID   string         `json:"active_node_id,omitempty"`
+	ActiveLLMCalls int            `json:"active_llm_calls,omitempty"`
+	Final          string         `json:"final,omitempty"`
+	StartedAt      int64          `json:"started_at"`
+	DurationMS     int64          `json:"duration_ms"`
+	Error          string         `json:"error,omitempty"`
+	Steps          []FlowTestStep `json:"steps"`
 }
 
 func (s *Service) setFlowTrace(trace FlowRunTrace) {
