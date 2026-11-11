@@ -106,6 +106,8 @@ func main() {
 	// 重摇：**把"最后那条 assistant 回复"重摇几版、挑一版定下来**（候选只在内存里）。
 	// 装配借的就是 `chat`（`RerollMessages`）—— 重摇与一轮对话共用同一份拼装，没有第二份。
 	rerollService := reroll.New(st, paths, turns, tasks, chatService)
+	// FlowAgent 的消息重摇执行图（不是普通 Prompt 装配）。
+	rerollService.FlowReroll = chatService
 	// 摘要重摇借 compact 的"只生成、不落库"半程 —— 摘要不许绕过 compact 自己拼请求。
 	// 适配器把 `compact.Generated` 翻成 `reroll.GeneratedSummary`（字段同名逐个搬）。
 	rerollService.Summaries = summaryRoller{compact: compactService}

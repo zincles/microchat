@@ -198,3 +198,60 @@ func (s *Service) FlowTrace(sessionID string) (FlowRunTrace, bool) {
 	trace, ok := s.flowTraces[sessionID]
 	return trace, ok
 }
+
+// RerollFlow：FlowAgent 的消息重摇。取最后一条 assistant 之前的那条 user 当 input，
+// 更早的消息当 history，执行图，把 output 的正文/思考交回 reroll 当候选。
+// 这是**非流式**的：候选只在摇完后出现（FlowAgent 一轮本身也还不流式）。
+func (s *Service) RerollFlow(ctx context.Context, session model.Session,
+	emit func(text, reasoning string, usage json.RawMessage, durationMS, reasoningMS *int64)) (bool, error) {
+	agent, ok := s.flowAgentOf(session)
+	if !ok {
+		return false, nil
+	}
+	messages, err := s.Store.ListMessages(session.ID)
+	if err != nil {
+		return true, err
+	}
+	if len(messages) == 0 || messages[len(messages)-1].Role != model.RoleAssistant {
+		return true, fmt.Errorf("这条会话的最后一条不是 assistant 回复，没有什么可重摇的")
+	}
+	cut := 0
+	input := ""
+	for index := len(messages) - 2; index >= 0; index-- {
+		if messages[index].Role == model.RoleUser {
+			cut = index
+			input = statelang.Scan(messages[index].Content).Cleaned
+			break
+		}
+	}
+	if strings.TrimSpace(input) == "" {
+		return true, fmt.Errorf("这条 assistant 回复前面没有可用的 user 输入")
+	}
+	history := make([]providers.ChatMessage, 0, cut)
+	for _, message := range messages[:cut] {
+		content := statelang.Scan(message.Content).Cleaned
+		if strings.TrimSpace(content) != "" {
+			history = append(history, providers.ChatMessage{Role: string(message.Role), Content: content})
+		}
+	}
+	var graph flowGraph
+	if err := json.Unmarshal(agent.Flow, &graph); err != nil {
+		return true, fmt.Errorf("流程 JSON 解析失败：%w", err)
+	}
+	started := time.Now()
+	_, _, providersConfig := s.files()
+	outcome, err := s.executeFlowGraph(ctx, graph, flowRunOptions{
+		SessionID:       session.ID,
+		Input:           input,
+		History:         history,
+		DefaultProvider: session.Provider,
+		DefaultModel:    session.Model,
+		ProvidersConfig: providersConfig,
+	})
+	if err != nil {
+		return true, err
+	}
+	durationMS := time.Since(started).Milliseconds()
+	emit(outcome.Final.Text, outcome.Final.Reasoning, outcome.Usage, &durationMS, nil)
+	return true, nil
+}

@@ -1,13 +1,17 @@
 package chat
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"microchat/internal/config"
+	"microchat/internal/model"
 	"microchat/internal/providers"
+	"microchat/internal/reroll"
+	"microchat/internal/store"
 )
 
 func TestJoinFlowInputsUsesConfiguredSeparator(t *testing.T) {
@@ -253,5 +257,56 @@ func TestFlowAgentLegacyReasoningInputStaysReasoning(t *testing.T) {
 	messages := h.settle(t)
 	if len(messages) != 2 || messages[1].Content != "" || messages[1].Reasoning != "思考" {
 		t.Fatalf("老 reasoning→in 迁移 = %+v", messages)
+	}
+}
+
+func TestFlowAgentRerollExecutesGraph(t *testing.T) {
+	h := newHarness(t, dummyProviders(), "dummy", "dummy")
+	flow := json.RawMessage(`{"version":1,"nodes":[
+		{"id":"in","type":"input","position":{"x":0,"y":0},"data":{}},
+		{"id":"llm","type":"llm","position":{"x":1,"y":0},"data":{"prompts":[{"id":"p1","role":"system","content":"写"}]}},
+		{"id":"out","type":"output","position":{"x":2,"y":0},"data":{}}
+	],"edges":[{"id":"e1","source":"llm","sourceHandle":"text","target":"out","targetHandle":"text"}]}`)
+	if err := config.SaveJSON(h.configDir+"/agents.json", config.AgentsConfig{Agents: []config.Agent{{
+		ID: "flow", Kind: "flow", Flow: flow,
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	h.session.AgentID = "flow"
+	ids, err := store.MintOrderedIDs(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, message := range []model.Message{
+		{ID: ids[0], SessionID: h.session.ID, Role: model.RoleUser, Content: "原问题"},
+		{ID: ids[1], SessionID: h.session.ID, Role: model.RoleAssistant, Content: "旧回复"},
+	} {
+		if _, err := h.store.InsertMessage(message); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rerolls := reroll.New(h.store, h.service.Paths, h.turns, h.tasks, h.service)
+	rerolls.FlowReroll = h.service
+	h.service.Candidates = rerolls
+	if _, err := rerolls.EnterSync(context.Background(), h.session); err != nil {
+		t.Fatal(err)
+	}
+	state := rerolls.State(h.session.ID, reroll.TargetMessage)
+	if state.Count != 2 || state.Items[1].Preview == "" {
+		t.Fatalf("FlowAgent 重摇没有候选：%+v", state)
+	}
+	if _, err := rerolls.Switch(h.session.ID, reroll.TargetMessage, 2); err != nil {
+		t.Fatal(err)
+	}
+	messages, err := h.store.ListMessages(h.session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tail *model.Message
+	if len(messages) > 0 {
+		tail = &messages[len(messages)-1]
+	}
+	if tail == nil || tail.Content != dummyReply {
+		t.Fatalf("FlowAgent 重摇候选 = %+v（想要 %q）", tail, dummyReply)
 	}
 }
