@@ -2212,7 +2212,8 @@ test("设置页签：六区 + 会话/渠道/智能体/更新独立入口", () =>
   // 独立入口：左栏底会话 / 渠道 / 智能体 + App 用 :only 打开同一个视图；更新走品牌头。
   assert.match(bar, /@click="\$emit\('open-sessions'\)"/, "左栏没有「会话」入口");
   assert.match(bar, /@click="\$emit\('open-providers'\)"/, "左栏没有「渠道」入口");
-  assert.match(bar, /@click="\$emit\('open-agent'\)"/, "左栏没有「智能体」入口");
+  assert.match(bar, /@click="\$emit\('open-agent'\)"/, "左栏没有「助手」入口");
+  assert.match(bar, /\bid="agents-manage"[\s\S]*?\n\s*助手\n/, "底部标签该是「助手」");
   assert.ok(!bar.includes('id="update-open"'), "左栏底部还在画「更新」入口（它已挪到品牌头与设置 tab）");
   assert.match(settings, /only\??:\s*string/, "SettingsModal 没有独立入口的 only 参数");
   assert.match(settings, /<h2 v-else class="settings-title">/, "独立入口没有页头标题");

@@ -296,11 +296,11 @@ defineExpose({ setSessions });
         variant="text"
         color="on-surface-variant"
         stacked
-        title="智能体管理（人设 / 提示词 / 能力）"
+        title="助手（人设 / 提示词 / 能力）；内部仍称智能体"
         @click="$emit('open-agent')"
       >
         <template #prepend><span class="fb-icon" v-html="ICONS.bot"></span></template>
-        智能体
+        助手
       </VBtn>
       <!-- 设置：2026-11-01 起**没有"root 专属"这回事**（账号砍了），谁都能进；
            外观那一区在同一天从删掉的用户视图搬了进来。更新入口在品牌头与设置最右 tab。 -->
