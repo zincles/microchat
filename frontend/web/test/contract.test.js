@@ -575,7 +575,10 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(flowNode, /flow-prompt-history/, "history 条目没有独立外观");
   assert.match(flowNode, /addHistory/, "LLM 节点不能添加历史条目");
   assert.match(flowNode, /flow-llm-model/, "LLM 节点没有 AI 模型选择框");
-  assert.match(flowNode, /flow-node-resizer/, "LLM 节点没有尺寸调节柄");
+  assert.match(flowNode, /flow-node-resizer/, "LLM 节点没有高度调节柄");
+  assert.match(css, /\.flow-node-llm \{[^}]*width:\s*22\.5em/, "LLM 卡片宽度没有固定");
+  assert.doesNotMatch(flowNode, /props\.data\.width\s*=/, "LLM 卡片仍在改宽度");
+  assert.match(flowNode, /props\.data\.height\s*=/, "LLM 卡片没有高度持久化");
   assert.match(flowNode, /flow-prompt-role-label[^>]*>Role:</, "Role 前面没有标签");
   assert.match(css, /\.flow-prompt-role \{[^}]*width:\s*6\.2em/, "Role 选择器没有收窄");
   assert.match(css, /\.flow-prompt-role \{[^}]*height:\s*1\.8em/, "Role 选择器纵向没有收窄");

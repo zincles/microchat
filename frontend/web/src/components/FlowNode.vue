@@ -68,20 +68,15 @@ const modelValue = computed({
 });
 const nodeStyle = computed(() => {
   if (props.type !== "llm") return {};
-  const width = Number(props.data.width);
   const height = Number(props.data.height);
-  return {
-    ...(Number.isFinite(width) && width > 0 ? { width: `${width}px` } : {}),
-    ...(Number.isFinite(height) && height > 0 ? { height: `${height}px` } : {}),
-  };
+  return Number.isFinite(height) && height > 0 ? { height: `${height}px` } : {};
 });
 const resizing = ref(false);
-let resizeStart = { x: 0, y: 0, width: 0, height: 0 };
+let resizeStart = { y: 0, height: 0 };
 function resizeMove(event: PointerEvent): void {
   if (!resizing.value) return;
-  const width = Math.max(260, Math.round(resizeStart.width + event.clientX - resizeStart.x));
+  // LLM 卡片宽度固定；缩放柄只改高度。
   const height = Math.max(120, Math.round(resizeStart.height + event.clientY - resizeStart.y));
-  props.data.width = width;
   props.data.height = height;
 }
 function resizeEnd(): void {
@@ -93,7 +88,7 @@ function resizeStartHandler(event: PointerEvent): void {
   const node = (event.currentTarget as HTMLElement).closest(".flow-node") as HTMLElement | null;
   if (!node) return;
   const rect = node.getBoundingClientRect();
-  resizeStart = { x: event.clientX, y: event.clientY, width: rect.width, height: rect.height };
+  resizeStart = { y: event.clientY, height: rect.height };
   resizing.value = true;
   window.addEventListener("pointermove", resizeMove);
   window.addEventListener("pointerup", resizeEnd);
@@ -306,7 +301,7 @@ function addJoinOutput(): void {
       <pre>{{ data.test.output || "（无输出）" }}</pre>
     </div>
     <span v-if="type === 'llm'" class="flow-node-resizer nodrag nopan"
-      title="拖动调整卡片大小" aria-label="调整卡片大小" @pointerdown="resizeStartHandler"></span>
+      title="拖动调整卡片高度" aria-label="调整卡片高度" @pointerdown="resizeStartHandler"></span>
     <div v-if="type === 'llm'" class="flow-llm-outputs">
       <div class="flow-llm-output-row">
         <span>思考</span>
