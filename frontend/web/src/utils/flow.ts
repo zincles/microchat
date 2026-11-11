@@ -1,19 +1,28 @@
 // FlowAgent 图的前端纯数据层：空图、归一化、保存前检查。
 //
 // 这一层不认识 Vue Flow，也不认识运行时；它只认 `FlowGraph` 的 JSON。
-// 节点类型先保持最小集合：input（字符串）/ history（messages[]）/ llm / join / output。
-// 以后加 template / condition 时，先在这里扩白名单，再改编辑器与运行时。
+// 节点类型先保持最小集合：input（字符串）/ history（messages[]）/ trim（messages[]）/
+// llm / join / output。以后加 template / condition 时，先在这里扩白名单，再改编辑器与运行时。
 import type { FlowEdge, FlowGraph, FlowNode } from "../api/types.ts";
 
 export const FLOW_VERSION = 1;
 export const DEFAULT_JOIN_SEPARATOR = "\n\n---\n\n";
-export const FLOW_NODE_TYPES = ["input", "history", "llm", "join", "output"] as const;
+export const FLOW_NODE_TYPES = ["input", "history", "trim", "llm", "join", "output"] as const;
 export type FlowNodeType = (typeof FLOW_NODE_TYPES)[number];
 export type FlowDataType = "string" | "messages";
 
+export const TRIM_MODES = [
+  { value: "tail", title: "保留最近 N 条" },
+  { value: "head", title: "保留最早 N 条" },
+  { value: "drop-head", title: "去掉开头 N 条" },
+  { value: "drop-tail", title: "去掉结尾 N 条" },
+] as const;
+export type TrimMode = (typeof TRIM_MODES)[number]["value"];
+export const DEFAULT_TRIM_COUNT = 10;
+
 const norm = (handle?: string, fallback = "out"): string => handle || fallback;
 
-// 端口类型是连接校验的唯一依据：字符串只能接字符串，history/messages[] 只能接 history 端口。
+// 端口类型是连接校验的唯一依据：字符串只能接字符串，messages[] 只能接 messages 端口。
 export function flowSourceType(node: FlowNode | undefined, handle?: string): FlowDataType | null {
   if (!node) return null;
   const h = norm(handle, "out");
@@ -22,6 +31,7 @@ export function flowSourceType(node: FlowNode | undefined, handle?: string): Flo
     case "join":
       return h === "out" || /^out-\d+$/.test(h) ? "string" : null;
     case "history":
+    case "trim":
       return h === "out" ? "messages" : null;
     case "llm":
       return h === "text" || h === "reasoning" ? "string" : null;
@@ -37,12 +47,34 @@ export function flowTargetType(node: FlowNode | undefined, handle?: string): Flo
     case "llm":
       if (h.startsWith("history-")) return "messages";
       return h.startsWith("prompt-") ? "string" : null;
+    case "trim":
+      return h === "in" ? "messages" : null;
     case "join":
       return h.startsWith("in-") ? "string" : null;
     case "output":
       return h === "in" ? "string" : null;
     default:
       return null;
+  }
+}
+
+export function trimModeOf(data?: Record<string, any> | null): TrimMode {
+  const value = String(data?.mode ?? "tail");
+  return TRIM_MODES.some((mode) => mode.value === value) ? value as TrimMode : "tail";
+}
+
+export function trimCountOf(data?: Record<string, any> | null): number {
+  const count = Number(data?.count ?? DEFAULT_TRIM_COUNT);
+  return Number.isInteger(count) && count > 0 ? count : DEFAULT_TRIM_COUNT;
+}
+
+export function trimMessages<T>(messages: readonly T[], mode: TrimMode, count: number): T[] {
+  const n = Number.isInteger(count) && count > 0 ? count : DEFAULT_TRIM_COUNT;
+  switch (mode) {
+    case "head": return messages.slice(0, n);
+    case "drop-head": return messages.slice(n);
+    case "drop-tail": return messages.slice(0, Math.max(0, messages.length - n));
+    default: return messages.slice(Math.max(0, messages.length - n));
   }
 }
 
@@ -93,7 +125,13 @@ export function flowIssues(graph: FlowGraph): string[] {
   for (const node of nodes) {
     if (!FLOW_NODE_TYPES.includes(node.type as FlowNodeType)) issues.push(`不认识的节点类型：${node.type}`);
     if (node.type === "history" && !edges.some((e) => e.source === node.id)) {
-      issues.push("历史数据节点还没有接到 LLM 的 history 输入");
+      issues.push("历史数据节点还没有接出去");
+    }
+    if (node.type === "trim") {
+      const mode = String(node.data?.mode ?? "tail");
+      if (!TRIM_MODES.some((item) => item.value === mode)) issues.push("裁剪节点有未知的裁剪方式");
+      const count = Number(node.data?.count ?? DEFAULT_TRIM_COUNT);
+      if (!Number.isInteger(count) || count < 1) issues.push("裁剪条数必须是正整数");
     }
     if (node.type === "llm") {
       const prompts = Array.isArray(node.data?.prompts) ? node.data.prompts : [];
@@ -211,7 +249,7 @@ export function flowDebugSteps(graph: FlowGraph): FlowDebugStep[] {
   const nodes = flowNodeOrder(graph);
   const edges = graph.edges ?? [];
   const values = new Map<string, { text: string; reasoning: string }>();
-  const labels: Record<string, string> = { input: "输入", history: "历史数据", llm: "调用 LLM", join: "拼接和复制", output: "输出" };
+  const labels: Record<string, string> = { input: "输入", history: "历史数据", trim: "裁剪 messages", llm: "调用 LLM", join: "拼接和复制", output: "输出" };
   const source = (edge: { source: string; sourceHandle?: string }): string => {
     const handle = edge.sourceHandle || "out";
     const value = values.get(`${edge.source}\0${handle}`) ?? values.get(`${edge.source}\0out`) ?? values.get(`${edge.source}\0text`);
@@ -228,6 +266,8 @@ export function flowDebugSteps(graph: FlowGraph): FlowDebugStep[] {
       output = "[本轮用户输入]";
     } else if (node.type === "history") {
       output = "[会话历史 messages]";
+    } else if (node.type === "trim") {
+      output = "[裁剪后 messages]";
     } else if (node.type === "llm") {
       label = "调用 LLM";
       output = "[LLM 正文]";

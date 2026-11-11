@@ -5,7 +5,7 @@ import { parseWireMessages, previewBlock } from "../src/utils/payload.ts";
 import { assemblePrompt, abilityPrompt, missingSegments } from "../src/utils/prompt.ts";
 import { renderMarkdown } from "../src/utils/markdown.ts";
 import { buildCartridge, cartridgeAgent } from "../src/utils/cartridge.ts";
-import { emptyFlowGraph, flowDebugSteps, flowIssues, flowSourceType, flowTargetType } from "../src/utils/flow.ts";
+import { emptyFlowGraph, flowDebugSteps, flowIssues, flowSourceType, flowTargetType, trimMessages } from "../src/utils/flow.ts";
 import { parseCommand, filterCommands, COMMAND_META } from "../src/utils/commands.ts";
 import { uuidv7 } from "../src/utils/ids.ts";
 import { groupSessions, SESSION_GROUP_LABELS } from "../src/utils/sessionGroups.ts";
@@ -472,8 +472,11 @@ test("FlowAgent：端口有类型，且每个端点只许一条线", () => {
   const history = { id: "h", type: "history", position: { x: 0, y: 0 }, data: {} };
   const llm = { id: "l", type: "llm", position: { x: 0, y: 0 }, data: { prompts: [{ id: "p1", role: "system", content: "x" }, { id: "h1", kind: "history" }] } };
   const join = { id: "j", type: "join", position: { x: 0, y: 0 }, data: { inputs: ["in-1", "in-2"] } };
+  const trim = { id: "t", type: "trim", position: { x: 0, y: 0 }, data: { mode: "tail", count: 2 } };
   assert.equal(flowSourceType(input, "out"), "string");
   assert.equal(flowSourceType(history, "out"), "messages");
+  assert.equal(flowSourceType(trim, "out"), "messages");
+  assert.equal(flowTargetType(trim, "in"), "messages");
   assert.equal(flowSourceType(llm, "reasoning"), "string");
   assert.equal(flowSourceType(llm, "text"), "string");
   assert.equal(flowSourceType(join, "out-1"), "string");
@@ -482,10 +485,11 @@ test("FlowAgent：端口有类型，且每个端点只许一条线", () => {
   assert.equal(flowTargetType(join, "in-1"), "string");
   const graph = {
     version: 1,
-    nodes: [input, history, llm, join, { id: "out", type: "output", position: { x: 0, y: 0 }, data: {} }],
+    nodes: [input, history, trim, llm, join, { id: "out", type: "output", position: { x: 0, y: 0 }, data: {} }],
     edges: [
       { id: "e1", source: "in", target: "l", targetHandle: "prompt-p1" },
-      { id: "e2", source: "h", target: "l", targetHandle: "history-h1" },
+      { id: "e2", source: "h", target: "t", targetHandle: "in" },
+      { id: "e2b", source: "t", target: "l", targetHandle: "history-h1" },
       { id: "e3", source: "l", sourceHandle: "text", target: "j", targetHandle: "in-1" },
       { id: "e4", source: "l", sourceHandle: "reasoning", target: "j", targetHandle: "in-2" },
       { id: "e5", source: "j", target: "out" },
@@ -495,6 +499,13 @@ test("FlowAgent：端口有类型，且每个端点只许一条线", () => {
   graph.edges.push({ id: "e6", source: "in", target: "j", targetHandle: "in-2" });
   assert.ok(flowIssues(graph).some((x) => x.includes("一个出口只能接一条线")));
   assert.ok(flowIssues(graph).some((x) => x.includes("一个入口只能接一条线")));
+  const msgs = [{ role: "user", content: "1" }, { role: "assistant", content: "2" }, { role: "user", content: "3" }];
+  assert.deepEqual(trimMessages(msgs, "tail", 2).map((m) => m.content), ["2", "3"]);
+  assert.deepEqual(trimMessages(msgs, "head", 2).map((m) => m.content), ["1", "2"]);
+  assert.deepEqual(trimMessages(msgs, "drop-head", 1).map((m) => m.content), ["2", "3"]);
+  assert.deepEqual(trimMessages(msgs, "drop-tail", 1).map((m) => m.content), ["1", "2"]);
+  const badTrim = { version: 1, nodes: [input, { ...trim, data: { mode: "tail", count: 0 } }, { id: "out", type: "output", position: { x: 0, y: 0 }, data: {} }], edges: [] };
+  assert.ok(flowIssues(badTrim).some((x) => x.includes("裁剪条数")));
 });
 
 test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接和复制节点", () => {
@@ -532,6 +543,9 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(flowNode, /flow-prompt-history/, "history 条目没有独立外观");
   assert.match(flowNode, /addHistory/, "LLM 节点不能添加历史条目");
   assert.match(flowNode, /flow-llm-model/, "LLM 节点没有 AI 模型选择框");
+  assert.match(flowNode, /flow-trim-controls/, "裁剪节点没有配置控件");
+  assert.match(flowNode, /TRIM_MODES/, "裁剪节点没有裁剪方式下拉");
+  assert.match(flowNode, /trimSummary/, "裁剪节点没有摘要");
   assert.match(flowNode, /id="text"/, "LLM 节点没有正文出口");
   assert.match(flowNode, /每行自己的左侧输入孔|prompt-\$\{prompt\.id\}/, "Prompt 条目没有独立输入孔");
   assert.ok(flowDebugSteps(emptyFlowGraph()).length >= 2, "空图没有调试步骤");
@@ -540,12 +554,12 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(css, /\.flow-debug \{[^}]*position:\s*absolute/, "调试栏仍占画布宽度");
   assert.match(css, /\.flow-debug \{[^}]*overflow-y:\s*auto/, "调试面板不能上下滚动");
   assert.match(css, /--flow-history:\s*#f2994a/, "历史类型不是橙色");
-  assert.match(css, /\.flow-node\.flow-node-history \.vue-flow__handle \{[^}]*background:\s*var\(--flow-history\)/, "历史节点端口没被染成历史色");
-  assert.match(css, /\.flow-node \.flow-prompt-history \.vue-flow__handle \{[^}]*background:\s*var\(--flow-history\)/, "历史条目端口没被染成历史色");
+  assert.match(css, /\.flow-node\.flow-node-history \.vue-flow__handle[^{]*\{[^}]*background:\s*var\(--flow-history\)/, "历史节点端口没被染成历史色");
+  assert.match(css, /\.flow-node \.flow-prompt-history \.vue-flow__handle[^{]*\{[^}]*background:\s*var\(--flow-history\)/, "历史条目端口没被染成历史色");
   assert.match(css, /\.flow-panel-test \{[^}]*display:\s*flex/, "测试面板没有独立内容区");
   assert.match(flow, /flow-node-row/, "节点面板没有节点列表");
   assert.match(flow, /flow-panel-tabs/, "面板没有 测试/调试/节点 tabs");
-  for (const type of ["input", "history", "llm", "join", "output"]) {
+  for (const type of ["input", "history", "trim", "llm", "join", "output"]) {
     assert.ok(flow.includes(`addNode('${type}')`) || flow.includes(`addNode("${type}")`), `流程编辑器缺 ${type} 节点`);
   }
   const empty = emptyFlowGraph();

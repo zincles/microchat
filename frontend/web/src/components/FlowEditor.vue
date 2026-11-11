@@ -2,7 +2,7 @@
 // FlowAgent 的第一版节点编辑器（Vue Flow）。
 //
 // 职责边界：它只产出/读入 `FlowGraph` JSON；不执行、不调模型。
-// 节点先保持最小集合：input / llm / join / output。
+// 节点先保持最小集合：input / history / trim / llm / join / output。
 // 两条属于 FlowAgent 的硬约束在数据层（utils/flow.ts）与这里一起做：
 //   · 只能调用传统 Agent，不能嵌套 FlowAgent；
 //   · 第一版只允许 DAG，且恰好一个输入、一个输出。
@@ -44,13 +44,14 @@ function toggleExpanded(): void {
   // 画布尺寸变了，Vue Flow 不会自动重新 fit；不重算的话全屏后节点会跑到视口外。
   if (expanded.value) fitAfterResize();
 }
-const nodeTypes = { input: FlowNode, history: FlowNode, llm: FlowNode, join: FlowNode, output: FlowNode } as any;
+const nodeTypes = { input: FlowNode, history: FlowNode, trim: FlowNode, llm: FlowNode, join: FlowNode, output: FlowNode } as any;
 const initial = normalizeFlowGraph(props.graph ?? emptyFlowGraph());
 const nodes = ref<any[]>(initial.nodes.map((n) => ({ ...n, data: { ...(n.data ?? {}) } })));
 const historyExists = computed(() => nodes.value.some((n) => n.type === "history"));
-const edgeClass = (sourceId: string, nodeList: any[] = nodes.value): string =>
-  nodeList.find((n) => n.id === sourceId)?.type === "history" ? "flow-edge-history" : "flow-edge-text";
-const edges = ref<any[]>(initial.edges.map((e) => ({ ...e, class: edgeClass(e.source, initial.nodes) })));
+const edgeClass = (edge: { source: string; sourceHandle?: string }, nodeList: any[] = nodes.value): string =>
+  flowSourceType(nodeList.find((n) => n.id === edge.source), edge.sourceHandle) === "messages"
+    ? "flow-edge-history" : "flow-edge-text";
+const edges = ref<any[]>(initial.edges.map((e) => ({ ...e, class: edgeClass(e, initial.nodes) })));
 
 
 const issues = computed(() => flowIssues(toGraph()));
@@ -65,13 +66,13 @@ provide("flowModels", models);
 const nodeRows = computed(() => nodes.value.map((n) => ({
   id: String(n.id),
   type: String(n.type),
-  label: ({ input: "输入", history: "历史", llm: "LLM", join: "拼接和复制", output: "输出" } as Record<string, string>)[String(n.type)] ?? String(n.type),
+  label: ({ input: "输入", history: "历史", trim: "裁剪", llm: "LLM", join: "拼接和复制", output: "输出" } as Record<string, string>)[String(n.type)] ?? String(n.type),
   incoming: edges.value.filter((e) => e.target === n.id),
   outgoing: edges.value.filter((e) => e.source === n.id),
 })));
 function nodeLabel(id: string): string {
   const node = nodes.value.find((n) => n.id === id);
-  return node ? (({ input: "输入", history: "历史", llm: "LLM", join: "拼接和复制", output: "输出" } as Record<string, string>)[String(node.type)] ?? String(node.type)) : id;
+  return node ? (({ input: "输入", history: "历史", trim: "裁剪", llm: "LLM", join: "拼接和复制", output: "输出" } as Record<string, string>)[String(node.type)] ?? String(node.type)) : id;
 }
 function openPanel(tab: "test" | "debug" | "nodes"): void {
   if (panelOpen.value && panelTab.value === tab) { panelOpen.value = false; return; }
@@ -129,7 +130,7 @@ function toGraph(): FlowGraph {
   };
 }
 
-function addNode(type: "input" | "history" | "llm" | "join" | "output"): void {
+function addNode(type: "input" | "history" | "trim" | "llm" | "join" | "output"): void {
   if (type === "input" && inputExists.value) return;
   if (type === "history" && historyExists.value) return;
   if (type === "output" && outputExists.value) return;
@@ -144,7 +145,8 @@ function addNode(type: "input" | "history" | "llm" | "join" | "output"): void {
     position: { x: 40 + (index % 2) * 240, y: 80 + Math.floor(index / 2) * 160 },
     data: type === "llm"
       ? { prompts: [{ id: `p-${Date.now().toString(36)}`, role: "system", content: "" }] }
-      : type === "join" ? { inputs: ["in-1", "in-2"], outputs: ["out-1"], separator: "\n\n---\n\n" } : {},
+      : type === "join" ? { inputs: ["in-1", "in-2"], outputs: ["out-1"], separator: "\n\n---\n\n" }
+      : type === "trim" ? { mode: "tail", count: 10 } : {},
   }];
   fitAfterResize();
 }
@@ -187,7 +189,7 @@ function onConnect(connection: Connection): void {
     id,
     source: connection.source,
     target: connection.target,
-    class: edgeClass(connection.source),
+    class: edgeClass({ source: connection.source, sourceHandle: connection.sourceHandle ?? undefined }),
     ...(connection.sourceHandle ? { sourceHandle: connection.sourceHandle } : {}),
     ...(connection.targetHandle ? { targetHandle: connection.targetHandle } : {}),
   }];
@@ -235,6 +237,7 @@ watch([nodes, edges], () => emit("update:graph", toGraph()), { deep: true });
       <span class="flow-toolbar-label">添加节点：</span>
       <VBtn variant="tonal" size="small" type="button" :disabled="inputExists" @click="addNode('input')">输入</VBtn>
       <VBtn variant="tonal" size="small" type="button" color="warning" :disabled="historyExists" @click="addNode('history')">历史数据</VBtn>
+      <VBtn variant="tonal" size="small" type="button" color="warning" @click="addNode('trim')">裁剪 messages</VBtn>
       <VBtn variant="tonal" size="small" type="button" @click="addNode('llm')">调用 LLM</VBtn>
       <VBtn variant="tonal" size="small" type="button" @click="addNode('join')">拼接和复制</VBtn>
       <VBtn variant="tonal" size="small" type="button" :disabled="outputExists" @click="addNode('output')">输出</VBtn>

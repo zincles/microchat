@@ -1,11 +1,11 @@
 <script setup lang="ts">
-// FlowAgent 编辑器的节点外壳：输入 / 调用 LLM / 拼接 / 输出。
+// FlowAgent 编辑器的节点外壳：输入 / 历史 / 裁剪 / 调用 LLM / 拼接 / 输出。
 // LLM 节点内部是一张 **messages 列表**：每个 Prompt 条目有自己的 role 和左侧输入孔。
 import { computed, inject, ref, type Ref } from "vue";
 import { Handle, Position } from "@vue-flow/core";
-import { VBtn, VSelect, VTextarea } from "vuetify/components";
+import { VBtn, VSelect, VTextField, VTextarea } from "vuetify/components";
 import type { ModelListItem } from "../api/types.ts";
-import { DEFAULT_JOIN_SEPARATOR } from "../utils/flow.ts";
+import { DEFAULT_JOIN_SEPARATOR, TRIM_MODES, trimCountOf, trimModeOf, type TrimMode } from "../utils/flow.ts";
 
 const props = defineProps<{
   id: string;
@@ -28,6 +28,7 @@ const models = inject<Ref<ModelListItem[]>>("flowModels", ref([]));
 const label = computed(() => ({
   input: "输入",
   history: "历史数据",
+  trim: "裁剪 messages",
   llm: "调用 LLM",
   join: "拼接和复制",
   output: "输出",
@@ -35,6 +36,7 @@ const label = computed(() => ({
 const hint = computed(() => ({
   input: "裸字符串：本轮用户输入",
   history: "messages[]：当前会话历史",
+  trim: "messages[] → messages[]：按条数裁剪",
   llm: "手动组装 messages",
   join: "多路拼接；只接一路时直接复制",
   output: "最终结果写入聊天",
@@ -55,6 +57,21 @@ const modelValue = computed({
     props.data.provider = value.slice(0, cut);
     props.data.model = value.slice(cut + 1);
   },
+});
+const trimMode = computed<TrimMode>({
+  get: () => trimModeOf(props.data),
+  set: (value: TrimMode) => { props.data.mode = value; },
+});
+const trimCount = computed<string>({
+  get: () => String(trimCountOf(props.data)),
+  set: (value: string) => {
+    const count = Number(value);
+    props.data.count = Number.isInteger(count) && count > 0 ? count : 1;
+  },
+});
+const trimSummary = computed(() => {
+  const mode = TRIM_MODES.find((item) => item.value === trimMode.value)?.title ?? "保留最近 N 条";
+  return mode.replace("N", trimCount.value);
 });
 const joinInputs = computed<string[]>(() => Array.isArray(props.data.inputs) && props.data.inputs.length
   ? props.data.inputs
@@ -103,7 +120,7 @@ function addJoinOutput(): void {
     @mouseenter="hovered = true"
     @mouseleave="hovered = false"
   >
-    <Handle v-if="type === 'output'" id="in" type="target" :position="Position.Left" />
+    <Handle v-if="type === 'output' || type === 'trim'" id="in" type="target" :position="Position.Left" />
     <div class="flow-node-head">
       <span class="flow-node-title">{{ label }}</span>
       <button class="flow-node-delete nodrag nopan" type="button" title="删除节点" aria-label="删除节点"
@@ -142,6 +159,12 @@ function addJoinOutput(): void {
       </div>
     </div>
     <div v-if="type === 'history'" class="flow-node-body">来自真实会话的历史 messages</div>
+    <div v-if="type === 'trim'" class="flow-trim-controls nodrag nopan">
+      <VSelect v-model="trimMode" :items="TRIM_MODES" density="compact" variant="outlined" hide-details />
+      <VTextField v-model="trimCount" type="number" min="1" step="1" density="compact"
+        variant="outlined" hide-details suffix="条" />
+      <span class="flow-node-body">{{ trimSummary }}</span>
+    </div>
     <div v-if="type === 'join'" class="flow-join-inputs">
       <div v-for="(input, i) in joinInputs" :key="input" class="flow-join-row">
         <Handle :id="input" type="target" :position="Position.Left" />

@@ -16,7 +16,8 @@ import (
 // FlowTest 是 FlowAgent 编辑器的「测试发送」：**只跑一次图，不落库、不建会话**。
 //
 // 这是运行时的最小验证器，不是完整 FlowAgent 运行时：
-//   - DAG、单 input/output；LLM 节点内部是手写的 Prompt 列表；
+//   - DAG、单 input/output；history 输出 messages[]，trim 按条数裁剪 messages[]；
+//     LLM 节点内部是手写的 Prompt 列表；
 //   - 每个 LLM 节点按 role/content + 对应输入孔组装 messages 后走 Complete；
 //   - LLM 节点有两个出口：reasoning（思考）与 text（正文）；
 //   - 输入节点吃测试消息，join/output 只拼上游文本；
@@ -99,6 +100,7 @@ func (s *Service) TestFlow(ctx context.Context, flowAgent config.Agent, message,
 	values := map[string]flowValue{}
 	steps := make([]FlowTestStep, 0, len(order))
 	for _, node := range order {
+		var nodeMessages []providers.ChatMessage
 		inputs := []string{}
 		for _, e := range graph.Edges {
 			if e.Target == node.ID {
@@ -114,6 +116,15 @@ func (s *Service) TestFlow(ctx context.Context, flowAgent config.Agent, message,
 			step.Label = "历史数据"
 			// 测试接口没有会话上下文：历史节点只回一个明确的空 messages 块，不伪造历史。
 			step.Output = "[]"
+		case "trim":
+			step.Label = "裁剪 messages"
+			for _, edge := range graph.Edges {
+				if edge.Target == node.ID {
+					nodeMessages = append(nodeMessages, sourceMessages(values, edge)...)
+				}
+			}
+			nodeMessages = trimFlowMessages(nodeMessages, flowTrimMode(node), flowTrimCount(node))
+			step.Output = fmt.Sprintf("messages[%d]", len(nodeMessages))
 		case "join":
 			step.Label = "拼接和复制"
 			step.Output = joinFlowInputs(inputs, flowJoinSeparator(node))
@@ -146,6 +157,9 @@ func (s *Service) TestFlow(ctx context.Context, flowAgent config.Agent, message,
 		values[flowKey(node.ID, "out")] = flowValue{Text: step.Output, Reasoning: step.Reasoning}
 		if node.Type == "history" {
 			values[flowKey(node.ID, "out")] = flowValue{Text: "[]", Messages: []providers.ChatMessage{}}
+		}
+		if node.Type == "trim" {
+			values[flowKey(node.ID, "out")] = flowValue{Text: step.Output, Messages: nodeMessages}
 		}
 		if node.Type == "join" {
 			for _, port := range flowJoinOutputs(node) {
@@ -201,6 +215,58 @@ func sourceMessages(values map[string]flowValue, edge flowEdge) []providers.Chat
 		value = values[flowKey(edge.Source, "out")]
 	}
 	return value.Messages
+}
+
+func flowTrimMode(node flowNode) string {
+	if mode, ok := node.Data["mode"].(string); ok {
+		switch mode {
+		case "tail", "head", "drop-head", "drop-tail":
+			return mode
+		}
+	}
+	return "tail"
+}
+
+func flowTrimCount(node flowNode) int {
+	switch value := node.Data["count"].(type) {
+	case float64:
+		if value >= 1 && value == float64(int(value)) {
+			return int(value)
+		}
+	case int:
+		if value >= 1 {
+			return value
+		}
+	}
+	return 10
+}
+
+// trimFlowMessages 是裁剪节点唯一的语义：count 永远按“条”算，不猜 token。
+func trimFlowMessages(messages []providers.ChatMessage, mode string, count int) []providers.ChatMessage {
+	if count < 1 || len(messages) == 0 {
+		return messages
+	}
+	switch mode {
+	case "head":
+		if len(messages) > count {
+			return messages[:count]
+		}
+	case "drop-head":
+		if len(messages) > count {
+			return messages[count:]
+		}
+		return nil
+	case "drop-tail":
+		if len(messages) > count {
+			return messages[:len(messages)-count]
+		}
+		return nil
+	default: // tail
+		if len(messages) > count {
+			return messages[len(messages)-count:]
+		}
+	}
+	return messages
 }
 
 func joinFlowInputs(inputs []string, separator string) string {
@@ -302,6 +368,11 @@ func validateTestGraph(graph flowGraph) error {
 		}
 		seen[node.ID] = true
 		counts[node.Type]++
+		switch node.Type {
+		case "input", "history", "trim", "llm", "join", "output":
+		default:
+			return fmt.Errorf("不认识的节点类型：%s", node.Type)
+		}
 	}
 	if counts["input"] != 1 {
 		return errors.New("流程图需要恰好一个输入节点")
@@ -310,6 +381,31 @@ func validateTestGraph(graph flowGraph) error {
 		return errors.New("流程图需要恰好一个输出节点")
 	}
 	for _, node := range graph.Nodes {
+		if node.Type == "trim" {
+			rawCount, ok := node.Data["count"]
+			if ok {
+				switch value := rawCount.(type) {
+				case float64:
+					if value < 1 || value != float64(int(value)) {
+						return fmt.Errorf("裁剪节点 %s 的条数必须是正整数", node.ID)
+					}
+				case int:
+					if value < 1 {
+						return fmt.Errorf("裁剪节点 %s 的条数必须是正整数", node.ID)
+					}
+				default:
+					return fmt.Errorf("裁剪节点 %s 的条数必须是正整数", node.ID)
+				}
+			}
+			if mode, ok := node.Data["mode"]; ok && mode != nil {
+				text, _ := mode.(string)
+				switch text {
+				case "tail", "head", "drop-head", "drop-tail":
+				default:
+					return fmt.Errorf("裁剪节点 %s 的裁剪方式不合法", node.ID)
+				}
+			}
+		}
 		if node.Type == "join" {
 			outputs := flowJoinOutputs(node)
 			seenPorts := map[string]bool{}
