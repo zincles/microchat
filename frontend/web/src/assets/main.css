@@ -1857,6 +1857,11 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-history-input { position: relative; display: flex; align-items: center; margin-top: 0.45em;
   padding-left: 0.8em; color: var(--flow-history); font-size: var(--md-type-label-small); }
 .flow-history-input .vue-flow__handle-left { left: 0; }
+.flow-join-inputs { display: flex; flex-direction: column; gap: 0.15em; margin-top: 0.35em; }
+.flow-join-row { position: relative; display: flex; align-items: center; min-height: 1.65em;
+  padding-left: 0.8em; color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
+.flow-join-row .vue-flow__handle-left { left: 0; }
+.flow-add-join { align-self: flex-start; margin-top: 0.1em; }
 /* LLM 的两个出口：思考 / 正文。Handle 放在各自行尾，连线不会叠在同一个点上。 */
 .flow-llm-outputs { margin-top: 0.45em; border-top: 1px solid var(--md-outline-variant); padding-top: 0.25em; }
 .flow-llm-output-row { position: relative; display: flex; justify-content: flex-end; align-items: center;

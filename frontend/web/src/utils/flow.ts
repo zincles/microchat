@@ -8,6 +8,42 @@ import type { FlowEdge, FlowGraph, FlowNode } from "../api/types.ts";
 export const FLOW_VERSION = 1;
 export const FLOW_NODE_TYPES = ["input", "history", "llm", "join", "output"] as const;
 export type FlowNodeType = (typeof FLOW_NODE_TYPES)[number];
+export type FlowDataType = "string" | "messages";
+
+const norm = (handle?: string, fallback = "out"): string => handle || fallback;
+
+// 端口类型是连接校验的唯一依据：字符串只能接字符串，history/messages[] 只能接 history 端口。
+export function flowSourceType(node: FlowNode | undefined, handle?: string): FlowDataType | null {
+  if (!node) return null;
+  const h = norm(handle, "out");
+  switch (node.type) {
+    case "input":
+    case "join":
+      return h === "out" ? "string" : null;
+    case "history":
+      return h === "out" ? "messages" : null;
+    case "llm":
+      return h === "text" || h === "reasoning" ? "string" : null;
+    default:
+      return null;
+  }
+}
+
+export function flowTargetType(node: FlowNode | undefined, handle?: string): FlowDataType | null {
+  if (!node) return null;
+  const h = norm(handle, "in");
+  switch (node.type) {
+    case "llm":
+      if (h === "history") return "messages";
+      return h.startsWith("prompt-") ? "string" : null;
+    case "join":
+      return h.startsWith("in-") ? "string" : null;
+    case "output":
+      return h === "in" ? "string" : null;
+    default:
+      return null;
+  }
+}
 
 export function emptyFlowGraph(): FlowGraph {
   return {
@@ -72,9 +108,35 @@ export function flowIssues(graph: FlowGraph): string[] {
       }
     }
   }
+  for (const node of nodes) {
+    if (node.type === "join") {
+      const inputs = Array.isArray(node.data?.inputs) ? node.data.inputs : ["in-1", "in-2"];
+      const seenInputs = new Set<string>();
+      for (const input of inputs) {
+        const id = String(input ?? "").trim();
+        if (!id || seenInputs.has(id)) issues.push("拼接节点有空的或重复的输入端口");
+        seenInputs.add(id);
+      }
+      if (!inputs.length) issues.push("拼接节点至少需要一个输入端口");
+    }
+  }
+  const usedSources = new Set<string>();
+  const usedTargets = new Set<string>();
   for (const edge of edges) {
     if (!byId.has(edge.source) || !byId.has(edge.target)) issues.push("有连线指向不存在的节点");
     if (edge.source === edge.target) issues.push("节点不能连到自己");
+    const sourceHandle = edge.sourceHandle || "out";
+    const targetHandle = edge.targetHandle || (byId.get(edge.target)?.type === "output" ? "in" : "in");
+    const sourceKey = `${edge.source}\0${sourceHandle}`;
+    const targetKey = `${edge.target}\0${targetHandle}`;
+    if (usedSources.has(sourceKey)) issues.push("一个出口只能接一条线（要多路请用拼接节点）");
+    if (usedTargets.has(targetKey)) issues.push("一个入口只能接一条线（要多路请用拼接节点）");
+    usedSources.add(sourceKey);
+    usedTargets.add(targetKey);
+    const st = flowSourceType(byId.get(edge.source), sourceHandle);
+    const tt = flowTargetType(byId.get(edge.target), targetHandle);
+    if (!st || !tt) issues.push("连线指向了不存在的端口");
+    else if (st !== tt) issues.push(`端口类型不匹配：${st} → ${tt}`);
   }
   const output = nodes.find((n) => n.type === "output");
   if (output && !edges.some((e) => e.target === output.id)) issues.push("输出节点还没有输入");

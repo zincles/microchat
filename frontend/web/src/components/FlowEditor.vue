@@ -17,7 +17,7 @@ import { VBtn, VTextField } from "vuetify/components";
 import { ICONS } from "./icons.ts";
 import { sharedApi } from "../utils/prefs.ts";
 import FlowNode from "./FlowNode.vue";
-import { emptyFlowGraph, flowDebugSteps, flowIssues, normalizeFlowGraph } from "../utils/flow.ts";
+import { emptyFlowGraph, flowDebugSteps, flowIssues, flowSourceType, flowTargetType, normalizeFlowGraph } from "../utils/flow.ts";
 import type { FlowEdge, FlowGraph, FlowNode as FlowNodeData } from "../api/types.ts";
 
 const props = withDefaults(defineProps<{
@@ -105,25 +105,29 @@ function addNode(type: "input" | "history" | "llm" | "join" | "output"): void {
     position: { x: 40 + (index % 2) * 240, y: 80 + Math.floor(index / 2) * 160 },
     data: type === "llm"
       ? { prompts: [{ id: `p-${Date.now().toString(36)}`, role: "system", content: "" }] }
-      : {},
+      : type === "join" ? { inputs: ["in-1", "in-2"] } : {},
   }];
   fitAfterResize();
 }
 
-function allowed(sourceType?: string, targetType?: string): boolean {
-  const map: Record<string, string[]> = {
-    input: ["llm", "join"],
-    history: ["llm"],
-    llm: ["llm", "join", "output"],
-    join: ["llm", "output"],
-  };
-  return !!sourceType && !!targetType && (map[sourceType]?.includes(targetType) ?? false);
+function isHandleUsed(direction: "source" | "target", nodeID: string, handle: string): boolean {
+  return edges.value.some((e) => direction === "source"
+    ? e.source === nodeID && (e.sourceHandle || "out") === handle
+    : e.target === nodeID && (e.targetHandle || "in") === handle);
 }
 function isValidConnection(connection: Connection): boolean {
   if (!connection.source || !connection.target || connection.source === connection.target) return false;
   const source = nodes.value.find((n) => n.id === connection.source);
   const target = nodes.value.find((n) => n.id === connection.target);
-  return allowed(source?.type, target?.type);
+  const sourceHandle = connection.sourceHandle || "out";
+  const targetHandle = connection.targetHandle || "in";
+  const st = flowSourceType(source, sourceHandle);
+  const tt = flowTargetType(target, targetHandle);
+  if (!st || !tt || st !== tt) return false;
+  // 一个端点只允许一条线；需要多路输入时用 join 节点的多个输入孔。
+  if (isHandleUsed("source", connection.source, sourceHandle)) return false;
+  if (isHandleUsed("target", connection.target, targetHandle)) return false;
+  return true;
 }
 function onConnect(connection: Connection): void {
   if (!isValidConnection(connection)) return;

@@ -33,6 +33,9 @@ const hint = computed(() => ({
   output: "最终结果写入聊天",
 }[props.type] ?? ""));
 const prompts = computed<PromptEntry[]>(() => Array.isArray(props.data.prompts) ? props.data.prompts : []);
+const joinInputs = computed<string[]>(() => Array.isArray(props.data.inputs) && props.data.inputs.length
+  ? props.data.inputs
+  : ["in-1", "in-2"]);
 const roles = [
   { title: "system", value: "system" },
   { title: "user", value: "user" },
@@ -45,6 +48,12 @@ function addPrompt(): void {
 function removePrompt(id: string): void {
   props.data.prompts = (props.data.prompts ?? []).filter((p: PromptEntry) => p.id !== id);
 }
+function addJoinInput(): void {
+  const inputs = [...joinInputs.value];
+  let n = inputs.length + 1;
+  while (inputs.includes(`in-${n}`)) n++;
+  props.data.inputs = [...inputs, `in-${n}`];
+}
 </script>
 
 <template>
@@ -54,7 +63,7 @@ function removePrompt(id: string): void {
     @mouseenter="hovered = true"
     @mouseleave="hovered = false"
   >
-    <Handle v-if="type === 'join' || type === 'output'" id="in" type="target" :position="Position.Left" />
+    <Handle v-if="type === 'output'" id="in" type="target" :position="Position.Left" />
     <div class="flow-node-head">
       <span class="flow-node-title">{{ label }}</span>
       <span class="flow-node-hint">{{ hint }}</span>
@@ -96,7 +105,13 @@ function removePrompt(id: string): void {
       <VBtn variant="text" size="small" type="button" class="flow-add-prompt nodrag nopan" @click="addPrompt">＋ 添加 Prompt</VBtn>
     </div>
     <div v-if="type === 'history'" class="flow-node-body">来自真实会话的历史 messages</div>
-    <div v-if="type === 'join'" class="flow-node-body">多路文本 → 一段文本</div>
+    <div v-if="type === 'join'" class="flow-join-inputs">
+      <div v-for="(input, i) in joinInputs" :key="input" class="flow-join-row">
+        <Handle :id="input" type="target" :position="Position.Left" />
+        <span>输入 {{ i + 1 }}</span>
+      </div>
+      <VBtn variant="text" size="small" type="button" class="flow-add-join nodrag nopan" @click="addJoinInput">＋ 添加输入</VBtn>
+    </div>
     <div v-if="hovered && data.test" class="flow-node-test" role="tooltip">
       <b>测试 I/O</b>
       <span class="flow-node-test-label">输入</span>
