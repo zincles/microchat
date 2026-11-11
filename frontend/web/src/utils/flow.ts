@@ -35,7 +35,7 @@ export function flowTargetType(node: FlowNode | undefined, handle?: string): Flo
   const h = norm(handle, "in");
   switch (node.type) {
     case "llm":
-      if (h === "history") return "messages";
+      if (h.startsWith("history-")) return "messages";
       return h.startsWith("prompt-") ? "string" : null;
     case "join":
       return h.startsWith("in-") ? "string" : null;
@@ -101,9 +101,11 @@ export function flowIssues(graph: FlowGraph): string[] {
       const seen = new Set<string>();
       for (const prompt of prompts) {
         const id = String(prompt?.id ?? "").trim();
-        if (!id || seen.has(id)) issues.push("LLM 节点里有空 id 或重复的 Prompt");
+        if (!id || seen.has(id)) issues.push("LLM 节点里有空 id 或重复的 Prompt/历史条目");
         seen.add(id);
-        if (!["system", "user", "assistant"].includes(String(prompt?.role ?? ""))) {
+        const kind = String(prompt?.kind ?? "prompt");
+        if (kind !== "prompt" && kind !== "history") issues.push("LLM 条目类型只能是 prompt 或 history");
+        if (kind !== "history" && !["system", "user", "assistant"].includes(String(prompt?.role ?? ""))) {
           issues.push("Prompt 条目的 role 只能是 system / user / assistant");
         }
       }

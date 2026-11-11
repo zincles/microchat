@@ -18,7 +18,7 @@ import { ICONS } from "./icons.ts";
 import { sharedApi } from "../utils/prefs.ts";
 import FlowNode from "./FlowNode.vue";
 import { emptyFlowGraph, flowDebugSteps, flowIssues, flowSourceType, flowTargetType, normalizeFlowGraph } from "../utils/flow.ts";
-import type { FlowEdge, FlowGraph, FlowNode as FlowNodeData } from "../api/types.ts";
+import type { FlowEdge, FlowGraph, FlowNode as FlowNodeData, ModelListItem } from "../api/types.ts";
 
 const props = withDefaults(defineProps<{
   graph?: FlowGraph | null;
@@ -60,6 +60,8 @@ const debugSteps = computed(() => flowDebugSteps(toGraph()));
 const testMessage = ref("");
 const testStatus = ref("");
 const testing = ref(false);
+const models = ref<ModelListItem[]>([]);
+provide("flowModels", models);
 const nodeRows = computed(() => nodes.value.map((n) => ({
   id: String(n.id),
   type: String(n.type),
@@ -88,7 +90,10 @@ function removeNode(id: string): void {
   nodes.value = nodes.value.filter((n) => n.id !== id);
 }
 provide("flowRemoveNode", removeNode);
-onMounted(fitAfterResize);
+onMounted(async () => {
+  fitAfterResize();
+  try { models.value = await api.models(); } catch { /* 模型清单拿不到时只留“跟随默认模型” */ }
+});
 const inputExists = computed(() => nodes.value.some((n) => n.type === "input"));
 const outputExists = computed(() => nodes.value.some((n) => n.type === "output"));
 let seq = 0;

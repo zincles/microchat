@@ -1830,7 +1830,6 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-node-output { border-right: 3px solid var(--flow-string); }
 .flow-node-history { border-left: 3px solid var(--flow-history); }
 .flow-canvas .flow-node-history .vue-flow__handle { background: var(--flow-history) !important; }
-.flow-canvas .flow-node .flow-history-input .vue-flow__handle { background: var(--flow-history) !important; }
 .flow-canvas .flow-node .vue-flow__handle { width: 10px; height: 10px;
   border: 2px solid var(--md-surface-container-high); background: var(--md-primary) !important; }
 .flow-canvas .flow-node .vue-flow__handle:hover { background: var(--md-secondary) !important; }
@@ -1875,8 +1874,17 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 
 /* LLM 节点：一张 messages 列表，每条 Prompt 自己带 role 和左侧输入孔。 */
 .flow-node-llm { min-width: 280px; max-width: 330px; }
+.flow-llm-model { display: flex; flex-direction: column; gap: 0.15em; margin-top: 0.4em;
+  color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
+.flow-llm-model .v-field__input { font-size: var(--md-type-label-small); }
 .flow-prompt-list { margin-top: 0.45em; display: flex; flex-direction: column; gap: 0.35em;
   max-height: 19em; overflow-y: auto; overscroll-behavior: contain; }
+.flow-prompt-add-row { display: flex; gap: 0.2em; flex-wrap: wrap; }
+.flow-prompt-history { position: relative; min-height: 2em; padding: 0.35em 0.1em 0.35em 0.8em;
+  border-top: 1px solid var(--md-outline-variant); display: flex; align-items: center; gap: 0.4em; }
+.flow-prompt-history:first-child { border-top: 0; }
+.flow-history-label { flex: 1 1 auto; color: var(--flow-history); font-size: var(--md-type-label-small); }
+.flow-prompt-history .vue-flow__handle-left { left: 0; }
 .flow-prompt-row { position: relative; padding: 0.35em 0.1em 0.4em 0.8em;
   border-top: 1px solid var(--md-outline-variant); }
 .flow-prompt-row:first-child { border-top: 0; }
@@ -1889,10 +1897,8 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-prompt-del:hover { color: var(--md-error); }
 .flow-add-prompt { align-self: flex-start; margin-top: 0.1em; }
 .flow-prompt-row .vue-flow__handle-left { left: 0; }
-/* LLM 节点顶部的 history 输入：黄色，接受 messages[] 而不是裸字符串。 */
-.flow-history-input { position: relative; display: flex; align-items: center; margin-top: 0.45em;
-  padding-left: 0.8em; color: var(--flow-history); font-size: var(--md-type-label-small); }
-.flow-history-input .vue-flow__handle-left { left: 0; }
+/* LLM 里的历史条目：黄色，接受 messages[] 而不是裸字符串。 */
+.flow-prompt-history .vue-flow__handle { background: var(--flow-history) !important; }
 .flow-join-inputs { display: flex; flex-direction: column; gap: 0.15em; margin-top: 0.35em; }
 .flow-join-row { position: relative; display: flex; align-items: center; min-height: 1.65em;
   padding-left: 0.8em; color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }

@@ -381,8 +381,9 @@ delete(AA)           # 删除
   `input / llm / join / output`；编辑器用 Vue Flow（`@vue-flow/core`）。
   **LLM 节点不绑定 Agent**：它内部是一张手动组装的消息列表，每个 Prompt 条目有
   `role`（system / user / assistant）、手写正文，以及一个自己的左侧输入孔；
-  多条 Prompt 的左边可以分别接不同上游。LLM 节点顶部另有 **history 输入**（黄色，
-  接 `history` 节点输出的 messages[]），右侧有**两个出口**：
+  Prompt 列表里还可以插入 **历史条目**（黄色，接 `history` 节点输出的 messages[]），
+  位置由用户在列表里的顺序决定；另有 **AI 模型选择框**（空 = 跟随默认模型），
+  LLM 节点数据存 `provider` / `model`。右侧有**两个出口**：
   `reasoning`（思考）与 `text`（正文），下游可以分别接线。
   数据类型的颜色是硬约定：**蓝色 = 裸字符串**（输入/拼接和复制/输出与 Prompt 输入），
   **黄色 = 历史 messages[]**（history 节点与它的边、LLM 的 history 端口）。
@@ -398,7 +399,8 @@ delete(AA)           # 删除
   节点右上角也有删除键；删除节点时连同所有相连边一起删。从已连接的口子开始拖 = 重连旧线：
   拖到空白删掉旧线，拖到别的端口则旧线被新线替换（每个端口仍只保留一条线）。
   编辑器有 **网页全屏**、**调试** 与 **测试**：调试是结构预演（不调模型）；测试会调
-  `POST /agents/{id}/flow/test`，按 Prompt 条目真实组装 messages 并调用上游，返回每步输入/输出（含 reasoning），
+  `POST /agents/{id}/flow/test`，按 Prompt/历史条目真实组装 messages 并调用上游
+  （LLM 节点选了模型就用节点的 provider/model，否则用 config defaults），返回每步输入/输出（含 reasoning），
   鼠标悬停**或选中**节点即可看该节点的测试 I/O（选中后持久显示，方便对比）。测试不建会话、不落库；真正会话语义尚未接线，
   FlowAgent 会出现在智能体列表里编辑，但会话的助手选择器先过滤掉它。
   **`preset_id`（2026-11-10）**：绑定一份 `tavern_presets` 原始预设（空 = 不绑定）。绑定时

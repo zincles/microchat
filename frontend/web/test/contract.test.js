@@ -470,14 +470,14 @@ test("智能体列表：名称|标识|类型|描述|是否默认", () => {
 test("FlowAgent：端口有类型，且每个端点只许一条线", () => {
   const input = { id: "in", type: "input", position: { x: 0, y: 0 }, data: {} };
   const history = { id: "h", type: "history", position: { x: 0, y: 0 }, data: {} };
-  const llm = { id: "l", type: "llm", position: { x: 0, y: 0 }, data: { prompts: [{ id: "p1", role: "system", content: "x" }] } };
+  const llm = { id: "l", type: "llm", position: { x: 0, y: 0 }, data: { prompts: [{ id: "p1", role: "system", content: "x" }, { id: "h1", kind: "history" }] } };
   const join = { id: "j", type: "join", position: { x: 0, y: 0 }, data: { inputs: ["in-1", "in-2"] } };
   assert.equal(flowSourceType(input, "out"), "string");
   assert.equal(flowSourceType(history, "out"), "messages");
   assert.equal(flowSourceType(llm, "reasoning"), "string");
   assert.equal(flowSourceType(llm, "text"), "string");
   assert.equal(flowSourceType(join, "out-1"), "string");
-  assert.equal(flowTargetType(llm, "history"), "messages");
+  assert.equal(flowTargetType(llm, "history-h1"), "messages");
   assert.equal(flowTargetType(llm, "prompt-p1"), "string");
   assert.equal(flowTargetType(join, "in-1"), "string");
   const graph = {
@@ -485,7 +485,7 @@ test("FlowAgent：端口有类型，且每个端点只许一条线", () => {
     nodes: [input, history, llm, join, { id: "out", type: "output", position: { x: 0, y: 0 }, data: {} }],
     edges: [
       { id: "e1", source: "in", target: "l", targetHandle: "prompt-p1" },
-      { id: "e2", source: "h", target: "l", targetHandle: "history" },
+      { id: "e2", source: "h", target: "l", targetHandle: "history-h1" },
       { id: "e3", source: "l", sourceHandle: "text", target: "j", targetHandle: "in-1" },
       { id: "e4", source: "l", sourceHandle: "reasoning", target: "j", targetHandle: "in-2" },
       { id: "e5", source: "j", target: "out" },
@@ -519,7 +519,7 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(flowNode, /hovered \|\| selected/, "选中节点时调试信息不会持久显示");
   assert.match(flowNode, /class="flow-node-delete/, "节点没有删除按钮");
   assert.match(flowNode, /id="reasoning"/, "LLM 节点没有思考出口");
-  assert.match(flowNode, /id="history"/, "LLM 节点没有 history 输入");
+  assert.match(flowNode, /history-\$\{prompt\.id\}/, "LLM 节点没有历史条目输入孔");
   assert.match(flowNode, /拼接和复制/, "拼接节点没有改名为拼接和复制");
   assert.match(flowNode, /class="flow-join-inputs"/, "拼接和复制节点没有多输入端口");
   assert.match(flowNode, /addJoinInput/, "拼接节点不能增加输入端口");
@@ -527,7 +527,9 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(flowNode, /class="flow-join-outputs"/, "拼接节点没有输出端口区");
   assert.match(flowNode, /joinSeparator/, "拼接节点没有分隔符设置");
   assert.match(flowNode, /分隔符/, "拼接节点没有分隔符标签");
-  assert.match(flowNode, /class="flow-history-input"/, "history 输入没有独立标签/端口");
+  assert.match(flowNode, /flow-prompt-history/, "history 条目没有独立外观");
+  assert.match(flowNode, /addHistory/, "LLM 节点不能添加历史条目");
+  assert.match(flowNode, /flow-llm-model/, "LLM 节点没有 AI 模型选择框");
   assert.match(flowNode, /id="text"/, "LLM 节点没有正文出口");
   assert.match(flowNode, /每行自己的左侧输入孔|prompt-\$\{prompt\.id\}/, "Prompt 条目没有独立输入孔");
   assert.ok(flowDebugSteps(emptyFlowGraph()).length >= 2, "空图没有调试步骤");

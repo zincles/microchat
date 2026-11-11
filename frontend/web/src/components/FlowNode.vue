@@ -1,9 +1,10 @@
 <script setup lang="ts">
 // FlowAgent 编辑器的节点外壳：输入 / 调用 LLM / 拼接 / 输出。
 // LLM 节点内部是一张 **messages 列表**：每个 Prompt 条目有自己的 role 和左侧输入孔。
-import { computed, inject, ref } from "vue";
+import { computed, inject, ref, type Ref } from "vue";
 import { Handle, Position } from "@vue-flow/core";
 import { VBtn, VSelect, VTextarea } from "vuetify/components";
+import type { ModelListItem } from "../api/types.ts";
 import { DEFAULT_JOIN_SEPARATOR } from "../utils/flow.ts";
 
 const props = defineProps<{
@@ -15,6 +16,7 @@ const props = defineProps<{
 
 interface PromptEntry {
   id: string;
+  kind?: "prompt" | "history";
   role: "system" | "user" | "assistant";
   content: string;
 }
@@ -22,6 +24,7 @@ interface PromptEntry {
 const hovered = ref(false);
 // 删除回调由 FlowEditor 提供：它会在同一个动作里删节点 + 所有相连边。
 const removeNode = inject<(id: string) => void>("flowRemoveNode", () => {});
+const models = inject<Ref<ModelListItem[]>>("flowModels", ref([]));
 const label = computed(() => ({
   input: "输入",
   history: "历史数据",
@@ -37,6 +40,22 @@ const hint = computed(() => ({
   output: "最终结果写入聊天",
 }[props.type] ?? ""));
 const prompts = computed<PromptEntry[]>(() => Array.isArray(props.data.prompts) ? props.data.prompts : []);
+const modelOptions = computed(() => [
+  { title: "跟随默认模型", value: "" },
+  ...models.value.map((m) => ({
+    title: `${m.provider} / ${m.display_name || m.upstream_id}`,
+    value: `${m.provider}/${m.upstream_id}`,
+  })),
+]);
+const modelValue = computed({
+  get: () => props.data.provider && props.data.model ? `${props.data.provider}/${props.data.model}` : "",
+  set: (value: string) => {
+    const cut = value.indexOf("/");
+    if (cut < 0) { props.data.provider = ""; props.data.model = ""; return; }
+    props.data.provider = value.slice(0, cut);
+    props.data.model = value.slice(cut + 1);
+  },
+});
 const joinInputs = computed<string[]>(() => Array.isArray(props.data.inputs) && props.data.inputs.length
   ? props.data.inputs
   : ["in-1", "in-2"]);
@@ -54,7 +73,11 @@ const roles = [
 ];
 function addPrompt(): void {
   if (!Array.isArray(props.data.prompts)) props.data.prompts = [];
-  props.data.prompts.push({ id: `p-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`, role: "system", content: "" });
+  props.data.prompts.push({ id: `p-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`, kind: "prompt", role: "system", content: "" });
+}
+function addHistory(): void {
+  if (!Array.isArray(props.data.prompts)) props.data.prompts = [];
+  props.data.prompts.push({ id: `h-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`, kind: "history", role: "system", content: "" });
 }
 function removePrompt(id: string): void {
   props.data.prompts = (props.data.prompts ?? []).filter((p: PromptEntry) => p.id !== id);
@@ -87,41 +110,36 @@ function addJoinOutput(): void {
         @click.stop="removeNode(id)">×</button>
       <span class="flow-node-hint">{{ hint }}</span>
     </div>
-    <div v-if="type === 'llm'" class="flow-history-input">
-      <Handle id="history" type="target" :position="Position.Left" />
-      <span>历史消息</span>
-    </div>
+    <label v-if="type === 'llm'" class="flow-llm-model nodrag nopan">
+      <span>AI 模型</span>
+      <VSelect v-model="modelValue" :items="modelOptions" density="compact" variant="outlined" hide-details />
+    </label>
     <div v-if="type === 'llm'" class="flow-prompt-list">
-      <div v-for="prompt in prompts" :key="prompt.id" class="flow-prompt-row">
-        <Handle
-          :id="`prompt-${prompt.id}`"
-          type="target"
-          :position="Position.Left"
-          :style="{ top: '50%' }"
-        />
-        <div class="flow-prompt-head">
-          <VSelect
-            v-model="prompt.role"
-            class="flow-prompt-role nodrag nopan"
-            :items="roles"
-            density="compact"
-            variant="outlined"
-            hide-details
-          />
+      <div v-for="prompt in prompts" :key="prompt.id"
+        :class="prompt.kind === 'history' ? 'flow-prompt-history' : 'flow-prompt-row'">
+        <Handle v-if="prompt.kind === 'history'" :id="`history-${prompt.id}`" type="target" :position="Position.Left" :style="{ top: '50%' }" />
+        <Handle v-else :id="`prompt-${prompt.id}`" type="target" :position="Position.Left" :style="{ top: '50%' }" />
+        <template v-if="prompt.kind === 'history'">
+          <span class="flow-history-label">历史 messages[]</span>
           <VBtn icon variant="text" size="x-small" type="button" class="flow-prompt-del nodrag nopan"
-            title="删除这条 Prompt" aria-label="删除这条 Prompt" @click="removePrompt(prompt.id)">×</VBtn>
-        </div>
-        <VTextarea
-          v-model="prompt.content"
-          class="flow-prompt-content nodrag nopan"
-          rows="2"
-          density="compact"
-          variant="outlined"
-          hide-details
-          placeholder="手写这段 Prompt（也可以只接上游）"
-        />
+            title="删除这条历史" aria-label="删除这条历史" @click="removePrompt(prompt.id)">×</VBtn>
+        </template>
+        <template v-else>
+          <div class="flow-prompt-head">
+            <VSelect v-model="prompt.role" class="flow-prompt-role nodrag nopan"
+              :items="roles" density="compact" variant="outlined" hide-details />
+            <VBtn icon variant="text" size="x-small" type="button" class="flow-prompt-del nodrag nopan"
+              title="删除这条 Prompt" aria-label="删除这条 Prompt" @click="removePrompt(prompt.id)">×</VBtn>
+          </div>
+          <VTextarea v-model="prompt.content" class="flow-prompt-content nodrag nopan"
+            rows="2" density="compact" variant="outlined" hide-details
+            placeholder="手写这段 Prompt（也可以只接上游）" />
+        </template>
       </div>
-      <VBtn variant="text" size="small" type="button" class="flow-add-prompt nodrag nopan" @click="addPrompt">＋ 添加 Prompt</VBtn>
+      <div class="flow-prompt-add-row">
+        <VBtn variant="text" size="small" type="button" class="flow-add-prompt nodrag nopan" @click="addPrompt">＋ 添加 Prompt</VBtn>
+        <VBtn variant="text" size="small" type="button" class="flow-add-prompt nodrag nopan" @click="addHistory">＋ 添加历史</VBtn>
+      </div>
     </div>
     <div v-if="type === 'history'" class="flow-node-body">来自真实会话的历史 messages</div>
     <div v-if="type === 'join'" class="flow-join-inputs">

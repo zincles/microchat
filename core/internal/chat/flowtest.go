@@ -56,6 +56,7 @@ type flowEdge struct {
 
 type flowPrompt struct {
 	ID      string `json:"id"`
+	Kind    string `json:"kind,omitempty"` // "" / prompt / history
 	Role    string `json:"role"`
 	Content string `json:"content"`
 }
@@ -63,6 +64,7 @@ type flowPrompt struct {
 type flowValue struct {
 	Text      string
 	Reasoning string
+	Messages  []providers.ChatMessage
 }
 
 const defaultJoinSeparator = "\n\n---\n\n"
@@ -110,8 +112,8 @@ func (s *Service) TestFlow(ctx context.Context, flowAgent config.Agent, message,
 			step.Output = message
 		case "history":
 			step.Label = "历史数据"
-			// 测试接口没有会话上下文：历史节点只回一个明确的占位，不当成真实消息。
-			step.Output = "[会话历史 messages]"
+			// 测试接口没有会话上下文：历史节点只回一个明确的空 messages 块，不伪造历史。
+			step.Output = "[]"
 		case "join":
 			step.Label = "拼接和复制"
 			step.Output = joinFlowInputs(inputs, flowJoinSeparator(node))
@@ -120,7 +122,14 @@ func (s *Service) TestFlow(ctx context.Context, flowAgent config.Agent, message,
 			step.Output = joinFlowInputs(inputs, defaultJoinSeparator)
 		case "llm":
 			step.Label = "调用 LLM"
-			text, reasoning, callErr := s.testLLMCall(ctx, node, graph.Edges, values, provider, modelID, providersConfig)
+			nodeProvider, nodeModel := provider, modelID
+			if value, ok := node.Data["provider"].(string); ok && strings.TrimSpace(value) != "" {
+				nodeProvider = strings.TrimSpace(value)
+			}
+			if value, ok := node.Data["model"].(string); ok && strings.TrimSpace(value) != "" {
+				nodeModel = strings.TrimSpace(value)
+			}
+			text, reasoning, callErr := s.testLLMCall(ctx, node, graph.Edges, values, nodeProvider, nodeModel, providersConfig)
 			if callErr != nil {
 				step.Error = callErr.Error()
 				steps = append(steps, step)
@@ -135,6 +144,9 @@ func (s *Service) TestFlow(ctx context.Context, flowAgent config.Agent, message,
 			return FlowTestResult{Steps: steps}, err
 		}
 		values[flowKey(node.ID, "out")] = flowValue{Text: step.Output, Reasoning: step.Reasoning}
+		if node.Type == "history" {
+			values[flowKey(node.ID, "out")] = flowValue{Text: "[]", Messages: []providers.ChatMessage{}}
+		}
 		if node.Type == "join" {
 			for _, port := range flowJoinOutputs(node) {
 				values[flowKey(node.ID, port)] = flowValue{Text: step.Output}
@@ -183,6 +195,14 @@ func flowJoinSeparator(node flowNode) string {
 	return defaultJoinSeparator
 }
 
+func sourceMessages(values map[string]flowValue, edge flowEdge) []providers.ChatMessage {
+	value, ok := values[flowKey(edge.Source, edge.SourceHandle)]
+	if !ok {
+		value = values[flowKey(edge.Source, "out")]
+	}
+	return value.Messages
+}
+
 func joinFlowInputs(inputs []string, separator string) string {
 	parts := make([]string, 0, len(inputs))
 	for _, input := range inputs {
@@ -212,6 +232,15 @@ func (s *Service) testLLMCall(ctx context.Context, node flowNode, edges []flowEd
 	}
 	messages := make([]providers.ChatMessage, 0, len(prompts))
 	for _, prompt := range prompts {
+		if prompt.Kind == "history" {
+			handle := "history-" + prompt.ID
+			for _, edge := range edges {
+				if edge.Target == node.ID && edge.TargetHandle == handle {
+					messages = append(messages, sourceMessages(values, edge)...)
+				}
+			}
+			continue
+		}
 		role := strings.TrimSpace(prompt.Role)
 		if role != "system" && role != "user" && role != "assistant" {
 			return "", "", fmt.Errorf("Prompt %s 的 role 不合法：%s", prompt.ID, prompt.Role)
@@ -310,7 +339,10 @@ func validateTestGraph(graph flowGraph) error {
 				return fmt.Errorf("LLM 节点 %s 有空的或重复的 Prompt id", node.ID)
 			}
 			seenPrompts[prompt.ID] = true
-			if prompt.Role != "system" && prompt.Role != "user" && prompt.Role != "assistant" {
+			if prompt.Kind != "" && prompt.Kind != "prompt" && prompt.Kind != "history" {
+				return fmt.Errorf("Prompt %s 的 kind 不合法：%s", prompt.ID, prompt.Kind)
+			}
+			if prompt.Kind != "history" && prompt.Role != "system" && prompt.Role != "user" && prompt.Role != "assistant" {
 				return fmt.Errorf("Prompt %s 的 role 只能是 system / user / assistant", prompt.ID)
 			}
 		}
