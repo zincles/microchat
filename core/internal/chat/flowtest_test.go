@@ -334,7 +334,7 @@ func TestExecuteFlowReportsActiveNode(t *testing.T) {
 	var events []string
 	if _, err := h.service.executeFlowGraph(context.Background(), graph, flowRunOptions{
 		DefaultProvider: "dummy", DefaultModel: "dummy", ProvidersConfig: dummyProviders(),
-		OnNode: func(id, _ string, phase string) { events = append(events, id+":"+phase) },
+		OnNode: func(node flowNode, phase string) { events = append(events, node.ID+":"+phase) },
 	}); err != nil {
 		t.Fatal(err)
 	}

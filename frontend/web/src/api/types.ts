@@ -590,11 +590,20 @@ export interface FlowTestResult {
   steps: FlowTestStep[];
 }
 
+export interface FlowActiveNode {
+  id: string;
+  label: string;
+  provider?: string;
+  model?: string;
+  started_at: number;
+}
+
 export interface FlowRunTrace {
   session_id: string;
   status: "running" | "done" | "error" | "canceled";
   active_node_id?: string;
   active_llm_calls?: number;
+  active_nodes?: FlowActiveNode[];
   final?: string;
   started_at: number;
   duration_ms: number;

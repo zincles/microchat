@@ -31,7 +31,7 @@ import {
   parseModelKey,
 } from "../utils/format.ts";
 import type { ModelChoice, ModelGroup } from "../utils/format.ts";
-import type { ContextUsage, MacroReport, Queue, Session, TaskBoard, TaskRecord } from "../api/types.ts";
+import type { ContextUsage, FlowActiveNode, MacroReport, Queue, Session, TaskBoard, TaskRecord } from "../api/types.ts";
 
 interface SessionInfo {
   id?: string;
@@ -65,12 +65,14 @@ const props = withDefaults(defineProps<{
   // flow：FlowAgent 暂不共用普通 Agent 的上下文面板 ⇒ 绿色环也停用（连任务浮板一起收）。
   flow?: boolean;
   flowCalls?: number;
+  flowActiveNodes?: FlowActiveNode[];
 }>(), {
   leftHidden: false,
   workspace: "chat",
   loading: false,
   flow: false,
   flowCalls: 0,
+  flowActiveNodes: () => [],
 });
 const emit = defineEmits<{
   "toggle-left": [];
@@ -253,7 +255,8 @@ const ctxArc = computed(() => contextArc(ctx.value));
 // dasharray="a b" 且 a+b=100 ⇒ 正好一道弧、没有第二道。
 const ctxDash = computed(() => `${ctxArc.value} ${100 - ctxArc.value}`);
 const ctxOver = computed(() => contextOverBudget(ctx.value));
-const flowCallCount = computed(() => props.flow ? Math.max(0, Number(props.flowCalls ?? 0)) : 0);
+const flowActiveNodes = computed(() => props.flow ? (props.flowActiveNodes ?? []) : []);
+const flowCallCount = computed(() => props.flow ? Math.max(0, Number(props.flowCalls ?? 0), flowActiveNodes.value.length) : 0);
 const ringBusy = computed(() => props.flow ? flowCallCount.value > 0 : taskBusy.value);
 const ringCount = computed(() => props.flow ? flowCallCount.value : activeTaskCount.value);
 const ringCountText = computed(() => ringCount.value > 99 ? "99+" : String(ringCount.value));
@@ -410,8 +413,12 @@ const ringTitle = computed(() => {
   return [formatStatusLine(status.value ?? {}), contextTitle(ctx.value), taskTitle.value].filter(Boolean).join("\n");
 });
 function clickRing(): void {
-  if (props.flow) { emit("select-workspace", "context"); return; }
+  if (props.flow) { ctxOpen.value = !ctxOpen.value; return; }
   toggleCtx();
+}
+function openWorkflow(): void {
+  ctxOpen.value = false;
+  emit("select-workspace", "context");
 }
 
 defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverridesSaved, setMacros });
@@ -524,6 +531,28 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
         <span v-if="ringCount > 0" class="ctx-ring-n">{{ ringCountText }}</span>
       </button>
     </span>
+    <template v-if="flow && ctxOpen">
+      <div class="agent-menu-backdrop" @click="ctxOpen = false"></div>
+      <VCard class="agent-menu ctx-menu flow-calls-menu" role="dialog" aria-label="并行 LLM 调用">
+        <div class="flow-calls-head">
+          <b>并行 LLM 调用</b>
+          <span class="flow-calls-count">{{ flowCallCount }} 个运行中</span>
+          <VBtn icon variant="text" size="small" type="button" title="关闭" aria-label="关闭" @click="ctxOpen = false">×</VBtn>
+        </div>
+        <p v-if="!flowActiveNodes.length" class="agent-empty">当前没有运行中的 LLM 调用。</p>
+        <VList v-else density="compact" class="flow-calls-list">
+          <VListItem v-for="node in flowActiveNodes" :key="node.id" class="flow-call-row">
+            <template #prepend><span class="flow-call-dot" aria-hidden="true"></span></template>
+            <div class="flow-call-text">
+              <b>{{ node.label }}</b>
+              <span>{{ node.id }}</span>
+              <small v-if="node.provider || node.model">{{ node.provider }}/{{ node.model }}</small>
+            </div>
+          </VListItem>
+        </VList>
+        <VBtn variant="text" size="small" type="button" class="flow-calls-open" @click="openWorkflow">打开工作流</VBtn>
+      </VCard>
+    </template>
     <template v-if="!flow && ctxOpen">
       <div class="agent-menu-backdrop" @click="ctxOpen = false"></div>
       <VCard class="agent-menu ctx-menu" :class="{ over: ctxOver }" role="dialog" aria-label="上下文与任务">

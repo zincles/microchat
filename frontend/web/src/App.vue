@@ -706,15 +706,19 @@ const agentGreeting = computed(() => {
 const currentAgent = computed(() => vueAgents.value.find((x) => x.id === sessionInfo.agent_id) ?? null);
 const currentAgentIsFlow = computed(() => currentAgent.value?.kind === "flow");
 const flowCalls = ref(0);
+const flowActiveNodes = ref<any[]>([]);
 let flowCallsTimer: ReturnType<typeof setInterval> | null = null;
 async function refreshFlowCalls(): Promise<void> {
-  if (draft || !sessionID || !currentAgentIsFlow.value) { flowCalls.value = 0; return; }
+  if (draft || !sessionID || !currentAgentIsFlow.value) { flowCalls.value = 0; flowActiveNodes.value = []; return; }
   const sid = sessionID;
   try {
     const trace = await api.flowRun(sid);
-    if (sid === sessionID) flowCalls.value = Number(trace?.active_llm_calls ?? (trace?.active_node_id ? 1 : 0));
+    if (sid === sessionID) {
+      flowCalls.value = Number(trace?.active_llm_calls ?? (trace?.active_node_id ? 1 : 0));
+      flowActiveNodes.value = trace?.active_nodes ?? [];
+    }
   } catch {
-    if (sid === sessionID) flowCalls.value = 0;
+    if (sid === sessionID) { flowCalls.value = 0; flowActiveNodes.value = []; }
   }
 }
 // 空草稿首屏的两格（2026-11-02）：当前助手名 + 会话模型。
@@ -2178,6 +2182,7 @@ onUnmounted(() => {
       :loading="loadingSession"
       :flow="currentAgentIsFlow"
       :flow-calls="flowCalls"
+      :flow-active-nodes="flowActiveNodes"
       @select-workspace="selectWorkspace"
       @save-overrides="saveRequestOverrides"
       @toggle-left="toggleLeft"

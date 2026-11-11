@@ -585,6 +585,10 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(topbar, /flowCalls\?:\s*number/, "顶栏没有 FlowAgent 活跃调用数");
   assert.match(topbar, /flowCallCount/, "环心没有使用活跃 LLM 调用数");
   assert.match(readFileSync(join(SRC, "App.vue"), "utf8"), /:flow-calls="flowCalls"/, "App 没把活跃调用数传给顶栏");
+  assert.match(readFileSync(join(SRC, "App.vue"), "utf8"), /:flow-active-nodes="flowActiveNodes"/, "App 没把活跃节点列表传给顶栏");
+  assert.match(topbar, /flow-calls-menu/, "FlowAgent 环没有独立弹出面板");
+  assert.match(topbar, /flowActiveNodes/, "环面板没有活跃 LLM 节点列表");
+  assert.match(topbar, /function clickRing\(\)[\s\S]*ctxOpen\.value = !ctxOpen\.value/, "FlowAgent 点环没有打开面板");
   assert.match(readFileSync(join(SRC, "App.vue"), "utf8"), /:flow="currentAgentIsFlow"/, "App 没把 FlowAgent 状态传给顶栏");
   const workspace = readFileSync(join(SRC, "components", "ContextWorkspace.vue"), "utf8");
   const app = readFileSync(join(SRC, "App.vue"), "utf8");

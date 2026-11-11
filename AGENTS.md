@@ -423,7 +423,7 @@ delete(AA)           # 删除
   FlowAgent 的顶栏工作区 tab 是 **聊天 / 工作流**；工作流页直接复用 `FlowEditor` 编辑当前 Agent 的图，
   改动约 0.7 秒防抖后 PATCH 回 `agents.json`（自动保存，不需要再进设置页）。
   工作流页每 700ms 读一次 `/flow/run`，右侧节点清单把 `active_node_id` 高亮成主色脉冲；
-  App 也每 700ms 读同一份轨迹，把 `active_llm_calls` 喂给顶栏环。当前执行器仍是
+  App 也每 700ms 读同一份轨迹，把 `active_llm_calls` / `active_nodes` 喂给顶栏环与弹出面板。当前执行器仍是
   **按拓扑序串行**跑节点（所以并发数通常为 0/1；并行调度是下一步，不是现状）。
   底部输入栏对 FlowAgent 隐藏「推理等级」与「工具」两个小面板（运行时不用这两个会话选项）。
   **FlowAgent 暂时不启用起标题 / 自动压缩等高级能力**（runFlow 不调 Titles/Compactor；
@@ -803,7 +803,7 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 | GET | `/sessions/{session_id}/context` | — | `ContextUsage` | 只有数字：`used_tokens`（估算）/ `budget_tokens` / `trigger_tokens` / `remaining_tokens` / `ctx_len` / `max_output` / `ratio` / `estimated` / `last_prompt_tokens` / `over_budget` |
 | GET | `/sessions/{session_id}/prompt` | — | `{"text","type"}` | **生效的系统提示词**（三级解析的**结果**，与出站拼装读同一处）：`type` = `conversation`（会话自己写了 `sessions.system_prompt`）/ `agent`（`agents.json` 里那个 agent 的）/ `builtin`（两级都没有 ⇒ 代码里的内置默认）。**永不给空**：解析全落空（典型：会话的 `agent_id` 软引用**悬空**）也退内置那句、`type` 报 `builtin`。**回拼装后的结果**（base + 追加段，见 agents.json 的 `segments`）|
 | GET | `/sessions/{session_id}/macros` | — | `{macros:[{name,aliases,description,value}], usage:[{name,count,known}], total}` | **已注册宏面板**（2026-11-10）：`macros` = 可用宏 + 当前值；`usage` = **生效系统提示词 + 全部消息正文**里每个 `{{…}}` 的出现次数（未知宏保留在统计里，`known:false`）。只读，不改任何东西 |
-| GET | `/sessions/{session_id}/flow/run` | — | `FlowRunTrace` | **FlowAgent 最近一次图执行**（进程内、覆盖式）：`status`（running/done/error/canceled）、`active_node_id`（正在执行的节点）、`active_llm_calls`（当前并发 LLM 调用数）、`final`、`duration_ms`、`steps`（每节点 input/output/error；LLM 节点另带 provider/model/usage/elapsed_ms/payload）。普通 Agent / 没跑过 ⇒ 404 |
+| GET | `/sessions/{session_id}/flow/run` | — | `FlowRunTrace` | **FlowAgent 最近一次图执行**（进程内、覆盖式）：`status`（running/done/error/canceled）、`active_node_id`（正在执行的节点）、`active_llm_calls`（当前并发 LLM 调用数）、`active_nodes`（节点/渠道/模型/开始时间）、`final`、`duration_ms`、`steps`（每节点 input/output/error；LLM 节点另带 provider/model/usage/elapsed_ms/payload）。普通 Agent / 没跑过 ⇒ 404 |
 | GET | `/sessions/{session_id}/status` | — | `TurnStatus` | `phase`（`idle`/`pending`/`streaming`/`error`）+ **`step`**（一轮 run 内第几个 assistant 模型轮，客户端据此切 live 气泡）+ `message_id` + `elapsed_ms` + `chars` + `thinking_chars` + `error` + **`tool`**（当前服务端工具 `{kind,state}`，正文一到就清）+ **`sources`**（搜索工具的 `action.sources`，按 URL 去重、正文到了也留着）。另搭两档**与轮次无关**的活状态：`compact`（`state`=`running`/`done`/`error` + `blocks`/`compacted`/`summary_id`/`from_idx`/`to_idx`/`merged` + `error`）与 `reroll`（`state` + `elapsed_ms` + `error`）|
 | GET | `/sessions/{session_id}/turn/text?from=N&think_from=M` | — | `StreamSlice` | 流式增量的**游标读**（正文与思考各一条游标，`from` = 第几个字符）：只服务动画 |
 | GET | `/sessions/{session_id}/turn/poll?from=N&think_from=M` | — | `{status, slice}` | **2026-11-03**：`status` 与 `turn/text` 合并成一发（远程/CF 少一个完整 RTT）。web 的 `pollTurn` 用它；`/status` 与 `/turn/text` 仍保留（重摇/前台对齐等旧调用） |
@@ -1248,8 +1248,9 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   2026-11-09（用户定）：环描边 3.2 → 4.0（稍微加粗）；浮板换成 **Vuetify `VCard` + `VTabs` + `VWindow` + `VProgressLinear` + `VList`**，宽度/高度都钉死（`min(24em, …)` / `min(23.5em, …)`）⇒ 切 tab 尺寸不变；外围 `padding: 1em`（`.agent-menu.ctx-menu` 双类，单类会被后文 `.agent-menu` 的 `0.25em 0` 盖掉）。内容超出时由 `VWindowItem` 里的 `.ctx-pane` 自己滚。
   面板文案要**严谨、专业**（2026-11-02 用户最终定：先嫌太机器，后嫌"还能装 / 给回复留的地方"太口语）：「请求体覆盖」页：JSON 输入省略外层 `{}`，`验证` 只本地检查，`保存` PATCH 到 `request_overrides`；每次主对话请求在**最后**浅合并（允许覆盖任何 key），上下文工作区的载荷预演与真发共用。
   「上下文」页用标准口径 —— `已用 766 / 995K`、`不到 0.1%`、`剩余可用`、`自动压缩阈值`、`上次实际用量`（数值带 `tokens`），预算一行写成 `输入预算 995,904 tokens = 上下文上限 1,000,000 − 输出预留 4,096`；
-  **FlowAgent**：绿色环重新启用，但圆心数字改为**当前并发运行的 LLM 调用数**（`active_llm_calls`），
-  有调用时环旋转；旧的节点级上下文明细仍不在这块面板里。状态行 `连接状态 / 当前助手 / 运行状态`，相位 `空闲 / 等待响应 / 生成中 / 出错`；任务种类 `刷新模型 / 对话 / 压缩 / 分段压缩 / 起标题 / 重摇 / 判断`（原始 `refresh_models` 不上屏），耗时 `0.4 秒 / 1 分 20 秒`，分组 `模型调用 / 其他任务`；空态 `当前无运行任务`。不写"还能装 / 给回复留的地方 / 没在跑"这类口语。
+  **FlowAgent**：绿色环重新启用，圆心数字 = **当前并发运行的 LLM 调用数**（`active_llm_calls`），
+  有调用时环旋转。点环打开**独立的 LLM 调用面板**（不切工作区）：列出 `active_nodes` 的节点/渠道/模型，
+  底部「打开工作流」才切到工作流页；旧的上下文明细不在这块面板里。状态行 `连接状态 / 当前助手 / 运行状态`，相位 `空闲 / 等待响应 / 生成中 / 出错`；任务种类 `刷新模型 / 对话 / 压缩 / 分段压缩 / 起标题 / 重摇 / 判断`（原始 `refresh_models` 不上屏），耗时 `0.4 秒 / 1 分 20 秒`，分组 `模型调用 / 其他任务`；空态 `当前无运行任务`。不写"还能装 / 给回复留的地方 / 没在跑"这类口语。
   没有上下文但有任务时，环给一小段 `18 82` 的弧（`ringDash`），否则空环转起来看不出来。
   ⚠ 环心数字包一层 `.ctx-ring-n`（字号 0.68em 单独一层）：尺寸与字号写同一个元素会叠乘。
   ⚠ **0 个时环心不显示数字**（2026-11-02 用户定「如果没有后台任务，中间不显示 0」）：环本身仍在、不转；有任务才出现数字。契约测试钉着 `v-if="activeTaskCount > 0"`（别用 `taskRunning`，队列也要算）。
