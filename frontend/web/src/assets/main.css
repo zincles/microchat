@@ -1783,7 +1783,14 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-debug-output { margin: 0.3em 0 0; padding: 0.4em 0.5em; border-radius: var(--r-xs);
   background: var(--md-surface-container-high); color: var(--md-on-surface);
   font-size: var(--md-type-label-small); line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
-.flow-canvas { --flow-string: var(--md-primary); --flow-history: #f2994a;
+.flow-canvas {
+  /* Vue Flow 的图元主题变量（边 / Handle / 节点底色）是图的唯一主题接口；
+   * Vuetify 只接管节点内部的表单控件（Vue Flow 没有等价物）。 */
+  --vf-node-bg: var(--md-surface-container);
+  --vf-node-text: var(--md-on-surface);
+  --vf-handle: var(--md-primary);
+  --vf-connection-path: var(--md-primary);
+  --flow-string: var(--vf-handle); --flow-history: #f2994a;
   height: min(54vh, 560px); min-height: 300px; border: 1px solid var(--md-outline-variant);
   border-radius: var(--md-shape-md); overflow: hidden; background: var(--md-surface-container-low); }
 .flow-canvas .vue-flow { background: var(--md-surface-container-low); }
@@ -1799,7 +1806,7 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-canvas .vue-flow__node:focus-visible .flow-node {
   border-color: var(--md-primary); box-shadow: 0 0 0 2px var(--md-primary);
 }
-.flow-canvas .vue-flow__edge-path { stroke: var(--flow-string); stroke-width: 1.5; }
+.flow-canvas .vue-flow__edge-path { stroke: var(--vf-connection-path); stroke-width: 1.5; }
 .flow-canvas .flow-edge-history .vue-flow__edge-path { stroke: var(--flow-history) !important; }
 .flow-canvas .flow-edge-text .vue-flow__edge-path { stroke: var(--flow-string) !important; }
 .flow-canvas .vue-flow__connection-path { stroke: var(--md-primary); stroke-width: 2; }
@@ -1836,7 +1843,7 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-canvas .flow-node.flow-node-trim .vue-flow__handle,
 .flow-canvas .flow-node.flow-node-merge .vue-flow__handle { background: var(--flow-history) !important; }
 .flow-canvas .flow-node .vue-flow__handle { z-index: 55; width: 12px; height: 12px;
-  border: 2px solid var(--md-surface-container-high); background: var(--md-primary) !important; }
+  border: 2px solid var(--md-surface-container-high); background: var(--vf-handle) !important; }
 .flow-canvas .flow-node .vue-flow__handle:hover { background: var(--md-secondary) !important; }
 .flow-node-body { margin-top: 0.35em; color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
 .flow-node-body code { color: var(--md-primary); font-size: 0.95em; }
@@ -1964,8 +1971,8 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
   --flow-node-soft: color-mix(in srgb, var(--md-primary) 14%, transparent);
   min-width: 200px; max-width: 260px; padding: 0.7em 0.75em 0.65em;
   border: 1px solid var(--md-outline-variant); border-left: 3px solid var(--flow-node-accent);
-  border-radius: var(--md-shape-md); background: var(--md-surface-container);
-  box-shadow: var(--md-elev-1);
+  border-radius: var(--md-shape-md); background: var(--vf-node-bg);
+  color: var(--vf-node-text); box-shadow: var(--md-elev-1);
 }
 .flow-node-llm { min-width: 300px; max-width: 460px; min-height: 16em; display: flex; flex-direction: column; }
 .flow-node-llm .flow-prompt-list { flex: 1 1 auto; min-height: 0; max-height: none; }
