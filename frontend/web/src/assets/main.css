@@ -1741,6 +1741,13 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 /* 网页全屏：编辑器自己铺满 #app，tabs/返回键留给设置视图；只展开画布这块。 */
 .flow-editor.expanded { position: fixed; inset: 0; z-index: 2000; max-width: none; width: auto;
   height: 100%; padding: 1em 1.1em; background: var(--md-surface); overflow: hidden; }
+/* 全屏时画布吃掉剩余高度：toolbar/test bar/hints 是 flex:none，flow-main 才是 flex:1。 */
+.flow-editor.expanded > .flow-toolbar,
+.flow-editor.expanded > .flow-test-bar,
+.flow-editor.expanded > .hint,
+.flow-editor.expanded > .flow-issues,
+.flow-editor.expanded > .flow-ok { flex: none; }
+.flow-editor.expanded .flow-main { flex: 1 1 auto; min-height: 0; }
 .flow-editor.expanded .flow-canvas { flex: 1 1 auto; height: auto; min-height: 0; }
 @media (max-width: 900px) {
   .flow-main { flex-direction: column; }

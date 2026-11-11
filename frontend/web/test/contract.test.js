@@ -524,6 +524,7 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/输出/Age
   assert.match(flowNode, /每行自己的左侧输入孔|prompt-\$\{prompt\.id\}/, "Prompt 条目没有独立输入孔");
   assert.ok(flowDebugSteps(emptyFlowGraph()).length >= 2, "空图没有调试步骤");
   assert.match(css, /\.flow-editor\.expanded \{[^}]*position:\s*fixed/, "网页全屏没有铺满 #app");
+  assert.match(css, /\.flow-editor\.expanded \.flow-main \{[^}]*flex:\s*1 1 auto/, "全屏时 flow-main 没有吃掉剩余高度");
   for (const type of ["input", "history", "llm", "join", "output"]) {
     assert.ok(flow.includes(`addNode('${type}')`) || flow.includes(`addNode("${type}")`), `流程编辑器缺 ${type} 节点`);
   }
