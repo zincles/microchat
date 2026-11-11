@@ -6,14 +6,15 @@
 // 两条属于 FlowAgent 的硬约束在数据层（utils/flow.ts）与这里一起做：
 //   · 只能调用传统 Agent，不能嵌套 FlowAgent；
 //   · 第一版只允许 DAG，且恰好一个输入、一个输出。
-import { computed, provide, ref, watch } from "vue";
-import { VueFlow, type Connection } from "@vue-flow/core";
+import { computed, nextTick, provide, ref, watch } from "vue";
+import { VueFlow, useVueFlow, type Connection } from "@vue-flow/core";
 import { Background } from "@vue-flow/background";
 import { Controls } from "@vue-flow/controls";
 import "@vue-flow/core/dist/style.css";
 import "@vue-flow/core/dist/theme-default.css";
 import "@vue-flow/controls/dist/style.css";
 import { VBtn } from "vuetify/components";
+import { ICONS } from "./icons.ts";
 import FlowNode from "./FlowNode.vue";
 import { emptyFlowGraph, flowIssues, normalizeFlowGraph } from "../utils/flow.ts";
 import type { Agent, FlowEdge, FlowGraph, FlowNode as FlowNodeData } from "../api/types.ts";
@@ -29,6 +30,14 @@ const emit = defineEmits<{ "update:graph": [graph: FlowGraph] }>();
 
 // Vue Flow 的 NodeComponent 类型要求完整 NodeProps；我们的节点只声明实际用到的字段，
 // 这里按 Vue Flow 的自定义节点约定交给运行时校验，别为了类型把无用 props 全抄一遍。
+// 网页全屏：只把编辑器铺满 #app（不是浏览器 Fullscreen API）；画布高度随视口走。
+const expanded = ref(false);
+const { fitView } = useVueFlow();
+function toggleExpanded(): void {
+  expanded.value = !expanded.value;
+  // 画布尺寸变了，Vue Flow 不会自动重新 fit；不重算的话全屏后节点会跑到视口外。
+  if (expanded.value) nextTick(() => fitView({ padding: 0.18 }));
+}
 const nodeTypes = { input: FlowNode, agent: FlowNode, join: FlowNode, output: FlowNode } as any;
 const initial = normalizeFlowGraph(props.graph ?? emptyFlowGraph());
 const nodes = ref<any[]>(initial.nodes.map((n) => ({ ...n, data: { ...(n.data ?? {}) } })));
@@ -107,13 +116,21 @@ watch([nodes, edges], () => emit("update:graph", toGraph()), { deep: true });
 </script>
 
 <template>
-  <section class="flow-editor">
+  <section class="flow-editor" :class="{ expanded }">
     <div class="flow-toolbar">
       <span class="flow-toolbar-label">添加节点：</span>
       <VBtn variant="tonal" size="small" type="button" :disabled="inputExists" @click="addNode('input')">输入</VBtn>
       <VBtn variant="tonal" size="small" type="button" @click="addNode('agent')">调用智能体</VBtn>
       <VBtn variant="tonal" size="small" type="button" @click="addNode('join')">拼接</VBtn>
       <VBtn variant="tonal" size="small" type="button" :disabled="outputExists" @click="addNode('output')">输出</VBtn>
+      <span class="flow-toolbar-spacer"></span>
+      <VBtn
+        icon variant="text" size="small" type="button" class="flow-fullscreen-btn"
+        :title="expanded ? '退出网页全屏' : '网页全屏'"
+        :aria-label="expanded ? '退出网页全屏' : '网页全屏'"
+        :aria-pressed="expanded ? 'true' : 'false'"
+        @click="toggleExpanded" v-html="expanded ? ICONS.minimize : ICONS.maximize"
+      />
     </div>
     <div class="flow-canvas">
       <VueFlow
