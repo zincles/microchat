@@ -310,3 +310,15 @@ func TestFlowAgentRerollExecutesGraph(t *testing.T) {
 		t.Fatalf("FlowAgent 重摇候选 = %+v（想要 %q）", tail, dummyReply)
 	}
 }
+
+func TestRewriteFlowInput(t *testing.T) {
+	if got := rewriteFlowInput([]string{"原问题"}, "前缀 {{input}} 后缀"); got != "前缀 原问题 后缀" {
+		t.Fatalf("模板改写 = %q", got)
+	}
+	if got := rewriteFlowInput([]string{"原问题"}, ""); got != "原问题" {
+		t.Fatalf("空模板应放行 = %q", got)
+	}
+	if got := rewriteFlowInput(nil, "固定输入"); got != "固定输入" {
+		t.Fatalf("无输入也可覆写 = %q", got)
+	}
+}

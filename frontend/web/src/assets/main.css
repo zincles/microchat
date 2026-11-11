@@ -1812,7 +1812,7 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-canvas .vue-flow__controls-button:last-child { border-bottom: 0; }
 .flow-canvas .vue-flow__controls-button:hover { background: var(--md-surface-container-highest); }
 .flow-canvas .vue-flow__controls-button svg { fill: currentColor; }
-.flow-node { position: relative; min-width: 190px; max-width: 240px; box-sizing: border-box; padding: 0.55em 0.65em;
+.flow-node { position: relative; min-width: 190px; max-width: 240px; box-sizing: border-box; padding: 0.55em 0.65em 0.6em 0.75em; overflow: visible;
   border: 1px solid var(--md-outline-variant); border-radius: var(--md-shape-sm);
   background: var(--md-surface-container-high); color: var(--md-on-surface);
   box-shadow: var(--md-elev-1); font-size: var(--md-type-body-small); }
@@ -1835,17 +1835,21 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-canvas .flow-node.flow-node-history .vue-flow__handle,
 .flow-canvas .flow-node.flow-node-trim .vue-flow__handle,
 .flow-canvas .flow-node.flow-node-merge .vue-flow__handle { background: var(--flow-history) !important; }
-.flow-canvas .flow-node .vue-flow__handle { width: 10px; height: 10px;
+.flow-canvas .flow-node .vue-flow__handle { z-index: 55; width: 12px; height: 12px;
   border: 2px solid var(--md-surface-container-high); background: var(--md-primary) !important; }
 .flow-canvas .flow-node .vue-flow__handle:hover { background: var(--md-secondary) !important; }
 .flow-node-body { margin-top: 0.35em; color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
+.flow-node-body code { color: var(--md-primary); font-size: 0.95em; }
+.flow-rewrite-controls { display: flex; flex-direction: column; gap: 0.3em; margin-top: 0.4em; }
+.flow-rewrite-controls .v-field__input { font-size: var(--md-type-label-small); line-height: 1.45; }
 .flow-output-inputs { display: flex; flex-direction: column; gap: 0.1em; margin-top: 0.35em; }
 .flow-output-row { position: relative; display: flex; align-items: center; min-height: 1.5em;
   padding-left: 0.8em; color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
 .flow-output-row .vue-flow__handle-left { left: 0; }
 /* 悬停节点的测试 I/O：不占布局、不拦截鼠标；长文本自己在框里滚。 */
-.flow-node-test { position: absolute; left: 0; top: calc(100% + 0.45em); z-index: 20;
-  width: max-content; max-width: 24em; max-height: 16em; overflow: auto; pointer-events: none;
+.flow-node-test { position: absolute; left: 0; top: calc(100% + 0.45em); z-index: 60;
+  width: max-content; max-width: 24em; max-height: 24em; overflow: auto; pointer-events: auto;
+  overscroll-behavior: contain; touch-action: pan-y;
   padding: 0.55em 0.65em; border: 1px solid var(--md-outline-variant); border-radius: var(--r-md);
   background: var(--md-surface-container-highest); color: var(--md-on-surface);
   box-shadow: var(--md-elev-2); font-size: var(--md-type-label-small); line-height: 1.45; }

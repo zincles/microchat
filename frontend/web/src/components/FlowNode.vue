@@ -31,18 +31,20 @@ const label = computed(() => ({
   history: "历史数据",
   trim: "裁剪 messages",
   merge: "拼接 messages",
+  rewrite: "覆写用户输入",
   llm: "调用 LLM",
   join: "拼接和复制",
   output: "输出",
 }[props.type] ?? props.type));
 const badge = computed(() => ({
-  input: "IN", history: "H", trim: "TR", merge: "MG", llm: "AI", join: "J", output: "OUT",
+  input: "IN", history: "H", trim: "TR", merge: "MG", rewrite: "RW", llm: "AI", join: "J", output: "OUT",
 }[props.type] ?? "·"));
 const hint = computed(() => ({
   input: "裸字符串：本轮用户输入",
   history: "messages[]：当前会话历史",
   trim: "messages[] → messages[]：按条数裁剪",
   merge: "多路 messages[] 按端口顺序拼接",
+  rewrite: "只改本轮用户输入；历史与存档不动",
   llm: "手动组装 messages",
   join: "多路拼接；只接一路时直接复制",
   output: "最终结果写入聊天",
@@ -63,6 +65,10 @@ const modelValue = computed({
     props.data.provider = value.slice(0, cut);
     props.data.model = value.slice(cut + 1);
   },
+});
+const rewritePrompt = computed({
+  get: () => typeof props.data.prompt === "string" ? props.data.prompt : "{{input}}",
+  set: (value: string) => { props.data.prompt = value; },
 });
 const trimMode = computed<TrimMode>({
   get: () => trimModeOf(props.data),
@@ -161,7 +167,7 @@ function addJoinOutput(): void {
     @mouseenter="hovered = true"
     @mouseleave="hovered = false"
   >
-    <Handle v-if="type === 'trim'" id="in" type="target" :position="Position.Left" />
+    <Handle v-if="type === 'trim' || type === 'rewrite'" id="in" type="target" :position="Position.Left" />
     <div class="flow-node-head">
       <span class="flow-node-badge" aria-hidden="true">{{ badge }}</span>
       <div class="flow-node-heading">
@@ -212,6 +218,11 @@ function addJoinOutput(): void {
         <span>思考</span>
       </div>
     </div>
+    <div v-if="type === 'rewrite'" class="flow-rewrite-controls nodrag nopan">
+      <VTextarea v-model="rewritePrompt" rows="3" density="compact" variant="outlined" hide-details
+        placeholder="留空 = 放行原输入" />
+      <span class="flow-node-body">用 <code v-pre>{{input}}</code> 插入原输入；只影响本轮。</span>
+    </div>
     <div v-if="type === 'history'" class="flow-node-body">来自真实会话的历史 messages</div>
     <div v-if="type === 'trim'" class="flow-trim-controls nodrag nopan">
       <VSelect v-model="trimMode" :items="TRIM_MODES" density="compact" variant="outlined" hide-details />
@@ -246,7 +257,7 @@ function addJoinOutput(): void {
           placeholder="留空 = 直接相连" />
       </label>
     </div>
-    <div v-if="(hovered || selected) && data.test" class="flow-node-test" role="tooltip">
+    <div v-if="(hovered || selected) && data.test" class="flow-node-test" role="tooltip" @wheel.stop>
       <b>测试 I/O</b>
       <span class="flow-node-test-label">输入</span>
       <pre>{{ (data.test.inputs ?? []).join("\n---\n") || "（无输入）" }}</pre>

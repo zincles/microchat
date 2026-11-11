@@ -174,6 +174,9 @@ func (s *Service) executeFlowGraph(ctx context.Context, graph flowGraph, opts fl
 				}
 			}
 			step.Output = fmt.Sprintf("messages[%d]", len(nodeMessages))
+		case "rewrite":
+			step.Label = "覆写用户输入"
+			step.Output = rewriteFlowInput(inputs, flowRewritePrompt(node))
 		case "join":
 			step.Label = "拼接和复制"
 			step.Output = joinFlowInputs(inputs, flowJoinSeparator(node))
@@ -291,6 +294,26 @@ func sourceMessages(values map[string]flowValue, edge flowEdge) []providers.Chat
 		value = values[flowKey(edge.Source, "out")]
 	}
 	return value.Messages
+}
+
+func flowRewritePrompt(node flowNode) string {
+	if prompt, ok := node.Data["prompt"].(string); ok {
+		return prompt
+	}
+	return "{{input}}"
+}
+
+// rewriteFlowInput：把上游字符串按模板改写。空模板 = 放行；模板里的 {{input}} 插原输入。
+// 只作用于本次图执行，不改会话里的用户消息（当前 Prompt 之外的上下文一概不动）。
+func rewriteFlowInput(inputs []string, prompt string) string {
+	original := ""
+	if len(inputs) > 0 {
+		original = inputs[0]
+	}
+	if strings.TrimSpace(prompt) == "" {
+		return original
+	}
+	return strings.ReplaceAll(prompt, "{{input}}", original)
 }
 
 func flowTrimMode(node flowNode) string {
@@ -512,7 +535,7 @@ func validateTestGraph(graph flowGraph) error {
 		seen[node.ID] = true
 		counts[node.Type]++
 		switch node.Type {
-		case "input", "history", "trim", "merge", "llm", "join", "output":
+		case "input", "history", "trim", "merge", "rewrite", "llm", "join", "output":
 		default:
 			return fmt.Errorf("不认识的节点类型：%s", node.Type)
 		}
