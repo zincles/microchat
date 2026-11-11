@@ -321,6 +321,33 @@ func applyFlowInputRewrite(agent config.Agent, content string) string {
 	return content
 }
 
+func flowLLMRetry(node flowNode) int {
+	switch value := node.Data["max_retry"].(type) {
+	case float64:
+		if value >= 0 && value == float64(int(value)) {
+			return int(value)
+		}
+	case int:
+		if value >= 0 {
+			return value
+		}
+	}
+	return 3
+}
+
+// flowRetryable：取消/超时不再重试；配置类错误重试也不会变好，直接失败。
+func flowRetryable(err error) bool {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var upstream *providers.UpstreamError
+	if errors.As(err, &upstream) {
+		return true
+	}
+	// 网络错误 / 空响应等由 providers 原样返回；统一按可重试处理。
+	return true
+}
+
 func flowTrimMode(node flowNode) string {
 	if mode, ok := node.Data["mode"].(string); ok {
 		switch mode {
@@ -492,9 +519,17 @@ func (s *Service) flowLLMCall(ctx context.Context, node flowNode, edges []flowEd
 			payload = &snapshot
 		}
 	}
-	result, err := providers.NewClient(wire).Complete(ctx, wire, request, localReply(chosen))
-	if err != nil {
-		return providers.Result{}, payload, err
+	client := providers.NewClient(wire)
+	maxRetry := flowLLMRetry(node)
+	var result providers.Result
+	for attempt := 0; ; attempt++ {
+		result, err = client.Complete(ctx, wire, request, localReply(chosen))
+		if err == nil {
+			break
+		}
+		if attempt >= maxRetry || ctx.Err() != nil || !flowRetryable(err) {
+			return providers.Result{}, payload, err
+		}
 	}
 	result.Text = strings.TrimSpace(result.Text)
 	result.Reasoning = strings.TrimSpace(result.Reasoning)
@@ -613,6 +648,20 @@ func validateTestGraph(graph flowGraph) error {
 		}
 		if node.Type != "llm" {
 			continue
+		}
+		if rawRetry, ok := node.Data["max_retry"]; ok {
+			switch value := rawRetry.(type) {
+			case float64:
+				if value < 0 || value != float64(int(value)) {
+					return fmt.Errorf("LLM 节点 %s 的 max_retry 必须是非负整数", node.ID)
+				}
+			case int:
+				if value < 0 {
+					return fmt.Errorf("LLM 节点 %s 的 max_retry 必须是非负整数", node.ID)
+				}
+			default:
+				return fmt.Errorf("LLM 节点 %s 的 max_retry 必须是非负整数", node.ID)
+			}
 		}
 		raw, ok := node.Data["prompts"]
 		if !ok {

@@ -94,6 +94,13 @@ function resizeStartHandler(event: PointerEvent): void {
   event.stopPropagation();
 }
 onUnmounted(resizeEnd);
+const maxRetry = computed<string>({
+  get: () => String(Number.isInteger(Number(props.data.max_retry)) ? Number(props.data.max_retry) : 3),
+  set: (value: string) => {
+    const retry = Number(value);
+    props.data.max_retry = Number.isInteger(retry) && retry >= 0 ? retry : 0;
+  },
+});
 const inputPrompt = computed({
   get: () => typeof props.data.prompt === "string" ? props.data.prompt : "",
   set: (value: string) => { props.data.prompt = value; },
@@ -209,6 +216,11 @@ function addJoinOutput(): void {
     <label v-if="type === 'llm'" class="flow-llm-model nodrag nopan">
       <span>AI 模型</span>
       <VSelect v-model="modelValue" :items="modelOptions" density="compact" variant="outlined" hide-details />
+    </label>
+    <label v-if="type === 'llm'" class="flow-llm-retry nodrag nopan">
+      <span>失败重试</span>
+      <VTextField v-model="maxRetry" type="number" min="0" step="1" density="compact"
+        variant="outlined" hide-details suffix="次" />
     </label>
     <div v-if="type === 'llm'" class="flow-prompt-list">
       <div v-for="prompt in prompts" :key="prompt.id"

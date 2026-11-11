@@ -99,8 +99,10 @@ export function formatFlowText(graph?: FlowGraph | null): string {
     const x = Math.round(Number(node.position?.x ?? 0));
     const y = Math.round(Number(node.position?.y ?? 0));
     const height = Number(node.data?.height);
+    const retry = Number(node.data?.max_retry);
     const size = Number.isFinite(height) && height > 0 ? ` h=${Math.round(height)}px` : "";
-    lines.push(`${node.id} [${label}] @ (${x}, ${y})${size}`);
+    const retryText = node.type === "llm" ? ` retry=${Number.isInteger(retry) && retry >= 0 ? retry : 3}` : "";
+    lines.push(`${node.id} [${label}] @ (${x}, ${y})${size}${retryText}`);
     const outgoing = edges.filter((edge) => edge.source === node.id);
     if (!outgoing.length) {
       lines.push("  （无输出连接）");

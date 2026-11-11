@@ -1897,6 +1897,9 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-llm-model { display: flex; flex-direction: column; gap: 0.15em; margin-top: 0.4em;
   color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
 .flow-llm-model .v-field__input { font-size: var(--md-type-label-small); }
+.flow-llm-retry { display: flex; align-items: center; gap: 0.45em; margin-top: 0.3em;
+  color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
+.flow-llm-retry .v-field { width: 5.2em; font-size: var(--md-type-label-small); }
 .flow-prompt-list { margin-top: 0.45em; display: flex; flex-direction: column; gap: 0.35em;
   max-height: 19em; overflow-y: auto; overscroll-behavior: contain; }
 .flow-prompt-add-row { display: flex; gap: 0.2em; flex-wrap: wrap; }

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"microchat/internal/config"
@@ -169,9 +170,10 @@ func TestFlowAgentDoesNotAutoAttachReasoning(t *testing.T) {
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"正文","reasoning_content":"思考"}}],"usage":{"prompt_tokens":3,"completion_tokens":2}}`))
 	}))
 	defer upstream.Close()
-	h := newHarness(t, config.ProvidersConfig{Providers: []config.Provider{{
+	stubConfig := config.ProvidersConfig{Providers: []config.Provider{{
 		ID: "stub", Kind: "openai-compat", BaseURL: upstream.URL, Identity: "bare",
-	}}}, "stub", "stub")
+	}}}
+	h := newHarness(t, stubConfig, "stub", "stub")
 	flow := json.RawMessage(`{"version":1,"nodes":[
 		{"id":"in","type":"input","position":{"x":0,"y":0},"data":{}},
 		{"id":"llm","type":"llm","position":{"x":1,"y":0},"data":{"prompts":[{"id":"p1","role":"system","content":"写正文"}]}},
@@ -203,9 +205,10 @@ func TestFlowAgentMapsReasoningPort(t *testing.T) {
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"正文","reasoning_content":"思考"}}],"usage":{"prompt_tokens":3,"completion_tokens":2}}`))
 	}))
 	defer upstream.Close()
-	h := newHarness(t, config.ProvidersConfig{Providers: []config.Provider{{
+	stubConfig := config.ProvidersConfig{Providers: []config.Provider{{
 		ID: "stub", Kind: "openai-compat", BaseURL: upstream.URL, Identity: "bare",
-	}}}, "stub", "stub")
+	}}}
+	h := newHarness(t, stubConfig, "stub", "stub")
 	flow := json.RawMessage(`{"version":1,"nodes":[
 		{"id":"in","type":"input","position":{"x":0,"y":0},"data":{}},
 		{"id":"llm","type":"llm","position":{"x":1,"y":0},"data":{"prompts":[{"id":"p1","role":"system","content":"写"}]}},
@@ -235,9 +238,10 @@ func TestFlowAgentLegacyReasoningInputStaysReasoning(t *testing.T) {
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"正文","reasoning_content":"思考"}}],"usage":{"prompt_tokens":3,"completion_tokens":2}}`))
 	}))
 	defer upstream.Close()
-	h := newHarness(t, config.ProvidersConfig{Providers: []config.Provider{{
+	stubConfig := config.ProvidersConfig{Providers: []config.Provider{{
 		ID: "stub", Kind: "openai-compat", BaseURL: upstream.URL, Identity: "bare",
-	}}}, "stub", "stub")
+	}}}
+	h := newHarness(t, stubConfig, "stub", "stub")
 	// 老图：单个 in，源是 reasoning。迁移/执行都必须落到 reasoning，不能变成正文。
 	flow := json.RawMessage(`{"version":1,"nodes":[
 		{"id":"in","type":"input","position":{"x":0,"y":0},"data":{}},
@@ -361,5 +365,64 @@ func TestFlowAgentStoresRewrittenInput(t *testing.T) {
 	messages := h.settle(t)
 	if len(messages) != 2 || messages[0].Content != "【改】原话" {
 		t.Fatalf("FlowAgent 用户消息应已改写后入库：%+v", messages)
+	}
+}
+
+func TestFlowLLMRetriesThenSucceeds(t *testing.T) {
+	var calls int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&calls, 1)
+		if n <= 3 {
+			http.Error(w, "temporary", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"成功"}}]}`))
+	}))
+	defer upstream.Close()
+	stubConfig := config.ProvidersConfig{Providers: []config.Provider{{
+		ID: "stub", Kind: "openai-compat", BaseURL: upstream.URL, Identity: "bare",
+	}}}
+	h := newHarness(t, stubConfig, "stub", "stub")
+	graph := flowGraph{Nodes: []flowNode{
+		{ID: "in", Type: "input"},
+		{ID: "llm", Type: "llm", Data: map[string]any{"max_retry": float64(3), "prompts": []any{map[string]any{"id": "p1", "role": "system", "content": "写"}}}},
+		{ID: "out", Type: "output"},
+	}, Edges: []flowEdge{{ID: "e", Source: "llm", SourceHandle: "text", Target: "out", TargetHandle: "text"}}}
+	out, err := h.service.executeFlowGraph(context.Background(), graph, flowRunOptions{
+		DefaultProvider: "stub", DefaultModel: "stub", ProvidersConfig: stubConfig,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 4 || out.Result.Output != "成功" {
+		t.Fatalf("重试次数 = %d, output = %q", calls, out.Result.Output)
+	}
+}
+
+func TestFlowLLMFailureFailsWholeFlow(t *testing.T) {
+	var calls int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		http.Error(w, "down", http.StatusInternalServerError)
+	}))
+	defer upstream.Close()
+	stubConfig := config.ProvidersConfig{Providers: []config.Provider{{
+		ID: "stub", Kind: "openai-compat", BaseURL: upstream.URL, Identity: "bare",
+	}}}
+	h := newHarness(t, stubConfig, "stub", "stub")
+	graph := flowGraph{Nodes: []flowNode{
+		{ID: "in", Type: "input"},
+		{ID: "llm", Type: "llm", Data: map[string]any{"max_retry": float64(2), "prompts": []any{map[string]any{"id": "p1", "role": "system", "content": "写"}}}},
+		{ID: "out", Type: "output"},
+	}, Edges: []flowEdge{{ID: "e", Source: "llm", SourceHandle: "text", Target: "out", TargetHandle: "text"}}}
+	_, err := h.service.executeFlowGraph(context.Background(), graph, flowRunOptions{
+		DefaultProvider: "stub", DefaultModel: "stub", ProvidersConfig: stubConfig,
+	})
+	if err == nil {
+		t.Fatal("节点重试耗尽后应让整个 Flow 失败")
+	}
+	if calls != 3 {
+		t.Fatalf("max_retry=2 应总共尝试 3 次，实际 %d", calls)
 	}
 }
