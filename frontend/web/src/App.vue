@@ -2250,6 +2250,7 @@ onUnmounted(() => {
       :thinking-options="thinkingChoices"
       :native-tools="currentAllTools"
       :native-tools-disabled="sessionInfo.native_tools_disabled ?? []"
+      :flow="currentAgentIsFlow"
       @select-thinking="setThinking"
       @toggle-native-tool="toggleNativeTool"
       @input-text="onComposerInput"

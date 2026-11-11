@@ -26,12 +26,15 @@ const props = withDefaults(defineProps<{
   thinkingOptions?: ThinkingOption[];
   nativeTools?: string[];
   nativeToolsDisabled?: string[];
+  // flow：FlowAgent 暂不支持推理档位与工具选择 —— 底部小面板里直接藏起来。
+  flow?: boolean;
 }>(), {
   menuOn: false,
   thinking: "",
   thinkingOptions: () => [],
   nativeTools: () => [],
   nativeToolsDisabled: () => [],
+  flow: false,
 });
 
 const text = ref("");
@@ -76,12 +79,13 @@ defineExpose({ submit, clear, setText, text, setRunning });
     <div class="composer-toolbar">
       <slot name="toolbar" />
       <ThinkingMenu
-        v-if="thinkingOptions.length"
+        v-if="!flow && thinkingOptions.length"
         :model-value="thinking"
         :options="thinkingOptions"
         @update:model-value="selectThinking"
       />
       <ToolsMenu
+        v-if="!flow"
         :available="nativeTools"
         :disabled="nativeToolsDisabled"
         @toggle="(id, on) => $emit('toggle-native-tool', id, on)"

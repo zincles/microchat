@@ -420,6 +420,7 @@ delete(AA)           # 删除
   `GET .../flow/run` 返回最近一次图执行的节点轨迹（每个 LLM 节点的请求快照、输出、usage、耗时）；
   **FlowAgent 暂时不套用普通 Agent 的载荷/状态/压缩上下文面板**（旧的「流程」tab 与环里的节点列表也已撤掉），
   新的节点面板另行设计；`/context` 的节点级数据仍保留给新面板用。
+  底部输入栏对 FlowAgent 隐藏「推理等级」与「工具」两个小面板（运行时不用这两个会话选项）。
   **`preset_id`（2026-11-10）**：绑定一份 `tavern_presets` 原始预设（空 = 不绑定）。绑定时
   Agent 的会话在出站装配里**现读原始 JSON → `tavern.Extract`**（执行 setvar/getvar/trim/注释，
   丢掉空结果），用真正的 relative/absolute 有效条目；**Agent 的 base、段与 `prompt_entries` 全部不参与**

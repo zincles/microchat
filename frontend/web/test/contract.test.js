@@ -557,6 +557,11 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(flowNode, /flow-prompt-history/, "history 条目没有独立外观");
   assert.match(flowNode, /addHistory/, "LLM 节点不能添加历史条目");
   assert.match(flowNode, /flow-llm-model/, "LLM 节点没有 AI 模型选择框");
+  const composer = readFileSync(join(SRC, "components", "Composer.vue"), "utf8");
+  assert.match(composer, /flow\?:\s*boolean/, "输入栏没有 FlowAgent 开关");
+  assert.match(composer, /v-if="!flow && thinkingOptions.length"/, "FlowAgent 仍显示推理等级");
+  assert.match(composer, /<ToolsMenu[\s\S]*v-if="!flow"/, "FlowAgent 仍显示工具选择");
+  assert.match(readFileSync(join(SRC, "App.vue"), "utf8"), /:flow="currentAgentIsFlow"/, "App 没把 FlowAgent 状态传给输入栏");
   const topbar = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
   assert.match(topbar, /flow\?:\s*boolean/, "顶栏没有 FlowAgent 开关");
   assert.match(topbar, /v-if="!flow"[\s\S]*id="ctx-ring"/, "FlowAgent 模式下绿色环没有停用");
