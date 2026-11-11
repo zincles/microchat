@@ -31,6 +31,7 @@ type FlowTestStep struct {
 	Inputs    []string        `json:"inputs,omitempty"`
 	Output    string          `json:"output,omitempty"`
 	Reasoning string          `json:"reasoning,omitempty"`
+	User      string          `json:"user,omitempty"`
 	Error     string          `json:"error,omitempty"`
 	Provider  string          `json:"provider,omitempty"`
 	Model     string          `json:"model,omitempty"`
@@ -43,6 +44,7 @@ type FlowTestStep struct {
 type FlowTestResult struct {
 	Output    string         `json:"output"`
 	Reasoning string         `json:"reasoning,omitempty"`
+	User      string         `json:"user,omitempty"`
 	Steps     []FlowTestStep `json:"steps"`
 }
 
@@ -74,6 +76,7 @@ type flowPrompt struct {
 type flowValue struct {
 	Text      string
 	Reasoning string
+	User      string
 	Messages  []providers.ChatMessage
 }
 
@@ -93,9 +96,10 @@ type flowRunOptions struct {
 }
 
 type flowRunOutcome struct {
-	Result FlowTestResult
-	Final  flowValue
-	Usage  json.RawMessage
+	Result      FlowTestResult
+	Final       flowValue
+	Usage       json.RawMessage
+	UserMessage string
 }
 
 // TestFlow：执行一次编辑器测试。provider/model 空 ⇒ 读 config.json 的 defaults。
@@ -119,7 +123,7 @@ func (s *Service) TestFlow(ctx context.Context, flowAgent config.Agent, message,
 		modelID = cfg.Defaults.Model
 	}
 	outcome, err := s.executeFlowGraph(ctx, graph, flowRunOptions{
-		Input:           applyFlowInputRewrite(flowAgent, message),
+		Input:           message,
 		DefaultProvider: provider,
 		DefaultModel:    modelID,
 		ProvidersConfig: providersConfig,
@@ -184,7 +188,9 @@ func (s *Service) executeFlowGraph(ctx context.Context, graph flowGraph, opts fl
 			step.Output = joinFlowInputs(inputs, flowJoinSeparator(node))
 		case "user_output":
 			step.Label = "用户消息"
-			step.Output = ""
+			if len(inputs) > 0 {
+				step.User = inputs[0]
+			}
 		case "output":
 			step.Label = "输出"
 			for _, edge := range graph.Edges {
@@ -205,6 +211,8 @@ func (s *Service) executeFlowGraph(ctx context.Context, graph flowGraph, opts fl
 					step.Output = sourceValue(values, edge)
 				case "reasoning":
 					step.Reasoning = sourceValue(values, edge)
+				case "user":
+					step.User = sourceValue(values, edge)
 				}
 			}
 		case "llm":
@@ -237,7 +245,7 @@ func (s *Service) executeFlowGraph(ctx context.Context, graph flowGraph, opts fl
 			steps = append(steps, step)
 			return flowRunOutcome{Result: FlowTestResult{Steps: steps}}, err
 		}
-		values[flowKey(node.ID, "out")] = flowValue{Text: step.Output, Reasoning: step.Reasoning}
+		values[flowKey(node.ID, "out")] = flowValue{Text: step.Output, Reasoning: step.Reasoning, User: step.User}
 		if node.Type == "history" || node.Type == "trim" || node.Type == "merge" {
 			values[flowKey(node.ID, "out")] = flowValue{Text: step.Output, Messages: nodeMessages}
 		}
@@ -261,10 +269,19 @@ func (s *Service) executeFlowGraph(ctx context.Context, graph flowGraph, opts fl
 			final = values[flowKey(node.ID, "out")]
 		}
 	}
+	// 兼容旧的独立 user_output 节点：它没有输出，但它的 User 仍可作为历史覆盖。
+	for _, node := range graph.Nodes {
+		if node.Type == "user_output" {
+			if value := values[flowKey(node.ID, "out")]; value.User != "" {
+				final.User = value.User
+			}
+		}
+	}
 	return flowRunOutcome{
-		Result: FlowTestResult{Output: final.Text, Reasoning: final.Reasoning, Steps: steps},
-		Final:  final,
-		Usage:  lastResult.Usage,
+		Result:      FlowTestResult{Output: final.Text, Reasoning: final.Reasoning, User: final.User, Steps: steps},
+		UserMessage: final.User,
+		Final:       final,
+		Usage:       lastResult.Usage,
 	}, nil
 }
 
@@ -302,26 +319,6 @@ func sourceMessages(values map[string]flowValue, edge flowEdge) []providers.Chat
 		value = values[flowKey(edge.Source, "out")]
 	}
 	return value.Messages
-}
-
-// applyFlowInputRewrite：图里的 input 节点可以把用户原文改写后再入库。
-// 这是**入库前**的一步（Accept / TestFlow 调用），不是运行时节点；因此历史里看到的就是改写后的 prompt。
-func applyFlowInputRewrite(agent config.Agent, content string) string {
-	var graph flowGraph
-	if json.Unmarshal(agent.Flow, &graph) != nil {
-		return content
-	}
-	for _, node := range graph.Nodes {
-		if node.Type != "user_output" {
-			continue
-		}
-		prompt, _ := node.Data["prompt"].(string)
-		if strings.TrimSpace(prompt) == "" {
-			return content
-		}
-		return strings.ReplaceAll(prompt, "{{input}}", content)
-	}
-	return content
 }
 
 func flowLLMRetry(node flowNode) int {

@@ -610,6 +610,9 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(workspace, /<FlowWorkspace/, "FlowAgent 工作流页没有接 Flow 编辑器");
   const flowWorkspace = readFileSync(join(SRC, "components", "FlowWorkspace.vue"), "utf8");
   assert.match(flowWorkspace, /flowRun\(props\.sessionId\)/, "工作流页没有轮询 Flow 执行轨迹");
+  assert.match(flowWorkspace, /snapshot === savedSnapshot\.value\) return/, "没有修改也会触发自动保存");
+  assert.match(flowWorkspace, /savedLabel/, "已保存没有时间显示");
+  assert.match(flowWorkspace, /已保存（\$\{seconds\}秒之前）/, "已保存没有相对时间文案");
   assert.match(flowWorkspace, /:active-node-id="activeNodeId"/, "工作流没有把活跃节点传给编辑器");
   assert.match(workspace, /agent\?:\s*Agent \| null/, "工作流页没有接当前 Agent");
   assert.match(app, /:agent="currentAgent"/, "App 没把当前 Agent 传给工作流页");
@@ -617,8 +620,9 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(readFileSync(join(SRC, "components", "FlowWorkspace.vue"), "utf8"), /patchAgent\(agent\.id, \{ flow: snapshot \}\)/, "工作流没有保存回 Agent 文件");
   assert.ok(!/flow-run-pane/.test(readFileSync(join(SRC, "components", "PayloadBar.vue"), "utf8")), "旧的 FlowAgent 载荷 tab 还在");
   assert.match(flowNode, /flow-trim-controls/, "裁剪节点没有配置控件");
-  assert.match(flowNode, /flow-user-output/, "用户消息节点没有入库前改写框");
-  assert.match(flowNode, /userPrompt/, "用户消息节点没有 prompt 绑定");
+  assert.match(flowNode, /id="user"/, "输出节点没有用户消息输入端口");
+  assert.match(flowNode, /getComputedStyle\(node\)\.height/, "拖拽缩放没有用 CSS 像素高度（会被画布缩放放大/缩小）");
+  assert.ok(!/userPrompt|flow-user-output|user_output/.test(flowNode), "用户消息还残留在独立节点里");
   assert.match(flowNode, /trimRoles/, "裁剪节点没有角色过滤");
   assert.match(flow, /function removePort/, "删除端口没有同步删除相连边");
   assert.match(flow, /provide\("flowRemovePort"/, "没有把删除端口的回调交给节点");
@@ -637,6 +641,9 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(css, /\.flow-canvas-actions \{[^}]*display:\s*flex/, "画布工具开关没有布局");
   assert.match(css, /\.flow-node-sidebar, \.flow-bottom \{[^}]*overflow-y:\s*auto/, "侧栏/底栏不能上下滚动");
   assert.match(css, /--flow-history:\s*#f2994a/, "历史类型不是橙色");
+  assert.match(css, /\.flow-port-string\s*\{[^}]*background:\s*var\(--flow-string\)/, "字符串端口没有按数据类型染色");
+  assert.match(css, /\.flow-port-messages\s*\{[^}]*background:\s*var\(--flow-history\)/, "messages 端口没有按数据类型染色");
+  assert.match(css, /\.v-btn svg\s*\{[^}]*width:\s*1\.45em/, "按钮里的 SVG 没有铺开");
   assert.match(css, /\.flow-node-row\.active/, "活跃节点没有高亮样式");
   assert.match(css, /\.flow-node\.flow-node-history \.vue-flow__handle[^{]*\{[^}]*background:\s*var\(--flow-history\)/, "历史节点端口没被染成历史色");
   assert.match(css, /\.flow-node \.flow-prompt-history \.vue-flow__handle[^{]*\{[^}]*background:\s*var\(--flow-history\)/, "历史条目端口没被染成历史色");
@@ -644,7 +651,7 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(flow, /flow-node-row/, "节点面板没有节点列表");
   assert.match(flow, /flow-panel-tabs/, "底栏没有 测试/调试 tabs");
   assert.match(flow, /<VMenu[\s\S]*flow-add-menu[\s\S]*addNodeItems/, "添加节点不是下拉列表");
-  for (const type of ["input", "history", "trim", "merge", "llm", "join", "output", "user_output"]) {
+  for (const type of ["input", "history", "trim", "merge", "llm", "join", "output"]) {
     assert.match(flow, new RegExp(`type: "${type}"`), `流程编辑器缺 ${type} 节点`);
   }
   const empty = emptyFlowGraph();

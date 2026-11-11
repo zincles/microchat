@@ -5,6 +5,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"microchat/internal/model"
 	"microchat/internal/providers"
 	"microchat/internal/statelang"
+	"microchat/internal/store"
 	"microchat/internal/task"
 )
 
@@ -170,6 +172,19 @@ func (s *Service) runFlow(session model.Session, replyID string, token uint64, r
 		})
 		guard.Cancel()
 		return
+	}
+
+	// output 的 `user` 端口是这一轮**要存进历史**的用户消息。它必须在图执行完之后才拿得到
+	//（用户可能接了润色/改写节点），所以先落原文、这里再就地换正文。
+	// Resend 的 runID 是回复 id、不在库里 ⇒ ErrNotFound 属于正常情况，不动任何东西。
+	if outcome.UserMessage != "" {
+		content := outcome.UserMessage
+		if _, err := s.Store.UpdateMessage(sessionID, runID, store.MessageEdit{Content: &content}); err != nil && !errors.Is(err, store.ErrNotFound) {
+			failTrace(err)
+			s.Turns.Finish(sessionID, token, err.Error())
+			guard.Fail(err.Error())
+			return
+		}
 	}
 
 	durationMS := time.Since(started).Milliseconds()

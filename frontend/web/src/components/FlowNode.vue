@@ -5,7 +5,7 @@ import { computed, inject, onUnmounted, ref, type Ref } from "vue";
 import { Handle, Position } from "@vue-flow/core";
 import { VBtn, VSelect, VTextField, VTextarea } from "vuetify/components";
 import type { ModelListItem } from "../api/types.ts";
-import { DEFAULT_JOIN_SEPARATOR, TRIM_MODES, TRIM_ROLES, trimCountOf, trimModeOf, type TrimMode } from "../utils/flow.ts";
+import { DEFAULT_JOIN_SEPARATOR, TRIM_MODES, TRIM_ROLES, trimCountOf, trimModeOf, type FlowDataType, type TrimMode } from "../utils/flow.ts";
 
 const props = defineProps<{
   id: string;
@@ -34,10 +34,9 @@ const label = computed(() => ({
   llm: "调用 LLM",
   join: "拼接和复制",
   output: "输出",
-  user_output: "用户消息",
 }[props.type] ?? props.type));
 const badge = computed(() => ({
-  input: "IN", history: "H", trim: "TR", merge: "MG", llm: "AI", join: "J", output: "OUT", user_output: "USR",
+  input: "IN", history: "H", trim: "TR", merge: "MG", llm: "AI", join: "J", output: "OUT",
 }[props.type] ?? "·"));
 const hint = computed(() => ({
   input: "裸字符串：本轮用户输入",
@@ -46,9 +45,9 @@ const hint = computed(() => ({
   merge: "多路 messages[] 按端口顺序拼接",
   llm: "手动组装 messages",
   join: "多路拼接；只接一路时直接复制",
-  output: "最终结果写入聊天",
-  user_output: "把改写后的用户 Prompt 写入历史",
+  output: "最终结果写入聊天；用户消息端口可改写入库正文",
 }[props.type] ?? ""));
+const portClass = (type: FlowDataType): string => type === "messages" ? "flow-port-messages" : "flow-port-string";
 const prompts = computed<PromptEntry[]>(() => Array.isArray(props.data.prompts) ? props.data.prompts : []);
 const modelOptions = computed(() => [
   { title: "跟随默认模型", value: "" },
@@ -83,15 +82,24 @@ function resizeEnd(): void {
   resizing.value = false;
   window.removeEventListener("pointermove", resizeMove);
   window.removeEventListener("pointerup", resizeEnd);
+  window.removeEventListener("pointercancel", resizeEnd);
 }
 function resizeStartHandler(event: PointerEvent): void {
   const node = (event.currentTarget as HTMLElement).closest(".flow-node") as HTMLElement | null;
   if (!node) return;
+  // 以**按下那一刻的真实高度**为基准，并把基准立刻写回 data.height：
+  // 否则第一帧会从旧的内容高度/旧 data.height 重算，表现成“一跳就变长”。
   const rect = node.getBoundingClientRect();
-  resizeStart = { y: event.clientY, height: rect.height };
+  if (rect.height <= 0) return;
+  // 读 **CSS 像素** 高度，不读 getBoundingClientRect：后者被 Vue Flow 的画布缩放乘过，
+  // 拿它当 height 写回会把节点瞬间缩掉一截（拖一下反而变短）。
+  const cssHeight = Number.parseFloat(getComputedStyle(node).height);
+  resizeStart = { y: event.clientY, height: Math.round(Number.isFinite(cssHeight) && cssHeight > 0 ? cssHeight : rect.height) };
+  props.data.height = resizeStart.height;
   resizing.value = true;
   window.addEventListener("pointermove", resizeMove);
   window.addEventListener("pointerup", resizeEnd);
+  window.addEventListener("pointercancel", resizeEnd);
   event.preventDefault();
   event.stopPropagation();
 }
@@ -102,10 +110,6 @@ const maxRetry = computed<string>({
     const retry = Number(value);
     props.data.max_retry = Number.isInteger(retry) && retry >= 0 ? retry : 0;
   },
-});
-const userPrompt = computed({
-  get: () => typeof props.data.prompt === "string" ? props.data.prompt : "",
-  set: (value: string) => { props.data.prompt = value; },
 });
 const trimMode = computed<TrimMode>({
   get: () => trimModeOf(props.data),
@@ -205,7 +209,7 @@ function addJoinOutput(): void {
     @mouseenter="hovered = true"
     @mouseleave="hovered = false"
   >
-    <Handle v-if="type === 'trim' || type === 'user_output'" id="in" type="target" :position="Position.Left" />
+    <Handle v-if="type === 'trim'" id="in" type="target" :position="Position.Left" :class="portClass('messages')" />
     <div class="flow-node-head">
       <span class="flow-node-badge" aria-hidden="true">{{ badge }}</span>
       <div class="flow-node-heading">
@@ -227,8 +231,8 @@ function addJoinOutput(): void {
     <div v-if="type === 'llm'" class="flow-prompt-list">
       <div v-for="prompt in prompts" :key="prompt.id"
         :class="prompt.kind === 'history' ? 'flow-prompt-history' : 'flow-prompt-row'">
-        <Handle v-if="prompt.kind === 'history'" :id="`history-${prompt.id}`" type="target" :position="Position.Left" :style="{ top: '50%' }" />
-        <Handle v-else :id="`prompt-${prompt.id}`" type="target" :position="Position.Left" :style="{ top: '50%' }" />
+        <Handle v-if="prompt.kind === 'history'" :id="`history-${prompt.id}`" type="target" :position="Position.Left" :style="{ top: '50%' }" :class="portClass('messages')" />
+        <Handle v-else :id="`prompt-${prompt.id}`" type="target" :position="Position.Left" :style="{ top: '50%' }" :class="portClass('string')" />
         <template v-if="prompt.kind === 'history'">
           <span class="flow-history-label">历史 messages[]</span>
           <VBtn icon variant="text" size="x-small" type="button" class="flow-prompt-del nodrag nopan"
@@ -256,18 +260,17 @@ function addJoinOutput(): void {
     </div>
     <div v-if="type === 'output'" class="flow-output-inputs">
       <div class="flow-output-row">
-        <Handle id="text" type="target" :position="Position.Left" />
+        <Handle id="text" type="target" :position="Position.Left" :class="portClass('string')" />
         <span>正文</span>
       </div>
       <div class="flow-output-row">
-        <Handle id="reasoning" type="target" :position="Position.Left" />
+        <Handle id="reasoning" type="target" :position="Position.Left" :class="portClass('string')" />
         <span>思考</span>
       </div>
-    </div>
-    <div v-if="type === 'user_output'" class="flow-user-output nodrag nopan">
-      <VTextarea v-model="userPrompt" rows="2" density="compact" variant="outlined" hide-details
-        placeholder="留空 = 原样入库" />
-      <span class="flow-node-body">用 <code v-pre>{{input}}</code> 插入原文；改写结果会进入历史。</span>
+      <div class="flow-output-row">
+        <Handle id="user" type="target" :position="Position.Left" :class="portClass('string')" />
+        <span>用户消息</span>
+      </div>
     </div>
     <div v-if="type === 'history'" class="flow-node-body">来自真实会话的历史 messages</div>
     <div v-if="type === 'trim'" class="flow-trim-controls nodrag nopan">
@@ -280,7 +283,7 @@ function addJoinOutput(): void {
     </div>
     <div v-if="type === 'merge'" class="flow-merge-inputs">
       <div v-for="(input, i) in mergeInputs" :key="input" class="flow-merge-row">
-        <Handle :id="input" type="target" :position="Position.Left" />
+        <Handle :id="input" type="target" :position="Position.Left" :class="portClass('messages')" />
         <span>输入 {{ i + 1 }} · messages[]</span>
         <VBtn icon variant="text" size="x-small" type="button" class="flow-port-del nodrag nopan"
           :disabled="mergeInputs.length <= 1" title="移除这个输入" aria-label="移除这个输入"
@@ -290,7 +293,7 @@ function addJoinOutput(): void {
     </div>
     <div v-if="type === 'join'" class="flow-join-inputs">
       <div v-for="(input, i) in joinInputs" :key="input" class="flow-join-row">
-        <Handle :id="input" type="target" :position="Position.Left" />
+        <Handle :id="input" type="target" :position="Position.Left" :class="portClass('string')" />
         <span>输入 {{ i + 1 }}</span>
         <VBtn icon variant="text" size="x-small" type="button" class="flow-port-del nodrag nopan"
           :disabled="joinInputs.length <= 1" title="移除这个输入" aria-label="移除这个输入"
@@ -311,17 +314,21 @@ function addJoinOutput(): void {
       <pre>{{ data.test.reasoning || "（无思考）" }}</pre>
       <span class="flow-node-test-label">正文</span>
       <pre>{{ data.test.output || "（无输出）" }}</pre>
+      <template v-if="data.test.user">
+        <span class="flow-node-test-label">写入历史</span>
+        <pre>{{ data.test.user }}</pre>
+      </template>
     </div>
     <span v-if="type === 'llm'" class="flow-node-resizer nodrag nopan"
       title="拖动调整卡片高度" aria-label="调整卡片高度" @pointerdown="resizeStartHandler"></span>
     <div v-if="type === 'llm'" class="flow-llm-outputs">
       <div class="flow-llm-output-row">
         <span>思考</span>
-        <Handle id="reasoning" type="source" :position="Position.Right" />
+        <Handle id="reasoning" type="source" :position="Position.Right" :class="portClass('string')" />
       </div>
       <div class="flow-llm-output-row">
         <span>正文</span>
-        <Handle id="text" type="source" :position="Position.Right" />
+        <Handle id="text" type="source" :position="Position.Right" :class="portClass('string')" />
       </div>
     </div>
     <div v-if="type === 'join'" class="flow-join-outputs">
@@ -330,10 +337,11 @@ function addJoinOutput(): void {
         <VBtn icon variant="text" size="x-small" type="button" class="flow-port-del nodrag nopan"
           :disabled="joinOutputs.length <= 1" title="移除这个输出" aria-label="移除这个输出"
           @click.stop="removeJoinOutput(i)">−</VBtn>
-        <Handle :id="output" type="source" :position="Position.Right" />
+        <Handle :id="output" type="source" :position="Position.Right" :class="portClass('string')" />
       </div>
       <VBtn variant="text" size="small" type="button" class="flow-add-join nodrag nopan" @click="addJoinOutput">＋ 添加输出</VBtn>
     </div>
-    <Handle v-else-if="type !== 'output' && type !== 'user_output'" id="out" type="source" :position="Position.Right" />
+    <Handle v-else-if="type !== 'output'" id="out" type="source" :position="Position.Right"
+      :class="portClass(type === 'history' || type === 'trim' || type === 'merge' ? 'messages' : 'string')" />
   </div>
 </template>

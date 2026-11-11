@@ -576,6 +576,7 @@ export interface FlowTestStep {
   inputs?: string[];
   output?: string;
   reasoning?: string;
+  user?: string;
   error?: string;
   provider?: string;
   model?: string;
@@ -587,6 +588,7 @@ export interface FlowTestStep {
 export interface FlowTestResult {
   output: string;
   reasoning?: string;
+  user?: string;
   steps: FlowTestStep[];
 }
 

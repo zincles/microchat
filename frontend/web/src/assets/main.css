@@ -1827,7 +1827,8 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-node-head { display: flex; flex-direction: column; gap: 0.1em; }
 .flow-node-delete { position: absolute; top: 0.2em; right: 0.25em; z-index: 2;
   width: 1.6em; height: 1.6em; padding: 0; border: 0; border-radius: var(--r-xs);
-  background: none; color: var(--md-on-surface-variant); font: inherit; cursor: pointer; }
+  background: none; color: var(--md-on-surface-variant); font: inherit; font-size: 1.15em;
+  line-height: 1; cursor: pointer; }
 .flow-node-delete:hover { color: var(--md-error); background: var(--md-error-container); }
 .flow-node-delete:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 1px; }
 .flow-node-title { font-weight: 600; color: var(--md-on-surface); }
@@ -1844,11 +1845,12 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-canvas .flow-node.flow-node-merge .vue-flow__handle { background: var(--flow-history) !important; }
 .flow-canvas .flow-node .vue-flow__handle { z-index: 55; width: 12px; height: 12px;
   border: 2px solid var(--md-surface-container-high); background: var(--vf-handle) !important; }
+/* 端口颜色 = 数据类型：字符串蓝、messages[] 橙。连线颜色用的是同一对 token。 */
+.flow-canvas .flow-node .vue-flow__handle.flow-port-string { background: var(--flow-string) !important; }
+.flow-canvas .flow-node .vue-flow__handle.flow-port-messages { background: var(--flow-history) !important; }
 .flow-canvas .flow-node .vue-flow__handle:hover { background: var(--md-secondary) !important; }
 .flow-node-body { margin-top: 0.35em; color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
 .flow-node-body code { color: var(--md-primary); font-size: 0.95em; }
-.flow-user-output { display: flex; flex-direction: column; gap: 0.3em; margin-top: 0.4em; }
-.flow-user-output .v-field__input { font-size: var(--md-type-label-small); line-height: 1.45; }
 .flow-output-inputs { display: flex; flex-direction: column; gap: 0.1em; margin-top: 0.35em; }
 .flow-output-row { position: relative; display: flex; align-items: center; min-height: 1.5em;
   padding-left: 0.8em; color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
@@ -2181,3 +2183,9 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-canvas .vue-flow__nodes { z-index: 2; }
 .flow-canvas .vue-flow__edges { z-index: 8 !important; }
 .flow-canvas .vue-flow__edge { pointer-events: none; }
+
+/* 删除 / 关闭按钮里的 SVG 不要缩成一小坨：按钮本身是点击目标，图标尽量铺满内容盒。 */
+.v-btn svg { width: 1.45em; height: 1.45em; display: block; }
+/* 图标按钮：SVG 以按钮内容盒为基准铺开（原先固定 14px，落在 34–40px 按钮里像缩成一小坨）。 */
+.v-btn.v-btn--icon svg { width: 65%; height: auto; }
+.icon-btn svg, .cp-close svg { width: 62%; height: auto; display: block; }

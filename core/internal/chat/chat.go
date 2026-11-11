@@ -128,10 +128,6 @@ func (s *Service) Accept(session model.Session, content string) (Accepted, error
 	}
 
 	storedContent := statelang.Scan(content).Cleaned
-	// FlowAgent 的 input 节点可以做入库前改写：历史里留下的是改写后的用户 prompt。
-	if agent, ok := s.flowAgentOf(session); ok {
-		storedContent = applyFlowInputRewrite(agent, storedContent)
-	}
 	user, err := s.Store.InsertMessage(model.Message{
 		// 用户 `<state>` 注入一律剔除再入库（只 system prompt 与 assistant 的块算数）。
 		ID: userID, SessionID: session.ID, Role: model.RoleUser, RunID: userID,

@@ -316,15 +316,17 @@ func TestFlowAgentRerollExecutesGraph(t *testing.T) {
 	}
 }
 
-func TestApplyFlowInputRewrite(t *testing.T) {
-	agent := config.Agent{Flow: json.RawMessage(`{"version":1,"nodes":[{"id":"usr","type":"user_output","data":{"prompt":"前缀 {{input}} 后缀"}}],"edges":[]}`)}
-	if got := applyFlowInputRewrite(agent, "原问题"); got != "前缀 原问题 后缀" {
-		t.Fatalf("模板改写 = %q", got)
+func TestFlowOutputUserPortOverridesHistory(t *testing.T) {
+	agent := config.Agent{Flow: json.RawMessage(`{"version":1,"nodes":[{"id":"in","type":"input"},{"id":"out","type":"output"}],"edges":[{"source":"in","sourceHandle":"out","target":"out","targetHandle":"user"}]}`)}
+	graph := flowGraph{Nodes: []flowNode{{ID: "in", Type: "input"}, {ID: "out", Type: "output"}}, Edges: []flowEdge{{Source: "in", SourceHandle: "out", Target: "out", TargetHandle: "user"}}}
+	out, err := (&Service{}).executeFlowGraph(context.Background(), graph, flowRunOptions{Input: "原问题"})
+	if err != nil {
+		t.Fatal(err)
 	}
-	plain := config.Agent{Flow: json.RawMessage(`{"version":1,"nodes":[{"id":"in","type":"input","data":{}}],"edges":[]}`)}
-	if got := applyFlowInputRewrite(plain, "原问题"); got != "原问题" {
-		t.Fatalf("空模板应放行 = %q", got)
+	if out.UserMessage != "原问题" || out.Result.User != "原问题" {
+		t.Fatalf("user 端口 = %+v", out)
 	}
+	_ = agent
 }
 
 func TestExecuteFlowReportsActiveNode(t *testing.T) {
@@ -346,14 +348,13 @@ func TestExecuteFlowReportsActiveNode(t *testing.T) {
 	}
 }
 
-func TestFlowAgentStoresRewrittenInput(t *testing.T) {
+func TestFlowAgentStoresOutputUserPort(t *testing.T) {
 	h := newHarness(t, dummyProviders(), "dummy", "dummy")
 	flow := json.RawMessage(`{"version":1,"nodes":[
 		{"id":"in","type":"input","data":{}},
-		{"id":"usr","type":"user_output","data":{"prompt":"【改】{{input}}"}},
 		{"id":"llm","type":"llm","data":{"prompts":[{"id":"p1","role":"system","content":"写"}]}},
 		{"id":"out","type":"output","data":{}}
-	],"edges":[{"id":"e0","source":"in","target":"usr","targetHandle":"in"},{"id":"e1","source":"llm","sourceHandle":"text","target":"out","targetHandle":"text"}]}`)
+	],"edges":[{"id":"e0","source":"in","target":"out","targetHandle":"user"},{"id":"e1","source":"llm","sourceHandle":"text","target":"out","targetHandle":"text"}]}`)
 	if err := config.SaveJSON(h.configDir+"/agents.json", config.AgentsConfig{Agents: []config.Agent{{
 		ID: "flow", Kind: "flow", Flow: flow,
 	}}}); err != nil {
@@ -364,8 +365,30 @@ func TestFlowAgentStoresRewrittenInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	messages := h.settle(t)
-	if len(messages) != 2 || messages[0].Content != "【改】原话" {
-		t.Fatalf("FlowAgent 用户消息应已改写后入库：%+v", messages)
+	if len(messages) != 2 || messages[0].Content != "原话" {
+		t.Fatalf("FlowAgent 用户消息应写入 output.user：%+v", messages)
+	}
+}
+
+func TestFlowOutputUserPortOverridesStoredUser(t *testing.T) {
+	h := newHarness(t, dummyProviders(), "dummy", "dummy")
+	flow := json.RawMessage(`{"version":1,"nodes":[
+		{"id":"in","type":"input","data":{}},
+		{"id":"llm","type":"llm","data":{"prompts":[{"id":"p1","role":"system","content":"改"}]}},
+		{"id":"out","type":"output","data":{}}
+	],"edges":[{"id":"e0","source":"in","sourceHandle":"out","target":"llm","targetHandle":"prompt-p1"},{"id":"e1","source":"llm","sourceHandle":"text","target":"out","targetHandle":"user"}]}`)
+	if err := config.SaveJSON(h.configDir+"/agents.json", config.AgentsConfig{Agents: []config.Agent{{
+		ID: "flow", Kind: "flow", Flow: flow,
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	h.session.AgentID = "flow"
+	if _, err := h.service.Accept(h.session, "原话"); err != nil {
+		t.Fatal(err)
+	}
+	messages := h.settle(t)
+	if len(messages) != 2 || messages[0].Content != dummyReply {
+		t.Fatalf("output.user 应覆盖入库用户消息：%+v", messages)
 	}
 }
 
