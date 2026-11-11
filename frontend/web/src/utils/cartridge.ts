@@ -12,6 +12,7 @@ export const CARTRIDGE_VERSION = 2;
 
 export interface CartridgeAgent {
   name: string;
+  description?: string;
   system_prompt: string;
   segments: string[];
   first_message: string;
@@ -30,7 +31,7 @@ export interface CartridgeSegment extends Segment {
 }
 
 // buildCartridge：agent（`GET /agents` 的形状）+ 段库 ⇒ 卡带对象。
-type CartridgeSource = Pick<Agent, "name" | "system_prompt" | "segments" | "first_message" | "abilities" | "prepend_state">;
+type CartridgeSource = Pick<Agent, "name" | "description" | "system_prompt" | "segments" | "first_message" | "abilities" | "prepend_state">;
 
 export function buildCartridge(agent: CartridgeSource, segments?: CartridgeSegment[] | null): Cartridge {
   const refs = (agent.segments ?? []).map((x) => String(x));
@@ -46,6 +47,7 @@ export function buildCartridge(agent: CartridgeSource, segments?: CartridgeSegme
     version: CARTRIDGE_VERSION,
     agent: {
       name: agent.name ?? "",
+      description: agent.description ?? "",
       system_prompt: agent.system_prompt ?? "", // base 原文（不拼平）
       segments: refs, // 引用照旧
       first_message: agent.first_message ?? "",
@@ -80,6 +82,7 @@ export function cartridgeAgent(doc: unknown): { agent: CartridgeAgent; segments:
   return {
     agent: {
       name: String(agent.name).trim(),
+      description: String(agent.description ?? ""),
       system_prompt: String(agent.system_prompt ?? ""),
       segments: Array.isArray(agent.segments) ? agent.segments.map((x) => String(x)) : [],
       first_message: String(agent.first_message ?? ""),

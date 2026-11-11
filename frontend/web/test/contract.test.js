@@ -453,6 +453,18 @@ test("系统提示词拼装：base + 追加段（顺序、空行、缺段跳过�
   assert.deepEqual(missingSegments(["a", "katex"], lib), ["a"]);
 });
 
+// 2026-11-11 用户定：智能体列表改为 名称 / 标识 / 类型 / 描述 / 是否默认。
+test("智能体列表：名称|标识|类型|描述|是否默认", () => {
+  const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
+  const editor = readFileSync(join(SRC, "components", "AgentEditor.vue"), "utf8");
+  assert.match(settings, /<thead><tr><th>名称<\/th><th>标识<\/th><th>类型<\/th><th>描述<\/th><th>是否默认<\/th><\/tr><\/thead>/, "表头不是五列目标顺序");
+  assert.match(settings, /function agentType\(/, "没有类型派生");
+  assert.match(settings, /a\.description \|\| "—"/, "描述列没渲染（空值该显示 —）");
+  assert.match(settings, /class="agent-desc"/, "描述列没有省略/悬停样式钩子");
+  assert.match(editor, /const description = ref\(/, "编辑器没有 description 状态");
+  assert.match(editor, /description: description\.value\.trim\(\)/, "保存没有写 description");
+});
+
 test("agent 卡带 v2：带引用段（内置不带）、结构不拼平；v1 老卡带照收；导入侧校验", () => {
   const lib = [
     { id: "katex", text: "数学用 $…$ 写。" },
@@ -460,13 +472,14 @@ test("agent 卡带 v2：带引用段（内置不带）、结构不拼平；v1 �
     { id: "合理的RolePlay", text: "内置的", builtin: true },
   ];
   const agent = {
-    id: "rp-agent-simple", name: "RP Agent", system_prompt: "你是主持人。",
+    id: "rp-agent-simple", name: "RP Agent", description: "负责主持与旁白", system_prompt: "你是主持人。",
     segments: ["katex", "合理的RolePlay", "mcp"], first_message: "开场",
     // 能力也引用段（2026-10-28）：`mcp` 与 agent 自己那份**重叠** ⇒ 卡带里只出现一次
     abilities: { title: { enabled: false }, compact: { segments: ["mcp", "katex"] } }, prepend_state: true,
   };
   const card = buildCartridge(agent, lib);
   assert.equal(card.version, 2);
+  assert.equal(card.agent.description, "负责主持与旁白");
   assert.equal(card.agent.system_prompt, "你是主持人。"); // base 原文，**不拼平**
   assert.deepEqual(card.agent.segments, ["katex", "合理的RolePlay", "mcp"]); // 引用照旧
   assert.deepEqual(card.segments, [ // 只带引用到的**用户段**；内置不带
@@ -484,6 +497,7 @@ test("agent 卡带 v2：带引用段（内置不带）、结构不拼平；v1 �
   assert.throws(() => cartridgeAgent({ agent: { name: "x" }, segments: [{ id: "  " }] }), /空 id/);
   const back = cartridgeAgent(card);
   assert.equal(back.agent.name, "RP Agent");
+  assert.equal(back.agent.description, "负责主持与旁白");
   assert.deepEqual(back.agent.segments, ["katex", "合理的RolePlay", "mcp"]);
   assert.equal(back.segments.length, 2);
   assert.equal(back.agent.prepend_state, true);

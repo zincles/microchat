@@ -256,8 +256,10 @@ type PromptEntry struct {
 }
 
 type Agent struct {
-	ID           string `json:"id"`
-	Name         string `json:"name"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// Description：给列表/选择器看的一句人话（可选；不参与提示词拼装）。
+	Description  string `json:"description,omitempty"`
 	SystemPrompt string `json:"system_prompt"`
 	// FirstMessage：**首段对话**（2026-10-11 用户定）——以这个 agent 新建会话时，
 	// 它作为**第一条 assistant 消息**（idx 1）落库；空 = 不启用。正文原样存档

@@ -537,6 +537,8 @@ export interface PromptEntry {
 export interface Agent {
   id: string;
   name: string;
+  /** 列表里显示的一句人话；不参与提示词拼装。 */
+  description?: string;
   system_prompt: string;
   first_message?: string;
   segments?: string[];
@@ -565,6 +567,7 @@ export interface AgentsConfig {
 
 export interface CreateAgentRequest {
   name: string;
+  description?: string;
   system_prompt?: string;
   first_message?: string;
   segments?: string[];
@@ -578,6 +581,7 @@ export interface UpdateAgentRequest {
   new_id?: string;
   make_default?: boolean;
   name?: string;
+  description?: string;
   system_prompt?: string;
   first_message?: string;
   segments?: string[];

@@ -1171,6 +1171,15 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 #session-mgr-list, #agent-list, #provider-list, #prompt-list { overflow-x: auto; }
 /* 提示词片段表三列：名称 / 内容预览 / 谁在用 —— 定宽 + 省略号，
  * 不然长预览会把「谁在用」挤出卡片（看起来像被裁掉了）。 */
+#agent-list table { table-layout: fixed; }
+#agent-list th:nth-child(1), #agent-list td:nth-child(1) { width: 18%; }
+#agent-list th:nth-child(2), #agent-list td:nth-child(2) { width: 24%; }
+#agent-list th:nth-child(3), #agent-list td:nth-child(3) { width: 13%; }
+#agent-list th:nth-child(4), #agent-list td:nth-child(4) { width: 37%; }
+#agent-list th:nth-child(5), #agent-list td:nth-child(5) { width: 8%; text-align: center; }
+#agent-list .agent-id, #agent-list .agent-desc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#agent-list .agent-id { font-family: var(--app-font-mono, ui-monospace, monospace); font-size: 0.86em; color: var(--md-on-surface-variant); }
+#agent-list .agent-default { color: var(--md-primary); font-weight: 600; }
 #prompt-list table { table-layout: fixed; }
 #prompt-list th:nth-child(1), #prompt-list td:nth-child(1) { width: 27%; }
 #prompt-list th:nth-child(2), #prompt-list td:nth-child(2) { width: 53%; }

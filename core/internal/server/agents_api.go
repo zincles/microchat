@@ -17,7 +17,9 @@ import (
 
 type CreateAgentReq struct {
 	// 名称是**唯一的人类句柄** —— id 由后端生成，不接受指定。
-	Name         string `json:"name"`
+	Name string `json:"name"`
+	// Description：列表里的一句说明（可选，不参与提示词拼装）。
+	Description  string `json:"description,omitempty"`
 	SystemPrompt string `json:"system_prompt"`
 	// FirstMessage：首段对话（新会话的第一条 assistant 消息；空 = 不启用）。
 	FirstMessage string `json:"first_message,omitempty"`
@@ -37,6 +39,7 @@ type CreateAgentReq struct {
 
 type UpdateAgentReq struct {
 	Name         *string `json:"name"`
+	Description  *string `json:"description"`
 	SystemPrompt *string `json:"system_prompt"`
 	// FirstMessage：nil = 不动；`""` = 清掉（首段不启用）；非空 = 写进去。
 	FirstMessage *string `json:"first_message"`
@@ -111,6 +114,7 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 	agent := config.Agent{
 		ID:            uuid.Must(uuid.NewV7()).String(),
 		Name:          name,
+		Description:   strings.TrimSpace(req.Description),
 		SystemPrompt:  req.SystemPrompt,
 		FirstMessage:  req.FirstMessage,
 		Segments:      req.Segments,
@@ -207,6 +211,9 @@ func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		agents.Agents[index].Name = name
+	}
+	if req.Description != nil {
+		agents.Agents[index].Description = strings.TrimSpace(*req.Description)
 	}
 	if req.SystemPrompt != nil {
 		agents.Agents[index].SystemPrompt = *req.SystemPrompt

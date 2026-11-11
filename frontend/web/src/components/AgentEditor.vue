@@ -19,6 +19,7 @@ import type { AbilityToggle, Agent, CreateAgentRequest, TavernPreset, UpdateAgen
 
 interface AgentTemplate {
   name?: string;
+  description?: string;
   system_prompt?: string;
   first_message?: string;
   prepend_state?: boolean;
@@ -72,6 +73,7 @@ const sessionModelOptions = computed(() => [{ label: "跟随会话", value: "" }
 const tab = ref("base");
 const aid = ref(props.agent?.id ?? "");
 const name = ref(props.agent?.name ?? props.template?.name ?? "");
+const description = ref(props.agent?.description ?? props.template?.description ?? "");
 const prompt = ref(props.agent?.system_prompt ?? props.template?.system_prompt ?? "");
 const firstMsg = ref(props.agent?.first_message ?? props.template?.first_message ?? "");
 const rows = ref<Record<string, AbilityDraft>>({});
@@ -174,6 +176,7 @@ async function save(): Promise<void> {
     if (isNew) {
       const body: CreateAgentRequest = {
         name: name.value.trim(),
+        description: description.value.trim(),
         system_prompt: prompt.value,
         first_message: firstMsg.value,
         segments: segs.value,
@@ -185,6 +188,7 @@ async function save(): Promise<void> {
     } else {
       const agent = props.agent!;
       const body: UpdateAgentRequest = {
+        description: description.value.trim(),
         system_prompt: prompt.value,
         first_message: firstMsg.value,
         segments: segs.value,
@@ -206,6 +210,7 @@ async function save(): Promise<void> {
 function exportCartridge(): void {
   const doc = buildCartridge({
     name: name.value.trim() || "未命名",
+    description: description.value.trim(),
     system_prompt: prompt.value,
     segments: segs.value,
     first_message: firstMsg.value,
@@ -273,6 +278,7 @@ function onKey(e: KeyboardEvent): void {
     <section class="pane-section">
       <label class="field"><span>标识（改名会同步所有引用）</span><VTextField density="compact" variant="outlined" hide-details v-model="aid" :disabled="isNew" placeholder="新建时自动生成" /></label>
       <label class="field"><span>名称</span><VTextField density="compact" variant="outlined" hide-details v-model="name" placeholder="例如：跑团主持人" /></label>
+      <label class="field-block"><span>描述（列表里显示，给人类看；不参与提示词）</span><VTextarea v-model="description" rows="2" density="compact" variant="outlined" hide-details placeholder="例如：负责旁白与 NPC，语气克制" /></label>
       <label class="field-block"><span>开场白（新会话里的第一条回复；留空 = 不启用）</span><VTextarea v-model="firstMsg" rows="3" density="compact" variant="outlined" hide-details placeholder="例如：你好，我是……（可以包含状态块来设置初始状态）" /></label>
       <label class="field"><span>在消息开头附上当前状态（角色扮演建议开启）</span><VSwitch v-model="prepend" color="primary" density="compact" hide-details /></label>
       <label class="field"><span>提示词方案（酒馆预设）</span><VSelect v-model="presetId" :items="[{ title: '不使用（用本 Agent 的提示词）', value: '' }, ...presets.map(p => ({ title: p.filename, value: p.id }))]" density="compact" variant="outlined" hide-details placeholder="不使用" /></label>

@@ -73,6 +73,19 @@ const editAgent = ref<any>(null); // null | 'new' | agent（二级编辑器）
 const editSeg = ref<any>(null); // null | 'new' | segment（「提示词」tab 内的二级页）
 // 谁引用了这个段（「提示词」tab 列表与编辑器共用）。
 const segRefs = (id: string): string[] => agents.value.filter((a) => (a.segments ?? []).includes(id)).map((a) => a.name || a.id);
+// 列表里的“类型”是**当前配置的形态**，不是又一个手填字段：
+// 绑了酒馆预设 ⇒ 整套预设接管；有手工提示词计划 ⇒ 计划；否则就是基础提示词。
+// 将来 FlowAgent 落地时，这里再优先看 kind=flow —— 现在不先造一个只有一种值的字段。
+function agentType(a: Agent): string {
+  if (a.preset_id) return "酒馆预设";
+  if ((a.prompt_entries ?? []).length) return "提示词计划";
+  return "基础提示词";
+}
+function agentTypeTitle(a: Agent): string {
+  if (a.preset_id) return "已绑定酒馆预设：Agent 自己的提示词不参与";
+  if ((a.prompt_entries ?? []).length) return "使用手工提示词计划";
+  return "基础提示词 + 片段";
+}
 const providers = ref<ProviderView[]>([]);
 // 顶栏/会话设置用的是同一份 `GET /models`（跨渠道拍平那一条）：默认值那两格的下拉也从它取。
 const modelGroups = ref<ModelGroup[]>([]);
@@ -303,7 +316,9 @@ const sessionMgrStatus = ref("");
 async function loadAgents(): Promise<void> {
   try {
     const data = await api.agents();
-    curDefault.value = data.default_agent ?? "";
+    // 后端允许 default_agent 缺失/空串，语义是“用内置 default”；
+    // 列表的“是否默认”必须按生效值画，不然默认助手那一行永远空着。
+    curDefault.value = data.default_agent || "default";
     agents.value = data.agents ?? [];
     segmentsLib.value = data.segments ?? [];
   } catch {}
@@ -570,11 +585,13 @@ function onKey(e: KeyboardEvent): void {
             <div class="row"><span class="status">{{ cartridgeStatus }}</span></div>
             <div id="agent-list">
               <VTable class="plist">
-                <thead><tr><th>名称</th><th>标识</th><th>默认使用</th></tr></thead>
+                <thead><tr><th>名称</th><th>标识</th><th>类型</th><th>描述</th><th>是否默认</th></tr></thead>
                 <tbody><tr v-for="a in agents" :key="a.id" class="clickable" @click="editAgent = a">
                   <td>{{ a.name }}</td>
-                  <td>{{ a.id }}</td>
-                  <td>{{ a.id === curDefault ? "✓" : "" }}</td>
+                  <td class="agent-id" :title="a.id">{{ a.id }}</td>
+                  <td :title="agentTypeTitle(a)">{{ agentType(a) }}</td>
+                  <td class="agent-desc" :title="a.description || ''">{{ a.description || "—" }}</td>
+                  <td class="agent-default" :title="a.id === curDefault ? '新建会话默认使用' : ''">{{ a.id === curDefault ? "✓" : "" }}</td>
                 </tr></tbody>
               </VTable>
             </div>
