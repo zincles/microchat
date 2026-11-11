@@ -115,8 +115,10 @@ export function normalizeFlowGraph(graph?: FlowGraph | null): FlowGraph {
     }))
     .map((e) => {
       // 老图的 output 只有一个 `in`；新图把正文/思考分成 text / reasoning，载入时就地迁移。
+      // 迁移看**源端口**：reasoning 源接到旧 `in` ⇒ 落 reasoning，不能把它悄悄变成正文。
       const target = nodes.find((n) => n.id === e.target);
-      return target?.type === "output" && e.targetHandle === "in" ? { ...e, targetHandle: "text" } : e;
+      if (target?.type !== "output" || e.targetHandle !== "in") return e;
+      return { ...e, targetHandle: e.sourceHandle === "reasoning" ? "reasoning" : "text" };
     });
   return { version: FLOW_VERSION, nodes, edges };
 }

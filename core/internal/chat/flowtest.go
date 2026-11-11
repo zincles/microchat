@@ -185,7 +185,12 @@ func (s *Service) executeFlowGraph(ctx context.Context, graph flowGraph, opts fl
 				}
 				handle := edge.TargetHandle
 				if handle == "" || handle == "in" {
-					handle = "text"
+					// 老 output 只有一个 `in`：按源端口解释，reasoning 源仍落到 reasoning。
+					if edge.SourceHandle == "reasoning" {
+						handle = "reasoning"
+					} else {
+						handle = "text"
+					}
 				}
 				switch handle {
 				case "text":

@@ -5,7 +5,7 @@ import { parseWireMessages, previewBlock } from "../src/utils/payload.ts";
 import { assemblePrompt, abilityPrompt, missingSegments } from "../src/utils/prompt.ts";
 import { renderMarkdown } from "../src/utils/markdown.ts";
 import { buildCartridge, cartridgeAgent } from "../src/utils/cartridge.ts";
-import { emptyFlowGraph, flowDebugSteps, flowIssues, flowSourceType, flowTargetType, trimMessages } from "../src/utils/flow.ts";
+import { emptyFlowGraph, flowDebugSteps, flowIssues, flowSourceType, flowTargetType, normalizeFlowGraph, trimMessages } from "../src/utils/flow.ts";
 import { parseCommand, filterCommands, COMMAND_META } from "../src/utils/commands.ts";
 import { uuidv7 } from "../src/utils/ids.ts";
 import { groupSessions, SESSION_GROUP_LABELS } from "../src/utils/sessionGroups.ts";
@@ -509,6 +509,12 @@ test("FlowAgent：端口有类型，且每个端点只许一条线", () => {
   assert.deepEqual(trimMessages(msgs, "head", 2).map((m) => m.content), ["1", "2"]);
   assert.deepEqual(trimMessages(msgs, "drop-head", 1).map((m) => m.content), ["2", "3"]);
   assert.deepEqual(trimMessages(msgs, "drop-tail", 1).map((m) => m.content), ["1", "2"]);
+  const legacy = normalizeFlowGraph({
+    version: 1,
+    nodes: [input, llm, { id: "out", type: "output", position: { x: 0, y: 0 }, data: {} }],
+    edges: [{ id: "old", source: "l", sourceHandle: "reasoning", target: "out", targetHandle: "in" }],
+  });
+  assert.equal(legacy.edges[0]?.targetHandle, "reasoning", "老图 reasoning→in 迁移错了");
   const badTrim = { version: 1, nodes: [input, { ...trim, data: { mode: "tail", count: 0 } }, { id: "out", type: "output", position: { x: 0, y: 0 }, data: {} }], edges: [] };
   assert.ok(flowIssues(badTrim).some((x) => x.includes("裁剪条数")));
   const badRole = { version: 1, nodes: [input, { ...trim, data: { roles: ["narrator"] } }, { id: "out", type: "output", position: { x: 0, y: 0 }, data: {} }], edges: [] };
