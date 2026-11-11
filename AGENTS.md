@@ -378,7 +378,7 @@ delete(AA)           # 删除
   （逻辑由 `flow` 的节点图驱动）。`flow` 是编辑器产出的
   `{version, nodes:[{id,type,position,data}], edges:[{id,source,target,...}]}`；
   后端目前**只搬运、不解释**节点表；节点白名单是
-  `input / history / trim / llm / join / output`；编辑器用 Vue Flow（`@vue-flow/core`）。
+  `input / history / trim / merge / llm / join / output`；编辑器用 Vue Flow（`@vue-flow/core`）。
   **LLM 节点不绑定 Agent**：它内部是一张手动组装的消息列表，每个 Prompt 条目有
   `role`（system / user / assistant）、手写正文，以及一个自己的左侧输入孔；
   Prompt 列表里还可以插入 **历史条目**（黄色，接 `history` 节点输出的 messages[]），
@@ -386,10 +386,11 @@ delete(AA)           # 删除
   LLM 节点数据存 `provider` / `model`。右侧有**两个出口**：
   `reasoning`（思考）与 `text`（正文），下游可以分别接线。
   数据类型的颜色是硬约定：**蓝色 = 裸字符串**（输入/拼接和复制/输出与 Prompt 输入），
-  **橙色 = messages[]**（history 节点、裁剪节点、它们的边与 LLM 的 history 端口）。
+  **橙色 = messages[]**（history / 裁剪 / 拼接 messages 节点、它们的边与 LLM 的 history 端口）。
   **端口是强类型的，且每个端点只允许一条线**：字符串不能接 messages，LLM 的
   reasoning 与 text 也各自只能接一条；要多路输入请用 `join`（它默认有 `in-1` / `in-2`
-  两个输入孔、一个 `out-1` 输出孔，可继续「添加输入」/「添加输出」；多个输出口都复制同一段
+  两个输入孔、一个 `out-1` 输出孔，可继续「添加输入」/「添加输出」，也能用每行的 `−` 移除端口；
+  **至少留一个输入、一个输出**，移除端口时相连的边一起删。多个输出口都复制同一段
   拼接结果。节点上可编辑**分隔符**（默认空行 `---` 空行；留空 = 直接相连）。类型不符的连接直接拒绝；拖到已被占用的端口时
   旧线被新线替换，不会出现一个端点两条线。
   history 是显式节点而不是隐式上下文：测试接口没有会话上下文，所以 history 节点
@@ -397,7 +398,10 @@ delete(AA)           # 删除
   **`trim`（裁剪 messages）** 是 messages[] → messages[] 的节点：一个 `in` 输入、一个 `out` 输出，
   按**条数**裁剪（不猜 token）。`mode` 四选一：`tail` 保留最近 N 条（默认）、`head` 保留最早 N 条、
   `drop-head` 去掉开头 N 条、`drop-tail` 去掉结尾 N 条；`count` 必须是正整数（缺省 10）。
+  `roles` 可选（`system` / `user` / `assistant`）：先按角色过滤，再按条数裁剪；缺失 / 空 = 全部角色。
   它可以接在 history 后面、再接给 LLM 的 history 条目，也可以串联多个裁剪节点。
+  **`merge`（拼接 messages）** 是 messages[] 的多输入合并节点：输入端口 `in-1`、`in-2`…（可加、可移除），
+  一个 `out`；按端口顺序拼接，不排序、不去重。它只接 messages[]，不是字符串的 `join`。
   右侧是**悬浮面板**（absolute，不占画布宽高），tabs = **测试 / 调试 / 节点**：
   测试页放输入与发送，调试页是结构预演，节点页列出每个节点的输入/输出连接并可就地断开/删除。
   节点右上角也有删除键；删除节点时连同所有相连边一起删。从已连接的口子开始拖 = 重连旧线：

@@ -5,7 +5,7 @@ import { computed, inject, ref, type Ref } from "vue";
 import { Handle, Position } from "@vue-flow/core";
 import { VBtn, VSelect, VTextField, VTextarea } from "vuetify/components";
 import type { ModelListItem } from "../api/types.ts";
-import { DEFAULT_JOIN_SEPARATOR, TRIM_MODES, trimCountOf, trimModeOf, type TrimMode } from "../utils/flow.ts";
+import { DEFAULT_JOIN_SEPARATOR, TRIM_MODES, TRIM_ROLES, trimCountOf, trimModeOf, type TrimMode } from "../utils/flow.ts";
 
 const props = defineProps<{
   id: string;
@@ -24,11 +24,13 @@ interface PromptEntry {
 const hovered = ref(false);
 // 删除回调由 FlowEditor 提供：它会在同一个动作里删节点 + 所有相连边。
 const removeNode = inject<(id: string) => void>("flowRemoveNode", () => {});
+const removePort = inject<(nodeId: string, handle: string, side: "source" | "target") => void>("flowRemovePort", () => {});
 const models = inject<Ref<ModelListItem[]>>("flowModels", ref([]));
 const label = computed(() => ({
   input: "输入",
   history: "历史数据",
   trim: "裁剪 messages",
+  merge: "拼接 messages",
   llm: "调用 LLM",
   join: "拼接和复制",
   output: "输出",
@@ -37,6 +39,7 @@ const hint = computed(() => ({
   input: "裸字符串：本轮用户输入",
   history: "messages[]：当前会话历史",
   trim: "messages[] → messages[]：按条数裁剪",
+  merge: "多路 messages[] 按端口顺序拼接",
   llm: "手动组装 messages",
   join: "多路拼接；只接一路时直接复制",
   output: "最终结果写入聊天",
@@ -69,10 +72,21 @@ const trimCount = computed<string>({
     props.data.count = Number.isInteger(count) && count > 0 ? count : 1;
   },
 });
+const trimRoleOptions: string[] = [...TRIM_ROLES];
+const trimRoles = computed<string[]>({
+  get: () => Array.isArray(props.data.roles) && props.data.roles.length
+    ? props.data.roles.filter((role: unknown) => (TRIM_ROLES as readonly string[]).includes(String(role)))
+    : [...TRIM_ROLES],
+  set: (roles: string[]) => { props.data.roles = roles.length ? roles : [...TRIM_ROLES]; },
+});
 const trimSummary = computed(() => {
   const mode = TRIM_MODES.find((item) => item.value === trimMode.value)?.title ?? "保留最近 N 条";
-  return mode.replace("N", trimCount.value);
+  const roles = trimRoles.value.length === TRIM_ROLES.length ? "全部角色" : `只保留 ${trimRoles.value.join(" / ")}`;
+  return `${mode.replace("N", trimCount.value)} · ${roles}`;
 });
+const mergeInputs = computed<string[]>(() => Array.isArray(props.data.inputs) && props.data.inputs.length
+  ? props.data.inputs
+  : ["in-1", "in-2"]);
 const joinInputs = computed<string[]>(() => Array.isArray(props.data.inputs) && props.data.inputs.length
   ? props.data.inputs
   : ["in-1", "in-2"]);
@@ -98,6 +112,30 @@ function addHistory(): void {
 }
 function removePrompt(id: string): void {
   props.data.prompts = (props.data.prompts ?? []).filter((p: PromptEntry) => p.id !== id);
+}
+function removeMergeInput(index: number): void {
+  if (mergeInputs.value.length <= 1) return;
+  const [removed] = mergeInputs.value.slice(index, index + 1);
+  props.data.inputs = mergeInputs.value.filter((_, i) => i !== index);
+  if (removed) removePort(props.id, removed, "target");
+}
+function addMergeInput(): void {
+  const inputs = [...mergeInputs.value];
+  let n = inputs.length + 1;
+  while (inputs.includes(`in-${n}`)) n++;
+  props.data.inputs = [...inputs, `in-${n}`];
+}
+function removeJoinInput(index: number): void {
+  if (joinInputs.value.length <= 1) return;
+  const [removed] = joinInputs.value.slice(index, index + 1);
+  props.data.inputs = joinInputs.value.filter((_, i) => i !== index);
+  if (removed) removePort(props.id, removed, "target");
+}
+function removeJoinOutput(index: number): void {
+  if (joinOutputs.value.length <= 1) return;
+  const [removed] = joinOutputs.value.slice(index, index + 1);
+  props.data.outputs = joinOutputs.value.filter((_, i) => i !== index);
+  if (removed) removePort(props.id, removed, "source");
 }
 function addJoinInput(): void {
   const inputs = [...joinInputs.value];
@@ -163,12 +201,27 @@ function addJoinOutput(): void {
       <VSelect v-model="trimMode" :items="TRIM_MODES" density="compact" variant="outlined" hide-details />
       <VTextField v-model="trimCount" type="number" min="1" step="1" density="compact"
         variant="outlined" hide-details suffix="条" />
+      <VSelect v-model="trimRoles" :items="trimRoleOptions" multiple chips density="compact"
+        variant="outlined" hide-details label="角色" />
       <span class="flow-node-body">{{ trimSummary }}</span>
+    </div>
+    <div v-if="type === 'merge'" class="flow-merge-inputs">
+      <div v-for="(input, i) in mergeInputs" :key="input" class="flow-merge-row">
+        <Handle :id="input" type="target" :position="Position.Left" />
+        <span>输入 {{ i + 1 }} · messages[]</span>
+        <VBtn icon variant="text" size="x-small" type="button" class="flow-port-del nodrag nopan"
+          :disabled="mergeInputs.length <= 1" title="移除这个输入" aria-label="移除这个输入"
+          @click.stop="removeMergeInput(i)">−</VBtn>
+      </div>
+      <VBtn variant="text" size="small" type="button" class="flow-add-merge nodrag nopan" @click="addMergeInput">＋ 添加输入</VBtn>
     </div>
     <div v-if="type === 'join'" class="flow-join-inputs">
       <div v-for="(input, i) in joinInputs" :key="input" class="flow-join-row">
         <Handle :id="input" type="target" :position="Position.Left" />
         <span>输入 {{ i + 1 }}</span>
+        <VBtn icon variant="text" size="x-small" type="button" class="flow-port-del nodrag nopan"
+          :disabled="joinInputs.length <= 1" title="移除这个输入" aria-label="移除这个输入"
+          @click.stop="removeJoinInput(i)">−</VBtn>
       </div>
       <VBtn variant="text" size="small" type="button" class="flow-add-join nodrag nopan" @click="addJoinInput">＋ 添加输入</VBtn>
       <label class="flow-join-sep nodrag nopan">
@@ -199,6 +252,9 @@ function addJoinOutput(): void {
     <div v-if="type === 'join'" class="flow-join-outputs">
       <div v-for="(output, i) in joinOutputs" :key="output" class="flow-join-output-row">
         <span>输出 {{ i + 1 }}</span>
+        <VBtn icon variant="text" size="x-small" type="button" class="flow-port-del nodrag nopan"
+          :disabled="joinOutputs.length <= 1" title="移除这个输出" aria-label="移除这个输出"
+          @click.stop="removeJoinOutput(i)">−</VBtn>
         <Handle :id="output" type="source" :position="Position.Right" />
       </div>
       <VBtn variant="text" size="small" type="button" class="flow-add-join nodrag nopan" @click="addJoinOutput">＋ 添加输出</VBtn>

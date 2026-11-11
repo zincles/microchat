@@ -123,7 +123,17 @@ func (s *Service) TestFlow(ctx context.Context, flowAgent config.Agent, message,
 					nodeMessages = append(nodeMessages, sourceMessages(values, edge)...)
 				}
 			}
-			nodeMessages = trimFlowMessages(nodeMessages, flowTrimMode(node), flowTrimCount(node))
+			nodeMessages = trimFlowMessages(filterFlowRoles(nodeMessages, flowTrimRoles(node)), flowTrimMode(node), flowTrimCount(node))
+			step.Output = fmt.Sprintf("messages[%d]", len(nodeMessages))
+		case "merge":
+			step.Label = "拼接 messages"
+			for _, port := range flowMergeInputs(node) {
+				for _, edge := range graph.Edges {
+					if edge.Target == node.ID && (edge.TargetHandle == port || (port == "in-1" && edge.TargetHandle == "")) {
+						nodeMessages = append(nodeMessages, sourceMessages(values, edge)...)
+					}
+				}
+			}
 			step.Output = fmt.Sprintf("messages[%d]", len(nodeMessages))
 		case "join":
 			step.Label = "拼接和复制"
@@ -158,7 +168,7 @@ func (s *Service) TestFlow(ctx context.Context, flowAgent config.Agent, message,
 		if node.Type == "history" {
 			values[flowKey(node.ID, "out")] = flowValue{Text: "[]", Messages: []providers.ChatMessage{}}
 		}
-		if node.Type == "trim" {
+		if node.Type == "trim" || node.Type == "merge" {
 			values[flowKey(node.ID, "out")] = flowValue{Text: step.Output, Messages: nodeMessages}
 		}
 		if node.Type == "join" {
@@ -225,6 +235,47 @@ func flowTrimMode(node flowNode) string {
 		}
 	}
 	return "tail"
+}
+
+func flowTrimRoles(node flowNode) []string {
+	raw, ok := node.Data["roles"]
+	if !ok || raw == nil {
+		return nil
+	}
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return nil
+	}
+	var roles []string
+	if json.Unmarshal(data, &roles) != nil {
+		return nil
+	}
+	out := make([]string, 0, len(roles))
+	for _, role := range roles {
+		switch role {
+		case "system", "user", "assistant":
+			out = append(out, role)
+		}
+	}
+	return out
+}
+
+// filterFlowRoles：roles 为空 = 全部角色；否则只留列出的角色。
+func filterFlowRoles(messages []providers.ChatMessage, roles []string) []providers.ChatMessage {
+	if len(roles) == 0 {
+		return messages
+	}
+	allowed := map[string]bool{}
+	for _, role := range roles {
+		allowed[role] = true
+	}
+	out := make([]providers.ChatMessage, 0, len(messages))
+	for _, message := range messages {
+		if allowed[message.Role] {
+			out = append(out, message)
+		}
+	}
+	return out
 }
 
 func flowTrimCount(node flowNode) int {
@@ -343,6 +394,19 @@ func (s *Service) testLLMCall(ctx context.Context, node flowNode, edges []flowEd
 	return strings.TrimSpace(result.Text), strings.TrimSpace(result.Reasoning), nil
 }
 
+func flowMergeInputs(node flowNode) []string {
+	raw, ok := node.Data["inputs"]
+	if !ok {
+		return []string{"in-1", "in-2"}
+	}
+	data, _ := json.Marshal(raw)
+	var inputs []string
+	if json.Unmarshal(data, &inputs) != nil || len(inputs) == 0 {
+		return []string{"in-1", "in-2"}
+	}
+	return inputs
+}
+
 func flowJoinOutputs(node flowNode) []string {
 	raw, ok := node.Data["outputs"]
 	if !ok {
@@ -369,7 +433,7 @@ func validateTestGraph(graph flowGraph) error {
 		seen[node.ID] = true
 		counts[node.Type]++
 		switch node.Type {
-		case "input", "history", "trim", "llm", "join", "output":
+		case "input", "history", "trim", "merge", "llm", "join", "output":
 		default:
 			return fmt.Errorf("不认识的节点类型：%s", node.Type)
 		}
@@ -404,6 +468,29 @@ func validateTestGraph(graph flowGraph) error {
 				default:
 					return fmt.Errorf("裁剪节点 %s 的裁剪方式不合法", node.ID)
 				}
+			}
+			if rawRoles, ok := node.Data["roles"]; ok && rawRoles != nil {
+				data, _ := json.Marshal(rawRoles)
+				var roles []string
+				if json.Unmarshal(data, &roles) != nil {
+					return fmt.Errorf("裁剪节点 %s 的角色不合法", node.ID)
+				}
+				for _, role := range roles {
+					if role != "system" && role != "user" && role != "assistant" {
+						return fmt.Errorf("裁剪节点 %s 的角色不合法", node.ID)
+					}
+				}
+			}
+		}
+		if node.Type == "merge" {
+			inputs := flowMergeInputs(node)
+			seenInputs := map[string]bool{}
+			for _, input := range inputs {
+				input = strings.TrimSpace(input)
+				if input == "" || seenInputs[input] {
+					return fmt.Errorf("拼接 messages 节点 %s 有空的或重复的输入端口", node.ID)
+				}
+				seenInputs[input] = true
 			}
 		}
 		if node.Type == "join" {

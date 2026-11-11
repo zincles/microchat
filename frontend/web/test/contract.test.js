@@ -473,10 +473,13 @@ test("FlowAgent：端口有类型，且每个端点只许一条线", () => {
   const llm = { id: "l", type: "llm", position: { x: 0, y: 0 }, data: { prompts: [{ id: "p1", role: "system", content: "x" }, { id: "h1", kind: "history" }] } };
   const join = { id: "j", type: "join", position: { x: 0, y: 0 }, data: { inputs: ["in-1", "in-2"] } };
   const trim = { id: "t", type: "trim", position: { x: 0, y: 0 }, data: { mode: "tail", count: 2 } };
+  const merge = { id: "m", type: "merge", position: { x: 0, y: 0 }, data: { inputs: ["in-1", "in-2"] } };
   assert.equal(flowSourceType(input, "out"), "string");
   assert.equal(flowSourceType(history, "out"), "messages");
   assert.equal(flowSourceType(trim, "out"), "messages");
   assert.equal(flowTargetType(trim, "in"), "messages");
+  assert.equal(flowSourceType(merge, "out"), "messages");
+  assert.equal(flowTargetType(merge, "in-1"), "messages");
   assert.equal(flowSourceType(llm, "reasoning"), "string");
   assert.equal(flowSourceType(llm, "text"), "string");
   assert.equal(flowSourceType(join, "out-1"), "string");
@@ -506,6 +509,13 @@ test("FlowAgent：端口有类型，且每个端点只许一条线", () => {
   assert.deepEqual(trimMessages(msgs, "drop-tail", 1).map((m) => m.content), ["1", "2"]);
   const badTrim = { version: 1, nodes: [input, { ...trim, data: { mode: "tail", count: 0 } }, { id: "out", type: "output", position: { x: 0, y: 0 }, data: {} }], edges: [] };
   assert.ok(flowIssues(badTrim).some((x) => x.includes("裁剪条数")));
+  const badRole = { version: 1, nodes: [input, { ...trim, data: { roles: ["narrator"] } }, { id: "out", type: "output", position: { x: 0, y: 0 }, data: {} }], edges: [] };
+  assert.ok(flowIssues(badRole).some((x) => x.includes("未知的角色")));
+  const mergeGraph = { version: 1, nodes: [history, merge, { ...llm, data: { prompts: [{ id: "h1", kind: "history" }] } }, { id: "out", type: "output", position: { x: 0, y: 0 }, data: {} }], edges: [
+    { id: "me1", source: "h", target: "m", targetHandle: "in-1" },
+    { id: "me2", source: "m", target: "l", targetHandle: "history-h1" },
+  ] };
+  assert.ok(!flowIssues(mergeGraph).some((x) => x.includes("端口类型不匹配")), "history → merge → LLM 应类型匹配");
 });
 
 test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接和复制节点", () => {
@@ -544,6 +554,14 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(flowNode, /addHistory/, "LLM 节点不能添加历史条目");
   assert.match(flowNode, /flow-llm-model/, "LLM 节点没有 AI 模型选择框");
   assert.match(flowNode, /flow-trim-controls/, "裁剪节点没有配置控件");
+  assert.match(flowNode, /trimRoles/, "裁剪节点没有角色过滤");
+  assert.match(flow, /function removePort/, "删除端口没有同步删除相连边");
+  assert.match(flow, /provide\("flowRemovePort"/, "没有把删除端口的回调交给节点");
+  assert.match(flowNode, /removeJoinInput/, "拼接节点不能移除输入");
+  assert.match(flowNode, /removeJoinOutput/, "拼接节点不能移除输出");
+  assert.match(flowNode, /removeMergeInput/, "拼接 messages 节点不能移除输入");
+  assert.match(flowNode, /flow-merge-inputs/, "拼接 messages 节点没有多输入端口");
+  assert.match(flowNode, /addMergeInput/, "拼接 messages 节点不能加输入");
   assert.match(flowNode, /TRIM_MODES/, "裁剪节点没有裁剪方式下拉");
   assert.match(flowNode, /trimSummary/, "裁剪节点没有摘要");
   assert.match(flowNode, /id="text"/, "LLM 节点没有正文出口");
@@ -559,7 +577,7 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(css, /\.flow-panel-test \{[^}]*display:\s*flex/, "测试面板没有独立内容区");
   assert.match(flow, /flow-node-row/, "节点面板没有节点列表");
   assert.match(flow, /flow-panel-tabs/, "面板没有 测试/调试/节点 tabs");
-  for (const type of ["input", "history", "trim", "llm", "join", "output"]) {
+  for (const type of ["input", "history", "trim", "merge", "llm", "join", "output"]) {
     assert.ok(flow.includes(`addNode('${type}')`) || flow.includes(`addNode("${type}")`), `流程编辑器缺 ${type} 节点`);
   }
   const empty = emptyFlowGraph();

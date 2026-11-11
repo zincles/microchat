@@ -1829,10 +1829,11 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 /* 入口/出口在卡片边上给一点方向色；默认主题会给 input/output 的 handle 染色，必须压住。 */
 .flow-node-input, .flow-node-join { border-left: 3px solid var(--flow-string); }
 .flow-node-output { border-right: 3px solid var(--flow-string); }
-.flow-node-history, .flow-node-trim { border-left: 3px solid var(--flow-history); }
+.flow-node-history, .flow-node-trim, .flow-node-merge { border-left: 3px solid var(--flow-history); }
 .flow-node-trim { border-right: 3px solid var(--flow-history); }
 .flow-canvas .flow-node.flow-node-history .vue-flow__handle,
-.flow-canvas .flow-node.flow-node-trim .vue-flow__handle { background: var(--flow-history) !important; }
+.flow-canvas .flow-node.flow-node-trim .vue-flow__handle,
+.flow-canvas .flow-node.flow-node-merge .vue-flow__handle { background: var(--flow-history) !important; }
 .flow-canvas .flow-node .vue-flow__handle { width: 10px; height: 10px;
   border: 2px solid var(--md-surface-container-high); background: var(--md-primary) !important; }
 .flow-canvas .flow-node .vue-flow__handle:hover { background: var(--md-secondary) !important; }
@@ -1889,6 +1890,17 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-history-label { flex: 1 1 auto; color: var(--flow-history); font-size: var(--md-type-label-small); }
 .flow-trim-controls { display: flex; flex-direction: column; gap: 0.35em; margin-top: 0.4em; }
 .flow-trim-controls .v-field { font-size: var(--md-type-label-small); }
+.flow-merge-inputs { display: flex; flex-direction: column; gap: 0.15em; margin-top: 0.35em; }
+.flow-merge-row { position: relative; display: flex; align-items: center; min-height: 1.65em;
+  padding-left: 0.8em; color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
+.flow-merge-row .vue-flow__handle-left { left: 0; }
+.flow-add-merge { align-self: flex-start; margin-top: 0.1em; }
+/* 端口行的减号：只在还能删时可用；禁用态保留位置，避免行宽跳动。 */
+.flow-port-del { flex: none; margin-left: auto; min-width: 1.2em; min-height: 1.2em;
+  color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
+.flow-port-del:disabled { opacity: 0.3; }
+.flow-join-output-row .flow-port-del { margin-left: 0; margin-right: 0.35em; }
+.flow-merge-row .flow-port-del, .flow-join-row .flow-port-del { margin-left: auto; }
 .flow-prompt-history .vue-flow__handle-left { left: 0; }
 .flow-prompt-row { position: relative; padding: 0.35em 0.1em 0.4em 0.8em;
   border-top: 1px solid var(--md-outline-variant); }

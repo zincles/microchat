@@ -7,7 +7,7 @@ import type { FlowEdge, FlowGraph, FlowNode } from "../api/types.ts";
 
 export const FLOW_VERSION = 1;
 export const DEFAULT_JOIN_SEPARATOR = "\n\n---\n\n";
-export const FLOW_NODE_TYPES = ["input", "history", "trim", "llm", "join", "output"] as const;
+export const FLOW_NODE_TYPES = ["input", "history", "trim", "merge", "llm", "join", "output"] as const;
 export type FlowNodeType = (typeof FLOW_NODE_TYPES)[number];
 export type FlowDataType = "string" | "messages";
 
@@ -19,6 +19,7 @@ export const TRIM_MODES = [
 ] as const;
 export type TrimMode = (typeof TRIM_MODES)[number]["value"];
 export const DEFAULT_TRIM_COUNT = 10;
+export const TRIM_ROLES = ["system", "user", "assistant"] as const;
 
 const norm = (handle?: string, fallback = "out"): string => handle || fallback;
 
@@ -32,6 +33,7 @@ export function flowSourceType(node: FlowNode | undefined, handle?: string): Flo
       return h === "out" || /^out-\d+$/.test(h) ? "string" : null;
     case "history":
     case "trim":
+    case "merge":
       return h === "out" ? "messages" : null;
     case "llm":
       return h === "text" || h === "reasoning" ? "string" : null;
@@ -49,6 +51,8 @@ export function flowTargetType(node: FlowNode | undefined, handle?: string): Flo
       return h.startsWith("prompt-") ? "string" : null;
     case "trim":
       return h === "in" ? "messages" : null;
+    case "merge":
+      return h.startsWith("in-") ? "messages" : null;
     case "join":
       return h.startsWith("in-") ? "string" : null;
     case "output":
@@ -132,6 +136,11 @@ export function flowIssues(graph: FlowGraph): string[] {
       if (!TRIM_MODES.some((item) => item.value === mode)) issues.push("裁剪节点有未知的裁剪方式");
       const count = Number(node.data?.count ?? DEFAULT_TRIM_COUNT);
       if (!Number.isInteger(count) || count < 1) issues.push("裁剪条数必须是正整数");
+      if (Array.isArray(node.data?.roles)) {
+        for (const role of node.data.roles) {
+          if (!(TRIM_ROLES as readonly string[]).includes(String(role))) issues.push("裁剪节点有未知的角色");
+        }
+      }
     }
     if (node.type === "llm") {
       const prompts = Array.isArray(node.data?.prompts) ? node.data.prompts : [];
@@ -150,6 +159,16 @@ export function flowIssues(graph: FlowGraph): string[] {
     }
   }
   for (const node of nodes) {
+    if (node.type === "merge") {
+      const inputs = Array.isArray(node.data?.inputs) ? node.data.inputs : ["in-1", "in-2"];
+      const seenInputs = new Set<string>();
+      for (const input of inputs) {
+        const id = String(input ?? "").trim();
+        if (!id || seenInputs.has(id)) issues.push("拼接 messages 节点有空的或重复的输入端口");
+        seenInputs.add(id);
+      }
+      if (!inputs.length) issues.push("拼接 messages 节点至少需要一个输入端口");
+    }
     if (node.type === "join") {
       const inputs = Array.isArray(node.data?.inputs) ? node.data.inputs : ["in-1", "in-2"];
       const seenInputs = new Set<string>();
@@ -249,7 +268,7 @@ export function flowDebugSteps(graph: FlowGraph): FlowDebugStep[] {
   const nodes = flowNodeOrder(graph);
   const edges = graph.edges ?? [];
   const values = new Map<string, { text: string; reasoning: string }>();
-  const labels: Record<string, string> = { input: "输入", history: "历史数据", trim: "裁剪 messages", llm: "调用 LLM", join: "拼接和复制", output: "输出" };
+  const labels: Record<string, string> = { input: "输入", history: "历史数据", trim: "裁剪 messages", merge: "拼接 messages", llm: "调用 LLM", join: "拼接和复制", output: "输出" };
   const source = (edge: { source: string; sourceHandle?: string }): string => {
     const handle = edge.sourceHandle || "out";
     const value = values.get(`${edge.source}\0${handle}`) ?? values.get(`${edge.source}\0out`) ?? values.get(`${edge.source}\0text`);
@@ -268,6 +287,8 @@ export function flowDebugSteps(graph: FlowGraph): FlowDebugStep[] {
       output = "[会话历史 messages]";
     } else if (node.type === "trim") {
       output = "[裁剪后 messages]";
+    } else if (node.type === "merge") {
+      output = "[拼接后 messages]";
     } else if (node.type === "llm") {
       label = "调用 LLM";
       output = "[LLM 正文]";
