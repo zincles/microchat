@@ -34,18 +34,20 @@ const label = computed(() => ({
   llm: "调用 LLM",
   join: "拼接和复制",
   output: "输出",
+  user_output: "用户消息",
 }[props.type] ?? props.type));
 const badge = computed(() => ({
-  input: "IN", history: "H", trim: "TR", merge: "MG", llm: "AI", join: "J", output: "OUT",
+  input: "IN", history: "H", trim: "TR", merge: "MG", llm: "AI", join: "J", output: "OUT", user_output: "USR",
 }[props.type] ?? "·"));
 const hint = computed(() => ({
-  input: "写入历史前的用户输入；可做后处理",
+  input: "裸字符串：本轮用户输入",
   history: "messages[]：当前会话历史",
   trim: "messages[] → messages[]：按条数裁剪",
   merge: "多路 messages[] 按端口顺序拼接",
   llm: "手动组装 messages",
   join: "多路拼接；只接一路时直接复制",
   output: "最终结果写入聊天",
+  user_output: "把改写后的用户 Prompt 写入历史",
 }[props.type] ?? ""));
 const prompts = computed<PromptEntry[]>(() => Array.isArray(props.data.prompts) ? props.data.prompts : []);
 const modelOptions = computed(() => [
@@ -101,7 +103,7 @@ const maxRetry = computed<string>({
     props.data.max_retry = Number.isInteger(retry) && retry >= 0 ? retry : 0;
   },
 });
-const inputPrompt = computed({
+const userPrompt = computed({
   get: () => typeof props.data.prompt === "string" ? props.data.prompt : "",
   set: (value: string) => { props.data.prompt = value; },
 });
@@ -203,7 +205,7 @@ function addJoinOutput(): void {
     @mouseenter="hovered = true"
     @mouseleave="hovered = false"
   >
-    <Handle v-if="type === 'trim'" id="in" type="target" :position="Position.Left" />
+    <Handle v-if="type === 'trim' || type === 'user_output'" id="in" type="target" :position="Position.Left" />
     <div class="flow-node-head">
       <span class="flow-node-badge" aria-hidden="true">{{ badge }}</span>
       <div class="flow-node-heading">
@@ -262,8 +264,8 @@ function addJoinOutput(): void {
         <span>思考</span>
       </div>
     </div>
-    <div v-if="type === 'input'" class="flow-input-rewrite nodrag nopan">
-      <VTextarea v-model="inputPrompt" rows="2" density="compact" variant="outlined" hide-details
+    <div v-if="type === 'user_output'" class="flow-user-output nodrag nopan">
+      <VTextarea v-model="userPrompt" rows="2" density="compact" variant="outlined" hide-details
         placeholder="留空 = 原样入库" />
       <span class="flow-node-body">用 <code v-pre>{{input}}</code> 插入原文；改写结果会进入历史。</span>
     </div>
@@ -332,6 +334,6 @@ function addJoinOutput(): void {
       </div>
       <VBtn variant="text" size="small" type="button" class="flow-add-join nodrag nopan" @click="addJoinOutput">＋ 添加输出</VBtn>
     </div>
-    <Handle v-else-if="type !== 'output'" id="out" type="source" :position="Position.Right" />
+    <Handle v-else-if="type !== 'output' && type !== 'user_output'" id="out" type="source" :position="Position.Right" />
   </div>
 </template>

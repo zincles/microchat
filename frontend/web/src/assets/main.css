@@ -1847,8 +1847,8 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-canvas .flow-node .vue-flow__handle:hover { background: var(--md-secondary) !important; }
 .flow-node-body { margin-top: 0.35em; color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
 .flow-node-body code { color: var(--md-primary); font-size: 0.95em; }
-.flow-input-rewrite { display: flex; flex-direction: column; gap: 0.3em; margin-top: 0.4em; }
-.flow-input-rewrite .v-field__input { font-size: var(--md-type-label-small); line-height: 1.45; }
+.flow-user-output { display: flex; flex-direction: column; gap: 0.3em; margin-top: 0.4em; }
+.flow-user-output .v-field__input { font-size: var(--md-type-label-small); line-height: 1.45; }
 .flow-output-inputs { display: flex; flex-direction: column; gap: 0.1em; margin-top: 0.35em; }
 .flow-output-row { position: relative; display: flex; align-items: center; min-height: 1.5em;
   padding-left: 0.8em; color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }

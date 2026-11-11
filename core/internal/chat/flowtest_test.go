@@ -317,7 +317,7 @@ func TestFlowAgentRerollExecutesGraph(t *testing.T) {
 }
 
 func TestApplyFlowInputRewrite(t *testing.T) {
-	agent := config.Agent{Flow: json.RawMessage(`{"version":1,"nodes":[{"id":"in","type":"input","data":{"prompt":"前缀 {{input}} 后缀"}}],"edges":[]}`)}
+	agent := config.Agent{Flow: json.RawMessage(`{"version":1,"nodes":[{"id":"usr","type":"user_output","data":{"prompt":"前缀 {{input}} 后缀"}}],"edges":[]}`)}
 	if got := applyFlowInputRewrite(agent, "原问题"); got != "前缀 原问题 后缀" {
 		t.Fatalf("模板改写 = %q", got)
 	}
@@ -349,10 +349,11 @@ func TestExecuteFlowReportsActiveNode(t *testing.T) {
 func TestFlowAgentStoresRewrittenInput(t *testing.T) {
 	h := newHarness(t, dummyProviders(), "dummy", "dummy")
 	flow := json.RawMessage(`{"version":1,"nodes":[
-		{"id":"in","type":"input","data":{"prompt":"【改】{{input}}"}},
+		{"id":"in","type":"input","data":{}},
+		{"id":"usr","type":"user_output","data":{"prompt":"【改】{{input}}"}},
 		{"id":"llm","type":"llm","data":{"prompts":[{"id":"p1","role":"system","content":"写"}]}},
 		{"id":"out","type":"output","data":{}}
-	],"edges":[{"id":"e1","source":"llm","sourceHandle":"text","target":"out","targetHandle":"text"}]}`)
+	],"edges":[{"id":"e0","source":"in","target":"usr","targetHandle":"in"},{"id":"e1","source":"llm","sourceHandle":"text","target":"out","targetHandle":"text"}]}`)
 	if err := config.SaveJSON(h.configDir+"/agents.json", config.AgentsConfig{Agents: []config.Agent{{
 		ID: "flow", Kind: "flow", Flow: flow,
 	}}}); err != nil {

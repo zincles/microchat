@@ -313,6 +313,8 @@ func flowNodeLabel(kind string) string {
 		return "拼接和复制"
 	case "output":
 		return "输出"
+	case "user_output":
+		return "用户消息"
 	default:
 		return kind
 	}

@@ -7,7 +7,7 @@ import type { FlowEdge, FlowGraph, FlowNode } from "../api/types.ts";
 
 export const FLOW_VERSION = 1;
 export const DEFAULT_JOIN_SEPARATOR = "\n\n---\n\n";
-export const FLOW_NODE_TYPES = ["input", "history", "trim", "merge", "llm", "join", "output"] as const;
+export const FLOW_NODE_TYPES = ["input", "history", "trim", "merge", "llm", "join", "output", "user_output"] as const;
 export type FlowNodeType = (typeof FLOW_NODE_TYPES)[number];
 export type FlowDataType = "string" | "messages";
 
@@ -35,6 +35,8 @@ export function flowSourceType(node: FlowNode | undefined, handle?: string): Flo
     case "trim":
     case "merge":
       return h === "out" ? "messages" : null;
+    case "user_output":
+      return null;
     case "llm":
       return h === "text" || h === "reasoning" ? "string" : null;
     default:
@@ -51,6 +53,8 @@ export function flowTargetType(node: FlowNode | undefined, handle?: string): Flo
       return h.startsWith("prompt-") ? "string" : null;
     case "trim":
       return h === "in" ? "messages" : null;
+    case "user_output":
+      return h === "in" ? "string" : null;
     case "merge":
       return h.startsWith("in-") ? "messages" : null;
     case "join":
@@ -84,7 +88,7 @@ export function trimMessages<T>(messages: readonly T[], mode: TrimMode, count: n
 
 const FLOW_TEXT_LABELS: Record<string, string> = {
   input: "输入", history: "历史数据", trim: "裁剪 messages", merge: "拼接 messages",
-  llm: "调用 LLM", join: "拼接和复制", output: "输出",
+  llm: "调用 LLM", join: "拼接和复制", output: "输出", user_output: "用户消息",
 };
 
 // formatFlowText：图的纯文本视图。用 id + 类型 + 位置 + 每个端口的去向，
@@ -167,6 +171,7 @@ export function flowIssues(graph: FlowGraph): string[] {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const counts = (type: string): number => nodes.filter((n) => n.type === type).length;
   if (counts("input") !== 1) issues.push("需要恰好一个输入节点");
+  if (counts("user_output") > 1) issues.push("用户消息接收节点最多一个");
   if (counts("output") !== 1) issues.push("需要恰好一个输出节点");
   for (const node of nodes) {
     if (!FLOW_NODE_TYPES.includes(node.type as FlowNodeType)) issues.push(`不认识的节点类型：${node.type}`);
@@ -310,7 +315,7 @@ export function flowDebugSteps(graph: FlowGraph): FlowDebugStep[] {
   const nodes = flowNodeOrder(graph);
   const edges = graph.edges ?? [];
   const values = new Map<string, { text: string; reasoning: string }>();
-  const labels: Record<string, string> = { input: "输入", history: "历史数据", trim: "裁剪 messages", merge: "拼接 messages", llm: "调用 LLM", join: "拼接和复制", output: "输出" };
+  const labels: Record<string, string> = { input: "输入", history: "历史数据", trim: "裁剪 messages", merge: "拼接 messages", llm: "调用 LLM", join: "拼接和复制", output: "输出", user_output: "用户消息" };
   const source = (edge: { source: string; sourceHandle?: string }): string => {
     const handle = edge.sourceHandle || "out";
     const value = values.get(`${edge.source}\0${handle}`) ?? values.get(`${edge.source}\0out`) ?? values.get(`${edge.source}\0text`);
@@ -331,6 +336,10 @@ export function flowDebugSteps(graph: FlowGraph): FlowDebugStep[] {
       output = "[裁剪后 messages]";
     } else if (node.type === "merge") {
       output = "[拼接后 messages]";
+    } else if (node.type === "user_output") {
+      output = "[写入历史的用户消息]";
+    } else if (node.type === "user_output") {
+      output = "[写入历史的用户消息]";
     } else if (node.type === "llm") {
       label = "调用 LLM";
       output = "[LLM 正文]";

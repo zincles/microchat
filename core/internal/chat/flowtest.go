@@ -182,6 +182,9 @@ func (s *Service) executeFlowGraph(ctx context.Context, graph flowGraph, opts fl
 		case "join":
 			step.Label = "拼接和复制"
 			step.Output = joinFlowInputs(inputs, flowJoinSeparator(node))
+		case "user_output":
+			step.Label = "用户消息"
+			step.Output = ""
 		case "output":
 			step.Label = "输出"
 			for _, edge := range graph.Edges {
@@ -309,7 +312,7 @@ func applyFlowInputRewrite(agent config.Agent, content string) string {
 		return content
 	}
 	for _, node := range graph.Nodes {
-		if node.Type != "input" {
+		if node.Type != "user_output" {
 			continue
 		}
 		prompt, _ := node.Data["prompt"].(string)
@@ -575,7 +578,7 @@ func validateTestGraph(graph flowGraph) error {
 		seen[node.ID] = true
 		counts[node.Type]++
 		switch node.Type {
-		case "input", "history", "trim", "merge", "llm", "join", "output":
+		case "input", "history", "trim", "merge", "llm", "join", "output", "user_output":
 		default:
 			return fmt.Errorf("不认识的节点类型：%s", node.Type)
 		}
@@ -585,6 +588,9 @@ func validateTestGraph(graph flowGraph) error {
 	}
 	if counts["output"] != 1 {
 		return errors.New("流程图需要恰好一个输出节点")
+	}
+	if counts["user_output"] > 1 {
+		return errors.New("流程图最多只能有一个用户消息接收节点")
 	}
 	for _, node := range graph.Nodes {
 		if node.Type == "trim" {
