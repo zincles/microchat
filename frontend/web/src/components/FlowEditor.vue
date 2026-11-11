@@ -55,8 +55,11 @@ const edges = ref<any[]>(initial.edges.map((e) => ({ ...e, class: edgeClass(e, i
 
 
 const issues = computed(() => flowIssues(toGraph()));
-const panelOpen = ref(false);
-const panelTab = ref<"test" | "debug" | "nodes">("debug");
+// 右侧节点侧栏 / 底部测试调试栏都是**浮在画布上的**，不参与画布宽度分配。
+const nodesOpen = ref(false);
+const bottomOpen = ref(false);
+const bottomTab = ref<"test" | "debug">("debug");
+const selectedNodeId = ref("");
 const debugSteps = computed(() => flowDebugSteps(toGraph()));
 const testMessage = ref("");
 const testStatus = ref("");
@@ -75,12 +78,14 @@ function nodeLabel(id: string): string {
   const node = nodes.value.find((n) => n.id === id);
   return node ? (({ input: "输入", history: "历史", trim: "裁剪", merge: "拼接 messages", llm: "LLM", join: "拼接和复制", output: "输出" } as Record<string, string>)[String(node.type)] ?? String(node.type)) : id;
 }
-function openPanel(tab: "test" | "debug" | "nodes"): void {
-  if (panelOpen.value && panelTab.value === tab) { panelOpen.value = false; return; }
-  panelTab.value = tab;
-  panelOpen.value = true;
+function toggleNodes(): void { nodesOpen.value = !nodesOpen.value; }
+function toggleBottom(tab: "test" | "debug"): void {
+  if (bottomOpen.value && bottomTab.value === tab) { bottomOpen.value = false; return; }
+  bottomTab.value = tab;
+  bottomOpen.value = true;
 }
 function selectNode(id: string): void {
+  selectedNodeId.value = id;
   nodes.value = nodes.value.map((n) => ({ ...n, selected: n.id === id }));
 }
 function removeEdge(id: string): void {
@@ -244,8 +249,8 @@ async function runTest(): Promise<void> {
       return { ...n, data };
     });
     testStatus.value = result.output ? `完成：${result.output.slice(0, 80)}` : "完成";
-    panelTab.value = "test";
-    panelOpen.value = true;
+    bottomTab.value = "test";
+    bottomOpen.value = true;
   } catch (e) {
     testStatus.value = `测试失败：${e instanceof Error ? e.message : String(e)}`;
   } finally {
@@ -260,42 +265,7 @@ watch([nodes, edges], () => emit("update:graph", toGraph()), { deep: true });
 <template>
   <section class="flow-editor" :class="{ expanded }">
     <div class="flow-main">
-      <nav class="flow-rail" aria-label="流程工具">
-        <VMenu :close-on-content-click="true">
-          <template #activator="{ props: menuProps }">
-            <VBtn v-bind="menuProps" class="flow-rail-btn flow-rail-add" variant="tonal"
-              size="small" type="button" title="添加节点" aria-label="添加节点">＋</VBtn>
-          </template>
-          <VList class="flow-add-menu" density="compact">
-            <VListItem v-for="item in addNodeItems" :key="item.type"
-              :disabled="item.disabled" @click="addNode(item.type)">
-              {{ item.label }}
-            </VListItem>
-          </VList>
-        </VMenu>
-        <span class="flow-rail-sep"></span>
-        <VBtn class="flow-rail-btn" :class="{ active: panelOpen && panelTab === 'test' }"
-          variant="text" size="small" type="button" title="测试" aria-label="测试"
-          :aria-pressed="panelOpen && panelTab === 'test' ? 'true' : 'false'"
-          @click="openPanel('test')">测</VBtn>
-        <VBtn class="flow-rail-btn" :class="{ active: panelOpen && panelTab === 'debug' }"
-          variant="text" size="small" type="button" title="调试" aria-label="调试"
-          :aria-pressed="panelOpen && panelTab === 'debug' ? 'true' : 'false'"
-          @click="openPanel('debug')">调</VBtn>
-        <VBtn class="flow-rail-btn" :class="{ active: panelOpen && panelTab === 'nodes' }"
-          variant="text" size="small" type="button" title="节点" aria-label="节点"
-          :aria-pressed="panelOpen && panelTab === 'nodes' ? 'true' : 'false'"
-          @click="openPanel('nodes')">节</VBtn>
-        <span class="flow-rail-spacer"></span>
-        <VBtn
-          icon variant="text" size="small" type="button" class="flow-fullscreen-btn flow-rail-btn"
-          :title="expanded ? '退出网页全屏' : '网页全屏'"
-          :aria-label="expanded ? '退出网页全屏' : '网页全屏'"
-          :aria-pressed="expanded ? 'true' : 'false'"
-          @click="toggleExpanded" v-html="expanded ? ICONS.minimize : ICONS.maximize"
-        />
-      </nav>
-      <div class="flow-canvas">
+      <div class="flow-canvas" :class="{ 'nodes-open': nodesOpen, 'bottom-open': bottomOpen }">
         <VueFlow
           v-model:nodes="nodes"
           v-model:edges="edges"
@@ -313,81 +283,125 @@ watch([nodes, edges], () => emit("update:graph", toGraph()), { deep: true });
           <Background :gap="18" :size="1" />
           <Controls position="bottom-right" />
         </VueFlow>
-      </div>
-      <aside v-if="panelOpen" class="flow-debug flow-sidebar" aria-label="流程面板" @wheel="onPanelWheel">
-        <div class="flow-panel-head">
-          <div class="flow-panel-tabs" role="tablist">
-            <button type="button" :class="{ active: panelTab === 'test' }" @click="panelTab = 'test'">测试</button>
-            <button type="button" :class="{ active: panelTab === 'debug' }" @click="panelTab = 'debug'">调试</button>
-            <button type="button" :class="{ active: panelTab === 'nodes' }" @click="panelTab = 'nodes'">节点</button>
-          </div>
-          <VBtn icon variant="text" size="small" type="button" title="关闭面板" aria-label="关闭面板" @click="panelOpen = false">×</VBtn>
+
+        <!-- 左上角：添加节点（浮在画布上，不挤画布）。 -->
+        <div class="flow-canvas-add">
+          <VMenu :close-on-content-click="true">
+            <template #activator="{ props: menuProps }">
+              <VBtn v-bind="menuProps" variant="tonal" size="small" type="button"
+                prepend-icon="mdi-plus" title="添加节点">添加节点</VBtn>
+            </template>
+            <VList class="flow-add-menu" density="compact">
+              <VListItem v-for="item in addNodeItems" :key="item.type"
+                :disabled="item.disabled" @click="addNode(item.type)">
+                {{ item.label }}
+              </VListItem>
+            </VList>
+          </VMenu>
         </div>
 
-        <div v-if="panelTab === 'test'" class="flow-panel-test">
-          <p class="hint">输入一条测试消息；真实调用 LLM 后，悬停节点可看每步输入输出。</p>
-          <VTextField v-model="testMessage" density="compact" variant="outlined" hide-details
-            placeholder="输入一条测试消息…" @keydown.enter.prevent="runTest" />
-          <div class="row">
-            <VBtn color="primary" variant="flat" size="small" type="button"
-              :loading="testing" :disabled="testing || !agentId" @click="runTest">发送测试</VBtn>
-            <span class="status">{{ testStatus || (agentId ? "" : "先保存 FlowAgent，再回来测试") }}</span>
-          </div>
+        <!-- 右上角：侧栏 / 底栏 / 全屏开关。 -->
+        <div class="flow-canvas-actions">
+          <VBtn class="flow-canvas-action" :class="{ active: bottomOpen && bottomTab === 'test' }"
+            variant="text" size="small" type="button" title="测试" @click="toggleBottom('test')">测试</VBtn>
+          <VBtn class="flow-canvas-action" :class="{ active: bottomOpen && bottomTab === 'debug' }"
+            variant="text" size="small" type="button" title="调试" @click="toggleBottom('debug')">调试</VBtn>
+          <VBtn class="flow-canvas-action" :class="{ active: nodesOpen }"
+            variant="text" size="small" type="button" title="节点与连接" @click="toggleNodes">节点</VBtn>
+          <VBtn
+            icon variant="text" size="small" type="button" class="flow-fullscreen-btn flow-canvas-action"
+            :title="expanded ? '退出网页全屏' : '网页全屏'"
+            :aria-label="expanded ? '退出网页全屏' : '网页全屏'"
+            :aria-pressed="expanded ? 'true' : 'false'"
+            @click="toggleExpanded" v-html="expanded ? ICONS.minimize : ICONS.maximize"
+          />
         </div>
 
-        <template v-else-if="panelTab === 'debug'">
-          <p class="hint">只做结构预演，不调用模型；用占位文本看连线和数据流。</p>
-          <div v-if="issues.length" class="flow-debug-issues">
-            <b>还不能运行：</b>
-            <ul><li v-for="issue in issues" :key="issue">{{ issue }}</li></ul>
+        <!-- 右侧：节点与连接（PS 图层面板式，浮在画布上）。 -->
+        <aside v-if="nodesOpen" class="flow-node-sidebar" aria-label="节点与连接" @wheel="onPanelWheel">
+          <div class="flow-panel-head">
+            <b>节点与连接</b>
+            <VBtn icon variant="text" size="small" type="button" title="关闭节点面板"
+              aria-label="关闭节点面板" @click="nodesOpen = false">×</VBtn>
           </div>
-          <div v-for="(step, i) in debugSteps" :key="step.id" class="flow-debug-step">
-            <div class="flow-debug-step-head">
-              <span class="flow-debug-index">{{ i + 1 }}</span>
-              <b>{{ step.label }}</b>
-              <code>{{ step.type }}</code>
-            </div>
-            <div v-if="step.inputs.length" class="flow-debug-inputs">
-              <span>输入</span>
-              <code v-for="(input, j) in step.inputs" :key="j">{{ input }}</code>
-            </div>
-            <div v-if="step.reasoning" class="flow-debug-reasoning">思考：{{ step.reasoning }}</div>
-            <pre class="flow-debug-output">{{ step.output }}</pre>
-          </div>
-        </template>
-
-        <template v-else>
           <p class="hint">像图层一样查看节点和连接；断开或删除都只改当前图。</p>
-          <div v-for="row in nodeRows" :key="row.id" class="flow-node-row">
+          <div v-for="row in nodeRows" :key="row.id" class="flow-node-row"
+            :class="{ selected: row.id === selectedNodeId }" @click="selectNode(row.id)">
             <div class="flow-node-row-head">
               <span class="flow-node-row-id"><span class="flow-node-badge" aria-hidden="true">{{ row.badge }}</span><b>{{ row.label }}</b><code>{{ row.id }}</code></span>
               <VBtn icon variant="text" size="x-small" type="button" title="删除节点" aria-label="删除节点"
-                @click="removeNode(row.id)"><span v-html="ICONS.trash"></span></VBtn>
+                @click.stop="removeNode(row.id)"><span v-html="ICONS.trash"></span></VBtn>
             </div>
             <div v-if="row.incoming.length" class="flow-conn-section">
               <span class="flow-conn-label">输入</span>
               <div v-for="edge in row.incoming" :key="edge.id" class="flow-conn-row">
                 <span :title="edge.id">{{ nodeLabel(edge.source) }} · {{ edge.sourceHandle || "out" }} → {{ edge.targetHandle || "in" }}</span>
-                <button type="button" class="flow-conn-x" @click="removeEdge(edge.id)">断开</button>
+                <button type="button" class="flow-conn-x" @click.stop="removeEdge(edge.id)">断开</button>
               </div>
             </div>
             <div v-if="row.outgoing.length" class="flow-conn-section">
               <span class="flow-conn-label">输出</span>
               <div v-for="edge in row.outgoing" :key="edge.id" class="flow-conn-row">
                 <span :title="edge.id">{{ edge.sourceHandle || "out" }} → {{ nodeLabel(edge.target) }} · {{ edge.targetHandle || "in" }}</span>
-                <button type="button" class="flow-conn-x" @click="removeEdge(edge.id)">断开</button>
+                <button type="button" class="flow-conn-x" @click.stop="removeEdge(edge.id)">断开</button>
               </div>
             </div>
             <div v-if="!row.incoming.length && !row.outgoing.length" class="flow-conn-empty">（还没有连接）</div>
           </div>
           <p v-if="!nodeRows.length" class="flow-conn-empty">（图里还没有节点）</p>
-        </template>
-      </aside>
+        </aside>
+
+        <!-- 底部：测试 / 调试，浮在画布上。 -->
+        <aside v-if="bottomOpen" class="flow-bottom" aria-label="测试与调试" @wheel="onPanelWheel">
+          <div class="flow-panel-head">
+            <div class="flow-panel-tabs" role="tablist">
+              <button type="button" :class="{ active: bottomTab === 'test' }" @click="bottomTab = 'test'">测试</button>
+              <button type="button" :class="{ active: bottomTab === 'debug' }" @click="bottomTab = 'debug'">调试</button>
+            </div>
+            <VBtn icon variant="text" size="small" type="button" title="关闭底栏"
+              aria-label="关闭底栏" @click="bottomOpen = false">×</VBtn>
+          </div>
+
+          <div v-if="bottomTab === 'test'" class="flow-panel-test">
+            <p class="hint">输入一条测试消息；真实调用 LLM 后，悬停节点可看每步输入输出。</p>
+            <VTextField v-model="testMessage" density="compact" variant="outlined" hide-details
+              placeholder="输入一条测试消息…" @keydown.enter.prevent="runTest" />
+            <div class="row">
+              <VBtn color="primary" variant="flat" size="small" type="button"
+                :loading="testing" :disabled="testing || !agentId" @click="runTest">发送测试</VBtn>
+              <span class="status">{{ testStatus || (agentId ? "" : "先保存 FlowAgent，再回来测试") }}</span>
+            </div>
+          </div>
+
+          <template v-else>
+            <p class="hint">只做结构预演，不调用模型；用占位文本看连线和数据流。</p>
+            <div v-if="issues.length" class="flow-debug-issues">
+              <b>还不能运行：</b>
+              <ul><li v-for="issue in issues" :key="issue">{{ issue }}</li></ul>
+            </div>
+            <div class="flow-debug-steps">
+              <div v-for="(step, i) in debugSteps" :key="step.id" class="flow-debug-step">
+                <div class="flow-debug-step-head">
+                  <span class="flow-debug-index">{{ i + 1 }}</span>
+                  <b>{{ step.label }}</b>
+                  <code>{{ step.type }}</code>
+                </div>
+                <div v-if="step.inputs.length" class="flow-debug-inputs">
+                  <span>输入</span>
+                  <code v-for="(input, j) in step.inputs" :key="j">{{ input }}</code>
+                </div>
+                <div v-if="step.reasoning" class="flow-debug-reasoning">思考：{{ step.reasoning }}</div>
+                <pre class="flow-debug-output">{{ step.output }}</pre>
+              </div>
+            </div>
+          </template>
+        </aside>
+      </div>
     </div>
     <p class="hint">拖动节点移动位置，从右侧端口拖到左侧端口连线。删除节点/连线用选中后按 Delete。</p>
-    <p v-if="issues.length && !panelOpen" class="field-warning flow-issues">
+    <p v-if="issues.length && !bottomOpen" class="field-warning flow-issues">
       <b>还不能运行：</b>{{ issues.join("；") }}
     </p>
-    <p v-else-if="!issues.length && !panelOpen" class="hint flow-ok">结构检查通过：恰好一个输入/输出，没有嵌套 FlowAgent。</p>
+    <p v-else-if="!issues.length && !bottomOpen" class="hint flow-ok">结构检查通过：恰好一个输入/输出，没有嵌套 FlowAgent。</p>
   </section>
 </template>

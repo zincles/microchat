@@ -540,11 +540,13 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(css, /\.flow-canvas \.vue-flow__node \{[^}]*background:\s*transparent !important/, "Vue Flow 外层白底没剥掉（输入/输出节点会套白框）");
   assert.match(css, /\.flow-canvas \.vue-flow__controls-button \{[^}]*background:\s*var\(--md-surface-container-high\)/, "画布控制键没跟 MD3 主题");
   assert.match(flow, /class="flow-fullscreen-btn/, "流程编辑器没有网页全屏按钮");
-  assert.match(flow, /class="flow-debug/, "流程编辑器没有调试面板");
-  assert.match(flow, /class="flow-rail"/, "流程编辑器没有左侧工具栏");
-  assert.match(flow, /class="flow-debug flow-sidebar"/, "调试面板不是可开合侧栏");
-  assert.match(flow, /@click="openPanel\('test'\)"/, "侧栏按钮没有接测试面板");
-  assert.match(css, /\.flow-debug\.flow-sidebar \{[^}]*position:\s*static/, "侧栏仍浮在画布上而不是占一列");
+  assert.match(flow, /class="flow-fullscreen-btn/, "流程编辑器没有网页全屏按钮");
+  assert.match(flow, /class="flow-canvas-add"/, "画布左上没有添加节点按钮");
+  assert.match(flow, /class="flow-canvas-actions"/, "画布右上没有面板开关");
+  assert.match(flow, /class="flow-node-sidebar"/, "没有右侧节点侧栏");
+  assert.match(flow, /class="flow-bottom"/, "没有底部调试栏");
+  assert.match(flow, /@click="toggleBottom\('test'\)"/, "底栏按钮没有接测试面板");
+  assert.match(css, /\.flow-node-sidebar, \.flow-bottom \{[^}]*position:\s*absolute/, "侧栏/底栏没有浮在画布上");
   assert.match(flow, /@wheel="onPanelWheel"/, "调试面板没有接管滚轮，画布会抢滚动");
   assert.match(flow, /function onPanelWheel/, "调试面板没有自己的滚动处理");
   assert.match(flow, /flowDebugSteps/, "调试面板没有结构预演数据");
@@ -598,14 +600,14 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.ok(flowDebugSteps(emptyFlowGraph()).length >= 2, "空图没有调试步骤");
   assert.match(css, /\.flow-editor\.expanded \{[^}]*position:\s*fixed/, "网页全屏没有铺满 #app");
   assert.match(css, /\.flow-editor\.expanded \.flow-main \{[^}]*flex:\s*1 1 auto/, "全屏时 flow-main 没有吃掉剩余高度");
-  assert.match(css, /\.flow-rail \{[^}]*display:\s*flex/, "左侧工具栏没有布局");
-  assert.match(css, /\.flow-debug \{[^}]*overflow-y:\s*auto/, "调试面板不能上下滚动");
+  assert.match(css, /\.flow-canvas-actions \{[^}]*display:\s*flex/, "画布工具开关没有布局");
+  assert.match(css, /\.flow-node-sidebar, \.flow-bottom \{[^}]*overflow-y:\s*auto/, "侧栏/底栏不能上下滚动");
   assert.match(css, /--flow-history:\s*#f2994a/, "历史类型不是橙色");
   assert.match(css, /\.flow-node\.flow-node-history \.vue-flow__handle[^{]*\{[^}]*background:\s*var\(--flow-history\)/, "历史节点端口没被染成历史色");
   assert.match(css, /\.flow-node \.flow-prompt-history \.vue-flow__handle[^{]*\{[^}]*background:\s*var\(--flow-history\)/, "历史条目端口没被染成历史色");
   assert.match(css, /\.flow-panel-test \{[^}]*display:\s*flex/, "测试面板没有独立内容区");
   assert.match(flow, /flow-node-row/, "节点面板没有节点列表");
-  assert.match(flow, /flow-panel-tabs/, "面板没有 测试/调试/节点 tabs");
+  assert.match(flow, /flow-panel-tabs/, "底栏没有 测试/调试 tabs");
   assert.match(flow, /<VMenu[\s\S]*flow-add-menu[\s\S]*addNodeItems/, "添加节点不是下拉列表");
   for (const type of ["input", "history", "trim", "merge", "llm", "join", "output"]) {
     assert.match(flow, new RegExp(`type: "${type}"`), `流程编辑器缺 ${type} 节点`);
