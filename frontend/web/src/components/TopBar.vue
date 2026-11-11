@@ -62,10 +62,13 @@ const props = withDefaults(defineProps<{
   workspace?: string;
   // loading：会话正在加载（模型列表也还没就位）⇒ 不拿旧/裸 id 闪一下，直接骨架。
   loading?: boolean;
+  // flow：FlowAgent 暂不共用普通 Agent 的上下文面板 ⇒ 绿色环也停用（连任务浮板一起收）。
+  flow?: boolean;
 }>(), {
   leftHidden: false,
   workspace: "chat",
   loading: false,
+  flow: false,
 });
 const emit = defineEmits<{
   "toggle-left": [];
@@ -269,6 +272,7 @@ const ctxBudgetNote = computed(() => {
 // closeMenus：Esc 一次收起所有顶栏浮板（MD3 menu 的常规行为；从前只有模型菜单接 Esc）。
 function closeMenus(): void { modelOpen.value = false; ctxOpen.value = false; }
 function toggleCtx(): void { ctxOpen.value = !ctxOpen.value; if (ctxOpen.value) { modelOpen.value = false; emit("refresh-macros"); } }
+watch(() => props.flow, (flow) => { if (flow) ctxOpen.value = false; });
 // setContext：App 每轮 refreshStatusline 喂一次（草稿态传 null）。
 function setContext(c?: ContextUsage | null): void { ctx.value = c ?? null; }
 // “已注册宏”面板：后端把注册表 + 本会话全文使用次数一起算好（这里只管画）。
@@ -487,6 +491,7 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
            圆心放**还在跑的后台任务数**；有任务时整个环转起来。点开是同一块面板，
            两个 tab：上下文数字 / 运行任务明细。 -->
       <button
+        v-if="!flow"
         id="ctx-ring"
         class="ctx-ring"
         :class="{ over: ctxOver, idle: !ctx, busy: taskBusy }"
@@ -503,7 +508,7 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
         <span v-if="activeTaskCount > 0" class="ctx-ring-n">{{ taskCountText }}</span>
       </button>
     </span>
-    <template v-if="ctxOpen">
+    <template v-if="!flow && ctxOpen">
       <div class="agent-menu-backdrop" @click="ctxOpen = false"></div>
       <VCard class="agent-menu ctx-menu" :class="{ over: ctxOver }" role="dialog" aria-label="上下文与任务">
         <VTabs

@@ -2159,6 +2159,7 @@ onUnmounted(() => {
       :left-hidden="leftHidden"
       :workspace="workspace"
       :loading="loadingSession"
+      :flow="currentAgentIsFlow"
       @select-workspace="selectWorkspace"
       @save-overrides="saveRequestOverrides"
       @toggle-left="toggleLeft"
