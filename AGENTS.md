@@ -380,7 +380,9 @@ delete(AA)           # 删除
   后端目前**只搬运、不解释**节点表。FlowAgent 的节点白名单先只有
   `input / agent / join / output`；编辑器用 Vue Flow（`@vue-flow/core`），
   `agent` 节点只能选传统 Agent（**禁止 FlowAgent 调 FlowAgent**）。
-  ⚠ 运行时尚未接线：FlowAgent 会出现在智能体列表里编辑，但会话的助手选择器先过滤掉它。
+  编辑器有 **网页全屏** 与 **调试** 按钮：调试是**结构预演**（按拓扑顺序把占位文本往下传，
+  显示每节点输入/输出与连线问题），不调用模型；真正运行时尚未接线，FlowAgent 会出现在
+  智能体列表里编辑，但会话的助手选择器先过滤掉它。
   **`preset_id`（2026-11-10）**：绑定一份 `tavern_presets` 原始预设（空 = 不绑定）。绑定时
   Agent 的会话在出站装配里**现读原始 JSON → `tavern.Extract`**（执行 setvar/getvar/trim/注释，
   丢掉空结果），用真正的 relative/absolute 有效条目；**Agent 的 base、段与 `prompt_entries` 全部不参与**

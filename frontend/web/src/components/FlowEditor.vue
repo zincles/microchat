@@ -16,7 +16,7 @@ import "@vue-flow/controls/dist/style.css";
 import { VBtn } from "vuetify/components";
 import { ICONS } from "./icons.ts";
 import FlowNode from "./FlowNode.vue";
-import { emptyFlowGraph, flowIssues, normalizeFlowGraph } from "../utils/flow.ts";
+import { emptyFlowGraph, flowDebugSteps, flowIssues, normalizeFlowGraph } from "../utils/flow.ts";
 import type { Agent, FlowEdge, FlowGraph, FlowNode as FlowNodeData } from "../api/types.ts";
 
 const props = withDefaults(defineProps<{
@@ -33,10 +33,14 @@ const emit = defineEmits<{ "update:graph": [graph: FlowGraph] }>();
 // 网页全屏：只把编辑器铺满 #app（不是浏览器 Fullscreen API）；画布高度随视口走。
 const expanded = ref(false);
 const { fitView } = useVueFlow();
+// 尺寸变化不是下一 tick 就量准的：等两帧再 fit，否则 Vue Flow 会拿旧画布宽度算视口。
+function fitAfterResize(): void {
+  nextTick(() => requestAnimationFrame(() => requestAnimationFrame(() => fitView({ padding: 0.18 }))));
+}
 function toggleExpanded(): void {
   expanded.value = !expanded.value;
   // 画布尺寸变了，Vue Flow 不会自动重新 fit；不重算的话全屏后节点会跑到视口外。
-  if (expanded.value) nextTick(() => fitView({ padding: 0.18 }));
+  if (expanded.value) fitAfterResize();
 }
 const nodeTypes = { input: FlowNode, agent: FlowNode, join: FlowNode, output: FlowNode } as any;
 const initial = normalizeFlowGraph(props.graph ?? emptyFlowGraph());
@@ -46,6 +50,10 @@ const edges = ref<any[]>(initial.edges.map((e) => ({ ...e })));
 provide("flowAgents", computed(() => props.agents ?? []));
 
 const issues = computed(() => flowIssues(toGraph(), props.agents ?? []));
+const debugOpen = ref(false);
+const debugSteps = computed(() => flowDebugSteps(toGraph(), props.agents ?? []));
+// 打开/关闭调试会让画布变窄/变宽；和全屏一样要重新 fit，否则节点会跑到画布外。
+watch(debugOpen, fitAfterResize);
 const inputExists = computed(() => nodes.value.some((n) => n.type === "input"));
 const outputExists = computed(() => nodes.value.some((n) => n.type === "output"));
 let seq = 0;
@@ -125,6 +133,12 @@ watch([nodes, edges], () => emit("update:graph", toGraph()), { deep: true });
       <VBtn variant="tonal" size="small" type="button" :disabled="outputExists" @click="addNode('output')">输出</VBtn>
       <span class="flow-toolbar-spacer"></span>
       <VBtn
+        variant="text" size="small" type="button"
+        :aria-pressed="debugOpen ? 'true' : 'false'"
+        :color="debugOpen ? 'primary' : undefined"
+        @click="debugOpen = !debugOpen"
+      >调试</VBtn>
+      <VBtn
         icon variant="text" size="small" type="button" class="flow-fullscreen-btn"
         :title="expanded ? '退出网页全屏' : '网页全屏'"
         :aria-label="expanded ? '退出网页全屏' : '网页全屏'"
@@ -132,25 +146,50 @@ watch([nodes, edges], () => emit("update:graph", toGraph()), { deep: true });
         @click="toggleExpanded" v-html="expanded ? ICONS.minimize : ICONS.maximize"
       />
     </div>
-    <div class="flow-canvas">
-      <VueFlow
-        v-model:nodes="nodes"
-        v-model:edges="edges"
-        :node-types="nodeTypes"
-        :is-valid-connection="isValidConnection"
-        :min-zoom="0.35"
-        :max-zoom="1.8"
-        fit-view-on-init
-        @connect="onConnect"
-      >
-        <Background :gap="18" :size="1" />
-        <Controls />
-      </VueFlow>
+    <div class="flow-main">
+      <div class="flow-canvas">
+        <VueFlow
+          v-model:nodes="nodes"
+          v-model:edges="edges"
+          :node-types="nodeTypes"
+          :is-valid-connection="isValidConnection"
+          :min-zoom="0.35"
+          :max-zoom="1.8"
+          fit-view-on-init
+          @connect="onConnect"
+        >
+          <Background :gap="18" :size="1" />
+          <Controls />
+        </VueFlow>
+      </div>
+      <aside v-if="debugOpen" class="flow-debug" aria-label="流程调试">
+        <div class="flow-debug-head">
+          <b>结构调试</b>
+          <VBtn icon variant="text" size="small" type="button" title="关闭调试" aria-label="关闭调试" @click="debugOpen = false">×</VBtn>
+        </div>
+        <p class="hint">只做结构预演，不调用模型；用占位文本看连线和数据流。</p>
+        <div v-if="issues.length" class="flow-debug-issues">
+          <b>还不能运行：</b>
+          <ul><li v-for="issue in issues" :key="issue">{{ issue }}</li></ul>
+        </div>
+        <div v-for="(step, i) in debugSteps" :key="step.id" class="flow-debug-step">
+          <div class="flow-debug-step-head">
+            <span class="flow-debug-index">{{ i + 1 }}</span>
+            <b>{{ step.label }}</b>
+            <code>{{ step.type }}</code>
+          </div>
+          <div v-if="step.inputs.length" class="flow-debug-inputs">
+            <span>输入</span>
+            <code v-for="(input, j) in step.inputs" :key="j">{{ input }}</code>
+          </div>
+          <pre class="flow-debug-output">{{ step.output }}</pre>
+        </div>
+      </aside>
     </div>
     <p class="hint">拖动节点移动位置，从右侧端口拖到左侧端口连线。删除节点/连线用选中后按 Delete。</p>
-    <p v-if="issues.length" class="field-warning flow-issues">
+    <p v-if="issues.length && !debugOpen" class="field-warning flow-issues">
       <b>还不能运行：</b>{{ issues.join("；") }}
     </p>
-    <p v-else class="hint flow-ok">结构检查通过：恰好一个输入/输出，没有嵌套 FlowAgent。</p>
+    <p v-else-if="!issues.length && !debugOpen" class="hint flow-ok">结构检查通过：恰好一个输入/输出，没有嵌套 FlowAgent。</p>
   </section>
 </template>

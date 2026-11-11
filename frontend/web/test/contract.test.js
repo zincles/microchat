@@ -5,7 +5,7 @@ import { parseWireMessages, previewBlock } from "../src/utils/payload.ts";
 import { assemblePrompt, abilityPrompt, missingSegments } from "../src/utils/prompt.ts";
 import { renderMarkdown } from "../src/utils/markdown.ts";
 import { buildCartridge, cartridgeAgent } from "../src/utils/cartridge.ts";
-import { emptyFlowGraph, flowIssues } from "../src/utils/flow.ts";
+import { emptyFlowGraph, flowDebugSteps, flowIssues } from "../src/utils/flow.ts";
 import { parseCommand, filterCommands, COMMAND_META } from "../src/utils/commands.ts";
 import { uuidv7 } from "../src/utils/ids.ts";
 import { groupSessions, SESSION_GROUP_LABELS } from "../src/utils/sessionGroups.ts";
@@ -480,6 +480,9 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/输出/Age
   assert.match(css, /\.flow-canvas \.vue-flow__node \{[^}]*background:\s*transparent !important/, "Vue Flow 外层白底没剥掉（输入/输出节点会套白框）");
   assert.match(css, /\.flow-canvas \.vue-flow__controls-button \{[^}]*background:\s*var\(--md-surface-container-high\)/, "画布控制键没跟 MD3 主题");
   assert.match(flow, /class="flow-fullscreen-btn"/, "流程编辑器没有网页全屏按钮");
+  assert.match(flow, /class="flow-debug"/, "流程编辑器没有调试面板");
+  assert.match(flow, /flowDebugSteps/, "调试面板没有结构预演数据");
+  assert.ok(flowDebugSteps(emptyFlowGraph(), []).length >= 2, "空图没有调试步骤");
   assert.match(css, /\.flow-editor\.expanded \{[^}]*position:\s*fixed/, "网页全屏没有铺满 #app");
   for (const type of ["input", "agent", "join", "output"]) {
     assert.ok(flow.includes(`addNode('${type}')`) || flow.includes(`addNode("${type}")`), `流程编辑器缺 ${type} 节点`);

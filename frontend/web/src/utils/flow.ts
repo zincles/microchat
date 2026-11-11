@@ -14,7 +14,7 @@ export function emptyFlowGraph(): FlowGraph {
     version: FLOW_VERSION,
     nodes: [
       { id: "input-1", type: "input", position: { x: 40, y: 100 }, data: {} },
-      { id: "output-1", type: "output", position: { x: 520, y: 100 }, data: {} },
+      { id: "output-1", type: "output", position: { x: 300, y: 100 }, data: {} },
     ],
     edges: [],
   };
@@ -88,4 +88,70 @@ export function flowIssues(graph: FlowGraph, agents: Array<{ id: string; name?: 
   }
   if (nodes.length && visited !== nodes.length) issues.push("流程图里有环（第一版只支持 DAG）");
   return [...new Set(issues)];
+}
+
+export interface FlowDebugStep {
+  id: string;
+  type: string;
+  label: string;
+  inputs: string[];
+  output: string;
+}
+
+// 调试预演用的节点顺序：Kahn 拓扑；有环时把剩下的按原顺序附在末尾，
+// 让调试面板仍能展示“这里有环”，而不是整块空白。
+export function flowNodeOrder(graph: FlowGraph): FlowNode[] {
+  const nodes = graph.nodes ?? [];
+  const edges = graph.edges ?? [];
+  const indegree = new Map(nodes.map((n) => [n.id, 0]));
+  for (const e of edges) if (indegree.has(e.target)) indegree.set(e.target, (indegree.get(e.target) ?? 0) + 1);
+  const queue = nodes.filter((n) => (indegree.get(n.id) ?? 0) === 0).map((n) => n.id);
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const out: FlowNode[] = [];
+  while (queue.length) {
+    const id = queue.shift()!;
+    const node = byId.get(id);
+    if (node) out.push(node);
+    for (const e of edges.filter((e) => e.source === id)) {
+      const next = indegree.get(e.target);
+      if (next == null) continue;
+      indegree.set(e.target, next - 1);
+      if (next - 1 === 0) queue.push(e.target);
+    }
+  }
+  const seen = new Set(out.map((n) => n.id));
+  for (const n of nodes) if (!seen.has(n.id)) out.push(n);
+  return out;
+}
+
+// 结构预演：不调用模型，只把“上游输出”当占位文本往下传。
+// 目的是看连线有没有接对、每个节点会收到几路输入；不是假装真跑。
+export function flowDebugSteps(graph: FlowGraph, agents: Array<{ id: string; name?: string; kind?: string }>): FlowDebugStep[] {
+  const nodes = flowNodeOrder(graph);
+  const edges = graph.edges ?? [];
+  const values = new Map<string, string>();
+  const labels: Record<string, string> = { input: "输入", agent: "调用智能体", join: "拼接", output: "输出" };
+  const steps: FlowDebugStep[] = [];
+  for (const node of nodes) {
+    const incoming = edges.filter((e) => e.target === node.id).map((e) => values.get(e.source) ?? "（上游未产出）");
+    let output = "";
+    let label = labels[node.type] ?? node.type;
+    if (node.type === "input") {
+      output = "[本轮用户输入]";
+    } else if (node.type === "agent") {
+      const id = String(node.data?.agent_id ?? "").trim();
+      const agent = agents.find((a) => a.id === id);
+      label = agent?.name ? `调用 ${agent.name}` : "调用智能体（未选择）";
+      output = agent ? `[${agent.name || agent.id} 的输出]` : "[未选择智能体]";
+    } else if (node.type === "join") {
+      output = incoming.length ? incoming.join("\n---\n") : "[没有输入]";
+    } else if (node.type === "output") {
+      output = incoming.length ? incoming.join("\n---\n") : "[没有输入]";
+    } else {
+      output = "[未知节点]";
+    }
+    values.set(node.id, output);
+    steps.push({ id: node.id, type: node.type, label, inputs: incoming, output });
+  }
+  return steps;
 }
