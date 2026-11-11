@@ -56,6 +56,14 @@ const edges = ref<any[]>(initial.edges.map((e) => ({ ...e, class: edgeClass(e.so
 const issues = computed(() => flowIssues(toGraph()));
 const debugOpen = ref(false);
 const debugSteps = computed(() => flowDebugSteps(toGraph()));
+const debugNodeList = computed(() => nodes.value.map((n) => ({
+  id: String(n.id),
+  type: String(n.type),
+  label: ({ input: "输入", history: "历史", llm: "LLM", join: "拼接", output: "输出" } as Record<string, string>)[String(n.type)] ?? String(n.type),
+})));
+function selectNode(id: string): void {
+  nodes.value = nodes.value.map((n) => ({ ...n, selected: n.id === id }));
+}
 const testOpen = ref(false);
 const testMessage = ref("");
 const testStatus = ref("");
@@ -199,22 +207,22 @@ watch([nodes, edges], () => emit("update:graph", toGraph()), { deep: true });
         @click="toggleExpanded" v-html="expanded ? ICONS.minimize : ICONS.maximize"
       />
     </div>
-    <div v-if="testOpen" class="flow-test-bar">
-      <VTextField
-        v-model="testMessage"
-        density="compact" variant="outlined" hide-details
-        class="flow-test-input"
-        placeholder="输入一条测试消息…"
-        @keydown.enter.prevent="runTest"
-      />
-      <VBtn
-        color="primary" variant="flat" size="small" type="button"
-        :loading="testing" :disabled="testing || !agentId"
-        @click="runTest"
-      >发送测试</VBtn>
-      <span class="status">{{ testStatus || (agentId ? "" : "先保存 FlowAgent，再回来测试") }}</span>
-    </div>
     <div class="flow-main">
+      <div v-if="testOpen" class="flow-test-bar" :class="{ 'debug-open': debugOpen }">
+        <VTextField
+          v-model="testMessage"
+          density="compact" variant="outlined" hide-details
+          class="flow-test-input"
+          placeholder="输入一条测试消息…"
+          @keydown.enter.prevent="runTest"
+        />
+        <VBtn
+          color="primary" variant="flat" size="small" type="button"
+          :loading="testing" :disabled="testing || !agentId"
+          @click="runTest"
+        >发送测试</VBtn>
+        <span class="status">{{ testStatus || (agentId ? "" : "先保存 FlowAgent，再回来测试") }}</span>
+      </div>
       <div class="flow-canvas">
         <VueFlow
           v-model:nodes="nodes"
@@ -237,6 +245,13 @@ watch([nodes, edges], () => emit("update:graph", toGraph()), { deep: true });
           <VBtn icon variant="text" size="small" type="button" title="关闭调试" aria-label="关闭调试" @click="debugOpen = false">×</VBtn>
         </div>
         <p class="hint">只做结构预演，不调用模型；用占位文本看连线和数据流。</p>
+        <div class="flow-debug-nodes">
+          <div class="flow-debug-section">节点 <span>{{ debugNodeList.length }}</span></div>
+          <button v-for="node in debugNodeList" :key="node.id" type="button"
+            class="flow-debug-node" :title="node.id" @click="selectNode(node.id)">
+            <span>{{ node.label }}</span><code>{{ node.id }}</code>
+          </button>
+        </div>
         <div v-if="issues.length" class="flow-debug-issues">
           <b>还不能运行：</b>
           <ul><li v-for="issue in issues" :key="issue">{{ issue }}</li></ul>

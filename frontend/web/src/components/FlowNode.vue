@@ -2,7 +2,7 @@
 // FlowAgent 编辑器的节点外壳：输入 / 调用 LLM / 拼接 / 输出。
 // LLM 节点内部是一张 **messages 列表**：每个 Prompt 条目有自己的 role 和左侧输入孔。
 import { computed, ref } from "vue";
-import { Handle, Position } from "@vue-flow/core";
+import { Handle, Position, useVueFlow } from "@vue-flow/core";
 import { VBtn, VSelect, VTextarea } from "vuetify/components";
 
 const props = defineProps<{
@@ -18,6 +18,7 @@ interface PromptEntry {
 }
 
 const hovered = ref(false);
+const { removeNodes } = useVueFlow();
 const label = computed(() => ({
   input: "输入",
   history: "历史数据",
@@ -66,6 +67,8 @@ function addJoinInput(): void {
     <Handle v-if="type === 'output'" id="in" type="target" :position="Position.Left" />
     <div class="flow-node-head">
       <span class="flow-node-title">{{ label }}</span>
+      <button class="flow-node-delete nodrag nopan" type="button" title="删除节点" aria-label="删除节点"
+        @click.stop="removeNodes([id])">×</button>
       <span class="flow-node-hint">{{ hint }}</span>
     </div>
     <div v-if="type === 'llm'" class="flow-history-input">

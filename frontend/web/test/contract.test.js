@@ -515,6 +515,7 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/输出/Age
   assert.match(flow, /发送测试/, "流程编辑器没有测试发送按钮");
   assert.match(flow, /api\.testFlow/, "测试发送没接后端");
   assert.match(flowNode, /class="flow-node-test"/, "节点悬停没有测试 I/O 浮层");
+  assert.match(flowNode, /class="flow-node-delete/, "节点没有删除按钮");
   assert.match(flowNode, /id="reasoning"/, "LLM 节点没有思考出口");
   assert.match(flowNode, /id="history"/, "LLM 节点没有 history 输入");
   assert.match(flowNode, /class="flow-join-inputs"/, "拼接节点没有多输入端口");
@@ -525,6 +526,9 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/输出/Age
   assert.ok(flowDebugSteps(emptyFlowGraph()).length >= 2, "空图没有调试步骤");
   assert.match(css, /\.flow-editor\.expanded \{[^}]*position:\s*fixed/, "网页全屏没有铺满 #app");
   assert.match(css, /\.flow-editor\.expanded \.flow-main \{[^}]*flex:\s*1 1 auto/, "全屏时 flow-main 没有吃掉剩余高度");
+  assert.match(css, /\.flow-debug \{[^}]*position:\s*absolute/, "调试栏仍占画布宽度");
+  assert.match(css, /\.flow-test-bar \{[^}]*position:\s*absolute/, "测试输入栏仍占画布高度");
+  assert.match(flow, /flow-debug-node/, "调试栏没有节点列表");
   for (const type of ["input", "history", "llm", "join", "output"]) {
     assert.ok(flow.includes(`addNode('${type}')`) || flow.includes(`addNode("${type}")`), `流程编辑器缺 ${type} 节点`);
   }

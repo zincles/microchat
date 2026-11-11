@@ -1750,14 +1750,18 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-editor.expanded .flow-main { flex: 1 1 auto; min-height: 0; }
 .flow-editor.expanded .flow-canvas { flex: 1 1 auto; height: auto; min-height: 0; }
 @media (max-width: 900px) {
-  .flow-main { flex-direction: column; }
-  .flow-debug { flex: none; width: 100%; max-height: 15em; }
+  .flow-debug { top: auto; left: 0.5em; right: 0.5em; bottom: 0.5em; width: auto;
+    height: min(15em, 48%); }
+  .flow-test-bar { width: calc(100% - 1em); max-width: none; }
 }
-.flow-main { display: flex; align-items: stretch; gap: 0.7em; min-height: 0; }
+.flow-main { position: relative; display: flex; align-items: stretch; gap: 0.7em; min-height: 0; }
 .flow-main .flow-canvas { flex: 1 1 auto; min-width: 0; }
-.flow-debug { flex: 0 0 min(19em, 38%); min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+/* 调试栏悬浮在画布右侧，不参与 flex 宽度分配 —— 打开它不能把绘图区挤窄。 */
+.flow-debug { position: absolute; top: 0.5em; right: 0.5em; bottom: 0.5em; z-index: 30;
+  width: min(20em, 42%); min-height: 0; overflow-y: auto; overscroll-behavior: contain;
   border: 1px solid var(--md-outline-variant); border-radius: var(--md-shape-md);
-  background: var(--md-surface-container-low); padding: 0.65em 0.75em; }
+  background: var(--md-surface-container-low); padding: 0.65em 0.75em;
+  box-shadow: var(--md-elev-2); }
 .flow-debug-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5em; }
 .flow-debug-head b { font-size: var(--md-type-title-small); }
 .flow-debug-issues { margin: 0.45em 0; padding: 0.5em 0.65em; border-left: 3px solid var(--md-error);
@@ -1814,6 +1818,11 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
   box-shadow: var(--md-elev-1); font-size: var(--md-type-body-small); }
 .flow-node-agent { min-width: 230px; }
 .flow-node-head { display: flex; flex-direction: column; gap: 0.1em; }
+.flow-node-delete { position: absolute; top: 0.2em; right: 0.25em; z-index: 2;
+  width: 1.6em; height: 1.6em; padding: 0; border: 0; border-radius: var(--r-xs);
+  background: none; color: var(--md-on-surface-variant); font: inherit; cursor: pointer; }
+.flow-node-delete:hover { color: var(--md-error); background: var(--md-error-container); }
+.flow-node-delete:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 1px; }
 .flow-node-title { font-weight: 600; color: var(--md-on-surface); }
 .flow-node-hint { color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); line-height: 1.35; }
 .flow-node-select { margin-top: 0.4em; }
@@ -1838,8 +1847,24 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-node-test-label { display: block; margin-top: 0.25em; color: var(--md-on-surface-variant); }
 .flow-node-test pre { margin: 0.15em 0 0; padding: 0.25em 0.35em; border-radius: var(--r-xs);
   background: var(--md-surface-container-low); white-space: pre-wrap; overflow-wrap: anywhere; }
-.flow-test-bar { display: flex; align-items: center; gap: 0.45em; flex-wrap: wrap; }
+/* 测试输入栏也浮在画布上方，不再占一行高度。 */
+.flow-test-bar { position: absolute; top: 0.5em; left: 0.5em; z-index: 31;
+  display: flex; align-items: center; gap: 0.45em; flex-wrap: wrap;
+  width: min(36em, calc(100% - 1em)); padding: 0.45em 0.55em;
+  border: 1px solid var(--md-outline-variant); border-radius: var(--r-md);
+  background: var(--md-surface-container-high); box-shadow: var(--md-elev-2); }
+.flow-test-bar.debug-open { max-width: calc(100% - 22em); }
 .flow-test-input { flex: 1 1 16em; min-width: 10em; }
+.flow-debug-nodes { margin: 0.45em 0 0.2em; }
+.flow-debug-section { display: flex; justify-content: space-between; color: var(--md-on-surface-variant);
+  font-size: var(--md-type-label-small); border-bottom: 1px solid var(--md-outline-variant);
+  padding-bottom: 0.2em; margin-bottom: 0.2em; }
+.flow-debug-node { display: flex; justify-content: space-between; gap: 0.5em; width: 100%;
+  padding: 0.28em 0.2em; border: 0; border-radius: var(--r-xs); background: none;
+  color: var(--md-on-surface); font: inherit; text-align: left; cursor: pointer; }
+.flow-debug-node:hover { background: var(--hover); }
+.flow-debug-node code { color: var(--md-on-surface-variant); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; max-width: 10em; }
 .flow-issues { margin-top: 0.2em; }
 .flow-ok { margin-top: 0.15em; }
 @media (max-width: 700px) { .flow-canvas { height: 48vh; min-height: 260px; } }
