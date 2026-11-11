@@ -525,6 +525,8 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(flowNode, /addJoinInput/, "拼接节点不能增加输入端口");
   assert.match(flowNode, /addJoinOutput/, "拼接节点不能增加输出端口");
   assert.match(flowNode, /class="flow-join-outputs"/, "拼接节点没有输出端口区");
+  assert.match(flowNode, /joinSeparator/, "拼接节点没有分隔符设置");
+  assert.match(flowNode, /分隔符/, "拼接节点没有分隔符标签");
   assert.match(flowNode, /class="flow-history-input"/, "history 输入没有独立标签/端口");
   assert.match(flowNode, /id="text"/, "LLM 节点没有正文出口");
   assert.match(flowNode, /每行自己的左侧输入孔|prompt-\$\{prompt\.id\}/, "Prompt 条目没有独立输入孔");

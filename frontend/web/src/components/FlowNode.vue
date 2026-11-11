@@ -4,6 +4,7 @@
 import { computed, inject, ref } from "vue";
 import { Handle, Position } from "@vue-flow/core";
 import { VBtn, VSelect, VTextarea } from "vuetify/components";
+import { DEFAULT_JOIN_SEPARATOR } from "../utils/flow.ts";
 
 const props = defineProps<{
   id: string;
@@ -42,6 +43,10 @@ const joinInputs = computed<string[]>(() => Array.isArray(props.data.inputs) && 
 const joinOutputs = computed<string[]>(() => Array.isArray(props.data.outputs) && props.data.outputs.length
   ? props.data.outputs
   : ["out-1"]);
+const joinSeparator = computed({
+  get: () => typeof props.data.separator === "string" ? props.data.separator : DEFAULT_JOIN_SEPARATOR,
+  set: (value: string) => { props.data.separator = value; },
+});
 const roles = [
   { title: "system", value: "system" },
   { title: "user", value: "user" },
@@ -125,6 +130,11 @@ function addJoinOutput(): void {
         <span>输入 {{ i + 1 }}</span>
       </div>
       <VBtn variant="text" size="small" type="button" class="flow-add-join nodrag nopan" @click="addJoinInput">＋ 添加输入</VBtn>
+      <label class="flow-join-sep nodrag nopan">
+        <span>分隔符</span>
+        <VTextarea v-model="joinSeparator" rows="1" density="compact" variant="outlined" hide-details
+          placeholder="留空 = 直接相连" />
+      </label>
     </div>
     <div v-if="(hovered || selected) && data.test" class="flow-node-test" role="tooltip">
       <b>测试 I/O</b>

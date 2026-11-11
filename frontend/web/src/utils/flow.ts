@@ -6,6 +6,7 @@
 import type { FlowEdge, FlowGraph, FlowNode } from "../api/types.ts";
 
 export const FLOW_VERSION = 1;
+export const DEFAULT_JOIN_SEPARATOR = "\n\n---\n\n";
 export const FLOW_NODE_TYPES = ["input", "history", "llm", "join", "output"] as const;
 export type FlowNodeType = (typeof FLOW_NODE_TYPES)[number];
 export type FlowDataType = "string" | "messages";
@@ -230,7 +231,8 @@ export function flowDebugSteps(graph: FlowGraph): FlowDebugStep[] {
       output = "[LLM 正文]";
       reasoning = "[LLM 思考]";
     } else if (node.type === "join") {
-      output = incoming.length ? incoming.join("\n---\n") : "[没有输入]";
+      const separator = typeof node.data?.separator === "string" ? node.data.separator : DEFAULT_JOIN_SEPARATOR;
+      output = incoming.length ? incoming.join(separator) : "[没有输入]";
     } else if (node.type === "output") {
       output = incoming.length ? incoming.join("\n---\n") : "[没有输入]";
     } else {

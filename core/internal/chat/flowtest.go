@@ -65,6 +65,8 @@ type flowValue struct {
 	Reasoning string
 }
 
+const defaultJoinSeparator = "\n\n---\n\n"
+
 // TestFlow：执行一次编辑器测试。provider/model 空 ⇒ 读 config.json 的 defaults。
 func (s *Service) TestFlow(ctx context.Context, flowAgent config.Agent, message, provider, modelID string) (FlowTestResult, error) {
 	if flowAgent.Kind != "flow" {
@@ -112,10 +114,10 @@ func (s *Service) TestFlow(ctx context.Context, flowAgent config.Agent, message,
 			step.Output = "[会话历史 messages]"
 		case "join":
 			step.Label = "拼接和复制"
-			step.Output = joinFlowInputs(inputs)
+			step.Output = joinFlowInputs(inputs, flowJoinSeparator(node))
 		case "output":
 			step.Label = "输出"
-			step.Output = joinFlowInputs(inputs)
+			step.Output = joinFlowInputs(inputs, defaultJoinSeparator)
 		case "llm":
 			step.Label = "调用 LLM"
 			text, reasoning, callErr := s.testLLMCall(ctx, node, graph.Edges, values, provider, modelID, providersConfig)
@@ -174,14 +176,21 @@ func sourceValue(values map[string]flowValue, edge flowEdge) string {
 	return ""
 }
 
-func joinFlowInputs(inputs []string) string {
+func flowJoinSeparator(node flowNode) string {
+	if separator, ok := node.Data["separator"].(string); ok {
+		return separator
+	}
+	return defaultJoinSeparator
+}
+
+func joinFlowInputs(inputs []string, separator string) string {
 	parts := make([]string, 0, len(inputs))
 	for _, input := range inputs {
 		if strings.TrimSpace(input) != "" {
 			parts = append(parts, input)
 		}
 	}
-	return strings.Join(parts, "\n\n---\n\n")
+	return strings.Join(parts, separator)
 }
 
 // testLLMCall：把 LLM 节点里手写的 Prompt 条目按顺序变成 messages，再真正调用上游。

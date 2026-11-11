@@ -1898,6 +1898,9 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
   padding-left: 0.8em; color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
 .flow-join-row .vue-flow__handle-left { left: 0; }
 .flow-add-join { align-self: flex-start; margin-top: 0.1em; }
+.flow-join-sep { display: flex; flex-direction: column; gap: 0.15em; margin-top: 0.35em; color: var(--md-on-surface-variant);
+  font-size: var(--md-type-label-small); }
+.flow-join-sep .v-field__input { font-family: var(--app-font-mono, ui-monospace, monospace); font-size: var(--md-type-label-small); }
 .flow-join-outputs { margin-top: 0.35em; border-top: 1px solid var(--md-outline-variant); padding-top: 0.2em; }
 .flow-join-output-row { position: relative; display: flex; align-items: center; justify-content: flex-end;
   min-height: 1.65em; padding-right: 0.85em; color: var(--md-on-surface-variant);

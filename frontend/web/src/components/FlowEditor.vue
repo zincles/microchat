@@ -131,7 +131,7 @@ function addNode(type: "input" | "history" | "llm" | "join" | "output"): void {
     position: { x: 40 + (index % 2) * 240, y: 80 + Math.floor(index / 2) * 160 },
     data: type === "llm"
       ? { prompts: [{ id: `p-${Date.now().toString(36)}`, role: "system", content: "" }] }
-      : type === "join" ? { inputs: ["in-1", "in-2"], outputs: ["out-1"] } : {},
+      : type === "join" ? { inputs: ["in-1", "in-2"], outputs: ["out-1"], separator: "\n\n---\n\n" } : {},
   }];
   fitAfterResize();
 }
