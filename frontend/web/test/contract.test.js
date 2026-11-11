@@ -539,6 +539,9 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(css, /\.flow-editor\.expanded \.flow-main \{[^}]*flex:\s*1 1 auto/, "全屏时 flow-main 没有吃掉剩余高度");
   assert.match(css, /\.flow-debug \{[^}]*position:\s*absolute/, "调试栏仍占画布宽度");
   assert.match(css, /\.flow-debug \{[^}]*overflow-y:\s*auto/, "调试面板不能上下滚动");
+  assert.match(css, /--flow-history:\s*#f2994a/, "历史类型不是橙色");
+  assert.match(css, /\.flow-node\.flow-node-history \.vue-flow__handle \{[^}]*background:\s*var\(--flow-history\)/, "历史节点端口没被染成历史色");
+  assert.match(css, /\.flow-node \.flow-prompt-history \.vue-flow__handle \{[^}]*background:\s*var\(--flow-history\)/, "历史条目端口没被染成历史色");
   assert.match(css, /\.flow-panel-test \{[^}]*display:\s*flex/, "测试面板没有独立内容区");
   assert.match(flow, /flow-node-row/, "节点面板没有节点列表");
   assert.match(flow, /flow-panel-tabs/, "面板没有 测试/调试/节点 tabs");

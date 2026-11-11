@@ -1782,7 +1782,7 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-debug-output { margin: 0.3em 0 0; padding: 0.4em 0.5em; border-radius: var(--r-xs);
   background: var(--md-surface-container-high); color: var(--md-on-surface);
   font-size: var(--md-type-label-small); line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
-.flow-canvas { --flow-string: var(--md-primary); --flow-history: #d9b44a;
+.flow-canvas { --flow-string: var(--md-primary); --flow-history: #f2994a;
   height: min(54vh, 560px); min-height: 300px; border: 1px solid var(--md-outline-variant);
   border-radius: var(--md-shape-md); overflow: hidden; background: var(--md-surface-container-low); }
 .flow-canvas .vue-flow { background: var(--md-surface-container-low); }
@@ -1830,7 +1830,7 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-node-input, .flow-node-join { border-left: 3px solid var(--flow-string); }
 .flow-node-output { border-right: 3px solid var(--flow-string); }
 .flow-node-history { border-left: 3px solid var(--flow-history); }
-.flow-canvas .flow-node-history .vue-flow__handle { background: var(--flow-history) !important; }
+.flow-canvas .flow-node.flow-node-history .vue-flow__handle { background: var(--flow-history) !important; }
 .flow-canvas .flow-node .vue-flow__handle { width: 10px; height: 10px;
   border: 2px solid var(--md-surface-container-high); background: var(--md-primary) !important; }
 .flow-canvas .flow-node .vue-flow__handle:hover { background: var(--md-secondary) !important; }
@@ -1898,8 +1898,8 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-prompt-del:hover { color: var(--md-error); }
 .flow-add-prompt { align-self: flex-start; margin-top: 0.1em; }
 .flow-prompt-row .vue-flow__handle-left { left: 0; }
-/* LLM 里的历史条目：黄色，接受 messages[] 而不是裸字符串。 */
-.flow-prompt-history .vue-flow__handle { background: var(--flow-history) !important; }
+/* LLM 里的历史条目：橙色，接受 messages[] 而不是裸字符串。 */
+.flow-canvas .flow-node .flow-prompt-history .vue-flow__handle { background: var(--flow-history) !important; }
 .flow-join-inputs { display: flex; flex-direction: column; gap: 0.15em; margin-top: 0.35em; }
 .flow-join-row { position: relative; display: flex; align-items: center; min-height: 1.65em;
   padding-left: 0.8em; color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
