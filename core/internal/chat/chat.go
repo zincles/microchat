@@ -127,10 +127,15 @@ func (s *Service) Accept(session model.Session, content string) (Accepted, error
 		return Accepted{}, err
 	}
 
+	storedContent := statelang.Scan(content).Cleaned
+	// FlowAgent 的 input 节点可以做入库前改写：历史里留下的是改写后的用户 prompt。
+	if agent, ok := s.flowAgentOf(session); ok {
+		storedContent = applyFlowInputRewrite(agent, storedContent)
+	}
 	user, err := s.Store.InsertMessage(model.Message{
 		// 用户 `<state>` 注入一律剔除再入库（只 system prompt 与 assistant 的块算数）。
 		ID: userID, SessionID: session.ID, Role: model.RoleUser, RunID: userID,
-		Content: statelang.Scan(content).Cleaned,
+		Content: storedContent,
 	})
 	if err != nil {
 		s.Turns.Stop(session.ID) // 登记了却写不进去 ⇒ 摘掉，别留下一个假的"在跑"
@@ -143,7 +148,7 @@ func (s *Service) Accept(session model.Session, content string) (Accepted, error
 	}
 	// 起标题**不在这儿**：它是 title 能力的事（`title.Service.Auto`，在拿到回复之后起）——
 	// 这里只落用户那句（用户的话不该丢，换个模型接着聊）。
-	accepted, err := s.launch(session, replyID, token, providersConfig, assistantIDs, userID, statelang.Scan(content).Cleaned)
+	accepted, err := s.launch(session, replyID, token, providersConfig, assistantIDs, userID, storedContent)
 	if err != nil {
 		return Accepted{}, err
 	}

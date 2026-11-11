@@ -479,8 +479,6 @@ test("FlowAgent：端口有类型，且每个端点只许一条线", () => {
   assert.equal(flowSourceType(trim, "out"), "messages");
   assert.equal(flowTargetType(trim, "in"), "messages");
   assert.equal(flowSourceType(merge, "out"), "messages");
-  assert.equal(flowSourceType({ id: "rw", type: "rewrite", data: {} }, "out"), "string");
-  assert.equal(flowTargetType({ id: "rw", type: "rewrite", data: {} }, "in"), "string");
   const textView = formatFlowText({ version: 1, nodes: [input, llm, { id: "out", type: "output", position: { x: 3, y: 4 }, data: {} }], edges: [{ id: "te", source: "l", sourceHandle: "text", target: "out", targetHandle: "text" }] });
   assert.match(textView, /l \[调用 LLM\]/, "文本视图缺节点");
   assert.match(textView, /text → out:text/, "文本视图缺连接");
@@ -616,8 +614,8 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(readFileSync(join(SRC, "components", "FlowWorkspace.vue"), "utf8"), /patchAgent\(agent\.id, \{ flow: snapshot \}\)/, "工作流没有保存回 Agent 文件");
   assert.ok(!/flow-run-pane/.test(readFileSync(join(SRC, "components", "PayloadBar.vue"), "utf8")), "旧的 FlowAgent 载荷 tab 还在");
   assert.match(flowNode, /flow-trim-controls/, "裁剪节点没有配置控件");
-  assert.match(flowNode, /flow-rewrite-controls/, "覆写输入节点没有编辑框");
-  assert.match(flowNode, /rewritePrompt/, "覆写输入节点没有 prompt 绑定");
+  assert.match(flowNode, /flow-input-rewrite/, "输入节点没有入库前改写框");
+  assert.match(flowNode, /inputPrompt/, "输入节点没有 prompt 绑定");
   assert.match(flowNode, /trimRoles/, "裁剪节点没有角色过滤");
   assert.match(flow, /function removePort/, "删除端口没有同步删除相连边");
   assert.match(flow, /provide\("flowRemovePort"/, "没有把删除端口的回调交给节点");
@@ -643,7 +641,7 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(flow, /flow-node-row/, "节点面板没有节点列表");
   assert.match(flow, /flow-panel-tabs/, "底栏没有 测试/调试 tabs");
   assert.match(flow, /<VMenu[\s\S]*flow-add-menu[\s\S]*addNodeItems/, "添加节点不是下拉列表");
-  for (const type of ["input", "history", "trim", "merge", "rewrite", "llm", "join", "output"]) {
+  for (const type of ["input", "history", "trim", "merge", "llm", "join", "output"]) {
     assert.match(flow, new RegExp(`type: "${type}"`), `流程编辑器缺 ${type} 节点`);
   }
   const empty = emptyFlowGraph();

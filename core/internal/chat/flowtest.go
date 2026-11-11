@@ -119,7 +119,7 @@ func (s *Service) TestFlow(ctx context.Context, flowAgent config.Agent, message,
 		modelID = cfg.Defaults.Model
 	}
 	outcome, err := s.executeFlowGraph(ctx, graph, flowRunOptions{
-		Input:           message,
+		Input:           applyFlowInputRewrite(flowAgent, message),
 		DefaultProvider: provider,
 		DefaultModel:    modelID,
 		ProvidersConfig: providersConfig,
@@ -179,9 +179,6 @@ func (s *Service) executeFlowGraph(ctx context.Context, graph flowGraph, opts fl
 				}
 			}
 			step.Output = fmt.Sprintf("messages[%d]", len(nodeMessages))
-		case "rewrite":
-			step.Label = "覆写用户输入"
-			step.Output = rewriteFlowInput(inputs, flowRewritePrompt(node))
 		case "join":
 			step.Label = "拼接和复制"
 			step.Output = joinFlowInputs(inputs, flowJoinSeparator(node))
@@ -304,24 +301,24 @@ func sourceMessages(values map[string]flowValue, edge flowEdge) []providers.Chat
 	return value.Messages
 }
 
-func flowRewritePrompt(node flowNode) string {
-	if prompt, ok := node.Data["prompt"].(string); ok {
-		return prompt
+// applyFlowInputRewrite：图里的 input 节点可以把用户原文改写后再入库。
+// 这是**入库前**的一步（Accept / TestFlow 调用），不是运行时节点；因此历史里看到的就是改写后的 prompt。
+func applyFlowInputRewrite(agent config.Agent, content string) string {
+	var graph flowGraph
+	if json.Unmarshal(agent.Flow, &graph) != nil {
+		return content
 	}
-	return "{{input}}"
-}
-
-// rewriteFlowInput：把上游字符串按模板改写。空模板 = 放行；模板里的 {{input}} 插原输入。
-// 只作用于本次图执行，不改会话里的用户消息（当前 Prompt 之外的上下文一概不动）。
-func rewriteFlowInput(inputs []string, prompt string) string {
-	original := ""
-	if len(inputs) > 0 {
-		original = inputs[0]
+	for _, node := range graph.Nodes {
+		if node.Type != "input" {
+			continue
+		}
+		prompt, _ := node.Data["prompt"].(string)
+		if strings.TrimSpace(prompt) == "" {
+			return content
+		}
+		return strings.ReplaceAll(prompt, "{{input}}", content)
 	}
-	if strings.TrimSpace(prompt) == "" {
-		return original
-	}
-	return strings.ReplaceAll(prompt, "{{input}}", original)
+	return content
 }
 
 func flowTrimMode(node flowNode) string {
@@ -543,7 +540,7 @@ func validateTestGraph(graph flowGraph) error {
 		seen[node.ID] = true
 		counts[node.Type]++
 		switch node.Type {
-		case "input", "history", "trim", "merge", "rewrite", "llm", "join", "output":
+		case "input", "history", "trim", "merge", "llm", "join", "output":
 		default:
 			return fmt.Errorf("不认识的节点类型：%s", node.Type)
 		}

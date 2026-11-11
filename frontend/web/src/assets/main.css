@@ -1847,8 +1847,8 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-canvas .flow-node .vue-flow__handle:hover { background: var(--md-secondary) !important; }
 .flow-node-body { margin-top: 0.35em; color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
 .flow-node-body code { color: var(--md-primary); font-size: 0.95em; }
-.flow-rewrite-controls { display: flex; flex-direction: column; gap: 0.3em; margin-top: 0.4em; }
-.flow-rewrite-controls .v-field__input { font-size: var(--md-type-label-small); line-height: 1.45; }
+.flow-input-rewrite { display: flex; flex-direction: column; gap: 0.3em; margin-top: 0.4em; }
+.flow-input-rewrite .v-field__input { font-size: var(--md-type-label-small); line-height: 1.45; }
 .flow-output-inputs { display: flex; flex-direction: column; gap: 0.1em; margin-top: 0.35em; }
 .flow-output-row { position: relative; display: flex; align-items: center; min-height: 1.5em;
   padding-left: 0.8em; color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
@@ -2173,3 +2173,8 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
   border-radius: var(--r-sm); background: var(--md-surface-container-low); color: var(--md-on-surface);
   font-family: var(--app-font-mono, ui-monospace, monospace); font-size: 0.78em; line-height: 1.55;
   white-space: pre-wrap; overflow-wrap: normal; overflow-x: auto; }
+
+/* 连线永远画在卡片上面：节点层在下，边层在上；边只做视觉，不抢节点/端口的指针。 */
+.flow-canvas .vue-flow__nodes { z-index: 2; }
+.flow-canvas .vue-flow__edges { z-index: 8 !important; }
+.flow-canvas .vue-flow__edge { pointer-events: none; }
