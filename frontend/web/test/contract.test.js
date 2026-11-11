@@ -512,6 +512,8 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(css, /\.flow-canvas \.vue-flow__controls-button \{[^}]*background:\s*var\(--md-surface-container-high\)/, "画布控制键没跟 MD3 主题");
   assert.match(flow, /class="flow-fullscreen-btn"/, "流程编辑器没有网页全屏按钮");
   assert.match(flow, /class="flow-debug"/, "流程编辑器没有调试面板");
+  assert.match(flow, /@wheel="onPanelWheel"/, "调试面板没有接管滚轮，画布会抢滚动");
+  assert.match(flow, /function onPanelWheel/, "调试面板没有自己的滚动处理");
   assert.match(flow, /flowDebugSteps/, "调试面板没有结构预演数据");
   assert.match(flow, /发送测试/, "流程编辑器没有测试发送按钮");
   assert.match(flow, /api\.testFlow/, "测试发送没接后端");
@@ -536,6 +538,7 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(css, /\.flow-editor\.expanded \{[^}]*position:\s*fixed/, "网页全屏没有铺满 #app");
   assert.match(css, /\.flow-editor\.expanded \.flow-main \{[^}]*flex:\s*1 1 auto/, "全屏时 flow-main 没有吃掉剩余高度");
   assert.match(css, /\.flow-debug \{[^}]*position:\s*absolute/, "调试栏仍占画布宽度");
+  assert.match(css, /\.flow-debug \{[^}]*overflow-y:\s*auto/, "调试面板不能上下滚动");
   assert.match(css, /\.flow-panel-test \{[^}]*display:\s*flex/, "测试面板没有独立内容区");
   assert.match(flow, /flow-node-row/, "节点面板没有节点列表");
   assert.match(flow, /flow-panel-tabs/, "面板没有 测试/调试/节点 tabs");

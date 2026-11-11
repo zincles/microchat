@@ -89,6 +89,14 @@ function removeNode(id: string): void {
   edges.value = edges.value.filter((e) => e.source !== id && e.target !== id);
   nodes.value = nodes.value.filter((n) => n.id !== id);
 }
+// 面板浮在画布上：Vue Flow 的平移滚轮/手势可能抢事件。面板自己滚时明确截住。
+function onPanelWheel(event: WheelEvent): void {
+  const el = event.currentTarget as HTMLElement | null;
+  if (!el || el.scrollHeight <= el.clientHeight) return;
+  el.scrollTop += event.deltaY;
+  event.preventDefault();
+  event.stopPropagation();
+}
 provide("flowRemoveNode", removeNode);
 onMounted(async () => {
   fitAfterResize();
@@ -271,7 +279,7 @@ watch([nodes, edges], () => emit("update:graph", toGraph()), { deep: true });
           <Controls position="bottom-right" />
         </VueFlow>
       </div>
-      <aside v-if="panelOpen" class="flow-debug" aria-label="流程面板">
+      <aside v-if="panelOpen" class="flow-debug" aria-label="流程面板" @wheel="onPanelWheel">
         <div class="flow-panel-head">
           <div class="flow-panel-tabs" role="tablist">
             <button type="button" :class="{ active: panelTab === 'test' }" @click="panelTab = 'test'">测试</button>
