@@ -1736,9 +1736,32 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-editor { display: flex; flex-direction: column; gap: 0.45em; }
 .flow-toolbar { display: flex; align-items: center; gap: 0.35em; flex-wrap: wrap; }
 .flow-toolbar-label { color: var(--md-on-surface-variant); font-size: var(--md-type-label-medium); }
-.flow-canvas { height: min(58vh, 620px); min-height: 320px; border: 1px solid var(--md-outline-variant);
+.flow-canvas { height: min(54vh, 560px); min-height: 300px; border: 1px solid var(--md-outline-variant);
   border-radius: var(--md-shape-md); overflow: hidden; background: var(--md-surface-container-low); }
 .flow-canvas .vue-flow { background: var(--md-surface-container-low); }
+/* Vue Flow 的 theme-default 会给 input/output 节点头套白底、白边、固定 150px 和居中对齐；
+ * 我们的节点自己就是卡片，所以把**外层 wrapper** 全部剥掉，只留内层 .flow-node。
+ * 不加 !important 压不过 theme 的 .vue-flow__node-input / selected 规则 —— 截图里的白框就是这么来的。 */
+.flow-canvas .vue-flow__node {
+  width: auto !important; padding: 0 !important; border: 0 !important; border-radius: 0 !important;
+  background: transparent !important; box-shadow: none !important; color: inherit !important;
+  font-size: inherit !important; text-align: left !important;
+}
+.flow-canvas .vue-flow__node.selected .flow-node,
+.flow-canvas .vue-flow__node:focus-visible .flow-node {
+  border-color: var(--md-primary); box-shadow: 0 0 0 2px var(--md-primary);
+}
+.flow-canvas .vue-flow__edge-path { stroke: var(--md-outline); stroke-width: 1.5; }
+.flow-canvas .vue-flow__connection-path { stroke: var(--md-primary); stroke-width: 2; }
+/* Controls 默认是白底大圆角按钮，和 MD3 主题格格不入；压成面板里的一组小图标键。 */
+.flow-canvas .vue-flow__controls { box-shadow: var(--md-elev-2); border-radius: var(--r-md); overflow: hidden; }
+.flow-canvas .vue-flow__controls-button {
+  width: 2.2em; height: 2.2em; border: 0; border-bottom: 1px solid var(--md-outline-variant);
+  background: var(--md-surface-container-high); color: var(--md-on-surface);
+}
+.flow-canvas .vue-flow__controls-button:last-child { border-bottom: 0; }
+.flow-canvas .vue-flow__controls-button:hover { background: var(--md-surface-container-highest); }
+.flow-canvas .vue-flow__controls-button svg { fill: currentColor; }
 .flow-node { min-width: 190px; max-width: 240px; box-sizing: border-box; padding: 0.55em 0.65em;
   border: 1px solid var(--md-outline-variant); border-radius: var(--md-shape-sm);
   background: var(--md-surface-container-high); color: var(--md-on-surface);
@@ -1749,9 +1772,12 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-node-hint { color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); line-height: 1.35; }
 .flow-node-select { margin-top: 0.4em; }
 .flow-node-select .v-field { font-size: var(--md-type-label-medium); }
-.flow-node .vue-flow__handle { width: 10px; height: 10px; border: 2px solid var(--md-surface-container-high);
-  background: var(--md-primary); }
-.flow-node .vue-flow__handle:hover { background: var(--md-secondary); }
+/* 入口/出口在卡片边上给一点方向色；默认主题会给 input/output 的 handle 染色，必须压住。 */
+.flow-node-input { border-left: 3px solid var(--md-primary); }
+.flow-node-output { border-right: 3px solid var(--md-primary); }
+.flow-canvas .flow-node .vue-flow__handle { width: 10px; height: 10px;
+  border: 2px solid var(--md-surface-container-high); background: var(--md-primary) !important; }
+.flow-canvas .flow-node .vue-flow__handle:hover { background: var(--md-secondary) !important; }
 .flow-node-body { margin-top: 0.35em; color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
 .flow-issues { margin-top: 0.2em; }
 .flow-ok { margin-top: 0.15em; }

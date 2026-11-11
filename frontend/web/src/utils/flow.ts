@@ -13,8 +13,8 @@ export function emptyFlowGraph(): FlowGraph {
   return {
     version: FLOW_VERSION,
     nodes: [
-      { id: "input-1", type: "input", position: { x: 80, y: 120 }, data: {} },
-      { id: "output-1", type: "output", position: { x: 380, y: 120 }, data: {} },
+      { id: "input-1", type: "input", position: { x: 40, y: 100 }, data: {} },
+      { id: "output-1", type: "output", position: { x: 520, y: 100 }, data: {} },
     ],
     edges: [],
   };

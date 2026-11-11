@@ -65,11 +65,13 @@ function addNode(type: "input" | "agent" | "join" | "output"): void {
   if (type === "output" && outputExists.value) return;
   seq += 1;
   const id = `${type}-${Date.now().toString(36)}-${seq}`;
-  const offset = nodes.value.length * 26;
+  // 两列、按行递增：新节点不叠在已有节点上（FlowAgent 的 agent 节点比输入/输出宽，
+  // 只按 x 递增很容易把输出盖住）。
+  const index = nodes.value.length;
   nodes.value = [...nodes.value, {
     id,
     type,
-    position: { x: 150 + offset, y: 80 + offset },
+    position: { x: 40 + (index % 2) * 240, y: 80 + Math.floor(index / 2) * 160 },
     data: type === "agent" ? { agent_id: "" } : {},
   }];
 }

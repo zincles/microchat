@@ -476,6 +476,9 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/输出/Age
   assert.match(settings, /<FlowAgent|FlowAgent/, "菜单没有 FlowAgent 文案");
   assert.match(editor, /agentKind === 'flow'/, "AgentEditor 没按类型切换页签");
   assert.match(flow, /<VueFlow/, "没有 Vue Flow 画布");
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8");
+  assert.match(css, /\.flow-canvas \.vue-flow__node \{[^}]*background:\s*transparent !important/, "Vue Flow 外层白底没剥掉（输入/输出节点会套白框）");
+  assert.match(css, /\.flow-canvas \.vue-flow__controls-button \{[^}]*background:\s*var\(--md-surface-container-high\)/, "画布控制键没跟 MD3 主题");
   for (const type of ["input", "agent", "join", "output"]) {
     assert.ok(flow.includes(`addNode('${type}')`) || flow.includes(`addNode("${type}")`), `流程编辑器缺 ${type} 节点`);
   }
