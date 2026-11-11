@@ -26,6 +26,7 @@ import type {
   EditMessageRequest,
   EnqueueQueueRequest,
   ExportDocument,
+  FlowRunTrace,
   FlowTestResult,
   HealthResponse,
   ImportJsonResult,
@@ -435,6 +436,8 @@ export function createApi({ base, token = "", fetchFn = fetch }: CreateApiOption
     // testFlow：FlowAgent 编辑器的一次性测试发送（不建会话、不落库）。
     testFlow: (id: string, message: string) =>
       call<FlowTestResult>("POST", `/agents/${enc(id)}/flow/test`, { message }),
+    // flowRun：FlowAgent 最近一次图执行（节点请求/输出/用量）；普通 Agent 没有这份 404。
+    flowRun: (id: string) => call<FlowRunTrace>("GET", `/sessions/${enc(id)}/flow/run`),
     patchAgent: (id: string, body: UpdateAgentRequest) =>
       call<Agent>("PATCH", `/agents/${enc(id)}`, body),
     deleteAgent: (id: string) => call<null>("DELETE", `/agents/${enc(id)}`),

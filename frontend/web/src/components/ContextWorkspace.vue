@@ -11,12 +11,14 @@
 // 它们有了正经地方，也就不必再挤在栏里和对话抢宽度。
 import { ref } from "vue";
 import PayloadBar from "./PayloadBar.vue";
+import type { FlowRunTrace } from "../api/types.ts";
 
 export interface PayloadBarApi {
   setWire: (wire: unknown) => void;
   setTables: (tables: unknown) => void;
   setTree: (tree: unknown) => void;
   setCompactWire: (wire: unknown) => void;
+  setFlowTrace: (trace: FlowRunTrace | null) => void;
 }
 
 const props = withDefaults(defineProps<{
@@ -50,6 +52,7 @@ defineExpose({
   setTables: (t: unknown): void => inner.value?.setTables(t),
   setTree: (t: unknown): void => inner.value?.setTree(t),
   setCompactWire: (w: unknown): void => inner.value?.setCompactWire(w),
+  setFlowTrace: (trace: FlowRunTrace | null): void => inner.value?.setFlowTrace(trace),
 });
 </script>
 

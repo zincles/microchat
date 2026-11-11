@@ -684,6 +684,7 @@ async function refreshMacros() {
   catch { topbarRef.value?.setMacros(null); }
 }
 function refreshContextLazy() {
+  refreshFlowTrace();
   if (workspace.value !== "context") return;
   if (payloadTab === "tree") refreshTree();
   else if (payloadTab === "state") refreshStateView(sessionID);
@@ -1270,7 +1271,8 @@ async function startDraft() {
   fillAgentSelect();
   payloadbarRef.value?.setWire(null);
   payloadbarRef.value?.setTables({});
-  payloadbarRef.value?.setCompactWire(null); // 上一发的压缩载荷不许挂在别的会话上
+  payloadbarRef.value?.setCompactWire(null);
+  payloadbarRef.value?.setFlowTrace(null); // 上一发的压缩载荷不许挂在别的会话上
   refreshStatusline("idle");
   refreshSessionsBar();
   refreshRerolls();
@@ -1365,6 +1367,7 @@ async function enterSession(id, preloaded = null) {
   payloadbarRef.value?.setWire(null);
   // 压缩那发的载荷同理：换会话就清掉（那是**某一次**压缩的账，不属于"当前"）
   payloadbarRef.value?.setCompactWire(null);
+  payloadbarRef.value?.setFlowTrace(null);
   refreshContextLazy();
   // 这一轮还在跑？（刷新页面、切走又回来）—— status 是权威：把合成的流气泡与轮询接回来。
   // reply 落库前消息列里本来就没有它，不接的话界面装 idle、发送才知道 409。
@@ -1711,6 +1714,19 @@ function afterCopy(fresh) {
   refreshSessionsBar();
   enterSession(fresh.id).catch((err) => toast(`进副本失败：${err.message}`, "error"));
 }
+// refreshFlowTrace：取 FlowAgent 最近一次图执行（普通 Agent 404 ⇒ 清空）。
+// 它不跟 /context 绑在一起：进入上下文工作区、翻 idle 之后各问一次；否则 boot 时
+// ContextWorkspace 还没 mount，trace 会被丢在一个空 ref 上。
+async function refreshFlowTrace(): Promise<void> {
+  if (draft || !sessionID) { payloadbarRef.value?.setFlowTrace(null); return; }
+  const sid = sessionID;
+  try {
+    const trace = await api.flowRun(sid);
+    if (sessionID === sid) payloadbarRef.value?.setFlowTrace(trace);
+  } catch {
+    if (sessionID === sid) payloadbarRef.value?.setFlowTrace(null);
+  }
+}
 // refreshStatusline：连接 / 助手 / 相位 / 上下文 —— 全都喂给右上角那枚环（2026-10-28 用户定）。
 //
 // 这四样从前是一行小字（"已连接 v0.1.0｜上下文 344/1.04M｜默认助手｜idle"），紧贴着对话；
@@ -1726,9 +1742,11 @@ function refreshStatusline(phase, elapsedMs = null, { withContext = true } = {})
   if (draft || !sessionID) {
     // 草稿：没有会话可问占用 ⇒ 环清空（没有会话就没有"占了多少"这回事）。
     topbarRef.value?.setContext(null);
+    payloadbarRef.value?.setFlowTrace(null);
     return;
   }
   if (!withContext) return;
+  refreshFlowTrace();
   api.context(sessionID).catch(() => null).then((ctx) => {
     topbarRef.value?.setContext(ctx);
   refreshMacros();

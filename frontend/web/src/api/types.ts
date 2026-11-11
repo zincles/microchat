@@ -156,6 +156,20 @@ export interface TurnPoll {
   slice: StreamSlice;
 }
 
+export interface FlowContextNode {
+  id: string;
+  label: string;
+  provider: string;
+  model: string;
+  used_tokens: number;
+  budget_tokens: number;
+  ctx_len: number;
+  max_output: number;
+  prompt_tokens: number;
+  ratio: number;
+  over_budget: boolean;
+}
+
 export interface ContextUsage {
   used_tokens: number;
   budget_tokens: number;
@@ -167,6 +181,7 @@ export interface ContextUsage {
   estimated: boolean;
   last_prompt_tokens: number;
   over_budget: boolean;
+  flow_nodes?: FlowContextNode[];
 }
 
 export interface StateOp {
@@ -562,10 +577,25 @@ export interface FlowTestStep {
   output?: string;
   reasoning?: string;
   error?: string;
+  provider?: string;
+  model?: string;
+  usage?: Record<string, unknown> | null;
+  elapsed_ms?: number;
+  payload?: LastPayload | null;
 }
 
 export interface FlowTestResult {
   output: string;
+  steps: FlowTestStep[];
+}
+
+export interface FlowRunTrace {
+  session_id: string;
+  status: "running" | "done" | "error" | "canceled";
+  final?: string;
+  started_at: number;
+  duration_ms: number;
+  error?: string;
   steps: FlowTestStep[];
 }
 

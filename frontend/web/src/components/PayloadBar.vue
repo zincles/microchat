@@ -17,7 +17,7 @@ import { parseWireMessages, previewBlock } from "../utils/payload.ts";
 import { depthText } from "../utils/format.ts";
 import type { ParsedWireMessage } from "../utils/payload.ts";
 import { payloadPreviewOn, savePayloadPreview, payloadVizOn, savePayloadViz } from "../utils/prefs.ts";
-import type { LastPayload, PayloadPreview } from "../api/types.ts";
+import type { FlowRunTrace, LastPayload, PayloadPreview } from "../api/types.ts";
 
 const props = withDefaults(defineProps<{
   defaultBlocks?: number | null; // chat.compact_blocks（空输入框的默认，只用于提示）
@@ -46,6 +46,33 @@ function doCompact(): void {
   emit("compact", Number.isFinite(n) && n > 0 ? Math.floor(n) : null);
 }
 const wire = ref<LastPayload | null>(null);
+// FlowAgent 的最近一次图执行：一张图有多个上游请求，不能塞进一个 LastPayload。
+const flowTrace = ref<FlowRunTrace | null>(null);
+const flowOpen = ref<Set<number>>(new Set());
+function setFlowTrace(trace?: FlowRunTrace | null): void {
+  flowTrace.value = trace ?? null;
+  flowOpen.value = new Set();
+  // FlowAgent 进来先看执行轨迹；普通会话仍停在载荷。
+  if (flowTrace.value && tab.value === "payload") tab.value = "flow";
+  if (!flowTrace.value && tab.value === "flow") tab.value = "payload";
+}
+function toggleFlowStep(index: number): void {
+  const next = new Set(flowOpen.value);
+  if (next.has(index)) next.delete(index); else next.add(index);
+  flowOpen.value = next;
+}
+function flowStepOpen(index: number): boolean { return flowOpen.value.has(index); }
+function flowStepPayload(step: FlowRunTrace["steps"][number]): string {
+  return step.payload ? JSON.stringify(step.payload, null, 2) : "（这个节点没有上游请求）";
+}
+function flowStepUsage(step: FlowRunTrace["steps"][number]): string {
+  const usage = step.usage as { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null | undefined;
+  if (!usage) return "";
+  const parts: string[] = [];
+  if (usage.prompt_tokens != null) parts.push(`入 ${usage.prompt_tokens}`);
+  if (usage.completion_tokens != null) parts.push(`出 ${usage.completion_tokens}`);
+  return parts.join(" / ");
+}
 // 载荷预览开关（2026-11-04 用户定）：关掉后不请求 /outgoing，载荷 tab 只显示"已关闭"。
 const preview = ref(payloadPreviewOn());
 function setPreview(on: boolean): void {
@@ -198,7 +225,7 @@ function previewCompact(): void {
   emit("compact-payload", Number.isFinite(n) && n > 0 ? Math.floor(n) : null);
 }
 
-defineExpose({ setWire, setTables, setTree, setCompactWire });
+defineExpose({ setWire, setTables, setTree, setCompactWire, setFlowTrace });
 </script>
 
 <template>
@@ -211,10 +238,37 @@ defineExpose({ setWire, setTables, setTree, setCompactWire });
       @update:model-value="selectTab"
     >
       <VTab value="payload">载荷</VTab>
+      <VTab v-if="flowTrace" value="flow">流程</VTab>
       <VTab value="state">状态</VTab>
       <VTab value="tree">压缩</VTab>
     </VTabs>
     <VTabsWindow v-model="tab" class="context-window">
+    <VTabsWindowItem v-if="flowTrace" value="flow">
+    <div id="flow-run-pane">
+      <div class="flow-run-head">
+        <b>FlowAgent 执行</b>
+        <span class="pv-chip">{{ flowTrace.status }}</span>
+        <span v-if="flowTrace.duration_ms" class="pv-chip">{{ flowTrace.duration_ms }} ms</span>
+      </div>
+      <p v-if="flowTrace.error" class="flow-run-error">{{ flowTrace.error }}</p>
+      <p v-if="flowTrace.final" class="flow-run-final"><b>最终输出</b><br>{{ flowTrace.final }}</p>
+      <div v-for="(step, index) in flowTrace.steps" :key="step.id + index" class="flow-run-step">
+        <button type="button" class="flow-run-step-head" @click="toggleFlowStep(index)">
+          <span class="flow-run-step-name">{{ step.label }} <small>#{{ step.id }}</small></span>
+          <span v-if="step.provider || step.model" class="pv-chip">{{ step.provider }}/{{ step.model }}</span>
+          <span v-if="flowStepUsage(step)" class="pv-chip">{{ flowStepUsage(step) }}</span>
+          <span v-if="step.elapsed_ms" class="pv-chip">{{ step.elapsed_ms }} ms</span>
+          <span v-if="step.error" class="flow-run-step-err">错误</span>
+        </button>
+        <pre v-if="step.error" class="flow-run-error">{{ step.error }}</pre>
+        <div v-if="flowStepOpen(index)" class="flow-run-step-body">
+          <div v-if="step.output"><b>输出</b><pre>{{ step.output }}</pre></div>
+          <div v-if="step.reasoning"><b>思考</b><pre>{{ step.reasoning }}</pre></div>
+          <div v-if="step.payload"><b>请求</b><pre>{{ flowStepPayload(step) }}</pre></div>
+        </div>
+      </div>
+    </div>
+    </VTabsWindowItem>
     <VTabsWindowItem value="payload">
     <div id="payload-pane">
       <div class="pv-toolbar">

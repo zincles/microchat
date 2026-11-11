@@ -84,8 +84,16 @@ func (s *Service) runFlow(session model.Session, replyID string, token uint64, r
 	defer cancel()
 
 	started := time.Now()
+	s.setFlowTrace(FlowRunTrace{SessionID: sessionID, Status: "running", StartedAt: started.UnixMilli()})
+	failTrace := func(err error) {
+		s.setFlowTrace(FlowRunTrace{
+			SessionID: sessionID, Status: "error", Error: err.Error(),
+			StartedAt: started.UnixMilli(), DurationMS: time.Since(started).Milliseconds(),
+		})
+	}
 	history, resolvedInput, err := s.flowConversation(session, runID, input)
 	if err != nil {
+		failTrace(err)
 		s.Turns.Finish(sessionID, token, err.Error())
 		guard.Fail(err.Error())
 		return
@@ -93,6 +101,7 @@ func (s *Service) runFlow(session model.Session, replyID string, token uint64, r
 	var graph flowGraph
 	if err := json.Unmarshal(agent.Flow, &graph); err != nil {
 		err = fmt.Errorf("流程 JSON 解析失败：%w", err)
+		failTrace(err)
 		s.Turns.Finish(sessionID, token, err.Error())
 		guard.Fail(err.Error())
 		return
@@ -107,15 +116,27 @@ func (s *Service) runFlow(session model.Session, replyID string, token uint64, r
 	})
 	if err != nil {
 		if !s.Turns.IsMine(sessionID, token) {
+			s.setFlowTrace(FlowRunTrace{
+				SessionID: sessionID, Status: "canceled", Steps: outcome.Result.Steps,
+				StartedAt: started.UnixMilli(), DurationMS: time.Since(started).Milliseconds(),
+			})
 			guard.Cancel()
 			return
 		}
+		s.setFlowTrace(FlowRunTrace{
+			SessionID: sessionID, Status: "error", Error: err.Error(), Steps: outcome.Result.Steps,
+			StartedAt: started.UnixMilli(), DurationMS: time.Since(started).Milliseconds(),
+		})
 		s.Turns.Finish(sessionID, token, err.Error())
 		guard.Fail(err.Error())
 		return
 	}
 	if !s.Turns.IsMine(sessionID, token) {
 		// 被按停 / 被顶掉：结果直接丢掉（用户按的是“取消 = 没做过”）。
+		s.setFlowTrace(FlowRunTrace{
+			SessionID: sessionID, Status: "canceled", Steps: outcome.Result.Steps,
+			StartedAt: started.UnixMilli(), DurationMS: time.Since(started).Milliseconds(),
+		})
 		guard.Cancel()
 		return
 	}
@@ -130,10 +151,15 @@ func (s *Service) runFlow(session model.Session, replyID string, token uint64, r
 		message.Reasoning = lastFlowReasoning(outcome.Result.Steps)
 	}
 	if _, err := s.Store.InsertMessage(message); err != nil {
+		failTrace(err)
 		s.Turns.Finish(sessionID, token, err.Error())
 		guard.Fail(err.Error())
 		return
 	}
+	s.setFlowTrace(FlowRunTrace{
+		SessionID: sessionID, Status: "done", Final: outcome.Final.Text, Steps: outcome.Result.Steps,
+		StartedAt: started.UnixMilli(), DurationMS: time.Since(started).Milliseconds(),
+	})
 	if s.Titles != nil {
 		s.Titles.Auto(session)
 	}
@@ -151,4 +177,33 @@ func lastFlowReasoning(steps []FlowTestStep) string {
 		}
 	}
 	return ""
+}
+
+// FlowRunTrace：最近一次 FlowAgent 图执行（进程内，覆盖式）。它是“整次图执行”的留档，
+// 而不是普通 Agent 那种一个 LastPayload —— 一张图可能有多个上游请求。
+type FlowRunTrace struct {
+	SessionID  string         `json:"session_id"`
+	Status     string         `json:"status"` // running / done / error / canceled
+	Final      string         `json:"final,omitempty"`
+	StartedAt  int64          `json:"started_at"`
+	DurationMS int64          `json:"duration_ms"`
+	Error      string         `json:"error,omitempty"`
+	Steps      []FlowTestStep `json:"steps"`
+}
+
+func (s *Service) setFlowTrace(trace FlowRunTrace) {
+	s.flowTraceMu.Lock()
+	defer s.flowTraceMu.Unlock()
+	if s.flowTraces == nil {
+		s.flowTraces = map[string]FlowRunTrace{}
+	}
+	s.flowTraces[trace.SessionID] = trace
+}
+
+// FlowTrace：读最近一次图执行；没有跑过 ⇒ false（别编一份空轨迹）。
+func (s *Service) FlowTrace(sessionID string) (FlowRunTrace, bool) {
+	s.flowTraceMu.Lock()
+	defer s.flowTraceMu.Unlock()
+	trace, ok := s.flowTraces[sessionID]
+	return trace, ok
 }

@@ -128,6 +128,7 @@ func TestFlowAgentAcceptRoundTrip(t *testing.T) {
 	if err := h.store.SetSessionAgent(h.session.ID, "flow"); err != nil {
 		t.Fatal(err)
 	}
+	h.session.AgentID = "flow"
 	accepted, err := h.service.Accept(h.session, "你好")
 	if err != nil {
 		t.Fatal(err)
@@ -141,5 +142,16 @@ func TestFlowAgentAcceptRoundTrip(t *testing.T) {
 	}
 	if messages[1].Content != dummyReply {
 		t.Fatalf("dummy 回复 = %q", messages[1].Content)
+	}
+	trace, ok := h.service.FlowTrace(h.session.ID)
+	if !ok || trace.Status != "done" || len(trace.Steps) != 3 {
+		t.Fatalf("FlowAgent 执行追踪 = %+v (ok=%v)", trace, ok)
+	}
+	ctx, err := h.service.ContextUsage(h.session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ctx.FlowNodes) != 1 || ctx.FlowNodes[0].BudgetTokens <= 0 {
+		t.Fatalf("FlowAgent 上下文节点 = %+v", ctx.FlowNodes)
 	}
 }

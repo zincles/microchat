@@ -154,6 +154,8 @@ func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *ch
 	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/turn/poll", s.turnPoll)
 	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/turn/events", s.turnEvents)
 	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/stop", s.stopTurn)
+	// FlowAgent 最近一次图执行（输出/每节点请求与用量）；普通 Agent 没有这一份。
+	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/flow/run", s.flowRun)
 	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/context", s.sessionContext)
 	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/compact", s.compactSession)
 	// 压缩预览：**只算不动**（调同一套 strategySpan；算完压哪段、压完树长什么样）

@@ -553,6 +553,13 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(flowNode, /flow-prompt-history/, "history 条目没有独立外观");
   assert.match(flowNode, /addHistory/, "LLM 节点不能添加历史条目");
   assert.match(flowNode, /flow-llm-model/, "LLM 节点没有 AI 模型选择框");
+  const payload = readFileSync(join(SRC, "components", "PayloadBar.vue"), "utf8");
+  const topbar = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
+  const client = readFileSync(join(SRC, "api", "client.ts"), "utf8");
+  assert.match(payload, /setFlowTrace/, "载荷面板没有 FlowAgent 轨迹入口");
+  assert.match(payload, /flow-run-pane/, "载荷面板没有 FlowAgent 执行视图");
+  assert.match(topbar, /flowNodes/, "上下文环面板没有 FlowAgent 节点列表");
+  assert.match(client, /flowRun:\s*\(id:/, "前端没有 flowRun 接口");
   assert.match(flowNode, /flow-trim-controls/, "裁剪节点没有配置控件");
   assert.match(flowNode, /trimRoles/, "裁剪节点没有角色过滤");
   assert.match(flow, /function removePort/, "删除端口没有同步删除相连边");

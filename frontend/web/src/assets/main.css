@@ -1937,3 +1937,19 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
   font-size: var(--md-type-label-small); }
 .flow-llm-output-row .vue-flow__handle-right { right: 0; }
 .flow-llm-output-row:hover { color: var(--md-primary); }
+
+/* FlowAgent 的执行轨迹：一张图多个上游请求，按节点展开。 */
+#flow-run-pane { display: flex; flex-direction: column; gap: 0.55em; }
+.flow-run-head { display: flex; align-items: center; gap: 0.45em; flex-wrap: wrap; }
+.flow-run-error { color: var(--md-error); white-space: pre-wrap; overflow-wrap: anywhere; }
+.flow-run-final { color: var(--md-on-surface); white-space: pre-wrap; overflow-wrap: anywhere; }
+.flow-run-step { border-top: 1px solid var(--md-outline-variant); padding-top: 0.4em; }
+.flow-run-step-head { display: flex; align-items: center; gap: 0.45em; width: 100%; padding: 0.25em 0;
+  border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.flow-run-step-head:hover { background: var(--hover); }
+.flow-run-step-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flow-run-step-err { color: var(--md-error); }
+.flow-run-step-body { display: flex; flex-direction: column; gap: 0.35em; padding: 0.25em 0 0.4em; }
+.flow-run-step-body pre { margin: 0; max-height: 22em; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+  padding: 0.4em 0.5em; border-radius: var(--r-xs); background: var(--md-surface-container-low);
+  color: var(--md-on-surface); font-size: var(--md-type-label-small); }

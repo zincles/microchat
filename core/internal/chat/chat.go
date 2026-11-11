@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"microchat/internal/config"
@@ -60,6 +61,9 @@ type Service struct {
 	// Compactor：自动压缩的那一口（见上面接口）—— main.go 里接上；没接（单测 / 直操模式）
 	// 就是"没人自动压"，手动 `/compact` 照旧。
 	Compactor Compactor
+	// FlowTrace 的最近一次图执行（进程内；重启即失，和 turn/task 一样）。
+	flowTraceMu sync.Mutex
+	flowTraces  map[string]FlowRunTrace
 }
 
 // CandidateOwner：候选列表的持有者（唯一实现是 `reroll.Service`）。

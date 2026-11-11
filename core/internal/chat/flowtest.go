@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -24,13 +25,19 @@ import (
 //   - 输入节点吃测试消息 / 本轮用户输入，join/output 只拼上游文本；
 //   - 中间结果不落库；聊天运行时只落 output 的最终文本。
 type FlowTestStep struct {
-	ID        string   `json:"id"`
-	Type      string   `json:"type"`
-	Label     string   `json:"label"`
-	Inputs    []string `json:"inputs,omitempty"`
-	Output    string   `json:"output,omitempty"`
-	Reasoning string   `json:"reasoning,omitempty"`
-	Error     string   `json:"error,omitempty"`
+	ID        string          `json:"id"`
+	Type      string          `json:"type"`
+	Label     string          `json:"label"`
+	Inputs    []string        `json:"inputs,omitempty"`
+	Output    string          `json:"output,omitempty"`
+	Reasoning string          `json:"reasoning,omitempty"`
+	Error     string          `json:"error,omitempty"`
+	Provider  string          `json:"provider,omitempty"`
+	Model     string          `json:"model,omitempty"`
+	Usage     json.RawMessage `json:"usage,omitempty"`
+	ElapsedMS int64           `json:"elapsed_ms,omitempty"`
+	// Payload：这一节点真会发出去的那一发（运行/测试都留档；密钥已打码）。
+	Payload *providers.LastPayload `json:"payload,omitempty"`
 }
 
 type FlowTestResult struct {
@@ -181,7 +188,13 @@ func (s *Service) executeFlowGraph(ctx context.Context, graph flowGraph, opts fl
 			if value, ok := node.Data["model"].(string); ok && strings.TrimSpace(value) != "" {
 				nodeModel = strings.TrimSpace(value)
 			}
-			result, callErr := s.flowLLMCall(ctx, node, graph.Edges, values, nodeProvider, nodeModel, opts.SessionID, opts.ProvidersConfig)
+			callStarted := time.Now()
+			result, payload, callErr := s.flowLLMCall(ctx, node, graph.Edges, values, nodeProvider, nodeModel, opts.SessionID, opts.ProvidersConfig)
+			step.Provider = nodeProvider
+			step.Model = nodeModel
+			step.Usage = result.Usage
+			step.ElapsedMS = time.Since(callStarted).Milliseconds()
+			step.Payload = payload
 			if callErr != nil {
 				step.Error = callErr.Error()
 				steps = append(steps, step)
@@ -367,18 +380,18 @@ func joinFlowInputs(inputs []string, separator string) string {
 // 每个 Prompt 条目自己的左侧输入孔（targetHandle = prompt-<id>）只喂那一条；
 // 手写内容和上游内容同时存在时，按“手写在前、上游在后”用空行隔开。
 func (s *Service) flowLLMCall(ctx context.Context, node flowNode, edges []flowEdge,
-	values map[string]flowValue, provider, modelID, sessionID string, providersConfig config.ProvidersConfig) (providers.Result, error) {
+	values map[string]flowValue, provider, modelID, sessionID string, providersConfig config.ProvidersConfig) (providers.Result, *providers.LastPayload, error) {
 	raw, ok := node.Data["prompts"]
 	if !ok {
-		return providers.Result{}, errors.New("LLM 节点没有 Prompt 条目")
+		return providers.Result{}, nil, errors.New("LLM 节点没有 Prompt 条目")
 	}
 	data, err := json.Marshal(raw)
 	if err != nil {
-		return providers.Result{}, err
+		return providers.Result{}, nil, err
 	}
 	var prompts []flowPrompt
 	if err := json.Unmarshal(data, &prompts); err != nil {
-		return providers.Result{}, fmt.Errorf("Prompt 条目解析失败：%w", err)
+		return providers.Result{}, nil, fmt.Errorf("Prompt 条目解析失败：%w", err)
 	}
 	messages := make([]providers.ChatMessage, 0, len(prompts))
 	for _, prompt := range prompts {
@@ -393,7 +406,7 @@ func (s *Service) flowLLMCall(ctx context.Context, node flowNode, edges []flowEd
 		}
 		role := strings.TrimSpace(prompt.Role)
 		if role != "system" && role != "user" && role != "assistant" {
-			return providers.Result{}, fmt.Errorf("Prompt %s 的 role 不合法：%s", prompt.ID, prompt.Role)
+			return providers.Result{}, nil, fmt.Errorf("Prompt %s 的 role 不合法：%s", prompt.ID, prompt.Role)
 		}
 		parts := []string{}
 		if strings.TrimSpace(prompt.Content) != "" {
@@ -414,7 +427,7 @@ func (s *Service) flowLLMCall(ctx context.Context, node flowNode, edges []flowEd
 		messages = append(messages, providers.ChatMessage{Role: role, Content: content})
 	}
 	if len(messages) == 0 {
-		return providers.Result{}, errors.New("LLM 节点没有任何非空 Prompt")
+		return providers.Result{}, nil, errors.New("LLM 节点没有任何非空 Prompt")
 	}
 	chosen := providers.SelectBackend(provider, modelID, providersConfig)
 	if chosen.Name != providers.BackendFallback && chosen.Name != providers.BackendDummy {
@@ -424,15 +437,20 @@ func (s *Service) flowLLMCall(ctx context.Context, node flowNode, edges []flowEd
 		sessionID = uuid.NewString()
 	}
 	wire := providers.FromConfig(chosen.Provider)
-	result, err := providers.NewClient(wire).Complete(ctx, wire, providers.Request{
-		Model: modelID, Messages: messages, SessionID: sessionID,
-	}, localReply(chosen))
+	request := providers.Request{Model: modelID, Messages: messages, SessionID: sessionID}
+	var payload *providers.LastPayload
+	if built, buildErr := providers.Build(wire, request); buildErr == nil {
+		if snapshot, snapErr := providers.Snapshot(built, time.Now()); snapErr == nil {
+			payload = &snapshot
+		}
+	}
+	result, err := providers.NewClient(wire).Complete(ctx, wire, request, localReply(chosen))
 	if err != nil {
-		return providers.Result{}, err
+		return providers.Result{}, payload, err
 	}
 	result.Text = strings.TrimSpace(result.Text)
 	result.Reasoning = strings.TrimSpace(result.Reasoning)
-	return result, nil
+	return result, payload, nil
 }
 
 func flowMergeInputs(node flowNode) []string {

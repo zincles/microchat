@@ -17,7 +17,9 @@ import (
 	"encoding/json"
 	"strings"
 
+	"microchat/internal/config"
 	"microchat/internal/model"
+	"microchat/internal/providers"
 	"microchat/internal/registry"
 	"microchat/internal/state"
 )
@@ -39,11 +41,35 @@ type ContextUsage struct {
 	Estimated        bool `json:"estimated"`
 	LastPromptTokens int  `json:"last_prompt_tokens"`
 	OverBudget       bool `json:"over_budget"`
+	// FlowNodes：FlowAgent 的节点级上下文。普通 Prompt Agent 不出现（omitempty）。
+	// 顶层 used/budget 取其中**占用比例最高**的节点 —— 环只回答“哪个节点最紧”。
+	FlowNodes []FlowContextNode `json:"flow_nodes,omitempty"`
+}
+
+type FlowContextNode struct {
+	ID           string  `json:"id"`
+	Label        string  `json:"label"`
+	Provider     string  `json:"provider"`
+	Model        string  `json:"model"`
+	UsedTokens   int     `json:"used_tokens"`
+	BudgetTokens int     `json:"budget_tokens"`
+	CtxLen       int     `json:"ctx_len"`
+	MaxOutput    int     `json:"max_output"`
+	PromptTokens int     `json:"prompt_tokens"`
+	Ratio        float64 `json:"ratio"`
+	OverBudget   bool    `json:"over_budget"`
 }
 
 // ContextUsage：算这次出站的占用。
 func (s *Service) ContextUsage(session model.Session) (ContextUsage, error) {
 	chatConfig, _, _ := s.files()
+	if _, ok := s.flowAgentOf(session); ok {
+		trace, hasTrace := s.FlowTrace(session.ID)
+		if !hasTrace {
+			return ContextUsage{Estimated: true}, nil
+		}
+		return s.flowContextUsage(session, trace, chatConfig), nil
+	}
 	messages, err := s.Store.ListMessages(session.ID)
 	if err != nil {
 		return ContextUsage{}, err
@@ -104,6 +130,76 @@ func (s *Service) ContextUsage(session model.Session) (ContextUsage, error) {
 		LastPromptTokens: lastPromptTokens(messages),
 		OverBudget:       used > budget,
 	}, nil
+}
+
+// flowContextUsage：FlowAgent 的上下文账。每个 LLM 节点按**自己的模型**算预算，
+// 顶层取占用比例最高的那个（环不能把不同模型的分母混成一个）。
+func (s *Service) flowContextUsage(session model.Session, trace FlowRunTrace, chatConfig config.ChatConfig) ContextUsage {
+	out := ContextUsage{Estimated: true}
+	for _, step := range trace.Steps {
+		if step.Type != "llm" {
+			continue
+		}
+		used := 0
+		if len(step.Usage) > 0 {
+			var usage providers.Usage
+			if json.Unmarshal(step.Usage, &usage) == nil {
+				used = int(usage.PromptTokens)
+			}
+		}
+		provider, modelID := step.Provider, step.Model
+		if strings.TrimSpace(provider) == "" {
+			provider = session.Provider
+		}
+		if strings.TrimSpace(modelID) == "" {
+			modelID = session.Model
+		}
+		ctxLen, maxOutput, budget := s.modelBudget(provider, modelID, chatConfig)
+		ratio := 0.0
+		if budget > 0 {
+			ratio = float64(used) / float64(budget)
+		}
+		node := FlowContextNode{
+			ID: step.ID, Label: step.Label, Provider: provider, Model: modelID,
+			UsedTokens: used, BudgetTokens: budget, CtxLen: ctxLen, MaxOutput: maxOutput,
+			PromptTokens: used, Ratio: ratio, OverBudget: used > budget,
+		}
+		out.FlowNodes = append(out.FlowNodes, node)
+		if len(out.FlowNodes) == 1 || node.Ratio > out.Ratio {
+			out.UsedTokens, out.BudgetTokens, out.CtxLen, out.MaxOutput = node.UsedTokens, node.BudgetTokens, node.CtxLen, node.MaxOutput
+			out.Ratio, out.OverBudget, out.LastPromptTokens = node.Ratio, node.OverBudget, node.PromptTokens
+			out.TriggerTokens = budget * 8 / 10
+			if chatConfig.CompactTriggerTokens != nil {
+				out.TriggerTokens = *chatConfig.CompactTriggerTokens
+			}
+			out.RemainingTokens = budget - used
+			out.Estimated = used == 0
+		}
+	}
+	return out
+}
+
+// modelBudget：某一对 (provider, model) 的上下文上限 / 输出预留 / 输入预算。
+// 与普通 Agent 的 ContextUsage 用同一套 registry 口径，只是允许每个 Flow 节点各算各的。
+func (s *Service) modelBudget(provider, modelID string, chatConfig config.ChatConfig) (int, int, int) {
+	row, err := s.Store.GetModel(provider, modelID)
+	if err != nil {
+		row = nil
+	}
+	var override, discovered, reportedMax *int64
+	if row != nil {
+		override, discovered, reportedMax = row.ContextOverride, row.ContextLength, row.MaxOutput
+	}
+	ctxLen := registry.ContextLen(override, discovered, chatConfig.ModelContextTokens)
+	maxOutput := defaultMaxOutput
+	if reportedMax != nil && *reportedMax >= 0 {
+		maxOutput = int(*reportedMax)
+	}
+	budget := ctxLen - maxOutput
+	if budget < 0 {
+		budget = 0
+	}
+	return ctxLen, maxOutput, budget
 }
 
 // lastPromptTokens：最近一条带用量的消息里那个 `prompt_tokens`。
