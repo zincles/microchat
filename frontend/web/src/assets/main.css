@@ -1767,6 +1767,8 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
   color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
 .flow-debug-inputs code { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   padding: 0 0.3em; border-radius: var(--r-xs); background: var(--md-surface-container-high); }
+.flow-debug-reasoning { margin-top: 0.3em; color: var(--md-on-surface-variant);
+  font-size: var(--md-type-label-small); overflow-wrap: anywhere; }
 .flow-debug-output { margin: 0.3em 0 0; padding: 0.4em 0.5em; border-radius: var(--r-xs);
   background: var(--md-surface-container-high); color: var(--md-on-surface);
   font-size: var(--md-type-label-small); line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -1845,3 +1847,10 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-prompt-del:hover { color: var(--md-error); }
 .flow-add-prompt { align-self: flex-start; margin-top: 0.1em; }
 .flow-prompt-row .vue-flow__handle-left { left: 0; }
+/* LLM 的两个出口：思考 / 正文。Handle 放在各自行尾，连线不会叠在同一个点上。 */
+.flow-llm-outputs { margin-top: 0.45em; border-top: 1px solid var(--md-outline-variant); padding-top: 0.25em; }
+.flow-llm-output-row { position: relative; display: flex; justify-content: flex-end; align-items: center;
+  min-height: 1.65em; padding-right: 0.85em; color: var(--md-on-surface-variant);
+  font-size: var(--md-type-label-small); }
+.flow-llm-output-row .vue-flow__handle-right { right: 0; }
+.flow-llm-output-row:hover { color: var(--md-primary); }

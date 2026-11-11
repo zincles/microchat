@@ -100,6 +100,7 @@ export interface FlowDebugStep {
   label: string;
   inputs: string[];
   output: string;
+  reasoning?: string;
 }
 
 // 调试预演用的节点顺序：Kahn 拓扑；有环时把剩下的按原顺序附在末尾，
@@ -129,22 +130,30 @@ export function flowNodeOrder(graph: FlowGraph): FlowNode[] {
 }
 
 // 结构预演：不调用模型，只把“上游输出”当占位文本往下传。
-// 目的是看连线有没有接对、每个节点会收到几路输入；不是假装真跑。
+// 重点是看连线：LLM 的 reasoning / text 两个出口按 sourceHandle 分开走。
 export function flowDebugSteps(graph: FlowGraph): FlowDebugStep[] {
   const nodes = flowNodeOrder(graph);
   const edges = graph.edges ?? [];
-  const values = new Map<string, string>();
+  const values = new Map<string, { text: string; reasoning: string }>();
   const labels: Record<string, string> = { input: "输入", llm: "调用 LLM", join: "拼接", output: "输出" };
+  const source = (edge: { source: string; sourceHandle?: string }): string => {
+    const handle = edge.sourceHandle || "out";
+    const value = values.get(`${edge.source}\0${handle}`) ?? values.get(`${edge.source}\0out`) ?? values.get(`${edge.source}\0text`);
+    if (!value) return "（上游未产出）";
+    return handle === "reasoning" ? (value.reasoning || "（无思考）") : value.text;
+  };
   const steps: FlowDebugStep[] = [];
   for (const node of nodes) {
-    const incoming = edges.filter((e) => e.target === node.id).map((e) => values.get(e.source) ?? "（上游未产出）");
+    const incoming = edges.filter((e) => e.target === node.id).map(source);
     let output = "";
+    let reasoning = "";
     let label = labels[node.type] ?? node.type;
     if (node.type === "input") {
       output = "[本轮用户输入]";
     } else if (node.type === "llm") {
       label = "调用 LLM";
-      output = "[LLM 输出]";
+      output = "[LLM 正文]";
+      reasoning = "[LLM 思考]";
     } else if (node.type === "join") {
       output = incoming.length ? incoming.join("\n---\n") : "[没有输入]";
     } else if (node.type === "output") {
@@ -152,8 +161,12 @@ export function flowDebugSteps(graph: FlowGraph): FlowDebugStep[] {
     } else {
       output = "[未知节点]";
     }
-    values.set(node.id, output);
-    steps.push({ id: node.id, type: node.type, label, inputs: incoming, output });
+    values.set(`${node.id}\0out`, { text: output, reasoning });
+    if (node.type === "llm") {
+      values.set(`${node.id}\0text`, { text: output, reasoning: "" });
+      values.set(`${node.id}\0reasoning`, { text: "", reasoning });
+    }
+    steps.push({ id: node.id, type: node.type, label, inputs: incoming, output, reasoning: reasoning || undefined });
   }
   return steps;
 }

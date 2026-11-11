@@ -94,9 +94,21 @@ function removePrompt(id: string): void {
       <b>测试 I/O</b>
       <span class="flow-node-test-label">输入</span>
       <pre>{{ (data.test.inputs ?? []).join("\n---\n") || "（无输入）" }}</pre>
-      <span class="flow-node-test-label">输出</span>
+      <span class="flow-node-test-label">思考</span>
+      <pre>{{ data.test.reasoning || "（无思考）" }}</pre>
+      <span class="flow-node-test-label">正文</span>
       <pre>{{ data.test.output || "（无输出）" }}</pre>
     </div>
-    <Handle v-if="type !== 'output'" id="out" type="source" :position="Position.Right" />
+    <div v-if="type === 'llm'" class="flow-llm-outputs">
+      <div class="flow-llm-output-row">
+        <span>思考</span>
+        <Handle id="reasoning" type="source" :position="Position.Right" />
+      </div>
+      <div class="flow-llm-output-row">
+        <span>正文</span>
+        <Handle id="text" type="source" :position="Position.Right" />
+      </div>
+    </div>
+    <Handle v-else-if="type !== 'output'" id="out" type="source" :position="Position.Right" />
   </div>
 </template>

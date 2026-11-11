@@ -18,15 +18,17 @@ import (
 // 这是运行时的最小验证器，不是完整 FlowAgent 运行时：
 //   - DAG、单 input/output；LLM 节点内部是手写的 Prompt 列表；
 //   - 每个 LLM 节点按 role/content + 对应输入孔组装 messages 后走 Complete；
+//   - LLM 节点有两个出口：reasoning（思考）与 text（正文）；
 //   - 输入节点吃测试消息，join/output 只拼上游文本；
 //   - 中间结果只回给编辑器，不碰 messages / summaries / 世界状态。
 type FlowTestStep struct {
-	ID     string   `json:"id"`
-	Type   string   `json:"type"`
-	Label  string   `json:"label"`
-	Inputs []string `json:"inputs,omitempty"`
-	Output string   `json:"output,omitempty"`
-	Error  string   `json:"error,omitempty"`
+	ID        string   `json:"id"`
+	Type      string   `json:"type"`
+	Label     string   `json:"label"`
+	Inputs    []string `json:"inputs,omitempty"`
+	Output    string   `json:"output,omitempty"`
+	Reasoning string   `json:"reasoning,omitempty"`
+	Error     string   `json:"error,omitempty"`
 }
 
 type FlowTestResult struct {
@@ -47,6 +49,7 @@ type flowNode struct {
 type flowEdge struct {
 	ID           string `json:"id"`
 	Source       string `json:"source"`
+	SourceHandle string `json:"sourceHandle,omitempty"`
 	Target       string `json:"target"`
 	TargetHandle string `json:"targetHandle,omitempty"`
 }
@@ -55,6 +58,11 @@ type flowPrompt struct {
 	ID      string `json:"id"`
 	Role    string `json:"role"`
 	Content string `json:"content"`
+}
+
+type flowValue struct {
+	Text      string
+	Reasoning string
 }
 
 // TestFlow：执行一次编辑器测试。provider/model 空 ⇒ 读 config.json 的 defaults。
@@ -84,13 +92,13 @@ func (s *Service) TestFlow(ctx context.Context, flowAgent config.Agent, message,
 	if err != nil {
 		return FlowTestResult{}, err
 	}
-	values := map[string]string{}
+	values := map[string]flowValue{}
 	steps := make([]FlowTestStep, 0, len(order))
 	for _, node := range order {
 		inputs := []string{}
 		for _, e := range graph.Edges {
 			if e.Target == node.ID {
-				inputs = append(inputs, values[e.Source])
+				inputs = append(inputs, sourceValue(values, e))
 			}
 		}
 		step := FlowTestStep{ID: node.ID, Type: node.Type, Inputs: inputs}
@@ -106,29 +114,55 @@ func (s *Service) TestFlow(ctx context.Context, flowAgent config.Agent, message,
 			step.Output = joinFlowInputs(inputs)
 		case "llm":
 			step.Label = "调用 LLM"
-			text, callErr := s.testLLMCall(ctx, node, graph.Edges, values, provider, modelID, providersConfig)
+			text, reasoning, callErr := s.testLLMCall(ctx, node, graph.Edges, values, provider, modelID, providersConfig)
 			if callErr != nil {
 				step.Error = callErr.Error()
 				steps = append(steps, step)
 				return FlowTestResult{Steps: steps}, callErr
 			}
 			step.Output = text
+			step.Reasoning = reasoning
 		default:
 			err = fmt.Errorf("不认识的节点类型：%s", node.Type)
 			step.Error = err.Error()
 			steps = append(steps, step)
 			return FlowTestResult{Steps: steps}, err
 		}
-		values[node.ID] = step.Output
+		values[flowKey(node.ID, "out")] = flowValue{Text: step.Output, Reasoning: step.Reasoning}
+		if node.Type == "llm" {
+			values[flowKey(node.ID, "text")] = flowValue{Text: step.Output}
+			values[flowKey(node.ID, "reasoning")] = flowValue{Reasoning: step.Reasoning}
+		}
 		steps = append(steps, step)
 	}
 	final := ""
 	for _, node := range graph.Nodes {
 		if node.Type == "output" {
-			final = values[node.ID]
+			final = values[flowKey(node.ID, "out")].Text
 		}
 	}
 	return FlowTestResult{Output: final, Steps: steps}, nil
+}
+
+func flowKey(id, handle string) string {
+	if strings.TrimSpace(handle) == "" {
+		handle = "text"
+	}
+	return id + "\x00" + handle
+}
+
+// sourceValue：按 sourceHandle 取上游出口；旧图没有 sourceHandle 时回落到 out/text。
+func sourceValue(values map[string]flowValue, edge flowEdge) string {
+	if value, ok := values[flowKey(edge.Source, edge.SourceHandle)]; ok {
+		if edge.SourceHandle == "reasoning" {
+			return value.Reasoning
+		}
+		return value.Text
+	}
+	if value, ok := values[flowKey(edge.Source, "out")]; ok {
+		return value.Text
+	}
+	return ""
 }
 
 func joinFlowInputs(inputs []string) string {
@@ -145,24 +179,24 @@ func joinFlowInputs(inputs []string) string {
 // 每个 Prompt 条目自己的左侧输入孔（targetHandle = prompt-<id>）只喂那一条；
 // 手写内容和上游内容同时存在时，按“手写在前、上游在后”用空行隔开。
 func (s *Service) testLLMCall(ctx context.Context, node flowNode, edges []flowEdge,
-	values map[string]string, provider, modelID string, providersConfig config.ProvidersConfig) (string, error) {
+	values map[string]flowValue, provider, modelID string, providersConfig config.ProvidersConfig) (string, string, error) {
 	raw, ok := node.Data["prompts"]
 	if !ok {
-		return "", errors.New("LLM 节点没有 Prompt 条目")
+		return "", "", errors.New("LLM 节点没有 Prompt 条目")
 	}
 	data, err := json.Marshal(raw)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	var prompts []flowPrompt
 	if err := json.Unmarshal(data, &prompts); err != nil {
-		return "", fmt.Errorf("Prompt 条目解析失败：%w", err)
+		return "", "", fmt.Errorf("Prompt 条目解析失败：%w", err)
 	}
 	messages := make([]providers.ChatMessage, 0, len(prompts))
 	for _, prompt := range prompts {
 		role := strings.TrimSpace(prompt.Role)
 		if role != "system" && role != "user" && role != "assistant" {
-			return "", fmt.Errorf("Prompt %s 的 role 不合法：%s", prompt.ID, prompt.Role)
+			return "", "", fmt.Errorf("Prompt %s 的 role 不合法：%s", prompt.ID, prompt.Role)
 		}
 		parts := []string{}
 		if strings.TrimSpace(prompt.Content) != "" {
@@ -171,7 +205,7 @@ func (s *Service) testLLMCall(ctx context.Context, node flowNode, edges []flowEd
 		handle := "prompt-" + prompt.ID
 		for _, edge := range edges {
 			if edge.Target == node.ID && edge.TargetHandle == handle {
-				if text := strings.TrimSpace(values[edge.Source]); text != "" {
+				if text := strings.TrimSpace(sourceValue(values, edge)); text != "" {
 					parts = append(parts, text)
 				}
 			}
@@ -183,7 +217,7 @@ func (s *Service) testLLMCall(ctx context.Context, node flowNode, edges []flowEd
 		messages = append(messages, providers.ChatMessage{Role: role, Content: content})
 	}
 	if len(messages) == 0 {
-		return "", errors.New("LLM 节点没有任何非空 Prompt")
+		return "", "", errors.New("LLM 节点没有任何非空 Prompt")
 	}
 	chosen := providers.SelectBackend(provider, modelID, providersConfig)
 	wire := providers.FromConfig(chosen.Provider)
@@ -191,9 +225,9 @@ func (s *Service) testLLMCall(ctx context.Context, node flowNode, edges []flowEd
 		Model: modelID, Messages: messages, SessionID: uuid.NewString(),
 	}, localReply(chosen))
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	return strings.TrimSpace(result.Text), nil
+	return strings.TrimSpace(result.Text), strings.TrimSpace(result.Reasoning), nil
 }
 
 func validateTestGraph(graph flowGraph) error {

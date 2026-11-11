@@ -560,6 +560,7 @@ export interface FlowTestStep {
   label: string;
   inputs?: string[];
   output?: string;
+  reasoning?: string;
   error?: string;
 }
 

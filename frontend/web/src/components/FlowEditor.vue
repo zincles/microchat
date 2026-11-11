@@ -6,7 +6,7 @@
 // 两条属于 FlowAgent 的硬约束在数据层（utils/flow.ts）与这里一起做：
 //   · 只能调用传统 Agent，不能嵌套 FlowAgent；
 //   · 第一版只允许 DAG，且恰好一个输入、一个输出。
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { VueFlow, useVueFlow, type Connection } from "@vue-flow/core";
 import { Background } from "@vue-flow/background";
 import { Controls } from "@vue-flow/controls";
@@ -59,6 +59,7 @@ const testStatus = ref("");
 const testing = ref(false);
 // 打开/关闭调试会让画布变窄/变宽；和全屏一样要重新 fit，否则节点会跑到画布外。
 watch(debugOpen, fitAfterResize);
+onMounted(fitAfterResize);
 const inputExists = computed(() => nodes.value.some((n) => n.type === "input"));
 const outputExists = computed(() => nodes.value.some((n) => n.type === "output"));
 let seq = 0;
@@ -102,6 +103,7 @@ function addNode(type: "input" | "llm" | "join" | "output"): void {
       ? { prompts: [{ id: `p-${Date.now().toString(36)}`, role: "system", content: "" }] }
       : {},
   }];
+  fitAfterResize();
 }
 
 function allowed(sourceType?: string, targetType?: string): boolean {
@@ -212,6 +214,7 @@ watch([nodes, edges], () => emit("update:graph", toGraph()), { deep: true });
           :max-zoom="1.8"
           fit-view-on-init
           @connect="onConnect"
+          @node-resize="fitAfterResize"
         >
           <Background :gap="18" :size="1" />
           <Controls position="bottom-right" />
@@ -237,6 +240,7 @@ watch([nodes, edges], () => emit("update:graph", toGraph()), { deep: true });
             <span>输入</span>
             <code v-for="(input, j) in step.inputs" :key="j">{{ input }}</code>
           </div>
+          <div v-if="step.reasoning" class="flow-debug-reasoning">思考：{{ step.reasoning }}</div>
           <pre class="flow-debug-output">{{ step.output }}</pre>
         </div>
       </aside>
