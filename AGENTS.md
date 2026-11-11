@@ -422,6 +422,8 @@ delete(AA)           # 删除
   新的节点面板另行设计；`/context` 的节点级数据仍保留给新面板用。
   FlowAgent 的顶栏工作区 tab 是 **聊天 / 工作流**；工作流页直接复用 `FlowEditor` 编辑当前 Agent 的图，
   改动约 0.7 秒防抖后 PATCH 回 `agents.json`（自动保存，不需要再进设置页）。
+  工作流页每 700ms 读一次 `/flow/run`，右侧节点清单把 `active_node_id` 高亮成主色脉冲；当前执行器仍是
+  **按拓扑序串行**跑节点（并行调度是下一步，不是现状）。
   底部输入栏对 FlowAgent 隐藏「推理等级」与「工具」两个小面板（运行时不用这两个会话选项）。
   **FlowAgent 暂时不启用起标题 / 自动压缩等高级能力**（runFlow 不调 Titles/Compactor；
   Agent 编辑器的能力页签也不显示）。
@@ -800,7 +802,7 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 | GET | `/sessions/{session_id}/context` | — | `ContextUsage` | 只有数字：`used_tokens`（估算）/ `budget_tokens` / `trigger_tokens` / `remaining_tokens` / `ctx_len` / `max_output` / `ratio` / `estimated` / `last_prompt_tokens` / `over_budget` |
 | GET | `/sessions/{session_id}/prompt` | — | `{"text","type"}` | **生效的系统提示词**（三级解析的**结果**，与出站拼装读同一处）：`type` = `conversation`（会话自己写了 `sessions.system_prompt`）/ `agent`（`agents.json` 里那个 agent 的）/ `builtin`（两级都没有 ⇒ 代码里的内置默认）。**永不给空**：解析全落空（典型：会话的 `agent_id` 软引用**悬空**）也退内置那句、`type` 报 `builtin`。**回拼装后的结果**（base + 追加段，见 agents.json 的 `segments`）|
 | GET | `/sessions/{session_id}/macros` | — | `{macros:[{name,aliases,description,value}], usage:[{name,count,known}], total}` | **已注册宏面板**（2026-11-10）：`macros` = 可用宏 + 当前值；`usage` = **生效系统提示词 + 全部消息正文**里每个 `{{…}}` 的出现次数（未知宏保留在统计里，`known:false`）。只读，不改任何东西 |
-| GET | `/sessions/{session_id}/flow/run` | — | `FlowRunTrace` | **FlowAgent 最近一次图执行**（进程内、覆盖式）：`status`（running/done/error/canceled）、`final`、`duration_ms`、`steps`（每节点 input/output/error；LLM 节点另带 provider/model/usage/elapsed_ms/payload）。普通 Agent / 没跑过 ⇒ 404 |
+| GET | `/sessions/{session_id}/flow/run` | — | `FlowRunTrace` | **FlowAgent 最近一次图执行**（进程内、覆盖式）：`status`（running/done/error/canceled）、`active_node_id`（正在执行的节点）、`final`、`duration_ms`、`steps`（每节点 input/output/error；LLM 节点另带 provider/model/usage/elapsed_ms/payload）。普通 Agent / 没跑过 ⇒ 404 |
 | GET | `/sessions/{session_id}/status` | — | `TurnStatus` | `phase`（`idle`/`pending`/`streaming`/`error`）+ **`step`**（一轮 run 内第几个 assistant 模型轮，客户端据此切 live 气泡）+ `message_id` + `elapsed_ms` + `chars` + `thinking_chars` + `error` + **`tool`**（当前服务端工具 `{kind,state}`，正文一到就清）+ **`sources`**（搜索工具的 `action.sources`，按 URL 去重、正文到了也留着）。另搭两档**与轮次无关**的活状态：`compact`（`state`=`running`/`done`/`error` + `blocks`/`compacted`/`summary_id`/`from_idx`/`to_idx`/`merged` + `error`）与 `reroll`（`state` + `elapsed_ms` + `error`）|
 | GET | `/sessions/{session_id}/turn/text?from=N&think_from=M` | — | `StreamSlice` | 流式增量的**游标读**（正文与思考各一条游标，`from` = 第几个字符）：只服务动画 |
 | GET | `/sessions/{session_id}/turn/poll?from=N&think_from=M` | — | `{status, slice}` | **2026-11-03**：`status` 与 `turn/text` 合并成一发（远程/CF 少一个完整 RTT）。web 的 `pollTurn` 用它；`/status` 与 `/turn/text` 仍保留（重摇/前台对齐等旧调用） |

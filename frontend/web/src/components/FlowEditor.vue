@@ -23,9 +23,11 @@ import type { FlowEdge, FlowGraph, FlowNode as FlowNodeData, ModelListItem } fro
 const props = withDefaults(defineProps<{
   graph?: FlowGraph | null;
   agentId?: string;
+  activeNodeId?: string;
 }>(), {
   graph: null,
   agentId: "",
+  activeNodeId: "",
 });
 const emit = defineEmits<{ "update:graph": [graph: FlowGraph] }>();
 const api = sharedApi();
@@ -328,7 +330,7 @@ watch([nodes, edges], () => emit("update:graph", toGraph()), { deep: true });
           </div>
           <p class="hint">像图层一样查看节点和连接；断开或删除都只改当前图。</p>
           <div v-for="row in nodeRows" :key="row.id" class="flow-node-row"
-            :class="{ selected: row.id === selectedNodeId }" @click="selectNode(row.id)">
+            :class="{ selected: row.id === selectedNodeId, active: row.id === activeNodeId }" @click="selectNode(row.id)">
             <div class="flow-node-row-head">
               <span class="flow-node-row-id"><span class="flow-node-badge" aria-hidden="true">{{ row.badge }}</span><b>{{ row.label }}</b><code>{{ row.id }}</code></span>
               <VBtn icon variant="text" size="x-small" type="button" title="删除节点" aria-label="删除节点"

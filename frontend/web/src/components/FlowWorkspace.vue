@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // FlowAgent 的「工作流」页：直接编辑当前 Agent 的 FlowGraph，并自动写回 agents.json。
 // 它是 AgentEditor 的流程页在会话工作区里的复用（同一个 FlowEditor，不另造一套）。
-import { onBeforeUnmount, ref, watch } from "vue";
+import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import FlowEditor from "./FlowEditor.vue";
 import { sharedApi } from "../utils/prefs.ts";
 import { normalizeFlowGraph } from "../utils/flow.ts";
@@ -9,12 +9,15 @@ import type { Agent, FlowGraph } from "../api/types.ts";
 
 const props = withDefaults(defineProps<{
   agent?: Agent | null;
-}>(), { agent: null });
+  sessionId?: string;
+}>(), { agent: null, sessionId: "" });
 const emit = defineEmits<{ saved: [] }>();
 const api = sharedApi();
 
 const graph = ref<FlowGraph>(normalizeFlowGraph(props.agent?.flow ?? null));
 const status = ref("");
+const activeNodeId = ref("");
+let pollTimer: number | null = null;
 let timer: number | null = null;
 let saveSeq = 0;
 let dirty = false;
@@ -32,6 +35,16 @@ function onGraph(next: FlowGraph): void {
   status.value = "未保存";
   schedule();
 }
+async function pollActive(): Promise<void> {
+  if (!props.sessionId) { activeNodeId.value = ""; return; }
+  try {
+    const trace = await api.flowRun(props.sessionId);
+    activeNodeId.value = trace?.active_node_id ?? "";
+  } catch {
+    activeNodeId.value = "";
+  }
+}
+
 async function save(): Promise<void> {
   cancelTimer();
   const agent = props.agent;
@@ -57,8 +70,13 @@ watch(() => props.agent?.id, () => {
   graph.value = normalizeFlowGraph(props.agent?.flow ?? null);
   status.value = "";
 });
+onMounted(() => {
+  pollActive();
+  pollTimer = window.setInterval(() => { void pollActive(); }, 700);
+});
 onBeforeUnmount(() => {
   cancelTimer();
+  if (pollTimer !== null) clearInterval(pollTimer);
   if (dirty) void save();
 });
 </script>
@@ -69,7 +87,8 @@ onBeforeUnmount(() => {
       <p class="hint">当前 Agent 的工作流；修改会防抖保存回 Agent 文件。</p>
       <span class="flow-workspace-status">{{ status }}</span>
     </div>
-    <FlowEditor v-if="props.agent?.id" v-model:graph="graph" :agent-id="props.agent.id" @update:graph="onGraph" />
+    <FlowEditor v-if="props.agent?.id" v-model:graph="graph" :agent-id="props.agent.id"
+      :active-node-id="activeNodeId" @update:graph="onGraph" />
     <p v-else class="ws-draft-note">这是草稿，还没有保存的 FlowAgent 可以编辑。</p>
   </section>
 </template>

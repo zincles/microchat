@@ -2109,3 +2109,21 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 #flow-workspace .flow-editor { flex: 1 1 auto; min-height: 0; height: 100%; }
 #flow-workspace .flow-editor .flow-main { flex: 1 1 auto; min-height: 0; }
 #flow-workspace .flow-editor .flow-canvas { flex: 1 1 auto; height: auto; min-height: 0; }
+
+/* 右侧节点清单里的“正在执行”节点：LLM 调用慢时能一眼看出卡在哪个节点。 */
+.flow-node-row.active {
+  border-color: var(--md-primary);
+  background: color-mix(in srgb, var(--md-primary) 12%, var(--md-surface-container));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--md-primary) 32%, transparent);
+}
+.flow-node-row.active .flow-node-badge {
+  background: var(--md-primary); color: var(--md-on-primary);
+  animation: flow-node-pulse 1.1s ease-in-out infinite;
+}
+@keyframes flow-node-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 color-mix(in srgb, var(--md-primary) 45%, transparent); }
+  50% { opacity: 0.72; box-shadow: 0 0 0 3px color-mix(in srgb, var(--md-primary) 0%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .flow-node-row.active .flow-node-badge { animation: none; }
+}

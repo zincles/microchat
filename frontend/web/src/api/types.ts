@@ -593,6 +593,7 @@ export interface FlowTestResult {
 export interface FlowRunTrace {
   session_id: string;
   status: "running" | "done" | "error" | "canceled";
+  active_node_id?: string;
   final?: string;
   started_at: number;
   duration_ms: number;

@@ -546,6 +546,7 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(flow, /class="flow-canvas-add"/, "画布左上没有添加节点按钮");
   assert.match(flow, /class="flow-canvas-actions"/, "画布右上没有面板开关");
   assert.match(flow, /class="flow-node-sidebar"/, "没有右侧节点侧栏");
+  assert.match(flow, /:class="\{ selected: row\.id === selectedNodeId, active: row\.id === activeNodeId \}"/, "节点侧栏没有活跃节点态");
   assert.match(flow, /class="flow-bottom"/, "没有底部调试栏");
   assert.match(flow, /@click="toggleBottom\('test'\)"/, "底栏按钮没有接测试面板");
   assert.match(css, /\.flow-node-sidebar, \.flow-bottom \{[^}]*position:\s*absolute/, "侧栏/底栏没有浮在画布上");
@@ -586,6 +587,9 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   const workspace = readFileSync(join(SRC, "components", "ContextWorkspace.vue"), "utf8");
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
   assert.match(workspace, /<FlowWorkspace/, "FlowAgent 工作流页没有接 Flow 编辑器");
+  const flowWorkspace = readFileSync(join(SRC, "components", "FlowWorkspace.vue"), "utf8");
+  assert.match(flowWorkspace, /flowRun\(props\.sessionId\)/, "工作流页没有轮询 Flow 执行轨迹");
+  assert.match(flowWorkspace, /:active-node-id="activeNodeId"/, "工作流没有把活跃节点传给编辑器");
   assert.match(workspace, /agent\?:\s*Agent \| null/, "工作流页没有接当前 Agent");
   assert.match(app, /:agent="currentAgent"/, "App 没把当前 Agent 传给工作流页");
   assert.match(app, /@flow-saved="refreshAgents"/, "工作流保存后没有刷新 Agent 列表");
@@ -612,6 +616,7 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(css, /\.flow-canvas-actions \{[^}]*display:\s*flex/, "画布工具开关没有布局");
   assert.match(css, /\.flow-node-sidebar, \.flow-bottom \{[^}]*overflow-y:\s*auto/, "侧栏/底栏不能上下滚动");
   assert.match(css, /--flow-history:\s*#f2994a/, "历史类型不是橙色");
+  assert.match(css, /\.flow-node-row\.active/, "活跃节点没有高亮样式");
   assert.match(css, /\.flow-node\.flow-node-history \.vue-flow__handle[^{]*\{[^}]*background:\s*var\(--flow-history\)/, "历史节点端口没被染成历史色");
   assert.match(css, /\.flow-node \.flow-prompt-history \.vue-flow__handle[^{]*\{[^}]*background:\s*var\(--flow-history\)/, "历史条目端口没被染成历史色");
   assert.match(css, /\.flow-panel-test \{[^}]*display:\s*flex/, "测试面板没有独立内容区");

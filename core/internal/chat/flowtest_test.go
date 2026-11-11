@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"microchat/internal/config"
@@ -320,5 +321,24 @@ func TestRewriteFlowInput(t *testing.T) {
 	}
 	if got := rewriteFlowInput(nil, "固定输入"); got != "固定输入" {
 		t.Fatalf("无输入也可覆写 = %q", got)
+	}
+}
+
+func TestExecuteFlowReportsActiveNode(t *testing.T) {
+	h := newHarness(t, dummyProviders(), "dummy", "dummy")
+	graph := flowGraph{Nodes: []flowNode{
+		{ID: "in", Type: "input"},
+		{ID: "llm", Type: "llm", Data: map[string]any{"prompts": []any{map[string]any{"id": "p1", "role": "system", "content": "写"}}}},
+		{ID: "out", Type: "output"},
+	}, Edges: []flowEdge{{ID: "e", Source: "llm", SourceHandle: "text", Target: "out", TargetHandle: "text"}}}
+	var events []string
+	if _, err := h.service.executeFlowGraph(context.Background(), graph, flowRunOptions{
+		DefaultProvider: "dummy", DefaultModel: "dummy", ProvidersConfig: dummyProviders(),
+		OnNode: func(id, phase string) { events = append(events, id+":"+phase) },
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(events) == 0 || !strings.Contains(strings.Join(events, ","), "llm:start") {
+		t.Fatalf("节点执行事件 = %#v", events)
 	}
 }

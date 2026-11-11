@@ -88,6 +88,8 @@ type flowRunOptions struct {
 	DefaultProvider string
 	DefaultModel    string
 	ProvidersConfig config.ProvidersConfig
+	// OnNode：执行器节点开始/结束的通知（运行时用它把 active node 写进 trace；测试可为 nil）。
+	OnNode func(id, phase string)
 }
 
 type flowRunOutcome struct {
@@ -139,6 +141,9 @@ func (s *Service) executeFlowGraph(ctx context.Context, graph flowGraph, opts fl
 	steps := make([]FlowTestStep, 0, len(order))
 	var lastResult providers.Result
 	for _, node := range order {
+		if opts.OnNode != nil {
+			opts.OnNode(node.ID, "start")
+		}
 		var nodeMessages []providers.ChatMessage
 		inputs := []string{}
 		for _, e := range graph.Edges {
@@ -246,6 +251,9 @@ func (s *Service) executeFlowGraph(ctx context.Context, graph flowGraph, opts fl
 			values[flowKey(node.ID, "reasoning")] = flowValue{Reasoning: step.Reasoning}
 		}
 		steps = append(steps, step)
+		if opts.OnNode != nil {
+			opts.OnNode(node.ID, "done")
+		}
 	}
 	final := flowValue{}
 	for _, node := range graph.Nodes {
