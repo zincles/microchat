@@ -158,7 +158,7 @@ function addJoinOutput(): void {
     @mouseenter="hovered = true"
     @mouseleave="hovered = false"
   >
-    <Handle v-if="type === 'output' || type === 'trim'" id="in" type="target" :position="Position.Left" />
+    <Handle v-if="type === 'trim'" id="in" type="target" :position="Position.Left" />
     <div class="flow-node-head">
       <span class="flow-node-title">{{ label }}</span>
       <button class="flow-node-delete nodrag nopan" type="button" title="删除节点" aria-label="删除节点"
@@ -194,6 +194,16 @@ function addJoinOutput(): void {
       <div class="flow-prompt-add-row">
         <VBtn variant="text" size="small" type="button" class="flow-add-prompt nodrag nopan" @click="addPrompt">＋ 添加 Prompt</VBtn>
         <VBtn variant="text" size="small" type="button" class="flow-add-prompt nodrag nopan" @click="addHistory">＋ 添加历史</VBtn>
+      </div>
+    </div>
+    <div v-if="type === 'output'" class="flow-output-inputs">
+      <div class="flow-output-row">
+        <Handle id="text" type="target" :position="Position.Left" />
+        <span>正文</span>
+      </div>
+      <div class="flow-output-row">
+        <Handle id="reasoning" type="target" :position="Position.Left" />
+        <span>思考</span>
       </div>
     </div>
     <div v-if="type === 'history'" class="flow-node-body">来自真实会话的历史 messages</div>

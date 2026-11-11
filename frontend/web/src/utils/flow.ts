@@ -56,7 +56,7 @@ export function flowTargetType(node: FlowNode | undefined, handle?: string): Flo
     case "join":
       return h.startsWith("in-") ? "string" : null;
     case "output":
-      return h === "in" ? "string" : null;
+      return h === "in" || h === "text" || h === "reasoning" ? "string" : null;
     default:
       return null;
   }
@@ -112,7 +112,12 @@ export function normalizeFlowGraph(graph?: FlowGraph | null): FlowGraph {
       target: e.target,
       ...(e.sourceHandle ? { sourceHandle: e.sourceHandle } : {}),
       ...(e.targetHandle ? { targetHandle: e.targetHandle } : {}),
-    }));
+    }))
+    .map((e) => {
+      // 老图的 output 只有一个 `in`；新图把正文/思考分成 text / reasoning，载入时就地迁移。
+      const target = nodes.find((n) => n.id === e.target);
+      return target?.type === "output" && e.targetHandle === "in" ? { ...e, targetHandle: "text" } : e;
+    });
   return { version: FLOW_VERSION, nodes, edges };
 }
 
@@ -297,7 +302,10 @@ export function flowDebugSteps(graph: FlowGraph): FlowDebugStep[] {
       const separator = typeof node.data?.separator === "string" ? node.data.separator : DEFAULT_JOIN_SEPARATOR;
       output = incoming.length ? incoming.join(separator) : "[没有输入]";
     } else if (node.type === "output") {
-      output = incoming.length ? incoming.join("\n---\n") : "[没有输入]";
+      const textInputs = edges.filter((e) => e.target === node.id && (e.targetHandle || "text") === "text").map(source);
+      const reasoningInputs = edges.filter((e) => e.target === node.id && e.targetHandle === "reasoning").map(source);
+      output = textInputs.length ? textInputs.join("\n---\n") : "[没有正文输入]";
+      reasoning = reasoningInputs.length ? reasoningInputs.join("\n---\n") : "";
     } else {
       output = "[未知节点]";
     }

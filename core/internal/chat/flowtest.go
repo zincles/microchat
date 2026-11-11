@@ -41,8 +41,9 @@ type FlowTestStep struct {
 }
 
 type FlowTestResult struct {
-	Output string         `json:"output"`
-	Steps  []FlowTestStep `json:"steps"`
+	Output    string         `json:"output"`
+	Reasoning string         `json:"reasoning,omitempty"`
+	Steps     []FlowTestStep `json:"steps"`
 }
 
 type flowGraph struct {
@@ -178,7 +179,21 @@ func (s *Service) executeFlowGraph(ctx context.Context, graph flowGraph, opts fl
 			step.Output = joinFlowInputs(inputs, flowJoinSeparator(node))
 		case "output":
 			step.Label = "输出"
-			step.Output = joinFlowInputs(inputs, defaultJoinSeparator)
+			for _, edge := range graph.Edges {
+				if edge.Target != node.ID {
+					continue
+				}
+				handle := edge.TargetHandle
+				if handle == "" || handle == "in" {
+					handle = "text"
+				}
+				switch handle {
+				case "text":
+					step.Output = sourceValue(values, edge)
+				case "reasoning":
+					step.Reasoning = sourceValue(values, edge)
+				}
+			}
 		case "llm":
 			step.Label = "调用 LLM"
 			nodeProvider, nodeModel := opts.DefaultProvider, opts.DefaultModel
@@ -231,7 +246,7 @@ func (s *Service) executeFlowGraph(ctx context.Context, graph flowGraph, opts fl
 		}
 	}
 	return flowRunOutcome{
-		Result: FlowTestResult{Output: final.Text, Steps: steps},
+		Result: FlowTestResult{Output: final.Text, Reasoning: final.Reasoning, Steps: steps},
 		Final:  final,
 		Usage:  lastResult.Usage,
 	}, nil

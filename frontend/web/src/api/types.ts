@@ -586,6 +586,7 @@ export interface FlowTestStep {
 
 export interface FlowTestResult {
   output: string;
+  reasoning?: string;
   steps: FlowTestStep[];
 }
 

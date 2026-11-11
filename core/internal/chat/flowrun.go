@@ -73,7 +73,7 @@ func (s *Service) flowConversation(session model.Session, runID, input string) (
 
 // runFlow：后台那半程。先完整执行图，再一次性 INSERT —— 取消/失败都不会留半条回复。
 func (s *Service) runFlow(session model.Session, replyID string, token uint64, runID, input string,
-	agent config.Agent, chosen providers.Backend, providersConfig config.ProvidersConfig) {
+	agent config.Agent, providersConfig config.ProvidersConfig) {
 	sessionID := session.ID
 	guard := s.Tasks.Begin(task.KindTurn, &sessionID, "生成 · 会话 "+shortID(sessionID))
 	defer guard.Interrupted()
@@ -147,9 +147,9 @@ func (s *Service) runFlow(session model.Session, replyID string, token uint64, r
 		Kind: model.MessageKindChat, Status: model.MessageStatusDone, RunID: runID,
 		Content: outcome.Final.Text, DurationMS: &durationMS, Usage: outcome.Usage,
 	}
-	if chosen.StoresReasoning() {
-		message.Reasoning = lastFlowReasoning(outcome.Result.Steps)
-	}
+	// 思考只来自 output 的 reasoning 端口；不再从任意 LLM 节点自动回填
+	// （那会把“正文就是思考”的图又显示成两遍思考）。
+	message.Reasoning = strings.TrimSpace(outcome.Final.Reasoning)
 	if _, err := s.Store.InsertMessage(message); err != nil {
 		failTrace(err)
 		s.Turns.Finish(sessionID, token, err.Error())
@@ -168,15 +168,6 @@ func (s *Service) runFlow(session model.Session, replyID string, token uint64, r
 	if s.Compactor != nil {
 		go s.MaybeAutoCompact(session)
 	}
-}
-
-func lastFlowReasoning(steps []FlowTestStep) string {
-	for index := len(steps) - 1; index >= 0; index-- {
-		if steps[index].Type == "llm" && strings.TrimSpace(steps[index].Reasoning) != "" {
-			return steps[index].Reasoning
-		}
-	}
-	return ""
 }
 
 // FlowRunTrace：最近一次 FlowAgent 图执行（进程内，覆盖式）。它是“整次图执行”的留档，

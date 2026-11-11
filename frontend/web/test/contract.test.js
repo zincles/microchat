@@ -486,6 +486,8 @@ test("FlowAgent：端口有类型，且每个端点只许一条线", () => {
   assert.equal(flowTargetType(llm, "history-h1"), "messages");
   assert.equal(flowTargetType(llm, "prompt-p1"), "string");
   assert.equal(flowTargetType(join, "in-1"), "string");
+  assert.equal(flowTargetType({ id: "out", type: "output", data: {} }, "text"), "string");
+  assert.equal(flowTargetType({ id: "out", type: "output", data: {} }, "reasoning"), "string");
   const graph = {
     version: 1,
     nodes: [input, history, trim, llm, join, { id: "out", type: "output", position: { x: 0, y: 0 }, data: {} }],
@@ -539,6 +541,8 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(flow, /发送测试/, "流程编辑器没有测试发送按钮");
   assert.match(flow, /api\.testFlow/, "测试发送没接后端");
   assert.match(flowNode, /class="flow-node-test"/, "节点悬停没有测试 I/O 浮层");
+  assert.match(flowNode, /class="flow-output-inputs"/, "输出节点没有正文/思考两个输入");
+  assert.match(flowNode, /id="reasoning"[\s\S]*id="text"|id="text"[\s\S]*id="reasoning"/, "输出节点缺少正文/思考端口");
   assert.match(flowNode, /hovered \|\| selected/, "选中节点时调试信息不会持久显示");
   assert.match(flowNode, /class="flow-node-delete/, "节点没有删除按钮");
   assert.match(flowNode, /id="reasoning"/, "LLM 节点没有思考出口");
