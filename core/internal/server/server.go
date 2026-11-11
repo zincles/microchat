@@ -81,6 +81,8 @@ func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *ch
 	s.mux.HandleFunc("POST /api/v1/agents", s.createAgent)
 	s.mux.HandleFunc("PATCH /api/v1/agents/{agent_id}", s.updateAgent)
 	s.mux.HandleFunc("DELETE /api/v1/agents/{agent_id}", s.deleteAgent)
+	// FlowAgent 编辑器的测试发送：只跑一次图，不建会话 / 不落库。
+	s.mux.HandleFunc("POST /api/v1/agents/{agent_id}/flow/test", s.testFlowAgent)
 	// 提示词段（system prompt segment）：读口随 `GET /agents`（那份就是 AgentsConfig 全貌）；
 	// 这里只有三个写口（设置面 = admin）。删除有守卫：还被引用 ⇒ 拒绝（列出引用者）。
 	s.mux.HandleFunc("POST /api/v1/segments", s.createSegment)

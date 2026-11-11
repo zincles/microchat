@@ -26,6 +26,7 @@ import type {
   EditMessageRequest,
   EnqueueQueueRequest,
   ExportDocument,
+  FlowTestResult,
   HealthResponse,
   ImportJsonResult,
   ImportStResult,
@@ -431,6 +432,9 @@ export function createApi({ base, token = "", fetchFn = fetch }: CreateApiOption
       call<Segment>("PATCH", `/segments/${enc(id)}`, body),
     deleteSegment: (id: string) => call<null>("DELETE", `/segments/${enc(id)}`),
     createAgent: (body: CreateAgentRequest) => call<Agent>("POST", "/agents", body),
+    // testFlow：FlowAgent 编辑器的一次性测试发送（不建会话、不落库）。
+    testFlow: (id: string, message: string) =>
+      call<FlowTestResult>("POST", `/agents/${enc(id)}/flow/test`, { message }),
     patchAgent: (id: string, body: UpdateAgentRequest) =>
       call<Agent>("PATCH", `/agents/${enc(id)}`, body),
     deleteAgent: (id: string) => call<null>("DELETE", `/agents/${enc(id)}`),

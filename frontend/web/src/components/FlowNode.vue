@@ -16,6 +16,7 @@ const props = defineProps<{
   type: string;
   data: Record<string, any>;
 }>();
+const hovered = ref(false);
 const agents = inject<Ref<FlowAgentOption[]>>("flowAgents", ref([]));
 const agentOptions = computed(() => agents.value
   .filter((a) => a.kind !== "flow")
@@ -35,7 +36,12 @@ const hint = computed(() => ({
 </script>
 
 <template>
-  <div class="flow-node" :class="[`flow-node-${type}`]">
+  <div
+    class="flow-node"
+    :class="[`flow-node-${type}`]"
+    @mouseenter="hovered = true"
+    @mouseleave="hovered = false"
+  >
     <Handle v-if="type !== 'input'" id="in" type="target" :position="Position.Left" />
     <div class="flow-node-head">
       <span class="flow-node-title">{{ label }}</span>
@@ -54,6 +60,13 @@ const hint = computed(() => ({
       placeholder="选择一个传统智能体…"
     />
     <div v-if="type === 'join'" class="flow-node-body">多路文本 → 一段文本</div>
+    <div v-if="hovered && data.test" class="flow-node-test" role="tooltip">
+      <b>测试 I/O</b>
+      <span class="flow-node-test-label">输入</span>
+      <pre>{{ (data.test.inputs ?? []).join("\n---\n") || "（无输入）" }}</pre>
+      <span class="flow-node-test-label">输出</span>
+      <pre>{{ data.test.output || "（无输出）" }}</pre>
+    </div>
     <Handle v-if="type !== 'output'" id="out" type="source" :position="Position.Right" />
   </div>
 </template>

@@ -554,6 +554,20 @@ export interface FlowEdge {
   targetHandle?: string;
 }
 
+export interface FlowTestStep {
+  id: string;
+  type: string;
+  label: string;
+  inputs?: string[];
+  output?: string;
+  error?: string;
+}
+
+export interface FlowTestResult {
+  output: string;
+  steps: FlowTestStep[];
+}
+
 export interface FlowGraph {
   version?: number;
   nodes: FlowNode[];

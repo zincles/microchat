@@ -471,6 +471,7 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/输出/Age
   const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
   const editor = readFileSync(join(SRC, "components", "AgentEditor.vue"), "utf8");
   const flow = readFileSync(join(SRC, "components", "FlowEditor.vue"), "utf8");
+  const flowNode = readFileSync(join(SRC, "components", "FlowNode.vue"), "utf8");
   assert.match(settings, /startNewAgent\('prompt'\)/, "新建菜单没有传统智能体");
   assert.match(settings, /startNewAgent\('flow'\)/, "新建菜单没有 FlowAgent");
   assert.match(settings, /<FlowAgent|FlowAgent/, "菜单没有 FlowAgent 文案");
@@ -482,6 +483,9 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/输出/Age
   assert.match(flow, /class="flow-fullscreen-btn"/, "流程编辑器没有网页全屏按钮");
   assert.match(flow, /class="flow-debug"/, "流程编辑器没有调试面板");
   assert.match(flow, /flowDebugSteps/, "调试面板没有结构预演数据");
+  assert.match(flow, /发送测试/, "流程编辑器没有测试发送按钮");
+  assert.match(flow, /api\.testFlow/, "测试发送没接后端");
+  assert.match(flowNode, /class="flow-node-test"/, "节点悬停没有测试 I/O 浮层");
   assert.ok(flowDebugSteps(emptyFlowGraph(), []).length >= 2, "空图没有调试步骤");
   assert.match(css, /\.flow-editor\.expanded \{[^}]*position:\s*fixed/, "网页全屏没有铺满 #app");
   for (const type of ["input", "agent", "join", "output"]) {

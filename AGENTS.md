@@ -380,9 +380,10 @@ delete(AA)           # 删除
   后端目前**只搬运、不解释**节点表。FlowAgent 的节点白名单先只有
   `input / agent / join / output`；编辑器用 Vue Flow（`@vue-flow/core`），
   `agent` 节点只能选传统 Agent（**禁止 FlowAgent 调 FlowAgent**）。
-  编辑器有 **网页全屏** 与 **调试** 按钮：调试是**结构预演**（按拓扑顺序把占位文本往下传，
-  显示每节点输入/输出与连线问题），不调用模型；真正运行时尚未接线，FlowAgent 会出现在
-  智能体列表里编辑，但会话的助手选择器先过滤掉它。
+  编辑器有 **网页全屏**、**调试** 与 **测试**：调试是结构预演（不调模型）；测试会调
+  `POST /agents/{id}/flow/test`，用一次性临时会话真正跑图中的传统 Agent，返回每步输入/输出，
+  鼠标悬停节点即可看该节点的测试 I/O。测试不建会话、不落库；真正会话语义尚未接线，
+  FlowAgent 会出现在智能体列表里编辑，但会话的助手选择器先过滤掉它。
   **`preset_id`（2026-11-10）**：绑定一份 `tavern_presets` 原始预设（空 = 不绑定）。绑定时
   Agent 的会话在出站装配里**现读原始 JSON → `tavern.Extract`**（执行 setvar/getvar/trim/注释，
   丢掉空结果），用真正的 relative/absolute 有效条目；**Agent 的 base、段与 `prompt_entries` 全部不参与**
@@ -835,6 +836,7 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 | PATCH | `/segments/{segment_id}` | `{new_id?,text?}` | `Segment`| 改内容 / 改名（改名 = 所有 agent 的引用一起搬）；**内置段 ⇒ 400（只读）**|
 | DELETE | `/segments/{segment_id}` | — | 204 | 删段；**还被 Agent（基座或能力追加段）引用 ⇒ 400（列出引用者）**、**内置段 ⇒ 400（删不掉）**。读口不另开 —— 段库随 `GET /agents` 一起给（内置带 `builtin` 标记；ST 导入段带 `preset_id` / `preset_name`）|
 | DELETE | `/agents/{agent_id}` | — | 204 | 内置默认 agent 不可删 |
+| POST | `/agents/{agent_id}/flow/test` | `{message,provider?,model?}` | `FlowTestResult` · 200 | **FlowAgent 编辑器的测试发送**：只跑一次图，不建会话、不落库；agent 节点用一次性临时会话走真实提示词拼装 + 上游 Complete；返回 `{output,steps:[{id,type,label,inputs,output,error}]}`。provider/model 省略 ⇒ config defaults |
 | GET | `/config/prefs` | — | `{prefs, markdown_types, defaults}` | **界面偏好**（2026-11-01 起住服务器）。<br>**`markdown_types` 是语法清单的唯一权威**（`[{id,name,kind,sample}]`）—— 界面据此排开关，**不许前端另抄一张**（少一条就留个点不动的死开关，多一条就是个后端不认识的选项）。<br>`defaults` = 出厂值（界面"恢复默认"与前端缺省都读它）。<br>⚠ 文件坏了（未知类型 / 坏背景）**直接报错**，不悄悄回落全默认 —— 那等于"用户的开关自己全开了"而他一点线索都没有 |
 | PUT | `/config/prefs` | `Prefs` | 同上 | **整份替换**（偏好是一组独立开关，客户端手里就有全量；补丁语义只会多出"没给的算不动还是算清空"这类歧义）。<br>⚠ **`background` 单开指针语义**：没传 = **不动它**；要清空得显式给 `"background": {}`（否则"只改主题"的客户端会顺手抹掉壁纸 —— 静默的数据丢失，与 `PATCH /sessions` 的 `system_prompt` 同一条规矩）。<br>未知 `markdown.disabled` id ⇒ **422 并点名**（先验后写：坏请求一个字都不落盘）|
 | GET | `/config/prefs/background` | — | 图片字节 | 服务器上那张自定义背景图（`data/prefs/background.bin`）。没有 ⇒ **404**；类型由 `DetectContentType` **现判**；带 `ETag`（= 登记里的 `version`），对上了回 **304**。`Cache-Control: private, max-age=0, must-revalidate` —— 每次回来问一句，换图才不会拿到旧的 |

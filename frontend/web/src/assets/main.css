@@ -1796,7 +1796,7 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-canvas .vue-flow__controls-button:last-child { border-bottom: 0; }
 .flow-canvas .vue-flow__controls-button:hover { background: var(--md-surface-container-highest); }
 .flow-canvas .vue-flow__controls-button svg { fill: currentColor; }
-.flow-node { min-width: 190px; max-width: 240px; box-sizing: border-box; padding: 0.55em 0.65em;
+.flow-node { position: relative; min-width: 190px; max-width: 240px; box-sizing: border-box; padding: 0.55em 0.65em;
   border: 1px solid var(--md-outline-variant); border-radius: var(--md-shape-sm);
   background: var(--md-surface-container-high); color: var(--md-on-surface);
   box-shadow: var(--md-elev-1); font-size: var(--md-type-body-small); }
@@ -1813,6 +1813,18 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
   border: 2px solid var(--md-surface-container-high); background: var(--md-primary) !important; }
 .flow-canvas .flow-node .vue-flow__handle:hover { background: var(--md-secondary) !important; }
 .flow-node-body { margin-top: 0.35em; color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
+/* 悬停节点的测试 I/O：不占布局、不拦截鼠标；长文本自己在框里滚。 */
+.flow-node-test { position: absolute; left: 0; top: calc(100% + 0.45em); z-index: 20;
+  width: max-content; max-width: 24em; max-height: 16em; overflow: auto; pointer-events: none;
+  padding: 0.55em 0.65em; border: 1px solid var(--md-outline-variant); border-radius: var(--r-md);
+  background: var(--md-surface-container-highest); color: var(--md-on-surface);
+  box-shadow: var(--md-elev-2); font-size: var(--md-type-label-small); line-height: 1.45; }
+.flow-node-test > b { display: block; margin-bottom: 0.25em; font-size: var(--md-type-label-medium); }
+.flow-node-test-label { display: block; margin-top: 0.25em; color: var(--md-on-surface-variant); }
+.flow-node-test pre { margin: 0.15em 0 0; padding: 0.25em 0.35em; border-radius: var(--r-xs);
+  background: var(--md-surface-container-low); white-space: pre-wrap; overflow-wrap: anywhere; }
+.flow-test-bar { display: flex; align-items: center; gap: 0.45em; flex-wrap: wrap; }
+.flow-test-input { flex: 1 1 16em; min-width: 10em; }
 .flow-issues { margin-top: 0.2em; }
 .flow-ok { margin-top: 0.15em; }
 @media (max-width: 700px) { .flow-canvas { height: 48vh; min-height: 260px; } }

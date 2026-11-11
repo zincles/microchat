@@ -326,7 +326,7 @@ function onKey(e: KeyboardEvent): void {
 
     <VTabsWindowItem v-if="agentKind === 'flow'" value="flow">
       <p class="hint flow-stage-note">当前阶段先做流程编排与保存；运行时尚未接线，FlowAgent 暂不出现在会话的助手选择器里。</p>
-      <FlowEditor v-model:graph="flowGraph" :agents="props.agents" />
+      <FlowEditor v-model:graph="flowGraph" :agents="props.agents" :agent-id="props.agent?.id ?? ''" />
     </VTabsWindowItem>
 
     <VTabsWindowItem v-for="id in ABILITY_IDS" :key="id" :value="id">

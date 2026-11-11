@@ -13,8 +13,9 @@ import { Controls } from "@vue-flow/controls";
 import "@vue-flow/core/dist/style.css";
 import "@vue-flow/core/dist/theme-default.css";
 import "@vue-flow/controls/dist/style.css";
-import { VBtn } from "vuetify/components";
+import { VBtn, VTextField } from "vuetify/components";
 import { ICONS } from "./icons.ts";
+import { sharedApi } from "../utils/prefs.ts";
 import FlowNode from "./FlowNode.vue";
 import { emptyFlowGraph, flowDebugSteps, flowIssues, normalizeFlowGraph } from "../utils/flow.ts";
 import type { Agent, FlowEdge, FlowGraph, FlowNode as FlowNodeData } from "../api/types.ts";
@@ -22,11 +23,14 @@ import type { Agent, FlowEdge, FlowGraph, FlowNode as FlowNodeData } from "../ap
 const props = withDefaults(defineProps<{
   graph?: FlowGraph | null;
   agents?: Agent[];
+  agentId?: string;
 }>(), {
   graph: null,
   agents: () => [],
+  agentId: "",
 });
 const emit = defineEmits<{ "update:graph": [graph: FlowGraph] }>();
+const api = sharedApi();
 
 // Vue Flow 的 NodeComponent 类型要求完整 NodeProps；我们的节点只声明实际用到的字段，
 // 这里按 Vue Flow 的自定义节点约定交给运行时校验，别为了类型把无用 props 全抄一遍。
@@ -52,6 +56,10 @@ provide("flowAgents", computed(() => props.agents ?? []));
 const issues = computed(() => flowIssues(toGraph(), props.agents ?? []));
 const debugOpen = ref(false);
 const debugSteps = computed(() => flowDebugSteps(toGraph(), props.agents ?? []));
+const testOpen = ref(false);
+const testMessage = ref("");
+const testStatus = ref("");
+const testing = ref(false);
 // 打开/关闭调试会让画布变窄/变宽；和全屏一样要重新 fit，否则节点会跑到画布外。
 watch(debugOpen, fitAfterResize);
 const inputExists = computed(() => nodes.value.some((n) => n.type === "input"));
@@ -61,12 +69,16 @@ let seq = 0;
 function toGraph(): FlowGraph {
   return {
     version: 1,
-    nodes: nodes.value.map((n) => ({
-      id: String(n.id),
-      type: String(n.type ?? "agent"),
-      position: { x: Number(n.position?.x ?? 0), y: Number(n.position?.y ?? 0) },
-      data: { ...(n.data ?? {}) },
-    })),
+    nodes: nodes.value.map((n) => {
+      const data = { ...(n.data ?? {}) };
+      delete data.test; // 测试结果只活在编辑器里，绝不写回 Graph
+      return {
+        id: String(n.id),
+        type: String(n.type ?? "agent"),
+        position: { x: Number(n.position?.x ?? 0), y: Number(n.position?.y ?? 0) },
+        data,
+      };
+    }),
     edges: edges.value.map((e) => ({
       id: String(e.id),
       source: String(e.source),
@@ -119,6 +131,29 @@ function onConnect(connection: Connection): void {
   }];
 }
 
+async function runTest(): Promise<void> {
+  if (!props.agentId) { testStatus.value = "先保存 FlowAgent，再回来测试"; return; }
+  if (!testMessage.value.trim()) { testStatus.value = "先输入一条测试消息"; return; }
+  testing.value = true;
+  testStatus.value = "测试中…";
+  try {
+    const result = await api.testFlow(props.agentId, testMessage.value.trim());
+    const byID = new Map(result.steps.map((step) => [step.id, step]));
+    nodes.value = nodes.value.map((n) => {
+      const test = byID.get(String(n.id));
+      const data = { ...(n.data ?? {}) };
+      if (test) data.test = test; else delete data.test;
+      return { ...n, data };
+    });
+    testStatus.value = result.output ? `完成：${result.output.slice(0, 80)}` : "完成";
+    debugOpen.value = true;
+  } catch (e) {
+    testStatus.value = `测试失败：${e instanceof Error ? e.message : String(e)}`;
+  } finally {
+    testing.value = false;
+  }
+}
+
 // 位置、连线、节点内 agent_id 都是深层数据；一有变化就把整张图交回 AgentEditor。
 watch([nodes, edges], () => emit("update:graph", toGraph()), { deep: true });
 </script>
@@ -134,6 +169,12 @@ watch([nodes, edges], () => emit("update:graph", toGraph()), { deep: true });
       <span class="flow-toolbar-spacer"></span>
       <VBtn
         variant="text" size="small" type="button"
+        :aria-pressed="testOpen ? 'true' : 'false'"
+        :color="testOpen ? 'primary' : undefined"
+        @click="testOpen = !testOpen"
+      >测试</VBtn>
+      <VBtn
+        variant="text" size="small" type="button"
         :aria-pressed="debugOpen ? 'true' : 'false'"
         :color="debugOpen ? 'primary' : undefined"
         @click="debugOpen = !debugOpen"
@@ -145,6 +186,21 @@ watch([nodes, edges], () => emit("update:graph", toGraph()), { deep: true });
         :aria-pressed="expanded ? 'true' : 'false'"
         @click="toggleExpanded" v-html="expanded ? ICONS.minimize : ICONS.maximize"
       />
+    </div>
+    <div v-if="testOpen" class="flow-test-bar">
+      <VTextField
+        v-model="testMessage"
+        density="compact" variant="outlined" hide-details
+        class="flow-test-input"
+        placeholder="输入一条测试消息…"
+        @keydown.enter.prevent="runTest"
+      />
+      <VBtn
+        color="primary" variant="flat" size="small" type="button"
+        :loading="testing" :disabled="testing || !agentId"
+        @click="runTest"
+      >发送测试</VBtn>
+      <span class="status">{{ testStatus || (agentId ? "" : "先保存 FlowAgent，再回来测试") }}</span>
     </div>
     <div class="flow-main">
       <div class="flow-canvas">
