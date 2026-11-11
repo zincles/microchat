@@ -248,18 +248,6 @@ const ctxArc = computed(() => contextArc(ctx.value));
 // dasharray="a b" 且 a+b=100 ⇒ 正好一道弧、没有第二道。
 const ctxDash = computed(() => `${ctxArc.value} ${100 - ctxArc.value}`);
 const ctxOver = computed(() => contextOverBudget(ctx.value));
-const flowNodes = computed(() => ctx.value?.flow_nodes ?? []);
-const flowNodeTitle = computed(() => flowNodes.value.length ? "FlowAgent：环显示占用比例最高的节点" : "");
-function flowNodePct(node: { used_tokens?: number; budget_tokens?: number }): string {
-  const used = Number(node.used_tokens ?? 0);
-  const budget = Number(node.budget_tokens ?? 0);
-  if (!(budget > 0)) return "—";
-  const ratio = used / budget * 100;
-  if (!(used > 0)) return "0%";
-  if (ratio < 0.1) return "不到 0.1%";
-  if (ratio < 10) return `${Math.floor(ratio * 10) / 10}%`;
-  return `${Math.floor(ratio)}%`;
-}
 const ctxRows = computed<Array<[string, string]>>(() => {
   const c = ctx.value;
   if (!c) return [];
@@ -269,7 +257,6 @@ const ctxRows = computed<Array<[string, string]>>(() => {
   ];
   // 上一次真发出去的 prompt_tokens（上游报的实数）—— 与本次估算值分开记。
   if (c.last_prompt_tokens != null) rows.push(["上次实际用量", `${formatTokens(c.last_prompt_tokens)} tokens`]);
-  if (flowNodes.value.length) rows.push(["FlowAgent 节点", `${flowNodes.value.length} 个`]);
   return rows;
 });
 // 预算这句是说给"为什么不是 100 万"的：只解释一次，不把算式塞进表格。
@@ -277,8 +264,7 @@ const ctxBudgetNote = computed(() => {
   const c = ctx.value;
   if (!c) return "";
   const num = (v?: number | null): string => Number(v ?? 0).toLocaleString("en-US");
-  const base = `输入预算 ${num(c.budget_tokens)} tokens = 上下文上限 ${num(c.ctx_len)} − 输出预留 ${num(c.max_output)}。`;
-  return flowNodes.value.length ? `${base} FlowAgent 取占用比例最高的节点。` : base;
+  return `输入预算 ${num(c.budget_tokens)} tokens = 上下文上限 ${num(c.ctx_len)} − 输出预留 ${num(c.max_output)}。`;
 });
 // closeMenus：Esc 一次收起所有顶栏浮板（MD3 menu 的常规行为；从前只有模型菜单接 Esc）。
 function closeMenus(): void { modelOpen.value = false; ctxOpen.value = false; }
@@ -405,7 +391,7 @@ const statusRows = computed<Array<[string, string]>>(() => {
 });
 function setStatus(s?: StatusInfo | null): void { status.value = s ?? null; }
 // 悬停解释 = 状态一句 + 预算一句（两处都是"一眼看不清、要解释"的东西）。
-const ringTitle = computed(() => [formatStatusLine(status.value ?? {}), contextTitle(ctx.value), flowNodeTitle.value, taskTitle.value].filter(Boolean).join("\n"));
+const ringTitle = computed(() => [formatStatusLine(status.value ?? {}), contextTitle(ctx.value), taskTitle.value].filter(Boolean).join("\n"));
 
 defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverridesSaved, setMacros });
 </script>
@@ -554,15 +540,6 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
                   </VListItem>
                 </VList>
                 <p class="ctx-note">{{ ctxBudgetNote }}</p>
-                <VList v-if="flowNodes.length" density="compact" class="ctx-list ctx-flow-nodes">
-                  <VListSubheader>FlowAgent 节点</VListSubheader>
-                  <VListItem v-for="node in flowNodes" :key="node.id" class="ctx-row">
-                    <div class="ctx-row-inner">
-                      <span class="ctx-key">{{ node.label }} <small>#{{ node.id }}</small></span>
-                      <span class="ctx-val">{{ formatTokens(node.used_tokens) }} / {{ formatTokens(node.budget_tokens) }} · {{ flowNodePct(node) }}</span>
-                    </div>
-                  </VListItem>
-                </VList>
               </template>
               <p v-else class="agent-empty">当前会话暂无上下文数据。</p>
               <VList v-if="statusRows.length" density="compact" class="ctx-list ctx-list-status">

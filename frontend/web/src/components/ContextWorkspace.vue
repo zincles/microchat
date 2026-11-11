@@ -11,14 +11,12 @@
 // 它们有了正经地方，也就不必再挤在栏里和对话抢宽度。
 import { ref } from "vue";
 import PayloadBar from "./PayloadBar.vue";
-import type { FlowRunTrace } from "../api/types.ts";
 
 export interface PayloadBarApi {
   setWire: (wire: unknown) => void;
   setTables: (tables: unknown) => void;
   setTree: (tree: unknown) => void;
   setCompactWire: (wire: unknown) => void;
-  setFlowTrace: (trace: FlowRunTrace | null) => void;
 }
 
 const props = withDefaults(defineProps<{
@@ -27,10 +25,13 @@ const props = withDefaults(defineProps<{
   sessionId?: string;
   // defaultBlocks：chat.compact_blocks（压缩面板空输入框的占位提示；原样转给面板）。
   defaultBlocks?: number | null;
+  // flow：FlowAgent 暂时不套用普通 Agent 的载荷/状态/压缩面板 —— 新面板另行设计。
+  flow?: boolean;
 }>(), {
   hasSession: false,
   sessionId: "",
   defaultBlocks: null,
+  flow: false,
 });
 // tab / compact / compact-payload：面板那三件事照旧往上报 ——
 // 压缩树要"看着才拉全量"（App 的 treeVisible），压缩与预演也得让 App 去发请求。
@@ -52,12 +53,16 @@ defineExpose({
   setTables: (t: unknown): void => inner.value?.setTables(t),
   setTree: (t: unknown): void => inner.value?.setTree(t),
   setCompactWire: (w: unknown): void => inner.value?.setCompactWire(w),
-  setFlowTrace: (trace: FlowRunTrace | null): void => inner.value?.setFlowTrace(trace),
 });
 </script>
 
 <template>
   <section id="context-workspace" aria-label="上下文工作区">
+    <section v-if="props.flow" class="flow-context-placeholder" aria-label="FlowAgent 上下文">
+      <p>FlowAgent 的上下文面板正在重做。</p>
+      <p>旧的载荷 / 状态 / 压缩面板只适用于普通 Agent，暂不从 FlowAgent 打开。</p>
+    </section>
+    <template v-else>
     <!-- 草稿态：还没会话 ⇒ 面板里全是空话。明说一句，别让人以为面板坏了。
          （不给"面板照样渲染"的选择：那三条 tab 在草稿里确实一个字都没有。） -->
     <p v-if="!props.hasSession" class="ws-draft-note">
@@ -74,5 +79,6 @@ defineExpose({
       @preview="(v) => emit('preview', v)"
       @advanced-done="() => emit('advanced-done')"
     />
+    </template>
   </section>
 </template>
