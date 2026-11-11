@@ -1,6 +1,8 @@
 package server
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -19,8 +21,11 @@ type CreateAgentReq struct {
 	// 名称是**唯一的人类句柄** —— id 由后端生成，不接受指定。
 	Name string `json:"name"`
 	// Description：列表里的一句说明（可选，不参与提示词拼装）。
-	Description  string `json:"description,omitempty"`
-	SystemPrompt string `json:"system_prompt"`
+	Description string `json:"description,omitempty"`
+	// Kind / Flow：FlowAgent 类型与图（2026-11-11）。空 kind = 传统提示词 Agent。
+	Kind         string          `json:"kind,omitempty"`
+	Flow         json.RawMessage `json:"flow,omitempty"`
+	SystemPrompt string          `json:"system_prompt"`
 	// FirstMessage：首段对话（新会话的第一条 assistant 消息；空 = 不启用）。
 	FirstMessage string `json:"first_message,omitempty"`
 	// Segments：追加段（段库里的 id 列表，顺序 = 追加顺序；拼装见 `state.AssembleSystemPrompt`）。
@@ -38,9 +43,12 @@ type CreateAgentReq struct {
 }
 
 type UpdateAgentReq struct {
-	Name         *string `json:"name"`
-	Description  *string `json:"description"`
-	SystemPrompt *string `json:"system_prompt"`
+	Name        *string `json:"name"`
+	Description *string `json:"description"`
+	// Kind / Flow：nil = 不动；"flow" + flow 图 = 保存 FlowAgent。
+	Kind         *string          `json:"kind,omitempty"`
+	Flow         *json.RawMessage `json:"flow,omitempty"`
+	SystemPrompt *string          `json:"system_prompt"`
 	// FirstMessage：nil = 不动；`""` = 清掉（首段不启用）；非空 = 写进去。
 	FirstMessage *string `json:"first_message"`
 	// Segments：给了就**整段替换**这串引用（nil = 不动；`[]` = 清空）。引用的段必须在库里 ⇒ 400。
@@ -58,6 +66,15 @@ type UpdateAgentReq struct {
 	NewID        *string `json:"new_id"`
 	PrependState *bool   `json:"prepend_state,omitempty"`
 	// ⚠ 没有 `display_mode`（2026-10-27 删，理由见 `CreateAgentReq`）。
+}
+
+func validateAgentKind(kind string) error {
+	switch strings.TrimSpace(kind) {
+	case "", "prompt", "flow":
+		return nil
+	default:
+		return fmt.Errorf("agent 类型只能是 prompt 或 flow")
+	}
 }
 
 // （读 agents.json 的 loadAgents 在 server.go 里 —— 早就有，别写第二份）
@@ -110,11 +127,17 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid", "agent 名称不能为空")
 		return
 	}
+	if err := validateAgentKind(req.Kind); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid", err.Error())
+		return
+	}
 	agents := s.loadAgents()
 	agent := config.Agent{
 		ID:            uuid.Must(uuid.NewV7()).String(),
 		Name:          name,
 		Description:   strings.TrimSpace(req.Description),
+		Kind:          strings.TrimSpace(req.Kind),
+		Flow:          req.Flow,
 		SystemPrompt:  req.SystemPrompt,
 		FirstMessage:  req.FirstMessage,
 		Segments:      req.Segments,
@@ -204,6 +227,12 @@ func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "agent 不存在")
 		return
 	}
+	if req.Kind != nil {
+		if err := validateAgentKind(*req.Kind); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid", err.Error())
+			return
+		}
+	}
 	if req.Name != nil {
 		name := strings.TrimSpace(*req.Name)
 		if name == "" {
@@ -214,6 +243,12 @@ func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Description != nil {
 		agents.Agents[index].Description = strings.TrimSpace(*req.Description)
+	}
+	if req.Kind != nil {
+		agents.Agents[index].Kind = strings.TrimSpace(*req.Kind)
+	}
+	if req.Flow != nil {
+		agents.Agents[index].Flow = *req.Flow
 	}
 	if req.SystemPrompt != nil {
 		agents.Agents[index].SystemPrompt = *req.SystemPrompt

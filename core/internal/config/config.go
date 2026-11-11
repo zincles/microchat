@@ -259,8 +259,13 @@ type Agent struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	// Description：给列表/选择器看的一句人话（可选；不参与提示词拼装）。
-	Description  string `json:"description,omitempty"`
-	SystemPrompt string `json:"system_prompt"`
+	Description string `json:"description,omitempty"`
+	// Kind：agent 的实现类型。空 / "prompt" = 现有提示词 Agent；"flow" = 由 FlowGraph 驱动。
+	Kind string `json:"kind,omitempty"`
+	// Flow：FlowAgent 的图（editor 存的结构，后端只搬运；运行时尚未接线）。
+	// 用 RawMessage 是为了让节点 schema 先在前端演进，不在 Go 里复制一份节点表。
+	Flow         json.RawMessage `json:"flow,omitempty"`
+	SystemPrompt string          `json:"system_prompt"`
 	// FirstMessage：**首段对话**（2026-10-11 用户定）——以这个 agent 新建会话时，
 	// 它作为**第一条 assistant 消息**（idx 1）落库；空 = 不启用。正文原样存档
 	// （可带 `<state>` 块 —— 于是"首段设初始状态"天然成立）。

@@ -1730,3 +1730,29 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .ctx-overrides-actions { display: flex; align-items: center; gap: 0.35em; }
 .ctx-overrides-state { margin-left: auto; color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
 .ctx-overrides-state.error { color: var(--md-error); }
+
+/* FlowAgent 编辑器（2026-11-11）：Vue Flow 负责画布，Vuetify 负责节点内控件。
+ * 节点只是“可拖的卡片”，不要套 MD3 的 elevation 大阴影 —— 画布里节点很多时会糊成一片。 */
+.flow-editor { display: flex; flex-direction: column; gap: 0.45em; }
+.flow-toolbar { display: flex; align-items: center; gap: 0.35em; flex-wrap: wrap; }
+.flow-toolbar-label { color: var(--md-on-surface-variant); font-size: var(--md-type-label-medium); }
+.flow-canvas { height: min(58vh, 620px); min-height: 320px; border: 1px solid var(--md-outline-variant);
+  border-radius: var(--md-shape-md); overflow: hidden; background: var(--md-surface-container-low); }
+.flow-canvas .vue-flow { background: var(--md-surface-container-low); }
+.flow-node { min-width: 190px; max-width: 240px; box-sizing: border-box; padding: 0.55em 0.65em;
+  border: 1px solid var(--md-outline-variant); border-radius: var(--md-shape-sm);
+  background: var(--md-surface-container-high); color: var(--md-on-surface);
+  box-shadow: var(--md-elev-1); font-size: var(--md-type-body-small); }
+.flow-node-agent { min-width: 230px; }
+.flow-node-head { display: flex; flex-direction: column; gap: 0.1em; }
+.flow-node-title { font-weight: 600; color: var(--md-on-surface); }
+.flow-node-hint { color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); line-height: 1.35; }
+.flow-node-select { margin-top: 0.4em; }
+.flow-node-select .v-field { font-size: var(--md-type-label-medium); }
+.flow-node .vue-flow__handle { width: 10px; height: 10px; border: 2px solid var(--md-surface-container-high);
+  background: var(--md-primary); }
+.flow-node .vue-flow__handle:hover { background: var(--md-secondary); }
+.flow-node-body { margin-top: 0.35em; color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
+.flow-issues { margin-top: 0.2em; }
+.flow-ok { margin-top: 0.15em; }
+@media (max-width: 700px) { .flow-canvas { height: 48vh; min-height: 260px; } }

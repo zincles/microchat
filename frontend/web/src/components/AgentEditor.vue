@@ -13,13 +13,16 @@ import { assemblePrompt, abilityPrompt } from "../utils/prompt.ts";
 import { buildCartridge } from "../utils/cartridge.ts";
 import { downloadJSON } from "../utils/download.ts";
 import SegmentList from "./SegmentList.vue";
+import FlowEditor from "./FlowEditor.vue";
+import { emptyFlowGraph, normalizeFlowGraph } from "../utils/flow.ts";
 import type { SegmentItem } from "./SegmentList.vue";
 import { VTab, VTabs, VTabsWindow, VTabsWindowItem, VSwitch, VBtn, VTextField, VTextarea, VSelect } from "vuetify/components";
-import type { AbilityToggle, Agent, CreateAgentRequest, TavernPreset, UpdateAgentRequest } from "../api/types.ts";
+import type { AbilityToggle, Agent, CreateAgentRequest, FlowGraph, TavernPreset, UpdateAgentRequest } from "../api/types.ts";
 
 interface AgentTemplate {
   name?: string;
   description?: string;
+  kind?: "prompt" | "flow";
   system_prompt?: string;
   first_message?: string;
   prepend_state?: boolean;
@@ -42,6 +45,8 @@ const props = withDefaults(defineProps<{
   agent?: Agent | null;
   isDefault?: boolean;
   template?: AgentTemplate | null; // 新建模板 {name, system_prompt, prepend_state, abilities}
+  kind?: "prompt" | "flow"; // 新建时选择的类型；编辑时以 agent.kind 为准
+  agents?: Agent[]; // FlowEditor 的 agent_call 节点只能选传统 Agent
   segments?: SegmentItem[]; // 段库（picker 用；随 GET /agents 一起给）
   presets?: TavernPreset[]; // 酒馆原始预设（绑定用）
   ask?: ((text: string) => Promise<boolean>) | null; // 全局确认框（删除前先摊开）
@@ -49,6 +54,8 @@ const props = withDefaults(defineProps<{
   agent: null,
   isDefault: false,
   template: null,
+  kind: "prompt",
+  agents: () => [],
   segments: () => [],
   presets: () => [],
   ask: null,
@@ -57,12 +64,16 @@ const emit = defineEmits<{ close: []; saved: [] }>();
 
 const api = sharedApi();
 const isNew = !props.agent;
-// 页签：基本 → 系统提示词 → 每个能力一页（顺序跟着 `ABILITY_IDS` 走，加能力就自动多一页）。
-const tabs: Array<{ id: string; label: string }> = [
+const agentKind = computed<"prompt" | "flow">(() => (props.agent?.kind === "flow" ? "flow" : props.agent ? "prompt" : props.kind));
+// 页签：基本 →（传统 Agent 的系统提示词 / FlowAgent 的流程）→ 每个能力一页。
+// 能力按 `ABILITY_IDS` 生成，加能力自动多一页。
+const tabs = computed<Array<{ id: string; label: string }>>(() => [
   { id: "base", label: "基本" },
-  { id: "prompt", label: "系统提示词" },
+  ...(agentKind.value === "flow"
+    ? [{ id: "flow", label: "流程" }]
+    : [{ id: "prompt", label: "系统提示词" }]),
   ...ABILITY_IDS.map((id) => ({ id, label: ABILITY_LABELS[id] ?? id })),
-];
+]);
 const modelSourceOptions = [
   { label: "跟随全局设置", value: "global" },
   { label: "使用当前模型", value: "session" },
@@ -82,6 +93,7 @@ const prepend = ref(!!(props.agent?.prepend_state ?? props.template?.prepend_sta
 // `SegmentList` 里（与能力那块**同一个组件** —— 用户 2026-10-28：「不协调」）。
 const segs = ref<string[]>([...(props.agent?.segments ?? props.template?.segments ?? [])]);
 const presetId = ref(props.agent?.preset_id ?? "");
+const flowGraph = ref<FlowGraph>(normalizeFlowGraph(props.agent?.flow ?? emptyFlowGraph()));
 const assembled = computed(() => assemblePrompt(prompt.value, segs.value, props.segments));
 const modelOptions = ref<ModelOption[]>([]);
 const status = ref("");
@@ -177,6 +189,8 @@ async function save(): Promise<void> {
       const body: CreateAgentRequest = {
         name: name.value.trim(),
         description: description.value.trim(),
+        kind: agentKind.value,
+        ...(agentKind.value === "flow" ? { flow: flowGraph.value } : {}),
         system_prompt: prompt.value,
         first_message: firstMsg.value,
         segments: segs.value,
@@ -189,6 +203,8 @@ async function save(): Promise<void> {
       const agent = props.agent!;
       const body: UpdateAgentRequest = {
         description: description.value.trim(),
+        kind: agentKind.value,
+        ...(agentKind.value === "flow" ? { flow: flowGraph.value } : {}),
         system_prompt: prompt.value,
         first_message: firstMsg.value,
         segments: segs.value,
@@ -280,21 +296,24 @@ function onKey(e: KeyboardEvent): void {
       <label class="field"><span>名称</span><VTextField density="compact" variant="outlined" hide-details v-model="name" placeholder="例如：跑团主持人" /></label>
       <label class="field-block"><span>描述（列表里显示，给人类看；不参与提示词）</span><VTextarea v-model="description" rows="2" density="compact" variant="outlined" hide-details placeholder="例如：负责旁白与 NPC，语气克制" /></label>
       <label class="field-block"><span>开场白（新会话里的第一条回复；留空 = 不启用）</span><VTextarea v-model="firstMsg" rows="3" density="compact" variant="outlined" hide-details placeholder="例如：你好，我是……（可以包含状态块来设置初始状态）" /></label>
-      <label class="field"><span>在消息开头附上当前状态（角色扮演建议开启）</span><VSwitch v-model="prepend" color="primary" density="compact" hide-details /></label>
-      <label class="field"><span>提示词方案（酒馆预设）</span><VSelect v-model="presetId" :items="[{ title: '不使用（用本 Agent 的提示词）', value: '' }, ...presets.map(p => ({ title: p.filename, value: p.id }))]" density="compact" variant="outlined" hide-details placeholder="不使用" /></label>
-      <p v-if="presetId" class="field-warning">
-        <b>注意：</b>启用后，这份酒馆预设会接管该 Agent 的对话提示词。
-        Agent 自己的<b>系统提示词</b>、<b>追加片段</b>和<b>手工提示词方案</b>都不再参与装配；
-        所有使用这个 Agent 的会话都会从下一轮起改用预设。
-        只有会话自己的「自定义提示词」仍然优先；模型、能力开关和状态注入不受影响。
-        这些设置不会丢，选「不使用」并保存即可恢复。
-      </p>
-      <p v-else class="hint">不选择时，使用这个 Agent 自己的系统提示词与片段。</p>
-      <p class="hint">预设是每轮现读现算；只有原始文件被删掉或解析失败时，才回落到 Agent 自己的方案。</p>
+      <template v-if="agentKind !== 'flow'">
+        <label class="field"><span>在消息开头附上当前状态（角色扮演建议开启）</span><VSwitch v-model="prepend" color="primary" density="compact" hide-details /></label>
+        <label class="field"><span>提示词方案（酒馆预设）</span><VSelect v-model="presetId" :items="[{ title: '不使用（用本 Agent 的提示词）', value: '' }, ...presets.map(p => ({ title: p.filename, value: p.id }))]" density="compact" variant="outlined" hide-details placeholder="不使用" /></label>
+        <p v-if="presetId" class="field-warning">
+          <b>注意：</b>启用后，这份酒馆预设会接管该 Agent 的对话提示词。
+          Agent 自己的<b>系统提示词</b>、<b>追加片段</b>和<b>手工提示词方案</b>都不再参与装配；
+          所有使用这个 Agent 的会话都会从下一轮起改用预设。
+          只有会话自己的「自定义提示词」仍然优先；模型、能力开关和状态注入不受影响。
+          这些设置不会丢，选「不使用」并保存即可恢复。
+        </p>
+        <p v-else class="hint">不选择时，使用这个 Agent 自己的系统提示词与片段。</p>
+        <p class="hint">预设是每轮现读现算；只有原始文件被删掉或解析失败时，才回落到 Agent 自己的方案。</p>
+      </template>
+      <p v-else class="hint">FlowAgent 的对话逻辑由「流程」页决定；这里只保留身份、描述与开场白。系统提示词、片段和提示词方案不参与。</p>
     </section>
     </VTabsWindowItem>
 
-    <VTabsWindowItem value="prompt">
+    <VTabsWindowItem v-if="agentKind !== 'flow'" value="prompt">
     <section class="pane-section">
       <label class="field-block"><span>系统提示词（基础人设）</span><VTextarea v-model="prompt" rows="6" density="compact" variant="outlined" hide-details placeholder="写这个智能体的基础设定…" /></label>
       <SegmentList
@@ -303,6 +322,11 @@ function onKey(e: KeyboardEvent): void {
         :assembled="assembled"
         heading="提示词片段（追加在基础提示词后面，顺序就是拼接顺序）" />
     </section>
+    </VTabsWindowItem>
+
+    <VTabsWindowItem v-if="agentKind === 'flow'" value="flow">
+      <p class="hint flow-stage-note">当前阶段先做流程编排与保存；运行时尚未接线，FlowAgent 暂不出现在会话的助手选择器里。</p>
+      <FlowEditor v-model:graph="flowGraph" :agents="props.agents" />
     </VTabsWindowItem>
 
     <VTabsWindowItem v-for="id in ABILITY_IDS" :key="id" :value="id">
@@ -331,8 +355,8 @@ function onKey(e: KeyboardEvent): void {
     <div class="row">
       <VBtn color="primary" variant="flat" size="small" type="button" @click="save">保存</VBtn>
       <span class="action-note">保存后，新会话与后续轮次使用新设定；不会改写已有消息。</span>
-      <VBtn variant="text" size="small" type="button" @click="exportCartridge" title="导出智能体文件（JSON；提示词片段会展开成完整提示词）">导出智能体</VBtn>
-      <VBtn variant="text" size="small" v-if="!isNew && !isDefault" type="button" @click="makeDefault">设为默认</VBtn>
+      <VBtn v-if="agentKind !== 'flow'" variant="text" size="small" type="button" @click="exportCartridge" title="导出智能体文件（JSON；提示词片段会展开成完整提示词）">导出智能体</VBtn>
+      <VBtn variant="text" size="small" v-if="!isNew && !isDefault && agentKind !== 'flow'" type="button" @click="makeDefault">设为默认</VBtn>
       <VBtn color="error" variant="text" size="small" v-if="!isNew" type="button" @click="remove">删除</VBtn>
       <span class="status">{{ status }}</span>
     </div>

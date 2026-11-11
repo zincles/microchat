@@ -373,7 +373,14 @@ delete(AA)           # 删除
   未知 id 在**写入与读取时都报错并点名**（写了不生效最难查）；坏文件 GET 直接报错，
   **不悄悄回落全默认**（那等于"用户的开关自己全开了"，而他一点线索都没有）。
   写出的 `disabled` 按类型清单排序 ⇒ 同一个状态永远写同一份文件。
-- `agents.json` — `{ "default_agent": "跑团", "agents": [ { "id": "跑团", "name": "跑团主持人", "description": "负责旁白与 NPC", "system_prompt": "你是跑团主持人。", "first_message": "你好！我是跑团主持人。", "preset_id": "" } ] }`
+- `agents.json` — `{ "default_agent": "跑团", "agents": [ { "id": "跑团", "name": "跑团主持人", "description": "负责旁白与 NPC", "kind": "prompt", "system_prompt": "你是跑团主持人。", "first_message": "你好！我是跑团主持人。", "preset_id": "" } ] }`
+  **`kind` / `flow`（2026-11-11）**：`kind` 空 / `prompt` = 传统提示词 Agent；`flow` = FlowAgent
+  （逻辑由 `flow` 的节点图驱动）。`flow` 是编辑器产出的
+  `{version, nodes:[{id,type,position,data}], edges:[{id,source,target,...}]}`；
+  后端目前**只搬运、不解释**节点表。FlowAgent 的节点白名单先只有
+  `input / agent / join / output`；编辑器用 Vue Flow（`@vue-flow/core`），
+  `agent` 节点只能选传统 Agent（**禁止 FlowAgent 调 FlowAgent**）。
+  ⚠ 运行时尚未接线：FlowAgent 会出现在智能体列表里编辑，但会话的助手选择器先过滤掉它。
   **`preset_id`（2026-11-10）**：绑定一份 `tavern_presets` 原始预设（空 = 不绑定）。绑定时
   Agent 的会话在出站装配里**现读原始 JSON → `tavern.Extract`**（执行 setvar/getvar/trim/注释，
   丢掉空结果），用真正的 relative/absolute 有效条目；**Agent 的 base、段与 `prompt_entries` 全部不参与**
@@ -820,8 +827,8 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 | GET | `/config/model-rules` | — | `{model_define_rules:[…]}` | 读 `config.json` 的模型定义规则（见「配置文件」）。返回派生前的**规则原文** |
 | PUT | `/config/model-rules` | `{model_define_rules:[…]}` | 同上 | **整份替换**；空数组 = 清空。先校验后落盘；坏规则 422 且一个字不写。写成功后 `GET /models` 立刻按新规则派生 |
 | GET | `/agents` | — | `AgentsConfig` | 生效列表（含内置默认 agent）|
-| POST | `/agents` | `CreateAgentReq` | `Agent` · 201 | 收 `name` / `description` / `system_prompt` / **`segments`（追加段 id 列表）** / `abilities` / `prepend_state`；id 由后端生成。**没有 `display_mode`** ✗（2026-10-27 删：从前 `chat` 双边气泡 / `roleplay` 用户气泡+AI 纯文本二选一，现在**只剩后者**、不再是开关。老 `agents.json` / 老卡带里写着它**照常能读**，只是成了不认识的键、下次整份重写自己没掉） |
-| PATCH | `/agents/{agent_id}` | `UpdateAgentReq` | `Agent` | `new_id` = 重命名（搬 `default_agent` 与会话引用）；`description` 三态（nil 不动 / `""` 清空 / 非空写入）；`make_default` = 设默认；`segments` / `abilities` / `prepend_state` 整段替换（语义同 POST；`segments: []` = 清空）|
+| POST | `/agents` | `CreateAgentReq` | `Agent` · 201 | 收 `name` / `description` / **`kind`（`prompt` / `flow`）** / **`flow`（FlowAgent 图）** / `system_prompt` / **`segments`（追加段 id 列表）** / `abilities` / `prepend_state`；id 由后端生成。**没有 `display_mode`** ✗（2026-10-27 删：从前 `chat` 双边气泡 / `roleplay` 用户气泡+AI 纯文本二选一，现在**只剩后者**、不再是开关。老 `agents.json` / 老卡带里写着它**照常能读**，只是成了不认识的键、下次整份重写自己没掉） |
+| PATCH | `/agents/{agent_id}` | `UpdateAgentReq` | `Agent` | `new_id` = 重命名（搬 `default_agent` 与会话引用）；`description` 三态（nil 不动 / `""` 清空 / 非空写入）；`kind` / `flow` 三态（nil 不动）；`make_default` = 设默认；`segments` / `abilities` / `prepend_state` 整段替换（语义同 POST；`segments: []` = 清空）|
 | POST | `/segments` | `{id,text,imported?,preset_id?}` | `Segment` · 201 | 建提示词段（id 非空唯一、≤64 字 ⇒ 重名 409；**与内置撞名 ⇒ 409**）。`preset_id` = 从哪份 ST 预设导入（服务端校验存在，并快照文件名进 `preset_name`；带它就强制 `imported:true`）|
 | PATCH | `/segments/{segment_id}` | `{new_id?,text?}` | `Segment`| 改内容 / 改名（改名 = 所有 agent 的引用一起搬）；**内置段 ⇒ 400（只读）**|
 | DELETE | `/segments/{segment_id}` | — | 204 | 删段；**还被 Agent（基座或能力追加段）引用 ⇒ 400（列出引用者）**、**内置段 ⇒ 400（删不掉）**。读口不另开 —— 段库随 `GET /agents` 一起给（内置带 `builtin` 标记；ST 导入段带 `preset_id` / `preset_name`）|
@@ -1494,6 +1501,9 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
 - 智能体列表五列：**名称 / 标识 / 类型 / 描述 / 是否默认**；类型是从当前配置派生的
   （酒馆预设 / 提示词计划 / 基础提示词），不是手填字段；描述是纯展示，不参与提示词。
   `default_agent` 为空时按内置 `default` 画「是否默认」（前端不把空串当成“没有默认”）。
+  **新建**是菜单二选一：传统智能体 / FlowAgent；FlowAgent 打开「基本 / 流程 / 能力」，
+  「流程」是 Vue Flow 画布（输入 / 调用智能体 / 拼接 / 输出）。运行时尚未接线，
+  FlowAgent 暂不进入会话的助手选择器。
 - 设置六 tab：**聊天 / 智能体 / 提示词 / 外观 / 酒馆 / 更新**（新会话默认设置 2026-11-09 移到「聊天」顶部，不再在会话管理）（2026-11-02 起；会话与渠道不再是设置 tab；酒馆 2026-11-06 加；更新 2026-11-11 从底部入口搬到最后一只 tab）。聊天 / 智能体 / 提示词/外观的编辑都是 **tab 内二级页**（列表 ⇄ 详情就地切换，`[←]` 返回 —— 2026-10-10 从弹窗改过来，弹窗叠视图的账清了）；**Agent 编辑器的二级页自己也分页签**（2026-10-28 用户：「全挤在一起很丑」）——「基本」（id / 名称 / 首段对话 / 句首贴状态）/「系统提示词」（base + 它的段）/ **每个能力一页**（启用 / Model / 提示词覆盖 / 它的段，页面由 `ABILITY_IDS` 生成 ⇒ 加能力自动多一页），页签条与保存行：**保存那一行在页签外面**（哪一页都能存；藏在某一页里的那种，翻到别的页就找不到保存了）。页签条 **2026-11-06 起是 Vuetify `VTabs`/`VTab` + `VTabsWindow`/`VTabsWindowItem`**（真正的 tabpanel；旧手写 `TabBar.vue` 已删）：设置主栏与 Agent 编辑器同一个模式，`@focus="tab = t.id"` 补上"方向键搬焦点即激活"（Vuetify 的 slide group 只搬焦点，不激活）。「会话设置」（左栏 ☰）是**紧凑对话框**（560px、高随内容）。**Esc 一次只关一层**：二级页开着时设置视图不响应 Esc、会话设置弹窗开着时同理（踩过：两边各监听 document，一下关两层）。**会话管理页**（左栏「会话」入口）= 新会话默认值 + 列表（点进）+ 删除 + 尾部**导入对话**区（`POST /sessions/import-st` 与 `/sessions/import-json` 各一张卡：一句说明 + 按钮 + 隐藏文件框 —— 2026-10-17 用户点名「两种导入混在一起、都乱了」，改成两卡分开、原生 file 框换按钮）。
 - **设置页签顺序有第二个约束**（2026-11-06 用户报「标签页切换行为不太对」）：
   `SETTINGS_TABS` 的显示顺序必须与 `VTabsWindowItem` 的 DOM 顺序一致

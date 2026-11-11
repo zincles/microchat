@@ -21,13 +21,16 @@ const agentValue = ref("");
 const sysPrompt = ref("");
 const sysPromptPh = ref("");
 const modelGroups = ref<Array<{ provider: string; items: ModelChoice[] }>>([]);
-const agents = ref<Array<{ id: string; label: string }>>([]);
+const agents = ref<Array<{ id: string; label: string; kind?: string }>>([]);
 const status = ref("");
 const modelChoices = computed(() => modelGroups.value.flatMap((g) => g.items.map((m) => ({
   label: `${g.provider} / ${m.label}`,
   value: m.value,
 }))));
-const agentChoices = computed(() => agents.value.map((a) => ({ label: a.label, value: a.id })));
+// FlowAgent 暂无运行时：会话设置里先不提供选择。
+const agentChoices = computed(() => agents.value
+  .filter((a: any) => a.kind !== "flow")
+  .map((a) => ({ label: a.label, value: a.id })));
 
 async function load(): Promise<void> {
   const sessions = await api.listSessions();
@@ -44,7 +47,7 @@ async function load(): Promise<void> {
     items: g.items.map((m) => modelOption(m)),
   }));
   const data = await api.agents().catch(() => ({ default_agent: "", agents: [] }));
-  agents.value = (data.agents ?? []).map((a) => agentOption(a));
+  agents.value = (data.agents ?? []).map((a) => ({ ...agentOption(a), kind: a.kind }));
 }
 
 async function save(): Promise<void> {

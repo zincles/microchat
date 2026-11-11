@@ -5,7 +5,7 @@
 //（2026-11-01 从删掉的用户视图整块搬进来，由 `AppearancePane.vue` 渲染）。
 // 关走 close（Esc/×）—— 视图不卸载就丢状态的口径照旧：v-if 挂载，进视图拉一次。
 import { ref, computed, watch, onMounted, onUnmounted } from "vue";
-import { VTab, VTabs, VTabsWindow, VTabsWindowItem, VSwitch, VBtn, VTextField, VSelect, VTable } from "vuetify/components";
+import { VTab, VTabs, VTabsWindow, VTabsWindowItem, VSwitch, VBtn, VTextField, VSelect, VTable, VMenu, VList, VListItem } from "vuetify/components";
 import AgentEditor from "./AgentEditor.vue";
 import AppearancePane from "./AppearancePane.vue";
 import SegmentEditor from "./SegmentEditor.vue";
@@ -70,6 +70,11 @@ const agents = ref<Agent[]>([]);
 const segmentsLib = ref<Segment[]>([]); // 提示词段库（随 GET /agents 一起给）
 const curDefault = ref("");
 const editAgent = ref<any>(null); // null | 'new' | agent（二级编辑器）
+const newAgentKind = ref<"prompt" | "flow">("prompt"); // 新建时的两种类型
+function startNewAgent(kind: "prompt" | "flow"): void {
+  newAgentKind.value = kind;
+  editAgent.value = "new";
+}
 const editSeg = ref<any>(null); // null | 'new' | segment（「提示词」tab 内的二级页）
 // 谁引用了这个段（「提示词」tab 列表与编辑器共用）。
 const segRefs = (id: string): string[] => agents.value.filter((a) => (a.segments ?? []).includes(id)).map((a) => a.name || a.id);
@@ -77,11 +82,13 @@ const segRefs = (id: string): string[] => agents.value.filter((a) => (a.segments
 // 绑了酒馆预设 ⇒ 整套预设接管；有手工提示词计划 ⇒ 计划；否则就是基础提示词。
 // 将来 FlowAgent 落地时，这里再优先看 kind=flow —— 现在不先造一个只有一种值的字段。
 function agentType(a: Agent): string {
+  if (a.kind === "flow") return "FlowAgent";
   if (a.preset_id) return "酒馆预设";
   if ((a.prompt_entries ?? []).length) return "提示词计划";
   return "基础提示词";
 }
 function agentTypeTitle(a: Agent): string {
+  if (a.kind === "flow") return "由 FlowGraph 驱动；不能调用另一个 FlowAgent";
   if (a.preset_id) return "已绑定酒馆预设：Agent 自己的提示词不参与";
   if ((a.prompt_entries ?? []).length) return "使用手工提示词计划";
   return "基础提示词 + 片段";
@@ -342,7 +349,11 @@ const modelOpts = computed(() => modelChoicesFor(modelGroups.value, defaults.val
 const titleSelectOptions = computed(() => [{ label: "使用当前模型", value: "" }, ...titleModelOptions.value]);
 const providerSelectOptions = computed(() => [{ label: "内置默认（本地示例）", value: "" }, ...providerOpts.value]);
 const modelSelectOptions = computed(() => [{ label: "内置默认（本地示例）", value: "" }, ...modelOpts.value]);
-const agentSelectOptions = computed(() => [{ label: "内置默认", value: "" }, ...agents.value.map((a) => ({ label: a.name || a.id, value: a.id }))]);
+const agentSelectOptions = computed(() => [
+  { label: "内置默认", value: "" },
+  // FlowAgent 暂无运行时：不能作为新会话默认助手。
+  ...agents.value.filter((a) => a.kind !== "flow").map((a) => ({ label: a.name || a.id, value: a.id })),
+]);
 const presetOptions = [
   { label: "从模板创建…", value: "" },
   { label: "通用助手", value: "assistant" },
@@ -576,7 +587,15 @@ function onKey(e: KeyboardEvent): void {
               <span class="head-btns">
                 <VBtn variant="text" size="small" type="button" @click="cartridgeInput?.click()" title="导入智能体文件（JSON；提示词片段会一起带进来）">导入智能体…</VBtn>
                 <input ref="cartridgeInput" type="file" accept=".json" hidden @change="importCartridge" />
-                <VBtn color="primary" variant="flat" size="small" type="button" @click="editAgent = 'new'">新建</VBtn>
+                <VMenu location="bottom end" origin="top end">
+                  <template #activator="{ props: activatorProps }">
+                    <VBtn v-bind="activatorProps" color="primary" variant="flat" size="small" type="button">新建</VBtn>
+                  </template>
+                  <VList density="compact">
+                    <VListItem title="传统智能体" subtitle="人设 + 提示词片段 + 能力" @click="startNewAgent('prompt')" />
+                    <VListItem title="FlowAgent" subtitle="用节点图编排多个智能体" @click="startNewAgent('flow')" />
+                  </VList>
+                </VMenu>
                 <VSelect v-model="presetPick" :items="presetOptions" item-title="label" item-value="value" title="从模板创建" density="compact" variant="outlined" hide-details @update:model-value="presetNew" />
               </span>
             </div>
@@ -600,6 +619,8 @@ function onKey(e: KeyboardEvent): void {
             v-if="editAgent"
             :agent="editAgent === 'new' || editAgent?.template ? null : editAgent"
             :template="editAgent?.template ?? null"
+            :kind="editAgent === 'new' ? newAgentKind : (editAgent?.kind === 'flow' ? 'flow' : 'prompt')"
+            :agents="agents"
             :segments="segmentsLib"
             :presets="tavernPresets"
             :is-default="editAgent !== 'new' && editAgent?.id === curDefault"

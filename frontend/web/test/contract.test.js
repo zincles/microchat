@@ -5,6 +5,7 @@ import { parseWireMessages, previewBlock } from "../src/utils/payload.ts";
 import { assemblePrompt, abilityPrompt, missingSegments } from "../src/utils/prompt.ts";
 import { renderMarkdown } from "../src/utils/markdown.ts";
 import { buildCartridge, cartridgeAgent } from "../src/utils/cartridge.ts";
+import { emptyFlowGraph, flowIssues } from "../src/utils/flow.ts";
 import { parseCommand, filterCommands, COMMAND_META } from "../src/utils/commands.ts";
 import { uuidv7 } from "../src/utils/ids.ts";
 import { groupSessions, SESSION_GROUP_LABELS } from "../src/utils/sessionGroups.ts";
@@ -463,6 +464,37 @@ test("智能体列表：名称|标识|类型|描述|是否默认", () => {
   assert.match(settings, /class="agent-desc"/, "描述列没有省略/悬停样式钩子");
   assert.match(editor, /const description = ref\(/, "编辑器没有 description 状态");
   assert.match(editor, /description: description\.value\.trim\(\)/, "保存没有写 description");
+});
+
+// 2026-11-11：新建智能体时选传统 / FlowAgent；FlowAgent 的流程页是第一版节点编辑器。
+test("FlowAgent：新建菜单两种类型，流程编辑器有输入/输出/Agent/拼接节点", () => {
+  const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
+  const editor = readFileSync(join(SRC, "components", "AgentEditor.vue"), "utf8");
+  const flow = readFileSync(join(SRC, "components", "FlowEditor.vue"), "utf8");
+  assert.match(settings, /startNewAgent\('prompt'\)/, "新建菜单没有传统智能体");
+  assert.match(settings, /startNewAgent\('flow'\)/, "新建菜单没有 FlowAgent");
+  assert.match(settings, /<FlowAgent|FlowAgent/, "菜单没有 FlowAgent 文案");
+  assert.match(editor, /agentKind === 'flow'/, "AgentEditor 没按类型切换页签");
+  assert.match(flow, /<VueFlow/, "没有 Vue Flow 画布");
+  for (const type of ["input", "agent", "join", "output"]) {
+    assert.ok(flow.includes(`addNode('${type}')`) || flow.includes(`addNode("${type}")`), `流程编辑器缺 ${type} 节点`);
+  }
+  const empty = emptyFlowGraph();
+  assert.ok(flowIssues(empty, []).some((x) => x.includes("输出节点还没有输入")), "空图没有输出连线警告");
+  const nested = {
+    version: 1,
+    nodes: [
+      { id: "in", type: "input", position: { x: 0, y: 0 }, data: {} },
+      { id: "a", type: "agent", position: { x: 1, y: 1 }, data: { agent_id: "nested" } },
+      { id: "out", type: "output", position: { x: 2, y: 2 }, data: {} },
+    ],
+    edges: [
+      { id: "e1", source: "in", target: "a" },
+      { id: "e2", source: "a", target: "out" },
+    ],
+  };
+  assert.ok(flowIssues(nested, [{ id: "nested", kind: "flow" }]).some((x) => x.includes("不能调用另一个 FlowAgent")),
+    "没有拦住嵌套 FlowAgent");
 });
 
 test("agent 卡带 v2：带引用段（内置不带）、结构不拼平；v1 老卡带照收；导入侧校验", () => {
@@ -1877,14 +1909,16 @@ test("页签条：设置与 Agent 都用 Vuetify VTabs/VTabsWindow", () => {
 // 用户 2026-10-28：「在具体某个 Agent 的设置界面里，我们最好也分 TAB，不然的话，全挤在一起很丑。」
 // 分页签这件事**两个地方都要**：VTabs 在，且每个能力各占一页（加能力自动多一页，
 // 别写成硬编码的两页 —— 硬编码的那种，加第三个能力时那个能力的开关会悄悄挤在最后一页里）。
-test("Agent 编辑器分页签：基本 / 系统提示词 / 每个能力各一页", () => {
+test("Agent 编辑器分页签：传统 Agent 是基本/系统提示词，FlowAgent 是基本/流程", () => {
   const editor = readFileSync(join(SRC, "components", "AgentEditor.vue"), "utf8");
   assert.match(editor, /\{ id: "base", label: "基本" \}/, "没有「基本」那一页");
   assert.match(editor, /\.\.\.ABILITY_IDS\.map\(\(id\) => \(\{ id, label: ABILITY_LABELS\[id\] \?\? id \}\)\)/,
     "能力那几页该由 ABILITY_IDS 生成（加能力自动多一页）");
   // 三个分区都在真正的 VTabsWindowItem 里（翻页不丢已填的东西）
   assert.match(editor, /<VTabsWindowItem value="base">/, "基本那一页没有 tabpanel");
-  assert.match(editor, /<VTabsWindowItem value="prompt">/, "系统提示词那一页没有 tabpanel");
+  assert.match(editor, /<VTabsWindowItem v-if="agentKind !== 'flow'" value="prompt">/, "传统 Agent 的系统提示词页没有 tabpanel");
+  assert.match(editor, /<VTabsWindowItem v-if="agentKind === 'flow'" value="flow">/, "FlowAgent 的流程页没有 tabpanel");
+  assert.match(editor, /<FlowEditor v-model:graph="flowGraph"/, "流程页没有接 Vue Flow 编辑器");
   assert.match(editor, /<VTabsWindowItem v-for="id in ABILITY_IDS" :key="id" :value="id">/, "能力那几页没有 tabpanel");
   // 保存行在页签**外面**：哪一页都能存（藏在某一页里的那种，翻到别的页就找不到保存了）
   const saveAt = editor.indexOf(">保存<");

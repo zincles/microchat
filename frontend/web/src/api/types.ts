@@ -534,11 +534,41 @@ export interface PromptEntry {
   system_prompt?: boolean;
 }
 
+export interface FlowPosition {
+  x: number;
+  y: number;
+}
+
+export interface FlowNode {
+  id: string;
+  type: string;
+  position: FlowPosition;
+  data?: Record<string, unknown>;
+}
+
+export interface FlowEdge {
+  id: string;
+  source: string;
+  target: string;
+  sourceHandle?: string;
+  targetHandle?: string;
+}
+
+export interface FlowGraph {
+  version?: number;
+  nodes: FlowNode[];
+  edges: FlowEdge[];
+}
+
 export interface Agent {
   id: string;
   name: string;
   /** 列表里显示的一句人话；不参与提示词拼装。 */
   description?: string;
+  /** 空 / "prompt" = 传统提示词 Agent；"flow" = FlowAgent（图驱动）。 */
+  kind?: "prompt" | "flow" | "";
+  /** FlowAgent 的图；传统 Agent 为空。 */
+  flow?: FlowGraph | null;
   system_prompt: string;
   first_message?: string;
   segments?: string[];
@@ -568,6 +598,8 @@ export interface AgentsConfig {
 export interface CreateAgentRequest {
   name: string;
   description?: string;
+  kind?: "prompt" | "flow";
+  flow?: FlowGraph | null;
   system_prompt?: string;
   first_message?: string;
   segments?: string[];
@@ -582,6 +614,8 @@ export interface UpdateAgentRequest {
   make_default?: boolean;
   name?: string;
   description?: string;
+  kind?: "prompt" | "flow";
+  flow?: FlowGraph | null;
   system_prompt?: string;
   first_message?: string;
   segments?: string[];
