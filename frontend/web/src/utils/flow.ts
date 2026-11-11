@@ -200,7 +200,7 @@ export function flowDebugSteps(graph: FlowGraph): FlowDebugStep[] {
   const nodes = flowNodeOrder(graph);
   const edges = graph.edges ?? [];
   const values = new Map<string, { text: string; reasoning: string }>();
-  const labels: Record<string, string> = { input: "输入", history: "历史数据", llm: "调用 LLM", join: "拼接", output: "输出" };
+  const labels: Record<string, string> = { input: "输入", history: "历史数据", llm: "调用 LLM", join: "拼接和复制", output: "输出" };
   const source = (edge: { source: string; sourceHandle?: string }): string => {
     const handle = edge.sourceHandle || "out";
     const value = values.get(`${edge.source}\0${handle}`) ?? values.get(`${edge.source}\0out`) ?? values.get(`${edge.source}\0text`);

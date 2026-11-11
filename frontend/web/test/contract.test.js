@@ -496,7 +496,7 @@ test("FlowAgent：端口有类型，且每个端点只许一条线", () => {
   assert.ok(flowIssues(graph).some((x) => x.includes("一个入口只能接一条线")));
 });
 
-test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接节点", () => {
+test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接和复制节点", () => {
   const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
   const editor = readFileSync(join(SRC, "components", "AgentEditor.vue"), "utf8");
   const flow = readFileSync(join(SRC, "components", "FlowEditor.vue"), "utf8");
@@ -518,7 +518,8 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(flowNode, /class="flow-node-delete/, "节点没有删除按钮");
   assert.match(flowNode, /id="reasoning"/, "LLM 节点没有思考出口");
   assert.match(flowNode, /id="history"/, "LLM 节点没有 history 输入");
-  assert.match(flowNode, /class="flow-join-inputs"/, "拼接节点没有多输入端口");
+  assert.match(flowNode, /拼接和复制/, "拼接节点没有改名为拼接和复制");
+  assert.match(flowNode, /class="flow-join-inputs"/, "拼接和复制节点没有多输入端口");
   assert.match(flowNode, /addJoinInput/, "拼接节点不能增加输入端口");
   assert.match(flowNode, /class="flow-history-input"/, "history 输入没有独立标签/端口");
   assert.match(flowNode, /id="text"/, "LLM 节点没有正文出口");

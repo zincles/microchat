@@ -63,13 +63,13 @@ const testing = ref(false);
 const nodeRows = computed(() => nodes.value.map((n) => ({
   id: String(n.id),
   type: String(n.type),
-  label: ({ input: "输入", history: "历史", llm: "LLM", join: "拼接", output: "输出" } as Record<string, string>)[String(n.type)] ?? String(n.type),
+  label: ({ input: "输入", history: "历史", llm: "LLM", join: "拼接和复制", output: "输出" } as Record<string, string>)[String(n.type)] ?? String(n.type),
   incoming: edges.value.filter((e) => e.target === n.id),
   outgoing: edges.value.filter((e) => e.source === n.id),
 })));
 function nodeLabel(id: string): string {
   const node = nodes.value.find((n) => n.id === id);
-  return node ? (({ input: "输入", history: "历史", llm: "LLM", join: "拼接", output: "输出" } as Record<string, string>)[String(node.type)] ?? String(node.type)) : id;
+  return node ? (({ input: "输入", history: "历史", llm: "LLM", join: "拼接和复制", output: "输出" } as Record<string, string>)[String(node.type)] ?? String(node.type)) : id;
 }
 function openPanel(tab: "test" | "debug" | "nodes"): void {
   if (panelOpen.value && panelTab.value === tab) { panelOpen.value = false; return; }
@@ -223,7 +223,7 @@ watch([nodes, edges], () => emit("update:graph", toGraph()), { deep: true });
       <VBtn variant="tonal" size="small" type="button" :disabled="inputExists" @click="addNode('input')">输入</VBtn>
       <VBtn variant="tonal" size="small" type="button" color="warning" :disabled="historyExists" @click="addNode('history')">历史数据</VBtn>
       <VBtn variant="tonal" size="small" type="button" @click="addNode('llm')">调用 LLM</VBtn>
-      <VBtn variant="tonal" size="small" type="button" @click="addNode('join')">拼接</VBtn>
+      <VBtn variant="tonal" size="small" type="button" @click="addNode('join')">拼接和复制</VBtn>
       <VBtn variant="tonal" size="small" type="button" :disabled="outputExists" @click="addNode('output')">输出</VBtn>
       <span class="flow-toolbar-spacer"></span>
       <VBtn variant="text" size="small" type="button"

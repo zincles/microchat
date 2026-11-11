@@ -24,14 +24,14 @@ const label = computed(() => ({
   input: "输入",
   history: "历史数据",
   llm: "调用 LLM",
-  join: "拼接",
+  join: "拼接和复制",
   output: "输出",
 }[props.type] ?? props.type));
 const hint = computed(() => ({
   input: "裸字符串：本轮用户输入",
   history: "messages[]：当前会话历史",
   llm: "手动组装 messages",
-  join: "把多路输出合成一段文本",
+  join: "多路拼接；只接一路时直接复制",
   output: "最终结果写入聊天",
 }[props.type] ?? ""));
 const prompts = computed<PromptEntry[]>(() => Array.isArray(props.data.prompts) ? props.data.prompts : []);

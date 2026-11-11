@@ -111,7 +111,7 @@ func (s *Service) TestFlow(ctx context.Context, flowAgent config.Agent, message,
 			// 测试接口没有会话上下文：历史节点只回一个明确的占位，不当成真实消息。
 			step.Output = "[会话历史 messages]"
 		case "join":
-			step.Label = "拼接"
+			step.Label = "拼接和复制"
 			step.Output = joinFlowInputs(inputs)
 		case "output":
 			step.Label = "输出"
