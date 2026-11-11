@@ -13,7 +13,7 @@ import { Controls } from "@vue-flow/controls";
 import "@vue-flow/core/dist/style.css";
 import "@vue-flow/core/dist/theme-default.css";
 import "@vue-flow/controls/dist/style.css";
-import { VBtn, VTextField } from "vuetify/components";
+import { VBtn, VList, VListItem, VMenu, VTextField } from "vuetify/components";
 import { ICONS } from "./icons.ts";
 import { sharedApi } from "../utils/prefs.ts";
 import FlowNode from "./FlowNode.vue";
@@ -140,6 +140,20 @@ function toGraph(): FlowGraph {
   };
 }
 
+const addNodeItems = computed<Array<{
+  type: "input" | "history" | "trim" | "merge" | "llm" | "join" | "output";
+  label: string;
+  disabled: boolean;
+}>>(() => [
+  { type: "input", label: "输入", disabled: inputExists.value },
+  { type: "history", label: "历史数据", disabled: historyExists.value },
+  { type: "trim", label: "裁剪 messages", disabled: false },
+  { type: "merge", label: "拼接 messages", disabled: false },
+  { type: "llm", label: "调用 LLM", disabled: false },
+  { type: "join", label: "拼接和复制", disabled: false },
+  { type: "output", label: "输出", disabled: outputExists.value },
+]);
+
 function addNode(type: "input" | "history" | "trim" | "merge" | "llm" | "join" | "output"): void {
   if (type === "input" && inputExists.value) return;
   if (type === "history" && historyExists.value) return;
@@ -245,14 +259,17 @@ watch([nodes, edges], () => emit("update:graph", toGraph()), { deep: true });
 <template>
   <section class="flow-editor" :class="{ expanded }">
     <div class="flow-toolbar">
-      <span class="flow-toolbar-label">添加节点：</span>
-      <VBtn variant="tonal" size="small" type="button" :disabled="inputExists" @click="addNode('input')">输入</VBtn>
-      <VBtn variant="tonal" size="small" type="button" color="warning" :disabled="historyExists" @click="addNode('history')">历史数据</VBtn>
-      <VBtn variant="tonal" size="small" type="button" color="warning" @click="addNode('trim')">裁剪 messages</VBtn>
-      <VBtn variant="tonal" size="small" type="button" color="warning" @click="addNode('merge')">拼接 messages</VBtn>
-      <VBtn variant="tonal" size="small" type="button" @click="addNode('llm')">调用 LLM</VBtn>
-      <VBtn variant="tonal" size="small" type="button" @click="addNode('join')">拼接和复制</VBtn>
-      <VBtn variant="tonal" size="small" type="button" :disabled="outputExists" @click="addNode('output')">输出</VBtn>
+      <VMenu location="bottom start" :close-on-content-click="true">
+        <template #activator="{ props: menuProps }">
+          <VBtn v-bind="menuProps" variant="tonal" size="small" type="button">＋ 添加节点</VBtn>
+        </template>
+        <VList class="flow-add-menu" density="compact">
+          <VListItem v-for="item in addNodeItems" :key="item.type"
+            :disabled="item.disabled" @click="addNode(item.type)">
+            {{ item.label }}
+          </VListItem>
+        </VList>
+      </VMenu>
       <span class="flow-toolbar-spacer"></span>
       <VBtn variant="text" size="small" type="button"
         :aria-pressed="panelOpen && panelTab === 'test' ? 'true' : 'false'"

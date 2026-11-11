@@ -577,8 +577,9 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(css, /\.flow-panel-test \{[^}]*display:\s*flex/, "测试面板没有独立内容区");
   assert.match(flow, /flow-node-row/, "节点面板没有节点列表");
   assert.match(flow, /flow-panel-tabs/, "面板没有 测试/调试/节点 tabs");
+  assert.match(flow, /<VMenu[\s\S]*flow-add-menu[\s\S]*addNodeItems/, "添加节点不是下拉列表");
   for (const type of ["input", "history", "trim", "merge", "llm", "join", "output"]) {
-    assert.ok(flow.includes(`addNode('${type}')`) || flow.includes(`addNode("${type}")`), `流程编辑器缺 ${type} 节点`);
+    assert.match(flow, new RegExp(`type: "${type}"`), `流程编辑器缺 ${type} 节点`);
   }
   const empty = emptyFlowGraph();
   assert.ok(flowIssues(empty).some((x) => x.includes("输出节点还没有输入")), "空图没有输出连线警告");
@@ -2012,6 +2013,10 @@ test("页签条：设置与 Agent 都用 Vuetify VTabs/VTabsWindow", () => {
 test("Agent 编辑器分页签：传统 Agent 是基本/系统提示词，FlowAgent 是基本/流程", () => {
   const editor = readFileSync(join(SRC, "components", "AgentEditor.vue"), "utf8");
   assert.match(editor, /\{ id: "base", label: "基本" \}/, "没有「基本」那一页");
+  assert.match(editor, /const tab = ref\(agentKind\.value === "flow" \? "flow" : "base"\)/, "FlowAgent 打开时没有默认落在流程页");
+  const flowAt = editor.indexOf('{ id: "flow", label: "流程" }');
+  const baseAt = editor.indexOf('{ id: "base", label: "基本" }');
+  assert.ok(flowAt > 0 && baseAt > flowAt, "FlowAgent 的「流程」不在最左");
   assert.match(editor, /\.\.\.ABILITY_IDS\.map\(\(id\) => \(\{ id, label: ABILITY_LABELS\[id\] \?\? id \}\)\)/,
     "能力那几页该由 ABILITY_IDS 生成（加能力自动多一页）");
   // 三个分区都在真正的 VTabsWindowItem 里（翻页不丢已填的东西）

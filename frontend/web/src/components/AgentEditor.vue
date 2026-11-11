@@ -63,15 +63,20 @@ const emit = defineEmits<{ close: []; saved: [] }>();
 const api = sharedApi();
 const isNew = !props.agent;
 const agentKind = computed<"prompt" | "flow">(() => (props.agent?.kind === "flow" ? "flow" : props.agent ? "prompt" : props.kind));
-// 页签：基本 →（传统 Agent 的系统提示词 / FlowAgent 的流程）→ 每个能力一页。
-// 能力按 `ABILITY_IDS` 生成，加能力自动多一页。
-const tabs = computed<Array<{ id: string; label: string }>>(() => [
-  { id: "base", label: "基本" },
-  ...(agentKind.value === "flow"
-    ? [{ id: "flow", label: "流程" }]
-    : [{ id: "prompt", label: "系统提示词" }]),
-  ...ABILITY_IDS.map((id) => ({ id, label: ABILITY_LABELS[id] ?? id })),
-]);
+// 页签：FlowAgent 是「流程 → 基本 → 能力」；传统 Agent 是「基本 → 系统提示词 → 能力」。
+// FlowAgent 的流程图是它的主体，必须是最左、打开就落在这一页；能力按 `ABILITY_IDS`
+// 生成，加能力自动多一页。
+const tabs = computed<Array<{ id: string; label: string }>>(() => agentKind.value === "flow"
+  ? [
+      { id: "flow", label: "流程" },
+      { id: "base", label: "基本" },
+      ...ABILITY_IDS.map((id) => ({ id, label: ABILITY_LABELS[id] ?? id })),
+    ]
+  : [
+      { id: "base", label: "基本" },
+      { id: "prompt", label: "系统提示词" },
+      ...ABILITY_IDS.map((id) => ({ id, label: ABILITY_LABELS[id] ?? id })),
+    ]);
 const modelSourceOptions = [
   { label: "跟随全局设置", value: "global" },
   { label: "使用当前模型", value: "session" },
@@ -79,7 +84,7 @@ const modelSourceOptions = [
 ];
 const agentModelOptions = computed(() => [{ label: "未选择（回落全局）", value: "" }, ...modelOptions.value]);
 const sessionModelOptions = computed(() => [{ label: "跟随会话", value: "" }, ...modelOptions.value]);
-const tab = ref("base");
+const tab = ref(agentKind.value === "flow" ? "flow" : "base");
 const aid = ref(props.agent?.id ?? "");
 const name = ref(props.agent?.name ?? props.template?.name ?? "");
 const description = ref(props.agent?.description ?? props.template?.description ?? "");

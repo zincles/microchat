@@ -1755,6 +1755,7 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-main { position: relative; display: flex; align-items: stretch; gap: 0.7em; min-height: 0; }
 .flow-main .flow-canvas { flex: 1 1 auto; min-width: 0; }
 /* 调试栏悬浮在画布右侧，不参与 flex 宽度分配 —— 打开它不能把绘图区挤窄。 */
+.flow-add-menu { min-width: 11em; }
 .flow-debug { position: absolute; top: 0.5em; right: 0.5em; bottom: 0.5em; z-index: 30;
   width: min(20em, 42%); min-height: 0; overflow-y: auto; overscroll-behavior: contain;
   touch-action: pan-y; -webkit-overflow-scrolling: touch;
