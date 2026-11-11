@@ -11,6 +11,8 @@
 // 它们有了正经地方，也就不必再挤在栏里和对话抢宽度。
 import { ref } from "vue";
 import PayloadBar from "./PayloadBar.vue";
+import FlowWorkspace from "./FlowWorkspace.vue";
+import type { Agent } from "../api/types.ts";
 
 export interface PayloadBarApi {
   setWire: (wire: unknown) => void;
@@ -27,11 +29,13 @@ const props = withDefaults(defineProps<{
   defaultBlocks?: number | null;
   // flow：FlowAgent 暂时不套用普通 Agent 的载荷/状态/压缩面板 —— 新面板另行设计。
   flow?: boolean;
+  agent?: Agent | null;
 }>(), {
   hasSession: false,
   sessionId: "",
   defaultBlocks: null,
   flow: false,
+  agent: null,
 });
 // tab / compact / compact-payload：面板那三件事照旧往上报 ——
 // 压缩树要"看着才拉全量"（App 的 treeVisible），压缩与预演也得让 App 去发请求。
@@ -42,6 +46,7 @@ const emit = defineEmits<{
   undo: [id: string];
   preview: [value: unknown];
   "advanced-done": [];
+  "flow-saved": [];
 }>();
 
 // inner：真正的面板。四个 setter 由 App 通过本组件的 expose 一路打到它身上
@@ -58,9 +63,8 @@ defineExpose({
 
 <template>
   <section id="context-workspace" aria-label="上下文工作区">
-    <section v-if="props.flow" class="flow-context-placeholder" aria-label="FlowAgent 上下文">
-      <p>FlowAgent 的上下文面板正在重做。</p>
-      <p>旧的载荷 / 状态 / 压缩面板只适用于普通 Agent，暂不从 FlowAgent 打开。</p>
+    <section v-if="props.flow" aria-label="FlowAgent 工作流">
+      <FlowWorkspace :agent="props.agent" @saved="() => emit('flow-saved')" />
     </section>
     <template v-else>
     <!-- 草稿态：还没会话 ⇒ 面板里全是空话。明说一句，别让人以为面板坏了。

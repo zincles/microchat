@@ -483,7 +483,7 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
         @update:model-value="setWorkspace"
       >
         <VTab value="chat" title="对话本身">聊天</VTab>
-        <VTab value="context" title="上下文工作区（压缩出来的前情提要、层级、状态、真发出去的载荷）">上下文</VTab>
+        <VTab value="context" :title="flow ? '当前 Agent 的工作流图' : '上下文工作区（压缩出来的前情提要、层级、状态、真发出去的载荷）'">{{ flow ? "工作流" : "上下文" }}</VTab>
       </VTabs>
       <!-- 顺序是**环在左、开关在右**（2026-10-28 用户定）：开关是"控制栏的按钮"，
            它是这一簇的锚，位置稳定；环是随状态变的仪表，挂在它左边不抢锚点。 -->

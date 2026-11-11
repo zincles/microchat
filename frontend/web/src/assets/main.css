@@ -2095,3 +2095,10 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
   .flow-canvas { --flow-bottom-h: 42%; }
   .flow-canvas.bottom-open .flow-node-sidebar { bottom: calc(42% + 0.9em); }
 }
+
+/* FlowAgent 工作流工作区：复用 FlowEditor，顶部只留一句保存状态。 */
+#flow-workspace { display: flex; flex-direction: column; gap: 0.35em; }
+.flow-workspace-head { display: flex; align-items: baseline; gap: 0.75em; }
+.flow-workspace-head .hint { margin: 0; flex: 1 1 auto; }
+.flow-workspace-status { flex: none; color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
+#flow-workspace .flow-editor { margin-top: 0.1em; }

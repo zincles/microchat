@@ -703,7 +703,8 @@ const agentGreeting = computed(() => {
   return (a?.first_message ?? "").trim();
 });
 // FlowAgent 暂不共用普通 Agent 的上下文面板；新的节点面板另行设计。
-const currentAgentIsFlow = computed(() => vueAgents.value.find((x) => x.id === sessionInfo.agent_id)?.kind === "flow");
+const currentAgent = computed(() => vueAgents.value.find((x) => x.id === sessionInfo.agent_id) ?? null);
+const currentAgentIsFlow = computed(() => currentAgent.value?.kind === "flow");
 // 空草稿首屏的两格（2026-11-02）：当前助手名 + 会话模型。
 // 模型显示上游 id（顶栏那份是 prettify 后的名字）—— 草稿还没有模型列表可查，
 // 而这一行是"我马上要跟谁说话"，宁可给原始 id 也不留空。
@@ -2279,6 +2280,8 @@ onUnmounted(() => {
       :session-id="sessionInfo.id"
       :default-blocks="compactDefault"
       :flow="currentAgentIsFlow"
+      :agent="currentAgent"
+      @flow-saved="refreshAgents"
       @compact="(n) => compactNow(n ?? undefined)"
       @compact-payload="previewCompactPayload"
       @tab="onPayloadTab"

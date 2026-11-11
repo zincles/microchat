@@ -585,9 +585,11 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(readFileSync(join(SRC, "App.vue"), "utf8"), /:flow="currentAgentIsFlow"/, "App 没把 FlowAgent 状态传给顶栏");
   const workspace = readFileSync(join(SRC, "components", "ContextWorkspace.vue"), "utf8");
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
-  assert.match(workspace, /flow-context-placeholder/, "FlowAgent 没有新的上下文占位面板");
-  assert.match(workspace, /flow\?:\s*boolean/, "上下文工作区没有 FlowAgent 分支");
-  assert.match(app, /:flow="currentAgentIsFlow"/, "App 没把 FlowAgent 状态传给上下文工作区");
+  assert.match(workspace, /<FlowWorkspace/, "FlowAgent 工作流页没有接 Flow 编辑器");
+  assert.match(workspace, /agent\?:\s*Agent \| null/, "工作流页没有接当前 Agent");
+  assert.match(app, /:agent="currentAgent"/, "App 没把当前 Agent 传给工作流页");
+  assert.match(app, /@flow-saved="refreshAgents"/, "工作流保存后没有刷新 Agent 列表");
+  assert.match(readFileSync(join(SRC, "components", "FlowWorkspace.vue"), "utf8"), /patchAgent\(agent\.id, \{ flow: snapshot \}\)/, "工作流没有保存回 Agent 文件");
   assert.ok(!/flow-run-pane/.test(readFileSync(join(SRC, "components", "PayloadBar.vue"), "utf8")), "旧的 FlowAgent 载荷 tab 还在");
   assert.match(flowNode, /flow-trim-controls/, "裁剪节点没有配置控件");
   assert.match(flowNode, /flow-rewrite-controls/, "覆写输入节点没有编辑框");
@@ -1346,7 +1348,7 @@ test("上下文环：圆心是后台任务数，有任务时转动，面板里�
   assert.ok(!/还能装|给回复留的地方|没有在跑的任务|上次用了/.test(top), "面板里还留着口语化文案");
   assert.match(top, /const ctxTab = ref(?:<[^>]+>)?\("context"\)/, "面板没有 tab 状态");
   assert.match(tpl, /<VTabs[\s\S]*?v-model="ctxTab"/, "面板不是 Vuetify VTabs");
-  assert.match(tpl, /<VTab value="context">上下文<\/VTab>/, "没有上下文 tab");
+  assert.match(tpl, /\{\{ flow \? "工作流" : "上下文" \}\}/, "FlowAgent 的工作流 tab 文案没接上");
   assert.match(tpl, /<VTab value="tasks">任务/, "没有任务 tab");
   assert.match(tpl, /<VWindow v-model="ctxTab"/, "面板内容没有用 Vuetify VWindow 切换");
   assert.match(tpl, /<VWindowItem value="context">/, "上下文内容没有挂在 context 窗口");

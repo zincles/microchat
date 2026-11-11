@@ -420,6 +420,8 @@ delete(AA)           # 删除
   `GET .../flow/run` 返回最近一次图执行的节点轨迹（每个 LLM 节点的请求快照、输出、usage、耗时）；
   **FlowAgent 暂时不套用普通 Agent 的载荷/状态/压缩上下文面板**（旧的「流程」tab 与环里的节点列表也已撤掉），
   新的节点面板另行设计；`/context` 的节点级数据仍保留给新面板用。
+  FlowAgent 的顶栏工作区 tab 是 **聊天 / 工作流**；工作流页直接复用 `FlowEditor` 编辑当前 Agent 的图，
+  改动约 0.7 秒防抖后 PATCH 回 `agents.json`（自动保存，不需要再进设置页）。
   底部输入栏对 FlowAgent 隐藏「推理等级」与「工具」两个小面板（运行时不用这两个会话选项）。
   **FlowAgent 暂时不启用起标题 / 自动压缩等高级能力**（runFlow 不调 Titles/Compactor；
   Agent 编辑器的能力页签也不显示）。
