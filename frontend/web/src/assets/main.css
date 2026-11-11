@@ -1915,7 +1915,7 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
   border-top: 1px solid var(--md-outline-variant); }
 .flow-prompt-row:first-child { border-top: 0; }
 .flow-prompt-head { display: flex; align-items: center; gap: 0.25em; }
-.flow-prompt-role { flex: 1 1 auto; min-width: 0; }
+.flow-prompt-role { flex: 0 0 6.8em; width: 6.8em; min-width: 0; }
 .flow-prompt-role .v-field { font-size: var(--md-type-label-small); }
 .flow-prompt-content { margin-top: 0.25em; }
 .flow-prompt-content .v-field__input { font-size: var(--md-type-label-small); line-height: 1.45; }
@@ -1962,7 +1962,9 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
   border-radius: var(--md-shape-md); background: var(--md-surface-container);
   box-shadow: var(--md-elev-1);
 }
-.flow-node-llm { min-width: 300px; max-width: 350px; }
+.flow-node-llm { min-width: 300px; max-width: 460px; display: flex; flex-direction: column; }
+.flow-node-llm .flow-prompt-list { flex: 1 1 auto; min-height: 0; }
+.flow-node-llm .flow-node-body { flex: none; }
 .flow-node-output { border-left-color: var(--flow-node-accent); border-right: 1px solid var(--md-outline-variant); }
 .flow-node-history, .flow-node-trim, .flow-node-merge {
   --flow-node-accent: var(--flow-history);
@@ -2144,3 +2146,12 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-calls-open { margin-top: 0.45em; color: var(--md-primary); }
 @keyframes flow-call-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.45; transform: scale(0.72); } }
 @media (prefers-reduced-motion: reduce) { .flow-call-dot { animation: none; } }
+
+/* 调用 LLM 卡片右下角的手动缩放柄。 */
+.flow-node-resizer { position: absolute; right: 0.15em; bottom: 0.15em; z-index: 60;
+  width: 0.9em; height: 0.9em; border-right: 2px solid var(--md-on-surface-variant);
+  border-bottom: 2px solid var(--md-on-surface-variant); border-radius: 0 0 var(--r-xs) 0;
+  opacity: 0; cursor: nwse-resize; }
+.flow-node-llm:hover .flow-node-resizer, .flow-node.resizing .flow-node-resizer { opacity: 0.7; }
+.flow-node-resizer:hover { opacity: 1; }
+.flow-node.resizing { user-select: none; }

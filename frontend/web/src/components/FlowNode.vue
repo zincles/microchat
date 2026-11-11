@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // FlowAgent 编辑器的节点外壳：输入 / 历史 / 裁剪 / 调用 LLM / 拼接 / 输出。
 // LLM 节点内部是一张 **messages 列表**：每个 Prompt 条目有自己的 role 和左侧输入孔。
-import { computed, inject, ref, type Ref } from "vue";
+import { computed, inject, onUnmounted, ref, type Ref } from "vue";
 import { Handle, Position } from "@vue-flow/core";
 import { VBtn, VSelect, VTextField, VTextarea } from "vuetify/components";
 import type { ModelListItem } from "../api/types.ts";
@@ -66,6 +66,41 @@ const modelValue = computed({
     props.data.model = value.slice(cut + 1);
   },
 });
+const nodeStyle = computed(() => {
+  if (props.type !== "llm") return {};
+  const width = Number(props.data.width);
+  const height = Number(props.data.height);
+  return {
+    ...(Number.isFinite(width) && width > 0 ? { width: `${width}px` } : {}),
+    ...(Number.isFinite(height) && height > 0 ? { height: `${height}px` } : {}),
+  };
+});
+const resizing = ref(false);
+let resizeStart = { x: 0, y: 0, width: 0, height: 0 };
+function resizeMove(event: PointerEvent): void {
+  if (!resizing.value) return;
+  const width = Math.max(260, Math.round(resizeStart.width + event.clientX - resizeStart.x));
+  const height = Math.max(120, Math.round(resizeStart.height + event.clientY - resizeStart.y));
+  props.data.width = width;
+  props.data.height = height;
+}
+function resizeEnd(): void {
+  resizing.value = false;
+  window.removeEventListener("pointermove", resizeMove);
+  window.removeEventListener("pointerup", resizeEnd);
+}
+function resizeStartHandler(event: PointerEvent): void {
+  const node = (event.currentTarget as HTMLElement).closest(".flow-node") as HTMLElement | null;
+  if (!node) return;
+  const rect = node.getBoundingClientRect();
+  resizeStart = { x: event.clientX, y: event.clientY, width: rect.width, height: rect.height };
+  resizing.value = true;
+  window.addEventListener("pointermove", resizeMove);
+  window.addEventListener("pointerup", resizeEnd);
+  event.preventDefault();
+  event.stopPropagation();
+}
+onUnmounted(resizeEnd);
 const rewritePrompt = computed({
   get: () => typeof props.data.prompt === "string" ? props.data.prompt : "{{input}}",
   set: (value: string) => { props.data.prompt = value; },
@@ -163,7 +198,8 @@ function addJoinOutput(): void {
 <template>
   <div
     class="flow-node"
-    :class="[`flow-node-${type}`]"
+    :class="[`flow-node-${type}`, { resizing }]"
+    :style="nodeStyle"
     @mouseenter="hovered = true"
     @mouseleave="hovered = false"
   >
@@ -266,6 +302,8 @@ function addJoinOutput(): void {
       <span class="flow-node-test-label">正文</span>
       <pre>{{ data.test.output || "（无输出）" }}</pre>
     </div>
+    <span v-if="type === 'llm'" class="flow-node-resizer nodrag nopan"
+      title="拖动调整卡片大小" aria-label="调整卡片大小" @pointerdown="resizeStartHandler"></span>
     <div v-if="type === 'llm'" class="flow-llm-outputs">
       <div class="flow-llm-output-row">
         <span>思考</span>

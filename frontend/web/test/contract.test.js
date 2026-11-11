@@ -575,6 +575,8 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(flowNode, /flow-prompt-history/, "history 条目没有独立外观");
   assert.match(flowNode, /addHistory/, "LLM 节点不能添加历史条目");
   assert.match(flowNode, /flow-llm-model/, "LLM 节点没有 AI 模型选择框");
+  assert.match(flowNode, /flow-node-resizer/, "LLM 节点没有尺寸调节柄");
+  assert.match(css, /\.flow-prompt-role \{[^}]*width:\s*6\.8em/, "Role 选择器没有收窄");
   const composer = readFileSync(join(SRC, "components", "Composer.vue"), "utf8");
   assert.match(composer, /flow\?:\s*boolean/, "输入栏没有 FlowAgent 开关");
   assert.match(composer, /v-if="!flow && thinkingOptions.length"/, "FlowAgent 仍显示推理等级");
