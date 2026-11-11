@@ -2144,6 +2144,7 @@ onUnmounted(() => {
         @open-settings="openSettings"
         @open-sessions="() => openManage('session')"
         @open-providers="() => openManage('provider')"
+        @open-agent="() => openManage('agent')"
         @open-update="() => openManage('update')"
       />
       <div id="scrim-left" @click="toggleLeft"></div>

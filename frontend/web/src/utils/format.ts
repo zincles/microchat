@@ -510,7 +510,7 @@ export interface SettingsTab {
   label: string;
 }
 
-// SETTINGS_TABS：设置视图四区（顺序固定）—— **id 与中文名同一份**（按钮标签、panel id 都从它来）。
+// SETTINGS_TABS：设置视图六区（顺序固定）—— **id 与中文名同一份**（按钮标签、panel id 都从它来）。
 // 2026-11-02 用户「设置面板塞了太多东西」：**会话 / 渠道** 不再住设置 tab，
 // 改由左栏底部的「会话 / 渠道」两个独立入口打开（同一个视图，`:only` 只显示那一页）。
 // 「外观」区 2026-11-01 搬回设置（用户定：「把外观设置做到设置里」）——
@@ -528,6 +528,7 @@ export const SETTINGS_TABS: SettingsTab[] = [
   { id: "prompt", label: "提示词" },
   { id: "appearance", label: "外观" },
   { id: "tavern", label: "酒馆" },
+  { id: "update", label: "更新" },
 ];
 
 // formatRoutesOutcome：刷路由回形 {provider, models, error?} ⇒ 缓存行文案。

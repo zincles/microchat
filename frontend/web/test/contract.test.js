@@ -2194,7 +2194,7 @@ test("设置：没有「连接」页，也没有绑不存在的 saveNet", () => 
 // 页签条与 SETTINGS_TABS 是同一份；会话/渠道的 panel 还在，但**不再住设置 tab** ——
 // 它们由左栏底部的独立入口用 `:only` 打开。这条同时钉住两头，防止"只删 tab、
 // panel 变成永远进不去的死页"或"又偷偷塞回设置里"。
-test("设置页签：五区 + 会话/渠道/更新独立入口", () => {
+test("设置页签：六区 + 会话/渠道/智能体/更新独立入口", () => {
   const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
   const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
   // 渠道页内部还有「渠道列表 / 全局模型规则」两个二级页签（list/global），
@@ -2206,13 +2206,14 @@ test("设置页签：五区 + 会话/渠道/更新独立入口", () => {
     `panel 不齐：${panels.join(", ")}`);
   // 键盘焦点即激活（VSlideGroup 的 ArrowLeft/Right 只搬焦点，@focus 补上 WAI-ARIA 自动激活）
   assert.match(settings, /@focus="tab = t\.id"/, "设置 VTabs 没在焦点时激活");
-  // 设置主栏五个 tab：酒馆负责 ST 导入/转换。
-  assert.deepEqual(SETTINGS_TABS.map((t) => t.id), ["chat", "agent", "prompt", "appearance", "tavern"],
+  // 设置主栏六个 tab：酒馆负责 ST 导入/转换，更新在最后。
+  assert.deepEqual(SETTINGS_TABS.map((t) => t.id), ["chat", "agent", "prompt", "appearance", "tavern", "update"],
     "SETTINGS_TABS 少/多了区，或顺序变了");
-  // 独立入口：左栏底两枚按钮 + App 用 :only 打开同一个视图。
+  // 独立入口：左栏底会话 / 渠道 / 智能体 + App 用 :only 打开同一个视图；更新走品牌头。
   assert.match(bar, /@click="\$emit\('open-sessions'\)"/, "左栏没有「会话」入口");
   assert.match(bar, /@click="\$emit\('open-providers'\)"/, "左栏没有「渠道」入口");
-  assert.match(bar, /@click="\$emit\('open-update'\)"/, "左栏没有「更新」入口");
+  assert.match(bar, /@click="\$emit\('open-agent'\)"/, "左栏没有「智能体」入口");
+  assert.ok(!bar.includes('id="update-open"'), "左栏底部还在画「更新」入口（它已挪到品牌头与设置 tab）");
   assert.match(settings, /only\??:\s*string/, "SettingsModal 没有独立入口的 only 参数");
   assert.match(settings, /<h2 v-else class="settings-title">/, "独立入口没有页头标题");
   assert.match(settings, /<VTabs[\s\S]*v-if="!only"/, "独立入口仍渲染设置 VTabs");
@@ -3570,7 +3571,7 @@ test("开机请求：会话/Agent 不重复，重活按需，加载有骨架", (
 //
 // 「安装说明」删掉；左栏底改成 会话 / 渠道 / 设置。会话与渠道走同一个设置视图的
 // `:only` 模式，不再占设置 tab。
-test("左栏：有会话/渠道/设置/更新，没有安装说明", () => {
+test("左栏：有会话/渠道/智能体/设置，没有安装说明", () => {
   const pwa = readFileSync(join(SRC, "utils", "pwa.ts"), "utf8");
   const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
@@ -3578,7 +3579,8 @@ test("左栏：有会话/渠道/设置/更新，没有安装说明", () => {
   assert.match(bar, /id="sessions-manage"/, "左栏没有会话入口");
   assert.match(bar, /id="providers-manage"/, "左栏没有渠道入口");
   assert.match(bar, /id="settings-open"/, "左栏没有设置入口");
-  assert.match(bar, /id="update-open"/, "左栏没有更新入口");
+  assert.match(bar, /id="agents-manage"/, "左栏没有智能体入口");
+  assert.ok(!bar.includes('id="update-open"'), "左栏底部还有更新入口（已挪到品牌头）");
   // 四个入口并排 + Vuetify MD3：不再手写 .foot-btn 竖排
   assert.match(bar, /<VBtn[\s\S]*class="bar-action"[\s\S]*stacked/, "底部入口不是 Vuetify VBtn(stacked)");
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
@@ -3602,9 +3604,9 @@ test("更新面板：显示提交 + 拉取并重启（由 entrypoint 接手）",
   const view = readFileSync(join(SRC, "composables", "useSettingsView.ts"), "utf8");
   const client = readFileSync(join(SRC, "api", "client.ts"), "utf8");
 
-  assert.match(bar, /id="update-open"[\s\S]*?@click="\$emit\('open-update'\)"/, "更新入口没接动作");
+  assert.match(bar, /class="brand"[\s\S]*?@click="\$emit\('open-update'\)"/, "品牌头没接更新入口");
   assert.match(app, /@open-update="\(\) => openManage\('update'\)"/, "App 没把更新入口接到设置视图");
-  assert.match(view, /pane === "provider" \|\| pane === "update"/, "openManage 不认识 update");
+  assert.match(view, /\["provider", "agent", "update"\]\.includes\(pane\)/, "openManage 不认识 update / agent");
   assert.match(settings, /<UpdatePane :ask="ask"/, "设置视图里没有更新面板");
   assert.match(settings, /props\.only === "update" \? "更新"/, "更新页没有独立页头");
   assert.match(settings, /if \(props\.only === "update"\) return;/, "更新页还在白拉设置页数据");
@@ -4405,8 +4407,8 @@ test("会话/渠道管理页不跑设置 tab 滑入（页面切换不是 tab）"
 test("设置页签顺序：window item 与标签顺序一致（提示词在外观前）", () => {
   const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
   const items = [...settings.matchAll(/<VTabsWindowItem value="([^"]+)"/g)].map((m) => m[1]);
-  const visible = items.filter((id) => ["chat", "agent", "prompt", "appearance"].includes(id));
-  assert.deepEqual(visible, ["chat", "agent", "prompt", "appearance"], "设置 window item 顺序与标签顺序不一致，滑入方向会反");
+  const visible = items.filter((id) => ["chat", "agent", "prompt", "appearance", "tavern", "update"].includes(id));
+  assert.deepEqual(visible, ["chat", "agent", "prompt", "appearance", "tavern", "update"], "设置 window item 顺序与标签顺序不一致，滑入方向会反");
 });
 
 

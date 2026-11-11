@@ -52,12 +52,13 @@ const api = sharedApi();
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 const leftSvg = ICONS.panelLeft;
 
-// 四个设置区 + 两个独立管理页（会话 / 渠道）。
+// 六个设置区 + 三个独立管理页（会话 / 渠道 / 智能体）。
 // （「连接」那一区 2026-10-28 删了 —— 理由写在 format.js 的 SETTINGS_TABS 上。）
 const tab = ref(props.only || "chat");
 // 单独入口的页头文字；空串 = 完整设置（显示 VTabs）。
 const onlyTitle = computed(() => (props.only === "session" ? "会话管理"
   : props.only === "provider" ? "渠道管理"
+  : props.only === "agent" ? "智能体"
   : props.only === "update" ? "更新"
   : ""));
 watch(() => props.only, (v) => { tab.value = v || "chat"; });

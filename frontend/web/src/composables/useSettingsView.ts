@@ -6,7 +6,7 @@ import { ref } from "vue";
 
 export function useSettingsView({ closeLeftDrawer }: { closeLeftDrawer: () => void }) {
   const settingsOpen = ref(false);
-  // "" = 完整设置（四个 tab）；"session" / "provider" / "update" = 只显示那一页。
+  // "" = 完整设置（六个 tab）；"session" / "provider" / "agent" / "update" = 只显示那一页。
   const settingsOnly = ref("");
 
   // 2026-11-01：账号砍了 ⇒ 没有"只有管理员能进"这回事（本机单人使用）。
@@ -17,7 +17,8 @@ export function useSettingsView({ closeLeftDrawer }: { closeLeftDrawer: () => vo
   }
 
   function openManage(pane: string): void {
-    settingsOnly.value = pane === "provider" || pane === "update" ? pane : "session";
+    // 会话 / 渠道 / 智能体 是左栏的独立管理页；更新由品牌头和设置里的最后一只 tab 进。
+    settingsOnly.value = ["provider", "agent", "update"].includes(pane) ? pane : "session";
     settingsOpen.value = true;
     closeLeftDrawer();
   }
