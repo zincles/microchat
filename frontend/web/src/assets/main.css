@@ -1914,9 +1914,12 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-prompt-row { position: relative; padding: 0.35em 0.1em 0.4em 0.8em;
   border-top: 1px solid var(--md-outline-variant); }
 .flow-prompt-row:first-child { border-top: 0; }
-.flow-prompt-head { display: flex; align-items: center; gap: 0.25em; }
-.flow-prompt-role { flex: 0 0 6.8em; width: 6.8em; min-width: 0; }
-.flow-prompt-role .v-field { font-size: var(--md-type-label-small); }
+.flow-prompt-head { display: flex; align-items: center; gap: 0.3em; }
+.flow-prompt-role-label { flex: none; color: var(--md-on-surface-variant);
+  font-size: var(--md-type-label-small); }
+.flow-prompt-role { flex: 0 0 6.2em; width: 6.2em; min-width: 0; }
+.flow-prompt-role .v-field { font-size: var(--md-type-label-small); min-height: 1.8em; height: 1.8em; }
+.flow-prompt-role .v-field__input { min-height: 1.8em; padding-top: 0; padding-bottom: 0; }
 .flow-prompt-content { margin-top: 0.25em; }
 .flow-prompt-content .v-field__input { font-size: var(--md-type-label-small); line-height: 1.45; }
 .flow-prompt-del { flex: none; color: var(--md-on-surface-variant); }
@@ -1939,7 +1942,7 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
   font-size: var(--md-type-label-small); }
 .flow-join-output-row .vue-flow__handle-right { right: 0; }
 /* LLM 的两个出口：思考 / 正文。Handle 放在各自行尾，连线不会叠在同一个点上。 */
-.flow-llm-outputs { margin-top: 0.45em; border-top: 1px solid var(--md-outline-variant); padding-top: 0.25em; }
+.flow-llm-outputs { margin-top: auto; flex: 0 0 auto; border-top: 1px solid var(--md-outline-variant); padding-top: 0.25em; }
 .flow-llm-output-row { position: relative; display: flex; justify-content: flex-end; align-items: center;
   min-height: 1.65em; padding-right: 0.85em; color: var(--md-on-surface-variant);
   font-size: var(--md-type-label-small); }
@@ -1962,8 +1965,8 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
   border-radius: var(--md-shape-md); background: var(--md-surface-container);
   box-shadow: var(--md-elev-1);
 }
-.flow-node-llm { min-width: 300px; max-width: 460px; display: flex; flex-direction: column; }
-.flow-node-llm .flow-prompt-list { flex: 1 1 auto; min-height: 0; }
+.flow-node-llm { min-width: 300px; max-width: 460px; min-height: 16em; display: flex; flex-direction: column; }
+.flow-node-llm .flow-prompt-list { flex: 1 1 auto; min-height: 0; max-height: none; }
 .flow-node-llm .flow-node-body { flex: none; }
 .flow-node-output { border-left-color: var(--flow-node-accent); border-right: 1px solid var(--md-outline-variant); }
 .flow-node-history, .flow-node-trim, .flow-node-merge {
