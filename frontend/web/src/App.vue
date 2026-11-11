@@ -1764,8 +1764,7 @@ const COMMAND_RUNNERS = {
   agents: async () => {
     const data = await api.agents();
     const rows = Array.isArray(data) ? data : (data.agents ?? []);
-    // FlowAgent 运行时尚未接线：先不放进命令面板的 Agent picker。
-    overlaysRef.value?.showPicker("agents", rows.filter((r) => r.kind !== "flow").map((r) => ({ label: r.name ?? r.id, value: r })), () => {});
+    overlaysRef.value?.showPicker("agents", rows.map((r) => ({ label: r.name ?? r.id, value: r })), () => {});
   },
   compact: async (args) => {
     const n = args[0] ? Number(args[0]) : 0;

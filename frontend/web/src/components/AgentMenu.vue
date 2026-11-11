@@ -13,10 +13,7 @@ const open = ref(false);
 
 interface AgentItem { id: string; label: string }
 const items = computed<AgentItem[]>(() => {
-  // FlowAgent 的运行时还没接线：可以编辑，但先不出现在会话的助手切换器里，
-  // 免得选了一个不会按图执行的 Agent。已有会话若曾被绑定，仍把它显示为“当前”。
   const list: AgentItem[] = (props.agents ?? [])
-    .filter((agent) => agent.kind !== "flow")
     .map((agent) => ({ id: agent.id, label: agent.name || agent.id }));
   if (props.modelValue && !list.some((agent) => agent.id === props.modelValue)) {
     const current = (props.agents ?? []).find((agent) => agent.id === props.modelValue);

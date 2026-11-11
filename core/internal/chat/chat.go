@@ -139,7 +139,7 @@ func (s *Service) Accept(session model.Session, content string) (Accepted, error
 	}
 	// 起标题**不在这儿**：它是 title 能力的事（`title.Service.Auto`，在拿到回复之后起）——
 	// 这里只落用户那句（用户的话不该丢，换个模型接着聊）。
-	accepted, err := s.launch(session, replyID, token, providersConfig, assistantIDs, userID)
+	accepted, err := s.launch(session, replyID, token, providersConfig, assistantIDs, userID, statelang.Scan(content).Cleaned)
 	if err != nil {
 		return Accepted{}, err
 	}
@@ -171,12 +171,25 @@ func (s *Service) Resend(session model.Session) (Accepted, error) {
 	if err != nil {
 		return Accepted{}, err
 	}
-	return s.launch(session, replyID, token, providersConfig, assistantIDs, replyID)
+	lastUser := ""
+	for index := len(messages) - 1; index >= 0; index-- {
+		if messages[index].Role == model.RoleUser {
+			lastUser = statelang.Scan(messages[index].Content).Cleaned
+			break
+		}
+	}
+	return s.launch(session, replyID, token, providersConfig, assistantIDs, replyID, lastUser)
 }
 
 // launch：出站定稿 + 选后端 + 丢给后台跑。调用方已登记（Begin 过了）⇒ 失败摘登记。
 func (s *Service) launch(session model.Session, replyID string, token uint64, providersConfig config.ProvidersConfig,
-	assistantIDs []string, runID string) (Accepted, error) {
+	assistantIDs []string, runID, input string) (Accepted, error) {
+	// FlowAgent 不经过普通 Chat 的单请求装配：图自己决定每个 LLM 节点的 messages。
+	if agent, ok := s.flowAgentOf(session); ok {
+		chosen := providers.SelectBackend(session.Provider, session.Model, providersConfig)
+		go s.runFlow(session, replyID, token, runID, input, agent, chosen, providersConfig)
+		return Accepted{Backend: chosen.Name, Turn: statusView(s.Turns.Status(session.ID))}, nil
+	}
 	// 出站**此刻定稿**（受理时捕获的上文）：后台不再重算，期间别人改了库也不影响这一轮
 	outgoing, reasoningByID, err := s.outgoingFor(session)
 	if err != nil {

@@ -2031,6 +2031,20 @@ test("Agent 编辑器分页签：传统 Agent 是基本/系统提示词，FlowAg
   assert.ok(saveAt > windowEnd, "保存行该在页签分区外面（否则只在某一页能看见）");
 });
 
+// FlowAgent 运行时接上第一版后，所有能选 Agent 的入口都必须放它进来；
+// 只删一处会留下“设置里能选、顶栏找不到”这种半接线。
+test("FlowAgent：所有会话入口都能选中", () => {
+  const sources = [
+    ["AgentMenu.vue", readFileSync(join(SRC, "components", "AgentMenu.vue"), "utf8")],
+    ["SessionSettings.vue", readFileSync(join(SRC, "components", "SessionSettings.vue"), "utf8")],
+    ["SettingsModal.vue", readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8")],
+    ["App.vue", readFileSync(join(SRC, "App.vue"), "utf8")],
+  ];
+  for (const [name, source] of sources) {
+    assert.ok(!/kind\s*!==\s*["']flow["']/.test(source), `${name} 仍在过滤 FlowAgent`);
+  }
+});
+
 // 2026-11-11 用户：酒馆预设会接管整套提示词，必须把“忽略了什么”写在选项旁边。
 test("Agent 酒馆预设：选中时警告说明会接管哪些提示词", () => {
   const editor = readFileSync(join(SRC, "components", "AgentEditor.vue"), "utf8");

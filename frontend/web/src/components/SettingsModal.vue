@@ -351,8 +351,7 @@ const providerSelectOptions = computed(() => [{ label: "内置默认（本地示
 const modelSelectOptions = computed(() => [{ label: "内置默认（本地示例）", value: "" }, ...modelOpts.value]);
 const agentSelectOptions = computed(() => [
   { label: "内置默认", value: "" },
-  // FlowAgent 暂无运行时：不能作为新会话默认助手。
-  ...agents.value.filter((a) => a.kind !== "flow").map((a) => ({ label: a.name || a.id, value: a.id })),
+  ...agents.value.map((a) => ({ label: a.name || a.id, value: a.id })),
 ]);
 const presetOptions = [
   { label: "从模板创建…", value: "" },

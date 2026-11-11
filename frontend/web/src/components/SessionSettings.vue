@@ -27,9 +27,7 @@ const modelChoices = computed(() => modelGroups.value.flatMap((g) => g.items.map
   label: `${g.provider} / ${m.label}`,
   value: m.value,
 }))));
-// FlowAgent 暂无运行时：会话设置里先不提供选择。
 const agentChoices = computed(() => agents.value
-  .filter((a: any) => a.kind !== "flow")
   .map((a) => ({ label: a.label, value: a.id })));
 
 async function load(): Promise<void> {

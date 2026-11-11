@@ -1,8 +1,10 @@
 package chat
 
 import (
+	"encoding/json"
 	"testing"
 
+	"microchat/internal/config"
 	"microchat/internal/providers"
 )
 
@@ -108,5 +110,36 @@ func TestFlowMergeInputsKeepPortOrder(t *testing.T) {
 	}
 	if got := flowMergeInputs(flowNode{}); len(got) != 2 || got[0] != "in-1" || got[1] != "in-2" {
 		t.Fatalf("默认输入端口 = %#v", got)
+	}
+}
+
+func TestFlowAgentAcceptRoundTrip(t *testing.T) {
+	h := newHarness(t, dummyProviders(), "dummy", "dummy")
+	flow := json.RawMessage(`{"version":1,"nodes":[
+		{"id":"in","type":"input","position":{"x":0,"y":0},"data":{}},
+		{"id":"llm","type":"llm","position":{"x":1,"y":0},"data":{"prompts":[{"id":"p1","role":"system","content":"你是测试"}]}},
+		{"id":"out","type":"output","position":{"x":2,"y":0},"data":{}}
+	],"edges":[{"id":"e1","source":"llm","sourceHandle":"text","target":"out","targetHandle":"in"}]}`)
+	if err := config.SaveJSON(h.configDir+"/agents.json", config.AgentsConfig{Agents: []config.Agent{{
+		ID: "flow", Kind: "flow", Flow: flow,
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.SetSessionAgent(h.session.ID, "flow"); err != nil {
+		t.Fatal(err)
+	}
+	accepted, err := h.service.Accept(h.session, "你好")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if accepted.Backend != "dummy" {
+		t.Fatalf("FlowAgent 仍应走会话渠道：%+v", accepted)
+	}
+	messages := h.settle(t)
+	if len(messages) != 2 || messages[0].Role != "user" || messages[1].Role != "assistant" {
+		t.Fatalf("FlowAgent 一轮没落成 user+assistant：%+v", messages)
+	}
+	if messages[1].Content != dummyReply {
+		t.Fatalf("dummy 回复 = %q", messages[1].Content)
 	}
 }

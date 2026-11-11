@@ -15,13 +15,14 @@ import (
 
 // FlowTest 是 FlowAgent 编辑器的「测试发送」：**只跑一次图，不落库、不建会话**。
 //
-// 这是运行时的最小验证器，不是完整 FlowAgent 运行时：
+// 测试接口与聊天运行时共用 executeFlowGraph；测试这一侧只把 steps 回给编辑器，
+// 不建会话、不落库。当前执行器的边界（第一版聊天也在用）：
 //   - DAG、单 input/output；history 输出 messages[]，trim 按条数裁剪 messages[]；
 //     LLM 节点内部是手写的 Prompt 列表；
-//   - 每个 LLM 节点按 role/content + 对应输入孔组装 messages 后走 Complete；
+//   - 每个 LLM 节点按 role/content + 对应输入孔组装 messages 后走 Complete（非流式、无工具）；
 //   - LLM 节点有两个出口：reasoning（思考）与 text（正文）；
-//   - 输入节点吃测试消息，join/output 只拼上游文本；
-//   - 中间结果只回给编辑器，不碰 messages / summaries / 世界状态。
+//   - 输入节点吃测试消息 / 本轮用户输入，join/output 只拼上游文本；
+//   - 中间结果不落库；聊天运行时只落 output 的最终文本。
 type FlowTestStep struct {
 	ID        string   `json:"id"`
 	Type      string   `json:"type"`
@@ -70,6 +71,23 @@ type flowValue struct {
 
 const defaultJoinSeparator = "\n\n---\n\n"
 
+// flowRunOptions：一次图执行的输入。测试接口传空 SessionID + 空 History；聊天运行时
+// 传真实会话 id 与会话历史。
+type flowRunOptions struct {
+	SessionID       string
+	Input           string
+	History         []providers.ChatMessage
+	DefaultProvider string
+	DefaultModel    string
+	ProvidersConfig config.ProvidersConfig
+}
+
+type flowRunOutcome struct {
+	Result FlowTestResult
+	Final  flowValue
+	Usage  json.RawMessage
+}
+
 // TestFlow：执行一次编辑器测试。provider/model 空 ⇒ 读 config.json 的 defaults。
 func (s *Service) TestFlow(ctx context.Context, flowAgent config.Agent, message, provider, modelID string) (FlowTestResult, error) {
 	if flowAgent.Kind != "flow" {
@@ -78,9 +96,6 @@ func (s *Service) TestFlow(ctx context.Context, flowAgent config.Agent, message,
 	var graph flowGraph
 	if err := json.Unmarshal(flowAgent.Flow, &graph); err != nil {
 		return FlowTestResult{}, fmt.Errorf("流程 JSON 解析失败：%w", err)
-	}
-	if err := validateTestGraph(graph); err != nil {
-		return FlowTestResult{}, err
 	}
 	cfg, err := config.LoadConfig(s.Paths)
 	if err != nil {
@@ -93,12 +108,28 @@ func (s *Service) TestFlow(ctx context.Context, flowAgent config.Agent, message,
 	if strings.TrimSpace(modelID) == "" {
 		modelID = cfg.Defaults.Model
 	}
+	outcome, err := s.executeFlowGraph(ctx, graph, flowRunOptions{
+		Input:           message,
+		DefaultProvider: provider,
+		DefaultModel:    modelID,
+		ProvidersConfig: providersConfig,
+	})
+	return outcome.Result, err
+}
+
+// executeFlowGraph：FlowAgent 的唯一执行器。编辑器测试与聊天运行时共用这一份 switch，
+// 区别只在 opts：测试没有会话（history 空、每次 LLM 用随机 id），运行时骑真实会话。
+func (s *Service) executeFlowGraph(ctx context.Context, graph flowGraph, opts flowRunOptions) (flowRunOutcome, error) {
+	if err := validateTestGraph(graph); err != nil {
+		return flowRunOutcome{}, err
+	}
 	order, err := topoFlow(graph)
 	if err != nil {
-		return FlowTestResult{}, err
+		return flowRunOutcome{}, err
 	}
 	values := map[string]flowValue{}
 	steps := make([]FlowTestStep, 0, len(order))
+	var lastResult providers.Result
 	for _, node := range order {
 		var nodeMessages []providers.ChatMessage
 		inputs := []string{}
@@ -111,11 +142,11 @@ func (s *Service) TestFlow(ctx context.Context, flowAgent config.Agent, message,
 		switch node.Type {
 		case "input":
 			step.Label = "输入"
-			step.Output = message
+			step.Output = opts.Input
 		case "history":
 			step.Label = "历史数据"
-			// 测试接口没有会话上下文：历史节点只回一个明确的空 messages 块，不伪造历史。
-			step.Output = "[]"
+			nodeMessages = append([]providers.ChatMessage{}, opts.History...)
+			step.Output = fmt.Sprintf("messages[%d]", len(nodeMessages))
 		case "trim":
 			step.Label = "裁剪 messages"
 			for _, edge := range graph.Edges {
@@ -143,32 +174,30 @@ func (s *Service) TestFlow(ctx context.Context, flowAgent config.Agent, message,
 			step.Output = joinFlowInputs(inputs, defaultJoinSeparator)
 		case "llm":
 			step.Label = "调用 LLM"
-			nodeProvider, nodeModel := provider, modelID
+			nodeProvider, nodeModel := opts.DefaultProvider, opts.DefaultModel
 			if value, ok := node.Data["provider"].(string); ok && strings.TrimSpace(value) != "" {
 				nodeProvider = strings.TrimSpace(value)
 			}
 			if value, ok := node.Data["model"].(string); ok && strings.TrimSpace(value) != "" {
 				nodeModel = strings.TrimSpace(value)
 			}
-			text, reasoning, callErr := s.testLLMCall(ctx, node, graph.Edges, values, nodeProvider, nodeModel, providersConfig)
+			result, callErr := s.flowLLMCall(ctx, node, graph.Edges, values, nodeProvider, nodeModel, opts.SessionID, opts.ProvidersConfig)
 			if callErr != nil {
 				step.Error = callErr.Error()
 				steps = append(steps, step)
-				return FlowTestResult{Steps: steps}, callErr
+				return flowRunOutcome{Result: FlowTestResult{Steps: steps}}, callErr
 			}
-			step.Output = text
-			step.Reasoning = reasoning
+			lastResult = result
+			step.Output = result.Text
+			step.Reasoning = result.Reasoning
 		default:
 			err = fmt.Errorf("不认识的节点类型：%s", node.Type)
 			step.Error = err.Error()
 			steps = append(steps, step)
-			return FlowTestResult{Steps: steps}, err
+			return flowRunOutcome{Result: FlowTestResult{Steps: steps}}, err
 		}
 		values[flowKey(node.ID, "out")] = flowValue{Text: step.Output, Reasoning: step.Reasoning}
-		if node.Type == "history" {
-			values[flowKey(node.ID, "out")] = flowValue{Text: "[]", Messages: []providers.ChatMessage{}}
-		}
-		if node.Type == "trim" || node.Type == "merge" {
+		if node.Type == "history" || node.Type == "trim" || node.Type == "merge" {
 			values[flowKey(node.ID, "out")] = flowValue{Text: step.Output, Messages: nodeMessages}
 		}
 		if node.Type == "join" {
@@ -182,13 +211,17 @@ func (s *Service) TestFlow(ctx context.Context, flowAgent config.Agent, message,
 		}
 		steps = append(steps, step)
 	}
-	final := ""
+	final := flowValue{}
 	for _, node := range graph.Nodes {
 		if node.Type == "output" {
-			final = values[flowKey(node.ID, "out")].Text
+			final = values[flowKey(node.ID, "out")]
 		}
 	}
-	return FlowTestResult{Output: final, Steps: steps}, nil
+	return flowRunOutcome{
+		Result: FlowTestResult{Output: final.Text, Steps: steps},
+		Final:  final,
+		Usage:  lastResult.Usage,
+	}, nil
 }
 
 func flowKey(id, handle string) string {
@@ -333,19 +366,19 @@ func joinFlowInputs(inputs []string, separator string) string {
 // testLLMCall：把 LLM 节点里手写的 Prompt 条目按顺序变成 messages，再真正调用上游。
 // 每个 Prompt 条目自己的左侧输入孔（targetHandle = prompt-<id>）只喂那一条；
 // 手写内容和上游内容同时存在时，按“手写在前、上游在后”用空行隔开。
-func (s *Service) testLLMCall(ctx context.Context, node flowNode, edges []flowEdge,
-	values map[string]flowValue, provider, modelID string, providersConfig config.ProvidersConfig) (string, string, error) {
+func (s *Service) flowLLMCall(ctx context.Context, node flowNode, edges []flowEdge,
+	values map[string]flowValue, provider, modelID, sessionID string, providersConfig config.ProvidersConfig) (providers.Result, error) {
 	raw, ok := node.Data["prompts"]
 	if !ok {
-		return "", "", errors.New("LLM 节点没有 Prompt 条目")
+		return providers.Result{}, errors.New("LLM 节点没有 Prompt 条目")
 	}
 	data, err := json.Marshal(raw)
 	if err != nil {
-		return "", "", err
+		return providers.Result{}, err
 	}
 	var prompts []flowPrompt
 	if err := json.Unmarshal(data, &prompts); err != nil {
-		return "", "", fmt.Errorf("Prompt 条目解析失败：%w", err)
+		return providers.Result{}, fmt.Errorf("Prompt 条目解析失败：%w", err)
 	}
 	messages := make([]providers.ChatMessage, 0, len(prompts))
 	for _, prompt := range prompts {
@@ -360,7 +393,7 @@ func (s *Service) testLLMCall(ctx context.Context, node flowNode, edges []flowEd
 		}
 		role := strings.TrimSpace(prompt.Role)
 		if role != "system" && role != "user" && role != "assistant" {
-			return "", "", fmt.Errorf("Prompt %s 的 role 不合法：%s", prompt.ID, prompt.Role)
+			return providers.Result{}, fmt.Errorf("Prompt %s 的 role 不合法：%s", prompt.ID, prompt.Role)
 		}
 		parts := []string{}
 		if strings.TrimSpace(prompt.Content) != "" {
@@ -381,17 +414,25 @@ func (s *Service) testLLMCall(ctx context.Context, node flowNode, edges []flowEd
 		messages = append(messages, providers.ChatMessage{Role: role, Content: content})
 	}
 	if len(messages) == 0 {
-		return "", "", errors.New("LLM 节点没有任何非空 Prompt")
+		return providers.Result{}, errors.New("LLM 节点没有任何非空 Prompt")
 	}
 	chosen := providers.SelectBackend(provider, modelID, providersConfig)
+	if chosen.Name != providers.BackendFallback && chosen.Name != providers.BackendDummy {
+		chosen.Provider.Protocol = string(providers.ResolveProtocolFor(s.Store.ModelRoute, chosen.Provider.ID, modelID, providers.Protocol(chosen.Provider.Protocol)))
+	}
+	if strings.TrimSpace(sessionID) == "" {
+		sessionID = uuid.NewString()
+	}
 	wire := providers.FromConfig(chosen.Provider)
 	result, err := providers.NewClient(wire).Complete(ctx, wire, providers.Request{
-		Model: modelID, Messages: messages, SessionID: uuid.NewString(),
+		Model: modelID, Messages: messages, SessionID: sessionID,
 	}, localReply(chosen))
 	if err != nil {
-		return "", "", err
+		return providers.Result{}, err
 	}
-	return strings.TrimSpace(result.Text), strings.TrimSpace(result.Reasoning), nil
+	result.Text = strings.TrimSpace(result.Text)
+	result.Reasoning = strings.TrimSpace(result.Reasoning)
+	return result, nil
 }
 
 func flowMergeInputs(node flowNode) []string {
