@@ -63,7 +63,7 @@ defineExpose({
 
 <template>
   <section id="context-workspace" aria-label="上下文工作区">
-    <section v-if="props.flow" aria-label="FlowAgent 工作流">
+    <section v-if="props.flow" class="flow-workspace-host" aria-label="FlowAgent 工作流">
       <FlowWorkspace :agent="props.agent" @saved="() => emit('flow-saved')" />
     </section>
     <template v-else>

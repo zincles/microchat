@@ -2102,3 +2102,10 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-workspace-head .hint { margin: 0; flex: 1 1 auto; }
 .flow-workspace-status { flex: none; color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
 #flow-workspace .flow-editor { margin-top: 0.1em; }
+
+/* 工作流页：容器有多高，画布就吃多高（AgentEditor 里的流程页仍用原来的 54vh 画布）。 */
+.flow-workspace-host { flex: 1 1 auto; min-height: 0; display: flex; }
+#flow-workspace { flex: 1 1 auto; min-height: 0; height: 100%; }
+#flow-workspace .flow-editor { flex: 1 1 auto; min-height: 0; height: 100%; }
+#flow-workspace .flow-editor .flow-main { flex: 1 1 auto; min-height: 0; }
+#flow-workspace .flow-editor .flow-canvas { flex: 1 1 auto; height: auto; min-height: 0; }
