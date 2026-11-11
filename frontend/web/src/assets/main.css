@@ -1756,7 +1756,7 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-main .flow-canvas { flex: 1 1 auto; min-width: 0; }
 /* 调试栏悬浮在画布右侧，不参与 flex 宽度分配 —— 打开它不能把绘图区挤窄。 */
 .flow-add-menu { min-width: 11em; }
-.flow-debug { position: absolute; top: 0.5em; right: 0.5em; bottom: 0.5em; z-index: 30;
+.flow-debug { position: static; top: auto; right: auto; bottom: auto; z-index: 30;
   width: min(20em, 42%); min-height: 0; overflow-y: auto; overscroll-behavior: contain;
   touch-action: pan-y; -webkit-overflow-scrolling: touch;
   border: 1px solid var(--md-outline-variant); border-radius: var(--md-shape-md);
@@ -2016,3 +2016,31 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-debug { background: var(--md-surface-container); }
 .flow-panel-tabs { gap: 0.2em; }
 .flow-panel-tabs button { padding: 0.32em 0.7em; border-radius: var(--r-sm) var(--r-sm) 0 0; }
+
+/* 编辑器内左侧工具栏 + 右侧可开合侧栏（2026-11-11 用户定，Blender 的 T / N 面板感）。 */
+.flow-main { align-items: stretch; gap: 0.55em; }
+.flow-rail {
+  flex: none; width: 3.1em; display: flex; flex-direction: column; align-items: center;
+  gap: 0.3em; padding: 0.35em 0.3em; border: 1px solid var(--md-outline-variant);
+  border-radius: var(--md-shape-md); background: var(--md-surface-container-low);
+  align-self: stretch;
+}
+.flow-rail-btn {
+  width: 2.35em; height: 2.35em; min-width: 0; padding: 0; border-radius: var(--r-sm);
+  color: var(--md-on-surface-variant); font-size: 0.9em;
+}
+.flow-rail-btn:hover { background: var(--hover); color: var(--md-on-surface); }
+.flow-rail-btn.active { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.flow-rail-add { color: var(--md-on-primary-container); background: var(--md-primary-container); }
+.flow-rail-sep { width: 1.4em; height: 1px; background: var(--md-outline-variant); margin: 0.15em 0; }
+.flow-rail-spacer { flex: 1 1 auto; }
+.flow-debug.flow-sidebar {
+  position: static; top: auto; right: auto; bottom: auto; width: min(22em, 38%);
+  height: auto; max-height: none; align-self: stretch; flex: none;
+  background: var(--md-surface-container); box-shadow: none;
+}
+.flow-debug.flow-sidebar .flow-panel-tabs { flex-wrap: wrap; }
+@media (max-width: 900px) {
+  .flow-debug.flow-sidebar { position: absolute; top: 0.4em; right: 0.4em; bottom: 0.4em;
+    width: min(20em, 78%); height: auto; z-index: 30; box-shadow: var(--md-elev-2); }
+}

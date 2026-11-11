@@ -539,8 +539,12 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8");
   assert.match(css, /\.flow-canvas \.vue-flow__node \{[^}]*background:\s*transparent !important/, "Vue Flow 外层白底没剥掉（输入/输出节点会套白框）");
   assert.match(css, /\.flow-canvas \.vue-flow__controls-button \{[^}]*background:\s*var\(--md-surface-container-high\)/, "画布控制键没跟 MD3 主题");
-  assert.match(flow, /class="flow-fullscreen-btn"/, "流程编辑器没有网页全屏按钮");
-  assert.match(flow, /class="flow-debug"/, "流程编辑器没有调试面板");
+  assert.match(flow, /class="flow-fullscreen-btn/, "流程编辑器没有网页全屏按钮");
+  assert.match(flow, /class="flow-debug/, "流程编辑器没有调试面板");
+  assert.match(flow, /class="flow-rail"/, "流程编辑器没有左侧工具栏");
+  assert.match(flow, /class="flow-debug flow-sidebar"/, "调试面板不是可开合侧栏");
+  assert.match(flow, /@click="openPanel\('test'\)"/, "侧栏按钮没有接测试面板");
+  assert.match(css, /\.flow-debug\.flow-sidebar \{[^}]*position:\s*static/, "侧栏仍浮在画布上而不是占一列");
   assert.match(flow, /@wheel="onPanelWheel"/, "调试面板没有接管滚轮，画布会抢滚动");
   assert.match(flow, /function onPanelWheel/, "调试面板没有自己的滚动处理");
   assert.match(flow, /flowDebugSteps/, "调试面板没有结构预演数据");
@@ -594,7 +598,7 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.ok(flowDebugSteps(emptyFlowGraph()).length >= 2, "空图没有调试步骤");
   assert.match(css, /\.flow-editor\.expanded \{[^}]*position:\s*fixed/, "网页全屏没有铺满 #app");
   assert.match(css, /\.flow-editor\.expanded \.flow-main \{[^}]*flex:\s*1 1 auto/, "全屏时 flow-main 没有吃掉剩余高度");
-  assert.match(css, /\.flow-debug \{[^}]*position:\s*absolute/, "调试栏仍占画布宽度");
+  assert.match(css, /\.flow-rail \{[^}]*display:\s*flex/, "左侧工具栏没有布局");
   assert.match(css, /\.flow-debug \{[^}]*overflow-y:\s*auto/, "调试面板不能上下滚动");
   assert.match(css, /--flow-history:\s*#f2994a/, "历史类型不是橙色");
   assert.match(css, /\.flow-node\.flow-node-history \.vue-flow__handle[^{]*\{[^}]*background:\s*var\(--flow-history\)/, "历史节点端口没被染成历史色");
@@ -2049,7 +2053,8 @@ test("Agent 编辑器分页签：传统 Agent 是基本/系统提示词，FlowAg
   assert.match(editor, /<VTabsWindowItem v-if="agentKind !== 'flow'" value="prompt">/, "传统 Agent 的系统提示词页没有 tabpanel");
   assert.match(editor, /<VTabsWindowItem v-if="agentKind === 'flow'" value="flow">/, "FlowAgent 的流程页没有 tabpanel");
   assert.match(editor, /<FlowEditor v-model:graph="flowGraph"/, "流程页没有接 Vue Flow 编辑器");
-  assert.match(editor, /<VTabsWindowItem v-for="id in ABILITY_IDS" :key="id" :value="id">/, "能力那几页没有 tabpanel");
+  assert.match(editor, /<VTabsWindowItem v-if="agentKind !== 'flow'" v-for="id in ABILITY_IDS"/, "能力页签没有对 FlowAgent 关闭");
+  assert.match(editor, /FlowAgent 暂不支持起标题\/压缩这些能力/, "FlowAgent 能力页签的说明没写");
   // 保存行在页签**外面**：哪一页都能存（藏在某一页里的那种，翻到别的页就找不到保存了）
   const saveAt = editor.indexOf(">保存<");
   const windowEnd = editor.indexOf("</VTabsWindow>");

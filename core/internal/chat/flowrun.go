@@ -160,14 +160,9 @@ func (s *Service) runFlow(session model.Session, replyID string, token uint64, r
 		SessionID: sessionID, Status: "done", Final: outcome.Final.Text, Steps: outcome.Result.Steps,
 		StartedAt: started.UnixMilli(), DurationMS: time.Since(started).Milliseconds(),
 	})
-	if s.Titles != nil {
-		s.Titles.Auto(session)
-	}
+	// FlowAgent 暂不启用起标题 / 自动压缩等高级能力：它们要等 Flow 版本重写。
 	s.Turns.Finish(sessionID, token, "")
 	guard.Succeed()
-	if s.Compactor != nil {
-		go s.MaybeAutoCompact(session)
-	}
 }
 
 // FlowRunTrace：最近一次 FlowAgent 图执行（进程内，覆盖式）。它是“整次图执行”的留档，

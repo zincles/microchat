@@ -70,7 +70,7 @@ const tabs = computed<Array<{ id: string; label: string }>>(() => agentKind.valu
   ? [
       { id: "flow", label: "流程" },
       { id: "base", label: "基本" },
-      ...ABILITY_IDS.map((id) => ({ id, label: ABILITY_LABELS[id] ?? id })),
+      // FlowAgent 暂不支持起标题/压缩这些能力，页签也不摆出来。
     ]
   : [
       { id: "base", label: "基本" },
@@ -198,7 +198,7 @@ async function save(): Promise<void> {
         first_message: firstMsg.value,
         segments: segs.value,
         preset_id: presetId.value,
-        abilities: patch,
+        ...(agentKind.value === "flow" ? {} : { abilities: patch }),
         ...(prepend.value ? { prepend_state: true } : {}),
       };
       await api.createAgent(body);
@@ -212,7 +212,7 @@ async function save(): Promise<void> {
         first_message: firstMsg.value,
         segments: segs.value,
         preset_id: presetId.value,
-        abilities: patch,
+        ...(agentKind.value === "flow" ? {} : { abilities: patch }),
       };
       if (!!prepend.value !== !!agent.prepend_state) body.prepend_state = prepend.value;
       if (name.value.trim() !== agent.name) body.name = name.value.trim();
@@ -312,7 +312,7 @@ function onKey(e: KeyboardEvent): void {
         <p v-else class="hint">不选择时，使用这个 Agent 自己的系统提示词与片段。</p>
         <p class="hint">预设是每轮现读现算；只有原始文件被删掉或解析失败时，才回落到 Agent 自己的方案。</p>
       </template>
-      <p v-else class="hint">FlowAgent 的对话逻辑由「流程」页决定；这里只保留身份、描述与开场白。系统提示词、片段和提示词方案不参与。</p>
+      <p v-else class="hint">FlowAgent 的对话逻辑由「流程」页决定；这里只保留身份、描述与开场白。系统提示词、片段、提示词方案和高级能力暂不参与。</p>
     </section>
     </VTabsWindowItem>
 
@@ -332,7 +332,7 @@ function onKey(e: KeyboardEvent): void {
       <FlowEditor v-model:graph="flowGraph" :agent-id="props.agent?.id ?? ''" />
     </VTabsWindowItem>
 
-    <VTabsWindowItem v-for="id in ABILITY_IDS" :key="id" :value="id">
+    <VTabsWindowItem v-if="agentKind !== 'flow'" v-for="id in ABILITY_IDS" :key="id" :value="id">
     <section class="pane-section">
       <label class="field"><span>启用（关闭后这项功能不会运行）</span><VSwitch v-model="rows[id].enabled" color="primary" density="compact" hide-details /></label>
       <template v-if="id === 'title'">

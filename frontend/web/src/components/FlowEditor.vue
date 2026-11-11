@@ -259,40 +259,42 @@ watch([nodes, edges], () => emit("update:graph", toGraph()), { deep: true });
 
 <template>
   <section class="flow-editor" :class="{ expanded }">
-    <div class="flow-toolbar">
-      <VMenu location="bottom start" :close-on-content-click="true">
-        <template #activator="{ props: menuProps }">
-          <VBtn v-bind="menuProps" variant="tonal" size="small" type="button">＋ 添加节点</VBtn>
-        </template>
-        <VList class="flow-add-menu" density="compact">
-          <VListItem v-for="item in addNodeItems" :key="item.type"
-            :disabled="item.disabled" @click="addNode(item.type)">
-            {{ item.label }}
-          </VListItem>
-        </VList>
-      </VMenu>
-      <span class="flow-toolbar-spacer"></span>
-      <VBtn variant="text" size="small" type="button"
-        :aria-pressed="panelOpen && panelTab === 'test' ? 'true' : 'false'"
-        :color="panelOpen && panelTab === 'test' ? 'primary' : undefined"
-        @click="openPanel('test')">测试</VBtn>
-      <VBtn variant="text" size="small" type="button"
-        :aria-pressed="panelOpen && panelTab === 'debug' ? 'true' : 'false'"
-        :color="panelOpen && panelTab === 'debug' ? 'primary' : undefined"
-        @click="openPanel('debug')">调试</VBtn>
-      <VBtn variant="text" size="small" type="button"
-        :aria-pressed="panelOpen && panelTab === 'nodes' ? 'true' : 'false'"
-        :color="panelOpen && panelTab === 'nodes' ? 'primary' : undefined"
-        @click="openPanel('nodes')">节点</VBtn>
-      <VBtn
-        icon variant="text" size="small" type="button" class="flow-fullscreen-btn"
-        :title="expanded ? '退出网页全屏' : '网页全屏'"
-        :aria-label="expanded ? '退出网页全屏' : '网页全屏'"
-        :aria-pressed="expanded ? 'true' : 'false'"
-        @click="toggleExpanded" v-html="expanded ? ICONS.minimize : ICONS.maximize"
-      />
-    </div>
     <div class="flow-main">
+      <nav class="flow-rail" aria-label="流程工具">
+        <VMenu :close-on-content-click="true">
+          <template #activator="{ props: menuProps }">
+            <VBtn v-bind="menuProps" class="flow-rail-btn flow-rail-add" variant="tonal"
+              size="small" type="button" title="添加节点" aria-label="添加节点">＋</VBtn>
+          </template>
+          <VList class="flow-add-menu" density="compact">
+            <VListItem v-for="item in addNodeItems" :key="item.type"
+              :disabled="item.disabled" @click="addNode(item.type)">
+              {{ item.label }}
+            </VListItem>
+          </VList>
+        </VMenu>
+        <span class="flow-rail-sep"></span>
+        <VBtn class="flow-rail-btn" :class="{ active: panelOpen && panelTab === 'test' }"
+          variant="text" size="small" type="button" title="测试" aria-label="测试"
+          :aria-pressed="panelOpen && panelTab === 'test' ? 'true' : 'false'"
+          @click="openPanel('test')">测</VBtn>
+        <VBtn class="flow-rail-btn" :class="{ active: panelOpen && panelTab === 'debug' }"
+          variant="text" size="small" type="button" title="调试" aria-label="调试"
+          :aria-pressed="panelOpen && panelTab === 'debug' ? 'true' : 'false'"
+          @click="openPanel('debug')">调</VBtn>
+        <VBtn class="flow-rail-btn" :class="{ active: panelOpen && panelTab === 'nodes' }"
+          variant="text" size="small" type="button" title="节点" aria-label="节点"
+          :aria-pressed="panelOpen && panelTab === 'nodes' ? 'true' : 'false'"
+          @click="openPanel('nodes')">节</VBtn>
+        <span class="flow-rail-spacer"></span>
+        <VBtn
+          icon variant="text" size="small" type="button" class="flow-fullscreen-btn flow-rail-btn"
+          :title="expanded ? '退出网页全屏' : '网页全屏'"
+          :aria-label="expanded ? '退出网页全屏' : '网页全屏'"
+          :aria-pressed="expanded ? 'true' : 'false'"
+          @click="toggleExpanded" v-html="expanded ? ICONS.minimize : ICONS.maximize"
+        />
+      </nav>
       <div class="flow-canvas">
         <VueFlow
           v-model:nodes="nodes"
@@ -312,7 +314,7 @@ watch([nodes, edges], () => emit("update:graph", toGraph()), { deep: true });
           <Controls position="bottom-right" />
         </VueFlow>
       </div>
-      <aside v-if="panelOpen" class="flow-debug" aria-label="流程面板" @wheel="onPanelWheel">
+      <aside v-if="panelOpen" class="flow-debug flow-sidebar" aria-label="流程面板" @wheel="onPanelWheel">
         <div class="flow-panel-head">
           <div class="flow-panel-tabs" role="tablist">
             <button type="button" :class="{ active: panelTab === 'test' }" @click="panelTab = 'test'">测试</button>
