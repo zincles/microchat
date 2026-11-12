@@ -16,8 +16,8 @@ export default defineConfig({
     alias: [
       { find: /^vue$/, replacement: "vue/dist/vue.esm-bundler.js" },
       // `virtual:pwa-register` 是 vite-plugin-pwa 的**虚拟模块**（构建时才有）。
-      // 这条冒烟不装 Service Worker ⇒ 换成 test/pwa-stub.js 里那份空实现。
-      { find: /^virtual:pwa-register$/, replacement: "/home/zincles/microchat/frontend/web/test/pwa-stub.js" },
+      // 这条冒烟不装 Service Worker ⇒ 换成 test/pwa-stub.ts 里那份空实现。
+      { find: /^virtual:pwa-register$/, replacement: "/home/zincles/microchat/frontend/web/test/pwa-stub.ts" },
     ],
   },
     // ⚠ 产物必须落在**项目内**：SSR 默认把 `vue` / `@vue/server-renderer` 当 external，

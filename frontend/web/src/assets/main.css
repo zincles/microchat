@@ -670,7 +670,6 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .adv-chunks { list-style: none; padding: 0; margin: 0.4em 0 0; }
 .adv-chunk { display: flex; align-items: baseline; gap: 0.55em; min-height: 2.5em; padding: 0.45em 0.2em; border-bottom: 1px solid var(--md-outline-variant); font-size: var(--md-type-body-small); }
 .adv-chunk:last-child { border-bottom: none; }
-.adv-index, .adv-idx { color: var(--md-on-surface-variant); flex: none; font-variant-numeric: tabular-nums; }
 .adv-meta { color: var(--md-on-surface-variant); margin-left: auto; }
 .adv-state { flex: none; min-width: 4.2em; text-align: right; color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
 .adv-dot { width: 0.55em; height: 0.55em; border-radius: 50%; background: var(--md-outline); flex: none; }
@@ -1724,36 +1723,19 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 /* FlowAgent 编辑器（2026-11-11）：Vue Flow 负责画布，Vuetify 负责节点内控件。
  * 节点只是“可拖的卡片”，不要套 MD3 的 elevation 大阴影 —— 画布里节点很多时会糊成一片。 */
 .flow-editor { display: flex; flex-direction: column; gap: 0.45em; }
-.flow-toolbar { display: flex; align-items: center; gap: 0.35em; flex-wrap: wrap; }
-.flow-toolbar-label { color: var(--md-on-surface-variant); font-size: var(--md-type-label-medium); }
-.flow-toolbar-spacer { flex: 1 1 auto; }
 .flow-fullscreen-btn { display: inline-flex; align-items: center; justify-content: center; width: 2.2em; height: 2.2em; }
 /* 网页全屏：编辑器自己铺满 #app，tabs/返回键留给设置视图；只展开画布这块。 */
 .flow-editor.expanded { position: fixed; inset: 0; z-index: 2000; max-width: none; width: auto;
   height: 100%; padding: 1em 1.1em; background: var(--md-surface); overflow: hidden; }
 /* 全屏时画布吃掉剩余高度：toolbar/test bar/hints 是 flex:none，flow-main 才是 flex:1。 */
-.flow-editor.expanded > .flow-toolbar,
-.flow-editor.expanded > .hint,
 .flow-editor.expanded > .flow-issues,
 .flow-editor.expanded > .flow-ok { flex: none; }
 .flow-editor.expanded .flow-main { flex: 1 1 auto; min-height: 0; }
 .flow-editor.expanded .flow-canvas { flex: 1 1 auto; height: auto; min-height: 0; }
-@media (max-width: 900px) {
-  .flow-debug { top: auto; left: 0.5em; right: 0.5em; bottom: 0.5em; width: auto;
-    height: min(15em, 48%); }
-}
 .flow-main { position: relative; display: flex; align-items: stretch; gap: 0.7em; min-height: 0; }
 .flow-main .flow-canvas { flex: 1 1 auto; min-width: 0; }
 /* 调试栏悬浮在画布右侧，不参与 flex 宽度分配 —— 打开它不能把绘图区挤窄。 */
 .flow-add-menu { min-width: 11em; }
-.flow-debug { position: static; top: auto; right: auto; bottom: auto; z-index: 30;
-  width: min(20em, 42%); min-height: 0; overflow-y: auto; overscroll-behavior: contain;
-  touch-action: pan-y; -webkit-overflow-scrolling: touch;
-  border: 1px solid var(--md-outline-variant); border-radius: var(--md-shape-md);
-  background: var(--md-surface-container-low); padding: 0.65em 0.75em;
-  box-shadow: var(--md-elev-2); }
-.flow-debug-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5em; }
-.flow-debug-head b { font-size: var(--md-type-title-small); }
 .flow-debug-issues { margin: 0.45em 0; padding: 0.5em 0.65em; border-left: 3px solid var(--md-error);
   border-radius: 0 var(--r-sm) var(--r-sm) 0; background: var(--md-error-container);
   color: var(--md-on-error-container); font-size: var(--md-type-label-medium); }
@@ -1817,7 +1799,6 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
   border: 1px solid var(--md-outline-variant); border-radius: var(--md-shape-sm);
   background: var(--md-surface-container-high); color: var(--md-on-surface);
   box-shadow: var(--md-elev-1); font-size: var(--md-type-body-small); }
-.flow-node-agent { min-width: 230px; }
 .flow-node-head { display: flex; flex-direction: column; gap: 0.1em; }
 .flow-node-delete { position: absolute; top: 0.2em; right: 0.25em; z-index: 2;
   width: 1.6em; height: 1.6em; padding: 0; border: 0; border-radius: var(--r-xs);
@@ -1827,8 +1808,6 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-node-delete:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 1px; }
 .flow-node-title { font-weight: 600; color: var(--md-on-surface); }
 .flow-node-hint { color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); line-height: 1.35; }
-.flow-node-select { margin-top: 0.4em; }
-.flow-node-select .v-field { font-size: var(--md-type-label-medium); }
 /* 类型色只落在徽标/端口上，不画在卡片边上。 */
 .flow-canvas .flow-node.flow-node-history .vue-flow__handle,
 .flow-canvas .flow-node.flow-node-trim .vue-flow__handle,
@@ -1956,10 +1935,6 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-llm-output-row .vue-flow__handle-right { right: 0; }
 .flow-llm-output-row:hover { color: var(--md-primary); }
 
-.flow-context-placeholder { max-width: 42em; margin: 1.2em auto; padding: 1em 1.2em;
-  border: 1px solid var(--md-outline-variant); border-radius: var(--md-shape-md);
-  color: var(--md-on-surface-variant); background: var(--md-surface-container-low); }
-.flow-context-placeholder p { margin: 0.35em 0; }
 
 /* ── FlowAgent 视觉层（2026-11-11）────────────────────────────────────────
  * 节点卡片和右侧节点清单原来都是“表单 + 边框”，信息没有层级。这里只做视觉：
@@ -2033,37 +2008,8 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-conn-row { gap: 0.5em; padding: 0.22em 0; }
 .flow-conn-x { padding: 0.1em 0.25em; border-radius: var(--r-xs); text-decoration: none; }
 .flow-conn-x:hover { background: var(--md-error-container); text-decoration: none; }
-.flow-debug { background: var(--md-surface-container); }
 .flow-panel-tabs { gap: 0.2em; }
 .flow-panel-tabs button { padding: 0.32em 0.7em; border-radius: var(--r-sm) var(--r-sm) 0 0; }
-
-/* 编辑器内左侧工具栏 + 右侧可开合侧栏（2026-11-11 用户定，Blender 的 T / N 面板感）。 */
-.flow-main { align-items: stretch; gap: 0.55em; }
-.flow-rail {
-  flex: none; width: 3.1em; display: flex; flex-direction: column; align-items: center;
-  gap: 0.3em; padding: 0.35em 0.3em; border: 1px solid var(--md-outline-variant);
-  border-radius: var(--md-shape-md); background: var(--md-surface-container-low);
-  align-self: stretch;
-}
-.flow-rail-btn {
-  width: 2.35em; height: 2.35em; min-width: 0; padding: 0; border-radius: var(--r-sm);
-  color: var(--md-on-surface-variant); font-size: 0.9em;
-}
-.flow-rail-btn:hover { background: var(--hover); color: var(--md-on-surface); }
-.flow-rail-btn.active { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
-.flow-rail-add { color: var(--md-on-primary-container); background: var(--md-primary-container); }
-.flow-rail-sep { width: 1.4em; height: 1px; background: var(--md-outline-variant); margin: 0.15em 0; }
-.flow-rail-spacer { flex: 1 1 auto; }
-.flow-debug.flow-sidebar {
-  position: static; top: auto; right: auto; bottom: auto; width: min(22em, 38%);
-  height: auto; max-height: none; align-self: stretch; flex: none;
-  background: var(--md-surface-container); box-shadow: none;
-}
-.flow-debug.flow-sidebar .flow-panel-tabs { flex-wrap: wrap; }
-@media (max-width: 900px) {
-  .flow-debug.flow-sidebar { position: absolute; top: 0.4em; right: 0.4em; bottom: 0.4em;
-    width: min(20em, 78%); height: auto; z-index: 30; box-shadow: var(--md-elev-2); }
-}
 
 /* FlowAgent 画布浮层布局（2026-11-11 用户定）：
  * 画面 = 整块画布；左上添加节点；右上开合；右侧节点与连接；底部测试/调试。

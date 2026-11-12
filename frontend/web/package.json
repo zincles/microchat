@@ -2,7 +2,7 @@
   "name": "microchat-web",
   "version": "0.1.0",
   "scripts": {
-    "test": "node --import tsx --test test/*.test.js",
+    "test": "node --import tsx --test test/*.test.ts",
     "dev": "vite --port 5173 --strictPort",
     "build": "vite build",
     "preview": "vite preview",
