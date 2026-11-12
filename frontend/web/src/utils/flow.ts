@@ -4,11 +4,12 @@
 // 节点类型先保持最小集合：input（字符串）/ history（messages[]）/ trim（messages[]）/
 // llm / join / output。以后加 template / condition 时，先在这里扩白名单，再改编辑器与运行时。
 import type { FlowEdge, FlowGraph, FlowNode } from "../api/types.ts";
+import { FLOW_NODE_SPECS, flowInputPorts, flowNodeSpec, flowOutputPorts, judgeAnswerType, nodeLabelFor, type FlowNodeKind } from "./flowSpecs.ts";
 
 export const FLOW_VERSION = 1;
 export const DEFAULT_JOIN_SEPARATOR = "\n\n---\n\n";
-export const FLOW_NODE_TYPES = ["input", "text", "history", "trim", "merge", "llm", "join", "judge", "output"] as const;
-export type FlowNodeType = (typeof FLOW_NODE_TYPES)[number];
+export const FLOW_NODE_TYPES = Object.keys(FLOW_NODE_SPECS) as FlowNodeKind[];
+export type FlowNodeType = FlowNodeKind;
 export type FlowDataType = "string" | "messages" | "bool" | "number" | "choice";
 
 export const TRIM_MODES = [
@@ -23,55 +24,26 @@ export const TRIM_ROLES = ["system", "user", "assistant"] as const;
 
 const norm = (handle?: string, fallback = "out"): string => handle || fallback;
 
-// 端口类型是连接校验的唯一依据：字符串只能接字符串，messages[] 只能接 messages 端口。
+// 端口类型是连接校验的唯一依据：结构由 flowSpecs.ts 的 NodeSpec 提供。
+// 这里只保留两个兼容映射：老 join 的 `out`、老 output 的 `in`。
 export function flowSourceType(node: FlowNode | undefined, handle?: string): FlowDataType | null {
   if (!node) return null;
   const h = norm(handle, "out");
-  switch (node.type) {
-    case "input":
-    case "text":
-    case "join":
-      return h === "out" || /^out-\d+$/.test(h) ? "string" : null;
-    case "judge":
-      return h === "out" ? judgeAnswerType(node) : null;
-    case "history":
-    case "trim":
-    case "merge":
-      return h === "out" ? "messages" : null;
-    case "llm":
-      return h === "text" || h === "reasoning" ? "string" : null;
-    default:
-      return null;
-  }
+  const ports = flowOutputPorts(node);
+  const port = ports.find((item) => item.handle === h);
+  if (port) return port.type;
+  if (h === "out" && node.type === "join") return ports[0]?.type ?? null;
+  return null;
 }
 
 export function flowTargetType(node: FlowNode | undefined, handle?: string): FlowDataType | null {
   if (!node) return null;
   const h = norm(handle, "in");
-  switch (node.type) {
-    case "llm":
-      if (h === "enabled") return "bool";
-      if (h.startsWith("history-")) return "messages";
-      return h.startsWith("prompt-") ? "string" : null;
-    case "trim":
-      return h === "in" ? "messages" : null;
-    case "merge":
-      return h.startsWith("in-") ? "messages" : null;
-    case "join":
-      return h.startsWith("in-") ? "string" : null;
-    case "judge":
-      return h === "state" ? "string" : null;
-    case "output":
-      return h === "in" || h === "text" || h === "reasoning" || h === "user" ? "string" : null;
-    default:
-      return null;
-  }
+  if (node.type === "output" && h === "in") return "string";
+  return flowInputPorts(node).find((item) => item.handle === h)?.type ?? null;
 }
 
-export function judgeAnswerType(node: FlowNode | undefined): FlowDataType {
-  const type = String(node?.data?.answer_type ?? "string");
-  return type === "bool" || type === "number" || type === "choice" ? type : "string";
-}
+export { judgeAnswerType };
 
 export function trimModeOf(data?: Record<string, any> | null): TrimMode {
   const value = String(data?.mode ?? "tail");
@@ -93,11 +65,6 @@ export function trimMessages<T>(messages: readonly T[], mode: TrimMode, count: n
   }
 }
 
-const FLOW_TEXT_LABELS: Record<string, string> = {
-  input: "输入", text: "纯文本", history: "历史数据", trim: "裁剪 messages", merge: "拼接 messages",
-  llm: "调用 LLM", join: "拼接和复制", judge: "JEV 判断", output: "输出",
-};
-
 // formatFlowText：图的纯文本视图。用 id + 类型 + 位置 + 每个端口的去向，
 // 方便在没有画布的地方（日志、聊天、code review）核对连接。
 export function formatFlowText(graph?: FlowGraph | null): string {
@@ -106,7 +73,7 @@ export function formatFlowText(graph?: FlowGraph | null): string {
   const byID = new Map(nodes.map((node) => [node.id, node]));
   const lines: string[] = [`AgentFlow · ${nodes.length} nodes / ${edges.length} edges`];
   for (const node of nodes) {
-    const label = FLOW_TEXT_LABELS[node.type] ?? node.type;
+    const label = nodeLabelFor(node);
     const x = Math.round(Number(node.position?.x ?? 0));
     const y = Math.round(Number(node.position?.y ?? 0));
     const height = Number(node.data?.height);
@@ -121,7 +88,7 @@ export function formatFlowText(graph?: FlowGraph | null): string {
     }
     for (const edge of outgoing) {
       const target = byID.get(edge.target);
-      const targetLabel = target ? FLOW_TEXT_LABELS[target.type] ?? target.type : "?";
+      const targetLabel = target ? nodeLabelFor(target) : "?";
       lines.push(`  ${edge.sourceHandle || "out"} → ${edge.target}:${edge.targetHandle || "in"} [${targetLabel}]`);
     }
   }
@@ -351,7 +318,6 @@ export function flowDebugSteps(graph: FlowGraph): FlowDebugStep[] {
   const nodes = flowNodeOrder(graph);
   const edges = graph.edges ?? [];
   const values = new Map<string, { text: string; reasoning: string }>();
-  const labels: Record<string, string> = { input: "输入", text: "纯文本", history: "历史数据", trim: "裁剪 messages", merge: "拼接 messages", llm: "调用 LLM", join: "拼接和复制", judge: "JEV 判断", output: "输出" };
   const source = (edge: { source: string; sourceHandle?: string }): string => {
     const handle = edge.sourceHandle || "out";
     const value = values.get(`${edge.source}\0${handle}`) ?? values.get(`${edge.source}\0out`) ?? values.get(`${edge.source}\0text`);
@@ -363,7 +329,7 @@ export function flowDebugSteps(graph: FlowGraph): FlowDebugStep[] {
     const incoming = edges.filter((e) => e.target === node.id).map(source);
     let output = "";
     let reasoning = "";
-    let label = labels[node.type] ?? node.type;
+    let label = nodeLabelFor(node);
     if (node.type === "input") {
       output = "[本轮用户输入]";
     } else if (node.type === "text") {

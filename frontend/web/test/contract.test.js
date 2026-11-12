@@ -5,7 +5,8 @@ import { parseWireMessages, previewBlock } from "../src/utils/payload.ts";
 import { assemblePrompt, abilityPrompt, missingSegments } from "../src/utils/prompt.ts";
 import { renderMarkdown } from "../src/utils/markdown.ts";
 import { buildCartridge, cartridgeAgent } from "../src/utils/cartridge.ts";
-import { emptyFlowGraph, flowDebugSteps, flowIssues, flowSourceType, flowTargetType, formatFlowText, normalizeFlowGraph, trimMessages } from "../src/utils/flow.ts";
+import { FLOW_NODE_TYPES, emptyFlowGraph, flowDebugSteps, flowIssues, flowSourceType, flowTargetType, formatFlowText, normalizeFlowGraph, trimMessages } from "../src/utils/flow.ts";
+import { FLOW_NODE_SPECS, flowInputPorts, flowOutputPorts } from "../src/utils/flowSpecs.ts";
 import { parseCommand, filterCommands, COMMAND_META } from "../src/utils/commands.ts";
 import { uuidv7 } from "../src/utils/ids.ts";
 import { groupSessions, SESSION_GROUP_LABELS } from "../src/utils/sessionGroups.ts";
@@ -474,6 +475,13 @@ test("FlowAgent：端口有类型，且每个端点只许一条线", () => {
   const join = { id: "j", type: "join", position: { x: 0, y: 0 }, data: { inputs: ["in-1", "in-2"] } };
   const trim = { id: "t", type: "trim", position: { x: 0, y: 0 }, data: { mode: "tail", count: 2 } };
   const merge = { id: "m", type: "merge", position: { x: 0, y: 0 }, data: { inputs: ["in-1", "in-2"] } };
+  // 节点结构必须先登记 NodeSpec：新增节点不允许只写模板/switch。
+  assert.deepEqual(FLOW_NODE_TYPES, Object.keys(FLOW_NODE_SPECS), "节点类型清单与 NodeSpec 不同步");
+  for (const spec of Object.values(FLOW_NODE_SPECS)) {
+    assert.ok(spec.label && spec.badge && spec.hint, `${spec.type} 缺少显示元信息`);
+    assert.ok(Array.isArray(spec.inputs({ id: "x", type: spec.type, position: { x: 0, y: 0 }, data: {} })), `${spec.type} inputs 不是数组`);
+    assert.ok(Array.isArray(spec.outputs({ id: "x", type: spec.type, position: { x: 0, y: 0 }, data: {} })), `${spec.type} outputs 不是数组`);
+  }
   assert.equal(flowSourceType(input, "out"), "string");
   assert.equal(flowSourceType(history, "out"), "messages");
   assert.equal(flowSourceType(trim, "out"), "messages");
@@ -568,7 +576,7 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(flowNode, /class="flow-node-delete/, "节点没有删除按钮");
   assert.match(flowNode, /id="reasoning"/, "LLM 节点没有思考出口");
   assert.match(flowNode, /history-\$\{prompt\.id\}/, "LLM 节点没有历史条目输入孔");
-  assert.match(flowNode, /拼接和复制/, "拼接节点没有改名为拼接和复制");
+  assert.equal(FLOW_NODE_SPECS.join.label, "拼接和复制", "拼接节点没有改名为拼接和复制");
   assert.match(flowNode, /class="flow-join-inputs"/, "拼接和复制节点没有多输入端口");
   assert.match(flowNode, /addJoinInput/, "拼接节点不能增加输入端口");
   assert.match(flowNode, /addJoinOutput/, "拼接节点不能增加输出端口");
@@ -686,7 +694,7 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(flow, /flow-panel-tabs/, "底栏没有 测试/调试 tabs");
   assert.match(flow, /<VMenu[\s\S]*flow-add-menu[\s\S]*addNodeItems/, "添加节点不是下拉列表");
   for (const type of ["input", "text", "history", "trim", "merge", "llm", "join", "judge", "output"]) {
-    assert.match(flow, new RegExp(`type: "${type}"`), `流程编辑器缺 ${type} 节点`);
+    assert.ok(FLOW_NODE_SPECS[type], `NodeSpec 缺 ${type} 节点`);
   }
   const empty = emptyFlowGraph();
   assert.ok(flowIssues(empty).some((x) => x.includes("输出节点还没有输入")), "空图没有输出连线警告");

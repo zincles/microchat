@@ -5,7 +5,8 @@ import { computed, inject, onUnmounted, ref, type Ref } from "vue";
 import { Handle, Position } from "@vue-flow/core";
 import { VBtn, VSelect, VTextField, VTextarea } from "vuetify/components";
 import type { ModelListItem } from "../api/types.ts";
-import { DEFAULT_JOIN_SEPARATOR, TRIM_MODES, TRIM_ROLES, judgeAnswerType as judgeAnswerTypeOf, trimCountOf, trimModeOf, type FlowDataType, type TrimMode } from "../utils/flow.ts";
+import { DEFAULT_JOIN_SEPARATOR, TRIM_MODES, TRIM_ROLES, trimCountOf, trimModeOf, type FlowDataType, type TrimMode } from "../utils/flow.ts";
+import { judgeAnswerType as judgeAnswerTypeOf, nodeBadgeFor, nodeHintFor, nodeLabelFor } from "../utils/flowSpecs.ts";
 
 const props = defineProps<{
   id: string;
@@ -29,33 +30,12 @@ const nodeClass = computed(() => [`flow-node-${props.type}`, runState.value ? `f
 const removeNode = inject<(id: string) => void>("flowRemoveNode", () => {});
 const removePort = inject<(nodeId: string, handle: string, side: "source" | "target") => void>("flowRemovePort", () => {});
 const models = inject<Ref<ModelListItem[]>>("flowModels", ref([]));
-const label = computed(() => ({
-  input: "输入",
-  text: "纯文本",
-  judge: "JEV 判断",
-  history: "历史数据",
-  trim: "裁剪 messages",
-  merge: "拼接 messages",
-  llm: "调用 LLM",
-  join: "拼接和复制",
-  output: "输出",
-}[props.type] ?? props.type));
-const badge = computed(() => ({
-  input: "IN", text: "TXT", judge: "JEV", history: "H", trim: "TR", merge: "MG", llm: "AI", join: "J", output: "OUT",
-}[props.type] ?? "·"));
-const hint = computed(() => ({
-  input: "裸字符串：本轮用户输入",
-  text: "无输入：输出这里写死的常量文本",
-  judge: "把场景/状态交给 JEV，输出概率答案 JSON",
-  history: "messages[]：当前会话历史",
-  trim: "messages[] → messages[]：按条数裁剪",
-  merge: "多路 messages[] 按端口顺序拼接",
-  llm: "手动组装 messages",
-  join: "多路拼接；只接一路时直接复制",
-  output: "最终结果写入聊天；用户消息端口可改写入库正文",
-}[props.type] ?? ""));
+const label = computed(() => nodeLabelFor(props.type));
+const badge = computed(() => nodeBadgeFor(props.type));
+const hint = computed(() => nodeHintFor(props.type));
 const portClass = (type: FlowDataType): string => `flow-port-${type}`;
 const prompts = computed<PromptEntry[]>(() => Array.isArray(props.data.prompts) ? props.data.prompts : []);
+
 const modelOptions = computed(() => [
   { title: "跟随默认模型", value: "" },
   ...models.value.map((m) => ({
