@@ -475,7 +475,7 @@ func TestXAIPreset(t *testing.T) {
 
 // 旧命名（`openai-compat`）必须仍按 OpenAI 兼容对待 —— 否则老配置会静默失去 stream_options。
 func TestLegacyOpenAICompatKind(t *testing.T) {
-	request, err := Build(Provider{ID: "old", Vendor: VendorOpenAICompat, BaseURL: "https://example.invalid/v1"},
+	request, err := Build(Provider{ID: "old", Vendor: VendorCustom, BaseURL: "https://example.invalid/v1"},
 		Request{Model: "m", SessionID: "s", Stream: true})
 	if err != nil {
 		t.Fatal(err)
@@ -571,7 +571,7 @@ func TestReasoningReplay(t *testing.T) {
 		t.Fatal("user 那条不该有思考")
 	}
 	// 不支持回传的 kind（标准 OpenAI 兼容）⇒ 一个字都不发
-	plain, err := Build(Provider{ID: "cmp", Vendor: VendorOpenAICompat, BaseURL: "https://x.invalid/v1"},
+	plain, err := Build(Provider{ID: "cmp", Vendor: VendorCustom, BaseURL: "https://x.invalid/v1"},
 		Request{Model: "m", SessionID: "s", Messages: messages})
 	if err != nil {
 		t.Fatal(err)
@@ -596,7 +596,7 @@ func TestPrimaryPresets(t *testing.T) {
 			primary[item.Vendor] = true
 		}
 	}
-	for _, want := range []Vendor{VendorDummy, VendorOpenAICompat, VendorOpenCodeGo} {
+	for _, want := range []Vendor{VendorDummy, VendorCustom, VendorOpenCodeGo} {
 		if !primary[want] {
 			t.Fatalf("%s 该是主选：%+v", want, primary)
 		}
@@ -747,7 +747,7 @@ func TestReasoningFieldPresenceForDeepSeek(t *testing.T) {
 
 // Validate：vendor×protocol 兼容矩阵（错配 loud error；占位 protocol 永远"暂不支持"）。
 func TestValidateVendorProtocolMatrix(t *testing.T) {
-	chatOK := []Vendor{VendorOpenAICompat, VendorDummy, VendorOpenAI, VendorOpenRouter, VendorDeepseek,
+	chatOK := []Vendor{VendorCustom, VendorDummy, VendorOpenAI, VendorOpenRouter, VendorDeepseek,
 		VendorOpenCodeGo, VendorOpenCode, VendorOllama, VendorLMStudio, VendorCustom}
 	for _, vendor := range chatOK {
 		provider := Provider{ID: "p", Vendor: vendor, BaseURL: "https://x.invalid/v1"}

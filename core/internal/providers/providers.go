@@ -43,20 +43,17 @@ func (v Vendor) VendorName() string {
 }
 
 const (
-	// VendorOpenAICompat：**旧命名**（Rust 时代）—— 端点全靠配置给，仍按 OpenAI 兼容对待。
-	// 留它是为了**不静默改变老配置的行为**（少了它，老配置会掉进"未知 vendor" ⇒ 不发 stream_options）。
-	VendorOpenAICompat Vendor = "openai-compat"
-	VendorDummy        Vendor = "dummy"       // 不联网：请求照拼（调试页看得到），但不发
-	VendorOpenAI       Vendor = "openai"      // 官方 OpenAI（api.openai.com）
-	VendorOpenRouter   Vendor = "openrouter"  // OpenRouter
-	VendorDeepseek     Vendor = "deepseek"    // DeepSeek 官方（api.deepseek.com，OpenAI 兼容）
-	VendorXAI          Vendor = "xai"         // xAI（api.x.ai/v1，OpenAI 兼容）
-	VendorOpenCodeGo   Vendor = "opencode-go" // OpenCode Go（网关按客户端身份放行）
-	VendorOpenCode     Vendor = "opencode"    // OpenCode（同上，非 Go 套餐）
-	VendorOllama       Vendor = "ollama"      // 本地
-	VendorLMStudio     Vendor = "lmstudio"    // 本地
-	VendorTypesafe     Vendor = "typesafe"    // Typesafe（SystemOne 协议）
-	VendorCustom       Vendor = "custom"      // 自定义端点：端点全靠配置给，按 OpenAI 兼容对待
+	VendorDummy      Vendor = "dummy"       // 不联网：请求照拼（调试页看得到），但不发
+	VendorOpenAI     Vendor = "openai"      // 官方 OpenAI（api.openai.com）
+	VendorOpenRouter Vendor = "openrouter"  // OpenRouter
+	VendorDeepseek   Vendor = "deepseek"    // DeepSeek 官方（api.deepseek.com，OpenAI 兼容）
+	VendorXAI        Vendor = "xai"         // xAI（api.x.ai/v1，OpenAI 兼容）
+	VendorOpenCodeGo Vendor = "opencode-go" // OpenCode Go（网关按客户端身份放行）
+	VendorOpenCode   Vendor = "opencode"    // OpenCode（同上，非 Go 套餐）
+	VendorOllama     Vendor = "ollama"      // 本地
+	VendorLMStudio   Vendor = "lmstudio"    // 本地
+	VendorTypesafe   Vendor = "typesafe"    // Typesafe（SystemOne 协议）
+	VendorCustom     Vendor = "custom"      // 自定义端点：端点全靠配置给，按 OpenAI 兼容对待
 )
 
 // Protocol：渠道**说什么话**（线协议）。与 Vendor 正交，由 Validate 做兼容矩阵检查。
@@ -228,10 +225,9 @@ type preset struct {
 
 var presets = map[Vendor]preset{
 	// 旧名：端点由配置供给（可能是任何 OpenAI 兼容服务），但语义与 custom 一致的那部分照给
-	VendorOpenAICompat: {supportsUsage: true, supportsStore: true},
-	VendorCustom:       {supportsUsage: true, supportsStore: true},
-	VendorOpenAI:       {baseURL: "https://api.openai.com/v1", apiKeyEnvs: []string{"OPENAI_API_KEY"}, supportsUsage: true, supportsStore: true, longCache: true},
-	VendorOpenRouter:   {baseURL: "https://openrouter.ai/api/v1", apiKeyEnvs: []string{"OPENROUTER_API_KEY"}, supportsUsage: true, supportsCost: true},
+	VendorCustom:     {supportsUsage: true, supportsStore: true},
+	VendorOpenAI:     {baseURL: "https://api.openai.com/v1", apiKeyEnvs: []string{"OPENAI_API_KEY"}, supportsUsage: true, supportsStore: true, longCache: true},
+	VendorOpenRouter: {baseURL: "https://openrouter.ai/api/v1", apiKeyEnvs: []string{"OPENROUTER_API_KEY"}, supportsUsage: true, supportsCost: true},
 	// DeepSeek 官方：OpenAI 兼容（`/chat/completions` + `/models` 同形）；思考字段用官方的 `reasoning_content`
 	//（接收侧三种全认，发送侧用它 —— 也是 `wireMessages` 里"deepseek vendor 字段必须在"那条规则的落点）。
 	VendorDeepseek: {baseURL: "https://api.deepseek.com", apiKeyEnvs: []string{"DEEPSEEK_API_KEY"}, supportsUsage: true, reasoningField: "reasoning_content"},
@@ -309,7 +305,7 @@ func (p Provider) Normalize() Provider {
 
 // Validate：vendor×protocol 兼容矩阵（错配 loud error）。
 //
-//   - chat-completion ← openai-compat、dummy、openai、openrouter、deepseek、opencode-go、
+//   - chat-completion ← dummy、openai、openrouter、deepseek、opencode-go、
 //     opencode、ollama、lmstudio、custom；custom 必须有 base_url（端点全靠配置给）。
 //   - openai-response ← opencode-go、opencode、openrouter、custom；custom 必须有 base_url
 //     或 Endpoints[openai-response]（端点全靠配置给）；其余 vendor 走它直接错配。
@@ -341,7 +337,7 @@ func (p Provider) Validate() error {
 		return nil
 	case ProtocolChatCompletion:
 		switch vendor {
-		case VendorOpenAICompat, VendorDummy, VendorOpenAI, VendorOpenRouter, VendorDeepseek, VendorXAI,
+		case VendorDummy, VendorOpenAI, VendorOpenRouter, VendorDeepseek, VendorXAI,
 			VendorOpenCodeGo, VendorOpenCode, VendorOllama, VendorLMStudio, VendorCustom:
 		default:
 			return fmt.Errorf("providers: vendor %q 不支持 protocol %q", vendor, protocol)
@@ -444,14 +440,14 @@ func reasoningFieldFor(p Provider) string {
 	return presets[p.EffectiveVendor()].reasoningField
 }
 
-// reasoningFieldForModel：同上，但 custom/openai-compat 保留旧的模型名启发式 ——
+// reasoningFieldForModel：同上，但 custom 保留旧的模型名启发式 ——
 // 模型名含 `deepseek` 时按 DeepSeek 官方字段回传（否则那一路上启发式永远落空）。
 func reasoningFieldForModel(p Provider, model string) string {
 	if p.ReasoningField != nil {
 		return *p.ReasoningField
 	}
 	vendor := p.EffectiveVendor()
-	if (vendor == VendorCustom || vendor == VendorOpenAICompat) && isDeepSeekFamily(model) {
+	if vendor == VendorCustom && isDeepSeekFamily(model) {
 		return "reasoning_content"
 	}
 	return presets[vendor].reasoningField
@@ -785,7 +781,7 @@ func applyOverride(body map[string]any, override map[string]json.RawMessage) {
 // 两件特殊处理（都照 Pi）：
 //  1. assistant 消息带着**当时的思考** ⇒ 补回同一个消息里（字段名随 provider：`reasoning_content` 等）；
 //  2. 思考字段**必须存在**的规则按 vendor 走（Pi 的 `openai-completions.ts:1379` 那条）：
-//     vendor==deepseek ⇒ 没有思考也补空字符串；vendor 为 custom/openai-compat ⇒ 保留旧的
+//     vendor==deepseek ⇒ 没有思考也补空字符串；vendor 为 custom ⇒ 保留旧的
 //     模型名启发式（含 `deepseek` 才补）；其余 vendor 不补。想整块关掉就把 `reasoning_field` 设成 ""。
 func wireMessages(messages []ChatMessage, reasoningField string, vendor Vendor, model string, toolResultName bool) []map[string]any {
 	requirePresence := false
@@ -793,7 +789,7 @@ func wireMessages(messages []ChatMessage, reasoningField string, vendor Vendor, 
 		switch vendor {
 		case VendorDeepseek:
 			requirePresence = true
-		case VendorCustom, VendorOpenAICompat:
+		case VendorCustom:
 			requirePresence = isDeepSeekFamily(model)
 		}
 	}
@@ -1178,7 +1174,7 @@ func ProtocolOptionOf(protocol Protocol) (ProtocolOption, bool) {
 }
 
 // primaryKinds：**主选**的三种（新建渠道时只该看到这三个 —— 其余是便利预设）。按 vendor。
-var primaryKinds = []Vendor{VendorDummy, VendorOpenAICompat, VendorOpenCodeGo}
+var primaryKinds = []Vendor{VendorDummy, VendorCustom, VendorOpenCodeGo}
 
 func isPrimary(vendor Vendor) bool {
 	for _, candidate := range primaryKinds {
@@ -1234,24 +1230,23 @@ func protocolOptionsFor(vendor Vendor) []ProtocolOption {
 // presetNames：vendor 的中文名（**唯一权威**：`GET /providers/presets` 的 `name` 就打这一份，
 // 界面只显示它、不许自己另抄一张翻译表）。
 var presetNames = map[Vendor]string{
-	VendorOpenAICompat: "标准（OpenAI 兼容）",
-	VendorCustom:       "自定义（OpenAI 兼容）",
-	VendorDummy:        "本地示例（不联网）",
-	VendorOpenAI:       "OpenAI 官方",
-	VendorOpenRouter:   "OpenRouter",
-	VendorDeepseek:     "DeepSeek 官方",
-	VendorXAI:          "xAI（Grok）",
-	VendorOpenCodeGo:   "OpenCode Go",
-	VendorOpenCode:     "OpenCode (Zen)",
-	VendorOllama:       "Ollama（本地）",
-	VendorLMStudio:     "LM Studio（本地）",
-	VendorTypesafe:     "Typesafe (SystemOne)",
+	VendorCustom:     "自定义（OpenAI 兼容）",
+	VendorDummy:      "本地示例（不联网）",
+	VendorOpenAI:     "OpenAI 官方",
+	VendorOpenRouter: "OpenRouter",
+	VendorDeepseek:   "DeepSeek 官方",
+	VendorXAI:        "xAI（Grok）",
+	VendorOpenCodeGo: "OpenCode Go",
+	VendorOpenCode:   "OpenCode (Zen)",
+	VendorOllama:     "Ollama（本地）",
+	VendorLMStudio:   "LM Studio（本地）",
+	VendorTypesafe:   "Typesafe (SystemOne)",
 }
 
 // Presets：全部内建预设（顺序固定 ⇒ 界面上的下拉稳定）。
 func Presets() []PresetInfo {
 	// 三种主选在前，其余便利预设殿后
-	order := []Vendor{VendorDummy, VendorOpenAICompat, VendorOpenCodeGo, VendorOpenRouter, VendorDeepseek, VendorXAI, VendorOpenCode, VendorOpenAI, VendorOllama, VendorLMStudio, VendorTypesafe, VendorCustom}
+	order := []Vendor{VendorDummy, VendorCustom, VendorOpenCodeGo, VendorOpenRouter, VendorDeepseek, VendorXAI, VendorOpenCode, VendorOpenAI, VendorOllama, VendorLMStudio, VendorTypesafe}
 	list := make([]PresetInfo, 0, len(order))
 	for _, vendor := range order {
 		preset := presets[vendor]

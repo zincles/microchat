@@ -59,7 +59,7 @@ func TestChatStreamsAndSplitsReasoning(t *testing.T) {
 		`data: [DONE]`,
 	}
 	stub := newStubUpstream(t, http.StatusOK, "text/event-stream", strings.Join(frames, "\n\n")+"\n\n")
-	provider := Provider{ID: "stub", Vendor: VendorOpenAICompat, BaseURL: stub.baseURL(), Identity: IdentityBare}
+	provider := Provider{ID: "stub", Vendor: VendorCustom, BaseURL: stub.baseURL(), Identity: IdentityBare}
 
 	var deltas []Delta
 	result, err := NewClient(provider).Chat(context.Background(), provider, Request{
@@ -289,7 +289,7 @@ func float64Ptr(value float64) *float64 { return &value }
 func TestUpstreamErrorIsReturnedAsIsAndNotRetried(t *testing.T) {
 	stub := newStubUpstream(t, http.StatusTooManyRequests, "application/json",
 		`{"error":{"message":"rate limited","type":"too_many_requests"}}`)
-	provider := Provider{ID: "stub", Vendor: VendorOpenAICompat, BaseURL: stub.baseURL(), APIKey: "sk-real", Identity: IdentityBare}
+	provider := Provider{ID: "stub", Vendor: VendorCustom, BaseURL: stub.baseURL(), APIKey: "sk-real", Identity: IdentityBare}
 	_, err := NewClient(provider).Chat(context.Background(), provider, Request{
 		Model: "m", SessionID: "s1", Messages: []ChatMessage{{Role: "user", Content: "在吗"}},
 	}, "", nil)
@@ -315,7 +315,7 @@ func TestErrorInsideTheStreamFailsTheTurn(t *testing.T) {
 		`data: {"error":{"message":"上游崩了"}}`,
 	}
 	stub := newStubUpstream(t, http.StatusOK, "text/event-stream", strings.Join(frames, "\n\n")+"\n\n")
-	provider := Provider{ID: "stub", Vendor: VendorOpenAICompat, BaseURL: stub.baseURL(), Identity: IdentityBare}
+	provider := Provider{ID: "stub", Vendor: VendorCustom, BaseURL: stub.baseURL(), Identity: IdentityBare}
 	result, err := NewClient(provider).Chat(context.Background(), provider, Request{
 		Model: "m", SessionID: "s1", Messages: []ChatMessage{{Role: "user", Content: "在吗"}},
 	}, "", nil)
@@ -331,7 +331,7 @@ func TestErrorInsideTheStreamFailsTheTurn(t *testing.T) {
 // 空流 ⇒ 明确的错（不往库里塞一条空消息）。
 func TestEmptyStreamIsAnError(t *testing.T) {
 	stub := newStubUpstream(t, http.StatusOK, "text/event-stream", "data: [DONE]\n\n")
-	provider := Provider{ID: "stub", Vendor: VendorOpenAICompat, BaseURL: stub.baseURL(), Identity: IdentityBare}
+	provider := Provider{ID: "stub", Vendor: VendorCustom, BaseURL: stub.baseURL(), Identity: IdentityBare}
 	_, err := NewClient(provider).Chat(context.Background(), provider, Request{
 		Model: "m", SessionID: "s1", Messages: []ChatMessage{{Role: "user", Content: "在吗"}},
 	}, "", nil)
@@ -344,7 +344,7 @@ func TestEmptyStreamIsAnError(t *testing.T) {
 // （那会让人对着"时好时坏"猜）。"整段拿结果"的辅助调用走的是 `Complete`（那一发本来就不流式）。
 func TestNonStreamingIsRefusedExplicitly(t *testing.T) {
 	off := false
-	provider := Provider{ID: "stub", Vendor: VendorOpenAICompat, BaseURL: "http://127.0.0.1:1/v1", Stream: &off}
+	provider := Provider{ID: "stub", Vendor: VendorCustom, BaseURL: "http://127.0.0.1:1/v1", Stream: &off}
 	_, err := NewClient(provider).Chat(context.Background(), provider, Request{
 		Model: "m", SessionID: "s1",
 	}, "", nil)
@@ -449,7 +449,7 @@ func TestCompleteRespectsEndpointConcurrency(t *testing.T) {
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
 	}))
 	t.Cleanup(server.Close)
-	provider := Provider{ID: "limit-test-unique", Vendor: VendorOpenAICompat, BaseURL: server.URL + "/v1",
+	provider := Provider{ID: "limit-test-unique", Vendor: VendorCustom, BaseURL: server.URL + "/v1",
 		Identity: IdentityBare, MaxConcurrency: 1}
 	client := NewClient(provider)
 	var wg sync.WaitGroup

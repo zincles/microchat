@@ -58,7 +58,7 @@ func TestRefreshModelsSkipsRegistersAndIsolatesFailures(t *testing.T) {
 		{ID: "dummy", Vendor: "dummy"},
 		{ID: "cloud", Vendor: "opencode-go"}, // 没配 key ⇒ 跳过（别拿 401 刷屏）
 		{ID: "healthy", Vendor: "opencode-go", APIKey: "sk-x", BaseURL: healthy.URL},
-		{ID: "broken", Vendor: "openai-compat", BaseURL: broken.URL},
+		{ID: "broken", Vendor: "custom", BaseURL: broken.URL},
 	}
 	tasks := task.NewRegistry()
 	outcomes := refreshModels(st, tasks, cfg, list)

@@ -283,7 +283,7 @@ func TestFlowAgentDoesNotAutoAttachReasoning(t *testing.T) {
 	}))
 	defer upstream.Close()
 	stubConfig := config.ProvidersConfig{Providers: []config.Provider{{
-		ID: "stub", Vendor: "openai-compat", BaseURL: upstream.URL, Identity: "bare",
+		ID: "stub", Vendor: "custom", BaseURL: upstream.URL, Identity: "bare",
 	}}}
 	h := newHarness(t, stubConfig, "stub", "stub")
 	flow := json.RawMessage(`{"version":1,"nodes":[
@@ -318,7 +318,7 @@ func TestFlowAgentMapsReasoningPort(t *testing.T) {
 	}))
 	defer upstream.Close()
 	stubConfig := config.ProvidersConfig{Providers: []config.Provider{{
-		ID: "stub", Vendor: "openai-compat", BaseURL: upstream.URL, Identity: "bare",
+		ID: "stub", Vendor: "custom", BaseURL: upstream.URL, Identity: "bare",
 	}}}
 	h := newHarness(t, stubConfig, "stub", "stub")
 	flow := json.RawMessage(`{"version":1,"nodes":[
@@ -351,7 +351,7 @@ func TestFlowAgentLegacyReasoningInputStaysReasoning(t *testing.T) {
 	}))
 	defer upstream.Close()
 	stubConfig := config.ProvidersConfig{Providers: []config.Provider{{
-		ID: "stub", Vendor: "openai-compat", BaseURL: upstream.URL, Identity: "bare",
+		ID: "stub", Vendor: "custom", BaseURL: upstream.URL, Identity: "bare",
 	}}}
 	h := newHarness(t, stubConfig, "stub", "stub")
 	// 老图：单个 in，源是 reasoning。迁移/执行都必须落到 reasoning，不能变成正文。
@@ -554,7 +554,7 @@ func TestFlowLLMRetriesThenSucceeds(t *testing.T) {
 	}))
 	defer upstream.Close()
 	stubConfig := config.ProvidersConfig{Providers: []config.Provider{{
-		ID: "stub", Vendor: "openai-compat", BaseURL: upstream.URL, Identity: "bare",
+		ID: "stub", Vendor: "custom", BaseURL: upstream.URL, Identity: "bare",
 	}}}
 	h := newHarness(t, stubConfig, "stub", "stub")
 	graph := flowGraph{Nodes: []flowNode{
@@ -581,7 +581,7 @@ func TestFlowLLMFailureFailsWholeFlow(t *testing.T) {
 	}))
 	defer upstream.Close()
 	stubConfig := config.ProvidersConfig{Providers: []config.Provider{{
-		ID: "stub", Vendor: "openai-compat", BaseURL: upstream.URL, Identity: "bare",
+		ID: "stub", Vendor: "custom", BaseURL: upstream.URL, Identity: "bare",
 	}}}
 	h := newHarness(t, stubConfig, "stub", "stub")
 	graph := flowGraph{Nodes: []flowNode{

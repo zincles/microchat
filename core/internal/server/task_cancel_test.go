@@ -103,7 +103,7 @@ func TestCanceledCompactWritesNothingAndRetryCoversSameSpan(t *testing.T) {
 
 	// 切到一个会挂住的渠道（照 `TestCompactRouteConflictsWhileRunning` 那条路建渠道）。
 	if recorder := call(box.server, "POST", "/api/v1/providers",
-		`{"id":"hung","vendor":"openai-compat","base_url":"`+upstream.server.URL+`"}`); recorder.Code != http.StatusCreated {
+		`{"id":"hung","vendor":"custom","base_url":"`+upstream.server.URL+`"}`); recorder.Code != http.StatusCreated {
 		t.Fatalf("建渠道该 201：%d %s", recorder.Code, recorder.Body.String())
 	}
 	if recorder := call(box.server, "PATCH", "/api/v1/sessions/"+box.sessionID,
@@ -202,7 +202,7 @@ func TestCancelTaskTwice(t *testing.T) {
 	box.seedTurn(t, "第一句")
 	box.seedTurn(t, "第二句")
 	if recorder := call(box.server, "POST", "/api/v1/providers",
-		`{"id":"hung","vendor":"openai-compat","base_url":"`+upstream.server.URL+`"}`); recorder.Code != http.StatusCreated {
+		`{"id":"hung","vendor":"custom","base_url":"`+upstream.server.URL+`"}`); recorder.Code != http.StatusCreated {
 		t.Fatalf("建渠道该 201：%d", recorder.Code)
 	}
 	if recorder := call(box.server, "PATCH", "/api/v1/sessions/"+box.sessionID,
@@ -281,7 +281,7 @@ func TestCanceledRerollLeavesNoPendingSlot(t *testing.T) {
 	box.seedTurn(t, "第一句") // 尾条 assistant 就是重摇目标
 
 	if recorder := call(box.server, "POST", "/api/v1/providers",
-		`{"id":"hung","vendor":"openai-compat","base_url":"`+upstream.server.URL+`"}`); recorder.Code != http.StatusCreated {
+		`{"id":"hung","vendor":"custom","base_url":"`+upstream.server.URL+`"}`); recorder.Code != http.StatusCreated {
 		t.Fatalf("建渠道该 201：%d %s", recorder.Code, recorder.Body.String())
 	}
 	if recorder := call(box.server, "PATCH", "/api/v1/sessions/"+box.sessionID,

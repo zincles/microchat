@@ -66,11 +66,6 @@ func validModelSource(source string) bool {
 	return source == ModelSourceGlobal || source == ModelSourceSession || source == ModelSourceAgent
 }
 
-// retired：**已退役**的能力 id（`config.RetiredAbilityIDs`，住 config 是因为读文件时就要摘掉，
-// 而 config 不能 import 这个包）。这里只借来看一眼：`Validate` 要把"退役"和"写错"分开 ——
-// 老 `agents.json` 里的 `judge` 是历史，不是错，不能让整份人格读不进来。
-var retired = config.RetiredAbilityIDs
-
 // Definition：一个能力的**代码侧定义** —— id、面板上的中文名、它在 `task` 里算哪种作业、默认模板。
 //
 // 这张表就是"流程在代码里"的落点：加一个能力 = 往这儿加一行（同时写下它那段流程）。
@@ -219,7 +214,7 @@ func digitValue(char byte) int {
 	return int(char-'a') + 10
 }
 
-// Valid：这是个**现在提供**的能力 id 吗（退役的不算 —— 见 `retired`）。
+// Valid：这是个**现在提供**的能力 id 吗。
 func Valid(id string) bool {
 	_, ok := DefinitionOf(id)
 	return ok
@@ -264,9 +259,6 @@ func Resolve(agent config.Agent, id ID) Setting {
 //
 // 为什么不能静默忽略：写了 `"ablities": …` 或 `"compactt": {…}` 的人以为它生效了，
 // 而实际什么都没发生 —— 这类"配了不生效"是最难查的一类问题。
-//
-// **退役的 id 不在此列**（`retired`）：老文件里写着 `judge` 是历史，不是写错；
-// 为此把整份人格判死、服务起不来，代价远大于收益。
 func Validate(agents config.AgentsConfig) error {
 	for _, agent := range agents.Effective() {
 		for _, id := range unknownIDs(agent) {
@@ -291,13 +283,10 @@ func Validate(agents config.AgentsConfig) error {
 	return nil
 }
 
-// unknownIDs：这份人格上写了、但不认识的能力 id（排好序 ⇒ 报错稳定；退役的不算不认识）。
+// unknownIDs：这份人格上写了、但不认识的能力 id（排好序 ⇒ 报错稳定）。
 func unknownIDs(agent config.Agent) []string {
 	unknown := []string{}
 	for id := range agent.Abilities {
-		if retired[id] {
-			continue
-		}
 		if !Valid(id) {
 			unknown = append(unknown, id)
 		}

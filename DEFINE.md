@@ -416,8 +416,7 @@ DELETE 体里带回 `last_deleted_message_id` ✓，服务端核对它仍是最�
 - **`prompt_version`** ✓：`sha256(**生效模板**)[:8]` ✓，每次调用连带写进那行记录 ✓（`summaries.prompt_version` ✓：**换个 agent 或改一句话，指纹就变** ✓ —— 算的地方也只有一处 ✓ `abilities.PromptVersion` ✓）。
 - **只列真会做的** ✗：`compact`（压缩/总结）✓、`title`（起标题）✓ 两个**已落地** ✓；传统 Agent 的 `judge`（JEV 判断）**已彻底删除** ✓
   —— `judge.Service` 与 `abilities.judge` 开关都不存在了；JEV 改成 Flow 的 `judge` 节点（`internal/judge.Evaluate` + `task.KindJudgement`）。
-  老 `agents.json` 里写着 `"judge": {…}` 照常能读（读入时就地摘掉，`config.RetiredAbilityIDs` 记着它），
-  而 `"judgee"` 那种真写错仍然 400 ✓；
+  老 `agents.json` 里写着 `"judge": {…}` 现在按未知能力报错；
   文档里举的"**索引**"最虚（索引什么没说清 ✗）⇒
   **不占位** ✗ —— 占位会让开关变成空诺 ✓（写着能开、其实没有实现 ✗）。
 - **死字段已删** ✓（2026-09-30）：`Agent.params` / `Agent.prompt_order` —— 声明了、没人读、用途未定 ⇒ **删** ✓

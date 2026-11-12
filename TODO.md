@@ -18,7 +18,7 @@
 
 ### 3. JEV 判断模型：已从传统 Agent 迁到 Flow
 - 2026-11-12 用户定「彻底砍掉传统Agent里的JEV模块」：`judge.Service` 与 Agent 的 `judge` 开关已删；
-  老 `agents.json` 里的 `judge` 仍由 `config.RetiredAbilityIDs` 读入即摘。
+  老 `agents.json` 里的 `judge` 不再兼容。
 - `internal/judge.Evaluate` 与 `task.KindJudgement` 保留，作为 Flow 的 `judge` 节点调用面。
 - 要接着做：① Switch 节点的分支裁剪；② 概率阈值与默认分支实测校准；③ 多角色动作集。见 `reminder/jev.md`。
 

@@ -140,8 +140,8 @@ func TestSkip(t *testing.T) {
 		{"opencode-go 没配 key", config.Provider{ID: "g", Vendor: "opencode-go"}, "没配 key"},
 		{"外网且配了 key", config.Provider{ID: "o", Vendor: "openai", APIKey: "sk-x"}, ""},
 		{"本机假上游（回环 IP）没配 key", config.Provider{ID: "s", Vendor: "openai", BaseURL: "http://127.0.0.1:8080/v1"}, ""},
-		{"本机假上游（localhost）没配 key", config.Provider{ID: "s", Vendor: "openai-compat", BaseURL: "http://localhost:8080/v1"}, ""},
-		{"内网端点没配 key", config.Provider{ID: "l", Vendor: "openai-compat", BaseURL: "http://192.168.1.5:8080/v1"}, ""},
+		{"本机假上游（localhost）没配 key", config.Provider{ID: "s", Vendor: "custom", BaseURL: "http://localhost:8080/v1"}, ""},
+		{"内网端点没配 key", config.Provider{ID: "l", Vendor: "custom", BaseURL: "http://192.168.1.5:8080/v1"}, ""},
 		{"ollama 预设（本机、无密钥概念）", config.Provider{ID: "ol", Vendor: "ollama"}, ""},
 	}
 	for _, item := range cases {
@@ -166,7 +166,7 @@ func TestRefreshAllSkipsAndIsolatesFailures(t *testing.T) {
 		{ID: "dummy", Vendor: "dummy"},
 		{ID: "cloud", Vendor: "opencode-go"},                                     // 没配 key ⇒ 跳过
 		{ID: "local", Vendor: "openai", BaseURL: "http://127.0.0.1:1/v1"},        // 本机 ⇒ 刷
-		{ID: "broken", Vendor: "openai-compat", BaseURL: "http://10.0.0.2:1/v1"}, // 内网 ⇒ 刷（这趟失败）
+		{ID: "broken", Vendor: "custom", BaseURL: "http://10.0.0.2:1/v1"}, // 内网 ⇒ 刷（这趟失败）
 	}
 	called := []string{}
 	outcomes := RefreshAll(list, func(provider config.Provider) Outcome {

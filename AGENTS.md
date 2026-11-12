@@ -861,7 +861,7 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 
 | 方法 | 路径 | 请求体 | 响应 | 说明 |
 |---|---|---|---|---|
-| GET | `/providers` | — | `[ProviderView]` | **含 `has_key`，绝不含密钥内容**；`base_url` 回**生效值**（只配 `kind` 时由预设供给）；`alias` = 显示别名（空 = 旧回退），`id` 永远不变 |
+| GET | `/providers` | — | `[ProviderView]` | **含 `has_key`，绝不含密钥内容**；`base_url` 回**生效值**（预设供给的也补上）；`alias` = 显示别名（空 = 旧回退），`id` 永远不变 |
 | GET | `/providers/presets` | — | `[PresetInfo]` | **内建预设清单**（kind / 端点 / 密钥环境变量 / 会话头 / 可选身份）—— 界面靠它生成"选一个内置 provider"的下拉 |
 | POST | `/providers` | `CreateProviderReq` | `ProviderView` · 201 | `api_key` 写进 `providers.json`；重名 → 409 |
 | PATCH | `/providers/{provider_id}` | `UpdateProviderReq` | `ProviderView` | `api_key`：`None` = 不动，`""` = 清除。`model_filter` 同三态（`""` = 不筛）；**改了要再 `POST …/refresh` 才生效**。`alias` 同三态（`""` = 清别名）且**只改显示、不改 id**。**`new_id` = 改渠道标识**（2026-11-05）：配置与库里的引用（`sessions.provider` / `models` / `model_route` / `provider_state` / `summaries.provider`）**一起搬**；撞已有渠道或在库里有同名数据 ⇒ **409**（**不合并**）；空 / 纯空白 ⇒ 422。先写配置、再搬库，库失败会把配置改回去 |
@@ -974,7 +974,7 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 **能力**（`internal/abilities`）：身份写死在代码里（`title` / `compact` —— **枚举就是全部**），**开关 + 可选覆盖写在 `agents.json` 每个 agent 的 `abilities` 上**（不另开 `abilities.json`），只能**覆盖**模板/渠道/模型，不能造新的；**未知的 id 在写入与启动读取时都报错**。
 - **传统 Agent 的 `judge` 能力已彻底删除**（2026-11-12 用户定：「彻底砍掉传统Agent的JEV模块」）：
   `abilities` 的枚举只剩 `title` / `compact`，没有 `judge.Service`、没有能力开关。
-  `config.RetiredAbilityIDs` 仍保留 `"judge"` 只为了读老 `agents.json` 时**容忍并摘掉**它——退役 ≠ 写错，不能让整份人格读不进来。
+  `config.RetiredAbilityIDs` 已删除；老 `agents.json` 里残留的 `judge` 现在会按未知能力报错。
   JEV 本身没有消失：它改成了 **Flow 的 `judge` 判断节点**（见「决策模型（JEV）」）。
 - **标题模型的来源三档**（2026-11-04 用户定）：`abilities.title.model_source` =
   `"global"`（默认：跟随 `config.json` 的 `chat.title_provider/title_model`，全局空 ⇒ 当前会话模型）/
@@ -1099,7 +1099,7 @@ DeepSeek / OpenCode GO 直连**确实不报**，所以那一格在那儿永远�
 | vendor | base_url（缺省，可覆写） | 密钥从哪来 | 每请求必带的头 |
 |---|---|---|---|
 | `dummy` | （无，不联网） | 不用 | 无 |
-| `openai-compat` / `custom` | （无，全靠配置给） | 按配置 / 环境 | 无（custom 可覆写端点跑 systemone，见下） |
+| `custom` | （无，全靠配置给） | 按配置 / 环境 | 无（可覆写端点跑 systemone，见下） |
 | `opencode-go` | `https://opencode.ai/zen/go/v1`（官方 discussion 里有人实测这条路 200）| `OPENCODE_API_KEY` | **`x-opencode-session: {{session_id}}`（网关必需** —— 注释原话"required per-conversation routing header"）+ `x-opencode-client: pi` + `user-agent: pi (linux <release>; x64)` + `accept: application/json` |
 | `opencode` | `https://opencode.ai/zen` | 同上 | 同上 |
 | `openrouter` | `https://openrouter.ai/api/v1` | `OPENROUTER_API_KEY` | `HTTP-Referer: https://pi.dev` / `X-OpenRouter-Title: pi` / `X-OpenRouter-Categories: cli-agent`（**可选**，归属用 —— Pi 那边还跟着"安装遥测开关"一起关）；systemone 走 `https://openrouter.ai/api/alpha/decisions`（verbatim 覆写） |

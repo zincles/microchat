@@ -371,8 +371,8 @@ func TestDefaultsEndpoints(t *testing.T) {
 //	④ `provider_state` 也清了（渠道回来时重新发现，不该继承旧时间戳）。
 func TestDeleteProviderAlsoDeletesItsModels(t *testing.T) {
 	server, st := newProvidersServer(t, `{"providers":[
-	  {"id":"gone","vendor":"openai-compat","base_url":"http://127.0.0.1:1/v1"},
-	  {"id":"kept","vendor":"openai-compat","base_url":"http://127.0.0.1:2/v1"}
+	  {"id":"gone","vendor":"custom","base_url":"http://127.0.0.1:1/v1"},
+	  {"id":"kept","vendor":"custom","base_url":"http://127.0.0.1:2/v1"}
 	]}`)
 	// 两个渠道各铺两个模型（发现列走 RefreshDiscovered，与真实刷新同一条路）
 	if _, _, _, err := st.RefreshDiscovered("gone", []store.Discovered{
@@ -432,7 +432,7 @@ func TestDeleteProviderAlsoDeletesItsModels(t *testing.T) {
 
 // 渠道不存在 ⇒ 404，且**不许**顺手删掉同名的模型数据（那条路径不该有任何副作用）。
 func TestDeleteUnknownProviderIs404AndTouchesNothing(t *testing.T) {
-	server, st := newProvidersServer(t, `{"providers":[{"id":"kept","vendor":"openai-compat","base_url":"http://127.0.0.1:1/v1"}]}`)
+	server, st := newProvidersServer(t, `{"providers":[{"id":"kept","vendor":"custom","base_url":"http://127.0.0.1:1/v1"}]}`)
 	if _, _, _, err := st.RefreshDiscovered("kept", []store.Discovered{{UpstreamID: "k-1"}}, 1); err != nil {
 		t.Fatal(err)
 	}

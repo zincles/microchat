@@ -1042,12 +1042,6 @@ test("能力 id：前端 ABILITY_IDS 与后端 abilities.definitions 一致", ()
 
   // 退役的**不在** definitions 里 —— 否则老配置会读不进来
   assert.ok(!goIDs.includes("judge"), "judge 已退役（2026-10-28 用户：「暂时砍掉 agent 的 judge 功能」），别加回 definitions");
-  // 但必须在 config 的退役表里：读文件时靠它把这条历史摘掉（摘不掉就一直躺在 agents.json 里）
-  const cfg = readFileSync(join(REPO, "core", "internal", "config", "config.go"), "utf8");
-  assert.ok(/var RetiredAbilityIDs = map\[string\]bool\{\s*"judge": true,/.test(cfg),
-    "config.RetiredAbilityIDs 里该有 judge（读入时摘掉它，否则它会一直躺在老文件里）");
-  assert.ok(cfg.includes("agents.dropRetiredAbilities()"),
-    "config.LoadAgents 该调 dropRetiredAbilities —— 否则只有启动时才摘、问一次接口又冒回来");
 });
 
 test("能力提示词拼装：覆盖打头 / 空则垫默认模板段 / 挑了它就替换", () => {

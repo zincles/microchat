@@ -62,7 +62,7 @@ func newHarness(t *testing.T) *harness {
 	dir := t.TempDir()
 	paths := config.Paths{ConfigDir: dir, DataDir: dir}
 	if err := config.SaveJSON(dir+"/providers.json", map[string]any{
-		"providers": []map[string]any{{"id": "fake", "vendor": "openai-compat", "base_url": upstream.URL}},
+		"providers": []map[string]any{{"id": "fake", "vendor": "custom", "base_url": upstream.URL}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -832,7 +832,7 @@ func TestRerollStreamsCandidate(t *testing.T) {
 	t.Cleanup(upstream.Close)
 	// 把这个会话的假上游换成"慢流"（与 main.go 同一条接线：providers.json 是唯一来源）。
 	if err := config.SaveJSON(h.paths.Config("providers.json"), map[string]any{
-		"providers": []map[string]any{{"id": "fake", "vendor": "openai-compat", "base_url": upstream.URL}},
+		"providers": []map[string]any{{"id": "fake", "vendor": "custom", "base_url": upstream.URL}},
 	}); err != nil {
 		t.Fatal(err)
 	}
