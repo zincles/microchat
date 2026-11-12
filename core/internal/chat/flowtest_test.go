@@ -392,6 +392,43 @@ func TestFlowOutputUserPortOverridesStoredUser(t *testing.T) {
 	}
 }
 
+func TestFlowResendStoresOutputUserPort(t *testing.T) {
+	h := newHarness(t, dummyProviders(), "dummy", "dummy")
+	flow := json.RawMessage(`{"version":1,"nodes":[
+		{"id":"in","type":"input","data":{}},
+		{"id":"llm","type":"llm","data":{"prompts":[{"id":"p1","role":"system","content":"改"}]}},
+		{"id":"out","type":"output","data":{}}
+	],"edges":[{"id":"e0","source":"in","sourceHandle":"out","target":"llm","targetHandle":"prompt-p1"},{"id":"e1","source":"llm","sourceHandle":"text","target":"out","targetHandle":"user"}]}`)
+	if err := config.SaveJSON(h.configDir+"/agents.json", config.AgentsConfig{Agents: []config.Agent{{
+		ID: "flow", Kind: "flow", Flow: flow,
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	h.session.AgentID = "flow"
+	ids, err := store.MintOrderedIDs(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.store.InsertMessage(model.Message{
+		ID: ids[0], SessionID: h.session.ID, Role: model.RoleUser, Content: "原话",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.service.Resend(h.session); err != nil {
+		t.Fatal(err)
+	}
+	messages := h.settle(t)
+	var user *model.Message
+	for index := range messages {
+		if messages[index].Role == model.RoleUser {
+			user = &messages[index]
+		}
+	}
+	if user == nil || user.Content != dummyReply {
+		t.Fatalf("Resend 也要用 output.user 覆盖被回答的用户消息：%+v", messages)
+	}
+}
+
 func TestFlowLLMRetriesThenSucceeds(t *testing.T) {
 	var calls int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

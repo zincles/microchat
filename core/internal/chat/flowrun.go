@@ -5,7 +5,6 @@ package chat
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -31,11 +30,12 @@ func (s *Service) flowAgentOf(session model.Session) (config.Agent, bool) {
 //
 // 历史先按存库正文剔掉 <state>：Flow 节点是手写 messages，不能把状态块当正文发出去。
 // 摘要/状态注入先不在 MVP 里做（见 AGENTS.md 的接线阶段记录）。
-func (s *Service) flowConversation(session model.Session, runID, input string) ([]providers.ChatMessage, string, error) {
+func (s *Service) flowConversation(session model.Session, runID, input string) ([]providers.ChatMessage, string, string, error) {
 	messages, err := s.Store.ListMessages(session.ID)
 	if err != nil {
-		return nil, "", err
+		return nil, "", "", err
 	}
+	userMessageID := ""
 	cut := len(messages)
 	if strings.TrimSpace(input) != "" {
 		for index := len(messages) - 1; index >= 0; index-- {
@@ -62,6 +62,9 @@ func (s *Service) flowConversation(session model.Session, runID, input string) (
 			}
 		}
 	}
+	if cut >= 0 && cut < len(messages) && messages[cut].Role == model.RoleUser {
+		userMessageID = messages[cut].ID
+	}
 	history := make([]providers.ChatMessage, 0, cut)
 	for _, message := range messages[:cut] {
 		content := statelang.Scan(message.Content).Cleaned
@@ -70,7 +73,7 @@ func (s *Service) flowConversation(session model.Session, runID, input string) (
 		}
 		history = append(history, providers.ChatMessage{Role: string(message.Role), Content: content})
 	}
-	return history, input, nil
+	return history, input, userMessageID, nil
 }
 
 // runFlow：后台那半程。先完整执行图，再一次性 INSERT —— 取消/失败都不会留半条回复。
@@ -123,7 +126,7 @@ func (s *Service) runFlow(session model.Session, replyID string, token uint64, r
 			StartedAt: started.UnixMilli(), DurationMS: time.Since(started).Milliseconds(),
 		})
 	}
-	history, resolvedInput, err := s.flowConversation(session, runID, input)
+	history, resolvedInput, userMessageID, err := s.flowConversation(session, runID, input)
 	if err != nil {
 		failTrace(err)
 		s.Turns.Finish(sessionID, token, err.Error())
@@ -176,10 +179,11 @@ func (s *Service) runFlow(session model.Session, replyID string, token uint64, r
 
 	// output 的 `user` 端口是这一轮**要存进历史**的用户消息。它必须在图执行完之后才拿得到
 	//（用户可能接了润色/改写节点），所以先落原文、这里再就地换正文。
-	// Resend 的 runID 是回复 id、不在库里 ⇒ ErrNotFound 属于正常情况，不动任何东西。
-	if outcome.UserMessage != "" {
+	// **Accept 与 Resend 都要改**：Resend 的 runID 是回复 id，真正被回答的是最后一条 user，
+	// flowConversation 已经把那条的 id 找出来了（用户真实场景：重发后 prompt 仍是原文）。
+	if outcome.UserMessage != "" && userMessageID != "" {
 		content := outcome.UserMessage
-		if _, err := s.Store.UpdateMessage(sessionID, runID, store.MessageEdit{Content: &content}); err != nil && !errors.Is(err, store.ErrNotFound) {
+		if _, err := s.Store.UpdateMessage(sessionID, userMessageID, store.MessageEdit{Content: &content}); err != nil {
 			failTrace(err)
 			s.Turns.Finish(sessionID, token, err.Error())
 			guard.Fail(err.Error())
