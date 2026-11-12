@@ -3904,7 +3904,10 @@ test("更新面板：显示提交 + 拉取并重启（由 entrypoint 接手）",
   const updateBar = readFileSync(join(SRC, "components", "UpdateBar.vue"), "utf8");
   assert.match(updateBar, /backend/, "顶部更新条不认识后端更新");
   assert.match(updateBar, /update-backend/, "顶部更新条没有更新前后端的动作");
-  assert.match(app, /checkBackendUpdate/, "App 没有自动检查 GitHub");
+  assert.match(app, /autoBackendUpdate/, "App 没有自动更新 GitHub");
+  assert.match(app, /5 \* 60 \* 1000/, "自动更新不是每 5 分钟");
+  assert.match(app, /remote_relation === "behind"/, "自动更新没有判断 GitHub 落后");
+  assert.match(readFileSync(join(SRC, "components", "UpdatePane.vue"), "utf8"), /自动更新（每 5 分钟）/, "更新面板没有自动更新开关");
   assert.match(app, /mc-update-auto-check/, "更新面板开关没通知 App");
   assert.match(app, /:backend="backendUpdate"/, "顶部更新条没接后端更新状态");
   assert.match(pane, /restart_supported/, "没区分容器部署与宿主二进制");

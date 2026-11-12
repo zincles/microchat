@@ -203,7 +203,7 @@ onMounted(() => {
       <p class="hint">拉取仓库最新提交（只走 <code>git pull --ff-only</code>），成功后由容器 entrypoint 重新编译并重启前后端。</p>
 
       <div class="update-auto">
-        <span>自动检查更新</span>
+        <span>自动更新（每 5 分钟）</span>
         <VSwitch
           :model-value="autoCheck"
           color="primary"
@@ -212,7 +212,7 @@ onMounted(() => {
           @update:model-value="setAutoCheck"
         />
       </div>
-      <p class="hint">开启后每 5 分钟检查一次 GitHub；本地落后时顶部会出现「GitHub 有新提交」更新条。</p>
+      <p class="hint">开启后每 5 分钟检查 GitHub；本地落后且工作区干净时自动拉取并重启前后端。有未提交修改、分叉或非容器部署时只提示，不自动动手。</p>
       <VDivider class="update-divider" />
 
       <section class="update-block pwa-block">

@@ -1526,9 +1526,10 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   ⚠ 当前页与服务器 build 相同也可能有 waiting SW（刚重启、旧壳还在）⇒ 两个判据都要看，别只比 build_id。
   后端：上「当前本地版本」（提交 / 分支 / 标题 / 完整 hash / 脏工作区），下「GitHub 最新版本」（远端 short/full + `remote_relation` 人话：已是最新 / 本地领先 N（未推送）/ 远端有新提交 N / 已分叉）。**分叉时主按钮自动切成「变基并重启」**（走 `/update/rebase`；默认 `/update/pull` 仍只 `--ff-only`，不会偷改历史）。
   `GET /update` 的 `git ls-remote` 有 6s 超时；读不到只填 `remote_error`，不影响本地区块。
-  面板里还有 **「自动检查更新」开关**（`prefs.json` 的 `update_auto_check`，默认开）：App 每 5 分钟查一次，
-  发现本地落后时顶部出现 **GitHub 更新条**（可一键同一个 `git pull` + 重启）；它和 PWA 更新条共存，
-  但后端更新优先（重启后前端 SW 会再提示）。顶部更新条不再只认 PWA。
+  面板里还有 **「自动更新（每 5 分钟）」开关**（`prefs.json` 的 `update_auto_check`，默认开）：
+  App 每 5 分钟查一次；本地落后、工作区干净、容器支持重启且页面前台时，**自动** `pull` + 等新进程 + reload
+  （不弹确认）。脏工作区 / 分叉 / 宿主二进制只把 GitHub 更新条摆出来，交给人手动处理。
+  它和 PWA 更新条共存；后端更新优先（重启后前端 SW 会再提示）。顶部更新条不再只认 PWA。
   ⚠ 这两个管理页是**页面切换，不是设置 tab**：`VTabsWindow` 的 `:key` 跟着 `only` 变 ⇒
   重挂载、不跑 tab 滑入（2026-11-06 用户报「有 Tab 效果，而且顺序是错的」——
   根因是 provider→chat 在 window item 顺序里是反向；只有完整设置的五个 tab 仍保留过渡）。

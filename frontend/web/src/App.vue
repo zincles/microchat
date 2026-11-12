@@ -44,7 +44,7 @@ import SessionSettings from "./components/SessionSettings.vue";
 import Overlays from "./components/Overlays.vue";
 import UpdateBar from "./components/UpdateBar.vue";
 import { registerPWA, onUpdateReady, startUpdate } from "./utils/pwa.ts";
-import { checkBackendUpdate, waitForRestart } from "./utils/update.ts";
+import { waitForRestart } from "./utils/update.ts";
 import { useTypewriter } from "./composables/useTypewriter.ts";
 import { useTasks } from "./composables/useTasks.ts";
 import { useSidePanels } from "./composables/useSidePanels.ts";
@@ -85,11 +85,44 @@ registerPWA();
 // 点「刷新」⇒ 发 skipWaiting，新 SW 接管后由 vite-plugin-pwa 内建回调 reload 这一页。
 function applyUpdate() { startUpdate(); }
 
-// 自动检查 GitHub：只有 remote_relation=behind 才算“有可拉取的更新”；
-// 本地领先 / 分叉 / 读不到都不打扰。开关在更新面板，事件通知这里重启定时器。
+// 自动更新：每 5 分钟检查一次 GitHub；只有“本地落后”才自动 pull + 重启。
+// 本地有未提交修改 / 分叉 / 非容器部署时不动手，只把更新条留给人处理。
 async function refreshBackendUpdate(): Promise<void> {
   if (!updateAutoCheckOn()) { backendUpdate.value = false; return; }
-  backendUpdate.value = await checkBackendUpdate(api);
+  // 后台标签页不自动更新：避免用户没看着时应用重启。
+  if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+  if (backendUpdating.value) return;
+  let status;
+  try {
+    status = await api.getUpdateStatus();
+  } catch {
+    return;
+  }
+  const canUpdate = status.remote_relation === "behind" || status.remote_relation === "unknown";
+  if (!canUpdate) {
+    backendUpdate.value = false;
+    return;
+  }
+  // 脏工作区 / 分叉 / 宿主二进制：自动 pull 会失败或没人重启，交给手动更新面板。
+  if (status.dirty || status.remote_relation === "diverged" || !status.restart_supported) {
+    backendUpdate.value = true;
+    return;
+  }
+  await autoBackendUpdate();
+}
+async function autoBackendUpdate(): Promise<void> {
+  if (backendUpdating.value) return;
+  backendUpdating.value = true;
+  backendUpdate.value = true;
+  try {
+    const result = await api.pullUpdate();
+    await waitForRestart(result.before.started_at, api);
+    location.reload();
+  } catch (e) {
+    backendUpdate.value = true;
+    backendUpdating.value = false;
+    toast(`自动更新失败：${e instanceof Error ? e.message : String(e)}`, "error");
+  }
 }
 function stopUpdatePolling(): void {
   if (updatePollTimer !== null) { window.clearInterval(updatePollTimer); updatePollTimer = null; }

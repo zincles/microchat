@@ -1,7 +1,7 @@
 // 更新相关的共用动作（2026-11-09）。
 //
-// - checkBackendUpdate：自动检查是否「本地落后 GitHub」；
 // - waitForRestart：pull 之后等新 Go 进程（用 started_at 判定，别被旧进程骗）。
+//   自动检查/自动 pull 的判定在 App（需要看 dirty / 分叉 / 容器能力）。
 //
 // UpdatePane（手动拉取）与 App（顶部更新条）共用，避免两边各写一套轮询。
 import { probeHealth } from "../api/client.ts";
@@ -13,19 +13,6 @@ export interface UpdateApi {
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
-
-// checkBackendUpdate：只有「远端确实领先」才算可更新；本地领先 / 分叉 / 读不到都不弹顶部条。
-export async function checkBackendUpdate(api: UpdateApi = sharedApi()): Promise<boolean> {
-  try {
-    const status = await api.getUpdateStatus();
-    if (!status.remote_commit || status.remote_commit === status.commit) return false;
-    // 远端对象本地还没有时 relation=unknown，但那也意味着“远端不是当前这个提交”；
-    // 本地领先（ahead）/分叉（diverged）不该提示“可更新”—— 前者是未推送，后者拉不动。
-    return status.remote_relation === "behind" || status.remote_relation === "unknown";
-  } catch {
-    return false;
-  }
-}
 
 // waitForRestart：entrypoint 每 2 秒看一次标记；先留一拍，再等后端 started_at 变化。
 // 单纯等 /health 会被还没被收掉的旧进程骗过去。
