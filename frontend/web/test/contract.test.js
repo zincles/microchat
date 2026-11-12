@@ -614,6 +614,12 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(flowWorkspace, /savedLabel/, "已保存没有时间显示");
   assert.match(flowWorkspace, /:node-states="nodeStates"/, "工作流没有把节点状态传给编辑器");
   assert.match(flowWorkspace, /:running="running"/, "工作流没有把运行中状态传给编辑器");
+  const pwa = readFileSync(join(SRC, "utils", "pwa.ts"), "utf8");
+  assert.match(pwa, /onRegisteredSW/, "PWA 没有拿到 registration");
+  assert.match(pwa, /UPDATE_CHECK_INTERVAL_MS/, "PWA 没有周期性更新检查");
+  assert.match(pwa, /visibilitychange/, "PWA 回前台没有补查更新");
+  assert.match(readFileSync(join(SRC, "App.vue"), "utf8"), /updateRef\.value\?\.show\(\)/, "新更新没有重新放出更新条");
+
   const flowEditor = readFileSync(join(SRC, "components", "FlowEditor.vue"), "utf8");
   assert.match(flowEditor, /:nodes-draggable="!locked"/, "运行中仍允许拖节点");
   assert.match(flowEditor, /:nodes-connectable="!locked"/, "运行中仍允许连线");

@@ -31,6 +31,37 @@ export function onUpdateReady(handler: () => void): void { notify = handler; }
 //      回调里 `window.location.reload()`（这是 vite-plugin-pwa 内建行为，不是我们写的）。
 // 参数 `true` 是"要 reload"（0.13.2+ 起这个参数虽不再参与判断，但传着与官方示例一致）。
 let updateSW: ((reloadPage?: boolean) => Promise<void>) | null = null;
+let swRegistration: ServiceWorkerRegistration | null = null;
+let updateCheckTimer: number | null = null;
+let lastUpdateCheckAt = 0;
+// 60s：既不会把上游/浏览器压出明显负担，又能在页面一直开着时发现新壳。
+const UPDATE_CHECK_INTERVAL_MS = 60_000;
+
+// checkForUpdate：主动问浏览器 sw.js 有没有变。必须在页面前台、在线时做；
+// 后台标签页的计时器会被浏览器节流，不能指望它准时跑。
+async function checkForUpdate(): Promise<void> {
+  if (typeof document === "undefined" || document.visibilityState !== "visible") return;
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+  if (!swRegistration) return;
+  const now = Date.now();
+  if (now - lastUpdateCheckAt < 5_000) return;
+  lastUpdateCheckAt = now;
+  try {
+    await swRegistration.update();
+  } catch {
+    // 离线 / 代理暂时不可达：下一拍再试；不要弹错误条。
+  }
+}
+
+function startPeriodicUpdateChecks(): void {
+  if (typeof window === "undefined" || updateCheckTimer !== null) return;
+  updateCheckTimer = window.setInterval(() => { void checkForUpdate(); }, UPDATE_CHECK_INTERVAL_MS);
+  // 回到前台、网络恢复时立刻补一次（后台计时器可能已被冻住）。
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") void checkForUpdate();
+  });
+  window.addEventListener("online", () => { void checkForUpdate(); });
+}
 export function startUpdate(): Promise<void> | undefined {
   if (!updateSW) return undefined;
   return updateSW(true);
@@ -196,6 +227,11 @@ export function registerPWA(): void {
     onNeedRefresh() { notify(); },
     // 首次装好（离线可用）⇒ 不打扰：那是正常状态，报了反而像出事了。
     onOfflineReady() {},
+    // registration 一拿到就开始周期检查；这是"页面一直开着也能看到更新条"的关键。
+    onRegisteredSW(_swUrl, registration) {
+      swRegistration = registration ?? null;
+      startPeriodicUpdateChecks();
+    },
     onRegisterError(error) {
       // 注册失败照实记一条（控制台）—— 不弹条：SW 挂了不影响页面能用。
       console.warn("[pwa] Service Worker 注册失败：", error);

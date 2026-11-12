@@ -76,7 +76,11 @@ const updateReady = ref(false);
 const backendUpdate = ref(false);
 const backendUpdating = ref(false);
 let updatePollTimer: ReturnType<typeof setInterval> | null = null;
-onUpdateReady(() => { updateReady.value = true; });
+onUpdateReady(() => {
+  updateReady.value = true;
+  // 如果之前把更新条点 × 收起来过，新一次更新要重新放出来。
+  nextTick(() => updateRef.value?.show());
+});
 registerPWA();
 // 点「刷新」⇒ 发 skipWaiting，新 SW 接管后由 vite-plugin-pwa 内建回调 reload 这一页。
 function applyUpdate() { startUpdate(); }
