@@ -382,20 +382,6 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
  * 文本+按钮，要显眼，方便用户快速切换」）。它在 #app 里 columns 之前，是 flex 子项 ——
  * 出现时把下面整个应用往下推，不会被任何悬浮层盖住，也不会盖住顶栏/tabs。
  * primary-container 底色 + primary 按钮：三套主题里都是"这里有事要做"的强提示。 */
-#update-bar { position: relative; flex: none; z-index: 55; display: flex; align-items: center; gap: 0.8em;
-  width: 100%; margin: 0; box-sizing: border-box;
-  background: var(--md-primary-container); color: var(--md-on-primary-container);
-  border: none; border-radius: 0;
-  padding: 0.85em max(1.2em, env(safe-area-inset-right)) 0.85em max(1.2em, env(safe-area-inset-left));
-  box-shadow: var(--md-elev-2); font-size: var(--md-type-label-large); font-weight: 500;
-  animation: md-dialog-in var(--md-dur-250) var(--md-ease-emphasized); }
-#update-bar .ub-text { flex: 1; min-width: 0; line-height: 1.45; word-break: break-word; }
-#update-bar .ub-go { flex: none; background: var(--md-primary); color: var(--md-on-primary); border: none; border-radius: var(--md-shape-full); min-height: 2.75em; padding: 0 1.2em; font: inherit; font-size: var(--md-type-label-large); font-weight: 500; cursor: pointer; }
-#update-bar .ub-go:hover:not(:disabled) { filter: brightness(1.1); }
-#update-bar .ub-go:disabled { opacity: 0.65; cursor: default; }
-#update-bar .ub-x { flex: none; color: var(--md-on-primary-container); border-radius: var(--md-shape-full); width: 2.75em; height: 2.75em; display: inline-flex; align-items: center; justify-content: center; }
-#update-bar .ub-x:hover { color: var(--md-on-primary-container); background: color-mix(in srgb, var(--md-on-primary-container) 8%, transparent); }
-@media (prefers-reduced-motion: reduce) { #update-bar { animation: none; } }
 /* 侧栏滑入滑出（TG 味 = 200ms ease-out；只动 transform/opacity，宽用 max-width 过渡不跳）。 */
 /* 2026-10-29：右栏搬进上下文工作区 ⇒ 这套滑入滑出只剩左栏（见 App 的 barSide 注释）。 */
 #sessions-bar { transition: transform var(--md-dur-300) var(--md-ease-emphasized), opacity var(--md-dur-250) var(--md-ease-standard), max-width var(--md-dur-300) var(--md-ease-emphasized), visibility 0s linear var(--md-dur-300); overflow: hidden; }
@@ -1286,7 +1272,7 @@ button:active { background: color-mix(in srgb, var(--md-on-secondary-container) 
 .icon-btn, .link-btn, button:has(> svg) { display: inline-flex; align-items: center; justify-content: center; }
 .icon-btn > svg, button > svg { display: block; }
 .icon-btn, .link-btn, .cp-close, .ctree-tw, .ctree-undo,
-.collapse-all, #update-bar .ub-x, .session-item .item-btn,
+.collapse-all, .session-item .item-btn,
 .model-btn, .agent-item, .model-item {
   background: none;
   border: none;
@@ -1542,7 +1528,7 @@ button.danger:hover { background: color-mix(in srgb, var(--md-error) 8%, transpa
 @keyframes md-dialog-in { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: none; } }
 @keyframes md-scrim-in { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) {
-  .confirm-backdrop, .confirm, .palette, .picker, #update-bar { animation: none; }
+  .confirm-backdrop, .confirm, .palette, .picker { animation: none; }
 }
 /* Toast 的语义点（MD3 snackbar 不描边：用前导点区分 ok / error）。 */
 .toast::before { content: ""; flex: none; width: 0.6em; height: 0.6em; border-radius: 50%; background: var(--md-primary); }

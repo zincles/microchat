@@ -1,29 +1,18 @@
 <script setup lang="ts">
-// 顶部更新条（2026-10-20 用户定 PWA；2026-11-09 加后端 GitHub 更新）。
-//
-// 两种来源：
-//   - pwa：浏览器里旧的 Service Worker 发现新壳，需要「刷新」；
-//   - backend：自动检查发现本地落后 GitHub，需要「更新」（git pull + 重启前后端）。
-// **不自动消失**：这是要求用户行动的通知；消失等于没通知。
+// 顶部更新条：PWA 新壳 / GitHub 后端更新共用。**不自动消失**，由用户点。
 import { computed, ref, watch } from "vue";
-import { VBtn } from "vuetify/components";
+import { VAlert, VBtn } from "vuetify/components";
 
 const props = withDefaults(defineProps<{
   pwa?: boolean;
   backend?: boolean;
   busy?: boolean;
-}>(), {
-  pwa: false,
-  backend: false,
-  busy: false,
-});
+}>(), { pwa: false, backend: false, busy: false });
 const emit = defineEmits<{ update: []; "update-backend": [] }>();
 
-const pwaBusy = ref(false); // PWA 刷新中（等新 SW 接管）
-const hidden = ref(false); // 用户不想现在更（×）：先收起来
+const pwaBusy = ref(false);
+const hidden = ref(false);
 const busy = computed(() => pwaBusy.value || props.busy);
-
-// 后端更新出现时强行放出来：即使之前把 PWA 提示收起来过，也别吞掉新的更新。
 watch(() => props.backend, (on) => { if (on) hidden.value = false; });
 
 function go(): void {
@@ -39,19 +28,35 @@ defineExpose({ show: (): void => { pwaBusy.value = false; hidden.value = false; 
 </script>
 
 <template>
-  <div v-if="backend || !hidden" id="update-bar" role="status">
+  <VAlert
+    v-if="backend || !hidden"
+    id="update-bar"
+    color="primary"
+    variant="tonal"
+    density="compact"
+    rounded="0"
+    role="status"
+    class="update-bar"
+  >
     <span class="ub-text">
       <template v-if="backend">GitHub 有新提交，可更新前后端</template>
       <template v-else>新版本已就绪，刷新页面应用</template>
       <template v-if="backend && pwa">；前端也有新版本</template>
       <template v-if="busy">，正在更新…</template>
     </span>
-    <VBtn v-if="backend" class="ub-go" color="primary" variant="flat" size="small" :disabled="busy" @click="updateBackend">
-      {{ busy ? "更新中…" : "更新" }}
-    </VBtn>
-    <VBtn v-else class="ub-go" color="primary" variant="flat" size="small" :disabled="busy" @click="go">
-      {{ busy ? "更新中…" : "刷新" }}
-    </VBtn>
-    <VBtn v-if="!backend" class="ub-x" icon variant="text" size="small" title="先不更新" aria-label="先不更新" :disabled="busy" @click="hidden = true">×</VBtn>
-  </div>
+    <template #append>
+      <VBtn v-if="backend" color="primary" variant="flat" size="small" :disabled="busy" @click="updateBackend">
+        {{ busy ? "更新中…" : "更新" }}
+      </VBtn>
+      <VBtn v-else color="primary" variant="flat" size="small" :disabled="busy" @click="go">
+        {{ busy ? "更新中…" : "刷新" }}
+      </VBtn>
+      <VBtn v-if="!backend" icon variant="text" size="small" title="先不更新" aria-label="先不更新" :disabled="busy" @click="hidden = true">×</VBtn>
+    </template>
+  </VAlert>
 </template>
+
+<style scoped>
+#update-bar { flex: none; margin: 0; width: 100%; border-radius: 0; }
+.ub-text { flex: 1; min-width: 0; line-height: 1.45; word-break: break-word; }
+</style>
