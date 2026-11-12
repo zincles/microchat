@@ -7,13 +7,13 @@
 //
 // 旧版 prompt 模式要求用户主动触发 SW 更新；autoUpdate 模式由浏览器自动完成安装/激活。
 //
-// ⚠ 这段只在 **build/preview** 有意义（dev 不开 SW —— 见 vite.config.js；那时
+// ⚠ 这段只在 **build/preview** 有意义（dev 不开 SW —— 见 vite.config.ts；那时
 // `registerSW` 拿到的是 dev 的 stub，回调永不触发，真跑也无害）。
 //
 // `virtual:pwa-register` 是 vite-plugin-pwa 提供的虚拟模块：它在**构建时**把
 // `registerSW` 换成真正那份实现（含 workbox-window 的自动更新/等待逻辑）。
 // 插件检测到这个 import 后会自己把 `injectRegister` 转成 `false`（不再往 index.html
-// 塞那段没有回调的 registerSW.js）—— 所以**别在 vite.config.js 里手写 injectRegister**，
+// 塞那段没有回调的 registerSW.js）—— 所以**别在 vite.config.ts 里手写 injectRegister**，
 // 那会跟它的自动检测打架。
 import { registerSW } from "virtual:pwa-register";
 
@@ -93,7 +93,7 @@ export interface PwaSnapshot {
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
-// 读服务器上**当前**的前端构建身份。build.json 由 vite.config.js 在每次构建时写出，
+// 读服务器上**当前**的前端构建身份。build.json 由 vite.config.ts 在每次构建时写出，
 // 且**不进 Service Worker 预缓存**（globPatterns 不含 json）⇒ cache:"no-store" 拿到的是新壳。
 export async function fetchLatestBuild(): Promise<PwaBuild> {
   const base = import.meta.env.BASE_URL || "/";

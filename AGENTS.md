@@ -140,7 +140,7 @@ reminder/                  ← 专题参考（`tool-calls.md` 工具调用 / `je
 docker compose up -d                                      # ← 部署（单容器，2026-10-14）：只公开 8788（前端），
                                                           #   后端只在容器里、地址零配置 —— 版本身份与口径见「Docker 部署」一节
 cd frontend/web && ./node_modules/.bin/vite               # 前端 dev（0.0.0.0:5173；**8788 是部署口**，见「Docker 部署」；
-                                                          #   监听地址写在 vite.config.js；别走 npm exec —— npm 会吃掉 --port/--host）
+                                                          #   监听地址写在 vite.config.ts；别走 npm exec —— npm 会吃掉 --port/--host）
 go -C core build -o ../microchat .                        # 要二进制就这条；产出 ./microchat
 ./microchat                                               # 起来就在 8787 服务（只服务，不开 TUI）
 go -C core test ./...                                     # 后端测试（`-C core` 是 Go 自带，不用 cd）
@@ -177,7 +177,7 @@ podman compose restart                                    # ← **每次提交�
   另有一条 `127.0.0.1:8787:8787`，给本机的 vite dev/脚本用）。
   ⚠ **两个口都只绑 `127.0.0.1`**（2026-11-01）：那是唯一的访问闸门，理由见「HTTP API」那节第一条。
   要让手机/平板用就把 compose 里那行改成 `"8788:8788"` —— 同时**没有任何保护**了。
-  vite 把 `/api` **代理**给同容器的后端（`frontend/web/vite.config.js` 的 `server.proxy` + `preview.proxy`）
+  vite 把 `/api` **代理**给同容器的后端（`frontend/web/vite.config.ts` 的 `server.proxy` + `preview.proxy`）
   ⇒ 浏览器**永远同源**、部署里**没有任何要填的地址**。
 - **容器里的后端绑 `0.0.0.0`**（2026-11-02 修）：后端默认绑 `127.0.0.1`（那是**宿主机**的唯一闸门），
   但在容器里绑回环 ⇒ 宿主的端口发布转发到容器的 eth0，而那里没人听 ⇒
@@ -200,7 +200,7 @@ podman compose restart                                    # ← **每次提交�
   ⚠ 生效值会打一行日志（`[vite] allowedHosts = …`）—— 部署时"到底生效没有"不该靠猜。
   ⚠ **podman-compose 不展开 `${VAR:-}`**：变量没设时它会把字面量 `${MICROCHAT_ALLOWED_HOSTS:-}`
   原样塞进容器（2026-11-08 删容器重建后实测：日志里就是这串，域名全 403）。
-  `vite.config.js` 把这种整串 `${…}` 当"没设"；**别把那条 fallback 去掉**。
+  `vite.config.ts` 把这种整串 `${…}` 当"没设"；**别把那条 fallback 去掉**。
   ⚠ 名单**不塞 `config.json`**：那个文件后端会整体重写（`SaveJSON` 只写它认识的字段），
   塞进去的自定义键会在下一次改设置时**悄悄消失**。
 - **后端地址的唯一权威 = 后端自己的 `data/config/config.json`**（`server.host/port`）：vite 启动时读它算代理目标
@@ -1333,7 +1333,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
 - **压缩树**（上下文工作区「压缩」tab，2026-10-10 加）：把压缩结构画成文件管理器那种树（目录 = 摘要、嵌套 = 嵌套压缩、行底 bar = 子树原文占比）。**后端零改动**：现取 `messages` + `summaries` 两个 GET，`utils/tree.ts` 的 `buildCompactTree` 本地建树 —— 口径**逐字复刻 `state.walk`**（左端对齐才用摘要、升到最粗同左端祖先、跳过后不回看），`发` = 装配真跳到它、`脏` = 已过期。树顶一行是 **块数输入 + 压缩按钮**（空 = 用 config 的 `compact_blocks`；与 `/compact` 共用 `compactNow`）。压缩命令受理后 `pollCompact` 盯到收尾（拿受理回执的 `at_ms` 对上——状态位是持久的，别认旧结局）。
 - **分段压缩 / 补齐空档（2026-11-05；2026-11-09 并入「压缩」子 tab）**：上下文「压缩」页内的第二、第三子 tab，组件 `AdvancedCompact.vue` 共用（`repair` prop 区分）。参数 `begin_idx/end_idx`、`step_blocks`、`concurrency`、`max_attempts`；先调 `/compact/advanced/preview` 看 chunk、空洞、总请求，再启动。整体只有 running/done/failed/canceled；chunk 在一个父 Task 下并发生成，全部成功才 `RecordSummaryBatch` 单事务落库；修洞模式只把同层已封段之间的空洞转成 chunk（尾部 open tail 不算洞）。
 - **消息列编号与摘要卡**（2026-10-10 加；2026-11-09 身份上移）：assistant 的身份在**正文顶部**：`助手-对话#4` / `助手-工具#4`（`kind=tool_run` 才叫工具；`assistantIdentity`，纯函数）。user 身份仍在气泡外 hover 才显形（`你 #2`）。编号用服务端 `idx`；库外的（乐观用户句、生成中那一发）按**后缀顺延**（线性追加 ⇒ 顺延号就是将来的真号）；纯合成的"失败"气泡不给号。被**顶层摘要**（没爹的那层 —— 金字塔只露最外）盖住的一段折成**四面圆角卡**（不是气泡）：头 `Summary #a-b`（+`脏`）、正文 = 摘要文本（发给模型的就是这份）、`查看未压缩文本` 展开原始气泡（**只读、无操作行** —— 用户定：展开里不许编辑/修改）。口径全在 `utils/chatrows.ts`（纯函数，契约测试钉住）；端点悬空/不在场 ⇒ 不折（宁可露原文）。卡头右侧三件（2026-10-10 加）：`⟳` 刷新 = 摘要重摇 —— **当前那版先占第 1 版、不丢**（seedSummary 的规矩），摇完自动切最新版；生成走 compact 的"只生成、不落库"半程、**非流式**（卡头标「刷新中…」，没有流式预览）；`✎` 编辑 = 应用内模态编辑器（`/editsum` 同一条路 —— 原生 `window.prompt` 退休）；重摇模式活着时 `◀ n/N ▶`（与气泡同一套语义，最右 ▶ 再按 = 再摇一版）。消息/摘要两族共用一把闸：一族在跑，另一族进模式 ⇒ 后端 409、前端 toast。候选只在内存（发新消息 / 切会话 / 重启就散 —— 应用的那版已在库里）。
-- **消息编辑是独立模态**（2026-11-02 用户定；2026-11-09 改用 Vuetify）：气泡上的「改正文 / 改思考」只 `emit('edit', messageId, kind)`，由 `MessageEditor.vue` 开 **`VDialog` + `VCard` + `VTextarea`**（`attach="#app"`、96vw × 92vh；文本框撑满剩余高度、取消/保存/保存并重摇固定在底部右侧、Esc 关闭）。**别退回手写 `.modal`**：`z-index: 20` 会被 `VNavigationDrawer`（1004）压住，VDialog 的 overlay 是 2400 且带焦点陷阱；网页全屏 = 只铺满 `#app`（不是浏览器 Fullscreen API）。不再把气泡就地换成 textarea，/edit 也不再走原生 `window.prompt`。保存 PATCH 后父组件 `reloadWindow()` + `refreshStateView()`。**保存并重摇**的合法位置只有两种（`utils/chatrows.ts` 的 `editRerollTarget`）：尾条 assistant 自己，或**紧挨着它前面的那条 user**（user2 后面只剩 AI2 ⇒ 编辑 user2 也能重摇 AI2）。其它位置不画，避免按了必败；先 PATCH 保存，再 `rerollNow(rerollTargetId)`。尾条 assistant 的底栏还有**「编辑最新 Prompt」**（2026-11-02 用户定）：A-B-C-D-E-F 时直接开 E 的编辑器，不用翻回去点 E（按钮是 `ICONS.notebookPen` **记事本+笔图标**，不是纯文字大按钮；aria/title 仍写明）；目标由 `latestPromptFor` 算（最新 assistant 之前最近的一条 user），只在 `isLast` 的 assistant 上画。右上角还有**网页全屏**切换（2026-11-03 用户定：不要浏览器 Fullscreen API、不占用户整块屏幕）：`expanded` class 把 `.message-edit-box` 从 96vw × 92vh 铺成 `#app` 的 100% × 100%，图标用 `ICONS.maximize` / `ICONS.minimize`，不再有「全屏」两个字。
+- **消息编辑是独立模态**（2026-11-02 用户定；2026-11-09 改用 Vuetify）：气泡上的「改正文 / 改思考」只 `emit('edit', messageId, kind)`，由 `MessageEditor.vue` 开 **`VDialog` + `VCard` + `VTextarea`**（`attach="#app"`、96vw × 92vh；文本框撑满剩余高度、取消/保存/保存并重摇固定在底部右侧、Esc 关闭）。轻量弹窗（会话设置 / 模型编辑 / 摘要编辑）统一用 `ModalShell.vue`（同样是 VDialog/VCard）；**别退回手写 `.modal`**：`z-index: 20` 会被 `VNavigationDrawer`（1004）压住，VDialog 的 overlay 是 2400 且带焦点陷阱；网页全屏 = 只铺满 `#app`（不是浏览器 Fullscreen API）。不再把气泡就地换成 textarea，/edit 也不再走原生 `window.prompt`。保存 PATCH 后父组件 `reloadWindow()` + `refreshStateView()`。**保存并重摇**的合法位置只有两种（`utils/chatrows.ts` 的 `editRerollTarget`）：尾条 assistant 自己，或**紧挨着它前面的那条 user**（user2 后面只剩 AI2 ⇒ 编辑 user2 也能重摇 AI2）。其它位置不画，避免按了必败；先 PATCH 保存，再 `rerollNow(rerollTargetId)`。尾条 assistant 的底栏还有**「编辑最新 Prompt」**（2026-11-02 用户定）：A-B-C-D-E-F 时直接开 E 的编辑器，不用翻回去点 E（按钮是 `ICONS.notebookPen` **记事本+笔图标**，不是纯文字大按钮；aria/title 仍写明）；目标由 `latestPromptFor` 算（最新 assistant 之前最近的一条 user），只在 `isLast` 的 assistant 上画。右上角还有**网页全屏**切换（2026-11-03 用户定：不要浏览器 Fullscreen API、不占用户整块屏幕）：`expanded` class 把 `.message-edit-box` 从 96vw × 92vh 铺成 `#app` 的 100% × 100%，图标用 `ICONS.maximize` / `ICONS.minimize`，不再有「全屏」两个字。
 - **聊天阅读排版**（2026-11-03 用户定：「布局不专业」的整改）：阅读列 `--read-col` 从 920 收到 **840**；
   聊天正文 `font-size: calc(16px * --app-text-scale)`、`line-height: 1.7`；消息之间 `gap: .8em`、
   assistant 上下 `padding: .45em 0`、段落 `margin-bottom: .7em`；用量脚注 `.7em`、略提对比度但仍是小字。
@@ -1370,7 +1370,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
 - **生产交付性能（2026-11-02，用户报"部署后前端响应慢、没有缓冲"）**：
   ① **字体子集**：`public/fonts/RobotoFlex-Latin.woff2` **84KB**（可变 wght 100–900 + opsz；
   只留拉丁、标点、常用箭头/符号；中文本来就落系统字族）。`contract.test.js` 钉着 <150KB + wOF2 魔数。
-  ② **缓存头**：`vite.config.js` 的 `assetCacheHeaders()` —— `/assets/*-<hash>.js/css` 与 `workbox-*.js`
+  ② **缓存头**：`vite.config.ts` 的 `assetCacheHeaders()` —— `/assets/*-<hash>.js/css` 与 `workbox-*.js`
   给 `public, max-age=31536000, immutable`；字体 1 周；index / manifest / sw / 图标仍 `no-cache`。
   从前全是 `no-cache`，内容寻址的包每次刷新都要多一个 304 往返。
   ③ **开机少发请求**：boot 拉过的 `/sessions` 直接传给 `enterSession(id, sessions)`；Agent 列表同一拍
@@ -1432,7 +1432,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   （MD3 primary tabs；Vuetify 自带 slider / role=tab / tabpanel；旧手写 `TabBar` 已删）；
   h3 竖条改 primary；字段行分隔线 outline-variant；
   `plist` = surface-container-low 卡片、表头 label-small、行 hover 状态层；`.io-card` = outlined 卡片。
-  浮层：`.modal` / `.confirm` / `.palette` / `.picker` = MD3 dialog/menu（surface-container-high、
+  浮层：`.modal-shell`（三处轻量弹窗共用的 VDialog/VCard 壳）/ `.confirm` / `.palette` / `.picker` = MD3 dialog/menu（surface-container-high、
   28dp / 12dp、elevation 3、scrim 45%、`md-dialog-in` 进场）；toast = snackbar（inverse-surface、
   4dp、elevation 3、语义点替代左边框）；更新条 = **顶部独立占位的大横幅**
   （`#app` 里 columns 之前的 flex 子项、primary-container 底、**占满整个顶部左右宽度**、
@@ -1667,7 +1667,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
 - **` overscroll-behavior: contain` 挂在"滚不动的自己"身上 = 断链炸弹** ✗（2026-10-17 实测，用户报"状态面板触屏和滚轮都滚不动"）：右栏原来是**栏自己滚**，而三个面板又各自 `overflow-y: auto` + `contain`，面板没有高度约束 ⇒ 它永远滚不动；`contain` 又只认"滚动者"⇒ 手势/滚轮滚到它就**不再往父级链** ⇒ 什么都不滚（载荷 tab 侥幸没事：它的 `<pre>` 没写 `contain`，链得到父级 ✓ —— 所以症状是"只有状态/压缩两栏死"）。
   **修法照左栏来**：栏改 `flex column; overflow: hidden`（自己不再滚），tabs `flex: none`（常驻），三个面板 `flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain` —— **`contain` 只该写在"真的是那个滚动者"的元素上** ✓。
   （排查法：`elementFromPoint` 看链、看每个挂 `contain` 的元素 `scrollHeight > clientHeight` 是不是成立 ✓；⚠ 用合成触摸测时先确认**面板没被手势滑关**、触摸点落在视口内 —— 这两条能把"量不出"误判成"修不好"，都踩过。）
-- **移动端"页面还能延展/往上滑不完"**（2026-10-10 真机症状）：`translateY(vv.offsetTop)` 与**文档可滚**是一对正反馈 —— 页面一滚，offsetTop 变大 → 再平移 → transform 又撑大可滚动区域 → 越滚越"延展"。解法：**文档锁死**（`html, body { height: 100%; overflow: hidden; overscroll-behavior: none }`），滚动只发生在内部容器（#messages-vue / #payload-bar / .settings-body / .modal-box / .palette / #session-list …），每个内部滚动容器再各挂 `overscroll-behavior: contain` 断掉滚动链与回弹。
+- **移动端"页面还能延展/往上滑不完"**（2026-10-10 真机症状）：`translateY(vv.offsetTop)` 与**文档可滚**是一对正反馈 —— 页面一滚，offsetTop 变大 → 再平移 → transform 又撑大可滚动区域 → 越滚越"延展"。解法：**文档锁死**（`html, body { height: 100%; overflow: hidden; overscroll-behavior: none }`），滚动只发生在内部容器（#messages-vue / #payload-bar / .settings-body / .modal-shell-body / .palette / #session-list …），每个内部滚动容器再各挂 `overscroll-behavior: contain` 断掉滚动链与回弹。
 - **连通性探针少一道闸就会"假连通"**（实测）：裸地址（没协议）会被 `fetch` 当**相对路径** ⇒ 撞上 vite 的 SPA 回退拿 200 HTML ⇒ 死地址也能"检查通过"；"随便一个 web 服务"回 200 同理。两道闸缺一不可：地址先 `normalizeApiBase`、回体必须是 JSON 且 `status == "ok"`。
 - **flex 列里的卡片不许给 `overflow: hidden` 就完事**：`overflow: hidden`（圆角要它）会让 flex 项的**自动最小高度失效** ⇒ 不加 `flex-shrink: 0`，卡片会被压得比内容矮（展开的摘要原文被裁掉一截、还会把同列的别的卡一起压扁 —— 2026-10-10 在摘要卡上实测）。
 - **批量改代码时逐文件落盘**：把 `write` 放在脚本末尾，中途任何断言失败都会让整批改动一起丢。

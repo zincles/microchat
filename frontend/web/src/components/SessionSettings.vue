@@ -2,10 +2,11 @@
 // 会话设置弹窗：改名 / 换模型 / 换 Agent / 改会话提示词（PATCH /sessions/{id}，只发改过的格）。
 // 由左栏条目的「选项」浮板打开，关丢弃（不保存不写）。创建副本 / 导出 / 删除
 // 也都住在那块浮板里（2026-11-04 用户定：面板里只留设置本身）。
-import { ref, computed, onMounted, onUnmounted } from "vue";
+import { ref, computed, onMounted } from "vue";
 import { VBtn, VTextField, VSelect, VTextarea } from "vuetify/components";
 import { sharedApi } from "../utils/prefs.ts";
 import { groupModelsByProvider, modelKey, parseModelKey, modelOption, agentOption } from "../utils/format.ts";
+import ModalShell from "./ModalShell.vue";
 import type { ModelChoice } from "../utils/format.ts";
 import type { Session, UpdateSessionRequest } from "../api/types.ts";
 
@@ -70,38 +71,25 @@ async function save(): Promise<void> {
 
 onMounted(() => {
   load().catch((e: unknown) => { status.value = `载入失败：${e instanceof Error ? e.message : String(e)}`; });
-  document.addEventListener("keydown", onKey);
 });
-onUnmounted(() => document.removeEventListener("keydown", onKey));
-function onKey(e: KeyboardEvent): void {
-  if (e.key === "Escape") emit("close");
-}
 </script>
 
 <template>
-  <div class="modal" @click.self="emit('close')">
-    <div class="modal-box compact">
-      <div class="modal-head">
-        <span>会话设置</span>
-        <span class="head-btns">
-          <VBtn icon variant="text" size="small" type="button" title="关闭（不保存不写）" @click="emit('close')">×</VBtn>
-        </span>
-      </div>
-      <div class="settings-cols">
-        <section class="panel">
-          <h3>名称</h3>
-          <label class="field"><span>标题（留空 = 自动起名）</span><VTextField v-model="title" placeholder="留空 = 自动起名" density="compact" variant="outlined" hide-details /></label>
-          <h3>模型</h3>
-          <label class="field"><span>渠道和模型</span><VSelect v-model="modelValue" :items="modelChoices" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
-          <label class="field"><span>智能体</span><VSelect v-model="agentValue" :items="agentChoices" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
-          <h3>自定义提示词</h3>
-          <label class="field-block"><span>这条会话的系统提示词（留空 = 使用智能体的设置）</span><VTextarea v-model="sysPrompt" :placeholder="sysPromptPh" rows="4" density="compact" variant="outlined" hide-details /></label>
-          <div class="row">
-            <VBtn color="primary" variant="flat" size="small" type="button" @click="save">保存</VBtn>
-            <span class="status">{{ status }}</span>
-          </div>
-        </section>
-      </div>
+  <ModalShell title="会话设置" @close="emit('close')">
+    <div class="settings-cols">
+      <section class="panel">
+        <h3>名称</h3>
+        <label class="field"><span>标题（留空 = 自动起名）</span><VTextField v-model="title" placeholder="留空 = 自动起名" density="compact" variant="outlined" hide-details /></label>
+        <h3>模型</h3>
+        <label class="field"><span>渠道和模型</span><VSelect v-model="modelValue" :items="modelChoices" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
+        <label class="field"><span>智能体</span><VSelect v-model="agentValue" :items="agentChoices" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
+        <h3>自定义提示词</h3>
+        <label class="field-block"><span>这条会话的系统提示词（留空 = 使用智能体的设置）</span><VTextarea v-model="sysPrompt" :placeholder="sysPromptPh" rows="4" density="compact" variant="outlined" hide-details /></label>
+        <div class="status">{{ status }}</div>
+      </section>
     </div>
-  </div>
+    <template #actions>
+      <VBtn color="primary" variant="flat" size="small" type="button" @click="save">保存</VBtn>
+    </template>
+  </ModalShell>
 </template>

@@ -1,17 +1,14 @@
 <script setup lang="ts">
-// 摘要正文编辑器（应用内模态）：替掉 /editsum 与卡上 ✎ 的原生 window.prompt。
-// 只改 text（PATCH /summaries/{id}：就地换正文，id / 区间 / 指针不动；空文本后端会 400，这里先拦）。
-import { ref, onMounted, onUnmounted } from "vue";
-import { VBtn } from "vuetify/components";
+// 摘要正文编辑器：只 PATCH text（就地换正文，id / 区间 / 指针不动；空文本后端会 400，这里先拦）。
+import { ref } from "vue";
+import { VBtn, VTextarea } from "vuetify/components";
 import { sharedApi } from "../utils/prefs.ts";
+import ModalShell from "./ModalShell.vue";
 import type { Summary } from "../api/types.ts";
 
 type EditableSummary = Pick<Summary, "id" | "text" | "begin_idx" | "end_idx">;
 
-const props = defineProps<{
-  sessionId: string;
-  summary: EditableSummary;
-}>();
+const props = defineProps<{ sessionId: string; summary: EditableSummary }>();
 const emit = defineEmits<{ close: []; saved: [] }>();
 const api = sharedApi();
 const text = ref(props.summary.text ?? "");
@@ -31,26 +28,15 @@ async function save(): Promise<void> {
   }
   busy.value = false;
 }
-function onKey(e: KeyboardEvent): void { if (e.key === "Escape") emit("close"); }
-onMounted(() => document.addEventListener("keydown", onKey));
-onUnmounted(() => document.removeEventListener("keydown", onKey));
 </script>
 
 <template>
-  <div class="modal" @click.self="$emit('close')">
-    <div class="modal-box compact">
-      <div class="modal-head">
-        <span>编辑摘要{{ range }}</span>
-        <span class="head-btns">
-          <VBtn icon variant="text" size="small" title="关闭（不保存）" aria-label="关闭" @click="$emit('close')">×</VBtn>
-        </span>
-      </div>
-      <textarea v-model="text" class="sum-edit-field" rows="10" placeholder="摘要正文"></textarea>
-      <div class="row">
-        <VBtn color="primary" variant="flat" size="small" :disabled="busy" @click="save">保存</VBtn>
-        <VBtn variant="text" size="small" @click="$emit('close')">取消</VBtn>
-        <span class="status">{{ status }}</span>
-      </div>
-    </div>
-  </div>
+  <ModalShell :title="`编辑摘要${range}`" @close="emit('close')">
+    <VTextarea v-model="text" rows="10" variant="outlined" hide-details placeholder="摘要正文" />
+    <template #actions>
+      <span class="status">{{ status }}</span>
+      <VBtn variant="text" size="small" @click="emit('close')">取消</VBtn>
+      <VBtn color="primary" variant="flat" size="small" :disabled="busy" @click="save">保存</VBtn>
+    </template>
+  </ModalShell>
 </template>

@@ -112,11 +112,9 @@ onMounted(() => {
       </VCardText>
       <VCardActions class="message-edit-foot">
         <span class="status">{{ status }}</span>
-        <div class="modal-actions">
-          <VBtn variant="text" size="small" @click="close">取消</VBtn>
-          <VBtn color="primary" variant="flat" size="small" :disabled="busy" @click="save(false)">保存</VBtn>
-          <VBtn v-if="rerollable" variant="tonal" size="small" :disabled="busy" @click="save(true)">保存并重摇</VBtn>
-        </div>
+        <VBtn variant="text" size="small" @click="close">取消</VBtn>
+        <VBtn color="primary" variant="flat" size="small" :disabled="busy" @click="save(false)">保存</VBtn>
+        <VBtn v-if="rerollable" variant="tonal" size="small" :disabled="busy" @click="save(true)">保存并重摇</VBtn>
       </VCardActions>
     </VCard>
   </VDialog>

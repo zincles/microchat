@@ -377,7 +377,7 @@ test("Mermaid：围栏输出延迟渲染占位；关掉 mermaid/代码块能退�
 test("Mermaid：动态 import、strict、主题重绘与气泡接线", () => {
   const renderer = readFileSync(join(SRC, "utils", "mermaid.ts"), "utf8");
   const bubble = readFileSync(join(SRC, "components", "MessageBubble.vue"), "utf8");
-  const vite = readFileSync(join(SRC, "..", "vite.config.js"), "utf8");
+  const vite = readFileSync(join(SRC, "..", "vite.config.ts"), "utf8");
   assert.match(renderer, /import\("mermaid"\)/, "Mermaid 没走动态 import（会压进首屏包）");
   assert.match(renderer, /securityLevel:\s*"strict"/, "Mermaid 没开 strict");
   assert.match(renderer, /htmlLabels:\s*false/, "Mermaid 没关 HTML labels");
@@ -617,7 +617,7 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(flowWorkspace, /:node-states="nodeStates"/, "工作流没有把节点状态传给编辑器");
   assert.match(flowWorkspace, /:running="running"/, "工作流没有把运行中状态传给编辑器");
   const pwa = readFileSync(join(SRC, "utils", "pwa.ts"), "utf8");
-  const vite = readFileSync(join(SRC, "..", "vite.config.js"), "utf8");
+  const vite = readFileSync(join(SRC, "..", "vite.config.ts"), "utf8");
   assert.match(pwa, /onRegisteredSW/, "PWA 没有拿到 registration");
   assert.match(pwa, /onNeedReload/, "PWA 自动更新没有用 onNeedReload 抑制 reload");
   assert.match(vite, /registerType:\s*"autoUpdate"/, "PWA 没有自动更新 SW");
@@ -2000,10 +2000,10 @@ test("外壳色：index.html 与 PWA manifest 跟暗色主题的底色一致", (
   assert.ok(meta, "index.html 里没有 theme-color meta");
   assert.equal(meta[1].toLowerCase(), want, "index.html 的 theme-color 与暗色主题底色对不上");
 
-  const vite = readFileSync(join(SRC, "..", "vite.config.js"), "utf8");
+  const vite = readFileSync(join(SRC, "..", "vite.config.ts"), "utf8");
   for (const key of ["background_color", "theme_color"]) {
     const m = vite.match(new RegExp(`${key}:\\s*"([^"]*)"`));
-    assert.ok(m, `vite.config.js 里没有 ${key}`);
+    assert.ok(m, `vite.config.ts 里没有 ${key}`);
     assert.equal(m[1].toLowerCase(), want, `PWA manifest 的 ${key} 与暗色主题底色对不上`);
   }
 });
@@ -3448,7 +3448,7 @@ test("消息编辑：应用内模态，不就地改气泡", () => {
   assert.ok(!/requestFullscreen|document\.fullscreenElement|fullscreenchange/.test(modal),
     "还在用浏览器 Fullscreen API（会占整块屏幕）");
   assert.match(modal, /@click="save\(true\)"/, "「保存并重摇」没走带 reroll 的保存");
-  assert.match(css, /\.modal-actions \{[^}]*margin-left:\s*auto[^}]*justify-content:\s*flex-end/, "保存/退出没有靠右");
+  assert.match(modal, /<VCardActions[^>]*class="message-edit-foot"/, "保存/退出没有 Vuetify 底栏");
   assert.match(app, /editRerollTarget\(vueMessages\.value, mid\)/, "没有判断这条编辑后能不能重摇");
   assert.match(app, /rerollable: !!rerollTargetId/, "没有把可重摇状态带给编辑器");
   assert.match(app, /:rerollable="messageEditTarget\.rerollable"/, "没把 rerollable 传给编辑器");
@@ -3572,7 +3572,7 @@ test("一轮的轮询：单拍失败继续，不判死刑", () => {
 //
 // 三件事钉住：默认必须是放行的、名单仍然能收窄、两个 server 都要挂上。
 test("vite：Host 默认不限制，设了名单才收窄", () => {
-  const config = readFileSync(join(SRC, "..", "vite.config.js"), "utf8");
+  const config = readFileSync(join(SRC, "..", "vite.config.ts"), "utf8");
   const body = config.replace(/\/\/[^\n]*/g, ""); // 先剥注释 —— 注释里全是这些词
 
   // ① 默认**放行**：名单为空时必须落到 `true`。
@@ -3787,7 +3787,7 @@ test("公式比列宽时给提示（不能只是右缘一刀切）", () => {
 
 // ── 生产交付（2026-11-02：远端部署"响应慢"的静态侧）────────────────────────
 test("静态产物缓存：哈希 assets immutable，入口/SW 仍 no-cache", () => {
-  const vite = readFileSync(join(SRC, "..", "vite.config.js"), "utf8");
+  const vite = readFileSync(join(SRC, "..", "vite.config.ts"), "utf8");
   assert.match(vite, /assetCacheHeaders\(\)/, "vite 没挂缓存头插件");
   assert.match(vite, /max-age=31536000, immutable/, "哈希资源没有 immutable");
   assert.match(vite, /max-age=604800/, "字体没给一周缓存");
@@ -3940,7 +3940,7 @@ test("模型规则：支持 match_protocol 与追加 server_tools / local_tools"
 test("更新面板：PWA 前端壳核对与切换", () => {
   const pane = readFileSync(join(SRC, "components", "UpdatePane.vue"), "utf8");
   const pwa = readFileSync(join(SRC, "utils", "pwa.ts"), "utf8");
-  const vite = readFileSync(join(SRC, "..", "vite.config.js"), "utf8");
+  const vite = readFileSync(join(SRC, "..", "vite.config.ts"), "utf8");
 
   assert.match(pane, /PWA \/ 已安装应用/, "更新面板里没有 PWA 区块");
   assert.match(pane, /__BUILD_ID__/, "没有读当前页面的构建身份");
@@ -4498,8 +4498,10 @@ test("浮层 MD3：dialog / menu / snackbar / banner，全局按钮与字段", (
   assert.match(css, /input:not\(\[type="checkbox"\]\)[^{]*:focus[^{]*\{[^}]*var\(--md-primary\)/, "输入框 focus 不是 primary");
   const appearance = readFileSync(join(SRC, "components", "AppearancePane.vue"), "utf8");
   assert.match(appearance, /<VSwitch[\s\S]*?color="primary"/, "开关开态不是 primary");
-  assert.match(css, /\.modal-box \{[^}]*background:\s*var\(--md-surface-container-high\)[^}]*border-radius:\s*var\(--md-shape-xl\)/, "对话框不是 MD3 dialog");
-  assert.match(css, /\.modal-box \{[^}]*box-shadow:\s*var\(--md-elev-3\)/, "对话框没有 elevation 3");
+  const modalShell = readFileSync(join(SRC, "components", "ModalShell.vue"), "utf8");
+  assert.match(modalShell, /<VDialog/, "模态壳没有用 Vuetify 对话框");
+  assert.match(modalShell, /<VCard[^>]*elevation="3"/, "模态壳没有 MD3 elevation 3");
+  assert.match(modalShell, /<VCardActions/, "模态壳没有复用卡片操作区");
   assert.match(css, /\.palette, \.picker \{[^}]*background:\s*var\(--md-surface-container\)/, "命令面板不是 MD3 菜单面");
   assert.match(css, /\.palette-item, \.picker-item \{[^}]*min-height:\s*3em/, "命令项不是 48dp");
   assert.match(css, /\.palette-item\.sel, \.picker-item\.sel \{[^}]*secondary-container/, "选中项不是 secondary-container");

@@ -29,7 +29,7 @@ test("App 能真的跑起来（SSR 冒烟，抓 setup 期的 ReferenceError）",
   // ⚠ 构建失败时**把 vite 的输出一起抛出来**：`stdio: "pipe"` 会把它吞掉，
   // 于是测试只报一句"构建失败"，人得自己再手跑一遍才知道为什么 —— 那等于没有报错信息。
   try {
-    execFileSync(process.execPath, [viteBin, "build", "--config", "test/vite.ssr.config.js", "--ssr", "test/ssr-entry.js"], {
+    execFileSync(process.execPath, [viteBin, "build", "--config", "test/vite.ssr.config.ts", "--ssr", "test/ssr-entry.js"], {
       cwd: root, stdio: "pipe",
     });
   } catch (e) {

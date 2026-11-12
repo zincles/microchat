@@ -47,7 +47,7 @@ export async function run() {
   });
 
   const { createSSRApp } = await import("vue");
-  // ⚠ 不能 `import("vue/server-renderer")`：vite.config.js 把 `vue` 别名到了
+  // ⚠ 不能 `import("vue/server-renderer")`：vite.config.ts 把 `vue` 别名到了
   // `vue/dist/vue.esm-bundler.js`，子路径会被拼成 `…esm-bundler.js/server-renderer`（不存在）。
   const { renderToString } = await import("@vue/server-renderer");
   const App = (await import("/home/zincles/microchat/frontend/web/src/App.vue")).default;

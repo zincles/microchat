@@ -406,7 +406,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 @keyframes msg-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 .msg { position: relative; font-size: calc(16px * var(--app-text-scale, 1)); line-height: 1.7; animation: msg-in var(--md-dur-250) var(--md-ease-emphasized); }
 @media (prefers-reduced-motion: reduce) { .msg { animation: none; } }
-.palette, .picker, .confirm, .modal-box { transition: opacity 150ms ease-out, transform 150ms ease-out; }
+.palette, .picker, .confirm { transition: opacity 150ms ease-out, transform 150ms ease-out; }
 .hidden { transition: none; }
 /* 下方三栏：左右贴边平栏（无 padding/圆角，Telegram 式）；顶栏与输入栏保留悬浮圆角卡。 */
 #columns { flex: 1; display: flex; gap: 0; min-height: 0; min-width: 0; }
@@ -788,7 +788,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .sum-ops .v-btn, .msg-ops .v-btn { flex: none; width: 2em !important; min-width: 2em !important; height: 2em !important; min-height: 2em !important; }
 .sum-pos { color: var(--md-on-surface-variant); font-size: var(--md-type-label-large); font-variant-numeric: tabular-nums; }
 .sum-busy { color: var(--md-on-surface-variant); font-size: var(--md-type-label-medium); margin-left: 0.2em; }
-.sum-edit-field, .message-edit-field { width: 100%; box-sizing: border-box; }
+.message-edit-field { width: 100%; box-sizing: border-box; }
 /* 消息编辑（2026-11-09 起 VDialog/VCard/VTextarea）：
    接近全屏：宽几乎占满视口、高 92vh，文本框吃掉剩余高度，保存/取消固定在底部。
    VDialog 的 overlay 层级由 Vuetify 管，终于不会被左侧栏压住。 */
@@ -915,10 +915,6 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .tavern-inspector-tab.active { color: var(--md-primary); border-bottom-color: var(--md-primary); }
 .tavern-inspector-tab:focus-visible { outline: 2px solid var(--md-primary); outline-offset: -2px; }
 @media (max-width: 700px) { .tavern-preview-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-/* 操作区固定在底部右侧（2026-11-02 用户定）：状态在左、按钮组在右；窄屏按钮也靠右。 */
-.modal-foot { display: flex; align-items: center; gap: 0.6em; margin-top: 0.6em; }
-.modal-foot .status { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
-.modal-actions { margin-left: auto; display: flex; align-items: center; justify-content: flex-end; gap: 0.4em; flex-wrap: wrap; }
 /* 气泡正文：markdown 渲染（marked 生成的 p/code/pre/longtable 走这里收敛）。 */
 .msg .text { word-break: break-word; }
 /* 流式末尾的终端光标：实心方块 + 老式终端那种硬切闪烁；只服务"正在写"的观感。 */
@@ -1116,12 +1112,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .palette-item.sel .cmd-desc { color: inherit; opacity: 0.75; }
 /* 设置 modal（分组卡片，不是左右分栏 —— TG 设置页就是一组一组的圆角块）。 */
 .hidden { display: none; }
-.modal { position: fixed; inset: 0; background: rgb(0 0 0 / 45%); z-index: 20; display: flex; align-items: center; justify-content: center; animation: md-scrim-in var(--md-dur-200) var(--md-ease-standard); }
-.modal-box { background: var(--md-surface-container-high); border: none; border-radius: var(--md-shape-xl); width: 94vw; max-width: 960px; height: 92vh; overflow-y: auto; overscroll-behavior: contain; padding: 1.5em; box-sizing: border-box; box-shadow: var(--md-elev-3); color: var(--md-on-surface); animation: md-dialog-in var(--md-dur-250) var(--md-ease-emphasized); }
 /* 紧凑对话框（会话设置这种小表单）：宽够用、高随内容 —— 别用 92vh 的空盒子。 */
-.modal-box.compact { width: min(560px, 94vw); max-width: 560px; height: auto; max-height: 88vh; }
-.modal-head { display: flex; justify-content: space-between; align-items: center; font-size: var(--md-type-title-medium); font-weight: 500; color: var(--md-on-surface); margin-bottom: 0.6em; }
-.modal-head .head-btns { display: flex; gap: 0.2em; align-items: center; }
 /* 图标按钮通用（× ＋ 这种）：去边框去底色，hover 才显底 —— 原生感就这么来。 */
 .icon-btn { color: var(--tg-hint); padding: 0.35em 0.55em; border-radius: var(--r-md); font-size: 1.1em; line-height: 1; }
 /* 图标按钮统一居中（2026-11-03 用户报：图标有时偏下）：SVG 是 inline 元素，默认按基线落，
@@ -1552,7 +1543,7 @@ button.danger:hover { background: color-mix(in srgb, var(--md-error) 8%, transpa
 @keyframes md-dialog-in { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: none; } }
 @keyframes md-scrim-in { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) {
-  .modal, .modal-box, .confirm-backdrop, .confirm, .palette, .picker, #update-bar { animation: none; }
+  .confirm-backdrop, .confirm, .palette, .picker, #update-bar { animation: none; }
 }
 /* Toast 的语义点（MD3 snackbar 不描边：用前导点区分 ok / error）。 */
 .toast::before { content: ""; flex: none; width: 0.6em; height: 0.6em; border-radius: 50%; background: var(--md-primary); }
@@ -1669,7 +1660,6 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .ctree-row { min-height: 2.1em; padding: 0.2em 0.3em; }
 .adv-chunk { min-height: 2.1em; padding: 0.35em 0.2em; }
 
-.modal-box { padding: 1.15em; }
 .confirm { padding: 1.15em; }
 .palette-item, .picker-item { min-height: 2.5em; }
 .toast { padding: 0.6em 0.85em; }

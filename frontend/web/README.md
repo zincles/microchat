@@ -18,7 +18,7 @@ npm run build     # 产出 dist/（不入库，部署时现打）
 后端另起：`./microchat`（8787 服务；CORS 全开，预检 204）。
 
 **后端地址只有一份权威 = 后端自己的 `data/config/config.json`**（`server.host/port`）：vite 启动时读它，
-把 `/api` **代理**给后端（`vite.config.js` 的 `server.proxy` + `preview.proxy`；读不到 ⇒ 默认 `127.0.0.1:8787`，
+把 `/api` **代理**给后端（`vite.config.ts` 的 `server.proxy` + `preview.proxy`；读不到 ⇒ 默认 `127.0.0.1:8787`，
 目录可被 `MICROCHAT_DATA_DIR`/`MICROCHAT_CONFIG_DIR` 覆盖）。所以浏览器**永远同源**、不用填地址 —— 启动自检的
 候选也是**同源优先**（`http://<当前来源>/api/v1`），"跟页面同主机的 8787"退为兜底（没有代理的静态部署）。
 Docker 部署（单容器、只公开 8788）见根目录 `docker-compose.yml`：地址口径与此完全同一条。

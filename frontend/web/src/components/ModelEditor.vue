@@ -3,11 +3,12 @@
 //
 // 这不是 model_define_rules（家族默认），而是精确到 (provider, upstream_id) 的覆盖；
 // 后端 PATCH /models 早就有，前端从前没有入口。
-import { computed, onMounted, onUnmounted, ref } from "vue";
-import { VBtn, VTextField } from "vuetify/components";
+import { computed, ref } from "vue";
+import { VBtn, VTextField, VTextarea } from "vuetify/components";
 import { sharedApi } from "../utils/prefs.ts";
 import { formatTokens } from "../utils/format.ts";
 import ModelIcon from "./ModelIcon.vue";
+import ModalShell from "./ModalShell.vue";
 import type { ModelView } from "../api/types.ts";
 
 const props = defineProps<{ provider: string; model: ModelView }>();
@@ -65,43 +66,30 @@ async function save(): Promise<void> {
   }
   busy.value = false;
 }
-function onKey(e: KeyboardEvent): void {
-  if (e.key === "Escape") close();
-}
-onMounted(() => document.addEventListener("keydown", onKey));
-onUnmounted(() => document.removeEventListener("keydown", onKey));
 </script>
 
 <template>
-  <div class="modal" @click.self="close">
-    <div class="modal-box compact model-edit-box">
-      <div class="modal-head">
-        <span class="model-edit-title"><ModelIcon :icon="model.icon" :brand="model.brand" />{{ title }}</span>
-        <span class="head-btns"><VBtn icon variant="text" size="small" title="关闭" aria-label="关闭" @click="close">×</VBtn></span>
-      </div>
-      <p class="hint model-edit-id">{{ model.upstream_id }} · {{ provider }}</p>
-      <label class="field"><span>显示名</span><VTextField v-model="displayName" density="compact" variant="outlined" hide-details placeholder="留空 = 用上游名 / 自动美化" /></label>
-      <label class="field"><span>上下文覆盖</span><VTextField v-model="contextOverride" type="number" min="1" density="compact" variant="outlined" hide-details placeholder="留空 = 跟随上游" /></label>
-      <p class="hint">{{ contextLabel() }}；这里填了就以这里为准。</p>
-      <label class="field"><span>采样参数（JSON）</span>
-        <textarea v-model="paramsText" class="model-params" rows="8" spellcheck="false"></textarea>
-      </label>
-      <p class="hint">模型刷新不会覆盖这三格；但如果这个模型从上游消失，整行（连带覆盖）会被删掉。</p>
-      <div class="modal-foot">
-        <span class="status">{{ status }}</span>
-        <div class="modal-actions">
-          <VBtn variant="text" size="small" @click="close">取消</VBtn>
-          <VBtn color="primary" variant="flat" size="small" :disabled="busy" @click="save">保存</VBtn>
-        </div>
-      </div>
-    </div>
-  </div>
+  <ModalShell :width="600" :max-width="600" @close="close">
+    <template #title>
+      <span class="model-edit-title"><ModelIcon :icon="model.icon" :brand="model.brand" />{{ title }}</span>
+    </template>
+    <p class="hint model-edit-id">{{ model.upstream_id }} · {{ provider }}</p>
+    <label class="field"><span>显示名</span><VTextField v-model="displayName" density="compact" variant="outlined" hide-details placeholder="留空 = 用上游名 / 自动美化" /></label>
+    <label class="field"><span>上下文覆盖</span><VTextField v-model="contextOverride" type="number" min="1" density="compact" variant="outlined" hide-details placeholder="留空 = 跟随上游" /></label>
+    <p class="hint">{{ contextLabel() }}；这里填了就以这里为准。</p>
+    <label class="field"><span>采样参数（JSON）</span>
+      <VTextarea v-model="paramsText" rows="8" variant="outlined" hide-details spellcheck="false" />
+    </label>
+    <p class="hint">模型刷新不会覆盖这三格；但如果这个模型从上游消失，整行（连带覆盖）会被删掉。</p>
+    <template #actions>
+      <span class="status">{{ status }}</span>
+      <VBtn variant="text" size="small" @click="close">取消</VBtn>
+      <VBtn color="primary" variant="flat" size="small" :disabled="busy" @click="save">保存</VBtn>
+    </template>
+  </ModalShell>
 </template>
 
 <style scoped>
-.model-edit-box { width: min(600px, 94vw); max-width: 600px; height: auto; max-height: 90vh; }
 .model-edit-title { display: inline-flex; align-items: center; gap: 0.45em; min-width: 0; }
 .model-edit-id { margin: -0.15em 0 0.9em; word-break: break-all; }
-.model-params { width: 100%; box-sizing: border-box; min-height: 8em; resize: vertical; font: inherit; font-family: var(--app-font-mono, ui-monospace, monospace); font-size: 0.82em; line-height: 1.45; padding: 0.65em 0.75em; border: 1px solid var(--md-outline); border-radius: var(--md-shape-xs); background: var(--md-surface-container-high); color: var(--md-on-surface); }
-.model-params:focus { outline: 2px solid var(--md-primary); outline-offset: -1px; }
 </style>
