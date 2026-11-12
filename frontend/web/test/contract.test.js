@@ -655,6 +655,8 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(css, /\.flow-port-number\s*\{[^}]*background:\s*var\(--flow-number\)/, "number 端口没有独立色");
   assert.match(css, /\.flow-port-choice|--flow-choice/, "choice 端口没有独立色");
   assert.match(css, /\.flow-edge-bool/, "bool 连线没有独立色");
+  assert.match(css, /\.flow-node-is-running\s*\{[^}]*border-color:\s*var\(--md-primary\)/, "激活节点外框不是蓝色");
+  assert.match(css, /\.flow-node-is-done\s*\{[^}]*border-color:\s*var\(--tg-ok\)/, "完成节点外框不是绿色");
 
   assert.ok(!/\.flow-node[^\n]*\{[^}]*border-left:\s*3px/.test(css), "节点卡片还在用左侧色条");
   assert.match(css, /\.flow-node-head \{[^}]*background:\s*color-mix/, "节点卡片没有类型色表头");
