@@ -122,51 +122,6 @@ func ValidModelIcon(icon string) bool {
 	return false
 }
 
-// normalizeLegacyModelIcons：旧版本默认规则写的是 openai/xai；读入时就地换成新 id。
-// 只救存量配置，不把旧值当成合法写入值（PUT 仍然会 422）。
-func normalizeLegacyModelIcons(rules []ModelDefineRule) {
-	for index := range rules {
-		if rules[index].Icon == nil {
-			continue
-		}
-		switch *rules[index].Icon {
-		case "openai":
-			*rules[index].Icon = "gpt"
-		case "xai":
-			*rules[index].Icon = "grok"
-		}
-	}
-}
-
-// legacyDefaultModelRuleIDs：2026-11-07 那版开箱规则的 id。
-//
-// config.json 一旦落过盘就**整体覆盖**默认值；老部署的 model_define_rules 里只有这 9 条，
-// 新加的 longcat/mistral/qwen/... 永远不会出现。这里只在“现有规则全是旧默认 id”时
-// 补上新增默认规则（用户若加了自己的规则就不动，避免把自定义规则盖掉/复活被删的规则）。
-var legacyDefaultModelRuleIDs = map[string]bool{
-	"gpt": true, "xai-image": true, "grok": true, "gemini": true, "claude": true,
-	"deepseek": true, "mimo": true, "glm": true, "kimi": true,
-}
-
-func ensureModelRuleDefaults(rules []ModelDefineRule) []ModelDefineRule {
-	if len(rules) == 0 {
-		return rules // 显式清空，不复活
-	}
-	seen := make(map[string]bool, len(rules))
-	for _, rule := range rules {
-		if !legacyDefaultModelRuleIDs[rule.ID] {
-			return rules // 用户/渠道有自定义规则：尊重现状
-		}
-		seen[rule.ID] = true
-	}
-	for _, def := range DefaultModelDefineRules() {
-		if !seen[def.ID] {
-			rules = append(rules, def)
-		}
-	}
-	return rules
-}
-
 // DefaultModelDefineRules：开箱的品牌规则（含 grok-4 × response 的 xAI native tool 默认值；
 // grok-imagine 是图像模型，先清空思考档并停止）。
 //

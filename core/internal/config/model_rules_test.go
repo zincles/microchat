@@ -135,7 +135,7 @@ func TestDefaultModelDefineRules(t *testing.T) {
 	}
 }
 
-func TestModelIconsAreClosedSetAndLegacyIsNormalized(t *testing.T) {
+func TestModelIconsAreClosedSet(t *testing.T) {
 	for _, icon := range ModelIconIDs {
 		if !ValidModelIcon(icon) {
 			t.Fatalf("%q 该是合法图标", icon)
@@ -143,14 +143,6 @@ func TestModelIconsAreClosedSetAndLegacyIsNormalized(t *testing.T) {
 	}
 	if ValidModelIcon("openai") || ValidModelIcon("xai") {
 		t.Fatal("旧图标名不该再是合法写入值")
-	}
-	old := []ModelDefineRule{
-		{Icon: stringPtr("openai")},
-		{Icon: stringPtr("xai")},
-	}
-	normalizeLegacyModelIcons(old)
-	if *old[0].Icon != "gpt" || *old[1].Icon != "grok" {
-		t.Fatalf("旧图标没归一化：%+v", old)
 	}
 	if err := ValidateModelDefineRules([]ModelDefineRule{{MatchContains: "x", Icon: stringPtr("openai")}}); err == nil {
 		t.Fatal("未知图标该报错")
@@ -180,34 +172,6 @@ func TestValidateModelDefineRules(t *testing.T) {
 	}
 }
 
-func TestEnsureModelRuleDefaultsMigratesOldDefaultSet(t *testing.T) {
-	old := []ModelDefineRule{
-		{ID: "gpt", MatchContains: "gpt"},
-		{ID: "xai-image", MatchContains: "grok-imagine"},
-		{ID: "grok", MatchContains: "grok"},
-		{ID: "gemini", MatchContains: "gemini"},
-		{ID: "claude", MatchContains: "claude"},
-		{ID: "deepseek", MatchContains: "deepseek"},
-		{ID: "mimo", MatchContains: "mimo"},
-		{ID: "glm", MatchContains: "glm"},
-		{ID: "kimi", MatchContains: "kimi"},
-	}
-	got := ensureModelRuleDefaults(old)
-	if len(got) != len(DefaultModelDefineRules()) {
-		t.Fatalf("旧默认规则没有补齐：got %d want %d", len(got), len(DefaultModelDefineRules()))
-	}
-	ids := map[string]bool{}
-	for _, r := range got {
-		ids[r.ID] = true
-	}
-	for _, r := range DefaultModelDefineRules() {
-		if !ids[r.ID] {
-			t.Fatalf("缺少新默认规则 %s", r.ID)
-		}
-	}
-}
-
-// 2026-11-09：grok-4.x + Response 默认追加 xAI native tools；协议不对/不是 grok-4 不追加。
 func TestDefaultGrok4NativeToolRule(t *testing.T) {
 	cfg := DefaultConfig()
 	cases := []struct {
