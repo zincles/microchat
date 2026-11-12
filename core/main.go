@@ -21,6 +21,7 @@ import (
 	"microchat/internal/compact"
 	"microchat/internal/config"
 	"microchat/internal/model"
+	"microchat/internal/providers"
 	"microchat/internal/queue"
 	"microchat/internal/registry"
 	"microchat/internal/reroll"
@@ -56,6 +57,9 @@ func main() {
 	}
 	if err := abilities.Validate(agents); err != nil {
 		fatal("agents.json 的能力开关不合法: %v", err)
+	}
+	if err := providers.ValidateConfig(providerConfig); err != nil {
+		fatal("providers.json 不合法: %v", err)
 	}
 	if err := agents.ValidateSegments(); err != nil {
 		fatal("agents.json 的提示词段不合法: %v", err)

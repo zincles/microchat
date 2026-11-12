@@ -5,6 +5,7 @@
 package providers
 
 import (
+	"fmt"
 	"strings"
 
 	"microchat/internal/config"
@@ -58,4 +59,15 @@ func SelectBackend(provider, model string, providersConfig config.ProvidersConfi
 // 默认为"要"：留档是保守选择，丢了才是真丢。
 func (b Backend) StoresReasoning() bool {
 	return b.Provider.StoreReasoning == nil || *b.Provider.StoreReasoning
+}
+
+// ValidateConfig：启动时把所有渠道过一遍 Validate；坏配置在启动时炸，
+// 而不是等到某一发请求才报“vendor 不支持 protocol”。
+func ValidateConfig(cfg config.ProvidersConfig) error {
+	for _, provider := range cfg.Providers {
+		if err := FromConfig(provider).Normalize().Validate(); err != nil {
+			return fmt.Errorf("providers.json[%s]：%w", provider.ID, err)
+		}
+	}
+	return nil
 }
