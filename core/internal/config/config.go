@@ -283,14 +283,6 @@ type Agent struct {
 	PrependState *bool `json:"prepend_state,omitempty"`
 }
 
-// ⚠ **`display_mode` 已删除**（2026-10-27 用户定：「只允许"你用气泡发消息，AI 回你 markdown
-// 而非气泡"的模式」）。从前它是 agent 上的二选一：
-//   - `chat`（默认）= 两边都是气泡；
-//   - `roleplay`   = 用户气泡 + AI 纯文本。
-// 现在**只有后者这一种**（而且不再是"模式"，就是界面的样子）⇒ 这个字段没有意义了，删掉。
-// 老 `agents.json` 里还留着 `"display_mode": "chat"/"roleplay"` 也不报错：它成了**不认识的键**，
-// 下次整份重写时自己就没了（与当年 `params` / `prompt_order` 同一条处理口径 ✓）。
-
 // Segment：一段可复用的提示词（"system prompt segment"，用户定 2026-10-11）。
 //
 // 住 `agents.json` 顶层（与"没有 abilities.json"同一条思路：一个文件 = 人格 + 段，
