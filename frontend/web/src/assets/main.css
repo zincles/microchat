@@ -1835,11 +1835,7 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-node-hint { color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); line-height: 1.35; }
 .flow-node-select { margin-top: 0.4em; }
 .flow-node-select .v-field { font-size: var(--md-type-label-medium); }
-/* 入口/出口在卡片边上给一点方向色；默认主题会给 input/output 的 handle 染色，必须压住。 */
-.flow-node-input, .flow-node-join { border-left: 3px solid var(--flow-string); }
-.flow-node-output { border-right: 3px solid var(--flow-string); }
-.flow-node-history, .flow-node-trim, .flow-node-merge { border-left: 3px solid var(--flow-history); }
-.flow-node-trim { border-right: 3px solid var(--flow-history); }
+/* 类型色只落在徽标/端口上，不画在卡片边上。 */
 .flow-canvas .flow-node.flow-node-history .vue-flow__handle,
 .flow-canvas .flow-node.flow-node-trim .vue-flow__handle,
 .flow-canvas .flow-node.flow-node-merge .vue-flow__handle { background: var(--flow-history) !important; }
@@ -1973,22 +1969,25 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
  * 类型徽标 / 标题层级 / 更松的留白 / 卡片式连接清单；不改变任何节点语义。 */
 .flow-node {
   --flow-node-accent: var(--md-primary);
-  --flow-node-soft: color-mix(in srgb, var(--md-primary) 14%, transparent);
+  --flow-node-soft: color-mix(in srgb, var(--flow-node-accent) 14%, transparent);
   min-width: 200px; max-width: 260px; padding: 0.7em 0.75em 0.65em;
-  border: 1px solid var(--md-outline-variant); border-left: 3px solid var(--flow-node-accent);
+  border: 1px solid var(--md-outline-variant);
   border-radius: var(--md-shape-md); background: var(--vf-node-bg);
   color: var(--vf-node-text); box-shadow: var(--md-elev-1);
 }
 .flow-node-llm { width: 22.5em; min-width: 22.5em; max-width: 22.5em; min-height: 16em; display: flex; flex-direction: column; }
 .flow-node-llm .flow-prompt-list { flex: 1 1 auto; min-height: 0; max-height: none; }
 .flow-node-llm .flow-node-body { flex: none; }
-.flow-node-output { border-left-color: var(--flow-node-accent); border-right: 1px solid var(--md-outline-variant); }
-.flow-node-history, .flow-node-trim, .flow-node-merge {
-  --flow-node-accent: var(--flow-history);
-  --flow-node-soft: color-mix(in srgb, var(--flow-history) 16%, transparent);
-}
+.flow-node-input, .flow-node-join { --flow-node-accent: var(--flow-string); }
+.flow-node-output { --flow-node-accent: var(--md-secondary); }
+.flow-node-text { --flow-node-accent: var(--tg-ok); }
+.flow-node-history, .flow-node-trim, .flow-node-merge { --flow-node-accent: var(--flow-history); }
 .flow-node-head {
-  display: flex; align-items: flex-start; gap: 0.5em; padding-right: 1.5em;
+  display: flex; align-items: center; gap: 0.5em;
+  margin: -0.7em -0.75em 0.6em; padding: 0.55em 2.1em 0.5em 0.75em;
+  border-bottom: 1px solid var(--md-outline-variant);
+  border-radius: var(--md-shape-md) var(--md-shape-md) 0 0;
+  background: color-mix(in srgb, var(--flow-node-accent) 7%, var(--vf-node-bg));
 }
 .flow-node-badge {
   flex: none; display: inline-flex; align-items: center; justify-content: center;
@@ -2000,7 +1999,7 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-node-heading { display: flex; flex-direction: column; gap: 0.16em; min-width: 0; }
 .flow-node-title { font-size: 0.95em; line-height: 1.25; }
 .flow-node-hint { line-height: 1.4; }
-.flow-node-delete { top: 0.45em; right: 0.45em; }
+.flow-node-delete { top: 0.7em; right: 0.55em; }
 .flow-node-body { margin-top: 0.5em; }
 .flow-node .v-field { border-radius: var(--r-sm); }
 .flow-node .v-field__outline { --v-field-border-opacity: 0.55; }
