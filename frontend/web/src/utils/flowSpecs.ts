@@ -6,6 +6,16 @@
 import type { FlowNode } from "../api/types.ts";
 import type { FlowDataType } from "./flow.ts";
 
+export const TRIM_MODES = [
+  { value: "tail", title: "保留最近 N 条" },
+  { value: "head", title: "保留最早 N 条" },
+  { value: "drop-head", title: "去掉开头 N 条" },
+  { value: "drop-tail", title: "去掉结尾 N 条" },
+] as const;
+export type TrimMode = (typeof TRIM_MODES)[number]["value"];
+export const DEFAULT_TRIM_COUNT = 10;
+export const TRIM_ROLES = ["system", "user", "assistant"] as const;
+
 export type FlowNodeKind =
   | "input" | "text" | "history" | "trim" | "merge"
   | "llm" | "join" | "judge" | "output";
@@ -28,6 +38,8 @@ export interface FlowNodeSpec {
   /** 静态端口或按 node.data 计算的动态端口。 */
   inputs: (node: FlowNode) => FlowPortSpec[];
   outputs: (node: FlowNode) => FlowPortSpec[];
+  /** 节点自己的配置问题；全局的输入/输出/边校验仍在 flowIssues。 */
+  validate?: (node: FlowNode) => string[];
 }
 
 const dataOf = (node: FlowNode | undefined): Record<string, any> => (node?.data ?? {}) as Record<string, any>;
@@ -49,6 +61,73 @@ function llmInputs(node: FlowNode): FlowPortSpec[] {
       : { handle: `prompt-${id}`, type: "string", label: "Prompt" });
   }
   return ports;
+}
+
+function trimIssues(node: FlowNode): string[] {
+  const data = dataOf(node);
+  const issues: string[] = [];
+  const mode = String(data.mode ?? "tail");
+  if (!TRIM_MODES.some((item) => item.value === mode)) issues.push("裁剪节点有未知的裁剪方式");
+  const count = Number(data.count ?? DEFAULT_TRIM_COUNT);
+  if (!Number.isInteger(count) || count < 1) issues.push("裁剪条数必须是正整数");
+  if (Array.isArray(data.roles)) {
+    for (const role of data.roles) {
+      if (!(TRIM_ROLES as readonly string[]).includes(String(role))) issues.push("裁剪节点有未知的角色");
+    }
+  }
+  return issues;
+}
+
+function portsIssues(kind: string, values: unknown, fallback: string[]): string[] {
+  const inputs = Array.isArray(values) ? values : fallback;
+  const issues: string[] = [];
+  const seen = new Set<string>();
+  for (const input of inputs) {
+    const id = String(input ?? "").trim();
+    if (!id || seen.has(id)) issues.push(`${kind}有空的或重复的端口`);
+    seen.add(id);
+  }
+  if (!inputs.length) issues.push(`${kind}至少需要一个端口`);
+  return issues;
+}
+
+function llmIssues(node: FlowNode): string[] {
+  const prompts = Array.isArray(dataOf(node).prompts) ? dataOf(node).prompts : [];
+  const issues: string[] = [];
+  if (!prompts.length) issues.push("有 LLM 节点还没有 Prompt 条目");
+  const seen = new Set<string>();
+  for (const prompt of prompts) {
+    const id = String(prompt?.id ?? "").trim();
+    if (!id || seen.has(id)) issues.push("LLM 节点里有空 id 或重复的 Prompt/历史条目");
+    seen.add(id);
+    const kind = String(prompt?.kind ?? "prompt");
+    if (kind !== "prompt" && kind !== "history") issues.push("LLM 条目类型只能是 prompt 或 history");
+    if (kind !== "history" && !["system", "user", "assistant"].includes(String(prompt?.role ?? ""))) {
+      issues.push("Prompt 条目的 role 只能是 system / user / assistant");
+    }
+  }
+  return issues;
+}
+
+function judgeIssues(node: FlowNode): string[] {
+  const data = dataOf(node);
+  const issues: string[] = [];
+  if (!String(data.provider ?? "").trim()) issues.push("JEV 判断节点还没选渠道");
+  if (!String(data.model ?? "").trim()) issues.push("JEV 判断节点还没填模型");
+  const answerType = String(data.answer_type ?? "string");
+  if (!["string", "bool", "number", "choice"].includes(answerType)) issues.push("JEV 判断节点的答案类型不认识");
+  const raw = data.questions;
+  if (typeof raw !== "string" || !raw.trim()) {
+    issues.push("JEV 判断节点还没有 questions");
+  } else {
+    try {
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) issues.push("JEV 判断节点的 questions 必须是 JSON object");
+    } catch {
+      issues.push("JEV 判断节点的 questions 不是合法 JSON");
+    }
+  }
+  return issues;
 }
 
 const joinPorts = (node: FlowNode, key: "inputs" | "outputs", fallback: string[]): string[] => {
@@ -75,12 +154,14 @@ const specs: Record<FlowNodeKind, FlowNodeSpec> = {
   trim: {
     type: "trim", label: "裁剪 messages", badge: "TR", hint: "messages[] → messages[]：按条数裁剪",
     category: "transform", defaults: () => ({ mode: "tail", count: 10 }),
+    validate: trimIssues,
     inputs: () => [{ handle: "in", type: "messages", label: "messages", required: true }],
     outputs: () => [{ handle: "out", type: "messages", label: "messages", required: true }],
   },
   merge: {
     type: "merge", label: "拼接 messages", badge: "MG", hint: "多路 messages[] 按端口顺序拼接",
     category: "transform", defaults: () => ({ inputs: ["in-1", "in-2"] }),
+    validate: (node) => portsIssues("拼接 messages 节点", dataOf(node).inputs, ["in-1", "in-2"]),
     inputs: (node) => joinPorts(node, "inputs", ["in-1", "in-2"]).map((handle) => ({ handle, type: "messages", label: handle })),
     outputs: () => [{ handle: "out", type: "messages", label: "messages", required: true }],
   },
@@ -88,6 +169,7 @@ const specs: Record<FlowNodeKind, FlowNodeSpec> = {
     type: "llm", label: "调用 LLM", badge: "AI", hint: "手动组装 messages",
     category: "transform",
     defaults: () => ({ prompts: [{ id: `p-${Date.now().toString(36)}`, role: "system", content: "" }] }),
+    validate: llmIssues,
     inputs: llmInputs,
     outputs: () => [
       { handle: "reasoning", type: "string", label: "思考" },
@@ -98,6 +180,10 @@ const specs: Record<FlowNodeKind, FlowNodeSpec> = {
     type: "join", label: "拼接和复制", badge: "J", hint: "多路拼接；只接一路时直接复制",
     category: "transform",
     defaults: () => ({ inputs: ["in-1", "in-2"], outputs: ["out-1"], separator: "\n\n---\n\n" }),
+    validate: (node) => [
+      ...portsIssues("拼接节点", dataOf(node).inputs, ["in-1", "in-2"]),
+      ...portsIssues("拼接节点输出", dataOf(node).outputs, ["out-1"]),
+    ],
     inputs: (node) => joinPorts(node, "inputs", ["in-1", "in-2"]).map((handle) => ({ handle, type: "string", label: handle })),
     outputs: (node) => joinPorts(node, "outputs", ["out-1"]).map((handle) => ({ handle, type: "string", label: handle })),
   },
@@ -108,6 +194,7 @@ const specs: Record<FlowNodeKind, FlowNodeSpec> = {
       provider: "", model: "", answer_type: "string", answer_key: "", threshold: 0.5,
       questions: JSON.stringify({ involves: "本轮用户行为是否直接涉及这个角色？" }, null, 2),
     }),
+    validate: judgeIssues,
     inputs: () => [{ handle: "state", type: "string", label: "场景/状态", required: true }],
     outputs: (node) => [{ handle: "out", type: answerTypeOf(node), label: "答案", required: true }],
   },

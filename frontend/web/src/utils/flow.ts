@@ -4,23 +4,15 @@
 // 节点类型先保持最小集合：input（字符串）/ history（messages[]）/ trim（messages[]）/
 // llm / join / output。以后加 template / condition 时，先在这里扩白名单，再改编辑器与运行时。
 import type { FlowEdge, FlowGraph, FlowNode } from "../api/types.ts";
-import { FLOW_NODE_SPECS, flowInputPorts, flowNodeSpec, flowOutputPorts, judgeAnswerType, nodeLabelFor, type FlowNodeKind } from "./flowSpecs.ts";
+import { DEFAULT_TRIM_COUNT, FLOW_NODE_SPECS, TRIM_MODES, TRIM_ROLES, flowInputPorts, flowNodeSpec, flowOutputPorts, judgeAnswerType, nodeLabelFor, type FlowNodeKind, type TrimMode } from "./flowSpecs.ts";
+export { DEFAULT_TRIM_COUNT, TRIM_MODES, TRIM_ROLES } from "./flowSpecs.ts";
+export type { TrimMode } from "./flowSpecs.ts";
 
 export const FLOW_VERSION = 1;
 export const DEFAULT_JOIN_SEPARATOR = "\n\n---\n\n";
 export const FLOW_NODE_TYPES = Object.keys(FLOW_NODE_SPECS) as FlowNodeKind[];
 export type FlowNodeType = FlowNodeKind;
 export type FlowDataType = "string" | "messages" | "bool" | "number" | "choice";
-
-export const TRIM_MODES = [
-  { value: "tail", title: "保留最近 N 条" },
-  { value: "head", title: "保留最早 N 条" },
-  { value: "drop-head", title: "去掉开头 N 条" },
-  { value: "drop-tail", title: "去掉结尾 N 条" },
-] as const;
-export type TrimMode = (typeof TRIM_MODES)[number]["value"];
-export const DEFAULT_TRIM_COUNT = 10;
-export const TRIM_ROLES = ["system", "user", "assistant"] as const;
 
 const norm = (handle?: string, fallback = "out"): string => handle || fallback;
 
@@ -150,7 +142,7 @@ export function normalizeFlowGraph(graph?: FlowGraph | null): FlowGraph {
 }
 
 // 保存前检查：不阻止保存草稿，但编辑器要把问题摆出来。
-// 第一版只允许 LLM 节点手动组装 messages；不引用 Agent，所以不存在嵌套 FlowAgent。
+// 每个节点的配置问题由 NodeSpec.validate 负责；这里只做全局结构与连线校验。
 export function flowIssues(graph: FlowGraph): string[] {
   const issues: string[] = [];
   const nodes = graph.nodes ?? [];
@@ -160,83 +152,15 @@ export function flowIssues(graph: FlowGraph): string[] {
   if (counts("input") !== 1) issues.push("需要恰好一个输入节点");
   if (counts("output") !== 1) issues.push("需要恰好一个输出节点");
   for (const node of nodes) {
-    if (!FLOW_NODE_TYPES.includes(node.type as FlowNodeType)) issues.push(`不认识的节点类型：${node.type}`);
+    const spec = flowNodeSpec(node.type);
+    if (!spec) {
+      issues.push(`不认识的节点类型：${node.type}`);
+      continue;
+    }
     if (node.type === "history" && !edges.some((e) => e.source === node.id)) {
       issues.push("历史数据节点还没有接出去");
     }
-    if (node.type === "trim") {
-      const mode = String(node.data?.mode ?? "tail");
-      if (!TRIM_MODES.some((item) => item.value === mode)) issues.push("裁剪节点有未知的裁剪方式");
-      const count = Number(node.data?.count ?? DEFAULT_TRIM_COUNT);
-      if (!Number.isInteger(count) || count < 1) issues.push("裁剪条数必须是正整数");
-      if (Array.isArray(node.data?.roles)) {
-        for (const role of node.data.roles) {
-          if (!(TRIM_ROLES as readonly string[]).includes(String(role))) issues.push("裁剪节点有未知的角色");
-        }
-      }
-    }
-    if (node.type === "judge") {
-      if (!String(node.data?.provider ?? "").trim()) issues.push("JEV 判断节点还没选渠道");
-      if (!String(node.data?.model ?? "").trim()) issues.push("JEV 判断节点还没填模型");
-      const answerType = String(node.data?.answer_type ?? "string");
-      if (!["string", "bool", "number", "choice"].includes(answerType)) issues.push("JEV 判断节点的答案类型不认识");
-      const raw = node.data?.questions;
-      if (typeof raw !== "string" || !raw.trim()) {
-        issues.push("JEV 判断节点还没有 questions");
-      } else {
-        try {
-          const parsed = JSON.parse(raw);
-          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) issues.push("JEV 判断节点的 questions 必须是 JSON object");
-        } catch {
-          issues.push("JEV 判断节点的 questions 不是合法 JSON");
-        }
-      }
-    }
-    if (node.type === "llm") {
-      const prompts = Array.isArray(node.data?.prompts) ? node.data.prompts : [];
-      if (!prompts.length) issues.push("有 LLM 节点还没有 Prompt 条目");
-      const seen = new Set<string>();
-      for (const prompt of prompts) {
-        const id = String(prompt?.id ?? "").trim();
-        if (!id || seen.has(id)) issues.push("LLM 节点里有空 id 或重复的 Prompt/历史条目");
-        seen.add(id);
-        const kind = String(prompt?.kind ?? "prompt");
-        if (kind !== "prompt" && kind !== "history") issues.push("LLM 条目类型只能是 prompt 或 history");
-        if (kind !== "history" && !["system", "user", "assistant"].includes(String(prompt?.role ?? ""))) {
-          issues.push("Prompt 条目的 role 只能是 system / user / assistant");
-        }
-      }
-    }
-  }
-  for (const node of nodes) {
-    if (node.type === "merge") {
-      const inputs = Array.isArray(node.data?.inputs) ? node.data.inputs : ["in-1", "in-2"];
-      const seenInputs = new Set<string>();
-      for (const input of inputs) {
-        const id = String(input ?? "").trim();
-        if (!id || seenInputs.has(id)) issues.push("拼接 messages 节点有空的或重复的输入端口");
-        seenInputs.add(id);
-      }
-      if (!inputs.length) issues.push("拼接 messages 节点至少需要一个输入端口");
-    }
-    if (node.type === "join") {
-      const inputs = Array.isArray(node.data?.inputs) ? node.data.inputs : ["in-1", "in-2"];
-      const seenInputs = new Set<string>();
-      for (const input of inputs) {
-        const id = String(input ?? "").trim();
-        if (!id || seenInputs.has(id)) issues.push("拼接节点有空的或重复的输入端口");
-        seenInputs.add(id);
-      }
-      if (!inputs.length) issues.push("拼接节点至少需要一个输入端口");
-      const outputs = Array.isArray(node.data?.outputs) ? node.data.outputs : ["out-1"];
-      const seenOutputs = new Set<string>();
-      for (const output of outputs) {
-        const id = String(output ?? "").trim();
-        if (!id || seenOutputs.has(id)) issues.push("拼接节点有空的或重复的输出端口");
-        seenOutputs.add(id);
-      }
-      if (!outputs.length) issues.push("拼接节点至少需要一个输出端口");
-    }
+    issues.push(...(spec.validate?.(node) ?? []));
   }
   const usedSources = new Set<string>();
   const usedTargets = new Set<string>();
@@ -244,7 +168,7 @@ export function flowIssues(graph: FlowGraph): string[] {
     if (!byId.has(edge.source) || !byId.has(edge.target)) issues.push("有连线指向不存在的节点");
     if (edge.source === edge.target) issues.push("节点不能连到自己");
     const sourceHandle = edge.sourceHandle || "out";
-    const targetHandle = edge.targetHandle || (byId.get(edge.target)?.type === "output" ? "in" : "in");
+    const targetHandle = edge.targetHandle || "in";
     const sourceKey = `${edge.source}\0${sourceHandle}`;
     const targetKey = `${edge.target}\0${targetHandle}`;
     if (usedSources.has(sourceKey)) issues.push("一个出口只能接一条线（要多路请用拼接节点）");
