@@ -795,7 +795,7 @@ func (s *Service) availableTools(session model.Session, chosen providers.Backend
 	}
 	// DeepSeek 的 Responses web_search 只支持 v4-pro，而且只给 queries 不给 sources；
 	// flash 会忽略它并把工具调用当正文吐出来。统一不走服务端工具，搜索走客户端 Search API。
-	if chosen.Provider.Vendor == "deepseek" || chosen.Provider.Kind == "deepseek" {
+	if chosen.Provider.Vendor == "deepseek" {
 		disabled := make(map[string]bool, len(session.NativeToolsDisabled))
 		for _, id := range session.NativeToolsDisabled {
 			disabled[id] = true

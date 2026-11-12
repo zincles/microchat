@@ -49,7 +49,7 @@ func call(server *Server, method, path, body string) *httptest.ResponseRecorder 
 
 // GET /providers：**绝不含密钥内容**，只回 has_key。
 func TestProvidersNeverEchoSecrets(t *testing.T) {
-	server, _ := newProvidersServer(t, `{"providers":[{"id":"ocgo","kind":"opencode-go","base_url":"https://opencode.ai/zen/go/v1","api_key":"sk-super-secret"}]}`)
+	server, _ := newProvidersServer(t, `{"providers":[{"id":"ocgo","vendor":"opencode-go","base_url":"https://opencode.ai/zen/go/v1","api_key":"sk-super-secret"}]}`)
 	recorder := call(server, "GET", "/api/v1/providers", "")
 	if recorder.Code != 200 {
 		t.Fatalf("%d", recorder.Code)
@@ -72,9 +72,9 @@ func TestProvidersNeverEchoSecrets(t *testing.T) {
 // 不再把 `opencode-go` 这种内部 id 摆在用户面前。它们紧跟在 `vendor` / `protocol` 后面 ——
 // 与哪些 id 是一对，排列本身就在说这件事。
 func TestProviderViewShape(t *testing.T) {
-	server, _ := newProvidersServer(t, `{"providers":[{"id":"ocgo","kind":"opencode-go","base_url":"https://opencode.ai/zen/go/v1","headers":{"X-Extra":"1"}}]}`)
+	server, _ := newProvidersServer(t, `{"providers":[{"id":"ocgo","vendor":"opencode-go","base_url":"https://opencode.ai/zen/go/v1","headers":{"X-Extra":"1"}}]}`)
 	recorder := call(server, "GET", "/api/v1/providers", "")
-	want := `[{"id":"ocgo","alias":"","name":null,"kind":"opencode-go","vendor":"opencode-go","protocol":"openai-chat-completion",` +
+	want := `[{"id":"ocgo","alias":"","name":null,"vendor":"opencode-go","protocol":"openai-chat-completion",` +
 		`"vendor_name":"OpenCode Go","protocol_name":"对话补全",` +
 		`"protocol_options":[{"protocol":"openai-chat-completion","label":"对话补全","hint":"最常用，绝大多数服务商都支持"},` +
 		`{"protocol":"openai-response","label":"应答接口","hint":"另一种接口格式；部分服务商支持"}],` +
@@ -141,8 +141,8 @@ func TestCreateProvider(t *testing.T) {
 	if recorder.Code != 422 {
 		t.Fatalf("缺 id 该 422：%d", recorder.Code)
 	}
-	// vendor 是唯一必填：只给 kind 不算数
-	recorder = call(server, "POST", "/api/v1/providers", `{"id":"novendor","kind":"openai"}`)
+	// vendor 是唯一必填
+	recorder = call(server, "POST", "/api/v1/providers", `{"id":"novendor"}`)
 	if recorder.Code != 422 {
 		t.Fatalf("缺 vendor 该 422：%d %s", recorder.Code, recorder.Body.String())
 	}
@@ -288,7 +288,7 @@ func TestProviderPresetsEndpoint(t *testing.T) {
 	}
 	kinds := map[string]providers.PresetInfo{}
 	for _, item := range list {
-		kinds[string(item.Kind)] = item
+		kinds[string(item.Vendor)] = item
 	}
 	if _, ok := kinds["opencode-go"]; !ok {
 		t.Fatalf("清单里得有 opencode-go：%+v", kinds)
@@ -313,7 +313,7 @@ func TestProviderPresetsEndpoint(t *testing.T) {
 
 // 只配 `kind` 的渠道：视图要回**生效的端点**（否则界面以为没端点）。
 func TestProviderViewShowsEffectiveBaseURL(t *testing.T) {
-	server, _ := newProvidersServer(t, `{"providers":[{"id":"ocgo","kind":"opencode-go"}]}`)
+	server, _ := newProvidersServer(t, `{"providers":[{"id":"ocgo","vendor":"opencode-go"}]}`)
 	var views []ProviderView
 	if err := json.Unmarshal(call(server, "GET", "/api/v1/providers", "").Body.Bytes(), &views); err != nil {
 		t.Fatal(err)

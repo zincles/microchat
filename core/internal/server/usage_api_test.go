@@ -14,7 +14,7 @@ const usageBody = `{"usage":{"rolling":{"status":"ok","percent":6,"resetsAt":"20
 
 // 非 opencode-go 的渠道 ⇒ 400 说清楚（用量端点只有 OpenCode GO 有）。
 func TestProviderUsageRejectsOtherKinds(t *testing.T) {
-	server, _ := newProvidersServer(t, `{"providers":[{"id":"dummy","kind":"dummy","api_key":"x"}]}`)
+	server, _ := newProvidersServer(t, `{"providers":[{"id":"dummy","vendor":"dummy","api_key":"x"}]}`)
 	recorder := call(server, "GET", "/api/v1/providers/dummy/usage", "")
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("该 400，得到 %d：%s", recorder.Code, recorder.Body.String())
@@ -36,7 +36,7 @@ func TestProviderUsageRejectsOtherKinds(t *testing.T) {
 // 没配 key ⇒ 400 说清楚（不会去问上游）。
 func TestProviderUsageNeedsKey(t *testing.T) {
 	t.Setenv("OPENCODE_API_KEY", "") // 别让环境变量顶上来
-	server, _ := newProvidersServer(t, `{"providers":[{"id":"ocgo","kind":"opencode-go","base_url":"https://opencode.ai/zen/go/v1"}]}`)
+	server, _ := newProvidersServer(t, `{"providers":[{"id":"ocgo","vendor":"opencode-go","base_url":"https://opencode.ai/zen/go/v1"}]}`)
 	recorder := call(server, "GET", "/api/v1/providers/ocgo/usage", "")
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("该 400，得到 %d：%s", recorder.Code, recorder.Body.String())
@@ -59,7 +59,7 @@ func TestProviderUsageOK(t *testing.T) {
 	}))
 	t.Cleanup(upstream.Close)
 
-	server, _ := newProvidersServer(t, `{"providers":[{"id":"ocgo","kind":"opencode-go","base_url":"`+upstream.URL+`/v1","api_key":"sk-test"}]}`)
+	server, _ := newProvidersServer(t, `{"providers":[{"id":"ocgo","vendor":"opencode-go","base_url":"`+upstream.URL+`/v1","api_key":"sk-test"}]}`)
 	recorder := call(server, "GET", "/api/v1/providers/ocgo/usage", "")
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("该 200，得到 %d：%s", recorder.Code, recorder.Body.String())

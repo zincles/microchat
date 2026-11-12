@@ -480,7 +480,6 @@ export interface ProtocolOption {
 
 export interface PresetInfo {
   vendor: string;
-  kind: string;
   name: string;
   base_url: string;
   needs_key: boolean;
@@ -497,7 +496,6 @@ export interface ProviderView {
   // 显示别名（空 = 沿用 name / id 的旧回退）。id 才是唯一标识，别名不参与匹配。
   alias: string;
   name: string | null;
-  kind: string;
   vendor: string;
   protocol: string;
   vendor_name: string;

@@ -34,7 +34,7 @@ func mustAgents(t *testing.T, text string) config.AgentsConfig {
 func newPromptSandbox(t *testing.T, agentsJSON string) *promptSandbox {
 	t.Helper()
 	dir := t.TempDir()
-	if err := config.SaveJSON(dir+"/providers.json", mustJSON(t, `{"providers":[{"id":"dummy","kind":"dummy"}]}`)); err != nil {
+	if err := config.SaveJSON(dir+"/providers.json", mustJSON(t, `{"providers":[{"id":"dummy","vendor":"dummy"}]}`)); err != nil {
 		t.Fatal(err)
 	}
 	if agentsJSON != "" {

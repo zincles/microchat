@@ -93,7 +93,7 @@ func newDummySandboxWith(t *testing.T, enable bool) *dummySandbox {
 	t.Helper()
 	dir := t.TempDir()
 	// dummy 渠道照着开箱默认（`config.DefaultConfig` 的 defaults 就是 dummy/dummy）
-	if err := config.SaveJSON(dir+"/providers.json", mustJSON(t, `{"providers":[{"id":"dummy","kind":"dummy"}]}`)); err != nil {
+	if err := config.SaveJSON(dir+"/providers.json", mustJSON(t, `{"providers":[{"id":"dummy","vendor":"dummy"}]}`)); err != nil {
 		t.Fatal(err)
 	}
 	st, err := store.Open(dir + "/microchat.db")
@@ -401,12 +401,12 @@ func TestFailureLeavesNothingAndReportsTheReason(t *testing.T) {
 	box := newDummySandbox(t)
 	// 把 dummy 换成一个指向死地址的渠道：连不上 ⇒ 上游错
 	if err := config.SaveJSON(box.server.paths.ConfigDir+"/providers.json",
-		mustJSON(t, `{"providers":[{"id":"dummy","kind":"dummy","base_url":"http://127.0.0.1:1/v1","client_ua_override":"x"}]}`)); err != nil {
+		mustJSON(t, `{"providers":[{"id":"dummy","vendor":"dummy","base_url":"http://127.0.0.1:1/v1","client_ua_override":"x"}]}`)); err != nil {
 		t.Fatal(err)
 	}
 	// dummy 渠道永远是"本地假上游"（不联网）⇒ 换一条真正会去连的死渠道
 	if err := config.SaveJSON(box.server.paths.ConfigDir+"/providers.json",
-		mustJSON(t, `{"providers":[{"id":"dead","kind":"openai-compat","base_url":"http://127.0.0.1:1/v1"}]}`)); err != nil {
+		mustJSON(t, `{"providers":[{"id":"dead","vendor":"custom","base_url":"http://127.0.0.1:1/v1"}]}`)); err != nil {
 		t.Fatal(err)
 	}
 	if err := box.store.SetSessionModel(box.sessionID, "dead", "some-model"); err != nil {

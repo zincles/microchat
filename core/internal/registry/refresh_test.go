@@ -65,7 +65,7 @@ func TestRefreshOneTouchesOnlyDiscoveryColumns(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	provider := config.Provider{ID: "x", Kind: "openai", BaseURL: upstream.URL}
+	provider := config.Provider{ID: "x", Vendor: "openai", BaseURL: upstream.URL}
 	outcome, err := RefreshOne(provider, st)
 	if err != nil {
 		t.Fatal(err)
@@ -117,7 +117,7 @@ func TestRefreshOneReportsUpstreamError(t *testing.T) {
 	clearKeyEnv(t)
 	st := openStore(t)
 	upstream := stubUpstream(t, 401, `{"error":"unauthorized"}`)
-	provider := config.Provider{ID: "x", Kind: "openai", BaseURL: upstream.URL, APIKey: "sk-bad"}
+	provider := config.Provider{ID: "x", Vendor: "openai", BaseURL: upstream.URL, APIKey: "sk-bad"}
 	if _, err := RefreshOne(provider, st); err == nil {
 		t.Fatal("401 该报错")
 	}
@@ -135,14 +135,14 @@ func TestSkip(t *testing.T) {
 		provider config.Provider
 		want     string
 	}{
-		{"dummy 不联网", config.Provider{ID: "d", Kind: "dummy"}, "dummy（不联网）"},
-		{"外网但没配 key（预设补上公网端点）", config.Provider{ID: "o", Kind: "openai"}, "没配 key"},
-		{"opencode-go 没配 key", config.Provider{ID: "g", Kind: "opencode-go"}, "没配 key"},
-		{"外网且配了 key", config.Provider{ID: "o", Kind: "openai", APIKey: "sk-x"}, ""},
-		{"本机假上游（回环 IP）没配 key", config.Provider{ID: "s", Kind: "openai", BaseURL: "http://127.0.0.1:8080/v1"}, ""},
-		{"本机假上游（localhost）没配 key", config.Provider{ID: "s", Kind: "openai-compat", BaseURL: "http://localhost:8080/v1"}, ""},
-		{"内网端点没配 key", config.Provider{ID: "l", Kind: "openai-compat", BaseURL: "http://192.168.1.5:8080/v1"}, ""},
-		{"ollama 预设（本机、无密钥概念）", config.Provider{ID: "ol", Kind: "ollama"}, ""},
+		{"dummy 不联网", config.Provider{ID: "d", Vendor: "dummy"}, "dummy（不联网）"},
+		{"外网但没配 key（预设补上公网端点）", config.Provider{ID: "o", Vendor: "openai"}, "没配 key"},
+		{"opencode-go 没配 key", config.Provider{ID: "g", Vendor: "opencode-go"}, "没配 key"},
+		{"外网且配了 key", config.Provider{ID: "o", Vendor: "openai", APIKey: "sk-x"}, ""},
+		{"本机假上游（回环 IP）没配 key", config.Provider{ID: "s", Vendor: "openai", BaseURL: "http://127.0.0.1:8080/v1"}, ""},
+		{"本机假上游（localhost）没配 key", config.Provider{ID: "s", Vendor: "openai-compat", BaseURL: "http://localhost:8080/v1"}, ""},
+		{"内网端点没配 key", config.Provider{ID: "l", Vendor: "openai-compat", BaseURL: "http://192.168.1.5:8080/v1"}, ""},
+		{"ollama 预设（本机、无密钥概念）", config.Provider{ID: "ol", Vendor: "ollama"}, ""},
 	}
 	for _, item := range cases {
 		if got := Skip(item.provider); got != item.want {
@@ -154,7 +154,7 @@ func TestSkip(t *testing.T) {
 // 环境变量里的密钥也算"配了 key"（`ApplyPreset` 会去那儿找）—— 别把能刷的渠道跳过。
 func TestSkipSeesKeyFromEnv(t *testing.T) {
 	t.Setenv("OPENCODE_API_KEY", "sk-from-env")
-	if got := Skip(config.Provider{ID: "g", Kind: "opencode-go"}); got != "" {
+	if got := Skip(config.Provider{ID: "g", Vendor: "opencode-go"}); got != "" {
 		t.Fatalf("环境变量里配了密钥就该刷：%q", got)
 	}
 }
@@ -163,10 +163,10 @@ func TestSkipSeesKeyFromEnv(t *testing.T) {
 func TestRefreshAllSkipsAndIsolatesFailures(t *testing.T) {
 	clearKeyEnv(t)
 	list := []config.Provider{
-		{ID: "dummy", Kind: "dummy"},
-		{ID: "cloud", Kind: "opencode-go"},                                     // 没配 key ⇒ 跳过
-		{ID: "local", Kind: "openai", BaseURL: "http://127.0.0.1:1/v1"},        // 本机 ⇒ 刷
-		{ID: "broken", Kind: "openai-compat", BaseURL: "http://10.0.0.2:1/v1"}, // 内网 ⇒ 刷（这趟失败）
+		{ID: "dummy", Vendor: "dummy"},
+		{ID: "cloud", Vendor: "opencode-go"},                                     // 没配 key ⇒ 跳过
+		{ID: "local", Vendor: "openai", BaseURL: "http://127.0.0.1:1/v1"},        // 本机 ⇒ 刷
+		{ID: "broken", Vendor: "openai-compat", BaseURL: "http://10.0.0.2:1/v1"}, // 内网 ⇒ 刷（这趟失败）
 	}
 	called := []string{}
 	outcomes := RefreshAll(list, func(provider config.Provider) Outcome {

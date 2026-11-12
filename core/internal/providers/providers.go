@@ -59,16 +59,6 @@ const (
 	VendorCustom       Vendor = "custom"      // 自定义端点：端点全靠配置给，按 OpenAI 兼容对待
 )
 
-// Kind：deprecated —— `Vendor` 的读入别名（值与 Vendor 常量逐字相同）。新代码一律用 Vendor。
-type Kind string
-
-const (
-	// KindOpenAICompat：唯一还活着的别名 —— 存量 `kind: openai-compat` 读入仍走它
-	// （`EffectiveVendor` 的 openai-compat→custom 分支）。其余 Kind* 常量已删：
-	// 生产代码零引用，测试改用 Vendor 字面量。
-	KindOpenAICompat Kind = "openai-compat"
-)
-
 // Protocol：渠道**说什么话**（线协议）。与 Vendor 正交，由 Validate 做兼容矩阵检查。
 type Protocol string
 
@@ -77,10 +67,6 @@ const (
 	ProtocolChatCompletion Protocol = "openai-chat-completion"
 	// ProtocolOpenAIResponse：OpenAI Response（`/responses`）—— opencode 系/openrouter/custom 可走。
 	ProtocolOpenAIResponse Protocol = "openai-response"
-	// ProtocolAnthropicMessages：占位 —— 暂不支持。
-	ProtocolAnthropicMessages Protocol = "anthropic-messages"
-	// ProtocolGeminiGenerateContent：占位 —— 暂不支持。
-	ProtocolGeminiGenerateContent Protocol = "gemini-generate-content"
 	// ProtocolSystemOne：JEV SystemOne（BaseURL verbatim 即整条 URL）。
 	ProtocolSystemOne Protocol = "systemone"
 )
@@ -114,13 +100,11 @@ const Version = "0.1.0"
 
 // Provider：一个渠道（`config/providers.json` 里的一条）。
 //
-// `Vendor`（找谁）× `Protocol`（说什么话）：新代码只填这两个；`Kind` 是废弃的读入别名
-// （老配置/旧字面量照常编译，`EffectiveVendor` 收敛；`Vendor` 非空时 `Kind` 被忽略）。
+// `Vendor`（找谁）× `Protocol`（说什么话）。
 type Provider struct {
 	ID       string            `json:"id"`
 	Name     string            `json:"name"`
 	Vendor   Vendor            `json:"vendor"`
-	Kind     Kind              `json:"kind,omitempty"` // deprecated：只读入；Vendor 非空时忽略
 	Protocol Protocol          `json:"protocol"`
 	BaseURL  string            `json:"base_url"`
 	Headers  map[string]string `json:"headers"`
@@ -292,16 +276,10 @@ func ResolveProtocolFor(lookup func(providerID, upstreamID string) (string, bool
 	return ProtocolChatCompletion
 }
 
-// EffectiveVendor：Vendor 非空用它；否则 Kind 映射（openai-compat→custom，其余逐字）；都空→custom。
+// EffectiveVendor：空 Vendor 沿用 custom（旧配置里没写 vendor 的兜底）。
 func (p Provider) EffectiveVendor() Vendor {
 	if p.Vendor != "" {
 		return p.Vendor
-	}
-	if p.Kind != "" {
-		if p.Kind == KindOpenAICompat {
-			return VendorCustom
-		}
-		return Vendor(p.Kind)
 	}
 	return VendorCustom
 }
@@ -322,7 +300,7 @@ func (p Provider) EffectiveProtocol() Protocol {
 	return ProtocolChatCompletion
 }
 
-// Normalize：把 Kind 别名与空 Protocol 收敛成 Vendor×Protocol（Vendor 非空时 Kind 被忽略）。
+// Normalize：把空 Vendor / Protocol 收敛成 custom × chat。
 func (p Provider) Normalize() Provider {
 	p.Vendor = p.EffectiveVendor()
 	p.Protocol = p.EffectiveProtocol()
@@ -336,13 +314,10 @@ func (p Provider) Normalize() Provider {
 //   - openai-response ← opencode-go、opencode、openrouter、custom；custom 必须有 base_url
 //     或 Endpoints[openai-response]（端点全靠配置给）；其余 vendor 走它直接错配。
 //   - systemone ← typesafe、openrouter、custom；base_url 非空（verbatim 整条 URL）。
-//   - 其余 protocol（anthropic-messages、gemini-generate-content）是占位，永远报错"暂不支持"。
 func (p Provider) Validate() error {
 	vendor := p.EffectiveVendor()
 	protocol := p.EffectiveProtocol()
 	switch protocol {
-	case ProtocolAnthropicMessages, ProtocolGeminiGenerateContent:
-		return fmt.Errorf("providers: protocol %q 暂不支持", protocol)
 	case ProtocolOpenAIResponse:
 		switch vendor {
 		case VendorOpenCodeGo, VendorOpenCode, VendorOpenRouter, VendorCustom, VendorXAI:
@@ -1134,7 +1109,7 @@ func FromConfig(c config.Provider) Provider {
 		log.Printf("providers: 配置 %q 的 endpoints 是预设专用，已忽略（沿用预设端点表）", c.ID)
 	}
 	return Provider{
-		ID: c.ID, Name: c.Name, Vendor: Vendor(c.Vendor), Kind: Kind(c.Kind),
+		ID: c.ID, Name: c.Name, Vendor: Vendor(c.Vendor),
 		Protocol: Protocol(c.Protocol), BaseURL: c.BaseURL,
 		Headers: c.Headers, APIKey: c.APIKey, Identity: Identity(c.Identity),
 		ClientUAOverride: c.ClientUAOverride, MaxConcurrency: c.MaxConcurrency,
@@ -1156,7 +1131,6 @@ func configTimeouts(t *config.Timeouts) *Timeouts {
 // PresetInfo：一个内建 vendor 的自述（给界面/客户端列出"可选的预设 provider"用）。
 type PresetInfo struct {
 	Vendor        Vendor     `json:"vendor"`
-	Kind          Kind       `json:"kind"` // deprecated：值与 Vendor 逐字相同（老界面照常用）
 	Name          string     `json:"name"`
 	BaseURL       string     `json:"base_url"`
 	NeedsKey      bool       `json:"needs_key"`
@@ -1164,8 +1138,7 @@ type PresetInfo struct {
 	SessionHeader string     `json:"session_header,omitempty"`
 	Protocols     []Protocol `json:"protocols"`
 	// ProtocolOptions：`Protocols` 的**可选项全貌**（界面直接拿去画下拉，别在界面里另抄一张表）。
-	// 每个进程只含**这个 vendor 真能用的**协议 —— `Validate` 会拒的占位协议（anthropic-messages、
-	// gemini-generate-content）绝不出现在这里：列出来等于给用户递一个按下去必炸的选项。
+	// 每个进程只含**这个 vendor 真能用的**协议；不认识的协议不会出现在下拉里。
 	ProtocolOptions []ProtocolOption `json:"protocol_options"`
 	// Primary：界面上的"主选"三种（Dummy / 标准 OpenAI 兼容 / OpenCode GO）；其余是便利预设。
 	Primary    bool     `json:"primary"`
@@ -1247,7 +1220,7 @@ func ProtocolOptionsFor(p Provider) []ProtocolOption {
 }
 
 // protocolOptionsFor：这个 vendor 能用的协议**带着中文名**的全貌（顺序 = vendorProtocols）。
-// 只放认识的：不认识 = 没有中文名 = 也不该出现在下拉里（占位协议正是这么被挡在外的）。
+// 只放认识的：不认识 = 没有中文名 = 也不该出现在下拉里。
 func protocolOptionsFor(vendor Vendor) []ProtocolOption {
 	list := make([]ProtocolOption, 0, 3)
 	for _, protocol := range vendorProtocols(vendor) {
@@ -1287,7 +1260,7 @@ func Presets() []PresetInfo {
 			keyEnv = preset.apiKeyEnvs[0]
 		}
 		list = append(list, PresetInfo{
-			Vendor: vendor, Kind: Kind(vendor), Name: presetNames[vendor], BaseURL: preset.baseURL,
+			Vendor: vendor, Name: presetNames[vendor], BaseURL: preset.baseURL,
 			NeedsKey: len(preset.apiKeyEnvs) > 0 && vendor != VendorDummy, KeyEnv: keyEnv,
 			SessionHeader:   preset.sessionHeader,
 			Protocols:       vendorProtocols(vendor),

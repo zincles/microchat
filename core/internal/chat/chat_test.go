@@ -59,7 +59,7 @@ func newHarness(t *testing.T, providersConfig config.ProvidersConfig, sessionPro
 }
 
 func dummyProviders() config.ProvidersConfig {
-	return config.ProvidersConfig{Providers: []config.Provider{{ID: "dummy", Kind: "dummy"}}}
+	return config.ProvidersConfig{Providers: []config.Provider{{ID: "dummy", Vendor: "dummy"}}}
 }
 
 // waitPhase：等到这一轮进到某一档（生成在后台跑，测试得等）。
@@ -206,8 +206,8 @@ func TestTitleLandsBeforeTheTurnGoesIdle(t *testing.T) {
 	// 标题能力被 agent 覆盖到那条慢渠道（对话那一轮仍走本地的 dummy，不联网）
 	if err := config.SaveJSON(h.configDir+"/providers.json", config.ProvidersConfig{
 		Providers: []config.Provider{
-			{ID: "dummy", Kind: "dummy"},
-			{ID: "slow", Kind: "openai-compat", BaseURL: upstream.URL, Identity: "bare"},
+			{ID: "dummy", Vendor: "dummy"},
+			{ID: "slow", Vendor: "openai-compat", BaseURL: upstream.URL, Identity: "bare"},
 		},
 	}); err != nil {
 		t.Fatal(err)
@@ -342,7 +342,7 @@ func TestMissingProviderFallsBack(t *testing.T) {
 // deadProviders：指向一个没人听的端口 —— 连不上就是上游错。
 func deadProviders() config.ProvidersConfig {
 	return config.ProvidersConfig{Providers: []config.Provider{{
-		ID: "dead", Kind: "openai-compat", BaseURL: "http://127.0.0.1:1/v1",
+		ID: "dead", Vendor: "openai-compat", BaseURL: "http://127.0.0.1:1/v1",
 	}}}
 }
 
@@ -357,7 +357,7 @@ func TestReasoningIsStoredWhenAsked(t *testing.T) {
 				"data: [DONE]\n\n")
 		flag := storeReasoning
 		h := newHarness(t, config.ProvidersConfig{Providers: []config.Provider{{
-			ID: "stub", Kind: "openai-compat", BaseURL: stub.URL, StoreReasoning: &flag,
+			ID: "stub", Vendor: "openai-compat", BaseURL: stub.URL, StoreReasoning: &flag,
 		}}}, "stub", "m")
 		if _, err := h.service.Accept(h.session, "问一句"); err != nil {
 			t.Fatal(err)

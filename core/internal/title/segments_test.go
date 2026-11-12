@@ -60,8 +60,8 @@ func stubHarness(t *testing.T, ability config.AbilityToggle, segments ...config.
 	agent := config.Agent{ID: "跑团", Name: "跑团主持人", SystemPrompt: "x",
 		Abilities: map[string]config.AbilityToggle{abilities.Title: ability}}
 	h := newHarness(t, config.ProvidersConfig{Providers: []config.Provider{
-		{ID: "dummy", Kind: "dummy"},
-		{ID: "stub", Kind: "openai-compat", BaseURL: stub.URL, Identity: "bare"},
+		{ID: "dummy", Vendor: "dummy"},
+		{ID: "stub", Vendor: "custom", BaseURL: stub.URL, Identity: "bare"},
 	}}, &agent)
 	if len(segments) > 0 {
 		agent.Abilities[abilities.Title] = ability

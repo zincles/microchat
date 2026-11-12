@@ -55,11 +55,11 @@ func TestVendorNamesAreChinese(t *testing.T) {
 	}
 }
 
-// 占位协议不在中文名表里 —— 这是"它们不可能被列进下拉"的**根**。
-func TestPlaceholderProtocolsHaveNoName(t *testing.T) {
-	for _, protocol := range []Protocol{ProtocolAnthropicMessages, ProtocolGeminiGenerateContent} {
+// 不认识的协议不在中文名表里 —— 这是"它们不可能被列进下拉"的根。
+func TestUnknownProtocolsHaveNoName(t *testing.T) {
+	for _, protocol := range []Protocol{"anthropic-messages", "gemini-generate-content"} {
 		if _, ok := ProtocolOptionOf(protocol); ok {
-			t.Errorf("占位协议 %q 不该有中文名（有了就会被列进下拉，而 Validate 一律拒它）", protocol)
+			t.Errorf("未知协议 %q 不该有中文名", protocol)
 		}
 	}
 }

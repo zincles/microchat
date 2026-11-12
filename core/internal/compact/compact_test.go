@@ -41,7 +41,7 @@ func newHarness(t *testing.T, agents config.AgentsConfig) *harness {
 	paths := config.Paths{ConfigDir: dir, DataDir: dir}
 	// dummy 渠道：不联网，压缩会走本地假摘要
 	if err := config.SaveJSON(dir+"/providers.json",
-		mustJSON(t, `{"providers":[{"id":"dummy","kind":"dummy"}]}`)); err != nil {
+		mustJSON(t, `{"providers":[{"id":"dummy","vendor":"dummy"}]}`)); err != nil {
 		t.Fatal(err)
 	}
 	if err := config.SaveJSON(dir+"/agents.json", agents); err != nil {
@@ -276,7 +276,7 @@ func TestMaterialStripsStateAndSendsTemplate(t *testing.T) {
 
 	h := newHarness(t, config.AgentsConfig{})
 	if err := config.SaveJSON(h.paths.Config("providers.json"), mustJSON(t,
-		`{"providers":[{"id":"stub","kind":"openai-compat","base_url":"`+stub.URL+`","identity":"bare"}]}`)); err != nil {
+		`{"providers":[{"id":"stub","vendor":"custom","base_url":"`+stub.URL+`","identity":"bare"}]}`)); err != nil {
 		t.Fatal(err)
 	}
 	h.session.Provider, h.session.Model = "stub", "m"
@@ -348,7 +348,7 @@ func TestMaterialCarriesTheStateAtTheRangeEnd(t *testing.T) {
 
 	h := newHarness(t, config.AgentsConfig{})
 	if err := config.SaveJSON(h.paths.Config("providers.json"), mustJSON(t,
-		`{"providers":[{"id":"stub","kind":"openai-compat","base_url":"`+stub.URL+`","identity":"bare"}]}`)); err != nil {
+		`{"providers":[{"id":"stub","vendor":"custom","base_url":"`+stub.URL+`","identity":"bare"}]}`)); err != nil {
 		t.Fatal(err)
 	}
 	h.session.Provider, h.session.Model = "stub", "m"
@@ -404,7 +404,7 @@ func TestEmptySummaryIsNotWritten(t *testing.T) {
 
 	h := newHarness(t, config.AgentsConfig{})
 	if err := config.SaveJSON(h.paths.Config("providers.json"), mustJSON(t,
-		`{"providers":[{"id":"stub","kind":"openai-compat","base_url":"`+stub.URL+`","identity":"bare"}]}`)); err != nil {
+		`{"providers":[{"id":"stub","vendor":"custom","base_url":"`+stub.URL+`","identity":"bare"}]}`)); err != nil {
 		t.Fatal(err)
 	}
 	h.session.Provider, h.session.Model = "stub", "m"
@@ -774,7 +774,7 @@ func TestRegenerateSummaryMergeRootKeepsChildHeaders(t *testing.T) {
 
 	// 重摇走 openai-compat 假上游（与 `prepare` 同一套解析：能力没覆盖 ⇒ 骑会话的渠道 / 模型）
 	if err := config.SaveJSON(h.paths.Config("providers.json"), mustJSON(t,
-		`{"providers":[{"id":"stub","kind":"openai-compat","base_url":"`+stub.URL+`","identity":"bare"}]}`)); err != nil {
+		`{"providers":[{"id":"stub","vendor":"custom","base_url":"`+stub.URL+`","identity":"bare"}]}`)); err != nil {
 		t.Fatal(err)
 	}
 	h.session.Provider, h.session.Model = "stub", "m"
@@ -910,7 +910,7 @@ func TestCompactRoutesByModelRouteTable(t *testing.T) {
 	}))
 	defer stub.Close()
 
-	providersJSON := mustJSON(t, `{"providers":[{"id":"stub","kind":"openai-compat","base_url":"`+stub.URL+`","identity":"bare"}]}`)
+	providersJSON := mustJSON(t, `{"providers":[{"id":"stub","vendor":"custom","base_url":"`+stub.URL+`","identity":"bare"}]}`)
 
 	// 有行 ⇒ /responses。
 	h := newHarness(t, config.AgentsConfig{})

@@ -325,7 +325,7 @@ delete(AA)           # 删除
   `history_window` = 消息列首屏 / “加载更多”一页多少**段**（默认 **5**；段 = 一条消息或一张顶层摘要卡）；`compact_blocks` = 压缩不给块数时压几个**对话块**（**缺省 3**；2026-10-11 从 5 改 3——小步快跑，每坨原话只嚼一次，且抬头那条路要凑满 N 条同层相邻顶层摘要，N 大常凑不齐直接报无可压缩）；`refresh_models_on_start` = 启动时要不要自动去问每个渠道有哪些模型，**默认 true**，类型是 `*bool` ⇒ 没写就是开）
 - `providers.json` — `{ "providers": [ { "id": "dummy", "vendor": "dummy" }, { "id": "openrouter", "vendor": "openrouter", "api_key": "sk-…", "model_filter": "gpt" }, { "id": "自建", "vendor": "custom", "base_url": "https://…/v1", "api_key": "sk-…" } ] }`
   （每条渠道可选 `"model_define_rules": [ … ]` = 该渠道自己的覆盖列表，应用在全局之后、优先；
-  见上面 `config.json` 的规则口径。`vendor` 是**唯一必填**；`kind` 只剩存量读入别名，新配置必须写 `vendor`；`protocol` 缺省 `openai-chat-completion`；`max_concurrency` = 该 endpoint 同时最多几个请求，0/缺 = 不限；
+  见上面 `config.json` 的规则口径。`vendor` 是**唯一必填**；`protocol` 缺省 `openai-chat-completion`；`max_concurrency` = 该 endpoint 同时最多几个请求，0/缺 = 不限；
   可选 `"alias"` = **显示别名**（2026-11-09）：渠道列表 / 模型选择器 / 默认值下拉优先显示它，空 = 沿用 `name` → `id` 的旧回退；它**只管显示**，会话 / 模型 / 路由引用的永远是 `id`）
   **密钥就写在这一条里**（空串 = 没配）：整个 `config/` 在忽略范围内；接口一律不回显（只回 `has_key`），调试页读它时先打码；写回权限收紧到 0600。
   **模型筛选器 `model_filter`（2026-10-22 用户定）** = **只有 id 命中任意一条规则的模型才导入**
@@ -345,8 +345,7 @@ delete(AA)           # 删除
   界面只**显示**它们（`GET /providers/presets` 的 `name` / `protocol_options`，`GET /providers` 的
   `vendor_name` / `protocol_name` / `protocol_options`），**不许自己另抄一张翻译表**（少一条就留个点不动的死选项）。
   列表页打中文名、内部 id 挂在 `title` 上（手改配置文件的人还得能对上号，出错信息里打的也是 id）。
-  ⚠ **占位协议不出现在下拉里**：`anthropic-messages` / `gemini-generate-content` 在 `Validate` 里一律被拒，
-  它们**没有中文名**，而 `protocolOptionsFor` 只放认识的那些 ⇒ 结构上就列不出来。从前前端写死一张 `PROTOCOLS`
+  ⚠ **不认识的协议不出现在下拉里**：`Validate` 一律拒绝，`protocolOptionsFor` 只放认识的那些。从前前端写死一张 `PROTOCOLS`
   表把它们摆进下拉，那是递给人一个按下去必炸的选项。
   **新建渠道的流程**（2026-10-28）：先问「服务商」再问「渠道标识」（标识会跟着服务商变，先填等于白填）——
   换 vendor 时 id 跟着变，**但只在 id 还是自动填的那个时才动**（手填过就不抢方向盘，判据是纯函数
@@ -1109,10 +1108,10 @@ DeepSeek / OpenCode GO 直连**确实不报**，所以那一格在那儿永远�
 | `openai` | `https://api.openai.com/v1` | `OPENAI_API_KEY` | 会话亲和三条 + `prompt_cache_key`（长缓存才 `24h`） |
 | `ollama` / `lmstudio` | `http://127.0.0.1:11434/v1` / `http://127.0.0.1:1234/v1` | 不用 | 无（本地） |
 | `typesafe`（JEV 决策） | `https://api.typesafe.ai/v1/systemone`（**verbatim 整条 URL，原样 POST，不拼路径**） | `TYPESAFE_API_KEY`（备 `JEV_API_KEY`） | 只有 `Content-Type` + `Accept: application/json` + `Authorization`（无会话头：上下文在 state 里自带） |
-- **两轴**：`vendor` = 找谁（端点预设 + key env + 内建头）；`protocol` = 说什么话（`openai-chat-completion` 缺省 / `openai-response` / `systemone` / 占位中的 `anthropic-messages` 等）。
+- **两轴**：`vendor` = 找谁（端点预设 + key env + 内建头）；`protocol` = 说什么话（`openai-chat-completion` 缺省 / `openai-response` / `systemone`）。
   渐进式配置：先选 `protocol`（干什么），再按兼容矩阵选 `vendor`（找谁），有预设的只输 `api_key`，只有 `custom` 才要 `base_url`。
 - **兼容矩阵即校验表**（`Provider.Validate`，错配 loud error）：chat-completion ← 除 typesafe 外全部 vendor（含 xai）；`openai-response` ← opencode-go/opencode/openrouter/custom/xai（`bd27768` 打通，muse 真测 ✓；xAI 的 `x_search`/`web_search`/`code_execution` 服务端工具已接进请求体）；systemone ← `typesafe` / `openrouter` / `custom`；
-  占位只剩 `anthropic-messages` / `gemini-generate-content`（选了就报"暂不支持"）。
+  不认识的协议一律拒绝。
 - **不需要搬它们的模型目录** ✓：模型列表是**发现**来的（`GET /models` ⇒ `registry`）；内建预设只提供
   **端点 + 头 + 认证从哪取**，每家十几行。**systemone 例外**：JEV 没有统一 `/models` 口径 ⇒ `refresh` 直接跳过（不算错）。
 - **单载体多协议 = 写多条** ✓（2026-10-01 OpenRouter 真测）：一个 vendor 挂多个 protocol 时（如 OpenRouter 同时有 chat / decisions / images），

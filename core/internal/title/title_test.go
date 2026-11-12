@@ -65,7 +65,7 @@ func newHarness(t *testing.T, providersConfig config.ProvidersConfig, agent *con
 }
 
 func dummyProviders() config.ProvidersConfig {
-	return config.ProvidersConfig{Providers: []config.Provider{{ID: "dummy", Kind: "dummy"}}}
+	return config.ProvidersConfig{Providers: []config.Provider{{ID: "dummy", Vendor: "dummy"}}}
 }
 
 // say：落两条消息（用户 + 助手）—— 起标题的材料取自这几条。
@@ -129,8 +129,8 @@ func TestAgentPromptOverrideReachesTheWire(t *testing.T) {
 			abilities.Title: {Provider: new("stub"), Model: new("m"), Prompt: new("用武侠腔起名字，七个字以内。")},
 		}}
 	h := newHarness(t, config.ProvidersConfig{Providers: []config.Provider{
-		{ID: "dummy", Kind: "dummy"},
-		{ID: "stub", Kind: "openai-compat", BaseURL: stub.URL, Identity: "bare"},
+		{ID: "dummy", Vendor: "dummy"},
+		{ID: "stub", Vendor: "custom", BaseURL: stub.URL, Identity: "bare"},
 	}}, agent)
 	h.say(t, "帮我写一段跑团的开幕词", "好的，山雨欲来……")
 
@@ -213,8 +213,8 @@ func TestMaterialIsRestrainedAndStripsState(t *testing.T) {
 		abilities.Title: {Provider: new("stub"), Model: new("m")},
 	}}
 	h := newHarness(t, config.ProvidersConfig{Providers: []config.Provider{
-		{ID: "dummy", Kind: "dummy"},
-		{ID: "stub", Kind: "openai-compat", BaseURL: stub.URL, Identity: "bare"},
+		{ID: "dummy", Vendor: "dummy"},
+		{ID: "stub", Vendor: "custom", BaseURL: stub.URL, Identity: "bare"},
 	}}, agent)
 	h.say(t, "第一句\n<state>季节 = 初冬</state>", "第一答")
 	h.say(t, "第二句", "第二答")
@@ -258,8 +258,8 @@ func TestTitleRoutesByModelRouteTable(t *testing.T) {
 	}}
 	mkProviders := func() config.ProvidersConfig {
 		return config.ProvidersConfig{Providers: []config.Provider{
-			{ID: "dummy", Kind: "dummy"},
-			{ID: "stub", Kind: "openai-compat", BaseURL: stub.URL, Identity: "bare"},
+			{ID: "dummy", Vendor: "dummy"},
+			{ID: "stub", Vendor: "custom", BaseURL: stub.URL, Identity: "bare"},
 		}}
 	}
 
@@ -301,8 +301,8 @@ func TestTitleRoutesByModelRouteTable(t *testing.T) {
 func TestTitleModelSourceModes(t *testing.T) {
 	stub := stubJSON(t, "山雨欲来", new([]byte))
 	providersConfig := config.ProvidersConfig{Providers: []config.Provider{
-		{ID: "dummy", Kind: "dummy"},
-		{ID: "stub", Kind: "openai-compat", BaseURL: stub.URL, Identity: "bare"},
+		{ID: "dummy", Vendor: "dummy"},
+		{ID: "stub", Vendor: "custom", BaseURL: stub.URL, Identity: "bare"},
 	}}
 	run := func(source, provider, model string) Result {
 		t.Helper()

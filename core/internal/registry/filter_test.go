@@ -147,7 +147,7 @@ func TestRefreshOneImportsOnlyMatchingModels(t *testing.T) {
 	upstream := stubUpstream(t, 200, `{"data":[
 	  {"id":"openai/gpt-5"},{"id":"gpt-6"},{"id":"anthropic/claude-sonnet-4.5"}]}`)
 
-	provider := config.Provider{ID: "x", Kind: "openai", BaseURL: upstream.URL, ModelFilter: "gpt"}
+	provider := config.Provider{ID: "x", Vendor: "openai", BaseURL: upstream.URL, ModelFilter: "gpt"}
 	outcome, err := RefreshOne(provider, st)
 	if err != nil {
 		t.Fatal(err)
@@ -178,7 +178,7 @@ func TestRefreshOneFilterChangePrunesOnNextRefresh(t *testing.T) {
 	  {"id":"openai/gpt-5"},{"id":"anthropic/claude-sonnet-4.5"}]}`)
 
 	// ① 先不筛：两个都进来
-	plain := config.Provider{ID: "x", Kind: "openai", BaseURL: upstream.URL}
+	plain := config.Provider{ID: "x", Vendor: "openai", BaseURL: upstream.URL}
 	if _, err := RefreshOne(plain, st); err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +214,7 @@ func TestRefreshOneRejectsWildcardFilterWithoutTouchingData(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	bad := config.Provider{ID: "x", Kind: "openai", BaseURL: upstream.URL, ModelFilter: "*"}
+	bad := config.Provider{ID: "x", Vendor: "openai", BaseURL: upstream.URL, ModelFilter: "*"}
 	if _, err := RefreshOne(bad, st); err == nil {
 		t.Fatal("筛选器 `*` 该让刷新报错")
 	}

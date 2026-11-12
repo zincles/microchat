@@ -315,7 +315,7 @@ func TestSnapshotMasksSecrets(t *testing.T) {
 // 那类 bug 立的 —— 手搓 `providers.Provider{...}` 漏一个字段，就是静默失效。
 func TestFromConfigCarriesEveryField(t *testing.T) {
 	configured := config.Provider{
-		ID: "ocgo", Name: "Go 套餐", Kind: "opencode-go",
+		ID: "ocgo", Name: "Go 套餐", Vendor: "opencode-go",
 		BaseURL: "https://opencode.ai/zen/go/v1", APIKey: "sk-x",
 		Headers: map[string]string{"X-Extra": "1"}, Identity: "pi",
 	}
@@ -780,25 +780,17 @@ func TestValidateVendorProtocolMatrix(t *testing.T) {
 	if err := (Provider{ID: "t", Vendor: VendorTypesafe, Protocol: ProtocolSystemOne}).Validate(); err == nil {
 		t.Fatal("systemone 没给 base_url 该报错")
 	}
-	// 占位 protocol 永远"暂不支持"（openai-response 已开放给 opencode 系/openrouter/custom，见 TestValidateResponseMatrix）
-	for _, protocol := range []Protocol{ProtocolAnthropicMessages, ProtocolGeminiGenerateContent} {
+	// 不认识的 protocol 一律拒绝。
+	for _, protocol := range []Protocol{"anthropic-messages", "gemini-generate-content"} {
 		err := (Provider{ID: "p", Vendor: VendorOpenAI, Protocol: protocol, BaseURL: "https://x.invalid/v1"}).Validate()
-		if err == nil || !strings.Contains(err.Error(), "暂不支持") {
-			t.Fatalf("protocol %q 该报暂不支持：%v", protocol, err)
+		if err == nil || !strings.Contains(err.Error(), "未知 protocol") {
+			t.Fatalf("protocol %q 该报未知：%v", protocol, err)
 		}
 	}
 	// Build 入口先 Normalize＋Validate：protocol 非 chat 直接报错
 	systemone := Provider{ID: "t", Vendor: VendorTypesafe, Protocol: ProtocolSystemOne, BaseURL: "https://x.invalid/s"}
 	if _, err := Build(systemone, Request{Model: "m", SessionID: "s"}); err == nil {
 		t.Fatal("systemone 走 Build 该报错")
-	}
-	// 别名读入：Kind 照常编译且收敛（openai-compat→custom）
-	legacy := Provider{ID: "old", Kind: KindOpenAICompat, BaseURL: "https://x.invalid/v1"}
-	if legacy.EffectiveVendor() != VendorCustom {
-		t.Fatalf("openai-compat 该映射到 custom：%q", legacy.EffectiveVendor())
-	}
-	if err := legacy.Validate(); err != nil {
-		t.Fatalf("别名输入该能过 Validate：%v", err)
 	}
 	// 都空→custom
 	if (Provider{ID: "e"}).EffectiveVendor() != VendorCustom {

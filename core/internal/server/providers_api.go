@@ -19,7 +19,6 @@ type ProviderView struct {
 	// Alias：界面显示用的别名（空 = 沿用 name / id 的旧回退）。`id` 永远是唯一标识。
 	Alias    string  `json:"alias"`
 	Name     *string `json:"name"`
-	Kind     string  `json:"kind"`
 	Vendor   string  `json:"vendor"`
 	Protocol string  `json:"protocol"`
 	// VendorName / ProtocolName：这两个 id 的**中文名**（唯一权威在 providers 包的协议与 vendor 表里）。
@@ -90,7 +89,6 @@ type CreateProviderReq struct {
 	ID       string            `json:"id"`
 	Name     *string           `json:"name"`
 	Alias    *string           `json:"alias"` // 显示别名（省略 / 空 = 没有别名）
-	Kind     *string           `json:"kind"`
 	Vendor   *string           `json:"vendor"`
 	Protocol *string           `json:"protocol"`
 	BaseURL  *string           `json:"base_url"`
@@ -108,7 +106,7 @@ type UpdateProviderReq struct {
 	// 改名会一并搬库里的引用（会话 / 模型 / 路由 / 上次刷新 / 摘要审计列）——
 	// 只改 `providers.json` 会让会话指向一个不存在的渠道，发消息静默回落 fallback。
 	NewID    *string           `json:"new_id"`
-	Vendor   *string           `json:"vendor"`   // None = 不动；"" = 清（回落到 Kind 别名）
+	Vendor   *string           `json:"vendor"`   // None = 不动；"" = 清（回落到 custom）
 	Protocol *string           `json:"protocol"` // None = 不动；"" = 清（回落到缺省 chat）
 	BaseURL  *string           `json:"base_url"`
 	Name     *string           `json:"name"`  // None = 不动；"" = 清显示名
@@ -189,7 +187,7 @@ func (s *Server) createProvider(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	provider := config.Provider{ID: req.ID, Kind: "", BaseURL: "", Headers: req.Headers,
+	provider := config.Provider{ID: req.ID, BaseURL: "", Headers: req.Headers,
 		APIKey: deref(req.APIKey), ModelFilter: deref(req.ModelFilter), ModelDefineRules: req.ModelDefineRules}
 	if req.MaxConcurrency != nil {
 		if *req.MaxConcurrency < 0 {
@@ -205,11 +203,7 @@ func (s *Server) createProvider(w http.ResponseWriter, r *http.Request) {
 		// 纯空白当没写：否则界面会显示一格看起来"有值"、实际什么都不像的别名。
 		provider.Alias = strings.TrimSpace(*req.Alias)
 	}
-	if req.Kind != nil {
-		provider.Kind = *req.Kind
-	}
-	// vendor 是**唯一必填**（kind 只剩废弃读入）：缺了 ⇒ 422（别名 kind 不算数 ——
-	// "写了 kind 没写 vendor"是旧习惯，必须 loud，否则新种类（typesafe）永远建不出来。
+	// vendor 是唯一必填：缺了 ⇒ 422。
 	if req.Vendor == nil || *req.Vendor == "" {
 		missingField(w, "vendor")
 		return
@@ -263,7 +257,7 @@ func (s *Server) updateProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	provider := configs.Providers[index]
-	if req.Vendor != nil { // None = 不动；"" = 清（回落到 Kind 别名）
+	if req.Vendor != nil { // None = 不动；"" = 清（回落到 custom）
 		provider.Vendor = *req.Vendor
 	}
 	if req.Protocol != nil { // None = 不动；"" = 清（回落到缺省 chat）
@@ -625,7 +619,7 @@ func providerView(provider config.Provider) ProviderView {
 		effective.Identity = providers.IdentityPi // 视图给"生效值"，别让界面猜（默认 = pi）
 	}
 	return ProviderView{
-		ID: provider.ID, Alias: strings.TrimSpace(provider.Alias), Name: name, Kind: provider.Kind,
+		ID: provider.ID, Alias: strings.TrimSpace(provider.Alias), Name: name,
 		Vendor: string(effective.EffectiveVendor()), Protocol: string(effective.EffectiveProtocol()),
 		VendorName: effective.EffectiveVendor().VendorName(), ProtocolName: providers.ProtocolLabel(effective.EffectiveProtocol()),
 		ProtocolOptions: providers.ProtocolOptionsFor(effective),
