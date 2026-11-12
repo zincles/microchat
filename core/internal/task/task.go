@@ -27,7 +27,7 @@ const (
 	KindCompact       Kind = "compact"        // 后台：把最老的 N 个对话块收成一条摘要
 	KindCompactJob    Kind = "compact_job"    // 后台：一次分段压缩作业（父，下面挂多个 KindCompact）
 	KindTitle         Kind = "title"          // 后台：给一条会话起标题（首次拿到回复之后自动一次）
-	KindJudgement     Kind = "judgement"      // 后台：JEV 决策（一段上游调用，骑会话 id）
+	KindJudgement     Kind = "judgement"      // 后台：Flow 的 JEV 判断节点（一段上游调用，骑会话 id）
 	KindRefreshModels Kind = "refresh_models" // 后台：从上游拉某个渠道的模型列表
 )
 
@@ -35,7 +35,7 @@ const (
 //
 // 判据是**这一发会不会打上游**（与 `needsSession` 同一件事的两面）：
 //
-//	llm   —— 会调模型、烧 token：turn / reroll / compact / title（judgement 已退役但种类还在）
+//	llm   —— 会调模型、烧 token：turn / reroll / compact / title / judgement（Flow 的 JEV 判断节点）
 //	plain —— 不调模型，就是本地/HTTP 的活儿：refresh_models
 //
 // ⚠ **只在这一处分类**：`Kind.Group()` 是唯一权威，`Record.Group` 在 `Begin` 时由它填。

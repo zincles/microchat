@@ -38,8 +38,8 @@ func TestLegacyAgentsFileWithJudgeStillLoads(t *testing.T) {
 	// ① 读得动：`GET /agents` 列出它，compact 的开关原样，**不再有 judge 这块能力**
 	got := decodeBody[struct {
 		Agents []struct {
-			ID        string                             `json:"id"`
-			Abilities map[string]config.AbilityToggle    `json:"abilities"`
+			ID        string                          `json:"id"`
+			Abilities map[string]config.AbilityToggle `json:"abilities"`
 		} `json:"agents"`
 	}](t, authCall(box.server, "GET", "/api/v1/agents", "", testSysToken))
 
@@ -106,7 +106,7 @@ func TestAbilityRegistryOnlyTitleAndCompact(t *testing.T) {
 	if ids := abilities.IDs(); len(ids) != 2 || ids[0] != abilities.Title || ids[1] != abilities.Compact {
 		t.Fatalf("在册能力该是 [title compact]，得到 %v", ids)
 	}
-	if abilities.Valid(abilities.Judge) {
+	if abilities.Valid("judge") {
 		t.Fatal("judge 已退役：Valid 该回 false")
 	}
 }

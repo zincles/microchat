@@ -16,12 +16,11 @@
 - 大件，三条铁律已写死在 `AGENTS.md`：**剪枝前必须先导出** ✓、**剪枝与落摘要同一事务** ✓、**报数不许静默** ✓。
 - 现在没有任何剪枝代码（`messages` 只增不减，除手动删后缀）；导出 v3（含金字塔）是唯一搬家手段。
 
-### 3. JEV 判断模型：复活路径已留好，功能停着
-- 2026-10-28 用户定「暂时砍掉 agent 的 judge 功能」：能力已从 `definitions` 摘掉、界面不出，
-  `config.RetiredAbilityIDs` 读入即摘（老 `agents.json` 写着它照常能读）。
-- 代码**没删**：`internal/judge`、`task.KindJudgement` 都在，只是没有调用点。
-- 要接着做：① 把它从 `RetiredAbilityIDs` 拿出来、往能力表加回一行；② 动态组合调用点（动作→动作 prompt，只动尾部）；
-  ③ 阈值实测校准（别拍脑袋，含中文语料）。见 `reminder/jev.md`。
+### 3. JEV 判断模型：已从传统 Agent 迁到 Flow
+- 2026-11-12 用户定「彻底砍掉传统Agent里的JEV模块」：`judge.Service` 与 Agent 的 `judge` 开关已删；
+  老 `agents.json` 里的 `judge` 仍由 `config.RetiredAbilityIDs` 读入即摘。
+- `internal/judge.Evaluate` 与 `task.KindJudgement` 保留，作为 Flow 的 `judge` 节点调用面。
+- 要接着做：① Switch 节点的分支裁剪；② 概率阈值与默认分支实测校准；③ 多角色动作集。见 `reminder/jev.md`。
 
 ### 4. `DEFINE.md` 里两处"待定"
 - **role 里要不要有 `system`**：现状没有（系统提示词走三级解析，不进消息表）。要改就得动迁移 + 世界状态现演。

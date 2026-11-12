@@ -11,7 +11,9 @@ import (
 	"github.com/google/uuid"
 
 	"microchat/internal/config"
+	"microchat/internal/judge"
 	"microchat/internal/providers"
+	"microchat/internal/task"
 )
 
 // FlowTest 是 FlowAgent 编辑器的「测试发送」：**只跑一次图，不落库、不建会话**。
@@ -218,6 +220,34 @@ func (s *Service) executeFlowGraph(ctx context.Context, graph flowGraph, opts fl
 					step.User = sourceValue(values, edge)
 				}
 			}
+		case "judge":
+			step.Label = "JEV 判断"
+			stateText := strings.Join(inputs, "\n\n")
+			questions, parseErr := flowJudgeQuestions(node)
+			if parseErr != nil {
+				step.Error = parseErr.Error()
+				steps = append(steps, step)
+				return flowRunOutcome{Result: FlowTestResult{Steps: steps}}, parseErr
+			}
+			answers, judgeErr := s.flowJudge(ctx, opts.SessionID, node, stateText, questions, opts.ProvidersConfig)
+			if judgeErr != nil {
+				step.Error = judgeErr.Error()
+				steps = append(steps, step)
+				return flowRunOutcome{Result: FlowTestResult{Steps: steps}}, judgeErr
+			}
+			value := any(answers)
+			if key := flowNodeDataString(node, "answer_key"); key != "" {
+				var ok bool
+				value, ok = answers[key]
+				if !ok {
+					err = fmt.Errorf("JEV 判断节点 %s 的 answer_key %q 不在 answers 里", node.ID, key)
+					step.Error = err.Error()
+					steps = append(steps, step)
+					return flowRunOutcome{Result: FlowTestResult{Steps: steps}}, err
+				}
+			}
+			encoded, _ := json.Marshal(value)
+			step.Output = string(encoded)
 		case "llm":
 			step.Label = "调用 LLM"
 			nodeProvider, nodeModel := opts.DefaultProvider, opts.DefaultModel
@@ -578,7 +608,7 @@ func validateTestGraph(graph flowGraph) error {
 		seen[node.ID] = true
 		counts[node.Type]++
 		switch node.Type {
-		case "input", "text", "history", "trim", "merge", "llm", "join", "output", "user_output":
+		case "input", "text", "history", "trim", "merge", "llm", "join", "output", "judge", "user_output":
 		default:
 			return fmt.Errorf("不认识的节点类型：%s", node.Type)
 		}
@@ -735,4 +765,69 @@ func topoFlow(graph flowGraph) ([]flowNode, error) {
 		return nil, errors.New("流程图里有环")
 	}
 	return out, nil
+}
+
+// flowJudgeQuestions：节点配置里的 questions 可以是 JSON 字符串（编辑器存的就是字符串），
+// 也接受已经解码过的 object（手写测试）。非空且必须是 object。
+func flowJudgeQuestions(node flowNode) (map[string]any, error) {
+	raw, ok := node.Data["questions"]
+	if !ok {
+		return nil, errors.New("JEV 判断节点没有 questions")
+	}
+	switch value := raw.(type) {
+	case string:
+		if strings.TrimSpace(value) == "" {
+			return nil, errors.New("JEV 判断节点的 questions 是空的")
+		}
+		var questions map[string]any
+		if err := json.Unmarshal([]byte(value), &questions); err != nil {
+			return nil, fmt.Errorf("JEV 判断节点的 questions 不是 JSON object：%w", err)
+		}
+		return questions, nil
+	case map[string]any:
+		if len(value) == 0 {
+			return nil, errors.New("JEV 判断节点的 questions 是空的")
+		}
+		return value, nil
+	default:
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return nil, err
+		}
+		var questions map[string]any
+		if err := json.Unmarshal(encoded, &questions); err != nil {
+			return nil, fmt.Errorf("JEV 判断节点的 questions 不是 JSON object：%w", err)
+		}
+		return questions, nil
+	}
+}
+
+// flowJudge：Flow 里的 JEV 那一发。裸调用 + Task 挂号（有会话时）。
+//
+// 它不走传统 Agent 的 judge 能力（那条已经删了）；provider/model 由节点自己给。
+func (s *Service) flowJudge(ctx context.Context, sessionID string, node flowNode,
+	stateText string, questions map[string]any, providersConfig config.ProvidersConfig) (judge.Answers, error) {
+	providerID := flowNodeDataString(node, "provider")
+	modelID := flowNodeDataString(node, "model")
+	if providerID == "" || modelID == "" {
+		return nil, errors.New("JEV 判断节点要填 provider 与 model（systemone 渠道与决策模型名）")
+	}
+	provider, ok := providersConfig.Get(providerID)
+	if !ok {
+		return nil, fmt.Errorf("JEV 判断节点找不到渠道 %q", providerID)
+	}
+	var guard *task.Guard
+	if sessionID != "" && s.Tasks != nil {
+		guard = s.Tasks.Begin(task.KindJudgement, &sessionID, "JEV 判断 · 会话 "+shortID(sessionID))
+		defer guard.Interrupted()
+	}
+	answers, err := judge.Evaluate(ctx, providers.FromConfig(provider), modelID, map[string]any{"text": stateText}, questions)
+	if guard != nil {
+		if err != nil {
+			guard.Fail(err.Error())
+		} else {
+			guard.Succeed()
+		}
+	}
+	return answers, err
 }

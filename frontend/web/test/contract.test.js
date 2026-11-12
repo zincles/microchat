@@ -622,6 +622,8 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(flowNode, /flow-trim-controls/, "裁剪节点没有配置控件");
   assert.match(flowNode, /id="user"/, "输出节点没有用户消息输入端口");
   assert.match(flowNode, /flow-text-value/, "纯文本节点没有常量输入框");
+  assert.match(flowNode, /flow-judge-controls/, "JEV 判断节点没有配置面板");
+  assert.match(flowNode, /id="state"/, "JEV 判断节点没有场景状态输入");
   assert.match(flowNode, /type === 'text'/, "纯文本节点没有渲染分支");
   assert.match(flowNode, /getComputedStyle\(node\)\.height/, "拖拽缩放没有用 CSS 像素高度（会被画布缩放放大/缩小）");
   assert.match(flowNode, /rect\.height \/ base/, "拖拽位移没有按画布缩放换算");
@@ -658,7 +660,7 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(flow, /flow-node-row/, "节点面板没有节点列表");
   assert.match(flow, /flow-panel-tabs/, "底栏没有 测试/调试 tabs");
   assert.match(flow, /<VMenu[\s\S]*flow-add-menu[\s\S]*addNodeItems/, "添加节点不是下拉列表");
-  for (const type of ["input", "text", "history", "trim", "merge", "llm", "join", "output"]) {
+  for (const type of ["input", "text", "history", "trim", "merge", "llm", "join", "judge", "output"]) {
     assert.match(flow, new RegExp(`type: "${type}"`), `流程编辑器缺 ${type} 节点`);
   }
   const empty = emptyFlowGraph();

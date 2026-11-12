@@ -7,7 +7,7 @@ import type { FlowEdge, FlowGraph, FlowNode } from "../api/types.ts";
 
 export const FLOW_VERSION = 1;
 export const DEFAULT_JOIN_SEPARATOR = "\n\n---\n\n";
-export const FLOW_NODE_TYPES = ["input", "text", "history", "trim", "merge", "llm", "join", "output"] as const;
+export const FLOW_NODE_TYPES = ["input", "text", "history", "trim", "merge", "llm", "join", "judge", "output"] as const;
 export type FlowNodeType = (typeof FLOW_NODE_TYPES)[number];
 export type FlowDataType = "string" | "messages";
 
@@ -32,6 +32,8 @@ export function flowSourceType(node: FlowNode | undefined, handle?: string): Flo
     case "text":
     case "join":
       return h === "out" || /^out-\d+$/.test(h) ? "string" : null;
+    case "judge":
+      return h === "out" ? "string" : null;
     case "history":
     case "trim":
     case "merge":
@@ -56,6 +58,8 @@ export function flowTargetType(node: FlowNode | undefined, handle?: string): Flo
       return h.startsWith("in-") ? "messages" : null;
     case "join":
       return h.startsWith("in-") ? "string" : null;
+    case "judge":
+      return h === "state" ? "string" : null;
     case "output":
       return h === "in" || h === "text" || h === "reasoning" || h === "user" ? "string" : null;
     default:
@@ -85,7 +89,7 @@ export function trimMessages<T>(messages: readonly T[], mode: TrimMode, count: n
 
 const FLOW_TEXT_LABELS: Record<string, string> = {
   input: "输入", text: "纯文本", history: "历史数据", trim: "裁剪 messages", merge: "拼接 messages",
-  llm: "调用 LLM", join: "拼接和复制", output: "输出",
+  llm: "调用 LLM", join: "拼接和复制", judge: "JEV 判断", output: "输出",
 };
 
 // formatFlowText：图的纯文本视图。用 id + 类型 + 位置 + 每个端口的去向，
@@ -195,6 +199,21 @@ export function flowIssues(graph: FlowGraph): string[] {
       if (Array.isArray(node.data?.roles)) {
         for (const role of node.data.roles) {
           if (!(TRIM_ROLES as readonly string[]).includes(String(role))) issues.push("裁剪节点有未知的角色");
+        }
+      }
+    }
+    if (node.type === "judge") {
+      if (!String(node.data?.provider ?? "").trim()) issues.push("JEV 判断节点还没选渠道");
+      if (!String(node.data?.model ?? "").trim()) issues.push("JEV 判断节点还没填模型");
+      const raw = node.data?.questions;
+      if (typeof raw !== "string" || !raw.trim()) {
+        issues.push("JEV 判断节点还没有 questions");
+      } else {
+        try {
+          const parsed = JSON.parse(raw);
+          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) issues.push("JEV 判断节点的 questions 必须是 JSON object");
+        } catch {
+          issues.push("JEV 判断节点的 questions 不是合法 JSON");
         }
       }
     }
@@ -324,7 +343,7 @@ export function flowDebugSteps(graph: FlowGraph): FlowDebugStep[] {
   const nodes = flowNodeOrder(graph);
   const edges = graph.edges ?? [];
   const values = new Map<string, { text: string; reasoning: string }>();
-  const labels: Record<string, string> = { input: "输入", text: "纯文本", history: "历史数据", trim: "裁剪 messages", merge: "拼接 messages", llm: "调用 LLM", join: "拼接和复制", output: "输出" };
+  const labels: Record<string, string> = { input: "输入", text: "纯文本", history: "历史数据", trim: "裁剪 messages", merge: "拼接 messages", llm: "调用 LLM", join: "拼接和复制", judge: "JEV 判断", output: "输出" };
   const source = (edge: { source: string; sourceHandle?: string }): string => {
     const handle = edge.sourceHandle || "out";
     const value = values.get(`${edge.source}\0${handle}`) ?? values.get(`${edge.source}\0out`) ?? values.get(`${edge.source}\0text`);
@@ -354,6 +373,8 @@ export function flowDebugSteps(graph: FlowGraph): FlowDebugStep[] {
     } else if (node.type === "join") {
       const separator = typeof node.data?.separator === "string" ? node.data.separator : DEFAULT_JOIN_SEPARATOR;
       output = incoming.length ? incoming.join(separator) : "[没有输入]";
+    } else if (node.type === "judge") {
+      output = "[JEV answers]";
     } else if (node.type === "output") {
       const textInputs = edges.filter((e) => e.target === node.id && (e.targetHandle || "text") === "text").map(source);
       const reasoningInputs = edges.filter((e) => e.target === node.id && e.targetHandle === "reasoning").map(source);

@@ -6,16 +6,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
-	"microchat/internal/config"
-	"microchat/internal/model"
 	"microchat/internal/providers"
-	"microchat/internal/store"
-	"microchat/internal/task"
 )
 
 // 往返：URL verbatim、体只有 model/state/questions、answers 照解析。
@@ -84,84 +78,5 @@ func TestEvaluateRejectsBadShape(t *testing.T) {
 	if _, err := Evaluate(context.Background(), provider, "m", nil, nil); err == nil ||
 		!strings.Contains(err.Error(), "502") {
 		t.Fatalf("非 2xx 该报错：%v", err)
-	}
-}
-
-// KindJudgement 挂号：有会话过、无会话 panic（needsSession 有它）。
-func TestJudgementNeedsSession(t *testing.T) {
-	registry := task.NewRegistry()
-	session := "c1"
-	registry.Begin(task.KindJudgement, &session, "判断 · 会话 c1").Succeed()
-	if registry.Running() != 0 {
-		t.Fatal("收尾后不该还在跑")
-	}
-	func() {
-		defer func() {
-			if recover() == nil {
-				t.Fatal("judgement 缺会话 id 该当场炸")
-			}
-		}()
-		registry.Begin(task.KindJudgement, nil, "缺会话")
-	}()
-	if task.KindJudgement.Label() != "判断" {
-		t.Fatalf("标签 = %q", task.KindJudgement.Label())
-	}
-}
-
-// JudgeFor：开关 + 选渠道 + 挂号 —— 关掉明确拒绝；没渠道说清楚；通了挂号收尾。
-func TestJudgeForRespectsSwitchAndChannel(t *testing.T) {
-	dir := t.TempDir()
-	write := func(name, content string) {
-		t.Helper()
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"answers":{"intent":{"choice":"attack"}}}`))
-	}))
-	t.Cleanup(upstream.Close)
-	write("config.json", `{}`)
-	write("providers.json", `{"providers":[{"id":"jev1","vendor":"custom","protocol":"systemone","base_url":"`+upstream.URL+`/x"}]}`)
-	write("agents.json", `{"agents":[]}`)
-	st, err := store.Open(filepath.Join(dir, "microchat.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	tasks := task.NewRegistry()
-	service := New(st, config.Paths{DataDir: dir, ConfigDir: dir}, tasks)
-	session := model.Session{ID: "c1", Provider: "jev1", Model: "jev-latest", AgentID: "default"}
-
-	answers, err := service.JudgeFor(context.Background(), session,
-		map[string]any{"text": "玩家拔刀"}, map[string]any{"intent": "打吗"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if answers["intent"] == nil {
-		t.Fatalf("answers = %+v", answers)
-	}
-	if tasks.Running() != 0 {
-		t.Fatal("收尾后不该还在跑")
-	}
-
-	// `judge` 2026-10-28 退役（用户：「暂时砍掉 agent 的 judge 功能」）⇒ 老文件里那条
-	// `"enabled": false` 会在**读入时就被摘掉**（`config.RetiredAbilityIDs`），于是这条流程
-	// 不再被它挡住 —— 这不是漏了判断，是"开关已经不提供"了。流程本身还能跑（下面这条就是为了钉住它）。
-	// ⚠ 「关掉 ⇒ 明确拒绝」这半条契约现在由**在册**能力承担（`compact` 有专门的测试），
-	//   别拿 judge 来测它了 —— 它已经不在册。
-	write("agents.json", `{"agents":[{"id":"off","abilities":{"judge":{"enabled":false}}}]}`)
-	session.AgentID = "off"
-	if _, err := service.JudgeFor(context.Background(), session, nil, nil); err != nil {
-		t.Fatalf("退役开关已摘掉，这一发该照常跑（流程还在）：%v", err)
-	}
-	if tasks.Running() != 0 {
-		t.Fatal("收尾后不该还在跑")
-	}
-
-	// 渠道不在 ⇒ 说清楚
-	session.AgentID = "default"
-	session.Provider = "没有这条"
-	if _, err := service.JudgeFor(context.Background(), session, nil, nil); err == nil {
-		t.Fatal("没渠道该说清楚")
 	}
 }

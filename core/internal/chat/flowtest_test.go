@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,6 +16,43 @@ import (
 	"microchat/internal/reroll"
 	"microchat/internal/store"
 )
+
+func TestFlowJudgeNodeCallsSystemOne(t *testing.T) {
+	var body map[string]any
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"answers":{"involves":{"choice":"yes","probability":0.82}}}`))
+	}))
+	t.Cleanup(upstream.Close)
+	providersConfig := config.ProvidersConfig{Providers: []config.Provider{{
+		ID: "jev", Vendor: "custom", Protocol: "systemone", BaseURL: upstream.URL,
+	}}}
+	graph := flowGraph{Nodes: []flowNode{
+		{ID: "in", Type: "input"},
+		{ID: "judge", Type: "judge", Data: map[string]any{
+			"provider": "jev", "model": "jev-latest", "answer_key": "involves",
+			"questions": `{"involves":"是否涉及这个角色？"}`,
+		}},
+		{ID: "out", Type: "output"},
+	}, Edges: []flowEdge{
+		{ID: "e1", Source: "in", SourceHandle: "out", Target: "judge", TargetHandle: "state"},
+		{ID: "e2", Source: "judge", SourceHandle: "out", Target: "out", TargetHandle: "text"},
+	}}
+	out, err := (&Service{}).executeFlowGraph(context.Background(), graph, flowRunOptions{
+		Input: "你推门进来", ProvidersConfig: providersConfig,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body["model"] != "jev-latest" || body["state"] == nil {
+		t.Fatalf("JEV 请求体不对：%v", body)
+	}
+	if !strings.Contains(out.Final.Text, `"choice":"yes"`) {
+		t.Fatalf("answer_key 输出 = %q", out.Final.Text)
+	}
+}
 
 func TestFlowTextNodeOutputsConstant(t *testing.T) {
 	graph := flowGraph{Nodes: []flowNode{

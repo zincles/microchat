@@ -46,7 +46,7 @@ func TestToggleOverrides(t *testing.T) {
 	}
 	// 退役的 judge（老配置里还写着它）：**照实解析**，不报错、没提到就是默认全开 ——
 	// 只把它从"能力清单"里拿掉，不是把它变成一颗地雷。
-	if setting := Resolve(agent, Judge); !setting.Enabled {
+	if setting := Resolve(agent, "judge"); !setting.Enabled {
 		t.Fatal("退役的 id 也得照实解析（老配置里还写着它）")
 	}
 }
@@ -74,7 +74,7 @@ func TestValidateRejectsUnknownIDs(t *testing.T) {
 	if err := Validate(config.AgentsConfig{Agents: []config.Agent{{ID: "好的"}}}); err != nil {
 		t.Fatalf("没写 abilities 的 agent 不该报错：%v", err)
 	}
-	if !Valid(Compact) || !Valid(Title) || Valid(Judge) || Valid("turn") {
+	if !Valid(Compact) || !Valid(Title) || Valid("judge") || Valid("turn") {
 		t.Fatal("在册能力就是 title / compact 两个（judge 已退役、turn 不是开关）")
 	}
 }
@@ -86,7 +86,7 @@ func TestValidateRejectsUnknownIDs(t *testing.T) {
 func TestRetiredJudgeIsToleratedNotRejected(t *testing.T) {
 	agents := config.AgentsConfig{Agents: []config.Agent{
 		{ID: "老文件", Abilities: map[string]config.AbilityToggle{
-			Judge:   {Enabled: new(false)},
+			"judge": {Enabled: new(false)},
 			Compact: {Enabled: new(true)},
 		}},
 	}}
@@ -95,7 +95,7 @@ func TestRetiredJudgeIsToleratedNotRejected(t *testing.T) {
 	}
 	// 但也不能假装它还生效：列出来的能力里没有它。
 	for _, id := range IDs() {
-		if id == Judge {
+		if id == "judge" {
 			t.Fatalf("退役的 judge 不该还在能力清单里：%v", IDs())
 		}
 	}
@@ -117,7 +117,7 @@ func TestEffectiveTemplateAndPromptVersion(t *testing.T) {
 			t.Fatalf("%s 该有默认模板（流程实现了就得有它那一段提示词）", id)
 		}
 	}
-	if DefaultTemplate(Judge) != "" || DefaultTemplate("没有这个能力") != "" {
+	if DefaultTemplate("judge") != "" || DefaultTemplate("没有这个能力") != "" {
 		t.Fatal("退役的 / 不认识的：没有模板")
 	}
 	// 没覆盖 ⇒ 默认那句；覆盖了 ⇒ 覆盖那句

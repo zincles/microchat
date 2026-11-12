@@ -332,6 +332,8 @@ func flowNodeLabel(kind string) string {
 		return "拼接和复制"
 	case "text":
 		return "纯文本"
+	case "judge":
+		return "JEV 判断"
 	case "output":
 		return "输出"
 	case "user_output":

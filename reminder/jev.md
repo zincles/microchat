@@ -71,7 +71,8 @@ A. 和玩家搭话    B. 无视玩家    C. 攻击玩家
 - **不是第三种 kind**：`vendor` × `protocol` 两轴里它是 `protocol: systemone`（`vendor: typesafe` 或承载它的 openrouter / custom；verbatim 整条 URL 原样 POST `{model,state,questions}`）；
 - 会话的**状态**永远来自现演 —— JEV 侧不存状态；
 - 产出**不是消息**：它是**材料**（喂给会话 Agent）或**审计记录**，绝不塞进 `messages`。
-- 调用面：`judge.Service.JudgeFor`（开关 + 选渠道 + `task.KindJudgement` 挂号 + 失败原样返回）。
+- 调用面：**Flow 的 `judge` 节点**（节点填 systemone 渠道 / 模型 / questions；`internal/judge.Evaluate` 裸调用 + `task.KindJudgement` 挂号 + 失败原样返回）。
+  传统 Agent 的 `judge` 能力与 `judge.Service` 已删除；`ability` 只剩 `title` / `compact`。
 
 ## 四、四条规矩（跟我们已有的硬边界对齐）
 

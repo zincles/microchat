@@ -29,6 +29,7 @@ const models = inject<Ref<ModelListItem[]>>("flowModels", ref([]));
 const label = computed(() => ({
   input: "输入",
   text: "纯文本",
+  judge: "JEV 判断",
   history: "历史数据",
   trim: "裁剪 messages",
   merge: "拼接 messages",
@@ -37,11 +38,12 @@ const label = computed(() => ({
   output: "输出",
 }[props.type] ?? props.type));
 const badge = computed(() => ({
-  input: "IN", text: "TXT", history: "H", trim: "TR", merge: "MG", llm: "AI", join: "J", output: "OUT",
+  input: "IN", text: "TXT", judge: "JEV", history: "H", trim: "TR", merge: "MG", llm: "AI", join: "J", output: "OUT",
 }[props.type] ?? "·"));
 const hint = computed(() => ({
   input: "裸字符串：本轮用户输入",
   text: "无输入：输出这里写死的常量文本",
+  judge: "把场景/状态交给 JEV，输出概率答案 JSON",
   history: "messages[]：当前会话历史",
   trim: "messages[] → messages[]：按条数裁剪",
   merge: "多路 messages[] 按端口顺序拼接",
@@ -122,6 +124,22 @@ const maxRetry = computed<string>({
 const textValue = computed({
   get: () => typeof props.data.text === "string" ? props.data.text : "",
   set: (value: string) => { props.data.text = value; },
+});
+const judgeProvider = computed({
+  get: () => typeof props.data.provider === "string" ? props.data.provider : "",
+  set: (value: string) => { props.data.provider = value; },
+});
+const judgeModel = computed({
+  get: () => typeof props.data.model === "string" ? props.data.model : "",
+  set: (value: string) => { props.data.model = value; },
+});
+const judgeQuestions = computed({
+  get: () => typeof props.data.questions === "string" ? props.data.questions : JSON.stringify(props.data.questions ?? {}, null, 2),
+  set: (value: string) => { props.data.questions = value; },
+});
+const judgeAnswerKey = computed({
+  get: () => typeof props.data.answer_key === "string" ? props.data.answer_key : "",
+  set: (value: string) => { props.data.answer_key = value; },
 });
 const trimMode = computed<TrimMode>({
   get: () => trimModeOf(props.data),
@@ -222,6 +240,7 @@ function addJoinOutput(): void {
     @mouseleave="hovered = false"
   >
     <Handle v-if="type === 'trim'" id="in" type="target" :position="Position.Left" :class="portClass('messages')" />
+    <Handle v-if="type === 'judge'" id="state" type="target" :position="Position.Left" :class="portClass('string')" />
     <div class="flow-node-head">
       <span class="flow-node-badge" aria-hidden="true">{{ badge }}</span>
       <div class="flow-node-heading">
@@ -283,6 +302,29 @@ function addJoinOutput(): void {
         <Handle id="user" type="target" :position="Position.Left" :class="portClass('string')" />
         <span>用户消息</span>
       </div>
+    </div>
+    <div v-if="type === 'judge'" class="flow-judge-controls nodrag nopan">
+      <label class="flow-judge-field">
+        <span>渠道</span>
+        <VTextField v-model="judgeProvider" density="compact" variant="outlined" hide-details
+          placeholder="systemone 渠道 id" />
+      </label>
+      <label class="flow-judge-field">
+        <span>决策模型</span>
+        <VTextField v-model="judgeModel" density="compact" variant="outlined" hide-details
+          placeholder="jev-latest" />
+      </label>
+      <label class="flow-judge-field">
+        <span>Questions JSON</span>
+        <VTextarea v-model="judgeQuestions" rows="5" density="compact" variant="outlined" hide-details
+          placeholder='{"involves": "是否涉及这个角色？"}' />
+      </label>
+      <label class="flow-judge-field">
+        <span>Answer key（可选）</span>
+        <VTextField v-model="judgeAnswerKey" density="compact" variant="outlined" hide-details
+          placeholder="只输出某个答案；留空 = 整个 answers" />
+      </label>
+      <span class="flow-node-body">状态接左侧输入；输出是 JSON。低置信度/失败由下游裁决。</span>
     </div>
     <label v-if="type === 'text'" class="flow-text-value nodrag nopan">
       <VTextarea v-model="textValue" rows="3" density="compact" variant="outlined" hide-details

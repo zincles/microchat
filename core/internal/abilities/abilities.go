@@ -3,8 +3,7 @@
 //
 // 四条口径（见 `DEFINE.md`「能力（Ability）」与 `AGENTS.md`「后台任务 / 压缩 / 能力」）：
 //
-//  1. **流程在代码里，开关在 Agent 上**："能力"= 会调模型的那种作业（现在是 `title` / `compact`；
-//     `judge` 2026-10-28 退役，见下面 `retired`），
+//  1. **流程在代码里，开关在 Agent 上**："能力"= 会调模型的那种作业（现在是 `title` / `compact`），
 //     能覆盖的只有模板 / 渠道 / 模型 —— **不能造新的**（表里没有的 id 写了也不认，报错）；
 //  2. **缺字段 = 默认全开**（现有 `agents.json` 一个字都不用改）；`enabled: false` ⇒
 //     调用方**明确拒绝**执行那一次，**不是静默降级**；
@@ -38,13 +37,6 @@ const (
 	Title ID = "title"
 	// Compact：把一段压成摘要（一段 → `summaries` 一行，落库由调用方单事务负责）。
 	Compact ID = "compact"
-	// Judge：**已退役**（2026-10-28 用户：「暂时砍掉 agent 的 judge 功能」）。
-	//
-	// 它不在 `definitions` 里 ⇒ 界面不出这一块、`Valid` 不认、新写的配置不会带它。
-	// 常量留着是因为两处还引着它：`internal/judge`（JEV 那发的实现，还没接调用点）
-	// 与 `task.KindJudgement`（那一发的作业种类）。**流程回来时**把下面 `definitions`
-	// 里那行加回去就行 —— 别把这个常量也删掉，否则那边得跟着改。
-	Judge ID = "judge"
 )
 
 // 标题模型的来源（2026-11-04 用户定）。只对 title 有意义：
@@ -84,7 +76,7 @@ var retired = config.RetiredAbilityIDs
 // 这张表就是"流程在代码里"的落点：加一个能力 = 往这儿加一行（同时写下它那段流程）。
 // 两行都 `TemplateSegment`：默认模板住段库（可读、可复制、可参与自由组合）。
 //
-// `Template` 空 = 没有模板（从前 `judge` 就是这种：state+questions 由调用方拼，不走模板）。
+// `Template` 空 = 没有模板（state+questions 由调用方拼的能力就属于这种）。
 //
 // `TemplateSegments` = "模板其实是段库里的一条（或几条）内置段"（与 `Template` 二选一）。
 // 为什么要这一格：模板也是提示词，用户的抱怨很直接 ——「凭什么这一段我读不到、也拼不了」。
@@ -124,10 +116,8 @@ func (d Definition) templateChosen(segments []string) bool {
 
 // definitions：全部能力（顺序固定 ⇒ 界面与 `-debug abilities` 的输出稳定）。
 //
-// `judge` 2026-10-28 退役（用户：「暂时砍掉 agent 的 judge 功能」）——
-// 它的定义行搬去了上面的 `retired`；流程回来时把这一行加回来：
-//
-//	{ID: Judge, Label: "判断", TaskKind: task.KindJudgement},
+// 传统 Agent 的 `judge` 能力已彻底删除；JEV 只作为 Flow 的判断节点使用，
+// 不再出现在 `definitions` 里。
 var definitions = []Definition{
 	{ID: Title, Label: "起标题", TaskKind: task.KindTitle,
 		TemplateSegments: []string{config.TitleTemplateSegmentID}},

@@ -1981,6 +1981,7 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-node-input, .flow-node-join { --flow-node-accent: var(--flow-string); }
 .flow-node-output { --flow-node-accent: var(--md-secondary); }
 .flow-node-text { --flow-node-accent: var(--tg-ok); }
+.flow-node-judge { --flow-node-accent: var(--md-secondary); }
 .flow-node-history, .flow-node-trim, .flow-node-merge { --flow-node-accent: var(--flow-history); }
 .flow-node-head {
   display: flex; align-items: center; gap: 0.5em;
@@ -2190,3 +2191,6 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .icon-btn svg, .cp-close svg { width: 62%; height: auto; display: block; }
 .flow-text-value { display: flex; flex-direction: column; gap: 0.3em; margin-top: 0.4em; }
 .flow-text-value .v-field__input { font-size: var(--md-type-label-small); line-height: 1.45; }
+.flow-judge-controls { display: flex; flex-direction: column; gap: 0.35em; margin-top: 0.45em; }
+.flow-judge-field { display: flex; flex-direction: column; gap: 0.15em; color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
+.flow-judge-field .v-field__input { font-size: var(--md-type-label-small); }

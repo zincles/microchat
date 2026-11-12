@@ -20,14 +20,13 @@ microchat：轻量 SillyTavern 替代（RPG 向）。三层，边界要清楚：
 | 词 | **只**指什么 | 别叫 |
 |---|---|---|
 | **世界状态（state）** | `<state>` 那套：**只从消息正文现演**的键值 —— 词汇只有两种：**变量**（键 → 值）与**表**（命名空间，不写表名就落到 `global` 表）；删除不留痕迹（提示词里的块不算数） | 孤立地说"状态"（得说清是世界状态、turn 状态还是 Task 状态） |
-| **能力（Ability）** | **写死在代码里的一段固定流程**（**会调模型的 Task 种类**：现在 `title` / `compact` 两个；`judge` 2026-10-28 退役）；开关在 Agent 上、流程在代码里。**"对话本身"不是能力** ✗（那是 Agent 存在的方式） | "工具"（撞函数调用）、"子 Agent" |
+| **能力（Ability）** | **写死在代码里的一段固定流程**（**会调模型的 Task 种类**：现在 `title` / `compact` 两个）；开关在 Agent 上、流程在代码里。**"对话本身"不是能力** ✗（那是 Agent 存在的方式） | "工具"（撞函数调用）、"子 Agent" |
 | **Agent** | **一份命名的人格 + 一组能力开关 + 可选提示词方案**（`agents.json`）：同一个运行时，只是开关/绑定不同 | 拿它指"某个能力" |
 | **任务（Task）** | **一次上游请求的全程**（发起 → 收尾 → 可能被取消）：一轮生成、一次压缩、一次刷新模型都挂号。**会调模型的一定是 Task**（**反之不成立** —— `refresh_models` 也是 Task，但它不调模型）。**TaskID 是 UUIDv7，且不进库** | "后台作业"（不都在后台）；拿它指"某个能力" |
 | ~~用户 / 系统令牌~~ | **这两个词已经作废**（2026-11-01 砍掉账号与鉴权）：没有登录者、没有凭据、没有归属。只剩"这台机器上的一个使用者" | 别再用"用户"指任何东西 —— 那是历史 |
 
 三层咬合：**Agent（人格 + 能力开关）→ 一次调用（对话型 / 功能型=能力）→ Task（这次上游请求的全程）**。
-**Task 的种类 ≈ 能力 id** ✓（2026-09-30 定，别再分两层）：`title` / `compact` 是，`judge` 能力的 Task 面叫 **`judgement`**（能力已退役、这一发的种类与实现都留着）
-（JEV 那一发的名字；见 `DEFINE.md`「任务（Task）与两族调用」），而 `turn` 作业发起的是**对话型调用**（**不算能力**）、`refresh_models` 发起 0 次。
+**Task 的种类 ≈ 能力 id** ✓（2026-09-30 定，别再分两层）：`title` / `compact` 是；**`judgement` 现在只属于 Flow 的 JEV 判断节点**（不再是传统 Agent 能力），而 `turn` 作业发起的是**对话型调用**（**不算能力**）、`refresh_models` 发起 0 次。
 "能不能自主选下一步"**不是** Agent 的判据，将来是某个能力（如 `plan`）的事。
 
 ## 代码布局
@@ -447,7 +446,7 @@ delete(AA)           # 删除
   每个 agent 可以带 **`first_message`（首段对话，2026-10-11 用户定）**：以它**新建**会话时，这段文本作为
   **第一条 assistant 消息（idx 1）**落库（正文**原样存档** ⇒ 可带 `<state>` 设初始状态）；空 = 不启用。
   草稿预演（`POST /outgoing`）把它**模拟**进去（"预演 = 真发"）；Copy 不重复插、ST 导入不受影响、改 agent 不追溯。
-  每个 agent 上可以带**能力开关** `abilities`（键 = 能力 id：`title` / `compact`；**未知的 id 在写入与启动读取时都报错**，不静默忽略；**退役的 `judge` 例外** —— 老文件里写着它照常能读，读入时就地摘掉）：
+  每个 agent 上可以带**能力开关** `abilities`（键 = 能力 id：`title` / `compact`；**未知的 id 在写入与启动读取时都报错**，不静默忽略；老文件里残留的 `judge` 只做历史兼容，读入时摘掉）：
   `"abilities": { "compact": { "enabled": false, "provider": "deepseek", "model": "deepseek-chat", "prompt": "…" } }`
   —— **缺字段 = 默认全开** ✓（不带 `abilities` 的 agent 三个能力都是开着的，现有文件一个字都不用改）；
   `provider` / `model` 留空 = 用**会话自己的**；`prompt` 留空 = 用代码里的默认模板；`enabled: false` ⇒ 调用方**明确拒绝**执行那一次（不是静默降级）。
@@ -974,18 +973,17 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
   开关 = `chat.auto_compact`（**缺字段 = 关** —— 未经验证，默认不开）；关着就全靠手动。
 
 **能力**（`internal/abilities`）：身份写死在代码里（`title` / `compact` —— **枚举就是全部**），**开关 + 可选覆盖写在 `agents.json` 每个 agent 的 `abilities` 上**（不另开 `abilities.json`），只能**覆盖**模板/渠道/模型，不能造新的；**未知的 id 在写入与启动读取时都报错**。
-- **`judge` 2026-10-28 退役**（用户原话：「暂时砍掉 agent 的 judge 功能」）：它从来只有开关、没有流程（`judge.Service.JudgeFor` 一直没人调），界面上就是一块点了没反应的开关。
-  退役办理：`internal/abilities/definitions` 里那一行拿掉（`Valid("judge")` 假、`IDs()` 不含它 ⇒ 界面不出、新写的配置不带）；
-  `config.RetiredAbilityIDs` 记着它，**`config.LoadAgents` 读进来就地摘掉**（与 `display_mode` 同口径：读了不算数、写回去就没有）。
-  **退役 ≠ 写错**：老 `agents.json` 里写着 `"judge": {…}` 是历史（现场那份就有四个 agent 带它），报错会让整份人格读不进来、服务起不来；而 `"judgee"` 那种真的写错仍然 400。
-  流程与那发的实现**没删**（`internal/judge` + `task.KindJudgement`，见「决策模型（JEV）」）—— 要复活就往 `definitions` 加回一行、再把 `RetiredAbilityIDs` 那条删掉。
+- **传统 Agent 的 `judge` 能力已彻底删除**（2026-11-12 用户定：「彻底砍掉传统Agent的JEV模块」）：
+  `abilities` 的枚举只剩 `title` / `compact`，没有 `judge.Service`、没有能力开关。
+  `config.RetiredAbilityIDs` 仍保留 `"judge"` 只为了读老 `agents.json` 时**容忍并摘掉**它——退役 ≠ 写错，不能让整份人格读不进来。
+  JEV 本身没有消失：它改成了 **Flow 的 `judge` 判断节点**（见「决策模型（JEV）」）。
 - **标题模型的来源三档**（2026-11-04 用户定）：`abilities.title.model_source` =
   `"global"`（默认：跟随 `config.json` 的 `chat.title_provider/title_model`，全局空 ⇒ 当前会话模型）/
   `"session"`（强制当前会话模型）/ `"agent"`（用本能力的 `provider`/`model`，两个都填才生效，否则回落 global）。
   编辑器在「智能体 → 起标题」；**默认 global**。旧配置没有这一格但填了 provider/model 的，按 **agent** 处理（保住既有覆盖）；
   未知来源在写入与启动读取时都报错。判定只有一处：`abilities.TitleModelSource`。
 - `abilities.Resolve(agent, id)` 是**唯一**解析处：缺条目 = **默认全开**；`provider`/`model` 空 = 用会话的；`enabled: false` ⇒ 调用方**明确拒绝**执行那一次（不是静默降级）。
-- `judge` 的调用面 = `judge.Service.JudgeFor`（开关 + 选渠道 + `task.KindJudgement` 挂号 + 失败原样返回；state/questions 由调用方拼，产出是材料**不落库**）—— 动态组合术调的就是它。**但能力已退役（2026-10-28）、至今没有调用点**：这段代码还在，接回去时记得先把 `judge` 从 `config.RetiredAbilityIDs` 里拿出来。
+- JEV 的调用面**只剩** Flow 的 `judge` 节点：`internal/judge.Evaluate` 是裸调用，节点负责渠道/模型、Task 挂号与失败处理；产出是材料（JSON answers），**不落库、不进历史、不自动写世界状态**。
 - compact 换模型 / 改提示词**不用写代码**（例子：会话的渠道是 dummy，但压缩单独走 deepseek）：
   `"abilities": { "compact": { "provider": "deepseek", "model": "deepseek-chat", "prompt": "…" } }` ——
   `provider`/`model` 留空 = 蹭会话自己的；`prompt` 留空 = 代码里的默认模板（填了就整段替换，`prompt_version` 指纹跟着变）；
@@ -1148,13 +1146,14 @@ DeepSeek / OpenCode GO 直连**确实不报**，所以那一格在那儿永远�
   models 表管"有哪些模型"，model_route 管"每个模型走哪条 API" —— 别藕断丝连混成一个。
   快照 5MB，一周手跑一次足够；**启动时不跑**（浪费）；快照失败不拦别家（旧行留着）。
 
-## 决策模型（JEV）：**不是聊天模型** —— 已落地 ✓（2026-10-01：`protocol: systemone` + `task.KindJudgement` + `internal/judge` 裸调用）
+## 决策模型（JEV）：**不是聊天模型** —— 现在是 Flow 的 `judge` 节点
 
 `typesafe/jev` 那类是**决策模型**（状态 + 类型化问题 → 概率），不生成文本、不能驱动会话、不走 `refresh`（没有统一 `/models` 口径 ⇒ 跳过不算错）。
 落点：`vendor: typesafe`（或承载它的 openrouter / custom）× `protocol: systemone`（verbatim 整条 URL 原样 POST `{model,state,questions}`）；
-`judge` 能力的 Task 面就是 `task.KindJudgement`（"判断"，要会话 id —— 调外部模型就要归属可查）；裸调用在 `internal/judge`（10s 超时、不重试、失败原路返回）。
-⚠ **2026-10-28 起 `judge` 这个能力退役了**（用户：「暂时砍掉 agent 的 judge 功能」）：开关没了、界面没了，`internal/judge` 与 `task.KindJudgement` 原样留着但**没人调**。
-规划中的用途与四条规矩（只动尾部 / 失败降级 / 产出不进历史与变量 / 阈值实测校准）见 **`reminder/jev.md`**。**裁决（阈值/NPC 动作集）还没做** —— 那是第二刀。
+Flow 的 `judge` 节点吃左侧 `state` 输入，节点配置里填 `provider`/`model`/`questions`/`answer_key`；
+执行时通过 `internal/judge.Evaluate` 裸调用（10s 超时、不重试、失败原路返回），有会话时用 `task.KindJudgement` 挂号。
+**传统 Agent 没有 JEV 能力**：`judge.Service`、`abilities.judge` 开关已删除；老配置里的 `judge` 只被摘掉，不会恢复成开关。
+规划中的用途与四条规矩（只动尾部 / 失败降级 / 产出不进历史与变量 / 阈值实测校准）见 **`reminder/jev.md`**。
 
 ## 界面（口径）
 
@@ -1566,6 +1565,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   输入 / 纯文本 / 调用 LLM / 裁剪 messages / 拼接 messages / 拼接和复制 / 输出。LLM 节点内是 Prompt 列表（role + 左侧输入孔 + 手写正文）；
   每个 LLM 节点带 `max_retry`（缺省 3，**首次失败后再试几次**）；重试耗尽仍失败 ⇒ 整次 FlowAgent 失败，不产出半条回复。
   **纯文本节点**：没有输入，只有一个 string 输出；`data.text` 就是它吐出的常量，可接给 Prompt / join / `output.user` 等任意 string 端口。
+  **JEV 判断节点**（`judge`）：左侧接一个 `state` 字符串，节点里填 systemone 渠道、决策模型、`questions` JSON 和可选 `answer_key`；输出是 answers JSON（或指定 key 的值）。它不生成文本，也不自动改世界状态。
   **输出节点有三个输入端口**：`text`（助手正文）/ `reasoning`（思考）/ `user`（**写入历史的用户消息**）。
   `user` 接上游（例如把润色后的文本接进来），这一轮图跑完后用它覆盖刚落的用户消息，再写 assistant；
   **Accept 与 Resend 都覆盖**（Resend 改的是“最后一条被回答的 user”，不是新回复的 id）；
