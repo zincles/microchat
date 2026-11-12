@@ -380,7 +380,11 @@ export function flowDebugSteps(graph: FlowGraph): FlowDebugStep[] {
       reasoning = "[LLM 思考]";
     } else if (node.type === "join") {
       const separator = typeof node.data?.separator === "string" ? node.data.separator : DEFAULT_JOIN_SEPARATOR;
-      output = incoming.length ? incoming.join(separator) : "[没有输入]";
+      const ports = Array.isArray(node.data?.inputs) && node.data.inputs.length ? node.data.inputs.map(String) : ["in-1", "in-2"];
+      const ordered = ports.flatMap((port) => edges
+        .filter((edge) => edge.target === node.id && (edge.targetHandle === port || (port === "in-1" && !edge.targetHandle)))
+        .map(source));
+      output = ordered.length ? ordered.join(separator) : "[没有输入]";
     } else if (node.type === "judge") {
       output = "[JEV answers]";
     } else if (node.type === "output") {

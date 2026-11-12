@@ -86,6 +86,28 @@ func TestFlowJudgeNodeCallsSystemOne(t *testing.T) {
 	}
 }
 
+func TestFlowJoinUsesPortOrderNotEdgeOrder(t *testing.T) {
+	graph := flowGraph{Nodes: []flowNode{
+		{ID: "in", Type: "input"},
+		{ID: "a", Type: "text", Data: map[string]any{"text": "A"}},
+		{ID: "b", Type: "text", Data: map[string]any{"text": "B"}},
+		{ID: "join", Type: "join", Data: map[string]any{"inputs": []any{"in-1", "in-2"}, "outputs": []any{"out-1"}, "separator": "|"}},
+		{ID: "out", Type: "output"},
+	}, Edges: []flowEdge{
+		// 故意先接 in-2，再接 in-1：执行必须按端口顺序 A|B，而不是边数组顺序 B|A。
+		{ID: "e2", Source: "b", SourceHandle: "out", Target: "join", TargetHandle: "in-2"},
+		{ID: "e1", Source: "a", SourceHandle: "out", Target: "join", TargetHandle: "in-1"},
+		{ID: "e3", Source: "join", SourceHandle: "out-1", Target: "out", TargetHandle: "text"},
+	}}
+	out, err := (&Service{}).executeFlowGraph(context.Background(), graph, flowRunOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Final.Text != "A|B" {
+		t.Fatalf("join 要按端口顺序拼接，得到 %q", out.Final.Text)
+	}
+}
+
 func TestFlowTextNodeOutputsConstant(t *testing.T) {
 	graph := flowGraph{Nodes: []flowNode{
 		{ID: "in", Type: "input"},

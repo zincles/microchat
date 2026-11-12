@@ -248,7 +248,24 @@ func (s *Service) executeFlowGraph(ctx context.Context, graph flowGraph, opts fl
 			step.Output = fmt.Sprintf("messages[%d]", len(nodeMessages))
 		case "join":
 			step.Label = "拼接和复制"
-			step.Output = joinFlowInputs(inputs, flowJoinSeparator(node))
+			// 按**端口顺序**拼，而不是按 edges 在 JSON 里的顺序拼。
+			// 复杂图里用户先接 in-2 再接 in-1 时，旧实现会把顺序拼反。
+			ordered := make([]string, 0, len(inputs))
+			for _, port := range flowJoinInputs(node) {
+				for _, edge := range graph.Edges {
+					if edge.Target != node.ID {
+						continue
+					}
+					handle := edge.TargetHandle
+					if handle == "" && port == "in-1" {
+						handle = "in-1"
+					}
+					if handle == port {
+						ordered = append(ordered, sourceValue(values, edge))
+					}
+				}
+			}
+			step.Output = joinFlowInputs(ordered, flowJoinSeparator(node))
 		case "user_output":
 			step.Label = "用户消息"
 			if len(inputs) > 0 {
@@ -650,6 +667,19 @@ func flowMergeInputs(node flowNode) []string {
 	return inputs
 }
 
+func flowJoinInputs(node flowNode) []string {
+	raw, ok := node.Data["inputs"]
+	if !ok {
+		return []string{"in-1", "in-2"}
+	}
+	data, _ := json.Marshal(raw)
+	var inputs []string
+	if json.Unmarshal(data, &inputs) != nil || len(inputs) == 0 {
+		return []string{"in-1", "in-2"}
+	}
+	return inputs
+}
+
 func flowJoinOutputs(node flowNode) []string {
 	raw, ok := node.Data["outputs"]
 	if !ok {
@@ -740,6 +770,15 @@ func validateTestGraph(graph flowGraph) error {
 			}
 		}
 		if node.Type == "join" {
+			inputs := flowJoinInputs(node)
+			seenInputs := map[string]bool{}
+			for _, input := range inputs {
+				input = strings.TrimSpace(input)
+				if input == "" || seenInputs[input] {
+					return fmt.Errorf("拼接节点 %s 有空的或重复的输入端口", node.ID)
+				}
+				seenInputs[input] = true
+			}
 			outputs := flowJoinOutputs(node)
 			seenPorts := map[string]bool{}
 			for _, port := range outputs {
