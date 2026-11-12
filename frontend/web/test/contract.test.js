@@ -622,6 +622,8 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(flowNode, /flow-trim-controls/, "裁剪节点没有配置控件");
   assert.match(flowNode, /id="user"/, "输出节点没有用户消息输入端口");
   assert.match(flowNode, /getComputedStyle\(node\)\.height/, "拖拽缩放没有用 CSS 像素高度（会被画布缩放放大/缩小）");
+  assert.match(flowNode, /rect\.height \/ base/, "拖拽位移没有按画布缩放换算");
+  assert.match(flowNode, /pointerToBottom/, "缩放没有让底边贴住鼠标");
   assert.ok(!/userPrompt|flow-user-output|user_output/.test(flowNode), "用户消息还残留在独立节点里");
   assert.match(flowNode, /trimRoles/, "裁剪节点没有角色过滤");
   assert.match(flow, /function removePort/, "删除端口没有同步删除相连边");

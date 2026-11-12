@@ -71,12 +71,14 @@ const nodeStyle = computed(() => {
   return Number.isFinite(height) && height > 0 ? { height: `${height}px` } : {};
 });
 const resizing = ref(false);
-let resizeStart = { y: 0, height: 0 };
+let resizeStart = { y: 0, height: 0, zoom: 1 };
 function resizeMove(event: PointerEvent): void {
   if (!resizing.value) return;
   // LLM 卡片宽度固定；缩放柄只改高度。
-  const height = Math.max(120, Math.round(resizeStart.height + event.clientY - resizeStart.y));
-  props.data.height = height;
+  // 鼠标位移是**屏幕像素**，height 是 **CSS 像素**；画布缩放 0.55 时直接相加会让
+  // 卡片底边只走鼠标的一半，越拖偏得越远。先按缩放比换算。
+  const delta = (event.clientY - resizeStart.y) / resizeStart.zoom;
+  props.data.height = Math.max(120, Math.round(resizeStart.height + delta));
 }
 function resizeEnd(): void {
   resizing.value = false;
@@ -94,7 +96,11 @@ function resizeStartHandler(event: PointerEvent): void {
   // 读 **CSS 像素** 高度，不读 getBoundingClientRect：后者被 Vue Flow 的画布缩放乘过，
   // 拿它当 height 写回会把节点瞬间缩掉一截（拖一下反而变短）。
   const cssHeight = Number.parseFloat(getComputedStyle(node).height);
-  resizeStart = { y: event.clientY, height: Math.round(Number.isFinite(cssHeight) && cssHeight > 0 ? cssHeight : rect.height) };
+  const base = Number.isFinite(cssHeight) && cssHeight > 0 ? cssHeight : rect.height;
+  const zoom = Math.max(0.01, rect.height / base);
+  // 让底边贴着鼠标：resizer 有自身高度，按在它中心时底边本来就在指针下面一点。
+  const pointerToBottom = (event.clientY - rect.bottom) / zoom;
+  resizeStart = { y: event.clientY, height: Math.max(120, Math.round(base + pointerToBottom)), zoom };
   props.data.height = resizeStart.height;
   resizing.value = true;
   window.addEventListener("pointermove", resizeMove);
