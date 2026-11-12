@@ -5,7 +5,7 @@ import { computed, inject, onUnmounted, ref, type Ref } from "vue";
 import { Handle, Position } from "@vue-flow/core";
 import { VBtn, VSelect, VTextField, VTextarea } from "vuetify/components";
 import type { ModelListItem } from "../api/types.ts";
-import { DEFAULT_JOIN_SEPARATOR, TRIM_MODES, TRIM_ROLES, trimCountOf, trimModeOf, type FlowDataType, type TrimMode } from "../utils/flow.ts";
+import { DEFAULT_JOIN_SEPARATOR, TRIM_MODES, TRIM_ROLES, judgeAnswerType as judgeAnswerTypeOf, trimCountOf, trimModeOf, type FlowDataType, type TrimMode } from "../utils/flow.ts";
 
 const props = defineProps<{
   id: string;
@@ -22,6 +22,9 @@ interface PromptEntry {
 }
 
 const hovered = ref(false);
+const runState = computed(() => String(props.data.runState ?? ""));
+const runStateLabel = computed(() => ({ waiting: "等待", running: "进行", done: "完成" } as Record<string, string>)[runState.value] ?? "");
+const nodeClass = computed(() => [`flow-node-${props.type}`, runState.value ? `flow-node-is-${runState.value}` : ""]);
 // 删除回调由 FlowEditor 提供：它会在同一个动作里删节点 + 所有相连边。
 const removeNode = inject<(id: string) => void>("flowRemoveNode", () => {});
 const removePort = inject<(nodeId: string, handle: string, side: "source" | "target") => void>("flowRemovePort", () => {});
@@ -51,7 +54,7 @@ const hint = computed(() => ({
   join: "多路拼接；只接一路时直接复制",
   output: "最终结果写入聊天；用户消息端口可改写入库正文",
 }[props.type] ?? ""));
-const portClass = (type: FlowDataType): string => type === "messages" ? "flow-port-messages" : "flow-port-string";
+const portClass = (type: FlowDataType): string => `flow-port-${type}`;
 const prompts = computed<PromptEntry[]>(() => Array.isArray(props.data.prompts) ? props.data.prompts : []);
 const modelOptions = computed(() => [
   { title: "跟随默认模型", value: "" },
@@ -140,6 +143,17 @@ const judgeQuestions = computed({
 const judgeAnswerKey = computed({
   get: () => typeof props.data.answer_key === "string" ? props.data.answer_key : "",
   set: (value: string) => { props.data.answer_key = value; },
+});
+const judgeAnswerType = computed<FlowDataType>({
+  get: () => judgeAnswerTypeOf(props as any),
+  set: (value: FlowDataType) => { props.data.answer_type = value; },
+});
+const judgeThreshold = computed<string>({
+  get: () => String(props.data.threshold ?? 0.5),
+  set: (value: string) => {
+    const number = Number(value);
+    props.data.threshold = Number.isFinite(number) ? number : 0.5;
+  },
 });
 const trimMode = computed<TrimMode>({
   get: () => trimModeOf(props.data),
@@ -234,7 +248,7 @@ function addJoinOutput(): void {
 <template>
   <div
     class="flow-node"
-    :class="[`flow-node-${type}`, { resizing }]"
+    :class="[nodeClass, { resizing }]"
     :style="nodeStyle"
     @mouseenter="hovered = true"
     @mouseleave="hovered = false"
@@ -247,8 +261,15 @@ function addJoinOutput(): void {
         <span class="flow-node-title">{{ label }}</span>
         <span class="flow-node-hint">{{ hint }}</span>
       </div>
+      <span v-if="runStateLabel" class="flow-node-state" :data-state="runState" :title="`节点状态：${runStateLabel}`">
+        <span class="flow-node-state-dot" aria-hidden="true"></span>{{ runStateLabel }}
+      </span>
       <button class="flow-node-delete nodrag nopan" type="button" title="删除节点" aria-label="删除节点"
         @click.stop="removeNode(id)">×</button>
+    </div>
+    <div v-if="type === 'llm'" class="flow-enabled-row">
+      <Handle id="enabled" type="target" :position="Position.Left" :class="portClass('bool')" />
+      <span>启用 · bool（可选）</span>
     </div>
     <label v-if="type === 'llm'" class="flow-llm-model nodrag nopan">
       <span>AI 模型</span>
@@ -313,6 +334,16 @@ function addJoinOutput(): void {
         <span>决策模型</span>
         <VTextField v-model="judgeModel" density="compact" variant="outlined" hide-details
           placeholder="jev-latest" />
+      </label>
+      <label class="flow-judge-field">
+        <span>答案类型</span>
+        <VSelect v-model="judgeAnswerType" :items="['string', 'bool', 'number', 'choice']" density="compact"
+          variant="outlined" hide-details />
+      </label>
+      <label v-if="judgeAnswerType === 'bool'" class="flow-judge-field">
+        <span>布尔阈值</span>
+        <VTextField v-model="judgeThreshold" type="number" step="0.05" min="0" max="1"
+          density="compact" variant="outlined" hide-details />
       </label>
       <label class="flow-judge-field">
         <span>Questions JSON</span>
@@ -401,6 +432,6 @@ function addJoinOutput(): void {
       <VBtn variant="text" size="small" type="button" class="flow-add-join nodrag nopan" @click="addJoinOutput">＋ 添加输出</VBtn>
     </div>
     <Handle v-else-if="type !== 'output'" id="out" type="source" :position="Position.Right"
-      :class="portClass(type === 'history' || type === 'trim' || type === 'merge' ? 'messages' : 'string')" />
+      :class="portClass(type === 'history' || type === 'trim' || type === 'merge' ? 'messages' : type === 'judge' ? judgeAnswerType : 'string')" />
   </div>
 </template>

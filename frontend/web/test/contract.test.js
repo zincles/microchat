@@ -612,6 +612,7 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(flowWorkspace, /flowRun\(props\.sessionId\)/, "工作流页没有轮询 Flow 执行轨迹");
   assert.match(flowWorkspace, /snapshot === savedSnapshot\.value\) return/, "没有修改也会触发自动保存");
   assert.match(flowWorkspace, /savedLabel/, "已保存没有时间显示");
+  assert.match(flowWorkspace, /:node-states="nodeStates"/, "工作流没有把节点状态传给编辑器");
   assert.match(flowWorkspace, /已保存（\$\{seconds\}秒之前）/, "已保存没有相对时间文案");
   assert.match(flowWorkspace, /:active-node-id="activeNodeId"/, "工作流没有把活跃节点传给编辑器");
   assert.match(workspace, /agent\?:\s*Agent \| null/, "工作流页没有接当前 Agent");
@@ -623,6 +624,8 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(flowNode, /id="user"/, "输出节点没有用户消息输入端口");
   assert.match(flowNode, /flow-text-value/, "纯文本节点没有常量输入框");
   assert.match(flowNode, /flow-judge-controls/, "JEV 判断节点没有配置面板");
+  assert.match(flowNode, /flow-node-state/, "节点没有运行状态显示");
+  assert.match(flowNode, /flow-enabled-row/, "LLM 节点没有 bool enabled 输入");
   assert.match(flowNode, /id="state"/, "JEV 判断节点没有场景状态输入");
   assert.match(flowNode, /type === 'text'/, "纯文本节点没有渲染分支");
   assert.match(flowNode, /getComputedStyle\(node\)\.height/, "拖拽缩放没有用 CSS 像素高度（会被画布缩放放大/缩小）");
@@ -648,6 +651,11 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(css, /\.flow-node-sidebar, \.flow-bottom \{[^}]*overflow-y:\s*auto/, "侧栏/底栏不能上下滚动");
   assert.match(css, /--flow-history:\s*#f2994a/, "历史类型不是橙色");
   assert.match(css, /\.flow-port-string\s*\{[^}]*background:\s*var\(--flow-string\)/, "字符串端口没有按数据类型染色");
+  assert.match(css, /\.flow-port-bool\s*\{[^}]*background:\s*var\(--flow-bool\)/, "bool 端口没有独立色");
+  assert.match(css, /\.flow-port-number\s*\{[^}]*background:\s*var\(--flow-number\)/, "number 端口没有独立色");
+  assert.match(css, /\.flow-port-choice|--flow-choice/, "choice 端口没有独立色");
+  assert.match(css, /\.flow-edge-bool/, "bool 连线没有独立色");
+
   assert.ok(!/\.flow-node[^\n]*\{[^}]*border-left:\s*3px/.test(css), "节点卡片还在用左侧色条");
   assert.match(css, /\.flow-node-head \{[^}]*background:\s*color-mix/, "节点卡片没有类型色表头");
   assert.match(css, /\.flow-node-text \{\s*--flow-node-accent:/, "纯文本节点没有独立强调色");

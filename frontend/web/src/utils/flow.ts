@@ -9,7 +9,7 @@ export const FLOW_VERSION = 1;
 export const DEFAULT_JOIN_SEPARATOR = "\n\n---\n\n";
 export const FLOW_NODE_TYPES = ["input", "text", "history", "trim", "merge", "llm", "join", "judge", "output"] as const;
 export type FlowNodeType = (typeof FLOW_NODE_TYPES)[number];
-export type FlowDataType = "string" | "messages";
+export type FlowDataType = "string" | "messages" | "bool" | "number" | "choice";
 
 export const TRIM_MODES = [
   { value: "tail", title: "保留最近 N 条" },
@@ -33,7 +33,7 @@ export function flowSourceType(node: FlowNode | undefined, handle?: string): Flo
     case "join":
       return h === "out" || /^out-\d+$/.test(h) ? "string" : null;
     case "judge":
-      return h === "out" ? "string" : null;
+      return h === "out" ? judgeAnswerType(node) : null;
     case "history":
     case "trim":
     case "merge":
@@ -50,6 +50,7 @@ export function flowTargetType(node: FlowNode | undefined, handle?: string): Flo
   const h = norm(handle, "in");
   switch (node.type) {
     case "llm":
+      if (h === "enabled") return "bool";
       if (h.startsWith("history-")) return "messages";
       return h.startsWith("prompt-") ? "string" : null;
     case "trim":
@@ -65,6 +66,11 @@ export function flowTargetType(node: FlowNode | undefined, handle?: string): Flo
     default:
       return null;
   }
+}
+
+export function judgeAnswerType(node: FlowNode | undefined): FlowDataType {
+  const type = String(node?.data?.answer_type ?? "string");
+  return type === "bool" || type === "number" || type === "choice" ? type : "string";
 }
 
 export function trimModeOf(data?: Record<string, any> | null): TrimMode {
@@ -205,6 +211,8 @@ export function flowIssues(graph: FlowGraph): string[] {
     if (node.type === "judge") {
       if (!String(node.data?.provider ?? "").trim()) issues.push("JEV 判断节点还没选渠道");
       if (!String(node.data?.model ?? "").trim()) issues.push("JEV 判断节点还没填模型");
+      const answerType = String(node.data?.answer_type ?? "string");
+      if (!["string", "bool", "number", "choice"].includes(answerType)) issues.push("JEV 判断节点的答案类型不认识");
       const raw = node.data?.questions;
       if (typeof raw !== "string" || !raw.trim()) {
         issues.push("JEV 判断节点还没有 questions");

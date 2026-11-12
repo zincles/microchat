@@ -24,10 +24,12 @@ const props = withDefaults(defineProps<{
   graph?: FlowGraph | null;
   agentId?: string;
   activeNodeId?: string;
+  nodeStates?: Record<string, string>;
 }>(), {
   graph: null,
   agentId: "",
   activeNodeId: "",
+  nodeStates: () => ({}),
 });
 const emit = defineEmits<{ "update:graph": [graph: FlowGraph] }>();
 const api = sharedApi();
@@ -50,9 +52,14 @@ const nodeTypes = { input: FlowNode, text: FlowNode, history: FlowNode, trim: Fl
 const initial = normalizeFlowGraph(props.graph ?? emptyFlowGraph());
 const nodes = ref<any[]>(initial.nodes.map((n) => ({ ...n, data: { ...(n.data ?? {}) } })));
 const historyExists = computed(() => nodes.value.some((n) => n.type === "history"));
-const edgeClass = (edge: { source: string; sourceHandle?: string }, nodeList: any[] = nodes.value): string =>
-  flowSourceType(nodeList.find((n) => n.id === edge.source), edge.sourceHandle) === "messages"
-    ? "flow-edge-history" : "flow-edge-text";
+const edgeClass = (edge: { source: string; sourceHandle?: string }, nodeList: any[] = nodes.value): string => {
+  const type = flowSourceType(nodeList.find((n) => n.id === edge.source), edge.sourceHandle);
+  if (type === "messages") return "flow-edge-history";
+  if (type === "bool") return "flow-edge-bool";
+  if (type === "number") return "flow-edge-number";
+  if (type === "choice") return "flow-edge-choice";
+  return "flow-edge-text";
+};
 const edges = ref<any[]>(initial.edges.map((e) => ({ ...e, class: edgeClass(e, initial.nodes) })));
 
 
@@ -138,6 +145,7 @@ function toGraph(): FlowGraph {
     nodes: nodes.value.map((n) => {
       const data = { ...(n.data ?? {}) };
       delete data.test; // 测试结果只活在编辑器里，绝不写回 Graph
+      delete data.runState; // 运行状态只活在界面上
       return {
         id: String(n.id),
         type: String(n.type ?? "llm"),
@@ -276,6 +284,16 @@ async function runTest(): Promise<void> {
 
 // 位置、连线、节点内 Prompt 条目都是深层数据；一有变化就把整张图交回 AgentEditor。
 watch([nodes, edges], () => emit("update:graph", toGraph()), { deep: true });
+// 运行状态是独立的展示层数据：不进 Graph、不触发自动保存。
+watch(() => props.nodeStates, (states) => {
+  const map = states ?? {};
+  nodes.value = nodes.value.map((n) => {
+    const data = { ...(n.data ?? {}) };
+    const state = map[String(n.id)];
+    if (state) data.runState = state; else delete data.runState;
+    return { ...n, data };
+  });
+}, { deep: true, immediate: true });
 </script>
 
 <template>

@@ -577,6 +577,7 @@ export interface FlowTestStep {
   output?: string;
   reasoning?: string;
   user?: string;
+  status?: string;
   error?: string;
   provider?: string;
   model?: string;
@@ -606,6 +607,7 @@ export interface FlowRunTrace {
   active_node_id?: string;
   active_llm_calls?: number;
   active_nodes?: FlowActiveNode[];
+  node_states?: Record<string, string>;
   final?: string;
   started_at: number;
   duration_ms: number;

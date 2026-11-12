@@ -1790,7 +1790,8 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
   --vf-node-text: var(--md-on-surface);
   --vf-handle: var(--md-primary);
   --vf-connection-path: var(--md-primary);
-  --flow-string: var(--vf-handle); --flow-history: #f2994a;
+  --flow-string: #6ea8fe; --flow-history: #f2994a; --flow-bool: #55d6a7;
+  --flow-number: #b388ff; --flow-choice: #ff7eb6;
   height: min(54vh, 560px); min-height: 300px; border: 1px solid var(--md-outline-variant);
   border-radius: var(--md-shape-md); overflow: hidden; background: var(--md-surface-container-low); }
 .flow-canvas .vue-flow { background: var(--md-surface-container-low); }
@@ -1809,6 +1810,9 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-canvas .vue-flow__edge-path { stroke: var(--vf-connection-path); stroke-width: 1.5; }
 .flow-canvas .flow-edge-history .vue-flow__edge-path { stroke: var(--flow-history) !important; }
 .flow-canvas .flow-edge-text .vue-flow__edge-path { stroke: var(--flow-string) !important; }
+.flow-canvas .flow-edge-bool .vue-flow__edge-path { stroke: var(--flow-bool) !important; }
+.flow-canvas .flow-edge-number .vue-flow__edge-path { stroke: var(--flow-number) !important; }
+.flow-canvas .flow-edge-choice .vue-flow__edge-path { stroke: var(--flow-choice) !important; }
 .flow-canvas .vue-flow__connection-path { stroke: var(--md-primary); stroke-width: 2; }
 /* Controls 默认是白底大圆角按钮，和 MD3 主题格格不入；压成面板里的一组小图标键。 */
 .flow-canvas .vue-flow__controls { box-shadow: var(--md-elev-2); border-radius: var(--r-md); overflow: hidden; }
@@ -1844,6 +1848,9 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 /* 端口颜色 = 数据类型：字符串蓝、messages[] 橙。连线颜色用的是同一对 token。 */
 .flow-canvas .flow-node .vue-flow__handle.flow-port-string { background: var(--flow-string) !important; }
 .flow-canvas .flow-node .vue-flow__handle.flow-port-messages { background: var(--flow-history) !important; }
+.flow-canvas .flow-node .vue-flow__handle.flow-port-bool { background: var(--flow-bool) !important; }
+.flow-canvas .flow-node .vue-flow__handle.flow-port-number { background: var(--flow-number) !important; }
+.flow-canvas .flow-node .vue-flow__handle.flow-port-choice { background: var(--flow-choice) !important; }
 .flow-canvas .flow-node .vue-flow__handle:hover { background: var(--md-secondary) !important; }
 .flow-node-body { margin-top: 0.35em; color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
 .flow-node-body code { color: var(--md-primary); font-size: 0.95em; }
@@ -2194,3 +2201,21 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-judge-controls { display: flex; flex-direction: column; gap: 0.35em; margin-top: 0.45em; }
 .flow-judge-field { display: flex; flex-direction: column; gap: 0.15em; color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
 .flow-judge-field .v-field__input { font-size: var(--md-type-label-small); }
+/* 节点运行状态：等待 / 进行 / 完成。状态点 + 轻微透明度变化，不改布局。 */
+.flow-node-state { flex: none; display: inline-flex; align-items: center; gap: 0.2em;
+  margin-left: auto; color: var(--md-on-surface-variant); font-size: 0.62em; white-space: nowrap; }
+.flow-node-state-dot { width: 0.55em; height: 0.55em; border-radius: 50%; background: currentColor; opacity: 0.55; }
+.flow-node-is-waiting { opacity: 0.78; }
+.flow-node-is-running { border-color: var(--flow-node-accent);
+  box-shadow: 0 0 0 1px var(--flow-node-accent), var(--md-elev-2); }
+.flow-node-is-running .flow-node-state { color: var(--flow-node-accent); }
+.flow-node-is-running .flow-node-state-dot { opacity: 1; animation: flow-state-pulse 1s ease-in-out infinite; }
+.flow-node-is-done .flow-node-state { color: var(--tg-ok); }
+.flow-node-is-done .flow-node-state-dot { opacity: 0.85; background: var(--tg-ok); }
+@keyframes flow-state-pulse { 50% { transform: scale(0.55); opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .flow-node-is-running .flow-node-state-dot { animation: none; } }
+
+.flow-enabled-row { position: relative; display: flex; align-items: center; min-height: 1.6em;
+  margin-top: 0.45em; padding-left: 0.8em; color: var(--md-on-surface-variant);
+  font-size: var(--md-type-label-small); }
+.flow-enabled-row .vue-flow__handle-left { left: 0; }

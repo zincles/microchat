@@ -1565,7 +1565,13 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   输入 / 纯文本 / 调用 LLM / 裁剪 messages / 拼接 messages / 拼接和复制 / 输出。LLM 节点内是 Prompt 列表（role + 左侧输入孔 + 手写正文）；
   每个 LLM 节点带 `max_retry`（缺省 3，**首次失败后再试几次**）；重试耗尽仍失败 ⇒ 整次 FlowAgent 失败，不产出半条回复。
   **纯文本节点**：没有输入，只有一个 string 输出；`data.text` 就是它吐出的常量，可接给 Prompt / join / `output.user` 等任意 string 端口。
-  **JEV 判断节点**（`judge`）：左侧接一个 `state` 字符串，节点里填 systemone 渠道、决策模型、`questions` JSON 和可选 `answer_key`；输出是 answers JSON（或指定 key 的值）。它不生成文本，也不自动改世界状态。
+  **JEV 判断节点**（`judge`）：左侧接一个 `state` 字符串，节点里填 systemone 渠道、决策模型、`questions` JSON、答案类型（string / bool / number / choice）和可选 `answer_key`；输出是 answers JSON（或指定 key 的值）。它不生成文本，也不自动改世界状态。
+  **数据流执行**（2026-11-12）：执行器不再无条件遍历所有节点，而是工作队列 ——
+  节点只在自己**已连接**的输入都收到值后才运行；未连接的输入端口视为“不需要”，不会阻塞
+  （例如 `output.user` 不接线就不覆写用户输入）。没有任何输入节点的节点（input / text / history）立即就绪。
+  节点状态是 `等待 / 进行 / 完成`，通过 Flow trace 的 `node_states` 实时送到工作流面板。
+  端口按类型着色：string 蓝 / messages 橙 / bool 绿 / number 紫 / choice 粉；
+  LLM 节点可选 `enabled` bool 输入（false ⇒ 跳过该节点，不调模型）。
   **输出节点有三个输入端口**：`text`（助手正文）/ `reasoning`（思考）/ `user`（**写入历史的用户消息**）。
   `user` 接上游（例如把润色后的文本接进来），这一轮图跑完后用它覆盖刚落的用户消息，再写 assistant；
   **Accept 与 Resend 都覆盖**（Resend 改的是“最后一条被回答的 user”，不是新回复的 id）；

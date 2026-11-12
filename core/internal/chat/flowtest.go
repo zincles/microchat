@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -34,6 +35,7 @@ type FlowTestStep struct {
 	Output    string          `json:"output,omitempty"`
 	Reasoning string          `json:"reasoning,omitempty"`
 	User      string          `json:"user,omitempty"`
+	Status    string          `json:"status,omitempty"`
 	Error     string          `json:"error,omitempty"`
 	Provider  string          `json:"provider,omitempty"`
 	Model     string          `json:"model,omitempty"`
@@ -80,6 +82,11 @@ type flowValue struct {
 	Reasoning string
 	User      string
 	Messages  []providers.ChatMessage
+	// Bool / Number / Choice 是 judge 节点的类型化出口；Text 仍保留一份可读表示，
+	// 旧节点不需要认识这些字段。
+	Bool   *bool
+	Number *float64
+	Choice string
 }
 
 const defaultJoinSeparator = "\n\n---\n\n"
@@ -146,7 +153,44 @@ func (s *Service) executeFlowGraph(ctx context.Context, graph flowGraph, opts fl
 	values := map[string]flowValue{}
 	steps := make([]FlowTestStep, 0, len(order))
 	var lastResult providers.Result
-	for _, node := range order {
+	// 数据流执行：节点只在自己**已连接**的输入都收到值之后才可运行。
+	// 拓扑顺序仍用来挑下一个可运行节点（保证确定性），但不再无条件把所有节点跑一遍。
+	incoming := map[string][]flowEdge{}
+	for _, edge := range graph.Edges {
+		incoming[edge.Target] = append(incoming[edge.Target], edge)
+	}
+	done := map[string]bool{}
+	ready := func(node flowNode) bool {
+		for _, edge := range incoming[node.ID] {
+			if !done[edge.Source] {
+				return false
+			}
+		}
+		return true
+	}
+	for {
+		var current *flowNode
+		for index := range order {
+			if done[order[index].ID] || !ready(order[index]) {
+				continue
+			}
+			current = &order[index]
+			break
+		}
+		if current == nil {
+			if len(done) == len(order) {
+				break
+			}
+			blocked := make([]string, 0)
+			for _, node := range order {
+				if !done[node.ID] {
+					blocked = append(blocked, node.ID)
+				}
+			}
+			err := fmt.Errorf("流程死锁：这些节点的输入永远等不到：%s", strings.Join(blocked, ", "))
+			return flowRunOutcome{Result: FlowTestResult{Steps: steps}}, err
+		}
+		node := *current
 		if opts.OnNode != nil {
 			opts.OnNode(node, "start")
 		}
@@ -158,6 +202,20 @@ func (s *Service) executeFlowGraph(ctx context.Context, graph flowGraph, opts fl
 			}
 		}
 		step := FlowTestStep{ID: node.ID, Type: node.Type, Inputs: inputs}
+		typed := flowValue{}
+		if node.Type == "llm" && !flowNodeEnabled(node, graph.Edges, values) {
+			step.Label = flowNodeLabel(node.Type)
+			step.Status = "skipped"
+			values[flowKey(node.ID, "out")] = flowValue{}
+			values[flowKey(node.ID, "text")] = flowValue{}
+			values[flowKey(node.ID, "reasoning")] = flowValue{}
+			steps = append(steps, step)
+			done[node.ID] = true
+			if opts.OnNode != nil {
+				opts.OnNode(node, "done")
+			}
+			continue
+		}
 		switch node.Type {
 		case "input":
 			step.Label = "输入"
@@ -248,6 +306,14 @@ func (s *Service) executeFlowGraph(ctx context.Context, graph flowGraph, opts fl
 			}
 			encoded, _ := json.Marshal(value)
 			step.Output = string(encoded)
+			switch strings.TrimSpace(flowNodeDataString(node, "answer_type")) {
+			case "bool":
+				typed.Bool = flowAnswerBool(value, flowNodeFloat(node, "threshold", 0.5))
+			case "number":
+				typed.Number = flowAnswerNumber(value)
+			case "choice":
+				typed.Choice = flowAnswerChoice(value)
+			}
 		case "llm":
 			step.Label = "调用 LLM"
 			nodeProvider, nodeModel := opts.DefaultProvider, opts.DefaultModel
@@ -278,7 +344,7 @@ func (s *Service) executeFlowGraph(ctx context.Context, graph flowGraph, opts fl
 			steps = append(steps, step)
 			return flowRunOutcome{Result: FlowTestResult{Steps: steps}}, err
 		}
-		values[flowKey(node.ID, "out")] = flowValue{Text: step.Output, Reasoning: step.Reasoning, User: step.User}
+		values[flowKey(node.ID, "out")] = flowValue{Text: step.Output, Reasoning: step.Reasoning, User: step.User, Bool: typed.Bool, Number: typed.Number, Choice: typed.Choice}
 		if node.Type == "history" || node.Type == "trim" || node.Type == "merge" {
 			values[flowKey(node.ID, "out")] = flowValue{Text: step.Output, Messages: nodeMessages}
 		}
@@ -291,7 +357,9 @@ func (s *Service) executeFlowGraph(ctx context.Context, graph flowGraph, opts fl
 			values[flowKey(node.ID, "text")] = flowValue{Text: step.Output}
 			values[flowKey(node.ID, "reasoning")] = flowValue{Reasoning: step.Reasoning}
 		}
+		step.Status = "done"
 		steps = append(steps, step)
+		done[node.ID] = true
 		if opts.OnNode != nil {
 			opts.OnNode(node, "done")
 		}
@@ -765,6 +833,125 @@ func topoFlow(graph flowGraph) ([]flowNode, error) {
 		return nil, errors.New("流程图里有环")
 	}
 	return out, nil
+}
+
+// flowNodeFloat：节点里可选的数值配置（没有 / 非法就用默认）。
+func flowNodeFloat(node flowNode, key string, fallback float64) float64 {
+	raw, ok := node.Data[key]
+	if !ok {
+		return fallback
+	}
+	switch value := raw.(type) {
+	case float64:
+		return value
+	case int:
+		return float64(value)
+	case int64:
+		return float64(value)
+	case json.Number:
+		if parsed, err := value.Float64(); err == nil {
+			return parsed
+		}
+	case string:
+		if parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64); err == nil {
+			return parsed
+		}
+	}
+	return fallback
+}
+
+// flowAnswerBool：把 JEV 的答案按 bool 解释。bool 直接认；数字按阈值；
+// 常见的 {probability/confidence/score} 对象取其中的数。
+func flowAnswerBool(value any, threshold float64) *bool {
+	switch answer := value.(type) {
+	case bool:
+		return &answer
+	case float64:
+		result := answer >= threshold
+		return &result
+	case int:
+		result := float64(answer) >= threshold
+		return &result
+	case map[string]any:
+		for _, key := range []string{"probability", "confidence", "score", "value"} {
+			if raw, ok := answer[key]; ok {
+				if number := flowAnswerNumber(raw); number != nil {
+					result := *number >= threshold
+					return &result
+				}
+			}
+		}
+		if raw, ok := answer["bool"]; ok {
+			if parsed, ok := raw.(bool); ok {
+				return &parsed
+			}
+		}
+	}
+	if text, ok := value.(string); ok {
+		switch strings.ToLower(strings.TrimSpace(text)) {
+		case "true", "yes", "on", "1":
+			result := true
+			return &result
+		case "false", "no", "off", "0":
+			result := false
+			return &result
+		}
+	}
+	return nil
+}
+
+func flowAnswerNumber(value any) *float64 {
+	switch answer := value.(type) {
+	case float64:
+		return &answer
+	case int:
+		number := float64(answer)
+		return &number
+	case map[string]any:
+		for _, key := range []string{"score", "probability", "confidence", "value"} {
+			if raw, ok := answer[key]; ok {
+				if number := flowAnswerNumber(raw); number != nil {
+					return number
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func flowAnswerChoice(value any) string {
+	switch answer := value.(type) {
+	case string:
+		return answer
+	case map[string]any:
+		for _, key := range []string{"choice", "selected", "label"} {
+			if raw, ok := answer[key]; ok {
+				if text, ok := raw.(string); ok {
+					return text
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// flowNodeEnabled：LLM 节点的可选 `enabled` 控制端口。没接 = 默认启用；
+// 接了且为 false ⇒ 跳过（不调模型、所有输出为空）。
+func flowNodeEnabled(node flowNode, edges []flowEdge, values map[string]flowValue) bool {
+	for _, edge := range edges {
+		if edge.Target != node.ID || edge.TargetHandle != "enabled" {
+			continue
+		}
+		value := values[flowKey(edge.Source, edge.SourceHandle)]
+		if value.Bool != nil {
+			return *value.Bool
+		}
+		text := strings.ToLower(strings.TrimSpace(value.Text))
+		if text == "false" || text == "0" || text == "no" || text == "off" {
+			return false
+		}
+	}
+	return true
 }
 
 // flowJudgeQuestions：节点配置里的 questions 可以是 JSON 字符串（编辑器存的就是字符串），

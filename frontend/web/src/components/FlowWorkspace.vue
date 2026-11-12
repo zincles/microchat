@@ -28,6 +28,7 @@ const savedLabel = computed(() => {
   return `已保存（${seconds}秒之前）`;
 });
 const activeNodeId = ref("");
+const nodeStates = ref<Record<string, string>>({});
 let pollTimer: number | null = null;
 let tickTimer: number | null = null;
 let timer: number | null = null;
@@ -54,8 +55,10 @@ async function pollActive(): Promise<void> {
   try {
     const trace = await api.flowRun(props.sessionId);
     activeNodeId.value = trace?.active_node_id ?? "";
+    nodeStates.value = trace?.node_states ?? {};
   } catch {
     activeNodeId.value = "";
+    nodeStates.value = {};
   }
 }
 
@@ -87,6 +90,7 @@ watch(() => props.agent?.id, () => {
   graph.value = normalizeFlowGraph(props.agent?.flow ?? null);
   savedSnapshot.value = JSON.stringify(graph.value);
   savedAt.value = null;
+  nodeStates.value = {};
   status.value = "";
 });
 onMounted(() => {
@@ -109,7 +113,7 @@ onBeforeUnmount(() => {
       <span class="flow-workspace-status">{{ savedLabel }}</span>
     </div>
     <FlowEditor v-if="props.agent?.id" :graph="graph" :agent-id="props.agent.id"
-      :active-node-id="activeNodeId" @update:graph="onGraph" />
+      :active-node-id="activeNodeId" :node-states="nodeStates" @update:graph="onGraph" />
     <p v-else class="ws-draft-note">这是草稿，还没有保存的 FlowAgent 可以编辑。</p>
   </section>
 </template>

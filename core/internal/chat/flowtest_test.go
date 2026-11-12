@@ -17,6 +17,38 @@ import (
 	"microchat/internal/store"
 )
 
+func TestFlowEnabledGateSkipsLLM(t *testing.T) {
+	h := newHarness(t, dummyProviders(), "dummy", "dummy")
+	graph := flowGraph{Nodes: []flowNode{
+		{ID: "in", Type: "input"},
+		{ID: "off", Type: "text", Data: map[string]any{"text": "false"}},
+		{ID: "llm", Type: "llm", Data: map[string]any{"prompts": []any{map[string]any{"id": "p1", "role": "system", "content": "写"}}}},
+		{ID: "out", Type: "output"},
+	}, Edges: []flowEdge{
+		{ID: "e1", Source: "in", SourceHandle: "out", Target: "llm", TargetHandle: "prompt-p1"},
+		{ID: "e2", Source: "off", SourceHandle: "out", Target: "llm", TargetHandle: "enabled"},
+		{ID: "e3", Source: "llm", SourceHandle: "text", Target: "out", TargetHandle: "text"},
+	}}
+	out, err := h.service.executeFlowGraph(context.Background(), graph, flowRunOptions{
+		Input: "原话", DefaultProvider: "dummy", DefaultModel: "dummy", ProvidersConfig: dummyProviders(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var llmStep *FlowTestStep
+	for index := range out.Result.Steps {
+		if out.Result.Steps[index].ID == "llm" {
+			llmStep = &out.Result.Steps[index]
+		}
+	}
+	if llmStep == nil || llmStep.Status != "skipped" || llmStep.Output != "" {
+		t.Fatalf("enabled=false 的 LLM 应跳过：%+v", out.Result.Steps)
+	}
+	if out.Final.Text != "" {
+		t.Fatalf("跳过后的输出应为空：%q", out.Final.Text)
+	}
+}
+
 func TestFlowJudgeNodeCallsSystemOne(t *testing.T) {
 	var body map[string]any
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
