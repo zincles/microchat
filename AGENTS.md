@@ -1563,7 +1563,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   输入 / 纯文本 / 调用 LLM / 裁剪 messages / 拼接 messages / 拼接和复制 / 输出。LLM 节点内是 Prompt 列表（role + 左侧输入孔 + 手写正文）；
   **节点结构先登记在 `utils/flowSpecs.ts` 的 `FLOW_NODE_SPECS`**（label / badge / hint / category / defaults / inputs / outputs）：
   `FlowNode.vue` 的显示元信息、`FlowEditor` 的添加菜单与默认 data、`flow.ts` 的端口类型都从这里读；
-  新增节点不允许只往模板/switch 里堆代码，必须先有 spec（下一阶段把运行时 runner 也收进同一张表）。
+  新增节点不允许只往模板/switch 里堆代码，必须先有 spec；运行时行为在 `flowNodeRunners` 里登记，执行器只调度。
   每个 LLM 节点带 `max_retry`（缺省 3，**首次失败后再试几次**）；重试耗尽仍失败 ⇒ 整次 FlowAgent 失败，不产出半条回复。
   **纯文本节点**：没有输入，只有一个 string 输出；`data.text` 就是它吐出的常量，可接给 Prompt / join / `output.user` 等任意 string 端口。
   **JEV 判断节点**（`judge`）：左侧接一个 `state` 字符串，节点里填 systemone 渠道、决策模型、`questions` JSON、答案类型（string / bool / number / choice）和可选 `answer_key`；输出是 answers JSON（或指定 key 的值）。它不生成文本，也不自动改世界状态。

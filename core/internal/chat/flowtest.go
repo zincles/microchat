@@ -140,8 +140,8 @@ func (s *Service) TestFlow(ctx context.Context, flowAgent config.Agent, message,
 	return outcome.Result, err
 }
 
-// executeFlowGraph：FlowAgent 的唯一执行器。编辑器测试与聊天运行时共用这一份 switch，
-// 区别只在 opts：测试没有会话（history 空、每次 LLM 用随机 id），运行时骑真实会话。
+// executeFlowGraph：FlowAgent 的唯一调度器。节点行为在 flowNodeRunners，
+// 这里只负责就绪、调用与传播；测试与聊天运行时共用。
 func (s *Service) executeFlowGraph(ctx context.Context, graph flowGraph, opts flowRunOptions) (flowRunOutcome, error) {
 	if err := validateTestGraph(graph); err != nil {
 		return flowRunOutcome{}, err
@@ -216,150 +216,27 @@ func (s *Service) executeFlowGraph(ctx context.Context, graph flowGraph, opts fl
 			}
 			continue
 		}
-		switch node.Type {
-		case "input":
-			step.Label = "输入"
-			step.Output = opts.Input
-		case "text":
-			step.Label = "纯文本"
-			step.Output = flowNodeDataString(node, "text")
-		case "history":
-			step.Label = "历史数据"
-			nodeMessages = append([]providers.ChatMessage{}, opts.History...)
-			step.Output = fmt.Sprintf("messages[%d]", len(nodeMessages))
-		case "trim":
-			step.Label = "裁剪 messages"
-			for _, edge := range graph.Edges {
-				if edge.Target == node.ID {
-					nodeMessages = append(nodeMessages, sourceMessages(values, edge)...)
-				}
-			}
-			nodeMessages = trimFlowMessages(filterFlowRoles(nodeMessages, flowTrimRoles(node)), flowTrimMode(node), flowTrimCount(node))
-			step.Output = fmt.Sprintf("messages[%d]", len(nodeMessages))
-		case "merge":
-			step.Label = "拼接 messages"
-			for _, port := range flowMergeInputs(node) {
-				for _, edge := range graph.Edges {
-					if edge.Target == node.ID && (edge.TargetHandle == port || (port == "in-1" && edge.TargetHandle == "")) {
-						nodeMessages = append(nodeMessages, sourceMessages(values, edge)...)
-					}
-				}
-			}
-			step.Output = fmt.Sprintf("messages[%d]", len(nodeMessages))
-		case "join":
-			step.Label = "拼接和复制"
-			// 按**端口顺序**拼，而不是按 edges 在 JSON 里的顺序拼。
-			// 复杂图里用户先接 in-2 再接 in-1 时，旧实现会把顺序拼反。
-			ordered := make([]string, 0, len(inputs))
-			for _, port := range flowJoinInputs(node) {
-				for _, edge := range graph.Edges {
-					if edge.Target != node.ID {
-						continue
-					}
-					handle := edge.TargetHandle
-					if handle == "" && port == "in-1" {
-						handle = "in-1"
-					}
-					if handle == port {
-						ordered = append(ordered, sourceValue(values, edge))
-					}
-				}
-			}
-			step.Output = joinFlowInputs(ordered, flowJoinSeparator(node))
-		case "user_output":
-			step.Label = "用户消息"
-			if len(inputs) > 0 {
-				step.User = inputs[0]
-			}
-		case "output":
-			step.Label = "输出"
-			for _, edge := range graph.Edges {
-				if edge.Target != node.ID {
-					continue
-				}
-				handle := edge.TargetHandle
-				if handle == "" || handle == "in" {
-					// 老 output 只有一个 `in`：按源端口解释，reasoning 源仍落到 reasoning。
-					if edge.SourceHandle == "reasoning" {
-						handle = "reasoning"
-					} else {
-						handle = "text"
-					}
-				}
-				switch handle {
-				case "text":
-					step.Output = sourceValue(values, edge)
-				case "reasoning":
-					step.Reasoning = sourceValue(values, edge)
-				case "user":
-					step.User = sourceValue(values, edge)
-				}
-			}
-		case "judge":
-			step.Label = "JEV 判断"
-			stateText := strings.Join(inputs, "\n\n")
-			questions, parseErr := flowJudgeQuestions(node)
-			if parseErr != nil {
-				step.Error = parseErr.Error()
-				steps = append(steps, step)
-				return flowRunOutcome{Result: FlowTestResult{Steps: steps}}, parseErr
-			}
-			answers, judgeErr := s.flowJudge(ctx, opts.SessionID, node, stateText, questions, opts.ProvidersConfig)
-			if judgeErr != nil {
-				step.Error = judgeErr.Error()
-				steps = append(steps, step)
-				return flowRunOutcome{Result: FlowTestResult{Steps: steps}}, judgeErr
-			}
-			value := any(answers)
-			if key := flowNodeDataString(node, "answer_key"); key != "" {
-				var ok bool
-				value, ok = answers[key]
-				if !ok {
-					err = fmt.Errorf("JEV 判断节点 %s 的 answer_key %q 不在 answers 里", node.ID, key)
-					step.Error = err.Error()
-					steps = append(steps, step)
-					return flowRunOutcome{Result: FlowTestResult{Steps: steps}}, err
-				}
-			}
-			encoded, _ := json.Marshal(value)
-			step.Output = string(encoded)
-			switch strings.TrimSpace(flowNodeDataString(node, "answer_type")) {
-			case "bool":
-				typed.Bool = flowAnswerBool(value, flowNodeFloat(node, "threshold", 0.5))
-			case "number":
-				typed.Number = flowAnswerNumber(value)
-			case "choice":
-				typed.Choice = flowAnswerChoice(value)
-			}
-		case "llm":
-			step.Label = "调用 LLM"
-			nodeProvider, nodeModel := opts.DefaultProvider, opts.DefaultModel
-			if value, ok := node.Data["provider"].(string); ok && strings.TrimSpace(value) != "" {
-				nodeProvider = strings.TrimSpace(value)
-			}
-			if value, ok := node.Data["model"].(string); ok && strings.TrimSpace(value) != "" {
-				nodeModel = strings.TrimSpace(value)
-			}
-			callStarted := time.Now()
-			result, payload, callErr := s.flowLLMCall(ctx, node, graph.Edges, values, nodeProvider, nodeModel, opts.SessionID, opts.ProvidersConfig)
-			step.Provider = nodeProvider
-			step.Model = nodeModel
-			step.Usage = result.Usage
-			step.ElapsedMS = time.Since(callStarted).Milliseconds()
-			step.Payload = payload
-			if callErr != nil {
-				step.Error = callErr.Error()
-				steps = append(steps, step)
-				return flowRunOutcome{Result: FlowTestResult{Steps: steps}}, callErr
-			}
-			lastResult = result
-			step.Output = result.Text
-			step.Reasoning = result.Reasoning
-		default:
+		runner, ok := flowNodeRunners[node.Type]
+		if !ok {
 			err = fmt.Errorf("不认识的节点类型：%s", node.Type)
 			step.Error = err.Error()
 			steps = append(steps, step)
 			return flowRunOutcome{Result: FlowTestResult{Steps: steps}}, err
+		}
+		run := &flowNodeRun{
+			service: s, ctx: ctx, node: node, graph: graph, values: values, opts: opts, step: step,
+		}
+		if runErr := runner(run); runErr != nil {
+			step = run.step
+			step.Error = runErr.Error()
+			steps = append(steps, step)
+			return flowRunOutcome{Result: FlowTestResult{Steps: steps}}, runErr
+		}
+		step = run.step
+		nodeMessages = run.messages
+		typed = run.typed
+		if run.lastSet {
+			lastResult = run.last
 		}
 		values[flowKey(node.ID, "out")] = flowValue{Text: step.Output, Reasoning: step.Reasoning, User: step.User, Bool: typed.Bool, Number: typed.Number, Choice: typed.Choice}
 		if node.Type == "history" || node.Type == "trim" || node.Type == "merge" {
