@@ -42,7 +42,7 @@ func SelectBackend(provider, model string, providersConfig config.ProvidersConfi
 	}
 	vendor := Vendor(found.Vendor)
 	if vendor == "" {
-		vendor = VendorCustom
+		return Backend{Name: BackendFallback}
 	}
 	if (Provider{Vendor: vendor}).EffectiveVendor() == VendorDummy {
 		return Backend{Name: BackendDummy, Provider: found}

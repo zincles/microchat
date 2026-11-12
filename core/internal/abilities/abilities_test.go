@@ -114,12 +114,6 @@ func TestTitleModelSource(t *testing.T) {
 	if got := TitleModelSource(bare); got != ModelSourceGlobal {
 		t.Fatalf("缺字段该是 global：%q", got)
 	}
-	legacy := Resolve(config.Agent{ID: "a", Abilities: map[string]config.AbilityToggle{
-		Title: {Provider: new("stub"), Model: new("m")},
-	}}, Title)
-	if got := TitleModelSource(legacy); got != ModelSourceAgent {
-		t.Fatalf("旧配置有 provider/model 该按 agent：%q", got)
-	}
 	for _, source := range []string{ModelSourceGlobal, ModelSourceSession, ModelSourceAgent} {
 		setting := Resolve(config.Agent{ID: "a", Abilities: map[string]config.AbilityToggle{
 			Title: {ModelSource: source},

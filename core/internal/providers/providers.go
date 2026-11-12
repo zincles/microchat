@@ -267,13 +267,8 @@ func ResolveProtocolFor(lookup func(providerID, upstreamID string) (string, bool
 	return ProtocolChatCompletion
 }
 
-// EffectiveVendor：空 Vendor 沿用 custom（旧配置里没写 vendor 的兜底）。
-func (p Provider) EffectiveVendor() Vendor {
-	if p.Vendor != "" {
-		return p.Vendor
-	}
-	return VendorCustom
-}
+// EffectiveVendor：渠道的 vendor；空值不兜底，交给 Validate 报错。
+func (p Provider) EffectiveVendor() Vendor { return p.Vendor }
 
 // ReportsCost：这家渠道会不会报"这一发花了多少钱"。
 //

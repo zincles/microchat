@@ -279,18 +279,16 @@ func flowKey(id, handle string) string {
 	return id + "\x00" + handle
 }
 
-// sourceValue：按 sourceHandle 取上游出口；旧图没有 sourceHandle 时回落到 out/text。
+// sourceValue：按 sourceHandle 取上游出口。
 func sourceValue(values map[string]flowValue, edge flowEdge) string {
-	if value, ok := values[flowKey(edge.Source, edge.SourceHandle)]; ok {
-		if edge.SourceHandle == "reasoning" {
-			return value.Reasoning
-		}
-		return value.Text
+	value, ok := values[flowKey(edge.Source, edge.SourceHandle)]
+	if !ok {
+		return ""
 	}
-	if value, ok := values[flowKey(edge.Source, "out")]; ok {
-		return value.Text
+	if edge.SourceHandle == "reasoning" {
+		return value.Reasoning
 	}
-	return ""
+	return value.Text
 }
 
 func flowJoinSeparator(node flowNode) string {
@@ -301,11 +299,7 @@ func flowJoinSeparator(node flowNode) string {
 }
 
 func sourceMessages(values map[string]flowValue, edge flowEdge) []providers.ChatMessage {
-	value, ok := values[flowKey(edge.Source, edge.SourceHandle)]
-	if !ok {
-		value = values[flowKey(edge.Source, "out")]
-	}
-	return value.Messages
+	return values[flowKey(edge.Source, edge.SourceHandle)].Messages
 }
 
 func flowLLMRetry(node flowNode) int {

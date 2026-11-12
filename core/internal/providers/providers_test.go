@@ -760,9 +760,8 @@ func TestValidateVendorProtocolMatrix(t *testing.T) {
 	if _, err := Build(systemone, Request{Model: "m", SessionID: "s"}); err == nil {
 		t.Fatal("systemone 走 Build 该报错")
 	}
-	// 都空→custom
-	if (Provider{ID: "e"}).EffectiveVendor() != VendorCustom {
-		t.Fatal("都空该兜到 custom")
+	if err := (Provider{ID: "e"}).Validate(); err == nil {
+		t.Fatal("空 vendor 该被拒绝")
 	}
 	if (Provider{ID: "e"}).EffectiveProtocol() != ProtocolChatCompletion {
 		t.Fatal("空 protocol 该缺省 chat")

@@ -126,7 +126,7 @@ func TestAgentPromptOverrideReachesTheWire(t *testing.T) {
 	stub := stubJSON(t, "山雨欲来", &body)
 	agent := &config.Agent{ID: "跑团", Name: "跑团主持人", SystemPrompt: "x",
 		Abilities: map[string]config.AbilityToggle{
-			abilities.Title: {Provider: new("stub"), Model: new("m"), Prompt: new("用武侠腔起名字，七个字以内。")},
+			abilities.Title: {ModelSource: "agent", Provider: new("stub"), Model: new("m"), Prompt: new("用武侠腔起名字，七个字以内。")},
 		}}
 	h := newHarness(t, config.ProvidersConfig{Providers: []config.Provider{
 		{ID: "dummy", Vendor: "dummy"},
@@ -210,7 +210,7 @@ func TestMaterialIsRestrainedAndStripsState(t *testing.T) {
 	var body []byte
 	stub := stubJSON(t, "假标题", &body)
 	agent := &config.Agent{ID: "跑团", Abilities: map[string]config.AbilityToggle{
-		abilities.Title: {Provider: new("stub"), Model: new("m")},
+		abilities.Title: {ModelSource: "agent", Provider: new("stub"), Model: new("m")},
 	}}
 	h := newHarness(t, config.ProvidersConfig{Providers: []config.Provider{
 		{ID: "dummy", Vendor: "dummy"},
@@ -254,7 +254,7 @@ func TestTitleRoutesByModelRouteTable(t *testing.T) {
 	t.Cleanup(stub.Close)
 
 	agent := &config.Agent{ID: "跑团", Abilities: map[string]config.AbilityToggle{
-		abilities.Title: {Provider: new("stub"), Model: new("m")},
+		abilities.Title: {ModelSource: "agent", Provider: new("stub"), Model: new("m")},
 	}}
 	mkProviders := func() config.ProvidersConfig {
 		return config.ProvidersConfig{Providers: []config.Provider{
@@ -335,10 +335,6 @@ func TestTitleModelSourceModes(t *testing.T) {
 	// 显式 agent 但没填完整 ⇒ 回落 global（不拼一个半截渠道/模型）
 	if got := run(abilities.ModelSourceAgent, "", ""); got.Provider != "stub" || got.Model != "global-m" {
 		t.Fatalf("agent 缺字段该回落 global：%+v", got)
-	}
-	// 旧配置：没有 model_source，只有 provider/model ⇒ 仍是 agent
-	if got := run("", "stub", "legacy-m"); got.Provider != "stub" || got.Model != "legacy-m" {
-		t.Fatalf("旧覆盖该继续按 agent：%+v", got)
 	}
 }
 

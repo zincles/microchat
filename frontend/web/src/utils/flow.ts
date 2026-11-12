@@ -14,13 +14,11 @@ export const FLOW_NODE_TYPES = Object.keys(FLOW_NODE_SPECS) as FlowNodeKind[];
 export type FlowNodeType = FlowNodeKind;
 export type FlowDataType = "string" | "messages" | "bool" | "number" | "choice";
 
-const norm = (handle?: string, fallback = "out"): string => handle || fallback;
-
 // 端口类型是连接校验的唯一依据：结构由 flowSpecs.ts 的 NodeSpec 提供。
 // 这里只保留两个兼容映射：老 join 的 `out`、老 output 的 `in`。
 export function flowSourceType(node: FlowNode | undefined, handle?: string): FlowDataType | null {
   if (!node) return null;
-  const h = norm(handle, "out");
+  const h = handle ?? "";
   const ports = flowOutputPorts(node);
   const port = ports.find((item) => item.handle === h);
   if (port) return port.type;
@@ -29,8 +27,7 @@ export function flowSourceType(node: FlowNode | undefined, handle?: string): Flo
 
 export function flowTargetType(node: FlowNode | undefined, handle?: string): FlowDataType | null {
   if (!node) return null;
-  const h = norm(handle, "in");
-  return flowInputPorts(node).find((item) => item.handle === h)?.type ?? null;
+  return flowInputPorts(node).find((item) => item.handle === (handle ?? ""))?.type ?? null;
 }
 
 export { judgeAnswerType };
@@ -79,7 +76,7 @@ export function formatFlowText(graph?: FlowGraph | null): string {
     for (const edge of outgoing) {
       const target = byID.get(edge.target);
       const targetLabel = target ? nodeLabelFor(target) : "?";
-      lines.push(`  ${edge.sourceHandle || "out"} → ${edge.target}:${edge.targetHandle || "in"} [${targetLabel}]`);
+      lines.push(`  ${edge.sourceHandle} → ${edge.target}:${edge.targetHandle} [${targetLabel}]`);
     }
   }
   return lines.join("\n");
@@ -145,8 +142,8 @@ export function flowIssues(graph: FlowGraph): string[] {
   for (const edge of edges) {
     if (!byId.has(edge.source) || !byId.has(edge.target)) issues.push("有连线指向不存在的节点");
     if (edge.source === edge.target) issues.push("节点不能连到自己");
-    const sourceHandle = edge.sourceHandle || "out";
-    const targetHandle = edge.targetHandle || "in";
+    const sourceHandle = edge.sourceHandle ?? "";
+    const targetHandle = edge.targetHandle ?? "";
     const sourceKey = `${edge.source}\0${sourceHandle}`;
     const targetKey = `${edge.target}\0${targetHandle}`;
     if (usedSources.has(sourceKey)) issues.push("一个出口只能接一条线（要多路请用拼接节点）");
@@ -221,8 +218,8 @@ export function flowDebugSteps(graph: FlowGraph): FlowDebugStep[] {
   const edges = graph.edges ?? [];
   const values = new Map<string, { text: string; reasoning: string }>();
   const source = (edge: { source: string; sourceHandle?: string }): string => {
-    const handle = edge.sourceHandle || "out";
-    const value = values.get(`${edge.source}\0${handle}`) ?? values.get(`${edge.source}\0out`) ?? values.get(`${edge.source}\0text`);
+    const handle = edge.sourceHandle ?? "";
+    const value = values.get(`${edge.source}\0${handle}`);
     if (!value) return "（上游未产出）";
     return handle === "reasoning" ? (value.reasoning || "（无思考）") : value.text;
   };

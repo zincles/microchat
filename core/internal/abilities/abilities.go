@@ -49,15 +49,10 @@ const (
 	ModelSourceAgent   = "agent"
 )
 
-// TitleModelSource：title 的生效模型来源。**只有这一处**做旧配置兼容：
-// 没有 `model_source` 但填了 provider/model 的老 Agent，按 "agent" 处理（否则它的覆盖会悄悄失效）。
+// TitleModelSource：title 的生效模型来源；缺字段 = global。
 func TitleModelSource(setting Setting) string {
-	switch setting.ModelSource {
-	case ModelSourceGlobal, ModelSourceSession, ModelSourceAgent:
+	if validModelSource(setting.ModelSource) {
 		return setting.ModelSource
-	}
-	if setting.Provider != "" || setting.Model != "" {
-		return ModelSourceAgent
 	}
 	return ModelSourceGlobal
 }

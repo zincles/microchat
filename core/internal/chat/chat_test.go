@@ -214,7 +214,7 @@ func TestTitleLandsBeforeTheTurnGoesIdle(t *testing.T) {
 	}
 	if err := config.SaveJSON(h.configDir+"/agents.json", config.AgentsConfig{
 		Agents: []config.Agent{{ID: "慢标题", Abilities: map[string]config.AbilityToggle{
-			abilities.Title: {Provider: new("slow"), Model: new("m")},
+			abilities.Title: {Provider: new("slow"), Model: new("m"), ModelSource: "agent"},
 		}}},
 	}); err != nil {
 		t.Fatal(err)

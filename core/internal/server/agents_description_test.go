@@ -92,7 +92,7 @@ func TestFlowAgentTestSend(t *testing.T) {
 	  {"id":"in","type":"input","position":{"x":0,"y":0},"data":{}},
 	  {"id":"a","type":"llm","position":{"x":1,"y":0},"data":{"prompts":[{"id":"p1","role":"system","content":"你是测试助手"}]}},
 	  {"id":"out","type":"output","position":{"x":2,"y":0},"data":{}}
-	],"edges":[{"id":"e1","source":"in","target":"a","targetHandle":"prompt-p1"},{"id":"e2","source":"a","target":"out"}]}`
+	],"edges":[{"id":"e1","source":"in","sourceHandle":"out","target":"a","targetHandle":"prompt-p1"},{"id":"e2","source":"a","sourceHandle":"text","target":"out","targetHandle":"text"}]}`
 	body, _ := json.Marshal(map[string]any{"name": "测试图", "kind": "flow", "flow": json.RawMessage(flow)})
 	rec := authCall(box.server, "POST", "/api/v1/agents", string(body), testSysToken)
 	if rec.Code != http.StatusCreated {

@@ -503,16 +503,16 @@ test("FlowAgent：端口有类型，且每个端点只许一条线", () => {
     version: 1,
     nodes: [input, history, trim, llm, join, { id: "out", type: "output", position: { x: 0, y: 0 }, data: {} }],
     edges: [
-      { id: "e1", source: "in", target: "l", targetHandle: "prompt-p1" },
-      { id: "e2", source: "h", target: "t", targetHandle: "in" },
-      { id: "e2b", source: "t", target: "l", targetHandle: "history-h1" },
+      { id: "e1", source: "in", sourceHandle: "out", target: "l", targetHandle: "prompt-p1" },
+      { id: "e2", source: "h", sourceHandle: "out", target: "t", targetHandle: "in" },
+      { id: "e2b", source: "t", sourceHandle: "out", target: "l", targetHandle: "history-h1" },
       { id: "e3", source: "l", sourceHandle: "text", target: "j", targetHandle: "in-1" },
       { id: "e4", source: "l", sourceHandle: "reasoning", target: "j", targetHandle: "in-2" },
       { id: "e5", source: "j", sourceHandle: "out-1", target: "out", targetHandle: "text" },
     ],
   };
   assert.deepEqual(flowIssues(graph), []);
-  graph.edges.push({ id: "e6", source: "in", target: "j", targetHandle: "in-2" });
+  graph.edges.push({ id: "e6", source: "in", sourceHandle: "out", target: "j", targetHandle: "in-2" });
   assert.ok(flowIssues(graph).some((x) => x.includes("一个出口只能接一条线")));
   assert.ok(flowIssues(graph).some((x) => x.includes("一个入口只能接一条线")));
   const msgs = [{ role: "user", content: "1" }, { role: "assistant", content: "2" }, { role: "user", content: "3" }];

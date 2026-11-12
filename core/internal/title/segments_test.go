@@ -73,7 +73,7 @@ func stubHarness(t *testing.T, ability config.AbilityToggle, segments ...config.
 
 // ① 默认模板**就是**段库里那条内置段（不是代码里另留一份字符串）。
 func TestTitleDefaultTemplateLivesInSegmentLibrary(t *testing.T) {
-	h, body := stubHarness(t, config.AbilityToggle{Provider: new("stub"), Model: new("m")})
+	h, body := stubHarness(t, config.AbilityToggle{ModelSource: "agent", Provider: new("stub"), Model: new("m")})
 
 	builtin, ok := config.BuiltinSegmentByID(config.TitleTemplateSegmentID)
 	if !ok {
@@ -95,7 +95,7 @@ func TestTitleDefaultTemplateLivesInSegmentLibrary(t *testing.T) {
 func TestTitleAppliesAbilitySegments(t *testing.T) {
 	style := config.Segment{ID: "风格", Text: "标题只准用四个字。"}
 	h, body := stubHarness(t,
-		config.AbilityToggle{Provider: new("stub"), Model: new("m"), Segments: []string{"风格"}},
+		config.AbilityToggle{ModelSource: "agent", Provider: new("stub"), Model: new("m"), Segments: []string{"风格"}},
 		style)
 
 	result, err := h.service.Generate(context.Background(), h.session)
@@ -124,7 +124,7 @@ func TestTitleAppliesAbilitySegments(t *testing.T) {
 func TestTitleTemplateSegmentIsNotPrependedTwice(t *testing.T) {
 	style := config.Segment{ID: "风格", Text: "标题只准用四个字。"}
 	h, body := stubHarness(t,
-		config.AbilityToggle{Provider: new("stub"), Model: new("m"),
+		config.AbilityToggle{ModelSource: "agent", Provider: new("stub"), Model: new("m"),
 			Segments: []string{config.TitleTemplateSegmentID, "风格"}},
 		style)
 
