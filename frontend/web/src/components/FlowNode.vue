@@ -28,6 +28,7 @@ const removePort = inject<(nodeId: string, handle: string, side: "source" | "tar
 const models = inject<Ref<ModelListItem[]>>("flowModels", ref([]));
 const label = computed(() => ({
   input: "输入",
+  text: "纯文本",
   history: "历史数据",
   trim: "裁剪 messages",
   merge: "拼接 messages",
@@ -36,10 +37,11 @@ const label = computed(() => ({
   output: "输出",
 }[props.type] ?? props.type));
 const badge = computed(() => ({
-  input: "IN", history: "H", trim: "TR", merge: "MG", llm: "AI", join: "J", output: "OUT",
+  input: "IN", text: "TXT", history: "H", trim: "TR", merge: "MG", llm: "AI", join: "J", output: "OUT",
 }[props.type] ?? "·"));
 const hint = computed(() => ({
   input: "裸字符串：本轮用户输入",
+  text: "无输入：输出这里写死的常量文本",
   history: "messages[]：当前会话历史",
   trim: "messages[] → messages[]：按条数裁剪",
   merge: "多路 messages[] 按端口顺序拼接",
@@ -116,6 +118,10 @@ const maxRetry = computed<string>({
     const retry = Number(value);
     props.data.max_retry = Number.isInteger(retry) && retry >= 0 ? retry : 0;
   },
+});
+const textValue = computed({
+  get: () => typeof props.data.text === "string" ? props.data.text : "",
+  set: (value: string) => { props.data.text = value; },
 });
 const trimMode = computed<TrimMode>({
   get: () => trimModeOf(props.data),
@@ -278,6 +284,11 @@ function addJoinOutput(): void {
         <span>用户消息</span>
       </div>
     </div>
+    <label v-if="type === 'text'" class="flow-text-value nodrag nopan">
+      <VTextarea v-model="textValue" rows="3" density="compact" variant="outlined" hide-details
+        placeholder="输入要输出的常量文本" />
+      <span class="flow-node-body">没有输入口，只有右侧文本输出。</span>
+    </label>
     <div v-if="type === 'history'" class="flow-node-body">来自真实会话的历史 messages</div>
     <div v-if="type === 'trim'" class="flow-trim-controls nodrag nopan">
       <VSelect v-model="trimMode" :items="TRIM_MODES" density="compact" variant="outlined" hide-details />

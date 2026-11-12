@@ -330,6 +330,8 @@ func flowNodeLabel(kind string) string {
 		return "拼接 messages"
 	case "join":
 		return "拼接和复制"
+	case "text":
+		return "纯文本"
 	case "output":
 		return "输出"
 	case "user_output":

@@ -2189,3 +2189,5 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 /* 图标按钮：SVG 以按钮内容盒为基准铺开（原先固定 14px，落在 34–40px 按钮里像缩成一小坨）。 */
 .v-btn.v-btn--icon svg { width: 65%; height: auto; }
 .icon-btn svg, .cp-close svg { width: 62%; height: auto; display: block; }
+.flow-text-value { display: flex; flex-direction: column; gap: 0.3em; margin-top: 0.4em; }
+.flow-text-value .v-field__input { font-size: var(--md-type-label-small); line-height: 1.45; }

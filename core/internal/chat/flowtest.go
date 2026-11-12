@@ -160,6 +160,9 @@ func (s *Service) executeFlowGraph(ctx context.Context, graph flowGraph, opts fl
 		case "input":
 			step.Label = "输入"
 			step.Output = opts.Input
+		case "text":
+			step.Label = "纯文本"
+			step.Output = flowNodeDataString(node, "text")
 		case "history":
 			step.Label = "历史数据"
 			nodeMessages = append([]providers.ChatMessage{}, opts.History...)
@@ -575,7 +578,7 @@ func validateTestGraph(graph flowGraph) error {
 		seen[node.ID] = true
 		counts[node.Type]++
 		switch node.Type {
-		case "input", "history", "trim", "merge", "llm", "join", "output", "user_output":
+		case "input", "text", "history", "trim", "merge", "llm", "join", "output", "user_output":
 		default:
 			return fmt.Errorf("不认识的节点类型：%s", node.Type)
 		}

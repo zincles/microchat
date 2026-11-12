@@ -46,7 +46,7 @@ function toggleExpanded(): void {
   // 画布尺寸变了，Vue Flow 不会自动重新 fit；不重算的话全屏后节点会跑到视口外。
   if (expanded.value) fitAfterResize();
 }
-const nodeTypes = { input: FlowNode, history: FlowNode, trim: FlowNode, merge: FlowNode, llm: FlowNode, join: FlowNode, output: FlowNode } as any;
+const nodeTypes = { input: FlowNode, text: FlowNode, history: FlowNode, trim: FlowNode, merge: FlowNode, llm: FlowNode, join: FlowNode, output: FlowNode } as any;
 const initial = normalizeFlowGraph(props.graph ?? emptyFlowGraph());
 const nodes = ref<any[]>(initial.nodes.map((n) => ({ ...n, data: { ...(n.data ?? {}) } })));
 const historyExists = computed(() => nodes.value.some((n) => n.type === "history"));
@@ -73,14 +73,14 @@ provide("flowModels", models);
 const nodeRows = computed(() => nodes.value.map((n) => ({
   id: String(n.id),
   type: String(n.type),
-  label: ({ input: "输入", history: "历史", trim: "裁剪", merge: "拼接 messages", llm: "LLM", join: "拼接和复制", output: "输出" } as Record<string, string>)[String(n.type)] ?? String(n.type),
-  badge: ({ input: "IN", history: "H", trim: "TR", merge: "MG", llm: "AI", join: "J", output: "OUT" } as Record<string, string>)[String(n.type)] ?? "·",
+  label: ({ input: "输入", text: "纯文本", history: "历史", trim: "裁剪", merge: "拼接 messages", llm: "LLM", join: "拼接和复制", output: "输出" } as Record<string, string>)[String(n.type)] ?? String(n.type),
+  badge: ({ input: "IN", text: "TXT", history: "H", trim: "TR", merge: "MG", llm: "AI", join: "J", output: "OUT" } as Record<string, string>)[String(n.type)] ?? "·",
   incoming: edges.value.filter((e) => e.target === n.id),
   outgoing: edges.value.filter((e) => e.source === n.id),
 })));
 function nodeLabel(id: string): string {
   const node = nodes.value.find((n) => n.id === id);
-  return node ? (({ input: "输入", history: "历史", trim: "裁剪", merge: "拼接 messages", llm: "LLM", join: "拼接和复制", output: "输出" } as Record<string, string>)[String(node.type)] ?? String(node.type)) : id;
+  return node ? (({ input: "输入", text: "纯文本", history: "历史", trim: "裁剪", merge: "拼接 messages", llm: "LLM", join: "拼接和复制", output: "输出" } as Record<string, string>)[String(node.type)] ?? String(node.type)) : id;
 }
 function toggleSidebar(tab: "nodes" | "text"): void {
   if (nodesOpen.value && sidebarTab.value === tab) { nodesOpen.value = false; return; }
@@ -156,11 +156,12 @@ function toGraph(): FlowGraph {
 }
 
 const addNodeItems = computed<Array<{
-  type: "input" | "history" | "trim" | "merge" | "llm" | "join" | "output";
+  type: "input" | "text" | "history" | "trim" | "merge" | "llm" | "join" | "output";
   label: string;
   disabled: boolean;
 }>>(() => [
   { type: "input", label: "输入", disabled: inputExists.value },
+  { type: "text", label: "纯文本", disabled: false },
   { type: "history", label: "历史数据", disabled: historyExists.value },
   { type: "trim", label: "裁剪 messages", disabled: false },
   { type: "merge", label: "拼接 messages", disabled: false },
@@ -169,7 +170,7 @@ const addNodeItems = computed<Array<{
   { type: "output", label: "输出", disabled: outputExists.value },
 ]);
 
-function addNode(type: "input" | "history" | "trim" | "merge" | "llm" | "join" | "output"): void {
+function addNode(type: "input" | "text" | "history" | "trim" | "merge" | "llm" | "join" | "output"): void {
   if (type === "input" && inputExists.value) return;
   if (type === "history" && historyExists.value) return;
   if (type === "output" && outputExists.value) return;
@@ -186,7 +187,8 @@ function addNode(type: "input" | "history" | "trim" | "merge" | "llm" | "join" |
       ? { prompts: [{ id: `p-${Date.now().toString(36)}`, role: "system", content: "" }] }
       : type === "join" ? { inputs: ["in-1", "in-2"], outputs: ["out-1"], separator: "\n\n---\n\n" }
       : type === "trim" ? { mode: "tail", count: 10 }
-      : type === "merge" ? { inputs: ["in-1", "in-2"] } : {},
+      : type === "merge" ? { inputs: ["in-1", "in-2"] }
+      : type === "text" ? { text: "" } : {},
   }];
   fitAfterResize();
 }

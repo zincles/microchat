@@ -7,7 +7,7 @@ import type { FlowEdge, FlowGraph, FlowNode } from "../api/types.ts";
 
 export const FLOW_VERSION = 1;
 export const DEFAULT_JOIN_SEPARATOR = "\n\n---\n\n";
-export const FLOW_NODE_TYPES = ["input", "history", "trim", "merge", "llm", "join", "output"] as const;
+export const FLOW_NODE_TYPES = ["input", "text", "history", "trim", "merge", "llm", "join", "output"] as const;
 export type FlowNodeType = (typeof FLOW_NODE_TYPES)[number];
 export type FlowDataType = "string" | "messages";
 
@@ -29,6 +29,7 @@ export function flowSourceType(node: FlowNode | undefined, handle?: string): Flo
   const h = norm(handle, "out");
   switch (node.type) {
     case "input":
+    case "text":
     case "join":
       return h === "out" || /^out-\d+$/.test(h) ? "string" : null;
     case "history":
@@ -83,7 +84,7 @@ export function trimMessages<T>(messages: readonly T[], mode: TrimMode, count: n
 }
 
 const FLOW_TEXT_LABELS: Record<string, string> = {
-  input: "输入", history: "历史数据", trim: "裁剪 messages", merge: "拼接 messages",
+  input: "输入", text: "纯文本", history: "历史数据", trim: "裁剪 messages", merge: "拼接 messages",
   llm: "调用 LLM", join: "拼接和复制", output: "输出",
 };
 
@@ -323,7 +324,7 @@ export function flowDebugSteps(graph: FlowGraph): FlowDebugStep[] {
   const nodes = flowNodeOrder(graph);
   const edges = graph.edges ?? [];
   const values = new Map<string, { text: string; reasoning: string }>();
-  const labels: Record<string, string> = { input: "输入", history: "历史数据", trim: "裁剪 messages", merge: "拼接 messages", llm: "调用 LLM", join: "拼接和复制", output: "输出" };
+  const labels: Record<string, string> = { input: "输入", text: "纯文本", history: "历史数据", trim: "裁剪 messages", merge: "拼接 messages", llm: "调用 LLM", join: "拼接和复制", output: "输出" };
   const source = (edge: { source: string; sourceHandle?: string }): string => {
     const handle = edge.sourceHandle || "out";
     const value = values.get(`${edge.source}\0${handle}`) ?? values.get(`${edge.source}\0out`) ?? values.get(`${edge.source}\0text`);
@@ -338,6 +339,8 @@ export function flowDebugSteps(graph: FlowGraph): FlowDebugStep[] {
     let label = labels[node.type] ?? node.type;
     if (node.type === "input") {
       output = "[本轮用户输入]";
+    } else if (node.type === "text") {
+      output = String(node.data?.text ?? "");
     } else if (node.type === "history") {
       output = "[会话历史 messages]";
     } else if (node.type === "trim") {

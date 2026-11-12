@@ -16,6 +16,26 @@ import (
 	"microchat/internal/store"
 )
 
+func TestFlowTextNodeOutputsConstant(t *testing.T) {
+	graph := flowGraph{Nodes: []flowNode{
+		{ID: "in", Type: "input"},
+		{ID: "text", Type: "text", Data: map[string]any{"text": "写死的常量"}},
+		{ID: "out", Type: "output"},
+	}, Edges: []flowEdge{
+		{ID: "e1", Source: "text", SourceHandle: "out", Target: "out", TargetHandle: "text"},
+	}}
+	out, err := (&Service{}).executeFlowGraph(context.Background(), graph, flowRunOptions{Input: "原话"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Final.Text != "写死的常量" {
+		t.Fatalf("纯文本节点输出 = %q", out.Final.Text)
+	}
+	if out.Final.User != "" {
+		t.Fatalf("纯文本节点不该碰用户消息：%+v", out)
+	}
+}
+
 func TestJoinFlowInputsUsesConfiguredSeparator(t *testing.T) {
 	if got := joinFlowInputs([]string{"A", "", "B"}, " | "); got != "A | B" {
 		t.Fatalf("分隔符拼接 = %q", got)

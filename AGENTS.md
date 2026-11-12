@@ -1563,8 +1563,9 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   侧栏第二个 tab 是**纯文本视图**（节点 id/类型/坐标/高度 + 每个端口去向，随图实时更新）；
   底部是可开合的**测试 / 调试**栏（同样浮在画布上）。
   连线层 `z-index:8` 在节点层 `2` 之上（边只做视觉、`pointer-events:none`，不会抢节点/端口的点击）。
-  输入 / 调用 LLM / 裁剪 messages / 拼接 messages / 拼接和复制 / 输出。LLM 节点内是 Prompt 列表（role + 左侧输入孔 + 手写正文）；
+  输入 / 纯文本 / 调用 LLM / 裁剪 messages / 拼接 messages / 拼接和复制 / 输出。LLM 节点内是 Prompt 列表（role + 左侧输入孔 + 手写正文）；
   每个 LLM 节点带 `max_retry`（缺省 3，**首次失败后再试几次**）；重试耗尽仍失败 ⇒ 整次 FlowAgent 失败，不产出半条回复。
+  **纯文本节点**：没有输入，只有一个 string 输出；`data.text` 就是它吐出的常量，可接给 Prompt / join / `output.user` 等任意 string 端口。
   **输出节点有三个输入端口**：`text`（助手正文）/ `reasoning`（思考）/ `user`（**写入历史的用户消息**）。
   `user` 接上游（例如把润色后的文本接进来），这一轮图跑完后用它覆盖刚落的用户消息，再写 assistant；
   **Accept 与 Resend 都覆盖**（Resend 改的是“最后一条被回答的 user”，不是新回复的 id）；
