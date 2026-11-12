@@ -615,7 +615,10 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(flowWorkspace, /:node-states="nodeStates"/, "工作流没有把节点状态传给编辑器");
   assert.match(flowWorkspace, /:running="running"/, "工作流没有把运行中状态传给编辑器");
   const pwa = readFileSync(join(SRC, "utils", "pwa.ts"), "utf8");
+  const vite = readFileSync(join(SRC, "..", "vite.config.js"), "utf8");
   assert.match(pwa, /onRegisteredSW/, "PWA 没有拿到 registration");
+  assert.match(pwa, /onNeedReload/, "PWA 自动更新没有用 onNeedReload 抑制 reload");
+  assert.match(vite, /registerType:\s*"autoUpdate"/, "PWA 没有自动更新 SW");
   assert.match(pwa, /UPDATE_CHECK_INTERVAL_MS/, "PWA 没有周期性更新检查");
   assert.match(pwa, /visibilitychange/, "PWA 回前台没有补查更新");
   assert.match(readFileSync(join(SRC, "App.vue"), "utf8"), /updateRef\.value\?\.show\(\)/, "新更新没有重新放出更新条");

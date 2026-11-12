@@ -1346,16 +1346,13 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
 - **消息列只挂窗口**（2026-10-10 加，防浏览器被撑炸）：进入会话只拉**最后 `history_window` 段**（默认 **5**；段 = 一条消息或**一张顶层摘要卡**，所以原始消息通常 ≤5）；更老的按 `↑ 加载更多历史` 一页一页往回（一页也这么多；值来自 `chat.history_window`，设置 → 聊天可改；插入前记高度、插完补回滚动锚）。**被摘要盖住的原文一个字节都不取**（按"消息段"拼连续区间，走 `POST /messages/batch` 一发拿全；摘要段整段跳过）；`查看未压缩文本` **按下才拉**（每次按下都拉新的一版，不吃旧缓存）。总数拿 `?last=1` 问尾条（比会话列表计数新鲜）；`reloadWindow` = 按最新段布局重拉当前窗口（一轮结束/编辑/删除/压缩/切版后），起点先 `alignWindowFrom` 对回段边界。**压缩树 tab 是例外**：看着它才拉**全量**消息+摘要建树（分析视图 = 用户显式要全量）。
 - **PWA（可安装，2026-10-11 用户点名）**：`vite-plugin-pwa`（build/preview 开 SW、dev 关）——壳预缓存（离线开门板）、`/api` 永不缓存。**安装前提 = HTTPS 或 localhost**：局域网 `http://<IP>` 装不了（非安全上下文）；云端反代终结 TLS 即满足。图标在 `public/`（favicon 栅格化）。实测：localhost 下 manifest/SW/图标全过，`beforeinstallprompt` 真触发。**应用内安装入口 2026-11-02 删掉**（用户定；左栏底改成 会话/渠道/设置）——浏览器自带的安装菜单/地址栏图标仍可用，PWA 能力本身没动。
   **前端构建身份 / `build.json`（2026-11-09）**：Vite 每次构建把同一枚 `build_id`（ISO 时间）写进 JS（`define: __BUILD_ID__`）与 `dist/build.json`（`buildInfoPlugin`）；`/build.json` 是**静态文件、不进 Workbox 预缓存**（`globPatterns` 不含 json）且响应 `no-cache` ⇒ 更新面板能拿服务器当前那一份来比当前页面的壳。**别把它塞进 `globPatterns`**：塞进去就永远读到旧值，工具会失去意义。
-- **新版本由用户点（2026-10-20 用户定，从 `autoUpdate` 改成 `prompt`）**：`registerType: "prompt"`
-  + 一条**常驻更新条**（`components/UpdateBar.vue`，注册在 `utils/pwa.ts` 调 `virtual:pwa-register`）。
+- **自动更新 SW + 顶部提示刷新（2026-11-12 用户定）**：`registerType: "autoUpdate"`；
+  `utils/pwa.ts` 的 `registerSW` 传 `onNeedReload`（**不自动 reload**）⇒ 新 SW 自动安装/接管后只弹
+  `components/UpdateBar.vue`，点「刷新」才 `location.reload()`。
+  每 **60 秒** `registration.update()` 查一次新壳；`visibilitychange` 回前台、`online` 恢复网络时立刻补查
+  （后台标签页计时器会被节流，不能只靠 interval）。
   Mermaid 的可选 chunk（`mermaid*` / `*Diagram*` / `chunk-*` 等）由 `globIgnores` 排除在预缓存外，
   改由 runtime cache 在首次渲染时收；别把它们塞回 `globPatterns`（会让安装包从 ~3.3MB 涨到 ~7.7MB）。
-  **为什么改**（真踩过）：`autoUpdate` 在新 SW `activated` 时**自己** `location.reload()` ——
-  它**静默**（你没看那标签页时刷新悄悄发生），且**从不告诉你"此刻看的是旧的"**。2026-10-20 因此白排查一轮：
-  服务器上三份 bundle（宿主 dist / 容器 `/build` / 8788 服务）**逐字节相同**且都含新代码，界面上却看不到新加的选项，
-  最后靠「清站点数据」才揭穿是 **SW 缓存的旧壳**。现在检测到新版本 ⇒ 弹更新条（**不自动消失** ——
-  与 Toast 的分工：Toast 是"告知"、3 秒即走；这条是"要你动手点一下"，消失了等于没通知）⇒
-  用户点「刷新」才 `updateServiceWorker()`（skipWaiting → controlling → reload）。
   ⚠ **验证这类事有个方法论陷阱**：`curl` **没有 SW**，它永远拿到服务器上那份新文件 ——
   于是"curl 验证通过"与"用户看到的还是旧的"**可以同时成立**。要验缓存层必须用真浏览器（或清站点数据后看）。
   ⚠ **别再手写 `injectRegister`**：插件检测到 `virtual:pwa-register` 的 import 后会自己把它转成 `false`
@@ -1524,7 +1521,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   **左上角品牌头可点击**（2026-11-11 用户定）：点它直接 `openManage('update')`；完整设置最右
   也有「更新」tab（`SETTINGS_TABS` 最后一项），底部不再有更新入口。
   **PWA / 已安装应用**：显示当前页面构建时间（`__BUILD_ID__`）、服务器最新（`GET /build.json`，`cache: no-store`）与
-  Service Worker 状态；「检查 PWA 更新」调 `registration.update()` 并等 waiting，「更新并刷新」走既有 `startUpdate()`
+  Service Worker 状态；「检查 PWA 更新」调 `registration.update()`（autoUpdate 下可能直接激活），「更新并刷新」走 `startUpdate()`
   （skipWaiting → controlling → reload），另有「强制重新加载」（注销 SW + 清 Cache Storage + reload，先确认）。
   ⚠ 当前页与服务器 build 相同也可能有 waiting SW（刚重启、旧壳还在）⇒ 两个判据都要看，别只比 build_id。
   后端：上「当前本地版本」（提交 / 分支 / 标题 / 完整 hash / 脏工作区），下「GitHub 最新版本」（远端 short/full + `remote_relation` 人话：已是最新 / 本地领先 N（未推送）/ 远端有新提交 N / 已分叉）。**分叉时主按钮自动切成「变基并重启」**（走 `/update/rebase`；默认 `/update/pull` 仍只 `--ff-only`，不会偷改历史）。

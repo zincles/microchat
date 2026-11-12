@@ -42,7 +42,7 @@ defineExpose({ show: (): void => { pwaBusy.value = false; hidden.value = false; 
   <div v-if="backend || !hidden" id="update-bar" role="status">
     <span class="ub-text">
       <template v-if="backend">GitHub 有新提交，可更新前后端</template>
-      <template v-else>有新版本可用</template>
+      <template v-else>新版本已就绪，刷新页面应用</template>
       <template v-if="backend && pwa">；前端也有新版本</template>
       <template v-if="busy">，正在更新…</template>
     </span>

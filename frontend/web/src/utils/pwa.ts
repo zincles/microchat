@@ -1,13 +1,11 @@
-// PWA 的 Service Worker 注册（**唯一一处**）—— 2026-10-20 用户定：从 `autoUpdate` 改成
-// `prompt` + 一条**常驻更新条**。
+// PWA 的 Service Worker 注册（**唯一一处**）。
 //
-// 为什么改（真实踩过，见 AGENTS.md「踩过的坑」）：
-// `autoUpdate` 会在新 SW `activated` 时**自己** `location.reload()` —— 看着省事，实则：
-//   · 你没在看那个标签页时，刷新**悄悄**发生（你甚至不知道发生过）；
-//   · 更要命的是它**不告诉你"此刻看的是旧的"**：2026-10-20 排查了一轮才发现
-//     "服务器上明明是新的、界面上却没有新选项"，最后靠清站点数据才揭穿是 SW 缓存的旧壳。
-// 现在 `prompt`：检测到新版本 ⇒ 弹一条**不自动消失**的条，由你点了才切过去（发 skipWaiting）。
-// 于是"我在看哪一版"变成一件说得出口的事。
+// 2026-11-12 用户定：**自动更新 SW，但不自动 reload**。
+// 新 SW 自动接管缓存；`registerSW` 的 `onNeedReload` 回调只弹顶部更新条，
+// 由用户点「刷新」才 reload。这样页面一直开着也能拿到新版本，又不会在
+// 看消息/编辑时被静默刷新打断。
+//
+// 旧版 prompt 模式要求用户主动触发 SW 更新；autoUpdate 模式由浏览器自动完成安装/激活。
 //
 // ⚠ 这段只在 **build/preview** 有意义（dev 不开 SW —— 见 vite.config.js；那时
 // `registerSW` 拿到的是 dev 的 stub，回调永不触发，真跑也无害）。
@@ -62,9 +60,11 @@ function startPeriodicUpdateChecks(): void {
   });
   window.addEventListener("online", () => { void checkForUpdate(); });
 }
-export function startUpdate(): Promise<void> | undefined {
-  if (!updateSW) return undefined;
-  return updateSW(true);
+export function startUpdate(): Promise<void> {
+  // autoUpdate 模式下新 SW 已经接管，updateServiceWorker(true) 已经没有 waiting
+  // 可以 skip；点刷新就是普通 reload。
+  if (typeof location !== "undefined") location.reload();
+  return Promise.resolve();
 }
 
 // ── 手动核对 / 切换（2026-11-09 用户定：更新面板里的 PWA 小工具）─────────────
@@ -227,6 +227,8 @@ export function registerPWA(): void {
     onNeedRefresh() { notify(); },
     // 首次装好（离线可用）⇒ 不打扰：那是正常状态，报了反而像出事了。
     onOfflineReady() {},
+    // autoUpdate：新 SW activated 时插件本来会自己 reload；给回调后改成弹条。
+    onNeedReload() { notify(); },
     // registration 一拿到就开始周期检查；这是"页面一直开着也能看到更新条"的关键。
     onRegisteredSW(_swUrl, registration) {
       swRegistration = registration ?? null;
