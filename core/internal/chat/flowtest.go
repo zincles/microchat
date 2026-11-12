@@ -264,14 +264,6 @@ func (s *Service) executeFlowGraph(ctx context.Context, graph flowGraph, opts fl
 			final = values[flowKey(node.ID, "out")]
 		}
 	}
-	// 兼容旧的独立 user_output 节点：它没有输出，但它的 User 仍可作为历史覆盖。
-	for _, node := range graph.Nodes {
-		if node.Type == "user_output" {
-			if value := values[flowKey(node.ID, "out")]; value.User != "" {
-				final.User = value.User
-			}
-		}
-	}
 	return flowRunOutcome{
 		Result:      FlowTestResult{Output: final.Text, Reasoning: final.Reasoning, User: final.User, Steps: steps},
 		UserMessage: final.User,
@@ -583,7 +575,7 @@ func validateTestGraph(graph flowGraph) error {
 		seen[node.ID] = true
 		counts[node.Type]++
 		switch node.Type {
-		case "input", "text", "history", "trim", "merge", "llm", "join", "output", "judge", "user_output":
+		case "input", "text", "history", "trim", "merge", "llm", "join", "output", "judge":
 		default:
 			return fmt.Errorf("不认识的节点类型：%s", node.Type)
 		}
@@ -593,9 +585,6 @@ func validateTestGraph(graph flowGraph) error {
 	}
 	if counts["output"] != 1 {
 		return errors.New("流程图需要恰好一个输出节点")
-	}
-	if counts["user_output"] > 1 {
-		return errors.New("流程图最多只能有一个用户消息接收节点")
 	}
 	for _, node := range graph.Nodes {
 		if node.Type == "trim" {

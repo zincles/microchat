@@ -508,7 +508,7 @@ test("FlowAgent：端口有类型，且每个端点只许一条线", () => {
       { id: "e2b", source: "t", target: "l", targetHandle: "history-h1" },
       { id: "e3", source: "l", sourceHandle: "text", target: "j", targetHandle: "in-1" },
       { id: "e4", source: "l", sourceHandle: "reasoning", target: "j", targetHandle: "in-2" },
-      { id: "e5", source: "j", target: "out" },
+      { id: "e5", source: "j", sourceHandle: "out-1", target: "out", targetHandle: "text" },
     ],
   };
   assert.deepEqual(flowIssues(graph), []);
@@ -520,12 +520,6 @@ test("FlowAgent：端口有类型，且每个端点只许一条线", () => {
   assert.deepEqual(trimMessages(msgs, "head", 2).map((m) => m.content), ["1", "2"]);
   assert.deepEqual(trimMessages(msgs, "drop-head", 1).map((m) => m.content), ["2", "3"]);
   assert.deepEqual(trimMessages(msgs, "drop-tail", 1).map((m) => m.content), ["1", "2"]);
-  const legacy = normalizeFlowGraph({
-    version: 1,
-    nodes: [input, llm, { id: "out", type: "output", position: { x: 0, y: 0 }, data: {} }],
-    edges: [{ id: "old", source: "l", sourceHandle: "reasoning", target: "out", targetHandle: "in" }],
-  });
-  assert.equal(legacy.edges[0]?.targetHandle, "reasoning", "老图 reasoning→in 迁移错了");
   const badTrim = { version: 1, nodes: [input, { ...trim, data: { mode: "tail", count: 0 } }, { id: "out", type: "output", position: { x: 0, y: 0 }, data: {} }], edges: [] };
   assert.ok(flowIssues(badTrim).some((x) => x.includes("裁剪条数")));
   const badRole = { version: 1, nodes: [input, { ...trim, data: { roles: ["narrator"] } }, { id: "out", type: "output", position: { x: 0, y: 0 }, data: {} }], edges: [] };

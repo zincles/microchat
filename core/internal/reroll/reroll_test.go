@@ -8,7 +8,7 @@ package reroll
 //  ⑤ 发新消息 ⇒ 候选全清；重启（新 Service）⇒ 列表空；
 //  ⑥ 尾条不是 assistant ⇒ invalid；生成中 ⇒ conflict。
 //
-// 上游用 `httptest` 假服务（`kind: openai-compat`）：**每一发回的话都不一样**（能分出是哪一版），
+// 上游用 `httptest` 假服务（`kind: custom`）：**每一发回的话都不一样**（能分出是哪一版），
 // 并带回 usage / reasoning —— 于是"切换时附带信息也换"才有东西可断言。
 
 import (

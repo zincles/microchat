@@ -239,7 +239,7 @@ func TestFlowAgentAcceptRoundTrip(t *testing.T) {
 		{"id":"in","type":"input","position":{"x":0,"y":0},"data":{}},
 		{"id":"llm","type":"llm","position":{"x":1,"y":0},"data":{"prompts":[{"id":"p1","role":"system","content":"你是测试"}]}},
 		{"id":"out","type":"output","position":{"x":2,"y":0},"data":{}}
-	],"edges":[{"id":"e1","source":"llm","sourceHandle":"text","target":"out","targetHandle":"in"}]}`)
+	],"edges":[{"id":"e1","source":"llm","sourceHandle":"text","target":"out","targetHandle":"text"}]}`)
 	if err := config.SaveJSON(h.configDir+"/agents.json", config.AgentsConfig{Agents: []config.Agent{{
 		ID: "flow", Kind: "flow", Flow: flow,
 	}}}); err != nil {
@@ -341,39 +341,6 @@ func TestFlowAgentMapsReasoningPort(t *testing.T) {
 	messages := h.settle(t)
 	if len(messages) != 2 || messages[1].Content != "正文" || messages[1].Reasoning != "思考" {
 		t.Fatalf("正文/思考端口映射 = %+v", messages)
-	}
-}
-
-func TestFlowAgentLegacyReasoningInputStaysReasoning(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"正文","reasoning_content":"思考"}}],"usage":{"prompt_tokens":3,"completion_tokens":2}}`))
-	}))
-	defer upstream.Close()
-	stubConfig := config.ProvidersConfig{Providers: []config.Provider{{
-		ID: "stub", Vendor: "custom", BaseURL: upstream.URL, Identity: "bare",
-	}}}
-	h := newHarness(t, stubConfig, "stub", "stub")
-	// 老图：单个 in，源是 reasoning。迁移/执行都必须落到 reasoning，不能变成正文。
-	flow := json.RawMessage(`{"version":1,"nodes":[
-		{"id":"in","type":"input","position":{"x":0,"y":0},"data":{}},
-		{"id":"llm","type":"llm","position":{"x":1,"y":0},"data":{"prompts":[{"id":"p1","role":"system","content":"写"}]}},
-		{"id":"out","type":"output","position":{"x":2,"y":0},"data":{}}
-	],"edges":[
-		{"id":"e1","source":"llm","sourceHandle":"reasoning","target":"out","targetHandle":"in"}
-	]}`)
-	if err := config.SaveJSON(h.configDir+"/agents.json", config.AgentsConfig{Agents: []config.Agent{{
-		ID: "flow", Kind: "flow", Flow: flow,
-	}}}); err != nil {
-		t.Fatal(err)
-	}
-	h.session.AgentID = "flow"
-	if _, err := h.service.Accept(h.session, "你好"); err != nil {
-		t.Fatal(err)
-	}
-	messages := h.settle(t)
-	if len(messages) != 2 || messages[1].Content != "" || messages[1].Reasoning != "思考" {
-		t.Fatalf("老 reasoning→in 迁移 = %+v", messages)
 	}
 }
 

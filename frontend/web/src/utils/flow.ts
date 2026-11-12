@@ -24,14 +24,12 @@ export function flowSourceType(node: FlowNode | undefined, handle?: string): Flo
   const ports = flowOutputPorts(node);
   const port = ports.find((item) => item.handle === h);
   if (port) return port.type;
-  if (h === "out" && node.type === "join") return ports[0]?.type ?? null;
   return null;
 }
 
 export function flowTargetType(node: FlowNode | undefined, handle?: string): FlowDataType | null {
   if (!node) return null;
   const h = norm(handle, "in");
-  if (node.type === "output" && h === "in") return "string";
   return flowInputPorts(node).find((item) => item.handle === h)?.type ?? null;
 }
 
@@ -117,28 +115,8 @@ export function normalizeFlowGraph(graph?: FlowGraph | null): FlowGraph {
       target: e.target,
       ...(e.sourceHandle ? { sourceHandle: e.sourceHandle } : {}),
       ...(e.targetHandle ? { targetHandle: e.targetHandle } : {}),
-    }))
-    .map((e) => {
-      // 老图的 output 只有一个 `in`；新图把正文/思考分成 text / reasoning，载入时就地迁移。
-      // 迁移看**源端口**：reasoning 源接到旧 `in` ⇒ 落 reasoning，不能把它悄悄变成正文。
-      const target = nodes.find((n) => n.id === e.target);
-      if (target?.type !== "output" || e.targetHandle !== "in") return e;
-      return { ...e, targetHandle: e.sourceHandle === "reasoning" ? "reasoning" : "text" };
-    });
-  // user_output 已并进 output 的 `user` 端口。老图载入时把它的入线搬到 output.user，
-  // 然后把这个节点丢掉；否则老图会带着一个运行时已不认识的节点继续跑。
-  const output = nodes.find((n) => n.type === "output");
-  const legacyUsers = new Set(nodes.filter((n) => n.type === "user_output").map((n) => n.id));
-  if (output && legacyUsers.size) {
-    for (const edge of edges) {
-      if (!legacyUsers.has(edge.target)) continue;
-      edge.target = output.id;
-      edge.targetHandle = "user";
-    }
-  }
-  const cleanNodes = nodes.filter((n) => !legacyUsers.has(n.id));
-  const cleanEdges = edges.filter((e) => !legacyUsers.has(e.source) && !legacyUsers.has(e.target));
-  return { version: FLOW_VERSION, nodes: cleanNodes, edges: cleanEdges };
+    }));
+  return { version: FLOW_VERSION, nodes, edges };
 }
 
 // 保存前检查：不阻止保存草稿，但编辑器要把问题摆出来。

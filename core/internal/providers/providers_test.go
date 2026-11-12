@@ -473,7 +473,7 @@ func TestXAIPreset(t *testing.T) {
 	}
 }
 
-// 旧命名（`openai-compat`）必须仍按 OpenAI 兼容对待 —— 否则老配置会静默失去 stream_options。
+// 旧命名（`custom`）必须仍按 OpenAI 兼容对待 —— 否则老配置会静默失去 stream_options。
 func TestLegacyOpenAICompatKind(t *testing.T) {
 	request, err := Build(Provider{ID: "old", Vendor: VendorCustom, BaseURL: "https://example.invalid/v1"},
 		Request{Model: "m", SessionID: "s", Stream: true})
@@ -679,7 +679,7 @@ func TestProviderLevelOverrides(t *testing.T) {
 }
 
 // `reasoning_content` **必须存在**的规则按 vendor 走：vendor==deepseek 必补空串；
-// custom/openai-compat 保留旧的模型名启发式；其余 vendor 不补（Pi 的解法：`openai-completions.ts:1379`）。
+// custom/custom 保留旧的模型名启发式；其余 vendor 不补（Pi 的解法：`openai-completions.ts:1379`）。
 func TestReasoningFieldPresenceForDeepSeek(t *testing.T) {
 	assistant := ChatMessage{Role: "assistant", Content: "苹果。"} // 这条**没有**思考
 	decode := func(t *testing.T, provider Provider, model string) map[string]any {
@@ -720,7 +720,7 @@ func TestReasoningFieldPresenceForDeepSeek(t *testing.T) {
 	if _, exists := item["reasoning_content"]; !exists {
 		t.Fatalf("deepseek vendor 该有这个字段：%+v", item)
 	}
-	// custom/openai-compat 保留旧的模型名启发式
+	// custom/custom 保留旧的模型名启发式
 	legacy := Provider{ID: "c", Vendor: VendorCustom, BaseURL: "https://x.invalid/v1"}
 	item = decode(t, legacy, "deepseek-v4-flash")
 	if _, exists := item["reasoning_content"]; !exists {

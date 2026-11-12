@@ -29,16 +29,15 @@ type flowNodeRun struct {
 type flowNodeRunner func(*flowNodeRun) error
 
 var flowNodeRunners = map[string]flowNodeRunner{
-	"input":       runInputNode,
-	"text":        runTextNode,
-	"history":     runHistoryNode,
-	"trim":        runTrimNode,
-	"merge":       runMergeNode,
-	"join":        runJoinNode,
-	"user_output": runUserOutputNode,
-	"output":      runOutputNode,
-	"judge":       runJudgeNode,
-	"llm":         runLLMNode,
+	"input":   runInputNode,
+	"text":    runTextNode,
+	"history": runHistoryNode,
+	"trim":    runTrimNode,
+	"merge":   runMergeNode,
+	"join":    runJoinNode,
+	"output":  runOutputNode,
+	"judge":   runJudgeNode,
+	"llm":     runLLMNode,
 }
 
 func runInputNode(r *flowNodeRun) error {
@@ -106,29 +105,13 @@ func runJoinNode(r *flowNodeRun) error {
 	return nil
 }
 
-func runUserOutputNode(r *flowNodeRun) error {
-	r.step.Label = "用户消息"
-	if len(r.step.Inputs) > 0 {
-		r.step.User = r.step.Inputs[0]
-	}
-	return nil
-}
-
 func runOutputNode(r *flowNodeRun) error {
 	r.step.Label = "输出"
 	for _, edge := range r.graph.Edges {
 		if edge.Target != r.node.ID {
 			continue
 		}
-		handle := edge.TargetHandle
-		if handle == "" || handle == "in" {
-			if edge.SourceHandle == "reasoning" {
-				handle = "reasoning"
-			} else {
-				handle = "text"
-			}
-		}
-		switch handle {
+		switch edge.TargetHandle {
 		case "text":
 			r.step.Output = sourceValue(r.values, edge)
 		case "reasoning":

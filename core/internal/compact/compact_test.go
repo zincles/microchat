@@ -772,7 +772,7 @@ func TestRegenerateSummaryMergeRootKeepsChildHeaders(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 重摇走 openai-compat 假上游（与 `prepare` 同一套解析：能力没覆盖 ⇒ 骑会话的渠道 / 模型）
+	// 重摇走 custom 假上游（与 `prepare` 同一套解析：能力没覆盖 ⇒ 骑会话的渠道 / 模型）
 	if err := config.SaveJSON(h.paths.Config("providers.json"), mustJSON(t,
 		`{"providers":[{"id":"stub","vendor":"custom","base_url":"`+stub.URL+`","identity":"bare"}]}`)); err != nil {
 		t.Fatal(err)

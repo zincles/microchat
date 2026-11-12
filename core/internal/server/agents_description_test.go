@@ -128,7 +128,7 @@ func TestFlowJoinCopiesToOutputPorts(t *testing.T) {
 	  {"id":"in","type":"input","position":{"x":0,"y":0},"data":{}},
 	  {"id":"j","type":"join","position":{"x":1,"y":0},"data":{"inputs":["in-1"],"outputs":["out-1","out-2"]}},
 	  {"id":"out","type":"output","position":{"x":2,"y":0},"data":{}}
-	],"edges":[{"id":"e1","source":"in","sourceHandle":"out","target":"j","targetHandle":"in-1"},{"id":"e2","source":"j","sourceHandle":"out-2","target":"out","targetHandle":"in"}]}`
+	],"edges":[{"id":"e1","source":"in","sourceHandle":"out","target":"j","targetHandle":"in-1"},{"id":"e2","source":"j","sourceHandle":"out-2","target":"out","targetHandle":"text"}]}`
 	body, _ := json.Marshal(map[string]any{"name": "拼接复制", "kind": "flow", "flow": json.RawMessage(flow)})
 	rec := authCall(box.server, "POST", "/api/v1/agents", string(body), testSysToken)
 	if rec.Code != http.StatusCreated {
