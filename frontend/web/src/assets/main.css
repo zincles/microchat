@@ -2208,10 +2208,11 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-node-is-waiting { opacity: 0.78; }
 /* 外框颜色就是状态：激活蓝、完成绿；等待保持卡片原样。 */
 .flow-node-is-running { border-color: var(--md-primary);
-  box-shadow: 0 0 0 1px var(--md-primary), var(--md-elev-2); }
+  box-shadow: 0 0 0 2px var(--md-primary), 0 0 18px color-mix(in srgb, var(--md-primary) 45%, transparent), var(--md-elev-2); }
 .flow-node-is-running .flow-node-state { color: var(--md-primary); }
 .flow-node-is-running .flow-node-state-dot { opacity: 1; animation: flow-state-pulse 1s ease-in-out infinite; }
-.flow-node-is-done { border-color: var(--tg-ok); }
+.flow-node-is-done { border-color: var(--tg-ok);
+  box-shadow: 0 0 0 1px var(--tg-ok), var(--md-elev-1); }
 .flow-node-is-done .flow-node-state { color: var(--tg-ok); }
 .flow-node-is-done .flow-node-state-dot { opacity: 0.85; background: var(--tg-ok); }
 @keyframes flow-state-pulse { 50% { transform: scale(0.55); opacity: 0.35; } }

@@ -285,11 +285,12 @@ async function runTest(): Promise<void> {
 // 位置、连线、节点内 Prompt 条目都是深层数据；一有变化就把整张图交回 AgentEditor。
 watch([nodes, edges], () => emit("update:graph", toGraph()), { deep: true });
 // 运行状态是独立的展示层数据：不进 Graph、不触发自动保存。
-watch(() => props.nodeStates, (states) => {
+watch([() => props.nodeStates, () => props.activeNodeId], ([states, activeId]) => {
   const map = states ?? {};
   nodes.value = nodes.value.map((n) => {
     const data = { ...(n.data ?? {}) };
-    const state = map[String(n.id)];
+    // node_states 是权威；老 trace 没有这一格时，至少把 activeNodeId 标成进行中。
+    const state = map[String(n.id)] || (String(n.id) === activeId ? "running" : "");
     if (state) data.runState = state; else delete data.runState;
     return { ...n, data };
   });
