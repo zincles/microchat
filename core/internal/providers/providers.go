@@ -189,11 +189,6 @@ type Request struct {
 	// ThinkingLevel：**统一七档**（off/minimal/low/medium/high/xhigh/max；空串 = 跟随模型默认）。
 	// 由这里按 vendor/model 映射成各家真正认识的字段（见 applyThinking）；别把厂商字符串带出这一层。
 	ThinkingLevel string
-	// ReasoningEffort：旧透传口（保留给已有调用/测试）；ThinkingLevel 非空时以它为准。
-	ReasoningEffort *string
-	// ReasoningSummary：思考摘要的档位（Pi 的 `reasoningSummary`）—— **原样透传**，没给就不发。
-	// 只进 Response 协议的 `reasoning.summary`；chat 体不发它。
-	ReasoningSummary *string
 	// Tools / ToolChoice：**工具透传**（原样进请求体；空 = 不发）。
 	Tools      []Tool
 	ToolChoice json.RawMessage
@@ -704,10 +699,6 @@ func applyThinking(body map[string]any, p Provider, r Request) {
 		}
 		return
 	}
-	// 旧透传口（没有统一档时）：原样发，不映射。
-	if r.ReasoningEffort != nil && *r.ReasoningEffort != "" {
-		body["reasoning_effort"] = *r.ReasoningEffort
-	}
 }
 
 // bodyFor：**体的唯一拼装处**（照 Pi 的 `openai-completions` 逐项对齐）。
@@ -930,20 +921,14 @@ func buildResponse(p Provider, r Request) (*http.Request, error) {
 	} else if hasToolHistory(r.Messages) {
 		body["tools"] = []Tool{}
 	}
-	if r.ThinkingLevel != "" || r.ReasoningEffort != nil && *r.ReasoningEffort != "" ||
-		r.ReasoningSummary != nil && *r.ReasoningSummary != "" {
+	if r.ThinkingLevel != "" {
 		reasoning := map[string]any{}
-		if r.ThinkingLevel != "" {
-			if effort, ok := thinkingEffortFor(p, r.Model, strings.ToLower(strings.TrimSpace(r.ThinkingLevel))); ok {
-				reasoning["effort"] = effort
-			}
-		} else if r.ReasoningEffort != nil && *r.ReasoningEffort != "" {
-			reasoning["effort"] = *r.ReasoningEffort
+		if effort, ok := thinkingEffortFor(p, r.Model, strings.ToLower(strings.TrimSpace(r.ThinkingLevel))); ok {
+			reasoning["effort"] = effort
 		}
-		if r.ReasoningSummary != nil && *r.ReasoningSummary != "" {
-			reasoning["summary"] = *r.ReasoningSummary
+		if len(reasoning) > 0 {
+			body["reasoning"] = reasoning
 		}
-		body["reasoning"] = reasoning
 	}
 	if r.MaxTokens > 0 {
 		body["max_output_tokens"] = r.MaxTokens

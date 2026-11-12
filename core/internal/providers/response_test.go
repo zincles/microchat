@@ -13,12 +13,10 @@ import (
 func TestBuildResponse(t *testing.T) {
 	provider := Provider{ID: "go", Vendor: VendorOpenCodeGo, Protocol: ProtocolOpenAIResponse, APIKey: "sk-x"}
 	temperature := 0.7
-	effort, summary := "high", "auto"
 	request, err := Build(provider, Request{
 		Model: "muse-spark-1.3", SessionID: "s-1",
 		Messages:  []ChatMessage{{Role: "user", Content: "在吗"}, {Role: "assistant", Content: "在"}},
-		MaxTokens: 128, Temperature: &temperature,
-		ReasoningEffort: &effort, ReasoningSummary: &summary,
+		MaxTokens: 128, Temperature: &temperature, ThinkingLevel: "high",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -60,7 +58,7 @@ func TestBuildResponse(t *testing.T) {
 		t.Fatalf("temperature = %v", body["temperature"])
 	}
 	reasoning, ok := body["reasoning"].(map[string]any)
-	if !ok || reasoning["effort"] != "high" || reasoning["summary"] != "auto" {
+	if !ok || reasoning["effort"] != "high" {
 		t.Fatalf("reasoning = %v", body["reasoning"])
 	}
 	if _, ok := body["prompt_cache_key"]; ok {

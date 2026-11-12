@@ -515,38 +515,6 @@ func TestAcceptFollowsStreaming(t *testing.T) {
 	}
 }
 
-// reasoning_effort：只在我们显式给了时才发（各家取值集合不同 ⇒ 原样透传，不映射）。
-func TestReasoningEffortPassthrough(t *testing.T) {
-	provider := opencodeProvider()
-	request, err := Build(provider, Request{Model: "m", SessionID: "s", Stream: true, ReasoningEffort: strPtr("max")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, _ := io.ReadAll(request.Body)
-	var parsed map[string]any
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		t.Fatal(err)
-	}
-	if parsed["reasoning_effort"] != "max" {
-		t.Fatalf("reasoning_effort = %v", parsed["reasoning_effort"])
-	}
-	// 没给就不发
-	request, err = Build(provider, Request{Model: "m", SessionID: "s", Stream: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, _ = io.ReadAll(request.Body)
-	again := map[string]any{}
-	if err := json.Unmarshal(body, &again); err != nil {
-		t.Fatal(err)
-	}
-	if _, exists := again["reasoning_effort"]; exists {
-		t.Fatal("没给就不该发 reasoning_effort")
-	}
-}
-
-func strPtr(value string) *string { return &value }
-
 // 思考**回传上游**：assistant 消息带着当时的思考时要补回同一个消息里（字段名随 provider）。
 func TestReasoningReplay(t *testing.T) {
 	messages := []ChatMessage{
