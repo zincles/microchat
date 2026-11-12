@@ -2222,3 +2222,10 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
   margin-top: 0.45em; padding-left: 0.8em; color: var(--md-on-surface-variant);
   font-size: var(--md-type-label-small); }
 .flow-enabled-row .vue-flow__handle-left { left: 0; }
+/* 运行中的 Flow：节点/连线不可拖、不可连、不可改；只保留画布平移缩放和状态显示。 */
+.flow-editor.is-locked .flow-node { pointer-events: none; }
+.flow-editor.is-locked .vue-flow__edge { pointer-events: none; }
+.flow-lock-badge { position: absolute; top: 0.55em; left: 50%; transform: translateX(-50%);
+  z-index: 70; padding: 0.25em 0.65em; border-radius: var(--r-btn);
+  background: var(--md-secondary-container); color: var(--md-on-secondary-container);
+  font-size: var(--md-type-label-small); pointer-events: none; }

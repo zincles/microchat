@@ -613,6 +613,11 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(flowWorkspace, /snapshot === savedSnapshot\.value\) return/, "没有修改也会触发自动保存");
   assert.match(flowWorkspace, /savedLabel/, "已保存没有时间显示");
   assert.match(flowWorkspace, /:node-states="nodeStates"/, "工作流没有把节点状态传给编辑器");
+  assert.match(flowWorkspace, /:running="running"/, "工作流没有把运行中状态传给编辑器");
+  const flowEditor = readFileSync(join(SRC, "components", "FlowEditor.vue"), "utf8");
+  assert.match(flowEditor, /:nodes-draggable="!locked"/, "运行中仍允许拖节点");
+  assert.match(flowEditor, /:nodes-connectable="!locked"/, "运行中仍允许连线");
+  assert.match(flowEditor, /:edges-updatable="!locked"/, "运行中仍允许改边");
   assert.match(flowWorkspace, /已保存（\$\{seconds\}秒之前）/, "已保存没有相对时间文案");
   assert.match(flowWorkspace, /:active-node-id="activeNodeId"/, "工作流没有把活跃节点传给编辑器");
   assert.match(workspace, /agent\?:\s*Agent \| null/, "工作流页没有接当前 Agent");
@@ -657,6 +662,7 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(css, /\.flow-edge-bool/, "bool 连线没有独立色");
   assert.match(css, /\.flow-node-is-running\s*\{[^}]*border-color:\s*var\(--md-primary\)/, "激活节点外框不是蓝色");
   assert.match(css, /\.flow-node-is-done\s*\{[^}]*border-color:\s*var\(--tg-ok\)/, "完成节点外框不是绿色");
+  assert.match(css, /\.flow-editor\.is-locked \.flow-node \{[^}]*pointer-events:\s*none/, "运行中没有锁住节点交互");
 
   assert.ok(!/\.flow-node[^\n]*\{[^}]*border-left:\s*3px/.test(css), "节点卡片还在用左侧色条");
   assert.match(css, /\.flow-node-head \{[^}]*background:\s*color-mix/, "节点卡片没有类型色表头");

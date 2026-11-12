@@ -25,11 +25,13 @@ const props = withDefaults(defineProps<{
   agentId?: string;
   activeNodeId?: string;
   nodeStates?: Record<string, string>;
+  running?: boolean;
 }>(), {
   graph: null,
   agentId: "",
   activeNodeId: "",
   nodeStates: () => ({}),
+  running: false,
 });
 const emit = defineEmits<{ "update:graph": [graph: FlowGraph] }>();
 const api = sharedApi();
@@ -75,6 +77,7 @@ const flowText = computed(() => formatFlowText(toGraph()));
 const testMessage = ref("");
 const testStatus = ref("");
 const testing = ref(false);
+const locked = computed(() => props.running);
 const models = ref<ModelListItem[]>([]);
 provide("flowModels", models);
 const nodeRows = computed(() => nodes.value.map((n) => ({
@@ -105,15 +108,18 @@ function selectNode(id: string): void {
   nodes.value = nodes.value.map((n) => ({ ...n, selected: n.id === id }));
 }
 function removeEdge(id: string): void {
+  if (locked.value) return;
   edges.value = edges.value.filter((e) => e.id !== id);
 }
 // 删除节点时**同一条事务里**把相连的边一起删掉，避免留下“指向不存在节点”的悬空边。
 function removeNode(id: string): void {
+  if (locked.value) return;
   edges.value = edges.value.filter((e) => e.source !== id && e.target !== id);
   nodes.value = nodes.value.filter((n) => n.id !== id);
 }
 // 删端口必须和删节点一样把相连的边一起删掉，否则会留下指向不存在端口的悬空线。
 function removePort(nodeId: string, handle: string, side: "source" | "target"): void {
+  if (locked.value) return;
   edges.value = edges.value.filter((e) => {
     if (side === "target") {
       return !(e.target === nodeId && (e.targetHandle || (handle === "in-1" ? "in-1" : "in")) === handle);
@@ -180,6 +186,7 @@ const addNodeItems = computed<Array<{
 ]);
 
 function addNode(type: "input" | "text" | "history" | "trim" | "merge" | "llm" | "join" | "judge" | "output"): void {
+  if (locked.value) return;
   if (type === "input" && inputExists.value) return;
   if (type === "history" && historyExists.value) return;
   if (type === "output" && outputExists.value) return;
@@ -223,6 +230,7 @@ const connectSucceeded = ref(false);
 
 // 从一个已连接的口子开始拖：先记住旧边；放开到空白就删掉它，落到别处则在 onConnect 里替换。
 function onConnectStart(params: OnConnectStartParams): void {
+  if (locked.value) return;
   connectSucceeded.value = false;
   const handle = params.handleId || "";
   const edge = edges.value.find((e) => params.handleType === "source"
@@ -231,7 +239,7 @@ function onConnectStart(params: OnConnectStartParams): void {
   pendingReconnect.value = edge?.id ?? null;
 }
 function onConnect(connection: Connection): void {
-  if (!isValidConnection(connection)) return;
+  if (locked.value || !isValidConnection(connection)) return;
   connectSucceeded.value = true;
   const sourceHandle = connection.sourceHandle || "out";
   const targetHandle = connection.targetHandle || "in";
@@ -251,6 +259,7 @@ function onConnect(connection: Connection): void {
   pendingReconnect.value = null;
 }
 function onConnectEnd(): void {
+  if (locked.value) return;
   // 拖回空白：没有产生新连接 ⇒ 把开始拖的那条旧线删掉。
   if (pendingReconnect.value && !connectSucceeded.value) {
     removeEdge(pendingReconnect.value);
@@ -298,7 +307,7 @@ watch([() => props.nodeStates, () => props.activeNodeId], ([states, activeId]) =
 </script>
 
 <template>
-  <section class="flow-editor" :class="{ expanded }">
+  <section class="flow-editor" :class="{ expanded, 'is-locked': locked }">
     <div class="flow-main">
       <div class="flow-canvas" :class="{ 'nodes-open': nodesOpen, 'bottom-open': bottomOpen }">
         <VueFlow
@@ -310,6 +319,9 @@ watch([() => props.nodeStates, () => props.activeNodeId], ([states, activeId]) =
           :max-zoom="1.8"
           fit-view-on-init
           :connection-mode="ConnectionMode.Loose"
+          :nodes-draggable="!locked"
+          :nodes-connectable="!locked"
+          :edges-updatable="!locked"
           @connect-start="onConnectStart"
           @connect="onConnect"
           @connect-end="onConnectEnd"
@@ -319,16 +331,17 @@ watch([() => props.nodeStates, () => props.activeNodeId], ([states, activeId]) =
           <Controls position="bottom-right" />
         </VueFlow>
 
+        <div v-if="locked" class="flow-lock-badge" role="status">运行中 · 只读</div>
         <!-- 左上角：添加节点（浮在画布上，不挤画布）。 -->
         <div class="flow-canvas-add">
           <VMenu :close-on-content-click="true">
             <template #activator="{ props: menuProps }">
-              <VBtn v-bind="menuProps" variant="tonal" size="small" type="button"
+              <VBtn v-bind="menuProps" variant="tonal" size="small" type="button" :disabled="locked"
                 prepend-icon="mdi-plus" title="添加节点">添加节点</VBtn>
             </template>
             <VList class="flow-add-menu" density="compact">
               <VListItem v-for="item in addNodeItems" :key="item.type"
-                :disabled="item.disabled" @click="addNode(item.type)">
+                :disabled="item.disabled || locked" @click="addNode(item.type)">
                 {{ item.label }}
               </VListItem>
             </VList>
@@ -375,20 +388,20 @@ watch([() => props.nodeStates, () => props.activeNodeId], ([states, activeId]) =
             <div class="flow-node-row-head">
               <span class="flow-node-row-id"><span class="flow-node-badge" aria-hidden="true">{{ row.badge }}</span><b>{{ row.label }}</b><code>{{ row.id }}</code></span>
               <VBtn icon variant="text" size="x-small" type="button" title="删除节点" aria-label="删除节点"
-                @click.stop="removeNode(row.id)"><span v-html="ICONS.trash"></span></VBtn>
+                :disabled="locked" @click.stop="removeNode(row.id)"><span v-html="ICONS.trash"></span></VBtn>
             </div>
             <div v-if="row.incoming.length" class="flow-conn-section">
               <span class="flow-conn-label">输入</span>
               <div v-for="edge in row.incoming" :key="edge.id" class="flow-conn-row">
                 <span :title="edge.id">{{ nodeLabel(edge.source) }} · {{ edge.sourceHandle || "out" }} → {{ edge.targetHandle || "in" }}</span>
-                <button type="button" class="flow-conn-x" @click.stop="removeEdge(edge.id)">断开</button>
+                <button type="button" class="flow-conn-x" :disabled="locked" @click.stop="removeEdge(edge.id)">断开</button>
               </div>
             </div>
             <div v-if="row.outgoing.length" class="flow-conn-section">
               <span class="flow-conn-label">输出</span>
               <div v-for="edge in row.outgoing" :key="edge.id" class="flow-conn-row">
                 <span :title="edge.id">{{ edge.sourceHandle || "out" }} → {{ nodeLabel(edge.target) }} · {{ edge.targetHandle || "in" }}</span>
-                <button type="button" class="flow-conn-x" @click.stop="removeEdge(edge.id)">断开</button>
+                <button type="button" class="flow-conn-x" :disabled="locked" @click.stop="removeEdge(edge.id)">断开</button>
               </div>
             </div>
             <div v-if="!row.incoming.length && !row.outgoing.length" class="flow-conn-empty">（还没有连接）</div>

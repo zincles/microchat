@@ -29,6 +29,7 @@ const savedLabel = computed(() => {
 });
 const activeNodeId = ref("");
 const nodeStates = ref<Record<string, string>>({});
+const running = ref(false);
 let pollTimer: number | null = null;
 let tickTimer: number | null = null;
 let timer: number | null = null;
@@ -51,14 +52,16 @@ function onGraph(next: FlowGraph): void {
   schedule();
 }
 async function pollActive(): Promise<void> {
-  if (!props.sessionId) { activeNodeId.value = ""; return; }
+  if (!props.sessionId) { activeNodeId.value = ""; nodeStates.value = {}; running.value = false; return; }
   try {
     const trace = await api.flowRun(props.sessionId);
     activeNodeId.value = trace?.active_node_id ?? "";
     nodeStates.value = trace?.node_states ?? {};
+    running.value = trace?.status === "running";
   } catch {
     activeNodeId.value = "";
     nodeStates.value = {};
+    running.value = false;
   }
 }
 
@@ -83,7 +86,7 @@ async function save(): Promise<void> {
     status.value = `保存失败：${error instanceof Error ? error.message : String(error)}`;
   }
 }
-watch(() => props.agent?.id, () => {
+watch([() => props.agent?.id, () => props.sessionId], () => {
   cancelTimer();
   saveSeq += 1;
   dirty = false;
@@ -91,6 +94,7 @@ watch(() => props.agent?.id, () => {
   savedSnapshot.value = JSON.stringify(graph.value);
   savedAt.value = null;
   nodeStates.value = {};
+  running.value = false;
   status.value = "";
 });
 onMounted(() => {
@@ -113,7 +117,7 @@ onBeforeUnmount(() => {
       <span class="flow-workspace-status">{{ savedLabel }}</span>
     </div>
     <FlowEditor v-if="props.agent?.id" :graph="graph" :agent-id="props.agent.id"
-      :active-node-id="activeNodeId" :node-states="nodeStates" @update:graph="onGraph" />
+      :active-node-id="activeNodeId" :node-states="nodeStates" :running="running" @update:graph="onGraph" />
     <p v-else class="ws-draft-note">这是草稿，还没有保存的 FlowAgent 可以编辑。</p>
   </section>
 </template>
