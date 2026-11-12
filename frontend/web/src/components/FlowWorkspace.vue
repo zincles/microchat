@@ -30,6 +30,7 @@ const savedLabel = computed(() => {
 const activeNodeId = ref("");
 const nodeStates = ref<Record<string, string>>({});
 const running = ref(false);
+const traceLabel = ref("");
 let pollTimer: number | null = null;
 let tickTimer: number | null = null;
 let timer: number | null = null;
@@ -52,16 +53,21 @@ function onGraph(next: FlowGraph): void {
   schedule();
 }
 async function pollActive(): Promise<void> {
-  if (!props.sessionId) { activeNodeId.value = ""; nodeStates.value = {}; running.value = false; return; }
+  if (!props.sessionId) { activeNodeId.value = ""; nodeStates.value = {}; running.value = false; traceLabel.value = ""; return; }
   try {
     const trace = await api.flowRun(props.sessionId);
     activeNodeId.value = trace?.active_node_id ?? "";
     nodeStates.value = trace?.node_states ?? {};
     running.value = trace?.status === "running";
+    traceLabel.value = trace?.status === "running" ? "运行中"
+      : trace?.status === "done" ? "上次运行已完成"
+      : trace?.status === "error" ? "上次运行失败"
+      : trace?.status === "canceled" ? "上次运行已取消" : "";
   } catch {
     activeNodeId.value = "";
     nodeStates.value = {};
     running.value = false;
+    traceLabel.value = "还没有执行记录";
   }
 }
 
@@ -95,6 +101,7 @@ watch([() => props.agent?.id, () => props.sessionId], () => {
   savedAt.value = null;
   nodeStates.value = {};
   running.value = false;
+  traceLabel.value = "";
   status.value = "";
 });
 onMounted(() => {
@@ -114,7 +121,7 @@ onBeforeUnmount(() => {
   <section id="flow-workspace" aria-label="FlowAgent 工作流">
     <div class="flow-workspace-head">
       <p class="hint">当前 Agent 的工作流；修改会防抖保存回 Agent 文件。</p>
-      <span class="flow-workspace-status">{{ savedLabel }}</span>
+      <span class="flow-workspace-status">{{ savedLabel }}<template v-if="traceLabel">{{ savedLabel ? " · " : "" }}{{ traceLabel }}</template></span>
     </div>
     <FlowEditor v-if="props.agent?.id" :graph="graph" :agent-id="props.agent.id"
       :active-node-id="activeNodeId" :node-states="nodeStates" :running="running" @update:graph="onGraph" />

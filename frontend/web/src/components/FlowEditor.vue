@@ -278,7 +278,14 @@ async function runTest(): Promise<void> {
     nodes.value = nodes.value.map((n) => {
       const test = byID.get(String(n.id));
       const data = { ...(n.data ?? {}) };
-      if (test) data.test = test; else delete data.test;
+      if (test) {
+        data.test = test;
+        // 测试是同步跑完的：结束后把每个节点标成完成/跳过，别让编辑器看起来什么都没发生。
+        data.runState = test.status === "skipped" ? "done" : "done";
+      } else {
+        delete data.test;
+        delete data.runState;
+      }
       return { ...n, data };
     });
     testStatus.value = result.output ? `完成：${result.output.slice(0, 80)}` : "完成";
