@@ -3,7 +3,7 @@
 // LLM 节点内部是一张 **messages 列表**：每个 Prompt 条目有自己的 role 和左侧输入孔。
 import { computed, inject, onUnmounted, ref, type Ref } from "vue";
 import { Handle, Position } from "@vue-flow/core";
-import { VBtn, VSelect, VTextField, VTextarea } from "vuetify/components";
+import { VBtn, VNumberInput, VSelect, VTextField, VTextarea } from "vuetify/components";
 import { ICONS } from "../assets/icons.ts";
 import type { ModelListItem } from "../api/types.ts";
 import { DEFAULT_JOIN_SEPARATOR, TRIM_MODES, TRIM_ROLES, trimCountOf, trimModeOf, type FlowDataType, type TrimMode } from "../utils/flow.ts";
@@ -113,10 +113,10 @@ function resizeStartHandler(event: PointerEvent): void {
   event.stopPropagation();
 }
 onUnmounted(resizeEnd);
-const maxRetry = computed<string>({
-  get: () => String(Number.isInteger(Number(props.data.max_retry)) ? Number(props.data.max_retry) : 3),
-  set: (value: string) => {
-    const retry = Number(value);
+const maxRetry = computed<number | null>({
+  get: () => Number.isInteger(Number(props.data.max_retry)) ? Number(props.data.max_retry) : 3,
+  set: (value) => {
+    const retry = Number(value ?? 0);
     props.data.max_retry = Number.isInteger(retry) && retry >= 0 ? retry : 0;
   },
 });
@@ -144,10 +144,10 @@ const judgeAnswerType = computed<FlowDataType>({
   get: () => judgeAnswerTypeOf({ data: props.data }),
   set: (value: FlowDataType) => { props.data.answer_type = value; },
 });
-const judgeThreshold = computed<string>({
-  get: () => String(props.data.threshold ?? 0.5),
-  set: (value: string) => {
-    const number = Number(value);
+const judgeThreshold = computed<number | null>({
+  get: () => Number.isFinite(Number(props.data.threshold)) ? Number(props.data.threshold) : 0.5,
+  set: (value) => {
+    const number = Number(value ?? 0.5);
     props.data.threshold = Number.isFinite(number) ? number : 0.5;
   },
 });
@@ -155,10 +155,10 @@ const trimMode = computed<TrimMode>({
   get: () => trimModeOf(props.data),
   set: (value: TrimMode) => { props.data.mode = value; },
 });
-const trimCount = computed<string>({
-  get: () => String(trimCountOf(props.data)),
-  set: (value: string) => {
-    const count = Number(value);
+const trimCount = computed<number | null>({
+  get: () => trimCountOf(props.data),
+  set: (value) => {
+    const count = Number(value ?? 1);
     props.data.count = Number.isInteger(count) && count > 0 ? count : 1;
   },
 });
@@ -172,7 +172,7 @@ const trimRoles = computed<string[]>({
 const trimSummary = computed(() => {
   const mode = TRIM_MODES.find((item) => item.value === trimMode.value)?.title ?? "保留最近 N 条";
   const roles = trimRoles.value.length === TRIM_ROLES.length ? "全部角色" : `只保留 ${trimRoles.value.join(" / ")}`;
-  return `${mode.replace("N", trimCount.value)} · ${roles}`;
+  return `${mode.replace("N", String(trimCount.value ?? 1))} · ${roles}`;
 });
 const mergeInputs = computed<string[]>(() => Array.isArray(props.data.inputs) && props.data.inputs.length
   ? props.data.inputs
@@ -271,8 +271,8 @@ function addJoinOutput(): void {
     </label>
     <label v-if="type === 'llm'" class="flow-llm-retry nodrag nopan">
       <span>失败重试</span>
-      <VTextField v-model="maxRetry" type="number" min="0" step="1" density="compact"
-        variant="outlined" hide-details suffix="次" />
+      <VNumberInput v-model="maxRetry" :min="0" :step="1" control-variant="stacked"
+        density="compact" variant="outlined" hide-details suffix="次" />
     </label>
     <div v-if="type === 'llm'" class="flow-prompt-list">
       <div v-for="prompt in prompts" :key="prompt.id"
@@ -336,8 +336,8 @@ function addJoinOutput(): void {
       </label>
       <label v-if="judgeAnswerType === 'bool'" class="flow-judge-field">
         <span>布尔阈值</span>
-        <VTextField v-model="judgeThreshold" type="number" step="0.05" min="0" max="1"
-          density="compact" variant="outlined" hide-details />
+        <VNumberInput v-model="judgeThreshold" :min="0" :max="1" :step="0.05" :precision="2"
+          control-variant="stacked" density="compact" variant="outlined" hide-details />
       </label>
       <label class="flow-judge-field">
         <span>Questions JSON</span>
@@ -359,8 +359,8 @@ function addJoinOutput(): void {
     <div v-if="type === 'history'" class="flow-node-body">来自真实会话的历史 messages</div>
     <div v-if="type === 'trim'" class="flow-trim-controls nodrag nopan">
       <VSelect v-model="trimMode" :items="TRIM_MODES" density="compact" variant="outlined" hide-details />
-      <VTextField v-model="trimCount" type="number" min="1" step="1" density="compact"
-        variant="outlined" hide-details suffix="条" />
+      <VNumberInput v-model="trimCount" :min="1" :step="1" control-variant="stacked"
+        density="compact" variant="outlined" hide-details suffix="条" />
       <VSelect v-model="trimRoles" :items="trimRoleOptions" multiple chips density="compact"
         variant="outlined" hide-details label="角色" />
       <span class="flow-node-body">{{ trimSummary }}</span>

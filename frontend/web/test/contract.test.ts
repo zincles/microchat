@@ -4972,9 +4972,10 @@ test("Flow 节点：左侧连接点外移、hover 不位移、标题栏不再画
 test("LLM 节点：内部字体/控件统一 token；按钮统一小号 outlined", () => {
   const node = readFileSync(join(SRC, "components", "FlowNode.vue"), "utf8");
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8");
-  assert.match(css, /\.flow-node \{\s*--flow-font:\s*calc\(10px[^}]*--flow-control-height:\s*calc\(30px/, "节点没有统一的字体/控件 token");
+  assert.match(css, /\.flow-node \{\s*--flow-font:\s*calc\(10px[^}]*--flow-control-height:\s*calc\(26px[^}]*--flow-button-height:\s*calc\(18px/, "节点没有统一的字体/控件 token");
   assert.match(css, /\.flow-node \.flow-prompt-content \.v-field__input\s*\{[^}]*font-size:\s*var\(--flow-font\)/, "Prompt 正文没有吃统一字号");
   assert.match(css, /\.flow-node \.v-btn\s*\{[^}]*font-size:\s*var\(--flow-font\)/, "节点按钮没有吃统一字号");
   assert.match(css, /\.flow-node \.v-btn\s*\{[^}]*border:\s*1px solid/, "节点按钮没有轮廓");
+  assert.match(node, /VNumberInput/, "数字输入没有用带上下增减的控件");
   assert.ok(!/variant="text"/.test(node), "FlowNode 还有平铺 text 按钮");
 });

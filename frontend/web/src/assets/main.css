@@ -2373,8 +2373,8 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-node {
   --flow-font: calc(10px * var(--app-text-scale, 1));
   --flow-title-font: calc(11.5px * var(--app-text-scale, 1));
-  --flow-control-height: calc(30px * var(--app-text-scale, 1));
-  --flow-button-height: calc(22px * var(--app-text-scale, 1));
+  --flow-control-height: calc(26px * var(--app-text-scale, 1));
+  --flow-button-height: calc(18px * var(--app-text-scale, 1));
 }
 .flow-node .v-field,
 .flow-node .v-field__input,
@@ -2422,3 +2422,29 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 }
 .flow-node .flow-node-title { font-size: var(--flow-title-font); }
 .flow-node .flow-node-badge { font-size: calc(7px * var(--app-text-scale, 1)); }
+
+
+/* 数字输入的上/下增减：收成与节点按钮同一档的 18px，轮廓由内层按钮自己画。 */
+.flow-node .v-field__append-inner {
+  height: var(--flow-control-height) !important;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+.flow-node .v-number-input__control {
+  width: 2.2em;
+  height: var(--flow-control-height) !important;
+  min-height: var(--flow-control-height) !important;
+  max-height: var(--flow-control-height) !important;
+  border-left: 1px solid var(--md-outline-variant);
+  overflow: hidden;
+}
+.flow-node .v-number-input__control .v-btn {
+  width: 100% !important; min-width: 100% !important;
+  height: calc(var(--flow-control-height) / 2) !important; min-height: 0 !important;
+  border: 0 !important; border-radius: 0 !important;
+  background: transparent !important;
+}
+.flow-node .v-number-input__control .v-btn:first-child {
+  border-bottom: 1px solid var(--md-outline-variant) !important;
+}
+.flow-node .v-number-input__control .v-icon { font-size: calc(var(--flow-font) * 0.9); }
