@@ -337,7 +337,7 @@ watch([() => props.nodeStates, () => props.activeNodeId], ([states, activeId]) =
           @connect-end="onConnectEnd"
           @node-resize="fitAfterResize"
         >
-          <Background :gap="18" :size="1" />
+          <Background :gap="22" :size="1" pattern-color="var(--md-outline-variant)" />
           <Controls position="bottom-right" />
         </VueFlow>
 

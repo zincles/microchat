@@ -248,7 +248,7 @@ function addJoinOutput(): void {
   >
     <Handle v-if="type === 'trim'" id="in" type="target" :position="Position.Left" :class="portClass('messages')" />
     <Handle v-if="type === 'judge'" id="state" type="target" :position="Position.Left" :class="portClass('string')" />
-    <div class="flow-node-head">
+    <div class="flow-node-head" :title="hint">
       <span class="flow-node-badge" aria-hidden="true">{{ badge }}</span>
       <div class="flow-node-heading">
         <span class="flow-node-title">{{ label }}</span>

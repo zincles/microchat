@@ -2195,3 +2195,74 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 #settings-view.flow-agent-open .agent-flow-pane .flow-editor .flow-main { flex: 1 1 auto; min-height: 0; }
 #settings-view.flow-agent-open .agent-flow-pane .flow-editor .flow-canvas { flex: 1 1 auto; height: auto; min-height: 0; }
 #settings-view.flow-agent-open .agent-flow-pane .flow-stage-note { flex: none; }
+
+
+/* FlowAgent 视觉精修（2026-11-13）：ComfyUI 式“节点 = 有标题栏的器件”，
+ * 不是“带一堆 outlined 表单的卡片”。这里只覆盖视觉，不改节点语义。 */
+.flow-canvas {
+  background:
+    radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--md-outline-variant) 42%, transparent) 1px, transparent 1.2px) 0 0 / 22px 22px,
+    var(--md-surface-container-low);
+}
+.flow-canvas .vue-flow__background { opacity: 0.55; }
+.flow-node {
+  border-radius: 10px;
+  border-color: color-mix(in srgb, var(--flow-node-accent) 24%, var(--md-outline-variant));
+  box-shadow: 0 8px 26px color-mix(in srgb, #000 34%, transparent), 0 1px 0 color-mix(in srgb, #fff 6%, transparent) inset;
+}
+.flow-node-head {
+  min-height: 2.25em;
+  padding: 0.45em 2em 0.42em 0.7em;
+  border-bottom-color: color-mix(in srgb, var(--flow-node-accent) 30%, var(--md-outline-variant));
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--flow-node-accent) 18%, var(--vf-node-bg)),
+    color-mix(in srgb, var(--flow-node-accent) 8%, var(--vf-node-bg)));
+  box-shadow: inset 3px 0 0 var(--flow-node-accent);
+}
+.flow-node-heading { gap: 0; }
+.flow-node-title { font-size: 0.86em; letter-spacing: 0.015em; }
+.flow-node-hint { display: none; }
+.flow-node-badge {
+  min-width: 1.8em; height: 1.45em; border-radius: 4px;
+  background: var(--flow-node-accent); color: var(--md-on-primary);
+  font-size: 0.58em; letter-spacing: 0.06em;
+}
+.flow-node-delete { opacity: 0; transition: opacity 120ms var(--md-ease-standard); }
+.flow-node:hover .flow-node-delete, .flow-node:focus-within .flow-node-delete { opacity: 1; }
+.flow-node .v-field {
+  border-radius: 4px !important;
+  background: color-mix(in srgb, var(--md-surface-container-highest) 62%, transparent) !important;
+}
+.flow-node .v-field__outline { --v-field-border-opacity: 0.2; }
+.flow-node .v-field__input { font-size: 0.78em; min-height: 2.1em; padding-top: 0.25em; padding-bottom: 0.25em; }
+.flow-prompt-row, .flow-prompt-history {
+  border: 0;
+  border-left: 2px solid color-mix(in srgb, var(--flow-node-accent) 55%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--md-surface-container-highest) 32%, transparent);
+}
+.flow-prompt-row .v-field__outline, .flow-prompt-history .v-field__outline { --v-field-border-opacity: 0.12; }
+.flow-node-body { font-size: 0.68em; line-height: 1.45; }
+.flow-output-row, .flow-llm-output-row, .flow-join-output-row, .flow-merge-row, .flow-join-row {
+  font-size: 0.84em;
+}
+.flow-node-llm { width: 21em; min-width: 21em; max-width: 21em; }
+.flow-canvas .vue-flow__handle {
+  width: 14px !important; height: 14px !important;
+  border: 3px solid var(--vf-node-bg) !important;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--flow-node-accent) 65%, transparent), 0 2px 5px color-mix(in srgb, #000 35%, transparent);
+}
+.flow-canvas .vue-flow__handle:hover { transform: scale(1.18); }
+.flow-canvas .vue-flow__edge-path { stroke-width: 2; opacity: 0.78; }
+.flow-canvas .vue-flow__edge:hover .vue-flow__edge-path { stroke-width: 2.6; opacity: 1; }
+.flow-canvas .vue-flow__node.selected .flow-node,
+.flow-canvas .vue-flow__node:focus-visible .flow-node {
+  border-color: var(--flow-node-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--flow-node-accent) 70%, transparent),
+    0 10px 30px color-mix(in srgb, #000 38%, transparent);
+}
+.flow-node-is-running {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--flow-node-accent) 75%, transparent),
+    0 0 22px color-mix(in srgb, var(--flow-node-accent) 26%, transparent),
+    0 8px 26px color-mix(in srgb, #000 34%, transparent);
+}
