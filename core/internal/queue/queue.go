@@ -321,19 +321,6 @@ func (s *Service) List() []Queue {
 	return out
 }
 
-// Running：还有几个队列在跑（面板的环 / 徽标看它）。
-func (s *Service) Running() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	count := 0
-	for _, q := range s.queues {
-		if q.FinishedAt == nil {
-			count++
-		}
-	}
-	return count
-}
-
 // keepQueues：保留多少条已结束的队列（跑着的永远都在）。与 `task.keepFinished` 同一个口径。
 const keepQueues = 20
 

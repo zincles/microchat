@@ -185,17 +185,6 @@ func messagesUpTo(messages []model.Message, at int) []model.Message {
 	return messages[:at]
 }
 
-// Fold：从空开始按出现顺序折叠，得到**一层**的 `{表: {键: 值}}`。
-//
-// 删除（`delete(键)` 或赋空值）就是把这个键**直接删掉**，不留痕迹（§38）；
-// 算完为空的表自动消失（§37）—— **`global` 是那条例外**，但它由往外给的那一层补
-// （`FromSources` 过 `statelang.EnsureDefaultTable`；本函数只管一层，保持干净）。
-func Fold(statements []statelang.Statement) Tables {
-	rows := make([]statelang.Statement, 0, len(statements))
-	rows = append(rows, statements...)
-	return foldStatements(rows)
-}
-
 func foldRows(rows []OpRow) Tables {
 	statements := make([]statelang.Statement, 0, len(rows))
 	for index := range rows {

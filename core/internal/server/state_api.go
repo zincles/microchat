@@ -19,15 +19,6 @@ func (s *Server) effectiveSystemPrompt(session model.Session) (string, state.Pro
 	return s.chat.EffectiveSystemPrompt(session)
 }
 
-// viewOf：现演一份这条会话的状态快照（分层 + 沿路径 fold）。
-func (s *Server) viewOf(session model.Session) (state.View, error) {
-	messages, err := s.store.ListMessages(session.ID)
-	if err != nil {
-		return state.View{}, err
-	}
-	return state.FromSources(session.ID, messages), nil
-}
-
 // getSessionState：某会话的世界状态：顺着正文现演出来的值（提示词里的块**不算数**——那是说明文）。
 //
 // 查询参数 `at_idx=N`（**同一条路由加参数**，不开新路）⇒ **截至第 N 条的现演**：

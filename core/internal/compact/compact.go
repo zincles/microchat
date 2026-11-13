@@ -1283,16 +1283,6 @@ func truncateMaterial(text string, max int) string {
 	return string(runes[:max]) + "…"
 }
 
-// sortedKeysOf：map 键排序（`state.sortedKeys` 不导出，这里各排各的）。
-func sortedKeysOf[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for key := range m {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
 // withStatePair：材料前后附段首/段末状态（为空的那份不附；两份都空 ⇒ 原样返回）。
 func withStatePair(material, before, after string) string {
 	out := material

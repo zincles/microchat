@@ -88,11 +88,6 @@ func Scan(text string) Document {
 	return document
 }
 
-// ParseStatements：解析**块体**（标签之间的那段）。语言本体就是它，纯函数。
-func ParseStatements(body string) ([]Statement, []Diagnostic) {
-	return parseStatements(body, 1)
-}
-
 // parseStatements：`baseLine` 是块体第一行在**整段文本**里的行号（好让诊断指向用户看得见的那一行）。
 func parseStatements(body string, baseLine int) ([]Statement, []Diagnostic) {
 	statements := []Statement{}
@@ -231,16 +226,6 @@ func checkKey(key string) string {
 		return "键不能含 `/` `<` `>` `=`"
 	}
 	return ""
-}
-
-// splitFirstSpace：在第一处空白切开（`set A = 1` → `set` + `A = 1`）。
-func splitFirstSpace(line string) (head, tail string) {
-	for index, r := range line {
-		if r == ' ' || r == '\t' || r == '\r' || r == '\n' {
-			return line[:index], line[index+len(string(r)):]
-		}
-	}
-	return line, ""
 }
 
 // findTag：找下一个 `<state>`（closing=false）或 `</state>`（closing=true）的起始下标；没有返回 -1。

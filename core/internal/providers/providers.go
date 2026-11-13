@@ -422,15 +422,8 @@ func sessionHeaderFor(p Provider) string {
 	return presets[p.EffectiveVendor()].sessionHeader
 }
 
-// reasoningFieldFor：这个渠道回传思考用哪个字段名（nil = 按 vendor 默认；"" = 不回传）。
-func reasoningFieldFor(p Provider) string {
-	if p.ReasoningField != nil {
-		return *p.ReasoningField
-	}
-	return presets[p.EffectiveVendor()].reasoningField
-}
-
-// reasoningFieldForModel：同上，但 custom 保留旧的模型名启发式 ——
+// reasoningFieldForModel：这个渠道回传思考用哪个字段名（nil = 按 vendor 默认；"" = 不回传）。
+// custom 保留旧的模型名启发式 ——
 // 模型名含 `deepseek` 时按 DeepSeek 官方字段回传（否则那一路上启发式永远落空）。
 func reasoningFieldForModel(p Provider, model string) string {
 	if p.ReasoningField != nil {
