@@ -1076,6 +1076,7 @@ const { runCommand } = useCommands({
   getSessionID: () => sessionID,
   getEpoch: () => epoch,
   isDraft: () => draft,
+  isFlow: () => currentAgentIsFlow.value,
   vueMessages,
   startDraft,
   enterSession,

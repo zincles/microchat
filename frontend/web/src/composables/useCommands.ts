@@ -32,6 +32,7 @@ export interface CommandsDeps {
   getSessionID: () => string | null;
   getEpoch: () => number;
   isDraft: () => boolean;
+  isFlow: () => boolean;
   vueMessages: Ref<AppRow[]>;
   startDraft: () => Promise<void>;
   enterSession: (id: string) => Promise<void>;
@@ -48,7 +49,7 @@ export interface CommandsDeps {
 }
 
 export function useCommands({
-  api, toast, overlaysRef, getSessionID, getEpoch, isDraft, vueMessages, startDraft, enterSession,
+  api, toast, overlaysRef, getSessionID, getEpoch, isDraft, isFlow, vueMessages, startDraft, enterSession,
   fillModelSelect, compactNow, rerollNow, resend, reloadWindow, refreshStateView, refreshRerolls,
   openMessageEditor, openSummaryEdit, deleteMessagesFlow,
 }: CommandsDeps) {
@@ -81,6 +82,7 @@ export function useCommands({
     },
     reroll: async () => { await rerollNow(); },
     switch: async (args) => {
+      if (isFlow()) { toast("FlowAgent 没有重摇版本；用 /reroll 重新生成"); return; }
       const sid = getSessionID();
       if (!sid) return;
       const my = getEpoch();
