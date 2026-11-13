@@ -2314,3 +2314,111 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
   background: var(--hover);
 }
 .flow-node-delete { border: 1px solid var(--md-outline-variant); }
+
+
+/* 节点内部统一尺度：正文 / 字段 / 下拉 / 按钮都吃同一个 --flow-text。
+ * 之前 Vuetify 的 16px 控件、9.6px Prompt、8.8px 标签和 7.4px 按钮混在一起，
+ * 同一张卡片里像拼出来的。 */
+.flow-node {
+  --flow-text: 0.8em;
+  --flow-control-height: 2.35em;
+}
+.flow-node .v-field,
+.flow-node .v-field__input,
+.flow-node .v-btn,
+.flow-node .flow-node-body,
+.flow-node .flow-node-hint,
+.flow-node .flow-llm-model > span,
+.flow-node .flow-llm-retry > span,
+.flow-node .flow-prompt-role,
+.flow-node .flow-prompt-role-label,
+.flow-node .flow-history-label,
+.flow-node .flow-output-row,
+.flow-node .flow-llm-output-row,
+.flow-node .flow-merge-row,
+.flow-node .flow-join-row {
+  font-size: var(--flow-text) !important;
+}
+.flow-node .v-field {
+  --v-input-control-height: var(--flow-control-height);
+}
+.flow-node .v-field__input {
+  min-height: var(--flow-control-height);
+  padding-top: 0.3em;
+  padding-bottom: 0.3em;
+}
+.flow-node .flow-prompt-content .v-field__input {
+  font-size: var(--flow-text) !important;
+  line-height: 1.5;
+  min-height: 3em;
+}
+.flow-node .flow-prompt-role {
+  height: var(--flow-control-height);
+  font-size: var(--flow-text) !important;
+}
+.flow-node .v-btn {
+  height: 2.05em !important;
+  min-height: 2.05em !important;
+  font-size: var(--flow-text) !important;
+}
+.flow-node .v-btn--icon {
+  width: 2.05em !important;
+  min-width: 2.05em !important;
+}
+.flow-node .flow-node-title { font-size: 0.96em; }
+.flow-node .flow-node-badge { font-size: 0.66em; }
+
+/* 最终统一尺寸：节点内不再各自用 em 叠乘（Vuetify 的 16px 基准把 .v-field 撑成 12.8/16px）。
+ * 全部吃同一组绝对像素 token；界面缩放通过 --app-text-scale 一起乘。 */
+.flow-node {
+  --flow-font: calc(10px * var(--app-text-scale, 1));
+  --flow-title-font: calc(11.5px * var(--app-text-scale, 1));
+  --flow-control-height: calc(30px * var(--app-text-scale, 1));
+  --flow-button-height: calc(22px * var(--app-text-scale, 1));
+}
+.flow-node .v-field,
+.flow-node .v-field__input,
+.flow-node .v-btn,
+.flow-node .flow-node-body,
+.flow-node .flow-node-hint,
+.flow-node .flow-llm-model > span,
+.flow-node .flow-llm-retry > span,
+.flow-node .flow-prompt-role,
+.flow-node .flow-prompt-role-label,
+.flow-node .flow-history-label,
+.flow-node .flow-output-row,
+.flow-node .flow-llm-output-row,
+.flow-node .flow-merge-row,
+.flow-node .flow-join-row {
+  font-size: var(--flow-font) !important;
+}
+.flow-node .v-field {
+  --v-input-control-height: var(--flow-control-height);
+  height: var(--flow-control-height);
+}
+.flow-node .v-field__input {
+  height: var(--flow-control-height) !important;
+  min-height: var(--flow-control-height) !important;
+  padding-top: 0.3em;
+  padding-bottom: 0.3em;
+}
+.flow-node .flow-prompt-content .v-field__input {
+  height: auto !important;
+  min-height: calc(var(--flow-control-height) * 1.25) !important;
+  font-size: var(--flow-font) !important;
+  line-height: 1.5;
+}
+.flow-node .flow-prompt-role {
+  height: var(--flow-control-height);
+}
+.flow-node .v-btn {
+  height: var(--flow-button-height) !important;
+  min-height: var(--flow-button-height) !important;
+  font-size: var(--flow-font) !important;
+}
+.flow-node .v-btn--icon {
+  width: var(--flow-button-height) !important;
+  min-width: var(--flow-button-height) !important;
+}
+.flow-node .flow-node-title { font-size: var(--flow-title-font); }
+.flow-node .flow-node-badge { font-size: calc(7px * var(--app-text-scale, 1)); }
