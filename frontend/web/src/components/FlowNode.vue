@@ -281,7 +281,7 @@ function addJoinOutput(): void {
         <Handle v-else :id="`prompt-${prompt.id}`" type="target" :position="Position.Left" :style="{ top: '50%' }" :class="portClass('string')" />
         <template v-if="prompt.kind === 'history'">
           <span class="flow-history-label">历史 messages[]</span>
-          <VBtn icon variant="text" size="x-small" type="button" class="flow-prompt-del nodrag nopan"
+          <VBtn icon variant="outlined" size="x-small" type="button" class="flow-prompt-del nodrag nopan"
             title="删除这条历史" aria-label="删除这条历史" @click="removePrompt(prompt.id)">×</VBtn>
         </template>
         <template v-else>
@@ -291,7 +291,7 @@ function addJoinOutput(): void {
               title="Prompt Role" aria-label="Prompt Role">
               <option v-for="role in roles" :key="role.value" :value="role.value">{{ role.title }}</option>
             </select>
-            <VBtn icon variant="text" size="x-small" type="button" class="flow-prompt-del nodrag nopan"
+            <VBtn icon variant="outlined" size="x-small" type="button" class="flow-prompt-del nodrag nopan"
               title="删除这条 Prompt" aria-label="删除这条 Prompt" @click="removePrompt(prompt.id)">×</VBtn>
           </div>
           <VTextarea v-model="prompt.content" class="flow-prompt-content nodrag nopan"
@@ -300,8 +300,8 @@ function addJoinOutput(): void {
         </template>
       </div>
       <div class="flow-prompt-add-row">
-        <VBtn variant="text" size="small" type="button" class="flow-add-prompt nodrag nopan" @click="addPrompt">＋ 添加 Prompt</VBtn>
-        <VBtn variant="text" size="small" type="button" class="flow-add-prompt nodrag nopan" @click="addHistory">＋ 添加历史</VBtn>
+        <VBtn variant="outlined" size="x-small" type="button" class="flow-add-prompt nodrag nopan" @click="addPrompt">＋ 添加 Prompt</VBtn>
+        <VBtn variant="outlined" size="x-small" type="button" class="flow-add-prompt nodrag nopan" @click="addHistory">＋ 添加历史</VBtn>
       </div>
     </div>
     <div v-if="type === 'output'" class="flow-output-inputs">
@@ -369,21 +369,21 @@ function addJoinOutput(): void {
       <div v-for="(input, i) in mergeInputs" :key="input" class="flow-merge-row">
         <Handle :id="input" type="target" :position="Position.Left" :class="portClass('messages')" />
         <span>输入 {{ i + 1 }} · messages[]</span>
-        <VBtn icon variant="text" size="x-small" type="button" class="flow-port-del nodrag nopan"
+        <VBtn icon variant="outlined" size="x-small" type="button" class="flow-port-del nodrag nopan"
           :disabled="mergeInputs.length <= 1" title="移除这个输入" aria-label="移除这个输入"
           @click.stop="removeMergeInput(i)">−</VBtn>
       </div>
-      <VBtn variant="text" size="small" type="button" class="flow-add-merge nodrag nopan" @click="addMergeInput">＋ 添加输入</VBtn>
+      <VBtn variant="outlined" size="x-small" type="button" class="flow-add-merge nodrag nopan" @click="addMergeInput">＋ 添加输入</VBtn>
     </div>
     <div v-if="type === 'join'" class="flow-join-inputs">
       <div v-for="(input, i) in joinInputs" :key="input" class="flow-join-row">
         <Handle :id="input" type="target" :position="Position.Left" :class="portClass('string')" />
         <span>输入 {{ i + 1 }}</span>
-        <VBtn icon variant="text" size="x-small" type="button" class="flow-port-del nodrag nopan"
+        <VBtn icon variant="outlined" size="x-small" type="button" class="flow-port-del nodrag nopan"
           :disabled="joinInputs.length <= 1" title="移除这个输入" aria-label="移除这个输入"
           @click.stop="removeJoinInput(i)">−</VBtn>
       </div>
-      <VBtn variant="text" size="small" type="button" class="flow-add-join nodrag nopan" @click="addJoinInput">＋ 添加输入</VBtn>
+      <VBtn variant="outlined" size="x-small" type="button" class="flow-add-join nodrag nopan" @click="addJoinInput">＋ 添加输入</VBtn>
       <label class="flow-join-sep nodrag nopan">
         <span>分隔符</span>
         <VTextarea v-model="joinSeparator" rows="1" density="compact" variant="outlined" hide-details
@@ -418,12 +418,12 @@ function addJoinOutput(): void {
     <div v-if="type === 'join'" class="flow-join-outputs">
       <div v-for="(output, i) in joinOutputs" :key="output" class="flow-join-output-row">
         <span>输出 {{ i + 1 }}</span>
-        <VBtn icon variant="text" size="x-small" type="button" class="flow-port-del nodrag nopan"
+        <VBtn icon variant="outlined" size="x-small" type="button" class="flow-port-del nodrag nopan"
           :disabled="joinOutputs.length <= 1" title="移除这个输出" aria-label="移除这个输出"
           @click.stop="removeJoinOutput(i)">−</VBtn>
         <Handle :id="output" type="source" :position="Position.Right" :class="portClass('string')" />
       </div>
-      <VBtn variant="text" size="small" type="button" class="flow-add-join nodrag nopan" @click="addJoinOutput">＋ 添加输出</VBtn>
+      <VBtn variant="outlined" size="x-small" type="button" class="flow-add-join nodrag nopan" @click="addJoinOutput">＋ 添加输出</VBtn>
     </div>
     <Handle v-else-if="type !== 'output'" id="out" type="source" :position="Position.Right"
       :class="portClass(type === 'history' || type === 'trim' || type === 'merge' ? 'messages' : type === 'judge' ? judgeAnswerType : 'string')" />

@@ -2278,7 +2278,7 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 /* 节点删除键：圆形幽灵键，悬停才出现；不再用一个大号文字 ×。 */
 .flow-node-delete {
   top: 0.45em; right: 0.45em;
-  width: 1.9em; height: 1.9em; padding: 0;
+  width: 1.6em; height: 1.6em; padding: 0;
   display: inline-flex; align-items: center; justify-content: center;
   border: 0; border-radius: 50%;
   background: color-mix(in srgb, var(--md-surface-container-highest) 72%, transparent);
@@ -2287,8 +2287,30 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
   opacity: 0.55;
   transition: opacity 120ms var(--md-ease-standard), background 120ms var(--md-ease-standard), color 120ms var(--md-ease-standard);
 }
-.flow-node-delete svg { display: block; width: 0.9em; height: 0.9em; }
+.flow-node-delete svg { display: block; width: 0.8em; height: 0.8em; }
 .flow-node:hover .flow-node-delete,
 .flow-node:focus-within .flow-node-delete { opacity: 1; }
 .flow-node-delete:hover { background: var(--md-error-container); color: var(--md-error); }
 .flow-node-delete:focus-visible { opacity: 1; outline: 2px solid var(--md-primary); outline-offset: 1px; }
+
+
+/* LLM 节点的 Prompt 正文是“内容”，不是标题：压到当前字号的 60%；
+ * 节点里的按钮不再用平铺 text 样式，统一收成小尺寸 outlined。 */
+.flow-node .flow-prompt-content .v-field__input {
+  font-size: 0.6em !important; line-height: 1.4;
+}
+.flow-node .v-btn {
+  height: 1.55em !important; min-height: 1.55em !important; padding: 0 0.4em;
+  border: 1px solid var(--md-outline-variant) !important;
+  border-radius: 4px;
+  font-size: 0.62em !important; text-transform: none; letter-spacing: 0;
+}
+.flow-node .v-btn--icon {
+  width: 1.55em !important; min-width: 1.55em !important; padding: 0;
+}
+.flow-node .v-btn.v-btn--variant-outlined { color: var(--md-on-surface-variant); }
+.flow-node .v-btn.v-btn--variant-outlined:hover {
+  color: var(--md-on-surface); border-color: var(--md-outline) !important;
+  background: var(--hover);
+}
+.flow-node-delete { border: 1px solid var(--md-outline-variant); }
