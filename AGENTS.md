@@ -426,6 +426,15 @@ delete(AA)           # 删除
   工作流页每 700ms 读一次 `/flow/run`，右侧节点清单把 `active_node_id` 高亮成主色脉冲；
   App 也每 700ms 读同一份轨迹，把 `active_llm_calls` / `active_nodes` 喂给顶栏环与弹出面板。当前执行器仍是
   **按拓扑序串行**跑节点（所以并发数通常为 0/1；并行调度是下一步，不是现状）。
+  **Flow 图的结构权威是 `core/internal/flow`（2026-11-13）**：保存 Agent、启动读取、FlowTest、聊天运行都先过
+  `flow.ValidateRaw`；`agents.json` 里仍存原始 JSON（便于 diff / 原样搬运），但**未通过 schema 的图写不进去、也起不来**。
+  - `FlowGraph = {version:1, nodes:[FlowNode], edges:[FlowEdge]}`；未知字段一律拒绝（含节点 `data` 内字段）。
+  - `FlowNode = {id,type,position:{x,y},data}`；`type ∈ input|text|history|trim|merge|join|llm|judge|output`。
+  - `input/history/output`: `data={}`；`text`: `{text}`；`trim`: `{mode,count,roles}`；`merge`: `{inputs}`；
+    `join`: `{inputs,outputs,separator}`；`llm`: `{provider,model,max_retry?,width?,height?,prompts:[{id,kind?,role,content}]}`；
+    `judge`: `{provider,model,questions,answer_type,answer_key?,threshold?}`。`width` 是旧数据兼容字段，运行时不用。
+  - `FlowEdge = {id,source,sourceHandle,target,targetHandle}`；端口不能为空、每个源/目标端口最多一条线；图必须恰好一个 input/output 且无环。
+  - `data.test` / `data.runState` 只活在编辑器，`toGraph()` 保存前删除，schema 不接受。
   底部输入栏对 FlowAgent 隐藏「推理等级」与「工具」两个小面板（运行时不用这两个会话选项）。
   **FlowAgent 暂时不启用起标题 / 自动压缩等高级能力**（runFlow 不调 Titles/Compactor；
   Agent 编辑器的能力页签也不显示）。

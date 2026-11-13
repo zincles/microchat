@@ -422,7 +422,7 @@ func TestFlowAgentStoresOutputUserPort(t *testing.T) {
 		{"id":"in","type":"input","data":{}},
 		{"id":"llm","type":"llm","data":{"prompts":[{"id":"p1","role":"system","content":"写"}]}},
 		{"id":"out","type":"output","data":{}}
-	],"edges":[{"id":"e0","source":"in","target":"out","targetHandle":"user"},{"id":"e1","source":"llm","sourceHandle":"text","target":"out","targetHandle":"text"}]}`)
+	],"edges":[{"id":"e0","source":"in","sourceHandle":"out","target":"out","targetHandle":"user"},{"id":"e1","source":"llm","sourceHandle":"text","target":"out","targetHandle":"text"}]}`)
 	if err := config.SaveJSON(h.configDir+"/agents.json", config.AgentsConfig{Agents: []config.Agent{{
 		ID: "flow", Kind: "flow", Flow: flow,
 	}}}); err != nil {

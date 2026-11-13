@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"microchat/internal/config"
+	"microchat/internal/flow"
 	"microchat/internal/model"
 	"microchat/internal/providers"
 	"microchat/internal/statelang"
@@ -138,6 +139,12 @@ func (s *Service) runFlow(session model.Session, replyID string, token uint64, r
 	}
 	history, resolvedInput, userMessageID, err := s.flowConversation(session, runID, input)
 	if err != nil {
+		failTrace(err)
+		s.Turns.Finish(sessionID, token, err.Error())
+		guard.Fail(err.Error())
+		return
+	}
+	if err := flow.ValidateRaw(agent.Flow); err != nil {
 		failTrace(err)
 		s.Turns.Finish(sessionID, token, err.Error())
 		guard.Fail(err.Error())

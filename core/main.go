@@ -20,6 +20,7 @@ import (
 	"microchat/internal/chat"
 	"microchat/internal/compact"
 	"microchat/internal/config"
+	"microchat/internal/flow"
 	"microchat/internal/model"
 	"microchat/internal/providers"
 	"microchat/internal/queue"
@@ -66,6 +67,14 @@ func main() {
 	}
 	if err := agents.ValidatePromptEntries(); err != nil {
 		fatal("agents.json 的 prompt_entries 不合法: %v", err)
+	}
+	for _, agent := range agents.Agents {
+		if agent.Kind != "flow" {
+			continue
+		}
+		if err := flow.ValidateRaw(agent.Flow); err != nil {
+			fatal("agents.json 的 FlowAgent %q 图不合法: %v", agent.ID, err)
+		}
 	}
 	// 给了 -debug 就**只干这一件事**：在监听端口之前就退出（也别进 TUI）。
 	if *debugMode {

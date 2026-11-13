@@ -10,6 +10,7 @@ import (
 
 	"microchat/internal/abilities"
 	"microchat/internal/config"
+	"microchat/internal/flow"
 )
 
 // ── agents.json：生效列表 + 增删改；config.json 的 chat 段 ──
@@ -80,6 +81,14 @@ func (s *Server) saveAgents(agents config.AgentsConfig) error {
 	return config.SaveJSON(s.paths.Config("agents.json"), agents)
 }
 
+// validateAgentFlow：FlowAgent 的图存进去之前必须能通过唯一 schema。
+func validateAgentFlow(agent config.Agent) error {
+	if agent.Kind != "flow" {
+		return nil
+	}
+	return flow.ValidateRaw(agent.Flow)
+}
+
 // segmentView：段库对外的一条 —— 用户段与**内置段**同列，`builtin` 标出来源（文件里没有它）。
 type segmentView struct {
 	config.Segment
@@ -142,6 +151,10 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		PromptEntries: req.PromptEntries,
 		Abilities:     req.Abilities,
 		PrependState:  req.PrependState,
+	}
+	if err := validateAgentFlow(agent); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid", err.Error())
+		return
 	}
 	// 未知的能力 id 写进去只会"配了不生效" ⇒ 当场拒（口径见 `internal/abilities`）
 	if err := abilities.Validate(config.AgentsConfig{Agents: []config.Agent{agent}}); err != nil {
@@ -267,6 +280,10 @@ func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.PrependState != nil {
 		agents.Agents[index].PrependState = req.PrependState
+	}
+	if err := validateAgentFlow(agents.Agents[index]); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid", err.Error())
+		return
 	}
 	// 未知的能力 id 一律在场拒（`POST` 与 `PATCH` 同一个口径）
 	if err := abilities.Validate(config.AgentsConfig{Agents: []config.Agent{agents.Agents[index]}}); err != nil {

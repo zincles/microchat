@@ -46,7 +46,10 @@ func TestAgentDescriptionRoundTrip(t *testing.T) {
 // FlowAgent 的 kind/flow 由编辑器原样搬运；后端暂不解释节点表。
 func TestFlowAgentKindAndGraphRoundTrip(t *testing.T) {
 	box := newDummySandboxWith(t, true)
-	body := `{"name":"流程图","kind":"flow","flow":{"version":1,"nodes":[{"id":"in","type":"input","position":{"x":1,"y":2},"data":{}}],"edges":[]}}`
+	body := `{"name":"流程图","kind":"flow","flow":{"version":1,"nodes":[
+		{"id":"in","type":"input","position":{"x":1,"y":2},"data":{}},
+		{"id":"out","type":"output","position":{"x":3,"y":2},"data":{}}
+	],"edges":[{"id":"e","source":"in","sourceHandle":"out","target":"out","targetHandle":"text"}]}}`
 	rec := authCall(box.server, "POST", "/api/v1/agents", body, testSysToken)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("建 FlowAgent = %d（%s）", rec.Code, rec.Body.String())
@@ -146,5 +149,18 @@ func TestFlowJoinCopiesToOutputPorts(t *testing.T) {
 	}](t, rec)
 	if got.Output != "复制我" {
 		t.Fatalf("out-2 没拿到复制值：%q", got.Output)
+	}
+}
+
+// Flow 图不是裸 JSON：保存前必须过 internal/flow 的唯一 schema。
+func TestFlowAgentRejectsUnknownDataField(t *testing.T) {
+	box := newDummySandboxWith(t, true)
+	body := `{"name":"坏图","kind":"flow","flow":{"version":1,"nodes":[
+		{"id":"in","type":"input","position":{"x":0,"y":0},"data":{}},
+		{"id":"out","type":"output","position":{"x":1,"y":0},"data":{"bogus":true}}
+	],"edges":[{"id":"e","source":"in","sourceHandle":"out","target":"out","targetHandle":"text"}]}}`
+	rec := authCall(box.server, "POST", "/api/v1/agents", body, testSysToken)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("未知节点 data 字段应 400，得到 %d（%s）", rec.Code, rec.Body.String())
 	}
 }

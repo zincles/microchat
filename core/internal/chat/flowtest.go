@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"microchat/internal/config"
+	"microchat/internal/flow"
 	"microchat/internal/judge"
 	"microchat/internal/providers"
 	"microchat/internal/task"
@@ -115,6 +116,9 @@ type flowRunOutcome struct {
 func (s *Service) TestFlow(ctx context.Context, flowAgent config.Agent, message, provider, modelID string) (FlowTestResult, error) {
 	if flowAgent.Kind != "flow" {
 		return FlowTestResult{}, errors.New("这个 Agent 不是 FlowAgent")
+	}
+	if err := flow.ValidateRaw(flowAgent.Flow); err != nil {
+		return FlowTestResult{}, err
 	}
 	var graph flowGraph
 	if err := json.Unmarshal(flowAgent.Flow, &graph); err != nil {
