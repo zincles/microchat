@@ -626,9 +626,9 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(readFileSync(join(SRC, "composables", "useAppUpdate.ts"), "utf8"), /updateRef\.value\?\.show\(\)/, "新更新没有重新放出更新条");
 
   const flowEditor = readFileSync(join(SRC, "components", "FlowEditor.vue"), "utf8");
-  assert.match(flowEditor, /:nodes-draggable="!locked"/, "运行中仍允许拖节点");
-  assert.match(flowEditor, /:nodes-connectable="!locked"/, "运行中仍允许连线");
-  assert.match(flowEditor, /:edges-updatable="!locked"/, "运行中仍允许改边");
+  assert.match(flowEditor, /:nodes-draggable="editable"/, "运行中仍允许拖节点");
+  assert.match(flowEditor, /:nodes-connectable="editable"/, "运行中仍允许连线");
+  assert.match(flowEditor, /:edges-updatable="editable"/, "运行中仍允许改边");
   assert.match(flowWorkspace, /已保存（\$\{seconds\}秒之前）/, "已保存没有相对时间文案");
   assert.match(flowWorkspace, /:active-node-id="activeNodeId"/, "工作流没有把活跃节点传给编辑器");
   assert.match(workspace, /agent\?:\s*Agent \| null/, "工作流页没有接当前 Agent");
@@ -2128,7 +2128,7 @@ test("Agent 编辑器分页签：传统 Agent 是基本/系统提示词，FlowAg
   // 三个分区都在真正的 VTabsWindowItem 里（翻页不丢已填的东西）
   assert.match(editor, /<VTabsWindowItem value="base">/, "基本那一页没有 tabpanel");
   assert.match(editor, /<VTabsWindowItem v-if="agentKind !== 'flow'" value="prompt">/, "传统 Agent 的系统提示词页没有 tabpanel");
-  assert.match(editor, /<VTabsWindowItem v-if="agentKind === 'flow'" value="flow">/, "FlowAgent 的流程页没有 tabpanel");
+  assert.match(editor, /<VTabsWindowItem v-if="agentKind === 'flow'" value="flow"(?: class="[^"]*")?>/, "FlowAgent 的流程页没有 tabpanel");
   assert.match(editor, /<FlowEditor v-model:graph="flowGraph"/, "流程页没有接 Vue Flow 编辑器");
   assert.match(editor, /<VTabsWindowItem v-if="agentKind !== 'flow'" v-for="id in ABILITY_IDS"/, "能力页签没有对 FlowAgent 关闭");
   assert.match(editor, /FlowAgent 暂不支持起标题\/压缩这些能力/, "FlowAgent 能力页签的说明没写");
@@ -4911,4 +4911,29 @@ test("源码里没有显式 any（类型严格约束不能靠人记得）", () =
     const text = readFileSync(join(SRC, name), "utf8");
     assert.ok(!/\bany\b/.test(text), `还有显式 any：${name}`);
   }
+});
+
+// 2026-11-13：会话工作流的 Flow 面板只读；编辑必须跳到对应 Agent 的流程页。
+test("工作流 tab 只读展示执行；编辑入口跳到该 Agent 的流程页", () => {
+  const context = readFileSync(join(SRC, "components", "ContextWorkspace.vue"), "utf8");
+  const workspace = readFileSync(join(SRC, "components", "FlowWorkspace.vue"), "utf8");
+  const editor = readFileSync(join(SRC, "components", "FlowEditor.vue"), "utf8");
+  const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8");
+
+  assert.match(context, /<FlowWorkspace[^>]*:readonly="true"/, "会话工作流没有强制只读");
+  assert.match(context, /@edit-agent="\(id\) => emit\('edit-flow-agent', id\)"/, "工作流没把编辑请求往上报");
+  assert.match(workspace, /readonly\?: boolean/, "FlowWorkspace 没有只读 prop");
+  assert.match(workspace, /@click="emit\('edit-agent', props\.agent\.id\)"/, "没有「编辑助手流程」按钮");
+  assert.match(workspace, /:trace-steps="traceSteps"/, "只读视图没把真实执行步骤传给画布");
+  assert.match(editor, /readonly\?: boolean/, "FlowEditor 没有只读 prop");
+  assert.match(editor, /v-if="!readonly" class="flow-canvas-add"/, "只读时仍显示添加节点");
+  assert.match(editor, /class="flow-trace-panel"/, "只读时没有执行记录面板");
+  assert.match(settings, /focusAgentId\?: string/, "设置页没有精确定位 Agent 的入口");
+  assert.match(settings, /focusRequestedAgent\(\)/, "设置页没有定位并打开目标 Agent");
+  assert.match(settings, /flow-agent-open/, "设置页没有流程全屏模式");
+  assert.match(app, /openAgentFlow/, "App 没有接工作流的编辑跳转");
+  assert.match(css, /#settings-view\.flow-agent-open \.settings-body/, "流程全屏没有布局规则");
+  assert.match(css, /\.flow-node\.is-readonly \.nodrag/, "只读节点仍可编辑");
 });

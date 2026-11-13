@@ -22,7 +22,7 @@ import { sharedApi } from "../utils/prefs.ts";
 import FlowNode from "./FlowNode.vue";
 import { FLOW_NODE_TYPES, emptyFlowGraph, flowDebugSteps, flowIssues, flowSourceType, flowTargetType, formatFlowText, normalizeFlowGraph, type FlowNodeType } from "../utils/flow.ts";
 import { FLOW_NODE_SPECS, nodeBadgeFor, nodeDefaults, nodeLabelFor } from "../utils/flowSpecs.ts";
-import type { FlowEdge, FlowGraph, FlowNode as FlowNodeGraph, ModelListItem } from "../api/types.ts";
+import type { FlowEdge, FlowGraph, FlowNode as FlowNodeGraph, FlowTestStep, ModelListItem } from "../api/types.ts";
 
 type CanvasNode = FlowNodeGraph & { data: Record<string, unknown> };
 type CanvasEdge = FlowEdge & { class?: string };
@@ -33,12 +33,16 @@ const props = withDefaults(defineProps<{
   activeNodeId?: string;
   nodeStates?: Record<string, string>;
   running?: boolean;
+  readonly?: boolean;
+  traceSteps?: FlowTestStep[];
 }>(), {
   graph: null,
   agentId: "",
   activeNodeId: "",
   nodeStates: () => ({}),
   running: false,
+  readonly: false,
+  traceSteps: () => [],
 });
 const emit = defineEmits<{ "update:graph": [graph: FlowGraph] }>();
 const api = sharedApi();
@@ -48,6 +52,9 @@ const api = sharedApi();
 // 网页全屏：只把编辑器铺满 #app（不是浏览器 Fullscreen API）；画布高度随视口走。
 const expanded = ref(false);
 const { fitView } = useVueFlow();
+// 只读编辑器只给会话工作区看当前执行；它不写回图，也不允许测试调用模型。
+const editable = computed(() => !props.readonly && !props.running);
+provide("flowReadonly", computed(() => props.readonly));
 // 尺寸变化不是下一 tick 就量准的：等两帧再 fit，否则 Vue Flow 会拿旧画布宽度算视口。
 function fitAfterResize(): void {
   nextTick(() => requestAnimationFrame(() => requestAnimationFrame(() => fitView({ padding: 0.18 }))));
@@ -310,7 +317,7 @@ watch([() => props.nodeStates, () => props.activeNodeId], ([states, activeId]) =
 </script>
 
 <template>
-  <section class="flow-editor" :class="{ expanded, 'is-locked': locked }">
+  <section class="flow-editor" :class="{ expanded, 'is-locked': locked, 'is-readonly': readonly }">
     <div class="flow-main">
       <div class="flow-canvas" :class="{ 'nodes-open': nodesOpen, 'bottom-open': bottomOpen }">
         <VueFlow
@@ -322,9 +329,9 @@ watch([() => props.nodeStates, () => props.activeNodeId], ([states, activeId]) =
           :max-zoom="1.8"
           fit-view-on-init
           :connection-mode="ConnectionMode.Loose"
-          :nodes-draggable="!locked"
-          :nodes-connectable="!locked"
-          :edges-updatable="!locked"
+          :nodes-draggable="editable"
+          :nodes-connectable="editable"
+          :edges-updatable="editable"
           @connect-start="onConnectStart"
           @connect="onConnect"
           @connect-end="onConnectEnd"
@@ -336,7 +343,7 @@ watch([() => props.nodeStates, () => props.activeNodeId], ([states, activeId]) =
 
         <div v-if="locked" class="flow-lock-badge" role="status">运行中 · 只读</div>
         <!-- 左上角：添加节点（浮在画布上，不挤画布）。 -->
-        <div class="flow-canvas-add">
+        <div v-if="!readonly" class="flow-canvas-add">
           <VMenu :close-on-content-click="true">
             <template #activator="{ props: menuProps }">
               <VBtn v-bind="menuProps" variant="tonal" size="small" type="button" :disabled="locked"
@@ -353,7 +360,7 @@ watch([() => props.nodeStates, () => props.activeNodeId], ([states, activeId]) =
 
         <!-- 右上角：侧栏 / 底栏 / 全屏开关。 -->
         <div class="flow-canvas-actions">
-          <VBtn class="flow-canvas-action" :class="{ active: bottomOpen && bottomTab === 'test' }"
+          <VBtn v-if="!readonly" class="flow-canvas-action" :class="{ active: bottomOpen && bottomTab === 'test' }"
             variant="text" size="small" type="button" title="测试" @click="toggleBottom('test')">测试</VBtn>
           <VBtn class="flow-canvas-action" :class="{ active: bottomOpen && bottomTab === 'debug' }"
             variant="text" size="small" type="button" title="调试" @click="toggleBottom('debug')">调试</VBtn>
@@ -390,21 +397,21 @@ watch([() => props.nodeStates, () => props.activeNodeId], ([states, activeId]) =
             :class="{ selected: row.id === selectedNodeId, active: row.id === activeNodeId }" @click="selectNode(row.id)">
             <div class="flow-node-row-head">
               <span class="flow-node-row-id"><span class="flow-node-badge" aria-hidden="true">{{ row.badge }}</span><b>{{ row.label }}</b><code>{{ row.id }}</code></span>
-              <VBtn icon variant="text" size="x-small" type="button" title="删除节点" aria-label="删除节点"
+              <VBtn v-if="!readonly" icon variant="text" size="x-small" type="button" title="删除节点" aria-label="删除节点"
                 :disabled="locked" @click.stop="removeNode(row.id)"><span v-html="ICONS.trash"></span></VBtn>
             </div>
             <div v-if="row.incoming.length" class="flow-conn-section">
               <span class="flow-conn-label">输入</span>
               <div v-for="edge in row.incoming" :key="edge.id" class="flow-conn-row">
                 <span :title="edge.id">{{ nodeLabel(edge.source) }} · {{ edge.sourceHandle || "out" }} → {{ edge.targetHandle || "in" }}</span>
-                <button type="button" class="flow-conn-x" :disabled="locked" @click.stop="removeEdge(edge.id)">断开</button>
+                <button v-if="!readonly" type="button" class="flow-conn-x" :disabled="locked" @click.stop="removeEdge(edge.id)">断开</button>
               </div>
             </div>
             <div v-if="row.outgoing.length" class="flow-conn-section">
               <span class="flow-conn-label">输出</span>
               <div v-for="edge in row.outgoing" :key="edge.id" class="flow-conn-row">
                 <span :title="edge.id">{{ edge.sourceHandle || "out" }} → {{ nodeLabel(edge.target) }} · {{ edge.targetHandle || "in" }}</span>
-                <button type="button" class="flow-conn-x" :disabled="locked" @click.stop="removeEdge(edge.id)">断开</button>
+                <button v-if="!readonly" type="button" class="flow-conn-x" :disabled="locked" @click.stop="removeEdge(edge.id)">断开</button>
               </div>
             </div>
             <div v-if="!row.incoming.length && !row.outgoing.length" class="flow-conn-empty">（还没有连接）</div>
@@ -424,7 +431,7 @@ watch([() => props.nodeStates, () => props.activeNodeId], ([states, activeId]) =
               aria-label="关闭底栏" @click="bottomOpen = false">×</VBtn>
           </div>
 
-          <div v-if="bottomTab === 'test'" class="flow-panel-test">
+          <div v-if="bottomTab === 'test' && !readonly" class="flow-panel-test">
             <p class="hint">输入一条测试消息；真实调用 LLM 后，悬停节点可看每步输入输出。</p>
             <VTextField v-model="testMessage" density="compact" variant="outlined" hide-details
               placeholder="输入一条测试消息…" @keydown.enter.prevent="runTest" />
@@ -460,10 +467,37 @@ watch([() => props.nodeStates, () => props.activeNodeId], ([states, activeId]) =
         </aside>
       </div>
     </div>
-    <p class="hint">拖动节点移动位置，从右侧端口拖到左侧端口连线。删除节点/连线用选中后按 Delete。</p>
+    <p class="hint">{{ readonly ? "只读执行视图：节点状态、输入输出与请求体来自当前对话；需要改流程请点上方「编辑助手流程」。" : "拖动节点移动位置，从右侧端口拖到左侧端口连线。删除节点/连线用选中后按 Delete。" }}</p>
     <p v-if="issues.length && !bottomOpen" class="field-warning flow-issues">
       <b>还不能运行：</b>{{ issues.join("；") }}
     </p>
     <p v-else-if="!issues.length && !bottomOpen" class="hint flow-ok">结构检查通过：恰好一个输入/输出，没有嵌套 FlowAgent。</p>
+    <section v-if="readonly" class="flow-trace-panel" aria-label="本次执行">
+      <div class="flow-trace-head">
+        <b>本次执行</b>
+        <span>{{ traceSteps.length ? `${traceSteps.length} 个节点` : "还没有执行记录" }}</span>
+      </div>
+      <p v-if="!traceSteps.length" class="hint">发出消息后，这里显示真实经过的节点、输入输出与请求体。</p>
+      <details v-for="step in traceSteps" :key="step.id" class="flow-trace-step">
+        <summary>
+          <b>{{ step.label }}</b>
+          <code>{{ step.type }}</code>
+          <span v-if="step.provider || step.model" class="flow-trace-model">{{ step.provider }} / {{ step.model }}</span>
+          <span v-if="step.elapsed_ms !== undefined" class="flow-trace-time">{{ step.elapsed_ms }} ms</span>
+        </summary>
+        <div v-if="step.inputs?.length" class="flow-trace-block">
+          <span>输入</span>
+          <code v-for="(input, index) in step.inputs" :key="index">{{ input }}</code>
+        </div>
+        <div v-if="step.output || step.reasoning || step.user" class="flow-trace-block">
+          <span>输出</span>
+          <pre v-if="step.output">{{ step.output }}</pre>
+          <pre v-if="step.reasoning">思考：{{ step.reasoning }}</pre>
+          <pre v-if="step.user">用户消息：{{ step.user }}</pre>
+        </div>
+        <pre v-if="step.payload" class="flow-trace-payload">{{ JSON.stringify(step.payload.body, null, 2) }}</pre>
+        <p v-if="step.error" class="field-warning">{{ step.error }}</p>
+      </details>
+    </section>
   </section>
 </template>

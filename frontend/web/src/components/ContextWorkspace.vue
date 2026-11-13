@@ -47,6 +47,7 @@ const emit = defineEmits<{
   preview: [value: unknown];
   "advanced-done": [];
   "flow-saved": [];
+  "edit-flow-agent": [id: string];
 }>();
 
 // inner：真正的面板。四个 setter 由 App 通过本组件的 expose 一路打到它身上
@@ -64,7 +65,8 @@ defineExpose({
 <template>
   <section id="context-workspace" aria-label="上下文工作区">
     <section v-if="props.flow" class="flow-workspace-host" aria-label="FlowAgent 工作流">
-      <FlowWorkspace :agent="props.agent" :session-id="props.sessionId" @saved="() => emit('flow-saved')" />
+      <FlowWorkspace :agent="props.agent" :session-id="props.sessionId" :readonly="true"
+        @saved="() => emit('flow-saved')" @edit-agent="(id) => emit('edit-flow-agent', id)" />
     </section>
     <template v-else>
     <!-- 草稿态：还没会话 ⇒ 面板里全是空话。明说一句，别让人以为面板坏了。

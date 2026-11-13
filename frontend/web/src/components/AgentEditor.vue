@@ -327,7 +327,7 @@ function onKey(e: KeyboardEvent): void {
     </section>
     </VTabsWindowItem>
 
-    <VTabsWindowItem v-if="agentKind === 'flow'" value="flow">
+    <VTabsWindowItem v-if="agentKind === 'flow'" value="flow" class="agent-flow-pane">
       <p class="hint flow-stage-note">FlowAgent 已能接收会话消息并落一条 assistant 回复；目前是整段执行（非流式、无工具）。FlowAgent 暂不沿用普通 Agent 的上下文面板，绿色上下文环也停用；新的上下文面板另行设计。</p>
       <FlowEditor v-model:graph="flowGraph" :agent-id="props.agent?.id ?? ''" />
     </VTabsWindowItem>

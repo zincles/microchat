@@ -2058,6 +2058,31 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 #flow-workspace .flow-editor .flow-main { flex: 1 1 auto; min-height: 0; }
 #flow-workspace .flow-editor .flow-canvas { flex: 1 1 auto; height: auto; min-height: 0; }
 
+/* 只读工作流：节点仍可选中/悬停看数据，但不接受任何编辑。 */
+.flow-node.is-readonly .nodrag { pointer-events: none; }
+.flow-node.is-readonly .flow-node-delete,
+.flow-node.is-readonly .flow-prompt-del,
+.flow-node.is-readonly .flow-port-del,
+.flow-node.is-readonly .flow-add-prompt,
+.flow-node.is-readonly .flow-add-merge,
+.flow-node.is-readonly .flow-node-resizer { display: none; }
+
+/* 工作流 tab 的只读执行记录：默认收起每个节点，避免长 payload 顶走画布。 */
+.flow-trace-panel { flex: none; max-height: 14em; overflow: auto; overscroll-behavior: contain;
+  border-top: 1px solid var(--md-outline-variant); padding-top: 0.45em; }
+.flow-trace-head { display: flex; align-items: baseline; gap: 0.6em; color: var(--md-on-surface); font-size: var(--md-type-label-medium); }
+.flow-trace-head span { color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
+.flow-trace-step { padding: 0.35em 0; border-top: 1px solid var(--md-outline-variant); }
+.flow-trace-step summary { display: flex; align-items: baseline; gap: 0.45em; cursor: pointer; }
+.flow-trace-step code, .flow-trace-model, .flow-trace-time { color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
+.flow-trace-block { display: flex; flex-wrap: wrap; gap: 0.3em; padding: 0.3em 0; font-size: var(--md-type-body-small); }
+.flow-trace-block > span { color: var(--md-on-surface-variant); }
+.flow-trace-block code { background: var(--mix-6); border-radius: var(--r-xs); padding: 0 0.25em; }
+.flow-trace-block pre, .flow-trace-payload { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 12em; overflow: auto;
+  margin: 0.25em 0; padding: 0.35em 0.5em; border-radius: var(--r-sm); background: var(--md-surface-container-low);
+  font-size: var(--md-type-label-small); }
+.flow-trace-payload { color: var(--md-on-surface-variant); }
+
 /* 右侧节点清单里的“正在执行”节点：LLM 调用慢时能一眼看出卡在哪个节点。 */
 .flow-node-row.active {
   border-color: var(--md-primary);
@@ -2151,3 +2176,22 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
   z-index: 70; padding: 0.25em 0.65em; border-radius: var(--r-btn);
   background: var(--md-secondary-container); color: var(--md-on-secondary-container);
   font-size: var(--md-type-label-small); pointer-events: none; }
+
+/* 智能体流程页：从会话工作流点「编辑助手流程」进来时，画布占满设置视图剩余宽高。
+ * 只在这个模式放开 760px 阅读宽度；普通设置/列表仍保持居中列。 */
+#settings-view.flow-agent-open .settings-body { display: flex; flex-direction: column; overflow: hidden; }
+#settings-view.flow-agent-open .settings-box { flex: 1 1 auto; min-height: 0; max-width: none; display: flex; flex-direction: column; }
+#settings-view.flow-agent-open .settings-cols { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+#settings-view.flow-agent-open .settings-window { flex: 1 1 auto; min-height: 0; }
+#settings-view.flow-agent-open .settings-window > .v-window__container,
+#settings-view.flow-agent-open .settings-window .v-window-item { height: 100%; }
+#settings-view.flow-agent-open #panel-agent { max-width: none; height: 100%; }
+#settings-view.flow-agent-open #panel-agent .detail-pane { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+#settings-view.flow-agent-open .agent-window { flex: 1 1 auto; min-height: 0; }
+#settings-view.flow-agent-open .agent-window > .v-window__container,
+#settings-view.flow-agent-open .agent-window .v-window-item { height: 100%; }
+#settings-view.flow-agent-open .agent-flow-pane { height: 100%; display: flex; flex-direction: column; min-height: 0; }
+#settings-view.flow-agent-open .agent-flow-pane .flow-editor { flex: 1 1 auto; min-height: 0; }
+#settings-view.flow-agent-open .agent-flow-pane .flow-editor .flow-main { flex: 1 1 auto; min-height: 0; }
+#settings-view.flow-agent-open .agent-flow-pane .flow-editor .flow-canvas { flex: 1 1 auto; height: auto; min-height: 0; }
+#settings-view.flow-agent-open .agent-flow-pane .flow-stage-note { flex: none; }

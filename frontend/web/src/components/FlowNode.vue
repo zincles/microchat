@@ -30,6 +30,7 @@ const nodeClass = computed(() => [`flow-node-${props.type}`, runState.value ? `f
 const removeNode = inject<(id: string) => void>("flowRemoveNode", () => {});
 const removePort = inject<(nodeId: string, handle: string, side: "source" | "target") => void>("flowRemovePort", () => {});
 const models = inject<Ref<ModelListItem[]>>("flowModels", ref([]));
+const readonly = inject<Ref<boolean>>("flowReadonly", ref(false));
 const label = computed(() => nodeLabelFor(props.type));
 const badge = computed(() => nodeBadgeFor(props.type));
 const hint = computed(() => nodeHintFor(props.type));
@@ -240,7 +241,7 @@ function addJoinOutput(): void {
 <template>
   <div
     class="flow-node"
-    :class="[nodeClass, { resizing }]"
+    :class="[nodeClass, { resizing, 'is-readonly': readonly }]"
     :style="nodeStyle"
     @mouseenter="hovered = true"
     @mouseleave="hovered = false"

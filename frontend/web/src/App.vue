@@ -333,6 +333,16 @@ function applyChatConfig(c: { compact_blocks?: number; history_window?: number }
   windowLimit.value = Number.isFinite(n) && n >= 1 ? Math.floor(n) : 5;
 }
 const sessionSettingsId = ref<string | null>(null);
+const agentFocus = ref("");
+
+function openAgentFlow(id: string): void {
+  if (!id) return;
+  agentFocus.value = id;
+  openManage("agent");
+}
+
+// 离开设置时清掉聚焦，避免下次从普通入口进「智能体」又自动打开同一个编辑器。
+watch(settingsOpen, (open) => { if (!open) agentFocus.value = ""; });
 
 // —— 消息列 ——
 // tmpKey：只给"还没进库"的气泡（乐观用户消息 / 流式占位）当 v-for key —— 不能共用 'stream'（重键）。
@@ -1437,6 +1447,7 @@ onUnmounted(() => {
       :flow="currentAgentIsFlow"
       :agent="currentAgent"
       @flow-saved="refreshAgents"
+      @edit-flow-agent="openAgentFlow"
       @compact="(n) => compactNow(n ?? undefined)"
       @compact-payload="previewCompactPayload"
       @tab="onPayloadTab"
@@ -1451,6 +1462,7 @@ onUnmounted(() => {
       <SettingsModal
         v-if="settingsOpen"
         :only="settingsOnly"
+        :focus-agent-id="agentFocus"
         :ask="askConfirm"
         :esc-blocked="!!sessionSettingsId"
         @close="closeSettings"

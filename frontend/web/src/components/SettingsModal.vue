@@ -54,10 +54,12 @@ const props = withDefaults(defineProps<{
   // only：单独入口（"session" / "provider"）—— 只显示那一页、不渲染设置页签；
   // 空串 = 完整设置。两者共用同一份数据加载与同一套 panel。
   only?: string;
+  focusAgentId?: string;
 }>(), {
   ask: null,
   escBlocked: false,
   only: "",
+  focusAgentId: "",
 });
 
 const api = sharedApi();
@@ -83,6 +85,26 @@ const segmentsLib = ref<Segment[]>([]); // 提示词段库（随 GET /agents 一
 const curDefault = ref("");
 const editAgent = ref<Agent | "new" | null>(null);
 const agentTemplate = ref<AgentTemplate | null>(null);
+let pendingAgentFocus = props.focusAgentId;
+const agentFlowOpen = computed(() => {
+  const editingFlow = editAgent.value === "new"
+    ? newAgentKind.value === "flow"
+    : editAgent.value?.kind === "flow";
+  return !!editingFlow && (props.only === "agent" || tab.value === "agent");
+});
+function focusRequestedAgent(): void {
+  if (!pendingAgentFocus) return;
+  const target = agents.value.find((agent) => agent.id === pendingAgentFocus);
+  if (!target) return;
+  pendingAgentFocus = "";
+  tab.value = "agent";
+  editExistingAgent(target);
+}
+watch(() => props.focusAgentId, (id) => {
+  if (!id) return;
+  pendingAgentFocus = id;
+  focusRequestedAgent();
+});
 const newAgentKind = ref<"prompt" | "flow">("prompt"); // 新建时的两种类型
 function startNewAgent(kind: "prompt" | "flow"): void {
   newAgentKind.value = kind;
@@ -350,6 +372,7 @@ async function loadAgents(): Promise<void> {
     curDefault.value = data.default_agent || "default";
     agents.value = data.agents ?? [];
     segmentsLib.value = data.segments ?? [];
+    focusRequestedAgent();
   } catch {}
 }
 
@@ -473,7 +496,7 @@ function onKey(e: KeyboardEvent): void {
 </script>
 
 <template>
-  <section id="settings-view">
+  <section id="settings-view" :class="{ 'flow-agent-open': agentFlowOpen }">
     <div class="settings-bar">
       <VBtn variant="text" size="small" type="button"
         title="显示/隐藏会话栏"
