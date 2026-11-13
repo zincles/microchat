@@ -2207,17 +2207,16 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-canvas .vue-flow__background { opacity: 0.55; }
 .flow-node {
   border-radius: 10px;
-  border-color: color-mix(in srgb, var(--flow-node-accent) 24%, var(--md-outline-variant));
+  border-color: var(--md-outline-variant);
   box-shadow: 0 8px 26px color-mix(in srgb, #000 34%, transparent), 0 1px 0 color-mix(in srgb, #fff 6%, transparent) inset;
+  --flow-pad-x: 0.75em;
 }
 .flow-node-head {
   min-height: 2.25em;
   padding: 0.45em 2em 0.42em 0.7em;
-  border-bottom-color: color-mix(in srgb, var(--flow-node-accent) 30%, var(--md-outline-variant));
-  background: linear-gradient(180deg,
-    color-mix(in srgb, var(--flow-node-accent) 18%, var(--vf-node-bg)),
-    color-mix(in srgb, var(--flow-node-accent) 8%, var(--vf-node-bg)));
-  box-shadow: inset 3px 0 0 var(--flow-node-accent);
+  border-bottom-color: var(--md-outline-variant);
+  background: var(--md-surface-container-highest);
+  box-shadow: none;
 }
 .flow-node-heading { gap: 0; }
 .flow-node-title { font-size: 0.86em; letter-spacing: 0.015em; }
@@ -2236,8 +2235,7 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-node .v-field__outline { --v-field-border-opacity: 0.2; }
 .flow-node .v-field__input { font-size: 0.78em; min-height: 2.1em; padding-top: 0.25em; padding-bottom: 0.25em; }
 .flow-prompt-row, .flow-prompt-history {
-  border: 0;
-  border-left: 2px solid color-mix(in srgb, var(--flow-node-accent) 55%, transparent);
+  border: 1px solid var(--md-outline-variant);
   border-radius: 4px;
   background: color-mix(in srgb, var(--md-surface-container-highest) 32%, transparent);
 }
@@ -2252,7 +2250,7 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
   border: 3px solid var(--vf-node-bg) !important;
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--flow-node-accent) 65%, transparent), 0 2px 5px color-mix(in srgb, #000 35%, transparent);
 }
-.flow-canvas .vue-flow__handle:hover { transform: scale(1.18); }
+.flow-canvas .vue-flow__handle:hover { filter: brightness(1.25); }
 .flow-canvas .vue-flow__edge-path { stroke-width: 2; opacity: 0.78; }
 .flow-canvas .vue-flow__edge:hover .vue-flow__edge-path { stroke-width: 2.6; opacity: 1; }
 .flow-canvas .vue-flow__node.selected .flow-node,
@@ -2266,3 +2264,12 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
     0 0 22px color-mix(in srgb, var(--flow-node-accent) 26%, transparent),
     0 8px 26px color-mix(in srgb, #000 34%, transparent);
 }
+
+
+/* Handle 的 left/right 是相对**节点 padding box**算的；节点有横向内边距时
+ * 会整颗缩进卡片里（左侧尤其容易被标题栏/正文盖住）。把 inset 统一抵消掉。
+ * 嵌套在 prompt/output 行里的 Handle 用行自己的内边距变量。 */
+.flow-node .vue-flow__handle-left { left: calc(-1 * var(--flow-pad-x, 0.75em)) !important; }
+.flow-node .vue-flow__handle-right { right: calc(-1 * var(--flow-pad-x, 0.75em)) !important; }
+.flow-prompt-row, .flow-prompt-history { --flow-pad-x: 0.7em; }
+.flow-output-row, .flow-llm-output-row, .flow-merge-row, .flow-join-row { --flow-pad-x: 0.5em; }

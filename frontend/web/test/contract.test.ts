@@ -4957,3 +4957,14 @@ test("FlowAgent 用重新生成：没有候选位次，走 regenerate 接口", (
   assert.match(client, /regenerate:\s*\(id[^)]*\)\s*=>\s*call<[^>]+>\("POST", `\/sessions\/\$\{enc\(id\)\}\/regenerate`/, "API 没有 regenerate");
   assert.match(reroll, /if \(!sid \|\| isFlow\(\)\)/, "FlowAgent 仍在问消息重摇状态");
 });
+
+// 2026-11-13 用户报：左侧连接点被节点框盖住；hover 时连接点位移；左侧色条难看。
+test("Flow 节点：左侧连接点外移、hover 不位移、标题栏不再画左边色条", () => {
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8");
+  assert.match(css, /\.flow-node \.vue-flow__handle-left \{\s*left:\s*calc\(-1 \* var\(--flow-pad-x/, "左侧 Handle 没抵消节点内边距");
+  assert.match(css, /\.flow-node \.vue-flow__handle-right \{\s*right:\s*calc\(-1 \* var\(--flow-pad-x/, "右侧 Handle 没抵消节点内边距");
+  assert.match(css, /\.flow-canvas \.vue-flow__handle:hover \{\s*filter:/, "Handle hover 没有改成不位移的反馈");
+  assert.ok(!/\.vue-flow__handle:hover\s*\{[^}]*transform:/.test(css), "Handle hover 还在用 transform（会错位）");
+  assert.ok(!/\.flow-node-head\s*\{[^}]*inset 3px|\.flow-node-head\s*\{[^}]*border-left/.test(css), "标题栏还在画左侧色条");
+  assert.ok(!/\.flow-prompt-row[^}]*border-left/.test(css), "Prompt 行还在画左侧色条");
+});
