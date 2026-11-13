@@ -192,7 +192,7 @@ func (s *Service) launch(session model.Session, replyID string, token uint64, pr
 	// FlowAgent 不经过普通 Chat 的单请求装配：图自己决定每个 LLM 节点的 messages。
 	if agent, ok := s.flowAgentOf(session); ok {
 		chosen := providers.SelectBackend(session.Provider, session.Model, providersConfig)
-		go s.runFlow(session, replyID, token, runID, input, agent, providersConfig)
+		go s.runFlow(session, replyID, token, runID, input, agent, providersConfig, "")
 		return Accepted{Backend: chosen.Name, Turn: statusView(s.Turns.Status(session.ID))}, nil
 	}
 	// 出站**此刻定稿**（受理时捕获的上文）：后台不再重算，期间别人改了库也不影响这一轮

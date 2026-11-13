@@ -13,7 +13,6 @@ import (
 	"microchat/internal/config"
 	"microchat/internal/model"
 	"microchat/internal/providers"
-	"microchat/internal/reroll"
 	"microchat/internal/store"
 )
 
@@ -344,7 +343,7 @@ func TestFlowAgentMapsReasoningPort(t *testing.T) {
 	}
 }
 
-func TestFlowAgentRerollExecutesGraph(t *testing.T) {
+func TestFlowAgentRegenerateReplacesTail(t *testing.T) {
 	h := newHarness(t, dummyProviders(), "dummy", "dummy")
 	flow := json.RawMessage(`{"version":1,"nodes":[
 		{"id":"in","type":"input","position":{"x":0,"y":0},"data":{}},
@@ -369,29 +368,19 @@ func TestFlowAgentRerollExecutesGraph(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	rerolls := reroll.New(h.store, h.service.Paths, h.turns, h.tasks, h.service)
-	rerolls.FlowReroll = h.service
-	h.service.Candidates = rerolls
-	if _, err := rerolls.EnterSync(context.Background(), h.session); err != nil {
-		t.Fatal(err)
-	}
-	state := rerolls.State(h.session.ID, reroll.TargetMessage)
-	if state.Count != 2 || state.Items[1].Preview == "" {
-		t.Fatalf("FlowAgent 重摇没有候选：%+v", state)
-	}
-	if _, err := rerolls.Switch(h.session.ID, reroll.TargetMessage, 2); err != nil {
-		t.Fatal(err)
-	}
-	messages, err := h.store.ListMessages(h.session.ID)
+	accepted, err := h.service.Regenerate(h.session)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var tail *model.Message
-	if len(messages) > 0 {
-		tail = &messages[len(messages)-1]
+	if accepted.Turn.MessageID == nil || *accepted.Turn.MessageID != ids[1] {
+		t.Fatalf("重新生成应原地换尾条 %s，得到 %+v", ids[1], accepted.Turn)
 	}
-	if tail == nil || tail.Content != dummyReply {
-		t.Fatalf("FlowAgent 重摇候选 = %+v（想要 %q）", tail, dummyReply)
+	messages := h.settle(t)
+	if len(messages) != 2 {
+		t.Fatalf("重新生成不应追加消息：%+v", messages)
+	}
+	if messages[1].ID != ids[1] || messages[1].Content != dummyReply {
+		t.Fatalf("重新生成结果 = %+v（想要 id=%s content=%q）", messages[1], ids[1], dummyReply)
 	}
 }
 

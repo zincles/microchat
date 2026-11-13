@@ -38,7 +38,8 @@ const props = withDefaults(defineProps<{
     sources?: { type?: string; url: string; title?: string }[];
     status?: string;
   }[];
-  reroll?: RerollView | null; // 重摇状态（本条是目标时才非 null）
+  reroll?: RerollView | null; // 重摇状态（本条是目标时才非 null；FlowAgent 不用）
+  flow?: boolean;
   // usage：上游报的用量（归一化后的那几格；2026-10-20 起气泡脚注就用它）。
   // 只有聚合站（OpenRouter）会带 cost_usd；直连渠道没有 ⇒ 脚注不显示价格。
   usage?: UsageLike | null;
@@ -62,6 +63,7 @@ const props = withDefaults(defineProps<{
   macros: () => ({}),
   tools: () => [],
   reroll: null,
+  flow: false,
   usage: null,
 });
 const emit = defineEmits<{
@@ -70,6 +72,7 @@ const emit = defineEmits<{
   delete: [messageId: string | null | undefined, isLast: boolean];
   reroll: [messageId: string | null | undefined];
   "reroll-go": [delta: number];
+  regenerate: [messageId: string | null | undefined];
 }>();
 
 // 脚注 = 身份 + 用量 + 首字延迟 + 速度（纯函数在 utils/format.ts，契约测试钉着）。
@@ -248,8 +251,11 @@ watch(() => props.streaming, (s) => nextTick(() => {
       <VBtn icon variant="text" size="small" title="改正文" aria-label="改正文" @click="emit('edit', messageId, 'content')" v-html="ICONS.pencil" />
       <VBtn v-if="role !== 'user'" icon variant="text" size="small" title="改思考" aria-label="改思考" @click="emit('edit', messageId, 'reasoning')" v-html="ICONS.brain" />
       <VBtn v-if="role !== 'user' && isLast && promptId" icon variant="text" size="small" color="primary" class="prompt-edit-btn" title="编辑最新 Prompt（编辑这条回复对应的用户输入）" aria-label="编辑最新 Prompt" @click="emit('edit-prompt', promptId)" v-html="ICONS.notebookPen" />
-      <VBtn v-if="role !== 'user' && isLast" icon variant="text" size="small" title="重摇（摇新的一版并切过去）" aria-label="重摇（摇新的一版并切过去）" @click="emit('reroll', messageId)" v-html="ICONS.refresh" />
-      <template v-if="role !== 'user' && isLast && reroll && reroll.active">
+      <VBtn v-if="role !== 'user' && isLast" icon variant="text" size="small"
+        :title="flow ? '重新生成（用当前历史重跑流程）' : '重摇（摇新的一版并切过去）'"
+        :aria-label="flow ? '重新生成（用当前历史重跑流程）' : '重摇（摇新的一版并切过去）'"
+        @click="flow ? emit('regenerate', messageId) : emit('reroll', messageId)" v-html="ICONS.refresh" />
+      <template v-if="!flow && role !== 'user' && isLast && reroll && reroll.active">
         <VBtn icon variant="text" size="small" title="上一版" aria-label="上一版" @click="emit('reroll-go', -1)">◀</VBtn>
         <span class="reroll-pos">{{ reroll.running ? `${reroll.current_idx}→${reroll.count}` : `${reroll.current_idx}/${reroll.count}` }}</span>
         <VBtn icon variant="text" size="small" title="下一版（到最右再按 = 再摇一版）" aria-label="下一版" @click="emit('reroll-go', 1)">▶</VBtn>

@@ -25,9 +25,11 @@ const props = withDefaults(defineProps<{
   message: EditableMessage;
   kind?: "content" | "reasoning";
   rerollable?: boolean;
+  flow?: boolean;
 }>(), {
   kind: "content",
   rerollable: false,
+  flow: false,
 });
 const emit = defineEmits<{
   close: [];
@@ -114,7 +116,7 @@ onMounted(() => {
         <span class="status">{{ status }}</span>
         <VBtn variant="text" size="small" @click="close">取消</VBtn>
         <VBtn color="primary" variant="flat" size="small" :disabled="busy" @click="save(false)">保存</VBtn>
-        <VBtn v-if="rerollable" variant="tonal" size="small" :disabled="busy" @click="save(true)">保存并重摇</VBtn>
+        <VBtn v-if="rerollable" variant="tonal" size="small" :disabled="busy" @click="save(true)">{{ flow ? "保存并重新生成" : "保存并重摇" }}</VBtn>
       </VCardActions>
     </VCard>
   </VDialog>

@@ -266,3 +266,27 @@ func (s *Server) sessionContext(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, usage)
 }
+
+// regenerateFlow：FlowAgent 的「重新生成」—— 用当前历史重跑图，原地换尾条 assistant。
+//
+// 与 resend 共用一把闸和 202 形状；区别是它不追加新回复，也不创建候选版本。
+// 用户消息可能已被上一轮 output.user 改写 —— 这是历史事实，重新生成不能“还原”它。
+func (s *Server) regenerateFlow(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	accepted, err := s.chat.Regenerate(*session)
+	switch {
+	case errors.Is(err, turn.ErrRerollBusy):
+		writeError(w, http.StatusConflict, "conflict", "这个会话还在生成或重摇：等它结束再重新生成")
+	case errors.Is(err, turn.ErrBusy):
+		writeError(w, http.StatusConflict, "conflict", "这个会话还在生成中，等它跑完或先按停止")
+	case errors.As(err, new(store.InvalidError)):
+		writeError(w, http.StatusBadRequest, "invalid", err.Error())
+	case err != nil:
+		writeStoreError(w, err)
+	default:
+		writeJSON(w, http.StatusAccepted, accepted)
+	}
+}

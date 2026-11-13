@@ -150,15 +150,6 @@ type Assembler interface {
 	RerollMessages(session model.Session) ([]providers.ChatMessage, error)
 }
 
-// FlowReroll：FlowAgent 的消息重摇 —— 不走单次装配，而是执行一遍图。
-//
-// 用回调而不是共享返回类型，保持 `chat` 与 `reroll` 互不 import（同 Assembler 的口径）。
-// `handled=false` ⇒ 这不是 FlowAgent，回到普通 RerollMessages 那条路。
-type FlowReroll interface {
-	RerollFlow(ctx context.Context, session model.Session,
-		emit func(text, reasoning string, usage json.RawMessage, durationMS, reasoningMS *int64)) (handled bool, err error)
-}
-
 // GeneratedSummary：一次"只生成、不落库"的摘要重摇产出（**消费方定义的形状**）。
 //
 // 唯一实现由 `main` 用适配器接上 `compact.Service`（`RegenerateSummary`）：摘要不许绕过 compact
@@ -184,8 +175,6 @@ type Service struct {
 	Turns  *turn.Registry
 	Tasks  *task.Registry
 	Roller Assembler
-	// FlowReroll：FlowAgent 的消息重摇（执行图而不是普通装配）。没接 / 普通 Agent ⇒ 走 Roller。
-	FlowReroll FlowReroll
 	// Summaries：摘要模式的生成器（消息模式不用它）。没接 ⇒ 摘要重摇那一趟报 internal。
 	Summaries SummaryGenerator
 
@@ -316,6 +305,9 @@ func (s *Service) prepare(session model.Session) (*roll, error) {
 		// 读不出来就说读不出来：静默按默认跑会让"配了别的渠道"的人对着结果猜
 		return nil, &Error{Code: "internal", Message: "读配置失败：" + err.Error()}
 	}
+	if agent, ok := agents.Get(session.AgentID); ok && agent.Kind == "flow" {
+		return nil, invalid("FlowAgent 不使用重摇；请用「重新生成」（它会用当前历史重跑整张图）")
+	}
 	messages, err := s.Store.ListMessages(session.ID)
 	if err != nil {
 		return nil, err
@@ -330,23 +322,15 @@ func (s *Service) prepare(session model.Session) (*roll, error) {
 			"（那是重发，不是重摇）—— 先让它答完再摇，或者换个说法重发")
 	}
 
-	// 生效渠道 / 模型：普通 Agent 用会话自己的；FlowAgent 的每个 LLM 节点自己选模型，
-	// 所以这里不先按会话渠道拒绝它。
-	flowAgent := false
-	if agent, ok := agents.Get(session.AgentID); ok && agent.Kind == "flow" {
-		flowAgent = true
-	}
-	backend := providers.Backend{}
+	// 重摇只服务普通 Prompt Agent；FlowAgent 走 chat.Regenerate（见上面的明确拒绝）。
+	backend := providers.SelectBackend(session.Provider, session.Model, providersConfig)
 	local := ""
-	if !flowAgent {
-		backend = providers.SelectBackend(session.Provider, session.Model, providersConfig)
-		switch backend.Name {
-		case providers.BackendFallback:
-			return nil, invalid("这条会话没有可用的模型（渠道 %q 不在 providers.json 里，或模型名为空）："+
-				"重摇要真调一次上游 —— 先配好渠道，或把这条会话切到 dummy", session.Provider)
-		case providers.BackendDummy:
-			local = dummyReply
-		}
+	switch backend.Name {
+	case providers.BackendFallback:
+		return nil, invalid("这条会话没有可用的模型（渠道 %q 不在 providers.json 里，或模型名为空）："+
+			"重摇要真调一次上游 —— 先配好渠道，或把这条会话切到 dummy", session.Provider)
+	case providers.BackendDummy:
+		local = dummyReply
 	}
 
 	// **与生成共用同一把闸**：生成在跑、或上一次重摇还没摇完 ⇒ 409（不排队）
@@ -545,39 +529,6 @@ func (s *Service) roll(ctx context.Context, prepared *roll) {
 	if prepared.kind == TargetSummary {
 		s.rollSummary(ctx, prepared)
 		return
-	}
-
-	// FlowAgent 的消息重摇：执行图，不流式输出，也不拼普通 Prompt 的 messages。
-	if s.FlowReroll != nil {
-		var candidate RerolledMessage
-		handled, err := s.FlowReroll.RerollFlow(ctx, prepared.session,
-			func(text, reasoning string, usage json.RawMessage, durationMS, reasoningMS *int64) {
-				candidate = RerolledMessage{
-					SessionID: sessionID, TargetMessageID: prepared.targetID,
-					RawText: text, Reasoning: reasoning, Usage: usage,
-					DurationMS: durationMS, ReasoningMS: reasoningMS,
-					At: time.Now().UnixMilli(),
-				}
-			})
-		if handled {
-			if err != nil {
-				s.abort(prepared, err)
-				return
-			}
-			if !s.Turns.IsMine(sessionID, prepared.token) {
-				prepared.guard.Cancel()
-				s.dropPending(prepared)
-				return
-			}
-			if !s.land(prepared, candidate, nil) {
-				prepared.guard.Cancel()
-				s.Turns.FinishReroll(sessionID, prepared.token, "")
-				return
-			}
-			prepared.guard.Succeed()
-			s.Turns.FinishReroll(sessionID, prepared.token, "")
-			return
-		}
 	}
 
 	messages, err := s.Roller.RerollMessages(prepared.session)

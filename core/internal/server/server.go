@@ -149,6 +149,7 @@ func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *ch
 	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/messages", s.sendMessage)
 	// 重发历史：**不落新消息**，拿现有历史再跑一轮（尾 user 没回复 / 尾 assistant 想再要一版都行）
 	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/resend", s.resendHistory)
+	s.mux.HandleFunc("POST /api/v1/sessions/{session_id}/regenerate", s.regenerateFlow)
 	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/status", s.turnStatus)
 	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/turn/text", s.turnText)
 	s.mux.HandleFunc("GET /api/v1/sessions/{session_id}/turn/poll", s.turnPoll)

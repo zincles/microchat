@@ -25,6 +25,7 @@ export interface RerollDeps {
   toast: (text: string, kind?: string) => void;
   getSessionID: () => string | null;
   getEpoch: () => number;
+  isFlow: () => boolean;
   getLastMsgId: () => string | null;
   vueSegments: Ref<ChatSegment[]>;
   streamDisplay: Ref<{ text: string; reasoning: string }>;
@@ -60,7 +61,7 @@ export interface Reroll {
 }
 
 export function useReroll({
-  api, toast, getSessionID, getEpoch, getLastMsgId, vueSegments, streamDisplay,
+  api, toast, getSessionID, getEpoch, isFlow, getLastMsgId, vueSegments, streamDisplay,
   setStreamTarget, resetTypewriter, waitTypewriter, refreshStatusline, refreshTasks, reloadWindow,
   refreshStateView,
 }: RerollDeps): Reroll {
@@ -97,7 +98,7 @@ export function useReroll({
 
   async function refreshReroll(): Promise<void> {
     const sid = getSessionID();
-    if (!sid) { rerollState.value = emptyReroll(); clearRerollPreview(); return; }
+    if (!sid || isFlow()) { rerollState.value = emptyReroll(); clearRerollPreview(); return; }
     const my = getEpoch();
     try {
       const st = await api.rerollState(sid);

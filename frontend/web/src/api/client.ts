@@ -286,6 +286,8 @@ export function createApi({ base, token = "", fetchFn = fetch }: CreateApiOption
       call<Accepted>("POST", `/sessions/${enc(id)}/messages`, { content }),
     // resend：重发历史（不落新消息，拿现有历史再跑一轮；空会话 400）。
     resend: (id: string) => call<Accepted>("POST", `/sessions/${enc(id)}/resend`),
+    // regenerate：FlowAgent 用当前历史重跑图，原地换尾条 assistant（不是候选列表）。
+    regenerate: (id: string) => call<Accepted>("POST", `/sessions/${enc(id)}/regenerate`),
     // editMessage：改任意一条消息的正文 / 思考（至少给一个；nil=不动、""=清掉）。
     editMessage: (sid: string, mid: string, body: EditMessageRequest) =>
       call<Message>("PATCH", `/sessions/${enc(sid)}/messages/${enc(mid)}`, body),

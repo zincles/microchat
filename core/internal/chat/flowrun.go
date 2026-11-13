@@ -78,7 +78,7 @@ func (s *Service) flowConversation(session model.Session, runID, input string) (
 
 // runFlow：后台那半程。先完整执行图，再一次性 INSERT —— 取消/失败都不会留半条回复。
 func (s *Service) runFlow(session model.Session, replyID string, token uint64, runID, input string,
-	agent config.Agent, providersConfig config.ProvidersConfig) {
+	agent config.Agent, providersConfig config.ProvidersConfig, replaceID string) {
 	sessionID := session.ID
 	guard := s.Tasks.Begin(task.KindTurn, &sessionID, "生成 · 会话 "+shortID(sessionID))
 	defer guard.Interrupted()
@@ -209,19 +209,32 @@ func (s *Service) runFlow(session model.Session, replyID string, token uint64, r
 	}
 
 	durationMS := time.Since(started).Milliseconds()
-	message := model.Message{
-		ID: replyID, SessionID: sessionID, Role: model.RoleAssistant,
-		Kind: model.MessageKindChat, Status: model.MessageStatusDone, RunID: runID,
-		Content: outcome.Final.Text, DurationMS: &durationMS, Usage: outcome.Usage,
+	progress := store.MessageMeta{
+		Reasoning:  strings.TrimSpace(outcome.Final.Reasoning),
+		DurationMS: &durationMS,
+		Usage:      outcome.Usage,
 	}
-	// 思考只来自 output 的 reasoning 端口；不再从任意 LLM 节点自动回填
-	// （那会把“正文就是思考”的图又显示成两遍思考）。
-	message.Reasoning = strings.TrimSpace(outcome.Final.Reasoning)
-	if _, err := s.Store.InsertMessage(message); err != nil {
-		failTrace(err)
-		s.Turns.Finish(sessionID, token, err.Error())
-		guard.Fail(err.Error())
-		return
+	if replaceID != "" {
+		// 重新生成：尾条 assistant 原地换正文/思考/用量；UUID 不变，摘要的覆盖区间仍成立。
+		if _, err := s.Store.ReplaceMessage(sessionID, replaceID, outcome.Final.Text, progress); err != nil {
+			failTrace(err)
+			s.Turns.Finish(sessionID, token, err.Error())
+			guard.Fail(err.Error())
+			return
+		}
+	} else {
+		message := model.Message{
+			ID: replyID, SessionID: sessionID, Role: model.RoleAssistant,
+			Kind: model.MessageKindChat, Status: model.MessageStatusDone, RunID: runID,
+			Content: outcome.Final.Text, DurationMS: &durationMS, Usage: outcome.Usage,
+			Reasoning: progress.Reasoning,
+		}
+		if _, err := s.Store.InsertMessage(message); err != nil {
+			failTrace(err)
+			s.Turns.Finish(sessionID, token, err.Error())
+			guard.Fail(err.Error())
+			return
+		}
 	}
 	trace.Status = "done"
 	trace.ActiveNodeID = ""
@@ -277,61 +290,43 @@ func (s *Service) FlowTrace(sessionID string) (FlowRunTrace, bool) {
 	return trace, ok
 }
 
-// RerollFlow：FlowAgent 的消息重摇。取最后一条 assistant 之前的那条 user 当 input，
-// 更早的消息当 history，执行图，把 output 的正文/思考交回 reroll 当候选。
-// 这是**非流式**的：候选只在摇完后出现（FlowAgent 一轮本身也还不流式）。
-func (s *Service) RerollFlow(ctx context.Context, session model.Session,
-	emit func(text, reasoning string, usage json.RawMessage, durationMS, reasoningMS *int64)) (bool, error) {
+// Regenerate：FlowAgent 的“重新生成” —— 用当前历史（含上次 output.user 可能改过的用户消息）
+// 重跑图，并把结果**原地换回尾声 assistant**。它是一轮普通生成（task.KindTurn），
+// 所以任务环与 /flow/run 都会照常更新；它不是候选列表，不能切回“上一版”。
+func (s *Service) Regenerate(session model.Session) (Accepted, error) {
 	agent, ok := s.flowAgentOf(session)
 	if !ok {
-		return false, nil
+		return Accepted{}, store.InvalidError("只有 FlowAgent 才能重新生成")
 	}
 	messages, err := s.Store.ListMessages(session.ID)
 	if err != nil {
-		return true, err
+		return Accepted{}, err
 	}
 	if len(messages) == 0 || messages[len(messages)-1].Role != model.RoleAssistant {
-		return true, fmt.Errorf("这条会话的最后一条不是 assistant 回复，没有什么可重摇的")
+		return Accepted{}, store.InvalidError("最后一条不是 assistant 回复：请用普通发送或重发")
 	}
-	cut := 0
+	tail := messages[len(messages)-1]
 	input := ""
 	for index := len(messages) - 2; index >= 0; index-- {
 		if messages[index].Role == model.RoleUser {
-			cut = index
 			input = statelang.Scan(messages[index].Content).Cleaned
 			break
 		}
 	}
 	if strings.TrimSpace(input) == "" {
-		return true, fmt.Errorf("这条 assistant 回复前面没有可用的 user 输入")
+		return Accepted{}, store.InvalidError("这条回复前面没有用户输入，无法重新生成")
 	}
-	history := make([]providers.ChatMessage, 0, cut)
-	for _, message := range messages[:cut] {
-		content := statelang.Scan(message.Content).Cleaned
-		if strings.TrimSpace(content) != "" {
-			history = append(history, providers.ChatMessage{Role: string(message.Role), Content: content})
-		}
-	}
-	var graph flowGraph
-	if err := json.Unmarshal(agent.Flow, &graph); err != nil {
-		return true, fmt.Errorf("流程 JSON 解析失败：%w", err)
-	}
-	started := time.Now()
 	_, _, providersConfig := s.files()
-	outcome, err := s.executeFlowGraph(ctx, graph, flowRunOptions{
-		SessionID:       session.ID,
-		Input:           input,
-		History:         history,
-		DefaultProvider: session.Provider,
-		DefaultModel:    session.Model,
-		ProvidersConfig: providersConfig,
-	})
+	chosen := providers.SelectBackend(session.Provider, session.Model, providersConfig)
+	token, err := s.Turns.Begin(session.ID, tail.ID)
 	if err != nil {
-		return true, err
+		return Accepted{}, err
 	}
-	durationMS := time.Since(started).Milliseconds()
-	emit(outcome.Final.Text, outcome.Final.Reasoning, outcome.Usage, &durationMS, nil)
-	return true, nil
+	if s.Candidates != nil {
+		s.Candidates.ClearMessages(session.ID)
+	}
+	go s.runFlow(session, tail.ID, token, tail.ID, input, agent, providersConfig, tail.ID)
+	return Accepted{Backend: chosen.Name, Turn: statusView(s.Turns.Status(session.ID))}, nil
 }
 
 func flowNodeLabel(kind string) string {

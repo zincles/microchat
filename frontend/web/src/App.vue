@@ -429,6 +429,34 @@ const {
   endPending: () => { pendingSends--; },
   onTurnFinished,
 });
+// FlowAgent 的「重新生成」：不是候选列表，而是用当前历史重跑图并原地换尾条。
+// 用户消息可能已被上一轮 output.user 改写；这里是历史事实，不能也不用“还原”。
+async function regenerateNow(): Promise<void> {
+  const sid = sessionID;
+  if (!sid || !currentAgentIsFlow.value) return;
+  const row = [...vueMessages.value].reverse().find((m) => m.role === "assistant" && m.messageId);
+  if (!row) { toast("这条会话还没有可重新生成的回复", "error"); return; }
+  row.stream = true;
+  row.phase = "waiting";
+  row.content = "";
+  row.reasoning = "";
+  row.reasoningMs = null;
+  row.tool = null;
+  row.sources = [];
+  localRev++;
+  try {
+    const accepted = await api.regenerate(sid);
+    refreshTasks();
+    await pollTurn(sid, accepted.turn.message_id, row);
+  } catch (err) {
+    row.stream = false;
+    row.phase = "";
+    localRev++;
+    toast(`重新生成失败：${errText(err)}`, "error");
+    await reloadWindow();
+  }
+}
+
 // 打开消息编辑器（新窗口，2026-11-02 用户定）：不再在气泡里就地换 textarea。
 // message 可以是消息列里的行，也可以是 /edit 从 vueMessages 里挑的原对象。
 function openMessageEditor(message: AppRow, kind: "content" | "reasoning"): void {
@@ -476,6 +504,7 @@ const {
   toast,
   getSessionID: () => sessionID,
   getEpoch: () => epoch,
+  isFlow: () => currentAgentIsFlow.value,
   getLastMsgId: () => lastMsgId.value,
   vueSegments,
   streamDisplay,
@@ -626,9 +655,10 @@ async function onMessageEdited(result: { message?: Message; reroll?: boolean } =
   await reloadWindowKeepingScroll();
   refreshStateView(sid);
   if (result.reroll && target?.rerollTargetId) {
-    // 先保存、再摇：保存已经落库，随后走正常重摇路径（旧正文立刻清空）。
-    // 编辑尾条 user 时，重摇的是它后面那条 assistant，不是这条 user 本身。
-    await rerollNow(target.rerollTargetId);
+    // 先保存、再生成：FlowAgent 没有“重摇”，用当前历史重新生成；
+    // 普通 Agent 仍走候选列表（编辑尾条 user 时目标是它后面那条 assistant）。
+    if (currentAgentIsFlow.value) await regenerateNow();
+    else await rerollNow(target.rerollTargetId);
     return;
   }
   toast("消息已保存", "ok");
@@ -1051,7 +1081,7 @@ const { runCommand } = useCommands({
   enterSession,
   fillModelSelect,
   compactNow,
-  rerollNow,
+  rerollNow: () => currentAgentIsFlow.value ? regenerateNow() : rerollNow(),
   resend,
   reloadWindow,
   refreshStateView,
@@ -1399,12 +1429,14 @@ onUnmounted(() => {
               :tools="row.msg.tools"
               :usage="row.msg.usage"
               :macros="macroValues"
-              :reroll="row.msg.messageId && rerollState.active && rerollState.target_message_id === row.msg.messageId ? rerollState : null"
+              :reroll="currentAgentIsFlow ? null : (row.msg.messageId && rerollState.active && rerollState.target_message_id === row.msg.messageId ? rerollState : null)"
+              :flow="currentAgentIsFlow"
               @edit="onBubbleEdit"
               @edit-prompt="onBubbleEditPrompt"
               @delete="onBubbleDelete"
               @reroll="rerollNow"
               @reroll-go="rerollGo"
+              @regenerate="regenerateNow"
             />
           </template>
           </div>
@@ -1492,6 +1524,7 @@ onUnmounted(() => {
       :message="messageEditTarget.message"
       :kind="messageEditTarget.kind"
       :rerollable="messageEditTarget.rerollable"
+      :flow="currentAgentIsFlow"
       @close="messageEditTarget = null"
       @saved="onMessageEdited"
     />

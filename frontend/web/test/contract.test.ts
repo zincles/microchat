@@ -4937,3 +4937,23 @@ test("工作流 tab 只读展示执行；编辑入口跳到该 Agent 的流程�
   assert.match(css, /#settings-view\.flow-agent-open \.settings-body/, "流程全屏没有布局规则");
   assert.match(css, /\.flow-node\.is-readonly \.nodrag/, "只读节点仍可编辑");
 });
+
+// FlowAgent 的 output.user 会改写用户消息，所以“用同一输入再摇一版”不成立。
+// 它的动作必须叫「重新生成」，走普通 turn（任务环 / flow trace 都更新），不建候选列表。
+test("FlowAgent 用重新生成：没有候选位次，走 regenerate 接口", () => {
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  const bubble = readFileSync(join(SRC, "components", "MessageBubble.vue"), "utf8");
+  const editor = readFileSync(join(SRC, "components", "MessageEditor.vue"), "utf8");
+  const client = readFileSync(join(SRC, "api", "client.ts"), "utf8");
+  const reroll = readFileSync(join(SRC, "composables", "useReroll.ts"), "utf8");
+
+  assert.match(app, /async function regenerateNow/, "App 没有 FlowAgent 重新生成入口");
+  assert.match(app, /api\.regenerate\(sid\)/, "重新生成没有走 /regenerate");
+  assert.match(app, /@regenerate="regenerateNow"/, "气泡的重新生成事件没接");
+  assert.match(app, /currentAgentIsFlow \? null : \(row\.msg\.messageId/, "FlowAgent 仍显示重摇候选位次");
+  assert.match(bubble, /emit\('regenerate', messageId\)/, "FlowAgent 按钮没发 regenerate");
+  assert.match(bubble, /!flow && role !== 'user'/, "FlowAgent 仍显示候选版本导航");
+  assert.match(editor, /保存并重新生成/, "编辑器没有区分重新生成");
+  assert.match(client, /regenerate:\s*\(id[^)]*\)\s*=>\s*call<[^>]+>\("POST", `\/sessions\/\$\{enc\(id\)\}\/regenerate`/, "API 没有 regenerate");
+  assert.match(reroll, /if \(!sid \|\| isFlow\(\)\)/, "FlowAgent 仍在问消息重摇状态");
+});

@@ -70,7 +70,7 @@ reminder/                  ← 专题参考（`tool-calls.md` 工具调用 / `je
 | `chat` | 一轮生成怎么跑 | 拿到整段才 INSERT；出站装配前按 Agent 的 `preset_id` 现读原始预设（解析成 prompt entries；不复制） |
 | `turn` | 这一轮的流细节 | 增量什么都不算；游标读不消费 |
 | `task` | 作业的身份 + 生死（= 一次上游请求的全程） | `defer` 兜底（**Go 没有 Drop**）；绝不留下僵尸条目；TaskID 是 UUIDv7、不进库；**按停只是「请求停止」**（真停不停由任务自己决定 —— 见「取消 = 没做过」）|
-| `reroll` | 重摇的**候选列表**（进程内、会话级） | 候选**只在内存里**（不建表、不写库、Copy 不带走）；两个平行家族：**尾条 assistant**（reroll-message）与**没有父的摘要**（reroll-summary）；切换 = 就地换正文（消息 **UUID 不变** / 摘要 **id 不变**）；与生成**共用同一把闸**；**装配与摘要都不另写一份**（借 chat 的装配、借 compact 的生成半程）；**候选生成走流式**（普通消息族，流进 `turn` 缓冲、摇完清空；摘要族仍整段式走 compact 半程；**FlowAgent 消息重摇执行图，非流式**） |
+| `reroll` | 重摇的**候选列表**（进程内、会话级） | 候选**只在内存里**（不建表、不写库、Copy 不带走）；两个平行家族：**尾条 assistant**（reroll-message）与**没有父的摘要**（reroll-summary）；切换 = 就地换正文（消息 **UUID 不变** / 摘要 **id 不变**）；与生成**共用同一把闸**；**装配与摘要都不另写一份**（借 chat 的装配、借 compact 的生成半程）；**候选生成走流式**（普通消息族，流进 `turn` 缓冲、摇完清空；摘要族仍整段式走 compact 半程；**FlowAgent 不用消息重摇**：走 `POST .../regenerate`，用当前历史重跑整张图并原地换尾条） |
 | `queue` | 队列任务（一串串行的原子任务） | **严格串行**（一步收尾才开下一步）；**一步失败即整体结束**；**可随时取消**（在飞的那一发一起掐断）；**不认识压缩**（Runner 由 `main.go` 接） |
 | `server` | **只有它碰 HTTP** | 错误体固定；只编排不含业务 |
 
@@ -420,8 +420,9 @@ delete(AA)           # 删除
   `GET .../flow/run` 返回最近一次图执行的节点轨迹（每个 LLM 节点的请求快照、输出、usage、耗时）；
   **FlowAgent 暂时不套用普通 Agent 的载荷/状态/压缩上下文面板**（旧的「流程」tab 与环里的节点列表也已撤掉），
   新的节点面板另行设计；`/context` 的节点级数据仍保留给新面板用。
-  FlowAgent 的顶栏工作区 tab 是 **聊天 / 工作流**；工作流页直接复用 `FlowEditor` 编辑当前 Agent 的图，
-  改动约 0.7 秒防抖后 PATCH 回 `agents.json`（自动保存，不需要再进设置页）。
+  FlowAgent 的顶栏工作区 tab 是 **聊天 / 工作流**；主界面的工作流页是**只读执行视图**：
+  显示当前对话的节点状态、输入输出与真实请求体，不写回图、不提供测试。编辑入口是页头的
+  「编辑助手流程」——它打开设置里对应 Agent 的流程页（设置视图内占满剩余宽高），只有那里能改图。
   工作流页每 700ms 读一次 `/flow/run`，右侧节点清单把 `active_node_id` 高亮成主色脉冲；
   App 也每 700ms 读同一份轨迹，把 `active_llm_calls` / `active_nodes` 喂给顶栏环与弹出面板。当前执行器仍是
   **按拓扑序串行**跑节点（所以并发数通常为 0/1；并行调度是下一步，不是现状）。
@@ -794,6 +795,7 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 | POST | `/sessions/{session_id}/messages/batch` | `{ranges:[[from,to],…]}` | `[Message]` | **2026-11-04**：一次取多个 1-based 闭区间（`to=0` = 到末尾），按整条会话 id 顺序返回并去重；首屏 / 加载更多把摘要切开的几段压成一发，不再一个区间一个 RTT。区间非法 ⇒ 422 |
 | POST | `/sessions/{session_id}/messages` | `SendReq` | `TurnAccepted` · **202** | 落用户消息 + 开工；不含回复正文 |
 | POST | `/sessions/{session_id}/resend` | — | `TurnAccepted`（`user` 为空） · **202** | **重发历史**：不落新消息，拿现有历史再跑一轮（尾 user 没回复 / 尾 assistant 想再要一版都行；空会话 ⇒ 400；在跑 ⇒ 409）。空输入点发送走这条 |
+| POST | `/sessions/{session_id}/regenerate` | — | `TurnAccepted`（`user` 为空） · **202** | **FlowAgent 的「重新生成」**：尾条必须是 assistant；用**当前**历史（含上一轮 `output.user` 可能已经改写的用户消息）重跑整张图，**原地换回尾条 assistant**（`message_id` 不变），不建候选列表。普通 Agent 不接受 ⇒ 400；在跑/重摇 ⇒ 409。Task 是 `KindTurn`，所以任务环与 `/flow/run` 会照常更新 |
 | PATCH | `/sessions/{session_id}/messages/{message_id}` | `EditMessageReq{content?, reasoning?}`（至少给一个 ⇒ 422；nil=不动、`""`=清掉） | `Message` | 改**任意**一条消息的正文 / 思考 = 重写存档（世界状态随之现演；摘要只标 `dirty`、**不级联**）|
 | GET | `/sessions/{session_id}/messages/{message_id}/deletion-preview` | — | `DeletionPlan` | **只算不动**（安全 ⇒ GET）：会删掉哪些消息 / 摘要、哪些指针会被置空 |
 | DELETE | `/sessions/{session_id}/messages/{message_id}` | `{"last_deleted_message_id"}` | `DeletionPlan` | 删**这条及之后的全部**（级联见 `DEFINE.md`）。核对字段不符 ⇒ **409**（重新预览）；缺字段 ⇒ 422 |
@@ -820,7 +822,7 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 | PATCH | `/sessions/{session_id}/summaries/{summary_id}` | `{"text":"…"}`（必填；空 ⇒ 400） | `Summary` | 手改**任意**一条摘要的正文 = 就地换 text（id / 区间 / 指针不动；改孩子 ⇒ 祖先标脏；自己变干净）|
 | GET | `/sessions/{session_id}/summaries/{summary_id}/undo-preview` | — | `{summary_id,level,count,items:[{id,from_idx,to_idx,level}]}` | **撤销预览**：撤这条会连带删哪些同层更晚的摘要。被上层盖住 ⇒ 409；不存在 ⇒ 404。只算不写 |
 | DELETE | `/sessions/{session_id}/summaries/{summary_id}` | — | 204 | **撤销压缩（支持级联）**：顶层都可撤；撤更早的会连同**同层更晚**的一起删。被上层盖住 ⇒ **409**（先撤上层）；没有 ⇒ 404。`UndoSummaries` 一个事务：批量释放孩子 parent → 批量清消息 `summary_id` → 批量删摘要。**不回体** |
-| POST | `/sessions/{session_id}/reroll-message` | — | `{target_message_id, task_id, state}` · **202** | **重摇·消息**：进模式并**立刻摇一次**（已在模式里 ⇒ 再摇一版）。候选（`RerolledMessage`）**只在内存里**、**不进历史** —— 选中才 apply 回那条 Message。尾条必须是 assistant（不是 ⇒ 400 说清那是"重发"）；与生成**共用同一把闸**（在跑 ⇒ 409）。**候选生成走流式**（2026-10-10 起）：deltas 进 `turn` 缓冲（`BeginReroll` 清、`FinishReroll` 清）⇒ 摇的过程中 `/turn/text` 能读到正文在长（web 靠它做气泡内预览）。**FlowAgent 例外**：消息重摇执行图，候选整段生成、非流式（与 FlowAgent 一轮一致）|
+| POST | `/sessions/{session_id}/reroll-message` | — | `{target_message_id, task_id, state}` · **202** | **重摇·消息（只服务普通 Prompt Agent）**：进模式并**立刻摇一次**（已在模式里 ⇒ 再摇一版）。候选（`RerolledMessage`）**只在内存里**、**不进历史** —— 选中才 apply 回那条 Message。尾条必须是 assistant（不是 ⇒ 400 说清那是"重发"）；与生成**共用同一把闸**（在跑 ⇒ 409）。**候选生成走流式**：deltas 进 `turn` 缓冲 ⇒ 摇的过程中 `/turn/text` 能读到正文在长。**FlowAgent ⇒ 400**：它用 `POST .../regenerate`，因为 `output.user` 可能已经改过用户输入，没有“同一输入再摇一次”这个概念 |
 | GET | `/sessions/{session_id}/reroll-message` | — | `{active, target_kind, target_message_id, count, current_idx, running, elapsed_ms, error, items:[…]}` | 重摇状态（**不吐全文**，预览几十字）。没进模式 ⇒ `active: false`（**不是 404**）|
 | POST | `.../reroll-message/switch` | `{"idx": n}` | 同上 | 选中第 `n` 版 ⇒ **就地重建**那条 Message（**UUID 不变**；正文与 usage / 耗时 / 思考一起换；摘要照旧标 `dirty`）|
 | DELETE | `.../reroll-message/{idx}` | — | 同上 | 删掉第 `idx` 版（**位次不是身份**）；**删到只剩一条 ⇒ 退出模式 + 清列表**（**不 apply**：message 保留当前这版）|
