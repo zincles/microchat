@@ -4,6 +4,7 @@
 import { computed, inject, onUnmounted, ref, type Ref } from "vue";
 import { Handle, Position } from "@vue-flow/core";
 import { VBtn, VSelect, VTextField, VTextarea } from "vuetify/components";
+import { ICONS } from "../assets/icons.ts";
 import type { ModelListItem } from "../api/types.ts";
 import { DEFAULT_JOIN_SEPARATOR, TRIM_MODES, TRIM_ROLES, trimCountOf, trimModeOf, type FlowDataType, type TrimMode } from "../utils/flow.ts";
 import { judgeAnswerType as judgeAnswerTypeOf, nodeBadgeFor, nodeHintFor, nodeLabelFor } from "../utils/flowSpecs.ts";
@@ -258,7 +259,7 @@ function addJoinOutput(): void {
         <span class="flow-node-state-dot" aria-hidden="true"></span>{{ runStateLabel }}
       </span>
       <button class="flow-node-delete nodrag nopan" type="button" title="删除节点" aria-label="删除节点"
-        @click.stop="removeNode(id)">×</button>
+        @click.stop="removeNode(id)" v-html="ICONS.x"></button>
     </div>
     <div v-if="type === 'llm'" class="flow-enabled-row">
       <Handle id="enabled" type="target" :position="Position.Left" :class="portClass('bool')" />

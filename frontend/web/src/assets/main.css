@@ -2273,3 +2273,22 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-node .vue-flow__handle-right { right: calc(-1 * var(--flow-pad-x, 0.75em)) !important; }
 .flow-prompt-row, .flow-prompt-history { --flow-pad-x: 0.7em; }
 .flow-output-row, .flow-llm-output-row, .flow-merge-row, .flow-join-row { --flow-pad-x: 0.5em; }
+
+
+/* 节点删除键：圆形幽灵键，悬停才出现；不再用一个大号文字 ×。 */
+.flow-node-delete {
+  top: 0.45em; right: 0.45em;
+  width: 1.9em; height: 1.9em; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 0; border-radius: 50%;
+  background: color-mix(in srgb, var(--md-surface-container-highest) 72%, transparent);
+  color: var(--md-on-surface-variant);
+  font-size: 0.9em;
+  opacity: 0.55;
+  transition: opacity 120ms var(--md-ease-standard), background 120ms var(--md-ease-standard), color 120ms var(--md-ease-standard);
+}
+.flow-node-delete svg { display: block; width: 0.9em; height: 0.9em; }
+.flow-node:hover .flow-node-delete,
+.flow-node:focus-within .flow-node-delete { opacity: 1; }
+.flow-node-delete:hover { background: var(--md-error-container); color: var(--md-error); }
+.flow-node-delete:focus-visible { opacity: 1; outline: 2px solid var(--md-primary); outline-offset: 1px; }
