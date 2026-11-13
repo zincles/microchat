@@ -19,7 +19,7 @@ import type { SegmentItem } from "./SegmentList.vue";
 import { VTab, VTabs, VTabsWindow, VTabsWindowItem, VSwitch, VBtn, VTextField, VTextarea, VSelect } from "vuetify/components";
 import type { AbilityToggle, Agent, CreateAgentRequest, FlowGraph, TavernPreset, UpdateAgentRequest } from "../api/types.ts";
 
-interface AgentTemplate {
+export interface AgentTemplate {
   name?: string;
   description?: string;
   kind?: "prompt" | "flow";

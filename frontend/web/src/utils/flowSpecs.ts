@@ -42,17 +42,29 @@ export interface FlowNodeSpec {
   validate?: (node: FlowNode) => string[];
 }
 
-const dataOf = (node: FlowNode | undefined): Record<string, any> => (node?.data ?? {}) as Record<string, any>;
+const dataOf = (node: Pick<FlowNode, "data"> | undefined): Record<string, unknown> => node?.data ?? {};
+
+interface FlowPromptDraft {
+  id?: unknown;
+  kind?: unknown;
+  role?: unknown;
+  content?: unknown;
+}
+
+const promptsOf = (node: FlowNode): FlowPromptDraft[] => {
+  const prompts = dataOf(node).prompts;
+  return Array.isArray(prompts) ? prompts as FlowPromptDraft[] : [];
+};
 const strings = (value: unknown): string[] => Array.isArray(value) ? value.map(String) : [];
 
-function answerTypeOf(node: FlowNode | undefined): FlowDataType {
+function answerTypeOf(node: Pick<FlowNode, "data"> | undefined): FlowDataType {
   const type = String(dataOf(node).answer_type ?? "string");
   return type === "bool" || type === "number" || type === "choice" ? type : "string";
 }
 
 function llmInputs(node: FlowNode): FlowPortSpec[] {
   const ports: FlowPortSpec[] = [{ handle: "enabled", type: "bool", label: "启用" }];
-  const prompts = Array.isArray(dataOf(node).prompts) ? dataOf(node).prompts : [];
+  const prompts = promptsOf(node);
   for (const prompt of prompts) {
     const id = String(prompt?.id ?? "").trim();
     if (!id) continue;
@@ -92,7 +104,7 @@ function portsIssues(kind: string, values: unknown, fallback: string[]): string[
 }
 
 function llmIssues(node: FlowNode): string[] {
-  const prompts = Array.isArray(dataOf(node).prompts) ? dataOf(node).prompts : [];
+  const prompts = promptsOf(node);
   const issues: string[] = [];
   if (!prompts.length) issues.push("有 LLM 节点还没有 Prompt 条目");
   const seen = new Set<string>();
@@ -243,6 +255,6 @@ export function flowOutputPorts(node: FlowNode): FlowPortSpec[] {
   return flowNodeSpec(node.type)?.outputs(node) ?? [];
 }
 
-export function judgeAnswerType(node: FlowNode | undefined): FlowDataType {
+export function judgeAnswerType(node: Pick<FlowNode, "data"> | undefined): FlowDataType {
   return answerTypeOf(node);
 }

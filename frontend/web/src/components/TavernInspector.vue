@@ -13,7 +13,7 @@ import { VBtn, VCard, VCardText, VCardTitle, VDialog, VProgressCircular } from "
 import { sharedApi } from "../utils/prefs.ts";
 import { depthText } from "../utils/format.ts";
 import { parseJsonText, type JsonValue } from "../utils/json.ts";
-import { ICONS } from "./icons.ts";
+import { ICONS } from "../assets/icons.ts";
 import JsonNode from "./JsonNode.vue";
 import type { Segment, TavernEffective, TavernEffectiveEntry, TavernPreset, TavernPreview } from "../api/types.ts";
 

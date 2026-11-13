@@ -13,15 +13,27 @@ import assistantPreset from "../../presets/assistant.json";
 import rpPreset from "../../presets/rp-agent.json";
 import ProviderEditor from "./ProviderEditor.vue";
 import ModelRulesEditor from "./ModelRulesEditor.vue";
+import type { AgentTemplate } from "./AgentEditor.vue";
 import UpdatePane from "./UpdatePane.vue";
 import TavernInspector from "./TavernInspector.vue";
-import { ICONS } from "./icons.ts";
+import { ICONS } from "../assets/icons.ts";
 import { sharedApi } from "../utils/prefs.ts";
 import { SETTINGS_TABS, groupModelsByProvider, modelOption, providerChoices, modelChoicesFor, modelKey, parseModelKey, providerDisplayName } from "../utils/format.ts";
 import type { ModelGroup } from "../utils/format.ts";
 import { downloadJSON, downloadBlob } from "../utils/download.ts";
 import { cartridgeAgent } from "../utils/cartridge.ts";
-import type { Agent, ChatConfig, ProviderView, Segment, SessionView, TavernPreset } from "../api/types.ts";
+import type { Agent, ChatConfig, DefaultsConfig, ProviderView, Segment, SessionView, TavernPreset } from "../api/types.ts";
+
+interface ChatForm {
+  title_chars: string | number;
+  title_model: string;
+  model_context_tokens: string | number;
+  history_window: string | number;
+  compact_blocks: string | number;
+  compact_trigger_tokens: string | number | null;
+  replay_reasoning: boolean;
+  auto_compact: boolean;
+}
 
 // models-changed：渠道/模型那摊变了（删除渠道会连模型一起没）⇒ 让 App 重拉顶栏的模型下拉。
 // 与会话左栏那个 sessions-changed 是**两件事**，别合并（各自的读口不同）。
@@ -62,20 +74,30 @@ const onlyTitle = computed(() => (props.only === "session" ? "会话管理"
   : props.only === "update" ? "更新"
   : ""));
 watch(() => props.only, (v) => { tab.value = v || "chat"; });
-const chat = ref<Record<string, any>>({ title_chars: "", title_model: "", model_context_tokens: "", history_window: "", compact_blocks: "", compact_trigger_tokens: "", replay_reasoning: false, auto_compact: true });
+const chat = ref<ChatForm>({ title_chars: "", title_model: "", model_context_tokens: "", history_window: "", compact_blocks: "", compact_trigger_tokens: "", replay_reasoning: false, auto_compact: true });
 const chatStatus = ref("");
-const defaults = ref<Record<string, any>>({ provider: "", model: "", agent: "" });
+const defaults = ref<DefaultsConfig>({ provider: "", model: "", agent: "" });
 const defStatus = ref("");
 const agents = ref<Agent[]>([]);
 const segmentsLib = ref<Segment[]>([]); // 提示词段库（随 GET /agents 一起给）
 const curDefault = ref("");
-const editAgent = ref<any>(null); // null | 'new' | agent（二级编辑器）
+const editAgent = ref<Agent | "new" | null>(null);
+const agentTemplate = ref<AgentTemplate | null>(null);
 const newAgentKind = ref<"prompt" | "flow">("prompt"); // 新建时的两种类型
 function startNewAgent(kind: "prompt" | "flow"): void {
   newAgentKind.value = kind;
+  agentTemplate.value = null;
   editAgent.value = "new";
 }
-const editSeg = ref<any>(null); // null | 'new' | segment（「提示词」tab 内的二级页）
+function editExistingAgent(agent: Agent): void {
+  agentTemplate.value = null;
+  editAgent.value = agent;
+}
+function closeAgentEditor(): void {
+  editAgent.value = null;
+  agentTemplate.value = null;
+}
+const editSeg = ref<Segment | "new" | null>(null); // null | 'new' | segment（「提示词」tab 内的二级页）
 // 谁引用了这个段（「提示词」tab 列表与编辑器共用）。
 const segRefs = (id: string): string[] => agents.value.filter((a) => (a.segments ?? []).includes(id)).map((a) => a.name || a.id);
 // 列表里的“类型”是**当前配置的形态**，不是又一个手填字段：
@@ -99,7 +121,7 @@ const modelGroups = ref<ModelGroup[]>([]);
 // 全局标题模型的下拉：跨渠道拍平（显示名带渠道前缀，两个渠道有同名模型时才分得清）。
 const titleModelOptions = computed<Array<{ value: string; label: string }>>(() => modelGroups.value.flatMap((g) =>
   (g.items ?? []).map((item) => ({ value: item.value, label: `${g.provider} / ${item.label}` }))));
-const editProvider = ref<any>(null); // null | 'new' | provider（二级编辑器）
+const editProvider = ref<ProviderView | "new" | null>(null); // null | 'new' | provider（二级编辑器）
 // 渠道页本身也分两页：列表 / 全局模型规则（后者与列表同级，不塞进单个渠道的详情）。
 const providerTab = ref<"list" | "global">("list");
 const routesStatus = ref("");
@@ -339,7 +361,8 @@ function presetNew(value?: unknown): void {
   if (!kind) return;
   // 名字清空等你起；其余（提示词/prepend/能力）照模板带。
   const src = kind === "rp" ? rpPreset : assistantPreset;
-  editAgent.value = { template: { ...src, name: "" } };
+  agentTemplate.value = { ...src, name: "" };
+  editAgent.value = "new";
 }
 
 // 默认值那两格的下拉选项（纯函数在 format.js，测试直引）。
@@ -604,7 +627,7 @@ function onKey(e: KeyboardEvent): void {
             <div id="agent-list">
               <VTable class="plist">
                 <thead><tr><th>名称</th><th>标识</th><th>类型</th><th>描述</th><th>是否默认</th></tr></thead>
-                <tbody><tr v-for="a in agents" :key="a.id" class="clickable" @click="editAgent = a">
+                <tbody><tr v-for="a in agents" :key="a.id" class="clickable" @click="editExistingAgent(a)">
                   <td>{{ a.name }}</td>
                   <td class="agent-id" :title="a.id">{{ a.id }}</td>
                   <td :title="agentTypeTitle(a)">{{ agentType(a) }}</td>
@@ -616,14 +639,14 @@ function onKey(e: KeyboardEvent): void {
           </template>
           <AgentEditor
             v-if="editAgent"
-            :agent="editAgent === 'new' || editAgent?.template ? null : editAgent"
-            :template="editAgent?.template ?? null"
+            :agent="editAgent === 'new' ? null : editAgent"
+            :template="agentTemplate"
             :kind="editAgent === 'new' ? newAgentKind : (editAgent?.kind === 'flow' ? 'flow' : 'prompt')"
             :segments="segmentsLib"
             :presets="tavernPresets"
             :is-default="editAgent !== 'new' && editAgent?.id === curDefault"
             :ask="ask"
-            @close="editAgent = null"
+            @close="closeAgentEditor"
             @saved="loadAgents"
           />
 

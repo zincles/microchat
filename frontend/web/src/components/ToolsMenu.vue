@@ -4,7 +4,8 @@
 //
 // 规则给的是“可用”；会话上存的是 disabled 列表 —— 新规则加进来的工具默认仍启用。
 import { computed } from "vue";
-import { VBtn, VList, VListItem, VListItemTitle, VMenu } from "vuetify/components";
+import { VListItem, VListItemTitle } from "vuetify/components";
+import ToolbarMenu from "./ToolbarMenu.vue";
 import { nativeToolLabel, nativeToolsLabel, nativeToolsTitle } from "../utils/format.ts";
 
 const props = withDefaults(defineProps<{
@@ -28,47 +29,37 @@ function toggle(id: string, on: boolean | null): void { emit("toggle", id, !!on)
 </script>
 
 <template>
-  <VMenu location="top end" origin="bottom end" :offset="[0, 8]" :width="220" max-height="50vh">
-    <template #activator="{ props: activatorProps }">
-      <VBtn
-        v-bind="activatorProps"
-        type="button"
-        variant="text"
-        rounded="xl"
-        size="small"
-        class="tools-btn"
-        :title="title"
-        :aria-label="title"
+  <ToolbarMenu
+    :title="title"
+    :label="label"
+    :width="220"
+    button-class="tools-btn"
+    label-class="tools-label"
+  >
+    <template v-if="available.length">
+      <VListItem
+        v-for="id in available"
+        :key="id"
+        @click="toggle(id, !enabledOf(id))"
       >
-        <span class="tools-label">{{ label }}</span>
-      </VBtn>
-    </template>
-    <VList density="compact" color="on-surface" bg-color="surface-container" rounded="md" class="tools-list py-1">
-      <template v-if="available.length">
-        <VListItem
-          v-for="id in available"
-          :key="id"
-          @click="toggle(id, !enabledOf(id))"
-        >
-          <template #prepend>
-            <span
-              class="tool-check"
-              :class="{ on: enabledOf(id) }"
-              role="checkbox"
-              :aria-checked="enabledOf(id)"
-            >
-              <svg v-if="enabledOf(id)" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M20 6 9 17l-5-5" />
-              </svg>
-            </span>
-          </template>
-          <VListItemTitle>{{ nativeToolLabel(id) }}</VListItemTitle>
-        </VListItem>
-      </template>
-      <VListItem v-else disabled>
-        <VListItemTitle>当前模型没有可用工具</VListItemTitle>
+        <template #prepend>
+          <span
+            class="tool-check"
+            :class="{ on: enabledOf(id) }"
+            role="checkbox"
+            :aria-checked="enabledOf(id)"
+          >
+            <svg v-if="enabledOf(id)" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M20 6 9 17l-5-5" />
+            </svg>
+          </span>
+        </template>
+        <VListItemTitle>{{ nativeToolLabel(id) }}</VListItemTitle>
       </VListItem>
-    </VList>
-  </VMenu>
+    </template>
+    <VListItem v-else disabled>
+      <VListItemTitle>当前模型没有可用工具</VListItemTitle>
+    </VListItem>
+  </ToolbarMenu>
 </template>

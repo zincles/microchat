@@ -2,7 +2,7 @@
 // 消息气泡：正文 markdown 渲染 + <state> 块独立容器（状态变化单列，不混进正文）。
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import { VBtn } from "vuetify/components";
-import { ICONS } from "./icons.ts";
+import { ICONS } from "../assets/icons.ts";
 import { assistantIdentity, formatThinkLabel, identityLabel, nativeToolLabel, sourceLabel, toolRunHint, usageFoot, usageFootTitle } from "../utils/format.ts";
 import type { UsageLike } from "../utils/format.ts";
 import { renderMarkdown, splitState } from "../utils/markdown.ts";

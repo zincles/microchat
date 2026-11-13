@@ -15,7 +15,7 @@ import {
   VTab, VTabs, VWindow, VWindowItem,
 } from "vuetify/components";
 import ModelIcon from "./ModelIcon.vue";
-import { ICONS } from "./icons.ts";
+import { ICONS } from "../assets/icons.ts";
 import {
   formatTokens,
   formatStatusLine,

@@ -44,7 +44,7 @@ import { useCommands } from "./composables/useCommands.ts";
 import { useContextWorkspace } from "./composables/useContextWorkspace.ts";
 import { useSessionActions } from "./composables/useSessionActions.ts";
 import type {
-  DeletionPlan, FlowActiveNode, Message, SessionView, TurnStatus,
+  CreateSessionRequest, DefaultsConfig, DeletionPlan, FlowActiveNode, Message, SessionView, TurnStatus,
 } from "./api/types.ts";
 import type { ChatSummary } from "./utils/chatrows.ts";
 import type {
@@ -62,12 +62,12 @@ applyBackground();
 applyTextScale();
 applyFonts();
 // —— 组件 refs（直调实例方法，替代桥） ——
-const toastRef = ref<any>(null);
-const topbarRef = ref<any>(null);
-const sessionbarRef = ref<any>(null);
-const payloadbarRef = ref<any>(null);
-const composerRef = ref<any>(null);
-const overlaysRef = ref<any>(null);
+const toastRef = ref<InstanceType<typeof Toast> | null>(null);
+const topbarRef = ref<InstanceType<typeof TopBar> | null>(null);
+const sessionbarRef = ref<InstanceType<typeof SessionBar> | null>(null);
+const payloadbarRef = ref<InstanceType<typeof ContextWorkspace> | null>(null);
+const composerRef = ref<InstanceType<typeof Composer> | null>(null);
+const overlaysRef = ref<InstanceType<typeof Overlays> | null>(null);
 // 命令菜单（输入框左侧 ☰ 与 "/" 浮层）：默认关（移动端碍事，2026-10-17 用户定）；
 // 设置 → 外观里改了立刻生效（不刷新）—— 偏好住服务器（`prefs.json`），这里是它的活视图。
 const cmdMenu = ref(commandMenuOn());
@@ -544,7 +544,7 @@ async function deleteMessagesFlow(sid: string, mid: string, confirmTextFor: Conf
       return null;
     });
     if (!plan || sid !== sessionID) return false;
-    if (!(await overlaysRef.value.confirmAsk(confirmTextFor(plan)))) return false;
+    if (!(await overlaysRef.value?.confirmAsk(confirmTextFor(plan)))) return false;
     try {
       await api.deleteMessages(sid, mid, plan.last_deleted_message_id);
       localRev++; // 删完消息列已经变了（等这一发重新拉窗口）
@@ -656,7 +656,7 @@ async function undoSummary(summaryID: string): Promise<void> {
   const items = preview.items ?? [];
   if (preview.count > 1) {
     const ranges = items.map((item) => `第 ${item.from_idx}–${item.to_idx} 条`).join("、");
-    const ok = await overlaysRef.value.confirmAsk(
+    const ok = await overlaysRef.value?.confirmAsk(
       `撤销这次压缩会同时撤销同层更晚的 ${preview.count - 1} 次压缩：${ranges}。` +
       `这些摘要会被删除，对应内容回到原文，不可逆。继续？`,
     );
@@ -793,7 +793,7 @@ async function startDraft() {
     id: "", title: "", provider: "", model: "", agent_id: "", thinking_level: "", system_prompt: "", native_tools_disabled: [], request_overrides: {},
   });
   paintSessionHeader();
-  const d = await api.getDefaults().catch(() => ({} as any));
+  const d = await api.getDefaults().catch((): DefaultsConfig => ({ provider: "", model: "", agent: "" }));
   if (my !== epoch || !draft) return; // 期间切去别的会话/又开了新草稿：这一发作废
   // 用户在默认值回来之前已经选过模型/Agent ⇒ 不覆盖那些格；只补没选过的。
   if (!draftPrefs.provider && !draftPrefs.model) {
@@ -1125,7 +1125,7 @@ function onComposerKeydown(e: KeyboardEvent, value: string): void {
 // sendFromDraft：草稿的第一句 —— 建会话（带草稿里选的 model/agent）→ 受理 → 轮询。
 // 只有"受理"失败才回滚（删掉刚建的空会话、退回草稿）；轮询掉线不回滚（消息已入库）。
 async function sendFromDraft(text: string): Promise<void> {
-  const body: any = {};
+  const body: CreateSessionRequest = {};
   if (draftId) body.id = draftId; // 预演头上那个 id —— 真会话必须落同一个
   if (draftPrefs.provider) body.provider = draftPrefs.provider;
   if (draftPrefs.model) body.model = draftPrefs.model;

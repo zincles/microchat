@@ -7,19 +7,25 @@
 //   · 只能调用传统 Agent，不能嵌套 FlowAgent；
 //   · 第一版只允许 DAG，且恰好一个输入、一个输出。
 import { computed, nextTick, onMounted, provide, ref, watch } from "vue";
-import { ConnectionMode, VueFlow, useVueFlow, type Connection, type OnConnectStartParams } from "@vue-flow/core";
+import {
+  ConnectionMode, VueFlow, useVueFlow,
+  type Connection, type NodeTypesObject, type OnConnectStartParams,
+} from "@vue-flow/core";
 import { Background } from "@vue-flow/background";
 import { Controls } from "@vue-flow/controls";
 import "@vue-flow/core/dist/style.css";
 import "@vue-flow/core/dist/theme-default.css";
 import "@vue-flow/controls/dist/style.css";
 import { VBtn, VList, VListItem, VMenu, VTextField } from "vuetify/components";
-import { ICONS } from "./icons.ts";
+import { ICONS } from "../assets/icons.ts";
 import { sharedApi } from "../utils/prefs.ts";
 import FlowNode from "./FlowNode.vue";
 import { FLOW_NODE_TYPES, emptyFlowGraph, flowDebugSteps, flowIssues, flowSourceType, flowTargetType, formatFlowText, normalizeFlowGraph, type FlowNodeType } from "../utils/flow.ts";
 import { FLOW_NODE_SPECS, nodeBadgeFor, nodeDefaults, nodeLabelFor } from "../utils/flowSpecs.ts";
-import type { FlowGraph, ModelListItem } from "../api/types.ts";
+import type { FlowEdge, FlowGraph, FlowNode as FlowNodeGraph, ModelListItem } from "../api/types.ts";
+
+type CanvasNode = FlowNodeGraph & { data: Record<string, unknown> };
+type CanvasEdge = FlowEdge & { class?: string };
 
 const props = withDefaults(defineProps<{
   graph?: FlowGraph | null;
@@ -51,19 +57,21 @@ function toggleExpanded(): void {
   // 画布尺寸变了，Vue Flow 不会自动重新 fit；不重算的话全屏后节点会跑到视口外。
   if (expanded.value) fitAfterResize();
 }
-const nodeTypes = Object.fromEntries(FLOW_NODE_TYPES.map((type) => [type, FlowNode])) as any;
+const nodeTypes: NodeTypesObject = Object.fromEntries(
+  FLOW_NODE_TYPES.map((type) => [type, FlowNode]),
+) as NodeTypesObject;
 const initial = normalizeFlowGraph(props.graph ?? emptyFlowGraph());
-const nodes = ref<any[]>(initial.nodes.map((n) => ({ ...n, data: { ...(n.data ?? {}) } })));
+const nodes = ref<CanvasNode[]>(initial.nodes.map((n) => ({ ...n, data: { ...(n.data ?? {}) } })));
 const historyExists = computed(() => nodes.value.some((n) => n.type === "history"));
-const edgeClass = (edge: { source: string; sourceHandle?: string }, nodeList: any[] = nodes.value): string => {
-  const type = flowSourceType(nodeList.find((n) => n.id === edge.source), edge.sourceHandle);
+const edgeClass = (edge: Pick<FlowEdge, "source" | "sourceHandle">, nodeList: FlowNodeGraph[] = nodes.value): string => {
+  const type = flowSourceType(nodeList.find((n) => n.id === edge.source), edge.sourceHandle ?? undefined);
   if (type === "messages") return "flow-edge-history";
   if (type === "bool") return "flow-edge-bool";
   if (type === "number") return "flow-edge-number";
   if (type === "choice") return "flow-edge-choice";
   return "flow-edge-text";
 };
-const edges = ref<any[]>(initial.edges.map((e) => ({ ...e, class: edgeClass(e, initial.nodes) })));
+const edges = ref<CanvasEdge[]>(initial.edges.map((e) => ({ ...e, class: edgeClass(e, initial.nodes) })));
 
 
 const issues = computed(() => flowIssues(toGraph()));
@@ -91,7 +99,7 @@ const nodeRows = computed(() => nodes.value.map((n) => ({
 })));
 function nodeLabel(id: string): string {
   const node = nodes.value.find((n) => n.id === id);
-  return node ? nodeLabelFor(node as any) : id;
+  return node ? nodeLabelFor(node) : id;
 }
 function toggleSidebar(tab: "nodes" | "text"): void {
   if (nodesOpen.value && sidebarTab.value === tab) { nodesOpen.value = false; return; }

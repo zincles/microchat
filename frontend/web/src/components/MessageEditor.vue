@@ -10,7 +10,7 @@
 import { ref, computed, nextTick, onMounted, watch } from "vue";
 import { VBtn, VCard, VCardActions, VCardText, VCardTitle, VDialog, VTextarea } from "vuetify/components";
 import { sharedApi } from "../utils/prefs.ts";
-import { ICONS } from "./icons.ts";
+import { ICONS } from "../assets/icons.ts";
 import type { EditMessageRequest, Message } from "../api/types.ts";
 
 interface EditableMessage {

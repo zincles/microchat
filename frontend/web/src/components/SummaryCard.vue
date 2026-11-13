@@ -6,7 +6,7 @@
 import { computed } from "vue";
 import { VBtn } from "vuetify/components";
 import MessageBubble from "./MessageBubble.vue";
-import { ICONS } from "./icons.ts";
+import { ICONS } from "../assets/icons.ts";
 import { renderMacroHtml, type MacroMap } from "../utils/macros.ts";
 import type { ChatRow, ChatSummary } from "../utils/chatrows.ts";
 import type { RerollView } from "../types/app.ts";

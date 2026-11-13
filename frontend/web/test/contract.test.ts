@@ -1798,7 +1798,7 @@ test("滚动隐藏：反向不足 slop 当抖动；上滑到顶全放回顶栏",
 // —— 页面只是安静地退回默认配色（或者让人选到一个没有规则的 id）。
 // 所以把三张表钉死：THEME_IDS 是唯一权威，另外两处必须**正好**是它（顺序也一样）。
 // 读文件比对，不引 CSS/Vue 解析器。
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -3778,7 +3778,7 @@ test("会话行选项键：未选中隐藏；悬停/键盘焦点/当前会话才
 });
 
 test("空输入时的发送键不是向下箭头（那个位置会被读成「滚到底」）", () => {
-  const icons = readFileSync(join(SRC, "components", "icons.ts"), "utf8");
+  const icons = readFileSync(join(SRC, "assets", "icons.ts"), "utf8");
   const cont = icons.slice(icons.indexOf("cont:"), icons.indexOf("menu:"));
   assert.ok(!cont.includes("M12 5v14"), "续写图标又变回向下箭头");
   assert.match(cont, /M3 12a9 9/, "续写图标应是回转箭头");
@@ -4457,9 +4457,10 @@ test("输入区：Vuetify 4 MD3 接管 input/send/think", () => {
   assert.match(composer, /<VTextarea[\s\S]*variant="solo-filled"/, "输入框不是 Vuetify MD3");
   assert.match(composer, /<VBtn[\s\S]*id="send-btn"/, "发送键不是 Vuetify VBtn");
   assert.match(composer, /:color="running \? 'error' : 'primary-container'"/, "发送键不是低亮 primary-container");
-  assert.match(thinking, /<VMenu[\s\S]*location="top end"/, "思考菜单不是从输入栏向上弹");
-  assert.match(thinking, /<VList/, "思考选项不是 Vuetify VList");
-  assert.match(thinking, /<VBtn/, "思考入口不是 Vuetify VBtn");
+  const menu = readFileSync(join(SRC, "components/ToolbarMenu.vue"), "utf8");
+  assert.match(menu, /<VMenu[\s\S]*location="top end"/, "思考菜单不是从输入栏向上弹");
+  assert.match(menu, /<VList/, "思考选项不是 Vuetify VList");
+  assert.match(menu, /<VBtn/, "思考入口不是 Vuetify VBtn");
 
   // 主题：MD3 blueprint + 三套应用色（不是 Vuetify 默认 Material 蓝）
   assert.match(plugin, /blueprint: md3/, "没启用 Vuetify MD3 blueprint");
@@ -4649,7 +4650,8 @@ test("思考档位：Session 字段 + 输入栏上方 Vuetify 菜单", () => {
   assert.ok(toolbarAt > 0 && textareaAt > toolbarAt, "按钮区不在输入框正上方");
 
   const thinking = readFileSync(join(SRC, "components/ThinkingMenu.vue"), "utf8");
-  assert.match(thinking, /<VMenu[\s\S]*location="top end"[\s\S]*origin="bottom end"/, "菜单没从输入栏向上弹");
+  const menu = readFileSync(join(SRC, "components/ToolbarMenu.vue"), "utf8");
+  assert.match(menu, /<VMenu[\s\S]*location="top end"[\s\S]*origin="bottom end"/, "菜单没从输入栏向上弹");
   assert.match(thinking, /<VListItem/, "菜单项不是 Vuetify 的 MD3 list item");
   assert.match(thinking, /推理等级：/, "按钮没有显示「推理等级：…」");
   assert.match(thinking, /thinkingLabel/, "按钮没用中文档位名");
@@ -4863,4 +4865,50 @@ test("上下文圆环的请求体覆盖面板：无外层花括号、验证/保�
   const actionsSrc = readFileSync(join(SRC, "composables", "useSessionActions.ts"), "utf8");
   assert.match(app, /@save-overrides="saveRequestOverrides"/, "App 没有接保存事件");
   assert.match(actionsSrc, /request_overrides: overrides/, "保存没有 PATCH request_overrides");
+});
+
+
+// 组件可达性 / 类型洁癖：这两条都是“不会报错、只会慢慢长回来”的腐烂。
+// 被废弃的整棵子树仍然互相 import 时，引用计数看着都活着；只有从入口做可达性才算得出来。
+test("组件树从 main.ts 可达：没有孤立的 .vue 子树；components/ 只放 .vue", () => {
+  const root = SRC;
+  const entry = join(root, "main.ts");
+  const reachable = new Set<string>();
+  const pending = [entry];
+  const imports = /(?:from\s+|import\s*\(\s*)["']([^"']+)["']/g;
+  while (pending.length) {
+    const file = pending.pop();
+    if (!file || reachable.has(file) || !existsSync(file)) continue;
+    reachable.add(file);
+    const text = readFileSync(file, "utf8");
+    for (const match of text.matchAll(imports)) {
+      const spec = match[1];
+      if (!spec.startsWith(".")) continue;
+      const base = join(file, "..", spec);
+      for (const candidate of [base, `${base}.ts`, `${base}.vue`, `${base}.js`]) {
+        if (existsSync(candidate) && !reachable.has(candidate)) pending.push(candidate);
+      }
+    }
+  }
+  const components = readdirSync(join(root, "components"), { recursive: true })
+    .map(String)
+    .filter((name) => name.endsWith(".vue"));
+  assert.ok(components.length > 0, "没有扫描到任何组件");
+  for (const name of components) {
+    assert.ok(reachable.has(join(root, "components", name)), `孤立组件（从 main.ts 不可达）：components/${name}`);
+  }
+  const nonVue = readdirSync(join(root, "components"), { recursive: true })
+    .map(String)
+    .filter((name) => !name.endsWith(".vue"));
+  assert.deepEqual(nonVue, [], "components/ 里混入了非 .vue 文件");
+});
+
+test("源码里没有显式 any（类型严格约束不能靠人记得）", () => {
+  const files = readdirSync(SRC, { recursive: true })
+    .map(String)
+    .filter((name) => name.endsWith(".ts") || name.endsWith(".vue"));
+  for (const name of files) {
+    const text = readFileSync(join(SRC, name), "utf8");
+    assert.ok(!/\bany\b/.test(text), `还有显式 any：${name}`);
+  }
 });

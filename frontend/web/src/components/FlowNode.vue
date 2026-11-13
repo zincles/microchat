@@ -12,7 +12,7 @@ const props = defineProps<{
   id: string;
   type: string;
   selected?: boolean;
-  data: Record<string, any>;
+  data: Record<string, unknown>;
 }>();
 
 interface PromptEntry {
@@ -34,7 +34,21 @@ const label = computed(() => nodeLabelFor(props.type));
 const badge = computed(() => nodeBadgeFor(props.type));
 const hint = computed(() => nodeHintFor(props.type));
 const portClass = (type: FlowDataType): string => `flow-port-${type}`;
-const prompts = computed<PromptEntry[]>(() => Array.isArray(props.data.prompts) ? props.data.prompts : []);
+const prompts = computed<PromptEntry[]>(() => Array.isArray(props.data.prompts) ? props.data.prompts as PromptEntry[] : []);
+function promptList(): PromptEntry[] {
+  if (!Array.isArray(props.data.prompts)) props.data.prompts = [];
+  return props.data.prompts as PromptEntry[];
+}
+interface FlowTestInfo {
+  inputs?: string[];
+  reasoning?: string;
+  output?: string;
+  user?: string;
+}
+const testInfo = computed<FlowTestInfo | null>(() => {
+  const value = props.data.test;
+  return value && typeof value === "object" ? value as FlowTestInfo : null;
+});
 
 const modelOptions = computed(() => [
   { title: "跟随默认模型", value: "" },
@@ -125,7 +139,7 @@ const judgeAnswerKey = computed({
   set: (value: string) => { props.data.answer_key = value; },
 });
 const judgeAnswerType = computed<FlowDataType>({
-  get: () => judgeAnswerTypeOf(props as any),
+  get: () => judgeAnswerTypeOf({ data: props.data }),
   set: (value: FlowDataType) => { props.data.answer_type = value; },
 });
 const judgeThreshold = computed<string>({
@@ -177,15 +191,13 @@ const roles = [
   { title: "assistant", value: "assistant" },
 ];
 function addPrompt(): void {
-  if (!Array.isArray(props.data.prompts)) props.data.prompts = [];
-  props.data.prompts.push({ id: `p-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`, kind: "prompt", role: "system", content: "" });
+  promptList().push({ id: `p-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`, kind: "prompt", role: "system", content: "" });
 }
 function addHistory(): void {
-  if (!Array.isArray(props.data.prompts)) props.data.prompts = [];
-  props.data.prompts.push({ id: `h-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`, kind: "history", role: "system", content: "" });
+  promptList().push({ id: `h-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`, kind: "history", role: "system", content: "" });
 }
 function removePrompt(id: string): void {
-  props.data.prompts = (props.data.prompts ?? []).filter((p: PromptEntry) => p.id !== id);
+  props.data.prompts = promptList().filter((p) => p.id !== id);
 }
 function removeMergeInput(index: number): void {
   if (mergeInputs.value.length <= 1) return;
@@ -376,17 +388,17 @@ function addJoinOutput(): void {
           placeholder="留空 = 直接相连" />
       </label>
     </div>
-    <div v-if="(hovered || selected) && data.test" class="flow-node-test" role="tooltip" @wheel.stop>
+    <div v-if="(hovered || selected) && testInfo" class="flow-node-test" role="tooltip" @wheel.stop>
       <b>测试 I/O</b>
       <span class="flow-node-test-label">输入</span>
-      <pre>{{ (data.test.inputs ?? []).join("\n---\n") || "（无输入）" }}</pre>
+      <pre>{{ (testInfo.inputs ?? []).join("\n---\n") || "（无输入）" }}</pre>
       <span class="flow-node-test-label">思考</span>
-      <pre>{{ data.test.reasoning || "（无思考）" }}</pre>
+      <pre>{{ testInfo.reasoning || "（无思考）" }}</pre>
       <span class="flow-node-test-label">正文</span>
-      <pre>{{ data.test.output || "（无输出）" }}</pre>
-      <template v-if="data.test.user">
+      <pre>{{ testInfo.output || "（无输出）" }}</pre>
+      <template v-if="testInfo.user">
         <span class="flow-node-test-label">写入历史</span>
-        <pre>{{ data.test.user }}</pre>
+        <pre>{{ testInfo.user }}</pre>
       </template>
     </div>
     <span v-if="type === 'llm'" class="flow-node-resizer nodrag nopan"

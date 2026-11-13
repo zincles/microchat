@@ -4,7 +4,7 @@
 // 标记：`发` = 装配真的跳到它（这一坨就发这份）；`脏` = 摘要被覆盖的消息改过、已过期（装配照用）。
 import { VBtn } from "vuetify/components";
 import { computed } from "vue";
-import { ICONS } from "./icons.ts";
+import { ICONS } from "../assets/icons.ts";
 import type { TreeNode } from "../utils/tree.ts";
 
 const props = withDefaults(defineProps<{

@@ -32,12 +32,12 @@ export function flowTargetType(node: FlowNode | undefined, handle?: string): Flo
 
 export { judgeAnswerType };
 
-export function trimModeOf(data?: Record<string, any> | null): TrimMode {
+export function trimModeOf(data?: Record<string, unknown> | null): TrimMode {
   const value = String(data?.mode ?? "tail");
   return TRIM_MODES.some((mode) => mode.value === value) ? value as TrimMode : "tail";
 }
 
-export function trimCountOf(data?: Record<string, any> | null): number {
+export function trimCountOf(data?: Record<string, unknown> | null): number {
   const count = Number(data?.count ?? DEFAULT_TRIM_COUNT);
   return Number.isInteger(count) && count > 0 ? count : DEFAULT_TRIM_COUNT;
 }

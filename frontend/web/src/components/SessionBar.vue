@@ -3,7 +3,7 @@
 // 每条只有一枚「选项」（竖三点）：设置与删除都收进那块浮板 —— 行内不再挤两枚键。
 import { ref, computed, nextTick, onMounted, onUnmounted } from "vue";
 import { VBtn, VBtnToggle, VNavigationDrawer } from "vuetify/components";
-import { ICONS } from "./icons.ts";
+import { ICONS } from "../assets/icons.ts";
 import { groupSessions } from "../utils/sessionGroups.ts";
 import { saveTheme, themePref, THEME_IDS } from "../utils/prefs.ts";
 import type { SessionView } from "../api/types.ts";

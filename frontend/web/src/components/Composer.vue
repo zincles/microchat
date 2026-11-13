@@ -5,7 +5,7 @@
 // 外观交给 Vuetify 的 `md3` blueprint（VTextarea / VBtn），不再由手写 CSS 画输入框和按钮。
 import { ref, nextTick } from "vue";
 import { VBtn, VTextarea } from "vuetify/components";
-import { ICONS } from "./icons.ts";
+import { ICONS } from "../assets/icons.ts";
 import ThinkingMenu from "./ThinkingMenu.vue";
 import ToolsMenu from "./ToolsMenu.vue";
 import type { ThinkingOption } from "../utils/thinking.ts";
@@ -39,7 +39,7 @@ const props = withDefaults(defineProps<{
 
 const text = ref("");
 const running = ref(false);
-const area = ref<any>(null);
+const area = ref<InstanceType<typeof VTextarea> | null>(null);
 const sendSvg = ICONS.send;
 
 function setRunning(v: unknown): void {
