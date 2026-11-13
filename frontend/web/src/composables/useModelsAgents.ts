@@ -5,7 +5,7 @@
 import { ref } from "vue";
 import type { Ref } from "vue";
 import { agentOption, groupModelsByProvider, modelKey, modelOption, parseModelKey } from "../utils/format.ts";
-import type { ModelChoice, ModelGroup } from "../utils/format.ts";
+import type { ModelGroup } from "../utils/format.ts";
 import type { Agent, ModelListItem, Session, UpdateSessionRequest } from "../api/types.ts";
 
 interface ModelsAgentsApi {

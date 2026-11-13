@@ -8,13 +8,7 @@ import type { UsageLike } from "../utils/format.ts";
 import { renderMarkdown, splitState } from "../utils/markdown.ts";
 import { renderMacroHtml, type MacroMap } from "../utils/macros.ts";
 import { renderMermaidIn } from "../utils/mermaid.ts";
-
-interface RerollLike {
-  active?: boolean;
-  count: number;
-  current_idx: number;
-  running?: boolean;
-}
+import type { RerollView } from "../types/app.ts";
 
 const props = withDefaults(defineProps<{
   who?: string;
@@ -44,7 +38,7 @@ const props = withDefaults(defineProps<{
     sources?: { type?: string; url: string; title?: string }[];
     status?: string;
   }[];
-  reroll?: RerollLike | null; // 重摇状态（本条是目标时才非 null）：{active,count,current_idx,running}
+  reroll?: RerollView | null; // 重摇状态（本条是目标时才非 null）
   // usage：上游报的用量（归一化后的那几格；2026-10-20 起气泡脚注就用它）。
   // 只有聚合站（OpenRouter）会带 cost_usd；直连渠道没有 ⇒ 脚注不显示价格。
   usage?: UsageLike | null;

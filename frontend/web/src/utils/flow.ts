@@ -4,7 +4,7 @@
 // 节点类型先保持最小集合：input（字符串）/ history（messages[]）/ trim（messages[]）/
 // llm / join / output。以后加 template / condition 时，先在这里扩白名单，再改编辑器与运行时。
 import type { FlowEdge, FlowGraph, FlowNode } from "../api/types.ts";
-import { DEFAULT_TRIM_COUNT, FLOW_NODE_SPECS, TRIM_MODES, TRIM_ROLES, flowInputPorts, flowNodeSpec, flowOutputPorts, judgeAnswerType, nodeLabelFor, type FlowNodeKind, type TrimMode } from "./flowSpecs.ts";
+import { DEFAULT_TRIM_COUNT, FLOW_NODE_SPECS, TRIM_MODES, flowInputPorts, flowNodeSpec, flowOutputPorts, judgeAnswerType, nodeLabelFor, type FlowNodeKind, type TrimMode } from "./flowSpecs.ts";
 export { DEFAULT_TRIM_COUNT, TRIM_MODES, TRIM_ROLES } from "./flowSpecs.ts";
 export type { TrimMode } from "./flowSpecs.ts";
 

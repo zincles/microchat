@@ -71,7 +71,7 @@ export function toolSources(tools?: {
 
 export interface ChatSummaryEntry {
   state: "loading" | "ready";
-  rows: ChatRow[] | null;
+  rows?: ChatRow[] | null;
 }
 
 export interface ChatRowMessage {

@@ -282,7 +282,7 @@ test("消息头：assistant 身份在正文顶部；user 身份在气泡外且 h
   assert.match(bubble, /usageFoot\(footUsage\.value, footTiming\.value\)/, "脚注没带上时长");
   assert.match(bubble, /durationMs: props\.durationMs/, "脚注没接 durationMs");
   assert.match(bubble, /props\.streaming \? null : props\.usage/, "生成中没把上一版的用量摘掉");
-  assert.match(app, /durationMs: m\.duration_ms \?\? null/, "toRow 没带 duration_ms");
+  assert.match(readFileSync(join(SRC, "composables", "useSessionWindow.ts"), "utf8"), /durationMs: m\.duration_ms \?\? null/, "toRow 没带 duration_ms");
   assert.match(app, /:duration-ms="rowDuration\(row\.msg\)"/, "App 没把 duration_ms 喂给气泡");
 
   // user：身份在 `.msg` 的**外面**（`</div>` 之后），且 CSS 默认透明、hover 才 1。
@@ -623,7 +623,7 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(vite, /registerType:\s*"autoUpdate"/, "PWA 没有自动更新 SW");
   assert.match(pwa, /UPDATE_CHECK_INTERVAL_MS/, "PWA 没有周期性更新检查");
   assert.match(pwa, /visibilitychange/, "PWA 回前台没有补查更新");
-  assert.match(readFileSync(join(SRC, "App.vue"), "utf8"), /updateRef\.value\?\.show\(\)/, "新更新没有重新放出更新条");
+  assert.match(readFileSync(join(SRC, "composables", "useAppUpdate.ts"), "utf8"), /updateRef\.value\?\.show\(\)/, "新更新没有重新放出更新条");
 
   const flowEditor = readFileSync(join(SRC, "components", "FlowEditor.vue"), "utf8");
   assert.match(flowEditor, /:nodes-draggable="!locked"/, "运行中仍允许拖节点");
@@ -1655,16 +1655,18 @@ test("打字机：按前后两包的到达间隔决定这一拍的速度；线�
   assert.equal(revealCount(40, 100, 999, 300), 100);
 
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  const turnSrc = readFileSync(join(SRC, "composables", "useTurnStream.ts"), "utf8");
+  const rerollSrc = readFileSync(join(SRC, "composables", "useReroll.ts"), "utf8");
   const tw = readFileSync(join(SRC, "composables", "useTypewriter.ts"), "utf8");
   assert.match(tw, /const streamDisplay = ref\(/, "没有打字机显示状态");
-  assert.match(app, /setStreamTarget\(merged\.text, merged\.reasoning\)/, "轮询到字后没进打字机");
-  assert.match(app, /streamText: streamDisplay\.value\.text/, "气泡还在直接吞整块");
+  assert.match(turnSrc, /setStreamTarget\(merged\.text, merged\.reasoning\)/, "轮询到字后没进打字机");
+  assert.match(rerollSrc, /streamText: streamDisplay\.value\.text/, "气泡还在直接吞整块");
   assert.match(tw, /const gap = twLastAt \? start - twLastAt : 0/, "没有按上一包到这一包的真实间隔计时");
   assert.match(tw, /duration: typewriterDuration\(gap\)/, "打字时长不是按包间隔算的");
   assert.match(app, /await waitTypewriter\(\)/, "收尾没等打字机放完（会跳一下）");
-  assert.ok((app.match(/setStreamTarget\(/g) ?? []).length >= 2, "重摇候选流没接打字机");
-  assert.match(app, /previewText: streamDisplay\.value\.text/, "重摇气泡没读打字机前缀");
-  assert.match(app, /await waitTypewriter\(\);[\s\S]{0,100}await switchReroll/, "重摇切版前没等最后一块放完");
+  assert.ok(((app.match(/setStreamTarget\(/g) ?? []).length + (turnSrc.match(/setStreamTarget\(/g) ?? []).length + (rerollSrc.match(/setStreamTarget\(/g) ?? []).length) >= 2, "重摇候选流没接打字机");
+  assert.match(rerollSrc, /previewText: streamDisplay\.value\.text/, "重摇气泡没读打字机前缀");
+  assert.match(rerollSrc, /await waitTypewriter\(\);[\s\S]{0,100}await switchReroll/, "重摇切版前没等最后一块放完");
   assert.match(tw, /requestAnimationFrame|requestFrame/, "没有逐帧推进");
   assert.ok(!/streamDisplay\.value\.reasoning \|\| m\.reasoning/.test(app),
     "思考还回落到完整 target —— 会整块瞬间冒出");
@@ -2021,9 +2023,10 @@ test("压缩载荷预演：按钮 / 事件 / App 监听 / 接口四处都接着"
   assert.match(bar, /setCompactWire/, "PayloadBar 没有暴露 setCompactWire");
 
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  const previewSrc = readFileSync(join(SRC, "composables", "usePreview.ts"), "utf8");
   assert.match(app, /@compact-payload="previewCompactPayload"/, "App 没有监听 compact-payload");
-  assert.match(app, /function previewCompactPayload/, "App 里没有 previewCompactPayload");
-  assert.match(app, /api\.compactPayload\(/, "App 没有调 api.compactPayload");
+  assert.match(previewSrc, /async function previewCompactPayload/, "预览 composable 里没有 previewCompactPayload");
+  assert.match(previewSrc, /api\.compactPayload\(/, "预览 composable 没有调 api.compactPayload");
 
   const client = readFileSync(join(SRC, "api", "client.ts"), "utf8");
   assert.match(client, /compactPayload:\s*\(id[^)]*\)/, "api 里没有 compactPayload");
@@ -2580,6 +2583,7 @@ test("分段压缩 / 补齐空档：第四、第五 tab，预览 → 并发运�
   const ws = readFileSync(join(SRC, "components", "ContextWorkspace.vue"), "utf8");
   const adv = readFileSync(join(SRC, "components", "AdvancedCompact.vue"), "utf8");
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  const ctxSrc = readFileSync(join(SRC, "composables", "useContextWorkspace.ts"), "utf8");
   const api = readFileSync(join(SRC, "api", "client.ts"), "utf8");
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 
@@ -2616,7 +2620,7 @@ test("分段压缩 / 补齐空档：第四、第五 tab，预览 → 并发运�
   assert.match(api, /advancedCompact:/, "API 客户端缺 advancedCompact");
   assert.match(api, /advancedCompactStatus:/, "API 客户端缺 advancedCompactStatus");
   assert.match(api, /advancedCompactCancel:/, "API 客户端缺 advancedCompactCancel");
-  assert.match(app, /function onAdvancedDone\(\)/, "App 没有分段压缩完成后的刷新");
+  assert.match(ctxSrc, /async function onAdvancedDone\(\)/, "上下文 composable 没有分段压缩完成后的刷新");
   assert.match(app, /@advanced-done="onAdvancedDone"/, "App 没接 advanced-done");
   assert.match(ws, /@advanced-done=/, "工作区没透传 advanced-done");
 
@@ -2719,21 +2723,22 @@ test("上下文工作区：切进去 / 换会话时按当前 tab 补拉", () => 
   assert.ok(fn, "找不到 selectWorkspace");
   assert.match(fn, /workspace\.value === "context"\) onWorkspaceContext\(\)/,
     "切进工作区时没补拉当前 tab");
-  assert.match(app, /onWorkspaceContext:\s*refreshContextLazy/, "App 没把 refreshContextLazy 接给工作区");
+  assert.match(app, /onWorkspaceContext:\s*\(\)\s*=>\s*refreshContextLazy\(\)/, "App 没把 refreshContextLazy 接给工作区");
   // 懒加载的分派只此一处：三种 tab 各管各的。
-  const lazy = app.match(/function refreshContextLazy\(\)[\s\S]*?\n\}/)?.[0] ?? "";
+  const ctxSrc = readFileSync(join(SRC, "composables", "useContextWorkspace.ts"), "utf8");
+  const lazy = ctxSrc.match(/function refreshContextLazy\(\)[\s\S]*?\n  \}/)?.[0] ?? "";
   assert.ok(lazy, "找不到 refreshContextLazy");
-  assert.match(lazy, /payloadTab === "tree"\) refreshTree\(\)/, "压缩 tab 没拉树");
-  assert.match(lazy, /payloadTab === "state"\) refreshStateView\(sessionID\)/, "状态 tab 没拉状态");
-  assert.match(lazy, /else if \(payloadTab === "payload"\) refreshHistoryPreview\(\)/, "载荷 tab 没拉历史预演");
-  const hp = app.match(/async function refreshHistoryPreview\(\)[\s\S]*?\n\}/)?.[0] ?? "";
+  assert.match(lazy, /payloadTab\.value === "tree"\) void refreshTree\(\)/, "压缩 tab 没拉树");
+  assert.match(lazy, /payloadTab\.value === "state"\) refreshStateView\(getSessionID\(\)\)/, "状态 tab 没拉状态");
+  assert.match(lazy, /else if \(payloadTab\.value === "payload"\) void refreshHistoryPreview\(\)/, "载荷 tab 没拉历史预演");
+  const hp = ctxSrc.match(/async function refreshHistoryPreview\(\)[\s\S]*?\n  \}/)?.[0] ?? "";
   assert.ok(hp, "找不到 refreshHistoryPreview");
   assert.ok(!/previewOn\(\)/.test(hp), "载荷 tab 仍受输入预览开关影响（打开载荷就该拉）");
 
   // 换会话那条：enterSession 落地之后也要按当前 tab 补拉。
   // ⚠ 从前这里用 `summaryMsgs.clear()` 当锚点 —— 它先命中的是 `startDraft`，等于一直在测草稿，
   //    enterSession 根本没被钉住（2026-11-02 才发现）。直接取函数体。
-  const enter = app.match(/async function enterSession\(id, preloaded = null\)[\s\S]*?\n\}/)?.[0] ?? "";
+  const enter = app.match(/async function enterSession\(id[^)]*\)[\s\S]*?\n\}/)?.[0] ?? "";
   assert.ok(enter, "找不到 enterSession");
   assert.match(enter, /refreshContextLazy\(\)/, "换会话时没按当前 tab 补拉 —— 会一直显示上一条会话的账");
   const draft = app.match(/async function startDraft\(\)[\s\S]*?\n\}/)?.[0] ?? "";
@@ -3040,14 +3045,14 @@ test("撤销压缩：树与摘要卡两处按钮，只按后端给的 undoable �
   // App：两处都接上（摘要卡给自己那条 id；工作区把 id 透传给同一个处理函数）
   assert.match(app, /@undo="undoSummary\(row\.summary\.id\)"/, "App 没接摘要卡的 undo");
   assert.match(app, /@undo="undoSummary"/, "App 没接工作区的 undo");
-  assert.match(app, /async function undoSummary\(summaryID\)/, "App 没有 undoSummary");
+  assert.match(app, /async function undoSummary\([^)]*\)/, "App 没有 undoSummary");
   // 撤销会让装配**变长**（那段回到原文）⇒ 三个视图都要重算，少一个就是数字不更新
-  const fn = app.match(/async function undoSummary\(summaryID\)[\s\S]*?\n\}/)?.[0] ?? "";
+  const fn = app.match(/async function undoSummary\([^)]*\)[\s\S]*?\n\}/)?.[0] ?? "";
   assert.match(fn, /reloadWindow\(\)/, "撤销后没重拉消息列（装配变长了）");
   assert.match(fn, /refreshStateView\(/, "撤销后没刷新状态视图");
   assert.match(fn, /refreshStatusline\(/, "撤销后没刷新上下文环");
   // 失败要把后端那句话原样给人看
-  assert.match(fn, /err\.message/, "撤销失败时没显示出后端给的说明");
+  assert.match(fn, /errText\(err\)/, "撤销失败时没显示出后端给的说明");
   // 更早的压缩要先预览、带级联警告，再删
   assert.match(fn, /api\.undoPreview\(/, "撤销前没有拿级联预览");
   assert.match(fn, /confirmAsk\(/, "级联撤销没弹警告");
@@ -3109,14 +3114,15 @@ test("左栏浮板：创建副本与导出 JSON 都在这里，会话设置面�
   // ② 接口与 App 接线。
   assert.match(api, /copySession:\s*\(id[^)]*\)\s*=>\s*call<[^>]+>\("POST", `\/sessions\/\$\{enc\(id\)\}\/copy`\)/,
     "API 客户端没有 copySession（或路径不对）");
+  const actionsSrc = readFileSync(join(SRC, "composables", "useSessionActions.ts"), "utf8");
   assert.match(app, /@copy="copySessionFromBar"/, "App 没接左栏 copy");
   assert.match(app, /@export="exportSessionFromBar"/, "App 没接左栏 export");
-  assert.match(app, /function copySessionFromBar\(id\)/, "App 没有 copySessionFromBar");
-  assert.match(app, /function exportSessionFromBar\(id\)/, "App 没有 exportSessionFromBar");
-  assert.match(app, /downloadJSON\(doc,/, "导出没有下载 JSON");
-  assert.match(app, /function afterCopy\(fresh\)/, "App 没有 afterCopy");
-  assert.match(app, /enterSession\(fresh\.id\)/, "复制完之后没进副本");
-  assert.match(app, /refreshSessionsBar\(\)/, "复制完之后没刷左栏（副本不出现）");
+  assert.match(actionsSrc, /function copySessionFromBar\([^)]*\)/, "App 没有 copySessionFromBar");
+  assert.match(actionsSrc, /function exportSessionFromBar\([^)]*\)/, "App 没有 exportSessionFromBar");
+  assert.match(actionsSrc, /downloadJSON\(doc,/, "导出没有下载 JSON");
+  assert.match(actionsSrc, /function afterCopy\([^)]*\)/, "App 没有 afterCopy");
+  assert.match(actionsSrc, /enterSession\(fresh\.id\)/, "复制完之后没进副本");
+  assert.match(actionsSrc, /refreshSessionsBar\(\)/, "复制完之后没刷左栏（副本不出现）");
 
   // ③ 面板里移除：创建副本那一节、导出按钮、copy 事件都不许留。
   assert.ok(!tpl.includes("<h3>创建副本</h3>"), "会话设置面板里还有创建副本");
@@ -3167,12 +3173,13 @@ test("设置 → 外观改完，聊天壳上的活开关跟手（@prefs-saved �
 // 现在：相位每拍照推（纯本地），列表与占用等翻 idle 再刷。
 test("生成轮询不刷全量：withContext:false + 列表只在收尾刷", () => {
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
-  assert.match(app, /function refreshStatusline\(phase, elapsedMs = null, \{ withContext = true \} = \{\}\)/,
+  const turnSrc = readFileSync(join(SRC, "composables", "useTurnStream.ts"), "utf8");
+  assert.match(app, /function refreshStatusline\(phase[^)]*withContext = true/,
     "refreshStatusline 没有 withContext 开关");
 
-  const start = app.indexOf("function applyTurnStream");
-  const end = app.indexOf('let connText = "未连接"', start);
-  const loop = app.slice(start, end === -1 ? start + 4000 : end);
+  const start = turnSrc.indexOf("function applyTurnStream");
+  const end = turnSrc.indexOf("async function pollTurnEvents", start);
+  const loop = turnSrc.slice(start, end === -1 ? start + 4000 : end);
   assert.match(loop, /refreshStatusline\(st\.phase, st\.elapsed_ms, \{ withContext: false \}\)/,
     "轮询里还在按默认问 /context（每拍一次全量装配）");
   const calls = (loop.match(/refreshSessionsBar\(\)/g) || []).length;
@@ -3393,17 +3400,18 @@ test("任务面板：能停的任务有取消按钮，按不动的不画", () =>
 //
 // 这类 bug 不报错、不误路由、构建也过 —— 只能按"状态是不是**无条件**写回"来钉。
 test("重摇轮询：状态没了也要写回（否则取消后界面一直等）", () => {
-  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  const app = readFileSync(join(SRC, "composables", "useReroll.ts"), "utf8");
+  const appSrc = readFileSync(join(SRC, "App.vue"), "utf8");
 
   for (const [fn, ref, kind] of [
     ["pollReroll", "rerollState", "message"],
     ["pollRerollSummary", "summaryReroll", "summary"],
   ]) {
-    const start = app.indexOf(`async function ${fn}(sid)`);
+    const start = app.indexOf(`async function ${fn}(sid:`);
     assert.ok(start > 0, `找不到 ${fn}`);
     const body = app.slice(start, app.indexOf("\n}", start));
     // 必须有"不活跃 ⇒ 显式写回 inactive"这条（三元那半边），而不是只有"活跃才写"。
-    assert.match(body, new RegExp(`${ref}\\.value = st\\.active && st\\.target_kind === "${kind}" \\? st : \\{ active: false \\}`),
+    assert.match(body, new RegExp(`${ref}\\.value = st\\.active && st\\.target_kind === "${kind}" \\? st : (?:emptyReroll\\(\\)|\\{ active: false \\})`),
       `${fn} 在状态变成"没了"时没有写回 inactive —— 取消之后界面会一直等`);
     // 反面：**不许**再出现"活跃才写"那种写法（它正是这个 bug 的形状）。
     assert.ok(!new RegExp(`if \\(st\\.active && st\\.target_kind === "${kind}"\\) ${ref}\\.value = st;`).test(body),
@@ -3413,8 +3421,8 @@ test("重摇轮询：状态没了也要写回（否则取消后界面一直等�
   // 面板按停之后要顺手对齐两族状态（不一定有轮询在跑）。
   const tasksSrc = readFileSync(join(SRC, "composables", "useTasks.ts"), "utf8");
   assert.match(tasksSrc, /onCanceled\?\.\(\)/, "cancelTask 没调用 onCanceled 回调");
-  assert.match(app, /onCanceled:\s*\(\)\s*=>\s*\{[\s\S]*?refreshReroll\(\)/, "App 没在 onCanceled 里对齐消息族重摇状态");
-  assert.match(app, /onCanceled:\s*\(\)\s*=>\s*\{[\s\S]*?refreshRerollSummary\(\)/, "App 没在 onCanceled 里对齐摘要族重摇状态");
+  assert.match(appSrc, /onCanceled:\s*\(\)\s*=>\s*\{[\s\S]*?refreshReroll\(\)/, "App 没在 onCanceled 里对齐消息族重摇状态");
+  assert.match(appSrc, /onCanceled:\s*\(\)\s*=>\s*\{[\s\S]*?refreshRerollSummary\(\)/, "App 没在 onCanceled 里对齐摘要族重摇状态");
 });
 
 // 按停**不许偷偷换版**：摇完只有"真的多出一版"才切过去。
@@ -3432,7 +3440,7 @@ test("消息编辑：应用内模态，不就地改气泡", () => {
   assert.match(bubble, /\$?emit\('edit', messageId, 'reasoning'\)/, "改思考按钮没打开编辑器");
   assert.match(app, /<MessageEditor/, "App 没挂消息编辑器");
   assert.match(app, /@edit="onBubbleEdit"/, "气泡的 edit 事件没接上");
-  assert.match(app, /function onBubbleEdit\(mid, kind\)/, "没有 onBubbleEdit");
+  assert.match(app, /function onBubbleEdit\([^)]*\)/, "没有 onBubbleEdit");
   assert.match(modal, /api\.editMessage\(props\.sessionId, props\.message\.id, body\)/, "模态保存没走消息编辑接口");
   assert.match(modal, /props\.kind === "reasoning" \? \{ reasoning: text\.value \} : \{ content: text\.value \}/,
     "模态没按正文/思考分别提交");
@@ -3464,15 +3472,15 @@ test("消息编辑：应用内模态，不就地改气泡", () => {
 // 那句会把正文切到**已经存在**的最后一版上 —— 用户按的是"取消"，界面却换了一版内容。
 // 那就是取消干了实事，正是要避免的。
 test("重摇：没多出版就不切版本（取消 ≠ 换一版）", () => {
-  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  const app = readFileSync(join(SRC, "composables", "useReroll.ts"), "utf8");
 
-  assert.match(app, /async function rerollNow\(targetId = null\)/, "rerollNow 没接收被点气泡的 id");
-  assert.match(app, /const target = targetId \|\| lastMsgId\.value/, "rerollNow 没优先用被点气泡的 id");
+  assert.match(app, /async function rerollNow\([^)]*\)/, "rerollNow 没接收被点气泡的 id");
+  assert.match(app, /const target = targetId \|\| getLastMsgId\(\)/, "rerollNow 没优先用被点气泡的 id");
   const bubble = readFileSync(join(SRC, "components", "MessageBubble.vue"), "utf8");
   assert.match(bubble, /\$?emit\('reroll', messageId\)/, "重摇按钮没把目标 id 报上去");
 
   for (const [enter, switchCall, refresh] of [
-    ["async function rerollNow(targetId = null)", "await switchReroll(sid, st.count)", "refreshReroll()"],
+    ["async function rerollNow(targetId: string | null = null)", "await switchReroll(sid, st.count)", "refreshReroll()"],
     ["async function summaryRefresh(", "await summarySwitch(st.count)", "refreshRerollSummary()"],
   ]) {
     const start = app.indexOf(enter);
@@ -3523,10 +3531,11 @@ test("回到前台会跟后端对齐（三条事件都接）", () => {
 
   // ④ 判"要不要接轮询"靠**循环在不在**（liveTurnPoll），不能靠"有没有 stream 气泡" ——
   //    气泡是循环死掉之后留下的假象，拿它当判据就永远不接。
-  assert.match(app, /let liveTurnPoll = 0;/, "没有 liveTurnPoll 计数");
-  assert.match(app, /liveTurnPoll\+\+;/, "轮询开始没计数");
-  assert.match(app, /liveTurnPoll--;/, "轮询结束没减计数");
-  assert.match(body, /liveTurnPoll === 0/, "resync 没按'循环在不在'决定接不接");
+  const turnSrc = readFileSync(join(SRC, "composables", "useTurnStream.ts"), "utf8");
+  assert.match(turnSrc, /let liveTurnPoll = 0;/, "没有 liveTurnPoll 计数");
+  assert.match(turnSrc, /liveTurnPoll\+\+;/, "轮询开始没计数");
+  assert.match(turnSrc, /liveTurnPoll--;/, "轮询结束没减计数");
+  assert.match(body, /hasLivePoll\(\)/, "resync 没按'循环在不在'决定接不接");
 
   // ⑤ 连发事件要合并（切回来时三条常常一串来）。
   assert.match(body, /resyncing \|\| now - lastResyncAt < 300/, "连发的三条事件没有合并");
@@ -3539,10 +3548,10 @@ test("回到前台会跟后端对齐（三条事件都接）", () => {
 test("一轮的轮询：单拍失败继续，不判死刑", () => {
   const api = readFileSync(join(SRC, "api", "client.ts"), "utf8");
   assert.match(api, /turnPoll:\s*\(id[^)]*\)/, "API 客户端没有 turnPoll");
-  const app = readFileSync(join(SRC, "App.vue"), "utf8");
-  const start = app.indexOf("async function pollTurnHTTP(sid, turnID, my, row)");
+  const turnSrc = readFileSync(join(SRC, "composables", "useTurnStream.ts"), "utf8");
+  const start = turnSrc.indexOf("async function pollTurnHTTP(sid:");
   assert.ok(start > 0);
-  const body = app.slice(start, app.indexOf("async function pollTurn(sid, turnID)", start));
+  const body = turnSrc.slice(start, turnSrc.indexOf("async function pollTurn(sid:", start));
   assert.match(body, /let misses = 0;/, "没有连续失败计数");
   assert.match(body, /if \(\+\+misses > 10\) throw err;/, "失败没有上限（会死循环）或没有上限判断");
   assert.match(body, /misses = 0;/, "成功之后没把计数清零");
@@ -3552,12 +3561,12 @@ test("一轮的轮询：单拍失败继续，不判死刑", () => {
   assert.match(body, /delay = Math\.max\(80, 300 - \(performance\.now\(\) - requestAt\)\)/,
     "没有按 RTT 自适应下一拍间隔");
   // 主路径是 SSE；SSE 建不起来才回退 HTTP。
-  assert.match(app, /if \(activeTurnPolls\.has\(sid\)\) return;/, "没有单飞闸（两个循环会写乱同一个显示前缀）");
-  assert.ok(/activeTurnPolls\.add\(sid\)/.test(app) && /activeTurnPolls\.delete\(sid\)/.test(app), "单飞闸没有登记/释放");
-  assert.match(app, /new EventSource\(api\.turnEventsUrl\(sid, 0, 0\)\)/, "主路径没有 SSE");
-  assert.match(app, /await pollTurnEvents\(sid, turnID, my, m\)/, "SSE 入口没接");
-  assert.match(app, /await pollTurnHTTP\(sid, turnID, my, m\)/, "SSE 没有 HTTP 回退");
-  assert.match(app, /st\.message_id !== turnID/, "迟到的旧连接没校验轮次 id");
+  assert.match(turnSrc, /if \(activeTurnPolls\.has\(sid\)\) return;/, "没有单飞闸（两个循环会写乱同一个显示前缀）");
+  assert.ok(/activeTurnPolls\.add\(sid\)/.test(turnSrc) && /activeTurnPolls\.delete\(sid\)/.test(turnSrc), "单飞闸没有登记/释放");
+  assert.match(turnSrc, /new EventSource\(api\.turnEventsUrl\(sid, 0, 0\)\)/, "主路径没有 SSE");
+  assert.match(turnSrc, /await pollTurnEvents\(sid, turnID, my, m\)/, "SSE 入口没接");
+  assert.match(turnSrc, /await pollTurnHTTP\(sid, turnID, my, m\)/, "SSE 没有 HTTP 回退");
+  assert.match(turnSrc, /st\.message_id !== turnID/, "迟到的旧连接没校验轮次 id");
 });
 
 // ── 域名部署：Host 闸门（2026-11-02）────────────────────────────
@@ -3830,12 +3839,12 @@ test("开机请求：会话/Agent 不重复，重活按需，加载有骨架", (
   // 2026-11-05：列表在屏幕上就直接用（高延迟下省一个完整 RTT），缓存没有才真去拉。
   assert.match(app, /let sessions = preloaded \?\? sessionsCache\.value/, "enterSession 仍无条件再拉一次 /sessions");
   // 进会话不再无条件 POST /outgoing / GET /state：只在工作区看得见时按 tab 拉。
-  const enter = app.match(/async function enterSession\(id, preloaded = null\)[\s\S]*?\n\}/)?.[0] ?? "";
+  const enter = app.match(/async function enterSession\(id[^)]*\)[\s\S]*?\n\}/)?.[0] ?? "";
   assert.ok(enter, "找不到 enterSession");
   assert.ok(!/api\.outgoingPreview/.test(enter), "enterSession 又无条件预演历史载荷了");
   assert.match(enter, /refreshContextLazy\(\)/, "进会话没按工作区 tab 懒加载");
   // 加载空白用骨架撑住。
-  assert.match(app, /const loadingSession = ref\(true\)/, "没有 loadingSession 状态");
+  assert.match(readFileSync(join(SRC, "composables", "useSessionWindow.ts"), "utf8"), /const loadingSession = ref\(true\)/, "没有 loadingSession 状态");
   assert.match(app, /v-if="loadingSession" class="chat-skeleton"/, "消息列没有加载骨架");
 });
 
@@ -3871,6 +3880,7 @@ test("更新面板：显示提交 + 拉取并重启（由 entrypoint 接手）",
   const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
   const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
+  const updateSrc = readFileSync(join(SRC, "composables", "useAppUpdate.ts"), "utf8");
   const pane = readFileSync(join(SRC, "components", "UpdatePane.vue"), "utf8");
   const upd = readFileSync(join(SRC, "utils", "update.ts"), "utf8");
   const view = readFileSync(join(SRC, "composables", "useSettingsView.ts"), "utf8");
@@ -3900,9 +3910,9 @@ test("更新面板：显示提交 + 拉取并重启（由 entrypoint 接手）",
   const updateBar = readFileSync(join(SRC, "components", "UpdateBar.vue"), "utf8");
   assert.match(updateBar, /backend/, "顶部更新条不认识后端更新");
   assert.match(updateBar, /update-backend/, "顶部更新条没有更新前后端的动作");
-  assert.match(app, /autoBackendUpdate/, "App 没有自动更新 GitHub");
-  assert.match(app, /5 \* 60 \* 1000/, "自动更新不是每 5 分钟");
-  assert.match(app, /remote_relation === "behind"/, "自动更新没有判断 GitHub 落后");
+  assert.match(updateSrc, /autoBackendUpdate/, "更新 composable 没有自动更新 GitHub");
+  assert.match(updateSrc, /5 \* 60 \* 1000/, "自动更新不是每 5 分钟");
+  assert.match(updateSrc, /remote_relation === "behind"/, "自动更新没有判断 GitHub 落后");
   assert.match(readFileSync(join(SRC, "components", "UpdatePane.vue"), "utf8"), /自动更新（每 5 分钟）/, "更新面板没有自动更新开关");
   assert.match(app, /mc-update-auto-check/, "更新面板开关没通知 App");
   assert.match(app, /:backend="backendUpdate"/, "顶部更新条没接后端更新状态");
@@ -4046,10 +4056,11 @@ test("聊天布局：16px / 1.7 行高、840 阅读列、更松的消息间距",
 
 test("回到前台重拉消息列时，用户没在底部就保留原来的滚动位置", () => {
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
-  assert.match(app, /async function reloadWindowKeepingScroll\(\{[^)]*\} = \{\}\)/, "没有保留滚动位置的重拉函数");
-  assert.match(app, /const stick = nearBottom\(el\)/, "没判断重拉前是否贴底");
-  assert.match(app, /if \(stick\) next\.scrollTop = next\.scrollHeight/, "贴底时没继续贴底");
-  assert.match(app, /next\.scrollTop = Math\.min\(top,/, "不在底部时没恢复原位置");
+  const windowSrc = readFileSync(join(SRC, "composables", "useSessionWindow.ts"), "utf8");
+  assert.match(windowSrc, /async function reloadWindowKeepingScroll\(\{[^)]*\} = \{\}\)/, "没有保留滚动位置的重拉函数");
+  assert.match(windowSrc, /const stick = nearBottom\(el\)/, "没判断重拉前是否贴底");
+  assert.match(windowSrc, /if \(stick\) next\.scrollTop = next\.scrollHeight/, "贴底时没继续贴底");
+  assert.match(windowSrc, /next\.scrollTop = Math\.min\(top,/, "不在底部时没恢复原位置");
   assert.match(app, /dropStreamBubbles\(\);\s*await reloadWindowKeepingScroll\(\)/, "前台对齐没走保留滚动");
   assert.match(app, /await waitTypewriter\(\);[\s\S]{0,160}await reloadWindowKeepingScroll\(\)/, "一轮落库后仍会把不贴底的人拽到底部");
 });
@@ -4064,11 +4075,12 @@ test("消息操作行：编辑/思考/重摇/删除始终可见，不再等 hove
 
 test("消息窗口：默认 5 段，设置里可改，首屏与加载更多共用", () => {
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  const windowSrc = readFileSync(join(SRC, "composables", "useSessionWindow.ts"), "utf8");
   const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
-  assert.match(app, /const windowLimit = ref\(5\)/, "消息窗口默认不是 5");
-  assert.match(app, /windowStart\(segments, limit\)/, "首屏没用可配置窗口");
-  assert.match(app, /limit = windowLimit\.value/, "窗口取数没有默认取 history_window");
-  assert.match(app, /prevWindowStart\(vueSegments\.value, windowFrom\.value, windowLimit\.value\)/, "加载更多没用可配置窗口");
+  assert.match(windowSrc, /const windowLimit = ref\(5\)/, "消息窗口默认不是 5");
+  assert.match(windowSrc, /windowStart\(segments, limit\)/, "首屏没用可配置窗口");
+  assert.match(windowSrc, /limit = windowLimit\.value/, "窗口取数没有默认取 history_window");
+  assert.match(windowSrc, /prevWindowStart\(vueSegments\.value, windowFrom\.value, windowLimit\.value\)/, "加载更多没用可配置窗口");
   assert.match(app, /history_window/, "App 没从 chat 配置读 history_window");
   assert.match(settings, /v-model="chat\.history_window"/, "设置里没有首屏消息数输入");
   assert.match(settings, /首屏加载多少条消息/, "设置项没有说人话的标签");
@@ -4102,17 +4114,18 @@ test("载荷预览：面板里可开关；关掉不请求，偏好与输入预�
   assert.match(bar, /const preview = ref\(payloadPreviewOn\(\)\)/, "载荷面板没有自己的预览开关");
   assert.match(bar, /<span class="lbl">预览载荷<\/span>/, "载荷开关没有可见标签");
   assert.match(bar, /emit\("preview"/, "载荷开关没把变化报给 App");
-  assert.match(app, /payloadPreviewOn\(\)/, "载荷请求没检查载荷预览开关");
-  assert.match(app, /function onPayloadPreview\(on\)/, "App 没接载荷预览开关");
+  const ctxSrc = readFileSync(join(SRC, "composables", "useContextWorkspace.ts"), "utf8");
+  assert.match(ctxSrc, /payloadPreviewOn\(\)/, "载荷请求没检查载荷预览开关");
+  assert.match(ctxSrc, /function onPayloadPreview\([^)]*\)/, "上下文 composable 没接载荷预览开关");
   assert.match(prefs, /payload_preview: true/, "前端缺省没有 payload_preview（默认应开）");
 });
 
 test("消息窗口批量取：摘要切出的多个区间压成一发 POST", () => {
-  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  const app = readFileSync(join(SRC, "composables", "useSessionWindow.ts"), "utf8");
   const api = readFileSync(join(SRC, "api", "client.ts"), "utf8");
   assert.match(api, /messageRanges:\s*\(id[^)]*\)\s*=>\s*call<[^>]+>\("POST", `\/sessions\/\$\{enc\(id\)\}\/messages\/batch`/,
     "API 客户端没有 messageRanges");
-  assert.match(app, /function batchRanges\(runs\)/, "没有把 Infinity 尾段转成 to=0 的纯函数");
+  assert.match(app, /function batchRanges\([^)]*\)/, "没有把 Infinity 尾段转成 to=0 的纯函数");
   assert.match(app, /b === Infinity \? 0 : b/, "批量区间没有处理尾部");
   assert.equal((app.match(/api\.messageRanges\(/g) ?? []).length, 2,
     "首屏与加载更多没有都走批量接口");
@@ -4216,9 +4229,10 @@ test("高延迟：发送先上屏、失败撤回；切会话不先拉列表；�
   const modelsSrc = readFileSync(join(SRC, "composables", "useModelsAgents.ts"), "utf8");
 
   // ① 乐观发送：addMessage 必须在 await 之前；失败要把文字还回输入框
-  const sendStart = app.indexOf("async function send(content)");
-  const sendEnd = app.indexOf("async function resend()");
-  const send = app.slice(sendStart, sendEnd);
+  const turnSrc = readFileSync(join(SRC, "composables", "useTurnStream.ts"), "utf8");
+  const sendStart = turnSrc.indexOf("async function send(content:");
+  const sendEnd = turnSrc.indexOf("async function resend()");
+  const send = turnSrc.slice(sendStart, sendEnd);
   assert.ok(sendStart > 0 && sendEnd > sendStart, "找不到 send()");
   assert.ok(send.indexOf('addMessage("你", content, "user")') < send.indexOf("await api.sendMessage"), "发送不是先上屏再等 202");
   assert.match(send, /dropOptimistic\(optimistic\)/, "发送失败没撤掉乐观气泡");
@@ -4237,9 +4251,10 @@ test("高延迟：发送先上屏、失败撤回；切会话不先拉列表；�
   assert.match(enter, /sessionsFetchedAt > SESSIONS_FRESH_MS/, "列表缓存没有后台保鲜（会一直用旧标题）");
 
   // ④ 窗口第一拍就带"最后 N 条"，摘要没横跨时第二拍为空
-  const load = app.slice(app.indexOf("async function fetchWindowNow"), app.indexOf("async function loadWindow"));
+  const windowSrc = readFileSync(join(SRC, "composables", "useSessionWindow.ts"), "utf8");
+  const load = windowSrc.slice(windowSrc.indexOf("async function fetchWindowNow"), windowSrc.indexOf("function fetchWindow("));
   assert.match(load, /api\.listMessagesLast\(id, limit\)/, "第一拍没带尾部种子");
-  assert.match(load, /seededMissingRuns\(runs, recent(?: as any)?\)/, "没按种子算缺口（会把已取到的再要一遍）");
+  assert.match(load, /seededMissingRuns\(runs, recent\.map/, "没按种子算缺口（会把已取到的再要一遍）");
 
   // ⑤ 模型清单缓存先画后对（切会话不再闪「加载模型…」）
   assert.match(modelsSrc, /if \(modelsCache\) paintModelOptions\(modelsCache\)/, "模型清单没有先画缓存");
@@ -4289,15 +4304,16 @@ test("回看缓存：拷贝进出、LRU 上限、可遗忘", () => {
 
 test("回看缓存接到切会话：先画缓存再对账；对账期间本地动过就作废", () => {
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  const windowSrc = readFileSync(join(SRC, "composables", "useSessionWindow.ts"), "utf8");
   const enter = app.slice(app.indexOf("async function enterSession"), app.indexOf("async function boot"));
-  const load = app.slice(app.indexOf("async function loadWindow"), app.indexOf("async function reloadWindow"));
+  const load = windowSrc.slice(windowSrc.indexOf("async function loadWindow"), windowSrc.indexOf("async function reloadWindow"));
 
   assert.match(enter, /const cached = recallWindow\(windowCache, id\)/, "切会话没查回看缓存");
   assert.ok(enter.indexOf("recallWindow(windowCache, id)") < enter.indexOf("await loadWindow"), "缓存命中时仍然先等网络");
   assert.match(enter, /loadingSession\.value = false; \/\/ 一屏已经在了/, "缓存命中还挂着骨架");
   assert.match(enter, /reloadWindowKeepingScroll\(\{ onlyIfUnchanged: true \}\)/, "缓存命中后没有后台对账（或没带防覆盖闸）");
   assert.match(load, /rememberWindow\(windowCache, sid/, "loadWindow 成功后没把这一屏记进缓存");
-  assert.match(load, /onlyIfUnchanged && \(rev !== localRev \|\| pendingSends > 0\)/, "后台对账没有和本地动作/在飞发送对账");
+  assert.match(load, /onlyIfUnchanged && \(rev !== getLocalRev\(\) \|\| !\(canReconcile\?\.\(\) \?\? true\)\)/, "后台对账没有和本地动作/在飞发送对账");
   assert.match(app, /localRev\+\+/, "本地动作没有推进 localRev");
   assert.match(app, /forgetWindow\(windowCache, id\)/, "删会话没清它的缓存");
 });
@@ -4328,6 +4344,7 @@ test("弱网：GET 带超时且网络失败重试一次，POST 不套上限", as
 //   · boot 的探活与首批 chat/sessions 并行，且 warm 用的是**第一个候选**（不是 apiBase() 的 8787 默认）。
 test("悬停预取与开屏并行：意图触发、单飞、上限、warm 用首选候选", () => {
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  const windowSrc = readFileSync(join(SRC, "composables", "useSessionWindow.ts"), "utf8");
   const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
   const client = readFileSync(join(SRC, "api", "client.ts"), "utf8");
 
@@ -4336,9 +4353,9 @@ test("悬停预取与开屏并行：意图触发、单飞、上限、warm 用首
   assert.match(bar, /@touchstart\.passive="prefetchNow\(s\)"/, "触屏没有预取");
   assert.match(bar, /@focusin="prefetchNow\(s\)"/, "键盘 focus 没有预取");
   assert.match(app, /@prefetch="prefetchSession"/, "App 没接预取事件");
-  assert.match(app, /function prefetchSession\(id\)/, "没有 prefetchSession");
-  assert.match(app, /PREFETCH_MAX_ACTIVE/, "预取没有并发上限");
-  assert.match(app, /const tailInflight = new Map\(\)/, "同一屏没有单飞（悬停后马上点会发两遍）");
+  assert.match(windowSrc, /function prefetchSession\([^)]*\)/, "没有 prefetchSession");
+  assert.match(windowSrc, /PREFETCH_MAX_ACTIVE/, "预取没有并发上限");
+  assert.match(windowSrc, /const tailInflight = new Map</, "同一屏没有单飞（悬停后马上点会发两遍）");
   assert.match(app, /const warmApi = createApi\(\{ base: firstBase \}\)/, "boot 没有并行预热首批数据");
   assert.match(app, /if \(winner === firstBase\) \{\s*\[chatCfg, sessions\] = await warm;/, "warm 结果没被用上（或候选没对上就吃了错误基址的数据）");
   assert.match(client, /timeout = 8000/, "探活没有超时（黑洞地址会把启动按住）");
@@ -4746,6 +4763,7 @@ test("ST 预设内容：解析预览/有效内容/原始 JSON 合并成一个面
 test("品牌标志可点击跳更新；更新页底部有项目介绍与 GitHub 链接", () => {
   const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  const updateSrc = readFileSync(join(SRC, "composables", "useAppUpdate.ts"), "utf8");
   const pane = readFileSync(join(SRC, "components", "UpdatePane.vue"), "utf8");
   assert.match(bar, /<button[\s\S]*class="brand"[\s\S]*@click="\$emit\('open-update'\)"/, "品牌标志不是跳更新面板的按钮");
   assert.match(app, /@open-update="\(\) => openManage\('update'\)"/, "App 没接 open-update");
@@ -4842,6 +4860,7 @@ test("上下文圆环的请求体覆盖面板：无外层花括号、验证/保�
   assert.match(top, /省略外层花括号/, "没有说明不用花括号");
   assert.match(top, /function parseOverrides\(/, "没有本地解析");
   assert.match(top, /emit\("save-overrides", parsed\)/, "保存没有 emit");
+  const actionsSrc = readFileSync(join(SRC, "composables", "useSessionActions.ts"), "utf8");
   assert.match(app, /@save-overrides="saveRequestOverrides"/, "App 没有接保存事件");
-  assert.match(app, /request_overrides: overrides/, "保存没有 PATCH request_overrides");
+  assert.match(actionsSrc, /request_overrides: overrides/, "保存没有 PATCH request_overrides");
 });

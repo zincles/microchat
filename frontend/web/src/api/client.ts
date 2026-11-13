@@ -43,7 +43,6 @@ import type {
   Prefs,
   PrefsView,
   PresetInfo,
-  PreviewResult,
   ProviderView,
   Queue,
   RefreshRoutesResult,

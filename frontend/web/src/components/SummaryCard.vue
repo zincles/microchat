@@ -8,41 +8,23 @@ import { VBtn } from "vuetify/components";
 import MessageBubble from "./MessageBubble.vue";
 import { ICONS } from "./icons.ts";
 import { renderMacroHtml, type MacroMap } from "../utils/macros.ts";
+import type { ChatRow, ChatSummary } from "../utils/chatrows.ts";
+import type { RerollView } from "../types/app.ts";
 
-interface SummaryLike {
-  id: string;
+type SummaryLike = ChatSummary & {
   text?: string;
   dirty?: boolean;
   tokens?: number;
   undoable?: boolean;
-  [key: string]: unknown;
-}
-interface SummaryRowMsg {
-  id?: string;
-  who?: string;
-  idx?: number | null;
-  role?: string;
-  content?: string;
-  reasoning?: string;
-  reasoningMs?: number | null;
-}
-interface SummaryRow {
-  msg: SummaryRowMsg;
-  displayIdx: number | null;
-}
-interface SummaryReroll {
-  count: number;
-  current_idx: number;
-  running?: boolean;
-}
+};
 
 const props = withDefaults(defineProps<{
   summary: SummaryLike;
   fromIdx?: number | string | null;
   toIdx?: number | string | null;
-  rows?: any[] | null;
+  rows?: ChatRow[] | null;
   loading?: boolean;
-  reroll?: any;
+  reroll?: RerollView | null;
   macros?: MacroMap;
 }>(), {
   fromIdx: null,
@@ -91,17 +73,18 @@ const emit = defineEmits<{
       <div v-if="loading" class="sum-loading">拉取未压缩文本…</div>
       <div v-else-if="!rows" class="sum-loading">展开时按需拉取（省内存）</div>
       <div v-else class="sum-originals">
-        <MessageBubble
-          v-for="r in rows"
-          :key="r.msg.id"
-          :who="r.msg.who"
-          :idx="r.displayIdx ?? undefined"
-          :role="r.msg.role"
-          :content="r.msg.content"
-          :reasoning="r.msg.reasoning"
-          :reasoning-ms="r.msg.reasoningMs ?? undefined"
-          :macros="macros"
-        />
+        <template v-for="r in rows" :key="r.key">
+          <MessageBubble
+            v-if="r.kind === 'msg'"
+            :who="r.msg.who"
+            :idx="r.displayIdx ?? undefined"
+            :role="r.msg.role"
+            :content="r.msg.content"
+            :reasoning="r.msg.reasoning"
+            :reasoning-ms="r.msg.reasoningMs ?? undefined"
+            :macros="macros"
+          />
+        </template>
       </div>
     </details>
   </div>

@@ -1,13 +1,7 @@
 {
-  // App.vue 是尚未拆完的组装根：先用宽松档保证它本身是 TS 且能编译；
-  // 其余 src/**/*.vue 由 tsconfig.json 严格检查。
+  // App.vue / main.ts 已纳入严格档：与其余 src 使用同一套 strict 规则。
+  // 这里只负责“把组装根和入口单独作为一个 program 检查”，不再放宽类型。
   "extends": "./tsconfig.json",
-  "compilerOptions": {
-    "strict": false,
-    "noImplicitAny": false,
-    "strictNullChecks": false,
-    "useUnknownInCatchVariables": false
-  },
   "include": ["src/App.vue", "src/main.ts", "src/env.d.ts"],
   "exclude": ["node_modules", "dist"]
 }

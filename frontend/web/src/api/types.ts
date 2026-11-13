@@ -13,6 +13,19 @@ export type MessageStatus = "done" | "canceled" | "failed" | "interrupted";
 export type TurnPhase = "idle" | "pending" | "streaming" | "error";
 export type SummaryType = "message" | "summary";
 
+export interface MessageTool {
+  id?: string;
+  source?: "server" | "client";
+  tool_name?: string;
+  item_id?: string;
+  queries?: string[];
+  arguments?: string;
+  result?: string;
+  sources?: SearchSource[];
+  status?: "done" | "canceled" | "unknown";
+  created_at?: number;
+}
+
 export interface Message {
   id: string;
   session_id: string;
@@ -26,6 +39,10 @@ export interface Message {
   created_at: number;
   updated_at: number;
   idx?: number;
+  kind?: MessageKind;
+  status?: MessageStatus;
+  tools_snapshot?: string[];
+  tools?: MessageTool[];
 }
 
 export interface Summary {
@@ -92,7 +109,7 @@ export interface TurnStatus {
 }
 
 export interface CompactStatus {
-  state: "running" | "done" | "error";
+  state: "running" | "done" | "error" | "canceled";
   blocks: number;
   compacted: number;
   summary_id?: string;
@@ -218,14 +235,6 @@ export interface LastPayload {
   annotations?: PayloadAnnotation[];
 }
 
-export interface PreviewResult {
-  from_idx: number;
-  to_idx: number;
-  merged: boolean;
-  blocks: number;
-  source_ids: string[];
-  action: string;
-}
 
 export interface PayloadPreview {
   payload: LastPayload;

@@ -33,13 +33,7 @@ import {
 import type { ModelChoice, ModelGroup } from "../utils/format.ts";
 import type { ContextUsage, FlowActiveNode, MacroReport, Queue, Session, TaskBoard, TaskRecord } from "../api/types.ts";
 
-interface SessionInfo {
-  id?: string;
-  provider?: string;
-  model?: string;
-  agent_id?: string;
-  request_overrides?: Record<string, unknown>;
-}
+type SessionInfo = Partial<Session>;
 interface StatusInfo {
   conn?: string;
   agent?: string;

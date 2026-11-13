@@ -3,14 +3,11 @@
 // （.palette/.picker/.confirm + 各条目类），行为照 main.js。
 import { VBtn } from "vuetify/components";
 import { ref } from "vue";
+import type { PickerItem } from "../types/app.ts";
 
 export interface PaletteItem {
   name: string;
   desc: string;
-}
-export interface PickerItem {
-  label: string;
-  [key: string]: unknown;
 }
 export type PickerAction = (item: PickerItem) => void;
 

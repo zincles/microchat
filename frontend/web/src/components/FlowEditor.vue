@@ -19,7 +19,7 @@ import { sharedApi } from "../utils/prefs.ts";
 import FlowNode from "./FlowNode.vue";
 import { FLOW_NODE_TYPES, emptyFlowGraph, flowDebugSteps, flowIssues, flowSourceType, flowTargetType, formatFlowText, normalizeFlowGraph, type FlowNodeType } from "../utils/flow.ts";
 import { FLOW_NODE_SPECS, nodeBadgeFor, nodeDefaults, nodeLabelFor } from "../utils/flowSpecs.ts";
-import type { FlowEdge, FlowGraph, FlowNode as FlowNodeData, ModelListItem } from "../api/types.ts";
+import type { FlowGraph, ModelListItem } from "../api/types.ts";
 
 const props = withDefaults(defineProps<{
   graph?: FlowGraph | null;

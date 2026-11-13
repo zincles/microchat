@@ -61,7 +61,7 @@ const vizData = computed(() => (viz.value ? parseWireMessages(wire.value) : null
 // 也少一次重排）；用户点过的以点过的为准。换一份载荷 ⇒ 清空回全折叠。
 const openMap = ref<Map<number, boolean>>(new Map());
 watch(vizData, () => { openMap.value = new Map(); });
-function blockOpen(m: ParsedWireMessage, i: number): boolean {
+function blockOpen(_m: ParsedWireMessage, i: number): boolean {
   return openMap.value.has(i) ? openMap.value.get(i)! : false;
 }
 function toggleBlock(m: ParsedWireMessage, i: number): void {
@@ -176,7 +176,7 @@ const compactStateHint = computed(() => {
 // 开合状态独立于上面"载荷"tab 那份（两边都在看同一种形状，但不要互相打断阅读）。
 // 同样**默认全折叠**（2026-11-04）。
 const cpOpenMap = ref<Map<number, boolean>>(new Map());
-function cpOpen(m: ParsedWireMessage, i: number): boolean {
+function cpOpen(_m: ParsedWireMessage, i: number): boolean {
   return cpOpenMap.value.has(i) ? cpOpenMap.value.get(i)! : false;
 }
 function cpToggle(m: ParsedWireMessage, i: number): void { cpOpenMap.value.set(i, !cpOpen(m, i)); }

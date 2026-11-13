@@ -3,32 +3,17 @@
 // 组件直接挂模板，ref 直调实例方法，不再经 *-vue.js 桥 / mount.js。
 import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import { VApp, VBtn, VTabsWindow, VTabsWindowItem } from "vuetify/components";
-import { createApi, mergeStreamSlice, probeHealth } from "./api/client.ts";
-import { parseCommand, filterCommands, COMMAND_META } from "./utils/commands.ts";
+import { createApi, probeHealth } from "./api/client.ts";
+import { parseCommand, filterCommands } from "./utils/commands.ts";
 import { uuidv7 } from "./utils/ids.ts";
-import { buildCompactTree } from "./utils/tree.ts";
-import {
-  buildChatRows, computeSegments, windowStart, prevWindowStart, alignWindowFrom, olderCount, runsToFetch, seededMissingRuns,
-  rerollTargetLive, bubbleText, editRerollTarget, latestPromptFor, toolSources,
-} from "./utils/chatrows.ts";
+import { buildChatRows, olderCount, editRerollTarget, latestPromptFor } from "./utils/chatrows.ts";
 import { applyBackground } from "./utils/background.ts";
 import { installViewportFit } from "./utils/viewport.ts";
-import { downloadJSON } from "./utils/download.ts";
-import { busySessionIds } from "./utils/tasks.ts";
 import { thinkingOptions, thinkingLevelsForModel } from "./utils/thinking.ts";
-import { rememberWindow, recallWindow, forgetWindow } from "./utils/windowcache.ts";
-import { sharedApi, previewOn, payloadPreviewOn, applyTheme, wantsSend, apiBase, apiBaseCandidates, saveNetPrefs, lastSessionId, saveLastSession, commandMenuOn, applyTextScale, applyFonts, chromeHideOn, syncPrefs, updateAutoCheckOn, userName as macroUserName } from "./utils/prefs.ts";
+import { forgetWindow, recallWindow } from "./utils/windowcache.ts";
+import { sharedApi, previewOn, payloadPreviewOn, applyTheme, wantsSend, apiBase, apiBaseCandidates, saveNetPrefs, lastSessionId, saveLastSession, commandMenuOn, applyTextScale, applyFonts, chromeHideOn, syncPrefs, userName as macroUserName } from "./utils/prefs.ts";
 import { macroMap } from "./utils/macros.ts";
-import {
-  groupModelsByProvider,
-  deletionPlanSummary,
-  modelKey,
-  parseModelKey,
-  modelOption,
-  agentOption,
-  whoText,
-  sessionTitle,
-} from "./utils/format.ts";
+import { deletionPlanSummary, whoText } from "./utils/format.ts";
 import TopBar from "./components/TopBar.vue";
 import AgentMenu from "./components/AgentMenu.vue";
 import SessionBar from "./components/SessionBar.vue";
@@ -43,8 +28,6 @@ import SettingsModal from "./components/SettingsModal.vue";
 import SessionSettings from "./components/SessionSettings.vue";
 import Overlays from "./components/Overlays.vue";
 import UpdateBar from "./components/UpdateBar.vue";
-import { registerPWA, onUpdateReady, startUpdate } from "./utils/pwa.ts";
-import { waitForRestart } from "./utils/update.ts";
 import { useTypewriter } from "./composables/useTypewriter.ts";
 import { useTasks } from "./composables/useTasks.ts";
 import { useSidePanels } from "./composables/useSidePanels.ts";
@@ -52,6 +35,24 @@ import { useChrome } from "./composables/useChrome.ts";
 import { useOverlayLayout } from "./composables/useOverlayLayout.ts";
 import { useSettingsView } from "./composables/useSettingsView.ts";
 import { useModelsAgents } from "./composables/useModelsAgents.ts";
+import { useAppUpdate } from "./composables/useAppUpdate.ts";
+import { useSessionWindow } from "./composables/useSessionWindow.ts";
+import { useTurnStream } from "./composables/useTurnStream.ts";
+import { useReroll } from "./composables/useReroll.ts";
+import { usePreview } from "./composables/usePreview.ts";
+import { useCommands } from "./composables/useCommands.ts";
+import { useContextWorkspace } from "./composables/useContextWorkspace.ts";
+import { useSessionActions } from "./composables/useSessionActions.ts";
+import type {
+  DeletionPlan, FlowActiveNode, Message, SessionView, TurnStatus,
+} from "./api/types.ts";
+import type { ChatSummary } from "./utils/chatrows.ts";
+import type {
+  AppRow, DraftPrefs, EditableSummary, PickerItem, SessionInfo, ThinkPart,
+} from "./types/app.ts";
+import { errCode, errText } from "./types/app.ts";
+
+type ConfirmText = (plan: DeletionPlan) => string;
 
 const api = sharedApi();
 applyTheme();
@@ -60,96 +61,6 @@ applyBackground();
 // 它写在根节点的 `style` 上（`--app-text-scale`），theme.css 的 body 字号吃这一格。
 applyTextScale();
 applyFonts();
-// 服务器是**偏好的权威**（2026-11-01「所有设置均存储在服务器上」）。
-// 上面那几行先按**本地镜像**把主题/缩放/输入栏形态铺上 —— 那是为了让**第一帧**就是对的
-// （不然会先闪一下默认配色再变）。随后这一发去问服务器，不一致就改过来（并重挂背景图）。
-// 失败只 toast：连不上后端时页面照样能用，只是偏好停在镜像那一份。
-syncPrefs()
-  .then(() => { applyBackground(); cmdMenu.value = commandMenuOn(); macroRev.value += 1; })
-  .catch((err) => toast(`界面偏好读取失败：${err.message}`, "error"))
-  .finally(() => { startUpdatePolling(); });
-// —— 新版本提示（PWA 更新条，2026-10-20 用户定）——
-// 从 `autoUpdate` 改成 `prompt`：新版本**等用户点**才切，而不是悄悄自己 reload。
-// 勾子必须在**开机**就挂（SW 装完是异步回调 —— 挂晚了那一次提示就丢了）。
-const updateRef = ref<any>(null);
-const updateReady = ref(false);
-const backendUpdate = ref(false);
-const backendUpdating = ref(false);
-let updatePollTimer: ReturnType<typeof setInterval> | null = null;
-onUpdateReady(() => {
-  updateReady.value = true;
-  // 如果之前把更新条点 × 收起来过，新一次更新要重新放出来。
-  nextTick(() => updateRef.value?.show());
-});
-registerPWA();
-// 点「刷新」⇒ 发 skipWaiting，新 SW 接管后由 vite-plugin-pwa 内建回调 reload 这一页。
-function applyUpdate() { startUpdate(); }
-
-// 自动更新：每 5 分钟检查一次 GitHub；只有“本地落后”才自动 pull + 重启。
-// 本地有未提交修改 / 分叉 / 非容器部署时不动手，只把更新条留给人处理。
-async function refreshBackendUpdate(): Promise<void> {
-  if (!updateAutoCheckOn()) { backendUpdate.value = false; return; }
-  // 后台标签页不自动更新：避免用户没看着时应用重启。
-  if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
-  if (backendUpdating.value) return;
-  let status;
-  try {
-    status = await api.getUpdateStatus();
-  } catch {
-    return;
-  }
-  const canUpdate = status.remote_relation === "behind" || status.remote_relation === "unknown";
-  if (!canUpdate) {
-    backendUpdate.value = false;
-    return;
-  }
-  // 脏工作区 / 分叉 / 宿主二进制：自动 pull 会失败或没人重启，交给手动更新面板。
-  if (status.dirty || status.remote_relation === "diverged" || !status.restart_supported) {
-    backendUpdate.value = true;
-    return;
-  }
-  await autoBackendUpdate();
-}
-async function autoBackendUpdate(): Promise<void> {
-  if (backendUpdating.value) return;
-  backendUpdating.value = true;
-  backendUpdate.value = true;
-  try {
-    const result = await api.pullUpdate();
-    await waitForRestart(result.before.started_at, api);
-    location.reload();
-  } catch (e) {
-    backendUpdate.value = true;
-    backendUpdating.value = false;
-    toast(`自动更新失败：${e instanceof Error ? e.message : String(e)}`, "error");
-  }
-}
-function stopUpdatePolling(): void {
-  if (updatePollTimer !== null) { window.clearInterval(updatePollTimer); updatePollTimer = null; }
-}
-function startUpdatePolling(): void {
-  stopUpdatePolling();
-  // SSR / 测试环境没有 window；别留一个 setInterval 把 Node 测试进程吊住。
-  if (typeof window === "undefined") return;
-  if (!updateAutoCheckOn()) { backendUpdate.value = false; return; }
-  void refreshBackendUpdate();
-  updatePollTimer = window.setInterval(() => { void refreshBackendUpdate(); }, 5 * 60 * 1000);
-}
-async function runBackendUpdate(): Promise<void> {
-  if (backendUpdating.value) return;
-  if (!(await askConfirm("会拉取远程最新代码并重启前后端，期间约 10–20 秒不可用。继续吗？"))) return;
-  backendUpdating.value = true;
-  try {
-    const result = await api.pullUpdate();
-    backendUpdate.value = false;
-    await waitForRestart(result.before.started_at, api);
-    location.reload();
-  } catch (e) {
-    backendUpdating.value = false;
-    toast(`更新失败：${e instanceof Error ? e.message : String(e)}`, "error");
-  }
-}
-
 // —— 组件 refs（直调实例方法，替代桥） ——
 const toastRef = ref<any>(null);
 const topbarRef = ref<any>(null);
@@ -188,7 +99,7 @@ const {
   uninstall: uninstallSidePanels,
 } = useSidePanels({
   isOverlayOpen: () => !!(overlaysRef.value?.isPaletteOpen() || overlaysRef.value?.isPickerOpen()),
-  onWorkspaceContext: refreshContextLazy,
+  onWorkspaceContext: () => refreshContextLazy(),
 });
 
 const { settingsOpen, settingsOnly, openSettings, openManage, closeSettings, backToChat } = useSettingsView({ closeLeftDrawer });
@@ -199,23 +110,34 @@ const { resetChrome, onMessagesScroll } = useChrome();
 
 const { liftOverlays, install: installOverlayLayout, uninstall: uninstallOverlayLayout } = useOverlayLayout(overlaysRef);
 // askConfirm：给设置/子编辑器用的全局确认框（与左栏删除同一个口 —— "不可逆的删除先摊开"）。
-function askConfirm(text) {
+function askConfirm(text: string): Promise<boolean> {
   return overlaysRef.value?.confirmAsk(text) ?? Promise.resolve(false);
 }
 // onPickAction：浮层"选中某项"的回执（动作在浮层里选好，这里执行 + 统一兜错）。
 // ⚠ 别把它写回模板内联（`(a, it) => Promise.resolve(a(it))…`）：模板里的 `Promise` 会被编译成
 // `_ctx.Promise`（实例代理上不存在）⇒ 点击那一刻当场 TypeError、被 Vue 吞掉，动作永远不执行
 // （踩过：picker 的鼠标点击从写下那天就是死的，键盘路径绕开了它所以一直没暴露）。
-function onPickAction(action, item) {
-  Promise.resolve(action(item)).catch((err) => toast(`操作失败：${err.message}`, "error"));
+function onPickAction(action: (item: PickerItem) => unknown, item: PickerItem): void {
+  Promise.resolve(action(item)).catch((err) => toast(`操作失败：${errText(err)}`, "error"));
 }
+// 更新生命周期（PWA 壳 + 后端 git）搬进 composable；App 只留模板绑定。
+const {
+  updateRef, updateReady, backendUpdate, backendUpdating,
+  applyUpdate, startUpdatePolling, runBackendUpdate,
+} = useAppUpdate({ api, toast, askConfirm });
+
+// 服务器是**偏好的权威**：先用本地镜像铺第一帧，再问服务器；失败只 toast。
+syncPrefs()
+  .then(() => { applyBackground(); cmdMenu.value = commandMenuOn(); macroRev.value += 1; })
+  .catch((err) => toast(`界面偏好读取失败：${errText(err)}`, "error"))
+  .finally(() => { startUpdatePolling(); });
 
 // —— 会话状态 ——
-let sessionID: any = null;
+let sessionID: string | null = null;
 // 会话列表缓存（2026-11-05，高延迟优化）：从前每点一条会话都要先 `GET /sessions`
 // 才轮到消息窗口 —— 远端 1s+ 时那一整个 RTT 什么也没画，而列表本来就在屏幕上。
 // 缓存只当"先用着的快照"：进会话后按需在后台补一次（见 enterSession），不拿它当真相。
-const sessionsCache = ref([]);
+const sessionsCache = ref<SessionView[]>([]);
 // 左栏的加载态（MD3）：首次拿列表画骨架；后台补列表时顶部一条 linear progress。
 // 从前空列表与"还没加载"在界面上分不出来 —— boot 的那两秒会写"还没有会话"，那是假话。
 const sessionsLoading = ref(true);
@@ -224,25 +146,17 @@ let sessionsFetchedAt = 0;
 const SESSIONS_FRESH_MS = 10_000;
 // 回看缓存（2026-11-05 用户定）：每条会话上一屏的窗口快照（LRU、最多 8 条）。
 // 切回去先把这屏画出来（0 RTT），再后台对账 —— 见 enterSession 与 windowcache.js。
-const windowCache = new Map();
 // localRev：本地的"消息列已经变了"计数（乐观发送 / 编辑 / 删除…）。
 // 后台对账在落屏前比一次：期间人动过 ⇒ 这一发作废，别拿旧快照覆盖刚画上去的字。
 let localRev = 0;
 // pendingSends：正在等 202 的发送数。乐观气泡已经上屏、但服务端还没落库 ——
 // 这时候落到屏上的窗口快照可能**还没有**那句，必须把它判成"旧"。
 let pendingSends = 0;
-// 悬停/触摸预取（2026-11-05）：会话行被"意图"指到就把它的窗口先拉进缓存，
-// 点下去就是 0 RTT。并发上限 3 —— 手指扫过整列时别把每一条都排上队。
-const PREFETCH_MAX_ACTIVE = 3;
-const PREFETCH_FRESH_MS = 30_000;
-const prefetching = new Set();
-const prefetchedAt = new Map();
-let prefetchActive = 0;
 // 会话世代：进会话/回草稿就 +1。所有会话域的异步续写都在 await 后核对本世代，对不上就丢 ——
 // 没有这道闸，快速切会话时迟到的 A 续写会覆掉已切到的 B 的抬头与消息列（实测复现过：
 // 顶栏 A、高亮 B、气泡 A —— 界面被撕成三份）。
 let epoch = 0;
-const sessionInfo = reactive<any>({});
+const sessionInfo = reactive<SessionInfo>({});
 // 草稿态（DeepSeek 网页版行为，2026-10-09 定）：＋/开机/`/new` 只开一张**客户端草稿**，库里没有行；
 // 首条发送才 POST /sessions（带上草稿里选好的 provider/model/agent）。
 // ⚠ HACK（刻意，全项目唯一的口子）：草稿**铸一枚 UUIDv7** 当将来那会话的 id —— 预演
@@ -250,8 +164,22 @@ const sessionInfo = reactive<any>({});
 // ⇒ 预演的那一发给真发的那一发逐字节一致。别扩散（消息/摘要的 id 仍是服务端铸）。
 // 要会话的命令（compact/cut/reroll…）在草稿里明确拒绝（needsSession 标在 commands.js 的表上）。
 let draft = false;
-let draftPrefs: any = { provider: "", model: "", agent: "", thinking_level: "", native_tools_disabled: [] };
-let draftId: any = null;
+let draftPrefs: DraftPrefs = { provider: "", model: "", agent: "", thinking_level: "", native_tools_disabled: [] };
+let draftId: string | null = null;
+
+// 出站预演只有一处：载荷、草稿第一句、压缩载荷。App 只把结果交给右栏。
+const { previewPayload, refreshPreview, previewCompactPayload } = usePreview({
+  api,
+  toast,
+  getEpoch: () => epoch,
+  getSessionID: () => sessionID,
+  isDraft: () => draft,
+  getDraftId: () => draftId,
+  draftPrefs,
+  composerRef,
+  payloadbarRef,
+  previewOn,
+});
 
 const {
   vueAgents,
@@ -318,7 +246,7 @@ async function toggleNativeTool(id: string, enabled: boolean): Promise<void> {
     refreshPreview();
   } catch (err) {
     sessionInfo.native_tools_disabled = prev;
-    toast(`工具选择保存失败：${err instanceof Error ? err.message : String(err)}`, "error");
+    toast(`工具选择保存失败：${err instanceof Error ? errText(err) : String(err)}`, "error");
   }
 }
 const currentThinking = computed(() => {
@@ -345,7 +273,7 @@ async function setThinking(level: string): Promise<void> {
     refreshPreview();
   } catch (err) {
     sessionInfo.thinking_level = prev;
-    toast(`思考等级保存失败：${err.message}`, "error");
+    toast(`思考等级保存失败：${errText(err)}`, "error");
   }
 }
 // 换模型后旧档位可能不在新模型的能力集里 ⇒ 清回"跟随默认"（后端也只会接受能力集里的值）。
@@ -354,33 +282,57 @@ watch(thinkingLevels, (levels) => {
   if (!cur || !levels.length) return;
   if (!levels.includes(cur)) setThinking("");
 });
-const vueMessages = ref<any[]>([]);
-// 会话加载中的骨架（2026-11-02）：进会话会先清空消息列，再等 /sessions + 消息窗口；
-// 远端部署时那是两三个 RTT 的空白。给一层静态骨架，至少让人知道"在加载"而不是"坏了"。
-const loadingSession = ref(true);
-const vueSegments = ref<any[]>([]); // 整条会话的段布局（computeSegments 的产出）：窗口/折叠/编号都认它
-const vueStream = ref({ id: null, text: "", reasoning: "" });
+// 消息窗口的取数/分页/摘要展开/预取都在 composable；App 只关心“当前会话”这一层。
+const {
+  vueMessages, vueSegments, loadingSession, windowLimit, windowFrom, summaryMsgs, openSummaries, windowCache,
+  toRow, loadWindow, reloadWindow, reloadWindowKeepingScroll, loadMore, prefetchSession,
+  onSummaryToggle,
+} = useSessionWindow({
+  api,
+  toast,
+  getSessionID: () => sessionID,
+  getEpoch: () => epoch,
+  getLocalRev: () => localRev,
+  isDraft: () => draft,
+  canReconcile: () => pendingSends === 0,
+  scrollBottom,
+  onWindowLoaded: () => { if (treeVisible.value) refreshTree(); },
+});
+
+// 会话级动作（覆盖 / Copy / 导出 / 删除）统一在这里，避免三处各写一遍列表刷新顺序。
+const {
+  saveRequestOverrides, copySessionFromBar, exportSessionFromBar, askDeleteSession,
+} = useSessionActions({
+  api,
+  toast,
+  getSessionID: () => sessionID,
+  isDraft: () => draft,
+  sessionInfo,
+  topbarRef,
+  overlaysRef,
+  refreshPreview,
+  refreshSessionsBar,
+  getSessionsCache: () => sessionsCache.value,
+  enterSession,
+  startDraft,
+  backToChat,
+  forgetCachedWindow: (id) => forgetWindow(windowCache, id),
+});
+const vueStream = ref<{ id: string | null; text: string; reasoning: string }>({ id: null, text: "", reasoning: "" });
 // 流式显字（2026-11-03）：`vueStream` 是后端的完整目标；`streamDisplay` 是打字机当前露出的前缀。
 // 每帧只改 streamDisplay，轮询与合并仍只认 vueStream（两个状态别互相镜像）。
-const { streamDisplay, setStreamTarget, waitTypewriter, resetTypewriter, flushTypewriter } = useTypewriter();
-// 消息窗口（分页 + 折叠；口径与全套算法在 utils/chatrows.ts）：
-// 只挂最后 N 段（默认 5，来自 chat.history_window）；更老的按"加载更多"一页一页往回；
-// 被摘要盖住的原文**展开才拉**（这里当缓存）。
-const windowLimit = ref(5);
-const windowFrom = ref(1); // 窗口起点（段对齐；1 = 已到最老）
-const summaryMsgs = reactive<any>(new Map()); // 摘要 id → {state:"loading"|"ready", rows}（只有展开过的才有）
-const openSummaries = new Set<string>(); // 哪些卡正展开着（reload 后补拉新鲜的）
+const { streamDisplay, setStreamTarget, waitTypewriter, resetTypewriter } = useTypewriter();
 // 设置视图的"单独入口"："" = 完整设置（四个 tab）；"session" / "provider" = 只显示那一页，
 // 从左侧栏底部的「会话 / 渠道」进来。两者共用同一个视图与同一份数据加载。
 // **设置 = root 专属**（用户定，2026-10-10）：`is_admin` 才给进设置；其他用户的入口按钮也不给。
-const compactDefault = ref(null); // chat.compact_blocks（压缩面板输入框的占位提示）
+const compactDefault = ref<number | null>(null); // chat.compact_blocks（压缩面板输入框的占位提示）
 // windowLimit：消息列首屏/加载更多一页多少段（chat.history_window；默认 5）。
-function applyChatConfig(c) {
+function applyChatConfig(c: { compact_blocks?: number; history_window?: number } | null): void {
   compactDefault.value = c?.compact_blocks ?? null;
   const n = Number(c?.history_window);
   windowLimit.value = Number.isFinite(n) && n >= 1 ? Math.floor(n) : 5;
 }
-const sessionSettingsId = ref(null);
+const sessionSettingsId = ref<string | null>(null);
 
 // —— 消息列 ——
 // tmpKey：只给"还没进库"的气泡（乐观用户消息 / 流式占位）当 v-for key —— 不能共用 'stream'（重键）。
@@ -392,345 +344,139 @@ function scrollBottom() {
     if (el) el.scrollTop = el.scrollHeight;
   });
 }
-function addMessage(who, text, cls, think = undefined, messageId = undefined) {
-  const row: any = {
+function addMessage(who: string, text: string, cls: string, think: ThinkPart = undefined, messageId?: string | null): AppRow {
+  const row: AppRow = {
     id: tmpKey(),
     who,
     role: cls === "user" ? "user" : "assistant",
     content: text,
     reasoning: typeof think === "string" ? think : think?.text,
-    reasoningMs: think?.ms,
-    messageId,
+    reasoningMs: typeof think === "string" ? undefined : think?.ms,
+    messageId: messageId ?? undefined,
   };
   vueMessages.value.push(row);
   scrollBottom();
   return row;
 }
-// startSendingBubble：2026-11-09 用户要的两段状态。
-// 在 POST 受理之前就画助手的空气泡并标 “sending”（正在向后端发送请求）；
-// 202 回来 / pollTurn 接手时改成 “waiting”（等待 Provider 响应）。
-function startSendingBubble() {
-  const row = addMessage("助手", "", "assistant");
-  row.stream = true;
-  row.phase = "sending";
-  row.step = 1;
-  return row;
-}
-
-// finishLiveRow：进入下一 step 时把当前 live 行钉成普通消息（不靠数据库）。
-function finishLiveRow(row) {
-  row.stream = false;
-  row.phase = "";
-  row.content = vueStream.value.text ?? "";
-  row.reasoning = vueStream.value.reasoning ?? "";
-  row.tool = null;
-  row.sources = [];
-}
-
-// startLiveStep：一轮 run 的第 N 个 assistant 模型轮 -> 新气泡。
-function startLiveStep(step) {
-  const row = addMessage("助手", "", "assistant");
-  row.stream = true;
-  row.phase = "waiting";
-  row.step = step;
-  return row;
-}
-
-// advanceLiveStep：status.step 变了才切；返回新 row / 归零游标。
-function advanceLiveStep(st, row, cur) {
-  const step = Number(st?.step || 0);
-  if (!step || !row || step === Number(row.step || 0)) return null;
-  finishLiveRow(row);
-  const next = startLiveStep(step);
-  vueStream.value = { id: vueStream.value.id, text: "", reasoning: "" };
-  resetTypewriter();
-  return { row: next, cur: { from: 0, thinkFrom: 0 } };
-}
 // 乐观上屏的那句用户消息（2026-11-05，高延迟优化）：先画，等 202 回来再换成服务端那条
 // （换的是**同一条消息**：服务端回的 `user` 带真 id/idx，编号与后续编辑/删除都认它）。
 // 失败就撤掉，绝不留在屏幕上假装发过 —— "看到的"和"真发出去的"分家比慢更糟。
-function settleOptimisticUser(row, user) {
+function settleOptimisticUser(row: AppRow, user?: Message | null): void {
   if (!user) return;
   const at = vueMessages.value.indexOf(row);
   if (at >= 0) vueMessages.value.splice(at, 1, toRow(user));
 }
-function dropOptimistic(row) {
+function dropOptimistic(row: AppRow): void {
   const at = vueMessages.value.indexOf(row);
   if (at >= 0) vueMessages.value.splice(at, 1);
 }
+
+// 一轮落地后的共同收尾：流已经结束，这里只做“界面与后端对齐”。
+async function onTurnFinished(sid: string, st: TurnStatus): Promise<void> {
+  if (sessionID !== sid) return;
+  const failed = st.phase === "error";
+  await waitTypewriter();
+  if (sessionID !== sid) return;
+  await reloadWindowKeepingScroll();
+  refreshMacros();
+  resetTypewriter();
+  if (sessionID !== sid) return;
+  if (failed) {
+    const text = `失败：${st.error || "未知"}`;
+    vueMessages.value.push({ who: "助手", role: "assistant", content: text, id: tmpKey(), noIdx: true });
+    scrollBottom();
+    toast(text, "error");
+  }
+  refreshStatusline(st.phase, st.elapsed_ms);
+  refreshSessionsBar();
+  refreshStateView(sid);
+  refreshRerolls();
+  if (previewOn()) {
+    api.outgoingPreview(sid, "").then((w) => payloadbarRef.value?.setWire(w))
+      .catch((err) => toast(`预演失败：${errText(err)}`, "error"));
+  }
+}
+// 一轮生成的流（发送/SSE/轮询/step）在 composable；落库后的刷新仍在本文件。
+const {
+  startSendingBubble, send, resend, pollTurn, hasLivePoll,
+} = useTurnStream({
+  api,
+  getSessionID: () => sessionID,
+  getEpoch: () => epoch,
+  vueMessages,
+  vueStream,
+  addMessage,
+  settleOptimisticUser,
+  dropOptimistic,
+  tmpKey,
+  composerRef,
+  resetTypewriter,
+  setStreamTarget,
+  refreshStatusline,
+  refreshTasks,
+  bumpLocalRev: () => { localRev++; },
+  beginPending: () => { pendingSends++; },
+  endPending: () => { pendingSends--; },
+  onTurnFinished,
+});
 // 打开消息编辑器（新窗口，2026-11-02 用户定）：不再在气泡里就地换 textarea。
 // message 可以是消息列里的行，也可以是 /edit 从 vueMessages 里挑的原对象。
-function openMessageEditor(message, kind) {
+function openMessageEditor(message: AppRow, kind: "content" | "reasoning"): void {
   const mid = message?.messageId ?? message?.id;
   if (!mid) { toast("这条消息还没有 id，暂时不能编辑", "error"); return; }
   // 重摇只认尾条 assistant：编辑它自己、或编辑它前面那条 user，才能「保存并重摇」。
   const rerollTargetId = editRerollTarget(vueMessages.value, mid);
   messageEditTarget.value = {
-    sessionId: sessionID,
+    sessionId: sessionID ?? "",
     message: { ...message, id: mid },
     kind,
     rerollable: !!rerollTargetId,
     rerollTargetId,
   };
 }
-// toRow：库里的消息 → 消息列的一行（展示形状）。
-function toRow(m) {
-  return {
-    who: m.role === "user" ? "你" : "助手",
-    kind: m.kind || "chat",
-    status: m.status || "done",
-    tools_snapshot: m.tools_snapshot || [],
-    tools: m.tools || [],
-    sources: toolSources(m.tools),
-    idx: m.idx, // 服务端派生的序号（编号就认它）
-    role: m.role,
-    content: m.content,
-    reasoning: m.reasoning,
-    reasoningMs: m.reasoning_ms,
-    durationMs: m.duration_ms ?? null, // 脚注的速度要用它（与 reasoning_ms 配对）
-    messageId: m.id,
-    id: m.id,
-    // usage：气泡脚注用它（token + 成本）。上游没报就是 null ⇒ 脚注整行不渲染。
-    // 归一化在后端（providers.NormalizeUsage），这里**只读**那几格。
-    usage: m.usage ?? null,
-  };
-}
-
-// batchRanges：runsToFetch 的 Infinity 尾段 → 批量接口的 to=0。
-function batchRanges(runs) {
-  return runs.map(([a, b]) => [a, b === Infinity ? 0 : b]);
-}
-
-// fetchWindow：拉一屏窗口（摘要 + 尾部种子 + 必要的老段）并算好行/段/起点 —— **不碰界面**。
-//
-// loadWindow（进会话 / 对账）与"悬停预取"共用它：预取只把结果塞进 windowCache，
-// 绝不许改当前消息列。`from = null` ⇒ 按"最后 N 段"起；否则保持起点（压缩/删除后对回段边界）。
-// 尾部那一屏做单飞：悬停后马上点下去，两边拿的是同一个 Promise，不会发两遍。
-const tailInflight = new Map();
-function fetchWindow(id, { from = null, limit = windowLimit.value } = {}) {
-  if (from !== null) return fetchWindowNow(id, { from, limit });
-  const key = id + ":" + limit;
-  const hit = tailInflight.get(key);
-  if (hit) return hit;
-  const p = fetchWindowNow(id, { from, limit }).finally(() => tailInflight.delete(key));
-  tailInflight.set(key, p);
-  return p;
-}
-async function fetchWindowNow(id, { from, limit }) {
-  const [sums, recent] = await Promise.all([
-    api.listSummaries(id),
-    // 总数与"窗口可能正好要的那几条"一起拿：`?last=N` 的末条 idx 就是总数。
-    // 没有摘要横跨窗口时，最后 N 条正好就是窗口要的全部 ⇒ 第二拍是空的。
-    api.listMessagesLast(id, limit),
-  ]);
-  const total = recent.length ? recent[recent.length - 1].idx : 0;
-  const segments = computeSegments(total, sums as any);
-  const windowFrom = from === null ? windowStart(segments, limit) : alignWindowFrom(segments, from, limit);
-  const runs = runsToFetch(segments, windowFrom, Infinity);
-  // 只有"窗口比尾部种子更老"才补一发（典型：摘要把窗口起点推到很前面）。
-  const missing = seededMissingRuns(runs, recent as any);
-  const rest = missing.length ? await api.messageRanges(id, batchRanges(missing)) : [];
-  return {
-    // 种子可能多带了几条（被摘要盖住 / 落在窗口外）—— buildChatRows 本来就只画段里的。
-    rows: [...recent, ...rest].sort((x, y) => x.idx - y.idx).map(toRow),
-    segments,
-    windowFrom,
-  };
-}
-
-// loadWindow：把窗口 [windowFrom..尾] 的消息取回来 —— **只按消息段拉**（runsToFetch）：
-// 被摘要盖住的 idx 一个字节都不取（想看原文 ⇒ 摘要卡展开时另拉）。
-// reset ⇒ 重新按"最后 N 段"定窗口；否则保持起点（先对回段边界：压缩/删除会改结构）。
-async function loadWindow({ reset = false, scroll = true, onlyIfUnchanged = false } = {}) {
-  const sid = sessionID;
-  const my = epoch;
-  const rev = onlyIfUnchanged ? localRev : -1;
-  if (!sid) return false;
-  const snap = await fetchWindow(sid, {
-    from: reset ? null : windowFrom.value,
-    limit: windowLimit.value,
-  });
-  if (my !== epoch) return false;
-  // 后台对账专用闸：等待期间人已经动了消息列（发送/编辑/删除…）⇒ 这一发是旧快照，丢掉。
-  // 不丢的话，切回缓存会话后马上打字发送，1 秒后那份"还没含新消息"的窗口会把乐观气泡冲掉。
-  if (onlyIfUnchanged && (rev !== localRev || pendingSends > 0)) return false;
-  const { segments } = snap;
-  vueSegments.value = segments;
-  windowFrom.value = snap.windowFrom;
-  vueMessages.value = snap.rows;
-  // 摘要缓存：卡没了的清掉；还开着的补拉新鲜的一份（结构或正文可能刚变过）。
-  const alive = new Set(segments.filter((seg) => seg.kind === "summary").map((seg) => seg.id));
-  for (const key of [...summaryMsgs.keys()]) if (!alive.has(key)) summaryMsgs.delete(key);
-  for (const id of openSummaries) if (alive.has(id)) refreshSummaryMsgs(id);
-  // 记下这一屏：切走再切回时先画它（0 RTT），后台再对账。
-  rememberWindow(windowCache, sid, { rows: vueMessages.value, segments, windowFrom: windowFrom.value });
-  if (scroll) scrollBottom();
-  if (treeVisible) refreshTree(); // 树看着就让它的全量账本跟着换
-  return true;
-}
-
-// reloadWindow：把当前窗口按服务端最新状态重拉（一轮结束 / 编辑 / 删除 / 压缩 / 切版之后）。
-async function reloadWindow({ scroll = true, onlyIfUnchanged = false } = {}) {
-  return loadWindow({ reset: false, scroll, onlyIfUnchanged });
-}
-// foreground / 落库后的重拉：**人没在底部就别把人拽回底部**（2026-11-03 用户报：
-// 出去截图再回来，滚动条自己跳回最新一条）。贴底才继续贴底；否则恢复原来的 scrollTop。
-const SCROLL_STICK_PX = 48;
-function nearBottom(el) {
-  return !el || el.scrollHeight - el.scrollTop - el.clientHeight <= SCROLL_STICK_PX;
-}
-async function reloadWindowKeepingScroll({ onlyIfUnchanged = false } = {}) {
-  const el = document.getElementById("messages-vue");
-  const stick = nearBottom(el);
-  const top = el?.scrollTop ?? 0;
-  const ok = await reloadWindow({ scroll: false, onlyIfUnchanged });
-  const next = document.getElementById("messages-vue");
-  if (next) {
-    if (stick) next.scrollTop = next.scrollHeight;
-    else next.scrollTop = Math.min(top, Math.max(0, next.scrollHeight - next.clientHeight));
-  }
-  return ok;
-}
-
-// prefetchSession：把一条会话的窗口悄悄取进缓存（不动界面、不抢当前会话的轮询）。
-//
-// 触发点在 SessionBar：桌面 140ms 悬停意图 / 键盘 focus / 触屏 touchstart。
-// 已有缓存或正在取的同一条直接跳过；取失败就算了（点下去还有正常路径）。
-function prefetchSession(id) {
-  if (!id || id === sessionID || draft) return;
-  if (windowCache.has(id) || prefetching.has(id)) return;
-  if (Date.now() - (prefetchedAt.get(id) ?? 0) < PREFETCH_FRESH_MS) return;
-  if (prefetchActive >= PREFETCH_MAX_ACTIVE) return;
-  prefetchActive++;
-  prefetching.add(id);
-  fetchWindow(id).then((snap) => {
-    // 期间人可能已经进了这条会话（loadWindow 会写自己那一份）—— 只在还没有缓存时补。
-    if (!windowCache.has(id)) rememberWindow(windowCache, id, snap);
-    prefetchedAt.set(id, Date.now());
-  }).catch(() => {}).finally(() => {
-    prefetchActive--;
-    prefetching.delete(id);
-  });
-}
-
-// loadMore：往回一页（windowLimit 段）。插入新行前记高度，插完把滚动位置补回去（锚住视野）。
-async function loadMore() {
-  const sid = sessionID;
-  const my = epoch;
-  const older = prevWindowStart(vueSegments.value, windowFrom.value, windowLimit.value);
-  if (!sid || older >= windowFrom.value) return;
-  const runs = runsToFetch(vueSegments.value, older, windowFrom.value - 1);
-  const got = runs.length ? await api.messageRanges(sid, batchRanges(runs)) : [];
-  if (my !== epoch) return;
-  const el = document.getElementById("messages-vue");
-  const beforeH = el ? el.scrollHeight : 0;
-  const beforeTop = el ? el.scrollTop : 0;
-  vueMessages.value = [...got.sort((x, y) => x.idx - y.idx).map(toRow), ...vueMessages.value];
-  windowFrom.value = older;
-  rememberWindow(windowCache, sid, {
-    rows: vueMessages.value, segments: vueSegments.value, windowFrom: windowFrom.value,
-  });
-  await nextTick();
-  if (el) el.scrollTop = beforeTop + (el.scrollHeight - beforeH);
-}
-
-// 摘要卡展开：**按下才拉**未压缩文本（每次按下都拉新的一版 —— 展开里编辑过也不吃旧缓存）。
-async function refreshSummaryMsgs(id) {
-  const seg = vueSegments.value.find((x) => x.kind === "summary" && x.id === id);
-  if (!seg) { summaryMsgs.delete(id); return; }
-  const my = epoch;
-  summaryMsgs.set(id, { state: "loading" });
-  try {
-    const msgs = await api.listMessagesRange(sessionID, seg.b, seg.e);
-    if (my !== epoch) return;
-    summaryMsgs.set(id, {
-      state: "ready",
-      rows: msgs.sort((x, y) => x.idx - y.idx).map((m) => ({ msg: toRow(m), displayIdx: m.idx })),
-    });
-  } catch (err) {
-    if (my !== epoch) return;
-    summaryMsgs.delete(id);
-    toast(`未压缩文本拉取失败：${err.message}`, "error");
-  }
-}
-function onSummaryToggle(id, open) {
-  if (!open) { openSummaries.delete(id); return; }
-  openSummaries.add(id);
-  refreshSummaryMsgs(id);
-}
-
-// 压缩树（右栏"压缩"tab）：**看着才拉全量**消息 + 摘要建树 ——
-// 树要的是整条账本（原文占比、嵌套），而消息列走的是窗口（见 utils/chatrows.ts）；
-// "树 tab 开着"就是用户显式说"给我看全量"。
-let treeVisible = false;
-let payloadTab = "payload"; // PayloadBar 的默认页；它切页时 onPayloadTab 会更新
-function onPayloadTab(t) {
-  payloadTab = t;
-  treeVisible = t === "tree";
-  if (workspace.value !== "context") return; // 人不在工作区：等他切过去再由 refreshContextLazy 拉
-  if (treeVisible) refreshTree();
-  else if (t === "state") refreshStateView(sessionID);
-  else if (t === "payload") refreshHistoryPreview();
-}
-// 载荷面板的「预览载荷」开关：关 ⇒ 清掉旧载荷（不占内存/不显示旧请求）；开 ⇒ 当前 tab 拉一发。
-function onPayloadPreview(on) {
-  if (!on) payloadbarRef.value?.setWire(null);
-  if (workspace.value === "context" && payloadTab === "payload") refreshHistoryPreview();
-}
-// 高级压缩完成后：消息列、状态视图、压缩树都可能变（一批新摘要 + summary_id 回填）。
-function onAdvancedDone() {
-  if (!sessionID) return;
-  reloadWindow();
-  refreshStateView(sessionID);
-  if (treeVisible) refreshTree();
-}
-
-async function refreshTree() {
-  if (!sessionID || !treeVisible) return;
-  const my = epoch;
-  try {
-    const [msgs, sums] = await Promise.all([api.listMessages(sessionID), api.listSummaries(sessionID)]);
-    if (my !== epoch) return;
-    payloadbarRef.value?.setTree(buildCompactTree(msgs as any, sums as any));
-  } catch {
-    if (my === epoch) payloadbarRef.value?.setTree(null);
-  }
-}
-// 历史预演（载荷 tab 的"这一发会发什么"）：**只在真的看载荷时才问**。
-// 从前 enterSession 无条件 `POST /outgoing` —— 服务端要列消息、现演世界状态、拼整段出站，
-// 换会话/刷新页面时这是最重的一发，而人可能根本没打开工作区。现在改成按需。
-let historyPreviewSeq = 0;
-async function refreshHistoryPreview() {
-  // 载荷 tab 是用户**显式点开**的上下文；预览开关是载荷自己的（2026-11-04 加），
-  // 与输入框的 previewOn 分开。草稿 / 无会话 / 关闭预览都清空、不发请求。
-  if (draft || !sessionID || !payloadPreviewOn()) { payloadbarRef.value?.setWire(null); return; }
-  const sid = sessionID;
-  const my = epoch;
-  const seq = ++historyPreviewSeq;
-  try {
-    const w = await api.outgoingPreview(sid, "");
-    if (my === epoch && seq === historyPreviewSeq) payloadbarRef.value?.setWire(w);
-  } catch (err) {
-    if (my === epoch && seq === historyPreviewSeq) toast(`预演失败：${err.message}`, "error");
-  }
-}
-// 工作区按当前 tab 懒加载：切进上下文 / 换会话时只拉"此刻真要看的那一页"。
-async function refreshMacros() {
-  if (!sessionID) { topbarRef.value?.setMacros(null); return; }
-  try { topbarRef.value?.setMacros(await api.sessionMacros(sessionID)); }
-  catch { topbarRef.value?.setMacros(null); }
-}
-function refreshContextLazy() {
-  if (workspace.value !== "context") return;
-  // FlowAgent 暂时没有普通 Agent 的上下文面板 ⇒ 不再发 /outgoing、/state、压缩树这些请求。
-  if (currentAgentIsFlow.value) return;
-  if (payloadTab === "tree") refreshTree();
-  else if (payloadTab === "state") refreshStateView(sessionID);
-  else if (payloadTab === "payload") refreshHistoryPreview();
-}
+const {
+  treeVisible, onPayloadTab, onPayloadPreview, onAdvancedDone,
+  refreshTree, refreshMacros, refreshContextLazy,
+} = useContextWorkspace({
+  api,
+  toast,
+  getSessionID: () => sessionID,
+  getEpoch: () => epoch,
+  isDraft: () => draft,
+  workspace,
+  isFlow: () => currentAgentIsFlow.value,
+  payloadbarRef,
+  setMacros: (report) => topbarRef.value?.setMacros(report),
+  refreshStateView,
+  reloadWindow: () => reloadWindow(),
+  payloadPreviewOn,
+});
 const lastMsgId = computed(() => [...vueMessages.value].reverse().find((m) => m.messageId)?.messageId ?? null);
 // 最新 AI 回复对应的用户输入（A-B-C-D-E-F ⇒ E）——“编辑最新 Prompt”的入口目标。
 const latestPromptId = computed(() => latestPromptFor(vueMessages.value));
+// 重摇两族（消息 / 摘要）在 composable；模板只读它给出的状态与纯函数。
+const {
+  rerollState, summaryReroll,
+  isLive, bubbleContent, bubbleReasoning, rowDuration,
+  refreshReroll, refreshRerollSummary, refreshRerolls,
+  summaryRefresh, summaryVersion, rerollNow, rerollGo,
+  resumeRerollIfLive,
+} = useReroll({
+  api,
+  toast,
+  getSessionID: () => sessionID,
+  getEpoch: () => epoch,
+  getLastMsgId: () => lastMsgId.value,
+  vueSegments,
+  streamDisplay,
+  setStreamTarget,
+  resetTypewriter,
+  waitTypewriter,
+  refreshStatusline,
+  refreshTasks,
+  reloadWindow: () => reloadWindow(),
+  refreshStateView,
+});
 // 渲染行：气泡（带编号）+ 被顶层摘要折起来的卡（口径见 utils/chatrows.ts）。
 // 当前 agent 的"首段对话"（`first_message`，2026-10-11 用户定）—— **computed 只看响应式的两格**
 // （vueAgents + sessionInfo.agent_id）。⚠ 别把它写成"先看普通变量 draft 再早退"：早退分支不碰任何
@@ -743,7 +489,7 @@ const agentGreeting = computed(() => {
 const currentAgent = computed(() => vueAgents.value.find((x) => x.id === sessionInfo.agent_id) ?? null);
 const currentAgentIsFlow = computed(() => currentAgent.value?.kind === "flow");
 const flowCalls = ref(0);
-const flowActiveNodes = ref<any[]>([]);
+const flowActiveNodes = ref<FlowActiveNode[]>([]);
 let flowCallsTimer: ReturnType<typeof setInterval> | null = null;
 async function refreshFlowCalls(): Promise<void> {
   if (draft || !sessionID || !currentAgentIsFlow.value) { flowCalls.value = 0; flowActiveNodes.value = []; return; }
@@ -781,19 +527,20 @@ const chatRows = computed(() => {
   });
 });
 const olderSegments = computed(() => olderCount(vueSegments.value, windowFrom.value));
-function onBubbleEdit(mid, kind) {
+function onBubbleEdit(mid: string | null | undefined, kind: "content" | "reasoning"): void {
+  if (!mid) return;
   const m = vueMessages.value.find((x) => x.messageId === mid || x.id === mid);
   if (!m) { toast("那条消息已经不在了（多半被删了）：重进会话看看", "error"); return; }
   openMessageEditor(m, kind);
 }
-function onBubbleEditPrompt(mid) { onBubbleEdit(mid, "content"); }
+function onBubbleEditPrompt(mid: string | null | undefined): void { onBubbleEdit(mid, "content"); }
 // deleteMessagesFlow：消息级删除的唯一出口（气泡"删"与 /cut 共用）——预览 → 确认 → 执行；
 // 执行时 409（conflict：末尾变了，别人删过/改过）⇒ **重新预览再确认**（最多三轮），
 // 不是干弹一个错（AGENTS 的口径：核对字段不符 ⇒ 409 ⇒ 重新预览）。
-async function deleteMessagesFlow(sid, mid, confirmTextFor) {
+async function deleteMessagesFlow(sid: string, mid: string, confirmTextFor: ConfirmText): Promise<boolean> {
   for (let i = 0; i < 3; i++) {
     const plan = await api.deletionPreview(sid, mid).catch((err) => {
-      toast(`删除预览失败：${err.message}`, "error");
+      toast(`删除预览失败：${errText(err)}`, "error");
       return null;
     });
     if (!plan || sid !== sessionID) return false;
@@ -802,17 +549,18 @@ async function deleteMessagesFlow(sid, mid, confirmTextFor) {
       await api.deleteMessages(sid, mid, plan.last_deleted_message_id);
       localRev++; // 删完消息列已经变了（等这一发重新拉窗口）
     } catch (err) {
-      if (err.code === "conflict" && i < 2) { toast("末尾变了：重新预览一眼再删", "error"); continue; }
-      toast(`删除失败：${err.message}`, "error");
+      if (errCode(err) === "conflict" && i < 2) { toast("末尾变了：重新预览一眼再删", "error"); continue; }
+      toast(`删除失败：${errText(err)}`, "error");
       return false;
     }
     return true;
   }
   return false;
 }
-async function onBubbleDelete(mid, isLast) {
+async function onBubbleDelete(mid: string | null | undefined, isLast: boolean): Promise<void> {
   if (!mid) return;
   const sid = sessionID;
+  if (!sid) return;
   const my = epoch;
   const ok = await deleteMessagesFlow(sid, mid, (plan) => {
     const suffix = isLast
@@ -831,137 +579,25 @@ async function onBubbleDelete(mid, isLast) {
 //
 // 交互（2026-10-10 用户定）：⟳ = 摇新一版并**立刻切到最新那版**（无论当前看着哪一版），
 // 结果就地换正文；模式活着期间气泡下出现 `◀ n/N ▶`：◀▶ 翻版，**最右的 ▶ = 再摇一版**。
-const rerollState = ref<any>({ active: false });
-const summaryReroll = ref<any>({ active: false }); // 摘要重摇（另一族；与消息族共用同一把闸 —— 进错族 409）
-const summaryEditTarget = ref<any>(null); // 编辑中的摘要（SummaryEditor 模态）
-const messageEditTarget = ref<any>(null); // 编辑中的消息（MessageEditor 模态）
-// 候选流预览（就地显示在目标气泡里）：running 期间靠 `/turn/text` 攒；任何一次落地/切版都清掉。
-const rerollPreview = ref({ text: "", reasoning: "" });
-function clearRerollPreview() { rerollPreview.value = { text: "", reasoning: "" }; }
-// rerollStarting：**刚点下 ⟳ 的那一刻**（状态还没回来）就记下目标 —— 让那条气泡立刻切成空白 +
-// 「正在输出…」（2026-10-17 用户定：旧正文一直挂到第一帧才换掉很难看）。状态回来后交给 rerollState。
-const rerollStarting = ref(null);
-// 判据都在 utils/chatrows.ts（纯函数、契约测试钉着）：这条是不是"正在摇的那条"、该显示什么。
-const isLive = (m) => rerollTargetLive(m, { startingId: rerollStarting.value, state: rerollState.value });
-function bubbleContent(m) {
-  return bubbleText(m, { field: "content", live: isLive(m), streamText: streamDisplay.value.text, previewText: streamDisplay.value.text });
-}
-function bubbleReasoning(m) {
-  // 思考多一层回落：库里没思考、合成流也没有 ⇒ 照旧用 m.reasoning（与从前一致）。
-  return bubbleText(m, { field: "reasoning", live: isLive(m), streamText: streamDisplay.value.reasoning, previewText: streamDisplay.value.reasoning });
-}
-// rowDuration：消息行的 `duration_ms` 收窄成气泡脚注要的 number|null。
-// ChatMessage 的索引签名是 unknown，而 `Number(undefined/null)` 不是"0 秒"——那会让速度公式
-// 除出无穷大；所以只放行真的大于 0 的有限数。
-function rowDuration(m) {
-  const n = Number(m?.durationMs);
-  return Number.isFinite(n) && n > 0 ? n : null;
-}
+const summaryEditTarget = ref<EditableSummary | null>(null); // 编辑中的摘要（SummaryEditor 模态）
+const messageEditTarget = ref<{
+  sessionId: string;
+  message: AppRow & { id: string };
+  kind: "content" | "reasoning";
+  rerollable: boolean;
+  rerollTargetId: string | null;
+} | null>(null); // 编辑中的消息（MessageEditor 模态）
 
-// refreshReroll：问一次重摇状态（进会话 / 一轮结束 / 删改之后都要对齐 —— 候选只在内存里，
-// 发新消息、删目标、切会话都会让它自然消失）。
-async function refreshReroll() {
-  if (!sessionID) { rerollState.value = { active: false }; clearRerollPreview(); return; }
-  const my = epoch;
-  try {
-    const st = await api.rerollState(sessionID);
-    if (my !== epoch) return;
-    const active = st?.active && st.target_kind === "message";
-    rerollState.value = active ? st : { active: false };
-    if (!active) clearRerollPreview();
-  } catch {
-    if (my !== epoch) return;
-    rerollState.value = { active: false };
-    clearRerollPreview();
-  }
-}
-// 摘要族的状态读取（两族各自一个 GET；形状同）。
-async function refreshRerollSummary() {
-  if (!sessionID) { summaryReroll.value = { active: false }; return; }
-  const my = epoch;
-  try {
-    const st = await api.rerollSummaryState(sessionID);
-    if (my !== epoch) return;
-    summaryReroll.value = st?.active && st.target_kind === "summary" ? st : { active: false };
-  } catch {
-    if (my === epoch) summaryReroll.value = { active: false };
-  }
-}
-// 两族一起对齐（切会话/一轮结束/删改之后都要）。
-function refreshRerolls() {
-  return Promise.all([refreshReroll(), refreshRerollSummary()]).catch(() => {});
-}
-// 摘要刷新（卡上 ⟳）：进摘要重摇模式并摇一版 —— **当前那版先占第 1 位**（不丢），完了切到最新那版。
-// 生成走 compact 的"只生成、不落库"半程（非流式）⇒ 没有流式预览，卡片头标"刷新中…"。
-async function summaryRefresh(sumId) {
-  const sid = sessionID;
-  const seg = vueSegments.value.find((x) => x.kind === "summary" && x.id === sumId);
-  if (!sid || !seg) return;
-  if (summaryReroll.value.active && summaryReroll.value.running) { toast("摘要还在刷新"); return; }
-  // 与 `rerollNow` 同一个口径：只有"真的多出一版"才切（被按停 ⇒ 不切）。
-  const versionsBefore = summaryReroll.value?.count ?? 0;
-  try {
-    await api.rerollSummaryEnter(sid, seg.b); // idx = 段起点（同树任意一条都上溯到同一个根）
-    refreshTasks();
-  } catch (err) {
-    toast(`刷新失败：${err.message}`, "error");
-    return;
-  }
-  const my = epoch;
-  const st = await pollRerollSummary(sid);
-  if (my !== epoch) return;
-  if (st?.error) { toast(`刷新失败：${st.error}`, "error"); return; }
-  if (!st?.active) return;
-  if (st.count <= versionsBefore) { refreshRerollSummary(); return; } // 被按停：不切（同上一条）
-  await summarySwitch(st.count); // 最新那版的位次就是 count（1-based，与气泡同一套）
-}
-async function pollRerollSummary(sid) {
-  const my = epoch;
-  let st = null;
-  for (let i = 0; i < 450; i++) {
-    await new Promise((r) => setTimeout(r, 400));
-    if (my !== epoch) return null;
-    st = await api.rerollSummaryState(sid).catch(() => null);
-    if (!st || my !== epoch) return null;
-    // 与消息族同一个坑，同一条改法（见 `pollReroll` 上面那条注释）。
-    summaryReroll.value = st.active && st.target_kind === "summary" ? st : { active: false };
-    refreshStatusline(st.running ? "摘要刷新中" : "idle", undefined, { withContext: !st.running });
-    if (!st.running) return st;
-  }
-  return st;
-}
-async function summarySwitch(idx) {
-  const my = epoch;
-  try {
-    await api.rerollSummarySwitch(sessionID, idx);
-  } catch (err) {
-    toast(`切版失败：${err.message}`, "error");
-    return;
-  }
-  if (my !== epoch) return;
-  await reloadWindow();
-  refreshStateView();
-  await refreshRerollSummary();
-}
-// ◀ ▶ 翻版；最右的 ▶ 再按 = 再摇一版（与气泡同一套语义）。
-async function summaryVersion(delta) {
-  const st = summaryReroll.value;
-  if (!st?.active || st.running) return;
-  const to = st.current_idx + delta;
-  if (delta > 0 && to > st.count) { await summaryRefresh(st.target_summary_id); return; }
-  if (delta < 0 && to < 1) { toast("已经是第一版了"); return; }
-  await summarySwitch(to);
-}
-function openSummaryEdit(sum) {
-  if (sum?.id) summaryEditTarget.value = sum;
+function openSummaryEdit(sum: EditableSummary | ChatSummary | null): void {
+  if (sum?.id) summaryEditTarget.value = sum as EditableSummary;
 }
 async function onSummaryEdited() {
   summaryEditTarget.value = null;
   await reloadWindow();
-  if (treeVisible) refreshTree();
+  if (treeVisible.value) refreshTree();
   toast("摘要已改", "ok");
 }
-async function onMessageEdited(result: any = {}) {
+async function onMessageEdited(result: { message?: Message; reroll?: boolean } = {}): Promise<void> {
   const sid = sessionID;
   const target = messageEditTarget.value;
   messageEditTarget.value = null;
@@ -987,122 +623,18 @@ async function onMessageEdited(result: any = {}) {
   }
   toast("消息已保存", "ok");
 }
-// pollReroll：等这一摇落地（顺带把状态行挂上"重摇中"，并把候选流攒进预览）。
-async function pollReroll(sid) {
-  const my = epoch;
-  let st = null;
-  let cur = { from: 0, thinkFrom: 0 };
-  for (let i = 0; i < 450; i++) {
-    await new Promise((r) => setTimeout(r, 400));
-    if (my !== epoch) return null;
-    st = await api.rerollState(sid).catch(() => null);
-    if (!st || my !== epoch) return null;
-    // ⚠ **无条件写回**，不是"活着才写"（2026-11-01 修的 bug：从任务面板按停之后，
-    // 对话界面一直"在等待"）。原来写的是 `if (st.active && ...) rerollState.value = st`
-    // ⇒ 状态变成"没了"时**一个字都不写**，`rerollState` 就永远停在旧的 `running:true` 上
-    // ⇒ `rerollTargetLive` 一直为真 ⇒ 气泡一直是空白 +"正在输出"，直到下一次刷新才恢复。
-    // 这与 `refreshReroll` 同一条口径：**不活跃就显式写回 inactive**。
-    rerollState.value = st.active && st.target_kind === "message" ? st : { active: false };
-    if (st.running) {
-      // 候选流：与一轮的游标读同一套（读不消费；token 对不上后端自然给空）。
-      const slice = await api.turnText(sid, cur.from, cur.thinkFrom).catch(() => null);
-      if (slice && my === epoch) {
-        const merged = mergeStreamSlice(
-          { text: rerollPreview.value.text, reasoning: rerollPreview.value.reasoning }, cur, slice);
-        rerollPreview.value = { text: merged.text, reasoning: merged.reasoning };
-        setStreamTarget(merged.text, merged.reasoning);
-        cur = merged.cur;
-      }
-    }
-    refreshStatusline(st.running ? "重摇中" : "idle", undefined, { withContext: !st.running });
-    if (!st.running) return st;
-  }
-  return st;
-}
-// rerollNow：⟳ / `/reroll` —— 摇一版（没进模式就先进），摇完**切到最新那版**。
-async function rerollNow(targetId = null) {
-  const sid = sessionID;
-  if (!sid) return;
-  const my = epoch;
-  clearRerollPreview();
-  resetTypewriter();
-  // 立刻把**被点的那条**切空白（别等第一帧）：优先用气泡报上来的 id，
-  // 命令 / 版本导航没有 id 时回落到尾条 assistant（后端也只认它）。
-  const target = targetId || lastMsgId.value;
-  if (!target) return;
-  rerollStarting.value = target;
-  // 摇之前有几版 —— 摇完只有"真的多出来一版"才切过去。
-  //
-  // 为什么不能直接 `switchReroll(st.count)`（2026-11-01 修的第二个洞）：从任务面板**按停**之后
-  // 候选列表还在（之前摇过的版本还在），`st.count` 没变，于是那句会把正文切到最后**已经存在**的那版上
-  // —— 用户按的是"取消"，界面却换了一版内容。那就是"取消"干了实事，正是要避免的。
-  const versionsBefore = rerollState.value?.count ?? 0;
-  try {
-    try {
-      await api.rerollEnter(sid); // 202：进模式并立刻摇一版；已在模式里 ⇒ 再摇一版
-      refreshTasks();
-    } catch (err) {
-      toast(`重摇失败：${err.message}`, "error");
-      return;
-    }
-    const st = await pollReroll(sid);
-    if (my !== epoch) return;
-    if (st?.error) { toast(`重摇失败：${st.error}`, "error"); clearRerollPreview(); return; }
-    if (!st?.active) return; // 连模式都退了（取消 / 只剩原文一版）
-    if (st.count <= versionsBefore) {
-      // 没多出新的一版 ⇒ 这一趟是被按停的（或者没摇成）：**什么都不切**。
-      refreshReroll();
-      return;
-    }
-    await waitTypewriter(); // 候选最后一块先放完，再切到库里那版（不然会跳一下）
-    await switchReroll(sid, st.count); // 最新那版的位次就是 count（1-based）
-  } finally {
-    // 走到哪儿都别留下"永远在摇"的假象（出错、被停、切会话、epoch 变了都算）。
-    rerollStarting.value = null;
-  }
-}
-// rerollGo：◀ ▶ —— 翻版；最右再按 = 再摇一版（与 TUI/TG 的 `‹ 2/3 ›` 同一套语义）。
-async function rerollGo(delta) {
-  const sid = sessionID;
-  const st = rerollState.value;
-  if (!sid || !st?.active || st.running) return;
-  const to = st.current_idx + delta;
-  if (delta > 0 && to > st.count) { await rerollNow(); return; }
-  if (delta < 0 && to < 1) { toast("已经是第一版了"); return; }
-  await switchReroll(sid, to);
-}
-// switchReroll：就地换正文（UUID 不变），然后对齐列表与状态。
-async function switchReroll(sid, idx) {
-  const my = epoch;
-  try {
-    await api.rerollSwitch(sid, idx);
-  } catch (err) {
-    toast(`切版失败：${err.message}`, "error");
-    return;
-  }
-  if (my !== epoch) return;
-  await reloadWindow();
-  // 两件事必须**同一拍**做（中间不能有 await）：预览一清、库内正文也已经是新那版 ⇒ 气泡无缝换过去；
-  // `rerollStarting` 若拖到 rerollNow 的 finally 才清，中间会闪一帧空白（预览空了却还判"在摇"）。
-  clearRerollPreview();
-  rerollStarting.value = null;
-  refreshStateView(sid);
-  refreshStatusline("idle");
-  await refreshRerolls();
-}
-
 // compactNow：受理一次压缩（命令面板与右栏压缩面板共用一条路）；`blocks` 空 = 用配置默认。
-async function compactNow(blocks) {
+async function compactNow(blocks?: number | null): Promise<void> {
   const sid = sessionID;
   if (!sid) { toast("先发一句话：草稿里还没有会话可压"); return; }
   try {
-    const accepted = await api.compact(sid, blocks);
+    const accepted = await api.compact(sid, blocks ?? undefined);
     localRev++; // 压缩会改摘要/段结构：在飞的后台对账别把旧结构盖回去
     refreshTasks();
     toast(`压缩已受理${blocks ? `（${blocks} 块）` : ""}`, "ok");
     pollCompact(sid, accepted?.at_ms).catch(() => {});
   } catch (err) {
-    toast(`压缩失败：${err.message}`, "error");
+    toast(`压缩失败：${errText(err)}`, "error");
   }
 }
 
@@ -1110,7 +642,7 @@ async function compactNow(blocks) {
 //
 // 顶层摘要都可撤；撤更早的一条会连同**同层更晚的压缩**一起删。先问后端要 preview，
 // 超过一条就摊开警告（哪些区间会一起没），绝不静默删一串。
-async function undoSummary(summaryID) {
+async function undoSummary(summaryID: string): Promise<void> {
   const sid = sessionID;
   if (!sid || !summaryID) return;
   const my = epoch;
@@ -1118,7 +650,7 @@ async function undoSummary(summaryID) {
   try {
     preview = await api.undoPreview(sid, summaryID);
   } catch (err) {
-    if (my === epoch) toast(`撤销失败：${err.message}`, "error");
+    if (my === epoch) toast(`撤销失败：${errText(err)}`, "error");
     return;
   }
   const items = preview.items ?? [];
@@ -1134,7 +666,7 @@ async function undoSummary(summaryID) {
   try {
     await api.undoSummary(sid, summaryID);
   } catch (err) {
-    if (my === epoch) toast(`撤销失败：${err.message}`, "error");
+    if (my === epoch) toast(`撤销失败：${errText(err)}`, "error");
     return;
   }
   if (my !== epoch) return;
@@ -1143,11 +675,11 @@ async function undoSummary(summaryID) {
   await reloadWindow();
   refreshStateView(sid);
   refreshStatusline("idle");
-  if (treeVisible) refreshTree();
+  if (treeVisible.value) refreshTree();
 }
 // pollCompact：盯一次压缩到收尾（拿受理时的 `at_ms` 对上这一发 —— 状态位是**持久**的，
 // 不认准 at_ms 会被上一次的旧结局骗），完了刷新消息列（装配变短）与压缩树。
-async function pollCompact(sid, atMS) {
+async function pollCompact(sid: string, atMS: number | undefined): Promise<void> {
   const my = epoch;
   for (let i = 0; i < 300; i++) {
     await new Promise((r) => setTimeout(r, 700));
@@ -1217,7 +749,7 @@ async function resyncOnForeground() {
     if (st.phase === "pending" || st.phase === "streaming") {
       // ① 还在跑：只把轮询接回来，**不动消息列**。
       refreshStatusline(st.phase, st.elapsed_ms);
-      if (liveTurnPoll === 0) {
+      if (!hasLivePoll()) {
         dropStreamBubbles();
         pollTurn(sessionID, st.message_id).catch(() => {});
       }
@@ -1244,50 +776,6 @@ async function resyncOnForeground() {
   }
 }
 
-// resumeReroll：重摇那两条轮询也可能在后台断掉 —— 回来后接着等它（口径与 `rerollNow` 一致：
-// 只有**真的多出一版**才切，取消不换版）。
-async function resumeRerollIfLive() {
-  if (!sessionID) return;
-  const messageLive = rerollState.value?.active && rerollState.value?.running;
-  const summaryLive = summaryReroll.value?.active && summaryReroll.value?.running;
-  if (!messageLive && !summaryLive) return;
-  const my = epoch;
-  if (messageLive) {
-    const before = rerollState.value?.count ?? 0;
-    const st = await pollReroll(sessionID).catch(() => null);
-    if (my !== epoch || !st) return;
-    if (st.active && st.count > before) await switchReroll(sessionID, st.count);
-    else refreshReroll();
-    return;
-  }
-  const before = summaryReroll.value?.count ?? 0;
-  const st = await pollRerollSummary(sessionID).catch(() => null);
-  if (my !== epoch || !st) return;
-  if (st.active && st.count > before) await summarySwitch(st.count);
-  else refreshRerollSummary();
-}
-
-async function askDeleteSession(id) {
-  // 高延迟下别为了一个标题先等一个 RTT：左栏缓存里就有它。
-  let title = sessionsCache.value.find((s) => s.id === id)?.title;
-  if (title === undefined) {
-    const list = await api.listSessions().catch(() => []);
-    title = list.find((s) => s.id === id)?.title;
-  }
-  const name = sessionTitle(title);
-  if (!(await overlaysRef.value.confirmAsk(`删除会话「${name}」？不可逆。`))) return;
-  try {
-    await api.deleteSession(id);
-  } catch (err) {
-    toast(`关闭失败：${err.message}`, "error");
-    return; // 删失败就别切会话（catch 回调里的 return 不是这个函数的 return）
-  }
-  forgetWindow(windowCache, id);
-  if (id === sessionID) {
-    backToChat(); // 被删的是当前会话 ⇒ 接下来要去草稿：**两个视图都让位**（哪边开着都回对话区）
-    await startDraft(); // 删掉当前会话 ⇒ 回到草稿（不再预建空会话 —— 那正是被拿掉的旧行为）
-  } else refreshSessionsBar();
-}
 async function startDraft() {
   const my = ++epoch;
   draft = true;
@@ -1347,9 +835,9 @@ async function startDraft() {
 function newSession() {
   closeLeftDrawer(); // 窄屏：抽屉让位（人已经去新对话了）
   backToChat(); // 侧栏动作 = 把人带回对话区（**两个视图**都让位 —— 别再只 closeSettings）
-  startDraft().catch((err) => toast(`新建失败：${err.message}`, "error"));
+  startDraft().catch((err) => toast(`新建失败：${errText(err)}`, "error"));
 }
-function renderSessions(sessions) {
+function renderSessions(sessions: SessionView[]): void {
   sessionsCache.value = sessions ?? [];
   sessionsLoading.value = false;
   sessionbarRef.value?.setSessions(sessions, sessionID);
@@ -1360,13 +848,13 @@ async function refreshSessionsBar() {
     const sessions = await api.listSessions();
     sessionsFetchedAt = Date.now();
     renderSessions(sessions);
-  } catch (err) { toast(`刷会话栏失败：${err.message}`, "error"); }
+  } catch (err) { toast(`刷会话栏失败：${errText(err)}`, "error"); }
   finally {
     sessionsRefreshing.value = false;
     sessionsLoading.value = false;
   }
 }
-async function enterSession(id, preloaded = null) {
+async function enterSession(id: string, preloaded: SessionView[] | null = null): Promise<void> {
   const my = ++epoch;
   loadingSession.value = true;
   try {
@@ -1460,7 +948,7 @@ async function boot() {
     last ? warmApi.listSessions().catch(() => []) : Promise.resolve([]),
   ]);
   let health = null;
-  let lastErr = null;
+  let lastErr: unknown = null;
   let winner = "";
   for (const cand of apiBaseCandidates()) {
     try {
@@ -1475,7 +963,7 @@ async function boot() {
     // 连不上后端：不开一副破界面，就明说"连不上"，并把试过的地址列出来 ——
     // 从前这里弹的是一张要填地址/口令的**门板**，账号砍了之后那种门板没有意义了
     //（没有要填的东西），于是改成一句能照着查的提示。
-    toast(`连不上后端（${String(lastErr?.message ?? lastErr)}）。检查它起没起、地址对不对。`, "error");
+    toast(`连不上后端（${errText(lastErr)}）。检查它起没起、地址对不对。`, "error");
     connText = "未连接";
     loadingSession.value = false;
     sessionsLoading.value = false;
@@ -1510,266 +998,7 @@ async function boot() {
   await startDraft();
 }
 
-// —— 发送 / 轮询 ——
-async function send(content) {
-  const sid = sessionID;
-  // 乐观上屏：远端 1s+ 时，等 202 再画那句会让人以为"按了没反应"。
-  const optimistic = addMessage("你", content, "user");
-  const live = startSendingBubble();
-  localRev++; // 消息列已经变了：在飞的后台对账不许拿旧快照覆盖它
-  let accepted;
-  pendingSends++;
-  try {
-    accepted = await api.sendMessage(sid, content);
-  } catch (err) {
-    dropOptimistic(optimistic);
-    dropOptimistic(live);
-    composerRef.value?.setText(content); // 发失败别把那句话吞掉
-    throw err;
-  } finally {
-    pendingSends--;
-  }
-  settleOptimisticUser(optimistic, accepted?.user);
-  live.phase = "waiting";
-  localRev++; // 服务端那条已经落库：在飞的对账（可能早于落库取的快照）到此为止
-  refreshTasks();
-  await pollTurn(sid, accepted.turn.message_id, live);
-}
-async function resend() {
-  const sid = sessionID;
-  const live = startSendingBubble();
-  let accepted;
-  try {
-    accepted = await api.resend(sid);
-  } catch (err) {
-    dropOptimistic(live);
-    throw err;
-  }
-  live.phase = "waiting";
-  refreshTasks();
-  await pollTurn(sid, accepted.turn.message_id, live);
-}
-// liveTurnPoll：**本地此刻有几条轮询循环真的在跑**（0 或 1）。
-//
-// 为什么需要这个数，而不是"看有没有 stream 气泡"：气泡是**一次性的**，循环死掉（网络错、
-// 后台被冻住之后异常退出）而气泡还留在列表里 —— 那个气泡就是僵住的假象。判"要不要接回来"
-// 必须看循环本身在不在。
-let liveTurnPoll = 0;
-// 同一个会话只允许一个轮询循环（2026-11-03）：前台对齐/重进会话/发送三路都可能喊 pollTurn，
-// 两个循环各带各的游标写同一个 streamDisplay ⇒ 字符会重复/跳序。这里是一把**前端单飞闸**。
-const activeTurnPolls = new Set();
-
-// applyTurnStream：把一次 status+slice 并进显示与打字机；返回新游标。
-function applyTurnStream(st, slice, cur, row) {
-  if (st.step) row.step = st.step;
-  row.tool = st.tool ?? null;
-  row.sources = st.sources ?? [];
-  if (row.tool || row.sources.length) row.kind = "tool_run";
-  const merged = mergeStreamSlice(
-    { text: vueStream.value.text ?? "", reasoning: vueStream.value.reasoning ?? "" }, cur, slice);
-  vueStream.value.text = merged.text;
-  vueStream.value.reasoning = merged.reasoning;
-  setStreamTarget(merged.text, merged.reasoning);
-  row.reasoning = merged.reasoning;
-  refreshStatusline(st.phase, st.elapsed_ms, { withContext: false });
-  return merged.cur;
-}
-
-// finishTurnStream：一轮落地后的共同收尾（SSE / 轮询回退都走这一处）。
-async function finishTurnStream(sid, st) {
-  if (sessionID !== sid) return;
-  const failed = st.phase === "error";
-  await waitTypewriter();
-  if (sessionID !== sid) return;
-  await reloadWindowKeepingScroll();
-  refreshMacros();
-  resetTypewriter();
-  if (sessionID !== sid) return;
-  if (failed) {
-    const errText = `失败：${st.error || "未知"}`;
-    vueMessages.value.push({ who: "助手", role: "assistant", content: errText, id: tmpKey(), noIdx: true });
-    scrollBottom();
-    toast(errText, "error");
-  }
-  refreshStatusline(st.phase, st.elapsed_ms);
-  refreshSessionsBar();
-  refreshStateView(sid);
-  refreshRerolls();
-  if (previewOn()) {
-    api.outgoingPreview(sid, "").then((w) => payloadbarRef.value?.setWire(w))
-      .catch((err) => toast(`预演失败：${err.message}`, "error"));
-  }
-}
-
-// pollTurnEvents：优先走 SSE（远程/CF 少每拍一个 RTT）。返回最终 status；null = 已换代/旧轮次，别回退。
-// 连接建了但 8s 一个事件都没有 ⇒ 抛错，让 pollTurn 回退到 HTTP 轮询（CF 缓冲/旧代理的兜底）。
-async function pollTurnEvents(sid, turnID, my, row) {
-  let cur = { from: 0, thinkFrom: 0 };
-  let liveRow = row;
-  let es = null;
-  try {
-    return await new Promise((resolve, reject) => {
-      let got = false;
-      const watchdog = setTimeout(() => {
-        if (got) return;
-        es?.close();
-        reject(new Error("SSE 连接超时"));
-      }, 8000);
-      es = new EventSource(api.turnEventsUrl(sid, 0, 0));
-      es.onmessage = (event) => {
-        got = true;
-        clearTimeout(watchdog);
-        if (my !== epoch) { es.close(); resolve(null); return; }
-        let poll;
-        try { poll = JSON.parse(event.data); } catch { return; }
-        const st = poll.status;
-        const slice = poll.slice;
-        if (!st || !slice) return;
-        // 迟到的旧连接拿到的是新一轮：立刻收手，别把新的字写进旧的显示前缀。
-        if (turnID && st.message_id && st.message_id !== turnID && st.phase !== "idle") {
-          es.close(); resolve(null); return;
-        }
-        const advanced = advanceLiveStep(st, liveRow, cur);
-        if (advanced) { liveRow = advanced.row; cur = advanced.cur; }
-        cur = applyTurnStream(st, slice, cur, liveRow);
-        if (st.phase === "idle" || st.phase === "error") {
-          es.close(); resolve(st);
-        }
-      };
-      es.onerror = () => {
-        // EventSource 自己会带 Last-Event-ID 重连；这里不关它。
-        // 如果从未收到过事件，watchdog 会兜底切 HTTP。
-      };
-    });
-  } finally {
-    es?.close();
-  }
-}
-
-// pollTurnHTTP：SSE 不可用时的回退（也是原来那套 status+增量轮询）。
-async function pollTurnHTTP(sid, turnID, my, row) {
-  let cur = { from: 0, thinkFrom: 0 };
-  let liveRow = row;
-  let misses = 0;
-  let delay = 200;
-  for (;;) {
-    await new Promise((r) => setTimeout(r, delay));
-    if (my !== epoch) return;
-    let poll;
-    let st;
-    let slice;
-    const requestAt = performance.now();
-    try {
-      poll = await api.turnPoll(sid, cur.from, cur.thinkFrom);
-      st = poll.status;
-      slice = poll.slice;
-      if (turnID && st.message_id && st.message_id !== turnID && st.phase !== "idle") return;
-      misses = 0;
-    } catch (err) {
-      if (++misses > 10) throw err;
-      delay = 200;
-      continue;
-    }
-    delay = Math.max(80, 300 - (performance.now() - requestAt));
-    if (my !== epoch) return;
-    const advanced = advanceLiveStep(st, liveRow, cur);
-    if (advanced) { liveRow = advanced.row; cur = advanced.cur; }
-    cur = applyTurnStream(st, slice, cur, liveRow);
-    if (st.phase === "idle" || st.phase === "error") {
-      await finishTurnStream(sid, st);
-      return;
-    }
-  }
-}
-
-async function pollTurn(sid, turnID, existing = null) {
-  if (activeTurnPolls.has(sid)) return;
-  activeTurnPolls.add(sid);
-  const my = epoch;
-  liveTurnPoll++;
-  const m = existing && vueMessages.value.includes(existing)
-    ? existing
-    : { who: "助手", role: "assistant", _stream: true, stream: true, content: "", reasoning: "", id: tmpKey() };
-  if (!m.stream) m.stream = true;
-  m.phase = "waiting";
-  m.tool = null;
-  m.sources = [];
-  m.step = 1;
-  if (!vueMessages.value.includes(m)) vueMessages.value.push(m);
-  vueStream.value = { id: turnID, text: "", reasoning: "" };
-  resetTypewriter();
-  composerRef.value?.setRunning(true);
-  refreshStatusline("pending");
-  try {
-    let finalStatus = null;
-    if (typeof EventSource === "function") {
-      try {
-        finalStatus = await pollTurnEvents(sid, turnID, my, m);
-      } catch {
-        finalStatus = undefined; // 明确：SSE 没起来，走下面的 HTTP 回退
-      }
-      if (finalStatus === null) return; // 世代/旧轮次：已收手，不回退
-    }
-    if (finalStatus) {
-      await finishTurnStream(sid, finalStatus);
-    } else {
-      await pollTurnHTTP(sid, turnID, my, m);
-    }
-  } finally {
-    activeTurnPolls.delete(sid);
-    liveTurnPoll--;
-    composerRef.value?.setRunning(false);
-  }
-}
 let connText = "未连接";
-// saveRequestOverrides：Agent/请求体覆盖面板的“保存”（2026-11-10）。
-// 存到会话上；保存后立刻重跑载荷预演，让「上下文 → 载荷」看到附加字段。
-async function saveRequestOverrides(overrides: Record<string, unknown>) {
-  if (draft || !sessionID) {
-    toast("先建立会话，才能保存请求体覆盖", "error");
-    return;
-  }
-  try {
-    const updated = await api.patchSession(sessionID, { request_overrides: overrides });
-    Object.assign(sessionInfo, updated);
-    topbarRef.value?.setOverridesSaved(updated.request_overrides ?? {});
-    refreshPreview();
-    toast("请求体覆盖已保存", "ok");
-  } catch (err) {
-    toast(`保存请求体覆盖失败：${err.message}`, "error");
-  }
-}
-
-// 左栏「选项」浮板的两件动作（2026-11-04 从会话设置面板挪过来）：
-// 复制成功后仍走 afterCopy（进副本）；导出仍用同一个 API + downloadJSON。
-async function copySessionFromBar(id) {
-  try {
-    const fresh = await api.copySession(id);
-    afterCopy(fresh);
-  } catch (err) {
-    toast(`复制失败：${err.message}`, "error");
-  }
-}
-async function exportSessionFromBar(id) {
-  try {
-    const doc = await api.exportSession(id);
-    downloadJSON(doc, `${doc.title || "新会话"}.json`);
-    toast(`已导出 ${doc.messages?.length ?? 0} 条`, "ok");
-  } catch (err) {
-    toast(`导出失败：${err.message}`, "error");
-  }
-}
-
-// afterCopy：**创建副本**之后（2026-11-01）—— 刷左栏让它出现，然后直接进副本。
-//
-// 为什么刷了左栏还要再进一次：副本是"接着在这儿往下写"的东西，
-// 停在原会话里会让人以为点了没反应（副本在左栏、视线还在浮板上）。
-function afterCopy(fresh) {
-  if (!fresh?.id) { toast("复制完成了，但没拿到新会话 id", "error"); return; }
-  toast(`已创建副本「${fresh.title || "未命名"}」`, "ok");
-  refreshSessionsBar();
-  enterSession(fresh.id).catch((err) => toast(`进副本失败：${err.message}`, "error"));
-}
 // refreshStatusline：连接 / 助手 / 相位 / 上下文 —— 全都喂给右上角那枚环（2026-10-28 用户定）。
 //
 // 这四样从前是一行小字（"已连接 v0.1.0｜上下文 344/1.04M｜默认助手｜idle"），紧贴着对话；
@@ -1779,7 +1008,7 @@ function afterCopy(fresh) {
 // 生成 / 重摇 / 摘要刷新这些轮询每秒要问好几次，而占用在一轮落地前根本不变 ⇒ 轮询里传 false，
 // 只在翻 idle 那一拍（以及进会话/换模型这些"事情真的变了"的时刻）按默认 true 问一次。
 // 少掉的是请求与装配，不是显示：环在轮询期间保持上一拍的数（那正是此刻真实的占用）。
-function refreshStatusline(phase, elapsedMs = null, { withContext = true } = {}) {
+function refreshStatusline(phase: string = "idle", elapsedMs: number | null = null, { withContext = true }: { withContext?: boolean } = {}): void {
   // 连接 + 助手 + 相位：草稿态也要报（"没连上"跟有没有会话无关）。
   topbarRef.value?.setStatus({ conn: connText, agent: statusAgent.value, phase, elapsedMs });
   if (draft || !sessionID) {
@@ -1791,174 +1020,42 @@ function refreshStatusline(phase, elapsedMs = null, { withContext = true } = {})
   api.context(sessionID).catch(() => null).then((ctx) => {
     topbarRef.value?.setContext(ctx);
   refreshMacros();
-  }).catch((err) => toast(`上下文占用读取失败：${err.message}`, "error"));
+  }).catch((err) => toast(`上下文占用读取失败：${errText(err)}`, "error"));
 }
-function refreshStateView(id = null) {
-  if (draft || !(id ?? sessionID)) return; // 草稿：没有会话可问状态（右栏保持空话）
+function refreshStateView(id: string | null = null): void {
+  const sid = id ?? sessionID;
+  if (draft || !sid) return; // 草稿：没有会话可问状态（右栏保持空话）
   const my = epoch;
-  api.sessionState(id ?? sessionID).then((v) => { if (my === epoch) payloadbarRef.value?.setTables(v?.tables); }).catch(() => {});
+  api.sessionState(sid).then((v) => { if (my === epoch) payloadbarRef.value?.setTables(v?.tables); }).catch(() => {});
 }
-
-// —— 命令 ——
-// 命令执行器：键与 commands.js 的 COMMAND_META **同一份命令表**（说明在表里、动作在这里；
-// 启动时对账，两边对不上立刻 console.error，不静默）。“要真会话”由表上的 needsSession 决定。
-const COMMAND_RUNNERS = {
-  new: async () => {
-    if (draft) { toast("已经在一张新对话里了"); return; }
-    await startDraft();
-  },
-  resume: async () => {
-    const list = await api.listSessions();
-    overlaysRef.value?.showPicker(
-      "选会话（resume）",
-      list.map((s) => ({ label: `${s.title || "(无标题)"} [${s.messages}条]`, value: s.id })),
-      (it) => enterSession(it.value),
-    );
-  },
-  model: async () => { fillModelSelect(); },
-  providers: async () => {
-    const rows = await api.providers();
-    overlaysRef.value?.showPicker("providers", rows.map((r) => ({ label: r.name ?? r.id, value: r })), () => {});
-  },
-  agents: async () => {
-    const data = await api.agents();
-    const rows = Array.isArray(data) ? data : (data.agents ?? []);
-    overlaysRef.value?.showPicker("agents", rows.map((r) => ({ label: r.name ?? r.id, value: r })), () => {});
-  },
-  compact: async (args) => {
-    const n = args[0] ? Number(args[0]) : 0;
-    await compactNow(Number.isFinite(n) && n > 0 ? n : undefined);
-  },
-  reroll: async () => { await rerollNow(); },
-  switch: async (args) => {
-    const my = epoch;
-    await api.rerollSwitch(sessionID, Number(args[0] ?? 0));
-    if (my !== epoch) return;
-    await reloadWindow();
-  },
-  stop: async () => { await api.stop(sessionID); },
-  resend: async () => { await resend(); },
-  delete: async () => {
-    if (!(await overlaysRef.value.confirmAsk(`删除整个会话 ${sessionID}？`))) return;
-    await api.deleteSession(sessionID);
-    await startDraft();
-  },
-  cut: async () => {
-    const sid = sessionID;
-    const messages = vueMessages.value; // 只列表里有的（想看更老的先"加载更多"）
-    overlaysRef.value?.showPicker(
-      "cut：选一条（删它及之后）",
-      messages.filter((m) => m.idx > 0).map((m) => ({
-        label: `#${m.idx} ${m.role} ${m.content.slice(0, 40)}`,
-        value: m,
-      })),
-      async (it) => {
-        const ok = await deleteMessagesFlow(sid, it.value.id,
-          (plan) => `${deletionPlanSummary(plan)}，确认删 #${it.value.idx} 及之后？`);
-        if (!ok || sid !== sessionID) return;
-        await reloadWindow();
-        refreshStateView(sid);
-        refreshRerolls();
-      },
-    );
-  },
-  edit: async (args) => {
-    const messages = vueMessages.value; // 只列表里有的（想看更老的先"加载更多"）
-    const wantThink = (args[0] ?? "").toLowerCase().startsWith("思") || (args[1] ?? "").toLowerCase().startsWith("思");
-    const n = Number(wantThink && isNaN(Number(args[0])) ? args[1] : args[0]);
-    const one = (m) => openMessageEditor(m, wantThink ? "reasoning" : "content");
-    if (Number.isInteger(n) && n > 0) {
-      const m = messages.find((x) => x.idx === n);
-      if (!m) { toast(`没有第 ${n} 条`, "error"); return; }
-      await one(m);
-      return;
-    }
-    overlaysRef.value?.showPicker(
-      `edit：选一条（改${wantThink ? "思考" : "正文"}）`,
-      messages.filter((m) => m.idx > 0).map((m) => ({
-        label: `#${m.idx} ${m.role} ${(wantThink ? (m.reasoning ?? "") : m.content).slice(0, 40)}`,
-        value: m,
-      })),
-      async (it) => { await one(it.value); },
-    );
-  },
-  editsum: async () => {
-    const items = await api.listSummaries(sessionID);
-    if (!items.length) { toast("这条会话还没有摘要"); return; }
-    overlaysRef.value?.showPicker(
-      "editsum：选一条摘要（改它的正文）",
-      items.map((s) => ({
-        label: `${(s.text ?? "").slice(0, 40)}${s.dirty ? "（已过期）" : ""}`,
-        value: s,
-      })),
-      async (it) => { openSummaryEdit(it.value); },
-    );
-  },
-};
-// 表里有、执行器没有 ⇒ 启动即报（命令表是面板与派发的唯一来源，漏了不许静默）。
-for (const k of Object.keys(COMMAND_META)) {
-  if (!COMMAND_RUNNERS[k]) console.error(`命令 /${k} 有表无执行器：COMMAND_META 与 COMMAND_RUNNERS 对不上`);
-}
-async function runCommand(name, args) {
-  overlaysRef.value?.hidePalette();
-  const meta = COMMAND_META[name];
-  if (!meta) { toast(`未知命令 /${name}`); return; }
-  if (draft && meta.needsSession) {
-    toast(`这是新对话：先发一句话再用 /${name}`, "error");
-    return;
-  }
-  await COMMAND_RUNNERS[name](args ?? []);
-}
+// 命令执行器：键表在 utils/commands.ts，动作与前置条件收在 composable。
+const { runCommand } = useCommands({
+  api,
+  toast,
+  overlaysRef,
+  getSessionID: () => sessionID,
+  getEpoch: () => epoch,
+  isDraft: () => draft,
+  vueMessages,
+  startDraft,
+  enterSession,
+  fillModelSelect,
+  compactNow,
+  rerollNow,
+  resend,
+  reloadWindow,
+  refreshStateView,
+  refreshRerolls,
+  openMessageEditor,
+  openSummaryEdit,
+  deleteMessagesFlow,
+});
 
 // —— 预演（右载荷栏）——
 // 两条路同一支笔：会话里走 `POST /sessions/{id}/outgoing`；草稿走 `POST /outgoing`（临时会话，
 // 带上草稿铸的 id —— 头上那个会话键就是将来真会话的）。previewSeq 丢弃迟到的那一版。
 let previewTimer = 0;
-let previewSeq = 0;
-async function previewPayload(v) {
-  const seq = ++previewSeq;
-  const my = epoch;
-  try {
-    const out = draft
-      ? await api.draftOutgoing({
-        id: draftId, provider: draftPrefs.provider, model: draftPrefs.model,
-        agent_id: draftPrefs.agent, thinking_level: draftPrefs.thinking_level || undefined, content: v,
-      })
-      : await api.outgoingPreview(sessionID, v);
-    if (seq !== previewSeq || my !== epoch) return; // 有更新的一发/换了会话：旧的丢掉
-    payloadbarRef.value?.setWire(out);
-  } catch (err) {
-    if (seq !== previewSeq || my !== epoch) return;
-    if (!draft && err?.code === "invalid") return; // 空会话问历史（400 invalid）⇒ 保持空话
-    toast(`预演失败：${err.message}`, "error");
-  }
-}
-// refreshPreview：拿输入框里现有的字**立刻**重跑（改模型/Agent、回草稿之后用）——空字/命令不跑。
-function refreshPreview() {
-  if (!previewOn()) return;
-  const v = composerRef.value?.text ?? "";
-  if (!v.trim() || v.startsWith("/")) return;
-  if (draft ? !draftId : !sessionID) return;
-  previewPayload(v);
-}
-// previewCompactPayload：压缩那发**真会发出去什么**（右栏「看载荷」按钮）。
-//
-// 只算不发：后端与真压走同一段拼装（同一个 `wireFor`，合同测试逐字节钉着），
-// 所以这里拿到的就是那一发请求本身 —— 与载荷 tab 同一套渲染器能画。
-// 草稿态没有会话 ⇒ 没得压（后端那条口是会话域的），直接说清。
-async function previewCompactPayload(n) {
-  if (draft || !sessionID) {
-    toast("这是新对话：先发一句话再预览压缩", "error");
-    return;
-  }
-  try {
-    payloadbarRef.value?.setCompactWire(await api.compactPayload(sessionID, n ?? null));
-  } catch (err) {
-    // 400 多半是"这会儿没得压"（凑不满块 / 能力关着）—— 原话照转，别自己编一句
-    toast(`压缩载荷预演失败：${err.message}`, "error");
-  }
-}
-function onComposerInput(v) {
+function onComposerInput(v: string): void {
   liftOverlays();
   if (cmdMenu.value && v.startsWith("/")) {
     const cmd = parseCommand(v);
@@ -1980,7 +1077,7 @@ function onComposerInput(v) {
     previewPayload(v);
   }, 300);
 }
-function onComposerKeydown(e, value) {
+function onComposerKeydown(e: KeyboardEvent, value: string): void {
   const pickerOpen = overlaysRef.value?.isPickerOpen();
   const palOpen = overlaysRef.value?.isPaletteOpen();
   if (e.key === "ArrowDown" || (e.key === "Tab" && !e.shiftKey)) {
@@ -2011,7 +1108,7 @@ function onComposerKeydown(e, value) {
       composerRef.value?.clear();
       liftOverlays();
       runCommand(entry?.name ?? "", cmd ? cmd.args : []).catch((err) =>
-        toast(`命令失败：${err.message}`, "error"),
+        toast(`命令失败：${errText(err)}`, "error"),
       );
     }
   } else if (e.key === "Escape") {
@@ -2027,7 +1124,7 @@ function onComposerKeydown(e, value) {
 }
 // sendFromDraft：草稿的第一句 —— 建会话（带草稿里选的 model/agent）→ 受理 → 轮询。
 // 只有"受理"失败才回滚（删掉刚建的空会话、退回草稿）；轮询掉线不回滚（消息已入库）。
-async function sendFromDraft(text) {
+async function sendFromDraft(text: string): Promise<void> {
   const body: any = {};
   if (draftId) body.id = draftId; // 预演头上那个 id —— 真会话必须落同一个
   if (draftPrefs.provider) body.provider = draftPrefs.provider;
@@ -2078,26 +1175,26 @@ async function sendFromDraft(text) {
 }
 function stopCurrent() {
   if (!sessionID) return; // 草稿没有会话可停
-  api.stop(sessionID).catch((err) => toast(`停止失败：${err.message}`, "error"));
+  api.stop(sessionID).catch((err) => toast(`停止失败：${errText(err)}`, "error"));
 }
-function onComposerSubmit(text) {
+function onComposerSubmit(text: string): void {
   liftOverlays();
   overlaysRef.value?.hidePalette();
   if (!text) {
     if (draft) { toast("新对话还没有可续写的历史：先写一句"); return; }
-    resend().catch((err) => toast(`重发失败：${err.message}`, "error"));
+    resend().catch((err) => toast(`重发失败：${errText(err)}`, "error"));
     return;
   }
   const cmd = parseCommand(text);
   if (cmd) {
-    runCommand(cmd.name, cmd.args).catch((err) => toast(`命令失败：${err.message}`, "error"));
+    runCommand(cmd.name, cmd.args).catch((err) => toast(`命令失败：${errText(err)}`, "error"));
     return;
   }
   if (draft) {
-    sendFromDraft(text).catch((err) => toast(`发送失败：${err.message}`, "error"));
+    sendFromDraft(text).catch((err) => toast(`发送失败：${errText(err)}`, "error"));
     return;
   }
-  send(text).catch((err) => toast(`发送失败：${err.message}`, "error"));
+  send(text).catch((err) => toast(`发送失败：${errText(err)}`, "error"));
 }
 
 // —— 滚动隐藏上下栏（触屏；2026-10-17 用户定，默认开）——
@@ -2155,7 +1252,7 @@ onMounted(() => {
     connText = "未连接";
     loadingSession.value = false;
     refreshStatusline("idle");
-    toast(`启动失败：${err.message}`, "error");
+    toast(`启动失败：${errText(err)}`, "error");
   });
 });
 onUnmounted(() => {
@@ -2164,7 +1261,6 @@ onUnmounted(() => {
 
   stopTasksPolling();
   if (flowCallsTimer !== null) { clearInterval(flowCallsTimer); flowCallsTimer = null; }
-  stopUpdatePolling();
   uninstallOverlayLayout();
   uninstallSidePanels();
   document.removeEventListener("visibilitychange", resyncOnForeground);
@@ -2196,7 +1292,7 @@ onUnmounted(() => {
         :refreshing="sessionsRefreshing"
         @prefetch="prefetchSession"
         @toggle-left="toggleLeft"
-        @select="(id) => { closeLeftDrawer(); backToChat(); enterSession(id).catch((err) => toast(`进会话失败：${err.message}`, 'error')); }"
+        @select="(id) => { closeLeftDrawer(); backToChat(); enterSession(id).catch((err) => toast(`进会话失败：${errText(err)}`, 'error')); }"
         @settings="(id) => { sessionSettingsId = id; }"
         @copy="copySessionFromBar"
         @export="exportSessionFromBar"
@@ -2223,7 +1319,7 @@ onUnmounted(() => {
       @select-workspace="selectWorkspace"
       @save-overrides="saveRequestOverrides"
       @toggle-left="toggleLeft"
-      @select-model="(v) => applyModelValue(v).catch((err) => toast(`换模型失败：${err.message}`, 'error'))"
+      @select-model="(v) => applyModelValue(v).catch((err) => toast(`换模型失败：${errText(err)}`, 'error'))"
       @cancel-queue="cancelQueue"
       @cancel-task="cancelTask"
       @refresh-macros="refreshMacros"
@@ -2254,7 +1350,7 @@ onUnmounted(() => {
             id="load-more"
             variant="outlined"
             size="small"
-            @click="loadMore().catch((err) => toast(`加载更多失败：${err.message}`, 'error'))"
+            @click="loadMore().catch((err) => toast(`加载更多失败：${errText(err)}`, 'error'))"
           >↑ 加载更多历史（还有 {{ olderSegments }} 段）</VBtn>
           <template v-for="row in chatRows" :key="row.key">
             <SummaryCard
@@ -2323,7 +1419,7 @@ onUnmounted(() => {
         <AgentMenu
           :agents="vueAgents"
           :model-value="sessionInfo.agent_id || ''"
-          @select="(id) => applyAgentValue(id).catch((err) => toast(`换 Agent 失败：${err.message}`, 'error'))"
+          @select="(id) => applyAgentValue(id).catch((err) => toast(`换 Agent 失败：${errText(err)}`, 'error'))"
         />
       </template>
     </Composer>
@@ -2363,17 +1459,17 @@ onUnmounted(() => {
         @models-changed="fillModelSelect"
         @chat-saved="onChatSaved"
         @prefs-saved="onPrefsSaved"
-        @goto-session="(id) => { closeSettings(); enterSession(id).catch((err) => toast(`进会话失败：${err.message}`, 'error')); }"
+        @goto-session="(id) => { closeSettings(); enterSession(id).catch((err) => toast(`进会话失败：${errText(err)}`, 'error')); }"
       />
       </div>
     </div>
     <Toast ref="toastRef" />
     <!-- 更新条：只在检测到新版本时出现（挂根层 —— 设置视图开着也该看得见）。 -->
     <!-- Overlays 挂根层（不在聊天视图里）：设置视图开着时"确认"也要能弹（fixed 定位照旧）。 -->
-    <Overlays ref="overlaysRef" @run-command="(n) => runCommand(n, []).catch((err) => toast(`命令失败：${err.message}`, 'error'))" @pick="onPickAction" />
+    <Overlays ref="overlaysRef" @run-command="(n) => runCommand(n, []).catch((err) => toast(`命令失败：${errText(err)}`, 'error'))" @pick="onPickAction" />
     <SummaryEditor
       v-if="summaryEditTarget"
-      :session-id="sessionID"
+      :session-id="sessionID ?? ''"
       :summary="summaryEditTarget"
       @close="summaryEditTarget = null"
       @saved="onSummaryEdited"
@@ -2391,7 +1487,7 @@ onUnmounted(() => {
       v-if="sessionSettingsId"
       :session-id="sessionSettingsId"
       @close="sessionSettingsId = null"
-      @renamed="() => { refreshSessionsBar(); if (sessionSettingsId === sessionID) enterSession(sessionID).catch(() => {}); sessionSettingsId = null; }"
+      @renamed="() => { refreshSessionsBar(); const sid = sessionID; if (sid && sessionSettingsId === sid) enterSession(sid).catch(() => {}); sessionSettingsId = null; }"
     />
   </VApp>
 </template>

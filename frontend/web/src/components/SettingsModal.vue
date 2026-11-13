@@ -20,8 +20,8 @@ import { sharedApi } from "../utils/prefs.ts";
 import { SETTINGS_TABS, groupModelsByProvider, modelOption, providerChoices, modelChoicesFor, modelKey, parseModelKey, providerDisplayName } from "../utils/format.ts";
 import type { ModelGroup } from "../utils/format.ts";
 import { downloadJSON, downloadBlob } from "../utils/download.ts";
-import { buildCartridge, cartridgeAgent } from "../utils/cartridge.ts";
-import type { Agent, ChatConfig, DefaultsConfig, ProviderView, Segment, SessionView, TavernPreset } from "../api/types.ts";
+import { cartridgeAgent } from "../utils/cartridge.ts";
+import type { Agent, ChatConfig, ProviderView, Segment, SessionView, TavernPreset } from "../api/types.ts";
 
 // models-changed：渠道/模型那摊变了（删除渠道会连模型一起没）⇒ 让 App 重拉顶栏的模型下拉。
 // 与会话左栏那个 sessions-changed 是**两件事**，别合并（各自的读口不同）。

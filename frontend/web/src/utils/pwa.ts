@@ -28,7 +28,6 @@ export function onUpdateReady(handler: () => void): void { notify = handler; }
 //   2. `updateServiceWorker(true)` 发 skipWaiting ⇒ 新 SW 接管 ⇒ controlling ⇒
 //      回调里 `window.location.reload()`（这是 vite-plugin-pwa 内建行为，不是我们写的）。
 // 参数 `true` 是"要 reload"（0.13.2+ 起这个参数虽不再参与判断，但传着与官方示例一致）。
-let updateSW: ((reloadPage?: boolean) => Promise<void>) | null = null;
 let swRegistration: ServiceWorkerRegistration | null = null;
 let updateCheckTimer: number | null = null;
 let lastUpdateCheckAt = 0;
@@ -222,7 +221,7 @@ export async function forceReloadPwa(): Promise<void> {
 
 // registerPWA：开机调一次 —— 装下 `onNeedRefresh` 回调，拿到 `updateSW`。
 export function registerPWA(): void {
-  updateSW = registerSW({
+  registerSW({
     // 检测到新版本（新 SW 装好、在等）⇒ 弹条。**不自动切**：切换由用户点。
     onNeedRefresh() { notify(); },
     // 首次装好（离线可用）⇒ 不打扰：那是正常状态，报了反而像出事了。
