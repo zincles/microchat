@@ -16,6 +16,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"microchat/internal/flow"
 )
 
 // Paths：两个目录都相对工作目录，可用环境变量覆盖（与 Rust 版同名）。
@@ -262,8 +264,8 @@ type Agent struct {
 	Kind string `json:"kind,omitempty"`
 	// Flow：FlowAgent 的图（editor 存的结构；chat 的 FlowAgent 运行时第一版会解释它）。
 	// 用 RawMessage 是为了让节点 schema 先在前端演进，不在 Go 里复制一份节点表。
-	Flow         json.RawMessage `json:"flow,omitempty"`
-	SystemPrompt string          `json:"system_prompt"`
+	Flow         *flow.Graph `json:"flow,omitempty"`
+	SystemPrompt string      `json:"system_prompt"`
 	// FirstMessage：**首段对话**（2026-10-11 用户定）——以这个 agent 新建会话时，
 	// 它作为**第一条 assistant 消息**（idx 1）落库；空 = 不启用。正文原样存档
 	// （可带 `<state>` 块 —— 于是"首段设初始状态"天然成立）。

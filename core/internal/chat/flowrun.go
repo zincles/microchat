@@ -4,8 +4,7 @@ package chat
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
+	"errors"
 	"strings"
 	"time"
 
@@ -77,6 +76,81 @@ func (s *Service) flowConversation(session model.Session, runID, input string) (
 	return history, input, userMessageID, nil
 }
 
+// runtimeGraph：typed flow.Graph → 运行时执行器使用的内部图。
+// 只在进程内转换，不再把配置里的原始 JSON 重新解析一遍。
+func runtimeGraph(graph *flow.Graph) flowGraph {
+	nodes := make([]flowNode, 0, len(graph.Nodes))
+	for _, node := range graph.Nodes {
+		data := map[string]any{}
+		d := node.Data
+		if d.Text != "" {
+			data["text"] = d.Text
+		}
+		if d.Mode != "" {
+			data["mode"] = d.Mode
+		}
+		if d.Count != nil {
+			data["count"] = float64(*d.Count)
+		}
+		if len(d.Roles) > 0 {
+			data["roles"] = d.Roles
+		}
+		if len(d.Inputs) > 0 {
+			data["inputs"] = d.Inputs
+		}
+		if len(d.Outputs) > 0 {
+			data["outputs"] = d.Outputs
+		}
+		if d.Separator != "" {
+			data["separator"] = d.Separator
+		}
+		if d.Provider != "" {
+			data["provider"] = d.Provider
+		}
+		if d.Model != "" {
+			data["model"] = d.Model
+		}
+		if d.MaxRetry != nil {
+			data["max_retry"] = float64(*d.MaxRetry)
+		}
+		if d.Width != nil {
+			data["width"] = *d.Width
+		}
+		if d.Height != nil {
+			data["height"] = *d.Height
+		}
+		if len(d.Prompts) > 0 {
+			prompts := make([]flowPrompt, 0, len(d.Prompts))
+			for _, prompt := range d.Prompts {
+				prompts = append(prompts, flowPrompt{ID: prompt.ID, Kind: prompt.Kind, Role: prompt.Role, Content: prompt.Content})
+			}
+			data["prompts"] = prompts
+		}
+		if len(d.Questions) > 0 {
+			questions := make(map[string]any, len(d.Questions))
+			for key, question := range d.Questions {
+				questions[key] = question
+			}
+			data["questions"] = questions
+		}
+		if d.AnswerType != "" {
+			data["answer_type"] = d.AnswerType
+		}
+		if d.AnswerKey != "" {
+			data["answer_key"] = d.AnswerKey
+		}
+		if d.Threshold != nil {
+			data["threshold"] = *d.Threshold
+		}
+		nodes = append(nodes, flowNode{ID: node.ID, Type: node.Type, Data: data})
+	}
+	edges := make([]flowEdge, 0, len(graph.Edges))
+	for _, edge := range graph.Edges {
+		edges = append(edges, flowEdge{ID: edge.ID, Source: edge.Source, SourceHandle: edge.SourceHandle, Target: edge.Target, TargetHandle: edge.TargetHandle})
+	}
+	return flowGraph{Version: graph.Version, Nodes: nodes, Edges: edges}
+}
+
 // runFlow：后台那半程。先完整执行图，再一次性 INSERT —— 取消/失败都不会留半条回复。
 func (s *Service) runFlow(session model.Session, replyID string, token uint64, runID, input string,
 	agent config.Agent, providersConfig config.ProvidersConfig, replaceID string) {
@@ -144,20 +218,20 @@ func (s *Service) runFlow(session model.Session, replyID string, token uint64, r
 		guard.Fail(err.Error())
 		return
 	}
-	if err := flow.ValidateRaw(agent.Flow); err != nil {
+	if agent.Flow == nil {
+		err := errors.New("FlowAgent 缺少 flow 图")
 		failTrace(err)
 		s.Turns.Finish(sessionID, token, err.Error())
 		guard.Fail(err.Error())
 		return
 	}
-	var graph flowGraph
-	if err := json.Unmarshal(agent.Flow, &graph); err != nil {
-		err = fmt.Errorf("流程 JSON 解析失败：%w", err)
+	if err := flow.Validate(*agent.Flow); err != nil {
 		failTrace(err)
 		s.Turns.Finish(sessionID, token, err.Error())
 		guard.Fail(err.Error())
 		return
 	}
+	graph := runtimeGraph(agent.Flow)
 	if trace.NodeStates == nil {
 		trace.NodeStates = map[string]string{}
 	}

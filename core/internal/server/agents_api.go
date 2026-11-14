@@ -1,7 +1,6 @@
 package server
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -24,9 +23,9 @@ type CreateAgentReq struct {
 	// Description：列表里的一句说明（可选，不参与提示词拼装）。
 	Description string `json:"description,omitempty"`
 	// Kind / Flow：FlowAgent 类型与图（2026-11-11）。空 kind = 传统提示词 Agent。
-	Kind         string          `json:"kind,omitempty"`
-	Flow         json.RawMessage `json:"flow,omitempty"`
-	SystemPrompt string          `json:"system_prompt"`
+	Kind         string      `json:"kind,omitempty"`
+	Flow         *flow.Graph `json:"flow,omitempty"`
+	SystemPrompt string      `json:"system_prompt"`
 	// FirstMessage：首段对话（新会话的第一条 assistant 消息；空 = 不启用）。
 	FirstMessage string `json:"first_message,omitempty"`
 	// Segments：追加段（段库里的 id 列表，顺序 = 追加顺序；拼装见 `state.AssembleSystemPrompt`）。
@@ -45,9 +44,9 @@ type UpdateAgentReq struct {
 	Name        *string `json:"name"`
 	Description *string `json:"description"`
 	// Kind / Flow：nil = 不动；"flow" + flow 图 = 保存 FlowAgent。
-	Kind         *string          `json:"kind,omitempty"`
-	Flow         *json.RawMessage `json:"flow,omitempty"`
-	SystemPrompt *string          `json:"system_prompt"`
+	Kind         *string     `json:"kind,omitempty"`
+	Flow         *flow.Graph `json:"flow,omitempty"`
+	SystemPrompt *string     `json:"system_prompt"`
 	// FirstMessage：nil = 不动；`""` = 清掉（首段不启用）；非空 = 写进去。
 	FirstMessage *string `json:"first_message"`
 	// Segments：给了就**整段替换**这串引用（nil = 不动；`[]` = 清空）。引用的段必须在库里 ⇒ 400。
@@ -86,7 +85,10 @@ func validateAgentFlow(agent config.Agent) error {
 	if agent.Kind != "flow" {
 		return nil
 	}
-	return flow.ValidateRaw(agent.Flow)
+	if agent.Flow == nil {
+		return fmt.Errorf("FlowAgent 缺少 flow 图")
+	}
+	return flow.Validate(*agent.Flow)
 }
 
 // segmentView：段库对外的一条 —— 用户段与**内置段**同列，`builtin` 标出来源（文件里没有它）。
@@ -258,7 +260,7 @@ func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request) {
 		agents.Agents[index].Kind = strings.TrimSpace(*req.Kind)
 	}
 	if req.Flow != nil {
-		agents.Agents[index].Flow = *req.Flow
+		agents.Agents[index].Flow = req.Flow
 	}
 	if req.SystemPrompt != nil {
 		agents.Agents[index].SystemPrompt = *req.SystemPrompt

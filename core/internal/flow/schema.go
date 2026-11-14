@@ -1,8 +1,7 @@
 // Package flow：FlowAgent 图的**唯一结构权威**。
 //
-// 为什么单独成包：agents.json 里存的是原始 JSON，但“能存”不等于“能跑”。
-// 这里把版本、节点、边的形状，以及每种节点 data 的字段一次说清；
-// 保存与启动都过它，运行时不再靠 map[string]any 猜字段。
+// 图不是裸 JSON：版本、节点、边、每种节点的 data 字段都在这里定型。
+// 保存、启动、FlowTest、聊天运行都先过 Validate；运行时不再靠 map 猜字段。
 package flow
 
 import (
@@ -27,11 +26,33 @@ type Position struct {
 	Y float64 `json:"y"`
 }
 
+// NodeData 是节点的**全部可持久化字段**；按节点类型只允许对应字段非零。
+// Width 是旧 LLM 数据兼容字段，运行时不用；test/runState 只属于编辑器，永不落盘。
+type NodeData struct {
+	Text       string            `json:"text,omitempty"`
+	Mode       string            `json:"mode,omitempty"`
+	Count      *int              `json:"count,omitempty"`
+	Roles      []string          `json:"roles,omitempty"`
+	Inputs     []string          `json:"inputs,omitempty"`
+	Outputs    []string          `json:"outputs,omitempty"`
+	Separator  string            `json:"separator,omitempty"`
+	Provider   string            `json:"provider,omitempty"`
+	Model      string            `json:"model,omitempty"`
+	MaxRetry   *int              `json:"max_retry,omitempty"`
+	Width      *float64          `json:"width,omitempty"`
+	Height     *float64          `json:"height,omitempty"`
+	Prompts    []Prompt          `json:"prompts,omitempty"`
+	Questions  map[string]string `json:"questions,omitempty"`
+	AnswerType string            `json:"answer_type,omitempty"`
+	AnswerKey  string            `json:"answer_key,omitempty"`
+	Threshold  *float64          `json:"threshold,omitempty"`
+}
+
 type Node struct {
-	ID       string          `json:"id"`
-	Type     string          `json:"type"`
-	Position Position        `json:"position"`
-	Data     json.RawMessage `json:"data"`
+	ID       string   `json:"id"`
+	Type     string   `json:"type"`
+	Position Position `json:"position"`
+	Data     NodeData `json:"data"`
 }
 
 type Edge struct {
@@ -49,65 +70,37 @@ type Prompt struct {
 	Content string `json:"content"`
 }
 
-type textData struct {
-	Text string `json:"text"`
-}
-
-type trimData struct {
-	Mode  string   `json:"mode"`
-	Count *int     `json:"count"`
-	Roles []string `json:"roles"`
-}
-
-type mergeData struct {
-	Inputs []string `json:"inputs"`
-}
-
-type joinData struct {
-	Inputs    []string `json:"inputs"`
-	Outputs   []string `json:"outputs"`
-	Separator string   `json:"separator"`
-}
-
-type llmData struct {
-	Provider string   `json:"provider"`
-	Model    string   `json:"model"`
-	MaxRetry *int     `json:"max_retry"`
-	Width    *float64 `json:"width"`
-	Height   *float64 `json:"height"`
-	Prompts  []Prompt `json:"prompts"`
-}
-
-type judgeData struct {
-	Provider   string          `json:"provider"`
-	Model      string          `json:"model"`
-	Questions  json.RawMessage `json:"questions"`
-	AnswerType string          `json:"answer_type"`
-	AnswerKey  string          `json:"answer_key"`
-	Threshold  *float64        `json:"threshold"`
-}
-
-// Parse：严格解码（图、节点、边、节点 data 都不允许未知字段）。
+// Parse：严格解码（图、节点、边、NodeData 都不允许未知字段）。
 func Parse(raw []byte) (Graph, error) {
 	var graph Graph
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&graph); err != nil {
-		return Graph{}, fmt.Errorf("Flow 图 JSON 不合法：%w", err)
-	}
-	if graph.Version != Version {
-		return Graph{}, fmt.Errorf("Flow 图版本必须是 %d，得到 %d", Version, graph.Version)
-	}
-	if err := Validate(graph); err != nil {
+	if err := json.Unmarshal(raw, &graph); err != nil {
 		return Graph{}, err
 	}
 	return graph, nil
 }
 
-// ValidateRaw：保存 / 启动时的入口。
-func ValidateRaw(raw []byte) error {
-	_, err := Parse(raw)
-	return err
+// UnmarshalJSON：任何从这里进入的图（agents.json / HTTP / 测试）都走同一套
+// DisallowUnknownFields + Validate，不允许调用方绕过 schema。
+func (g *Graph) UnmarshalJSON(raw []byte) error {
+	type graphWire Graph
+	var wire graphWire
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&wire); err != nil {
+		return fmt.Errorf("Flow 图 JSON 不合法：%w", err)
+	}
+	if dec.More() {
+		return errors.New("Flow 图 JSON 后面还有内容")
+	}
+	graph := Graph(wire)
+	if graph.Version != Version {
+		return fmt.Errorf("Flow 图版本必须是 %d，得到 %d", Version, graph.Version)
+	}
+	if err := Validate(graph); err != nil {
+		return err
+	}
+	*g = graph
+	return nil
 }
 
 func Validate(graph Graph) error {
@@ -160,23 +153,23 @@ func Validate(graph Graph) error {
 		sourcePorts[sp] = true
 		targetPorts[tp] = true
 	}
-	if err := validateDAG(graph); err != nil {
-		return err
-	}
-	return nil
+	return validateDAG(graph)
 }
 
 func validateNodeData(node Node) error {
+	data := node.Data
 	switch node.Type {
 	case "input", "history", "output":
-		return decodeData(node, &struct{}{})
+		if !emptyData(data) {
+			return fmt.Errorf("节点 %s（%s）不应该有 data 字段", node.ID, node.Type)
+		}
 	case "text":
-		var data textData
-		return decodeData(node, &data)
+		if !onlyFields(data, "text") {
+			return fmt.Errorf("文本节点 %s 含不属于它的字段", node.ID)
+		}
 	case "trim":
-		var data trimData
-		if err := decodeData(node, &data); err != nil {
-			return err
+		if !onlyFields(data, "mode", "count", "roles") {
+			return fmt.Errorf("裁剪节点 %s 含不属于它的字段", node.ID)
 		}
 		if data.Mode != "" && data.Mode != "tail" && data.Mode != "head" && data.Mode != "drop-head" && data.Mode != "drop-tail" {
 			return fmt.Errorf("裁剪节点 %s 的 mode 不合法", node.ID)
@@ -189,26 +182,26 @@ func validateNodeData(node Node) error {
 				return fmt.Errorf("裁剪节点 %s 的角色不合法：%s", node.ID, role)
 			}
 		}
-		return nil
 	case "merge":
-		var data mergeData
-		if err := decodeData(node, &data); err != nil {
-			return err
-		}
-		return validatePorts(node.ID, "输入", data.Inputs)
-	case "join":
-		var data joinData
-		if err := decodeData(node, &data); err != nil {
-			return err
+		if !onlyFields(data, "inputs") {
+			return fmt.Errorf("拼接 messages 节点 %s 含不属于它的字段", node.ID)
 		}
 		if err := validatePorts(node.ID, "输入", data.Inputs); err != nil {
 			return err
 		}
-		return validatePorts(node.ID, "输出", data.Outputs)
-	case "llm":
-		var data llmData
-		if err := decodeData(node, &data); err != nil {
+	case "join":
+		if !onlyFields(data, "inputs", "outputs", "separator") {
+			return fmt.Errorf("拼接节点 %s 含不属于它的字段", node.ID)
+		}
+		if err := validatePorts(node.ID, "输入", data.Inputs); err != nil {
 			return err
+		}
+		if err := validatePorts(node.ID, "输出", data.Outputs); err != nil {
+			return err
+		}
+	case "llm":
+		if !onlyFields(data, "provider", "model", "max_retry", "width", "height", "prompts") {
+			return fmt.Errorf("LLM 节点 %s 含不属于它的字段", node.ID)
 		}
 		if data.MaxRetry != nil && *data.MaxRetry < 0 {
 			return fmt.Errorf("LLM 节点 %s 的 max_retry 必须是非负整数", node.ID)
@@ -235,11 +228,9 @@ func validateNodeData(node Node) error {
 				return fmt.Errorf("Prompt %s 的 role 只能是 system / user / assistant", prompt.ID)
 			}
 		}
-		return nil
 	case "judge":
-		var data judgeData
-		if err := decodeData(node, &data); err != nil {
-			return err
+		if !onlyFields(data, "provider", "model", "questions", "answer_type", "answer_key", "threshold") {
+			return fmt.Errorf("JEV 节点 %s 含不属于它的字段", node.ID)
 		}
 		if strings.TrimSpace(data.Provider) == "" || strings.TrimSpace(data.Model) == "" {
 			return fmt.Errorf("JEV 节点 %s 必须填渠道和模型", node.ID)
@@ -252,26 +243,86 @@ func validateNodeData(node Node) error {
 		if data.Threshold != nil && (*data.Threshold < 0 || *data.Threshold > 1) {
 			return fmt.Errorf("JEV 节点 %s 的 threshold 必须在 0..1", node.ID)
 		}
-		if len(data.Questions) == 0 || !json.Valid(data.Questions) {
-			return fmt.Errorf("JEV 节点 %s 的 questions 不是合法 JSON", node.ID)
+		if len(data.Questions) == 0 {
+			return fmt.Errorf("JEV 节点 %s 没有 questions", node.ID)
 		}
-		return nil
+		for key, question := range data.Questions {
+			if strings.TrimSpace(key) == "" || strings.TrimSpace(question) == "" {
+				return fmt.Errorf("JEV 节点 %s 的 questions 有空键或空值", node.ID)
+			}
+		}
 	default:
 		return fmt.Errorf("不认识的节点类型：%s", node.Type)
 	}
+	return nil
 }
 
-func decodeData(node Node, into any) error {
-	raw := bytes.TrimSpace(node.Data)
-	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
-		raw = []byte("{}")
+func emptyData(data NodeData) bool {
+	return data.Text == "" && data.Mode == "" && data.Count == nil && len(data.Roles) == 0 &&
+		len(data.Inputs) == 0 && len(data.Outputs) == 0 && data.Separator == "" &&
+		data.Provider == "" && data.Model == "" && data.MaxRetry == nil && data.Width == nil &&
+		data.Height == nil && len(data.Prompts) == 0 && len(data.Questions) == 0 &&
+		data.AnswerType == "" && data.AnswerKey == "" && data.Threshold == nil
+}
+
+func onlyFields(data NodeData, allowed ...string) bool {
+	allowedSet := map[string]bool{}
+	for _, name := range allowed {
+		allowedSet[name] = true
 	}
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(into); err != nil {
-		return fmt.Errorf("节点 %s（%s）的 data 不合法：%w", node.ID, node.Type, err)
+	// 零值字段忽略；非零字段必须在该节点类型的白名单内。
+	if data.Text != "" && !allowedSet["text"] {
+		return false
 	}
-	return nil
+	if data.Mode != "" && !allowedSet["mode"] {
+		return false
+	}
+	if data.Count != nil && !allowedSet["count"] {
+		return false
+	}
+	if len(data.Roles) > 0 && !allowedSet["roles"] {
+		return false
+	}
+	if len(data.Inputs) > 0 && !allowedSet["inputs"] {
+		return false
+	}
+	if len(data.Outputs) > 0 && !allowedSet["outputs"] {
+		return false
+	}
+	if data.Separator != "" && !allowedSet["separator"] {
+		return false
+	}
+	if data.Provider != "" && !allowedSet["provider"] {
+		return false
+	}
+	if data.Model != "" && !allowedSet["model"] {
+		return false
+	}
+	if data.MaxRetry != nil && !allowedSet["max_retry"] {
+		return false
+	}
+	if data.Width != nil && !allowedSet["width"] {
+		return false
+	}
+	if data.Height != nil && !allowedSet["height"] {
+		return false
+	}
+	if len(data.Prompts) > 0 && !allowedSet["prompts"] {
+		return false
+	}
+	if len(data.Questions) > 0 && !allowedSet["questions"] {
+		return false
+	}
+	if data.AnswerType != "" && !allowedSet["answer_type"] {
+		return false
+	}
+	if data.AnswerKey != "" && !allowedSet["answer_key"] {
+		return false
+	}
+	if data.Threshold != nil && !allowedSet["threshold"] {
+		return false
+	}
+	return true
 }
 
 func validatePorts(nodeID, side string, ports []string) error {
@@ -321,6 +372,4 @@ func validateDAG(graph Graph) error {
 	return nil
 }
 
-func finite(value float64) bool {
-	return !math.IsNaN(value) && !math.IsInf(value, 0)
-}
+func finite(value float64) bool { return !math.IsNaN(value) && !math.IsInf(value, 0) }

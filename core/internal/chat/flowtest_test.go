@@ -11,10 +11,20 @@ import (
 	"testing"
 
 	"microchat/internal/config"
+	flowdef "microchat/internal/flow"
 	"microchat/internal/model"
 	"microchat/internal/providers"
 	"microchat/internal/store"
 )
+
+func mustFlow(t *testing.T, raw json.RawMessage) *flowdef.Graph {
+	t.Helper()
+	graph, err := flowdef.Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &graph
+}
 
 func TestFlowEnabledGateSkipsLLM(t *testing.T) {
 	h := newHarness(t, dummyProviders(), "dummy", "dummy")
@@ -240,7 +250,7 @@ func TestFlowAgentAcceptRoundTrip(t *testing.T) {
 		{"id":"out","type":"output","position":{"x":2,"y":0},"data":{}}
 	],"edges":[{"id":"e1","source":"llm","sourceHandle":"text","target":"out","targetHandle":"text"}]}`)
 	if err := config.SaveJSON(h.configDir+"/agents.json", config.AgentsConfig{Agents: []config.Agent{{
-		ID: "flow", Kind: "flow", Flow: flow,
+		ID: "flow", Kind: "flow", Flow: mustFlow(t, flow),
 	}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +303,7 @@ func TestFlowAgentDoesNotAutoAttachReasoning(t *testing.T) {
 		{"id":"e1","source":"llm","sourceHandle":"reasoning","target":"out","targetHandle":"text"}
 	]}`)
 	if err := config.SaveJSON(h.configDir+"/agents.json", config.AgentsConfig{Agents: []config.Agent{{
-		ID: "flow", Kind: "flow", Flow: flow,
+		ID: "flow", Kind: "flow", Flow: mustFlow(t, flow),
 	}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -329,7 +339,7 @@ func TestFlowAgentMapsReasoningPort(t *testing.T) {
 		{"id":"e2","source":"llm","sourceHandle":"reasoning","target":"out","targetHandle":"reasoning"}
 	]}`)
 	if err := config.SaveJSON(h.configDir+"/agents.json", config.AgentsConfig{Agents: []config.Agent{{
-		ID: "flow", Kind: "flow", Flow: flow,
+		ID: "flow", Kind: "flow", Flow: mustFlow(t, flow),
 	}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -351,7 +361,7 @@ func TestFlowAgentRegenerateReplacesTail(t *testing.T) {
 		{"id":"out","type":"output","position":{"x":2,"y":0},"data":{}}
 	],"edges":[{"id":"e1","source":"llm","sourceHandle":"text","target":"out","targetHandle":"text"}]}`)
 	if err := config.SaveJSON(h.configDir+"/agents.json", config.AgentsConfig{Agents: []config.Agent{{
-		ID: "flow", Kind: "flow", Flow: flow,
+		ID: "flow", Kind: "flow", Flow: mustFlow(t, flow),
 	}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -385,7 +395,7 @@ func TestFlowAgentRegenerateReplacesTail(t *testing.T) {
 }
 
 func TestFlowOutputUserPortOverridesHistory(t *testing.T) {
-	agent := config.Agent{Flow: json.RawMessage(`{"version":1,"nodes":[{"id":"in","type":"input"},{"id":"out","type":"output"}],"edges":[{"source":"in","sourceHandle":"out","target":"out","targetHandle":"user"}]}`)}
+	agent := config.Agent{Flow: mustFlow(t, json.RawMessage(`{"version":1,"nodes":[{"id":"in","type":"input"},{"id":"out","type":"output"}],"edges":[{"id":"e","source":"in","sourceHandle":"out","target":"out","targetHandle":"user"}]}`))}
 	graph := flowGraph{Nodes: []flowNode{{ID: "in", Type: "input"}, {ID: "out", Type: "output"}}, Edges: []flowEdge{{Source: "in", SourceHandle: "out", Target: "out", TargetHandle: "user"}}}
 	out, err := (&Service{}).executeFlowGraph(context.Background(), graph, flowRunOptions{Input: "原问题"})
 	if err != nil {
@@ -424,7 +434,7 @@ func TestFlowAgentStoresOutputUserPort(t *testing.T) {
 		{"id":"out","type":"output","data":{}}
 	],"edges":[{"id":"e0","source":"in","sourceHandle":"out","target":"out","targetHandle":"user"},{"id":"e1","source":"llm","sourceHandle":"text","target":"out","targetHandle":"text"}]}`)
 	if err := config.SaveJSON(h.configDir+"/agents.json", config.AgentsConfig{Agents: []config.Agent{{
-		ID: "flow", Kind: "flow", Flow: flow,
+		ID: "flow", Kind: "flow", Flow: mustFlow(t, flow),
 	}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -446,7 +456,7 @@ func TestFlowOutputUserPortOverridesStoredUser(t *testing.T) {
 		{"id":"out","type":"output","data":{}}
 	],"edges":[{"id":"e0","source":"in","sourceHandle":"out","target":"llm","targetHandle":"prompt-p1"},{"id":"e1","source":"llm","sourceHandle":"text","target":"out","targetHandle":"user"}]}`)
 	if err := config.SaveJSON(h.configDir+"/agents.json", config.AgentsConfig{Agents: []config.Agent{{
-		ID: "flow", Kind: "flow", Flow: flow,
+		ID: "flow", Kind: "flow", Flow: mustFlow(t, flow),
 	}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -468,7 +478,7 @@ func TestFlowResendStoresOutputUserPort(t *testing.T) {
 		{"id":"out","type":"output","data":{}}
 	],"edges":[{"id":"e0","source":"in","sourceHandle":"out","target":"llm","targetHandle":"prompt-p1"},{"id":"e1","source":"llm","sourceHandle":"text","target":"out","targetHandle":"user"}]}`)
 	if err := config.SaveJSON(h.configDir+"/agents.json", config.AgentsConfig{Agents: []config.Agent{{
-		ID: "flow", Kind: "flow", Flow: flow,
+		ID: "flow", Kind: "flow", Flow: mustFlow(t, flow),
 	}}}); err != nil {
 		t.Fatal(err)
 	}

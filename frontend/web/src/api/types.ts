@@ -561,11 +561,47 @@ export interface FlowPosition {
   y: number;
 }
 
+export type FlowNodeType =
+  | "input" | "text" | "history" | "trim" | "merge"
+  | "join" | "llm" | "judge" | "output";
+
+export interface FlowPrompt {
+  id: string;
+  kind?: "" | "prompt" | "history";
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+
+/** 节点 data 的完整可持久化字段；所有字段可选，按 type 由后端 schema 校验组合。 */
+export interface FlowNodeData {
+  text?: string;
+  mode?: string;
+  count?: number;
+  roles?: string[];
+  inputs?: string[];
+  outputs?: string[];
+  separator?: string;
+  provider?: string;
+  model?: string;
+  max_retry?: number;
+  /** 旧 LLM 数据兼容字段；运行时不用。 */
+  width?: number;
+  height?: number;
+  prompts?: FlowPrompt[];
+  questions?: Record<string, string>;
+  answer_type?: "string" | "bool" | "number" | "choice";
+  answer_key?: string;
+  threshold?: number;
+  /** 只活在编辑器，保存前由 toGraph 删除。 */
+  test?: { inputs?: string[]; reasoning?: string; output?: string; user?: string };
+  runState?: string;
+}
+
 export interface FlowNode {
   id: string;
-  type: string;
+  type: FlowNodeType;
   position: FlowPosition;
-  data?: Record<string, unknown>;
+  data?: FlowNodeData;
 }
 
 export interface FlowEdge {
@@ -623,7 +659,7 @@ export interface FlowRunTrace {
 }
 
 export interface FlowGraph {
-  version?: number;
+  version: number;
   nodes: FlowNode[];
   edges: FlowEdge[];
 }

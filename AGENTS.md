@@ -426,8 +426,10 @@ delete(AA)           # 删除
   工作流页每 700ms 读一次 `/flow/run`，右侧节点清单把 `active_node_id` 高亮成主色脉冲；
   App 也每 700ms 读同一份轨迹，把 `active_llm_calls` / `active_nodes` 喂给顶栏环与弹出面板。当前执行器仍是
   **按拓扑序串行**跑节点（所以并发数通常为 0/1；并行调度是下一步，不是现状）。
-  **Flow 图的结构权威是 `core/internal/flow`（2026-11-13）**：保存 Agent、启动读取、FlowTest、聊天运行都先过
-  `flow.ValidateRaw`；`agents.json` 里仍存原始 JSON（便于 diff / 原样搬运），但**未通过 schema 的图写不进去、也起不来**。
+  **Flow 图的结构权威是 `core/internal/flow`（2026-11-13）**：`config.Agent.Flow` 是 **`*flow.Graph`**
+  （不是 `json.RawMessage`）；`agents.json`/HTTP 的 JSON 只是它的序列化/入口，`Graph.UnmarshalJSON` 用
+  `DisallowUnknownFields` + `Validate` 严格解码。保存 Agent、启动读取、FlowTest、聊天运行都过同一 schema；
+  **未通过 schema 的图写不进去、也起不来**。
   - `FlowGraph = {version:1, nodes:[FlowNode], edges:[FlowEdge]}`；未知字段一律拒绝（含节点 `data` 内字段）。
   - `FlowNode = {id,type,position:{x,y},data}`；`type ∈ input|text|history|trim|merge|join|llm|judge|output`。
   - `input/history/output`: `data={}`；`text`: `{text}`；`trim`: `{mode,count,roles}`；`merge`: `{inputs}`；

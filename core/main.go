@@ -72,7 +72,10 @@ func main() {
 		if agent.Kind != "flow" {
 			continue
 		}
-		if err := flow.ValidateRaw(agent.Flow); err != nil {
+		if agent.Flow == nil {
+			fatal("agents.json 的 FlowAgent %q 缺少 flow 图", agent.ID)
+		}
+		if err := flow.Validate(*agent.Flow); err != nil {
 			fatal("agents.json 的 FlowAgent %q 图不合法: %v", agent.ID, err)
 		}
 	}

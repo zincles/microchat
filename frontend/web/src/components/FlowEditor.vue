@@ -22,9 +22,9 @@ import { sharedApi } from "../utils/prefs.ts";
 import FlowNode from "./FlowNode.vue";
 import { FLOW_NODE_TYPES, emptyFlowGraph, flowDebugSteps, flowIssues, flowSourceType, flowTargetType, formatFlowText, normalizeFlowGraph, type FlowNodeType } from "../utils/flow.ts";
 import { FLOW_NODE_SPECS, nodeBadgeFor, nodeDefaults, nodeLabelFor } from "../utils/flowSpecs.ts";
-import type { FlowEdge, FlowGraph, FlowNode as FlowNodeGraph, FlowTestStep, ModelListItem } from "../api/types.ts";
+import type { FlowEdge, FlowGraph, FlowNode as FlowNodeGraph, FlowNodeData, FlowTestStep, ModelListItem } from "../api/types.ts";
 
-type CanvasNode = FlowNodeGraph & { data: Record<string, unknown> };
+type CanvasNode = Omit<FlowNodeGraph, "data"> & { data: FlowNodeData };
 type CanvasEdge = FlowEdge & { class?: string };
 
 const props = withDefaults(defineProps<{
@@ -168,9 +168,20 @@ function toGraph(): FlowGraph {
       const data = { ...(n.data ?? {}) };
       delete data.test; // 测试结果只活在编辑器里，绝不写回 Graph
       delete data.runState; // 运行状态只活在界面上
+      // JEV 节点的 questions 在编辑器里是文本；落库 schema 要求 object。
+      if (String(n.type) === "judge" && typeof data.questions === "string") {
+        try {
+          const parsed: unknown = JSON.parse(data.questions);
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            data.questions = parsed as Record<string, string>;
+          }
+        } catch {
+          // 非法 JSON 留给后端 400；不在这里静默改写用户输入。
+        }
+      }
       return {
         id: String(n.id),
-        type: String(n.type ?? "llm"),
+        type: String(n.type ?? "llm") as FlowNodeType,
         position: { x: Number(n.position?.x ?? 0), y: Number(n.position?.y ?? 0) },
         data,
       };

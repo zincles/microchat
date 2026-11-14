@@ -117,13 +117,13 @@ func (s *Service) TestFlow(ctx context.Context, flowAgent config.Agent, message,
 	if flowAgent.Kind != "flow" {
 		return FlowTestResult{}, errors.New("这个 Agent 不是 FlowAgent")
 	}
-	if err := flow.ValidateRaw(flowAgent.Flow); err != nil {
+	if flowAgent.Flow == nil {
+		return FlowTestResult{}, errors.New("FlowAgent 缺少 flow 图")
+	}
+	if err := flow.Validate(*flowAgent.Flow); err != nil {
 		return FlowTestResult{}, err
 	}
-	var graph flowGraph
-	if err := json.Unmarshal(flowAgent.Flow, &graph); err != nil {
-		return FlowTestResult{}, fmt.Errorf("流程 JSON 解析失败：%w", err)
-	}
+	graph := runtimeGraph(flowAgent.Flow)
 	cfg, err := config.LoadConfig(s.Paths)
 	if err != nil {
 		return FlowTestResult{}, err

@@ -5,7 +5,7 @@ import { computed, inject, onUnmounted, ref, type Ref } from "vue";
 import { Handle, Position } from "@vue-flow/core";
 import { VBtn, VNumberInput, VSelect, VTextField, VTextarea } from "vuetify/components";
 import { ICONS } from "../assets/icons.ts";
-import type { ModelListItem } from "../api/types.ts";
+import type { FlowNodeData, ModelListItem } from "../api/types.ts";
 import { DEFAULT_JOIN_SEPARATOR, TRIM_MODES, TRIM_ROLES, trimCountOf, trimModeOf, type FlowDataType, type TrimMode } from "../utils/flow.ts";
 import { judgeAnswerType as judgeAnswerTypeOf, nodeBadgeFor, nodeHintFor, nodeLabelFor } from "../utils/flowSpecs.ts";
 
@@ -13,7 +13,7 @@ const props = defineProps<{
   id: string;
   type: string;
   selected?: boolean;
-  data: Record<string, unknown>;
+  data: FlowNodeData;
 }>();
 
 interface PromptEntry {
@@ -133,8 +133,17 @@ const judgeModel = computed({
   set: (value: string) => { props.data.model = value; },
 });
 const judgeQuestions = computed({
-  get: () => typeof props.data.questions === "string" ? props.data.questions : JSON.stringify(props.data.questions ?? {}, null, 2),
-  set: (value: string) => { props.data.questions = value; },
+  get: () => JSON.stringify(props.data.questions ?? {}, null, 2),
+  set: (value: string) => {
+    try {
+      const parsed: unknown = JSON.parse(value);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        props.data.questions = parsed as Record<string, string>;
+      }
+    } catch {
+      // 编辑器保留原文；保存时由 toGraph 再决定是否 400。
+    }
+  },
 });
 const judgeAnswerKey = computed({
   get: () => typeof props.data.answer_key === "string" ? props.data.answer_key : "",
@@ -142,7 +151,9 @@ const judgeAnswerKey = computed({
 });
 const judgeAnswerType = computed<FlowDataType>({
   get: () => judgeAnswerTypeOf({ data: props.data }),
-  set: (value: FlowDataType) => { props.data.answer_type = value; },
+  set: (value: FlowDataType) => {
+    if (value === "string" || value === "bool" || value === "number" || value === "choice") props.data.answer_type = value;
+  },
 });
 const judgeThreshold = computed<number | null>({
   get: () => Number.isFinite(Number(props.data.threshold)) ? Number(props.data.threshold) : 0.5,

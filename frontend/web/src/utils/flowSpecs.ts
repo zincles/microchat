@@ -3,7 +3,7 @@
 // 以前这些事实散在 FlowNode.vue / FlowEditor.vue / flow.ts / flowtest.go 四份；
 // 加一个节点要改多处，漏一处就静默失效。这里先把前端这一侧的"一个节点长什么样"
 // 收成一张表；运行时执行仍由 flowtest.go 的 runner 负责。
-import type { FlowNode } from "../api/types.ts";
+import type { FlowNode, FlowNodeData } from "../api/types.ts";
 import type { FlowDataType } from "./flow.ts";
 
 export const TRIM_MODES = [
@@ -34,7 +34,7 @@ export interface FlowNodeSpec {
   hint: string;
   category: "source" | "transform" | "sink";
   /** 新增节点时写进 data 的默认值。 */
-  defaults: () => Record<string, unknown>;
+  defaults: () => FlowNodeData;
   /** 静态端口或按 node.data 计算的动态端口。 */
   inputs: (node: FlowNode) => FlowPortSpec[];
   outputs: (node: FlowNode) => FlowPortSpec[];
@@ -42,7 +42,7 @@ export interface FlowNodeSpec {
   validate?: (node: FlowNode) => string[];
 }
 
-const dataOf = (node: Pick<FlowNode, "data"> | undefined): Record<string, unknown> => node?.data ?? {};
+const dataOf = (node: Pick<FlowNode, "data"> | undefined): FlowNodeData => node?.data ?? {};
 
 interface FlowPromptDraft {
   id?: unknown;
@@ -128,15 +128,15 @@ function judgeIssues(node: FlowNode): string[] {
   if (!String(data.model ?? "").trim()) issues.push("JEV 判断节点还没填模型");
   const answerType = String(data.answer_type ?? "string");
   if (!["string", "bool", "number", "choice"].includes(answerType)) issues.push("JEV 判断节点的答案类型不认识");
-  const raw = data.questions;
-  if (typeof raw !== "string" || !raw.trim()) {
+  const questions = data.questions;
+  if (!questions || typeof questions !== "object" || Array.isArray(questions) || !Object.keys(questions).length) {
     issues.push("JEV 判断节点还没有 questions");
   } else {
-    try {
-      const parsed = JSON.parse(raw);
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) issues.push("JEV 判断节点的 questions 必须是 JSON object");
-    } catch {
-      issues.push("JEV 判断节点的 questions 不是合法 JSON");
+    for (const [key, value] of Object.entries(questions)) {
+      if (!key.trim() || typeof value !== "string" || !value.trim()) {
+        issues.push("JEV 判断节点的 questions 必须是非空字符串键值");
+        break;
+      }
     }
   }
   return issues;
@@ -204,7 +204,7 @@ const specs: Record<FlowNodeKind, FlowNodeSpec> = {
     category: "transform",
     defaults: () => ({
       provider: "", model: "", answer_type: "string", answer_key: "", threshold: 0.5,
-      questions: JSON.stringify({ involves: "本轮用户行为是否直接涉及这个角色？" }, null, 2),
+      questions: { involves: "本轮用户行为是否直接涉及这个角色？" },
     }),
     validate: judgeIssues,
     inputs: () => [{ handle: "state", type: "string", label: "场景/状态", required: true }],
@@ -228,7 +228,7 @@ export function flowNodeSpec(type: string | undefined): FlowNodeSpec | undefined
   return specs[type as FlowNodeKind];
 }
 
-export function nodeDefaults(type: string): Record<string, unknown> {
+export function nodeDefaults(type: string): FlowNodeData {
   return flowNodeSpec(type)?.defaults() ?? {};
 }
 

@@ -19,13 +19,13 @@ const validGraph = `{
 }`
 
 func TestValidGraph(t *testing.T) {
-	if err := ValidateRaw([]byte(validGraph)); err != nil {
+	if _, err := Parse([]byte(validGraph)); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestRejectUnknownGraphField(t *testing.T) {
-	if err := ValidateRaw([]byte(`{"version":1,"nodes":[],"edges":[],"extra":true}`)); err == nil {
+	if _, err := Parse([]byte(`{"version":1,"nodes":[],"edges":[],"extra":true}`)); err == nil {
 		t.Fatal("未知图字段应该被拒绝")
 	}
 }
@@ -39,7 +39,7 @@ func TestRejectUnknownNodeDataField(t *testing.T) {
 		{"id":"e1","source":"in","sourceHandle":"out","target":"llm","targetHandle":"prompt-p"},
 		{"id":"e2","source":"llm","sourceHandle":"text","target":"out","targetHandle":"text"}
 	]}`
-	if err := ValidateRaw([]byte(raw)); err == nil {
+	if _, err := Parse([]byte(raw)); err == nil {
 		t.Fatal("未知节点 data 字段应该被拒绝")
 	}
 }
@@ -49,7 +49,7 @@ func TestRejectMissingPort(t *testing.T) {
 		{"id":"in","type":"input","position":{"x":0,"y":0},"data":{}},
 		{"id":"out","type":"output","position":{"x":1,"y":0},"data":{}}
 	],"edges":[{"id":"e","source":"in","target":"out"}]}`
-	if err := ValidateRaw([]byte(raw)); err == nil {
+	if _, err := Parse([]byte(raw)); err == nil {
 		t.Fatal("空端口应该被拒绝")
 	}
 }
@@ -65,7 +65,7 @@ func TestRejectCycle(t *testing.T) {
 		{"id":"e2","source":"a","sourceHandle":"out","target":"b","targetHandle":"in"},
 		{"id":"e3","source":"b","sourceHandle":"out","target":"a","targetHandle":"in"}
 	]}`
-	if err := ValidateRaw([]byte(raw)); err == nil {
+	if _, err := Parse([]byte(raw)); err == nil {
 		t.Fatal("有环的图应该被拒绝")
 	}
 }

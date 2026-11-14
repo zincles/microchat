@@ -3,7 +3,7 @@
 // 这一层不认识 Vue Flow，也不认识运行时；它只认 `FlowGraph` 的 JSON。
 // 节点类型先保持最小集合：input（字符串）/ history（messages[]）/ trim（messages[]）/
 // llm / join / output。以后加 template / condition 时，先在这里扩白名单，再改编辑器与运行时。
-import type { FlowEdge, FlowGraph, FlowNode } from "../api/types.ts";
+import type { FlowEdge, FlowGraph, FlowNode, FlowNodeData } from "../api/types.ts";
 import { DEFAULT_TRIM_COUNT, FLOW_NODE_SPECS, TRIM_MODES, flowInputPorts, flowNodeSpec, flowOutputPorts, judgeAnswerType, nodeLabelFor, type FlowNodeKind, type TrimMode } from "./flowSpecs.ts";
 export { DEFAULT_TRIM_COUNT, TRIM_MODES, TRIM_ROLES } from "./flowSpecs.ts";
 export type { TrimMode } from "./flowSpecs.ts";
@@ -32,12 +32,12 @@ export function flowTargetType(node: FlowNode | undefined, handle?: string): Flo
 
 export { judgeAnswerType };
 
-export function trimModeOf(data?: Record<string, unknown> | null): TrimMode {
+export function trimModeOf(data?: FlowNodeData | null): TrimMode {
   const value = String(data?.mode ?? "tail");
   return TRIM_MODES.some((mode) => mode.value === value) ? value as TrimMode : "tail";
 }
 
-export function trimCountOf(data?: Record<string, unknown> | null): number {
+export function trimCountOf(data?: FlowNodeData | null): number {
   const count = Number(data?.count ?? DEFAULT_TRIM_COUNT);
   return Number.isInteger(count) && count > 0 ? count : DEFAULT_TRIM_COUNT;
 }
@@ -99,7 +99,7 @@ export function normalizeFlowGraph(graph?: FlowGraph | null): FlowGraph {
     .filter((n) => n && typeof n.id === "string" && n.id)
     .map((n) => ({
       id: n.id,
-      type: String(n.type ?? "llm"),
+      type: String(n.type ?? "llm") as FlowNodeType,
       position: { x: Number(n.position?.x ?? 0), y: Number(n.position?.y ?? 0) },
       data: n.data && typeof n.data === "object" ? { ...n.data } : {},
     }));
