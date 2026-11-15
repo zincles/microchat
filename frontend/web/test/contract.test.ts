@@ -3670,9 +3670,12 @@ test("空草稿首屏：有欢迎语与当前助手/模型，不是一整页纯�
 test("输入框：Vuetify MD3 输入栏 + 发送键", () => {
   const composer = readFileSync(join(SRC, "components", "Composer.vue"), "utf8");
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  assert.match(composer, /import \{ VBtn, VTextarea \} from "vuetify\/components"/, "输入栏没用 Vuetify 组件");
-  assert.match(composer, /<VTextarea[\s\S]*variant="solo-filled"/, "输入框不是 Vuetify MD3 filled 形态");
-  assert.match(composer, /bg-color="surface-container"/, "输入框没用 MD3 容器色");
+  assert.match(composer, /import \{ VBtn, VSheet, VTextarea \} from "vuetify\/components"/, "输入栏没用 Vuetify 组件");
+  assert.match(composer, /<VSheet[^>]*class="composer-shell"/, "输入栏没有 Vuetify 浮卡外壳");
+  assert.match(composer, /<VTextarea[\s\S]*variant="plain"/, "输入框仍然用 Vuetify 的高亮 filled 形态");
+  assert.ok(!/solo-filled/.test(composer), "输入框还在用 solo-filled");
+  assert.match(composer, /color="surface-container-low"/, "输入栏没用低对比容器色");
+  assert.match(composer, /<style scoped>/, "输入栏表面样式没有收在组件内");
   assert.match(css, /#composer \{[^}]*width:\s*min\(calc\(100% - 1\.2em\), var\(--read-col, 840px\)\)/, "输入栏没有与正文同宽");
   assert.match(css, /#composer \{[^}]*left:\s*50%/, "输入栏没有居中");
   assert.match(css, /#composer \{[^}]*transform:\s*translateX\(-50%\)/, "输入栏居中位移没接上");
@@ -4103,7 +4106,7 @@ test("设计系统：tab 统一下划线、设置平铺、圆角收口", () => {
   // 圆角/输入框收口
   assert.match(theme, /--r-card:\s*12px/, "卡片圆角没有统一到 12");
   const composer = readFileSync(join(SRC, "components", "Composer.vue"), "utf8");
-  assert.match(composer, /rounded="xl"/, "输入框没走 Vuetify 的 MD3 shape");
+  assert.match(composer, /<VSheet[^>]*rounded="24"/, "输入框浮卡没有使用 Vuetify 的 24px 圆角");
   assert.ok(!/#input \{/.test(css), "旧 #input 样式还留着");
 });
 
@@ -4454,7 +4457,8 @@ test("输入区：Vuetify 4 MD3 接管 input/send/think", () => {
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 
   // 组件：Vuetify 自己的输入/按钮/菜单，不再手写 .composer-box / #send-btn 外形
-  assert.match(composer, /<VTextarea[\s\S]*variant="solo-filled"/, "输入框不是 Vuetify MD3");
+  assert.match(composer, /<VTextarea[\s\S]*variant="plain"/, "输入框不是 Vuetify plain 输入");
+  assert.match(composer, /class="composer-shell"/, "输入框没有低对比浮卡外壳");
   assert.match(composer, /<VBtn[\s\S]*id="send-btn"/, "发送键不是 Vuetify VBtn");
   assert.match(composer, /:color="running \? 'error' : 'primary-container'"/, "发送键不是低亮 primary-container");
   const menu = readFileSync(join(SRC, "components/ToolbarMenu.vue"), "utf8");
@@ -5074,4 +5078,13 @@ test("Flow 新节点：拼装 messages 与调试打印（动态类型 + Toast）
   assert.match(app, /formatDebugPayload/, "App 没有格式化调试载荷");
   assert.match(editor, /调试打印/, "编辑器测试没有 Toast");
   assert.match(app, /provide\("toast", toast\)/, "App 没有提供全局 Toast");
+});
+
+test("主题切换不渐变；消息列预留滚动槽", () => {
+  const prefs = readFileSync(join(SRC, "utils", "prefs.ts"), "utf8");
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8");
+  assert.match(prefs, /theme-changing/, "主题切换没有临时关闭过渡");
+  assert.match(prefs, /themeChangeSeq/, "连续切换主题时没有取消旧的恢复帧");
+  assert.match(css, /body\.theme-changing \*[\s\S]*transition:\s*none/, "主题切换没有禁用过渡的 CSS");
+  assert.match(css, /#messages-vue \{[^}]*scrollbar-gutter:\s*stable both-edges/, "消息列没有稳定滚动条槽");
 });

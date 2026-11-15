@@ -1321,7 +1321,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   （中文字形/没装的字体仍能回落）；`body` 读前者，`code, pre, kbd, samp` 读后者。
   设置 → 外观 有两格自由输入（CSS `font-family` 写法，可逗号分隔）；`normalizeFontFamily` 拒绝
   `;{}<>`（避免破坏声明），留空/坏值回落系统。
-- **输入框只有发送，且在一体面板里**（2026-11-04 用户定：暂时不做附件/模式，也不留全屏键）：底部现在是 **Vuetify 4 的 `VTextarea` + `VBtn`**（`variant="solo-filled"` / `density="comfortable"` / `rounded="xl"`），不再有 `.composer-box` 那层手写卡；空草稿保留欢迎块。
+- **输入框只有发送，且在一体面板里**（2026-11-04 用户定：暂时不做附件/模式，也不留全屏键）：底部现在是 **Vuetify 4 的 `VSheet` + `VTextarea` + `VBtn`**：`VSheet` 负责 24px 圆角、低对比底色/描边/阴影，`VTextarea` 用 `variant="plain"` + `auto-grow`（1..6 行），表面样式收在 `Composer.vue` 的 scoped style 里；不再有 `.composer-box` 那层手写卡。空草稿保留欢迎块。
   **宽度与正文一致**（2026-11-07 用户定）：`#composer` 不再是 `left:0;right:0` 全宽，而是
   `width: min(calc(100% - 1.2em), var(--read-col, 840px))` + `left:50%` / `translateX(-50%)`；
   桌面宽 840 与 `.messages-inner` 对齐，手机两侧留 0.6em。
@@ -1447,8 +1447,10 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   **设置界面控件**（2026-11-06 用户定「按钮和组件也全换成 Vuetify」）：`VTextField` / `VSelect` / `VTextarea` /
   `VSwitch` / `VBtn` / `VTable`；旧 `ToggleSwitch.vue` 与 `TabBar.vue` 已删，原生可见控件（button/select/textarea/input）
   在设置页里不再出现（隐藏的 file input 保留，触发键是 VBtn）。
-  **输入区**（2026-11-06 起 Vuetify 4）：`VTextarea`（`solo-filled` / `comfortable` / `rounded=xl` / `bg-surface-container-high`）
-  + `VBtn`（发送 primary、停止 error、思考 text）；旧的 `.composer-box` / `#input` / `#composer button` 手写样式已删。
+  **输入区**（2026-11-06 起 Vuetify 4；2026-11-16 改为 `VSheet + plain VTextarea`）：`VSheet`
+  给 24px 圆角/低对比表面，`VTextarea` 只管输入与 1..6 行 auto-grow；`VBtn`（发送 primary、
+  停止 error、思考 text）。旧的 `.composer-box` / `#input` / `#composer button` 手写样式已删。
+  ⚠ 不要改回 `solo-filled`：高亮底正是“组件感”的来源；表面样式只应在 Composer 的 scoped style 里。
   `.messages-inner` 顶部留白跟着顶栏从 3.2em 提到 **4.2em**（顶栏 3.5em + 间隙）。
   ⚠ 共享类暂时还是旧样式：`.bar-head.bar-tabs`、`.empty` 等**不要**在没加 `#sessions-bar` 前缀时改
   （否则会顺手改掉上下文工作区，且契约测试只钉了一部分）。

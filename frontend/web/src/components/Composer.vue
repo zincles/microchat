@@ -4,7 +4,7 @@
 // 行为不变：回车/发送键发送、生成中变停止、自增高 1..6 行、命令菜单、思考档位。
 // 外观交给 Vuetify 的 `md3` blueprint（VTextarea / VBtn），不再由手写 CSS 画输入框和按钮。
 import { ref, nextTick } from "vue";
-import { VBtn, VTextarea } from "vuetify/components";
+import { VBtn, VSheet, VTextarea } from "vuetify/components";
 import { ICONS } from "../assets/icons.ts";
 import ThinkingMenu from "./ThinkingMenu.vue";
 import ToolsMenu from "./ToolsMenu.vue";
@@ -92,24 +92,23 @@ defineExpose({ submit, clear, setText, text, setRunning });
       />
     </div>
     <div class="composer-row">
-    <VTextarea
-      id="composer-input"
-      ref="area"
-      class="composer-input"
-      :model-value="text"
-      variant="solo-filled"
-      density="comfortable"
-      bg-color="surface-container"
-      flat
-      hide-details
-      auto-grow
-      :rows="1"
-      :max-rows="6"
-      rounded="xl"
-      placeholder="输入消息…"
-      @update:model-value="onValue"
-      @keydown="onKeydown"
-    />
+    <VSheet class="composer-shell" color="surface-container-low" rounded="24">
+      <VTextarea
+        id="composer-input"
+        ref="area"
+        class="composer-input"
+        :model-value="text"
+        variant="plain"
+        density="comfortable"
+        hide-details
+        auto-grow
+        :rows="1"
+        :max-rows="6"
+        placeholder="输入消息…"
+        @update:model-value="onValue"
+        @keydown="onKeydown"
+      />
+    </VSheet>
     <div class="composer-actions">
       <VBtn
         v-if="props.menuOn"
@@ -142,3 +141,41 @@ defineExpose({ submit, clear, setText, text, setRunning });
     </div>
   </form>
 </template>
+
+<style scoped>
+/* 表面只在这里定义：VSheet 管圆角/底色，VTextarea 用 plain 只负责输入。
+ * 这样不会再把 .v-field 的覆盖写到全局，设置页和编辑器不受影响。 */
+.composer-shell {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--md-outline) 20%, transparent);
+  box-shadow:
+    0 4px 12px rgba(0, 0, 0, 0.02),
+    0 2px 4px rgba(0, 0, 0, 0.04);
+  transition: border-color 160ms var(--md-ease-standard, ease), box-shadow 160ms var(--md-ease-standard, ease);
+}
+.composer-shell:focus-within {
+  border-color: color-mix(in srgb, var(--md-primary) 55%, transparent);
+  box-shadow:
+    0 4px 14px rgba(0, 0, 0, 0.035),
+    0 2px 5px rgba(0, 0, 0, 0.05);
+}
+#app .composer-shell :deep(.v-field) {
+  background: transparent;
+  border-radius: inherit;
+}
+/* #app .v-field__input 那条 `all: revert-layer` 的逃生门特异性是 (1,1)；
+ * 这里必须带上 #app，否则 padding / min-height 会被它整条回退。 */
+#app .composer-shell :deep(.v-field__input) {
+  min-height: 48px;
+  padding: 12px 16px;
+  font-size: 16px;
+  line-height: 24px;
+}
+#app .composer-shell :deep(.v-field__outline) {
+  display: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .composer-shell { transition: none; }
+}
+</style>

@@ -359,6 +359,7 @@ export function themePref(): string {
 
 // 主题应用（唯一一处）：TG Mini App 里 data-theme **根本不设**（用户主题由 TG 注入的
 // --tg-theme-* 供给）—— 缺了这道守卫，TG 里保存一次设置就会把预设色压到 TG 注入色上。
+let themeChangeSeq = 0;
 export function applyTheme(theme?: string): void {
   if (window.Telegram?.WebApp) {
     document.documentElement.removeAttribute("data-theme");
@@ -366,8 +367,20 @@ export function applyTheme(theme?: string): void {
     return;
   }
   const next = theme === undefined ? themePref() : normalizeTheme(theme);
+  const body = document.body;
+  const seq = ++themeChangeSeq;
+  // Vuetify / 自定义 CSS 都会在 data-theme 变化的同一帧换色；如果不关过渡，
+  // 整页会从旧主题渐变到新主题，像卡了一拍。只在这次切换的两帧内关掉。
+  body?.classList.add("theme-changing");
   document.documentElement.setAttribute("data-theme", next);
   syncThemeColor();
+  if (body && typeof requestAnimationFrame === "function") {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (seq === themeChangeSeq) body.classList.remove("theme-changing");
+    }));
+  } else {
+    body?.classList.remove("theme-changing");
+  }
   // 左栏那颗主题键要跟着 data-theme 走（设置页下拉、syncPrefs 的 applyAll 都会走到这里）。
   if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
     window.dispatchEvent(new CustomEvent("mc-theme-changed", { detail: next }));

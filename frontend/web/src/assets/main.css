@@ -2576,3 +2576,20 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
   stroke: var(--md-outline);
 }
 .flow-node-debug .flow-node-body { line-height: 1.5; }
+
+/* 主题切换：Vuetify 与自定义 CSS 同时换色，关掉这两帧的过渡，避免整页渐变。 */
+body.theme-changing *,
+body.theme-changing *::before,
+body.theme-changing *::after {
+  transition: none !important;
+}
+
+/* 消息列：滚动条出现时左右不抖；移动端覆盖层滚动条不需要预留槽。 */
+#messages-vue {
+  scrollbar-gutter: stable both-edges;
+}
+@media (max-width: 700px) {
+  #messages-vue {
+    scrollbar-gutter: auto;
+  }
+}
