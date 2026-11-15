@@ -977,7 +977,9 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
  * 整行 0.72 的底噪，hover 整行才提到 1；按钮本身不再单独藏。 */
 /* 重摇位次牌（气泡下 ◀ 2/3 ▶ 的中间那块）。 */
 .msg-ops .reroll-pos { font-size: var(--md-type-label-small); color: var(--md-on-surface-variant); padding: 0 0.2em; font-variant-numeric: tabular-nums; }
-#composer { position: absolute; bottom: 0; left: 50%; right: auto; width: min(calc(100% - 1.2em), var(--read-col, 840px));
+#composer {
+  --composer-control: calc(34px * var(--app-text-scale, 1));
+  position: absolute; bottom: 0; left: 50%; right: auto; width: min(calc(100% - 1.2em), var(--read-col, 840px));
   display: flex; flex-direction: column; align-items: stretch; gap: 0.3em; background: none; z-index: 5;
   padding: 0.6em 0.6em calc(0.6em + env(safe-area-inset-bottom, 0px)); }
 /* 输入栏正上方的按钮区（思考 / 后续工具、MCP…）：不占输入卡的面，只放一排小按钮。 */
@@ -986,16 +988,18 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 /* Vuetify 只负责控件外观；这里只做布局（输入占满、按钮贴底一行）。 */
 .composer-input { flex: 1 1 auto; min-width: 0; }
 .composer-actions { flex: none; display: flex; align-items: flex-end; gap: 0.25em; }
+/* 发送键与上方工具按钮同一档 34px；Vuetify 默认 icon button 是 48px，会把输入行撑高。 */
+#app .composer-send-btn { width: var(--composer-control) !important; height: var(--composer-control) !important; }
 /* 发送图标按 SVG 的几何中心对齐；VBtn 的 content 默认被 inline 基线撑高，箭头会偏上一截。 */
 .composer-send-btn .v-btn__content { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; margin: 0; }
 .composer-send-btn .v-btn__content > span { display: flex; align-items: center; justify-content: center; line-height: 0; }
 /* 输入栏上方的按钮区（2026-11-10 用户定：推理等级与工具必须同一尺寸/风格）。
    两者共用同一套 MD3 outlined 小按钮：高度/字号/内边距/边框/底色只写这一处。 */
 .composer-toolbar .agent-anchor { display: inline-flex; flex: none; position: relative; }
-.composer-toolbar .agent-btn { width: 2em; height: 2em; min-width: 2em; min-height: 2em; font-size: 0.82em; outline: 1px solid var(--md-outline-variant); }
+.composer-toolbar .agent-btn { width: var(--composer-control); height: var(--composer-control); min-width: var(--composer-control); min-height: var(--composer-control); font-size: 0.82em; outline: 1px solid var(--md-outline-variant); }
 .composer-toolbar .agent-menu { top: auto; bottom: calc(100% + 0.4em); left: 0; transform-origin: bottom left; }
 .composer-toolbar .thinking-btn,
-.composer-toolbar .tools-btn { min-width: 0 !important; height: 2em !important; min-height: 2em !important;
+.composer-toolbar .tools-btn { min-width: 0 !important; height: var(--composer-control) !important; min-height: var(--composer-control) !important;
   padding: 0 0.8em !important; border: 1px solid var(--md-outline-variant) !important;
   background: var(--md-surface-container) !important; box-shadow: none !important;
   font-size: 0.82em !important; line-height: 2em !important; color: var(--md-on-surface-variant);
@@ -1781,10 +1785,8 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-canvas .vue-flow__controls-button:last-child { border-bottom: 0; }
 .flow-canvas .vue-flow__controls-button:hover { background: var(--md-surface-container-highest); }
 .flow-canvas .vue-flow__controls-button svg { fill: currentColor; }
-.flow-node { position: relative; min-width: 190px; max-width: 240px; box-sizing: border-box; padding: 0.55em 0.65em 0.6em 0.75em; overflow: visible;
-  border: 1px solid var(--md-outline-variant); border-radius: var(--md-shape-sm);
-  background: var(--md-surface-container-high); color: var(--md-on-surface);
-  box-shadow: var(--md-elev-1); font-size: var(--md-type-body-small); }
+/* 节点外观在下方视觉层统一定义；这里只留布局底座，避免同一组声明出现两次。 */
+.flow-node { position: relative; box-sizing: border-box; overflow: visible; font-size: var(--md-type-body-small); }
 .flow-node-head { display: flex; flex-direction: column; gap: 0.1em; }
 .flow-node-delete { position: absolute; top: 0.2em; right: 0.25em; z-index: 2;
   width: 1.6em; height: 1.6em; padding: 0; border: 0; border-radius: var(--r-xs);
@@ -1793,7 +1795,6 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-node-delete:hover { color: var(--md-error); background: var(--md-error-container); }
 .flow-node-delete:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 1px; }
 .flow-node-title { font-weight: 600; color: var(--md-on-surface); }
-.flow-node-hint { color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); line-height: 1.35; }
 /* 类型色只落在徽标/端口上，不画在卡片边上。 */
 .flow-canvas .flow-node.flow-node-history .vue-flow__handle,
 .flow-canvas .flow-node.flow-node-trim .vue-flow__handle,
@@ -1866,7 +1867,6 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-prompt-history { position: relative; min-height: 2em; padding: 0.35em 0.1em 0.35em 0.8em;
   border-top: 1px solid var(--md-outline-variant); display: flex; align-items: center; gap: 0.4em; }
 .flow-prompt-history:first-child { border-top: 0; }
-.flow-history-label { flex: 1 1 auto; color: var(--flow-history); font-size: var(--md-type-label-small); }
 .flow-trim-controls { display: flex; flex-direction: column; gap: 0.35em; margin-top: 0.4em; }
 .flow-trim-controls .v-field { font-size: var(--md-type-label-small); }
 .flow-merge-inputs { display: flex; flex-direction: column; gap: 0.15em; margin-top: 0.35em; }
@@ -1884,7 +1884,6 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-prompt-row { position: relative; padding: 0.35em 0.1em 0.4em 0.8em;
   border-top: 1px solid var(--md-outline-variant); }
 .flow-prompt-row:first-child { border-top: 0; }
-.flow-prompt-head { display: flex; align-items: center; gap: 0.3em; }
 .flow-prompt-role-label { flex: none; color: var(--md-on-surface-variant);
   font-size: var(--md-type-label-small); }
 .flow-prompt-role { flex: 0 0 6.2em; width: 6.2em; height: 1.8em; min-width: 0;
@@ -1894,8 +1893,6 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-prompt-role:focus { outline: 1px solid var(--md-primary); outline-offset: 0; }
 .flow-prompt-content { margin-top: 0.25em; }
 .flow-prompt-content .v-field__input { font-size: var(--md-type-label-small); line-height: 1.45; }
-.flow-prompt-del { flex: none; color: var(--md-on-surface-variant); }
-.flow-prompt-del:hover { color: var(--md-error); }
 .flow-add-prompt { align-self: flex-start; margin-top: 0.1em; }
 .flow-prompt-row .vue-flow__handle-left { left: 0; }
 /* LLM 里的历史条目：橙色，接受 messages[] 而不是裸字符串。 */
@@ -1957,7 +1954,6 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 }
 .flow-node-heading { display: flex; flex-direction: column; gap: 0.16em; min-width: 0; }
 .flow-node-title { font-size: 0.95em; line-height: 1.25; }
-.flow-node-hint { line-height: 1.4; }
 .flow-node-delete { top: 0.7em; right: 0.55em; }
 .flow-node-body { margin-top: 0.5em; }
 .flow-node .v-field { border-radius: var(--r-sm); }
@@ -1970,7 +1966,6 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 }
 .flow-prompt-history { min-height: 2.4em; border-color: color-mix(in srgb, var(--flow-history) 45%, var(--md-outline-variant)); }
 .flow-prompt-row:first-child, .flow-prompt-history:first-child { border-top: 1px solid var(--md-outline-variant); }
-.flow-prompt-head { gap: 0.35em; }
 .flow-prompt-add-row { margin-top: 0.1em; }
 .flow-add-prompt, .flow-add-join, .flow-add-merge { color: var(--md-primary); }
 .flow-output-row, .flow-llm-output-row, .flow-join-output-row, .flow-merge-row, .flow-join-row {
@@ -2061,7 +2056,6 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 /* 只读工作流：节点仍可选中/悬停看数据，但不接受任何编辑。 */
 .flow-node.is-readonly .nodrag { pointer-events: none; }
 .flow-node.is-readonly .flow-node-delete,
-.flow-node.is-readonly .flow-prompt-del,
 .flow-node.is-readonly .flow-port-del,
 .flow-node.is-readonly .flow-add-prompt,
 .flow-node.is-readonly .flow-add-merge,
@@ -2327,12 +2321,10 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-node .v-field__input,
 .flow-node .v-btn,
 .flow-node .flow-node-body,
-.flow-node .flow-node-hint,
 .flow-node .flow-llm-model > span,
 .flow-node .flow-llm-retry > span,
 .flow-node .flow-prompt-role,
 .flow-node .flow-prompt-role-label,
-.flow-node .flow-history-label,
 .flow-node .flow-output-row,
 .flow-node .flow-llm-output-row,
 .flow-node .flow-merge-row,
@@ -2380,12 +2372,10 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-node .v-field__input,
 .flow-node .v-btn,
 .flow-node .flow-node-body,
-.flow-node .flow-node-hint,
 .flow-node .flow-llm-model > span,
 .flow-node .flow-llm-retry > span,
 .flow-node .flow-prompt-role,
 .flow-node .flow-prompt-role-label,
-.flow-node .flow-history-label,
 .flow-node .flow-output-row,
 .flow-node .flow-llm-output-row,
 .flow-node .flow-merge-row,

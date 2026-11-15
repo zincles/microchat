@@ -5088,3 +5088,11 @@ test("主题切换不渐变；消息列预留滚动槽", () => {
   assert.match(css, /body\.theme-changing \*[\s\S]*transition:\s*none/, "主题切换没有禁用过渡的 CSS");
   assert.match(css, /#messages-vue \{[^}]*scrollbar-gutter:\s*stable both-edges/, "消息列没有稳定滚动条槽");
 });
+
+test("Composer 控件尺寸收成一个 token；旧 Flow 行类已清理", () => {
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8");
+  assert.match(css, /--composer-control:\s*calc\(34px/, "Composer 没有统一的 34px 控件 token");
+  assert.match(css, /#app \.composer-send-btn \{[^}]*width:\s*var\(--composer-control\)/, "发送键没有吃统一控件尺寸");
+  assert.match(css, /\.composer-toolbar \.thinking-btn,\s*\.composer-toolbar \.tools-btn \{[^}]*height:\s*var\(--composer-control\)/, "工具按钮没有吃统一控件尺寸");
+  assert.ok(!/flow-history-label|flow-prompt-del|flow-prompt-head/.test(css), "旧 Flow 行类还在 CSS 里");
+});
