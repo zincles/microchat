@@ -2448,3 +2448,131 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
   border-bottom: 1px solid var(--md-outline-variant) !important;
 }
 .flow-node .v-number-input__control .v-icon { font-size: calc(var(--flow-font) * 0.9); }
+
+
+/* ── 端口行（2026-11-14）──────────────────────────────────────────────
+ * 动态入口不再各写一套 Handle + 裸文字。一个端口一行：
+ *   Handle 贴节点边缘 | 标签 | 元信息（类型/role） | 删除
+ * 有正文的端口（LLM Prompt）把正文放在同一行下面。
+ * 端口身份是 data-port-id / Handle id；显示序号只是给人看的。
+ */
+.flow-node .flow-port-row {
+  position: relative;
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  min-width: 0;
+  padding: 0.28em 0 0.32em;
+  border: 0;
+  border-top: 1px solid var(--md-outline-variant);
+  border-radius: 0;
+  background: none;
+}
+.flow-node .flow-port-row:first-child { border-top: 0; }
+.flow-node .flow-port-row.flow-prompt-row,
+.flow-node .flow-port-row.flow-prompt-history {
+  padding: 0.35em 0 0.4em;
+  border: 0;
+  border-top: 1px solid var(--md-outline-variant);
+  border-radius: 0;
+  background: none;
+}
+.flow-node .flow-port-row.flow-prompt-row:first-child,
+.flow-node .flow-port-row.flow-prompt-history:first-child { border-top: 0; }
+
+.flow-port-head {
+  display: flex;
+  align-items: center;
+  gap: 0.35em;
+  min-height: 1.6em;
+  min-width: 0;
+}
+.flow-port-label {
+  flex: none;
+  color: var(--md-on-surface);
+  font-size: var(--flow-font);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.flow-port-meta {
+  flex: none;
+  color: var(--md-on-surface-variant);
+  font-size: calc(var(--flow-font) * 0.9);
+  white-space: nowrap;
+}
+.flow-port-row .flow-port-del {
+  flex: none;
+  margin-left: auto;
+}
+.flow-port-row.is-right .flow-port-head { justify-content: flex-end; }
+.flow-port-row.is-right .flow-port-del { margin-left: 0.15em; }
+.flow-port-body { margin-top: 0.25em; min-width: 0; }
+
+/* 有正文时 Handle 对齐标题行，而不是整行（含 textarea）的垂直中心。 */
+.flow-node .flow-port-row.has-body > .vue-flow__handle { top: 1.05em; }
+
+/* Prompt 列表是唯一的滚动容器（max-height + overflow-y:auto）。
+ * CSS 里只要一个轴是 auto，另一个轴就会被算成 auto ⇒ 行左侧的 Handle 会被裁掉，
+ * 表现是“点不到、看不见，但还能连”。给列表补一圈左内边距、再用等量负外边距抵消，
+ * 内容位置不动，裁切框却向左扩到节点边缘。 */
+.flow-node .flow-prompt-list {
+  margin-left: -1.4em;
+  padding-left: 1.4em;
+}
+
+/* 节点内的普通字段被统一压成一行高；Textarea 必须恢复自动高度，
+ * 否则内容被 .v-field 的固定 26px 裁掉（LLM Prompt 正文尤其明显）。 */
+.flow-node .v-textarea .v-field {
+  height: auto !important;
+}
+.flow-node .v-textarea .v-field__input {
+  height: auto !important;
+  min-height: var(--flow-control-height) !important;
+}
+.flow-node .flow-prompt-content .v-field {
+  height: auto !important;
+  min-height: calc(var(--flow-control-height) * 2.4);
+}
+.flow-node .flow-prompt-content .v-field__input {
+  height: auto !important;
+  min-height: calc(var(--flow-control-height) * 2.4) !important;
+}
+
+/* 端点图案的半径 + 描边会吃掉内容边缘约 3–4px；节点内边距只留 0.75em 时，
+ * 左侧 Handle 会压住标签第一个字。把横向内边距与 Handle 偏移一起加一档：
+ * 内容仍在同一列，Handle 退到节点边缘外侧，文字与端点之间留出明确缝隙。 */
+.flow-node {
+  --flow-pad-x: 1.3em;
+  padding-left: 1.3em;
+  padding-right: 1.3em;
+}
+.flow-node-head {
+  margin-left: -1.3em;
+  margin-right: -1.3em;
+  padding-left: 1.3em;
+}
+.flow-node .flow-prompt-row,
+.flow-node .flow-prompt-history,
+.flow-node .flow-output-row,
+.flow-node .flow-llm-output-row,
+.flow-node .flow-merge-row,
+.flow-node .flow-join-row {
+  --flow-pad-x: 1.3em;
+}
+
+/* 拼装 messages / 调试打印（2026-11-15） */
+.flow-node-assemble {
+  width: 21em; min-width: 21em; max-width: 21em; min-height: 12em;
+  display: flex; flex-direction: column;
+}
+.flow-node-assemble .flow-prompt-list { flex: 1 1 auto; min-height: 0; max-height: none; }
+.flow-node-debug { --flow-node-accent: var(--md-secondary); }
+.flow-canvas .flow-node .vue-flow__handle.flow-port-any {
+  background: var(--md-outline) !important;
+}
+.flow-canvas .vue-flow__edge.flow-edge-any .vue-flow__edge-path {
+  stroke: var(--md-outline);
+}
+.flow-node-debug .flow-node-body { line-height: 1.5; }

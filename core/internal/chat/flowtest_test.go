@@ -565,3 +565,62 @@ func TestFlowLLMFailureFailsWholeFlow(t *testing.T) {
 		t.Fatalf("max_retry=2 应总共尝试 3 次，实际 %d", calls)
 	}
 }
+
+func TestFlowAssembleAndDebugPayload(t *testing.T) {
+	graph := flowGraph{Nodes: []flowNode{
+		{ID: "in", Type: "input"},
+		{ID: "assemble", Type: "assemble", Data: map[string]any{"prompts": []any{
+			map[string]any{"id": "p1", "role": "user", "content": "固定"},
+		}}},
+		{ID: "debug", Type: "debug"},
+		{ID: "out", Type: "output"},
+	}, Edges: []flowEdge{
+		{ID: "e1", Source: "in", SourceHandle: "out", Target: "assemble", TargetHandle: "prompt-p1"},
+		{ID: "e2", Source: "assemble", SourceHandle: "out", Target: "debug", TargetHandle: "in"},
+		{ID: "e3", Source: "debug", SourceHandle: "out", Target: "out", TargetHandle: "text"},
+	}}
+	out, err := (&Service{}).executeFlowGraph(context.Background(), graph, flowRunOptions{Input: "本轮"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var assemble, debug *FlowTestStep
+	for index := range out.Result.Steps {
+		switch out.Result.Steps[index].ID {
+		case "assemble":
+			assemble = &out.Result.Steps[index]
+		case "debug":
+			debug = &out.Result.Steps[index]
+		}
+	}
+	if assemble == nil || assemble.Output != "messages[1]" {
+		t.Fatalf("拼装节点输出不对：%+v", assemble)
+	}
+	messages, ok := debug.Debug.([]providers.ChatMessage)
+	if !ok || len(messages) != 1 || messages[0].Role != "user" || messages[0].Content != "固定\n\n本轮" {
+		t.Fatalf("调试载荷不是拼装后的 messages：%#v", debug)
+	}
+	if out.Final.Text != "messages[1]" {
+		t.Fatalf("调试节点没有原样转发 messages 的可读文本：%q", out.Final.Text)
+	}
+}
+
+func TestFlowDebugPassesTextThrough(t *testing.T) {
+	graph := flowGraph{Nodes: []flowNode{
+		{ID: "in", Type: "input"},
+		{ID: "debug", Type: "debug"},
+		{ID: "out", Type: "output"},
+	}, Edges: []flowEdge{
+		{ID: "e1", Source: "in", SourceHandle: "out", Target: "debug", TargetHandle: "in"},
+		{ID: "e2", Source: "debug", SourceHandle: "out", Target: "out", TargetHandle: "text"},
+	}}
+	out, err := (&Service{}).executeFlowGraph(context.Background(), graph, flowRunOptions{Input: "原样"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Final.Text != "原样" {
+		t.Fatalf("调试节点没有原样转发文本：%q", out.Final.Text)
+	}
+	if len(out.Result.Steps) < 2 || out.Result.Steps[1].Debug != "原样" {
+		t.Fatalf("调试载荷不对：%+v", out.Result.Steps)
+	}
+}

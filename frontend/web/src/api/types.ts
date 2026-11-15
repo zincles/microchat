@@ -556,60 +556,21 @@ export interface PromptEntry {
   system_prompt?: boolean;
 }
 
-export interface FlowPosition {
-  x: number;
-  y: number;
-}
+import type { FlowGraph, FlowNodeData } from "./flow.generated.ts";
+export type {
+  FlowEdge,
+  FlowNode,
+  FlowNodeData,
+  FlowNodeType,
+  FlowPosition,
+  FlowPrompt,
+} from "./flow.generated.ts";
+export type { FlowGraph };
 
-export type FlowNodeType =
-  | "input" | "text" | "history" | "trim" | "merge"
-  | "join" | "llm" | "judge" | "output";
-
-export interface FlowPrompt {
-  id: string;
-  kind?: "" | "prompt" | "history";
-  role: "system" | "user" | "assistant";
-  content: string;
-}
-
-/** 节点 data 的完整可持久化字段；所有字段可选，按 type 由后端 schema 校验组合。 */
-export interface FlowNodeData {
-  text?: string;
-  mode?: string;
-  count?: number;
-  roles?: string[];
-  inputs?: string[];
-  outputs?: string[];
-  separator?: string;
-  provider?: string;
-  model?: string;
-  max_retry?: number;
-  /** 旧 LLM 数据兼容字段；运行时不用。 */
-  width?: number;
-  height?: number;
-  prompts?: FlowPrompt[];
-  questions?: Record<string, string>;
-  answer_type?: "string" | "bool" | "number" | "choice";
-  answer_key?: string;
-  threshold?: number;
-  /** 只活在编辑器，保存前由 toGraph 删除。 */
+/** 画布视图专用的非持久化字段；保存前由 toGraph 删除。 */
+export interface FlowCanvasData extends FlowNodeData {
   test?: { inputs?: string[]; reasoning?: string; output?: string; user?: string };
   runState?: string;
-}
-
-export interface FlowNode {
-  id: string;
-  type: FlowNodeType;
-  position: FlowPosition;
-  data?: FlowNodeData;
-}
-
-export interface FlowEdge {
-  id: string;
-  source: string;
-  target: string;
-  sourceHandle?: string;
-  targetHandle?: string;
 }
 
 export interface FlowTestStep {
@@ -627,6 +588,8 @@ export interface FlowTestStep {
   usage?: Record<string, unknown> | null;
   elapsed_ms?: number;
   payload?: LastPayload | null;
+  /** debug 节点收到的原始载荷（任意 JSON 值）。 */
+  debug?: unknown;
 }
 
 export interface FlowTestResult {
@@ -656,12 +619,6 @@ export interface FlowRunTrace {
   duration_ms: number;
   error?: string;
   steps: FlowTestStep[];
-}
-
-export interface FlowGraph {
-  version: number;
-  nodes: FlowNode[];
-  edges: FlowEdge[];
 }
 
 export interface Agent {

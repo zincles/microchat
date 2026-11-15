@@ -13,11 +13,24 @@ export const DEFAULT_JOIN_SEPARATOR = "\n\n---\n\n";
 export const FLOW_NODE_TYPES = Object.keys(FLOW_NODE_SPECS) as FlowNodeKind[];
 export type FlowNodeType = FlowNodeKind;
 export type FlowDataType = "string" | "messages" | "bool" | "number" | "choice";
+/** 端口类型多一个 `any`：调试节点的类型由上游决定，没接上游前不猜。 */
+export type FlowPortType = FlowDataType | "any";
 
 // 端口类型是连接校验的唯一依据：结构由 flowSpecs.ts 的 NodeSpec 提供。
 // 这里只保留两个兼容映射：老 join 的 `out`、老 output 的 `in`。
-export function flowSourceType(node: FlowNode | undefined, handle?: string): FlowDataType | null {
+// debug 节点是动态类型：它的输入/输出类型都从**接进来的那条边**反推。
+function debugInputType(nodeID: string, graph?: FlowGraph, seen = new Set<string>()): FlowPortType {
+  if (!graph || seen.has(nodeID)) return "any";
+  seen.add(nodeID);
+  const incoming = (graph.edges ?? []).find((edge) => edge.target === nodeID);
+  if (!incoming) return "any";
+  const source = (graph.nodes ?? []).find((item) => item.id === incoming.source);
+  return flowSourceType(source, incoming.sourceHandle, graph, seen) ?? "any";
+}
+
+export function flowSourceType(node: FlowNode | undefined, handle?: string, graph?: FlowGraph, seen?: Set<string>): FlowPortType | null {
   if (!node) return null;
+  if (node.type === "debug") return (handle ?? "out") === "out" ? debugInputType(node.id, graph, seen) : null;
   const h = handle ?? "";
   const ports = flowOutputPorts(node);
   const port = ports.find((item) => item.handle === h);
@@ -25,8 +38,9 @@ export function flowSourceType(node: FlowNode | undefined, handle?: string): Flo
   return null;
 }
 
-export function flowTargetType(node: FlowNode | undefined, handle?: string): FlowDataType | null {
+export function flowTargetType(node: FlowNode | undefined, handle?: string, graph?: FlowGraph): FlowPortType | null {
   if (!node) return null;
+  if (node.type === "debug") return (handle ?? "in") === "in" ? debugInputType(node.id, graph) : null;
   return flowInputPorts(node).find((item) => item.handle === (handle ?? ""))?.type ?? null;
 }
 
@@ -54,6 +68,18 @@ export function trimMessages<T>(messages: readonly T[], mode: TrimMode, count: n
 
 // formatFlowText：图的纯文本视图。用 id + 类型 + 位置 + 每个端口的去向，
 // 方便在没有画布的地方（日志、聊天、code review）核对连接。
+/** 调试节点的 Toast 文本：字符串原样，其余 JSON；太长截断，别把 toast 撑爆。 */
+export function formatDebugPayload(value: unknown): string {
+  let text: string;
+  if (typeof value === "string") text = value;
+  else {
+    try { text = JSON.stringify(value); }
+    catch { text = String(value); }
+  }
+  if (!text) text = "（空载荷）";
+  return text.length > 800 ? `${text.slice(0, 800)}…` : text;
+}
+
 export function formatFlowText(graph?: FlowGraph | null): string {
   const nodes = graph?.nodes ?? [];
   const edges = graph?.edges ?? [];
@@ -110,8 +136,8 @@ export function normalizeFlowGraph(graph?: FlowGraph | null): FlowGraph {
       id: String(e.id ?? `edge-${e.source}-${e.target}`),
       source: e.source,
       target: e.target,
-      ...(e.sourceHandle ? { sourceHandle: e.sourceHandle } : {}),
-      ...(e.targetHandle ? { targetHandle: e.targetHandle } : {}),
+      sourceHandle: String(e.sourceHandle ?? ""),
+      targetHandle: String(e.targetHandle ?? ""),
     }));
   return { version: FLOW_VERSION, nodes, edges };
 }
@@ -150,10 +176,10 @@ export function flowIssues(graph: FlowGraph): string[] {
     if (usedTargets.has(targetKey)) issues.push("一个入口只能接一条线（要多路请用拼接节点）");
     usedSources.add(sourceKey);
     usedTargets.add(targetKey);
-    const st = flowSourceType(byId.get(edge.source), sourceHandle);
-    const tt = flowTargetType(byId.get(edge.target), targetHandle);
+    const st = flowSourceType(byId.get(edge.source), sourceHandle, graph);
+    const tt = flowTargetType(byId.get(edge.target), targetHandle, graph);
     if (!st || !tt) issues.push("连线指向了不存在的端口");
-    else if (st !== tt) issues.push(`端口类型不匹配：${st} → ${tt}`);
+    else if (st !== "any" && tt !== "any" && st !== tt) issues.push(`端口类型不匹配：${st} → ${tt}`);
   }
   const output = nodes.find((n) => n.type === "output");
   if (output && !edges.some((e) => e.target === output.id)) issues.push("输出节点还没有输入");
@@ -239,6 +265,11 @@ export function flowDebugSteps(graph: FlowGraph): FlowDebugStep[] {
       output = "[裁剪后 messages]";
     } else if (node.type === "merge") {
       output = "[拼接后 messages]";
+    } else if (node.type === "assemble") {
+      output = "[拼装 messages]";
+    } else if (node.type === "debug") {
+      label = "调试打印";
+      output = incoming.length ? incoming[0] : "[没有输入]";
     } else if (node.type === "llm") {
       label = "调用 LLM";
       output = "[LLM 正文]";

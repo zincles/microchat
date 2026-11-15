@@ -2,18 +2,18 @@
 // FlowAgent 编辑器的节点外壳：输入 / 历史 / 裁剪 / 调用 LLM / 拼接 / 输出。
 // LLM 节点内部是一张 **messages 列表**：每个 Prompt 条目有自己的 role 和左侧输入孔。
 import { computed, inject, onUnmounted, ref, type Ref } from "vue";
-import { Handle, Position } from "@vue-flow/core";
 import { VBtn, VNumberInput, VSelect, VTextField, VTextarea } from "vuetify/components";
 import { ICONS } from "../assets/icons.ts";
-import type { FlowNodeData, ModelListItem } from "../api/types.ts";
-import { DEFAULT_JOIN_SEPARATOR, TRIM_MODES, TRIM_ROLES, trimCountOf, trimModeOf, type FlowDataType, type TrimMode } from "../utils/flow.ts";
+import FlowPortRow from "./FlowPortRow.vue";
+import type { FlowCanvasData, FlowGraph, FlowNodeType, ModelListItem } from "../api/types.ts";
+import { DEFAULT_JOIN_SEPARATOR, TRIM_MODES, TRIM_ROLES, flowTargetType, trimCountOf, trimModeOf, type FlowDataType, type FlowPortType, type TrimMode } from "../utils/flow.ts";
 import { judgeAnswerType as judgeAnswerTypeOf, nodeBadgeFor, nodeHintFor, nodeLabelFor } from "../utils/flowSpecs.ts";
 
 const props = defineProps<{
   id: string;
   type: string;
   selected?: boolean;
-  data: FlowNodeData;
+  data: FlowCanvasData;
 }>();
 
 interface PromptEntry {
@@ -32,10 +32,10 @@ const removeNode = inject<(id: string) => void>("flowRemoveNode", () => {});
 const removePort = inject<(nodeId: string, handle: string, side: "source" | "target") => void>("flowRemovePort", () => {});
 const models = inject<Ref<ModelListItem[]>>("flowModels", ref([]));
 const readonly = inject<Ref<boolean>>("flowReadonly", ref(false));
+const graph = inject<Ref<FlowGraph>>("flowGraph", ref<FlowGraph>({ version: 1, nodes: [], edges: [] }));
 const label = computed(() => nodeLabelFor(props.type));
 const badge = computed(() => nodeBadgeFor(props.type));
 const hint = computed(() => nodeHintFor(props.type));
-const portClass = (type: FlowDataType): string => `flow-port-${type}`;
 const prompts = computed<PromptEntry[]>(() => Array.isArray(props.data.prompts) ? props.data.prompts as PromptEntry[] : []);
 function promptList(): PromptEntry[] {
   if (!Array.isArray(props.data.prompts)) props.data.prompts = [];
@@ -203,14 +203,49 @@ const roles = [
   { title: "user", value: "user" },
   { title: "assistant", value: "assistant" },
 ];
+// 只有一个固定出口的节点（input / text / history / trim / merge / judge）共用一行端口。
+const singleOutput = computed<{ label: string; type: FlowDataType; meta: string }>(() => {
+  if (props.type === "judge") return { label: "答案", type: judgeAnswerType.value as FlowDataType, meta: String(judgeAnswerType.value) };
+  if (props.type === "history" || props.type === "trim" || props.type === "merge" || props.type === "assemble") {
+    return { label: "messages[]", type: "messages", meta: "输出" };
+  }
+  return { label: "输出", type: "string", meta: "string" };
+});
+// 调试节点的出口类型 = 接进来的那条边的类型；没接就是 any。
+const debugType = computed<FlowPortType>(() => {
+  const node = {
+    id: props.id,
+    type: props.type as FlowNodeType,
+    position: { x: 0, y: 0 },
+    data: props.data,
+  };
+  return flowTargetType(node, "in", graph.value) ?? "any";
+});
+// 端口身份 = 前缀 + 单元 id。单元 id 只铸一次，删除后永不重用；
+// 显示序号（Prompt 1 / 历史 1）只是给人看的，删掉一条后可以重排。
+function newUnitID(prefix: string): string {
+  const uuid = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return `${prefix}-${uuid}`;
+}
 function addPrompt(): void {
-  promptList().push({ id: `p-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`, kind: "prompt", role: "system", content: "" });
+  promptList().push({ id: newUnitID("p"), kind: "prompt", role: "system", content: "" });
 }
 function addHistory(): void {
-  promptList().push({ id: `h-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`, kind: "history", role: "system", content: "" });
+  promptList().push({ id: newUnitID("h"), kind: "history", role: "system", content: "" });
 }
-function removePrompt(id: string): void {
-  props.data.prompts = promptList().filter((p) => p.id !== id);
+function promptPort(prompt: PromptEntry): string {
+  return prompt.kind === "history" ? `history-${prompt.id}` : `prompt-${prompt.id}`;
+}
+function promptLabel(prompt: PromptEntry, index: number): string {
+  const kind = prompt.kind === "history" ? "history" : "prompt";
+  const sameKind = prompts.value.slice(0, index + 1).filter((item) => (item.kind === "history" ? "history" : "prompt") === kind);
+  return `${kind === "history" ? "历史" : "Prompt"} ${sameKind.length}`;
+}
+function removePrompt(prompt: PromptEntry): void {
+  removePort(props.id, promptPort(prompt), "target");
+  props.data.prompts = promptList().filter((p) => p.id !== prompt.id);
 }
 function removeMergeInput(index: number): void {
   if (mergeInputs.value.length <= 1) return;
@@ -219,10 +254,7 @@ function removeMergeInput(index: number): void {
   if (removed) removePort(props.id, removed, "target");
 }
 function addMergeInput(): void {
-  const inputs = [...mergeInputs.value];
-  let n = inputs.length + 1;
-  while (inputs.includes(`in-${n}`)) n++;
-  props.data.inputs = [...inputs, `in-${n}`];
+  props.data.inputs = [...mergeInputs.value, newUnitID("in")];
 }
 function removeJoinInput(index: number): void {
   if (joinInputs.value.length <= 1) return;
@@ -237,16 +269,10 @@ function removeJoinOutput(index: number): void {
   if (removed) removePort(props.id, removed, "source");
 }
 function addJoinInput(): void {
-  const inputs = [...joinInputs.value];
-  let n = inputs.length + 1;
-  while (inputs.includes(`in-${n}`)) n++;
-  props.data.inputs = [...inputs, `in-${n}`];
+  props.data.inputs = [...joinInputs.value, newUnitID("in")];
 }
 function addJoinOutput(): void {
-  const outputs = [...joinOutputs.value];
-  let n = outputs.length + 1;
-  while (outputs.includes(`out-${n}`)) n++;
-  props.data.outputs = [...outputs, `out-${n}`];
+  props.data.outputs = [...joinOutputs.value, newUnitID("out")];
 }
 </script>
 
@@ -258,8 +284,6 @@ function addJoinOutput(): void {
     @mouseenter="hovered = true"
     @mouseleave="hovered = false"
   >
-    <Handle v-if="type === 'trim'" id="in" type="target" :position="Position.Left" :class="portClass('messages')" />
-    <Handle v-if="type === 'judge'" id="state" type="target" :position="Position.Left" :class="portClass('string')" />
     <div class="flow-node-head" :title="hint">
       <span class="flow-node-badge" aria-hidden="true">{{ badge }}</span>
       <div class="flow-node-heading">
@@ -272,10 +296,12 @@ function addJoinOutput(): void {
       <button class="flow-node-delete nodrag nopan" type="button" title="删除节点" aria-label="删除节点"
         @click.stop="removeNode(id)" v-html="ICONS.x"></button>
     </div>
-    <div v-if="type === 'llm'" class="flow-enabled-row">
-      <Handle id="enabled" type="target" :position="Position.Left" :class="portClass('bool')" />
-      <span>启用 · bool（可选）</span>
-    </div>
+    <FlowPortRow v-if="type === 'llm'" id="enabled" type="bool" side="left"
+      label="启用" meta="bool（可选）" root-class="flow-enabled-row" />
+    <FlowPortRow v-if="type === 'trim'" id="in" type="messages" side="left"
+      label="messages[]" meta="输入" root-class="flow-trim-row" />
+    <FlowPortRow v-if="type === 'judge'" id="state" type="string" side="left"
+      label="场景 / 状态" meta="string" root-class="flow-judge-state-row" />
     <label v-if="type === 'llm'" class="flow-llm-model nodrag nopan">
       <span>AI 模型</span>
       <VSelect v-model="modelValue" :items="modelOptions" density="compact" variant="outlined" hide-details />
@@ -285,49 +311,44 @@ function addJoinOutput(): void {
       <VNumberInput v-model="maxRetry" :min="0" :step="1" control-variant="stacked"
         density="compact" variant="outlined" hide-details suffix="次" />
     </label>
-    <div v-if="type === 'llm'" class="flow-prompt-list">
-      <div v-for="prompt in prompts" :key="prompt.id"
-        :class="prompt.kind === 'history' ? 'flow-prompt-history' : 'flow-prompt-row'">
-        <Handle v-if="prompt.kind === 'history'" :id="`history-${prompt.id}`" type="target" :position="Position.Left" :style="{ top: '50%' }" :class="portClass('messages')" />
-        <Handle v-else :id="`prompt-${prompt.id}`" type="target" :position="Position.Left" :style="{ top: '50%' }" :class="portClass('string')" />
-        <template v-if="prompt.kind === 'history'">
-          <span class="flow-history-label">历史 messages[]</span>
-          <VBtn icon variant="outlined" size="x-small" type="button" class="flow-prompt-del nodrag nopan"
-            title="删除这条历史" aria-label="删除这条历史" @click="removePrompt(prompt.id)">×</VBtn>
+    <div v-if="type === 'llm' || type === 'assemble'" class="flow-prompt-list">
+      <FlowPortRow
+        v-for="(prompt, index) in prompts"
+        :key="prompt.id"
+        :id="prompt.kind === 'history' ? `history-${prompt.id}` : `prompt-${prompt.id}`"
+        :type="prompt.kind === 'history' ? 'messages' : 'string'"
+        side="left"
+        :label="promptLabel(prompt, index)"
+        :meta="prompt.kind === 'history' ? 'messages[]' : ''"
+        :root-class="prompt.kind === 'history' ? 'flow-prompt-history' : 'flow-prompt-row'"
+        :removable="!readonly"
+        :remove-title="prompt.kind === 'history' ? '删除这条历史' : '删除这条 Prompt'"
+        @remove="removePrompt(prompt)"
+      >
+        <template v-if="prompt.kind !== 'history'" #meta>
+          <span class="flow-prompt-role-label">Role:</span>
+          <select v-model="prompt.role" class="flow-prompt-role nodrag nopan"
+            title="Prompt Role" aria-label="Prompt Role">
+            <option v-for="role in roles" :key="role.value" :value="role.value">{{ role.title }}</option>
+          </select>
         </template>
-        <template v-else>
-          <div class="flow-prompt-head">
-            <span class="flow-prompt-role-label">Role:</span>
-            <select v-model="prompt.role" class="flow-prompt-role nodrag nopan"
-              title="Prompt Role" aria-label="Prompt Role">
-              <option v-for="role in roles" :key="role.value" :value="role.value">{{ role.title }}</option>
-            </select>
-            <VBtn icon variant="outlined" size="x-small" type="button" class="flow-prompt-del nodrag nopan"
-              title="删除这条 Prompt" aria-label="删除这条 Prompt" @click="removePrompt(prompt.id)">×</VBtn>
-          </div>
+        <template v-if="prompt.kind !== 'history'" #default>
           <VTextarea v-model="prompt.content" class="flow-prompt-content nodrag nopan"
             rows="2" density="compact" variant="outlined" hide-details
             placeholder="手写这段 Prompt（也可以只接上游）" />
         </template>
-      </div>
+      </FlowPortRow>
       <div class="flow-prompt-add-row">
         <VBtn variant="outlined" size="x-small" type="button" class="flow-add-prompt nodrag nopan" @click="addPrompt">＋ 添加 Prompt</VBtn>
         <VBtn variant="outlined" size="x-small" type="button" class="flow-add-prompt nodrag nopan" @click="addHistory">＋ 添加历史</VBtn>
       </div>
     </div>
+    <FlowPortRow v-if="type === 'debug'" id="in" :type="debugType" side="left"
+      label="数据" :meta="debugType === 'any' ? '任意类型' : debugType" root-class="flow-debug-row" />
     <div v-if="type === 'output'" class="flow-output-inputs">
-      <div class="flow-output-row">
-        <Handle id="text" type="target" :position="Position.Left" :class="portClass('string')" />
-        <span>正文</span>
-      </div>
-      <div class="flow-output-row">
-        <Handle id="reasoning" type="target" :position="Position.Left" :class="portClass('string')" />
-        <span>思考</span>
-      </div>
-      <div class="flow-output-row">
-        <Handle id="user" type="target" :position="Position.Left" :class="portClass('string')" />
-        <span>用户消息</span>
-      </div>
+      <FlowPortRow id="text" type="string" side="left" label="正文" meta="string" root-class="flow-output-row" />
+      <FlowPortRow id="reasoning" type="string" side="left" label="思考" meta="string" root-class="flow-output-row" />
+      <FlowPortRow id="user" type="string" side="left" label="用户消息" meta="string" root-class="flow-output-row" />
     </div>
     <div v-if="type === 'judge'" class="flow-judge-controls nodrag nopan">
       <label class="flow-judge-field">
@@ -367,7 +388,15 @@ function addJoinOutput(): void {
         placeholder="输入要输出的常量文本" />
       <span class="flow-node-body">没有输入口，只有右侧文本输出。</span>
     </label>
-    <div v-if="type === 'history'" class="flow-node-body">来自真实会话的历史 messages</div>
+    <div v-if="type === 'debug'" class="flow-node-body">
+      输入原样转发；有数据流经时弹 Toast 显示载荷。输出类型跟随输入。
+    </div>
+    <div v-if="type === 'history'" class="flow-node-body">
+      <b>只读原始历史正文</b>：只输出当前用户消息之前的 user / assistant 正文（无思考），
+      已剔除 <code>&lt;state&gt;</code>。<br>
+      <b>不包含</b> System prompt（在各 LLM 调用块内编写），也不包含最新用户输入
+      （由「输入」节点负责）。
+    </div>
     <div v-if="type === 'trim'" class="flow-trim-controls nodrag nopan">
       <VSelect v-model="trimMode" :items="TRIM_MODES" density="compact" variant="outlined" hide-details />
       <VNumberInput v-model="trimCount" :min="1" :step="1" control-variant="stacked"
@@ -377,23 +406,17 @@ function addJoinOutput(): void {
       <span class="flow-node-body">{{ trimSummary }}</span>
     </div>
     <div v-if="type === 'merge'" class="flow-merge-inputs">
-      <div v-for="(input, i) in mergeInputs" :key="input" class="flow-merge-row">
-        <Handle :id="input" type="target" :position="Position.Left" :class="portClass('messages')" />
-        <span>输入 {{ i + 1 }} · messages[]</span>
-        <VBtn icon variant="outlined" size="x-small" type="button" class="flow-port-del nodrag nopan"
-          :disabled="mergeInputs.length <= 1" title="移除这个输入" aria-label="移除这个输入"
-          @click.stop="removeMergeInput(i)">−</VBtn>
-      </div>
+      <FlowPortRow v-for="(input, i) in mergeInputs" :key="input" :id="input" type="messages" side="left"
+        :label="`输入 ${i + 1}`" meta="messages[]" root-class="flow-merge-row"
+        removable :remove-disabled="mergeInputs.length <= 1" remove-title="移除这个输入"
+        @remove="removeMergeInput(i)" />
       <VBtn variant="outlined" size="x-small" type="button" class="flow-add-merge nodrag nopan" @click="addMergeInput">＋ 添加输入</VBtn>
     </div>
     <div v-if="type === 'join'" class="flow-join-inputs">
-      <div v-for="(input, i) in joinInputs" :key="input" class="flow-join-row">
-        <Handle :id="input" type="target" :position="Position.Left" :class="portClass('string')" />
-        <span>输入 {{ i + 1 }}</span>
-        <VBtn icon variant="outlined" size="x-small" type="button" class="flow-port-del nodrag nopan"
-          :disabled="joinInputs.length <= 1" title="移除这个输入" aria-label="移除这个输入"
-          @click.stop="removeJoinInput(i)">−</VBtn>
-      </div>
+      <FlowPortRow v-for="(input, i) in joinInputs" :key="input" :id="input" type="string" side="left"
+        :label="`输入 ${i + 1}`" meta="string" root-class="flow-join-row"
+        removable :remove-disabled="joinInputs.length <= 1" remove-title="移除这个输入"
+        @remove="removeJoinInput(i)" />
       <VBtn variant="outlined" size="x-small" type="button" class="flow-add-join nodrag nopan" @click="addJoinInput">＋ 添加输入</VBtn>
       <label class="flow-join-sep nodrag nopan">
         <span>分隔符</span>
@@ -417,26 +440,19 @@ function addJoinOutput(): void {
     <span v-if="type === 'llm'" class="flow-node-resizer nodrag nopan"
       title="拖动调整卡片高度" aria-label="调整卡片高度" @pointerdown="resizeStartHandler"></span>
     <div v-if="type === 'llm'" class="flow-llm-outputs">
-      <div class="flow-llm-output-row">
-        <span>思考</span>
-        <Handle id="reasoning" type="source" :position="Position.Right" :class="portClass('string')" />
-      </div>
-      <div class="flow-llm-output-row">
-        <span>正文</span>
-        <Handle id="text" type="source" :position="Position.Right" :class="portClass('string')" />
-      </div>
+      <FlowPortRow id="reasoning" type="string" side="right" label="思考" meta="string" root-class="flow-llm-output-row" />
+      <FlowPortRow id="text" type="string" side="right" label="正文" meta="string" root-class="flow-llm-output-row" />
     </div>
     <div v-if="type === 'join'" class="flow-join-outputs">
-      <div v-for="(output, i) in joinOutputs" :key="output" class="flow-join-output-row">
-        <span>输出 {{ i + 1 }}</span>
-        <VBtn icon variant="outlined" size="x-small" type="button" class="flow-port-del nodrag nopan"
-          :disabled="joinOutputs.length <= 1" title="移除这个输出" aria-label="移除这个输出"
-          @click.stop="removeJoinOutput(i)">−</VBtn>
-        <Handle :id="output" type="source" :position="Position.Right" :class="portClass('string')" />
-      </div>
+      <FlowPortRow v-for="(output, i) in joinOutputs" :key="output" :id="output" type="string" side="right"
+        :label="`输出 ${i + 1}`" meta="string" root-class="flow-join-output-row"
+        removable :remove-disabled="joinOutputs.length <= 1" remove-title="移除这个输出"
+        @remove="removeJoinOutput(i)" />
       <VBtn variant="outlined" size="x-small" type="button" class="flow-add-join nodrag nopan" @click="addJoinOutput">＋ 添加输出</VBtn>
     </div>
-    <Handle v-else-if="type !== 'output'" id="out" type="source" :position="Position.Right"
-      :class="portClass(type === 'history' || type === 'trim' || type === 'merge' ? 'messages' : type === 'judge' ? judgeAnswerType : 'string')" />
+    <FlowPortRow v-if="type === 'debug'" id="out" :type="debugType" side="right"
+      label="原样输出" :meta="debugType === 'any' ? '任意类型' : debugType" root-class="flow-debug-row" />
+    <FlowPortRow v-else-if="type !== 'output' && type !== 'llm' && type !== 'join'" id="out" :type="singleOutput.type" side="right"
+      :label="singleOutput.label" :meta="singleOutput.meta" root-class="flow-single-output-row" />
   </div>
 </template>

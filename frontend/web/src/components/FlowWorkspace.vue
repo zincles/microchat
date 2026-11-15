@@ -57,7 +57,10 @@ function onGraph(next: FlowGraph): void {
   schedule();
 }
 async function pollActive(): Promise<void> {
-  if (!props.sessionId) { activeNodeId.value = ""; nodeStates.value = {}; running.value = false; traceLabel.value = ""; traceSteps.value = []; return; }
+  if (!props.sessionId) {
+    activeNodeId.value = ""; nodeStates.value = {}; running.value = false; traceLabel.value = ""; traceSteps.value = [];
+    return;
+  }
   try {
     const trace = await api.flowRun(props.sessionId);
     activeNodeId.value = trace?.active_node_id ?? "";

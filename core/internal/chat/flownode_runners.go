@@ -24,20 +24,25 @@ type flowNodeRun struct {
 	typed    flowValue
 	last     providers.Result
 	lastSet  bool
+	// passthrough：debug 节点原样转发的输入值（类型可能不是 text）。
+	passthrough    flowValue
+	passthroughSet bool
 }
 
 type flowNodeRunner func(*flowNodeRun) error
 
 var flowNodeRunners = map[string]flowNodeRunner{
-	"input":   runInputNode,
-	"text":    runTextNode,
-	"history": runHistoryNode,
-	"trim":    runTrimNode,
-	"merge":   runMergeNode,
-	"join":    runJoinNode,
-	"output":  runOutputNode,
-	"judge":   runJudgeNode,
-	"llm":     runLLMNode,
+	"input":    runInputNode,
+	"text":     runTextNode,
+	"history":  runHistoryNode,
+	"trim":     runTrimNode,
+	"merge":    runMergeNode,
+	"assemble": runAssembleNode,
+	"join":     runJoinNode,
+	"output":   runOutputNode,
+	"judge":    runJudgeNode,
+	"debug":    runDebugNode,
+	"llm":      runLLMNode,
 }
 
 func runInputNode(r *flowNodeRun) error {
@@ -81,6 +86,41 @@ func runMergeNode(r *flowNodeRun) error {
 		}
 	}
 	r.step.Output = fmt.Sprintf("messages[%d]", len(r.messages))
+	return nil
+}
+
+func runAssembleNode(r *flowNodeRun) error {
+	r.step.Label = "拼装 messages"
+	messages, err := flowPromptMessages(r.node, r.graph.Edges, r.values)
+	if err != nil {
+		return err
+	}
+	r.messages = messages
+	r.step.Output = fmt.Sprintf("messages[%d]", len(messages))
+	return nil
+}
+
+func runDebugNode(r *flowNodeRun) error {
+	r.step.Label = "调试打印"
+	for _, edge := range r.graph.Edges {
+		if edge.Target != r.node.ID {
+			continue
+		}
+		value := valuesForEdge(r.values, edge)
+		text := flowDebugText(value)
+		// 输出要能同时喂给“字符串”和原类型下游：Text 保留一份可读表示，
+		// Messages / Bool / Number / Choice 原样带过去。
+		if strings.TrimSpace(value.Text) == "" {
+			value.Text = text
+		}
+		r.passthrough = value
+		r.passthroughSet = true
+		r.step.Debug = flowDebugPayload(value)
+		r.step.Output = text
+		return nil
+	}
+	r.step.Output = ""
+	r.step.Debug = ""
 	return nil
 }
 

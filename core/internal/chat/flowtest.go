@@ -44,6 +44,9 @@ type FlowTestStep struct {
 	ElapsedMS int64           `json:"elapsed_ms,omitempty"`
 	// Payload：这一节点真会发出去的那一发（运行/测试都留档；密钥已打码）。
 	Payload *providers.LastPayload `json:"payload,omitempty"`
+	// Debug：调试打印节点收到的原始载荷（text / messages[] / bool / number / choice）。
+	// 只在 debug 节点上出现；前端据此弹 Toast。
+	Debug any `json:"debug,omitempty"`
 }
 
 type FlowTestResult struct {
@@ -243,8 +246,11 @@ func (s *Service) executeFlowGraph(ctx context.Context, graph flowGraph, opts fl
 			lastResult = run.last
 		}
 		values[flowKey(node.ID, "out")] = flowValue{Text: step.Output, Reasoning: step.Reasoning, User: step.User, Bool: typed.Bool, Number: typed.Number, Choice: typed.Choice}
-		if node.Type == "history" || node.Type == "trim" || node.Type == "merge" {
+		if node.Type == "history" || node.Type == "trim" || node.Type == "merge" || node.Type == "assemble" {
 			values[flowKey(node.ID, "out")] = flowValue{Text: step.Output, Messages: nodeMessages}
+		}
+		if node.Type == "debug" && run.passthroughSet {
+			values[flowKey(node.ID, "out")] = run.passthrough
 		}
 		if node.Type == "join" {
 			for _, port := range flowJoinOutputs(node) {
@@ -304,6 +310,53 @@ func flowJoinSeparator(node flowNode) string {
 
 func sourceMessages(values map[string]flowValue, edge flowEdge) []providers.ChatMessage {
 	return values[flowKey(edge.Source, edge.SourceHandle)].Messages
+}
+
+func valuesForEdge(values map[string]flowValue, edge flowEdge) flowValue {
+	return values[flowKey(edge.Source, edge.SourceHandle)]
+}
+
+// flowDebugPayload：调试节点的 Toast 载荷。消息优先于文本，因为 messages[] 才是
+// “原样”的那份数据；typed 值保持原类型，前端 JSON.stringify 后打印。
+func flowDebugPayload(value flowValue) any {
+	if value.Messages != nil {
+		return value.Messages
+	}
+	if value.Bool != nil {
+		return *value.Bool
+	}
+	if value.Number != nil {
+		return *value.Number
+	}
+	if value.Choice != "" {
+		return value.Choice
+	}
+	if value.Text != "" {
+		return value.Text
+	}
+	return value.Reasoning
+}
+
+func flowDebugText(value flowValue) string {
+	if value.Messages != nil {
+		return fmt.Sprintf("messages[%d]", len(value.Messages))
+	}
+	if value.Bool != nil {
+		if *value.Bool {
+			return "true"
+		}
+		return "false"
+	}
+	if value.Number != nil {
+		return fmt.Sprintf("%v", *value.Number)
+	}
+	if value.Choice != "" {
+		return value.Choice
+	}
+	if value.Text != "" {
+		return value.Text
+	}
+	return value.Reasoning
 }
 
 func flowLLMRetry(node flowNode) int {
@@ -436,22 +489,22 @@ func joinFlowInputs(inputs []string, separator string) string {
 	return strings.Join(parts, separator)
 }
 
-// testLLMCall：把 LLM 节点里手写的 Prompt 条目按顺序变成 messages，再真正调用上游。
+// flowPromptMessages：LLM 与 assemble 共用的 Prompt 列表 → messages 规则。
 // 每个 Prompt 条目自己的左侧输入孔（targetHandle = prompt-<id>）只喂那一条；
 // 手写内容和上游内容同时存在时，按“手写在前、上游在后”用空行隔开。
-func (s *Service) flowLLMCall(ctx context.Context, node flowNode, edges []flowEdge,
-	values map[string]flowValue, provider, modelID, sessionID string, providersConfig config.ProvidersConfig) (providers.Result, *providers.LastPayload, error) {
+// history 条目直接把上游的 messages[] 按位置并入。
+func flowPromptMessages(node flowNode, edges []flowEdge, values map[string]flowValue) ([]providers.ChatMessage, error) {
 	raw, ok := node.Data["prompts"]
 	if !ok {
-		return providers.Result{}, nil, errors.New("LLM 节点没有 Prompt 条目")
+		return nil, errors.New("节点没有 Prompt 条目")
 	}
 	data, err := json.Marshal(raw)
 	if err != nil {
-		return providers.Result{}, nil, err
+		return nil, err
 	}
 	var prompts []flowPrompt
 	if err := json.Unmarshal(data, &prompts); err != nil {
-		return providers.Result{}, nil, fmt.Errorf("Prompt 条目解析失败：%w", err)
+		return nil, fmt.Errorf("Prompt 条目解析失败：%w", err)
 	}
 	messages := make([]providers.ChatMessage, 0, len(prompts))
 	for _, prompt := range prompts {
@@ -466,7 +519,7 @@ func (s *Service) flowLLMCall(ctx context.Context, node flowNode, edges []flowEd
 		}
 		role := strings.TrimSpace(prompt.Role)
 		if role != "system" && role != "user" && role != "assistant" {
-			return providers.Result{}, nil, fmt.Errorf("Prompt %s 的 role 不合法：%s", prompt.ID, prompt.Role)
+			return nil, fmt.Errorf("Prompt %s 的 role 不合法：%s", prompt.ID, prompt.Role)
 		}
 		parts := []string{}
 		if strings.TrimSpace(prompt.Content) != "" {
@@ -485,6 +538,18 @@ func (s *Service) flowLLMCall(ctx context.Context, node flowNode, edges []flowEd
 			continue
 		}
 		messages = append(messages, providers.ChatMessage{Role: role, Content: content})
+	}
+	return messages, nil
+}
+
+// testLLMCall：把 LLM 节点里手写的 Prompt 条目按顺序变成 messages，再真正调用上游。
+// 每个 Prompt 条目自己的左侧输入孔（targetHandle = prompt-<id>）只喂那一条；
+// 手写内容和上游内容同时存在时，按“手写在前、上游在后”用空行隔开。
+func (s *Service) flowLLMCall(ctx context.Context, node flowNode, edges []flowEdge,
+	values map[string]flowValue, provider, modelID, sessionID string, providersConfig config.ProvidersConfig) (providers.Result, *providers.LastPayload, error) {
+	messages, err := flowPromptMessages(node, edges, values)
+	if err != nil {
+		return providers.Result{}, nil, err
 	}
 	if len(messages) == 0 {
 		return providers.Result{}, nil, errors.New("LLM 节点没有任何非空 Prompt")
@@ -573,7 +638,7 @@ func validateTestGraph(graph flowGraph) error {
 		seen[node.ID] = true
 		counts[node.Type]++
 		switch node.Type {
-		case "input", "text", "history", "trim", "merge", "llm", "join", "output", "judge":
+		case "input", "text", "history", "trim", "merge", "assemble", "llm", "join", "output", "judge", "debug":
 		default:
 			return fmt.Errorf("不认识的节点类型：%s", node.Type)
 		}
@@ -653,36 +718,38 @@ func validateTestGraph(graph flowGraph) error {
 				seenPorts[port] = true
 			}
 		}
-		if node.Type != "llm" {
+		if node.Type != "llm" && node.Type != "assemble" {
 			continue
 		}
-		if rawRetry, ok := node.Data["max_retry"]; ok {
-			switch value := rawRetry.(type) {
-			case float64:
-				if value < 0 || value != float64(int(value)) {
+		if node.Type == "llm" {
+			if rawRetry, ok := node.Data["max_retry"]; ok {
+				switch value := rawRetry.(type) {
+				case float64:
+					if value < 0 || value != float64(int(value)) {
+						return fmt.Errorf("LLM 节点 %s 的 max_retry 必须是非负整数", node.ID)
+					}
+				case int:
+					if value < 0 {
+						return fmt.Errorf("LLM 节点 %s 的 max_retry 必须是非负整数", node.ID)
+					}
+				default:
 					return fmt.Errorf("LLM 节点 %s 的 max_retry 必须是非负整数", node.ID)
 				}
-			case int:
-				if value < 0 {
-					return fmt.Errorf("LLM 节点 %s 的 max_retry 必须是非负整数", node.ID)
-				}
-			default:
-				return fmt.Errorf("LLM 节点 %s 的 max_retry 必须是非负整数", node.ID)
 			}
 		}
 		raw, ok := node.Data["prompts"]
 		if !ok {
-			return fmt.Errorf("LLM 节点 %s 没有 Prompt 条目", node.ID)
+			return fmt.Errorf("%s 节点 %s 没有 Prompt 条目", node.Type, node.ID)
 		}
 		data, _ := json.Marshal(raw)
 		var prompts []flowPrompt
 		if err := json.Unmarshal(data, &prompts); err != nil || len(prompts) == 0 {
-			return fmt.Errorf("LLM 节点 %s 的 Prompt 条目为空或格式不对", node.ID)
+			return fmt.Errorf("%s 节点 %s 的 Prompt 条目为空或格式不对", node.Type, node.ID)
 		}
 		seenPrompts := map[string]bool{}
 		for _, prompt := range prompts {
 			if strings.TrimSpace(prompt.ID) == "" || seenPrompts[prompt.ID] {
-				return fmt.Errorf("LLM 节点 %s 有空的或重复的 Prompt id", node.ID)
+				return fmt.Errorf("%s 节点 %s 有空的或重复的 Prompt id", node.Type, node.ID)
 			}
 			seenPrompts[prompt.ID] = true
 			if prompt.Kind != "" && prompt.Kind != "prompt" && prompt.Kind != "history" {

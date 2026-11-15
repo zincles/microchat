@@ -377,14 +377,28 @@ delete(AA)           # 删除
   **`kind` / `flow`（2026-11-11）**：`kind` 空 / `prompt` = 传统提示词 Agent；`flow` = FlowAgent
   （逻辑由 `flow` 的节点图驱动）。`flow` 是编辑器产出的
   `{version, nodes:[{id,type,position,data}], edges:[{id,source,target,...}]}`；
-  后端目前**只搬运、不解释**节点表；节点白名单是
-  `input / history / trim / merge / llm / join / output`；编辑器用 Vue Flow（`@vue-flow/core`）。
+  后端目前会**校验并执行**节点表；节点白名单是
+  `input / text / history / trim / merge / assemble / join / llm / judge / debug / output`；
+  编辑器用 Vue Flow（`@vue-flow/core`）。
   **LLM 节点不绑定 Agent**：它内部是一张手动组装的消息列表，每个 Prompt 条目有
   `role`（system / user / assistant）、手写正文，以及一个自己的左侧输入孔；
   Prompt 列表里还可以插入 **历史条目**（黄色，接 `history` 节点输出的 messages[]），
   位置由用户在列表里的顺序决定；另有 **AI 模型选择框**（空 = 跟随默认模型），
   LLM 节点数据存 `provider` / `model`。右侧有**两个出口**：
   `reasoning`（思考）与 `text`（正文），下游可以分别接线。
+  **入口不是一个裸圆点**（2026-11-14）：LLM 每个 Prompt / 历史条目、join / merge 的每路
+  输入输出、output 的三个入口、各节点的固定出入，统一用 `FlowPortRow.vue` 渲染
+  （Handle + 可读标签 + 类型/role + 可选删除）。标签是 `Prompt 1` / `历史 1` / `输入 1` /
+  `正文` 这类**显示序号**，端口身份仍是 `data-port-id` / `Handle id`：Prompt 是
+  `prompt-<unit_id>`、历史是 `history-<unit_id>`、join/merge 的单元就是 `<unit_id>`。
+  `unit_id` 只在新建时铸一次（UUID），删除后**永不重用**；显示序号可以重排。
+  添加一个 Prompt / 历史 / join 输入输出 = 多一个单元、多一条端口行；删除单元时连同
+  引用该端口的边一起删。旧图里的 `in-1` / `out-1` / `prompt-p1` 照旧是合法身份。
+  ⚠ Prompt 列表是滚动容器：`overflow-y:auto` 会把另一轴也算成 auto，行左侧的 Handle
+  会被裁掉（看得见却点不到 / 看不见但能连）⇒ 列表用 `-1.4em` margin + 等量 `padding-left`
+  把裁切框扩到节点边缘；Textarea 必须覆盖 `.flow-node .v-field` 的固定单行高为 `auto`，
+  否则 Prompt 正文会被裁成一截。节点横向 padding 与 Handle 偏移都取 **1.3em**
+  （端点半径 + 描边会吃掉内容边缘几像素，0.75em 时图案会压住标签第一个字）。
   数据类型的颜色是硬约定：**蓝色 = 裸字符串**（输入/拼接和复制/输出与 Prompt 输入），
   **橙色 = messages[]**（history / 裁剪 / 拼接 messages 节点、它们的边与 LLM 的 history 端口）。
   **端口是强类型的，且每个端点只允许一条线**：字符串不能接 messages，LLM 的
@@ -393,8 +407,11 @@ delete(AA)           # 删除
   **至少留一个输入、一个输出**，移除端口时相连的边一起删。多个输出口都复制同一段
   拼接结果。节点上可编辑**分隔符**（默认空行 `---` 空行；留空 = 直接相连）。类型不符的连接直接拒绝；拖到已被占用的端口时
   旧线被新线替换，不会出现一个端点两条线。
-  history 是显式节点而不是隐式上下文：测试接口没有会话上下文，所以 history 节点
-  在测试里输出明确的占位，不伪造历史。
+  history 是显式节点而不是隐式上下文：**只输出原始历史上下文的正文（无思考）** ——
+  当前用户消息之前的 user / assistant 正文（已剔 `<state>`，不换成摘要）；
+  **不包含 System prompt**（System prompt 在各自的 LLM 调用块内编写），
+  **也不包含最新用户输入**（最新输入由 `input` 节点负责）—— 节点正文里也写明了这条边界。
+  测试接口没有会话上下文，所以 history 节点在测试里输出明确的占位，不伪造历史。
   **`trim`（裁剪 messages）** 是 messages[] → messages[] 的节点：一个 `in` 输入、一个 `out` 输出，
   按**条数**裁剪（不猜 token）。`mode` 四选一：`tail` 保留最近 N 条（默认）、`head` 保留最早 N 条、
   `drop-head` 去掉开头 N 条、`drop-tail` 去掉结尾 N 条；`count` 必须是正整数（缺省 10）。
@@ -402,6 +419,11 @@ delete(AA)           # 删除
   它可以接在 history 后面、再接给 LLM 的 history 条目，也可以串联多个裁剪节点。
   **`merge`（拼接 messages）** 是 messages[] 的多输入合并节点：输入端口 `in-1`、`in-2`…（可加、可移除），
   一个 `out`；按端口顺序拼接，不排序、不去重。它只接 messages[]，不是字符串的 `join`。
+  **`assemble`（拼装 messages）** 与 LLM 节点共用 Prompt 列表（role / 手写正文 / 每条的字符串输入，
+  也可插 history 条目），但它**不调模型**：按列表顺序拼出 messages[] 从 `out` 输出。
+  **`debug`（调试打印）** 只有一个 `in` 和一个 `out`；收到什么就原样转发什么，
+  并在 Flow trace 的 `debug` 字段留下载荷，前端据此弹 Toast。它的输出类型跟随输入
+  （未接输入时为 `any`，前端端口颜色也随上游变化）。
   **`output`（输出）有两个独立输入**：`text`（正文）与 `reasoning`（思考）。图执行时分别映射到
   assistant 消息的 `content` / `reasoning`；**不再从任意 LLM 节点自动回填思考**。老图里 output 的
   单输入 `in` 在载入/执行时**按源端口迁移**：reasoning 源落到 `reasoning`，其它源落到 `text`。
@@ -415,9 +437,11 @@ delete(AA)           # 删除
   （LLM 节点选了模型就用节点的 provider/model，否则用 config defaults），返回每步输入/输出（含 reasoning），
   鼠标悬停**或选中**节点即可看该节点的测试 I/O（选中后持久显示，方便对比）。测试不建会话、不落库。
   **聊天运行时第一版已接线**：会话可以选 FlowAgent；`Accept` 后执行图，把 `output` 的一段文本落成一条
-  assistant 消息（不是流式，也还没有工具）。`history` 节点取当前用户消息之前的存库正文（已剔 `<state>`），
-  `input` 节点取本轮用户输入；摘要注入 / 状态注入 / 多 LLM 的流式合并还没做。
-  `GET .../flow/run` 返回最近一次图执行的节点轨迹（每个 LLM 节点的请求快照、输出、usage、耗时）；
+  assistant 消息（不是流式，也还没有工具）。`history` 节点只取当前用户消息之前的存库**正文（无思考）**
+  （已剔 `<state>`），不含 System prompt 与最新用户输入；`input` 节点取本轮用户输入。
+  摘要注入 / 状态注入 / 多 LLM 的流式合并还没做。
+  `GET .../flow/run` 返回最近一次图执行的节点轨迹（每个 LLM 节点的请求快照、输出、usage、耗时；
+  `debug` 节点的 `debug` 字段是它收到的原始载荷，前端用它弹 Toast）；
   **FlowAgent 暂时不套用普通 Agent 的载荷/状态/压缩上下文面板**（旧的「流程」tab 与环里的节点列表也已撤掉），
   新的节点面板另行设计；`/context` 的节点级数据仍保留给新面板用。
   FlowAgent 的顶栏工作区 tab 是 **聊天 / 工作流**；主界面的工作流页是**只读执行视图**：
@@ -437,6 +461,8 @@ delete(AA)           # 删除
     `judge`: `{provider,model,questions,answer_type,answer_key?,threshold?}`。`width` 是旧数据兼容字段，运行时不用。
   - `FlowEdge = {id,source,sourceHandle,target,targetHandle}`；端口不能为空、每个源/目标端口最多一条线；图必须恰好一个 input/output 且无环。
   - `data.test` / `data.runState` 只活在编辑器，`toGraph()` 保存前删除，schema 不接受。
+  - **前端类型由 Go 生成**：`go generate ./internal/flow`（`core/cmd/flowgen`）写 `frontend/web/src/api/flow.generated.ts`；
+    `api/types.ts` 只 re-export，节点类型联合与 NodeData 不再手抄一份。
   底部输入栏对 FlowAgent 隐藏「推理等级」与「工具」两个小面板（运行时不用这两个会话选项）。
   **FlowAgent 暂时不启用起标题 / 自动压缩等高级能力**（runFlow 不调 Titles/Compactor；
   Agent 编辑器的能力页签也不显示）。
@@ -1572,7 +1598,9 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   侧栏第二个 tab 是**纯文本视图**（节点 id/类型/坐标/高度 + 每个端口去向，随图实时更新）；
   底部是可开合的**测试 / 调试**栏（同样浮在画布上）。
   连线层 `z-index:8` 在节点层 `2` 之上（边只做视觉、`pointer-events:none`，不会抢节点/端口的点击）。
-  输入 / 纯文本 / 调用 LLM / 裁剪 messages / 拼接 messages / 拼接和复制 / 输出。LLM 节点内是 Prompt 列表（role + 左侧输入孔 + 手写正文）；
+  输入 / 纯文本 / 历史数据 / 调用 LLM / 裁剪 messages / 拼接 messages / 拼装 messages /
+  拼接和复制 / JEV 判断 / 调试打印 / 输出。
+  LLM 与拼装 messages 节点内是 Prompt 列表（`FlowPortRow`：标签 + role + 左侧输入孔 + 手写正文）；
   **节点结构先登记在 `utils/flowSpecs.ts` 的 `FLOW_NODE_SPECS`**（label / badge / hint / category / defaults / inputs / outputs）：
   `FlowNode.vue` 的显示元信息、`FlowEditor` 的添加菜单与默认 data、`flow.ts` 的端口类型都从这里读；
   新增节点不允许只往模板/switch 里堆代码，必须先有 spec；运行时行为在 `flowNodeRunners` 里登记，执行器只调度。

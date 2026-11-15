@@ -3,8 +3,8 @@
 // 以前这些事实散在 FlowNode.vue / FlowEditor.vue / flow.ts / flowtest.go 四份；
 // 加一个节点要改多处，漏一处就静默失效。这里先把前端这一侧的"一个节点长什么样"
 // 收成一张表；运行时执行仍由 flowtest.go 的 runner 负责。
-import type { FlowNode, FlowNodeData } from "../api/types.ts";
-import type { FlowDataType } from "./flow.ts";
+import type { FlowNode, FlowNodeData, FlowNodeType } from "../api/types.ts";
+import type { FlowDataType, FlowPortType } from "./flow.ts";
 
 export const TRIM_MODES = [
   { value: "tail", title: "保留最近 N 条" },
@@ -16,13 +16,11 @@ export type TrimMode = (typeof TRIM_MODES)[number]["value"];
 export const DEFAULT_TRIM_COUNT = 10;
 export const TRIM_ROLES = ["system", "user", "assistant"] as const;
 
-export type FlowNodeKind =
-  | "input" | "text" | "history" | "trim" | "merge"
-  | "llm" | "join" | "judge" | "output";
+export type FlowNodeKind = FlowNodeType;
 
 export interface FlowPortSpec {
   handle: string;
-  type: FlowDataType;
+  type: FlowPortType;
   label: string;
   required?: boolean;
 }
@@ -62,8 +60,8 @@ function answerTypeOf(node: Pick<FlowNode, "data"> | undefined): FlowDataType {
   return type === "bool" || type === "number" || type === "choice" ? type : "string";
 }
 
-function llmInputs(node: FlowNode): FlowPortSpec[] {
-  const ports: FlowPortSpec[] = [{ handle: "enabled", type: "bool", label: "启用" }];
+function promptInputs(node: FlowNode): FlowPortSpec[] {
+  const ports: FlowPortSpec[] = [];
   const prompts = promptsOf(node);
   for (const prompt of prompts) {
     const id = String(prompt?.id ?? "").trim();
@@ -73,6 +71,10 @@ function llmInputs(node: FlowNode): FlowPortSpec[] {
       : { handle: `prompt-${id}`, type: "string", label: "Prompt" });
   }
   return ports;
+}
+
+function llmInputs(node: FlowNode): FlowPortSpec[] {
+  return [{ handle: "enabled", type: "bool", label: "启用" }, ...promptInputs(node)];
 }
 
 function trimIssues(node: FlowNode): string[] {
@@ -103,10 +105,10 @@ function portsIssues(kind: string, values: unknown, fallback: string[]): string[
   return issues;
 }
 
-function llmIssues(node: FlowNode): string[] {
+function promptIssues(node: FlowNode): string[] {
   const prompts = promptsOf(node);
   const issues: string[] = [];
-  if (!prompts.length) issues.push("有 LLM 节点还没有 Prompt 条目");
+  if (!prompts.length) issues.push("有节点还没有 Prompt 条目");
   const seen = new Set<string>();
   for (const prompt of prompts) {
     const id = String(prompt?.id ?? "").trim();
@@ -159,7 +161,8 @@ const specs: Record<FlowNodeKind, FlowNodeSpec> = {
     inputs: () => [], outputs: () => [{ handle: "out", type: "string", label: "输出", required: true }],
   },
   history: {
-    type: "history", label: "历史数据", badge: "H", hint: "messages[]：当前会话历史",
+    type: "history", label: "历史数据", badge: "H",
+    hint: "messages[]：原始历史正文（无思考）；不含 System prompt 与最新用户输入",
     category: "source", defaults: () => ({}),
     inputs: () => [], outputs: () => [{ handle: "out", type: "messages", label: "messages", required: true }],
   },
@@ -177,11 +180,20 @@ const specs: Record<FlowNodeKind, FlowNodeSpec> = {
     inputs: (node) => joinPorts(node, "inputs", ["in-1", "in-2"]).map((handle) => ({ handle, type: "messages", label: handle })),
     outputs: () => [{ handle: "out", type: "messages", label: "messages", required: true }],
   },
+  assemble: {
+    type: "assemble", label: "拼装 messages", badge: "ASM",
+    hint: "按 Prompt 列表拼出 messages[]；每个条目可接一个字符串输入",
+    category: "transform",
+    defaults: () => ({ prompts: [{ id: `p-${Date.now().toString(36)}`, role: "system", content: "" }] }),
+    validate: promptIssues,
+    inputs: promptInputs,
+    outputs: () => [{ handle: "out", type: "messages", label: "messages", required: true }],
+  },
   llm: {
     type: "llm", label: "调用 LLM", badge: "AI", hint: "手动组装 messages",
     category: "transform",
     defaults: () => ({ prompts: [{ id: `p-${Date.now().toString(36)}`, role: "system", content: "" }] }),
-    validate: llmIssues,
+    validate: promptIssues,
     inputs: llmInputs,
     outputs: () => [
       { handle: "reasoning", type: "string", label: "思考" },
@@ -198,6 +210,13 @@ const specs: Record<FlowNodeKind, FlowNodeSpec> = {
     ],
     inputs: (node) => joinPorts(node, "inputs", ["in-1", "in-2"]).map((handle) => ({ handle, type: "string", label: handle })),
     outputs: (node) => joinPorts(node, "outputs", ["out-1"]).map((handle) => ({ handle, type: "string", label: handle })),
+  },
+  debug: {
+    type: "debug", label: "调试打印", badge: "DBG",
+    hint: "原样转发输入；数据流经时弹 Toast 显示载荷；输出类型跟随输入",
+    category: "transform", defaults: () => ({}),
+    inputs: () => [{ handle: "in", type: "any", label: "数据", required: true }],
+    outputs: () => [{ handle: "out", type: "any", label: "原样输出" }],
   },
   judge: {
     type: "judge", label: "JEV 判断", badge: "JEV", hint: "把场景/状态交给 JEV，输出概率答案 JSON",

@@ -4,6 +4,8 @@
 // 保存、启动、FlowTest、聊天运行都先过 Validate；运行时不再靠 map 猜字段。
 package flow
 
+//go:generate go run ../../cmd/flowgen
+
 import (
 	"bytes"
 	"encoding/json"
@@ -14,6 +16,9 @@ import (
 )
 
 const Version = 1
+
+// NodeTypes 是节点类型的唯一清单（运行时校验与前端类型生成共用）。
+var NodeTypes = []string{"input", "text", "history", "trim", "merge", "assemble", "join", "llm", "judge", "debug", "output"}
 
 type Graph struct {
 	Version int    `json:"version"`
@@ -212,21 +217,19 @@ func validateNodeData(node Node) error {
 		if data.Height != nil && (!finite(*data.Height) || *data.Height <= 0) {
 			return fmt.Errorf("LLM 节点 %s 的 height 不合法", node.ID)
 		}
-		if len(data.Prompts) == 0 {
-			return fmt.Errorf("LLM 节点 %s 没有 Prompt 条目", node.ID)
+		if err := validatePromptEntries(node, "LLM"); err != nil {
+			return err
 		}
-		ids := map[string]bool{}
-		for _, prompt := range data.Prompts {
-			if strings.TrimSpace(prompt.ID) == "" || ids[prompt.ID] {
-				return fmt.Errorf("LLM 节点 %s 有空的或重复的 Prompt id", node.ID)
-			}
-			ids[prompt.ID] = true
-			if prompt.Kind != "" && prompt.Kind != "prompt" && prompt.Kind != "history" {
-				return fmt.Errorf("Prompt %s 的 kind 不合法：%s", prompt.ID, prompt.Kind)
-			}
-			if prompt.Kind != "history" && prompt.Role != "system" && prompt.Role != "user" && prompt.Role != "assistant" {
-				return fmt.Errorf("Prompt %s 的 role 只能是 system / user / assistant", prompt.ID)
-			}
+	case "assemble":
+		if !onlyFields(data, "prompts") {
+			return fmt.Errorf("拼装 messages 节点 %s 含不属于它的字段", node.ID)
+		}
+		if err := validatePromptEntries(node, "拼装 messages"); err != nil {
+			return err
+		}
+	case "debug":
+		if !emptyData(data) {
+			return fmt.Errorf("调试节点 %s 不应该有 data 字段", node.ID)
 		}
 	case "judge":
 		if !onlyFields(data, "provider", "model", "questions", "answer_type", "answer_key", "threshold") {
@@ -253,6 +256,28 @@ func validateNodeData(node Node) error {
 		}
 	default:
 		return fmt.Errorf("不认识的节点类型：%s", node.Type)
+	}
+	return nil
+}
+
+// validatePromptEntries：LLM 与 assemble 共用的 Prompt 列表规则。
+// kind 空 / prompt / history；history 不要求 role，prompt 必须是 system/user/assistant。
+func validatePromptEntries(node Node, label string) error {
+	if len(node.Data.Prompts) == 0 {
+		return fmt.Errorf("%s 节点 %s 没有 Prompt 条目", label, node.ID)
+	}
+	ids := map[string]bool{}
+	for _, prompt := range node.Data.Prompts {
+		if strings.TrimSpace(prompt.ID) == "" || ids[prompt.ID] {
+			return fmt.Errorf("%s 节点 %s 有空的或重复的 Prompt id", label, node.ID)
+		}
+		ids[prompt.ID] = true
+		if prompt.Kind != "" && prompt.Kind != "prompt" && prompt.Kind != "history" {
+			return fmt.Errorf("Prompt %s 的 kind 不合法：%s", prompt.ID, prompt.Kind)
+		}
+		if prompt.Kind != "history" && prompt.Role != "system" && prompt.Role != "user" && prompt.Role != "assistant" {
+			return fmt.Errorf("Prompt %s 的 role 只能是 system / user / assistant", prompt.ID)
+		}
 	}
 	return nil
 }

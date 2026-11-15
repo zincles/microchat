@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // App.vue —— 三栏骨架 + 全部接线（原 main.js + 九个桥，合一）。
 // 组件直接挂模板，ref 直调实例方法，不再经 *-vue.js 桥 / mount.js。
-import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
+import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick, provide } from "vue";
 import { VApp, VBtn, VTabsWindow, VTabsWindowItem } from "vuetify/components";
 import { createApi, probeHealth } from "./api/client.ts";
 import { parseCommand, filterCommands } from "./utils/commands.ts";
@@ -13,6 +13,7 @@ import { thinkingOptions, thinkingLevelsForModel } from "./utils/thinking.ts";
 import { forgetWindow, recallWindow } from "./utils/windowcache.ts";
 import { sharedApi, previewOn, payloadPreviewOn, applyTheme, wantsSend, apiBase, apiBaseCandidates, saveNetPrefs, lastSessionId, saveLastSession, commandMenuOn, applyTextScale, applyFonts, chromeHideOn, syncPrefs, userName as macroUserName } from "./utils/prefs.ts";
 import { macroMap } from "./utils/macros.ts";
+import { formatDebugPayload } from "./utils/flow.ts";
 import { deletionPlanSummary, whoText } from "./utils/format.ts";
 import TopBar from "./components/TopBar.vue";
 import AgentMenu from "./components/AgentMenu.vue";
@@ -44,7 +45,7 @@ import { useCommands } from "./composables/useCommands.ts";
 import { useContextWorkspace } from "./composables/useContextWorkspace.ts";
 import { useSessionActions } from "./composables/useSessionActions.ts";
 import type {
-  CreateSessionRequest, DefaultsConfig, DeletionPlan, FlowActiveNode, Message, SessionView, TurnStatus,
+  CreateSessionRequest, DefaultsConfig, DeletionPlan, FlowActiveNode, FlowRunTrace, Message, SessionView, TurnStatus,
 } from "./api/types.ts";
 import type { ChatSummary } from "./utils/chatrows.ts";
 import type {
@@ -74,6 +75,8 @@ const cmdMenu = ref(commandMenuOn());
 // 宏值变化后让消息列与顶栏面板重算（prefs 缓存不是 Vue 响应式）。
 const macroRev = ref(0);
 const toast = (t: string, k = "") => toastRef.value?.push(t, k);
+// 调试打印节点要弹 Toast；给所有子组件一个统一出口（设置里的 FlowEditor 也拿得到）。
+provide("toast", toast);
 // 任务面板轮询：busyIds 给左栏、setTasks 给顶栏环心；取消按钮回调里对齐重摇两族。
 const {
   busyIds,
@@ -530,14 +533,52 @@ const currentAgentIsFlow = computed(() => currentAgent.value?.kind === "flow");
 const flowCalls = ref(0);
 const flowActiveNodes = ref<FlowActiveNode[]>([]);
 let flowCallsTimer: ReturnType<typeof setInterval> | null = null;
+// 调试打印节点的 Toast 在 App 层轮询，不依赖用户先打开「工作流」页。
+let flowDebugSession = "";
+let flowDebugRun = -1;
+let flowDebugOpenedAt = 0;
+let flowDebugReady = false;
+let seenFlowDebug = new Set<string>();
+function notifyFlowDebug(trace: FlowRunTrace | null): void {
+  if (!trace) return;
+  const startedAt = Number(trace.started_at ?? 0);
+  if (startedAt !== flowDebugRun) {
+    flowDebugRun = startedAt;
+    seenFlowDebug = new Set<string>();
+  }
+  for (const step of trace.steps ?? []) {
+    if (step.type !== "debug" || step.debug === undefined) continue;
+    const key = `${startedAt}:${step.id}`;
+    const fresh = !seenFlowDebug.has(key);
+    seenFlowDebug.add(key);
+    if (!fresh) continue;
+    // 会话刚打开时可能拿到上一条旧轨迹：只标记，不为它补弹旧 Toast。
+    // 但刚发出的新一轮即使已经跑完，started_at 也接近打开时间，仍要弹。
+    if (!flowDebugReady && trace.status !== "running" && startedAt < flowDebugOpenedAt - 1500) continue;
+    toast(`调试打印：${formatDebugPayload(step.debug)}`);
+  }
+  flowDebugReady = true;
+}
 async function refreshFlowCalls(): Promise<void> {
-  if (draft || !sessionID || !currentAgentIsFlow.value) { flowCalls.value = 0; flowActiveNodes.value = []; return; }
+  if (draft || !sessionID || !currentAgentIsFlow.value) {
+    flowCalls.value = 0; flowActiveNodes.value = [];
+    flowDebugSession = ""; flowDebugRun = -1; flowDebugReady = false; seenFlowDebug = new Set<string>();
+    return;
+  }
   const sid = sessionID;
+  if (sid !== flowDebugSession) {
+    flowDebugSession = sid;
+    flowDebugRun = -1;
+    flowDebugOpenedAt = Date.now();
+    flowDebugReady = false;
+    seenFlowDebug = new Set<string>();
+  }
   try {
     const trace = await api.flowRun(sid);
     if (sid === sessionID) {
       flowCalls.value = Number(trace?.active_llm_calls ?? (trace?.active_node_id ? 1 : 0));
       flowActiveNodes.value = trace?.active_nodes ?? [];
+      notifyFlowDebug(trace);
     }
   } catch {
     if (sid === sessionID) { flowCalls.value = 0; flowActiveNodes.value = []; }

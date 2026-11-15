@@ -69,3 +69,41 @@ func TestRejectCycle(t *testing.T) {
 		t.Fatal("有环的图应该被拒绝")
 	}
 }
+
+func TestValidAssembleAndDebugGraph(t *testing.T) {
+	raw := `{"version":1,"nodes":[
+		{"id":"in","type":"input","position":{"x":0,"y":0},"data":{}},
+		{"id":"assemble","type":"assemble","position":{"x":1,"y":0},"data":{"prompts":[{"id":"p1","role":"user","content":"固定"}]}},
+		{"id":"debug","type":"debug","position":{"x":2,"y":0},"data":{}},
+		{"id":"out","type":"output","position":{"x":3,"y":0},"data":{}}
+	],"edges":[
+		{"id":"e1","source":"in","sourceHandle":"out","target":"assemble","targetHandle":"prompt-p1"},
+		{"id":"e2","source":"assemble","sourceHandle":"out","target":"debug","targetHandle":"in"},
+		{"id":"e3","source":"debug","sourceHandle":"out","target":"out","targetHandle":"text"}
+	]}`
+	if _, err := Parse([]byte(raw)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRejectAssembleWithoutPrompts(t *testing.T) {
+	raw := `{"version":1,"nodes":[
+		{"id":"in","type":"input","position":{"x":0,"y":0},"data":{}},
+		{"id":"assemble","type":"assemble","position":{"x":1,"y":0},"data":{}},
+		{"id":"out","type":"output","position":{"x":2,"y":0},"data":{}}
+	],"edges":[{"id":"e","source":"in","sourceHandle":"out","target":"out","targetHandle":"text"}]}`
+	if _, err := Parse([]byte(raw)); err == nil {
+		t.Fatal("没有 Prompt 的拼装节点应该被拒绝")
+	}
+}
+
+func TestRejectDebugData(t *testing.T) {
+	raw := `{"version":1,"nodes":[
+		{"id":"in","type":"input","position":{"x":0,"y":0},"data":{}},
+		{"id":"debug","type":"debug","position":{"x":1,"y":0},"data":{"text":"x"}},
+		{"id":"out","type":"output","position":{"x":2,"y":0},"data":{}}
+	],"edges":[{"id":"e","source":"in","sourceHandle":"out","target":"out","targetHandle":"text"}]}`
+	if _, err := Parse([]byte(raw)); err == nil {
+		t.Fatal("调试节点不应该有 data 字段")
+	}
+}

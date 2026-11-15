@@ -6,7 +6,7 @@
 // 两条属于 FlowAgent 的硬约束在数据层（utils/flow.ts）与这里一起做：
 //   · 只能调用传统 Agent，不能嵌套 FlowAgent；
 //   · 第一版只允许 DAG，且恰好一个输入、一个输出。
-import { computed, nextTick, onMounted, provide, ref, watch } from "vue";
+import { computed, inject, nextTick, onMounted, provide, ref, watch } from "vue";
 import {
   ConnectionMode, VueFlow, useVueFlow,
   type Connection, type NodeTypesObject, type OnConnectStartParams,
@@ -20,12 +20,16 @@ import { VBtn, VList, VListItem, VMenu, VTextField } from "vuetify/components";
 import { ICONS } from "../assets/icons.ts";
 import { sharedApi } from "../utils/prefs.ts";
 import FlowNode from "./FlowNode.vue";
-import { FLOW_NODE_TYPES, emptyFlowGraph, flowDebugSteps, flowIssues, flowSourceType, flowTargetType, formatFlowText, normalizeFlowGraph, type FlowNodeType } from "../utils/flow.ts";
+import { FLOW_NODE_TYPES, emptyFlowGraph, flowDebugSteps, flowIssues, flowSourceType, flowTargetType, formatDebugPayload, formatFlowText, normalizeFlowGraph, type FlowNodeType } from "../utils/flow.ts";
 import { FLOW_NODE_SPECS, nodeBadgeFor, nodeDefaults, nodeLabelFor } from "../utils/flowSpecs.ts";
-import type { FlowEdge, FlowGraph, FlowNode as FlowNodeGraph, FlowNodeData, FlowTestStep, ModelListItem } from "../api/types.ts";
+import type { FlowCanvasData, FlowEdge, FlowGraph, FlowNode as FlowNodeGraph, FlowTestStep, ModelListItem } from "../api/types.ts";
 
-type CanvasNode = Omit<FlowNodeGraph, "data"> & { data: FlowNodeData };
-type CanvasEdge = FlowEdge & { class?: string };
+type CanvasNode = Omit<FlowNodeGraph, "data"> & { data: FlowCanvasData };
+type CanvasEdge = Omit<FlowEdge, "sourceHandle" | "targetHandle"> & {
+  sourceHandle?: string;
+  targetHandle?: string;
+  class?: string;
+};
 
 const props = withDefaults(defineProps<{
   graph?: FlowGraph | null;
@@ -46,6 +50,7 @@ const props = withDefaults(defineProps<{
 });
 const emit = defineEmits<{ "update:graph": [graph: FlowGraph] }>();
 const api = sharedApi();
+const toast = inject<(text: string, kind?: string) => void>("toast", () => {});
 
 // Vue Flow 的 NodeComponent 类型要求完整 NodeProps；我们的节点只声明实际用到的字段，
 // 这里按 Vue Flow 的自定义节点约定交给运行时校验，别为了类型把无用 props 全抄一遍。
@@ -70,15 +75,22 @@ const nodeTypes: NodeTypesObject = Object.fromEntries(
 const initial = normalizeFlowGraph(props.graph ?? emptyFlowGraph());
 const nodes = ref<CanvasNode[]>(initial.nodes.map((n) => ({ ...n, data: { ...(n.data ?? {}) } })));
 const historyExists = computed(() => nodes.value.some((n) => n.type === "history"));
-const edgeClass = (edge: Pick<FlowEdge, "source" | "sourceHandle">, nodeList: FlowNodeGraph[] = nodes.value): string => {
-  const type = flowSourceType(nodeList.find((n) => n.id === edge.source), edge.sourceHandle ?? undefined);
+const currentGraph = computed<FlowGraph>(() => ({
+  version: 1,
+  nodes: nodes.value as FlowNodeGraph[],
+  edges: edges.value as FlowEdge[],
+}));
+provide("flowGraph", currentGraph);
+function edgeClass(edge: { source: string; sourceHandle?: string | null }, graph: FlowGraph): string {
+  const type = flowSourceType(graph.nodes.find((n) => n.id === edge.source), edge.sourceHandle ?? undefined, graph);
   if (type === "messages") return "flow-edge-history";
   if (type === "bool") return "flow-edge-bool";
   if (type === "number") return "flow-edge-number";
   if (type === "choice") return "flow-edge-choice";
+  if (type === "any") return "flow-edge-any";
   return "flow-edge-text";
-};
-const edges = ref<CanvasEdge[]>(initial.edges.map((e) => ({ ...e, class: edgeClass(e, initial.nodes) })));
+}
+const edges = ref<CanvasEdge[]>(initial.edges.map((e) => ({ ...e, class: edgeClass(e, initial) })));
 
 
 const issues = computed(() => flowIssues(toGraph()));
@@ -190,8 +202,8 @@ function toGraph(): FlowGraph {
       id: String(e.id),
       source: String(e.source),
       target: String(e.target),
-      ...(e.sourceHandle ? { sourceHandle: String(e.sourceHandle) } : {}),
-      ...(e.targetHandle ? { targetHandle: String(e.targetHandle) } : {}),
+      sourceHandle: String(e.sourceHandle ?? ""),
+      targetHandle: String(e.targetHandle ?? ""),
     })),
   };
 }
@@ -233,9 +245,15 @@ function isValidConnection(connection: Connection): boolean {
   const target = nodes.value.find((n) => n.id === connection.target);
   const sourceHandle = connection.sourceHandle || "out";
   const targetHandle = connection.targetHandle || "in";
-  const st = flowSourceType(source, sourceHandle);
-  const tt = flowTargetType(target, targetHandle);
-  if (!st || !tt || st !== tt) return false;
+  const graph: FlowGraph = {
+    version: 1,
+    nodes: nodes.value as FlowNodeGraph[],
+    edges: edges.value as FlowEdge[],
+  };
+  const st = flowSourceType(source, sourceHandle, graph);
+  const tt = flowTargetType(target, targetHandle, graph);
+  if (!st || !tt) return false;
+  if (st !== "any" && tt !== "any" && st !== tt) return false;
   // 端点占用不在这里拒绝：拖到已占用的端点应当**替换旧线**。
   return true;
 }
@@ -266,9 +284,13 @@ function onConnect(connection: Connection): void {
     id,
     source: connection.source,
     target: connection.target,
-    class: edgeClass({ source: connection.source, sourceHandle: connection.sourceHandle ?? undefined }),
-    ...(connection.sourceHandle ? { sourceHandle: connection.sourceHandle } : {}),
-    ...(connection.targetHandle ? { targetHandle: connection.targetHandle } : {}),
+    class: edgeClass({ source: connection.source, sourceHandle: connection.sourceHandle ?? undefined }, {
+      version: 1,
+      nodes: nodes.value as FlowNodeGraph[],
+      edges: edges.value as FlowEdge[],
+    }),
+    sourceHandle: connection.sourceHandle ?? "",
+    targetHandle: connection.targetHandle ?? "",
   }];
   pendingReconnect.value = null;
 }
@@ -302,6 +324,11 @@ async function runTest(): Promise<void> {
       }
       return { ...n, data };
     });
+    for (const step of result.steps) {
+      if (step.type === "debug" && step.debug !== undefined) {
+        toast(`调试打印：${formatDebugPayload(step.debug)}`);
+      }
+    }
     testStatus.value = result.output ? `完成：${result.output.slice(0, 80)}` : "完成";
     bottomTab.value = "test";
     bottomOpen.value = true;

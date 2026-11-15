@@ -5,7 +5,7 @@ import { parseWireMessages, previewBlock } from "../src/utils/payload.ts";
 import { assemblePrompt, abilityPrompt, missingSegments } from "../src/utils/prompt.ts";
 import { renderMarkdown } from "../src/utils/markdown.ts";
 import { buildCartridge, cartridgeAgent } from "../src/utils/cartridge.ts";
-import { FLOW_NODE_TYPES, emptyFlowGraph, flowDebugSteps, flowIssues, flowSourceType, flowTargetType, formatFlowText, normalizeFlowGraph, trimMessages } from "../src/utils/flow.ts";
+import { FLOW_NODE_TYPES, emptyFlowGraph, flowDebugSteps, flowIssues, flowSourceType, flowTargetType, formatDebugPayload, formatFlowText, normalizeFlowGraph, trimMessages } from "../src/utils/flow.ts";
 import { FLOW_NODE_SPECS, flowInputPorts, flowOutputPorts } from "../src/utils/flowSpecs.ts";
 import { parseCommand, filterCommands, COMMAND_META } from "../src/utils/commands.ts";
 import { uuidv7 } from "../src/utils/ids.ts";
@@ -4909,7 +4909,8 @@ test("源码里没有显式 any（类型严格约束不能靠人记得）", () =
     .filter((name) => name.endsWith(".ts") || name.endsWith(".vue"));
   for (const name of files) {
     const text = readFileSync(join(SRC, name), "utf8");
-    assert.ok(!/\bany\b/.test(text), `还有显式 any：${name}`);
+    // 只看 TS 的 any 类型；端口类型的字符串值 "any" 不是类型逃逸。
+    assert.ok(!/(:\s*any\b|<\s*any\s*>|as\s+any\b|=\s*any\b|\bany\s*\[\])/.test(text), `还有显式 any：${name}`);
   }
 });
 
@@ -4978,4 +4979,99 @@ test("LLM 节点：内部字体/控件统一 token；按钮统一小号 outlined
   assert.match(css, /\.flow-node \.v-btn\s*\{[^}]*border:\s*1px solid/, "节点按钮没有轮廓");
   assert.match(node, /VNumberInput/, "数字输入没有用带上下增减的控件");
   assert.ok(!/variant="text"/.test(node), "FlowNode 还有平铺 text 按钮");
+});
+
+// 2026-11-14 用户定：动态入口不能只是行左侧一颗没有名字的圆点。
+// 一个最小单元 = 一个端口行：Handle + 可读标签 + 可选类型/role + 删除。
+test("Flow 端口行：Handle 与标签同源，删除单元同时删端口", () => {
+  const node = readFileSync(join(SRC, "components", "FlowNode.vue"), "utf8");
+  const row = readFileSync(join(SRC, "components", "FlowPortRow.vue"), "utf8");
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8");
+
+  assert.match(row, /class="flow-port-row"/, "端口行没有统一根类");
+  assert.match(row, /:data-port-id="id"/, "端口行没有暴露稳定的端口 id");
+  assert.match(row, /class="flow-port-label"/, "端口行没有可读标签");
+  assert.match(row, /class="flow-port-meta"/, "端口行没有类型/role 元信息");
+  assert.match(row, /<Handle[^>]*:id="id"/, "端口行没有把 Handle 绑到同一个 id");
+  assert.match(row, /emit\(['"]remove['"]\)/, "端口行没有删除事件");
+
+  assert.match(node, /import FlowPortRow from "\.\/FlowPortRow\.vue"/, "FlowNode 没用统一端口行");
+  assert.ok(!/<Handle/.test(node), "FlowNode 还在直接摆 Handle");
+  assert.match(node, /:label="promptLabel\(prompt, index\)"/, "Prompt 行没有显示序号标签");
+  assert.match(node, /:root-class="prompt\.kind === 'history' \? 'flow-prompt-history' : 'flow-prompt-row'"/, "Prompt/历史行失去独立外观");
+  assert.match(node, /removePort\(props\.id, promptPort\(prompt\), "target"\)/, "删除 Prompt 没有同时删相连边");
+  assert.match(node, /newUnitID\("p"\)/, "新 Prompt 没有铸稳定单元 id");
+  assert.match(css, /\.flow-node \.flow-port-row \{[^}]*flex:\s*none/, "端口行会被 flex 压扁");
+});
+
+// 2026-11-14 用户报：LLM 节点左侧入口看不见但能连；Prompt 文本框被压成一行。
+test("Flow 节点：滚动列表不裁 Handle；Textarea 恢复自动高度", () => {
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8");
+  assert.match(css, /\.flow-node \.flow-prompt-list \{[^}]*margin-left:\s*-1\.4em[^}]*padding-left:\s*1\.4em/, "Prompt 滚动列表会把左侧 Handle 裁掉");
+  assert.match(css, /\.flow-node \.v-textarea \.v-field \{[^}]*height:\s*auto/, "Textarea 仍被固定字段高度裁切");
+  assert.match(css, /\.flow-node \.flow-prompt-content \.v-field__input \{[^}]*min-height:\s*calc\(var\(--flow-control-height\) \* 2\.4\)/, "Prompt 文本框没有恢复多行高度");
+});
+
+test("Flow 节点：端点图案与文本之间留出内边距", () => {
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8");
+  assert.match(css, /\.flow-node \{\s*--flow-pad-x:\s*1\.3em;\s*padding-left:\s*1\.3em;\s*padding-right:\s*1\.3em;/, "节点横向内边距没有给端点留位置");
+  assert.match(css, /\.flow-node \.flow-output-row,[\s\S]*--flow-pad-x:\s*1\.3em/, "端口行仍用旧偏移，Handle 会压住文字");
+});
+
+test("Flow 历史节点：只输出原始历史正文，不含 System prompt 与最新输入", () => {
+  const node = readFileSync(join(SRC, "components", "FlowNode.vue"), "utf8");
+  const specs = readFileSync(join(SRC, "utils", "flowSpecs.ts"), "utf8");
+  assert.match(node, /只输出当前用户消息之前的 user \/ assistant 正文（无思考）/, "历史节点没有说明只输出正文、无思考");
+  assert.match(node, /不包含<\/b> System prompt/, "历史节点没有说明 System prompt 不参与");
+  assert.match(node, /在各 LLM 调用块内编写/, "历史节点没有说明 System prompt 在哪里写");
+  assert.match(node, /最新用户输入/, "历史节点没有说明最新输入不参与");
+  assert.match(node, /由「输入」节点负责/, "历史节点没有指向 input 节点");
+  assert.match(specs, /原始历史正文（无思考）；不含 System prompt 与最新用户输入/, "历史节点 hint 没有同步口径");
+});
+
+
+test("Flow 新节点：拼装 messages 与调试打印（动态类型 + Toast）", () => {
+  const graph = {
+    version: 1,
+    nodes: [
+      { id: "in", type: "input", position: { x: 0, y: 0 }, data: {} },
+      { id: "dbg", type: "debug", position: { x: 1, y: 0 }, data: {} },
+      { id: "out", type: "output", position: { x: 2, y: 0 }, data: {} },
+    ],
+    edges: [
+      { id: "e1", source: "in", sourceHandle: "out", target: "dbg", targetHandle: "in" },
+      { id: "e2", source: "dbg", sourceHandle: "out", target: "out", targetHandle: "text" },
+    ],
+  };
+  const dbg = graph.nodes[1];
+  assert.equal(FLOW_NODE_SPECS.debug.label, "调试打印");
+  assert.equal(flowTargetType(dbg, "in", graph), "string");
+  assert.equal(flowSourceType(dbg, "out", graph), "string");
+  assert.equal(flowTargetType(dbg, "in"), "any");
+  assert.equal(flowSourceType(dbg, "out"), "any");
+  assert.equal(flowSourceType(dbg, "wrong", graph), null);
+  assert.ok(!flowIssues(graph).some((x) => x.includes("端口类型不匹配")), "debug 类型没有跟随输入");
+
+  const assemble = { id: "asm", type: "assemble", position: { x: 0, y: 0 }, data: { prompts: [{ id: "p1", role: "user", content: "" }] } };
+  assert.equal(FLOW_NODE_SPECS.assemble.label, "拼装 messages");
+  assert.equal(flowSourceType(assemble, "out"), "messages");
+  assert.equal(flowTargetType(assemble, "prompt-p1"), "string");
+  assert.ok(flowInputPorts(assemble).some((p) => p.handle === "prompt-p1"));
+  assert.ok(flowOutputPorts(assemble).some((p) => p.handle === "out" && p.type === "messages"));
+
+  assert.match(formatDebugPayload({ a: 1 }), /"a":1/);
+  assert.ok(formatDebugPayload("x".repeat(900)).length < 900);
+
+  const node = readFileSync(join(SRC, "components", "FlowNode.vue"), "utf8");
+  const workspace = readFileSync(join(SRC, "components", "FlowWorkspace.vue"), "utf8");
+  const editor = readFileSync(join(SRC, "components", "FlowEditor.vue"), "utf8");
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  assert.match(node, /type === 'llm' \|\| type === 'assemble'/, "拼装节点没有复用 Prompt 编辑器");
+  assert.match(node, /type === 'debug'/, "没有调试节点 UI");
+  assert.match(node, /debugType/, "调试节点没有动态端口类型");
+  assert.match(app, /notifyFlowDebug/, "App 没有在聊天轮询里识别调试节点");
+  assert.match(app, /step\.type !== "debug"/, "App 没有识别调试节点");
+  assert.match(app, /formatDebugPayload/, "App 没有格式化调试载荷");
+  assert.match(editor, /调试打印/, "编辑器测试没有 Toast");
+  assert.match(app, /provide\("toast", toast\)/, "App 没有提供全局 Toast");
 });
