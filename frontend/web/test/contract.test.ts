@@ -584,7 +584,7 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(flowNode, /max_retry/, "LLM 节点没有写入 max_retry");
   assert.match(css, /\.flow-llm-retry/, "失败重试行没有样式");
   assert.match(flowNode, /flow-node-resizer/, "LLM 节点没有高度调节柄");
-  assert.match(css, /\.flow-node-llm \{[^}]*width:\s*22\.5em/, "LLM 卡片宽度没有固定");
+  assert.match(css, /\.flow-node-llm \{[^}]*width:\s*21em/, "LLM 卡片宽度没有固定");
   assert.doesNotMatch(flowNode, /props\.data\.width\s*=/, "LLM 卡片仍在改宽度");
   assert.match(flowNode, /props\.data\.height\s*=/, "LLM 卡片没有高度持久化");
   assert.match(flowNode, /flow-prompt-role-label[^>]*>Role:</, "Role 前面没有标签");

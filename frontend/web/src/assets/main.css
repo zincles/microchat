@@ -1807,7 +1807,6 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
   opacity: 0.55;
   transition: opacity 120ms var(--md-ease-standard), background 120ms var(--md-ease-standard), color 120ms var(--md-ease-standard);
 }
-.flow-node-title { font-weight: 600; color: var(--md-on-surface); }
 /* 类型色只落在徽标/端口上，不画在卡片边上。 */
 .flow-canvas .flow-node.flow-node-history .vue-flow__handle,
 .flow-canvas .flow-node.flow-node-trim .vue-flow__handle,
@@ -1821,7 +1820,7 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-canvas .flow-node .vue-flow__handle.flow-port-number { background: var(--flow-number) !important; }
 .flow-canvas .flow-node .vue-flow__handle.flow-port-choice { background: var(--flow-choice) !important; }
 .flow-canvas .flow-node .vue-flow__handle:hover { background: var(--md-secondary) !important; }
-.flow-node-body { margin-top: 0.35em; color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
+.flow-node-body { margin-top: 0.5em; color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); line-height: 1.45; }
 .flow-node-body code { color: var(--md-primary); font-size: 0.95em; }
 .flow-output-inputs { display: flex; flex-direction: column; gap: 0.1em; margin-top: 0.35em; }
 .flow-output-row { position: relative; display: flex; align-items: center; min-height: 1.5em;
@@ -1867,7 +1866,6 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 @media (max-width: 700px) { .flow-canvas { height: 48vh; min-height: 260px; } }
 
 /* LLM 节点：一张 messages 列表，每条 Prompt 自己带 role 和左侧输入孔。 */
-.flow-node-llm { min-width: 280px; max-width: 330px; }
 .flow-llm-model { display: flex; flex-direction: column; gap: 0.15em; margin-top: 0.4em;
   color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
 .flow-llm-model .v-field__input { font-size: var(--md-type-label-small); }
@@ -1943,7 +1941,6 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
   border-radius: var(--md-shape-md); background: var(--vf-node-bg);
   color: var(--vf-node-text); box-shadow: var(--md-elev-1);
 }
-.flow-node-llm { width: 22.5em; min-width: 22.5em; max-width: 22.5em; min-height: 16em; display: flex; flex-direction: column; }
 .flow-node-llm .flow-prompt-list { flex: 1 1 auto; min-height: 0; max-height: none; }
 .flow-node-llm .flow-node-body { flex: none; }
 .flow-node-input, .flow-node-join { --flow-node-accent: var(--flow-string); }
@@ -1951,6 +1948,7 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-node-text { --flow-node-accent: var(--tg-ok); }
 .flow-node-judge { --flow-node-accent: var(--md-secondary); }
 .flow-node-history, .flow-node-trim, .flow-node-merge { --flow-node-accent: var(--flow-history); }
+.flow-node-heading { display: flex; flex-direction: column; gap: 0; min-width: 0; }
 .flow-node-badge {
   flex: none; display: inline-flex; align-items: center; justify-content: center;
   min-width: 2.1em; height: 1.6em; padding: 0 0.35em; border-radius: var(--r-sm);
@@ -1958,11 +1956,6 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
   color: var(--flow-node-accent, var(--md-primary)); font-size: 0.68em; font-weight: 700;
   letter-spacing: 0.04em;
 }
-.flow-node-heading { display: flex; flex-direction: column; gap: 0.16em; min-width: 0; }
-.flow-node-title { font-size: 0.95em; line-height: 1.25; }
-.flow-node-body { margin-top: 0.5em; }
-.flow-node .v-field { border-radius: var(--r-sm); }
-.flow-node .v-field__outline { --v-field-border-opacity: 0.55; }
 .flow-llm-model { margin-top: 0.55em; }
 .flow-prompt-list { gap: 0.4em; margin-top: 0.55em; padding-right: 0.1em; }
 .flow-prompt-row, .flow-prompt-history {
@@ -2210,31 +2203,26 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
   box-shadow: 0 8px 26px color-mix(in srgb, #000 34%, transparent), 0 1px 0 color-mix(in srgb, #fff 6%, transparent) inset;
   --flow-pad-x: 0.75em;
 }
-.flow-node-heading { gap: 0; }
-.flow-node-title { font-size: 0.86em; letter-spacing: 0.015em; }
 .flow-node-hint { display: none; }
 .flow-node-badge {
   min-width: 1.8em; height: 1.45em; border-radius: 4px;
   background: var(--flow-node-accent); color: var(--md-on-primary);
   font-size: 0.58em; letter-spacing: 0.06em;
 }
-.flow-node .v-field {
-  border-radius: 4px !important;
-  background: color-mix(in srgb, var(--md-surface-container-highest) 62%, transparent) !important;
-}
 .flow-node .v-field__outline { --v-field-border-opacity: 0.2; }
-.flow-node .v-field__input { font-size: 0.78em; min-height: 2.1em; padding-top: 0.25em; padding-bottom: 0.25em; }
 .flow-prompt-row, .flow-prompt-history {
   border: 1px solid var(--md-outline-variant);
   border-radius: 4px;
   background: color-mix(in srgb, var(--md-surface-container-highest) 32%, transparent);
 }
 .flow-prompt-row .v-field__outline, .flow-prompt-history .v-field__outline { --v-field-border-opacity: 0.12; }
-.flow-node-body { font-size: 0.68em; line-height: 1.45; }
 .flow-output-row, .flow-llm-output-row, .flow-join-output-row, .flow-merge-row, .flow-join-row {
   font-size: 0.84em;
 }
-.flow-node-llm { width: 21em; min-width: 21em; max-width: 21em; }
+.flow-node-llm {
+  width: 21em; min-width: 21em; max-width: 21em; min-height: 16em;
+  display: flex; flex-direction: column;
+}
 .flow-canvas .vue-flow__handle {
   width: 14px !important; height: 14px !important;
   border: 3px solid var(--vf-node-bg) !important;
@@ -2275,18 +2263,6 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 
 /* LLM 节点的 Prompt 正文是“内容”，不是标题：压到当前字号的 60%；
  * 节点里的按钮不再用平铺 text 样式，统一收成小尺寸 outlined。 */
-.flow-node .flow-prompt-content .v-field__input {
-  font-size: 0.6em !important; line-height: 1.4;
-}
-.flow-node .v-btn {
-  height: 1.55em !important; min-height: 1.55em !important; padding: 0 0.4em;
-  border: 1px solid var(--md-outline-variant) !important;
-  border-radius: 4px;
-  font-size: 0.62em !important; text-transform: none; letter-spacing: 0;
-}
-.flow-node .v-btn--icon {
-  width: 1.55em !important; min-width: 1.55em !important; padding: 0;
-}
 .flow-node .v-btn.v-btn--variant-outlined { color: var(--md-on-surface-variant); }
 .flow-node .v-btn.v-btn--variant-outlined:hover {
   color: var(--md-on-surface); border-color: var(--md-outline) !important;
@@ -2319,6 +2295,8 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-node .v-field {
   --v-input-control-height: var(--flow-control-height);
   height: var(--flow-control-height);
+  border-radius: 4px !important;
+  background: color-mix(in srgb, var(--md-surface-container-highest) 62%, transparent) !important;
 }
 .flow-node .v-field__input {
   height: var(--flow-control-height) !important;
@@ -2328,7 +2306,7 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 }
 .flow-node .flow-prompt-content .v-field__input {
   height: auto !important;
-  min-height: calc(var(--flow-control-height) * 1.25) !important;
+  min-height: calc(var(--flow-control-height) * 2.4) !important;
   font-size: var(--flow-font) !important;
   line-height: 1.5;
 }
@@ -2338,13 +2316,25 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-node .v-btn {
   height: var(--flow-button-height) !important;
   min-height: var(--flow-button-height) !important;
+  padding: 0 0.4em;
+  border: 1px solid var(--md-outline-variant) !important;
+  border-radius: 4px;
   font-size: var(--flow-font) !important;
+  text-transform: none;
+  letter-spacing: 0;
 }
 .flow-node .v-btn--icon {
   width: var(--flow-button-height) !important;
   min-width: var(--flow-button-height) !important;
+  padding: 0;
 }
-.flow-node .flow-node-title { font-size: var(--flow-title-font); }
+.flow-node .flow-node-title {
+  font-size: var(--flow-title-font);
+  font-weight: 600;
+  color: var(--md-on-surface);
+  line-height: 1.25;
+  letter-spacing: 0.015em;
+}
 .flow-node .flow-node-badge { font-size: calc(7px * var(--app-text-scale, 1)); }
 
 
@@ -2458,10 +2448,6 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-node .flow-prompt-content .v-field {
   height: auto !important;
   min-height: calc(var(--flow-control-height) * 2.4);
-}
-.flow-node .flow-prompt-content .v-field__input {
-  height: auto !important;
-  min-height: calc(var(--flow-control-height) * 2.4) !important;
 }
 
 /* 端点图案的半径 + 描边会吃掉内容边缘约 3–4px；节点内边距只留 0.75em 时，
