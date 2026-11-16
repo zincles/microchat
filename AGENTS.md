@@ -1362,8 +1362,10 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   **颜色唯一权威是 Vuetify theme**，
   `theme.css` 的 `--md-*` 只是 `rgb(var(--v-theme-*))` 的映射（不再维护第二套色值）；
   `installVuetifyThemeBridge` 用 MutationObserver 跟 `data-theme`。
-  ⚠ Vuetify 4 的样式在 CSS `@layer` 里，本项目旧 CSS 未分层 ⇒ 旧 `button`/`input` 基线会压过 VBtn/VField；
-  `main.css` 里只对 `#app .v-btn, .v-overlay-container .v-btn, #app .v-field__input` 做 `all: revert-layer` 的逃生门。
+  ⚠ Vuetify 4 的样式在 CSS `@layer` 里，本项目旧 CSS 未分层 ⇒ 旧 `button` 基线会压过 VBtn；
+  `main.css` 里只对 `#app .v-btn, .v-overlay-container .v-btn, #app .v-tab` 做 `all: revert-layer` 的逃生门。
+  旧原生 `input` / `textarea` 基线已用 `:not(.v-field__input)` 排除 Vuetify 字段，不再需要
+  给 `#app .v-field__input` 整条 `all: revert-layer`。
   ⚠ 代价要认：Vuetify styles 是全量的，整包 CSS/JS 都明显变大；换来的是输入/按钮/菜单的 MD3 行为与维护面。
   **下一块**若是 tabs：完整 Vuetify 的 CSS 已经进来了 ⇒ 直接用 `VTabs`/`VTabsWindow`（内置 MD3 slider/键盘/ARIA）；
   Vuetify0 的 headless `Tabs` 只在"不想引完整 Vuetify 样式"时才考虑。别再手写第五套。

@@ -4473,7 +4473,9 @@ test("输入区：Vuetify 4 MD3 接管 input/send/think", () => {
   assert.match(plugin, /prefers-color-scheme: light/, "auto 没桥到系统亮色");
 
   // 旧未分层 CSS 不能改写 Vuetify 组件
-  assert.match(css, /#app \.v-btn, \.v-overlay-container \.v-btn, #app \.v-field__input, #app \.v-tab \{ all: revert-layer; \}/, "Vuetify 组件还会被旧按钮/输入样式压住");
+  assert.match(css, /#app \.v-btn, \.v-overlay-container \.v-btn, #app \.v-tab \{ all: revert-layer; \}/, "Vuetify 按钮/标签仍被旧基线压住");
+  assert.ok(!/#app \.v-field__input/.test(css), "旧输入基线仍靠 all: revert-layer 逃逸");
+  assert.match(css, /textarea:not\(\.v-field__input\)/, "旧 textarea 基线没有排除 Vuetify 字段");
   assert.ok(!/#composer button \{/.test(css), "旧的 #composer button 样式还留着");
   assert.ok(!/#input \{/.test(css), "旧的 #input 样式还留着");
 });

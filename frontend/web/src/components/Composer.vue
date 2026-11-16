@@ -160,19 +160,17 @@ defineExpose({ submit, clear, setText, text, setRunning });
     0 4px 14px rgba(0, 0, 0, 0.035),
     0 2px 5px rgba(0, 0, 0, 0.05);
 }
-#app .composer-shell :deep(.v-field) {
+.composer-shell :deep(.v-field) {
   background: transparent;
   border-radius: inherit;
 }
-/* #app .v-field__input 那条 `all: revert-layer` 的逃生门特异性是 (1,1)；
- * 这里必须带上 #app，否则 padding / min-height 会被它整条回退。 */
-#app .composer-shell :deep(.v-field__input) {
+.composer-shell :deep(.v-field__input) {
   min-height: 48px;
   padding: 12px 16px;
   font-size: 16px;
   line-height: 24px;
 }
-#app .composer-shell :deep(.v-field__outline) {
+.composer-shell :deep(.v-field__outline) {
   display: none;
 }
 @media (prefers-reduced-motion: reduce) {
