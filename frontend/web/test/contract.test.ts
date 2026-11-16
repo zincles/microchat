@@ -676,7 +676,7 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(css, /\.flow-editor\.is-locked \.flow-node \{[^}]*pointer-events:\s*none/, "运行中没有锁住节点交互");
 
   assert.ok(!/\.flow-node[^\n]*\{[^}]*border-left:\s*3px/.test(css), "节点卡片还在用左侧色条");
-  assert.match(css, /\.flow-node-head \{[^}]*background:\s*color-mix/, "节点卡片没有类型色表头");
+  assert.match(css, /\.flow-node-head \{[^}]*background:\s*var\(--md-surface-container-highest\)/, "节点表头没有最终表面色");
   assert.match(css, /\.flow-node-text \{\s*--flow-node-accent:/, "纯文本节点没有独立强调色");
   assert.match(css, /\.flow-port-messages\s*\{[^}]*background:\s*var\(--flow-history\)/, "messages 端口没有按数据类型染色");
   assert.match(css, /\.v-btn svg\s*\{[^}]*width:\s*1\.45em/, "按钮里的 SVG 没有铺开");

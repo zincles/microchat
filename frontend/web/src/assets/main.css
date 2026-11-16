@@ -1787,13 +1787,26 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-canvas .vue-flow__controls-button svg { fill: currentColor; }
 /* 节点外观在下方视觉层统一定义；这里只留布局底座，避免同一组声明出现两次。 */
 .flow-node { position: relative; box-sizing: border-box; overflow: visible; font-size: var(--md-type-body-small); }
-.flow-node-head { display: flex; flex-direction: column; gap: 0.1em; }
-.flow-node-delete { position: absolute; top: 0.2em; right: 0.25em; z-index: 2;
-  width: 1.6em; height: 1.6em; padding: 0; border: 0; border-radius: var(--r-xs);
-  background: none; color: var(--md-on-surface-variant); font: inherit; font-size: 1.15em;
-  line-height: 1; cursor: pointer; }
-.flow-node-delete:hover { color: var(--md-error); background: var(--md-error-container); }
-.flow-node-delete:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 1px; }
+.flow-node-head {
+  display: flex; flex-direction: column; align-items: center; gap: 0.5em;
+  min-height: 2.25em;
+  margin: -0.7em -1.3em 0.6em; padding: 0.45em 2em 0.42em 1.3em;
+  border-bottom: 1px solid var(--md-outline-variant);
+  border-radius: var(--md-shape-md) var(--md-shape-md) 0 0;
+  background: var(--md-surface-container-highest);
+  box-shadow: none;
+}
+.flow-node-delete {
+  position: absolute; top: 0.45em; right: 0.45em; z-index: 2;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.6em; height: 1.6em; min-height: 0; padding: 0;
+  border: 1px solid var(--md-outline-variant); border-radius: 50%;
+  background: color-mix(in srgb, var(--md-surface-container-highest) 72%, transparent);
+  color: var(--md-on-surface-variant);
+  font: inherit; font-size: 0.9em; line-height: 1; cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 120ms var(--md-ease-standard), background 120ms var(--md-ease-standard), color 120ms var(--md-ease-standard);
+}
 .flow-node-title { font-weight: 600; color: var(--md-on-surface); }
 /* 类型色只落在徽标/端口上，不画在卡片边上。 */
 .flow-canvas .flow-node.flow-node-history .vue-flow__handle,
@@ -1938,13 +1951,6 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 .flow-node-text { --flow-node-accent: var(--tg-ok); }
 .flow-node-judge { --flow-node-accent: var(--md-secondary); }
 .flow-node-history, .flow-node-trim, .flow-node-merge { --flow-node-accent: var(--flow-history); }
-.flow-node-head {
-  display: flex; align-items: center; gap: 0.5em;
-  margin: -0.7em -0.75em 0.6em; padding: 0.55em 2.1em 0.5em 0.75em;
-  border-bottom: 1px solid var(--md-outline-variant);
-  border-radius: var(--md-shape-md) var(--md-shape-md) 0 0;
-  background: color-mix(in srgb, var(--flow-node-accent) 7%, var(--vf-node-bg));
-}
 .flow-node-badge {
   flex: none; display: inline-flex; align-items: center; justify-content: center;
   min-width: 2.1em; height: 1.6em; padding: 0 0.35em; border-radius: var(--r-sm);
@@ -1954,7 +1960,6 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 }
 .flow-node-heading { display: flex; flex-direction: column; gap: 0.16em; min-width: 0; }
 .flow-node-title { font-size: 0.95em; line-height: 1.25; }
-.flow-node-delete { top: 0.7em; right: 0.55em; }
 .flow-node-body { margin-top: 0.5em; }
 .flow-node .v-field { border-radius: var(--r-sm); }
 .flow-node .v-field__outline { --v-field-border-opacity: 0.55; }
@@ -2205,13 +2210,6 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
   box-shadow: 0 8px 26px color-mix(in srgb, #000 34%, transparent), 0 1px 0 color-mix(in srgb, #fff 6%, transparent) inset;
   --flow-pad-x: 0.75em;
 }
-.flow-node-head {
-  min-height: 2.25em;
-  padding: 0.45em 2em 0.42em 0.7em;
-  border-bottom-color: var(--md-outline-variant);
-  background: var(--md-surface-container-highest);
-  box-shadow: none;
-}
 .flow-node-heading { gap: 0; }
 .flow-node-title { font-size: 0.86em; letter-spacing: 0.015em; }
 .flow-node-hint { display: none; }
@@ -2220,8 +2218,6 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
   background: var(--flow-node-accent); color: var(--md-on-primary);
   font-size: 0.58em; letter-spacing: 0.06em;
 }
-.flow-node-delete { opacity: 0; transition: opacity 120ms var(--md-ease-standard); }
-.flow-node:hover .flow-node-delete, .flow-node:focus-within .flow-node-delete { opacity: 1; }
 .flow-node .v-field {
   border-radius: 4px !important;
   background: color-mix(in srgb, var(--md-surface-container-highest) 62%, transparent) !important;
@@ -2270,17 +2266,6 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
 
 
 /* 节点删除键：圆形幽灵键，悬停才出现；不再用一个大号文字 ×。 */
-.flow-node-delete {
-  top: 0.45em; right: 0.45em;
-  width: 1.6em; height: 1.6em; padding: 0;
-  display: inline-flex; align-items: center; justify-content: center;
-  border: 0; border-radius: 50%;
-  background: color-mix(in srgb, var(--md-surface-container-highest) 72%, transparent);
-  color: var(--md-on-surface-variant);
-  font-size: 0.9em;
-  opacity: 0.55;
-  transition: opacity 120ms var(--md-ease-standard), background 120ms var(--md-ease-standard), color 120ms var(--md-ease-standard);
-}
 .flow-node-delete svg { display: block; width: 0.8em; height: 0.8em; }
 .flow-node:hover .flow-node-delete,
 .flow-node:focus-within .flow-node-delete { opacity: 1; }
@@ -2307,7 +2292,6 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
   color: var(--md-on-surface); border-color: var(--md-outline) !important;
   background: var(--hover);
 }
-.flow-node-delete { border: 1px solid var(--md-outline-variant); }
 
 
 /* 最终统一尺寸：节点内不再各自用 em 叠乘（Vuetify 的 16px 基准把 .v-field 撑成 12.8/16px）。
@@ -2487,11 +2471,6 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, te
   --flow-pad-x: 1.3em;
   padding-left: 1.3em;
   padding-right: 1.3em;
-}
-.flow-node-head {
-  margin-left: -1.3em;
-  margin-right: -1.3em;
-  padding-left: 1.3em;
 }
 .flow-node .flow-prompt-row,
 .flow-node .flow-prompt-history,
