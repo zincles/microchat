@@ -111,7 +111,7 @@ func (s *Store) attachToolsLocked(sessionID string, messages []model.Message) er
 	}
 	rows, err := s.db.Query(
 		`SELECT t.id, t.message_id, t.seq, t.source, t.tool_name, t.item_id,
-		        t.queries, t.sources, t.arguments, t.result, t.status, t.created_at
+		        t.queries, t.sources, t.arguments, t.result, t.status, t.text_offset, t.created_at
 		   FROM message_tools t
 		   JOIN messages m ON m.id = t.message_id
 		  WHERE m.session_id = ?1
@@ -124,13 +124,18 @@ func (s *Store) attachToolsLocked(sessionID string, messages []model.Message) er
 	for rows.Next() {
 		var tool model.MessageTool
 		var itemID sql.NullString
+		var offset sql.NullInt64
 		var queries, sources []byte
 		if err := rows.Scan(&tool.ID, &tool.MessageID, &tool.Seq, &tool.Source, &tool.ToolName, &itemID,
-			&queries, &sources, &tool.Arguments, &tool.Result, &tool.Status, &tool.CreatedAt); err != nil {
+			&queries, &sources, &tool.Arguments, &tool.Result, &tool.Status, &offset, &tool.CreatedAt); err != nil {
 			return err
 		}
 		if itemID.Valid {
 			tool.ItemID = itemID.String
+		}
+		if offset.Valid {
+			value := int(offset.Int64)
+			tool.TextOffset = &value
 		}
 		_ = json.Unmarshal(queries, &tool.Queries)
 		_ = json.Unmarshal(sources, &tool.Sources)
@@ -332,10 +337,10 @@ func (s *Store) InsertMessageWithTools(message model.Message, tools []model.Mess
 		}
 		if _, err := tx.Exec(
 			`INSERT INTO message_tools
-			   (id, message_id, seq, source, tool_name, item_id, queries, sources, arguments, result, status, created_at)
-			 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)`,
+			   (id, message_id, seq, source, tool_name, item_id, queries, sources, arguments, result, status, text_offset, created_at)
+			 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)`,
 			tool.ID, tool.MessageID, tool.Seq, tool.Source, tool.ToolName, nullableText(tool.ItemID),
-			mustJSON(tool.Queries), mustJSON(tool.Sources), tool.Arguments, tool.Result, tool.Status, tool.CreatedAt); err != nil {
+			mustJSON(tool.Queries), mustJSON(tool.Sources), tool.Arguments, tool.Result, tool.Status, nullableInt(tool.TextOffset), tool.CreatedAt); err != nil {
 			return model.Message{}, err
 		}
 	}
@@ -355,6 +360,13 @@ func nullableText(value string) any {
 		return nil
 	}
 	return value
+}
+
+func nullableInt(value *int) any {
+	if value == nil {
+		return nil
+	}
+	return *value
 }
 
 // InsertMessagesWithTools：一次把同一轮的多条 assistant 消息 + 它们的工具记录
@@ -406,10 +418,10 @@ func (s *Store) InsertMessagesWithTools(messages []model.Message) ([]model.Messa
 			}
 			if _, err := tx.Exec(
 				`INSERT INTO message_tools
-				   (id, message_id, seq, source, tool_name, item_id, queries, sources, arguments, result, status, created_at)
-				 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)`,
+				   (id, message_id, seq, source, tool_name, item_id, queries, sources, arguments, result, status, text_offset, created_at)
+				 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)`,
 				tool.ID, tool.MessageID, tool.Seq, tool.Source, tool.ToolName, nullableText(tool.ItemID),
-				mustJSON(tool.Queries), mustJSON(tool.Sources), tool.Arguments, tool.Result, tool.Status, tool.CreatedAt); err != nil {
+				mustJSON(tool.Queries), mustJSON(tool.Sources), tool.Arguments, tool.Result, tool.Status, nullableInt(tool.TextOffset), tool.CreatedAt); err != nil {
 				return nil, err
 			}
 		}

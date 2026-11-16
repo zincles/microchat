@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"microchat/internal/config"
 	"microchat/internal/macro"
@@ -238,16 +239,24 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 	client := providers.NewClient(wire)
 	tools := s.availableTools(session, chosen)
 	chatMessages := wireMessages(outgoing, reasoningByID)
-	toolOrder := []string{}
-	toolEvents := map[string]providers.ToolEvent{}
 	assistantMessages := []model.Message{}
 	nextAssistant := 0
 	var result providers.Result
 	var err error
+	var lastServerTools []model.MessageTool
+	// 每一轮模型响应各自计算工具在正文里的偏移；工具事件只属于当前这一轮。
+	var roundText strings.Builder
+	toolOrder := []string{}
+	toolEvents := map[string]providers.ToolEvent{}
+	toolOffsets := map[string]int{}
 	for round := 0; round <= maxToolRounds; round++ {
 		if round > 0 {
 			s.Turns.NextStep(sessionID, token)
 		}
+		roundText.Reset()
+		toolOrder = toolOrder[:0]
+		toolEvents = map[string]providers.ToolEvent{}
+		toolOffsets = map[string]int{}
 		result, err = client.Chat(ctx, wire, providers.Request{
 			Model:         session.Model,
 			Messages:      chatMessages,
@@ -262,6 +271,8 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 					event, exists := toolEvents[delta.Tool.ItemID]
 					if !exists {
 						toolOrder = append(toolOrder, delta.Tool.ItemID)
+						// 工具在正文里的位置：按已经输出的**字符数**记（不含 <state> 块）。
+						toolOffsets[delta.Tool.ItemID] = utf8.RuneCountInString(statelang.Scan(roundText.String()).Cleaned)
 						event = *delta.Tool
 					} else {
 						if delta.Tool.Kind != "" {
@@ -295,6 +306,7 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 					firstTextAt = time.Now()
 				}
 				partialText.WriteString(delta.Text)
+				roundText.WriteString(delta.Text)
 				s.Turns.AppendContent(sessionID, token, delta.Text)
 			}
 			if delta.Reasoning != "" {
@@ -305,14 +317,17 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 		if err != nil {
 			break
 		}
+		serverTools := serverMessageTools(toolOrder, toolEvents, toolOffsets)
 		if len(result.ToolCalls) == 0 {
+			lastServerTools = serverTools
 			break
 		}
 		chatMessages = append(chatMessages, providers.ChatMessage{
 			Role: "assistant", Content: result.Text, Reasoning: result.Reasoning,
 			ToolCalls: toolCallsJSON(result.ToolCalls),
 		})
-		roundTools := make([]model.MessageTool, 0, len(result.ToolCalls))
+		roundTools := make([]model.MessageTool, 0, len(result.ToolCalls)+len(serverTools))
+		roundTools = append(roundTools, serverTools...)
 		for _, call := range result.ToolCalls {
 			s.Turns.SetTool(sessionID, token, call.Name, "in_progress")
 			content, sources, toolErr := runLocalTool(ctx, chosen.Provider, call)
@@ -368,7 +383,8 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 			if chosen.StoresReasoning() && strings.TrimSpace(partialReasoning.String()) != "" {
 				canceled.Reasoning = partialReasoning.String()
 			}
-			_, _ = s.Store.InsertMessageWithTools(canceled, nil)
+			canceledTools := serverMessageTools(toolOrder, toolEvents, toolOffsets)
+			_, _ = s.Store.InsertMessageWithTools(canceled, canceledTools)
 			guard.Cancel()
 			return
 		}
@@ -382,18 +398,7 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 		return
 	}
 	kind := model.MessageKindChat
-	messageTools := []model.MessageTool{}
-	for _, itemID := range toolOrder {
-		event := toolEvents[itemID]
-		sources := make([]model.MessageToolSource, 0, len(event.Sources))
-		for _, source := range event.Sources {
-			sources = append(sources, model.MessageToolSource{Type: source.Type, URL: source.URL, Title: source.Title})
-		}
-		messageTools = append(messageTools, model.MessageTool{
-			Source: "server", ToolName: event.Kind, ItemID: event.ItemID,
-			Queries: event.Queries, Sources: sources, Status: "done",
-		})
-	}
+	messageTools := lastServerTools
 	if len(messageTools) > 0 {
 		kind = model.MessageKindToolRun
 	}
@@ -417,6 +422,26 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 	if s.Compactor != nil {
 		go s.MaybeAutoCompact(session)
 	}
+}
+
+// serverMessageTools：把一轮的 server 工具事件按发生顺序变成可落库的 tool 行。
+// TextOffset 是相对该轮正文的字符数；旧数据没有偏移时前端仍按“工具卡在正文上方”显示。
+func serverMessageTools(order []string, events map[string]providers.ToolEvent, offsets map[string]int) []model.MessageTool {
+	out := make([]model.MessageTool, 0, len(order))
+	for _, itemID := range order {
+		event := events[itemID]
+		sources := make([]model.MessageToolSource, 0, len(event.Sources))
+		for _, source := range event.Sources {
+			sources = append(sources, model.MessageToolSource{Type: source.Type, URL: source.URL, Title: source.Title})
+		}
+		offset := offsets[itemID]
+		out = append(out, model.MessageTool{
+			Source: "server", ToolName: event.Kind, ItemID: event.ItemID,
+			Queries: event.Queries, Sources: sources, Status: "done",
+			TextOffset: &offset,
+		})
+	}
+	return out
 }
 
 // localToolQueries：给界面卡片显示的一小段检索词/URL（完整参数仍留 Arguments）。

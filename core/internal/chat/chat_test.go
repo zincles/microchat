@@ -499,3 +499,15 @@ func TestPreviewWireCarriesServerTools(t *testing.T) {
 		t.Fatalf("关掉 web_search 后 tools = %#v", tools)
 	}
 }
+
+func TestServerMessageToolsKeepsTextOffsets(t *testing.T) {
+	events := map[string]providers.ToolEvent{
+		"ws_1": {ItemID: "ws_1", Kind: "web_search", Queries: []string{"a"}},
+		"ws_2": {ItemID: "ws_2", Kind: "web_search", Queries: []string{"b"}},
+	}
+	got := serverMessageTools([]string{"ws_1", "ws_2"}, events, map[string]int{"ws_1": 0, "ws_2": 12})
+	if len(got) != 2 || got[0].TextOffset == nil || *got[0].TextOffset != 0 ||
+		got[1].TextOffset == nil || *got[1].TextOffset != 12 {
+		t.Fatalf("offsets = %+v", got)
+	}
+}

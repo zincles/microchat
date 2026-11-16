@@ -1059,13 +1059,15 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 
 ### `message_tools` —— 一条消息内部的工具调用
 
-`id` · `message_id`（FK CASCADE）· `seq`（消息内部顺序）· `source`（`server` / `client`）· `tool_name` · `item_id`（上游 output item）· `queries`（JSON 数组）· `sources`（JSON 数组：`type/url/title`）· `arguments` / `result` / `status`（`done/canceled/unknown`）· `created_at`
+`id` · `message_id`（FK CASCADE）· `seq`（消息内部顺序）· `source`（`server` / `client`）· `tool_name` · `item_id`（上游 output item）· `queries`（JSON 数组）· `sources`（JSON 数组：`type/url/title`）· `arguments` / `result` / `status`（`done/canceled/unknown`）· **`text_offset`**（服务端工具发生时正文已输出的字符数，rune，已剔 `<state>`；旧行为 NULL）· `created_at`
 
 **它不是消息**：不占 `idx`、不参与世界状态、不单独进摘要区间。多条工具调用 = 多条本表行；不要建 `_before` / `_after` 两张表（顺序用 `seq`）。
 xAI 的 `web_search_call` 落这里；DeepSeek 服务端 `web_search` 不接（只支持 v4-pro、无 sources），搜索走客户端 Search/Fetch。
-界面在**正文上方**画**工具卡**：工具名 + `queries`（本地 web_fetch 显示 URL）+ 来源条数；
-每个工具卡自己就是**可折叠 `details`**（默认收起，展开只列它自己的来源）；
-不再把所有工具的来源合并成一条 30 条的清单，避免几十条链接把答案顶走。
+界面把**工具卡**插在正文的时间线上（2026-11-17）：按 `text_offset` 切开正文，
+工具卡出现在它发生的位置，而不是全部堆在正文上方。偏移会吸附到段落 / 行 / 句末边界，
+避免把 Markdown 的 `**粗体**`、链接或代码块劈开；没有 `text_offset` 的旧消息仍退回
+“工具卡全在正文上方”的旧布局。每个工具卡自己就是**可折叠 `details`**（默认收起，
+展开只列它自己的来源），不再把所有工具的来源合并成一条 30 条的清单。
 
 ### `models` —— 发现所得 + 用户覆盖（PK `(provider, upstream_id)`）
 

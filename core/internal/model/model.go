@@ -54,7 +54,10 @@ type MessageTool struct {
 	Arguments string              `json:"arguments,omitempty"`
 	Result    string              `json:"result,omitempty"`
 	Status    string              `json:"status,omitempty"`
-	CreatedAt int64               `json:"created_at"`
+	// TextOffset：服务端工具发生时，正文已经输出的**字符数**（rune；不含 <state> 块）。
+	// 旧记录没有这一格 ⇒ nil，前端退回“工具卡全在正文上方”。
+	TextOffset *int  `json:"text_offset,omitempty"`
+	CreatedAt  int64 `json:"created_at"`
 }
 
 // MessageToolSource：工具返回的来源（xAI 的 action.sources；DeepSeek 直连 Search 也有）。

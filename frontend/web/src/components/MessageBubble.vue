@@ -3,12 +3,15 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import { VBtn } from "vuetify/components";
 import { ICONS } from "../assets/icons.ts";
-import { assistantIdentity, formatThinkLabel, identityLabel, nativeToolLabel, sourceLabel, toolRunHint, usageFoot, usageFootTitle } from "../utils/format.ts";
+import { assistantIdentity, formatThinkLabel, identityLabel, sourceLabel, toolRunHint, usageFoot, usageFootTitle } from "../utils/format.ts";
 import type { UsageLike } from "../utils/format.ts";
 import { renderMarkdown, splitState } from "../utils/markdown.ts";
+import { buildToolTimeline } from "../utils/chatrows.ts";
 import { renderMacroHtml, type MacroMap } from "../utils/macros.ts";
 import { renderMermaidIn } from "../utils/mermaid.ts";
 import type { RerollView } from "../types/app.ts";
+import type { MessageTool } from "../api/types.ts";
+import MessageToolCard from "./MessageToolCard.vue";
 
 const props = withDefaults(defineProps<{
   who?: string;
@@ -30,14 +33,7 @@ const props = withDefaults(defineProps<{
   tool?: { kind: string; state: string } | null;
   sources?: { type?: string; url: string; title?: string }[];
   macros?: MacroMap;
-  tools?: {
-    id?: string;
-    source?: string;
-    tool_name?: string;
-    queries?: string[];
-    sources?: { type?: string; url: string; title?: string }[];
-    status?: string;
-  }[];
+  tools?: MessageTool[];
   reroll?: RerollView | null; // 重摇状态（本条是目标时才非 null；FlowAgent 不用）
   flow?: boolean;
   // usage：上游报的用量（归一化后的那几格；2026-10-20 起气泡脚注就用它）。
@@ -114,6 +110,11 @@ const canEdit = computed(() => !!props.messageId);
 // 正文拆说话/状态：说话走 markdown，状态块进独立容器。
 const parts = computed(() => splitState(props.content));
 const bodyHtml = computed(() => renderMarkdown(parts.value.cleaned, { macros: props.macros }));
+// 新消息带 text_offset ⇒ 工具卡按正文位置插入；旧消息没有 ⇒ 保持“工具卡在正文上方”。
+const toolTimeline = computed(() => buildToolTimeline(parts.value.cleaned, props.tools).map((part) => ({
+  ...part,
+  html: part.kind === "text" ? renderMarkdown(part.text ?? "", { macros: props.macros }) : "",
+})));
 const reasoningHtml = computed(() => renderMacroHtml(props.reasoning, props.macros));
 // 公式比列宽时给右缘一道内阴影（2026-11-02）：手机上原本是"一刀切"，看不出还能往右滑。
 // `overflow-x: auto` 之外再标一个类 —— 只有真的溢出才提示，短公式不受影响。
@@ -197,32 +198,29 @@ watch(() => props.streaming, (s) => nextTick(() => {
         <summary>{{ thinkLabel }}</summary>
         <div class="think-body" v-html="reasoningHtml"></div>
       </details>
-      <!-- 工具调用发生在正文之前（xAI 的 web_search_call 也是先于最终 text）；卡片必须在上方。
-           来源链接仍留在正文下方，作为引用清单，避免 30 条链接把答案顶走。 -->
+      <!-- 旧消息没有 text_offset，只能把工具卡放在正文上方；新消息按时间线插在正文中。 -->
       <div v-if="streaming && toolHint" class="tool-status" aria-live="polite">
         <span class="tool-dot" aria-hidden="true"></span>
         <i>{{ toolHint }}</i>
       </div>
-      <div v-if="tools.length" class="tool-cards" aria-label="工具调用">
-        <details v-for="(tool, i) in tools" :key="tool.id || i" class="tool-card">
-          <summary>
-            <span class="tool-card-name">{{ nativeToolLabel(tool.tool_name) }}</span>
-            <span v-if="tool.source" class="tool-card-source">{{ tool.source === "client" ? "本地" : "服务端" }}</span>
-            <span v-if="tool.queries?.length" class="tool-card-query">{{ tool.queries.join(" / ") }}</span>
-            <span v-if="tool.sources?.length" class="tool-card-count">{{ tool.sources.length }} 条来源</span>
-          </summary>
-          <a v-for="source in tool.sources || []" :key="source.url" :href="source.url" target="_blank" rel="noopener noreferrer">
+      <template v-if="!toolTimeline.length">
+        <div v-if="tools.length" class="tool-cards" aria-label="工具调用">
+          <MessageToolCard v-for="(tool, i) in tools" :key="tool.id || i" :tool="tool" />
+        </div>
+        <details v-else-if="sources.length" class="tool-sources" aria-label="搜索结果">
+          <summary class="tool-sources-title">来源 {{ sources.length }}</summary>
+          <a v-for="source in sources" :key="source.url" :href="source.url" target="_blank" rel="noopener noreferrer">
             {{ sourceLabel(source.url, source.title) }}
           </a>
         </details>
+      </template>
+      <div v-if="toolTimeline.length" ref="textEl" class="text text-timeline">
+        <template v-for="(part, i) in toolTimeline" :key="i">
+          <div v-if="part.kind === 'text'" class="text-segment" v-html="part.html"></div>
+          <MessageToolCard v-else-if="part.tool" :tool="part.tool" inline />
+        </template>
       </div>
-      <details v-else-if="sources.length" class="tool-sources" aria-label="搜索结果">
-        <summary class="tool-sources-title">来源 {{ sources.length }}</summary>
-        <a v-for="source in sources" :key="source.url" :href="source.url" target="_blank" rel="noopener noreferrer">
-          {{ sourceLabel(source.url, source.title) }}
-        </a>
-      </details>
-      <div ref="textEl" class="text" v-html="bodyHtml"></div>
+      <div v-else ref="textEl" class="text" v-html="bodyHtml"></div>
       <div v-if="streaming && !content && !reasoning && !toolHint" class="typing" aria-label="正在生成">
         <span></span><span></span><span></span>
         <i class="typing-hint">{{ typingHint }}</i>

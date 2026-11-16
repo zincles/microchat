@@ -69,15 +69,16 @@ type exportMessage struct {
 }
 
 type exportTool struct {
-	Source    string                    `json:"source,omitempty"`
-	ToolName  string                    `json:"tool_name"`
-	ItemID    string                    `json:"item_id,omitempty"`
-	Queries   []string                  `json:"queries,omitempty"`
-	Sources   []model.MessageToolSource `json:"sources,omitempty"`
-	Arguments string                    `json:"arguments,omitempty"`
-	Result    string                    `json:"result,omitempty"`
-	Status    string                    `json:"status,omitempty"`
-	Seq       int                       `json:"seq,omitempty"`
+	Source     string                    `json:"source,omitempty"`
+	ToolName   string                    `json:"tool_name"`
+	ItemID     string                    `json:"item_id,omitempty"`
+	Queries    []string                  `json:"queries,omitempty"`
+	Sources    []model.MessageToolSource `json:"sources,omitempty"`
+	Arguments  string                    `json:"arguments,omitempty"`
+	Result     string                    `json:"result,omitempty"`
+	Status     string                    `json:"status,omitempty"`
+	TextOffset *int                      `json:"text_offset,omitempty"`
+	Seq        int                       `json:"seq,omitempty"`
 }
 
 // exportSummary：金字塔里的一条。
@@ -137,7 +138,7 @@ func (s *Server) exportSession(w http.ResponseWriter, r *http.Request) {
 			exported.Tools = append(exported.Tools, exportTool{
 				Source: tool.Source, ToolName: tool.ToolName, ItemID: tool.ItemID,
 				Queries: tool.Queries, Sources: tool.Sources, Arguments: tool.Arguments,
-				Result: tool.Result, Status: tool.Status, Seq: tool.Seq,
+				Result: tool.Result, Status: tool.Status, TextOffset: tool.TextOffset, Seq: tool.Seq,
 			})
 		}
 		out.Messages = append(out.Messages, exported)
@@ -197,7 +198,7 @@ func (s *Server) importJSON(w http.ResponseWriter, r *http.Request) {
 			item.Tools = append(item.Tools, model.MessageTool{
 				Source: tool.Source, ToolName: tool.ToolName, ItemID: tool.ItemID,
 				Queries: tool.Queries, Sources: tool.Sources, Arguments: tool.Arguments,
-				Result: tool.Result, Status: tool.Status, Seq: tool.Seq,
+				Result: tool.Result, Status: tool.Status, TextOffset: tool.TextOffset, Seq: tool.Seq,
 			})
 		}
 		parsed = append(parsed, item)

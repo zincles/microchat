@@ -62,6 +62,7 @@ CREATE TABLE message_tools (
   arguments  TEXT NOT NULL DEFAULT '',
   result     TEXT NOT NULL DEFAULT '',
   status     TEXT NOT NULL DEFAULT 'done',
+  text_offset INTEGER,
   created_at INTEGER NOT NULL
 );
 CREATE INDEX message_tools_by_message ON message_tools(message_id, seq);

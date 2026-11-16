@@ -92,6 +92,9 @@ func (s *Store) migrate() error {
 	if err := s.ensureMessageTools(); err != nil {
 		return err
 	}
+	if err := s.ensureMessageToolTextOffset(); err != nil {
+		return err
+	}
 	return s.ensureTavernPresets()
 }
 
@@ -186,12 +189,28 @@ func (s *Store) ensureMessageTools() error {
   arguments  TEXT NOT NULL DEFAULT '',
   result     TEXT NOT NULL DEFAULT '',
   status     TEXT NOT NULL DEFAULT 'done',
+  text_offset INTEGER,
   created_at INTEGER NOT NULL
 )`)
 	if err != nil {
 		return err
 	}
 	_, err = s.db.Exec("CREATE INDEX IF NOT EXISTS message_tools_by_message ON message_tools(message_id, seq)")
+	return err
+}
+
+// ensureMessageToolTextOffset：老库补 message_tools.text_offset（幂等）。
+// NULL = 旧记录（前端退回工具卡在正文上方）；0 是合法的“工具发生在正文开头”。
+func (s *Store) ensureMessageToolTextOffset() error {
+	var hasColumn int
+	if err := s.db.QueryRow(
+		"SELECT COUNT(*) FROM pragma_table_info('message_tools') WHERE name = 'text_offset'").Scan(&hasColumn); err != nil {
+		return err
+	}
+	if hasColumn > 0 {
+		return nil
+	}
+	_, err := s.db.Exec("ALTER TABLE message_tools ADD COLUMN text_offset INTEGER")
 	return err
 }
 

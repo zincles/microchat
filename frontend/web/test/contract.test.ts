@@ -11,7 +11,7 @@ import { parseCommand, filterCommands, COMMAND_META } from "../src/utils/command
 import { uuidv7 } from "../src/utils/ids.ts";
 import { groupSessions, SESSION_GROUP_LABELS } from "../src/utils/sessionGroups.ts";
 import { buildCompactTree, treeTotals } from "../src/utils/tree.ts";
-import { buildChatRows, rerollTargetLive, bubbleText, editRerollTarget, latestPromptFor, seededMissingRuns, toolSources } from "../src/utils/chatrows.ts";
+import { buildChatRows, buildToolTimeline, rerollTargetLive, bubbleText, editRerollTarget, latestPromptFor, seededMissingRuns, toolSources } from "../src/utils/chatrows.ts";
 import { resetChrome, stepChrome } from "../src/utils/chrome.ts";
 import { typewriterDuration, revealCount, TYPEWRITER_DEFAULT_MS, TYPEWRITER_MIN_MS, TYPEWRITER_MAX_MS } from "../src/utils/typewriter.ts";
 import { computeViewportFit } from "../src/utils/viewport.ts";
@@ -4844,14 +4844,14 @@ test("工具来源：多次搜索合并时按 URL 去重", () => {
   assert.deepEqual(toolSources(null), []);
 });
 
-test("工具卡和来源都在正文上方；每个工具卡自己折叠来源", () => {
+test("工具卡按 text_offset 插入正文；旧消息保留上方兜底", () => {
   const bubble = readFileSync(join(SRC, "components", "MessageBubble.vue"), "utf8");
-  const cardAt = bubble.indexOf('class="tool-cards"');
-  const textAt = bubble.indexOf('ref="textEl" class="text"');
-  assert.ok(cardAt > 0 && textAt > 0);
-  assert.ok(cardAt < textAt, "工具卡必须先于正文");
-  assert.ok(bubble.includes('<details v-for="(tool, i) in tools"'), "工具卡必须是 details");
-  assert.ok(bubble.includes('v-else-if="sources.length"'), "live 来源兜底仍在");
+  const card = readFileSync(join(SRC, "components", "MessageToolCard.vue"), "utf8");
+  assert.match(card, /<details class="tool-card"/, "工具卡必须是 details");
+  assert.match(bubble, /buildToolTimeline/, "工具卡没有接入时间线");
+  assert.match(bubble, /MessageToolCard/, "工具卡没有复用统一组件");
+  assert.match(bubble, /v-if="!toolTimeline.length"/, "旧消息没有上方兜底");
+  assert.match(bubble, /v-else-if="sources.length"/, "live 来源兜底仍在");
 });
 
 test("输入栏的推理等级/工具按钮共用同一套尺寸与风格", () => {
@@ -5097,4 +5097,25 @@ test("Composer 控件尺寸收成一个 token；旧 Flow 行类已清理", () =>
   assert.match(css, /#app \.composer-send-btn \{[^}]*width:\s*var\(--composer-control\)/, "发送键没有吃统一控件尺寸");
   assert.match(css, /\.composer-toolbar \.thinking-btn,\s*\.composer-toolbar \.tools-btn \{[^}]*height:\s*var\(--composer-control\)/, "工具按钮没有吃统一控件尺寸");
   assert.ok(!/flow-history-label|flow-prompt-del|flow-prompt-head/.test(css), "旧 Flow 行类还在 CSS 里");
+});
+
+
+test("服务端工具时间线：按 text_offset 插入正文位置", () => {
+  const text = "甲😀。\n\n乙丙";
+  const parts = buildToolTimeline(text, [
+    { tool_name: "web_search", text_offset: 1 },
+    { tool_name: "web_search", text_offset: 2 },
+    { tool_name: "web_search", text_offset: 99 },
+  ]);
+  assert.equal(parts[0].kind, "text");
+  assert.equal(parts[0].text, "甲😀。\n\n");
+  assert.equal(parts[1].kind, "tool");
+  assert.equal(parts[2].kind, "tool");
+  assert.equal(parts[3].kind, "text");
+  assert.equal(parts[3].text, "乙丙");
+  assert.equal(parts[4].kind, "tool");
+  assert.deepEqual(buildToolTimeline(text, [{ tool_name: "web_search" }]), []);
+  const bubble = readFileSync(join(SRC, "components", "MessageBubble.vue"), "utf8");
+  assert.match(bubble, /buildToolTimeline/, "消息气泡没有使用工具时间线");
+  assert.match(bubble, /MessageToolCard/, "工具卡没有复用统一组件");
 });

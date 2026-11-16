@@ -15,14 +15,16 @@ export type SummaryType = "message" | "summary";
 
 export interface MessageTool {
   id?: string;
-  source?: "server" | "client";
+  source?: string;
   tool_name?: string;
   item_id?: string;
   queries?: string[];
   arguments?: string;
   result?: string;
   sources?: SearchSource[];
-  status?: "done" | "canceled" | "unknown";
+  status?: string;
+  /** server 工具发生时正文已输出的字符数（rune）；旧记录没有这个字段。 */
+  text_offset?: number;
   created_at?: number;
 }
 

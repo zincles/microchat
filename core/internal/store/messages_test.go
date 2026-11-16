@@ -559,7 +559,7 @@ func TestMessageMetadataRoundTrip(t *testing.T) {
 		Source: "server", ToolName: "web_search", ItemID: "ws_1",
 		Queries: []string{"xAI news"},
 		Sources: []model.MessageToolSource{{Type: "url", URL: "https://example.com/a", Title: "A"}},
-		Status:  "done",
+		Status:  "done", TextOffset: intPtr(7),
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -586,6 +586,9 @@ func TestMessageMetadataRoundTrip(t *testing.T) {
 	}
 	if got.Tools[0].Sources[0].URL != "https://example.com/a" {
 		t.Fatalf("source = %+v", got.Tools[0].Sources[0])
+	}
+	if got.Tools[0].TextOffset == nil || *got.Tools[0].TextOffset != 7 {
+		t.Fatalf("text_offset = %+v", got.Tools[0].TextOffset)
 	}
 	copied, err := st.CopySession("s1")
 	if err != nil {
@@ -631,3 +634,5 @@ func TestInsertMessagesWithToolsBatch(t *testing.T) {
 		t.Fatalf("got = %+v", got)
 	}
 }
+
+func intPtr(value int) *int { return &value }

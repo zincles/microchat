@@ -40,6 +40,7 @@ export interface ChatMessage {
     result?: string;
     sources?: { type?: string; url: string; title?: string }[];
     status?: string;
+    text_offset?: number;
   }[];
   who?: string;
   content?: string;
@@ -51,6 +52,56 @@ export interface ChatMessage {
   tool?: { kind: string; state: string } | null;
   sources?: { type?: string; url: string; title?: string }[];
   [key: string]: unknown;
+}
+
+export interface ToolTimelinePart<T> {
+  kind: "text" | "tool";
+  text?: string;
+  tool?: T;
+}
+
+/** 把一条 assistant 正文按服务端工具的 text_offset 切开。
+ *  offset 是 Go 侧的 rune 数，所以这里必须按 code point 取，不能拿 JS UTF-16 index 直接 slice。
+ *  旧消息没有 text_offset ⇒ 返回空数组，调用方继续用“工具卡全在正文上方”的旧布局。 */
+export function buildToolTimeline<T extends { text_offset?: number }>(
+  text: string,
+  tools?: T[] | null,
+): ToolTimelinePart<T>[] {
+  if (!tools?.length || !tools.some((tool) => typeof tool.text_offset === "number")) return [];
+  const chars = Array.from(text);
+  const groups = new Map<number, T[]>();
+  const snap = (raw: number): number => {
+    const at = Math.max(0, Math.min(chars.length, Math.trunc(raw)));
+    if (at <= 0 || at >= chars.length) return at;
+    // 工具卡不能把 Markdown 语法劈开（`**粗体**` / 链接 / 代码块）。
+    // 优先落到段落边界，其次行尾，再其次句末；都没有就放到正文末尾。
+    for (let i = at; i < chars.length - 1; i++) {
+      if (chars[i] === "\n" && chars[i + 1] === "\n") return i + 2;
+    }
+    for (let i = at; i < chars.length; i++) {
+      if (chars[i] === "\n") return i + 1;
+    }
+    for (let i = at; i < chars.length; i++) {
+      if ("。！？.!?；;".includes(chars[i])) return i + 1;
+    }
+    return chars.length;
+  };
+  for (const tool of tools) {
+    const raw = typeof tool.text_offset === "number" ? tool.text_offset : 0;
+    const offset = snap(raw);
+    const list = groups.get(offset) ?? [];
+    list.push(tool);
+    groups.set(offset, list);
+  }
+  const parts: ToolTimelinePart<T>[] = [];
+  let at = 0;
+  for (const offset of [...groups.keys()].sort((a, b) => a - b)) {
+    if (offset > at) parts.push({ kind: "text", text: chars.slice(at, offset).join("") });
+    for (const tool of groups.get(offset) ?? []) parts.push({ kind: "tool", tool });
+    at = Math.max(at, offset);
+  }
+  if (at < chars.length) parts.push({ kind: "text", text: chars.slice(at).join("") });
+  return parts;
 }
 
 // toolSources：把一条消息的多个工具来源摊平并按 URL 去重（多次搜索常返回同一批站点）。
