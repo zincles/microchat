@@ -94,13 +94,22 @@ export function mergeStreamSlice(
   if (slice.next === cur.from && slice.think_next === cur.thinkFrom) {
     return { text: acc.text, reasoning: acc.reasoning, cur, reset: false };
   }
+  // SSE 断线重连或 HTTP 回退时，服务端可能忽略客户端游标、从 0 重放整段。
+  // `next` 是字节游标：整段重放的字节数等于 next，而正常增量只等于 next-cur。
+  // 用这个区分并**替换**累积器，否则客户端会把整段再追加一次（“文字重复、刷新才恢复”）。
+  const replay = (text: string | undefined, next: number, base: string): boolean =>
+    !!text && next > 0 && utf8Length(text) === next && text.startsWith(base);
+  const replayText = replay(slice.text, slice.next, acc.text);
+  const replayThinking = replay(slice.thinking, slice.think_next, acc.reasoning);
   return {
-    text: acc.text + (slice.text ?? ""),
-    reasoning: acc.reasoning + (slice.thinking ?? ""),
+    text: replayText ? (slice.text ?? "") : acc.text + (slice.text ?? ""),
+    reasoning: replayThinking ? (slice.thinking ?? "") : acc.reasoning + (slice.thinking ?? ""),
     cur: { from: slice.next, thinkFrom: slice.think_next },
     reset: false,
   };
 }
+
+const utf8Length = (text: string): number => new TextEncoder().encode(text).length;
 
 // readJson：2xx/错误体都当 JSON 读；读不出来（如框架 405 的 text/plain）不炸成 SyntaxError ——
 // 错误面给 null（由 httpError 回退 `HTTP <status>`），成功面照旧原样抛（成功体必是 JSON，不许瞒）。

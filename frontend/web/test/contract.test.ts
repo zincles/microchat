@@ -5131,3 +5131,22 @@ test("正文 Markdown 表格有外框、表头和列线；吃满阅读列", () =
   assert.match(css, /\.msg \.text th,\s*\.msg \.text td \{[^}]*border:\s*1px solid/, "Markdown 表格没有列线");
   assert.match(css, /\.msg \.text th \{[^}]*background:\s*var\(--md-surface-container\)/, "Markdown 表头没有底色");
 });
+
+test("流式合并：服务端从 0 重放整段时替换而不是重复追加", () => {
+  const replay = mergeStreamSlice(
+    { text: "hello", reasoning: "think" },
+    { from: 5, thinkFrom: 5 },
+    { text: "hello world", thinking: "think more", next: 11, think_next: 10 },
+  );
+  assert.deepEqual(replay, {
+    text: "hello world", reasoning: "think more",
+    cur: { from: 11, thinkFrom: 10 }, reset: false,
+  });
+  const delta = mergeStreamSlice(
+    { text: "he", reasoning: "th" },
+    { from: 2, thinkFrom: 2 },
+    { text: "llo", thinking: "ink", next: 5, think_next: 5 },
+  );
+  assert.equal(delta.text, "hello");
+  assert.equal(delta.reasoning, "think");
+});
