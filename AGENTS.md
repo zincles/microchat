@@ -1477,7 +1477,9 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   设置页：`#settings-view` = surface；页签用 Vuetify `VTabs`/`VTab` + `VTabsWindow`/`VTabsWindowItem`
   （MD3 primary tabs；Vuetify 自带 slider / role=tab / tabpanel；旧手写 `TabBar` 已删）；
   h3 竖条改 primary；字段行分隔线 outline-variant；
-  `plist` = surface-container-low 卡片、表头 label-small、行 hover 状态层；`.io-card` = outlined 卡片。
+  `plist` 是真正的表（2026-11-18 修）：`.v-table.plist` 外层 1px 外框 + 12px 圆角，
+  表头 surface-container 底色，`th + th` / `td + td` 画列分隔线，行有下边线、最后一行去掉；
+  表头 label-small，行 hover 状态层。`.io-card` = outlined 卡片。
   浮层：`.modal-shell`（三处轻量弹窗共用的 VDialog/VCard 壳）/ `.confirm` / `.palette` / `.picker` = MD3 dialog/menu（surface-container-high、
   28dp / 12dp、elevation 3、scrim 45%、`md-dialog-in` 进场）；toast = snackbar（inverse-surface、
   4dp、elevation 3、语义点替代左边框）；更新条 = **顶部独立占位的大横幅**

@@ -1234,11 +1234,9 @@ test("providerDisplayName：别名优先，空则沿用 name → id", () => {
   assert.equal(providerDisplayName({ id: "opencode-go-2", name: "旧显示名", alias: "" }), "旧显示名");
 });
 
-test("渠道分隔：管理列表行间与模型选择器组头之间都有发丝线", () => {
+test("列表分隔：表格行线与模型选择器组头都有发丝线", () => {
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  // 管理列表：关掉基类的下边线，只留行与行之间的上边线（避免双线）。
-  assert.match(css, /#provider-list \.plist tbody td\s*\{[^}]*border-bottom:\s*none/);
-  assert.match(css, /#provider-list \.plist tbody tr \+ tr td\s*\{[^}]*border-top/);
+  assert.match(css, /#settings-view \.v-table\.plist tbody td\s*\{[^}]*border-bottom:\s*1px solid/);
   // 模型选择器：非首组的组头画线。
   assert.match(css, /\.model-group-head:not\(:first-child\)\s*\{[^}]*border-top/);
 });
@@ -5118,4 +5116,11 @@ test("服务端工具时间线：按 text_offset 插入正文位置", () => {
   const bubble = readFileSync(join(SRC, "components", "MessageBubble.vue"), "utf8");
   assert.match(bubble, /buildToolTimeline/, "消息气泡没有使用工具时间线");
   assert.match(bubble, /MessageToolCard/, "工具卡没有复用统一组件");
+});
+
+test("设置列表：VTable 有外框、表头底色和列分隔线", () => {
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8");
+  assert.match(css, /#settings-view \.v-table\.plist \{[^}]*border:\s*1px solid var\(--md-outline-variant\)/, "列表没有外框");
+  assert.match(css, /#settings-view \.v-table\.plist thead th \{[^}]*background:\s*var\(--md-surface-container\)/, "表头没有底色");
+  assert.match(css, /#settings-view \.v-table\.plist th \+ th,[\s\S]*border-left:\s*1px solid var\(--md-outline-variant\)/, "列之间没有分隔线");
 });
