@@ -5124,3 +5124,10 @@ test("设置列表：VTable 有外框、表头底色和列分隔线", () => {
   assert.match(css, /#settings-view \.v-table\.plist thead th \{[^}]*background:\s*var\(--md-surface-container\)/, "表头没有底色");
   assert.match(css, /#settings-view \.v-table\.plist th \+ th,[\s\S]*border-left:\s*1px solid var\(--md-outline-variant\)/, "列之间没有分隔线");
 });
+
+test("正文 Markdown 表格有外框、表头和列线；吃满阅读列", () => {
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8");
+  assert.match(css, /\.msg \.text table \{[^}]*width:\s*100%[^}]*border:\s*1px solid/, "Markdown 表格没有吃满宽度");
+  assert.match(css, /\.msg \.text th,\s*\.msg \.text td \{[^}]*border:\s*1px solid/, "Markdown 表格没有列线");
+  assert.match(css, /\.msg \.text th \{[^}]*background:\s*var\(--md-surface-container\)/, "Markdown 表头没有底色");
+});
