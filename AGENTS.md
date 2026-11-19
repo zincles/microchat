@@ -1249,12 +1249,26 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   从前是 `select#session-model.flat-select`（**原生选项**）—— 聚合站动辄几百个模型（OpenRouter 实测 470），
   一条滚不完的长菜单里既搜不了、同一渠道的模型还不挨在一起。现在是顶栏那枚字点开的浮板
   （`#model-btn` + `.model-menu`，壳子借 `.agent-menu` 那一套 `--tg-float` / `--shadow-3`）：
+  **顶部渠道 tab**（2026-11-18 用户定：比滚到某个渠道再找更快，也更接近 OpenWebUI）——
+  第一个永远「全部」，其余每个渠道一只，**可横向滚动**；点了只列该渠道的模型（组头不再重复），
+  搜索框跟着在渠道内过滤；tab 名字 = 别名 → 渠道名 → id，空渠道不建 tab。
+  **鼠标也能用**：按住 tab 拖动 = 左右滚（`pointerdown` + window 监听，不 setPointerCapture，
+  否则 click 的 target 会变成容器、tab 点不动）；滚轮落在 tab 上 = 横向滚（`deltaX` / `deltaY`
+  取绝对值大的）。触屏仍走原生横向滚动。
   **搜索框**（命中显示名 / 渠道名 / 上游 id —— 上游 id 必须参与，显示名常常不含渠道信息）+
-  **按渠道分组**（组头 = 渠道显示名 + 条数）+ 当前项打勾 + 上下键与回车。静息**仍然只有字**
+  **按渠道分组**（「全部」时组头 = 渠道显示名 + 条数）+ 当前项打勾 + 上下键与回车。静息**仍然只有字**
   （顶栏是透明的，栏面上不该长出一颗按钮），悬停给一层薄底说"这能点"。
-  ⚠ **过滤 / 分组 / 扁平序号是纯函数**，住 `frontend/web/src/utils/format.ts`
-  （`filterModelGroups` / `curModelLabelOf` / `modelMatches`）—— 住组件里就只能靠正则钉源码，
-  钉不出"搜到了什么"。
+  ⚠ **过滤 / 分组 / tab / 扁平序号是纯函数**，住 `frontend/web/src/utils/format.ts`
+  （`filterModelGroups` / `modelProviderTabs` / `reindexModelGroups` / `curModelLabelOf` / `modelMatches`）
+  —— 住组件里就只能靠正则钉源码，钉不出"搜到了什么"。
+  ⚠ **按渠道筛完必须 `reindexModelGroups` 重编号**：`flat` 是全列表序号，不重编的话上下键会从
+  第 20 项开始，第一下按 Down 找不到第 0 项。
+  **尺寸**（2026-11-18 用户定：「漂亮点、稍微大一点；移动设备几乎占完屏幕」）：
+  桌面 `width: min(34em, calc(100vw - 2em))`、列表 52vh、行高 2.75em、elevation 3；
+  移动/粗指针（`max-width:700px` 或 `pointer:coarse`）固定为左右 0.5em、顶栏下方 0.5em、
+  `height: calc(100dvh - var(--topbar-h, 3.5em) - 1em)`，列表吃满剩余高度。
+  ⚠ 别把移动端高度写成 `bottom: 0.5em` 或百分比：顶栏自己有 transform（滚动隐藏），
+  `position: fixed` 的包含块会变成顶栏，百分比高度按顶栏算，实测只剩 18px 一条缝。
   ⚠ 三块浮板（模型 / Agent 选人 / 上下文环）**互斥**：开一块要关掉另外两块（叠在一起既看不清也点不准）。
   ⚠ 顺带删掉了 `modelSel` / `reapplyValues` 那套补丁 —— 那是给 `<select>` 打的（选项异步到、`value` 先落进
   DOM 会被浏览器换掉）；自己的面板里值就只是数据。
@@ -1323,7 +1337,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   （中文字形/没装的字体仍能回落）；`body` 读前者，`code, pre, kbd, samp` 读后者。
   设置 → 外观 有两格自由输入（CSS `font-family` 写法，可逗号分隔）；`normalizeFontFamily` 拒绝
   `;{}<>`（避免破坏声明），留空/坏值回落系统。
-- **输入框只有发送，且在一体面板里**（2026-11-04 用户定：暂时不做附件/模式，也不留全屏键）：底部现在是 **Vuetify 4 的 `VSheet` + `VTextarea` + `VBtn`**：`VSheet` 负责 24px 圆角、低对比底色/描边/阴影，`VTextarea` 用 `variant="plain"` + `auto-grow`（1..6 行），表面样式收在 `Composer.vue` 的 scoped style 里；不再有 `.composer-box` 那层手写卡。空草稿保留欢迎块。
+- **输入框只有发送，且在一体面板里**（2026-11-04 用户定：暂时不做附件/模式，也不留全屏键）：底部现在是 **Vuetify 4 的 `VSheet` + `VTextarea` + `VBtn`**：`VSheet` 负责 24px 圆角、低对比底色/描边/阴影，`VTextarea` 用 `variant="plain"` + `auto-grow`（1..6 行）。**输入卡内部上下两段**（2026-11-18 用户定）：上半是输入区，下半才是助手头像 / 推理等级 / 工具 / 发送键的控件行；表面样式收在 `Composer.vue` 的 scoped style 里，不再有 `.composer-box` 那层手写卡。空草稿保留欢迎块。
   **宽度与正文一致**（2026-11-07 用户定）：`#composer` 不再是 `left:0;right:0` 全宽，而是
   `width: min(calc(100% - 1.2em), var(--read-col, 840px))` + `left:50%` / `translateX(-50%)`；
   桌面宽 840 与 `.messages-inner` 对齐，手机两侧留 0.6em。
@@ -1334,7 +1348,9 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   `ThinkingMenu` 住在 toolbar 里，紧挨它右边是**工具状态**：`工具：无` 或
   `工具：2` / `工具：3`（数量来自 `GET /models` 的 `server_tools` + `local_tools`；
   没有工具不编 0；悬停列出中文名）。
-  按钮显示 **「推理等级：默认」**（中文档位名）；菜单项显示 **「低 low / 中 medium / 高 high / 最高 max」**
+  按钮**只显示当前档位**（「默认 / 低 / 中 / 高 / 最高」，2026-11-20 用户定）——
+  省掉「推理等级：」前缀，把宽度让给输入栏；悬停与 `aria-label` 仍是「推理等级：…」。
+  菜单项显示 **「低 low / 中 medium / 高 high / 最高 max」**
   （中文 + 原始 ASCII）；空档位是「默认 default」。工具状态是**可点击按钮**：
   点开列出模型规则给出的 native tools，自绘勾选框（Vuetify 默认 MDI checkbox 字体没装，会空白）；
   逐项取消/恢复，存进 `sessions.native_tools_disabled`（草稿存 `draftPrefs`，建会话时带上）。
@@ -1432,6 +1448,13 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   gemini.google.com 的 GM3 system colors —— bg `#131314` / 容器 `#1b1b1b`/`#1e1f20`/`#282a2c`/`#333537`、
   正文 `#e3e3e3`、次要文字 `#c4c7c5`、主色 `#a8c7fa`、on-primary `#062e6f`、错误 `#f2b8b5`。
   自定义 CSS 的 `--tg-*` 暗色值同步对齐（bg / secondary-bg / float / text / hint / link / button / button-text）；
+  **主题对比度**（2026-11-18 用户定「把 vuetify 主题色的对比度降低一些」，并强调「所有主题永远遵循
+  Vuetify，不要搞特殊」）：暗色有两对容器色**不再照抄 Gemini** —— `secondary-container` `#004a77`(S=100%)
+  → `#2f4a5c`(S=32%)、`on-secondary-container` `#c2e7ff` → `#bfd4e0`（文字对比 7.20→6.08）；
+  `primary-container` `#1f3760`(S=51%) → `#2e4054`(S=29%)、`on-primary-container` `#d3e3fd` → `#cad7e3`
+  （9.12→7.25）。选中底 / 按钮 / chip / 会话 tab 全部同步变柔，因为它们本来就只认这一个 token。
+  ⚠ **不要**在组件 CSS 里给某一栏单独 color-mix 调色（2026-11-18 第一版就是那么写的，被用户否了）：
+  要更柔就只改 `plugins/vuetify.ts` 这四个值。
   亮色不动；Breeze 已于 2026-11-09 删除。light / dark / auto 共用同一套 MD3 语义。
   **落点先左栏 + 顶栏 + 输入区**（2026-11-05 第二刀；2026-11-06 起上下文三 tab 用 VTabs（压缩内再三个子 tab）、顶栏工作区用 VTabs + VTabsWindow、消息/摘要操作键用 VBtn）：左栏规则以 `#sessions-bar` 前缀收口
   （`.bar-head` / `.empty` 是共享类，直接改会波及上下文工作区）。左栏结构 = MD3 navigation drawer：

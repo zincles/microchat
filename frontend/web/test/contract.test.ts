@@ -44,6 +44,8 @@ import {
   SETTINGS_TABS,
   providerIdForNextVendor,
   filterModelGroups,
+  modelProviderTabs,
+  reindexModelGroups,
   curModelLabelOf,
   modelMatches,
   ORPHAN_MODEL_GROUP,
@@ -2262,6 +2264,38 @@ test("模型面板：扁平序号连续（上下键要能一条条走完可见�
   assert.deepEqual(filterModelGroups(MODEL_SAMPLE, "qwen").flatMap((g) => g.items.map((i) => i.flat)), [0]);
 });
 
+test("模型面板：顶部渠道 tab 是「全部」+ 每个渠道，且左右可滚动", () => {
+  const tabs = modelProviderTabs(MODEL_SAMPLE);
+  assert.deepEqual(tabs.map((t) => t.label), ["全部", "OpenRouter", "本地 ollama"]);
+  assert.equal(tabs[0].provider, "", "「全部」的 id 必须是空串（状态里用它表示不筛）");
+  assert.equal(tabs[0].count, 3, "「全部」的计数该是全部模型数");
+  assert.equal(tabs[1].count, 2);
+  // 空组不建 tab：没有模型的渠道点进去只会是一片空白
+  assert.deepEqual(modelProviderTabs([{ provider: "empty", items: [] }]), [{ provider: "", label: "全部", count: 0 }]);
+
+  // 按渠道筛完必须重新编号：否则上下键从全列表的序号开始，第一下按 Down 就找不到第 0 项。
+  const filtered = reindexModelGroups(filterModelGroups(MODEL_SAMPLE, "").filter((g) => g.provider === "本地"));
+  assert.deepEqual(filtered.flatMap((g) => g.items.map((i) => i.flat)), [0]);
+
+  const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
+  assert.match(top, /class="model-provider-tabs"/, "模型浮板顶部没有渠道 tab");
+  assert.match(top, /v-for="tab in modelProviderTabsList"/, "渠道 tab 没有从 provider 列表生成");
+  assert.match(top, /class="model-provider-tab"/, "渠道 tab 没有可点的按钮");
+  assert.match(top, /v-for="g in visibleGroups"/, "列表没有按选中的渠道筛选");
+  assert.match(top, /ref="modelTabsEl"/, "tab 没有 ref（滚轮/拖动要操作它）");
+  assert.match(top, /@pointerdown="onTabsPointerDown"/, "tab 不支持鼠标拖动");
+  assert.match(top, /@wheel="onTabsWheel"/, "tab 不支持滚轮横向滚动");
+  assert.ok(top.indexOf('class="model-provider-tabs"') < top.indexOf('class="model-search"'), "tab 必须在搜索框上面（面板顶部）");
+  assert.ok(top.indexOf('class="model-provider-tab"') < top.indexOf('class="model-search"'), "tab 必须在搜索框上面（面板顶部）");
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8");
+  assert.match(css, /\.model-provider-tabs \{[^}]*overflow-x:\s*auto/, "渠道 tab 不能横向滚动");
+  assert.match(css, /\.model-provider-tab\.active \{[^}]*border-bottom-color:\s*var\(--md-primary\)/, "选中的渠道 tab 没有高亮");
+  assert.match(css, /\.model-provider-tabs \{[^}]*cursor:\s*grab/, "渠道 tab 没有拖动光标");
+  assert.match(css, /\.model-provider-tabs\.dragging \{[^}]*cursor:\s*grabbing/, "拖动时没有 grabbing 光标");
+  assert.match(css, /\.model-menu \{[^}]*width:\s*min\(34em/, "模型浮板没有放大");
+  assert.match(css, /@media \(max-width: 700px\), \(pointer: coarse\) \{[\s\S]{0,300}\.agent-menu\.model-menu \{[^}]*position: fixed[^}]*left: 0\.5em; right: 0\.5em[^}]*height: calc\(100dvh - var\(--topbar-h, 3\.5em\) - 1em\)/, "移动端模型浮板没有几乎占满屏幕");
+});
+
 test("模型面板：当前模型不在列表里 ⇒ 单独一组排最前（别让它看着像没选）", () => {
   const orphan = { value: modelKey("删掉的渠道", "m1"), label: "删掉的渠道/m1（不在列表）" };
   const groups = filterModelGroups(MODEL_SAMPLE, "", orphan);
@@ -3677,7 +3711,7 @@ test("输入框：Vuetify MD3 输入栏 + 发送键", () => {
   assert.match(css, /#composer \{[^}]*width:\s*min\(calc\(100% - 1\.2em\), var\(--read-col, 840px\)\)/, "输入栏没有与正文同宽");
   assert.match(css, /#composer \{[^}]*left:\s*50%/, "输入栏没有居中");
   assert.match(css, /#composer \{[^}]*transform:\s*translateX\(-50%\)/, "输入栏居中位移没接上");
-  assert.match(composer, /class="composer-actions"/, "按钮列没有容器");
+  assert.match(composer, /class="composer-top-actions"/, "发送键没有放进输入面板控件行");
   assert.match(composer, /id="send-btn"/, "没有发送键");
   assert.ok(!composer.includes('id="expand-btn"'), "全屏键还留着");
   assert.ok(!composer.includes("composer-fs"), "全屏输入层还留着");
@@ -4650,14 +4684,15 @@ test("思考档位：Session 字段 + 输入栏上方 Vuetify 菜单", () => {
   assert.match(composer, /class="composer-toolbar"/, "输入栏上方没有按钮区");
   assert.match(composer, /<ThinkingMenu/, "按钮区里没有思考档位");
   const toolbarAt = composer.indexOf('class="composer-toolbar"');
-  const textareaAt = composer.indexOf("<VTextarea", toolbarAt);
-  assert.ok(toolbarAt > 0 && textareaAt > toolbarAt, "按钮区不在输入框正上方");
+  const textareaAt = composer.indexOf("<VTextarea", 0);
+  assert.ok(toolbarAt > 0 && textareaAt > 0 && textareaAt < toolbarAt, "输入框不在控件行上方");
 
   const thinking = readFileSync(join(SRC, "components/ThinkingMenu.vue"), "utf8");
   const menu = readFileSync(join(SRC, "components/ToolbarMenu.vue"), "utf8");
   assert.match(menu, /<VMenu[\s\S]*location="top end"[\s\S]*origin="bottom end"/, "菜单没从输入栏向上弹");
   assert.match(thinking, /<VListItem/, "菜单项不是 Vuetify 的 MD3 list item");
-  assert.match(thinking, /推理等级：/, "按钮没有显示「推理等级：…」");
+  assert.match(thinking, /const currentTitle = computed\(\(\) => `推理等级：\$\{current\.value\}`\)/, "按钮没有把「推理等级：…」留在悬停/无障碍标签里");
+  assert.match(thinking, /:label="current"/, "按钮可见文字没有只显示当前档位");
   assert.match(thinking, /thinkingLabel/, "按钮没用中文档位名");
   assert.match(thinking, /option\.label/, "菜单项没有中文名");
   assert.match(thinking, /thinking-raw/, "菜单项没有附上原始 ASCII 档位");

@@ -76,22 +76,6 @@ defineExpose({ submit, clear, setText, text, setRunning });
 
 <template>
   <form id="composer" class="composer-vuetify" @submit.prevent="running ? stop() : submit()">
-    <div class="composer-toolbar">
-      <slot name="toolbar" />
-      <ThinkingMenu
-        v-if="!flow && thinkingOptions.length"
-        :model-value="thinking"
-        :options="thinkingOptions"
-        @update:model-value="selectThinking"
-      />
-      <ToolsMenu
-        v-if="!flow"
-        :available="nativeTools"
-        :disabled="nativeToolsDisabled"
-        @toggle="(id, on) => $emit('toggle-native-tool', id, on)"
-      />
-    </div>
-    <div class="composer-row">
     <VSheet class="composer-shell" color="surface-container-low" rounded="24">
       <VTextarea
         id="composer-input"
@@ -108,37 +92,51 @@ defineExpose({ submit, clear, setText, text, setRunning });
         @update:model-value="onValue"
         @keydown="onKeydown"
       />
+      <div class="composer-toolbar">
+        <slot name="toolbar" />
+        <ToolsMenu
+          v-if="!flow"
+          :available="nativeTools"
+          :disabled="nativeToolsDisabled"
+          @toggle="(id, on) => $emit('toggle-native-tool', id, on)"
+        />
+        <div class="composer-top-actions">
+          <VBtn
+            v-if="props.menuOn"
+            type="button"
+            icon
+            variant="text"
+            rounded="circle"
+            class="composer-menu-btn"
+            title="命令菜单"
+            aria-label="命令菜单"
+            @click="$emit('menu')"
+          >
+            <span v-html="ICONS.menu"></span>
+          </VBtn>
+          <ThinkingMenu
+            v-if="!flow && thinkingOptions.length"
+            :model-value="thinking"
+            :options="thinkingOptions"
+            @update:model-value="selectThinking"
+          />
+          <VBtn
+            id="send-btn"
+            type="button"
+            icon
+            variant="flat"
+            rounded="circle"
+            :color="running ? 'error' : 'primary-container'"
+            class="composer-send-btn"
+            :title="running ? '停止' : text.trim() ? '发送' : '续写（重发历史）'"
+            :aria-label="running ? '停止' : text.trim() ? '发送' : '续写（重发历史）'"
+            @click="running ? stop() : submit()"
+          >
+            <span v-html="running ? ICONS.stop : text.trim() ? sendSvg : ICONS.down"></span>
+          </VBtn>
+        </div>
+      </div>
     </VSheet>
-    <div class="composer-actions">
-      <VBtn
-        v-if="props.menuOn"
-        type="button"
-        icon
-        variant="text"
-        rounded="circle"
-        class="composer-menu-btn"
-        title="命令菜单"
-        aria-label="命令菜单"
-        @click="$emit('menu')"
-      >
-        <span v-html="ICONS.menu"></span>
-      </VBtn>
-      <VBtn
-        id="send-btn"
-        type="button"
-        icon
-        variant="flat"
-        rounded="circle"
-        :color="running ? 'error' : 'primary-container'"
-        class="composer-send-btn"
-        :title="running ? '停止' : text.trim() ? '发送' : '续写（重发历史）'"
-        :aria-label="running ? '停止' : text.trim() ? '发送' : '续写（重发历史）'"
-        @click="running ? stop() : submit()"
-      >
-        <span v-html="running ? ICONS.stop : text.trim() ? sendSvg : ICONS.down"></span>
-      </VBtn>
-    </div>
-    </div>
   </form>
 </template>
 
@@ -146,7 +144,10 @@ defineExpose({ submit, clear, setText, text, setRunning });
 /* 表面只在这里定义：VSheet 管圆角/底色，VTextarea 用 plain 只负责输入。
  * 这样不会再把 .v-field 的覆盖写到全局，设置页和编辑器不受影响。 */
 .composer-shell {
+  display: flex;
   flex: 1 1 auto;
+  flex-direction: column;
+  width: 100%;
   min-width: 0;
   border: 1px solid color-mix(in srgb, var(--md-outline) 20%, transparent);
   box-shadow:

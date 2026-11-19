@@ -138,9 +138,23 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
  * 上面不跟着滚；③ 宽一点（渠道名 + 模型名一行要放得下，20em 太窄会切掉模型名）。
  * 为什么要有搜索框：聚合站动辄几百个模型（OpenRouter 实测 470），一条原生长菜单里
  * 既搜不了、同一渠道的模型也不挨在一起。 */
-.model-menu { left: 0; min-width: 18em; max-width: 26em; max-height: none; overflow: visible; display: flex; flex-direction: column; gap: 0.35em; padding: 0.5em 0; }
+.model-menu { left: 0; width: min(34em, calc(100vw - 2em)); min-width: 0; max-width: 34em; max-height: none; overflow: visible; display: flex; flex-direction: column; gap: 0.45em; padding: 0.5em 0 0.6em; }
+/* 大一点的模型浮板（2026-11-18 用户定）：比原来 26em 宽一档，行高与搜索栏也各长一点；
+ * 阴影抬到 3 级 —— 面板大了，2 级浮不起来。 */
+.agent-menu.model-menu { padding: 0.55em 0 0.65em; box-shadow: var(--md-elev-3); }
+.model-menu .model-item { min-height: 2.75em; padding: 0.5em 1em; }
+.model-menu .model-search { min-height: 2.75em; }
+/* 渠道 tab（2026-11-18 用户定）：可横向滚动，"全部"在最左；点 tab 只列该渠道的模型。
+ * 只在这里滚，不带着搜索框与模型列表一起滚 —— 它们各自有自己的滚动区。 */
+.model-provider-tabs { display: flex; align-items: stretch; gap: 0.1em; flex: none; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; margin: 0 0.35em; padding: 0 0.15em; border-bottom: 1px solid color-mix(in srgb, var(--md-outline-variant) 70%, transparent); scrollbar-width: thin; cursor: grab; user-select: none; touch-action: pan-x; }
+.model-provider-tabs.dragging { cursor: grabbing; }
+.model-provider-tabs.dragging .model-provider-tab { cursor: grabbing; }
+.model-provider-tab { flex: 0 0 auto; min-height: 0; border: none; border-bottom: 2px solid transparent; border-radius: 0; padding: 0.5em 0.55em 0.4em; background: none; color: var(--md-on-surface-variant); font: inherit; font-size: var(--md-type-label-large); font-weight: 500; white-space: nowrap; cursor: inherit; transition: color var(--md-dur-150) var(--md-ease-standard), border-color var(--md-dur-150) var(--md-ease-standard), background-color var(--md-dur-150) var(--md-ease-standard); }
+.model-provider-tab:hover { color: var(--md-on-surface); background: color-mix(in srgb, var(--md-on-surface) 6%, transparent); }
+.model-provider-tab.active { color: var(--md-primary); border-bottom-color: var(--md-primary); }
+
 .model-search { width: calc(100% - 1em); margin: 0 0.5em; box-sizing: border-box; min-height: 3em; padding: 0 1em; border: none; border-radius: var(--md-shape-full); background: var(--md-surface-container-high); color: var(--md-on-surface); font: inherit; font-size: var(--md-type-body-medium); outline: none; transition: background-color var(--md-dur-150) var(--md-ease-standard), box-shadow var(--md-dur-150) var(--md-ease-standard); }
-.model-list { overflow-y: auto; max-height: 46vh; overscroll-behavior: contain; }
+.model-list { overflow-y: auto; max-height: 52vh; overscroll-behavior: contain; }
 .model-group-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.6em; margin: 0.6em 1em 0.2em; color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); font-weight: 500; letter-spacing: 0.05em; }
 /* 渠道之间画一条发丝线（2026-11-09）：组头只是小字，两组模型从前直接接在一起，
  * 一眼看不出"换渠道了"。第一条不画；线与线之间留白，不压模型行的可点区域。 */
@@ -359,6 +373,22 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .macro-empty-icon { flex: none; color: var(--tg-hint); font-size: 1.25em; line-height: 1; }
 .macro-empty b { display: block; color: var(--md-on-surface-variant); font-size: 0.92em; font-weight: 500; }
 .macro-empty span { display: block; margin-top: 0.15em; }
+/* 模型浮板在移动设备上几乎占满屏幕（2026-11-18 用户定）：
+ * 上留顶栏、四周留 0.5em；滚动只发生在模型列表里，tab 与搜索框不动。
+ * ⚠ 高度必须用 100dvh 显式算：顶栏自己有 transform（滚动隐藏用），fixed 的包含块
+ *   会变成顶栏而不是 #app，百分比高度会按顶栏高度算成一条细缝（实测 18px）。 */
+@media (max-width: 700px), (pointer: coarse) {
+  .agent-menu.model-menu {
+    position: fixed; top: calc(var(--topbar-h, 3.5em) + 0.5em); left: 0.5em; right: 0.5em;
+    height: calc(100dvh - var(--topbar-h, 3.5em) - 1em);
+    width: auto; min-width: 0; max-width: none; max-height: none; overflow: hidden;
+  }
+  .model-menu .model-list { flex: 1 1 auto; min-height: 0; max-height: none; }
+  .model-menu .model-item { min-height: 3em; padding: 0.6em 1em; }
+  .model-menu .model-search { min-height: 2.8em; }
+  .model-menu .model-provider-tabs { margin: 0 0.3em; }
+}
+
 /* 正文里的宏 chip：显示当前值，悬停回原文。值本身由 utils/macros.ts 先转义再进 HTML。 */
 .macro-chip { background: var(--md-secondary-container); color: var(--md-on-secondary-container);
   border-radius: var(--r-xs); padding: 0 0.28em; cursor: help; }
@@ -1010,12 +1040,11 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
   position: absolute; bottom: 0; left: 50%; right: auto; width: min(calc(100% - 1.2em), var(--read-col, 840px));
   display: flex; flex-direction: column; align-items: stretch; gap: 0.3em; background: none; z-index: 5;
   padding: 0.6em 0.6em calc(0.6em + env(safe-area-inset-bottom, 0px)); }
-/* 输入栏正上方的按钮区（思考 / 后续工具、MCP…）：不占输入卡的面，只放一排小按钮。 */
-.composer-toolbar { display: flex; align-items: center; gap: 0.35em; min-height: 2em; padding: 0 0.35em; flex-wrap: wrap; }
-.composer-row { display: flex; align-items: flex-end; gap: 0.5em; width: 100%; }
-/* Vuetify 只负责控件外观；这里只做布局（输入占满、按钮贴底一行）。 */
-.composer-input { flex: 1 1 auto; min-width: 0; }
-.composer-actions { flex: none; display: flex; align-items: flex-end; gap: 0.25em; }
+/* 输入卡内部的底部控件行（助手 / 思考 / 工具 / 发送）：上半输入，下半显示。 */
+.composer-toolbar { display: flex; align-items: center; gap: 0.35em; min-height: var(--composer-control); padding: 0 0.5em 0.35em; flex-wrap: wrap; }
+.composer-top-actions { flex: none; display: flex; align-items: center; gap: 0.25em; margin-left: auto; }
+/* Vuetify 只负责控件外观；这里只做布局（输入在顶部控件下面占满）。 */
+.composer-input { flex: 1 1 auto; width: 100%; min-width: 0; }
 /* 发送键与上方工具按钮同一档 34px；Vuetify 默认 icon button 是 48px，会把输入行撑高。 */
 #app .composer-send-btn { width: var(--composer-control) !important; height: var(--composer-control) !important; }
 /* 发送图标按 SVG 的几何中心对齐；VBtn 的 content 默认被 inline 基线撑高，箭头会偏上一截。 */
@@ -1062,7 +1091,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 @media (prefers-reduced-motion: reduce) { #chat-col > header, #composer { transition: none; } }
 /* ⚠ 这里原本有"任务行进栏"那条规则（`.taskline` 占一整行、`order: -1` 排在输入框上面）
  * 和上面「两个隔间」那段历史。**2026-11-01 整块删掉了**：后台任务已并进顶栏的上下文环（`#ctx-ring`）。
- * 输入栏上方现在是 `.composer-toolbar` 按钮区（思考档位 / 将来的工具、MCP），不是状态行；
+ * 输入卡内部现在是 `.composer-toolbar` 控件行（助手 / 思考 / 工具 / 发送），在输入区下方；
  * 别再往这里塞第二份任务数字。
  */
 /* ⚠ 状态行（`.statusline`）2026-10-28 **整条删掉**了：连接 / 助手 / 相位搬进右上角那枚环的

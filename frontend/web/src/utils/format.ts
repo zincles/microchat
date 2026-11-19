@@ -419,6 +419,39 @@ export function filterModelGroups(groups?: ModelGroup[] | null, query?: string |
   return out;
 }
 
+// 渠道 tab（2026-11-18 用户定）：模型浮板顶部一排可横向滚动的 tab，第一个永远是"全部"，
+// 其余每个渠道一个。名字口径与组头相同：别名 → 渠道名 → id。空组不建 tab。
+export interface ModelProviderTab {
+  provider: string;
+  label: string;
+  count: number;
+}
+export function modelProviderTabs(groups?: ModelGroup[] | null): ModelProviderTab[] {
+  const tabs: ModelProviderTab[] = [{ provider: "", label: "全部", count: 0 }];
+  for (const g of groups ?? []) {
+    const items = g.items ?? [];
+    if (!items.length) continue;
+    const first = items[0];
+    tabs[0].count += items.length;
+    tabs.push({
+      provider: g.provider,
+      label: String(first.alias || first.provider_name || g.providerName || g.provider),
+      count: items.length,
+    });
+  }
+  return tabs;
+}
+
+// 按渠道筛选之后要重新编号：filterModelGroups 的 flat 是全列表的序号，
+// 直接拿去画"当前渠道"的列表，上下键会从 20 开始（第一下按 Down 找不到第 0 项）。
+export function reindexModelGroups(groups?: ModelGroup[] | null): ModelGroup[] {
+  let flat = 0;
+  return (groups ?? []).map((g) => ({
+    ...g,
+    items: (g.items ?? []).map((m) => ({ ...m, flat: flat++ })),
+  }));
+}
+
 // 顶栏按钮上那行字：列表里找到就用显示名；找不到用"不在列表"那条；再找不到（列表还没到）
 // 就把 key 拆开拼个 provider/model —— 总比空白强（空白看着像"没选模型"）。
 export function curModelLabelOf(groups?: ModelGroup[] | null, cur?: string | null, orphan: ModelChoice | null = null): string {

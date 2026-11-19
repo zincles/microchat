@@ -9,6 +9,10 @@ import { md3 } from "vuetify/blueprints";
 // 暗色 = Gemini 暗色板（2026-11-06 用户定：「改成 gemini 的主题配色（暗色）」）。
 // 色值直接取自 gemini.google.com 的 GM3 system colors（surface / surface-container-* /
 // primary / secondary / error），不是另调的一版近似色：
+//   ⚠ 例外（2026-11-18 用户定「把主题色的对比度降低一些」）：两对容器色不再照抄 Gemini。
+//     Gemini 的 secondary-container #004a77 是 HSL S=100% 的纯蓝，铺成整块选中底 / 按钮太扎眼；
+//     这里把容器底去饱和、on- 色同步压一档（数值见下），其余角色仍是原色值。
+//     要再调就只改这四个值 —— 组件里不要再写颜色特例（用户明确：所有主题只认 Vuetify）。
 //   bg #131314 · 容器 #1b1b1b/#1e1f20/#282a2c/#333537 · 主色 #a8c7fa · on-primary #062e6f
 // 亮色保持原样；Breeze 已于 2026-11-09 删除。
 const darkTheme = {
@@ -30,12 +34,14 @@ const darkTheme = {
     "outline-variant": "#444746",
     primary: "#a8c7fa",
     "on-primary": "#062e6f",
-    "primary-container": "#1f3760",
-    "on-primary-container": "#d3e3fd",
+    // 去饱和：S 51%→29%，on- 文字对比 9.12→7.25（对底仍 ≥4.5）
+    "primary-container": "#2e4054",
+    "on-primary-container": "#cad7e3",
     secondary: "#7fcfff",
     "on-secondary": "#003355",
-    "secondary-container": "#004a77",
-    "on-secondary-container": "#c2e7ff",
+    // 选中底 / 按钮底：S 100%→32%，on- 文字对比 7.20→6.08（整块不再是一坨纯蓝）
+    "secondary-container": "#2f4a5c",
+    "on-secondary-container": "#bfd4e0",
     tertiary: "#6dd58c",
     "on-tertiary": "#0a3818",
     "tertiary-container": "#0f5223",

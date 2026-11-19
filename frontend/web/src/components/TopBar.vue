@@ -27,6 +27,8 @@ import {
   contextOverBudget,
   curModelLabelOf,
   filterModelGroups,
+  modelProviderTabs,
+  reindexModelGroups,
   modelKey,
   parseModelKey,
 } from "../utils/format.ts";
@@ -94,6 +96,10 @@ const orphanModel = ref<ModelChoice | null>(null);
 //   选项异步到、`value` 先落进 DOM 会被浏览器换掉。既然是自己的面板，值就只是数据。
 const modelOpen = ref(false);
 const modelQuery = ref("");
+// 顶部的渠道 tab："" = 全部；其余 = 该渠道的 provider id。
+// 2026-11-18 用户定：别让人滚过几百个模型去找某个渠道 —— 先点 tab 再在该渠道里找。
+const modelProvider = ref("");
+const modelTabsEl = ref<HTMLElement | null>(null);
 const modelSearchEl = ref<HTMLInputElement | null>(null);
 const modelActive = ref(-1); // 上下键选中的那一项（在**扁平化**的列表里的下标），-1 = 没选
 
@@ -112,13 +118,74 @@ const curModelChoice = computed<ModelChoice | null>(() => {
 });
 
 const filteredGroups = computed(() => filterModelGroups(modelGroups.value, modelQuery.value, orphanModel.value));
-const modelFlatCount = computed(() => filteredGroups.value.reduce((n, g) => n + g.items.length, 0));
+const modelProviderTabsList = computed(() => modelProviderTabs(modelGroups.value));
+// 选了渠道 tab 就只留那一组；然后重新编号（否则上下键从全列表的序号开始）。
+const visibleGroups = computed(() => {
+  const picked = modelProvider.value
+    ? filteredGroups.value.filter((g) => g.provider === modelProvider.value)
+    : filteredGroups.value;
+  return reindexModelGroups(picked);
+});
+const modelFlatCount = computed(() => visibleGroups.value.reduce((n, g) => n + g.items.length, 0));
+
+// 渠道 tab：鼠标拖动 / 滚轮都横向滚（2026-11-18 用户定）。
+// 触屏交给浏览器的原生横向滚动；鼠标拖动才自己接管（按下期间挂 window 监听，
+// 不 setPointerCapture —— 捕获会把 click 的 target 换成容器，tab 就点不动了）。
+let tabDrag: { pointerId: number; startX: number; startLeft: number; moved: boolean } | null = null;
+let suppressTabClick = false;
+function onTabsPointerDown(e: PointerEvent): void {
+  if (e.pointerType === "touch" || e.button !== 0) return;
+  const el = modelTabsEl.value;
+  if (!el || el.scrollWidth <= el.clientWidth) return;
+  tabDrag = { pointerId: e.pointerId, startX: e.clientX, startLeft: el.scrollLeft, moved: false };
+  el.classList.add("dragging");
+  const move = (ev: PointerEvent): void => {
+    if (!tabDrag || ev.pointerId !== tabDrag.pointerId) return;
+    const dx = ev.clientX - tabDrag.startX;
+    if (!tabDrag.moved && Math.abs(dx) > 4) tabDrag.moved = true;
+    if (!tabDrag.moved) return;
+    el.scrollLeft = tabDrag.startLeft - dx;
+    ev.preventDefault();
+  };
+  const end = (): void => {
+    const moved = tabDrag?.moved ?? false;
+    tabDrag = null;
+    el.classList.remove("dragging");
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", end);
+    window.removeEventListener("pointercancel", end);
+    if (moved) {
+      // 拖动结束后的那次 click 不是"选渠道"，只是拖拽的尾巴。
+      // click 在 pointerup 之后同步触发；超时兜底（松在空白处时没有 click）。
+      suppressTabClick = true;
+      setTimeout(() => { suppressTabClick = false; }, 0);
+    }
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", end);
+  window.addEventListener("pointercancel", end);
+}
+function onTabsWheel(e: WheelEvent): void {
+  const el = modelTabsEl.value;
+  if (!el || el.scrollWidth <= el.clientWidth) return;
+  // 普通滚轮给 deltaY，触控板横滑给 deltaX；哪个大用哪个。
+  const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+  if (!delta) return;
+  el.scrollLeft += delta;
+  e.preventDefault();
+}
+function selectModelProvider(provider: string): void {
+  if (suppressTabClick) return;
+  modelProvider.value = provider;
+  modelActive.value = -1;
+}
 
 function toggleModel(): void {
   modelOpen.value = !modelOpen.value;
   if (!modelOpen.value) return;
   ctxOpen.value = false;
   modelQuery.value = "";
+  modelProvider.value = "";
   modelActive.value = -1;
   // 打开就聚焦搜索框：几百个模型，第一次动作必然是打字。
   nextTick(() => modelSearchEl.value?.focus());
@@ -129,7 +196,7 @@ function pickModel(value?: string | null): void {
   if (value && value !== curModel.value) emit("select-model", value);
 }
 function flatItemAt(index: number): ModelChoice | null {
-  for (const g of filteredGroups.value) {
+  for (const g of visibleGroups.value) {
     for (const m of g.items) if (m.flat === index) return m;
   }
   return null;
@@ -454,20 +521,45 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
       <template v-if="modelOpen">
         <div class="agent-menu-backdrop" @click="modelOpen = false"></div>
         <div class="agent-menu model-menu" role="dialog" aria-label="选择模型" @keydown.esc="modelOpen = false">
+          <!-- 顶部渠道 tab：左右滚动，"全部"永远在最左。选完 tab 后只列这个渠道的模型，
+               不必在几百个模型里滚到某个渠道再找。 -->
+          <div
+            ref="modelTabsEl"
+            class="model-provider-tabs"
+            role="tablist"
+            aria-label="按渠道筛选模型"
+            @pointerdown="onTabsPointerDown"
+            @wheel="onTabsWheel"
+            @dragstart.prevent
+          >
+            <button
+              v-for="tab in modelProviderTabsList"
+              :key="tab.provider || '__all__'"
+              type="button"
+              role="tab"
+              class="model-provider-tab"
+              :class="{ active: modelProvider === tab.provider }"
+              :aria-selected="modelProvider === tab.provider ? 'true' : 'false'"
+              :title="`${tab.label}（${tab.count} 个模型）`"
+              @click="selectModelProvider(tab.provider)"
+            >
+              {{ tab.label }}
+            </button>
+          </div>
           <input
             ref="modelSearchEl"
             v-model="modelQuery"
             class="model-search"
             type="search"
-            placeholder="搜索模型 / 渠道…"
+            :placeholder="modelProvider ? '搜索这个渠道的模型…' : '搜索模型 / 渠道…'"
             aria-label="搜索模型"
             @keydown.down.prevent="moveActive(1)"
             @keydown.up.prevent="moveActive(-1)"
             @keydown.enter.prevent="pickActive"
           />
           <div class="model-list">
-            <template v-for="g in filteredGroups" :key="g.provider">
-              <div class="model-group-head">
+            <template v-for="g in visibleGroups" :key="g.provider">
+              <div v-if="!modelProvider" class="model-group-head">
                 <span class="model-group-name">{{ g.providerName }}</span>
                 <span class="model-group-count">{{ g.items.length }}</span>
               </div>
@@ -485,7 +577,7 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
                 <span v-if="m.value === curModel" class="model-check">✓</span>
               </button>
             </template>
-            <p v-if="!filteredGroups.length" class="agent-empty">没有匹配的模型</p>
+            <p v-if="!visibleGroups.length" class="agent-empty">没有匹配的模型</p>
           </div>
         </div>
       </template>
