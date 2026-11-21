@@ -2594,6 +2594,12 @@ body.theme-changing *::after {
     scrollbar-gutter: auto;
   }
 }
+/* 长期滚动面板预留滚动槽：内容异步加载后即使开始溢出，也不再挤窄正文/列表。
+ * 不全局套到每个 overflow:auto（代码块/临时浮层各有自己的布局）；移动端 overlay scrollbar 不占槽。 */
+#session-list, .settings-body, .ctx-pane, #payload-pane, #state-view,
+.compact-preview-pane, #advanced-compact, #repair-compact, .agent-menu, .model-list {
+  scrollbar-gutter: stable;
+}
 
 /* 设置/渠道/智能体列表：它们真的是表，不该只靠文字对齐假装成表。
  * VTable 的 class 在**外层 .v-table** 上（不是 table 元素），所以这里从 .v-table.plist 收口：

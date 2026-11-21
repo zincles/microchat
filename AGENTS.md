@@ -1742,6 +1742,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   仍在改旧对象，而 `sendFromDraft` 读新对象 ⇒ 草稿里选的模型建会话时退回 defaults。改对象内容用
   `Object.assign(draftPrefs, …)`，不要换引用。
 - **`*bool` 的默认值不能共用同一个局部变量**（2026-11-02 实测，设置页"开关点不动"的根因）：`DefaultPrefs` 从前写 `on := true; off := false`，再让 `Preview` / `ChromeHide` 都 `&on`、`CommandMenu` / `PayloadViz` / `BarLeftHidden` 都 `&off`。JSON 解码 `command_menu:true` 会把那个共享的 `off` 改成 true，下一行 `payload_viz:false` 又把它改回来 —— **最终值取决于字段在 JSON 里的顺序**，表现是界面拨了、服务端没变、刷新又回去。每格各写 `new(true)` / `new(false)`（Go 1.26），并有用混合值的 round-trip 测试（`config/prefs_test.go`）。
+- **异步内容加载会让滚动条槽突然出现，经典滚动条会挤窄整块内容**：文档本身锁死不滚，真正的滚动口是 `#messages-vue` / `#session-list` / `.settings-body` / 上下文 pane 等内部容器。对这些长期布局滚动口用 `scrollbar-gutter: stable`；消息列桌面用 `stable both-edges` 保持阅读列居中，窄屏 overlay scrollbar 可恢复 `auto`。**不要全局套到所有 `overflow:auto`**：临时浮层、代码块、嵌套滚动区会无谓留空。
 - **` overscroll-behavior: contain` 挂在"滚不动的自己"身上 = 断链炸弹** ✗（2026-10-17 实测，用户报"状态面板触屏和滚轮都滚不动"）：右栏原来是**栏自己滚**，而三个面板又各自 `overflow-y: auto` + `contain`，面板没有高度约束 ⇒ 它永远滚不动；`contain` 又只认"滚动者"⇒ 手势/滚轮滚到它就**不再往父级链** ⇒ 什么都不滚（载荷 tab 侥幸没事：它的 `<pre>` 没写 `contain`，链得到父级 ✓ —— 所以症状是"只有状态/压缩两栏死"）。
   **修法照左栏来**：栏改 `flex column; overflow: hidden`（自己不再滚），tabs `flex: none`（常驻），三个面板 `flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain` —— **`contain` 只该写在"真的是那个滚动者"的元素上** ✓。
   （排查法：`elementFromPoint` 看链、看每个挂 `contain` 的元素 `scrollHeight > clientHeight` 是不是成立 ✓；⚠ 用合成触摸测时先确认**面板没被手势滑关**、触摸点落在视口内 —— 这两条能把"量不出"误判成"修不好"，都踩过。）

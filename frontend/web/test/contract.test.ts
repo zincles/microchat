@@ -5157,6 +5157,7 @@ test("主题切换不渐变；消息列预留滚动槽", () => {
   assert.match(prefs, /themeChangeSeq/, "连续切换主题时没有取消旧的恢复帧");
   assert.match(css, /body\.theme-changing \*[\s\S]*transition:\s*none/, "主题切换没有禁用过渡的 CSS");
   assert.match(css, /#messages-vue \{[^}]*scrollbar-gutter:\s*stable both-edges/, "消息列没有稳定滚动条槽");
+  assert.match(css, /#session-list, \.settings-body, \.ctx-pane, #payload-pane, #state-view,[\s\S]*scrollbar-gutter:\s*stable/, "会话/设置/上下文主滚动区没有稳定槽");
 });
 
 test("Composer 控件尺寸收成一个 token；旧 Flow 行类已清理", () => {
