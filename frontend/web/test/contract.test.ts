@@ -41,7 +41,7 @@ import {
   groupModelsByProvider,
   providerChoices,
   modelChoicesFor,
-  SETTINGS_TABS,
+  SETTINGS_SECTIONS,
   providerIdForNextVendor,
   filterModelGroups,
   modelProviderTabs,
@@ -1852,6 +1852,20 @@ test("设置-聊天：默认值 → 上下文 → 压缩 → 生成，顺序固�
   assert.ok(!sessionPart.includes("新会话默认"), "会话管理里还留着新会话默认设置");
 });
 
+test("设置目录：外观与输入拆成两页，AppearancePane 只按 section 渲染", () => {
+  const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
+  const pane = readFileSync(join(SRC, "components", "AppearancePane.vue"), "utf8");
+
+  assert.match(pane, /section\?: "appearance" \| "input"/, "AppearancePane 没有分页参数");
+  assert.match(pane, /v-if="props\.section === 'appearance'"/, "外观内容没有按 section 收口");
+  assert.match(pane, /:id="props\.section === 'appearance' \? 'panel-appearance' : 'panel-input'"/, "外观/输入共用同一个 panel id");
+  assert.match(pane, /<section v-else class="settings-card">/, "输入内容没有独立的 v-else 分支");
+  assert.match(settings, /<AppearancePane section="appearance"/, "设置目录没有「外观」页");
+  assert.match(settings, /<AppearancePane section="input"/, "设置目录没有「输入」页");
+  assert.ok(settings.indexOf('<VTabsWindowItem value="appearance"') < settings.indexOf('<VTabsWindowItem value="input"'),
+    "外观与输入的 window item 顺序反了（目录顺序会跟着反）");
+});
+
 test("外观页：发送键 / 预演 / 命令菜单三格都在（搬用户视图时丢过）", () => {
   const vue = readFileSync(join(SRC, "components", "AppearancePane.vue"), "utf8");
   // 发送键的三档必须与 `prefs.js` 的 `wantsSend` 完全一致（多一档 = 选了不生效）。
@@ -2098,15 +2112,23 @@ test("上下文环：App 喂 ctx / 环在顶栏画 / 状态行不再报占用", 
   assert.ok(!/\.statusline/.test(css), "main.css 里还留着 .statusline 规则（那一行已经删了）");
 });
 
-// 页签条：设置主栏与 Agent 编辑器改用 Vuetify 的 VTabs + VTabsWindowItem。
-test("页签条：设置与 Agent 都用 Vuetify VTabs/VTabsWindow", () => {
+// 2026-11-20 用户定「一步到位全量重排」：设置顶层不再是一排 tab，
+// 首页是一张目录卡（SettingsHome），点进去才显示对应内容；Agent 编辑器仍是 VTabs。
+test("设置目录：首页是目录卡，子区才有 VTabsWindow", () => {
   const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
+  const home = readFileSync(join(SRC, "components", "SettingsHome.vue"), "utf8");
   const editor = readFileSync(join(SRC, "components", "AgentEditor.vue"), "utf8");
-  assert.match(settings, /<VTabs[\s\S]*v-model="tab"[\s\S]*<VTab v-for="t in SETTINGS_TABS"[\s\S]*@focus="tab = t\.id"/, "设置主栏没用 VTabs/VTab（或缺自动激活）");
+
+  assert.match(settings, /<SettingsHome :sections="SETTINGS_SECTIONS"/, "设置首页没有用 SettingsHome");
+  assert.match(settings, /<VTabsWindowItem v-if="!only" value="home"/, "完整设置没有目录页");
+  assert.match(settings, /<VTabsWindow v-model="tab"[\s\S]*<VTabsWindowItem value="chat"/, "设置子区没有真正的 tabpanel");
+  assert.ok(!/<VTab v-for="t in SETTINGS_SECTIONS"/.test(settings), "设置顶层又回到一排 tab");
+  assert.match(home, /<button[\s\S]*class="settings-home-card"/, "目录卡不是可点按钮");
+  assert.match(home, /v-html="iconOf\(s\.icon\)"/, "目录卡没带图标");
+
   assert.match(editor, /<VTabs[\s\S]*v-model="tab"[\s\S]*<VTab v-for="t in tabs"[\s\S]*@focus="tab = t\.id"/, "Agent 编辑器没用 VTabs/VTab（或缺自动激活）");
-  assert.match(settings, /<VTabsWindow v-model="tab"[\s\S]*<VTabsWindowItem value="chat"/, "设置没有真正的 tabpanel");
   assert.match(editor, /<VTabsWindow v-model="tab"[\s\S]*<VTabsWindowItem value="base"/, "Agent 编辑器没有真正的 tabpanel");
-  for (const [name, src] of [["SettingsModal.vue", settings], ["AgentEditor.vue", editor]]) {
+  for (const [name, src] of [["SettingsModal.vue", settings], ["SettingsHome.vue", home], ["AgentEditor.vue", editor]]) {
     assert.ok(!src.includes("TabBar"), `${name} 还引用旧 TabBar`);
     assert.ok(!src.includes("tab-thumb"), `${name} 还自己画滑动底片`);
     assert.ok(!src.includes("offsetWidth"), `${name} 还自己在量按钮宽度`);
@@ -2497,33 +2519,29 @@ test("设置：没有「连接」页，也没有绑不存在的 saveNet", () => 
   assert.ok(!/直接改地址|API 地址/.test(settings), "设置里又开始让人手填后端地址了");
 });
 
-// 页签条与 SETTINGS_TABS 是同一份；会话/渠道的 panel 还在，但**不再住设置 tab** ——
-// 它们由左栏底部的独立入口用 `:only` 打开。这条同时钉住两头，防止"只删 tab、
-// panel 变成永远进不去的死页"或"又偷偷塞回设置里"。
-test("设置页签：六区 + 会话/渠道/智能体/更新独立入口", () => {
+// 设置目录与独立入口共用同一份 `SETTINGS_SECTIONS`；会话/渠道/智能体/更新
+// 由左栏独立入口直接落到对应页，完整设置从目录进去。
+test("设置目录：七区 + 会话/渠道/智能体/更新独立入口", () => {
   const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
   const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
   // 渠道页内部还有「渠道列表 / 全局模型规则」两个二级页签（list/global），
-  // 它们不在设置主栏里；这里只取真正的设置 panel。
-  const panels = [...settings.matchAll(/<VTabsWindowItem value="([a-z]+)"/g)]
+  // 它们不在设置目录里；这里只取真正的设置 panel。
+  const panels = [...settings.matchAll(/<VTabsWindowItem[^>]*\bvalue="([a-z]+)"/g)]
     .map((m) => m[1]).filter((id) => id !== "list" && id !== "global");
-  // 七个 panel 都在真正的 tabpanel 里（session/provider/update 由独立入口打开）。
-  assert.deepEqual([...panels].sort(), ["agent", "appearance", "chat", "prompt", "provider", "session", "tavern", "update"],
+  assert.deepEqual([...panels].sort(), ["agent", "appearance", "chat", "home", "input", "prompt", "provider", "session", "tavern", "update"],
     `panel 不齐：${panels.join(", ")}`);
-  // 键盘焦点即激活（VSlideGroup 的 ArrowLeft/Right 只搬焦点，@focus 补上 WAI-ARIA 自动激活）
-  assert.match(settings, /@focus="tab = t\.id"/, "设置 VTabs 没在焦点时激活");
-  // 设置主栏六个 tab：酒馆负责 ST 导入/转换，更新在最后。
-  assert.deepEqual(SETTINGS_TABS.map((t) => t.id), ["chat", "agent", "prompt", "appearance", "tavern", "update"],
-    "SETTINGS_TABS 少/多了区，或顺序变了");
+  // 设置目录七个入口：聊天 / 智能体 / 提示词 / 外观 / 输入 / 酒馆 / 更新。
+  assert.deepEqual(SETTINGS_SECTIONS.map((s) => s.id), ["chat", "agent", "prompt", "appearance", "input", "tavern", "update"],
+    "SETTINGS_SECTIONS 少/多了区，或顺序变了");
   // 独立入口：左栏底会话 / 渠道 / 智能体 + App 用 :only 打开同一个视图；更新走品牌头。
   assert.match(bar, /@click="\$emit\('open-sessions'\)"/, "左栏没有「会话」入口");
   assert.match(bar, /@click="\$emit\('open-providers'\)"/, "左栏没有「渠道」入口");
   assert.match(bar, /@click="\$emit\('open-agent'\)"/, "左栏没有「助手」入口");
   assert.match(bar, /\bid="agents-manage"[\s\S]*?\n\s*助手\n/, "底部标签该是「助手」");
-  assert.ok(!bar.includes('id="update-open"'), "左栏底部还在画「更新」入口（它已挪到品牌头与设置 tab）");
+  assert.ok(!bar.includes('id="update-open"'), "左栏底部还在画「更新」入口（它已挪到品牌头与设置目录）");
   assert.match(settings, /only\??:\s*string/, "SettingsModal 没有独立入口的 only 参数");
-  assert.match(settings, /<h2 v-else class="settings-title">/, "独立入口没有页头标题");
-  assert.match(settings, /<VTabs[\s\S]*v-if="!only"/, "独立入口仍渲染设置 VTabs");
+  assert.match(settings, /const activeTitle = computed/, "设置页头没有跟随目录/子区标题");
+  assert.match(settings, /<VTabsWindowItem v-if="!only" value="home"/, "独立入口不该渲染目录页");
 });
 
 // 「新会话默认值」那两格从前是**手打 id 的文本框**，说明文自己都写着
@@ -3855,9 +3873,10 @@ test("设置页：标题只有一套语言，设置与会话/渠道管理页同�
   assert.match(css, /\.settings-cols \.panel h3\s*\{[^}]*color:\s*var\(--md-on-surface\)/, "h3 不是 MD3 正文色");
   assert.match(css, /\.settings-cols \.panel h3::before\s*\{[^}]*background:\s*var\(--md-primary\)/, "h3 没有统一的 MD3 竖条");
   assert.ok(!/\.settings-card h3::before/.test(css), "卡片又给 h3 单独定义了一套竖条");
-  // 六个 tab 的宽度必须一起写，切 tab 不能忽宽忽窄。
-  const width = css.match(/#panel-appearance\s*,[^{]*#panel-provider\s*\{[^}]*max-width:\s*760px/);
-  assert.ok(width, "六个 panel 没有统一 760 宽");
+  // 设置各页的宽度必须一起写，切页不能忽宽忽窄。
+  const width = css.match(/#panel-appearance[^{]*#panel-provider[^{]*#panel-update\s*\{[^}]*max-width:\s*760px/);
+  assert.ok(width, "设置各 panel 没有统一 760 宽");
+  assert.match(css, /#panel-appearance[^{]*#panel-input[^{]*#panel-chat/, "输入页没进统一宽度清单");
 });
 
 test("开机请求：会话/Agent 不重复，重活按需，加载有骨架", () => {
@@ -3927,7 +3946,8 @@ test("更新面板：显示提交 + 拉取并重启（由 entrypoint 接手）",
   assert.match(settings, /<UpdatePane :ask="ask"/, "设置视图里没有更新面板");
   assert.match(settings, /props\.only === "update" \? "更新"/, "更新页没有独立页头");
   assert.match(settings, /if \(props\.only === "update"\) return;/, "更新页还在白拉设置页数据");
-  assert.match(pane, /<VDivider class="update-divider"/, "本地/远端两块之间没有分隔符");
+  assert.match(pane, /class="update-grid"/, "更新页没有压缩成版本/PWA 双卡");
+  assert.match(pane, /class="update-version-grid"/, "本地/远端没有并排的版本网格");
   assert.match(pane, /当前本地版本/, "没有本地版本区块");
   assert.match(pane, /GitHub 最新版本/, "没有 GitHub 最新版本区块");
   assert.match(pane, /status\.remote_short/, "更新面板没显示 GitHub 最新提交");
@@ -3940,8 +3960,8 @@ test("更新面板：显示提交 + 拉取并重启（由 entrypoint 接手）",
   assert.match(pane, /saveUpdateAutoCheck/, "更新面板没有自动检查开关");
   assert.match(pane, /update_auto_check|updateAutoCheckOn/, "自动检查开关没接偏好");
   assert.match(pane, /<VSwitch/, "自动检查不是 Vuetify 开关");
-  assert.ok(pane.indexOf('class="update-auto"') < pane.indexOf('class="update-version"'), "自动检查不在顶部两块之上");
-  assert.ok(pane.indexOf('class="update-auto"') < pane.indexOf('class="update-divider"'), "自动检查与下面两块之间没有分隔符");
+  assert.ok(pane.indexOf('class="update-auto"') < pane.indexOf('class="update-version-grid"'), "自动检查不在版本网格之上");
+  assert.ok(pane.indexOf("update-version-card") < pane.indexOf("update-pwa-card"), "版本卡不在 PWA 卡之前");
   const updateBar = readFileSync(join(SRC, "components", "UpdateBar.vue"), "utf8");
   assert.match(updateBar, /backend/, "顶部更新条不认识后端更新");
   assert.match(updateBar, /update-backend/, "顶部更新条没有更新前后端的动作");
@@ -3987,7 +4007,7 @@ test("更新面板：PWA 前端壳核对与切换", () => {
   const pwa = readFileSync(join(SRC, "utils", "pwa.ts"), "utf8");
   const vite = readFileSync(join(SRC, "..", "vite.config.ts"), "utf8");
 
-  assert.match(pane, /PWA \/ 已安装应用/, "更新面板里没有 PWA 区块");
+  assert.match(pane, /前端缓存（PWA）/, "更新面板里没有 PWA 区块");
   assert.match(pane, /__BUILD_ID__/, "没有读当前页面的构建身份");
   assert.match(pane, /fetchLatestBuild/, "没有读服务器上的 build.json");
   assert.match(pane, /checkPwaUpdate/, "没有手动检查 Service Worker 更新");
@@ -4544,6 +4564,20 @@ test("设置页 MD3：segmented tab / 平铺行 / 表格 / 字段标签", () => 
   assert.match(css, /\.settings-cols \.panel table\.plist \{[^}]*var\(--md-surface-container-low\)/, "表格不是 MD3 容器");
 });
 
+test("设置移动端：表格行变卡片，字段标签来自 data-label", () => {
+  const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  for (const label of ["标题", "消息数", "名称", "标识", "内容预览", "渠道", "服务商", "文件", "导入时间"]) {
+    assert.ok(settings.includes(`data-label="${label}"`), `设置表格缺移动端字段标签：${label}`);
+  }
+  assert.match(css, /@media \(max-width: 700px\) \{[\s\S]*#settings-view \.v-table\.plist thead \{ display: none !important; \}/,
+    "手机上没有隐藏表头");
+  assert.match(css, /#settings-view \.v-table\.plist td::before \{ content: attr\(data-label\)/,
+    "手机上的卡片字段没有用 data-label 生成标签");
+  assert.match(css, /#settings-view \.v-table\.plist tr \{[^}]*border-radius:\s*var\(--md-shape-md\)/,
+    "手机上的表格行不是卡片");
+});
+
 test("浮层 MD3：dialog / menu / snackbar / banner，全局按钮与字段", () => {
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   assert.match(css, /button \{[^}]*background:\s*var\(--md-secondary-container\)/, "默认按钮不是 MD3 tonal");
@@ -4738,18 +4772,19 @@ test("会话/渠道管理页不跑设置 tab 滑入（页面切换不是 tab）"
   assert.match(settings, /<VTabsWindow[^>]*:key="props\.only \|\| 'settings'"/, "管理页没有按 only 重挂载 window，tab 滑入还会反向");
 });
 
-// 设置页签的 window item 顺序必须与 SETTINGS_TABS 一致：Vuetify 的滑入方向按
-// window item 注册顺序算，不是按 tab 标签顺序算（2026-11-06 用户报「行为不太对」）。
-test("设置页签顺序：window item 与标签顺序一致（提示词在外观前）", () => {
+// 设置目录的 window item 顺序必须与 SETTINGS_SECTIONS 一致：Vuetify 的滑入方向按
+// window item 注册顺序算，不是按目录卡顺序算（2026-11-06 用户报「行为不太对」）。
+test("设置页顺序：目录在最前，子区与 SETTINGS_SECTIONS 一致", () => {
   const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
-  const items = [...settings.matchAll(/<VTabsWindowItem value="([^"]+)"/g)].map((m) => m[1]);
-  const visible = items.filter((id) => ["chat", "agent", "prompt", "appearance", "tavern", "update"].includes(id));
-  assert.deepEqual(visible, ["chat", "agent", "prompt", "appearance", "tavern", "update"], "设置 window item 顺序与标签顺序不一致，滑入方向会反");
+  const items = [...settings.matchAll(/<VTabsWindowItem[^>]*\bvalue="([^"]+)"/g)].map((m) => m[1]);
+  const sectionIds = new Set(SETTINGS_SECTIONS.map((s) => s.id));
+  const visible = items.filter((id) => id === "home" || sectionIds.has(id));
+  assert.deepEqual(visible, ["home", ...SETTINGS_SECTIONS.map((s) => s.id)], "设置 window item 顺序与目录顺序不一致，滑入方向会反");
 });
 
 
-// 酒馆（2026-11-06 用户定）：第五个设置 tab，专门放 ST 预设/角色卡/聊天记录的导入与转换。
-test("酒馆：第五个设置 tab，ST 聊天记录导入搬到这里", () => {
+// 酒馆（2026-11-06 用户定）：设置目录里的独立页，专门放 ST 预设/角色卡/聊天记录的导入与转换。
+test("酒馆：设置目录里的独立页，ST 聊天记录导入搬到这里", () => {
   const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
   assert.match(settings, /<VTabsWindowItem value="tavern">/, "没有酒馆 pane");
   const tavern = settings.slice(settings.indexOf('<VTabsWindowItem value="tavern">'), settings.indexOf('<VTabsWindowItem value="provider">'));

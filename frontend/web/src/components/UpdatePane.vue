@@ -5,7 +5,7 @@
 //（重新编译 Go、重新构建 vite、再把两个进程拉起来）。前端在这里等新进程的
 // `started_at` 变了才刷新 —— 只看 /health 会被尚未被收掉的旧进程骗过去。
 import { computed, onMounted, ref } from "vue";
-import { VBtn, VDivider, VSwitch } from "vuetify/components";
+import { VBtn, VSwitch } from "vuetify/components";
 import { sharedApi, saveUpdateAutoCheck, updateAutoCheckOn } from "../utils/prefs.ts";
 import { waitForRestart } from "../utils/update.ts";
 import {
@@ -198,25 +198,84 @@ onMounted(() => {
 
 <template>
   <section id="panel-update" class="panel">
-    <section class="settings-card">
-      <h3>版本更新</h3>
-      <p class="hint">拉取仓库最新提交（只走 <code>git pull --ff-only</code>），成功后由容器 entrypoint 重新编译并重启前后端。</p>
+    <p class="settings-lead">这一页只管两件事：<b>版本</b>（本地 / GitHub 最新 / 一键拉取重启）和 <b>前端缓存</b>（PWA）。关于项目放在最下面。</p>
 
-      <div class="update-auto">
-        <span>自动更新（每 5 分钟）</span>
-        <VSwitch
-          :model-value="autoCheck"
-          color="primary"
-          density="compact"
-          hide-details
-          @update:model-value="setAutoCheck"
-        />
-      </div>
-      <p class="hint">开启后每 5 分钟检查 GitHub；本地落后且工作区干净时自动拉取并重启前后端。有未提交修改、分叉或非容器部署时只提示，不自动动手。</p>
-      <VDivider class="update-divider" />
+    <div class="update-grid">
+      <section class="settings-card update-version-card">
+        <h3>版本</h3>
+        <div class="update-auto">
+          <span>自动更新（每 5 分钟）</span>
+          <VSwitch
+            :model-value="autoCheck"
+            color="primary"
+            density="compact"
+            hide-details
+            @update:model-value="setAutoCheck"
+          />
+        </div>
+        <p class="hint">开启后每 5 分钟检查 GitHub；本地落后且工作区干净时自动拉取并重启前后端。有未提交修改、分叉或非容器部署时只提示，不自动动手。</p>
 
-      <section class="update-block pwa-block">
-        <h4 class="update-section-title">PWA / 已安装应用</h4>
+        <div v-if="loading" class="hint">读取当前版本…</div>
+        <template v-else-if="status">
+          <div class="update-version-grid">
+            <section class="update-block">
+              <h4 class="update-section-title">当前本地版本</h4>
+              <div class="update-row"><span>提交</span><code>{{ status.short || status.commit }}</code></div>
+              <div class="update-row"><span>分支</span><code>{{ status.branch || "（detached）" }}</code></div>
+              <div v-if="status.subject" class="update-subject">{{ status.subject }}</div>
+              <div class="update-hash" :title="status.commit">{{ status.commit }}</div>
+              <p v-if="status.dirty" class="hint update-warn">
+                工作区有 {{ status.changed_files }} 个未提交改动；<code>git pull --ff-only</code> 可能因此失败，失败时不会重启。
+              </p>
+            </section>
+
+            <section class="update-block">
+              <h4 class="update-section-title">GitHub 最新版本</h4>
+              <div class="update-row"><span>提交</span><code>{{ status.remote_short || "—" }}</code></div>
+              <div v-if="status.remote_subject" class="update-subject">{{ status.remote_subject }}</div>
+              <div v-if="status.remote_commit" class="update-hash" :title="status.remote_commit">{{ status.remote_commit }}</div>
+              <p v-if="status.remote_commit" class="update-compare"
+                :class="status.remote_commit === status.commit ? 'update-ok' : 'update-warn'"
+                :title="status.remote_commit">
+                <template v-if="status.remote_commit === status.commit">✓ 已是最新提交</template>
+                <template v-else-if="status.remote_relation === 'ahead'">
+                  本地领先远端 {{ status.ahead || 0 }} 个提交（尚未推送）
+                </template>
+                <template v-else-if="status.remote_relation === 'behind'">
+                  远端有新提交 {{ status.behind || 0 }} 个，可拉取并重启
+                </template>
+                <template v-else-if="status.remote_relation === 'diverged'">
+                  本地与远端已分叉，可「变基并重启」
+                </template>
+                <template v-else>远端有新提交，可拉取并重启</template>
+              </p>
+              <p v-else-if="status.remote_error" class="hint update-warn">
+                无法读取 GitHub 最新提交：{{ status.remote_error }}
+              </p>
+            </section>
+          </div>
+
+          <p v-if="!supported" class="hint update-warn">
+            当前不是容器部署（没有 <code>MICROCHAT_RESTART_FILE</code>）：拉取后不会自动重启。
+          </p>
+
+          <div class="row">
+            <VBtn color="primary" variant="flat" size="small" type="button"
+              :loading="phase !== 'idle'" :disabled="phase !== 'idle' || !supported"
+              @click="pullAndRestart(needsRebase)">
+              {{ buttonText }}
+            </VBtn>
+            <VBtn variant="text" size="small" type="button" :disabled="busy" @click="load">刷新状态</VBtn>
+            <span class="status">{{ message }}</span>
+          </div>
+          <p v-if="error" class="hint update-error">{{ error }}</p>
+          <pre v-if="log" class="update-log">{{ log }}</pre>
+        </template>
+        <p v-else-if="error" class="hint update-error">{{ error }}</p>
+      </section>
+
+      <section class="settings-card update-pwa-card">
+        <h3>前端缓存（PWA）</h3>
         <p class="hint">核对当前页面与服务器上的前端构建；如果安装的 PWA 还显示旧界面，用这里直接检查并切换。</p>
         <div class="update-row"><span>当前页面</span><code :title="pageBuildId">{{ currentBuildLabel }}</code></div>
         <div class="update-row"><span>服务器最新</span><code :title="latestBuild?.build_id">{{ latestBuildLabel }}</code></div>
@@ -238,80 +297,18 @@ onMounted(() => {
         </div>
         <p v-if="pwaError" class="hint update-warn">{{ pwaError }}</p>
       </section>
+    </div>
 
-      <VDivider class="update-divider" />
-
-      <div v-if="loading" class="hint">读取当前版本…</div>
-      <template v-else-if="status">
-        <div class="update-version">
-          <section class="update-block">
-            <h4 class="update-section-title">当前本地版本</h4>
-            <div class="update-row"><span>提交</span><code>{{ status.short || status.commit }}</code></div>
-            <div class="update-row"><span>分支</span><code>{{ status.branch || "（detached）" }}</code></div>
-            <div v-if="status.subject" class="update-subject">{{ status.subject }}</div>
-            <div class="update-hash" :title="status.commit">{{ status.commit }}</div>
-            <p v-if="status.dirty" class="hint update-warn">
-              工作区有 {{ status.changed_files }} 个未提交改动；<code>git pull --ff-only</code> 可能因此失败，失败时不会重启。
-            </p>
-          </section>
-
-          <VDivider class="update-divider" />
-
-          <section class="update-block">
-            <h4 class="update-section-title">GitHub 最新版本</h4>
-            <div class="update-row"><span>提交</span><code>{{ status.remote_short || "—" }}</code></div>
-            <div v-if="status.remote_subject" class="update-subject">{{ status.remote_subject }}</div>
-            <div v-if="status.remote_commit" class="update-hash" :title="status.remote_commit">{{ status.remote_commit }}</div>
-            <p v-if="status.remote_commit" class="update-compare"
-              :class="status.remote_commit === status.commit ? 'update-ok' : 'update-warn'"
-              :title="status.remote_commit">
-              <template v-if="status.remote_commit === status.commit">✓ 已是最新提交</template>
-              <template v-else-if="status.remote_relation === 'ahead'">
-                本地领先远端 {{ status.ahead || 0 }} 个提交（尚未推送）
-              </template>
-              <template v-else-if="status.remote_relation === 'behind'">
-                远端有新提交 {{ status.behind || 0 }} 个，可拉取并重启
-              </template>
-              <template v-else-if="status.remote_relation === 'diverged'">
-                本地与远端已分叉，可「变基并重启」
-              </template>
-              <template v-else>远端有新提交，可拉取并重启</template>
-            </p>
-            <p v-else-if="status.remote_error" class="hint update-warn">
-              无法读取 GitHub 最新提交：{{ status.remote_error }}
-            </p>
-          </section>
-        </div>
-        <p v-if="!supported" class="hint update-warn">
-          当前不是容器部署（没有 <code>MICROCHAT_RESTART_FILE</code>）：拉取后不会自动重启。
-        </p>
-
-
-        <div class="row">
-          <VBtn color="primary" variant="flat" size="small" type="button"
-            :loading="phase !== 'idle'" :disabled="phase !== 'idle' || !supported"
-            @click="pullAndRestart(needsRebase)">
-            {{ buttonText }}
-          </VBtn>
-          <VBtn variant="text" size="small" type="button" :disabled="busy" @click="load">刷新状态</VBtn>
-          <span class="status">{{ message }}</span>
-        </div>
-        <p v-if="error" class="hint update-error">{{ error }}</p>
-        <pre v-if="log" class="update-log">{{ log }}</pre>
-      </template>
-      <p v-else-if="error" class="hint update-error">{{ error }}</p>
-
-      <section class="project-about">
-        <h3>关于 MicroChat</h3>
-        <p>
-          MicroChat 是一个轻量、可自托管的 SillyTavern 替代品，面向角色扮演与长对话：
-          Go 后端负责上下文、压缩与状态，Vue 前端负责阅读与编辑体验。基础功能不依赖外部账号，数据落在自己的 <code>data/</code> 目录。
-        </p>
-        <p class="project-authors">作者：Zincles、DeepSeekV4.1Flash</p>
-        <p class="project-link">
-          <a href="https://github.com/zincles/microchat" target="_blank" rel="noopener noreferrer">github.com/zincles/microchat</a>
-        </p>
-      </section>
+    <section class="settings-card update-about-card project-about">
+      <h3>关于 MicroChat</h3>
+      <p>
+        MicroChat 是一个轻量、可自托管的 SillyTavern 替代品，面向角色扮演与长对话：
+        Go 后端负责上下文、压缩与状态，Vue 前端负责阅读与编辑体验。基础功能不依赖外部账号，数据落在自己的 <code>data/</code> 目录。
+      </p>
+      <p class="project-authors">作者：Zincles、DeepSeekV4.1Flash</p>
+      <p class="project-link">
+        <a href="https://github.com/zincles/microchat" target="_blank" rel="noopener noreferrer">github.com/zincles/microchat</a>
+      </p>
     </section>
   </section>
 </template>

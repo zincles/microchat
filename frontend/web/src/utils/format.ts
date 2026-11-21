@@ -538,30 +538,27 @@ export function deletionPlanSummary(plan?: DeletionPlan | null): string {
 
 // ---- 设置 modal 纯逻辑（无 DOM，测试直引） ----
 
-export interface SettingsTab {
+export interface SettingsSection {
   id: string;
   label: string;
+  desc: string;
+  icon: string;
 }
 
-// SETTINGS_TABS：设置视图六区（顺序固定）—— **id 与中文名同一份**（按钮标签、panel id 都从它来）。
-// 2026-11-02 用户「设置面板塞了太多东西」：**会话 / 渠道** 不再住设置 tab，
-// 改由左栏底部的「会话 / 渠道」两个独立入口打开（同一个视图，`:only` 只显示那一页）。
-// 「外观」区 2026-11-01 搬回设置（用户定：「把外观设置做到设置里」）——
-// 它原本住**用户视图**（`UserView.vue`），而那个视图随账号功能一起删了：
-// 身份/用户管理跟着账号没了，个人偏好（主题/缩放/背景图/发送键/预演/命令菜单）
-// 整块搬进这一区，一个字都没改口径。
-// 「连接」区 2026-10-28 **删掉**：那一页只有「后端地址 + Token」两格，而单容器部署里浏览器
-// 永远同源（vite 把 /api 代理给后端），地址是启动自检自动探出来的；连不上时门板会自己弹出来
-// 让人填 —— 正常部署里这格一辈子用不到。更糟的是它的「保存」按钮绑的 `saveNet` 在重构时丢了，
-// 点下去直接抛错。留着只会让人以为"我得自己配点什么"。
-// 「提示词」= 可复用提示词段（system prompt segment）的库；「智能体」里逐段引用（2026-10-11 用户定）。
-export const SETTINGS_TABS: SettingsTab[] = [
-  { id: "chat", label: "聊天" },
-  { id: "agent", label: "智能体" },
-  { id: "prompt", label: "提示词" },
-  { id: "appearance", label: "外观" },
-  { id: "tavern", label: "酒馆" },
-  { id: "update", label: "更新" },
+// SETTINGS_SECTIONS：设置目录（2026-11-20 用户定「一步到位全量重排」）。
+// 顶层不再是一排 tab 抢一行 —— 首页是一张**目录卡**，点进去才显示对应内容；
+// 手机上不用再把六个 tab 挤进 390px。
+//
+// 「外观」和「输入」拆成两页：外观管“长什么样”，输入管“怎么发”。
+// 「文本格式（Markdown）」跟着外观走 —— 它决定的是消息**渲染成什么样**，不是怎么输入。
+export const SETTINGS_SECTIONS: SettingsSection[] = [
+  { id: "chat", label: "聊天", desc: "默认模型、上下文与自动压缩", icon: "chat" },
+  { id: "agent", label: "智能体", desc: "人设、提示词片段与能力", icon: "bot" },
+  { id: "prompt", label: "提示词", desc: "可复用的文本片段库", icon: "notebookPen" },
+  { id: "appearance", label: "外观", desc: "主题、缩放、字体与背景", icon: "themeAuto" },
+  { id: "input", label: "输入", desc: "发送方式、预览与命令菜单", icon: "send" },
+  { id: "tavern", label: "酒馆", desc: "SillyTavern 导入与解析", icon: "spark" },
+  { id: "update", label: "更新", desc: "版本、PWA 与关于", icon: "refresh" },
 ];
 
 // formatRoutesOutcome：刷路由回形 {provider, models, error?} ⇒ 缓存行文案。

@@ -1,9 +1,10 @@
 <script setup lang="ts">
-// 外观面板（设置视图的「外观」区）。
+// 外观 / 输入面板（设置视图的「外观」与「输入」两页，2026-11-20 拆页）。
 //
 // 这块**原本住在用户视图**（`UserView.vue`）。账号砍掉之后用户视图整个没了 ——
 // 它原来那半：**个人偏好**（主题 / 缩放 / 背景图 / 滚动收起 / 发送键 /
 // 预演 / 命令菜单）原样搬到这儿；2026-11-01 又加了一区 **markdown 渲染**。
+// 2026-11-20：按 `props.section` 分成 appearance（长什么样）与 input（怎么发）。
 //
 // 2026-11-01 两件大事：
 //   ① **全部偏好搬到服务器**（`data/config/prefs.json`，见 `utils/prefs.ts` 顶上的说明）。
@@ -35,6 +36,12 @@ import {
   uploadBackground, clearBackground,
 } from "../utils/background.ts";
 import type { MarkdownType } from "../api/types.ts";
+const props = withDefaults(defineProps<{
+  // section：这一页渲染哪一块 —— 2026-11-20 用户定「外观 / 输入拆页」。
+  // appearance 管“长什么样”（主题/缩放/字体/背景/Markdown 渲染）；
+  // input 管“怎么发”（回车、预览、命令菜单）。
+  section?: "appearance" | "input";
+}>(), { section: "appearance" });
 
 const emit = defineEmits<{ "prefs-saved": [] }>();
 
@@ -243,101 +250,105 @@ async function clearBg(): Promise<void> {
 </script>
 
 <template>
-  <section id="panel-appearance" class="panel">
-    <p class="settings-lead">外观改动<b>立即生效并保存到服务器</b>，换设备或清缓存不会丢；这一页没有单独的保存按钮。</p>
-    <section class="settings-card">
-      <h3>外观</h3>
-      <!-- 只有三套（2026-10-28 用户定）。id 必须与 prefs.ts 的 THEME_IDS 逐个对得上，
-           contract.test.js 钉着 —— 这里多一个少一个都不会报错，只会让人选到没规则的主题。 -->
-      <label class="field"><span>主题</span><VSelect :model-value="theme" :items="themeOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details @update:model-value="onTheme" /></label>
-      <!-- 界面缩放（2026-10-28，照 OpenWebUI 的 UI Scale）：**拖动即生效**，不用点保存。
-           `.field` 是两列网格（label | 控件）：滑杆与百分比必须包成**一个**子元素，
-           否则百分比会被挤到第二行第一列去。 -->
-      <label class="field"><span>界面缩放</span>
-        <span class="scale-wrap">
-          <VSlider
-            :model-value="textScale"
-            :min="scaleBounds.min"
-            :max="scaleBounds.max"
-            :step="scaleBounds.step"
-            color="primary"
-            density="compact"
-            hide-details
-            aria-label="界面缩放"
-            @update:model-value="onScaleInput"
-          />
-          <b class="scale-value">{{ scalePercent }}%</b>
-        </span>
-      </label>
-      <div class="row">
-        <VBtn color="primary" variant="flat" size="small" type="button" :disabled="!scaleDirty" @click="saveScale">保存缩放</VBtn>
-        <VBtn variant="text" size="small" type="button" @click="resetScale">复位 100%</VBtn>
-        <span class="status">{{ scaleDirty ? "未保存：点「保存缩放」后才会应用" : "字号和留白会一起等比缩放" }}</span>
-      </div>
-      <label class="field"><span>用户名称</span><VTextField density="compact" variant="outlined" hide-details v-model="userName" @change="saveName" placeholder="留空 = 你" /></label>
-      <p class="hint">用于提示词与消息里的 <code v-text="'{{user_name}}'"></code> / <code v-text="'{{user}}'"></code> 宏；只做替换，不影响世界状态。</p>
-      <label class="field"><span>标准字体</span><VTextField density="compact" variant="outlined" hide-details v-model="fontBody" @change="saveFonts" placeholder="留空 = 系统默认（CSS font-family）" /></label>
-      <label class="field"><span>等宽字体（代码块）</span><VTextField density="compact" variant="outlined" hide-details v-model="fontMono" @change="saveFonts" placeholder="留空 = 系统等宽" /></label>
-      <p class="hint">可按 CSS 写法给多个后备字体，例如 <code>"Noto Sans SC", sans-serif</code>。标准字体用于全站，等宽字体只用于代码块；留空恢复内置系统字族。</p>
-      <div class="row"><VBtn variant="text" size="small" type="button" @click="resetFonts">恢复默认字体</VBtn></div>
-      <label class="field"><span>背景图地址</span><VTextField density="compact" variant="outlined" hide-details v-model="bgUrl" placeholder="https://…（跨域也可）" /></label>
-      <div class="row">
-        <VBtn color="primary" variant="flat" size="small" type="button" @click="applyBgUrl">应用地址</VBtn>
-        <VBtn variant="text" size="small" type="button" @click="bgFile?.click()">上传图片…</VBtn>
-        <input ref="bgFile" type="file" accept="image/*" hidden @change="pickBgFile" />
-        <VBtn color="error" variant="text" size="small" type="button" @click="clearBg">清除</VBtn>
-      </div>
-      <div class="row"><span class="status">当前背景：{{ bgStatus }}</span></div>
-      <p v-if="bgPreview" class="hint">背景图保存在服务器上 —— 换设备也在。</p>
-    </section>
+  <section :id="props.section === 'appearance' ? 'panel-appearance' : 'panel-input'" class="panel">
+    <p v-if="props.section === 'appearance'" class="settings-lead">外观改动<b>立即生效并保存到服务器</b>，换设备或清缓存不会丢；这一页没有单独的保存按钮。</p>
+    <p v-else class="settings-lead">输入偏好<b>立即生效并保存到服务器</b>；这一页只管“怎么把字发出去”，不管模型与上下文。</p>
 
-    <section class="settings-card">
-      <h3>布局</h3>
-      <label class="field"><span>滚动时自动收起顶栏/底栏（仅触屏）</span><VSwitch :model-value="chromeHide" @update:model-value="(v) => setChromeHide(v === true)" color="primary" density="compact" hide-details /></label>
-      <p class="hint">向下浏览时顶栏逐步收起，往回看时底栏逐步收起 —— 一次只收一边，反向滚动就放回来；到顶或到底立刻全部放回。只在触屏上生效。</p>
-    </section>
+    <template v-if="props.section === 'appearance'">
+      <section class="settings-card">
+        <h3>外观</h3>
+        <!-- 只有三套（2026-10-28 用户定）。id 必须与 prefs.ts 的 THEME_IDS 逐个对得上，
+             contract.test.js 钉着 —— 这里多一个少一个都不会报错，只会让人选到没规则的主题。 -->
+        <label class="field"><span>主题</span><VSelect :model-value="theme" :items="themeOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details @update:model-value="onTheme" /></label>
+        <!-- 界面缩放（2026-10-28，照 OpenWebUI 的 UI Scale）：**拖动即生效**，不用点保存。
+             `.field` 是两列网格（label | 控件）：滑杆与百分比必须包成**一个**子元素，
+             否则百分比会被挤到第二行第一列去。 -->
+        <label class="field"><span>界面缩放</span>
+          <span class="scale-wrap">
+            <VSlider
+              :model-value="textScale"
+              :min="scaleBounds.min"
+              :max="scaleBounds.max"
+              :step="scaleBounds.step"
+              color="primary"
+              density="compact"
+              hide-details
+              aria-label="界面缩放"
+              @update:model-value="onScaleInput"
+            />
+            <b class="scale-value">{{ scalePercent }}%</b>
+          </span>
+        </label>
+        <div class="row">
+          <VBtn color="primary" variant="flat" size="small" type="button" :disabled="!scaleDirty" @click="saveScale">保存缩放</VBtn>
+          <VBtn variant="text" size="small" type="button" @click="resetScale">复位 100%</VBtn>
+          <span class="status">{{ scaleDirty ? "未保存：点「保存缩放」后才会应用" : "字号和留白会一起等比缩放" }}</span>
+        </div>
+        <label class="field"><span>用户名称</span><VTextField density="compact" variant="outlined" hide-details v-model="userName" @change="saveName" placeholder="留空 = 你" /></label>
+        <p class="hint">用于提示词与消息里的 <code v-text="'{{user_name}}'"></code> / <code v-text="'{{user}}'"></code> 宏；只做替换，不影响世界状态。</p>
+        <label class="field"><span>标准字体</span><VTextField density="compact" variant="outlined" hide-details v-model="fontBody" @change="saveFonts" placeholder="留空 = 系统默认（CSS font-family）" /></label>
+        <label class="field"><span>等宽字体（代码块）</span><VTextField density="compact" variant="outlined" hide-details v-model="fontMono" @change="saveFonts" placeholder="留空 = 系统等宽" /></label>
+        <p class="hint">可按 CSS 写法给多个后备字体，例如 <code>"Noto Sans SC", sans-serif</code>。标准字体用于全站，等宽字体只用于代码块；留空恢复内置系统字族。</p>
+        <div class="row"><VBtn variant="text" size="small" type="button" @click="resetFonts">恢复默认字体</VBtn></div>
+        <label class="field"><span>背景图地址</span><VTextField density="compact" variant="outlined" hide-details v-model="bgUrl" placeholder="https://…（跨域也可）" /></label>
+        <div class="row">
+          <VBtn color="primary" variant="flat" size="small" type="button" @click="applyBgUrl">应用地址</VBtn>
+          <VBtn variant="text" size="small" type="button" @click="bgFile?.click()">上传图片…</VBtn>
+          <input ref="bgFile" type="file" accept="image/*" hidden @change="pickBgFile" />
+          <VBtn color="error" variant="text" size="small" type="button" @click="clearBg">清除</VBtn>
+        </div>
+        <div class="row"><span class="status">当前背景：{{ bgStatus }}</span></div>
+        <p v-if="bgPreview" class="hint">背景图保存在服务器上 —— 换设备也在。</p>
+      </section>
 
-    <section class="settings-card">
+      <section class="settings-card">
+        <h3>布局</h3>
+        <label class="field"><span>滚动时自动收起顶栏/底栏（仅触屏）</span><VSwitch :model-value="chromeHide" @update:model-value="(v) => setChromeHide(v === true)" color="primary" density="compact" hide-details /></label>
+        <p class="hint">向下浏览时顶栏逐步收起，往回看时底栏逐步收起 —— 一次只收一边，反向滚动就放回来；到顶或到底立刻全部放回。只在触屏上生效。</p>
+      </section>
+
+      <section class="settings-card">
+        <!-- ── markdown 渲染（2026-11-01）──
+             用户口径：「不然瞎解析不好」⇒ 每一类都能单独关掉，关掉的含义是**原样显示**
+             （把 `**粗**` 照字面画出来，而不是悄悄变成"粗"、更不是吃掉标记）。 -->
+        <h3>文本格式（Markdown）</h3>
+        <label class="field"><span>解析 Markdown 格式</span><VSwitch :model-value="mdEnabled" @update:model-value="(v) => setMdEnabled(v === true)" color="primary" density="compact" hide-details /></label>
+        <p class="hint">
+          关闭后，整条消息按<b>原文显示</b>（标记不转换，但换行保留）。
+          开启时，下面每一类格式还能单独关闭 —— 关闭的那一类同样按原文显示。
+        </p>
+        <!-- 类型清单是**后端给的**（`GET /config/prefs` 的 `markdown_types`）：
+             名字与例子都从那儿来，前端不另抄一张表。 -->
+        <div v-for="group in mdGroups" :key="group.kind" class="md-group">
+          <div class="md-group-head">
+            <span>{{ group.title }}</span>
+            <span class="md-group-ops">
+              <VBtn variant="text" size="small" type="button" :disabled="!mdEnabled" @click="disableAll">全部关闭</VBtn>
+              <VBtn variant="text" size="small" type="button" :disabled="!mdEnabled" @click="enableAll">全部开启</VBtn>
+            </span>
+          </div>
+          <label v-for="item in group.items" :key="item.id" class="field md-row">
+            <span>
+              {{ item.name }}
+              <code class="md-sample">{{ item.sample }}</code>
+            </span>
+            <VSwitch :model-value="typeOn(item.id)" :disabled="!mdEnabled" @update:model-value="(on) => toggleType(item.id, on === true)" color="primary" density="compact" hide-details />
+          </label>
+        </div>
+        <p v-if="!mdEnabled" class="hint">总开关关闭时，下面的单项开关不生效（设置会保留，重新打开就恢复）。</p>
+        <p class="hint">
+          <b>HTML 标签一律不解析</b>：程序会先把 <code>&amp;</code> 和 <code>&lt;</code> 转义掉，防止注入脚本。
+        </p>
+        <p class="hint">这一页<b>没有保存按钮</b>：改动立即生效，并保存到服务器。</p>
+      </section>
+    </template>
+
+    <section v-else class="settings-card">
       <h3>输入</h3>
       <label class="field"><span>发送方式</span><VSelect :model-value="send" :items="sendOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details @update:model-value="onSend" /></label>
       <label class="field"><span>输入时预览将要发送的内容</span><VSwitch :model-value="preview" @update:model-value="(v) => setPreview(v === true)" color="primary" density="compact" hide-details /></label>
       <label class="field"><span>命令菜单</span><VSwitch :model-value="cmdMenu" @update:model-value="(v) => setCmdMenu(v === true)" color="primary" density="compact" hide-details /></label>
       <p class="hint">发送方式决定回车怎么用；预览会在输入时先算一遍会发给模型的内容（可在上下文工作区查看）；打开命令菜单后，输入框左侧会出现 ☰，输入 <code>/</code> 会弹出命令列表。</p>
-    </section>
-
-    <section class="settings-card">
-      <!-- ── markdown 渲染（2026-11-01）──
-           用户口径：「不然瞎解析不好」⇒ 每一类都能单独关掉，关掉的含义是**原样显示**
-           （把 `**粗**` 照字面画出来，而不是悄悄变成"粗"、更不是吃掉标记）。 -->
-      <h3>文本格式（Markdown）</h3>
-      <label class="field"><span>解析 Markdown 格式</span><VSwitch :model-value="mdEnabled" @update:model-value="(v) => setMdEnabled(v === true)" color="primary" density="compact" hide-details /></label>
-      <p class="hint">
-        关闭后，整条消息按<b>原文显示</b>（标记不转换，但换行保留）。
-        开启时，下面每一类格式还能单独关闭 —— 关闭的那一类同样按原文显示。
-      </p>
-      <!-- 类型清单是**后端给的**（`GET /config/prefs` 的 `markdown_types`）：
-           名字与例子都从那儿来，前端不另抄一张表。 -->
-      <div v-for="group in mdGroups" :key="group.kind" class="md-group">
-        <div class="md-group-head">
-          <span>{{ group.title }}</span>
-          <span class="md-group-ops">
-            <VBtn variant="text" size="small" type="button" :disabled="!mdEnabled" @click="disableAll">全部关闭</VBtn>
-            <VBtn variant="text" size="small" type="button" :disabled="!mdEnabled" @click="enableAll">全部开启</VBtn>
-          </span>
-        </div>
-        <label v-for="item in group.items" :key="item.id" class="field md-row">
-          <span>
-            {{ item.name }}
-            <code class="md-sample">{{ item.sample }}</code>
-          </span>
-          <VSwitch :model-value="typeOn(item.id)" :disabled="!mdEnabled" @update:model-value="(on) => toggleType(item.id, on === true)" color="primary" density="compact" hide-details />
-        </label>
-      </div>
-      <p v-if="!mdEnabled" class="hint">总开关关闭时，下面的单项开关不生效（设置会保留，重新打开就恢复）。</p>
-      <p class="hint">
-        <b>HTML 标签一律不解析</b>：程序会先把 <code>&amp;</code> 和 <code>&lt;</code> 转义掉，防止注入脚本。
-      </p>
-      <p class="hint">这一页<b>没有保存按钮</b>：改动立即生效，并保存到服务器。</p>
     </section>
   </section>
 </template>

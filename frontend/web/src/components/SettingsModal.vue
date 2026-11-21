@@ -16,9 +16,10 @@ import ModelRulesEditor from "./ModelRulesEditor.vue";
 import type { AgentTemplate } from "./AgentEditor.vue";
 import UpdatePane from "./UpdatePane.vue";
 import TavernInspector from "./TavernInspector.vue";
+import SettingsHome from "./SettingsHome.vue";
 import { ICONS } from "../assets/icons.ts";
 import { sharedApi } from "../utils/prefs.ts";
-import { SETTINGS_TABS, groupModelsByProvider, modelOption, providerChoices, modelChoicesFor, modelKey, parseModelKey, providerDisplayName } from "../utils/format.ts";
+import { SETTINGS_SECTIONS, groupModelsByProvider, modelOption, providerChoices, modelChoicesFor, modelKey, parseModelKey, providerDisplayName } from "../utils/format.ts";
 import type { ModelGroup } from "../utils/format.ts";
 import { downloadJSON, downloadBlob } from "../utils/download.ts";
 import { cartridgeAgent } from "../utils/cartridge.ts";
@@ -66,16 +67,22 @@ const api = sharedApi();
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 const leftSvg = ICONS.panelLeft;
 
-// 六个设置区 + 三个独立管理页（会话 / 渠道 / 智能体）。
-// （「连接」那一区 2026-10-28 删了 —— 理由写在 format.js 的 SETTINGS_TABS 上。）
-const tab = ref(props.only || "chat");
-// 单独入口的页头文字；空串 = 完整设置（显示 VTabs）。
+// 设置目录 + 七个子区（聊天 / 智能体 / 提示词 / 外观 / 输入 / 酒馆 / 更新）。
+// 「会话 / 渠道 / 智能体 / 更新」仍是左栏独立入口，直接落到对应页；完整设置先看目录。
+const tab = ref(props.only || "home");
+// 单独入口的页头文字；空串 = 完整设置（从目录进）。
 const onlyTitle = computed(() => (props.only === "session" ? "会话管理"
   : props.only === "provider" ? "渠道管理"
   : props.only === "agent" ? "智能体"
   : props.only === "update" ? "更新"
   : ""));
-watch(() => props.only, (v) => { tab.value = v || "chat"; });
+// 目录页 / 子区共用一条页头：目录页叫「设置」，进到子区就显示那一区的名字。
+const activeTitle = computed(() => {
+  if (props.only) return onlyTitle.value;
+  if (tab.value === "home") return "设置";
+  return SETTINGS_SECTIONS.find((s) => s.id === tab.value)?.label ?? "设置";
+});
+watch(() => props.only, (v) => { tab.value = v || "home"; });
 const chat = ref<ChatForm>({ title_chars: "", title_model: "", model_context_tokens: "", history_window: "", compact_blocks: "", compact_trigger_tokens: "", replay_reasoning: false, auto_compact: true });
 const chatStatus = ref("");
 const defaults = ref<DefaultsConfig>({ provider: "", model: "", agent: "" });
@@ -498,25 +505,33 @@ function onKey(e: KeyboardEvent): void {
 <template>
   <section id="settings-view" :class="{ 'flow-agent-open': agentFlowOpen }">
     <div class="settings-bar">
-      <VBtn variant="text" size="small" type="button"
+      <!-- 目录页：左边这颗还是“收起会话栏”；进了子区：它变成“返回目录”。
+           同一个位置两种含义 ⇒ 靠 title/aria 与图标区分，不再额外加一颗按钮挤手机宽度。 -->
+      <VBtn
+        v-if="!only && tab !== 'home'"
+        variant="text"
+        size="small"
+        type="button"
+        title="返回设置目录"
+        aria-label="返回设置目录"
+        @click="tab = 'home'"
+      >←</VBtn>
+      <VBtn
+        v-else
+        variant="text"
+        size="small"
+        type="button"
         title="显示/隐藏会话栏"
         aria-label="显示/隐藏会话栏"
         @click="$emit('toggle-left')"
-        v-html="leftSvg"></VBtn>
-      <VTabs
-        v-if="!only"
-        v-model="tab"
-        class="settings-tabs"
-        density="compact"
-        align-tabs="start"
-      >
-        <VTab v-for="t in SETTINGS_TABS" :key="t.id" :value="t.id" @focus="tab = t.id">{{ t.label }}</VTab>
-      </VTabs>
-      <h2 v-else class="settings-title">{{ onlyTitle }}</h2>
+        v-html="leftSvg"
+      ></VBtn>
+      <h2 class="settings-title">{{ activeTitle }}</h2>
       <VBtn icon variant="text" size="small" id="settings-close" type="button" title="退出设置（Esc）" aria-label="退出设置" @click="$emit('close')">
         ×
       </VBtn>
     </div>
+
     <div class="settings-body">
       <div class="settings-box">
         <div class="settings-cols">
@@ -524,6 +539,9 @@ function onKey(e: KeyboardEvent): void {
              否则「渠道 → 设置」会从最后一个 window item 跳回 chat，方向反着走
              （2026-11-06 用户报「有 Tab 效果，而且顺序是错的」）。 -->
         <VTabsWindow v-model="tab" :key="props.only || 'settings'" class="settings-window">
+        <VTabsWindowItem v-if="!only" value="home">
+          <SettingsHome :sections="SETTINGS_SECTIONS" @select="tab = $event" />
+        </VTabsWindowItem>
         <VTabsWindowItem value="chat">
         <section id="panel-chat" class="panel">
           <p class="settings-lead">
@@ -595,10 +613,10 @@ function onKey(e: KeyboardEvent): void {
             <VTable class="plist">
               <thead><tr><th>标题</th><th>消息数</th><th>模型</th><th></th></tr></thead>
               <tbody><tr v-for="s in sessions" :key="s.id" class="clickable" @click="gotoSession(s.id)">
-                <td>{{ s.title || "新会话" }}</td>
-                <td>{{ s.messages }}</td>
-                <td :title="`${s.provider}/${s.model}`">{{ s.model || "—" }}</td>
-                <td class="ops">
+                <td data-label="标题">{{ s.title || "新会话" }}</td>
+                <td data-label="消息数">{{ s.messages }}</td>
+                <td data-label="模型" :title="`${s.provider}/${s.model}`">{{ s.model || "—" }}</td>
+                <td data-label="操作" class="ops">
                   <VBtn variant="text" size="small" type="button" @click.stop="exportSessionRow(s)" title="导出这条对话（含全部消息、摘要，以及使用的渠道、模型和智能体）">导出</VBtn>
                   <VBtn color="error" variant="text" size="small" type="button" @click.stop="askDropSession(s.id, s.title)">删除</VBtn>
                 </td>
@@ -651,11 +669,11 @@ function onKey(e: KeyboardEvent): void {
               <VTable class="plist">
                 <thead><tr><th>名称</th><th>标识</th><th>类型</th><th>描述</th><th>是否默认</th></tr></thead>
                 <tbody><tr v-for="a in agents" :key="a.id" class="clickable" @click="editExistingAgent(a)">
-                  <td>{{ a.name }}</td>
-                  <td class="agent-id" :title="a.id">{{ a.id }}</td>
-                  <td :title="agentTypeTitle(a)">{{ agentType(a) }}</td>
-                  <td class="agent-desc" :title="a.description || ''">{{ a.description || "—" }}</td>
-                  <td class="agent-default" :title="a.id === curDefault ? '新建会话默认使用' : ''">{{ a.id === curDefault ? "✓" : "" }}</td>
+                  <td data-label="名称">{{ a.name }}</td>
+                  <td data-label="标识" class="agent-id" :title="a.id">{{ a.id }}</td>
+                  <td data-label="类型" :title="agentTypeTitle(a)">{{ agentType(a) }}</td>
+                  <td data-label="描述" class="agent-desc" :title="a.description || ''">{{ a.description || "—" }}</td>
+                  <td data-label="默认" class="agent-default" :title="a.id === curDefault ? '新建会话默认使用' : ''">{{ a.id === curDefault ? "✓" : "" }}</td>
                 </tr></tbody>
               </VTable>
             </div>
@@ -690,9 +708,9 @@ function onKey(e: KeyboardEvent): void {
               <VTable class="plist">
                 <thead><tr><th>名称</th><th>内容预览</th><th>谁在用</th></tr></thead>
                 <tbody><tr v-for="s in segmentsLib" :key="s.id" class="clickable" @click="editSeg = s">
-                  <td>{{ s.id }}<i v-if="s.builtin" class="builtin-tag">内置</i><i v-if="s.imported" class="builtin-tag imported" :title="segmentSource(s)">导入</i></td>
-                  <td>{{ s.text.slice(0, 40) }}</td>
-                  <td>{{ segRefs(s.id).join("、") || "—" }}</td>
+                  <td data-label="名称">{{ s.id }}<i v-if="s.builtin" class="builtin-tag">内置</i><i v-if="s.imported" class="builtin-tag imported" :title="segmentSource(s)">导入</i></td>
+                  <td data-label="内容预览">{{ s.text.slice(0, 40) }}</td>
+                  <td data-label="谁在用">{{ segRefs(s.id).join("、") || "—" }}</td>
                 </tr></tbody>
               </VTable>
             </div>
@@ -708,10 +726,13 @@ function onKey(e: KeyboardEvent): void {
           />
         </section>
         </VTabsWindowItem>
-        <!-- 外观（2026-11-01 从删掉的用户视图搬来）：主题 / 缩放 / 背景图 / 显示模式 /
-             滚动收起 / 发送键 / 预演 / 命令菜单。全部即时生效，改了就存。 -->
+        <!-- 外观 / 输入（2026-11-20 用户定拆成两页）：外观 = 主题/缩放/字体/背景/Markdown；
+             输入 = 发送方式/输入时预览/命令菜单。全部即时生效，改了就存。 -->
         <VTabsWindowItem value="appearance">
-          <AppearancePane @prefs-saved="emit('prefs-saved')" />
+          <AppearancePane section="appearance" @prefs-saved="emit('prefs-saved')" />
+        </VTabsWindowItem>
+        <VTabsWindowItem value="input">
+          <AppearancePane section="input" @prefs-saved="emit('prefs-saved')" />
         </VTabsWindowItem>
         <VTabsWindowItem value="tavern">
         <section id="panel-tavern" class="panel">
@@ -730,10 +751,10 @@ function onKey(e: KeyboardEvent): void {
               <VTable class="plist">
                 <thead><tr><th>文件</th><th>大小</th><th>导入时间</th><th></th></tr></thead>
                 <tbody><tr v-for="p in tavernPresets" :key="p.id">
-                  <td :title="p.filename">{{ p.filename }}</td>
-                  <td>{{ sizeText(p.size) }}</td>
-                  <td>{{ timeText(p.created_at) }}</td>
-                  <td class="ops">
+                  <td data-label="文件" :title="p.filename">{{ p.filename }}</td>
+                  <td data-label="大小">{{ sizeText(p.size) }}</td>
+                  <td data-label="导入时间">{{ timeText(p.created_at) }}</td>
+                  <td data-label="操作" class="ops">
                     <VBtn variant="text" size="small" type="button" title="解析预览 / 有效内容与导入 / 原始 JSON" @click="inspectTavernPreset(p)">解析与导入</VBtn>
                     <VBtn variant="text" size="small" type="button" @click="downloadTavernPreset(p)">导出</VBtn>
                     <VBtn color="error" variant="text" size="small" type="button" @click="removeTavernPreset(p)">删除</VBtn>
@@ -771,15 +792,15 @@ function onKey(e: KeyboardEvent): void {
               <VTable class="plist">
                 <thead><tr><th>渠道</th><th>服务商</th><th>模型</th><th>密钥</th><th></th></tr></thead>
                 <tbody><tr v-for="p in providers" :key="p.id" class="clickable" @click="editProvider = p">
-                  <td :title="p.name ? `${p.name}（${p.id}）` : p.id">
+                  <td data-label="渠道" :title="p.name ? `${p.name}（${p.id}）` : p.id">
                     <span class="provider-alias">{{ providerDisplayName(p) }}</span>
                     <!-- 别名之下保留真实 id：列表显示的是人话，但改配置 / 对日志时得能一眼对回内部标识。 -->
                     <code v-if="providerDisplayName(p) !== p.id" class="provider-id">{{ p.id }}</code>
                   </td>
-                  <td :title="p.vendor">{{ p.vendor_name || p.vendor || "?" }}</td>
-                  <td>{{ p.models?.length ?? 0 }} 个<i v-if="p.model_filter" class="io-tag" :title="`只导入匹配：${p.model_filter}`">筛选</i></td>
-                  <td>{{ p.has_key ? "已配置" : "未配置" }}</td>
-                  <td class="ops"><VBtn color="error" variant="text" size="small" type="button" @click.stop="askDeleteProvider(p.id)">删除</VBtn></td>
+                  <td data-label="服务商" :title="p.vendor">{{ p.vendor_name || p.vendor || "?" }}</td>
+                  <td data-label="模型">{{ p.models?.length ?? 0 }} 个<i v-if="p.model_filter" class="io-tag" :title="`只导入匹配：${p.model_filter}`">筛选</i></td>
+                  <td data-label="密钥">{{ p.has_key ? "已配置" : "未配置" }}</td>
+                  <td data-label="操作" class="ops"><VBtn color="error" variant="text" size="small" type="button" @click.stop="askDeleteProvider(p.id)">删除</VBtn></td>
                 </tr></tbody>
               </VTable>
             </div>

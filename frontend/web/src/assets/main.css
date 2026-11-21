@@ -1199,6 +1199,20 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
   border-radius: 0 var(--r-sm) var(--r-sm) 0; background: var(--md-surface-container-low);
   color: var(--md-on-surface-variant); font-size: var(--md-type-body-small); line-height: 1.55; }
 .settings-lead b { color: var(--md-on-surface); font-weight: 600; }
+/* 设置目录首页（2026-11-20 用户定「一步到位全量重排」）：顶层从一排 tab 换成一张目录卡。
+ * 手机上不用再把六个 tab 挤进 390px；桌面按内容自动换列。 */
+.settings-home-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(13.5em, 1fr)); gap: 0.7em; }
+.settings-home-card { display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto; align-items: center; column-gap: 0.7em;
+  padding: 0.85em 0.95em; border: 1px solid var(--md-outline-variant); border-radius: var(--md-shape-md);
+  background: var(--md-surface-container-low); color: var(--md-on-surface); text-align: left; cursor: pointer;
+  transition: background-color var(--md-dur-150) var(--md-ease-standard), border-color var(--md-dur-150) var(--md-ease-standard), transform var(--md-dur-100) var(--md-ease-standard); }
+.settings-home-card:hover { background: var(--md-surface-container); border-color: color-mix(in srgb, var(--md-primary) 35%, var(--md-outline-variant)); }
+.settings-home-card:active { transform: scale(0.985); }
+.settings-home-icon { grid-row: 1 / 3; width: 2.35em; height: 2.35em; display: grid; place-items: center;
+  color: var(--md-on-primary-container); background: var(--md-primary-container); border-radius: 50%; }
+.settings-home-icon svg { width: 1.15em; height: 1.15em; }
+.settings-home-title { font-size: var(--md-type-title-small); font-weight: 600; line-height: 1.25; }
+.settings-home-desc { grid-column: 2; color: var(--md-on-surface-variant); font-size: var(--md-type-body-small); line-height: 1.35; }
 /* 按钮旁的一句话（保存范围、是否落库、是否影响已有数据）：比底部大段 hint 更贴动作。 */
 .action-note { color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); line-height: 1.4; }
 .action-row { align-items: center; }
@@ -1207,9 +1221,32 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
   border-radius: 0 var(--r-sm) var(--r-sm) 0; background: var(--md-error-container);
   color: var(--md-on-error-container); font-size: var(--md-type-body-small); line-height: 1.55; }
 .field-warning b { font-weight: 600; }
-/* 列表（会话/Agent/渠道）：与会话卡片同一张"底"，窄屏可横滚。 */
+/* 列表（会话/智能体/渠道/片段/酒馆）：桌面仍是表；手机上改成“一行一卡”，
+ * 字段标签用 data-label 顶在内容上面 —— 表格语义保留，视觉不再横向滚。 */
 .settings-cols .panel table.plist { background: var(--md-surface-container-low); border-radius: var(--md-shape-md); margin: 0 0 0.5em; border-collapse: separate; border-spacing: 0; overflow: hidden; }
-#session-mgr-list, #agent-list, #provider-list, #prompt-list { overflow-x: auto; }
+#session-mgr-list, #agent-list, #provider-list, #prompt-list, #tavern-file-list { overflow-x: auto; }
+@media (max-width: 700px) {
+  #settings-view .v-table.plist,
+  #settings-view .v-table.plist .v-table__wrapper,
+  #settings-view .v-table.plist table,
+  #settings-view .v-table.plist tbody { display: block !important; width: 100%; overflow: visible; }
+  #settings-view .v-table.plist thead { display: none !important; }
+  #settings-view .v-table.plist tr { display: flex !important; flex-direction: column; gap: 0.35em;
+    margin: 0 0 0.6em; padding: 0.7em 0.85em; background: var(--md-surface-container-low);
+    border: 1px solid var(--md-outline-variant); border-radius: var(--md-shape-md); }
+  #settings-view .v-table.plist tr:hover td { background: none; }
+  #settings-view .v-table.plist td { display: flex !important; flex-direction: column; gap: 0.12em;
+    width: auto !important; max-width: none !important; text-align: left !important;
+    padding: 0.1em 0; border: none !important; white-space: normal; }
+  #settings-view .panel-head { flex-direction: column; align-items: flex-start; gap: 0.45em; }
+  #settings-view .panel-head .head-btns { width: 100%; justify-content: flex-start; }
+  #settings-view .panel-head .head-btns .v-select { flex: 1 1 100%; min-width: 0; }
+  #settings-view .v-table.plist td::before { content: attr(data-label); color: var(--md-on-surface-variant);
+    font-size: var(--md-type-label-small); line-height: 1.25; }
+  #settings-view .v-table.plist td.ops { flex-direction: row; flex-wrap: wrap; gap: 0.25em; }
+  #settings-view .v-table.plist td.ops::before { margin-right: 0.15em; }
+  #settings-view .v-table.plist td.ops .v-btn { min-height: 2.35em; }
+}
 /* 提示词片段表三列：名称 / 内容预览 / 谁在用 —— 定宽 + 省略号，
  * 不然长预览会把「谁在用」挤出卡片（看起来像被裁掉了）。 */
 #agent-list table { table-layout: fixed; }
@@ -1239,19 +1276,19 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .settings-cols .panel .field, .settings-cols .panel .row { background: none; margin: 0; padding: 0.7em 0.2em; line-height: 1.45; border-top: 1px solid var(--md-outline-variant); border-radius: 0; }
 .settings-cols .panel h3 + .field, .settings-cols .panel h3 + .row,
 .settings-cols .panel > .field:first-child, .settings-cols .panel > .row:first-child { border-top: none; }
-/* 设置页统一 760 居中（列表页有表格，但切 tab 时宽度不该跳来跳去）。
+/* 设置页统一 760 居中（列表页有表格，但切页时宽度不该跳来跳去）。
  * `.settings-card` 现在只是分节容器，不再有底色/圆角/内边距 —— 视觉上是一条平铺列表。 */
-#panel-appearance, #panel-chat, #panel-session, #panel-agent, #panel-prompt, #panel-provider {
+#panel-appearance, #panel-input, #panel-chat, #panel-session, #panel-agent, #panel-prompt, #panel-provider, #panel-update {
   max-width: 760px; margin: 0 auto;
 }
 .settings-card { background: none; border-radius: 0; padding: 0; margin: 0 0 1.4em; }
-/* 更新页：版本号用等宽数字，git 原文单独滚动。 */
-.update-version { margin: 0.7em 0 0.2em; display: flex; flex-direction: column; gap: 0.15em; }
+/* 更新页（2026-11-20 用户定“压成两块简洁版式”）：版本 / PWA 双卡，关于独立收底。 */
+.update-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(18em, 1fr)); gap: 0.8em; align-items: start; }
+.update-version-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(13em, 1fr)); gap: 0.7em; margin: 0.7em 0 0.2em; }
 .update-block { display: flex; flex-direction: column; gap: 0.15em; }
-.pwa-block { margin: 0.7em 0 0.2em; }
 .update-section-title { margin: 0 0 0.35em; font-size: var(--md-type-title-small); font-weight: 600; color: var(--md-on-surface); }
-.update-divider { margin: 1em 0; }
-.update-auto { display: flex; align-items: center; justify-content: space-between; gap: 1em; margin: 0.9em 0 0.2em; color: var(--md-on-surface); }
+.update-auto { display: flex; align-items: center; justify-content: space-between; gap: 1em; margin: 0.5em 0 0.2em; color: var(--md-on-surface); }
+.update-about-card { margin-top: 0.9em; }
 .update-row { display: flex; align-items: baseline; gap: 0.55em; font-size: var(--md-type-body-medium); }
 .update-row > span { color: var(--md-on-surface-variant); }
 .update-row code { font-family: var(--app-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); }
