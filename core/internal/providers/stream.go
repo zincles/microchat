@@ -54,18 +54,22 @@ type ToolEvent struct {
 }
 
 // ToolCall：模型发起的一次客户端 function call（流式里按 index 累积）。
+// TextOffset：该调用出现在本轮正文中的 rune 偏移；由 chat 层统一补上，0 也是合法值。
 type ToolCall struct {
-	ID        string
-	Name      string
-	Arguments string
+	ID         string
+	Name       string
+	Arguments  string
+	TextOffset *int
 }
 
 // Result：一次流式调用的结局 —— **整段**正文 + 整段思考 + 归一化后的用量 + 工具调用。
+// FinishReason：OpenAI-compatible Chat Completions 的停止原因；Responses 没有这格。
 type Result struct {
-	Text      string
-	Reasoning string
-	Usage     json.RawMessage
-	ToolCalls []ToolCall
+	Text         string
+	Reasoning    string
+	Usage        json.RawMessage
+	ToolCalls    []ToolCall
+	FinishReason string
 }
 
 // UpstreamError：上游报的错（非 2xx，或 200 开着流却在帧里报 error 对象）。
@@ -268,7 +272,8 @@ func (c *Client) streamResponseUpstream(ctx context.Context, request *http.Reque
 // streamChunk：一帧的 JSON（OpenAI 兼容的流式形状）。
 type streamChunk struct {
 	Choices []struct {
-		Delta streamDelta `json:"delta"`
+		Delta        streamDelta `json:"delta"`
+		FinishReason string      `json:"finish_reason"`
 	} `json:"choices"`
 	Usage json.RawMessage `json:"usage"`
 	// Error：有些上游 200 开着流再报错（形状各家不同，只取人话那一句）。
@@ -326,16 +331,18 @@ func readStream(status int, body io.Reader, onDelta func(Delta)) (Result, error)
 		}
 		var chunk streamChunk
 		if json.Unmarshal([]byte(data), &chunk) != nil {
-			continue // 心跳 / 注释 / 别家的私货：跳过，别让一个怪帧打断整条流
+			continue // 心跳 / 注释 / 别家私货：跳过，不打断整条流
 		}
 		if chunk.Error != nil {
 			return Result{}, &UpstreamError{Status: status, Body: snippet(data)}
 		}
-		// 用量在最后一个 chunk 里报告；一路覆盖，最后那个为准
 		if usage := NormalizeUsage(chunk.Usage); len(usage) > 0 {
 			result.Usage = usage
 		}
 		for _, choice := range chunk.Choices {
+			if choice.FinishReason != "" {
+				result.FinishReason = choice.FinishReason
+			}
 			for _, delta := range choice.Delta.ToolCalls {
 				call, exists := calls[delta.Index]
 				if !exists {
@@ -368,10 +375,22 @@ func readStream(status int, body io.Reader, onDelta func(Delta)) (Result, error)
 	for _, index := range callOrder {
 		result.ToolCalls = append(result.ToolCalls, *calls[index])
 	}
+	if isToolCallFinishReason(result.FinishReason) && len(result.ToolCalls) == 0 {
+		return Result{}, fmt.Errorf("providers: 上游以 %q 停止，但没有完整的 tool call", result.FinishReason)
+	}
 	if result.Text == "" && len(result.ToolCalls) == 0 {
 		return Result{}, ErrEmpty
 	}
 	return result, nil
+}
+
+func isToolCallFinishReason(reason string) bool {
+	switch strings.ToLower(strings.TrimSpace(reason)) {
+	case "tool_call", "tool_calls", "function_call", "function_calls":
+		return true
+	default:
+		return false
+	}
 }
 
 // toolEventFromType：从完整 SSE 帧认出 `response.<kind>_call.<state>`，并保留

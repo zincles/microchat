@@ -511,3 +511,29 @@ func TestServerMessageToolsKeepsTextOffsets(t *testing.T) {
 		t.Fatalf("offsets = %+v", got)
 	}
 }
+
+func TestLocalToolCallsCarryTextOffset(t *testing.T) {
+	declared := []providers.Tool{providers.FunctionTool("web_search", "", json.RawMessage(`{"type":"object"}`))}
+	call := providers.ToolCall{ID: "call_1", Name: "web_search", Arguments: `{}`, TextOffset: new(7)}
+	if err := validateToolCalls([]providers.ToolCall{call}, declared); err != nil {
+		t.Fatal(err)
+	}
+	if got := call.TextOffset; got == nil || *got != 7 {
+		t.Fatalf("text offset = %v", got)
+	}
+}
+
+func TestValidateToolCallsRejectsMalformedCalls(t *testing.T) {
+	declared := []providers.Tool{providers.FunctionTool("web_search", "", json.RawMessage(`{"type":"object"}`))}
+	tests := []providers.ToolCall{
+		{Name: "web_search", Arguments: `{}`},
+		{ID: "call_1", Arguments: `{}`},
+		{ID: "call_1", Name: "web_search", Arguments: "{"},
+		{ID: "call_1", Name: "web_fetch", Arguments: `{}`},
+	}
+	for i, call := range tests {
+		if err := validateToolCalls([]providers.ToolCall{call}, declared); err == nil {
+			t.Errorf("case %d should be rejected", i)
+		}
+	}
+}

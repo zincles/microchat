@@ -491,4 +491,15 @@ func TestReadStreamAccumulatesToolCalls(t *testing.T) {
 	if call.ID != "call_1" || call.Name != "web_search" || call.Arguments != `{"query":"xAI"}` {
 		t.Fatalf("call = %+v", call)
 	}
+	if result.FinishReason != "tool_calls" {
+		t.Fatalf("finish reason = %q", result.FinishReason)
+	}
+}
+
+func TestReadStreamRejectsToolStopWithoutCall(t *testing.T) {
+	body := "data: {\"choices\":[{\"delta\":{\"content\":\"先说一句\"},\"finish_reason\":\"tool_call\"}]}\n\ndata: [DONE]\n\n"
+	_, err := readStream(200, strings.NewReader(body), nil)
+	if err == nil || !strings.Contains(err.Error(), "没有完整的 tool call") {
+		t.Fatalf("expected malformed tool call error, got %v", err)
+	}
 }

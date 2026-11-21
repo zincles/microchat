@@ -318,6 +318,16 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 			break
 		}
 		serverTools := serverMessageTools(toolOrder, toolEvents, toolOffsets)
+		if len(result.ToolCalls) > 0 {
+			offset := utf8.RuneCountInString(statelang.Scan(roundText.String()).Cleaned)
+			for i := range result.ToolCalls {
+				result.ToolCalls[i].TextOffset = new(offset)
+			}
+			if callErr := validateToolCalls(result.ToolCalls, tools); callErr != nil {
+				err = callErr
+				break
+			}
+		}
 		if len(result.ToolCalls) == 0 {
 			lastServerTools = serverTools
 			break
@@ -348,7 +358,7 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 			roundTools = append(roundTools, model.MessageTool{
 				Source: "client", ToolName: call.Name, ItemID: call.ID,
 				Arguments: call.Arguments, Result: content, Sources: sources, Status: status,
-				Queries: localToolQueries(call),
+				Queries: localToolQueries(call), TextOffset: call.TextOffset,
 			})
 			chatMessages = append(chatMessages, providers.ChatMessage{
 				Role: "tool", Content: content, ToolCallID: call.ID, Name: call.Name,
@@ -523,6 +533,33 @@ func (s *Service) assistantMessage(session model.Session, replyID string, token 
 }
 
 func ptrInt64(value int64) *int64 { return &value }
+
+// validateToolCalls：模型返回的 function call 进入执行器前必须是可配对、可解析、已声明的调用。
+// 服务端原生工具不走这条路径；它们由 providers 的 Responses 事件直接记录。
+func validateToolCalls(calls []providers.ToolCall, declared []providers.Tool) error {
+	allowed := make(map[string]bool)
+	for _, tool := range declared {
+		if tool.Function != nil && tool.Function.Name != "" {
+			allowed[tool.Function.Name] = true
+		}
+	}
+	for _, call := range calls {
+		if strings.TrimSpace(call.ID) == "" {
+			return errors.New("上游返回了没有 id 的工具调用")
+		}
+		name := strings.TrimSpace(call.Name)
+		if name == "" {
+			return fmt.Errorf("工具调用 %q 缺少名称", call.ID)
+		}
+		if !allowed[name] {
+			return fmt.Errorf("模型请求了未声明的本地工具 %q", name)
+		}
+		if raw := strings.TrimSpace(call.Arguments); raw == "" || !json.Valid([]byte(raw)) {
+			return fmt.Errorf("工具 %q 的 arguments 不是合法 JSON", name)
+		}
+	}
+	return nil
+}
 
 // toolNames：请求里工具声明的名字（server 工具用 type，function 工具用 name），
 // 存进消息的 tools_snapshot —— 记录"生成时可用什么"，不表示实际调用。
