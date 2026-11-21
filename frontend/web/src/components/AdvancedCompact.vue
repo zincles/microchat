@@ -134,16 +134,16 @@ const stateText = (state: AdvancedChunk["state"] | AdvancedJob["state"] | string
     <div class="adv-config">
       <label class="field"><span>{{ repair ? "检查范围（留空 = 整条对话）" : "消息范围（从第几条到第几条）" }}</span>
         <span class="adv-range">
-          <VTextField v-model="begin" class="adv-input" type="number" min="1" placeholder="begin" aria-label="起始消息序号" density="compact" variant="outlined" hide-details />
+          <VTextField v-model="begin" class="adv-input" type="number" min="1" placeholder="起始" aria-label="起始消息序号" density="compact" variant="outlined" hide-details />
           <span>–</span>
-          <VTextField v-model="end" class="adv-input" type="number" min="1" placeholder="end" aria-label="结束消息序号" density="compact" variant="outlined" hide-details />
+          <VTextField v-model="end" class="adv-input" type="number" min="1" placeholder="结束" aria-label="结束消息序号" density="compact" variant="outlined" hide-details />
         </span>
       </label>
       <label class="field"><span>每次压缩的对话段数</span><VTextField v-model="step" class="adv-input" type="number" min="1" max="64" density="compact" variant="outlined" hide-details /></label>
       <label class="field"><span>同时处理数量</span><VTextField v-model="concurrency" class="adv-input" type="number" min="1" max="8" density="compact" variant="outlined" hide-details /></label>
       <label class="field"><span>每段最多尝试次数</span><VTextField v-model="attempts" class="adv-input" type="number" min="1" max="10" density="compact" variant="outlined" hide-details /></label>
       <div class="row">
-        <VBtn variant="tonal" size="small" :disabled="busy" @click="loadPreview">{{ repair ? "检查待补区间" : "查看压缩方案" }}</VBtn>
+        <VBtn variant="tonal" size="small" :disabled="busy || !props.sessionId" @click="loadPreview">{{ repair ? "检查待补区间" : "查看压缩方案" }}</VBtn>
         <VBtn color="primary" variant="flat" size="small" :disabled="busy || !preview || !preview.total_requests" @click="start">开始压缩</VBtn>
         <VBtn v-if="job?.state === 'running'" color="error" variant="text" size="small" @click="cancel">取消任务</VBtn>
         <span class="status">{{ error }}</span>
@@ -151,7 +151,7 @@ const stateText = (state: AdvancedChunk["state"] | AdvancedJob["state"] | string
     </div>
 
     <p v-if="!props.sessionId" class="empty">（尚未创建对话，暂时没有可压缩内容。）</p>
-    <p v-else-if="!preview && !job" class="empty">{{ repair ? "点「检查待补区间」看看有哪些内容还没压缩" : "填写消息范围后点「查看压缩方案」；这一步不会发送请求" }}</p>
+    <p v-else-if="!preview && !job" class="empty">{{ repair ? "点「检查待补区间」查看未覆盖的范围；这一步不调用模型或写入摘要。" : "填写消息范围后点「查看压缩方案」；这一步不调用模型或写入摘要。" }}</p>
 
     <template v-if="preview">
       <div class="adv-summary">

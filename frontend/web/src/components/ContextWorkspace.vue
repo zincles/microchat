@@ -69,10 +69,9 @@ defineExpose({
         @saved="() => emit('flow-saved')" @edit-agent="(id) => emit('edit-flow-agent', id)" />
     </section>
     <template v-else>
-    <!-- 草稿态：还没会话 ⇒ 面板里全是空话。明说一句，别让人以为面板坏了。
-         （不给"面板照样渲染"的选择：那三条 tab 在草稿里确实一个字都没有。） -->
+    <!-- 草稿可以预览请求，但还没有存库的历史与世界状态。 -->
     <p v-if="!props.hasSession" class="ws-draft-note">
-      这是新对话（草稿）：发第一句之后，这里会有这一发真发出去的请求、当前世界状态、压缩金字塔。
+      当前为新对话草稿：可以预览输入内容组成的请求；世界状态与历史压缩在建立会话后可用。
     </p>
     <PayloadBar
       ref="inner"

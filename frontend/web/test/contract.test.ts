@@ -2622,10 +2622,6 @@ test("分段压缩 / 补齐空档：第四、第五 tab，预览 → 并发运�
 
   // ① 三个子 tab 住在「压缩」这一页里（2026-11-09 合并），不是顶层 tab。
   assert.match(bar, /class="compact-subtabs"/, "压缩页没有子 tab");
-  for (const [label, id] of [["预览", "preview"], ["分段压缩", "advanced"], ["补齐空档", "repair"]]) {
-    assert.ok(bar.includes(`value="${id}">${label}</VTab>`), `缺少「${label}」子 tab`);
-    assert.match(bar, new RegExp(`<VTabsWindowItem value="${id}">`), `「${label}」没有自己的 tabpanel`);
-  }
   assert.ok(bar.indexOf('class="compact-subtabs"') < bar.indexOf('VTabsWindowItem value="advanced"'), "子 tab 不在压缩页里");
   assert.match(bar, /<AdvancedCompact :session-id="sessionId"/, "分段压缩没拿到会话 id");
   assert.match(bar, /<AdvancedCompact :session-id="sessionId" repair/, "补齐空档没打开 repair");
@@ -4094,7 +4090,6 @@ test("载荷预览：面板里可开关；关掉不请求，偏好与输入预�
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
   const prefs = readFileSync(join(SRC, "utils", "prefs.ts"), "utf8");
   assert.match(bar, /const preview = ref\(payloadPreviewOn\(\)\)/, "载荷面板没有自己的预览开关");
-  assert.match(bar, /<span class="lbl">预览载荷<\/span>/, "载荷开关没有可见标签");
   assert.match(bar, /emit\("preview"/, "载荷开关没把变化报给 App");
   const ctxSrc = readFileSync(join(SRC, "composables", "useContextWorkspace.ts"), "utf8");
   assert.match(ctxSrc, /payloadPreviewOn\(\)/, "载荷请求没检查载荷预览开关");

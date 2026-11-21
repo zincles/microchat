@@ -309,7 +309,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
  * 两层都滚会让 contain 把链式滚动断在"滚不动的那一层"上（2026-10-17 在右栏踩过同样的坑）。 */
 #context-workspace { flex: 1; min-height: 0; display: flex; flex-direction: column;
   /* 与聊天页共用顶栏实测高度，切换工作区时保持同一条内容起始线。 */
-  padding: calc(var(--topbar-h, 3.2em) + 1.2em) 0.8em 0.7em; gap: 0.4em; }
+  padding: calc(var(--topbar-h, 3.2em) + 1.2em) 0 0.7em; gap: 0.4em; }
 /* 草稿态那句提示：**平铺一行小字**（2026-10-29 用户：「不需要面板…完全可以平铺」——
  * 连这条提示也不该是一块虚线框；它不是内容，是一句说明）。 */
 .ws-draft-note { flex: none; margin: 0 auto 0.6em; max-width: var(--read-col, 840px); width: 100%; box-sizing: border-box; background: var(--md-surface-container-low); color: var(--md-on-surface-variant); border-radius: var(--md-shape-md); padding: 1em 1.2em; font-size: var(--md-type-body-medium); line-height: 1.6; }
@@ -461,19 +461,30 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
  * 才带气泡）⇒ 这一块照它来：透明、无圆角、无内边距，宽度对齐阅读列，字色走正文那套。
  * 只保留"纵向 flex + 让 pane 自己滚"这两条结构性的东西（那是 2026-10-17 立的规矩）。 */
 .ws-panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 0.5em;
-  max-width: var(--read-col, 840px); width: 100%; margin: 0 auto;
+  max-width: var(--read-col, 840px); width: calc(100% - 1.2em); margin: 0 auto;
   background: none; border-radius: 0; padding: 0;
-  font-size: 0.92em; color: var(--tg-text); box-sizing: border-box; }
+  font-size: 1em; color: var(--tg-text); box-sizing: border-box; }
 /* 三个面板：占满 tabs 以下的空间、自己滚（`contain` 在这儿才有意义 —— 它就是那个滚动者）。
  * 载荷/状态是普通长文，必须自己 `overflow-y: auto`；压缩面板里面还有一层子窗口，
  * 真正的滚动者是最内层的 `.compact-preview-pane`，所以它自己反而 `overflow: hidden`。 */
-#payload-pane, #state-view { height: 100%; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
-#compact-tree { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; overscroll-behavior: contain; }
-.compact-subtabs { flex: none; align-self: flex-start; margin: 0 0 0.25em; }
+#payload-pane, #state-view { height: 100%; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 1em var(--chat-inset) 1.5em; }
+#compact-tree { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; overscroll-behavior: contain; padding-top: 1em; }
+.compact-subtabs { flex: none; max-width: 100%; margin: 0; padding: 0 var(--chat-inset); }
+.compact-subtabs .v-tab { min-width: 0 !important; padding: 0 0.3em !important; font-size: 0.9em !important; text-transform: none; }
+.workspace-intro, .workspace-action-note { margin: 0 0 1em; color: var(--md-on-surface-variant); font-size: var(--md-type-body-medium); line-height: 1.6; }
+.compact-intro { flex: none; padding: 0 var(--chat-inset); }
+.workspace-action-note { font-size: var(--md-type-label-medium); }
+.workspace-section-head, .state-table-head { display: flex; align-items: baseline; flex-wrap: wrap; justify-content: space-between; gap: 0.4em 1em; }
+.workspace-section-head { margin-bottom: 1em; }
+.context-count { color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
+.workspace-empty { padding: 1.5em 0; color: var(--md-on-surface-variant); font-size: var(--md-type-body-medium); }
+.workspace-empty strong { display: block; color: var(--md-on-surface); font-weight: 500; }
+.workspace-empty p { margin: 0.4em 0 0; }
 .compact-subwindow { flex: 1 1 auto; min-height: 0; }
 .compact-subwindow > .v-window__container { height: 100% !important; min-height: 0; }
 .compact-subwindow .v-window-item { height: 100% !important; min-height: 0; }
 .compact-preview-pane { height: 100%; overflow-y: auto; overscroll-behavior: contain; }
+.compact-preview-pane, #advanced-compact, #repair-compact { padding: 1em var(--chat-inset) 1.5em; box-sizing: border-box; }
 #outgoing-raw { white-space: pre; overflow-x: auto; margin: 0; max-width: 100%; }
 /* 内置段的标记（代码里内嵌、只读 —— 2026-10-11）。 */
 .builtin-tag { font-style: normal; font-size: 0.78em; color: var(--tg-link); border: 1px solid currentColor; border-radius: var(--r-xs); padding: 0 0.25em; margin-left: 0.4em; }
@@ -490,8 +501,11 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .seg-assembled pre { white-space: pre-wrap; word-break: break-word; max-height: 20em; overflow-y: auto;
   background: var(--hover); padding: 0.5em 0.6em; border-radius: var(--r-sm); }
 /* 载荷栏"分块视图"（用户点名 2026-10-11）：body.messages 一块块矩形画出来（角色徽标 + 内容）。 */
-.pv-toolbar { display: flex; align-items: center; gap: 0.5em; margin: 0 0 0.6em; color: var(--md-on-surface-variant); }
-.pv-toolbar .lbl { font-size: var(--md-type-label-medium); }
+.pv-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 0.65em; margin: 0 0 1em; color: var(--md-on-surface-variant); }
+.pv-toolbar .v-input { flex: 0 0 auto; }
+.pv-toolbar .v-label { font-size: var(--md-type-label-large); }
+.workspace-view-toggle { flex: none; margin-left: auto; }
+.workspace-view-toggle .v-btn { min-width: 0; padding-inline: 0.8em; text-transform: none; }
 /* 「折叠全部」（2026-10-29 用户定）。**平铺的手感**：没有边框、没有底色，只是一行可点的字 ——
  * 与 .pv-role / .pv-chip 那套一致（这三页现在都是裸文本 + 细线，不放盒子）。
  * margin-left:auto 把它推到行的右端：它是"收拾"动作，不抢左边那些控件的位置。
@@ -548,13 +562,12 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .pv-content.pv-empty { color: var(--md-on-surface-variant); }
 .pv-extra { margin-top: 0.35em; padding-top: 0.35em; border-top: 1px solid var(--md-outline-variant); color: var(--md-on-surface-variant); font-size: var(--md-type-body-small); white-space: pre-wrap; word-break: break-word; }
 /* 压缩树（文件管理器那种看体积的树）：缩进行 + 行底容量条（du 味）。 */
-#compact-tree { font-size: 0.92em; }
 /* 压缩面板的"块数 + 压缩"一行。 */
-.ctree-actions { display: flex; gap: 0.4em; margin: 0.2em 0 0.7em; }
-.ctree-actions .blocks-input { flex: 1; min-width: 0; }
+.ctree-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 0.65em; margin: 0 0 0.8em; }
+.ctree-actions .blocks-input { flex: 1 1 10em; max-width: 13em; min-width: 0; }
 .ctree-actions .v-btn { flex: none; }
 /* 压缩页顶上那行：左边是总量，右边是「折叠全部」（2026-10-29）。 */
-.ctree-head { display: flex; align-items: baseline; gap: 0.5em; margin: 0.2em 0 0.6em; }
+.ctree-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.5em; margin: 1em 0 0.6em; }
 .ctree-total { color: var(--md-on-surface); font-size: var(--md-type-label-medium); }
 /* 压缩那发的载荷（「看载荷」按钮拉回来的那一发）—— 复用 .pv-* 那套渲染，只补它自己的头。
    放"载荷 tab"里也行，但那是**这一轮要发的**；压缩是另一发，混在一起会让人认错。 */
@@ -663,11 +676,13 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .context-window .v-window-item { height: 100% !important; min-height: 0; }
 #payload-pane, #state-view, #compact-tree, #advanced-compact, #repair-compact { height: 100%; box-sizing: border-box; }
 #advanced-compact, #repair-compact { overflow-y: auto; overscroll-behavior: contain; }
-.context-tabs .v-tab { min-width: 0 !important; padding: 0.4em 0.65em !important; text-transform: none; font-size: 1.15em !important; font-weight: 500 !important; letter-spacing: 0.006em; }
+.context-tabs .v-tab { flex: 1 1 0; min-width: 0 !important; padding: 0.4em 0.3em !important; text-transform: none; font-size: 1em !important; font-weight: 500 !important; letter-spacing: 0; }
 
 /* 高级压缩 / 修洞（2026-11-05）：配置 + 计划 + 作业进度，都是平铺文本，不做卡片。 */
 .adv-pane { padding: 0.2em 0 1em; }
-.adv-config { margin-bottom: 0.6em; }
+.adv-config { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.8em 1.5em; margin-bottom: 1em; }
+.adv-config > .row { grid-column: 1 / -1; flex-wrap: wrap; }
+@media (max-width: 700px) { .adv-config { grid-template-columns: minmax(0, 1fr); } }
 .adv-range { display: flex; align-items: center; gap: 0.35em; }
 .adv-range .v-input { width: 5.2em; }
 .adv-summary { display: flex; flex-wrap: wrap; gap: 0.35em 0.9em; align-items: baseline; padding: 0.55em 0; color: var(--md-on-surface-variant); font-size: var(--md-type-label-medium); border-bottom: 1px solid var(--md-outline-variant); }
@@ -692,11 +707,13 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 @media (prefers-reduced-motion: reduce) { .adv-dot.running { animation: none; } }
 /* 状态表：表名小标题 + 键值行（键暗、值亮）。滚动与 tabs 常驻见上面 #payload-pane 那组规则。 */
 #state-view .state-table { margin: 0 0 0.9em; }
-#state-view h4 { color: var(--md-primary); font-size: var(--md-type-label-medium); font-weight: 500; letter-spacing: 0.04em; margin: 0.7em 0 0.25em; }
-#state-view .state-row { display: flex; gap: 0.6em; padding: 0.35em 0.2em; border-bottom: 1px solid var(--md-outline-variant); }
+.state-table-head { padding: 0.8em 0; border-bottom: 1px solid var(--md-outline-variant); }
+#state-view h4 { color: var(--md-primary); font-size: var(--md-type-label-large); font-weight: 500; margin: 0; overflow-wrap: anywhere; }
+#state-view .state-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 1em; padding: 0.7em 0; border-bottom: 1px solid var(--md-outline-variant); }
 #state-view .state-row:last-child { border-bottom: none; }
-#state-view .k { flex: none; color: var(--md-on-surface-variant); }
-#state-view .v { flex: 1; color: var(--md-on-surface); word-break: break-word; }
+#state-view .k { color: var(--md-on-surface-variant); overflow-wrap: anywhere; }
+#state-view .v { color: var(--md-on-surface); overflow-wrap: anywhere; white-space: pre-wrap; }
+.state-table-empty { padding: 0.8em 0; color: var(--md-on-surface-variant); font-size: var(--md-type-body-medium); }
 /* 会话列表自己滚（此前没有任何滚动规则 ⇒ 会话一多直接被裁掉，移动端抽屉里更是够不着）。 */
 #session-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0.15em 0.35em 0.45em; }
 .session-group-head { padding: 0.5em 0.5em 0.15em; color: var(--tg-hint); font-size: 0.68em; letter-spacing: 0.04em; line-height: 1.2; }
@@ -1426,7 +1443,7 @@ button.danger:hover { background: color-mix(in srgb, var(--md-error) 8%, transpa
 /* 等宽数字（2026-11-02）：这一族数字会随流式/滚动变化，宽度不一就会左右跳。
  * 以前 14 条规则各写一遍 `font-variant-numeric`，现在只在这里写一次。 */
 .model-group-count, .task-time, .task-progress, .ctx-used, .ctx-pct,
-.ctx-val, .pv-idx, .msg-ident, .msg-foot,
+.ctx-val, .pv-idx, .msg-ident, .msg-foot, .context-count,
 .sum-range, .sum-pos, .scale-value { font-variant-numeric: tabular-nums; }
 
 
