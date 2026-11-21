@@ -5220,3 +5220,15 @@ test("流式合并：服务端从 0 重放整段时替换而不是重复追加",
   assert.equal(delta.text, "hello");
   assert.equal(delta.reasoning, "think");
 });
+
+test("流式合并：一条游标推进时另一条重复回放也不重复追加", () => {
+  const merged = mergeStreamSlice(
+    { text: "正文", reasoning: "思考" },
+    { from: 6, thinkFrom: 6 },
+    { text: "正文", thinking: "继续", next: 6, think_next: 12 },
+  );
+  assert.deepEqual(merged, {
+    text: "正文", reasoning: "思考继续",
+    cur: { from: 6, thinkFrom: 12 }, reset: false,
+  });
+});

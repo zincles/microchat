@@ -90,20 +90,23 @@ export function mergeStreamSlice(
 ): MergedStream {
   const reset = slice.next < cur.from || slice.think_next < cur.thinkFrom;
   if (reset) return { text: "", reasoning: "", cur: { from: 0, thinkFrom: 0 }, reset: true };
-  // **同一个游标读两次**（网络重试 / 迟到的重复响应）不许把同一段再追加一遍。
-  if (slice.next === cur.from && slice.think_next === cur.thinkFrom) {
-    return { text: acc.text, reasoning: acc.reasoning, cur, reset: false };
-  }
-  // SSE 断线重连或 HTTP 回退时，服务端可能忽略客户端游标、从 0 重放整段。
-  // `next` 是字节游标：整段重放的字节数等于 next，而正常增量只等于 next-cur。
-  // 用这个区分并**替换**累积器，否则客户端会把整段再追加一次（“文字重复、刷新才恢复”）。
-  const replay = (text: string | undefined, next: number, base: string): boolean =>
-    !!text && next > 0 && utf8Length(text) === next && text.startsWith(base);
-  const replayText = replay(slice.text, slice.next, acc.text);
-  const replayThinking = replay(slice.thinking, slice.think_next, acc.reasoning);
+  // 正文与思考各有独立游标：一个通道前进时，另一个通道可能只是重复回放。
+  // 不能只在“两枚游标都相同”时去重，否则思考流推进的那一帧会把重复正文再追加一次，反之亦然。
+  const mergeChannel = (
+    accText: string,
+    chunk: string | undefined,
+    next: number,
+    from: number,
+  ): string => {
+    if (next === from) return accText;
+    const value = chunk ?? "";
+    // SSE 重连从 0 重放整段：用字节游标确认后替换，而不是追加。
+    if (value && next > 0 && utf8Length(value) === next && value.startsWith(accText)) return value;
+    return accText + value;
+  };
   return {
-    text: replayText ? (slice.text ?? "") : acc.text + (slice.text ?? ""),
-    reasoning: replayThinking ? (slice.thinking ?? "") : acc.reasoning + (slice.thinking ?? ""),
+    text: mergeChannel(acc.text, slice.text, slice.next, cur.from),
+    reasoning: mergeChannel(acc.reasoning, slice.thinking, slice.think_next, cur.thinkFrom),
     cur: { from: slice.next, thinkFrom: slice.think_next },
     reset: false,
   };
