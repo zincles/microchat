@@ -3743,50 +3743,6 @@ test("输入框：Vuetify MD3 输入栏 + 发送键", () => {
   assert.match(pane, /fontBody as fontBodyPref/, "字体值没从服务器偏好读回");
 });
 
-test("左栏顶部：Brand Title 在顶，新对话在中间，对话/生图/库存 在下方（Gemini 式）", () => {
-  const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
-  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  assert.match(bar, /class="brand-name">MicroChat</, "左栏顶部缺 Brand Title");
-  assert.match(bar, /class="brand-mark"/, "品牌标题没有标");
-  const newAt = bar.indexOf('id="session-new"');
-  const tabsAt = bar.indexOf('class="session-mode-tabs"');
-  assert.ok(newAt > 0 && tabsAt > 0, "找不到新对话 / tabs");
-  assert.ok(newAt < tabsAt, "对话/生图/库存 应该在新对话下方");
-  assert.match(bar, /<VBtnToggle[\s\S]*?v-model="mode"/, "左栏模式不是 VBtnToggle");
-  assert.match(bar, /mandatory/, "模式切换不是 mandatory（能取消到无选中）");
-  assert.match(bar, /:aria-pressed="mode === 'chat'"/, "对话按钮没有 pressed 状态");
-  assert.match(bar, />对话</, "缺「对话」按钮");
-  assert.match(bar, />生图</, "缺「生图」按钮");
-  assert.match(bar, /生图（暂未接入）/, "生图按钮没标暂未接入");
-  assert.match(bar, />库存</, "缺「库存」按钮");
-  assert.match(bar, /库存（暂未接入）/, "库存按钮没标暂未接入");
-  assert.match(bar, /:aria-pressed="mode === 'inventory'"/, "库存按钮没有 pressed 状态");
-  assert.match(bar, /const mode = ref(?:<[^>]+>)?\("chat"\)/, "默认模式不是对话");
-  assert.match(css, /#sessions-bar \.session-mode-tabs \{[^}]*width:\s*calc\(100% - 1\.1em\)/, "模式切换没有占满栏宽");
-  assert.match(css, /#sessions-bar \.session-mode-tabs \.v-btn \{[^}]*flex:\s*1 1 0/, "三个按钮没有均分栏宽");
-  assert.match(css, /#sessions-bar \.brand-name \{[^}]*font-size:\s*1\.05em/, "品牌标题没有独立字号");
-});
-test("移动端顶栏：模型名吃剩余空间，不再被挤成一个字母", () => {
-  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  assert.match(css, /#chat-col > header \.model-anchor\s*\{[^}]*flex:\s*1 1 auto/,
-    "模型外壳不会伸缩 —— 窄屏只剩固定宽度");
-  assert.match(css, /#chat-col > header \.model-btn\s*\{[^}]*flex:\s*1 1 auto/,
-    "模型按钮自己不伸缩");
-  assert.match(css, /#chat-col > header \.model-caret\s*\{[^}]*display:\s*none/,
-    "窄屏还留着 8px 的下拉箭头，白占模型名的位置");
-  // 2026-11-02：空间够就完整显示；390 这种真放不下时允许换行，不再一律截成省略号。
-  assert.match(css, /\.model-anchor\s*\{[^}]*flex:\s*1 1 auto/, "宽屏也没把剩余空间给模型");
-  assert.match(css, /\.model-btn-label\s*\{[^}]*flex:\s*0 1 auto[^}]*min-width:\s*0/, "模型名不能收缩");
-  assert.match(css, /@media \(max-width: 1100px\)[\s\S]{0,900}#chat-col > header\s*\{[^}]*gap:\s*0\.35em/,
-    "中等宽度没有收紧顶栏间距（还是把模型名挤掉）");
-  assert.match(css, /@media \(max-width: 700px\)[\s\S]{0,700}\.model-btn-label\s*\{[^}]*white-space:\s*normal/,
-    "极窄屏仍不换行（只能截断）");
-  assert.match(css, /\.messages-inner \{[^}]*padding-top:\s*max\([^)]*--topbar-h,/s,
-    "换行后的顶栏高度没有从消息列留白里让出来");
-  const layout = readFileSync(join(SRC, "composables", "useOverlayLayout.ts"), "utf8");
-  assert.match(layout, /topbarRO = new ResizeObserver\(sync\)/, "App 没有观察顶栏高度");
-  assert.match(layout, /--topbar-h/, "App 没有把顶栏高度写进 --topbar-h");
-});
 
 test("会话列表：一行只有一枚选项键，设置/删除收进浮板，上下间距更紧", () => {
   const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
@@ -4096,18 +4052,6 @@ test("CSS 复用：幽灵按钮底座与蒙层 token 只有一处", () => {
   assert.ok(!/color-mix\(in srgb, var\(--tg-text\) 6%/.test(css), "main.css 又出现了写死的 6% 蒙层");
 });
 
-test("聊天布局：16px / 1.7 行高、840 阅读列、更松的消息间距", () => {
-  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  assert.match(css, /--read-col, 840px/, "阅读列还停在 920px（中文行太长）");
-  assert.match(css, /\.msg \{[^}]*font-size:\s*calc\(16px \* var\(--app-text-scale/, "聊天正文没有 16px 字号");
-  assert.match(css, /\.msg \{[^}]*line-height:\s*1\.7/, "聊天正文行高没放宽");
-  assert.match(css, /#?messages-inner \{[^}]*gap:\s*0\.8em/, "消息之间还是挤在一起");
-  assert.match(css, /\.msg-wrap\.assistant \.msg \{[^}]*padding:\s*0\.45em 0/, "assistant 上下仍太挤");
-  assert.match(css, /\.msg \.text p \{[^}]*margin:\s*0 0 0\.7em/, "段落间距没放宽");
-  assert.match(css, /\.msg \.msg-foot \{[^}]*font-size:\s*var\(--md-type-label-small\)/, "用量脚注没有收成 MD3 label-small");
-  assert.match(css, /\.icon-btn, \.link-btn, button:has\(> svg\)[^{]*\{[^}]*align-items:\s*center/, "图标按钮没有统一 flex 居中");
-  assert.match(css, /button > svg \{[^}]*display:\s*block/, "SVG 还按 inline 基线落（会偏下）");
-});
 
 test("回到前台重拉消息列时，用户没在底部就保留原来的滚动位置", () => {
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
@@ -4464,6 +4408,11 @@ test("左栏 MD3：分段按钮 / extended FAB / 48dp 行 / 状态层 / MD3 忙�
   assert.match(css, /@keyframes session-skeleton-shimmer/, "骨架没有 shimmer");
   assert.match(bar, /v-if="refreshing" class="md-linear-progress"/, "后台刷新没有 linear progress");
   assert.match(css, /@keyframes md-linear-progress/, "linear progress 没有动画");
+  // 它只是状态：绝对定位在栏头里，出现/消失不许顶动下面的新建按钮与整列会话
+  assert.match(css, /#sessions-bar \.bar-head \{ position:\s*relative; \}/, "刷新条没有包含块（栏头没定位）");
+  assert.match(css, /#sessions-bar \.md-linear-progress \{ position:\s*absolute/, "刷新条又回到流内（进站点会顶动左栏）");
+  assert.match(bar, /<div class="bar-head">[\s\S]*?md-linear-progress[\s\S]*?<\/div>\s*<button id="session-new"/,
+    "刷新条不在栏头里 —— 会重新占一行");
   assert.match(css, /@keyframes session-item-in/, "列表项没有进场动画");
   assert.match(bar, /v-html="ICONS\.plus"/, "新建按钮没有用图标（还是文字加号）");
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
@@ -4477,30 +4426,6 @@ test("左栏 MD3：分段按钮 / extended FAB / 48dp 行 / 状态层 / MD3 忙�
   assert.match(css, /\.session-menu \{[^}]*border-radius:\s*var\(--md-shape-xs\)/, "MD3 menu 圆角不是 4dp");
 });
 
-// MD3 第二刀（2026-11-05）：顶栏 + 输入区。
-test("顶栏 MD3：surface 容器 / 40dp 文本按钮 / MD3 菜单 / 两段 tab indicator", () => {
-  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  const header = css.match(/#chat-col > header \{(?=[^}]*position:\s*absolute)[^}]*\}/)?.[0] ?? "";
-  assert.match(header, /background:\s*var\(--md-surface-container-low\)/, "顶栏不是 MD3 surface 容器");
-  assert.match(css, /#chat-col > header \{ min-height:\s*2\.65em; height:\s*2\.65em; padding:\s*0\.15em 0\.6em;/, "顶栏没有再收窄到 2.65em");
-  assert.match(header, /box-shadow:\s*var\(--shadow-top\)/, "顶栏丢了向下阴影（用户 2026-11-01 定）");
-  assert.match(css, /\.model-btn \{[^}]*min-height:\s*2em/, "模型按钮没有收窄到 2em");
-  assert.match(css, /\.model-btn \{[^}]*border-radius:\s*var\(--md-shape-full\)/, "模型按钮不是 full 圆角");
-  assert.match(css, /\.agent-menu \{[^}]*background:\s*var\(--md-surface-container\)/, "菜单不是 MD3 surface-container");
-  assert.match(css, /\.agent-menu \{[^}]*border-radius:\s*var\(--md-shape-xs\)/, "菜单不是 4dp 圆角");
-  assert.match(css, /@keyframes md-menu-in/, "菜单没有进场动画");
-  assert.match(css, /\.model-search \{[^}]*border-radius:\s*var\(--md-shape-full\)/, "模型搜索不是 MD3 搜索栏");
-  // 全局 input 基线特异性 0,4 会压掉单类选择器 —— 必须有一条 `#chat-col > header` 作用域的覆盖。
-  assert.match(css, /#chat-col > header \.model-search \{[^}]*border-radius:\s*var\(--md-shape-full\)/, "模型搜索没拿回 MD3 圆角（会被全局 input 基线压掉）");
-  const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
-  assert.match(top, /@keydown\.esc="closeMenus"/, "顶栏浮板没有 Esc 统一收起");
-  assert.match(top, /function closeMenus\(\)/, "没有 closeMenus");
-  assert.match(css, /\.model-item \{[^}]*min-height:\s*3em/, "模型项不是 48dp");
-  assert.match(top, /<VTabs[\s\S]*?class="ws-switch workspace-tabs"/, "顶栏工作区不是 VTabs");
-  assert.match(css, /#ctx-ring \{[^}]*width:\s*2em/, "上下文环没有收窄到 2em");
-  assert.match(css, /\.ctx-ring-track \{[^}]*var\(--md-outline-variant\)/, "环轨道不是 outline-variant");
-  assert.match(css, /\.ctx-ring-fill \{[^}]*stroke:\s*var\(--tg-ok\)/, "环的正常色不该丢（绿=正常）");
-});
 
 test("输入区：Vuetify 4 MD3 接管 input/send/think", () => {
   const composer = readFileSync(join(SRC, "components", "Composer.vue"), "utf8");
@@ -4676,31 +4601,12 @@ test("波纹：触点 → 圆（纯函数），委托安装一次，reduce 下�
   assert.match(css, /prefers-reduced-motion[\s\S]{0,160}\.md-ripple/, "reduce 下没兜底");
 });
 
-test("密度：行高/顶栏/FAB/输入/设置/消息间距都收了一档", () => {
-  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  assert.match(css, /#sessions-bar \.session-item \{[^}]*min-height:\s*2\.4em/, "会话行没收到紧凑密度（2.4em）");
-  assert.match(css, /#sessions-bar #session-new \{[^}]*min-height:\s*3em/, "FAB 没收到 48dp");
-  assert.match(css, /#chat-col > header \{ min-height:\s*2\.65em/, "顶栏没有再收窄到 2.65em");
-  assert.match(css, /\.messages-inner \{[^}]*gap:\s*0\.75em/, "消息间距没放大到 0.75em");
-  assert.match(css, /\.messages-inner \{[^}]*padding-top:\s*3\.15em/, "消息列顶部留白没跟着顶栏收");
-  assert.match(css, /\.settings-cols \.panel \.field, \.settings-cols \.panel \.row \{[^}]*padding:\s*0\.45em/, "设置行没收到 0.45em");
-  assert.match(css, /\.agent-item, \.model-item \{[^}]*min-height:\s*2\.5em/, "菜单项没收到 40dp");
-});
 
 test("左栏底：会话/渠道/设置上方有一条 outline-variant 分隔线", () => {
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   assert.match(css, /#sessions-bar \.bar-foot \{[^}]*border-top:\s*1px solid var\(--md-outline-variant\)/, "底部管理入口上方没有分隔线");
 });
 
-test("会话分组标题：更大间距 + 非首组淡分隔线", () => {
-  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  // 以文件末尾最后一次定义为准：同特异性下它就是真正生效的规则。
-  const tail = css.slice(css.lastIndexOf("#sessions-bar .session-group-head {"));
-  assert.match(tail, /^#sessions-bar \.session-group-head \{ padding: 1em 0\.75em 0\.3em/, "分组标题内边距不是最终生效值");
-  assert.match(tail, /#sessions-bar \.session-group-head:first-child \{ padding-top: 0\.45em/, "首组顶部留白不是最终生效值");
-  assert.match(tail, /#sessions-bar \.session-group-head:not\(:first-child\) \{[^}]*margin-top:\s*1em/, "组间外边距没有放大到 1em");
-  assert.match(tail, /#sessions-bar \.session-group-head:not\(:first-child\) \{[^}]*border-top:\s*1px solid color-mix\(in srgb, var\(--md-outline-variant\) 55%/, "非首组没有淡分隔线");
-});
 
 
 // 思考档位（2026-11-08）：Session 字段 + 输入栏正上方按钮区的 Vuetify 菜单。

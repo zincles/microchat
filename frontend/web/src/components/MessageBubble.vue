@@ -237,28 +237,26 @@ watch(() => props.streaming, (s) => nextTick(() => {
           <div v-for="(ln, j) in b.lines" :key="j" class="state-line">{{ ln }}</div>
         </div>
       </div>
-      <!-- 脚注（2026-11-09 用户定）：编号 + 用量 + 首字延迟 + 速度合成一行，贴着正文底部。
-           只在 assistant 这边；用户消息的身份在气泡外（下面那行，hover 才显形）。
-           生成中 / 库外那条没有这些数 ⇒ `foot` 为空 ⇒ 整行不渲染。 -->
-      <div v-if="role !== 'user' && foot" class="msg-foot" :title="footTitle">{{ foot }}</div>
     </div>
-    <div v-if="canEdit" class="msg-ops">
-      <!-- 用户身份（2026-11-09 用户定）：从气泡里挪到**气泡外的动作行**，CSS 里只在 hover 时显形。
-           放在这里而不是单独一行：单独占位会在每条你说的话下面永远留一道空行。 -->
-      <span v-if="role === 'user' && ident" class="msg-ident">{{ ident }}</span>
-      <VBtn icon variant="text" size="small" title="改正文" aria-label="改正文" @click="emit('edit', messageId, 'content')" v-html="ICONS.pencil" />
-      <VBtn v-if="role !== 'user'" icon variant="text" size="small" title="改思考" aria-label="改思考" @click="emit('edit', messageId, 'reasoning')" v-html="ICONS.brain" />
-      <VBtn v-if="role !== 'user' && isLast && promptId" icon variant="text" size="small" color="primary" class="prompt-edit-btn" title="编辑最新 Prompt（编辑这条回复对应的用户输入）" aria-label="编辑最新 Prompt" @click="emit('edit-prompt', promptId)" v-html="ICONS.notebookPen" />
-      <VBtn v-if="role !== 'user' && isLast" icon variant="text" size="small"
-        :title="flow ? '重新生成（用当前历史重跑流程）' : '重摇（摇新的一版并切过去）'"
-        :aria-label="flow ? '重新生成（用当前历史重跑流程）' : '重摇（摇新的一版并切过去）'"
-        @click="flow ? emit('regenerate', messageId) : emit('reroll', messageId)" v-html="ICONS.refresh" />
-      <template v-if="!flow && role !== 'user' && isLast && reroll && reroll.active">
-        <VBtn icon variant="text" size="small" title="上一版" aria-label="上一版" @click="emit('reroll-go', -1)">◀</VBtn>
-        <span class="reroll-pos">{{ reroll.running ? `${reroll.current_idx}→${reroll.count}` : `${reroll.current_idx}/${reroll.count}` }}</span>
-        <VBtn icon variant="text" size="small" title="下一版（到最右再按 = 再摇一版）" aria-label="下一版" @click="emit('reroll-go', 1)">▶</VBtn>
-      </template>
-      <VBtn icon variant="text" size="small" color="error" title="删除这条及之后" aria-label="删除这条及之后" @click="emit('delete', messageId, isLast)" v-html="ICONS.trash" />
+    <div v-if="canEdit || (role !== 'user' && foot)" class="msg-footer">
+      <div v-if="canEdit" class="msg-ops">
+        <!-- 身份与操作常驻同一行，用户身份沿用 hover / focus 显示。 -->
+        <span v-if="role === 'user' && ident" class="msg-ident">{{ ident }}</span>
+        <VBtn icon variant="text" size="small" title="改正文" aria-label="改正文" @click="emit('edit', messageId, 'content')" v-html="ICONS.pencil" />
+        <VBtn v-if="role !== 'user'" icon variant="text" size="small" title="改思考" aria-label="改思考" @click="emit('edit', messageId, 'reasoning')" v-html="ICONS.brain" />
+        <VBtn v-if="role !== 'user' && isLast && promptId" icon variant="text" size="small" color="primary" class="prompt-edit-btn" title="编辑最新 Prompt（编辑这条回复对应的用户输入）" aria-label="编辑最新 Prompt" @click="emit('edit-prompt', promptId)" v-html="ICONS.notebookPen" />
+        <VBtn v-if="role !== 'user' && isLast" icon variant="text" size="small"
+          :title="flow ? '重新生成（用当前历史重跑流程）' : '重摇（摇新的一版并切过去）'"
+          :aria-label="flow ? '重新生成（用当前历史重跑流程）' : '重摇（摇新的一版并切过去）'"
+          @click="flow ? emit('regenerate', messageId) : emit('reroll', messageId)" v-html="ICONS.refresh" />
+        <template v-if="!flow && role !== 'user' && isLast && reroll && reroll.active">
+          <VBtn icon variant="text" size="small" title="上一版" aria-label="上一版" @click="emit('reroll-go', -1)">◀</VBtn>
+          <span class="reroll-pos">{{ reroll.running ? `${reroll.current_idx}→${reroll.count}` : `${reroll.current_idx}/${reroll.count}` }}</span>
+          <VBtn icon variant="text" size="small" title="下一版（到最右再按 = 再摇一版）" aria-label="下一版" @click="emit('reroll-go', 1)">▶</VBtn>
+        </template>
+        <VBtn icon variant="text" size="small" color="error" title="删除这条及之后" aria-label="删除这条及之后" @click="emit('delete', messageId, isLast)" v-html="ICONS.trash" />
+      </div>
+      <div v-if="role !== 'user' && foot" class="msg-foot" :title="footTitle">{{ foot }}</div>
     </div>
   </div>
 </template>

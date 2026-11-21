@@ -187,8 +187,10 @@ defineExpose({ setSessions });
           v-html="ICONS.panelLeft"
         ></button>
       </span>
+      <!-- 刷新条钉在栏头底边：它只是状态，不占布局 —— 曾放在栏头与新建按钮之间，
+           进入站点时出现/消失会把下面整列（新建、模式切换、列表）顶动一次。 -->
+      <div v-if="refreshing" class="md-linear-progress" role="progressbar" aria-label="正在刷新会话列表"><span></span></div>
     </div>
-    <div v-if="refreshing" class="md-linear-progress" role="progressbar" aria-label="正在刷新会话列表"><span></span></div>
     <button id="session-new" type="button" :title="newTitle" :disabled="mode === 'inventory'" @click="onNew">
       <span class="plus" aria-hidden="true" v-html="ICONS.plus"></span><span class="label">{{ newLabel }}</span>
     </button>

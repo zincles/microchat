@@ -1394,8 +1394,9 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
 - **消息列编号与摘要卡**（2026-10-10 加；2026-11-09 身份上移）：assistant 的身份在**正文顶部**：`助手-对话#4` / `助手-工具#4`（`kind=tool_run` 才叫工具；`assistantIdentity`，纯函数）。user 身份仍在气泡外 hover 才显形（`你 #2`）。编号用服务端 `idx`；库外的（乐观用户句、生成中那一发）按**后缀顺延**（线性追加 ⇒ 顺延号就是将来的真号）；纯合成的"失败"气泡不给号。被**顶层摘要**（没爹的那层 —— 金字塔只露最外）盖住的一段折成**四面圆角卡**（不是气泡）：头 `Summary #a-b`（+`脏`）、正文 = 摘要文本（发给模型的就是这份）、`查看未压缩文本` 展开原始气泡（**只读、无操作行** —— 用户定：展开里不许编辑/修改）。口径全在 `utils/chatrows.ts`（纯函数，契约测试钉住）；端点悬空/不在场 ⇒ 不折（宁可露原文）。卡头右侧三件（2026-10-10 加）：`⟳` 刷新 = 摘要重摇 —— **当前那版先占第 1 版、不丢**（seedSummary 的规矩），摇完自动切最新版；生成走 compact 的"只生成、不落库"半程、**非流式**（卡头标「刷新中…」，没有流式预览）；`✎` 编辑 = 应用内模态编辑器（`/editsum` 同一条路 —— 原生 `window.prompt` 退休）；重摇模式活着时 `◀ n/N ▶`（与气泡同一套语义，最右 ▶ 再按 = 再摇一版）。消息/摘要两族共用一把闸：一族在跑，另一族进模式 ⇒ 后端 409、前端 toast。候选只在内存（发新消息 / 切会话 / 重启就散 —— 应用的那版已在库里）。
 - **消息编辑是独立模态**（2026-11-02 用户定；2026-11-09 改用 Vuetify）：气泡上的「改正文 / 改思考」只 `emit('edit', messageId, kind)`，由 `MessageEditor.vue` 开 **`VDialog` + `VCard` + `VTextarea`**（`attach="#app"`、96vw × 92vh；文本框撑满剩余高度、取消/保存/保存并重摇固定在底部右侧、Esc 关闭）。轻量弹窗（会话设置 / 模型编辑 / 摘要编辑）统一用 `ModalShell.vue`（同样是 VDialog/VCard）；**别退回手写 `.modal`**：`z-index: 20` 会被 `VNavigationDrawer`（1004）压住，VDialog 的 overlay 是 2400 且带焦点陷阱；网页全屏 = 只铺满 `#app`（不是浏览器 Fullscreen API）。不再把气泡就地换成 textarea，/edit 也不再走原生 `window.prompt`。保存 PATCH 后父组件 `reloadWindow()` + `refreshStateView()`。**保存并重摇**的合法位置只有两种（`utils/chatrows.ts` 的 `editRerollTarget`）：尾条 assistant 自己，或**紧挨着它前面的那条 user**（user2 后面只剩 AI2 ⇒ 编辑 user2 也能重摇 AI2）。其它位置不画，避免按了必败；先 PATCH 保存，再 `rerollNow(rerollTargetId)`。尾条 assistant 的底栏还有**「编辑最新 Prompt」**（2026-11-02 用户定）：A-B-C-D-E-F 时直接开 E 的编辑器，不用翻回去点 E（按钮是 `ICONS.notebookPen` **记事本+笔图标**，不是纯文字大按钮；aria/title 仍写明）；目标由 `latestPromptFor` 算（最新 assistant 之前最近的一条 user），只在 `isLast` 的 assistant 上画。右上角还有**网页全屏**切换（2026-11-03 用户定：不要浏览器 Fullscreen API、不占用户整块屏幕）：`expanded` class 把 `.message-edit-box` 从 96vw × 92vh 铺成 `#app` 的 100% × 100%，图标用 `ICONS.maximize` / `ICONS.minimize`，不再有「全屏」两个字。
 - **聊天阅读排版**（2026-11-03 用户定：「布局不专业」的整改）：阅读列 `--read-col` 从 920 收到 **840**；
-  聊天正文 `font-size: calc(16px * --app-text-scale)`、`line-height: 1.7`；消息之间 `gap: .8em`、
-  assistant 上下 `padding: .45em 0`、段落 `margin-bottom: .7em`；用量脚注 `.7em`、略提对比度但仍是小字。
+  聊天正文 `font-size: calc(16px * --app-text-scale)`、`line-height: 1.7`；消息之间 `gap: 1.5em`，段落 `margin-bottom: .7em`。
+  **结构统一（2026-11-21）**：正文与输入卡同宽（上限 840px），共用 `--chat-inset`（桌面 24px / 手机 16px，随缩放变化）；移除旧头像的 56px 占位。助手身份在正文上方；操作与用量在正文外的 `.msg-footer`，宽屏同排、窄屏换行，不隐藏操作、不省略用量。
+  输入区下方的配置组是「助手 / 推理 / 工具」，发送独立靠右；配置可换行，发送不被挤走。顶栏桌面最小 48px；≤480px 分成「开关 + 模型」与「工作区 + 状态环」两行，避免放大字体时模型名零宽。聊天与上下文页都按 `--topbar-h` 实测值让位，不另写固定顶部留白。颜色仍只来自 Vuetify 主题。
   ⚠ 编号 `#idx` 与操作行是**用户明确要求常显**的（2026-11-03）：五个按钮（改正文/改思考/编辑最新 Prompt/重摇/删除）任何时候都显示，`.msg-ops` 常驻 opacity **0.72**、hover 才到 1；`.hover-only` 已删。别按"OpenWebUI 都 hover"去藏。
   改回 920/15px 之前先量中文行宽（~60 字一行太长）。
 - **会话列表只留标题**（2026-11-04 用户定：「除了标题，其他啥元数据也不需要」）：`#session-list` 自己留 `0.25em 0.45em` 内边距；条目**只显示标题**（消息条数、相对时间都删了；`relativeTime` 纯函数也删）；关闭/设置两枚按钮改成线性图标（`ICONS.x` / `ICONS.settings`），圆形幽灵按钮、hover 才给底。
@@ -1534,12 +1535,8 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   状态层与波纹由 `v-tab` 自己管；旧 `.ws-tab` / `.bar-head.bar-tabs .tab` 已删。
   `prefers-reduced-motion` 下**整个不做**。⚠ 圆心 left/top 是**相对宿主**的，
   `rippleSpec` 必须减 `rect.left/top`（漏过：圆画到视口坐标、被裁掉 ⇒ 像没生效）。
-  **密度**（2026-11-06 用户：「MD3 padding 太浪费」；2026-11-07 会话列表再收紧）：
-  `main.css` 末尾一块密度覆盖 —— 会话行 48→**≈37px**（`min-height:2.4em`，图标键同步 2.4em）、
-  分组标题 `0.55em/0.75em/0.2em`（首组 0.32em）、列表内边距 `0.12em/0.3em/0.4em`、
-  顶栏 56→39.75、FAB 56→48、输入框 ~69→55、菜单 48→40、设置行 0.7→0.45em、
-  消息间距 0.8→0.75em（2026-11-09 因消息头不再显示，留一点呼吸）。**只改尺寸不改语义**：8dp 圆角、state layer、secondary-container 选中态、
-  label-large 字号全部保留；要整体调松/调紧只改这一块。
+  **密度**：会话行保持约 37px（`min-height:2.4em`）、菜单约 40px、设置字段 `0.45em`。聊天页几何在基础规则维护，不再用末尾密度覆盖重写顶栏高度、阅读留白与输入区 padding；侧栏品牌、新建、模式切换和列表统一 0.8em 横向边距，历史分组只用留白区分。
+  只改尺寸与层级，不改 MD3 state layer、选中态与字体角色。
   ⚠ 字体：2026-11-06 已按 MD3 换成自托管 **Roboto Flex**（旧 Inter 删除）；`--app-font-body` 的自定义
   字体仍排第一，没配时落 Roboto Flex → 系统 → 中文字族。
 - **高延迟（1s+ RTT）下的界面口径**（2026-11-05 用户定：「优化服务器和用户之间存在 1000ms 以上延迟的极端场景」）：

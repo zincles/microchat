@@ -93,13 +93,21 @@ defineExpose({ submit, clear, setText, text, setRunning });
         @keydown="onKeydown"
       />
       <div class="composer-toolbar">
-        <slot name="toolbar" />
-        <ToolsMenu
-          v-if="!flow"
-          :available="nativeTools"
-          :disabled="nativeToolsDisabled"
-          @toggle="(id, on) => $emit('toggle-native-tool', id, on)"
-        />
+        <div class="composer-options">
+          <slot name="toolbar" />
+          <ThinkingMenu
+            v-if="!flow && thinkingOptions.length"
+            :model-value="thinking"
+            :options="thinkingOptions"
+            @update:model-value="selectThinking"
+          />
+          <ToolsMenu
+            v-if="!flow"
+            :available="nativeTools"
+            :disabled="nativeToolsDisabled"
+            @toggle="(id, on) => $emit('toggle-native-tool', id, on)"
+          />
+        </div>
         <div class="composer-top-actions">
           <VBtn
             v-if="props.menuOn"
@@ -114,12 +122,6 @@ defineExpose({ submit, clear, setText, text, setRunning });
           >
             <span v-html="ICONS.menu"></span>
           </VBtn>
-          <ThinkingMenu
-            v-if="!flow && thinkingOptions.length"
-            :model-value="thinking"
-            :options="thinkingOptions"
-            @update:model-value="selectThinking"
-          />
           <VBtn
             id="send-btn"
             type="button"
@@ -149,27 +151,22 @@ defineExpose({ submit, clear, setText, text, setRunning });
   flex-direction: column;
   width: 100%;
   min-width: 0;
-  border: 1px solid color-mix(in srgb, var(--md-outline) 20%, transparent);
-  box-shadow:
-    0 4px 12px rgba(0, 0, 0, 0.02),
-    0 2px 4px rgba(0, 0, 0, 0.04);
-  transition: border-color 160ms var(--md-ease-standard, ease), box-shadow 160ms var(--md-ease-standard, ease);
+  border: 1px solid var(--md-outline-variant);
+  box-shadow: var(--md-elev-1);
+  transition: border-color var(--md-dur-150) var(--md-ease-standard);
 }
 .composer-shell:focus-within {
-  border-color: color-mix(in srgb, var(--md-primary) 55%, transparent);
-  box-shadow:
-    0 4px 14px rgba(0, 0, 0, 0.035),
-    0 2px 5px rgba(0, 0, 0, 0.05);
+  border-color: var(--md-primary);
 }
 .composer-shell :deep(.v-field) {
   background: transparent;
   border-radius: inherit;
 }
 .composer-shell :deep(.v-field__input) {
-  min-height: 48px;
-  padding: 12px 16px;
-  font-size: 16px;
-  line-height: 24px;
+  min-height: 3em;
+  padding: 0.75em var(--chat-inset);
+  font-size: calc(16px * var(--app-text-scale, 1));
+  line-height: 1.5;
 }
 .composer-shell :deep(.v-field__outline) {
   display: none;
