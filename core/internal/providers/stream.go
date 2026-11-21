@@ -374,12 +374,21 @@ func readStream(status int, body io.Reader, onDelta func(Delta)) (Result, error)
 	return result, nil
 }
 
-// toolEventFromType：从 `response.<kind>_call.<state>` 认出服务端工具状态。
-//
-// 不写死 kind/state：xAI 的工具列表会变（web_search / x_search / code_interpreter /
-// image_generation / mcp / shell …），只要上游沿用 `*_call.<state>` 这一套，就能显示。
-// 只认以 `.` 分开的两段，别把 `response.completed` 或 `..._call_code.delta` 误认成工具。
-func toolEventFromType(eventType string) *ToolEvent {
+// toolEventFromType：从完整 SSE 帧认出 `response.<kind>_call.<state>`，并保留
+// Responses API 给出的 `item_id`。这个 id 不能从 event type 推出来；丢掉它会让
+// chat.run 只能在 `output_item.done` 时才登记工具，正文偏移就会落在搜索完成之后。
+func toolEventFromType(raw string) *ToolEvent {
+	var envelope struct {
+		Type   string `json:"type"`
+		ItemID string `json:"item_id"`
+		Item   struct {
+			ID string `json:"id"`
+		} `json:"item"`
+	}
+	if json.Unmarshal([]byte(raw), &envelope) != nil {
+		return nil
+	}
+	eventType := envelope.Type
 	const prefix = "response."
 	if !strings.HasPrefix(eventType, prefix) {
 		return nil
@@ -397,7 +406,11 @@ func toolEventFromType(eventType string) *ToolEvent {
 	if kind == "" || kind == "reasoning" || kind == "message" {
 		return nil
 	}
-	return &ToolEvent{Kind: kind, State: state}
+	itemID := strings.TrimSpace(envelope.ItemID)
+	if itemID == "" {
+		itemID = strings.TrimSpace(envelope.Item.ID)
+	}
+	return &ToolEvent{ItemID: itemID, Kind: kind, State: state}
 }
 
 // toolEventFromOutputItem：`response.output_item.done` 里的 web_search_call 带
@@ -527,7 +540,7 @@ func readResponseStream(status int, body io.Reader, onDelta func(Delta)) (Result
 		default:
 			// 工具调用：response.web_search_call.in_progress / .searching / .completed
 			// （X 搜索同理；代码执行的上游事件名是 code_interpreter_call）。
-			if event := toolEventFromType(envelope.Type); event != nil {
+			if event := toolEventFromType(data); event != nil {
 				if onDelta != nil {
 					onDelta(Delta{Tool: event})
 				}

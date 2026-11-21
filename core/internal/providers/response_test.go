@@ -223,17 +223,19 @@ func TestResolveProtocolFallsBackToConfiguredProtocol(t *testing.T) {
 
 func TestResponseStreamReportsServerToolStates(t *testing.T) {
 	sseBody := strings.Join([]string{
-		"data: {\"type\":\"response.web_search_call.in_progress\"}",
+		`data: {"type":"response.web_search_call.in_progress","item_id":"ws_1"}`,
 		"",
-		"data: {\"type\":\"response.web_search_call.searching\"}",
+		`data: {"type":"response.web_search_call.searching","item_id":"ws_1"}`,
 		"",
-		"data: {\"type\":\"response.web_search_call.completed\"}",
+		`data: {"type":"response.web_search_call.completed","item_id":"ws_1"}`,
 		"",
-		"data: {\"type\":\"response.code_interpreter_call.interpreting\"}",
+		`data: {"type":"response.web_search_call.in_progress","item_id":"ws_2"}`,
 		"",
-		"data: {\"type\":\"response.output_text.delta\",\"delta\":\"好\"}",
+		`data: {"type":"response.code_interpreter_call.interpreting","item_id":"code_1"}`,
 		"",
-		"data: {\"type\":\"response.completed\",\"response\":{}}",
+		`data: {"type":"response.output_text.delta","delta":"好"}`,
+		"",
+		`data: {"type":"response.completed","response":{}}`,
 		"",
 	}, "\n")
 	var events []ToolEvent
@@ -249,16 +251,17 @@ func TestResponseStreamReportsServerToolStates(t *testing.T) {
 		t.Fatalf("text = %q", result.Text)
 	}
 	want := []ToolEvent{
-		{Kind: "web_search", State: "in_progress"},
-		{Kind: "web_search", State: "searching"},
-		{Kind: "web_search", State: "completed"},
-		{Kind: "code_interpreter", State: "interpreting"},
+		{ItemID: "ws_1", Kind: "web_search", State: "in_progress"},
+		{ItemID: "ws_1", Kind: "web_search", State: "searching"},
+		{ItemID: "ws_1", Kind: "web_search", State: "completed"},
+		{ItemID: "ws_2", Kind: "web_search", State: "in_progress"},
+		{ItemID: "code_1", Kind: "code_interpreter", State: "interpreting"},
 	}
 	if len(events) != len(want) {
 		t.Fatalf("工具事件 = %+v，想要 %+v", events, want)
 	}
 	for i := range want {
-		if events[i].Kind != want[i].Kind || events[i].State != want[i].State {
+		if events[i].ItemID != want[i].ItemID || events[i].Kind != want[i].Kind || events[i].State != want[i].State {
 			t.Fatalf("第 %d 个工具事件 = %+v，想要 %+v", i, events[i], want[i])
 		}
 	}
