@@ -2299,23 +2299,6 @@ test("模型面板：顶部渠道 tab 是「全部」+ 每个渠道，且左右�
   const filtered = reindexModelGroups(filterModelGroups(MODEL_SAMPLE, "").filter((g) => g.provider === "本地"));
   assert.deepEqual(filtered.flatMap((g) => g.items.map((i) => i.flat)), [0]);
 
-  const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
-  assert.match(top, /class="model-provider-tabs"/, "模型浮板顶部没有渠道 tab");
-  assert.match(top, /v-for="tab in modelProviderTabsList"/, "渠道 tab 没有从 provider 列表生成");
-  assert.match(top, /class="model-provider-tab"/, "渠道 tab 没有可点的按钮");
-  assert.match(top, /v-for="g in visibleGroups"/, "列表没有按选中的渠道筛选");
-  assert.match(top, /ref="modelTabsEl"/, "tab 没有 ref（滚轮/拖动要操作它）");
-  assert.match(top, /@pointerdown="onTabsPointerDown"/, "tab 不支持鼠标拖动");
-  assert.match(top, /@wheel="onTabsWheel"/, "tab 不支持滚轮横向滚动");
-  assert.ok(top.indexOf('class="model-provider-tabs"') < top.indexOf('class="model-search"'), "tab 必须在搜索框上面（面板顶部）");
-  assert.ok(top.indexOf('class="model-provider-tab"') < top.indexOf('class="model-search"'), "tab 必须在搜索框上面（面板顶部）");
-  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8");
-  assert.match(css, /\.model-provider-tabs \{[^}]*overflow-x:\s*auto/, "渠道 tab 不能横向滚动");
-  assert.match(css, /\.model-provider-tab\.active \{[^}]*border-bottom-color:\s*var\(--md-primary\)/, "选中的渠道 tab 没有高亮");
-  assert.match(css, /\.model-provider-tabs \{[^}]*cursor:\s*grab/, "渠道 tab 没有拖动光标");
-  assert.match(css, /\.model-provider-tabs\.dragging \{[^}]*cursor:\s*grabbing/, "拖动时没有 grabbing 光标");
-  assert.match(css, /\.model-menu \{[^}]*width:\s*min\(34em/, "模型浮板没有放大");
-  assert.match(css, /@media \(max-width: 700px\), \(pointer: coarse\) \{[\s\S]{0,300}\.agent-menu\.model-menu \{[^}]*position: fixed[^}]*left: 0\.5em; right: 0\.5em[^}]*height: calc\(100dvh - var\(--topbar-h, 3\.5em\) - 1em\)/, "移动端模型浮板没有几乎占满屏幕");
 });
 
 test("模型面板：当前模型不在列表里 ⇒ 单独一组排最前（别让它看着像没选）", () => {

@@ -101,6 +101,8 @@ const modelQuery = ref("");
 const modelProvider = ref("");
 const modelTabsEl = ref<HTMLElement | null>(null);
 const modelSearchEl = ref<HTMLInputElement | null>(null);
+const modelMenuEl = ref<HTMLElement | null>(null);
+const modelButtonEl = ref<HTMLButtonElement | null>(null);
 const modelActive = ref(-1); // 上下键选中的那一项（在**扁平化**的列表里的下标），-1 = 没选
 
 const curModelLabel = computed(() => {
@@ -177,7 +179,22 @@ function onTabsWheel(e: WheelEvent): void {
 function selectModelProvider(provider: string): void {
   if (suppressTabClick) return;
   modelProvider.value = provider;
-  modelActive.value = -1;
+}
+function moveModelProvider(delta: number): void {
+  const tabs = modelProviderTabsList.value;
+  const index = tabs.findIndex((tab) => tab.provider === modelProvider.value);
+  const next = tabs[(index + delta + tabs.length) % tabs.length];
+  if (!next) return;
+  selectModelProvider(next.provider);
+  nextTick(() => {
+    const active = modelTabsEl.value?.querySelector<HTMLButtonElement>('[aria-selected="true"]');
+    active?.focus({ preventScroll: true });
+    active?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  });
+}
+function closeModel(): void {
+  modelOpen.value = false;
+  nextTick(() => modelButtonEl.value?.focus({ preventScroll: true }));
 }
 
 function toggleModel(): void {
@@ -191,7 +208,7 @@ function toggleModel(): void {
   nextTick(() => modelSearchEl.value?.focus());
 }
 function pickModel(value?: string | null): void {
-  modelOpen.value = false;
+  closeModel();
   // 点当前那一项 = 什么都不做（别为了一次误点发一个 PATCH）。
   if (value && value !== curModel.value) emit("select-model", value);
 }
@@ -204,15 +221,23 @@ function flatItemAt(index: number): ModelChoice | null {
 function moveActive(delta: number): void {
   const n = modelFlatCount.value;
   if (!n) return;
-  const next = modelActive.value + delta;
-  modelActive.value = next < 0 ? 0 : next >= n ? n - 1 : next;
+  const next = modelActive.value < 0 ? (delta > 0 ? 0 : n - 1) : modelActive.value + delta;
+  modelActive.value = Math.max(0, Math.min(n - 1, next));
 }
 function pickActive(): void {
   const hit = flatItemAt(modelActive.value);
   if (hit) pickModel(hit.value);
 }
-// 改了搜索词就丢掉上次的高亮（不然回车会选中一个新列表里不存在的位次）。
-watch(modelQuery, () => { modelActive.value = -1; });
+// 筛选条件变化后从头看结果，同时清掉旧位次，避免新渠道仍停在上一组的列表末尾。
+watch([modelQuery, modelProvider], () => {
+  modelActive.value = -1;
+  nextTick(() => { if (modelMenuEl.value) modelMenuEl.value.scrollTop = 0; });
+});
+watch(modelActive, () => {
+  if (modelActive.value < 0) return;
+  nextTick(() => modelMenuEl.value?.querySelector<HTMLElement>(`#model-option-${modelActive.value}`)
+    ?.scrollIntoView({ block: "nearest" }));
+});
 
 const leftSvg = ICONS.panelLeft;
 
@@ -502,6 +527,7 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
     <span class="model-anchor">
       <button
         id="model-btn"
+        ref="modelButtonEl"
         class="model-btn"
         :class="{ loading }"
         type="button"
@@ -519,8 +545,28 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
         <svg class="model-caret" viewBox="0 0 10 6" aria-hidden="true"><path d="M0 0h10L5 6z" /></svg>
       </button>
       <template v-if="modelOpen">
-        <div class="agent-menu-backdrop" @click="modelOpen = false"></div>
-        <div class="agent-menu model-menu" role="dialog" aria-label="选择模型" @keydown.esc="modelOpen = false">
+        <div class="agent-menu-backdrop" @click="closeModel"></div>
+        <VCard class="agent-menu model-menu" role="dialog" aria-labelledby="model-menu-title" @keydown.esc.stop="closeModel">
+          <div class="model-menu-head">
+            <h2 id="model-menu-title">选择模型</h2>
+            <VBtn icon variant="text" size="small" title="关闭模型选择器" aria-label="关闭模型选择器" @click="closeModel" v-html="ICONS.x" />
+          </div>
+          <input
+            ref="modelSearchEl"
+            v-model="modelQuery"
+            class="model-search"
+            type="search"
+            :placeholder="modelProvider ? '搜索这个渠道的模型…' : '搜索模型 / 渠道…'"
+            aria-label="搜索模型"
+            role="combobox"
+            aria-expanded="true"
+            aria-controls="model-options"
+            aria-autocomplete="list"
+            :aria-activedescendant="modelActive >= 0 ? `model-option-${modelActive}` : undefined"
+            @keydown.down.prevent="moveActive(1)"
+            @keydown.up.prevent="moveActive(-1)"
+            @keydown.enter.prevent="pickActive"
+          />
           <!-- 顶部渠道 tab：左右滚动，"全部"永远在最左。选完 tab 后只列这个渠道的模型，
                不必在几百个模型里滚到某个渠道再找。 -->
           <div
@@ -540,24 +586,17 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
               class="model-provider-tab"
               :class="{ active: modelProvider === tab.provider }"
               :aria-selected="modelProvider === tab.provider ? 'true' : 'false'"
+              aria-controls="model-options"
               :title="`${tab.label}（${tab.count} 个模型）`"
+              :tabindex="modelProvider === tab.provider ? 0 : -1"
+              @keydown.right.prevent="moveModelProvider(1)"
+              @keydown.left.prevent="moveModelProvider(-1)"
               @click="selectModelProvider(tab.provider)"
             >
               {{ tab.label }}
             </button>
           </div>
-          <input
-            ref="modelSearchEl"
-            v-model="modelQuery"
-            class="model-search"
-            type="search"
-            :placeholder="modelProvider ? '搜索这个渠道的模型…' : '搜索模型 / 渠道…'"
-            aria-label="搜索模型"
-            @keydown.down.prevent="moveActive(1)"
-            @keydown.up.prevent="moveActive(-1)"
-            @keydown.enter.prevent="pickActive"
-          />
-          <div class="model-list">
+          <div id="model-options" ref="modelMenuEl" class="model-list" role="listbox" aria-label="可用模型">
             <template v-for="g in visibleGroups" :key="g.provider">
               <div v-if="!modelProvider" class="model-group-head">
                 <span class="model-group-name">{{ g.providerName }}</span>
@@ -566,6 +605,10 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
               <button
                 v-for="m in g.items"
                 :key="m.value"
+                :id="`model-option-${m.flat}`"
+                role="option"
+                :aria-selected="m.value === curModel"
+                tabindex="-1"
                 type="button"
                 class="model-item"
                 :class="{ sel: m.value === curModel, active: m.flat === modelActive }"
@@ -573,13 +616,23 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
                 @click="pickModel(m.value)"
               >
                 <ModelIcon :icon="m.icon" :brand="m.brand" size="lg" />
-                <span class="model-name">{{ m.label }}</span>
-                <span v-if="m.value === curModel" class="model-check">✓</span>
+                <span class="model-item-copy">
+                  <span class="model-name">{{ m.label }}</span>
+                  <span v-if="m.upstream_id && m.upstream_id !== m.label" class="model-item-id">{{ m.upstream_id }}</span>
+                </span>
+                <span v-if="m.value === curModel" class="model-check">✓ 当前</span>
               </button>
             </template>
-            <p v-if="!visibleGroups.length" class="agent-empty">没有匹配的模型</p>
+            <div v-if="!visibleGroups.length" class="model-empty" role="status">
+              <strong>没有匹配的模型</strong>
+              <span>试试其他名称、上游 ID，或切换渠道。</span>
+            </div>
           </div>
-        </div>
+          <div class="model-menu-foot">
+            <span role="status">{{ modelFlatCount }} 个模型</span>
+            <span class="model-key-hint">↑ ↓ 选择 · Enter 切换</span>
+          </div>
+        </VCard>
       </template>
     </span>
     <span class="header-right">
