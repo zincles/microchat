@@ -3739,6 +3739,41 @@ test("输入框：Vuetify MD3 输入栏 + 发送键", () => {
   assert.match(pane, /fontBody as fontBodyPref/, "字体值没从服务器偏好读回");
 });
 
+test("专注模式：输入栏按钮、顶栏只留模型与环、空闲收起", () => {
+  const composer = readFileSync(join(SRC, "components", "Composer.vue"), "utf8");
+  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+
+  // 按钮在「工具」右侧，文案始终是「专注」，开关状态用 aria-pressed / tonal 底表达。
+  const toolsAt = composer.indexOf("<ToolsMenu");
+  const zenAt = composer.indexOf('class="zen-btn"');
+  assert.ok(toolsAt > 0 && zenAt > toolsAt, "「专注」按钮不在工具右侧");
+  assert.match(composer, />专注<\/VBtn>/, "专注按钮文案不对");
+  assert.match(composer, /rounded="xl"[\s\S]{0,160}class="zen-btn"/, "专注按钮与推理/工具按钮形状不一致");
+  assert.match(composer, /@click="\$emit\('toggle-zen'\)"/, "专注按钮没接开关");
+  assert.match(composer, /:aria-pressed="zen"/, "专注按钮没有开关语义");
+  assert.match(composer, /'zen-hidden': zen && zenHidden/, "输入栏没有 zen 收起状态");
+
+  // 2 秒空闲 + 任意操作恢复；进入专注先收起顶部浮板。
+  assert.match(app, /const zenMode = ref\(false\)/, "App 没有专注状态");
+  assert.match(app, /ZEN_IDLE_MS = 2000/, "空闲收起不是 2 秒");
+  assert.match(app, /addEventListener\("pointerdown", zenActivity, true\)/, "专注模式没有监听操作");
+  assert.match(app, /zenComposerHidden\.value = true/, "空闲后没有收起输入栏");
+  assert.match(app, /@toggle-zen="toggleZen"/, "Composer 的专注开关没接上");
+  assert.match(app, /topbarRef\.value\?\.closeMenus\(\)/, "进入专注时没有收起右侧浮板");
+  assert.match(top, /defineExpose\(\{[^}]*closeMenus \}\)/, "TopBar 没暴露 closeMenus");
+  assert.match(app, /:class="\{ zen: zenMode \}"/, "聊天列没有 zen 类");
+
+  // 顶栏条隐藏，只留模型/环的小背景；工作区 tab 与侧栏开关不出现。
+  assert.match(css, /#chat-col\.zen > header \{ background: transparent; box-shadow: none/, "专注时顶栏还有底色/阴影");
+  assert.match(css, /#chat-col\.zen > header \.workspace-tabs \{ display: none/, "专注时工作区 tab 还在");
+  assert.match(css, /#chat-col\.zen > header \.model-btn \{[^}]*flex: 0 1 auto[^}]*background: var\(--md-surface-container\)/, "模型背景没有仅包住自身（占满整行）");
+  assert.match(css, /#chat-col\.zen > header #ctx-ring \{[^}]*background: var\(--md-surface-container\)/, "状态环没有自己的背景");
+  assert.match(css, /#composer\.zen\.zen-hidden \{ --zen-shift: 50%/, "输入栏没有下移一半");
+  assert.match(css, /#composer\.zen \{ transition: transform 600ms/, "输入栏收起没有慢速过渡");
+});
+
 
 test("会话列表：一行只有一枚选项键，设置/删除收进浮板，上下间距更紧", () => {
   const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
@@ -4825,9 +4860,9 @@ test("工具卡按 text_offset 插入正文；旧消息保留上方兜底", () =
   assert.match(bubble, /v-else-if="sources.length"/, "live 来源兜底仍在");
 });
 
-test("输入栏的推理等级/工具按钮共用同一套尺寸与风格", () => {
+test("输入栏的推理等级/工具/专注按钮共用同一套尺寸与风格", () => {
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8");
-  assert.match(css, /\.composer-toolbar \.thinking-btn,\s*\.composer-toolbar \.tools-btn\s*\{/);
+  assert.match(css, /\.composer-toolbar \.thinking-btn,\s*\.composer-toolbar \.tools-btn,\s*\.composer-toolbar \.zen-btn\s*\{/);
   assert.match(css, /\.thinking-label,\s*\.tools-label\s*\{/);
 });
 
@@ -5067,7 +5102,7 @@ test("Composer 控件尺寸收成一个 token；旧 Flow 行类已清理", () =>
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8");
   assert.match(css, /--composer-control:\s*calc\(34px/, "Composer 没有统一的 34px 控件 token");
   assert.match(css, /#app \.composer-send-btn \{[^}]*width:\s*var\(--composer-control\)/, "发送键没有吃统一控件尺寸");
-  assert.match(css, /\.composer-toolbar \.thinking-btn,\s*\.composer-toolbar \.tools-btn \{[^}]*height:\s*var\(--composer-control\)/, "工具按钮没有吃统一控件尺寸");
+  assert.match(css, /\.composer-toolbar \.thinking-btn,\s*\.composer-toolbar \.tools-btn,\s*\.composer-toolbar \.zen-btn \{[^}]*height:\s*var\(--composer-control\)/, "工具/专注按钮没有吃统一控件尺寸");
   assert.ok(!/flow-history-label|flow-prompt-del|flow-prompt-head/.test(css), "旧 Flow 行类还在 CSS 里");
 });
 

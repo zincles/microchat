@@ -304,6 +304,23 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 @media (max-width: 360px) {
   #chat-col > header .model-icon { display: none; }
 }
+/* 专注模式（2026-11-22 用户定）：顶栏条消失，只留模型与状态环各自的小背景；
+ * 顶栏空白区域不再接收点击。 */
+#chat-col.zen > header { background: transparent; box-shadow: none; pointer-events: none; }
+#chat-col.zen > header #toggle-left,
+#chat-col.zen > header .workspace-tabs { display: none; }
+#chat-col.zen > header .model-anchor { pointer-events: auto; }
+#chat-col.zen > header .model-btn { flex: 0 1 auto; background: var(--md-surface-container); box-shadow: var(--md-elev-1); }
+#chat-col.zen > header .header-right { pointer-events: none; }
+#chat-col.zen > header #ctx-ring,
+#chat-col.zen > header .header-right .agent-menu-backdrop,
+#chat-col.zen > header .header-right .ctx-menu,
+#chat-col.zen > header > .agent-menu-backdrop,
+#chat-col.zen > header > .ctx-menu { pointer-events: auto; }
+#chat-col.zen > header #ctx-ring { pointer-events: auto; background: var(--md-surface-container);
+  border-radius: 50%; box-shadow: var(--md-elev-1); }
+#chat-col.zen > header #ctx-ring:hover { background: var(--md-surface-container-high); }
+#chat-col.zen > header .model-btn:hover { background: var(--md-surface-container-high); }
 /* 上下文工作区（2026-10-29）：占满消息列那块地方（顶栏是悬浮层，所以顶部要自己留出高度）。
  * **没有输入行** —— 这不是说话的地方，切回来才说。 */
 /* 2026-10-29：右栏那三条 tab 搬进来之后，这块**自己不滚** —— 滚动交给面板里各自的 pane
@@ -1066,13 +1083,18 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .composer-toolbar .agent-btn { width: var(--composer-control); height: var(--composer-control); min-width: var(--composer-control); min-height: var(--composer-control); font-size: 0.82em; outline: 1px solid var(--md-outline-variant); }
 .composer-toolbar .agent-menu { top: auto; bottom: calc(100% + 0.4em); left: 0; transform-origin: bottom left; }
 .composer-toolbar .thinking-btn,
-.composer-toolbar .tools-btn { min-width: 0 !important; height: var(--composer-control) !important; min-height: var(--composer-control) !important;
+.composer-toolbar .tools-btn,
+.composer-toolbar .zen-btn { min-width: 0 !important; height: var(--composer-control) !important; min-height: var(--composer-control) !important;
   padding: 0 0.8em !important; border: 1px solid var(--md-outline-variant) !important;
   background: var(--md-surface-container) !important; box-shadow: none !important;
   font-size: 0.82em !important; line-height: 2em !important; color: var(--md-on-surface-variant);
   text-transform: none !important; }
 .composer-toolbar .thinking-btn:hover,
-.composer-toolbar .tools-btn:hover { color: var(--md-on-surface); background: color-mix(in srgb, var(--md-on-surface) 8%, var(--md-surface-container)) !important; }
+.composer-toolbar .tools-btn:hover,
+.composer-toolbar .zen-btn:hover { color: var(--md-on-surface); background: color-mix(in srgb, var(--md-on-surface) 8%, var(--md-surface-container)) !important; }
+/* 专注开着时给按钮一个明确的 tonal 状态；文案始终是「专注」，不变成别的词。 */
+.composer-toolbar .zen-btn.on { background: var(--md-secondary-container) !important;
+  color: var(--md-on-secondary-container); border-color: transparent !important; }
 .thinking-label,
 .tools-label { margin: 0; white-space: nowrap; font-size: inherit; line-height: inherit; }
 .tools-label { font-variant-numeric: tabular-nums; }
@@ -1097,8 +1119,11 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
  * 往下看顶栏往上让位、往回看底栏往下让位，**进度与位移成正比**（不是到阈值才啪一下）。
  * 短过渡只为把抖动抹平（浏览器工具栏也是这个味道）；reduced-motion 里关掉。 */
 #chat-col > header { transform: translateY(calc(-1 * var(--chrome-top, 0px))); transition: transform 90ms linear; }
-#composer { transform: translateX(-50%) translateY(var(--chrome-bottom, 0px)); transition: transform 90ms linear; }
-@media (prefers-reduced-motion: reduce) { #chat-col > header, #composer { transition: none; } }
+#composer { transform: translateX(-50%) translateY(calc(var(--chrome-bottom, 0px) + var(--zen-shift, 0%))); transition: transform 90ms linear; }
+/* 专注模式：空闲 2 秒后整卡下移自身高度的一半；恢复与收起都走慢速强调曲线。 */
+#composer.zen { transition: transform 600ms var(--md-ease-emphasized); }
+#composer.zen.zen-hidden { --zen-shift: 50%; }
+@media (prefers-reduced-motion: reduce) { #chat-col > header, #composer, #composer.zen { transition: none; } }
 /* ⚠ 这里原本有"任务行进栏"那条规则（`.taskline` 占一整行、`order: -1` 排在输入框上面）
  * 和上面「两个隔间」那段历史。**2026-11-01 整块删掉了**：后台任务已并进顶栏的上下文环（`#ctx-ring`）。
  * 输入卡内部现在是 `.composer-toolbar` 控件行（助手 / 思考 / 工具 / 发送），在输入区下方；

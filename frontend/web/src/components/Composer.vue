@@ -18,6 +18,7 @@ const emit = defineEmits<{
   menu: [];
   "select-thinking": [value: string];
   "toggle-native-tool": [id: string, enabled: boolean];
+  "toggle-zen": [];
 }>();
 
 const props = withDefaults(defineProps<{
@@ -28,6 +29,9 @@ const props = withDefaults(defineProps<{
   nativeToolsDisabled?: string[];
   // flow：FlowAgent 暂不支持推理档位与工具选择 —— 底部小面板里直接藏起来。
   flow?: boolean;
+  // 专注模式：顶栏隐藏、输入栏空闲自动下移一半。
+  zen?: boolean;
+  zenHidden?: boolean;
 }>(), {
   menuOn: false,
   thinking: "",
@@ -35,6 +39,8 @@ const props = withDefaults(defineProps<{
   nativeTools: () => [],
   nativeToolsDisabled: () => [],
   flow: false,
+  zen: false,
+  zenHidden: false,
 });
 
 const text = ref("");
@@ -75,7 +81,7 @@ defineExpose({ submit, clear, setText, text, setRunning });
 </script>
 
 <template>
-  <form id="composer" class="composer-vuetify" @submit.prevent="running ? stop() : submit()">
+  <form id="composer" class="composer-vuetify" :class="{ zen: zen, 'zen-hidden': zen && zenHidden }" @submit.prevent="running ? stop() : submit()">
     <VSheet class="composer-shell" color="surface-container-low" rounded="24">
       <VTextarea
         id="composer-input"
@@ -107,6 +113,18 @@ defineExpose({ submit, clear, setText, text, setRunning });
             :disabled="nativeToolsDisabled"
             @toggle="(id, on) => $emit('toggle-native-tool', id, on)"
           />
+          <VBtn
+            v-if="!flow"
+            type="button"
+            variant="text"
+            rounded="xl"
+            size="small"
+            class="zen-btn"
+            :class="{ on: zen }"
+            :aria-pressed="zen"
+            :title="zen ? '退出专注模式' : '专注模式：隐藏顶栏，输入栏空闲时自动收起一半'"
+            @click="$emit('toggle-zen')"
+          >专注</VBtn>
         </div>
         <div class="composer-top-actions">
           <VBtn

@@ -507,7 +507,7 @@ function openWorkflow(): void {
   emit("select-workspace", "context");
 }
 
-defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverridesSaved, setMacros });
+defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverridesSaved, setMacros, closeMenus });
 </script>
 
 <template>

@@ -69,6 +69,41 @@ const sessionbarRef = ref<InstanceType<typeof SessionBar> | null>(null);
 const payloadbarRef = ref<InstanceType<typeof ContextWorkspace> | null>(null);
 const composerRef = ref<InstanceType<typeof Composer> | null>(null);
 const overlaysRef = ref<InstanceType<typeof Overlays> | null>(null);
+// 专注模式（2026-11-22 用户定）：隐藏顶栏，只留模型与状态环的小背景；
+// 输入栏空闲 2 秒后缓缓下移一半，任意操作恢复并重新计时。
+const zenMode = ref(false);
+const zenComposerHidden = ref(false);
+const ZEN_IDLE_MS = 2000;
+let zenTimer: number | null = null;
+function clearZenTimer(): void {
+  if (zenTimer !== null) { clearTimeout(zenTimer); zenTimer = null; }
+}
+// 任意操作：立刻把输入栏拉回来，并把“再空闲 2 秒”的计时重开。
+function zenActivity(): void {
+  if (!zenMode.value) return;
+  zenComposerHidden.value = false;
+  clearZenTimer();
+  zenTimer = window.setTimeout(() => {
+    zenTimer = null;
+    if (!zenMode.value) return;
+    // 浮层（工具/推理/模型等菜单）开着时先不收起，免得锚点跑掉；松手后重新计时。
+    if (document.querySelector(".v-overlay-container .v-overlay--active")) { zenActivity(); return; }
+    zenComposerHidden.value = true;
+  }, ZEN_IDLE_MS);
+}
+function toggleZen(): void {
+  zenMode.value = !zenMode.value;
+  if (zenMode.value) {
+    zenComposerHidden.value = false;
+    // 进入专注：收起右侧/浮出的面板（当前是模型菜单与状态环那扇右浮板）；
+    // 之后仍可由用户手动点开。
+    topbarRef.value?.closeMenus();
+    zenActivity();
+  } else {
+    clearZenTimer();
+    zenComposerHidden.value = false;
+  }
+}
 // 命令菜单（输入框左侧 ☰ 与 "/" 浮层）：默认关（移动端碍事，2026-10-17 用户定）；
 // 设置 → 外观里改了立刻生效（不刷新）—— 偏好住服务器（`prefs.json`），这里是它的活视图。
 const cmdMenu = ref(commandMenuOn());
@@ -1328,6 +1363,13 @@ onMounted(() => {
   document.addEventListener("visibilitychange", resyncOnForeground);
   window.addEventListener("focus", resyncOnForeground);
   window.addEventListener("pageshow", resyncOnForeground);
+  // 专注模式下的“操作”判定：按下、键盘、滚轮、触摸、输入都算；滚轮/触摸保持 passive。
+  window.addEventListener("pointerdown", zenActivity, true);
+  window.addEventListener("keydown", zenActivity, true);
+  window.addEventListener("input", zenActivity, true);
+  window.addEventListener("wheel", zenActivity, { passive: true, capture: true });
+  window.addEventListener("touchstart", zenActivity, { passive: true, capture: true });
+  window.addEventListener("touchmove", zenActivity, { passive: true, capture: true });
   window.addEventListener("mc-update-auto-check", startUpdatePolling);
   installOverlayLayout();
   boot().catch((err) => {
@@ -1348,6 +1390,13 @@ onUnmounted(() => {
   document.removeEventListener("visibilitychange", resyncOnForeground);
   window.removeEventListener("focus", resyncOnForeground);
   window.removeEventListener("pageshow", resyncOnForeground);
+  window.removeEventListener("pointerdown", zenActivity, true);
+  window.removeEventListener("keydown", zenActivity, true);
+  window.removeEventListener("input", zenActivity, true);
+  window.removeEventListener("wheel", zenActivity, true);
+  window.removeEventListener("touchstart", zenActivity, true);
+  window.removeEventListener("touchmove", zenActivity, true);
+  clearZenTimer();
   window.removeEventListener("mc-update-auto-check", startUpdatePolling);
 });
 </script>
@@ -1388,7 +1437,7 @@ onUnmounted(() => {
       />
       <div id="scrim-left" @click="toggleLeft"></div>
       <div id="content">
-      <section id="chat-col" v-show="!settingsOpen">
+      <section id="chat-col" v-show="!settingsOpen" :class="{ zen: zenMode }">
     <TopBar
       ref="topbarRef"
       :left-hidden="leftHidden"
@@ -1490,12 +1539,15 @@ onUnmounted(() => {
       :native-tools="currentAllTools"
       :native-tools-disabled="sessionInfo.native_tools_disabled ?? []"
       :flow="currentAgentIsFlow"
+      :zen="zenMode"
+      :zen-hidden="zenComposerHidden"
       @select-thinking="setThinking"
       @toggle-native-tool="toggleNativeTool"
       @input-text="onComposerInput"
       @keydown="onComposerKeydown"
       @submit="onComposerSubmit"
       @stop="stopCurrent"
+      @toggle-zen="toggleZen"
       @menu="() => overlaysRef?.showPalette(filterCommands(''))"
     >
       <template #toolbar>
