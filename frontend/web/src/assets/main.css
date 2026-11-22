@@ -279,7 +279,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
  * 字与高度保持不动。 */
 @media (max-width: 1100px) {
   /* 中等宽度（平板/窄桌）：把顶栏的间距与内边距收紧，把省下来的横向空间交给模型名。
-     ⚠ 不缩字；390 以下另有换行规则。 */
+     ⚠ 不缩字；更窄处继续收 padding，但不换行。 */
   #chat-col > header { gap: 0.35em; padding: 0.3em 0.5em; }
   #chat-col > header .model-anchor { flex: 1 1 auto; min-width: 0; }
   #chat-col > header .model-btn { flex: 1 1 auto; }
@@ -287,20 +287,22 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
   #chat-col > header .header-right { gap: 0.25em; }
 }
 @media (max-width: 700px) {
-  /* 顶栏重排（2026-11-02）：390px 下模型名曾被挤成 `d…`。
-     空间实在不够时**允许换行**，宁可栏高一点，也不把名字截成谜语；*/
-  #chat-col > header .model-btn-label { white-space: normal; overflow: visible; text-overflow: clip;
-    line-height: 1.15; overflow-wrap: anywhere; }
+  /* 窄屏也保持单行（2026-11-22 用户定）：模型名超长就省略，完整名字在按钮 title；
+     不再允许换行，也不把工作区导航拆到第二行。 */
+  #chat-col > header { flex-wrap: nowrap; }
   #chat-col > header .model-caret { display: none; }
-  .ws-switch .v-btn { padding: 0.4em 0.6em !important; }
+  .ws-switch .v-btn { padding: 0.4em 0.5em !important; }
 }
-/* 手机将模型身份与工作区导航分行，放大字体时也不给模型名留下零宽列。 */
+/* 极窄屏：先保模型名，并收紧导航内边距；仍然只有一行。 */
 @media (max-width: 480px) {
-  #chat-col > header { display: grid; grid-template-columns: auto minmax(0, 1fr); }
-  #chat-col > header .model-anchor { grid-column: 1 / -1; grid-row: 1; }
-  #chat-col > header:has(> #toggle-left) .model-anchor { grid-column: 2; }
-  #chat-col > header > #toggle-left { grid-column: 1; grid-row: 1; }
-  #chat-col > header .header-right { grid-column: 1 / -1; grid-row: 2; width: 100%; margin-left: 0; justify-content: space-between; }
+  #chat-col > header { gap: 0.25em; padding: 0.25em 0.4em; }
+  #chat-col > header .model-btn { padding: 0 0.45em; }
+  #chat-col > header .workspace-tabs .v-tab { padding: 0.4em 0.35em !important; }
+  #chat-col > header #ctx-ring { width: 1.8em; height: 1.8em; }
+}
+/* 更极端（如 320px 且放大字体）：模型图标让位给名字，完整名字仍在按钮 title。 */
+@media (max-width: 360px) {
+  #chat-col > header .model-icon { display: none; }
 }
 /* 上下文工作区（2026-10-29）：占满消息列那块地方（顶栏是悬浮层，所以顶部要自己留出高度）。
  * **没有输入行** —— 这不是说话的地方，切回来才说。 */

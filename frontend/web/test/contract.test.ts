@@ -2336,6 +2336,16 @@ test("模型面板：按钮上那行字（列表里有 → 显示名；没有 �
   assert.match(app, /:loading="loadingSession"/, "App 没把会话加载态传给顶栏");
 });
 
+test("窄屏顶栏保持单行：模型名超长则省略，不拆成两行", () => {
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
+  assert.match(css, /\.model-btn-label \{[^}]*white-space:\s*nowrap/, "模型名没有保持单行");
+  assert.ok(!/\.model-btn-label[^}]*white-space:\s*normal/.test(css), "窄屏又允许模型名换行（顶栏会被撑高）");
+  assert.ok(!/@media \(max-width: 480px\)[\s\S]{0,300}#chat-col > header \{ display: grid/.test(css),
+    "窄屏又把顶栏拆成两行");
+  assert.match(top, /:title="curModelLabel \?/, "模型名被省略时按钮没有完整名字的提示");
+});
+
 test("模型面板：按钮 / 浮板 / emit / App 监听四处接着，且不再有原生 <select>", () => {
   const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
   const app = readFileSync(join(SRC, "App.vue"), "utf8");

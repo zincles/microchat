@@ -532,7 +532,7 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
         :class="{ loading }"
         type="button"
         :disabled="loading"
-        title="改当前会话的模型"
+        :title="curModelLabel ? `${curModelLabel}｜改当前会话的模型` : '改当前会话的模型'"
         aria-label="选择模型"
         :aria-expanded="modelOpen ? 'true' : 'false'"
         @click="toggleModel"
