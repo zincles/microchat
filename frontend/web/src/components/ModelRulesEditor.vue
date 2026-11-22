@@ -22,7 +22,7 @@ const isProvider = computed(() => props.scope === "provider");
 const heading = computed(() => isProvider.value ? "当前渠道的覆盖规则" : "全局模型定义规则");
 const hint = computed(() => isProvider.value
   ? "只作用于当前渠道；应用在全局规则之后，同名字段会覆盖全局。修改后保存渠道生效。"
-  : "系统内置规则只读、可停用；用户规则在它们之后生效，可覆盖内置字段。按列表顺序匹配原始模型 id。");
+  : "系统内建全局规则只读、可停用；用户规则在它们之后生效，可覆盖内建字段。按列表顺序匹配原始模型 id。");
 
 const rules = ref<ModelDefineRule[]>([]);
 const builtinRules = ref<BuiltinModelRule[]>([]);
@@ -272,7 +272,7 @@ onMounted(() => { load().catch(() => {}); });
 
     <template v-if="!isProvider">
       <div class="rules-subhead">
-        <h4>系统内置规则</h4>
+        <h4>系统内建全局规则</h4>
         <span class="rule-badge">只读 · 可停用</span>
       </div>
       <div v-if="builtinRules.length" class="rule-list builtin-list">
@@ -299,7 +299,7 @@ onMounted(() => { load().catch(() => {}); });
           </div>
         </div>
       </div>
-      <div v-else class="status">（系统内置规则为空）</div>
+      <div v-else class="status">（系统内建全局规则为空）</div>
       <div class="rules-subhead">
         <h4>用户规则</h4>
         <span class="hint">在内置规则之后应用，可覆盖同名字段。</span>

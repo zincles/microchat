@@ -70,7 +70,7 @@ type ModelRulesConfig struct {
 	DisabledBuiltinModelRules []string          `json:"disabled_builtin_model_rules,omitempty"`
 }
 
-// BuiltinModelRuleView：系统内置规则 + 只读/停用标记（GET /config/model-rules）。
+// BuiltinModelRuleView：系统内建全局规则 + 只读/停用标记（GET /config/model-rules）。
 type BuiltinModelRuleView struct {
 	ModelDefineRule
 	Builtin  bool `json:"builtin"`
@@ -164,7 +164,7 @@ func ValidModelIcon(icon string) bool {
 //go:embed builtin_model_rules.json
 var builtinModelRulesJSON []byte
 
-// BuiltinModelDefineRules：系统内置规则库（只读，可停用）。
+// BuiltinModelDefineRules：系统内建全局规则库（只读，可停用）。
 //
 // 数据住 builtin_model_rules.json（随二进制发布），与用户规则分开：
 // 生效顺序 = 内置（未停用）在前，用户规则在后；用户规则可以覆盖内置字段。

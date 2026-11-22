@@ -309,7 +309,7 @@ delete(AA)           # 删除
   （客户端执行）是**两个独立字段**，都是**追加**语义、各自按规则顺序去重；它们只把候选写进画像，
   真正发请求前还要经过 provider/协议/模型能力闸。
   `match_protocol` 可限定 `openai-chat-completion` / `openai-response`（`chat` / `response` 是写入简写）。
-  **系统内置规则**住 `core/internal/config/builtin_model_rules.json`（`go:embed` 进二进制，和内置提示词段同性质），
+  **系统内建全局规则**住 `core/internal/config/builtin_model_rules.json`（`go:embed` 进二进制，和内置提示词段同性质），
   **只读、不可编辑/删除**；当前 28 条全部是内置：品牌/图标/思考档，以及 grok / GPT / Gemini / DeepSeek 的搜索与本地工具。
   **用户规则**才是 `config.json` 的 `model_define_rules`（可编辑/新增/删除/排序）；用户规则 id 不能复用内置 id。
   生效顺序 = **内置（未停用）→ 用户 → 渠道规则**；后两层可覆盖内置字段，`is_final` 只在各自层停止。
@@ -1675,7 +1675,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   规则（`model_define_rules`）是家族默认，这里是对单个 `(provider, upstream_id)` 的精确覆盖。
   规则编辑器支持匹配协议（`match_protocol`）与**分别追加服务端 / 本地工具**（`server_tools` / `local_tools`）；
   全局规则页分两段：**系统内置规则**（只读，开关启停，不显示编辑/删除/排序）与**用户规则**（可编辑）。
-  内置 grok/GPT/Gemini 的搜索规则、DeepSeek 本地工具都在内置段里；用户规则在内置之后应用，可覆盖字段。
+  内建 grok/GPT/Gemini 的搜索规则、DeepSeek 本地工具都在内置段里；用户规则在内置之后应用，可覆盖字段。
   空态说清「保存并刷新后会出现在这里」。
 - **设置页编排**（2026-11-11 用户定「越科学的布局越好」）：每页先一段 `.settings-lead` 说清**这一页管什么**，
   聊天页固定四段 —— **新会话默认 → 上下文与加载 → 自动压缩 → 生成与标题**（默认值在最前，

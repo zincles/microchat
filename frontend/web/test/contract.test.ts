@@ -3986,7 +3986,7 @@ test("模型规则：内置只读规则 + 用户规则，支持 match_protocol �
   assert.match(types, /match_protocol\?/, "API 类型没有 match_protocol");
   assert.match(types, /server_tools\?/, "API 类型没有 server_tools");
   assert.match(types, /local_tools\?/, "API 类型没有 local_tools");
-  assert.match(editor, /系统内置规则/, "编辑器没有内置规则区");
+  assert.match(editor, /系统内建全局规则/, "编辑器没有系统内建规则区");
   assert.match(editor, /用户规则/, "编辑器没有用户规则区");
   assert.match(editor, /builtin_model_rules/, "编辑器没有读内置规则");
   assert.match(editor, /disabled_builtin_model_rules/, "编辑器没有保存内置停用列表");
