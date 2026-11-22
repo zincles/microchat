@@ -297,7 +297,7 @@ func (p Provider) Normalize() Provider {
 //
 //   - chat-completion ← dummy、openai、openrouter、deepseek、opencode-go、
 //     opencode、ollama、lmstudio、custom；custom 必须有 base_url（端点全靠配置给）。
-//   - openai-response ← opencode-go、opencode、openrouter、custom；custom 必须有 base_url
+//   - openai-response ← openai、opencode-go、opencode、openrouter、custom、xai；custom 必须有 base_url
 //     或 Endpoints[openai-response]（端点全靠配置给）；其余 vendor 走它直接错配。
 //   - systemone ← typesafe、openrouter、custom；base_url 非空（verbatim 整条 URL）。
 func (p Provider) Validate() error {
@@ -306,7 +306,7 @@ func (p Provider) Validate() error {
 	switch protocol {
 	case ProtocolOpenAIResponse:
 		switch vendor {
-		case VendorOpenCodeGo, VendorOpenCode, VendorOpenRouter, VendorCustom, VendorXAI:
+		case VendorOpenAI, VendorOpenCodeGo, VendorOpenCode, VendorOpenRouter, VendorCustom, VendorXAI:
 		default:
 			return fmt.Errorf("providers: vendor %q 不支持 protocol %q", vendor, protocol)
 		}
@@ -1165,7 +1165,7 @@ func vendorProtocols(vendor Vendor) []Protocol {
 		return []Protocol{ProtocolSystemOne}
 	case VendorOpenRouter, VendorCustom:
 		return []Protocol{ProtocolChatCompletion, ProtocolOpenAIResponse, ProtocolSystemOne}
-	case VendorOpenCodeGo, VendorOpenCode, VendorXAI:
+	case VendorOpenAI, VendorOpenCodeGo, VendorOpenCode, VendorXAI:
 		return []Protocol{ProtocolChatCompletion, ProtocolOpenAIResponse}
 	default:
 		return []Protocol{ProtocolChatCompletion}

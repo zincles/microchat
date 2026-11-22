@@ -311,7 +311,10 @@ delete(AA)           # 删除
   `match_protocol` 可限定 `openai-chat-completion` / `openai-response`（`chat` / `response` 是写入简写）。
   开箱规则含：gpt / grok / 各类品牌图标 / `grok-imagine` 清空思考档；另有
   **`xai-grok-4-native`：`grok-4` + `openai-response`（不区分 vendor）默认追加
-  `server_tools`：`x_search` / `web_search` / `code_execution`**。写 `[]` 即关闭。未知档位、空匹配、空定义、
+  `server_tools`：`x_search` / `web_search` / `code_execution`**，以及
+  **`openai-gpt-native`：字段含 `gpt` + `openai-response`（不区分 vendor）默认追加
+  `server_tools`：`web_search`**（`gpt-image` 由前一条 final 规则挡住，不会挂搜索）。
+  写 `[]` 即关闭。未知档位、空匹配、空定义、
   未知图标/协议/native tool、重复 id 在写入与 `LoadConfig` 时都报错。匹配只认 raw id（大小写不敏感）
   + 可选 `match_exact` / `match_provider` / `match_protocol`，不认用户改过的 `display_name`。
   **渠道自己的 `model_define_rules`**（`providers.json` 每条渠道上的同名字段）会在全局规则**之后**
@@ -1148,7 +1151,7 @@ DeepSeek / OpenCode GO 直连**确实不报**，所以那一格在那儿永远�
 | `typesafe`（JEV 决策） | `https://api.typesafe.ai/v1/systemone`（**verbatim 整条 URL，原样 POST，不拼路径**） | `TYPESAFE_API_KEY`（备 `JEV_API_KEY`） | 只有 `Content-Type` + `Accept: application/json` + `Authorization`（无会话头：上下文在 state 里自带） |
 - **两轴**：`vendor` = 找谁（端点预设 + key env + 内建头）；`protocol` = 说什么话（`openai-chat-completion` 缺省 / `openai-response` / `systemone`）。
   渐进式配置：先选 `protocol`（干什么），再按兼容矩阵选 `vendor`（找谁），有预设的只输 `api_key`，只有 `custom` 才要 `base_url`。
-- **兼容矩阵即校验表**（`Provider.Validate`，错配 loud error）：chat-completion ← 除 typesafe 外全部 vendor（含 xai）；`openai-response` ← opencode-go/opencode/openrouter/custom/xai（`bd27768` 打通，muse 真测 ✓；xAI 的 `x_search`/`web_search`/`code_execution` 服务端工具已接进请求体）；systemone ← `typesafe` / `openrouter` / `custom`；
+- **兼容矩阵即校验表**（`Provider.Validate`，错配 loud error）：chat-completion ← 除 typesafe 外全部 vendor（含 xai）；`openai-response` ← openai/opencode-go/opencode/openrouter/custom/xai（`bd27768` 打通，muse 真测 ✓；xAI 的 `x_search`/`web_search`/`code_execution` 与 OpenAI 的 `web_search` 服务端工具已接进请求体）；systemone ← `typesafe` / `openrouter` / `custom`；
   不认识的协议一律拒绝。
 - **不需要搬它们的模型目录** ✓：模型列表是**发现**来的（`GET /models` ⇒ `registry`）；内建预设只提供
   **端点 + 头 + 认证从哪取**，每家十几行。**systemone 例外**：JEV 没有统一 `/models` 口径 ⇒ `refresh` 直接跳过（不算错）。
@@ -1672,6 +1675,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   规则（`model_define_rules`）是家族默认，这里是对单个 `(provider, upstream_id)` 的精确覆盖。
   规则编辑器支持匹配协议（`match_protocol`）与**分别追加服务端 / 本地工具**（`server_tools` / `local_tools`）；
   `grok-4 × response` 的内置默认会显示成「追加 x_search / web_search / code_execution」；
+  `gpt × response` 默认显示成「追加 web_search」；
   DeepSeek 默认追加 `web_search` / `web_fetch`（本地执行）。空态说清「保存并刷新后会出现在这里」。
 - **设置页编排**（2026-11-11 用户定「越科学的布局越好」）：每页先一段 `.settings-lead` 说清**这一页管什么**，
   聊天页固定四段 —— **新会话默认 → 上下文与加载 → 自动压缩 → 生成与标题**（默认值在最前，

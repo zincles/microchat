@@ -275,6 +275,37 @@ func TestLoadConfigDoesNotMergeDefaultRuleFields(t *testing.T) {
 	}
 }
 
+func TestDefaultGPTNativeToolRule(t *testing.T) {
+	cfg := DefaultConfig()
+	cases := []struct {
+		name     string
+		provider string
+		model    string
+		protocol string
+		want     []string
+	}{
+		{"response gpt-5 官方", "openai", "gpt-5", "openai-response", []string{"web_search"}},
+		{"response gpt-5.5 任意 vendor", "openrouter", "openai/gpt-5.5", "openai-response", []string{"web_search"}},
+		{"response gpt-4.1 custom", "custom", "gpt-4.1", "openai-response", []string{"web_search"}},
+		{"chat 不追加", "openai", "gpt-5", "openai-chat-completion", nil},
+		{"非 gpt 不追加", "openai", "o3", "openai-response", nil},
+		{"图像模型不追加", "openai", "gpt-image-1", "openai-response", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := cfg.ModelProfileFor(tc.provider, tc.model, tc.protocol, ModelProfile{})
+			if len(got.ServerTools) != len(tc.want) {
+				t.Fatalf("server_tools = %v，想要 %v", got.ServerTools, tc.want)
+			}
+			for i := range tc.want {
+				if got.ServerTools[i] != tc.want[i] {
+					t.Fatalf("server_tools = %v，想要 %v", got.ServerTools, tc.want)
+				}
+			}
+		})
+	}
+}
+
 func TestLocalToolsAreSeparateFromServerTools(t *testing.T) {
 	cfg := Config{ModelDefineRules: []ModelDefineRule{
 		{ID: "local", MatchContains: "grok", MatchProtocol: "response", LocalTools: stringSlicePtr("roll_dice", "roll_dice", "lookup")},

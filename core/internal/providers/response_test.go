@@ -10,6 +10,34 @@ import (
 )
 
 // Build：opencode-go + response ⇒ URL 以 /responses 结尾、体是数组 input、无 messages。
+func TestBuildOpenAIResponseWebSearch(t *testing.T) {
+	provider := Provider{ID: "oa", Vendor: VendorOpenAI, Protocol: ProtocolOpenAIResponse,
+		BaseURL: "https://api.openai.com/v1", APIKey: "sk-x"}
+	request, err := Build(provider, Request{
+		Model: "gpt-5", SessionID: "s-1",
+		Tools: ServerTools([]string{"web_search"}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := request.URL.String(); got != "https://api.openai.com/v1/responses" {
+		t.Fatalf("URL = %q", got)
+	}
+	raw, _ := io.ReadAll(request.Body)
+	var body map[string]any
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatal(err)
+	}
+	tools, ok := body["tools"].([]any)
+	if !ok || len(tools) != 1 {
+		t.Fatalf("tools = %v", body["tools"])
+	}
+	first, _ := tools[0].(map[string]any)
+	if first["type"] != "web_search" {
+		t.Fatalf("工具声明 = %v", first)
+	}
+}
+
 func TestBuildResponse(t *testing.T) {
 	provider := Provider{ID: "go", Vendor: VendorOpenCodeGo, Protocol: ProtocolOpenAIResponse, APIKey: "sk-x"}
 	temperature := 0.7
@@ -88,9 +116,9 @@ func TestBuildResponse(t *testing.T) {
 	}
 }
 
-// Validate 矩阵：response ← opencode-go/opencode/openrouter/custom；deepseek+response 报错。
+// Validate 矩阵：response ← openai/opencode-go/opencode/openrouter/custom/xai；deepseek+response 报错。
 func TestValidateResponseMatrix(t *testing.T) {
-	for _, vendor := range []Vendor{VendorOpenCodeGo, VendorOpenCode, VendorOpenRouter, VendorCustom, VendorXAI} {
+	for _, vendor := range []Vendor{VendorOpenAI, VendorOpenCodeGo, VendorOpenCode, VendorOpenRouter, VendorCustom, VendorXAI} {
 		provider := Provider{ID: "p", Vendor: vendor, Protocol: ProtocolOpenAIResponse, BaseURL: "https://x.invalid/v1"}
 		if err := provider.Validate(); err != nil {
 			t.Fatalf("vendor %q × response 该过：%v", vendor, err)
