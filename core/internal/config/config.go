@@ -65,9 +65,12 @@ type Config struct {
 	Server   ServerConfig   `json:"server"`
 	Defaults DefaultsConfig `json:"defaults"`
 	Chat     ChatConfig     `json:"chat"`
-	// ModelDefineRules：按模型 raw id 覆写展示/能力画像的纯数据规则（2026-11-07）。
+	// ModelDefineRules：**用户**规则（按模型 raw id 覆写展示/能力画像，2026-11-07）。
 	// 模型行会被刷新删掉，规则不会；它不执行代码，也不改 wire 协议。
+	// 系统内置规则住 builtin_model_rules.json，不写在这里；内置与用户规则合并生效。
 	ModelDefineRules []ModelDefineRule `json:"model_define_rules,omitempty"`
+	// DisabledBuiltinModelRules：被用户停用的系统内置规则 id（只读规则只能启停）。
+	DisabledBuiltinModelRules []string `json:"disabled_builtin_model_rules,omitempty"`
 }
 
 type ServerConfig struct {
@@ -120,10 +123,9 @@ func DefaultConfig() Config {
 		// 为什么不是 0.0.0.0：账号与鉴权都砍了，后端一旦对局域网开放，同网段任何设备
 		// 都能直接改数据（删会话、读 API key、花 token）。绑回环是**唯一真能挡住**的办法。
 		// 要放开就显式把 config.json 的 server.host 改成 0.0.0.0（那时就没有这道保护了）。
-		Server:           ServerConfig{Host: "127.0.0.1", Port: 8787},
-		Defaults:         DefaultsConfig{Provider: "dummy", Model: DummyModelID, Agent: DefaultAgentID},
-		Chat:             DefaultChat(),
-		ModelDefineRules: DefaultModelDefineRules(),
+		Server:   ServerConfig{Host: "127.0.0.1", Port: 8787},
+		Defaults: DefaultsConfig{Provider: "dummy", Model: DummyModelID, Agent: DefaultAgentID},
+		Chat:     DefaultChat(),
 	}
 }
 
@@ -142,10 +144,9 @@ func LoadConfig(paths Paths) (Config, error) {
 	if err := loadJSON(paths.Config("config.json"), &config); err != nil {
 		return config, err
 	}
-	if config.ModelDefineRules == nil {
-		// 文件不存在 / 没写这一格 ⇒ 用开箱默认；显式 `[]` 是空的非 nil slice，不会被复活。
-		config.ModelDefineRules = DefaultModelDefineRules()
-	}
+	// 旧配置里可能把系统内置规则也存进了 model_define_rules（升级前它们是普通规则）。
+	// 内置规则现在由 builtin_model_rules.json 提供；同 id 的用户项丢掉，避免重复/可编辑副本。
+	config.ModelDefineRules = dropBuiltinRuleIDs(config.ModelDefineRules)
 	if config.Chat.TitleChars == 0 {
 		config.Chat.TitleChars = 32
 	}
@@ -167,6 +168,7 @@ func LoadConfig(paths Paths) (Config, error) {
 	if err := ValidateModelDefineRules(config.ModelDefineRules); err != nil {
 		return config, err
 	}
+	config.DisabledBuiltinModelRules = normalizeDisabledBuiltinModelRules(config.DisabledBuiltinModelRules)
 	return config, nil
 }
 

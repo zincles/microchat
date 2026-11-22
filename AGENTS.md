@@ -295,7 +295,7 @@ delete(AA)           # 删除
 
 - `config.json` — `{ "server": { "host": "127.0.0.1", "port": 8787, "refresh_models_on_start": true }, "defaults": { "provider": "dummy", "model": "dummy", "agent": "default" }, "chat": { "model_context_tokens": 131072, "history_window": 5, "compact_trigger_tokens": null, "compact_blocks": 5, "title_provider": "", "title_model": "" } }`
   （**全局标题模型**：`title_provider` / `title_model` 都空 = **使用当前会话模型**（默认）；都填 = 起标题固定走这一对。只填一个不算数。）
-  **`model_define_rules`（2026-11-07）** = 一组**纯数据 override**，按模型 raw `upstream_id` 覆写展示/能力画像：
+  **`model_define_rules`（2026-11-07；2026-11-23 拆成内置 / 用户）** = 一组**纯数据 override**，按模型 raw `upstream_id` 覆写展示/能力画像：
   `{ "id": "xai", "match_contains": "grok", "match_exact": "", "match_provider": "",
     "match_protocol": "", "is_final": false,
     "thinking_levels": ["low","medium","high","max"], "brand": "xAI", "icon": "grok",
@@ -309,18 +309,14 @@ delete(AA)           # 删除
   （客户端执行）是**两个独立字段**，都是**追加**语义、各自按规则顺序去重；它们只把候选写进画像，
   真正发请求前还要经过 provider/协议/模型能力闸。
   `match_protocol` 可限定 `openai-chat-completion` / `openai-response`（`chat` / `response` 是写入简写）。
-  开箱规则**只含展示/思考档**：gpt / grok / 各类品牌图标、`grok-imagine` 清空思考档；
-  **不包含任何 `server_tools` / `local_tools`**（2026-11-22 用户定：工具追加不硬编码）。
-  所有搜索/工具都来自本页的全局规则；当前配置里有：
-  `xai-grok-4-native`（`grok-4` + `openai-response` → `x_search` / `web_search` / `code_execution`）、
-  `openai-image`（`gpt-image`，命中即停）、`openai-gpt-native`（包含 `gpt` → `web_search`）、
-  `gemini-native`（包含 `gemini` → `web_search`）、`deepseek-web`（本地 `web_search` / `web_fetch`）。
-  GPT/Gemini 两条**不写 `match_protocol` ⇒ chat / response 都生效**；grok 规则仍限定 response。
-  ⚠ **内置默认只在 `config.json` 没有 `model_define_rules` 字段时生效**；一旦在界面保存过，这份数组就是**快照**，
-  以后新增的内置规则不会自动并进去（想恢复默认就删掉该字段；想在旧配置上启用就补对应条目）。
-  写 `[]` 即关闭。未知档位、空匹配、空定义、
-  未知图标/协议/native tool、重复 id 在写入与 `LoadConfig` 时都报错。匹配只认 raw id（大小写不敏感）
-  + 可选 `match_exact` / `match_provider` / `match_protocol`，不认用户改过的 `display_name`。
+  **系统内置规则**住 `core/internal/config/builtin_model_rules.json`（`go:embed` 进二进制，和内置提示词段同性质），
+  **只读、不可编辑/删除**；当前 28 条全部是内置：品牌/图标/思考档，以及 grok / GPT / Gemini / DeepSeek 的搜索与本地工具。
+  **用户规则**才是 `config.json` 的 `model_define_rules`（可编辑/新增/删除/排序）；用户规则 id 不能复用内置 id。
+  生效顺序 = **内置（未停用）→ 用户 → 渠道规则**；后两层可覆盖内置字段，`is_final` 只在各自层停止。
+  内置规则用 `config.json` 的 **`disabled_builtin_model_rules: ["id", …]`** 启停；写入时未知 / 重复 id ⇒ 422，启动读取只保留仍存在且不重复的 id（内置规则会随版本增删，旧 id 不该阻塞启动）。
+  旧配置把内置规则也存进了 `model_define_rules`：`LoadConfig` 会丢掉同 id 的副本（内置是权威），下次保存后文件里只剩用户规则。
+  内置规则与用户规则的空匹配/空定义/未知档位/未知图标/未知协议/未知 native tool/重复 id 都以同一套口径校验。
+  匹配只认 raw id（大小写不敏感）+ 可选 `match_exact` / `match_provider` / `match_protocol`，不认用户改过的 `display_name`。
   **渠道自己的 `model_define_rules`**（`providers.json` 每条渠道上的同名字段）会在全局规则**之后**
   应用，因此永远优先；`is_final` 只在各自那一层停止，不会挡住另一层。`matched_rules` 用
   `global:` / `provider:` 前缀标出来源。
@@ -915,8 +911,8 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 | GET | `/providers/{provider_id}/usage` | — | `ProviderUsageView` | **套餐余量**（只读）：**只对 `vendor = opencode-go` 的渠道有义** ⇒ 别的 vendor **400**（`invalid`）、没配 key 也 **400**；上游错原样传（`upstream`）。形状 = `plan` / `windows[].label/percent/resets_at` + `provider_id`（`-debug usage` 就是它；web 界面还没入口） |
 | GET | `/models` | — | `[ModelListItem]` | 跨 provider 拍平（"渠道 / 模型"下拉用）。每项带 **`thinking_levels`**（该模型能安全收到的统一档位；前端只摆这些；未知模型回全部七档），以及 `model_define_rules` 派生的 **`brand` / `icon` / `server_tools` / `local_tools` / `matched_rules`**（不落库；工具只是候选，发请求前仍要能力校验）|
 | PATCH | `/models` | `{provider, upstream_id, context_override, display_name, params}` | `ModelView` | 设/清模型的用户列（上下文覆盖 `null` = 清；显示名；采样参数）。**刷新永不覆盖用户列**；模型行被刷新删掉时这些覆盖也会没（规则不受影响） |
-| GET | `/config/model-rules` | — | `{model_define_rules:[…]}` | 读 `config.json` 的模型定义规则（见「配置文件」）。返回派生前的**规则原文** |
-| PUT | `/config/model-rules` | `{model_define_rules:[…]}` | 同上 | **整份替换**；空数组 = 清空。先校验后落盘；坏规则 422 且一个字不写。写成功后 `GET /models` 立刻按新规则派生 |
+| GET | `/config/model-rules` | — | `{model_define_rules:[…], builtin_model_rules:[{…,builtin:true,disabled}], disabled_builtin_model_rules:[…]}` | 用户规则 + 系统内置规则（含只读/停用标记） |
+| PUT | `/config/model-rules` | `{model_define_rules:[…], disabled_builtin_model_rules?:[…]}` | 同 GET | 用户规则**整份替换**（空数组 = 清空）；停用列表**省略 = 不改**、`[]` = 全部启用。用户规则复用内置 id / 未知停用 id ⇒ 422；先校验后落盘。写成功后 `GET /models` 立刻按新规则派生 |
 | GET | `/agents` | — | `AgentsConfig` | 生效列表（含内置默认 agent）|
 | POST | `/agents` | `CreateAgentReq` | `Agent` · 201 | 收 `name` / `description` / **`kind`（`prompt` / `flow`）** / **`flow`（FlowAgent 图）** / `system_prompt` / **`segments`（追加段 id 列表）** / `abilities` / `prepend_state`；id 由后端生成。**没有 `display_mode`** ✗（两边气泡 / roleplay 二选一已取消；老键是不认识的键） |
 | PATCH | `/agents/{agent_id}` | `UpdateAgentReq` | `Agent` | `new_id` = 重命名（搬 `default_agent` 与会话引用）；`description` 三态（nil 不动 / `""` 清空 / 非空写入）；`kind` / `flow` 三态（nil 不动）；`make_default` = 设默认；`segments` / `abilities` / `prepend_state` 整段替换（语义同 POST；`segments: []` = 清空）|
@@ -1678,9 +1674,9 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   改该模型自己的**用户列**（显示名 / 上下文覆盖 / JSON 参数）——
   规则（`model_define_rules`）是家族默认，这里是对单个 `(provider, upstream_id)` 的精确覆盖。
   规则编辑器支持匹配协议（`match_protocol`）与**分别追加服务端 / 本地工具**（`server_tools` / `local_tools`）；
-  `grok-4 × response` 的全局规则会显示成「追加 x_search / web_search / code_execution」；
-  `gpt` / `gemini`（任意协议）的全局规则显示成「追加 web_search」；
-  DeepSeek 的全局规则追加 `web_search` / `web_fetch`（本地执行）。空态说清「保存并刷新后会出现在这里」。
+  全局规则页分两段：**系统内置规则**（只读，开关启停，不显示编辑/删除/排序）与**用户规则**（可编辑）。
+  内置 grok/GPT/Gemini 的搜索规则、DeepSeek 本地工具都在内置段里；用户规则在内置之后应用，可覆盖字段。
+  空态说清「保存并刷新后会出现在这里」。
 - **设置页编排**（2026-11-11 用户定「越科学的布局越好」）：每页先一段 `.settings-lead` 说清**这一页管什么**，
   聊天页固定四段 —— **新会话默认 → 上下文与加载 → 自动压缩 → 生成与标题**（默认值在最前，
   上下文/压缩/辅助生成各自成组；`保存对话设置` 放在最后一组末尾，按钮旁用 `.action-note` 写清

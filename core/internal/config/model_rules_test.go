@@ -6,16 +6,25 @@ import (
 	"testing"
 )
 
+// withoutBuiltins：测试用户规则本身时停用全部系统内置规则，避免品牌/工具规则串入。
+func withoutBuiltins(rules []ModelDefineRule) Config {
+	cfg := Config{ModelDefineRules: rules}
+	for _, rule := range builtinModelRules {
+		cfg.DisabledBuiltinModelRules = append(cfg.DisabledBuiltinModelRules, rule.ID)
+	}
+	return cfg
+}
+
 // 顺序覆写：后命中的覆盖前面的；is_final 应用完就停。
 func TestModelDefineRulesOverrideAndFinal(t *testing.T) {
 	levels := []string{"low", "high"}
-	cfg := Config{ModelDefineRules: []ModelDefineRule{
+	cfg := withoutBuiltins([]ModelDefineRule{
 		{ID: "brand", MatchContains: "grok", Brand: stringPtr("xAI")},
 		{ID: "icon", MatchContains: "grok", Icon: stringPtr("grok")},
 		{ID: "thinking", MatchContains: "grok", ThinkingLevels: &levels},
 		{ID: "stop", MatchContains: "grok", IsFinal: true, Brand: stringPtr("stop")},
 		{ID: "late", MatchContains: "grok", Brand: stringPtr("late")},
-	}}
+	})
 	got := cfg.ModelProfile("xai", "x-ai/grok-4.7", ModelProfile{ThinkingLevels: []string{"off", "max"}})
 	if got.Brand != "stop" || got.Icon != "grok" {
 		t.Fatalf("覆盖顺序不对：%+v", got)
@@ -33,10 +42,10 @@ func TestModelDefineRulesOverrideAndFinal(t *testing.T) {
 func TestProviderRulesWinOverGlobal(t *testing.T) {
 	globalLevels := []string{"low"}
 	providerLevels := []string{"high", "max"}
-	cfg := Config{ModelDefineRules: []ModelDefineRule{
+	cfg := withoutBuiltins([]ModelDefineRule{
 		{ID: "global", MatchContains: "grok", IsFinal: true, Brand: stringPtr("global"),
 			ThinkingLevels: &globalLevels},
-	}}
+	})
 	got := cfg.ModelProfileWithRules("xai", "grok-4.7", ModelProfile{}, []ModelDefineRule{
 		{ID: "custom", MatchContains: "grok", Brand: stringPtr("custom"),
 			ThinkingLevels: &providerLevels},
@@ -51,16 +60,16 @@ func TestProviderRulesWinOverGlobal(t *testing.T) {
 
 // 匹配 raw id（大小写不敏感）+ provider；空规则集保留 fallback。
 func TestModelDefineRulesMatchRawIDAndProvider(t *testing.T) {
-	cfg := Config{ModelDefineRules: []ModelDefineRule{
+	cfg := withoutBuiltins([]ModelDefineRule{
 		{ID: "only-xai", MatchContains: "GROK", MatchProvider: "xai", Brand: stringPtr("xAI")},
-	}}
+	})
 	if got := cfg.ModelProfile("other", "grok-4.7", ModelProfile{}); got.Brand != "" {
 		t.Fatalf("provider 不匹配却命中了：%+v", got)
 	}
 	if got := cfg.ModelProfile("xai", "grok-4.7", ModelProfile{}); got.Brand != "xAI" {
 		t.Fatalf("大小写/provider 匹配失败：%+v", got)
 	}
-	if got := (Config{}).ModelProfile("xai", "grok-4.7", ModelProfile{ThinkingLevels: []string{"low"}}); got.Brand != "" ||
+	if got := (withoutBuiltins(nil)).ModelProfile("xai", "grok-4.7", ModelProfile{ThinkingLevels: []string{"low"}}); got.Brand != "" ||
 		!reflect.DeepEqual(got.ThinkingLevels, []string{"low"}) {
 		t.Fatalf("空规则集该保留 fallback：%+v", got)
 	}
@@ -69,17 +78,17 @@ func TestModelDefineRulesMatchRawIDAndProvider(t *testing.T) {
 // 空数组 = 明确覆写成没有档位（与 nil = 不动不同）。
 func TestModelDefineRulesEmptyThinkingLevels(t *testing.T) {
 	empty := []string{}
-	cfg := Config{ModelDefineRules: []ModelDefineRule{
+	cfg := withoutBuiltins([]ModelDefineRule{
 		{ID: "no-thinking", MatchContains: "grok", ThinkingLevels: &empty},
-	}}
+	})
 	got := cfg.ModelProfile("xai", "grok", ModelProfile{ThinkingLevels: []string{"low"}})
 	if len(got.ThinkingLevels) != 0 {
 		t.Fatalf("空数组该明确清空：%+v", got.ThinkingLevels)
 	}
 }
 
-// 默认规则：gpt/grok 各自有品牌和图标；用户可以写 [] 关掉。
-func TestDefaultModelDefineRules(t *testing.T) {
+// 系统内置规则：品牌/图标来自 builtin_model_rules.json。
+func TestBuiltinModelDefineRules(t *testing.T) {
 	cfg := DefaultConfig()
 	if got := cfg.ModelProfile("openai", "gpt-5", ModelProfile{}); got.Brand != "OpenAI" || got.Icon != "gpt" {
 		t.Fatalf("gpt 默认规则 = %+v", got)
@@ -203,15 +212,15 @@ func TestLoadConfigDoesNotMergeDefaultRuleFields(t *testing.T) {
 }
 
 func TestConfiguredSearchToolRules(t *testing.T) {
-	// 这些条目住在用户的「全局模型规则」里，不在 DefaultModelDefineRules。
+	// 这些条目住在「全局模型规则」里（用户或内置），不在 Go 内存里的特例分支。
 	// 这里只验证规则机制：只要 server_tools 命中，chat / response 两种协议都一致。
-	cfg := Config{ModelDefineRules: []ModelDefineRule{
+	cfg := withoutBuiltins([]ModelDefineRule{
 		{ID: "openai-image", MatchContains: "gpt-image", IsFinal: true},
 		{ID: "openai-gpt-native", MatchContains: "gpt", ServerTools: stringSlicePtr("web_search")},
 		{ID: "gemini-native", MatchContains: "gemini", ServerTools: stringSlicePtr("web_search")},
 		{ID: "xai-grok-4-native", MatchContains: "grok-4", MatchProtocol: "openai-response",
 			ServerTools: stringSlicePtr("x_search", "web_search", "code_execution")},
-	}}
+	})
 	cases := []struct {
 		name     string
 		model    string
@@ -241,11 +250,70 @@ func TestConfiguredSearchToolRules(t *testing.T) {
 	}
 }
 
+func TestBuiltinRulesMergeDisableAndValidation(t *testing.T) {
+	user := []ModelDefineRule{{ID: "user-gpt", MatchContains: "gpt", Brand: stringPtr("用户品牌")}}
+	cfg := Config{ModelDefineRules: user}
+	got := cfg.ModelProfile("p", "gpt-5", ModelProfile{})
+	if got.Brand != "用户品牌" {
+		t.Fatalf("用户规则应覆盖内置品牌：%+v", got)
+	}
+	if !containsString(got.MatchedRules, "global:gpt") || !containsString(got.MatchedRules, "global:user-gpt") {
+		t.Fatalf("matched_rules 应含内置与用户：%v", got.MatchedRules)
+	}
+
+	cfg.DisabledBuiltinModelRules = []string{"gpt"}
+	got = cfg.ModelProfile("p", "gpt-5", ModelProfile{})
+	if containsString(got.MatchedRules, "global:gpt") {
+		t.Fatalf("停用后不该命中内置 gpt：%v", got.MatchedRules)
+	}
+	if got.Brand != "用户品牌" {
+		t.Fatalf("停用内置后用户规则仍生效：%+v", got)
+	}
+
+	// 内置 grok 工具规则也可停用；停用后没有任何搜索工具。
+	grok := Config{DisabledBuiltinModelRules: []string{"xai-grok-4-native"}}
+	got = grok.ModelProfileFor("xai", "grok-4.7", "openai-response", ModelProfile{})
+	if len(got.ServerTools) != 0 {
+		t.Fatalf("停用内置 grok 工具后仍有 tools：%v", got.ServerTools)
+	}
+
+	// 用户规则不能复用内置 id；停用列表只能引用真实内置 id。
+	if err := ValidateUserModelDefineRules([]ModelDefineRule{{ID: "gpt", MatchContains: "gpt", Brand: stringPtr("x")}}); err == nil {
+		t.Fatal("用户规则复用内置 id 该报错")
+	}
+	if err := ValidateDisabledBuiltinModelRules([]string{"no-such-rule"}); err == nil {
+		t.Fatal("未知停用 id 该报错")
+	}
+
+	view := cfg.ModelRulesView()
+	if len(view.BuiltinModelRules) == 0 || !view.BuiltinModelRules[0].Builtin {
+		t.Fatalf("内置规则视图不对：%+v", view.BuiltinModelRules)
+	}
+	found := false
+	for _, rule := range view.BuiltinModelRules {
+		if rule.ID == "gpt" {
+			found = rule.Disabled
+		}
+	}
+	if !found {
+		t.Fatal("已停用的内置规则没有标记 disabled")
+	}
+}
+
+func containsString(list []string, want string) bool {
+	for _, item := range list {
+		if item == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestLocalToolsAreSeparateFromServerTools(t *testing.T) {
-	cfg := Config{ModelDefineRules: []ModelDefineRule{
+	cfg := withoutBuiltins([]ModelDefineRule{
 		{ID: "local", MatchContains: "grok", MatchProtocol: "response", LocalTools: stringSlicePtr("roll_dice", "roll_dice", "lookup")},
 		{ID: "server", MatchContains: "grok", MatchProtocol: "response", ServerTools: stringSlicePtr("x_search")},
-	}}
+	})
 	got := cfg.ModelProfileFor("p", "grok-4.7", "openai-response", ModelProfile{})
 	if !reflect.DeepEqual(got.LocalTools, []string{"roll_dice", "lookup"}) {
 		t.Fatalf("local_tools = %v", got.LocalTools)

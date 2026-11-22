@@ -479,8 +479,20 @@ export interface ModelDefineRule {
   local_tools?: string[];
 }
 
+export interface BuiltinModelRule extends ModelDefineRule {
+  builtin: boolean;
+  disabled: boolean;
+}
+
+export interface ModelRulesView {
+  model_define_rules: ModelDefineRule[];
+  builtin_model_rules: BuiltinModelRule[];
+  disabled_builtin_model_rules: string[];
+}
+
 export interface ModelRulesConfig {
   model_define_rules: ModelDefineRule[];
+  disabled_builtin_model_rules?: string[];
 }
 
 export interface ProtocolOption {

@@ -9,7 +9,7 @@ import HelpTip from "./HelpTip.vue";
 import { sharedApi } from "../utils/prefs.ts";
 import { THINKING_LEVELS, thinkingLabel } from "../utils/thinking.ts";
 import { MODEL_ICON_OPTIONS } from "../utils/modelIcons.ts";
-import type { ModelDefineRule } from "../api/types.ts";
+import type { BuiltinModelRule, ModelDefineRule } from "../api/types.ts";
 
 const props = withDefaults(defineProps<{
   scope?: "global" | "provider";
@@ -22,9 +22,11 @@ const isProvider = computed(() => props.scope === "provider");
 const heading = computed(() => isProvider.value ? "当前渠道的覆盖规则" : "全局模型定义规则");
 const hint = computed(() => isProvider.value
   ? "只作用于当前渠道；应用在全局规则之后，同名字段会覆盖全局。修改后保存渠道生效。"
-  : "所有渠道共享的默认规则；按列表顺序匹配原始模型 id，命中的字段覆盖前面的。");
+  : "系统内置规则只读、可停用；用户规则在它们之后生效，可覆盖内置字段。按列表顺序匹配原始模型 id。");
 
 const rules = ref<ModelDefineRule[]>([]);
+const builtinRules = ref<BuiltinModelRule[]>([]);
+const disabledBuiltin = ref<string[]>([]);
 const editing = ref<number | "new" | null>(null);
 const draft = reactive({
   id: "",
@@ -81,12 +83,16 @@ async function load(): Promise<void> {
   status.value = "";
   if (isProvider.value) {
     rules.value = cloneRules(props.rules);
+    builtinRules.value = [];
+    disabledBuiltin.value = [];
     return;
   }
   busy.value = true;
   try {
     const result = await api.modelRules();
     rules.value = cloneRules(result.model_define_rules ?? []);
+    builtinRules.value = JSON.parse(JSON.stringify(result.builtin_model_rules ?? [])) as BuiltinModelRule[];
+    disabledBuiltin.value = [...(result.disabled_builtin_model_rules ?? [])];
   } catch (e: unknown) {
     status.value = `读取规则失败：${e instanceof Error ? e.message : String(e)}`;
   }
@@ -184,6 +190,19 @@ function moveRule(index: number, delta: number): void {
   status.value = "已调整顺序；点下面的保存按钮写回";
 }
 
+function builtinDisabled(id?: string): boolean {
+  return !!id && disabledBuiltin.value.includes(id);
+}
+
+function setBuiltinEnabled(id: string | undefined, on: boolean): void {
+  if (!id) return;
+  const next = new Set(disabledBuiltin.value);
+  if (on) next.delete(id);
+  else next.add(id);
+  disabledBuiltin.value = [...next];
+  status.value = "已修改；点下面的保存按钮写回";
+}
+
 async function saveAll(): Promise<void> {
   if (editing.value !== null) {
     status.value = "先完成正在编辑的规则";
@@ -197,8 +216,13 @@ async function saveAll(): Promise<void> {
   }
   busy.value = true;
   try {
-    const result = await api.saveModelRules({ model_define_rules: cloneRules(rules.value) });
+    const result = await api.saveModelRules({
+      model_define_rules: cloneRules(rules.value),
+      disabled_builtin_model_rules: [...disabledBuiltin.value],
+    });
     rules.value = cloneRules(result.model_define_rules ?? []);
+    builtinRules.value = JSON.parse(JSON.stringify(result.builtin_model_rules ?? [])) as BuiltinModelRule[];
+    disabledBuiltin.value = [...(result.disabled_builtin_model_rules ?? [])];
     status.value = "已保存";
     emit("saved");
   } catch (e: unknown) {
@@ -246,6 +270,42 @@ onMounted(() => { load().catch(() => {}); });
       <VBtn color="primary" variant="flat" size="small" type="button" @click="openNew">新增规则</VBtn>
     </div>
 
+    <template v-if="!isProvider">
+      <div class="rules-subhead">
+        <h4>系统内置规则</h4>
+        <span class="rule-badge">只读 · 可停用</span>
+      </div>
+      <div v-if="builtinRules.length" class="rule-list builtin-list">
+        <div
+          v-for="(rule, index) in builtinRules"
+          :key="rule.id"
+          class="rule-row builtin"
+          :class="{ disabled: builtinDisabled(rule.id) }"
+        >
+          <div class="rule-index">{{ index + 1 }}</div>
+          <div class="rule-body">
+            <div class="rule-cond">{{ conditionText(rule) || "（没有匹配条件）" }}</div>
+            <div class="rule-def">{{ defineText(rule) || "（没有覆写字段）" }}</div>
+            <div v-if="rule.id" class="rule-id">id: {{ rule.id }}</div>
+          </div>
+          <div class="rule-ops">
+            <VSwitch
+              :model-value="!builtinDisabled(rule.id)"
+              density="compact"
+              hide-details
+              :label="builtinDisabled(rule.id) ? '已停用' : '启用'"
+              @update:model-value="(v) => setBuiltinEnabled(rule.id, v === true)"
+            />
+          </div>
+        </div>
+      </div>
+      <div v-else class="status">（系统内置规则为空）</div>
+      <div class="rules-subhead">
+        <h4>用户规则</h4>
+        <span class="hint">在内置规则之后应用，可覆盖同名字段。</span>
+      </div>
+    </template>
+
     <div v-if="rules.length" class="rule-list">
       <div v-for="(rule, index) in rules" :key="`${index}-${rule.id ?? ''}`" class="rule-row">
         <div class="rule-index">{{ index + 1 }}</div>
@@ -262,7 +322,7 @@ onMounted(() => { load().catch(() => {}); });
         </div>
       </div>
     </div>
-    <div v-else class="status">（还没有规则）</div>
+    <div v-else class="status">（还没有用户规则）</div>
 
     <div v-if="editing !== null" class="rule-editor">
       <h4>{{ editing === "new" ? "新增规则" : "编辑规则" }}</h4>
@@ -309,6 +369,11 @@ onMounted(() => { load().catch(() => {}); });
 .rules-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.8em; }
 .rules-head h3 { margin: 0; }
 .rules-head .hint { margin: 0.25em 0 0; max-width: 62em; }
+.rules-subhead { display: flex; align-items: baseline; gap: 0.5em; flex-wrap: wrap; margin-top: 0.9em; }
+.rules-subhead h4 { margin: 0; font-size: var(--md-type-title-small); font-weight: 500; }
+.rule-badge { color: var(--md-on-surface-variant); font-size: 0.8em; border: 1px solid var(--md-outline-variant); border-radius: var(--md-shape-full); padding: 0 0.5em; line-height: 1.6; }
+.rule-row.disabled { opacity: 0.55; }
+.rule-row.builtin .rule-ops { min-width: 7em; }
 .rule-list { margin-top: 0.6em; border-top: 1px solid var(--line); }
 .rule-row { display: grid; grid-template-columns: 2em minmax(0, 1fr) auto; gap: 0.6em; align-items: center; padding: 0.55em 0; border-bottom: 1px solid var(--line); }
 .rule-index { color: var(--tg-hint); font-variant-numeric: tabular-nums; text-align: right; }

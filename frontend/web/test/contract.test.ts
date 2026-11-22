@@ -3970,11 +3970,13 @@ test("更新面板：显示提交 + 拉取并重启（由 entrypoint 接手）",
   assert.match(client, /rebaseUpdate: \(\) => call<UpdatePullResult>\("POST", "\/update\/rebase"\)/, "API 客户端没有 POST /update/rebase");
 });
 
-// 模型规则：grok-4 × response 默认追加 xAI native tools（2026-11-09 用户定）。
-test("模型规则：支持 match_protocol 与追加 server_tools / local_tools", () => {
+// 模型规则：内置规则与用户规则分开；grok-4 × response 等工具规则住在内置 JSON 里。
+test("模型规则：内置只读规则 + 用户规则，支持 match_protocol 与工具追加", () => {
   const editor = readFileSync(join(SRC, "components", "ModelRulesEditor.vue"), "utf8");
   const types = readFileSync(join(SRC, "api", "types.ts"), "utf8");
+  const builtin = readFileSync(join(SRC, "..", "..", "..", "core", "internal", "config", "builtin_model_rules.json"), "utf8");
   const go = readFileSync(join(SRC, "..", "..", "..", "core", "internal", "config", "model_rules.go"), "utf8");
+  const client = readFileSync(join(SRC, "api", "client.ts"), "utf8");
   assert.match(editor, /match_protocol/, "规则编辑器没有协议条件");
   assert.match(editor, /openai-response/, "协议选项里没有 response");
   assert.match(editor, /server_tools/, "规则编辑器没有服务端工具");
@@ -3984,10 +3986,19 @@ test("模型规则：支持 match_protocol 与追加 server_tools / local_tools"
   assert.match(types, /match_protocol\?/, "API 类型没有 match_protocol");
   assert.match(types, /server_tools\?/, "API 类型没有 server_tools");
   assert.match(types, /local_tools\?/, "API 类型没有 local_tools");
-  assert.match(go, /xai-grok-4-native/, "默认规则没有 grok-4 × response 条目");
-  assert.match(go, /MatchProtocol:\s*"openai-response"/, "默认规则没限定 response");
-  assert.match(go, /ServerTools:\s*stringSlicePtr\("x_search", "web_search", "code_execution"\)/,
-    "默认规则没有追加 xAI 服务端 tools");
+  assert.match(editor, /系统内置规则/, "编辑器没有内置规则区");
+  assert.match(editor, /用户规则/, "编辑器没有用户规则区");
+  assert.match(editor, /builtin_model_rules/, "编辑器没有读内置规则");
+  assert.match(editor, /disabled_builtin_model_rules/, "编辑器没有保存内置停用列表");
+  assert.match(editor, /setBuiltinEnabled/, "编辑器没有内置规则启停动作");
+  assert.match(types, /BuiltinModelRule/, "API 类型没有内置规则视图");
+  assert.match(types, /ModelRulesView/, "API 类型没有规则视图");
+  assert.match(client, /modelRules: \(\) => call<ModelRulesView>/, "客户端没读规则视图");
+  assert.match(builtin, /"id": "xai-grok-4-native"/, "内置规则没有 grok-4 × response 条目");
+  assert.match(builtin, /"match_protocol": "openai-response"/, "内置 grok 规则没限定 response");
+  assert.match(builtin, /"server_tools": \[[^\]]*"x_search"[^\]]*"web_search"[^\]]*"code_execution"/s,
+    "内置 grok 规则没有追加 xAI 服务端 tools");
+  assert.ok(!/xai-grok-4-native/.test(go), "工具规则不该再写死在 Go 默认规则里");
 });
 
 // PWA 小工具（2026-11-09 用户定）：更新面板里核对当前壳是否最新，并能直接切换。

@@ -3,12 +3,15 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"slices"
 	"testing"
 	"time"
 
 	"microchat/internal/config"
 	"microchat/internal/store"
 )
+
+func contains(list []string, want string) bool { return slices.Contains(list, want) }
 
 // 规则只影响派生画像，不写 models 行；/models 与渠道详情都读同一份。
 func TestModelRulesApplyToModelViews(t *testing.T) {
@@ -58,7 +61,8 @@ func TestModelRulesApplyToModelViews(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &items); err != nil {
 		t.Fatal(err)
 	}
-	if items[0].Brand != "Grok!" || len(items[0].ThinkingLevels) != 2 || items[0].MatchedRules[1] != "global:xai-final" {
+	if items[0].Brand != "Grok!" || len(items[0].ThinkingLevels) != 2 ||
+		!contains(items[0].MatchedRules, "global:xai-final") || !contains(items[0].MatchedRules, "global:grok") {
 		t.Fatalf("PUT 后画像 = %+v", items[0])
 	}
 
@@ -74,6 +78,66 @@ func TestModelRulesApplyToModelViews(t *testing.T) {
 	}
 	if len(rules.Rules) != 2 || rules.Rules[1].ID != "xai-final" {
 		t.Fatalf("坏规则不该覆盖旧规则：%+v", rules)
+	}
+}
+
+// 系统内置规则：GET 分列、可停用；停用后不再参与画像；用户规则不能复用内置 id。
+func TestBuiltinModelRulesViewAndDisable(t *testing.T) {
+	server, st := newProvidersServer(t, `{"providers":[{"id":"xai","vendor":"xai"}]}`)
+	if _, _, _, err := st.RefreshDiscovered("xai", []store.Discovered{{UpstreamID: "grok-4.7"}}, time.Now().UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	recorder := call(server, "GET", "/api/v1/config/model-rules", "")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("GET rules = %d：%s", recorder.Code, recorder.Body.String())
+	}
+	var view config.ModelRulesView
+	if err := json.Unmarshal(recorder.Body.Bytes(), &view); err != nil {
+		t.Fatal(err)
+	}
+	if len(view.BuiltinModelRules) == 0 || !view.BuiltinModelRules[0].Builtin {
+		t.Fatalf("没有系统内置规则：%+v", view)
+	}
+	if len(view.ModelDefineRules) != 0 {
+		t.Fatalf("内置规则不该出现在用户规则里：%+v", view.ModelDefineRules)
+	}
+
+	body := `{"model_define_rules":[],"disabled_builtin_model_rules":["xai-grok-4-native"]}`
+	recorder = call(server, "PUT", "/api/v1/config/model-rules", body)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("PUT disable = %d：%s", recorder.Code, recorder.Body.String())
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &view); err != nil {
+		t.Fatal(err)
+	}
+	disabled := false
+	for _, rule := range view.BuiltinModelRules {
+		if rule.ID == "xai-grok-4-native" {
+			disabled = rule.Disabled
+		}
+	}
+	if !disabled {
+		t.Fatalf("停用状态没写回视图：%+v", view.BuiltinModelRules)
+	}
+	recorder = call(server, "GET", "/api/v1/models", "")
+	var items []ModelListItem
+	if err := json.Unmarshal(recorder.Body.Bytes(), &items); err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || len(items[0].ServerTools) != 0 {
+		t.Fatalf("停用内置 grok 规则后仍有工具：%+v", items)
+	}
+
+	// 用户规则复用内置 id / 未知停用 id 都 422。
+	recorder = call(server, "PUT", "/api/v1/config/model-rules",
+		`{"model_define_rules":[{"id":"xai-grok-4-native","match_contains":"grok","server_tools":["x_search"]}]}`)
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("复用内置 id 该 422，得到 %d", recorder.Code)
+	}
+	recorder = call(server, "PUT", "/api/v1/config/model-rules",
+		`{"model_define_rules":[],"disabled_builtin_model_rules":["nope"]}`)
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("未知停用 id 该 422，得到 %d", recorder.Code)
 	}
 }
 

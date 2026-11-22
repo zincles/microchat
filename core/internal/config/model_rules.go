@@ -11,6 +11,8 @@
 package config
 
 import (
+	_ "embed"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -61,9 +63,46 @@ type ModelProfile struct {
 	MatchedRules []string `json:"matched_rules,omitempty"`
 }
 
-// ModelRulesConfig：HTTP 读写 model_define_rules 的外壳（与 config.json 的字段同名）。
+// ModelRulesConfig：HTTP 写 model_define_rules 的外壳（与 config.json 的字段同名）。
+// DisabledBuiltinModelRules 省略（nil）= 不改停用列表；显式 [] = 全部启用。
 type ModelRulesConfig struct {
-	Rules []ModelDefineRule `json:"model_define_rules"`
+	Rules                     []ModelDefineRule `json:"model_define_rules"`
+	DisabledBuiltinModelRules []string          `json:"disabled_builtin_model_rules,omitempty"`
+}
+
+// BuiltinModelRuleView：系统内置规则 + 只读/停用标记（GET /config/model-rules）。
+type BuiltinModelRuleView struct {
+	ModelDefineRule
+	Builtin  bool `json:"builtin"`
+	Disabled bool `json:"disabled"`
+}
+
+// ModelRulesView：全局规则视图 = 用户规则 + 系统内置规则（含停用状态）。
+type ModelRulesView struct {
+	ModelDefineRules          []ModelDefineRule      `json:"model_define_rules"`
+	BuiltinModelRules         []BuiltinModelRuleView `json:"builtin_model_rules"`
+	DisabledBuiltinModelRules []string               `json:"disabled_builtin_model_rules"`
+}
+
+// ModelRulesView：按配置生成只读/停用标记；内置规则永远全部列出。
+func (c Config) ModelRulesView() ModelRulesView {
+	user := c.ModelDefineRules
+	if user == nil {
+		user = []ModelDefineRule{}
+	}
+	disabled := make(map[string]bool, len(c.DisabledBuiltinModelRules))
+	for _, id := range c.DisabledBuiltinModelRules {
+		disabled[id] = true
+	}
+	builtins := make([]BuiltinModelRuleView, 0, len(builtinModelRules))
+	for _, rule := range builtinModelRules {
+		builtins = append(builtins, BuiltinModelRuleView{ModelDefineRule: rule, Builtin: true, Disabled: disabled[rule.ID]})
+	}
+	return ModelRulesView{
+		ModelDefineRules:          user,
+		BuiltinModelRules:         builtins,
+		DisabledBuiltinModelRules: append([]string{}, c.DisabledBuiltinModelRules...),
+	}
 }
 
 // ModelIconIDs：允许写进规则里的图标 id（**封闭集合**，前端只出这些选项）。
@@ -122,50 +161,42 @@ func ValidModelIcon(icon string) bool {
 	return false
 }
 
-// DefaultModelDefineRules：开箱规则只含**展示/思考档**（品牌、图标、grok-imagine 清空思考档）。
-// 所有搜索/工具追加（grok、GPT、Gemini、DeepSeek …）都只来自用户的「全局模型规则」，
-// 不在代码里写死；grok-imagine 是图像模型，先清空思考档并停止。
-// ⚠ 这些只在 config.json **没有** model_define_rules 字段时生效；界面保存过就是快照，
-// 新增内置规则不会自动并入旧配置（见 AGENTS.md）。GPT / Gemini 的 web_search 由用户在
-// 「渠道 → 全局模型规则」里自行追加，不在代码里写死。
+//go:embed builtin_model_rules.json
+var builtinModelRulesJSON []byte
+
+// BuiltinModelDefineRules：系统内置规则库（只读，可停用）。
 //
-// native tool 规则只追加**候选**；请求构造时仍要经过 provider/协议/模型能力校验。
-// 用户把整个数组写成 `[]` 就能关掉。
-func DefaultModelDefineRules() []ModelDefineRule {
-	noThinking := []string{}
-	return []ModelDefineRule{
-		{ID: "gpt", MatchContains: "gpt", Brand: stringPtr("OpenAI"), Icon: stringPtr("gpt")},
-		// 图像模型也带 “grok”，但它不是聊天模型：先把思考档位清空并停止，
-		// 免得界面对它摆出一排它根本收不到的 off/minimal/...。
-		{ID: "xai-image", MatchContains: "grok-imagine", IsFinal: true,
-			Brand: stringPtr("xAI"), Icon: stringPtr("grok"), ThinkingLevels: &noThinking},
-		{ID: "grok", MatchContains: "grok", Brand: stringPtr("xAI"), Icon: stringPtr("grok")},
-		{ID: "gemini", MatchContains: "gemini", Brand: stringPtr("Google"), Icon: stringPtr("gemini")},
-		{ID: "claude", MatchContains: "claude", Brand: stringPtr("Anthropic"), Icon: stringPtr("claude")},
-		{ID: "deepseek", MatchContains: "deepseek", Brand: stringPtr("DeepSeek"), Icon: stringPtr("deepseek")},
-		{ID: "mimo", MatchContains: "mimo", Brand: stringPtr("Xiaomi"), Icon: stringPtr("mimo")},
-		{ID: "glm", MatchContains: "glm", Brand: stringPtr("Zhipu"), Icon: stringPtr("glm")},
-		{ID: "kimi", MatchContains: "kimi", Brand: stringPtr("Moonshot"), Icon: stringPtr("kimi")},
-		// 以下家族同样只按 raw id 的大小写不敏感子串匹配。
-		{ID: "longcat", MatchContains: "longcat", Brand: stringPtr("LongCat"), Icon: stringPtr("longcat")},
-		{ID: "mistral", MatchContains: "mistral", Brand: stringPtr("Mistral"), Icon: stringPtr("mistral")},
-		{ID: "qwen", MatchContains: "qwen", Brand: stringPtr("Qwen"), Icon: stringPtr("qwen")},
-		{ID: "minimax", MatchContains: "minimax", Brand: stringPtr("MiniMax"), Icon: stringPtr("minimax")},
-		{ID: "tencent-hunyuan", MatchContains: "hunyuan", Brand: stringPtr("Tencent"), Icon: stringPtr("tencent")},
-		// Hy 系列：只用 hy3/hy4/hy-mt 这类足够长的 token。裸 “hy” 会顺手抓走
-		// Hymba / “*-hybrid” 这些别的家族，所以不放宽；以后 hyN 需要各加一条。
-		{ID: "tencent-hy-mt", MatchContains: "hy-mt", Brand: stringPtr("Tencent"), Icon: stringPtr("tencent")},
-		{ID: "tencent-hy3", MatchContains: "hy3", Brand: stringPtr("Tencent"), Icon: stringPtr("tencent")},
-		{ID: "tencent-hy4", MatchContains: "hy4", Brand: stringPtr("Tencent"), Icon: stringPtr("tencent")},
-		{ID: "meta-llama", MatchContains: "llama", Brand: stringPtr("Meta"), Icon: stringPtr("meta")},
-		{ID: "meta-muse", MatchContains: "muse", Brand: stringPtr("Meta"), Icon: stringPtr("meta")},
-		// StepFun 的 raw id 是 step-3.5-flash 这类；第三方前缀里还会出现 stepfun。
-		{ID: "stepfun", MatchContains: "stepfun", Brand: stringPtr("StepFun"), Icon: stringPtr("stepfun")},
-		{ID: "stepfun-step", MatchContains: "step-", Brand: stringPtr("StepFun"), Icon: stringPtr("stepfun")},
-		// 不使用 “volcengine”：这个平台也转卖 deepseek/glm，会抢走别的家族。
-		{ID: "bytedance-doubao", MatchContains: "doubao", Brand: stringPtr("ByteDance"), Icon: stringPtr("bytedance")},
-		{ID: "bytedance-seed", MatchContains: "seed", Brand: stringPtr("ByteDance"), Icon: stringPtr("bytedance")},
+// 数据住 builtin_model_rules.json（随二进制发布），与用户规则分开：
+// 生效顺序 = 内置（未停用）在前，用户规则在后；用户规则可以覆盖内置字段。
+// 用户不能编辑/删除内置规则，只能通过 config.json 的 disabled_builtin_model_rules 停用。
+var builtinModelRules = mustParseBuiltinModelRules()
+
+func mustParseBuiltinModelRules() []ModelDefineRule {
+	var rules []ModelDefineRule
+	if err := json.Unmarshal(builtinModelRulesJSON, &rules); err != nil {
+		panic(fmt.Sprintf("builtin_model_rules.json: %v", err))
 	}
+	if err := ValidateModelDefineRules(rules); err != nil {
+		panic(fmt.Sprintf("builtin_model_rules.json: %v", err))
+	}
+	for index, rule := range rules {
+		if strings.TrimSpace(rule.ID) == "" {
+			panic(fmt.Sprintf("builtin_model_rules.json[%d]: id 不能为空（内置规则必须可停用）", index))
+		}
+	}
+	return rules
+}
+
+// BuiltinModelDefineRules：返回内置规则（只读；调用方不得修改）。
+func BuiltinModelDefineRules() []ModelDefineRule { return builtinModelRules }
+
+// BuiltinModelRuleIDs：内置规则 id 集合（用于禁止用户规则复用 id）。
+func BuiltinModelRuleIDs() map[string]bool {
+	out := make(map[string]bool, len(builtinModelRules))
+	for _, rule := range builtinModelRules {
+		out[rule.ID] = true
+	}
+	return out
 }
 
 func stringPtr(value string) *string {
@@ -176,6 +207,68 @@ func stringPtr(value string) *string {
 func stringSlicePtr(values ...string) *[]string {
 	copy := append([]string{}, values...)
 	return &copy
+}
+
+// dropBuiltinRuleIDs：旧配置把内置规则也存进用户数组时，丢掉同 id 的副本。
+func dropBuiltinRuleIDs(rules []ModelDefineRule) []ModelDefineRule {
+	if len(rules) == 0 {
+		return rules
+	}
+	builtin := BuiltinModelRuleIDs()
+	out := rules[:0]
+	for _, rule := range rules {
+		if rule.ID != "" && builtin[rule.ID] {
+			continue
+		}
+		out = append(out, rule)
+	}
+	return out
+}
+
+// ValidateUserModelDefineRules：用户规则校验（额外禁止复用内置 id）。
+func ValidateUserModelDefineRules(rules []ModelDefineRule) error {
+	if err := ValidateModelDefineRules(rules); err != nil {
+		return err
+	}
+	builtin := BuiltinModelRuleIDs()
+	for index, rule := range rules {
+		if rule.ID != "" && builtin[rule.ID] {
+			return fmt.Errorf("model_define_rules[%d]：id %q 是系统内置规则，用户规则不能复用", index, rule.ID)
+		}
+	}
+	return nil
+}
+
+// normalizeDisabledBuiltinModelRules：启动时只保留仍存在且不重复的内置 id。
+// 内置规则会随版本增删；旧配置里的已删除 id 不应该把服务卡在启动。
+func normalizeDisabledBuiltinModelRules(ids []string) []string {
+	known := BuiltinModelRuleIDs()
+	out := make([]string, 0, len(ids))
+	seen := map[string]bool{}
+	for _, id := range ids {
+		if !known[id] || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
+}
+
+// ValidateDisabledBuiltinModelRules：停用列表只能引用真实存在的内置规则，且不能重复。
+func ValidateDisabledBuiltinModelRules(ids []string) error {
+	known := BuiltinModelRuleIDs()
+	seen := map[string]bool{}
+	for index, id := range ids {
+		if !known[id] {
+			return fmt.Errorf("disabled_builtin_model_rules[%d]：未知的内置规则 id %q", index, id)
+		}
+		if seen[id] {
+			return fmt.Errorf("disabled_builtin_model_rules[%d]：id %q 重复", index, id)
+		}
+		seen[id] = true
+	}
+	return nil
 }
 
 // ValidateModelDefineRules：规则集合的校验（写入与 LoadConfig 同一口径）。
@@ -268,6 +361,22 @@ func (c Config) ModelProfileWithRules(providerID, upstreamID string, fallback Mo
 	return c.ModelProfileWithRulesFor(providerID, upstreamID, "", fallback, providerRules)
 }
 
+// EffectiveModelDefineRules：系统内置（未停用）+ 用户规则，按此顺序生效。
+func (c Config) EffectiveModelDefineRules() []ModelDefineRule {
+	disabled := make(map[string]bool, len(c.DisabledBuiltinModelRules))
+	for _, id := range c.DisabledBuiltinModelRules {
+		disabled[id] = true
+	}
+	out := make([]ModelDefineRule, 0, len(builtinModelRules)+len(c.ModelDefineRules))
+	for _, rule := range builtinModelRules {
+		if !disabled[rule.ID] {
+			out = append(out, rule)
+		}
+	}
+	out = append(out, c.ModelDefineRules...)
+	return out
+}
+
 func (c Config) ModelProfileWithRulesFor(providerID, upstreamID, protocol string, fallback ModelProfile, providerRules []ModelDefineRule) ModelProfile {
 	profile := ModelProfile{
 		Brand:          fallback.Brand,
@@ -276,7 +385,7 @@ func (c Config) ModelProfileWithRulesFor(providerID, upstreamID, protocol string
 		ServerTools:    append([]string{}, fallback.ServerTools...),
 		LocalTools:     append([]string{}, fallback.LocalTools...),
 	}
-	profile = applyModelRules(profile, c.ModelDefineRules, providerID, upstreamID, protocol, "global")
+	profile = applyModelRules(profile, c.EffectiveModelDefineRules(), providerID, upstreamID, protocol, "global")
 	profile = applyModelRules(profile, providerRules, providerID, upstreamID, protocol, "provider")
 	return profile
 }
