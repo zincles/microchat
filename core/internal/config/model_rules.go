@@ -124,6 +124,8 @@ func ValidModelIcon(icon string) bool {
 
 // DefaultModelDefineRules：开箱的品牌规则（含 grok-4 × response 的 xAI native tool、
 // GPT × response 的 OpenAI web_search 默认值；grok-imagine / gpt-image 先清空思考档或停住）。
+// ⚠ 这些只在 config.json **没有** model_define_rules 字段时生效；界面保存过就是快照，
+// 新增内置规则不会自动并入旧配置（见 AGENTS.md）。
 //
 // native tool 规则只追加**候选**；请求构造时仍要经过 provider/协议/模型能力校验。
 // 用户把整个数组写成 `[]` 就能关掉。

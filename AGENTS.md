@@ -314,6 +314,8 @@ delete(AA)           # 删除
   `server_tools`：`x_search` / `web_search` / `code_execution`**，以及
   **`openai-gpt-native`：字段含 `gpt` + `openai-response`（不区分 vendor）默认追加
   `server_tools`：`web_search`**（`gpt-image` 由前一条 final 规则挡住，不会挂搜索）。
+  ⚠ **内置默认只在 `config.json` 没有 `model_define_rules` 字段时生效**；一旦在界面保存过，这份数组就是**快照**，
+  以后新增的内置规则不会自动并进去（想恢复默认就删掉该字段；想在旧配置上启用就补对应条目）。
   写 `[]` 即关闭。未知档位、空匹配、空定义、
   未知图标/协议/native tool、重复 id 在写入与 `LoadConfig` 时都报错。匹配只认 raw id（大小写不敏感）
   + 可选 `match_exact` / `match_provider` / `match_protocol`，不认用户改过的 `display_name`。
