@@ -504,6 +504,15 @@ func TestPreviewWireCarriesServerToolsOnChat(t *testing.T) {
 	h := newHarness(t, config.ProvidersConfig{Providers: []config.Provider{{
 		ID: "p", Vendor: "custom", Protocol: "openai-chat-completion", BaseURL: "https://x.invalid/v1",
 	}}}, "p", "gpt-5")
+	// 工具只来自「全局模型规则」，代码默认值里没有 GPT 专用条目。
+	cfg := config.DefaultConfig()
+	webTools := []string{"web_search"}
+	cfg.ModelDefineRules = []config.ModelDefineRule{
+		{ID: "gpt-web", MatchContains: "gpt", ServerTools: &webTools},
+	}
+	if err := config.SaveJSON(h.configDir+"/config.json", cfg); err != nil {
+		t.Fatal(err)
+	}
 	payload, err := h.service.PreviewWire(h.session, "你好")
 	if err != nil {
 		t.Fatal(err)

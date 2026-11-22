@@ -275,26 +275,29 @@ func TestLoadConfigDoesNotMergeDefaultRuleFields(t *testing.T) {
 	}
 }
 
-func TestDefaultGPTNativeToolRule(t *testing.T) {
-	cfg := DefaultConfig()
+func TestConfiguredGPTAndGeminiWebSearchRules(t *testing.T) {
+	// 这些条目住在用户的「全局模型规则」里，不在 DefaultModelDefineRules。
+	// 这里只验证规则机制：只要 server_tools 命中，chat / response 两种协议都一致。
+	cfg := Config{ModelDefineRules: []ModelDefineRule{
+		{ID: "openai-image", MatchContains: "gpt-image", IsFinal: true},
+		{ID: "openai-gpt-native", MatchContains: "gpt", ServerTools: stringSlicePtr("web_search")},
+		{ID: "gemini-native", MatchContains: "gemini", ServerTools: stringSlicePtr("web_search")},
+	}}
 	cases := []struct {
 		name     string
-		provider string
 		model    string
 		protocol string
 		want     []string
 	}{
-		{"response gpt-5 官方", "openai", "gpt-5", "openai-response", []string{"web_search"}},
-		{"response gpt-5.5 任意 vendor", "openrouter", "openai/gpt-5.5", "openai-response", []string{"web_search"}},
-		{"response gpt-4.1 custom", "custom", "gpt-4.1", "openai-response", []string{"web_search"}},
-		{"chat gpt-5 官方也追加", "openai", "gpt-5", "openai-chat-completion", []string{"web_search"}},
-		{"chat gpt-4.1 custom 也追加", "custom", "gpt-4.1", "openai-chat-completion", []string{"web_search"}},
-		{"非 gpt 不追加", "openai", "o3", "openai-response", nil},
-		{"图像模型不追加", "openai", "gpt-image-1", "openai-response", nil},
+		{"gpt response", "gpt-5", "openai-response", []string{"web_search"}},
+		{"gpt chat", "gpt-5", "openai-chat-completion", []string{"web_search"}},
+		{"gemini response", "gemini-4-argon", "openai-response", []string{"web_search"}},
+		{"gemini chat", "gemini-4-argon", "openai-chat-completion", []string{"web_search"}},
+		{"gpt 图像排除", "gpt-image-1", "openai-response", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := cfg.ModelProfileFor(tc.provider, tc.model, tc.protocol, ModelProfile{})
+			got := cfg.ModelProfileFor("p", tc.model, tc.protocol, ModelProfile{})
 			if len(got.ServerTools) != len(tc.want) {
 				t.Fatalf("server_tools = %v，想要 %v", got.ServerTools, tc.want)
 			}
