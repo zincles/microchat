@@ -18,7 +18,6 @@ const emit = defineEmits<{
   "new-image": [];
   "open-settings": [];
   "toggle-left": [];
-  "open-sessions": [];
   "open-providers": [];
   "open-agent": [];
   "open-update": [];
@@ -263,21 +262,8 @@ defineExpose({ setSessions });
       <div class="empty">库存<br /><span class="sub">功能尚未接入；这里将来放库存列表</span></div>
     </div>
     <div class="bar-foot">
-      <!-- 管理入口（2026-11-02 用户定）：会话 / 渠道从设置里拆出来，各有一个独立入口；
-           它们与「设置」共用同一个视图，只是不经过设置 tab。 -->
-      <VBtn
-        id="sessions-manage"
-        class="bar-action"
-        type="button"
-        variant="text"
-        color="on-surface-variant"
-        stacked
-        title="会话管理（新建默认值 / 列表 / 导入）"
-        @click="$emit('open-sessions')"
-      >
-        <template #prepend><span class="fb-icon" v-html="ICONS.chat"></span></template>
-        会话
-      </VBtn>
+      <!-- 管理入口（2026-11-22 用户定）：会话列表搬进设置目录，底部只留渠道 / 助手 / 设置；
+           三者与「设置」共用同一个视图，只是不经过目录。 -->
       <VBtn
         id="providers-manage"
         class="bar-action"

@@ -553,6 +553,7 @@ export interface SettingsSection {
 // 「文本格式（Markdown）」跟着外观走 —— 它决定的是消息**渲染成什么样**，不是怎么输入。
 export const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "chat", label: "聊天", desc: "默认模型、上下文与自动压缩", icon: "chat" },
+  { id: "session", label: "会话", desc: "会话列表、导出与导入", icon: "list" },
   { id: "agent", label: "智能体", desc: "人设、提示词片段与能力", icon: "bot" },
   { id: "prompt", label: "提示词", desc: "可复用的文本片段库", icon: "notebookPen" },
   { id: "appearance", label: "外观", desc: "主题、缩放、字体与背景", icon: "themeAuto" },

@@ -1382,7 +1382,6 @@ onUnmounted(() => {
         @new="newSession"
         @new-image="() => toast('生图功能尚未接入', 'warn')"
         @open-settings="openSettings"
-        @open-sessions="() => openManage('session')"
         @open-providers="() => openManage('provider')"
         @open-agent="() => openManage('agent')"
         @open-update="() => openManage('update')"

@@ -52,7 +52,7 @@ const emit = defineEmits<{
 const props = withDefaults(defineProps<{
   ask?: ((text: string) => Promise<boolean>) | null;
   escBlocked?: boolean;
-  // only：单独入口（"session" / "provider"）—— 只显示那一页、不渲染设置页签；
+  // only：单独入口（"provider" / "agent" / "update"）—— 只显示那一页、不渲染目录；
   // 空串 = 完整设置。两者共用同一份数据加载与同一套 panel。
   only?: string;
   focusAgentId?: string;
@@ -67,12 +67,11 @@ const api = sharedApi();
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 const leftSvg = ICONS.panelLeft;
 
-// 设置目录 + 七个子区（聊天 / 智能体 / 提示词 / 外观 / 输入 / 酒馆 / 更新）。
-// 「会话 / 渠道 / 智能体 / 更新」仍是左栏独立入口，直接落到对应页；完整设置先看目录。
+// 设置目录 + 八个子区（聊天 / 会话 / 智能体 / 提示词 / 外观 / 输入 / 酒馆 / 更新）。
+// 「渠道 / 智能体 / 更新」仍是独立入口，直接落到对应页；完整设置先看目录。
 const tab = ref(props.only || "home");
 // 单独入口的页头文字；空串 = 完整设置（从目录进）。
-const onlyTitle = computed(() => (props.only === "session" ? "会话管理"
-  : props.only === "provider" ? "渠道管理"
+const onlyTitle = computed(() => (props.only === "provider" ? "渠道管理"
   : props.only === "agent" ? "智能体"
   : props.only === "update" ? "更新"
   : ""));
@@ -608,6 +607,9 @@ function onKey(e: KeyboardEvent): void {
         </VTabsWindowItem>
         <VTabsWindowItem value="session">
         <section id="panel-session" class="panel">
+          <p class="settings-lead">
+            管理已有会话：点击一行回到对话，或导出、删除；也可以从对话记录文件新建会话。
+          </p>
           <h3>已有会话（{{ sessions.length }} 条，点击打开）</h3>
           <div id="session-mgr-list">
             <VTable class="plist">
