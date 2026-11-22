@@ -1314,7 +1314,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
 - **共享层（2026-10-10 审计整改）**：`utils/prefs.ts` = 界面偏好与共享 api 客户端的唯一出口（主题应用含 TG 守卫 —— TG 里 data-theme 根本不设；发送键判定/提示、apiBase/Token、`sharedApi()` 按偏好缓存）；`api/client.ts` 的 `mergeStreamSlice` = 流式合并唯一规则（游标回退 ⇒ 清零重建）；api 错误统一带 `code`/`status`（分支按 code，别猜文案）；`format.ts` 的 modelKey/modelLabel/whoText/sessionTitle = 键与标签的唯一出口；`COMMAND_META`（commands.js）与 App 执行器启动对账。
 - **CSS 复用基线（2026-11-02，用户定「减少 CSS 的使用量、多复用少重写」）**：除底部输入栏与设置界面控件（2026-11-06 起用 Vuetify 4）外，全站仍是手写 CSS（不引 Tailwind —— 它与 em 缩放/大量状态选择器不合，且会把 CSS 搬进模板）。复用只有四处，新样式照此写：
   ① **幽灵按钮底座** `main.css` 那一组（`.icon-btn / .edit-btn / .link-btn / .cp-close / .ctree-tw / .ctree-undo / .collapse-all / .session-item 的两枚 / 模型与 Agent 菜单项 / tabs`）= `background:none; border:none; cursor:pointer` **只写一次**，具体规则只写颜色/尺寸/圆角；
-     （底部管理入口 2026-11-06 换 Vuetify `VBtn(stacked)` 后已退出这张表）
+     （底部管理入口 2026-11-06 换 Vuetify `VBtn` 后已退出这张表）
   ② **文字蒙层** 用 `theme.css` 的 `--mix-6 / 8 / 10 / 13 / 18`（加已有的 `--hover` = 7%），别再在 `main.css` 里现写 `color-mix(... N%, transparent)`；
   ③ **圆角** 用 `--r-xs(4) / --r-sm(6) / --r-md(8) / --r-btn / --r-card / --r-shell / --r-bubble`，不写字面量；
   ④ **等宽数字** 只在 `main.css` 末尾那一组写 `font-variant-numeric: tabular-nums`，新数字元素加进选择器清单，别单写一条。
@@ -1581,7 +1581,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   **左栏底 = 渠道 / 助手 / 设置**（2026-11-02 拆出会话/渠道；2026-11-11 把「智能体」升成独立入口、
   底部标签叫「助手」，更新从底部挪走；**2026-11-22 会话列表搬进设置目录**——底部只剩三项）。
   **三个入口并排**：
-  Vuetify `VBtn(stacked)` 三等分一行，图标在文字上方。渠道 / 助手用 `SettingsModal` 的 `:only`
+  Vuetify `VBtn` 三等分一行，图标在左、文字在右。渠道 / 助手用 `SettingsModal` 的 `:only`
   只显示那一页、隐藏目录，页头写「渠道管理 / 智能体」——「助手」只是底部标签；
   退出仍走同一个 close。
   **更新面板**（`UpdatePane.vue`，2026-11-20 压成两块简洁版式）：左边「版本」（本地 / GitHub 最新 /

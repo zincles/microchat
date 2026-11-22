@@ -270,7 +270,6 @@ defineExpose({ setSessions });
         type="button"
         variant="text"
         color="on-surface-variant"
-        stacked
         title="渠道管理（端点 / 密钥 / 模型筛选）"
         @click="$emit('open-providers')"
       >
@@ -283,7 +282,6 @@ defineExpose({ setSessions });
         type="button"
         variant="text"
         color="on-surface-variant"
-        stacked
         title="助手（人设 / 提示词 / 能力）；内部仍称智能体"
         @click="$emit('open-agent')"
       >
@@ -298,7 +296,6 @@ defineExpose({ setSessions });
         type="button"
         variant="text"
         color="on-surface-variant"
-        stacked
         title="设置（对话 / 智能体 / 提示词 / 外观 / 酒馆 / 更新）"
         @click="$emit('open-settings')"
       >

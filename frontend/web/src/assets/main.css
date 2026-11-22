@@ -1523,9 +1523,10 @@ button.danger:hover { background: color-mix(in srgb, var(--md-error) 8%, transpa
  * 它跟栏面是同一层，不画盒；线只是把"管理入口"与上面的会话列表分开。 */
 #sessions-bar .bar-foot { margin-top: auto; padding: 0.35em 0.45em 0.45em; border-top: 1px solid var(--md-outline-variant);
   display: flex; flex-direction: row; align-items: stretch; gap: 0.12em; }
-/* 三个管理入口并排（2026-11-06 用户定「并排，改善移动体验」）：Vuetify VBtn(stacked)。
+/* 三个管理入口并排（2026-11-06 用户定「并排」；2026-11-22 改成图标在左、文字在右）。
  * flex:1 让三格等宽；min-width:0 让窄侧栏也能塞下（VBtn 自带 min-width 会被这里盖掉）。 */
-#sessions-bar .bar-foot .bar-action { flex: 1 1 0; min-width: 0; }
+#sessions-bar .bar-foot .bar-action { flex: 1 1 0; min-width: 0; min-height: 2.8em; padding: 0 0.4em; }
+#sessions-bar .bar-foot .bar-action .v-btn__prepend { margin-inline-end: 0.4em; }
 #sessions-bar .bar-foot .fb-icon { display: inline-flex; align-items: center; justify-content: center; }
 #sessions-bar .bar-foot .fb-icon svg { width: 1.25em; height: 1.25em; }
 #sessions-bar .session-item { position: relative; display: flex; align-items: center; gap: 0.4em; min-height: 3.2em; background: transparent;

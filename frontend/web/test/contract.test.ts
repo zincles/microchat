@@ -3852,16 +3852,17 @@ test("左栏：有渠道/智能体/设置，没有会话与安装说明", () => 
   const pwa = readFileSync(join(SRC, "utils", "pwa.ts"), "utf8");
   const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 
   assert.ok(!bar.includes('id="sessions-manage"'), "左栏还留着会话入口（已搬进设置目录）");
   assert.match(bar, /id="providers-manage"/, "左栏没有渠道入口");
   assert.match(bar, /id="settings-open"/, "左栏没有设置入口");
   assert.match(bar, /id="agents-manage"/, "左栏没有智能体入口");
   assert.ok(!bar.includes('id="update-open"'), "左栏底部还有更新入口（已挪到品牌头）");
-  // 三个入口并排 + Vuetify MD3：不再手写 .foot-btn 竖排
+  // 三个入口并排 + Vuetify MD3：图标在左、文字在右（不再 stacked）
   assert.equal((bar.match(/class="bar-action"/g) ?? []).length, 3, "底部入口不是三个（渠道/助手/设置）");
-  assert.match(bar, /<VBtn[\s\S]*class="bar-action"[\s\S]*stacked/, "底部入口不是 Vuetify VBtn(stacked)");
-  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.ok(!/\bstacked\b/.test(bar), "底部入口仍是上下堆叠（图标应排在文字左侧）");
+  assert.match(css, /#sessions-bar \.bar-foot \.bar-action \.v-btn__prepend \{[^}]*margin-inline-end/, "图标与文字之间没有间距");
   assert.match(css, /#sessions-bar \.bar-foot \{[^}]*flex-direction: row/, "底部入口没有并排");
   assert.match(css, /#sessions-bar \.bar-foot \.bar-action \{[^}]*flex: 1 1 0/, "底部入口没等宽");
   assert.ok(!/foot-btn/.test(bar), "还留着旧 .foot-btn");
