@@ -500,6 +500,27 @@ func TestPreviewWireCarriesServerTools(t *testing.T) {
 	}
 }
 
+func TestPreviewWireCarriesServerToolsOnChat(t *testing.T) {
+	h := newHarness(t, config.ProvidersConfig{Providers: []config.Provider{{
+		ID: "p", Vendor: "custom", Protocol: "openai-chat-completion", BaseURL: "https://x.invalid/v1",
+	}}}, "p", "gpt-5")
+	payload, err := h.service.PreviewWire(h.session, "你好")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(payload.Body, &body); err != nil {
+		t.Fatal(err)
+	}
+	tools, ok := body["tools"].([]any)
+	if !ok || len(tools) != 1 {
+		t.Fatalf("chat 预演的 tools = %#v", body["tools"])
+	}
+	if got := tools[0].(map[string]any)["type"]; got != "web_search" {
+		t.Fatalf("chat 预演的服务端工具 = %#v", got)
+	}
+}
+
 func TestServerMessageToolsKeepsTextOffsets(t *testing.T) {
 	events := map[string]providers.ToolEvent{
 		"ws_1": {ItemID: "ws_1", Kind: "web_search", Queries: []string{"a"}},

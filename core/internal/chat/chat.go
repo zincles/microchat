@@ -875,12 +875,10 @@ func (s *Service) availableTools(session model.Session, chosen providers.Backend
 		}
 		return kept
 	}
-	// 服务端工具只有 OpenAI Response 协议能表达。
-	// xAI 实测：/chat/completions 对 web_search/x_search 直接 422（只认 function/live_search），
-	// live_search 又已 410 废弃；/responses 才认 Agent Tools。
-	if providers.Protocol(chosen.Provider.Protocol) != providers.ProtocolOpenAIResponse {
-		return nil
-	}
+	// 服务端工具不再按协议一刀切：模型规则明确给了候选就带上（2026-11-22 用户定：
+	// GPT 的 web_search 在 chat / response 两种接口下都要附加）。
+	// ⚠ xAI 的 chat 端点对 x_search/web_search 会 422；它的内置规则仍只匹配 response，
+	// 所以不要去掉那条规则的 match_protocol。
 	cfg, err := config.LoadConfig(s.Paths)
 	if err != nil {
 		return nil

@@ -123,7 +123,7 @@ func ValidModelIcon(icon string) bool {
 }
 
 // DefaultModelDefineRules：开箱的品牌规则（含 grok-4 × response 的 xAI native tool、
-// GPT × response 的 OpenAI web_search 默认值；grok-imagine / gpt-image 先清空思考档或停住）。
+// GPT（chat/response 均可）的 OpenAI web_search 默认值；grok-imagine / gpt-image 先清空思考档或停住）。
 // ⚠ 这些只在 config.json **没有** model_define_rules 字段时生效；界面保存过就是快照，
 // 新增内置规则不会自动并入旧配置（见 AGENTS.md）。
 //
@@ -136,10 +136,10 @@ func DefaultModelDefineRules() []ModelDefineRule {
 		// GPT 图像模型也带 “gpt”，但它不是聊天模型：先停住，别把 web_search 挂到它身上。
 		{ID: "openai-image", MatchContains: "gpt-image", IsFinal: true,
 			Brand: stringPtr("OpenAI"), Icon: stringPtr("gpt")},
-		// 2026-11-22 用户定：字段含 gpt 且走 Responses 时，默认追加 OpenAI 的服务端
-		// web_search（不区分 vendor，与 grok-4 × response 同一套规则机制）。
-		// 是否真能发仍由 provider/协议闸决定；这里只负责规则画像。
-		{ID: "openai-gpt-native", MatchContains: "gpt", MatchProtocol: "openai-response",
+		// 2026-11-22 用户定：字段含 gpt 就默认追加 OpenAI 的服务端 web_search，
+		// **不再区分 chat / response**（不区分 vendor；请求层两种协议都会带上）。
+		// 是否真能发仍由上游能力决定；这里只负责规则画像。
+		{ID: "openai-gpt-native", MatchContains: "gpt",
 			ServerTools: stringSlicePtr("web_search")},
 		// 图像模型也带 “grok”，但它不是聊天模型：先把思考档位清空并停止，
 		// 免得界面对它摆出一排它根本收不到的 off/minimal/...。

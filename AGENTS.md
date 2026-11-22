@@ -312,7 +312,7 @@ delete(AA)           # 删除
   开箱规则含：gpt / grok / 各类品牌图标 / `grok-imagine` 清空思考档；另有
   **`xai-grok-4-native`：`grok-4` + `openai-response`（不区分 vendor）默认追加
   `server_tools`：`x_search` / `web_search` / `code_execution`**，以及
-  **`openai-gpt-native`：字段含 `gpt` + `openai-response`（不区分 vendor）默认追加
+  **`openai-gpt-native`：字段含 `gpt`（不区分 vendor / 不区分 chat 与 response 接口）默认追加
   `server_tools`：`web_search`**（`gpt-image` 由前一条 final 规则挡住，不会挂搜索）。
   ⚠ **内置默认只在 `config.json` 没有 `model_define_rules` 字段时生效**；一旦在界面保存过，这份数组就是**快照**，
   以后新增的内置规则不会自动并进去（想恢复默认就删掉该字段；想在旧配置上启用就补对应条目）。
@@ -1131,7 +1131,7 @@ DeepSeek / OpenCode GO 直连**确实不报**，所以那一格在那儿永远�
   缓存按**内容前缀**算、与 session id 无关 ⇒ 别为缓存分子会话；也别为"拒绝缓存"发明 header（Pi 的 `cacheRetention: "none"` 对 OpenCode GO 是 no-op）。
 - 思考回传用 `reasoning_content`（网关照收；deepseek 系没思考补空串、别的系不塞）；`reasoning_effort` 关不掉（下限 low）。
 - **工具不在提示词里**：请求体顶层 `tools` 数组；回话是助手消息里的 `tool_calls`，结果以 `{role:"tool", tool_call_id}` 回填。两条铁律：历史里出现过工具 ⇒ `tools` 参数必须在（哪怕 `[]`）；不认识的字段默认不发。形状/开关/实测见 `reminder/tool-calls.md`。
-  **服务端工具已接**（2026-11-09）：模型规则派生的 `server_tools` 在 Responses 协议下作为 `{"type":"x_search"}` 这类声明进请求体，命中会话 `native_tools_disabled` 的扣掉；它们不靠 `allow_tools`（那是给任意 function tool 的默认关闸）。
+  **服务端工具已接**（2026-11-09；2026-11-22 起不再按协议一刀切）：模型规则派生的 `server_tools` 作为 `{"type":"x_search"}` / `{"type":"web_search"}` 这类声明进请求体，命中会话 `native_tools_disabled` 的扣掉；它们不靠 `allow_tools`（那是给任意 function tool 的默认关闸）。**chat 与 response 都会带**；能否被上游接受仍由渠道决定（xAI 的 chat 端点会 422，所以它的内置规则仍限定 `openai-response`）。
   **本地工具已接**（2026-11-10）：DeepSeek 默认规则 `deepseek-web` 给 `web_search` / `web_fetch` 两个 function 声明；`chat` 做客户端 tool loop（最多 4 轮），执行 `/v1/tools/search` / `/v1/tools/fetch`，工具结果以 `role:"tool"` 回填。每轮 tool-call 落一条**中间 assistant 消息**（`kind=tool_run`，`message_tools.source=client` 挂它身上），最终正文另落一条 `kind=chat`；同一轮消息共享 `run_id`。工具结果/来源刷新后仍在。
   **DeepSeek 服务端 `web_search` 不接**：只支持 v4-pro、只有 queries 没有 sources；flash 会忽略并吐 `<tool_call>` 文本。`availableTools` 对 DeepSeek 只返回本地工具（按 `native_tools_disabled` 过滤）。
   ⚠ **xAI 的服务端工具只有 `/responses`**（2026-11-09 真 key 实测）：`/chat/completions` 对 `{"type":"web_search"}` / `{"type":"x_search"}` 直接 **422**（只认 `function` 或 `live_search`），而 `live_search` 虽能过 schema，实际回 **410 "Live search is deprecated. Please switch to the Agent Tools API"**；`/responses` 对三种 Agent Tools 都是 200。
@@ -1677,7 +1677,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   规则（`model_define_rules`）是家族默认，这里是对单个 `(provider, upstream_id)` 的精确覆盖。
   规则编辑器支持匹配协议（`match_protocol`）与**分别追加服务端 / 本地工具**（`server_tools` / `local_tools`）；
   `grok-4 × response` 的内置默认会显示成「追加 x_search / web_search / code_execution」；
-  `gpt × response` 默认显示成「追加 web_search」；
+  `gpt`（任意协议）默认显示成「追加 web_search」；
   DeepSeek 默认追加 `web_search` / `web_fetch`（本地执行）。空态说清「保存并刷新后会出现在这里」。
 - **设置页编排**（2026-11-11 用户定「越科学的布局越好」）：每页先一段 `.settings-lead` 说清**这一页管什么**，
   聊天页固定四段 —— **新会话默认 → 上下文与加载 → 自动压缩 → 生成与标题**（默认值在最前，

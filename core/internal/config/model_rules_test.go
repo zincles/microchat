@@ -287,7 +287,8 @@ func TestDefaultGPTNativeToolRule(t *testing.T) {
 		{"response gpt-5 官方", "openai", "gpt-5", "openai-response", []string{"web_search"}},
 		{"response gpt-5.5 任意 vendor", "openrouter", "openai/gpt-5.5", "openai-response", []string{"web_search"}},
 		{"response gpt-4.1 custom", "custom", "gpt-4.1", "openai-response", []string{"web_search"}},
-		{"chat 不追加", "openai", "gpt-5", "openai-chat-completion", nil},
+		{"chat gpt-5 官方也追加", "openai", "gpt-5", "openai-chat-completion", []string{"web_search"}},
+		{"chat gpt-4.1 custom 也追加", "custom", "gpt-4.1", "openai-chat-completion", []string{"web_search"}},
 		{"非 gpt 不追加", "openai", "o3", "openai-response", nil},
 		{"图像模型不追加", "openai", "gpt-image-1", "openai-response", nil},
 	}

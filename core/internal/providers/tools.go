@@ -2,7 +2,7 @@ package providers
 
 import "encoding/json"
 
-// ServerTool：provider-native 服务端工具的线上形状（Responses API：`{"type":"web_search"}`）。
+// ServerTool：provider-native 服务端工具的线上形状（`{"type":"web_search"}`；chat / response 都可能）。
 // 它没有 function 字段 —— 模型由上游自己执行，不回到客户端。
 func ServerTool(id string) Tool { return Tool{Type: id} }
 

@@ -10,6 +10,30 @@ import (
 )
 
 // Build：opencode-go + response ⇒ URL 以 /responses 结尾、体是数组 input、无 messages。
+func TestBuildChatServerTools(t *testing.T) {
+	provider := Provider{ID: "p", Vendor: VendorCustom, Protocol: ProtocolChatCompletion,
+		BaseURL: "https://x.invalid/v1"}
+	request, err := Build(provider, Request{
+		Model: "gpt-5", SessionID: "s-1",
+		Tools: ServerTools([]string{"web_search"}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := io.ReadAll(request.Body)
+	var body map[string]any
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatal(err)
+	}
+	tools, ok := body["tools"].([]any)
+	if !ok || len(tools) != 1 {
+		t.Fatalf("chat 体里的 tools = %v", body["tools"])
+	}
+	if first, _ := tools[0].(map[string]any); first["type"] != "web_search" {
+		t.Fatalf("工具声明 = %v", first)
+	}
+}
+
 func TestBuildOpenAIResponseWebSearch(t *testing.T) {
 	provider := Provider{ID: "oa", Vendor: VendorOpenAI, Protocol: ProtocolOpenAIResponse,
 		BaseURL: "https://api.openai.com/v1", APIKey: "sk-x"}

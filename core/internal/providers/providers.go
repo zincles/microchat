@@ -732,7 +732,8 @@ func bodyFor(p Provider, r Request) map[string]any {
 	// 思考档位：统一七档 → 各家字段（见 applyThinking）。
 	applyThinking(body, p, r)
 	// 工具定义：**只在渠道允许透传时才发**（不认识的字段有些上游会 400）。
-	if (toolsAllowed(p) || allLocalTools(r.Tools)) && len(r.Tools) > 0 {
+	// 服务端工具（只有 type）是规则明确给的候选，两种协议都带上（GPT 的 web_search 用户要求）。
+	if (toolsAllowed(p) || allLocalTools(r.Tools) || allServerTools(r.Tools)) && len(r.Tools) > 0 {
 		body["tools"] = r.Tools
 		if len(r.ToolChoice) > 0 {
 			body["tool_choice"] = r.ToolChoice
