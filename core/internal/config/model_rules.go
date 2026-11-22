@@ -122,8 +122,9 @@ func ValidModelIcon(icon string) bool {
 	return false
 }
 
-// DefaultModelDefineRules：开箱的品牌规则（含 grok-4 × response 的 xAI native tool 默认值；
-// grok-imagine 是图像模型，先清空思考档并停止）。
+// DefaultModelDefineRules：开箱规则只含**展示/思考档**（品牌、图标、grok-imagine 清空思考档）。
+// 所有搜索/工具追加（grok、GPT、Gemini、DeepSeek …）都只来自用户的「全局模型规则」，
+// 不在代码里写死；grok-imagine 是图像模型，先清空思考档并停止。
 // ⚠ 这些只在 config.json **没有** model_define_rules 字段时生效；界面保存过就是快照，
 // 新增内置规则不会自动并入旧配置（见 AGENTS.md）。GPT / Gemini 的 web_search 由用户在
 // 「渠道 → 全局模型规则」里自行追加，不在代码里写死。
@@ -139,15 +140,9 @@ func DefaultModelDefineRules() []ModelDefineRule {
 		{ID: "xai-image", MatchContains: "grok-imagine", IsFinal: true,
 			Brand: stringPtr("xAI"), Icon: stringPtr("grok"), ThinkingLevels: &noThinking},
 		{ID: "grok", MatchContains: "grok", Brand: stringPtr("xAI"), Icon: stringPtr("grok")},
-		// 2026-11-09 用户定：grok-4.x 且走 Responses（不区分 vendor）时，默认追加 xAI 的
-		// 服务端工具。是否真的能发仍由 provider/模型能力闸决定；这里只负责规则画像。
-		{ID: "xai-grok-4-native", MatchContains: "grok-4", MatchProtocol: "openai-response",
-			ServerTools: stringSlicePtr("x_search", "web_search", "code_execution")},
 		{ID: "gemini", MatchContains: "gemini", Brand: stringPtr("Google"), Icon: stringPtr("gemini")},
 		{ID: "claude", MatchContains: "claude", Brand: stringPtr("Anthropic"), Icon: stringPtr("claude")},
 		{ID: "deepseek", MatchContains: "deepseek", Brand: stringPtr("DeepSeek"), Icon: stringPtr("deepseek")},
-		// DeepSeek 的联网搜索走客户端 Search/Fetch；服务端 web_search 不接（见 AGENTS）。
-		{ID: "deepseek-web", MatchContains: "deepseek", LocalTools: stringSlicePtr("web_search", "web_fetch")},
 		{ID: "mimo", MatchContains: "mimo", Brand: stringPtr("Xiaomi"), Icon: stringPtr("mimo")},
 		{ID: "glm", MatchContains: "glm", Brand: stringPtr("Zhipu"), Icon: stringPtr("glm")},
 		{ID: "kimi", MatchContains: "kimi", Brand: stringPtr("Moonshot"), Icon: stringPtr("kimi")},

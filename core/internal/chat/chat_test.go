@@ -465,6 +465,16 @@ func TestPreviewWireCarriesServerTools(t *testing.T) {
 	h := newHarness(t, config.ProvidersConfig{Providers: []config.Provider{{
 		ID: "xai", Vendor: "xai", Protocol: "openai-response",
 	}}}, "xai", "grok-4.7")
+	// 工具只来自「全局模型规则」，代码默认值里没有 grok 专用条目。
+	cfg := config.DefaultConfig()
+	grokTools := []string{"x_search", "web_search", "code_execution"}
+	cfg.ModelDefineRules = []config.ModelDefineRule{{
+		ID: "xai-grok-4-native", MatchContains: "grok-4", MatchProtocol: "openai-response",
+		ServerTools: &grokTools,
+	}}
+	if err := config.SaveJSON(h.configDir+"/config.json", cfg); err != nil {
+		t.Fatal(err)
+	}
 	payload, err := h.service.PreviewWire(h.session, "你好")
 	if err != nil {
 		t.Fatal(err)

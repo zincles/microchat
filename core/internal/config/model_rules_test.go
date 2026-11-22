@@ -172,74 +172,8 @@ func TestValidateModelDefineRules(t *testing.T) {
 	}
 }
 
-func TestDefaultGrok4NativeToolRule(t *testing.T) {
-	cfg := DefaultConfig()
-	cases := []struct {
-		name     string
-		provider string
-		model    string
-		protocol string
-		want     []string
-	}{
-		{"response 4.7 任意 vendor", "openrouter", "x-ai/grok-4.7", "openai-response", []string{"x_search", "web_search", "code_execution"}},
-		{"response 4.6", "xai", "grok-4.6", "openai-response", []string{"x_search", "web_search", "code_execution"}},
-		{"response 4.x", "custom", "grok-4.20-0309", "openai-response", []string{"x_search", "web_search", "code_execution"}},
-		{"chat 不追加", "xai", "grok-4.7", "openai-chat-completion", nil},
-		{"grok-3 不追加", "xai", "grok-3", "openai-response", nil},
-		{"图像模型不追加", "xai", "grok-imagine-image-2.0", "openai-response", nil},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := cfg.ModelProfileFor(tc.provider, tc.model, tc.protocol, ModelProfile{})
-			if len(got.ServerTools) != len(tc.want) {
-				t.Fatalf("server_tools = %v，想要 %v", got.ServerTools, tc.want)
-			}
-			for i := range tc.want {
-				if got.ServerTools[i] != tc.want[i] {
-					t.Fatalf("server_tools = %v，想要 %v", got.ServerTools, tc.want)
-				}
-			}
-		})
-	}
-}
-
-func TestServerToolsAppendAndDedupe(t *testing.T) {
-	cfg := Config{ModelDefineRules: []ModelDefineRule{
-		{ID: "one", MatchContains: "grok", MatchProtocol: "response", ServerTools: stringSlicePtr("x_search", "web_search")},
-		{ID: "two", MatchContains: "grok", MatchProtocol: "response", ServerTools: stringSlicePtr("web_search", "code_execution")},
-	}}
-	got := cfg.ModelProfileFor("p", "grok-4.7", "openai-response", ModelProfile{})
-	want := []string{"x_search", "web_search", "code_execution"}
-	if !reflect.DeepEqual(got.ServerTools, want) {
-		t.Fatalf("追加/去重 = %v，想要 %v", got.ServerTools, want)
-	}
-	if !reflect.DeepEqual(got.MatchedRules, []string{"global:one", "global:two"}) {
-		t.Fatalf("matched_rules = %v", got.MatchedRules)
-	}
-}
-
-func TestValidateNativeToolRules(t *testing.T) {
-	valid := []ModelDefineRule{{MatchContains: "x", ServerTools: stringSlicePtr("x_search")}}
-	if err := ValidateModelDefineRules(valid); err != nil {
-		t.Fatalf("只追加 native tool 的规则该合法：%v", err)
-	}
-	for name, rule := range map[string]ModelDefineRule{
-		"未知工具":  {MatchContains: "x", ServerTools: stringSlicePtr("nope")},
-		"重复工具":  {MatchContains: "x", ServerTools: stringSlicePtr("x_search", "x_search")},
-		"空工具数组": {MatchContains: "x", ServerTools: stringSlicePtr()},
-		"未知协议":  {MatchContains: "x", MatchProtocol: "grpc", ServerTools: stringSlicePtr("x_search")},
-	} {
-		t.Run(name, func(t *testing.T) {
-			if err := ValidateModelDefineRules([]ModelDefineRule{rule}); err == nil {
-				t.Fatalf("该报错：%+v", rule)
-			}
-		})
-	}
-}
-
-// 回归：解码进 DefaultConfig 的已有 slice 时，JSON 不会清零结构体字段。若不清空
-// ModelDefineRules，gemini（旧配置第 4 条）会继承默认列表第 4 条 xai-grok-4-native
-// 的 match_protocol / server_tools —— 2026-11-09 实测到的静默串值。
+// 回归：config.json 里有 model_define_rules 时，不能再继承代码默认规则的字段
+// （2026-11-09 实测过“gemini 继承了默认列表某条 native 规则”的静默串值）。
 func TestLoadConfigDoesNotMergeDefaultRuleFields(t *testing.T) {
 	dir := t.TempDir()
 	old := `{"model_define_rules":[
@@ -262,26 +196,21 @@ func TestLoadConfigDoesNotMergeDefaultRuleFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, rule := range cfg.ModelDefineRules {
-		switch rule.ID {
-		case "gemini":
-			if rule.MatchProtocol != "" || (rule.ServerTools != nil && len(*rule.ServerTools) != 0) {
-				t.Fatalf("gemini 串到了默认 native 规则字段：%+v", rule)
-			}
-		case "xai-grok-4-native":
-			if rule.ServerTools == nil || len(*rule.ServerTools) != 3 {
-				t.Fatalf("新默认 native 规则没补上：%+v", rule)
-			}
+		if rule.ID == "gemini" && (rule.MatchProtocol != "" || (rule.ServerTools != nil && len(*rule.ServerTools) != 0)) {
+			t.Fatalf("gemini 串到了默认 native 规则字段：%+v", rule)
 		}
 	}
 }
 
-func TestConfiguredGPTAndGeminiWebSearchRules(t *testing.T) {
+func TestConfiguredSearchToolRules(t *testing.T) {
 	// 这些条目住在用户的「全局模型规则」里，不在 DefaultModelDefineRules。
 	// 这里只验证规则机制：只要 server_tools 命中，chat / response 两种协议都一致。
 	cfg := Config{ModelDefineRules: []ModelDefineRule{
 		{ID: "openai-image", MatchContains: "gpt-image", IsFinal: true},
 		{ID: "openai-gpt-native", MatchContains: "gpt", ServerTools: stringSlicePtr("web_search")},
 		{ID: "gemini-native", MatchContains: "gemini", ServerTools: stringSlicePtr("web_search")},
+		{ID: "xai-grok-4-native", MatchContains: "grok-4", MatchProtocol: "openai-response",
+			ServerTools: stringSlicePtr("x_search", "web_search", "code_execution")},
 	}}
 	cases := []struct {
 		name     string
@@ -294,6 +223,8 @@ func TestConfiguredGPTAndGeminiWebSearchRules(t *testing.T) {
 		{"gemini response", "gemini-4-argon", "openai-response", []string{"web_search"}},
 		{"gemini chat", "gemini-4-argon", "openai-chat-completion", []string{"web_search"}},
 		{"gpt 图像排除", "gpt-image-1", "openai-response", nil},
+		{"grok response", "grok-4.7", "openai-response", []string{"x_search", "web_search", "code_execution"}},
+		{"grok chat 受规则协议限制", "grok-4.7", "openai-chat-completion", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

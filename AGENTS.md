@@ -309,13 +309,13 @@ delete(AA)           # 删除
   （客户端执行）是**两个独立字段**，都是**追加**语义、各自按规则顺序去重；它们只把候选写进画像，
   真正发请求前还要经过 provider/协议/模型能力闸。
   `match_protocol` 可限定 `openai-chat-completion` / `openai-response`（`chat` / `response` 是写入简写）。
-  开箱规则含：gpt / grok / 各类品牌图标 / `grok-imagine` 清空思考档；另有
-  **`xai-grok-4-native`：`grok-4` + `openai-response`（不区分 vendor）默认追加
-  `server_tools`：`x_search` / `web_search` / `code_execution`**。
-  **GPT / Gemini 的 `web_search` 不在代码默认列表里**（2026-11-22 用户定：不硬编码），
-  由用户在本页按需追加；当前配置里已有：
+  开箱规则**只含展示/思考档**：gpt / grok / 各类品牌图标、`grok-imagine` 清空思考档；
+  **不包含任何 `server_tools` / `local_tools`**（2026-11-22 用户定：工具追加不硬编码）。
+  所有搜索/工具都来自本页的全局规则；当前配置里有：
+  `xai-grok-4-native`（`grok-4` + `openai-response` → `x_search` / `web_search` / `code_execution`）、
   `openai-image`（`gpt-image`，命中即停）、`openai-gpt-native`（包含 `gpt` → `web_search`）、
-  `gemini-native`（包含 `gemini` → `web_search`）。**不写 `match_protocol` ⇒ chat / response 都生效**。
+  `gemini-native`（包含 `gemini` → `web_search`）、`deepseek-web`（本地 `web_search` / `web_fetch`）。
+  GPT/Gemini 两条**不写 `match_protocol` ⇒ chat / response 都生效**；grok 规则仍限定 response。
   ⚠ **内置默认只在 `config.json` 没有 `model_define_rules` 字段时生效**；一旦在界面保存过，这份数组就是**快照**，
   以后新增的内置规则不会自动并进去（想恢复默认就删掉该字段；想在旧配置上启用就补对应条目）。
   写 `[]` 即关闭。未知档位、空匹配、空定义、
@@ -1678,9 +1678,9 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   改该模型自己的**用户列**（显示名 / 上下文覆盖 / JSON 参数）——
   规则（`model_define_rules`）是家族默认，这里是对单个 `(provider, upstream_id)` 的精确覆盖。
   规则编辑器支持匹配协议（`match_protocol`）与**分别追加服务端 / 本地工具**（`server_tools` / `local_tools`）；
-  `grok-4 × response` 的内置默认会显示成「追加 x_search / web_search / code_execution」；
+  `grok-4 × response` 的全局规则会显示成「追加 x_search / web_search / code_execution」；
   `gpt` / `gemini`（任意协议）的全局规则显示成「追加 web_search」；
-  DeepSeek 默认追加 `web_search` / `web_fetch`（本地执行）。空态说清「保存并刷新后会出现在这里」。
+  DeepSeek 的全局规则追加 `web_search` / `web_fetch`（本地执行）。空态说清「保存并刷新后会出现在这里」。
 - **设置页编排**（2026-11-11 用户定「越科学的布局越好」）：每页先一段 `.settings-lead` 说清**这一页管什么**，
   聊天页固定四段 —— **新会话默认 → 上下文与加载 → 自动压缩 → 生成与标题**（默认值在最前，
   上下文/压缩/辅助生成各自成组；`保存对话设置` 放在最后一组末尾，按钮旁用 `.action-note` 写清
