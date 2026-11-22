@@ -2113,18 +2113,24 @@ test("上下文环：App 喂 ctx / 环在顶栏画 / 状态行不再报占用", 
 });
 
 // 2026-11-20 用户定「一步到位全量重排」：设置顶层不再是一排 tab，
-// 首页是一张目录卡（SettingsHome），点进去才显示对应内容；Agent 编辑器仍是 VTabs。
-test("设置目录：首页是目录卡，子区才有 VTabsWindow", () => {
+// 首页是一张目录（SettingsHome），点进去才显示对应内容；Agent 编辑器仍是 VTabs。
+// 2026-11-22 用户定「像 Android 平板的设置」：目录改 MD3 单列列表，不做磁贴网格。
+test("设置目录：首页是 MD3 设置列表，子区才有 VTabsWindow", () => {
   const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
   const home = readFileSync(join(SRC, "components", "SettingsHome.vue"), "utf8");
   const editor = readFileSync(join(SRC, "components", "AgentEditor.vue"), "utf8");
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 
   assert.match(settings, /<SettingsHome :sections="SETTINGS_SECTIONS"/, "设置首页没有用 SettingsHome");
   assert.match(settings, /<VTabsWindowItem v-if="!only" value="home"/, "完整设置没有目录页");
   assert.match(settings, /<VTabsWindow v-model="tab"[\s\S]*<VTabsWindowItem value="chat"/, "设置子区没有真正的 tabpanel");
   assert.ok(!/<VTab v-for="t in SETTINGS_SECTIONS"/.test(settings), "设置顶层又回到一排 tab");
-  assert.match(home, /<button[\s\S]*class="settings-home-card"/, "目录卡不是可点按钮");
-  assert.match(home, /v-html="iconOf\(s\.icon\)"/, "目录卡没带图标");
+  assert.match(home, /class="settings-home-list"/, "设置目录不是单列列表");
+  assert.match(home, /<button[\s\S]*class="settings-home-row"/, "目录行不是可点按钮");
+  assert.match(home, /v-html="iconOf\(s\.icon\)"/, "目录行没带图标");
+  assert.match(home, /class="settings-home-chevron"[\s\S]*v-html="chevron"/, "目录行尾没有进入箭头");
+  assert.match(css, /\.settings-home-row \+ \.settings-home-row \{[^}]*border-top:\s*1px solid/, "目录行之间没有分隔线");
+  assert.ok(!/settings-home-grid|settings-home-card/.test(css), "旧磁贴网格样式还留着");
 
   assert.match(editor, /<VTabs[\s\S]*v-model="tab"[\s\S]*<VTab v-for="t in tabs"[\s\S]*@focus="tab = t\.id"/, "Agent 编辑器没用 VTabs/VTab（或缺自动激活）");
   assert.match(editor, /<VTabsWindow v-model="tab"[\s\S]*<VTabsWindowItem value="base"/, "Agent 编辑器没有真正的 tabpanel");
@@ -4659,7 +4665,7 @@ test("会话/渠道管理页不跑设置 tab 滑入（页面切换不是 tab）"
 });
 
 // 设置目录的 window item 顺序必须与 SETTINGS_SECTIONS 一致：Vuetify 的滑入方向按
-// window item 注册顺序算，不是按目录卡顺序算（2026-11-06 用户报「行为不太对」）。
+// window item 注册顺序算，不是按目录顺序算（2026-11-06 用户报「行为不太对」）。
 test("设置页顺序：目录在最前，子区与 SETTINGS_SECTIONS 一致", () => {
   const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
   const items = [...settings.matchAll(/<VTabsWindowItem[^>]*\bvalue="([^"]+)"/g)].map((m) => m[1]);

@@ -1207,20 +1207,28 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
   border-radius: 0 var(--r-sm) var(--r-sm) 0; background: var(--md-surface-container-low);
   color: var(--md-on-surface-variant); font-size: var(--md-type-body-small); line-height: 1.55; }
 .settings-lead b { color: var(--md-on-surface); font-weight: 600; }
-/* 设置目录首页（2026-11-20 用户定「一步到位全量重排」）：顶层从一排 tab 换成一张目录卡。
- * 手机上不用再把六个 tab 挤进 390px；桌面按内容自动换列。 */
-.settings-home-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(13.5em, 1fr)); gap: 0.7em; }
-.settings-home-card { display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto; align-items: center; column-gap: 0.7em;
-  padding: 0.85em 0.95em; border: 1px solid var(--md-outline-variant); border-radius: var(--md-shape-md);
-  background: var(--md-surface-container-low); color: var(--md-on-surface); text-align: left; cursor: pointer;
-  transition: background-color var(--md-dur-150) var(--md-ease-standard), border-color var(--md-dur-150) var(--md-ease-standard), transform var(--md-dur-100) var(--md-ease-standard); }
-.settings-home-card:hover { background: var(--md-surface-container); border-color: color-mix(in srgb, var(--md-primary) 35%, var(--md-outline-variant)); }
-.settings-home-card:active { transform: scale(0.985); }
-.settings-home-icon { grid-row: 1 / 3; width: 2.35em; height: 2.35em; display: grid; place-items: center;
-  color: var(--md-on-primary-container); background: var(--md-primary-container); border-radius: 50%; }
-.settings-home-icon svg { width: 1.15em; height: 1.15em; }
-.settings-home-title { font-size: var(--md-type-title-small); font-weight: 600; line-height: 1.25; }
-.settings-home-desc { grid-column: 2; color: var(--md-on-surface-variant); font-size: var(--md-type-body-small); line-height: 1.35; }
+/* 设置目录首页（2026-11-22 用户定）：MD3 单列设置列表，像 Android 平板的设置。
+ * 一行 = 圆底图标 + 标题/说明 + 右箭头；行间发丝线，整组一块低对比容器。 */
+.settings-home-lead { margin: 0 0 1em; color: var(--md-on-surface-variant); font-size: var(--md-type-body-medium); line-height: 1.6; }
+.settings-home-list { background: var(--md-surface-container-low); border-radius: var(--md-shape-md); overflow: hidden; }
+.settings-home-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 0.9em;
+  width: 100%; box-sizing: border-box; min-height: 4.25em; padding: 0.8em 1em;
+  border: none; border-radius: 0; background: none; color: var(--md-on-surface); text-align: left; cursor: pointer;
+  transition: background-color var(--md-dur-150) var(--md-ease-standard); }
+.settings-home-row + .settings-home-row { border-top: 1px solid var(--md-outline-variant); }
+.settings-home-row:hover { background: color-mix(in srgb, var(--md-on-surface) 7%, transparent); }
+.settings-home-row:active { background: color-mix(in srgb, var(--md-on-surface) 10%, transparent); }
+.settings-home-row:focus-visible { outline: 2px solid var(--md-primary); outline-offset: -2px; }
+.settings-home-icon { width: 2.5em; height: 2.5em; display: grid; place-items: center; border-radius: 50%;
+  color: var(--md-on-secondary-container); background: var(--md-secondary-container); }
+.settings-home-icon svg { width: 1.2em; height: 1.2em; }
+.settings-home-copy { display: flex; flex-direction: column; gap: 0.15em; min-width: 0; }
+.settings-home-title { font-size: var(--md-type-title-small); font-weight: 500; line-height: 1.3; }
+.settings-home-desc { color: var(--md-on-surface-variant); font-size: var(--md-type-body-small); line-height: 1.4; }
+.settings-home-chevron { display: flex; color: var(--md-on-surface-variant); }
+@media (max-width: 700px) {
+  .settings-home-row { min-height: 4em; padding: 0.7em 0.85em; gap: 0.75em; }
+}
 /* 按钮旁的一句话（保存范围、是否落库、是否影响已有数据）：比底部大段 hint 更贴动作。 */
 .action-note { color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); line-height: 1.4; }
 .action-row { align-items: center; }
