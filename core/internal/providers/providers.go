@@ -876,10 +876,11 @@ func Build(p Provider, r Request) (*http.Request, error) {
 // URL：Endpoints[response] 非空用它（预设按 base 拼的），否则老路 base+`/responses`；
 // 体：`{"model","input": [{role,content:[{type:"input_text",text}]}],"stream": 照 r.Stream,
 // "reasoning":{effort?,summary?}（给了才发）、"max_output_tokens"（>0 才发）、
-// "store":false（opencode 系照 Pi 发；custom 不发）、"temperature"（有就发）}`。
+// "store":false（官方/OpenRouter/xAI/opencode 系；custom 不发）、"temperature"（有就发）}`。
 // prompt_cache_key 条件照 chat（opencode 系本来就没有 longCache ⇒ 自然不发，别特意关）。
-// Responses 的历史形状：user/developer/system 是输入消息，assistant 必须是
-// `type:"message"` + `output_text`（`input_text` 会被上游 400）；工具回程分别是
+// Responses 的历史形状：user/developer/system 是输入消息，assistant 发
+// EasyInputMessage（role + 字符串正文）—— 既不能把 `input_text` 涂在 assistant 上，
+// 也不要造一个缺 id 的 `type:"message"` 半截 output item；工具回程分别是
 // `function_call` 与 `function_call_output`（Pi 的 convertResponsesMessages 口径）。
 func buildResponse(p Provider, r Request) (*http.Request, error) {
 	if p.EffectiveVendor() != VendorDummy && p.BaseURL == "" &&
@@ -914,10 +915,11 @@ func buildResponse(p Provider, r Request) (*http.Request, error) {
 				}
 			}
 			if strings.TrimSpace(message.Content) != "" {
-				input = append(input, map[string]any{
-					"type": "message", "role": "assistant", "status": "completed",
-					"content": []map[string]any{{"type": "output_text", "text": message.Content, "annotations": []any{}}},
-				})
+				// 这是官方文档里的 EasyInputMessage 形状。不要只写 output_text 却没有 id：
+				// 那是「半截 ResponseOutputMessage」，严格的兼容端点会按 400 拒掉
+				// （官方仓库的 SDK 也仍在讨论这个歧义）。我们没有保存上游 output item id，
+				// 所以用最容易通过校验的字符串正文。
+				input = append(input, map[string]any{"role": "assistant", "content": message.Content})
 			}
 		case "tool":
 			input = append(input, map[string]any{

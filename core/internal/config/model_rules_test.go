@@ -213,10 +213,11 @@ func TestLoadConfigDoesNotMergeDefaultRuleFields(t *testing.T) {
 
 func TestConfiguredSearchToolRules(t *testing.T) {
 	// 这些条目住在「全局模型规则」里（用户或内置），不在 Go 内存里的特例分支。
-	// 这里只验证规则机制：只要 server_tools 命中，chat / response 两种协议都一致。
+	// 这里验证规则机制与内置 GPT 规则的协议闸：GPT 的 web_search 只属于 Responses；
+	// 不带 match_protocol 的规则（gemini 那条）仍然两种协议都命中。
 	cfg := withoutBuiltins([]ModelDefineRule{
 		{ID: "openai-image", MatchContains: "gpt-image", IsFinal: true},
-		{ID: "openai-gpt-native", MatchContains: "gpt", ServerTools: stringSlicePtr("web_search")},
+		{ID: "openai-gpt-native", MatchContains: "gpt", MatchProtocol: "openai-response", ServerTools: stringSlicePtr("web_search")},
 		{ID: "gemini-native", MatchContains: "gemini", ServerTools: stringSlicePtr("web_search")},
 		{ID: "xai-grok-4-native", MatchContains: "grok-4", MatchProtocol: "openai-response",
 			ServerTools: stringSlicePtr("x_search", "web_search", "code_execution")},
@@ -228,7 +229,7 @@ func TestConfiguredSearchToolRules(t *testing.T) {
 		want     []string
 	}{
 		{"gpt response", "gpt-5", "openai-response", []string{"web_search"}},
-		{"gpt chat", "gpt-5", "openai-chat-completion", []string{"web_search"}},
+		{"gpt chat 受内置规则协议限制", "gpt-5", "openai-chat-completion", nil},
 		{"gemini response", "gemini-4-argon", "openai-response", []string{"web_search"}},
 		{"gemini chat", "gemini-4-argon", "openai-chat-completion", []string{"web_search"}},
 		{"gpt 图像排除", "gpt-image-1", "openai-response", nil},
@@ -247,6 +248,16 @@ func TestConfiguredSearchToolRules(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestBuiltinGPTWebSearchOnlyOnResponses(t *testing.T) {
+	cfg := DefaultConfig()
+	if got := cfg.ModelProfileFor("p", "gpt-5", "openai-response", ModelProfile{}); len(got.ServerTools) != 1 || got.ServerTools[0] != "web_search" {
+		t.Fatalf("GPT responses server_tools = %v", got.ServerTools)
+	}
+	if got := cfg.ModelProfileFor("p", "gpt-5", "openai-chat-completion", ModelProfile{}); len(got.ServerTools) != 0 {
+		t.Fatalf("GPT chat 不该带 web_search：%v", got.ServerTools)
 	}
 }
 

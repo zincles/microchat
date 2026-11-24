@@ -875,10 +875,11 @@ func (s *Service) availableTools(session model.Session, chosen providers.Backend
 		}
 		return kept
 	}
-	// 服务端工具不再按协议一刀切：模型规则明确给了候选就带上（2026-11-22 用户定：
-	// GPT 的 web_search 在 chat / response 两种接口下都要附加）。
-	// ⚠ xAI 的 chat 端点对 x_search/web_search 会 422；它的内置规则仍只匹配 response，
-	// 所以不要去掉那条规则的 match_protocol。
+	// 服务端工具不再在代码里按协议一刀切：模型规则明确给了候选就带上。
+	// ⚠ 但内置规则自己会按协议限定：GPT 的 web_search 只匹配 openai-response
+	// （官方 Chat Completions 只支持专用搜索模型，普通 GPT 带 web_search 会 400）；
+	// xAI 的 chat 端点对 x_search/web_search 会 422，它的规则也只匹配 response。
+	// 想给自建代理的 chat 开搜索，加一条不带 match_protocol 的用户规则即可。
 	cfg, err := config.LoadConfig(s.Paths)
 	if err != nil {
 		return nil

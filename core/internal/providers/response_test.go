@@ -72,13 +72,11 @@ func TestBuildResponseHistoryShapes(t *testing.T) {
 		t.Fatalf("function_call = %#v", call)
 	}
 	assistant := asMap(3)
-	if assistant["type"] != "message" || assistant["role"] != "assistant" {
-		t.Fatalf("assistant message = %#v", assistant)
+	if assistant["role"] != "assistant" || assistant["content"] != "hello" {
+		t.Fatalf("assistant EasyInputMessage = %#v", assistant)
 	}
-	content, _ := assistant["content"].([]any)
-	if len(content) != 1 || content[0].(map[string]any)["type"] != "output_text" ||
-		content[0].(map[string]any)["text"] != "hello" {
-		t.Fatalf("assistant content = %#v", assistant["content"])
+	if _, exists := assistant["type"]; exists {
+		t.Fatalf("assistant 不该是半截 output message：%#v", assistant)
 	}
 	tool := asMap(4)
 	if tool["type"] != "function_call_output" || tool["call_id"] != "call_1" || tool["output"] != "result" {

@@ -15,6 +15,7 @@
   {
     "id": "openai-gpt-native",
     "match_contains": "gpt",
+    "match_protocol": "openai-response",
     "server_tools": [
       "web_search"
     ]
