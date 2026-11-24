@@ -528,9 +528,26 @@ func readResponseStream(status int, body io.Reader, onDelta func(Delta)) (Result
 			if onDelta != nil {
 				onDelta(Delta{Text: frame.Delta})
 			}
-		case "response.reasoning_summary_text.delta", "response.reasoning_summary_part.done",
-			"response.reasoning_text.delta":
-			log.Printf("providers: response reasoning 事件吞掉（%s，别入库）", envelope.Type)
+		case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
+			var frame struct {
+				Delta string `json:"delta"`
+			}
+			if json.Unmarshal([]byte(data), &frame) != nil || frame.Delta == "" {
+				continue
+			}
+			result.Reasoning += frame.Delta
+			if onDelta != nil {
+				onDelta(Delta{Reasoning: frame.Delta})
+			}
+		case "response.reasoning_summary_part.done":
+			// 多段摘要之间补空行（Pi 的 processResponsesStream 同一条规矩）；
+			// 没有内容时不要凭空写一个换行。
+			if result.Reasoning != "" {
+				result.Reasoning += "\n\n"
+				if onDelta != nil {
+					onDelta(Delta{Reasoning: "\n\n"})
+				}
+			}
 		case "response.refusal", "response.refusal.delta":
 			return Result{}, &UpstreamError{Status: status, Body: snippet("response.refusal：" + data)}
 		case "response.failed", "response.error", "error":
@@ -717,12 +734,23 @@ func NormalizeUsage(raw json.RawMessage) json.RawMessage {
 		return nil
 	}
 	var wire struct {
+		// Chat Completions
 		PromptTokens     *int64 `json:"prompt_tokens"`
 		CompletionTokens *int64 `json:"completion_tokens"`
-		TotalTokens      *int64 `json:"total_tokens"`
-		PromptDetails    struct {
+		// Responses
+		InputTokens   *int64 `json:"input_tokens"`
+		OutputTokens  *int64 `json:"output_tokens"`
+		TotalTokens   *int64 `json:"total_tokens"`
+		PromptDetails struct {
 			CachedTokens *int64 `json:"cached_tokens"`
 		} `json:"prompt_tokens_details"`
+		InputDetails struct {
+			CachedTokens     *int64 `json:"cached_tokens"`
+			CacheWriteTokens *int64 `json:"cache_write_tokens"`
+		} `json:"input_tokens_details"`
+		OutputDetails struct {
+			ReasoningTokens *int64 `json:"reasoning_tokens"`
+		} `json:"output_tokens_details"`
 		// 缓存命中的其它写法：DeepSeek 系 `prompt_cache_hit_tokens`、Anthropic 系 `cache_read_input_tokens`
 		PromptCacheHitTokens *int64 `json:"prompt_cache_hit_tokens"`
 		CacheReadInputTokens *int64 `json:"cache_read_input_tokens"`
@@ -735,17 +763,20 @@ func NormalizeUsage(raw json.RawMessage) json.RawMessage {
 		// 那不该让整份用量归零（宁可这一格没有，别的数照给）。
 		Cost json.RawMessage `json:"cost"`
 	}
-	if json.Unmarshal(raw, &wire) != nil || wire.PromptTokens == nil {
-		return nil // 连 prompt_tokens 都没有 ⇒ 这份用量我们不认识
+	if json.Unmarshal(raw, &wire) != nil {
+		return nil
 	}
-	prompt := *wire.PromptTokens
-	completion := numberOr(wire.CompletionTokens, 0)
+	prompt := firstNumber(wire.PromptTokens, wire.InputTokens)
+	if prompt == 0 && wire.PromptTokens == nil && wire.InputTokens == nil {
+		return nil // 连输入 token 都没有 ⇒ 这份用量我们不认识
+	}
+	completion := firstNumber(wire.CompletionTokens, wire.OutputTokens)
 	usage := Usage{
 		PromptTokens:     prompt,
 		CompletionTokens: completion,
 		TotalTokens:      numberOr(wire.TotalTokens, prompt+completion),
-		CachedTokens:     firstNumber(wire.PromptDetails.CachedTokens, wire.PromptCacheHitTokens, wire.CacheReadInputTokens),
-		ReasoningTokens:  firstNumber(wire.CompletionDetails.ReasoningTokens, wire.ReasoningTokens),
+		CachedTokens:     firstNumber(wire.PromptDetails.CachedTokens, wire.InputDetails.CachedTokens, wire.PromptCacheHitTokens, wire.CacheReadInputTokens),
+		ReasoningTokens:  firstNumber(wire.CompletionDetails.ReasoningTokens, wire.OutputDetails.ReasoningTokens, wire.ReasoningTokens),
 		CostUSD:          parseCost(wire.Cost),
 		Raw:              raw,
 	}

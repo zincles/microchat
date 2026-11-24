@@ -907,7 +907,35 @@ func wireMessages(outgoing []state.Outgoing, reasoningByID map[string]string) []
 		if item.Role == state.RoleAssistant && item.MessageID != nil {
 			message.Reasoning = reasoningByID[*item.MessageID]
 		}
+		var calls []providers.ToolCall
+		if item.Role == state.RoleAssistant {
+			for _, tool := range item.Tools {
+				if tool.Source != "client" || strings.TrimSpace(tool.ItemID) == "" {
+					continue
+				}
+				arguments := tool.Arguments
+				if strings.TrimSpace(arguments) == "" {
+					arguments = "{}"
+				}
+				calls = append(calls, providers.ToolCall{ID: tool.ItemID, Name: tool.ToolName, Arguments: arguments})
+			}
+			if len(calls) > 0 {
+				message.ToolCalls = toolCallsJSON(calls)
+			}
+		}
 		messages = append(messages, message)
+		// 客户端工具的结果紧跟在发起它的 assistant 之后；没有这一步，下一轮历史里
+		// 只剩下一条空的 assistant（或最终正文），模型看不到工具返回过什么。
+		if item.Role == state.RoleAssistant {
+			for _, tool := range item.Tools {
+				if tool.Source != "client" || strings.TrimSpace(tool.ItemID) == "" {
+					continue
+				}
+				messages = append(messages, providers.ChatMessage{
+					Role: "tool", Content: tool.Result, ToolCallID: tool.ItemID, Name: tool.ToolName,
+				})
+			}
+		}
 	}
 	return messages
 }

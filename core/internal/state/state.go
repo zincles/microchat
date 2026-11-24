@@ -279,8 +279,11 @@ type Outgoing struct {
 
 	Type      string  `json:"type"`                 // system | message | summary
 	MessageID *string `json:"message_id,omitempty"` // type=message
-	SummaryID *string `json:"summary_id,omitempty"` // type=summary
-	Blocks    *int64  `json:"blocks,omitempty"`     // type=summary：它覆盖几个块
+	// Tools：这条消息上的**客户端**工具调用记录（服务端工具不参与回放）。
+	// 只给 wire 层重建 assistant.tool_calls + role:"tool" 历史用；它不是出站 JSON 的一部分。
+	Tools     []model.MessageTool `json:"-"`
+	SummaryID *string             `json:"summary_id,omitempty"` // type=summary
+	Blocks    *int64              `json:"blocks,omitempty"`     // type=summary：它覆盖几个块
 	// Idx：这一项对应**第几条消息**（派生字段，同 `model.Message.Idx`）。
 	// `type=system` ⇒ **0**（合成的系统提示词，它不是消息）；`type=message` ⇒ 它自己那条的序号。
 	Idx *int `json:"idx,omitempty"`
@@ -366,7 +369,8 @@ func BuildOutgoingWithPromptEntries(systemPrompt string, messages []model.Messag
 			// 正文为空的不发出去：生成中的占位消息就在历史里躺着，而"空一条、再说一句"
 			// 对上游是纯噪音；整句都是 `<state>` 块的消息同理（剔除后为空）。
 			content := statelang.Scan(part.message.Content).Cleaned
-			if strings.TrimSpace(content) == "" {
+			clientTools := clientMessageTools(part.message.Tools)
+			if strings.TrimSpace(content) == "" && len(clientTools) == 0 {
 				continue
 			}
 			role := RoleAssistant
@@ -374,7 +378,7 @@ func BuildOutgoingWithPromptEntries(systemPrompt string, messages []model.Messag
 				role = RoleUser
 			}
 			id := part.message.ID
-			item := Outgoing{Role: role, Content: content, Type: "message", MessageID: &id}
+			item := Outgoing{Role: role, Content: content, Type: "message", MessageID: &id, Tools: clientTools}
 			if part.message.Idx > 0 { // 手搭出来的消息没编过号 ⇒ 就不带这一格（0 是系统提示词的）
 				index := part.message.Idx
 				item.Idx = &index
@@ -716,4 +720,16 @@ func sortedKeys[V any](m map[string]V) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// clientMessageTools：只保留客户端执行过的工具调用。服务端工具由上游执行，
+// 回放成 function_call 会伪造一次不存在的客户端调用。
+func clientMessageTools(tools []model.MessageTool) []model.MessageTool {
+	var out []model.MessageTool
+	for _, tool := range tools {
+		if tool.Source == "client" && strings.TrimSpace(tool.ItemID) != "" {
+			out = append(out, tool)
+		}
+	}
+	return out
 }

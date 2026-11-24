@@ -15,6 +15,7 @@ import (
 	"microchat/internal/config"
 	"microchat/internal/model"
 	"microchat/internal/providers"
+	"microchat/internal/state"
 	"microchat/internal/store"
 	"microchat/internal/task"
 	"microchat/internal/title"
@@ -537,6 +538,26 @@ func TestPreviewWireCarriesServerToolsOnChat(t *testing.T) {
 	}
 	if got := tools[0].(map[string]any)["type"]; got != "web_search" {
 		t.Fatalf("chat 预演的服务端工具 = %#v", got)
+	}
+}
+
+func TestWireMessagesReplaysClientToolHistory(t *testing.T) {
+	id := "m2"
+	outgoing := []state.Outgoing{{Role: state.RoleAssistant, Content: "", MessageID: &id, Tools: []model.MessageTool{{
+		Source: "client", ToolName: "web_search", ItemID: "call_1", Arguments: `{"query":"x"}`, Result: "result",
+	}}}, {Role: state.RoleUser, Content: "next"}}
+	got := wireMessages(outgoing, nil)
+	if len(got) != 3 {
+		t.Fatalf("messages = %+v", got)
+	}
+	if len(got[0].ToolCalls) == 0 || !strings.Contains(string(got[0].ToolCalls), `"call_1"`) {
+		t.Fatalf("assistant 没带 tool_calls：%+v", got[0])
+	}
+	if got[1].Role != "tool" || got[1].ToolCallID != "call_1" || got[1].Content != "result" {
+		t.Fatalf("tool 结果 = %+v", got[1])
+	}
+	if got[2].Role != "user" {
+		t.Fatalf("后续消息 = %+v", got[2])
 	}
 }
 

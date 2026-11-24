@@ -102,6 +102,22 @@ func TestChatStreamsAndSplitsReasoning(t *testing.T) {
 }
 
 // 量只附在最后一段（`choices: []` + `usage`）也该认 —— 这就是"打完字才报数"的形状。
+func TestNormalizeUsageResponsesShape(t *testing.T) {
+	raw := []byte(`{"input_tokens":120,"output_tokens":30,"total_tokens":150,"input_tokens_details":{"cached_tokens":80},"output_tokens_details":{"reasoning_tokens":7}}`)
+	got := NormalizeUsage(raw)
+	if len(got) == 0 {
+		t.Fatal("Responses usage 不该丢")
+	}
+	var usage Usage
+	if err := json.Unmarshal(got, &usage); err != nil {
+		t.Fatal(err)
+	}
+	if usage.PromptTokens != 120 || usage.CompletionTokens != 30 || usage.TotalTokens != 150 ||
+		usage.CachedTokens != 80 || usage.ReasoningTokens != 7 {
+		t.Fatalf("usage = %+v", usage)
+	}
+}
+
 func TestTrailingUsageOnlyChunkIsAccepted(t *testing.T) {
 	stub := newStubUpstream(t, 200, "text/event-stream",
 		"data: {\"choices\":[{\"delta\":{\"content\":\"在\"}}]}\n\n"+
@@ -353,7 +369,7 @@ func TestNonStreamingIsRefusedExplicitly(t *testing.T) {
 	}
 }
 
-// readResponseStream：脚本化事件流 —— 文本分片拼正文、reasoning 系吞了记 log、usage 归一化。
+// readResponseStream：脚本化事件流 —— 文本分片拼正文、reasoning 摘要进思考、usage 归一化。
 func TestReadResponseStreamTextAndUsage(t *testing.T) {
 	frames := []string{
 		`data: {"type":"response.created","response":{"id":"r1"}}`,
@@ -376,11 +392,17 @@ func TestReadResponseStreamTextAndUsage(t *testing.T) {
 	if result.Text != "你好，世界" {
 		t.Fatalf("正文 = %q", result.Text)
 	}
-	if result.Reasoning != "" {
-		t.Fatalf("reasoning 系该吞了别入库：%q", result.Reasoning)
+	if result.Reasoning != "想一下\n\n还是想" {
+		t.Fatalf("reasoning = %q", result.Reasoning)
 	}
-	if len(deltas) != 2 || deltas[0].Text != "你好" || deltas[1].Text != "，世界" {
+	wantDeltas := []Delta{{Text: "你好"}, {Reasoning: "想一下"}, {Reasoning: "\n\n"}, {Reasoning: "还是想"}, {Text: "，世界"}}
+	if len(deltas) != len(wantDeltas) {
 		t.Fatalf("增量 = %+v", deltas)
+	}
+	for i := range wantDeltas {
+		if deltas[i] != wantDeltas[i] {
+			t.Fatalf("第 %d 个增量 = %+v，想要 %+v", i, deltas[i], wantDeltas[i])
+		}
 	}
 	var usage Usage
 	if err := json.Unmarshal(result.Usage, &usage); err != nil {

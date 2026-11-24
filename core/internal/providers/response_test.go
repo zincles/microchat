@@ -34,6 +34,58 @@ func TestBuildChatServerTools(t *testing.T) {
 	}
 }
 
+// Responses 的历史形状：assistant 必须是 output_text message；工具回程是
+// function_call / function_call_output，不能把 input_text 涂在 assistant 上。
+func TestBuildResponseHistoryShapes(t *testing.T) {
+	provider := Provider{ID: "oa", Vendor: VendorOpenAI, Protocol: ProtocolOpenAIResponse,
+		BaseURL: "https://api.openai.com/v1", APIKey: "sk-x"}
+	request, err := Build(provider, Request{
+		Model: "gpt-5", SessionID: "s-1",
+		Messages: []ChatMessage{
+			{Role: "system", Content: "be terse"},
+			{Role: "user", Content: "hi"},
+			{Role: "assistant", Content: "hello", ToolCalls: json.RawMessage(`[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]`)},
+			{Role: "tool", ToolCallID: "call_1", Content: "result"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := io.ReadAll(request.Body)
+	var body map[string]any
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatal(err)
+	}
+	input, ok := body["input"].([]any)
+	if !ok || len(input) != 5 {
+		t.Fatalf("input = %#v", body["input"])
+	}
+	asMap := func(i int) map[string]any { return input[i].(map[string]any) }
+	if asMap(0)["role"] != "system" || asMap(0)["content"] != "be terse" {
+		t.Fatalf("system = %#v", asMap(0))
+	}
+	if asMap(1)["role"] != "user" {
+		t.Fatalf("user = %#v", asMap(1))
+	}
+	call := asMap(2)
+	if call["type"] != "function_call" || call["call_id"] != "call_1" || call["name"] != "lookup" {
+		t.Fatalf("function_call = %#v", call)
+	}
+	assistant := asMap(3)
+	if assistant["type"] != "message" || assistant["role"] != "assistant" {
+		t.Fatalf("assistant message = %#v", assistant)
+	}
+	content, _ := assistant["content"].([]any)
+	if len(content) != 1 || content[0].(map[string]any)["type"] != "output_text" ||
+		content[0].(map[string]any)["text"] != "hello" {
+		t.Fatalf("assistant content = %#v", assistant["content"])
+	}
+	tool := asMap(4)
+	if tool["type"] != "function_call_output" || tool["call_id"] != "call_1" || tool["output"] != "result" {
+		t.Fatalf("function_call_output = %#v", tool)
+	}
+}
+
 func TestBuildOpenAIResponseWebSearch(t *testing.T) {
 	provider := Provider{ID: "oa", Vendor: VendorOpenAI, Protocol: ProtocolOpenAIResponse,
 		BaseURL: "https://api.openai.com/v1", APIKey: "sk-x"}
@@ -59,6 +111,9 @@ func TestBuildOpenAIResponseWebSearch(t *testing.T) {
 	first, _ := tools[0].(map[string]any)
 	if first["type"] != "web_search" {
 		t.Fatalf("工具声明 = %v", first)
+	}
+	if body["store"] != false {
+		t.Fatalf("官方 OpenAI Responses 该发 store:false：%v", body["store"])
 	}
 }
 
@@ -110,7 +165,7 @@ func TestBuildResponse(t *testing.T) {
 		t.Fatalf("temperature = %v", body["temperature"])
 	}
 	reasoning, ok := body["reasoning"].(map[string]any)
-	if !ok || reasoning["effort"] != "high" {
+	if !ok || reasoning["effort"] != "high" || reasoning["summary"] != "auto" {
 		t.Fatalf("reasoning = %v", body["reasoning"])
 	}
 	if _, ok := body["prompt_cache_key"]; ok {

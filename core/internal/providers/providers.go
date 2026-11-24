@@ -878,7 +878,9 @@ func Build(p Provider, r Request) (*http.Request, error) {
 // "reasoning":{effort?,summary?}（给了才发）、"max_output_tokens"（>0 才发）、
 // "store":false（opencode 系照 Pi 发；custom 不发）、"temperature"（有就发）}`。
 // prompt_cache_key 条件照 chat（opencode 系本来就没有 longCache ⇒ 自然不发，别特意关）。
-// history 里没有工具，tool_calls 回放撞上再说（YAGNI）。
+// Responses 的历史形状：user/developer/system 是输入消息，assistant 必须是
+// `type:"message"` + `output_text`（`input_text` 会被上游 400）；工具回程分别是
+// `function_call` 与 `function_call_output`（Pi 的 convertResponsesMessages 口径）。
 func buildResponse(p Provider, r Request) (*http.Request, error) {
 	if p.EffectiveVendor() != VendorDummy && p.BaseURL == "" &&
 		strings.TrimSpace(p.Endpoints[ProtocolOpenAIResponse]) == "" {
@@ -890,10 +892,45 @@ func buildResponse(p Provider, r Request) (*http.Request, error) {
 		if role == "" {
 			role = "user"
 		}
-		input = append(input, map[string]any{
-			"role":    role,
-			"content": []map[string]any{{"type": "input_text", "text": message.Content}},
-		})
+		switch role {
+		case "assistant":
+			// 先放工具调用，再放同一条 assistant 的正文（两者可同时存在）。
+			if len(message.ToolCalls) > 0 {
+				var calls []struct {
+					ID       string `json:"id"`
+					Function struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					} `json:"function"`
+				}
+				if err := json.Unmarshal(message.ToolCalls, &calls); err != nil {
+					return nil, fmt.Errorf("providers: assistant tool_calls 解析失败：%w", err)
+				}
+				for _, call := range calls {
+					input = append(input, map[string]any{
+						"type": "function_call", "call_id": call.ID,
+						"name": call.Function.Name, "arguments": call.Function.Arguments,
+					})
+				}
+			}
+			if strings.TrimSpace(message.Content) != "" {
+				input = append(input, map[string]any{
+					"type": "message", "role": "assistant", "status": "completed",
+					"content": []map[string]any{{"type": "output_text", "text": message.Content, "annotations": []any{}}},
+				})
+			}
+		case "tool":
+			input = append(input, map[string]any{
+				"type": "function_call_output", "call_id": message.ToolCallID, "output": message.Content,
+			})
+		case "system", "developer":
+			// Pi 的 instruction 消息用纯字符串；Responses 接受这种形状。
+			input = append(input, map[string]any{"role": role, "content": message.Content})
+		default:
+			input = append(input, map[string]any{
+				"role": role, "content": []map[string]any{{"type": "input_text", "text": message.Content}},
+			})
+		}
 	}
 	preset := presets[p.EffectiveVendor()]
 	body := map[string]any{
@@ -914,17 +951,26 @@ func buildResponse(p Provider, r Request) (*http.Request, error) {
 		reasoning := map[string]any{}
 		if effort, ok := thinkingEffortFor(p, r.Model, strings.ToLower(strings.TrimSpace(r.ThinkingLevel))); ok {
 			reasoning["effort"] = effort
+			// Pi 的 Responses 请求会带 summary:auto；不带的话上游通常不吐 reasoning 摘要，
+			// 界面就只能看到正文。加密 reasoning 的回放暂未实现（见 AGENTS）。
+			reasoning["summary"] = "auto"
 		}
 		if len(reasoning) > 0 {
 			body["reasoning"] = reasoning
 		}
 	}
 	if r.MaxTokens > 0 {
-		body["max_output_tokens"] = r.MaxTokens
+		// Pi 对 Responses 的 max_output_tokens 有 16 的下限；上游对更小的值直接 400。
+		maxTokens := r.MaxTokens
+		if maxTokens < 16 {
+			maxTokens = 16
+		}
+		body["max_output_tokens"] = maxTokens
 	}
-	// store:false：opencode 系照 Pi 发；custom 不发（用户自备端点，不认识的字段可能 400）。
-	// openrouter 走 chat 那条的老口径（预设里没开 supportsStore ⇒ 不发）。
-	if vendor := p.EffectiveVendor(); vendor == VendorOpenCodeGo || vendor == VendorOpenCode {
+	// store:false：已知会应答的渠道照 Pi 发，别把会话留在上游；custom 仍不发
+	// （用户自备端点，不认识的字段可能 400）。
+	if vendor := p.EffectiveVendor(); vendor == VendorOpenAI || vendor == VendorOpenRouter ||
+		vendor == VendorXAI || vendor == VendorOpenCodeGo || vendor == VendorOpenCode {
 		body["store"] = false
 	}
 	if r.Temperature != nil {

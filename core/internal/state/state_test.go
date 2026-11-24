@@ -219,6 +219,31 @@ func TestBuildOutgoing(t *testing.T) {
 //
 // 序号**只有一处算**（`store.IndexMessages`：按 id 排序后的位置）⇒ 这里只是把编好的号带出来，不重算；
 // 手搭出来、没编过号的消息**不带**这一格（0 是留给系统提示词的，不能拿它冒充"第 0 条消息"）。
+func TestBuildOutgoingKeepsClientToolRunMessages(t *testing.T) {
+	messages := []model.Message{
+		{ID: "m1", Role: model.RoleUser, Content: "hi"},
+		{ID: "m2", Role: model.RoleAssistant, Kind: model.MessageKindToolRun, Content: "", Tools: []model.MessageTool{{
+			Source: "client", ToolName: "web_search", ItemID: "call_1", Arguments: "{}", Result: "result",
+		}}},
+		{ID: "m3", Role: model.RoleAssistant, Kind: model.MessageKindToolRun, Content: "", Tools: []model.MessageTool{{
+			Source: "server", ToolName: "web_search", ItemID: "ws_1",
+		}}},
+	}
+	out := BuildOutgoing("", messages, nil, Tables{}, false)
+	seen := map[string]bool{}
+	for _, item := range out {
+		if item.MessageID != nil {
+			seen[*item.MessageID] = true
+		}
+	}
+	if !seen["m2"] {
+		t.Fatalf("带客户端工具的空 assistant 被丢掉了：%+v", out)
+	}
+	if seen["m3"] {
+		t.Fatalf("只有服务端工具的空 assistant 不该发：%+v", out)
+	}
+}
+
 func TestBuildOutgoingCarriesIndexes(t *testing.T) {
 	messages := []model.Message{
 		{ID: "m1", Idx: 1, Role: model.RoleUser, Content: "一", SummaryID: new("s1")},
