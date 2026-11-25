@@ -17,6 +17,7 @@ import type { EditMessageRequest, Message } from "../api/types.ts";
 interface EditableMessage {
   id: string;
   idx?: number | null;
+  role?: string;
   content?: string;
   reasoning?: string;
 }
