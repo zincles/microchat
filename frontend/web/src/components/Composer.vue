@@ -169,7 +169,7 @@ defineExpose({ submit, setRunning });
   border-radius: inherit;
 }
 .composer-shell :deep(.v-field__input) {
-  padding: var(--chat-space) var(--composer-inset);
+  padding: var(--composer-inset);
   font-size: calc(16px * var(--app-text-scale, 1));
   line-height: 1.5;
 }
