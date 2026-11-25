@@ -719,7 +719,6 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 #session-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0.15em 0.35em 0.45em; }
 .session-group-head { padding: 0.5em 0.5em 0.15em; color: var(--tg-hint); font-size: 0.68em; letter-spacing: 0.04em; line-height: 1.2; }
 .session-group-head:first-child { padding-top: 0.3em; }
-.bar-foot { padding: 0.5em; border-top: 1px solid var(--line); margin-top: auto; }
 .session-item { display: flex; gap: 0.22em; align-items: center; padding: 0.32em 0.4em; border-radius: var(--r-btn); cursor: pointer; white-space: nowrap; overflow: hidden; color: var(--tg-text); font-size: 0.92em; line-height: 1.2; }
 .session-item:hover { background: var(--mix-6); }
 .session-item.sel { background: var(--mix-10); color: var(--tg-text); }
@@ -1495,13 +1494,9 @@ button.danger:hover { background: color-mix(in srgb, var(--md-error) 8%, transpa
   font-size: var(--md-type-label-medium); font-weight: 500; line-height: 1.2; }
 #sessions-bar .session-group-head:first-child { padding-top: calc(var(--chat-space) / 2); }
 #sessions-bar .session-group-head:not(:first-child) { margin-top: calc(var(--chat-space) / 2); border-top: 1px solid var(--line); }
-/* 三个管理入口留在桌面与手机的同一位置。 */
-#sessions-bar .bar-foot { margin-top: auto; padding: calc(var(--chat-space) / 2) var(--chat-space); border-top: 1px solid var(--line); background: var(--md-surface-container);
-  display: flex; align-items: stretch; gap: calc(var(--chat-space) / 2); }
-/* 三个管理入口并排（2026-11-06 用户定「并排」；2026-11-22 改成图标在左、文字在右）。
- * flex:1 让三格等宽；min-width:0 让窄侧栏也能塞下（VBtn 自带 min-width 会被这里盖掉）。 */
-#sessions-bar .bar-foot .bar-action { flex: 1 1 0; min-width: 0; min-height: var(--chat-control); padding: 0 calc(var(--chat-space) / 2); }
-#sessions-bar .bar-foot .bar-action .v-btn__prepend { margin-inline-end: 0.4em; }
+#sessions-bar .bar-foot { margin-top: auto; padding: calc(var(--chat-space) / 2) var(--chat-space); border-top: 1px solid var(--line); background: var(--md-surface-container); }
+#app #settings-open { width: 100%; min-height: var(--chat-control); padding-inline: var(--chat-space); justify-content: flex-start; }
+#settings-open .v-btn__prepend { margin-inline-end: var(--chat-space); }
 #sessions-bar .bar-foot .fb-icon { display: inline-flex; align-items: center; justify-content: center; }
 #sessions-bar .bar-foot .fb-icon svg { width: 1.25em; height: 1.25em; }
 #sessions-bar .session-item { position: relative; display: flex; align-items: center; gap: calc(var(--chat-space) / 2); min-height: var(--chat-control); background: transparent;

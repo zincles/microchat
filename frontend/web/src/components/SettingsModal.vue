@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 设置与聊天同级。目录负责查找，具体子页负责编辑与保存；渠道、智能体与更新也可以直接进入。
+// 设置与聊天同级。目录负责查找，子页负责编辑；品牌与工作流可直达对应子页。
 import { ref, computed, nextTick, useTemplateRef, watch, onMounted, onUnmounted } from "vue";
 import { VTab, VTabs, VTabsWindow, VTabsWindowItem, VSwitch, VBtn, VTextField, VSelect, VTable, VMenu, VList, VListItem } from "vuetify/components";
 import AgentEditor from "./AgentEditor.vue";
@@ -52,9 +52,8 @@ const emit = defineEmits<{
 const props = withDefaults(defineProps<{
   ask?: ((text: string, options?: ConfirmOptions) => Promise<boolean>) | null;
   escBlocked?: boolean;
-  // only：单独入口（"provider" / "agent" / "update"）—— 只显示那一页、不渲染目录；
-  // 空串 = 完整设置。两者共用同一份数据加载与同一套 panel。
-  only?: string;
+  // 品牌进入更新，工作流进入特定智能体；空串进入完整设置目录。
+  only?: "" | "agent" | "update";
   focusAgentId?: string;
 }>(), {
   ask: null,
@@ -71,14 +70,7 @@ const settingsHome = useTemplateRef<InstanceType<typeof SettingsHome>>("settings
 const settingsTitle = useTemplateRef<HTMLHeadingElement>("settingsTitle");
 const settingsBody = useTemplateRef<HTMLDivElement>("settingsBody");
 const tab = ref(props.only || "home");
-// 单独入口的页头文字；空串 = 完整设置（从目录进）。
-const onlyTitle = computed(() => (props.only === "provider" ? "渠道管理"
-  : props.only === "agent" ? "智能体"
-  : props.only === "update" ? "更新"
-  : ""));
-// 目录页 / 子区共用一条页头：目录页叫「设置」，进到子区就显示那一区的名字。
 const activeTitle = computed(() => {
-  if (props.only) return onlyTitle.value;
   if (tab.value === "home") return "设置";
   return SETTINGS_SECTIONS.find((s) => s.id === tab.value)?.label ?? "设置";
 });

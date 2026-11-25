@@ -1,13 +1,9 @@
-// 设置视图的开合与独立入口。
-//
-// 设置与对话**同级**（不是弹窗，2026-10-10）；渠道/智能体仍从左栏独立入口进，
-// 共用同一个视图（`:only` 只显示那一页）。会话列表已搬进设置目录（2026-11-22）。
+// 设置与聊天同级；左栏进入目录，品牌和工作流保留指向具体页面的入口。
 import { ref } from "vue";
 
 export function useSettingsView({ closeLeftDrawer }: { closeLeftDrawer: () => void }) {
   const settingsOpen = ref(false);
-  // "" = 完整设置；"provider" / "agent" / "update" = 只显示那一页。
-  const settingsOnly = ref("");
+  const settingsOnly = ref<"" | "agent" | "update">("");
 
   // 2026-11-01：账号砍了 ⇒ 没有"只有管理员能进"这回事（本机单人使用）。
   function openSettings(): void {
@@ -16,9 +12,8 @@ export function useSettingsView({ closeLeftDrawer }: { closeLeftDrawer: () => vo
     closeLeftDrawer();
   }
 
-  function openManage(pane: string): void {
-    // 渠道 / 智能体是左栏的独立管理页；更新由品牌头进。未知 pane 回完整设置目录。
-    settingsOnly.value = ["provider", "agent", "update"].includes(pane) ? pane : "";
+  function openManage(pane: "agent" | "update"): void {
+    settingsOnly.value = pane;
     settingsOpen.value = true;
     closeLeftDrawer();
   }

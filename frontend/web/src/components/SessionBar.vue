@@ -20,8 +20,6 @@ const emit = defineEmits<{
   "new-image": [];
   "open-settings": [];
   "toggle-left": [];
-  "open-providers": [];
-  "open-agent": [];
   "open-update": [];
   prefetch: [id: string];
 }>();
@@ -309,41 +307,11 @@ defineExpose({ setSessions });
       <div class="empty">库存<br /><span class="sub">功能尚未接入；这里将来放库存列表</span></div>
     </div>
     <div class="bar-foot">
-      <!-- 管理入口（2026-11-22 用户定）：会话列表搬进设置目录，底部只留渠道 / 助手 / 设置；
-           三者与「设置」共用同一个视图，只是不经过目录。 -->
-      <VBtn
-        id="providers-manage"
-        class="bar-action"
-        type="button"
-        variant="text"
-        color="on-surface-variant"
-        title="渠道管理（端点 / 密钥 / 模型筛选）"
-        @click="$emit('open-providers')"
-      >
-        <template #prepend><span class="fb-icon" v-html="ICONS.server"></span></template>
-        渠道
-      </VBtn>
-      <VBtn
-        id="agents-manage"
-        class="bar-action"
-        type="button"
-        variant="text"
-        color="on-surface-variant"
-        title="助手（人设 / 提示词 / 能力）；内部仍称智能体"
-        @click="$emit('open-agent')"
-      >
-        <template #prepend><span class="fb-icon" v-html="ICONS.bot"></span></template>
-        助手
-      </VBtn>
-      <!-- 设置：2026-11-01 起**没有"root 专属"这回事**（账号砍了），谁都能进；
-           外观那一区在同一天从删掉的用户视图搬了进来。更新入口在品牌头与设置最右 tab。 -->
       <VBtn
         id="settings-open"
-        class="bar-action"
         type="button"
         variant="text"
         color="on-surface-variant"
-        title="设置（对话 / 智能体 / 提示词 / 外观 / 酒馆 / 更新）"
         @click="$emit('open-settings')"
       >
         <template #prepend><span class="fb-icon" v-html="ICONS.settings"></span></template>

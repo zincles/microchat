@@ -1530,8 +1530,6 @@ onUnmounted(() => {
         @new="newSession"
         @new-image="() => toast('生图功能尚未接入', 'warn')"
         @open-settings="openSettings"
-        @open-providers="() => openManage('provider')"
-        @open-agent="() => openManage('agent')"
         @open-update="() => openManage('update')"
       />
       <div id="scrim-left" @click="toggleLeft"></div>

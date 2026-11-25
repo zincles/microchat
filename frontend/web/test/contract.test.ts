@@ -2317,21 +2317,6 @@ test("设置：没有「连接」页，也没有绑不存在的 saveNet", () => 
   assert.ok(!/直接改地址|API 地址/.test(settings), "设置里又开始让人手填后端地址了");
 });
 
-test("渠道、智能体和更新保留独立管理入口", () => {
-  const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
-  const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
-  // 独立入口：左栏底只剩渠道 / 智能体；会话列表已搬进设置目录（2026-11-22）。
-  assert.ok(!bar.includes('id="sessions-manage"'), "左栏还留着「会话」入口（已搬进设置）");
-  assert.ok(!bar.includes("open-sessions"), "左栏还发 open-sessions（已搬进设置）");
-  assert.match(bar, /@click="\$emit\('open-providers'\)"/, "左栏没有「渠道」入口");
-  assert.match(bar, /@click="\$emit\('open-agent'\)"/, "左栏没有「助手」入口");
-  assert.match(bar, /\bid="agents-manage"[\s\S]*?\n\s*助手\n/, "底部标签该是「助手」");
-  assert.ok(!bar.includes('id="update-open"'), "左栏底部还在画「更新」入口（它已挪到品牌头与设置目录）");
-  assert.match(settings, /only\??:\s*string/, "SettingsModal 没有独立入口的 only 参数");
-  assert.match(settings, /const activeTitle = computed/, "设置页头没有跟随目录/子区标题");
-  assert.match(settings, /<VTabsWindowItem v-if="!only" value="home"/, "独立入口不该渲染目录页");
-});
-
 // 「新会话默认值」那两格从前是**手打 id 的文本框**，说明文自己都写着
 // 「填错不会报错，只会在发送时回落成『未配置模型』」—— 把校验推给用户。
 // 改成下拉之后，能选出来的都是真存在的；但当前值即使不在列表里也必须保住（见下一条）。
@@ -3479,27 +3464,10 @@ test("开机请求：会话/Agent 不重复，重活按需，加载有骨架", (
   assert.match(app, /v-if="loadingSession" class="chat-skeleton"/, "消息列没有加载骨架");
 });
 
-// ── 左栏入口（2026-11-02 用户定）────────────────────────────────────────────
-//
-// 「安装说明」删掉；左栏底只剩 渠道 / 智能体 / 设置。会话列表已搬进设置目录（2026-11-22），
-// 渠道与智能体仍走独立 `:only` 入口。
-test("左栏：有渠道/智能体/设置，没有会话与安装说明", () => {
+test("左栏不再提供应用内安装入口", () => {
   const pwa = readFileSync(join(SRC, "utils", "pwa.ts"), "utf8");
   const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
-  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-
-  assert.ok(!bar.includes('id="sessions-manage"'), "左栏还留着会话入口（已搬进设置目录）");
-  assert.match(bar, /id="providers-manage"/, "左栏没有渠道入口");
-  assert.match(bar, /id="settings-open"/, "左栏没有设置入口");
-  assert.match(bar, /id="agents-manage"/, "左栏没有智能体入口");
-  assert.ok(!bar.includes('id="update-open"'), "左栏底部还有更新入口（已挪到品牌头）");
-  // 三个入口并排 + Vuetify MD3：图标在左、文字在右（不再 stacked）
-  assert.equal((bar.match(/class="bar-action"/g) ?? []).length, 3, "底部入口不是三个（渠道/助手/设置）");
-  assert.ok(!/\bstacked\b/.test(bar), "底部入口仍是上下堆叠（图标应排在文字左侧）");
-  assert.match(css, /#sessions-bar \.bar-foot \.bar-action \.v-btn__prepend \{[^}]*margin-inline-end/, "图标与文字之间没有间距");
-  assert.match(css, /#sessions-bar \.bar-foot \.bar-action \{[^}]*flex: 1 1 0/, "底部入口没等宽");
-  assert.ok(!/foot-btn/.test(bar), "还留着旧 .foot-btn");
   for (const dead of ["install-app", "安装说明", "installable", "standalone", "download"]) {
     assert.ok(!bar.includes(dead), `左栏还留着安装入口的 ${dead}`);
   }
