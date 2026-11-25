@@ -79,17 +79,20 @@ type Source = model.MessageToolSource
 type Status struct {
 	Phase Phase `json:"phase"`
 	// Step：一轮 run 里的第几个 assistant 模型轮（从 1 开始；客户端据此切 live 气泡）。
-	Step          int            `json:"step,omitempty"`
-	MessageID     *string        `json:"message_id,omitempty"`
-	RunID         string         `json:"run_id,omitempty"` // 与已归档的中间工具消息配对，重连时也不必猜。
-	ElapsedMS     int64          `json:"elapsed_ms"`
-	Chars         int            `json:"chars"`
-	ThinkingChars int            `json:"thinking_chars"`
-	Error         string         `json:"error,omitempty"`
-	Tool          *ToolStatus    `json:"tool,omitempty"`
-	Sources       []Source       `json:"sources,omitempty"`
-	Compact       *CompactStatus `json:"compact,omitempty"`
-	Reroll        *RerollStatus  `json:"reroll,omitempty"`
+	Step          int                 `json:"step,omitempty"`
+	MessageID     *string             `json:"message_id,omitempty"`
+	RunID         string              `json:"run_id,omitempty"` // 与已归档的中间工具消息配对，重连时也不必猜。
+	ElapsedMS     int64               `json:"elapsed_ms"`
+	Chars         int                 `json:"chars"`
+	ThinkingChars int                 `json:"thinking_chars"`
+	Error         string              `json:"error,omitempty"`
+	Tool          *ToolStatus         `json:"tool,omitempty"`
+	Tools         []model.MessageTool `json:"tools,omitempty"` // 当前步的有序快照，只读。
+	Sources       []Source            `json:"sources,omitempty"`
+	Compact       *CompactStatus      `json:"compact,omitempty"`
+	Reroll        *RerollStatus       `json:"reroll,omitempty"`
+
+	ToolsRevision uint64 `json:"-"` // 同一步内即使字节游标未动，也要通知 SSE。
 }
 
 // StreamSlice：一次游标读的结果。正文与思考各有一对字节游标：[起点, 终点)。
@@ -122,6 +125,9 @@ type entry struct {
 	err       string
 	// tool：当前服务端工具（同一时刻只显示最近一个；上游串行调用时后面的会覆盖前面的）。
 	tool *ToolStatus
+	// tools 发布后不再改动，状态读可直接引用这份快照。
+	tools         []model.MessageTool
+	toolsRevision uint64
 	// sources：这一轮搜索工具拿回来的来源（按 URL 去重，界面上列“来源”）。
 	sources []Source
 	// reroll：这个会话此刻有没有在摇（**与轮次共用同一把闸**：一方在跑，另一方就进不来）。
@@ -176,6 +182,7 @@ func (r *Registry) statusLocked(sessionID string, item *entry) Status {
 		tool := *item.tool
 		status.Tool = &tool
 	}
+	status.Tools, status.ToolsRevision = item.tools, item.toolsRevision
 	if len(item.sources) > 0 {
 		status.Sources = append([]Source(nil), item.sources...)
 	}
@@ -239,6 +246,7 @@ func (r *Registry) BeginReroll(sessionID string) (uint64, error) {
 	item.text.Reset()
 	item.thinking.Reset()
 	item.tool = nil
+	item.tools, item.toolsRevision = nil, 0
 	item.sources = nil
 	item.reroll = &RerollStatus{State: "running"}
 	item.rerollStarted = time.Now()
@@ -262,6 +270,7 @@ func (r *Registry) FinishReroll(sessionID string, token uint64, failure string) 
 	item.text.Reset()
 	item.thinking.Reset()
 	item.tool = nil
+	item.tools, item.toolsRevision = nil, 0
 	item.sources = nil
 	if failure == "" {
 		item.reroll.State = "done"
@@ -361,6 +370,7 @@ func (r *Registry) NextStep(sessionID string, token uint64) bool {
 	item.text.Reset()
 	item.thinking.Reset()
 	item.tool = nil
+	item.tools, item.toolsRevision = nil, 0
 	item.sources = nil
 	item.phase = PhasePending
 	return true
@@ -390,6 +400,28 @@ func (r *Registry) SetTool(sessionID string, token uint64, kind, state string) b
 		return false
 	}
 	item.tool = &ToolStatus{Kind: kind, State: state}
+	return true
+}
+
+// SetHostedTools 只接受活跃的生成或重摇令牌，同时更新当前工具并替换当前步的有序快照。
+// kind 为空时只替换快照，不改变当前工具状态。
+// 复制记录切片，调用者可重用它；记录里的查询、来源、偏移等引用发布后不得原地修改。
+func (r *Registry) SetHostedTools(sessionID string, token uint64, kind, state string, tools []model.MessageTool) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	item := r.lookup(sessionID)
+	if item == nil || item.token != token || (!item.phase.IsBusy() && !item.reroll.IsRunning()) {
+		return false
+	}
+	if kind != "" {
+		if item.tool == nil {
+			item.tool = &ToolStatus{Kind: kind, State: state}
+		} else {
+			*item.tool = ToolStatus{Kind: kind, State: state}
+		}
+	}
+	item.tools = append([]model.MessageTool(nil), tools...)
+	item.toolsRevision++
 	return true
 }
 

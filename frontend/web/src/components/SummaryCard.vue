@@ -85,6 +85,7 @@ const emit = defineEmits<{
             :content="r.msg.content"
             :reasoning="r.msg.reasoning"
             :reasoning-ms="r.msg.reasoningMs ?? undefined"
+            :tools="r.msg.tools"
             :macros="macros"
           />
         </template>

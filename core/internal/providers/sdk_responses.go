@@ -233,10 +233,16 @@ func responseResult(reply *responses.Response) (Result, error) {
 	return result.checked()
 }
 
-func hostedItem(item responses.ResponseOutputItemUnion) *ToolEvent {
-	switch item.Type {
+func isHostedType(kind string) bool {
+	switch kind {
 	case "web_search_call", "x_search_call", "file_search_call", "code_interpreter_call", "code_execution_call", "image_generation_call", "mcp_call":
-	default:
+		return true
+	}
+	return false
+}
+
+func hostedItem(item responses.ResponseOutputItemUnion) *ToolEvent {
+	if !isHostedType(item.Type) {
 		return nil
 	}
 	e := &ToolEvent{ItemID: item.ID, Kind: strings.TrimSuffix(item.Type, "_call"), State: item.Status,
@@ -257,7 +263,47 @@ func hostedItem(item responses.ResponseOutputItemUnion) *ToolEvent {
 type responseSlot struct {
 	item      responses.ResponseOutputItemUnion
 	arguments strings.Builder
+	text      map[int64]*responseTextPart
+	textID    string
 	done      bool
+}
+
+type responseTextPart struct {
+	deltas []string
+	final  string
+	done   bool
+}
+
+func getResponseSlot(slots map[int64]*responseSlot, index int64) *responseSlot {
+	slot := slots[index]
+	if slot == nil {
+		slot = &responseSlot{}
+		slots[index] = slot
+	}
+	return slot
+}
+
+// completeText 只用有序的、可归属到消息项的文本补齐缺失的 item.done。
+func (s *responseSlot) completeText() {
+	item := &s.item
+	if len(s.text) == 0 || (item.Type != "" && item.Type != "message") || (s.done && len(item.Content) != 0) {
+		return
+	}
+	item.Type = "message"
+	if item.ID == "" {
+		item.ID = s.textID
+	}
+	item.Content = make([]responses.ResponseOutputMessageContentUnion, 0, len(s.text))
+	for _, index := range slices.Sorted(maps.Keys(s.text)) {
+		part := s.text[index]
+		var text string
+		if part.done {
+			text = part.final
+		} else {
+			text = strings.Join(part.deltas, "")
+		}
+		item.Content = append(item.Content, responses.ResponseOutputMessageContentUnion{Type: "output_text", Text: text})
+	}
 }
 
 // HTTP SSE 的标准终态包含 response.output。部分网关只在 output_item.done 给最终项，
@@ -265,17 +311,49 @@ type responseSlot struct {
 func collectResponse(stream *ssestream.Stream[responses.ResponseStreamEventUnion], emit func(Delta)) (Result, error) {
 	defer stream.Close()
 	slots := map[int64]*responseSlot{}
-	var text, reasoning strings.Builder
+	var text []string
+	var reasoning strings.Builder
+	var unorderedText bool
 	var responseID string
 	for stream.Next() {
 		e := stream.Current()
+		index := e.OutputIndex
+		if !e.JSON.OutputIndex.Valid() || index < 0 {
+			index = -1
+		}
 		switch e.Type {
 		case "response.created":
 			responseID = e.Response.ID
-		case "response.output_text.delta":
-			text.WriteString(e.Delta)
-			if emit != nil && e.Delta != "" {
-				emit(Delta{Text: e.Delta})
+		case "response.output_text.delta", "response.output_text.done":
+			if e.Type == "response.output_text.delta" && e.Delta != "" {
+				text = append(text, e.Delta)
+				if emit != nil {
+					emit(Delta{Text: e.Delta})
+				}
+			}
+			if index < 0 {
+				unorderedText = true
+				continue
+			}
+			slot := getResponseSlot(slots, index)
+			if e.ItemID != "" {
+				if slot.textID != "" && slot.textID != e.ItemID {
+					unorderedText = true
+				}
+				slot.textID = e.ItemID
+			}
+			if slot.text == nil {
+				slot.text = make(map[int64]*responseTextPart)
+			}
+			part := slot.text[e.ContentIndex]
+			if part == nil {
+				part = &responseTextPart{}
+				slot.text[e.ContentIndex] = part
+			}
+			if e.Type == "response.output_text.done" && e.JSON.Text.Valid() {
+				part.final, part.done = e.Text, true
+			} else if e.Delta != "" {
+				part.deltas = append(part.deltas, e.Delta)
 			}
 		case "response.reasoning_text.delta", "response.reasoning_summary_text.delta", "response.reasoning_summary_part.done":
 			delta := e.Delta
@@ -287,16 +365,18 @@ func collectResponse(stream *ssestream.Stream[responses.ResponseStreamEventUnion
 				emit(Delta{Reasoning: delta})
 			}
 		case "response.output_item.added", "response.output_item.done":
-			slot := &responseSlot{item: e.Item, done: e.Type == "response.output_item.done"}
+			slot := getResponseSlot(slots, index)
+			slot.item = e.Item
+			slot.done = e.Type == "response.output_item.done"
+			slot.arguments.Reset()
 			slot.arguments.WriteString(e.Item.Arguments.OfString)
-			slots[e.OutputIndex] = slot
 			if emit != nil {
 				if tool := hostedItem(e.Item); tool != nil {
 					emit(Delta{Tool: tool})
 				}
 			}
 		case "response.function_call_arguments.delta", "response.function_call_arguments.done":
-			slot := slots[e.OutputIndex]
+			slot := slots[index]
 			if slot == nil || slot.item.Type != "function_call" || e.ItemID != "" && slot.item.ID != e.ItemID {
 				return Result{}, fmt.Errorf("providers: 工具参数没有对应的 output item %q", e.ItemID)
 			}
@@ -321,30 +401,55 @@ func collectResponse(stream *ssestream.Stream[responses.ResponseStreamEventUnion
 			if reply.ID == "" {
 				reply.ID = responseID
 			}
+			var unorderedItem, unorderedBody bool
 			if !reply.JSON.Output.Valid() {
+				hasText := false
+				// 复用同一 output_index 作为文本和工具的网关没有可证明的输出顺序。
+				for _, slot := range slots {
+					if len(slot.text) != 0 && (slot.item.Type != "" && slot.item.Type != "message" ||
+						slot.textID != "" && slot.item.ID != "" && slot.textID != slot.item.ID) {
+						unorderedText = true
+					}
+				}
 				for _, i := range slices.Sorted(maps.Keys(slots)) {
 					slot := slots[i]
 					if slot.item.Type == "function_call" && !slot.done {
 						return Result{}, fmt.Errorf("providers: 工具参数尚未完成 %q", slot.item.CallID)
 					}
-					if slot.done {
-						reply.Output = append(reply.Output, slot.item)
+					if !unorderedText {
+						slot.completeText()
+					}
+					item := &slot.item
+					if slot.done || item.Type == "message" && len(item.Content) != 0 || isHostedType(item.Type) {
+						reply.Output = append(reply.Output, *item)
+						unorderedItem = unorderedItem || i < 0 && strings.HasSuffix(item.Type, "_call")
+						hasText = hasText || item.Type == "message" && slices.ContainsFunc(item.Content, func(c responses.ResponseOutputMessageContentUnion) bool {
+							return c.Type == "output_text" && c.Text != ""
+						})
 					}
 				}
-				// 兼容只流文本、终帧只带用量的网关。
-				if reply.OutputText() == "" && text.Len() > 0 {
+				// 兼容只流文本、终帧只带用量的网关；无序正文不充作工具位置的证据。
+				if unorderedText && !hasText && len(text) != 0 {
+					unorderedBody = len(reply.Output) != 0
 					reply.Output = append(reply.Output, responses.ResponseOutputItemUnion{Type: "message",
-						Content: []responses.ResponseOutputMessageContentUnion{{Type: "output_text", Text: text.String()}}})
+						Content: []responses.ResponseOutputMessageContentUnion{{Type: "output_text", Text: strings.Join(text, "")}}})
 				}
 			}
 			result, err := responseResult(&reply)
 			if err != nil {
 				return Result{}, err
 			}
+			if unorderedItem {
+				// 保存调用事实，但缺失 output_index 的工具不能作为有序记录续传或定位。
+				result.Exchange.Items = result.Exchange.Items[1:]
+			}
+			if unorderedBody {
+				result.Exchange.Items = result.Exchange.Items[:len(result.Exchange.Items)-1]
+			}
 			if result.Reasoning == "" {
 				result.Reasoning = reasoning.String()
 			}
-			if emit != nil && text.Len() == 0 && result.Text != "" {
+			if emit != nil && len(text) == 0 && result.Text != "" {
 				emit(Delta{Text: result.Text})
 			}
 			return result, nil
@@ -353,15 +458,26 @@ func collectResponse(stream *ssestream.Stream[responses.ResponseStreamEventUnion
 				continue
 			}
 			name, state, found := strings.Cut(strings.TrimPrefix(e.Type, "response."), ".")
-			if emit != nil && found && strings.HasSuffix(name, "_call") && e.ItemID != "" {
-				emit(Delta{Tool: &ToolEvent{ItemID: e.ItemID, Kind: strings.TrimSuffix(name, "_call"), State: state}})
+			if found && strings.HasSuffix(name, "_call") && e.ItemID != "" {
+				if emit != nil {
+					emit(Delta{Tool: &ToolEvent{ItemID: e.ItemID, Kind: strings.TrimSuffix(name, "_call"), State: state}})
+				}
+				if index >= 0 && isHostedType(name) {
+					slot := getResponseSlot(slots, index)
+					if slot.item.Type == "" {
+						slot.item = responses.ResponseOutputItemUnion{Type: name, ID: e.ItemID}
+					}
+					if !slot.done && slot.item.Type == name && slot.item.ID == e.ItemID {
+						slot.item.Status = state
+					}
+				}
 			}
 		}
 	}
 	if err := stream.Err(); err != nil {
 		return Result{}, err
 	}
-	if text.Len() == 0 && len(slots) == 0 {
+	if len(text) == 0 && len(slots) == 0 {
 		return Result{}, ErrEmpty
 	}
 	return Result{}, errors.New("providers: Responses 流缺少终态事件")

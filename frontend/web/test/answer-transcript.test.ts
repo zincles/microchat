@@ -65,6 +65,12 @@ test("单条托管工具保留正文时间线；仅工具或失败结尾仍展�
   assert.equal(answerSteps(group([lastTool, error]), false, false)[0].presentation.answerView, "prose-footer");
 });
 
+test("工具独占一步时，默认阅读视图也保留有位置的服务端工具", () => {
+  const search = message(1, { tools: [{ source: "server", tool_name: "web_search", body_offset: 0 }] });
+  const reply = message(2, { content: "使用检索结果写的回答" });
+  assert.deepEqual(answerSteps(group([search, reply]), false, false).map(({ row }) => row), [search, reply]);
+});
+
 test("分页只报可见调用，实时后续步骤无调用数时不臆测；重摇忽略候选的旧工具", () => {
   const prior = message(7, { kind: "tool_run", tools: [call] });
   const partial = group([prior, message(8, { content: "回答" })], 7);

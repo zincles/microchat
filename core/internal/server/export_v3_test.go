@@ -394,3 +394,69 @@ func TestExportV5PreservesExchangeOrder(t *testing.T) {
 		t.Fatalf("导入的调用轨迹 %+v, %v", messages, err)
 	}
 }
+
+func TestMessageListsProjectArchivedToolBodies(t *testing.T) {
+	box := newDummySandboxWith(t, true)
+	const first = "先查。<state>变量</state>"
+	const last = "结论😀。"
+	record := &model.Exchange{Protocol: "openai-response", Items: []model.OutputItem{
+		{Type: "web_search_call", ID: "ws_0"},
+		{Type: "message", Text: first},
+		{Type: "x_search_call", ID: "xs_1"},
+		{Type: "function_call", ID: "fc_2", CallID: "client_2"},
+		{Type: "message", Text: last},
+	}}
+	ids, err := store.MintOrderedIDs(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := 3
+	for i, content := range []string{first + last, first + "新结论。"} {
+		_, err := box.store.InsertMessage(model.Message{ID: ids[i], SessionID: box.sessionID, Role: model.RoleAssistant,
+			Content: content, Exchanges: []*model.Exchange{record}, Tools: []model.MessageTool{
+				{Source: "server", ToolName: "web_search", ItemID: "ws_0"},
+				{Source: "server", ToolName: "x_search", ItemID: "xs_1", TextOffset: &legacy},
+				{Source: "client", ToolName: "lookup", ItemID: "client_2"},
+				{Source: "client", ToolName: "other", ItemID: "fc_2"},
+			}})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := "/api/v1/sessions/" + box.sessionID
+	for _, tc := range []struct{ method, suffix, body string }{
+		{"GET", "/messages", ""},
+		{"POST", "/messages/batch", `{"ranges":[[1,2]]}`},
+	} {
+		res := call(box.server, tc.method, path+tc.suffix, tc.body)
+		if res.Code != http.StatusOK || strings.Contains(res.Body.String(), `"exchanges"`) {
+			t.Fatalf("%s %s: %d %s", tc.method, tc.suffix, res.Code, res.Body)
+		}
+		messages := decodeBody[[]model.Message](t, res)
+		if len(messages) != 2 || len(messages[0].Tools) != 4 || len(messages[1].Tools) != 4 {
+			t.Fatalf("消息列表 = %+v", messages)
+		}
+		for i, want := range []int{0, len(first), len(first)} {
+			if got := messages[0].Tools[i].BodyOffset; got == nil || *got != want {
+				t.Errorf("%s: 工具 %d 的 body_offset = %v, 想要 %d", tc.suffix, i, got, want)
+			}
+		}
+		if messages[0].Tools[3].BodyOffset != nil {
+			t.Errorf("%s: 不能按客户端的 item ID 定位", tc.suffix)
+		}
+		for _, tool := range messages[1].Tools {
+			if tool.BodyOffset != nil {
+				t.Errorf("%s: 修改过的正文仍有 body_offset: %+v", tc.suffix, tool)
+			}
+		}
+		for _, message := range messages {
+			if got := message.Tools[1].TextOffset; got == nil || *got != legacy {
+				t.Errorf("%s: 旧 text_offset 被修改: %v", tc.suffix, got)
+			}
+		}
+	}
+	res := call(box.server, "GET", path+"/export", "")
+	if res.Code != http.StatusOK || strings.Contains(res.Body.String(), `"body_offset"`) {
+		t.Fatalf("导出格式改变：%d %s", res.Code, res.Body)
+	}
+}

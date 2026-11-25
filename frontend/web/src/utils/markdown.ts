@@ -311,15 +311,23 @@ export interface StateBlock {
   lines: string[];
 }
 
+export interface StateTextProjection {
+  raw: string;
+  removed: ReadonlyArray<readonly [start: number, end: number]>;
+  leading: number;
+}
+
 // splitState：把 <state…>…</state> / <current_state…>…</current_state> 摘出来，
 // 回 [{table, current, lines}]；说话部分原样回（markdown 走它）。
 // 表名：无名 ⇒ global（与后端 DefaultTable 同口径）。
-export function splitState(text?: string | null): { cleaned: string; blocks: StateBlock[] } {
+export function splitState(text?: string | null, project = false): { cleaned: string; blocks: StateBlock[]; projection?: StateTextProjection } {
   const source = text ?? "";
   const blocks: StateBlock[] = [];
+  const removed = project ? [] as Array<readonly [number, number]> : undefined;
   const re = /<(state|current_state)([^>]*)>([\s\S]*?)<\/\1\s*>/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(source)) !== null) {
+    removed?.push([m.index, re.lastIndex]);
     const tag = m[1].toLowerCase();
     const table = (m[2] ?? "").trim() || "global";
     const lines = m[3]
@@ -328,8 +336,10 @@ export function splitState(text?: string | null): { cleaned: string; blocks: Sta
       .filter(Boolean);
     blocks.push({ table, current: tag === "current_state", lines });
   }
-  const cleaned = source.replace(re, "").trim();
-  return { cleaned, blocks };
+  const stripped = blocks.length ? source.replace(re, "") : source;
+  const cleaned = stripped.trim();
+  if (!removed) return { cleaned, blocks };
+  return { cleaned, blocks, projection: { raw: source, removed, leading: stripped.length - stripped.trimStart().length } };
 }
 
 // markdownTypeIDs：当前后端认识的类型 id（测试与设置界面用来核对）。

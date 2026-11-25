@@ -56,7 +56,9 @@ type MessageTool struct {
 	Status    string              `json:"status,omitempty"`
 	// TextOffset：服务端工具发生时，正文已经输出的**字符数**（rune；不含 <state> 块）。
 	// 旧记录没有这一格 ⇒ nil，前端退回“工具卡全在正文上方”。
-	TextOffset *int  `json:"text_offset,omitempty"`
+	TextOffset *int `json:"text_offset,omitempty"`
+	// BodyOffset：原始正文的 UTF-8 字节偏移（含 <state>），仅用于显示，不落库。
+	BodyOffset *int  `json:"body_offset,omitempty"`
 	CreatedAt  int64 `json:"created_at"`
 }
 

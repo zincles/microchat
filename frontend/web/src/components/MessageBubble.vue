@@ -6,7 +6,7 @@ import { ICONS } from "../assets/icons.ts";
 import { assistantIdentity, formatThinkLabel, identityLabel, sourceLabel, toolRunHint, usageMetrics } from "../utils/format.ts";
 import type { UsageLike } from "../utils/format.ts";
 import { renderMarkdown, splitState } from "../utils/markdown.ts";
-import { buildToolTimeline } from "../utils/chatrows.ts";
+import { buildToolTimeline, hasToolPosition, inlineHostedTool } from "../utils/chatrows.ts";
 import { renderMacroHtml, type MacroMap } from "../utils/macros.ts";
 import { renderMermaidIn } from "../utils/mermaid.ts";
 import { animateCandidate } from "../utils/candidateMotion.ts";
@@ -30,7 +30,7 @@ const props = withDefaults(defineProps<BubblePresentation & {
   promptId?: string | null; // 最新 AI 回复对应的用户输入（仅尾条 assistant 有）
   isLast?: boolean;
   allowContinue?: boolean;
-  streaming?: boolean; // 生成中（还没落库的那条）：等首字节时给三点呼吸动画
+  streaming?: boolean; // 生成中（还没落库的那条）：发送与等待阶段显示星芒。
   // phase：sending = 正在向后端发送请求；waiting = 202 已受理、等 Provider 首字节。
   phase?: "sending" | "waiting" | string | null;
   // tool：当前服务端工具（xAI web_search / x_search / code_execution）；只服务生成中的提示。
@@ -106,13 +106,13 @@ const thinkLabel = computed(() =>
 const canEdit = computed(() => !!props.messageId);
 
 // 正文拆说话/状态：说话走 markdown，状态块进独立容器。
-const parts = computed(() => splitState(props.content));
+const inlineTools = computed(() => props.candidate ? [] : props.tools.filter(showToolDetails.value ? hasToolPosition : inlineHostedTool));
+const legacyTools = computed(() => showToolDetails.value ? props.tools.filter((tool) => !hasToolPosition(tool)) : []);
+const parts = computed(() => splitState(props.content, inlineTools.value.some((tool) => tool.body_offset !== undefined)));
 const bodyHtml = computed(() => renderMarkdown(parts.value.cleaned, { macros: props.macros }));
-// 新消息带 text_offset ⇒ 工具卡按正文位置插入；旧消息没有 ⇒ 保持“工具卡在正文上方”。
-const toolTimeline = computed(() => !showToolDetails.value ? [] : buildToolTimeline(parts.value.cleaned, props.tools).map((part) => ({
-  ...part,
-  html: part.kind === "text" ? renderMarkdown(part.text ?? "", { macros: props.macros }) : "",
-})));
+const toolTimeline = computed(() => buildToolTimeline(parts.value.cleaned, inlineTools.value, parts.value.projection, props.streaming).map((part) => (
+  part.kind === "text" ? { ...part, html: renderMarkdown(part.text, { macros: props.macros }) } : part
+)));
 const reasoningHtml = computed(() => renderMacroHtml(props.reasoning, props.macros));
 // 公式比列宽时给右缘一道内阴影（2026-11-02）：手机上原本是"一刀切"，看不出还能往右滑。
 // `overflow-x: auto` 之外再标一个类 —— 只有真的溢出才提示，短公式不受影响。
@@ -143,7 +143,7 @@ function placeStreamCursor(): void {
   if (!props.streaming || !textEl.value || !box) { clearStreamCursor(); return; }
   const walker = document.createTreeWalker(textEl.value, NodeFilter.SHOW_TEXT, {
     acceptNode(node: Node): number {
-      return node.nodeValue && node.nodeValue.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+      return node.nodeValue?.trim() && !node.parentElement?.closest(".tool-card") ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
     },
   });
   let last: Node | null = null;
@@ -176,7 +176,7 @@ onMounted(() => {
 onUnmounted(() => window.removeEventListener("mc-theme-changed", paintMermaid));
 // 流式期间正文每来一段就重算一次 —— 那时不扫公式（每帧扫一遍是白烧 CPU）；
 // 但光标要跟着最后一个字走。收尾那一拍去掉光标、扫公式并画 Mermaid。
-watch([bodyHtml, () => props.answerView], () => {
+watch([() => props.content, toolTimeline, () => props.answerView], () => {
   if (props.streaming) nextTick(placeStreamCursor);
   else nextTick(() => { markMathOverflow(); paintMermaid(); });
 });
@@ -191,7 +191,7 @@ watch(() => props.streaming, (s) => nextTick(() => {
        从前这里按 `display_mode` 切两套 class（两边气泡 / 用户气泡+AI 纯文本）；现在后者是唯一的样子，
        所以不再有条件类 —— 形态本身写在 CSS 的 `.msg.assistant` / `.msg-wrap.assistant` 里。 -->
   <div :class="`msg-wrap ${role === 'user' ? 'user' : 'assistant'}`">
-    <div v-if="answerView === 'full' || content" ref="msgEl" :class="`msg ${role === 'user' ? 'user' : 'assistant'}`">
+    <div v-if="answerView === 'full' || content || toolTimeline.length" ref="msgEl" :class="`msg ${role === 'user' ? 'user' : 'assistant'}`">
       <div v-if="role !== 'user' && answerView === 'full' && (assistantIdent || statusText)" class="msg-head">
         {{ assistantIdent }}<span v-if="statusText" :class="{ 'msg-status': issue }">{{ assistantIdent ? ' · ' : '' }}{{ statusText }}</span>
       </div>
@@ -199,32 +199,31 @@ watch(() => props.streaming, (s) => nextTick(() => {
         <summary>{{ thinkLabel }}</summary>
         <div class="think-body" v-html="reasoningHtml"></div>
       </details>
-      <!-- 旧消息没有 text_offset，只能把工具卡放在正文上方；新消息按时间线插在正文中。 -->
-      <div v-if="!progressShown && streaming && toolHint" class="tool-status" aria-live="polite">
+      <div v-if="!progressShown && streaming && toolHint && !tools.length" class="tool-status" aria-live="polite">
         <span class="tool-dot" aria-hidden="true"></span>
         <i>{{ toolHint }}</i>
       </div>
-      <template v-if="!toolTimeline.length">
-        <template v-if="showToolDetails">
-        <div v-if="tools.length" class="tool-cards" aria-label="工具调用">
-          <MessageToolCard v-for="(tool, i) in tools" :key="tool.id || i" :tool="tool" />
+      <template v-if="showToolDetails">
+        <div v-if="legacyTools.length" class="tool-cards" aria-label="未记录位置的工具调用">
+          <MessageToolCard v-for="(tool, i) in legacyTools" :key="tool.id || i" :tool="tool" />
         </div>
-        <details v-else-if="sources.length" class="tool-sources" aria-label="搜索结果">
+        <details v-else-if="!tools.length && sources.length" class="tool-sources" aria-label="搜索结果">
           <summary class="tool-sources-title">来源 {{ sources.length }}</summary>
           <a v-for="source in sources" :key="source.url" :href="source.url" target="_blank" rel="noopener noreferrer">
             {{ sourceLabel(source.url, source.title) }}
           </a>
         </details>
-        </template>
       </template>
       <div v-if="toolTimeline.length" ref="textEl" class="text text-timeline">
-        <template v-for="(part, i) in toolTimeline" :key="i">
-          <div v-if="part.kind === 'text'" class="text-segment" v-html="part.html"></div>
-          <MessageToolCard v-else-if="part.tool" :tool="part.tool" inline />
+        <template v-for="(part, i) in toolTimeline" :key="part.kind === 'tool' ? `tool-${part.tool.source}-${part.tool.item_id || part.tool.id || i}` : `text-${i}`">
+          <template v-if="part.kind === 'text'">
+            <div v-if="part.html" class="text-segment" v-html="part.html"></div>
+          </template>
+          <MessageToolCard v-else :tool="part.tool" :live="streaming" inline />
         </template>
       </div>
       <div v-else ref="textEl" class="text" v-html="bodyHtml"></div>
-      <div v-if="!progressShown && streaming && !content && !reasoning && !toolHint" class="typing" role="status">
+      <div v-if="!progressShown && streaming && !content && !reasoning && !toolHint && !tools.length" class="typing" role="status">
         <span class="typing-orbit" aria-hidden="true" v-html="ICONS.spark"></span>
         <span>{{ typingHint }}</span>
       </div>

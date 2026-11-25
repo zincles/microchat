@@ -3,6 +3,7 @@ package model
 import (
 	"encoding/json"
 	"slices"
+	"strings"
 )
 
 // Exchange 是产生一条已归档回复的上游调用。一个 run 内按消息 ID 排列各次调用。
@@ -51,4 +52,54 @@ func (m Message) DirectExchange() *Exchange {
 		return m.Exchanges[0]
 	}
 	return nil
+}
+
+// LocateToolBodies 从 Responses 的有序输出恢复工具在原始正文的位置。
+// 只有输出正文与存档逐字节一致时，位置才对这条消息有效。
+func (e *Exchange) LocateToolBodies(content string, tools []MessageTool) {
+	if e == nil || e.NodeID != "" || e.Protocol != "openai-response" || len(tools) == 0 {
+		return
+	}
+	remaining := content
+	for _, item := range e.Items {
+		if item.Type == "message" {
+			var ok bool
+			remaining, ok = strings.CutPrefix(remaining, item.Text)
+			if !ok {
+				return
+			}
+		}
+	}
+	if remaining != "" {
+		return
+	}
+
+	type toolKey struct{ source, id string }
+	offsets := make(map[toolKey]int, len(tools))
+	offset := 0
+	for _, item := range e.Items {
+		var key toolKey
+		switch {
+		case item.Type == "message":
+			offset += len(item.Text)
+			continue
+		case item.Type == "function_call":
+			key = toolKey{"client", item.CallID}
+		case strings.HasSuffix(item.Type, "_call"):
+			key = toolKey{"server", item.ID}
+		}
+		if key.id != "" {
+			if previous, seen := offsets[key]; seen && previous != offset {
+				offsets[key] = -1
+			} else {
+				offsets[key] = offset
+			}
+		}
+	}
+	for i := range tools {
+		t := &tools[i]
+		if offset, ok := offsets[toolKey{t.Source, t.ItemID}]; ok && offset >= 0 {
+			t.BodyOffset = new(offset)
+		}
+	}
 }

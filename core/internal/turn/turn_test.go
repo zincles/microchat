@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"microchat/internal/model"
 )
 
 // 没登记过的会话就是 idle —— 后端一重启就该是这样，这是诚实的。
@@ -250,6 +252,63 @@ func TestToolStatusLifecycle(t *testing.T) {
 	}
 	if got := registry.Status("s").Tool; got != nil {
 		t.Fatalf("正文一到工具状态就该清掉：%+v", got)
+	}
+}
+
+func TestHostedToolsSnapshotLifecycle(t *testing.T) {
+	registry := NewRegistry()
+	token, err := registry.Begin("s", "m", "u")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools := []model.MessageTool{{ItemID: "first", ToolName: "web_search"}}
+	if registry.SetHostedTools("s", token+1, "web_search", "searching", tools) ||
+		!registry.SetHostedTools("s", token, "web_search", "searching", tools) {
+		t.Fatal("只应收下当前令牌的工具快照")
+	}
+	status := registry.Status("s")
+	if status.Tool == nil || *status.Tool != (ToolStatus{Kind: "web_search", State: "searching"}) || len(status.Tools) != 1 {
+		t.Fatalf("当前工具和快照应同时发布：%+v", status)
+	}
+	tools[0].ItemID = "replacement"
+	if got := registry.Status("s").Tools; len(got) != 1 || got[0].ItemID != "first" {
+		t.Fatal("调用者重用记录切片不应更改已发布的快照")
+	}
+	if !registry.SetHostedTools("s", token, "", "", tools) {
+		t.Fatal("工具快照替换失败")
+	}
+	if current := registry.Status("s").Tool; current == nil || *current != *status.Tool {
+		t.Fatalf("只发布快照时不应改变当前工具：%+v", current)
+	}
+	tools[0].ItemID = "reused again"
+	if !registry.AppendContent("s", token, "正文") {
+		t.Fatal("写入正文失败")
+	}
+	afterText := registry.Status("s")
+	if afterText.Tool != nil || len(afterText.Tools) != 1 || afterText.Tools[0].ItemID != "replacement" ||
+		afterText.ToolsRevision == status.ToolsRevision || status.Tools[0].ItemID != "first" {
+		t.Fatalf("正文应清掉当前工具，不应改变有序快照：%+v（原状态 %+v）", afterText, status)
+	}
+	if !registry.SetHostedTools("s", token, "", "", tools) {
+		t.Fatal("最终工具快照替换失败")
+	}
+	if reconciled := registry.Status("s"); reconciled.Tool != nil || len(reconciled.Tools) != 1 || reconciled.Tools[0].ItemID != "reused again" {
+		t.Fatalf("只发布最终快照不应重新显示当前工具：%+v", reconciled)
+	}
+	registry.Finish("s", token, "")
+	if registry.SetHostedTools("s", token, "web_search", "completed", nil) || len(registry.Status("s").Tools) != 1 {
+		t.Fatal("生成结束后应保留已发布的快照，拒绝迟到的更新")
+	}
+	reroll, err := registry.BeginReroll("s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(registry.Status("s").Tools) != 0 || !registry.SetHostedTools("s", reroll, "web_search", "searching", tools) {
+		t.Fatal("开摇应清掉上一轮的快照并接收本轮工具")
+	}
+	registry.FinishReroll("s", reroll, "")
+	if len(registry.Status("s").Tools) != 0 {
+		t.Fatal("重摇结束应清掉候选工具快照")
 	}
 }
 

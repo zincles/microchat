@@ -156,6 +156,7 @@ func (s *Server) turnEvents(w http.ResponseWriter, r *http.Request) {
 	lastPhase := turn.Phase("")
 	lastTool := ""
 	lastSources := ""
+	var lastToolsRevision uint64
 	var lastStatus time.Time
 	for {
 		status, slice, scope := s.chat.Snapshot(sid, from, thinkFrom, resume)
@@ -163,6 +164,7 @@ func (s *Server) turnEvents(w http.ResponseWriter, r *http.Request) {
 		if status.Reroll.IsRunning() {
 			// 候选复用同一份缓冲，但不是刚结束的普通生成；候选增量只走 /turn/text。
 			status.Chars, status.ThinkingChars = 0, 0
+			status.Tools, status.ToolsRevision = nil, 0
 			slice = turn.StreamSlice{Done: slice.Done}
 		}
 		toolKey := ""
@@ -174,7 +176,8 @@ func (s *Server) turnEvents(w http.ResponseWriter, r *http.Request) {
 			sourceKey += source.URL + "\x00"
 		}
 		changed := slice.Next != lastText || slice.ThinkNext != lastThink ||
-			status.Phase != lastPhase || scopeChanged || toolKey != lastTool || sourceKey != lastSources
+			status.Phase != lastPhase || scopeChanged || toolKey != lastTool || sourceKey != lastSources ||
+			status.ToolsRevision != lastToolsRevision
 		if changed || time.Since(lastStatus) >= 500*time.Millisecond {
 			payload, err := json.Marshal(TurnPoll{Status: status, Slice: slice})
 			if err != nil {
@@ -196,6 +199,7 @@ func (s *Server) turnEvents(w http.ResponseWriter, r *http.Request) {
 			lastPhase = status.Phase
 			lastTool = toolKey
 			lastSources = sourceKey
+			lastToolsRevision = status.ToolsRevision
 			lastStatus = time.Now()
 		}
 		if !status.Phase.IsBusy() {

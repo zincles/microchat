@@ -9,11 +9,13 @@ import type { MessageTool } from "../api/types.ts";
 const props = withDefaults(defineProps<{
   tool: MessageTool;
   inline?: boolean;
-}>(), { inline: false });
+  live?: boolean;
+}>(), { inline: false, live: false });
 
 const name = computed(() => nativeToolLabel(props.tool.tool_name));
 const sources = computed(() => props.tool.sources ?? []);
 const issue = computed(() => issueLabel(props.tool.status));
+const pending = computed(() => props.live && !issue.value && !["done", "completed"].includes(props.tool.status ?? ""));
 const expanded = shallowRef(false);
 function onToggle(event: Event): void {
   expanded.value = (event.currentTarget as HTMLDetailsElement).open;
@@ -26,6 +28,7 @@ function onToggle(event: Event): void {
       <span class="tool-card-name">{{ name }}</span>
       <span v-if="tool.source" class="tool-card-source">{{ tool.source === "client" ? "本地" : "服务端" }}</span>
       <span v-if="issue" class="tool-issue">{{ issue }}</span>
+      <span v-else-if="pending" class="tool-pending" role="status">进行中</span>
       <span v-if="tool.queries?.length" class="tool-card-query">{{ tool.queries.join(" / ") }}</span>
       <span v-if="sources.length" class="tool-card-count">{{ sources.length }} 条来源</span>
     </summary>
@@ -41,6 +44,7 @@ function onToggle(event: Event): void {
 
 <style scoped>
 .tool-issue { color: var(--md-error); }
+.tool-pending { color: var(--md-primary); white-space: nowrap; }
 .tool-field { margin: 0.4em 0 0.4em 1em; }
 .tool-field pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0.2em 0; }
 </style>

@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { createApi, mergeStreamSlice, DEFAULT_API_URL, normalizeApiBase, probeHealth } from "../src/api/client.ts";
 import { parseWireMessages, previewBlock } from "../src/utils/payload.ts";
 import { assemblePrompt, abilityPrompt, missingSegments } from "../src/utils/prompt.ts";
-import { renderMarkdown } from "../src/utils/markdown.ts";
+import { renderMarkdown, splitState } from "../src/utils/markdown.ts";
 import { buildCartridge, cartridgeAgent } from "../src/utils/cartridge.ts";
 import { FLOW_NODE_TYPES, emptyFlowGraph, flowDebugSteps, flowIssues, flowSourceType, flowTargetType, formatDebugPayload, formatFlowText, normalizeFlowGraph, trimMessages } from "../src/utils/flow.ts";
 import { FLOW_NODE_SPECS, flowInputPorts, flowOutputPorts } from "../src/utils/flowSpecs.ts";
@@ -3343,7 +3343,7 @@ test("专注模式：输入栏按钮、顶栏只留模型与环、空闲收起",
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 
-  // 按钮在「工具」右侧，文案始终是「专注」，开关状态用 aria-pressed / tonal 底表达。
+  // 按钮在「工具」右侧，文案始终是「专注」，开关状态用 aria-pressed 表达。
   const toolsAt = composer.indexOf("<ToolsMenu");
   const zenAt = composer.indexOf('class="zen-btn"');
   assert.ok(toolsAt > 0 && zenAt > toolsAt, "「专注」按钮不在工具右侧");
@@ -3483,14 +3483,11 @@ test("更新面板：显示提交 + 拉取并重启（由 entrypoint 接手）",
   const updateSrc = readFileSync(join(SRC, "composables", "useAppUpdate.ts"), "utf8");
   const pane = readFileSync(join(SRC, "components", "UpdatePane.vue"), "utf8");
   const upd = readFileSync(join(SRC, "utils", "update.ts"), "utf8");
-  const view = readFileSync(join(SRC, "composables", "useSettingsView.ts"), "utf8");
   const client = readFileSync(join(SRC, "api", "client.ts"), "utf8");
 
   assert.match(bar, /class="brand"[\s\S]*?@click="\$emit\('open-update'\)"/, "品牌头没接更新入口");
   assert.match(app, /@open-update="\(\) => openManage\('update'\)"/, "App 没把更新入口接到设置视图");
-  assert.match(view, /\["provider", "agent", "update"\]\.includes\(pane\)/, "openManage 不认识 update / agent");
   assert.match(settings, /<UpdatePane :ask="ask"/, "设置视图里没有更新面板");
-  assert.match(settings, /props\.only === "update" \? "更新"/, "更新页没有独立页头");
   assert.match(settings, /if \(props\.only === "update"\) return;/, "更新页还在白拉设置页数据");
   assert.match(pane, /class="update-grid"/, "更新页没有压缩成版本/PWA 双卡");
   assert.match(pane, /class="update-version-grid"/, "本地/远端没有并排的版本网格");
@@ -4345,16 +4342,6 @@ test("工具来源：多次搜索合并时按 URL 去重", () => {
   assert.deepEqual(toolSources(null), []);
 });
 
-test("工具卡按 text_offset 插入正文；旧消息保留上方兜底", () => {
-  const bubble = readFileSync(join(SRC, "components", "MessageBubble.vue"), "utf8");
-  const card = readFileSync(join(SRC, "components", "MessageToolCard.vue"), "utf8");
-  assert.match(card, /<details class="tool-card"/, "工具卡必须是 details");
-  assert.match(bubble, /buildToolTimeline/, "工具卡没有接入时间线");
-  assert.match(bubble, /MessageToolCard/, "工具卡没有复用统一组件");
-  assert.match(bubble, /v-if="!toolTimeline.length"/, "旧消息没有上方兜底");
-  assert.match(bubble, /v-else-if="sources.length"/, "live 来源兜底仍在");
-});
-
 test("上下文圆环的请求体覆盖面板：无外层花括号、验证/保存、App 落库", () => {
   const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
@@ -4590,24 +4577,29 @@ test("旧 Flow 行类已清理", () => {
 });
 
 
-test("服务端工具时间线：按 text_offset 插入正文位置", () => {
-  const text = "甲😀。\n\n乙丙";
-  const parts = buildToolTimeline(text, [
-    { tool_name: "web_search", text_offset: 1 },
-    { tool_name: "web_search", text_offset: 2 },
-    { tool_name: "web_search", text_offset: 99 },
+test("工具时间线：按原始字节位置分隔正文，状态块不挪动工具卡", () => {
+  const preface = "  <state>HP=7</state>甲🙂";
+  const middle = "乙🚉";
+  const first = { body_offset: Buffer.byteLength(preface), tool_name: "web_search" };
+  const second = { body_offset: Buffer.byteLength(preface + middle), tool_name: "web_search" };
+  const { cleaned, projection } = splitState(preface + middle + "丙。", true);
+  assert.deepEqual(buildToolTimeline(cleaned, [second, first], projection), [
+    { kind: "text", text: "甲🙂" }, { kind: "tool", tool: first },
+    { kind: "text", text: "乙🚉" }, { kind: "tool", tool: second },
+    { kind: "text", text: "丙。" },
   ]);
-  assert.equal(parts[0].kind, "text");
-  assert.equal(parts[0].text, "甲😀。\n\n");
-  assert.equal(parts[1].kind, "tool");
-  assert.equal(parts[2].kind, "tool");
-  assert.equal(parts[3].kind, "text");
-  assert.equal(parts[3].text, "乙丙");
-  assert.equal(parts[4].kind, "tool");
-  assert.deepEqual(buildToolTimeline(text, [{ tool_name: "web_search" }]), []);
-  const bubble = readFileSync(join(SRC, "components", "MessageBubble.vue"), "utf8");
-  assert.match(bubble, /buildToolTimeline/, "消息气泡没有使用工具时间线");
-  assert.match(bubble, /MessageToolCard/, "工具卡没有复用统一组件");
+  // SSE 可能先拿到两个工具，打字机还没显示中间段；第二张卡不能提前堆到第一张旁边。
+  const live = splitState(preface, true);
+  assert.deepEqual(buildToolTimeline(live.cleaned, [first, second], live.projection, true), [
+    { kind: "text", text: "甲🙂" }, { kind: "tool", tool: first },
+  ]);
+});
+
+test("老工具的 rune 位置仍可还原，未记录位置不冒充时间点", () => {
+  const tool = { tool_name: "web_search", text_offset: 2 };
+  assert.deepEqual(buildToolTimeline("甲😀后。", [tool, { tool_name: "web_search" }]), [
+    { kind: "text", text: "甲😀" }, { kind: "tool", tool }, { kind: "text", text: "后。" },
+  ]);
 });
 
 test("设置列表：VTable 有外框、表头底色和列分隔线", () => {

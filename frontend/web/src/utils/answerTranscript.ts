@@ -1,4 +1,4 @@
-import type { ChatRow, ChatRowMessage } from "./chatrows.ts";
+import { inlineHostedTool, type ChatRow, type ChatRowMessage } from "./chatrows.ts";
 import { nativeToolLabel, toolRunHint } from "./format.ts";
 
 export interface AnswerGroup {
@@ -124,8 +124,9 @@ export function answerSteps(group: AnswerGroup, expanded: boolean, liveHasBody: 
     const final = row === last;
     const candidate = !!rerollingId && rerollingId === msg.messageId;
     const hasBody = msg.stream || candidate ? liveHasBody : !!msg.content?.trim();
-    if (!expanded && !hasBody && row !== footer && !final) continue;
-    // 收起时保留每一步真正说过的话；工具按 text_offset 穿插在正文里的顺序只在展开时还原。
+    const hasTimeline = !candidate && msg.tools?.some(inlineHostedTool);
+    if (!expanded && !hasBody && !hasTimeline && row !== footer && !final) continue;
+    // 正文内的服务端工具始终原位显示；展开补充各步骤的身份、思考与操作。
     const view = expanded ? "full" : row === footer ? "prose-footer" : "prose";
     out.push({ row, presentation: { answerView: view, copyAnswer: final, progressShown: true, candidate } });
   }

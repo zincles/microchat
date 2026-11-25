@@ -98,10 +98,15 @@ func (p *roundProgress) offset() int {
 }
 
 func (p *roundProgress) hostedTool(e providers.ToolEvent) {
-	p.turns.SetTool(p.session, p.token, e.Kind, e.State)
 	if e.ItemID == "" {
+		p.turns.SetTool(p.session, p.token, e.Kind, e.State)
 		return
 	}
+	p.rememberHostedTool(e)
+	p.turns.SetHostedTools(p.session, p.token, e.Kind, e.State, p.tools)
+}
+
+func (p *roundProgress) rememberHostedTool(e providers.ToolEvent) {
 	i, exists := p.hosted[e.ItemID]
 	if !exists {
 		i = len(p.tools)
@@ -109,7 +114,8 @@ func (p *roundProgress) hostedTool(e providers.ToolEvent) {
 			p.hosted = make(map[string]int)
 		}
 		p.hosted[e.ItemID] = i
-		p.tools = append(p.tools, model.MessageTool{Source: "server", ItemID: e.ItemID, ToolName: e.Kind, TextOffset: new(p.offset())})
+		p.tools = append(p.tools, model.MessageTool{Source: "server", ItemID: e.ItemID, ToolName: e.Kind,
+			BodyOffset: new(p.text.Len()), TextOffset: new(p.offset())})
 	}
 	t := &p.tools[i]
 	if e.State != "" {
@@ -130,9 +136,20 @@ func (p *roundProgress) hostedTool(e providers.ToolEvent) {
 // 完整输出项能恢复并行调用在正文中的位置，即使网关只发了终帧。
 func (p *roundProgress) finish(r providers.Result) {
 	for _, event := range r.ServerTools {
-		p.hostedTool(event)
+		if event.ItemID != "" {
+			if event.State == "" {
+				event.State = "completed"
+			}
+			p.rememberHostedTool(event)
+		}
 	}
-	if r.Exchange == nil || r.Exchange.Protocol != string(providers.ProtocolOpenAIResponse) {
+	// 终态可能补齐迟到工具的位置，但只在该坐标与已经播出的正文一致时更新实时预览。
+	// 归档消息由列表接口按保存的输出项定位，不依赖事件到达顺序。
+	if len(p.tools) != 0 && p.text.String() == r.Text {
+		r.Exchange.LocateToolBodies(r.Text, p.tools)
+		p.turns.SetHostedTools(p.session, p.token, "", "", p.tools)
+	}
+	if r.Exchange == nil || r.Exchange.Protocol != string(providers.ProtocolOpenAIResponse) || len(r.ToolCalls) == 0 {
 		return
 	}
 	offsets := make(map[string]int, len(r.ToolCalls))

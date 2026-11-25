@@ -89,16 +89,17 @@ export function useTurnStream({
     if (!step || (row.step ?? 0) >= step) return false;
     const previous = vueStream.value;
     const at = vueMessages.value.indexOf(row);
-    if (at >= 0 && row.step && (previous.text || previous.reasoning || row.tool || row.sources?.length)) {
+    if (at >= 0 && row.step && (previous.text || previous.reasoning || row.tool || row.tools?.length || row.sources?.length)) {
       vueMessages.value.splice(at, 0, { id: tmpKey(), who: "助手", role: "assistant", kind: "tool_run",
         run_id: row.run_id, step: row.step, content: previous.text, reasoning: previous.reasoning,
-        tool: row.tool, sources: row.sources });
+        tool: row.tool, tools: row.tools, sources: row.sources });
     }
     row.step = step;
     row.kind = "chat";
     row.reasoning = "";
     row.sources = [];
     row.tool = null;
+    row.tools = undefined;
     vueStream.value = { id: previous.id, text: "", reasoning: "" };
     resetTypewriter();
     void readCommittedSteps(sid, my, st, row);
@@ -110,7 +111,8 @@ export function useTurnStream({
     if (merged.gap) return false;
     row.tool = st.tool ?? null;
     row.sources = st.sources ?? [];
-    if (row.tool || row.sources.length) row.kind = "tool_run";
+    row.tools = st.tools;
+    if (row.tool || row.sources.length || row.tools?.length) row.kind = "tool_run";
     cur.from = merged.cur.from;
     cur.thinkFrom = merged.cur.thinkFrom;
     vueStream.value.text = merged.text;
@@ -198,6 +200,7 @@ export function useTurnStream({
     if (!m.stream) m.stream = true;
     m.phase = "waiting";
     m.tool = null;
+    m.tools = undefined;
     m.sources = [];
     // 起标题还在跑时，最终正文可能已经入库；继续等终态，但不要再画一份合成回复。
     if (!vueMessages.value.includes(m) && !vueMessages.value.some(r => r.messageId && r.messageId === turnID)) vueMessages.value.push(m);

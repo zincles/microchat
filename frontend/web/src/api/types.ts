@@ -25,6 +25,8 @@ export interface MessageTool {
   status?: string;
   /** server 工具发生时正文已输出的字符数（rune）；旧记录没有这个字段。 */
   text_offset?: number;
+  /** 原始 content 内的 UTF-8 字节偏移；用于按上游输出顺序放置工具卡。 */
+  body_offset?: number;
   created_at?: number;
 }
 
@@ -110,6 +112,8 @@ export interface TurnStatus {
   tool?: ToolStatus;
   /** 服务端搜索工具拿回来的来源（按 URL 去重）。 */
   sources?: SearchSource[];
+  /** 当前模型步骤的有序服务端工具快照。 */
+  tools?: MessageTool[];
 }
 
 export interface CompactStatus {

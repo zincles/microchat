@@ -10,6 +10,9 @@
 //
 // 段的两端用 **begin_idx/end_idx（消息序号）** —— 接口现发（store 派生），
 // 前端手里没有全文也能切段（这正是分页的意义）。
+import type { MessageTool } from "../api/types.ts";
+import type { StateTextProjection } from "./markdown.ts";
+
 export interface ChatSummary {
   id: string;
   parent_summary_id?: string;
@@ -32,18 +35,7 @@ export interface ChatMessage {
   run_id?: string;
   step?: number;
   tools_snapshot?: string[];
-  tools?: {
-    id?: string;
-    source?: string;
-    tool_name?: string;
-    item_id?: string;
-    queries?: string[];
-    arguments?: string;
-    result?: string;
-    sources?: { type?: string; url: string; title?: string }[];
-    status?: string;
-    text_offset?: number;
-  }[];
+  tools?: MessageTool[];
   who?: string;
   content?: string;
   reasoning?: string;
@@ -56,53 +48,72 @@ export interface ChatMessage {
   [key: string]: unknown;
 }
 
-export interface ToolTimelinePart<T> {
-  kind: "text" | "tool";
-  text?: string;
-  tool?: T;
+type ToolPosition = Pick<MessageTool, "body_offset" | "text_offset">;
+
+export type ToolTimelinePart<T> = { kind: "text"; text: string } | { kind: "tool"; tool: T };
+
+export function hasToolPosition(tool: ToolPosition): boolean {
+  return typeof tool.body_offset === "number" || typeof tool.text_offset === "number";
 }
 
-/** 把一条 assistant 正文按服务端工具的 text_offset 切开。
- *  offset 是 Go 侧的 rune 数，所以这里必须按 code point 取，不能拿 JS UTF-16 index 直接 slice。
- *  旧消息没有 text_offset ⇒ 返回空数组，调用方继续用“工具卡全在正文上方”的旧布局。 */
-export function buildToolTimeline<T extends { text_offset?: number }>(
-  text: string,
-  tools?: T[] | null,
-): ToolTimelinePart<T>[] {
-  if (!tools?.length || !tools.some((tool) => typeof tool.text_offset === "number")) return [];
-  const chars = Array.from(text);
-  const groups = new Map<number, T[]>();
-  const snap = (raw: number): number => {
-    const at = Math.max(0, Math.min(chars.length, Math.trunc(raw)));
-    if (at <= 0 || at >= chars.length) return at;
-    // 工具卡不能把 Markdown 语法劈开（`**粗体**` / 链接 / 代码块）。
-    // 优先落到段落边界，其次行尾，再其次句末；都没有就放到正文末尾。
-    for (let i = at; i < chars.length - 1; i++) {
-      if (chars[i] === "\n" && chars[i + 1] === "\n") return i + 2;
+export function inlineHostedTool(tool: MessageTool): boolean {
+  return tool.source === "server" && hasToolPosition(tool);
+}
+
+// 按递增位置扫描一次 UTF-16 字符串。已存档的老位置用 rune，新位置用原文的 UTF-8 字节。
+function indicesAt(text: string, offsets: number[], bytes: boolean, streaming: boolean): Map<number, number> {
+  const indices = new Map<number, number>();
+  let at = 0, consumed = 0;
+  for (const offset of offsets.sort((a, b) => a - b)) {
+    while (consumed < offset && at < text.length) {
+      const cp = text.codePointAt(at)!;
+      at += cp < 0x10000 ? 1 : 2;
+      consumed += !bytes || cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
     }
-    for (let i = at; i < chars.length; i++) {
-      if (chars[i] === "\n") return i + 1;
-    }
-    for (let i = at; i < chars.length; i++) {
-      if ("。！？.!?；;".includes(chars[i])) return i + 1;
-    }
-    return chars.length;
-  };
-  for (const tool of tools) {
-    const raw = typeof tool.text_offset === "number" ? tool.text_offset : 0;
-    const offset = snap(raw);
-    const list = groups.get(offset) ?? [];
-    list.push(tool);
-    groups.set(offset, list);
+    if (streaming && consumed < offset) break; // 打字机还没露出该工具之前的正文。
+    indices.set(offset, at);
   }
+  return indices;
+}
+
+/** 不把不同工具吸到同一个句尾。原文位置经过与正文同一次状态块剥离后再切片。 */
+export function buildToolTimeline<T extends ToolPosition>(
+  text: string, tools?: T[] | null, projection?: StateTextProjection, streaming = false,
+): ToolTimelinePart<T>[] {
+  if (!tools?.length) return [];
+  const rawOffsets: number[] = [], legacyOffsets: number[] = [];
+  for (const tool of tools) {
+    if (projection && typeof tool.body_offset === "number") rawOffsets.push(tool.body_offset);
+    else if (typeof tool.text_offset === "number") legacyOffsets.push(tool.text_offset);
+  }
+  const raw = projection && indicesAt(projection.raw, rawOffsets, true, streaming);
+  if (raw && projection) {
+    let block = 0, removed = 0;
+    for (const [offset, index] of raw) {
+      while (block < projection.removed.length && projection.removed[block][1] <= index) {
+        const [start, end] = projection.removed[block++];
+        removed += end - start;
+      }
+      const inside = block < projection.removed.length ? Math.max(0, index - projection.removed[block][0]) : 0;
+      raw.set(offset, Math.min(text.length, Math.max(0, index - removed - inside - projection.leading)));
+    }
+  }
+  const legacy = indicesAt(text, legacyOffsets, false, streaming);
+  const placed: Array<{ index: number; tool: T }> = [];
+  for (const tool of tools) {
+    const index = raw && typeof tool.body_offset === "number" ? raw.get(tool.body_offset)
+      : typeof tool.text_offset === "number" ? legacy.get(tool.text_offset) : undefined;
+    if (index !== undefined) placed.push({ index, tool });
+  }
+  if (!placed.length) return [];
   const parts: ToolTimelinePart<T>[] = [];
   let at = 0;
-  for (const offset of [...groups.keys()].sort((a, b) => a - b)) {
-    if (offset > at) parts.push({ kind: "text", text: chars.slice(at, offset).join("") });
-    for (const tool of groups.get(offset) ?? []) parts.push({ kind: "tool", tool });
-    at = Math.max(at, offset);
+  for (const { index, tool } of placed.sort((a, b) => a.index - b.index)) {
+    if (index > at) parts.push({ kind: "text", text: text.slice(at, index) });
+    parts.push({ kind: "tool", tool });
+    at = index;
   }
-  if (at < chars.length) parts.push({ kind: "text", text: chars.slice(at).join("") });
+  if (at < text.length) parts.push({ kind: "text", text: text.slice(at) });
   return parts;
 }
 

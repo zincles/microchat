@@ -711,17 +711,12 @@ Go 1.26 + httptest 实测：客户端 ctx 一取消，**客户端立刻**返回 
 
 ⚠ 同时把轮询本身改韧了：**单拍失败继续下一拍**（连着十拍不行才认栽）。切后台/换网那几拍
 请求本来就会失败，从前一抛出去循环就没了，而气泡还留着 —— 这就是那个 bug 的另一半。
-⚠ **同一个会话只能有一个轮询循环**（2026-11-03 修"流式文字顺序错乱"）：`activeTurnPolls` 是前端单飞闸，
-`pollTurn` 先查再登记、finally 释放；迟到的旧循环还要用 `status.message_id !== turnID` 自裁。
-网络重试/重复响应则由 `mergeStreamSlice` 兜底：**同一游标读两次不追加**（`next/think_next` 与
-`cur` 相等直接返回原累积），否则同一块会被拼两遍。前端所有游标都是后端返回的偏移量，不要拿
-JS 字符串长度自己推。
+`activeTurnPolls` 只允许当前会话视图的一份订阅；迟到帧还要匹配会话世代、消息和模型步骤。
+正文与思考各用 UTF-8 字节区间。`mergeStreamSlice` 忽略旧帧，重叠只追加尚未消费的字节，遇到缺口从本地游标补读；不能按文本内容去重。
 
 **markdown 渲染是逐类型可关的**（2026-11-01 用户定：「增加 markdown 渲染开关 …… 所有的会被
 Markdown 解析的非 <div> HTML 块，我们为每个类型都加个开关。不然瞎解析不好。」）：
-设置 → 外观的最下面一区，一个**总开关** + 十七类**逐类型开关**（按 `块级`/`行内` 分两组，
-每组带「全关 / 全开」）。类型清单**由后端给**（`GET /config/prefs` 的 `markdown_types`），
-前端不另抄一张表 —— 少一条就留个点不动的死开关，多一条就是个后端不认识的选项。
+在设置的「消息渲染」打开总开关，或按整段／行内逐类切换；两组共用「全部关闭 / 全部开启」。类型清单来自 `GET /config/prefs` 的 `markdown_types`，前端不另抄。
 **Mermaid 是其中一类**（`mermaid`，块级）：`utils/markdown.ts` 先把 ```mermaid 围栏摘成
 `.mermaid-figure`（源码可见），`utils/mermaid.ts` 在挂载/收流/主题变化后动态 `import("mermaid")`，
 用 `securityLevel:"strict"` + `htmlLabels:false` 把 `.mermaid-diagram` 换成 SVG；失败保留源码并显示错误。
@@ -839,10 +834,10 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 | GET | `/sessions/{session_id}/prompt` | — | `{"text","type"}` | **生效的系统提示词**（三级解析的**结果**，与出站拼装读同一处）：`type` = `conversation`（会话自己写了 `sessions.system_prompt`）/ `agent`（`agents.json` 里那个 agent 的）/ `builtin`（两级都没有 ⇒ 代码里的内置默认）。**永不给空**：解析全落空（典型：会话的 `agent_id` 软引用**悬空**）也退内置那句、`type` 报 `builtin`。**回拼装后的结果**（base + 追加段，见 agents.json 的 `segments`）|
 | GET | `/sessions/{session_id}/macros` | — | `{macros:[{name,aliases,description,value}], usage:[{name,count,known}], total}` | **已注册宏面板**（2026-11-10）：`macros` = 可用宏 + 当前值；`usage` = **生效系统提示词 + 全部消息正文**里每个 `{{…}}` 的出现次数（未知宏保留在统计里，`known:false`）。只读，不改任何东西 |
 | GET | `/sessions/{session_id}/flow/run` | — | `FlowRunTrace` | **FlowAgent 最近一次图执行**（进程内、覆盖式）：`status`（running/done/error/canceled）、`active_node_id`（正在执行的节点）、`active_llm_calls`（当前并发 LLM 调用数）、`active_nodes`（节点/渠道/模型/开始时间）、`final`、`duration_ms`、`steps`（每节点 input/output/error；LLM 节点另带 provider/model/usage/elapsed_ms/payload）。普通 Agent / 没跑过 ⇒ 404 |
-| GET | `/sessions/{session_id}/status` | — | `TurnStatus` | `phase`（`idle`/`pending`/`streaming`/`error`）+ **`step`**（一轮 run 内第几个 assistant 模型轮，客户端据此切 live 气泡）+ `message_id` + `elapsed_ms` + `chars` + `thinking_chars` + `error` + **`tool`**（当前服务端工具 `{kind,state}`，正文一到就清）+ **`sources`**（搜索工具的 `action.sources`，按 URL 去重、正文到了也留着）。另搭两档**与轮次无关**的活状态：`compact`（`state`=`running`/`done`/`error` + `blocks`/`compacted`/`summary_id`/`from_idx`/`to_idx`/`merged` + `error`）与 `reroll`（`state` + `elapsed_ms` + `error`）|
-| GET | `/sessions/{session_id}/turn/text?from=N&think_from=M` | — | `StreamSlice` | 流式增量的**游标读**（正文与思考各一条游标，`from` = 第几个字符）：只服务动画 |
-| GET | `/sessions/{session_id}/turn/poll?from=N&think_from=M` | — | `{status, slice}` | **2026-11-03**：`status` 与 `turn/text` 合并成一发（远程/CF 少一个完整 RTT）。web 的 `pollTurn` 用它；`/status` 与 `/turn/text` 仍保留（重摇/前台对齐等旧调用） |
-| GET | `/sessions/{session_id}/turn/events?from=N&think_from=M` | — | SSE `{status, slice}` | **2026-11-03**：主路径改成 **SSE**（`id: next:think_next`，断线重连带 Last-Event-ID；服务端 100ms 看内存、状态 500ms 一次；**`tool` / `sources` / `step` 一变化就立即发**；step 变化时游标归零）。web 的 `pollTurnEvents` 优先用它；8s 没有首个事件才回退到 `/turn/poll` 轮询。CF 需要 `no-transform`/`X-Accel-Buffering:no`；已设 |
+| GET | `/sessions/{session_id}/status` | — | `TurnStatus` | 当前相位、消息 ID、模型步骤 `step`、耗时、正文与思考长度；`tool` 是当前工具提示，`sources` 是去重来源，`tools` 是当前步骤各次服务端工具的快照（含原始正文位置）。压缩和重摇状态分别在 `compact`、`reroll`。 |
+| GET | `/sessions/{session_id}/turn/text?from=N&think_from=M` | — | `StreamSlice` | 正文与思考各按 UTF-8 字节续读，对应区间 `[from,next)`、`[think_from,think_next)`；不消费缓冲。 |
+| GET | `/sessions/{session_id}/turn/poll?from=N&think_from=M` | — | `{status, slice}` | 同一快照返回状态与增量，避免跨工具步骤取到不配对的数据。 |
+| GET | `/sessions/{session_id}/turn/events?from=N&think_from=M` | — | SSE `{status, slice}` | 主路径为 SSE，断线由浏览器带 `Last-Event-ID`。ID 绑定消息、步骤与缓冲代际；不匹配则从新缓冲开头读取。工具快照更新即使没有新字节也会发；没有首帧、不能重连或发现缺口时，从本地已消费位置回退到 `/turn/poll`。 |
 | POST | `/sessions/{session_id}/stop` | — | `{"stopped": bool}` | **幂等**：会话存在且是自己的、只是没在跑 ⇒ 200（`false`）；**不存在 / 不是自己的 ⇒ 404**（多用户起它不再是例外——不许掐别人的轮子）|
 | POST | `/sessions/{session_id}/compact` | `CompactReq` | `CompactStatus` · **202** | **压缩**：`{"blocks": N}` 或 `{"begin_idx": i, "end_idx": j}`（1-based 消息序号，与 `/messages?from_idx=&to_idx=` 同一套词；两种给法互斥、区间两端都得给；都不给 ⇒ 用 `chat.compact_blocks`）。**按块，不按条**（块 = assistant→user 交界，一块 ≥2 条）。按块数 ⇒ 策略（底层凑不够就抬头并摘要）；按区间 ⇒ 全未覆盖走消息级、**同层顶层摘要恰好铺满**走合并（金字塔）、其余 ⇒ 400（混合有洞，不后台跑）。**同一个会话同时只允许一次**（在跑 ⇒ 409）。跑完的结局在 `GET .../status` 的 `compact` 那一档（`running`/`done`/`error` + `from_idx`/`to_idx`/`merged` + 原因）|
 | POST | `/sessions/{session_id}/compact/preview` | `{"blocks": N}` | `PreviewResult` · 200 | **压缩预览**：**只算不动**（调同一套策略；区间入口自己就是答案，不走这里 ⇒ 400）。回 `from_idx`/`to_idx` + `merged` + `source_ids` + 人话一句（"压第a–b条（N块）"/"并第a–b条那N坨"）。落库/调上游/挂号一概不碰 |
@@ -1045,11 +1040,8 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 
 **它不是消息**：不占 `idx`、不参与世界状态、不单独进摘要区间。多条工具调用 = 多条本表行；不要建 `_before` / `_after` 两张表（顺序用 `seq`）。
 xAI 的 `web_search_call` 落这里；DeepSeek 服务端 `web_search` 不接（只支持 v4-pro、无 sources），搜索走客户端 Search/Fetch。
-界面把**工具卡**插在正文的时间线上（2026-11-17）：按 `text_offset` 切开正文，
-工具卡出现在它发生的位置，而不是全部堆在正文上方。偏移会吸附到段落 / 行 / 句末边界，
-避免把 Markdown 的 `**粗体**`、链接或代码块劈开；没有 `text_offset` 的旧消息仍退回
-“工具卡全在正文上方”的旧布局。每个工具卡自己就是**可折叠 `details`**（默认收起，
-展开只列它自己的来源），不再把所有工具的来源合并成一条 30 条的清单。
+**正文／工具时间线**：实时帧的 `status.tools` 保留当前步骤各次服务端调用和进度，正文到来不会清掉已见调用。历史的两个消息读取接口依据与归档正文逐字一致的 Responses 输出项推导 `tools[].body_offset`（原始正文 UTF-8 字节，不落库），原有 `text_offset`（剔除状态块后的 rune 数）仍可用于旧记录。
+界面剥离状态块时同步投影位置，不再把调用吸附到段尾。默认阅读视图也显示正文中有位置的服务端工具，点开各卡只看自己的查询和来源。没有位置的旧卡仍从「查看过程」进入，不猜测顺序。
 
 ### `models` —— 发现所得 + 用户覆盖（PK `(provider, upstream_id)`）
 
@@ -1324,6 +1316,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   以 `{"type":"x_search"}` 进请求体；本地工具有 `web_search` / `web_fetch` 的客户端执行循环
   （DeepSeek Search/Fetch）。MCP 将来单独列，不混进这个数字。
   `VMenu` 是 `location="top end"` + `VList`/`VListItem`，**从输入栏向上弹**。
+  推理、工具与专注按钮统一描边、不填底；展开与选中只强调轮廓和文字。输入文字区四边共用 `--composer-inset`，随界面缩放。
   TopBar 不再持有 ThinkingMenu；输入行只剩 `菜单? / 发送`。
   Session 级字段与后端校验不变（见下）。
   **Session 级**：`sessions.thinking_level`（空 = 跟随模型默认；非空 = `off/minimal/low/medium/high/xhigh/max`），
@@ -1455,7 +1448,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   16dp 圆角 + 4dp 尾巴；AI 仍是纯文本（不包气泡，保留既有形态）。消息头 = label-medium / on-surface-variant；
   操作行 = 32dp MD3 icon button（状态层 / danger 用 error）；思考折叠 = surface-container-low 圆角容器，
   summary 带 ▸/▾ 与 focus 环；摘要卡 = MD3 card（surface-container-low、12dp、elevation 1、dirty 用 error-container）；
-  代码块 = surface-container-low + outline-variant 描边；等首字节三点与流式光标都用 primary；
+  代码块 = surface-container-low + outline-variant 描边；等首字节星芒与流式光标都用 primary；
   「加载更多」= MD3 outlined 按钮（outline-variant 描边、full 圆角、状态层）。
   ⚠ 用户气泡里的 `who` / `foot` 仍有旧规则的 `color: inherit; opacity` 覆盖（气泡内语义色继承是对的，别删）。
   **设置页 + 浮层 + 全局控件**（2026-11-05 第四刀）：
@@ -1540,16 +1533,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   （刷新模型/导入本来就慢，20 秒会把正常请求剪断）。`probeHealth` 自带 **8s** 超时 ——
   黑洞地址不能把启动按住。
   ⚠ 契约测试钉着这些顺序（`高延迟：发送先上屏…` 那条），改回"先 await 再画"会红。
-- **设置（⚙）谁都能进**（2026-11-01 起：账号砍了 ⇒ 没有"root 专属"）。左栏底那枚 `👤 用户` **删了** ——
-  它原来是"登录者自己的事"，而登录者这个概念没了；里面两块：**身份 / 用户管理**跟着账号一起删，
-  **外观 / 输入**整块搬进设置；2026-11-20 起拆成「外观」（主题/缩放/字体/背景/Markdown）与
-  「输入」（发送方式/输入时预览/命令菜单）两个目录页，仍由 `AppearancePane.vue` 按 `section` 渲染。
-  **左栏底 = 渠道 / 助手 / 设置**（2026-11-02 拆出会话/渠道；2026-11-11 把「智能体」升成独立入口、
-  底部标签叫「助手」，更新从底部挪走；**2026-11-22 会话列表搬进设置目录**——底部只剩三项）。
-  **三个入口并排**：
-  Vuetify `VBtn` 三等分一行，图标在左、文字在右。渠道 / 助手用 `SettingsModal` 的 `:only`
-  只显示那一页、隐藏目录，页头写「渠道管理 / 智能体」——「助手」只是底部标签；
-  退出仍走同一个 close。
+- **设置**：左栏底部只保留「设置」。目录按「常用设置 / 对话与模型 / 数据与维护」分组，搜索直接定位具体控件。渠道与智能体从目录进入；工作流跳转仍可直达当前智能体。外观、输入与消息渲染由 `AppearancePane.vue` 分页；缩放要显式保存，其余按控件回写。
   **更新面板**（`UpdatePane.vue`，2026-11-20 压成两块简洁版式）：左边「版本」（本地 / GitHub 最新 /
   自动更新 / 拉取并重启），右边「前端缓存（PWA）」；**关于 MicroChat** 独立收底
   （项目一句话 + 作者 Zincles / DeepSeekV4.1Flash + GitHub 链接）。
@@ -1565,9 +1549,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   App 每 5 分钟查一次；本地落后、工作区干净、容器支持重启且页面前台时，**自动** `pull` + 等新进程 + reload
   （不弹确认）。脏工作区 / 分叉 / 宿主二进制只把 GitHub 更新条摆出来，交给人手动处理。
   它和 PWA 更新条共存；后端更新优先（重启后前端 SW 会再提示）。顶部更新条不再只认 PWA。
-  ⚠ 这两个管理页是**页面切换，不是设置 tab**：`VTabsWindow` 的 `:key` 跟着 `only` 变 ⇒
-  重挂载、不跑 tab 滑入（2026-11-06 用户报「有 Tab 效果，而且顺序是错的」——
-  根因是 provider→chat 在 window item 顺序里是反向；只有完整设置的五个 tab 仍保留过渡）。
+  品牌与工作流的直达路径通过 `only` 进入，对应页面不跑目录滑入；从目录选子页仍保留过渡。
   **酒馆**（2026-11-06 用户定）：专门放 SillyTavern 预设 / 角色卡 / 聊天记录的导入与转换；
   目前只有 ST 聊天记录导入（`POST /sessions/import-st`），预设/角色卡转换是空位。原本在「会话管理」里的
   ST 导入卡已整块搬到这里（会话管理只留 MicroChat JSON 导入）。
@@ -1639,12 +1621,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   全局规则页分两段：**系统内置规则**（只读，开关启停，不显示编辑/删除/排序）与**用户规则**（可编辑）。
   内建 grok/GPT/Gemini 的搜索规则、DeepSeek 本地工具都在内置段里；用户规则在内置之后应用，可覆盖字段。
   空态说清「保存并刷新后会出现在这里」。
-- **设置页编排**（2026-11-11 用户定「越科学的布局越好」）：每页先一段 `.settings-lead` 说清**这一页管什么**，
-  聊天页固定四段 —— **新会话默认 → 上下文与加载 → 自动压缩 → 生成与标题**（默认值在最前，
-  上下文/压缩/辅助生成各自成组；`保存对话设置` 放在最后一组末尾，按钮旁用 `.action-note` 写清
-  「从下一轮生效、不改写已有消息」）。所有会写数据 / 重拉模型的按钮都挨着一句 action-note：
-  保存默认值只影响新会话、保存渠道会重拉模型（测试连通性不落库）、保存智能体不改写历史、
-  提示词片段新建后还要在智能体里引用。别把这类限定藏到页面底部的大段 hint 里。
+- **设置保存范围**：新会话默认独立保存，只影响新会话；上下文与生成分开保存，通过读最新聊天配置保留另一页的设置，不改写已有消息。需要重拉模型或修改资料的入口在动作旁说明影响。
 - **设置页平铺列表**（2026-11-04 统一设计系统）：`.settings-card` 只剩分节容器（无底色/圆角/内边距），字段行之间一条 `--line`；不再“卡片套卡片”。**tab 仍是 Vuetify**（2026-11-06 用户定「用真正的 Vuetify TabBar/TabItem」）：Agent 二级页用 `VTabs`（MD3 primary tabs + slider + tabpanel）；上下文三 tab（压缩内再三个子 tab）与顶栏聊天·上下文也是 `VTabs`；都由 `VTabsWindow` 做左右滑动。设置顶层改成目录列表（`SettingsHome.vue`），不再抢一行 tab。窄屏把 `v-tab` 压到 `min-width:0`，放得下（不再靠 show-arrows 吃 104px）。
 **设置目录、子页与渠道/智能体管理页统一 760 居中**（列表页有表格，但切页时宽度不该跳来跳去；会话管理在设置目录里）。**所有 `h3` 统一一种标题语言**：正文色半粗 + 左侧蓝色短竖条（从前只有卡片里的 h3 有竖条，其它 tab 是裸文字 —— 用户指出不一致）。「输入」卡里是 **发送方式（`enter` / `shift-enter` / `button`）**、输入时预览、命令菜单 —— 这三格在 2026-11-01 从用户视图搬进 `AppearancePane` 时 **refs 与 persist 都搬了、模板整段漏了**（界面上找不到，2026-11-02 补回）。开关一律 `:model-value` + `setX(v) { ref = v; persist(); }`，**别写 `v-model + @update:model-value="persist"`** —— 两个监听同挂 update 时显式那个可能先跑，存进去的是旧值（实测：界面 on、服务端 off）。
 - **设置移动端**（2026-11-20）：表格（会话 / 智能体 / 提示词 / 渠道 / 酒馆）在 ≤700px 变成**一行一卡** ——

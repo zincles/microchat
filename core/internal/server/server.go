@@ -280,7 +280,7 @@ func (s *Server) listMessages(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, messages)
+	writeMessageList(w, messages)
 }
 
 // MessageRangesReq：`{"ranges":[[1,5],[8,10]]}`；`to=0` 表示到末尾。
@@ -313,6 +313,13 @@ func (s *Server) listMessagesBatch(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
+	}
+	writeMessageList(w, messages)
+}
+
+func writeMessageList(w http.ResponseWriter, messages []model.Message) {
+	for _, m := range messages {
+		m.DirectExchange().LocateToolBodies(m.Content, m.Tools)
 	}
 	writeJSON(w, http.StatusOK, messages)
 }

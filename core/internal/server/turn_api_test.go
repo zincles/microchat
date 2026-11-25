@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"microchat/internal/chat"
@@ -706,6 +708,72 @@ func TestTurnEventsResumesScopedCursor(t *testing.T) {
 	}
 }
 
+func TestTurnEventsPublishesHostedToolsWithoutNewBytes(t *testing.T) {
+	box := newDummySandbox(t)
+	synctest.Test(t, func(t *testing.T) {
+		turns := box.server.chat.Turns
+		token, err := turns.Begin(box.sessionID, "reply", "run")
+		if err != nil {
+			t.Fatal(err)
+		}
+		const a, b, c = "前🙂", "中", "后🚀"
+		const kind, state = "web_search", "completed"
+		first := model.MessageTool{ItemID: "first", ToolName: kind, Source: "server", Status: state, Seq: 1, BodyOffset: new(len(a))}
+		second := model.MessageTool{ItemID: "second", ToolName: kind, Source: "server", Status: state, Seq: 2, BodyOffset: new(len(a) + len(b))}
+		updated := second
+		updated.Queries = []string{"new query"}
+		if !turns.AppendContent(box.sessionID, token, a) || !turns.SetHostedTools(box.sessionID, token, kind, state, []model.MessageTool{first}) {
+			t.Fatal("写入首段和第一个搜索失败")
+		}
+		frames := recordTurnEvents(t, box, "", "", func(event int) bool {
+			switch event {
+			case 1:
+				if !turns.AppendContent(box.sessionID, token, b) || !turns.SetHostedTools(box.sessionID, token, kind, state, []model.MessageTool{first, second}) {
+					t.Fatal("写入中段和第二个搜索失败")
+				}
+			case 2:
+				if !turns.SetHostedTools(box.sessionID, token, kind, state, []model.MessageTool{first, updated}) {
+					t.Fatal("未收到只修改工具详情的更新")
+				}
+			case 3:
+				if !turns.AppendContent(box.sessionID, token, c) {
+					t.Fatal("写入末段失败")
+				}
+				turns.Finish(box.sessionID, token, "")
+			}
+			return event == 4
+		})
+		if len(frames) != 4 {
+			t.Fatalf("应收到四帧，得到 %v", frames)
+		}
+		check := func(got TurnPoll, slice turn.StreamSlice, tools ...model.MessageTool) {
+			t.Helper()
+			if got.Status.Step != 1 || got.Slice != slice || !reflect.DeepEqual(got.Status.Tools, tools) {
+				t.Fatalf("状态 = %+v，想要增量 %+v 和工具 %+v", got, slice, tools)
+			}
+		}
+		_, start := decodeTurnEvent(t, frames[0])
+		check(start, turn.StreamSlice{Text: a, Next: len(a)}, first)
+		middleID, middle := decodeTurnEvent(t, frames[1])
+		check(middle, turn.StreamSlice{Text: b, From: len(a), Next: len(a) + len(b)}, first, second)
+		updatedID, details := decodeTurnEvent(t, frames[2])
+		check(details, turn.StreamSlice{From: len(a) + len(b), Next: len(a) + len(b)}, first, updated)
+		if updatedID != middleID || details.Status.ElapsedMS-middle.Status.ElapsedMS != 100 {
+			t.Fatalf("只更新工具详情应在下一次检查时发出（不等 500ms 心跳），游标 ID 不变：%q %+v → %q %+v", middleID, middle, updatedID, details)
+		}
+		endSlice := turn.StreamSlice{Text: c, From: len(a) + len(b), Next: len(a) + len(b) + len(c), Done: true}
+		_, end := decodeTurnEvent(t, frames[3])
+		check(end, endSlice, first, updated)
+		_, resumed := decodeTurnEvent(t, recordTurnEvents(t, box, "", updatedID, nil)[0])
+		check(resumed, endSlice, first, updated)
+		poll := call(box.server, "GET", fmt.Sprintf("%s/turn/poll?from=%d", box.path, endSlice.From), "")
+		if poll.Code != http.StatusOK {
+			t.Fatalf("轮询该 200，得到 %d：%s", poll.Code, poll.Body.String())
+		}
+		check(decodeBody[TurnPoll](t, poll), endSlice, first, updated)
+	})
+}
+
 func TestTurnEventsResetsCursorAtNextStep(t *testing.T) {
 	box := newDummySandbox(t)
 	turns := box.server.chat.Turns
@@ -713,7 +781,8 @@ func TestTurnEventsResetsCursorAtNextStep(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !turns.AppendContent(box.sessionID, token, "前文") {
+	if !turns.AppendContent(box.sessionID, token, "前文") ||
+		!turns.SetHostedTools(box.sessionID, token, "web_search", "completed", []model.MessageTool{{ItemID: "first"}}) {
 		t.Fatal("写入第一步失败")
 	}
 	frames := recordTurnEvents(t, box, "", "", func(event int) bool {
@@ -728,8 +797,12 @@ func TestTurnEventsResetsCursorAtNextStep(t *testing.T) {
 	if len(frames) != 2 {
 		t.Fatalf("应收到两个 SSE 帧，得到 %v", frames)
 	}
+	_, first := decodeTurnEvent(t, frames[0])
+	if len(first.Status.Tools) != 1 {
+		t.Fatalf("第一步应带工具快照：%+v", first)
+	}
 	id, got := decodeTurnEvent(t, frames[1])
-	if id != fmt.Sprintf("reply:2:%d:6:0", token) || got.Status.Step != 2 || got.Slice != (turn.StreamSlice{Text: "后文", Next: 6}) {
+	if id != fmt.Sprintf("reply:2:%d:6:0", token) || got.Status.Step != 2 || len(got.Status.Tools) != 0 || got.Slice != (turn.StreamSlice{Text: "后文", Next: 6}) {
 		t.Fatalf("打开的连接切到第二步时应从头读取：%q %+v", id, got)
 	}
 }

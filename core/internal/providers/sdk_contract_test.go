@@ -78,6 +78,97 @@ func TestBufferedFunctionCalls(t *testing.T) {
 	}
 }
 
+func TestResponseStreamKeepsIndexedTextAroundHostedTools(t *testing.T) {
+	const first = "先查。<state>变量</state>"
+	const middle = "再看😀。"
+	const last = "结论。"
+	const firstItem = `{"id":"msg_0","type":"message","phase":"commentary","content":[{"type":"output_text","text":"` + first + `"}]}`
+	const webItem = `{"id":"ws_1","type":"web_search_call","status":"completed","action":{"type":"search","query":"第一条"}}`
+	const middleItem = `{"id":"msg_2","type":"message","content":[{"type":"output_text","text":"` + middle + `"}]}`
+	const xItem = `{"id":"xs_3","type":"x_search_call","status":"completed"}`
+	const lastItem = `{"id":"msg_4","type":"message","content":[{"type":"output_text","text":"` + last + `"}]}`
+	for _, tc := range []struct{ name, final, wantLast string }{
+		{"indexed fallback", `{"id":"r1","status":"completed"}`, last},
+		{"authoritative output", `{"id":"r1","status":"completed","output":[` + firstItem + `,` + webItem + `,` + middleItem + `,` + xItem + `,` + strings.Replace(lastItem, last, "最终。", 1) + `]}`, "最终。"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			frames := []string{
+				`data: {"type":"response.output_text.delta","output_index":0,"content_index":0,"item_id":"msg_0","delta":"` + first + `"}`,
+				`data: {"type":"response.output_item.done","output_index":0,"item":` + firstItem + `}`,
+				`data: {"type":"response.output_item.done","output_index":1,"item":` + webItem + `}`,
+				`data: {"type":"response.output_text.delta","output_index":2,"content_index":0,"item_id":"msg_2","delta":"再"}`,
+				`data: {"type":"response.output_text.delta","output_index":2,"content_index":0,"item_id":"msg_2","delta":"看😀。"}`,
+				`data: {"type":"response.output_text.done","output_index":2,"content_index":0,"item_id":"msg_2","text":"` + middle + `"}`,
+				`data: {"type":"response.x_search_call.completed","output_index":3,"item_id":"xs_3"}`,
+				`data: {"type":"response.output_text.delta","output_index":4,"content_index":0,"item_id":"msg_4","delta":"` + last + `"}`,
+				`data: {"type":"response.completed","response":` + tc.final + `}`,
+			}
+			stub := newStubUpstream(t, http.StatusOK, "text/event-stream", strings.Join(frames, "\n\n")+"\n\n")
+			p := Provider{ID: "xai", Vendor: VendorXAI, Protocol: ProtocolOpenAIResponse, BaseURL: stub.baseURL(), APIKey: "fixture"}
+			var live strings.Builder
+			r, err := NewClient(p).Chat(context.Background(), p, Request{Model: "grok-test", SessionID: "s"}, "", func(d Delta) {
+				live.WriteString(d.Text)
+				if d.Tool != nil {
+					live.WriteString("[" + d.Tool.ItemID + "]")
+				}
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := live.String(); got != first+"[ws_1]"+middle+"[xs_3]"+last {
+				t.Fatalf("实时顺序 = %q", got)
+			}
+			if r.Text != first+middle+tc.wantLast {
+				t.Fatalf("完整正文 = %q", r.Text)
+			}
+			items := r.Exchange.Items
+			if len(items) != 5 || items[0].ID != "msg_0" || items[0].Text != first || items[0].Phase != "commentary" ||
+				items[1].Type != "web_search_call" || items[1].ID != "ws_1" || len(items[1].Payload) == 0 ||
+				items[2].ID != "msg_2" || items[2].Text != middle || items[3].Type != "x_search_call" || items[3].ID != "xs_3" ||
+				items[4].ID != "msg_4" || items[4].Text != tc.wantLast {
+				t.Fatalf("归档输出项 = %+v", items)
+			}
+			if len(r.ServerTools) != 2 || r.ServerTools[0].Query != "第一条" || r.ServerTools[1].State != "completed" {
+				t.Fatalf("托管调用 = %+v", r.ServerTools)
+			}
+			tools := []model.MessageTool{{Source: "server", ItemID: "xs_3"}, {Source: "server", ItemID: "ws_1"}}
+			r.Exchange.LocateToolBodies(r.Text, tools)
+			if tools[0].BodyOffset == nil || *tools[0].BodyOffset != len(first+middle) || tools[1].BodyOffset == nil || *tools[1].BodyOffset != len(first) {
+				t.Fatalf("原始字节位置 = %+v", tools)
+			}
+		})
+	}
+}
+
+func TestResponseStreamDoesNotInferUnindexedToolPositions(t *testing.T) {
+	frames := []string{
+		`data: {"type":"response.output_text.delta","delta":"先查。"}`,
+		`data: {"type":"response.output_item.done","output_index":1,"item":{"type":"web_search_call","id":"ws_1","status":"completed"}}`,
+		`data: {"type":"response.output_text.delta","delta":"结束。"}`,
+		`data: {"type":"response.completed","response":{"status":"completed"}}`,
+	}
+	r, err := readResponseStream(200, strings.NewReader(strings.Join(frames, "\n\n")+"\n\n"), nil)
+	if err != nil || r.Text != "先查。结束。" || len(r.ServerTools) != 1 {
+		t.Fatalf("无位置的回退结果 = %+v, %v", r, err)
+	}
+	r.Exchange.Protocol = string(ProtocolOpenAIResponse)
+	legacy := 3
+	tools := []model.MessageTool{{Source: "server", ItemID: "ws_1", TextOffset: &legacy}}
+	r.Exchange.LocateToolBodies(r.Text, tools)
+	if tools[0].BodyOffset != nil || tools[0].TextOffset == nil || *tools[0].TextOffset != legacy {
+		t.Fatalf("无顺序证据时应保留旧位置：%+v", tools[0])
+	}
+}
+
+func TestResponseStreamEmitsFinalTextWithoutDeltas(t *testing.T) {
+	frame := `data: {"type":"response.completed","response":{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"完整正文"}]}]}}` + "\n\n"
+	var emitted strings.Builder
+	r, err := readResponseStream(200, strings.NewReader(frame), func(d Delta) { emitted.WriteString(d.Text) })
+	if err != nil || r.Text != "完整正文" || emitted.String() != r.Text {
+		t.Fatalf("无正文增量时，终帧正文 = %q，实时 = %q，错误 = %v", r.Text, emitted.String(), err)
+	}
+}
+
 func TestResponseRejectsPartialCalls(t *testing.T) {
 	added := `data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc1","call_id":"c1","name":"lookup","arguments":""}}` + "\n\n"
 	delta := `data: {"type":"response.function_call_arguments.delta","output_index":0,"item_id":"fc1","delta":"{}"}` + "\n\n"
