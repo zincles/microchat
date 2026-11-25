@@ -1070,7 +1070,6 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .msg-ops { --msg-action-size: 30px; gap: 0 0.6em; }
 .msg-action-group { gap: 0 1px; }
 #app .msg-ops .v-btn { flex: none; width: var(--msg-action-size); min-width: var(--msg-action-size); height: var(--msg-action-size); min-height: var(--msg-action-size); padding: 0; color: var(--md-on-surface-variant); }
-#app .msg-ops .continue-turn { width: auto; padding-inline: 0.6em; font-size: var(--md-type-label-medium); letter-spacing: normal; }
 /* 触屏只放大命中区，图标不随 44px 按钮放大到正文的两倍。 */
 .msg-ops .v-btn--icon svg { max-width: calc(20px * var(--app-text-scale, 1)); }
 #app .msg-ops .v-btn:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }

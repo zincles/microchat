@@ -1596,7 +1596,8 @@ onUnmounted(() => {
             </template>
           </AnswerTranscript>
           <div v-if="continuationRow?.kind === 'summary'" class="msg-ops">
-            <VBtn class="continue-turn" type="button" variant="text" size="small" title="用现有历史生成下一条回复" @click="continueTurn">续写</VBtn>
+            <VBtn icon type="button" variant="text" size="small"
+              title="续写（按现有历史生成下一条回复）" aria-label="续写" @click="continueTurn" v-html="ICONS.messagePlus" />
           </div>
           </div>
         </main>

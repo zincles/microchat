@@ -259,7 +259,8 @@ watch(() => props.streaming, (s) => nextTick(() => {
             <VBtn icon variant="text" size="small" title="下一版（到最右再按 = 再摇一版）" aria-label="下一版" @click="emit('reroll-go', 1)">▶</VBtn>
           </template>
         </div>
-        <VBtn v-if="allowContinue" class="continue-turn" type="button" variant="text" size="small" title="用现有历史生成下一条回复" @click="emit('continue-turn')">续写</VBtn>
+        <VBtn v-if="allowContinue" icon type="button" variant="text" size="small"
+          title="续写（按现有历史生成下一条回复）" aria-label="续写" @click="emit('continue-turn')" v-html="ICONS.messagePlus" />
         <VBtn icon variant="text" size="small" class="msg-delete" title="删除这条及之后" aria-label="删除这条及之后" @click="emit('delete', messageId, isLast)" v-html="ICONS.trash" />
       </div>
       <details v-if="metrics.length" class="msg-foot">
