@@ -6,7 +6,7 @@
 //	max_output     = 上游发现，缺省 4096
 //	budget_tokens  = ctx_len − 输出预留（**没有别的上限** —— 别吃到爆由触发阈值负责）
 //	trigger_tokens = 用户设的，缺省 = 预算 × 0.8（自动压缩在 80% 触发）
-//	used_tokens    = 这次出站全部文本的估算（`state.EstimateTokens`）
+//	used_tokens    = 最终请求里上下文字段（含工具声明和回放项）的字符估算
 //	remaining      = 预算 − 占用，**超了就照实报负数**（夹到 0 会把"超了多少"藏起来）
 //
 // `last_prompt_tokens` 是唯一来自上游的地面真相（上一轮 `usage` 报的）—— 摆出来是为了让
@@ -62,7 +62,7 @@ type FlowContextNode struct {
 
 // ContextUsage：算这次出站的占用。
 func (s *Service) ContextUsage(session model.Session) (ContextUsage, error) {
-	chatConfig, _, _ := s.files()
+	chatConfig, _, channels := s.files()
 	if _, ok := s.flowAgentOf(session); ok {
 		trace, hasTrace := s.FlowTrace(session.ID)
 		if !hasTrace {
@@ -70,25 +70,20 @@ func (s *Service) ContextUsage(session model.Session) (ContextUsage, error) {
 		}
 		return s.flowContextUsage(session, trace, chatConfig), nil
 	}
-	messages, err := s.Store.ListMessages(session.ID)
+	outgoing, messages, err := s.Outgoing(session)
 	if err != nil {
 		return ContextUsage{}, err
 	}
-	summaries, err := s.Store.ListSummaries(session.ID)
+	call, err := s.prepareChat(session, outgoing, messages, channels)
 	if err != nil {
 		return ContextUsage{}, err
 	}
-	prompt, _ := s.EffectiveSystemPrompt(session)
-	entries, presetActive := s.promptEntries(session, messages)
-	if presetActive {
-		prompt = strings.TrimSpace(session.SystemPrompt)
+	input, err := call.contextInput()
+	if err != nil {
+		return ContextUsage{}, err
 	}
-	tables := state.FromSources(session.ID, messages).Tables
-	// 与真发出去的那一份**同一个拼装**（用 /outgoing 核对时不该出现第二份答案）
-	outgoing := s.renderMacros(session, state.BuildOutgoingWithPromptEntries(
-		prompt, messages, summaries, tables, false, entries))
 
-	row, err := s.Store.GetModel(session.Provider, session.Model)
+	row, err := s.Store.GetModel(session.Provider, input.Model)
 	if err != nil {
 		return ContextUsage{}, err
 	}
@@ -114,10 +109,7 @@ func (s *Service) ContextUsage(session model.Session) (ContextUsage, error) {
 		trigger = *chatConfig.CompactTriggerTokens
 	}
 	ratio := state.TokenizerRatio(tokenizer)
-	used := 0
-	for _, item := range outgoing {
-		used += state.EstimateTokens(item.Content, ratio)
-	}
+	used := input.estimate(ratio)
 	return ContextUsage{
 		UsedTokens:       used,
 		BudgetTokens:     budget,
@@ -130,6 +122,41 @@ func (s *Service) ContextUsage(session model.Session) (ContextUsage, error) {
 		LastPromptTokens: lastPromptTokens(messages),
 		OverBudget:       used > budget,
 	}, nil
+}
+
+// 只量模型的输入材料。SDK 序列化后的字段已包含同协议回放、宏和会话覆盖。
+// JSON 的字符数是近似值，上一发实际的 prompt_tokens 单独显示。
+type contextInput struct {
+	Model                                           string
+	Messages, Input, Instructions, Tools, Functions json.RawMessage
+	ToolChoice                                      json.RawMessage `json:"tool_choice"`
+	FunctionCall                                    json.RawMessage `json:"function_call"`
+	ResponseFormat                                  json.RawMessage `json:"response_format"`
+	Text                                            struct{ Format json.RawMessage }
+}
+
+func (call preparedChat) contextInput() (contextInput, error) {
+	var input contextInput
+	if call.backend.Name == providers.BackendFallback {
+		// 离线会话也显示本地历史的估算。dummy 用同一 SDK 构造，整个预演不联网。
+		call.wire = providers.Provider{Vendor: providers.VendorDummy}
+	}
+	req, err := providers.Build(call.wire, call.request)
+	if err != nil {
+		return input, err
+	}
+	defer req.Body.Close()
+	err = json.NewDecoder(req.Body).Decode(&input)
+	return input, err
+}
+
+func (input contextInput) estimate(ratio float64) int {
+	total := 0
+	for _, field := range []json.RawMessage{input.Messages, input.Input, input.Instructions, input.Tools, input.ToolChoice,
+		input.Functions, input.FunctionCall, input.ResponseFormat, input.Text.Format} {
+		total += state.EstimateTokens(string(field), ratio)
+	}
+	return total
 }
 
 // flowContextUsage：FlowAgent 的上下文账。每个 LLM 节点按**自己的模型**算预算，

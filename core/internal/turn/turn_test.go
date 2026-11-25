@@ -170,17 +170,24 @@ func TestStopIsIdempotent(t *testing.T) {
 // 压缩状态搭同一趟车回报（与轮次无关）。
 func TestCompactStatusRidesAlong(t *testing.T) {
 	turns := NewRegistry()
-	if _, err := turns.BeginCompact("c1", 10, 1000); err != nil {
+	accepted, err := turns.BeginCompact("c1", 10, 1000)
+	if err != nil {
 		t.Fatal(err)
 	}
 	status := turns.Status("c1")
 	if status.Compact == nil || !status.Compact.IsRunning() || status.Compact.Blocks != 10 {
 		t.Fatalf("压缩状态 = %+v", status.Compact)
 	}
+	if _, err := turns.Begin("c1", "reply"); err != nil || !turns.Stop("c1") {
+		t.Fatalf("压缩期间的对话应能单独开始、停止：%v", err)
+	}
 	if _, err := turns.BeginCompact("c1", 5, 2000); err == nil {
 		t.Fatal("同一会话同时只允许一个压缩")
 	}
 	turns.FinishCompact("c1", "done", "sum-1", "", 8, 1, 4, false)
+	if !accepted.IsRunning() || !status.Compact.IsRunning() {
+		t.Fatal("受理回执及此前读取的进度必须保持快照语义")
+	}
 	status = turns.Status("c1")
 	if status.Compact.State != "done" || status.Compact.Compacted != 8 || *status.Compact.SummaryID != "sum-1" {
 		t.Fatalf("收尾后 = %+v", status.Compact)

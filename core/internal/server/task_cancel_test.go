@@ -41,14 +41,16 @@ import (
 type hungUpstream struct {
 	server   *httptest.Server
 	release  chan struct{}
+	started  chan struct{}
 	attempts int32
 }
 
 func newHungUpstream(t *testing.T, body string) *hungUpstream {
 	t.Helper()
-	h := &hungUpstream{release: make(chan struct{})}
+	h := &hungUpstream{release: make(chan struct{}), started: make(chan struct{})}
 	h.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if atomic.AddInt32(&h.attempts, 1) == 1 {
+			close(h.started)
 			<-h.release // 挂到测试收尾放行
 			return
 		}
@@ -116,7 +118,12 @@ func TestCanceledCompactWritesNothingAndRetryCoversSameSpan(t *testing.T) {
 		t.Fatalf("受理该 202，得到 %d：%s", recorder.Code, recorder.Body.String())
 	}
 
-	// ② 等它真的挂在上游上（那枚任务出现了 ⇒ 它已经到了"调上游"这一步）。
+	// ② Task 登记早于实际发包。等首发进入 handler 后再取消，重试才会是第二发。
+	select {
+	case <-upstream.started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("第一次压缩请求没有到达上游")
+	}
 	record := runningTask(t, box, task.KindCompact)
 	if !record.Cancelable {
 		t.Fatal("压缩任务该是**能按停**的（面板据此决定画不画按钮）")

@@ -109,7 +109,6 @@ type entry struct {
 	text      strings.Builder
 	thinking  strings.Builder
 	err       string
-	compact   *CompactStatus
 	// tool：当前服务端工具（同一时刻只显示最近一个；上游串行调用时后面的会覆盖前面的）。
 	tool *ToolStatus
 	// sources：这一轮搜索工具拿回来的来源（按 URL 去重，界面上列“来源”）。
@@ -125,6 +124,8 @@ type entry struct {
 type Registry struct {
 	mu      sync.Mutex
 	entries map[string]*entry
+	// 压缩可以跨越多轮生成，同一会话另一次压缩要等它收尾。
+	compactions map[string]CompactStatus
 	// nextToken：**全进程单调递增**，绝不回绕。
 	//
 	// 别从"这个会话上一次的令牌 +1"推 —— `Stop` 会把条目**摘掉**，于是下一条从 1 重新开始，
@@ -133,7 +134,9 @@ type Registry struct {
 	nextToken uint64
 }
 
-func NewRegistry() *Registry { return &Registry{entries: map[string]*entry{}} }
+func NewRegistry() *Registry {
+	return &Registry{entries: map[string]*entry{}, compactions: map[string]CompactStatus{}}
+}
 
 func (r *Registry) lookup(id string) *entry { return r.entries[id] }
 
@@ -141,15 +144,19 @@ func (r *Registry) lookup(id string) *entry { return r.entries[id] }
 func (r *Registry) Status(sessionID string) Status {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	status := Status{Phase: PhaseIdle}
+	if compact, ok := r.compactions[sessionID]; ok {
+		if compact.SummaryID != nil {
+			compact.SummaryID = new(*compact.SummaryID)
+		}
+		status.Compact = &compact
+	}
 	item := r.lookup(sessionID)
 	if item == nil {
-		return Status{Phase: PhaseIdle}
+		return status
 	}
-	status := Status{
-		Phase: item.phase, Step: item.step, MessageID: item.messageID,
-		Chars: item.text.Len(), ThinkingChars: item.thinking.Len(),
-		Error: item.err, Compact: item.compact,
-	}
+	status.Phase, status.Step, status.MessageID = item.phase, item.step, item.messageID
+	status.Chars, status.ThinkingChars, status.Error = item.text.Len(), item.thinking.Len(), item.err
 	if item.tool != nil {
 		tool := *item.tool
 		status.Tool = &tool
@@ -251,18 +258,14 @@ func (r *Registry) FinishReroll(sessionID string, token uint64, failure string) 
 }
 
 // BeginCompact：登记一次压缩（同一会话同时只允许一个）。
-func (r *Registry) BeginCompact(sessionID string, blocks int, atMS int64) (*CompactStatus, error) {
+func (r *Registry) BeginCompact(sessionID string, blocks int, atMS int64) (CompactStatus, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if item := r.lookup(sessionID); item != nil && item.compact.IsRunning() {
-		return nil, ErrBusy
+	if previous := r.compactions[sessionID]; previous.IsRunning() {
+		return CompactStatus{}, ErrBusy
 	}
-	status := &CompactStatus{State: "running", Blocks: blocks, AtMS: atMS}
-	if item := r.lookup(sessionID); item != nil {
-		item.compact = status
-	} else {
-		r.entries[sessionID] = &entry{phase: PhaseIdle, compact: status}
-	}
+	status := CompactStatus{State: "running", Blocks: blocks, AtMS: atMS}
+	r.compactions[sessionID] = status
 	return status, nil
 }
 
@@ -270,19 +273,20 @@ func (r *Registry) BeginCompact(sessionID string, blocks int, atMS int64) (*Comp
 func (r *Registry) FinishCompact(sessionID, state, summaryID, message string, compacted, fromIdx, toIdx int, merged bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	item := r.lookup(sessionID)
-	if item == nil || item.compact == nil {
+	status := r.compactions[sessionID]
+	if !status.IsRunning() {
 		return
 	}
-	item.compact.State = state
-	item.compact.Compacted = compacted
-	item.compact.FromIdx = fromIdx
-	item.compact.ToIdx = toIdx
-	item.compact.Merged = merged
+	status.State = state
+	status.Compacted = compacted
+	status.FromIdx = fromIdx
+	status.ToIdx = toIdx
+	status.Merged = merged
 	if summaryID != "" {
-		item.compact.SummaryID = &summaryID
+		status.SummaryID = &summaryID
 	}
-	item.compact.Error = message
+	status.Error = message
+	r.compactions[sessionID] = status
 }
 
 // ErrBusy：已经在跑。

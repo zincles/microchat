@@ -541,27 +541,17 @@ type outgoingLine struct {
 	ContentChars   int    `json:"content_chars"`
 }
 
-// outgoing：**(b) 当前已定历史的载荷**（不含还没发出去的那句 ✗）—— 与 `GET /sessions/{id}/outgoing`
-// 同一条计算（标签已剔、状态已注入、按摘要收拢），逐条一行。
-// （真发那一刻的真载荷是 (a)：`GET /debug/last-payload` 那份快照；(c)「把待发那句追加进去之后」只有服务端算得出来。）
-//
-// **检查压缩效果靠 `source` / `summary_id` / `blocks`**，别去猜正文抬头。
+// outgoing 显示普通 Agent 的逻辑出站项，保留摘要区间与提示词注入的来源。
 func (e *debugEnv) outgoing(args []string) int {
 	session, ok := e.session(argAt(args, 0))
 	if !ok {
 		return 1
 	}
-	messages, err := e.store.ListMessages(session.ID)
+	items, _, err := e.chat.Outgoing(*session)
 	if err != nil {
 		return report(err)
 	}
-	summaries, err := e.store.ListSummaries(session.ID)
-	if err != nil {
-		return report(err)
-	}
-	prompt, _ := e.chat.EffectiveSystemPrompt(*session)
-	view := state.FromSources(session.ID, messages)
-	for index, item := range state.BuildOutgoing(prompt, messages, summaries, view.Tables, false) {
+	for index, item := range items {
 		emit(outgoingLine{
 			Index: index, Outgoing: item,
 			Preview: preview(item.Content, 40), ContentChars: len([]rune(item.Content)),

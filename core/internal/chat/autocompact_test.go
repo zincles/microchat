@@ -2,14 +2,107 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
 	"microchat/internal/compact"
 	"microchat/internal/config"
 	"microchat/internal/model"
+	"microchat/internal/providers"
+	"microchat/internal/state"
 	"microchat/internal/store"
 )
+
+// 正文很短，工具结果本身足以越过触发线。压缩后只应计算顶层摘要与开着的尾段。
+func TestContextUsageFollowsToolHistoryThroughSummaryMerge(t *testing.T) {
+	for _, protocol := range []providers.Protocol{providers.ProtocolChatCompletion, providers.ProtocolOpenAIResponse} {
+		t.Run(string(protocol), func(t *testing.T) {
+			channels := dummyProviders()
+			channels.Providers = append(channels.Providers, config.Provider{ID: "fixture", Vendor: "xai", Protocol: string(protocol)})
+			h := newHarness(t, channels, "fixture", "grok-fixture")
+			writeChatConfig(t, h.configDir, config.ChatConfig{ModelContextTokens: 8192, CompactTriggerTokens: new(2000), CompactBlocks: 1, AutoCompact: true})
+			agent := config.Agent{ID: h.session.AgentID, SystemPrompt: "Archive.", PrependState: new(true),
+				Abilities: map[string]config.AbilityToggle{"compact": {Provider: new("dummy"), Model: new("dummy")}}}
+			if err := config.SaveJSON(h.configDir+"/agents.json", config.AgentsConfig{Agents: []config.Agent{agent}}); err != nil {
+				t.Fatal(err)
+			}
+			messages := []model.Message{
+				{Role: model.RoleUser, Content: "检索"},
+				{Role: model.RoleAssistant, Kind: model.MessageKindToolRun, Tools: []model.MessageTool{{Source: "client", ToolName: "lookup", ItemID: "c1",
+					Arguments: "{}", Result: strings.Repeat("档", 6000), Status: "done"}}},
+				{Role: model.RoleAssistant, Content: "收到。\n<state>\nseal = AMBER\n</state>"},
+				{Role: model.RoleUser, Content: "去第二站"}, {Role: model.RoleAssistant, Content: "到了。"},
+				{Role: model.RoleUser, Content: "等信使"}, {Role: model.RoleAssistant, Content: "好。"},
+			}
+			ids, err := store.MintOrderedIDs(len(messages))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for i := range messages {
+				messages[i].ID = ids[i]
+				messages[i].SessionID = h.session.ID
+			}
+			if _, err := h.store.InsertMessagesWithTools(messages); err != nil {
+				t.Fatal(err)
+			}
+
+			// 独立用预演核对占用，确保内容与类型是最后一发的形状。
+			checkUsage := func() (int, string) {
+				t.Helper()
+				preview, err := h.service.PreviewHistoryWire(h.session)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var fields map[string]json.RawMessage
+				if err := json.Unmarshal(preview.Body, &fields); err != nil {
+					t.Fatal(err)
+				}
+				key := "messages"
+				if protocol == providers.ProtocolOpenAIResponse {
+					key = "input"
+				}
+				body := string(fields[key])
+				usage, err := h.service.ContextUsage(h.session)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := state.EstimateTokens(body, state.DefaultTokenizerRatio) + state.EstimateTokens(string(fields["tools"]), state.DefaultTokenizerRatio)
+				if usage.UsedTokens != want {
+					t.Fatalf("上下文估算 %d，按预演应为 %d", usage.UsedTokens, want)
+				}
+				return usage.UsedTokens, body
+			}
+			before, _ := checkUsage()
+			if before < 2000 {
+				t.Fatalf("工具结果未触发压缩：%d", before)
+			}
+			svc := compact.New(h.store, h.service.Paths, h.turns, h.tasks)
+			h.service.Compactor = compactAdapter{svc: svc}
+			h.service.MaybeAutoCompact(h.session)
+			sums, err := h.store.ListSummaries(h.session.ID)
+			if err != nil || len(sums) != 1 || *sums[0].EndMessageID != ids[2] {
+				t.Fatalf("第一块没有完整压缩 %+v, %v", sums, err)
+			}
+			for _, req := range []compact.Request{{BeginIdx: 4, EndIdx: 5}, {BeginIdx: 1, EndIdx: 5}} {
+				if _, err := svc.Compact(context.Background(), h.session, req); err != nil {
+					t.Fatal(err)
+				}
+			}
+			after, body := checkUsage()
+			if after >= 2000 || strings.Contains(body, "c1") || strings.Contains(body, strings.Repeat("档", 10)) ||
+				strings.Count(body, "【前情提要") != 1 || !strings.Contains(body, "等信使") || strings.Count(body, "AMBER") != 2 {
+				t.Fatalf("父摘要、开块或两处已启用的状态注入异常：%d, %s", after, body)
+			}
+			if protocol == providers.ProtocolOpenAIResponse {
+				h.session.RequestOverrides = map[string]json.RawMessage{"input": json.RawMessage(`"完全覆盖这次输入"`)}
+				if overridden, _ := checkUsage(); overridden >= after {
+					t.Fatalf("覆盖后仍计入历史：%d", overridden)
+				}
+			}
+		})
+	}
+}
 
 // 自动压缩（2026-10-11 用户定）：到触发线（缺省 = 预算 80%）就压、一次压 N 块（缺省 3）、
 // 压到退出线（预算 50%）以下停；开关缺省开、可关；这一步没换来缩减就停（防死循环）。

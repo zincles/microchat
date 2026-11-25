@@ -161,7 +161,7 @@ func (s *Service) Start(session model.Session, req Request) (turn.CompactStatus,
 		_, runErr := s.execute(ctx, prepared, cancel)
 		s.finish(session.ID, runErr, ctx)
 	}()
-	return *status, nil
+	return status, nil
 }
 
 // Compact：**同步跑完一次**（直操模式用它）—— 校验 → 挂号 → 调 → 落库 → 收尾，全在这一趟里。

@@ -196,12 +196,12 @@ func (s *Service) launch(session model.Session, replyID string, token uint64, pr
 		return Accepted{Backend: chosen.Name, Turn: statusView(s.Turns.Status(session.ID))}, nil
 	}
 	// 出站**此刻定稿**（受理时捕获的上文）：后台不再重算，期间别人改了库也不影响这一轮
-	outgoing, reasoningByID, err := s.outgoingFor(session)
+	outgoing, messages, err := s.Outgoing(session)
 	if err != nil {
 		s.Turns.Stop(session.ID)
 		return Accepted{}, err
 	}
-	call, err := s.prepareChat(session, outgoing, reasoningByID, providersConfig)
+	call, err := s.prepareChat(session, outgoing, messages, providersConfig)
 	if err != nil {
 		s.Turns.StopToken(session.ID, token)
 		return Accepted{}, err
@@ -359,41 +359,33 @@ func toolNames(tools []providers.Tool) []string {
 	return names
 }
 
-// assemble：历史（+ 可选的"还没进库的那一句"）→ 真会发出去的东西。
-//
-// **真发（`outgoingFor`）与预演（`PreviewWire`）共用这一处** —— 各写一遍必然漂移，
-// 而漂移之后预演说的就不再是"真发会发什么"（接口存在的全部理由就是这句话）。
-// 装配本身仍只有一条路：世界状态现演（`state.FromSources`）+ 出站拼装（`state.BuildOutgoing`）。
-//
-// `pending` 那一项**追加在历史末尾**，就是真发时"用户那句刚落库、`ListMessages` 里排在最后"的位置。
-// 它缺 `created_at`：那个字段只进 `/state` 的操作流水（"哪句话带来的状态"），不参与出站装配。
-func (s *Service) assemble(session model.Session, pending []model.Message) ([]state.Outgoing, []model.Message, error) {
+// Outgoing 装配普通 Agent 的模型上下文。pending 只在预演时追加。
+// 同时返回参与装配的历史，供思考回放与用量统计使用。
+func (s *Service) Outgoing(session model.Session, pending ...model.Message) ([]state.Outgoing, []model.Message, error) {
 	messages, err := s.Store.ListMessages(session.ID)
 	if err != nil {
 		return nil, nil, err
 	}
 	messages = append(messages, pending...)
-	return s.assembleMessages(session, messages)
+	outgoing, err := s.assembleMessages(session, messages)
+	return outgoing, messages, err
 }
 
 // assembleMessages：**装配的唯一实现**（历史已经是最终那份清单）—— 状态现演 + 出站拼装。
 //
 // 序号在这儿整段重编一遍（`store.IndexMessages`：对已编过号的那些是幂等的）——
 // **"下一个序号是多少"也只有这一处算**，别在别处再写一遍。
-func (s *Service) assembleMessages(session model.Session, messages []model.Message) ([]state.Outgoing, []model.Message, error) {
+func (s *Service) assembleMessages(session model.Session, messages []model.Message) ([]state.Outgoing, error) {
 	store.IndexMessages(messages)
 	summaries, err := s.Store.ListSummaries(session.ID)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	prompt, _ := s.EffectiveSystemPrompt(session)
 	entries, presetActive := s.promptEntries(session, messages)
-	if presetActive {
-		// 预设是完整的提示词方案：Agent 的 base/段不参与；会话自己的 system_prompt 仍最高。
-		prompt = strings.TrimSpace(session.SystemPrompt)
-	}
+	prompt, _ := s.systemPrompt(session, presetActive)
 	tables := state.FromSources(session.ID, messages).Tables
-	return state.BuildOutgoingWithPromptEntries(prompt, messages, summaries, tables, s.prependState(session), entries), messages, nil
+	outgoing := state.BuildOutgoingWithPromptEntries(prompt, messages, summaries, tables, s.prependState(session), entries)
+	return s.renderMacros(session, outgoing), nil
 }
 
 // promptEntries：当前会话的提示词计划。
@@ -468,24 +460,12 @@ func (s *Service) RerollMessages(session model.Session) ([]providers.ChatMessage
 	if len(messages) == 0 || messages[len(messages)-1].Role != model.RoleAssistant {
 		return nil, errors.New("这条会话的最后一条不是 assistant 回复，没有什么可重摇的")
 	}
-	outgoing, kept, err := s.assembleMessages(session, messages[:len(messages)-1])
+	kept := messages[:len(messages)-1]
+	outgoing, err := s.assembleMessages(session, kept)
 	if err != nil {
 		return nil, err
 	}
 	return wireMessages(outgoing, s.reasoningTable(kept)), nil
-}
-
-// outgoingFor：受理那一刻把"真会发出去的东西"定稿。
-//
-// 拼装**只有一条路**（`state.BuildOutgoing`，经 `assemble`）；这里额外做的是按需把 assistant 消息当时的
-// **思考**按 id 收成一张表 —— 那是回传上游用的 replay metadata（Pi 的原话：不回传，多轮推理就断了），
-// 正文一个字都不动。收不收由 `chat.replay_reasoning` 定（缺省关：省上下文；思考仍落库可看）。
-func (s *Service) outgoingFor(session model.Session) ([]state.Outgoing, map[string]string, error) {
-	outgoing, messages, err := s.assemble(session, nil)
-	if err != nil {
-		return nil, nil, err
-	}
-	return s.renderMacros(session, outgoing), s.reasoningTable(messages), nil
 }
 
 // MacroValues：当前会话可用的**只读替换宏**的值（user_name / char_name / model …）。
@@ -534,10 +514,7 @@ func (s *Service) reasoningTable(messages []model.Message) map[string]string {
 
 // PreviewWire："把这句发出去"会拼出的**真请求** —— 同一段装配 + 同一段 Build，不发。
 //
-// 与真发（`Accept` → `outgoingFor` → `run` → `Client.Chat` → `Build`）共用每一段：
-// `assemble`（含 pending 追尾）→ `wireMessages`（role/content + 思考回填）→
-// 选后端 + `ResolveProtocol` 查表 → `providers.Build`。`Build` 里 `SessionID` 必填的
-// 断言同样生效（缺了在这里就炸，不会等发出去被上游拒）。
+// 与真发共用 Outgoing、prepareChat 和 SDK 请求构造。
 //
 // 回的是 `providers.LastPayload` 同形状（method/url/headers/体；密钥打码）——
 // 与 (a) `GET /debug/last-payload` 同一支笔（`Snapshot`），两份对得上才叫调试可靠。
@@ -554,18 +531,18 @@ func (s *Service) PreviewWire(session model.Session, content string) (providers.
 			pending = append([]model.Message{greeting}, pending...)
 		}
 	}
-	outgoing, messages, err := s.assemble(session, pending)
+	outgoing, messages, err := s.Outgoing(session, pending...)
 	if err != nil {
 		return providers.LastPayload{}, err
 	}
-	return s.buildWire(session, s.renderMacros(session, outgoing), s.reasoningTable(messages), providersConfig)
+	return s.buildWire(session, outgoing, messages, providersConfig)
 }
 
 // PreviewHistoryWire："空输入点发送"会发出去的真请求 —— 现有历史、不追新句。
-// 与 `Resend → launch → outgoingFor` 同一段装配（`assemble(session, nil)`），只算不写。
+// 与 Resend 共用已归档历史的装配。
 // 空会话（0 条消息）⇒ 与 Resend 同错（InvalidError），前端右栏保持空话。
 func (s *Service) PreviewHistoryWire(session model.Session) (providers.LastPayload, error) {
-	messages, err := s.Store.ListMessages(session.ID)
+	outgoing, messages, err := s.Outgoing(session)
 	if err != nil {
 		return providers.LastPayload{}, err
 	}
@@ -573,11 +550,7 @@ func (s *Service) PreviewHistoryWire(session model.Session) (providers.LastPaylo
 		return providers.LastPayload{}, store.InvalidError("空会话没有历史可重发：先说一句话")
 	}
 	_, _, providersConfig := s.files()
-	outgoing, reasoningByID, err := s.outgoingFor(session)
-	if err != nil {
-		return providers.LastPayload{}, err
-	}
-	return s.buildWire(session, outgoing, reasoningByID, providersConfig)
+	return s.buildWire(session, outgoing, messages, providersConfig)
 }
 
 type preparedChat struct {
@@ -588,20 +561,20 @@ type preparedChat struct {
 }
 
 // 预演和生成共用模型路由、工具清单和出站装配。
-func (s *Service) prepareChat(session model.Session, outgoing []state.Outgoing, reasoningByID map[string]string, channels config.ProvidersConfig) (preparedChat, error) {
+func (s *Service) prepareChat(session model.Session, outgoing []state.Outgoing, messages []model.Message, channels config.ProvidersConfig) (preparedChat, error) {
 	chosen := providers.SelectBackend(session.Provider, session.Model, channels)
 	wire := providers.ForModel(chosen.Provider, session.Model, s.Store.ModelRoute)
 	tools, err := s.toolsFor(session, chosen, wire.EffectiveProtocol(), channels)
 	if err != nil {
 		return preparedChat{}, err
 	}
-	req := providers.Request{Model: session.Model, SessionID: session.ID, Messages: wireMessages(outgoing, reasoningByID),
+	req := providers.Request{Model: session.Model, SessionID: session.ID, Messages: wireMessages(outgoing, s.reasoningTable(messages)),
 		ThinkingLevel: session.ThinkingLevel, Tools: tools.declared, Override: session.RequestOverrides, Stream: true}
 	return preparedChat{backend: chosen, wire: wire, request: req, tools: tools}, nil
 }
 
-func (s *Service) buildWire(session model.Session, outgoing []state.Outgoing, reasoningByID map[string]string, configs config.ProvidersConfig) (providers.LastPayload, error) {
-	call, err := s.prepareChat(session, outgoing, reasoningByID, configs)
+func (s *Service) buildWire(session model.Session, outgoing []state.Outgoing, messages []model.Message, configs config.ProvidersConfig) (providers.LastPayload, error) {
+	call, err := s.prepareChat(session, outgoing, messages, configs)
 	if err != nil {
 		return providers.LastPayload{}, err
 	}
@@ -676,8 +649,12 @@ func wireMessages(outgoing []state.Outgoing, reasoningByID map[string]string) []
 // 解析本身在 `state.ResolveSystemPrompt`（唯一实现，**永不返回空串**）；这里只是把现读的
 // agent 配置喂给它，没有第二份算法。
 func (s *Service) EffectiveSystemPrompt(session model.Session) (string, state.PromptSource) {
-	// 绑定预设时，Agent 的 base/段不参与；会话自己的显式 system_prompt 仍最高。
-	if _, presetActive := s.promptEntries(session, nil); presetActive {
+	_, presetActive := s.promptEntries(session, nil)
+	return s.systemPrompt(session, presetActive)
+}
+
+func (s *Service) systemPrompt(session model.Session, presetActive bool) (string, state.PromptSource) {
+	if presetActive {
 		if own := strings.TrimSpace(session.SystemPrompt); own != "" {
 			return own, state.PromptFromSession
 		}

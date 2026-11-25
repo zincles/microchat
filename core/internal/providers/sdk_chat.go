@@ -136,13 +136,15 @@ func functionDefinition(f *ToolFunction) (shared.FunctionDefinitionParam, error)
 		return def, fmt.Errorf("providers: function 工具缺少 name")
 	}
 	if len(f.Parameters) != 0 {
-		decoder := json.NewDecoder(strings.NewReader(string(f.Parameters)))
-		decoder.UseNumber()
-		if !json.Valid(f.Parameters) {
-			return def, fmt.Errorf("providers: 工具 %q 的 parameters 不是 JSON", f.Name)
-		}
-		if err := decoder.Decode(&def.Parameters); err != nil || def.Parameters == nil {
+		// SDK 把 map 里的 json.Number 编成字符串。保留每个属性的原始 JSON，
+		// 也保住超过 float64 精度的整数以及嵌套数组里的值。
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(f.Parameters, &fields); err != nil || fields == nil {
 			return def, fmt.Errorf("providers: 工具 %q 的 parameters 必须为对象", f.Name)
+		}
+		def.Parameters = make(shared.FunctionParameters, len(fields))
+		for key, value := range fields {
+			def.Parameters[key] = value
 		}
 	}
 	if f.Description != "" {

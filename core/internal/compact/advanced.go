@@ -360,9 +360,10 @@ func (s *Service) StartAdvanced(session model.Session, req AdvancedRequest) (Adv
 	s.advMu.Lock()
 	s.advancedJobs[job.ID] = job
 	s.advBySession[session.ID] = job.ID
+	initial := snapshotAdvanced(job)
 	s.advMu.Unlock()
 	go s.runAdvanced(ctx, session, plan, job, cancelCause)
-	return snapshotAdvanced(job), nil
+	return initial, nil
 }
 
 // AdvancedJobStatus：按 job id 取快照（作业结束后仍保留在进程内）。

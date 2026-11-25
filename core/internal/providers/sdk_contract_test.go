@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,39 @@ import (
 
 	"microchat/internal/model"
 )
+
+func TestFunctionSchemaPreservesJSONNumbers(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object","properties":{"n":{"type":"integer","minimum":1,"maximum":9007199254740993,"enum":[1,3]}}}`)
+	for _, protocol := range []Protocol{ProtocolChatCompletion, ProtocolOpenAIResponse} {
+		t.Run(string(protocol), func(t *testing.T) {
+			req, err := Build(Provider{ID: "p", Vendor: VendorXAI, Protocol: protocol}, Request{
+				SessionID: "s", Model: "m", Tools: []Tool{FunctionTool("lookup", "", schema)},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer req.Body.Close()
+			var body struct {
+				Tools []struct {
+					Parameters json.RawMessage
+					Function   struct{ Parameters json.RawMessage }
+				}
+			}
+			if err := json.NewDecoder(req.Body).Decode(&body); err != nil || len(body.Tools) != 1 {
+				t.Fatalf("tools: %v, %v", body, err)
+			}
+			raw := body.Tools[0].Parameters
+			if protocol == ProtocolChatCompletion {
+				raw = body.Tools[0].Function.Parameters
+			}
+			for _, field := range []string{`"minimum":1`, `"maximum":9007199254740993`, `"enum":[1,3]`} {
+				if !bytes.Contains(raw, []byte(field)) {
+					t.Errorf("schema 丢失数值 %s: %s", field, raw)
+				}
+			}
+		})
+	}
+}
 
 func TestBufferedFunctionCalls(t *testing.T) {
 	for _, protocol := range []Protocol{ProtocolChatCompletion, ProtocolOpenAIResponse} {
