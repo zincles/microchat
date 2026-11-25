@@ -1054,6 +1054,10 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 #app :is(.msg-ops, .sum-ops) .v-btn { flex: none; width: var(--chat-action); min-width: var(--chat-action); height: var(--chat-action); min-height: var(--chat-action); padding: 0; color: var(--md-on-surface-variant); }
 /* 放大触摸目标，不同比放大里面的图标。 */
 .msg-ops .v-btn--icon svg { max-width: calc(20px * var(--app-text-scale, 1)); }
+/* 加载按钮的插槽铺满按钮，让 SVG 的 65% 不按内层窄 span 计算。 */
+:is(.msg-ops .v-btn--icon, .sum-ops .v-btn--icon, .ctree-undo) :is(.v-btn__content, .v-btn__content > span) {
+  display: flex; align-items: center; justify-content: center; width: 100%;
+}
 #app .msg-ops .v-btn:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
 #app .msg-ops .msg-delete:is(:focus-visible, :active) { color: var(--md-error); }
 @media (hover: hover) {
