@@ -37,9 +37,13 @@ go_source_hash() {
   (find core -type f -print | sort | xargs sha256sum) | sha256sum | cut -d' ' -f1
 }
 web_source_hash() {
-  (find frontend/web \
-    \( -type d \( -name node_modules -o -name dist -o -name .vite -o -name test \) -prune \) -o \
-    -type f -print | sort | xargs sha256sum) | sha256sum | cut -d' ' -f1
+  {
+    # 构建步骤本身变更时也要使旧 dist 失效。
+    sha256sum docker/entrypoint.sh
+    find frontend/web \
+      \( -type d \( -name node_modules -o -name dist -o -name .vite -o -name test \) -prune \) -o \
+      -type f -print | sort | xargs sha256sum
+  } | sha256sum | cut -d' ' -f1
 }
 GO_HASH=$(go_source_hash)
 WEB_HASH=$(web_source_hash)
@@ -99,6 +103,9 @@ echo "[entrypoint] 后端就绪：127.0.0.1:$PORT（不对外发布，只有本�
 # 依赖卷跨容器持久；用 package.json + package-lock.json 的哈希当安装标记，
 # lock/依赖变了或安装不完整就自动 npm ci（2026-11-08 VPS 缺 vite-plugin-vuetify 实踩）。
 mkdir -p /build/web
+# tar 只覆盖，不删除；旧 vite.config.js 会抢在如今的 .ts 前被读到。
+# 此处只有源码副本可清，依赖卷和已构建的 dist 必须保留。
+find /build/web -mindepth 1 -maxdepth 1 ! -name node_modules ! -name dist -exec rm -rf -- {} +
 (cd /app/frontend/web && tar cf - --exclude=node_modules --exclude=dist .) | (cd /build/web && tar xf -)
 cd /build/web
 # 依赖卷是**跨容器持久**的：只判断 `node_modules/vite` 在不在会漏掉新加的插件

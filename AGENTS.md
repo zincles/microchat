@@ -213,6 +213,7 @@ podman compose restart                                    # ← **每次提交�
   整个盖住嵌套卷（实测踩过）；② 就算挂得住，宿主 glibc / 容器 musl 的 `node_modules` 也不通用
   （rollup 原生包，实测直接崩）⇒ 依赖必须与宿主隔离。`/go` 是命名卷（模块 + 编译缓存，重启不用重编）；
   `./` bind 进 `/app` ⇒ `data/`（库 + 配置）就落在宿主机仓库里，`down` 不丢。
+  `/build/web` 同步源码前清除旧副本，只保留 `node_modules` 和 `dist`。否则被删除的 `vite.config.js` 仍会优先于 `.ts` 加载，生成旧 PWA 清单。
 - **改了代码怎么生效**：源码是 bind 的 ⇒ `docker compose restart`（podman：`podman compose restart`）即可
   （entrypoint 每次启动都现编译：前端源码先拷进 `/build`、再装/构建）—— 实测 **10 秒**就绪；改 `Dockerfile`/依赖层才要 `up -d --build`。
   **界面里的「更新」**（2026-11-09）走另一条路：后端 `git pull --ff-only` 后写 `data/.restart-request`，
@@ -1385,7 +1386,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   `vite-plugin-vuetify` 与 `@vitejs/plugin-vue` 均实测兼容。
   ⚠ Node 必须是 20.19+ / 22.12+（Dockerfile 的 Node 24.19 没问题）。
   entrypoint 另有**两份源码哈希缓存**（`/build/.microchat-go-hash` / `.microchat-web-hash`）：
-  `core/` 与 `frontend/web`（排除 node_modules/dist/test/.vite）各自算哈希；没变就跳过 Go build /
+  `core/` 与 `frontend/web`（排除 node_modules/dist/test/.vite，并计入 entrypoint 脚本）各自算哈希；没变就跳过 Go build /
   Vite build，只改哪边就只重建哪边。`restart` 实测 **2.96s**（Vite 8 + 缓存；旧 Vite 7 是 16s+）。
   `up -d` 重建容器会丢 `/build` 缓存（首次重新构建），但数据与依赖卷不受影响。
 - **生产交付性能（2026-11-02，用户报"部署后前端响应慢、没有缓冲"）**：
