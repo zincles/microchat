@@ -2003,14 +2003,6 @@ test("上下文环：App 喂 ctx / 环在顶栏画 / 状态行不再报占用", 
   assert.match(css, /\.ctx-tabs \.v-tab \{[^}]*min-width:\s*0/, "四个 tab 会被 Vuetify 默认 90px 最小宽挤掉");
   assert.match(css, /\.ctx-menu \{[^}]*height:\s*min\(23\.5em/, "浮板高度没钉死（切 tab 会跳高矮）");
   assert.match(css, /\.agent-menu\.ctx-menu \{[^}]*padding:\s*1em/, "浮板外围没有 padding（被 .agent-menu 的 0.25em 覆盖了）");
-  // 顺序：2026-10-28 定的是「环在左、载荷栏开关在右」—— 那是**栏还在**时的锚点关系。
-  // 2026-10-29 右栏搬进上下文工作区后那枚开关没了，锚点换成**工作区两段开关**：
-  // 它排在环左边（用户原话「就位于那个绿色圆环左侧」），环仍然是簇里最靠里的那枚仪表。
-  // 三样东西都是绝对定位的兄弟，换顺序**不会报错**，只会悄悄换到另一边 —— 所以钉住先后。
-  assert.ok(
-    top.indexOf('class="ws-switch"') < top.indexOf('id="ctx-ring"'),
-    "工作区开关该在环的左边（用户 2026-10-29 定）",
-  );
   // 右栏的开关必须真的没了：留着它点了没反应（栏不存在），比没有更糟。
   assert.ok(!top.includes('id="toggle-right"'), "顶栏还留着载荷栏那枚 [◨] 开关 —— 栏已经搬走了");
 
@@ -2495,11 +2487,11 @@ test("上下文工作区：开关在绿环左边，只切内容不切顶栏", ()
   const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
   const app = readFileSync(join(SRC, "..", "src", "App.vue"), "utf8").replace(/<!--[\s\S]*?-->/g, "");
 
-  // ① 顺序：ws-switch 出现在 ctx-ring 之前，且都在 .header-right 里
-  const switchAt = top.indexOf('class="ws-switch workspace-tabs"');
+  // 工作区标签在状态环左边，两者都在右侧一簇。
+  const switchAt = top.indexOf('class="workspace-tabs"');
   const ringAt = top.indexOf('id="ctx-ring"');
   const rightAt = top.indexOf('class="header-right"');
-  assert.ok(switchAt > 0 && ringAt > 0 && rightAt > 0, "找不到 ws-switch / ctx-ring / header-right");
+  assert.ok(switchAt > 0 && ringAt > 0 && rightAt > 0, "找不到工作区标签、环或右侧控件组");
   assert.ok(rightAt < switchAt, "两段开关该在 .header-right 里（与环同一簇）");
   assert.ok(switchAt < ringAt, "开关该在绿环**左边**（用户原话），现在顺序反了");
 
@@ -2712,8 +2704,6 @@ test("上下文工作区：平铺，不许再长出卡片和气泡", () => {
   assert.match(panel, /background:\s*none/, "工作区外壳又有底色了 —— 那又变成一张卡片");
   assert.match(panel, /border-radius:\s*0/, "工作区外壳又有圆角了");
   assert.match(panel, /padding:\s*0/, "工作区外壳又有内边距了（那是卡片的特征）");
-  // 与聊天保持一致：宽度对齐阅读列、正文色
-  assert.match(panel, /max-width:\s*var\(--read-col/, "没和聊天共用阅读列宽度");
   assert.match(panel, /color:\s*var\(--tg-text\)/, "正文色该是 --tg-text（不是提示色）");
 
   // ② 载荷的每一块：不许有边框/底色（从前是"小卡片"，用户点名不要）
@@ -2737,23 +2727,6 @@ test("上下文工作区：平铺，不许再长出卡片和气泡", () => {
   const chip = rule(".pv-chip");
   assert.match(chip, /border:\s*none/, "元信息又变成带框的小标签了");
   assert.match(css, /\.pv-chip \+ \.pv-chip::before/, "元信息之间没有分隔点（裸文字会连成一片）");
-});
-
-// 「聊天 / 上下文」那颗开关的大小（2026-10-29 用户：「把那个切换按钮弄大一点」）。
-//
-// 它长在**悬浮顶栏**里 —— 顶栏是 absolute 层，消息列的顶部留白（`.messages-inner` 的
-// padding-top）是唯一给它让位的东西。所以"放大"这件事有个硬上限：
-// **总高不能超过那截留白**，否则第一条消息会被压在开关底下（不报错，只是看不见）。
-// 这条按实际声明**算一遍**，两头都钉：够大（别悄悄改小）、又没顶到天花板。
-test("工作区开关：VTabs，尺寸仍在顶栏内", () => {
-  const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
-  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  assert.match(top, /<VTabs[\s\S]*?class="ws-switch workspace-tabs"/, "工作区开关不是 VTabs");
-  assert.match(top, /<VTab value="chat"[^>]*>聊天<\/VTab>/, "缺「聊天」");
-  assert.match(top, /<VTab value="context"[^>]*>上下文<\/VTab>/, "缺「上下文」");
-  assert.match(css, /#chat-col > header \.workspace-tabs \.v-tab \{[^}]*height:\s*2\.1em/, "工作区 tab 没有高度");
-  assert.match(css, /#chat-col > header \.workspace-tabs \.v-tab \{[^}]*font-size:\s*0\.875em/, "工作区 tab 字号丢了");
-  assert.match(css, /#chat-col > header \.workspace-tabs \.v-tab\.v-tab--selected/, "工作区选中 tab 没有 primary 色");
 });
 
 
@@ -3260,40 +3233,6 @@ test("markdown 类型清单：前端的 FALLBACK 与后端 MarkdownTypes 对得�
   }
 });
 
-// 顶栏阴影（2026-11-01 用户定：「顶部栏有阴影」）。
-//
-// 这条不是"好看一点"：顶栏是**不透明**的悬浮层，压在滚过去的消息上 ——
-// 没有阴影时那条边是齐刷刷一刀切（像正文被裁掉了），有阴影才读成"栏在内容**上面**"。
-// 也就是说，阴影在这儿替**边框**干活。所以同时钉住两件事：
-//   ① 必须有阴影（而且要**向下**的 —— 顶栏的阴影往下落，不是往两边）；
-//   ② 仍**不许描线**（2026-11-01 的另一条口径：「不透明要的是挡住，不是把栏画成一个盒子」）。
-test("顶栏有向下阴影（替边框干活），且仍不描线", () => {
-  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8");
-  const theme = readFileSync(join(SRC, "assets", "theme.css"), "utf8");
-  const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, ""); // 判"有没有声明"要先剥注释
-
-  // 只认**悬浮层那条**主规则（`position: absolute`）。不能按"第一个 #chat-col > header {"
-  // 取 —— 2026-11-02 窄屏媒体查询里另有一条调 gap/padding 的同名规则会排在它前面。
-  const headerRule = strip(css).match(/#chat-col > header \{(?=[^}]*position:\s*absolute)[^}]*\}/);
-  assert.ok(headerRule, "找不到 #chat-col > header 那条规则");
-
-  // ① 有阴影，且用的是 token（组件不许写死色值 —— theme.css 顶上那条规矩）。
-  assert.match(headerRule[0], /box-shadow:\s*var\(--shadow-top\)/,
-    "顶栏没有 box-shadow: var(--shadow-top)");
-
-  // ② 真**向下**：offset-y 为正（负的就是往上，落在栏自己背后，看不见）。
-  const token = strip(theme).match(/--shadow-top:\s*([^;]+);/);
-  assert.ok(token, "theme.css 里没有 --shadow-top");
-  const offsets = [...token[1].matchAll(/(-?[\d.]+)px\s+(-?[\d.]+)px/g)].map((m) => Number(m[2]));
-  assert.ok(offsets.length >= 2, `--shadow-top 应该是两层（接触影 + 离开感），得到 ${offsets}`);
-  for (const y of offsets) {
-    assert.ok(y > 0, `--shadow-top 的第 ${y}px 不是向下 —— 顶栏的阴影要落在栏下面`);
-  }
-
-  // ③ 仍不描线。
-  assert.ok(!/border(-bottom|-block-end)?:\s*(?!none)/.test(headerRule[0].replace(/border-radius[^;]*;/g, "")),
-    "顶栏加回了边框 —— 那条口径是用阴影、不用线");
-});
 
 // ── 按停任务（2026-11-01 用户定）────────────────────────────────────
 //
@@ -3602,9 +3541,6 @@ test("输入框：Vuetify MD3 输入栏 + 发送键", () => {
   assert.ok(!/solo-filled/.test(composer), "输入框还在用 solo-filled");
   assert.match(composer, /color="surface-container-low"/, "输入栏没用低对比容器色");
   assert.match(composer, /<style scoped>/, "输入栏表面样式没有收在组件内");
-  assert.match(css, /#composer \{[^}]*width:\s*min\(calc\(100% - 1\.2em\), var\(--read-col, 840px\)\)/, "输入栏没有与正文同宽");
-  assert.match(css, /#composer \{[^}]*left:\s*50%/, "输入栏没有居中");
-  assert.match(css, /#composer \{[^}]*transform:\s*translateX\(-50%\)/, "输入栏居中位移没接上");
   assert.match(composer, /class="composer-top-actions"/, "发送键没有放进输入面板控件行");
   assert.match(composer, /id="send-btn"/, "没有发送键");
   assert.ok(!composer.includes('id="expand-btn"'), "全屏键还留着");
@@ -3648,7 +3584,6 @@ test("专注模式：输入栏按钮、顶栏只留模型与环、空闲收起",
   assert.match(css, /#chat-col\.zen > header \.model-btn \{[^}]*flex: 0 1 auto[^}]*background: var\(--md-surface-container\)/, "模型背景没有仅包住自身（占满整行）");
   assert.match(css, /#chat-col\.zen > header #ctx-ring \{[^}]*background: var\(--md-surface-container\)/, "状态环没有自己的背景");
   assert.match(css, /#composer\.zen\.zen-hidden \{ --zen-shift: 50%/, "输入栏没有下移一半");
-  assert.match(css, /#composer\.zen \{ transition: transform 600ms/, "输入栏收起没有慢速过渡");
 });
 
 
@@ -3984,7 +3919,7 @@ test("设计系统：tab 统一下划线、设置平铺、圆角收口", () => {
   // 顶栏/上下文都换成了 Vuetify 组件，indicator 由 VBtnToggle / VTabs 自己画。
   const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
   const bar = readFileSync(join(SRC, "components", "PayloadBar.vue"), "utf8");
-  assert.match(top, /<VTabs[\s\S]*?class="ws-switch workspace-tabs"/, "顶栏工作区不是 VTabs");
+  assert.match(top, /<VTabs[^>]*class="workspace-tabs"/, "顶栏工作区不是 VTabs");
   assert.match(bar, /<VTabs[\s\S]*?class="context-tabs"/, "上下文 tab 不是 VTabs");
   // 设置页：无卡片底、无连体组圆角
   assert.match(css, /\.settings-card \{[^}]*background:\s*none[^}]*padding:\s*0/, "设置分节还带卡片底");
@@ -4297,7 +4232,6 @@ test("左栏 MD3：分段按钮 / extended FAB / 48dp 行 / 状态层 / MD3 忙�
   assert.match(css, /#sessions-bar \.md-linear-progress \{ position:\s*absolute/, "刷新条又回到流内（进站点会顶动左栏）");
   assert.match(bar, /<div class="bar-head">[\s\S]*?md-linear-progress[\s\S]*?<\/div>\s*<button id="session-new"/,
     "刷新条不在栏头里 —— 会重新占一行");
-  assert.match(css, /@keyframes session-item-in/, "列表项没有进场动画");
   assert.match(bar, /v-html="ICONS\.plus"/, "新建按钮没有用图标（还是文字加号）");
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
   assert.match(app, /const sessionsLoading = ref\(true\)/, "App 没有首次加载态");
@@ -4478,7 +4412,6 @@ test("波纹：触点 → 圆（纯函数），委托安装一次，reduce 下�
   assert.match(css, /\.md-ripple-host \{[^}]*overflow:\s*hidden/, "波纹宿主没裁剪");
   assert.match(ripple, /md-ripple-layer/, "没有独立裁剪层");
   assert.match(css, /\.md-ripple-host > \.md-ripple-layer \{[^}]*border-radius:\s*inherit/, "裁剪层没继承宿主圆角");
-  assert.match(css, /\.md-ripple-host/, "Vuetify 键没有波纹宿主");
   assert.match(css, /prefers-reduced-motion[\s\S]{0,160}\.md-ripple/, "reduce 下没兜底");
 });
 

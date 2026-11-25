@@ -680,8 +680,8 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
       <!-- 聊天 / 上下文（2026-10-29 用户定）：开关在环左边；环说"占了多少"，这块说"占的是什么"。 -->
       <VTabs
         :model-value="workspace"
-        class="ws-switch workspace-tabs"
-        density="compact"
+        class="workspace-tabs"
+        height="var(--md-touch-target)"
         color="primary"
         aria-label="工作区"
         @update:model-value="setWorkspace"

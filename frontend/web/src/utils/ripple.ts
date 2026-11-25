@@ -1,12 +1,9 @@
-// MD3 按下波纹（2026-11-06 用户定：「把按钮波纹做好」）。
-//
-// 做法是**事件委托**，不给每个按钮挂指令/监听：document 上收 pointerdown，
-// 找最近的「可波纹宿主」，在触点位置放一枚 span，动画结束自己删掉。
-// 这样新加的按钮/会话行/菜单项自动就有波纹，不必逐个接线。
+// 原生控件的按下反馈。Vuetify 按钮已经有 VRipple，不再叠加自绘波纹。
+// 一次事件委托；按下时从触点（键盘则从中心）扩散，结束后清理。
 //
 // 三条边界：
 //   · 触屏、鼠标左键都算；右键/中键不算；禁用态不算；
-//   · `prefers-reduced-motion: reduce` 下**整个不做**（MD3 的 reduce 是不放动画）；
+//   · 系统设为减少动态效果时不启动自绘波纹；
 //   · 波纹是 `currentColor` 的半透明圆 —— 主按钮上是 on-primary 的暗波纹，
 //     普通按钮上是正文色的淡波纹，不需要每个组件各配一份颜色。
 export const RIPPLE_SELECTOR =
@@ -64,29 +61,34 @@ function spawn(host: Element, clientX: number, clientY: number): void {
 
 type RippleRoot = Document | HTMLElement;
 
-// installRipple：在 main.js 挂载后调用一次。
+function rippleHost(target: EventTarget | null): HTMLElement | null {
+  const el = target as Element | null;
+  if (el?.closest?.(".v-btn, input, textarea, select")) return null;
+  const host = el?.closest?.<HTMLElement>(RIPPLE_SELECTOR);
+  return host && !host.matches(':disabled, [aria-disabled="true"]') ? host : null;
+}
+
+// installRipple：挂载后安装一次。
 export function installRipple(root: RippleRoot | null = typeof document !== "undefined" ? document : null): void {
   if (!root) return;
   const marker = root as RippleRoot & { __mdRippleInstalled?: boolean };
   if (marker.__mdRippleInstalled) return;
   marker.__mdRippleInstalled = true;
-  if (typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+  const reducedMotion = typeof window !== "undefined" ? window.matchMedia?.("(prefers-reduced-motion: reduce)") : null;
 
   root.addEventListener("pointerdown", (e: Event) => {
     const pointer = e as PointerEvent;
-    if (pointer.pointerType === "mouse" && pointer.button !== 0) return;
-    const host = (pointer.target as Element | null)?.closest?.(RIPPLE_SELECTOR) as HTMLElement | null;
-    if (!host || (host as HTMLButtonElement).disabled || host.getAttribute("aria-disabled") === "true") return;
-    if (host.closest("input, textarea, select")) return;
-    spawn(host, pointer.clientX, pointer.clientY);
+    if (reducedMotion?.matches || (pointer.pointerType === "mouse" && pointer.button !== 0)) return;
+    const host = rippleHost(pointer.target);
+    if (host) spawn(host, pointer.clientX, pointer.clientY);
   }, { passive: true });
 
   // 键盘激活（Enter / Space）没有触点：从控件中心放一枚，行为与 MD3 一致。
   root.addEventListener("keydown", (e: Event) => {
     const key = e as KeyboardEvent;
-    if (key.key !== "Enter" && key.key !== " ") return;
-    const host = (key.target as Element | null)?.closest?.(RIPPLE_SELECTOR) as HTMLElement | null;
-    if (!host || (host as HTMLButtonElement).disabled) return;
+    if (reducedMotion?.matches || (key.key !== "Enter" && key.key !== " ")) return;
+    const host = rippleHost(key.target);
+    if (!host) return;
     const rect = host.getBoundingClientRect();
     spawn(host, rect.left + rect.width / 2, rect.top + rect.height / 2);
   });

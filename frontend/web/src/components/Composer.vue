@@ -159,7 +159,6 @@ defineExpose({ submit, setRunning });
   width: 100%;
   min-width: 0;
   border: 1px solid var(--md-outline-variant);
-  box-shadow: var(--md-elev-1);
   transition: border-color var(--md-dur-150) var(--md-ease-standard);
 }
 .composer-shell:focus-within {
@@ -170,8 +169,8 @@ defineExpose({ submit, setRunning });
   border-radius: inherit;
 }
 .composer-shell :deep(.v-field__input) {
-  min-height: 3em;
-  padding: 0.75em var(--chat-inset);
+  min-height: calc(6 * var(--chat-space));
+  padding: calc(1.5 * var(--chat-space)) var(--chat-inset);
   font-size: calc(16px * var(--app-text-scale, 1));
   line-height: 1.5;
 }

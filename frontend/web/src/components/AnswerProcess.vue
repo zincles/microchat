@@ -41,8 +41,8 @@ const steps = computed(() => answerSteps(props.group, expanded.value, props.live
 .process-chevron { display: inline-flex; align-self: center; }
 .process-chevron.expanded { transform: rotate(90deg); }
 .process-action { white-space: pre; }
-@media (pointer: coarse), (max-width: 600px) {
-  #app .answer-byline .process-toggle { min-height: 44px; }
+@media (pointer: coarse), (max-width: 700px) {
+  #app .answer-byline .process-toggle { min-height: var(--md-touch-target); }
 }
 .answer-steps { display: flex; flex-direction: column; gap: 0.5em; }
 </style>

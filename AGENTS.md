@@ -1381,7 +1381,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   开启后：顶栏条透明（无底、无阴影），只保留**模型按钮**与**状态环**各自的小面底，侧栏开关和工作区 tab 隐藏；输入栏在 **2 秒**无操作后下移自身高度的一半（600ms 强调曲线），`pointerdown` / `keydown` / `input` / `wheel` / `touchstart` / `touchmove` 任一操作立刻恢复并重置计时。Vuetify 浮层（工具/推理/模型菜单）开着时暂不收，免得锚点跑掉。
   进入专注会收起顶栏浮板（模型菜单、状态环那扇右侧面板）；之后仍可手点状态环打开，不做阻断。**当前界面没有独立的右侧栏**（2026-10-29 已并入上下文工作区）；若将来加回，进入专注时应在同一个 `toggleZen` 里一并收起。状态只在进程内，不写偏好。
 - **聊天阅读排版**：阅读列与输入卡同宽，上限 840px；共用 `--chat-inset`（桌面 24px / 手机 16px，随缩放）。正文 16px、行高 1.7。问答之间留 0.5em，新的一轮在此基础上多留 1.75em。桌面助手的叙述段落最长 44em；代码块、表格、块公式、图仍可用满阅读列，手机不缩行宽。
-  回答操作常显，静止时同为中性色；删除只在悬停、键盘聚焦、按下和删除确认时突出。用量按组换行。输入卡只保留一层表面，头像、推理、工具和专注靠左，发送独立靠右；粗指针控件至少 44px。顶栏仍保持单行，聊天与上下文按实测 `--topbar-h` 让位。
+  回答操作常显，静止时同为中性色；组内和组间共享同一个按钮间距。粗指针下命中盒为 48px、图标不放大，空间不足整组换行。删除只在悬停、键盘聚焦、按下和删除确认时突出。用量按组换行。输入卡只保留一层表面，头像、推理、工具和专注靠左，发送独立靠右。顶栏仍保持单行，聊天与上下文按实测 `--topbar-h` 让位。
   仅宽屏非粗指针的空草稿把欢迎语与同一张输入卡靠在一起。有开场白、已有消息、窄屏、粗指针或专注模式时仍贴底。命令菜单和会话选择浮层按真实输入卡的位置对齐，不假设输入卡一定在底边。
 - **会话列表只留标题**（2026-11-04 用户定：「除了标题，其他啥元数据也不需要」）：`#session-list` 自己留 `0.25em 0.45em` 内边距；条目**只显示标题**（消息条数、相对时间都删了；`relativeTime` 纯函数也删）；关闭/设置两枚按钮改成线性图标（`ICONS.x` / `ICONS.settings`），圆形幽灵按钮、hover 才给底。
   「查找会话」只过滤已加载的标题（忽略大小写和首尾空白），不搜正文、不发搜索请求。标题和行尾选项是两个独立按钮；上下键移动焦点、回车打开，Esc 清除查找并回到入口。移动端打开会话后收起抽屉。
@@ -1449,14 +1449,12 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   底部 = navigation drawer item；选项浮板 = MD3 menu（surface-container / 4dp 圆角 / elevation 2 / 48dp 行）。
   **忙碌环**改成 MD3 circular progress indicator：SVG 双圆（track 18% + arc），旋转 + dash 伸缩（`session-busy-dash`），
   reduced-motion 停转但保留缺口弧。**加载效果**：`sessionsLoading` → 6 条 shimmer 骨架（`aria-busy` 同步），
-  `sessionsRefreshing` → header 下 3dp indeterminate linear progress。行进场 = `session-item-in`（200ms emphasized），
-  reduced-motion 不跑。
-  **顶栏**（2026-11-05 第二刀；2026-11-06 再缩 20%；2026-11-07 再收窄）：`#chat-col > header` = MD3 top app bar
-  （surface-container-low、`2.65em` ≈ 39.75px、保留向下的阴影、不描线；窄屏也单行，不因模型名换行变高）；
-  模型按钮 = 2em full 圆角 text button；Agent 头像 = 2.2em avatar（状态层 / 按下 scale）；
-  模型/Agent/上下文浮板 = MD3 menu（surface-container、4dp 圆角、elevation 2、48dp 行）+ `md-menu-in` 进场，
+  `sessionsRefreshing` → header 下 3dp indeterminate linear progress。刷新和插入会话不重播整条列表的入场动画。
+  **顶栏**：单行 MD3 top app bar，使用 `--chat-bar`（64px 基准）、surface-container-low 与轻量下缘阴影，不描线。
+  模型、面板入口与工作区页签使用 48px 命中盒；浮板只在打开时入场，工作区切换沿水平方向移动。
+  `prefers-reduced-motion` 关闭位移过渡与装饰性动画，保留加载和选中状态。
   顶栏整体接 `@keydown.esc`（一次收起所有浮板）；工作区 聊天/上下文 = MD3 primary tabs（3dp 圆角 indicator，宽度过渡）；
-  上下文环 = 40dp 触控盒、track 用 outline-variant、弧仍是 `--tg-ok`（绿=正常 / 红=超预算）。
+  上下文环的轨道用 outline-variant、弧仍是 `--tg-ok`（绿=正常 / 红=超预算）。
   **设置界面控件**（2026-11-06 用户定「按钮和组件也全换成 Vuetify」）：`VTextField` / `VSelect` / `VTextarea` /
   `VSwitch` / `VBtn` / `VTable`；旧 `ToggleSwitch.vue` 与 `TabBar.vue` 已删，原生可见控件（button/select/textarea/input）
   在设置页里不再出现（隐藏的 file input 保留，触发键是 VBtn）。
@@ -1509,10 +1507,9 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   快修（2026-11-06）：草稿欢迎页（title-large / body-medium / label kbd chip）、
   全局空态（on-surface-variant）、细滚动条（outline-variant）、
   思考/摘要原文/载荷块展开的 `md-fade-in`（reduced-motion 关闭）。
-  **按下波纹**（2026-11-06 用户定「把按钮波纹做好」）：`utils/ripple.ts` 在 `main.js` 装一次
-  事件委托（`pointerdown` + 键盘 Enter/Space），给 `button / .session-item / .model-item /
-  .agent-item / .palette-item / .picker-item` 在触点位置放一枚 `currentColor` 半透明圆，
-  动画 `md-ripple` 结束自删；宿主临时加 `.md-ripple-host`（relative + overflow hidden）。
+  **按下波纹**：`utils/ripple.ts` 在入口装一次事件委托（`pointerdown` + 键盘 Enter/Space），仅处理原生控件；
+  Vuetify 按钮用内建波纹，禁用控件、文本输入和减少动态效果不触发委托波纹。
+  波纹以 `currentColor` 绘制，动画后移除裁剪层及临时宿主类。
   ⚠ 波纹圆挂在宿主内的 **`.md-ripple-layer`**（absolute inset 0 + `border-radius: inherit` +
   overflow hidden）上，不是直接挂宿主：某些按钮/列表行的绝对定位子元素会逃出宿主的圆角裁剪
   （用户报「波纹扩散到按钮外部」），独立裁剪层是确定性的兜底。
