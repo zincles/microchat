@@ -25,7 +25,9 @@ test("相同 run 只连相邻的助手记录，不跨用户、摘要、旧记录
   }
   assert.deepEqual(transcriptItems([left, right], 1), [left, right]);
   const old = message(1, { kind: "tool_run", run_id: undefined, tools: [call] });
-  assert.deepEqual(transcriptItems([old], 1), [old]);
+  const neighbor = message(2, { kind: "tool_run", run_id: undefined, tools: [call] });
+  const archive = transcriptItems([old, neighbor], 1);
+  assert.deepEqual(archive.map(item => item.kind === "answer" && item.rows), [[old], [neighbor]]);
 });
 
 test("收起时每段正文和状态按原序出现一次，展开回到实际消息，数字按调用而非步骤", () => {
@@ -35,7 +37,7 @@ test("收起时每段正文和状态按原序出现一次，展开回到实际�
   assert.equal(processLabel(item), "已完成 4 次工具调用");
   const closed = answerSteps(item, false, false);
   assert.deepEqual(closed.map(step => step.row), rows.slice(1));
-  assert.deepEqual(closed.map(step => step.presentation.answerView), ["prose", "prose", "full"]);
+  assert.deepEqual(closed.map(step => step.presentation.answerView), ["prose", "prose", "prose-footer"]);
   for (const expanded of [false, true]) {
     assert.deepEqual(answerSteps(item, expanded, false).filter(step => step.presentation.copyAnswer).map(step => step.row), [rows[3]]);
   }
@@ -44,8 +46,13 @@ test("收起时每段正文和状态按原序出现一次，展开回到实际�
 
 test("单条托管工具保留正文时间线；仅工具或失败结尾仍展示状态与可操作的消息", () => {
   const hosted = message(1, { content: "前\n\n后", kind: "tool_run", tools: [{ ...call, text_offset: 2 }] });
-  assert.deepEqual(transcriptItems([hosted], 1), [hosted]);
+  const item = group([hosted]);
+  assert.equal(processLabel(item), "已完成 1 次工具调用");
+  assert.equal(answerSteps(item, false, false)[0].presentation.answerView, "prose-footer");
+  assert.equal(answerSteps(item, true, false)[0].presentation.answerView, "full");
   for (const [status, label] of [["failed", "失败"], ["interrupted", "已中断"], ["canceled", "已取消"]] as const) {
+    const plain = message(1, { status });
+    assert.deepEqual(transcriptItems([plain], 1), [plain]); // 无额外过程，不能凭一次取消造出空展开入口
     const item = group([message(1, { kind: "tool_run", tools: [{ ...call, status: "failed" }], status })]);
     assert.ok(processLabel(item).includes(`回答${label}`));
     assert.ok(processLabel(item).includes("工具调用失败"));

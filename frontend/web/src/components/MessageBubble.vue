@@ -3,7 +3,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import { VBtn } from "vuetify/components";
 import { ICONS } from "../assets/icons.ts";
-import { assistantIdentity, formatThinkLabel, identityLabel, sourceLabel, toolRunHint, usageFoot, usageFootTitle } from "../utils/format.ts";
+import { assistantIdentity, formatThinkLabel, identityLabel, sourceLabel, toolRunHint, usageMetrics } from "../utils/format.ts";
 import type { UsageLike } from "../utils/format.ts";
 import { renderMarkdown, splitState } from "../utils/markdown.ts";
 import { buildToolTimeline } from "../utils/chatrows.ts";
@@ -24,7 +24,7 @@ const props = withDefaults(defineProps<BubblePresentation & {
   content?: string;
   reasoning?: string;
   reasoningMs?: number | null;
-  durationMs?: number | null; // 这一发的总耗时（受理 → 收尾），与 reasoningMs 一起算速度
+  durationMs?: number | null; // 受理 → 收尾的总耗时，是输出速度的分母。
   messageId?: string | null;
   promptId?: string | null; // 最新 AI 回复对应的用户输入（仅尾条 assistant 有）
   isLast?: boolean;
@@ -74,25 +74,21 @@ const emit = defineEmits<{
   regenerate: [messageId: string | null | undefined];
 }>();
 
-// 脚注 = 身份 + 用量 + 首字延迟 + 速度（纯函数在 utils/format.ts，契约测试钉着）。
-// 各段有才写；什么都没有（生成中 / 库外那条）⇒ 空串 ⇒ 整行不渲染。
-//
-// 生成中（含重摇候选流）只留编号：那一发还没落库，行上挂的 `usage` / 时长是**上一版**的，
-// 拿它算延迟/速度等于给新候选配旧账 —— 宁可空着。落库重拉之后这些数才属于当前这一版。
-const footMeta = computed(() => ({
-  idx: props.idx,
+// 包括重摇在内，流式行上的用量和时长可能仍是上一版的，绝不能配给新正文。
+const metrics = computed(() => props.streaming || props.role === "user" || props.answerView === "prose" ? [] : usageMetrics(props.usage, {
   reasoningMs: props.reasoningMs,
   durationMs: props.durationMs,
 }));
-const footUsage = computed(() => (props.streaming ? null : props.usage));
-const footTiming = computed(() => (props.streaming ? { idx: props.idx } : footMeta.value));
-const foot = computed(() => usageFoot(footUsage.value, footTiming.value));
-const footTitle = computed(() => usageFootTitle(footUsage.value, footTiming.value));
 // 用户身份（`你 #3`）：气泡**外面**那一行，CSS 里只在 hover 时显形。
 const ident = computed(() => identityLabel(props.who, props.idx));
-const assistantIdent = computed(() => props.answerView !== "full" ? "" : props.candidate
-  ? assistantIdentity(props.who, "chat", props.idx) : assistantIdentity(props.who, props.kind, props.idx));
-const statusText = computed(() => props.candidate ? "" : issueLabel(props.status ?? undefined));
+const assistantIdent = computed(() => assistantIdentity(props.who, props.idx));
+const issue = computed(() => props.candidate ? "" : issueLabel(props.status ?? undefined));
+const statusText = computed(() => {
+  if (issue.value) return issue.value;
+  if (props.candidate) return props.progressShown ? "" : "正在重新生成回答…";
+  if (!props.progressShown && props.status === "done" && !props.streaming && props.kind !== "tool_run" && !props.content.trim()) return "无正文";
+  return "";
+});
 const showToolDetails = computed(() => props.answerView === "full" && !props.candidate);
 
 // 流式期间还没正文 ⇒ 标签说"思考中…"；落库后才是"思考过程（2.1s）"（那会儿才有用时）。
@@ -191,7 +187,9 @@ watch(() => props.streaming, (s) => nextTick(() => {
        所以不再有条件类 —— 形态本身写在 CSS 的 `.msg.assistant` / `.msg-wrap.assistant` 里。 -->
   <div :class="`msg-wrap ${role === 'user' ? 'user' : 'assistant'}`">
     <div v-if="answerView === 'full' || content" ref="msgEl" :class="`msg ${role === 'user' ? 'user' : 'assistant'}`">
-      <div v-if="role !== 'user' && assistantIdent" class="msg-head">{{ assistantIdent }}<span v-if="statusText" class="msg-status"> · {{ statusText }}</span></div>
+      <div v-if="role !== 'user' && answerView === 'full' && (assistantIdent || statusText)" class="msg-head">
+        {{ assistantIdent }}<span v-if="statusText" :class="{ 'msg-status': issue }">{{ assistantIdent ? ' · ' : '' }}{{ statusText }}</span>
+      </div>
       <details v-if="answerView === 'full' && reasoning" class="think">
         <summary>{{ thinkLabel }}</summary>
         <div class="think-body" v-html="reasoningHtml"></div>
@@ -238,26 +236,34 @@ watch(() => props.streaming, (s) => nextTick(() => {
         </div>
       </div>
     </div>
-    <div v-if="answerView !== 'prose' && (canEdit || (role !== 'user' && foot))" class="msg-footer">
+    <div v-if="answerView !== 'prose' && (canEdit || metrics.length)" class="msg-footer">
       <div v-if="canEdit" class="msg-ops">
-        <!-- 身份与操作常驻同一行，用户身份沿用 hover / focus 显示。 -->
         <span v-if="role === 'user' && ident" class="msg-ident">{{ ident }}</span>
-        <CopyAnswerButton v-if="copyAnswer && role === 'assistant' && !streaming && parts.cleaned" :body="parts.cleaned" :macros="macros" />
-        <VBtn icon variant="text" size="small" title="改正文" aria-label="改正文" @click="emit('edit', messageId, 'content')" v-html="ICONS.pencil" />
-        <VBtn v-if="role !== 'user'" icon variant="text" size="small" title="改思考" aria-label="改思考" @click="emit('edit', messageId, 'reasoning')" v-html="ICONS.brain" />
-        <VBtn v-if="role !== 'user' && isLast && promptId" icon variant="text" size="small" color="primary" class="prompt-edit-btn" title="编辑最新 Prompt（编辑这条回复对应的用户输入）" aria-label="编辑最新 Prompt" @click="emit('edit-prompt', promptId)" v-html="ICONS.notebookPen" />
-        <VBtn v-if="role !== 'user' && isLast" icon variant="text" size="small"
-          :title="flow ? '重新生成（用当前历史重跑流程）' : '重摇（摇新的一版并切过去）'"
-          :aria-label="flow ? '重新生成（用当前历史重跑流程）' : '重摇（摇新的一版并切过去）'"
-          @click="flow ? emit('regenerate', messageId) : emit('reroll', messageId)" v-html="ICONS.refresh" />
-        <template v-if="!flow && role !== 'user' && isLast && reroll && reroll.active">
-          <VBtn icon variant="text" size="small" title="上一版" aria-label="上一版" @click="emit('reroll-go', -1)">◀</VBtn>
-          <span class="reroll-pos">{{ reroll.running ? `${reroll.current_idx}→${reroll.count}` : `${reroll.current_idx}/${reroll.count}` }}</span>
-          <VBtn icon variant="text" size="small" title="下一版（到最右再按 = 再摇一版）" aria-label="下一版" @click="emit('reroll-go', 1)">▶</VBtn>
-        </template>
-        <VBtn icon variant="text" size="small" color="error" title="删除这条及之后" aria-label="删除这条及之后" @click="emit('delete', messageId, isLast)" v-html="ICONS.trash" />
+        <div class="msg-action-group" role="group" aria-label="消息操作">
+          <CopyAnswerButton v-if="copyAnswer && role === 'assistant' && !streaming && parts.cleaned" :body="parts.cleaned" :macros="macros" />
+          <VBtn icon variant="text" size="small" title="改正文" aria-label="改正文" @click="emit('edit', messageId, 'content')" v-html="ICONS.pencil" />
+          <VBtn v-if="role !== 'user'" icon variant="text" size="small" title="改思考" aria-label="改思考" @click="emit('edit', messageId, 'reasoning')" v-html="ICONS.brain" />
+          <VBtn v-if="role !== 'user' && isLast && promptId" icon variant="text" size="small" title="编辑最新 Prompt（编辑这条回复对应的用户输入）" aria-label="编辑最新 Prompt" @click="emit('edit-prompt', promptId)" v-html="ICONS.notebookPen" />
+        </div>
+        <div v-if="role !== 'user' && isLast" class="msg-action-group" role="group" aria-label="重新生成与版本">
+          <VBtn icon variant="text" size="small"
+            :title="flow ? '重新生成（用当前历史重跑流程）' : '重摇（摇新的一版并切过去）'"
+            :aria-label="flow ? '重新生成（用当前历史重跑流程）' : '重摇（摇新的一版并切过去）'"
+            @click="flow ? emit('regenerate', messageId) : emit('reroll', messageId)" v-html="ICONS.refresh" />
+          <template v-if="!flow && reroll?.active">
+            <VBtn icon variant="text" size="small" title="上一版" aria-label="上一版" @click="emit('reroll-go', -1)">◀</VBtn>
+            <span class="reroll-pos">{{ reroll.running ? `${reroll.current_idx}→${reroll.count}` : `${reroll.current_idx}/${reroll.count}` }}</span>
+            <VBtn icon variant="text" size="small" title="下一版（到最右再按 = 再摇一版）" aria-label="下一版" @click="emit('reroll-go', 1)">▶</VBtn>
+          </template>
+        </div>
+        <VBtn icon variant="text" size="small" class="msg-delete" title="删除这条及之后" aria-label="删除这条及之后" @click="emit('delete', messageId, isLast)" v-html="ICONS.trash" />
       </div>
-      <div v-if="role !== 'user' && foot" class="msg-foot" :title="footTitle">{{ foot }}</div>
+      <details v-if="metrics.length" class="msg-foot">
+        <summary title="回答用量与耗时明细">
+          <span v-for="metric in metrics" :key="metric.text" class="msg-metric" :title="metric.detail">{{ metric.text }}</span>
+        </summary>
+        <ul><li v-for="metric in metrics" :key="metric.text">{{ metric.detail }}</li></ul>
+      </details>
     </div>
   </div>
 </template>

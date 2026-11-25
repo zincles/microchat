@@ -69,6 +69,7 @@ function onEscape(event: KeyboardEvent): void {
           :aria-label="title"
         >
           <span :class="labelClass">{{ label }}</span>
+          <span class="toolbar-chevron" aria-hidden="true"></span>
         </VBtn>
       </slot>
     </template>
@@ -89,3 +90,16 @@ function onEscape(event: KeyboardEvent): void {
     </VList>
   </VMenu>
 </template>
+
+<style scoped>
+/* 箭头只提示这里能展开，读屏仍使用按钮原有的完整标签。 */
+.toolbar-chevron {
+  flex: none;
+  width: 0.45em;
+  height: 0.45em;
+  margin: -0.2em 0.1em 0 0.4em;
+  border: solid currentColor;
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+}
+</style>

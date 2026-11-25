@@ -1,6 +1,5 @@
 import type { ChatRow, ChatRowMessage } from "./chatrows.ts";
 import { nativeToolLabel, toolRunHint } from "./format.ts";
-import { splitState } from "./markdown.ts";
 
 export interface AnswerGroup {
   kind: "answer";
@@ -28,10 +27,9 @@ function hasGap(left: ChatRowMessage, right: ChatRowMessage): boolean {
 
 function needsProcess(row: ChatRowMessage): boolean {
   const msg = row.msg;
-  if (msg.stream) return !!msg.tool || msg.kind === "tool_run" || Number(msg.step) > 1;
-  // 单条带正文的托管工具回复已经有自己的来源时间线，不再叠一层过程。
-  if (msg.kind !== "tool_run" && !msg.tools?.length && (!msg.status || msg.status === "done")) return false;
-  return !splitState(msg.content).cleaned;
+  // 单条普通回复即便失败、取消或没有正文也没有额外过程；原因直接跟着署名。
+  return !!msg.tool || msg.kind === "tool_run" || !!msg.tools?.length || !!msg.sources?.length
+    || (!!msg.stream && Number(msg.step) > 1);
 }
 
 /** 只在当前窗口里合并相邻实证；摘要的内部原文始终留在摘要组件。 */
@@ -40,10 +38,11 @@ export function transcriptItems(rows: ChatRow[], windowFrom: number, rerollingId
   for (let i = 0; i < rows.length;) {
     const first = rows[i];
     const id = run(first);
-    if (!id || first.kind !== "msg") { out.push(first); i++; continue; }
+    if (first.kind !== "msg" || first.msg.role !== "assistant") { out.push(first); i++; continue; }
     const steps = [first];
     let j = i + 1;
-    while (j < rows.length) {
+    // 旧记录没有轮次身份，可以查看本条的工具，但不能把相邻记录推断为同一轮。
+    while (id && j < rows.length) {
       const next = rows[j];
       if (next.kind !== "msg" || run(next) !== id || hasGap(steps[steps.length - 1], next)) break;
       steps.push(next);
@@ -51,8 +50,8 @@ export function transcriptItems(rows: ChatRow[], windowFrom: number, rerollingId
     }
     if (steps.length > 1 || ((!rerollingId || first.msg.messageId !== rerollingId) && needsProcess(first))) {
       const before = rows[i - 1];
-      const partial = (!before && (windowFrom > 1 || (first.displayIdx ?? 1) > 1)) || before?.kind === "summary"
-        || (before?.kind === "msg" && hasGap(before, first)) || steps.some((row, index) => Number(row.msg.step) > index + 1);
+      const partial = !!id && ((!before && (windowFrom > 1 || (first.displayIdx ?? 1) > 1)) || before?.kind === "summary"
+        || (before?.kind === "msg" && hasGap(before, first)) || steps.some((row, index) => Number(row.msg.step) > index + 1));
       out.push({ kind: "answer", key: first.key, rows: steps, partial });
     } else out.push(first);
     i = j;
@@ -126,9 +125,8 @@ export function answerSteps(group: AnswerGroup, expanded: boolean, liveHasBody: 
     const candidate = !!rerollingId && rerollingId === msg.messageId;
     const hasBody = msg.stream || candidate ? liveHasBody : !!msg.content?.trim();
     if (!expanded && !hasBody && row !== footer && !final) continue;
-    // 末步有正文和按位置记录的工具时保留原生时间线；没有正文的末步只常显操作/用量。
-    const finalDetails = final && hasBody && !candidate && (msg.kind !== "tool_run" || msg.tools?.some(tool => typeof tool.text_offset === "number"));
-    const view = expanded || finalDetails ? "full" : row === footer ? "prose-footer" : "prose";
+    // 收起时保留每一步真正说过的话；工具按 text_offset 穿插在正文里的顺序只在展开时还原。
+    const view = expanded ? "full" : row === footer ? "prose-footer" : "prose";
     out.push({ row, presentation: { answerView: view, copyAnswer: final, progressShown: true, candidate } });
   }
   return out;

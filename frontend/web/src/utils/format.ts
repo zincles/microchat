@@ -267,10 +267,9 @@ export interface UsageLike {
   [key: string]: unknown;
 }
 
-export interface FootMeta {
-  idx?: number | string | null;
-  reasoningMs?: number | null;
-  durationMs?: number | null;
+interface UsageMetric {
+  text: string;
+  detail: string;
 }
 
 // identityLabel：气泡外那行身份（用户消息 hover 才出现）：`你 #3`。
@@ -282,19 +281,11 @@ export function identityLabel(who?: string | null, idx?: number | string | null)
   return w ? `${w} #${n}` : `#${n}`;
 }
 
-// assistantIdentity：助手消息顶部身份。`kind` 是实际用过工具（tool_run）还是普通对话。
-// 不用「智能体」：Agent 是人格/能力的词，不是消息类型；`助手-工具` 说的就是这条消息做了什么。
-export function assistantIdentity(
-  who?: string | null,
-  kind?: string | null,
-  idx?: number | string | null,
-): string {
-  const w = String(who ?? "").trim();
-  const n = idx === null || idx === undefined ? "" : String(idx).trim();
-  let label = w;
-  if (w === "助手") label = kind === "tool_run" ? "助手-工具" : "助手-对话";
-  if (!n) return label;
-  return label ? `${label}#${n}` : `#${n}`;
+// 署名只采用消息自己的名字、编号；是否用过工具由过程行说明。
+export function assistantIdentity(who?: string | null, idx?: number | string | null): string {
+  const name = who?.trim() || "";
+  const number = String(idx ?? "").trim();
+  return number ? (name ? `${name} · #${number}` : `#${number}`) : name;
 }
 
 // depthText：ST 的 injection_depth 人话解释。只对 absolute 有效；
@@ -307,7 +298,7 @@ export function depthText(depth?: number | null): string {
   return `倒数第${n}条之前`;
 }
 
-// formatLatency：首字延迟（后端 `reasoning_ms`：受理 → 第一段正文），秒、两位小数。
+// formatLatency：首字延迟（后端 `reasoning_ms`：受理 → 第一段正文），秒、一位小数。
 // 没这一格（没存思考的渠道 / 还没有正文 / 生成中）⇒ 空串 ⇒ 脚注省掉这段。
 export function formatLatency(ms?: number | null): string {
   if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return "";
@@ -319,55 +310,40 @@ export function formatLatency(ms?: number | null): string {
 // 不再按 reasoning_ms 拆分子分母：上游的 reasoning_tokens 有时**大于** completion_tokens
 // （实测 deepseek 4.1：completion 12 / reasoning 66），拆出来的生成窗只剩 13ms、token 为负，
 // 结果要么不显示、要么几百 tps 的假数。直接用总输出 / 总耗时更诚实，也和用户举例一致。
-export function formatSpeed(usage?: UsageLike | null, _reasoningMs?: number | null, durationMs?: number | null): string {
-  const completion = Number(usage?.completion_tokens ?? NaN);
-  const duration = Number(durationMs ?? NaN);
-  if (!Number.isFinite(completion) || completion <= 0) return "";
-  if (!Number.isFinite(duration) || duration <= 0) return "";
-  const tps = completion / (duration / 1000);
+export function formatSpeed(usage?: UsageLike | null, durationMs?: number | null): string {
+  const completion = usage?.completion_tokens;
+  if (typeof completion !== "number" || !Number.isFinite(completion) || completion <= 0) return "";
+  if (typeof durationMs !== "number" || !Number.isFinite(durationMs) || durationMs <= 0) return "";
+  const tps = completion / (durationMs / 1000);
   return `${Number(tps.toFixed(1))} tps`;
 }
 
-// usageFoot：气泡底部只留用量/延迟/速度（身份已挪到消息顶部）。
-//
-// 口径（AGENTS.md「用量两处别混」）：单位是 token，`reasoning_tokens` 是
-// `completion_tokens` 的**子集**（不是另加）；未命中 = prompt − cached（推导，不另存）。
-// 各段都是**有才写**：没用量省用量、没时长省延迟/速度 —— 空 ⇒ 整个脚注不渲染。
-// 缓存命中留在悬停说明里（脚注要短）。
-export function usageFoot(usage?: UsageLike | null, meta?: FootMeta | null): string {
-  const parts: string[] = [];
-  if (usage && usage.prompt_tokens != null) {
-    const completion = `输出：${formatTokens(usage.completion_tokens)}`;
-    const reasoning = Number(usage.reasoning_tokens ?? 0);
-    const withThink = reasoning > 0 ? `${completion}（思考 ${formatTokens(reasoning)}）` : completion;
-    const cached = Number(usage.cached_tokens ?? 0);
-    const withCache = cached > 0 ? `（已缓存：${formatTokens(cached)}）` : "";
-    parts.push(`输入：${formatTokens(usage.prompt_tokens)}${withCache}， ${withThink}`);
+// 每组是一项可换行的脚注。短文案沿用 token / 金额的显示精度，明细保留上游原数。
+// 缓存属于输入，思考属于输出。即使上游只报子项，也不补造总数或把子项另加一次。
+export function usageMetrics(usage?: UsageLike | null, timing?: { reasoningMs?: number | null; durationMs?: number | null }): UsageMetric[] {
+  const metrics: UsageMetric[] = [];
+  function tokens(label: string, total: number | null | undefined, subsetLabel: string, subset: number | null | undefined): void {
+    const hasTotal = typeof total === "number" && Number.isFinite(total);
+    const hasSubset = typeof subset === "number" && Number.isFinite(subset);
+    if (!hasTotal && !hasSubset) return;
+    if (!hasTotal) {
+      metrics.push({ text: `${label}${subsetLabel} ${formatTokens(subset)}`, detail: `${label}中的${subsetLabel} ${subset} tok（未报告${label}总数）` });
+      return;
+    }
+    metrics.push({
+      text: `${label} ${formatTokens(total)}${hasSubset ? `（${subsetLabel} ${formatTokens(subset)}）` : ""}`,
+      detail: `${label} ${total} tok${hasSubset ? `（其中${subsetLabel} ${subset} tok，是${label}的子集，不另加）` : ""}`,
+    });
   }
-  const cost = usage ? formatCost(usage.cost_usd) : "";
-  if (cost) parts.push(`成本 ${cost}`);
-  const latency = formatLatency(meta?.reasoningMs);
-  if (latency) parts.push(`首字延迟： ${latency}`);
-  const speed = formatSpeed(usage, meta?.reasoningMs, meta?.durationMs);
-  if (speed) parts.push(`速度： ${speed}`);
-  return parts.length ? `${parts.join("， ")}。` : "";
-}
-
-// usageFootTitle：那行小字的悬停解释（说清哪个数是子集、cost/延迟/速度怎么来的）。
-export function usageFootTitle(usage?: UsageLike | null, meta?: FootMeta | null): string {
-  const lines: string[] = [];
-  if (usage && usage.prompt_tokens != null) {
-    lines.push(
-      `输入 ${usage.prompt_tokens} tok（其中缓存命中 ${usage.cached_tokens ?? 0}）`,
-      `输出 ${usage.completion_tokens ?? 0} tok（其中思考 ${usage.reasoning_tokens ?? 0} —— 是输出的子集，不另加）`,
-    );
-    if (usage.cost_usd != null) lines.push(`成本 ${formatCost(usage.cost_usd)}：上游报的实扣金额`);
-  }
-  const latency = formatLatency(meta?.reasoningMs);
-  if (latency) lines.push(`首字延迟 ${latency}：受理 → 第一段正文`);
-  const speed = formatSpeed(usage, meta?.reasoningMs, meta?.durationMs);
-  if (speed) lines.push(`速度 ${speed}：输出 token ÷ 整发耗时`);
-  return lines.join("\n");
+  tokens("输入", usage?.prompt_tokens, "缓存", usage?.cached_tokens);
+  tokens("输出", usage?.completion_tokens, "思考", usage?.reasoning_tokens);
+  const cost = formatCost(usage?.cost_usd);
+  if (cost) metrics.push({ text: `成本 ${cost}`, detail: `成本 $${usage?.cost_usd}：上游报的实扣金额（美元）` });
+  const latency = formatLatency(timing?.reasoningMs);
+  if (latency) metrics.push({ text: `首字 ${latency}`, detail: `首字延迟 ${timing?.reasoningMs} ms：受理 → 第一段正文` });
+  const speed = formatSpeed(usage, timing?.durationMs);
+  if (speed) metrics.push({ text: `速度 ${speed}`, detail: `速度 ${speed}：输出 ${usage?.completion_tokens} tok ÷ 整发耗时 ${timing?.durationMs} ms` });
+  return metrics;
 }
 
 // contextOverBudget：超预算 ⇒ 环变红（从前是状态行那行小字变红，信号不能丢）。

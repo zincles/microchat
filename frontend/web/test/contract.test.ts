@@ -27,8 +27,7 @@ import {
   CONTEXT_MIN_ARC,
   contextOverBudget,
   formatCost,
-  usageFoot,
-  usageFootTitle,
+  usageMetrics,
   identityLabel,
   assistantIdentity,
   formatLatency,
@@ -195,104 +194,34 @@ test("formatCost：便宜模型给 4 位小数；没数据回空串（不是 $0.
   assert.equal(formatCost("0.5"), "");            // 不是数字 ⇒ 当没有
 });
 
-test("usageFoot：底部只留用量/延迟/速度；没用量整行为空", () => {
-  const foot = usageFoot({ prompt_tokens: 6585, completion_tokens: 945, cached_tokens: 0, reasoning_tokens: 333, cost_usd: 0.0012 });
-  assert.ok(foot.includes("输入：6.5K， 输出：945（思考 333）")); // 向下取整：6585 ⇒ 6.5K
-  assert.ok(foot.includes("成本 $0.0012"));
-  assert.ok(!foot.includes("缓存命中") && !foot.includes("已缓存")); // 0 命中不啰嗦
-  assert.ok(!foot.includes("首字延迟"));          // 没有时长 ⇒ 不编
-  assert.ok(!foot.includes("速度"));
-  assert.equal(usageFoot(null), "");              // 生成中 / 库外那条
-  assert.equal(usageFoot({}), "");                // 上游没报
-  assert.equal(usageFootTitle(null), "");
-
-  // 缓存命中只进悬停说明（脚注要短），同一份用量两边不重复罗列。
-  const withCache = usageFoot({ prompt_tokens: 100000, completion_tokens: 50, cached_tokens: 96000 });
-  assert.ok(withCache.includes("输入：100K（已缓存：96K）"));
-  assert.ok(!withCache.includes("$"));            // 没 cost ⇒ 没有价格那一格
-  assert.ok(usageFootTitle({ prompt_tokens: 100000, completion_tokens: 50, cached_tokens: 96000 }).includes("缓存命中 96000"));
+test("用量边注：同组显示总数与子集，短数不改变明细里的原值", () => {
+  const metrics = usageMetrics({ prompt_tokens: 6585, completion_tokens: 945, cached_tokens: 0, reasoning_tokens: 333, cost_usd: 0.0012 }, { reasoningMs: 1234, durationMs: 10000 });
+  assert.deepEqual(metrics.map(m => m.text), ["输入 6.5K（缓存 0）", "输出 945（思考 333）", "成本 $0.0012", "首字 1.2 s", "速度 94.5 tps"]);
+  assert.match(metrics[0].detail, /6585/);
+  assert.match(metrics[3].detail, /1234/);
 });
 
-test("身份脚注：IDX/用量/首字延迟/速度齐全；缺哪格就省哪段", () => {
-  // reasoning_ms = 受理 → 第一段正文（首字延迟）；duration_ms = 整发的墙钟时间。
-  const full = usageFoot(
-    { prompt_tokens: 1126, completion_tokens: 1229, reasoning_tokens: 900 },
-    { idx: 4, reasoningMs: 1234, durationMs: 10000 },
-  );
-  assert.match(full, /^输入：1\.1K， 输出：1\.2K（思考 900）/);
-  assert.ok(full.includes("首字延迟： 1.2 s"));
-  // 生成窗口 = 10 − 1.234 = 8.766 s；生成 token = 1229 − 900 = 329 ⇒ 37.5 tps（≥10 收成整数 = 37）。
-  assert.ok(full.includes("速度： 122.9 tps"));
-  assert.ok(full.endsWith("。"));
+test("用量边注：未报告的维度不造零，总数缺失也不吞掉已报告的子项", () => {
+  assert.deepEqual(usageMetrics(null), []);
+  assert.deepEqual(usageMetrics({}), []);
+  assert.deepEqual(usageMetrics({ cached_tokens: 80, reasoning_tokens: 30, cost_usd: 0 }).map(m => m.text), ["输入缓存 80", "输出思考 30", "成本 $0"]);
+  assert.deepEqual(usageMetrics(null, { reasoningMs: 0 }).map(m => m.text), ["首字 0.0 s"]);
+});
 
-  // 没有 reasoning_ms：整段算速度（100 token / 2 s = 50 tps），也没有首字延迟这一段。
-  const noThink = usageFoot({ prompt_tokens: 10, completion_tokens: 100 }, { idx: 7, durationMs: 2000 });
-  assert.ok(noThink.startsWith("输入：10， "));
-  assert.ok(!noThink.includes("首字延迟"));
-  assert.ok(noThink.includes("速度： 50 tps"));
-
-  // 只有编号（生成中 / 库外那条）：脚注就只是编号，绝不编出 0 token。
-  assert.equal(usageFoot(null, { idx: 3 }), ""); // 身份在顶部；底部没有用量就不出现
-  assert.equal(usageFoot(null, { idx: null }), "");
-
+test("署名与编号不混入工具类型；首字和速度只用实际计量", () => {
   assert.equal(identityLabel("你", 3), "你 #3");
-  assert.equal(identityLabel("你", null), "你");       // 乐观句还没编号
   assert.equal(identityLabel("", 3), "#3");
   assert.equal(identityLabel("你", undefined), "你");
-  assert.equal(assistantIdentity("助手", "chat", 2), "助手-对话#2");
-  assert.equal(assistantIdentity("助手", "tool_run", 3), "助手-工具#3");
-  assert.equal(assistantIdentity("主持人", "tool_run", 4), "主持人#4");
-  assert.equal(assistantIdentity("助手", "chat", null), "助手-对话");
-
+  assert.equal(assistantIdentity("助手", 2), "助手 · #2");
+  assert.equal(assistantIdentity("主持人", 4), "主持人 · #4");
+  assert.equal(assistantIdentity("助手", null), "助手");
+  assert.equal(assistantIdentity("", null), "");
   assert.equal(formatLatency(1234), "1.2 s");
   assert.equal(formatLatency(null), "");
-  assert.equal(formatSpeed({ completion_tokens: 50 }, null, 1000), "50 tps");
-  assert.equal(formatSpeed({ completion_tokens: 50 }, null, 0), "");   // 生成窗为 0 ⇒ 不算
-  assert.equal(formatSpeed({ completion_tokens: 0 }, null, 1000), "");
-  assert.equal(formatSpeed({ completion_tokens: 50, reasoning_tokens: 50 }, 900, 1000), "50 tps"); // 总输出 / 总耗时，不拆思考窗
-  assert.equal(formatSpeed({ completion_tokens: 12, reasoning_tokens: 66 }, 2574, 2587), "4.6 tps"); // 上游 reasoning_tokens > completion 也不出负数
-});
-
-test("usageFoot 的悬停说明：点明思考是输出的子集、成本/延迟/速度的来源", () => {
-  const title = usageFootTitle(
-    { prompt_tokens: 100, completion_tokens: 40, cached_tokens: 80, reasoning_tokens: 30, cost_usd: 0.0004 },
-    { idx: 2, reasoningMs: 800, durationMs: 4000 },
-  );
-  assert.ok(title.includes("输入 100 tok（其中缓存命中 80）"));
-  assert.ok(title.includes("子集"));              // 别让人把 reasoning 再加一遍
-  assert.ok(title.includes("$0.0004"));
-  assert.ok(title.includes("上游报的"));
-  assert.ok(title.includes("受理 → 第一段正文"));
-  assert.ok(title.includes("输出 token ÷ 整发耗时"));
-
-});
-
-test("消息头：assistant 身份在正文顶部；user 身份在气泡外且 hover 才显形", () => {
-  const bubble = readFileSync(join(SRC, "components", "MessageBubble.vue"), "utf8");
-  const app = readFileSync(join(SRC, "App.vue"), "utf8");
-  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  assert.match(bubble, /v-if="role !== 'user' && assistantIdent" class="msg-head"/, "assistant 身份不在顶部");
-  assert.match(bubble, /assistantIdentity\(props\.who, props\.kind, props\.idx\)/, "顶部身份没接 kind");
-  assert.ok(!/msg-idx/.test(bubble), "气泡里还留着 #编号");
-  assert.ok(!/<span class="who">/.test(bubble), "气泡里还渲染 who");
-  assert.match(css, /\.msg \.msg-head/, "CSS 没有消息头规则");
-  assert.ok(!/\.msg \.who\b/.test(css), "CSS 还留着 who 规则");
-  assert.ok(!/\.msg \.msg-idx\b/.test(css), "CSS 还留着气泡内编号规则");
-
-  // assistant：脚注一行，含身份/用量/延迟/速度的拼装出口。
-  assert.match(bubble, /v-if="role !== 'user' && foot" class="msg-foot"/, "assistant 脚注不该回到用户气泡里");
-  assert.match(bubble, /usageFoot\(footUsage\.value, footTiming\.value\)/, "脚注没带上时长");
-  assert.match(bubble, /durationMs: props\.durationMs/, "脚注没接 durationMs");
-  assert.match(bubble, /props\.streaming \? null : props\.usage/, "生成中没把上一版的用量摘掉");
-  assert.match(readFileSync(join(SRC, "composables", "useSessionWindow.ts"), "utf8"), /durationMs: m\.duration_ms \?\? null/, "toRow 没带 duration_ms");
-  assert.match(app, /:duration-ms="rowDuration\(row\.msg\)"/, "App 没把 duration_ms 喂给气泡");
-
-  // user：身份在 `.msg` 的**外面**（`</div>` 之后），且 CSS 默认透明、hover 才 1。
-  const identAt = bubble.indexOf('class="msg-ident"');
-  const msgCloseAt = bubble.indexOf("</div>", bubble.indexOf('class="text"'));
-  assert.ok(identAt > msgCloseAt, "用户身份还留在气泡里面");
-  assert.match(css, /\.msg-ident \{[^}]*opacity:\s*0/, "用户身份默认没藏起来");
-  assert.match(css, /\.msg-wrap\.user:hover \.msg-ident[^{]*\{[^}]*opacity:\s*1/, "用户身份 hover 不显形");
+  assert.equal(formatSpeed({ completion_tokens: 50 }, 1000), "50 tps");
+  assert.equal(formatSpeed({ completion_tokens: 50 }, 0), "");
+  assert.equal(formatSpeed({ completion_tokens: 0 }, 1000), "");
+  assert.equal(formatSpeed({ completion_tokens: 12, reasoning_tokens: 66 }, 2587), "4.6 tps"); // 不从输出里再减思考
 });
 
 test("状态行：助手 + phase/耗时；上下文占用不在这行（2026-10-28 挪去右上角的环）", () => {
@@ -3664,17 +3593,6 @@ test("草稿：defaults 不覆盖已选模型（draftPrefs 必须保持同一对
     "defaults 回来时没有保护用户已经选过的模型");
 });
 
-test("空草稿首屏：有欢迎语与当前助手/模型，不是一整页纯黑", () => {
-  const app = readFileSync(join(SRC, "App.vue"), "utf8");
-  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  assert.match(app, /v-if="draft && !chatRows\.length" class="draft-welcome"/,
-    "草稿空态没有欢迎块");
-  assert.match(app, /draftAgentName/, "欢迎块没给当前助手");
-  assert.match(app, /draftModelName/, "欢迎块没给当前模型");
-  assert.match(app, /直接在下面输入第一条消息开始/, "没说清下一步该做什么");
-  assert.match(css, /\.draft-welcome\s*\{/, "欢迎块没有样式（会与消息列挤在一起）");
-});
-
 test("输入框：Vuetify MD3 输入栏 + 发送键", () => {
   const composer = readFileSync(join(SRC, "components", "Composer.vue"), "utf8");
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
@@ -3765,9 +3683,8 @@ test("会话行选项键：未选中隐藏；悬停/键盘焦点/当前会话才
     "当前会话那行没有常亮选项键");
   assert.match(css, /#sessions-bar \.session-item \.item-btn:focus-visible[\s\S]*?opacity:\s*1[^}]*pointer-events:\s*auto/,
     "键盘焦点没有点亮选项键");
-  const hoverBlock = css.match(/@media \(hover: hover\) \{([\s\S]*?)\n\}/);
-  assert.ok(hoverBlock, "没有保留鼠标悬停的 @media (hover: hover) 规则");
-  assert.match(hoverBlock[1], /#sessions-bar \.session-item:hover \.item-btn,[\s\S]*?opacity:\s*1[^}]*pointer-events:\s*auto/,
+  const hoverRules = Array.from(css.matchAll(/@media \(hover: hover\) \{([\s\S]*?)\n\}/g), ([, rules]) => rules).join("\n");
+  assert.match(hoverRules, /#sessions-bar \.session-item:hover \.item-btn,[\s\S]*?opacity:\s*1[^}]*pointer-events:\s*auto/,
     "鼠标悬停没有点亮选项键");
   assert.ok(!/@media \(hover: none\)[\s\S]*?\.item-btn/.test(css),
     "又给触屏开了「三个点常驻」的例外");
@@ -4054,16 +3971,6 @@ test("CSS 复用：幽灵按钮底座与蒙层 token 只有一处", () => {
   assert.ok(!/color-mix\(in srgb, var\(--tg-text\) 6%/.test(css), "main.css 又出现了写死的 6% 蒙层");
 });
 
-
-
-test("消息操作行：编辑/思考/重摇/删除始终可见，不再等 hover", () => {
-  const bubble = readFileSync(join(SRC, "components", "MessageBubble.vue"), "utf8");
-  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  assert.ok(!/hover-only/.test(bubble), "气泡里还留着 hover-only（那三个按钮又会被藏起来）");
-  assert.ok(!/\.msg-ops \.hover-only/.test(css), "CSS 还在按 hover 藏操作按钮");
-  assert.match(css, /\.msg-ops \{[^}]*opacity:\s*0\.72/, "操作行没有常显的底噪");
-});
-
 test("消息窗口：默认 5 段，设置里可改，首屏与加载更多共用", () => {
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
   const windowSrc = readFileSync(join(SRC, "composables", "useSessionWindow.ts"), "utf8");
@@ -4092,8 +3999,6 @@ test("设计系统：tab 统一下划线、设置平铺、圆角收口", () => {
   assert.ok(!/settings-cols \.panel h3 \+ \.field[^}]*border-radius/.test(css), "设置字段又连成卡片组");
   // 圆角/输入框收口
   assert.match(theme, /--r-card:\s*12px/, "卡片圆角没有统一到 12");
-  const composer = readFileSync(join(SRC, "components", "Composer.vue"), "utf8");
-  assert.match(composer, /<VSheet[^>]*rounded="24"/, "输入框浮卡没有使用 Vuetify 的 24px 圆角");
   assert.ok(!/#input \{/.test(css), "旧 #input 样式还留着");
 });
 
@@ -4443,13 +4348,12 @@ test("输入区：Vuetify 4 MD3 接管 input/send/think", () => {
 });
 
 // MD3 第三刀（2026-11-05）：消息区（气泡 / 思考 / 摘要卡 / 操作行 / 代码块）。
-test("消息区 MD3：中性灰用户气泡 / 32dp 操作 / 思考容器 / 卡片摘要 / 代码容器", () => {
+test("消息区 MD3：中性灰用户气泡、思考容器、卡片摘要与代码容器", () => {
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 
   assert.match(css, /\.msg\.user \{[^}]*background:\s*var\(--md-surface-container-high\)/, "用户气泡不是 Gemini 中性灰容器");
   assert.match(css, /\.msg\.user \{[^}]*color:\s*var\(--md-on-surface\)/, "用户气泡正文色不是 on-surface");
   assert.match(css, /\.msg\.user \{[^}]*border-radius:\s*var\(--md-shape-lg\) var\(--md-shape-lg\) var\(--md-shape-xs\)/, "用户气泡不是 16dp/4dp 尾巴圆角");
-  assert.match(css, /\.msg-ops \.v-btn \{[^}]*width:\s*2em[^}]*height:\s*2em/, "操作键不是 32dp VBtn");
   const bubble = readFileSync(join(SRC, "components", "MessageBubble.vue"), "utf8");
   assert.match(bubble, /<VBtn[^>]*variant="text"[^>]*title="改正文"/, "操作键不是 VBtn");
   assert.match(css, /\.msg \.think \{[^}]*background:\s*var\(--md-surface-container-low\)/, "思考折叠不是 MD3 容器");
@@ -4556,7 +4460,6 @@ test("上下文工作区 MD3：primary tabs / 载荷行 / 状态 / 压缩树 / �
 test("MD3 快修：草稿欢迎 / 空态 / 滚动条 / 展开动画", () => {
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   assert.match(css, /\.draft-welcome h2 \{[^}]*font-size:\s*var\(--md-type-title-large\)/, "草稿标题不是 MD3 title-large");
-  assert.match(css, /\.dw-hint kbd \{[^}]*var\(--md-surface-container-high\)/, "kbd 不是 MD3 容器");
   assert.match(css, /\.empty \{[^}]*var\(--md-on-surface-variant\)/, "空态不是 on-surface-variant");
   assert.match(css, /\*::-webkit-scrollbar-thumb \{[^}]*var\(--md-outline-variant\)/, "滚动条不是 outline-variant");
   assert.match(css, /@keyframes md-fade-in/, "展开没有淡入动画");
@@ -4811,12 +4714,6 @@ test("工具卡按 text_offset 插入正文；旧消息保留上方兜底", () =
   assert.match(bubble, /v-else-if="sources.length"/, "live 来源兜底仍在");
 });
 
-test("输入栏的推理等级/工具/专注按钮共用同一套尺寸与风格", () => {
-  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8");
-  assert.match(css, /\.composer-toolbar \.thinking-btn,\s*\.composer-toolbar \.tools-btn,\s*\.composer-toolbar \.zen-btn\s*\{/);
-  assert.match(css, /\.thinking-label,\s*\.tools-label\s*\{/);
-});
-
 test("上下文圆环的请求体覆盖面板：无外层花括号、验证/保存、App 落库", () => {
   const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
@@ -4916,7 +4813,6 @@ test("FlowAgent 用重新生成：没有候选位次，走 regenerate 接口", (
   assert.match(app, /@regenerate="regenerateNow"/, "气泡的重新生成事件没接");
   assert.match(app, /currentAgentIsFlow \? null : \(row\.msg\.messageId/, "FlowAgent 仍显示重摇候选位次");
   assert.match(bubble, /emit\('regenerate', messageId\)/, "FlowAgent 按钮没发 regenerate");
-  assert.match(bubble, /!flow && role !== 'user'/, "FlowAgent 仍显示候选版本导航");
   assert.match(editor, /保存并重新生成/, "编辑器没有区分重新生成");
   assert.match(client, /regenerate:\s*\(id[^)]*\)\s*=>\s*call<[^>]+>\("POST", `\/sessions\/\$\{enc\(id\)\}\/regenerate`/, "API 没有 regenerate");
   assert.match(reroll, /if \(!sid \|\| isFlow\(\)\)/, "FlowAgent 仍在问消息重摇状态");
@@ -5049,11 +4945,8 @@ test("主题切换不渐变；消息列预留滚动槽", () => {
   assert.match(css, /#session-list, \.settings-body, \.ctx-pane, #payload-pane, #state-view,[\s\S]*scrollbar-gutter:\s*stable/, "会话/设置/上下文主滚动区没有稳定槽");
 });
 
-test("Composer 控件尺寸收成一个 token；旧 Flow 行类已清理", () => {
+test("旧 Flow 行类已清理", () => {
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8");
-  assert.match(css, /--composer-control:\s*calc\(34px/, "Composer 没有统一的 34px 控件 token");
-  assert.match(css, /#app \.composer-send-btn \{[^}]*width:\s*var\(--composer-control\)/, "发送键没有吃统一控件尺寸");
-  assert.match(css, /\.composer-toolbar \.thinking-btn,\s*\.composer-toolbar \.tools-btn,\s*\.composer-toolbar \.zen-btn \{[^}]*height:\s*var\(--composer-control\)/, "工具/专注按钮没有吃统一控件尺寸");
   assert.ok(!/flow-history-label|flow-prompt-del|flow-prompt-head/.test(css), "旧 Flow 行类还在 CSS 里");
 });
 

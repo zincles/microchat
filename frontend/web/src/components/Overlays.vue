@@ -2,7 +2,7 @@
 // 浮层三件（命令面板 / picker / 确认框）：挂 #overlays-vue，DOM 照旧
 // （.palette/.picker/.confirm + 各条目类），行为照 main.js。
 import { VBtn } from "vuetify/components";
-import { ref } from "vue";
+import { ref, useTemplateRef, watch } from "vue";
 import type { PickerItem } from "../types/app.ts";
 
 export interface PaletteItem {
@@ -24,9 +24,16 @@ const pickerSel = ref(0);
 const pickerOpen = ref(false);
 const confirmText = ref("");
 const confirmOpen = ref(false);
+const confirmDestructive = ref(false);
 
 let pickerAction: PickerAction | null = null;
 let confirmResolve: ((value: boolean) => void) | null = null;
+
+// 面板受输入卡上方的可用高度限制；用方向键选到屏外条目时，只滚动列表，不移动焦点。
+const panels = useTemplateRef<HTMLElement>("panels");
+watch([palItems, palSel, pickerItems, pickerSel], () => {
+  panels.value?.querySelector<HTMLElement>(".picker:not(.hidden) .sel, .palette:not(.hidden) .sel")?.scrollIntoView({ block: "nearest" });
+}, { flush: "post" });
 
 function showPalette(items?: PaletteItem[]): void {
   palItems.value = items ?? [];
@@ -62,9 +69,10 @@ function runPicker(it?: PickerItem): void {
   if (it && a) emit("pick", a, it);
 }
 
-function confirmAsk(text: string): Promise<boolean> {
+function confirmAsk(text: string, destructive = false): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
     confirmText.value = text;
+    confirmDestructive.value = destructive;
     confirmOpen.value = true;
     confirmResolve = resolve;
   });
@@ -84,24 +92,18 @@ defineExpose({
   movePicker,
   hidePicker,
   confirmAsk,
-  lift,
   isPaletteOpen: (): boolean => palItems.value.length > 0,
   isPickerOpen: (): boolean => pickerOpen.value,
   palSelected: (): PaletteItem | undefined => palItems.value[palSel.value],
   pickerSelected: (): PickerItem | undefined => pickerItems.value[pickerSel.value],
   pickerAction: (): PickerAction | null => pickerAction,
 });
-
-// lift：把面板/ picker 顶到输入框上方（输入框长高多少就顶多少）。
-// bottom = 输入框高 + 状态行 + 间隙，由调用方量好传进来（px）。
-const liftPx = ref(0);
-function lift(px?: number | null): void { liftPx.value = Math.max(0, px ?? 0); }
 </script>
 
 <template>
-  <div id="overlays-vue">
+  <div id="overlays-vue" ref="panels">
     <div v-if="palItems.length" class="palette-backdrop" @click="hidePalette()"></div>
-    <div class="palette" :class="{ hidden: !palItems.length }" :style="liftPx ? { bottom: `calc(5em + ${liftPx}px)` } : null">
+    <div class="palette" :class="{ hidden: !palItems.length }">
       <div id="palette-list">
         <div
           v-for="(it, i) in palItems"
@@ -116,7 +118,7 @@ function lift(px?: number | null): void { liftPx.value = Math.max(0, px ?? 0); }
       </div>
       <div class="palette-hint">Tab/↑↓ 选择，回车执行</div>
     </div>
-    <div class="picker" :class="{ hidden: !pickerOpen }" :style="liftPx ? { bottom: `calc(5em + ${liftPx}px)` } : null">
+    <div class="picker" :class="{ hidden: !pickerOpen }">
       <div id="picker-title">{{ pickerTitle }}</div>
       <div id="picker-list">
         <div
@@ -134,7 +136,7 @@ function lift(px?: number | null): void { liftPx.value = Math.max(0, px ?? 0); }
       <div class="confirm">
         <div id="confirm-text">{{ confirmText }}</div>
         <div class="confirm-btns">
-          <VBtn id="confirm-yes" color="primary" variant="flat" size="small" @click="confirmDone(true)">确认</VBtn>
+          <VBtn id="confirm-yes" :color="confirmDestructive ? 'error' : 'primary'" variant="flat" size="small" @click="confirmDone(true)">确认</VBtn>
           <VBtn id="confirm-no" variant="text" size="small" @click="confirmDone(false)">取消</VBtn>
         </div>
       </div>

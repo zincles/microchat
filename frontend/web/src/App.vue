@@ -148,7 +148,7 @@ watch([settingsOpen, workspace], () => { activeChatMenu.value = null; });
 
 const { resetChrome, onMessagesScroll } = useChrome();
 
-const { liftOverlays, install: installOverlayLayout, uninstall: uninstallOverlayLayout } = useOverlayLayout(overlaysRef);
+const { liftOverlays, install: installOverlayLayout, uninstall: uninstallOverlayLayout } = useOverlayLayout();
 // askConfirm：给设置/子编辑器用的全局确认框（与左栏删除同一个口 —— "不可逆的删除先摊开"）。
 function askConfirm(text: string): Promise<boolean> {
   return overlaysRef.value?.confirmAsk(text) ?? Promise.resolve(false);
@@ -672,6 +672,7 @@ const chatRows = computed(() => {
     summaryMsgs,
   });
 });
+const emptyDraft = computed(() => workspace.value === "chat" && sessionInfo.id === "" && !loadingSession.value && !chatRows.value.length);
 const olderSegments = computed(() => olderCount(vueSegments.value, windowFrom.value));
 function onBubbleEdit(mid: string | null | undefined, kind: "content" | "reasoning"): void {
   if (!mid) return;
@@ -690,7 +691,7 @@ async function deleteMessagesFlow(sid: string, mid: string, confirmTextFor: Conf
       return null;
     });
     if (!plan || sid !== sessionID) return false;
-    if (!(await overlaysRef.value?.confirmAsk(confirmTextFor(plan)))) return false;
+    if (!(await overlaysRef.value?.confirmAsk(confirmTextFor(plan), true))) return false;
     try {
       await api.deleteMessages(sid, mid, plan.last_deleted_message_id);
       localRev++; // 删完消息列已经变了（等这一发重新拉窗口）
@@ -1458,8 +1459,6 @@ onUnmounted(() => {
 
 <template>
   <VApp>
-    <!-- 更新条：**悬浮**在输入栏上方（fixed + bottom: --composer-h + 0.5em），不占布局。
-         从前试过流内横幅：它会把整个应用往下推、独自占掉一大段；用户 2026-11-06 要求改回悬浮。 -->
     <UpdateBar
       v-if="updateReady || backendUpdate || backendUpdating"
       ref="updateRef"
@@ -1512,10 +1511,8 @@ onUnmounted(() => {
         <!-- 聊天 / 上下文：VTabsWindow 真正负责左右滑动；顶栏的 VTabs 只管 tab 条。 -->
         <VTabsWindow v-model="workspace" class="workspace-window">
         <VTabsWindowItem value="chat">
-        <div class="workspace-pane">
+        <div class="workspace-pane" :class="{ 'empty-draft': emptyDraft }">
         <main id="messages-vue">
-          <!-- 滚动容器（#messages-vue）现在**占满整个对话区**（滚动条因此贴最右缘，2026-10-14 用户定）；
-               阅读列约束（760 居中、两侧 56px、上下留白）落在这一层 —— 气泡别拉成整屏长句。 -->
           <div class="messages-inner">
           <!-- 会话加载骨架（2026-11-02）：先撑住消息列，别让人对着纯黑猜"是不是坏了"。 -->
           <div v-if="loadingSession" class="chat-skeleton" aria-label="正在加载会话" role="status">
@@ -1523,12 +1520,9 @@ onUnmounted(() => {
             <span class="sk-line sk-b"></span>
             <span class="sk-line sk-c"></span>
           </div>
-          <!-- 空草稿首屏（2026-11-02）：新会话不是一页纯黑 —— 欢迎语 + 当前助手/模型。
-               左栏的品牌位已删；这里只回答"我马上要跟谁说话"。 -->
-          <div v-if="draft && !chatRows.length" class="draft-welcome">
+          <div v-if="emptyDraft" class="draft-welcome">
             <h2>有什么想聊的？</h2>
             <p class="dw-sub">{{ draftAgentName }}<span class="dw-sep">·</span>{{ draftModelName }}</p>
-            <p class="dw-hint">直接在下面输入第一条消息开始；也可以用 <kbd>/</kbd> 开头的命令。</p>
           </div>
           <VBtn
             v-if="olderSegments > 0"

@@ -1,8 +1,5 @@
 <script setup lang="ts">
-// 底栏输入（2026-11-06 起：Vuetify 4 MD3 组件，渐进替换的第一块）。
-//
-// 行为不变：回车/发送键发送、生成中变停止、自增高 1..6 行、命令菜单、思考档位。
-// 外观交给 Vuetify 的 `md3` blueprint（VTextarea / VBtn），不再由手写 CSS 画输入框和按钮。
+// 一张输入卡：上方写消息，下方调整选项并发送；新对话只改变卡的位置。
 import { ref } from "vue";
 import { VBtn, VSheet, VTextarea } from "vuetify/components";
 import { ICONS } from "../assets/icons.ts";
@@ -73,7 +70,7 @@ defineExpose({ submit, setRunning });
 
 <template>
   <form id="composer" class="composer-vuetify" :class="{ zen: zen, 'zen-hidden': zen && zenHidden }" @submit.prevent="running ? stop() : submit()">
-    <VSheet class="composer-shell" color="surface-container-low" rounded="24">
+    <VSheet class="composer-shell" color="surface-container-low" rounded="xl">
       <VTextarea
         id="composer-input"
         class="composer-input"
@@ -106,11 +103,11 @@ defineExpose({ submit, setRunning });
           <VBtn
             v-if="!flow"
             type="button"
-            variant="text"
+            :variant="zen ? 'flat' : 'text'"
+            :color="zen ? 'secondary-container' : undefined"
             rounded="xl"
             size="small"
             class="zen-btn"
-            :class="{ on: zen }"
             :aria-pressed="zen"
             :title="zen ? '退出专注模式' : '专注模式：隐藏顶栏，输入栏空闲时自动收起一半'"
             @click="$emit('toggle-zen')"
