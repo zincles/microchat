@@ -7,6 +7,7 @@ import type { Ref } from "vue";
 import { agentOption, groupModelsByProvider, modelKey, modelOption, parseModelKey } from "../utils/format.ts";
 import type { ModelGroup } from "../utils/format.ts";
 import type { Agent, ModelListItem, Session, UpdateSessionRequest } from "../api/types.ts";
+import type { DraftPrefs } from "../types/app.ts";
 
 interface ModelsAgentsApi {
   models(): Promise<ModelListItem[]>;
@@ -25,12 +26,6 @@ interface SessionInfoLike {
   agent_id?: string;
   thinking_level?: string;
   [key: string]: unknown;
-}
-interface DraftPrefs {
-  provider: string;
-  model: string;
-  agent: string;
-  thinking_level?: string;
 }
 interface UseModelsAgentsOptions {
   api: ModelsAgentsApi;
@@ -102,6 +97,7 @@ export function useModelsAgents({
       // 草稿：改动只活在客户端，建会话时随 POST /sessions 一起带上。
       draftPrefs.provider = provider;
       draftPrefs.model = model;
+      draftPrefs.modelSelected = true;
       Object.assign(sessionInfo, { provider, model });
       paintSessionHeader();
       onRefreshStatusline("idle");

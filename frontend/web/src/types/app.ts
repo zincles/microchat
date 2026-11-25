@@ -17,6 +17,7 @@ export type SessionInfo = Partial<Session>;
 export type DraftPrefs = {
   provider: string;
   model: string;
+  modelSelected: boolean;
   agent: string;
   thinking_level: string;
   native_tools_disabled: string[];

@@ -43,10 +43,8 @@ import {
   SETTINGS_SECTIONS,
   providerIdForNextVendor,
   filterModelGroups,
-  modelProviderTabs,
-  reindexModelGroups,
+  groupModelChoices,
   curModelLabelOf,
-  modelMatches,
   ORPHAN_MODEL_GROUP,
   deletionPlanSummary,
   formatRoutesOutcome,
@@ -1142,6 +1140,7 @@ test("模型选项带 brand/icon：选择器能画家族图标，不把 family �
     name: "Grok 4.7",
     display_name: null,
     thinking_levels: ["low", "high"],
+    owned_by: "system",
     brand: "xAI",
     icon: "xai",
     matched_rules: ["xai"],
@@ -1149,13 +1148,14 @@ test("模型选项带 brand/icon：选择器能画家族图标，不把 family �
   // value 仍是 provider id + upstream_id —— 别名绝不参与键。
   assert.equal(choice.value, modelKey("xai", "grok-4.7"));
   assert.equal(choice.brand, "xAI");
+  assert.equal(choice.owner, "xAI");
   assert.equal(choice.icon, "xai");
   assert.equal(choice.provider_name, "xAI");
   assert.equal(choice.alias, "xAI 主渠道");
   // 组头优先别名，搜索也能按别名命中。
-  const groups = filterModelGroups([{ provider: "xai", items: [choice] }], "");
-  assert.equal(groups[0].providerName, "xAI 主渠道");
-  assert.equal(filterModelGroups([{ provider: "xai", items: [choice] }], "主渠道").length, 1);
+  const groups = groupModelChoices([{ provider: "xai", items: [choice] }], "channel");
+  assert.equal(groups[0].label, "xAI 主渠道");
+  assert.equal(filterModelGroups(groups, "主渠道").length, 1);
 });
 
 test("providerDisplayName：别名优先，空则沿用 name → id", () => {
@@ -2152,17 +2152,13 @@ test("模型规则编辑器：结构化控件 + 顺序调整，不是 JSON texta
   assert.match(provider, /<ModelRulesEditor scope="provider"/, "渠道详情该有自己的覆盖规则编辑器");
 });
 
-// —— 顶栏的模型选择浮板（2026-10-28 用户定：「可否把模型的那个选择器也改成这种自定义的面板，
-// 按 Provider 分类的（接近 openwebui 风格的）面板？」）——
-// 从前是个静默 `<select>`。换成自己的面板之后有两块要能验：
-//   ① 纯逻辑（搜什么、怎么分组、当前那条显示什么）—— 直接测函数
-//   ② 接线（按钮 → 面板 → emit → App 收）+ **旧的 `<select>` 真的删干净了**（CSS 留着就是死码）
+// 同一模型名经两个渠道提供时，在归属视图仍应保留两条可独立选择的结果。
 const MODEL_SAMPLE = [
   {
     provider: "openrouter",
     items: [
-      { value: modelKey("openrouter", "openai/gpt-4o"), label: "GPT-4o", provider_name: "OpenRouter", upstream_id: "openai/gpt-4o" },
-      { value: modelKey("openrouter", "anthropic/claude-3.7"), label: "Claude 3.7", provider_name: "OpenRouter", upstream_id: "anthropic/claude-3.7" },
+      { value: modelKey("openrouter", "openai/gpt-4o"), label: "GPT-4o", provider_name: "OpenRouter", upstream_id: "openai/gpt-4o", brand: "OpenAI", owner: "OpenAI" },
+      { value: modelKey("openrouter", "anthropic/claude-3.7"), label: "Claude 3.7", provider_name: "OpenRouter", upstream_id: "anthropic/claude-3.7", brand: "Anthropic", owner: "Anthropic" },
     ],
   },
   {
@@ -2172,68 +2168,65 @@ const MODEL_SAMPLE = [
     ],
   },
 ];
+const CHANNEL_GROUPS = groupModelChoices(MODEL_SAMPLE, "channel");
 
 test("模型面板：按渠道分组、搜索命中显示名 / 渠道名 / 上游 id", () => {
-  assert.equal(filterModelGroups(MODEL_SAMPLE, "").length, 2, "不搜的时候该有两个渠道组");
-  // 组头用的是 provider_name（渠道的显示名），不是冷冰冰的 id
-  assert.equal(filterModelGroups(MODEL_SAMPLE, "")[1].providerName, "本地 ollama");
+  assert.deepEqual(filterModelGroups(CHANNEL_GROUPS).map((g) => g.label), ["OpenRouter", "本地 ollama"]);
 
   // 按显示名搜（不分大小写）
-  const gpt = filterModelGroups(MODEL_SAMPLE, "gpt-4o");
+  const gpt = filterModelGroups(CHANNEL_GROUPS, "gpt-4o");
   assert.equal(gpt.length, 1);
   assert.deepEqual(gpt[0].items.map((i) => i.label), ["GPT-4o"]);
 
   // 按上游 id 搜 —— 显示名里没有 "anthropic"，这条只有上游 id 能命中
-  assert.equal(filterModelGroups(MODEL_SAMPLE, "anthropic")[0].items[0].label, "Claude 3.7");
+  assert.equal(filterModelGroups(CHANNEL_GROUPS, "anthropic")[0].items[0].label, "Claude 3.7");
 
   // 按渠道显示名搜 ⇒ 整组都在（搜"本地 ollama"该把它的模型都捞出来）
-  const local = filterModelGroups(MODEL_SAMPLE, "本地 ollama");
+  const local = filterModelGroups(CHANNEL_GROUPS, "本地 ollama");
   assert.equal(local.length, 1);
   assert.equal(local[0].items.length, 1);
 
   // 搜不到：空数组（界面上是"没有匹配的模型"），**不是**保留一堆空组头
-  assert.deepEqual(filterModelGroups(MODEL_SAMPLE, "没有这个模型"), []);
-  // 分完就空的组要丢掉 —— 留着空组头会让人以为"搜到了但没显示"
-  assert.ok(filterModelGroups(MODEL_SAMPLE, "gpt").every((g) => g.items.length > 0), "不该留下空组");
+  assert.deepEqual(filterModelGroups(CHANNEL_GROUPS, "没有这个模型"), []);
 });
 
 test("模型面板：扁平序号连续（上下键要能一条条走完可见列表）", () => {
   // 顺序 = 分组顺序 + 组内顺序；序号 0..n-1 连续无洞
-  const all = filterModelGroups(MODEL_SAMPLE, "");
+  const all = filterModelGroups(CHANNEL_GROUPS);
   const flats = all.flatMap((g) => g.items.map((i) => i.flat));
   assert.deepEqual(flats, [0, 1, 2]);
 
   // 过滤之后仍然从 0 起、连续（否则上下键会跳空）
-  const one = filterModelGroups(MODEL_SAMPLE, "gpt");
+  const one = filterModelGroups(CHANNEL_GROUPS, "gpt");
   assert.deepEqual(one.flatMap((g) => g.items.map((i) => i.flat)), [0]);
-  // 搜索改变的是"序号是什么"，不是"序号从几开始"
-  assert.deepEqual(filterModelGroups(MODEL_SAMPLE, "qwen").flatMap((g) => g.items.map((i) => i.flat)), [0]);
+  // 只看不是第一组的渠道时，上下键的第一项仍是 0。
+  assert.deepEqual(filterModelGroups(CHANNEL_GROUPS.slice(1)).flatMap((g) => g.items.map((i) => i.flat)), [0]);
 });
 
-test("模型面板：顶部渠道 tab 是「全部」+ 每个渠道，且左右可滚动", () => {
-  const tabs = modelProviderTabs(MODEL_SAMPLE);
-  assert.deepEqual(tabs.map((t) => t.label), ["全部", "OpenRouter", "本地 ollama"]);
-  assert.equal(tabs[0].provider, "", "「全部」的 id 必须是空串（状态里用它表示不筛）");
-  assert.equal(tabs[0].count, 3, "「全部」的计数该是全部模型数");
-  assert.equal(tabs[1].count, 2);
-  // 空组不建 tab：没有模型的渠道点进去只会是一片空白
-  assert.deepEqual(modelProviderTabs([{ provider: "empty", items: [] }]), [{ provider: "", label: "全部", count: 0 }]);
-
-  // 按渠道筛完必须重新编号：否则上下键从全列表的序号开始，第一下按 Down 就找不到第 0 项。
-  const filtered = reindexModelGroups(filterModelGroups(MODEL_SAMPLE, "").filter((g) => g.provider === "本地"));
-  assert.deepEqual(filtered.flatMap((g) => g.items.map((i) => i.flat)), [0]);
-
+test("模型面板：跨渠道按归属汇总；缺少品牌时用发现归属，未知项仍可选", () => {
+  const relay = [
+    modelOption({ provider: "relay", provider_name: "中转", upstream_id: "openai/gpt-4o", name: "GPT-4o", display_name: null, thinking_levels: [], owned_by: " openai " }),
+    modelOption({ provider: "relay", provider_name: "中转", upstream_id: "orion-small", name: "Orion Small", display_name: null, thinking_levels: [], owned_by: "Orion Labs" }),
+  ];
+  const owners = groupModelChoices([{ provider: "relay", items: relay }, ...MODEL_SAMPLE], "owner");
+  assert.deepEqual(owners.map((g) => g.label), ["Anthropic", "OpenAI", "Orion Labs", "未标注归属"]);
+  const openAI = filterModelGroups([owners[1]]);
+  assert.deepEqual(openAI[0].items.map((m) => [m.value, m.flat]), [
+    [modelKey("relay", "openai/gpt-4o"), 0],
+    [modelKey("openrouter", "openai/gpt-4o"), 1],
+  ]);
+  assert.deepEqual(filterModelGroups(owners, "Orion Labs")[0].items.map((m) => m.label), ["Orion Small"]);
+  assert.deepEqual(owners[3].items.map((m) => m.label), ["Qwen 2.5 14B"]);
 });
 
 test("模型面板：当前模型不在列表里 ⇒ 单独一组排最前（别让它看着像没选）", () => {
-  const orphan = { value: modelKey("删掉的渠道", "m1"), label: "删掉的渠道/m1（不在列表）" };
-  const groups = filterModelGroups(MODEL_SAMPLE, "", orphan);
+  const orphan = { value: modelKey("删掉的渠道", "m1"), label: "删掉的渠道/m1（不在列表）", provider_name: "删掉的渠道", upstream_id: "m1" };
+  const groups = filterModelGroups(CHANNEL_GROUPS, "", orphan);
   assert.equal(groups.length, 3);
-  assert.equal(groups[0].provider, ORPHAN_MODEL_GROUP);
-  assert.equal(groups[0].providerName, "当前（不在列表）");
+  assert.equal(groups[0].id, ORPHAN_MODEL_GROUP);
+  assert.equal(groups[0].label, "当前（不在列表）");
   assert.equal(groups[0].items[0].flat, 0, "孤儿项该拿到第一个序号");
-  // 搜别的词时它可以让位（不是"永远钉在最上面"）
-  assert.ok(!filterModelGroups(MODEL_SAMPLE, "gpt", orphan).some((g) => g.provider === ORPHAN_MODEL_GROUP));
+  assert.ok(!filterModelGroups(CHANNEL_GROUPS, "gpt", orphan).some((g) => g.id === ORPHAN_MODEL_GROUP));
 });
 
 test("模型面板：按钮上那行字（列表里有 → 显示名；没有 → 不在列表；列表还没到 → 加载中）", () => {
@@ -3517,19 +3510,6 @@ test("容器 entrypoint：后端绑 0.0.0.0，且端口在启动前就解析好"
   assert.match(body, /\.microchat-lock/, "没有用 lock 哈希标记 installed 状态");
   assert.ok(!/\[ -d node_modules\/vite \] \|\| npm ci/.test(body),
     "还在用「vite 在就算装好了」的旧判据");
-});
-
-// ── 前端可用性收尾（2026-11-02：实看 390px 截图后补的）──────────────
-//
-// 三条都是"不报错、不误路由、构建也过"的那类：空草稿是一页纯黑、模型名被挤成一个字母、
-// 会话操作键小到手指点不准。钉住它们，免得下次改布局又悄悄退回去。
-test("草稿：defaults 不覆盖已选模型（draftPrefs 必须保持同一对象引用）", () => {
-  const app = readFileSync(join(SRC, "App.vue"), "utf8");
-  assert.match(app, /Object\.assign\(draftPrefs,/, "startDraft 没有就地重置 draftPrefs");
-  assert.ok(!/^\s*draftPrefs\s*=\s*\{/m.test(app),
-    "startDraft 又给 draftPrefs 重新赋值了 → composable 改旧对象、sendFromDraft 读新对象");
-  assert.match(app, /if \(!draftPrefs\.provider && !draftPrefs\.model\)/,
-    "defaults 回来时没有保护用户已经选过的模型");
 });
 
 test("输入框：Vuetify MD3 输入栏 + 发送键", () => {

@@ -3,8 +3,7 @@
 // 左上角只剩**当前模型平铺字**；右侧只在某一侧栏收着时才出它的开关。
 // Agent 入口在 Composer 的 toolbar slot 最左端（AgentMenu.vue）。
 //
-// 模型选择器（2026-10-28 用户定）：从静默 `<select>` 换成自定义浮板（按渠道分组 + 搜索），
-// 与 Agent 选人、上下文环那两个浮板同一族。
+// 模型选择器按归属或渠道浏览。行身份始终是渠道与上游 ID 的组合。
 //
 // Agent 入口（2026-11-10 用户定）：从顶栏挪到输入栏上方、推理/工具按钮左侧；
 // 圆形头像 = 选人（AgentMenu.vue），状态行小字里那个助手名仍管"显示"。
@@ -13,7 +12,7 @@ import { ref, computed, nextTick, watch, type Ref } from "vue";
 import { ClickOutside as vClickOutside } from "vuetify/directives";
 import { useChatMenu } from "../composables/useChatMenu.ts";
 import {
-  VBtn, VCard, VList, VListItem, VListSubheader, VProgressLinear,
+  VBtn, VBtnToggle, VCard, VList, VListItem, VListSubheader, VProgressLinear,
   VTab, VTabs, VWindow, VWindowItem,
 } from "vuetify/components";
 import ModelIcon from "./ModelIcon.vue";
@@ -29,12 +28,11 @@ import {
   contextOverBudget,
   curModelLabelOf,
   filterModelGroups,
-  modelProviderTabs,
-  reindexModelGroups,
+  groupModelChoices,
   modelKey,
   parseModelKey,
 } from "../utils/format.ts";
-import type { ModelChoice, ModelGroup } from "../utils/format.ts";
+import type { ModelBrowseMode, ModelChoice, ModelGroup } from "../utils/format.ts";
 import type { ContextUsage, FlowActiveNode, MacroReport, Queue, Session, TaskBoard, TaskRecord } from "../api/types.ts";
 
 type SessionInfo = Partial<Session>;
@@ -60,6 +58,8 @@ const props = withDefaults(defineProps<{
   workspace?: string;
   // loading：会话正在加载（模型列表也还没就位）⇒ 不拿旧/裸 id 闪一下，直接骨架。
   loading?: boolean;
+  modelSelectionPending?: boolean;
+  savingModelDefault?: boolean;
   // flow：FlowAgent 暂不共用普通 Agent 的上下文面板 ⇒ 绿色环也停用（连任务浮板一起收）。
   flow?: boolean;
   flowCalls?: number;
@@ -75,6 +75,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   "toggle-left": [];
   "select-model": [value: string];
+  "save-model-default": [];
   "select-workspace": [workspace: string];
   "save-overrides": [overrides: Record<string, unknown>];
   "cancel-queue": [id: string];
@@ -89,18 +90,11 @@ const curModel = ref("");
 // 会话绑的模型不在列表里（渠道被删、模型下架）⇒ 补一条"不在列表"，别让它看起来像没选
 // —— 那是有值，只是列表里没有（显示谎言比多一行丑得多）。
 const orphanModel = ref<ModelChoice | null>(null);
-// —— 模型选择器（2026-10-28 用户定）——
-// 从前这儿是个静默 `<select>`：**原生选项**在 470 个模型的聚合站上是一条滚不完的长菜单，
-// 同一渠道的模型还不挨在一起、也没法搜。现在点开一块与 Agent 选人同族的浮板：
-// 搜索框 + 按渠道分组（组头带渠道名与条数）+ 当前项打勾 + 上下键与回车。
-//
-// ⚠ 顺带删掉了 `modelSel` / `reapplyValues` 那套补写：那是给 `<select>` 打的补丁 ——
-//   选项异步到、`value` 先落进 DOM 会被浏览器换掉。既然是自己的面板，值就只是数据。
+// 搜索在两种分组方式间保留；分组页签和结果位次则分别从头开始。
 const modelOpen = useChatMenu("model");
 const modelQuery = ref("");
-// 顶部的渠道 tab："" = 全部；其余 = 该渠道的 provider id。
-// 2026-11-18 用户定：别让人滚过几百个模型去找某个渠道 —— 先点 tab 再在该渠道里找。
-const modelProvider = ref("");
+const modelBrowse = ref<ModelBrowseMode>("owner");
+const modelGroupId = ref("");
 const modelTabsEl = ref<HTMLElement | null>(null);
 const modelSearchEl = ref<HTMLInputElement | null>(null);
 const modelMenuEl = ref<HTMLElement | null>(null);
@@ -112,7 +106,7 @@ const curModelLabel = computed(() => {
   return curModelLabelOf(modelGroups.value, curModel.value, orphanModel.value);
 });
 
-// 过滤 + 分组 + 扁平序号都在 `utils/format.ts` 的 `filterModelGroups` 里（那边才测得到"搜到了什么"）。
+// 当前组合不依赖搜索或分组；切换分组只改变浏览方式。
 const curModelChoice = computed<ModelChoice | null>(() => {
   for (const group of modelGroups.value) {
     const hit = (group.items ?? []).find((item) => item.value === curModel.value);
@@ -121,18 +115,22 @@ const curModelChoice = computed<ModelChoice | null>(() => {
   return orphanModel.value;
 });
 
-const filteredGroups = computed(() => filterModelGroups(modelGroups.value, modelQuery.value, orphanModel.value));
-const modelProviderTabsList = computed(() => modelProviderTabs(modelGroups.value));
-// 选了渠道 tab 就只留那一组；然后重新编号（否则上下键从全列表的序号开始）。
+const browseGroups = computed(() => groupModelChoices(modelGroups.value, modelBrowse.value));
+const modelTabs = computed(() => [
+  { id: "", label: "全部", count: browseGroups.value.reduce((n, g) => n + g.items.length, 0) },
+  ...browseGroups.value.map(({ id, label, items }) => ({ id, label, count: items.length })),
+]);
+const selectedModelGroup = computed(() => browseGroups.value.find((g) => g.id === modelGroupId.value));
+const selectedModelTab = computed(() => selectedModelGroup.value?.id ?? "");
 const visibleGroups = computed(() => {
-  const picked = modelProvider.value
-    ? filteredGroups.value.filter((g) => g.provider === modelProvider.value)
-    : filteredGroups.value;
-  return reindexModelGroups(picked);
+  const group = selectedModelGroup.value;
+  return group
+    ? filterModelGroups([group], modelQuery.value)
+    : filterModelGroups(browseGroups.value, modelQuery.value, orphanModel.value);
 });
 const modelFlatCount = computed(() => visibleGroups.value.reduce((n, g) => n + g.items.length, 0));
 
-// 渠道 tab：鼠标拖动 / 滚轮都横向滚（2026-11-18 用户定）。
+// 归属和渠道共用同一条可横向拖动的页签栏。
 // 触屏交给浏览器的原生横向滚动；鼠标拖动才自己接管（按下期间挂 window 监听，
 // 不 setPointerCapture —— 捕获会把 click 的 target 换成容器，tab 就点不动了）。
 let tabDrag: { pointerId: number; startX: number; startLeft: number; moved: boolean } | null = null;
@@ -159,7 +157,7 @@ function onTabsPointerDown(e: PointerEvent): void {
     window.removeEventListener("pointerup", end);
     window.removeEventListener("pointercancel", end);
     if (moved) {
-      // 拖动结束后的那次 click 不是"选渠道"，只是拖拽的尾巴。
+      // 拖动结束后的 click 只是拖拽的尾巴，不是选页签。
       // click 在 pointerup 之后同步触发；超时兜底（松在空白处时没有 click）。
       suppressTabClick = true;
       setTimeout(() => { suppressTabClick = false; }, 0);
@@ -178,16 +176,19 @@ function onTabsWheel(e: WheelEvent): void {
   el.scrollLeft += delta;
   e.preventDefault();
 }
-function selectModelProvider(provider: string): void {
-  if (suppressTabClick) return;
-  modelProvider.value = provider;
+function setModelBrowse(mode: unknown): void {
+  if ((mode !== "owner" && mode !== "channel") || mode === modelBrowse.value) return;
+  modelBrowse.value = mode;
+  modelGroupId.value = "";
+  if (modelTabsEl.value) modelTabsEl.value.scrollLeft = 0;
 }
-function moveModelProvider(delta: number): void {
-  const tabs = modelProviderTabsList.value;
-  const index = tabs.findIndex((tab) => tab.provider === modelProvider.value);
-  const next = tabs[(index + delta + tabs.length) % tabs.length];
-  if (!next) return;
-  selectModelProvider(next.provider);
+function selectModelTab(id: string): void {
+  if (!suppressTabClick) modelGroupId.value = id;
+}
+function moveModelTab(delta: number): void {
+  const tabs = modelTabs.value;
+  const index = tabs.findIndex((tab) => tab.id === selectedModelTab.value);
+  selectModelTab(tabs[(index + delta + tabs.length) % tabs.length].id);
   nextTick(() => {
     const active = modelTabsEl.value?.querySelector<HTMLButtonElement>('[aria-selected="true"]');
     active?.focus({ preventScroll: true });
@@ -217,7 +218,7 @@ function toggleModel(): void {
   if (modelOpen.value) { modelPanel.close(); return; }
   modelOpen.value = true;
   modelQuery.value = "";
-  modelProvider.value = "";
+  modelGroupId.value = "";
   modelActive.value = -1;
   // 打开就聚焦搜索框：几百个模型，第一次动作必然是打字。
   nextTick(() => { if (modelOpen.value) modelSearchEl.value?.focus({ preventScroll: true }); });
@@ -226,6 +227,12 @@ function pickModel(value?: string | null): void {
   modelPanel.close();
   // 点当前那一项 = 什么都不做（别为了一次误点发一个 PATCH）。
   if (value && value !== curModel.value) emit("select-model", value);
+}
+function modelItemDetail(model: ModelChoice): string {
+  const upstream = model.upstream_id !== model.label ? model.upstream_id : "";
+  if (modelBrowse.value === "channel") return upstream;
+  const channel = model.alias || model.provider_name;
+  return upstream ? `${channel} · ${upstream}` : channel;
 }
 function flatItemAt(index: number): ModelChoice | null {
   for (const g of visibleGroups.value) {
@@ -256,8 +263,8 @@ function onModelKey(e: KeyboardEvent): void {
     if (hit) pickModel(hit.value);
   }
 }
-// 筛选条件变化后从头看结果，同时清掉旧位次，避免新渠道仍停在上一组的列表末尾。
-watch([modelQuery, modelProvider], () => {
+// 筛选或清单变化后从头看结果，不能让键盘指向上一份列表的下标。
+watch([modelQuery, selectedModelGroup, browseGroups], () => {
   modelActive.value = -1;
   nextTick(() => { if (modelMenuEl.value) modelMenuEl.value.scrollTop = 0; });
 });
@@ -284,7 +291,7 @@ function syncOrphanModel(): void {
     : null;
 }
 function setSession(info: SessionInfo | Partial<Session>): void {
-  if (info.provider && info.model) curModel.value = modelKey(info.provider, info.model);
+  curModel.value = info.provider && info.model ? modelKey(info.provider, info.model) : "";
   setSessionOverrides(info as SessionInfo);
   syncOrphanModel();
 }
@@ -563,8 +570,7 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
       @click="$emit('toggle-left')"
       v-html="leftSvg"
     ></button>
-    <!-- 当前模型（2026-10-28 用户定：换成自定义面板，按渠道分组）。
-         外壳 `span` 只管定位（浮板要贴着按钮掉，而不是贴着栏的左内边距）。 -->
+    <!-- 浮板贴着模型按钮定位，而不是贴着顶栏的左内边距。 -->
     <span class="model-anchor">
       <button
         id="model-btn"
@@ -599,7 +605,7 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
             v-model="modelQuery"
             class="model-search"
             type="search"
-            :placeholder="modelProvider ? '搜索这个渠道的模型…' : '搜索模型 / 渠道…'"
+            placeholder="搜索模型、归属或渠道…"
             aria-label="搜索模型"
             role="combobox"
             aria-expanded="true"
@@ -608,70 +614,89 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
             :aria-activedescendant="modelActive >= 0 ? `model-option-${modelActive}` : undefined"
             @keydown="onModelKey"
           />
-          <!-- 顶部渠道 tab：左右滚动，"全部"永远在最左。选完 tab 后只列这个渠道的模型，
-               不必在几百个模型里滚到某个渠道再找。 -->
+          <VBtnToggle
+            :model-value="modelBrowse"
+            class="model-browse"
+            mandatory divided density="compact" color="secondary-container"
+            role="group" aria-label="模型分组方式"
+            @update:model-value="setModelBrowse"
+          >
+            <VBtn value="owner" :aria-pressed="modelBrowse === 'owner'">按归属</VBtn>
+            <VBtn value="channel" :aria-pressed="modelBrowse === 'channel'">按渠道</VBtn>
+          </VBtnToggle>
           <div
             ref="modelTabsEl"
-            class="model-provider-tabs"
+            class="model-group-tabs"
             role="tablist"
-            aria-label="按渠道筛选模型"
+            :aria-label="modelBrowse === 'owner' ? '按归属筛选模型' : '按渠道筛选模型'"
             @pointerdown="onTabsPointerDown"
             @wheel="onTabsWheel"
             @dragstart.prevent
           >
             <button
-              v-for="tab in modelProviderTabsList"
-              :key="tab.provider || '__all__'"
+              v-for="tab in modelTabs"
+              :key="tab.id"
               type="button"
               role="tab"
-              class="model-provider-tab"
-              :class="{ active: modelProvider === tab.provider }"
-              :aria-selected="modelProvider === tab.provider ? 'true' : 'false'"
-              aria-controls="model-options"
+              class="model-group-tab"
+              :class="{ active: selectedModelTab === tab.id }"
+              :aria-selected="selectedModelTab === tab.id"
+              aria-controls="model-group-panel"
               :title="`${tab.label}（${tab.count} 个模型）`"
-              :tabindex="modelProvider === tab.provider ? 0 : -1"
-              @keydown.right.prevent="moveModelProvider(1)"
-              @keydown.left.prevent="moveModelProvider(-1)"
-              @click="selectModelProvider(tab.provider)"
+              :tabindex="selectedModelTab === tab.id ? 0 : -1"
+              @keydown.right.prevent="moveModelTab(1)"
+              @keydown.left.prevent="moveModelTab(-1)"
+              @click="selectModelTab(tab.id)"
             >
               {{ tab.label }}
             </button>
           </div>
-          <div id="model-options" ref="modelMenuEl" class="model-list" role="listbox" aria-label="可用模型">
-            <template v-for="g in visibleGroups" :key="g.provider">
-              <div v-if="!modelProvider" class="model-group-head">
-                <span class="model-group-name">{{ g.providerName }}</span>
-                <span class="model-group-count">{{ g.items.length }}</span>
+          <div id="model-group-panel" class="model-results" role="tabpanel" :aria-label="selectedModelGroup?.label ?? '全部模型'">
+            <div id="model-options" ref="modelMenuEl" class="model-list" role="listbox" aria-label="可用模型">
+              <template v-for="g in visibleGroups" :key="g.id">
+                <div v-if="!selectedModelTab" class="model-group-head">
+                  <span class="model-group-name">{{ g.label }}</span>
+                  <span class="model-group-count">{{ g.items.length }}</span>
+                </div>
+                <button
+                  v-for="m in g.items"
+                  :key="m.value"
+                  :id="`model-option-${m.flat}`"
+                  role="option"
+                  :aria-selected="m.value === curModel"
+                  tabindex="-1"
+                  type="button"
+                  class="model-item"
+                  :class="{ sel: m.value === curModel, active: m.flat === modelActive }"
+                  :title="`${m.alias || m.provider_name} / ${m.upstream_id || m.label}`"
+                  @click="pickModel(m.value)"
+                >
+                  <ModelIcon :icon="m.icon" :brand="m.brand" size="lg" />
+                  <span class="model-item-copy">
+                    <span class="model-name">{{ m.label }}</span>
+                    <span v-if="modelBrowse === 'owner' || (m.upstream_id && m.upstream_id !== m.label)" class="model-item-id">{{ modelItemDetail(m) }}</span>
+                  </span>
+                  <span v-if="m.value === curModel" class="model-check">✓ 当前</span>
+                </button>
+              </template>
+              <div v-if="!visibleGroups.length" class="model-empty" role="status">
+                <strong>没有匹配的模型</strong>
+                <span>试试其他名称、上游 ID，或选择其他分组。</span>
               </div>
-              <button
-                v-for="m in g.items"
-                :key="m.value"
-                :id="`model-option-${m.flat}`"
-                role="option"
-                :aria-selected="m.value === curModel"
-                tabindex="-1"
-                type="button"
-                class="model-item"
-                :class="{ sel: m.value === curModel, active: m.flat === modelActive }"
-                :title="`${g.providerName} / ${m.upstream_id || m.label}`"
-                @click="pickModel(m.value)"
-              >
-                <ModelIcon :icon="m.icon" :brand="m.brand" size="lg" />
-                <span class="model-item-copy">
-                  <span class="model-name">{{ m.label }}</span>
-                  <span v-if="m.upstream_id && m.upstream_id !== m.label" class="model-item-id">{{ m.upstream_id }}</span>
-                </span>
-                <span v-if="m.value === curModel" class="model-check">✓ 当前</span>
-              </button>
-            </template>
-            <div v-if="!visibleGroups.length" class="model-empty" role="status">
-              <strong>没有匹配的模型</strong>
-              <span>试试其他名称、上游 ID，或切换渠道。</span>
             </div>
           </div>
           <div class="model-menu-foot">
-            <span role="status">{{ modelFlatCount }} 个模型</span>
-            <span class="model-key-hint">↑ ↓ 选择 · Enter 切换</span>
+            <div class="model-menu-meta">
+              <span role="status">{{ modelFlatCount }} 个模型</span>
+              <span class="model-key-hint">↑ ↓ 选择 · Enter 切换</span>
+            </div>
+            <VBtn
+              class="model-default-btn" variant="tonal" color="primary" size="small" type="button"
+              :disabled="!curModel || loading || modelSelectionPending"
+              :loading="savingModelDefault"
+              title="将当前模型和渠道设为新会话默认"
+              @click="$emit('save-model-default')"
+            >设当前为新会话默认</VBtn>
           </div>
         </VCard>
       </template>

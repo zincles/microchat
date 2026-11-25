@@ -124,36 +124,34 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 /* 顶栏模型与上下文面板共用表面；外点关闭由 ClickOutside 判断，不遮挡其它入口。 */
 .agent-menu { position: absolute; z-index: 2; top: calc(100% + 0.4em); left: 1em; min-width: 12em; max-width: 20em; max-height: 60vh; overflow-y: auto; overscroll-behavior: contain; background: var(--md-surface-container); color: var(--md-on-surface); border-radius: var(--md-shape-xs); padding: 0.35em 0; box-shadow: var(--md-elev-2); animation: md-fade-in var(--md-dur-150) var(--md-ease-standard); }
 .agent-empty { margin: 0.4em 1em; color: var(--md-on-surface-variant); font-size: var(--md-type-body-medium); }
-/* —— 模型选择浮板（2026-10-28 用户定：按渠道分组，接近 OpenWebUI 那种）——
- * 壳子直接借 `.agent-menu`（--tg-float / --shadow-3 / --r-shell），这里只改三件事：
- * ① 定位贴按钮（`left: 0`，父级是 `.model-anchor`）；② 滚动交给列表 —— 搜索框必须留在
- * 上面不跟着滚；③ 宽一点（渠道名 + 模型名一行要放得下，20em 太窄会切掉模型名）。
- * 为什么要有搜索框：聚合站动辄几百个模型（OpenRouter 实测 470），一条原生长菜单里
- * 既搜不了、同一渠道的模型也不挨在一起。 */
+/* 模型选择器贴着入口展开。分组方式、搜索与默认值操作不随模型列表滚动。 */
 .model-menu { left: 0; width: min(34em, calc(100vw - 2em)); min-width: 0; max-width: calc(100% + 5em); height: min(40em, calc(var(--vvh, 100dvh) - var(--topbar-h, var(--chat-bar)) - 2em)); max-height: none; display: flex; flex-direction: column; gap: 0.6em; font: inherit; }
 /* 标题、筛选与页脚固定，只有结果列表滚动；结果变少时面板不跟着收缩。 */
 .agent-menu.model-menu { padding: 0; overflow: hidden; border-radius: var(--md-shape-md); box-shadow: var(--md-elev-3); scrollbar-gutter: auto; }
 .model-menu-head { display: flex; align-items: center; justify-content: space-between; gap: 1em; flex: none; padding: 0.6em 1em 0; }
 .model-menu-head h2 { margin: 0; font-size: var(--md-type-title-medium); font-weight: 500; }
+#app .model-menu-head .v-btn { width: var(--md-touch-target); height: var(--md-touch-target); }
 .model-menu .model-item { min-height: 3.6em; padding: 0.65em 0.8em; border-radius: var(--md-shape-sm); }
 .model-menu .model-search { min-height: 2.8em; flex: none; }
-.model-menu-foot { display: flex; align-items: center; justify-content: space-between; gap: 0.6em; flex: none; padding: 0.7em 1.25em; border-top: 1px solid var(--md-outline-variant); color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
+.model-menu-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.6em; flex: none; padding: 0.4em 1em; border-top: 1px solid var(--md-outline-variant); color: var(--md-on-surface-variant); }
+.model-menu-meta { display: grid; gap: 0.2em; font-size: var(--md-type-label-small); }
+#app .model-menu-foot .model-default-btn { min-height: var(--md-touch-target); }
 .model-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 10em; padding: 1em; gap: 0.5em; color: var(--md-on-surface-variant); font-size: var(--md-type-body-medium); text-align: center; }
 .model-empty strong { color: var(--md-on-surface); font-weight: 500; }
-/* 渠道 tab（2026-11-18 用户定）：可横向滚动，"全部"在最左；点 tab 只列该渠道的模型。
- * 只在这里滚，不带着搜索框与模型列表一起滚 —— 它们各自有自己的滚动区。 */
-.model-provider-tabs { display: flex; align-items: stretch; gap: 0.1em; flex: none; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; margin: 0 1em; padding: 0; border-bottom: 1px solid var(--md-outline-variant); scrollbar-width: thin; cursor: grab; user-select: none; touch-action: pan-x; }
-.model-provider-tabs.dragging { cursor: grabbing; }
-.model-provider-tabs.dragging .model-provider-tab { cursor: grabbing; }
-.model-provider-tab { flex: 0 0 auto; min-height: 0; border: none; border-bottom: 2px solid transparent; border-radius: 0; padding: 0.5em 0.55em 0.4em; background: none; color: var(--md-on-surface-variant); font: inherit; font-size: var(--md-type-label-large); font-weight: 500; white-space: nowrap; cursor: inherit; transition: color var(--md-dur-150) var(--md-ease-standard), border-color var(--md-dur-150) var(--md-ease-standard), background-color var(--md-dur-150) var(--md-ease-standard); }
-.model-provider-tab:hover { color: var(--md-on-surface); background: color-mix(in srgb, var(--md-on-surface) 6%, transparent); }
-.model-provider-tab.active { color: var(--md-primary); border-bottom-color: var(--md-primary); }
+.model-browse { display: flex; flex: none; margin: 0 1em; }
+#app .model-browse .v-btn { flex: 1; min-height: var(--md-touch-target); }
+/* 两种分组共用横向滚动的页签栏，「全部」在最左。 */
+.model-group-tabs { display: flex; align-items: stretch; gap: 0.1em; flex: none; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; margin: 0 1em; padding: 0; border-bottom: 1px solid var(--md-outline-variant); scrollbar-width: thin; cursor: grab; user-select: none; touch-action: pan-x; }
+.model-group-tabs.dragging { cursor: grabbing; }
+.model-group-tab { flex: 0 0 auto; min-width: var(--md-touch-target); min-height: var(--md-touch-target); border: none; border-bottom: 2px solid transparent; border-radius: 0; padding: 0.4em 0.65em; background: none; color: var(--md-on-surface-variant); font: inherit; font-size: var(--md-type-label-large); font-weight: 500; white-space: nowrap; cursor: inherit; transition: color var(--md-dur-150) var(--md-ease-standard), border-color var(--md-dur-150) var(--md-ease-standard), background-color var(--md-dur-150) var(--md-ease-standard); }
+.model-group-tab:hover { color: var(--md-on-surface); background: var(--hover); }
+.model-group-tab.active { color: var(--md-primary); border-bottom-color: var(--md-primary); }
 
 .model-search { width: calc(100% - 2em); margin: 0 1em; box-sizing: border-box; min-height: 3em; padding: 0 1em; border: none; border-radius: var(--md-shape-full); background: var(--md-surface-container-high); color: var(--md-on-surface); font: inherit; font-size: var(--md-type-body-medium); outline: none; transition: background-color var(--md-dur-150) var(--md-ease-standard), box-shadow var(--md-dur-150) var(--md-ease-standard); }
-.model-list { overflow-y: auto; flex: 1 1 auto; min-height: 0; padding: 0 0.6em 0.6em; overscroll-behavior: contain; }
+.model-results { display: flex; flex: 1; min-height: 0; }
+.model-list { overflow-y: auto; flex: 1; min-width: 0; padding: 0 0.6em 0.6em; overscroll-behavior: contain; }
 .model-group-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.6em; margin: 0.6em 0.8em 0.3em; color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); font-weight: 500; letter-spacing: 0.02em; }
-/* 渠道之间画一条发丝线（2026-11-09）：组头只是小字，两组模型从前直接接在一起，
- * 一眼看不出"换渠道了"。第一条不画；线与线之间留白，不压模型行的可点区域。 */
+/* 组间留分隔线；首组不用，线不压模型行的可点区域。 */
 .model-group-head:not(:first-child) { margin-top: 0.9em; padding-top: 0.55em; border-top: 1px solid color-mix(in srgb, var(--md-outline-variant) 65%, transparent); }
 .model-group-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-group-count { flex: none; opacity: 0.75; }

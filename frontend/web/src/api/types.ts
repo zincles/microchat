@@ -451,6 +451,7 @@ export interface ModelListItem {
   upstream_id: string;
   name: string;
   display_name: string | null;
+  owned_by?: string | null;
   thinking_levels: string[];
   brand?: string;
   icon?: string;

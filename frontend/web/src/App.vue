@@ -49,7 +49,7 @@ import { useCommands } from "./composables/useCommands.ts";
 import { useContextWorkspace } from "./composables/useContextWorkspace.ts";
 import { useSessionActions } from "./composables/useSessionActions.ts";
 import type {
-  CreateSessionRequest, DefaultsConfig, DeletionPlan, FlowActiveNode, FlowRunTrace, Message, SessionView, TurnStatus,
+  CreateSessionRequest, DeletionPlan, FlowActiveNode, FlowRunTrace, Message, SessionView, TurnStatus,
 } from "./api/types.ts";
 import type { ChatSummary } from "./utils/chatrows.ts";
 import type {
@@ -205,7 +205,7 @@ const sessionInfo = reactive<SessionInfo>({});
 // ⇒ 预演的那一发给真发的那一发逐字节一致。别扩散（消息/摘要的 id 仍是服务端铸）。
 // 要会话的命令（compact/cut/reroll…）在草稿里明确拒绝（needsSession 标在 commands.js 的表上）。
 let draft = false;
-let draftPrefs: DraftPrefs = { provider: "", model: "", agent: "", thinking_level: "", native_tools_disabled: [] };
+const draftPrefs: DraftPrefs = { provider: "", model: "", modelSelected: false, agent: "", thinking_level: "", native_tools_disabled: [] };
 let draftId: string | null = uuidv7();
 const composerKey = ref(lastSessionId() || draftId);
 const sessionDrafts = createSessionDrafts();
@@ -248,6 +248,33 @@ const {
   onRefreshStatusline: refreshStatusline,
   onRefreshPreview: refreshPreview,
 });
+
+const pendingModelSelections = ref(0);
+async function selectSessionModel(value: string): Promise<void> {
+  pendingModelSelections.value++;
+  try {
+    await applyModelValue(value);
+  } catch (err) {
+    toast(`换模型失败：${errText(err)}`, "error");
+  } finally {
+    pendingModelSelections.value--;
+  }
+}
+
+const savingModelDefault = ref(false);
+async function saveCurrentModelDefault(): Promise<void> {
+  const { provider, model } = sessionInfo;
+  if (!provider || !model || loadingSession.value || pendingModelSelections.value || savingModelDefault.value) return;
+  savingModelDefault.value = true;
+  try {
+    await api.putDefaults({ provider, model });
+    toast("已将当前模型和渠道设为新会话默认", "ok");
+  } catch (err) {
+    toast(`保存默认模型失败：${errText(err)}`, "error");
+  } finally {
+    savingModelDefault.value = false;
+  }
+}
 // 思考档位：Session 上的显式值（空 = 跟随模型默认）。能选哪些档由模型清单里的
 // `thinking_levels` 决定（后端 providers.ThinkingLevels 的唯一权威）—— 前端不另抄模型表。
 const thinkingLevels = computed(() => {
@@ -958,7 +985,7 @@ async function startDraft() {
   // ⚠ **不要 `draftPrefs = {...}`**：composable 在创建时捕获了同一个对象引用，
   // 重新赋值会让 applyModelValue/applyAgentValue 改到旧对象，sendFromDraft 却读新对象
   // ⇒ 草稿里选的模型/Agent 到建会话时退回 defaults（2026-11-08 用户报 dummy/dummy）。
-  if (fresh) Object.assign(draftPrefs, { provider: "", model: "", agent: "", thinking_level: "", native_tools_disabled: [] });
+  if (fresh) Object.assign(draftPrefs, { provider: "", model: "", modelSelected: false, agent: "", thinking_level: "", native_tools_disabled: [] });
   // `id: ""` 是必须的：`Object.assign` **不清旧键**，从一条真会话切到草稿时
   // `sessionInfo.id` 会留着上一条的 id —— 于是"这是草稿吗"就答错了（曾经就没人读它，
   // 所以一直没露；上下文工作区要读它才露出来）。
@@ -975,14 +1002,14 @@ async function startDraft() {
   summaryMsgs.clear();
   openSummaries.clear();
   paintSessionHeader();
-  const d = await api.getDefaults().catch((): DefaultsConfig => ({ provider: "", model: "", agent: "" }));
+  const d = await api.getDefaults().catch(() => null);
   if (my !== epoch || !draft) return; // 期间切去别的会话/又开了新草稿：这一发作废
-  // 用户在默认值回来之前已经选过模型/Agent ⇒ 不覆盖那些格；只补没选过的。
-  if (!draftPrefs.provider && !draftPrefs.model) {
+  // 只保留显式选过的组合；继承配置的草稿在入口重新读取当前默认值。
+  if (d && !draftPrefs.modelSelected) {
     draftPrefs.provider = d.provider ?? "";
     draftPrefs.model = d.model ?? "";
   }
-  if (!draftPrefs.agent) draftPrefs.agent = d.agent ?? "";
+  if (!draftPrefs.agent) draftPrefs.agent = d?.agent ?? "";
   Object.assign(sessionInfo, {
     provider: draftPrefs.provider, model: draftPrefs.model,
     agent_id: draftPrefs.agent, thinking_level: draftPrefs.thinking_level,
@@ -1507,13 +1534,16 @@ onUnmounted(() => {
       :left-hidden="leftHidden"
       :workspace="workspace"
       :loading="loadingSession"
+      :model-selection-pending="pendingModelSelections > 0"
+      :saving-model-default="savingModelDefault"
       :flow="currentAgentIsFlow"
       :flow-calls="flowCalls"
       :flow-active-nodes="flowActiveNodes"
       @select-workspace="selectWorkspace"
       @save-overrides="saveRequestOverrides"
       @toggle-left="toggleLeft"
-      @select-model="(v) => applyModelValue(v).catch((err) => toast(`换模型失败：${errText(err)}`, 'error'))"
+      @select-model="selectSessionModel"
+      @save-model-default="saveCurrentModelDefault"
       @cancel-queue="cancelQueue"
       @cancel-task="cancelTask"
       @refresh-macros="refreshMacros"

@@ -899,7 +899,7 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 | POST | `/providers/{provider_id}/test` | 可选 `{vendor,protocol,base_url,api_key,model_filter}` | `{ok,models,filtered,note?,error?}` | **测试连通性**（2026-11-02）：只拉一次 `/models`，**不落库、不保存**；请求体可带编辑器里尚未保存的值（api_key 空 = 用已存的）。返回 200 + `ok:false` 表示"连不上"（不是接口 500）；dummy 直接回 ok+note |
 | POST | `/providers/{provider_id}/refresh-routes` | — | `{provider, models}` | 只刷路由表：拉 models.dev 快照 ⇒ `model_route` 落库（只认聚合站；**启动时不跑**，一周手跑一次）|
 | GET | `/providers/{provider_id}/usage` | — | `ProviderUsageView` | **套餐余量**（只读）：**只对 `vendor = opencode-go` 的渠道有义** ⇒ 别的 vendor **400**（`invalid`）、没配 key 也 **400**；上游错原样传（`upstream`）。形状 = `plan` / `windows[].label/percent/resets_at` + `provider_id`（`-debug usage` 就是它；web 界面还没入口） |
-| GET | `/models` | — | `[ModelListItem]` | 跨 provider 拍平（"渠道 / 模型"下拉用）。每项带 **`thinking_levels`**（该模型能安全收到的统一档位；前端只摆这些；未知模型回全部七档），以及 `model_define_rules` 派生的 **`brand` / `icon` / `server_tools` / `local_tools` / `matched_rules`**（不落库；工具只是候选，发请求前仍要能力校验）|
+| GET | `/models` | — | `[ModelListItem]` | 跨渠道拍平；身份是 `(provider, upstream_id)`。`owned_by` 是上游发现的归属（可为 `null`），`brand` 等来自模型规则。`thinking_levels` 是合法档位；`server_tools` / `local_tools` 是候选，发请求前仍要经过能力校验。|
 | PATCH | `/models` | `{provider, upstream_id, context_override, display_name, params}` | `ModelView` | 设/清模型的用户列（上下文覆盖 `null` = 清；显示名；采样参数）。**刷新永不覆盖用户列**；模型行被刷新删掉时这些覆盖也会没（规则不受影响） |
 | GET | `/config/model-rules` | — | `{model_define_rules:[…], builtin_model_rules:[{…,builtin:true,disabled}], disabled_builtin_model_rules:[…]}` | 用户规则 + 系统内置规则（含只读/停用标记） |
 | PUT | `/config/model-rules` | `{model_define_rules:[…], disabled_builtin_model_rules?:[…]}` | 同 GET | 用户规则**整份替换**（空数组 = 清空）；停用列表**省略 = 不改**、`[]` = 全部启用。用户规则复用内置 id / 未知停用 id ⇒ 422；先校验后落盘。写成功后 `GET /models` 立刻按新规则派生 |
@@ -1228,33 +1228,16 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   `useOverlayLayout` / `useSettingsView` / `useModelsAgents`。
 - **门板/登录的视觉**（2026-10-14 用户定"更好看"）：玻璃卡（`backdrop-filter`）+ 品牌头（**内联 SVG** 标 —— 无外部资源，离线 SW 照旧）+ 主题色光晕 + 入场动画（尊重 `prefers-reduced-motion`）；**底自己铺 `--mc-bg-image`**（就是用户背景图那枚变量）+ 一层跟主题走的面纱 —— 门板在 `#app` 里、够不着 `body::before` 的图层，想要"透出背景图"**别用透明**（会把聊天壳一起透出来，实测截图里左栏顶栏全露馅）。
 - **连接门板**（2026-10-10 加）：启动自检探不通后端（新设备第一次打开/地址没填对）⇒ 不开破界面，先给全屏"连接到 microchat 后端"面板：填地址（裸写 `192.168.0.110:8787` 也行 —— `normalizeApiBase` 自动补 `http://` 与 `/api/v1`）→ 过 ⇒ `saveNetPrefs` 存 **JWT** + **刷新页面**进聊天（沿用"改完刷新生效"）。**地址栏只在"探不通"时出现**（2026-10-14 用户定）：探通 ⇒ 收起，登录界面只有用户名/口令（单容器部署里浏览器永远同源，不该再问地址）；中途又断了 ⇒ 地址栏自动放回来。**2026-10-10 多用户改造**：启动自检探开放口 `/auth/status`——探不通 ⇒ 门板带原因；`needs_setup:true` ⇒ 「初始化 root」（**uid 0 恒在**，只设口令+确认；名字固定 root）；已初始化 ⇒ 登录（地址 / 用户名 / 口令）。探针两道闸照旧（`normalizeApiBase` + 必须回 `status:"ok"`）。
-- **模型选择器**（2026-10-28 用户定：「既然助手切换器和上下文使用率指示器都有漂亮得点击后显示的面板，可否把模型的那个选择器也改成这种自定义面板，按 Provider 分类的（接近 openwebui 风格）」）：
-  从前是 `select#session-model.flat-select`（**原生选项**）—— 聚合站动辄几百个模型（OpenRouter 实测 470），
-  一条滚不完的长菜单里既搜不了、同一渠道的模型还不挨在一起。现在是顶栏那枚字点开的浮板
-  （`#model-btn` + `.model-menu`，Vuetify `VCard` 壳，颜色仍来自同一主题）：
-  **面板结构（2026-11-21）**：标题与关闭 → 搜索 → 渠道 tab → 模型列表 → 结果数/键盘提示；只有列表滚动。条目显示名称及不同于名称的上游 ID，允许换行；当前使用是 secondary-container 底 +「✓ 当前」，键盘指向是 primary 内描边。
-  **渠道 tab**（2026-11-18 用户定：比滚到某个渠道再找更快，也更接近 OpenWebUI）——
-  第一个永远「全部」，其余每个渠道一只，**可横向滚动**；点了只列该渠道的模型（组头不再重复），
-  搜索框跟着在渠道内过滤；tab 名字 = 别名 → 渠道名 → id，空渠道不建 tab。
-  **鼠标也能用**：按住 tab 拖动 = 左右滚（`pointerdown` + window 监听，不 setPointerCapture，
-  否则 click 的 target 会变成容器、tab 点不动）；滚轮落在 tab 上 = 横向滚（`deltaX` / `deltaY`
-  取绝对值大的）。触屏仍走原生横向滚动。
-  渠道 tab 的左右键切换筛选；搜索框上下键定位模型、Enter 切换，键盘目标自动滚入视野。搜索/渠道改变时清掉旧高亮并把结果列表滚回开头；关闭或选完回到顶栏模型按钮。搜索框用 combobox 的 `aria-activedescendant` 对应列表选项。
-  **搜索框**（命中显示名 / 渠道名 / 上游 id —— 上游 id 必须参与，显示名常常不含渠道信息）+
-  **按渠道分组**（「全部」时组头 = 渠道显示名 + 条数）+ 当前项打勾 + 上下键与回车。静息**仍然只有字**
-  （顶栏是透明的，栏面上不该长出一颗按钮），悬停给一层薄底说"这能点"。
-  ⚠ **过滤 / 分组 / tab / 扁平序号是纯函数**，住 `frontend/web/src/utils/format.ts`
-  （`filterModelGroups` / `modelProviderTabs` / `reindexModelGroups` / `curModelLabelOf` / `modelMatches`）
-  —— 住组件里就只能靠正则钉源码，钉不出"搜到了什么"。
-  ⚠ **按渠道筛完必须 `reindexModelGroups` 重编号**：`flat` 是全列表序号，不重编的话上下键会从
-  第 20 项开始，第一下按 Down 找不到第 0 项。
+- **模型选择器**：顶栏模型按钮打开浮板，依次是搜索、分组方式、横向页签、模型列表和操作栏。默认「按归属」，将跨渠道模型按规则 `brand` 归组，未配品牌时用上游 `owned_by`，都没有归到「未标注归属」。归属名不分大小写合并，每个型号仍按渠道分别列出，行内标明渠道。「按渠道」保留按别名 → 渠道名 → id 浏览的方式。
+  两种方式共用「全部」与分组页签，支持鼠标拖动、滚轮、触屏横滑及键盘左右键。切换分组方式保留搜索词，结果从头显示。搜索匹配模型名、上游 ID、归属和渠道；先选组再搜索和从零编号，搜索框的上下键 / Enter 只操作可见结果。当前使用与键盘指向分别显示。
+  「设当前为新会话默认」用 `PUT /config/defaults` 只保存当前已选的 `provider` / `model`；搜索高亮不算当前模型，默认助手和已有会话不改。继承默认值的草稿重新打开时使用新设置；手动选过模型的草稿保留自己的选择。
   **尺寸**（2026-11-18 用户定：「漂亮点、稍微大一点；移动设备几乎占完屏幕」）：
   桌面宽度上限 34em，同时受模型按钮所在列的剩余空间约束；高度上限 40em，并按可视高度扣除顶栏与间距。筛选到零条结果也不收缩面板。
-  移动/粗指针（`max-width:700px` 或 `pointer:coarse`）固定为左右 0.5em、顶栏下方 0.5em，
-  `height: calc(var(--vvh, 100dvh) - var(--topbar-h, 3.5em) - 1em)`，列表吃满剩余高度。
+  移动/粗指针（`max-width:700px` 或 `pointer:coarse`）在顶栏下方留一个 `--chat-space`，
+  高度按可视窗扣掉顶栏与上下间距，结果列表吃满剩余高度。
   ⚠ 别把移动端高度写成 `bottom: 0.5em` 或百分比：顶栏自己有 transform（滚动隐藏），
   `position: fixed` 的包含块会变成顶栏，百分比高度按顶栏算，实测只剩 18px 一条缝。
-  模型、上下文环、助手、推理和工具共用 `useChatMenu` 的单一打开项。打开另一个入口不必先关旧菜单；选择或按 Esc 回到入口，点击输入框则不抢焦点。模型保留搜索和渠道分组，输入栏的短列表统一用 `ToolbarMenu`。
+  模型、上下文环、助手、推理和工具共用 `useChatMenu` 的单一打开项。打开另一个入口不必先关旧菜单；选择或按 Esc 回到入口，点击输入框则不抢焦点。输入栏的短列表统一用 `ToolbarMenu`。
   ⚠ 顺带删掉了 `modelSel` / `reapplyValues` 那套补丁 —— 那是给 `<select>` 打的（选项异步到、`value` 先落进
   DOM 会被浏览器换掉）；自己的面板里值就只是数据。
 

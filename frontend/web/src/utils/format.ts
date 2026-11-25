@@ -119,6 +119,7 @@ export interface ModelChoice {
   alias?: string;
   upstream_id: string;
   brand?: string;
+  owner?: string;
   icon?: string;
   flat?: number;
   [key: string]: unknown;
@@ -132,8 +133,7 @@ export interface ModelGroup {
 }
 
 // 下拉项（`/models` 的行 → {value,label}）。
-// 2026-10-28：顶栏的模型选择器换成自定义面板之后，每项还带着 `provider_name` / `upstream_id` ——
-// 面板要按渠道分组、搜索要能按渠道名与上游 id 命中（label 只是显示名，常常不含渠道信息）。
+// 渠道只决定请求走哪条路；归属优先采用模型规则的品牌，未配置时才读上游发现字段。
 export function modelOption(m: ModelListItem): ModelChoice {
   return {
     value: modelKey(m.provider, m.upstream_id),
@@ -143,6 +143,7 @@ export function modelOption(m: ModelListItem): ModelChoice {
     alias: String(m.alias ?? "").trim(),
     upstream_id: m.upstream_id,
     brand: m.brand,
+    owner: m.brand?.trim() || m.owned_by?.trim() || undefined,
     icon: m.icon,
   };
 }
@@ -369,63 +370,64 @@ export function providerIdForNextVendor(currentId?: string | null, autoId?: stri
 // 都能脱离 DOM 说清楚 —— 住组件里就只能靠正则去钉源码（钉不出"搜到了什么"）。
 export const ORPHAN_MODEL_GROUP = "\u0000orphan";
 
-// 一条模型匹配不匹配查询词：显示名 / 渠道名 / 上游 id 三者任一含它即算。
-// 上游 id 必须参与 —— 显示名常常不含渠道信息（"GPT-4o" 是哪家的？），而人恰恰按它找。
-export function modelMatches(m: ModelChoice, query?: string | null): boolean {
-  const q = String(query ?? "").trim().toLowerCase();
-  if (!q) return true;
-  return [m.label, m.alias, m.provider_name, m.upstream_id].filter(Boolean).join(" ").toLowerCase().includes(q);
-}
+export type ModelBrowseMode = "owner" | "channel";
 
-// 过滤 + 分组 + 扁平序号：面板的上下键要能一条条走完整个可见列表，
-// 所以每项带 `flat`（在本列表里的下标；分组顺序 = 传入顺序，组内 = 原顺序）。
-// 分完是空的组直接丢（搜索之后留一堆空组头只会让人以为没搜到）。
-// `orphan` = 当前值不在列表里那一条（渠道删了 / 模型下架）：它排最前 —— 那是"我现在在哪"。
-export function filterModelGroups(groups?: ModelGroup[] | null, query?: string | null, orphan: ModelChoice | null = null): ModelGroup[] {
-  const out: ModelGroup[] = [];
-  let flat = 0;
-  if (orphan && modelMatches(orphan, query)) {
-    out.push({ provider: ORPHAN_MODEL_GROUP, providerName: "当前（不在列表）", items: [{ ...orphan, flat: flat++ }] });
-  }
-  for (const g of groups ?? []) {
-    const items = (g.items ?? []).filter((m) => modelMatches(m, query)).map((m) => ({ ...m, flat: flat++ }));
-    if (!items.length) continue;
-    out.push({ provider: g.provider, providerName: items[0].alias || items[0].provider_name || g.provider, items });
-  }
-  return out;
-}
-
-// 渠道 tab（2026-11-18 用户定）：模型浮板顶部一排可横向滚动的 tab，第一个永远是"全部"，
-// 其余每个渠道一个。名字口径与组头相同：别名 → 渠道名 → id。空组不建 tab。
-export interface ModelProviderTab {
-  provider: string;
+export interface ModelPickerGroup {
+  id: string;
   label: string;
-  count: number;
+  items: ModelChoice[];
 }
-export function modelProviderTabs(groups?: ModelGroup[] | null): ModelProviderTab[] {
-  const tabs: ModelProviderTab[] = [{ provider: "", label: "全部", count: 0 }];
-  for (const g of groups ?? []) {
-    const items = g.items ?? [];
-    if (!items.length) continue;
-    const first = items[0];
-    tabs[0].count += items.length;
-    tabs.push({
-      provider: g.provider,
-      label: String(first.alias || first.provider_name || g.providerName || g.provider),
-      count: items.length,
+
+export function groupModelChoices(groups: ModelGroup[], mode: ModelBrowseMode): ModelPickerGroup[] {
+  if (mode === "channel") {
+    return groups.flatMap(({ provider, providerName, items }) => {
+      const first = items[0];
+      return first ? [{ id: `channel:${provider}`, label: first.alias || first.provider_name || providerName || provider, items }] : [];
     });
   }
-  return tabs;
+
+  const owners = new Map<string, ModelPickerGroup>();
+  for (const { items } of groups) {
+    for (const item of items) {
+      const owner = item.owner ?? "";
+      const key = owner.toLowerCase();
+      const group = owners.get(key);
+      if (group) {
+        // 合并 OpenAI / openai 等同名归属，优先用模型规则提供的写法。
+        if (item.brand?.trim()) group.label = owner;
+        group.items.push(item);
+      } else {
+        owners.set(key, { id: `owner:${key}`, label: owner || "未标注归属", items: [item] });
+      }
+    }
+  }
+  const unmarked = owners.get("");
+  owners.delete("");
+  const result = [...owners.values()].sort((a, b) => a.label.localeCompare(b.label));
+  if (unmarked) result.push(unmarked);
+  return result;
 }
 
-// 按渠道筛选之后要重新编号：filterModelGroups 的 flat 是全列表的序号，
-// 直接拿去画"当前渠道"的列表，上下键会从 20 开始（第一下按 Down 找不到第 0 项）。
-export function reindexModelGroups(groups?: ModelGroup[] | null): ModelGroup[] {
+function modelMatches(m: ModelChoice, query: string): boolean {
+  return !query || [m.label, m.alias, m.provider_name, m.upstream_id, m.owner].some((s) => s?.toLowerCase().includes(query));
+}
+
+// 先选择分组、再搜索并编号；上下键只沿可见结果走，不会跳到另一个组。
+export function filterModelGroups(groups: ModelPickerGroup[], query = "", orphan: ModelChoice | null = null): ModelPickerGroup[] {
+  const q = query.trim().toLowerCase();
+  const out: ModelPickerGroup[] = [];
   let flat = 0;
-  return (groups ?? []).map((g) => ({
-    ...g,
-    items: (g.items ?? []).map((m) => ({ ...m, flat: flat++ })),
-  }));
+  if (orphan && modelMatches(orphan, q)) {
+    out.push({ id: ORPHAN_MODEL_GROUP, label: "当前（不在列表）", items: [{ ...orphan, flat: flat++ }] });
+  }
+  for (const { id, label, items } of groups) {
+    const matches: ModelChoice[] = [];
+    for (const item of items) {
+      if (modelMatches(item, q)) matches.push({ ...item, flat: flat++ });
+    }
+    if (matches.length) out.push({ id, label, items: matches });
+  }
+  return out;
 }
 
 // 顶栏按钮上那行字：列表里找到就用显示名；找不到用"不在列表"那条；再找不到（列表还没到）

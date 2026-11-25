@@ -251,10 +251,10 @@ func TestRefreshDiscoversModels(t *testing.T) {
 	if rows[0].ContextLength == nil || *rows[0].ContextLength != 131072 {
 		t.Fatalf("发现列：%+v", rows[0])
 	}
-	// 拍平那份也该看得见，且显示名走了 prettify
+	// 列表要保留上游发现的归属，模型规则推断的品牌不能替换它。
 	var items []ModelListItem
 	_ = json.Unmarshal(call(server, "GET", "/api/v1/models", "").Body.Bytes(), &items)
-	if len(items) != 1 || items[0].Name != "Deepseek V4 Flash" {
+	if len(items) != 1 || items[0].Name != "Deepseek V4 Flash" || items[0].OwnedBy == nil || *items[0].OwnedBy != "deepseek" {
 		t.Fatalf("拍平 = %+v", items)
 	}
 }

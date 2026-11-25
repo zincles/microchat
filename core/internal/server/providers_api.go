@@ -67,7 +67,7 @@ type ModelView struct {
 	MatchedRules   []string `json:"matched_rules,omitempty"`
 }
 
-// ModelListItem：`GET /models` 的一项（跨 provider 拍平；"渠道 / 模型"下拉用）。
+// ModelListItem：`GET /models` 的一项，模型身份仍由渠道与上游 ID 确定。
 type ModelListItem struct {
 	Provider     string  `json:"provider"`
 	ProviderName *string `json:"provider_name"`
@@ -76,6 +76,7 @@ type ModelListItem struct {
 	UpstreamID  string  `json:"upstream_id"`
 	Name        string  `json:"name"`
 	DisplayName *string `json:"display_name"`
+	OwnedBy     *string `json:"owned_by"`
 	// ThinkingLevels：这个模型能安全收到的统一档位（UI 只摆这些；空 = 不显示思考选择器）。
 	ThinkingLevels []string `json:"thinking_levels"`
 	// model_define_rules 的派生结果（不落库）。
@@ -569,6 +570,7 @@ func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
 			UpstreamID:     view.UpstreamID,
 			Name:           view.Name,
 			DisplayName:    view.DisplayName,
+			OwnedBy:        view.OwnedBy,
 			ThinkingLevels: view.ThinkingLevels,
 			Brand:          view.Brand,
 			Icon:           view.Icon,
