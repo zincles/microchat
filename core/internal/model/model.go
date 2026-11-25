@@ -200,6 +200,7 @@ const (
 type TurnStatus struct {
 	Phase         TurnPhase `json:"phase"`
 	MessageID     *string   `json:"message_id,omitempty"`
+	RunID         string    `json:"run_id,omitempty"`
 	ElapsedMS     int64     `json:"elapsed_ms"`
 	Chars         int       `json:"chars"`
 	ThinkingChars int       `json:"thinking_chars"`

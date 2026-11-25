@@ -11,6 +11,7 @@ import { applyBackground } from "./utils/background.ts";
 import { installViewportFit } from "./utils/viewport.ts";
 import { thinkingOptions, thinkingLevelsForModel } from "./utils/thinking.ts";
 import { forgetWindow, recallWindow } from "./utils/windowcache.ts";
+import { createSessionDrafts, type DraftReceipt } from "./utils/sessionDrafts.ts";
 import { sharedApi, previewOn, payloadPreviewOn, applyTheme, wantsSend, apiBase, apiBaseCandidates, saveNetPrefs, lastSessionId, saveLastSession, commandMenuOn, applyTextScale, applyFonts, chromeHideOn, syncPrefs, userName as macroUserName } from "./utils/prefs.ts";
 import { macroMap } from "./utils/macros.ts";
 import { formatDebugPayload } from "./utils/flow.ts";
@@ -18,6 +19,7 @@ import { deletionPlanSummary, whoText } from "./utils/format.ts";
 import TopBar from "./components/TopBar.vue";
 import AgentMenu from "./components/AgentMenu.vue";
 import SessionBar from "./components/SessionBar.vue";
+import AnswerTranscript from "./components/AnswerTranscript.vue";
 import MessageBubble from "./components/MessageBubble.vue";
 import SummaryCard from "./components/SummaryCard.vue";
 import SummaryEditor from "./components/SummaryEditor.vue";
@@ -203,7 +205,10 @@ const sessionInfo = reactive<SessionInfo>({});
 // 要会话的命令（compact/cut/reroll…）在草稿里明确拒绝（needsSession 标在 commands.js 的表上）。
 let draft = false;
 let draftPrefs: DraftPrefs = { provider: "", model: "", agent: "", thinking_level: "", native_tools_disabled: [] };
-let draftId: string | null = null;
+let draftId: string | null = uuidv7();
+const composerKey = ref(lastSessionId() || draftId);
+const sessionDrafts = createSessionDrafts();
+let submittingDraft: string | null = null;
 
 // 出站预演只有一处：载荷、草稿第一句、压缩载荷。App 只把结果交给右栏。
 const { previewPayload, refreshPreview, previewCompactPayload } = usePreview({
@@ -214,7 +219,7 @@ const { previewPayload, refreshPreview, previewCompactPayload } = usePreview({
   isDraft: () => draft,
   getDraftId: () => draftId,
   draftPrefs,
-  composerRef,
+  getText: () => sessionDrafts.get(composerKey.value),
   payloadbarRef,
   previewOn,
 });
@@ -325,6 +330,7 @@ const {
   vueMessages, vueSegments, loadingSession, windowLimit, windowFrom, summaryMsgs, openSummaries, windowCache,
   toRow, loadWindow, reloadWindow, reloadWindowKeepingScroll, loadMore, prefetchSession,
   onSummaryToggle,
+  rememberReadingPosition, restoreReadingPosition, forgetReadingPosition,
 } = useSessionWindow({
   api,
   toast,
@@ -336,6 +342,25 @@ const {
   scrollBottom,
   onWindowLoaded: () => { if (treeVisible.value) refreshTree(); },
 });
+
+watch(() => !settingsOpen.value && workspace.value === "chat", (visible) => {
+  if (visible) restoreReadingPosition();
+  else rememberReadingPosition();
+});
+
+function forgetConversation(id: string): void {
+  forgetWindow(windowCache, id);
+  forgetReadingPosition(id);
+  sessionDrafts.forget(id);
+}
+
+function onManagedSessionsChanged(deletedId?: string): void {
+  if (deletedId) {
+    forgetConversation(deletedId);
+    if (deletedId === sessionID) { void startDraft(); return; }
+  }
+  void refreshSessionsBar();
+}
 
 // 会话级动作（覆盖 / Copy / 导出 / 删除）统一在这里，避免三处各写一遍列表刷新顺序。
 const {
@@ -354,7 +379,7 @@ const {
   enterSession,
   startDraft,
   backToChat,
-  forgetCachedWindow: (id) => forgetWindow(windowCache, id),
+  forgetCachedWindow: forgetConversation,
 });
 const vueStream = ref<{ id: string | null; text: string; reasoning: string }>({ id: null, text: "", reasoning: "" });
 // 流式显字（2026-11-03）：`vueStream` 是后端的完整目标；`streamDisplay` 是打字机当前露出的前缀。
@@ -387,9 +412,10 @@ watch(settingsOpen, (open) => { if (!open) agentFocus.value = ""; });
 let tmpSeq = 0;
 function tmpKey() { return `tmp-${++tmpSeq}`; }
 function scrollBottom() {
+  const my = epoch;
   requestAnimationFrame(() => {
     const el = document.getElementById("messages-vue");
-    if (el) el.scrollTop = el.scrollHeight;
+    if (el && my === epoch) el.scrollTop = el.scrollHeight;
   });
 }
 function addMessage(who: string, text: string, cls: string, think: ThinkPart = undefined, messageId?: string | null): AppRow {
@@ -404,7 +430,7 @@ function addMessage(who: string, text: string, cls: string, think: ThinkPart = u
   };
   vueMessages.value.push(row);
   scrollBottom();
-  return row;
+  return vueMessages.value[vueMessages.value.length - 1];
 }
 // 乐观上屏的那句用户消息（2026-11-05，高延迟优化）：先画，等 202 回来再换成服务端那条
 // （换的是**同一条消息**：服务端回的 `user` 带真 id/idx，编号与后续编辑/删除都认它）。
@@ -419,21 +445,25 @@ function dropOptimistic(row: AppRow): void {
   if (at >= 0) vueMessages.value.splice(at, 1);
 }
 
+function showTurnFailure(st: TurnStatus): void {
+  if (st.phase !== "error" || !st.error) return;
+  const id = `error-${st.message_id ?? "turn"}`;
+  if (!vueMessages.value.some(row => row.id === id)) {
+    vueMessages.value.push({ id, run_id: st.run_id, who: "助手", role: "assistant", status: "failed", content: st.error, noIdx: true });
+  }
+}
 // 一轮落地后的共同收尾：流已经结束，这里只做“界面与后端对齐”。
 async function onTurnFinished(sid: string, st: TurnStatus): Promise<void> {
   if (sessionID !== sid) return;
-  const failed = st.phase === "error";
+  const my = epoch;
   await waitTypewriter();
-  if (sessionID !== sid) return;
-  await reloadWindowKeepingScroll();
+  if (my !== epoch) return;
+  if (!await reloadWindowKeepingScroll() || my !== epoch) return;
   refreshMacros();
   resetTypewriter();
-  if (sessionID !== sid) return;
-  if (failed) {
-    const text = `失败：${st.error || "未知"}`;
-    vueMessages.value.push({ who: "助手", role: "assistant", content: text, id: tmpKey(), noIdx: true });
-    scrollBottom();
-    toast(text, "error");
+  if (st.phase === "error") {
+    showTurnFailure(st);
+    toast(`失败：${st.error || "未知"}`, "error");
   }
   refreshStatusline(st.phase, st.elapsed_ms);
   refreshSessionsBar();
@@ -527,12 +557,12 @@ const {
   reloadWindow: () => reloadWindow(),
   payloadPreviewOn,
 });
-const lastMsgId = computed(() => [...vueMessages.value].reverse().find((m) => m.messageId)?.messageId ?? null);
+const lastMsgId = computed(() => vueMessages.value.at(-1)?.messageId ?? null);
 // 最新 AI 回复对应的用户输入（A-B-C-D-E-F ⇒ E）——“编辑最新 Prompt”的入口目标。
 const latestPromptId = computed(() => latestPromptFor(vueMessages.value));
 // 重摇两族（消息 / 摘要）在 composable；模板只读它给出的状态与纯函数。
 const {
-  rerollState, summaryReroll,
+  rerollState, summaryReroll, rerollStarting,
   isLive, bubbleContent, bubbleReasoning, rowDuration,
   refreshReroll, refreshRerollSummary, refreshRerolls,
   summaryRefresh, summaryVersion, rerollNow, rerollGo,
@@ -554,6 +584,7 @@ const {
   reloadWindow: () => reloadWindow(),
   refreshStateView,
 });
+const rerollingId = computed(() => rerollStarting.value || (rerollState.value.running ? rerollState.value.target_message_id : null));
 // 渲染行：气泡（带编号）+ 被顶层摘要折起来的卡（口径见 utils/chatrows.ts）。
 // 当前 agent 的"首段对话"（`first_message`，2026-10-11 用户定）—— **computed 只看响应式的两格**
 // （vueAgents + sessionInfo.agent_id）。⚠ 别把它写成"先看普通变量 draft 再早退"：早退分支不碰任何
@@ -880,6 +911,7 @@ async function resyncOnForeground() {
     dropStreamBubbles();
     await reloadWindowKeepingScroll();
     if (my !== epoch) return;
+    showTurnFailure(st);
     refreshStatusline(st.phase, st.elapsed_ms);
     // 上下文三 tab 只在**真的在看工作区**时才刷；聊天界面不白拉 /state 与 /outgoing。
     refreshContextLazy();
@@ -893,21 +925,34 @@ async function resyncOnForeground() {
 }
 
 async function startDraft() {
+  rememberReadingPosition();
   const my = ++epoch;
   draft = true;
   sessionID = null;
   saveLastSession(""); // 人在草稿 ⇒ 开机也该回草稿（别把人拽回上次那条会话）
-  draftId = uuidv7(); // 这张草稿将来那会话的 id（预演与建会话都用它）
+  composerRef.value?.setRunning(false);
+  const fresh = !draftId;
+  draftId ??= uuidv7();
+  composerKey.value = draftId;
   // ⚠ **不要 `draftPrefs = {...}`**：composable 在创建时捕获了同一个对象引用，
   // 重新赋值会让 applyModelValue/applyAgentValue 改到旧对象，sendFromDraft 却读新对象
   // ⇒ 草稿里选的模型/Agent 到建会话时退回 defaults（2026-11-08 用户报 dummy/dummy）。
-  Object.assign(draftPrefs, { provider: "", model: "", agent: "", thinking_level: "", native_tools_disabled: [] });
+  if (fresh) Object.assign(draftPrefs, { provider: "", model: "", agent: "", thinking_level: "", native_tools_disabled: [] });
   // `id: ""` 是必须的：`Object.assign` **不清旧键**，从一条真会话切到草稿时
   // `sessionInfo.id` 会留着上一条的 id —— 于是"这是草稿吗"就答错了（曾经就没人读它，
   // 所以一直没露；上下文工作区要读它才露出来）。
   Object.assign(sessionInfo, {
     id: "", title: "", provider: "", model: "", agent_id: "", thinking_level: "", system_prompt: "", native_tools_disabled: [], request_overrides: {},
   });
+  vueMessages.value = [];
+  loadingSession.value = false;
+  vueStream.value = { id: null, text: "", reasoning: "" };
+  resetTypewriter();
+  // 窗口/树/懒加载缓存一起清（草稿没有会话可问）。
+  vueSegments.value = [];
+  windowFrom.value = 1;
+  summaryMsgs.clear();
+  openSummaries.clear();
   paintSessionHeader();
   const d = await api.getDefaults().catch((): DefaultsConfig => ({ provider: "", model: "", agent: "" }));
   if (my !== epoch || !draft) return; // 期间切去别的会话/又开了新草稿：这一发作废
@@ -922,10 +967,6 @@ async function startDraft() {
     agent_id: draftPrefs.agent, thinking_level: draftPrefs.thinking_level,
     native_tools_disabled: draftPrefs.native_tools_disabled,
   });
-  vueMessages.value = [];
-  loadingSession.value = false;
-  vueStream.value = { id: null, text: "", reasoning: "" };
-  resetTypewriter();
   paintSessionHeader();
   refreshAgents();
   fillModelSelect();
@@ -937,16 +978,11 @@ async function startDraft() {
   void refreshFlowCalls();
   refreshSessionsBar();
   refreshRerolls();
-  // 窗口/树/懒加载缓存一起清（草稿没有会话可问）。
-  vueSegments.value = [];
-  windowFrom.value = 1;
-  summaryMsgs.clear();
-  openSummaries.clear();
   payloadbarRef.value?.setTree(null);
   // 人可能正站在上下文工作区里换会话（左栏点一下就换）⇒ 当前 tab 要跟着换上新的，
   // 否则那块地方会一直显示上一条会话的账本（静默的错，看不出来）。
   refreshContextLazy();
-  refreshPreview(); // 输入框里若还留着字（＋ 时不清输入框），预演立刻跟上
+  refreshPreview();
 }
 function newSession() {
   closeLeftDrawer(); // 窄屏：抽屉让位（人已经去新对话了）
@@ -971,11 +1007,14 @@ async function refreshSessionsBar() {
   }
 }
 async function enterSession(id: string, preloaded: SessionView[] | null = null): Promise<void> {
+  rememberReadingPosition();
   const my = ++epoch;
   loadingSession.value = true;
   try {
   draft = false;
   sessionID = id;
+  composerKey.value = id;
+  composerRef.value?.setRunning(false);
   saveLastSession(id); // 记住"在看哪条"——刷新/重载回来就进它
   // 窗口重新起：先清掉上一条会话的一切（消息/段/展开态/懒加载缓存），再按"最后 N 段"拉。
   vueMessages.value = [];
@@ -1015,11 +1054,12 @@ async function enterSession(id: string, preloaded: SessionView[] | null = null):
     windowFrom.value = cached.windowFrom;
     vueMessages.value = cached.rows;
     loadingSession.value = false; // 一屏已经在了，骨架没有意义
-    nextTick(scrollBottom);
   } else {
-    const ok = await loadWindow({ reset: true });
+    const ok = await loadWindow({ resume: true, scroll: false });
     if (my !== epoch || !ok) return;
   }
+  loadingSession.value = false;
+  restoreReadingPosition();
   refreshStatusline("idle");
   refreshRerolls();
   // 载荷/状态/树都只在"人正看着工作区"时才拉（2026-11-02）：换会话时从前无条件
@@ -1031,15 +1071,19 @@ async function enterSession(id: string, preloaded: SessionView[] | null = null):
   refreshContextLazy();
   // 这一轮还在跑？（刷新页面、切走又回来）—— status 是权威：把合成的流气泡与轮询接回来。
   // reply 落库前消息列里本来就没有它，不接的话界面装 idle、发送才知道 409。
-  api.status(id).then((st) => {
+  api.status(id).then(async (st) => {
     if (my !== epoch) return;
     if (st?.phase === "pending" || st?.phase === "streaming") {
-      if (!vueMessages.value.some((m) => m.stream)) pollTurn(id, st.message_id).catch(() => {});
+      if (!hasLivePoll()) {
+        dropStreamBubbles();
+        pollTurn(id, st.message_id).catch(() => {});
+      }
       // 轮询收尾会自己重拉窗口 ⇒ 别再叠一次后台对账跟它抢着写消息列。
       return;
     }
     // 缓存那一屏是旧的：空闲时后台对一次（等待期间人动过消息列 ⇒ 这一发作废）。
-    if (cached) reloadWindowKeepingScroll({ onlyIfUnchanged: true }).catch(() => {});
+    if (cached) await reloadWindowKeepingScroll({ onlyIfUnchanged: true });
+    if (my === epoch) showTurnFailure(st);
   }).catch(() => {});
   } finally {
     if (my === epoch) loadingSession.value = false;
@@ -1181,8 +1225,9 @@ function onComposerInput(v: string): void {
     overlaysRef.value?.hidePalette();
   }
   clearTimeout(previewTimer);
+  const my = epoch;
   previewTimer = setTimeout(() => {
-    if (!previewOn()) return;
+    if (my !== epoch || !previewOn() || sessionDrafts.get(composerKey.value) !== v) return;
     if (v.startsWith("/") || (!draft && !sessionID)) {
       refreshStatusline("idle");
       return;
@@ -1222,7 +1267,7 @@ function onComposerKeydown(e: KeyboardEvent, value: string): void {
       e.preventDefault();
       const cmd = parseCommand(value);
       const entry = overlaysRef.value.palSelected();
-      composerRef.value?.clear();
+      sessionDrafts.set(composerKey.value, "");
       liftOverlays();
       runCommand(entry?.name ?? "", cmd ? cmd.args : []).catch((err) =>
         toast(`命令失败：${errText(err)}`, "error"),
@@ -1241,9 +1286,10 @@ function onComposerKeydown(e: KeyboardEvent, value: string): void {
 }
 // sendFromDraft：草稿的第一句 —— 建会话（带草稿里选的 model/agent）→ 受理 → 轮询。
 // 只有"受理"失败才回滚（删掉刚建的空会话、退回草稿）；轮询掉线不回滚（消息已入库）。
-async function sendFromDraft(text: string): Promise<void> {
-  const body: CreateSessionRequest = {};
-  if (draftId) body.id = draftId; // 预演头上那个 id —— 真会话必须落同一个
+async function sendFromDraft(text: string, receipt: DraftReceipt): Promise<void> {
+  const id = composerKey.value;
+  const my = epoch;
+  const body: CreateSessionRequest = { id };
   if (draftPrefs.provider) body.provider = draftPrefs.provider;
   if (draftPrefs.model) body.model = draftPrefs.model;
   if (draftPrefs.agent) body.agent_id = draftPrefs.agent;
@@ -1256,36 +1302,39 @@ async function sendFromDraft(text: string): Promise<void> {
   const optimistic = addMessage("你", text, "user");
   const live = startSendingBubble();
   localRev++;
-  let s;
+  submittingDraft = id;
+  pendingSends++;
+  let s, accepted;
   try {
     s = await api.createSession(body);
+    try {
+      accepted = await api.sendMessage(s.id, text);
+    } catch (err) {
+      await api.deleteSession(s.id).catch(() => {});
+      throw err;
+    }
   } catch (err) {
+    receipt.reject();
     dropOptimistic(optimistic);
     dropOptimistic(live);
-    composerRef.value?.setText(text);
-    throw err;
-  }
-  draft = false;
-  sessionID = s.id;
-  saveLastSession(s.id); // 草稿转真会话：从现在起"在看的就是它"
-  Object.assign(sessionInfo, s);
-  paintSessionHeader();
-  refreshSessionsBar();
-  let accepted;
-  pendingSends++;
-  try {
-    accepted = await api.sendMessage(s.id, text);
-    refreshTasks();
-  } catch (err) {
-    await api.deleteSession(s.id).catch(() => {});
-    await startDraft();
-    dropOptimistic(live);
-    composerRef.value?.setText(text);
     throw err;
   } finally {
+    submittingDraft = null;
     pendingSends--;
   }
-  settleOptimisticUser(optimistic, accepted?.user);
+  receipt.accept();
+  draftId = null;
+  refreshTasks();
+  refreshSessionsBar();
+  if (composerKey.value !== id) return; // 受理成功，但人已经在读别的会话。
+  if (my !== epoch) { await enterSession(s.id); return; }
+  draft = false;
+  sessionID = s.id;
+  saveLastSession(s.id);
+  Object.assign(sessionInfo, s);
+  paintSessionHeader();
+  settleOptimisticUser(optimistic, accepted.user);
+  live.run_id = accepted.turn.run_id;
   live.phase = "waiting";
   localRev++;
   await pollTurn(s.id, accepted.turn.message_id, live);
@@ -1302,16 +1351,20 @@ function onComposerSubmit(text: string): void {
     resend().catch((err) => toast(`重发失败：${errText(err)}`, "error"));
     return;
   }
+  if (draft && submittingDraft === composerKey.value) { toast("首条消息正在发送"); return; }
+  clearTimeout(previewTimer);
+  const receipt = sessionDrafts.take(composerKey.value);
   const cmd = parseCommand(text);
   if (cmd) {
+    receipt.accept();
     runCommand(cmd.name, cmd.args).catch((err) => toast(`命令失败：${errText(err)}`, "error"));
     return;
   }
   if (draft) {
-    sendFromDraft(text).catch((err) => toast(`发送失败：${errText(err)}`, "error"));
+    sendFromDraft(text, receipt).catch((err) => toast(`发送失败：${errText(err)}`, "error"));
     return;
   }
-  send(text).catch((err) => toast(`发送失败：${errText(err)}`, "error"));
+  send(text, receipt).catch((err) => toast(`发送失败：${errText(err)}`, "error"));
 }
 
 // —— 滚动隐藏上下栏（触屏；2026-10-17 用户定，默认开）——
@@ -1482,9 +1535,10 @@ onUnmounted(() => {
             size="small"
             @click="loadMore().catch((err) => toast(`加载更多失败：${errText(err)}`, 'error'))"
           >↑ 加载更多历史（还有 {{ olderSegments }} 段）</VBtn>
-          <template v-for="row in chatRows" :key="row.key">
+          <AnswerTranscript :rows="chatRows" :live-text="streamDisplay.text" :window-from="windowFrom" :rerolling-id="rerollingId">
+            <template #summary="{ row, readingKey }">
             <SummaryCard
-              v-if="row.kind === 'summary'"
+              :data-reading-key="readingKey"
               :summary="row.summary"
               :from-idx="row.fromIdx"
               :to-idx="row.toIdx"
@@ -1498,8 +1552,11 @@ onUnmounted(() => {
               @version="(d) => summaryVersion(d)"
               @undo="undoSummary(row.summary.id)"
             />
+            </template>
+            <template #message="{ row, presentation, readingKey }">
             <MessageBubble
-              v-else
+              v-bind="presentation"
+              :data-reading-key="readingKey"
               :who="row.msg.who"
               :idx="row.displayIdx"
               :role="row.msg.role"
@@ -1528,12 +1585,15 @@ onUnmounted(() => {
               @reroll-go="rerollGo"
               @regenerate="regenerateNow"
             />
-          </template>
+            </template>
+          </AnswerTranscript>
           </div>
         </main>
     <Composer
       ref="composerRef"
       :menu-on="cmdMenu"
+      :model-value="sessionDrafts.get(composerKey)"
+      @update:model-value="(value) => sessionDrafts.set(composerKey, value)"
       :thinking="currentThinking"
       :thinking-options="thinkingChoices"
       :native-tools="currentAllTools"
@@ -1592,7 +1652,7 @@ onUnmounted(() => {
         :esc-blocked="!!sessionSettingsId"
         @close="closeSettings"
         @toggle-left="toggleLeft"
-        @sessions-changed="refreshSessionsBar"
+        @sessions-changed="onManagedSessionsChanged"
         @models-changed="fillModelSelect"
         @chat-saved="onChatSaved"
         @prefs-saved="onPrefsSaved"

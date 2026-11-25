@@ -2,6 +2,8 @@
 // SVG 图标（内联，零依赖）—— 出处：Lucide v1.52.0（ISC，可商用），按 16px 线条风取 path。
 // pencil = 改正文；brain = 改思考。fill/stroke 全用 currentColor ⇒ 跟随按钮颜色，深浅主题自适应。
 export const ICONS = {
+  copy:
+    '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></svg>',
   pencil:
     '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg>',
   // notebookPen：编辑最新 Prompt（笔记本 + 笔，2026-11-03 用户定：别再摆一颗纯文字大按钮）。

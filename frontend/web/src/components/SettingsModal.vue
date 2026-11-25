@@ -41,7 +41,7 @@ interface ChatForm {
 const emit = defineEmits<{
   close: [];
   "toggle-left": [];
-  "sessions-changed": [];
+  "sessions-changed": [deletedId?: string];
   "models-changed": [];
   "goto-session": [id: string];
   "prefs-saved": [];
@@ -477,7 +477,7 @@ async function askDropSession(id: string, title: string): Promise<void> {
   try {
     await api.deleteSession(id);
     await loadSessions();
-    emit("sessions-changed");
+    emit("sessions-changed", id);
   } catch (e) { sessionMgrStatus.value = `删除失败：${errMsg(e)}`; }
 }
 

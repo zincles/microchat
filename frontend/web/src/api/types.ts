@@ -43,6 +43,7 @@ export interface Message {
   idx?: number;
   kind?: MessageKind;
   status?: MessageStatus;
+  run_id?: string;
   tools_snapshot?: string[];
   tools?: MessageTool[];
 }
@@ -100,6 +101,7 @@ export interface TurnStatus {
   phase: TurnPhase;
   step?: number;
   message_id?: string;
+  run_id?: string;
   elapsed_ms: number;
   chars: number;
   thinking_chars: number;

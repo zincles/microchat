@@ -3,21 +3,23 @@
 // 组件化边界：这里只管“流怎么走完”，落库后的界面刷新交给 App 的 onTurnFinished
 //（消息列/状态/占用/任务/预演各自都在 App 的域里）。增量的合并规则仍在 api/client.ts，
 // 这里只负责把 status 与 slice 喂给打字机。
-import type { Ref } from "vue";
-import type { Accepted, StreamCursor, StreamSlice, TurnPoll, TurnStatus } from "../api/types.ts";
+import { reactive, type Ref } from "vue";
+import type { Accepted, Message, StreamCursor, StreamSlice, TurnPoll, TurnStatus } from "../api/types.ts";
 import type { AppRow } from "../types/app.ts";
 import { mergeStreamSlice } from "../api/client.ts";
+import { toRow } from "./useSessionWindow.ts";
+import type { DraftReceipt } from "../utils/sessionDrafts.ts";
 
 interface TurnApi {
   sendMessage(id: string, content: string): Promise<Accepted>;
   resend(id: string): Promise<Accepted>;
+  listMessagesLast(id: string, n: number): Promise<Message[]>;
   turnPoll(id: string, from: number, thinkFrom: number): Promise<TurnPoll>;
   turnEventsUrl(id: string, from: number, thinkFrom: number): string;
 }
 
 interface ComposerHandle {
   setRunning(running: boolean): void;
-  setText(text: string): void;
 }
 
 export interface TurnStreamDeps {
@@ -43,7 +45,7 @@ export interface TurnStreamDeps {
 
 export interface TurnStream {
   startSendingBubble: () => AppRow;
-  send: (content: string) => Promise<void>;
+  send: (content: string, draft: DraftReceipt) => Promise<void>;
   resend: () => Promise<void>;
   pollTurn: (sid: string, turnID: string | undefined, existing?: AppRow | null) => Promise<void>;
   hasLivePoll: () => boolean;
@@ -54,51 +56,56 @@ export function useTurnStream({
   tmpKey, composerRef, resetTypewriter, setStreamTarget, refreshStatusline, refreshTasks,
   bumpLocalRev, beginPending, endPending, onTurnFinished,
 }: TurnStreamDeps): TurnStream {
-  // 本地此刻有几条轮询循环真的在跑（0 或 1）。
-  // 为什么需要这个数，而不是“看有没有 stream 气泡”：气泡是**一次性的**，循环死掉而气泡还留着
-  // —— 那个气泡就是僵住的假象。判“要不要接回来”必须看循环本身在不在。
-  let liveTurnPoll = 0;
-  // 同一个会话只允许一个轮询循环：前台对齐/重进会话/发送三路都可能喊 pollTurn，
-  // 两个循环各带各的游标写同一个 streamDisplay ⇒ 字符会重复/跳序。
-  const activeTurnPolls = new Set<string>();
+  // 离开再回来是新的一次订阅；旧连接的 finally 不能解开新订阅或改另一条会话的发送键。
+  const activeTurnPolls = new Map<string, number>();
 
   function startSendingBubble(): AppRow {
     const row = addMessage("助手", "", "assistant");
     row.stream = true;
     row.phase = "sending";
-    row.step = 1;
     return row;
   }
 
-  function finishLiveRow(row: AppRow): void {
-    row.stream = false;
-    row.phase = "";
-    row.content = vueStream.value.text ?? "";
-    row.reasoning = vueStream.value.reasoning ?? "";
-    row.tool = null;
-    row.sources = [];
+  // NextStep 只在前一步的消息和工具结果提交之后发出。只在换步时补读这些真记录，
+  // 避免短于 SSE 节拍的搜索悄悄消失，也不把一次模型调用误报成一次工具调用。
+  async function readCommittedSteps(sid: string, my: number, st: TurnStatus, live: AppRow): Promise<void> {
+    const { run_id: run, step } = st;
+    if (!run || !step || step < 2) return;
+    let recent: Message[];
+    try { recent = await api.listMessagesLast(sid, step); }
+    catch { return; } // 网络中断时留着已经见到的片段，最终仍会从归档对齐。
+    if (my !== getEpoch() || live.step !== step || !live.stream || !vueMessages.value.includes(live)) return;
+    const steps = recent.filter(m => m.role === "assistant" && m.run_id === run && m.id !== st.message_id);
+    if (steps.length !== step - 1) return; // 查询期间上游又走了一步，下一步的快照才有完整前缀。
+    const ids = new Set(steps.map(m => m.id));
+    const kept = vueMessages.value.filter(m => m === live || !(m.role === "assistant" && m.run_id === run && (!m.messageId || ids.has(m.messageId))));
+    kept.splice(kept.indexOf(live), 0, ...steps.map(toRow));
+    vueMessages.value = kept;
   }
 
-  function startLiveStep(step: number): AppRow {
-    const row = addMessage("助手", "", "assistant");
-    row.stream = true;
-    row.phase = "waiting";
+  function advanceLiveStep(sid: string, my: number, st: TurnStatus, row: AppRow): boolean {
+    if (st.run_id) row.run_id = st.run_id;
+    const step = st.step;
+    if (!step || step === row.step) return false;
+    const previous = vueStream.value;
+    const at = vueMessages.value.indexOf(row);
+    if (at >= 0 && row.step && (previous.text || previous.reasoning || row.tool || row.sources?.length)) {
+      vueMessages.value.splice(at, 0, { id: tmpKey(), who: "助手", role: "assistant", kind: "tool_run",
+        run_id: row.run_id, step: row.step, content: previous.text, reasoning: previous.reasoning,
+        tool: row.tool, sources: row.sources });
+    }
     row.step = step;
-    return row;
-  }
-
-  function advanceLiveStep(st: TurnStatus, row: AppRow | null): { row: AppRow; cur: StreamCursor } | null {
-    const step = Number(st.step || 0);
-    if (!step || !row || step === Number(row.step || 0)) return null;
-    finishLiveRow(row);
-    const next = startLiveStep(step);
-    vueStream.value = { id: vueStream.value.id, text: "", reasoning: "" };
+    row.kind = "chat";
+    row.reasoning = "";
+    row.sources = [];
+    row.tool = null;
+    vueStream.value = { id: previous.id, text: "", reasoning: "" };
     resetTypewriter();
-    return { row: next, cur: { from: 0, thinkFrom: 0 } };
+    void readCommittedSteps(sid, my, st, row);
+    return true;
   }
 
   function applyTurnStream(st: TurnStatus, slice: StreamSlice, cur: StreamCursor, row: AppRow): StreamCursor {
-    if (st.step) row.step = st.step;
     row.tool = st.tool ?? null;
     row.sources = st.sources ?? [];
     if (row.tool || row.sources.length) row.kind = "tool_run";
@@ -114,7 +121,6 @@ export function useTurnStream({
 
   async function pollTurnEvents(sid: string, turnID: string | undefined, my: number, row: AppRow): Promise<TurnStatus | null | undefined> {
     let cur: StreamCursor = { from: 0, thinkFrom: 0 };
-    let liveRow = row;
     const sources: EventSource[] = [];
     try {
       return await new Promise((resolve, reject) => {
@@ -135,13 +141,9 @@ export function useTurnStream({
           const st = poll.status;
           const slice = poll.slice;
           if (!st || !slice) return;
-          // 迟到的旧连接拿到的是新一轮：立刻收手，别把新的字写进旧的显示前缀。
-          if (turnID && st.message_id && st.message_id !== turnID && st.phase !== "idle") {
-            source.close(); resolve(null); return;
-          }
-          const advanced = advanceLiveStep(st, liveRow);
-          if (advanced) { liveRow = advanced.row; cur = advanced.cur; }
-          cur = applyTurnStream(st, slice, cur, liveRow);
+          if (turnID && st.message_id && st.message_id !== turnID) { source.close(); resolve(null); return; }
+          if (advanceLiveStep(sid, my, st, row)) cur = { from: 0, thinkFrom: 0 };
+          cur = applyTurnStream(st, slice, cur, row);
           if (st.phase === "idle" || st.phase === "error") {
             source.close(); resolve(st);
           }
@@ -158,7 +160,6 @@ export function useTurnStream({
 
   async function pollTurnHTTP(sid: string, turnID: string | undefined, my: number, row: AppRow): Promise<void> {
     let cur: StreamCursor = { from: 0, thinkFrom: 0 };
-    let liveRow = row;
     let misses = 0;
     let delay = 200;
     for (;;) {
@@ -168,7 +169,7 @@ export function useTurnStream({
       const requestAt = performance.now();
       try {
         poll = await api.turnPoll(sid, cur.from, cur.thinkFrom);
-        if (turnID && poll.status.message_id && poll.status.message_id !== turnID && poll.status.phase !== "idle") return;
+        if (turnID && poll.status.message_id && poll.status.message_id !== turnID) return;
         misses = 0;
       } catch (err: unknown) {
         if (++misses > 10) throw err;
@@ -178,9 +179,13 @@ export function useTurnStream({
       delay = Math.max(80, 300 - (performance.now() - requestAt));
       if (my !== getEpoch()) return;
       const st = poll.status;
-      const advanced = advanceLiveStep(st, liveRow);
-      if (advanced) { liveRow = advanced.row; cur = advanced.cur; }
-      cur = applyTurnStream(st, poll.slice, cur, liveRow);
+      if (advanceLiveStep(sid, my, st, row)) {
+        const fromPrevious = cur.from !== 0 || cur.thinkFrom !== 0;
+        cur = { from: 0, thinkFrom: 0 };
+        // HTTP 的这一拍是按旧游标取的；不要把新步的半截尾巴当成全文。
+        if (fromPrevious && (st.phase === "pending" || st.phase === "streaming")) continue;
+      }
+      cur = applyTurnStream(st, poll.slice, cur, row);
       if (st.phase === "idle" || st.phase === "error") {
         await onTurnFinished(sid, st);
         return;
@@ -189,19 +194,18 @@ export function useTurnStream({
   }
 
   async function pollTurn(sid: string, turnID: string | undefined, existing: AppRow | null = null): Promise<void> {
-    if (activeTurnPolls.has(sid)) return;
-    activeTurnPolls.add(sid);
     const my = getEpoch();
-    liveTurnPoll++;
+    if (sid !== getSessionID() || activeTurnPolls.get(sid) === my) return;
+    activeTurnPolls.set(sid, my);
     const m = existing && vueMessages.value.includes(existing)
       ? existing
-      : { who: "助手", role: "assistant", stream: true, content: "", reasoning: "", id: tmpKey() } as AppRow;
+      : reactive<AppRow>({ who: "助手", role: "assistant", stream: true, content: "", reasoning: "", id: tmpKey() });
     if (!m.stream) m.stream = true;
     m.phase = "waiting";
     m.tool = null;
     m.sources = [];
-    m.step = 1;
-    if (!vueMessages.value.includes(m)) vueMessages.value.push(m);
+    // 起标题还在跑时，最终正文可能已经入库；继续等终态，但不要再画一份合成回复。
+    if (!vueMessages.value.includes(m) && !vueMessages.value.some(r => r.messageId && r.messageId === turnID)) vueMessages.value.push(m);
     vueStream.value = { id: turnID ?? null, text: "", reasoning: "" };
     resetTypewriter();
     composerRef.value?.setRunning(true);
@@ -222,15 +226,15 @@ export function useTurnStream({
         await pollTurnHTTP(sid, turnID, my, m);
       }
     } finally {
-      activeTurnPolls.delete(sid);
-      liveTurnPoll--;
-      composerRef.value?.setRunning(false);
+      if (activeTurnPolls.get(sid) === my) activeTurnPolls.delete(sid);
+      if (my === getEpoch()) composerRef.value?.setRunning(false);
     }
   }
 
-  async function send(content: string): Promise<void> {
+  async function send(content: string, draft: DraftReceipt): Promise<void> {
     const sid = getSessionID();
     if (!sid) throw new Error("还没有会话");
+    const my = getEpoch();
     const optimistic = addMessage("你", content, "user");
     const live = startSendingBubble();
     bumpLocalRev();
@@ -241,15 +245,19 @@ export function useTurnStream({
     } catch (err: unknown) {
       dropOptimistic(optimistic);
       dropOptimistic(live);
-      composerRef.value?.setText(content);
+      draft.reject();
       throw err;
     } finally {
       endPending();
     }
+    draft.accept();
+    refreshTasks();
+    if (sid !== getSessionID()) return;
+    if (my !== getEpoch()) { await pollTurn(sid, accepted.turn.message_id); return; }
     settleOptimisticUser(optimistic, accepted?.user);
     live.phase = "waiting";
     bumpLocalRev();
-    refreshTasks();
+    live.run_id = accepted.turn.run_id;
     await pollTurn(sid, accepted.turn.message_id, live);
   }
 
@@ -266,11 +274,13 @@ export function useTurnStream({
     }
     live.phase = "waiting";
     refreshTasks();
+    if (sid !== getSessionID()) return;
+    live.run_id = accepted.turn.run_id;
     await pollTurn(sid, accepted.turn.message_id, live);
   }
 
   return {
+    hasLivePoll: () => activeTurnPolls.get(getSessionID() ?? "") === getEpoch(),
     startSendingBubble, send, resend, pollTurn,
-    hasLivePoll: () => liveTurnPoll > 0,
   };
 }

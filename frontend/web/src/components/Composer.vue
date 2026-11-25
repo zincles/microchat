@@ -3,7 +3,7 @@
 //
 // 行为不变：回车/发送键发送、生成中变停止、自增高 1..6 行、命令菜单、思考档位。
 // 外观交给 Vuetify 的 `md3` blueprint（VTextarea / VBtn），不再由手写 CSS 画输入框和按钮。
-import { ref, nextTick } from "vue";
+import { ref } from "vue";
 import { VBtn, VSheet, VTextarea } from "vuetify/components";
 import { ICONS } from "../assets/icons.ts";
 import ThinkingMenu from "./ThinkingMenu.vue";
@@ -43,25 +43,23 @@ const props = withDefaults(defineProps<{
   zenHidden: false,
 });
 
-const text = ref("");
+const text = defineModel<string>({ required: true });
 const running = ref(false);
-const area = ref<InstanceType<typeof VTextarea> | null>(null);
 const sendSvg = ICONS.send;
 
 function setRunning(v: unknown): void {
   running.value = !!v;
 }
 function onValue(value: unknown): void {
-  text.value = String(value ?? "");
-  emit("input-text", text.value);
+  const input = String(value ?? "");
+  text.value = input;
+  emit("input-text", input);
 }
 function onKeydown(e: KeyboardEvent): void {
   emit("keydown", e, text.value);
 }
 function submit(): void {
-  const t = text.value.trim();
-  text.value = "";
-  emit("submit", t);
+  emit("submit", text.value.trim());
 }
 function stop(): void {
   emit("stop");
@@ -69,15 +67,8 @@ function stop(): void {
 function selectThinking(value: string): void {
   emit("select-thinking", value);
 }
-function clear(): void {
-  text.value = "";
-}
-function setText(t?: string): void {
-  text.value = String(t ?? "");
-  nextTick(() => area.value?.focus());
-}
 
-defineExpose({ submit, clear, setText, text, setRunning });
+defineExpose({ submit, setRunning });
 </script>
 
 <template>
@@ -85,7 +76,6 @@ defineExpose({ submit, clear, setText, text, setRunning });
     <VSheet class="composer-shell" color="surface-container-low" rounded="24">
       <VTextarea
         id="composer-input"
-        ref="area"
         class="composer-input"
         :model-value="text"
         variant="plain"

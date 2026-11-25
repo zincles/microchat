@@ -81,6 +81,7 @@ type Status struct {
 	// Step：一轮 run 里的第几个 assistant 模型轮（从 1 开始；客户端据此切 live 气泡）。
 	Step          int            `json:"step,omitempty"`
 	MessageID     *string        `json:"message_id,omitempty"`
+	RunID         string         `json:"run_id,omitempty"` // 与已归档的中间工具消息配对，重连时也不必猜。
 	ElapsedMS     int64          `json:"elapsed_ms"`
 	Chars         int            `json:"chars"`
 	ThinkingChars int            `json:"thinking_chars"`
@@ -104,6 +105,7 @@ type entry struct {
 	phase     Phase
 	step      int
 	messageID *string
+	runID     string
 	started   time.Time
 	elapsed   time.Duration // 结束后的定格时长（error 态回报它）
 	text      strings.Builder
@@ -156,6 +158,7 @@ func (r *Registry) Status(sessionID string) Status {
 		return status
 	}
 	status.Phase, status.Step, status.MessageID = item.phase, item.step, item.messageID
+	status.RunID = item.runID
 	status.Chars, status.ThinkingChars, status.Error = item.text.Len(), item.thinking.Len(), item.err
 	if item.tool != nil {
 		tool := *item.tool
@@ -185,7 +188,7 @@ func (r *Registry) Status(sessionID string) Status {
 //
 // 闸门管两件事：这一轮生成、以及一次重摇 —— **两边共用它**（重摇也是一次对话型调用：
 // 两个上游请求同时改同一段历史，谁也说不清谁先谁后）⇒ 重摇在跑时再发消息 = 409。
-func (r *Registry) Begin(sessionID, messageID string) (uint64, error) {
+func (r *Registry) Begin(sessionID, messageID, runID string) (uint64, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	item := r.lookup(sessionID)
@@ -197,7 +200,7 @@ func (r *Registry) Begin(sessionID, messageID string) (uint64, error) {
 	}
 	r.nextToken++
 	r.entries[sessionID] = &entry{
-		phase: PhasePending, step: 1, messageID: &messageID, started: time.Now(), token: r.nextToken,
+		phase: PhasePending, step: 1, messageID: &messageID, runID: runID, started: time.Now(), token: r.nextToken,
 	}
 	return r.nextToken, nil
 }

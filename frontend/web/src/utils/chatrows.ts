@@ -29,6 +29,8 @@ export interface ChatMessage {
   role?: string;
   kind?: "chat" | "tool_run";
   status?: "done" | "canceled" | "failed" | "interrupted";
+  run_id?: string;
+  step?: number;
   tools_snapshot?: string[];
   tools?: {
     id?: string;
@@ -283,19 +285,10 @@ export function buildChatRows({
     last = Math.max(last, segEnd(seg));
   }
 
-  // 尾巴 extras：布局还不认识的消息（总数快照滞后时的新消息）、乐观句、生成中那一发。
-  const extras: ChatMessage[] = [];
+  // 尾段已按追加顺序排列。受理回执可能没有 idx；不能因此把它排到后来的已存工具步之后。
   for (const m of list) {
     const idx = typeof m.idx === "number" ? m.idx : 0;
-    if (idx > 0) {
-      if (idx < windowFrom || covered.has(idx)) continue;
-      extras.push(m);
-    } else {
-      extras.push(m);
-    }
-  }
-  extras.sort((a, b) => (a.idx ?? Infinity) - (b.idx ?? Infinity)); // 无 idx 的排最后（稳定序保持原顺序）
-  for (const m of extras) {
+    if (idx > 0 && (idx < windowFrom || covered.has(idx))) continue;
     if (m.noIdx) rows.push({ kind: "msg", key: m.id ?? "err", msg: m, displayIdx: null });
     else if (typeof m.idx === "number" && m.idx > 0) {
       last = Math.max(last, m.idx);

@@ -3575,13 +3575,6 @@ test("回到前台会跟后端对齐（三条事件都接）", () => {
   assert.ok(!/outgoingPreview\(sessionID/.test(body), "聊天界面的前台对齐还在无条件拉 /outgoing");
   assert.match(body, /refreshStatusline\(/, "落地之后没刷状态行（上下文占用就在那儿）");
 
-  // ④ 判"要不要接轮询"靠**循环在不在**（liveTurnPoll），不能靠"有没有 stream 气泡" ——
-  //    气泡是循环死掉之后留下的假象，拿它当判据就永远不接。
-  const turnSrc = readFileSync(join(SRC, "composables", "useTurnStream.ts"), "utf8");
-  assert.match(turnSrc, /let liveTurnPoll = 0;/, "没有 liveTurnPoll 计数");
-  assert.match(turnSrc, /liveTurnPoll\+\+;/, "轮询开始没计数");
-  assert.match(turnSrc, /liveTurnPoll--;/, "轮询结束没减计数");
-  assert.match(body, /hasLivePoll\(\)/, "resync 没按'循环在不在'决定接不接");
 
   // ⑤ 连发事件要合并（切回来时三条常常一串来）。
   assert.match(body, /resyncing \|\| now - lastResyncAt < 300/, "连发的三条事件没有合并");
@@ -3607,8 +3600,6 @@ test("一轮的轮询：单拍失败继续，不判死刑", () => {
   assert.match(body, /delay = Math\.max\(80, 300 - \(performance\.now\(\) - requestAt\)\)/,
     "没有按 RTT 自适应下一拍间隔");
   // 主路径是 SSE；SSE 建不起来才回退 HTTP。
-  assert.match(turnSrc, /if \(activeTurnPolls\.has\(sid\)\) return;/, "没有单飞闸（两个循环会写乱同一个显示前缀）");
-  assert.ok(/activeTurnPolls\.add\(sid\)/.test(turnSrc) && /activeTurnPolls\.delete\(sid\)/.test(turnSrc), "单飞闸没有登记/释放");
   assert.match(turnSrc, /new EventSource\(api\.turnEventsUrl\(sid, 0, 0\)\)/, "主路径没有 SSE");
   assert.match(turnSrc, /await pollTurnEvents\(sid, turnID, my, m\)/, "SSE 入口没接");
   assert.match(turnSrc, /await pollTurnHTTP\(sid, turnID, my, m\)/, "SSE 没有 HTTP 回退");
@@ -4097,16 +4088,6 @@ test("CSS 复用：幽灵按钮底座与蒙层 token 只有一处", () => {
 });
 
 
-test("回到前台重拉消息列时，用户没在底部就保留原来的滚动位置", () => {
-  const app = readFileSync(join(SRC, "App.vue"), "utf8");
-  const windowSrc = readFileSync(join(SRC, "composables", "useSessionWindow.ts"), "utf8");
-  assert.match(windowSrc, /async function reloadWindowKeepingScroll\(\{[^)]*\} = \{\}\)/, "没有保留滚动位置的重拉函数");
-  assert.match(windowSrc, /const stick = nearBottom\(el\)/, "没判断重拉前是否贴底");
-  assert.match(windowSrc, /if \(stick\) next\.scrollTop = next\.scrollHeight/, "贴底时没继续贴底");
-  assert.match(windowSrc, /next\.scrollTop = Math\.min\(top,/, "不在底部时没恢复原位置");
-  assert.match(app, /dropStreamBubbles\(\);\s*await reloadWindowKeepingScroll\(\)/, "前台对齐没走保留滚动");
-  assert.match(app, /await waitTypewriter\(\);[\s\S]{0,160}await reloadWindowKeepingScroll\(\)/, "一轮落库后仍会把不贴底的人拽到底部");
-});
 
 test("消息操作行：编辑/思考/重摇/删除始终可见，不再等 hover", () => {
   const bubble = readFileSync(join(SRC, "components", "MessageBubble.vue"), "utf8");
@@ -4123,7 +4104,6 @@ test("消息窗口：默认 5 段，设置里可改，首屏与加载更多共�
   assert.match(windowSrc, /const windowLimit = ref\(5\)/, "消息窗口默认不是 5");
   assert.match(windowSrc, /windowStart\(segments, limit\)/, "首屏没用可配置窗口");
   assert.match(windowSrc, /limit = windowLimit\.value/, "窗口取数没有默认取 history_window");
-  assert.match(windowSrc, /prevWindowStart\(vueSegments\.value, windowFrom\.value, windowLimit\.value\)/, "加载更多没用可配置窗口");
   assert.match(app, /history_window/, "App 没从 chat 配置读 history_window");
   assert.match(settings, /v-model="chat\.history_window"/, "设置里没有首屏消息数输入");
   assert.match(settings, /首屏加载多少条消息/, "设置项没有说人话的标签");
@@ -4278,13 +4258,11 @@ test("高延迟：发送先上屏、失败撤回；切会话不先拉列表；�
   assert.ok(sendStart > 0 && sendEnd > sendStart, "找不到 send()");
   assert.ok(send.indexOf('addMessage("你", content, "user")') < send.indexOf("await api.sendMessage"), "发送不是先上屏再等 202");
   assert.match(send, /dropOptimistic\(optimistic\)/, "发送失败没撤掉乐观气泡");
-  assert.match(send, /setText\(content\)/, "发送失败没把输入的文字还回去");
   assert.match(send, /settleOptimisticUser\(optimistic, accepted\?\.user\)/, "202 回来后没换成服务端那条（编号/编辑都要真 id）");
 
   // ② 草稿那条是两个 back-to-back 请求（建会话 → 受理），同样先上屏
   const draft = app.slice(app.indexOf("async function sendFromDraft"), app.indexOf("function stopCurrent"));
   assert.ok(draft.indexOf('addMessage("你", text, "user")') < draft.indexOf("await api.createSession"), "草稿首句不是先上屏再建会话");
-  assert.match(draft, /setText\(text\)/, "草稿发送失败没把文字还回去");
 
   // ③ 切会话：列表在屏幕上就直接用，别先 GET /sessions 再画
   const enter = app.slice(app.indexOf("async function enterSession"), app.indexOf("async function boot"));

@@ -122,7 +122,7 @@ func (s *Service) Accept(session model.Session, content string) (Accepted, error
 	assistantIDs := ids[1 : len(ids)-1]
 
 	// **唯一的并发闸门**：同会话已经在跑 ⇒ 直接拒（不排队）
-	token, err := s.Turns.Begin(session.ID, replyID)
+	token, err := s.Turns.Begin(session.ID, replyID, userID)
 	if err != nil {
 		return Accepted{}, err
 	}
@@ -172,7 +172,7 @@ func (s *Service) Resend(session model.Session) (Accepted, error) {
 	replyID := ids[len(ids)-1]
 	assistantIDs := ids[:len(ids)-1]
 	// **唯一的并发闸门**：同会话已经在跑 ⇒ 直接拒（不排队，与 Accept 同一把）
-	token, err := s.Turns.Begin(session.ID, replyID)
+	token, err := s.Turns.Begin(session.ID, replyID, replyID)
 	if err != nil {
 		return Accepted{}, err
 	}
@@ -675,7 +675,7 @@ func (s *Service) StatusView(sessionID string) model.TurnStatus {
 // statusView：登记表的状态 → 接口上的形状（`GET /sessions` 那一栏要它）。
 func statusView(status turn.Status) model.TurnStatus {
 	return model.TurnStatus{
-		Phase: model.TurnPhase(status.Phase), MessageID: status.MessageID,
+		Phase: model.TurnPhase(status.Phase), MessageID: status.MessageID, RunID: status.RunID,
 		ElapsedMS: status.ElapsedMS, Chars: status.Chars,
 		ThinkingChars: status.ThinkingChars, Error: status.Error,
 	}

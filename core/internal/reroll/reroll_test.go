@@ -420,7 +420,7 @@ func TestEnterRefusals(t *testing.T) {
 	}
 	// 生成中（闸门被占）⇒ conflict
 	h.turn(t, "第一轮")
-	if _, err := h.turns.Begin(h.sessionID, "reply"); err != nil {
+	if _, err := h.turns.Begin(h.sessionID, "reply", "run"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := h.service.EnterSync(context.Background(), h.session); !isCode(err, "conflict") {
@@ -462,7 +462,7 @@ func TestBusyGateIsSharedWithTurn(t *testing.T) {
 	}
 	// 反向：生成期间不许重摇
 	h.turns.FinishReroll(h.sessionID, token, "")
-	if _, err := h.turns.Begin(h.sessionID, "reply"); err != nil {
+	if _, err := h.turns.Begin(h.sessionID, "reply", "run"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := h.service.EnterSync(context.Background(), h.session); !isCode(err, "conflict") {

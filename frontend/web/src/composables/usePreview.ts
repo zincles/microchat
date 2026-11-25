@@ -22,10 +22,6 @@ interface PayloadSink {
   setCompactWire(payload: PayloadPreview | null): void;
 }
 
-interface ComposerSink {
-  text: string;
-}
-
 export interface PreviewDeps {
   api: PreviewApi;
   toast: (text: string, kind?: string) => void;
@@ -34,13 +30,13 @@ export interface PreviewDeps {
   isDraft: () => boolean;
   getDraftId: () => string | null;
   draftPrefs: DraftPrefs;
-  composerRef: Ref<ComposerSink | null>;
+  getText: () => string;
   payloadbarRef: Ref<PayloadSink | null>;
   previewOn: () => boolean;
 }
 
 export function usePreview({
-  api, toast, getEpoch, getSessionID, isDraft, getDraftId, draftPrefs, composerRef, payloadbarRef, previewOn,
+  api, toast, getEpoch, getSessionID, isDraft, getDraftId, draftPrefs, getText, payloadbarRef, previewOn,
 }: PreviewDeps) {
   let previewSeq = 0;
 
@@ -77,7 +73,7 @@ export function usePreview({
 
   function refreshPreview(): void {
     if (!previewOn()) return;
-    const value = composerRef.value?.text ?? "";
+    const value = getText();
     if (!value.trim() || value.startsWith("/")) return;
     if (isDraft() ? !getDraftId() : !getSessionID()) return;
     void previewPayload(value);

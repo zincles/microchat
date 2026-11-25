@@ -399,7 +399,7 @@ func (s *Service) Regenerate(session model.Session) (Accepted, error) {
 	}
 	_, _, providersConfig := s.files()
 	chosen := providers.SelectBackend(session.Provider, session.Model, providersConfig)
-	token, err := s.Turns.Begin(session.ID, tail.ID)
+	token, err := s.Turns.Begin(session.ID, tail.ID, tail.RunID)
 	if err != nil {
 		return Accepted{}, err
 	}

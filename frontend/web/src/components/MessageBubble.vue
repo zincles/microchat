@@ -12,8 +12,10 @@ import { renderMermaidIn } from "../utils/mermaid.ts";
 import type { RerollView } from "../types/app.ts";
 import type { MessageTool } from "../api/types.ts";
 import MessageToolCard from "./MessageToolCard.vue";
+import CopyAnswerButton from "./CopyAnswerButton.vue";
+import { issueLabel, type BubblePresentation } from "../utils/answerTranscript.ts";
 
-const props = withDefaults(defineProps<{
+const props = withDefaults(defineProps<BubblePresentation & {
   who?: string;
   idx?: number | string | null; // 显示编号（真消息=服务端 idx；库外的按后缀顺延）
   role?: string;
@@ -40,6 +42,7 @@ const props = withDefaults(defineProps<{
   // 只有聚合站（OpenRouter）会带 cost_usd；直连渠道没有 ⇒ 脚注不显示价格。
   usage?: UsageLike | null;
 }>(), {
+  answerView: "full",
   who: "",
   idx: null,
   role: "",
@@ -87,21 +90,16 @@ const foot = computed(() => usageFoot(footUsage.value, footTiming.value));
 const footTitle = computed(() => usageFootTitle(footUsage.value, footTiming.value));
 // 用户身份（`你 #3`）：气泡**外面**那一行，CSS 里只在 hover 时显形。
 const ident = computed(() => identityLabel(props.who, props.idx));
-const assistantIdent = computed(() => assistantIdentity(props.who, props.kind, props.idx));
-const statusText = computed(() => {
-  switch (props.status) {
-    case "canceled": return "已取消";
-    case "failed": return "失败";
-    case "interrupted": return "已中断";
-    default: return "";
-  }
-});
+const assistantIdent = computed(() => props.answerView !== "full" ? "" : props.candidate
+  ? assistantIdentity(props.who, "chat", props.idx) : assistantIdentity(props.who, props.kind, props.idx));
+const statusText = computed(() => props.candidate ? "" : issueLabel(props.status ?? undefined));
+const showToolDetails = computed(() => props.answerView === "full" && !props.candidate);
 
 // 流式期间还没正文 ⇒ 标签说"思考中…"；落库后才是"思考过程（2.1s）"（那会儿才有用时）。
 const typingHint = computed(() =>
   props.phase === "sending" ? "正在向后端发送请求…" : "等待 Provider 响应…",
 );
-const toolHint = computed(() => toolRunHint(props.tool));
+const toolHint = computed(() => props.candidate ? "" : toolRunHint(props.tool));
 const thinkLabel = computed(() =>
   props.streaming && !props.content ? "思考中…" : formatThinkLabel(props.reasoningMs),
 );
@@ -111,7 +109,7 @@ const canEdit = computed(() => !!props.messageId);
 const parts = computed(() => splitState(props.content));
 const bodyHtml = computed(() => renderMarkdown(parts.value.cleaned, { macros: props.macros }));
 // 新消息带 text_offset ⇒ 工具卡按正文位置插入；旧消息没有 ⇒ 保持“工具卡在正文上方”。
-const toolTimeline = computed(() => buildToolTimeline(parts.value.cleaned, props.tools).map((part) => ({
+const toolTimeline = computed(() => !showToolDetails.value ? [] : buildToolTimeline(parts.value.cleaned, props.tools).map((part) => ({
   ...part,
   html: part.kind === "text" ? renderMarkdown(part.text ?? "", { macros: props.macros }) : "",
 })));
@@ -177,7 +175,7 @@ onMounted(() => {
 onUnmounted(() => window.removeEventListener("mc-theme-changed", paintMermaid));
 // 流式期间正文每来一段就重算一次 —— 那时不扫公式（每帧扫一遍是白烧 CPU）；
 // 但光标要跟着最后一个字走。收尾那一拍去掉光标、扫公式并画 Mermaid。
-watch(bodyHtml, () => {
+watch([bodyHtml, () => props.answerView], () => {
   if (props.streaming) nextTick(placeStreamCursor);
   else nextTick(() => { markMathOverflow(); paintMermaid(); });
 });
@@ -192,18 +190,19 @@ watch(() => props.streaming, (s) => nextTick(() => {
        从前这里按 `display_mode` 切两套 class（两边气泡 / 用户气泡+AI 纯文本）；现在后者是唯一的样子，
        所以不再有条件类 —— 形态本身写在 CSS 的 `.msg.assistant` / `.msg-wrap.assistant` 里。 -->
   <div :class="`msg-wrap ${role === 'user' ? 'user' : 'assistant'}`">
-    <div ref="msgEl" :class="`msg ${role === 'user' ? 'user' : 'assistant'}`">
+    <div v-if="answerView === 'full' || content" ref="msgEl" :class="`msg ${role === 'user' ? 'user' : 'assistant'}`">
       <div v-if="role !== 'user' && assistantIdent" class="msg-head">{{ assistantIdent }}<span v-if="statusText" class="msg-status"> · {{ statusText }}</span></div>
-      <details v-if="reasoning" class="think">
+      <details v-if="answerView === 'full' && reasoning" class="think">
         <summary>{{ thinkLabel }}</summary>
         <div class="think-body" v-html="reasoningHtml"></div>
       </details>
       <!-- 旧消息没有 text_offset，只能把工具卡放在正文上方；新消息按时间线插在正文中。 -->
-      <div v-if="streaming && toolHint" class="tool-status" aria-live="polite">
+      <div v-if="!progressShown && streaming && toolHint" class="tool-status" aria-live="polite">
         <span class="tool-dot" aria-hidden="true"></span>
         <i>{{ toolHint }}</i>
       </div>
       <template v-if="!toolTimeline.length">
+        <template v-if="showToolDetails">
         <div v-if="tools.length" class="tool-cards" aria-label="工具调用">
           <MessageToolCard v-for="(tool, i) in tools" :key="tool.id || i" :tool="tool" />
         </div>
@@ -213,6 +212,7 @@ watch(() => props.streaming, (s) => nextTick(() => {
             {{ sourceLabel(source.url, source.title) }}
           </a>
         </details>
+        </template>
       </template>
       <div v-if="toolTimeline.length" ref="textEl" class="text text-timeline">
         <template v-for="(part, i) in toolTimeline" :key="i">
@@ -221,7 +221,7 @@ watch(() => props.streaming, (s) => nextTick(() => {
         </template>
       </div>
       <div v-else ref="textEl" class="text" v-html="bodyHtml"></div>
-      <div v-if="streaming && !content && !reasoning && !toolHint" class="typing" aria-label="正在生成">
+      <div v-if="!progressShown && streaming && !content && !reasoning && !toolHint" class="typing" aria-label="正在生成">
         <span></span><span></span><span></span>
         <i class="typing-hint">{{ typingHint }}</i>
       </div>
@@ -238,10 +238,11 @@ watch(() => props.streaming, (s) => nextTick(() => {
         </div>
       </div>
     </div>
-    <div v-if="canEdit || (role !== 'user' && foot)" class="msg-footer">
+    <div v-if="answerView !== 'prose' && (canEdit || (role !== 'user' && foot))" class="msg-footer">
       <div v-if="canEdit" class="msg-ops">
         <!-- 身份与操作常驻同一行，用户身份沿用 hover / focus 显示。 -->
         <span v-if="role === 'user' && ident" class="msg-ident">{{ ident }}</span>
+        <CopyAnswerButton v-if="copyAnswer && role === 'assistant' && !streaming && parts.cleaned" :body="parts.cleaned" :macros="macros" />
         <VBtn icon variant="text" size="small" title="改正文" aria-label="改正文" @click="emit('edit', messageId, 'content')" v-html="ICONS.pencil" />
         <VBtn v-if="role !== 'user'" icon variant="text" size="small" title="改思考" aria-label="改思考" @click="emit('edit', messageId, 'reasoning')" v-html="ICONS.brain" />
         <VBtn v-if="role !== 'user' && isLast && promptId" icon variant="text" size="small" color="primary" class="prompt-edit-btn" title="编辑最新 Prompt（编辑这条回复对应的用户输入）" aria-label="编辑最新 Prompt" @click="emit('edit-prompt', promptId)" v-html="ICONS.notebookPen" />

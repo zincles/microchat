@@ -186,7 +186,7 @@ func TestRerollRefusals(t *testing.T) {
 	box.waitPhase(t, box.sessionID, "idle")
 
 	// 生成中 ⇒ 409（闸门占着）
-	if _, err := box.server.chat.Turns.Begin(box.sessionID, "reply"); err != nil {
+	if _, err := box.server.chat.Turns.Begin(box.sessionID, "reply", "run"); err != nil {
 		t.Fatal(err)
 	}
 	if recorder := call(box.server, "POST", box.path+"/reroll-message", ""); recorder.Code != http.StatusConflict {

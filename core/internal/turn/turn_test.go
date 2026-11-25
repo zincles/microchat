@@ -21,18 +21,18 @@ func TestUnknownSessionIsIdle(t *testing.T) {
 // begin 是**唯一的并发闸门**：第二个挤进来要被拒（不排队）。
 func TestBeginIsTheOnlyGate(t *testing.T) {
 	turns := NewRegistry()
-	token, err := turns.Begin("c1", "m1")
+	token, err := turns.Begin("c1", "m1", "u1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if status := turns.Status("c1"); status.Phase != PhasePending || status.MessageID == nil || *status.MessageID != "m1" {
 		t.Fatalf("状态 = %+v", status)
 	}
-	if _, err := turns.Begin("c1", "m2"); err == nil {
+	if _, err := turns.Begin("c1", "m2", "u2"); err == nil {
 		t.Fatal("已经在跑时再受理必须被拒")
 	}
 	// 换一个会话不受影响
-	if _, err := turns.Begin("c2", "m9"); err != nil {
+	if _, err := turns.Begin("c2", "m9", "u9"); err != nil {
 		t.Fatalf("别的会话不该被牵连：%v", err)
 	}
 	_ = token
@@ -41,7 +41,7 @@ func TestBeginIsTheOnlyGate(t *testing.T) {
 // 增量进缓冲：pending 抬成 streaming；令牌对不上就丢（被 stop 顶掉的旧任务不许写进来）。
 func TestAppendOnlyWithTheRightToken(t *testing.T) {
 	turns := NewRegistry()
-	token, _ := turns.Begin("c1", "m1")
+	token, _ := turns.Begin("c1", "m1", "u1")
 	if !turns.AppendContent("c1", token, "你好") {
 		t.Fatal("自己那一轮的增量该收下")
 	}
@@ -66,7 +66,7 @@ func TestAppendOnlyWithTheRightToken(t *testing.T) {
 // 游标读：**读不消费**（两个客户端各拿各的），`from` 是第几个字符。
 func TestCursorReadDoesNotConsume(t *testing.T) {
 	turns := NewRegistry()
-	token, _ := turns.Begin("c1", "m1")
+	token, _ := turns.Begin("c1", "m1", "u1")
 	turns.AppendContent("c1", token, "0123456789")
 	turns.AppendReasoning("c1", token, "abc")
 
@@ -95,7 +95,7 @@ func TestCursorReadDoesNotConsume(t *testing.T) {
 // 收尾：成功回 idle；失败进 error 并记住上一轮的耗时。
 func TestFinishKeepsElapsedForError(t *testing.T) {
 	turns := NewRegistry()
-	token, _ := turns.Begin("c1", "m1")
+	token, _ := turns.Begin("c1", "m1", "u1")
 	time.Sleep(2 * time.Millisecond)
 	turns.Finish("c1", token, "上游 500")
 	status := turns.Status("c1")
@@ -118,9 +118,9 @@ func TestFinishKeepsElapsedForError(t *testing.T) {
 // 而旧任务这时正好回来 ⇒ 令牌对上了 ⇒ 它会把自己的结果写进**新一轮**的账上。
 func TestTokensNeverRepeatAcrossTurns(t *testing.T) {
 	turns := NewRegistry()
-	stale, _ := turns.Begin("c1", "m1")
+	stale, _ := turns.Begin("c1", "m1", "u1")
 	turns.Stop("c1")
-	fresh, _ := turns.Begin("c1", "m2")
+	fresh, _ := turns.Begin("c1", "m2", "u2")
 	if stale == fresh {
 		t.Fatalf("新旧令牌撞了：%d", stale)
 	}
@@ -145,7 +145,7 @@ func TestStopIsIdempotent(t *testing.T) {
 	if turns.Stop("c1") {
 		t.Fatal("没在跑 ⇒ false")
 	}
-	token, _ := turns.Begin("c1", "m1")
+	token, _ := turns.Begin("c1", "m1", "u1")
 	cancelled := false
 	turns.Attach("c1", token, func() { cancelled = true })
 	turns.AppendContent("c1", token, "半句话")
@@ -178,7 +178,7 @@ func TestCompactStatusRidesAlong(t *testing.T) {
 	if status.Compact == nil || !status.Compact.IsRunning() || status.Compact.Blocks != 10 {
 		t.Fatalf("压缩状态 = %+v", status.Compact)
 	}
-	if _, err := turns.Begin("c1", "reply"); err != nil || !turns.Stop("c1") {
+	if _, err := turns.Begin("c1", "reply", "run"); err != nil || !turns.Stop("c1") {
 		t.Fatalf("压缩期间的对话应能单独开始、停止：%v", err)
 	}
 	if _, err := turns.BeginCompact("c1", 5, 2000); err == nil {
@@ -218,7 +218,7 @@ func TestAttachAfterStopCancelsImmediately(t *testing.T) {
 // 正常那条路不能被误伤：登记还在、令牌对得上 ⇒ 只挂上去，**不许**顺手取消。
 func TestAttachOnLiveTurnDoesNotCancel(t *testing.T) {
 	registry := NewRegistry()
-	token, err := registry.Begin("session-live", "message-1")
+	token, err := registry.Begin("session-live", "message-1", "run-1")
 	if err != nil {
 		t.Fatalf("登记该成功：%v", err)
 	}
@@ -234,7 +234,7 @@ func TestAttachOnLiveTurnDoesNotCancel(t *testing.T) {
 
 func TestToolStatusLifecycle(t *testing.T) {
 	registry := NewRegistry()
-	token, err := registry.Begin("s", "m")
+	token, err := registry.Begin("s", "m", "u")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +255,7 @@ func TestToolStatusLifecycle(t *testing.T) {
 
 func TestAddSourcesDedupesAndSurvivesText(t *testing.T) {
 	registry := NewRegistry()
-	token, _ := registry.Begin("s", "m")
+	token, _ := registry.Begin("s", "m", "u")
 	if !registry.AddSources("s", token, []Source{
 		{URL: "https://a.example/1"}, {URL: "https://a.example/1"}, {URL: "https://b.example/2"},
 	}) {
@@ -276,7 +276,7 @@ func TestAddSourcesDedupesAndSurvivesText(t *testing.T) {
 
 func TestNextStepResetsStream(t *testing.T) {
 	registry := NewRegistry()
-	token, _ := registry.Begin("s", "m")
+	token, _ := registry.Begin("s", "m", "u")
 	if !registry.AppendContent("s", token, "第一段") {
 		t.Fatal("append")
 	}
@@ -284,7 +284,7 @@ func TestNextStepResetsStream(t *testing.T) {
 		t.Fatal("NextStep")
 	}
 	status := registry.Status("s")
-	if status.Step != 2 || status.Chars != 0 || status.Phase != PhasePending {
+	if status.RunID != "u" || status.Step != 2 || status.Chars != 0 || status.Phase != PhasePending {
 		t.Fatalf("status = %+v", status)
 	}
 }

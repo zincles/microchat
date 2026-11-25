@@ -101,12 +101,16 @@ func TestSDKToolRoundTrip(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := h.service.Accept(h.session, "查资料"); err != nil {
+			accepted, err := h.service.Accept(h.session, "查资料")
+			if err != nil {
 				t.Fatal(err)
 			}
 			messages := h.settle(t)
 			if len(messages) != 3 || rounds.Load() != 2 || executed.Load() != 2 {
 				t.Fatalf("消息=%d 模型请求=%d 工具执行=%d turn=%+v", len(messages), rounds.Load(), executed.Load(), h.turns.Status(h.session.ID))
+			}
+			if accepted.Turn.RunID != messages[0].ID || accepted.Turn.RunID != messages[1].RunID || h.turns.Status(h.session.ID).RunID != accepted.Turn.RunID {
+				t.Fatalf("受理、重连与归档必须指向同一轮：%+v, %+v", accepted.Turn, messages)
 			}
 			if messages[1].Kind != model.MessageKindToolRun || messages[2].Content != "拿到资料了。" ||
 				messages[1].RunID != messages[2].RunID || len(messages[1].Tools) != 2 || messages[2].Idx != 3 {
