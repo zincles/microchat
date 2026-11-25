@@ -44,7 +44,7 @@ func TestBuildResponseHistoryShapes(t *testing.T) {
 		Messages: []ChatMessage{
 			{Role: "system", Content: "be terse"},
 			{Role: "user", Content: "hi"},
-			{Role: "assistant", Content: "hello", ToolCalls: json.RawMessage(`[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]`)},
+			{Role: "assistant", Content: "hello", ToolCalls: []ToolCall{{ID: "call_1", Name: "lookup", Arguments: "{}"}}},
 			{Role: "tool", ToolCallID: "call_1", Content: "result"},
 		},
 	})
@@ -342,7 +342,7 @@ func TestResponseStreamReportsServerToolStates(t *testing.T) {
 		"",
 		`data: {"type":"response.completed","response":{}}`,
 		"",
-	}, "\n")
+	}, "\n") + "\n"
 	var events []ToolEvent
 	result, err := readResponseStream(200, strings.NewReader(sseBody), func(delta Delta) {
 		if delta.Tool != nil {

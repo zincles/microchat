@@ -14,6 +14,7 @@ import (
 	"microchat/internal/config"
 	"microchat/internal/flow"
 	"microchat/internal/judge"
+	"microchat/internal/model"
 	"microchat/internal/providers"
 	"microchat/internal/task"
 )
@@ -109,6 +110,7 @@ type flowRunOptions struct {
 }
 
 type flowRunOutcome struct {
+	Exchanges   []*model.Exchange
 	Result      FlowTestResult
 	Final       flowValue
 	Usage       json.RawMessage
@@ -159,6 +161,7 @@ func (s *Service) executeFlowGraph(ctx context.Context, graph flowGraph, opts fl
 	}
 	values := map[string]flowValue{}
 	steps := make([]FlowTestStep, 0, len(order))
+	var exchanges []*model.Exchange
 	var lastResult providers.Result
 	// 数据流执行：节点只在自己**已连接**的输入都收到值之后才可运行。
 	// 拓扑顺序仍用来挑下一个可运行节点（保证确定性），但不再无条件把所有节点跑一遍。
@@ -244,6 +247,10 @@ func (s *Service) executeFlowGraph(ctx context.Context, graph flowGraph, opts fl
 		typed = run.typed
 		if run.lastSet {
 			lastResult = run.last
+			if lastResult.Exchange != nil {
+				lastResult.Exchange.NodeID = node.ID
+				exchanges = append(exchanges, lastResult.Exchange)
+			}
 		}
 		values[flowKey(node.ID, "out")] = flowValue{Text: step.Output, Reasoning: step.Reasoning, User: step.User, Bool: typed.Bool, Number: typed.Number, Choice: typed.Choice}
 		if node.Type == "history" || node.Type == "trim" || node.Type == "merge" || node.Type == "assemble" {
@@ -278,7 +285,7 @@ func (s *Service) executeFlowGraph(ctx context.Context, graph flowGraph, opts fl
 		Result:      FlowTestResult{Output: final.Text, Reasoning: final.Reasoning, User: final.User, Steps: steps},
 		UserMessage: final.User,
 		Final:       final,
-		Usage:       lastResult.Usage,
+		Usage:       lastResult.Usage, Exchanges: exchanges,
 	}, nil
 }
 
@@ -555,13 +562,10 @@ func (s *Service) flowLLMCall(ctx context.Context, node flowNode, edges []flowEd
 		return providers.Result{}, nil, errors.New("LLM 节点没有任何非空 Prompt")
 	}
 	chosen := providers.SelectBackend(provider, modelID, providersConfig)
-	if chosen.Name != providers.BackendFallback && chosen.Name != providers.BackendDummy {
-		chosen.Provider.Protocol = string(providers.ResolveProtocolFor(s.Store.ModelRoute, chosen.Provider.ID, modelID, providers.Protocol(chosen.Provider.Protocol)))
-	}
 	if strings.TrimSpace(sessionID) == "" {
 		sessionID = uuid.NewString()
 	}
-	wire := providers.FromConfig(chosen.Provider)
+	wire := providers.ForModel(chosen.Provider, modelID, s.Store.ModelRoute)
 	request := providers.Request{Model: modelID, Messages: messages, SessionID: sessionID}
 	var payload *providers.LastPayload
 	if built, buildErr := providers.Build(wire, request); buildErr == nil {
@@ -581,6 +585,7 @@ func (s *Service) flowLLMCall(ctx context.Context, node flowNode, edges []flowEd
 			return providers.Result{}, payload, err
 		}
 	}
+	result.Exchange = result.Exchange.ForStorage(chosen.StoresReasoning())
 	result.Text = strings.TrimSpace(result.Text)
 	result.Reasoning = strings.TrimSpace(result.Reasoning)
 	return result, payload, nil

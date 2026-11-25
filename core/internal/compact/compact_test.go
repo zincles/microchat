@@ -263,6 +263,20 @@ func TestCompactRangeMustAlignToWholeBlocks(t *testing.T) {
 	}
 }
 
+func compactMessages(t *testing.T, raw []byte) (system, material string) {
+	t.Helper()
+	var body struct {
+		Messages []struct{ Role, Content string }
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Messages) != 2 || body.Messages[0].Role != "system" || body.Messages[1].Role != "user" {
+		t.Fatalf("压缩请求缺少模板或材料：%s", raw)
+	}
+	return body.Messages[0].Content, body.Messages[1].Content
+}
+
 // ⑤ 材料：那一段的 `<state>` 块**不发给上游**；模板进 system。
 func TestMaterialStripsStateAndSendsTemplate(t *testing.T) {
 	var body []byte
@@ -287,7 +301,7 @@ func TestMaterialStripsStateAndSendsTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sent := string(body)
+	system, sent := compactMessages(t, body)
 	if strings.Contains(sent, "<state>") {
 		t.Fatalf("材料里的 <state> 块该被剔掉：%s", sent)
 	}
@@ -300,8 +314,8 @@ func TestMaterialStripsStateAndSendsTemplate(t *testing.T) {
 		t.Fatalf("材料该是这一段正文：%s", sent)
 	}
 	// 模板在 system 里（改模板 ⇒ prompt_version 跟着变）
-	if !strings.Contains(sent, "前情提要") {
-		t.Fatalf("模板该作为 system 发出去：%s", sent)
+	if !strings.Contains(system, "前情提要") {
+		t.Fatalf("模板该作为 system 发出去：%s", system)
 	}
 	// ⑤ usage 落进那一行
 	rows := h.summaries(t)
@@ -792,7 +806,7 @@ func TestRegenerateSummaryMergeRootKeepsChildHeaders(t *testing.T) {
 		t.Fatalf("生效渠道 / 模型 = %s / %s", generated.Provider, generated.Model)
 	}
 
-	sent := string(body)
+	_, sent := compactMessages(t, body)
 	// 材料是各段孩子的**轻抬头 + 正文**（不是那段对话原文）
 	for _, want := range []string{
 		"【第 1–2 条（1 块）】",

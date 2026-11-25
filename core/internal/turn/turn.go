@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"microchat/internal/model"
 )
 
 // Phase：一个会话此刻处在哪一档。
@@ -71,11 +73,7 @@ type ToolStatus struct {
 }
 
 // Source：服务端搜索工具拿回来的来源（web_search / x_search 的 action.sources）。
-type Source struct {
-	Type  string `json:"type,omitempty"`
-	URL   string `json:"url"`
-	Title string `json:"title,omitempty"`
-}
+type Source = model.MessageToolSource
 
 // Status：`GET /sessions/{id}/status` 的响应（字段顺序即契约）。
 type Status struct {
@@ -505,11 +503,14 @@ func (r *Registry) StopReroll(sessionID string) bool {
 //
 // 管的是"这个会话此刻在跑的那一件" —— 一轮生成**或**一次重摇（两者共用这把闸）。
 // 重摇被按停 ⇒ 那一版不落位（候选项由 `reroll` 自己摘掉），message 还是当前这版。
-func (r *Registry) Stop(sessionID string) bool {
+func (r *Registry) Stop(sessionID string) bool { return r.StopToken(sessionID, 0) }
+
+// StopToken 供 Task 的取消回调使用；过期回调不能停掉同会话后来的一轮。
+func (r *Registry) StopToken(sessionID string, token uint64) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	item := r.lookup(sessionID)
-	if item == nil || (!item.phase.IsBusy() && !item.reroll.IsRunning()) {
+	if item == nil || (token != 0 && item.token != token) || (!item.phase.IsBusy() && !item.reroll.IsRunning()) {
 		return false
 	}
 	if item.cancel != nil {

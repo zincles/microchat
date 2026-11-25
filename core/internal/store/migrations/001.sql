@@ -37,6 +37,8 @@ CREATE TABLE messages (
   run_id      TEXT NOT NULL DEFAULT '',
   -- 生成时可用工具名的 JSON 数组；实际调用在 message_tools
   tools_snapshot TEXT NOT NULL DEFAULT '[]',
+  -- 此次已归档模型调用的来源、终态与有序输出项。老消息为 NULL。
+  exchanges   TEXT CHECK (exchanges IS NULL OR json_valid(exchanges)),
   content     TEXT NOT NULL,
   created_at  INTEGER NOT NULL,
   -- 修改时（毫秒）：新建时 = created_at；改正文时刷成当前毫秒。

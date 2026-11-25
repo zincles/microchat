@@ -1084,9 +1084,7 @@ func (s *Service) wireFor(p *prepared) (providers.Provider, providers.Request, s
 	values := s.macroValues(p.session, p.model)
 	template := macro.Render(p.template, values)
 	material = macro.Render(material, values)
-	wire := providers.FromConfig(p.channel)
-	// 与 chat.go Accept 同一条查表：有行且 api=="openai-responses" ⇒ /responses；没有行时用渠道自己的 protocol。
-	wire.Protocol = providers.ResolveProtocolFor(s.Store.ModelRoute, p.channel.ID, p.model, providers.Protocol(p.channel.Protocol))
+	wire := providers.ForModel(p.channel, p.model, s.Store.ModelRoute)
 	return wire, providers.Request{
 		Model: p.model,
 		Messages: []providers.ChatMessage{

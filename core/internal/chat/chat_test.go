@@ -550,7 +550,7 @@ func TestWireMessagesReplaysClientToolHistory(t *testing.T) {
 	if len(got) != 3 {
 		t.Fatalf("messages = %+v", got)
 	}
-	if len(got[0].ToolCalls) == 0 || !strings.Contains(string(got[0].ToolCalls), `"call_1"`) {
+	if len(got[0].ToolCalls) == 0 || got[0].ToolCalls[0].ID != "call_1" {
 		t.Fatalf("assistant 没带 tool_calls：%+v", got[0])
 	}
 	if got[1].Role != "tool" || got[1].ToolCallID != "call_1" || got[1].Content != "result" {
@@ -562,11 +562,11 @@ func TestWireMessagesReplaysClientToolHistory(t *testing.T) {
 }
 
 func TestServerMessageToolsKeepsTextOffsets(t *testing.T) {
-	events := map[string]providers.ToolEvent{
-		"ws_1": {ItemID: "ws_1", Kind: "web_search", Queries: []string{"a"}},
-		"ws_2": {ItemID: "ws_2", Kind: "web_search", Queries: []string{"b"}},
-	}
-	got := serverMessageTools([]string{"ws_1", "ws_2"}, events, map[string]int{"ws_1": 0, "ws_2": 12})
+	p := roundProgress{turns: turn.NewRegistry()}
+	p.hostedTool(providers.ToolEvent{ItemID: "ws_1", Kind: "web_search", Queries: []string{"a"}})
+	p.text.WriteString("abcdefghijkl")
+	p.hostedTool(providers.ToolEvent{ItemID: "ws_2", Kind: "web_search", Queries: []string{"b"}})
+	got := p.tools
 	if len(got) != 2 || got[0].TextOffset == nil || *got[0].TextOffset != 0 ||
 		got[1].TextOffset == nil || *got[1].TextOffset != 12 {
 		t.Fatalf("offsets = %+v", got)
@@ -574,27 +574,13 @@ func TestServerMessageToolsKeepsTextOffsets(t *testing.T) {
 }
 
 func TestLocalToolCallsCarryTextOffset(t *testing.T) {
-	declared := []providers.Tool{providers.FunctionTool("web_search", "", json.RawMessage(`{"type":"object"}`))}
-	call := providers.ToolCall{ID: "call_1", Name: "web_search", Arguments: `{}`, TextOffset: new(7)}
-	if err := validateToolCalls([]providers.ToolCall{call}, declared); err != nil {
-		t.Fatal(err)
-	}
-	if got := call.TextOffset; got == nil || *got != 7 {
-		t.Fatalf("text offset = %v", got)
-	}
-}
-
-func TestValidateToolCallsRejectsMalformedCalls(t *testing.T) {
-	declared := []providers.Tool{providers.FunctionTool("web_search", "", json.RawMessage(`{"type":"object"}`))}
-	tests := []providers.ToolCall{
-		{Name: "web_search", Arguments: `{}`},
-		{ID: "call_1", Arguments: `{}`},
-		{ID: "call_1", Name: "web_search", Arguments: "{"},
-		{ID: "call_1", Name: "web_fetch", Arguments: `{}`},
-	}
-	for i, call := range tests {
-		if err := validateToolCalls([]providers.ToolCall{call}, declared); err == nil {
-			t.Errorf("case %d should be rejected", i)
-		}
+	progress := roundProgress{turns: turn.NewRegistry()}
+	result := providers.Result{ToolCalls: []providers.ToolCall{{ID: "c"}},
+		Exchange: &model.Exchange{Protocol: "openai-response", Items: []model.OutputItem{
+			{Type: "message", Text: "查一下。"}, {Type: "function_call", CallID: "c"}, {Type: "message", Text: "仍在检索。"},
+		}}}
+	progress.finish(result)
+	if got := result.ToolCalls[0].TextOffset; got == nil || *got != 4 {
+		t.Fatalf("调用偏移 = %v", got)
 	}
 }

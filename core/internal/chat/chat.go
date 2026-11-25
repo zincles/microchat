@@ -21,7 +21,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"microchat/internal/config"
 	"microchat/internal/macro"
@@ -202,219 +201,94 @@ func (s *Service) launch(session model.Session, replyID string, token uint64, pr
 		s.Turns.Stop(session.ID)
 		return Accepted{}, err
 	}
-	chosen := providers.SelectBackend(session.Provider, session.Model, providersConfig)
-	// 发之前查表定这次说什么话：`model_route` 有行且 api=="openai-responses" ⇒
-	// response；没有行时用渠道配置的 protocol 兜底。只覆盖进 wire.Protocol（别改 session、别落库）。
-	// 查表键是**渠道 id**（`chosen.Provider.ID`）：`model_route` 是按渠道刷新的，
-	// 同一个 vendor 配两条渠道时各有各的表 —— 拿 vendor 查会串台。
-	// compact/title/reroll-message 走同一条查表（各调 Complete 之前），见三包对应调用点。
-	if model := session.Model; chosen.Name != providers.BackendFallback && chosen.Name != providers.BackendDummy {
-		chosen.Provider.Protocol = string(providers.ResolveProtocolFor(s.Store.ModelRoute, chosen.Provider.ID, model, providers.Protocol(chosen.Provider.Protocol)))
+	call, err := s.prepareChat(session, outgoing, reasoningByID, providersConfig)
+	if err != nil {
+		s.Turns.StopToken(session.ID, token)
+		return Accepted{}, err
 	}
-	go s.run(session, replyID, token, chosen, outgoing, reasoningByID, time.Now(), assistantIDs, runID)
-	return Accepted{
-		Backend: chosen.Name,
-		Turn:    statusView(s.Turns.Status(session.ID)),
-	}, nil
+	go s.run(session, replyID, token, call, time.Now(), assistantIDs, runID)
+	return Accepted{Backend: call.backend.Name, Turn: statusView(s.Turns.Status(session.ID))}, nil
 }
 
 // run：后台那半程 —— **整段拿到才 INSERT**（用受理时定好的 id）。
-func (s *Service) run(session model.Session, replyID string, token uint64, chosen providers.Backend,
-	outgoing []state.Outgoing, reasoningByID map[string]string, started time.Time, assistantIDs []string, runID string) {
+func (s *Service) run(session model.Session, replyID string, token uint64, call preparedChat,
+	started time.Time, assistantIDs []string, runID string) {
 	sessionID := session.ID
-	// 挂号：前台这一轮也是任务（会调模型的作业必带会话 id ⇒ Begin 自己会断言）
-	guard := s.Tasks.Begin(task.KindTurn, &sessionID, "生成 · 会话 "+shortID(sessionID))
-	defer guard.Interrupted() // 忘了收 / panic ⇒ 记成"中断"，绝不留僵尸条目
-	// 任务面板上的按钮走的也是这条（与 `POST /sessions/{id}/stop` 同一个口 —— 两处一个动作，别分家）。
-	guard.Cancellable(func() { s.Turns.Stop(sessionID) })
-
+	// 一个 run 可以发出多次上游请求。每次回填单独挂号，终态后释放同一轮的闸门。
+	var guard *task.Guard
+	defer func() { guard.Interrupted() }()
 	ctx, cancel := context.WithCancel(context.Background())
 	s.Turns.Attach(sessionID, token, cancel)
 	defer cancel()
 
-	var firstTextAt time.Time
-	var partialText, partialReasoning strings.Builder
-	// 配置 → 线上形状只有这一条路（`FromConfig`）：手搓字面量漏一个字段就是静默失效
-	wire := providers.FromConfig(chosen.Provider)
-	client := providers.NewClient(wire)
-	tools := s.availableTools(session, chosen)
-	chatMessages := wireMessages(outgoing, reasoningByID)
-	assistantMessages := []model.Message{}
-	nextAssistant := 0
+	client := providers.NewClient(call.wire)
+	request := call.request
+	chosen := call.backend
+	snapshot := toolNames(request.Tools)
 	var result providers.Result
+	var progress *roundProgress
 	var err error
-	var lastServerTools []model.MessageTool
-	// 每一轮模型响应各自计算工具在正文里的偏移；工具事件只属于当前这一轮。
-	var roundText strings.Builder
-	toolOrder := []string{}
-	toolEvents := map[string]providers.ToolEvent{}
-	toolOffsets := map[string]int{}
-	for round := 0; round <= maxToolRounds; round++ {
+	for round := 0; ; round++ {
 		if round > 0 {
 			s.Turns.NextStep(sessionID, token)
 		}
-		roundText.Reset()
-		toolOrder = toolOrder[:0]
-		toolEvents = map[string]providers.ToolEvent{}
-		toolOffsets = map[string]int{}
-		result, err = client.Chat(ctx, wire, providers.Request{
-			Model:         session.Model,
-			Messages:      chatMessages,
-			SessionID:     sessionID,
-			ThinkingLevel: session.ThinkingLevel,
-			Tools:         tools,
-			Override:      session.RequestOverrides,
-		}, localReply(chosen), func(delta providers.Delta) {
-			if delta.Tool != nil {
-				s.Turns.SetTool(sessionID, token, delta.Tool.Kind, delta.Tool.State)
-				if delta.Tool.ItemID != "" {
-					event, exists := toolEvents[delta.Tool.ItemID]
-					if !exists {
-						toolOrder = append(toolOrder, delta.Tool.ItemID)
-						// 工具在正文里的位置：按已经输出的**字符数**记（不含 <state> 块）。
-						toolOffsets[delta.Tool.ItemID] = utf8.RuneCountInString(statelang.Scan(roundText.String()).Cleaned)
-						event = *delta.Tool
-					} else {
-						if delta.Tool.Kind != "" {
-							event.Kind = delta.Tool.Kind
-						}
-						if delta.Tool.State != "" {
-							event.State = delta.Tool.State
-						}
-						if delta.Tool.Query != "" {
-							event.Query = delta.Tool.Query
-						}
-						if len(delta.Tool.Queries) > 0 {
-							event.Queries = append([]string{}, delta.Tool.Queries...)
-						}
-						if len(delta.Tool.Sources) > 0 {
-							event.Sources = append([]providers.ToolSource{}, delta.Tool.Sources...)
-						}
-					}
-					toolEvents[delta.Tool.ItemID] = event
-				}
-				if len(delta.Tool.Sources) > 0 {
-					sources := make([]turn.Source, 0, len(delta.Tool.Sources))
-					for _, source := range delta.Tool.Sources {
-						sources = append(sources, turn.Source{Type: source.Type, URL: source.URL, Title: source.Title})
-					}
-					s.Turns.AddSources(sessionID, token, sources)
-				}
-			}
-			if delta.Text != "" {
-				if firstTextAt.IsZero() {
-					firstTextAt = time.Now()
-				}
-				partialText.WriteString(delta.Text)
-				roundText.WriteString(delta.Text)
-				s.Turns.AppendContent(sessionID, token, delta.Text)
-			}
-			if delta.Reasoning != "" {
-				partialReasoning.WriteString(delta.Reasoning)
-				s.Turns.AppendReasoning(sessionID, token, delta.Reasoning)
-			}
-		})
+		guard = s.Tasks.Begin(task.KindTurn, &sessionID, "生成 · 会话 "+shortID(sessionID))
+		guard.Cancellable(func() { s.Turns.StopToken(sessionID, token) })
+		progress = &roundProgress{turns: s.Turns, session: sessionID, token: token}
+		result, err = client.Chat(ctx, call.wire, request, localReply(chosen), progress.delta)
 		if err != nil {
 			break
 		}
-		serverTools := serverMessageTools(toolOrder, toolEvents, toolOffsets)
-		if len(result.ToolCalls) > 0 {
-			offset := utf8.RuneCountInString(statelang.Scan(roundText.String()).Cleaned)
-			for i := range result.ToolCalls {
-				result.ToolCalls[i].TextOffset = new(offset)
-			}
-			if callErr := validateToolCalls(result.ToolCalls, tools); callErr != nil {
-				err = callErr
-				break
-			}
-		}
+		progress.finish(result)
 		if len(result.ToolCalls) == 0 {
-			lastServerTools = serverTools
 			break
 		}
-		chatMessages = append(chatMessages, providers.ChatMessage{
-			Role: "assistant", Content: result.Text, Reasoning: result.Reasoning,
-			ToolCalls: toolCallsJSON(result.ToolCalls),
-		})
-		roundTools := make([]model.MessageTool, 0, len(result.ToolCalls)+len(serverTools))
-		roundTools = append(roundTools, serverTools...)
-		for _, call := range result.ToolCalls {
-			s.Turns.SetTool(sessionID, token, call.Name, "in_progress")
-			content, sources, toolErr := runLocalTool(ctx, chosen.Provider, call)
-			status := "done"
-			if toolErr != nil {
-				status = "failed"
-				errJSON, _ := json.Marshal(map[string]string{"error": toolErr.Error()})
-				content = string(errJSON)
-			}
-			s.Turns.SetTool(sessionID, token, call.Name, status)
-			if len(sources) > 0 {
-				turnSources := make([]turn.Source, 0, len(sources))
-				for _, source := range sources {
-					turnSources = append(turnSources, turn.Source{Type: source.Type, URL: source.URL, Title: source.Title})
-				}
-				s.Turns.AddSources(sessionID, token, turnSources)
-			}
-			roundTools = append(roundTools, model.MessageTool{
-				Source: "client", ToolName: call.Name, ItemID: call.ID,
-				Arguments: call.Arguments, Result: content, Sources: sources, Status: status,
-				Queries: localToolQueries(call), TextOffset: call.TextOffset,
-			})
-			chatMessages = append(chatMessages, providers.ChatMessage{
-				Role: "tool", Content: content, ToolCallID: call.ID, Name: call.Name,
-			})
-		}
-		if nextAssistant >= len(assistantIDs) {
-			err = fmt.Errorf("assistant 消息 id 预留不足")
-			break
-		}
-		roundMessage := s.roundMessage(
-			session, assistantIDs[nextAssistant], chosen, result, roundTools, toolNames(tools), runID)
-		if _, err := s.Store.InsertMessageWithTools(roundMessage, roundMessage.Tools); err != nil {
-			s.Turns.Finish(sessionID, token, err.Error())
-			guard.Fail(err.Error())
-			return
-		}
-		nextAssistant++
-		if round == maxToolRounds {
+		if round >= len(assistantIDs) {
 			err = fmt.Errorf("工具调用超过 %d 轮", maxToolRounds)
 			break
 		}
-	}
-	if err != nil {
-		if !s.Turns.IsMine(sessionID, token) {
-			// 被按停 / 被顶掉：已完成的中途 tool-call 消息已经落库（保留），
-			// 当前这条以 canceled 落一条空/半截消息 —— 取消不是"整轮消失"。
-			canceled := model.Message{
-				ID: replyID, SessionID: sessionID, Role: model.RoleAssistant,
-				Kind: model.MessageKindChat, Status: model.MessageStatusCanceled, RunID: runID,
-				Content: partialText.String(), DurationMS: ptrInt64(time.Since(started).Milliseconds()),
-			}
-			if chosen.StoresReasoning() && strings.TrimSpace(partialReasoning.String()) != "" {
-				canceled.Reasoning = partialReasoning.String()
-			}
-			canceledTools := serverMessageTools(toolOrder, toolEvents, toolOffsets)
-			_, _ = s.Store.InsertMessageWithTools(canceled, canceledTools)
-			guard.Cancel()
-			return
+		if err = call.tools.execute(ctx, result.ToolCalls, progress); err != nil {
+			break
 		}
-		s.Turns.Finish(sessionID, token, err.Error()) // 进 error 态：界面看得见原因
-		guard.Fail(err.Error())
-		return
+		message := generatedMessage(sessionID, assistantIDs[round], runID, result, progress.tools, snapshot, chosen.StoresReasoning())
+		if _, err = s.Store.InsertMessage(message); err != nil {
+			break
+		}
+		// 与重载存档共用调用/结果的展开，保留本轮内存中的推理续传项。
+		continuation, _ := state.OutgoingMessage(message)
+		continuation.Exchange = result.Exchange
+		next := wireMessages(s.renderMacros(session, []state.Outgoing{continuation}), map[string]string{message.ID: result.Reasoning})
+		request.Messages = append(request.Messages, next...)
+		guard.Succeed()
 	}
 	if !s.Turns.IsMine(sessionID, token) {
-		// 令牌对不上 ⇒ 这一轮已经被停掉：结果**直接丢掉**，不许写库
+		// 前面已经完成的工具轮各有自己的消息，这里只保存当前一发的片段。
+		partial := providers.Result{Text: progress.text.String(), Reasoning: progress.reasoning.String()}
+		if result.Exchange != nil {
+			// 模型已给整段，只在本地工具执行中被取消。
+			partial.Text, partial.Reasoning = result.Text, result.Reasoning
+		}
+		canceled := generatedMessage(sessionID, replyID, runID, partial, progress.tools, snapshot, chosen.StoresReasoning())
+		canceled.Status = model.MessageStatusCanceled
+		canceled.DurationMS = new(time.Since(started).Milliseconds())
+		if _, saveErr := s.Store.InsertMessage(canceled); saveErr != nil {
+			guard.Fail(saveErr.Error())
+			return
+		}
 		guard.Cancel()
 		return
 	}
-	kind := model.MessageKindChat
-	messageTools := lastServerTools
-	if len(messageTools) > 0 {
-		kind = model.MessageKindToolRun
+	if err != nil {
+		s.Turns.Finish(sessionID, token, err.Error())
+		guard.Fail(err.Error())
+		return
 	}
-	message := s.assistantMessage(session, replyID, token, chosen, result, firstTextAt, started, kind, toolNames(tools), messageTools, runID)
-	assistantMessages = append(assistantMessages, message)
-	if _, err := s.Store.InsertMessagesWithTools(assistantMessages); err != nil {
+	message := generatedMessage(sessionID, replyID, runID, result, progress.tools, snapshot, chosen.StoresReasoning())
+	message.DurationMS = new(time.Since(started).Milliseconds())
+	if message.Reasoning != "" && !progress.firstTextAt.IsZero() {
+		message.ReasoningMS = new(progress.firstTextAt.Sub(started).Milliseconds())
+	}
+	if _, err := s.Store.InsertMessage(message); err != nil {
 		s.Turns.Finish(sessionID, token, err.Error())
 		guard.Fail(err.Error())
 		return
@@ -432,26 +306,6 @@ func (s *Service) run(session model.Session, replyID string, token uint64, chose
 	if s.Compactor != nil {
 		go s.MaybeAutoCompact(session)
 	}
-}
-
-// serverMessageTools：把一轮的 server 工具事件按发生顺序变成可落库的 tool 行。
-// TextOffset 是相对该轮正文的字符数；旧数据没有偏移时前端仍按“工具卡在正文上方”显示。
-func serverMessageTools(order []string, events map[string]providers.ToolEvent, offsets map[string]int) []model.MessageTool {
-	out := make([]model.MessageTool, 0, len(order))
-	for _, itemID := range order {
-		event := events[itemID]
-		sources := make([]model.MessageToolSource, 0, len(event.Sources))
-		for _, source := range event.Sources {
-			sources = append(sources, model.MessageToolSource{Type: source.Type, URL: source.URL, Title: source.Title})
-		}
-		offset := offsets[itemID]
-		out = append(out, model.MessageTool{
-			Source: "server", ToolName: event.Kind, ItemID: event.ItemID,
-			Queries: event.Queries, Sources: sources, Status: "done",
-			TextOffset: &offset,
-		})
-	}
-	return out
 }
 
 // localToolQueries：给界面卡片显示的一小段检索词/URL（完整参数仍留 Arguments）。
@@ -476,89 +330,17 @@ func localToolQueries(call providers.ToolCall) []string {
 	return nil
 }
 
-// toolCallsJSON：把客户端 function calls 拼成 assistant 消息的 wire 形状。
-func toolCallsJSON(calls []providers.ToolCall) json.RawMessage {
-	out := make([]map[string]any, 0, len(calls))
-	for _, call := range calls {
-		out = append(out, map[string]any{
-			"id": call.ID, "type": "function",
-			"function": map[string]any{"name": call.Name, "arguments": call.Arguments},
-		})
+func generatedMessage(sessionID, id, runID string, result providers.Result, tools []model.MessageTool, snapshot []string, keepReasoning bool) model.Message {
+	m := model.Message{ID: id, SessionID: sessionID, Role: model.RoleAssistant, RunID: runID,
+		Status: model.MessageStatusDone, Kind: model.MessageKindChat, Content: result.Text,
+		Tools: tools, ToolsSnapshot: snapshot, Usage: result.Usage, Exchanges: result.Archive(keepReasoning)}
+	if len(tools) != 0 {
+		m.Kind = model.MessageKindToolRun
 	}
-	raw, _ := json.Marshal(out)
-	return raw
-}
-
-// roundMessage：客户端工具循环里的**中间 assistant 消息**（通常只有 tool_calls，
-// 正文可能为空）；它和最终回复同属一个 run，工具记录挂在它自己身上。
-func (s *Service) roundMessage(session model.Session, id string, chosen providers.Backend,
-	result providers.Result, tools []model.MessageTool, snapshot []string, runID string) model.Message {
-	message := model.Message{
-		ID: id, SessionID: session.ID, Role: model.RoleAssistant,
-		Kind: model.MessageKindToolRun, Status: model.MessageStatusDone, RunID: runID,
-		ToolsSnapshot: snapshot, Tools: tools, Content: result.Text,
-		Usage: result.Usage,
+	if keepReasoning {
+		m.Reasoning = result.Reasoning
 	}
-	if chosen.StoresReasoning() && strings.TrimSpace(result.Reasoning) != "" {
-		message.Reasoning = result.Reasoning
-	}
-	return message
-}
-
-// assistantMessage：把这一轮的产出拼成要落库的那一行。
-//
-// 思考**留不留档**由渠道的 `store_reasoning` 决定：它只服务动画与回看，不参与任何计算；
-// 关掉它时连 `reasoning_ms` 一起不写（没有"这个思考"可言）。
-func (s *Service) assistantMessage(session model.Session, replyID string, token uint64, chosen providers.Backend,
-	result providers.Result, firstTextAt time.Time, started time.Time, kind model.MessageKind, tools []string,
-	messageTools []model.MessageTool, runID string) model.Message {
-	durationMS := time.Since(started).Milliseconds()
-	message := model.Message{
-		ID: replyID, SessionID: session.ID, Role: model.RoleAssistant,
-		Kind: kind, Status: model.MessageStatusDone, RunID: runID, ToolsSnapshot: tools,
-		Tools:   messageTools,
-		Content: result.Text, DurationMS: &durationMS, Usage: result.Usage,
-	}
-	if chosen.StoresReasoning() {
-		if reasoning := s.Turns.ThinkingOf(session.ID); strings.TrimSpace(reasoning) != "" {
-			message.Reasoning = reasoning
-			// 思考用时 = 受理 → 第一段正文（没有正文就没有"思考用时"可言）
-			if !firstTextAt.IsZero() {
-				ms := firstTextAt.Sub(started).Milliseconds()
-				message.ReasoningMS = &ms
-			}
-		}
-	}
-	return message
-}
-
-func ptrInt64(value int64) *int64 { return &value }
-
-// validateToolCalls：模型返回的 function call 进入执行器前必须是可配对、可解析、已声明的调用。
-// 服务端原生工具不走这条路径；它们由 providers 的 Responses 事件直接记录。
-func validateToolCalls(calls []providers.ToolCall, declared []providers.Tool) error {
-	allowed := make(map[string]bool)
-	for _, tool := range declared {
-		if tool.Function != nil && tool.Function.Name != "" {
-			allowed[tool.Function.Name] = true
-		}
-	}
-	for _, call := range calls {
-		if strings.TrimSpace(call.ID) == "" {
-			return errors.New("上游返回了没有 id 的工具调用")
-		}
-		name := strings.TrimSpace(call.Name)
-		if name == "" {
-			return fmt.Errorf("工具调用 %q 缺少名称", call.ID)
-		}
-		if !allowed[name] {
-			return fmt.Errorf("模型请求了未声明的本地工具 %q", name)
-		}
-		if raw := strings.TrimSpace(call.Arguments); raw == "" || !json.Valid([]byte(raw)) {
-			return fmt.Errorf("工具 %q 的 arguments 不是合法 JSON", name)
-		}
-	}
-	return nil
+	return m
 }
 
 // toolNames：请求里工具声明的名字（server 工具用 type，function 工具用 name），
@@ -798,22 +580,32 @@ func (s *Service) PreviewHistoryWire(session model.Session) (providers.LastPaylo
 	return s.buildWire(session, outgoing, reasoningByID, providersConfig)
 }
 
-// buildWire：出站 → 选后端 → Build → 快照。PreviewWire 与 PreviewHistoryWire 共用。
-func (s *Service) buildWire(session model.Session, outgoing []state.Outgoing, reasoningByID map[string]string, providersConfig config.ProvidersConfig) (providers.LastPayload, error) {
-	chosen := providers.SelectBackend(session.Provider, session.Model, providersConfig)
-	if model := session.Model; chosen.Name != providers.BackendFallback && chosen.Name != providers.BackendDummy {
-		chosen.Provider.Protocol = string(providers.ResolveProtocolFor(s.Store.ModelRoute, chosen.Provider.ID, model, providers.Protocol(chosen.Provider.Protocol)))
+type preparedChat struct {
+	backend providers.Backend
+	wire    providers.Provider
+	request providers.Request
+	tools   turnTools
+}
+
+// 预演和生成共用模型路由、工具清单和出站装配。
+func (s *Service) prepareChat(session model.Session, outgoing []state.Outgoing, reasoningByID map[string]string, channels config.ProvidersConfig) (preparedChat, error) {
+	chosen := providers.SelectBackend(session.Provider, session.Model, channels)
+	wire := providers.ForModel(chosen.Provider, session.Model, s.Store.ModelRoute)
+	tools, err := s.toolsFor(session, chosen, wire.EffectiveProtocol(), channels)
+	if err != nil {
+		return preparedChat{}, err
 	}
-	wire := providers.FromConfig(chosen.Provider)
-	request, err := providers.Build(wire, providers.Request{
-		Model:         session.Model,
-		Messages:      wireMessages(outgoing, reasoningByID),
-		SessionID:     session.ID,
-		ThinkingLevel: session.ThinkingLevel,
-		Tools:         s.availableTools(session, chosen),
-		Override:      session.RequestOverrides,
-		Stream:        true,
-	})
+	req := providers.Request{Model: session.Model, SessionID: session.ID, Messages: wireMessages(outgoing, reasoningByID),
+		ThinkingLevel: session.ThinkingLevel, Tools: tools.declared, Override: session.RequestOverrides, Stream: true}
+	return preparedChat{backend: chosen, wire: wire, request: req, tools: tools}, nil
+}
+
+func (s *Service) buildWire(session model.Session, outgoing []state.Outgoing, reasoningByID map[string]string, configs config.ProvidersConfig) (providers.LastPayload, error) {
+	call, err := s.prepareChat(session, outgoing, reasoningByID, configs)
+	if err != nil {
+		return providers.LastPayload{}, err
+	}
+	request, err := providers.Build(call.wire, call.request)
 	if err != nil {
 		return providers.LastPayload{}, err
 	}
@@ -846,60 +638,6 @@ func messageAnnotations(outgoing []state.Outgoing) []providers.MessageAnnotation
 	return out
 }
 
-// availableTools：这一轮请求体顶层要带的工具声明。
-//
-// 只从**模型规则派生画像**取 `server_tools`（provider 侧执行），并扣掉会话里手动关掉的；
-// 服务端工具是 Responses 的已知能力，不依赖 `allow_tools`。`local_tools` 目前只是配置候选，
-// 还没有工具注册表/执行器 ⇒ 不发，等定义落地后再在这里接 function tool 声明。
-func (s *Service) availableTools(session model.Session, chosen providers.Backend) []providers.Tool {
-	if chosen.Name == providers.BackendFallback || chosen.Name == providers.BackendDummy {
-		return nil
-	}
-	// DeepSeek 的 Responses web_search 只支持 v4-pro，而且只给 queries 不给 sources；
-	// flash 会忽略它并把工具调用当正文吐出来。统一不走服务端工具，搜索走客户端 Search API。
-	if chosen.Provider.Vendor == "deepseek" {
-		disabled := make(map[string]bool, len(session.NativeToolsDisabled))
-		for _, id := range session.NativeToolsDisabled {
-			disabled[id] = true
-		}
-		out := deepseekLocalTools()
-		kept := out[:0]
-		for _, tool := range out {
-			name := tool.Type
-			if tool.Function != nil {
-				name = tool.Function.Name
-			}
-			if !disabled[name] {
-				kept = append(kept, tool)
-			}
-		}
-		return kept
-	}
-	// 服务端工具不再在代码里按协议一刀切：模型规则明确给了候选就带上。
-	// ⚠ 但内置规则自己会按协议限定：GPT 的 web_search 只匹配 openai-response
-	// （官方 Chat Completions 只支持专用搜索模型，普通 GPT 带 web_search 会 400）；
-	// xAI 的 chat 端点对 x_search/web_search 会 422，它的规则也只匹配 response。
-	// 想给自建代理的 chat 开搜索，加一条不带 match_protocol 的用户规则即可。
-	cfg, err := config.LoadConfig(s.Paths)
-	if err != nil {
-		return nil
-	}
-	profile := cfg.ModelProfileWithRulesFor(
-		chosen.Provider.ID, session.Model, chosen.Provider.Protocol,
-		config.ModelProfile{}, chosen.Provider.ModelDefineRules)
-	disabled := make(map[string]bool, len(session.NativeToolsDisabled))
-	for _, id := range session.NativeToolsDisabled {
-		disabled[id] = true
-	}
-	ids := make([]string, 0, len(profile.ServerTools))
-	for _, id := range profile.ServerTools {
-		if !disabled[id] {
-			ids = append(ids, id)
-		}
-	}
-	return providers.ServerTools(ids)
-}
-
 // wireMessages：出站消息 → 上游形状（正文照抄，只把思考贴回 assistant 那几条）。
 func wireMessages(outgoing []state.Outgoing, reasoningByID map[string]string) []providers.ChatMessage {
 	messages := make([]providers.ChatMessage, 0, len(outgoing))
@@ -908,35 +646,25 @@ func wireMessages(outgoing []state.Outgoing, reasoningByID map[string]string) []
 		if item.Role == state.RoleAssistant && item.MessageID != nil {
 			message.Reasoning = reasoningByID[*item.MessageID]
 		}
-		var calls []providers.ToolCall
-		if item.Role == state.RoleAssistant {
-			for _, tool := range item.Tools {
-				if tool.Source != "client" || strings.TrimSpace(tool.ItemID) == "" {
-					continue
-				}
-				arguments := tool.Arguments
-				if strings.TrimSpace(arguments) == "" {
-					arguments = "{}"
-				}
-				calls = append(calls, providers.ToolCall{ID: tool.ItemID, Name: tool.ToolName, Arguments: arguments})
+		message.Exchange = item.Exchange
+		var outputs []providers.ChatMessage
+		for _, tool := range item.Tools {
+			if item.Role != state.RoleAssistant || tool.Source != "client" || tool.ItemID == "" {
+				continue
 			}
-			if len(calls) > 0 {
-				message.ToolCalls = toolCallsJSON(calls)
+			arguments := tool.Arguments
+			if strings.TrimSpace(arguments) == "" {
+				arguments = "{}"
 			}
+			message.ToolCalls = append(message.ToolCalls, providers.ToolCall{ID: tool.ItemID, Name: tool.ToolName, Arguments: arguments})
+			outputs = append(outputs, providers.ChatMessage{Role: "tool", ToolCallID: tool.ItemID, Name: tool.ToolName, Content: tool.Result})
+		}
+		if len(message.ToolCalls) == 0 && message.Reasoning == "" {
+			// 单独的历史推理遵守 replay_reasoning；本地工具结果需带原生续传项。
+			message.Exchange = message.Exchange.ForStorage(false)
 		}
 		messages = append(messages, message)
-		// 客户端工具的结果紧跟在发起它的 assistant 之后；没有这一步，下一轮历史里
-		// 只剩下一条空的 assistant（或最终正文），模型看不到工具返回过什么。
-		if item.Role == state.RoleAssistant {
-			for _, tool := range item.Tools {
-				if tool.Source != "client" || strings.TrimSpace(tool.ItemID) == "" {
-					continue
-				}
-				messages = append(messages, providers.ChatMessage{
-					Role: "tool", Content: tool.Result, ToolCallID: tool.ItemID, Name: tool.ToolName,
-				})
-			}
-		}
+		messages = append(messages, outputs...)
 	}
 	return messages
 }

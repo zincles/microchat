@@ -281,6 +281,7 @@ type Outgoing struct {
 	MessageID *string `json:"message_id,omitempty"` // type=message
 	// Tools：这条消息上的**客户端**工具调用记录（服务端工具不参与回放）。
 	// 只给 wire 层重建 assistant.tool_calls + role:"tool" 历史用；它不是出站 JSON 的一部分。
+	Exchange  *model.Exchange     `json:"-"`
 	Tools     []model.MessageTool `json:"-"`
 	SummaryID *string             `json:"summary_id,omitempty"` // type=summary
 	Blocks    *int64              `json:"blocks,omitempty"`     // type=summary：它覆盖几个块
@@ -366,24 +367,9 @@ func BuildOutgoingWithPromptEntries(systemPrompt string, messages []model.Messag
 	}
 	for _, part := range walk(messages, summaries) {
 		if part.message != nil {
-			// 正文为空的不发出去：生成中的占位消息就在历史里躺着，而"空一条、再说一句"
-			// 对上游是纯噪音；整句都是 `<state>` 块的消息同理（剔除后为空）。
-			content := statelang.Scan(part.message.Content).Cleaned
-			clientTools := clientMessageTools(part.message.Tools)
-			if strings.TrimSpace(content) == "" && len(clientTools) == 0 {
-				continue
+			if item, ok := OutgoingMessage(*part.message); ok {
+				outgoing = append(outgoing, item)
 			}
-			role := RoleAssistant
-			if part.message.Role == model.RoleUser {
-				role = RoleUser
-			}
-			id := part.message.ID
-			item := Outgoing{Role: role, Content: content, Type: "message", MessageID: &id, Tools: clientTools}
-			if part.message.Idx > 0 { // 手搭出来的消息没编过号 ⇒ 就不带这一格（0 是系统提示词的）
-				index := part.message.Idx
-				item.Idx = &index
-			}
-			outgoing = append(outgoing, item)
 			continue
 		}
 		// 摘要：它是 AI 生成的前情提要（compact 那一发的产出）⇒ 用 assistant 角色；
@@ -720,6 +706,32 @@ func sortedKeys[V any](m map[string]V) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// OutgoingMessage 是存档消息进入模型历史的唯一投影，同轮工具续传也使用它。
+func OutgoingMessage(m model.Message) (Outgoing, bool) {
+	content := statelang.Scan(m.Content).Cleaned
+	tools := clientMessageTools(m.Tools)
+	if strings.TrimSpace(content) == "" && len(tools) == 0 && !hasHostedOutput(m) {
+		return Outgoing{}, false
+	}
+	item := Outgoing{Role: OutgoingRole(m.Role), Content: content, Type: "message", MessageID: &m.ID, Tools: tools, Exchange: m.DirectExchange()}
+	if m.Idx > 0 {
+		item.Idx = &m.Idx
+	}
+	return item, true
+}
+
+func hasHostedOutput(m model.Message) bool {
+	if m.DirectExchange() == nil {
+		return false
+	}
+	for _, t := range m.Tools {
+		if t.Source == "server" && t.Status == "done" {
+			return true
+		}
+	}
+	return false
 }
 
 // clientMessageTools：只保留客户端执行过的工具调用。服务端工具由上游执行，

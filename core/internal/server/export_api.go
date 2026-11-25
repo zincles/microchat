@@ -18,6 +18,7 @@ import (
 //   **再加三个软引用** —— `provider` / `model` / `agent_id`（+ `agent_name` 只为报错时说得出口）。
 //   就这三个：它们是会话自己的三格绑定（`sessions.provider/model/agent_id`），导回去"这条对话
 //   当初是谁在什么模型上说的"就齐了。
+// v5：带模型调用记录的消息额外导出 exchanges。没有记录的会话继续导出 v4。
 // v4（2026-11-10）：消息再带 `kind`/`status`/`run_id` + `tools`（message_tools），
 //   保证多 assistant Message 与工具轨迹一起搬家。v3 及更早文件没有这些字段 ⇒ 按普通消息读。
 // v3（2026-10-28 用户定："我们要完整的把那个金字塔结构导出出来，或者导入进去。必须做到"）：
@@ -57,8 +58,9 @@ type sessionExport struct {
 }
 
 type exportMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Exchanges []*model.Exchange `json:"exchanges,omitempty"`
+	Role      string            `json:"role"`
+	Content   string            `json:"content"`
 	// Reasoning：v3 起。模型的思考（界面折在那条回复下面那截）。老文件没有 ⇒ 空。
 	Reasoning string `json:"reasoning,omitempty"`
 	// v4：消息级类型/状态/run 与工具轨迹（message_tools）。老文件没有 ⇒ 普通 done 消息。
@@ -130,7 +132,10 @@ func (s *Server) exportSession(w http.ResponseWriter, r *http.Request) {
 		Summaries: make([]exportSummary, 0, len(summaries)),
 	}
 	for _, m := range messages {
-		exported := exportMessage{
+		if len(m.Exchanges) != 0 {
+			out.Version = 5
+		}
+		exported := exportMessage{Exchanges: m.Exchanges,
 			Role: string(m.Role), Content: m.Content, Reasoning: m.Reasoning,
 			Kind: string(m.Kind), Status: string(m.Status), RunID: m.RunID,
 		}
@@ -173,9 +178,9 @@ func (s *Server) importJSON(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if req.Version > 4 {
+	if req.Version > 5 {
 		writeError(w, http.StatusBadRequest, "invalid",
-			fmt.Sprintf("这份文件的 version = %d 比本程序认识的（4）新：请升级后再导入", req.Version))
+			fmt.Sprintf("这份文件的 version = %d 比本程序认识的（5）新：请升级后再导入", req.Version))
 		return
 	}
 	if len(req.Messages) == 0 {
@@ -190,7 +195,7 @@ func (s *Server) importJSON(w http.ResponseWriter, r *http.Request) {
 				fmt.Sprintf("第 %d 条的 role 只许 user / assistant（得到 %q）", index+1, m.Role))
 			return
 		}
-		item := store.ImportMessage{
+		item := store.ImportMessage{Exchanges: m.Exchanges,
 			IsUser: role == "user", Content: m.Content, Reasoning: m.Reasoning,
 			Kind: m.Kind, Status: m.Status, RunID: m.RunID,
 		}
@@ -244,6 +249,7 @@ func (s *Server) importJSON(w http.ResponseWriter, r *http.Request) {
 		session.AgentID = agentID
 	}
 	if err := s.store.ImportMessages(session.ID, parsed); err != nil {
+		_ = s.store.DeleteSession(session.ID)
 		writeStoreError(w, err)
 		return
 	}

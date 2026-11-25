@@ -44,7 +44,7 @@ func newStubUpstream(t *testing.T, status int, contentType, body string) *stubUp
 
 func (s *stubUpstream) baseURL() string { return s.server.URL + "/v1" }
 
-// 流式：`data:` 分帧交给成熟库（go-sse），这里只验"拼起来的整段对不对、增量顺序对不对"。
+// 流式：`data:` 分帧交给SDK，这里只验"拼起来的整段对不对、增量顺序对不对"。
 func TestChatStreamsAndSplitsReasoning(t *testing.T) {
 	// 思考的字段名各家不同：三种都要认（OpenRouter 系 reasoning / DeepSeek 官方 reasoning_content / 第三种）
 	frames := []string{
@@ -513,8 +513,8 @@ func TestReadStreamAccumulatesToolCalls(t *testing.T) {
 	if call.ID != "call_1" || call.Name != "web_search" || call.Arguments != `{"query":"xAI"}` {
 		t.Fatalf("call = %+v", call)
 	}
-	if result.FinishReason != "tool_calls" {
-		t.Fatalf("finish reason = %q", result.FinishReason)
+	if result.Exchange.FinishReason != "tool_calls" {
+		t.Fatalf("finish reason = %q", result.Exchange.FinishReason)
 	}
 }
 

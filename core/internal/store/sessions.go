@@ -364,29 +364,23 @@ func (s *Store) CopySession(sessionID string) (model.Session, error) {
 	}
 	for index := range messages {
 		message := messages[index]
-		if _, err := tx.Exec(
-			`INSERT INTO messages
-			   (id, session_id, role, kind, status, run_id, tools_snapshot, content, created_at, updated_at, reasoning, reasoning_ms, duration_ms, usage, summary_id)
-			 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)`,
-			messageIDs[index], copied.ID, string(message.Role), string(message.Kind), string(message.Status), message.RunID,
-			mustJSON(message.ToolsSnapshot), message.Content, message.CreatedAt, message.UpdatedAt,
-			message.Reasoning, message.ReasoningMS, message.DurationMS, usageArg(message.Usage),
-			remapID(message.SummaryID, summaryIDOf)); err != nil {
-			return model.Session{}, err
+		message.ID = messageIDs[index]
+		message.SessionID = copied.ID
+		if message.SummaryID != nil {
+			mapped, ok := summaryIDOf[*message.SummaryID]
+			message.SummaryID = nil
+			if ok {
+				message.SummaryID = &mapped
+			}
 		}
-		for _, tool := range message.Tools {
-			toolID, err := newID()
-			if err != nil {
-				return model.Session{}, err
-			}
-			if _, err := tx.Exec(
-				`INSERT INTO message_tools
-				   (id, message_id, seq, source, tool_name, item_id, queries, sources, arguments, result, status, created_at)
-				 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)`,
-				toolID, messageIDs[index], tool.Seq, tool.Source, tool.ToolName, nullableText(tool.ItemID),
-				mustJSON(tool.Queries), mustJSON(tool.Sources), tool.Arguments, tool.Result, tool.Status, tool.CreatedAt); err != nil {
-				return model.Session{}, err
-			}
+		if mapped := messageIDOf[message.RunID]; mapped != "" {
+			message.RunID = mapped
+		}
+		for j := range message.Tools {
+			message.Tools[j].ID = ""
+		}
+		if err := insertArchivedMessage(tx, &message); err != nil {
+			return model.Session{}, err
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -435,14 +429,6 @@ func optionalID(id *string, table map[string]string) *string {
 		return id
 	}
 	return &mapped
-}
-
-// remapID：同上，但直接给 SQL 的可空列用（nil = NULL）。
-func remapID(id *string, table map[string]string) any {
-	if id == nil {
-		return nil
-	}
-	return *optionalID(id, table)
 }
 
 // remapSourceIDs：`source_ids` 按 `type` 指向消息或摘要 ⇒ 一并换成新 id（DB 列名是历史：`source_kind`）。
@@ -500,6 +486,7 @@ type STMessage struct {
 
 // ImportMessage：一条要落的导入消息（**ST 导入与 JSON 导入共用**；id 在落库时批铸排序，这里不带）。
 type ImportMessage struct {
+	Exchanges []*model.Exchange
 	IsUser    bool
 	Content   string
 	Reasoning string
@@ -561,19 +548,19 @@ func (s *Store) ImportMessages(sessionID string, parsed []ImportMessage) error {
 	if err != nil {
 		return err
 	}
+	rows := make([]model.Message, 0, len(parsed))
 	for index, item := range parsed {
 		role := model.RoleAssistant
 		if item.IsUser {
 			role = model.RoleUser
 		}
-		if _, err := s.InsertMessageWithTools(model.Message{
+		rows = append(rows, model.Message{Exchanges: item.Exchanges,
 			ID: ids[index], SessionID: sessionID, Role: role,
 			Kind: model.MessageKind(item.Kind), Status: model.MessageStatus(item.Status),
 			RunID: item.RunID, Content: item.Content, Reasoning: item.Reasoning,
 			CreatedAt: item.CreatedAt, Tools: item.Tools,
-		}, item.Tools); err != nil {
-			return err
-		}
+		})
 	}
-	return nil
+	_, err = s.InsertMessagesWithTools(rows)
+	return err
 }

@@ -157,7 +157,7 @@ func (s *Service) runFlow(session model.Session, replyID string, token uint64, r
 	sessionID := session.ID
 	guard := s.Tasks.Begin(task.KindTurn, &sessionID, "生成 · 会话 "+shortID(sessionID))
 	defer guard.Interrupted()
-	guard.Cancellable(func() { s.Turns.Stop(sessionID) })
+	guard.Cancellable(func() { s.Turns.StopToken(sessionID, token) })
 
 	ctx, cancel := context.WithCancel(context.Background())
 	s.Turns.Attach(sessionID, token, cancel)
@@ -293,7 +293,7 @@ func (s *Service) runFlow(session model.Session, replyID string, token uint64, r
 	progress := store.MessageMeta{
 		Reasoning:  strings.TrimSpace(outcome.Final.Reasoning),
 		DurationMS: &durationMS,
-		Usage:      outcome.Usage,
+		Usage:      outcome.Usage, Exchanges: outcome.Exchanges,
 	}
 	if replaceID != "" {
 		// 重新生成：尾条 assistant 原地换正文/思考/用量；UUID 不变，摘要的覆盖区间仍成立。
@@ -308,7 +308,7 @@ func (s *Service) runFlow(session model.Session, replyID string, token uint64, r
 			ID: replyID, SessionID: sessionID, Role: model.RoleAssistant,
 			Kind: model.MessageKindChat, Status: model.MessageStatusDone, RunID: runID,
 			Content: outcome.Final.Text, DurationMS: &durationMS, Usage: outcome.Usage,
-			Reasoning: progress.Reasoning,
+			Reasoning: progress.Reasoning, Exchanges: progress.Exchanges,
 		}
 		if _, err := s.Store.InsertMessage(message); err != nil {
 			failTrace(err)

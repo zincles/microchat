@@ -15,7 +15,8 @@ import (
 
 // ProviderView：`GET /providers` 的一项。**绝不含密钥内容**（只回 `has_key`）。
 type ProviderView struct {
-	ID string `json:"id"`
+	LocalToolProvider string `json:"local_tool_provider,omitempty"`
+	ID                string `json:"id"`
 	// Alias：界面显示用的别名（空 = 沿用 name / id 的旧回退）。`id` 永远是唯一标识。
 	Alias    string  `json:"alias"`
 	Name     *string `json:"name"`
@@ -86,14 +87,15 @@ type ModelListItem struct {
 }
 
 type CreateProviderReq struct {
-	ID       string            `json:"id"`
-	Name     *string           `json:"name"`
-	Alias    *string           `json:"alias"` // 显示别名（省略 / 空 = 没有别名）
-	Vendor   *string           `json:"vendor"`
-	Protocol *string           `json:"protocol"`
-	BaseURL  *string           `json:"base_url"`
-	Headers  map[string]string `json:"headers"`
-	APIKey   *string           `json:"api_key"`
+	LocalToolProvider string            `json:"local_tool_provider,omitempty"`
+	ID                string            `json:"id"`
+	Name              *string           `json:"name"`
+	Alias             *string           `json:"alias"` // 显示别名（省略 / 空 = 没有别名）
+	Vendor            *string           `json:"vendor"`
+	Protocol          *string           `json:"protocol"`
+	BaseURL           *string           `json:"base_url"`
+	Headers           map[string]string `json:"headers"`
+	APIKey            *string           `json:"api_key"`
 	// ModelFilter：模型筛选器（省略 / 空 = 不筛）。校验在 ValidateModelFilter（坏写法 ⇒ 422）。
 	ModelFilter    *string `json:"model_filter"`
 	MaxConcurrency *int    `json:"max_concurrency"`
@@ -102,6 +104,7 @@ type CreateProviderReq struct {
 }
 
 type UpdateProviderReq struct {
+	LocalToolProvider *string `json:"local_tool_provider,omitempty"`
 	// NewID：改**渠道标识**（2026-11-05 用户定「渠道标识要能改」）。None = 不动。
 	// 改名会一并搬库里的引用（会话 / 模型 / 路由 / 上次刷新 / 摘要审计列）——
 	// 只改 `providers.json` 会让会话指向一个不存在的渠道，发消息静默回落 fallback。
@@ -187,7 +190,7 @@ func (s *Server) createProvider(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	provider := config.Provider{ID: req.ID, BaseURL: "", Headers: req.Headers,
+	provider := config.Provider{ID: req.ID, LocalToolProvider: strings.TrimSpace(req.LocalToolProvider), Headers: req.Headers,
 		APIKey: deref(req.APIKey), ModelFilter: deref(req.ModelFilter), ModelDefineRules: req.ModelDefineRules}
 	if req.MaxConcurrency != nil {
 		if *req.MaxConcurrency < 0 {
@@ -257,6 +260,9 @@ func (s *Server) updateProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	provider := configs.Providers[index]
+	if req.LocalToolProvider != nil {
+		provider.LocalToolProvider = strings.TrimSpace(*req.LocalToolProvider)
+	}
 	if req.Vendor != nil { // None = 不动；"" = 清（回落到 custom）
 		provider.Vendor = *req.Vendor
 	}
@@ -324,7 +330,16 @@ func (s *Server) updateProvider(w http.ResponseWriter, r *http.Request) {
 			renamed = true
 		}
 	}
+	original := append([]config.Provider(nil), configs.Providers...)
 	configs.Providers[index] = provider
+	if renamed {
+		for i := range configs.Providers {
+			if configs.Providers[i].LocalToolProvider == oldID {
+				configs.Providers[i].LocalToolProvider = provider.ID
+			}
+		}
+		provider = configs.Providers[index]
+	}
 	// **先写配置、再搬库**：配置是权威，写失败 ⇒ 什么都没发生（最干净）；
 	// 库搬失败 ⇒ 把配置改回去。两个写操作跨 SQLite 与 JSON，只能选一种失败残留，
 	// 这里选"失败后回到原样"，与 deleteProvider 的顺序（先库后配置）不同 —— 那边删库失败
@@ -335,7 +350,7 @@ func (s *Server) updateProvider(w http.ResponseWriter, r *http.Request) {
 	}
 	if renamed {
 		if err := s.store.RenameProvider(oldID, provider.ID); err != nil {
-			configs.Providers[index].ID = oldID
+			configs.Providers = original
 			if revertErr := s.saveProviders(configs); revertErr != nil {
 				log.Printf("渠道「%s」改名后回滚配置失败（库里已是「%s」）：%v", oldID, provider.ID, revertErr)
 				writeError(w, http.StatusInternalServerError, "internal",
@@ -377,6 +392,9 @@ func (s *Server) deleteProvider(w http.ResponseWriter, r *http.Request) {
 		if provider.ID == id {
 			found = true
 			continue
+		}
+		if provider.LocalToolProvider == id {
+			provider.LocalToolProvider = ""
 		}
 		kept = append(kept, provider)
 	}
@@ -627,7 +645,7 @@ func providerView(provider config.Provider) ProviderView {
 		HasKey: provider.APIKey != "", ModelFilter: provider.ModelFilter,
 		MaxConcurrency: provider.MaxConcurrency,
 		Identity:       string(effective.Identity), Models: []ModelView{},
-		ModelDefineRules: provider.ModelDefineRules,
+		ModelDefineRules: provider.ModelDefineRules, LocalToolProvider: provider.LocalToolProvider,
 	}
 }
 

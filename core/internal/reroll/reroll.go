@@ -63,16 +63,21 @@ const (
 //
 // `Tokens` 只有摘要模式用（`ReplaceSummaryText` 要它）；消息模式不用（消息那一版不带 token 数）。
 type RerolledMessage struct {
-	SessionID       string          `json:"session_id"`
-	TargetMessageID string          `json:"target_message_id"`
-	RawText         string          `json:"raw_text"`
-	Idx             int             `json:"idx"`
-	Tokens          int             `json:"tokens,omitempty"`
-	Usage           json.RawMessage `json:"usage,omitempty"`
-	DurationMS      *int64          `json:"duration_ms,omitempty"`
-	Reasoning       string          `json:"reasoning,omitempty"`
-	ReasoningMS     *int64          `json:"reasoning_ms,omitempty"`
-	At              int64           `json:"at"`
+	Exchanges       []*model.Exchange   `json:"-"`
+	Tools           []model.MessageTool `json:"-"`
+	ToolsSnapshot   []string            `json:"-"`
+	Kind            model.MessageKind   `json:"-"`
+	Status          model.MessageStatus `json:"-"`
+	SessionID       string              `json:"session_id"`
+	TargetMessageID string              `json:"target_message_id"`
+	RawText         string              `json:"raw_text"`
+	Idx             int                 `json:"idx"`
+	Tokens          int                 `json:"tokens,omitempty"`
+	Usage           json.RawMessage     `json:"usage,omitempty"`
+	DurationMS      *int64              `json:"duration_ms,omitempty"`
+	Reasoning       string              `json:"reasoning,omitempty"`
+	ReasoningMS     *int64              `json:"reasoning_ms,omitempty"`
+	At              int64               `json:"at"`
 }
 
 // Item：给界面看的一版（**不吐全文** —— 预览几十个字就够）。
@@ -368,7 +373,7 @@ func (s *Service) seed(tail model.Message, token uint64) error {
 			sessionID: tail.SessionID, kind: TargetMessage, targetID: tail.ID, current: 1,
 			items: []RerolledMessage{{
 				SessionID: tail.SessionID, TargetMessageID: tail.ID,
-				RawText: tail.Content, Idx: 1,
+				RawText: tail.Content, Idx: 1, Exchanges: tail.Exchanges, Tools: tail.Tools, ToolsSnapshot: tail.ToolsSnapshot, Kind: tail.Kind, Status: tail.Status,
 				Usage: tail.Usage, DurationMS: tail.DurationMS,
 				Reasoning: tail.Reasoning, ReasoningMS: tail.ReasoningMS,
 				At: time.Now().UnixMilli(),
@@ -538,9 +543,7 @@ func (s *Service) roll(ctx context.Context, prepared *roll) {
 	}
 	started := time.Now()
 	var firstTextAt time.Time
-	wire := providers.FromConfig(prepared.channel)
-	// 与 chat.go Accept 同一条查表：有行且 api=="openai-responses" ⇒ /responses；没有行时用渠道自己的 protocol。
-	wire.Protocol = providers.ResolveProtocolFor(s.Store.ModelRoute, prepared.channel.ID, prepared.model, providers.Protocol(prepared.channel.Protocol))
+	wire := providers.ForModel(prepared.channel, prepared.model, s.Store.ModelRoute)
 	result, err := providers.NewClient(wire).Chat(ctx, wire, providers.Request{
 		Model:     prepared.model,
 		Messages:  messages,
@@ -565,7 +568,7 @@ func (s *Service) roll(ctx context.Context, prepared *roll) {
 	durationMS := time.Since(started).Milliseconds()
 	candidate := RerolledMessage{
 		SessionID: sessionID, TargetMessageID: prepared.targetID,
-		RawText: result.Text, Usage: result.Usage, DurationMS: &durationMS,
+		RawText: result.Text, Usage: result.Usage, DurationMS: &durationMS, Exchanges: result.Archive(prepared.storesReasoning),
 		At: time.Now().UnixMilli(),
 	}
 	// 思考：与一轮生成同一条规矩 —— 渠道要留档才留（`store_reasoning`）；
@@ -896,6 +899,7 @@ func (s *Service) stateLocked(entry *list) State {
 func (s *Service) apply(item RerolledMessage) error {
 	_, err := s.Store.ReplaceMessage(item.SessionID, item.TargetMessageID, item.RawText, store.MessageMeta{
 		Reasoning: item.Reasoning, ReasoningMS: item.ReasoningMS,
+		Exchanges: item.Exchanges, Tools: item.Tools, ToolsSnapshot: item.ToolsSnapshot, Kind: item.Kind, Status: item.Status,
 		DurationMS: item.DurationMS, Usage: item.Usage,
 	})
 	if err == nil {

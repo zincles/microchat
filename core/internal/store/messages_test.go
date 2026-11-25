@@ -551,16 +551,16 @@ func TestListMessageRangesBatchesAndDeduplicates(t *testing.T) {
 func TestMessageMetadataRoundTrip(t *testing.T) {
 	st := openTemp(t)
 	seedSession(t, st, "s1", "m1")
-	inserted, err := st.InsertMessageWithTools(model.Message{
+	inserted, err := st.InsertMessage(model.Message{
 		ID: "a1", SessionID: "s1", Role: model.RoleAssistant,
 		Kind: model.MessageKindToolRun, Status: model.MessageStatusDone,
 		ToolsSnapshot: []string{"web_search"}, Content: "结果",
-	}, []model.MessageTool{{
-		Source: "server", ToolName: "web_search", ItemID: "ws_1",
-		Queries: []string{"xAI news"},
-		Sources: []model.MessageToolSource{{Type: "url", URL: "https://example.com/a", Title: "A"}},
-		Status:  "done", TextOffset: intPtr(7),
-	}})
+		Tools: []model.MessageTool{{
+			Source: "server", ToolName: "web_search", ItemID: "ws_1",
+			Queries: []string{"xAI news"},
+			Sources: []model.MessageToolSource{{Type: "url", URL: "https://example.com/a", Title: "A"}},
+			Status:  "done", TextOffset: intPtr(7),
+		}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -636,3 +636,37 @@ func TestInsertMessagesWithToolsBatch(t *testing.T) {
 }
 
 func intPtr(value int) *int { return &value }
+
+// 模拟 user_version=1 且已有存档的旧库，启动补列可重复执行。
+func TestExchangeUpgradePreservesHistory(t *testing.T) {
+	path := t.TempDir() + "/old.db"
+	old, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedSession(t, old, "s", "m1", "m2")
+	seedSummary(t, old, "sum", "s", nil, "m1", "m2")
+	if _, err = old.db.Exec("ALTER TABLE messages DROP COLUMN exchanges"); err != nil {
+		t.Fatal(err)
+	}
+	if err = old.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		st, err := Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		messages, err := st.ListMessages("s")
+		if err != nil || len(messages) != 2 || messages[0].ID != "m1" || messages[1].Idx != 2 || messages[1].Exchanges != nil {
+			t.Fatalf("旧消息迁移 %+v, %v", messages, err)
+		}
+		sums, err := st.ListSummaries("s")
+		if err != nil || len(sums) != 1 || *sums[0].BeginMessageID != "m1" || *sums[0].EndMessageID != "m2" {
+			t.Fatalf("旧摘要迁移 %+v, %v", sums, err)
+		}
+		if err = st.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

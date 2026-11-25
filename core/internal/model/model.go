@@ -71,9 +71,10 @@ type MessageToolSource struct {
 //
 // **字段顺序照抄 Rust 版**（serde 按声明顺序输出 ⇒ 顺序不同 = 字节不同 = 前端可能踩坑）。
 type Message struct {
-	ID        string `json:"id"`
-	SessionID string `json:"session_id"`
-	Role      Role   `json:"role"`
+	Exchanges []*Exchange `json:"-"` // 协议续传材料只供后端和显式导出使用。
+	ID        string      `json:"id"`
+	SessionID string      `json:"session_id"`
+	Role      Role        `json:"role"`
 	// Kind：storage/display 类型（role 仍是 wire 的 user/assistant）。
 	Kind   MessageKind   `json:"kind,omitempty"`
 	Status MessageStatus `json:"status,omitempty"`
@@ -129,21 +130,6 @@ const (
 	TypeMessages  SummaryType = "message"
 	TypeSummaries SummaryType = "summary"
 )
-
-// User：一个登录者（多用户与鉴权，2026-10-10 定）。
-//
-// **第一个注册者是 admin，id = 0**；之后注册关闭、由 admin 在网页端加人。
-// 口令只存 bcrypt 哈希；`Ver` 是**口令版本**（+1 ⇒ 此人所有 JWT 立刻失效）；
-// `TgUserID` 是 Telegram 绑定（NULL = 没绑）。`0` 恒是 admin 的座次。
-type User struct {
-	ID        int64  `json:"id"`
-	Name      string `json:"name"`
-	PassHash  string `json:"-"` // 永不出口
-	IsAdmin   bool   `json:"is_admin"`
-	Ver       int64  `json:"ver"`
-	TgUserID  *int64 `json:"tg_user_id,omitempty"`
-	CreatedAt int64  `json:"created_at"`
-}
 
 // Summary：一条摘要（Compact 的产出）。派生数据：只插行，绝不碰 messages 的正文。
 //

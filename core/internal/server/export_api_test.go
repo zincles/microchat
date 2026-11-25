@@ -161,8 +161,8 @@ func TestSessionImportKeepsUnknownBindings(t *testing.T) {
 func TestSessionImportRejectsNewerVersion(t *testing.T) {
 	box := newDummySandboxWith(t, true)
 	rec := authCall(box.server, "POST", "/api/v1/sessions/import-json",
-		`{"version":5,"messages":[{"role":"user","content":"a"}]}`, testSysToken)
-	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "version = 5") {
+		`{"version":6,"messages":[{"role":"user","content":"a"}]}`, testSysToken)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "version = 6") {
 		t.Fatalf("更新的 version 该 400 并说清：%d（%s）", rec.Code, rec.Body.String())
 	}
 }

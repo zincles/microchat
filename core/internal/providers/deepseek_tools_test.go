@@ -1,4 +1,4 @@
-package chat
+package providers
 
 import (
 	"context"
@@ -7,9 +7,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"microchat/internal/config"
-	"microchat/internal/providers"
 )
 
 func TestRunLocalDeepSeekTools(t *testing.T) {
@@ -32,9 +29,9 @@ func TestRunLocalDeepSeekTools(t *testing.T) {
 		}
 	}))
 	t.Cleanup(server.Close)
-	channel := config.Provider{ID: "ds", Vendor: "deepseek", BaseURL: server.URL, APIKey: "k"}
+	channel := Provider{ID: "ds", Vendor: "deepseek", BaseURL: server.URL, APIKey: "k"}
 
-	content, sources, err := runLocalTool(context.Background(), channel, providers.ToolCall{
+	content, sources, err := RunDeepSeekTool(context.Background(), channel, ToolCall{
 		ID: "call_1", Name: "web_search", Arguments: `{"query":"xAI","count":3}`,
 	})
 	if err != nil {
@@ -44,7 +41,7 @@ func TestRunLocalDeepSeekTools(t *testing.T) {
 		t.Fatalf("search content=%s sources=%+v", content, sources)
 	}
 
-	content, sources, err = runLocalTool(context.Background(), channel, providers.ToolCall{
+	content, sources, err = RunDeepSeekTool(context.Background(), channel, ToolCall{
 		ID: "call_2", Name: "web_fetch", Arguments: `{"url":"https://example.com/a"}`,
 	})
 	if err != nil {

@@ -533,8 +533,10 @@ func (c AgentsConfig) Resolve(id string) (Agent, bool) {
 //
 // `Vendor`（找谁）× `Protocol`（说什么话）。
 type Provider struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	// LocalToolProvider 指定执行 web_search/web_fetch 的 DeepSeek 渠道。空值只在 DeepSeek 自身启用这两个本地工具。
+	LocalToolProvider string `json:"local_tool_provider,omitempty"`
+	ID                string `json:"id"`
+	Name              string `json:"name"`
 	// Alias：渠道在界面上的**别名**（可选，2026-11-09 用户定）。
 	// 空 = 沿用原有的显示回退（name → vendor_name / id）；它**只管显示** ——
 	// 会话、模型、路由引用的一直是 `id`，别名不参与任何匹配，也不许拿来当 id。

@@ -1,4 +1,4 @@
-package chat
+package providers
 
 import (
 	"bytes"
@@ -10,18 +10,16 @@ import (
 	"strings"
 	"time"
 
-	"microchat/internal/config"
 	"microchat/internal/model"
-	"microchat/internal/providers"
 )
 
 // DeepSeek 的联网搜索走**客户端** Search/Fetch API。它不作为服务端工具发；
 // 这里只给模型 function 声明，执行在我们自己手里，结果再以 role:"tool" 回填。
-func deepseekLocalTools() []providers.Tool {
-	return []providers.Tool{
-		providers.FunctionTool("web_search", "Search the web. Returns titles, URLs and snippets.",
+func DeepSeekTools() []Tool {
+	return []Tool{
+		FunctionTool("web_search", "Search the web. Returns titles, URLs and snippets.",
 			json.RawMessage(`{"type":"object","properties":{"query":{"type":"string","description":"Search query, max 128 characters"},"count":{"type":"integer","minimum":1,"maximum":50,"description":"Number of results, default 5"}},"required":["query"],"additionalProperties":false}`)),
-		providers.FunctionTool("web_fetch", "Fetch one HTTP(S) page and return its Markdown content.",
+		FunctionTool("web_fetch", "Fetch one HTTP(S) page and return its Markdown content.",
 			json.RawMessage(`{"type":"object","properties":{"url":{"type":"string","description":"HTTP or HTTPS URL"}},"required":["url"],"additionalProperties":false}`)),
 	}
 }
@@ -52,13 +50,15 @@ type localFetchResponse struct {
 const maxLocalToolResult = 64 << 10
 
 // runLocalTool：执行一个客户端 function call，返回给模型的**字符串**（JSON 优先）与来源。
-func runLocalTool(ctx context.Context, channel config.Provider, call providers.ToolCall) (string, []model.MessageToolSource, error) {
-	wire := providers.ApplyPreset(providers.FromConfig(channel))
-	base := strings.TrimRight(wire.BaseURL, "/")
+func RunDeepSeekTool(ctx context.Context, channel Provider, call ToolCall) (string, []model.MessageToolSource, error) {
+	wire := ApplyPreset(channel)
+	base := strings.TrimSuffix(strings.TrimRight(wire.BaseURL, "/"), "/v1")
 	if base == "" {
 		return "", nil, fmt.Errorf("工具 %s：渠道没有 base_url", call.Name)
 	}
-	client := &http.Client{Timeout: 45 * time.Second}
+	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	client := NewClient(wire)
 	switch call.Name {
 	case "web_search":
 		var args struct {
@@ -132,7 +132,7 @@ func runLocalTool(ctx context.Context, channel config.Provider, call providers.T
 	}
 }
 
-func doDeepSeekTool(ctx context.Context, client *http.Client, url, key string, body []byte) ([]byte, error) {
+func doDeepSeekTool(ctx context.Context, client *Client, url, key string, body []byte) ([]byte, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, err

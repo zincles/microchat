@@ -863,7 +863,7 @@ func TestToolPassthrough(t *testing.T) {
 		},
 	}}
 	assistant := ChatMessage{Role: "assistant", Content: "",
-		ToolCalls: json.RawMessage(`[{"id":"call_1","type":"function","function":{"name":"roll_dice","arguments":"{\"sides\":20}"}}]`)}
+		ToolCalls: []ToolCall{{ID: "call_1", Name: "roll_dice", Arguments: `{"sides":20}`}}}
 	result := ChatMessage{Role: "tool", Content: "17", ToolCallID: "call_1", Name: "roll_dice"}
 	messages := []ChatMessage{{Role: "user", Content: "掷个 d20"}, assistant, result}
 
@@ -909,7 +909,7 @@ func TestToolPassthrough(t *testing.T) {
 		provider := opencodeProvider()
 		provider.AllowTools = &yes
 		body := build(t, provider, Request{Model: "m", Messages: messages, Tools: tools,
-			ToolChoice: json.RawMessage(`"auto"`)})
+			ToolChoice: "auto"})
 		sent, ok := body["tools"].([]any)
 		if !ok || len(sent) != 1 {
 			t.Fatalf("tools = %v", body["tools"])

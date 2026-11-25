@@ -1,27 +1,17 @@
-// Package providers：**只有它碰网络** —— 上游请求的唯一构造处。
-//
-// 形状**照抄 Pi**（`badlogic/pi-mono` 的 `packages/ai`），因为 OpenCode GO 那类网关按客户端身份放行：
-//
-//   - 头：`kind` 决定必需头（opencode 系要 `x-opencode-session`）；`identity` 决定自报身份；
-//     用户 `headers` **最后合并 ⇒ 永远能覆盖**。
-//   - 体：与 Pi 的 `openai-completions` 逐项对齐（stream ✓ stream_options.include_usage ✓
-//     prompt_cache_key / prompt_cache_retention 的**条件** ✓ store:false ✓ max_completion_tokens ✓）。
-//
-// 两条硬规矩：
-//  1. **`SessionID` 必填** —— 让"忘了传会话 id"在**构造期**就报，而不是静默少一个头（上游看来那像"时好时坏"）；
-//  2. 会话 id 是**路由键**，缓存是**体里的参数** —— 两者分开（`cacheRetention: "none"` 只影响后者）。
+// Package providers 管理上游渠道和协议适配。Chat Completions 和 Responses 使用 OpenAI Go SDK。
+// 渠道身份、路由头、超时及并发限制在此统一处理。
 package providers
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"runtime"
 	"strings"
@@ -136,24 +126,15 @@ type Timeouts struct {
 	TotalSeconds   float64 `json:"total_seconds"`
 }
 
-// ChatMessage：发给上游的一条消息（OpenAI 形状）。
-//
-// `Reasoning` **不出现在 JSON 里**（各自字段名不同，由 provider 决定）：
-// 推理型模型的思考要**回传上游**才有连续的多轮推理（Pi 的原话：`reasoning_details` 是 replay metadata）。
+// ChatMessage 是交给协议适配器的历史。调用 ID 用来配对本地执行结果。
 type ChatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-
-	// Reasoning：这条 assistant 消息当时的思考；只在该 kind 支持回传时才发。
-	Reasoning string `json:"-"`
-
-	// ── 工具回程（**原样透传**，形状与上游给的完全一致）──
-	// ToolCalls：assistant 消息里的 `tool_calls` 原始 JSON（`[{id,type,function:{name,arguments}}]`）。
-	ToolCalls json.RawMessage `json:"-"`
-	// ToolCallID：`role:"tool"` 的结果消息指回哪一次调用。
-	ToolCallID string `json:"-"`
-	// Name：有些上游要求工具结果里带函数名（Pi 的 `requiresToolResultName`）。
-	Name string `json:"-"`
+	Role       string          `json:"role"`
+	Content    string          `json:"content"`
+	Reasoning  string          `json:"-"`
+	ToolCalls  []ToolCall      `json:"-"`
+	ToolCallID string          `json:"-"`
+	Name       string          `json:"-"`
+	Exchange   *model.Exchange `json:"-"`
 }
 
 // Tool：一个工具声明 —— **只进请求体顶层的 `tools` 数组**（不是提示词文本）。
@@ -187,11 +168,11 @@ type Request struct {
 	MaxTokens      int
 	Temperature    *float64
 	// ThinkingLevel：**统一七档**（off/minimal/low/medium/high/xhigh/max；空串 = 跟随模型默认）。
-	// 由这里按 vendor/model 映射成各家真正认识的字段（见 applyThinking）；别把厂商字符串带出这一层。
+	// 由这里按 vendor/model 映射成各家真正认识的字段；别把厂商字符串带出这一层。
 	ThinkingLevel string
-	// Tools / ToolChoice：**工具透传**（原样进请求体；空 = 不发）。
+	// ToolChoice 可以为 auto / required / none 或已声明的函数名；协议适配器负责编码。
 	Tools      []Tool
-	ToolChoice json.RawMessage
+	ToolChoice string
 	// Override：请求体顶层**最后**写入的覆盖（原样 JSON 值；允许覆盖任何 key）。
 	Override map[string]json.RawMessage
 	Stream   bool
@@ -265,6 +246,15 @@ func ResolveProtocolFor(lookup func(providerID, upstreamID string) (string, bool
 		return fallback
 	}
 	return ProtocolChatCompletion
+}
+
+// ForModel 在生成和预演的各入口统一解析最终协议。路由表按渠道 ID 查，配置提供缺省协议。
+func ForModel(c config.Provider, modelID string, lookup func(string, string) (string, bool)) Provider {
+	p := FromConfig(c)
+	if p.Vendor != "" && p.Vendor != VendorDummy {
+		p.Protocol = ResolveProtocolFor(lookup, p.ID, modelID, p.Protocol)
+	}
+	return p
 }
 
 // EffectiveVendor：渠道的 vendor；空值不兜底，交给 Validate 报错。
@@ -359,6 +349,7 @@ func ApplyPreset(p Provider) Provider {
 	// 不断老配置）；用户显式填了的不动。
 	switch p.EffectiveVendor() {
 	case VendorOpenCodeGo, VendorOpenCode, VendorOpenRouter:
+		p.Endpoints = maps.Clone(p.Endpoints)
 		if p.Endpoints == nil {
 			p.Endpoints = map[Protocol]string{}
 		}
@@ -497,11 +488,15 @@ func headersFor(p Provider, r Request) map[string]string {
 		headers["Accept"] = "application/json"
 	}
 
-	// 用户显式配置最后合并 ⇒ 永远是最后一句话
-	for name, value := range p.Headers {
-		headers[name] = value
+	// HTTP 头不分大小写，配置写成 X-Opencode-Session 也能覆盖预设。
+	merged := make(map[string]string, len(headers)+len(p.Headers))
+	for name, value := range headers {
+		merged[http.CanonicalHeaderKey(name)] = value
 	}
-	return headers
+	for name, value := range p.Headers {
+		merged[http.CanonicalHeaderKey(name)] = value
+	}
+	return merged
 }
 
 // thinkingLevelOrder：统一七档，顺序 = UI 从低到高（规范清单住 model，避免 config 再抄一份）。
@@ -664,140 +659,6 @@ func thinkingEffortFor(p Provider, model, level string) (string, bool) {
 	return level, true
 }
 
-// applyThinking：把统一档写进请求体。各家字段不同，**只有这一处**拼。
-//   - DeepSeek：thinking.type 控开关；reasoning_effort 控深度
-//   - OpenRouter：reasoning.effort（不是顶层 reasoning_effort）
-//   - 其余 OpenAI 兼容：顶层 reasoning_effort
-func applyThinking(body map[string]any, p Provider, r Request) {
-	if r.ThinkingLevel != "" {
-		level := strings.ToLower(strings.TrimSpace(r.ThinkingLevel))
-		if p.EffectiveVendor() == VendorDeepseek {
-			mode := "enabled"
-			if level == "off" {
-				mode = "disabled"
-			}
-			body["thinking"] = map[string]any{"type": mode}
-		}
-		if effort, ok := thinkingEffortFor(p, r.Model, level); ok {
-			if p.EffectiveVendor() == VendorOpenRouter {
-				body["reasoning"] = map[string]any{"effort": effort}
-			} else {
-				body["reasoning_effort"] = effort
-			}
-		}
-		return
-	}
-}
-
-// bodyFor：**体的唯一拼装处**（照 Pi 的 `openai-completions` 逐项对齐）。
-func bodyFor(p Provider, r Request) map[string]any {
-	preset := presets[p.EffectiveVendor()]
-	reasoningField := reasoningFieldForModel(p, r.Model)
-	body := map[string]any{
-		"model":    r.Model,
-		"messages": wireMessages(r.Messages, reasoningField, p.EffectiveVendor(), r.Model, toolResultNameFor(p)),
-		"stream":   r.Stream,
-	}
-	retention := r.CacheRetention
-	if retention == "" {
-		retention = CacheAuto
-	}
-	// prompt_cache_key：只在 OpenAI 官方（且没关缓存）或长缓存时才给
-	if (isOpenAIOfficial(p) && retention != CacheNone) || (retention == CacheLong && preset.longCache) {
-		if r.SessionID != "" {
-			body["prompt_cache_key"] = clampPromptCacheKey(r.SessionID)
-		}
-	}
-	if retention == CacheLong && preset.longCache {
-		body["prompt_cache_retention"] = "24h"
-	}
-	// **只在流式时发**：探针实测 —— 非流式请求带上它，网关直接 400
-	//（"stream_options should be set along with stream = true"）。
-	if preset.supportsUsage && r.Stream {
-		body["stream_options"] = map[string]any{"include_usage": true}
-	}
-	if preset.supportsStore {
-		body["store"] = false
-	}
-	if r.MaxTokens > 0 {
-		if preset.maxTokensOld {
-			body["max_tokens"] = r.MaxTokens
-		} else {
-			body["max_completion_tokens"] = r.MaxTokens
-		}
-	}
-	if r.Temperature != nil {
-		body["temperature"] = *r.Temperature
-	}
-	// 思考档位：统一七档 → 各家字段（见 applyThinking）。
-	applyThinking(body, p, r)
-	// 工具定义：**只在渠道允许透传时才发**（不认识的字段有些上游会 400）。
-	// 服务端工具（只有 type）是规则明确给的候选，两种协议都带上（GPT 的 web_search 用户要求）。
-	if (toolsAllowed(p) || allLocalTools(r.Tools) || allServerTools(r.Tools)) && len(r.Tools) > 0 {
-		body["tools"] = r.Tools
-		if len(r.ToolChoice) > 0 {
-			body["tool_choice"] = r.ToolChoice
-		}
-	} else if hasToolHistory(r.Messages) {
-		// **与开关无关**：历史里出现过工具调用 ⇒ 这个参数**必须在**（哪怕空数组）。
-		// 否则 `role:"tool"` 的结果消息没有对应的调用，上游会直接拒 —— 这正是 Pi 那条
-		// `tools: []` 要防的情况。（回放历史本身也照旧：它是存档的一部分。）
-		body["tools"] = []Tool{}
-	}
-	applyOverride(body, r.Override)
-	return body
-}
-
-// applyOverride：会话级请求体覆盖 —— **最后写**，允许覆盖任何 key（包括 model/stream/tools）。
-// 用户明确要求允许覆盖；坏处由用户承担（这是调试口，不是安全边界）。
-func applyOverride(body map[string]any, override map[string]json.RawMessage) {
-	for key, value := range override {
-		body[key] = value
-	}
-}
-
-// wireMessages：把消息拼成要发出去的形状。
-//
-// 两件特殊处理（都照 Pi）：
-//  1. assistant 消息带着**当时的思考** ⇒ 补回同一个消息里（字段名随 provider：`reasoning_content` 等）；
-//  2. 思考字段**必须存在**的规则按 vendor 走（Pi 的 `openai-completions.ts:1379` 那条）：
-//     vendor==deepseek ⇒ 没有思考也补空字符串；vendor 为 custom ⇒ 保留旧的
-//     模型名启发式（含 `deepseek` 才补）；其余 vendor 不补。想整块关掉就把 `reasoning_field` 设成 ""。
-func wireMessages(messages []ChatMessage, reasoningField string, vendor Vendor, model string, toolResultName bool) []map[string]any {
-	requirePresence := false
-	if reasoningField != "" {
-		switch vendor {
-		case VendorDeepseek:
-			requirePresence = true
-		case VendorCustom:
-			requirePresence = isDeepSeekFamily(model)
-		}
-	}
-	out := make([]map[string]any, 0, len(messages))
-	for _, message := range messages {
-		item := map[string]any{"role": message.Role, "content": message.Content}
-		if reasoningField != "" && message.Role == "assistant" {
-			if strings.TrimSpace(message.Reasoning) != "" {
-				item[reasoningField] = message.Reasoning
-			} else if requirePresence {
-				item[reasoningField] = "" // 字段必须在 ⇒ 空着也得在（Pi 的解法）
-			}
-		}
-		// 工具回程：assistant 的 tool_calls 原样带回；`role:"tool"` 的结果指回调用 id
-		if message.Role == "assistant" && len(message.ToolCalls) > 0 {
-			item["tool_calls"] = message.ToolCalls
-		}
-		if message.Role == "tool" {
-			item["tool_call_id"] = message.ToolCallID
-			if toolResultName && message.Name != "" {
-				item["name"] = message.Name // 只有要求的上游才带
-			}
-		}
-		out = append(out, item)
-	}
-	return out
-}
-
 // hasToolHistory：这段历史里出现过工具调用或结果吗。
 //
 // Pi 的用法：有历史但这次没给 tools ⇒ 仍然发一个**空的 `tools: []`**
@@ -816,7 +677,10 @@ func isDeepSeekFamily(model string) bool {
 	return strings.Contains(strings.ToLower(model), "deepseek")
 }
 
-func isOpenAIOfficial(p Provider) bool { return strings.Contains(p.BaseURL, "api.openai.com") }
+func isOpenAIOfficial(p Provider) bool {
+	u, err := url.Parse(p.BaseURL)
+	return err == nil && strings.EqualFold(u.Hostname(), "api.openai.com")
+}
 
 // clampPromptCacheKey：OpenAI 对 prompt_cache_key 有长度限制，超了会被拒。
 func clampPromptCacheKey(key string) string {
@@ -825,195 +689,6 @@ func clampPromptCacheKey(key string) string {
 		return key
 	}
 	return key[:limit]
-}
-
-// Build：拼出要发的那一发（**纯函数**，好测）。**不发**（dummy 也走它 —— 调试页看到的就是它）。
-//
-// 按 protocol 分两路拼 URL（都先 Normalize＋Validate）：chat 走 `bodyFor`（Pi 的 openai-completions 形状），
-// openai-response 走 `buildResponse`（Pi 的 openai-responses 形状：数组 input + reasoning/max_output_tokens/store）；
-// systemone 走 BuildSystemOne，其余占位已在 Validate 拦下。
-func Build(p Provider, r Request) (*http.Request, error) {
-	p = ApplyPreset(p.Normalize())
-	if err := p.Validate(); err != nil {
-		return nil, err
-	}
-	if strings.TrimSpace(r.SessionID) == "" {
-		// 会话 id 是**路由键**：本会话的每一轮、每个辅助调用都必须带上同一个。
-		// 忘了传 ⇒ 在这里就报，别让它变成"上游看来时好时坏"的静默 bug。
-		return nil, errors.New("providers: SessionID 必填（每会话一个稳定 id —— 路由与提示词缓存都要它）")
-	}
-	if p.EffectiveProtocol() == ProtocolOpenAIResponse {
-		return buildResponse(p, r)
-	}
-	if p.EffectiveProtocol() != ProtocolChatCompletion {
-		// systemone 走 BuildSystemOne，其余占位已在 Validate 拦下。
-		return nil, fmt.Errorf("providers: protocol %q 不走 Build（chat 请用空 protocol，systemone 走 BuildSystemOne）", p.Protocol)
-	}
-	if p.EffectiveVendor() != VendorDummy && p.BaseURL == "" {
-		return nil, fmt.Errorf("providers: %s 缺少 base_url", p.ID)
-	}
-	body, err := json.Marshal(bodyFor(p, r))
-	if err != nil {
-		return nil, err
-	}
-	url := endpointURL(p, ProtocolChatCompletion, "/chat/completions")
-	request, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	for name, value := range headersFor(p, r) {
-		request.Header.Set(name, value)
-	}
-	request.Header.Set("Content-Type", "application/json")
-	if p.APIKey != "" {
-		request.Header.Set("Authorization", "Bearer "+p.APIKey)
-	}
-	return request, nil
-}
-
-// buildResponse：Response 协议那一发（照 Pi `openai-responses.ts:328-378`）。
-//
-// URL：Endpoints[response] 非空用它（预设按 base 拼的），否则老路 base+`/responses`；
-// 体：`{"model","input": [{role,content:[{type:"input_text",text}]}],"stream": 照 r.Stream,
-// "reasoning":{effort?,summary?}（给了才发）、"max_output_tokens"（>0 才发）、
-// "store":false（官方/OpenRouter/xAI/opencode 系；custom 不发）、"temperature"（有就发）}`。
-// prompt_cache_key 条件照 chat（opencode 系本来就没有 longCache ⇒ 自然不发，别特意关）。
-// Responses 的历史形状：user/developer/system 是输入消息，assistant 发
-// EasyInputMessage（role + 字符串正文）—— 既不能把 `input_text` 涂在 assistant 上，
-// 也不要造一个缺 id 的 `type:"message"` 半截 output item；工具回程分别是
-// `function_call` 与 `function_call_output`（Pi 的 convertResponsesMessages 口径）。
-func buildResponse(p Provider, r Request) (*http.Request, error) {
-	if p.EffectiveVendor() != VendorDummy && p.BaseURL == "" &&
-		strings.TrimSpace(p.Endpoints[ProtocolOpenAIResponse]) == "" {
-		return nil, fmt.Errorf("providers: %s 缺少 base_url", p.ID)
-	}
-	input := make([]map[string]any, 0, len(r.Messages))
-	for _, message := range r.Messages {
-		role := strings.TrimSpace(message.Role)
-		if role == "" {
-			role = "user"
-		}
-		switch role {
-		case "assistant":
-			// 先放工具调用，再放同一条 assistant 的正文（两者可同时存在）。
-			if len(message.ToolCalls) > 0 {
-				var calls []struct {
-					ID       string `json:"id"`
-					Function struct {
-						Name      string `json:"name"`
-						Arguments string `json:"arguments"`
-					} `json:"function"`
-				}
-				if err := json.Unmarshal(message.ToolCalls, &calls); err != nil {
-					return nil, fmt.Errorf("providers: assistant tool_calls 解析失败：%w", err)
-				}
-				for _, call := range calls {
-					input = append(input, map[string]any{
-						"type": "function_call", "call_id": call.ID,
-						"name": call.Function.Name, "arguments": call.Function.Arguments,
-					})
-				}
-			}
-			if strings.TrimSpace(message.Content) != "" {
-				// 这是官方文档里的 EasyInputMessage 形状。不要只写 output_text 却没有 id：
-				// 那是「半截 ResponseOutputMessage」，严格的兼容端点会按 400 拒掉
-				// （官方仓库的 SDK 也仍在讨论这个歧义）。我们没有保存上游 output item id，
-				// 所以用最容易通过校验的字符串正文。
-				input = append(input, map[string]any{"role": "assistant", "content": message.Content})
-			}
-		case "tool":
-			input = append(input, map[string]any{
-				"type": "function_call_output", "call_id": message.ToolCallID, "output": message.Content,
-			})
-		case "system", "developer":
-			// Pi 的 instruction 消息用纯字符串；Responses 接受这种形状。
-			input = append(input, map[string]any{"role": role, "content": message.Content})
-		default:
-			input = append(input, map[string]any{
-				"role": role, "content": []map[string]any{{"type": "input_text", "text": message.Content}},
-			})
-		}
-	}
-	preset := presets[p.EffectiveVendor()]
-	body := map[string]any{
-		"model":  r.Model,
-		"input":  input,
-		"stream": r.Stream,
-	}
-	// 服务端工具（只有 type）是 Responses 的已知能力，不靠 AllowTools；function tool 仍要显式打开。
-	if len(r.Tools) > 0 && (toolsAllowed(p) || allServerTools(r.Tools)) {
-		body["tools"] = r.Tools
-		if len(r.ToolChoice) > 0 {
-			body["tool_choice"] = r.ToolChoice
-		}
-	} else if hasToolHistory(r.Messages) {
-		body["tools"] = []Tool{}
-	}
-	if r.ThinkingLevel != "" {
-		reasoning := map[string]any{}
-		if effort, ok := thinkingEffortFor(p, r.Model, strings.ToLower(strings.TrimSpace(r.ThinkingLevel))); ok {
-			reasoning["effort"] = effort
-			// Pi 的 Responses 请求会带 summary:auto；不带的话上游通常不吐 reasoning 摘要，
-			// 界面就只能看到正文。加密 reasoning 的回放暂未实现（见 AGENTS）。
-			reasoning["summary"] = "auto"
-		}
-		if len(reasoning) > 0 {
-			body["reasoning"] = reasoning
-		}
-	}
-	if r.MaxTokens > 0 {
-		// Pi 对 Responses 的 max_output_tokens 有 16 的下限；上游对更小的值直接 400。
-		maxTokens := r.MaxTokens
-		if maxTokens < 16 {
-			maxTokens = 16
-		}
-		body["max_output_tokens"] = maxTokens
-	}
-	// store:false：已知会应答的渠道照 Pi 发，别把会话留在上游；custom 仍不发
-	// （用户自备端点，不认识的字段可能 400）。
-	if vendor := p.EffectiveVendor(); vendor == VendorOpenAI || vendor == VendorOpenRouter ||
-		vendor == VendorXAI || vendor == VendorOpenCodeGo || vendor == VendorOpenCode {
-		body["store"] = false
-	}
-	if r.Temperature != nil {
-		body["temperature"] = *r.Temperature
-	}
-	retention := r.CacheRetention
-	if retention == "" {
-		retention = CacheAuto
-	}
-	if (isOpenAIOfficial(p) && retention != CacheNone) || (retention == CacheLong && preset.longCache) {
-		if r.SessionID != "" {
-			body["prompt_cache_key"] = clampPromptCacheKey(r.SessionID)
-		}
-	}
-	applyOverride(body, r.Override)
-	raw, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	url := endpointURL(p, ProtocolOpenAIResponse, "/responses")
-	request, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(raw))
-	if err != nil {
-		return nil, err
-	}
-	for name, value := range headersFor(p, r) {
-		request.Header.Set(name, value)
-	}
-	request.Header.Set("Content-Type", "application/json")
-	if p.APIKey != "" {
-		request.Header.Set("Authorization", "Bearer "+p.APIKey)
-	}
-	return request, nil
-}
-
-// endpointURL：按 protocol 拼 URL —— Endpoints[protocol] 非空用它（verbatim，原样 POST），
-// 否则老路 base_url + 后缀。都先 Normalize＋Validate（调用方 Build 已做）。
-func endpointURL(p Provider, protocol Protocol, suffix string) string {
-	if url := strings.TrimSpace(p.Endpoints[protocol]); url != "" {
-		return url
-	}
-	return strings.TrimRight(p.BaseURL, "/") + suffix
 }
 
 // urlForEndpoint：预设拼端点表用 —— baseURL 去尾 `/` + path；baseURL 为空 ⇒ 空。
@@ -1294,14 +969,6 @@ type Client struct {
 	http *http.Client
 }
 
-type netDialer struct {
-	timeout time.Duration
-}
-
-func (d *netDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	return (&net.Dialer{Timeout: d.timeout}).DialContext(ctx, network, address)
-}
-
 func NewClient(p Provider) *Client {
 	connect, total := 15*time.Second, 300*time.Second // 缺省就像 providers.json 的注释说的：超时必配
 	if p.Timeouts != nil {
@@ -1315,8 +982,9 @@ func NewClient(p Provider) *Client {
 	return &Client{http: &http.Client{
 		Timeout: total,
 		Transport: &http.Transport{
-			DialContext:         (&netDialer{timeout: connect}).DialContext,
+			DialContext:         (&net.Dialer{Timeout: connect}).DialContext,
 			MaxIdleConnsPerHost: 4,
+			IdleConnTimeout:     90 * time.Second,
 		},
 	}}
 }

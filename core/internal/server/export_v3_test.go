@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -362,5 +363,34 @@ func TestExportV3CarriesReasoning(t *testing.T) {
 	}](t, authCall(box.server, "GET", "/api/v1/sessions/"+newID+"/messages", "", testSysToken))
 	if len(after) != 2 || after[1].Reasoning != "先想一下，再回答。" {
 		t.Fatalf("思考没导回来：%+v", after)
+	}
+}
+
+func TestExportV5PreservesExchangeOrder(t *testing.T) {
+	box := newDummySandboxWith(t, true)
+	records := []*model.Exchange{
+		{Provider: "p", Protocol: "openai-response", Model: "m", NodeID: "n1", ResponseID: "r1", Items: []model.OutputItem{{Type: "future_item", Payload: json.RawMessage(`{"type":"future_item","notes":[1,2]}`)}}},
+		{Provider: "p", Protocol: "openai-chat-completion", Model: "m", NodeID: "n2", ResponseID: "r2"},
+	}
+	id, err := store.MintOrderedIDs(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = box.store.InsertMessage(model.Message{ID: id[0], SessionID: box.sessionID, Role: model.RoleAssistant, Content: "存档", Exchanges: records}); err != nil {
+		t.Fatal(err)
+	}
+	raw := authCall(box.server, "GET", "/api/v1/sessions/"+box.sessionID+"/export", "", testSysToken)
+	doc := decodeBody[sessionExport](t, raw)
+	if doc.Version != 5 {
+		t.Fatalf("带调用记录的导出版本=%d", doc.Version)
+	}
+	imported := authCall(box.server, "POST", "/api/v1/sessions/import-json", raw.Body.String(), testSysToken)
+	if imported.Code != http.StatusCreated {
+		t.Fatal(imported.Body.String())
+	}
+	fresh := decodeBody[struct{ Session model.Session }](t, imported)
+	messages, err := box.store.ListMessages(fresh.Session.ID)
+	if err != nil || len(messages) == 0 || !reflect.DeepEqual(messages[len(messages)-1].Exchanges, records) {
+		t.Fatalf("导入的调用轨迹 %+v, %v", messages, err)
 	}
 }
