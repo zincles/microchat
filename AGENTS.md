@@ -6,7 +6,7 @@ microchat：轻量 SillyTavern 替代（RPG 向）。三层，边界要清楚：
 
 | 层 | 位置 | 状态 |
 |---|---|---|
-| 后端（**唯一权威**） | `core/`（Go + 标准库 + `modernc.org/sqlite`） | **新代码一律写这儿** |
+| 后端（**唯一权威**） | `core/`（Go、SQLite、官方 OpenAI Go SDK） | **新代码一律写这儿** |
 | Web 前端（**当前主力**） | `frontend/web/` | **优先迭代这儿**（2026-10-04 定：迭代快，助手擅 Web 栈；新界面能力先落这儿） |
 | ~~TUI / TG Bot~~ | **已删除**（2026-11-01：用户「砍掉CLI对话器，只保留服务web前端的功能」） | 只剩 web 一个前端 |
 
@@ -14,7 +14,7 @@ microchat：轻量 SillyTavern 替代（RPG 向）。三层，边界要清楚：
 
 > **会话（Session）与消息（Message）的完整定义、字段、以及"故意不存什么"，见 `DEFINE.md`** ——
 > 那份是词表的唯一权威；这里只列最常用的几个词。
-> **下一步做什么看 `TODO.md`** —— 那里只列"还没动"的；设计口径看 `DEFINE.md`。
+> **下一步做什么看 [TODO.md](TODO.md)**，其中区分了可执行的待办和仍需决定的设计。
 > **任务（Task）与两族调用（对话型 / 功能型）的完整定义**同样在 `DEFINE.md`（那一节：Task = 一次上游请求的全程）。
 
 | 词 | **只**指什么 | 别叫 |
@@ -38,7 +38,7 @@ core/                      ← 后端（Go **核心**；叫 core 是因为它不
     statelang/             `<state>` 语法的唯一权威（零依赖纯函数 + testdata/cases.json 共享语料）
     state/                 世界状态：分层现演、注入渲染、**唯一**出站拼装
     store/                 SQLite：打开/迁移/读写（migrations/*.sql）
-    server/                HTTP：路由、错误体、鉴权（只编排，不含业务）
+    server/                HTTP 路由、参数校验、错误体与服务编排
     （2026-11-01 删了 apiclient/ tui/ tg/ —— 见下面那条）
     queue/                 队列任务：一串**串行**跑的原子任务（一步失败即整体结束、可取消）
     model/ config/         纯结构 / `config/` 读写
@@ -61,14 +61,14 @@ reminder/                  ← 专题参考（`tool-calls.md` 工具调用 / `je
 | `store` | **只有它碰 SQL** | 正文/提示词原样存档；变量不落库；会话是**线性**的（顺序在 `id` 上，没有父指针/leaf）；摘要盖的是**一段**（`begin/end`）；生成中不写正式正文，取消时当前消息以 `status=canceled` 落库（已完成中间 tool 消息保留）；消息序号 `idx` **派生**（按 `id` 排第几条，不落库）|
 | `config` | `config/` 五个文件 | 可缺失；整体重写；密钥不回显 |
 | `registry` | 模型口径 | 身份 `(provider, upstream_id)`；发现与覆盖分列，刷新不动用户列 |
-| `providers` | **只有它碰网络** | 只走成熟库；超时必配；**选后端**（哪条渠道来答）也只有这一处 |
+| `providers` | **上游网络请求的唯一入口** | `SelectBackend` 选渠道，`ForModel` 确定实际协议。Chat Completions 与 Responses 的流式和非流式调用共用官方 Go SDK，渠道保留自己的地址、请求头、凭据和超时。 |
 | `state` | **只有它拼出站文本** | 发出去的**正文**剔标签、改注入当前状态（**提示词原样出站**）；提示词拼装（base + 追加段）也在这儿（`AssembleSystemPrompt`）；`BuildOutgoingWithPromptEntries` 把 relative/absolute prompt entries 插成 `prompt`/`injection` 临时项（不落库、不占 idx） |
 | `blocks` | 块切分 | 块是推导的、不入库；不许劈开；开着的那块永不压 |
-| `compact` | 摘要唯一入口 | **只往 summaries 插行**；消息级不许覆盖已压缩的区间（**合并级相反**：只吃同层顶层摘要）；失败不阻塞一轮 |
+| `compact` | 摘要唯一入口 | 消息级取尚未压缩的闭合块，合并级取同层相邻的顶层摘要。在同一事务写入摘要及覆盖关系，保留消息原文。压缩失败不阻塞对话。 |
 | `abilities` | 能力身份（枚举） | 产出不进历史/树/变量；失败不阻塞一轮；**缺条目 = 默认全开** |
 | `template` | ST 控制宏求值 | `setvar/getvar`、`trim`、`//` 注释、`lastUserMessage` 按文本顺序执行；变量由调用方作用域持有；未知宏保留；**不递归** |
 | `chat` | 一轮生成怎么跑 | 拿到整段才 INSERT；出站装配前按 Agent 的 `preset_id` 现读原始预设（解析成 prompt entries；不复制） |
-| `turn` | 这一轮的流细节 | 增量什么都不算；游标读不消费 |
+| `turn` | 这一轮的流细节 | 增量用于实时显示，游标读不消费。压缩进度在 `Registry.compactions` 按会话单独登记，对外读取快照。 |
 | `task` | 作业的身份 + 生死（= 一次上游请求的全程） | `defer` 兜底（**Go 没有 Drop**）；绝不留下僵尸条目；TaskID 是 UUIDv7、不进库；**按停只是「请求停止」**（真停不停由任务自己决定 —— 见「取消 = 没做过」）|
 | `reroll` | 重摇的**候选列表**（进程内、会话级） | 候选**只在内存里**（不建表、不写库、Copy 不带走）；两个平行家族：**尾条 assistant**（reroll-message）与**没有父的摘要**（reroll-summary）；切换 = 就地换正文（消息 **UUID 不变** / 摘要 **id 不变**）；与生成**共用同一把闸**；**装配与摘要都不另写一份**（借 chat 的装配、借 compact 的生成半程）；**候选生成走流式**（普通消息族，流进 `turn` 缓冲、摇完清空；摘要族仍整段式走 compact 半程；**FlowAgent 不用消息重摇**：走 `POST .../regenerate`，用当前历史重跑整张图并原地换尾条） |
 | `queue` | 队列任务（一串串行的原子任务） | **严格串行**（一步收尾才开下一步）；**一步失败即整体结束**；**可随时取消**（在飞的那一发一起掐断）；**不认识压缩**（Runner 由 `main.go` 接） |
@@ -87,9 +87,6 @@ reminder/                  ← 专题参考（`tool-calls.md` 工具调用 / `je
 而各包不会互相 import（Go 也就不会报环）。
 **Go 用编译器强制这张图**。
 
-⚠ **表里还没建的只剩 `template`**（`{{…}}` 那套）：`compact` / `blocks` / `abilities` 都已落地 ✓（`chat` 早就有了 ✓）。
-（其余都在 ✓）—— 所以要"强制这张图"目前只对已达成的部分成立 ✓，别拿这张地图当现有代码读。
-
 ## 不变量（破坏了会静默出错）
 
 1. **存储是 SQLite**（不选全 JSON：崩溃安全、并发、查询都白拿）：`data/microchat.db`。手写配置只在 `config/`（**严格 JSON**：注释与尾逗号都报错——程序会整体重写）。**配置住数据目录里**（默认 `data/config/`）⇒ 备份 / 搬家只要搬 `data/` 一个目录；
@@ -99,7 +96,7 @@ reminder/                  ← 专题参考（`tool-calls.md` 工具调用 / `je
   ⚠ 只有两样仍住 localStorage，各有硬理由：`mc_api`（"去哪个服务器"，拿到地址之前没法请求）与
   `mc_last_session`（**设备状态**，不是设置）。
   **连接级 pragma 挂在 DSN 上**（`?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)`）：`db.Exec("PRAGMA …")` 只管当时那一条连接，池子后来新开的就漏了（踩过，见「踩过的坑」）。
-2. **正文与提示词都是存档**：`<state>` 块原样留在消息正文里；**发出去的正文一律剔块**、改注入当前状态表。**系统提示词原样出站**（它是说明文：块不算状态、也不剔除 —— 2026-10-11 修：从前剔块会把提示词里的语法示例剪碎）。唯一出口 `state.BuildOutgoing()`——不许写第二条拼装路径。
+2. **出站装配保留存档。** 普通 Agent 通过 `state.BuildOutgoingWithPromptEntries` 装配历史，`state.BuildOutgoing` 是无预设条目时的入口。装配会剔除消息正文里的 `<state>` 并注入当前世界状态，保留系统提示词中的语法示例。普通发送入口 `chat.Accept` 在归档前会剔除新输入里的状态块。
 3. **世界状态不落库**：世界状态**每次现算**（`state.FromSources`）——**只按会话顺序扫消息正文里的块**，然后 fold。每条操作带 `message_id`，"哪句话带来的状态"追得回来。**没有派生表** ⇒ 编辑/删除消息、Copy 一条会话都不需要"重算"（换个会话看状态就是重拉 `/sessions/{session_id}/state`）。
    **提示词里的块不算数**（说明文；底子层 2026-10-07 已删——`<state>` 示例可以放心写进提示词/段里，见「agents.json」一节）。
    **删除不留痕迹**：`delete(键)` 与空值 `键 =` 就是把这个键从现演里拿掉（无墓碑）。
@@ -284,7 +281,7 @@ delete(AA)           # 删除
   `{{user_name}}` / `{{user}}` → `prefs.user_name`（空 = “你”）；
   `{{char_name}}` / `{{char}}` / `{{agent_name}}` → 当前 Agent 的 `name`（空 = “助手”）；
   `{{model}}` → 当前会话模型。
-- **未知宏原样保留**，不猜、不吞（将来的 `{{getvar::…}}` 归模板变量引擎，不归这里）；**不递归**展开。
+- **未知宏原样保留**，不猜、不吞（ST 预设中的 `{{getvar::…}}` 由 `template` 在预设求值时处理）；**不递归**展开。
 - **`<state>` 块里不替换、不 chip**；状态计算完全看不到宏。宏值里即使含 `<state>` 也不参与 fold。
 - **面板**：上下文环的「已注册宏」tab；`GET /sessions/{id}/macros` 返回可用宏 + 当前值，
   以及**生效系统提示词 + 全部消息正文**里的使用次数（未知宏也保留，标 `known:false`）。
@@ -324,12 +321,13 @@ delete(AA)           # 删除
   账号与鉴权都砍了，所以**端口绑定就是唯一的访问闸门**；改成 `0.0.0.0` 即对 LAN 开放，
   那时**没有任何保护**（同网段任何设备都能改数据）。`host`/`port` 随时改这个文件生效（`-addr host:port` 可临时盖）。
   ⚠ 旧配置里若还写着 `0.0.0.0` 与 `jwt_key`：前者**照旧生效**（程序不替人改主意），后者已经没人读（留着无害））
-（`auto_compact` = **自动压缩**开关（**缺字段 = 关**；2026-10-11 用户定——这套未经验证，默认不开，要用的自己去设置里打开；关着就全靠手动 `/compact`）·
+（`auto_compact` = 普通 Agent 的**自动压缩**开关（默认关，可在设置中开启）·
   `history_window` = 消息列首屏 / “加载更多”一页多少**段**（默认 **5**；段 = 一条消息或一张顶层摘要卡）；`compact_blocks` = 压缩不给块数时压几个**对话块**（**缺省 3**；2026-10-11 从 5 改 3——小步快跑，每坨原话只嚼一次，且抬头那条路要凑满 N 条同层相邻顶层摘要，N 大常凑不齐直接报无可压缩）；`refresh_models_on_start` = 启动时要不要自动去问每个渠道有哪些模型，**默认 true**，类型是 `*bool` ⇒ 没写就是开）
 - `providers.json` — `{ "providers": [ { "id": "dummy", "vendor": "dummy" }, { "id": "openrouter", "vendor": "openrouter", "api_key": "sk-…", "model_filter": "gpt" }, { "id": "自建", "vendor": "custom", "base_url": "https://…/v1", "api_key": "sk-…" } ] }`
   （每条渠道可选 `"model_define_rules": [ … ]` = 该渠道自己的覆盖列表，应用在全局之后、优先；
   见上面 `config.json` 的规则口径。`vendor` 是**唯一必填**；`protocol` 缺省 `openai-chat-completion`；`max_concurrency` = 该 endpoint 同时最多几个请求，0/缺 = 不限；
   可选 `"alias"` = **显示别名**（2026-11-09）：渠道列表 / 模型选择器 / 默认值下拉优先显示它，空 = 沿用 `name` → `id` 的旧回退；它**只管显示**，会话 / 模型 / 路由引用的永远是 `id`）
+  可选 `local_tool_provider` 填执行本地搜索的 DeepSeek 渠道 ID。给其他模型接搜索时，同时在模型规则的 `local_tools` 选择 `web_search` 或 `web_fetch`。
   **密钥就写在这一条里**（空串 = 没配）：整个 `config/` 在忽略范围内；接口一律不回显（只回 `has_key`），调试页读它时先打码；写回权限收紧到 0600。
   **模型筛选器 `model_filter`（2026-10-22 用户定）** = **只有 id 命中任意一条规则的模型才导入**
   （聚合站动辄几百个模型：OpenRouter 实测 470 个，真正常用的就几个）。空 / 纯空白 = **不筛**。
@@ -485,7 +483,7 @@ delete(AA)           # 删除
   正文仍走只读宏替换。id 非空且唯一、role/position 封闭、depth/order 非负 —— 写入与启动都报。
   每个 agent 可以带 **`first_message`（首段对话，2026-10-11 用户定）**：以它**新建**会话时，这段文本作为
   **第一条 assistant 消息（idx 1）**落库（正文**原样存档** ⇒ 可带 `<state>` 设初始状态）；空 = 不启用。
-  草稿预演（`POST /outgoing`）把它**模拟**进去（"预演 = 真发"）；Copy 不重复插、ST 导入不受影响、改 agent 不追溯。
+  草稿预演（`POST /outgoing`）按真会话的顺序模拟这条首段；Copy 不重复插、ST 导入不受影响、改 agent 不追溯。
   每个 agent 上可以带**能力开关** `abilities`（键 = 能力 id：`title` / `compact`；**未知的 id 在写入与启动读取时都报错**，不静默忽略；老文件里残留的 `judge` 只做历史兼容，读入时摘掉）：
   `"abilities": { "compact": { "enabled": false, "provider": "deepseek", "model": "deepseek-chat", "prompt": "…" } }`
   —— **缺字段 = 默认全开** ✓（不带 `abilities` 的 agent 三个能力都是开着的，现有文件一个字都不用改）；
@@ -786,7 +784,7 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 
 - 无用：`GET /debug/state`、`GET /debug/file/{name}`、`DELETE /providers/{provider_id}/models`
   （理由：后端自述会说谎、配置文件原文不该给远程客户端、上游模型列表本就自动清理）
-  —— ⚠ `GET /sessions/{session_id}/export` 2026-10-11 **以"对话 JSON 导出"的名义回来了**（2026-10-17 扩成 v2：再带渠道/模型/Agent 三格软引用；**2026-10-28 扩成 v3**：再带整张摘要金字塔 + 每条消息的 `reasoning`；**2026-11-10 扩成 v4**：再带消息 `kind/status/run_id` 与 `message_tools`；见下表）
+  —— ⚠ `GET /sessions/{session_id}/export` 2026-10-11 **以"对话 JSON 导出"的名义回来了**（2026-10-17 扩成 v2：再带渠道/模型/Agent 三格软引用；**2026-10-28 扩成 v3**：再带整张摘要金字塔 + 每条消息的 `reasoning`；**2026-11-10 扩成 v4**：再带消息 `kind/status/run_id` 与工具轨迹。含模型调用记录的会话从 2026-11-25 起导出 v5，见下表）
 - 可选（**待重做**，不做兼容）：`POST /models/probe`、`POST /sessions/{session_id}/archive`、
   `GET/PUT /abilities`
 - **`POST /sessions/{session_id}/fork` 已彻底作废** ✗（不是"待重做"）：线性会话里分岔就是 **Copy** ✓（见上表）
@@ -815,8 +813,8 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 | 方法 | 路径 | 请求体 | 响应 | 说明 |
 |---|---|---|---|---|
 | GET | `/sessions` | — | `[SessionView]` | 每项 = 会话 + `messages`（**这条会话有几条消息** —— 客户端的启动编排据此认定"空会话"，不必逐条会话再拉一次消息）+ `turn`（客户端据此标"生成中"）。会话自身含 **`thinking_level`**（空 = 跟随模型默认；非空 = `off/minimal/low/medium/high/xhigh/max`）与 **`native_tools_disabled`**（**历史字段名**；语义 = 用户手动关掉的 `server_tools` / 本地工具 id，规则新增的工具默认仍启用）|
-| GET | `/sessions/{session_id}/export` | — | `{version:4,title,provider,model,agent_id,agent_name,messages:[{role,content,reasoning,kind,status,run_id,tools:[…]}],summaries:[…]}` | **对话记录导出**（JSON；2026-10-11 起，10-17 扩成 v2，**10-28 扩成 v3**、**11-10 扩成 v4**）：标题 + 每条 role/content（正文原样，`<state>` 块留着 ⇒ 导回去状态照常现演）+ **这条会话当初绑的渠道 / 模型 / Agent 三格软引用**（`agent_name` 只为"本机没有也能说清是谁"）+ **v3：整张摘要金字塔 + 每条消息的 `reasoning`**。<br>**消息一条不少**：压缩在库里从不改 `messages`（`RecordSummary` 只写 `summary_id`）⇒ 被摘要盖住的原文照旧全导。<br>**摘要必须带**：它是模型写的字，**不可重算**（重压得到另一段 —— `reroll-summary` 的存在就是证据），从前导回来等于"从没压过"。形状：`{key, parent_key?, type, begin_idx?, end_idx?, text, blocks, tokens, provider, model, prompt_version, usage, dirty, created_at}` —— `key`/`parent_key` 只是**文件内的句柄**（父子关系），`begin_idx`/`end_idx` 是 **1-based 消息序号**（不用消息 id：导入后 id 全换新）。<br>**仍不带**：system prompt / 消息 id / 消息的思考耗时与用量 / 摘要的 `source_ids`（导入时按真实成员重建）；**Agent 的定义也不带**（人设搬家走卡带）。**不要凭据**（没鉴权了） |
-| POST | `/sessions/import-json` | 上面那个导出格式（v1/v2 也收） | `{session, messages, summaries, agent_missing}` · 201 | **JSON 导入**：建新会话 + 按序落库（id 批铸排序）；role 只许 user/assistant（坏 ⇒ 400 点名第几条）、空 messages ⇒ 400、`version > 4` ⇒ 400；标题没给 ⇒ 首条 user 起。**v2 的三格照抄**（`provider`/`model`/`agent_id` —— 本机没有也照抄、不静默换缺省；文件没点名 agent 才用 `default_agent`），agent 本机没有 ⇒ `agent_missing: true`（界面提示"人设回落内置默认、要人设导卡带"）。**v4 的消息元数据/工具**：`kind/status/run_id` 与 `tools` 原样导入（工具 id 新铸）；**v3 的金字塔**：摘要**全部铸新 id** 再重映射父子（照抄旧 id 让同一个文件导两次会撞主键）⇒ `store.RestoreSummaries` 一个事务写进去，并回填 `messages.summary_id`（重叠区间在那一层当场变错误）。形状/成环/越界**在动库之前**验完 ⇒ 坏文件不留空壳会话；真写失败则把刚建的会话删掉（**半成品比失败更糟**：用户以为导进来了）。**不经过** `POST /sessions` ⇒ 不插首段对话 |
+| GET | `/sessions/{session_id}/export` | — | `{version,title,provider,model,agent_id,agent_name,messages,summaries}` | 全量导出原文、思考、消息元数据、工具轨迹及整张摘要金字塔。任一消息有 `exchanges` 则导出 v5，携带其有序调用记录；其余会话导出 v4。摘要在文件内用 `key/parent_key` 和 1-based 的 `begin_idx/end_idx` 关联。 |
+| POST | `/sessions/import-json` | 会话导出 JSON（v1–v5） | `{session,messages,summaries,agent_missing}` · 201 | 导入先校验角色、非空历史和摘要区间，再铸新 ID、重映射摘要父子并恢复覆盖指针。保留渠道、模型和 Agent 的软引用；缺少 Agent 时回报 `agent_missing`。v4 恢复工具轨迹，v5 还恢复 `exchanges`。版本高于 5 返回 400。 |
 | POST | `/sessions/import-st` | JSONL 原文（`?title=` 可选） | `{session, messages, skipped}` · 201 | **不要凭据**（设置面）。**ST 导入**：SillyTavern JSONL（一行一条）→ 建会话 + 按序落库；只认四样（is_user/mes/reasoning/send_date），其余全丢；空文件 ⇒ 400 |
 | POST | `/tavern/presets` | 原始 JSON 字节（`?name=文件名`） | `TavernPreset` · 201 | **酒馆原始存档**：只校验 `json.Valid`，**绝不 Unmarshal→Marshal**；BLOB 原样落库，导出逐字节一致；上限 32MB；坏 JSON ⇒ 422（不保存） |
 | GET | `/tavern/presets` | — | `[TavernPreset]` | 列表只回元数据（id/filename/size/created_at），**不带正文** |
@@ -838,7 +836,7 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 | DELETE | `/sessions/{session_id}/messages/{message_id}` | `{"last_deleted_message_id"}` | `DeletionPlan` | 删**这条及之后的全部**（级联见 `DEFINE.md`）。核对字段不符 ⇒ **409**（重新预览）；缺字段 ⇒ 422 |
 | GET | `/sessions/{session_id}/state` | — | `StateView` | `session` / `effective` / `tables`，**每次现算**（状态只从**正文**来——提示词的块不算数）。`global` 是 **`tables` 里那张表**（不写表名的块落到它，且它**恒在**：空也回 `{}`）。查询参数 `?at_idx=N` ⇒ **截至第 N 条的现演**：正文只 fold 到第 N 条（含）、`0` ⇒ 空状态、越界 ⇒ 当作到最后一条（与 `/messages` 一个口径）、不给 ⇒ 当前状态；负 / 非整数 ⇒ **400** |
 | POST | `/sessions/{session_id}/outgoing` | `{"content":"…"}` | `LastPayload`（`method/url/headers/体` + `annotations`） | **(c) 把这条 content 当成即将追加的那句用户消息之后**，真会发出去的那一发（**真请求**，与 (a) 同一支笔 `Snapshot`：`chat.PreviewWire` 与真发共用装配→`wireMessages`→选后端查表→`providers.Build` 两份对不上就地炸）。**只算不写**：不落库、不改任何状态。待发那句若带 `<state>` 块 ⇒ **状态表跟着变** ⇒ 必须重走一遍现演与装配（不是"(b) + 一条消息"）。缺 / 空白 `content` ⇒ **400** |
-| POST | `/outgoing` | `{"id?","provider?","model?","agent_id?","thinking_level?","content"}` | `LastPayload` | **草稿预演**（2026-10-09 加，web 草稿态用）：**还没有会话**时的第一句 —— 临时种子会话（零行、无历史）走同一个 `chat.PreviewWire`，**一条会话都不建**。`id` = 客户端（草稿）铸的 UUIDv7 ⇒ 进请求头（`x-opencode-session` 那类）就是将来真会话要用的那个；省略 ⇒ 服务端现铸。`provider/model/agent_id` 省略 ⇒ 与 `POST /sessions` **同一处口径**（config defaults + `default_agent`）。空 `content` ⇒ **400**（草稿没有历史可续写）。**agent 配了 `first_message` 时把它模拟成一条 assistant 垫在用户句前**（真会话会带它 ⇒ 预演 = 真发） |
+| POST | `/outgoing` | `{"id?","provider?","model?","agent_id?","thinking_level?","content"}` | `LastPayload` | **草稿预演**（2026-10-09 加，web 草稿态用）：**还没有会话**时的第一句 —— 临时种子会话（零行、无历史）走同一个 `chat.PreviewWire`，**一条会话都不建**。`id` = 客户端（草稿）铸的 UUIDv7 ⇒ 进请求头（`x-opencode-session` 那类）就是将来真会话要用的那个；省略 ⇒ 服务端现铸。`provider/model/agent_id` 省略 ⇒ 与 `POST /sessions` **同一处口径**（config defaults + `default_agent`）。空 `content` ⇒ **400**（草稿没有历史可续写）。**agent 配了 `first_message` 时把它模拟成一条 assistant 垫在用户句前**，顺序与建会话时一致 |
 | GET | `/sessions/{session_id}/context` | — | `ContextUsage` | 只有数字：`used_tokens`（估算）/ `budget_tokens` / `trigger_tokens` / `remaining_tokens` / `ctx_len` / `max_output` / `ratio` / `estimated` / `last_prompt_tokens` / `over_budget` |
 | GET | `/sessions/{session_id}/prompt` | — | `{"text","type"}` | **生效的系统提示词**（三级解析的**结果**，与出站拼装读同一处）：`type` = `conversation`（会话自己写了 `sessions.system_prompt`）/ `agent`（`agents.json` 里那个 agent 的）/ `builtin`（两级都没有 ⇒ 代码里的内置默认）。**永不给空**：解析全落空（典型：会话的 `agent_id` 软引用**悬空**）也退内置那句、`type` 报 `builtin`。**回拼装后的结果**（base + 追加段，见 agents.json 的 `segments`）|
 | GET | `/sessions/{session_id}/macros` | — | `{macros:[{name,aliases,description,value}], usage:[{name,count,known}], total}` | **已注册宏面板**（2026-11-10）：`macros` = 可用宏 + 当前值；`usage` = **生效系统提示词 + 全部消息正文**里每个 `{{…}}` 的出现次数（未知宏保留在统计里，`known:false`）。只读，不改任何东西 |
@@ -880,15 +878,9 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 | **(c) 把待发那句追加进去之后** | 同一段装配 + 同一段 Build 的**真请求**（`method/url/headers/体`，与 (a) 同一支笔；库内账一个不发；**只算不写**） | `POST /sessions/{session_id}/outgoing` | 能 ✓，但**只有服务端算得出来** |
 | **(d) 草稿的第一句**（2026-10-09 加） | 同 (c)，但会话**还不存在**：临时种子会话（零行、无历史）；`id` 是客户端草稿铸的 UUIDv7 ⇒ 头上那个会话键就是将来真会话的 | `POST /outgoing` | 能 ✓ 同 (c) |
 
-**(c) 为什么客户端拼不出来** ✗：待发那句里若带 `<state>` 块 ⇒ **注入系统提示词的状态表会跟着变** ⇒ (c) 不是"(b) + 一条消息" ✗，必须重走一遍状态现演与装配。
-`LastPayload.annotations`（2026-11-11）与 `body.messages` 同下标：`type` = `prompt`（relative）或 `injection`（absolute），带 `prompt_id` / `depth` / `order`；上下文工作区的载荷分块用它把**注入项**（尤其 absolute）高亮出来，不和真实历史混读。
-**（d) 与真发逐字节一致** ✓（2026-10-09 实测：`method/url/headers/体` 全同）—— 靠两个钉子：同一个 `chat.PreviewWire`；同一个 id（草稿铸的那枚最后就落成 `sessions.id`）。
-注意 (a) 是**覆盖式**：一轮跑完后标题/压缩这些**辅助调用也发上游**，会把 (a) 顶成它们那一发 —— 想看"聊天这一轮发了什么"，等没有辅助调用的下一轮再对（或对 (c)/(d)）。
-（旧 (b) 逐项形状已删：`message_id`/`idx`/`type` 全是库内账，上游一格都不要 —— 调 `GET /outgoing` 就 410 `gone`。）
+普通 Agent 的真发和预演都由 `chat.Service.Outgoing` 读取历史，交给 `state.BuildOutgoingWithPromptEntries` 装配，再由 `prepareChat` 选择实际协议和工具。重摇使用同一装配逻辑并摘掉尾条回复。`-debug outgoing` 输出带来源的逻辑项；`POST .../outgoing` 返回 SDK 最终构造的请求快照。标题和压缩也会更新 `/debug/last-payload`。
 
-**真发的那一轮装配的就是 (c) 的前身** ✓：受理时先把用户消息落库，再走**同一段装配**
-（`chat.outgoingFor` ⇒ `assemble` ⇒ `state.FromSources` + `state.BuildOutgoing`）——
-唯一的差别只是"那句已经进了库、`ListMessages` 里有它" ⇒ **预演与真发不出第二份答案** ✓（`POST /outgoing` 走的正是同一个 `assemble` + `Build`）。
+草稿预演会模拟 Agent 的首段对话。待发文本含 `<state>` 时，预演与实际受理的清理时机仍有差异。`LastPayload.annotations` 目前按逻辑项标注 `prompt_id/depth/order`，一条消息展开成多个工具项后需要校准下标。两项均见 [TODO.md](TODO.md)。
 
 ### statelang（给外部工具）
 
@@ -960,14 +952,9 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 
 - 状态在**进程内**（不进库）：后端一重启就没有生成在跑，回到 `idle` 是诚实的；
 - 每次受理：**先算好回复 id → 登记 → spawn**。`begin` 是唯一并发闸门 ⇒ 两个请求挤进来只有一个 202，另一个 409（**不排队**：排队会让"按了发送却什么都没发生"难以解释）；
-- 后台任务落库前核对令牌：被 `stop` 顶掉的旧任务回来时令牌对不上，结果直接丢掉；
-- `stop` = 摘登记 + abort 后台任务（别让上游白跑完）。**库里没有要收拾的东西**。
+- `stop` 取消当前轮的上下文并摘掉登记。已完成的中间工具消息保留；普通对话把当前步骤收到的半截正文和工具记录存为 `status=canceled`。每次工具回填后的模型请求各登记一个 `turn` Task。
+- 流式事件由 SDK 解码。正文、思考与工具进度先进入本步缓冲，世界状态按落库后的消息正文本身计算。`store_reasoning` 控制思考留档，`chat.replay_reasoning` 控制可见思考文本的历史回传。
 
-**流式**：增量**什么都不算**（不进库、不参与世界状态与出站计算）——落库只认流结束后那一整段。所以流断了、被停了、上游中途报错，档案永远干净。
-
-- 上游用现成的 SSE 库，不手搓 `data:` 分帧；
-- 增量进这一轮的缓冲区，顺手把 `pending` 抬成 `streaming`；令牌对不上的字节直接丢；
-- **思考流单独一条缓冲**：推理型模型先吐 `reasoning`/`reasoning_content` 再吐 `content`（两家字段名不同，两个都认）；思考只服务动画、**不参与任何计算**，但会落档（`messages.reasoning`；`store_reasoning: false` 则只走动画）；
 - 给前端的是**游标读**（`?from=N&think_from=M`，正文与思考各一条）：多个客户端与断线重连各拿各的，互不偷；`done` 表示这轮结束，结束后仍可补拉尾巴。
 - **前端打字机**（2026-11-03 用户定：「后端一块一块到，前端要在 0.5s 里平滑打出来」）：轮询到的整块不直接上屏。
   `vueStream` 仍是后端的完整目标，`streamDisplay` 是打字机当前露出的前缀；每拍 `setStreamTarget` 把新字符按
@@ -986,21 +973,14 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 三份状态**各管一段、不许互为镜像**：`task` = 身份 + 生死；`turn` = 流细节（几个字、取消）+ 压缩那一档 + **重摇的候选流**（2026-10-10 起 reroll 也往里写）；`compact` = 压缩自己的细节。
 （重摇是 Task：`task.KindReroll`，两族共用；看不到流与此无关 —— 当年是 `Complete` 非流式的老选择，已在 web 时代改掉。）
 
-**压缩**（`internal/compact`，已落地 ✓；路由 `POST /sessions/{session_id}/compact` ⇒ **202**）：机制与策略两层。
-- **机制** = 给它一段（两端用 **message id** 指；**成员可以是消息，也可以是同一层的顶层摘要** —— 后者就是金字塔合并）→ 拼材料（每一步正文过 `statelang.Scan(...).Cleaned`，`<state>` 块剔掉；**同时把该消息的 `message_tools` 工具轨迹（工具名/查询/结果/来源）拼进去** —— 中间 assistant 消息正文常常为空，漏了整轮工具；末尾附上下面那份状态）→ 叫 `compact` 能力（**非流式**一次调用，骑本会话 id、`cache_retention: none`）→ 过五条验证 → **只往 `summaries` 插一行**。
-  五条验证：① 剔 `<state>`；② 非空（剔完是空的 ⇒ **不写**，宁可什么都没有）；③ 区间自洽（两端在本会话、begin ≤ end、两端都还在）；④ **不许覆盖已压缩的区间**（消息级；`store.RecordSummary` 在事务里再核一遍 —— **合并级相反**：它吃的就是已压缩的那一层，复核 = 一条守卫 UPDATE「只认还顶层的孩子」）；⑤ 落库一并写 `prompt_version` 与 `usage`。
-- **材料里附一份"算到区间末的状态"** ✓（2026-09-30 落地）：拿区间的 `to_idx` 去问 `at_idx` 那条链（`state.StateAt`：**当前的**生效提示词打底 + 正文只 fold 到区间末），
-  用**同一个** `state.RenderTable` 渲染，抬头写死口气「【程序·状态（截至这段末尾；程序事实，仅供参考，不要写进梗概）】」。
-  ⇒ 模型写梗概时**看得见**这一段结束时的变量，但**抄不进摘要**（摘要照旧不存状态）；一个变量都没有 ⇒ 不附（不塞空话）。
-  **只此一处** ✗ —— 起标题那条链不许跟着加（`title` 不碰状态）。
-- **策略** = "从第一条没被覆盖的消息起，取最老的 N 个**已闭合块**"（手动按钮的语义）；**最后那个开着的块永不压**；块是推导的、不入库（`internal/blocks`）。
-  底层凑不够 N 个整块时**抬头** ✓（2026-10-02 落地）：从最老起取 N 个**同层、相邻、都没爹的顶层摘要**并上去（同一套合并闸；跨层不凑；一层找不齐就报"无可压缩"）。
-  ⇒ 点"再压 N 块"会沿金字塔往上走（AB/CD/EF+G → 并 AB+CD 得 AD → …），每坨原话只被嚼一次（摊开，不逮着一坨反复压）。
-  **按块数的完整口径（2026-10-10 补记，用户曾因此困惑）**：①消息级 —— 从"第一条没被覆盖的消息"起取**至多 N 个**已闭合未覆盖块，**拿几条算几条（≥1 就走）**；②够不着才抬头 —— 顶层摘要里滑窗找**恰好 N 条**同层相邻、首尾相接、不碰开块的一组；两条路都空 ⇒ 报"无可压缩"。
-  ⇒ **N 太大时"材料明明有"也会报错**（1 坨顶层摘要凑不齐 N）；爬金字塔的正确姿势：先把生消息按批压出**几坨同层**摘要，再拿 `N=2..`（或区间入口）并上去；区间入口点名一段已压缩区间，恰好被一层顶层摘要铺满时直接走合并。
+**压缩**由 `internal/compact` 执行。手动请求 `POST /sessions/{session_id}/compact` 受理后返回 202。
+
+- **选区间。** 请求压 N 块时，从最早未覆盖处取至多 N 个已闭合块。消息级无块可取时，尝试合并恰好 N 条首尾相接的同层顶层摘要，合并至少需要两条。也可指定消息区间。两种入口都保留当前开块。
+- **准备材料。** 消息级取块内正文，剔除 `<state>`，并附上 `message_tools` 的工具名、查询、结果和来源。结果超过 2000 个字符时截断并标记。合并级取子摘要的正文与区间抬头。两级都用 `state.StateAt` 从原始消息现算段首、段末的世界状态，有值时附给模型。
+- **生成和校验。** `compact` 用本会话 ID 非流式调用一次，缓存策略为 `CacheNone`。从返回的摘要剔除 `<state>`，空摘要报错。写入时核对区间归属、顺序与覆盖关系，并记录 `prompt_version`、`usage`。
 - **结局带区间** ✓（2026-10-02 落地）：`Result` / `turn.CompactStatus` 都有 `from_idx` / `to_idx`（1-based）+ `merged`（是不是合并级）；
   客户端轮询到 done 就报"压好第 a–b 条（N 块）"/"并好第 a–b 条那 N 坨"，不用再翻 `/outgoing`；`-debug compact` 同样打出来。
-- 落库 = **单入口 `store.RecordSummary`**（按 `source_kind` 分岔）+ 守卫 UPDATE，**同一事务**：消息级把这一段消息的 `summary_id` 指过去；合并级把孩子的 `parent_summary_id` 回填（只认还顶层的）。**绝不插/改/删 `messages` 的其它列**（正文是存档）。
+- 单次压缩通过 `store.RecordSummary` 提交。高级分段压缩等全部分段成功后通过 `store.RecordSummaryBatch` 一次提交。两者都在事务中写入覆盖关系。
 - 谁也**不许**绕过这里自己拼摘要请求。不持锁跨 await：取料在锁里、调用在锁外、落库再进锁。
 - **失败不阻塞**：失败就把这一次报失败（带原因），会话一个字节都不动；**重试由调用方决定**，这里绝不重试。
 - 普通 Agent 的占用环和自动压缩都按 SDK 最终请求的输入字段估算，计入工具声明、调用结果、协议回放与会话覆盖。压入父摘要的历史整段跳过；精确的上轮输入用量仍看 `last_prompt_tokens`。
@@ -1009,7 +989,7 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
   就开始：**一次压 `compact_blocks` 个块（缺省 3）**，压完再看——仍 ≥ **退出线**（预算 50%）就接着压下一批，
   直到 < 50%、压不动（无可压缩/上游失败）、或这一步没换来任何缩减（防死循环）。后台跑（`go MaybeAutoCompact`），
   每一批自己挂号（`compact` 的 Task ⇒ "后台任务"行里看得见）；**失败不阻塞任何一轮**（停了下一轮再来看）。
-  开关 = `chat.auto_compact`（**缺字段 = 关** —— 未经验证，默认不开）；关着就全靠手动。
+  开关为 `chat.auto_compact`（默认关）。启动或停止对话时，正在运行的压缩继续占用该会话的压缩登记，重复压缩返回 409。受理回执和轮询进度均为快照。
 
 **能力**（`internal/abilities`）：身份写死在代码里（`title` / `compact` —— **枚举就是全部**），**开关 + 可选覆盖写在 `agents.json` 每个 agent 的 `abilities` 上**（不另开 `abilities.json`），只能**覆盖**模板/渠道/模型，不能造新的；**未知的 id 在写入与启动读取时都报错**。
 - **传统 Agent 的 `judge` 能力已彻底删除**（2026-11-12 用户定：「彻底砍掉传统Agent的JEV模块」）：
@@ -1037,14 +1017,11 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
   同 id 不同文本时也以本地为准）；没有 ⇒ 建它并打上 **`imported: true`**（来源标记，界面显示「导入」徽标；
   记的是"从哪来"，编辑不清标）。v1 老卡带（提示词已拼平、无 segments 数组）照样能导。
   **不另开路由**：拼/拆在客户端（`utils/cartridge.ts`），落库用现有 `POST /segments` + `POST /agents` ✓。
-- **占位符**（`{{…}}`）：白名单 = 枚举（`{{system_time}}` / `{{state_before}}` / `{{state_after}}` / `{{range}}` / `{{blocks}}`）；**不认识的 `{{foo}}` 原样留着**；**只扫一遍**（替换进去的值不再当模板扫）；**会话 Agent 的提示词永不替换**（它一变，前缀缓存每轮全废）。（`template` 模块本身还没建 ✗。）
+- ST 控制宏在 `core/internal/template` 求值，能力提示词中拟议的时间与压缩区间占位符另列于 [TODO.md](TODO.md)。
 
 ## 数据模型
 
-**只有一份**：`core/internal/store/migrations/001.sql`。
-**开发阶段没有向后兼容**：改形状就改这个文件，然后把 `data/microchat.db` 删掉重来（用户 2026-09-29 定）——**不要**写 002、003。
-
-**四张表，全是 TEXT id（UUIDv7）+ 毫秒整数时间戳。**
+新库的基线迁移是 `core/internal/store/migrations/001.sql`。已有版本 1 的库在打开时由 `store.migrate` 幂等补列和补表，包括 `messages.exchanges`。验证升级用现有库的副本，保留已有的消息 ID、工具记录和摘要区间。模型路由表 `model_route` 由路由刷新按需创建。
 
 ### `sessions`
 
@@ -1055,12 +1032,15 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 ### `messages` —— 一条消息，**线性会话里的一格**
 
 `id`（生成回复时**受理那一刻**就算好；**顺序就是它**）· `session_id`（FK CASCADE）· `role`（`CHECK IN ('user','assistant')`）· **`kind`**（`chat` / `tool_run`，实际发生过工具调用才 `tool_run`）· **`status`**（`done` / `canceled` / `failed` / `interrupted`）· **`run_id`**（同一次用户输入产生的多条 assistant 共用的 id；老消息/非多消息为空）· **`tools_snapshot`**（生成时可用工具名的 JSON 数组，不表示实际调用）· `content`（**存档本体**，`<state>` 块原样留着）· `created_at`
-后四列**只服务显示**（出站/状态/编辑一律不看）：`reasoning` · `reasoning_ms`（受理 → 第一段正文）· `duration_ms` · `usage`（归一化后的 JSON）
+
+`reasoning` 保存可见思考文本，`reasoning_ms` 和 `duration_ms` 记录耗时，`usage` 保存归一化用量。
+
+`exchanges` 是可空的 JSON 数组，结构见 `core/internal/model/exchange.go`。普通 Agent 按步将模型调用记录附在对应的 assistant 消息上，Flow 产物可关联多个带 `node_id` 的 LLM 调用。记录包含渠道、模型、实际协议、上游响应 ID、终态、用量及有序输出项。旧消息和本地回声的记录可为空，回放时使用正文和已有工具记录。
 `GET /messages` 的每条还带 **`tools`**（该消息实际发生的工具调用，不占 `idx`、不参与世界状态；来源 UI 刷新后也靠它）。
 
 ### `message_tools` —— 一条消息内部的工具调用
 
-`id` · `message_id`（FK CASCADE）· `seq`（消息内部顺序）· `source`（`server` / `client`）· `tool_name` · `item_id`（上游 output item）· `queries`（JSON 数组）· `sources`（JSON 数组：`type/url/title`）· `arguments` / `result` / `status`（`done/canceled/unknown`）· **`text_offset`**（服务端工具发生时正文已输出的字符数，rune，已剔 `<state>`；旧行为 NULL）· `created_at`
+`id` · `message_id`（FK CASCADE）· `seq`（消息内部顺序）· `source`（`server` / `client`）· `tool_name` · `item_id`（`source=client` 存配对结果的调用 ID，`source=server` 存上游工具项 ID；Responses 函数项自身的 ID 另在 `exchanges[].items[].id`）· `queries`（JSON 数组）· `sources`（JSON 数组：`type/url/title`）· `arguments` / `result` / `status`（本地执行记录 `done` 或 `failed`，服务端工具可带上游进度）· **`text_offset`**（服务端工具发生时正文已输出的字符数，rune，已剔 `<state>`；旧行为 NULL）· `created_at`
 
 **它不是消息**：不占 `idx`、不参与世界状态、不单独进摘要区间。多条工具调用 = 多条本表行；不要建 `_before` / `_after` 两张表（顺序用 `seq`）。
 xAI 的 `web_search_call` 落这里；DeepSeek 服务端 `web_search` 不接（只支持 v4-pro、无 sources），搜索走客户端 Search/Fetch。
@@ -1088,25 +1068,19 @@ xAI 的 `web_search_call` 落这里；DeepSeek 服务端 `web_search` 不接（�
 `tavern_presets`（2026-11-06）：`id`（UUIDv7）· `filename` · `size` · `data`（**BLOB，原始字节**）· `created_at`。
 **只存不解析**：导入/导出必须逐字节一致；解析/转换是以后独立的只读步骤。老库由 `store.ensureTavernPresets` 幂等补表。
 
-**索引/外键/运行时**：索引 `messages_by_session(session_id, id)`（**顺序就是 `id`**，取"最新一条"也走它）、`messages(summary_id)`、`summaries(session_id/parent_summary_id)`。外键**只有两条**（`messages` 的两个）：`session_id` ⇒ CASCADE、`summary_id` ⇒ SET NULL；`begin/end_message_id` 与 `agent_id`/`provider` 是故意不加约束的（`begin/end` 的失效由 `store.DeletionPlan` 一份计算负责）。迁移由 `PRAGMA user_version` 驱动（当前 **只有 001** —— 开发阶段改形状就改它、删库重来，**不许追加** 002）；`foreign_keys=ON`、`journal_mode=WAL`；写入由一把锁串行化。
+会话顺序使用 `messages_by_session(session_id, id)` 索引。消息随会话级联删除，工具记录随消息级联删除；删除摘要时，关联消息的 `summary_id` 可以置空。摘要区间及祖先如何随删后缀更新，由 `store.DeletionPlan` 决定。SQLite 使用 WAL，并在每条连接启用外键。
 
-## 摘要 / 压缩：只插行、按区间跳（推导见 `reminder/compact.md`）
+## 摘要的存储与出站装配
 
-- **压缩只往 `summaries` 插行**，绝不插/改/删 `messages`（删消息的级联是另一条路）；摘要盖的是**一段区间**（`begin/end_message_id`，
-  创建时写一次），失效只有两条：被盖的消息**被删** ⇒ 连同父链作废；**被改写** ⇒ 只标 `dirty`、照用。
-- 装配**按区间跳**（`state.BuildOutgoing`）：有 `summary_id` 且区间左端就是这条 ⇒ 升到最粗的左端对齐祖先、一次跳到区间右端之后；
-  否则发原文。**能取粗的不取精，宁用细的不许漏**。
-- **只有 Compact，没有"丢"**：不存在"少发一段没人代表的内容"。超预算 ⇒ 先压再发；真压不动 ⇒ 报错原路返回。
-- 用户态按块（整块对齐、开着的那块永不压）、算法层按 Message；摘要里**不存状态**；剪枝没做（先当没这回事）。
-- **自动触发已落地** ✓（2026-10-11 用户定，口径全在 `chat/autocompact.go`）：一轮翻 idle 之后看占用，
-  到触发线（`TriggerTokens`，缺省 = 预算 80%）就压，**一次压 `compact_blocks` 个块（缺省 3）**，
-  压到退出线（预算 50%）以下停；压不动 / 没进展就停（防死循环）。后台跑、每批自挂号；开关 `chat.auto_compact`（**缺字段 = 关**）。
+- 消息级压缩通过事务插入摘要并设置成员消息的 `summary_id`。合并级插入父摘要并设置孩子的 `parent_summary_id`。两者均保留原始消息、工具记录与调用记录。
+- 普通 Agent 装配时，`state.walk` 在区间左端选择可用的最粗摘要，跳到其右端之后。开着的尾块继续发送原文。指针悬空或区间缺失时回退到可用的细层。编辑覆盖区间内的消息会标记摘要 `dirty`，删除后缀按 `store.DeletionPlan` 处理。
+- Flow 的 `history` 节点读取原始历史正文。自动压缩适用于普通 Agent。切块、材料与触发条件见上文「后台任务 / 压缩 / 能力」。[区间装配与剪枝设计](reminder/compact.md)
 
-## 与上游通信：网关只认会话头（细节见 `reminder/gateway.md`）
+## 与上游通信
 
-**只许用成熟的外部库**：HTTP 一律标准库 + 现成的 SSE 库（**不手搓协议解析**）；数据结构用 serde/encoding-json 映射成纯数据形状。**不自己写传输层、不自己写协议解析**（手写协议解析是 bug 温床）。
+模型生成用官方 OpenAI Go SDK（版本锁在 `core/go.mod`）。SystemOne 判断、DeepSeek Search/Fetch 和模型列表查询由 `providers` 保留各自的 HTTP 调用。
 超时别忘：`providers.json` 的 `timeouts`（缺省 connect 15s / total 300s）。**不设总超时 = 上游卡住、界面转一辈子**。
-**辅助调用另有自己的短上限** ✓（`title` 10s / `compact` 60s，常量就在各自包里）：它们跑在**这一轮翻 idle 之前** ⇒ 只靠渠道那个 300s 会让一轮被上游按住五分钟。
+普通对话先结束自动起标题，再将本轮置为 idle。自动起标题的超时为 30 秒。手动异步压缩入口 `compact.Start` 的超时为 60 秒，普通对话的自动压缩在 idle 之后启动。
 `usage` 各家字段名不一，**归一化只有一处**；前端只管读 `cached_tokens` 这些键。
 **成本：聚合站报，直连渠道不报**（2026-10-20 改口 —— 从前这句写的是"成本算不了：API 不返回 cost"）：
 OpenRouter 每一发都在 `usage.cost` 里回**实扣美元金额**（不需要任何额外参数；官方文档明说
@@ -1117,11 +1091,7 @@ DeepSeek / OpenCode GO 直连**确实不报**，所以那一格在那儿永远�
 不支持的渠道即使上游回了 `cost: 0`，也由 `Provider.costAwareUsage` 在**归一化之后、返回之前**摘掉 `cost_usd`
 （不是显示成 `$0`，是整格不出现）。从前只看"有没有这一格"，于是不支持费用的渠道回个 0 就会被画成 $0。
 气泡脚注 = `utils/format.ts` 的 `usageFoot`（token + 成本；契约测试钉着）。
-⚠ **别拿 `top_provider.max_completion_tokens` 当输出预留**（2026-10-20 踩过并回退）：OpenRouter 的
-`max_completion_tokens` 是"这个模型**最多能吐多长**"（deepseek-v4.1-flash 是 943718），
-而 `chat.ContextUsage` 要的是"**给回复留多少额度**"（Pi 的 `reserveTokens`，缺省 16384）——
-语义不同、量级差两个数量级。按它算预算会把 1M 上下文的模型算成只剩 104K 可用，
-等于凭空触发压缩。`max_output` 缺省就该回落 4096，除非上游明确报了"预留"这件事。
+普通 Agent 的输入预算取上下文上限减去输出预留。输出预留读模型的 `max_output`，缺省为 4096。OpenRouter 的 `top_provider.max_completion_tokens` 表示单次输出的上限，不能用作这项预留。`chat.ContextUsage` 同时给出本次估算的 `used_tokens` 和上次实报的 `last_prompt_tokens`。
 
 - **硬闸只有一个：`x-opencode-session`**（每会话稳定 UUID = `sessions.id`，裸 UUIDv7 零转换；缺了网关 400）。
   官方"别用通用库名"目前是要求而非强制（仍照做）；`x-opencode-client` 不是必需。实测矩阵见 `reminder/gateway.md`。
@@ -1129,17 +1099,23 @@ DeepSeek / OpenCode GO 直连**确实不报**，所以那一格在那儿永远�
   **不许派生第二个 id**（UUIDv5 方案作废），**不为没上下文随机铸 id**（`task.Begin()` 当场断言；只有不调模型的 Task 可无会话）。
   缓存按**内容前缀**算、与 session id 无关 ⇒ 别为缓存分子会话；也别为"拒绝缓存"发明 header（Pi 的 `cacheRetention: "none"` 对 OpenCode GO 是 no-op）。
 - 思考回传用 `reasoning_content`（网关照收；deepseek 系没思考补空串、别的系不塞）；`reasoning_effort` 关不掉（下限 low）。
-- **工具不在提示词里**：请求体顶层 `tools` 数组；回话是助手消息里的 `tool_calls`，结果以 `{role:"tool", tool_call_id}` 回填。两条铁律：历史里出现过工具 ⇒ `tools` 参数必须在（哪怕 `[]`）；不认识的字段默认不发。形状/开关/实测见 `reminder/tool-calls.md`。
-  **服务端工具已接**（2026-11-09；2026-11-22 起不再按协议一刀切）：模型规则派生的 `server_tools` 作为 `{"type":"x_search"}` / `{"type":"web_search"}` 这类声明进请求体，命中会话 `native_tools_disabled` 的扣掉；它们不靠 `allow_tools`（那是给任意 function tool 的默认关闸）。**chat 与 response 都会带**；能否被上游接受仍由渠道决定（xAI 的 chat 端点会 422，所以它的内置规则仍限定 `openai-response`）。
-  **本地工具已接**（2026-11-10）：DeepSeek 默认规则 `deepseek-web` 给 `web_search` / `web_fetch` 两个 function 声明；`chat` 做客户端 tool loop（最多 4 轮），执行 `/v1/tools/search` / `/v1/tools/fetch`，工具结果以 `role:"tool"` 回填。每轮 tool-call 落一条**中间 assistant 消息**（`kind=tool_run`，`message_tools.source=client` 挂它身上），最终正文另落一条 `kind=chat`；同一轮消息共享 `run_id`。工具结果/来源刷新后仍在。
-  **DeepSeek 服务端 `web_search` 不接**：只支持 v4-pro、只有 queries 没有 sources；flash 会忽略并吐 `<tool_call>` 文本。`availableTools` 对 DeepSeek 只返回本地工具（按 `native_tools_disabled` 过滤）。
-  ⚠ **xAI 的服务端工具只有 `/responses`**（2026-11-09 真 key 实测）：`/chat/completions` 对 `{"type":"web_search"}` / `{"type":"x_search"}` 直接 **422**（只认 `function` 或 `live_search`），而 `live_search` 虽能过 schema，实际回 **410 "Live search is deprecated. Please switch to the Agent Tools API"**；`/responses` 对三种 Agent Tools 都是 200。
-- **`/debug/last-payload` 必须连请求头一起回显**（打码）—— 不然"为什么 403"只能靠猜。
-- **与 Pi 的调用层差异（2026-11-24 排查）**：
-  **已对齐的关键形状**：Responses 历史的 assistant 用 **EasyInputMessage**（`{role:"assistant", content:"…"}`）—— `input_text` 会被上游以 `Invalid value: 'input_text'` 400，而只写 `output_text`、却没有 `id` 的 `type:"message"` 是半截 output item，严格端点也不认；system 用字符串；客户端工具历史回放为 `function_call` / `function_call_output`（chat 侧回放 assistant.tool_calls + role:"tool"），`state.BuildOutgoing` 不再丢掉正文为空但有客户端工具的 tool_run 消息；Responses 的 `input_tokens` / `output_tokens` / `input_tokens_details.cached_tokens` / `output_tokens_details.reasoning_tokens` 也进同一套 usage 归一化；Responses reasoning summary 事件现在进思考（不再只记 log）；已知会应答的渠道发 `store:false`，有 thinking 时 `reasoning.summary:"auto"`。
-  **SDK 与工具续传（2026-11-25）**：两套协议在 `core/internal/providers` 使用官方 `openai-go/v3`。每次工具回填写自己的 Task，模型渠道可用 `local_tool_provider` 指向执行 `web_search` / `web_fetch` 的 DeepSeek 渠道，并用模型规则的 `local_tools` 选择函数。`messages.exchanges` 保存归档产物的渠道、协议、终态与有序输出项；SDK 按 `call_id` 配对工具结果，原渠道、端点与模型匹配时可回放加密推理项。含调用记录的会话导出为 v5（可导入 v1–v5）。
-  **搜索工具的协议闸**：内置 `openai-gpt-native` 已带 `match_protocol:"openai-response"`（官方 Chat Completions 只支持专用搜索模型，普通 GPT 的 `tools:[{"type":"web_search"}]` 会 400）；要给自己代理的 chat 开搜索，另加一条不带 `match_protocol` 的用户规则。`gemini-native` 仍是旧口径（未按官方 Google 工具重写）。
 
+### 模型协议与工具调用
+
+普通对话、压缩、标题、消息重摇和 Flow 的 LLM 节点通过 `providers.ForModel` 解析实际协议。`core/internal/providers/sdk.go` 负责调用 SDK，`sdk_chat.go` 与 `sdk_responses.go` 分别编码参数、归并响应。预演在 SDK 序列化后截取请求。调试快照包含请求体和脱敏后的请求头。发送沿用渠道的超时、并发限制、会话头和请求覆盖，SDK 自动重试设为 0。
+
+两套协议共用本地的消息、工具记录和摘要。到 `providers` 才转换成 SDK 类型。Chat Completions 把对话历史放在 `messages[]`。Responses 的 `input[]` 和 `output[]` 按顺序容纳普通消息、推理项和工具项，一次回复可以产生多个输出项。
+
+| 协议 | 本地函数声明 | 调用与回填 |
+|---|---|---|
+| Chat Completions（`openai-chat-completion`） | `tools[].function` 带 `name/parameters` | `assistant.tool_calls[].id` 配对 `role:"tool"` 的 `tool_call_id`。 |
+| Responses（`openai-response`） | `tools[]` 的 `type:"function"`、`name`、`parameters` 在同一层 | 按 `output_index` 归并流式输出项。收到 `response.completed` 后，按 `function_call.call_id` 配对 `function_call_output.call_id`。工具项可单独构成有效回复。 |
+
+- `chat/tool_loop.go` 按模型规则、执行渠道和会话开关选工具。本地 `web_search` / `web_fetch` 由选定的 DeepSeek 渠道执行。xAI 原生搜索和代码执行由上游执行，内置规则限定 Responses。普通对话最多执行 4 轮本地工具，每轮可含多个调用。执行失败时将错误作为结果回填，取消则结束当前轮。
+- 历史回放以当次装配后的正文为准。协议、渠道、端点指纹和模型匹配时，Responses 可复用消息阶段、已支持的托管工具项和可用的加密推理项。换渠道时使用通用正文及成对的本地调用与结果。Task ID 只存在于进程内。
+- 函数的 JSON Schema 需保留原始类型与数值精度。曾因 SDK 将 `json.Number` 编成字符串，导致 xAI 对 `minimum` / `maximum` 返回 400。`functionDefinition` 按属性保留 `json.RawMessage`。`TestFunctionSchemaPreservesJSONNumbers` 检查两套协议最终发出的 JSON。
+- **Grok 实测（2026-11-25，`f628b46`）。** xAI 的 `grok-4.7` 在隔离会话中流式发起函数调用，收到本地搜索返回的固定合成结果后给出了最终回复。手动压缩第 1–3 条、第 4–5 条并合并后，下一轮能从覆盖第 1–5 条的父摘要取回封印码和站名，从原始消息现演的世界状态取回信使。
+- 本地回归中，`TestSDKToolRoundTrip` 验证两套协议的工具往返，`TestContextUsageFollowsToolHistoryThroughSummaryMerge` 验证工具结果触发自动压缩和合并后的计量。`TestAutoCompactLoopsUntilBelowExit` 检查退出线，`TestCompactStatusRidesAlong` 检查压缩期间启动和停止对话。旧网关的独立探针记录见 [工具调用](reminder/tool-calls.md) 和 [网关](reminder/gateway.md)。
 
 ### 内建 provider 预设（2026-10-01 起按 `vendor` × `protocol` 两轴；`kind` 只剩废弃读入）
 
@@ -1371,7 +1347,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   **能力集由后端给**（`GET /models` 的 `thinking_levels`，唯一实现 `providers.ThinkingLevels`）—— 前端只摆这些，
   不另抄一张模型表：Claude 没有 `off/minimal`、Gemini 3/4 没有 `off/xhigh/max`、GLM-5.3 只有 `low/high/max`、
   DeepSeek 七档全会映射成 `none/low/high/max`。**换模型后旧档位若不在新能力集里 ⇒ 自动清回默认**（`watch` 里做）。
-  **线上映射只有一处**（`providers.applyThinking`）：DeepSeek 发 `thinking.type` + 映射后的 `reasoning_effort`；
+  **档位映射**（`providers.thinkingEffortFor`，字段由对应 SDK 适配器写入）：DeepSeek 发 `thinking.type` + 映射后的 `reasoning_effort`；
   OpenRouter 发 `reasoning.effort`；其余 OpenAI 兼容发顶层 `reasoning_effort`；Responses 发 `reasoning.effort`。
   （2026-11-06 左栏顶部**重新放回 Brand Title** —— 用户定「原来那个位置更适合放 Brand Title」；
   输入区本身仍不放品牌。）
@@ -1393,7 +1369,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   ⚠ 代价要认：Vuetify styles 是全量的，整包 CSS/JS 都明显变大；换来的是输入/按钮/菜单的 MD3 行为与维护面。
   **下一块**若是 tabs：完整 Vuetify 的 CSS 已经进来了 ⇒ 直接用 `VTabs`/`VTabsWindow`（内置 MD3 slider/键盘/ARIA）；
   Vuetify0 的 headless `Tabs` 只在"不想引完整 Vuetify 样式"时才考虑。别再手写第五套。
-- **草稿态**（2026-10-09 定，学 DeepSeek 网页版）：点＋/`/new` 只开一张**客户端草稿**（清空消息列与右栏，顶栏显示 `config` defaults 的模型/Agent，改它只改本地 prefs）；草稿**铸一枚 UUIDv7**（`utils/ids.ts`）当将来那会话的 id —— **预演走 `POST /outgoing`**（临时会话、头上就是这枚 id）、**首条发送才 `POST /sessions`**（把这枚 id 与改过的 provider/model/agent 一起带上 ⇒ 预演那一发 = 真发那一发；受理失败 ⇒ 删掉刚建的空会话、退回草稿）。⚠ **这是 HACK**（客户端铸 `sessions.id`，全项目唯一的口子 —— 动机与代价见上面 `POST /sessions` 那行；别扩散）。库里不再产生空行 ⇒ 旧"启动编排"（先清空会话再预建真会话）连同一起拿掉。改模型/Agent、回草稿都会**立刻重跑预演**（`previewSeq` 丢弃迟到的旧版）。要会话的命令（`/compact` `/cut` `/reroll` `/switch` `/stop` `/resend` `/delete` `/edit` `/editsum`）在草稿里明确拒绝。（TUI 2026-11-01 已删，那句只作历史记录。）
+- **草稿态**（2026-10-09 定，学 DeepSeek 网页版）：点＋/`/new` 只开一张**客户端草稿**（清空消息列与右栏，顶栏显示 `config` defaults 的模型/Agent，改它只改本地 prefs）；草稿**铸一枚 UUIDv7**（`utils/ids.ts`）当将来那会话的 id —— **预演走 `POST /outgoing`**（临时会话、头上就是这枚 id）、**首条发送才 `POST /sessions`**（带上这枚 id 与选定的 provider/model/agent，两次使用同一会话键；受理失败 ⇒ 删掉刚建的空会话、退回草稿）。⚠ **这是 HACK**（客户端铸 `sessions.id`，全项目唯一的口子 —— 动机与代价见上面 `POST /sessions` 那行；别扩散）。库里不再产生空行 ⇒ 旧"启动编排"（先清空会话再预建真会话）连同一起拿掉。改模型/Agent、回草稿都会**立刻重跑预演**（`previewSeq` 丢弃迟到的旧版）。要会话的命令（`/compact` `/cut` `/reroll` `/switch` `/stop` `/resend` `/delete` `/edit` `/editsum`）在草稿里明确拒绝。（TUI 2026-11-01 已删，那句只作历史记录。）
 - **压缩树默认全收**（2026-11-03 用户定：上下文面板里压缩后的文本默认折叠）：`PayloadBar.setTree` 用 `collapsibleSet` 把有孩子的节点全放进 `treeCollapsed`；摘要行的压缩预览在折叠时不显示，点 ▸ 才展开看摘要/子节点。⚠ 树为了算体积仍读全量消息结构（不是逐摘要懒加载）；聊天里的**摘要卡**原文才是展开才拉。
 - **压缩树**（上下文工作区「压缩」tab，2026-10-10 加）：把压缩结构画成文件管理器那种树（目录 = 摘要、嵌套 = 嵌套压缩、行底 bar = 子树原文占比）。**后端零改动**：现取 `messages` + `summaries` 两个 GET，`utils/tree.ts` 的 `buildCompactTree` 本地建树 —— 口径**逐字复刻 `state.walk`**（左端对齐才用摘要、升到最粗同左端祖先、跳过后不回看），`发` = 装配真跳到它、`脏` = 已过期。树顶一行是 **块数输入 + 压缩按钮**（空 = 用 config 的 `compact_blocks`；与 `/compact` 共用 `compactNow`）。压缩命令受理后 `pollCompact` 盯到收尾（拿受理回执的 `at_ms` 对上——状态位是持久的，别认旧结局）。
 - **分段压缩 / 补齐空档（2026-11-05；2026-11-09 并入「压缩」子 tab）**：上下文「压缩」页内的第二、第三子 tab，组件 `AdvancedCompact.vue` 共用（`repair` prop 区分）。参数 `begin_idx/end_idx`、`step_blocks`、`concurrency`、`max_attempts`；先调 `/compact/advanced/preview` 看 chunk、空洞、总请求，再启动。整体只有 running/done/failed/canceled；chunk 在一个父 Task 下并发生成，全部成功才 `RecordSummaryBatch` 单事务落库；修洞模式只把同层已封段之间的空洞转成 chunk（尾部 open tail 不算洞）。
@@ -1736,7 +1712,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   界面就晚一秒可用），逐渠道**各自挂号** Task、**失败只 log**。刷新**只写发现列**
   （`display_name` / `params` / `context_override` / `tokenizer` 一个字都不许动）。
 - **不设总超时 = 上游卡住、界面转一辈子**：超时写在 `providers.json` 的 `timeouts`（缺省 connect 15s / total 300s）。
-  辅助调用（`title` / `compact`）**另有自己的短上限**（10s / 60s）—— 它们排在"这一轮翻 idle"**之前**，只靠渠道那 300s 会让一轮被上游按住五分钟。
+  自动起标题和手动异步压缩各自的超时见「与上游通信」。
 - **`db.Exec("PRAGMA …")` 只管当时那一条连接** ✗：连接池后来新开的连接就漏了 —— `foreign_keys` 漏掉 = 级联**静默失效**（`ON DELETE CASCADE` 不生效，还回 204）；
   另外 SQLite 的 `busy_timeout` 默认是 **0** ⇒ 两个进程同时开同一个库（服务在跑 + 一个 `./microchat -debug <op>`）会当场回
   `database is locked (5) (SQLITE_BUSY)`，而"打开库"这一步就要拿一下写锁。两条都挂到 DSN 上（`?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)`）——**每建一条连接生效一次**，池子怎么开都带得上。
