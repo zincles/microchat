@@ -4,6 +4,7 @@
 import { VBtn, VTextField, VTextarea } from "vuetify/components";
 import { ref, onMounted, onUnmounted } from "vue";
 import { sharedApi } from "../utils/prefs.ts";
+import SettingsBack from "./SettingsBack.vue";
 import type { Agent, Segment, UpdateSegmentRequest } from "../api/types.ts";
 
 interface EditableSegment extends Segment {
@@ -86,7 +87,7 @@ function onKey(e: KeyboardEvent): void { if (e.key === "Escape") emit("close"); 
 <template>
   <div class="detail-pane">
     <div class="panel-head">
-      <VBtn icon variant="text" size="small" type="button" title="返回列表（Esc）" @click="emit('close')">←</VBtn>
+      <SettingsBack @back="emit('close')" />
       <span class="status">{{ isNew ? "新建提示词片段" : isBuiltin ? `内置片段「${props.segment!.id}」（只读）` : `编辑「${props.segment!.id}」${props.segment!.imported ? "（导入）" : ""}` }}</span>
     </div>
     <label class="field"><span>名称（改名会同步所有引用）</span><VTextField density="compact" variant="outlined" hide-details v-model="id" :readonly="isBuiltin" placeholder="例如：状态语法 / 数学公式 / 联网规则" /></label>

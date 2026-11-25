@@ -1,10 +1,11 @@
 <script setup lang="ts">
 // 左会话栏：列表 + 新建 + 置底设置按钮。
 // 每条只有一枚「选项」（竖三点）：设置与删除都收进那块浮板 —— 行内不再挤两枚键。
-import { ref, shallowRef, computed, nextTick, onMounted, onUnmounted, useTemplateRef, watch } from "vue";
+import { ref, computed, nextTick, onMounted, onUnmounted, useTemplateRef, watch } from "vue";
 import { VBtn, VBtnToggle, VNavigationDrawer } from "vuetify/components";
+import SessionSearch from "./SessionSearch.vue";
 import { ICONS } from "../assets/icons.ts";
-import { filterSessionTitles, groupSessions } from "../utils/sessionGroups.ts";
+import { groupSessions } from "../utils/sessionGroups.ts";
 import { sessionTitle } from "../utils/format.ts";
 import { saveTheme, themePref, THEME_IDS } from "../utils/prefs.ts";
 import type { SessionView } from "../api/types.ts";
@@ -66,29 +67,14 @@ const currentId = ref<string | null>(null);
 // 左栏顶部的三个空白：对话 / 生图 / 库存。生图与库存暂未接 API，切过去只改选中态
 // （未来这里放各自的列表）。
 const mode = ref<"chat" | "image" | "inventory">("chat");
-const searchOpen = shallowRef(false);
-const query = shallowRef("");
-const searchTrigger = useTemplateRef<HTMLButtonElement>("searchTrigger");
-const searchInput = useTemplateRef<HTMLInputElement>("searchInput");
+const newButton = useTemplateRef<HTMLButtonElement>("newButton");
 const sessionList = useTemplateRef<HTMLDivElement>("sessionList");
-const historyVisible = computed(() => mode.value === "chat" && !props.collapsed);
-const groupedSessions = computed(() => groupSessions(filterSessionTitles(sessions.value, query.value)));
+const groupedSessions = computed(() => groupSessions(sessions.value));
 
-function openSearch(): void {
-  searchOpen.value = true;
-  nextTick(() => { if (historyVisible.value) searchInput.value?.focus(); });
+function selectFoundSession(id: string): void {
+  mode.value = "chat";
+  emit("select", id);
 }
-function closeSearch(restoreFocus = false): void {
-  searchOpen.value = false;
-  query.value = "";
-  if (restoreFocus) nextTick(() => { if (historyVisible.value) searchTrigger.value?.focus(); });
-}
-function clearSearch(): void {
-  query.value = "";
-  searchInput.value?.focus();
-}
-watch(historyVisible, (visible) => { if (!visible) closeSearch(); });
-watch(query, () => prefetchEnd());
 
 function titleButtons(): HTMLButtonElement[] {
   return Array.from(sessionList.value?.querySelectorAll<HTMLButtonElement>(".session-main") ?? []);
@@ -100,25 +86,13 @@ function onHistoryKey(event: KeyboardEvent): void {
     event.stopPropagation();
     return;
   }
-  if (event.key === "Escape" && searchOpen.value) {
-    event.preventDefault();
-    event.stopPropagation();
-    closeSearch(true);
-    return;
-  }
-  const fromInput = target === searchInput.value;
-  if (!fromInput && !(target instanceof HTMLButtonElement && target.matches(".session-main"))) return;
-  if (event.key === "Enter" && (fromInput || event.repeat)) {
-    event.preventDefault();
-    if (!event.repeat) titleButtons()[0]?.click();
-    return;
-  }
+  if (!(target instanceof HTMLButtonElement) || !target.matches(".session-main")) return;
+  if (event.key === "Enter" && event.repeat) { event.preventDefault(); return; }
   if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
   event.preventDefault();
   const rows = titleButtons(); // 实际 DOM 顺序包括日期分组，不依赖 v-for ref 数组的顺序。
   const down = event.key === "ArrowDown";
-  const index = fromInput ? (down ? 0 : rows.length - 1)
-    : Math.max(0, Math.min(rows.length - 1, rows.indexOf(target as HTMLButtonElement) + (down ? 1 : -1)));
+  const index = Math.max(0, Math.min(rows.length - 1, rows.indexOf(target) + (down ? 1 : -1)));
   rows[index]?.focus();
 }
 
@@ -128,9 +102,9 @@ watch(groupedSessions, async () => {
   const active = document.activeElement;
   if (!(active instanceof HTMLButtonElement) || !active.dataset.sessionId || !sessionList.value.contains(active)) return;
   await nextTick();
-  if (!historyVisible.value || document.activeElement !== document.body) return;
+  if (mode.value !== "chat" || props.collapsed || document.activeElement !== document.body) return;
   const row = titleButtons().find((button) => button.dataset.sessionId === active.dataset.sessionId);
-  (row ?? searchInput.value ?? searchTrigger.value)?.focus();
+  (row ?? newButton.value)?.focus();
 });
 const menu = ref<{ id: string; left: number; top: number } | null>(null); // Teleport 到 body 的浮板
 const menuEl = ref<HTMLElement | null>(null);
@@ -218,13 +192,14 @@ defineExpose({ setSessions });
     id="sessions-bar"
     :model-value="true"
     permanent
-    :width="280"
+    :width="256"
     :scrim="false"
     :touchless="true"
     class="sessions-drawer"
     :class="{ collapsed: props.collapsed }"
     :inert="props.collapsed"
   >
+    <div class="session-navigation">
     <div class="bar-head">
       <!-- Brand Title（2026-11-06 用户定）：原来放大 tab 的位置换作品牌；
            下面依次是新对话 → 对话/生图 → 会话列表（Gemini 式左侧栏）。 -->
@@ -239,6 +214,7 @@ defineExpose({ setSessions });
         <span class="brand-name">MicroChat</span>
       </button>
       <span class="bar-head-actions">
+        <SessionSearch :sessions="sessions" :current-id="currentId" @select="selectFoundSession" />
         <button
           id="theme-toggle"
           class="icon-btn theme-toggle"
@@ -262,18 +238,15 @@ defineExpose({ setSessions });
            进入站点时出现/消失会把下面整列（新建、模式切换、列表）顶动一次。 -->
       <div v-if="refreshing" class="md-linear-progress" role="progressbar" aria-label="正在刷新会话列表"><span></span></div>
     </div>
-    <button id="session-new" type="button" :title="newTitle" :disabled="mode === 'inventory'" @click="onNew">
-      <span class="plus" aria-hidden="true" v-html="ICONS.plus"></span><span class="label">{{ newLabel }}</span>
+    <button id="session-new" ref="newButton" type="button" :title="newTitle" :disabled="mode === 'inventory'" @click="onNew">
+      <span class="plus" aria-hidden="true" v-html="ICONS.plus"></span>{{ newLabel }}
     </button>
-    <!-- 左栏模式切换，不是内容 tab：生图与库存面板还没接，切过去只是选中态。
-         用 VBtnToggle 做全宽分段按钮；等它们有独立列表再升级成 VTabs。 -->
+    <!-- 模式切换保留原有入口，不再用外框把三个按钮围成一块。 -->
     <VBtnToggle
       v-model="mode"
-      class="session-mode-tabs"
+      class="session-mode-tabs ui-mode-switch"
       mandatory
-      divided
-      density="compact"
-      color="primary"
+      variant="text"
       role="group"
       aria-label="左栏模式"
     >
@@ -281,16 +254,6 @@ defineExpose({ setSessions });
       <VBtn value="image" title="生图（暂未接入）" :aria-pressed="mode === 'image'">生图</VBtn>
       <VBtn value="inventory" title="库存（暂未接入）" :aria-pressed="mode === 'inventory'">库存</VBtn>
     </VBtnToggle>
-    <div v-if="mode === 'chat'" class="session-search" @keydown="onHistoryKey">
-      <button v-if="!searchOpen" ref="searchTrigger" class="session-search-trigger" type="button" @click="openSearch">
-        <span aria-hidden="true" v-html="ICONS.search"></span>查找会话
-      </button>
-      <template v-else>
-        <input ref="searchInput" v-model="query" type="text" role="searchbox" aria-label="查找会话" placeholder="按标题查找会话"
-          aria-description="上下方向键移动到结果，回车打开会话，Esc 关闭查找" aria-controls="session-list" enterkeyhint="go" autocomplete="off" />
-        <button v-if="query" class="session-search-action" type="button" aria-label="清除查找" @click="clearSearch">清除</button>
-        <button class="session-search-action" type="button" aria-label="关闭查找" @click="closeSearch(true)">关闭</button>
-      </template>
     </div>
     <div v-if="mode === 'chat'" id="session-list" ref="sessionList" :aria-busy="loading && !sessions.length ? 'true' : 'false'" @keydown="onHistoryKey">
       <div v-if="loading && !sessions.length" class="session-skeleton">
@@ -406,60 +369,3 @@ defineExpose({ setSessions });
   </Teleport>
 </template>
 
-<style scoped>
-.session-search { display: flex; align-items: center; flex: none; gap: 0.25em; margin: 0 0.8em; }
-.session-search input { flex: 1; min-width: 0; }
-.session-search button { min-height: 2.25em; color: var(--md-on-surface-variant); background: transparent; }
-.session-search button:hover { background: var(--mix-8); }
-.session-search-trigger { display: inline-flex; align-items: center; gap: 0.5em; }
-.session-search-trigger span { display: inline-flex; }
-.session-search-action { padding: 0 0.5em; }
-
-/* 左栏模式 tab 的垂直几何钉死（2026-11-09）。
- * 病灶有两层，都在测量里看得到：
- *  1) VBtnGroup 的 compact 规则给了整条胶囊 `height: 36px`，而按钮自己的
- *     `min-height: 2.667em`（label-large 下 = 37.33px）比它更高 —— 按钮永远溢出
- *     1.33px，靠 `overflow: hidden` 裁掉，所以"按钮高度"和"胶囊高度"本来就对不上。
- *  2) 抽屉内容是 column flex，这条胶囊是 `flex: 0 1 auto` 的普通子项，会被挤。
- *     对话模式下列表内容更高 → 胶囊被压到 25.14px；生图/库存是占位面板 → 不压，36px。
- *     于是切换模式时同一个控件高矮变了 10.9px。
- * 修法：胶囊不参与伸缩（flex: none）、高度交给按钮（height: auto），
- * 按钮统一 min-height = 2.667em + border-box。三格都走同一条规则，选中/焦点只改
- * 颜色与 outline，不再碰尺寸。 */
-/* 注意：这里不能用 `:deep()` —— SessionBar 的根是 Fragment（抽屉 + Teleport），
- * 作用域属性不会挂到抽屉根上，`:deep()` 编译出的 `[data-v-x] .x` 找不到祖先。
- * 但 VBtnToggle / VBtn 的根元素自己带着本组件的 `data-v-x`，普通作用域选择器就够。 */
-.session-mode-tabs {
-  flex: none;
-  height: auto;
-  box-sizing: border-box;
-  align-items: stretch;
-}
-.session-mode-tabs .v-btn {
-  height: auto;
-  min-height: 2.667em;
-  max-height: none;
-  box-sizing: border-box;
-  align-self: stretch;
-}
-
-/* 字面墨迹居中（2026-11-09 逐像素复测，取代 main.css 的 `-0.16em`）。
- * 旧的 `-0.16em` 是在**被裁掉**的胶囊上量的：那时可见带只有 25.14px、窗口偏上，
- * 字往下压才显得居中；胶囊高度修好后按钮 37.33px 完整可见，同一偏移就偏高。
- * 实测（截屏取字面 ink 亮度质心，非行盒中心）：不偏移时墨迹中心本来就在按钮中心
- * **上方 0.5px 左右**（字体固有，Noto Sans CJK 的 ink 比行盒几何中心高）；旧 `-0.16em`
- * 再往上推 2.24px，于是实际高约 2.7–3.3px —— 这就是"字偏上"的全部来源。
- * 目标：墨迹质心 = 按钮中心 → 需要**往下**约 0.7px，即 +0.05em（13.9995px 字号下 = 0.70px）。
- * 注意 Chrome 把字形竖直位置吸附到设备像素，所以不同 dpr 的残差是 0.8/1/0.5px 一档：
- *   dpr 1.25 / 2 / 4 实测质心残差 +0.04…+0.34 / -0.24…+0.06 / +0.06…+0.42px；
- *   dpr 1 只能落在 ±0.5px 的档上（+0.33…+0.70px）。三个 tab 同值，选中/未选中一致。
- * 选 0.05em 而不是恰好补到 0（0.0757em）：后者在 dpr 4 会掉到下一档，残差反而 +0.5…+0.7px；
- * 0.05em 在四个 dpr 上都是最靠中的那一档。
- * 选择器必须盖过 main.css 的 `#sessions-bar .session-mode-tabs .v-btn__content`
- * （1 id + 2 类）：带上 id 再 `:deep()` → `#sessions-bar .session-mode-tabs
- * .v-btn[data-v] .v-btn__content`（1 id + 4 类）。作用域属性挂在按钮根上（slot 内容
- * 归父组件所有），不能锚在抽屉根上（它是 Fragment，没有本组件的作用域属性）。 */
-#sessions-bar .session-mode-tabs .v-btn :deep(.v-btn__content) {
-  transform: translateY(0.05em);
-}
-</style>

@@ -17,6 +17,7 @@ import "@vue-flow/core/dist/style.css";
 import "@vue-flow/core/dist/theme-default.css";
 import "@vue-flow/controls/dist/style.css";
 import { VBtn, VList, VListItem, VMenu, VTextField } from "vuetify/components";
+import CloseButton from "./CloseButton.vue";
 import { ICONS } from "../assets/icons.ts";
 import { sharedApi } from "../utils/prefs.ts";
 import FlowNode from "./FlowNode.vue";
@@ -422,8 +423,7 @@ watch([() => props.nodeStates, () => props.activeNodeId], ([states, activeId]) =
               <button type="button" :class="{ active: sidebarTab === 'nodes' }" @click="sidebarTab = 'nodes'">节点与连接</button>
               <button type="button" :class="{ active: sidebarTab === 'text' }" @click="sidebarTab = 'text'">文本</button>
             </div>
-            <VBtn icon variant="text" size="small" type="button" title="关闭节点面板"
-              aria-label="关闭节点面板" @click="nodesOpen = false">×</VBtn>
+            <CloseButton label="关闭节点面板" @click="nodesOpen = false" />
           </div>
           <template v-if="sidebarTab === 'text'">
             <p class="hint">用文本核对节点、端口和连接；内容随当前图实时更新。</p>
@@ -465,8 +465,7 @@ watch([() => props.nodeStates, () => props.activeNodeId], ([states, activeId]) =
               <button type="button" :class="{ active: bottomTab === 'test' }" @click="bottomTab = 'test'">测试</button>
               <button type="button" :class="{ active: bottomTab === 'debug' }" @click="bottomTab = 'debug'">调试</button>
             </div>
-            <VBtn icon variant="text" size="small" type="button" title="关闭底栏"
-              aria-label="关闭底栏" @click="bottomOpen = false">×</VBtn>
+            <CloseButton label="关闭底栏" @click="bottomOpen = false" />
           </div>
 
           <div v-if="bottomTab === 'test' && !readonly" class="flow-panel-test">

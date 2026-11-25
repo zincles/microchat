@@ -2,6 +2,7 @@
 // 顶部更新条：PWA 新壳 / GitHub 后端更新共用。**不自动消失**，由用户点。
 import { computed, ref, watch } from "vue";
 import { VAlert, VBtn } from "vuetify/components";
+import CloseButton from "./CloseButton.vue";
 
 const props = withDefaults(defineProps<{
   pwa?: boolean;
@@ -51,7 +52,7 @@ defineExpose({ show: (): void => { pwaBusy.value = false; hidden.value = false; 
       <VBtn v-else color="primary" variant="flat" size="small" :disabled="busy" @click="go">
         {{ busy ? "更新中…" : "刷新" }}
       </VBtn>
-      <VBtn v-if="!backend" icon variant="text" size="small" title="先不更新" aria-label="先不更新" :disabled="busy" @click="hidden = true">×</VBtn>
+      <CloseButton v-if="!backend" label="先不更新" :disabled="busy" @click="hidden = true" />
     </template>
   </VAlert>
 </template>

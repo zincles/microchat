@@ -246,10 +246,12 @@ func (s *Service) Enter(session model.Session) (Accepted, error) {
 	if err != nil {
 		return Accepted{}, err
 	}
+	// 回执描述启动时占用的候选位次，不让极快的上游先完成或取消。
+	state := s.State(session.ID, TargetMessage)
 	go func() { s.roll(context.Background(), prepared) }()
 	return Accepted{
 		TargetMessageID: prepared.targetID, TaskID: prepared.guard.ID(),
-		State: s.State(session.ID, TargetMessage),
+		State: state,
 	}, nil
 }
 
@@ -279,10 +281,11 @@ func (s *Service) EnterSummary(session model.Session, idx int) (Accepted, error)
 	if err != nil {
 		return Accepted{}, err
 	}
+	state := s.State(session.ID, TargetSummary)
 	go func() { s.roll(context.Background(), prepared) }()
 	return Accepted{
 		TargetSummaryID: prepared.summaryID, TaskID: prepared.guard.ID(),
-		State: s.State(session.ID, TargetSummary),
+		State: state,
 	}, nil
 }
 

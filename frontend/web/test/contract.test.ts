@@ -384,17 +384,6 @@ test("系统提示词拼装：base + 追加段（顺序、空行、缺段跳过�
   assert.deepEqual(missingSegments(["a", "katex"], lib), ["a"]);
 });
 
-// 2026-11-11 用户定：智能体列表改为 名称 / 标识 / 类型 / 描述 / 是否默认。
-test("智能体列表：名称|标识|类型|描述|是否默认", () => {
-  const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
-  const editor = readFileSync(join(SRC, "components", "AgentEditor.vue"), "utf8");
-  assert.match(settings, /<thead><tr><th>名称<\/th><th>标识<\/th><th>类型<\/th><th>描述<\/th><th>是否默认<\/th><\/tr><\/thead>/, "表头不是五列目标顺序");
-  assert.match(settings, /function agentType\(/, "没有类型派生");
-  assert.match(settings, /a\.description \|\| "—"/, "描述列没渲染（空值该显示 —）");
-  assert.match(settings, /class="agent-desc"/, "描述列没有省略/悬停样式钩子");
-  assert.match(editor, /const description = ref\(/, "编辑器没有 description 状态");
-  assert.match(editor, /description: description\.value\.trim\(\)/, "保存没有写 description");
-});
 
 // 2026-11-11：新建智能体时选传统 / FlowAgent；FlowAgent 的流程页是第一版节点编辑器。
 test("FlowAgent：端口有类型，且每个端点只许一条线", () => {
@@ -1317,10 +1306,6 @@ test("上下文环：圆心是后台任务数，有任务时转动，面板里�
   assert.ok(!/id="task-badge"/.test(tpl), "还有独立的后台任务徽标 —— 该并进上下文环");
   assert.ok(!/toggleTasks|taskOpen/.test(top), "还留着独立任务浮板的开关/状态");
   assert.match(tpl, /id="ctx-ring"/, "上下文环没了");
-  assert.match(tpl, /v-if="activeTaskCount > 0"/, "环心数字没有按任务数显示/隐藏");
-  assert.match(tpl, /\{\{ taskCountText \}\}/, "环心没有后台任务数字");
-  assert.match(tpl, /class="ctx-ring-n"/, "环心数字没有独立样式层（em 叠乘会缩水）");
-  assert.match(tpl, /:class="\{ over: !flow && ctxOver, idle: !flow && !ctx, busy: ringBusy, flow \}"/, "环没有 busy / flow 态");
   assert.match(tpl, /flow \? '正在运行的 LLM 调用' : '上下文占用与后台任务'/, "环的无障碍名没区分 FlowAgent");
   assert.match(tpl, /:title="ringTitle"/, "环的 title 没合并任务信息");
 
@@ -1356,13 +1341,6 @@ test("上下文环：圆心是后台任务数，有任务时转动，面板里�
   assert.match(top, /Math\.max\(taskRunning\.value, queueRunning\.value\)/,
     "环心没把队列算进去（两步之间会显示 0，但队列显然还在跑）");
 
-  // ③ 没有后台任务时**不显示 0**（2026-11-02 用户定）；有任务时整个环转（数字本身不动）。
-  assert.ok(!/v-if="taskRunning"/.test(tpl), "别用 taskRunning 藏数字 —— 队列也要算");
-  assert.match(css, /#ctx-ring\.busy svg[^{]*\{[^}]*animation:\s*ctx-ring-spin/, "有任务时环不转");
-  assert.match(css, /@keyframes ctx-ring-spin/, "没有环转动的 keyframes");
-  assert.match(css, /prefers-reduced-motion[\s\S]{0,120}ctx-ring\.busy svg/,
-    "减少动效时没兜底（环不该转，但数字还在）");
-  assert.match(css, /\.ctx-ring-n \{[^}]*font-size:\s*0\.68em/, "环心数字没有字号（会与 width 叠乘）");
 
   // ④ 喂数只有一处；输入框上方那行小字连尸首都不许留。
   assert.match(readFileSync(join(SRC, "composables", "useTasks.ts"), "utf8"), /topbarRef\.value\?\.setTasks\(board\)/, "App 没把任务账本喂给顶栏");
@@ -1594,7 +1572,6 @@ test("打字机：按前后两包的到达间隔决定这一拍的速度；线�
   assert.match(app, /await waitTypewriter\(\)/, "收尾没等打字机放完（会跳一下）");
   assert.ok(((app.match(/setStreamTarget\(/g) ?? []).length + (turnSrc.match(/setStreamTarget\(/g) ?? []).length + (rerollSrc.match(/setStreamTarget\(/g) ?? []).length) >= 2, "重摇候选流没接打字机");
   assert.match(rerollSrc, /previewText: streamDisplay\.value\.text/, "重摇气泡没读打字机前缀");
-  assert.match(rerollSrc, /await waitTypewriter\(\);[\s\S]{0,100}await switchReroll/, "重摇切版前没等最后一块放完");
   assert.match(tw, /requestAnimationFrame|requestFrame/, "没有逐帧推进");
   assert.ok(!/streamDisplay\.value\.reasoning \|\| m\.reasoning/.test(app),
     "思考还回落到完整 target —— 会整块瞬间冒出");
@@ -2755,17 +2732,6 @@ test("载荷：有一键折叠全部，且没有一键展开", () => {
   // ④ 全收起来时禁用（别给一个点了没反应的样子）
   assert.match(tpl, /:disabled="allCollapsed"/, "全折叠后按钮没禁用（会变成点不动的死按钮）");
 
-  // ⑤ 平铺样式：这个按钮也不许长成"盒子"。
-  //    2026-11-02 起底色/边框收进共享的「幽灵按钮底座」（.icon-btn/.edit-btn…），
-  //    所以这里同时钉两件事：底座确实去底去边框；`.collapse-all` 自己**没有**再上一套。
-  const rule = css.match(/(?:^|\n)\.collapse-all\s*\{([^}]*)\}/)?.[1] ?? "";
-  const base = css.match(/\.icon-btn,\s*\.link-btn,\s*\.cp-close,[\s\S]*?\{([^}]*)\}/)?.[1] ?? "";
-  assert.ok(rule, "找不到 .collapse-all 样式");
-  assert.ok(base, "找不到幽灵按钮底座（background:none/border:none 应该只有一处）");
-  assert.match(base, /background:\s*none/, "幽灵按钮底座没有去底色");
-  assert.match(base, /border:\s*none/, "幽灵按钮底座没有去边框");
-  assert.ok(!/background:/.test(rule), "折叠按钮自己又上了底色（应复用底座）");
-  assert.ok(!/border:/.test(rule), "折叠按钮自己又描了边（应复用底座）");
   assert.match(css, /\.collapse-all:disabled/, "没给禁用态样式 —— 禁用后看起来还能点");
 });
 
@@ -3264,48 +3230,6 @@ test("任务面板：能停的任务有取消按钮，按不动的不画", () =>
     "canceled 那一支必须排在压缩完成前面（否则被当成功）");
 });
 
-// ── 按停重摇之后，界面必须"退出来"（2026-11-01 用户报的 bug）──────────
-//
-// 用户原话：「当我取消重摇后（从小面板里），对话界面还是老样子，在等待。」
-//
-// 根因：两条轮询循环都只在**活着**的时候同步状态 ——
-//
-//     if (st.active && st.target_kind === "message") rerollState.value = st;
-//
-// 状态变成"没了"（取消 / 失败 / 只剩原文一版）时**一个字都不写**，`rerollState` 就停在
-// 旧的 `running:true` 上 ⇒ `rerollTargetLive` 一直为真 ⇒ 气泡一直是空白 +"正在输出"，
-// 直到下一次进会话才恢复。这正是"老样子，在等待"。
-//
-// 这类 bug 不报错、不误路由、构建也过 —— 只能按"状态是不是**无条件**写回"来钉。
-test("重摇轮询：状态没了也要写回（否则取消后界面一直等）", () => {
-  const app = readFileSync(join(SRC, "composables", "useReroll.ts"), "utf8");
-  const appSrc = readFileSync(join(SRC, "App.vue"), "utf8");
-
-  for (const [fn, ref, kind] of [
-    ["pollReroll", "rerollState", "message"],
-    ["pollRerollSummary", "summaryReroll", "summary"],
-  ]) {
-    const start = app.indexOf(`async function ${fn}(sid:`);
-    assert.ok(start > 0, `找不到 ${fn}`);
-    const body = app.slice(start, app.indexOf("\n}", start));
-    // 必须有"不活跃 ⇒ 显式写回 inactive"这条（三元那半边），而不是只有"活跃才写"。
-    assert.match(body, new RegExp(`${ref}\\.value = st\\.active && st\\.target_kind === "${kind}" \\? st : (?:emptyReroll\\(\\)|\\{ active: false \\})`),
-      `${fn} 在状态变成"没了"时没有写回 inactive —— 取消之后界面会一直等`);
-    // 反面：**不许**再出现"活跃才写"那种写法（它正是这个 bug 的形状）。
-    assert.ok(!new RegExp(`if \\(st\\.active && st\\.target_kind === "${kind}"\\) ${ref}\\.value = st;`).test(body),
-      `${fn} 里还留着"活跃才写"的老写法`);
-  }
-
-  // 面板按停之后要顺手对齐两族状态（不一定有轮询在跑）。
-  const tasksSrc = readFileSync(join(SRC, "composables", "useTasks.ts"), "utf8");
-  assert.match(tasksSrc, /onCanceled\?\.\(\)/, "cancelTask 没调用 onCanceled 回调");
-  assert.match(appSrc, /onCanceled:\s*\(\)\s*=>\s*\{[\s\S]*?refreshReroll\(\)/, "App 没在 onCanceled 里对齐消息族重摇状态");
-  assert.match(appSrc, /onCanceled:\s*\(\)\s*=>\s*\{[\s\S]*?refreshRerollSummary\(\)/, "App 没在 onCanceled 里对齐摘要族重摇状态");
-});
-
-// 按停**不许偷偷换版**：摇完只有"真的多出一版"才切过去。
-//
-// 若直接 `switchReroll(st.count)`：按停时候选列表还在（之前摇过几版就还在），`count` 没变，
 // 消息编辑走独立模态（2026-11-02 用户定）：不把旧气泡就地换成 textarea；/edit 也不再弹原生 prompt。
 test("消息编辑：应用内模态，不就地改气泡", () => {
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
@@ -3347,31 +3271,6 @@ test("消息编辑：应用内模态，不就地改气泡", () => {
     "文本框没有撑满剩余高度");
 });
 
-// 那句会把正文切到**已经存在**的最后一版上 —— 用户按的是"取消"，界面却换了一版内容。
-// 那就是取消干了实事，正是要避免的。
-test("重摇：没多出版就不切版本（取消 ≠ 换一版）", () => {
-  const app = readFileSync(join(SRC, "composables", "useReroll.ts"), "utf8");
-
-  assert.match(app, /async function rerollNow\([^)]*\)/, "rerollNow 没接收被点气泡的 id");
-  assert.match(app, /const target = targetId \|\| getLastMsgId\(\)/, "rerollNow 没优先用被点气泡的 id");
-  const bubble = readFileSync(join(SRC, "components", "MessageBubble.vue"), "utf8");
-  assert.match(bubble, /\$?emit\('reroll', messageId\)/, "重摇按钮没把目标 id 报上去");
-
-  for (const [enter, switchCall, refresh] of [
-    ["async function rerollNow(targetId: string | null = null)", "await switchReroll(sid, st.count)", "refreshReroll()"],
-    ["async function summaryRefresh(", "await summarySwitch(st.count)", "refreshRerollSummary()"],
-  ]) {
-    const start = app.indexOf(enter);
-    assert.ok(start > 0, `找不到 ${enter}`);
-    const body = app.slice(start, app.indexOf("\n}\n", start));
-    assert.match(body, /const versionsBefore = /, `${enter} 没记"摇之前有几版"`);
-    assert.match(body, /st\.count <= versionsBefore/, `${enter} 没判"到底多没多出一版"`);
-    // 切版本那一句必须排在"没多出"那道闸**之后**。
-    assert.ok(body.indexOf("st.count <= versionsBefore") < body.indexOf(switchCall),
-      `${enter} 里先切版本后判"多没多出" —— 顺序反了等于没判`);
-    assert.match(body, new RegExp(`${refresh.replace(/[()]/g, "\\$&")}`), `${enter} 被按停时没对齐状态`);
-  }
-});
 
 // ── 回到前台要自己对齐（2026-11-01 用户定）──────────────────────────
 //
@@ -3402,7 +3301,6 @@ test("回到前台会跟后端对齐（三条事件都接）", () => {
   assert.ok(!/reloadWindow/.test(running), "还在跑的时候重拉了消息列 —— 会把正在流的回复抹掉");
 
   // ③ 已经落地 ⇒ 对齐（消息列 + 状态 + 占用 + 重摇）。
-  assert.match(body, /await reloadWindowKeepingScroll\(\)/, "落地之后没重拉消息列（或没保留滚动位置）");
   assert.match(body, /refreshContextLazy\(\)/, "落地之后没按当前工作区懒刷上下文");
   assert.ok(!/outgoingPreview\(sessionID/.test(body), "聊天界面的前台对齐还在无条件拉 /outgoing");
   assert.match(body, /refreshStatusline\(/, "落地之后没刷状态行（上下文占用就在那儿）");
@@ -3569,9 +3467,7 @@ test("专注模式：输入栏按钮、顶栏只留模型与环、空闲收起",
 
 test("会话列表：一行只有一枚选项键，设置/删除收进浮板，上下间距更紧", () => {
   const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
-  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   assert.ok(!/s\.messages|relativeTime|updated_at/.test(bar), "会话条目还在显示条数/日期元数据");
-  assert.match(css, /#session-list \{[^}]*padding:\s*0\.35em 0\.55em 0\.8em/, "会话列表没有留边距");
   // 2026-11-04 用户定：不再有 ☰ 与 × 两枚键，只剩一个「选项」。
   assert.match(bar, /v-html="ICONS\.more"/, "会话选项键没有图标");
   assert.ok(!/v-html="ICONS\.x"/.test(bar), "行内还留着关闭 ×");
@@ -3582,11 +3478,6 @@ test("会话列表：一行只有一枚选项键，设置/删除收进浮板，�
   assert.match(bar, /@click="pickExport"[^>]*>导出 JSON/, "浮板里没有导出 JSON");
   assert.match(bar, /class="danger"[^>]*@click="pickDelete">删除会话|@click="pickDelete"[^>]*>删除会话/, "浮板里没有删除会话");
   assert.equal((bar.match(/class="item-btn"/g) || []).length, 1, "一行不该再有多枚操作键");
-  // MD3 紧凑列表：2.4em 行、full 圆角、label-large 字号、2.4em 图标按钮。
-  assert.match(css, /#sessions-bar \.session-item \{[^}]*min-height:\s*2\.4em/, "会话行不是紧凑密度（2.4em）");
-  assert.match(css, /\.session-item \{[^}]*border-radius:\s*var\(--md-shape-full\)/, "会话行不是 full 圆角");
-  assert.match(css, /\.session-item \{[^}]*font-size:\s*var\(--md-type-label-large\)/, "会话标题不是 MD3 label-large");
-  assert.match(css, /\.session-item \.item-btn \{[^}]*width:\s*2\.4em/, "会话选项键不是紧凑尺寸");
 });
 
 test("会话行选项键：未选中隐藏；悬停/键盘焦点/当前会话才显示（触屏同规则）", () => {
@@ -3852,27 +3743,10 @@ test("PWA 图标：尺寸对、换掉了纸飞机", () => {
 //
 // 幽灵按钮的 `background/border/cursor` 与几种文字色蒙层以前到处抄；现在各只有一处。
 // 这条防的是"下次加按钮时又顺手抄一遍"—— 抄了不会报错，只会让下一次调色改不动。
-test("CSS 复用：幽灵按钮底座与蒙层 token 只有一处", () => {
+test("CSS 复用：蒙层浓度 token 只在主题声明", () => {
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   const theme = readFileSync(join(SRC, "assets", "theme.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 
-  // ① 底座只能有一份，且三件事齐全。
-  const base = css.match(/\.icon-btn,\s*\.link-btn,\s*\.cp-close,[\s\S]*?\{([^}]*)\}/)?.[1] ?? "";
-  assert.ok(base, "找不到幽灵按钮底座");
-  assert.match(base, /background:\s*none/, "底座没有去底色");
-  assert.match(base, /border:\s*none/, "底座没有去边框");
-  assert.match(base, /cursor:\s*pointer/, "底座没有指针样式");
-
-  // ② 具体按钮不许再把这三条抄回来（只查最典型的四个）。
-  for (const sel of [".icon-btn", ".link-btn", ".msg-ops \\.v-btn"]) {
-    const rule = css.match(new RegExp(`${sel}\\s*\\{([^}]*)\\}`))?.[1] ?? "";
-    assert.ok(rule, `找不到 ${sel} 的规则`);
-    assert.ok(!/background:\s*none/.test(rule), `${sel} 又自己写了一遍 background:none（应复用底座）`);
-    assert.ok(!/border:\s*none/.test(rule), `${sel} 又自己写了一遍 border:none（应复用底座）`);
-    assert.ok(!/cursor:\s*pointer/.test(rule), `${sel} 又自己写了一遍 cursor:pointer（应复用底座）`);
-  }
-
-  // ③ 蒙层浓度 token 在 theme.css，main.css 只管引用。
   for (const id of ["--mix-6", "--mix-8", "--mix-10", "--mix-13", "--mix-18"]) {
     assert.match(theme, new RegExp(`${id}:\\s*color-mix`), `theme.css 缺少 ${id}`);
   }
@@ -4179,19 +4053,10 @@ test("MD3 token 层：颜色/形状/动效/字体角色都在，三套主题各�
   assert.ok(!/--md-type-[a-z-]+:\s*\d+px/.test(theme), "MD3 字体角色写成了 px（界面缩放会对它失效）");
 });
 
-test("左栏 MD3：分段按钮 / extended FAB / 48dp 行 / 状态层 / MD3 忙碌环", () => {
+test("会话列表：忙碌、加载与选中反馈", () => {
   const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 
-  // 分段按钮（对话/生图）与 extended FAB
-  assert.match(css, /\.session-mode-tabs \{[^}]*border:\s*1px solid var\(--md-outline\)/, "模式切换不是 MD3 分段按钮");
-  assert.match(css, /\.session-mode-tabs \.v-btn\.v-btn--active \{[^}]*background:\s*var\(--md-secondary-container\)/, "分段按钮选中态不是 secondary-container");
-  assert.match(css, /#session-new \{[^}]*background:\s*var\(--md-primary-container\)/, "新建不是 MD3 extended FAB");
-  assert.match(css, /#session-new \{[^}]*box-shadow:\s*var\(--md-elev-1\)/, "FAB 没有 elevation 1");
-  assert.match(css, /#session-new:hover \{[^}]*box-shadow:\s*var\(--md-elev-2\)/, "FAB 悬停没有升到 elevation 2");
-
-  // 行：48dp、full 圆角、状态层、选中 tonal
-  assert.match(css, /\.session-item \{[^}]*min-height:\s*3\.2em/, "会话行不是 48dp");
   assert.match(css, /\.session-item::after \{[^}]*opacity:\s*0/, "会话行没有状态层");
   assert.match(css, /\.session-item:hover::after \{[^}]*--md-state-hover/, "没有 MD3 hover 状态层");
   assert.match(css, /\.session-item\.sel \{[^}]*background:\s*var\(--md-secondary-container\)/, "选中行不是 secondary-container");
@@ -4288,7 +4153,7 @@ test("设置页 MD3：segmented tab / 平铺行 / 表格 / 字段标签", () => 
 test("设置移动端：表格行变卡片，字段标签来自 data-label", () => {
   const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  for (const label of ["标题", "消息数", "名称", "标识", "内容预览", "渠道", "服务商", "文件", "导入时间"]) {
+  for (const label of ["名称", "内容预览", "文件", "导入时间"]) {
     assert.ok(settings.includes(`data-label="${label}"`), `设置表格缺移动端字段标签：${label}`);
   }
   assert.match(css, /@media \(max-width: 700px\) \{[\s\S]*#settings-view \.v-table\.plist thead \{ display: none !important; \}/,

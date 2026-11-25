@@ -17,13 +17,16 @@ import type { AgentTemplate } from "./AgentEditor.vue";
 import UpdatePane from "./UpdatePane.vue";
 import TavernInspector from "./TavernInspector.vue";
 import SettingsHome from "./SettingsHome.vue";
+import SettingsBack from "./SettingsBack.vue";
+import CloseButton from "./CloseButton.vue";
 import { ICONS } from "../assets/icons.ts";
 import { sharedApi } from "../utils/prefs.ts";
-import { SETTINGS_SECTIONS, groupModelsByProvider, modelOption, providerChoices, modelChoicesFor, modelKey, parseModelKey, providerDisplayName } from "../utils/format.ts";
+import { SETTINGS_SECTIONS, groupModelsByProvider, modelOption, providerChoices, modelChoicesFor, modelKey, parseModelKey, providerDisplayName, sessionTitle } from "../utils/format.ts";
 import type { ModelGroup } from "../utils/format.ts";
 import { downloadJSON, downloadBlob } from "../utils/download.ts";
 import { cartridgeAgent } from "../utils/cartridge.ts";
 import type { Agent, ChatConfig, DefaultsConfig, ProviderView, Segment, SessionView, TavernPreset } from "../api/types.ts";
+import type { ConfirmOptions } from "../types/app.ts";
 
 interface ChatForm {
   title_chars: string | number;
@@ -50,7 +53,7 @@ const emit = defineEmits<{
 // ask：全局确认框（App 的 Overlays.confirmAsk）—— 设置里的删除（会话/渠道/Agent）也必须先摊开再点头。
 // escBlocked：外面临时弹窗（会话设置）开着时，Esc 归它 —— 一次按键不许关两层。
 const props = withDefaults(defineProps<{
-  ask?: ((text: string) => Promise<boolean>) | null;
+  ask?: ((text: string, options?: ConfirmOptions) => Promise<boolean>) | null;
   escBlocked?: boolean;
   // only：单独入口（"provider" / "agent" / "update"）—— 只显示那一页、不渲染目录；
   // 空串 = 完整设置。两者共用同一份数据加载与同一套 panel。
@@ -473,7 +476,7 @@ function gotoSession(id: string): void {
   emit("goto-session", id);
 }
 async function askDropSession(id: string, title: string): Promise<void> {
-  if (props.ask && !(await props.ask(`删除会话「${title || "新会话"}」？消息与摘要一并删，不可逆。`))) return;
+  if (props.ask && !(await props.ask(`「${sessionTitle(title)}」及其消息和摘要将永久删除，无法恢复。`, { destructive: true, action: "删除会话" }))) return;
   try {
     await api.deleteSession(id);
     await loadSessions();
@@ -494,7 +497,7 @@ onMounted(() => {
 });
 onUnmounted(() => document.removeEventListener("keydown", onKey));
 function onKey(e: KeyboardEvent): void {
-  if (e.key !== "Escape") return;
+  if (e.key !== "Escape" || document.querySelector(".confirm-dialog.v-overlay--active")) return;
   // 二级页（Agent/渠道详情）或外面临时弹窗开着 ⇒ Esc 归它们；一次按键只关一层（踩过：双关）。
   if (editAgent.value || editSeg.value || editProvider.value || props.escBlocked) return;
   emit("close");
@@ -504,17 +507,7 @@ function onKey(e: KeyboardEvent): void {
 <template>
   <section id="settings-view" :class="{ 'flow-agent-open': agentFlowOpen }">
     <div class="settings-bar">
-      <!-- 目录页：左边这颗还是“收起会话栏”；进了子区：它变成“返回目录”。
-           同一个位置两种含义 ⇒ 靠 title/aria 与图标区分，不再额外加一颗按钮挤手机宽度。 -->
-      <VBtn
-        v-if="!only && tab !== 'home'"
-        variant="text"
-        size="small"
-        type="button"
-        title="返回设置目录"
-        aria-label="返回设置目录"
-        @click="tab = 'home'"
-      >←</VBtn>
+      <SettingsBack v-if="!only && tab !== 'home'" label="返回设置目录" @back="tab = 'home'" />
       <VBtn
         v-else
         variant="text"
@@ -526,9 +519,7 @@ function onKey(e: KeyboardEvent): void {
         v-html="leftSvg"
       ></VBtn>
       <h2 class="settings-title">{{ activeTitle }}</h2>
-      <VBtn icon variant="text" size="small" id="settings-close" type="button" title="退出设置（Esc）" aria-label="退出设置" @click="$emit('close')">
-        ×
-      </VBtn>
+      <CloseButton id="settings-close" label="退出设置" title="退出设置（Esc）" @click="$emit('close')" />
     </div>
 
     <div class="settings-body">
@@ -610,21 +601,26 @@ function onKey(e: KeyboardEvent): void {
           <p class="settings-lead">
             管理已有会话：点击一行回到对话，或导出、删除；也可以从对话记录文件新建会话。
           </p>
-          <h3>已有会话（{{ sessions.length }} 条，点击打开）</h3>
-          <div id="session-mgr-list">
-            <VTable class="plist">
-              <thead><tr><th>标题</th><th>消息数</th><th>模型</th><th></th></tr></thead>
-              <tbody><tr v-for="s in sessions" :key="s.id" class="clickable" @click="gotoSession(s.id)">
-                <td data-label="标题">{{ s.title || "新会话" }}</td>
-                <td data-label="消息数">{{ s.messages }}</td>
-                <td data-label="模型" :title="`${s.provider}/${s.model}`">{{ s.model || "—" }}</td>
-                <td data-label="操作" class="ops">
-                  <VBtn variant="text" size="small" type="button" @click.stop="exportSessionRow(s)" title="导出这条对话（含全部消息、摘要，以及使用的渠道、模型和智能体）">导出</VBtn>
-                  <VBtn color="error" variant="text" size="small" type="button" @click.stop="askDropSession(s.id, s.title)">删除</VBtn>
-                </td>
-              </tr></tbody>
-            </VTable>
-          </div>
+          <h3>已有会话（{{ sessions.length }}）</h3>
+          <ul v-if="sessions.length" id="session-mgr-list" class="settings-list" aria-label="已有会话">
+            <li v-for="s in sessions" :key="s.id" class="settings-list-row">
+              <VBtn class="settings-list-entry manage-entry" variant="text" type="button" @click="gotoSession(s.id)">
+                <span class="settings-list-copy">
+                  <strong>{{ sessionTitle(s.title) }}</strong>
+                  <span class="manage-meta">
+                    <span>{{ s.messages }} 条消息</span>
+                    <span v-if="s.model" :title="`${s.provider}/${s.model}`">{{ s.model }}</span>
+                  </span>
+                </span>
+                <span class="settings-list-chevron" aria-hidden="true" v-html="ICONS.chevronRight"></span>
+              </VBtn>
+              <div class="manage-actions">
+                <VBtn variant="text" size="small" type="button" @click="exportSessionRow(s)" :aria-label="`导出 ${sessionTitle(s.title)}`">导出</VBtn>
+                <VBtn variant="text" size="small" type="button" class="manage-delete" @click="askDropSession(s.id, s.title)" :aria-label="`删除 ${sessionTitle(s.title)}`">删除</VBtn>
+              </div>
+            </li>
+          </ul>
+          <p v-else class="manage-empty">还没有会话</p>
           <div class="row" v-if="sessionMgrStatus"><span class="status">{{ sessionMgrStatus }}</span></div>
           <!-- 导入区（2026-10-17 用户点名「混在一起、都乱了」）：两种格式各一张卡 ——
                各有一句「这是哪种文件、导进去会怎样」，动作都是按钮 + 隐藏文件框（原生 file 框太丑，
@@ -666,19 +662,26 @@ function onKey(e: KeyboardEvent): void {
             </div>
             <p class="hint">每个智能体 = 一份人设 + 一组能力开关；会话在顶栏切换使用哪一个。</p>
             <p class="action-note">「从模板创建」只写入初始内容；导入智能体文件会把它引用的提示词片段一起带进来。</p>
-            <div class="row"><span class="status">{{ cartridgeStatus }}</span></div>
-            <div id="agent-list">
-              <VTable class="plist">
-                <thead><tr><th>名称</th><th>标识</th><th>类型</th><th>描述</th><th>是否默认</th></tr></thead>
-                <tbody><tr v-for="a in agents" :key="a.id" class="clickable" @click="editExistingAgent(a)">
-                  <td data-label="名称">{{ a.name }}</td>
-                  <td data-label="标识" class="agent-id" :title="a.id">{{ a.id }}</td>
-                  <td data-label="类型" :title="agentTypeTitle(a)">{{ agentType(a) }}</td>
-                  <td data-label="描述" class="agent-desc" :title="a.description || ''">{{ a.description || "—" }}</td>
-                  <td data-label="默认" class="agent-default" :title="a.id === curDefault ? '新建会话默认使用' : ''">{{ a.id === curDefault ? "✓" : "" }}</td>
-                </tr></tbody>
-              </VTable>
-            </div>
+            <p v-if="cartridgeStatus" class="status" role="status">{{ cartridgeStatus }}</p>
+            <ul v-if="agents.length" id="agent-list" class="settings-list" aria-label="智能体">
+              <li v-for="a in agents" :key="a.id" class="settings-list-row">
+                <VBtn type="button" variant="text" class="settings-list-entry manage-entry" @click="editExistingAgent(a)">
+                  <span class="settings-list-copy">
+                    <span class="manage-meta manage-name">
+                      <strong>{{ a.name || a.id }}</strong>
+                      <span v-if="a.id === curDefault" class="manage-default">默认</span>
+                    </span>
+                    <span class="manage-meta">
+                      <code>{{ a.id }}</code>
+                      <span :title="agentTypeTitle(a)">{{ agentType(a) }}</span>
+                    </span>
+                    <span v-if="a.description" class="manage-description" :title="a.description">{{ a.description }}</span>
+                  </span>
+                  <span class="settings-list-chevron" aria-hidden="true" v-html="ICONS.chevronRight"></span>
+                </VBtn>
+              </li>
+            </ul>
+            <p v-else class="manage-empty">没有可显示的智能体</p>
           </template>
           <AgentEditor
             v-if="editAgent"
@@ -788,28 +791,34 @@ function onKey(e: KeyboardEvent): void {
             </VTabs>
             <VTabsWindow v-model="providerTab" class="agent-window">
             <VTabsWindowItem value="list">
-            <h3>渠道</h3>
-            <p class="hint">一条渠道 = 用哪个服务商、哪个密钥、哪些模型。点一行编辑；模型数是上次刷新到的数量。</p>
-            <div id="provider-list">
-              <VTable class="plist">
-                <thead><tr><th>渠道</th><th>服务商</th><th>模型</th><th>密钥</th><th></th></tr></thead>
-                <tbody><tr v-for="p in providers" :key="p.id" class="clickable" @click="editProvider = p">
-                  <td data-label="渠道" :title="p.name ? `${p.name}（${p.id}）` : p.id">
-                    <span class="provider-alias">{{ providerDisplayName(p) }}</span>
-                    <!-- 别名之下保留真实 id：列表显示的是人话，但改配置 / 对日志时得能一眼对回内部标识。 -->
-                    <code v-if="providerDisplayName(p) !== p.id" class="provider-id">{{ p.id }}</code>
-                  </td>
-                  <td data-label="服务商" :title="p.vendor">{{ p.vendor_name || p.vendor || "?" }}</td>
-                  <td data-label="模型">{{ p.models?.length ?? 0 }} 个<i v-if="p.model_filter" class="io-tag" :title="`只导入匹配：${p.model_filter}`">筛选</i></td>
-                  <td data-label="密钥">{{ p.has_key ? "已配置" : "未配置" }}</td>
-                  <td data-label="操作" class="ops"><VBtn color="error" variant="text" size="small" type="button" @click.stop="askDeleteProvider(p.id)">删除</VBtn></td>
-                </tr></tbody>
-              </VTable>
+            <div class="panel-head">
+              <h3>渠道（{{ providers.length }}）</h3>
+              <VBtn color="primary" variant="flat" size="small" type="button" @click="editProvider = 'new'">新建渠道</VBtn>
             </div>
-            <div class="row">
-              <VBtn color="primary" variant="flat" size="small" type="button" @click="editProvider = 'new'">新建</VBtn>
-              <span class="status">{{ routesStatus }}</span>
-            </div>
+            <ul v-if="providers.length" id="provider-list" class="settings-list" aria-label="渠道">
+              <li v-for="p in providers" :key="p.id" class="settings-list-row">
+                <VBtn type="button" variant="text" class="settings-list-entry manage-entry" @click="editProvider = p">
+                  <span class="settings-list-copy">
+                    <span class="manage-meta manage-name">
+                      <strong>{{ providerDisplayName(p) }}</strong>
+                      <code v-if="providerDisplayName(p) !== p.id">{{ p.id }}</code>
+                    </span>
+                    <span class="manage-meta">
+                      <span>{{ p.vendor_name || p.vendor }}</span>
+                      <span>{{ p.models?.length ?? 0 }} 个模型</span>
+                      <span>{{ p.has_key ? "密钥已配置" : "未配置密钥" }}</span>
+                      <span v-if="p.model_filter" :title="`只导入匹配：${p.model_filter}`">已筛选</span>
+                    </span>
+                  </span>
+                  <span class="settings-list-chevron" aria-hidden="true" v-html="ICONS.chevronRight"></span>
+                </VBtn>
+                <div class="manage-actions">
+                  <VBtn variant="text" size="small" type="button" class="manage-delete" @click="askDeleteProvider(p.id)" :aria-label="`删除 ${providerDisplayName(p)}`">删除</VBtn>
+                </div>
+              </li>
+            </ul>
+            <p v-else class="manage-empty">还没有渠道</p>
+            <p v-if="routesStatus" class="status" role="status">{{ routesStatus }}</p>
             </VTabsWindowItem>
             <VTabsWindowItem value="global">
               <ModelRulesEditor @saved="emit('models-changed')" />
@@ -841,3 +850,16 @@ function onKey(e: KeyboardEvent): void {
     />
   </section>
 </template>
+
+<style scoped>
+.manage-meta { display: flex; align-items: baseline; flex-wrap: wrap; min-width: 0; gap: 0.2em 0.75em; color: var(--md-on-surface-variant); font-size: var(--md-type-label-medium); }
+.manage-name { font-size: inherit; }
+.manage-name code { font-size: var(--md-type-label-medium); }
+.manage-description { color: var(--md-on-surface-variant); font-size: var(--md-type-body-medium); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.manage-default { color: var(--md-primary); font-size: var(--md-type-label-medium); }
+.manage-actions { display: flex; flex: none; gap: calc(var(--chat-space) / 4); }
+.manage-actions { padding-inline-end: calc(var(--chat-space) / 2); }
+#app .manage-actions .v-btn { min-width: 0; min-height: var(--chat-control); padding-inline: calc(0.75 * var(--chat-space)); color: var(--md-on-surface-variant); font-size: var(--md-type-label-large); letter-spacing: normal; }
+#app .manage-actions .manage-delete:is(:hover, :focus-visible) { color: var(--md-error); }
+.manage-empty { color: var(--md-on-surface-variant); font-size: var(--md-type-body-medium); }
+</style>

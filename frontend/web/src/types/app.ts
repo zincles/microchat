@@ -14,6 +14,7 @@ export type AppRow = ChatMessage & {
 export type ThinkPart = string | { text?: string; ms?: number } | undefined;
 export type PickerItem = { label: string; value?: unknown; [key: string]: unknown };
 export type SessionInfo = Partial<Session>;
+export interface ConfirmOptions { destructive?: boolean; action?: string }
 export type DraftPrefs = {
   provider: string;
   model: string;

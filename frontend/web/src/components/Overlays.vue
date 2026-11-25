@@ -1,9 +1,9 @@
 <script setup lang="ts">
-// 浮层三件（命令面板 / picker / 确认框）：挂 #overlays-vue，DOM 照旧
-// （.palette/.picker/.confirm + 各条目类），行为照 main.js。
-import { VBtn } from "vuetify/components";
+// 命令框与选择器跟随输入卡；确认对话框使用 Vuetify 的遮罩与焦点约束。
+import { VBtn, VCard, VDialog } from "vuetify/components";
+import CloseButton from "./CloseButton.vue";
 import { ref, useTemplateRef, watch } from "vue";
-import type { PickerItem } from "../types/app.ts";
+import type { ConfirmOptions, PickerItem } from "../types/app.ts";
 
 export interface PaletteItem {
   name: string;
@@ -25,9 +25,12 @@ const pickerOpen = ref(false);
 const confirmText = ref("");
 const confirmOpen = ref(false);
 const confirmDestructive = ref(false);
+const confirmAction = ref("");
+const cancelButton = useTemplateRef<InstanceType<typeof VBtn>>("cancelButton");
 
 let pickerAction: PickerAction | null = null;
 let confirmResolve: ((value: boolean) => void) | null = null;
+let confirmTrigger: HTMLElement | null = null;
 
 // 面板受输入卡上方的可用高度限制；用方向键选到屏外条目时，只滚动列表，不移动焦点。
 const panels = useTemplateRef<HTMLElement>("panels");
@@ -69,10 +72,13 @@ function runPicker(it?: PickerItem): void {
   if (it && a) emit("pick", a, it);
 }
 
-function confirmAsk(text: string, destructive = false): Promise<boolean> {
+function confirmAsk(text: string, options: ConfirmOptions = {}): Promise<boolean> {
+  confirmResolve?.(false);
+  confirmTrigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   return new Promise<boolean>((resolve) => {
     confirmText.value = text;
-    confirmDestructive.value = destructive;
+    confirmDestructive.value = options.destructive ?? false;
+    confirmAction.value = options.action ?? "";
     confirmOpen.value = true;
     confirmResolve = resolve;
   });
@@ -82,6 +88,11 @@ function confirmDone(v: boolean): void {
   const r = confirmResolve;
   confirmResolve = null;
   r?.(v);
+}
+function focusCancel(): void { cancelButton.value?.$el.focus({ preventScroll: true }); }
+function restoreConfirmFocus(): void {
+  if (confirmTrigger?.isConnected) confirmTrigger.focus({ preventScroll: true });
+  confirmTrigger = null;
 }
 
 defineExpose({
@@ -132,14 +143,29 @@ defineExpose({
         </div>
       </div>
     </div>
-    <div v-if="confirmOpen" class="confirm-backdrop" @click.self="confirmDone(false)">
-      <div class="confirm">
-        <div id="confirm-text">{{ confirmText }}</div>
-        <div class="confirm-btns">
-          <VBtn id="confirm-yes" :color="confirmDestructive ? 'error' : 'primary'" variant="flat" size="small" @click="confirmDone(true)">确认</VBtn>
-          <VBtn id="confirm-no" variant="text" size="small" @click="confirmDone(false)">取消</VBtn>
+    <VDialog :model-value="confirmOpen" attach="#app" class="confirm-dialog" width="440" max-width="calc(100% - 24px)"
+      aria-labelledby="confirm-title" aria-describedby="confirm-text" @update:model-value="(shown) => { if (!shown) confirmDone(false); }"
+      @after-enter="focusCancel" @after-leave="restoreConfirmFocus">
+      <VCard class="confirm-card" color="surface-container-high" @keydown.esc.stop="confirmDone(false)">
+        <div class="confirm-heading">
+          <h2 id="confirm-title">{{ confirmAction || '确认操作' }}</h2>
+          <CloseButton @click="confirmDone(false)" />
         </div>
-      </div>
-    </div>
+        <p id="confirm-text">{{ confirmText }}</p>
+        <div class="confirm-actions">
+          <VBtn ref="cancelButton" id="confirm-no" variant="text" size="small" @click="confirmDone(false)">取消</VBtn>
+          <VBtn id="confirm-yes" :color="confirmDestructive ? 'error' : 'primary'" variant="flat" size="small" @click="confirmDone(true)">{{ confirmAction || '确认' }}</VBtn>
+        </div>
+      </VCard>
+    </VDialog>
   </div>
 </template>
+
+<style scoped>
+.confirm-card { padding: calc(2 * var(--chat-space)); border-radius: var(--md-shape-lg); }
+.confirm-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--chat-space); }
+.confirm-heading h2 { margin: 0; font-size: var(--md-type-title-medium); font-weight: 600; }
+#confirm-text { margin: var(--chat-space) 0 calc(2 * var(--chat-space)); color: var(--md-on-surface-variant); white-space: pre-wrap; overflow-wrap: anywhere; }
+.confirm-actions { display: flex; justify-content: flex-end; gap: calc(var(--chat-space) / 2); }
+#app .confirm-actions .v-btn { min-height: var(--chat-control); }
+</style>

@@ -16,6 +16,7 @@ import {
   VTab, VTabs, VWindow, VWindowItem,
 } from "vuetify/components";
 import ModelIcon from "./ModelIcon.vue";
+import CloseButton from "./CloseButton.vue";
 import { ICONS } from "../assets/icons.ts";
 import {
   formatTokens,
@@ -117,8 +118,11 @@ const curModelChoice = computed<ModelChoice | null>(() => {
 
 const browseGroups = computed(() => groupModelChoices(modelGroups.value, modelBrowse.value));
 const modelTabs = computed(() => [
-  { id: "", label: "全部", count: browseGroups.value.reduce((n, g) => n + g.items.length, 0) },
-  ...browseGroups.value.map(({ id, label, items }) => ({ id, label, count: items.length })),
+  { id: "", label: "全部", count: browseGroups.value.reduce((n, g) => n + g.items.length, 0), icon: undefined },
+  ...browseGroups.value.map(({ id, label, items }) => ({
+    id, label, count: items.length,
+    icon: modelBrowse.value === "owner" ? items.find((item) => item.owner && item.icon)?.icon : undefined,
+  })),
 ]);
 const selectedModelGroup = computed(() => browseGroups.value.find((g) => g.id === modelGroupId.value));
 const selectedModelTab = computed(() => selectedModelGroup.value?.id ?? "");
@@ -381,7 +385,6 @@ const ctxDash = computed(() => `${ctxArc.value} ${100 - ctxArc.value}`);
 const ctxOver = computed(() => contextOverBudget(ctx.value));
 const flowActiveNodes = computed(() => props.flow ? (props.flowActiveNodes ?? []) : []);
 const flowCallCount = computed(() => props.flow ? Math.max(0, Number(props.flowCalls ?? 0), flowActiveNodes.value.length) : 0);
-const ringBusy = computed(() => props.flow ? flowCallCount.value > 0 : taskBusy.value);
 const ringCount = computed(() => props.flow ? flowCallCount.value : activeTaskCount.value);
 const ringCountText = computed(() => ringCount.value > 99 ? "99+" : String(ringCount.value));
 const ctxRows = computed<Array<[string, string]>>(() => {
@@ -452,15 +455,6 @@ const taskBusy = computed(() => taskRunning.value > 0 || queueRunning.value > 0)
 // 队列与它当前那一步原子任务是同一件事，用 max 避免重复计数；队列两步之间也算 1。
 const activeTaskCount = computed(() => Math.max(taskRunning.value, queueRunning.value));
 const taskCountText = computed(() => (activeTaskCount.value > 99 ? "99+" : String(activeTaskCount.value)));
-// 环的可见弧：正常跟上下文占用；有任务在跑时至少留一小段，让"在转"看得见
-//（否则占用很低时只有 2/100，或者草稿完全没有弧，转起来跟没转一样）。
-const ringDash = computed(() => {
-  if (props.flow) return flowCallCount.value > 0 ? "18 82" : "0 100";
-  if (!taskBusy.value) return ctxDash.value;
-  // 有任务在跑时至少留一小段可见的弧：占用很低时原本只有 2/100，转起来像没转。
-  const arc = Math.max(ctxArc.value, 18);
-  return `${arc} ${100 - arc}`;
-});
 // 环的 title / aria：把"在跑什么"和上下文占用一起说清。
 const taskTitle = computed(() => {
   if (props.flow) {
@@ -560,6 +554,7 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
 
 <template>
   <header @keydown.esc="onMenuEscape">
+    <div v-if="loading" class="session-entry-progress" aria-hidden="true"><span></span></div>
     <button
       v-if="leftHidden"
       id="toggle-left"
@@ -594,11 +589,16 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
         </template>
         <svg class="model-caret" viewBox="0 0 10 6" aria-hidden="true"><path d="M0 0h10L5 6z" /></svg>
       </button>
-      <template v-if="modelOpen">
-        <VCard id="chat-model-picker" v-click-outside="modelPanel.outside" class="agent-menu model-menu" role="dialog" aria-labelledby="model-menu-title" @focusout="modelPanel.onFocusOut">
+      <Transition name="model-picker">
+        <VCard v-if="modelOpen" id="chat-model-picker" v-click-outside="modelPanel.outside" class="agent-menu model-menu" role="dialog" aria-labelledby="model-menu-title" @focusout="modelPanel.onFocusOut">
           <div class="model-menu-head">
             <h2 id="model-menu-title">选择模型</h2>
-            <VBtn icon variant="text" size="small" title="关闭模型选择器" aria-label="关闭模型选择器" @click="modelPanel.close" v-html="ICONS.x" />
+            <VBtnToggle class="ui-mode-switch model-browse" :model-value="modelBrowse" mandatory variant="text"
+              role="group" aria-label="模型分组方式" @update:model-value="setModelBrowse">
+              <VBtn value="owner" :aria-pressed="modelBrowse === 'owner'">按归属</VBtn>
+              <VBtn value="channel" :aria-pressed="modelBrowse === 'channel'">按渠道</VBtn>
+            </VBtnToggle>
+            <CloseButton label="关闭模型选择器" @click="modelPanel.close" />
           </div>
           <input
             ref="modelSearchEl"
@@ -614,16 +614,6 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
             :aria-activedescendant="modelActive >= 0 ? `model-option-${modelActive}` : undefined"
             @keydown="onModelKey"
           />
-          <VBtnToggle
-            :model-value="modelBrowse"
-            class="model-browse"
-            mandatory divided density="compact" color="secondary-container"
-            role="group" aria-label="模型分组方式"
-            @update:model-value="setModelBrowse"
-          >
-            <VBtn value="owner" :aria-pressed="modelBrowse === 'owner'">按归属</VBtn>
-            <VBtn value="channel" :aria-pressed="modelBrowse === 'channel'">按渠道</VBtn>
-          </VBtnToggle>
           <div
             ref="modelTabsEl"
             class="model-group-tabs"
@@ -648,6 +638,7 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
               @keydown.left.prevent="moveModelTab(-1)"
               @click="selectModelTab(tab.id)"
             >
+              <ModelIcon v-if="tab.icon" :icon="tab.icon" size="sm" />
               {{ tab.label }}
             </button>
           </div>
@@ -671,7 +662,7 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
                   :title="`${m.alias || m.provider_name} / ${m.upstream_id || m.label}`"
                   @click="pickModel(m.value)"
                 >
-                  <ModelIcon :icon="m.icon" :brand="m.brand" size="lg" />
+                  <ModelIcon :icon="m.icon" :brand="m.brand" />
                   <span class="model-item-copy">
                     <span class="model-name">{{ m.label }}</span>
                     <span v-if="modelBrowse === 'owner' || (m.upstream_id && m.upstream_id !== m.label)" class="model-item-id">{{ modelItemDetail(m) }}</span>
@@ -699,14 +690,14 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
             >设当前为新会话默认</VBtn>
           </div>
         </VCard>
-      </template>
+      </Transition>
     </span>
     <span class="header-right">
       <!-- 聊天 / 上下文（2026-10-29 用户定）：开关在环左边；环说"占了多少"，这块说"占的是什么"。 -->
       <VTabs
         :model-value="workspace"
         class="workspace-tabs"
-        height="var(--md-touch-target)"
+        height="var(--chat-bar)"
         color="primary"
         aria-label="工作区"
         @update:model-value="setWorkspace"
@@ -714,27 +705,24 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
         <VTab value="chat" title="对话本身">聊天</VTab>
         <VTab value="context" :title="flow ? '当前 Agent 的工作流图' : '上下文工作区（压缩出来的前情提要、层级、状态、真发出去的载荷）'">{{ flow ? "工作流" : "上下文" }}</VTab>
       </VTabs>
-      <!-- 顺序是**环在左、开关在右**（2026-10-28 用户定）：开关是"控制栏的按钮"，
-           它是这一簇的锚，位置稳定；环是随状态变的仪表，挂在它左边不抢锚点。 -->
-      <!-- 上下文占比环（2026-11-02 合并后台任务）：环长 = 已用 / 输入预算；绿正常、红超预算。
-           圆心放**还在跑的后台任务数**；有任务时整个环转起来。点开是同一块面板，
-           两个 tab：上下文数字 / 运行任务明细。 -->
+      <!-- 内圈保留真实上下文占比；活动弧与中心计数只在有任务时显示。 -->
       <button
         id="ctx-ring"
         ref="ctxButtonEl"
         aria-haspopup="dialog"
         :aria-controls="ctxOpen ? 'chat-context-panel' : undefined"
         class="ctx-ring"
-        :class="{ over: !flow && ctxOver, idle: !flow && !ctx, busy: ringBusy, flow }"
+        :class="{ over: !flow && ctxOver }"
         type="button"
         :title="ringTitle"
         :aria-label="flow ? '正在运行的 LLM 调用' : '上下文占用与后台任务'"
         :aria-expanded="ctxOpen"
         @click="clickRing"
       >
-        <svg viewBox="0 0 32 32" aria-hidden="true">
-          <circle class="ctx-ring-track" cx="16" cy="16" r="13" />
-          <circle class="ctx-ring-fill" cx="16" cy="16" r="13" pathLength="100" :stroke-dasharray="ringDash" />
+        <svg viewBox="0 0 36 36" aria-hidden="true">
+          <circle class="ctx-ring-track" cx="18" cy="18" r="12.5" />
+          <circle v-if="!flow && ctxArc > 0" class="ctx-ring-fill" cx="18" cy="18" r="12.5" pathLength="100" :stroke-dasharray="ctxDash" />
+          <circle v-if="ringCount > 0" class="ctx-ring-activity" cx="18" cy="18" r="16" pathLength="100" stroke-dasharray="23 77" />
         </svg>
         <span v-if="ringCount > 0" class="ctx-ring-n">{{ ringCountText }}</span>
       </button>
@@ -744,7 +732,7 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
         <div class="flow-calls-head">
           <b>并行 LLM 调用</b>
           <span class="flow-calls-count">{{ flowCallCount }} 个运行中</span>
-          <VBtn icon variant="text" size="small" type="button" title="关闭" aria-label="关闭" @click="ctxPanel.close">×</VBtn>
+          <CloseButton label="关闭并行 LLM 调用" @click="ctxPanel.close" />
         </div>
         <p v-if="!flowActiveNodes.length" class="agent-empty">当前没有运行中的 LLM 调用。</p>
         <VList v-else density="compact" class="flow-calls-list">

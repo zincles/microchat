@@ -41,6 +41,8 @@ export const ICONS = {
   // 设置列表行尾的进入箭头（MD3 list item 的 trailing chevron）。
   chevronRight:
     '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>',
+  arrowLeft:
+    '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 19-7-7 7-7M5 12h14"/></svg>',
   // 会话条目的「选项」：竖排三点。一个入口装下设置与删除，别再让行内挤两枚键。
   // 品牌标（左栏顶，Gemini 式的小星芒）。四角星 + 一颗小星。
   spark:

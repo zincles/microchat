@@ -9,6 +9,7 @@
 // 只 PATCH 这一条消息的 content 或 reasoning；保存成功后由父组件重拉消息与状态。
 import { ref, computed, nextTick, onMounted, watch } from "vue";
 import { VBtn, VCard, VCardActions, VCardText, VCardTitle, VDialog, VTextarea } from "vuetify/components";
+import CloseButton from "./CloseButton.vue";
 import { sharedApi } from "../utils/prefs.ts";
 import { ICONS } from "../assets/icons.ts";
 import type { EditMessageRequest, Message } from "../api/types.ts";
@@ -45,11 +46,8 @@ const status = ref("");
 const busy = ref(false);
 const expanded = ref(false);
 const changed = computed(() => text.value !== original);
-const label = computed(() => (props.kind === "reasoning" ? "思考" : "正文"));
-const heading = computed(() => {
-  const n = props.message.idx;
-  return `编辑${label.value}${n != null ? ` · #${n}` : ""}`;
-});
+const label = computed(() => props.kind === "reasoning" ? "思考" : props.message.role === "user" ? "Prompt" : "回复正文");
+const heading = computed(() => `编辑${label.value === "Prompt" ? " " : ""}${label.value}`);
 
 // 关闭统一走 VDialog 的 v-model：点 × / 遮罩 / Esc 都会让它变 false，再由这里发 close。
 watch(open, (value) => { if (!value) emit("close"); });
@@ -84,21 +82,24 @@ onMounted(() => {
     v-model="open"
     attach="#app"
     class="message-edit-dialog"
+    aria-labelledby="message-edit-heading"
     :class="{ expanded }"
     scrim="rgba(0, 0, 0, 0.45)"
     :fullscreen="expanded"
   >
     <VCard class="message-edit-card" elevation="3">
       <VCardTitle class="message-edit-title">
-        <span>{{ heading }}</span>
+        <div class="message-edit-heading">
+          <h2 id="message-edit-heading">{{ heading }}</h2>
+          <span v-if="props.message.idx != null">#{{ props.message.idx }}</span>
+        </div>
         <span class="head-btns">
           <VBtn icon variant="text" size="small" class="full-btn"
             :title="expanded ? '退出网页全屏' : '网页全屏'"
             :aria-label="expanded ? '退出网页全屏' : '网页全屏'"
             :aria-pressed="expanded ? 'true' : 'false'"
             @click="toggleExpanded" v-html="expanded ? ICONS.minimize : ICONS.maximize" />
-          <VBtn icon variant="text" size="small" title="关闭（不保存）" aria-label="关闭"
-            @click="close" v-html="ICONS.x" />
+          <CloseButton title="关闭（不保存）" @click="close" />
         </span>
       </VCardTitle>
       <VCardText class="message-edit-body">
@@ -107,13 +108,14 @@ onMounted(() => {
           v-model="text"
           class="message-edit-field"
           rows="14"
-          variant="outlined"
+          variant="plain"
           hide-details
+          :aria-label="label"
           :placeholder="`${label}内容`"
         />
       </VCardText>
       <VCardActions class="message-edit-foot">
-        <span class="status">{{ status }}</span>
+        <span class="status" role="status">{{ status }}</span>
         <VBtn variant="text" size="small" @click="close">取消</VBtn>
         <VBtn color="primary" variant="flat" size="small" :disabled="busy" @click="save(false)">保存</VBtn>
         <VBtn v-if="rerollable" variant="tonal" size="small" :disabled="busy" @click="save(true)">{{ flow ? "保存并重新生成" : "保存并重摇" }}</VBtn>

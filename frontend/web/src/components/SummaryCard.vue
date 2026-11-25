@@ -3,11 +3,12 @@
 // 头行 `Summary #a-b`（+ `脏` 徽标）；正文 = **摘要文本**（发给模型的就是这份，折叠态就看它）；
 // `查看未压缩文本` 展开被盖住的原始气泡 —— 带着各自的操作（编辑/删除照常可用，
 // 不然被折住的消息在界面上就没有入口了）。
-import { computed } from "vue";
+import { computed, useTemplateRef, watch } from "vue";
 import { VBtn } from "vuetify/components";
 import MessageBubble from "./MessageBubble.vue";
 import { ICONS } from "../assets/icons.ts";
 import { renderMacroHtml, type MacroMap } from "../utils/macros.ts";
+import { animateCandidate } from "../utils/candidateMotion.ts";
 import type { ChatRow, ChatSummary } from "../utils/chatrows.ts";
 import type { RerollView } from "../types/app.ts";
 
@@ -37,6 +38,8 @@ const props = withDefaults(defineProps<{
 // 卡里的原文气泡**只读**：不给 messageId ⇒ MessageBubble 不画操作行（用户定：展开里不许编辑/修改）。
 // refresh = 摇新一版（当前那版留在第 1 位，不丢）；edit = 应用内编辑器；version = ◀▶ 翻版（最右再按 = 再摇）。
 const summaryHtml = computed(() => renderMacroHtml(props.summary.text ?? "", props.macros));
+const body = useTemplateRef<HTMLElement>("body");
+watch(() => props.reroll?.current_idx, (next, previous) => animateCandidate(body.value, next, previous), { flush: "post" });
 const emit = defineEmits<{
   "toggle-raw": [open: boolean];
   refresh: [];
@@ -67,7 +70,7 @@ const emit = defineEmits<{
         <span v-if="reroll && reroll.running" class="sum-busy">刷新中…</span>
       </span>
     </div>
-    <div class="sum-text" v-html="summaryHtml"></div>
+    <div ref="body" class="sum-text" v-html="summaryHtml"></div>
     <details class="sum-raw" @toggle="(e) => emit('toggle-raw', (e.target as HTMLDetailsElement).open)">
       <summary>查看未压缩文本</summary>
       <div v-if="loading" class="sum-loading">拉取未压缩文本…</div>

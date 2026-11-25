@@ -2,9 +2,9 @@
 //
 // 这一层只碰“候选与位次”：装配材料由后端现算，落库由 switch 接口完成。
 // 消息列的渲染仍由 App 拿这里的状态算（isLive / bubbleContent），避免把模板逻辑搬进 composable。
-import { ref } from "vue";
+import { onScopeDispose, ref } from "vue";
 import type { Ref } from "vue";
-import type { RerollState, StreamSlice } from "../api/types.ts";
+import type { RerollAccepted, RerollState, StreamSlice } from "../api/types.ts";
 import { mergeStreamSlice } from "../api/client.ts";
 import { bubbleText, rerollTargetLive, type ChatSegment } from "../utils/chatrows.ts";
 import type { AppRow } from "../types/app.ts";
@@ -13,10 +13,10 @@ import { emptyReroll, type RerollView } from "../types/app.ts";
 interface RerollApi {
   rerollState(id: string): Promise<RerollState>;
   rerollSummaryState(id: string): Promise<RerollState>;
-  rerollEnter(id: string): Promise<unknown>;
-  rerollSwitch(id: string, idx: number): Promise<unknown>;
-  rerollSummaryEnter(id: string, idx: number): Promise<unknown>;
-  rerollSummarySwitch(id: string, idx: number): Promise<unknown>;
+  rerollEnter(id: string): Promise<RerollAccepted>;
+  rerollSwitch(id: string, idx: number): Promise<RerollState>;
+  rerollSummaryEnter(id: string, idx: number): Promise<RerollAccepted>;
+  rerollSummarySwitch(id: string, idx: number): Promise<RerollState>;
   turnText(id: string, from: number, thinkFrom: number): Promise<StreamSlice>;
 }
 
@@ -26,6 +26,7 @@ export interface RerollDeps {
   getSessionID: () => string | null;
   getEpoch: () => number;
   isFlow: () => boolean;
+  isWindowLoading: () => boolean;
   getLastMsgId: () => string | null;
   vueSegments: Ref<ChatSegment[]>;
   streamDisplay: Ref<{ text: string; reasoning: string }>;
@@ -35,43 +36,62 @@ export interface RerollDeps {
   refreshStatusline: (phase: string, elapsedMs?: number | null, opts?: { withContext?: boolean }) => void;
   refreshTasks: () => void;
   reloadWindow: () => Promise<boolean>;
+  onVersionWritten: (id: string) => void;
   refreshStateView: (id?: string | null) => void;
 }
 
 export interface Reroll {
   rerollState: Ref<RerollView>;
   summaryReroll: Ref<RerollView>;
-  rerollPreview: Ref<{ text: string; reasoning: string }>;
   rerollStarting: Ref<string | null>;
   isLive: (m: AppRow) => boolean;
   bubbleContent: (m: AppRow) => string;
   bubbleReasoning: (m: AppRow) => string;
   rowDuration: (m: AppRow) => number | null;
-  refreshReroll: () => Promise<void>;
-  refreshRerollSummary: () => Promise<void>;
-  refreshRerolls: () => Promise<unknown>;
+  refreshRerolls: () => Promise<void>;
+  resetRerollView: () => void;
   summaryRefresh: (sumId: string) => Promise<void>;
-  summarySwitch: (idx: number) => Promise<void>;
   summaryVersion: (delta: number) => Promise<void>;
-  pollReroll: (sid: string) => Promise<RerollView | null>;
   rerollNow: (targetId?: string | null) => Promise<void>;
   rerollGo: (delta: number) => Promise<void>;
-  switchReroll: (sid: string, idx: number) => Promise<void>;
-  resumeRerollIfLive: () => Promise<void>;
+}
+
+type Family = "message" | "summary";
+interface PendingCandidate {
+  kind: Family;
+  target: string;
+  idx: number | null; // null = 还在等受理回执
 }
 
 export function useReroll({
-  api, toast, getSessionID, getEpoch, isFlow, getLastMsgId, vueSegments, streamDisplay,
+  api, toast, getSessionID, getEpoch, isWindowLoading, isFlow, getLastMsgId, vueSegments, streamDisplay,
   setStreamTarget, resetTypewriter, waitTypewriter, refreshStatusline, refreshTasks, reloadWindow,
-  refreshStateView,
+  onVersionWritten, refreshStateView,
 }: RerollDeps): Reroll {
   const rerollState = ref<RerollView>(emptyReroll());
   const summaryReroll = ref<RerollView>(emptyReroll());
-  const rerollPreview = ref({ text: "", reasoning: "" });
   const rerollStarting = ref<string | null>(null);
 
-  function clearRerollPreview(): void {
-    rerollPreview.value = { text: "", reasoning: "" };
+  // 候选属于会话；前台观察者只属于当前这次进入。切走时不取消后台任务，也不在别处轮询。
+  const pending = new Map<string, PendingCandidate>();
+  const switching = new Set<string>();
+  let observer: { epoch: number } | null = null;
+
+  function resetRerollView(): void {
+    observer = null;
+    rerollState.value = emptyReroll();
+    summaryReroll.value = emptyReroll();
+    rerollStarting.value = null;
+  }
+  onScopeDispose(resetRerollView);
+
+  function targetOf(state: RerollState): string | undefined {
+    return state.target_kind === "message" ? state.target_message_id : state.target_summary_id;
+  }
+
+  function paintState(state: RerollState): void {
+    rerollState.value = state.active && state.target_kind === "message" ? state : emptyReroll();
+    summaryReroll.value = state.active && state.target_kind === "summary" ? state : emptyReroll();
   }
 
   const isLive = (m: AppRow): boolean =>
@@ -96,215 +116,168 @@ export function useReroll({
     return Number.isFinite(n) && n > 0 ? n : null;
   }
 
-  async function refreshReroll(): Promise<void> {
-    const sid = getSessionID();
-    if (!sid || isFlow()) { rerollState.value = emptyReroll(); clearRerollPreview(); return; }
-    const my = getEpoch();
+  async function applyVersion(sid: string, kind: Family, idx: number): Promise<boolean> {
+    if (switching.has(sid)) return false;
+    switching.add(sid);
+    let written = false;
     try {
-      const st = await api.rerollState(sid);
-      if (my !== getEpoch()) return;
-      const active = st?.active && st.target_kind === "message";
-      rerollState.value = active ? st : emptyReroll();
-      if (!active) clearRerollPreview();
-    } catch {
-      if (my !== getEpoch()) return;
-      rerollState.value = emptyReroll();
-      clearRerollPreview();
+      const state = await (kind === "message" ? api.rerollSwitch(sid, idx) : api.rerollSummarySwitch(sid, idx));
+      written = true;
+      pending.delete(sid);
+      onVersionWritten(sid);
+      if (getSessionID() !== sid || isWindowLoading()) return true;
+      const epoch = getEpoch();
+      const loaded = await reloadWindow();
+      if (getEpoch() === epoch && getSessionID() === sid && loaded) {
+        paintState(state);
+        rerollStarting.value = null;
+        refreshStateView(sid);
+        refreshStatusline("idle");
+      }
+      return loaded;
+    } catch (err) {
+      if (getSessionID() === sid) toast(`${written ? "候选已切换，载入正文失败" : "切版失败"}：${err instanceof Error ? err.message : String(err)}`, "error");
+      return false;
+    } finally {
+      switching.delete(sid);
     }
   }
 
-  async function refreshRerollSummary(): Promise<void> {
+  async function observeReroll(initial?: RerollState): Promise<void> {
     const sid = getSessionID();
-    if (!sid) { summaryReroll.value = emptyReroll(); return; }
-    const my = getEpoch();
+    const epoch = getEpoch();
+    if (!sid || isWindowLoading() || observer?.epoch === epoch || switching.has(sid)) return;
+    const known = pending.get(sid);
+    if (known?.kind === "message") rerollStarting.value = known.target;
+    if (known?.idx === null) return;
+
+    const watching = { epoch };
+    observer = watching;
+    const owns = () => observer === watching && getEpoch() === epoch && getSessionID() === sid;
+    let kind: Family = known?.kind ?? "message";
     try {
-      const st = await api.rerollSummaryState(sid);
-      if (my !== getEpoch()) return;
-      summaryReroll.value = st?.active && st.target_kind === "summary" ? st : emptyReroll();
-    } catch {
-      if (my === getEpoch()) summaryReroll.value = emptyReroll();
+      let state = initial;
+      if (!state?.active) {
+        const [message, summary] = await Promise.all([
+          isFlow() ? emptyReroll() : api.rerollState(sid),
+          api.rerollSummaryState(sid),
+        ]);
+        state = message.running ? message : summary.running ? summary : message.active ? message : summary;
+      }
+      if (!owns()) return;
+      kind = state.target_kind ?? kind;
+      const target = targetOf(state);
+      let intent = known?.kind === kind && known.target === target ? known : undefined;
+      if (known && !intent) pending.delete(sid);
+      let cur = { from: 0, thinkFrom: 0 };
+      let text = { text: "", reasoning: "" };
+      const read = kind === "message" ? api.rerollState : api.rerollSummaryState;
+      while (state.active && targetOf(state) === target && state.running) {
+        const idx = state.items.find((item) => item.pending)?.idx;
+        if (idx !== undefined && target) {
+          intent = { kind, target, idx };
+          pending.set(sid, intent);
+        }
+        paintState(state);
+        if (kind === "message") {
+          const slice = await api.turnText(sid, cur.from, cur.thinkFrom).catch(() => null);
+          if (!owns()) return;
+          if (slice) {
+            const merged = mergeStreamSlice(text, cur, slice);
+            text = { text: merged.text, reasoning: merged.reasoning };
+            setStreamTarget(merged.text, merged.reasoning);
+            cur = merged.cur;
+          }
+        }
+        refreshStatusline(kind === "message" ? "重摇中" : "摘要刷新中", undefined, { withContext: false });
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        if (!owns()) return;
+        state = await read(sid);
+        if (!owns()) return;
+      }
+
+      // count 含正在生成的占位。必须确认同一目标的这个位次已经有正文，取消不能切到旧候选。
+      const idx = intent?.idx;
+      if (idx && state.active && targetOf(state) === intent?.target && !state.error && state.current_idx !== idx &&
+          state.items.some((item) => item.idx === idx && !item.pending)) {
+        if (kind === "message") await waitTypewriter();
+        if (!owns()) return;
+        const applied = await applyVersion(sid, kind, idx);
+        if (!owns() || applied) return;
+      }
+      pending.delete(sid);
+      paintState(state);
+      rerollStarting.value = null;
+      if (intent) refreshStatusline("idle");
+      if (state.error && intent) toast(`重摇失败：${state.error}`, "error");
+    } catch (err) {
+      if (!owns()) return;
+      const running = pending.has(sid);
+      resetRerollView();
+      if (running) toast(`读取重摇进度失败：${err instanceof Error ? err.message : String(err)}`, "error");
+    } finally {
+      if (observer === watching) observer = null;
     }
   }
 
-  function refreshRerolls(): Promise<unknown> {
-    return Promise.all([refreshReroll(), refreshRerollSummary()]).catch(() => {});
+  async function begin(sid: string, kind: Family, target: string, accept: () => Promise<RerollAccepted>): Promise<void> {
+    if (switching.has(sid) || rerollState.value.running || summaryReroll.value.running) return;
+    if (pending.has(sid)) { await observeReroll(); return; }
+    observer = null;
+    const intent: PendingCandidate = { kind, target, idx: null };
+    pending.set(sid, intent);
+    if (kind === "message") {
+      resetTypewriter();
+      rerollStarting.value = target;
+    }
+    let response: RerollAccepted;
+    try { response = await accept(); }
+    catch (err) {
+      pending.delete(sid);
+      if (getSessionID() === sid) {
+        rerollStarting.value = null;
+        toast(`重摇失败：${err instanceof Error ? err.message : String(err)}`, "error");
+      }
+      return;
+    }
+    refreshTasks();
+    intent.target = targetOf(response.state) ?? target;
+    intent.idx = response.state.items.find((item) => item.pending)?.idx ?? 0;
+    if (getSessionID() === sid) await observeReroll(response.state);
+  }
+
+  async function rerollNow(targetId: string | null = null): Promise<void> {
+    const sid = getSessionID();
+    const target = targetId || getLastMsgId();
+    if (sid && target && !isFlow()) await begin(sid, "message", target, () => api.rerollEnter(sid));
   }
 
   async function summaryRefresh(sumId: string): Promise<void> {
     const sid = getSessionID();
     const seg = vueSegments.value.find((x): x is Extract<ChatSegment, { kind: "summary" }> => x.kind === "summary" && x.id === sumId);
-    if (!sid || !seg) return;
-    if (summaryReroll.value.active && summaryReroll.value.running) { toast("摘要还在刷新"); return; }
-    // 与 rerollNow 同一个口径：只有“真的多出一版”才切（被按停 ⇒ 不切）。
-    const versionsBefore = summaryReroll.value.count;
-    try {
-      await api.rerollSummaryEnter(sid, seg.b);
-      refreshTasks();
-    } catch (err: unknown) {
-      toast(`刷新失败：${err instanceof Error ? err.message : String(err)}`, "error");
+    if (sid && seg) await begin(sid, "summary", sumId, () => api.rerollSummaryEnter(sid, seg.b));
+  }
+
+  async function move(kind: Family, delta: number): Promise<void> {
+    const sid = getSessionID();
+    const state = (kind === "message" ? rerollState : summaryReroll).value;
+    if (!sid || !state.active || state.running || pending.has(sid) || switching.has(sid)) return;
+    const idx = state.current_idx + delta;
+    if (idx < 1) { toast("已经是第一版了"); return; }
+    if (idx > state.count) {
+      if (kind === "message") await rerollNow();
+      else await summaryRefresh(state.target_summary_id ?? "");
       return;
     }
-    const my = getEpoch();
-    const st = await pollRerollSummary(sid);
-    if (my !== getEpoch()) return;
-    if (st?.error) { toast(`刷新失败：${st.error}`, "error"); return; }
-    if (!st?.active) return;
-    if (st.count <= versionsBefore) { await refreshRerollSummary(); return; }
-    await summarySwitch(st.count);
-  }
-
-  async function pollRerollSummary(sid: string): Promise<RerollView | null> {
-    const my = getEpoch();
-    let st: RerollView | null = null;
-    for (let i = 0; i < 450; i++) {
-      await new Promise((r) => setTimeout(r, 400));
-      if (my !== getEpoch()) return null;
-      st = await api.rerollSummaryState(sid).catch(() => null);
-      if (!st || my !== getEpoch()) return null;
-      summaryReroll.value = st.active && st.target_kind === "summary" ? st : emptyReroll();
-      refreshStatusline(st.running ? "摘要刷新中" : "idle", undefined, { withContext: !st.running });
-      if (!st.running) return st;
-    }
-    return st;
-  }
-
-  async function summarySwitch(idx: number): Promise<void> {
-    const sid = getSessionID();
-    if (!sid) return;
-    const my = getEpoch();
-    try {
-      await api.rerollSummarySwitch(sid, idx);
-    } catch (err: unknown) {
-      toast(`切版失败：${err instanceof Error ? err.message : String(err)}`, "error");
-      return;
-    }
-    if (my !== getEpoch()) return;
-    await reloadWindow();
-    refreshStateView();
-    await refreshRerollSummary();
-  }
-
-  async function summaryVersion(delta: number): Promise<void> {
-    const st = summaryReroll.value;
-    if (!st.active || st.running) return;
-    const to = st.current_idx + delta;
-    if (delta > 0 && to > st.count) { await summaryRefresh(st.target_summary_id ?? ""); return; }
-    if (delta < 0 && to < 1) { toast("已经是第一版了"); return; }
-    await summarySwitch(to);
-  }
-
-  async function pollReroll(sid: string): Promise<RerollView | null> {
-    const my = getEpoch();
-    let st: RerollView | null = null;
-    let cur = { from: 0, thinkFrom: 0 };
-    for (let i = 0; i < 450; i++) {
-      await new Promise((r) => setTimeout(r, 400));
-      if (my !== getEpoch()) return null;
-      st = await api.rerollState(sid).catch(() => null);
-      if (!st || my !== getEpoch()) return null;
-      // ⚠ 无条件写回，不是“活着才写”（2026-11-01 修的 bug：按停之后界面一直等）。
-      rerollState.value = st.active && st.target_kind === "message" ? st : emptyReroll();
-      if (st.running) {
-        const slice = await api.turnText(sid, cur.from, cur.thinkFrom).catch(() => null);
-        if (slice && my === getEpoch()) {
-          const merged = mergeStreamSlice(
-            { text: rerollPreview.value.text, reasoning: rerollPreview.value.reasoning }, cur, slice);
-          rerollPreview.value = { text: merged.text, reasoning: merged.reasoning };
-          setStreamTarget(merged.text, merged.reasoning);
-          cur = merged.cur;
-        }
-      }
-      refreshStatusline(st.running ? "重摇中" : "idle", undefined, { withContext: !st.running });
-      if (!st.running) return st;
-    }
-    return st;
-  }
-
-  async function rerollNow(targetId: string | null = null): Promise<void> {
-    const sid = getSessionID();
-    if (!sid) return;
-    const my = getEpoch();
-    clearRerollPreview();
-    resetTypewriter();
-    const target = targetId || getLastMsgId();
-    if (!target) return;
-    rerollStarting.value = target;
-    const versionsBefore = rerollState.value.count;
-    try {
-      try {
-        await api.rerollEnter(sid);
-        refreshTasks();
-      } catch (err: unknown) {
-        toast(`重摇失败：${err instanceof Error ? err.message : String(err)}`, "error");
-        return;
-      }
-      const st = await pollReroll(sid);
-      if (my !== getEpoch()) return;
-      if (st?.error) { toast(`重摇失败：${st.error}`, "error"); clearRerollPreview(); return; }
-      if (!st?.active) return;
-      if (st.count <= versionsBefore) { await refreshReroll(); return; }
-      await waitTypewriter();
-      await switchReroll(sid, st.count);
-    } finally {
-      rerollStarting.value = null;
-    }
-  }
-
-  async function rerollGo(delta: number): Promise<void> {
-    const sid = getSessionID();
-    const st = rerollState.value;
-    if (!sid || !st.active || st.running) return;
-    const to = st.current_idx + delta;
-    if (delta > 0 && to > st.count) { await rerollNow(); return; }
-    if (delta < 0 && to < 1) { toast("已经是第一版了"); return; }
-    await switchReroll(sid, to);
-  }
-
-  async function switchReroll(sid: string, idx: number): Promise<void> {
-    const my = getEpoch();
-    try {
-      await api.rerollSwitch(sid, idx);
-    } catch (err: unknown) {
-      toast(`切版失败：${err instanceof Error ? err.message : String(err)}`, "error");
-      return;
-    }
-    if (my !== getEpoch()) return;
-    await reloadWindow();
-    // 预览与库内正文必须同一拍换过去，否则会闪一帧空白。
-    clearRerollPreview();
-    rerollStarting.value = null;
-    refreshStateView(sid);
-    refreshStatusline("idle");
-    await refreshRerolls();
-  }
-
-  async function resumeRerollIfLive(): Promise<void> {
-    const sid = getSessionID();
-    if (!sid) return;
-    const messageLive = rerollState.value.active && rerollState.value.running;
-    const summaryLive = summaryReroll.value.active && summaryReroll.value.running;
-    if (!messageLive && !summaryLive) return;
-    const my = getEpoch();
-    if (messageLive) {
-      const before = rerollState.value.count;
-      const st = await pollReroll(sid).catch(() => null);
-      if (my !== getEpoch() || !st) return;
-      if (st.active && st.count > before) await switchReroll(sid, st.count);
-      else await refreshReroll();
-      return;
-    }
-    const before = summaryReroll.value.count;
-    const st = await pollRerollSummary(sid).catch(() => null);
-    if (my !== getEpoch() || !st) return;
-    if (st.active && st.count > before) await summarySwitch(st.count);
-    else await refreshRerollSummary();
+    observer = null;
+    await applyVersion(sid, kind, idx);
   }
 
   return {
-    rerollState, summaryReroll, rerollPreview, rerollStarting,
+    rerollState, summaryReroll, rerollStarting,
     isLive, bubbleContent, bubbleReasoning, rowDuration,
-    refreshReroll, refreshRerollSummary, refreshRerolls,
-    summaryRefresh, summarySwitch, summaryVersion, pollReroll, rerollNow, rerollGo, switchReroll,
-    resumeRerollIfLive,
+    refreshRerolls: () => observeReroll(), resetRerollView,
+    summaryRefresh, summaryVersion: (delta) => move("summary", delta),
+    rerollNow, rerollGo: (delta) => move("message", delta),
   };
 }

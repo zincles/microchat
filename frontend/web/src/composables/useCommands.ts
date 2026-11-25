@@ -6,7 +6,7 @@ import type { Ref } from "vue";
 import { COMMAND_META } from "../utils/commands.ts";
 import { deletionPlanSummary } from "../utils/format.ts";
 import type { Agent, ProviderView, SessionView, Summary } from "../api/types.ts";
-import type { AppRow, EditableSummary, PickerItem } from "../types/app.ts";
+import type { AppRow, ConfirmOptions, EditableSummary, PickerItem } from "../types/app.ts";
 import type { ChatSummary } from "../utils/chatrows.ts";
 
 interface CommandApi {
@@ -22,7 +22,7 @@ interface CommandApi {
 interface OverlaySink {
   showPicker(title: string, items: PickerItem[], action: (item: PickerItem) => void): void;
   hidePalette(): void;
-  confirmAsk(text: string): Promise<boolean>;
+  confirmAsk(text: string, options?: ConfirmOptions): Promise<boolean>;
 }
 
 export interface CommandsDeps {
@@ -95,7 +95,7 @@ export function useCommands({
     delete: async () => {
       const sid = getSessionID();
       if (!sid) return;
-      if (!(await overlaysRef.value?.confirmAsk(`删除整个会话 ${sid}？`))) return;
+      if (!(await overlaysRef.value?.confirmAsk("当前会话及其消息和摘要将永久删除，无法恢复。", { destructive: true, action: "删除会话" }))) return;
       await api.deleteSession(sid);
       await startDraft();
     },

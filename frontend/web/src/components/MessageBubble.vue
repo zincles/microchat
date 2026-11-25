@@ -9,6 +9,7 @@ import { renderMarkdown, splitState } from "../utils/markdown.ts";
 import { buildToolTimeline } from "../utils/chatrows.ts";
 import { renderMacroHtml, type MacroMap } from "../utils/macros.ts";
 import { renderMermaidIn } from "../utils/mermaid.ts";
+import { animateCandidate } from "../utils/candidateMotion.ts";
 import type { RerollView } from "../types/app.ts";
 import type { MessageTool } from "../api/types.ts";
 import MessageToolCard from "./MessageToolCard.vue";
@@ -117,6 +118,7 @@ const reasoningHtml = computed(() => renderMacroHtml(props.reasoning, props.macr
 // `overflow-x: auto` 之外再标一个类 —— 只有真的溢出才提示，短公式不受影响。
 const textEl = ref<HTMLElement | null>(null);
 const msgEl = ref<HTMLElement | null>(null);
+watch(() => props.reroll?.current_idx, (next, previous) => animateCandidate(msgEl.value, next, previous), { flush: "post" });
 let cursorEl: HTMLSpanElement | null = null;
 function markMathOverflow(): void {
   const root = textEl.value;

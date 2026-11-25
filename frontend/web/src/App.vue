@@ -53,7 +53,7 @@ import type {
 } from "./api/types.ts";
 import type { ChatSummary } from "./utils/chatrows.ts";
 import type {
-  AppRow, DraftPrefs, EditableSummary, PickerItem, SessionInfo, ThinkPart,
+  AppRow, ConfirmOptions, DraftPrefs, EditableSummary, PickerItem, SessionInfo, ThinkPart,
 } from "./types/app.ts";
 import { errCode, errText } from "./types/app.ts";
 
@@ -127,7 +127,7 @@ const {
   api,
   toast,
   topbarRef,
-  onCanceled: () => { refreshReroll(); refreshRerollSummary(); },
+  onCanceled: () => { void refreshRerolls(); },
 });
 
 const {
@@ -151,8 +151,8 @@ const { resetChrome, onMessagesScroll } = useChrome();
 
 const { liftOverlays, install: installOverlayLayout, uninstall: uninstallOverlayLayout } = useOverlayLayout();
 // askConfirm：给设置/子编辑器用的全局确认框（与左栏删除同一个口 —— "不可逆的删除先摊开"）。
-function askConfirm(text: string): Promise<boolean> {
-  return overlaysRef.value?.confirmAsk(text) ?? Promise.resolve(false);
+function askConfirm(text: string, options?: ConfirmOptions): Promise<boolean> {
+  return overlaysRef.value?.confirmAsk(text, options) ?? Promise.resolve(false);
 }
 // onPickAction：浮层"选中某项"的回执（动作在浮层里选好，这里执行 + 统一兜错）。
 // ⚠ 别把它写回模板内联（`(a, it) => Promise.resolve(a(it))…`）：模板里的 `Promise` 会被编译成
@@ -601,15 +601,15 @@ const latestPromptId = computed(() => latestPromptFor(vueMessages.value));
 const {
   rerollState, summaryReroll, rerollStarting,
   isLive, bubbleContent, bubbleReasoning, rowDuration,
-  refreshReroll, refreshRerollSummary, refreshRerolls,
+  refreshRerolls, resetRerollView,
   summaryRefresh, summaryVersion, rerollNow, rerollGo,
-  resumeRerollIfLive,
 } = useReroll({
   api,
   toast,
   getSessionID: () => sessionID,
   getEpoch: () => epoch,
   isFlow: () => currentAgentIsFlow.value,
+  isWindowLoading: () => loadingSession.value,
   getLastMsgId: () => lastMsgId.value,
   vueSegments,
   streamDisplay,
@@ -619,6 +619,10 @@ const {
   refreshStatusline,
   refreshTasks,
   reloadWindow: reloadWindowKeepingScroll,
+  onVersionWritten(id) {
+    forgetWindow(windowCache, id);
+    if (sessionID === id) localRev++;
+  },
   refreshStateView,
 });
 const rerollingId = computed(() => rerollStarting.value || (rerollState.value.running ? rerollState.value.target_message_id : null));
@@ -737,7 +741,7 @@ async function deleteMessagesFlow(sid: string, mid: string, confirmTextFor: Conf
       return null;
     });
     if (!plan || sid !== sessionID) return false;
-    if (!(await overlaysRef.value?.confirmAsk(confirmTextFor(plan), true))) return false;
+    if (!(await askConfirm(confirmTextFor(plan), { destructive: true, action: "删除消息" }))) return false;
     try {
       await api.deleteMessages(sid, mid, plan.last_deleted_message_id);
       localRev++; // 删完消息列已经变了（等这一发重新拉窗口）
@@ -955,15 +959,13 @@ async function resyncOnForeground() {
     // ⚠ 先摘僵住的 stream 气泡再 reload —— 不摘的话 `reloadWindow` 里那句"没在流才重建"
     // 的判断可能把旧的合成气泡留在列表里（它就是那个"永远在等待"的来源）。
     dropStreamBubbles();
-    await reloadWindowKeepingScroll();
+    await reloadWindowKeepingScroll({ onlyIfUnchanged: true });
     if (my !== epoch) return;
     showTurnFailure(st);
     refreshStatusline(st.phase, st.elapsed_ms);
     // 上下文三 tab 只在**真的在看工作区**时才刷；聊天界面不白拉 /state 与 /outgoing。
     refreshContextLazy();
-    refreshRerolls();
-    // 重摇那趟如果还活着 ⇒ 把它的轮询也接回来（不 await：它可能还要摇一阵）。
-    resumeRerollIfLive().catch(() => {});
+    void refreshRerolls();
     if (st.phase === "error" && st.error) toast(`上一轮失败了：${st.error}`, "error");
   } finally {
     resyncing = false;
@@ -974,6 +976,7 @@ async function startDraft() {
   activeChatMenu.value = null;
   rememberReadingPosition();
   const my = ++epoch;
+  resetRerollView();
   resetReadingTail();
   draft = true;
   sessionID = null;
@@ -1058,7 +1061,9 @@ async function enterSession(id: string, preloaded: SessionView[] | null = null):
   activeChatMenu.value = null;
   rememberReadingPosition();
   const my = ++epoch;
+  resetRerollView();
   resetReadingTail();
+  resetChrome();
   loadingSession.value = true;
   try {
   draft = false;
@@ -1552,10 +1557,10 @@ onUnmounted(() => {
         <VTabsWindow v-model="workspace" class="workspace-window">
         <VTabsWindowItem value="chat">
         <div class="workspace-pane" :class="{ 'empty-draft': emptyDraft }">
-        <main id="messages-vue" ref="messages-pane" tabindex="0" aria-label="消息记录" @scroll.passive="onChatScroll">
+        <main id="messages-vue" ref="messages-pane" tabindex="0" aria-label="消息记录" :aria-busy="loadingSession" @scroll.passive="onChatScroll">
           <div class="messages-inner">
-          <!-- 会话加载骨架（2026-11-02）：先撑住消息列，别让人对着纯黑猜"是不是坏了"。 -->
-          <div v-if="loadingSession" class="chat-skeleton" aria-label="正在加载会话" role="status">
+          <div v-if="loadingSession" class="chat-skeleton" aria-hidden="true">
+            <span class="sk-question"></span>
             <span class="sk-line sk-a"></span>
             <span class="sk-line sk-b"></span>
             <span class="sk-line sk-c"></span>
@@ -1631,6 +1636,7 @@ onUnmounted(() => {
           </div>
           </div>
         </main>
+        <span class="d-sr-only" role="status">{{ loadingSession ? '正在加载对话' : '' }}</span>
         <span class="d-sr-only" role="status">{{ hasNewReply ? '有新回复' : '' }}</span>
         <div v-if="awayFromLatest && !loadingSession && chatRows.length" class="latest-jump">
           <VBtn type="button" variant="flat" :color="hasNewReply ? 'secondary-container' : 'surface-container-high'"

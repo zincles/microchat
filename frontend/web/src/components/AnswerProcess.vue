@@ -36,13 +36,10 @@ const steps = computed(() => answerSteps(props.group, expanded.value, props.live
 <style scoped>
 .answer-process { min-width: 0; }
 .answer-byline { display: flex; flex-wrap: wrap; align-items: center; gap: 0 0.65em; }
-#app .answer-byline .process-toggle { max-width: 100%; min-width: 0; height: auto; min-height: 2rem; padding-inline: 0.3em; font-size: var(--md-type-label-medium); color: var(--md-on-surface-variant); text-transform: none; letter-spacing: normal; }
+#app .answer-byline .process-toggle { max-width: 100%; min-width: 0; height: auto; min-height: var(--chat-action); padding-inline: 0.3em; font-size: var(--md-type-label-medium); color: var(--md-on-surface-variant); text-transform: none; letter-spacing: normal; }
 .process-toggle :deep(.v-btn__content) { min-width: 0; white-space: normal; overflow-wrap: anywhere; flex-wrap: wrap; justify-content: flex-start; text-align: start; }
 .process-chevron { display: inline-flex; align-self: center; }
 .process-chevron.expanded { transform: rotate(90deg); }
 .process-action { white-space: pre; }
-@media (pointer: coarse), (max-width: 700px) {
-  #app .answer-byline .process-toggle { min-height: var(--md-touch-target); }
-}
-.answer-steps { display: flex; flex-direction: column; gap: 0.5em; }
+.answer-steps { display: flex; flex-direction: column; gap: calc(var(--chat-space) / 2); }
 </style>

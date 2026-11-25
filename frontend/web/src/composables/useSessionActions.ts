@@ -4,7 +4,7 @@
 // “刷列表 + 进会话 + 清缓存”的顺序。
 import type { Ref } from "vue";
 import type { ExportDocument, Session, SessionView } from "../api/types.ts";
-import type { SessionInfo } from "../types/app.ts";
+import type { ConfirmOptions, SessionInfo } from "../types/app.ts";
 import { downloadJSON } from "../utils/download.ts";
 import { sessionTitle } from "../utils/format.ts";
 
@@ -17,7 +17,7 @@ interface SessionActionApi {
 }
 
 interface OverlaySink {
-  confirmAsk(text: string): Promise<boolean>;
+  confirmAsk(text: string, options?: ConfirmOptions): Promise<boolean>;
 }
 
 interface TopbarSink {
@@ -98,7 +98,7 @@ export function useSessionActions({
       title = list.find((s) => s.id === id)?.title;
     }
     const name = sessionTitle(title);
-    if (!(await overlaysRef.value?.confirmAsk(`删除会话「${name}」？不可逆。`))) return;
+    if (!(await overlaysRef.value?.confirmAsk(`「${name}」及其消息和摘要将永久删除，无法恢复。`, { destructive: true, action: "删除会话" }))) return;
     try {
       await api.deleteSession(id);
     } catch (err: unknown) {

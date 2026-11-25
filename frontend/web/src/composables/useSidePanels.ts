@@ -74,11 +74,11 @@ export function useSidePanels({ isOverlayOpen, onWorkspaceContext }: SidePanelOp
 
   function swipeBlocked(target: EventTarget | null): boolean {
     if (isOverlayOpen()) return true;
-    if (document.querySelector("#settings-view") || document.querySelector(".modal")) return true;
+    if (document.querySelector("#settings-view, .v-dialog.v-overlay--active")) return true;
     // 抽屉自己身上 ⇒ 一律接管（pre 也不例外）："把抽屉拖走"在这儿就该能用。
     const el = target as Element | null;
     if (el?.closest?.("#sessions-bar")) return false;
-    return !!el?.closest?.("textarea, input, select, pre, .palette, .picker, .modal, #settings-view");
+    return !!el?.closest?.("textarea, input, select, pre, .palette, .picker");
   }
 
   function paintDrag(d: PanelDrag, p: number): void {

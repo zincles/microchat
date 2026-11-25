@@ -9,6 +9,7 @@ import { formatTokens, providerIdForNextVendor } from "../utils/format.ts";
 import ModelEditor from "./ModelEditor.vue";
 import ModelIcon from "./ModelIcon.vue";
 import ModelRulesEditor from "./ModelRulesEditor.vue";
+import SettingsBack from "./SettingsBack.vue";
 import type {
   CreateProviderRequest,
   ModelDefineRule,
@@ -310,7 +311,7 @@ function onCustomRulesSaved(rules: ModelDefineRule[]): void {
   <!-- 二级页（2026-10-10 起不再是弹窗）：嵌在设置视图的 Provider tab 里，列表 ⇄ 详情就地切换。 -->
   <div class="detail-pane">
     <div class="panel-head">
-      <VBtn icon variant="text" size="small" type="button" title="返回列表（Esc）" @click="emit('close')">←</VBtn>
+      <SettingsBack @back="emit('close')" />
       <span class="status">{{ isNew ? "新建渠道" : `渠道「${pid}」（${modelCount} 个模型）` }}</span>
     </div>
     <VTabs v-model="tab" class="agent-tabs" density="compact" align-tabs="start">

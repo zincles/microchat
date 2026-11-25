@@ -2,7 +2,8 @@
 // 统一的轻量模态壳：VDialog + VCard，关闭/遮罩/Esc 都交给 Vuetify。
 // 业务组件只提供 title / 正文 / actions，不再手写 .modal / .modal-box。
 import { ref, watch } from "vue";
-import { VBtn, VCard, VCardActions, VCardText, VCardTitle, VDialog } from "vuetify/components";
+import { VCard, VCardActions, VCardText, VCardTitle, VDialog } from "vuetify/components";
+import CloseButton from "./CloseButton.vue";
 
 const props = withDefaults(defineProps<{
   title?: string;
@@ -25,7 +26,7 @@ watch(open, (value) => { if (!value) emit("close"); });
     <VCard class="modal-shell" elevation="3" :style="{ maxHeight }">
       <VCardTitle class="modal-shell-title">
         <slot name="title">{{ title }}</slot>
-        <VBtn icon variant="text" size="small" title="关闭" aria-label="关闭" @click="open = false">×</VBtn>
+        <CloseButton @click="open = false" />
       </VCardTitle>
       <VCardText class="modal-shell-body">
         <slot />

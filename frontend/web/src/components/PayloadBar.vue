@@ -11,6 +11,7 @@ import { VBtn, VBtnToggle, VSwitch, VTab, VTabs, VTabsWindow, VTabsWindowItem, V
 import { ref, computed, watch } from "vue";
 import CompactTree from "./CompactTree.vue";
 import AdvancedCompact from "./AdvancedCompact.vue";
+import CloseButton from "./CloseButton.vue";
 import { treeTotals } from "../utils/tree.ts";
 import type { TreeNode } from "../utils/tree.ts";
 import { parseWireMessages, previewBlock } from "../utils/payload.ts";
@@ -331,7 +332,7 @@ defineExpose({ setWire, setTables, setTree, setCompactWire });
       <div v-if="compactWire" id="compact-payload">
         <div class="cp-head">
           <span class="cp-title">本次压缩请求</span>
-          <VBtn icon variant="text" size="small" class="cp-close" title="收起" aria-label="收起" @click="closeCompactPayload">×</VBtn>
+          <CloseButton label="收起压缩请求" @click="closeCompactPayload" />
         </div>
         <div class="pv-meta">
           <span class="pv-method">{{ compactMeta.method }}</span>

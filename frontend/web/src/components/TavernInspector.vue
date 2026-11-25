@@ -13,7 +13,7 @@ import { VBtn, VCard, VCardText, VCardTitle, VDialog, VProgressCircular } from "
 import { sharedApi } from "../utils/prefs.ts";
 import { depthText } from "../utils/format.ts";
 import { parseJsonText, type JsonValue } from "../utils/json.ts";
-import { ICONS } from "../assets/icons.ts";
+import CloseButton from "./CloseButton.vue";
 import JsonNode from "./JsonNode.vue";
 import type { Segment, TavernEffective, TavernEffectiveEntry, TavernPreset, TavernPreview } from "../api/types.ts";
 
@@ -226,7 +226,7 @@ watch(() => props.preset.id, () => {
         </div>
         <div class="head-btns">
           <VBtn v-if="tab === 'raw' && rawLoaded" variant="text" size="small" type="button" @click="collapseAll">全部收起</VBtn>
-          <VBtn icon variant="text" size="small" title="关闭" aria-label="关闭" @click="close" v-html="ICONS.x" />
+          <CloseButton @click="close" />
         </div>
       </VCardTitle>
 

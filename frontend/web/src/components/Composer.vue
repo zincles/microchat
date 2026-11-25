@@ -77,7 +77,7 @@ defineExpose({ submit, setRunning });
         class="composer-input"
         :model-value="text"
         variant="plain"
-        density="comfortable"
+        density="compact"
         hide-details
         auto-grow
         :rows="1"
@@ -134,7 +134,7 @@ defineExpose({ submit, setRunning });
             icon
             variant="flat"
             rounded="circle"
-            :color="running ? 'error' : 'primary-container'"
+            :color="running ? 'error' : hasText ? 'primary' : undefined"
             class="composer-send-btn"
             :disabled="!running && !hasText"
             :title="running ? '停止' : '发送'"
@@ -169,8 +169,7 @@ defineExpose({ submit, setRunning });
   border-radius: inherit;
 }
 .composer-shell :deep(.v-field__input) {
-  min-height: calc(6 * var(--chat-space));
-  padding: calc(1.5 * var(--chat-space)) var(--chat-inset);
+  padding: var(--chat-space) var(--composer-inset);
   font-size: calc(16px * var(--app-text-scale, 1));
   line-height: 1.5;
 }

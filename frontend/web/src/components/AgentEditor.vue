@@ -14,6 +14,7 @@ import { buildCartridge } from "../utils/cartridge.ts";
 import { downloadJSON } from "../utils/download.ts";
 import SegmentList from "./SegmentList.vue";
 import FlowEditor from "./FlowEditor.vue";
+import SettingsBack from "./SettingsBack.vue";
 import { emptyFlowGraph, normalizeFlowGraph } from "../utils/flow.ts";
 import type { SegmentItem } from "./SegmentList.vue";
 import { VTab, VTabs, VTabsWindow, VTabsWindowItem, VSwitch, VBtn, VTextField, VTextarea, VSelect } from "vuetify/components";
@@ -280,7 +281,7 @@ function onKey(e: KeyboardEvent): void {
   <!-- 二级页（2026-10-10 起不再是弹窗）：嵌在设置视图的 Agent tab 里，列表 ⇄ 详情就地切换。 -->
   <div class="detail-pane">
     <div class="panel-head">
-      <VBtn icon variant="text" size="small" type="button" title="返回列表（Esc）" @click="emit('close')">←</VBtn>
+      <SettingsBack @back="emit('close')" />
       <span class="status">{{ isNew ? "新建智能体" : `编辑「${props.agent?.name ?? ""}」` }}{{ !isNew && isDefault ? "（默认）" : "" }}</span>
     </div>
     <VTabs
