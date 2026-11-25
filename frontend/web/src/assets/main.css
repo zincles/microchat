@@ -1481,11 +1481,15 @@ button.danger:hover { background: color-mix(in srgb, var(--md-error) 8%, transpa
 #sessions-bar .session-mode-tabs { margin: 0 var(--chat-space) calc(var(--chat-space) / 2); }
 #sessions-bar .session-mode-tabs .v-btn { flex: 1 1 0; }
 
-#sessions-bar #session-new { flex: none; display: flex; align-items: center; justify-content: flex-start; gap: var(--chat-space); min-height: var(--chat-control); margin: 0 var(--chat-space) calc(var(--chat-space) / 2); padding: 0 var(--chat-space); border-radius: var(--md-shape-full); color: var(--md-on-primary-container); background: var(--md-primary-container); }
+#sessions-bar .session-actions { display: flex; align-items: center; gap: calc(var(--chat-space) / 2); margin: 0 var(--chat-space) calc(var(--chat-space) / 2); }
+#sessions-bar #session-new { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; justify-content: flex-start; gap: var(--chat-space); min-height: var(--chat-control); padding: 0 var(--chat-space); border-radius: var(--md-shape-full); color: var(--md-on-primary-container); background: var(--md-primary-container); }
 #sessions-bar #session-new:not(:disabled):hover { background: color-mix(in srgb, var(--md-on-primary-container) 8%, var(--md-primary-container)); }
 #sessions-bar #session-new:disabled { opacity: 0.55; cursor: default; }
 #sessions-bar #session-new:focus-visible { outline: 2px solid var(--md-primary); outline-offset: -2px; }
-#sessions-bar #session-new .plus { display: inline-flex; }
+#sessions-bar #session-new .plus { display: inline-flex; flex: none; }
+#app #settings-open { flex: none; width: var(--chat-control); height: var(--chat-control); }
+#settings-open svg { display: block; width: 18px; height: 18px; }
+#settings-open:focus-visible { outline: 2px solid var(--md-primary); outline-offset: -2px; }
 
 /* 历史组只在日期边界画半透明细线，同组对话不描边。 */
 #sessions-bar .mode-panel { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 1.2em 0.8em; }
@@ -1495,11 +1499,6 @@ button.danger:hover { background: color-mix(in srgb, var(--md-error) 8%, transpa
   font-size: var(--md-type-label-medium); font-weight: 500; line-height: 1.2; }
 #sessions-bar .session-group-head:first-child { padding-top: calc(var(--chat-space) / 2); }
 #sessions-bar .session-group-head:not(:first-child) { margin-top: calc(var(--chat-space) / 2); border-top: 1px solid var(--line); }
-#sessions-bar .bar-foot { margin-top: auto; padding: calc(var(--chat-space) / 2) var(--chat-space); border-top: 1px solid var(--line); background: var(--md-surface-container); }
-#app #settings-open { width: 100%; min-height: var(--chat-control); padding-inline: var(--chat-space); justify-content: flex-start; }
-#settings-open .v-btn__prepend { margin-inline-end: var(--chat-space); }
-#sessions-bar .bar-foot .fb-icon { display: inline-flex; align-items: center; justify-content: center; }
-#sessions-bar .bar-foot .fb-icon svg { width: 1.25em; height: 1.25em; }
 #sessions-bar .session-item { position: relative; display: flex; align-items: center; gap: calc(var(--chat-space) / 2); min-height: var(--chat-control); background: transparent;
   padding: 0 calc(var(--chat-space) / 2) 0 var(--chat-space); border-radius: var(--md-shape-sm); color: var(--md-on-surface);
   font-size: var(--md-type-label-large); line-height: 1.35; letter-spacing: 0.006em;

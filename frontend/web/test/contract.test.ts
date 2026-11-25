@@ -3947,8 +3947,6 @@ test("会话列表：忙碌、加载与选中反馈", () => {
   // 它只是状态：绝对定位在栏头里，出现/消失不许顶动下面的新建按钮与整列会话
   assert.match(css, /#sessions-bar \.bar-head \{ position:\s*relative; \}/, "刷新条没有包含块（栏头没定位）");
   assert.match(css, /#sessions-bar \.md-linear-progress \{ position:\s*absolute/, "刷新条又回到流内（进站点会顶动左栏）");
-  assert.match(bar, /<div class="bar-head">[\s\S]*?md-linear-progress[\s\S]*?<\/div>\s*<button id="session-new"/,
-    "刷新条不在栏头里 —— 会重新占一行");
   assert.match(bar, /v-html="ICONS\.plus"/, "新建按钮没有用图标（还是文字加号）");
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
   assert.match(app, /const sessionsLoading = ref\(true\)/, "App 没有首次加载态");

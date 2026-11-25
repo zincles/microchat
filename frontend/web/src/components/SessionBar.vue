@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 左会话栏：列表 + 新建 + 置底设置按钮。
+// 左会话栏：新建和设置同排，历史列表独立滚动。
 // 每条只有一枚「选项」（竖三点）：设置与删除都收进那块浮板 —— 行内不再挤两枚键。
 import { ref, computed, nextTick, onMounted, onUnmounted, useTemplateRef, watch } from "vue";
 import { VBtn, VBtnToggle, VNavigationDrawer } from "vuetify/components";
@@ -236,9 +236,15 @@ defineExpose({ setSessions });
            进入站点时出现/消失会把下面整列（新建、模式切换、列表）顶动一次。 -->
       <div v-if="refreshing" class="md-linear-progress" role="progressbar" aria-label="正在刷新会话列表"><span></span></div>
     </div>
-    <button id="session-new" ref="newButton" type="button" :title="newTitle" :disabled="mode === 'inventory'" @click="onNew">
-      <span class="plus" aria-hidden="true" v-html="ICONS.plus"></span>{{ newLabel }}
-    </button>
+    <div class="session-actions">
+      <button id="session-new" ref="newButton" type="button" :title="newTitle" :disabled="mode === 'inventory'" @click="onNew">
+        <span class="plus" aria-hidden="true" v-html="ICONS.plus"></span>{{ newLabel }}
+      </button>
+      <VBtn id="settings-open" type="button" icon variant="text" color="on-surface-variant"
+        title="设置" aria-label="设置" @click="$emit('open-settings')">
+        <span aria-hidden="true" v-html="ICONS.settings"></span>
+      </VBtn>
+    </div>
     <!-- 模式切换保留原有入口，不再用外框把三个按钮围成一块。 -->
     <VBtnToggle
       v-model="mode"
@@ -305,18 +311,6 @@ defineExpose({ setSessions });
     </div>
     <div v-else class="mode-panel" aria-label="库存">
       <div class="empty">库存<br /><span class="sub">功能尚未接入；这里将来放库存列表</span></div>
-    </div>
-    <div class="bar-foot">
-      <VBtn
-        id="settings-open"
-        type="button"
-        variant="text"
-        color="on-surface-variant"
-        @click="$emit('open-settings')"
-      >
-        <template #prepend><span class="fb-icon" v-html="ICONS.settings"></span></template>
-        设置
-      </VBtn>
     </div>
   </VNavigationDrawer>
   <Teleport to="body">
