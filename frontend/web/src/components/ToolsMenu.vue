@@ -25,11 +25,12 @@ const title = computed(() => {
 const label = computed(() => nativeToolsLabel(enabled.value));
 
 function enabledOf(id: string): boolean { return !props.disabled.includes(id); }
-function toggle(id: string, on: boolean | null): void { emit("toggle", id, !!on); }
+function toggle(id: string): void { emit("toggle", id, !enabledOf(id)); }
 </script>
 
 <template>
   <ToolbarMenu
+    name="tools"
     :title="title"
     :label="label"
     :width="220"
@@ -40,14 +41,15 @@ function toggle(id: string, on: boolean | null): void { emit("toggle", id, !!on)
       <VListItem
         v-for="id in available"
         :key="id"
-        @click="toggle(id, !enabledOf(id))"
+        role="option"
+        :aria-selected="enabledOf(id)"
+        @click="toggle(id)"
       >
         <template #prepend>
           <span
             class="tool-check"
             :class="{ on: enabledOf(id) }"
-            role="checkbox"
-            :aria-checked="enabledOf(id)"
+            aria-hidden="true"
           >
             <svg v-if="enabledOf(id)" viewBox="0 0 24 24" fill="none" stroke="currentColor"
               stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -58,7 +60,7 @@ function toggle(id: string, on: boolean | null): void { emit("toggle", id, !!on)
         <VListItemTitle>{{ nativeToolLabel(id) }}</VListItemTitle>
       </VListItem>
     </template>
-    <VListItem v-else disabled>
+    <VListItem v-else disabled role="option" aria-selected="false" aria-disabled="true">
       <VListItemTitle>当前模型没有可用工具</VListItemTitle>
     </VListItem>
   </ToolbarMenu>

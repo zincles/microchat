@@ -3,6 +3,8 @@
 // 纯函数：时间边界只在这里算一次，组件只按返回的组渲染。`now` 可注入 ⇒ 测试不用等时钟。
 // 边界按**本地日历日的零点**算（不是"距现在 24h"）：23:59 与 00:01 只差两分钟，
 // 但它们属于两天，分组该跟人看到的日子一致。
+import { sessionTitle } from "./format.ts";
+
 export const SESSION_GROUP_LABELS = ["今天", "昨天", "一周内", "一月内", "更久"];
 
 export interface SessionLike {
@@ -13,6 +15,11 @@ export interface SessionGroup<T> {
   key: string;
   label: string;
   items: T[];
+}
+
+export function filterSessionTitles<T extends { title?: string | null }>(sessions: T[], query: string): T[] {
+  const needle = query.trim().toLowerCase();
+  return needle ? sessions.filter((s) => sessionTitle(s.title).toLowerCase().includes(needle)) : sessions;
 }
 
 function startOfDay(ms: number, dayOffset = 0): number {

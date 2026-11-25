@@ -37,6 +37,7 @@ import { useSidePanels } from "./composables/useSidePanels.ts";
 import { useChrome } from "./composables/useChrome.ts";
 import { useOverlayLayout } from "./composables/useOverlayLayout.ts";
 import { useSettingsView } from "./composables/useSettingsView.ts";
+import { provideChatMenus } from "./composables/useChatMenu.ts";
 import { useModelsAgents } from "./composables/useModelsAgents.ts";
 import { useAppUpdate } from "./composables/useAppUpdate.ts";
 import { useSessionWindow } from "./composables/useSessionWindow.ts";
@@ -71,6 +72,7 @@ const sessionbarRef = ref<InstanceType<typeof SessionBar> | null>(null);
 const payloadbarRef = ref<InstanceType<typeof ContextWorkspace> | null>(null);
 const composerRef = ref<InstanceType<typeof Composer> | null>(null);
 const overlaysRef = ref<InstanceType<typeof Overlays> | null>(null);
+const activeChatMenu = provideChatMenus();
 // 专注模式（2026-11-22 用户定）：隐藏顶栏，只留模型与状态环的小背景；
 // 输入栏空闲 2 秒后缓缓下移一半，任意操作恢复并重新计时。
 const zenMode = ref(false);
@@ -89,7 +91,7 @@ function zenActivity(): void {
     zenTimer = null;
     if (!zenMode.value) return;
     // 浮层（工具/推理/模型等菜单）开着时先不收起，免得锚点跑掉；松手后重新计时。
-    if (document.querySelector(".v-overlay-container .v-overlay--active")) { zenActivity(); return; }
+    if (activeChatMenu.value || document.querySelector(".v-overlay-container .v-overlay--active")) { zenActivity(); return; }
     zenComposerHidden.value = true;
   }, ZEN_IDLE_MS);
 }
@@ -97,9 +99,7 @@ function toggleZen(): void {
   zenMode.value = !zenMode.value;
   if (zenMode.value) {
     zenComposerHidden.value = false;
-    // 进入专注：收起右侧/浮出的面板（当前是模型菜单与状态环那扇右浮板）；
-    // 之后仍可由用户手动点开。
-    topbarRef.value?.closeMenus();
+    activeChatMenu.value = null;
     zenActivity();
   } else {
     clearZenTimer();
@@ -138,13 +138,13 @@ const {
   install: installSidePanels,
   uninstall: uninstallSidePanels,
 } = useSidePanels({
-  isOverlayOpen: () => !!(overlaysRef.value?.isPaletteOpen() || overlaysRef.value?.isPickerOpen()),
+  isOverlayOpen: () => !!(activeChatMenu.value || overlaysRef.value?.isPaletteOpen() || overlaysRef.value?.isPickerOpen()),
   onWorkspaceContext: () => refreshContextLazy(),
 });
 
 const { settingsOpen, settingsOnly, openSettings, openManage, closeSettings, backToChat } = useSettingsView({ closeLeftDrawer });
 
-
+watch([settingsOpen, workspace], () => { activeChatMenu.value = null; });
 
 const { resetChrome, onMessagesScroll } = useChrome();
 
@@ -925,6 +925,7 @@ async function resyncOnForeground() {
 }
 
 async function startDraft() {
+  activeChatMenu.value = null;
   rememberReadingPosition();
   const my = ++epoch;
   draft = true;
@@ -1007,6 +1008,7 @@ async function refreshSessionsBar() {
   }
 }
 async function enterSession(id: string, preloaded: SessionView[] | null = null): Promise<void> {
+  activeChatMenu.value = null;
   rememberReadingPosition();
   const my = ++epoch;
   loadingSession.value = true;

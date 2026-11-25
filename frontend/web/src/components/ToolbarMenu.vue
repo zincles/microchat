@@ -1,45 +1,89 @@
 <script setup lang="ts">
-// 输入栏上方的 MD3 工具菜单壳：VMenu + 触发器按钮 + VList。
-// 思考档位 / 工具选择只是内容不同，壳不该各写一遍。
+// 输入栏选择器共用浮层、触发器的无障碍关系和选中后的焦点归还。
+import { nextTick, useId, useTemplateRef, watch } from "vue";
 import { VBtn, VList, VMenu } from "vuetify/components";
+import { useChatMenu } from "../composables/useChatMenu.ts";
 
-withDefaults(defineProps<{
+const props = withDefaults(defineProps<{
+  name: "agent" | "thinking" | "tools";
   title: string;
-  label: string;
+  label?: string;
   width?: number;
   buttonClass?: string;
   labelClass?: string;
-  listClass?: string;
 }>(), {
   width: 180,
   buttonClass: "",
   labelClass: "",
-  listClass: "",
 });
+const open = useChatMenu(props.name);
+const listId = `${useId()}-choices`;
+const menu = useTemplateRef<{ activatorEl?: HTMLElement }>("menu");
+
+// 受控 VMenu 打开时先更新 model，再挂载并定位列表。焦点若已去了别的入口就不抢回来。
+function focusSelection(): void {
+  const list = document.getElementById(listId);
+  if (!open.value || !list || document.activeElement !== menu.value?.activatorEl) return;
+  const enabled = '[role="option"]:not([aria-disabled="true"])';
+  const option = list.querySelector<HTMLElement>(`${enabled}[aria-selected="true"]`) ?? list.querySelector<HTMLElement>(enabled);
+  option?.focus();
+}
+watch(open, (show) => { if (show) nextTick(focusSelection); });
+
+// 只在本菜单内选择或按 Escape 时归还焦点，外点/切换/卸载交给 VMenu。
+function closeAndFocus(): void {
+  if (!open.value) return;
+  open.value = false;
+  menu.value?.activatorEl?.focus({ preventScroll: true });
+}
+function onEscape(event: KeyboardEvent): void {
+  if (event.key !== "Escape" || !open.value) return;
+  event.stopPropagation();
+  event.preventDefault();
+  closeAndFocus();
+}
 </script>
 
 <template>
-  <VMenu location="top end" origin="bottom end" :offset="[0, 8]" :width="width" max-height="50vh">
+  <VMenu
+    ref="menu"
+    v-model="open"
+    :activator-props="{ 'aria-haspopup': 'listbox', 'aria-controls': listId, 'aria-owns': listId, onKeydown: onEscape }"
+    :location="name === 'agent' ? 'top start' : 'top end'"
+    :offset="8"
+    :width="width"
+    max-height="50vh"
+    :close-on-content-click="false"
+    @after-enter="focusSelection"
+  >
     <template #activator="{ props: activatorProps }">
-      <VBtn
-        v-bind="activatorProps"
-        type="button"
-        variant="text"
-        rounded="xl"
-        size="small"
-        :class="buttonClass"
-        :title="title"
-        :aria-label="title"
-      >
-        <span :class="labelClass">{{ label }}</span>
-      </VBtn>
+      <slot name="activator" :props="activatorProps">
+        <VBtn
+          v-bind="activatorProps"
+          type="button"
+          variant="text"
+          rounded="xl"
+          size="small"
+          :class="buttonClass"
+          :title="title"
+          :aria-label="title"
+        >
+          <span :class="labelClass">{{ label }}</span>
+        </VBtn>
+      </slot>
     </template>
     <VList
+      :id="listId"
+      role="listbox"
+      :aria-label="title"
+      :aria-multiselectable="name === 'tools' || undefined"
       density="compact"
       color="on-surface"
       bg-color="surface-container"
       rounded="md"
-      :class="['py-1', listClass]"
+      class="py-1"
+      @click="closeAndFocus"
+      @keydown.esc="onEscape"
     >
       <slot />
     </VList>

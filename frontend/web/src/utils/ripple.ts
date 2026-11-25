@@ -10,7 +10,7 @@
 //   · 波纹是 `currentColor` 的半透明圆 —— 主按钮上是 on-primary 的暗波纹，
 //     普通按钮上是正文色的淡波纹，不需要每个组件各配一份颜色。
 export const RIPPLE_SELECTOR =
-  "button, .session-item, .model-item, .agent-item, .palette-item, .picker-item";
+  "button, .session-item, .model-item, .palette-item, .picker-item";
 
 export interface RippleSpec {
   size: number;

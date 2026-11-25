@@ -1,10 +1,11 @@
 <script setup lang="ts">
 // 左会话栏：列表 + 新建 + 置底设置按钮。
 // 每条只有一枚「选项」（竖三点）：设置与删除都收进那块浮板 —— 行内不再挤两枚键。
-import { ref, computed, nextTick, onMounted, onUnmounted } from "vue";
+import { ref, shallowRef, computed, nextTick, onMounted, onUnmounted, useTemplateRef, watch } from "vue";
 import { VBtn, VBtnToggle, VNavigationDrawer } from "vuetify/components";
 import { ICONS } from "../assets/icons.ts";
-import { groupSessions } from "../utils/sessionGroups.ts";
+import { filterSessionTitles, groupSessions } from "../utils/sessionGroups.ts";
+import { sessionTitle } from "../utils/format.ts";
 import { saveTheme, themePref, THEME_IDS } from "../utils/prefs.ts";
 import type { SessionView } from "../api/types.ts";
 
@@ -65,7 +66,72 @@ const currentId = ref<string | null>(null);
 // 左栏顶部的三个空白：对话 / 生图 / 库存。生图与库存暂未接 API，切过去只改选中态
 // （未来这里放各自的列表）。
 const mode = ref<"chat" | "image" | "inventory">("chat");
-const groupedSessions = computed(() => groupSessions(sessions.value));
+const searchOpen = shallowRef(false);
+const query = shallowRef("");
+const searchTrigger = useTemplateRef<HTMLButtonElement>("searchTrigger");
+const searchInput = useTemplateRef<HTMLInputElement>("searchInput");
+const sessionList = useTemplateRef<HTMLDivElement>("sessionList");
+const historyVisible = computed(() => mode.value === "chat" && !props.collapsed);
+const groupedSessions = computed(() => groupSessions(filterSessionTitles(sessions.value, query.value)));
+
+function openSearch(): void {
+  searchOpen.value = true;
+  nextTick(() => { if (historyVisible.value) searchInput.value?.focus(); });
+}
+function closeSearch(restoreFocus = false): void {
+  searchOpen.value = false;
+  query.value = "";
+  if (restoreFocus) nextTick(() => { if (historyVisible.value) searchTrigger.value?.focus(); });
+}
+function clearSearch(): void {
+  query.value = "";
+  searchInput.value?.focus();
+}
+watch(historyVisible, (visible) => { if (!visible) closeSearch(); });
+watch(query, () => prefetchEnd());
+
+function titleButtons(): HTMLButtonElement[] {
+  return Array.from(sessionList.value?.querySelectorAll<HTMLButtonElement>(".session-main") ?? []);
+}
+function onHistoryKey(event: KeyboardEvent): void {
+  const target = event.target;
+  if (event.isComposing || event.keyCode === 229) {
+    if (target instanceof HTMLButtonElement) event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
+  if (event.key === "Escape" && searchOpen.value) {
+    event.preventDefault();
+    event.stopPropagation();
+    closeSearch(true);
+    return;
+  }
+  const fromInput = target === searchInput.value;
+  if (!fromInput && !(target instanceof HTMLButtonElement && target.matches(".session-main"))) return;
+  if (event.key === "Enter" && (fromInput || event.repeat)) {
+    event.preventDefault();
+    if (!event.repeat) titleButtons()[0]?.click();
+    return;
+  }
+  if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+  event.preventDefault();
+  const rows = titleButtons(); // 实际 DOM 顺序包括日期分组，不依赖 v-for ref 数组的顺序。
+  const down = event.key === "ArrowDown";
+  const index = fromInput ? (down ? 0 : rows.length - 1)
+    : Math.max(0, Math.min(rows.length - 1, rows.indexOf(target as HTMLButtonElement) + (down ? 1 : -1)));
+  rows[index]?.focus();
+}
+
+// 刷新后会话可能换组，原按钮会被卸载。焦点跟 ID 走，不跟原来的行号。
+watch(groupedSessions, async () => {
+  if (!sessionList.value) return;
+  const active = document.activeElement;
+  if (!(active instanceof HTMLButtonElement) || !active.dataset.sessionId || !sessionList.value.contains(active)) return;
+  await nextTick();
+  if (!historyVisible.value || document.activeElement !== document.body) return;
+  const row = titleButtons().find((button) => button.dataset.sessionId === active.dataset.sessionId);
+  (row ?? searchInput.value ?? searchTrigger.value)?.focus();
+});
 const menu = ref<{ id: string; left: number; top: number } | null>(null); // Teleport 到 body 的浮板
 const menuEl = ref<HTMLElement | null>(null);
 
@@ -112,8 +178,10 @@ function onKey(e: KeyboardEvent): void { if (e.key === "Escape") closeMenu(); }
 // 触屏 touchstart / 键盘 focus 立即 —— 这三种之后紧跟着的多半就是点击。
 // 真正的去重、并发上限、缓存判断都在 App 的 prefetchSession 里。
 let hoverTimer: ReturnType<typeof setTimeout> | null = null;
+let hoverId: string | null = null;
 function prefetchHover(s: SessionView, e?: PointerEvent): void {
-  if (e?.pointerType && e.pointerType !== "mouse") return;
+  if ((e?.pointerType && e.pointerType !== "mouse") || hoverId === s.id) return;
+  hoverId = s.id;
   clearTimeout(hoverTimer ?? undefined);
   hoverTimer = setTimeout(() => emit("prefetch", s.id), 140);
 }
@@ -121,7 +189,10 @@ function prefetchNow(s: SessionView): void {
   clearTimeout(hoverTimer ?? undefined);
   emit("prefetch", s.id);
 }
-function prefetchEnd(): void { clearTimeout(hoverTimer ?? undefined); }
+function prefetchEnd(): void {
+  clearTimeout(hoverTimer ?? undefined);
+  hoverId = null;
+}
 
 function syncTheme(): void { theme.value = themePref(); }
 onMounted(() => {
@@ -152,6 +223,7 @@ defineExpose({ setSessions });
     :touchless="true"
     class="sessions-drawer"
     :class="{ collapsed: props.collapsed }"
+    :inert="props.collapsed"
   >
     <div class="bar-head">
       <!-- Brand Title（2026-11-06 用户定）：原来放大 tab 的位置换作品牌；
@@ -209,11 +281,23 @@ defineExpose({ setSessions });
       <VBtn value="image" title="生图（暂未接入）" :aria-pressed="mode === 'image'">生图</VBtn>
       <VBtn value="inventory" title="库存（暂未接入）" :aria-pressed="mode === 'inventory'">库存</VBtn>
     </VBtnToggle>
-    <div v-if="mode === 'chat'" id="session-list" :aria-busy="loading && !sessions.length ? 'true' : 'false'">
+    <div v-if="mode === 'chat'" class="session-search" @keydown="onHistoryKey">
+      <button v-if="!searchOpen" ref="searchTrigger" class="session-search-trigger" type="button" @click="openSearch">
+        <span aria-hidden="true" v-html="ICONS.search"></span>查找会话
+      </button>
+      <template v-else>
+        <input ref="searchInput" v-model="query" type="text" role="searchbox" aria-label="查找会话" placeholder="按标题查找会话"
+          aria-description="上下方向键移动到结果，回车打开会话，Esc 关闭查找" aria-controls="session-list" enterkeyhint="go" autocomplete="off" />
+        <button v-if="query" class="session-search-action" type="button" aria-label="清除查找" @click="clearSearch">清除</button>
+        <button class="session-search-action" type="button" aria-label="关闭查找" @click="closeSearch(true)">关闭</button>
+      </template>
+    </div>
+    <div v-if="mode === 'chat'" id="session-list" ref="sessionList" :aria-busy="loading && !sessions.length ? 'true' : 'false'" @keydown="onHistoryKey">
       <div v-if="loading && !sessions.length" class="session-skeleton">
         <div v-for="(w, i) in skeletonWidths" :key="i" class="skeleton-row" :style="{ '--w': w }"></div>
       </div>
       <div v-else-if="!sessions.length" class="empty">还没有会话<br /><span class="sub">点上面「＋ 开启新对话」开始</span></div>
+      <div v-else-if="!groupedSessions.length" class="empty" role="status">没有匹配的会话</div>
       <template v-for="group in groupedSessions" :key="group.key">
         <div class="session-group-head">{{ group.label }}</div>
         <div
@@ -221,15 +305,15 @@ defineExpose({ setSessions });
           :key="s.id"
           class="session-item"
           :class="{ sel: s.id === currentId }"
-          @click="$emit('select', s.id)"
-          @pointerenter="prefetchHover(s, $event)"
+          @pointermove="prefetchHover(s, $event)"
           @pointerleave="prefetchEnd"
           @focusin="prefetchNow(s)"
           @touchstart.passive="prefetchNow(s)"
         >
-          <span class="session-main">
-            <span class="title">{{ s.title || "新会话" }}</span>
-          </span>
+          <button class="session-main" type="button" :data-session-id="s.id" :aria-current="s.id === currentId ? 'true' : undefined"
+            @click="$emit('select', s.id)">
+            <span class="title">{{ sessionTitle(s.title) }}</span>
+          </button>
           <!-- 行内环：这条会话此刻有任务在跑（生成 / 压缩 / 重摇 / 起标题 / 队列踩到它）。
                与「选项」键并存 —— 它是状态，不是入口，所以不抢那枚按钮的位置。 -->
           <svg
@@ -323,6 +407,14 @@ defineExpose({ setSessions });
 </template>
 
 <style scoped>
+.session-search { display: flex; align-items: center; flex: none; gap: 0.25em; margin: 0 0.8em; }
+.session-search input { flex: 1; min-width: 0; }
+.session-search button { min-height: 2.25em; color: var(--md-on-surface-variant); background: transparent; }
+.session-search button:hover { background: var(--mix-8); }
+.session-search-trigger { display: inline-flex; align-items: center; gap: 0.5em; }
+.session-search-trigger span { display: inline-flex; }
+.session-search-action { padding: 0 0.5em; }
+
 /* 左栏模式 tab 的垂直几何钉死（2026-11-09）。
  * 病灶有两层，都在测量里看得到：
  *  1) VBtnGroup 的 compact 规则给了整条胶囊 `height: 36px`，而按钮自己的

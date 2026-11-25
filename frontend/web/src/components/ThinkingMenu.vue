@@ -26,6 +26,7 @@ function pick(value: string): void {
 
 <template>
   <ToolbarMenu
+    name="thinking"
     :title="currentTitle"
     :label="current"
     :width="150"
@@ -36,6 +37,8 @@ function pick(value: string): void {
       v-for="option in options"
       :key="option.value || 'default'"
       :active="option.value === modelValue"
+      role="option"
+      :aria-selected="option.value === modelValue"
       @click="pick(option.value)"
     >
       <VListItemTitle>

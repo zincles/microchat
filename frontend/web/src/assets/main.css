@@ -118,19 +118,11 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 #chat-col > header #toggle-left:hover {
   background: var(--tg-secondary-bg); color: var(--tg-text); filter: brightness(1.25);
 }
-/* Agent 头像（顶栏左上、模型字左边，2026-10-14 用户定）：圆形首字标，底色由 id 派生
- * （同一 id 永远同一个色，纯计算无存储）；点开 = 选人浮板。 */
+/* 输入栏的助手头像：每个助手按 ID 保持同一个首字与颜色。 */
 .agent-btn { position: relative; flex: none; width: 2.78em; height: 2.78em; padding: 0; border: none; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 0.9em; font-weight: 600; box-shadow: none; outline: 1px solid color-mix(in srgb, #fff 18%, transparent); transition: transform var(--md-dur-100) var(--md-ease-standard); }
 .agent-btn:hover { transform: scale(1.03); }
-/* 菜单：贴着头像往下掉（--tg-float 浮板，与命令面板同族）；背后一层透明遮罩，点哪儿都收。 */
-.agent-menu-backdrop { position: fixed; inset: 0; z-index: 1; }
+/* 顶栏模型与上下文面板共用表面；外点关闭由 ClickOutside 判断，不遮挡其它入口。 */
 .agent-menu { position: absolute; z-index: 2; top: calc(100% + 0.4em); left: 1em; min-width: 12em; max-width: 20em; max-height: 60vh; overflow-y: auto; overscroll-behavior: contain; background: var(--md-surface-container); color: var(--md-on-surface); border-radius: var(--md-shape-xs); padding: 0.35em 0; box-shadow: var(--md-elev-2); transform-origin: top left; animation: md-menu-in var(--md-dur-150) var(--md-ease-emphasized); }
-.agent-item { display: flex; align-items: center; gap: 0.6em; width: 100%; box-sizing: border-box; text-align: left; border-radius: 0; min-height: 3em; padding: 0.6em 1em; color: var(--md-on-surface); font: inherit; font-size: var(--md-type-label-large); line-height: 1.3; background: none; border: none; cursor: pointer; transition: background-color var(--md-dur-150) var(--md-ease-standard); }
-.agent-item:hover { background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); }
-.agent-item .agent-dot { flex: none; width: 1.6em; height: 1.6em; border-radius: 50%; display: flex; align-items: center;
-  justify-content: center; color: #fff; font-size: 0.8em; font-weight: 600; }
-.agent-item .agent-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.agent-item .agent-check { color: var(--md-primary); }
 .agent-empty { margin: 0.4em 1em; color: var(--md-on-surface-variant); font-size: var(--md-type-body-medium); }
 /* —— 模型选择浮板（2026-10-28 用户定：按渠道分组，接近 OpenWebUI 那种）——
  * 壳子直接借 `.agent-menu`（--tg-float / --shadow-3 / --r-shell），这里只改三件事：
@@ -312,10 +304,6 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 #chat-col.zen > header .model-anchor { pointer-events: auto; }
 #chat-col.zen > header .model-btn { flex: 0 1 auto; background: var(--md-surface-container); box-shadow: var(--md-elev-1); }
 #chat-col.zen > header .header-right { pointer-events: none; }
-#chat-col.zen > header #ctx-ring,
-#chat-col.zen > header .header-right .agent-menu-backdrop,
-#chat-col.zen > header .header-right .ctx-menu,
-#chat-col.zen > header > .agent-menu-backdrop,
 #chat-col.zen > header > .ctx-menu { pointer-events: auto; }
 #chat-col.zen > header #ctx-ring { pointer-events: auto; background: var(--md-surface-container);
   border-radius: 50%; box-shadow: var(--md-elev-1); }
@@ -1079,9 +1067,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .composer-send-btn .v-btn__content > span { display: flex; align-items: center; justify-content: center; line-height: 0; }
 /* 输入栏上方的按钮区（2026-11-10 用户定：推理等级与工具必须同一尺寸/风格）。
    两者共用同一套 MD3 outlined 小按钮：高度/字号/内边距/边框/底色只写这一处。 */
-.composer-toolbar .agent-anchor { display: inline-flex; flex: none; position: relative; }
 .composer-toolbar .agent-btn { width: var(--composer-control); height: var(--composer-control); min-width: var(--composer-control); min-height: var(--composer-control); font-size: 0.82em; outline: 1px solid var(--md-outline-variant); }
-.composer-toolbar .agent-menu { top: auto; bottom: calc(100% + 0.4em); left: 0; transform-origin: bottom left; }
 .composer-toolbar .thinking-btn,
 .composer-toolbar .tools-btn,
 .composer-toolbar .zen-btn { min-width: 0 !important; height: var(--composer-control) !important; min-height: var(--composer-control) !important;
@@ -1418,7 +1404,7 @@ button:active { background: color-mix(in srgb, var(--md-on-secondary-container) 
 .icon-btn > svg, button > svg { display: block; }
 .icon-btn, .link-btn, .cp-close, .ctree-tw, .ctree-undo,
 .collapse-all, .session-item .item-btn,
-.model-btn, .agent-item, .model-item {
+.model-btn, .model-item {
   background: none;
   border: none;
   cursor: pointer;
@@ -1567,11 +1553,15 @@ button.danger:hover { background: color-mix(in srgb, var(--md-error) 8%, transpa
   transition: opacity var(--md-dur-150) var(--md-ease-standard); }
 #sessions-bar .session-item:hover::after { opacity: var(--md-state-hover); }
 #sessions-bar .session-item:active::after { opacity: var(--md-state-pressed); }
-#sessions-bar .session-item:focus-visible::after { opacity: var(--md-state-focus); }
-#sessions-bar .session-item:focus-visible { outline: 2px solid var(--md-primary); outline-offset: -2px; }
+#sessions-bar .session-item:has(.session-main:focus-visible)::after { opacity: var(--md-state-focus); }
+#sessions-bar .session-item:has(.session-main:focus-visible) { outline: 2px solid var(--md-primary); outline-offset: -2px; }
 #sessions-bar .session-item.sel { background: var(--md-secondary-container); color: var(--md-on-secondary-container);
   --md-state-color: var(--md-on-secondary-container); }
-#sessions-bar .session-main { position: relative; z-index: 1; flex: 1; min-width: 0; display: flex; align-items: center; gap: 0.4em; }
+#sessions-bar .session-main { position: static; flex: 1; min-width: 0; min-height: 0; align-self: stretch; display: flex; align-items: center;
+  padding: 0; border: 0; background: transparent; color: inherit; font: inherit; letter-spacing: inherit; text-align: start; }
+/* 标题按钮的命中区铺满行；独立的选项键在上一层，隐藏时不截点击。 */
+#sessions-bar .session-main::before { content: ""; position: absolute; inset: 0; }
+#sessions-bar .session-main:focus-visible { outline: none; }
 #sessions-bar .session-main .title { overflow: hidden; text-overflow: ellipsis; line-height: 1.35; }
 #sessions-bar .session-item .item-btn { position: relative; z-index: 1; flex: none; width: 2.4em; height: 2.4em; padding: 0; opacity: 1;
   display: inline-flex; align-items: center; justify-content: center; border: none; background: none;
@@ -1585,7 +1575,7 @@ button.danger:hover { background: color-mix(in srgb, var(--md-error) 8%, transpa
 
 /* 行内环：MD3 circular progress indicator（indeterminate，旋转 + dash 伸缩）。 */
 #sessions-bar .session-item .session-busy { position: relative; z-index: 1; flex: none; width: 1.1em; height: 1.1em;
-  border: none; border-radius: 0; box-sizing: border-box;
+  border: none; border-radius: 0; box-sizing: border-box; pointer-events: none;
   color: var(--md-primary); transform-origin: 50% 50%; animation: session-busy-spin 1.3s linear infinite; }
 #sessions-bar .session-item .session-busy circle { fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; }
 #sessions-bar .session-item .session-busy .session-busy-track { opacity: 0.18; }
@@ -1649,7 +1639,6 @@ button.danger:hover { background: color-mix(in srgb, var(--md-error) 8%, transpa
 /* 上面那批 MD3 规则里"原本不存在"的状态，在这里补：
  * 焦点态用 primary 环、按下 scale、菜单/搜索的 hover 与 focus。 */
 .agent-btn:active { transform: scale(0.96); }
-.agent-item:active { background: color-mix(in srgb, var(--md-on-surface) 10%, transparent); }
 .model-search:focus { outline: none; }
 /* 输入框占位符用 on-surface-variant（MD3 支持文本色）。 */
 
@@ -1762,7 +1751,7 @@ button.danger:hover { background: color-mix(in srgb, var(--md-error) 8%, transpa
 
 
 .agent-menu { padding: 0.25em 0; }
-.agent-item, .model-item { min-height: 2.5em; padding: 0.4em 0.8em; }
+.model-item { min-height: 2.5em; padding: 0.4em 0.8em; }
 
 .settings-cols .panel .field, .settings-cols .panel .row { padding: 0.45em 0.2em; }
 .settings-cols .panel h3 { margin: 0.8em 0 0.2em; }

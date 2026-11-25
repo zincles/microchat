@@ -9,7 +9,9 @@
 // Agent 入口（2026-11-10 用户定）：从顶栏挪到输入栏上方、推理/工具按钮左侧；
 // 圆形头像 = 选人（AgentMenu.vue），状态行小字里那个助手名仍管"显示"。
 // 会话抬头不在顶栏（左栏列表高亮 + 状态行都有它）。
-import { ref, computed, nextTick, watch } from "vue";
+import { ref, computed, nextTick, watch, type Ref } from "vue";
+import { ClickOutside as vClickOutside } from "vuetify/directives";
+import { useChatMenu } from "../composables/useChatMenu.ts";
 import {
   VBtn, VCard, VList, VListItem, VListSubheader, VProgressLinear,
   VTab, VTabs, VWindow, VWindowItem,
@@ -94,7 +96,7 @@ const orphanModel = ref<ModelChoice | null>(null);
 //
 // ⚠ 顺带删掉了 `modelSel` / `reapplyValues` 那套补写：那是给 `<select>` 打的补丁 ——
 //   选项异步到、`value` 先落进 DOM 会被浏览器换掉。既然是自己的面板，值就只是数据。
-const modelOpen = ref(false);
+const modelOpen = useChatMenu("model");
 const modelQuery = ref("");
 // 顶部的渠道 tab："" = 全部；其余 = 该渠道的 provider id。
 // 2026-11-18 用户定：别让人滚过几百个模型去找某个渠道 —— 先点 tab 再在该渠道里找。
@@ -192,23 +194,36 @@ function moveModelProvider(delta: number): void {
     active?.scrollIntoView({ block: "nearest", inline: "nearest" });
   });
 }
-function closeModel(): void {
-  modelOpen.value = false;
-  nextTick(() => modelButtonEl.value?.focus({ preventScroll: true }));
+// 顶栏这两块是非模态面板。显式关闭回入口；点到别的控件则让焦点跟过去。
+function panelDismissal(open: Ref<boolean>, trigger: Ref<HTMLButtonElement | null>) {
+  function close(): void {
+    if (!open.value) return;
+    open.value = false;
+    trigger.value?.focus({ preventScroll: true });
+  }
+  const outside = {
+    include: () => trigger.value ? [trigger.value] : [],
+    handler: () => { if (document.activeElement === document.body) close(); else open.value = false; },
+  };
+  function onFocusOut(e: FocusEvent): void {
+    const next = e.relatedTarget;
+    if (next instanceof Node && !trigger.value?.contains(next) && !(e.currentTarget as HTMLElement).contains(next)) open.value = false;
+  }
+  return { close, outside, onFocusOut };
 }
+const modelPanel = panelDismissal(modelOpen, modelButtonEl);
 
 function toggleModel(): void {
-  modelOpen.value = !modelOpen.value;
-  if (!modelOpen.value) return;
-  ctxOpen.value = false;
+  if (modelOpen.value) { modelPanel.close(); return; }
+  modelOpen.value = true;
   modelQuery.value = "";
   modelProvider.value = "";
   modelActive.value = -1;
   // 打开就聚焦搜索框：几百个模型，第一次动作必然是打字。
-  nextTick(() => modelSearchEl.value?.focus());
+  nextTick(() => { if (modelOpen.value) modelSearchEl.value?.focus({ preventScroll: true }); });
 }
 function pickModel(value?: string | null): void {
-  closeModel();
+  modelPanel.close();
   // 点当前那一项 = 什么都不做（别为了一次误点发一个 PATCH）。
   if (value && value !== curModel.value) emit("select-model", value);
 }
@@ -224,9 +239,22 @@ function moveActive(delta: number): void {
   const next = modelActive.value < 0 ? (delta > 0 ? 0 : n - 1) : modelActive.value + delta;
   modelActive.value = Math.max(0, Math.min(n - 1, next));
 }
-function pickActive(): void {
-  const hit = flatItemAt(modelActive.value);
-  if (hit) pickModel(hit.value);
+function onModelKey(e: KeyboardEvent): void {
+  if (e.isComposing || e.keyCode === 229) return;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    const delta = e.key === "ArrowDown" ? 1 : -1;
+    if (modelOpen.value) moveActive(delta);
+    else {
+      toggleModel();
+      // 重开时要先等原搜索/渠道的高亮重置，再定位第一项或最后一项。
+      nextTick(() => { if (modelOpen.value) moveActive(delta); });
+    }
+  } else if (e.key === "Enter" && e.currentTarget === modelSearchEl.value) {
+    e.preventDefault();
+    const hit = flatItemAt(modelActive.value);
+    if (hit) pickModel(hit.value);
+  }
 }
 // 筛选条件变化后从头看结果，同时清掉旧位次，避免新渠道仍停在上一组的列表末尾。
 watch([modelQuery, modelProvider], () => {
@@ -275,7 +303,10 @@ function setModels(groups: ModelGroup[], cur?: string): void {
 // ⚠ 弧长用 `pathLength="100"` 把周长**归一化**成 100 ⇒ dasharray 直接写百分数，
 //   不必在 JS 里算 2πr（r 改了也不用改代码）。
 const ctx = ref<ContextUsage | null>(null);
-const ctxOpen = ref(false);
+const ctxOpen = useChatMenu("context");
+const ctxButtonEl = ref<HTMLButtonElement | null>(null);
+const ctxCard = ref<InstanceType<typeof VCard> | null>(null);
+const ctxPanel = panelDismissal(ctxOpen, ctxButtonEl);
 // 环面板的两个 tab（2026-11-02 用户定）：上下文状态 / 正在运行的任务。
 const ctxTab = ref<"context" | "tasks" | "overrides" | "macros">("context");
 // —— 请求体覆盖（2026-11-10 用户定）——
@@ -364,10 +395,14 @@ const ctxBudgetNote = computed(() => {
   const num = (v?: number | null): string => Number(v ?? 0).toLocaleString("en-US");
   return `输入预算 ${num(c.budget_tokens)} tokens = 上下文上限 ${num(c.ctx_len)} − 输出预留 ${num(c.max_output)}。`;
 });
-// closeMenus：Esc 一次收起所有顶栏浮板（MD3 menu 的常规行为；从前只有模型菜单接 Esc）。
-function closeMenus(): void { modelOpen.value = false; ctxOpen.value = false; }
-function toggleCtx(): void { ctxOpen.value = !ctxOpen.value; if (ctxOpen.value) { modelOpen.value = false; emit("refresh-macros"); } }
-watch(() => props.flow, (flow) => { if (flow) ctxOpen.value = false; });
+function onMenuEscape(event: KeyboardEvent): void {
+  if (event.isComposing || event.keyCode === 229 || (!modelOpen.value && !ctxOpen.value)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (modelOpen.value) modelPanel.close();
+  else ctxPanel.close();
+}
+watch(() => props.flow, () => { ctxOpen.value = false; });
 // setContext：App 每轮 refreshStatusline 喂一次（草稿态传 null）。
 function setContext(c?: ContextUsage | null): void { ctx.value = c ?? null; }
 // “已注册宏”面板：后端把注册表 + 本会话全文使用次数一起算好（这里只管画）。
@@ -499,19 +534,25 @@ const ringTitle = computed(() => {
   return [formatStatusLine(status.value ?? {}), contextTitle(ctx.value), taskTitle.value].filter(Boolean).join("\n");
 });
 function clickRing(): void {
-  if (props.flow) { ctxOpen.value = !ctxOpen.value; return; }
-  toggleCtx();
+  if (ctxOpen.value) { ctxPanel.close(); return; }
+  ctxOpen.value = true;
+  if (!props.flow) emit("refresh-macros");
+  nextTick(() => {
+    if (!ctxOpen.value) return;
+    const el: HTMLElement | undefined = ctxCard.value?.$el;
+    (el?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]') ?? el?.querySelector("button"))?.focus({ preventScroll: true });
+  });
 }
 function openWorkflow(): void {
-  ctxOpen.value = false;
+  ctxPanel.close();
   emit("select-workspace", "context");
 }
 
-defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverridesSaved, setMacros, closeMenus });
+defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverridesSaved, setMacros });
 </script>
 
 <template>
-  <header @keydown.esc="closeMenus">
+  <header @keydown.esc="onMenuEscape">
     <button
       v-if="leftHidden"
       id="toggle-left"
@@ -534,8 +575,11 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
         :disabled="loading"
         :title="curModelLabel ? `${curModelLabel}｜改当前会话的模型` : '改当前会话的模型'"
         aria-label="选择模型"
+        aria-haspopup="dialog"
+        :aria-controls="modelOpen ? 'chat-model-picker' : undefined"
         :aria-expanded="modelOpen ? 'true' : 'false'"
         @click="toggleModel"
+        @keydown="onModelKey"
       >
         <span v-if="loading" class="model-loading" aria-hidden="true"></span>
         <template v-else>
@@ -545,11 +589,10 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
         <svg class="model-caret" viewBox="0 0 10 6" aria-hidden="true"><path d="M0 0h10L5 6z" /></svg>
       </button>
       <template v-if="modelOpen">
-        <div class="agent-menu-backdrop" @click="closeModel"></div>
-        <VCard class="agent-menu model-menu" role="dialog" aria-labelledby="model-menu-title" @keydown.esc.stop="closeModel">
+        <VCard id="chat-model-picker" v-click-outside="modelPanel.outside" class="agent-menu model-menu" role="dialog" aria-labelledby="model-menu-title" @focusout="modelPanel.onFocusOut">
           <div class="model-menu-head">
             <h2 id="model-menu-title">选择模型</h2>
-            <VBtn icon variant="text" size="small" title="关闭模型选择器" aria-label="关闭模型选择器" @click="closeModel" v-html="ICONS.x" />
+            <VBtn icon variant="text" size="small" title="关闭模型选择器" aria-label="关闭模型选择器" @click="modelPanel.close" v-html="ICONS.x" />
           </div>
           <input
             ref="modelSearchEl"
@@ -563,9 +606,7 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
             aria-controls="model-options"
             aria-autocomplete="list"
             :aria-activedescendant="modelActive >= 0 ? `model-option-${modelActive}` : undefined"
-            @keydown.down.prevent="moveActive(1)"
-            @keydown.up.prevent="moveActive(-1)"
-            @keydown.enter.prevent="pickActive"
+            @keydown="onModelKey"
           />
           <!-- 顶部渠道 tab：左右滚动，"全部"永远在最左。选完 tab 后只列这个渠道的模型，
                不必在几百个模型里滚到某个渠道再找。 -->
@@ -655,12 +696,15 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
            两个 tab：上下文数字 / 运行任务明细。 -->
       <button
         id="ctx-ring"
+        ref="ctxButtonEl"
+        aria-haspopup="dialog"
+        :aria-controls="ctxOpen ? 'chat-context-panel' : undefined"
         class="ctx-ring"
         :class="{ over: !flow && ctxOver, idle: !flow && !ctx, busy: ringBusy, flow }"
         type="button"
         :title="ringTitle"
         :aria-label="flow ? '正在运行的 LLM 调用' : '上下文占用与后台任务'"
-        :aria-expanded="!flow && ctxOpen ? 'true' : 'false'"
+        :aria-expanded="ctxOpen"
         @click="clickRing"
       >
         <svg viewBox="0 0 32 32" aria-hidden="true">
@@ -671,12 +715,11 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
       </button>
     </span>
     <template v-if="flow && ctxOpen">
-      <div class="agent-menu-backdrop" @click="ctxOpen = false"></div>
-      <VCard class="agent-menu ctx-menu flow-calls-menu" role="dialog" aria-label="并行 LLM 调用">
+      <VCard id="chat-context-panel" ref="ctxCard" v-click-outside="ctxPanel.outside" class="agent-menu ctx-menu flow-calls-menu" role="dialog" aria-label="并行 LLM 调用" @focusout="ctxPanel.onFocusOut">
         <div class="flow-calls-head">
           <b>并行 LLM 调用</b>
           <span class="flow-calls-count">{{ flowCallCount }} 个运行中</span>
-          <VBtn icon variant="text" size="small" type="button" title="关闭" aria-label="关闭" @click="ctxOpen = false">×</VBtn>
+          <VBtn icon variant="text" size="small" type="button" title="关闭" aria-label="关闭" @click="ctxPanel.close">×</VBtn>
         </div>
         <p v-if="!flowActiveNodes.length" class="agent-empty">当前没有运行中的 LLM 调用。</p>
         <VList v-else density="compact" class="flow-calls-list">
@@ -693,8 +736,7 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
       </VCard>
     </template>
     <template v-if="!flow && ctxOpen">
-      <div class="agent-menu-backdrop" @click="ctxOpen = false"></div>
-      <VCard class="agent-menu ctx-menu" :class="{ over: ctxOver }" role="dialog" aria-label="上下文与任务">
+      <VCard id="chat-context-panel" ref="ctxCard" v-click-outside="ctxPanel.outside" class="agent-menu ctx-menu" :class="{ over: ctxOver }" role="dialog" aria-label="上下文与任务" @focusout="ctxPanel.onFocusOut">
         <VTabs
           v-model="ctxTab"
           class="ctx-tabs"
