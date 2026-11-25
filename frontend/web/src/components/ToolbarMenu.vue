@@ -61,7 +61,7 @@ function onEscape(event: KeyboardEvent): void {
         <VBtn
           v-bind="activatorProps"
           type="button"
-          variant="text"
+          variant="outlined"
           rounded="xl"
           size="small"
           :class="buttonClass"

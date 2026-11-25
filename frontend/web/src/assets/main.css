@@ -1076,13 +1076,14 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 #composer .composer-send-btn svg { width: 20px; height: 20px; }
 /* 发送图标按 SVG 的几何中心对齐；VBtn 的 content 默认被 inline 基线撑高，箭头会偏上一截。 */
 .composer-top-actions .v-btn__content, .composer-top-actions .v-btn__content > span { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; line-height: 0; }
-/* 配置项是文字按钮，沿用 VBtn 的悬停、按下状态层，不另画一排胶囊。 */
+/* 推理、工具与专注使用描边文字按钮；保留 Vuetify 的悬停和按下状态层。 */
 .composer-toolbar .agent-btn { width: var(--chat-control); height: var(--chat-control); min-width: var(--chat-control); min-height: var(--chat-control); font-size: 0.82em; outline: 1px solid var(--md-outline-variant); }
 #composer .composer-toolbar :is(.thinking-btn, .tools-btn, .zen-btn) {
   min-width: var(--chat-action); max-width: 100%; min-height: var(--chat-control); height: auto;
   padding: calc(var(--chat-space) / 4) calc(0.75 * var(--chat-space)); font-size: var(--md-type-label-medium); line-height: 1.35; text-transform: none;
+  border-color: var(--md-outline); color: var(--md-on-surface-variant);
 }
-#composer .composer-toolbar .v-btn--variant-text { color: var(--md-on-surface-variant); }
+#composer .composer-toolbar :is([aria-expanded="true"].thinking-btn, [aria-expanded="true"].tools-btn, [aria-pressed="true"].zen-btn) { border-color: var(--md-primary); color: var(--md-primary); }
 #composer .composer-toolbar button:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px; }
 .composer-options .v-btn__content { min-width: 0; }
 .thinking-label, .tools-label { min-width: 0; white-space: normal; overflow-wrap: anywhere; }

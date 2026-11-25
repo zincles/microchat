@@ -104,8 +104,7 @@ defineExpose({ submit, setRunning });
           <VBtn
             v-if="!flow"
             type="button"
-            :variant="zen ? 'flat' : 'text'"
-            :color="zen ? 'secondary-container' : undefined"
+            variant="outlined"
             rounded="xl"
             size="small"
             class="zen-btn"
