@@ -65,6 +65,7 @@ export async function renderMermaidIn(root: HTMLElement | null): Promise<void> {
     if (done.get(figure) === key || pending.get(figure) === key) continue;
     pending.set(figure, key);
     figure.classList.remove("mermaid-error", "mermaid-rendered");
+    figure.classList.add("mermaid-rendering");
     if (errorEl) errorEl.textContent = "";
     if (status) status.textContent = "渲染中…";
 
@@ -72,21 +73,24 @@ export async function renderMermaidIn(root: HTMLElement | null): Promise<void> {
       const mermaid = await ensureMermaid(theme);
       const { svg } = await mermaid.render(`mermaid-${Date.now().toString(36)}-${++seq}`, code);
       // 流式期间可能已经换了一版正文；旧结果不要盖到新源码上。
-      if (!figure.isConnected || (sourceEl?.textContent ?? "") !== code) continue;
+      if (pending.get(figure) !== key || !figure.isConnected || (sourceEl?.textContent ?? "") !== code) continue;
       diagram.innerHTML = svg;
       if (sourceEl) sourceEl.hidden = true;
       if (status) status.textContent = "";
       figure.classList.add("mermaid-rendered");
       done.set(figure, key);
     } catch (e) {
-      if (!figure.isConnected || (sourceEl?.textContent ?? "") !== code) continue;
+      if (pending.get(figure) !== key || !figure.isConnected || (sourceEl?.textContent ?? "") !== code) continue;
       figure.classList.add("mermaid-error");
       if (status) status.textContent = "渲染失败";
       if (sourceEl) sourceEl.hidden = false;
       if (errorEl) errorEl.textContent = errorText(e);
       done.set(figure, key);
     } finally {
-      if (pending.get(figure) === key) pending.delete(figure);
+      if (pending.get(figure) === key) {
+        pending.delete(figure);
+        figure.classList.remove("mermaid-rendering");
+      }
     }
   }
 }

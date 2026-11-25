@@ -27,6 +27,7 @@ const props = withDefaults(defineProps<BubblePresentation & {
   reasoningMs?: number | null;
   durationMs?: number | null; // 受理 → 收尾的总耗时，是输出速度的分母。
   messageId?: string | null;
+  deleting?: boolean;
   promptId?: string | null; // 最新 AI 回复对应的用户输入（仅尾条 assistant 有）
   isLast?: boolean;
   allowContinue?: boolean;
@@ -118,6 +119,15 @@ const reasoningHtml = computed(() => renderMacroHtml(props.reasoning, props.macr
 // `overflow-x: auto` 之外再标一个类 —— 只有真的溢出才提示，短公式不受影响。
 const textEl = ref<HTMLElement | null>(null);
 const msgEl = ref<HTMLElement | null>(null);
+function markPendingImages(): void {
+  for (const image of textEl.value?.querySelectorAll("img") ?? []) {
+    if (!image.complete) image.setAttribute("aria-busy", "true");
+  }
+}
+function settleImage(event: Event): void {
+  if (event.target instanceof HTMLImageElement) event.target.removeAttribute("aria-busy");
+}
+watch([textEl, bodyHtml, toolTimeline], markPendingImages, { flush: "post" });
 watch(() => props.reroll?.current_idx, (next, previous) => animateCandidate(msgEl.value, next, previous), { flush: "post" });
 let cursorEl: HTMLSpanElement | null = null;
 function markMathOverflow(): void {
@@ -191,7 +201,8 @@ watch(() => props.streaming, (s) => nextTick(() => {
        从前这里按 `display_mode` 切两套 class（两边气泡 / 用户气泡+AI 纯文本）；现在后者是唯一的样子，
        所以不再有条件类 —— 形态本身写在 CSS 的 `.msg.assistant` / `.msg-wrap.assistant` 里。 -->
   <div :class="`msg-wrap ${role === 'user' ? 'user' : 'assistant'}`">
-    <div v-if="answerView === 'full' || content || toolTimeline.length" ref="msgEl" :class="`msg ${role === 'user' ? 'user' : 'assistant'}`">
+    <div v-if="answerView === 'full' || content || toolTimeline.length" ref="msgEl" :class="`msg ${role === 'user' ? 'user' : 'assistant'}`"
+      @load.capture="settleImage" @error.capture="settleImage">
       <div v-if="role !== 'user' && answerView === 'full' && (assistantIdent || statusText)" class="msg-head">
         {{ assistantIdent }}<span v-if="statusText" :class="{ 'msg-status': issue }">{{ assistantIdent ? ' · ' : '' }}{{ statusText }}</span>
       </div>
@@ -262,7 +273,9 @@ watch(() => props.streaming, (s) => nextTick(() => {
         </div>
         <VBtn v-if="allowContinue" icon type="button" variant="text" size="small"
           title="续写（按现有历史生成下一条回复）" aria-label="续写" @click="emit('continue-turn')" v-html="ICONS.messagePlus" />
-        <VBtn icon variant="text" size="small" class="msg-delete" title="删除这条及之后" aria-label="删除这条及之后" @click="emit('delete', messageId, isLast)" v-html="ICONS.trash" />
+        <VBtn icon variant="text" size="small" class="msg-delete" :loading="deleting" :disabled="deleting" title="删除这条及之后" aria-label="删除这条及之后" @click="emit('delete', messageId, isLast)">
+          <span aria-hidden="true" v-html="ICONS.trash" />
+        </VBtn>
       </div>
       <details v-if="metrics.length" class="msg-foot">
         <summary title="回答用量与耗时明细">

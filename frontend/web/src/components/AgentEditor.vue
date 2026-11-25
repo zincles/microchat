@@ -5,7 +5,7 @@
 // 2026-10-28 用户：「在具体某个 Agent 的设置界面里，我们最好也分 TAB，不然的话，全挤在一起很丑。」
 // ⇒ 一条长滚动拆成页签：基本 / 系统提示词 / 每个能力一页（页签条用 Vuetify `VTabs`，与设置主栏同一套）。
 // 保存一行留在页签**外面**（哪一页都能保存；翻页不丢已填的东西，状态都在 ref 里）。
-import { ref, computed, onMounted, onUnmounted } from "vue";
+import { ref, shallowRef, computed, onMounted, onUnmounted } from "vue";
 import { sharedApi } from "../utils/prefs.ts";
 import { ABILITY_IDS, ABILITY_LABELS, ABILITY_TEMPLATE_SEGMENTS, buildAbilitiesPatch, modelKey, parseModelKey, modelLabel } from "../utils/format.ts";
 import type { AbilityRow } from "../utils/format.ts";
@@ -14,6 +14,7 @@ import { buildCartridge } from "../utils/cartridge.ts";
 import { downloadJSON } from "../utils/download.ts";
 import SegmentList from "./SegmentList.vue";
 import FlowEditor from "./FlowEditor.vue";
+import RequestLoading from "./RequestLoading.vue";
 import SettingsBack from "./SettingsBack.vue";
 import { emptyFlowGraph, normalizeFlowGraph } from "../utils/flow.ts";
 import type { SegmentItem } from "./SegmentList.vue";
@@ -101,6 +102,11 @@ const flowGraph = ref<FlowGraph>(normalizeFlowGraph(props.agent?.flow ?? emptyFl
 const assembled = computed(() => assemblePrompt(prompt.value, segs.value, props.segments));
 const modelOptions = ref<ModelOption[]>([]);
 const status = ref("");
+const loadingModels = shallowRef(false);
+const modelsReady = shallowRef(false);
+const modelLoadError = shallowRef("");
+const action = shallowRef<"save" | "default" | "confirm-delete" | "delete" | null>(null);
+let active = true;
 
 // —— 能力里的提示词段（2026-10-28 用户定："用于 Compact 的提示词段"也要能自由组合）——
 // 编辑器就是 `SegmentList`（与上面 agent 级**同一个组件**：同一个段库、同一条拼装规则、
@@ -186,9 +192,11 @@ function toPatch(): Record<string, AbilityRow> {
 }
 
 async function save(): Promise<void> {
+  if (action.value) return;
   if (!name.value.trim()) { status.value = "给个名字"; return; }
-  const patch = buildAbilitiesPatch(toPatch());
+  action.value = "save";
   try {
+    const patch = buildAbilitiesPatch(toPatch());
     if (isNew) {
       const body: CreateAgentRequest = {
         name: name.value.trim(),
@@ -220,9 +228,9 @@ async function save(): Promise<void> {
       if (aid.value.trim() && aid.value.trim() !== agent.id) body.new_id = aid.value.trim();
       await api.patchAgent(agent.id, body);
     }
-    emit("saved");
-    emit("close");
+    finishEdit();
   } catch (e: unknown) { status.value = `保存失败：${e instanceof Error ? e.message : String(e)}`; }
+  finally { action.value = null; }
 }
 
 // 导出卡带（2026-10-11 用户定）：**只导 agent 自己** —— 用到的段**拼平**进 system_prompt、
@@ -242,38 +250,64 @@ function exportCartridge(): void {
 }
 
 async function makeDefault(): Promise<void> {
-  if (isNew) return;
+  if (isNew || action.value) return;
+  action.value = "default";
   try {
     await api.patchAgent(props.agent!.id, { make_default: true });
-    emit("saved");
-    emit("close");
+    finishEdit();
   } catch (e: unknown) { status.value = `设默认失败：${e instanceof Error ? e.message : String(e)}`; }
+  finally { action.value = null; }
 }
 
 async function remove(): Promise<void> {
-  if (isNew) return;
+  if (isNew || action.value) return;
   const agent = props.agent!;
-  if (props.ask && !(await props.ask(`删除 Agent「${agent.name || agent.id}」？不可逆。`))) return;
+  action.value = "confirm-delete";
   try {
+    if (props.ask && !(await props.ask(`删除 Agent「${agent.name || agent.id}」？不可逆。`))) return;
+    if (!active) return;
+    action.value = "delete";
     await api.deleteAgent(agent.id);
-    emit("saved");
-    emit("close");
+    finishEdit();
   } catch (e: unknown) { status.value = `删除失败：${e instanceof Error ? e.message : String(e)}`; }
+  finally { action.value = null; }
 }
 
-onMounted(async () => {
+function finishEdit(): void {
+  if (!active) return;
+  emit("saved");
+  emit("close");
+}
+
+async function loadModels(): Promise<void> {
+  if (loadingModels.value) return;
+  loadingModels.value = true;
   try {
     const models = await api.models();
+    if (!active) return;
     modelOptions.value = (models ?? []).map((m) => ({
       value: modelKey(m.provider, m.upstream_id),
       label: `${m.provider}/${modelLabel(m)}`,
     }));
-  } catch {}
+    modelsReady.value = true;
+    modelLoadError.value = "";
+  } catch (e: unknown) {
+    if (active) modelLoadError.value = `读取模型列表失败：${e instanceof Error ? e.message : String(e)}`;
+  } finally {
+    loadingModels.value = false;
+  }
+}
+
+onMounted(() => {
+  if (agentKind.value !== "flow") void loadModels();
   document.addEventListener("keydown", onKey);
 });
-onUnmounted(() => document.removeEventListener("keydown", onKey));
+onUnmounted(() => {
+  active = false;
+  document.removeEventListener("keydown", onKey);
+});
 function onKey(e: KeyboardEvent): void {
-  if (e.key === "Escape") emit("close");
+  if (e.key === "Escape" && !action.value) emit("close");
 }
 </script>
 
@@ -281,8 +315,13 @@ function onKey(e: KeyboardEvent): void {
   <!-- 二级页（2026-10-10 起不再是弹窗）：嵌在设置视图的 Agent tab 里，列表 ⇄ 详情就地切换。 -->
   <div class="detail-pane">
     <div class="panel-head">
-      <SettingsBack @back="emit('close')" />
+      <SettingsBack :disabled="!!action" @back="emit('close')" />
       <span class="status">{{ isNew ? "新建智能体" : `编辑「${props.agent?.name ?? ""}」` }}{{ !isNew && isDefault ? "（默认）" : "" }}</span>
+    </div>
+    <RequestLoading v-if="loadingModels && !modelLoadError" label="正在读取模型列表…" />
+    <div v-else-if="modelLoadError" class="row">
+      <span class="status" role="status">{{ modelLoadError }}</span>
+      <VBtn variant="text" size="small" type="button" :loading="loadingModels" :disabled="loadingModels" @click="loadModels">重新载入</VBtn>
     </div>
     <VTabs
       v-model="tab"
@@ -293,7 +332,7 @@ function onKey(e: KeyboardEvent): void {
       <VTab v-for="t in tabs" :key="t.id" :value="t.id" @focus="tab = t.id">{{ t.label }}</VTab>
     </VTabs>
 
-    <VTabsWindow v-model="tab" class="agent-window">
+    <VTabsWindow v-model="tab" class="agent-window" :inert="!!action">
     <VTabsWindowItem value="base">
     <section class="pane-section">
       <label class="field"><span>标识（改名会同步所有引用）</span><VTextField density="compact" variant="outlined" hide-details v-model="aid" :disabled="isNew" placeholder="新建时自动生成" /></label>
@@ -338,10 +377,10 @@ function onKey(e: KeyboardEvent): void {
       <label class="field"><span>启用（关闭后这项功能不会运行）</span><VSwitch v-model="rows[id].enabled" color="primary" density="compact" hide-details /></label>
       <template v-if="id === 'title'">
         <label class="field"><span>标题模型来源</span><VSelect v-model="rows[id].modelSource" :items="modelSourceOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
-        <label v-if="rows[id].modelSource === 'agent'" class="field"><span>Agent 模型</span><VSelect v-model="rows[id].model" :items="agentModelOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
+        <label v-if="rows[id].modelSource === 'agent'" class="field"><span>Agent 模型</span><VSelect v-model="rows[id].model" :items="agentModelOptions" :disabled="!modelsReady" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
         <p class="hint">跟随全局设置：用设置 → 聊天 → 标题模型；全局空着就用当前会话模型。Agent 模型两项都填才生效，否则回落全局。</p>
       </template>
-      <label v-else class="field"><span>模型</span><VSelect v-model="rows[id].model" :items="sessionModelOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
+      <label v-else class="field"><span>模型</span><VSelect v-model="rows[id].model" :items="sessionModelOptions" :disabled="!modelsReady" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
       <label class="field-block"><span>自定义提示词（留空 = 使用默认模板）</span><VTextarea v-model="rows[id].prompt" rows="3" density="compact" variant="outlined" hide-details /></label>
       <!-- 提示词段：追加在（覆盖 ?: 默认）模板**后面**，顺序 = 这里的顺序。
            改了模板不必把段里的字抄进来 —— 抄进来就是两份，改一处忘一处。
@@ -357,11 +396,11 @@ function onKey(e: KeyboardEvent): void {
     </VTabsWindow>
 
     <div class="row">
-      <VBtn color="primary" variant="flat" size="small" type="button" @click="save">保存</VBtn>
+      <VBtn color="primary" variant="flat" size="small" type="button" :loading="action === 'save'" :disabled="!!action" @click="save">保存</VBtn>
       <span class="action-note">保存后，新会话与后续轮次使用新设定；不会改写已有消息。</span>
       <VBtn v-if="agentKind !== 'flow'" variant="text" size="small" type="button" @click="exportCartridge" title="导出智能体文件（JSON；提示词片段会展开成完整提示词）">导出智能体</VBtn>
-      <VBtn variant="text" size="small" v-if="!isNew && !isDefault && agentKind !== 'flow'" type="button" @click="makeDefault">设为默认</VBtn>
-      <VBtn color="error" variant="text" size="small" v-if="!isNew" type="button" @click="remove">删除</VBtn>
+      <VBtn variant="text" size="small" v-if="!isNew && !isDefault && agentKind !== 'flow'" type="button" :loading="action === 'default'" :disabled="!!action" @click="makeDefault">设为默认</VBtn>
+      <VBtn color="error" variant="text" size="small" v-if="!isNew" type="button" :loading="action === 'delete'" :disabled="!!action" @click="remove">删除</VBtn>
       <span class="status">{{ status }}</span>
     </div>
   </div>

@@ -1364,7 +1364,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   **行尾「选项」三个点默认隐藏**：未悬停 / 未选中 / 未聚焦就 `opacity:0 + pointer-events:none`（**触屏也一样**；触屏先点行选中它，再点三个点）。只有 `:hover`（`@media (hover:hover)`）、`:focus-visible` 与 `.sel` 当前会话无条件点亮。⚠ **别再加 `@media (hover:none)` 的"触屏常驻"例外** —— PWA / 触屏对 hover 能力的报告不一致，2026-11-09 实报「所有三个点都显示」，根因就是那条例外。
   **有任务在跑的行，标题右侧一枚小环**（2026-11-05 用户定：「如果一个对话有正在运行的 TASK，那么这个对话在左侧对话列表里，就应该有些反应」）：判定在 `utils/tasks.ts` 的 `busySessionIds`（唯一处）—— 取 `/tasks` 同一拍的快照里 `finished_at` 为空且带 `session` 的原子任务，外加队列 `current.session_id`（两步之间可能短暂没有原子任务）；**已完成的不算**（面板还会把记录列一阵子，那是账不是状态）。App 在 `refreshTasks` 里算好、经 `:busy-ids` 传给 `SessionBar`；读不到 `/tasks` 就清空（别留一条永远转的假象）。样式 `.session-busy`：边框旋转、尺寸随字号、`prefers-reduced-motion` 下停转但保留缺口环。
 - **消息列只挂窗口**（2026-10-10 加，防浏览器被撑炸）：进入会话只拉**最后 `history_window` 段**（默认 **5**；段 = 一条消息或**一张顶层摘要卡**，所以原始消息通常 ≤5）；更老的按 `↑ 加载更多历史` 一页一页往回（一页也这么多；值来自 `chat.history_window`，设置 → 聊天可改；插入前记高度、插完补回滚动锚）。**被摘要盖住的原文一个字节都不取**（按"消息段"拼连续区间，走 `POST /messages/batch` 一发拿全；摘要段整段跳过）；`查看未压缩文本` **按下才拉**（每次按下都拉新的一版，不吃旧缓存）。总数拿 `?last=1` 问尾条（比会话列表计数新鲜）；`reloadWindow` = 按最新段布局重拉当前窗口（一轮结束/编辑/删除/压缩/切版后），起点先 `alignWindowFrom` 对回段边界。**压缩树 tab 是例外**：看着它才拉**全量**消息+摘要建树（分析视图 = 用户显式要全量）。
-- **PWA（可安装，2026-10-11 用户点名）**：`vite-plugin-pwa`（build/preview 开 SW、dev 关）——壳预缓存（离线开门板）、`/api` 永不缓存。**安装前提 = HTTPS 或 localhost**：局域网 `http://<IP>` 装不了（非安全上下文）；云端反代终结 TLS 即满足。图标在 `public/`（favicon 栅格化）。实测：localhost 下 manifest/SW/图标全过，`beforeinstallprompt` 真触发。**应用内安装入口 2026-11-02 删掉**（用户定；底部入口后来只剩渠道/助手/设置，会话列表 2026-11-22 进设置目录）——浏览器自带的安装菜单/地址栏图标仍可用，PWA 能力本身没动。
+- **PWA（可安装）**：`vite-plugin-pwa` 只在 build/preview 启用 Service Worker；预缓存壳，`/api` 不缓存。安装要求 HTTPS 或 localhost。`frontend/web/public/favicon.svg` 是图标源；改图后用 `frontend/web/scripts/render-app-icons.sh` 同步生成 `src/assets/app-icons` 的普通、可遮罩与 iOS PNG。位图 URL 随内容变化：Chrome 按清单中的 `icons` 字段识别变化，原地址换字节不足以更新已安装图标。保留 manifest 地址、scope 与 start_url；已有图标的确认或重新安装由浏览器管理。
   **前端构建身份 / `build.json`（2026-11-09）**：Vite 每次构建把同一枚 `build_id`（ISO 时间）写进 JS（`define: __BUILD_ID__`）与 `dist/build.json`（`buildInfoPlugin`）；`/build.json` 是**静态文件、不进 Workbox 预缓存**（`globPatterns` 不含 json）且响应 `no-cache` ⇒ 更新面板能拿服务器当前那一份来比当前页面的壳。**别把它塞进 `globPatterns`**：塞进去就永远读到旧值，工具会失去意义。
 - **自动更新 SW + 顶部提示刷新（2026-11-12 用户定）**：`registerType: "autoUpdate"`；
   `utils/pwa.ts` 的 `registerSW` 传 `onNeedReload`（**不自动 reload**）⇒ 新 SW 自动安装/接管后只弹
@@ -1533,6 +1533,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   （刷新模型/导入本来就慢，20 秒会把正常请求剪断）。`probeHealth` 自带 **8s** 超时 ——
   黑洞地址不能把启动按住。
   ⚠ 契约测试钉着这些顺序（`高延迟：发送先上屏…` 那条），改回"先 await 再画"会红。
+- **前台远端等待**：`RequestLoading.vue` 供缺数据的可见区域使用，操作按钮用 Vuetify 的 `loading`，侧栏会话操作复用行内状态环。会话设置并行读取会话、模型与智能体；数据未齐或读取失败时不显示可编辑表单。轮询和预取不增设遮罩；减少动态效果时保留静态提示。
 - **设置**：左栏唯一设置入口是「开启新对话」旁的齿轮，底部不留工具条。目录按「常用设置 / 对话与模型 / 数据与维护」分组，搜索直接定位具体控件。渠道与智能体从目录进入；工作流跳转仍可直达当前智能体。外观、输入与消息渲染由 `AppearancePane.vue` 分页；缩放要显式保存，其余按控件回写。
   **更新面板**（`UpdatePane.vue`，2026-11-20 压成两块简洁版式）：左边「版本」（本地 / GitHub 最新 /
   自动更新 / 拉取并重启），右边「前端缓存（PWA）」；**关于 MicroChat** 独立收底

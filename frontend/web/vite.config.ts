@@ -1,7 +1,8 @@
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import vue from "@vitejs/plugin-vue";
 import vuetify from "vite-plugin-vuetify";
 import { VitePWA } from "vite-plugin-pwa";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -121,6 +122,25 @@ function assetCacheHeaders() {
   };
 }
 
+// Chrome 按 manifest 的 icons 字段判断是否刷新安装图标，原地址换内容不够。
+const installIcons = [
+  { name: "pwa-192", size: 192, purpose: "any" },
+  { name: "pwa-512", size: 512, purpose: "any" },
+  { name: "pwa-maskable-512", size: 512, purpose: "maskable" },
+].map(({ name, size, purpose }) => {
+  const source = fs.readFileSync(new URL(`./src/assets/app-icons/${name}.png`, import.meta.url));
+  const hash = createHash("sha256").update(source).digest("hex").slice(0, 12);
+  return { source, entry: { src: `assets/${name}-${hash}.png`, sizes: `${size}x${size}`, type: "image/png", purpose } };
+});
+
+const installIconAssets: Plugin = {
+  name: "microchat-install-icons",
+  apply: "build",
+  generateBundle() {
+    for (const { entry, source } of installIcons) this.emitFile({ type: "asset", fileName: entry.src, source });
+  },
+};
+
 export default defineConfig({
   plugins: [
     vue(),
@@ -129,6 +149,7 @@ export default defineConfig({
     vuetify({ autoImport: true }),
     buildInfoPlugin(),
     assetCacheHeaders(),
+    installIconAssets,
     // PWA（2026-10-11 用户点名）：可"安装为应用"。三件事 —— manifest / 图标 / 一个最小 SW。
     //   · SW **只预缓存壳**（HTML/JS/CSS/图标）：/api 一概不碰（数据必须现取；别写
     //     runtimeCaching 去接它，接了就是串数据）。
@@ -154,11 +175,7 @@ export default defineConfig({
         // 会看到"图标背景是藏青、应用是灰"的割裂感。
         background_color: "#131314",
         theme_color: "#131314",
-        icons: [
-          { src: "pwa-192.png", sizes: "192x192", type: "image/png" },
-          { src: "pwa-512.png", sizes: "512x512", type: "image/png" },
-          { src: "pwa-maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
-        ],
+        icons: installIcons.map(({ entry }) => entry),
       },
       workbox: {
         globPatterns: ["**/*.{js,css,html,svg,png,woff2,woff,ttf}"],

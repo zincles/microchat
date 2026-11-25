@@ -38,9 +38,11 @@ export interface SessionWindow {
   vueMessages: Ref<AppRow[]>;
   vueSegments: Ref<ChatSegment[]>;
   loadingSession: Ref<boolean>;
+  loadingMore: Ref<boolean>;
   windowLimit: Ref<number>;
   windowFrom: Ref<number>;
   summaryMsgs: Map<string, ChatSummaryEntry>;
+  summaryErrors: Map<string, string>;
   openSummaries: Set<string>;
   windowCache: Map<string, WindowSnapshot<AppRow, ChatSegment>>;
   toRow: (m: Message) => AppRow;
@@ -58,6 +60,7 @@ export interface SessionWindow {
   resetReadingTail: () => void;
   noteNewReply: () => void;
   loadMore: () => Promise<void>;
+  resetWindowRequests: () => void;
   prefetchSession: (id: string) => void;
   refreshSummaryMsgs: (id: string) => Promise<void>;
   onSummaryToggle: (id: string, open: boolean) => void;
@@ -103,9 +106,13 @@ export function useSessionWindow({
   const vueMessages = ref<AppRow[]>([]);
   const vueSegments = ref<ChatSegment[]>([]);
   const loadingSession = ref(true);
+  const loadingMore = shallowRef(false);
+  let pagingEpoch: number | null = null;
   const windowLimit = ref(5);
   const windowFrom = ref(1);
   const summaryMsgs = reactive<Map<string, ChatSummaryEntry>>(new Map());
+  const summaryErrors = reactive(new Map<string, string>());
+  const summaryRequests = new Map<string, symbol>();
   const openSummaries = new Set<string>();
   const windowCache = new Map<string, WindowSnapshot<AppRow, ChatSegment>>();
   const tailInflight = new Map<string, Promise<WindowSnapshot<AppRow, ChatSegment>>>();
@@ -119,6 +126,13 @@ export function useSessionWindow({
   const awayFromLatest = shallowRef(false);
   const hasNewReply = shallowRef(false);
   let lastScrollTop = 0;
+
+  function resetWindowRequests(): void {
+    pagingEpoch = null;
+    loadingMore.value = false;
+    summaryErrors.clear();
+    summaryRequests.clear();
+  }
 
   function syncTail(el: HTMLElement): void {
     lastScrollTop = el.scrollTop;
@@ -244,15 +258,22 @@ export function useSessionWindow({
     return p;
   }
 
-  async function refreshSummaryMsgs(id: string): Promise<void> {
+  async function refreshSummaryMsgs(id: string, foreground = true): Promise<void> {
     const seg = vueSegments.value.find((x): x is Extract<ChatSegment, { kind: "summary" }> => x.kind === "summary" && x.id === id);
     const sid = getSessionID();
     if (!seg || !sid) { summaryMsgs.delete(id); return; }
     const my = getEpoch();
-    summaryMsgs.set(id, { state: "loading", rows: null });
+    const request = Symbol();
+    summaryRequests.set(id, request);
+    const current = () => my === getEpoch() && summaryRequests.get(id) === request;
+    if (foreground) {
+      summaryErrors.delete(id);
+      summaryMsgs.set(id, { state: "loading", rows: null });
+    }
     try {
       const msgs = await api.listMessagesRange(sid, seg.b, seg.e);
-      if (my !== getEpoch()) return;
+      if (!current()) return;
+      summaryErrors.delete(id);
       summaryMsgs.set(id, {
         state: "ready",
         rows: msgs.sort((x, y) => (x.idx ?? 0) - (y.idx ?? 0)).map((m) => ({
@@ -260,9 +281,15 @@ export function useSessionWindow({
         })),
       });
     } catch (err: unknown) {
-      if (my !== getEpoch()) return;
-      summaryMsgs.delete(id);
-      toast(`未压缩文本拉取失败：${err instanceof Error ? err.message : String(err)}`, "error");
+      if (!current()) return;
+      const message = `未压缩文本拉取失败：${err instanceof Error ? err.message : String(err)}`;
+      if (foreground || !summaryMsgs.get(id)?.rows) {
+        summaryMsgs.delete(id);
+        summaryErrors.set(id, message);
+      }
+      if (openSummaries.has(id)) toast(message, "error");
+    } finally {
+      if (current()) summaryRequests.delete(id);
     }
   }
 
@@ -299,7 +326,9 @@ export function useSessionWindow({
     vueMessages.value = snap.rows;
     const alive = new Set(snap.segments.filter((seg) => seg.kind === "summary").map((seg) => seg.id));
     for (const key of [...summaryMsgs.keys()]) if (!alive.has(key)) summaryMsgs.delete(key);
-    for (const id of openSummaries) if (alive.has(id)) void refreshSummaryMsgs(id);
+    for (const key of summaryErrors.keys()) if (!alive.has(key)) summaryErrors.delete(key);
+    for (const key of summaryRequests.keys()) if (!alive.has(key)) summaryRequests.delete(key);
+    for (const id of openSummaries) if (alive.has(id)) void refreshSummaryMsgs(id, false);
     rememberWindow(windowCache, sid, { rows: vueMessages.value, segments: snap.segments, windowFrom: windowFrom.value });
     onWindowLoaded?.();
     if (position || scroll === true) {
@@ -338,6 +367,22 @@ export function useSessionWindow({
   }
 
   async function loadMore(): Promise<void> {
+    const my = getEpoch();
+    if (pagingEpoch === my) return;
+    pagingEpoch = my;
+    try {
+      await loadOlderWindow();
+    } catch (err: unknown) {
+      if (my === getEpoch()) toast(`加载更多失败：${err instanceof Error ? err.message : String(err)}`, "error");
+    } finally {
+      if (pagingEpoch === my) {
+        pagingEpoch = null;
+        loadingMore.value = false;
+      }
+    }
+  }
+
+  async function loadOlderWindow(): Promise<void> {
     const sid = getSessionID();
     const my = getEpoch();
     const from = windowFrom.value;
@@ -345,10 +390,11 @@ export function useSessionWindow({
     const older = prevWindowStart(segments, from, windowLimit.value);
     if (!sid || older >= from) return;
     const runs = runsToFetch(segments, older, from - 1);
+    if (runs.length) loadingMore.value = true;
     const got = runs.length ? await api.messageRanges(sid, batchRanges(runs)) : [];
     if (my !== getEpoch() || sid !== getSessionID() || from !== windowFrom.value) return;
     // 等分页时前台对账可能已经替换了段结构。按新结构兑现这次翻页，不往新窗口拼旧数据。
-    if (segments !== vueSegments.value) return loadMore();
+    if (segments !== vueSegments.value) return loadOlderWindow();
     const el = pane.value;
     const position = captureReadingPosition(el);
     const beforeH = el?.scrollHeight ?? 0;
@@ -368,8 +414,8 @@ export function useSessionWindow({
   }
 
   return {
-    vueMessages, vueSegments, loadingSession, windowLimit, windowFrom, summaryMsgs, openSummaries, windowCache,
-    toRow, fetchWindow, loadWindow, reloadWindow, reloadWindowKeepingScroll, loadMore, prefetchSession,
+    vueMessages, vueSegments, loadingSession, loadingMore, windowLimit, windowFrom, summaryMsgs, summaryErrors, openSummaries, windowCache,
+    toRow, fetchWindow, loadWindow, reloadWindow, reloadWindowKeepingScroll, loadMore, resetWindowRequests, prefetchSession,
     rememberReadingPosition, restoreReadingPosition, forgetReadingPosition,
     awayFromLatest, hasNewReply, onReadingScroll, jumpToLatest, resetReadingTail, noteNewReply,
     refreshSummaryMsgs, onSummaryToggle,

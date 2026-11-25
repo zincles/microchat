@@ -18,6 +18,7 @@ const range = props.summary.begin_idx && props.summary.end_idx
   ? ` #${props.summary.begin_idx}-${props.summary.end_idx}` : "";
 
 async function save(): Promise<void> {
+  if (busy.value) return;
   if (!text.value.trim()) { status.value = "不许空（空摘要没有意义）"; return; }
   busy.value = true;
   try {
@@ -25,8 +26,9 @@ async function save(): Promise<void> {
     emit("saved");
   } catch (e: unknown) {
     status.value = `保存失败：${e instanceof Error ? e.message : String(e)}`;
+  } finally {
+    busy.value = false;
   }
-  busy.value = false;
 }
 </script>
 
@@ -36,7 +38,7 @@ async function save(): Promise<void> {
     <template #actions>
       <span class="status">{{ status }}</span>
       <VBtn variant="text" size="small" @click="emit('close')">取消</VBtn>
-      <VBtn color="primary" variant="flat" size="small" :disabled="busy" @click="save">保存</VBtn>
+      <VBtn color="primary" variant="flat" size="small" :disabled="busy" :loading="busy" @click="save">保存</VBtn>
     </template>
   </ModalShell>
 </template>

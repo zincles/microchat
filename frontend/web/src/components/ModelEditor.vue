@@ -29,6 +29,7 @@ function contextLabel(): string {
 }
 
 async function save(): Promise<void> {
+  if (busy.value) return;
   status.value = "";
   const rawContext = contextOverride.value.trim();
   let context: number | null = null;
@@ -63,13 +64,14 @@ async function save(): Promise<void> {
     emit("saved", updated);
   } catch (e: unknown) {
     status.value = `保存失败：${e instanceof Error ? e.message : String(e)}`;
+  } finally {
+    busy.value = false;
   }
-  busy.value = false;
 }
 </script>
 
 <template>
-  <ModalShell :width="600" :max-width="600" @close="close">
+  <ModalShell :width="600" @close="close">
     <template #title>
       <span class="model-edit-title"><ModelIcon :icon="model.icon" :brand="model.brand" />{{ title }}</span>
     </template>
@@ -84,7 +86,7 @@ async function save(): Promise<void> {
     <template #actions>
       <span class="status">{{ status }}</span>
       <VBtn variant="text" size="small" @click="close">取消</VBtn>
-      <VBtn color="primary" variant="flat" size="small" :disabled="busy" @click="save">保存</VBtn>
+      <VBtn color="primary" variant="flat" size="small" :disabled="busy" :loading="busy" @click="save">保存</VBtn>
     </template>
   </ModalShell>
 </template>

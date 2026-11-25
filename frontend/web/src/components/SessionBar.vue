@@ -29,6 +29,7 @@ const emit = defineEmits<{
 const props = withDefaults(defineProps<{
   collapsed?: boolean;
   busyIds?: string[];
+  pendingActions?: ReadonlyMap<string, string>;
   // loading：首次拿会话列表（boot）—— 画骨架，别显示"还没有会话"（那是假话）。
   loading?: boolean;
   // refreshing：后台在补一次列表（10 秒保鲜期外）—— 顶部一条 MD3 linear progress。
@@ -36,6 +37,7 @@ const props = withDefaults(defineProps<{
 }>(), {
   collapsed: false,
   busyIds: () => [],
+  pendingActions: () => new Map(),
   loading: false,
   refreshing: false,
 });
@@ -281,16 +283,15 @@ defineExpose({ setSessions });
             @click="$emit('select', s.id)">
             <span class="title">{{ sessionTitle(s.title) }}</span>
           </button>
-          <!-- 行内环：这条会话此刻有任务在跑（生成 / 压缩 / 重摇 / 起标题 / 队列踩到它）。
-               与「选项」键并存 —— 它是状态，不是入口，所以不抢那枚按钮的位置。 -->
+          <!-- 前台会话操作借用同一枚环，不把等待误报成模型任务。 -->
           <svg
-            v-if="busySet.has(s.id)"
+            v-if="pendingActions.has(s.id) || busySet.has(s.id)"
             class="session-busy"
             viewBox="0 0 24 24"
             role="status"
-            aria-label="正在运行任务"
+            :aria-label="pendingActions.get(s.id) ?? '正在运行任务'"
           >
-            <title>正在运行任务</title>
+            <title>{{ pendingActions.get(s.id) ?? '正在运行任务' }}</title>
             <circle class="session-busy-track" cx="12" cy="12" r="9"></circle>
             <circle class="session-busy-arc" cx="12" cy="12" r="9"></circle>
           </svg>
@@ -324,9 +325,9 @@ defineExpose({ setSessions });
       @click.stop
     >
       <button type="button" role="menuitem" @click="pickSettings">会话设置</button>
-      <button type="button" role="menuitem" @click="pickCopy">创建副本</button>
-      <button type="button" role="menuitem" @click="pickExport">导出 JSON</button>
-      <button type="button" role="menuitem" class="danger" @click="pickDelete">删除会话</button>
+      <button type="button" role="menuitem" :disabled="pendingActions.has(menu.id)" @click="pickCopy">创建副本</button>
+      <button type="button" role="menuitem" :disabled="pendingActions.has(menu.id)" @click="pickExport">导出 JSON</button>
+      <button type="button" role="menuitem" class="danger" :disabled="pendingActions.has(menu.id)" @click="pickDelete">删除会话</button>
     </div>
   </Teleport>
 </template>

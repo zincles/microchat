@@ -6,8 +6,7 @@
 //   ③ 取消原子任务 / 队列，并让重摇两族当场对齐。
 //
 // `canceled:false` 不是错误（刚好跑完 / 压根不能停）—— 补刷一次面板，那一行自己会消失。
-import { ref } from "vue";
-import type { Ref } from "vue";
+import { readonly, ref, shallowReactive, type Ref } from "vue";
 import type { Queue, TaskBoard } from "../api/types.ts";
 import { busySessionIds } from "../utils/tasks.ts";
 
@@ -30,6 +29,7 @@ interface UseTasksOptions {
 
 export function useTasks({ api, toast, topbarRef, onCanceled }: UseTasksOptions) {
   const busyIds = ref<string[]>([]);
+  const cancelingTasks = shallowReactive(new Set<string>());
   let timer: ReturnType<typeof setInterval> | null = null;
 
   async function refreshTasks(): Promise<void> {
@@ -46,22 +46,34 @@ export function useTasks({ api, toast, topbarRef, onCanceled }: UseTasksOptions)
   }
 
   // 按下之后**不立刻**从面板上抹掉那一行：真正停不停由那一发自己决定（ctx 取消是**请求**）。
-  function cancelTask(id: string): void {
-    api.cancelTask(id)
-      .then((res) => {
-        if (!res?.canceled) toast("这一发已经结束了");
-        refreshTasks();
-        // 按停的可能是一趟重摇 ⇒ 两族的界面状态也当场对齐（别等轮询或者下一次进会话）。
-        onCanceled?.();
-      })
-      .catch((err: unknown) => toast(`按停失败：${err instanceof Error ? err.message : String(err)}`, "error"));
+  async function cancelTask(id: string): Promise<void> {
+    if (cancelingTasks.has(id)) return;
+    cancelingTasks.add(id);
+    try {
+      const res = await api.cancelTask(id);
+      if (!res?.canceled) toast("这一发已经结束了");
+      void refreshTasks();
+      // 按停的可能是一趟重摇 ⇒ 两族的界面状态也当场对齐（别等轮询或者下一次进会话）。
+      onCanceled?.();
+    } catch (err: unknown) {
+      toast(`按停失败：${err instanceof Error ? err.message : String(err)}`, "error");
+    } finally {
+      cancelingTasks.delete(id);
+    }
   }
 
   // 取消一个**队列任务**：在飞的那一发会被一起掐断；补刷一次面板，别等 2 秒节拍。
-  function cancelQueue(id: string): void {
-    api.cancelQueue(id)
-      .then(() => refreshTasks())
-      .catch((err: unknown) => toast(`取消失败：${err instanceof Error ? err.message : String(err)}`, "error"));
+  async function cancelQueue(id: string): Promise<void> {
+    if (cancelingTasks.has(id)) return;
+    cancelingTasks.add(id);
+    try {
+      await api.cancelQueue(id);
+      void refreshTasks();
+    } catch (err: unknown) {
+      toast(`取消失败：${err instanceof Error ? err.message : String(err)}`, "error");
+    } finally {
+      cancelingTasks.delete(id);
+    }
   }
 
   function startPolling(): void {
@@ -75,5 +87,5 @@ export function useTasks({ api, toast, topbarRef, onCanceled }: UseTasksOptions)
     }
   }
 
-  return { busyIds, refreshTasks, cancelTask, cancelQueue, startPolling, stopPolling };
+  return { busyIds, cancelingTasks: readonly(cancelingTasks), refreshTasks, cancelTask, cancelQueue, startPolling, stopPolling };
 }

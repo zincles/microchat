@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 设置与聊天同级。目录负责查找，子页负责编辑；品牌与工作流可直达对应子页。
-import { ref, computed, nextTick, useTemplateRef, watch, onMounted, onUnmounted } from "vue";
+import { ref, shallowRef, reactive, computed, nextTick, useTemplateRef, watch, onMounted, onUnmounted } from "vue";
 import { VTab, VTabs, VTabsWindow, VTabsWindowItem, VSwitch, VBtn, VTextField, VSelect, VTable, VMenu, VList, VListItem } from "vuetify/components";
 import AgentEditor from "./AgentEditor.vue";
 import AppearancePane from "./AppearancePane.vue";
@@ -15,6 +15,7 @@ import TavernInspector from "./TavernInspector.vue";
 import SettingsHome from "./SettingsHome.vue";
 import SettingsBack from "./SettingsBack.vue";
 import CloseButton from "./CloseButton.vue";
+import RequestLoading from "./RequestLoading.vue";
 import { ICONS } from "../assets/icons.ts";
 import { sharedApi } from "../utils/prefs.ts";
 import { groupModelsByProvider, modelOption, providerChoices, modelChoicesFor, modelKey, parseModelKey, providerDisplayName, sessionTitle } from "../utils/format.ts";
@@ -66,6 +67,49 @@ const api = sharedApi();
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 const leftSvg = ICONS.panelLeft;
 
+function readState() {
+  return { pending: true, ready: false, error: "", request: 0 };
+}
+const reads = reactive({
+  chat: readState(), defaults: readState(), agents: readState(), providers: readState(),
+  models: readState(), sessions: readState(), tavern: readState(),
+});
+async function readSetting<T>(
+  key: keyof typeof reads, load: () => Promise<T>, apply: (data: T) => void, failure: string,
+): Promise<void> {
+  const state = reads[key];
+  const request = ++state.request;
+  state.pending = true;
+  state.error = "";
+  try {
+    const data = await load();
+    if (state.request !== request) return;
+    apply(data);
+    state.ready = true;
+  } catch (e) {
+    if (state.request === request) state.error = `${failure}：${errMsg(e)}`;
+  } finally {
+    if (state.request === request) state.pending = false;
+  }
+}
+function awaitingFirstRead(key: keyof typeof reads): boolean {
+  return reads[key].pending && !reads[key].ready;
+}
+const formReads = {
+  defaults: ["defaults", "providers", "models", "agents"],
+  context: ["chat"],
+  generation: ["chat", "models"],
+} as const;
+const formWaiting = computed(() => ({
+  defaults: formReads.defaults.some(awaitingFirstRead),
+  context: formReads.context.some(awaitingFirstRead),
+  generation: formReads.generation.some(awaitingFirstRead),
+}));
+function formError(page: keyof typeof formReads, stale = false): string {
+  return formReads[page].map((key) => reads[key])
+    .filter((read) => read.ready === stale && read.error).map((read) => read.error).join("；");
+}
+
 const settingsHome = useTemplateRef<InstanceType<typeof SettingsHome>>("settingsHome");
 const settingsTitle = useTemplateRef<HTMLHeadingElement>("settingsTitle");
 const settingsBody = useTemplateRef<HTMLDivElement>("settingsBody");
@@ -74,19 +118,25 @@ const activeTitle = computed(() => {
   if (tab.value === "home") return "设置";
   return SETTINGS_SECTIONS.find((s) => s.id === tab.value)?.label ?? "设置";
 });
-watch(() => props.only, (v) => { tab.value = v || "home"; });
+watch(() => props.only, (v) => {
+  tab.value = v || "home";
+  if (v !== "update") loadSettings();
+  if (v === "agent") focusRequestedAgent();
+});
 const chat = ref<ChatForm>({ title_chars: "", title_model: "", model_context_tokens: "", history_window: "", compact_blocks: "", compact_trigger_tokens: "", replay_reasoning: false, auto_compact: true });
 const chatStatus = ref({ context: "", generation: "" });
-const chatReady = ref(false);
-const savingChat = ref(false);
+const savingChat = shallowRef<"context" | "generation" | null>(null);
 const defaults = ref<DefaultsConfig>({ provider: "", model: "", agent: "" });
 const defStatus = ref("");
-const defaultsReady = ref(false);
+const savingDefaults = shallowRef(false);
 const agents = ref<Agent[]>([]);
 const segmentsLib = ref<Segment[]>([]); // 提示词段库（随 GET /agents 一起给）
 const curDefault = ref("");
 const editAgent = ref<Agent | "new" | null>(null);
 const agentTemplate = ref<AgentTemplate | null>(null);
+const agentNeedsPresets = computed(() => editAgent.value === "new"
+  ? newAgentKind.value !== "flow"
+  : !!editAgent.value && editAgent.value.kind !== "flow");
 let pendingAgentFocus = props.focusAgentId;
 const agentFlowOpen = computed(() => {
   const editingFlow = editAgent.value === "new"
@@ -95,15 +145,13 @@ const agentFlowOpen = computed(() => {
   return !!editingFlow && (props.only === "agent" || tab.value === "agent");
 });
 function focusRequestedAgent(): void {
-  if (!pendingAgentFocus) return;
+  if (!pendingAgentFocus || tab.value !== "agent") return;
   const target = agents.value.find((agent) => agent.id === pendingAgentFocus);
   if (!target) return;
   pendingAgentFocus = "";
-  tab.value = "agent";
   editExistingAgent(target);
 }
 watch(() => props.focusAgentId, (id) => {
-  if (!id) return;
   pendingAgentFocus = id;
   focusRequestedAgent();
 });
@@ -149,7 +197,26 @@ const editProvider = ref<ProviderView | "new" | null>(null); // null | 'new' | p
 // 渠道页本身也分两页：列表 / 全局模型规则（后者与列表同级，不塞进单个渠道的详情）。
 const providerTab = ref<"list" | "global">("list");
 
+const pendingAnchor = shallowRef<SettingsLocation | null>(null);
+watch(tab, () => { pendingAnchor.value = null; });
+watch(formWaiting, () => {
+  const target = pendingAnchor.value;
+  if (!target || formIsWaiting(target.page)) return;
+  pendingAnchor.value = null;
+  if (tab.value === target.page && document.activeElement === settingsTitle.value) focusSettingAnchor(target.anchor);
+}, { flush: "post" });
+function formIsWaiting(page: SettingsLocation["page"]): boolean {
+  return (page === "defaults" || page === "context" || page === "generation") && formWaiting.value[page];
+}
+function focusSettingAnchor(anchor?: string): boolean {
+  const target = anchor && settingsBody.value?.querySelector<HTMLElement>(`#setting-${CSS.escape(anchor)}`);
+  if (!target) return false;
+  target.scrollIntoView({ block: "center", inline: "nearest" });
+  target.focus({ preventScroll: true });
+  return true;
+}
 async function openSetting({ page, anchor }: SettingsLocation): Promise<void> {
+  pendingAnchor.value = null;
   if (anchor === "global-model-rules") {
     editProvider.value = null;
     providerTab.value = "global";
@@ -157,13 +224,9 @@ async function openSetting({ page, anchor }: SettingsLocation): Promise<void> {
   tab.value = page;
   await nextTick();
   if (tab.value !== page) return;
-  const body = settingsBody.value;
-  if (body) body.scrollTop = 0;
-  const target = anchor && body?.querySelector<HTMLElement>(`#setting-${CSS.escape(anchor)}`);
-  if (target) {
-    target.scrollIntoView({ block: "center", inline: "nearest" });
-    target.focus({ preventScroll: true });
-  } else {
+  if (settingsBody.value) settingsBody.value.scrollTop = 0;
+  if (!focusSettingAnchor(anchor)) {
+    if (anchor && formIsWaiting(page)) pendingAnchor.value = { page, anchor };
     settingsTitle.value?.focus({ preventScroll: true });
   }
 }
@@ -173,10 +236,16 @@ async function backToDirectory(): Promise<void> {
   if (tab.value === "home") settingsHome.value?.restoreFocus();
 }
 const routesStatus = ref("");
+const pendingSessionExports = reactive(new Set<string>());
+const pendingSessionDeletes = reactive(new Set<string>());
+const pendingProviderDeletes = reactive(new Set<string>());
+const pendingTavernDownloads = reactive(new Set<string>());
+const pendingTavernDeletes = reactive(new Set<string>());
+const providerRefreshes = shallowRef(0);
+const libraryRefreshes = reactive({ agent: 0, prompt: 0 });
 
-async function loadChat(): Promise<void> {
-  try {
-    const c = await api.getChat();
+function loadChat(): Promise<void> {
+  return readSetting("chat", () => api.getChat(), (c) => {
     chat.value = {
       title_chars: c.title_chars ?? "",
       title_model: c.title_provider && c.title_model ? modelKey(c.title_provider, c.title_model) : "",
@@ -187,17 +256,13 @@ async function loadChat(): Promise<void> {
       replay_reasoning: !!c.replay_reasoning,
       auto_compact: !!c.auto_compact, // 缺字段 = 关（与后端同一口径；这套未经验证，默认不开）
     };
-    chatReady.value = true;
-  } catch (e) {
-    const message = `读取对话设置失败：${errMsg(e)}`;
-    chatStatus.value = { context: message, generation: message };
-  }
+  }, "读取对话设置失败");
 }
 async function saveChat(section: "context" | "generation"): Promise<void> {
-  if (!chatReady.value || savingChat.value) return;
+  if (formIsWaiting(section) || formError(section) || savingChat.value) return;
   const num = (v: unknown): number | undefined => (String(v ?? "").trim() === "" ? undefined : Number(v));
   const form = { ...chat.value };
-  savingChat.value = true;
+  savingChat.value = section;
   try {
     const body: ChatConfig = await api.getChat();
     if (section === "context") {
@@ -219,26 +284,28 @@ async function saveChat(section: "context" | "generation"): Promise<void> {
     chatStatus.value[section] = "已保存";
     emit("chat-saved");
   } catch (e) { chatStatus.value[section] = `保存失败：${errMsg(e)}`; }
-  finally { savingChat.value = false; }
+  finally { savingChat.value = null; }
 }
 
-async function loadDefaults(): Promise<void> {
-  try {
-    const d = await api.getDefaults();
+function loadDefaults(): Promise<void> {
+  return readSetting("defaults", () => api.getDefaults(), (d) => {
     defaults.value = { provider: d.provider ?? "", model: d.model ?? "", agent: d.agent ?? "" };
-    defaultsReady.value = true;
-  } catch (e) { defStatus.value = `读取默认值失败：${errMsg(e)}`; }
+  }, "读取默认值失败");
 }
 async function saveDefaults(): Promise<void> {
-  if (!defaultsReady.value) return;
+  if (formWaiting.value.defaults || formError("defaults") || savingDefaults.value) return;
+  savingDefaults.value = true;
   try {
     await api.putDefaults({ ...defaults.value });
     defStatus.value = "已保存";
   } catch (e) { defStatus.value = `保存失败：${errMsg(e)}`; }
+  finally { savingDefaults.value = false; }
 }
 
 // 会话行导出（2026-10-11）：与 ☰ 里那颗同一支笔（GET /sessions/{id}/export → 下载）。
 async function exportSessionRow(s: SessionView): Promise<void> {
+  if (pendingSessionExports.has(s.id)) return;
+  pendingSessionExports.add(s.id);
   try {
     const doc = await api.exportSession(s.id);
     downloadJSON(doc, `${s.title || "新会话"}.json`);
@@ -246,16 +313,19 @@ async function exportSessionRow(s: SessionView): Promise<void> {
     const packed = doc.summaries?.length ? `，压缩块 ${doc.summaries.length} 个` : "";
     sessionMgrStatus.value = `已导出 ${doc.messages.length} 条${packed}：${s.title || "新会话"}`;
   } catch (e) { sessionMgrStatus.value = `导出失败：${errMsg(e)}`; }
+  finally { pendingSessionExports.delete(s.id); }
 }
 
 // Agent 卡带导入（2026-10-11）：卡带 = agent + 它引用到的用户段（id+原文）。
 // 合并规则（用户定）：系统里已有同 id 的段（用户段或内置）⇒ **丢弃卡带那份**；没有 ⇒ 建（打「导入」标记）。
 const cartridgeInput = ref<HTMLInputElement | null>(null);
 const cartridgeStatus = ref("");
+const importingCartridge = shallowRef(false);
 async function importCartridge(event: Event): Promise<void> {
   const input = event.target as HTMLInputElement;
   const file = input.files?.[0];
-  if (!file) return;
+  if (!file || importingCartridge.value || !reads.agents.ready) return;
+  importingCartridge.value = true;
   cartridgeStatus.value = "导入中…";
   try {
     const card = cartridgeAgent(JSON.parse(await file.text()));
@@ -272,15 +342,20 @@ async function importCartridge(event: Event): Promise<void> {
     cartridgeStatus.value = `已导入「${made.name}」（段：新建 ${created} / 复用 ${skipped}）`;
     await loadAgents();
   } catch (e) { cartridgeStatus.value = `导入失败：${errMsg(e)}`; }
-  input.value = "";
+  finally {
+    input.value = "";
+    importingCartridge.value = false;
+  }
 }
 
 // JSON 对话导入（2026-10-11）：与 ST 导入同口径 —— 文件框 → POST /sessions/import-json → 刷列表。
 const jsonStatus = ref("");
+const importingJSON = shallowRef(false);
 async function importJSONFile(event: Event): Promise<void> {
   const input = event.target as HTMLInputElement;
   const file = input.files?.[0];
-  if (!file) return;
+  if (!file || importingJSON.value) return;
+  importingJSON.value = true;
   jsonStatus.value = "导入中…";
   try {
     const doc = JSON.parse(await file.text()) as Record<string, unknown>;
@@ -299,18 +374,23 @@ async function importJSONFile(event: Event): Promise<void> {
     await loadSessions();
     emit("sessions-changed");
   } catch (e) { jsonStatus.value = `导入失败：${errMsg(e)}`; }
-  input.value = "";
+  finally {
+    input.value = "";
+    importingJSON.value = false;
+  }
 }
 
 // 已有对话管理器：ST 导入（文件框 → POST /sessions/import-st，导完刷会话 tab + 左栏）。
 const importTitle = ref("");
 const importStatus = ref("");
+const importingST = shallowRef(false);
 const stInput = ref<HTMLInputElement | null>(null);   // ST 的隐藏文件框（按钮负责长相，见下）
 const jsonInput = ref<HTMLInputElement | null>(null); // 对话 JSON 的隐藏文件框
 async function importSTFile(event: Event): Promise<void> {
   const input = event.target as HTMLInputElement;
   const file = input.files?.[0];
-  if (!file) return;
+  if (!file || importingST.value) return;
+  importingST.value = true;
   importStatus.value = "导入中…";
   try {
     const text = await file.text();
@@ -319,11 +399,15 @@ async function importSTFile(event: Event): Promise<void> {
     await loadSessions();
     emit("sessions-changed");
   } catch (e) { importStatus.value = `导入失败：${errMsg(e)}`; }
-  input.value = "";
+  finally {
+    input.value = "";
+    importingST.value = false;
+  }
 }
 // 酒馆原始导入（2026-11-06）：只存原始字节；列表/删除/下载，不解析。
 const tavernPresets = ref<TavernPreset[]>([]);
 const tavernStatus = ref("");
+const importingTavern = shallowRef(false);
 const tavernInput = ref<HTMLInputElement | null>(null);
 // 「内容」只把元数据交给查看器；原始字节由查看器按需下载，列表不背 1.5MB 的正文。
 const inspectingPreset = ref<TavernPreset | null>(null);
@@ -333,28 +417,31 @@ function sizeText(n: number): string {
   return `${(n / 1024 / 1024).toFixed(2)} MB`;
 }
 function timeText(ms: number): string { return new Date(ms).toLocaleString(); }
-async function loadTavernPresets(): Promise<void> {
-  try { tavernPresets.value = await api.listTavernPresets(); }
-  catch (e) { tavernStatus.value = `读取酒馆导入失败：${errMsg(e)}`; }
+function loadTavernPresets(): Promise<void> {
+  return readSetting("tavern", () => api.listTavernPresets(), (data) => { tavernPresets.value = data; }, "读取酒馆导入失败");
 }
 async function importTavernPresetFile(event: Event): Promise<void> {
   const input = event.target as HTMLInputElement;
   const file = input.files?.[0];
-  if (!file) return;
+  if (!file || importingTavern.value) return;
+  importingTavern.value = true;
   tavernStatus.value = `保存 ${file.name} 中…`;
   try {
     const p = await api.uploadTavernPreset(file);
     tavernStatus.value = `已原样保存：${p.filename}（${sizeText(p.size)}）`;
     await loadTavernPresets();
   } catch (e) { tavernStatus.value = `保存失败：${errMsg(e)}`; }
-  input.value = "";
+  finally {
+    input.value = "";
+    importingTavern.value = false;
+  }
 }
 function inspectTavernPreset(p: TavernPreset): void {
   inspectingPreset.value = p;
 }
 // 导入片段后刷新段库；Agent 编辑器的段下拉也读这一份。
 function onPresetSegmentImported(): void {
-  loadAgents().catch(() => {});
+  void loadAgents();
 }
 function presetLabel(id?: string): string {
   if (!id) return "";
@@ -365,10 +452,14 @@ function segmentSource(segment: Segment): string {
   return `导入自 ST 预设：${segment.preset_name || presetLabel(segment.preset_id)}`;
 }
 async function downloadTavernPreset(p: TavernPreset): Promise<void> {
+  if (pendingTavernDownloads.has(p.id)) return;
+  pendingTavernDownloads.add(p.id);
   try { downloadBlob(await api.downloadTavernPreset(p.id), p.filename); }
   catch (e) { tavernStatus.value = `导出失败：${errMsg(e)}`; }
+  finally { pendingTavernDownloads.delete(p.id); }
 }
 async function removeTavernPreset(p: TavernPreset): Promise<void> {
+  if (!reads.agents.ready || pendingTavernDeletes.has(p.id)) return;
   if (props.ask && !(await props.ask(`删除原始预设「${p.filename}」？不可逆。`))) return;
   const linked = segmentsLib.value.filter((s) => s.imported && s.preset_id === p.id);
   // 有导入片段时再问一次：删预设不等于删片段，两者都可以是用户想要的。
@@ -381,6 +472,8 @@ async function removeTavernPreset(p: TavernPreset): Promise<void> {
     ) : false;
     mode = also ? "delete" : "keep";
   }
+  if (pendingTavernDeletes.has(p.id)) return;
+  pendingTavernDeletes.add(p.id);
   try {
     await api.deleteTavernPreset(p.id, mode);
     tavernStatus.value = mode === "delete"
@@ -389,22 +482,27 @@ async function removeTavernPreset(p: TavernPreset): Promise<void> {
     await loadTavernPresets();
     if (mode === "delete") await loadAgents();
   } catch (e) { tavernStatus.value = `删除失败：${errMsg(e)}`; }
+  finally { pendingTavernDeletes.delete(p.id); }
 }
 
 // 会话 tab：列表 + 新建/进入/删除（编辑走左栏 ☰ 二级）。
 const sessions = ref<SessionView[]>([]);
 const sessionMgrStatus = ref("");
 
-async function loadAgents(): Promise<void> {
-  try {
-    const data = await api.agents();
+function loadAgents(): Promise<void> {
+  return readSetting("agents", () => api.agents(), (data) => {
     // 后端允许 default_agent 缺失/空串，语义是“用内置 default”；
     // 列表的“是否默认”必须按生效值画，不然默认助手那一行永远空着。
     curDefault.value = data.default_agent || "default";
     agents.value = data.agents ?? [];
     segmentsLib.value = data.segments ?? [];
     focusRequestedAgent();
-  } catch {}
+  }, "读取智能体和提示词片段失败");
+}
+async function onLibrarySaved(page: "agent" | "prompt"): Promise<void> {
+  libraryRefreshes[page]++;
+  try { await loadAgents(); }
+  finally { libraryRefreshes[page]--; }
 }
 
 // 预设模板（随 git 走：presets/*.json）：长提示词不硬编码，前端不存第二份真相。
@@ -449,77 +547,95 @@ function onDefaultProviderChange(value: unknown): void {
 }
 
 async function loadProviders(): Promise<void> {
-  try {
-    providers.value = (await api.providers()) ?? [];
-  } catch (e) { routesStatus.value = `渠道列表失败：${errMsg(e)}`; }
+  await readSetting("providers", () => api.providers(), (data) => { providers.value = data ?? []; }, "渠道列表失败");
   // 模型清单另一个读口（`/models` 跨渠道拍平）：拉失败不该拖垮渠道列表 ⇒ 单独 catch。
-  try {
-    const models = await api.models();
+  await readSetting("models", () => api.models(), (models) => {
     modelGroups.value = groupModelsByProvider(models).map((g) => ({
       provider: g.provider,
       items: g.items.map(modelOption),
     }));
-  } catch {}
+  }, "读取模型列表失败");
 }
 
 // onProviderSaved：保存回执带 id —— **改名之后必须换成新对象**。
 // 旧 props 的 id 已经不存在了，编辑器留在原地的话下一次保存（哪怕是清密钥）必 404。
 // 顶栏的模型下拉也吃 `/models`（按渠道分组），改名后分组名要跟着换 ⇒ 通知 App 重拉。
 async function onProviderSaved(id: string): Promise<void> {
-  await loadProviders();
-  if (id && editProvider.value && editProvider.value !== "new") {
-    editProvider.value = providers.value.find((p) => p.id === id) ?? null;
-  }
-  emit("models-changed");
+  const editor = editProvider.value;
+  providerRefreshes.value++;
+  try {
+    await loadProviders();
+    const current = editProvider.value;
+    if (id && editor && editor !== "new" && current && current !== "new"
+      && (current.id === editor.id || current.id === id)) {
+      const updated = providers.value.find((p) => p.id === id);
+      if (updated) editProvider.value = updated;
+    }
+    emit("models-changed");
+  } finally { providerRefreshes.value--; }
 }
 
 async function askDeleteProvider(id: string): Promise<void> {
   // 文案要说清"模型也一起没"（2026-10-22）：从前删渠道只删配置、模型留在列表里仍可选中，
   // 用户以为删干净了；现在真的连模型一起删 —— 那就得在确认框里说出来，别让人删完才发现。
   if (props.ask && !(await props.ask(`删除渠道「${id}」？密钥与它发现到的模型会一起删掉，不可逆。`))) return;
+  if (pendingProviderDeletes.has(id)) return;
+  pendingProviderDeletes.add(id);
   try {
     await api.deleteProvider(id);
     if (editProvider.value && editProvider.value !== "new" && editProvider.value.id === id) editProvider.value = null;
-    loadProviders().catch(() => {});
+    const refreshing = loadProviders();
     // 顶栏"渠道 / 模型"下拉吃的是 `/models`（另一个读口），得让它也重拉一次。
     // ⚠ `sessions-changed` 是**会话左栏**的刷新（App 里只挂到 refreshSessionsBar）——
     // 别拿它冒充"模型列表已刷新"，那是两件事（我一开始就这么写错了，核过 App 才发现）。
     emit("models-changed");
+    await refreshing;
   } catch (e) { routesStatus.value = `删除失败：${errMsg(e)}`; }
+  finally { pendingProviderDeletes.delete(id); }
 }
 
 // 会话 tab 动作：进会话关设置面板（App 切；删除也要先确认 —— 与左栏同一个口）。
-async function loadSessions(): Promise<void> {
-  try {
-    sessions.value = await api.listSessions();
-  } catch (e) { sessionMgrStatus.value = `拉列表失败：${errMsg(e)}`; }
+function loadSessions(): Promise<void> {
+  return readSetting("sessions", () => api.listSessions(), (data) => { sessions.value = data; }, "拉列表失败");
 }
 function gotoSession(id: string): void {
   emit("goto-session", id);
 }
 async function askDropSession(id: string, title: string): Promise<void> {
   if (props.ask && !(await props.ask(`「${sessionTitle(title)}」及其消息和摘要将永久删除，无法恢复。`, { destructive: true, action: "删除会话" }))) return;
+  if (pendingSessionDeletes.has(id)) return;
+  pendingSessionDeletes.add(id);
   try {
     await api.deleteSession(id);
     await loadSessions();
     emit("sessions-changed", id);
   } catch (e) { sessionMgrStatus.value = `删除失败：${errMsg(e)}`; }
+  finally { pendingSessionDeletes.delete(id); }
 }
 
+let settingsStarted = false;
+function loadSettings(): void {
+  if (settingsStarted) return;
+  settingsStarted = true;
+  void loadChat();
+  void loadDefaults();
+  void loadAgents();
+  void loadProviders();
+  void loadSessions();
+  void loadTavernPresets();
+}
 onMounted(() => {
   document.addEventListener("keydown", onKey);
   // 更新页自带 GET /update；别为它白拉设置页那六份数据。
-  if (props.only === "update") return;
-  loadChat().catch(() => {});
-  loadDefaults().catch(() => {});
-  loadAgents().catch(() => {});
-  loadProviders().catch(() => {});
-  loadSessions().catch(() => {});
-  loadTavernPresets().catch(() => {});
+  if (props.only !== "update") loadSettings();
 });
 onUnmounted(() => document.removeEventListener("keydown", onKey));
 function onKey(e: KeyboardEvent): void {
   if (e.key !== "Escape" || document.querySelector(".confirm-dialog.v-overlay--active")) return;
+  if (tab.value === "agent" && agentNeedsPresets.value && !reads.tavern.ready && !props.escBlocked) {
+    closeAgentEditor();
+    return;
+  }
   // 二级页（Agent/渠道详情）或外面临时弹窗开着 ⇒ Esc 归它们；一次按键只关一层（踩过：双关）。
   if (editAgent.value || editSeg.value || editProvider.value || props.escBlocked) return;
   emit("close");
@@ -558,7 +674,10 @@ function onKey(e: KeyboardEvent): void {
         <section id="panel-defaults" class="panel">
           <p class="settings-lead">只影响以后新建的会话；已有会话在对话顶栏或会话选项里修改。</p>
 
-          <section class="settings-card">
+          <RequestLoading v-if="formWaiting.defaults" label="读取新会话默认设置…" />
+          <p v-else-if="formError('defaults')" class="status" role="alert">{{ formError('defaults') }}</p>
+          <section v-else class="settings-card">
+          <p v-if="formError('defaults', true)" class="status" role="alert">{{ formError('defaults', true) }}</p>
           <h3>新会话默认</h3>
           <p class="hint">新建会话时自动带入；改动<b>不影响已有会话</b>。</p>
           <!-- 三格都是**下拉**（2026-10-28）：从前渠道/模型是手打 id 的文本框，说明文自己都写着
@@ -571,8 +690,8 @@ function onKey(e: KeyboardEvent): void {
           <p class="hint" v-if="!modelOpts.length">这个渠道还没有拉到任何模型 —— 可以先留空用内置默认，或去「渠道」里点「保存并刷新」。</p>
           <p class="hint">留空 = 内置默认（本地示例模型，不联网，开箱就能回话）。</p>
           <div class="row action-row">
-            <VBtn color="primary" variant="flat" size="small" type="button" :disabled="!defaultsReady" @click="saveDefaults">保存默认值</VBtn>
-            <span class="status">{{ defStatus }}</span>
+            <VBtn color="primary" variant="flat" size="small" type="button" :loading="savingDefaults" :disabled="savingDefaults" @click="saveDefaults">保存默认值</VBtn>
+            <span class="status" role="status">{{ defStatus }}</span>
           </div>
           </section>
         </section>
@@ -587,6 +706,9 @@ function onKey(e: KeyboardEvent): void {
         <section id="panel-context" class="panel">
           <p class="settings-lead">调整消息加载、模型的输入预算以及自动压缩策略。</p>
 
+          <RequestLoading v-if="formWaiting.context" label="读取上下文设置…" />
+          <p v-else-if="formError('context')" class="status" role="alert">{{ formError('context') }}</p>
+          <template v-else>
           <section class="settings-card">
           <h3>上下文与加载</h3>
           <p class="hint">决定模型一次能带多少历史，以及消息列一次拉多少；不改变模型自己的上限。</p>
@@ -609,15 +731,20 @@ function onKey(e: KeyboardEvent): void {
           <p class="hint">填绝对值；留空按输入预算的 80% 计算。</p>
           </section>
           <div class="row action-row">
-            <VBtn color="primary" variant="flat" size="small" type="button" :disabled="!chatReady || savingChat" @click="saveChat('context')">保存上下文设置</VBtn>
+            <VBtn color="primary" variant="flat" size="small" type="button" :loading="savingChat === 'context'" :disabled="!!savingChat" @click="saveChat('context')">保存上下文设置</VBtn>
             <span class="status" role="status">{{ chatStatus.context }}</span>
           </div>
+          </template>
         </section>
         </VTabsWindowItem>
         <VTabsWindowItem value="generation">
         <section id="panel-generation" class="panel">
           <p class="settings-lead">调整自动起标题，以及模型能否收到历史消息的思考过程。保存后从下一轮生效。</p>
 
+          <RequestLoading v-if="formWaiting.generation" label="读取生成设置…" />
+          <p v-else-if="formError('generation')" class="status" role="alert">{{ formError('generation') }}</p>
+          <template v-else>
+          <p v-if="formError('generation', true)" class="status" role="alert">{{ formError('generation', true) }}</p>
           <section class="settings-card">
           <h3>自动标题</h3>
           <label id="setting-title-chars" tabindex="-1" class="field"><span>自动标题最多字数</span><VTextField density="compact" variant="outlined" hide-details v-model="chat.title_chars" type="number" min="1" placeholder="留空 = 32" /></label>
@@ -630,10 +757,11 @@ function onKey(e: KeyboardEvent): void {
           <label id="setting-replay-reasoning" tabindex="-1" class="field"><span>回传思考过程</span><VSwitch v-model="chat.replay_reasoning" color="primary" density="compact" hide-details /></label>
           <p class="hint">把思考过程随历史发回上游，多轮推理更连续；关闭可省上下文，思考仍会存档可看。</p>
           <div class="row action-row">
-            <VBtn color="primary" variant="flat" size="small" type="button" :disabled="!chatReady || savingChat" @click="saveChat('generation')">保存生成设置</VBtn>
+            <VBtn color="primary" variant="flat" size="small" type="button" :loading="savingChat === 'generation'" :disabled="!!savingChat" @click="saveChat('generation')">保存生成设置</VBtn>
             <span class="status" role="status">{{ chatStatus.generation }}</span>
           </div>
           </section>
+          </template>
         </section>
         </VTabsWindowItem>
         <VTabsWindowItem value="markdown">
@@ -641,6 +769,7 @@ function onKey(e: KeyboardEvent): void {
         </VTabsWindowItem>
         <VTabsWindowItem value="provider">
         <section id="panel-provider" class="panel">
+          <RequestLoading v-if="providerRefreshes && (editProvider || providerTab === 'list') && !awaitingFirstRead('providers')" label="刷新渠道列表…" />
           <template v-if="!editProvider">
             <VTabs v-model="providerTab" class="agent-tabs" density="compact" align-tabs="start">
               <VTab value="list">渠道列表</VTab>
@@ -648,8 +777,9 @@ function onKey(e: KeyboardEvent): void {
             </VTabs>
             <VTabsWindow v-model="providerTab" class="agent-window">
             <VTabsWindowItem value="list">
-            <div class="panel-head">
-              <h3>渠道（{{ providers.length }}）</h3>
+            <RequestLoading v-if="awaitingFirstRead('providers')" label="读取渠道列表…" />
+            <div v-else class="panel-head">
+              <h3>渠道<template v-if="reads.providers.ready">（{{ providers.length }}）</template></h3>
               <VBtn color="primary" variant="flat" size="small" type="button" @click="editProvider = 'new'">新建渠道</VBtn>
             </div>
             <ul v-if="providers.length" id="provider-list" class="settings-list" aria-label="渠道">
@@ -670,11 +800,12 @@ function onKey(e: KeyboardEvent): void {
                   <span class="settings-list-chevron" aria-hidden="true" v-html="ICONS.chevronRight"></span>
                 </VBtn>
                 <div class="manage-actions">
-                  <VBtn variant="text" size="small" type="button" class="manage-delete" @click="askDeleteProvider(p.id)" :aria-label="`删除 ${providerDisplayName(p)}`">删除</VBtn>
+                  <VBtn variant="text" size="small" type="button" class="manage-delete" :loading="pendingProviderDeletes.has(p.id)" :disabled="pendingProviderDeletes.has(p.id)" @click="askDeleteProvider(p.id)" :aria-label="`删除 ${providerDisplayName(p)}`">删除</VBtn>
                 </div>
               </li>
             </ul>
-            <p v-else class="manage-empty">还没有渠道</p>
+            <p v-else-if="reads.providers.ready" class="manage-empty">还没有渠道</p>
+            <p v-if="reads.providers.error" class="status" role="alert">{{ reads.providers.error }}</p>
             <p v-if="routesStatus" class="status" role="status">{{ routesStatus }}</p>
             </VTabsWindowItem>
             <VTabsWindowItem value="global">
@@ -689,6 +820,7 @@ function onKey(e: KeyboardEvent): void {
             @saved="onProviderSaved"
             @model-saved="emit('models-changed')"
           />
+          <p v-if="editProvider && reads.providers.error" class="status" role="alert">{{ reads.providers.error }}</p>
         </section>
         </VTabsWindowItem>
         <VTabsWindowItem value="session">
@@ -696,7 +828,8 @@ function onKey(e: KeyboardEvent): void {
           <p class="settings-lead">
             管理已有会话：点击一行回到对话，或导出、删除；也可以从对话记录文件新建会话。
           </p>
-          <h3>已有会话（{{ sessions.length }}）</h3>
+          <RequestLoading v-if="awaitingFirstRead('sessions')" label="读取会话列表…" />
+          <h3 v-else-if="reads.sessions.ready">已有会话（{{ sessions.length }}）</h3>
           <ul v-if="sessions.length" id="session-mgr-list" class="settings-list" aria-label="已有会话">
             <li v-for="s in sessions" :key="s.id" class="settings-list-row">
               <VBtn class="settings-list-entry manage-entry" variant="text" type="button" @click="gotoSession(s.id)">
@@ -710,22 +843,23 @@ function onKey(e: KeyboardEvent): void {
                 <span class="settings-list-chevron" aria-hidden="true" v-html="ICONS.chevronRight"></span>
               </VBtn>
               <div class="manage-actions">
-                <VBtn variant="text" size="small" type="button" @click="exportSessionRow(s)" :aria-label="`导出 ${sessionTitle(s.title)}`">导出</VBtn>
-                <VBtn variant="text" size="small" type="button" class="manage-delete" @click="askDropSession(s.id, s.title)" :aria-label="`删除 ${sessionTitle(s.title)}`">删除</VBtn>
+                <VBtn variant="text" size="small" type="button" :loading="pendingSessionExports.has(s.id)" :disabled="pendingSessionExports.has(s.id)" @click="exportSessionRow(s)" :aria-label="`导出 ${sessionTitle(s.title)}`">导出</VBtn>
+                <VBtn variant="text" size="small" type="button" class="manage-delete" :loading="pendingSessionDeletes.has(s.id)" :disabled="pendingSessionDeletes.has(s.id)" @click="askDropSession(s.id, s.title)" :aria-label="`删除 ${sessionTitle(s.title)}`">删除</VBtn>
               </div>
             </li>
           </ul>
-          <p v-else class="manage-empty">还没有会话</p>
-          <div class="row" v-if="sessionMgrStatus"><span class="status">{{ sessionMgrStatus }}</span></div>
+          <p v-else-if="reads.sessions.ready" class="manage-empty">还没有会话</p>
+          <p v-if="reads.sessions.error" class="status" role="alert">{{ reads.sessions.error }}</p>
+          <div class="row" v-if="sessionMgrStatus"><span class="status" role="status">{{ sessionMgrStatus }}</span></div>
           <h3 id="setting-import-json" tabindex="-1">导入 MicroChat 对话</h3>
           <div class="io-cards">
             <div class="io-card">
               <div class="io-head"><b>MicroChat 对话记录</b><i class="io-tag">.json</i></div>
               <p class="hint">本应用导出的对话记录：标题、每条消息的说话人和正文（消息里的状态块会保留，导回去后状态照常重算），以及这条会话当时使用的渠道、模型和智能体（本机没有那个智能体会提示，人设回落到内置默认）。</p>
               <div class="row">
-                <VBtn color="primary" variant="flat" size="small" type="button" @click="jsonInput?.click()">选择 .json 文件…</VBtn>
+                <VBtn color="primary" variant="flat" size="small" type="button" :loading="importingJSON" :disabled="importingJSON" @click="jsonInput?.click()">选择 .json 文件…</VBtn>
                 <input ref="jsonInput" type="file" accept=".json" hidden @change="importJSONFile" />
-                <span class="status">{{ jsonStatus }}</span>
+                <span class="status" role="status">{{ jsonStatus }}</span>
               </div>
             </div>
           </div>
@@ -734,11 +868,13 @@ function onKey(e: KeyboardEvent): void {
         </VTabsWindowItem>
         <VTabsWindowItem value="agent">
         <section id="panel-agent" class="panel">
-          <template v-if="!editAgent">
+          <p v-if="reads.agents.error" class="status" role="alert">{{ reads.agents.error }}</p>
+          <RequestLoading v-if="awaitingFirstRead('agents')" label="读取智能体…" />
+          <template v-else-if="reads.agents.ready && !editAgent">
             <div class="panel-head">
               <h3>智能体</h3>
               <span class="head-btns">
-                <VBtn variant="text" size="small" type="button" @click="cartridgeInput?.click()" title="导入智能体文件（JSON；提示词片段会一起带进来）">导入智能体…</VBtn>
+                <VBtn variant="text" size="small" type="button" :loading="importingCartridge" :disabled="importingCartridge" @click="cartridgeInput?.click()" title="导入智能体文件（JSON；提示词片段会一起带进来）">导入智能体…</VBtn>
                 <input ref="cartridgeInput" type="file" accept=".json" hidden @change="importCartridge" />
                 <VMenu location="bottom end" origin="top end">
                   <template #activator="{ props: activatorProps }">
@@ -755,6 +891,7 @@ function onKey(e: KeyboardEvent): void {
             <p class="hint">每个智能体 = 一份人设 + 一组能力开关；会话在顶栏切换使用哪一个。</p>
             <p class="action-note">「从模板创建」只写入初始内容；导入智能体文件会把它引用的提示词片段一起带进来。</p>
             <p v-if="cartridgeStatus" class="status" role="status">{{ cartridgeStatus }}</p>
+            <RequestLoading v-if="libraryRefreshes.agent && !importingCartridge" label="刷新智能体列表…" />
             <ul v-if="agents.length" id="agent-list" class="settings-list" aria-label="智能体">
               <li v-for="a in agents" :key="a.id" class="settings-list-row">
                 <VBtn type="button" variant="text" class="settings-list-entry manage-entry" @click="editExistingAgent(a)">
@@ -775,8 +912,14 @@ function onKey(e: KeyboardEvent): void {
             </ul>
             <p v-else class="manage-empty">没有可显示的智能体</p>
           </template>
+          <template v-else-if="agentNeedsPresets && !reads.tavern.ready">
+            <SettingsBack @back="closeAgentEditor" />
+            <RequestLoading v-if="awaitingFirstRead('tavern')" label="读取可用的酒馆预设…" />
+            <p v-else class="status" role="alert">{{ reads.tavern.error }}</p>
+          </template>
           <AgentEditor
-            v-if="editAgent"
+            v-else-if="editAgent"
+            :key="editAgent === 'new' ? 'new' : editAgent.id"
             :agent="editAgent === 'new' ? null : editAgent"
             :template="agentTemplate"
             :kind="editAgent === 'new' ? newAgentKind : (editAgent?.kind === 'flow' ? 'flow' : 'prompt')"
@@ -785,14 +928,16 @@ function onKey(e: KeyboardEvent): void {
             :is-default="editAgent !== 'new' && editAgent?.id === curDefault"
             :ask="ask"
             @close="closeAgentEditor"
-            @saved="loadAgents"
+            @saved="onLibrarySaved('agent')"
           />
 
         </section>
         </VTabsWindowItem>
         <VTabsWindowItem value="prompt">
         <section id="panel-prompt" class="panel">
-          <template v-if="!editSeg">
+          <p v-if="reads.agents.error" class="status" role="alert">{{ reads.agents.error }}</p>
+          <RequestLoading v-if="awaitingFirstRead('agents')" label="读取提示词片段…" />
+          <template v-else-if="reads.agents.ready && !editSeg">
             <div class="panel-head">
               <h3>提示词片段</h3>
               <span class="head-btns">
@@ -801,6 +946,7 @@ function onKey(e: KeyboardEvent): void {
               </span>
             </div>
             <p class="hint">可复用的文本库；片段本身不会生效，要在智能体或能力的「提示词片段」里按顺序引用。</p>
+            <RequestLoading v-if="libraryRefreshes.prompt" label="刷新提示词片段…" />
             <div id="prompt-list" v-if="segmentsLib.length">
               <VTable class="plist">
                 <thead><tr><th>名称</th><th>内容预览</th><th>谁在用</th></tr></thead>
@@ -814,12 +960,12 @@ function onKey(e: KeyboardEvent): void {
             <div v-else class="status">（还没有片段 —— 点「新建」创建一个，例如教模型写状态块、数学公式或联网规则）</div>
           </template>
           <SegmentEditor
-            v-else
+            v-else-if="editSeg"
             :segment="editSeg === 'new' ? null : editSeg"
             :agents="agents"
             :ask="ask"
             @close="editSeg = null"
-            @saved="loadAgents"
+            @saved="onLibrarySaved('prompt')"
           />
         </section>
         </VTabsWindowItem>
@@ -831,12 +977,13 @@ function onKey(e: KeyboardEvent): void {
             <h3 id="setting-import-preset" tabindex="-1">原始 JSON 存档</h3>
             <p class="hint">只保存文件的原始字节，不解析、不改写；导出时逐字节原样返回。解析与导入片段走每行的「解析与导入」。</p>
             <div class="row">
-              <VBtn color="primary" variant="flat" size="small" type="button" @click="tavernInput?.click()">导入原始 JSON…</VBtn>
+              <VBtn color="primary" variant="flat" size="small" type="button" :loading="importingTavern" :disabled="importingTavern" @click="tavernInput?.click()">导入原始 JSON…</VBtn>
               <span class="action-note">只保存原始字节、不改写文件；解析和导入片段走「解析与导入」。</span>
               <input ref="tavernInput" type="file" accept=".json,application/json" hidden @change="importTavernPresetFile" />
-              <span class="status">{{ tavernStatus }}</span>
+              <span class="status" role="status">{{ tavernStatus }}</span>
             </div>
-            <div v-if="tavernPresets.length" id="tavern-file-list">
+            <RequestLoading v-if="awaitingFirstRead('tavern') || (tavernPresets.length && awaitingFirstRead('agents'))" label="读取酒馆预设与导入片段…" />
+            <div v-else-if="tavernPresets.length" id="tavern-file-list">
               <VTable class="plist">
                 <thead><tr><th>文件</th><th>大小</th><th>导入时间</th><th></th></tr></thead>
                 <tbody><tr v-for="p in tavernPresets" :key="p.id">
@@ -845,22 +992,24 @@ function onKey(e: KeyboardEvent): void {
                   <td data-label="导入时间">{{ timeText(p.created_at) }}</td>
                   <td data-label="操作" class="ops">
                     <VBtn variant="text" size="small" type="button" title="解析预览 / 有效内容与导入 / 原始 JSON" @click="inspectTavernPreset(p)">解析与导入</VBtn>
-                    <VBtn variant="text" size="small" type="button" @click="downloadTavernPreset(p)">导出</VBtn>
-                    <VBtn color="error" variant="text" size="small" type="button" @click="removeTavernPreset(p)">删除</VBtn>
+                    <VBtn variant="text" size="small" type="button" :loading="pendingTavernDownloads.has(p.id)" :disabled="pendingTavernDownloads.has(p.id)" @click="downloadTavernPreset(p)">导出</VBtn>
+                    <VBtn color="error" variant="text" size="small" type="button" :loading="pendingTavernDeletes.has(p.id)" :disabled="!reads.agents.ready || pendingTavernDeletes.has(p.id)" @click="removeTavernPreset(p)">删除</VBtn>
                   </td>
                 </tr></tbody>
               </VTable>
             </div>
-            <p v-else class="hint">还没有导入原始文件。</p>
+            <p v-else-if="reads.tavern.ready" class="hint">还没有导入原始文件。</p>
+            <p v-if="reads.tavern.error" class="status" role="alert">{{ reads.tavern.error }}</p>
+            <p v-if="tavernPresets.length && reads.agents.error" class="status" role="alert">{{ reads.agents.error }}</p>
           </section>
           <h3 id="setting-import-st" tabindex="-1">导入 SillyTavern 聊天记录</h3>
             <div class="io-card">
               <div class="io-head"><b>SillyTavern 聊天记录</b><i class="io-tag">.jsonl</i></div>
               <p class="hint">SillyTavern 导出的聊天记录（一行一条）。只读取说话人、正文、思考过程和时间，其余内容会丢掉。</p>
               <div class="row">
-                <VBtn color="primary" variant="flat" size="small" type="button" @click="stInput?.click()">选择 .jsonl 文件…</VBtn>
+                <VBtn color="primary" variant="flat" size="small" type="button" :loading="importingST" :disabled="importingST" @click="stInput?.click()">选择 .jsonl 文件…</VBtn>
                 <input ref="stInput" type="file" accept=".jsonl,.json,.txt" hidden @change="importSTFile" />
-                <span class="status">{{ importStatus }}</span>
+                <span class="status" role="status">{{ importStatus }}</span>
               </div>
               <label class="field"><span>标题</span><VTextField density="compact" variant="outlined" hide-details v-model="importTitle" placeholder="留空 = 用第一句话自动起名" /></label>
             </div>
@@ -875,8 +1024,10 @@ function onKey(e: KeyboardEvent): void {
     </div>
     <TavernInspector
       v-if="inspectingPreset"
+      :key="inspectingPreset.id"
       :preset="inspectingPreset"
       :segments="segmentsLib"
+      :segments-ready="reads.agents.ready"
       @close="inspectingPreset = null"
       @imported="onPresetSegmentImported"
     />

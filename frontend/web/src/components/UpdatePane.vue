@@ -4,7 +4,7 @@
 // 后端只负责拉取与写重启标记；真正重启由容器的 entrypoint 看家循环完成
 //（重新编译 Go、重新构建 vite、再把两个进程拉起来）。前端在这里等新进程的
 // `started_at` 变了才刷新 —— 只看 /health 会被尚未被收掉的旧进程骗过去。
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, shallowRef } from "vue";
 import { VBtn, VSwitch } from "vuetify/components";
 import { sharedApi, saveUpdateAutoCheck, updateAutoCheckOn } from "../utils/prefs.ts";
 import { waitForRestart } from "../utils/update.ts";
@@ -17,6 +17,7 @@ import {
 } from "../utils/pwa.ts";
 import type { PwaBuild, PwaSnapshot } from "../utils/pwa.ts";
 import type { UpdateStatus } from "../api/types.ts";
+import RequestLoading from "./RequestLoading.vue";
 
 const props = withDefaults(defineProps<{
   ask?: ((text: string) => Promise<boolean>) | null;
@@ -24,7 +25,7 @@ const props = withDefaults(defineProps<{
 
 const api = sharedApi();
 const status = ref<UpdateStatus | null>(null);
-const loading = ref(true);
+const loading = shallowRef(false);
 const busy = ref(false);
 const phase = ref<"idle" | "pulling" | "restarting">("idle");
 const message = ref("");
@@ -37,7 +38,7 @@ const autoCheck = ref(updateAutoCheckOn());
 const pageBuildId = typeof __BUILD_ID__ !== "undefined" ? __BUILD_ID__ : "";
 const pwaSnapshot = ref<PwaSnapshot | null>(null);
 const latestBuild = ref<PwaBuild | null>(null);
-const pwaBusy = ref(false);
+const pwaAction = shallowRef<"initial" | "check" | "apply" | "reload" | null>("initial");
 const pwaError = ref("");
 
 const supported = computed(() => !!status.value?.restart_supported);
@@ -45,7 +46,7 @@ const needsRebase = computed(() => status.value?.remote_relation === "diverged")
 const currentBuildLabel = computed(() => buildLabel(pageBuildId, "未知（开发模式）"));
 const latestBuildLabel = computed(() => latestBuild.value
   ? buildLabel(latestBuild.value.built_at || latestBuild.value.build_id, "未知")
-  : "读取中…");
+  : "未知");
 const pwaBuildMatch = computed(() => !!(latestBuild.value && pageBuildId
   && latestBuild.value.build_id === pageBuildId));
 const pwaUpdateAvailable = computed(() => !!(pwaSnapshot.value?.waiting
@@ -53,7 +54,7 @@ const pwaUpdateAvailable = computed(() => !!(pwaSnapshot.value?.waiting
 const pwaOk = computed(() => pwaBuildMatch.value && !pwaSnapshot.value?.waiting);
 const pwaSwLabel = computed(() => {
   const s = pwaSnapshot.value;
-  if (!s) return "读取中…";
+  if (!s) return "读取失败";
   if (s.error) return "读取失败";
   if (!s.supported) return "不支持";
   if (!s.secure) return "非安全上下文";
@@ -65,7 +66,7 @@ const pwaSwLabel = computed(() => {
 });
 const pwaStatus = computed(() => {
   const s = pwaSnapshot.value;
-  if (!s) return "正在读取 PWA 状态…";
+  if (!s) return "读取 PWA 状态失败。";
   if (s.error) return "读取 PWA 状态失败。";
   if (!s.supported) return "此浏览器不支持 Service Worker；只能核对构建版本。";
   if (!s.secure) return "非安全上下文：PWA 不会注册（需要 HTTPS 或 localhost）。";
@@ -100,6 +101,7 @@ function setAutoCheck(value: boolean | null): void {
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function load(): Promise<void> {
+  if (loading.value || busy.value) return;
   loading.value = true;
   error.value = "";
   try {
@@ -112,46 +114,48 @@ async function load(): Promise<void> {
 }
 
 async function loadPwa(forceCheck = false): Promise<void> {
-  if (pwaBusy.value) return;
-  pwaBusy.value = true;
+  if (forceCheck && pwaAction.value) return;
+  pwaAction.value = forceCheck ? "check" : "initial";
   pwaError.value = "";
   try {
-    latestBuild.value = await fetchLatestBuild().catch((e) => {
+    try {
+      latestBuild.value = await fetchLatestBuild();
+    } catch (e) {
       pwaError.value = `读取服务器前端版本失败：${errText(e)}`;
-      return null;
-    });
+    }
     pwaSnapshot.value = forceCheck ? await checkPwaUpdate() : await readPwaSnapshot();
   } catch (e) {
     pwaError.value = `PWA 状态读取失败：${errText(e)}`;
   } finally {
-    pwaBusy.value = false;
+    pwaAction.value = null;
   }
 }
 
 async function applyPwa(): Promise<void> {
-  if (pwaBusy.value) return;
-  pwaBusy.value = true;
+  if (pwaAction.value) return;
+  pwaAction.value = "apply";
   pwaError.value = "";
   try {
     await applyPwaUpdate();
   } catch (e) {
     pwaError.value = `PWA 更新失败：${errText(e)}`;
   } finally {
-    pwaBusy.value = false;
+    pwaAction.value = null;
   }
 }
 
 async function forceReload(): Promise<void> {
-  if (pwaBusy.value) return;
+  if (pwaAction.value) return;
   if (props.ask && !(await props.ask("会注销 Service Worker 并清空前端缓存，然后重新加载页面。继续吗？"))) return;
-  pwaBusy.value = true;
+  if (pwaAction.value) return;
+  pwaAction.value = "reload";
   pwaError.value = "";
   try {
     await forceReloadPwa();
   } catch (e) {
     pwaError.value = `强制重新加载失败：${errText(e)}`;
   } finally {
-    pwaBusy.value = false;
+    pwaAction.value = null;
   }
 }
 
@@ -198,6 +202,12 @@ onMounted(() => {
 
 <template>
   <section id="panel-update" class="panel">
+    <RequestLoading
+      v-if="(loading && !status) || pwaAction === 'initial'"
+      :label="loading && !status
+        ? (pwaAction === 'initial' ? '读取当前版本与 PWA 状态…' : '读取当前版本…')
+        : '读取前端版本与 PWA 状态…'"
+    />
     <div class="update-grid">
       <section class="settings-card update-version-card">
         <h3>版本</h3>
@@ -216,8 +226,7 @@ onMounted(() => {
           <p id="auto-update-hint" class="hint">开启后每 5 分钟检查 GitHub；本地落后且工作区干净时自动拉取并重启前后端。有未提交修改、分叉或非容器部署时只提示，不自动动手。</p>
         </div>
 
-        <div v-if="loading" class="hint">读取当前版本…</div>
-        <template v-else-if="status">
+        <template v-if="status">
           <div class="update-version-grid">
             <section class="update-block">
               <h4 class="update-section-title">当前本地版本</h4>
@@ -262,11 +271,11 @@ onMounted(() => {
 
           <div class="row">
             <VBtn color="primary" variant="flat" size="small" type="button"
-              :loading="phase !== 'idle'" :disabled="phase !== 'idle' || !supported"
+              :loading="phase !== 'idle'" :disabled="loading || phase !== 'idle' || !supported"
               @click="pullAndRestart(needsRebase)">
               {{ buttonText }}
             </VBtn>
-            <VBtn variant="text" size="small" type="button" :disabled="busy" @click="load">刷新状态</VBtn>
+            <VBtn variant="text" size="small" type="button" :loading="loading" :disabled="busy || loading" @click="load">刷新状态</VBtn>
             <span class="status">{{ message }}</span>
           </div>
           <p v-if="error" class="hint update-error">{{ error }}</p>
@@ -279,24 +288,26 @@ onMounted(() => {
         <h3 id="pwa-title">前端缓存（PWA）</h3>
         <p class="hint">核对当前页面与服务器上的前端构建；如果安装的 PWA 还显示旧界面，用这里直接检查并切换。</p>
         <div class="update-row"><span>当前页面</span><code :title="pageBuildId">{{ currentBuildLabel }}</code></div>
-        <div class="update-row"><span>服务器最新</span><code :title="latestBuild?.build_id">{{ latestBuildLabel }}</code></div>
-        <div class="update-row"><span>Service Worker</span><span>{{ pwaSwLabel }}</span></div>
-        <p class="update-compare"
-          :class="pwaUpdateAvailable ? 'update-warn' : (pwaOk ? 'update-ok' : '')">{{ pwaStatus }}</p>
-        <div class="row">
-          <VBtn color="primary" variant="flat" size="small" type="button"
-            :loading="pwaBusy" :disabled="pwaBusy" @click="loadPwa(true)">
-            检查 PWA 更新
-          </VBtn>
-          <VBtn v-if="pwaUpdateAvailable" color="primary" variant="tonal" size="small" type="button"
-            :disabled="pwaBusy" @click="applyPwa">
-            更新并刷新
-          </VBtn>
-          <VBtn variant="text" size="small" type="button" :disabled="pwaBusy" @click="forceReload">
-            强制重新加载
-          </VBtn>
-        </div>
-        <p v-if="pwaError" class="hint update-warn">{{ pwaError }}</p>
+        <template v-if="pwaAction !== 'initial'">
+          <div class="update-row"><span>服务器最新</span><code :title="latestBuild?.build_id">{{ latestBuildLabel }}</code></div>
+          <div class="update-row"><span>Service Worker</span><span>{{ pwaSwLabel }}</span></div>
+          <p class="update-compare"
+            :class="pwaUpdateAvailable ? 'update-warn' : (pwaOk ? 'update-ok' : '')">{{ pwaStatus }}</p>
+          <div class="row">
+            <VBtn color="primary" variant="flat" size="small" type="button"
+              :loading="pwaAction === 'check'" :disabled="!!pwaAction" @click="loadPwa(true)">
+              检查 PWA 更新
+            </VBtn>
+            <VBtn v-if="pwaUpdateAvailable" color="primary" variant="tonal" size="small" type="button"
+              :loading="pwaAction === 'apply'" :disabled="!!pwaAction" @click="applyPwa">
+              更新并刷新
+            </VBtn>
+            <VBtn variant="text" size="small" type="button" :loading="pwaAction === 'reload'" :disabled="!!pwaAction" @click="forceReload">
+              强制重新加载
+            </VBtn>
+          </div>
+          <p v-if="pwaError" class="hint update-warn" role="alert">{{ pwaError }}</p>
+        </template>
       </section>
     </div>
 

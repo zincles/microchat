@@ -2,7 +2,7 @@
 // 设置中的外观、输入和 Markdown 页共用此面板；每次只保存当前控件改动的偏好，
 // 不用另一个页面还留在内存中的旧值覆盖服务器偏好。缩放必须显式保存。
 import { VSwitch, VBtn, VTextField, VSelect, VSlider } from "vuetify/components";
-import { ref, computed, onMounted } from "vue";
+import { ref, shallowRef, computed, onMounted } from "vue";
 import {
   themePref, saveTheme, sendMode, saveSendMode,
   previewOn, savePreview,
@@ -46,6 +46,7 @@ const chromeHide = ref(true);
 const bgUrl = ref("");
 const bgStatus = ref("");
 const bgPreview = ref("");
+const bgAction = shallowRef<"upload" | "remove" | null>(null);
 const themeOptions = [
   { label: "亮色", value: "light" },
   { label: "暗色", value: "dark" },
@@ -203,6 +204,7 @@ function enableAll(): void {
 
 // —— 背景图（外观）：URL / 上传二选一，**即时生效** ——
 function applyBgUrl(): void {
+  if (bgAction.value) return;
   const value = bgUrl.value.trim();
   if (!value) {
     bgStatus.value = "先填图片地址（或改用上传）";
@@ -218,8 +220,8 @@ function applyBgUrl(): void {
 async function pickBgFile(event: Event): Promise<void> {
   const input = event.target as HTMLInputElement;
   const file = input.files?.[0];
-  if (!file) return;
-  bgStatus.value = "上传中…";
+  if (!file || bgAction.value) return;
+  bgAction.value = "upload";
   try {
     await uploadBackground(file);       // 压好 + 传上去（服务器那边顺手登记元信息）
     await refreshPrefs();               // 拿回服务器登记好的那份（含版本号）
@@ -228,11 +230,15 @@ async function pickBgFile(event: Event): Promise<void> {
     emit("prefs-saved");
   } catch (e: unknown) {
     bgStatus.value = `上传失败：${e instanceof Error ? e.message : String(e)}`;
+  } finally {
+    input.value = "";
+    bgAction.value = null;
   }
-  input.value = "";
 }
 
 async function clearBg(): Promise<void> {
+  if (bgAction.value) return;
+  bgAction.value = "remove";
   try {
     await clearBackground();
     await refreshPrefs();
@@ -241,6 +247,8 @@ async function clearBg(): Promise<void> {
     emit("prefs-saved");
   } catch (e: unknown) {
     bgStatus.value = `清除失败：${e instanceof Error ? e.message : String(e)}`;
+  } finally {
+    bgAction.value = null;
   }
 }
 </script>
@@ -283,11 +291,11 @@ async function clearBg(): Promise<void> {
         <div id="setting-background" tabindex="-1">
           <label class="field"><span>背景图地址</span><VTextField density="compact" variant="outlined" hide-details v-model="bgUrl" placeholder="https://…（跨域也可）" /></label>
           <div class="row">
-            <VBtn color="primary" variant="flat" size="small" type="button" @click="applyBgUrl">应用地址</VBtn>
-            <VBtn variant="text" size="small" type="button" @click="bgFile?.click()">上传图片…</VBtn>
+            <VBtn color="primary" variant="flat" size="small" type="button" :disabled="!!bgAction" @click="applyBgUrl">应用地址</VBtn>
+            <VBtn variant="text" size="small" type="button" :loading="bgAction === 'upload'" :disabled="!!bgAction" @click="bgFile?.click()">上传图片…</VBtn>
             <input ref="bgFile" type="file" accept="image/*" hidden @change="pickBgFile" />
-            <VBtn color="error" variant="text" size="small" type="button" @click="clearBg">清除</VBtn>
-            <span class="status">当前背景：{{ bgStatus }}</span>
+            <VBtn color="error" variant="text" size="small" type="button" :loading="bgAction === 'remove'" :disabled="!!bgAction" @click="clearBg">清除</VBtn>
+            <span class="status" role="status">当前背景：{{ bgStatus }}</span>
           </div>
           <p v-if="bgPreview" class="hint">背景图保存在服务器上 —— 换设备也在。</p>
         </div>

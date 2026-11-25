@@ -14,6 +14,7 @@ const props = withDefaults(defineProps<{
   // 全靠约定），而且"全收起来了吗"这个判断会变成跨组件的字符串比较。
   // 现在：父组件拿着 Set，这里只负责「按 Set 渲染」+「点一下发新的 Set」。
   collapsed?: Set<string>;
+  undoLoadingId?: string | null;
 }>(), {
   nodes: () => [],
   collapsed: () => new Set(),
@@ -119,12 +120,14 @@ function barStyle(n: TreeNode, depth: number): { left: string; width: string } {
         variant="text"
         size="x-small"
         class="ctree-undo"
-        :disabled="!r.n.undoable"
+        :loading="undoLoadingId === r.n.id"
+        :disabled="!r.n.undoable || undoLoadingId === r.n.id"
         :title="r.n.undoable ? '撤销这次压缩（同层更晚的会一并撤销）' : '被上层摘要盖住：先撤上面那层'"
         aria-label="撤销这次压缩"
         @click.stop="emit('undo', r.n.id)"
-        v-html="ICONS.trash"
-      />
+      >
+        <span aria-hidden="true" v-html="ICONS.trash" />
+      </VBtn>
     </div>
   </div>
 </template>

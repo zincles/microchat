@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // App.vue —— 三栏骨架 + 全部接线（原 main.js + 九个桥，合一）。
 // 组件直接挂模板，ref 直调实例方法，不再经 *-vue.js 桥 / mount.js。
-import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick, provide, useTemplateRef } from "vue";
+import { ref, shallowRef, reactive, computed, watch, onMounted, onUnmounted, nextTick, provide, useTemplateRef } from "vue";
 import { VApp, VBtn, VTabsWindow, VTabsWindowItem } from "vuetify/components";
 import { ICONS } from "./assets/icons.ts";
 import { createApi, probeHealth } from "./api/client.ts";
@@ -118,6 +118,7 @@ provide("toast", toast);
 // 任务面板轮询：busyIds 给左栏、setTasks 给顶栏环心；取消按钮回调里对齐重摇两族。
 const {
   busyIds,
+  cancelingTasks,
   refreshTasks,
   cancelTask,
   cancelQueue,
@@ -212,7 +213,7 @@ const sessionDrafts = createSessionDrafts();
 let submittingDraft: string | null = null;
 
 // 出站预演只有一处：载荷、草稿第一句、压缩载荷。App 只把结果交给右栏。
-const { previewPayload, refreshPreview, previewCompactPayload } = usePreview({
+const { inputPreview, compactPreviewLoading, resetPreviews, previewPayload, refreshPreview, previewCompactPayload } = usePreview({
   api,
   toast,
   getEpoch: () => epoch,
@@ -298,6 +299,24 @@ const currentAllTools = computed<string[]>(() => [
   ...(currentModelRow.value?.server_tools ?? []),
   ...(currentModelRow.value?.local_tools ?? []),
 ].filter(Boolean));
+type ComposerRequest = "agent" | "thinking" | "tools" | "stop";
+const composerRequests = reactive(new Set<string>());
+function composerRequestKey(action: ComposerRequest): string {
+  return `${composerKey.value}:${action}`;
+}
+function composerRequestPending(action: ComposerRequest): boolean {
+  return composerRequests.has(composerRequestKey(action));
+}
+async function runComposerRequest(action: ComposerRequest, run: () => Promise<void>): Promise<void> {
+  const key = composerRequestKey(action);
+  if (composerRequests.has(key)) return;
+  composerRequests.add(key);
+  try { await run(); }
+  finally { composerRequests.delete(key); }
+}
+function selectSessionAgent(id: string): void {
+  void runComposerRequest("agent", () => applyAgentValue(id).catch((err) => toast(`换助手失败：${errText(err)}`, "error")));
+}
 async function toggleNativeTool(id: string, enabled: boolean): Promise<void> {
   if (!id) return;
   const next = (sessionInfo.native_tools_disabled ?? []).filter((x: string) => x !== id);
@@ -308,17 +327,23 @@ async function toggleNativeTool(id: string, enabled: boolean): Promise<void> {
     refreshPreview();
     return;
   }
-  if (!sessionID) return;
-  const prev = [...(sessionInfo.native_tools_disabled ?? [])];
-  sessionInfo.native_tools_disabled = [...next];
-  try {
-    const updated = await api.patchSession(sessionID, { native_tools_disabled: next });
-    Object.assign(sessionInfo, updated);
-    refreshPreview();
-  } catch (err) {
-    sessionInfo.native_tools_disabled = prev;
-    toast(`工具选择保存失败：${err instanceof Error ? errText(err) : String(err)}`, "error");
-  }
+  const sid = sessionID;
+  if (!sid) return;
+  await runComposerRequest("tools", async () => {
+    const my = epoch;
+    const prev = sessionInfo.native_tools_disabled ?? [];
+    sessionInfo.native_tools_disabled = next;
+    try {
+      const updated = await api.patchSession(sid, { native_tools_disabled: next });
+      if (my !== epoch) return;
+      sessionInfo.native_tools_disabled = updated.native_tools_disabled ?? [];
+      refreshPreview();
+    } catch (err) {
+      if (my !== epoch) return;
+      sessionInfo.native_tools_disabled = prev;
+      toast(`工具选择保存失败：${errText(err)}`, "error");
+    }
+  });
 }
 const currentThinking = computed(() => {
   // 草稿与真会话都把当前档位放在 sessionInfo 上（setThinking 两边一起写），
@@ -334,18 +359,23 @@ async function setThinking(level: string): Promise<void> {
     refreshPreview();
     return;
   }
-  if (!sessionID) return;
+  const sid = sessionID;
   const prev = sessionInfo.thinking_level ?? "";
-  if (next === prev) return;
-  sessionInfo.thinking_level = next; // 先上屏（1s+ RTT：别让人以为没点动）
-  try {
-    const updated = await api.patchSession(sessionID, { thinking_level: next });
-    Object.assign(sessionInfo, updated);
-    refreshPreview();
-  } catch (err) {
-    sessionInfo.thinking_level = prev;
-    toast(`思考等级保存失败：${errText(err)}`, "error");
-  }
+  if (!sid || next === prev) return;
+  await runComposerRequest("thinking", async () => {
+    const my = epoch;
+    sessionInfo.thinking_level = next; // 先上屏，保存期间提示进度。
+    try {
+      const updated = await api.patchSession(sid, { thinking_level: next });
+      if (my !== epoch) return;
+      sessionInfo.thinking_level = updated.thinking_level ?? "";
+      refreshPreview();
+    } catch (err) {
+      if (my !== epoch) return;
+      sessionInfo.thinking_level = prev;
+      toast(`思考等级保存失败：${errText(err)}`, "error");
+    }
+  });
 }
 // 换模型后旧档位可能不在新模型的能力集里 ⇒ 清回"跟随默认"（后端也只会接受能力集里的值）。
 watch(thinkingLevels, (levels) => {
@@ -356,9 +386,9 @@ watch(thinkingLevels, (levels) => {
 const messagesPane = useTemplateRef<HTMLElement>("messages-pane");
 // 消息窗口的取数/分页/摘要展开/预取都在 composable；App 只关心“当前会话”这一层。
 const {
-  vueMessages, vueSegments, loadingSession, windowLimit, windowFrom, summaryMsgs, openSummaries, windowCache,
+  vueMessages, vueSegments, loadingSession, loadingMore, windowLimit, windowFrom, summaryMsgs, summaryErrors, openSummaries, windowCache,
   toRow, loadWindow, reloadWindow, reloadWindowKeepingScroll, loadMore, prefetchSession,
-  onSummaryToggle,
+  onSummaryToggle, resetWindowRequests,
   rememberReadingPosition, restoreReadingPosition, forgetReadingPosition,
   awayFromLatest, hasNewReply, onReadingScroll, jumpToLatest, resetReadingTail, noteNewReply,
 } = useSessionWindow({
@@ -370,7 +400,7 @@ const {
   isDraft: () => draft,
   canReconcile: () => pendingSends === 0,
   pane: messagesPane,
-  onWindowLoaded: () => { if (treeVisible.value) refreshTree(); },
+  onWindowLoaded: () => { if (treeVisible.value) refreshTree(false); },
 });
 
 watch(() => !settingsOpen.value && workspace.value === "chat", (visible) => {
@@ -394,7 +424,7 @@ function onManagedSessionsChanged(deletedId?: string): void {
 
 // 会话级动作（覆盖 / Copy / 导出 / 删除）统一在这里，避免三处各写一遍列表刷新顺序。
 const {
-  saveRequestOverrides, copySessionFromBar, exportSessionFromBar, askDeleteSession,
+  saveRequestOverrides, savingRequestOverrides, copySessionFromBar, exportSessionFromBar, askDeleteSession, pendingSessionActions,
 } = useSessionActions({
   api,
   toast,
@@ -506,10 +536,7 @@ async function onTurnFinished(sid: string, st: TurnStatus): Promise<void> {
   refreshSessionsBar();
   refreshStateView(sid);
   refreshRerolls();
-  if (previewOn()) {
-    api.outgoingPreview(sid, "").then((w) => payloadbarRef.value?.setWire(w))
-      .catch((err) => toast(`预演失败：${errText(err)}`, "error"));
-  }
+  if (previewOn()) void refreshHistoryPreview(false);
 }
 // 一轮生成的流（发送/SSE/轮询/step）在 composable；落库后的刷新仍在本文件。
 const {
@@ -577,9 +604,20 @@ function openMessageEditor(message: AppRow, kind: "content" | "reasoning"): void
     rerollTargetId,
   };
 }
+const stateLoading = shallowRef(false);
+const stateError = shallowRef("");
+const compactStarting = shallowRef(false);
+const contextUsageLoading = shallowRef(false);
+const contextUsageError = shallowRef("");
+let contextUsageLoaded = false;
+let contextUsageSeq = 0;
+const undoSummaryAction = shallowRef<{ id: string; loading: boolean } | null>(null);
+const summaryCandidateAction = shallowRef<{ id: string; action: "refresh" | "previous" | "next" } | null>(null);
+let stateSeq = 0;
 const {
   treeVisible, onPayloadTab, onPayloadPreview, onAdvancedDone,
-  refreshTree, refreshMacros, refreshContextLazy,
+  historyWire, historyLoading, historyError, treeLoading, treeError, macrosLoading, macrosError,
+  resetContextRequests, refreshTree, refreshHistoryPreview, refreshMacros, refreshContextLazy,
 } = useContextWorkspace({
   api,
   toast,
@@ -590,10 +628,32 @@ const {
   isFlow: () => currentAgentIsFlow.value,
   payloadbarRef,
   setMacros: (report) => topbarRef.value?.setMacros(report),
+  isVisible: () => workspace.value === "context" && !settingsOpen.value,
   refreshStateView,
   reloadWindow: () => reloadWindow(),
   payloadPreviewOn,
 });
+const outgoingWire = computed(() => inputPreview.value ? inputPreview.value.wire : historyWire.value);
+const outgoingLoading = computed(() => inputPreview.value ? inputPreview.value.loading : historyLoading.value);
+const outgoingError = computed(() => inputPreview.value ? inputPreview.value.error : historyError.value);
+
+function resetSessionRequests(): void {
+  resetWindowRequests();
+  resetContextRequests();
+  resetPreviews();
+  stateLoading.value = false;
+  stateError.value = "";
+  compactStarting.value = false;
+  undoSummaryAction.value = null;
+  summaryCandidateAction.value = null;
+  payloadbarRef.value?.setTables({});
+  payloadbarRef.value?.setTree(null);
+  payloadbarRef.value?.setCompactWire(null);
+  contextUsageLoading.value = false;
+  contextUsageError.value = "";
+  contextUsageLoaded = false;
+  topbarRef.value?.setContext(null);
+}
 const lastMsgId = computed(() => vueMessages.value.at(-1)?.messageId ?? null);
 // 最新 AI 回复对应的用户输入（A-B-C-D-E-F ⇒ E）——“编辑最新 Prompt”的入口目标。
 const latestPromptId = computed(() => latestPromptFor(vueMessages.value));
@@ -628,6 +688,18 @@ const {
   },
   refreshStateView,
 });
+
+async function runSummaryCandidate(id: string, delta?: number): Promise<void> {
+  if (summaryCandidateAction.value) return;
+  const my = epoch;
+  summaryCandidateAction.value = { id, action: delta === undefined ? "refresh" : delta < 0 ? "previous" : "next" };
+  try {
+    if (delta === undefined) await summaryRefresh(id);
+    else await summaryVersion(delta);
+  } finally {
+    if (my === epoch) summaryCandidateAction.value = null;
+  }
+}
 const rerollingId = computed(() => rerollStarting.value || (rerollState.value.running ? rerollState.value.target_message_id : null));
 // 渲染行：气泡（带编号）+ 被顶层摘要折起来的卡（口径见 utils/chatrows.ts）。
 // 当前 agent 的"首段对话"（`first_message`，2026-10-11 用户定）—— **computed 只看响应式的两格**
@@ -643,6 +715,7 @@ const currentAgentIsFlow = computed(() => currentAgent.value?.kind === "flow");
 const flowCalls = ref(0);
 const flowActiveNodes = ref<FlowActiveNode[]>([]);
 let flowCallsTimer: ReturnType<typeof setInterval> | null = null;
+let flowCallsPollEpoch: number | null = null;
 // 调试打印节点的 Toast 在 App 层轮询，不依赖用户先打开「工作流」页。
 let flowDebugSession = "";
 let flowDebugRun = -1;
@@ -676,6 +749,9 @@ async function refreshFlowCalls(): Promise<void> {
     return;
   }
   const sid = sessionID;
+  const my = epoch;
+  if (flowCallsPollEpoch === my) return;
+  flowCallsPollEpoch = my;
   if (sid !== flowDebugSession) {
     flowDebugSession = sid;
     flowDebugRun = -1;
@@ -685,13 +761,15 @@ async function refreshFlowCalls(): Promise<void> {
   }
   try {
     const trace = await api.flowRun(sid);
-    if (sid === sessionID) {
+    if (my === epoch && currentAgentIsFlow.value) {
       flowCalls.value = Number(trace?.active_llm_calls ?? (trace?.active_node_id ? 1 : 0));
       flowActiveNodes.value = trace?.active_nodes ?? [];
       notifyFlowDebug(trace);
     }
   } catch {
-    if (sid === sessionID) { flowCalls.value = 0; flowActiveNodes.value = []; }
+    if (my === epoch && currentAgentIsFlow.value) { flowCalls.value = 0; flowActiveNodes.value = []; }
+  } finally {
+    if (flowCallsPollEpoch === my) flowCallsPollEpoch = null;
   }
 }
 // 空草稿首屏的两格（2026-11-02）：当前助手名 + 会话模型。
@@ -737,25 +815,34 @@ function onBubbleEditPrompt(mid: string | null | undefined): void { onBubbleEdit
 // deleteMessagesFlow：消息级删除的唯一出口（气泡"删"与 /cut 共用）——预览 → 确认 → 执行；
 // 执行时 409（conflict：末尾变了，别人删过/改过）⇒ **重新预览再确认**（最多三轮），
 // 不是干弹一个错（AGENTS 的口径：核对字段不符 ⇒ 409 ⇒ 重新预览）。
+const messageDeletionRequests = reactive(new Map<string, "request" | "confirm">());
 async function deleteMessagesFlow(sid: string, mid: string, confirmTextFor: ConfirmText): Promise<boolean> {
-  for (let i = 0; i < 3; i++) {
-    const plan = await api.deletionPreview(sid, mid).catch((err) => {
-      toast(`删除预览失败：${errText(err)}`, "error");
-      return null;
-    });
-    if (!plan || sid !== sessionID) return false;
-    if (!(await askConfirm(confirmTextFor(plan), { destructive: true, action: "删除消息" }))) return false;
-    try {
-      await api.deleteMessages(sid, mid, plan.last_deleted_message_id);
-      localRev++; // 删完消息列已经变了（等这一发重新拉窗口）
-    } catch (err) {
-      if (errCode(err) === "conflict" && i < 2) { toast("末尾变了：重新预览一眼再删", "error"); continue; }
-      toast(`删除失败：${errText(err)}`, "error");
-      return false;
+  if (messageDeletionRequests.has(mid)) return false;
+  try {
+    for (let i = 0; i < 3; i++) {
+      messageDeletionRequests.set(mid, "request");
+      const plan = await api.deletionPreview(sid, mid).catch((err) => {
+        toast(`删除预览失败：${errText(err)}`, "error");
+        return null;
+      });
+      if (!plan || sid !== sessionID) return false;
+      messageDeletionRequests.set(mid, "confirm");
+      if (!(await askConfirm(confirmTextFor(plan), { destructive: true, action: "删除消息" })) || sid !== sessionID) return false;
+      messageDeletionRequests.set(mid, "request");
+      try {
+        await api.deleteMessages(sid, mid, plan.last_deleted_message_id);
+        localRev++; // 删完消息列已经变了（等这一发重新拉窗口）
+      } catch (err) {
+        if (errCode(err) === "conflict" && i < 2) { toast("末尾变了：重新预览一眼再删", "error"); continue; }
+        toast(`删除失败：${errText(err)}`, "error");
+        return false;
+      }
+      return true;
     }
-    return true;
+    return false;
+  } finally {
+    messageDeletionRequests.delete(mid);
   }
-  return false;
 }
 async function onBubbleDelete(mid: string | null | undefined, isLast: boolean): Promise<void> {
   if (!mid) return;
@@ -827,14 +914,20 @@ async function onMessageEdited(result: { message?: Message; reroll?: boolean } =
 async function compactNow(blocks?: number | null): Promise<void> {
   const sid = sessionID;
   if (!sid) { toast("先发一句话：草稿里还没有会话可压"); return; }
+  if (compactStarting.value) return;
+  const my = epoch;
+  compactStarting.value = true;
   try {
     const accepted = await api.compact(sid, blocks ?? undefined);
+    if (my !== epoch) return;
     localRev++; // 压缩会改摘要/段结构：在飞的后台对账别把旧结构盖回去
     refreshTasks();
     toast(`压缩已受理${blocks ? `（${blocks} 块）` : ""}`, "ok");
     pollCompact(sid, accepted?.at_ms).catch(() => {});
   } catch (err) {
-    toast(`压缩失败：${errText(err)}`, "error");
+    if (my === epoch) toast(`压缩失败：${errText(err)}`, "error");
+  } finally {
+    if (my === epoch) compactStarting.value = false;
   }
 }
 
@@ -844,38 +937,40 @@ async function compactNow(blocks?: number | null): Promise<void> {
 // 超过一条就摊开警告（哪些区间会一起没），绝不静默删一串。
 async function undoSummary(summaryID: string): Promise<void> {
   const sid = sessionID;
-  if (!sid || !summaryID) return;
+  if (!sid || !summaryID || undoSummaryAction.value) return;
   const my = epoch;
-  let preview;
+  undoSummaryAction.value = { id: summaryID, loading: true };
   try {
-    preview = await api.undoPreview(sid, summaryID);
-  } catch (err) {
-    if (my === epoch) toast(`撤销失败：${errText(err)}`, "error");
-    return;
-  }
-  const items = preview.items ?? [];
-  if (preview.count > 1) {
-    const ranges = items.map((item) => `第 ${item.from_idx}–${item.to_idx} 条`).join("、");
-    const ok = await overlaysRef.value?.confirmAsk(
-      `撤销这次压缩会同时撤销同层更晚的 ${preview.count - 1} 次压缩：${ranges}。` +
-      `这些摘要会被删除，对应内容回到原文，不可逆。继续？`,
-    );
-    if (!ok) return;
-  }
-  if (my !== epoch) return;
-  try {
+    const preview = await api.undoPreview(sid, summaryID);
+    if (my !== epoch) return;
+    const items = preview.items ?? [];
+    if (preview.count > 1) {
+      const ranges = items.map((item) => `第 ${item.from_idx}–${item.to_idx} 条`).join("、");
+      undoSummaryAction.value = { id: summaryID, loading: false };
+      const ok = await overlaysRef.value?.confirmAsk(
+        `撤销这次压缩会同时撤销同层更晚的 ${preview.count - 1} 次压缩：${ranges}。` +
+        `这些摘要会被删除，对应内容回到原文，不可逆。继续？`,
+      );
+      if (!ok || my !== epoch) return;
+      undoSummaryAction.value = { id: summaryID, loading: true };
+    }
     await api.undoSummary(sid, summaryID);
+    if (my !== epoch) return;
+    toast(preview.count > 1 ? `已撤销 ${preview.count} 次压缩` : "已撤销这次压缩", "ok");
+    // 装配会变长（那些段回到原文）⇒ 消息列、状态、环上的占用都要重算一遍。
+    try { await reloadWindow(); }
+    catch (err) {
+      if (my === epoch) toast(`已撤销，但刷新历史失败：${errText(err)}`, "error");
+    }
+    if (my !== epoch) return;
+    refreshStateView(sid);
+    refreshStatusline("idle");
+    if (treeVisible.value) refreshTree(false);
   } catch (err) {
     if (my === epoch) toast(`撤销失败：${errText(err)}`, "error");
-    return;
+  } finally {
+    if (my === epoch) undoSummaryAction.value = null;
   }
-  if (my !== epoch) return;
-  toast(preview.count > 1 ? `已撤销 ${preview.count} 次压缩` : "已撤销这次压缩", "ok");
-  // 装配会**变长**（那些段回到原文）⇒ 消息列、状态、环上的占用都要重算一遍。
-  await reloadWindow();
-  refreshStateView(sid);
-  refreshStatusline("idle");
-  if (treeVisible.value) refreshTree();
 }
 // pollCompact：盯一次压缩到收尾（拿受理时的 `at_ms` 对上这一发 —— 状态位是**持久**的，
 // 不认准 at_ms 会被上一次的旧结局骗），完了刷新消息列（装配变短）与压缩树。
@@ -967,7 +1062,7 @@ async function resyncOnForeground() {
     showTurnFailure(st);
     refreshStatusline(st.phase, st.elapsed_ms);
     // 上下文三 tab 只在**真的在看工作区**时才刷；聊天界面不白拉 /state 与 /outgoing。
-    refreshContextLazy();
+    refreshContextLazy(false);
     void refreshRerolls();
     if (st.phase === "error" && st.error) toast(`上一轮失败了：${st.error}`, "error");
   } finally {
@@ -979,6 +1074,7 @@ async function startDraft() {
   activeChatMenu.value = null;
   rememberReadingPosition();
   const my = ++epoch;
+  resetSessionRequests();
   resetRerollView();
   resetReadingTail();
   draft = true;
@@ -1025,14 +1121,10 @@ async function startDraft() {
   refreshAgents();
   fillModelSelect();
   fillAgentSelect();
-  payloadbarRef.value?.setWire(null);
-  payloadbarRef.value?.setTables({});
-  payloadbarRef.value?.setCompactWire(null);
   refreshStatusline("idle");
   void refreshFlowCalls();
   refreshSessionsBar();
   refreshRerolls();
-  payloadbarRef.value?.setTree(null);
   // 人可能正站在上下文工作区里换会话（左栏点一下就换）⇒ 当前 tab 要跟着换上新的，
   // 否则那块地方会一直显示上一条会话的账本（静默的错，看不出来）。
   refreshContextLazy();
@@ -1064,6 +1156,7 @@ async function enterSession(id: string, preloaded: SessionView[] | null = null):
   activeChatMenu.value = null;
   rememberReadingPosition();
   const my = ++epoch;
+  resetSessionRequests();
   resetRerollView();
   resetReadingTail();
   resetChrome();
@@ -1081,10 +1174,6 @@ async function enterSession(id: string, preloaded: SessionView[] | null = null):
   resetTypewriter();
   summaryMsgs.clear();
   openSummaries.clear();
-  // 上一会话的上下文占用不许挂在新会话上（高延迟下它会挂满一个 RTT 才被新数覆盖 ——
-  // 那正好是"看起来像新会话的账、其实是旧的"最难受的一秒）。
-  topbarRef.value?.setContext(null);
-  topbarRef.value?.setMacros(null);
   // 开机恢复那条路已经拉过一次 `/sessions`（boot），别在同一毫秒再要一遍 ——
   // 远端部署时那是一整个 RTT + 一份完整会话列表。
   // 同理，点左栏切会话时列表**就在屏幕上**（sessionsCache）⇒ 直接用，别先问一遍再画：
@@ -1123,9 +1212,6 @@ async function enterSession(id: string, preloaded: SessionView[] | null = null):
   // 载荷/状态/树都只在"人正看着工作区"时才拉（2026-11-02）：换会话时从前无条件
   // `POST /outgoing` + `GET /state`，而聊天界面根本用不到它们 —— 远端部署时那是两次
   // 重装配（列消息 + 现演状态 + 拼整段出站）+ 两个 RTT。
-  payloadbarRef.value?.setWire(null);
-  // 压缩那发的载荷同理：换会话就清掉（那是**某一次**压缩的账，不属于"当前"）
-  payloadbarRef.value?.setCompactWire(null);
   refreshContextLazy();
   // 这一轮还在跑？（刷新页面、切走又回来）—— status 是权威：把合成的流气泡与轮询接回来。
   // reply 落库前消息列里本来就没有它，不接的话界面装 idle、发送才知道 409。
@@ -1234,17 +1320,46 @@ function refreshStatusline(phase: string = "idle", elapsedMs: number | null = nu
     topbarRef.value?.setContext(null);
     return;
   }
-  if (!withContext) return;
-  api.context(sessionID).catch(() => null).then((ctx) => {
-    topbarRef.value?.setContext(ctx);
-  refreshMacros();
-  }).catch((err) => toast(`上下文占用读取失败：${errText(err)}`, "error"));
+  if (withContext) void refreshContextUsage(sessionID);
 }
-function refreshStateView(id: string | null = null): void {
-  const sid = id ?? sessionID;
-  if (draft || !sid) return; // 草稿：没有会话可问状态（右栏保持空话）
+
+async function refreshContextUsage(sid: string): Promise<void> {
   const my = epoch;
-  api.sessionState(sid).then((v) => { if (my === epoch) payloadbarRef.value?.setTables(v?.tables); }).catch(() => {});
+  const seq = ++contextUsageSeq;
+  const current = () => my === epoch && seq === contextUsageSeq;
+  if (!contextUsageLoaded && !contextUsageError.value) contextUsageLoading.value = true;
+  try {
+    const ctx = await api.context(sid);
+    if (!current()) return;
+    contextUsageError.value = "";
+    contextUsageLoaded = true;
+    topbarRef.value?.setContext(ctx);
+  } catch (err: unknown) {
+    if (current() && !contextUsageLoaded) contextUsageError.value = `上下文占用读取失败：${errText(err)}`;
+  } finally {
+    if (current()) {
+      contextUsageLoading.value = false;
+      void refreshMacros();
+    }
+  }
+}
+async function refreshStateView(id: string | null = null, foreground = false): Promise<void> {
+  const sid = id ?? sessionID;
+  if (draft || !sid || sid !== sessionID) return;
+  const my = epoch;
+  const seq = ++stateSeq;
+  const current = () => my === epoch && seq === stateSeq;
+  if (foreground) stateLoading.value = true;
+  try {
+    const result = await api.sessionState(sid);
+    if (!current()) return;
+    payloadbarRef.value?.setTables(result?.tables);
+    stateError.value = "";
+  } catch (err: unknown) {
+    if (current() && (foreground || stateLoading.value)) stateError.value = `世界状态读取失败：${errText(err)}`;
+  } finally {
+    if (current()) stateLoading.value = false;
+  }
 }
 // 命令执行器：键表在 utils/commands.ts，动作与前置条件收在 composable。
 const { runCommand } = useCommands({
@@ -1290,10 +1405,7 @@ function onComposerInput(v: string): void {
       refreshStatusline("idle");
       return;
     }
-    if (draft && !v.trim()) {
-      payloadbarRef.value?.setWire(null); // 草稿清空 ⇒ 右栏回到占位文案
-      return;
-    }
+    if (draft && !v.trim()) return;
     previewPayload(v);
   }, 300);
 }
@@ -1398,8 +1510,12 @@ async function sendFromDraft(text: string, receipt: DraftReceipt): Promise<void>
   await pollTurn(s.id, accepted.turn.message_id, live);
 }
 function stopCurrent() {
-  if (!sessionID) return; // 草稿没有会话可停
-  api.stop(sessionID).catch((err) => toast(`停止失败：${errText(err)}`, "error"));
+  const sid = sessionID;
+  if (!sid) return; // 草稿没有会话可停
+  void runComposerRequest("stop", async () => {
+    try { await api.stop(sid); }
+    catch (err) { toast(`停止失败：${errText(err)}`, "error"); }
+  });
 }
 function onComposerSubmit(text: string): void {
   if (!text) return;
@@ -1518,6 +1634,7 @@ onUnmounted(() => {
         ref="sessionbarRef"
         :collapsed="leftHidden"
         :busy-ids="busyIds"
+        :pending-actions="pendingSessionActions"
         :loading="sessionsLoading"
         :refreshing="sessionsRefreshing"
         @prefetch="prefetchSession"
@@ -1545,6 +1662,13 @@ onUnmounted(() => {
       :flow="currentAgentIsFlow"
       :flow-calls="flowCalls"
       :flow-active-nodes="flowActiveNodes"
+      :macro-session-id="loadingSession ? '' : sessionInfo.id"
+      :macros-loading="macrosLoading"
+      :macros-error="macrosError"
+      :saving-overrides="!!sessionInfo.id && savingRequestOverrides.has(sessionInfo.id)"
+      :canceling-tasks="cancelingTasks"
+      :context-usage-loading="contextUsageLoading"
+      :context-usage-error="contextUsageError"
       @select-workspace="selectWorkspace"
       @save-overrides="saveRequestOverrides"
       @toggle-left="toggleLeft"
@@ -1575,7 +1699,9 @@ onUnmounted(() => {
             id="load-more"
             variant="outlined"
             size="small"
-            @click="loadMore().catch((err) => toast(`加载更多失败：${errText(err)}`, 'error'))"
+            :loading="loadingMore"
+            :disabled="loadingMore"
+            @click="loadMore"
           >↑ 加载更多历史（还有 {{ olderSegments }} 段）</VBtn>
           <Transition name="session-reveal">
           <div v-if="!loadingSession" class="session-transcript">
@@ -1588,12 +1714,15 @@ onUnmounted(() => {
               :to-idx="row.toIdx"
               :rows="row.rows"
               :loading="row.loading"
+              :raw-error="summaryErrors.get(row.summary.id)"
               :reroll="summaryReroll.active && summaryReroll.target_summary_id === row.summary.id ? summaryReroll : null"
+              :candidate-loading="summaryCandidateAction?.id === row.summary.id ? summaryCandidateAction.action : null"
+              :undo-loading="undoSummaryAction?.id === row.summary.id && undoSummaryAction.loading"
               :macros="macroValues"
               @toggle-raw="(open) => onSummaryToggle(row.summary.id, open)"
-              @refresh="summaryRefresh(row.summary.id)"
+              @refresh="runSummaryCandidate(row.summary.id)"
               @edit="openSummaryEdit(row.summary)"
-              @version="(d) => summaryVersion(d)"
+              @version="(d) => runSummaryCandidate(row.summary.id, d)"
               @undo="undoSummary(row.summary.id)"
             />
             </template>
@@ -1609,6 +1738,7 @@ onUnmounted(() => {
               :reasoning-ms="row.msg.reasoningMs"
               :duration-ms="rowDuration(row.msg)"
               :message-id="row.msg.messageId"
+              :deleting="!!row.msg.messageId && messageDeletionRequests.get(row.msg.messageId) === 'request'"
               :prompt-id="row.msg.messageId === lastMsgId ? latestPromptId : null"
               :is-last="!!row.msg.messageId && row.msg.messageId === lastMsgId"
               :allow-continue="row.key === continuationRow?.key"
@@ -1659,6 +1789,9 @@ onUnmounted(() => {
       :thinking-options="thinkingChoices"
       :native-tools="currentAllTools"
       :native-tools-disabled="sessionInfo.native_tools_disabled ?? []"
+      :thinking-pending="composerRequestPending('thinking')"
+      :tools-pending="composerRequestPending('tools')"
+      :stopping="composerRequestPending('stop')"
       :flow="currentAgentIsFlow"
       :zen="zenMode"
       :zen-hidden="zenComposerHidden"
@@ -1675,7 +1808,8 @@ onUnmounted(() => {
         <AgentMenu
           :agents="vueAgents"
           :model-value="sessionInfo.agent_id || ''"
-          @select="(id) => applyAgentValue(id).catch((err) => toast(`换 Agent 失败：${errText(err)}`, 'error'))"
+          :pending="composerRequestPending('agent')"
+          @select="selectSessionAgent"
         />
       </template>
     </Composer>
@@ -1688,10 +1822,21 @@ onUnmounted(() => {
     <ContextWorkspace
       ref="payloadbarRef"
       :has-session="!!sessionInfo.id"
-      :session-id="sessionInfo.id"
+      :session-id="loadingSession ? '' : sessionInfo.id"
+      :session-loading="loadingSession"
       :default-blocks="compactDefault"
       :flow="currentAgentIsFlow"
       :agent="currentAgent"
+      :wire="outgoingWire"
+      :preview-loading="loadingSession || outgoingLoading"
+      :preview-error="outgoingError"
+      :state-loading="loadingSession || stateLoading"
+      :state-error="stateError"
+      :tree-loading="loadingSession || treeLoading"
+      :tree-error="treeError"
+      :compact-preview-loading="compactPreviewLoading"
+      :compact-starting="compactStarting"
+      :undo-loading-id="undoSummaryAction?.loading ? undoSummaryAction.id : null"
       @flow-saved="refreshAgents"
       @edit-flow-agent="openAgentFlow"
       @compact="(n) => compactNow(n ?? undefined)"

@@ -8,6 +8,7 @@ const props = withDefaults(defineProps<{
   name: "agent" | "thinking" | "tools";
   title: string;
   label?: string;
+  pending?: boolean;
   width?: number;
   buttonClass?: string;
   labelClass?: string;
@@ -17,6 +18,9 @@ const props = withDefaults(defineProps<{
   labelClass: "",
 });
 const open = useChatMenu(props.name);
+function setOpen(value: boolean): void {
+  if (!value || !props.pending) open.value = value;
+}
 const listId = `${useId()}-choices`;
 const menu = useTemplateRef<{ activatorEl?: HTMLElement }>("menu");
 
@@ -47,7 +51,8 @@ function onEscape(event: KeyboardEvent): void {
 <template>
   <VMenu
     ref="menu"
-    v-model="open"
+    :model-value="open"
+    @update:model-value="setOpen"
     :activator-props="{ 'aria-haspopup': 'listbox', 'aria-controls': listId, 'aria-owns': listId, onKeydown: onEscape }"
     :location="name === 'agent' ? 'top start' : 'top end'"
     :offset="8"
@@ -67,6 +72,8 @@ function onEscape(event: KeyboardEvent): void {
           :class="buttonClass"
           :title="title"
           :aria-label="title"
+          :loading="pending"
+          :aria-disabled="pending || undefined"
         >
           <span :class="labelClass">{{ label }}</span>
           <span class="toolbar-chevron" aria-hidden="true"></span>

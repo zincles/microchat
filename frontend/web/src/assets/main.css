@@ -758,6 +758,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
   display: block; width: 100%; box-sizing: border-box; text-align: left; background: none; border: none;
   padding: 0.48em 0.65em; border-radius: var(--r-btn); color: var(--tg-text); font: inherit; line-height: 1.3; cursor: pointer; }
 .session-menu button:hover, .session-menu button:focus-visible { background: var(--mix-8); }
+.session-menu button:disabled { opacity: 0.5; cursor: default; background: none; }
 .session-menu button.danger { color: var(--tg-destructive); }
 /* —— 消息（2026-10-27 起**只有一种形态**：你发气泡、AI 回正文）——
  * 基础 `.msg` 只放两边共用的东西；**气泡那套（底色/圆角/内边距）只挂在 `.msg.user` 上**。
@@ -978,6 +979,11 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .msg .text code { background: var(--md-surface-container-high); border-radius: var(--md-shape-xs); padding: 0.1em 0.35em; font-size: 0.88em; }
 .msg .text pre { background: var(--md-surface-container-low); border: 1px solid var(--md-outline-variant); border-radius: var(--md-shape-sm); padding: 0.6em 0.8em; margin: 0.6em 0; overflow-x: auto; }
 .msg .text pre code { background: none; padding: 0; }
+.msg .text img[aria-busy="true"] {
+  inline-size: min(14em, 100%); min-block-size: 5em;
+  border-radius: var(--md-shape-sm); background: var(--md-surface-container-high);
+  animation: sk-breathe 1.3s ease-in-out infinite;
+}
 /* Mermaid：源码先可见（没 JS / 流式中也能读），渲染成功后换成图；失败就把源码留着并说明。 */
 .mermaid-figure { border: 1px solid var(--md-outline-variant); border-radius: var(--md-shape-sm);
   background: var(--md-surface-container-low); margin: 0.6em 0; overflow: hidden; }
@@ -986,6 +992,12 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
   color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); }
 .mermaid-label { font-weight: 500; }
 .mermaid-status { font-variant-numeric: tabular-nums; }
+.mermaid-rendering .mermaid-status::before {
+  content: ""; display: inline-block; inline-size: 0.9em; block-size: 0.9em;
+  margin-inline-end: 0.45em; vertical-align: -0.1em;
+  border: 1px solid var(--md-outline-variant); border-top-color: var(--md-primary); border-radius: var(--md-shape-full);
+  animation: session-busy-spin 1s linear infinite;
+}
 .mermaid-diagram { display: flex; justify-content: center; overflow-x: auto; padding: 0.8em; }
 .mermaid-diagram svg { max-width: 100%; height: auto; }
 .mermaid-source { margin: 0 !important; border: none !important; border-radius: 0 !important;
@@ -995,6 +1007,9 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
   font-size: var(--md-type-body-small); white-space: pre-wrap; overflow-wrap: anywhere; }
 .mermaid-figure.mermaid-error .mermaid-error { display: block; }
 .mermaid-figure.mermaid-error .mermaid-status { color: var(--md-error); }
+@media (prefers-reduced-motion: reduce) {
+  .msg .text img[aria-busy="true"], .mermaid-rendering .mermaid-status::before { animation: none; }
+}
 .msg .text ul, .msg .text ol { margin: 0 0 0.7em; padding-left: 1.4em; }
 .msg .text blockquote { margin: 0 0 0.7em; padding-left: 0.7em; border-left: 2px solid var(--md-primary); opacity: 0.85; }
 .msg .text h1, .msg .text h2, .msg .text h3 { margin: 0.4em 0 0.3em; font-size: 1.05em; }
@@ -1103,6 +1118,11 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
  * 菜单传送到 body（`.v-overlay-container`），一并覆盖。
  */
 #app .v-btn, .v-overlay-container .v-btn, #app .v-tab { all: revert-layer; }
+
+@media (prefers-reduced-motion: reduce) {
+  .v-progress-circular--indeterminate > svg,
+  .v-progress-circular--indeterminate .v-progress-circular__overlay { animation: none; }
+}
 
 /* 滚动藏栏与返回最新同速，只用 transform；专注模式收放不用长位移动画。 */
 #chat-col > header { transform: translateY(calc(-1 * var(--chrome-top, 0px))); }

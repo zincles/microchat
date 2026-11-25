@@ -6,7 +6,7 @@
 // 两条属于 FlowAgent 的硬约束在数据层（utils/flow.ts）与这里一起做：
 //   · 只能调用传统 Agent，不能嵌套 FlowAgent；
 //   · 第一版只允许 DAG，且恰好一个输入、一个输出。
-import { computed, inject, nextTick, onMounted, provide, ref, watch } from "vue";
+import { computed, inject, nextTick, onMounted, onUnmounted, provide, ref, shallowRef, watch } from "vue";
 import {
   ConnectionMode, VueFlow, useVueFlow,
   type Connection, type NodeTypesObject, type OnConnectStartParams,
@@ -18,6 +18,7 @@ import "@vue-flow/core/dist/theme-default.css";
 import "@vue-flow/controls/dist/style.css";
 import { VBtn, VList, VListItem, VMenu, VTextField } from "vuetify/components";
 import CloseButton from "./CloseButton.vue";
+import RequestLoading from "./RequestLoading.vue";
 import { ICONS } from "../assets/icons.ts";
 import { sharedApi } from "../utils/prefs.ts";
 import FlowNode from "./FlowNode.vue";
@@ -40,6 +41,8 @@ const props = withDefaults(defineProps<{
   running?: boolean;
   readonly?: boolean;
   traceSteps?: FlowTestStep[];
+  traceLoading?: boolean;
+  traceError?: string;
 }>(), {
   graph: null,
   agentId: "",
@@ -108,6 +111,10 @@ const testStatus = ref("");
 const testing = ref(false);
 const locked = computed(() => props.running);
 const models = ref<ModelListItem[]>([]);
+const hasModelPicker = computed(() => !props.readonly && nodes.value.some((node) => node.type === "llm"));
+const loadingModels = shallowRef(false);
+const modelLoadError = shallowRef("");
+let active = true;
 provide("flowModels", models);
 const nodeRows = computed(() => nodes.value.map((n) => ({
   id: String(n.id),
@@ -166,10 +173,25 @@ function onPanelWheel(event: WheelEvent): void {
 }
 provide("flowRemoveNode", removeNode);
 provide("flowRemovePort", removePort);
-onMounted(async () => {
+async function loadModels(): Promise<void> {
+  if (loadingModels.value) return;
+  loadingModels.value = true;
+  try {
+    const result = await api.models();
+    if (!active) return;
+    models.value = result;
+    modelLoadError.value = "";
+  } catch (e: unknown) {
+    if (active) modelLoadError.value = `读取模型列表失败：${e instanceof Error ? e.message : String(e)}`;
+  } finally {
+    loadingModels.value = false;
+  }
+}
+onMounted(() => {
   fitAfterResize();
-  try { models.value = await api.models(); } catch { /* 模型清单拿不到时只留“跟随默认模型” */ }
+  void loadModels();
 });
+onUnmounted(() => { active = false; });
 const inputExists = computed(() => nodes.value.some((n) => n.type === "input"));
 const outputExists = computed(() => nodes.value.some((n) => n.type === "output"));
 let seq = 0;
@@ -305,12 +327,15 @@ function onConnectEnd(): void {
 }
 
 async function runTest(): Promise<void> {
-  if (!props.agentId) { testStatus.value = "先保存 FlowAgent，再回来测试"; return; }
+  if (!editable.value || testing.value) return;
+  const agentId = props.agentId;
+  if (!agentId) { testStatus.value = "先保存 FlowAgent，再回来测试"; return; }
   if (!testMessage.value.trim()) { testStatus.value = "先输入一条测试消息"; return; }
   testing.value = true;
-  testStatus.value = "测试中…";
+  testStatus.value = "";
   try {
-    const result = await api.testFlow(props.agentId, testMessage.value.trim());
+    const result = await api.testFlow(agentId, testMessage.value.trim());
+    if (!active || props.agentId !== agentId) return;
     const byID = new Map(result.steps.map((step) => [step.id, step]));
     nodes.value = nodes.value.map((n) => {
       const test = byID.get(String(n.id));
@@ -334,11 +359,13 @@ async function runTest(): Promise<void> {
     bottomTab.value = "test";
     bottomOpen.value = true;
   } catch (e) {
-    testStatus.value = `测试失败：${e instanceof Error ? e.message : String(e)}`;
+    if (active && props.agentId === agentId) testStatus.value = `测试失败：${e instanceof Error ? e.message : String(e)}`;
   } finally {
     testing.value = false;
   }
 }
+
+watch(() => props.agentId, () => { testStatus.value = ""; });
 
 // 位置、连线、节点内 Prompt 条目都是深层数据；一有变化就把整张图交回 AgentEditor。
 watch([nodes, edges], () => emit("update:graph", toGraph()), { deep: true });
@@ -357,6 +384,11 @@ watch([() => props.nodeStates, () => props.activeNodeId], ([states, activeId]) =
 
 <template>
   <section class="flow-editor" :class="{ expanded, 'is-locked': locked, 'is-readonly': readonly }">
+    <RequestLoading v-if="hasModelPicker && loadingModels && !modelLoadError" label="正在读取模型列表…" />
+    <div v-else-if="hasModelPicker && modelLoadError" class="row">
+      <span class="status" role="status">{{ modelLoadError }}</span>
+      <VBtn variant="text" size="small" type="button" :loading="loadingModels" :disabled="loadingModels" @click="loadModels">重新载入</VBtn>
+    </div>
     <div class="flow-main">
       <div class="flow-canvas" :class="{ 'nodes-open': nodesOpen, 'bottom-open': bottomOpen }">
         <VueFlow
@@ -471,11 +503,12 @@ watch([() => props.nodeStates, () => props.activeNodeId], ([states, activeId]) =
           <div v-if="bottomTab === 'test' && !readonly" class="flow-panel-test">
             <p class="hint">输入一条测试消息；真实调用 LLM 后，悬停节点可看每步输入输出。</p>
             <VTextField v-model="testMessage" density="compact" variant="outlined" hide-details
+              :readonly="testing || locked"
               placeholder="输入一条测试消息…" @keydown.enter.prevent="runTest" />
             <div class="row">
               <VBtn color="primary" variant="flat" size="small" type="button"
-                :loading="testing" :disabled="testing || !agentId" @click="runTest">发送测试</VBtn>
-              <span class="status">{{ testStatus || (agentId ? "" : "先保存 FlowAgent，再回来测试") }}</span>
+                :loading="testing" :disabled="testing || locked || !agentId" @click="runTest">发送测试</VBtn>
+              <span class="status" role="status">{{ testing ? "测试中…" : testStatus || (agentId ? "" : "先保存 FlowAgent，再回来测试") }}</span>
             </div>
           </div>
 
@@ -512,9 +545,11 @@ watch([() => props.nodeStates, () => props.activeNodeId], ([states, activeId]) =
     <section v-if="readonly" class="flow-trace-panel" aria-label="本次执行">
       <div class="flow-trace-head">
         <b>本次执行</b>
-        <span>{{ traceSteps.length ? `${traceSteps.length} 个节点` : "还没有执行记录" }}</span>
+        <span v-if="traceSteps.length || (!traceLoading && !traceError)">{{ traceSteps.length ? `${traceSteps.length} 个节点` : "还没有执行记录" }}</span>
       </div>
-      <p v-if="!traceSteps.length" class="hint">发出消息后，这里显示真实经过的节点、输入输出与请求体。</p>
+      <RequestLoading v-if="traceLoading" label="正在加载工作流执行记录…" />
+      <p v-else-if="traceError" class="field-warning" role="status">{{ traceError }}</p>
+      <p v-else-if="!traceSteps.length" class="hint">发出消息后，这里显示真实经过的节点、输入输出与请求体。</p>
       <details v-for="step in traceSteps" :key="step.id" class="flow-trace-step">
         <summary>
           <b>{{ step.label }}</b>

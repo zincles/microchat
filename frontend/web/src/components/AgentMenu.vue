@@ -2,13 +2,14 @@
 // 助手（Agent）选择入口（2026-11-10 用户定：从顶栏挪到输入栏上方，最左侧）。
 // 只负责头像 + 选人菜单；真正的 PATCH 由 App 的 applyAgentValue 做。
 import { computed } from "vue";
-import { VAvatar, VListItem, VListItemTitle } from "vuetify/components";
+import { VAvatar, VListItem, VListItemTitle, VProgressCircular } from "vuetify/components";
 import ToolbarMenu from "./ToolbarMenu.vue";
 import type { Agent } from "../api/types.ts";
 
 const props = withDefaults(defineProps<{
   agents?: Agent[];
   modelValue?: string;
+  pending?: boolean;
 }>(), { agents: () => [], modelValue: "" });
 const emit = defineEmits<{ select: [id: string] }>();
 
@@ -34,7 +35,7 @@ function pick(id: string): void {
 </script>
 
 <template>
-  <ToolbarMenu name="agent" title="切换助手" :width="240">
+  <ToolbarMenu name="agent" title="切换助手" :width="240" :pending="pending">
     <template #activator="{ props: activatorProps }">
       <button
         v-bind="activatorProps"
@@ -45,7 +46,12 @@ function pick(id: string): void {
         :title="`当前助手：${current}（点击切换）`"
         aria-label="切换助手"
         :aria-description="`当前助手：${current}`"
-      >{{ initial(current) }}</button>
+        :aria-busy="pending || undefined"
+        :aria-disabled="pending || undefined"
+      >
+        <VProgressCircular v-if="pending" indeterminate size="18" width="2" aria-hidden="true" />
+        <template v-else>{{ initial(current) }}</template>
+      </button>
     </template>
     <VListItem
       v-for="agent in items"

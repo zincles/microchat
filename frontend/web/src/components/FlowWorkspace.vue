@@ -1,12 +1,13 @@
 <script setup lang="ts">
 // FlowAgent 的「工作流」页：会话工作区里**只读**展示当前对话的真实执行；
 // 编辑入口跳到对应的智能体流程页（AgentEditor 的 FlowEditor，不在这里复制一份编辑器）。
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 import { VBtn } from "vuetify/components";
 import FlowEditor from "./FlowEditor.vue";
 import { sharedApi } from "../utils/prefs.ts";
 import { normalizeFlowGraph } from "../utils/flow.ts";
 import type { Agent, FlowGraph, FlowTestStep } from "../api/types.ts";
+import { errCode, errText } from "../types/app.ts";
 
 const props = withDefaults(defineProps<{
   agent?: Agent | null;
@@ -34,6 +35,10 @@ const nodeStates = ref<Record<string, string>>({});
 const running = ref(false);
 const traceLabel = ref("");
 const traceSteps = ref<FlowTestStep[]>([]);
+const traceLoading = shallowRef(false);
+const traceError = shallowRef("");
+let traceScope = 0;
+let pollingScope: number | null = null;
 let pollTimer: number | null = null;
 let tickTimer: number | null = null;
 let timer: number | null = null;
@@ -56,13 +61,16 @@ function onGraph(next: FlowGraph): void {
   status.value = "未保存";
   schedule();
 }
-async function pollActive(): Promise<void> {
-  if (!props.sessionId) {
-    activeNodeId.value = ""; nodeStates.value = {}; running.value = false; traceLabel.value = ""; traceSteps.value = [];
-    return;
-  }
+async function pollActive(first = false): Promise<void> {
+  const sid = props.sessionId;
+  const scope = traceScope;
+  if (!sid || pollingScope === scope) return;
+  pollingScope = scope;
+  if (first && props.readonly) traceLoading.value = true;
   try {
-    const trace = await api.flowRun(props.sessionId);
+    const trace = await api.flowRun(sid);
+    if (scope !== traceScope) return;
+    traceError.value = "";
     activeNodeId.value = trace?.active_node_id ?? "";
     nodeStates.value = trace?.node_states ?? {};
     traceSteps.value = trace?.steps ?? [];
@@ -71,12 +79,23 @@ async function pollActive(): Promise<void> {
       : trace?.status === "done" ? "上次运行已完成"
       : trace?.status === "error" ? "上次运行失败"
       : trace?.status === "canceled" ? "上次运行已取消" : "";
-  } catch {
+  } catch (err: unknown) {
+    if (scope !== traceScope) return;
+    if (errCode(err) !== "not_found") {
+      if (first || !traceLabel.value) traceError.value = `工作流执行记录读取失败：${errText(err)}`;
+      return;
+    }
+    traceError.value = "";
     activeNodeId.value = "";
     nodeStates.value = {};
     running.value = false;
     traceSteps.value = [];
     traceLabel.value = "还没有执行记录";
+  } finally {
+    if (scope === traceScope) {
+      pollingScope = null;
+      traceLoading.value = false;
+    }
   }
 }
 
@@ -102,24 +121,31 @@ async function save(): Promise<void> {
     status.value = `保存失败：${error instanceof Error ? error.message : String(error)}`;
   }
 }
-watch([() => props.agent?.id, () => props.sessionId], () => {
+watch([() => props.agent?.id, () => props.sessionId, () => props.readonly], () => {
+  traceScope++;
+  traceLoading.value = false;
+  traceError.value = "";
   cancelTimer();
   saveSeq += 1;
   dirty = false;
   graph.value = normalizeFlowGraph(props.agent?.flow ?? null);
   savedSnapshot.value = JSON.stringify(graph.value);
   savedAt.value = null;
+  activeNodeId.value = "";
+  traceSteps.value = [];
   nodeStates.value = {};
   running.value = false;
   traceLabel.value = "";
   status.value = "";
+  void pollActive(true);
 });
 onMounted(() => {
-  pollActive();
+  void pollActive(true);
   pollTimer = window.setInterval(() => { void pollActive(); }, 700);
   tickTimer = window.setInterval(() => { nowMs.value = Date.now(); }, 1000);
 });
 onBeforeUnmount(() => {
+  traceScope++;
   cancelTimer();
   if (pollTimer !== null) clearInterval(pollTimer);
   if (tickTimer !== null) clearInterval(tickTimer);
@@ -137,7 +163,7 @@ onBeforeUnmount(() => {
     </div>
     <FlowEditor v-if="props.agent?.id" :graph="graph" :agent-id="props.agent.id"
       :active-node-id="activeNodeId" :node-states="nodeStates" :running="running"
-      :readonly="readonly" :trace-steps="traceSteps" @update:graph="onGraph" />
+      :readonly="readonly" :trace-steps="traceSteps" :trace-loading="traceLoading" :trace-error="traceError" @update:graph="onGraph" />
     <p v-else class="ws-draft-note">这是草稿，还没有保存的 FlowAgent 可以编辑。</p>
   </section>
 </template>

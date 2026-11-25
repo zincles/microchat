@@ -20,8 +20,10 @@ import type { Segment, TavernEffective, TavernEffectiveEntry, TavernPreset, Tave
 const props = withDefaults(defineProps<{
   preset: TavernPreset;
   segments?: Segment[];
+  segmentsReady?: boolean;
 }>(), {
   segments: () => [],
+  segmentsReady: true,
 });
 const emit = defineEmits<{ close: []; imported: [segment: Segment] }>();
 const api = sharedApi();
@@ -164,7 +166,7 @@ function nextSegmentID(entry: TavernEffectiveEntry, index: number): string {
 
 async function importEntry(entry: TavernEffectiveEntry, index: number): Promise<void> {
   const key = entryKey(entry, index);
-  if (isImported(entry, index) || isImporting(entry, index)) return;
+  if (!props.segmentsReady || isImported(entry, index) || isImporting(entry, index)) return;
   if (!canImport(entry)) {
     importStatus.value = `「${entry.name || entry.identifier}」含动态宏，不能导入为静态片段`;
     return;
@@ -346,6 +348,7 @@ watch(() => props.preset.id, () => {
               <button v-if="openEntries.length" class="tavern-effective-collapse-all" type="button" @click="collapseEntries">全部收起</button>
             </div>
             <p v-if="!data.entries.length" class="tavern-preview-empty">没有留下任何正文。</p>
+            <p v-if="data.entries.length && !segmentsReady" class="tavern-preview-note" role="alert">提示词片段库不可用，暂不能导入。</p>
             <article
               v-for="(entry, index) in data.entries"
               :key="entry.identifier"
@@ -368,7 +371,8 @@ watch(() => props.preset.id, () => {
                 <VBtn
                   v-if="canImport(entry)"
                   variant="text" size="small" type="button"
-                  :disabled="isImported(entry, index) || isImporting(entry, index)"
+                  :loading="isImporting(entry, index)"
+                  :disabled="!segmentsReady || isImported(entry, index) || isImporting(entry, index)"
                   :title="`导入为提示词片段（来源：${preset.filename}）`"
                   @click="importEntry(entry, index)"
                 >{{ isImported(entry, index) ? "已导入" : isImporting(entry, index) ? "导入中…" : "导入为片段" }}</VBtn>

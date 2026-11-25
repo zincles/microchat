@@ -3,9 +3,10 @@
 //
 // 规则是纯数据 override：匹配 raw 模型 id，覆盖 brand / icon / thinking_levels。
 // global = 所有渠道共享；provider = 当前渠道自己的列表，应用在全局之后、优先。
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, onMounted, reactive, ref, shallowRef, watch } from "vue";
 import { VBtn, VSelect, VSwitch, VTextField } from "vuetify/components";
 import HelpTip from "./HelpTip.vue";
+import RequestLoading from "./RequestLoading.vue";
 import { sharedApi } from "../utils/prefs.ts";
 import { THINKING_LEVELS, thinkingLabel } from "../utils/thinking.ts";
 import { MODEL_ICON_OPTIONS } from "../utils/modelIcons.ts";
@@ -14,6 +15,8 @@ import type { BuiltinModelRule, ModelDefineRule } from "../api/types.ts";
 const props = withDefaults(defineProps<{
   scope?: "global" | "provider";
   rules?: ModelDefineRule[];
+  blocked?: boolean;
+  applying?: boolean;
 }>(), { scope: "global", rules: () => [] });
 const emit = defineEmits<{ save: [rules: ModelDefineRule[]]; saved: [] }>();
 
@@ -24,7 +27,7 @@ const hint = computed(() => isProvider.value
   ? "只作用于当前渠道；应用在全局规则之后，同名字段会覆盖全局。修改后保存渠道生效。"
   : "系统内建全局规则只读、可停用；用户规则在它们之后生效，可覆盖内建字段。按列表顺序匹配原始模型 id。");
 
-const rules = ref<ModelDefineRule[]>([]);
+const rules = ref<ModelDefineRule[]>(isProvider.value ? cloneRules(props.rules) : []);
 const builtinRules = ref<BuiltinModelRule[]>([]);
 const disabledBuiltin = ref<string[]>([]);
 const editing = ref<number | "new" | null>(null);
@@ -43,7 +46,10 @@ const draft = reactive({
 const thinkingOn = ref(false);
 const levels = ref<string[]>([]);
 const status = ref("");
-const busy = ref(false);
+const action = shallowRef<"initial" | "reload" | "save" | null>(null);
+const loaded = shallowRef(false);
+const ready = computed(() => isProvider.value || loaded.value);
+const busy = computed(() => props.blocked || !!action.value);
 
 const levelOptions = THINKING_LEVELS.map((value) => ({ title: thinkingLabel(value), value }));
 const iconOptions = MODEL_ICON_OPTIONS.map((option) => ({ title: option.label, value: option.value }));
@@ -78,7 +84,8 @@ function resetDraft(): void {
   levels.value = [];
 }
 
-async function load(): Promise<void> {
+async function load(source: "initial" | "reload"): Promise<void> {
+  if (busy.value) return;
   editing.value = null;
   status.value = "";
   if (isProvider.value) {
@@ -87,16 +94,18 @@ async function load(): Promise<void> {
     disabledBuiltin.value = [];
     return;
   }
-  busy.value = true;
+  action.value = source;
   try {
     const result = await api.modelRules();
     rules.value = cloneRules(result.model_define_rules ?? []);
     builtinRules.value = JSON.parse(JSON.stringify(result.builtin_model_rules ?? [])) as BuiltinModelRule[];
     disabledBuiltin.value = [...(result.disabled_builtin_model_rules ?? [])];
+    loaded.value = true;
   } catch (e: unknown) {
     status.value = `读取规则失败：${e instanceof Error ? e.message : String(e)}`;
+  } finally {
+    action.value = null;
   }
-  busy.value = false;
 }
 
 function openNew(): void {
@@ -204,6 +213,7 @@ function setBuiltinEnabled(id: string | undefined, on: boolean): void {
 }
 
 async function saveAll(): Promise<void> {
+  if (busy.value || !ready.value) return;
   if (editing.value !== null) {
     status.value = "先完成正在编辑的规则";
     return;
@@ -211,10 +221,9 @@ async function saveAll(): Promise<void> {
   status.value = "";
   if (isProvider.value) {
     emit("save", cloneRules(rules.value));
-    status.value = "已应用到渠道";
     return;
   }
-  busy.value = true;
+  action.value = "save";
   try {
     const result = await api.saveModelRules({
       model_define_rules: cloneRules(rules.value),
@@ -227,8 +236,9 @@ async function saveAll(): Promise<void> {
     emit("saved");
   } catch (e: unknown) {
     status.value = `保存失败：${e instanceof Error ? e.message : String(e)}`;
+  } finally {
+    action.value = null;
   }
-  busy.value = false;
 }
 
 function conditionText(rule: ModelDefineRule): string {
@@ -257,7 +267,7 @@ watch(() => props.rules, (next) => {
   // 渠道规则由父组件持有；保存后父组件会回写，编辑器跟着刷新。
   if (isProvider.value && editing.value === null) rules.value = cloneRules(next);
 }, { deep: true });
-onMounted(() => { load().catch(() => {}); });
+onMounted(() => { if (!isProvider.value) void load("initial"); });
 </script>
 
 <template>
@@ -267,9 +277,11 @@ onMounted(() => { load().catch(() => {}); });
         <h3>{{ heading }}</h3>
         <p class="hint">{{ hint }}</p>
       </div>
-      <VBtn color="primary" variant="flat" size="small" type="button" @click="openNew">新增规则</VBtn>
+      <VBtn color="primary" variant="flat" size="small" type="button" :disabled="busy || !ready" @click="openNew">新增规则</VBtn>
     </div>
 
+    <RequestLoading v-if="action === 'initial'" label="正在读取全局模型规则…" />
+    <template v-if="ready">
     <template v-if="!isProvider">
       <div class="rules-subhead">
         <h4>系统内建全局规则</h4>
@@ -293,6 +305,7 @@ onMounted(() => { load().catch(() => {}); });
               :model-value="!builtinDisabled(rule.id)"
               density="compact"
               hide-details
+              :disabled="busy"
               :label="builtinDisabled(rule.id) ? '已停用' : '启用'"
               @update:model-value="(v) => setBuiltinEnabled(rule.id, v === true)"
             />
@@ -315,10 +328,10 @@ onMounted(() => { load().catch(() => {}); });
           <div v-if="rule.id" class="rule-id">id: {{ rule.id }}</div>
         </div>
         <div class="rule-ops">
-          <VBtn variant="text" size="small" type="button" @click="moveRule(index, -1)">上移</VBtn>
-          <VBtn variant="text" size="small" type="button" @click="moveRule(index, 1)">下移</VBtn>
-          <VBtn variant="text" size="small" type="button" @click="openEdit(index)">编辑</VBtn>
-          <VBtn color="error" variant="text" size="small" type="button" @click="deleteRule(index)">删除</VBtn>
+          <VBtn variant="text" size="small" type="button" :disabled="busy" @click="moveRule(index, -1)">上移</VBtn>
+          <VBtn variant="text" size="small" type="button" :disabled="busy" @click="moveRule(index, 1)">下移</VBtn>
+          <VBtn variant="text" size="small" type="button" :disabled="busy" @click="openEdit(index)">编辑</VBtn>
+          <VBtn color="error" variant="text" size="small" type="button" :disabled="busy" @click="deleteRule(index)">删除</VBtn>
         </div>
       </div>
     </div>
@@ -351,15 +364,16 @@ onMounted(() => { load().catch(() => {}); });
       </section>
 
       <div class="rule-actions">
-        <VBtn variant="text" size="small" type="button" @click="cancelEdit">取消</VBtn>
-        <VBtn color="primary" variant="flat" size="small" type="button" @click="saveDraft">完成编辑</VBtn>
+        <VBtn variant="text" size="small" type="button" :disabled="busy" @click="cancelEdit">取消</VBtn>
+        <VBtn color="primary" variant="flat" size="small" type="button" :disabled="busy" @click="saveDraft">完成编辑</VBtn>
       </div>
     </div>
+    </template>
 
     <div class="row rules-save">
-      <VBtn color="primary" variant="flat" size="small" type="button" :disabled="busy" @click="saveAll">{{ isProvider ? "应用到渠道" : "保存全局规则" }}</VBtn>
-      <VBtn variant="text" size="small" type="button" :disabled="busy" @click="load">重新载入</VBtn>
-      <span class="status">{{ status }}</span>
+      <VBtn color="primary" variant="flat" size="small" type="button" :loading="action === 'save' || applying" :disabled="busy || !ready" @click="saveAll">{{ isProvider ? "应用到渠道" : "保存全局规则" }}</VBtn>
+      <VBtn variant="text" size="small" type="button" :loading="action === 'reload'" :disabled="busy" @click="load('reload')">重新载入</VBtn>
+      <span class="status" role="status">{{ status }}</span>
     </div>
   </section>
 </template>

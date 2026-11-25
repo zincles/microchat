@@ -13,6 +13,7 @@ import type { ThinkingOption } from "../utils/thinking.ts";
 const props = defineProps<{
   modelValue: string;
   options: ThinkingOption[];
+  pending?: boolean;
 }>();
 const emit = defineEmits<{ "update:modelValue": [value: string] }>();
 
@@ -29,6 +30,7 @@ function pick(value: string): void {
     name="thinking"
     :title="currentTitle"
     :label="current"
+    :pending="pending"
     :width="150"
     button-class="thinking-btn"
     label-class="thinking-label"

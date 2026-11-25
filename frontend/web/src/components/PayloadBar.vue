@@ -12,6 +12,7 @@ import { ref, computed, watch } from "vue";
 import CompactTree from "./CompactTree.vue";
 import AdvancedCompact from "./AdvancedCompact.vue";
 import CloseButton from "./CloseButton.vue";
+import RequestLoading from "./RequestLoading.vue";
 import { treeTotals } from "../utils/tree.ts";
 import type { TreeNode } from "../utils/tree.ts";
 import { parseWireMessages, previewBlock } from "../utils/payload.ts";
@@ -23,6 +24,16 @@ import type { LastPayload, PayloadPreview } from "../api/types.ts";
 const props = withDefaults(defineProps<{
   defaultBlocks?: number | null; // chat.compact_blocks（空输入框的默认，只用于提示）
   sessionId?: string;
+  wire: LastPayload | null;
+  previewLoading: boolean;
+  previewError: string;
+  stateLoading: boolean;
+  stateError: string;
+  treeLoading: boolean;
+  treeError: string;
+  compactPreviewLoading: boolean;
+  compactStarting: boolean;
+  undoLoadingId: string | null;
 }>(), {
   defaultBlocks: null,
   sessionId: "",
@@ -43,10 +54,10 @@ const compactTab = ref("preview");
 function selectTab(t: unknown): void { tab.value = String(t ?? ""); emit("tab", tab.value); }
 const blocks = ref(""); // 压缩面板上的块数输入（空 = 用配置默认）
 function doCompact(): void {
+  if (props.compactStarting || !props.sessionId) return;
   const n = Number(blocks.value);
   emit("compact", Number.isFinite(n) && n > 0 ? Math.floor(n) : null);
 }
-const wire = ref<LastPayload | null>(null);
 // 载荷预览开关（2026-11-04 用户定）：关掉后不请求 /outgoing，载荷 tab 只显示"已关闭"。
 const preview = ref(payloadPreviewOn());
 function setPreview(on: boolean): void {
@@ -57,7 +68,7 @@ function setPreview(on: boolean): void {
 // 分块视图（用户点名 2026-10-11）：开关记忆在 localStorage；开着就把 body.messages 一块块画。
 const viz = ref(payloadVizOn());
 function setViz(v: boolean): void { viz.value = !!v; savePayloadViz(viz.value); }
-const vizData = computed(() => (viz.value ? parseWireMessages(wire.value) : null));
+const vizData = computed(() => (viz.value ? parseWireMessages(props.wire) : null));
 // 每块开合（2026-11-04 用户定）：分块视图**默认全部折叠**（远程部署少铺开、
 // 也少一次重排）；用户点过的以点过的为准。换一份载荷 ⇒ 清空回全折叠。
 const openMap = ref<Map<number, boolean>>(new Map());
@@ -91,12 +102,11 @@ function collapseAll(): void {
 const tables = ref<Record<string, Record<string, string>>>({});
 const tree = ref<TreeNode[] | null>(null); // null = 还没数据（不发请求，显示空话）
 
-const payloadText = computed(() => wire.value ? JSON.stringify(wire.value, null, 2) : "");
+const payloadText = computed(() => props.wire ? JSON.stringify(props.wire, null, 2) : "");
 const tableNames = computed(() => Object.keys(tables.value ?? {}).sort());
 const stateVariableCount = computed(() => Object.values(tables.value).reduce((n, table) => n + Object.keys(table).length, 0));
 const totals = computed(() => (tree.value ? treeTotals(tree.value) : null));
 
-function setWire(w?: LastPayload | null): void { wire.value = w ?? null; }
 function setTables(t?: Record<string, Record<string, string>> | null): void { tables.value = t ?? {}; }
 // 折叠集合：只收**有孩子的节点**（叶子折了没意义）。
 function collapsibleSet(nodes?: TreeNode[] | null): Set<string> {
@@ -193,11 +203,12 @@ function setCompactWire(result?: PayloadPreview | null): void {
 }
 // previewCompact：把面板上那个块数（空 = 用配置默认）交给 App 去问后端。
 function previewCompact(): void {
+  if (props.compactPreviewLoading || !props.sessionId) return;
   const n = Number(blocks.value);
   emit("compact-payload", Number.isFinite(n) && n > 0 ? Math.floor(n) : null);
 }
 
-defineExpose({ setWire, setTables, setTree, setCompactWire });
+defineExpose({ setTables, setTree, setCompactWire });
 </script>
 
 <template>
@@ -240,6 +251,8 @@ defineExpose({ setWire, setTables, setTree, setCompactWire });
         <strong>请求预览已关闭</strong>
         <p>开启后才会获取预览内容，关闭时不请求此页数据。</p>
       </div>
+      <RequestLoading v-else-if="previewLoading" label="正在加载请求预览…" />
+      <p v-else-if="previewError" class="workspace-empty" role="alert">{{ previewError }}</p>
       <div v-else-if="!wire" class="workspace-empty" role="status">
         <strong>暂无可预览的请求</strong>
         <p>在聊天页输入内容后返回这里，查看它与历史一起组成的请求。</p>
@@ -288,15 +301,19 @@ defineExpose({ setWire, setTables, setTree, setCompactWire });
     <VTabsWindowItem value="state">
     <div id="state-view">
       <p class="workspace-intro">从消息正文中的 &lt;state&gt; 块按顺序现算；系统提示词不计入。编辑或删除消息后，世界状态随之变化。</p>
-      <div class="workspace-section-head"><strong>当前世界状态</strong><span class="context-count">{{ tableNames.length }} 张表 · {{ stateVariableCount }} 个变量</span></div>
-      <div v-if="!tableNames.length" class="workspace-empty" role="status"><strong>暂无世界状态数据</strong><p>包含 &lt;state&gt; 块的消息会在这里形成变量表。</p></div>
-      <section v-for="name in tableNames" :key="name" class="state-table">
-        <div class="state-table-head"><h4>{{ name }}</h4><span class="context-count">{{ Object.keys(tables[name] ?? {}).length }} 个变量</span></div>
-        <div v-for="(v, k) in tables[name]" :key="k" class="state-row">
-          <span class="k">{{ k }}</span><span class="v">{{ v }}</span>
-        </div>
-        <div v-if="!Object.keys(tables[name] ?? {}).length" class="state-table-empty">此表暂无变量</div>
-      </section>
+      <div class="workspace-section-head"><strong>当前世界状态</strong><span v-if="!stateLoading && (!stateError || tableNames.length)" class="context-count">{{ tableNames.length }} 张表 · {{ stateVariableCount }} 个变量</span></div>
+      <RequestLoading v-if="stateLoading" label="正在加载世界状态…" />
+      <template v-else>
+        <p v-if="stateError" class="workspace-empty" role="alert">{{ stateError }}</p>
+        <div v-else-if="!tableNames.length" class="workspace-empty" role="status"><strong>暂无世界状态数据</strong><p>包含 &lt;state&gt; 块的消息会在这里形成变量表。</p></div>
+        <section v-for="name in tableNames" :key="name" class="state-table">
+          <div class="state-table-head"><h4>{{ name }}</h4><span class="context-count">{{ Object.keys(tables[name] ?? {}).length }} 个变量</span></div>
+          <div v-for="(v, k) in tables[name]" :key="k" class="state-row">
+            <span class="k">{{ k }}</span><span class="v">{{ v }}</span>
+          </div>
+          <div v-if="!Object.keys(tables[name] ?? {}).length" class="state-table-empty">此表暂无变量</div>
+        </section>
+      </template>
     </div>
     </VTabsWindowItem>
     <VTabsWindowItem value="tree">
@@ -325,8 +342,8 @@ defineExpose({ setWire, setTables, setTree, setCompactWire });
           persistent-placeholder
           @keydown.enter.prevent="doCompact"
         />
-        <VBtn :disabled="!sessionId" variant="tonal" size="small" title="预览本次压缩请求，不调用模型、不写入摘要" @click="previewCompact">预览压缩请求</VBtn>
-        <VBtn :disabled="!sessionId" color="primary" variant="flat" size="small" title="调用模型生成摘要，成功后写入本次压缩结果" @click="doCompact">开始压缩</VBtn>
+        <VBtn :loading="compactPreviewLoading" :disabled="!sessionId || compactPreviewLoading" variant="tonal" size="small" title="预览本次压缩请求，不调用模型、不写入摘要" @click="previewCompact">预览压缩请求</VBtn>
+        <VBtn :loading="compactStarting" :disabled="!sessionId || compactStarting" color="primary" variant="flat" size="small" title="调用模型生成摘要，成功后写入本次压缩结果" @click="doCompact">开始压缩</VBtn>
       </div>
       <p class="workspace-action-note">先预览可检查压缩范围与请求内容；开始压缩才会调用模型并保存摘要。</p>
       <div v-if="compactWire" id="compact-payload">
@@ -355,7 +372,9 @@ defineExpose({ setWire, setTables, setTree, setCompactWire });
           </li>
         </ol>
       </div>
-      <div v-if="!tree" class="workspace-empty" role="status"><strong>暂无压缩结构</strong><p>建立会话并加载历史后，这里会显示消息与摘要的覆盖关系。</p></div>
+      <RequestLoading v-if="treeLoading" label="正在加载压缩结构…" />
+      <p v-else-if="treeError" class="workspace-empty" role="alert">{{ treeError }}</p>
+      <div v-else-if="!tree" class="workspace-empty" role="status"><strong>暂无压缩结构</strong><p>建立会话并加载历史后，这里会显示消息与摘要的覆盖关系。</p></div>
       <template v-else>
         <div class="ctree-head">
           <span v-if="totals" class="ctree-total">原文 {{ totals.rawChars }} 字 · 历史发送量 ≈{{ totals.sent }} tokens</span>
@@ -375,6 +394,7 @@ defineExpose({ setWire, setTables, setTree, setCompactWire });
         <CompactTree
           v-model:collapsed="treeCollapsed"
           :nodes="tree"
+          :undo-loading-id="undoLoadingId"
           @undo="(id) => emit('undo', id)"
         />
         <div class="ctree-legend">▾ 展开或折叠 · <i class="ctree-tag">发</i> 用于出站装配 · <i class="ctree-tag dirty">脏</i> 覆盖内容已改动，摘要仍沿用</div>

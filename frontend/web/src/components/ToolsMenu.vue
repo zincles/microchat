@@ -11,6 +11,7 @@ import { nativeToolLabel, nativeToolsLabel, nativeToolsTitle } from "../utils/fo
 const props = withDefaults(defineProps<{
   available?: string[];
   disabled?: string[];
+  pending?: boolean;
 }>(), { available: () => [], disabled: () => [] });
 const emit = defineEmits<{ toggle: [id: string, enabled: boolean] }>();
 
@@ -33,6 +34,7 @@ function toggle(id: string): void { emit("toggle", id, !enabledOf(id)); }
     name="tools"
     :title="title"
     :label="label"
+    :pending="pending"
     :width="220"
     button-class="tools-btn"
     label-class="tools-label"

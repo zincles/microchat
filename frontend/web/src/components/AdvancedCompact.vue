@@ -6,7 +6,7 @@
 //
 // 一条硬口径：整体只有 running / done / failed / canceled；每块的 state 只是进度，
 // 不是"这一块成功就算整体成功"。
-import { ref, computed, watch, onUnmounted } from "vue";
+import { ref, shallowRef, computed, watch, onUnmounted } from "vue";
 import { VBtn, VTextField } from "vuetify/components";
 import { sharedApi } from "../utils/prefs.ts";
 import type { AdvancedChunk, AdvancedJob, AdvancedPreview, AdvancedRequest } from "../api/types.ts";
@@ -29,11 +29,19 @@ const attempts = ref(5);
 const preview = ref<AdvancedPreview | null>(null);
 const job = ref<AdvancedJob | null>(null);
 const error = ref("");
-const busy = ref(false);
+const pending = shallowRef<"preview" | "start" | "cancel" | null>(null);
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
 let disposed = false;
 let lastDoneJob = "";
 let pollFailures = 0;
+let scope = 0;
+let pollSeq = 0;
+
+function stopPolling(): void {
+  pollSeq++;
+  clearTimeout(pollTimer ?? undefined);
+  pollTimer = null;
+}
 
 function requestBody(): AdvancedRequest {
   const body: AdvancedRequest = {
@@ -49,43 +57,58 @@ function requestBody(): AdvancedRequest {
 }
 
 async function loadPreview(): Promise<void> {
-  if (!props.sessionId) return;
-  busy.value = true;
+  const sid = props.sessionId;
+  if (!sid || pending.value) return;
+  const my = scope;
+  pending.value = "preview";
   error.value = "";
   try {
-    preview.value = await api.advancedCompactPreview(props.sessionId, requestBody());
+    const result = await api.advancedCompactPreview(sid, requestBody());
+    if (my !== scope || disposed) return;
+    preview.value = result;
+    stopPolling();
     job.value = null;
   } catch (e: unknown) {
+    if (my !== scope || disposed) return;
     preview.value = null;
     error.value = e instanceof Error ? e.message : String(e);
   } finally {
-    busy.value = false;
+    if (my === scope && !disposed) pending.value = null;
   }
 }
 
 async function start(): Promise<void> {
-  if (!props.sessionId || job.value?.state === "running") return;
-  busy.value = true;
+  const sid = props.sessionId;
+  if (!sid || pending.value || job.value?.state === "running") return;
+  const my = scope;
+  stopPolling();
+  pending.value = "start";
   error.value = "";
   try {
-    job.value = await api.advancedCompact(props.sessionId, requestBody());
+    const result = await api.advancedCompact(sid, requestBody());
+    if (my !== scope || disposed) return;
+    job.value = result;
     lastDoneJob = "";
     pollFailures = 0;
     poll();
   } catch (e: unknown) {
+    if (my !== scope || disposed) return;
     error.value = e instanceof Error ? e.message : String(e);
   } finally {
-    busy.value = false;
+    if (my === scope && !disposed) pending.value = null;
   }
 }
 
 function poll(): void {
-  clearTimeout(pollTimer ?? undefined);
-  if (!job.value?.id || disposed) return;
+  stopPolling();
+  const jid = job.value?.id;
+  const sid = props.sessionId;
+  if (!jid || !sid || disposed) return;
+  const seq = pollSeq;
   pollTimer = setTimeout(async () => {
     try {
-      const next = await api.advancedCompactStatus(props.sessionId, job.value!.id);
-      if (disposed) return;
+      const next = await api.advancedCompactStatus(sid, jid);
+      if (seq !== pollSeq || disposed) return;
       pollFailures = 0;
       job.value = next;
       if (next.state === "running") { poll(); return; }
@@ -94,7 +117,7 @@ function poll(): void {
         emit("done");
       }
     } catch (e: unknown) {
-      if (disposed) return;
+      if (seq !== pollSeq || disposed) return;
       // 单拍失败不判死刑：网络抖动/切后台时继续问；连续多次失败才停。
       pollFailures += 1;
       error.value = e instanceof Error ? e.message : String(e);
@@ -104,20 +127,34 @@ function poll(): void {
 }
 
 async function cancel(): Promise<void> {
-  if (!job.value?.id || job.value.state !== "running") return;
+  const sid = props.sessionId;
+  const jid = job.value?.id;
+  if (!sid || !jid || pending.value || job.value?.state !== "running") return;
+  const my = scope;
+  pending.value = "cancel";
+  stopPolling();
   try {
-    job.value = await api.advancedCompactCancel(props.sessionId, job.value.id);
-    poll();
-  } catch (e: unknown) { error.value = e instanceof Error ? e.message : String(e); }
+    const result = await api.advancedCompactCancel(sid, jid);
+    if (my === scope && !disposed) job.value = result;
+  } catch (e: unknown) {
+    if (my === scope && !disposed) error.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    if (my === scope && !disposed) {
+      pending.value = null;
+      poll();
+    }
+  }
 }
 
-watch(() => props.sessionId, () => {
-  clearTimeout(pollTimer ?? undefined);
+watch([() => props.sessionId, () => props.repair], () => {
+  scope++;
+  pending.value = null;
+  stopPolling();
   preview.value = null;
   job.value = null;
   error.value = "";
 });
-onUnmounted(() => { disposed = true; clearTimeout(pollTimer ?? undefined); });
+onUnmounted(() => { disposed = true; stopPolling(); });
 
 const doneChunks = computed(() => (job.value?.chunks ?? []).filter((c) => c.state === "done").length);
 const failedChunks = computed(() => (job.value?.chunks ?? []).filter((c) => c.state === "failed").length);
@@ -143,15 +180,15 @@ const stateText = (state: AdvancedChunk["state"] | AdvancedJob["state"] | string
       <label class="field"><span>同时处理数量</span><VTextField v-model="concurrency" class="adv-input" type="number" min="1" max="8" density="compact" variant="outlined" hide-details /></label>
       <label class="field"><span>每段最多尝试次数</span><VTextField v-model="attempts" class="adv-input" type="number" min="1" max="10" density="compact" variant="outlined" hide-details /></label>
       <div class="row">
-        <VBtn variant="tonal" size="small" :disabled="busy || !props.sessionId" @click="loadPreview">{{ repair ? "检查待补区间" : "查看压缩方案" }}</VBtn>
-        <VBtn color="primary" variant="flat" size="small" :disabled="busy || !preview || !preview.total_requests" @click="start">开始压缩</VBtn>
-        <VBtn v-if="job?.state === 'running'" color="error" variant="text" size="small" @click="cancel">取消任务</VBtn>
+        <VBtn variant="tonal" size="small" :loading="pending === 'preview'" :disabled="!!pending || !props.sessionId" @click="loadPreview">{{ repair ? "检查待补区间" : "查看压缩方案" }}</VBtn>
+        <VBtn color="primary" variant="flat" size="small" :loading="pending === 'start'" :disabled="!!pending || !preview || !preview.total_requests || job?.state === 'running'" @click="start">开始压缩</VBtn>
+        <VBtn v-if="job?.state === 'running'" color="error" variant="text" size="small" :loading="pending === 'cancel'" :disabled="!!pending" @click="cancel">取消任务</VBtn>
         <span class="status">{{ error }}</span>
       </div>
     </div>
 
     <p v-if="!props.sessionId" class="empty">（尚未创建对话，暂时没有可压缩内容。）</p>
-    <p v-else-if="!preview && !job" class="empty">{{ repair ? "点「检查待补区间」查看未覆盖的范围；这一步不调用模型或写入摘要。" : "填写消息范围后点「查看压缩方案」；这一步不调用模型或写入摘要。" }}</p>
+    <p v-else-if="!preview && !job && !pending && !error" class="empty">{{ repair ? "点「检查待补区间」查看未覆盖的范围；这一步不调用模型或写入摘要。" : "填写消息范围后点「查看压缩方案」；这一步不调用模型或写入摘要。" }}</p>
 
     <template v-if="preview">
       <div class="adv-summary">

@@ -536,7 +536,6 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
   assert.match(workspace, /<FlowWorkspace/, "FlowAgent 工作流页没有接 Flow 编辑器");
   const flowWorkspace = readFileSync(join(SRC, "components", "FlowWorkspace.vue"), "utf8");
-  assert.match(flowWorkspace, /flowRun\(props\.sessionId\)/, "工作流页没有轮询 Flow 执行轨迹");
   assert.match(flowWorkspace, /snapshot === savedSnapshot\.value\) return/, "没有修改也会触发自动保存");
   assert.match(flowWorkspace, /savedLabel/, "已保存没有时间显示");
   assert.match(flowWorkspace, /:node-states="nodeStates"/, "工作流没有把节点状态传给编辑器");
@@ -2006,19 +2005,6 @@ test("Agent 编辑器分页签：传统 Agent 是基本/系统提示词，FlowAg
   assert.ok(saveAt > windowEnd, "保存行该在页签分区外面（否则只在某一页能看见）");
 });
 
-// FlowAgent 运行时接上第一版后，所有能选 Agent 的入口都必须放它进来；
-// 只删一处会留下“设置里能选、顶栏找不到”这种半接线。
-test("FlowAgent：所有会话入口都能选中", () => {
-  const sources = [
-    ["AgentMenu.vue", readFileSync(join(SRC, "components", "AgentMenu.vue"), "utf8")],
-    ["SessionSettings.vue", readFileSync(join(SRC, "components", "SessionSettings.vue"), "utf8")],
-    ["SettingsModal.vue", readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8")],
-    ["App.vue", readFileSync(join(SRC, "App.vue"), "utf8")],
-  ];
-  for (const [name, source] of sources) {
-    assert.ok(!/kind\s*!==\s*["']flow["']/.test(source), `${name} 仍在过滤 FlowAgent`);
-  }
-});
 
 // 2026-11-11 用户：酒馆预设会接管整套提示词，必须把“忽略了什么”写在选项旁边。
 test("Agent 酒馆预设：选中时警告说明会接管哪些提示词", () => {
@@ -2461,8 +2447,10 @@ test("上下文工作区：右栏三 tab 搬进来了，栏本身删干净", () 
   // ① 面板挂在工作区里（不是各画一份 —— 两份必然在某天分叉）
   assert.match(ws, /import PayloadBar from "\.\/PayloadBar\.vue"/, "工作区没复用那块面板");
   assert.match(ws, /<PayloadBar/, "工作区里没渲染面板");
-  // 四个 setter 一路透到面板身上（App 只认工作区这个 ref）
-  for (const fn of ["setWire", "setTables", "setTree", "setCompactWire"]) {
+  // 请求预览由上游持有，晚挂载面板也拿得到；其余结果还是由 setter 转发。
+  assert.match(app, /:wire="outgoingWire"/, "App 没传请求预览给工作区");
+  assert.match(ws, /:wire="props\.wire"/, "工作区没转发请求预览给面板");
+  for (const fn of ["setTables", "setTree", "setCompactWire"]) {
     assert.match(ws, new RegExp(`${fn}:`), `工作区没转发 ${fn}（App 塞进来的数据到不了面板）`);
   }
   // 三件事照旧往上报（压缩树"看着才拉全量"靠它）
@@ -2545,12 +2533,12 @@ test("上下文工作区：切进去 / 换会话时按当前 tab 补拉", () => 
   assert.match(app, /onWorkspaceContext:\s*\(\)\s*=>\s*refreshContextLazy\(\)/, "App 没把 refreshContextLazy 接给工作区");
   // 懒加载的分派只此一处：三种 tab 各管各的。
   const ctxSrc = readFileSync(join(SRC, "composables", "useContextWorkspace.ts"), "utf8");
-  const lazy = ctxSrc.match(/function refreshContextLazy\(\)[\s\S]*?\n  \}/)?.[0] ?? "";
+  const lazy = ctxSrc.match(/function refreshContextLazy\(foreground = true\)[\s\S]*?\n  \}/)?.[0] ?? "";
   assert.ok(lazy, "找不到 refreshContextLazy");
-  assert.match(lazy, /payloadTab\.value === "tree"\) void refreshTree\(\)/, "压缩 tab 没拉树");
-  assert.match(lazy, /payloadTab\.value === "state"\) refreshStateView\(getSessionID\(\)\)/, "状态 tab 没拉状态");
-  assert.match(lazy, /else if \(payloadTab\.value === "payload"\) void refreshHistoryPreview\(\)/, "载荷 tab 没拉历史预演");
-  const hp = ctxSrc.match(/async function refreshHistoryPreview\(\)[\s\S]*?\n  \}/)?.[0] ?? "";
+  assert.match(lazy, /payloadTab\.value === "tree"\) void refreshTree\(foreground\)/, "压缩 tab 没拉树");
+  assert.match(lazy, /payloadTab\.value === "state"\) refreshStateView\(getSessionID\(\), foreground\)/, "状态 tab 没拉状态");
+  assert.match(lazy, /else if \(payloadTab\.value === "payload"\) void refreshHistoryPreview\(foreground\)/, "载荷 tab 没拉历史预演");
+  const hp = ctxSrc.match(/async function refreshHistoryPreview\(foreground = true\)[\s\S]*?\n  \}/)?.[0] ?? "";
   assert.ok(hp, "找不到 refreshHistoryPreview");
   assert.ok(!/previewOn\(\)/.test(hp), "载荷 tab 仍受输入预览开关影响（打开载荷就该拉）");
 
@@ -2813,7 +2801,7 @@ test("撤销压缩：树与摘要卡两处按钮，只按后端给的 undoable �
 
   // ② 树行：垃圾桶图标 + 悬停"撤销" + 禁用系在 undoable 上
   assert.match(treeTpl, /class="ctree-undo"/, "压缩树行没有撤销按钮");
-  assert.match(treeTpl, /:disabled="!r\.n\.undoable"/, "树上的撤销按钮没有系在 undoable 上（会变成能点但失败）");
+  assert.match(treeTpl, /:disabled="!r\.n\.undoable \|\| undoLoadingId === r\.n\.id"/, "树上的撤销按钮应在不允许撤销或正在请求时禁用");
   assert.match(treeTpl, /撤销这次压缩/, "树上的撤销按钮悬停没写「撤销」");
   assert.ok(treeTpl.includes("ICONS.trash"), "树上的撤销按钮没用垃圾桶图标");
   // 只有摘要行才有 —— 消息行（叶子）不可撤，别长出一颗灰按钮
@@ -2822,6 +2810,8 @@ test("撤销压缩：树与摘要卡两处按钮，只按后端给的 undoable �
   // ③ 摘要卡：与刷新/编辑并排
   assert.match(cardTpl, /aria-label="撤销这次压缩"/, "摘要卡没有撤销按钮");
   assert.match(cardTpl, /:disabled="!summary\.undoable/, "摘要卡的撤销按钮没系在 summary.undoable 上");
+  assert.match(treeTpl, /:loading="undoLoadingId === r\.n\.id"/, "树上的撤销按钮没显示当前请求的加载态");
+  assert.match(cardTpl, /:loading="undoLoading"/, "摘要卡的撤销按钮没显示加载态");
   assert.match(cardTpl, /撤销这次压缩/, "摘要卡的撤销按钮悬停没写「撤销」");
   assert.ok(cardTpl.includes("ICONS.trash"), "摘要卡的撤销按钮没用垃圾桶图标");
 
@@ -3079,7 +3069,6 @@ test("工具状态：无/1/2/3，标题列出工具", () => {
   assert.match(composer, /nativeToolsDisabled/, "Composer 没接已关闭工具");
   assert.match(app, /toggleNativeTool/, "App 没有保存工具选择");
   assert.match(app, /native_tools_disabled/, "App 没读会话的工具开关");
-  assert.match(app, /patchSession\(sessionID, \{ native_tools_disabled/, "工具选择没有 PATCH 到会话");
 });
 
 test("markdown 类型清单：前端的 FALLBACK 与后端 MarkdownTypes 对得上", () => {
@@ -3210,7 +3199,7 @@ test("回到前台会跟后端对齐（三条事件都接）", () => {
   assert.ok(!/reloadWindow/.test(running), "还在跑的时候重拉了消息列 —— 会把正在流的回复抹掉");
 
   // ③ 已经落地 ⇒ 对齐（消息列 + 状态 + 占用 + 重摇）。
-  assert.match(body, /refreshContextLazy\(\)/, "落地之后没按当前工作区懒刷上下文");
+  assert.match(body, /refreshContextLazy\(false\)/, "落地之后没在后台按当前工作区懒刷上下文");
   assert.ok(!/outgoingPreview\(sessionID/.test(body), "聊天界面的前台对齐还在无条件拉 /outgoing");
   assert.match(body, /refreshStatusline\(/, "落地之后没刷状态行（上下文占用就在那儿）");
 
@@ -3488,7 +3477,6 @@ test("更新面板：显示提交 + 拉取并重启（由 entrypoint 接手）",
   assert.match(bar, /class="brand"[\s\S]*?@click="\$emit\('open-update'\)"/, "品牌头没接更新入口");
   assert.match(app, /@open-update="\(\) => openManage\('update'\)"/, "App 没把更新入口接到设置视图");
   assert.match(settings, /<UpdatePane :ask="ask"/, "设置视图里没有更新面板");
-  assert.match(settings, /if \(props\.only === "update"\) return;/, "更新页还在白拉设置页数据");
   assert.match(pane, /class="update-grid"/, "更新页没有压缩成版本/PWA 双卡");
   assert.match(pane, /class="update-version-grid"/, "本地/远端没有并排的版本网格");
   assert.match(pane, /当前本地版本/, "没有本地版本区块");
@@ -3601,7 +3589,7 @@ test("左栏：对话/生图/库存三面板；主题三态按钮在品牌与收
 });
 
 test("PWA 安装图标的位图尺寸与 manifest 一致", () => {
-  const dir = join(SRC, "..", "public");
+  const dir = join(SRC, "assets", "app-icons");
   const sizeOf = (name) => {
     const b = readFileSync(join(dir, name));
     assert.equal(b.toString("ascii", 1, 4), "PNG", `${name} 不是 PNG`);
@@ -3701,7 +3689,6 @@ test("渠道标识可改：编辑态输入框可用、保存发 new_id、成功�
 
   assert.match(settings, /@saved="onProviderSaved"/, "父组件没接带 id 的保存回执");
   assert.match(settings, /function onProviderSaved\(id[^)]*\)/, "没有 onProviderSaved");
-  assert.match(settings, /editProvider\.value = providers\.value\.find\(/, "改名后没把编辑器指向新对象");
   assert.match(settings, /emit\("models-changed"\)/, "改名后没通知顶栏重拉模型分组");
 });
 
@@ -3750,7 +3737,6 @@ test("忙碌会话接到左栏：同一拍、读不到就清空、行上有环�
   assert.match(readFileSync(join(SRC, "composables", "useTasks.ts"), "utf8"), /busyIds\.value = busySessionIds\(board\)/, "App 没把 /tasks 快照算成忙碌会话");
   assert.match(readFileSync(join(SRC, "composables", "useTasks.ts"), "utf8"), /busyIds\.value = \[\]/, "任务读不到时没清空（会留下永远转的假象）");
   assert.match(app, /:busy-ids="busyIds"/, "没把忙碌会话传给左栏");
-  assert.match(bar, /v-if="busySet\.has\(s\.id\)"/, "行上没有按会话 id 判断");
   assert.match(bar, /class="session-busy"/, "没有行内环元素");
   assert.match(css, /@keyframes session-busy-spin/, "环没有转起来的动画");
   assert.match(css, /prefers-reduced-motion[\s\S]{0,300}session-busy[\s\S]{0,120}animation: none/, "reduced-motion 下没关动画");

@@ -17,6 +17,7 @@ import {
 } from "vuetify/components";
 import ModelIcon from "./ModelIcon.vue";
 import CloseButton from "./CloseButton.vue";
+import RequestLoading from "./RequestLoading.vue";
 import { ICONS } from "../assets/icons.ts";
 import {
   formatTokens,
@@ -65,6 +66,13 @@ const props = withDefaults(defineProps<{
   flow?: boolean;
   flowCalls?: number;
   flowActiveNodes?: FlowActiveNode[];
+  macroSessionId?: string;
+  macrosLoading?: boolean;
+  macrosError?: string;
+  savingOverrides?: boolean;
+  cancelingTasks?: ReadonlySet<string>;
+  contextUsageLoading?: boolean;
+  contextUsageError?: string;
 }>(), {
   leftHidden: false,
   workspace: "chat",
@@ -418,6 +426,9 @@ function setContext(c?: ContextUsage | null): void { ctx.value = c ?? null; }
 // “已注册宏”面板：后端把注册表 + 本会话全文使用次数一起算好（这里只管画）。
 const macroReport = ref<MacroReport | null>(null);
 function setMacros(report?: MacroReport | null): void { macroReport.value = report ?? null; }
+watch([ctxOpen, ctxTab, () => props.flow, () => props.macroSessionId], ([open, tab, flow, sid]) => {
+  if (open && tab === "macros" && !flow && sid) emit("refresh-macros");
+});
 function macroLabel(name: string): string { return `{{${name}}}`; }
 
 // —— 后台任务（2026-11-01 用户定：「把后台任务也做成右上角那个圆环一样的东西……显示一个数字，
@@ -537,7 +548,6 @@ const ringTitle = computed(() => {
 function clickRing(): void {
   if (ctxOpen.value) { ctxPanel.close(); return; }
   ctxOpen.value = true;
-  if (!props.flow) emit("refresh-macros");
   nextTick(() => {
     if (!ctxOpen.value) return;
     const el: HTMLElement | undefined = ctxCard.value?.$el;
@@ -766,7 +776,9 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
         <VWindow v-model="ctxTab" class="ctx-window">
           <VWindowItem value="context">
             <div class="ctx-pane">
-              <template v-if="ctx">
+              <RequestLoading v-if="contextUsageLoading" label="正在加载上下文占用…" />
+              <p v-else-if="contextUsageError" class="agent-empty" role="alert">{{ contextUsageError }}</p>
+              <template v-else-if="ctx">
                 <div class="ctx-head">
                   <b class="ctx-used">已用 {{ formatTokens(ctx.used_tokens) }} / {{ formatTokens(ctx.budget_tokens) }}</b>
                   <b class="ctx-pct" :class="{ over: ctxOver }">{{ ctxOver ? "超出预算" : contextPercentText(ctx) }}</b>
@@ -828,6 +840,8 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
                         variant="text"
                         color="error"
                         size="x-small"
+                        :loading="cancelingTasks?.has(q.id)"
+                        :disabled="cancelingTasks?.has(q.id)"
                         title="取消这个队列（在飞的那一发也一起掐断）"
                         @click.stop="emit('cancel-queue', q.id)"
                       >取消</VBtn>
@@ -855,6 +869,8 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
                           variant="text"
                           color="error"
                           size="x-small"
+                          :loading="cancelingTasks?.has(t.id)"
+                          :disabled="cancelingTasks?.has(t.id)"
                           title="按停这个任务（已经写下的东西不受影响：取消 = 没做过）"
                           @click.stop="emit('cancel-task', t.id)"
                         >取消</VBtn>
@@ -873,12 +889,13 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
                 v-model="overridesText"
                 class="ctx-overrides-input"
                 spellcheck="false"
+                :disabled="savingOverrides"
                 placeholder='"think": false'
                 @input="overridesDirty = true; overridesError = ''; overridesNotice = ''"
               ></textarea>
               <div class="ctx-overrides-actions">
                 <VBtn type="button" variant="text" size="small" @click="validateOverrides">验证</VBtn>
-                <VBtn type="button" variant="flat" color="primary" size="small" :disabled="!overridesSessionId" @click="saveOverrides">保存</VBtn>
+                <VBtn type="button" variant="flat" color="primary" size="small" :loading="savingOverrides" :disabled="!overridesSessionId || savingOverrides" @click="saveOverrides">保存</VBtn>
                 <span class="ctx-overrides-state" :class="{ error: !!overridesError }">{{ overridesError || overridesNotice || (overridesDirty ? "未保存" : "已保存") }}</span>
               </div>
             </div>
@@ -886,6 +903,10 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
           <VWindowItem value="macros">
             <div class="ctx-pane ctx-macros">
               <p class="macro-note">存储保留 <code v-text="'{{…}}'"></code> 原文；只有后端出站与界面显示时替换。</p>
+              <RequestLoading v-if="macrosLoading" label="正在加载已注册宏…" />
+              <p v-else-if="macrosError" class="agent-empty" role="alert">{{ macrosError }}</p>
+              <p v-else-if="!macroSessionId" class="agent-empty">建立会话后可查看已注册宏与使用情况。</p>
+              <template v-else-if="macroReport">
 
               <div class="macro-section-title">
                 <span>可用宏</span>
@@ -926,6 +947,7 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
                   </tr>
                 </tbody>
               </table>
+              </template>
             </div>
           </VWindowItem>
         </VWindow>

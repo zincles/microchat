@@ -24,6 +24,9 @@ const props = withDefaults(defineProps<{
   thinkingOptions?: ThinkingOption[];
   nativeTools?: string[];
   nativeToolsDisabled?: string[];
+  thinkingPending?: boolean;
+  toolsPending?: boolean;
+  stopping?: boolean;
   // flow：FlowAgent 暂不支持推理档位与工具选择 —— 底部小面板里直接藏起来。
   flow?: boolean;
   // 专注模式：顶栏隐藏、输入栏空闲自动下移一半。
@@ -93,12 +96,14 @@ defineExpose({ submit, setRunning });
             v-if="!flow && thinkingOptions.length"
             :model-value="thinking"
             :options="thinkingOptions"
+            :pending="thinkingPending"
             @update:model-value="selectThinking"
           />
           <ToolsMenu
             v-if="!flow"
             :available="nativeTools"
             :disabled="nativeToolsDisabled"
+            :pending="toolsPending"
             @toggle="(id, on) => $emit('toggle-native-tool', id, on)"
           />
           <VBtn
@@ -135,7 +140,8 @@ defineExpose({ submit, setRunning });
             rounded="circle"
             :color="running ? 'error' : hasText ? 'primary' : undefined"
             class="composer-send-btn"
-            :disabled="!running && !hasText"
+            :loading="stopping"
+            :disabled="stopping || (!running && !hasText)"
             :title="running ? '停止' : '发送'"
             :aria-label="running ? '停止' : '发送'"
             @click="running ? stop() : submit()"

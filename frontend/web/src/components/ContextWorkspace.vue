@@ -12,10 +12,10 @@
 import { ref } from "vue";
 import PayloadBar from "./PayloadBar.vue";
 import FlowWorkspace from "./FlowWorkspace.vue";
-import type { Agent } from "../api/types.ts";
+import RequestLoading from "./RequestLoading.vue";
+import type { Agent, LastPayload } from "../api/types.ts";
 
 export interface PayloadBarApi {
-  setWire: (wire: unknown) => void;
   setTables: (tables: unknown) => void;
   setTree: (tree: unknown) => void;
   setCompactWire: (wire: unknown) => void;
@@ -25,11 +25,22 @@ const props = withDefaults(defineProps<{
   // hasSession：草稿态（还没建会话）时没有上下文可谈 —— 那句话要说，别让人以为坏了。
   hasSession?: boolean;
   sessionId?: string;
+  sessionLoading: boolean;
   // defaultBlocks：chat.compact_blocks（压缩面板空输入框的占位提示；原样转给面板）。
   defaultBlocks?: number | null;
   // flow：FlowAgent 暂时不套用普通 Agent 的载荷/状态/压缩面板 —— 新面板另行设计。
   flow?: boolean;
   agent?: Agent | null;
+  wire: LastPayload | null;
+  previewLoading: boolean;
+  previewError: string;
+  stateLoading: boolean;
+  stateError: string;
+  treeLoading: boolean;
+  treeError: string;
+  compactPreviewLoading: boolean;
+  compactStarting: boolean;
+  undoLoadingId: string | null;
 }>(), {
   hasSession: false,
   sessionId: "",
@@ -50,12 +61,10 @@ const emit = defineEmits<{
   "edit-flow-agent": [id: string];
 }>();
 
-// inner：真正的面板。四个 setter 由 App 通过本组件的 expose 一路打到它身上
-// （载荷 / 状态表 / 压缩树 / 压缩那一发的载荷）。
+// inner：真正的面板。世界状态、压缩树与压缩载荷仍由 App 推送。
 const inner = ref<PayloadBarApi | null>(null);
 
 defineExpose({
-  setWire: (w: unknown): void => inner.value?.setWire(w),
   setTables: (t: unknown): void => inner.value?.setTables(t),
   setTree: (t: unknown): void => inner.value?.setTree(t),
   setCompactWire: (w: unknown): void => inner.value?.setCompactWire(w),
@@ -65,18 +74,29 @@ defineExpose({
 <template>
   <section id="context-workspace" aria-label="上下文工作区">
     <section v-if="props.flow" class="flow-workspace-host" aria-label="FlowAgent 工作流">
-      <FlowWorkspace :agent="props.agent" :session-id="props.sessionId" :readonly="true"
+      <RequestLoading v-if="props.sessionLoading" label="正在加载会话…" />
+      <FlowWorkspace v-else :agent="props.agent" :session-id="props.sessionId" :readonly="true"
         @saved="() => emit('flow-saved')" @edit-agent="(id) => emit('edit-flow-agent', id)" />
     </section>
     <template v-else>
     <!-- 草稿可以预览请求，但还没有存库的历史与世界状态。 -->
-    <p v-if="!props.hasSession" class="ws-draft-note">
+    <p v-if="!props.hasSession && !props.sessionLoading" class="ws-draft-note">
       当前为新对话草稿：可以预览输入内容组成的请求；世界状态与历史压缩在建立会话后可用。
     </p>
     <PayloadBar
       ref="inner"
       :default-blocks="props.defaultBlocks ?? undefined"
       :session-id="props.sessionId"
+      :wire="props.wire"
+      :preview-loading="props.previewLoading"
+      :preview-error="props.previewError"
+      :state-loading="props.stateLoading"
+      :state-error="props.stateError"
+      :tree-loading="props.treeLoading"
+      :tree-error="props.treeError"
+      :compact-preview-loading="props.compactPreviewLoading"
+      :compact-starting="props.compactStarting"
+      :undo-loading-id="props.undoLoadingId"
       @tab="(t) => emit('tab', t)"
       @compact="(n) => emit('compact', n)"
       @compact-payload="(n) => emit('compact-payload', n)"

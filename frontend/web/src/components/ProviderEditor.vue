@@ -3,12 +3,13 @@
 // isNew（boolean）：无 provider 快照=新建（空表单）；有=编辑（带入 provider，只发改过的格；key 另填=换，不填=不动）。
 // 内置刷新模型列表 + 刷路由（编辑时直接点，不用退回一级）。
 import { VBtn, VTextField, VSelect, VTable, VTab, VTabs, VTabsWindow, VTabsWindowItem } from "vuetify/components";
-import { ref, computed, onMounted, onUnmounted } from "vue";
+import { ref, shallowRef, computed, onMounted, onUnmounted } from "vue";
 import { sharedApi } from "../utils/prefs.ts";
 import { formatTokens, providerIdForNextVendor } from "../utils/format.ts";
 import ModelEditor from "./ModelEditor.vue";
 import ModelIcon from "./ModelIcon.vue";
 import ModelRulesEditor from "./ModelRulesEditor.vue";
+import RequestLoading from "./RequestLoading.vue";
 import SettingsBack from "./SettingsBack.vue";
 import type {
   CreateProviderRequest,
@@ -62,6 +63,13 @@ const tab = ref<"upstream" | "models">("upstream");
 const modelCount = computed(() => models.value.length);
 const presets = ref<PresetInfo[]>([]);
 const status = ref("");
+const statusTab = shallowRef<"upstream" | "models">("upstream");
+const loadingPresets = shallowRef(false);
+const presetsReady = shallowRef(false);
+const presetLoadError = shallowRef("");
+const action = shallowRef<"save" | "apply-rules" | "test" | "clear-key" | null>(null);
+const blocked = computed(() => !presetsReady.value || !!action.value || !!editingModel.value);
+let active = true;
 
 // 预设分两组：`primary`（后端说的"主选三种"）在前，其余便利预设殿后。
 //
@@ -146,8 +154,23 @@ function touchId(): void {
 }
 
 async function load(): Promise<void> {
-  const pres = await api.providerPresets().catch(() => []);
-  presets.value = pres ?? [];
+  if (loadingPresets.value) return;
+  loadingPresets.value = true;
+  try {
+    const pres = await api.providerPresets();
+    if (!active) return;
+    fillForm(pres ?? []);
+    presetsReady.value = true;
+    presetLoadError.value = "";
+  } catch (e: unknown) {
+    if (active) presetLoadError.value = `载入失败：${e instanceof Error ? e.message : String(e)}`;
+  } finally {
+    loadingPresets.value = false;
+  }
+}
+
+function fillForm(pres: PresetInfo[]): void {
+  presets.value = pres;
   if (isNew) {
     const first = presets.value[0];
     if (first) pickVendor(first.vendor);
@@ -168,9 +191,12 @@ async function load(): Promise<void> {
   baseCustomRules.value = JSON.stringify(customRules.value);
 }
 
-async function save(): Promise<void> {
-  const wanted = filter.value.trim();
+async function save(source: "save" | "apply-rules" = "save"): Promise<void> {
+  if (blocked.value) return;
+  action.value = source;
   try {
+    statusTab.value = source === "apply-rules" ? "models" : "upstream";
+    const wanted = filter.value.trim();
     let savedID = props.provider?.id ?? "";
     if (isNew) {
       const id = pid.value.trim();
@@ -215,14 +241,16 @@ async function save(): Promise<void> {
     baseCustomRules.value = JSON.stringify(customRules.value);
     // 带上 id：父组件要拿它把 editProvider 换成新对象（改名之后旧 props 的 id 已经不存在，
     // 留在原地再点保存会 404）。新建那条照旧用返回的 id。
-    emit("saved", savedID);
+    if (active) emit("saved", savedID);
     // 「保存并刷新」：保存完**总是**再拉一次模型（不是只在筛选器变了时）。
     // 新建的渠道刷新完就回列表（这个二级页的 isNew 是挂载时定的常量，留着再点保存会 409）；
     // 已有的留在原地，结果直接写在状态行里。
     await reloadModels(savedID);
-    if (isNew) emit("close");
+    if (active && isNew) emit("close");
   } catch (e: unknown) {
     status.value = `保存失败：${e instanceof Error ? e.message : String(e)}`;
+  } finally {
+    action.value = null;
   }
 }
 
@@ -231,11 +259,12 @@ async function reloadModels(id: string): Promise<void> {
   // dummy 没有上游可拉：保存成功就够了，别报一条看起来像失败的刷新错误。
   if (vendor.value === "dummy") {
     status.value = "已保存（本地示例：不联网，没有模型可刷新）";
-    emit("saved", id);
+    if (active) emit("saved", id);
     return;
   }
   try {
     const view = await api.refreshProvider(id);
+    if (!active) return;
     models.value = view?.models ?? [];
     status.value = `已保存并刷新：导入 ${modelCount.value} 个模型` +
       (baseFilter.value ? `（筛选：${baseFilter.value}）` : "");
@@ -248,8 +277,11 @@ async function reloadModels(id: string): Promise<void> {
 // testConnection：只拉一次 /models，**不保存、不落库**。测的是表单里此刻的值，
 // 所以新建/改到一半也能先测；后端给 15 秒短上限。
 async function testConnection(): Promise<void> {
+  if (blocked.value) return;
+  statusTab.value = "upstream";
   const id = pid.value.trim();
   if (!id) { status.value = "先填渠道 id 再测"; return; }
+  action.value = "test";
   status.value = "测试中…（最多 15 秒）";
   try {
     const body: TestProviderRequest = {
@@ -259,7 +291,6 @@ async function testConnection(): Promise<void> {
       model_filter: filter.value.trim(),
     };
     if (key.value) body.api_key = key.value;
-    status.value = "测试中…（最多 15 秒）";
     const out = await api.testProvider(id, body);
     if (out?.ok) {
       status.value = `连接成功：${out.models} 个模型` +
@@ -270,27 +301,36 @@ async function testConnection(): Promise<void> {
     }
   } catch (e: unknown) {
     status.value = `测试失败：${e instanceof Error ? e.message : String(e)}`;
+  } finally {
+    action.value = null;
   }
 }
 
 async function clearKey(): Promise<void> {
+  if (blocked.value) return;
+  statusTab.value = "upstream";
   if (isNew) { key.value = ""; return; }
+  action.value = "clear-key";
   try {
     await api.patchProvider(props.provider!.id, { api_key: "" });
     hasKey.value = false;
     key.value = "";
     status.value = "密钥已清";
   } catch (e: unknown) { status.value = `清密钥失败：${e instanceof Error ? e.message : String(e)}`; }
+  finally { action.value = null; }
 }
 
 onMounted(() => {
-  load().catch((e: unknown) => { status.value = `载入失败：${e instanceof Error ? e.message : String(e)}`; });
+  void load();
   document.addEventListener("keydown", onKey);
 });
-onUnmounted(() => document.removeEventListener("keydown", onKey));
+onUnmounted(() => {
+  active = false;
+  document.removeEventListener("keydown", onKey);
+});
 function onKey(e: KeyboardEvent): void {
   // 模型编辑弹窗开着时，Esc 只关弹窗；别一下退到渠道列表（两层一起关）。
-  if (e.key === "Escape" && !editingModel.value) emit("close");
+  if (e.key === "Escape" && !editingModel.value && !action.value) emit("close");
 }
 function onModelSaved(updated: ModelView): void {
   models.value = models.value.map((item) => item.upstream_id === updated.upstream_id ? updated : item);
@@ -300,9 +340,10 @@ function onModelSaved(updated: ModelView): void {
 }
 
 function onCustomRulesSaved(rules: ModelDefineRule[]): void {
+  if (blocked.value) return;
   customRules.value = rules;
   // 渠道级规则属于 providers.json：跟着「保存渠道」一起落盘（新建时也一起创建）。
-  save().catch((e: unknown) => { status.value = `保存失败：${e instanceof Error ? e.message : String(e)}`; });
+  void save("apply-rules");
 }
 
 </script>
@@ -311,12 +352,18 @@ function onCustomRulesSaved(rules: ModelDefineRule[]): void {
   <!-- 二级页（2026-10-10 起不再是弹窗）：嵌在设置视图的 Provider tab 里，列表 ⇄ 详情就地切换。 -->
   <div class="detail-pane">
     <div class="panel-head">
-      <SettingsBack @back="emit('close')" />
-      <span class="status">{{ isNew ? "新建渠道" : `渠道「${pid}」（${modelCount} 个模型）` }}</span>
+      <SettingsBack :disabled="!!action" @back="emit('close')" />
+      <span class="status">{{ isNew ? "新建渠道" : presetsReady ? `渠道「${pid}」（${modelCount} 个模型）` : `渠道「${props.provider?.id ?? ''}」` }}</span>
     </div>
+    <RequestLoading v-if="!presetsReady && !presetLoadError && loadingPresets" label="正在读取渠道预设…" />
+    <div v-else-if="!presetsReady && presetLoadError" class="row">
+      <span class="status" role="status">{{ presetLoadError }}</span>
+      <VBtn variant="text" size="small" type="button" :loading="loadingPresets" :disabled="loadingPresets" @click="load">重新载入</VBtn>
+    </div>
+    <template v-else-if="presetsReady">
     <VTabs v-model="tab" class="agent-tabs" density="compact" align-tabs="start">
-      <VTab value="upstream">上游</VTab>
-      <VTab value="models">模型配置</VTab>
+      <VTab value="upstream" :disabled="!!action && tab !== 'upstream'">上游</VTab>
+      <VTab value="models" :disabled="!!action && tab !== 'models'">模型配置</VTab>
     </VTabs>
     <VTabsWindow v-model="tab" class="agent-window">
     <VTabsWindowItem value="upstream">
@@ -325,35 +372,35 @@ function onCustomRulesSaved(rules: ModelDefineRule[]): void {
          改 vendor 时它还会跟着变，先填等于白填。 -->
     <!-- vendor / protocol 一律**中文名在前、内部 id 附后**（2026-10-28 用户：「应该用中文化的名字吧」）。
          id 不藏起来：手改 config/providers.json 的人得能对上号，出错信息里也打的是 id。 -->
-    <label class="field"><span>服务商</span><VSelect :model-value="vendor" :items="vendorOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details @update:model-value="onVendorChange" /></label>
+    <label class="field"><span>服务商</span><VSelect :model-value="vendor" :items="vendorOptions" :disabled="blocked" item-title="label" item-value="value" density="compact" variant="outlined" hide-details @update:model-value="onVendorChange" /></label>
     <p v-if="vendorHint" class="hint">{{ vendorHint }}</p>
-    <label class="field"><span>渠道标识</span><VTextField density="compact" variant="outlined" hide-details v-model="pid" placeholder="新建时自动生成" @update:model-value="touchId" /></label>
+    <label class="field"><span>渠道标识</span><VTextField density="compact" variant="outlined" hide-details v-model="pid" :readonly="blocked" placeholder="新建时自动生成" @update:model-value="touchId" /></label>
     <p v-if="isNew" class="hint">这个标识是渠道在本机的名字，会出现在模型列表和配置文件里。换服务商时会自动跟着变；你手改过之后就不再自动改。</p>
     <p v-else class="hint">改名会一起改掉已绑定这条渠道的会话与模型清单；库里已有同名数据时会被拒绝（不合并两个渠道）。</p>
-    <label class="field"><span>显示别名（可选）</span><VTextField density="compact" variant="outlined" hide-details v-model="alias" placeholder="例如：OpenCode GO" /></label>
+    <label class="field"><span>显示别名（可选）</span><VTextField density="compact" variant="outlined" hide-details v-model="alias" :readonly="blocked" placeholder="例如：OpenCode GO" /></label>
     <p class="hint">只影响界面显示（渠道列表、模型选择器）；留空 = 沿用原来的名字。真正的渠道标识仍是上面的 id，别名不会改掉它。</p>
-    <label class="field"><span>接口类型</span><VSelect v-model="protocol" :items="protocolSelectOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
+    <label class="field"><span>接口类型</span><VSelect v-model="protocol" :items="protocolSelectOptions" :disabled="blocked" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
     <p class="hint">{{ protocolHint }}</p>
-    <label class="field"><span>接口地址</span><VTextField density="compact" variant="outlined" hide-details v-model="baseUrl" :placeholder="effectiveBase" /></label>
+    <label class="field"><span>接口地址</span><VTextField density="compact" variant="outlined" hide-details v-model="baseUrl" :readonly="blocked" :placeholder="effectiveBase" /></label>
     <p class="hint">实际请求地址：<code>{{ effectiveBase }}</code></p>
     <h3>密钥</h3>
-    <label class="field"><span>{{ hasKey ? "API Key（留空=不改）" : "API Key（可空）" }}</span><VTextField density="compact" variant="outlined" hide-details v-model="key" placeholder="API Key" type="password" /></label>
+    <label class="field"><span>{{ hasKey ? "API Key（留空=不改）" : "API Key（可空）" }}</span><VTextField density="compact" variant="outlined" hide-details v-model="key" :readonly="blocked" placeholder="API Key" type="password" /></label>
     <h3>模型筛选（可选）</h3>
     <label class="field"><span>只导入匹配的模型</span>
-      <VTextField density="compact" variant="outlined" hide-details v-model="filter" placeholder="留空 = 全部（例如：deepseek,mimo）" />
+      <VTextField density="compact" variant="outlined" hide-details v-model="filter" :readonly="blocked" placeholder="留空 = 全部（例如：deepseek,mimo）" />
     </label>
     <p class="hint">
       用半角逗号分隔几个关键词；模型名包含<b>任意一个</b>就会导入，不区分大小写。
       不支持 <code>*</code> 通配符；留空 = 全部导入。
     </p>
-    <label class="field"><span>最大并发（0 = 不限）</span><VTextField density="compact" variant="outlined" hide-details v-model="maxConcurrency" type="number" min="0" /></label>
+    <label class="field"><span>最大并发（0 = 不限）</span><VTextField density="compact" variant="outlined" hide-details v-model="maxConcurrency" :readonly="blocked" type="number" min="0" /></label>
     <p class="hint">同一渠道同时最多几个请求；高级压缩的作业并发会与它取较小值。</p>
     <div class="row">
-      <VBtn color="primary" variant="flat" size="small" type="button" @click="save">保存并刷新</VBtn>
-      <VBtn variant="text" size="small" type="button" @click="testConnection">测试连通性</VBtn>
+      <VBtn color="primary" variant="flat" size="small" type="button" :loading="action === 'save'" :disabled="blocked" @click="save()">保存并刷新</VBtn>
+      <VBtn variant="text" size="small" type="button" :loading="action === 'test'" :disabled="blocked" @click="testConnection">测试连通性</VBtn>
       <span class="action-note">保存会写配置并重新拉取模型；测试只连一次、不保存，也不会改动已有模型。</span>
-      <VBtn color="error" variant="text" size="small" v-if="!isNew && (hasKey || key)" type="button" @click="clearKey">清密钥</VBtn>
-      <span class="status">{{ status }}</span>
+      <VBtn color="error" variant="text" size="small" v-if="!isNew && (hasKey || key)" type="button" :loading="action === 'clear-key'" :disabled="blocked" @click="clearKey">清密钥</VBtn>
+      <span v-if="statusTab === 'upstream'" class="status" role="status">{{ status }}</span>
     </div>
     </VTabsWindowItem>
     <VTabsWindowItem value="models">
@@ -373,11 +420,12 @@ function onCustomRulesSaved(rules: ModelDefineRule[]): void {
             <div class="model-upstream" :title="m.upstream_id">{{ m.upstream_id }}<template v-if="m.matched_rules?.length"> · {{ m.matched_rules.join(" / ") }}</template></div>
           </td>
           <td>{{ modelContext(m) }}</td>
-          <td class="ops"><VBtn variant="text" size="small" type="button" @click="editingModel = m">编辑</VBtn></td>
+          <td class="ops"><VBtn variant="text" size="small" type="button" :disabled="blocked" @click="editingModel = m">编辑</VBtn></td>
         </tr></tbody>
       </VTable>
     </div>
-    <ModelRulesEditor scope="provider" :rules="customRules" @save="onCustomRulesSaved" />
+    <ModelRulesEditor scope="provider" :rules="customRules" :blocked="blocked" :applying="action === 'apply-rules'" @save="onCustomRulesSaved" />
+    <p v-if="statusTab === 'models' && status" class="status" role="status">{{ status }}</p>
     <ModelEditor
       v-if="editingModel"
       :provider="pid"
@@ -387,5 +435,6 @@ function onCustomRulesSaved(rules: ModelDefineRule[]): void {
     />
     </VTabsWindowItem>
     </VTabsWindow>
+    </template>
   </div>
 </template>

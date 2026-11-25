@@ -8,12 +8,10 @@ import CloseButton from "./CloseButton.vue";
 const props = withDefaults(defineProps<{
   title?: string;
   width?: string | number;
-  maxWidth?: string | number;
   maxHeight?: string;
 }>(), {
   title: "",
   width: 560,
-  maxWidth: 560,
   maxHeight: "88vh",
 });
 const emit = defineEmits<{ close: [] }>();
@@ -22,7 +20,7 @@ watch(open, (value) => { if (!value) emit("close"); });
 </script>
 
 <template>
-  <VDialog v-model="open" attach="#app" :width="width" :max-width="maxWidth" scrim="rgba(0, 0, 0, 0.45)">
+  <VDialog v-model="open" attach="#app" :width="width" scrim="rgba(0, 0, 0, 0.45)">
     <VCard class="modal-shell" elevation="3" :style="{ maxHeight }">
       <VCardTitle class="modal-shell-title">
         <slot name="title">{{ title }}</slot>

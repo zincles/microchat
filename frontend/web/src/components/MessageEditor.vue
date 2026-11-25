@@ -44,7 +44,7 @@ const field = ref<{ focus: () => void } | null>(null);
 const original = props.kind === "reasoning" ? (props.message.reasoning ?? "") : (props.message.content ?? "");
 const text = ref(original);
 const status = ref("");
-const busy = ref(false);
+const busy = ref<"save" | "reroll" | null>(null);
 const expanded = ref(false);
 const changed = computed(() => text.value !== original);
 const label = computed(() => props.kind === "reasoning" ? "思考" : props.message.role === "user" ? "Prompt" : "回复正文");
@@ -57,12 +57,13 @@ watch(open, (value) => { if (!value) emit("close"); });
 function toggleExpanded(): void { expanded.value = !expanded.value; }
 function close(): void { open.value = false; }
 async function save(reroll = false): Promise<void> {
+  if (busy.value) return;
   if (!changed.value) {
     if (reroll) emit("saved", { reroll: true });
     else close();
     return;
   }
-  busy.value = true;
+  busy.value = reroll ? "reroll" : "save";
   status.value = "";
   try {
     const body: EditMessageRequest = props.kind === "reasoning" ? { reasoning: text.value } : { content: text.value };
@@ -70,8 +71,9 @@ async function save(reroll = false): Promise<void> {
     emit("saved", { reroll, message: updated });
   } catch (e: unknown) {
     status.value = `保存失败：${e instanceof Error ? e.message : String(e)}`;
+  } finally {
+    busy.value = null;
   }
-  busy.value = false;
 }
 onMounted(() => {
   nextTick(() => field.value?.focus());
@@ -118,8 +120,8 @@ onMounted(() => {
       <VCardActions class="message-edit-foot">
         <span class="status" role="status">{{ status }}</span>
         <VBtn variant="text" size="small" @click="close">取消</VBtn>
-        <VBtn color="primary" variant="flat" size="small" :disabled="busy" @click="save(false)">保存</VBtn>
-        <VBtn v-if="rerollable" variant="tonal" size="small" :disabled="busy" @click="save(true)">{{ flow ? "保存并重新生成" : "保存并重摇" }}</VBtn>
+        <VBtn color="primary" variant="flat" size="small" :disabled="!!busy" :loading="busy === 'save'" @click="save(false)">保存</VBtn>
+        <VBtn v-if="rerollable" variant="tonal" size="small" :disabled="!!busy" :loading="busy === 'reroll'" @click="save(true)">{{ flow ? "保存并重新生成" : "保存并重摇" }}</VBtn>
       </VCardActions>
     </VCard>
   </VDialog>
