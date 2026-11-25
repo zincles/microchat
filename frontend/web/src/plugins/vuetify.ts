@@ -96,6 +96,8 @@ export const vuetify = createVuetify({
   // 具体组件写了 rounded 的仍以自己为准。
   defaults: {
     VBtn: { rounded: "pill" },
+    // 全站布尔开关统一使用 Vuetify 提供的 MD3 outlined-track 变体。
+    VSwitch: { inset: "material" },
   },
   theme: {
     defaultTheme: "dark",

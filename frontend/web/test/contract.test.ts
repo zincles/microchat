@@ -4002,6 +4002,8 @@ test("设置页 MD3：segmented tab / 平铺行 / 表格 / 字段标签", () => 
   assert.match(css, /#settings-view \.field > span \{[^}]*var\(--md-on-surface-variant\)/, "字段标签不是 on-surface-variant");
   assert.match(css, /#settings-view \.plist th[^{]*\{[^}]*var\(--md-on-surface-variant\)/, "表头不是 on-surface-variant");
   assert.match(css, /\.settings-cols \.panel table\.plist \{[^}]*var\(--md-surface-container-low\)/, "表格不是 MD3 容器");
+  const vuetify = readFileSync(join(SRC, "plugins", "vuetify.ts"), "utf8");
+  assert.match(vuetify, /VSwitch:\s*\{\s*inset:\s*"material"\s*\}/, "全站开关必须走 Vuetify MD3 Material treatment");
 });
 
 test("设置移动端：表格行变卡片，字段标签来自 data-label", () => {

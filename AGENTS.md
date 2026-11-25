@@ -1456,8 +1456,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   全局 `button` = MD3 tonal 按钮（secondary-container、full 圆角、40dp），`.primary` = filled primary，
   `.danger` = text error；幽灵按钮族追加 `min-height: 0`（不吃 40dp 下限，否则 2em 的图标键被撑成椭圆）。
   全局输入框/select/textarea = MD3 outlined 字段（outline 1px、4dp 圆角、focus 1px primary 内环）；
-  range = MD3 轨道（4px outline-variant）+ primary 圆钮；ToggleSwitch = MD3 switch（52×32 轨道、
-  outline 描边、开态 primary + 24dp 滑块）。
+  range = MD3 轨道（4px outline-variant）+ primary 圆钮；全站 `VSwitch` 默认 `inset="material"`，采用 52×32 outlined track、未选中 16px / 选中 24px thumb 与 Vuetify 的 focus/disabled 状态，不在模板逐个补变体。
   设置页：`#settings-view` = surface；页签用 Vuetify `VTabs`/`VTab` + `VTabsWindow`/`VTabsWindowItem`
   （MD3 primary tabs；Vuetify 自带 slider / role=tab / tabpanel；旧手写 `TabBar` 已删）；
   h3 竖条改 primary；字段行分隔线 outline-variant；
