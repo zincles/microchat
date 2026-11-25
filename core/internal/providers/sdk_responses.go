@@ -25,7 +25,7 @@ func responseParams(p Provider, r Request) (responses.ResponseNewParams, error) 
 	for _, m := range r.Messages {
 		switch m.Role {
 		case "assistant":
-			input = append(input, responseAssistant(p.ID, r.Model, endpointHash, m)...)
+			input = append(input, responseAssistant(p, r.Model, endpointHash, m)...)
 		case "tool":
 			item := responses.ResponseInputItemParamOfFunctionCallOutput(m.Content)
 			item.OfFunctionCallOutput.CallID = openai.String(m.ToolCallID)
@@ -107,7 +107,7 @@ func responseParams(p Provider, r Request) (responses.ResponseNewParams, error) 
 
 // 回放以装配后的正文及成对的本地调用为准。只有原渠道、模型与协议相同时才使用原生项。
 // 正文经过剔标签或宏展开时，用当前正文替换原文本段，不能从协议附件把存档原文发回去。
-func responseAssistant(provider, modelID, endpointHash string, m ChatMessage) responses.ResponseInputParam {
+func responseAssistant(p Provider, modelID, endpointHash string, m ChatMessage) responses.ResponseInputParam {
 	var input responses.ResponseInputParam
 	callItem := func(c ToolCall, itemID string) responses.ResponseInputItemUnionParam {
 		item := responses.ResponseInputItemParamOfFunctionCall(c.Arguments, c.ID, c.Name)
@@ -117,7 +117,7 @@ func responseAssistant(provider, modelID, endpointHash string, m ChatMessage) re
 		return item
 	}
 	record := m.Exchange
-	if record == nil || record.Protocol != string(ProtocolOpenAIResponse) || record.Provider != provider || record.Model != modelID || record.EndpointHash != endpointHash {
+	if record == nil || record.Protocol != string(ProtocolOpenAIResponse) || record.Provider != p.ID || record.Model != modelID || record.EndpointHash != endpointHash {
 		for _, call := range m.ToolCalls {
 			input = append(input, callItem(call, ""))
 		}
@@ -159,12 +159,15 @@ func responseAssistant(provider, modelID, endpointHash string, m ChatMessage) re
 				input = append(input, callItem(c, part.ID))
 				delete(calls, part.CallID)
 			}
-		case "reasoning", "web_search_call", "file_search_call", "x_search_call", "code_interpreter_call":
+		case "reasoning", "web_search_call", "file_search_call", "x_search_call", "code_interpreter_call", "custom_tool_call":
 			var item responses.ResponseOutputItemUnion
 			if len(part.Payload) == 0 || json.Unmarshal(part.Payload, &item) != nil || item.Type != part.Type {
 				continue
 			}
 			if item.Type == "reasoning" && item.EncryptedContent == "" {
+				continue
+			}
+			if item.Type == "custom_tool_call" && xaiSearchKind(p.Vendor, item.CallID) == "" {
 				continue
 			}
 			input = append(input, param.Override[responses.ResponseInputItemUnionParam](part.Payload))
@@ -181,7 +184,7 @@ func responseAssistant(provider, modelID, endpointHash string, m ChatMessage) re
 	return input
 }
 
-func responseResult(reply *responses.Response) (Result, error) {
+func responseResult(vendor Vendor, reply *responses.Response) (Result, error) {
 	reason := string(reply.Status)
 	if reason == "" {
 		reason = "completed"
@@ -211,7 +214,7 @@ func responseResult(reply *responses.Response) (Result, error) {
 			}
 			part.CallID = item.CallID
 			result.ToolCalls = append(result.ToolCalls, ToolCall{ID: item.CallID, Name: item.Name, Arguments: item.Arguments.OfString})
-		case "computer_call", "custom_tool_call", "local_shell_call", "apply_patch_call", "mcp_approval_request":
+		case "computer_call", "local_shell_call", "apply_patch_call", "mcp_approval_request":
 			return Result{}, fmt.Errorf("providers: 上游请求的 %q 需要专用执行器", item.Type)
 		case "reasoning":
 			for _, summary := range item.Summary {
@@ -222,9 +225,15 @@ func responseResult(reply *responses.Response) (Result, error) {
 			}
 			part.Payload = json.RawMessage(item.RawJSON())
 		default:
-			// 保留未知输出项，当前适配器只执行已注册的本地 function。
+			event := hostedItem(vendor, item, true)
+			if item.Type == "custom_tool_call" {
+				if event == nil {
+					return Result{}, fmt.Errorf("providers: 上游请求的 %q 需要专用执行器", item.Type)
+				}
+				part.CallID = item.CallID
+			}
 			part.Payload = json.RawMessage(item.RawJSON())
-			if event := hostedItem(item); event != nil {
+			if event != nil {
 				result.ServerTools = append(result.ServerTools, *event)
 			}
 		}
@@ -241,12 +250,47 @@ func isHostedType(kind string) bool {
 	return false
 }
 
-func hostedItem(item responses.ResponseOutputItemUnion) *ToolEvent {
-	if !isHostedType(item.Type) {
+// xAI 用保留的 call_id 前缀区分两种已由上游处理的搜索。
+// https://docs.x.ai/developers/tools/tool-usage-details#using-responses-api
+func xaiSearchKind(vendor Vendor, callID string) string {
+	if vendor == VendorXAI {
+		switch {
+		case strings.HasPrefix(callID, "xs_"):
+			return "x_search"
+		case strings.HasPrefix(callID, "as_"):
+			return "attachment_search"
+		}
+	}
+	return ""
+}
+
+func hostedItem(vendor Vendor, item responses.ResponseOutputItemUnion, done bool) *ToolEvent {
+	kind := ""
+	if isHostedType(item.Type) {
+		kind = strings.TrimSuffix(item.Type, "_call")
+	} else if item.Type == "custom_tool_call" {
+		kind = xaiSearchKind(vendor, item.CallID)
+	}
+	if kind == "" {
 		return nil
 	}
-	e := &ToolEvent{ItemID: item.ID, Kind: strings.TrimSuffix(item.Type, "_call"), State: item.Status,
-		Query: item.Action.Query, Queries: item.Action.Queries}
+	e := &ToolEvent{ItemID: item.ID, Kind: kind, State: item.Status, Query: item.Action.Query, Queries: item.Action.Queries}
+	if item.Type == "custom_tool_call" {
+		if e.State == "" {
+			e.State = "in_progress"
+			if done {
+				e.State = "completed"
+			}
+		}
+		if e.Query == "" && item.Input != "" {
+			var input struct {
+				Query string `json:"query"`
+			}
+			if json.Unmarshal([]byte(item.Input), &input) == nil {
+				e.Query = input.Query
+			}
+		}
+	}
 	if e.Query != "" {
 		e.Queries = append([]string{e.Query}, e.Queries...)
 	}
@@ -308,7 +352,7 @@ func (s *responseSlot) completeText() {
 
 // HTTP SSE 的标准终态包含 response.output。部分网关只在 output_item.done 给最终项，
 // 还有些只给 arguments.done。按 output_index 归并，到 completed 才准交给执行器。
-func collectResponse(stream *ssestream.Stream[responses.ResponseStreamEventUnion], emit func(Delta)) (Result, error) {
+func collectResponse(vendor Vendor, stream *ssestream.Stream[responses.ResponseStreamEventUnion], emit func(Delta)) (Result, error) {
 	defer stream.Close()
 	slots := map[int64]*responseSlot{}
 	var text []string
@@ -371,7 +415,7 @@ func collectResponse(stream *ssestream.Stream[responses.ResponseStreamEventUnion
 			slot.arguments.Reset()
 			slot.arguments.WriteString(e.Item.Arguments.OfString)
 			if emit != nil {
-				if tool := hostedItem(e.Item); tool != nil {
+				if tool := hostedItem(vendor, e.Item, slot.done); tool != nil {
 					emit(Delta{Tool: tool})
 				}
 			}
@@ -435,7 +479,7 @@ func collectResponse(stream *ssestream.Stream[responses.ResponseStreamEventUnion
 						Content: []responses.ResponseOutputMessageContentUnion{{Type: "output_text", Text: strings.Join(text, "")}}})
 				}
 			}
-			result, err := responseResult(&reply)
+			result, err := responseResult(vendor, &reply)
 			if err != nil {
 				return Result{}, err
 			}

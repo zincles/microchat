@@ -127,7 +127,7 @@ response.web_search_call.completed
 response.code_interpreter_call.in_progress / .interpreting / .completed
 ```
 
-（X 搜索同理，类型名是 `x_search_call`；代码执行在工具 id 上叫 `code_execution`，事件名却是 `code_interpreter_call`。）
+代码执行在工具声明里是 `code_execution`，输出项是 `code_interpreter_call`。在 [xAI 的 Responses 接口](https://docs.x.ai/developers/tools/tool-usage-details#using-responses-api) 中，X 搜索和附件搜索用 `custom_tool_call` 记录，`call_id` 分别以 `xs_`、`as_` 开头。`sdk_responses.go` 将它们记为托管工具；同渠道、端点、模型与协议匹配时按原顺序回放原始项，不在本地执行或伪造工具结果。其他 `custom_tool_call` 仍要求专用执行器。
 
 `providers.readResponseStream` 把它们折成 `Delta.Tool{kind,state}`，`chat` 写进 `turn`，于是
 `GET /status` 与 `/turn/events` 的 `status.tool` 在正文还没到时就有值；气泡把它翻成

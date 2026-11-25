@@ -21,7 +21,7 @@ func readStream(status int, body io.Reader, emit func(Delta)) (Result, error) {
 }
 
 func readResponseStream(status int, body io.Reader, emit func(Delta)) (Result, error) {
-	return collectResponse(fixtureStream[responses.ResponseStreamEventUnion](status, body), emit)
+	return collectResponse(VendorOpenAI, fixtureStream[responses.ResponseStreamEventUnion](status, body), emit)
 }
 
 func completeResponse(_ int, data []byte) (Result, error) {
@@ -29,5 +29,5 @@ func completeResponse(_ int, data []byte) (Result, error) {
 	if err := json.Unmarshal(data, &reply); err != nil {
 		return Result{}, err
 	}
-	return responseResult(&reply)
+	return responseResult(VendorOpenAI, &reply)
 }

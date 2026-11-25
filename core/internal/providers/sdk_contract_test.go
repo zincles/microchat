@@ -197,6 +197,104 @@ func TestResponseRejectsPartialCalls(t *testing.T) {
 	}
 }
 
+func TestXAIResponsesHostedCustomSearch(t *testing.T) {
+	const search = `{"type":"custom_tool_call","id":"ct_x","call_id":"xs_search1","name":"x_keyword_search","input":"{\"query\":\"公开消息\"}"}`
+	const attachment = `{"type":"custom_tool_call","id":"ct_a","call_id":"as_search1","name":"attachment_search","input":"{}"}`
+	const final = `{"type":"message","content":[{"type":"output_text","text":"搜索结论"}]}`
+	const reply = `{"id":"r1","status":"completed","output":[` + search + `,` + attachment + `,` + final + `]}`
+	for _, tc := range []struct {
+		name, terminal string
+		stream         bool
+	}{
+		{"非流式", reply, false},
+		{"流式终帧", reply, true},
+		{"流式逐项终帧", `{"id":"r1","status":"completed"}`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var result Result
+			var err error
+			p := Provider{ID: "grok", Vendor: VendorXAI, Protocol: ProtocolOpenAIResponse, APIKey: "fixture"}
+			r := Request{SessionID: "s", Model: "grok-test", Tools: []Tool{ServerTool("x_search")}}
+			if tc.stream {
+				sse := strings.Join([]string{
+					`data: {"type":"response.output_item.added","output_index":0,"item":{"type":"custom_tool_call","id":"ct_x","call_id":"xs_search1","name":"x_keyword_search","input":""}}`,
+					`data: {"type":"response.output_item.done","output_index":0,"item":` + search + `}`,
+					`data: {"type":"response.output_item.done","output_index":1,"item":` + attachment + `}`,
+					`data: {"type":"response.output_item.done","output_index":2,"item":` + final + `}`,
+					`data: {"type":"response.completed","response":` + tc.terminal + `}`,
+				}, "\n\n") + "\n\n"
+				p.BaseURL = newStubUpstream(t, 200, "text/event-stream", sse).baseURL()
+				var events []ToolEvent
+				result, err = NewClient(p).Chat(t.Context(), p, r, "", func(d Delta) {
+					if d.Tool != nil {
+						events = append(events, *d.Tool)
+					}
+				})
+				if len(events) != 3 || events[0].Kind != "x_search" || events[0].State != "in_progress" ||
+					events[1].State != "completed" || events[1].Query != "公开消息" || events[2].Kind != "attachment_search" {
+					t.Fatalf("实时工具轨迹 = %+v", events)
+				}
+			} else {
+				p.BaseURL = newStubUpstream(t, 200, "application/json", reply).baseURL()
+				result, err = NewClient(p).Complete(t.Context(), p, r, "")
+			}
+			if err != nil || result.Text != "搜索结论" || len(result.ToolCalls) != 0 || len(result.ServerTools) != 2 {
+				t.Fatalf("X 搜索应完成且不进入客户端执行器：%+v, %v", result, err)
+			}
+			if got := result.ServerTools[0]; got.ItemID != "ct_x" || got.Kind != "x_search" || got.Query != "公开消息" || got.State != "completed" {
+				t.Fatalf("X 搜索轨迹 = %+v", got)
+			}
+			items := result.Exchange.Items
+			if len(items) != 3 || items[0].ID != "ct_x" || items[0].CallID != "xs_search1" || string(items[0].Payload) != search {
+				t.Fatalf("归档项 = %+v", items)
+			}
+			r.Messages = []ChatMessage{{Role: "assistant", Content: result.Text, Exchange: result.Exchange}, {Role: "user", Content: "继续"}}
+			for _, sameChannel := range []bool{true, false} {
+				if !sameChannel {
+					p.ID = "另一个渠道"
+				}
+				req, buildErr := Build(p, r)
+				if buildErr != nil {
+					t.Fatal(buildErr)
+				}
+				var wire struct{ Input []json.RawMessage }
+				decodeErr := json.NewDecoder(req.Body).Decode(&wire)
+				_ = req.Body.Close()
+				if decodeErr != nil {
+					t.Fatal(decodeErr)
+				}
+				if sameChannel {
+					if len(wire.Input) != 4 || string(wire.Input[0]) != search || string(wire.Input[1]) != attachment {
+						t.Fatalf("同渠道原序回放托管项，不伪造工具结果：%s", wire.Input)
+					}
+				} else if len(wire.Input) != 2 || !bytes.Contains(wire.Input[0], []byte(result.Text)) {
+					t.Fatalf("换渠道只回放正文和用户输入：%s", wire.Input)
+				}
+			}
+		})
+	}
+}
+
+func TestResponseRejectsUnregisteredCustomExecution(t *testing.T) {
+	for _, tc := range []struct {
+		vendor Vendor
+		callID string
+	}{
+		{VendorXAI, "call_local"},
+		{VendorOpenAI, "xs_lookalike"},
+	} {
+		t.Run(string(tc.vendor), func(t *testing.T) {
+			reply := `{"id":"r1","status":"completed","output":[{"type":"custom_tool_call","id":"ct1","call_id":"` + tc.callID + `","name":"unregistered","input":"free text"}]}`
+			p := Provider{ID: "test", Vendor: tc.vendor, Protocol: ProtocolOpenAIResponse, APIKey: "fixture",
+				BaseURL: newStubUpstream(t, 200, "application/json", reply).baseURL()}
+			result, err := NewClient(p).Complete(t.Context(), p, Request{SessionID: "s", Model: "test"}, "")
+			if err == nil || !strings.Contains(err.Error(), `"custom_tool_call" 需要专用执行器`) || len(result.ToolCalls)+len(result.ServerTools) != 0 {
+				t.Fatalf("不认识的自定义工具不能成功：%+v, %v", result, err)
+			}
+		})
+	}
+}
+
 func TestReplayUsesAssembledTextAndMatchingProvider(t *testing.T) {
 	p := Provider{ID: "old", Vendor: VendorOpenAI, Protocol: ProtocolOpenAIResponse}
 	exchange := &model.Exchange{Provider: p.ID, EndpointHash: responseEndpointHash(ApplyPreset(p)), Protocol: string(p.Protocol), Model: "m", Items: []model.OutputItem{

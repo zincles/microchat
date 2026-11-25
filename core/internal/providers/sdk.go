@@ -138,12 +138,12 @@ func invokeSDK(ctx context.Context, client *http.Client, p Provider, r Request, 
 		}
 		service := responses.NewResponseService(opts...)
 		if r.Stream {
-			result, err = collectResponse(service.NewStreaming(ctx, params), emit)
+			result, err = collectResponse(p.Vendor, service.NewStreaming(ctx, params), emit)
 		} else {
 			var reply *responses.Response
 			reply, err = service.New(ctx, params)
 			if err == nil {
-				result, err = responseResult(reply)
+				result, err = responseResult(p.Vendor, reply)
 			}
 		}
 	default:
