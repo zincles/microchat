@@ -1439,7 +1439,7 @@ offset 6 / blur 20 / spread -4，渐变往下铺约 12px。深色主题底是 `#
   给 24px 圆角/低对比表面，`VTextarea` 只管输入与 1..6 行 auto-grow；`VBtn`（发送 primary、
   停止 error、思考 text）。旧的 `.composer-box` / `#input` / `#composer button` 手写样式已删。
   ⚠ 不要改回 `solo-filled`：高亮底正是“组件感”的来源；表面样式只应在 Composer 的 scoped style 里。
-  工具按钮与发送键共用 `--composer-control: calc(34px * var(--app-text-scale))`，不要各自写高度。
+  助手和发送按钮共用 `--chat-control`，圆心分别与输入卡的两个底角圆心重合。工具栏两侧和底部的内边距均为卡片圆角半径减去按钮半径和描边宽度。窄屏只让中间选项换行。
   `.messages-inner` 顶部留白跟着顶栏从 3.2em 提到 **4.2em**（顶栏 3.5em + 间隙）。
   ⚠ 共享类暂时还是旧样式：`.bar-head.bar-tabs`、`.empty` 等**不要**在没加 `#sessions-bar` 前缀时改
   （否则会顺手改掉上下文工作区，且契约测试只钉了一部分）。

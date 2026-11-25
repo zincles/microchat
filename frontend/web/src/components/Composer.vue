@@ -74,7 +74,7 @@ defineExpose({ submit, setRunning });
 
 <template>
   <form id="composer" class="composer-vuetify" :class="{ zen: zen, 'zen-hidden': zen && zenHidden }" @submit.prevent="submit">
-    <VSheet class="composer-shell" color="surface-container-low" rounded="xl">
+    <VSheet class="composer-shell" color="surface-container-low">
       <VTextarea
         id="composer-input"
         class="composer-input"
@@ -90,8 +90,8 @@ defineExpose({ submit, setRunning });
         @keydown="onKeydown"
       />
       <div class="composer-toolbar">
+        <slot name="toolbar" />
         <div class="composer-options">
-          <slot name="toolbar" />
           <ThinkingMenu
             v-if="!flow && thinkingOptions.length"
             :model-value="thinking"
@@ -155,15 +155,19 @@ defineExpose({ submit, setRunning });
 </template>
 
 <style scoped>
-/* 表面只在这里定义：VSheet 管圆角/底色，VTextarea 用 plain 只负责输入。
- * 这样不会再把 .v-field 的覆盖写到全局，设置页和编辑器不受影响。 */
+/* 输入卡只用一层表面，圆角与下方两个圆形按钮共用一套几何。 */
 .composer-shell {
+  --composer-radius: 24px;
+  --composer-border: 1px;
+  /* 内缩从描边内侧量起，按钮圆心到两条外边的距离都等于卡片圆角半径。 */
+  --composer-corner-inset: calc(var(--composer-radius) - var(--composer-border) - var(--chat-control) / 2);
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
   width: 100%;
   min-width: 0;
-  border: 1px solid var(--md-outline-variant);
+  border: var(--composer-border) solid var(--md-outline-variant);
+  border-radius: var(--composer-radius);
   transition: border-color var(--md-dur-150) var(--md-ease-standard);
 }
 .composer-shell:focus-within {

@@ -1084,10 +1084,10 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
   position: absolute; bottom: 0; left: 50%; width: var(--chat-column);
   display: flex; flex-direction: column; align-items: stretch; z-index: 5;
   padding: 0 0 calc(var(--chat-space) / 2 + env(safe-area-inset-bottom, 0px)); }
-/* 配置靠左、发送靠右：与输入文字共用边距，窄屏只让配置项换行。 */
-.composer-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: var(--chat-space); padding: 0 var(--composer-inset) calc(var(--chat-space) / 2); }
-.composer-options { display: flex; align-items: center; flex-wrap: wrap; min-width: 0; gap: calc(var(--chat-space) / 2); }
-.composer-top-actions { display: flex; align-items: center; gap: calc(var(--chat-space) / 2); }
+/* 两个角落按钮与底边对齐，只有中间的配置项允许换行。 */
+.composer-toolbar { display: flex; align-items: flex-end; gap: var(--chat-space); padding: 0 var(--composer-corner-inset) var(--composer-corner-inset); }
+.composer-options { display: flex; flex: 1; align-items: center; flex-wrap: wrap; min-width: 0; gap: calc(var(--chat-space) / 2); }
+.composer-top-actions { display: flex; flex: none; align-items: center; gap: calc(var(--chat-space) / 2); }
 /* 文字区占满上层，动作区始终保留自己的列。 */
 .composer-input { flex: 1 1 auto; width: 100%; min-width: 0; }
 #composer .composer-toolbar :is(.composer-send-btn, .composer-menu-btn) { width: var(--chat-control); height: var(--chat-control); }
