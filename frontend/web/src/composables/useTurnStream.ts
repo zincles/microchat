@@ -264,17 +264,24 @@ export function useTurnStream({
   async function resend(): Promise<void> {
     const sid = getSessionID();
     if (!sid) throw new Error("还没有会话");
+    const my = getEpoch();
     const live = startSendingBubble();
+    bumpLocalRev();
     let accepted: Accepted;
+    beginPending();
     try {
       accepted = await api.resend(sid);
     } catch (err: unknown) {
       dropOptimistic(live);
       throw err;
+    } finally {
+      endPending();
     }
-    live.phase = "waiting";
     refreshTasks();
     if (sid !== getSessionID()) return;
+    if (my !== getEpoch()) { await pollTurn(sid, accepted.turn.message_id); return; }
+    live.phase = "waiting";
+    bumpLocalRev();
     live.run_id = accepted.turn.run_id;
     await pollTurn(sid, accepted.turn.message_id, live);
   }

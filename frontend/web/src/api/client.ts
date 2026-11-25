@@ -362,7 +362,7 @@ export function createApi({ base, token = "", fetchFn = fetch }: CreateApiOption
     // 已注册宏 + 本会话全文的使用统计（上下文环的“已注册宏”tab）。
     sessionMacros: (id: string) => call<MacroReport>("GET", `/sessions/${enc(id)}/macros`),
     sessionState: (id: string) => call<StateView>("GET", `/sessions/${enc(id)}/state`),
-    // outgoingPreview：右载荷预演 —— 有字问 (c)（待发追尾），空字问现有历史（与空发 resend 同段）。
+    // outgoingPreview：有字预演追加后的请求，空字预演「续写」所用的现有历史。
     // 空会话空字 ⇒ 后端 400（与 resend 同错），调用方吞掉保持空话。
     outgoingPreview: (id: string, content?: string) =>
       call<LastPayload>("POST", `/sessions/${enc(id)}/outgoing`, { content: content ?? "" }),

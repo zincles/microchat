@@ -24,10 +24,8 @@ export function useChrome() {
   }
 
   // 判据在 utils/chrome.ts（纯函数、契约测试钉着）；这里只喂数字 + 写两个 CSS 变量。
-  function onMessagesScroll(): void {
-    const el = document.querySelector<HTMLElement>("#messages-vue");
-    if (!el) return;
-    if (!chromeHideOn() || !coarsePointer?.matches) {
+  function onMessagesScroll(el: HTMLElement, atTail: boolean): void {
+    if (atTail || !chromeHideOn() || !coarsePointer?.matches) {
       if (chrome.top || chrome.bottom) resetChrome(el);
       else chrome.last = el.scrollTop;
       return;

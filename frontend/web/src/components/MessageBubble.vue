@@ -28,6 +28,7 @@ const props = withDefaults(defineProps<BubblePresentation & {
   messageId?: string | null;
   promptId?: string | null; // 最新 AI 回复对应的用户输入（仅尾条 assistant 有）
   isLast?: boolean;
+  allowContinue?: boolean;
   streaming?: boolean; // 生成中（还没落库的那条）：等首字节时给三点呼吸动画
   // phase：sending = 正在向后端发送请求；waiting = 202 已受理、等 Provider 首字节。
   phase?: "sending" | "waiting" | string | null;
@@ -55,6 +56,7 @@ const props = withDefaults(defineProps<BubblePresentation & {
   messageId: null,
   promptId: null,
   isLast: false,
+  allowContinue: false,
   streaming: false,
   phase: null,
   tool: null,
@@ -72,6 +74,7 @@ const emit = defineEmits<{
   reroll: [messageId: string | null | undefined];
   "reroll-go": [delta: number];
   regenerate: [messageId: string | null | undefined];
+  "continue-turn": [];
 }>();
 
 // 包括重摇在内，流式行上的用量和时长可能仍是上一版的，绝不能配给新正文。
@@ -256,6 +259,7 @@ watch(() => props.streaming, (s) => nextTick(() => {
             <VBtn icon variant="text" size="small" title="下一版（到最右再按 = 再摇一版）" aria-label="下一版" @click="emit('reroll-go', 1)">▶</VBtn>
           </template>
         </div>
+        <VBtn v-if="allowContinue" class="continue-turn" type="button" variant="text" size="small" title="用现有历史生成下一条回复" @click="emit('continue-turn')">续写</VBtn>
         <VBtn icon variant="text" size="small" class="msg-delete" title="删除这条及之后" aria-label="删除这条及之后" @click="emit('delete', messageId, isLast)" v-html="ICONS.trash" />
       </div>
       <details v-if="metrics.length" class="msg-foot">

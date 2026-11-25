@@ -6,15 +6,19 @@ export type ReadingPosition =
 
 const STICK_TO_BOTTOM_PX = 48;
 
-function visible(el: HTMLElement | null): el is HTMLElement {
+export function readingPaneVisible(el: HTMLElement | null): el is HTMLElement {
   return !!el && el.clientHeight > 0 && el.clientWidth > 0
     && el.checkVisibility?.({ visibilityProperty: true }) !== false;
 }
 
+export function atReadingTail(el: HTMLElement): boolean {
+  return el.scrollHeight - el.clientHeight - el.scrollTop <= STICK_TO_BOTTOM_PX;
+}
+
 export function captureReadingPosition(el: HTMLElement | null): ReadingPosition | null {
-  if (!visible(el)) return null;
+  if (!readingPaneVisible(el)) return null;
   const top = el.scrollTop;
-  if (el.scrollHeight - top - el.clientHeight <= STICK_TO_BOTTOM_PX) return { kind: "bottom" };
+  if (atReadingTail(el)) return { kind: "bottom" };
   const viewport = el.getBoundingClientRect();
   for (const row of el.querySelectorAll<HTMLElement>("[data-reading-key]")) {
     const key = row.dataset.readingKey;
@@ -27,7 +31,7 @@ export function captureReadingPosition(el: HTMLElement | null): ReadingPosition 
 }
 
 export function applyReadingPosition(el: HTMLElement | null, position: ReadingPosition): void {
-  if (!visible(el)) return;
+  if (!readingPaneVisible(el)) return;
   const max = Math.max(0, el.scrollHeight - el.clientHeight);
   if (position.kind === "bottom") { el.scrollTop = max; return; }
   let target = position.top;

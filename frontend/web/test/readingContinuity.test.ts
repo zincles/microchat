@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
-import { nextTick, watch } from "vue";
+import { effectScope, nextTick, shallowRef, watch } from "vue";
 import { useSessionWindow, type SessionWindowDeps } from "../src/composables/useSessionWindow.ts";
 import type { Message } from "../src/api/types.ts";
 import { applyReadingPosition, captureReadingPosition } from "../src/utils/readingPosition.ts";
@@ -47,12 +47,9 @@ test("阅读锚保留首个可见行及行内偏移；锚消失时钳住像素�
 
 function fixture(t: TestContext, options: { beforeLast?: () => Promise<void>; onWindowLoaded?: () => void } = {}) {
   const pane = new Pane();
-  const old = Object.getOwnPropertyDescriptor(globalThis, "document");
-  Object.defineProperty(globalThis, "document", { configurable: true, value: { getElementById: () => pane.element } });
-  t.after(() => {
-    if (old) Object.defineProperty(globalThis, "document", old);
-    else Reflect.deleteProperty(globalThis, "document");
-  });
+  const element = shallowRef<HTMLElement | null>(null);
+  const scope = effectScope();
+  t.after(() => scope.stop());
   const session = { id: "A", epoch: 0 };
   const messages: Message[] = Array.from({ length: 12 }, (_, n) => ({
     idx: n + 1, id: `m${n + 1}`, role: "user", content: "正文", session_id: "A", created_at: 0, updated_at: 0,
@@ -67,13 +64,14 @@ function fixture(t: TestContext, options: { beforeLast?: () => Promise<void>; on
     },
     async listMessagesRange() { return []; },
   };
-  const view = useSessionWindow({
+  const view = scope.run(() => useSessionWindow({
     api, getSessionID: () => session.id, getEpoch: () => session.epoch, getLocalRev: () => 0, isDraft: () => false,
-    toast: assert.fail, scrollBottom: () => { pane.scrollTop = pane.scrollHeight - pane.clientHeight; },
+    toast: assert.fail, pane: element,
     onWindowLoaded: options.onWindowLoaded,
-  });
+  }))!;
   view.loadingSession.value = false;
-  return { view, pane, ranges, session };
+  element.value = pane.element;
+  return { view, pane, ranges, session, messages };
 }
 
 test("加载更早历史后缓存保留整页，缓存失效仍从书签页拉起；隐藏或骨架不覆盖真书签", async (t) => {
@@ -172,4 +170,73 @@ test("对账途中翻页不缩回尾页；新旧工具步骤归入一组而换�
   assert.equal(await reconciling, false);
   assert.equal(view.windowFrom.value, 3);
   assert.equal(pane.scrollTop, 405);
+});
+
+test("尾部随内容和视口变化；向上翻后保留读位，新回复只提示不跳转", async (t) => {
+  let resize!: () => void;
+  const original = Object.getOwnPropertyDescriptor(globalThis, "ResizeObserver");
+  Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: class {
+    constructor(callback: () => void) { resize = callback; }
+    observe() {}
+    disconnect() {}
+  } });
+  t.after(() => {
+    if (original) Object.defineProperty(globalThis, "ResizeObserver", original);
+    else Reflect.deleteProperty(globalThis, "ResizeObserver");
+  });
+  const { view, pane } = fixture(t);
+  view.jumpToLatest();
+  await nextTick();
+  pane.scrollHeight = 1170;
+  view.onReadingScroll(); // 程序滚动的事件晚于下一批内容，不算主动向上翻。
+  resize();
+  assert.equal(pane.scrollTop, 990);
+  assert.equal(view.awayFromLatest.value, false);
+
+  pane.scrollTop = 790;
+  view.onReadingScroll();
+  assert.equal(view.awayFromLatest.value, true);
+  assert.equal(view.hasNewReply.value, false);
+  view.noteNewReply();
+  pane.scrollHeight = 1360;
+  pane.clientHeight = 90;
+  resize();
+  assert.equal(pane.scrollTop, 790);
+  assert.equal(view.hasNewReply.value, true);
+
+  view.jumpToLatest();
+  assert.equal(view.hasNewReply.value, false);
+  pane.scrollHeight = 1500;
+  resize();
+  assert.equal(pane.scrollTop, 1410);
+  assert.equal(view.awayFromLatest.value, false);
+});
+
+test("切回旧读位时提示离开期间落库的回复，不把其他会话标成未读", async (t) => {
+  const { view, pane, session, messages } = fixture(t);
+  await view.loadWindow({ reset: true });
+  pane.scrollTop = 300;
+  pane.rows = [["m8", 280, 220]];
+  view.onReadingScroll();
+  view.rememberReadingPosition();
+
+  session.id = "B"; session.epoch++;
+  view.resetReadingTail();
+  view.restoreReadingPosition();
+  await nextTick();
+  assert.equal(pane.scrollTop, 820);
+  assert.equal(view.hasNewReply.value, false);
+
+  session.id = "A"; session.epoch++;
+  view.resetReadingTail();
+  messages.push({ ...messages[11], id: "m13", idx: 13, role: "assistant" });
+  await view.loadWindow({ resume: true, scroll: false });
+  pane.scrollHeight = 1200;
+  view.restoreReadingPosition();
+  await nextTick();
+  assert.equal(pane.scrollTop, 300);
+  assert.equal(view.hasNewReply.value, true);
+  pane.scrollTop = 1020;
+  view.onReadingScroll();
+  assert.equal(view.hasNewReply.value, false);
 });

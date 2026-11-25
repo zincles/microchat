@@ -3,7 +3,7 @@
 // App 只保留“会话状态机”（进哪条、发什么、流怎么走）；这里只回答一件事：
 // **当前会话要显示哪一屏**。取数只按消息段拉（被摘要盖住的原文一个字节都不取），
 // 摘要卡展开是另一条按需路径。口径与纯算法在 utils/chatrows.ts。
-import { nextTick, reactive, ref } from "vue";
+import { nextTick, reactive, ref, shallowRef, watch } from "vue";
 import type { Ref } from "vue";
 import type { Message, Summary } from "../api/types.ts";
 import {
@@ -11,7 +11,7 @@ import {
   toolSources, windowStart, type ChatSegment, type ChatSummary, type ChatSummaryEntry,
 } from "../utils/chatrows.ts";
 import { rememberWindow, type WindowSnapshot } from "../utils/windowcache.ts";
-import { applyReadingPosition, captureReadingPosition, type ReadingPosition } from "../utils/readingPosition.ts";
+import { applyReadingPosition, atReadingTail, captureReadingPosition, readingPaneVisible, type ReadingPosition } from "../utils/readingPosition.ts";
 import type { AppRow } from "../types/app.ts";
 
 interface WindowApi {
@@ -28,7 +28,7 @@ export interface SessionWindowDeps {
   getEpoch: () => number;
   isDraft: () => boolean;
   getLocalRev: () => number;
-  scrollBottom: () => void;
+  pane: Readonly<Ref<HTMLElement | null>>;
   /** 后台对账前再问一次：等待期间人动过消息列吗？ */
   canReconcile?: () => boolean;
   onWindowLoaded?: () => void;
@@ -51,6 +51,12 @@ export interface SessionWindow {
   rememberReadingPosition: () => void;
   restoreReadingPosition: () => void;
   forgetReadingPosition: (id: string) => void;
+  awayFromLatest: Readonly<Ref<boolean>>;
+  hasNewReply: Readonly<Ref<boolean>>;
+  onReadingScroll: () => void;
+  jumpToLatest: () => void;
+  resetReadingTail: () => void;
+  noteNewReply: () => void;
   loadMore: () => Promise<void>;
   prefetchSession: (id: string) => void;
   refreshSummaryMsgs: (id: string) => Promise<void>;
@@ -87,12 +93,12 @@ function batchRanges(runs: Array<[number, number]>): Array<[number, number]> {
   return runs.map(([a, b]) => [a, b === Infinity ? 0 : b]);
 }
 
-function messagePane(): HTMLElement | null {
-  return document.getElementById("messages-vue");
+function lastReplyID(rows: AppRow[]): string {
+  return rows.findLast(row => row.role === "assistant" && row.messageId)?.messageId ?? "";
 }
 
 export function useSessionWindow({
-  api, toast, getSessionID, getEpoch, getLocalRev, isDraft, scrollBottom, canReconcile, onWindowLoaded,
+  api, toast, getSessionID, getEpoch, getLocalRev, isDraft, pane, canReconcile, onWindowLoaded,
 }: SessionWindowDeps): SessionWindow {
   const vueMessages = ref<AppRow[]>([]);
   const vueSegments = ref<ChatSegment[]>([]);
@@ -107,15 +113,79 @@ export function useSessionWindow({
   const prefetchedAt = new Map<string, number>();
   let prefetchActive = 0;
   // 文本窗口按 LRU 淘汰；轻量书签另存，旧窗口没命中时仍能从读过的那一页取数。
-  const bookmarks = new Map<string, { position: ReadingPosition; windowFrom: number }>();
+  const bookmarks = new Map<string, { position: ReadingPosition; windowFrom: number; replyID: string; hasNewReply: boolean }>();
   let restoringEpoch: number | null = null;
   let forgottenEpoch: number | null = null;
+  const awayFromLatest = shallowRef(false);
+  const hasNewReply = shallowRef(false);
+  let lastScrollTop = 0;
+
+  function syncTail(el: HTMLElement): void {
+    lastScrollTop = el.scrollTop;
+    awayFromLatest.value = !atReadingTail(el);
+    if (!awayFromLatest.value) hasNewReply.value = false;
+  }
+
+  function moveTo(el: HTMLElement | null, position: ReadingPosition): void {
+    if (!readingPaneVisible(el)) return;
+    applyReadingPosition(el, position);
+    syncTail(el);
+  }
+
+  function resetReadingTail(): void {
+    awayFromLatest.value = false;
+    hasNewReply.value = false;
+    lastScrollTop = 0;
+  }
+
+  function measurePane(): HTMLElement | null {
+    const el = pane.value;
+    return !loadingSession.value && restoringEpoch !== getEpoch() && readingPaneVisible(el) ? el : null;
+  }
+
+  function sampleScroll(el: HTMLElement): void {
+    // 自己写的 scrollTop 也会触发 scroll；后续内容增长不能把这一拍误判成向上翻。
+    if (el.scrollTop === lastScrollTop) return;
+    if (awayFromLatest.value || el.scrollTop < lastScrollTop) syncTail(el);
+    else lastScrollTop = el.scrollTop;
+  }
+
+  function onReadingScroll(): void {
+    const el = measurePane();
+    if (el) sampleScroll(el);
+  }
+
+  function jumpToLatest(): void {
+    moveTo(pane.value, { kind: "bottom" });
+  }
+
+  function noteNewReply(): void {
+    onReadingScroll();
+    if (awayFromLatest.value) hasNewReply.value = true;
+  }
+
+  watch(pane, (el, _old, onCleanup) => {
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (measurePane() !== el) return;
+      sampleScroll(el);
+      // 正文换行、图片加载、输入栏长高及键盘缩窗都走同一条路，不跟每个流式字符抢布局。
+      if (!awayFromLatest.value) {
+        if (el.scrollHeight - el.clientHeight - el.scrollTop > 1) jumpToLatest();
+      } else if (atReadingTail(el)) syncTail(el);
+    });
+    observer.observe(el);
+    if (el.firstElementChild) observer.observe(el.firstElementChild, { box: "border-box" });
+    onCleanup(() => observer.disconnect());
+  }, { flush: "post" });
 
   function rememberReadingPosition(): void {
     const sid = getSessionID();
     if (!sid || loadingSession.value || restoringEpoch === getEpoch() || forgottenEpoch === getEpoch()) return;
-    const position = captureReadingPosition(messagePane());
-    if (position) bookmarks.set(sid, { position, windowFrom: windowFrom.value });
+    const position = captureReadingPosition(pane.value);
+    if (position) bookmarks.set(sid, {
+      position, windowFrom: windowFrom.value, replyID: lastReplyID(vueMessages.value), hasNewReply: hasNewReply.value,
+    });
   }
 
   function restoreReadingPosition(): void {
@@ -125,7 +195,11 @@ export function useSessionWindow({
     restoringEpoch = my;
     void nextTick(() => {
       if (my !== getEpoch() || sid !== getSessionID()) return;
-      applyReadingPosition(messagePane(), bookmarks.get(sid)?.position ?? { kind: "bottom" });
+      const saved = bookmarks.get(sid);
+      moveTo(pane.value, saved?.position ?? { kind: "bottom" });
+      if (saved && (saved.hasNewReply || lastReplyID(vueMessages.value) > saved.replyID) && awayFromLatest.value) {
+        hasNewReply.value = true;
+      }
       restoringEpoch = null;
     });
   }
@@ -218,7 +292,8 @@ export function useSessionWindow({
     // 后台对账专用闸：等待期间人已经动了消息列（发送/编辑/删除…）⇒ 这一发是旧快照。
     if (onlyIfUnchanged && (rev !== getLocalRev() || !(canReconcile?.() ?? true))) return false;
     // 等网络期间可能已经翻页或滚到另一条消息；只取落屏这一刻的锚，不把人拉回请求发起处。
-    const position = scroll === "keep" ? captureReadingPosition(messagePane()) : null;
+    const position = scroll === "keep" ? captureReadingPosition(pane.value) : null;
+    const newReply = scroll === "keep" && lastReplyID(snap.rows) > lastReplyID(vueMessages.value);
     vueSegments.value = snap.segments;
     windowFrom.value = snap.windowFrom;
     vueMessages.value = snap.rows;
@@ -226,13 +301,13 @@ export function useSessionWindow({
     for (const key of [...summaryMsgs.keys()]) if (!alive.has(key)) summaryMsgs.delete(key);
     for (const id of openSummaries) if (alive.has(id)) void refreshSummaryMsgs(id);
     rememberWindow(windowCache, sid, { rows: vueMessages.value, segments: snap.segments, windowFrom: windowFrom.value });
-    if (scroll === true) scrollBottom();
     onWindowLoaded?.();
-    if (position) {
+    if (position || scroll === true) {
       await nextTick();
       if (my !== getEpoch() || sid !== getSessionID()) return false;
-      applyReadingPosition(messagePane(), position);
+      moveTo(pane.value, position ?? { kind: "bottom" });
     }
+    if (newReply) noteNewReply();
     return true;
   }
 
@@ -274,7 +349,7 @@ export function useSessionWindow({
     if (my !== getEpoch() || sid !== getSessionID() || from !== windowFrom.value) return;
     // 等分页时前台对账可能已经替换了段结构。按新结构兑现这次翻页，不往新窗口拼旧数据。
     if (segments !== vueSegments.value) return loadMore();
-    const el = messagePane();
+    const el = pane.value;
     const position = captureReadingPosition(el);
     const beforeH = el?.scrollHeight ?? 0;
     const beforeTop = el?.scrollTop ?? 0;
@@ -284,11 +359,11 @@ export function useSessionWindow({
       rows: vueMessages.value.filter(row => row.messageId), segments: vueSegments.value, windowFrom: windowFrom.value,
     });
     await nextTick();
-    if (position && el && my === getEpoch() && sid === getSessionID() && el === messagePane()) {
+    if (position && el && my === getEpoch() && sid === getSessionID() && el === pane.value) {
       // 翻页要把新内容加在视口上方，即使原来离底部只差几十像素也不应吸到底。
       const top = beforeTop + el.scrollHeight - beforeH;
       // 新页可能并进同一条回复，换掉组首的锚；找不到它时仍按新增高度补偿。
-      applyReadingPosition(el, position.kind === "row" ? { ...position, top } : { kind: "offset", top });
+      moveTo(el, position.kind === "row" ? { ...position, top } : { kind: "offset", top });
     }
   }
 
@@ -296,6 +371,7 @@ export function useSessionWindow({
     vueMessages, vueSegments, loadingSession, windowLimit, windowFrom, summaryMsgs, openSummaries, windowCache,
     toRow, fetchWindow, loadWindow, reloadWindow, reloadWindowKeepingScroll, loadMore, prefetchSession,
     rememberReadingPosition, restoreReadingPosition, forgetReadingPosition,
+    awayFromLatest, hasNewReply, onReadingScroll, jumpToLatest, resetReadingTail, noteNewReply,
     refreshSummaryMsgs, onSummaryToggle,
   };
 }

@@ -704,9 +704,7 @@ Go 1.26 + httptest 实测：客户端 ctx 一取消，**客户端立刻**返回 
 3. **连发事件要合并**（`resyncing || now - lastResyncAt < 300`）：切回来时三条事件常常一串来，
    每条跑一遍就是三倍请求。resync 本身幂等，重复跑不会错，只是浪费。
 4. **重拉消息列要保住滚动位置**（2026-11-03 用户报：「出去截个图再回来，滚动条自己退回最新一条」）：
-   落地后的 `reloadWindow()` 默认 `scrollBottom()` ⇒ 人明明停在上面也被拽到底部。改走
-   `reloadWindowKeepingScroll()`：重拉前量 `nearBottom`（48px 内算贴底），贴底才继续贴底，
-   否则恢复原 `scrollTop`。`pollTurn` 落库那一拍也走同一条。`fetch`/visibility 都别绕过它。
+   `reloadWindowKeepingScroll()` 在重拉落屏前量当前位置：距尾部 48px 内继续贴底，否则按稳定消息行恢复读位。轮次落库及前台对齐共用此路径。
 
 ⚠ **判"要不要接轮询"必须看"循环在不在"（`liveTurnPoll`），不能看"有没有 stream 气泡"**：
 气泡是**循环死掉之后留在列表里**的那个东西，拿它当判据就永远不接 —— 那正是"永远在等待"的形状。
@@ -829,7 +827,7 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 | GET | `/sessions/{session_id}/messages` | — | `[Message]` | **按 `id` 升序的整条会话**（线性 ⇒ 没有"当前路径"）。三条查询参数（**都不给 = 全部**，语义不变）：`?from_idx=5&to_idx=10` **闭区间**（含两端；缺一端补默认：起点 1 / 终点末尾）、`?last=20` **取尾**。**参数错 ⇒ 400**（`last` 与区间混用、非正整数、区间反了）；**越界不是错** ⇒ 给现有的那几条（起点在末尾之后 ⇒ 空数组）。响应仍是**数组** ✗（不换成对象）。每条带 `idx`：**0 = 合成的系统提示词；1..N = 真消息** —— 它是**派生的**（= 按 `id` 排第几条）、**不落库**、**永不改变**（只删后缀 ⇒ 不留洞；不往中间插；编辑/重摇不改 `id`）|
 | POST | `/sessions/{session_id}/messages/batch` | `{ranges:[[from,to],…]}` | `[Message]` | **2026-11-04**：一次取多个 1-based 闭区间（`to=0` = 到末尾），按整条会话 id 顺序返回并去重；首屏 / 加载更多把摘要切开的几段压成一发，不再一个区间一个 RTT。区间非法 ⇒ 422 |
 | POST | `/sessions/{session_id}/messages` | `SendReq` | `TurnAccepted` · **202** | 落用户消息 + 开工；不含回复正文 |
-| POST | `/sessions/{session_id}/resend` | — | `TurnAccepted`（`user` 为空） · **202** | **重发历史**：不落新消息，拿现有历史再跑一轮（尾 user 没回复 / 尾 assistant 想再要一版都行；空会话 ⇒ 400；在跑 ⇒ 409）。空输入点发送走这条 |
+| POST | `/sessions/{session_id}/resend` | — | `TurnAccepted`（`user` 为空） · **202** | **重发历史**：不追加用户消息，按现有历史生成下一条回答（尾条是用户消息或助手消息都可；空会话 ⇒ 400；在跑 ⇒ 409）。入口为最后一轮的「续写」或 `/resend`，空输入不发送 |
 | POST | `/sessions/{session_id}/regenerate` | — | `TurnAccepted`（`user` 为空） · **202** | **FlowAgent 的「重新生成」**：尾条必须是 assistant；用**当前**历史（含上一轮 `output.user` 可能已经改写的用户消息）重跑整张图，**原地换回尾条 assistant**（`message_id` 不变），不建候选列表。普通 Agent 不接受 ⇒ 400；在跑/重摇 ⇒ 409。Task 是 `KindTurn`，所以任务环与 `/flow/run` 会照常更新 |
 | PATCH | `/sessions/{session_id}/messages/{message_id}` | `EditMessageReq{content?, reasoning?}`（至少给一个 ⇒ 422；nil=不动、`""`=清掉） | `Message` | 改**任意**一条消息的正文 / 思考 = 重写存档（世界状态随之现演；摘要只标 `dirty`、**不级联**）|
 | GET | `/sessions/{session_id}/messages/{message_id}/deletion-preview` | — | `DeletionPlan` | **只算不动**（安全 ⇒ GET）：会删掉哪些消息 / 摘要、哪些指针会被置空 |
@@ -955,6 +953,7 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 - `stop` 取消当前轮的上下文并摘掉登记。已完成的中间工具消息保留；普通对话把当前步骤收到的半截正文和工具记录存为 `status=canceled`。每次工具回填后的模型请求各登记一个 `turn` Task。
 - 受理回执、会话列表的 `turn`、`/status` 和 SSE/轮询快照都带可选的 `run_id`：它对应存档消息的同名字段，不是 Task ID，也不一定等于最终回复的 `message_id`。Web 只把相邻且明确同一轮的助手消息组织为一份回答；工具次数按实际调用记录计，不按步骤数猜。中间正文仍按原序显示，展开过程才展示各步的思考、用量、来源与原消息操作。缺失 `run_id` 的旧消息不分组，摘要仍是独立边界。
 - Web 的未发送文字和阅读位置是**当前页面内**的会话状态：切回来恢复原输入与阅读锚点，贴底时继续贴底；不进 SQLite、偏好文件或 localStorage。复制回答只取显示用宏替换后的 Markdown 正文，不带思考、工具回填、世界状态块或脚注。
+- `useSessionWindow` 在阅读列或视口变高、变矮时仅让贴尾的视口跟随输出。回看时保留读位；若有新回复，「回到最新」同时提示。这个入口只滚动并恢复藏起的输入栏，不发请求、不续写。自然滚回尾部也会清提示。
 - 流式事件由 SDK 解码。正文、思考与工具进度先进入本步缓冲，世界状态按落库后的消息正文本身计算。`store_reasoning` 控制思考留档，`chat.replay_reasoning` 控制可见思考文本的历史回传。
 
 - 给前端的是**游标读**（`?from=N&think_from=M`，正文与思考各一条）：多个客户端与断线重连各拿各的，互不偷；`done` 表示这轮结束，结束后仍可补拉尾巴。

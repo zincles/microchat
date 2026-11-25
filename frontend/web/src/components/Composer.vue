@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 一张输入卡：上方写消息，下方调整选项并发送；新对话只改变卡的位置。
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { VBtn, VSheet, VTextarea } from "vuetify/components";
 import { ICONS } from "../assets/icons.ts";
 import ThinkingMenu from "./ThinkingMenu.vue";
@@ -42,7 +42,7 @@ const props = withDefaults(defineProps<{
 
 const text = defineModel<string>({ required: true });
 const running = ref(false);
-const sendSvg = ICONS.send;
+const hasText = computed(() => !!text.value.trim());
 
 function setRunning(v: unknown): void {
   running.value = !!v;
@@ -56,7 +56,8 @@ function onKeydown(e: KeyboardEvent): void {
   emit("keydown", e, text.value);
 }
 function submit(): void {
-  emit("submit", text.value.trim());
+  const content = text.value.trim();
+  if (content) emit("submit", content);
 }
 function stop(): void {
   emit("stop");
@@ -69,7 +70,7 @@ defineExpose({ submit, setRunning });
 </script>
 
 <template>
-  <form id="composer" class="composer-vuetify" :class="{ zen: zen, 'zen-hidden': zen && zenHidden }" @submit.prevent="running ? stop() : submit()">
+  <form id="composer" class="composer-vuetify" :class="{ zen: zen, 'zen-hidden': zen && zenHidden }" @submit.prevent="submit">
     <VSheet class="composer-shell" color="surface-container-low" rounded="xl">
       <VTextarea
         id="composer-input"
@@ -135,11 +136,12 @@ defineExpose({ submit, setRunning });
             rounded="circle"
             :color="running ? 'error' : 'primary-container'"
             class="composer-send-btn"
-            :title="running ? '停止' : text.trim() ? '发送' : '续写（重发历史）'"
-            :aria-label="running ? '停止' : text.trim() ? '发送' : '续写（重发历史）'"
+            :disabled="!running && !hasText"
+            :title="running ? '停止' : '发送'"
+            :aria-label="running ? '停止' : '发送'"
             @click="running ? stop() : submit()"
           >
-            <span v-html="running ? ICONS.stop : text.trim() ? sendSvg : ICONS.down"></span>
+            <span aria-hidden="true" v-html="running ? ICONS.stop : ICONS.send"></span>
           </VBtn>
         </div>
       </div>

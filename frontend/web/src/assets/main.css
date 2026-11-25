@@ -623,6 +623,18 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 #chat-col > header { position: absolute; top: 0; left: 0; right: 0; z-index: 6; background: var(--md-surface-container-low); color: var(--md-on-surface); min-height: 3.2em; padding: 0.4em 0.8em; box-sizing: border-box; gap: 0.5em; text-shadow: none; box-shadow: var(--shadow-top); }
 /* 滚动口占满工作区；阅读列和输入卡同宽，不再保留已不存在的头像占位。 */
 #messages-vue { flex: 1; overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
+#messages-vue:focus-visible { outline: 2px solid var(--md-primary); outline-offset: -2px; }
+/* 跟输入卡让位，触屏藏栏时随之降到安全区上沿；自身不占消息列高度。 */
+.latest-jump { position: absolute; z-index: 5; left: 50%; translate: -50% 0;
+  bottom: max(calc(0.5em + env(safe-area-inset-bottom, 0px)), calc(var(--composer-h, 7em) - var(--chrome-bottom, 0px) + 0.5em));
+  transition: bottom 90ms linear; white-space: nowrap; }
+#app .latest-jump .v-btn { min-height: 36px; font-size: var(--md-type-label-large); letter-spacing: normal; }
+#app .latest-jump .v-btn:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px; }
+.latest-arrow { display: inline-flex; margin-inline-end: 0.4em; }
+@media (pointer: coarse), (max-width: 700px) {
+  #app .latest-jump .v-btn { min-height: 48px; }
+}
+@media (prefers-reduced-motion: reduce) { .latest-jump { transition: none; } }
 .messages-inner { width: min(calc(100% - 1.2em), var(--read-col, 840px)); margin: 0 auto; box-sizing: border-box;
   padding: calc(var(--topbar-h, 3.2em) + 1.2em) var(--chat-inset) calc(var(--composer-h, 7em) + 1.5em); display: flex; flex-direction: column; gap: 0.5em; }
 /* 问答之间只留小间距；新一轮、续写或摘要换段时多留一行。只排顶层，不拆回答过程和摘要原文。 */
@@ -1058,6 +1070,7 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .msg-ops { --msg-action-size: 30px; gap: 0 0.6em; }
 .msg-action-group { gap: 0 1px; }
 #app .msg-ops .v-btn { flex: none; width: var(--msg-action-size); min-width: var(--msg-action-size); height: var(--msg-action-size); min-height: var(--msg-action-size); padding: 0; color: var(--md-on-surface-variant); }
+#app .msg-ops .continue-turn { width: auto; padding-inline: 0.6em; font-size: var(--md-type-label-medium); letter-spacing: normal; }
 /* 触屏只放大命中区，图标不随 44px 按钮放大到正文的两倍。 */
 .msg-ops .v-btn--icon svg { max-width: calc(20px * var(--app-text-scale, 1)); }
 #app .msg-ops .v-btn:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }

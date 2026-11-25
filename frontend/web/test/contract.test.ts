@@ -823,7 +823,7 @@ test("压缩树：左端对不上就不算 used（照原文发那条）", () => 
   assert.equal(tree[1].dirty, true);
 });
 
-test("outgoingPreview 空字问历史：空/空白也发包，与空发 resend 同段", async () => {
+test("outgoingPreview 空字问历史：空/空白也发包，预览续写所用历史", async () => {
   const seen = [];
   const api = createApi({ base: "http://x/api/v1", fetchFn: async (url, opts) => { seen.push(JSON.parse(opts.body)); return { status: 200, ok: true, json: async () => ([]) }; } });
   await api.outgoingPreview("s1", "");
@@ -2505,7 +2505,7 @@ test("上下文工作区：开关在绿环左边，只切内容不切顶栏", ()
 
   // ② 顶栏不在切换范围内：聊天 / 上下文住在 VTabsWindow 里；顶栏不许有 v-show/v-if
   assert.match(app, /<VTabsWindow v-model="workspace" class="workspace-window"/, "工作区没有被 VTabsWindow 接住");
-  assert.match(app, /<VTabsWindowItem value="chat">[\s\S]*?<main id="messages-vue">/, "聊天页不在 window item 里");
+  assert.match(app, /<VTabsWindowItem value="chat">(?:(?!<\/VTabsWindowItem>)[\s\S])*?<main id="messages-vue"(?:\s|>)/, "聊天页不在 window item 里");
   assert.match(app, /<VTabsWindowItem value="context">[\s\S]*?<ContextWorkspace/, "上下文页不在 window item 里");
   assert.ok(!/<main id="messages-vue" v-show/.test(app), "消息列还在用 v-show");
   assert.ok(!/<Composer\s+v-show/.test(app), "输入行还在用 v-show");
@@ -3690,13 +3690,6 @@ test("会话行选项键：未选中隐藏；悬停/键盘焦点/当前会话才
     "又给触屏开了「三个点常驻」的例外");
   assert.ok(!/#sessions-bar \.session-item[^{]*\.item-btn \{[^}]*display:\s*none/.test(css),
     "选项键不能用 display:none 收起（会连焦点和命中区一起丢掉）");
-});
-
-test("空输入时的发送键不是向下箭头（那个位置会被读成「滚到底」）", () => {
-  const icons = readFileSync(join(SRC, "assets", "icons.ts"), "utf8");
-  const cont = icons.slice(icons.indexOf("cont:"), icons.indexOf("menu:"));
-  assert.ok(!cont.includes("M12 5v14"), "续写图标又变回向下箭头");
-  assert.match(cont, /M3 12a9 9/, "续写图标应是回转箭头");
 });
 
 test("公式比列宽时给提示（不能只是右缘一刀切）", () => {

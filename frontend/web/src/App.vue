@@ -1,8 +1,9 @@
 <script setup lang="ts">
 // App.vue —— 三栏骨架 + 全部接线（原 main.js + 九个桥，合一）。
 // 组件直接挂模板，ref 直调实例方法，不再经 *-vue.js 桥 / mount.js。
-import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick, provide } from "vue";
+import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick, provide, useTemplateRef } from "vue";
 import { VApp, VBtn, VTabsWindow, VTabsWindowItem } from "vuetify/components";
+import { ICONS } from "./assets/icons.ts";
 import { createApi, probeHealth } from "./api/client.ts";
 import { parseCommand, filterCommands } from "./utils/commands.ts";
 import { uuidv7 } from "./utils/ids.ts";
@@ -325,12 +326,14 @@ watch(thinkingLevels, (levels) => {
   if (!cur || !levels.length) return;
   if (!levels.includes(cur)) setThinking("");
 });
+const messagesPane = useTemplateRef<HTMLElement>("messages-pane");
 // 消息窗口的取数/分页/摘要展开/预取都在 composable；App 只关心“当前会话”这一层。
 const {
   vueMessages, vueSegments, loadingSession, windowLimit, windowFrom, summaryMsgs, openSummaries, windowCache,
   toRow, loadWindow, reloadWindow, reloadWindowKeepingScroll, loadMore, prefetchSession,
   onSummaryToggle,
   rememberReadingPosition, restoreReadingPosition, forgetReadingPosition,
+  awayFromLatest, hasNewReply, onReadingScroll, jumpToLatest, resetReadingTail, noteNewReply,
 } = useSessionWindow({
   api,
   toast,
@@ -339,7 +342,7 @@ const {
   getLocalRev: () => localRev,
   isDraft: () => draft,
   canReconcile: () => pendingSends === 0,
-  scrollBottom,
+  pane: messagesPane,
   onWindowLoaded: () => { if (treeVisible.value) refreshTree(); },
 });
 
@@ -382,6 +385,7 @@ const {
   forgetCachedWindow: forgetConversation,
 });
 const vueStream = ref<{ id: string | null; text: string; reasoning: string }>({ id: null, text: "", reasoning: "" });
+watch(() => vueStream.value.text, (text) => { if (text) noteNewReply(); });
 // 流式显字（2026-11-03）：`vueStream` 是后端的完整目标；`streamDisplay` 是打字机当前露出的前缀。
 // 每帧只改 streamDisplay，轮询与合并仍只认 vueStream（两个状态别互相镜像）。
 const { streamDisplay, setStreamTarget, waitTypewriter, resetTypewriter } = useTypewriter();
@@ -411,12 +415,19 @@ watch(settingsOpen, (open) => { if (!open) agentFocus.value = ""; });
 // tmpKey：只给"还没进库"的气泡（乐观用户消息 / 流式占位）当 v-for key —— 不能共用 'stream'（重键）。
 let tmpSeq = 0;
 function tmpKey() { return `tmp-${++tmpSeq}`; }
-function scrollBottom() {
-  const my = epoch;
-  requestAnimationFrame(() => {
-    const el = document.getElementById("messages-vue");
-    if (el && my === epoch) el.scrollTop = el.scrollHeight;
-  });
+function onChatScroll(): void {
+  const el = messagesPane.value;
+  if (!el || loadingSession.value) return;
+  onReadingScroll();
+  onMessagesScroll(el, !awayFromLatest.value);
+}
+
+function returnToLatest(): void {
+  const el = messagesPane.value;
+  if (!el) return;
+  jumpToLatest();
+  resetChrome(el);
+  el.focus({ preventScroll: true });
 }
 function addMessage(who: string, text: string, cls: string, think: ThinkPart = undefined, messageId?: string | null): AppRow {
   const row: AppRow = {
@@ -429,7 +440,6 @@ function addMessage(who: string, text: string, cls: string, think: ThinkPart = u
     messageId: messageId ?? undefined,
   };
   vueMessages.value.push(row);
-  scrollBottom();
   return vueMessages.value[vueMessages.value.length - 1];
 }
 // 乐观上屏的那句用户消息（2026-11-05，高延迟优化）：先画，等 202 回来再换成服务端那条
@@ -581,7 +591,7 @@ const {
   waitTypewriter,
   refreshStatusline,
   refreshTasks,
-  reloadWindow: () => reloadWindow(),
+  reloadWindow: reloadWindowKeepingScroll,
   refreshStateView,
 });
 const rerollingId = computed(() => rerollStarting.value || (rerollState.value.running ? rerollState.value.target_message_id : null));
@@ -673,6 +683,15 @@ const chatRows = computed(() => {
   });
 });
 const emptyDraft = computed(() => workspace.value === "chat" && sessionInfo.id === "" && !loadingSession.value && !chatRows.value.length);
+const continuationRow = computed(() => {
+  if (!sessionInfo.id || loadingSession.value || rerollingId.value || summaryReroll.value.running || vueMessages.value.some(row => row.stream)) return;
+  return chatRows.value.findLast(row => row.kind === "summary" || row.msg.messageId);
+});
+
+function continueTurn(): void {
+  if (!continuationRow.value || hasLivePoll()) return;
+  resend().catch((err) => toast(`续写失败：${errText(err)}`, "error"));
+}
 const olderSegments = computed(() => olderCount(vueSegments.value, windowFrom.value));
 function onBubbleEdit(mid: string | null | undefined, kind: "content" | "reasoning"): void {
   if (!mid) return;
@@ -721,8 +740,7 @@ async function onBubbleDelete(mid: string | null | undefined, isLast: boolean): 
   refreshRerolls();
 }
 // —— 重摇（尾条气泡的 ⟳ / ◀ ▶ 与 /reroll 命令共用）——
-// 口径：这只是**重摇**（`reroll-message`，就地换正文、UUID 不变），不是"重发历史"
-// （`/resend` 那条路归空输入点发送）。后端要求目标**必须是尾条 assistant** ⇒ 只挂最新一条。
+// 重摇就地换正文、UUID 不变；「续写」和 /resend 才会按现有历史追加一轮。
 //
 // 交互（2026-10-10 用户定）：⟳ = 摇新一版并**立刻切到最新那版**（无论当前看着哪一版），
 // 结果就地换正文；模式活着期间气泡下出现 `◀ n/N ▶`：◀▶ 翻版，**最右的 ▶ = 再摇一版**。
@@ -929,6 +947,7 @@ async function startDraft() {
   activeChatMenu.value = null;
   rememberReadingPosition();
   const my = ++epoch;
+  resetReadingTail();
   draft = true;
   sessionID = null;
   saveLastSession(""); // 人在草稿 ⇒ 开机也该回草稿（别把人拽回上次那条会话）
@@ -1012,6 +1031,7 @@ async function enterSession(id: string, preloaded: SessionView[] | null = null):
   activeChatMenu.value = null;
   rememberReadingPosition();
   const my = ++epoch;
+  resetReadingTail();
   loadingSession.value = true;
   try {
   draft = false;
@@ -1347,13 +1367,9 @@ function stopCurrent() {
   api.stop(sessionID).catch((err) => toast(`停止失败：${errText(err)}`, "error"));
 }
 function onComposerSubmit(text: string): void {
+  if (!text) return;
   liftOverlays();
   overlaysRef.value?.hidePalette();
-  if (!text) {
-    if (draft) { toast("新对话还没有可续写的历史：先写一句"); return; }
-    resend().catch((err) => toast(`重发失败：${errText(err)}`, "error"));
-    return;
-  }
   if (draft && submittingDraft === composerKey.value) { toast("首条消息正在发送"); return; }
   clearTimeout(previewTimer);
   const receipt = sessionDrafts.take(composerKey.value);
@@ -1399,14 +1415,8 @@ onMounted(() => {
   startTasksPolling();
   flowCallsTimer = window.setInterval(() => { void refreshFlowCalls(); }, 700);
   void refreshFlowCalls();
-  // 键盘遮挡：整盒跟着视觉视口拟合（见 utils/viewport.ts）；键盘一开，如果人正在输入，
-  // 顺手把消息列贴回底部（矮了一截后最新一条不该被挤出视野）。
+  // 键盘缩小视觉视口时，消息窗口只在本来贴尾的情况下继续跟随。
   uninstallViewportFit = installViewportFit();
-  const vv = window.visualViewport;
-  const onVvResize = () => { if (document.activeElement?.id === "input") scrollBottom(); };
-  vv?.addEventListener("resize", onVvResize);
-  // 滚动隐藏上下栏（触屏）：passive 监听，只写两个 CSS 变量。
-  document.querySelector("#messages-vue")?.addEventListener("scroll", onMessagesScroll, { passive: true });
   // 滑动面板：跟手拖拽。touchmove 必须非 passive（接管后要 preventDefault 压住页面滚）。
 
   // 跨断点（桌面 ⇄ 抽屉）时把状态重算一遍：变成抽屉就一律先关掉，不然会"啪"地盖上来。
@@ -1512,7 +1522,7 @@ onUnmounted(() => {
         <VTabsWindow v-model="workspace" class="workspace-window">
         <VTabsWindowItem value="chat">
         <div class="workspace-pane" :class="{ 'empty-draft': emptyDraft }">
-        <main id="messages-vue">
+        <main id="messages-vue" ref="messages-pane" tabindex="0" aria-label="消息记录" @scroll.passive="onChatScroll">
           <div class="messages-inner">
           <!-- 会话加载骨架（2026-11-02）：先撑住消息列，别让人对着纯黑猜"是不是坏了"。 -->
           <div v-if="loadingSession" class="chat-skeleton" aria-label="正在加载会话" role="status">
@@ -1563,6 +1573,7 @@ onUnmounted(() => {
               :message-id="row.msg.messageId"
               :prompt-id="row.msg.messageId === lastMsgId ? latestPromptId : null"
               :is-last="!!row.msg.messageId && row.msg.messageId === lastMsgId"
+              :allow-continue="row.key === continuationRow?.key"
               :streaming="!!row.msg.stream || isLive(row.msg)"
               :phase="String(row.msg.phase || '')"
               :kind="row.msg.kind || 'chat'"
@@ -1580,11 +1591,23 @@ onUnmounted(() => {
               @reroll="rerollNow"
               @reroll-go="rerollGo"
               @regenerate="regenerateNow"
+              @continue-turn="continueTurn"
             />
             </template>
           </AnswerTranscript>
+          <div v-if="continuationRow?.kind === 'summary'" class="msg-ops">
+            <VBtn class="continue-turn" type="button" variant="text" size="small" title="用现有历史生成下一条回复" @click="continueTurn">续写</VBtn>
+          </div>
           </div>
         </main>
+        <span class="d-sr-only" role="status">{{ hasNewReply ? '有新回复' : '' }}</span>
+        <div v-if="awayFromLatest && !loadingSession && chatRows.length" class="latest-jump">
+          <VBtn type="button" variant="flat" :color="hasNewReply ? 'secondary-container' : 'surface-container-high'"
+            rounded="xl" elevation="1" aria-controls="messages-vue" @click="returnToLatest">
+            <span class="latest-arrow" aria-hidden="true" v-html="ICONS.down"></span>
+            <span v-if="hasNewReply">有新回复 · </span>回到最新
+          </VBtn>
+        </div>
     <Composer
       ref="composerRef"
       :menu-on="cmdMenu"
