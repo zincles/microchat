@@ -198,22 +198,23 @@ onMounted(() => {
 
 <template>
   <section id="panel-update" class="panel">
-    <p class="settings-lead">这一页只管两件事：<b>版本</b>（本地 / GitHub 最新 / 一键拉取重启）和 <b>前端缓存</b>（PWA）。关于项目放在最下面。</p>
-
     <div class="update-grid">
       <section class="settings-card update-version-card">
         <h3>版本</h3>
-        <div class="update-auto">
-          <span>自动更新（每 5 分钟）</span>
-          <VSwitch
-            :model-value="autoCheck"
-            color="primary"
-            density="compact"
-            hide-details
-            @update:model-value="setAutoCheck"
-          />
+        <div id="setting-auto-update" tabindex="-1">
+          <label class="update-auto">
+            <span>自动更新（每 5 分钟）</span>
+            <VSwitch
+              :model-value="autoCheck"
+              color="primary"
+              density="compact"
+              hide-details
+              aria-describedby="auto-update-hint"
+              @update:model-value="setAutoCheck"
+            />
+          </label>
+          <p id="auto-update-hint" class="hint">开启后每 5 分钟检查 GitHub；本地落后且工作区干净时自动拉取并重启前后端。有未提交修改、分叉或非容器部署时只提示，不自动动手。</p>
         </div>
-        <p class="hint">开启后每 5 分钟检查 GitHub；本地落后且工作区干净时自动拉取并重启前后端。有未提交修改、分叉或非容器部署时只提示，不自动动手。</p>
 
         <div v-if="loading" class="hint">读取当前版本…</div>
         <template v-else-if="status">
@@ -274,8 +275,8 @@ onMounted(() => {
         <p v-else-if="error" class="hint update-error">{{ error }}</p>
       </section>
 
-      <section class="settings-card update-pwa-card">
-        <h3>前端缓存（PWA）</h3>
+      <section id="setting-pwa" tabindex="-1" class="settings-card update-pwa-card" aria-labelledby="pwa-title">
+        <h3 id="pwa-title">前端缓存（PWA）</h3>
         <p class="hint">核对当前页面与服务器上的前端构建；如果安装的 PWA 还显示旧界面，用这里直接检查并切换。</p>
         <div class="update-row"><span>当前页面</span><code :title="pageBuildId">{{ currentBuildLabel }}</code></div>
         <div class="update-row"><span>服务器最新</span><code :title="latestBuild?.build_id">{{ latestBuildLabel }}</code></div>

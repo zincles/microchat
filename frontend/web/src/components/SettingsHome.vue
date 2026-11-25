@@ -1,32 +1,67 @@
 <script setup lang="ts">
-// 设置目录首页：MD3 单列设置列表（2026-11-22 用户定「像 Android 平板的设置」）。
-// 每行 = 图标 + 标题/说明 + 右箭头；八项依次排列，不做磁贴。
-import { VBtn } from "vuetify/components";
+import { computed, shallowRef, useTemplateRef } from "vue";
+import { VBtn, VTextField } from "vuetify/components";
 import { ICONS } from "../assets/icons.ts";
-import type { SettingsSection } from "../utils/format.ts";
+import { markdownTypes } from "../utils/prefs.ts";
+import { searchSettings, SETTINGS_GROUPS, type SettingsLocation } from "../utils/settingsCatalog.ts";
 
-defineProps<{ sections: SettingsSection[] }>();
-const emit = defineEmits<{ select: [id: string] }>();
+type Entry = SettingsLocation & { label: string; desc: string; icon: keyof typeof ICONS };
+const emit = defineEmits<{ select: [target: SettingsLocation] }>();
+const query = shallowRef("");
+const searchForm = useTemplateRef<HTMLFormElement>("searchForm");
+const searching = computed(() => !!query.value.trim());
+const results = computed(() => searchSettings(query.value, markdownTypes()));
+const directory = SETTINGS_GROUPS.map(({ label, pages }) => ({
+  label, entries: pages.map(({ id: page, ...entry }) => ({ page, ...entry })),
+}));
+const groups = computed<readonly { label: string; entries: readonly Entry[] }[]>(() => searching.value
+  ? [{ label: "搜索结果", entries: results.value }]
+  : directory);
 
-const chevron = ICONS.chevronRight;
-function iconOf(id: string): string {
-  return ICONS[id as keyof typeof ICONS] ?? ICONS.settings;
+let lastEntry: HTMLElement | null = null;
+function select(entry: SettingsLocation, event?: MouseEvent): void {
+  lastEntry = (event?.currentTarget as HTMLElement | null) ?? null;
+  emit("select", entry);
 }
+function selectFirst(): void {
+  if (results.value[0]) select(results.value[0]);
+}
+function clearSearch(event: KeyboardEvent): void {
+  if (!query.value) return;
+  event.stopPropagation();
+  query.value = "";
+}
+function restoreFocus(): void {
+  const entry = lastEntry?.isConnected ? lastEntry : searchForm.value?.querySelector("input");
+  entry?.focus();
+}
+defineExpose({ restoreFocus });
 </script>
 
 <template>
   <section id="settings-home" class="panel">
-    <ul class="settings-list settings-home-list" aria-label="设置类别">
-      <li v-for="s in sections" :key="s.id" class="settings-list-row">
-        <VBtn type="button" variant="text" class="settings-list-entry settings-home-row" :aria-label="s.label" @click="emit('select', s.id)">
-          <span class="settings-home-icon" aria-hidden="true" v-html="iconOf(s.icon)"></span>
-          <span class="settings-list-copy">
-            <strong>{{ s.label }}</strong>
-            <span class="settings-list-note">{{ s.desc }}</span>
-          </span>
-          <span class="settings-list-chevron" aria-hidden="true" v-html="chevron"></span>
-        </VBtn>
-      </li>
-    </ul>
+    <form ref="searchForm" class="settings-search" role="search" @submit.prevent="selectFirst">
+      <VTextField v-model="query" id="settings-query" type="search" variant="solo-filled" density="compact"
+        flat rounded="lg" hide-details aria-label="搜索设置" placeholder="搜索设置，例如：字号、回车、自动压缩"
+        @keydown.esc="clearSearch">
+        <template #prepend-inner><span class="settings-search-icon" aria-hidden="true" v-html="ICONS.search"></span></template>
+      </VTextField>
+    </form>
+    <section v-for="group in groups" :key="group.label" class="settings-directory-group">
+      <h3 class="settings-directory-label">{{ group.label }}</h3>
+      <p v-if="!group.entries.length" class="settings-list-note" role="status">没有找到匹配的设置。试试其他关键词。</p>
+      <ul v-else class="settings-list" :aria-label="group.label">
+        <li v-for="entry in group.entries" :key="entry.anchor ?? entry.page" class="settings-list-row">
+          <VBtn type="button" variant="text" class="settings-list-entry" :aria-label="entry.label" @click="select(entry, $event)">
+            <span class="settings-list-icon" aria-hidden="true" v-html="ICONS[entry.icon]"></span>
+            <span class="settings-list-copy">
+              <strong>{{ entry.label }}</strong>
+              <span class="settings-list-note">{{ entry.desc }}</span>
+            </span>
+            <span class="settings-list-chevron" aria-hidden="true" v-html="ICONS.chevronRight"></span>
+          </VBtn>
+        </li>
+      </ul>
+    </section>
   </section>
 </template>

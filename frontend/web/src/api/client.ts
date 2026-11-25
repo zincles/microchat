@@ -79,41 +79,44 @@ export const DEFAULT_API_URL = "http://127.0.0.1:8787/api/v1";
 
 export type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
-// mergeStreamSlice：把一次游标读并进（正文/思考）累积器 —— 流式轮询的唯一合并规则。
-// `slice.next < cur.from` = 游标回退（后端缓冲被新一轮重置）⇒ **清零重建**：
-// 返回空累积 + 游标归零，下一拍从 0 读回新缓冲的全部内容（不是"接着往后追加"——
-// 那样会把旧一轮的尾巴接在新一轮前面，且永远错过新缓冲开头）。
+// 每条流只接受覆盖本地游标的字节区间。旧帧不回退，重叠只补尾巴，缺口由调用方补读。
+// 同一轮的步骤身份由 status 判定，不从字节长度推测是不是换了一轮。
 // 正常情况：追加本段、游标推进到 slice.next/think_next。
 export function mergeStreamSlice(
   acc: StreamAccumulator,
   cur: StreamCursor,
   slice: StreamSlice,
 ): MergedStream {
-  const reset = slice.next < cur.from || slice.think_next < cur.thinkFrom;
-  if (reset) return { text: "", reasoning: "", cur: { from: 0, thinkFrom: 0 }, reset: true };
-  // 正文与思考各有独立游标：一个通道前进时，另一个通道可能只是重复回放。
-  // 不能只在“两枚游标都相同”时去重，否则思考流推进的那一帧会把重复正文再追加一次，反之亦然。
-  const mergeChannel = (
-    accText: string,
-    chunk: string | undefined,
-    next: number,
-    from: number,
-  ): string => {
-    if (next === from) return accText;
-    const value = chunk ?? "";
-    // SSE 重连从 0 重放整段：用字节游标确认后替换，而不是追加。
-    if (value && next > 0 && utf8Length(value) === next && value.startsWith(accText)) return value;
-    return accText + value;
-  };
+  const text = slice.text ?? "";
+  const thinking = slice.thinking ?? "";
+  const start = slice.from ?? (slice.next - utf8.encode(text).length);
+  const thinkStart = slice.think_from ?? (slice.think_next - utf8.encode(thinking).length);
+  if ((slice.next > cur.from && start > cur.from) || (slice.think_next > cur.thinkFrom && thinkStart > cur.thinkFrom)) {
+    return { text: acc.text, reasoning: acc.reasoning, cur, gap: true };
+  }
   return {
-    text: mergeChannel(acc.text, slice.text, slice.next, cur.from),
-    reasoning: mergeChannel(acc.reasoning, slice.thinking, slice.think_next, cur.thinkFrom),
-    cur: { from: slice.next, thinkFrom: slice.think_next },
-    reset: false,
+    text: slice.next <= cur.from ? acc.text : appendStreamRange(acc.text, text, start, cur.from),
+    reasoning: slice.think_next <= cur.thinkFrom ? acc.reasoning : appendStreamRange(acc.reasoning, thinking, thinkStart, cur.thinkFrom),
+    cur: { from: Math.max(cur.from, slice.next), thinkFrom: Math.max(cur.thinkFrom, slice.think_next) },
+    gap: false,
   };
 }
 
-const utf8Length = (text: string): number => new TextEncoder().encode(text).length;
+const utf8 = new TextEncoder();
+
+function appendStreamRange(prefix: string, chunk: string, start: number, cursor: number): string {
+  if (start === 0) return chunk; // 完整重放已覆盖旧前缀。
+  if (start === cursor) return prefix + chunk;
+  let remaining = cursor - start;
+  let index = 0;
+  for (const char of chunk) {
+    if (remaining <= 0) break;
+    const code = char.codePointAt(0)!;
+    remaining -= code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
+    index += char.length;
+  }
+  return prefix + chunk.slice(index);
+}
 
 // readJson：2xx/错误体都当 JSON 读；读不出来（如框架 405 的 text/plain）不炸成 SyntaxError ——
 // 错误面给 null（由 httpError 回退 `HTTP <status>`），成功面照旧原样抛（成功体必是 JSON，不许瞒）。

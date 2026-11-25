@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -554,23 +556,35 @@ func TestTurnPollCombinesStatusAndSlice(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("轮询该 200，得到 %d：%s", recorder.Code, recorder.Body.String())
 	}
-	var got struct {
-		Status struct {
-			Phase string `json:"phase"`
-		} `json:"status"`
-		Slice struct {
-			Next      int `json:"next"`
-			ThinkNext int `json:"think_next"`
-		} `json:"slice"`
-	}
+	var got TurnPoll
 	if err := json.Unmarshal(recorder.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if got.Status.Phase != string(turn.PhaseIdle) {
+	if got.Status.Phase != turn.PhaseIdle {
 		t.Fatalf("没有轮次时 phase 该是 idle，得到 %q", got.Status.Phase)
 	}
 	if got.Slice.Next != 0 || got.Slice.ThinkNext != 0 {
 		t.Fatalf("空轮次的游标该是 0，得到 %+v", got.Slice)
+	}
+
+	turns := box.server.chat.Turns
+	token, err := turns.Begin(box.sessionID, "reply", "run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !turns.NextStep(box.sessionID, token) ||
+		!turns.AppendContent(box.sessionID, token, "前🙂后") ||
+		!turns.AppendReasoning(box.sessionID, token, "思考") {
+		t.Fatal("写入第二步失败")
+	}
+	recorder = call(box.server, "GET", box.path+"/turn/poll?from=7&think_from=999", "")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("轮询该 200，得到 %d：%s", recorder.Code, recorder.Body.String())
+	}
+	got = decodeBody[TurnPoll](t, recorder)
+	want := turn.StreamSlice{Text: "后", From: 7, Next: 10, ThinkFrom: 6, ThinkNext: 6}
+	if got.Status.Step != 2 || got.Status.Chars != want.Next || got.Status.ThinkingChars != want.ThinkNext || got.Slice != want {
+		t.Fatalf("第二步的字节增量和状态不一致：%+v，想要 %+v", got, want)
 	}
 }
 
@@ -589,6 +603,156 @@ func TestTurnEventsSendsIdleEvent(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), "data: ") {
 		t.Fatalf("不是 SSE 帧：%s", recorder.Body.String())
+	}
+}
+
+type turnEventRecorder struct {
+	*httptest.ResponseRecorder
+	onEvent func()
+}
+
+func (r *turnEventRecorder) Flush() {
+	r.ResponseRecorder.Flush()
+	if r.Body.Len() != 0 {
+		r.onEvent()
+	}
+}
+
+// recordTurnEvents 用 flush 推进登记表或结束请求，不靠异步上游的时序造步号。
+func recordTurnEvents(t *testing.T, box *dummySandbox, query, lastID string, afterEvent func(int) bool) []string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	request := httptest.NewRequest("GET", box.path+"/turn/events"+query, nil).WithContext(ctx)
+	if lastID != "" {
+		request.Header.Set("Last-Event-ID", lastID)
+	}
+	events := 0
+	recorder := &turnEventRecorder{ResponseRecorder: httptest.NewRecorder(), onEvent: func() {
+		events++
+		if afterEvent == nil || afterEvent(events) {
+			cancel()
+		}
+	}}
+	box.server.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || events == 0 {
+		t.Fatalf("SSE 帧未送达：%d %s", recorder.Code, recorder.Body.String())
+	}
+	return strings.Split(strings.TrimSuffix(recorder.Body.String(), "\n\n"), "\n\n")
+}
+
+func decodeTurnEvent(t *testing.T, frame string) (string, TurnPoll) {
+	t.Helper()
+	idLine, data, ok := strings.Cut(frame, "\ndata: ")
+	id, hasID := strings.CutPrefix(idLine, "id:")
+	if !ok || !hasID {
+		t.Fatalf("SSE 帧无 id 或 data：%q", frame)
+	}
+	var got TurnPoll
+	if err := json.Unmarshal([]byte(data), &got); err != nil {
+		t.Fatalf("解 SSE 帧失败：%v（%s）", err, data)
+	}
+	return strings.TrimPrefix(id, " "), got
+}
+
+func TestTurnEventsResumesScopedCursor(t *testing.T) {
+	box := newDummySandbox(t)
+	turns := box.server.chat.Turns
+	token, err := turns.Begin(box.sessionID, "reply", "run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const textPrefix, thinkPrefix = "前🙂", "想"
+	if !turns.AppendContent(box.sessionID, token, textPrefix) || !turns.AppendReasoning(box.sessionID, token, thinkPrefix) {
+		t.Fatal("写入第一步失败")
+	}
+	firstID, _ := decodeTurnEvent(t, recordTurnEvents(t, box, "", "", nil)[0])
+	if want := fmt.Sprintf("reply:1:%d:7:3", token); firstID != want {
+		t.Fatalf("第一步游标 ID = %q，想要 %q", firstID, want)
+	}
+	if !turns.NextStep(box.sessionID, token) ||
+		!turns.AppendContent(box.sessionID, token, textPrefix) || !turns.AppendReasoning(box.sessionID, token, thinkPrefix) {
+		t.Fatal("写入第二步前缀失败")
+	}
+	secondID, _ := decodeTurnEvent(t, recordTurnEvents(t, box, "", "", nil)[0])
+	if !turns.AppendContent(box.sessionID, token, "后🚀") || !turns.AppendReasoning(box.sessionID, token, "到★") {
+		t.Fatal("写入第二步后缀失败")
+	}
+	const prefixQuery = "?from=7&think_from=3"
+	for _, test := range []struct {
+		name, lastID, query string
+		wantSuffix          bool
+	}{
+		{"matching", secondID, "?from=999&think_from=999", true},
+		{"query", "", prefixQuery, true},
+		{"stale step", firstID, prefixQuery, false},
+		{"stale message", strings.Replace(secondID, "reply:", "other:", 1), prefixQuery, false},
+		{"stale token", fmt.Sprintf("reply:2:%d:7:3", token+1), prefixQuery, false},
+		{"legacy", "7:3", prefixQuery, false},
+		{"invalid", secondID + ":0", prefixQuery, false},
+		{"negative offset", fmt.Sprintf("reply:2:%d:-1:3", token), prefixQuery, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			id, got := decodeTurnEvent(t, recordTurnEvents(t, box, test.query, test.lastID, nil)[0])
+			want := turn.StreamSlice{Text: "前🙂后🚀", Thinking: "想到★", Next: 14, ThinkNext: 9}
+			if test.wantSuffix {
+				want.Text, want.Thinking, want.From, want.ThinkFrom = "后🚀", "到★", 7, 3
+			}
+			wantID := fmt.Sprintf("reply:2:%d:14:9", token)
+			if id != wantID || got.Status.Step != 2 || got.Status.Chars != want.Next || got.Status.ThinkingChars != want.ThinkNext || got.Slice != want {
+				t.Fatalf("SSE = %q %+v，想要 %q 和第二步的增量 %+v", id, got, wantID, want)
+			}
+		})
+	}
+}
+
+func TestTurnEventsResetsCursorAtNextStep(t *testing.T) {
+	box := newDummySandbox(t)
+	turns := box.server.chat.Turns
+	token, err := turns.Begin(box.sessionID, "reply", "run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !turns.AppendContent(box.sessionID, token, "前文") {
+		t.Fatal("写入第一步失败")
+	}
+	frames := recordTurnEvents(t, box, "", "", func(event int) bool {
+		if event == 1 {
+			if !turns.NextStep(box.sessionID, token) || !turns.AppendContent(box.sessionID, token, "后文") {
+				t.Fatal("写入第二步失败")
+			}
+			return false
+		}
+		return true
+	})
+	if len(frames) != 2 {
+		t.Fatalf("应收到两个 SSE 帧，得到 %v", frames)
+	}
+	id, got := decodeTurnEvent(t, frames[1])
+	if id != fmt.Sprintf("reply:2:%d:6:0", token) || got.Status.Step != 2 || got.Slice != (turn.StreamSlice{Text: "后文", Next: 6}) {
+		t.Fatalf("打开的连接切到第二步时应从头读取：%q %+v", id, got)
+	}
+}
+
+func TestTurnEventsDoesNotResumeIntoReroll(t *testing.T) {
+	box := newDummySandbox(t)
+	turns := box.server.chat.Turns
+	token, err := turns.Begin(box.sessionID, "reply", "run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	turns.Finish(box.sessionID, token, "")
+	rerollToken, err := turns.BeginReroll(box.sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !turns.AppendContent(box.sessionID, rerollToken, "候选") || !turns.AppendReasoning(box.sessionID, rerollToken, "推理") {
+		t.Fatal("写入重摇候选失败")
+	}
+	id, got := decodeTurnEvent(t, recordTurnEvents(t, box, "", fmt.Sprintf("reply:1:%d:0:0", token), nil)[0])
+	if id != "" || got.Status.Phase != turn.PhaseIdle || got.Status.Chars != 0 || got.Status.ThinkingChars != 0 ||
+		!got.Status.Reroll.IsRunning() || got.Slice != (turn.StreamSlice{Done: true}) {
+		t.Fatalf("终止事件不该把候选当作历史生成：%q %+v", id, got)
 	}
 }
 

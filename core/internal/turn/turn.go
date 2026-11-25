@@ -92,13 +92,22 @@ type Status struct {
 	Reroll        *RerollStatus  `json:"reroll,omitempty"`
 }
 
-// StreamSlice：一次**游标读**的结果（正文与思考各一段 + 各自的新游标 + 这轮是否结束）。
+// StreamSlice：一次游标读的结果。正文与思考各有一对字节游标：[起点, 终点)。
 type StreamSlice struct {
 	Text      string `json:"text"`
+	From      int    `json:"from"`
 	Next      int    `json:"next"`
 	Thinking  string `json:"thinking"`
+	ThinkFrom int    `json:"think_from"`
 	ThinkNext int    `json:"think_next"`
 	Done      bool   `json:"done"`
+}
+
+// StreamScope 指认一份普通生成缓冲。Token 区分 FlowAgent 原地重新生成时重复使用的消息 ID。
+type StreamScope struct {
+	MessageID string
+	Step      int
+	Token     uint64
 }
 
 type entry struct {
@@ -146,6 +155,10 @@ func (r *Registry) lookup(id string) *entry { return r.entries[id] }
 func (r *Registry) Status(sessionID string) Status {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.statusLocked(sessionID, r.lookup(sessionID))
+}
+
+func (r *Registry) statusLocked(sessionID string, item *entry) Status {
 	status := Status{Phase: PhaseIdle}
 	if compact, ok := r.compactions[sessionID]; ok {
 		if compact.SummaryID != nil {
@@ -153,7 +166,6 @@ func (r *Registry) Status(sessionID string) Status {
 		}
 		status.Compact = &compact
 	}
-	item := r.lookup(sessionID)
 	if item == nil {
 		return status
 	}
@@ -436,21 +448,35 @@ func (r *Registry) append(sessionID string, token uint64, delta string, thinking
 func (r *Registry) StreamSince(sessionID string, from, thinkFrom int) StreamSlice {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	slice := StreamSlice{}
+	return streamSinceLocked(r.lookup(sessionID), from, thinkFrom)
+}
+
+// Snapshot 在同一把锁下读状态与字节增量；有续读身份时，只在原缓冲匹配时沿用游标。
+func (r *Registry) Snapshot(sessionID string, from, thinkFrom int, resume *StreamScope) (Status, StreamSlice, StreamScope) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	item := r.lookup(sessionID)
+	var scope StreamScope
+	if item != nil && item.messageID != nil && item.reroll == nil {
+		scope = StreamScope{MessageID: *item.messageID, Step: item.step, Token: item.token}
+	}
+	if resume != nil && *resume != scope {
+		from, thinkFrom = 0, 0
+	}
+	return r.statusLocked(sessionID, item), streamSinceLocked(item, from, thinkFrom), scope
+}
+
+func streamSinceLocked(item *entry, from, thinkFrom int) StreamSlice {
 	if item == nil {
-		return slice
+		return StreamSlice{}
 	}
 	text, thinking := item.text.String(), item.thinking.String()
-	slice.Next, slice.ThinkNext = len(text), len(thinking)
-	if from < len(text) {
-		slice.Text = text[from:]
+	from, thinkFrom = min(from, len(text)), min(thinkFrom, len(thinking))
+	return StreamSlice{
+		Text: text[from:], From: from, Next: len(text),
+		Thinking: thinking[thinkFrom:], ThinkFrom: thinkFrom, ThinkNext: len(thinking),
+		Done: !item.phase.IsBusy(),
 	}
-	if thinkFrom < len(thinking) {
-		slice.Thinking = thinking[thinkFrom:]
-	}
-	slice.Done = !item.phase.IsBusy()
-	return slice
 }
 
 // ThinkingOf / ThinkingMSOf：思考正文与用时（受理 → 第一段正文）—— 落档时要用。

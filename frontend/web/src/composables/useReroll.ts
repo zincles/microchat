@@ -25,7 +25,7 @@ export interface RerollDeps {
   toast: (text: string, kind?: string) => void;
   getSessionID: () => string | null;
   getEpoch: () => number;
-  isFlow: () => boolean;
+  canRerollMessage: () => boolean | Promise<boolean>;
   isWindowLoading: () => boolean;
   getLastMsgId: () => string | null;
   vueSegments: Ref<ChatSegment[]>;
@@ -64,7 +64,7 @@ interface PendingCandidate {
 }
 
 export function useReroll({
-  api, toast, getSessionID, getEpoch, isWindowLoading, isFlow, getLastMsgId, vueSegments, streamDisplay,
+  api, toast, getSessionID, getEpoch, canRerollMessage, isWindowLoading, getLastMsgId, vueSegments, streamDisplay,
   setStreamTarget, resetTypewriter, waitTypewriter, refreshStatusline, refreshTasks, reloadWindow,
   onVersionWritten, refreshStateView,
 }: RerollDeps): Reroll {
@@ -159,7 +159,8 @@ export function useReroll({
       let state = initial;
       if (!state?.active) {
         const [message, summary] = await Promise.all([
-          isFlow() ? emptyReroll() : api.rerollState(sid),
+          Promise.resolve(canRerollMessage()).then((allowed) =>
+            allowed && owns() ? api.rerollState(sid) : emptyReroll()),
           api.rerollSummaryState(sid),
         ]);
         state = message.running ? message : summary.running ? summary : message.active ? message : summary;
@@ -248,8 +249,13 @@ export function useReroll({
 
   async function rerollNow(targetId: string | null = null): Promise<void> {
     const sid = getSessionID();
+    const epoch = getEpoch();
     const target = targetId || getLastMsgId();
-    if (sid && target && !isFlow()) await begin(sid, "message", target, () => api.rerollEnter(sid));
+    if (!sid || !target) return;
+    const allowed = canRerollMessage();
+    if ((typeof allowed === "boolean" ? allowed : await allowed) && getEpoch() === epoch) {
+      await begin(sid, "message", target, () => api.rerollEnter(sid));
+    }
   }
 
   async function summaryRefresh(sumId: string): Promise<void> {

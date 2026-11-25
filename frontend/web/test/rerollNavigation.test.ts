@@ -19,27 +19,29 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function harness() {
+function harness(canRerollMessage: (id: string) => boolean | Promise<boolean> = () => true) {
   let sid = "a", epoch = 0;
   let state: RerollState = emptyReroll();
   let archived = "原文";
   let output = deferred<void>();
   const accepted = deferred<RerollAccepted>();
   const versionWrites: Array<[string, number]> = [];
+  const stateReads: Array<[string, string]> = [];
+  const messageEntries: string[] = [];
   const streamDisplay = ref({ text: "", reasoning: "" });
   const scope = effectScope();
   const view = scope.run(() => useReroll({
     api: {
-      rerollState: async (id) => id === "a" ? state : emptyReroll(),
-      rerollSummaryState: async () => emptyReroll(),
-      rerollEnter: () => accepted.promise,
+      rerollState: async (id) => { stateReads.push(["message", id]); return id === "a" ? state : emptyReroll(); },
+      rerollSummaryState: async (id) => { stateReads.push(["summary", id]); return emptyReroll(); },
+      rerollEnter: (id) => { messageEntries.push(id); return accepted.promise; },
       rerollSummaryEnter: async () => { throw new Error("不是摘要重摇"); },
       rerollSummarySwitch: async () => { throw new Error("不是摘要切版"); },
       rerollSwitch: async (id, idx) => { versionWrites.push([id, idx]); archived = `第 ${idx} 版的归档`; return { ...state, current_idx: idx }; },
-      turnText: async () => ({ text: "还在生成的字", next: 6, thinking: "", think_next: 0, done: false }),
+      turnText: async () => ({ text: "还在生成的字", from: 0, next: 18, thinking: "", think_from: 0, think_next: 0, done: false }),
     },
     toast: (message) => assert.fail(message),
-    getSessionID: () => sid, getEpoch: () => epoch, getLastMsgId: () => "reply", isFlow: () => false, isWindowLoading: () => false,
+    getSessionID: () => sid, getEpoch: () => epoch, getLastMsgId: () => "reply", canRerollMessage: () => canRerollMessage(sid), isWindowLoading: () => false,
     vueSegments: ref([]), streamDisplay,
     setStreamTarget: (text, reasoning) => { streamDisplay.value = { text, reasoning }; output.resolve(); },
     resetTypewriter: () => { streamDisplay.value = { text: "", reasoning: "" }; },
@@ -51,7 +53,7 @@ function harness() {
     return view.refreshRerolls();
   };
   const row = (): AppRow => ({ id: "reply", messageId: "reply", role: "assistant", content: archived });
-  return { view, accepted, versionWrites, row, changeView, setState: (s: RerollState) => { state = s; }, waitForText: () => output.promise, close: () => scope.stop() };
+  return { view, accepted, versionWrites, stateReads, messageEntries, row, changeView, setState: (s: RerollState) => { state = s; }, waitForText: () => output.promise, close: () => scope.stop() };
 }
 
 test("重摇切出再切回：恢复流文字，只应用原会话新生成的那一版", async (t) => {
@@ -93,5 +95,35 @@ test("切出时才收到重摇受理，但后台取消：回来后不换到已�
   await h.changeView("a");
   assert.deepEqual(h.versionWrites, []);
   assert.equal(h.view.rerollState.value.current_idx, 1);
+  assert.equal(h.view.bubbleContent(h.row()), "原文");
+});
+
+test("助手类型未加载时只问摘要；认出 FlowAgent 后不请求消息重摇", async (t) => {
+  const agent = deferred<boolean>();
+  const h = harness((id) => id === "a" ? agent.promise : true);
+  t.after(h.close);
+  const refresh = h.view.refreshRerolls();
+  const enter = h.view.rerollNow("reply");
+  assert.deepEqual(h.stateReads, [["summary", "a"]]);
+  assert.deepEqual(h.messageEntries, []);
+  agent.resolve(false);
+  await Promise.all([refresh, enter]);
+  assert.deepEqual(h.stateReads, [["summary", "a"]]);
+  assert.deepEqual(h.messageEntries, []);
+  await h.changeView("b");
+  assert.deepEqual(h.stateReads, [["summary", "a"], ["summary", "b"], ["message", "b"]]);
+});
+
+test("等待助手类型时切走，迟到的传统助手判定不请求旧会话", async (t) => {
+  const agent = deferred<boolean>();
+  const h = harness((id) => id === "a" ? agent.promise : false);
+  t.after(h.close);
+  const refresh = h.view.refreshRerolls();
+  const enter = h.view.rerollNow("reply");
+  await h.changeView("b");
+  agent.resolve(true);
+  await Promise.all([refresh, enter]);
+  assert.deepEqual(h.stateReads, [["summary", "a"], ["summary", "b"]]);
+  assert.deepEqual(h.messageEntries, []);
   assert.equal(h.view.bubbleContent(h.row()), "原文");
 });

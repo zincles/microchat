@@ -608,7 +608,10 @@ const {
   toast,
   getSessionID: () => sessionID,
   getEpoch: () => epoch,
-  isFlow: () => currentAgentIsFlow.value,
+  canRerollMessage: () => currentAgent.value
+    ? !currentAgentIsFlow.value
+    // 冷进入时助手列表和消息窗口并行；类型未明不能当作传统助手。
+    : refreshAgents().then(() => vueAgents.value.length > 0 && !currentAgentIsFlow.value),
   isWindowLoading: () => loadingSession.value,
   getLastMsgId: () => lastMsgId.value,
   vueSegments,
@@ -1576,6 +1579,8 @@ onUnmounted(() => {
             size="small"
             @click="loadMore().catch((err) => toast(`加载更多失败：${errText(err)}`, 'error'))"
           >↑ 加载更多历史（还有 {{ olderSegments }} 段）</VBtn>
+          <Transition name="session-reveal">
+          <div v-if="!loadingSession" class="session-transcript">
           <AnswerTranscript :rows="chatRows" :live-text="streamDisplay.text" :window-from="windowFrom" :rerolling-id="rerollingId">
             <template #summary="{ row, readingKey }">
             <SummaryCard
@@ -1634,6 +1639,8 @@ onUnmounted(() => {
             <VBtn icon type="button" variant="text" size="small"
               title="续写（按现有历史生成下一条回复）" aria-label="续写" @click="continueTurn" v-html="ICONS.messagePlus" />
           </div>
+          </div>
+          </Transition>
           </div>
         </main>
         <span class="d-sr-only" role="status">{{ loadingSession ? '正在加载对话' : '' }}</span>

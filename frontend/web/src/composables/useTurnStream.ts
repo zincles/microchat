@@ -86,7 +86,7 @@ export function useTurnStream({
   function advanceLiveStep(sid: string, my: number, st: TurnStatus, row: AppRow): boolean {
     if (st.run_id) row.run_id = st.run_id;
     const step = st.step;
-    if (!step || step === row.step) return false;
+    if (!step || (row.step ?? 0) >= step) return false;
     const previous = vueStream.value;
     const at = vueMessages.value.indexOf(row);
     if (at >= 0 && row.step && (previous.text || previous.reasoning || row.tool || row.sources?.length)) {
@@ -105,61 +105,55 @@ export function useTurnStream({
     return true;
   }
 
-  function applyTurnStream(st: TurnStatus, slice: StreamSlice, cur: StreamCursor, row: AppRow): StreamCursor {
+  function applyTurnStream(st: TurnStatus, slice: StreamSlice, cur: StreamCursor, row: AppRow): boolean {
+    const merged = mergeStreamSlice(vueStream.value, cur, slice);
+    if (merged.gap) return false;
     row.tool = st.tool ?? null;
     row.sources = st.sources ?? [];
     if (row.tool || row.sources.length) row.kind = "tool_run";
-    const merged = mergeStreamSlice(
-      { text: vueStream.value.text ?? "", reasoning: vueStream.value.reasoning ?? "" }, cur, slice);
+    cur.from = merged.cur.from;
+    cur.thinkFrom = merged.cur.thinkFrom;
     vueStream.value.text = merged.text;
     vueStream.value.reasoning = merged.reasoning;
     setStreamTarget(merged.text, merged.reasoning);
     row.reasoning = merged.reasoning;
     refreshStatusline(st.phase, st.elapsed_ms, { withContext: false });
-    return merged.cur;
+    return true;
   }
 
-  async function pollTurnEvents(sid: string, turnID: string | undefined, my: number, row: AppRow): Promise<TurnStatus | null | undefined> {
-    let cur: StreamCursor = { from: 0, thinkFrom: 0 };
-    const sources: EventSource[] = [];
+  async function pollTurnEvents(sid: string, turnID: string | undefined, my: number, row: AppRow, cur: StreamCursor): Promise<TurnStatus | null | undefined> {
+    const source = new EventSource(api.turnEventsUrl(sid, cur.from, cur.thinkFrom));
+    let watchdog: ReturnType<typeof setTimeout> | undefined;
     try {
       return await new Promise((resolve, reject) => {
-        let got = false;
-        const watchdog = setTimeout(() => {
-          if (got) return;
-          sources.forEach((source) => source.close());
-          reject(new Error("SSE 连接超时"));
-        }, 8000);
-        const source = new EventSource(api.turnEventsUrl(sid, 0, 0));
-        sources.push(source);
+        watchdog = setTimeout(() => reject(new Error("SSE 连接超时")), 8000);
         source.onmessage = (event) => {
-          got = true;
-          clearTimeout(watchdog);
-          if (my !== getEpoch()) { source.close(); resolve(null); return; }
+          if (my !== getEpoch()) { resolve(null); return; }
           let poll: TurnPoll;
           try { poll = JSON.parse(event.data) as TurnPoll; } catch { return; }
-          const st = poll.status;
-          const slice = poll.slice;
+          const { status: st, slice } = poll;
           if (!st || !slice) return;
-          if (turnID && st.message_id && st.message_id !== turnID) { source.close(); resolve(null); return; }
-          if (advanceLiveStep(sid, my, st, row)) cur = { from: 0, thinkFrom: 0 };
-          cur = applyTurnStream(st, slice, cur, row);
-          if (st.phase === "idle" || st.phase === "error") {
-            source.close(); resolve(st);
-          }
+          clearTimeout(watchdog);
+          if (turnID && st.message_id && st.message_id !== turnID) { resolve(null); return; }
+          if (st.step && row.step && st.step < row.step) return;
+          if (advanceLiveStep(sid, my, st, row)) cur.from = cur.thinkFrom = 0;
+          const applied = applyTurnStream(st, slice, cur, row);
+          if (st.phase === "idle" || st.phase === "error") resolve(st);
+          // 浏览器记录的是收到的事件 ID，不是应用实际消费的位置；有缺口就用本地游标补读。
+          else if (!applied) resolve(undefined);
         };
         source.onerror = () => {
-          // EventSource 自己会带 Last-Event-ID 重连；这里不关它。
-          // 如果从未收到过事件，watchdog 会兜底切 HTTP。
+          // 临时断线由 EventSource 带 Last-Event-ID 重连；不能重连时用同一游标回退 HTTP。
+          if (source.readyState === EventSource.CLOSED) resolve(undefined);
         };
       });
     } finally {
-      sources.forEach((source) => source.close());
+      clearTimeout(watchdog);
+      source.close();
     }
   }
 
-  async function pollTurnHTTP(sid: string, turnID: string | undefined, my: number, row: AppRow): Promise<void> {
-    let cur: StreamCursor = { from: 0, thinkFrom: 0 };
+  async function pollTurnHTTP(sid: string, turnID: string | undefined, my: number, row: AppRow, cur: StreamCursor): Promise<void> {
     let misses = 0;
     let delay = 200;
     for (;;) {
@@ -179,13 +173,14 @@ export function useTurnStream({
       delay = Math.max(80, 300 - (performance.now() - requestAt));
       if (my !== getEpoch()) return;
       const st = poll.status;
+      if (st.step && row.step && st.step < row.step) continue;
       if (advanceLiveStep(sid, my, st, row)) {
         const fromPrevious = cur.from !== 0 || cur.thinkFrom !== 0;
-        cur = { from: 0, thinkFrom: 0 };
+        cur.from = cur.thinkFrom = 0;
         // HTTP 的这一拍是按旧游标取的；不要把新步的半截尾巴当成全文。
         if (fromPrevious && (st.phase === "pending" || st.phase === "streaming")) continue;
       }
-      cur = applyTurnStream(st, poll.slice, cur, row);
+      applyTurnStream(st, poll.slice, cur, row);
       if (st.phase === "idle" || st.phase === "error") {
         await onTurnFinished(sid, st);
         return;
@@ -210,11 +205,12 @@ export function useTurnStream({
     resetTypewriter();
     composerRef.value?.setRunning(true);
     refreshStatusline("pending");
+    const cur: StreamCursor = { from: 0, thinkFrom: 0 };
     try {
       let finalStatus: TurnStatus | null | undefined;
       if (typeof EventSource === "function") {
         try {
-          finalStatus = await pollTurnEvents(sid, turnID, my, m);
+          finalStatus = await pollTurnEvents(sid, turnID, my, m, cur);
         } catch {
           finalStatus = undefined; // SSE 没起来，走下面的 HTTP 回退
         }
@@ -223,7 +219,7 @@ export function useTurnStream({
       if (finalStatus) {
         await onTurnFinished(sid, finalStatus);
       } else {
-        await pollTurnHTTP(sid, turnID, my, m);
+        await pollTurnHTTP(sid, turnID, my, m, cur);
       }
     } finally {
       if (activeTurnPolls.get(sid) === my) activeTurnPolls.delete(sid);

@@ -686,6 +686,11 @@ func (s *Service) StreamSince(sessionID string, from, thinkFrom int) turn.Stream
 	return s.Turns.StreamSince(sessionID, from, thinkFrom)
 }
 
+// Snapshot：同时读取这一轮的状态、增量和缓冲身份。
+func (s *Service) Snapshot(sessionID string, from, thinkFrom int, resume *turn.StreamScope) (turn.Status, turn.StreamSlice, turn.StreamScope) {
+	return s.Turns.Snapshot(sessionID, from, thinkFrom, resume)
+}
+
 // Stop：按停这一轮（摘登记 + abort 后台任务）。**幂等**：没在跑也回 false。
 func (s *Service) Stop(sessionID string) bool { return s.Turns.Stop(sessionID) }
 

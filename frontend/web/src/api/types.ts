@@ -149,8 +149,11 @@ export interface Accepted {
 
 export interface StreamSlice {
   text: string;
+  /** 服务端实际读取的 UTF-8 字节起点；旧服务端没有这一项。 */
+  from?: number;
   next: number;
   thinking: string;
+  think_from?: number;
   think_next: number;
   done: boolean;
 }
@@ -169,7 +172,7 @@ export interface MergedStream {
   text: string;
   reasoning: string;
   cur: StreamCursor;
-  reset: boolean;
+  gap: boolean;
 }
 
 export interface TurnPoll {

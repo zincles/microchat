@@ -1,10 +1,6 @@
 <script setup lang="ts">
-// 设置**视图**（2026-10-10 起与对话同级，不再是弹窗 —— OpenWebUI 那种）：占满左栏右边的整块区域，
-// 自带小头（[◧] 左栏开关 · 设置 · [×] 返回对话）。子编辑器（Agent/Provider）改为对应 tab 内的二级页（列表 ⇄ 详情就地切换）。
-// 「外观」那族的个人偏好（主题/缩放/背景图/发送键/预演）住在**本视图的「外观」区**
-//（2026-11-01 从删掉的用户视图整块搬进来，由 `AppearancePane.vue` 渲染）。
-// 关走 close（Esc/×）—— 视图不卸载就丢状态的口径照旧：v-if 挂载，进视图拉一次。
-import { ref, computed, watch, onMounted, onUnmounted } from "vue";
+// 设置与聊天同级。目录负责查找，具体子页负责编辑与保存；渠道、智能体与更新也可以直接进入。
+import { ref, computed, nextTick, useTemplateRef, watch, onMounted, onUnmounted } from "vue";
 import { VTab, VTabs, VTabsWindow, VTabsWindowItem, VSwitch, VBtn, VTextField, VSelect, VTable, VMenu, VList, VListItem } from "vuetify/components";
 import AgentEditor from "./AgentEditor.vue";
 import AppearancePane from "./AppearancePane.vue";
@@ -21,8 +17,9 @@ import SettingsBack from "./SettingsBack.vue";
 import CloseButton from "./CloseButton.vue";
 import { ICONS } from "../assets/icons.ts";
 import { sharedApi } from "../utils/prefs.ts";
-import { SETTINGS_SECTIONS, groupModelsByProvider, modelOption, providerChoices, modelChoicesFor, modelKey, parseModelKey, providerDisplayName, sessionTitle } from "../utils/format.ts";
+import { groupModelsByProvider, modelOption, providerChoices, modelChoicesFor, modelKey, parseModelKey, providerDisplayName, sessionTitle } from "../utils/format.ts";
 import type { ModelGroup } from "../utils/format.ts";
+import { SETTINGS_SECTIONS, type SettingsLocation } from "../utils/settingsCatalog.ts";
 import { downloadJSON, downloadBlob } from "../utils/download.ts";
 import { cartridgeAgent } from "../utils/cartridge.ts";
 import type { Agent, ChatConfig, DefaultsConfig, ProviderView, Segment, SessionView, TavernPreset } from "../api/types.ts";
@@ -70,8 +67,9 @@ const api = sharedApi();
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 const leftSvg = ICONS.panelLeft;
 
-// 设置目录 + 八个子区（聊天 / 会话 / 智能体 / 提示词 / 外观 / 输入 / 酒馆 / 更新）。
-// 「渠道 / 智能体 / 更新」仍是独立入口，直接落到对应页；完整设置先看目录。
+const settingsHome = useTemplateRef<InstanceType<typeof SettingsHome>>("settingsHome");
+const settingsTitle = useTemplateRef<HTMLHeadingElement>("settingsTitle");
+const settingsBody = useTemplateRef<HTMLDivElement>("settingsBody");
 const tab = ref(props.only || "home");
 // 单独入口的页头文字；空串 = 完整设置（从目录进）。
 const onlyTitle = computed(() => (props.only === "provider" ? "渠道管理"
@@ -86,9 +84,12 @@ const activeTitle = computed(() => {
 });
 watch(() => props.only, (v) => { tab.value = v || "home"; });
 const chat = ref<ChatForm>({ title_chars: "", title_model: "", model_context_tokens: "", history_window: "", compact_blocks: "", compact_trigger_tokens: "", replay_reasoning: false, auto_compact: true });
-const chatStatus = ref("");
+const chatStatus = ref({ context: "", generation: "" });
+const chatReady = ref(false);
+const savingChat = ref(false);
 const defaults = ref<DefaultsConfig>({ provider: "", model: "", agent: "" });
 const defStatus = ref("");
+const defaultsReady = ref(false);
 const agents = ref<Agent[]>([]);
 const segmentsLib = ref<Segment[]>([]); // 提示词段库（随 GET /agents 一起给）
 const curDefault = ref("");
@@ -155,6 +156,30 @@ const titleModelOptions = computed<Array<{ value: string; label: string }>>(() =
 const editProvider = ref<ProviderView | "new" | null>(null); // null | 'new' | provider（二级编辑器）
 // 渠道页本身也分两页：列表 / 全局模型规则（后者与列表同级，不塞进单个渠道的详情）。
 const providerTab = ref<"list" | "global">("list");
+
+async function openSetting({ page, anchor }: SettingsLocation): Promise<void> {
+  if (anchor === "global-model-rules") {
+    editProvider.value = null;
+    providerTab.value = "global";
+  }
+  tab.value = page;
+  await nextTick();
+  if (tab.value !== page) return;
+  const body = settingsBody.value;
+  if (body) body.scrollTop = 0;
+  const target = anchor && body?.querySelector<HTMLElement>(`#setting-${CSS.escape(anchor)}`);
+  if (target) {
+    target.scrollIntoView({ block: "center", inline: "nearest" });
+    target.focus({ preventScroll: true });
+  } else {
+    settingsTitle.value?.focus({ preventScroll: true });
+  }
+}
+async function backToDirectory(): Promise<void> {
+  tab.value = "home";
+  await nextTick();
+  if (tab.value === "home") settingsHome.value?.restoreFocus();
+}
 const routesStatus = ref("");
 
 async function loadChat(): Promise<void> {
@@ -170,45 +195,50 @@ async function loadChat(): Promise<void> {
       replay_reasoning: !!c.replay_reasoning,
       auto_compact: !!c.auto_compact, // 缺字段 = 关（与后端同一口径；这套未经验证，默认不开）
     };
-  } catch {}
+    chatReady.value = true;
+  } catch (e) {
+    const message = `读取对话设置失败：${errMsg(e)}`;
+    chatStatus.value = { context: message, generation: message };
+  }
 }
-async function saveChat(): Promise<void> {
+async function saveChat(section: "context" | "generation"): Promise<void> {
+  if (!chatReady.value || savingChat.value) return;
   const num = (v: unknown): number | undefined => (String(v ?? "").trim() === "" ? undefined : Number(v));
-  const body: Partial<ChatConfig> = {};
-  const t = num(chat.value.title_chars);
-  const m = num(chat.value.model_context_tokens);
-  const b = num(chat.value.compact_blocks);
-  const hw = num(chat.value.history_window);
-  if (t !== undefined) body.title_chars = t;
-  if (m !== undefined) body.model_context_tokens = m;
-  if (b !== undefined) body.compact_blocks = b;
-  if (hw !== undefined) body.history_window = hw;
-  const titleModel = parseModelKey(chat.value.title_model ?? "");
-  const cur = await api.getChat().catch(() => null);
-  if (!cur) { chatStatus.value = "保存失败：拿不到当前配置"; return; }
-  const fullBody: ChatConfig = {
-    ...cur, ...body,
-    title_provider: titleModel?.provider ?? "",
-    title_model: titleModel?.model ?? "",
-    replay_reasoning: !!chat.value.replay_reasoning,
-    auto_compact: !!chat.value.auto_compact,
-  };
-  if (String(chat.value.compact_trigger_tokens ?? "").trim() === "") delete fullBody.compact_trigger_tokens;
-  else fullBody.compact_trigger_tokens = Number(chat.value.compact_trigger_tokens);
+  const form = { ...chat.value };
+  savingChat.value = true;
   try {
-    await api.putChat(fullBody);
-    chatStatus.value = "已保存";
+    const body: ChatConfig = await api.getChat();
+    if (section === "context") {
+      body.model_context_tokens = num(form.model_context_tokens) ?? body.model_context_tokens;
+      body.history_window = num(form.history_window) ?? body.history_window;
+      body.compact_blocks = num(form.compact_blocks) ?? body.compact_blocks;
+      body.auto_compact = form.auto_compact;
+      const trigger = num(form.compact_trigger_tokens);
+      if (trigger === undefined) delete body.compact_trigger_tokens;
+      else body.compact_trigger_tokens = trigger;
+    } else {
+      const model = parseModelKey(form.title_model);
+      body.title_chars = num(form.title_chars) ?? body.title_chars;
+      body.title_provider = model?.provider ?? "";
+      body.title_model = model?.model ?? "";
+      body.replay_reasoning = form.replay_reasoning;
+    }
+    await api.putChat(body);
+    chatStatus.value[section] = "已保存";
     emit("chat-saved");
-  } catch (e) { chatStatus.value = `保存失败：${errMsg(e)}`; }
+  } catch (e) { chatStatus.value[section] = `保存失败：${errMsg(e)}`; }
+  finally { savingChat.value = false; }
 }
 
 async function loadDefaults(): Promise<void> {
   try {
     const d = await api.getDefaults();
     defaults.value = { provider: d.provider ?? "", model: d.model ?? "", agent: d.agent ?? "" };
-  } catch {}
+    defaultsReady.value = true;
+  } catch (e) { defStatus.value = `读取默认值失败：${errMsg(e)}`; }
 }
 async function saveDefaults(): Promise<void> {
+  if (!defaultsReady.value) return;
   try {
     await api.putDefaults({ ...defaults.value });
     defStatus.value = "已保存";
@@ -507,7 +537,7 @@ function onKey(e: KeyboardEvent): void {
 <template>
   <section id="settings-view" :class="{ 'flow-agent-open': agentFlowOpen }">
     <div class="settings-bar">
-      <SettingsBack v-if="!only && tab !== 'home'" label="返回设置目录" @back="tab = 'home'" />
+      <SettingsBack v-if="!only && tab !== 'home'" label="返回设置目录" @back="backToDirectory" />
       <VBtn
         v-else
         variant="text"
@@ -518,11 +548,11 @@ function onKey(e: KeyboardEvent): void {
         @click="$emit('toggle-left')"
         v-html="leftSvg"
       ></VBtn>
-      <h2 class="settings-title">{{ activeTitle }}</h2>
+      <h2 ref="settingsTitle" class="settings-title" tabindex="-1">{{ activeTitle }}</h2>
       <CloseButton id="settings-close" label="退出设置" title="退出设置（Esc）" @click="$emit('close')" />
     </div>
 
-    <div class="settings-body">
+    <div ref="settingsBody" class="settings-body">
       <div class="settings-box">
         <div class="settings-cols">
         <!-- 会话/渠道是**页面切换**，不是设置页签：key 随 only 变 ⇒ 重挂载、不跑 tab 滑入。
@@ -530,13 +560,11 @@ function onKey(e: KeyboardEvent): void {
              （2026-11-06 用户报「有 Tab 效果，而且顺序是错的」）。 -->
         <VTabsWindow v-model="tab" :key="props.only || 'settings'" class="settings-window">
         <VTabsWindowItem v-if="!only" value="home">
-          <SettingsHome :sections="SETTINGS_SECTIONS" @select="tab = $event" />
+          <SettingsHome ref="settingsHome" @select="openSetting" />
         </VTabsWindowItem>
-        <VTabsWindowItem value="chat">
-        <section id="panel-chat" class="panel">
-          <p class="settings-lead">
-            这里管<b>所有会话共用</b>的默认值与上下文策略；单条会话的模型、智能体与提示词在顶栏或左栏「会话选项」里改。
-          </p>
+        <VTabsWindowItem value="defaults">
+        <section id="panel-defaults" class="panel">
+          <p class="settings-lead">只影响以后新建的会话；已有会话在对话顶栏或会话选项里修改。</p>
 
           <section class="settings-card">
           <h3>新会话默认</h3>
@@ -545,55 +573,130 @@ function onKey(e: KeyboardEvent): void {
                「填错不会报错，只会在发送时回落成『未配置模型』」—— 那是把校验推给用户。
                现在能选出来的都真实存在；当前值即使不在列表里（渠道被删、手改过配置文件、
                或 dummy 这种永远发现不到模型的渠道）也会补一条并标明，**不许**静默丢掉。 -->
-          <label class="field"><span>渠道</span><VSelect :model-value="defaults.provider" :items="providerSelectOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details @update:model-value="onDefaultProviderChange" /></label>
-          <label class="field"><span>模型</span><VSelect v-model="defaults.model" :items="modelSelectOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
-          <label class="field"><span>智能体</span><VSelect v-model="defaults.agent" :items="agentSelectOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
+          <label id="setting-default-provider" tabindex="-1" class="field"><span>默认渠道</span><VSelect :model-value="defaults.provider" :items="providerSelectOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details @update:model-value="onDefaultProviderChange" /></label>
+          <label id="setting-default-model" tabindex="-1" class="field"><span>默认模型</span><VSelect v-model="defaults.model" :items="modelSelectOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
+          <label id="setting-default-agent" tabindex="-1" class="field"><span>默认智能体</span><VSelect v-model="defaults.agent" :items="agentSelectOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
           <p class="hint" v-if="!modelOpts.length">这个渠道还没有拉到任何模型 —— 可以先留空用内置默认，或去「渠道」里点「保存并刷新」。</p>
           <p class="hint">留空 = 内置默认（本地示例模型，不联网，开箱就能回话）。</p>
           <div class="row action-row">
-            <VBtn color="primary" variant="flat" size="small" type="button" @click="saveDefaults">保存默认值</VBtn>
-            <span class="action-note">只影响之后新建的会话，不改已有会话。</span>
+            <VBtn color="primary" variant="flat" size="small" type="button" :disabled="!defaultsReady" @click="saveDefaults">保存默认值</VBtn>
             <span class="status">{{ defStatus }}</span>
           </div>
           </section>
+        </section>
+        </VTabsWindowItem>
+        <VTabsWindowItem value="appearance">
+          <AppearancePane section="appearance" @prefs-saved="emit('prefs-saved')" />
+        </VTabsWindowItem>
+        <VTabsWindowItem value="input">
+          <AppearancePane section="input" @prefs-saved="emit('prefs-saved')" />
+        </VTabsWindowItem>
+        <VTabsWindowItem value="context">
+        <section id="panel-context" class="panel">
+          <p class="settings-lead">调整消息加载、模型的输入预算以及自动压缩策略。</p>
 
           <section class="settings-card">
           <h3>上下文与加载</h3>
           <p class="hint">决定模型一次能带多少历史，以及消息列一次拉多少；不改变模型自己的上限。</p>
-          <label class="field"><span>上下文长度（token）</span><VTextField density="compact" variant="outlined" hide-details v-model="chat.model_context_tokens" type="number" min="1" /></label>
+          <label id="setting-context-length" tabindex="-1" class="field"><span>上下文长度（token）</span><VTextField density="compact" variant="outlined" hide-details v-model="chat.model_context_tokens" type="number" min="1" /></label>
           <!-- 为什么右上角那枚环的分母常常比这里小：它是**输入预算** = 上下文 − 给回复留的输出额度。
                移动端没有 hover，所以这句话必须写在这儿（不能只藏在环的 title 里）。 -->
           <p class="hint">右上角那枚环显示的是<b>还能输入多少</b>：这里填的上下文长度减去给回复预留的空间。填 1000000 时通常显示 995904。</p>
-          <label class="field"><span>首屏加载多少条消息</span><VTextField density="compact" variant="outlined" hide-details v-model="chat.history_window" type="number" min="1" placeholder="留空 = 5" /></label>
+          <label id="setting-history-window" tabindex="-1" class="field"><span>首屏加载条数</span><VTextField density="compact" variant="outlined" hide-details v-model="chat.history_window" type="number" min="1" placeholder="留空 = 5" /></label>
           <p class="hint">按消息段计数（一条消息或一张顶层摘要卡）；「加载更多」每页同样数量。远程部署时调小可减少首屏等待。</p>
           </section>
 
           <section class="settings-card">
           <h3>自动压缩</h3>
           <p class="hint">上下文快满时把较早的对话压成摘要；原文仍保留在会话里，撤销压缩可恢复。</p>
-          <label class="field"><span>启用自动压缩</span><VSwitch v-model="chat.auto_compact" color="primary" density="compact" hide-details /></label>
+          <label id="setting-auto-compact" tabindex="-1" class="field"><span>启用自动压缩</span><VSwitch v-model="chat.auto_compact" color="primary" density="compact" hide-details /></label>
           <p class="hint">达到触发线就后台压缩，压到输入预算的 50% 以下停；关闭后只能手动压缩。</p>
-          <label class="field"><span>每次压缩块数</span><VTextField density="compact" variant="outlined" hide-details v-model="chat.compact_blocks" type="number" min="1" placeholder="留空 = 3" /></label>
+          <label id="setting-compact-blocks" tabindex="-1" class="field"><span>每次压缩块数</span><VTextField density="compact" variant="outlined" hide-details v-model="chat.compact_blocks" type="number" min="1" placeholder="留空 = 3" /></label>
           <p class="hint">块 = 一段完整对话；一次压几个块。默认 3，小步快跑更容易保持细节。</p>
-          <label class="field"><span>触发阈值（token）</span><VTextField density="compact" variant="outlined" hide-details v-model="chat.compact_trigger_tokens" type="number" min="1" placeholder="留空 = 输入预算的 80%" /></label>
+          <label id="setting-compact-trigger" tabindex="-1" class="field"><span>压缩触发阈值（token）</span><VTextField density="compact" variant="outlined" hide-details v-model="chat.compact_trigger_tokens" type="number" min="1" placeholder="留空 = 输入预算的 80%" /></label>
           <p class="hint">填绝对值；留空按输入预算的 80% 计算。</p>
           </section>
+          <div class="row action-row">
+            <VBtn color="primary" variant="flat" size="small" type="button" :disabled="!chatReady || savingChat" @click="saveChat('context')">保存上下文设置</VBtn>
+            <span class="status" role="status">{{ chatStatus.context }}</span>
+          </div>
+        </section>
+        </VTabsWindowItem>
+        <VTabsWindowItem value="generation">
+        <section id="panel-generation" class="panel">
+          <p class="settings-lead">调整自动起标题，以及模型能否收到历史消息的思考过程。保存后从下一轮生效。</p>
 
           <section class="settings-card">
-          <h3>生成与标题</h3>
-          <p class="hint">这些只影响辅助生成，不改变聊天主模型的回复。</p>
-          <label class="field"><span>自动标题最多字数</span><VTextField density="compact" variant="outlined" hide-details v-model="chat.title_chars" type="number" min="1" placeholder="留空 = 32" /></label>
+          <h3>自动标题</h3>
+          <label id="setting-title-chars" tabindex="-1" class="field"><span>自动标题最多字数</span><VTextField density="compact" variant="outlined" hide-details v-model="chat.title_chars" type="number" min="1" placeholder="留空 = 32" /></label>
           <p class="hint">标题只在会话标题为空时自动生成；用户手动改名后不再覆盖。</p>
-          <label class="field"><span>全局标题模型</span><VSelect v-model="chat.title_model" :items="titleSelectOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
+          <label id="setting-title-model" tabindex="-1" class="field"><span>全局标题模型</span><VSelect v-model="chat.title_model" :items="titleSelectOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
           <p class="hint">默认「使用当前模型」；智能体里的起标题能力选「跟随全局设置」时读这里。</p>
-          <label class="field"><span>回传思考过程</span><VSwitch v-model="chat.replay_reasoning" color="primary" density="compact" hide-details /></label>
+          </section>
+          <section class="settings-card">
+          <h3>历史思考</h3>
+          <label id="setting-replay-reasoning" tabindex="-1" class="field"><span>回传思考过程</span><VSwitch v-model="chat.replay_reasoning" color="primary" density="compact" hide-details /></label>
           <p class="hint">把思考过程随历史发回上游，多轮推理更连续；关闭可省上下文，思考仍会存档可看。</p>
           <div class="row action-row">
-            <VBtn color="primary" variant="flat" size="small" type="button" @click="saveChat">保存对话设置</VBtn>
-            <span class="action-note">从下一轮开始生效，不改写已有消息。</span>
-            <span class="status">{{ chatStatus }}</span>
+            <VBtn color="primary" variant="flat" size="small" type="button" :disabled="!chatReady || savingChat" @click="saveChat('generation')">保存生成设置</VBtn>
+            <span class="status" role="status">{{ chatStatus.generation }}</span>
           </div>
           </section>
+        </section>
+        </VTabsWindowItem>
+        <VTabsWindowItem value="markdown">
+          <AppearancePane section="markdown" @prefs-saved="emit('prefs-saved')" />
+        </VTabsWindowItem>
+        <VTabsWindowItem value="provider">
+        <section id="panel-provider" class="panel">
+          <template v-if="!editProvider">
+            <VTabs v-model="providerTab" class="agent-tabs" density="compact" align-tabs="start">
+              <VTab value="list">渠道列表</VTab>
+              <VTab value="global">全局模型规则</VTab>
+            </VTabs>
+            <VTabsWindow v-model="providerTab" class="agent-window">
+            <VTabsWindowItem value="list">
+            <div class="panel-head">
+              <h3>渠道（{{ providers.length }}）</h3>
+              <VBtn color="primary" variant="flat" size="small" type="button" @click="editProvider = 'new'">新建渠道</VBtn>
+            </div>
+            <ul v-if="providers.length" id="provider-list" class="settings-list" aria-label="渠道">
+              <li v-for="p in providers" :key="p.id" class="settings-list-row">
+                <VBtn type="button" variant="text" class="settings-list-entry manage-entry" @click="editProvider = p">
+                  <span class="settings-list-copy">
+                    <span class="manage-meta manage-name">
+                      <strong>{{ providerDisplayName(p) }}</strong>
+                      <code v-if="providerDisplayName(p) !== p.id">{{ p.id }}</code>
+                    </span>
+                    <span class="manage-meta">
+                      <span>{{ p.vendor_name || p.vendor }}</span>
+                      <span>{{ p.models?.length ?? 0 }} 个模型</span>
+                      <span>{{ p.has_key ? "密钥已配置" : "未配置密钥" }}</span>
+                      <span v-if="p.model_filter" :title="`只导入匹配：${p.model_filter}`">已筛选</span>
+                    </span>
+                  </span>
+                  <span class="settings-list-chevron" aria-hidden="true" v-html="ICONS.chevronRight"></span>
+                </VBtn>
+                <div class="manage-actions">
+                  <VBtn variant="text" size="small" type="button" class="manage-delete" @click="askDeleteProvider(p.id)" :aria-label="`删除 ${providerDisplayName(p)}`">删除</VBtn>
+                </div>
+              </li>
+            </ul>
+            <p v-else class="manage-empty">还没有渠道</p>
+            <p v-if="routesStatus" class="status" role="status">{{ routesStatus }}</p>
+            </VTabsWindowItem>
+            <VTabsWindowItem value="global">
+              <div id="setting-global-model-rules" tabindex="-1"><ModelRulesEditor @saved="emit('models-changed')" /></div>
+            </VTabsWindowItem>
+            </VTabsWindow>
+          </template>
+          <ProviderEditor
+            v-else
+            :provider="editProvider === 'new' ? null : editProvider"
+            @close="editProvider = null"
+            @saved="onProviderSaved"
+            @model-saved="emit('models-changed')"
+          />
         </section>
         </VTabsWindowItem>
         <VTabsWindowItem value="session">
@@ -622,10 +725,7 @@ function onKey(e: KeyboardEvent): void {
           </ul>
           <p v-else class="manage-empty">还没有会话</p>
           <div class="row" v-if="sessionMgrStatus"><span class="status">{{ sessionMgrStatus }}</span></div>
-          <!-- 导入区（2026-10-17 用户点名「混在一起、都乱了」）：两种格式各一张卡 ——
-               各有一句「这是哪种文件、导进去会怎样」，动作都是按钮 + 隐藏文件框（原生 file 框太丑，
-               而且两张卡长一样 ⇒ 分不清谁是谁）。 -->
-          <h3>导入 MicroChat 对话</h3>
+          <h3 id="setting-import-json" tabindex="-1">导入 MicroChat 对话</h3>
           <div class="io-cards">
             <div class="io-card">
               <div class="io-head"><b>MicroChat 对话记录</b><i class="io-tag">.json</i></div>
@@ -637,7 +737,7 @@ function onKey(e: KeyboardEvent): void {
               </div>
             </div>
           </div>
-          <p class="hint">两种导入都会<b>新建一条会话</b>，不会改动现有会话；导入完成后左栏马上能看到。</p>
+          <p class="hint">导入只会<b>新建一条会话</b>，不会改动现有会话。</p>
         </section>
         </VTabsWindowItem>
         <VTabsWindowItem value="agent">
@@ -731,20 +831,12 @@ function onKey(e: KeyboardEvent): void {
           />
         </section>
         </VTabsWindowItem>
-        <!-- 外观 / 输入（2026-11-20 用户定拆成两页）：外观 = 主题/缩放/字体/背景/Markdown；
-             输入 = 发送方式/输入时预览/命令菜单。全部即时生效，改了就存。 -->
-        <VTabsWindowItem value="appearance">
-          <AppearancePane section="appearance" @prefs-saved="emit('prefs-saved')" />
-        </VTabsWindowItem>
-        <VTabsWindowItem value="input">
-          <AppearancePane section="input" @prefs-saved="emit('prefs-saved')" />
-        </VTabsWindowItem>
         <VTabsWindowItem value="tavern">
         <section id="panel-tavern" class="panel">
           <h3>酒馆</h3>
           <p class="hint">专门处理 SillyTavern 的预设、角色卡与聊天记录：预设可以解析并导入提示词片段，聊天记录可以导入成会话；角色卡转换还没接。</p>
           <section class="settings-card">
-            <h3>原始 JSON 存档</h3>
+            <h3 id="setting-import-preset" tabindex="-1">原始 JSON 存档</h3>
             <p class="hint">只保存文件的原始字节，不解析、不改写；导出时逐字节原样返回。解析与导入片段走每行的「解析与导入」。</p>
             <div class="row">
               <VBtn color="primary" variant="flat" size="small" type="button" @click="tavernInput?.click()">导入原始 JSON…</VBtn>
@@ -769,7 +861,7 @@ function onKey(e: KeyboardEvent): void {
             </div>
             <p v-else class="hint">还没有导入原始文件。</p>
           </section>
-          <h3>导入 SillyTavern 聊天记录</h3>
+          <h3 id="setting-import-st" tabindex="-1">导入 SillyTavern 聊天记录</h3>
             <div class="io-card">
               <div class="io-head"><b>SillyTavern 聊天记录</b><i class="io-tag">.jsonl</i></div>
               <p class="hint">SillyTavern 导出的聊天记录（一行一条）。只读取说话人、正文、思考过程和时间，其余内容会丢掉。</p>
@@ -780,58 +872,6 @@ function onKey(e: KeyboardEvent): void {
               </div>
               <label class="field"><span>标题</span><VTextField density="compact" variant="outlined" hide-details v-model="importTitle" placeholder="留空 = 用第一句话自动起名" /></label>
             </div>
-        </section>
-        </VTabsWindowItem>
-        <VTabsWindowItem value="provider">
-        <section id="panel-provider" class="panel">
-          <template v-if="!editProvider">
-            <VTabs v-model="providerTab" class="agent-tabs" density="compact" align-tabs="start">
-              <VTab value="list">渠道列表</VTab>
-              <VTab value="global">全局模型规则</VTab>
-            </VTabs>
-            <VTabsWindow v-model="providerTab" class="agent-window">
-            <VTabsWindowItem value="list">
-            <div class="panel-head">
-              <h3>渠道（{{ providers.length }}）</h3>
-              <VBtn color="primary" variant="flat" size="small" type="button" @click="editProvider = 'new'">新建渠道</VBtn>
-            </div>
-            <ul v-if="providers.length" id="provider-list" class="settings-list" aria-label="渠道">
-              <li v-for="p in providers" :key="p.id" class="settings-list-row">
-                <VBtn type="button" variant="text" class="settings-list-entry manage-entry" @click="editProvider = p">
-                  <span class="settings-list-copy">
-                    <span class="manage-meta manage-name">
-                      <strong>{{ providerDisplayName(p) }}</strong>
-                      <code v-if="providerDisplayName(p) !== p.id">{{ p.id }}</code>
-                    </span>
-                    <span class="manage-meta">
-                      <span>{{ p.vendor_name || p.vendor }}</span>
-                      <span>{{ p.models?.length ?? 0 }} 个模型</span>
-                      <span>{{ p.has_key ? "密钥已配置" : "未配置密钥" }}</span>
-                      <span v-if="p.model_filter" :title="`只导入匹配：${p.model_filter}`">已筛选</span>
-                    </span>
-                  </span>
-                  <span class="settings-list-chevron" aria-hidden="true" v-html="ICONS.chevronRight"></span>
-                </VBtn>
-                <div class="manage-actions">
-                  <VBtn variant="text" size="small" type="button" class="manage-delete" @click="askDeleteProvider(p.id)" :aria-label="`删除 ${providerDisplayName(p)}`">删除</VBtn>
-                </div>
-              </li>
-            </ul>
-            <p v-else class="manage-empty">还没有渠道</p>
-            <p v-if="routesStatus" class="status" role="status">{{ routesStatus }}</p>
-            </VTabsWindowItem>
-            <VTabsWindowItem value="global">
-              <ModelRulesEditor @saved="emit('models-changed')" />
-            </VTabsWindowItem>
-            </VTabsWindow>
-          </template>
-          <ProviderEditor
-            v-else
-            :provider="editProvider === 'new' ? null : editProvider"
-            @close="editProvider = null"
-            @saved="onProviderSaved"
-            @model-saved="emit('models-changed')"
-          />
         </section>
         </VTabsWindowItem>
         <VTabsWindowItem value="update">
@@ -857,8 +897,7 @@ function onKey(e: KeyboardEvent): void {
 .manage-name code { font-size: var(--md-type-label-medium); }
 .manage-description { color: var(--md-on-surface-variant); font-size: var(--md-type-body-medium); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .manage-default { color: var(--md-primary); font-size: var(--md-type-label-medium); }
-.manage-actions { display: flex; flex: none; gap: calc(var(--chat-space) / 4); }
-.manage-actions { padding-inline-end: calc(var(--chat-space) / 2); }
+.manage-actions { display: flex; flex: none; gap: calc(var(--chat-space) / 4); padding-inline-end: calc(var(--chat-space) / 2); }
 #app .manage-actions .v-btn { min-width: 0; min-height: var(--chat-control); padding-inline: calc(0.75 * var(--chat-space)); color: var(--md-on-surface-variant); font-size: var(--md-type-label-large); letter-spacing: normal; }
 #app .manage-actions .manage-delete:is(:hover, :focus-visible) { color: var(--md-error); }
 .manage-empty { color: var(--md-on-surface-variant); font-size: var(--md-type-body-medium); }

@@ -516,30 +516,6 @@ export function deletionPlanSummary(plan?: DeletionPlan | null): string {
 
 // ---- 设置 modal 纯逻辑（无 DOM，测试直引） ----
 
-export interface SettingsSection {
-  id: string;
-  label: string;
-  desc: string;
-  icon: string;
-}
-
-// SETTINGS_SECTIONS：设置目录（2026-11-20 用户定「一步到位全量重排」）。
-// 顶层不再是一排 tab 抢一行 —— 首页是一张**目录卡**，点进去才显示对应内容；
-// 手机上不用再把六个 tab 挤进 390px。
-//
-// 「外观」和「输入」拆成两页：外观管“长什么样”，输入管“怎么发”。
-// 「文本格式（Markdown）」跟着外观走 —— 它决定的是消息**渲染成什么样**，不是怎么输入。
-export const SETTINGS_SECTIONS: SettingsSection[] = [
-  { id: "chat", label: "聊天", desc: "默认模型、上下文与自动压缩", icon: "chat" },
-  { id: "session", label: "会话", desc: "会话列表、导出与导入", icon: "list" },
-  { id: "agent", label: "智能体", desc: "人设、提示词片段与能力", icon: "bot" },
-  { id: "prompt", label: "提示词", desc: "可复用的文本片段库", icon: "notebookPen" },
-  { id: "appearance", label: "外观", desc: "主题、缩放、字体与背景", icon: "themeAuto" },
-  { id: "input", label: "输入", desc: "发送方式、预览与命令菜单", icon: "send" },
-  { id: "tavern", label: "酒馆", desc: "SillyTavern 导入与解析", icon: "spark" },
-  { id: "update", label: "更新", desc: "版本、PWA 与关于", icon: "refresh" },
-];
-
 // formatRoutesOutcome：刷路由回形 {provider, models, error?} ⇒ 缓存行文案。
 export function formatRoutesOutcome(o?: { provider?: string; models?: number; error?: string } | null): string {
   if (!o || typeof o !== "object") return "未刷新";

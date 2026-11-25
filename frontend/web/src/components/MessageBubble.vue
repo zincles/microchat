@@ -224,9 +224,9 @@ watch(() => props.streaming, (s) => nextTick(() => {
         </template>
       </div>
       <div v-else ref="textEl" class="text" v-html="bodyHtml"></div>
-      <div v-if="!progressShown && streaming && !content && !reasoning && !toolHint" class="typing" aria-label="正在生成">
-        <span></span><span></span><span></span>
-        <i class="typing-hint">{{ typingHint }}</i>
+      <div v-if="!progressShown && streaming && !content && !reasoning && !toolHint" class="typing" role="status">
+        <span class="typing-orbit" aria-hidden="true" v-html="ICONS.spark"></span>
+        <span>{{ typingHint }}</span>
       </div>
 
       <div v-if="parts.blocks.length" class="state-blocks">

@@ -607,9 +607,10 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .latest-arrow { display: inline-flex; margin-inline-end: calc(var(--chat-space) / 2); }
 .messages-inner { width: var(--chat-column); margin: 0 auto; box-sizing: border-box;
   padding: var(--chat-content-top) var(--chat-inset) calc(var(--composer-h, 7em) + var(--chat-space)); display: flex; flex-direction: column; gap: calc(var(--chat-space) / 2); }
+.session-transcript { display: flex; flex-direction: column; gap: inherit; min-width: 0; }
 /* 问答相邻；新一轮、续写或摘要用额外留白分隔。 */
-.messages-inner > :is(.msg-wrap, .answer-process, .sum-block) + :is(.msg-wrap, .answer-process, .sum-block) { margin-block-start: calc(2 * var(--chat-space)); }
-.messages-inner > .msg-wrap.user + :is(.msg-wrap.assistant, .answer-process) { margin-block-start: 0; }
+.session-transcript > :is(.msg-wrap, .answer-process, .sum-block) + :is(.msg-wrap, .answer-process, .sum-block) { margin-block-start: calc(2 * var(--chat-space)); }
+.session-transcript > .msg-wrap.user + :is(.msg-wrap.assistant, .answer-process) { margin-block-start: 0; }
 /* 窄屏保留独立欢迎区，输入卡仍贴近键盘。 */
 .draft-welcome { margin: 0; min-height: 40vh; padding: 1.4em 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 0.45em; color: var(--md-on-surface); }
 .draft-welcome h2 { margin: 0; font-size: var(--md-type-title-large); font-weight: 500; letter-spacing: -0.01em; color: var(--md-on-surface); }
@@ -632,8 +633,13 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .sk-line { height: 0.7em; }
 .sk-a { width: 22%; } .sk-b { width: 85%; animation-delay: 120ms; } .sk-c { width: 56%; animation-delay: 240ms; }
 @keyframes sk-breathe { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
+/* 只在骨架换成正文时淡入；不移位，既有的阅读锚点照常恢复。 */
+.session-reveal-enter-active { transition: opacity var(--md-dur-200) var(--md-ease-standard); }
+.session-reveal-enter-from { opacity: 0; }
 @media (prefers-reduced-motion: reduce) {
   .chat-skeleton > span, .session-entry-progress span { animation: none; }
+  .session-reveal-enter-active { transition: none; }
+  .session-reveal-enter-from { opacity: 1; }
 }
 /* 抽屉遮罩（只在窄屏显示；点一下 = 收起左栏）：与栏的状态由 CSS 兄弟选择器联动，不用 JS 状态。 */
 /* 2026-10-29：右栏搬进上下文工作区 ⇒ `#scrim-right` 与 ≤1100 那段右抽屉规则一起删了
@@ -1125,8 +1131,12 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 #session-list .empty .sub { font-size: 0.9em; opacity: 0.8; }
 .msg .think { color: var(--md-on-surface-variant); font-size: var(--md-type-body-medium); background: var(--md-surface-container-low); border-radius: var(--md-shape-sm); padding: 0.5em 0.8em; margin: 0.1em 0 0.5em; opacity: 1; }
 .msg .think-body { white-space: pre-wrap; word-break: break-word; margin-top: 0.4em; color: var(--md-on-surface-variant); line-height: 1.5; }
-/* 等首字节的三点呼吸（生成中且还没有任何字）：别让气泡只剩一个"助手"抬头。 */
-.msg .typing { display: flex; gap: 0.28em; align-items: center; padding: 0.4em 0; }
+/* 等首字节：静止品牌星芒与一颗沿环旋转的微光。两阶段只换文案，不重启动画。 */
+.msg .typing { display: flex; gap: var(--chat-space); align-items: center; padding: calc(var(--chat-space) / 2) 0; color: var(--md-on-surface-variant); font-size: var(--md-type-label-medium); }
+.typing-orbit { position: relative; flex: none; width: 2em; aspect-ratio: 1; display: grid; place-items: center; border: 1px solid var(--line); border-radius: var(--md-shape-full); color: var(--md-primary); }
+.typing-orbit svg { width: 1.15em; height: 1.15em; }
+.typing-orbit::after { content: ""; position: absolute; inset: -1px; background: radial-gradient(circle at 50% 2px, currentColor 1px, transparent 2px); animation: typing-orbit-turn 1.8s linear infinite; }
+@keyframes typing-orbit-turn { to { transform: rotate(1turn); } }
 /* 服务端工具状态（2026-11-09）：生成中显示“正在搜索网页 / 搜索完成，正在整理结果”。 */
 .msg .tool-status { display: flex; gap: 0.4em; align-items: center; padding: 0.4em 0; color: var(--md-primary); font-size: var(--md-type-body-medium); }
 .msg .tool-status .tool-dot { width: 0.5em; height: 0.5em; border-radius: 50%; background: currentColor; animation: tool-pulse 1s var(--md-ease-standard) infinite; }
@@ -1153,15 +1163,8 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .msg .tool-sources[open] .tool-sources-title { margin-bottom: 0.18em; }
 .msg .tool-sources a { display: block; color: var(--md-primary); font-size: var(--md-type-label-medium); text-decoration: none; overflow-wrap: anywhere; }
 .msg .tool-sources a:hover { text-decoration: underline; }
-/* 标签（2026-10-17 用户点名"显示 正在输出 之类的东西"）：三点呼吸 + 一句暗字，说明这气泡在干活
- * —— 只有点没有字，静太小、也说不清是在输出还是在等。 */
-.msg .typing .typing-hint { font-style: normal; margin-left: 0.4em; color: var(--md-on-surface-variant); font-size: var(--md-type-label-medium); }
-.msg .typing span { width: 0.42em; height: 0.42em; border-radius: 50%; background: var(--md-primary); animation: typing-pulse 1.2s var(--md-ease-standard) infinite; }
-.msg .typing span:nth-child(2) { animation-delay: 0.15s; }
-.msg .typing span:nth-child(3) { animation-delay: 0.3s; }
-@keyframes typing-pulse { 0%, 60%, 100% { opacity: 0.25; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-0.18em); } }
 @media (prefers-reduced-motion: reduce) {
-  .msg .typing span { animation: none; opacity: 0.6; }
+  .typing-orbit::after { content: none; }
   .msg .tool-status .tool-dot { animation: none; opacity: 0.8; }
 }
 /* 跟随实际输入卡，而非写死窗口中央；面板太长时在顶栏与输入卡之间滚动。 */
@@ -1219,27 +1222,24 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
   border-radius: 0 var(--r-sm) var(--r-sm) 0; background: var(--md-surface-container-low);
   color: var(--md-on-surface-variant); font-size: var(--md-type-body-small); line-height: 1.55; }
 .settings-lead b { color: var(--md-on-surface); font-weight: 600; }
-/* 设置目录首页（2026-11-22 用户定）：MD3 单列设置列表，像 Android 平板的设置。
- * 一行 = 圆底图标 + 标题/说明 + 右箭头；行间发丝线，整组一块低对比容器。 */
-.settings-home-lead { margin: 0 0 1em; color: var(--md-on-surface-variant); font-size: var(--md-type-body-medium); line-height: 1.6; }
-.settings-home-list { background: var(--md-surface-container-low); border-radius: var(--md-shape-md); overflow: hidden; }
-.settings-home-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 0.9em;
-  width: 100%; box-sizing: border-box; min-height: 4.25em; padding: 0.8em 1em;
-  border: none; border-radius: 0; background: none; color: var(--md-on-surface); text-align: left; cursor: pointer;
-  transition: background-color var(--md-dur-150) var(--md-ease-standard); }
-.settings-home-row + .settings-home-row { border-top: 1px solid var(--md-outline-variant); }
-.settings-home-row:hover { background: color-mix(in srgb, var(--md-on-surface) 7%, transparent); }
-.settings-home-row:active { background: color-mix(in srgb, var(--md-on-surface) 10%, transparent); }
-.settings-home-row:focus-visible { outline: 2px solid var(--md-primary); outline-offset: -2px; }
-.settings-home-icon { width: 2.5em; height: 2.5em; display: grid; place-items: center; border-radius: 50%;
-  color: var(--md-on-secondary-container); background: var(--md-secondary-container); }
-.settings-home-icon svg { width: 1.2em; height: 1.2em; }
-.settings-home-copy { display: flex; flex-direction: column; gap: 0.15em; min-width: 0; }
-.settings-home-title { font-size: var(--md-type-title-small); font-weight: 500; line-height: 1.3; }
-.settings-home-desc { color: var(--md-on-surface-variant); font-size: var(--md-type-body-small); line-height: 1.4; }
-.settings-home-chevron { display: flex; color: var(--md-on-surface-variant); }
+/* 目录、搜索结果及管理入口共用一套 MD3 列表。操作按钮保持为独立命中区。 */
+.settings-search { margin-bottom: calc(3 * var(--chat-space)); }
+.settings-search-icon, .settings-list-chevron { display: inline-flex; flex: none; color: var(--md-on-surface-variant); }
+.settings-directory-group + .settings-directory-group { margin-top: calc(3 * var(--chat-space)); }
+.settings-cols .panel h3.settings-directory-label { color: var(--md-on-surface-variant); font-size: var(--md-type-label-large); margin: 0 0 var(--chat-space); padding-inline: calc(2 * var(--chat-space)); }
+.settings-cols .panel h3.settings-directory-label::before { content: none; }
+.settings-list { list-style: none; margin: 0; padding: 0; background: var(--md-surface-container-low); border-radius: var(--md-shape-md); }
+.settings-list-row { display: flex; align-items: center; min-width: 0; gap: var(--chat-space); }
+.settings-list-row + .settings-list-row { border-top: 1px solid var(--md-outline-variant); }
+#app .settings-list-entry { flex: 1 1 0; min-width: 0; min-height: 64px; height: auto; padding: calc(1.5 * var(--chat-space)) calc(2 * var(--chat-space)); border-radius: var(--md-shape-sm); color: var(--md-on-surface); text-align: start; letter-spacing: normal; }
+.settings-list-entry .v-btn__content { display: flex; flex: 1 1 auto; align-items: center; min-width: 0; gap: var(--chat-space); white-space: normal; }
+.settings-list-entry:focus-visible, #settings-view [id^="setting-"]:focus { outline: 2px solid var(--md-primary); outline-offset: -2px; }
+.settings-list-icon { flex: none; width: 36px; aspect-ratio: 1; display: grid; place-items: center; border-radius: var(--md-shape-full); color: var(--md-on-secondary-container); background: var(--md-secondary-container); }
+.settings-list-copy { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; gap: calc(var(--chat-space) / 2); font-size: var(--md-type-body-large); line-height: 1.4; overflow-wrap: anywhere; }
+.settings-list-copy strong { color: var(--md-on-surface); font-weight: 500; }
+.settings-list-note { color: var(--md-on-surface-variant); font-size: var(--md-type-body-medium); }
 @media (max-width: 700px) {
-  .settings-home-row { min-height: 4em; padding: 0.7em 0.85em; gap: 0.75em; }
+  #app .settings-list-entry { padding-inline: calc(1.5 * var(--chat-space)); }
 }
 /* 按钮旁的一句话（保存范围、是否落库、是否影响已有数据）：比底部大段 hint 更贴动作。 */
 .action-note { color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); line-height: 1.4; }
@@ -1294,10 +1294,9 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .settings-cols .panel .field, .settings-cols .panel .row { background: none; margin: 0; padding: 0.7em 0.2em; line-height: 1.45; border-top: 1px solid var(--md-outline-variant); border-radius: 0; }
 .settings-cols .panel h3 + .field, .settings-cols .panel h3 + .row,
 .settings-cols .panel > .field:first-child, .settings-cols .panel > .row:first-child { border-top: none; }
-/* 设置页统一 760 居中（列表页有表格，但切页时宽度不该跳来跳去）。
- * `.settings-card` 现在只是分节容器，不再有底色/圆角/内边距 —— 视觉上是一条平铺列表。 */
-#panel-appearance, #panel-input, #panel-chat, #panel-session, #panel-agent, #panel-prompt, #panel-provider, #panel-update {
-  max-width: 760px; margin: 0 auto;
+/* 外层目录与子页统一阅读宽度，不给每个设置页另维护选择器。 */
+.settings-window > .v-window__container > .v-window-item > .panel {
+  max-width: 760px; margin-inline: auto;
 }
 .settings-card { background: none; border-radius: 0; padding: 0; margin: 0 0 1.4em; }
 /* 更新页（2026-11-20 用户定“压成两块简洁版式”）：版本 / PWA 双卡，关于独立收底。 */
@@ -1332,13 +1331,11 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .settings-cols .panel .settings-card h3 { margin: 0.6em 0 0.2em; }
 .settings-cols .panel .settings-card .field { grid-template-columns: 190px 1fr; }
 .settings-cols .panel .settings-card .hint { margin: 0.35em 0 0.3em; }
-/* markdown 两组的「块级 / 行内 + 全关全开」头行：从前只是两段裸文字，挤在字段之间。 */
-#panel-appearance .md-group { margin-top: 0.55em; }
-#panel-appearance .md-group-head { display: flex; align-items: center; justify-content: space-between; gap: 0.6em;
-  padding: 0.55em 0 0.2em; border-top: 1px solid var(--line); color: var(--tg-hint); font-size: 0.82em; letter-spacing: 0.02em; }
-#panel-appearance .md-group:first-of-type .md-group-head { border-top: none; }
-#panel-appearance .md-group-ops { display: flex; gap: 0.15em; }
-#panel-appearance .md-row code.md-sample { color: var(--tg-hint); background: var(--mix-6); border-radius: var(--r-xs);
+/* Markdown 分项与整组操作集中在独立页。 */
+#panel-markdown .md-group { margin-top: 0.55em; }
+#panel-markdown .md-group-head { padding: 0.55em 0 0.2em; border-top: 1px solid var(--line); color: var(--md-on-surface-variant); font-size: var(--md-type-label-large); }
+#panel-markdown .md-group-ops { display: flex; flex-wrap: wrap; gap: calc(var(--chat-space) / 2); }
+#panel-markdown .md-row code.md-sample { color: var(--tg-hint); background: var(--mix-6); border-radius: var(--r-xs);
   padding: 0 0.25em; font-size: 0.9em; }
 @media (max-width: 700px) {
   .settings-cols .panel .settings-card .field { grid-template-columns: 1fr; gap: 0.3em; }

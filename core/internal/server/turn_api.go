@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"microchat/internal/store"
@@ -108,18 +109,15 @@ func (s *Server) turnPoll(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireSession(w, r); !ok {
 		return
 	}
-	sid := r.PathValue("session_id")
-	writeJSON(w, http.StatusOK, TurnPoll{
-		Status: s.chat.Status(sid),
-		Slice:  s.chat.StreamSince(sid, from, thinkFrom),
-	})
+	status, slice, _ := s.chat.Snapshot(r.PathValue("session_id"), from, thinkFrom, nil)
+	writeJSON(w, http.StatusOK, TurnPoll{Status: status, Slice: slice})
 }
 
 // turnEvents：SSE 版的一轮增量（2026-11-03：远程/CF 下不要每个增量都走一个请求）。
 //
 // 服务端内部 100ms 看一眼 turn 缓冲，只把**变化**写成 SSE 事件；状态最多 500ms 一次，
-// 用来让前端更新耗时。`id:` 是字节游标 `next:think_next`，浏览器断线重连会自动带
-// `Last-Event-ID`，这里优先用它，避免重放旧文字。
+// 用来让前端更新耗时。浏览器断线重连会带 `Last-Event-ID`；只有消息、轮内步号和缓冲令牌
+// 都对得上才沿用其中的字节游标，否则从当前缓冲的开头读。
 //
 // 这是**只读**流：不消费、不改变 turn；事件里的 slice 与 `/turn/poll` 形状一致。
 func (s *Server) turnEvents(w http.ResponseWriter, r *http.Request) {
@@ -139,11 +137,11 @@ func (s *Server) turnEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "当前连接不支持流式输出")
 		return
 	}
+	var resumedScope turn.StreamScope
+	var resume *turn.StreamScope
 	if id := r.Header.Get("Last-Event-ID"); id != "" {
-		var a, b int
-		if _, err := fmt.Sscanf(id, "%d:%d", &a, &b); err == nil && a >= 0 && b >= 0 {
-			from, thinkFrom = a, b
-		}
+		resumedScope, from, thinkFrom = parseTurnEventID(id)
+		resume = &resumedScope
 	}
 	sid := r.PathValue("session_id")
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
@@ -156,19 +154,17 @@ func (s *Server) turnEvents(w http.ResponseWriter, r *http.Request) {
 	defer ticker.Stop()
 	lastText, lastThink := -1, -1
 	lastPhase := turn.Phase("")
-	lastStep := 0
 	lastTool := ""
 	lastSources := ""
 	var lastStatus time.Time
 	for {
-		status := s.chat.Status(sid)
-		stepChanged := status.Step != lastStep
-		if stepChanged {
-			from, thinkFrom = 0, 0
-			lastText, lastThink = -1, -1
-			lastStep = status.Step
+		status, slice, scope := s.chat.Snapshot(sid, from, thinkFrom, resume)
+		scopeChanged := resume != nil && *resume != scope
+		if status.Reroll.IsRunning() {
+			// 候选复用同一份缓冲，但不是刚结束的普通生成；候选增量只走 /turn/text。
+			status.Chars, status.ThinkingChars = 0, 0
+			slice = turn.StreamSlice{Done: slice.Done}
 		}
-		slice := s.chat.StreamSince(sid, from, thinkFrom)
 		toolKey := ""
 		if status.Tool != nil {
 			toolKey = status.Tool.Kind + "\x00" + status.Tool.State
@@ -178,17 +174,24 @@ func (s *Server) turnEvents(w http.ResponseWriter, r *http.Request) {
 			sourceKey += source.URL + "\x00"
 		}
 		changed := slice.Next != lastText || slice.ThinkNext != lastThink ||
-			status.Phase != lastPhase || stepChanged || toolKey != lastTool || sourceKey != lastSources
+			status.Phase != lastPhase || scopeChanged || toolKey != lastTool || sourceKey != lastSources
 		if changed || time.Since(lastStatus) >= 500*time.Millisecond {
 			payload, err := json.Marshal(TurnPoll{Status: status, Slice: slice})
 			if err != nil {
 				return
 			}
-			if _, err := fmt.Fprintf(w, "id: %d:%d\ndata: %s\n\n", slice.Next, slice.ThinkNext, payload); err != nil {
+			if scope.MessageID == "" {
+				_, err = fmt.Fprintf(w, "id:\ndata: %s\n\n", payload)
+			} else {
+				_, err = fmt.Fprintf(w, "id: %s:%d:%d:%d:%d\ndata: %s\n\n", scope.MessageID, scope.Step, scope.Token, slice.Next, slice.ThinkNext, payload)
+			}
+			if err != nil {
 				return
 			}
 			flusher.Flush()
 			from, thinkFrom = slice.Next, slice.ThinkNext
+			resumedScope = scope
+			resume = &resumedScope
 			lastText, lastThink = slice.Next, slice.ThinkNext
 			lastPhase = status.Phase
 			lastTool = toolKey
@@ -204,6 +207,23 @@ func (s *Server) turnEvents(w http.ResponseWriter, r *http.Request) {
 		case <-ticker.C:
 		}
 	}
+}
+
+// parseTurnEventID 读消息 ID、步号、缓冲令牌和两条游标；旧格式或坏值一律从头读。
+func parseTurnEventID(id string) (turn.StreamScope, int, int) {
+	messageID, rest, _ := strings.Cut(id, ":")
+	stepText, rest, _ := strings.Cut(rest, ":")
+	tokenText, rest, _ := strings.Cut(rest, ":")
+	fromText, thinkFromText, _ := strings.Cut(rest, ":")
+	step, stepErr := strconv.Atoi(stepText)
+	token, tokenErr := strconv.ParseUint(tokenText, 10, 64)
+	from, fromErr := strconv.Atoi(fromText)
+	thinkFrom, thinkErr := strconv.Atoi(thinkFromText)
+	if messageID == "" || stepErr != nil || step <= 0 || tokenErr != nil || token == 0 ||
+		fromErr != nil || from < 0 || thinkErr != nil || thinkFrom < 0 {
+		return turn.StreamScope{}, 0, 0
+	}
+	return turn.StreamScope{MessageID: messageID, Step: step, Token: token}, from, thinkFrom
 }
 
 // turnText：这一轮已生成正文的**增量**（两条游标：正文 + 思考）—— 只服务动画。
@@ -236,7 +256,7 @@ func queryInt(w http.ResponseWriter, r *http.Request, name string) (int, bool) {
 	}
 	value, err := strconv.Atoi(raw)
 	if err != nil || value < 0 {
-		writeError(w, http.StatusUnprocessableEntity, "invalid", name+" 要是非负整数（第几个字符）")
+		writeError(w, http.StatusUnprocessableEntity, "invalid", name+" 要是非负整数（字节偏移）")
 		return 0, false
 	}
 	return value, true
