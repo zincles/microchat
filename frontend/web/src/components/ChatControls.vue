@@ -414,8 +414,9 @@ defineExpose({ setSession, setModels });
     </span>
     <VTabs
       :model-value="workspace"
-      class="workspace-tabs ui-mode-switch"
-      hide-slider
+      class="workspace-tabs"
+      height="var(--chat-nav-size)"
+      color="primary"
       aria-label="工作区"
       @update:model-value="setWorkspace"
     >

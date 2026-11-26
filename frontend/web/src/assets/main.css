@@ -215,6 +215,13 @@ body::before { content: ""; position: fixed; inset: 0; z-index: 0; pointer-event
   font-size: 0.8em; text-transform: none; letter-spacing: 0; }
 /* 已结束的队列那格显示结局（成功 / 取消 / 失败）—— 与原子任务的时长同一列。 */
 .task-queue.done { opacity: 0.7; }
+/* 工作区切换共用一个胶囊表面，保留 Vuetify 的键盘交互与选中指示器。 */
+.workspace-tabs { flex: none; margin-inline-start: auto; border-radius: var(--md-shape-full);
+  background: var(--md-surface-container); box-shadow: var(--md-elev-1); overflow: hidden; }
+#chat-controls .workspace-tabs .v-tab { min-width: var(--md-touch-target); padding-inline: var(--chat-space);
+  text-transform: none; font-size: var(--md-type-label-large); color: var(--md-on-surface-variant); }
+#chat-controls .workspace-tabs .v-tab.v-tab--selected { color: var(--md-primary); }
+#chat-controls .workspace-tabs .v-tab:focus-visible { outline: 2px solid var(--md-primary); outline-offset: -2px; }
 /* 工作区窗口：聊天与上下文共用一块，由 VTabsWindow 做左右滑动。 */
 .workspace-window { flex: 1 1 auto; min-height: 0; width: 100%; }
 /* VWindow 的 container/item 高度必须显式钉死，否则 #messages-vue 会被内容撑到 2000px。 */
@@ -233,6 +240,7 @@ body::before { content: ""; position: fixed; inset: 0; z-index: 0; pointer-event
 /* 窄屏让模型名缩短，不缩触控区域或文字，也不增加第二行。 */
 @media (max-width: 700px) {
   #chat-controls .model-caret { display: none; }
+  #chat-controls .workspace-tabs .v-tab { padding-inline: calc(var(--chat-space) / 2); }
 }
 /* 更极端（如 320px 且放大字体）：模型图标让位给名字，完整名字仍在按钮 title。 */
 @media (max-width: 360px) {
@@ -1437,17 +1445,11 @@ button.danger:hover { background: color-mix(in srgb, var(--md-error) 8%, transpa
 #sessions-bar .bar-head .icon-btn:focus-visible { outline: 2px solid var(--md-primary); outline-offset: -2px; }
 
 #sessions-bar .session-navigation { flex: none; display: flex; flex-direction: column; background: var(--md-surface-container); border-bottom: 1px solid var(--line); }
-/* 横排模式按钮：工作区、模型分组等共用分段外观；工作区保留页签的键盘交互。 */
-#app .ui-mode-switch { display: flex; flex: none; height: auto; }
-#app .ui-mode-switch, #app .ui-mode-switch .v-slide-group__content { gap: calc(var(--chat-space) / 2); }
+/* 横排模式按钮：侧栏与模型选择器共用底色、状态层和触控尺寸。 */
+#app .ui-mode-switch { display: flex; flex: none; height: auto; gap: calc(var(--chat-space) / 2); }
 #app .ui-mode-switch .v-btn { min-width: 0; min-height: var(--chat-control); height: auto; padding: 0 var(--chat-space); border-radius: var(--md-shape-sm); font-size: var(--md-type-label-large); letter-spacing: normal; background: var(--md-surface-container-high); color: var(--md-on-surface-variant); }
-#app .ui-mode-switch .v-btn:is(.v-btn--active, .v-tab--selected) { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+#app .ui-mode-switch .v-btn.v-btn--active { background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
 #app .ui-mode-switch .v-btn:focus-visible { outline: 2px solid var(--md-primary); outline-offset: -2px; }
-.workspace-tabs { margin-inline-start: auto; }
-#app .workspace-tabs .v-tab { min-width: var(--md-touch-target); min-height: var(--chat-nav-size); text-transform: none; }
-@media (max-width: 700px) {
-  #app .workspace-tabs .v-tab { padding-inline: calc(var(--chat-space) / 2); }
-}
 #sessions-bar .session-mode-tabs { margin: 0 var(--chat-space) calc(var(--chat-space) / 2); }
 #sessions-bar .session-mode-tabs .v-btn { flex: 1 1 0; }
 

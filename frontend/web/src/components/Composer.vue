@@ -41,7 +41,8 @@ const props = withDefaults(defineProps<{
 const text = defineModel<string>({ required: true });
 const running = ref(false);
 const hasText = computed(() => !!text.value.trim());
-const actionLabel = computed(() => running.value ? "停止" : !hasText.value && props.canContinue ? "续写" : "发送");
+const continueMode = computed(() => !hasText.value && props.canContinue);
+const actionLabel = computed(() => running.value ? "停止" : continueMode.value ? "续写" : "发送");
 
 function setRunning(v: unknown): void {
   running.value = !!v;
@@ -133,7 +134,7 @@ defineExpose({ submit, setRunning });
             :aria-label="actionLabel"
             @click="running ? stop() : submit()"
           >
-            <span aria-hidden="true" v-html="running ? ICONS.stop : actionLabel === '续写' ? ICONS.messagePlus : ICONS.send"></span>
+            <span aria-hidden="true" v-html="running ? ICONS.stop : continueMode ? ICONS.down : ICONS.send"></span>
           </VBtn>
         </div>
       </div>
