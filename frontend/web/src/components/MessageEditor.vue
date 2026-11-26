@@ -6,11 +6,11 @@
 // `VNavigationDrawer`（MD3 层级 1000+）压在下面；VDialog 的 overlay 层级与焦点陷阱
 // 由 Vuetify 统一管，顺便不再手写 Esc / 遮罩逻辑。
 //
-// 只 PATCH 这一条消息的 content 或 reasoning；保存成功后由父组件重拉消息与状态。
-import { ref, computed, nextTick, onMounted, watch } from "vue";
-import { VBtn, VCard, VCardActions, VCardText, VCardTitle, VDialog, VTextarea } from "vuetify/components";
+// 切换编辑字段时保留两边的草稿，保存只 PATCH 有改动的字段。
+import { ref, reactive, computed, nextTick, onMounted, watch } from "vue";
+import { VBtn, VBtnToggle, VCard, VCardActions, VCardText, VCardTitle, VDialog, VTextarea } from "vuetify/components";
 import CloseButton from "./CloseButton.vue";
-import { sharedApi } from "../utils/prefs.ts";
+import { messageEditorPrefs, saveMessageEditorPrefs, sharedApi } from "../utils/prefs.ts";
 import { ICONS } from "../assets/icons.ts";
 import type { EditMessageRequest, Message } from "../api/types.ts";
 
@@ -25,11 +25,10 @@ interface EditableMessage {
 const props = withDefaults(defineProps<{
   sessionId: string;
   message: EditableMessage;
-  kind?: "content" | "reasoning";
+  startWithReasoning?: boolean;
   rerollable?: boolean;
   flow?: boolean;
 }>(), {
-  kind: "content",
   rerollable: false,
   flow: false,
 });
@@ -41,24 +40,38 @@ const emit = defineEmits<{
 const api = sharedApi();
 const open = ref(true);
 const field = ref<{ focus: () => void } | null>(null);
-const original = props.kind === "reasoning" ? (props.message.reasoning ?? "") : (props.message.content ?? "");
-const text = ref(original);
+const canEditReasoning = props.message.role === "assistant";
+const prefs = messageEditorPrefs();
+const part = ref<"content" | "reasoning">(canEditReasoning && (props.startWithReasoning || prefs.reasoning) ? "reasoning" : "content");
+const original = { content: props.message.content ?? "", reasoning: props.message.reasoning ?? "" };
+const draft = reactive({ ...original });
 const status = ref("");
 const busy = ref<"save" | "reroll" | null>(null);
-const expanded = ref(false);
-const changed = computed(() => text.value !== original);
-const label = computed(() => props.kind === "reasoning" ? "思考" : props.message.role === "user" ? "Prompt" : "回复正文");
-const heading = computed(() => `编辑${label.value === "Prompt" ? " " : ""}${label.value}`);
+const expanded = ref(prefs.fullscreen);
+const label = computed(() => part.value === "reasoning" ? "思考" : props.message.role === "user" ? "Prompt" : "正文");
+const heading = props.message.role === "user" ? "编辑 Prompt" : "编辑消息";
+
+function selectPart(value: unknown): void {
+  if ((value !== "content" && value !== "reasoning") || value === part.value) return;
+  part.value = value;
+  saveMessageEditorPrefs({ reasoning: value === "reasoning" });
+}
 
 // 关闭统一走 VDialog 的 v-model：点 × / 遮罩 / Esc 都会让它变 false，再由这里发 close。
 watch(open, (value) => { if (!value) emit("close"); });
 
 // 网页全屏：只是把编辑框铺满 #app（不是浏览器 Fullscreen API，不占用户整块屏幕）。
-function toggleExpanded(): void { expanded.value = !expanded.value; }
+function toggleExpanded(): void {
+  expanded.value = !expanded.value;
+  saveMessageEditorPrefs({ fullscreen: expanded.value });
+}
 function close(): void { open.value = false; }
 async function save(reroll = false): Promise<void> {
   if (busy.value) return;
-  if (!changed.value) {
+  const body: EditMessageRequest = {};
+  if (draft.content !== original.content) body.content = draft.content;
+  if (canEditReasoning && draft.reasoning !== original.reasoning) body.reasoning = draft.reasoning;
+  if (body.content === undefined && body.reasoning === undefined) {
     if (reroll) emit("saved", { reroll: true });
     else close();
     return;
@@ -66,7 +79,6 @@ async function save(reroll = false): Promise<void> {
   busy.value = reroll ? "reroll" : "save";
   status.value = "";
   try {
-    const body: EditMessageRequest = props.kind === "reasoning" ? { reasoning: text.value } : { content: text.value };
     const updated = await api.editMessage(props.sessionId, props.message.id, body);
     emit("saved", { reroll, message: updated });
   } catch (e: unknown) {
@@ -105,10 +117,17 @@ onMounted(() => {
           <CloseButton title="关闭（不保存）" @click="close" />
         </span>
       </VCardTitle>
+      <div v-if="canEditReasoning" class="message-edit-mode">
+        <VBtnToggle class="ui-mode-switch" :model-value="part" mandatory variant="text"
+          aria-label="编辑内容" @update:model-value="selectPart">
+          <VBtn value="content" :aria-pressed="part === 'content'">正文</VBtn>
+          <VBtn value="reasoning" :aria-pressed="part === 'reasoning'">思考</VBtn>
+        </VBtnToggle>
+      </div>
       <VCardText class="message-edit-body">
         <VTextarea
           ref="field"
-          v-model="text"
+          v-model="draft[part]"
           class="message-edit-field"
           rows="14"
           variant="plain"

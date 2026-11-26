@@ -303,7 +303,7 @@ export function depthText(depth?: number | null): string {
 // 没这一格（没存思考的渠道 / 还没有正文 / 生成中）⇒ 空串 ⇒ 脚注省掉这段。
 export function formatLatency(ms?: number | null): string {
   if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return "";
-  return `${(ms / 1000).toFixed(1)} s`;
+  return `${(ms / 1000).toFixed(1)} 秒`;
 }
 
 // formatSpeed：输出速度（tps）＝ completion_tokens ÷ 整发墙钟时间。
@@ -316,34 +316,40 @@ export function formatSpeed(usage?: UsageLike | null, durationMs?: number | null
   if (typeof completion !== "number" || !Number.isFinite(completion) || completion <= 0) return "";
   if (typeof durationMs !== "number" || !Number.isFinite(durationMs) || durationMs <= 0) return "";
   const tps = completion / (durationMs / 1000);
-  return `${Number(tps.toFixed(1))} tps`;
+  return `${Number(tps.toFixed(1))} token/秒`;
 }
 
 // 每组是一项可换行的脚注。短文案沿用 token / 金额的显示精度，明细保留上游原数。
 // 缓存属于输入，思考属于输出。即使上游只报子项，也不补造总数或把子项另加一次。
 export function usageMetrics(usage?: UsageLike | null, timing?: { reasoningMs?: number | null; durationMs?: number | null }): UsageMetric[] {
   const metrics: UsageMetric[] = [];
+  const number = (value: number): string => value.toLocaleString("en-US");
   function tokens(label: string, total: number | null | undefined, subsetLabel: string, subset: number | null | undefined): void {
     const hasTotal = typeof total === "number" && Number.isFinite(total);
     const hasSubset = typeof subset === "number" && Number.isFinite(subset);
-    if (!hasTotal && !hasSubset) return;
     if (!hasTotal) {
-      metrics.push({ text: `${label}${subsetLabel} ${formatTokens(subset)}`, detail: `${label}中的${subsetLabel} ${subset} tok（未报告${label}总数）` });
+      if (hasSubset) metrics.push({ text: `${subsetLabel} ${formatTokens(subset)}`, detail: `${subsetLabel}用量：${number(subset)} token（未报告${label}总量）` });
       return;
     }
     metrics.push({
       text: `${label} ${formatTokens(total)}${hasSubset ? `（${subsetLabel} ${formatTokens(subset)}）` : ""}`,
-      detail: `${label} ${total} tok${hasSubset ? `（其中${subsetLabel} ${subset} tok，是${label}的子集，不另加）` : ""}`,
+      detail: `${label}用量：${number(total)} token${hasSubset ? `（含${subsetLabel} ${number(subset)} token）` : ""}`,
     });
   }
   tokens("输入", usage?.prompt_tokens, "缓存", usage?.cached_tokens);
   tokens("输出", usage?.completion_tokens, "思考", usage?.reasoning_tokens);
   const cost = formatCost(usage?.cost_usd);
-  if (cost) metrics.push({ text: `成本 ${cost}`, detail: `成本 $${usage?.cost_usd}：上游报的实扣金额（美元）` });
-  const latency = formatLatency(timing?.reasoningMs);
-  if (latency) metrics.push({ text: `首字 ${latency}`, detail: `首字延迟 ${timing?.reasoningMs} ms：受理 → 第一段正文` });
-  const speed = formatSpeed(usage, timing?.durationMs);
-  if (speed) metrics.push({ text: `速度 ${speed}`, detail: `速度 ${speed}：输出 ${usage?.completion_tokens} tok ÷ 整发耗时 ${timing?.durationMs} ms` });
+  if (cost) metrics.push({ text: `费用 ${cost}`, detail: `本次费用：${usage?.cost_usd} 美元` });
+  const latencyMs = timing?.reasoningMs;
+  const latency = formatLatency(latencyMs);
+  if (latency && latencyMs != null) {
+    metrics.push({ text: `首字 ${latency}`, detail: `首字延迟：${number(latencyMs / 1000)} 秒（从请求受理到首段正文）` });
+  }
+  const durationMs = timing?.durationMs;
+  const speed = formatSpeed(usage, durationMs);
+  if (speed && durationMs != null) {
+    metrics.push({ text: `平均 ${speed}`, detail: `平均输出速度：${speed}（按本次请求总耗时 ${number(durationMs / 1000)} 秒计算）` });
+  }
   return metrics;
 }
 

@@ -20,7 +20,7 @@ interface OverlaySink {
   confirmAsk(text: string, options?: ConfirmOptions): Promise<boolean>;
 }
 
-interface TopbarSink {
+interface OverridesSink {
   setOverridesSaved(value: Record<string, unknown>): void;
 }
 
@@ -30,7 +30,7 @@ export interface SessionActionsDeps {
   getSessionID: () => string | null;
   isDraft: () => boolean;
   sessionInfo: SessionInfo;
-  topbarRef: Ref<TopbarSink | null>;
+  contextRingRef: Ref<OverridesSink | null>;
   overlaysRef: Ref<OverlaySink | null>;
   refreshPreview: () => void;
   refreshSessionsBar: () => Promise<void>;
@@ -42,7 +42,7 @@ export interface SessionActionsDeps {
 }
 
 export function useSessionActions({
-  api, toast, getSessionID, isDraft, sessionInfo, topbarRef, overlaysRef, refreshPreview,
+  api, toast, getSessionID, isDraft, sessionInfo, contextRingRef, overlaysRef, refreshPreview,
   refreshSessionsBar, getSessionsCache, enterSession, startDraft, backToChat, forgetCachedWindow,
 }: SessionActionsDeps) {
   const pendingSessionActions = shallowReactive(new Map<string, string>());
@@ -60,7 +60,7 @@ export function useSessionActions({
       const updated = await api.patchSession(sid, { request_overrides: overrides });
       if (sid !== getSessionID()) return;
       Object.assign(sessionInfo, updated);
-      topbarRef.value?.setOverridesSaved(updated.request_overrides ?? {});
+      contextRingRef.value?.setOverridesSaved(updated.request_overrides ?? {});
       refreshPreview();
       toast("请求体覆盖已保存", "ok");
     } catch (err: unknown) {

@@ -2,7 +2,7 @@
 //
 // 2026-11-01 用户定：「任务菜单里，我希望有办法取消任务」。这里只管三件事：
 //   ① 2s 拉一次 `/tasks`（进程内事实，零成本）；
-//   ② 把同一拍喂给顶栏环心与左栏行内环（**同一个快照**，别各自 filter）；
+//   ② 把同一拍喂给输入栏圆环与左栏行内环（**同一个快照**，别各自 filter）；
 //   ③ 取消原子任务 / 队列，并让重摇两族当场对齐。
 //
 // `canceled:false` 不是错误（刚好跑完 / 压根不能停）—— 补刷一次面板，那一行自己会消失。
@@ -17,17 +17,17 @@ interface TasksApi {
   cancelTask(id: string): Promise<{ canceled: boolean }>;
   cancelQueue(id: string): Promise<Queue>;
 }
-interface TopbarTasks {
+interface ContextRingSink {
   setTasks(board: TaskBoard | null): void;
 }
 interface UseTasksOptions {
   api: TasksApi;
   toast: (text: string, kind?: string) => void;
-  topbarRef: Ref<TopbarTasks | null>;
+  contextRingRef: Ref<ContextRingSink | null>;
   onCanceled?: () => void;
 }
 
-export function useTasks({ api, toast, topbarRef, onCanceled }: UseTasksOptions) {
+export function useTasks({ api, toast, contextRingRef, onCanceled }: UseTasksOptions) {
   const busyIds = ref<string[]>([]);
   const cancelingTasks = shallowReactive(new Set<string>());
   let timer: ReturnType<typeof setInterval> | null = null;
@@ -35,12 +35,12 @@ export function useTasks({ api, toast, topbarRef, onCanceled }: UseTasksOptions)
   async function refreshTasks(): Promise<void> {
     try {
       const board = await api.tasks();
-      topbarRef.value?.setTasks(board);
-      // 左栏的行内环：哪条会话此刻有任务在跑（与顶栏环心同一个快照）。
+      contextRingRef.value?.setTasks(board);
+      // 左栏的忙碌标记与输入栏圆环来自同一个快照。
       busyIds.value = busySessionIds(board);
     } catch {
       // 读不到 ⇒ 面板说"读不到"，左栏**不能**继续挂着上一拍的环（那会是一条永远转的假象）。
-      topbarRef.value?.setTasks(null);
+      contextRingRef.value?.setTasks(null);
       busyIds.value = [];
     }
   }

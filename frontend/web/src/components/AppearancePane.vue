@@ -303,8 +303,8 @@ async function clearBg(): Promise<void> {
 
       <section class="settings-card">
         <h3>布局</h3>
-        <label id="setting-chrome-hide" tabindex="-1" class="field"><span>滚动时自动收起顶栏/底栏（仅触屏）</span><VSwitch :model-value="chromeHide" @update:model-value="(v) => setChromeHide(v === true)" color="primary" density="compact" hide-details /></label>
-        <p class="hint">往下看时收起顶栏，往回看时收起底栏；反向滚动时恢复，到顶或到底时全部恢复。</p>
+        <label id="setting-chrome-hide" tabindex="-1" class="field"><span>滚动时自动收起悬浮控件和输入栏（仅触屏）</span><VSwitch :model-value="chromeHide" @update:model-value="(v) => setChromeHide(v === true)" color="primary" density="compact" hide-details /></label>
+        <p class="hint">往下看时收起上方控件，往回看时收起输入栏；到顶或到底时全部恢复。</p>
       </section>
     </template>
 

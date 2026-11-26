@@ -43,7 +43,7 @@ export interface CommandsDeps {
   reloadWindow: () => Promise<boolean>;
   refreshStateView: (id?: string | null) => void;
   refreshRerolls: () => Promise<unknown>;
-  openMessageEditor: (message: AppRow, kind: "content" | "reasoning") => void;
+  openMessageEditor: (message: AppRow, startWithReasoning?: boolean) => void;
   openSummaryEdit: (sum: EditableSummary | ChatSummary | null) => void;
   deleteMessagesFlow: (sid: string, mid: string, confirmTextFor: (plan: import("../api/types.ts").DeletionPlan) => string) => Promise<boolean>;
 }
@@ -124,7 +124,7 @@ export function useCommands({
       const messages = vueMessages.value;
       const wantThink = (args[0] ?? "").toLowerCase().startsWith("思") || (args[1] ?? "").toLowerCase().startsWith("思");
       const n = Number(wantThink && isNaN(Number(args[0])) ? args[1] : args[0]);
-      const one = (m: AppRow): void => openMessageEditor(m, wantThink ? "reasoning" : "content");
+      const one = (m: AppRow): void => openMessageEditor(m, wantThink);
       if (Number.isInteger(n) && n > 0) {
         const m = messages.find((x) => x.idx === n);
         if (!m) { toast(`没有第 ${n} 条`, "error"); return; }
@@ -132,7 +132,7 @@ export function useCommands({
         return;
       }
       overlaysRef.value?.showPicker(
-        `edit：选一条（改${wantThink ? "思考" : "正文"}）`,
+        "edit：选一条消息",
         messages.filter((m) => (m.idx ?? 0) > 0).map((m) => ({
           label: `#${m.idx} ${m.role} ${(wantThink ? (m.reasoning ?? "") : (m.content ?? "")).slice(0, 40)}`,
           value: m,

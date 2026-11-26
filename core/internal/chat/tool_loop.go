@@ -102,11 +102,11 @@ func (p *roundProgress) hostedTool(e providers.ToolEvent) {
 		p.turns.SetTool(p.session, p.token, e.Kind, e.State)
 		return
 	}
-	p.rememberHostedTool(e)
+	p.rememberHostedTool(e, true)
 	p.turns.SetHostedTools(p.session, p.token, e.Kind, e.State, p.tools)
 }
 
-func (p *roundProgress) rememberHostedTool(e providers.ToolEvent) {
+func (p *roundProgress) rememberHostedTool(e providers.ToolEvent, streamed bool) {
 	i, exists := p.hosted[e.ItemID]
 	if !exists {
 		i = len(p.tools)
@@ -114,8 +114,12 @@ func (p *roundProgress) rememberHostedTool(e providers.ToolEvent) {
 			p.hosted = make(map[string]int)
 		}
 		p.hosted[e.ItemID] = i
-		p.tools = append(p.tools, model.MessageTool{Source: "server", ItemID: e.ItemID, ToolName: e.Kind,
-			BodyOffset: new(p.text.Len()), TextOffset: new(p.offset())})
+		tool := model.MessageTool{Source: "server", ItemID: e.ItemID, ToolName: e.Kind}
+		if streamed {
+			tool.BodyOffset = new(p.text.Len())
+			tool.TextOffset = new(p.offset())
+		}
+		p.tools = append(p.tools, tool)
 	}
 	t := &p.tools[i]
 	if e.State != "" {
@@ -140,7 +144,7 @@ func (p *roundProgress) finish(r providers.Result) {
 			if event.State == "" {
 				event.State = "completed"
 			}
-			p.rememberHostedTool(event)
+			p.rememberHostedTool(event, false)
 		}
 	}
 	// 终态可能补齐迟到工具的位置，但只在该坐标与已经播出的正文一致时更新实时预览。

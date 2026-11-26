@@ -98,7 +98,7 @@ func (e *Exchange) LocateToolBodies(content string, tools []MessageTool) {
 	}
 	for i := range tools {
 		t := &tools[i]
-		if offset, ok := offsets[toolKey{t.Source, t.ItemID}]; ok && offset >= 0 {
+		if offset, ok := offsets[toolKey{t.Source, t.ItemID}]; ok && offset >= 0 && (t.BodyOffset == nil || offset < *t.BodyOffset) {
 			t.BodyOffset = new(offset)
 		}
 	}

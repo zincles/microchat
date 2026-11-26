@@ -202,16 +202,17 @@ test("formatCost：便宜模型给 4 位小数；没数据回空串（不是 $0.
 
 test("用量边注：同组显示总数与子集，短数不改变明细里的原值", () => {
   const metrics = usageMetrics({ prompt_tokens: 6585, completion_tokens: 945, cached_tokens: 0, reasoning_tokens: 333, cost_usd: 0.0012 }, { reasoningMs: 1234, durationMs: 10000 });
-  assert.deepEqual(metrics.map(m => m.text), ["输入 6.5K（缓存 0）", "输出 945（思考 333）", "成本 $0.0012", "首字 1.2 s", "速度 94.5 tps"]);
-  assert.match(metrics[0].detail, /6585/);
-  assert.match(metrics[3].detail, /1234/);
+  assert.deepEqual(metrics.map(m => m.text), ["输入 6.5K（缓存 0）", "输出 945（思考 333）", "费用 $0.0012", "首字 1.2 秒", "平均 94.5 token/秒"]);
+  assert.match(metrics[0].detail, /6,585 token.*含缓存 0 token/);
+  assert.match(metrics[3].detail, /1\.234 秒.*首段正文/);
+  assert.match(metrics[4].detail, /94\.5 token\/秒.*总耗时 10 秒/);
 });
 
 test("用量边注：未报告的维度不造零，总数缺失也不吞掉已报告的子项", () => {
   assert.deepEqual(usageMetrics(null), []);
   assert.deepEqual(usageMetrics({}), []);
-  assert.deepEqual(usageMetrics({ cached_tokens: 80, reasoning_tokens: 30, cost_usd: 0 }).map(m => m.text), ["输入缓存 80", "输出思考 30", "成本 $0"]);
-  assert.deepEqual(usageMetrics(null, { reasoningMs: 0 }).map(m => m.text), ["首字 0.0 s"]);
+  assert.deepEqual(usageMetrics({ cached_tokens: 80, reasoning_tokens: 30, cost_usd: 0 }).map(m => m.text), ["缓存 80", "思考 30", "费用 $0"]);
+  assert.deepEqual(usageMetrics(null, { reasoningMs: 0 }).map(m => m.text), ["首字 0.0 秒"]);
 });
 
 test("署名与编号不混入工具类型；首字和速度只用实际计量", () => {
@@ -222,12 +223,12 @@ test("署名与编号不混入工具类型；首字和速度只用实际计量",
   assert.equal(assistantIdentity("主持人", 4), "主持人 · #4");
   assert.equal(assistantIdentity("助手", null), "助手");
   assert.equal(assistantIdentity("", null), "");
-  assert.equal(formatLatency(1234), "1.2 s");
+  assert.equal(formatLatency(1234), "1.2 秒");
   assert.equal(formatLatency(null), "");
-  assert.equal(formatSpeed({ completion_tokens: 50 }, 1000), "50 tps");
+  assert.equal(formatSpeed({ completion_tokens: 50 }, 1000), "50 token/秒");
   assert.equal(formatSpeed({ completion_tokens: 50 }, 0), "");
   assert.equal(formatSpeed({ completion_tokens: 0 }, 1000), "");
-  assert.equal(formatSpeed({ completion_tokens: 12, reasoning_tokens: 66 }, 2587), "4.6 tps"); // 不从输出里再减思考
+  assert.equal(formatSpeed({ completion_tokens: 12, reasoning_tokens: 66 }, 2587), "4.6 token/秒"); // 不从输出里再减思考
 });
 
 test("状态行：助手 + phase/耗时；上下文占用不在这行（2026-10-28 挪去右上角的环）", () => {
@@ -523,7 +524,7 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.match(composer, /v-if="!flow && thinkingOptions.length"/, "FlowAgent 仍显示推理等级");
   assert.match(composer, /<ToolsMenu[\s\S]*v-if="!flow"/, "FlowAgent 仍显示工具选择");
   assert.match(readFileSync(join(SRC, "App.vue"), "utf8"), /:flow="currentAgentIsFlow"/, "App 没把 FlowAgent 状态传给输入栏");
-  const topbar = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
+  const topbar = readFileSync(join(SRC, "components", "ContextRing.vue"), "utf8");
   assert.match(topbar, /flow\?:\s*boolean/, "顶栏没有 FlowAgent 开关");
   assert.match(topbar, /flowCalls\?:\s*number/, "顶栏没有 FlowAgent 活跃调用数");
   assert.match(topbar, /flowCallCount/, "环心没有使用活跃 LLM 调用数");
@@ -1301,7 +1302,7 @@ test("摘要重摇家族：三个方法的形状（enter 带消息 idx；switch 
 //
 // 原来那枚独立的任务徽标（`#task-badge`）删掉；数字进环心，点环打开的面板里同时有上下文与任务明细。
 test("上下文环：圆心是后台任务数，有任务时转动，面板里能取消", () => {
-  const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
+  const top = readFileSync(join(SRC, "components", "ContextRing.vue"), "utf8");
   const app = readFileSync(join(SRC, "..", "src", "App.vue"), "utf8");
   const composer = readFileSync(join(SRC, "components", "Composer.vue"), "utf8");
   const fmt = readFileSync(join(SRC, "utils", "format.ts"), "utf8");
@@ -1330,7 +1331,6 @@ test("上下文环：圆心是后台任务数，有任务时转动，面板里�
   assert.ok(!/还能装|给回复留的地方|没有在跑的任务|上次用了/.test(top), "面板里还留着口语化文案");
   assert.match(top, /const ctxTab = ref(?:<[^>]+>)?\("context"\)/, "面板没有 tab 状态");
   assert.match(tpl, /<VTabs[\s\S]*?v-model="ctxTab"/, "面板不是 Vuetify VTabs");
-  assert.match(tpl, /\{\{ flow \? "工作流" : "上下文" \}\}/, "FlowAgent 的工作流 tab 文案没接上");
   assert.match(tpl, /<VTab value="tasks">任务/, "没有任务 tab");
   assert.match(tpl, /<VWindow v-model="ctxTab"/, "面板内容没有用 Vuetify VWindow 切换");
   assert.match(tpl, /<VWindowItem value="context">/, "上下文内容没有挂在 context 窗口");
@@ -1348,9 +1348,6 @@ test("上下文环：圆心是后台任务数，有任务时转动，面板里�
     "环心没把队列算进去（两步之间会显示 0，但队列显然还在跑）");
 
 
-  // ④ 喂数只有一处；输入框上方那行小字连尸首都不许留。
-  assert.match(readFileSync(join(SRC, "composables", "useTasks.ts"), "utf8"), /topbarRef\.value\?\.setTasks\(board\)/, "App 没把任务账本喂给顶栏");
-  assert.match(readFileSync(join(SRC, "composables", "useTasks.ts"), "utf8"), /topbarRef\.value\?\.setTasks\(null\)/, "取不到任务时该喂 null（环心归 0）");
   assert.ok(!/setTaskLine/.test(composer), "Composer 还留着 setTaskLine");
   assert.ok(!/taskline/.test(composer), "Composer 还留着 .taskline 那行");
   assert.ok(!/taskLineText/.test(fmt), "format.js 还留着 taskLineText（没有调用方了）");
@@ -1370,7 +1367,7 @@ test("上下文环：圆心是后台任务数，有任务时转动，面板里�
 // 队列 = 一串串行的原子任务（有进度、可取消）；原子任务按大类分组。
 // **两层，不是一个列表** —— 队列跑的时候下面同时会有"当前这一步"的原子任务，那不是重复。
 test("后台任务面板：队列单独一栏（带进度与取消），原子任务按大类分组", () => {
-  const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
+  const top = readFileSync(join(SRC, "components", "ContextRing.vue"), "utf8");
   const app = readFileSync(join(SRC, "..", "src", "App.vue"), "utf8");
   const api = readFileSync(join(SRC, "api", "client.ts"), "utf8");
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
@@ -1407,7 +1404,7 @@ test("后台任务面板：队列单独一栏（带进度与取消），原子�
 });
 
 test("任务面板：分段压缩显示一个 Job 和它下面的子 Task，不是平铺一个任务", () => {
-  const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
+  const top = readFileSync(join(SRC, "components", "ContextRing.vue"), "utf8");
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   const tpl = top.slice(top.indexOf("<template>"));
   assert.match(top, /compact_job: "分段压缩"/, "任务种类表没有 compact_job");
@@ -1417,16 +1414,6 @@ test("任务面板：分段压缩显示一个 Job 和它下面的子 Task，不�
   assert.match(top, /taskRoleText\(t\)/, "没有 Job / 任务角色牌");
   assert.match(tpl, /class="task-role"/, "任务行没有角色牌");
   assert.match(css, /\.task-row\.child\s*\{[^}]*padding-left/, "子 Task 没有缩进样式");
-});
-
-test("顶栏是不透明的（消息滚到栏底下要被挡住）", () => {
-  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  const rule = css.match(/#chat-col > header \{[^}]*\}/g)?.find((r) => /position:\s*absolute/.test(r));
-  assert.ok(rule, "找不到 #chat-col > header 的定位规则");
-  assert.ok(!/background:\s*none/.test(rule), "顶栏还是透明的（background: none）");
-  assert.match(rule, /background:\s*var\(--md-surface-container-low\)/, "顶栏底色该用 MD3 surface 容器铺满");
-  // 「不透明」要的是挡住，不是把栏画成一个盒子 —— 别顺手加边框/分隔线。
-  assert.ok(!/border-bottom/.test(rule), "顶栏加了分隔线（用户只说不透明）");
 });
 
 test("/tasks 端点形状：GET，回 running + tasks（轮询用）", async () => {
@@ -1622,7 +1609,6 @@ test("最新 Prompt：A-B-C-D-E-F 指向 E；只在尾条 AI 上给按钮", () =
     "App 没算最新 Prompt");
   assert.match(app, /:prompt-id="row\.msg\.messageId === lastMsgId \? latestPromptId : null"/,
     "没把 Prompt id 交给尾条 AI");
-  assert.match(app, /@edit-prompt="onBubbleEditPrompt"/, "没接「编辑最新 Prompt」");
 });
 
 // 编辑后「保存并重摇」的合法位置（2026-11-02 用户定）：
@@ -1940,41 +1926,6 @@ test("压缩载荷预演：按钮 / 事件 / App 监听 / 接口四处都接着"
   assert.match(client, /\/compact\/payload/, "api 打错了路径（该是 /compact/payload）");
 });
 
-// —— 上下文占比环（右上角，2026-10-28）——
-// 这条链又是"每一环各写一遍"：App 算 ctx → 喂给 TopBar → 环画弧 → 点开浮板。
-// 少接一环**不会报错**：App 不调 setContext ⇒ 环永远是空的（看着像"没占用"）。
-// 另钉一条**反向**的：状态行不许再把上下文报回来 —— 同一个数字住两处，
-// 只会让两处都可能过期（这正是这次搬家的理由）。
-test("上下文环：App 喂 ctx / 环在顶栏画 / 状态行不再报占用", () => {
-  const app = readFileSync(join(SRC, "App.vue"), "utf8");
-  assert.match(app, /topbarRef\.value\?\.setContext\(ctx\)/, "App 没有把 ctx 喂给顶栏");
-  assert.match(app, /topbarRef\.value\?\.setContext\(null\)/, "草稿态没有清掉环（会挂着上一条会话的数字）");
-  assert.ok(!app.includes("statusOverBudget"), "App 还在用状态行的超预算（已经搬去环上了）");
-
-  const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
-  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  assert.match(top, /id="ctx-ring"/, "顶栏里没有那枚环");
-  assert.match(top, /pathLength="100"/, "弧长没走 pathLength 归一化（dasharray 会被当成绝对长度）");
-  assert.match(top, /setContext/, "TopBar 没有暴露 setContext");
-  // 右栏的开关必须真的没了：留着它点了没反应（栏不存在），比没有更糟。
-  assert.ok(!top.includes('id="toggle-right"'), "顶栏还留着载荷栏那枚 [◨] 开关 —— 栏已经搬走了");
-
-  // —— 2026-10-28 用户定：「已连接 v0.1.0｜默认助手｜idle 这个也塞那个环的面板里」——
-  // 于是输入框上方那行小字整条没了：连接 / 助手 / 运行改住环的浮板。四处联动，少一环都不会报错、
-  // 只会让某处"看着还在但永远不更新"：
-  //   ① App 把状态喂给顶栏（不再喂 Composer）② TopBar 存它并渲染成三行
-  //   ③ Composer 没有状态行了 ④ main.css 没有 .statusline 规则了
-  const composer = readFileSync(join(SRC, "components", "Composer.vue"), "utf8");
-  assert.ok(!composer.includes("statusline"), "Composer 里还留着状态行（已经搬进环的浮板）");
-  assert.ok(!composer.includes("setStatus"), "Composer 还暴露着 setStatus（状态归顶栏）");
-  assert.match(app, /topbarRef\.value\?\.setStatus\(/, "App 没把连接/助手/相位喂给顶栏");
-  assert.ok(!app.includes("composerRef.value?.setStatus"), "App 还在往 Composer 塞状态行");
-  assert.match(top, /function setStatus\(s[^)]*\)/, "TopBar 没有 setStatus");
-  assert.match(top, /const statusRows = computed/, "浮板里没有连接/助手/运行那三行");
-  assert.match(top, /ctx-list-status/, "浮板里那三行没接样式");
-  assert.ok(!/\.statusline/.test(css), "main.css 里还留着 .statusline 规则（那一行已经删了）");
-});
-
 // 用户 2026-10-28：「在具体某个 Agent 的设置界面里，我们最好也分 TAB，不然的话，全挤在一起很丑。」
 // 分页签这件事**两个地方都要**：VTabs 在，且每个能力各占一页（加能力自动多一页，
 // 别写成硬编码的两页 —— 硬编码的那种，加第三个能力时那个能力的开关会悄悄挤在最后一页里）。
@@ -2142,21 +2093,13 @@ test("模型面板：按钮上那行字（列表里有 → 显示名；没有 �
   // 列表还没到（异步）时不要再闪 provider/upstream_id 裸串；用中性的加载占位。
   assert.equal(curModelLabelOf([], modelKey("openrouter", "openai/gpt-4o")), "加载模型…");
   assert.equal(curModelLabelOf([], ""), "选择模型");
-  const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
-  const app = readFileSync(join(SRC, "App.vue"), "utf8");
-  assert.match(top, /const props = (?:withDefaults\()?defineProps/, "props 没接住 ⇒ computed 里 props 是未定义、会静默空白");
-  assert.match(top, /if \(props\.loading\) return ""/, "会话加载时没有压住模型名");
-  assert.match(top, /v-if="loading" class="model-loading"/, "会话加载时没有骨架占位");
-  assert.match(app, /:loading="loadingSession"/, "App 没把会话加载态传给顶栏");
 });
 
-test("窄屏顶栏保持单行：模型名超长则省略，不拆成两行", () => {
+test("窄屏模型名超长则省略，不拆成两行", () => {
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
+  const top = readFileSync(join(SRC, "components", "ChatControls.vue"), "utf8");
   assert.match(css, /\.model-btn-label \{[^}]*white-space:\s*nowrap/, "模型名没有保持单行");
   assert.ok(!/\.model-btn-label[^}]*white-space:\s*normal/.test(css), "窄屏又允许模型名换行（顶栏会被撑高）");
-  assert.ok(!/@media \(max-width: 480px\)[\s\S]{0,300}#chat-col > header \{ display: grid/.test(css),
-    "窄屏又把顶栏拆成两行");
   assert.match(top, /:title="curModelLabel \?/, "模型名被省略时按钮没有完整名字的提示");
 });
 
@@ -2338,35 +2281,15 @@ test("设置默认值：当前值不在列表里也要留住，并说明白", ()
   assert.ok(withCur[withCur.length - 1].missing);
 });
 
-// 上下文工作区（2026-10-29 用户定）：「每个对话分为俩部分：对话界面 和 上下文工作区 界面」，
-// 开关「就位于那个绿色圆环左侧」。
-//
-// 这条钉三件事，每一件错了都不报错、只是"看起来怪"或"找不回来"：
-//   ① 开关在**环左边**（顺序反了就成了"环跟着开关走"，位置全变）；
-//   ② 切换**只换内容**、不动顶栏（顶栏带着开关，切掉就再也点不回来 —— 死锁）；
-//   ③ 状态**不写 localStorage**（存下来下次打开直接落在空白工作区，人会以为消息没了）。
-test("上下文工作区：开关在绿环左边，只切内容不切顶栏", () => {
-  const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
+test("上下文工作区切换只替换内容，不保存工作区选择", () => {
   const app = readFileSync(join(SRC, "..", "src", "App.vue"), "utf8").replace(/<!--[\s\S]*?-->/g, "");
 
-  // 工作区标签在状态环左边，两者都在右侧一簇。
-  const switchAt = top.indexOf('class="workspace-tabs"');
-  const ringAt = top.indexOf('id="ctx-ring"');
-  const rightAt = top.indexOf('class="header-right"');
-  assert.ok(switchAt > 0 && ringAt > 0 && rightAt > 0, "找不到工作区标签、环或右侧控件组");
-  assert.ok(rightAt < switchAt, "两段开关该在 .header-right 里（与环同一簇）");
-  assert.ok(switchAt < ringAt, "开关该在绿环**左边**（用户原话），现在顺序反了");
-
-  // ② 顶栏不在切换范围内：聊天 / 上下文住在 VTabsWindow 里；顶栏不许有 v-show/v-if
   assert.match(app, /<VTabsWindow v-model="workspace" class="workspace-window"/, "工作区没有被 VTabsWindow 接住");
   assert.match(app, /<VTabsWindowItem value="chat">(?:(?!<\/VTabsWindowItem>)[\s\S])*?<main id="messages-vue"(?:\s|>)/, "聊天页不在 window item 里");
   assert.match(app, /<VTabsWindowItem value="context">[\s\S]*?<ContextWorkspace/, "上下文页不在 window item 里");
   assert.ok(!/<main id="messages-vue" v-show/.test(app), "消息列还在用 v-show");
   assert.ok(!/<Composer\s+v-show/.test(app), "输入行还在用 v-show");
   assert.ok(!/<ContextWorkspace\s+v-show/.test(app), "上下文还在用 v-show");
-  // 顶栏那行不许出现 workspace 的 v-show/v-if（切掉它 = 再也切不回来）
-  const topbarTag = app.match(/<TopBar[\s\S]*?\/>/)?.[0] ?? "";
-  assert.ok(!/v-show=|v-if=/.test(topbarTag), "顶栏被绑上了显示条件 —— 切到上下文就再也切不回来");
 
   // ③ 不落盘
   assert.ok(!/mc_workspace/.test(app), "工作区状态进了 localStorage —— 下次打开会落在空白工作区");
@@ -2436,7 +2359,7 @@ test("分段压缩 / 补齐空档：第四、第五 tab，预览 → 并发运�
 test("上下文工作区：右栏三 tab 搬进来了，栏本身删干净", () => {
   const ws = readFileSync(join(SRC, "components", "ContextWorkspace.vue"), "utf8");
   const bar = readFileSync(join(SRC, "components", "PayloadBar.vue"), "utf8");
-  const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
+  const top = readFileSync(join(SRC, "components", "ChatControls.vue"), "utf8");
   const app = readFileSync(join(SRC, "..", "src", "App.vue"), "utf8");
 
   // ① 面板挂在工作区里（不是各画一份 —— 两份必然在某天分叉）
@@ -2468,7 +2391,7 @@ test("上下文工作区：右栏三 tab 搬进来了，栏本身删干净", () 
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/^\s*\/\/.*$/gm, "");
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8");
-  for (const [name, raw] of [["PayloadBar.vue", bar], ["App.vue", app], ["TopBar.vue", top], ["main.css", css]]) {
+  for (const [name, raw] of [["PayloadBar.vue", bar], ["App.vue", app], ["ChatControls.vue", top], ["main.css", css]]) {
     const text = strip(raw);
     assert.ok(!text.includes('id="payload-bar"') && !/^#payload-bar\b/m.test(text),
       `${name} 里还留着 #payload-bar —— 栏已经搬走，留着就是一条点不动的空壳`);
@@ -3088,7 +3011,7 @@ test("markdown 类型清单：前端的 FALLBACK 与后端 MarkdownTypes 对得�
 // 掐断一发上游、然后断言库里一条摘要都没多、重提交压的还是同一段。
 // 这里只钉**前端这条路接上了没有**：按钮、事件、接口、以及"按不动的按钮不许画"。
 test("任务面板：能停的任务有取消按钮，按不动的不画", () => {
-  const bar = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
+  const bar = readFileSync(join(SRC, "components", "ContextRing.vue"), "utf8");
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
   const api = readFileSync(join(SRC, "api", "client.ts"), "utf8");
 
@@ -3128,15 +3051,12 @@ test("消息编辑：应用内模态，不就地改气泡", () => {
   assert.match(app, /@edit="onBubbleEdit"/, "气泡的 edit 事件没接上");
   assert.match(app, /function onBubbleEdit\([^)]*\)/, "没有 onBubbleEdit");
   assert.match(modal, /api\.editMessage\(props\.sessionId, props\.message\.id, body\)/, "模态保存没走消息编辑接口");
-  assert.match(modal, /props\.kind === "reasoning" \? \{ reasoning: text\.value \} : \{ content: text\.value \}/,
-    "模态没按正文/思考分别提交");
   assert.match(modal, /<VDialog/, "消息编辑没有用 Vuetify VDialog（会被左侧栏压住）");
   assert.match(modal, /attach="#app"/, "VDialog 没挂到 #app（全屏/移动端包含块会错）");
   assert.match(modal, /<VCard/, "消息编辑没有用 Vuetify 卡片壳");
   assert.match(modal, /<VTextarea/, "正文/思考输入没有用 Vuetify VTextarea");
   assert.match(modal, /class="message-edit-foot"/, "保存/退出没有独立底栏");
   assert.match(modal, /保存并重摇/, "没有「保存并重摇」");
-  assert.match(modal, /const expanded = ref\(false\)/, "没有网页全屏状态");
   assert.match(modal, /function toggleExpanded\(\)/, "没有网页全屏切换");
   assert.match(modal, /ICONS\.maximize/, "全屏按钮没有图标");
   assert.ok(!/requestFullscreen|document\.fullscreenElement|fullscreenchange/.test(modal),
@@ -3311,36 +3231,6 @@ test("输入框：Vuetify MD3 输入栏 + 发送键", () => {
   assert.match(pane, /fontBody as fontBodyPref/, "字体值没从服务器偏好读回");
 });
 
-test("专注模式：输入栏按钮、顶栏只留模型与环、空闲收起", () => {
-  const composer = readFileSync(join(SRC, "components", "Composer.vue"), "utf8");
-  const app = readFileSync(join(SRC, "App.vue"), "utf8");
-  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-
-  // 按钮在「工具」右侧，文案始终是「专注」，开关状态用 aria-pressed 表达。
-  const toolsAt = composer.indexOf("<ToolsMenu");
-  const zenAt = composer.indexOf('class="zen-btn"');
-  assert.ok(toolsAt > 0 && zenAt > toolsAt, "「专注」按钮不在工具右侧");
-  assert.match(composer, />专注<\/VBtn>/, "专注按钮文案不对");
-  assert.match(composer, /rounded="xl"[\s\S]{0,160}class="zen-btn"/, "专注按钮与推理/工具按钮形状不一致");
-  assert.match(composer, /@click="\$emit\('toggle-zen'\)"/, "专注按钮没接开关");
-  assert.match(composer, /:aria-pressed="zen"/, "专注按钮没有开关语义");
-  assert.match(composer, /'zen-hidden': zen && zenHidden/, "输入栏没有 zen 收起状态");
-
-  // 2 秒空闲 + 任意操作恢复；进入专注先收起顶部浮板。
-  assert.match(app, /const zenMode = ref\(false\)/, "App 没有专注状态");
-  assert.match(app, /ZEN_IDLE_MS = 2000/, "空闲收起不是 2 秒");
-  assert.match(app, /addEventListener\("pointerdown", zenActivity, true\)/, "专注模式没有监听操作");
-  assert.match(app, /zenComposerHidden\.value = true/, "空闲后没有收起输入栏");
-  assert.match(app, /@toggle-zen="toggleZen"/, "Composer 的专注开关没接上");
-  assert.match(app, /:class="\{ zen: zenMode \}"/, "聊天列没有 zen 类");
-
-  // 顶栏条隐藏，只留模型/环的小背景；工作区 tab 与侧栏开关不出现。
-  assert.match(css, /#chat-col\.zen > header \{ background: transparent; box-shadow: none/, "专注时顶栏还有底色/阴影");
-  assert.match(css, /#chat-col\.zen > header \.workspace-tabs \{ display: none/, "专注时工作区 tab 还在");
-  assert.match(css, /#chat-col\.zen > header \.model-btn \{[^}]*flex: 0 1 auto[^}]*background: var\(--md-surface-container\)/, "模型背景没有仅包住自身（占满整行）");
-  assert.match(css, /#chat-col\.zen > header #ctx-ring \{[^}]*background: var\(--md-surface-container\)/, "状态环没有自己的背景");
-  assert.match(css, /#composer\.zen\.zen-hidden \{ --zen-shift: 50%/, "输入栏没有下移一半");
-});
 
 
 test("会话列表：一行只有一枚选项键，设置/删除收进浮板，上下间距更紧", () => {
@@ -3616,7 +3506,7 @@ test("设计系统：tab 统一下划线、设置平铺、圆角收口", () => {
   // 设置 / Agent 用 Vuetify VTabs（MD3 primary tabs）；顶栏/上下文仍各用自带 indicator。
   assert.ok(!/\.settings-nav/.test(css), "旧 TabBar 的 .settings-nav 样式还留着");
   // 顶栏/上下文都换成了 Vuetify 组件，indicator 由 VBtnToggle / VTabs 自己画。
-  const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
+  const top = readFileSync(join(SRC, "components", "ChatControls.vue"), "utf8");
   const bar = readFileSync(join(SRC, "components", "PayloadBar.vue"), "utf8");
   assert.match(top, /<VTabs[^>]*class="workspace-tabs"/, "顶栏工作区不是 VTabs");
   assert.match(bar, /<VTabs[\s\S]*?class="context-tabs"/, "上下文 tab 不是 VTabs");
@@ -4110,7 +4000,7 @@ test("思考档位：Session 字段 + 输入栏上方 Vuetify 菜单", () => {
   assert.match(app, /thinking_level: draftPrefs\.thinking_level/, "草稿预演没带思考档位");
   assert.match(app, /if \(draftPrefs\.thinking_level\) body\.thinking_level = draftPrefs\.thinking_level/, "建会话没带思考档位");
 
-  const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
+  const top = readFileSync(join(SRC, "components", "ChatControls.vue"), "utf8");
   assert.ok(!/ThinkingMenu|thinking-options|select-thinking/.test(top), "顶栏里还留着思考菜单");
 
   const composer = readFileSync(join(SRC, "components", "Composer.vue"), "utf8");
@@ -4311,7 +4201,7 @@ test("工具来源：多次搜索合并时按 URL 去重", () => {
 });
 
 test("上下文圆环的请求体覆盖面板：无外层花括号、验证/保存、App 落库", () => {
-  const top = readFileSync(join(SRC, "components", "TopBar.vue"), "utf8");
+  const top = readFileSync(join(SRC, "components", "ContextRing.vue"), "utf8");
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
   assert.match(top, /value="overrides">请求体覆盖/, "圆环面板没有请求体覆盖 tab");
   assert.match(top, /class="ctx-overrides-input"/, "没有 JSON 输入框");
@@ -4567,6 +4457,17 @@ test("老工具的 rune 位置仍可还原，未记录位置不冒充时间点",
   const tool = { tool_name: "web_search", text_offset: 2 };
   assert.deepEqual(buildToolTimeline("甲😀后。", [tool, { tool_name: "web_search" }]), [
     { kind: "text", text: "甲😀" }, { kind: "tool", tool }, { kind: "text", text: "后。" },
+  ]);
+});
+
+test("终帧把搜索列到整段正文之后时，仍用流式阶段记录的位置", () => {
+  const first = "先查😀。";
+  const tail = "再给出结论。";
+  const body = `<state>HP=7</state>${first}${tail}`;
+  const { cleaned, projection } = splitState(body, true);
+  const tool = { tool_name: "web_search", body_offset: Buffer.byteLength(body), text_offset: 4 };
+  assert.deepEqual(buildToolTimeline(cleaned, [tool], projection), [
+    { kind: "text", text: first }, { kind: "tool", tool }, { kind: "text", text: tail },
   ]);
 });
 

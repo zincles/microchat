@@ -773,6 +773,11 @@ export interface MacroReport {
   total: number;
 }
 
+export interface MessageEditorPrefs {
+  reasoning: boolean;
+  fullscreen: boolean;
+}
+
 export interface Prefs {
   markdown: MarkdownPrefs;
   theme?: string;
@@ -788,6 +793,7 @@ export interface Prefs {
   chrome_hide?: boolean;
   payload_viz?: boolean;
   bar_left_hidden?: boolean;
+  message_editor?: MessageEditorPrefs;
   update_auto_check?: boolean;
 }
 

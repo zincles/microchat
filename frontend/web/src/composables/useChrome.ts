@@ -1,4 +1,4 @@
-// 滚动隐藏上下栏：DOM 接线 + 两个 CSS 变量。
+// 滚动收起上方控件和输入栏：DOM 接线 + 两个 CSS 变量。
 //
 // 判据全在 utils/chrome.ts（纯函数）；这里只喂数字、写 `--chrome-top` / `--chrome-bottom`，
 // CSS 只做 translateY ⇒ 不碰布局。只在触屏（pointer: coarse）生效。
@@ -36,7 +36,7 @@ export function useChrome() {
     chrome = stepChrome(chrome, {
       dy,
       scrollTop: y,
-      headerH: document.querySelector<HTMLElement>("#chat-col > header")?.offsetHeight ?? 40,
+      headerH: document.getElementById("chat-controls")?.offsetHeight ?? 44,
       composerH: document.querySelector<HTMLElement>("#composer")?.offsetHeight ?? 64,
     });
     applyChrome();

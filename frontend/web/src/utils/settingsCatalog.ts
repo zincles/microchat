@@ -41,7 +41,7 @@ const FIELDS = [
   ["appearance", "font-body", "标准字体", "正文字体 font"],
   ["appearance", "font-mono", "等宽字体", "代码块 等宽 font mono"],
   ["appearance", "background", "背景图", "壁纸 上传 图片 background"],
-  ["appearance", "chrome-hide", "滚动时收起顶栏和底栏", "触屏 手机 布局 自动隐藏"],
+  ["appearance", "chrome-hide", "滚动时收起悬浮控件和输入栏", "触屏 手机 布局 自动隐藏 顶栏 底栏"],
   ["input", "send-mode", "发送方式", "回车 Enter Shift 换行 发送键"],
   ["input", "input-preview", "输入时预览", "请求预览 发送内容 载荷"],
   ["input", "command-menu", "命令菜单", "/ 斜杠命令 快捷命令"],

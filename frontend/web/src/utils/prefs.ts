@@ -12,7 +12,7 @@
 // 为什么所有 getter 仍是**同步**的：调用点遍布 App 与各组件（`previewOn()` 在渲染路径上）。
 // 若改成 async，半个应用要跟着改成 await —— 换来的只是"改成从服务器读"这一个结果。
 // 所以：内存缓存（`cache`）是读取的唯一来源，`syncPrefs()` 负责把它与服务器对齐。
-import type { Background, MarkdownPrefs, MarkdownType, Prefs, PrefsView } from "../api/types.ts";
+import type { Background, MarkdownPrefs, MarkdownType, MessageEditorPrefs, Prefs, PrefsView } from "../api/types.ts";
 import { createApi, DEFAULT_API_URL, normalizeApiBase } from "../api/client.ts";
 
 // 主题（2026-11-09 用户定：「只留 亮色 / 暗色 / 自动 三种」）。
@@ -95,6 +95,7 @@ const FALLBACK_PREFS: Prefs = {
   chrome_hide: true,
   payload_viz: false,
   bar_left_hidden: false,
+  message_editor: { reasoning: false, fullscreen: false },
   update_auto_check: true,
 };
 
@@ -243,11 +244,9 @@ function applyServerPrefs(view: PrefsView): void {
   }
 }
 
-function sendPrefs({ keepalive = true }: { keepalive?: boolean } = {}): Promise<void> {
-  const snapshot = clone(cache);
-  return sharedApi().putPrefs(snapshot, keepalive ? { keepalive: true } : undefined)
-    .then(applyServerPrefs)
-    .then(() => {})
+function sendPrefs(): Promise<void> {
+  return sharedApi().putPrefs(clone(cache), { keepalive: true })
+    .then((view) => { if (!pendingPut) applyServerPrefs(view); })
     .catch((err: unknown) => {
       // 写不进去要让**页面**知道（偏好只在这台浏览器上生效了，刷新就没了）。
       console.error("保存界面偏好失败：", err);
@@ -261,22 +260,23 @@ function sendPrefs({ keepalive = true }: { keepalive?: boolean } = {}): Promise<
 // flushPrefs：把还没发出去的那一格立刻发掉（滑杆松手、页面隐藏、刷新前）。
 // 幂等；没有待发内容就什么都不做。
 export function flushPrefs(): void {
-  if (!pendingPut || flushing) return;
+  if (!pendingPut) return;
+  clearTimeout(putTimer ?? undefined);
+  putTimer = null;
+  if (flushing) return;
   pendingPut = false;
   flushing = true;
-  if (putTimer) { clearTimeout(putTimer); putTimer = null; }
-  sendPrefs({ keepalive: true }).catch(() => {}).finally(() => { flushing = false; });
+  // 整份偏好按顺序写，迟到的回应不能覆盖期间改动的另一格。
+  void sendPrefs().catch(() => {}).finally(() => {
+    flushing = false;
+    if (putTimer === null) flushPrefs();
+  });
 }
 
 function schedulePut(): void {
   pendingPut = true;
   clearTimeout(putTimer ?? undefined);
-  putTimer = setTimeout(() => {
-    putTimer = null;
-    if (!pendingPut) return;
-    pendingPut = false;
-    sendPrefs().catch(() => {});
-  }, 250);
+  putTimer = setTimeout(flushPrefs, 250);
 }
 
 // 刷新 / 切后台：浏览器可能马上丢掉这一页，最后一格必须带 keepalive 发出去。
@@ -494,6 +494,14 @@ export function saveBarLeftHidden(on: boolean): void { setPref("bar_left_hidden"
 // `/update`，发现 remote_relation=behind 时顶部出现「GitHub 有新提交」。
 export function updateAutoCheckOn(): boolean { return flagPref("update_auto_check", true); }
 export function saveUpdateAutoCheck(on: boolean): void { setPref("update_auto_check", !!on); }
+
+export function messageEditorPrefs(): MessageEditorPrefs {
+  return { reasoning: cache.message_editor?.reasoning === true, fullscreen: cache.message_editor?.fullscreen === true };
+}
+
+export function saveMessageEditorPrefs(patch: Partial<MessageEditorPrefs>): void {
+  setPref("message_editor", { ...messageEditorPrefs(), ...patch });
+}
 
 // —— 发送键三档（App 的 keydown 判定与 Composer 的占位提示同源）——
 

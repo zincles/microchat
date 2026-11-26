@@ -573,6 +573,26 @@ func TestServerMessageToolsKeepsTextOffsets(t *testing.T) {
 	}
 }
 
+func TestHostedToolsDoNotMoveToTheEndOnCompletion(t *testing.T) {
+	p := roundProgress{turns: turn.NewRegistry()}
+	p.text.WriteString("开头。")
+	p.hostedTool(providers.ToolEvent{ItemID: "ws_1", Kind: "web_search", State: "in_progress"})
+	p.text.WriteString("结论。")
+	body := p.text.String()
+	p.finish(providers.Result{Text: body, ServerTools: []providers.ToolEvent{
+		{ItemID: "ws_1", Kind: "web_search", State: "completed"},
+		{ItemID: "late", Kind: "web_search", State: "completed"},
+	}, Exchange: &model.Exchange{Protocol: "openai-response", Items: []model.OutputItem{
+		{Type: "message", Text: body}, {Type: "web_search_call", ID: "ws_1"},
+	}}})
+	if got := p.tools[0]; got.BodyOffset == nil || *got.BodyOffset != len("开头。") || got.Status != "done" {
+		t.Fatalf("已见搜索应该留在原位并更新终态：%+v", got)
+	}
+	if got := p.tools[1]; got.BodyOffset != nil || got.TextOffset != nil {
+		t.Fatalf("只有终帧、又没有有序项的搜索不应猜位置：%+v", got)
+	}
+}
+
 func TestLocalToolCallsCarryTextOffset(t *testing.T) {
 	progress := roundProgress{turns: turn.NewRegistry()}
 	result := providers.Result{ToolCalls: []providers.ToolCall{{ID: "c"}},

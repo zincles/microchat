@@ -17,7 +17,8 @@ import { sharedApi, previewOn, payloadPreviewOn, applyTheme, wantsSend, apiBase,
 import { macroMap } from "./utils/macros.ts";
 import { formatDebugPayload } from "./utils/flow.ts";
 import { deletionPlanSummary, whoText } from "./utils/format.ts";
-import TopBar from "./components/TopBar.vue";
+import ChatControls from "./components/ChatControls.vue";
+import ContextRing from "./components/ContextRing.vue";
 import AgentMenu from "./components/AgentMenu.vue";
 import SessionBar from "./components/SessionBar.vue";
 import AnswerTranscript from "./components/AnswerTranscript.vue";
@@ -68,7 +69,8 @@ applyTextScale();
 applyFonts();
 // —— 组件 refs（直调实例方法，替代桥） ——
 const toastRef = ref<InstanceType<typeof Toast> | null>(null);
-const topbarRef = ref<InstanceType<typeof TopBar> | null>(null);
+const chatControlsRef = ref<InstanceType<typeof ChatControls> | null>(null);
+const contextRingRef = ref<InstanceType<typeof ContextRing> | null>(null);
 const sessionbarRef = ref<InstanceType<typeof SessionBar> | null>(null);
 const payloadbarRef = ref<InstanceType<typeof ContextWorkspace> | null>(null);
 const composerRef = ref<InstanceType<typeof Composer> | null>(null);
@@ -80,39 +82,6 @@ const compactActions = shallowRef(actionLayout?.matches ?? false);
 const syncActionLayout = (event: MediaQueryListEvent) => { compactActions.value = event.matches; };
 onMounted(() => actionLayout?.addEventListener?.("change", syncActionLayout));
 onUnmounted(() => actionLayout?.removeEventListener?.("change", syncActionLayout));
-// 专注模式（2026-11-22 用户定）：隐藏顶栏，只留模型与状态环的小背景；
-// 输入栏空闲 2 秒后缓缓下移一半，任意操作恢复并重新计时。
-const zenMode = ref(false);
-const zenComposerHidden = ref(false);
-const ZEN_IDLE_MS = 2000;
-let zenTimer: number | null = null;
-function clearZenTimer(): void {
-  if (zenTimer !== null) { clearTimeout(zenTimer); zenTimer = null; }
-}
-// 任意操作：立刻把输入栏拉回来，并把“再空闲 2 秒”的计时重开。
-function zenActivity(): void {
-  if (!zenMode.value) return;
-  zenComposerHidden.value = false;
-  clearZenTimer();
-  zenTimer = window.setTimeout(() => {
-    zenTimer = null;
-    if (!zenMode.value) return;
-    // 浮层（工具/推理/模型等菜单）开着时先不收起，免得锚点跑掉；松手后重新计时。
-    if (activeChatMenu.value || document.querySelector(".v-overlay-container .v-overlay--active")) { zenActivity(); return; }
-    zenComposerHidden.value = true;
-  }, ZEN_IDLE_MS);
-}
-function toggleZen(): void {
-  zenMode.value = !zenMode.value;
-  if (zenMode.value) {
-    zenComposerHidden.value = false;
-    activeChatMenu.value = null;
-    zenActivity();
-  } else {
-    clearZenTimer();
-    zenComposerHidden.value = false;
-  }
-}
 // 命令菜单（输入框左侧 ☰ 与 "/" 浮层）：默认关（移动端碍事，2026-10-17 用户定）；
 // 设置 → 外观里改了立刻生效（不刷新）—— 偏好住服务器（`prefs.json`），这里是它的活视图。
 const cmdMenu = ref(commandMenuOn());
@@ -121,7 +90,7 @@ const macroRev = ref(0);
 const toast = (t: string, k = "") => toastRef.value?.push(t, k);
 // 调试打印节点要弹 Toast；给所有子组件一个统一出口（设置里的 FlowEditor 也拿得到）。
 provide("toast", toast);
-// 任务面板轮询：busyIds 给左栏、setTasks 给顶栏环心；取消按钮回调里对齐重摇两族。
+// 任务面板轮询：busyIds 给左栏，快照给输入栏圆环；取消时对齐两族重摇。
 const {
   busyIds,
   cancelingTasks,
@@ -133,7 +102,7 @@ const {
 } = useTasks({
   api,
   toast,
-  topbarRef,
+  contextRingRef,
   onCanceled: () => { void refreshRerolls(); },
 });
 
@@ -246,7 +215,7 @@ const {
 } = useModelsAgents({
   api,
   toast,
-  topbarRef,
+  chatControlsRef,
   getEpoch: () => epoch,
   getSessionID: () => sessionID,
   isDraft: () => draft,
@@ -437,7 +406,7 @@ const {
   getSessionID: () => sessionID,
   isDraft: () => draft,
   sessionInfo,
-  topbarRef,
+  contextRingRef,
   overlaysRef,
   refreshPreview,
   refreshSessionsBar,
@@ -597,7 +566,7 @@ async function regenerateNow(): Promise<void> {
 
 // 打开消息编辑器（新窗口，2026-11-02 用户定）：不再在气泡里就地换 textarea。
 // message 可以是消息列里的行，也可以是 /edit 从 vueMessages 里挑的原对象。
-function openMessageEditor(message: AppRow, kind: "content" | "reasoning"): void {
+function openMessageEditor(message: AppRow, startWithReasoning = false): void {
   const mid = message?.messageId ?? message?.id;
   if (!mid) { toast("这条消息还没有 id，暂时不能编辑", "error"); return; }
   // 重摇只认尾条 assistant：编辑它自己、或编辑它前面那条 user，才能「保存并重摇」。
@@ -605,7 +574,7 @@ function openMessageEditor(message: AppRow, kind: "content" | "reasoning"): void
   messageEditTarget.value = {
     sessionId: sessionID ?? "",
     message: { ...message, id: mid },
-    kind,
+    startWithReasoning,
     rerollable: !!rerollTargetId,
     rerollTargetId,
   };
@@ -633,7 +602,7 @@ const {
   workspace,
   isFlow: () => currentAgentIsFlow.value,
   payloadbarRef,
-  setMacros: (report) => topbarRef.value?.setMacros(report),
+  setMacros: (report) => contextRingRef.value?.setMacros(report),
   isVisible: () => workspace.value === "context" && !settingsOpen.value,
   refreshStateView,
   reloadWindow: () => reloadWindow(),
@@ -658,7 +627,7 @@ function resetSessionRequests(): void {
   contextUsageLoading.value = false;
   contextUsageError.value = "";
   contextUsageLoaded = false;
-  topbarRef.value?.setContext(null);
+  contextRingRef.value?.setContext(null);
 }
 const lastMsgId = computed(() => vueMessages.value.at(-1)?.messageId ?? null);
 // 最新 AI 回复对应的用户输入（A-B-C-D-E-F ⇒ E）——“编辑最新 Prompt”的入口目标。
@@ -801,23 +770,16 @@ const chatRows = computed(() => {
   });
 });
 const emptyDraft = computed(() => workspace.value === "chat" && sessionInfo.id === "" && !loadingSession.value && !chatRows.value.length);
-const continuationRow = computed(() => {
-  if (!sessionInfo.id || loadingSession.value || rerollingId.value || summaryReroll.value.running || vueMessages.value.some(row => row.stream)) return;
-  return chatRows.value.findLast(row => row.kind === "summary" || row.msg.messageId);
-});
-
-function continueTurn(): void {
-  if (!continuationRow.value || hasLivePoll()) return;
-  resend().catch((err) => toast(`续写失败：${errText(err)}`, "error"));
-}
+const canContinue = computed(() => !!sessionInfo.id && !loadingSession.value && !rerollingId.value &&
+  !summaryReroll.value.running && !vueMessages.value.some(row => row.stream) &&
+  chatRows.value.some(row => row.kind === "summary" || row.msg.messageId));
 const olderSegments = computed(() => olderCount(vueSegments.value, windowFrom.value));
-function onBubbleEdit(mid: string | null | undefined, kind: "content" | "reasoning"): void {
+function onBubbleEdit(mid: string | null | undefined): void {
   if (!mid) return;
   const m = vueMessages.value.find((x) => x.messageId === mid || x.id === mid);
   if (!m) { toast("那条消息已经不在了（多半被删了）：重进会话看看", "error"); return; }
-  openMessageEditor(m, kind);
+  openMessageEditor(m);
 }
-function onBubbleEditPrompt(mid: string | null | undefined): void { onBubbleEdit(mid, "content"); }
 // deleteMessagesFlow：消息级删除的唯一出口（气泡"删"与 /cut 共用）——预览 → 确认 → 执行；
 // 执行时 409（conflict：末尾变了，别人删过/改过）⇒ **重新预览再确认**（最多三轮），
 // 不是干弹一个错（AGENTS 的口径：核对字段不符 ⇒ 409 ⇒ 重新预览）。
@@ -875,7 +837,7 @@ const summaryEditTarget = ref<EditableSummary | null>(null); // 编辑中的摘�
 const messageEditTarget = ref<{
   sessionId: string;
   message: AppRow & { id: string };
-  kind: "content" | "reasoning";
+  startWithReasoning: boolean;
   rerollable: boolean;
   rerollTargetId: string | null;
 } | null>(null); // 编辑中的消息（MessageEditor 模态）
@@ -1320,10 +1282,10 @@ let connText = "未连接";
 // 少掉的是请求与装配，不是显示：环在轮询期间保持上一拍的数（那正是此刻真实的占用）。
 function refreshStatusline(phase: string = "idle", elapsedMs: number | null = null, { withContext = true }: { withContext?: boolean } = {}): void {
   // 连接 + 助手 + 相位：草稿态也要报（"没连上"跟有没有会话无关）。
-  topbarRef.value?.setStatus({ conn: connText, agent: statusAgent.value, phase, elapsedMs });
+  contextRingRef.value?.setStatus({ conn: connText, agent: statusAgent.value, phase, elapsedMs });
   if (draft || !sessionID) {
     // 草稿：没有会话可问占用 ⇒ 环清空（没有会话就没有"占了多少"这回事）。
-    topbarRef.value?.setContext(null);
+    contextRingRef.value?.setContext(null);
     return;
   }
   if (withContext) void refreshContextUsage(sessionID);
@@ -1339,7 +1301,7 @@ async function refreshContextUsage(sid: string): Promise<void> {
     if (!current()) return;
     contextUsageError.value = "";
     contextUsageLoaded = true;
-    topbarRef.value?.setContext(ctx);
+    contextRingRef.value?.setContext(ctx);
   } catch (err: unknown) {
     if (current() && !contextUsageLoaded) contextUsageError.value = `上下文占用读取失败：${errText(err)}`;
   } finally {
@@ -1524,7 +1486,12 @@ function stopCurrent() {
   });
 }
 function onComposerSubmit(text: string): void {
-  if (!text) return;
+  if (!text) {
+    if (canContinue.value && !hasLivePoll()) {
+      void resend().catch((err) => toast(`续写失败：${errText(err)}`, "error"));
+    }
+    return;
+  }
   liftOverlays();
   overlaysRef.value?.hidePalette();
   if (draft && submittingDraft === composerKey.value) { toast("首条消息正在发送"); return; }
@@ -1586,13 +1553,6 @@ onMounted(() => {
   document.addEventListener("visibilitychange", resyncOnForeground);
   window.addEventListener("focus", resyncOnForeground);
   window.addEventListener("pageshow", resyncOnForeground);
-  // 专注模式下的“操作”判定：按下、键盘、滚轮、触摸、输入都算；滚轮/触摸保持 passive。
-  window.addEventListener("pointerdown", zenActivity, true);
-  window.addEventListener("keydown", zenActivity, true);
-  window.addEventListener("input", zenActivity, true);
-  window.addEventListener("wheel", zenActivity, { passive: true, capture: true });
-  window.addEventListener("touchstart", zenActivity, { passive: true, capture: true });
-  window.addEventListener("touchmove", zenActivity, { passive: true, capture: true });
   window.addEventListener("mc-update-auto-check", startUpdatePolling);
   installOverlayLayout();
   boot().catch((err) => {
@@ -1613,13 +1573,6 @@ onUnmounted(() => {
   document.removeEventListener("visibilitychange", resyncOnForeground);
   window.removeEventListener("focus", resyncOnForeground);
   window.removeEventListener("pageshow", resyncOnForeground);
-  window.removeEventListener("pointerdown", zenActivity, true);
-  window.removeEventListener("keydown", zenActivity, true);
-  window.removeEventListener("input", zenActivity, true);
-  window.removeEventListener("wheel", zenActivity, true);
-  window.removeEventListener("touchstart", zenActivity, true);
-  window.removeEventListener("touchmove", zenActivity, true);
-  clearZenTimer();
   window.removeEventListener("mc-update-auto-check", startUpdatePolling);
 });
 </script>
@@ -1635,7 +1588,7 @@ onUnmounted(() => {
       @update="applyUpdate"
       @update-backend="runBackendUpdate"
     />
-    <div id="columns">
+    <div id="columns" :class="{ 'chat-controls-visible': !settingsOpen }">
       <SessionBar
         ref="sessionbarRef"
         :collapsed="leftHidden"
@@ -1657,32 +1610,19 @@ onUnmounted(() => {
       />
       <div id="scrim-left" @click="toggleLeft"></div>
       <div id="content">
-      <section id="chat-col" v-show="!settingsOpen" :class="{ zen: zenMode }">
-    <TopBar
-      ref="topbarRef"
+      <section id="chat-col" v-show="!settingsOpen">
+    <ChatControls
+      ref="chatControlsRef"
       :left-hidden="leftHidden"
       :workspace="workspace"
       :loading="loadingSession"
       :model-selection-pending="pendingModelSelections > 0"
       :saving-model-default="savingModelDefault"
       :flow="currentAgentIsFlow"
-      :flow-calls="flowCalls"
-      :flow-active-nodes="flowActiveNodes"
-      :macro-session-id="loadingSession ? '' : sessionInfo.id"
-      :macros-loading="macrosLoading"
-      :macros-error="macrosError"
-      :saving-overrides="!!sessionInfo.id && savingRequestOverrides.has(sessionInfo.id)"
-      :canceling-tasks="cancelingTasks"
-      :context-usage-loading="contextUsageLoading"
-      :context-usage-error="contextUsageError"
       @select-workspace="selectWorkspace"
-      @save-overrides="saveRequestOverrides"
       @toggle-left="toggleLeft"
       @select-model="selectSessionModel"
       @save-model-default="saveCurrentModelDefault"
-      @cancel-queue="cancelQueue"
-      @cancel-task="cancelTask"
-      @refresh-macros="refreshMacros"
     />
         <!-- 聊天 / 上下文：VTabsWindow 真正负责左右滑动；顶栏的 VTabs 只管 tab 条。 -->
         <VTabsWindow v-model="workspace" class="workspace-window">
@@ -1749,7 +1689,6 @@ onUnmounted(() => {
               :deleting="!!row.msg.messageId && messageDeletionRequests.get(row.msg.messageId) === 'request'"
               :prompt-id="row.msg.messageId === lastMsgId ? latestPromptId : null"
               :is-last="!!row.msg.messageId && row.msg.messageId === lastMsgId"
-              :allow-continue="row.key === continuationRow?.key"
               :streaming="!!row.msg.stream || isLive(row.msg)"
               :phase="String(row.msg.phase || '')"
               :kind="row.msg.kind || 'chat'"
@@ -1762,19 +1701,13 @@ onUnmounted(() => {
               :reroll="currentAgentIsFlow ? null : (row.msg.messageId && rerollState.active && rerollState.target_message_id === row.msg.messageId ? rerollState : null)"
               :flow="currentAgentIsFlow"
               @edit="onBubbleEdit"
-              @edit-prompt="onBubbleEditPrompt"
               @delete="onBubbleDelete"
               @reroll="rerollNow"
               @reroll-go="rerollGo"
               @regenerate="regenerateNow"
-              @continue-turn="continueTurn"
             />
             </template>
           </AnswerTranscript>
-          <div v-if="continuationRow?.kind === 'summary'" class="msg-ops">
-            <VBtn icon type="button" variant="text" size="small"
-              title="续写（按现有历史生成下一条回复）" aria-label="续写" @click="continueTurn" v-html="ICONS.messagePlus" />
-          </div>
           </div>
           </Transition>
           </div>
@@ -1800,16 +1733,14 @@ onUnmounted(() => {
       :thinking-pending="composerRequestPending('thinking')"
       :tools-pending="composerRequestPending('tools')"
       :stopping="composerRequestPending('stop')"
+      :can-continue="canContinue"
       :flow="currentAgentIsFlow"
-      :zen="zenMode"
-      :zen-hidden="zenComposerHidden"
       @select-thinking="setThinking"
       @toggle-native-tool="toggleNativeTool"
       @input-text="onComposerInput"
       @keydown="onComposerKeydown"
       @submit="onComposerSubmit"
       @stop="stopCurrent"
-      @toggle-zen="toggleZen"
       @menu="() => overlaysRef?.showPalette(filterCommands(''))"
     >
       <template #toolbar>
@@ -1818,6 +1749,27 @@ onUnmounted(() => {
           :model-value="sessionInfo.agent_id || ''"
           :pending="composerRequestPending('agent')"
           @select="selectSessionAgent"
+        />
+      </template>
+      <template #status>
+        <ContextRing
+          ref="contextRingRef"
+          :flow="currentAgentIsFlow"
+          :flow-calls="flowCalls"
+          :flow-active-nodes="flowActiveNodes"
+          :session-id="loadingSession ? '' : sessionInfo.id"
+          :request-overrides="sessionInfo.request_overrides"
+          :macros-loading="macrosLoading"
+          :macros-error="macrosError"
+          :saving-overrides="!!sessionInfo.id && savingRequestOverrides.has(sessionInfo.id)"
+          :canceling-tasks="cancelingTasks"
+          :context-usage-loading="contextUsageLoading"
+          :context-usage-error="contextUsageError"
+          @open-workflow="selectWorkspace('context')"
+          @save-overrides="saveRequestOverrides"
+          @cancel-queue="cancelQueue"
+          @cancel-task="cancelTask"
+          @refresh-macros="refreshMacros"
         />
       </template>
     </Composer>
@@ -1889,7 +1841,7 @@ onUnmounted(() => {
       v-if="messageEditTarget"
       :session-id="messageEditTarget.sessionId"
       :message="messageEditTarget.message"
-      :kind="messageEditTarget.kind"
+      :start-with-reasoning="messageEditTarget.startWithReasoning"
       :rerollable="messageEditTarget.rerollable"
       :flow="currentAgentIsFlow"
       @close="messageEditTarget = null"

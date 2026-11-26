@@ -101,7 +101,7 @@ func TestPrefsRoundTrip(t *testing.T) {
 
 	// ⚠ 故意按**清单的反序**发（image 在后、table 在前）：这样"有没有归一化"才看得出区别。
 	// 第一次我按正序发，于是去掉 Normalize 的注入**照样通过** —— 那个测试当时是假的。
-	body := `{"markdown":{"disabled":["image","table"]},"theme":"dark","text_scale":"1.1","send":"mod-enter"}`
+	body := `{"markdown":{"disabled":["image","table"]},"theme":"dark","text_scale":"1.1","send":"mod-enter","message_editor":{"reasoning":true,"fullscreen":true}}`
 	recorder := call(server, "PUT", "/api/v1/config/prefs", body)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("PUT 该 200，得到 %d：%s", recorder.Code, recorder.Body.String())
@@ -128,8 +128,12 @@ func TestPrefsRoundTrip(t *testing.T) {
 	}
 
 	// ② 再 GET 一次（新 Server 实例也一样 —— 权威在文件，不在进程内缓存）。
-	if got := getPrefsView(t, server); got.Prefs.Theme != "dark" {
+	got := getPrefsView(t, server)
+	if got.Prefs.Theme != "dark" {
 		t.Fatalf("回读的 theme 该是 dark，得到 %q", got.Prefs.Theme)
+	}
+	if !got.Prefs.MessageEditor.Reasoning || !got.Prefs.MessageEditor.Fullscreen {
+		t.Fatalf("消息编辑器偏好未从文件恢复：%+v", got.Prefs.MessageEditor)
 	}
 
 	// ③ Normalize：写出的顺序 = **类型清单的顺序**（同一个状态必须写出同一份文件，

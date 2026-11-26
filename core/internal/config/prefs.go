@@ -187,6 +187,12 @@ func (b Background) Validate() error {
 	}
 }
 
+// MessageEditorPrefs 记住编辑器所选字段和网页全屏状态。零值为正文、窗口模式。
+type MessageEditorPrefs struct {
+	Reasoning  bool `json:"reasoning"`
+	Fullscreen bool `json:"fullscreen"`
+}
+
 // Prefs：`prefs.json` 整体。
 //
 // 字段名用 snake_case，与 `config.json` 其余部分一致。
@@ -217,6 +223,8 @@ type Prefs struct {
 	ChromeHide    *bool `json:"chrome_hide,omitempty"`
 	PayloadViz    *bool `json:"payload_viz,omitempty"`
 	BarLeftHidden *bool `json:"bar_left_hidden,omitempty"`
+
+	MessageEditor MessageEditorPrefs `json:"message_editor"`
 
 	// —— 更新 ——
 	// UpdateAutoCheck：每 5 分钟查一次 GitHub 最新提交；发现落后时顶部出现更新条。

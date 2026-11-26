@@ -32,7 +32,6 @@ const props = withDefaults(defineProps<BubblePresentation & {
   deleting?: boolean;
   promptId?: string | null; // 最新 AI 回复对应的用户输入（仅尾条 assistant 有）
   isLast?: boolean;
-  allowContinue?: boolean;
   streaming?: boolean; // 生成中（还没落库的那条）：发送与等待阶段显示星芒。
   // phase：sending = 正在向后端发送请求；waiting = 202 已受理、等 Provider 首字节。
   phase?: "sending" | "waiting" | string | null;
@@ -60,7 +59,6 @@ const props = withDefaults(defineProps<BubblePresentation & {
   messageId: null,
   promptId: null,
   isLast: false,
-  allowContinue: false,
   streaming: false,
   phase: null,
   tool: null,
@@ -72,13 +70,11 @@ const props = withDefaults(defineProps<BubblePresentation & {
   usage: null,
 });
 const emit = defineEmits<{
-  edit: [messageId: string | null | undefined, kind: "content" | "reasoning"];
-  "edit-prompt": [promptId: string];
+  edit: [messageId: string | null | undefined];
   delete: [messageId: string | null | undefined, isLast: boolean];
   reroll: [messageId: string | null | undefined];
   "reroll-go": [delta: number];
   regenerate: [messageId: string | null | undefined];
-  "continue-turn": [];
 }>();
 
 // 包括重摇在内，流式行上的用量和时长可能仍是上一版的，绝不能配给新正文。
@@ -119,24 +115,21 @@ async function copyReply(): Promise<void> {
 }
 
 const replyActions = computed(() => {
-  const leading: OverflowAction[] = [];
+  const extra: OverflowAction[] = [];
   if (props.copyAnswer && props.role === "assistant" && !props.streaming && parts.value.cleaned) {
-    leading.push({ icon: ICONS.copy, label: "复制回答", run: copyReply });
+    extra.push({ icon: ICONS.copy, label: "复制回答", run: copyReply });
   }
-  leading.push({ icon: ICONS.pencil, label: "改正文", run: () => emit("edit", props.messageId, "content") });
-  if (props.role !== "user") {
-    leading.push({ icon: ICONS.brain, label: "改思考", run: () => emit("edit", props.messageId, "reasoning") });
-    const promptId = props.promptId;
-    if (props.isLast && promptId) {
-      leading.push({ icon: ICONS.notebookPen, label: "编辑最新 Prompt", hint: "编辑这条回复对应的用户输入", run: () => emit("edit-prompt", promptId) });
-    }
+  const edit: OverflowAction = { icon: ICONS.pencil, label: "编辑消息", run: () => emit("edit", props.messageId) };
+  if (!compactReroll.value) extra.push(edit);
+  const promptId = props.promptId;
+  if (props.role !== "user" && props.isLast && promptId) {
+    extra.push({ icon: ICONS.notebookPen, label: "编辑最新 Prompt", hint: "编辑这条回复对应的用户输入", run: () => emit("edit", promptId) });
   }
-  const trailing: OverflowAction[] = [];
-  if (props.allowContinue) {
-    trailing.push({ icon: ICONS.messagePlus, label: "续写", hint: "按现有历史生成下一条回复", run: () => emit("continue-turn") });
+  if (compactReroll.value) {
+    extra.push({ icon: ICONS.refresh, label: "重摇", hint: "直接生成新版本", disabled: props.streaming, run: () => emit("reroll", props.messageId) });
+    return { inline: [edit], overflow: extra };
   }
-  trailing.push({ icon: ICONS.trash, label: "删除这条及之后", loading: props.deleting, destructive: true, run: () => emit("delete", props.messageId, props.isLast) });
-  return { leading, trailing };
+  return { inline: extra, overflow: [] };
 });
 
 // 正文拆说话/状态：说话走 markdown，状态块进独立容器。
@@ -287,11 +280,11 @@ watch(() => props.streaming, (s) => nextTick(() => {
     <div v-if="answerView !== 'prose' && (canEdit || metrics.length)" class="msg-footer">
       <div v-if="canEdit" class="msg-ops" :class="{ 'reroll-compact': compactReroll }">
         <span v-if="role === 'user' && ident" class="msg-ident">{{ ident }}</span>
-        <div v-if="!compactReroll" class="msg-action-group" role="group" aria-label="消息操作">
-          <ActionOverflow :actions="replyActions.leading" />
+        <div class="msg-action-group" role="group" aria-label="消息操作">
+          <ActionOverflow :actions="replyActions.inline" />
         </div>
         <div v-if="role !== 'user' && isLast" class="msg-action-group" role="group" aria-label="重新生成与版本">
-          <VBtn icon variant="text" size="small"
+          <VBtn v-if="!compactReroll" icon variant="text" size="small"
             :title="flow ? '重新生成（用当前历史重跑流程）' : '重摇（摇新的一版并切过去）'"
             :aria-label="flow ? '重新生成（用当前历史重跑流程）' : '重摇（摇新的一版并切过去）'"
             @click="flow ? emit('regenerate', messageId) : emit('reroll', messageId)" v-html="ICONS.refresh" />
@@ -301,8 +294,11 @@ watch(() => props.streaming, (s) => nextTick(() => {
             <VBtn icon variant="text" size="small" title="下一版（到最右再按 = 再摇一版）" aria-label="下一版" @click="emit('reroll-go', 1)">▶</VBtn>
           </template>
         </div>
-        <ActionOverflow v-if="compactReroll" menu-label="更多消息操作" :actions="[...replyActions.leading, ...replyActions.trailing]" />
-        <ActionOverflow v-else :actions="replyActions.trailing" />
+        <VBtn icon variant="text" size="small" class="msg-delete" :loading="deleting" :disabled="deleting"
+          title="删除这条及之后" aria-label="删除这条及之后" @click="emit('delete', messageId, isLast)">
+          <span aria-hidden="true" v-html="ICONS.trash" />
+        </VBtn>
+        <ActionOverflow v-if="compactReroll" menu-label="更多消息操作" :actions="replyActions.overflow" />
       </div>
       <details v-if="metrics.length" class="msg-foot">
         <summary title="回答用量与耗时明细">

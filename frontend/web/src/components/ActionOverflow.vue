@@ -9,7 +9,6 @@ export interface OverflowAction {
   disabled?: boolean;
   hint?: string;
   loading?: boolean;
-  destructive?: boolean;
 }
 
 const props = defineProps<{
@@ -42,7 +41,7 @@ const props = defineProps<{
   </VMenu>
   <template v-else>
     <VBtn v-for="action in props.actions" :key="action.label" icon type="button" variant="text" size="small"
-      :title="action.hint ? `${action.label}（${action.hint}）` : action.label" :aria-label="action.label" :class="{ 'msg-delete': action.destructive }"
+      :title="action.hint ? `${action.label}（${action.hint}）` : action.label" :aria-label="action.label"
       :loading="action.loading" :disabled="action.disabled || action.loading" @click="action.run()">
       <span aria-hidden="true" v-html="action.icon" />
     </VBtn>

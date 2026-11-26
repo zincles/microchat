@@ -15,7 +15,6 @@ const emit = defineEmits<{
   menu: [];
   "select-thinking": [value: string];
   "toggle-native-tool": [id: string, enabled: boolean];
-  "toggle-zen": [];
 }>();
 
 const props = withDefaults(defineProps<{
@@ -27,11 +26,9 @@ const props = withDefaults(defineProps<{
   thinkingPending?: boolean;
   toolsPending?: boolean;
   stopping?: boolean;
+  canContinue?: boolean;
   // flow：FlowAgent 暂不支持推理档位与工具选择 —— 底部小面板里直接藏起来。
   flow?: boolean;
-  // 专注模式：顶栏隐藏、输入栏空闲自动下移一半。
-  zen?: boolean;
-  zenHidden?: boolean;
 }>(), {
   menuOn: false,
   thinking: "",
@@ -39,13 +36,12 @@ const props = withDefaults(defineProps<{
   nativeTools: () => [],
   nativeToolsDisabled: () => [],
   flow: false,
-  zen: false,
-  zenHidden: false,
 });
 
 const text = defineModel<string>({ required: true });
 const running = ref(false);
 const hasText = computed(() => !!text.value.trim());
+const actionLabel = computed(() => running.value ? "停止" : !hasText.value && props.canContinue ? "续写" : "发送");
 
 function setRunning(v: unknown): void {
   running.value = !!v;
@@ -59,8 +55,9 @@ function onKeydown(e: KeyboardEvent): void {
   emit("keydown", e, text.value);
 }
 function submit(): void {
+  if (running.value || props.stopping) return;
   const content = text.value.trim();
-  if (content) emit("submit", content);
+  if (content || props.canContinue) emit("submit", content);
 }
 function stop(): void {
   emit("stop");
@@ -73,7 +70,7 @@ defineExpose({ submit, setRunning });
 </script>
 
 <template>
-  <form id="composer" class="composer-vuetify" :class="{ zen: zen, 'zen-hidden': zen && zenHidden }" @submit.prevent="submit">
+  <form id="composer" class="composer-vuetify" @submit.prevent="submit">
     <VSheet class="composer-shell" color="surface-container-low">
       <VTextarea
         id="composer-input"
@@ -106,17 +103,6 @@ defineExpose({ submit, setRunning });
             :pending="toolsPending"
             @toggle="(id, on) => $emit('toggle-native-tool', id, on)"
           />
-          <VBtn
-            v-if="!flow"
-            type="button"
-            variant="outlined"
-            rounded="xl"
-            size="small"
-            class="zen-btn"
-            :aria-pressed="zen"
-            :title="zen ? '退出专注模式' : '专注模式：隐藏顶栏，输入栏空闲时自动收起一半'"
-            @click="$emit('toggle-zen')"
-          >专注</VBtn>
         </div>
         <div class="composer-top-actions">
           <VBtn
@@ -132,21 +118,22 @@ defineExpose({ submit, setRunning });
           >
             <span v-html="ICONS.menu"></span>
           </VBtn>
+          <slot name="status" />
           <VBtn
             id="send-btn"
             type="button"
             icon
             variant="flat"
             rounded="circle"
-            :color="running ? 'error' : hasText ? 'primary' : undefined"
+            :color="running ? 'error' : hasText || canContinue ? 'primary' : undefined"
             class="composer-send-btn"
             :loading="stopping"
-            :disabled="stopping || (!running && !hasText)"
-            :title="running ? '停止' : '发送'"
-            :aria-label="running ? '停止' : '发送'"
+            :disabled="stopping || (!running && !hasText && !canContinue)"
+            :title="actionLabel"
+            :aria-label="actionLabel"
             @click="running ? stop() : submit()"
           >
-            <span aria-hidden="true" v-html="running ? ICONS.stop : ICONS.send"></span>
+            <span aria-hidden="true" v-html="running ? ICONS.stop : actionLabel === '续写' ? ICONS.messagePlus : ICONS.send"></span>
           </VBtn>
         </div>
       </div>

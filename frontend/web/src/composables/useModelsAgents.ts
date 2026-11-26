@@ -14,8 +14,8 @@ interface ModelsAgentsApi {
   agents(): Promise<{ default_agent: string; agents: Agent[]; segments?: unknown[] }>;
   patchSession(id: string, body: UpdateSessionRequest): Promise<Session>;
 }
-interface TopbarModels {
-  setSession(info: Record<string, unknown>, draft: boolean): void;
+interface ChatControlsModels {
+  setSession(info: Record<string, unknown>): void;
   setModels(groups: ModelGroup[], cur: string): void;
 }
 interface SessionInfoLike {
@@ -30,7 +30,7 @@ interface SessionInfoLike {
 interface UseModelsAgentsOptions {
   api: ModelsAgentsApi;
   toast: (text: string, kind?: string) => void;
-  topbarRef: Ref<TopbarModels | null>;
+  chatControlsRef: Ref<ChatControlsModels | null>;
   getEpoch: () => number;
   getSessionID: () => string | null;
   isDraft: () => boolean;
@@ -43,7 +43,7 @@ interface UseModelsAgentsOptions {
 export function useModelsAgents({
   api,
   toast,
-  topbarRef,
+  chatControlsRef,
   getEpoch,
   getSessionID,
   isDraft,
@@ -61,7 +61,7 @@ export function useModelsAgents({
   let agentsInflight: Promise<{ default_agent: string; agents: Agent[]; segments?: unknown[] }> | null = null;
 
   function paintSessionHeader(): void {
-    topbarRef.value?.setSession(sessionInfo, isDraft());
+    chatControlsRef.value?.setSession(sessionInfo);
     document.title = sessionInfo.title ? `${sessionInfo.title} - MicroChat` : "MicroChat";
   }
 
@@ -74,7 +74,7 @@ export function useModelsAgents({
     const cur = sessionInfo.provider && sessionInfo.model
       ? modelKey(sessionInfo.provider, sessionInfo.model)
       : "";
-    topbarRef.value?.setModels(groups, cur);
+    chatControlsRef.value?.setModels(groups, cur);
   }
 
   function fillModelSelect(): void {

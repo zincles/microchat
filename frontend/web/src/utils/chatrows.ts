@@ -84,7 +84,7 @@ export function buildToolTimeline<T extends ToolPosition>(
   const rawOffsets: number[] = [], legacyOffsets: number[] = [];
   for (const tool of tools) {
     if (projection && typeof tool.body_offset === "number") rawOffsets.push(tool.body_offset);
-    else if (typeof tool.text_offset === "number") legacyOffsets.push(tool.text_offset);
+    if (typeof tool.text_offset === "number" && (!streaming || !projection || typeof tool.body_offset !== "number")) legacyOffsets.push(tool.text_offset);
   }
   const raw = projection && indicesAt(projection.raw, rawOffsets, true, streaming);
   if (raw && projection) {
@@ -101,8 +101,10 @@ export function buildToolTimeline<T extends ToolPosition>(
   const legacy = indicesAt(text, legacyOffsets, false, streaming);
   const placed: Array<{ index: number; tool: T }> = [];
   for (const tool of tools) {
-    const index = raw && typeof tool.body_offset === "number" ? raw.get(tool.body_offset)
-      : typeof tool.text_offset === "number" ? legacy.get(tool.text_offset) : undefined;
+    const ordered = raw && typeof tool.body_offset === "number" ? raw.get(tool.body_offset) : undefined;
+    const observed = typeof tool.text_offset === "number" ? legacy.get(tool.text_offset) : undefined;
+    // 终帧可以把中途调用并列到整段正文之后；不能用更晚的位置覆盖实时记录。
+    const index = ordered === undefined ? observed : observed === undefined ? ordered : Math.min(ordered, observed);
     if (index !== undefined) placed.push({ index, tool });
   }
   if (!placed.length) return [];
