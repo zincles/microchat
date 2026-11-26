@@ -1749,6 +1749,7 @@ onUnmounted(() => {
           :model-value="sessionInfo.agent_id || ''"
           :pending="composerRequestPending('agent')"
           @select="selectSessionAgent"
+          @configure="openAgentFlow"
         />
       </template>
       <template #status>

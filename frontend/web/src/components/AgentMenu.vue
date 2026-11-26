@@ -2,8 +2,9 @@
 // 助手（Agent）选择入口（2026-11-10 用户定：从顶栏挪到输入栏上方，最左侧）。
 // 只负责头像 + 选人菜单；真正的 PATCH 由 App 的 applyAgentValue 做。
 import { computed } from "vue";
-import { VAvatar, VListItem, VListItemTitle, VProgressCircular } from "vuetify/components";
+import { VAvatar, VBtn, VListItem, VListItemTitle, VProgressCircular } from "vuetify/components";
 import ToolbarMenu from "./ToolbarMenu.vue";
+import { ICONS } from "../assets/icons.ts";
 import type { Agent } from "../api/types.ts";
 
 const props = withDefaults(defineProps<{
@@ -11,14 +12,14 @@ const props = withDefaults(defineProps<{
   modelValue?: string;
   pending?: boolean;
 }>(), { agents: () => [], modelValue: "" });
-const emit = defineEmits<{ select: [id: string] }>();
+const emit = defineEmits<{ select: [id: string]; configure: [id: string] }>();
 
-interface AgentItem { id: string; label: string }
+interface AgentItem { id: string; label: string; configurable: boolean }
 const items = computed<AgentItem[]>(() => {
   const list: AgentItem[] = (props.agents ?? [])
-    .map((agent) => ({ id: agent.id, label: agent.name || agent.id }));
+    .map((agent) => ({ id: agent.id, label: agent.name || agent.id, configurable: true }));
   if (props.modelValue && !list.some((agent) => agent.id === props.modelValue)) {
-    list.unshift({ id: props.modelValue, label: `${props.modelValue}（不在列表）` });
+    list.unshift({ id: props.modelValue, label: `${props.modelValue}（不在列表）`, configurable: false });
   }
   return list;
 });
@@ -31,6 +32,10 @@ function avatarColor(id: string): string {
 }
 function pick(id: string): void {
   if (id !== props.modelValue) emit("select", id);
+}
+function configure(id: string, close: () => void): void {
+  close();
+  emit("configure", id);
 }
 </script>
 
@@ -53,26 +58,49 @@ function pick(id: string): void {
         <template v-else>{{ initial(current) }}</template>
       </button>
     </template>
-    <VListItem
-      v-for="agent in items"
-      :key="agent.id"
-      role="option"
-      :active="agent.id === modelValue"
-      :aria-selected="agent.id === modelValue"
-      @click="pick(agent.id)"
-    >
-      <template #prepend>
-        <VAvatar :size="24" :style="{ background: avatarColor(agent.id) }" class="text-white" aria-hidden="true">
-          {{ initial(agent.label) }}
-        </VAvatar>
-      </template>
-      <VListItemTitle :title="agent.label">{{ agent.label }}</VListItemTitle>
-      <template v-if="agent.id === modelValue" #append>
-        <span aria-hidden="true" class="text-primary">✓</span>
-      </template>
-    </VListItem>
-    <VListItem v-if="!items.length" disabled role="option" aria-selected="false" aria-disabled="true">
-      <VListItemTitle>没有可选的助手</VListItemTitle>
-    </VListItem>
+    <template #default="{ close }">
+      <VListItem
+        v-for="agent in items"
+        :key="agent.id"
+        role="option"
+        :active="agent.id === modelValue"
+        :aria-selected="agent.id === modelValue"
+        @click="pick(agent.id)"
+      >
+        <template #prepend>
+          <VAvatar :size="24" :style="{ background: avatarColor(agent.id) }" class="text-white" aria-hidden="true">
+            {{ initial(agent.label) }}
+          </VAvatar>
+        </template>
+        <VListItemTitle :title="agent.label">{{ agent.label }}</VListItemTitle>
+        <template #append>
+          <span class="agent-option-actions">
+            <VBtn
+              v-if="agent.configurable"
+              type="button"
+              icon
+              variant="text"
+              size="small"
+              class="agent-option-settings"
+              :title="`配置智能体 ${agent.label}`"
+              :aria-label="`配置智能体 ${agent.label}`"
+              @click.stop="configure(agent.id, close)"
+            >
+              <span aria-hidden="true" v-html="ICONS.settings"></span>
+            </VBtn>
+            <span v-if="agent.id === modelValue" aria-hidden="true" class="text-primary">✓</span>
+          </span>
+        </template>
+      </VListItem>
+      <VListItem v-if="!items.length" disabled role="option" aria-selected="false" aria-disabled="true">
+        <VListItemTitle>没有可选的助手</VListItemTitle>
+      </VListItem>
+    </template>
   </ToolbarMenu>
 </template>
+
+<style scoped>
+.agent-option-actions { display: flex; align-items: center; gap: 0.2em; }
+.agent-option-settings { flex: none; }
+.agent-option-settings :deep(svg) { display: block; width: 1em; height: 1em; }
+</style>

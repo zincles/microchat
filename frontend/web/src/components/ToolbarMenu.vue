@@ -23,6 +23,10 @@ function setOpen(value: boolean): void {
 }
 const listId = `${useId()}-choices`;
 const menu = useTemplateRef<{ activatorEl?: HTMLElement }>("menu");
+defineSlots<{
+  activator: (props: { props: Record<string, unknown> }) => unknown;
+  default: (props: { close: () => void }) => unknown;
+}>();
 
 // 受控 VMenu 打开时先更新 model，再挂载并定位列表。焦点若已去了别的入口就不抢回来。
 function focusSelection(): void {
@@ -93,7 +97,7 @@ function onEscape(event: KeyboardEvent): void {
       @click="closeAndFocus"
       @keydown.esc="onEscape"
     >
-      <slot />
+      <slot :close="closeAndFocus" />
     </VList>
   </VMenu>
 </template>
