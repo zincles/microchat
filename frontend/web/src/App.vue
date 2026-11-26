@@ -74,6 +74,12 @@ const payloadbarRef = ref<InstanceType<typeof ContextWorkspace> | null>(null);
 const composerRef = ref<InstanceType<typeof Composer> | null>(null);
 const overlaysRef = ref<InstanceType<typeof Overlays> | null>(null);
 const activeChatMenu = provideChatMenus();
+// 整列共享一个媒体查询，切换布局时同步收起旧的操作菜单。
+const actionLayout = typeof window === "undefined" ? undefined : window.matchMedia?.("(max-width: 700px), (pointer: coarse)");
+const compactActions = shallowRef(actionLayout?.matches ?? false);
+const syncActionLayout = (event: MediaQueryListEvent) => { compactActions.value = event.matches; };
+onMounted(() => actionLayout?.addEventListener?.("change", syncActionLayout));
+onUnmounted(() => actionLayout?.removeEventListener?.("change", syncActionLayout));
 // 专注模式（2026-11-22 用户定）：隐藏顶栏，只留模型与状态环的小背景；
 // 输入栏空闲 2 秒后缓缓下移一半，任意操作恢复并重新计时。
 const zenMode = ref(false);
@@ -1709,6 +1715,7 @@ onUnmounted(() => {
             <template #summary="{ row, readingKey }">
             <SummaryCard
               :data-reading-key="readingKey"
+              :compact-actions="compactActions"
               :summary="row.summary"
               :from-idx="row.fromIdx"
               :to-idx="row.toIdx"
@@ -1729,6 +1736,7 @@ onUnmounted(() => {
             <template #message="{ row, presentation, readingKey }">
             <MessageBubble
               v-bind="presentation"
+              :compact-actions="compactActions"
               :data-reading-key="readingKey"
               :who="row.msg.who"
               :idx="row.displayIdx"

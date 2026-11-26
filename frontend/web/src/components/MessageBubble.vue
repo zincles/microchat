@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 消息气泡：正文 markdown 渲染 + <state> 块独立容器（状态变化单列，不混进正文）。
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
+import { ref, computed, watch, onMounted, onUnmounted, nextTick, inject } from "vue";
 import { VBtn } from "vuetify/components";
 import { ICONS } from "../assets/icons.ts";
 import { assistantIdentity, formatThinkLabel, identityLabel, sourceLabel, toolRunHint, usageMetrics } from "../utils/format.ts";
@@ -13,10 +13,12 @@ import { animateCandidate } from "../utils/candidateMotion.ts";
 import type { RerollView } from "../types/app.ts";
 import type { MessageTool } from "../api/types.ts";
 import MessageToolCard from "./MessageToolCard.vue";
-import CopyAnswerButton from "./CopyAnswerButton.vue";
+import ActionOverflow, { type OverflowAction } from "./ActionOverflow.vue";
 import { issueLabel, type BubblePresentation } from "../utils/answerTranscript.ts";
+import { copyMarkdownBody, writeClipboard } from "../utils/answerCopy.ts";
 
 const props = withDefaults(defineProps<BubblePresentation & {
+  compactActions?: boolean;
   who?: string;
   idx?: number | string | null; // 显示编号（真消息=服务端 idx；库外的按后缀顺延）
   role?: string;
@@ -105,6 +107,37 @@ const thinkLabel = computed(() =>
   props.streaming && !props.content ? "思考中…" : formatThinkLabel(props.reasoningMs),
 );
 const canEdit = computed(() => !!props.messageId);
+const compactReroll = computed(() => props.compactActions && props.reroll?.active && props.isLast && !props.flow && props.role !== "user");
+const toast = inject<(text: string, kind?: string) => void>("toast");
+async function copyReply(): Promise<void> {
+  try {
+    await writeClipboard(copyMarkdownBody(parts.value.cleaned, props.macros));
+    toast?.("已复制", "ok");
+  } catch {
+    toast?.("复制失败，请手动选取正文", "error");
+  }
+}
+
+const replyActions = computed(() => {
+  const leading: OverflowAction[] = [];
+  if (props.copyAnswer && props.role === "assistant" && !props.streaming && parts.value.cleaned) {
+    leading.push({ icon: ICONS.copy, label: "复制回答", run: copyReply });
+  }
+  leading.push({ icon: ICONS.pencil, label: "改正文", run: () => emit("edit", props.messageId, "content") });
+  if (props.role !== "user") {
+    leading.push({ icon: ICONS.brain, label: "改思考", run: () => emit("edit", props.messageId, "reasoning") });
+    const promptId = props.promptId;
+    if (props.isLast && promptId) {
+      leading.push({ icon: ICONS.notebookPen, label: "编辑最新 Prompt", hint: "编辑这条回复对应的用户输入", run: () => emit("edit-prompt", promptId) });
+    }
+  }
+  const trailing: OverflowAction[] = [];
+  if (props.allowContinue) {
+    trailing.push({ icon: ICONS.messagePlus, label: "续写", hint: "按现有历史生成下一条回复", run: () => emit("continue-turn") });
+  }
+  trailing.push({ icon: ICONS.trash, label: "删除这条及之后", loading: props.deleting, destructive: true, run: () => emit("delete", props.messageId, props.isLast) });
+  return { leading, trailing };
+});
 
 // 正文拆说话/状态：说话走 markdown，状态块进独立容器。
 const inlineTools = computed(() => props.candidate ? [] : props.tools.filter(showToolDetails.value ? hasToolPosition : inlineHostedTool));
@@ -252,13 +285,10 @@ watch(() => props.streaming, (s) => nextTick(() => {
       </div>
     </div>
     <div v-if="answerView !== 'prose' && (canEdit || metrics.length)" class="msg-footer">
-      <div v-if="canEdit" class="msg-ops">
+      <div v-if="canEdit" class="msg-ops" :class="{ 'reroll-compact': compactReroll }">
         <span v-if="role === 'user' && ident" class="msg-ident">{{ ident }}</span>
-        <div class="msg-action-group" role="group" aria-label="消息操作">
-          <CopyAnswerButton v-if="copyAnswer && role === 'assistant' && !streaming && parts.cleaned" :body="parts.cleaned" :macros="macros" />
-          <VBtn icon variant="text" size="small" title="改正文" aria-label="改正文" @click="emit('edit', messageId, 'content')" v-html="ICONS.pencil" />
-          <VBtn v-if="role !== 'user'" icon variant="text" size="small" title="改思考" aria-label="改思考" @click="emit('edit', messageId, 'reasoning')" v-html="ICONS.brain" />
-          <VBtn v-if="role !== 'user' && isLast && promptId" icon variant="text" size="small" title="编辑最新 Prompt（编辑这条回复对应的用户输入）" aria-label="编辑最新 Prompt" @click="emit('edit-prompt', promptId)" v-html="ICONS.notebookPen" />
+        <div v-if="!compactReroll" class="msg-action-group" role="group" aria-label="消息操作">
+          <ActionOverflow :actions="replyActions.leading" />
         </div>
         <div v-if="role !== 'user' && isLast" class="msg-action-group" role="group" aria-label="重新生成与版本">
           <VBtn icon variant="text" size="small"
@@ -271,11 +301,8 @@ watch(() => props.streaming, (s) => nextTick(() => {
             <VBtn icon variant="text" size="small" title="下一版（到最右再按 = 再摇一版）" aria-label="下一版" @click="emit('reroll-go', 1)">▶</VBtn>
           </template>
         </div>
-        <VBtn v-if="allowContinue" icon type="button" variant="text" size="small"
-          title="续写（按现有历史生成下一条回复）" aria-label="续写" @click="emit('continue-turn')" v-html="ICONS.messagePlus" />
-        <VBtn icon variant="text" size="small" class="msg-delete" :loading="deleting" :disabled="deleting" title="删除这条及之后" aria-label="删除这条及之后" @click="emit('delete', messageId, isLast)">
-          <span aria-hidden="true" v-html="ICONS.trash" />
-        </VBtn>
+        <ActionOverflow v-if="compactReroll" menu-label="更多消息操作" :actions="[...replyActions.leading, ...replyActions.trailing]" />
+        <ActionOverflow v-else :actions="replyActions.trailing" />
       </div>
       <details v-if="metrics.length" class="msg-foot">
         <summary title="回答用量与耗时明细">

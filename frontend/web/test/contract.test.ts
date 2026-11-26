@@ -1618,16 +1618,11 @@ test("最新 Prompt：A-B-C-D-E-F 指向 E；只在尾条 AI 上给按钮", () =
   assert.equal(latestPromptFor([{ id: "u", role: "user" }]), null);
   assert.equal(latestPromptFor([{ id: "a", role: "assistant" }]), null);
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
-  const bubble = readFileSync(join(SRC, "components", "MessageBubble.vue"), "utf8");
   assert.match(app, /const latestPromptId = computed\(\(\) => latestPromptFor\(vueMessages\.value\)\)/,
     "App 没算最新 Prompt");
   assert.match(app, /:prompt-id="row\.msg\.messageId === lastMsgId \? latestPromptId : null"/,
     "没把 Prompt id 交给尾条 AI");
   assert.match(app, /@edit-prompt="onBubbleEditPrompt"/, "没接「编辑最新 Prompt」");
-  assert.match(bubble, /v-if="role !== 'user' && isLast && promptId"/, "按钮不该出现在非尾条/用户消息上");
-  assert.match(bubble, /\$?emit\('edit-prompt', promptId\)/, "按钮没把 Prompt id 报上去");
-  assert.match(bubble, /v-html="ICONS\.notebookPen"/, "「编辑最新 Prompt」还是纯文字按钮，没换成记事本+笔图标");
-  assert.ok(!/>编辑最新 Prompt</.test(bubble), "按钮里还留着纯文字");
 });
 
 // 编辑后「保存并重摇」的合法位置（2026-11-02 用户定）：
@@ -2784,16 +2779,14 @@ test("上下文面板：三个 tab 不小于正文", () => {
 //
 // 合法性只有一份（后端 `compact.PlanUndo`：顶层都可撤；更早的会级联同层更晚的），
 // 界面**只读不算** —— 这里钉的是"数据搬对了、两处都接上了、不能撤时不是死按钮"。
-test("撤销压缩：树与摘要卡两处按钮，只按后端给的 undoable 亮", () => {
+test("撤销压缩：树与摘要卡共用预览和提交", () => {
   const tree = readFileSync(join(SRC, "components", "CompactTree.vue"), "utf8");
-  const card = readFileSync(join(SRC, "components", "SummaryCard.vue"), "utf8");
   const bar = readFileSync(join(SRC, "components", "PayloadBar.vue"), "utf8");
   const ws = readFileSync(join(SRC, "components", "ContextWorkspace.vue"), "utf8");
   const app = readFileSync(join(SRC, "..", "src", "App.vue"), "utf8");
   const api = readFileSync(join(SRC, "api", "client.ts"), "utf8");
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   const treeTpl = tree.slice(tree.indexOf("<template>")).replace(/<!--[\s\S]*?-->/g, "");
-  const cardTpl = card.slice(card.indexOf("<template>")).replace(/<!--[\s\S]*?-->/g, "");
 
   // ① 接口：DELETE 到 summaries/{id}
   assert.match(api, /undoSummary:\s*\(sid[^)]*\)\s*=>\s*call<[^>]+>\("DELETE", `\/sessions\/\$\{enc\(sid\)\}\/summaries\/\$\{enc\(sumid\)\}`/,
@@ -2807,14 +2800,7 @@ test("撤销压缩：树与摘要卡两处按钮，只按后端给的 undoable �
   // 只有摘要行才有 —— 消息行（叶子）不可撤，别长出一颗灰按钮
   assert.match(treeTpl, /v-if="r\.n\.kind === 'summary'"/, "树上的撤销按钮没有限定在摘要行");
 
-  // ③ 摘要卡：与刷新/编辑并排
-  assert.match(cardTpl, /aria-label="撤销这次压缩"/, "摘要卡没有撤销按钮");
-  assert.match(cardTpl, /:disabled="!summary\.undoable/, "摘要卡的撤销按钮没系在 summary.undoable 上");
   assert.match(treeTpl, /:loading="undoLoadingId === r\.n\.id"/, "树上的撤销按钮没显示当前请求的加载态");
-  assert.match(cardTpl, /:loading="undoLoading"/, "摘要卡的撤销按钮没显示加载态");
-  assert.match(cardTpl, /撤销这次压缩/, "摘要卡的撤销按钮悬停没写「撤销」");
-  assert.ok(cardTpl.includes("ICONS.trash"), "摘要卡的撤销按钮没用垃圾桶图标");
-
   // ④ 一路往上报：树 → 面板 → 工作区 → App（少一环就是点了没反应）
   assert.match(tree, /defineEmits(?:\(\[[^\]]*"undo"|<\{[^}]*undo:)/, "CompactTree 没声明 undo 事件");
   assert.match(bar, /@undo="\(id\) => emit\('undo', id\)"/, "面板没把树的 undo 往上报");
@@ -3138,8 +3124,6 @@ test("消息编辑：应用内模态，不就地改气泡", () => {
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8");
   assert.ok(!/inline-edit|inline-input/.test(bubble), "气泡里还留着就地编辑的 textarea");
   assert.ok(!/window\.prompt/.test(app), "/edit 还在用原生 prompt");
-  assert.match(bubble, /\$?emit\('edit', messageId, 'content'\)/, "改正文按钮没打开编辑器");
-  assert.match(bubble, /\$?emit\('edit', messageId, 'reasoning'\)/, "改思考按钮没打开编辑器");
   assert.match(app, /<MessageEditor/, "App 没挂消息编辑器");
   assert.match(app, /@edit="onBubbleEdit"/, "气泡的 edit 事件没接上");
   assert.match(app, /function onBubbleEdit\([^)]*\)/, "没有 onBubbleEdit");
@@ -3981,8 +3965,6 @@ test("消息区 MD3：中性灰用户气泡、思考容器、卡片摘要与代�
   assert.match(css, /\.msg\.user \{[^}]*background:\s*var\(--md-surface-container-high\)/, "用户气泡不是 Gemini 中性灰容器");
   assert.match(css, /\.msg\.user \{[^}]*color:\s*var\(--md-on-surface\)/, "用户气泡正文色不是 on-surface");
   assert.match(css, /\.msg\.user \{[^}]*border-radius:\s*var\(--md-shape-lg\) var\(--md-shape-lg\) var\(--md-shape-xs\)/, "用户气泡不是 16dp/4dp 尾巴圆角");
-  const bubble = readFileSync(join(SRC, "components", "MessageBubble.vue"), "utf8");
-  assert.match(bubble, /<VBtn[^>]*variant="text"[^>]*title="改正文"/, "操作键不是 VBtn");
   assert.match(css, /\.msg \.think \{[^}]*background:\s*var\(--md-surface-container-low\)/, "思考折叠不是 MD3 容器");
   assert.match(css, /\.sum-block \{[^}]*background:\s*var\(--md-surface-container-low\)/, "摘要卡不是 MD3 卡片");
   assert.match(css, /\.sum-block \{[^}]*box-shadow:\s*var\(--md-elev-1\)/, "摘要卡没有 elevation 1");

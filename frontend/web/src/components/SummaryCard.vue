@@ -5,6 +5,7 @@
 // 不然被折住的消息在界面上就没有入口了）。
 import { computed, useTemplateRef, watch } from "vue";
 import { VBtn } from "vuetify/components";
+import ActionOverflow, { type OverflowAction } from "./ActionOverflow.vue";
 import MessageBubble from "./MessageBubble.vue";
 import RequestLoading from "./RequestLoading.vue";
 import { ICONS } from "../assets/icons.ts";
@@ -21,6 +22,7 @@ type SummaryLike = ChatSummary & {
 };
 
 const props = withDefaults(defineProps<{
+  compactActions?: boolean;
   summary: SummaryLike;
   fromIdx?: number | string | null;
   toIdx?: number | string | null;
@@ -46,6 +48,7 @@ const props = withDefaults(defineProps<{
 // refresh = 摇新一版（当前那版留在第 1 位，不丢）；edit = 应用内编辑器；version = ◀▶ 翻版（最右再按 = 再摇）。
 const summaryHtml = computed(() => renderMacroHtml(props.summary.text ?? "", props.macros));
 const versionBusy = computed(() => !!props.candidateLoading || !!props.reroll?.running);
+const compactReroll = computed(() => props.compactActions && props.reroll?.active);
 const body = useTemplateRef<HTMLElement>("body");
 watch(() => props.reroll?.current_idx, (next, previous) => animateCandidate(body.value, next, previous), { flush: "post" });
 const emit = defineEmits<{
@@ -55,6 +58,17 @@ const emit = defineEmits<{
   version: [delta: number];
   undo: [];
 }>();
+const summaryActions = computed<OverflowAction[]>(() => [
+  { icon: ICONS.pencil, label: "编辑摘要", disabled: props.reroll?.running, run: () => emit("edit") },
+  {
+    icon: ICONS.trash,
+    label: "撤销这次压缩",
+    hint: props.summary.undoable ? "同层更晚的摘要会一并撤销" : "被上层摘要盖住：先撤上面那层",
+    disabled: !props.summary.undoable || versionBusy.value,
+    loading: props.undoLoading,
+    run: () => emit("undo"),
+  },
+]);
 </script>
 
 <template>
@@ -63,7 +77,7 @@ const emit = defineEmits<{
       <span class="sum-name">Summary</span>
       <span class="sum-range">#{{ fromIdx }}-{{ toIdx }}</span>
       <span v-if="summary.dirty" class="sum-tag" title="所辖消息被编辑过：摘要可能过期（装配照用）">脏</span>
-      <span class="sum-ops">
+      <span class="sum-ops" :class="{ 'reroll-compact': compactReroll }">
         <template v-if="reroll">
           <VBtn icon variant="text" size="small" :loading="candidateLoading === 'previous'" :disabled="versionBusy" title="上一版" aria-label="上一版" @click="emit('version', -1)">◀</VBtn>
           <span class="sum-pos">{{ reroll.running ? `${reroll.current_idx}→${reroll.count}` : `${reroll.current_idx}/${reroll.count}` }}</span>
@@ -72,14 +86,8 @@ const emit = defineEmits<{
         <VBtn icon variant="text" size="small" :loading="candidateLoading === 'refresh' || (!candidateLoading && !!reroll?.running)" :disabled="versionBusy" title="刷新（摇新一版；当前这版留在位次里，不丢）" aria-label="刷新摘要" @click="emit('refresh')">
           <span aria-hidden="true" v-html="ICONS.refresh" />
         </VBtn>
-        <VBtn icon variant="text" size="small" :disabled="!!reroll && reroll.running" title="编辑摘要正文" aria-label="编辑摘要" @click="emit('edit')" v-html="ICONS.pencil" />
-        <!-- 撤销这次压缩（2026-11-01 用户定）：垃圾桶图标，**悬停说'撤销'**。
-             顶层都可点；更早的会级联撤销同层更晚的摘要（App 会先弹警告）。
-             不能撤的**留着但禁用** —— 让人看见"这儿本来能撤"，配上说明才不是死按钮。 -->
-        <VBtn icon variant="text" size="small" :loading="undoLoading" :disabled="!summary.undoable || versionBusy || undoLoading" :title="summary.undoable ? '撤销这次压缩（同层更晚的会一并撤销）' : '被上层摘要盖住：先撤上面那层'" aria-label="撤销这次压缩" @click="emit('undo')">
-          <span aria-hidden="true" v-html="ICONS.trash" />
-        </VBtn>
-        <span v-if="reroll && reroll.running" class="sum-busy">刷新中…</span>
+        <ActionOverflow :menu-label="compactReroll ? '更多摘要操作' : undefined" :actions="summaryActions" />
+        <span v-if="reroll?.running" class="sum-busy" :class="{ 'd-sr-only': compactReroll }" role="status">刷新中…</span>
       </span>
     </div>
     <div ref="body" class="sum-text" v-html="summaryHtml"></div>

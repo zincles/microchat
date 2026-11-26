@@ -388,12 +388,16 @@ function setSessionOverrides(info: SessionInfo): void {
 }
 // 弧长（含"用了就得看得见"的最小弧）在 `utils/format.ts` 的 `contextArc` 里 —— 那边才测得到。
 const ctxArc = computed(() => contextArc(ctx.value));
-// dasharray="a b" 且 a+b=100 ⇒ 正好一道弧、没有第二道。
-const ctxDash = computed(() => `${ctxArc.value} ${100 - ctxArc.value}`);
 const ctxOver = computed(() => contextOverBudget(ctx.value));
 const flowActiveNodes = computed(() => props.flow ? (props.flowActiveNodes ?? []) : []);
 const flowCallCount = computed(() => props.flow ? Math.max(0, Number(props.flowCalls ?? 0), flowActiveNodes.value.length) : 0);
 const ringCount = computed(() => props.flow ? flowCallCount.value : activeTaskCount.value);
+// 有任务时给满环留一道可见的缺口。还没有占用数据的会话（含 Flow）用短弧表示活动。
+const ringArc = computed(() => {
+  const usage = props.flow ? 0 : ctxArc.value;
+  if (!ringCount.value) return usage;
+  return usage > 0 ? Math.min(usage, 92) : 18;
+});
 const ringCountText = computed(() => ringCount.value > 99 ? "99+" : String(ringCount.value));
 const ctxRows = computed<Array<[string, string]>>(() => {
   const c = ctx.value;
@@ -715,7 +719,7 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
         <VTab value="chat" title="对话本身">聊天</VTab>
         <VTab value="context" :title="flow ? '当前 Agent 的工作流图' : '上下文工作区（压缩出来的前情提要、层级、状态、真发出去的载荷）'">{{ flow ? "工作流" : "上下文" }}</VTab>
       </VTabs>
-      <!-- 内圈保留真实上下文占比；活动弧与中心计数只在有任务时显示。 -->
+      <!-- 弧长表示占用，旋转表示有任务。环心数字独立于 SVG。 -->
       <button
         id="ctx-ring"
         ref="ctxButtonEl"
@@ -731,8 +735,8 @@ defineExpose({ setSession, setModels, setContext, setStatus, setTasks, setOverri
       >
         <svg viewBox="0 0 36 36" aria-hidden="true">
           <circle class="ctx-ring-track" cx="18" cy="18" r="12.5" />
-          <circle v-if="!flow && ctxArc > 0" class="ctx-ring-fill" cx="18" cy="18" r="12.5" pathLength="100" :stroke-dasharray="ctxDash" />
-          <circle v-if="ringCount > 0" class="ctx-ring-activity" cx="18" cy="18" r="16" pathLength="100" stroke-dasharray="23 77" />
+          <circle v-if="ringArc > 0" class="ctx-ring-fill" :class="{ spinning: ringCount > 0 }" cx="18" cy="18" r="12.5"
+            pathLength="100" :stroke-dasharray="`${ringArc} ${100 - ringArc}`" />
         </svg>
         <span v-if="ringCount > 0" class="ctx-ring-n">{{ ringCountText }}</span>
       </button>

@@ -179,21 +179,23 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
 .model-item.sel .model-item-id { color: inherit; }
 .model-item .model-check { flex: none; color: inherit; font-size: 0.8em; white-space: nowrap; }
 
-/* 上下文刻度固定在十二点，任务只转动外圈，避免把用量和活动混作一件事。 */
+/* 轨道和计数固定。占用弧空闲时从十二点开始，有任务时沿同一轨道转动。 */
 #ctx-ring { flex: none; position: relative; width: var(--chat-bar); height: var(--chat-bar); min-height: 0; padding: 0; border: none; border-radius: var(--md-shape-full); background: none; color: var(--md-on-surface); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: background-color var(--md-dur-150) var(--md-ease-standard); }
 #ctx-ring:hover { background: var(--hover); }
 #chat-col > header #ctx-ring[aria-expanded="true"] { background: var(--md-secondary-container); }
 #ctx-ring:focus-visible { outline: 2px solid var(--md-primary); outline-offset: -2px; }
 #ctx-ring svg { display: block; width: 28px; height: 28px; }
-#ctx-ring circle { fill: none; transform: rotate(-90deg); transform-origin: center; }
+#ctx-ring circle { fill: none; }
 .ctx-ring-track, .ctx-ring-fill { stroke-width: 3; }
 .ctx-ring-track { stroke: var(--md-outline-variant); }
-.ctx-ring-fill { stroke: var(--tg-ok); stroke-linecap: round; transition: stroke-dasharray var(--md-dur-250) var(--md-ease-standard); }
+.ctx-ring-fill { stroke: var(--tg-ok); stroke-linecap: round; transform: rotate(-90deg); transform-origin: center; transition: stroke-dasharray var(--md-dur-250) var(--md-ease-standard); }
 #ctx-ring.over .ctx-ring-fill { stroke: var(--md-error); }
-.ctx-ring-activity { stroke: var(--md-primary); stroke-width: 1.5; stroke-linecap: round; animation: ctx-ring-spin 1.5s linear infinite; }
+@media (prefers-reduced-motion: no-preference) {
+  .ctx-ring-fill.spinning { animation: ctx-ring-spin 1.1s linear infinite; }
+}
 .ctx-ring-n { position: absolute; inset: 0; display: grid; place-items: center; font-size: 0.68em; line-height: 1; font-weight: 600; font-variant-numeric: tabular-nums; pointer-events: none; }
-@keyframes ctx-ring-spin { to { transform: rotate(270deg); } }
-@media (prefers-reduced-motion: reduce) { .ctx-ring-activity { animation: none; } .ctx-ring-fill { transition: none; } }
+@keyframes ctx-ring-spin { from { transform: rotate(-90deg); } to { transform: rotate(270deg); } }
+@media (prefers-reduced-motion: reduce) { .ctx-ring-fill { transition: none; } }
 /* 后台任务明细现在住上下文环的浮板里（2026-11-02 合并）；任务行的样式继续用下面这组。 */
 .task-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.6em;
   padding: 0.3em 0.55em 0.45em; border-bottom: 1px solid var(--mix-10); }
@@ -1064,6 +1066,11 @@ header { display: flex; gap: 0.8em; align-items: center; padding: 0.35em 1em; co
   #app .msg-ops .msg-delete:hover { color: var(--md-error); }
 }
 .msg-ops .reroll-pos { font-size: var(--md-type-label-medium); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+/* 重摇时只让用量脚注或摘要标题换行，不拆开操作，也不缩小触摸目标。 */
+.msg-ops.reroll-compact, .reroll-compact .msg-action-group, .sum-ops.reroll-compact { flex-wrap: nowrap; }
+.reroll-compact { --chat-action: var(--md-touch-target); }
+.sum-ops.reroll-compact { max-width: 100%; }
+.reroll-compact :is(.reroll-pos, .sum-pos) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .msg-foot { flex: 1 1 13em; min-width: 0; max-width: 100%; font-size: var(--md-type-label-medium); line-height: 1.6; }
 .msg-foot > summary { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 0 0.85em; cursor: pointer; }
 .msg-foot > summary::-webkit-details-marker { display: none; }
