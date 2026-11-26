@@ -546,7 +546,7 @@ delete(AA)           # 删除
   **最后一条用户消息**句首（历史不动；前缀缓存友好）。
 
 **上下文工作区**（2026-10-29 用户定：「每个对话分为俩部分：对话界面 和 上下文工作区 界面」）：
-右上方的悬浮 `VTabs`（`.workspace-tabs`）切换「聊天 / 上下文」，Flow 会话切换「聊天 / 工作流」。
+右上方的悬浮切换控件显示「聊天 / 上下文」，Flow 会话显示「聊天 / 工作流」。它共用模型分组的 `.ui-mode-switch` 分段样式，以底色标记选中项，`VTabs` 保留键盘操作，不画下划线。
 下面用 `VTabsWindow` 装两个 `VTabsWindowItem`（chat / context），**左右滑动动画由 VWindow 负责**。
 聊天页里是 `#messages-vue` + `#composer`，上下文页里是 `ContextWorkspace.vue`；不再用 `v-show`。
 **结构统一（2026-11-21）**：工作区导航为「请求预览 / 世界状态 / 历史压缩」，内部 tab id 仍是 payload/state/tree，不改按页加载规则。三页共用聊天阅读宽度与 `--chat-inset`，说明、控件、内容分层，保持平铺、不加卡片。请求页用有标签的「启用请求预览」开关 +「分块 / JSON」显示切换，分块序号写「第 N 项」（不是历史消息编号）；关掉时显示空态且不请求 `/outgoing`。
@@ -1411,7 +1411,7 @@ Flow 的 `judge` 节点吃左侧 `state` 输入，节点配置里填 `provider`/
   **忙碌环**改成 MD3 circular progress indicator：SVG 双圆（track 18% + arc），旋转 + dash 伸缩（`session-busy-dash`），
   reduced-motion 停转但保留缺口弧。**加载效果**：`sessionsLoading` → 6 条 shimmer 骨架（`aria-busy` 同步），
   `sessionsRefreshing` → header 下 3dp indeterminate linear progress。刷新和插入会话不重播整条列表的入场动画。
-  **上方悬浮控件**使用主题表面、全圆角和一级阴影；没有贯通背景。工作区页签为 Vuetify `VTabs`，切换沿水平方向移动。减少动态效果时不播放位移动效。
+  **上方悬浮控件**没有贯通背景。模型按钮和侧栏开关各用独立的主题表面、全圆角和一级阴影；模型按钮必须用不透明底色，正文滚过时不能透到按钮上。工作区切换保留水平过渡，减少动态效果时不播放位移动效。
   **设置界面控件**（2026-11-06 用户定「按钮和组件也全换成 Vuetify」）：`VTextField` / `VSelect` / `VTextarea` /
   `VSwitch` / `VBtn` / `VTable`；旧 `ToggleSwitch.vue` 与 `TabBar.vue` 已删，原生可见控件（button/select/textarea/input）
   在设置页里不再出现（隐藏的 file input 保留，触发键是 VBtn）。

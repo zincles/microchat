@@ -3500,15 +3500,11 @@ test("消息窗口：默认 5 段，设置里可改，首屏与加载更多共�
   assert.match(settings, /v-model="chat\.history_window"/, "设置里没有首屏消息数输入");
 });
 
-test("设计系统：tab 统一下划线、设置平铺、圆角收口", () => {
+test("设计系统：上下文页签、设置平铺、圆角收口", () => {
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   const theme = readFileSync(join(SRC, "assets", "theme.css"), "utf8");
-  // 设置 / Agent 用 Vuetify VTabs（MD3 primary tabs）；顶栏/上下文仍各用自带 indicator。
   assert.ok(!/\.settings-nav/.test(css), "旧 TabBar 的 .settings-nav 样式还留着");
-  // 顶栏/上下文都换成了 Vuetify 组件，indicator 由 VBtnToggle / VTabs 自己画。
-  const top = readFileSync(join(SRC, "components", "ChatControls.vue"), "utf8");
   const bar = readFileSync(join(SRC, "components", "PayloadBar.vue"), "utf8");
-  assert.match(top, /<VTabs[^>]*class="workspace-tabs"/, "顶栏工作区不是 VTabs");
   assert.match(bar, /<VTabs[\s\S]*?class="context-tabs"/, "上下文 tab 不是 VTabs");
   // 设置页：无卡片底、无连体组圆角
   assert.match(css, /\.settings-card \{[^}]*background:\s*none[^}]*padding:\s*0/, "设置分节还带卡片底");
