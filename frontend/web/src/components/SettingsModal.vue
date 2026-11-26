@@ -23,7 +23,7 @@ import type { ModelGroup } from "../utils/format.ts";
 import { SETTINGS_SECTIONS, type SettingsLocation } from "../utils/settingsCatalog.ts";
 import { downloadJSON, downloadBlob } from "../utils/download.ts";
 import { cartridgeAgent } from "../utils/cartridge.ts";
-import type { Agent, ChatConfig, DefaultsConfig, ProviderView, Segment, SessionView, TavernPreset } from "../api/types.ts";
+import type { Agent, ChatConfig, CreateAgentRequest, DefaultsConfig, ProviderView, Segment, SessionView, TavernPreset } from "../api/types.ts";
 import type { ConfirmOptions } from "../types/app.ts";
 
 interface ChatForm {
@@ -169,6 +169,42 @@ function closeAgentEditor(): void {
   editAgent.value = null;
   agentTemplate.value = null;
 }
+
+function copiedAgentName(agent: Agent): string {
+  const base = `${agent.name || agent.id}（副本）`;
+  const names = new Set(agents.value.map((item) => item.name));
+  if (!names.has(base)) return base;
+  for (let suffix = 2; ; suffix++) {
+    const candidate = `${agent.name || agent.id}（副本 ${suffix}）`;
+    if (!names.has(candidate)) return candidate;
+  }
+}
+
+async function copyAgent(agent: Agent): Promise<void> {
+  if (!reads.agents.ready || pendingAgentCopies.has(agent.id)) return;
+  pendingAgentCopies.add(agent.id);
+  agentCopyStatus.value = "";
+  try {
+    const copy: CreateAgentRequest = {
+      name: copiedAgentName(agent),
+      description: agent.description,
+      kind: agent.kind || undefined,
+      flow: agent.flow,
+      system_prompt: agent.system_prompt,
+      first_message: agent.first_message,
+      segments: agent.segments,
+      preset_id: agent.preset_id,
+      prompt_entries: agent.prompt_entries,
+      abilities: agent.abilities,
+      prepend_state: agent.prepend_state,
+    };
+    const created = await api.createAgent(copy);
+    agentCopyStatus.value = `已创建副本「${created.name}」`;
+    await onLibrarySaved("agent");
+    editExistingAgent(created);
+  } catch (e) { agentCopyStatus.value = `复制失败：${errMsg(e)}`; }
+  finally { pendingAgentCopies.delete(agent.id); }
+}
 const editSeg = ref<Segment | "new" | null>(null); // null | 'new' | segment（「提示词」tab 内的二级页）
 // 谁引用了这个段（「提示词」tab 列表与编辑器共用）。
 const segRefs = (id: string): string[] => agents.value.filter((a) => (a.segments ?? []).includes(id)).map((a) => a.name || a.id);
@@ -243,6 +279,8 @@ const pendingTavernDownloads = reactive(new Set<string>());
 const pendingTavernDeletes = reactive(new Set<string>());
 const providerRefreshes = shallowRef(0);
 const libraryRefreshes = reactive({ agent: 0, prompt: 0 });
+const pendingAgentCopies = reactive(new Set<string>());
+const agentCopyStatus = ref("");
 
 function loadChat(): Promise<void> {
   return readSetting("chat", () => api.getChat(), (c) => {
@@ -891,6 +929,7 @@ function onKey(e: KeyboardEvent): void {
             <p class="hint">每个智能体 = 一份人设 + 一组能力开关；会话在顶栏切换使用哪一个。</p>
             <p class="action-note">「从模板创建」只写入初始内容；导入智能体文件会把它引用的提示词片段一起带进来。</p>
             <p v-if="cartridgeStatus" class="status" role="status">{{ cartridgeStatus }}</p>
+            <p v-if="agentCopyStatus" class="status" role="status">{{ agentCopyStatus }}</p>
             <RequestLoading v-if="libraryRefreshes.agent && !importingCartridge" label="刷新智能体列表…" />
             <ul v-if="agents.length" id="agent-list" class="settings-list" aria-label="智能体">
               <li v-for="a in agents" :key="a.id" class="settings-list-row">
@@ -908,6 +947,9 @@ function onKey(e: KeyboardEvent): void {
                   </span>
                   <span class="settings-list-chevron" aria-hidden="true" v-html="ICONS.chevronRight"></span>
                 </VBtn>
+                <div class="manage-actions">
+                  <VBtn variant="text" size="small" type="button" :loading="pendingAgentCopies.has(a.id)" :disabled="pendingAgentCopies.has(a.id)" :aria-label="`复制 ${a.name || a.id}`" @click.stop="copyAgent(a)">复制</VBtn>
+                </div>
               </li>
             </ul>
             <p v-else class="manage-empty">没有可显示的智能体</p>
