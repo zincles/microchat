@@ -156,7 +156,7 @@ code, pre, kbd, samp { font-family: var(--app-font-mono, ui-monospace, SFMono-Re
 #ctx-ring:focus-visible { outline: 2px solid var(--md-primary); outline-offset: -2px; }
 #ctx-ring svg { display: block; width: 28px; height: 28px; }
 #ctx-ring circle { fill: none; }
-.ctx-ring-track, .ctx-ring-fill { stroke-width: 3; }
+.ctx-ring-track, .ctx-ring-fill { stroke-width: 6; }
 .ctx-ring-track { stroke: var(--md-outline-variant); }
 .ctx-ring-fill { stroke: var(--tg-ok); stroke-linecap: round; transform: rotate(-90deg); transform-origin: center; transition: stroke-dasharray var(--md-dur-250) var(--md-ease-standard); }
 #ctx-ring.over .ctx-ring-fill { stroke: var(--md-error); }

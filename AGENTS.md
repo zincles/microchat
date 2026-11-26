@@ -1,33 +1,28 @@
-# AGENTS.md — 工作须知
+# AGENTS.md — 工程约定
 
-对外说明见 **`README.md`**（定位、技术栈、部署与内置更新）；本文件是内部工作须知。
+MicroChat 是单人自托管聊天应用：Go + SQLite 后端与 Vue Web 前端。当前优先完善聊天；左栏「生图」「项目」仍是占位，远程 Runner 只记在延期设计中。应用没有登录或内建鉴权，部署边界见 [README.md](README.md)。
 
-microchat：轻量 SillyTavern 替代（RPG 向）。三层，边界要清楚：
+## 文档分工
 
-| 层 | 位置 | 状态 |
-|---|---|---|
-| 后端（**唯一权威**） | `core/`（Go、SQLite、官方 OpenAI Go SDK） | **新代码一律写这儿** |
-| Web 前端（**当前主力**） | `frontend/web/` | **优先迭代这儿**（2026-10-04 定：迭代快，助手擅 Web 栈；新界面能力先落这儿） |
-| ~~TUI / TG Bot~~ | **已删除**（2026-11-01：用户「砍掉CLI对话器，只保留服务web前端的功能」） | 只剩 web 一个前端 |
+- [README.md](README.md)：产品现状、部署与更新。
+- [DEFINE.md](DEFINE.md)：领域术语和持久化语义。
+- [TODO.md](TODO.md)：聊天待办、协议验证和延期设计，不记已完成流水。
+- [Web 开发说明](frontend/web/README.md)：前端开发与交互约束。
+- [专题索引](reminder/)：工具、压缩、JEV、网关和套餐余量。
 
-## 术语表（一个词只指一件事）
+`core/internal/config/segments/*.md` 是嵌入二进制的提示词，不是工程文档。已完成工作的过程留在 Git；只把仍约束实现或排障的结论留在本文件。
 
-> **会话（Session）与消息（Message）的完整定义、字段、以及"故意不存什么"，见 `DEFINE.md`** ——
-> 那份是词表的唯一权威；这里只列最常用的几个词。
-> **下一步做什么看 [TODO.md](TODO.md)**，其中区分了可执行的待办和仍需决定的设计。
-> **任务（Task）与两族调用（对话型 / 功能型）的完整定义**同样在 `DEFINE.md`（那一节：Task = 一次上游请求的全程）。
+## 术语速查
 
-| 词 | **只**指什么 | 别叫 |
-|---|---|---|
-| **世界状态（state）** | `<state>` 那套：**只从消息正文现演**的键值 —— 词汇只有两种：**变量**（键 → 值）与**表**（命名空间，不写表名就落到 `global` 表）；删除不留痕迹（提示词里的块不算数） | 孤立地说"状态"（得说清是世界状态、turn 状态还是 Task 状态） |
-| **能力（Ability）** | **写死在代码里的一段固定流程**（**会调模型的 Task 种类**：现在 `title` / `compact` 两个）；开关在 Agent 上、流程在代码里。**"对话本身"不是能力** ✗（那是 Agent 存在的方式） | "工具"（撞函数调用）、"子 Agent" |
-| **Agent** | **一份命名的人格 + 一组能力开关 + 可选提示词方案**（`agents.json`）：同一个运行时，只是开关/绑定不同 | 拿它指"某个能力" |
-| **任务（Task）** | **一次上游请求的全程**（发起 → 收尾 → 可能被取消）：一轮生成、一次压缩、一次刷新模型都挂号。**会调模型的一定是 Task**（**反之不成立** —— `refresh_models` 也是 Task，但它不调模型）。**TaskID 是 UUIDv7，且不进库** | "后台作业"（不都在后台）；拿它指"某个能力" |
-| ~~用户 / 系统令牌~~ | **这两个词已经作废**（2026-11-01 砍掉账号与鉴权）：没有登录者、没有凭据、没有归属。只剩"这台机器上的一个使用者" | 别再用"用户"指任何东西 —— 那是历史 |
+| 词 | 本仓含义 |
+|---|---|
+| 世界状态 | 只从已存消息正文的 `<state>` 现演；提示词示例不参与计算。 |
+| Agent | 人格、能力开关与提示词方案；不是独立进程。 |
+| 能力 | 代码里的固定模型流程，目前为 `title`、`compact`；Flow 的 `judge` 是节点。 |
+| Task | 一次上游模型调用或受登记的非模型作业全程；ID 只在进程内。 |
+| 工具 | 模型请求中的结构化动作；服务端执行与本地执行是两类。 |
 
-三层咬合：**Agent（人格 + 能力开关）→ 一次调用（对话型 / 功能型=能力）→ Task（这次上游请求的全程）**。
-**Task 的种类 ≈ 能力 id** ✓（2026-09-30 定，别再分两层）：`title` / `compact` 是；**`judgement` 现在只属于 Flow 的 JEV 判断节点**（不再是传统 Agent 能力），而 `turn` 作业发起的是**对话型调用**（**不算能力**）、`refresh_models` 发起 0 次。
-"能不能自主选下一步"**不是** Agent 的判据，将来是某个能力（如 `plan`）的事。
+完整定义见 [DEFINE.md](DEFINE.md)。
 
 ## 代码布局
 
@@ -291,7 +286,7 @@ delete(AA)           # 删除
 
 **`data/config/`** 里是**严格 JSON**（程序整体重写），都可缺失。文件名一律 `.json`：
 
-- `config.json` — `{ "server": { "host": "127.0.0.1", "port": 8787, "refresh_models_on_start": true }, "defaults": { "provider": "dummy", "model": "dummy", "agent": "default" }, "chat": { "model_context_tokens": 131072, "history_window": 5, "compact_trigger_tokens": null, "compact_blocks": 5, "title_provider": "", "title_model": "" } }`
+- `config.json` — `{ "server": { "host": "127.0.0.1", "port": 8787, "refresh_models_on_start": true }, "defaults": { "provider": "dummy", "model": "dummy", "agent": "default" }, "chat": { "model_context_tokens": 131072, "history_window": 5, "compact_trigger_tokens": null, "compact_blocks": 3, "title_provider": "", "title_model": "" } }`
   （**全局标题模型**：`title_provider` / `title_model` 都空 = **使用当前会话模型**（默认）；都填 = 起标题固定走这一对。只填一个不算数。）
   **`model_define_rules`（2026-11-07；2026-11-23 拆成内置 / 用户）** = 一组**纯数据 override**，按模型 raw `upstream_id` 覆写展示/能力画像：
   `{ "id": "xai", "match_contains": "grok", "match_exact": "", "match_provider": "",
@@ -760,10 +755,9 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
   端口绑定还是老的（踩过：改完 `ss` 一看还是 `*:8788`，全网卡都在听，而 `restart` 报"成功"）。
 - 错误体固定 `{"error":{"code","message"}}`，`code` ∈ `invalid` / `not_found` / `conflict` / `unauthorized` / `upstream` / `internal`——客户端按 `code` 分支，别匹配文案。
 - **405 由框架自己回**（路径在、方法不对），不带上面的体，但带 `allow:` 头。
-- **CORS 全开 ✓ + 预检 204 ✓**（`Access-Control-*` 盖住**每一个**响应：200 / 401 / 404 / 405 / 错误体都带；
-  `OPTIONS` 在**鉴权之前**被接管 ⇒ 预检不带 `Authorization` 也放行、回 **204 无体**；只有 `OPTIONS` 被我们截下，其余方法照旧透给路由）。
-  `Allow-Origin` 有 `Origin` 就**回显**它、否则 `*`（并带 `Vary: Origin`）；`Allow-Headers` 回显 `Access-Control-Request-Headers`（没有则 `Authorization, Content-Type`）；
-  `Max-Age: 600`；`Expose-Headers: Allow`（405 的 `allow:` 不在安全名单里，浏览器默认读不到）。
+- **CORS 全开，预检回 204。** `Access-Control-*` 由中间件加到响应，`OPTIONS` 在路由前直接处理；CORS 不是鉴权，也不能替代反向代理保护。
+  有 `Origin` 时回显并带 `Vary: Origin`，没有则为 `*`；允许请求头按预检回显，缺省为 `Authorization, Content-Type`；暴露 `Allow` 供浏览器读取 405。
+  本项目没有应用内鉴权；默认回环绑定与对外反代边界见部署说明。
 - **TLS 不归我们**（用户定）：云上由反代终结（Cloudflare 一类）；本二进制只管 HTTP。
 
 ### 故意砍掉的（2026-09-29 定：**先简化，再往深走**）
@@ -777,25 +771,9 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
   `GET/PUT /abilities`
 - **`POST /sessions/{session_id}/fork` 已彻底作废** ✗（不是"待重做"）：线性会话里分岔就是 **Copy** ✓（见上表）
 - **不要照旧版补回来** ✗ —— 旧版是参照，不是目标；要加先改这张表。
-### 访问控制（2026-11-01 · 取代原来的「鉴权」与「用户管理」两节）
+### 访问边界
 
-**只有一个使用者、只从本机访问** ⇒ 没有登录、没有账号、没有权限区分。原来看三样东西现在都不存在了：
-
-| 原来 | 现在 |
-|---|---|
-| `Authorization: Bearer <JWT>` / 环回系统令牌 | **不要凭据**（那个头没人读） |
-| `POST /auth/login` · `/auth/setup` · `GET /auth/me` · `POST /auth/logout` · `GET /auth/status` | **全删**（访问这些路径 ⇒ 404） |
-| `GET/POST/PATCH/DELETE /users*`（加人 / 改名 / 改口令 / 删人） | **全删** |
-| 「root 无口令 ⇒ 服务未启用 ⇒ 403 `setup_required`」 | **删**（没有"启用"这回事） |
-| `sessions.owner_id`（归属过滤；非本人 ⇒ 404） | **删列**（只判会话在不在） |
-| `-debug set-root-password` / `-debug reset-users` | **删**（没有口令可设、没有用户可重置） |
-| 设置面 = root 专属 | **不设限**（都只有一个使用者） |
-
-⚠ `store.dropRetired()`：新库本来就没有 `users` 表与 `owner_id` 列（`001.sql` 已经删了那一段），
-**老库**则还留着它们 —— 迁移靠 `PRAGMA user_version` 拦着，改 `001.sql` 对老库**不生效**（不会重跑）。
-所以打开库时顺手 `DROP TABLE IF EXISTS users` + `ALTER TABLE sessions DROP COLUMN owner_id`（**幂等**，
-只删这两个"没人再读"的东西，绝不动会话/消息/摘要的数据）。
-
+MicroChat 没有登录、账号、会话归属或应用内鉴权；`Authorization` 不授予身份。默认后端绑定 `127.0.0.1`。需要远程访问时由反向代理负责 TLS 与鉴权，不能把 Vite Host 白名单或 CORS 当作保护。早期数据库遗留的 `users` 表与 `sessions.owner_id` 由 store 的兼容清理处理，不触及会话内容。
 ### 会话与消息
 
 | 方法 | 路径 | 请求体 | 响应 | 说明 |
@@ -1210,8 +1188,7 @@ Flow 的 `judge` 节点吃左侧 `state` 输入，节点配置里填 `provider`/
   `npm run typecheck` = 两档一起跑，必须双绿。`npm test` 走 `tsx`。
   App 已抽出的 composables：`useTypewriter` / `useTasks` / `useSidePanels` / `useChrome` /
   `useOverlayLayout` / `useSettingsView` / `useModelsAgents`。
-- **门板/登录的视觉**（2026-10-14 用户定"更好看"）：玻璃卡（`backdrop-filter`）+ 品牌头（**内联 SVG** 标 —— 无外部资源，离线 SW 照旧）+ 主题色光晕 + 入场动画（尊重 `prefers-reduced-motion`）；**底自己铺 `--mc-bg-image`**（就是用户背景图那枚变量）+ 一层跟主题走的面纱 —— 门板在 `#app` 里、够不着 `body::before` 的图层，想要"透出背景图"**别用透明**（会把聊天壳一起透出来，实测截图里左栏顶栏全露馅）。
-- **连接门板**（2026-10-10 加）：启动自检探不通后端（新设备第一次打开/地址没填对）⇒ 不开破界面，先给全屏"连接到 microchat 后端"面板：填地址（裸写 `192.168.0.110:8787` 也行 —— `normalizeApiBase` 自动补 `http://` 与 `/api/v1`）→ 过 ⇒ `saveNetPrefs` 存 **JWT** + **刷新页面**进聊天（沿用"改完刷新生效"）。**地址栏只在"探不通"时出现**（2026-10-14 用户定）：探通 ⇒ 收起，登录界面只有用户名/口令（单容器部署里浏览器永远同源，不该再问地址）；中途又断了 ⇒ 地址栏自动放回来。**2026-10-10 多用户改造**：启动自检探开放口 `/auth/status`——探不通 ⇒ 门板带原因；`needs_setup:true` ⇒ 「初始化 root」（**uid 0 恒在**，只设口令+确认；名字固定 root）；已初始化 ⇒ 登录（地址 / 用户名 / 口令）。探针两道闸照旧（`normalizeApiBase` + 必须回 `status:"ok"`）。
+- **启动状态。** 页面启动时并行探测同源 `/api/v1` 与首屏数据；连接失败显示状态和错误，不要求填写服务器地址、账号或口令。运行行为见 `App.vue` 与 [Web 开发说明](frontend/web/README.md)。
 - **模型选择器**：顶栏模型按钮打开浮板，依次是搜索、分组方式、横向页签、模型列表和操作栏。默认「按归属」，将跨渠道模型按规则 `brand` 归组，未配品牌时用上游 `owned_by`，都没有归到「未标注归属」。归属名不分大小写合并，每个型号仍按渠道分别列出，行内标明渠道。「按渠道」保留按别名 → 渠道名 → id 浏览的方式。
   两种方式共用「全部」与分组页签，支持鼠标拖动、滚轮、触屏横滑及键盘左右键。切换分组方式保留搜索词，结果从头显示。搜索匹配模型名、上游 ID、归属和渠道；先选组再搜索和从零编号，搜索框的上下键 / Enter 只操作可见结果。当前使用与键盘指向分别显示。
   「设当前为新会话默认」用 `PUT /config/defaults` 只保存当前已选的 `provider` / `model`；搜索高亮不算当前模型，默认助手和已有会话不改。继承默认值的草稿重新打开时使用新设置；手动选过模型的草稿保留自己的选择。
@@ -1243,8 +1220,7 @@ Flow 的 `judge` 节点吃左侧 `state` 输入，节点配置里填 `provider`/
   判据是纯函数 `utils/chrome.ts` 的 `stepChrome`（契约测试钉着），App 只把算出的两个像素数写成根节点的
   `--chrome-top` / `--chrome-bottom`，CSS 只做 `translateY`（90ms linear 抹抖，reduced-motion 里关过渡）。
   触屏判定 = `(pointer: coarse)` ⇒ 鼠标滚轮不参与（桌面滚不隐藏）。
-- **移动端键盘不遮输入框**（2026-10-10 加）：`utils/viewport.ts` 用 **visualViewport** 把应用盒拟合过去 —— `#app` 高 = `vv.height`、`translateY(vv.offsetTop)`（iOS 的"可视窗上推"跟着走；捏合缩放 scale>1 时不拟合）。`#app` 一带 transform 就成了其内全部 `fixed` 浮层（命令面板 / picker / 确认框 / toast / 连接门板）的**包含块** ⇒ 浮层自动钉在**键盘上沿**；命令面板/picker 限高 `calc(100% - 7em)`（百分比按包含块解析 ⇒ 键盘缩盒时自动跟着缩，小屏不顶出视口，内容自己滚 —— 实测过 617px 面板裸奔出视口）。`index.html` 的 `interactive-widget=resizes-content` 给 Chromium 系先缩布局视口（与 vv 拟合叠加不打架，都以 vv 为准）。配套的**文档锁死**（`html, body { height: 100%; overflow: hidden; overscroll-behavior: none }`）缺不得 —— 见踩过的坑「页面还能延展」；`#session-list` 也终于有自己的滚动（此前没有任何滚动规则，会话一多直接被裁）。
-- **用户视图**（2026-10-10 加，与设置**平级**的另一半）：左栏底 `👤 用户` 打开它 —— **设置管实例/服务器**（聊天参数、渠道、Agent、会话），**用户管登录者自己**—— 身份（`/auth/me`：名字 + 管理员标记 + **退出登录**）与个人偏好（主题 / 背景图 / 发送键 / 输入预演）；**用户管理（加人/踢人/改口令）下一步做**。两块**互斥**（一屏只开一个，互相打开时对方让位）；视图口径同设置：`[◧] 用户 [×]`、Esc 一次只关一层；设置视图因此从六区缩成**五区**（原「界面」区整块搬走，当时的设置分区在 format.js；现在叫 `SETTINGS_SECTIONS`）。
+- **移动端键盘不遮输入框**：`utils/viewport.ts` 用 `visualViewport` 拟合应用盒；浮层随可视区域缩放，文档本身不滚。适配时保留内部滚动容器。
 - **上下文环（2026-11-02 合并后台任务）**：用户定「以上下文指示器的绿色圈圈为主体。中央原本空着的区域，放入代表活跃后台任务数量的数字。在后台任务运行时，绿色圈圈会转动」。
   `ContextRing.vue` 在输入卡发送键左侧。弧长表示已用 / 输入预算，超预算时用错误色；忙碌时只有**同一条占用弧**沿轨道旋转（1.1s 一圈）。轨道与环心数字不转，减少动态效果时弧也不转。普通会话的计数取 `max(/tasks.running, 未结束队列数)`。
   点环打开的面板分**四个 tab**（2026-11-02 用户定：「上下文状态 和 正在运行的任务，分为俩TAB」；后加「请求体覆盖」与「已注册宏」）：「上下文」= 数字、连接/助手/运行三行；「任务」= **只列正在跑的**队列 + 原子任务（进度、时长、失败红字、取消；结束的立刻消失）—— 取消仍走 `@cancel-task` / `@cancel-queue`；「请求体覆盖」= JSON 覆盖编辑；「已注册宏」= 可用宏 + 当前值 + 本会话全文使用次数（`GET /sessions/{id}/macros`）。tab 状态是 `ctxTab`（默认上下文），不写 localStorage。
@@ -1279,7 +1255,7 @@ Flow 的 `judge` 节点吃左侧 `state` 输入，节点配置里填 `provider`/
   `applyTextScale`/`saveTextScale`，开机第一帧就应用）。它**只乘 body 的 `font-size`**
   （`calc(15px * var(--app-text-scale, 1))`）—— 全项目尺寸几乎都是 em、0 处 rem、0 处 px 字号，
   于是改这一格 = 整页等比缩放。范围/步长钉在 `prefs.js` 的 `TEXT_SCALE_MIN/MAX/STEP`（0.85–1.3，5% 一格），
-  滑杆在**用户视图 → 外观**，**拖动即生效**（尺寸得看着调）。`--r-*` 圆角与滚动条是 px ⇒ 不跟着缩（OpenWebUI 同样如此）。
+  滑杆位于**设置 → 外观**并即时生效；`--r-*` 圆角与滚动条是 px，不随字号缩放。
   **③ 自定义字体（2026-11-04 用户定）**：`prefs.json` 的 `font_body` / `font_mono`，空 = 内置系统字族。
   `applyFonts()` 把自定义值写到根节点 `--app-font-body` / `--app-font-mono`，并**在末尾补内置栈**
   （中文字形/没装的字体仍能回落）；`body` 读前者，`code, pre, kbd, samp` 读后者。
@@ -1320,7 +1296,7 @@ Flow 的 `judge` 节点吃左侧 `state` 输入，节点配置里填 `provider`/
 - 输入行 `/` 进命令面板（**只放已有路由的命令**），`resume` 走 picker；`model` 只是重拉顶栏下拉（不弹 picker）；不可逆的走全屏确认。
   **命令菜单默认关**（2026-10-17 用户定：移动端那颗 ☰ 与 `/` 浮层纯碍事）—— 关着时输入框左侧**没有 ☰**、
   输入 `/` **不弹面板**（但 `/name` 回车照旧执行：命令本身没消失，只是没有"菜单"这一层）；
-  开回来在**用户视图 → 输入 → 命令菜单**（个人偏好 `mc_cmd_menu`，保存后**即时生效**，不用刷新）。
+  开关位于**设置 → 输入**，保存后即时生效。
 - **输入栏只有一种布局**（2026-11-04 用户定：「不允许再设置紧凑和宽松布局」）：删掉 `float`/`solid` 二选一、`composer_style` 偏好、`data-composer` 属性与对应设置项；统一用 Vuetify MD3 输入栏（`VTextarea` + 右侧 VBtn）。
 - **Vuetify 4 渐进接入**（2026-11-06 用户定：「可以逐渐替换吗？」「使用 Vuetify 内置 MD3 主题，而不是手搓 CSS」）：
   第一块是 **Composer + 顶栏控件**，不套 VMain/QLayout 壳（2026-11-07 起顶栏也用 VNavigationDrawer/VTabs）。`src/plugins/vuetify.ts`：
@@ -1621,7 +1597,7 @@ Flow 的 `judge` 节点吃左侧 `state` 输入，节点配置里填 `provider`/
   保存后总是重拉一次模型；测试走 `POST /providers/{id}/test`，只拉 `/models`、不落库、可带未保存的表单值
   （API Key 留空 = 用已存的），返回 200 + `ok:false` 表示连不上（不是接口挂了）。「清密钥」保留为小号文字按钮。
 - **开机回到上次的会话**（2026-10-11 用户定）：刷新 / 被安卓丢弃后重载 ⇒ **进回"上次在看的那条会话"**（`mc_last_session`，住 localStorage —— 纯本地偏好，与 cookie / 服务端无关），不再是一张空草稿；取不到（删了 / 换人登录 / 别的设备）⇒ 回落草稿（不猜、不串人）。人在草稿 ⇒ 该键清空，开机也回草稿。
-- **背景图**（用户视图，2026-10-10 加；原先在设置→界面，随"用户"视图一起搬家）：**花纹整套砍掉**（用户定）—— doodle.svg / `--tg-pattern` 删净，`body::before` 改挂**自定义背景图**：URL（浏览器直接加载，跨域无妨）或**上传**（canvas 压到长边 1920 / JPEG 0.85，配额满降档 1280/0.75 重试一次；小图原样存保 PNG；住 localStorage `mc_bg`，**不上后端** —— 纯本地偏好）。没设 = `none` 纯平底。口径与工具在 `utils/background.ts`（App 开机 `applyBackground()`）。设置里**即时生效**（不吃 saveUi 的保存键：上传是异步的，攒着容易对不上账）。
+- **背景图**：自定义图片由服务器存入 `data/prefs/background.bin`，偏好登记在 `prefs.json`；改图即时上传和生效，随服务器数据备份，不在浏览器 `localStorage` 保存图片副本。
 - 交互照 Pi：CJK 宽度对齐 / markdown 渲染（marked + KaTeX）。**渲染口径**（`utils/markdown.ts`，2026-10-11）：
   数学定界符同时认 `$$…$$`、`\[…\]`（DeepSeek 系模型默认写后者；二者都走 displayMode），
   行内 `$…$` / `\(…\)`；`\boxed{…}` 是 KaTeX 原生命令（原生细框），不是外层 CSS 卡片。

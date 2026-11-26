@@ -1,148 +1,32 @@
-# 工具调用（Tool Calls）—— 形状、开关、实测
+# 工具调用：声明、执行和回放
 
-> 这份是**专题参考**：工具相关的全部细节。工程规矩与设计取舍在 `AGENTS.md`；
-> **行为一律与 Pi（`badlogic/pi-mono`）保持一致**，下面每条都标了出处或实测记录。
+这是协议专题。项目边界见 [AGENTS.md](../AGENTS.md)，消息与调用记录的区别见 [DEFINE.md](../DEFINE.md)。
 
-## 一、工具在哪：**不在提示词里**
+## 当前实现
 
-工具**不是**写进系统提示词的文本，而是**请求体顶层的数组**：
+工具以请求体的结构化 `tools` 数组声明，不把签名写进提示词。`model_define_rules` 的 `server_tools` / `local_tools` 是候选；[chat/tool_loop.go](../core/internal/chat/tool_loop.go) 结合实际协议、执行渠道和会话的 `native_tools_disabled` 选择，同一份结果供预演和真发。不要把旧的渠道 `allow_tools` 当成本地工具授权入口。
 
-```jsonc
-// ① 请求体
-{
-  "model": "…", "messages": [ … ], "stream": true,
-  "tools": [ { "type": "function",
-               "function": { "name": "roll_dice", "description": "掷骰子",
-                             "parameters": { /* JSON Schema */ },
-                             "strict": true } } ],   // ← 只在工具自己声明了才发
-  "tool_choice": "auto"                              // ← 原样透传
-}
-```
+- **服务端工具**由上游执行。xAI 的 `web_search`、`x_search`、`code_execution` 走 Responses；OpenAI 的通用 `web_search` 声明也限定 Responses，不能照抄到普通 Chat Completions。
+- **本地工具**目前是 DeepSeek Search/Fetch 的 `web_search`、`web_fetch`。DeepSeek 自己可执行，其他渠道可通过 `local_tool_provider` 选择 DeepSeek 执行渠道，并按本地工具规则启用。普通对话最多 4 轮工具回填，每轮可有多个调用；执行失败回结构化错误，取消结束本轮。
 
-（Pi 的系统提示词只有 200 token 左右，正因为工具是结构化注入的 —— 提示词里只讲"你是谁、怎么干活"。）
-
-```jsonc
-// ② 模型回话：助手消息里的 tool_calls（arguments 是 **JSON 字符串**，不是对象）
-{ "role": "assistant", "content": "",
-  "tool_calls": [ { "id": "call_00_…", "type": "function",
-                    "function": { "name": "roll_dice", "arguments": "{\"sides\":20}" } } ] }
-
-// ③ 我们回填结果
-{ "role": "tool", "content": "{\"result\": 17}", "tool_call_id": "call_00_…",
-  "name": "roll_dice" }        // ← 只有要求的上游才带（Pi 的 requiresToolResultName）
-```
-
-## 二、我们的开关（渠道级，`providers.json`）
-
-| 字段 | 默认 | 作用 | 对应 Pi 的什么 |
-|---|---|---|---|
-| `allow_tools` | **关** | 开才把**客户端 function tool**（`{type:"function",…}`）与 `tool_choice` 原样发给上游；provider-native 服务端工具（只有 `type`）不靠这格 | —— |
-| `tool_result_name` | 关 | 工具结果消息里带 `name` | `requiresToolResultName` |
-
-**为什么默认关**：不认识的字段，有些上游**直接 400**；宁可少发，让用户显式打开。
-**`strict` 同理**：只有工具自己声明了才发（Pi 的注释："Some reject unknown fields"）。
-
-两条与开关**无关**、必须始终成立的规矩：
-
-1. **历史里出现过工具调用/结果 ⇒ `tools` 参数必须在**（哪怕空数组 `[]`）——
-   否则 `role:"tool"` 的结果消息没有对应的调用，上游会直接拒。这正是 Pi 那条 `tools: []` 要防的情况
-   （`openai-completions.ts`：`else if (hasToolHistory(context.messages)) params.tools = []`）。
-2. **历史里的 `tool_calls` / `tool_call_id` 照旧回放** —— 它们是存档的一部分，与开关无关。
-
-## 三、与 Pi 对齐的清单
-
-| 项 | Pi 的做法（源码出处）| 我们 |
+| 协议 | 函数声明 | 调用与回填 |
 |---|---|---|
-| 工具声明形状 | `convertTools`：`{type:"function", function:{name,description,parameters}}`；`strict` 只在支持时 | 同 ✓ |
-| `tool_choice` | `options.toolChoice` 原样进体 | 同 ✓（原样透传）|
-| 工具结果消息 | `{role:"tool", content, tool_call_id}`；`name` 按 `requiresToolResultName` | 同 ✓ |
-| 有工具历史但没给 tools | 发 `tools: []` | 同 ✓（**与开关无关**）|
-| 思考回传（带工具调用时）| `requiresReasoningContentOnAssistantMessages`（检测到 DeepSeek 就开）：没有思考时补**空字符串** | 同 ✓（模型名含 `deepseek` ⇒ 补 `""`）|
-| OpenCode GO 的思考字段名 | 硬写死：`signature === "reasoning"` ⇒ 改成 `reasoning_content` | 同 ✓（预设里就是它）|
+| Chat Completions | `tools[].function` 下有 `name`、`parameters` | `assistant.tool_calls[].id` 对应 `role:"tool"` 的 `tool_call_id`，arguments 是 JSON 字符串。 |
+| Responses | `tools[]` 的 `type:"function"`、`name`、`parameters` 同层 | 按 `output_index` 收集输出；用 `function_call.call_id` 配对 `function_call_output.call_id`，不要用 Responses 项的 `id`。 |
 
-## 四、实测记录（2026-09-29，真 key 打 OpenCode GO）
+Go SDK 编码与解码在 [sdk_chat.go](../core/internal/providers/sdk_chat.go)、[sdk_responses.go](../core/internal/providers/sdk_responses.go)。Schema 属性按 `json.RawMessage` 保留原值；把 `minimum` / `maximum` 从数值变成字符串曾让 xAI 返回 400。流式与非流式都不能换掉这条规则。
 
-用**我们自己的 `providers` 代码**（不是手搓 JSON）：
+## 留档与界面
 
-```
-① 给工具定义（deepseek-v4.1-flash）⇒ 200 ✓ 模型发起 roll_dice ✓
-② 回填调用与结果                  ⇒ 200 ✓ 最终答复用了结果：「掷出了 20 面骰子，结果是 17」✓
-③ 同两轮改成流式                   ⇒ 200 ✓ SSE 帧正常 ✓
-```
+`message_tools` 记录真实调用、结果、来源和消息内 `seq`；`exchanges` 保存一次上游请求的有序输出项。历史回放以当前出站正文为准，同渠道、端点、协议、模型才复用可回放的 Responses 原生项（包括受支持的托管工具和加密推理）；跨来源退回通用正文与配对的本地调用/结果。不要从会话今天的模型猜过去的协议。
 
-**顺带抓到的真 bug**：`stream_options` **只能跟 `stream: true` 一起发** ——
-非流式带上它，网关直接 400：*"stream_options should be set along with stream = true"*（已修 + 测试钉住）。
-（教训：先前那些**手搓**的探针都没带这个字段，所以一直没踩到；换了我们自己的代码才现形。）
+实时工具位置来自流里实际观察到的正文位置。历史若能确认有序输出的正文与存档一致，可用输出项导出原文 UTF-8 字节偏移；否则使用可靠的已存位置或只在「查看过程」列出。终帧的排序不能把已显示的搜索调用拖到后面。工具不占消息序号，搜索来源随消息保留。
 
-**模型支持**：工具要挑**支持工具**的模型（`deepseek-v4.1-flash` 可以 ✓）。
+## 验证记录
 
-## 五、还没做（将来看需要）
-
-## 六、xAI 端点矩阵（2026-11-09 真 key 实测，grok-4.7）
-
-结论先说：**Agent Tools 只有 `/responses` 能用**；`/chat/completions` 只接受客户端 `function`，以及已废弃的 `live_search`。
-
-| 请求 | `/chat/completions` | `/responses` |
-|---|---|---|
-| 无 tools | 200 | 200 |
-| `tools:[{"type":"web_search"}]` | **422** `unknown variant web_search, expected function or live_search` | **200** |
-| `tools:[{"type":"x_search"}]` | **422** 同上 | **200** |
-| `tools:[{"type":"code_execution"}]` | **422** 同上（实测） | **200** |
-| `tools:[{"type":"function",…}]` | **200**（客户端 function tool 可用） | schema 接受 `function`（未作产品化） |
-| `tools:[{"type":"live_search","sources":[{"type":"web"}]}]` | **410** `Live search is deprecated. Please switch to the Agent Tools API`（缺 `sources` 先 422） | **422** `unknown variant live_search` |
-
-所以：**不要在 chat/completions 上发 xAI 的 `web_search`/`x_search`/`code_execution`**；它们只在 Responses 端点有效。我们的 `availableTools` 也只在 `openai-response` 协议下生成，chat 协议不发。
-
-### 其他服务端工具与来源（2026-11-09）
-
-- **状态解析是通用的**：`response.<kind>_call.<state>` 不写死 kind/state。`web_search`、`x_search`、
-  `code_interpreter`（工具 id 为 `code_execution`）、`image_generation`、`mcp`、`shell` 等只要沿用这套事件名
-  都能进 `status.tool`；前端有中文标签，未知 kind 原样显示（不吞）。
-- **`web_fetch` 不是 xAI 的服务端工具**（2026-11-09 实测 `/responses` 直接 422，expected 里没有它）。
-  别把它写进 xAI 的 `server_tools`；前端给了标签只是为将来/别的渠道留口，不等于能发。
-  xAI 当前 expected 集合：`web_search` / `x_search` / `image_generation` / `collections_search` /
-  `file_search` / `code_execution` / `code_interpreter` / `mcp` / `shell` / `tool_search`。
-  其中需要额外参数的工具（file_search/mcp 等）不能只发 `{type}`，我们仍只开放已知可裸发的三件。
-- **搜索结果可以显示并落库**：`response.output_item.done` 的 `web_search_call.action.sources` 带 URL
-  （实测；x_search 同理），解析成 `message_tools.sources`；气泡下方列「来源 N」链接，刷新后仍在。
-  一张 `message_tools` 表存所有调用（`seq` 排序），不要 before/after 两张表；界面每个工具卡
-  是独立 details（`tool_name + queries + sources 条数`），展开显示该工具自己的来源，放在正文上方。
-  来源只有 URL，没有摘要/正文 —— 摘要要从最终回答的 citation/正文里看。
-
-- **DeepSeek 的两套搜索不同**（2026-11-10 实测）：
-  - 独立 `POST /v1/tools/search` / `/v1/tools/fetch`：客户端 API，返回 `results[]`（title/url/snippet/summary/content/date/authority）。**已接成本地 function tool**：模型发起 `web_search` / `web_fetch`，chat 执行后以 `role:"tool"` 回填；每轮 tool-call 落一条中间 assistant 消息（`message_tools.source=client`），最终正文另落一条，同一 run_id。
-  - Responses 的 `tools:[{"type":"web_search"}]`：服务端工具，仅 `deepseek-v4-pro` 生效；`action` 是 `queries[]`，**没有 sources**；`deepseek-flash` 会忽略它并把 `<tool_call>` 当正文吐出来。
-  - `/chat/completions` 不接受 `web_search`（422，只认 function）。
-  - 因此 `availableTools` 对 DeepSeek 只返回**本地** function tools（`web_search` / `web_fetch`），服务端 `web_search` 一律不发。
-- 来源与工具状态都是**流细节**：正文到了工具行消失，来源留到一轮收尾；不落库。
-
-### 工具执行状态（2026-11-09 接进界面）
-
-xAI 在 Agent Tools 执行期间会发一串状态事件（实测 SSE）：
-
-```text
-response.web_search_call.in_progress
-response.web_search_call.searching
-response.web_search_call.completed
-response.code_interpreter_call.in_progress / .interpreting / .completed
-```
-
-代码执行在工具声明里是 `code_execution`，输出项是 `code_interpreter_call`。在 [xAI 的 Responses 接口](https://docs.x.ai/developers/tools/tool-usage-details#using-responses-api) 中，X 搜索和附件搜索用 `custom_tool_call` 记录，`call_id` 分别以 `xs_`、`as_` 开头。`sdk_responses.go` 将它们记为托管工具；同渠道、端点、模型与协议匹配时按原顺序回放原始项，不在本地执行或伪造工具结果。其他 `custom_tool_call` 仍要求专用执行器。
-
-`providers.readResponseStream` 把它们折成 `Delta.Tool{kind,state}`，`chat` 写进 `turn`，于是
-`GET /status` 与 `/turn/events` 的 `status.tool` 在正文还没到时就有值；气泡把它翻成
-「正在搜索网页… / 网页搜索完成，正在整理结果…」。正文第一段一到，`AppendContent` 就清掉这格
-（不是等整轮结束）。这解决的是「上游在搜，界面像卡住几十秒」。
+- **2026-11-09，xAI `grok-4.7`。** Responses 接受 `web_search`、`x_search`、`code_execution`；Chat Completions 对它们回 422，但接受客户端 `function`。已废弃 `live_search` 在 Chat 端返回 410。Responses 不接受 `web_fetch`。X 搜索和附件搜索可在 `custom_tool_call` 下用 `xs_`、`as_` 形式标识托管项，见 [xAI 工具记录](https://docs.x.ai/developers/tools/tool-usage-details#using-responses-api)。
+- **2026-11-10，DeepSeek。** 独立 Search/Fetch 返回结果与来源；Responses 原生 `web_search` 当时只在 v4-pro 生效，未返回 sources，flash 可能输出字面工具标签。两者不要混为一套接口。
+- **2026-11-25，`f628b46`。** 真实 xAI Grok 流式发起函数调用，收到本地搜索的合成回填后生成最终回复。两段摘要合并后，下一轮能回忆父摘要里的事实，并从原始正文现演世界状态。不是 OpenAI 官方端点的 `store:false` 证明。
+- 本地回归：[两种协议工具往返](../core/internal/chat/tool_loop_test.go) `TestSDKToolRoundTrip`，[数值 Schema](../core/internal/providers/sdk_contract_test.go) `TestFunctionSchemaPreservesJSONNumbers`，[工具计量和摘要合并](../core/internal/chat/autocompact_test.go) `TestContextUsageFollowsToolHistoryThroughSummaryMerge`。
 
 
-- **服务端工具已接**（2026-11-09）：模型规则派生的 `server_tools` 在 OpenAI **Response** 协议下
-  作为 `{"type":"x_search"}` / `{"type":"web_search"}` / `{"type":"code_execution"}` 进请求体；
-  命中会话 `native_tools_disabled` 的扣掉。xAI 真发实测 200（2026-11-09），服务端自己执行；
-  这些工具**不靠** `allow_tools`（那格只挡任意 function tool）。生成的 `tools` 字段在 `/outgoing` 预演里就能看见。
-- **本地 function tool**：`web_search` / `web_fetch` 已接（DeepSeek `deepseek-web` 默认规则）；
-  chat 做 ≤4 轮 tool loop，结果以 `role:"tool"` 回填，最终落 `message_tools(source=client)`。
-- **流式里 `tool_calls` 的分片拼装**：`delta.tool_calls[]` 是**按 index 累加**的（arguments 一段一段来），
-  Pi 用 `partial-json` 边收边解析；我们目前只在**非流式**下验证过 function 工具，流式要做时照 Pi 的累加逻辑写 ✓；
-- **工具的执行**：那是**上层**的事（谁定义工具、谁执行、结果怎么落档），`providers` 只负责"原样透传"；
-- 若将来把工具调用**落档**（现在的 `messages` 表没有工具列），需要一次迁移 + 回放时要保证
-  `tool_calls` 与结果消息**成对**出现（否则上游会拒）。
