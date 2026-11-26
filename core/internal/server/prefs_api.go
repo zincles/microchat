@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"microchat/internal/config"
 )
@@ -62,12 +63,41 @@ func (s *Server) putPrefs(w http.ResponseWriter, r *http.Request) {
 	// 要清空就显式给 `"background": {}`。
 	var req struct {
 		config.Prefs
+		BrandIcon  *string             `json:"brand_icon"`
 		Background *config.Background `json:"background"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
 	}
 	incoming := req.Prefs
+	defaults := config.DefaultPrefs()
+	if req.BrandIcon == nil {
+		incoming.BrandIcon = defaults.BrandIcon
+	} else {
+		incoming.BrandIcon = *req.BrandIcon
+	}
+	incoming.BrandName = strings.TrimSpace(incoming.BrandName)
+	incoming.WelcomeText = strings.TrimSpace(incoming.WelcomeText)
+	if incoming.BrandName == "" {
+		incoming.BrandName = defaults.BrandName
+	}
+	if incoming.WelcomeText == "" {
+		incoming.WelcomeText = defaults.WelcomeText
+	}
+	if len([]rune(incoming.BrandName)) > 32 {
+		writeError(w, http.StatusUnprocessableEntity, "invalid", "brand_name must be at most 32 characters")
+		return
+	}
+	if len([]rune(incoming.WelcomeText)) > 120 {
+		writeError(w, http.StatusUnprocessableEntity, "invalid", "welcome_text must be at most 120 characters")
+		return
+	}
+	switch incoming.BrandIcon {
+	case "spark", "chat", "bot", "messagePlus":
+	default:
+		writeError(w, http.StatusUnprocessableEntity, "invalid", "brand_icon must be spark, chat, bot, or messagePlus")
+		return
+	}
 	if err := incoming.Markdown.Validate(); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "invalid", err.Error())
 		return

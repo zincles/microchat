@@ -5,10 +5,11 @@
 // 但它们属于两天，分组该跟人看到的日子一致。
 import { sessionTitle } from "./format.ts";
 
-export const SESSION_GROUP_LABELS = ["今天", "昨天", "一周内", "一月内", "更久"];
+export const SESSION_GROUP_LABELS = ["收藏", "今天", "昨天", "一周内", "一月内", "更久"];
 
 export interface SessionLike {
   updated_at?: number | string | null;
+  favorite?: boolean;
 }
 
 export interface SessionGroup<T> {
@@ -34,21 +35,25 @@ export function groupSessions<T extends SessionLike>(sessions: T[] | null | unde
   const yesterday = startOfDay(now, -1);
   const week = startOfDay(now, -7);
   const month = startOfDay(now, -30);
-  const keys = ["today", "yesterday", "week", "month", "older"];
-  const buckets: SessionGroup<T>[] = SESSION_GROUP_LABELS.map((label, index) => ({
-    key: keys[index] ?? "older",
+  const favoriteItems: T[] = [];
+  const buckets: SessionGroup<T>[] = SESSION_GROUP_LABELS.slice(1).map((label, index) => ({
+    key: ["today", "yesterday", "week", "month", "older"][index] ?? "older",
     label,
     items: [],
   }));
   for (const session of sessions ?? []) {
+    if (session.favorite) {
+      favoriteItems.push(session);
+      continue;
+    }
     const stamp = Number(session?.updated_at);
     const at = Number.isFinite(stamp) ? stamp : 0;
-    const index = at >= today ? 0
-      : at >= yesterday ? 1
-      : at >= week ? 2
-      : at >= month ? 3
-      : 4;
-    buckets[index].items.push(session);
+    const index = at >= today ? 0 : at >= yesterday ? 1 : at >= week ? 2 : at >= month ? 3 : 4;
+    const bucket = buckets[index];
+    if (bucket) bucket.items.push(session);
   }
-  return buckets.filter((bucket) => bucket.items.length);
+  const groups: SessionGroup<T>[] = favoriteItems.length
+    ? [{ key: "favorite", label: "收藏", items: favoriteItems }, ...buckets]
+    : buckets;
+  return groups.filter((bucket) => bucket.items.length);
 }

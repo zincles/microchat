@@ -645,28 +645,35 @@ func TestExchangeUpgradePreservesHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	seedSession(t, old, "s", "m1", "m2")
-	seedSummary(t, old, "sum", "s", nil, "m1", "m2")
-	if _, err = old.db.Exec("ALTER TABLE messages DROP COLUMN exchanges"); err != nil {
-		t.Fatal(err)
-	}
-	if err = old.Close(); err != nil {
-		t.Fatal(err)
-	}
-	for range 2 {
-		st, err := Open(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		messages, err := st.ListMessages("s")
-		if err != nil || len(messages) != 2 || messages[0].ID != "m1" || messages[1].Idx != 2 || messages[1].Exchanges != nil {
-			t.Fatalf("旧消息迁移 %+v, %v", messages, err)
-		}
-		sums, err := st.ListSummaries("s")
-		if err != nil || len(sums) != 1 || *sums[0].BeginMessageID != "m1" || *sums[0].EndMessageID != "m2" {
-			t.Fatalf("旧摘要迁移 %+v, %v", sums, err)
-		}
-		if err = st.Close(); err != nil {
-			t.Fatal(err)
-		}
-	}
+ seedSummary(t, old, "sum", "s", nil, "m1", "m2")
+ if _, err = old.db.Exec("ALTER TABLE messages DROP COLUMN exchanges"); err != nil {
+  t.Fatal(err)
+ }
+ if _, err = old.db.Exec("ALTER TABLE sessions DROP COLUMN favorite"); err != nil {
+  t.Fatal(err)
+ }
+ if err = old.Close(); err != nil {
+  t.Fatal(err)
+ }
+ for range 2 {
+  st, err := Open(path)
+  if err != nil {
+   t.Fatal(err)
+  }
+  session, err := st.GetSession("s")
+  if err != nil || session == nil || session.Favorite {
+   t.Fatalf("旧会话应默认未收藏：%+v, %v", session, err)
+  }
+  messages, err := st.ListMessages("s")
+  if err != nil || len(messages) != 2 || messages[0].ID != "m1" || messages[1].Idx != 2 || messages[1].Exchanges != nil {
+   t.Fatalf("旧消息迁移 %+v, %v", messages, err)
+  }
+  sums, err := st.ListSummaries("s")
+  if err != nil || len(sums) != 1 || *sums[0].BeginMessageID != "m1" || *sums[0].EndMessageID != "m2" {
+   t.Fatalf("旧摘要迁移 %+v, %v", sums, err)
+  }
+  if err = st.Close(); err != nil {
+   t.Fatal(err)
+  }
+ }
 }

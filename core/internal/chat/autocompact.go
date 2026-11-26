@@ -2,7 +2,7 @@ package chat
 
 import (
 	"context"
-	"log"
+	"microchat/internal/logx"
 
 	"microchat/internal/config"
 	"microchat/internal/model"
@@ -37,7 +37,7 @@ func (s *Service) MaybeAutoCompact(session model.Session) {
 	}
 	usage, err := s.ContextUsage(session)
 	if err != nil {
-		log.Printf("自动压缩：算占用失败，跳过（%v）", err)
+		logx.Warnf("自动压缩：算占用失败，跳过（%v）", err)
 		return
 	}
 	if usage.UsedTokens < usage.TriggerTokens {
@@ -52,7 +52,7 @@ func (s *Service) MaybeAutoCompact(session model.Session) {
 		before := usage.UsedTokens
 		if err := s.Compactor.Compact(context.Background(), session, blocks); err != nil {
 			// 无可压缩 / 另一个压缩在跑 / 上游失败：停 —— **不阻塞任何一轮**，下一轮再来看。
-			log.Printf("自动压缩：停了（%d 字时）%v", before, err)
+			logx.Warnf("自动压缩：停了（%d 字时）%v", before, err)
 			return
 		}
 		usage, err = s.ContextUsage(session)
@@ -60,7 +60,7 @@ func (s *Service) MaybeAutoCompact(session model.Session) {
 			return
 		}
 		if usage.UsedTokens >= before {
-			log.Printf("自动压缩：这一步没有缩减（%d → %d 字），停", before, usage.UsedTokens)
+			logx.Warnf("自动压缩：这一步没有缩减（%d → %d 字），停", before, usage.UsedTokens)
 			return
 		}
 	}

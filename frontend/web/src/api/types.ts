@@ -86,11 +86,25 @@ export interface Session {
   request_overrides: Record<string, unknown>;
   created_at: number;
   updated_at: number;
+  favorite: boolean;
 }
 
 export interface ToolStatus {
   kind: string;
   state: string;
+}
+
+export interface LiveHeartbeatResponse {
+  online_clients: number;
+}
+
+export interface LiveSessionEvent {
+  session_id: string;
+  revision: number;
+}
+
+export interface LivePresenceEvent {
+  online_clients: number;
 }
 
 export interface SearchSource {
@@ -448,6 +462,7 @@ export interface ModelView {
   server_tools?: string[];
   local_tools?: string[];
   matched_rules?: string[];
+  replay_reasoning: boolean;
 }
 
 export interface ModelListItem {
@@ -459,8 +474,9 @@ export interface ModelListItem {
   name: string;
   display_name: string | null;
   owned_by?: string | null;
-  thinking_levels: string[];
   brand?: string;
+  thinking_levels: string[];
+  replay_reasoning: boolean;
   icon?: string;
   server_tools?: string[];
   local_tools?: string[];
@@ -476,32 +492,44 @@ export interface SetModelRequest {
 }
 
 export interface ModelDefineRule {
+  kind?: never;
   id?: string;
   match_contains?: string;
   match_exact?: string;
   match_provider?: string;
   match_protocol?: string;
+  match_all?: boolean;
   is_final?: boolean;
   thinking_levels?: string[];
   brand?: string;
   icon?: string;
   server_tools?: string[];
   local_tools?: string[];
+  replay_reasoning?: boolean;
+  replay_reasoning_with_tools?: boolean;
 }
 
-export interface BuiltinModelRule extends ModelDefineRule {
-  builtin: boolean;
-  disabled: boolean;
+export interface ModelRuleGroup {
+  kind: "group";
+  id: string;
+  name: string;
+  rules: ModelDefineRule[];
 }
+
+export type ModelRule = ModelDefineRule | ModelRuleGroup;
+
+export type BuiltinModelRule =
+  | (ModelDefineRule & { builtin: boolean; disabled: boolean })
+  | { kind: "group"; id: string; name: string; rules: BuiltinModelRule[] };
 
 export interface ModelRulesView {
-  model_define_rules: ModelDefineRule[];
+  model_define_rules: ModelRule[];
   builtin_model_rules: BuiltinModelRule[];
   disabled_builtin_model_rules: string[];
 }
 
 export interface ModelRulesConfig {
-  model_define_rules: ModelDefineRule[];
+  model_define_rules: ModelRule[];
   disabled_builtin_model_rules?: string[];
 }
 
@@ -543,7 +571,7 @@ export interface ProviderView {
   last_refresh_at: number | null;
   models: ModelView[];
   // 当前渠道自己的覆盖规则（应用在全局规则之后，优先）。
-  model_define_rules?: ModelDefineRule[];
+  model_define_rules?: ModelRule[];
 }
 
 export interface TestProviderResult {
@@ -657,6 +685,8 @@ export interface Agent {
   system_prompt: string;
   first_message?: string;
   segments?: string[];
+  /** 只追加到本轮最新用户消息的出站内容，不回写历史。 */
+  latest_prompt_segments?: string[];
   prompt_entries?: PromptEntry[];
   preset_id?: string;
   abilities?: Record<string, AbilityToggle>;
@@ -688,6 +718,7 @@ export interface CreateAgentRequest {
   system_prompt?: string;
   first_message?: string;
   segments?: string[];
+  latest_prompt_segments?: string[];
   prompt_entries?: PromptEntry[];
   preset_id?: string;
   abilities?: Record<string, AbilityToggle>;
@@ -704,6 +735,7 @@ export interface UpdateAgentRequest {
   system_prompt?: string;
   first_message?: string;
   segments?: string[];
+  latest_prompt_segments?: string[];
   prompt_entries?: PromptEntry[];
   preset_id?: string;
   abilities?: Record<string, AbilityToggle>;
@@ -732,7 +764,6 @@ export interface ChatConfig {
   compact_trigger_tokens?: number | null;
   compact_blocks: number;
   history_window: number;
-  replay_reasoning?: boolean;
 }
 
 export interface DefaultsConfig {
@@ -795,6 +826,9 @@ export interface Prefs {
   bar_left_hidden?: boolean;
   message_editor?: MessageEditorPrefs;
   update_auto_check?: boolean;
+  brand_name: string;
+  brand_icon: "spark" | "chat" | "bot" | "messagePlus";
+  welcome_text: string;
 }
 
 export interface MarkdownType {
@@ -831,6 +865,7 @@ export interface UpdateSessionRequest {
   thinking_level?: string;
   native_tools_disabled?: string[];
   request_overrides?: Record<string, unknown> | null;
+  favorite?: boolean;
 }
 
 export interface EditMessageRequest {
@@ -859,7 +894,7 @@ export interface CreateProviderRequest {
   api_key?: string;
   model_filter?: string;
   max_concurrency?: number;
-  model_define_rules?: ModelDefineRule[];
+  model_define_rules?: ModelRule[];
 }
 
 export interface UpdateProviderRequest {
@@ -873,7 +908,7 @@ export interface UpdateProviderRequest {
   api_key?: string;
   model_filter?: string;
   max_concurrency?: number;
-  model_define_rules?: ModelDefineRule[];
+  model_define_rules?: ModelRule[];
 }
 
 export interface TestProviderRequest {

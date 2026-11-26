@@ -70,6 +70,21 @@ func (f *fakeRunner) snapshot() []string {
 	return out
 }
 
+type committedRunner struct {
+	committed chan struct{}
+	release   chan struct{}
+	returned  chan struct{}
+	calls     int
+}
+
+func (r *committedRunner) RunStep(ctx context.Context, step Step) error {
+	r.calls++
+	close(r.committed)
+	<-r.release
+	close(r.returned)
+	return nil
+}
+
 // waitState：等到队列落到某个结局（最长 2 秒）。
 func waitState(t *testing.T, svc *Service, id string, want task.State) Queue {
 	t.Helper()
@@ -206,6 +221,18 @@ func TestQueueCancelAbortsInFlightStep(t *testing.T) {
 		t.Fatalf("取消后状态该是「取消」，实际 %q", canceled.State)
 	}
 	final := waitState(t, svc, created.ID, task.StateCanceled)
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		compactTasks := svc.Registry.Board().Tasks
+		if len(compactTasks) == 1 && compactTasks[0].Outcome == task.StateCanceled {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	compactTasks := svc.Registry.Board().Tasks
+	if len(compactTasks) != 1 || compactTasks[0].Outcome != task.StateCanceled {
+		t.Fatalf("队列取消后在飞步骤 task 也该是 canceled：%+v", compactTasks)
+	}
 	if final.Index != 0 {
 		t.Fatalf("在飞那一步被掐断 ⇒ 完成的步数该是 0，实际 %d", final.Index)
 	}
@@ -219,6 +246,41 @@ func TestQueueCancelAbortsInFlightStep(t *testing.T) {
 	}
 	if starts != 1 {
 		t.Fatalf("取消之后不该再开新步（只该有 1 次 start），实际 %d 次：%v", starts, runner.snapshot())
+	}
+}
+
+func TestQueueCancelAfterRunnerCommitKeepsStepSucceeded(t *testing.T) {
+	st := openTemp(t)
+	a, err := st.CreateSession("dummy", "dummy", "", "甲")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &committedRunner{
+		committed: make(chan struct{}), release: make(chan struct{}), returned: make(chan struct{}),
+	}
+	svc := New(st, task.NewRegistry())
+	svc.Runner = runner
+	created, err := svc.Enqueue(KindCompact, "", []Step{{SessionID: a.ID}, {SessionID: a.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-runner.committed
+	canceled, err := svc.Cancel(created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if canceled.State != task.StateCanceled {
+		t.Fatalf("提交后取消仍该使队列 canceled：%+v", canceled)
+	}
+	close(runner.release)
+	<-runner.returned
+	final := waitState(t, svc, created.ID, task.StateCanceled)
+	if final.Index != 1 || runner.calls != 1 {
+		t.Fatalf("已提交当前步骤应计入进度但不启动下一步：queue=%+v calls=%d", final, runner.calls)
+	}
+	board := svc.Registry.Board().Tasks
+	if len(board) != 1 || board[0].Outcome != task.StateSucceeded {
+		t.Fatalf("nil runner 结果代表已提交，本步 task 应 succeeded：%+v", board)
 	}
 }
 

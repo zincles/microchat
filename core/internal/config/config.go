@@ -172,7 +172,7 @@ func LoadConfig(paths Paths) (Config, error) {
 	return config, nil
 }
 
-// ChatConfig：`config.json` 的 chat 段（模型上下文 / 摘要触发阈值 / 标题字数 / 默认压几块 / 思考回传）。
+// ChatConfig：`config.json` 的 chat 段（模型上下文 / 摘要触发阈值 / 标题字数 / 默认压几块）。
 type ChatConfig struct {
 	TitleChars int `json:"title_chars"`
 	// TitleProvider / TitleModel：**全局的标题模型**（2026-11-04 用户定）。
@@ -192,9 +192,6 @@ type ChatConfig struct {
 	// HistoryWindow：消息列首屏 / “加载更多”一页加载多少**消息段**（2026-11-03 用户定：默认 5）。
 	// 段 = 一条消息或一张顶层摘要卡；被摘要盖住的原文仍然按需展开，不在这里预取。
 	HistoryWindow int `json:"history_window"`
-	// ReplayReasoning：出站时回传思考（replay metadata，多轮推理不断档）。
-	// 缺省 = 关（省上下文；思考仍落库可看，只是不发给上游）。
-	ReplayReasoning *bool `json:"replay_reasoning,omitempty"`
 }
 
 // DefaultCompactBlocks：`compact_blocks` 的缺省（2026-10-11 用户定：**3** —— 小步快跑：
@@ -276,6 +273,8 @@ type Agent struct {
 	// 拼装 = base（`system_prompt`）+ 逐段 `"\n\n"` 拼接 —— **纯字符串拼接**，
 	// 无替换无递归（`state.AssembleSystemPrompt`，唯一实现处）。
 	Segments []string `json:"segments,omitempty"`
+	// LatestPromptSegments：只在出站时追加到最新一条 user message；不写入 messages，不作为之后的历史。
+	LatestPromptSegments []string `json:"latest_prompt_segments,omitempty"`
 	// PresetID：这个 Agent 绑定的 ST 原始预设（tavern_presets.id）。空 = 用 PromptEntries/base。
 	// 绑定后由 chat 在出站装配时现读原始 JSON → tavern.Parse；不复制条目。
 	PresetID string `json:"preset_id,omitempty"`
@@ -399,8 +398,7 @@ func BuiltinSegmentByID(id string) (Segment, bool) {
 }
 
 // ValidateSegments：段库与引用的一致性 —— **写入与启动读取时都报**（与 abilities 一个口径）：
-// 段 id 非空且唯一、**不许与内置撞名**；每个 agent 引用的段必须在库**或内置**里
-// （写了不生效是最难查的一类问题）。
+// 段 id 非空且唯一、不许与内置撞名；基础提示词、最新用户消息与能力引用的段都必须在库或内置集合中。
 func (c AgentsConfig) ValidateSegments() error {
 	seen := map[string]bool{}
 	for _, segment := range c.Segments {
@@ -421,6 +419,16 @@ func (c AgentsConfig) ValidateSegments() error {
 			if !seen[ref] {
 				if _, builtin := BuiltinSegmentByID(ref); !builtin {
 					return fmt.Errorf("agent %q 引用了不存在的提示词段：%s", agent.ID, ref)
+				}
+			}
+		}
+		if agent.Kind == "flow" && len(agent.LatestPromptSegments) != 0 {
+			return fmt.Errorf("FlowAgent %q 不能配置仅用于最新用户消息的提示词段", agent.ID)
+		}
+		for _, ref := range agent.LatestPromptSegments {
+			if !seen[ref] {
+				if _, builtin := BuiltinSegmentByID(ref); !builtin {
+					return fmt.Errorf("agent %q 的最新用户消息引用了不存在的提示词段：%s", agent.ID, ref)
 				}
 			}
 		}

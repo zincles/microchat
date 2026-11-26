@@ -9,9 +9,7 @@ import (
 // withoutBuiltins：测试用户规则本身时停用全部系统内置规则，避免品牌/工具规则串入。
 func withoutBuiltins(rules []ModelDefineRule) Config {
 	cfg := Config{ModelDefineRules: rules}
-	for _, rule := range builtinModelRules {
-		cfg.DisabledBuiltinModelRules = append(cfg.DisabledBuiltinModelRules, rule.ID)
-	}
+	for id := range builtinRuleIDsForDisable() { cfg.DisabledBuiltinModelRules = append(cfg.DisabledBuiltinModelRules, id) }
 	return cfg
 }
 
@@ -166,9 +164,14 @@ func TestValidateModelDefineRules(t *testing.T) {
 	}{
 		{"空匹配", []ModelDefineRule{{Brand: stringPtr("x")}}},
 		{"空定义", []ModelDefineRule{{MatchContains: "x"}}},
+		{"match_all without effect", []ModelDefineRule{{MatchAll: true}}},
+		{"nested group", []ModelDefineRule{{Kind: "group", ID: "g", Name: "g", Rules: []ModelDefineRule{{Kind: "group", ID: "nested", Name: "nested", Rules: []ModelDefineRule{{MatchAll: true, ReplayReasoning: new(true)}}}}}}},
+		{"duplicate child id", []ModelDefineRule{{Kind: "group", ID: "g", Name: "g", Rules: []ModelDefineRule{{ID: "x", MatchAll: true, ReplayReasoning: new(true)}}}, {ID: "x", MatchAll: true, ReplayReasoning: new(true)}}},
+		{"group override", []ModelDefineRule{{Kind: "group", ID: "g", Name: "g", MatchContains: "x", Rules: []ModelDefineRule{{MatchAll: true, ReplayReasoning: new(true)}}}}},
 		{"未知档位", []ModelDefineRule{{MatchContains: "x", ThinkingLevels: &badLevel}}},
 
 		{"重复 id", []ModelDefineRule{{ID: "a", MatchContains: "x", Brand: stringPtr("x")}, {ID: "a", MatchContains: "y", Brand: stringPtr("y")}}},
+		{"both reasoning policies", []ModelDefineRule{{MatchAll: true, ReplayReasoning: new(true), ReplayReasoningWithTools: new(false)}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if err := ValidateModelDefineRules(tc.rules); err == nil {
@@ -301,9 +304,9 @@ func TestBuiltinRulesMergeDisableAndValidation(t *testing.T) {
 		t.Fatalf("内置规则视图不对：%+v", view.BuiltinModelRules)
 	}
 	found := false
-	for _, rule := range view.BuiltinModelRules {
-		if rule.ID == "gpt" {
-			found = rule.Disabled
+	for _, group := range view.BuiltinModelRules {
+		for _, rule := range group.Rules {
+			if rule.ID == "gpt" { found = rule.Disabled }
 		}
 	}
 	if !found {
@@ -332,4 +335,36 @@ func TestLocalToolsAreSeparateFromServerTools(t *testing.T) {
 	if !reflect.DeepEqual(got.ServerTools, []string{"x_search"}) {
 		t.Fatalf("server_tools = %v", got.ServerTools)
 	}
+}
+
+func TestGroupedRulesAndReasoningPolicy(t *testing.T) {
+	group := ModelDefineRule{Kind: "group", ID: "models", Name: "Models", Rules: []ModelDefineRule{
+		{ID: "first", MatchContains: "fixture", Brand: stringPtr("first"), IsFinal: true},
+		{ID: "unreached", MatchContains: "fixture", Brand: stringPtr("unreached")},
+	}}
+	tools := withoutBuiltins([]ModelDefineRule{group, {ID: "after", MatchAll: true, Brand: stringPtr("after")}})
+	profile := tools.ModelProfileWithRules("p", "fixture-1", ModelProfile{}, []ModelDefineRule{{ID: "provider", MatchAll: true, Brand: stringPtr("provider")}})
+	if profile.Brand != "provider" || !reflect.DeepEqual(profile.MatchedRules, []string{"global:first", "provider:provider"}) { t.Fatalf("group order/final/profile: %+v", profile) }
+
+	serverTools := []string{"web_search"}
+	allow := true
+	deny := false
+	cfg := withoutBuiltins([]ModelDefineRule{
+		{ID: "tools", MatchContains: "fixture", ServerTools: &serverTools},
+		{ID: "dynamic", MatchAll: true, ReplayReasoningWithTools: &allow},
+	})
+	if got := cfg.ModelProfile("p", "fixture-1", ModelProfile{}); !got.ReplayReasoning { t.Fatalf("tools should enable reasoning replay: %+v", got) }
+	if got := cfg.ModelProfile("p", "other", ModelProfile{}); got.ReplayReasoning { t.Fatalf("no tools should disable reasoning replay: %+v", got) }
+	if got := cfg.ModelProfileWithRules("p", "fixture-1", ModelProfile{}, []ModelDefineRule{{ID: "provider-policy", MatchAll: true, ReplayReasoning: &deny}}); got.ReplayReasoning { t.Fatalf("provider explicit false should override dynamic policy: %+v", got) }
+	if got := cfg.ModelProfileWithRules("p", "fixture-1", ModelProfile{}, []ModelDefineRule{{ID: "provider-policy", MatchAll: true, ReplayReasoning: &allow}}); !got.ReplayReasoning { t.Fatalf("provider explicit true should override dynamic policy: %+v", got) }
+}
+
+func TestBuiltinFinalDoesNotBlockUserOrProviderRules(t *testing.T) {
+	user := ModelDefineRule{ID: "user", MatchAll: true, Brand: stringPtr("user brand")}
+	cfg := Config{ModelDefineRules: []ModelDefineRule{user}}
+	profile := cfg.ModelProfile("xai", "grok-imagine-image-2.0", ModelProfile{})
+	if profile.Brand != "user brand" || !containsString(profile.MatchedRules, "global:xai-image") || !containsString(profile.MatchedRules, "global:user") { t.Fatalf("builtin final must not block user layer: %+v", profile) }
+	provider := ModelDefineRule{ID: "provider", MatchAll: true, Brand: stringPtr("provider brand")}
+	profile = cfg.ModelProfileWithRules("xai", "grok-imagine-image-2.0", ModelProfile{}, []ModelDefineRule{provider})
+	if profile.Brand != "provider brand" || !containsString(profile.MatchedRules, "provider:provider") { t.Fatalf("builtin final must not block provider layer: %+v", profile) }
 }

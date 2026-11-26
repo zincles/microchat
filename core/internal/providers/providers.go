@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"microchat/internal/logx"
 	"maps"
 	"net"
 	"net/http"
@@ -799,7 +799,7 @@ func FromConfig(c config.Provider) Provider {
 	// Endpoints 是**预设专用**：配置里写了 ⇒ 忽略 + log（不断老配置）。
 	// （类型是 map[Protocol]string，config 侧是 map[string]string —— 但**逐项也不搬**：整张忽略。）
 	if len(c.Endpoints) > 0 {
-		log.Printf("providers: 配置 %q 的 endpoints 是预设专用，已忽略（沿用预设端点表）", c.ID)
+		logx.Warnf("providers: 配置 %q 的 endpoints 是预设专用，已忽略（沿用预设端点表）", c.ID)
 	}
 	return Provider{
 		ID: c.ID, Name: c.Name, Vendor: Vendor(c.Vendor),

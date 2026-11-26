@@ -1,12 +1,154 @@
 package store
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"testing"
 
 	"microchat/internal/model"
 )
+
+func TestRecordSummaryRejectsChangedSourcesAndRollsBack(t *testing.T) {
+	st := openTemp(t)
+	seedSession(t, st, "s1", "m1", "m2", "m3", "m4")
+	messages, err := st.ListMessages("s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshots := make([]SummarySourceSnapshot, 0, 2)
+	for _, message := range messages[:2] {
+		snapshots = append(snapshots, SummarySourceSnapshot{
+			ID: message.ID, Kind: model.TypeMessages, Content: message.Content, UpdatedAt: message.UpdatedAt,
+		})
+	}
+	if _, err := st.UpdateMessage("s1", "m1", MessageEdit{Content: new("改过的正文")}); err != nil {
+		t.Fatal(err)
+	}
+	summary := model.Summary{
+		ID: "sum1", SessionID: "s1", Type: model.TypeMessages,
+		BeginMessageID: new("m1"), EndMessageID: new("m2"), Text: "旧材料摘要",
+		Blocks: 1, SourceIDs: []string{"m1", "m2"}, Provider: "dummy", Model: "dummy",
+	}
+	if err := st.RecordSummaryContext(context.Background(), summary, summary.SourceIDs, SummaryCommitSnapshot{Members: snapshots}); err == nil {
+		t.Fatal("来源正文变化后该拒绝落库")
+	}
+	if rows, _ := st.ListSummaries("s1"); len(rows) != 0 {
+		t.Fatalf("来源变化失败不许留下摘要：%+v", rows)
+	}
+	for _, message := range mustMessages(t, st, "s1")[:2] {
+		if message.SummaryID != nil {
+			t.Fatalf("来源变化失败不许回填指针：%+v", message)
+		}
+	}
+}
+
+func TestRecordSummaryRejectsChangedMergeSource(t *testing.T) {
+	st := openTemp(t)
+	seedSession(t, st, "s1", "m1", "m2", "m3", "m4")
+	for _, child := range []model.Summary{
+		{ID: "c1", SessionID: "s1", Type: model.TypeMessages, BeginMessageID: new("m1"), EndMessageID: new("m2"), Text: "孩子一", SourceIDs: []string{"m1", "m2"}},
+		{ID: "c2", SessionID: "s1", Type: model.TypeMessages, BeginMessageID: new("m3"), EndMessageID: new("m4"), Text: "孩子二", SourceIDs: []string{"m3", "m4"}},
+	} {
+		if err := st.RecordSummary(child, child.SourceIDs); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := st.UpdateSummaryText("s1", "c1", SummaryEdit{Text: new("孩子一（新）")}); err != nil {
+		t.Fatal(err)
+	}
+	parent := model.Summary{
+		ID: "p1", SessionID: "s1", Type: model.TypeSummaries,
+		BeginMessageID: new("m1"), EndMessageID: new("m4"), Text: "父摘要",
+		Blocks: 2, SourceIDs: []string{"c1", "c2"}, Provider: "dummy", Model: "dummy",
+	}
+	snapshots := []SummarySourceSnapshot{
+		{ID: "c1", Kind: model.TypeSummaries, Content: "孩子一"},
+		{ID: "c2", Kind: model.TypeSummaries, Content: "孩子二"},
+	}
+	if err := st.RecordSummaryContext(context.Background(), parent, parent.SourceIDs, SummaryCommitSnapshot{Members: snapshots}); err == nil {
+		t.Fatal("合并源正文变化后该拒绝落库")
+	}
+	if rows, _ := st.ListSummaries("s1"); len(rows) != 2 {
+		t.Fatalf("合并失败不许留下父摘要：%+v", rows)
+	}
+}
+
+func TestRecordSummaryContextCancelBeforeCommitWritesNothing(t *testing.T) {
+	st := openTemp(t)
+	seedSession(t, st, "s1", "m1", "m2")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	previous := summaryCommitHook
+	defer func() { summaryCommitHook = previous }()
+	summaryCommitHook = cancel
+	summary := model.Summary{
+		ID: "sum1", SessionID: "s1", Type: model.TypeMessages,
+		BeginMessageID: new("m1"), EndMessageID: new("m2"), Text: "摘要",
+		SourceIDs: []string{"m1", "m2"}, Provider: "dummy", Model: "dummy",
+	}
+	messages, err := st.ListMessages("s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshots := []SummarySourceSnapshot{
+		{ID: messages[0].ID, Kind: model.TypeMessages, Content: messages[0].Content, UpdatedAt: messages[0].UpdatedAt},
+		{ID: messages[1].ID, Kind: model.TypeMessages, Content: messages[1].Content, UpdatedAt: messages[1].UpdatedAt},
+	}
+	if err := st.RecordSummaryContext(ctx, summary, summary.SourceIDs, SummaryCommitSnapshot{Members: snapshots}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("提交前取消该返回 context.Canceled：%v", err)
+	}
+	if rows, _ := st.ListSummaries("s1"); len(rows) != 0 {
+		t.Fatalf("提交前取消不许留下摘要：%+v", rows)
+	}
+	for _, message := range mustMessages(t, st, "s1") {
+		if message.SummaryID != nil {
+			t.Fatalf("提交前取消不许回填指针：%+v", message.SummaryID)
+		}
+	}
+}
+
+func mustMessages(t *testing.T, st *Store, sessionID string) []model.Message {
+	t.Helper()
+	messages, err := st.ListMessages(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return messages
+}
+
+func TestRecordSummaryBatchRejectsChangedChunkAndRollsBack(t *testing.T) {
+	st := openTemp(t)
+	seedSession(t, st, "s1", "m1", "m2", "m3", "m4")
+	messages, err := st.ListMessages("s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	summaries := []model.Summary{
+		{ID: "s1", SessionID: "s1", Type: model.TypeMessages, BeginMessageID: new("m1"), EndMessageID: new("m2"), Text: "一", SourceIDs: []string{"m1", "m2"}},
+		{ID: "s2", SessionID: "s1", Type: model.TypeMessages, BeginMessageID: new("m3"), EndMessageID: new("m4"), Text: "二", SourceIDs: []string{"m3", "m4"}},
+	}
+	snapshots := make([]SummarySourceSnapshot, 0, len(messages))
+	for _, message := range messages {
+		snapshots = append(snapshots, SummarySourceSnapshot{ID: message.ID, Kind: model.TypeMessages, Content: message.Content, UpdatedAt: message.UpdatedAt})
+	}
+	if _, err := st.UpdateMessage("s1", "m3", MessageEdit{Content: new("第二块被改过")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RecordSummaryBatchContext(context.Background(), summaries, []SummaryCommitSnapshot{
+		{Members: snapshots[:2]}, {Members: snapshots[2:]},
+	}); err == nil {
+		t.Fatal("任一 chunk 来源变化都该使整批拒绝")
+	}
+	if rows, _ := st.ListSummaries("s1"); len(rows) != 0 {
+		t.Fatalf("批量来源变化不许留下任何摘要：%+v", rows)
+	}
+	for _, message := range mustMessages(t, st, "s1") {
+		if message.SummaryID != nil {
+			t.Fatalf("批量来源变化不许回填消息指针：%+v", message)
+		}
+	}
+}
 
 // 压缩的落库口（`RecordSummary`）：**一个事务里**插摘要 + 把这一段的指针指过去。
 //

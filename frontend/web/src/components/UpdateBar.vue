@@ -7,8 +7,9 @@ import CloseButton from "./CloseButton.vue";
 const props = withDefaults(defineProps<{
   pwa?: boolean;
   backend?: boolean;
+  backendMessage?: string;
   busy?: boolean;
-}>(), { pwa: false, backend: false, busy: false });
+}>(), { pwa: false, backend: false, backendMessage: "", busy: false });
 const emit = defineEmits<{ update: []; "update-backend": [] }>();
 
 const pwaBusy = ref(false);
@@ -40,7 +41,7 @@ defineExpose({ show: (): void => { pwaBusy.value = false; hidden.value = false; 
     class="update-bar"
   >
     <span class="ub-text">
-      <template v-if="backend">GitHub 有新提交，可更新前后端</template>
+      <template v-if="backend">{{ backendMessage || (busy ? "正在完成更新…" : "GitHub 有新提交，可更新前后端") }}</template>
       <template v-else>新版本已就绪，刷新页面应用</template>
       <template v-if="backend && pwa">；前端也有新版本</template>
       <template v-if="busy">，正在更新…</template>

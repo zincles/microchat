@@ -66,7 +66,10 @@ func TestSegmentsCRUDAndAssembly(t *testing.T) {
 	if got := authCall(box.server, "POST", "/api/v1/agents", `{"name":"坏","segments":["nope"]}`, testSysToken); got.Code != 400 {
 		t.Fatalf("未知引用该 400，得到 %d（%s）", got.Code, got.Body.String())
 	}
-	made := authCall(box.server, "POST", "/api/v1/agents", `{"name":"段测","system_prompt":"你是助手。","segments":["katex","mcp"]}`, testSysToken)
+	if got := authCall(box.server, "POST", "/api/v1/agents", `{"name":"坏段","latest_prompt_segments":["nope"]}`, testSysToken); got.Code != 400 {
+		t.Fatalf("未知的最新用户消息段该 400，得到 %d（%s）", got.Code, got.Body.String())
+	}
+	made := authCall(box.server, "POST", "/api/v1/agents", `{"name":"段测","system_prompt":"你是助手。","segments":["katex","mcp"],"latest_prompt_segments":["katex","mcp"]}`, testSysToken)
 	if made.Code != 201 {
 		t.Fatalf("建 agent = %d（%s）", made.Code, made.Body.String())
 	}
@@ -93,21 +96,22 @@ func TestSegmentsCRUDAndAssembly(t *testing.T) {
 	}
 	after := decodeBody[struct {
 		Agents []struct {
-			Segments []string `json:"segments"`
+			Segments             []string `json:"segments"`
+			LatestPromptSegments []string `json:"latest_prompt_segments"`
 		} `json:"agents"`
 	}](t, authCall(box.server, "GET", "/api/v1/agents", "", testSysToken))
 	found := false
 	for _, a := range after.Agents {
-		if len(a.Segments) == 2 && a.Segments[0] == "katex2" {
+		if len(a.Segments) == 2 && a.Segments[0] == "katex2" && len(a.LatestPromptSegments) == 2 && a.LatestPromptSegments[0] == "katex2" {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("改名该把引用一起搬：%+v", after.Agents)
+		t.Fatalf("改名该同步系统提示词与最新用户消息的引用：%+v", after.Agents)
 	}
 
 	// ⑥ 整段替换（`[]` = 清空也是整段替换的一种）
-	if got := authCall(box.server, "PATCH", "/api/v1/agents/"+agentID, `{"segments":["mcp"]}`, testSysToken); got.Code != 200 {
+	if got := authCall(box.server, "PATCH", "/api/v1/agents/"+agentID, `{"segments":["mcp"],"latest_prompt_segments":["mcp"]}`, testSysToken); got.Code != 200 {
 		t.Fatalf("整段替换 = %d（%s）", got.Code, got.Body.String())
 	}
 	prompt = decodeBody[struct {
@@ -141,8 +145,8 @@ func TestSegmentsCRUDAndAssembly(t *testing.T) {
 	if del.Code != 400 || !strings.Contains(del.Body.String(), "段测") {
 		t.Fatalf("被引用的段该 400 且点名引用者：%d（%s）", del.Code, del.Body.String())
 	}
-	if got := authCall(box.server, "PATCH", "/api/v1/agents/"+agentID, `{"segments":[]}`, testSysToken); got.Code != 200 {
-		t.Fatalf("清空引用 = %d", got.Code)
+	if got := authCall(box.server, "PATCH", "/api/v1/agents/"+agentID, `{"segments":[],"latest_prompt_segments":[]}`, testSysToken); got.Code != 200 {
+		t.Fatalf("清空引用 = %d（%s）", got.Code, got.Body.String())
 	}
 	if got := authCall(box.server, "DELETE", "/api/v1/segments/mcp", "", testSysToken); got.Code != 204 {
 		t.Fatalf("摘掉引用后该能删：%d（%s）", got.Code, got.Body.String())
@@ -175,5 +179,40 @@ func TestSegmentImportedFlag(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("没找到 from-card")
+	}
+}
+
+func TestSegmentCopyPreservesSourceMetadata(t *testing.T) {
+	box := newDummySandboxWith(t, true)
+	preset := authCall(box.server, "POST", "/api/v1/tavern/presets?name=origin.json", `{"a":1}`, testSysToken)
+	if preset.Code != 201 {
+		t.Fatalf("建来源预设 = %d（%s）", preset.Code, preset.Body.String())
+	}
+	presetID := decodeBody[struct {
+		ID string `json:"id"`
+	}](t, preset).ID
+	source := authCall(box.server, "POST", "/api/v1/segments", `{"id":"from-st","text":"原始正文","preset_id":"`+presetID+`"}`, testSysToken)
+	if source.Code != 201 {
+		t.Fatalf("建来源片段 = %d（%s）", source.Code, source.Body.String())
+	}
+	if got := authCall(box.server, "DELETE", "/api/v1/tavern/presets/"+presetID+"?segments=keep", "", testSysToken); got.Code != 204 {
+		t.Fatalf("删除预设并保留片段 = %d（%s）", got.Code, got.Body.String())
+	}
+	copied := authCall(box.server, "POST", "/api/v1/segments/from-st/copy", `{"id":"from-st-copy"}`, testSysToken)
+	if copied.Code != 201 {
+		t.Fatalf("复制导入片段 = %d（%s）", copied.Code, copied.Body.String())
+	}
+	copySegment := decodeBody[config.Segment](t, copied)
+	if copySegment.ID != "from-st-copy" || copySegment.Text != "原始正文" || !copySegment.Imported || copySegment.PresetID != presetID || copySegment.PresetName != "origin.json" {
+		t.Fatalf("副本必须保留正文和失效来源快照：%+v", copySegment)
+	}
+	builtin, _ := config.BuiltinSegmentByID("StateLang 语法")
+	builtinCopy := authCall(box.server, "POST", "/api/v1/segments/"+url.PathEscape(builtin.ID)+"/copy", `{"id":"state-copy"}`, testSysToken)
+	if builtinCopy.Code != 201 {
+		t.Fatalf("复制内置片段 = %d（%s）", builtinCopy.Code, builtinCopy.Body.String())
+	}
+	custom := decodeBody[config.Segment](t, builtinCopy)
+	if custom.ID != "state-copy" || custom.Text != builtin.Text || custom.Imported || custom.PresetID != "" || custom.PresetName != "" {
+		t.Fatalf("内置副本应成为相同正文的自定义段：%+v", custom)
 	}
 }

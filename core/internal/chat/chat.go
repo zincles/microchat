@@ -17,12 +17,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"strings"
 	"sync"
 	"time"
 
 	"microchat/internal/config"
+	"microchat/internal/logx"
 	"microchat/internal/macro"
 	"microchat/internal/model"
 	"microchat/internal/providers"
@@ -40,6 +40,10 @@ import (
 // `compact.Service` 在 main.go 里适配（各包不互相 import ⇒ 不报环）。nil = 没接 ⇒ 自动压缩不跑。
 type Compactor interface {
 	Compact(ctx context.Context, session model.Session, blocks int) error
+}
+// ChangeNotifier is defined by the chat consumer to avoid a dependency on server.
+type ChangeNotifier interface {
+	PublishSessionChanged(sessionID string)
 }
 
 type Service struct {
@@ -61,6 +65,7 @@ type Service struct {
 	// Compactor：自动压缩的那一口（见上面接口）—— main.go 里接上；没接（单测 / 直操模式）
 	// 就是"没人自动压"，手动 `/compact` 照旧。
 	Compactor Compactor
+	Notifier ChangeNotifier
 	// FlowTrace 的最近一次图执行（进程内；重启即失，和 turn/task 一样）。
 	flowTraceMu sync.Mutex
 	flowTraces  map[string]FlowRunTrace
@@ -146,6 +151,9 @@ func (s *Service) Accept(session model.Session, content string) (Accepted, error
 	// 这里只落用户那句（用户的话不该丢，换个模型接着聊）。
 	accepted, err := s.launch(session, replyID, token, providersConfig, assistantIDs, userID, storedContent)
 	if err != nil {
+		if s.Notifier != nil {
+			s.Notifier.PublishSessionChanged(session.ID)
+		}
 		return Accepted{}, err
 	}
 	accepted.User = &user
@@ -192,6 +200,9 @@ func (s *Service) launch(session model.Session, replyID string, token uint64, pr
 	// FlowAgent 不经过普通 Chat 的单请求装配：图自己决定每个 LLM 节点的 messages。
 	if agent, ok := s.flowAgentOf(session); ok {
 		chosen := providers.SelectBackend(session.Provider, session.Model, providersConfig)
+		if s.Notifier != nil {
+			s.Notifier.PublishSessionChanged(session.ID)
+		}
 		go s.runFlow(session, replyID, token, runID, input, agent, providersConfig, "")
 		return Accepted{Backend: chosen.Name, Turn: statusView(s.Turns.Status(session.ID))}, nil
 	}
@@ -205,6 +216,9 @@ func (s *Service) launch(session model.Session, replyID string, token uint64, pr
 	if err != nil {
 		s.Turns.StopToken(session.ID, token)
 		return Accepted{}, err
+	}
+	if s.Notifier != nil {
+		s.Notifier.PublishSessionChanged(session.ID)
 	}
 	go s.run(session, replyID, token, call, time.Now(), assistantIDs, runID)
 	return Accepted{Backend: call.backend.Name, Turn: statusView(s.Turns.Status(session.ID))}, nil
@@ -276,10 +290,16 @@ func (s *Service) run(session model.Session, replyID string, token uint64, call 
 			return
 		}
 		guard.Cancel()
+		if s.Notifier != nil {
+			s.Notifier.PublishSessionChanged(sessionID)
+		}
 		return
 	}
 	if err != nil {
 		s.Turns.Finish(sessionID, token, err.Error())
+		if s.Notifier != nil {
+			s.Notifier.PublishSessionChanged(sessionID)
+		}
 		guard.Fail(err.Error())
 		return
 	}
@@ -290,6 +310,9 @@ func (s *Service) run(session model.Session, replyID string, token uint64, call 
 	}
 	if _, err := s.Store.InsertMessage(message); err != nil {
 		s.Turns.Finish(sessionID, token, err.Error())
+		if s.Notifier != nil {
+			s.Notifier.PublishSessionChanged(sessionID)
+		}
 		guard.Fail(err.Error())
 		return
 	}
@@ -300,6 +323,9 @@ func (s *Service) run(session model.Session, replyID string, token uint64, call 
 		s.Titles.Auto(session)
 	}
 	s.Turns.Finish(sessionID, token, "") // 成功 ⇒ idle（客户端据此一次性重拉消息）
+	if s.Notifier != nil {
+		s.Notifier.PublishSessionChanged(sessionID)
+	}
 	guard.Succeed()
 	// 自动压缩（2026-10-11 用户定）：**翻 idle 之后**再看 —— 压缩是好几个上游调用，
 	// 别让界面为它多转圈；它自己挂号（compact 的 Task），在"后台任务"行里看得见。
@@ -381,31 +407,31 @@ func (s *Service) assembleMessages(session model.Session, messages []model.Messa
 	if err != nil {
 		return nil, err
 	}
-	entries, presetActive := s.promptEntries(session, messages)
+	entries, presetActive, latestUserPrompt := s.promptEntries(session, messages)
 	prompt, _ := s.systemPrompt(session, presetActive)
 	tables := state.FromSources(session.ID, messages).Tables
 	outgoing := state.BuildOutgoingWithPromptEntries(prompt, messages, summaries, tables, s.prependState(session), entries)
+	outgoing = state.AppendLatestUserPrompt(outgoing, latestUserPrompt)
 	return s.renderMacros(session, outgoing), nil
 }
 
-// promptEntries：当前会话的提示词计划。
-//
-// Agent 绑定了 preset_id ⇒ 每次现读原始 JSON → tavern.Parse（不复制条目；预设是唯一来源）。
-// 没有绑定 ⇒ 用手工/高级 PromptEntries（空 = 老行为）。
-// 第二个返回值 = 预设是否生效；调用方据此决定 Agent base/段要不要让位。
-func (s *Service) promptEntries(session model.Session, messages []model.Message) ([]config.PromptEntry, bool) {
+// promptEntries：系统提示词计划与仅对本轮最新 user message 生效的补充文本。
+// Agent 绑定预设时，预设接管系统提示词，但最新用户消息片段仍独立追加。
+// 第二个返回值表示预设是否生效；第三个是最新用户消息的临时补充。
+func (s *Service) promptEntries(session model.Session, messages []model.Message) ([]config.PromptEntry, bool, string) {
 	_, agents, _ := s.files()
 	agent, ok := agents.Get(session.AgentID)
 	if !ok {
-		return nil, false
+		return nil, false, ""
 	}
+	latestUserPrompt := state.JoinPrompt("", agent.LatestPromptSegments, agents, "agent "+agent.ID+" latest user message")
 	if strings.TrimSpace(agent.PresetID) == "" {
-		return agent.PromptEntries, false
+		return agent.PromptEntries, false, latestUserPrompt
 	}
 	preset, data, err := s.Store.GetTavernPreset(agent.PresetID)
 	if err != nil || preset == nil {
-		log.Printf("会话 %s 的 Agent 预设 %q 读不到（回落 Agent 提示词）：%v", shortID(session.ID), agent.PresetID, err)
-		return agent.PromptEntries, false
+		logx.Warnf("会话 %s 的 Agent 预设 %q 读不到（回落 Agent 提示词）：%v", shortID(session.ID), agent.PresetID, err)
+		return agent.PromptEntries, false, latestUserPrompt
 	}
 	// 真正进模型的不是原始 entries，而是执行 setvar/getvar/trim/注释后留下的那 24 条。
 	// lastUserMessage 用这一轮的最后一条 user（pending 已包含），于是 User_Input 段也是活的。
@@ -421,8 +447,8 @@ func (s *Service) promptEntries(session model.Session, messages []model.Message)
 		Values: s.MacroValues(session), LastUserMessage: lastUser,
 	})
 	if err != nil {
-		log.Printf("会话 %s 的 Agent 预设 %q 求值失败（回落 Agent 提示词）：%v", shortID(session.ID), agent.PresetID, err)
-		return agent.PromptEntries, false
+		logx.Warnf("会话 %s 的 Agent 预设 %q 求值失败（回落 Agent 提示词）：%v", shortID(session.ID), agent.PresetID, err)
+		return agent.PromptEntries, false, latestUserPrompt
 	}
 	entries := make([]config.PromptEntry, 0, len(extracted.Entries))
 	for _, entry := range extracted.Entries {
@@ -431,7 +457,7 @@ func (s *Service) promptEntries(session model.Session, messages []model.Message)
 			Position: entry.Position, Depth: entry.Depth, Order: entry.Order, SystemPrompt: entry.SystemPrompt,
 		})
 	}
-	return entries, true
+	return entries, true, latestUserPrompt
 }
 
 // prependState：这个会话的 Agent 开了 `prepend_state` 才往用户句首贴 `<current_state>`。
@@ -465,7 +491,14 @@ func (s *Service) RerollMessages(session model.Session) ([]providers.ChatMessage
 	if err != nil {
 		return nil, err
 	}
-	return wireMessages(outgoing, s.reasoningTable(kept)), nil
+	_, _, channels := s.files()
+	chosen := providers.SelectBackend(session.Provider, session.Model, channels)
+	wire := providers.ForModel(chosen.Provider, session.Model, s.Store.ModelRoute)
+	tools, err := s.toolsFor(session, chosen, wire.EffectiveProtocol(), channels)
+	if err != nil {
+		return nil, err
+	}
+	return wireMessages(outgoing, s.reasoningTable(kept, tools.replayReasoning)), nil
 }
 
 // MacroValues：当前会话可用的**只读替换宏**的值（user_name / char_name / model …）。
@@ -497,18 +530,10 @@ func (s *Service) renderMacros(session model.Session, outgoing []state.Outgoing)
 	return outgoing
 }
 
-// reasoningTable：思考回传表。`chat.replay_reasoning` 开才收，否则空表（`wireMessages` 贴不上思考）。
-// 每次现读配置（与 `files()` 同口径，不缓存）⇒ 改完即时生效，不用重启。
-func (s *Service) reasoningTable(messages []model.Message) map[string]string {
+// reasoningTable selects only stored reasoning that the resolved model policy permits.
+func (s *Service) reasoningTable(messages []model.Message, replay bool) map[string]string {
 	reasoningByID := map[string]string{}
-	chatConfig, _, _, err := config.Load(s.Paths)
-	if err == nil && chatConfig.ReplayReasoning != nil && *chatConfig.ReplayReasoning {
-		for _, message := range messages {
-			if message.Reasoning != "" {
-				reasoningByID[message.ID] = message.Reasoning
-			}
-		}
-	}
+	if replay { for _, message := range messages { if message.Reasoning != "" { reasoningByID[message.ID] = message.Reasoning } } }
 	return reasoningByID
 }
 
@@ -568,7 +593,8 @@ func (s *Service) prepareChat(session model.Session, outgoing []state.Outgoing, 
 	if err != nil {
 		return preparedChat{}, err
 	}
-	req := providers.Request{Model: session.Model, SessionID: session.ID, Messages: wireMessages(outgoing, s.reasoningTable(messages)),
+	replayReasoning := tools.replayReasoning
+	req := providers.Request{Model: session.Model, SessionID: session.ID, Messages: wireMessages(outgoing, s.reasoningTable(messages, replayReasoning)),
 		ThinkingLevel: session.ThinkingLevel, Tools: tools.declared, Override: session.RequestOverrides, Stream: true}
 	return preparedChat{backend: chosen, wire: wire, request: req, tools: tools}, nil
 }
@@ -649,7 +675,7 @@ func wireMessages(outgoing []state.Outgoing, reasoningByID map[string]string) []
 // 解析本身在 `state.ResolveSystemPrompt`（唯一实现，**永不返回空串**）；这里只是把现读的
 // agent 配置喂给它，没有第二份算法。
 func (s *Service) EffectiveSystemPrompt(session model.Session) (string, state.PromptSource) {
-	_, presetActive := s.promptEntries(session, nil)
+	_, presetActive, _ := s.promptEntries(session, nil)
 	return s.systemPrompt(session, presetActive)
 }
 

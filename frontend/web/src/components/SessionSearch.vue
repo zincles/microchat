@@ -14,7 +14,7 @@ const query = shallowRef("");
 const active = shallowRef(-1);
 const input = useTemplateRef<HTMLInputElement>("input");
 const results = useTemplateRef<HTMLElement>("results");
-const matches = computed(() => filterSessionTitles(props.sessions, query.value));
+const matches = computed(() => [...filterSessionTitles(props.sessions, query.value)].sort((a, b) => Number(b.favorite) - Number(a.favorite)));
 
 function focusSearch(): void {
   input.value?.focus({ preventScroll: true });

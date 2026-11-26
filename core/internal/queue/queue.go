@@ -235,7 +235,11 @@ func (s *Service) run(q *entry) {
 		}
 		s.mu.Lock()
 		q.Index++
+		canceled := q.State != task.StateRunning
 		s.mu.Unlock()
+		if canceled {
+			return
+		}
 	}
 }
 
@@ -253,8 +257,21 @@ func (s *Service) runStep(q *entry, step Step, index int) error {
 	title := fmt.Sprintf("队列压缩 · %s · 第 %d/%d 步", titleOf(session), index+1, len(q.Steps))
 	guard := s.Registry.Begin(task.KindCompact, &step.SessionID, title)
 	defer guard.Interrupted()
+	s.mu.Lock()
+	if q.State != task.StateRunning {
+		s.mu.Unlock()
+		guard.Cancel()
+		return context.Canceled
+	}
+	s.mu.Unlock()
 	if err := s.Runner.RunStep(q.ctx, step); err != nil {
-		guard.Fail(err.Error())
+		s.mu.Lock()
+		if q.State != task.StateRunning {
+			guard.Cancel()
+		} else {
+			guard.Fail(err.Error())
+		}
+		s.mu.Unlock()
 		return err
 	}
 	guard.Succeed()

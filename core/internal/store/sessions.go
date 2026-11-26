@@ -24,7 +24,7 @@ func (e InvalidError) Error() string { return string(e) }
 func nowMS() int64 { return time.Now().UnixMilli() }
 
 // sessionColumns：会话自己的列（**没有 current_leaf**：线性会话不需要"停在哪儿"）。
-const sessionColumns = "id, title, system_prompt, provider, model, agent_id, thinking_level, native_tools_disabled, request_overrides, created_at, updated_at"
+const sessionColumns = "id, title, system_prompt, provider, model, agent_id, thinking_level, native_tools_disabled, request_overrides, created_at, updated_at, favorite"
 
 // 一个最小的扫描接口：sql.Row 与 sql.Rows 都满足它。
 type scanner interface{ Scan(dest ...any) error }
@@ -32,11 +32,11 @@ type scanner interface{ Scan(dest ...any) error }
 func scanSession(row scanner) (model.Session, error) {
 	var session model.Session
 	var disabledJSON, overridesJSON string
-	err := row.Scan(
-		&session.ID, &session.Title, &session.SystemPrompt,
-		&session.Provider, &session.Model, &session.AgentID, &session.ThinkingLevel,
-		&disabledJSON, &overridesJSON, &session.CreatedAt, &session.UpdatedAt,
-	)
+ err := row.Scan(
+  &session.ID, &session.Title, &session.SystemPrompt,
+  &session.Provider, &session.Model, &session.AgentID, &session.ThinkingLevel,
+  &disabledJSON, &overridesJSON, &session.CreatedAt, &session.UpdatedAt, &session.Favorite,
+ )
 	if err != nil {
 		return session, err
 	}
@@ -76,14 +76,14 @@ func (s *Store) session(id string) (*model.Session, error) {
 	return &session, nil
 }
 
-// ListSessions：**全部会话**（按 updated_at 倒序，同刻按 id 倒序 —— 界面的排序口径）。
+// ListSessions：**全部会话**（收藏优先，其余按 updated_at 倒序，同刻按 id 倒序）。
 //
 // 2026-11-01：账号砍了 ⇒ 没有"这个人"了，归属过滤整个去掉（那个参数也一起删）。
 func (s *Store) ListSessions() ([]model.Session, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	rows, err := s.db.Query("SELECT " + sessionColumns +
-		" FROM sessions ORDER BY updated_at DESC, id DESC")
+ s.mu.Lock()
+ defer s.mu.Unlock()
+ rows, err := s.db.Query("SELECT " + sessionColumns +
+  " FROM sessions ORDER BY favorite DESC, updated_at DESC, id DESC")
 	if err != nil {
 		return nil, err
 	}
@@ -187,6 +187,10 @@ func (s *Store) SetSessionNativeToolsDisabled(id string, disabled []string) erro
 		disabled = []string{}
 	}
 	return s.execTouch("UPDATE sessions SET native_tools_disabled = ?1 WHERE id = ?2", mustJSON(disabled), id)
+}
+// SetSessionFavorite：更新收藏状态，不改变会话的更新时间。
+func (s *Store) SetSessionFavorite(id string, favorite bool) error {
+ return s.execTouch("UPDATE sessions SET favorite = ?1 WHERE id = ?2", favorite, id)
 }
 
 // SetSessionRequestOverrides：写请求体顶层覆盖（原样 JSON 对象；空 map = 清空）。

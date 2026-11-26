@@ -34,7 +34,7 @@ func TestProviderEndpointsPassthrough(t *testing.T) {
 func TestValidateSegments(t *testing.T) {
 	ok := AgentsConfig{
 		Segments: []Segment{{ID: "katex", Text: "数学用 $…$ 写。"}},
-		Agents:   []Agent{{ID: "a", Segments: []string{"katex"}}},
+		Agents:   []Agent{{ID: "a", Segments: []string{"katex"}, LatestPromptSegments: []string{"katex"}}},
 	}
 	if err := ok.ValidateSegments(); err != nil {
 		t.Fatalf("合法的该过：%v", err)
@@ -46,6 +46,8 @@ func TestValidateSegments(t *testing.T) {
 		{"空 id", AgentsConfig{Segments: []Segment{{ID: "  "}}}},
 		{"重复 id", AgentsConfig{Segments: []Segment{{ID: "a"}, {ID: "a"}}}},
 		{"引用不存在", AgentsConfig{Agents: []Agent{{ID: "x", Segments: []string{"nope"}}}}},
+		{"最新用户消息引用不存在", AgentsConfig{Agents: []Agent{{ID: "x", LatestPromptSegments: []string{"nope"}}}}},
+		{"FlowAgent 不接受最新用户消息段", AgentsConfig{Segments: []Segment{{ID: "katex"}}, Agents: []Agent{{ID: "x", Kind: "flow", LatestPromptSegments: []string{"katex"}}}}},
 	} {
 		if err := probe.cfg.ValidateSegments(); err == nil {
 			t.Fatalf("%s 该报错", probe.name)

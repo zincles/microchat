@@ -24,7 +24,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"microchat/internal/logx"
 	"sort"
 	"strconv"
 	"strings"
@@ -120,12 +120,18 @@ func invalid(format string, args ...any) error {
 	return &Error{Code: "invalid", Message: fmt.Sprintf(format, args...)}
 }
 
+// ChangeNotifier is defined by the compact consumer to avoid a dependency on server.
+type ChangeNotifier interface {
+	PublishSessionChanged(sessionID string)
+}
+
 // Service：压缩的唯一实现处。
 type Service struct {
 	Store *store.Store
 	Paths config.Paths
 	Turns *turn.Registry
 	Tasks *task.Registry
+	Notifier ChangeNotifier
 
 	advMu        sync.Mutex
 	advancedJobs map[string]*AdvancedJob
@@ -635,7 +641,13 @@ func strategySpan(messages []model.Message, summaries []model.Summary, all []blo
 				continue // 早就压过的那几块（在第一条没被覆盖的消息之前）
 			}
 			if firstCovered(messages, block.Begin, block.End) >= 0 {
-				continue // 碎的覆盖：跳过 —— 不许覆盖已压缩的区间
+				if len(taken) > 0 {
+					break // 已覆盖区间是硬边界，不能与后面的新块拼成一个 span
+				}
+				continue
+			}
+			if len(taken) > 0 && block.Begin != taken[len(taken)-1].End+1 {
+				break // 只返回连续的闭区间
 			}
 			taken = append(taken, block)
 			if len(taken) == count {
@@ -1028,7 +1040,7 @@ func (s *Service) generateText(ctx context.Context, p *prepared) (generatedText,
 	text := strings.TrimSpace(statelang.Scan(result.Text).Cleaned)
 	if text != strings.TrimSpace(result.Text) {
 		// 上游把状态写进梗概了 ⇒ 记一句（文档口径：`summaries.text` 只写叙事，混进来会被剔掉并留个痕）
-		log.Printf("压缩：会话 %s 的摘要里混了 <state> 块，已剔除", shortID(p.session.ID))
+		logx.Warnf("压缩：会话 %s 的摘要里混了 <state> 块，已剔除", shortID(p.session.ID))
 	}
 	// ② 非空：剔完是空的 ⇒ **不写**（宁可这一趟什么都没有，也别塞一条空摘要）
 	if text == "" {
@@ -1109,8 +1121,11 @@ func (s *Service) call(ctx context.Context, p *prepared) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	if err := s.Store.RecordSummary(summary, sourceIDs); err != nil {
+	if err := s.Store.RecordSummaryContext(ctx, summary, sourceIDs, commitSnapshotOf(p)); err != nil {
 		return Result{}, storeError(err)
+	}
+	if s.Notifier != nil {
+		s.Notifier.PublishSessionChanged(p.session.ID)
 	}
 	return Result{
 		SessionID: p.session.ID, BeginMessageID: *summary.BeginMessageID, EndMessageID: *summary.EndMessageID,
@@ -1163,6 +1178,31 @@ func (s *Service) buildSummary(p *prepared, generated generatedText) (model.Summ
 		CreatedAt:     time.Now().UnixMilli(),
 	}
 	return summary, sourceIDs, nil
+}
+
+func commitSnapshotOf(p *prepared) store.SummaryCommitSnapshot {
+	if len(p.span.Sources) > 0 {
+		members := make([]store.SummarySourceSnapshot, 0, len(p.span.Sources))
+		for _, source := range p.span.Sources {
+			members = append(members, store.SummarySourceSnapshot{
+				ID: source.ID, Kind: model.TypeSummaries, Content: source.Text, Dirty: source.Dirty,
+			})
+		}
+		dependencies := make([]store.SummarySourceSnapshot, 0, len(p.span.Messages))
+		for _, message := range p.span.Messages {
+			dependencies = append(dependencies, store.SummarySourceSnapshot{
+				ID: message.ID, Kind: model.TypeMessages, Content: message.Content, UpdatedAt: message.UpdatedAt,
+			})
+		}
+		return store.SummaryCommitSnapshot{Members: members, Dependencies: dependencies}
+	}
+	members := make([]store.SummarySourceSnapshot, 0, len(p.span.Messages))
+	for _, message := range p.span.Messages {
+		members = append(members, store.SummarySourceSnapshot{
+			ID: message.ID, Kind: model.TypeMessages, Content: message.Content, UpdatedAt: message.UpdatedAt,
+		})
+	}
+	return store.SummaryCommitSnapshot{Members: members}
 }
 
 // messageIdxs：这段快照里 message id → 1-based 序号（摘要抬头里的"第 a–b 条"按它写）。

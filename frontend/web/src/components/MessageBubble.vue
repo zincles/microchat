@@ -141,8 +141,7 @@ const toolTimeline = computed(() => buildToolTimeline(parts.value.cleaned, inlin
   part.kind === "text" ? { ...part, html: renderMarkdown(part.text, { macros: props.macros }) } : part
 )));
 const reasoningHtml = computed(() => renderMacroHtml(props.reasoning, props.macros));
-// 公式比列宽时给右缘一道内阴影（2026-11-02）：手机上原本是"一刀切"，看不出还能往右滑。
-// `overflow-x: auto` 之外再标一个类 —— 只有真的溢出才提示，短公式不受影响。
+// 公式确实比列宽时给右缘一道提示；字体加载/排版完成前不开放横滚，避免短暂白条。
 const textEl = ref<HTMLElement | null>(null);
 const msgEl = ref<HTMLElement | null>(null);
 function markPendingImages(): void {
@@ -156,12 +155,19 @@ function settleImage(event: Event): void {
 watch([textEl, bodyHtml, toolTimeline], markPendingImages, { flush: "post" });
 watch(() => props.reroll?.current_idx, (next, previous) => animateCandidate(msgEl.value, next, previous), { flush: "post" });
 let cursorEl: HTMLSpanElement | null = null;
+let cursorPrinting = false;
+let cursorWaitFrame = 0;
+let cursorUpdate = 0;
 function markMathOverflow(): void {
   const root = textEl.value;
   if (!root) return;
   for (const el of root.querySelectorAll<HTMLElement>(".katex-display")) {
     el.classList.toggle("scroll-x", el.scrollWidth > el.clientWidth + 1);
   }
+}
+function settleMathOverflow(): void {
+  // KaTeX 字体使公式宽度在插入后还会变化；等待当前字体集稳定再决定是否启用横滚。
+  void document.fonts.ready.then(() => nextTick(markMathOverflow));
 }
 // Mermaid：流式期间不画（代码块每帧都在长，画一次废一次）；收流/挂载后再交给延迟加载的 mermaid。
 function paintMermaid(): void {
@@ -171,6 +177,10 @@ function paintMermaid(): void {
 // 流式期间的终端光标：v-html 每帧会重写正文，所以每帧在**最后一个有字的文本节点**后面
 // 插一个光标（不塞进 Markdown 源，免得落进代码块/公式被转义）。它只是装饰，aria-hidden。
 function clearStreamCursor(): void {
+  cursorPrinting = false;
+  cursorUpdate++;
+  if (cursorWaitFrame) cancelAnimationFrame(cursorWaitFrame);
+  cursorWaitFrame = 0;
   cursorEl?.remove();
   cursorEl = null;
 }
@@ -192,7 +202,9 @@ function placeStreamCursor(): void {
     cursorEl.className = "stream-cursor";
     cursorEl.setAttribute("aria-hidden", "true");
     box.appendChild(cursorEl);
+
   }
+  cursorEl.classList.toggle("is-printing", cursorPrinting);
   const range = document.createRange();
   const end = last.nodeValue?.length ?? 0;
   range.selectNodeContents(last);
@@ -205,20 +217,40 @@ function placeStreamCursor(): void {
   cursorEl.style.top = `${rect.top - host.top}px`;
   cursorEl.style.height = `${rect.height}px`;
 }
+function markCursorPrinting(): void {
+  if (!props.streaming) return;
+  cursorPrinting = true;
+  const update = ++cursorUpdate;
+  if (cursorWaitFrame) cancelAnimationFrame(cursorWaitFrame);
+  cursorWaitFrame = 0;
+  cursorEl?.classList.add("is-printing");
+  void nextTick(() => {
+    if (update !== cursorUpdate) return;
+    placeStreamCursor();
+    cursorWaitFrame = requestAnimationFrame(() => {
+      if (update !== cursorUpdate) return;
+      cursorPrinting = false;
+      cursorEl?.classList.remove("is-printing");
+      cursorWaitFrame = 0;
+    });
+  });
+}
 onMounted(() => {
-  nextTick(() => { markMathOverflow(); placeStreamCursor(); paintMermaid(); });
+  settleMathOverflow(); placeStreamCursor(); paintMermaid();
   window.addEventListener("mc-theme-changed", paintMermaid);
 });
-onUnmounted(() => window.removeEventListener("mc-theme-changed", paintMermaid));
+onUnmounted(() => { window.removeEventListener("mc-theme-changed", paintMermaid); clearStreamCursor(); });
 // 流式期间正文每来一段就重算一次 —— 那时不扫公式（每帧扫一遍是白烧 CPU）；
 // 但光标要跟着最后一个字走。收尾那一拍去掉光标、扫公式并画 Mermaid。
-watch([() => props.content, toolTimeline, () => props.answerView], () => {
-  if (props.streaming) nextTick(placeStreamCursor);
-  else nextTick(() => { markMathOverflow(); paintMermaid(); });
+watch([() => props.content, toolTimeline, () => props.answerView], ([content], [previousContent]) => {
+  if (props.streaming) {
+    if (content.length > previousContent.length) markCursorPrinting();
+    else nextTick(placeStreamCursor);
+  } else nextTick(() => { settleMathOverflow(); paintMermaid(); });
 });
 watch(() => props.streaming, (s) => nextTick(() => {
   if (s) placeStreamCursor();
-  else { clearStreamCursor(); markMathOverflow(); paintMermaid(); }
+  else { clearStreamCursor(); settleMathOverflow(); paintMermaid(); }
 }));
 </script>
 

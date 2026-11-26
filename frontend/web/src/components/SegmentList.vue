@@ -1,14 +1,14 @@
 <script setup lang="ts">
-// 提示词段清单 —— **一个组件，两处用**（agent 的 base 后面 / 能力的模板后面）。
+// 提示词段清单 —— **一个组件，多处用**（系统提示词后 / 最新用户消息 / 能力模板后）。
 //
-// 为什么抽出来（2026-10-28 用户：「不协调。总觉得和编辑系统提示词的有区别。」）：
-// 同一种东西写两遍，第二遍就会悄悄长出别的样子 —— 标题一边是 `<h3>`、另一边是灰色小字
-// 加一条底边线；预览一边叫「拼装预览」、另一边叫「这一发真会发出去的提示词」；
-// 段正文截断 48 字 vs 40 字；"引用了库里没有的段"一边有汇总警告、另一边只有行内 ⚠。
-// 这些都不是功能差异，纯粹是"忘了同步"。所以顺序 / 挑段 / 缺段警告 / 拼装预览
-// **只留这一份实现**：改一处，两处一起变。
+// 同一种选择与排序逻辑分散多写几遍，很快就会长出不一致的标题、预览和缺段警告。
+// 顺序 / 挑段 / 缺段警告 / 拼装预览只在这里实现；片段编辑由父级显式处理 `edit-segment`。
+// 这让三种装配位置共用同一组行为，同时不把片段库或页面导航耦合进本组件。
+//
+// 修改这里时要保留 `ids` 的 v-model 和 `edit-segment` 事件契约。
 import { computed, ref } from "vue";
 import { VBtn, VSelect } from "vuetify/components";
+import { ICONS } from "../assets/icons.ts";
 import { missingSegments } from "../utils/prompt.ts";
 
 export interface SegmentItem {
@@ -30,7 +30,7 @@ const props = withDefaults(defineProps<{
   assembled: "",
   hint: "",
 });
-const emit = defineEmits<{ "update:ids": [ids: string[]] }>();
+const emit = defineEmits<{ "update:ids": [ids: string[]]; "edit-segment": [id: string] }>();
 
 const pick = ref("");
 const segText = (id: string): string => props.segments.find((s) => s.id === id)?.text ?? "";
@@ -68,6 +68,7 @@ function optionLabel(segment: SegmentItem): string {
     <VBtn icon variant="text" size="small" type="button" title="下移" :disabled="i === ids.length - 1" @click="move(i, 1)">↓</VBtn>
     <span class="seg-id">{{ sid }}<template v-if="segMissing(sid)"> ⚠ 不存在</template></span>
     <span class="seg-preview">{{ segText(sid).slice(0, 48) }}</span>
+    <VBtn icon variant="text" size="small" type="button" :title="`编辑片段 ${sid}`" :aria-label="`编辑片段 ${sid}`" @click="emit('edit-segment', sid)"><span aria-hidden="true" v-html="ICONS.pencil"></span></VBtn>
     <VBtn icon variant="text" size="small" type="button" title="移除（不会删除片段本身）" @click="drop(i)">✕</VBtn>
   </div>
   <div class="row">

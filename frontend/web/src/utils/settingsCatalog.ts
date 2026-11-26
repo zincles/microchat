@@ -1,35 +1,64 @@
 import type { MarkdownType } from "../api/types.ts";
 import type { ICONS } from "../assets/icons.ts";
 
-// 与设置视图外层的窗口顺序一致，返回目录与进入子页的方向才一致。
-export const SETTINGS_GROUPS = [
-  { label: "常用设置", pages: [
+type SettingsPage =
+  | "defaults" | "input" | "provider" | "agent" | "prompt"
+  | "appearance" | "markdown" | "session"
+  | "context" | "generation" | "update" | "tavern" | "runner";
+
+type SettingsPageDefinition = {
+  id: SettingsPage;
+  label: string;
+  desc: string;
+  icon: keyof typeof ICONS;
+};
+
+type SettingsCategoryDefinition = {
+  label: string;
+  desc: string;
+  icon: keyof typeof ICONS;
+  pages: SettingsPageDefinition[];
+};
+
+export const SETTINGS_GROUPS: SettingsCategoryDefinition[] = [
+  { label: "用户配置", desc: "默认模型、渠道、智能体与输入习惯", icon: "settings", pages: [
     { id: "defaults", label: "新会话默认", desc: "默认渠道、模型和智能体", icon: "messagePlus" },
-    { id: "appearance", label: "外观", desc: "主题、字号、字体与背景", icon: "themeAuto" },
     { id: "input", label: "输入与发送", desc: "回车行为、输入时预览与称呼", icon: "send" },
-  ] },
-  { label: "对话与模型", pages: [
-    { id: "context", label: "上下文与压缩", desc: "历史加载、上下文长度和压缩阈值", icon: "sliders" },
-    { id: "generation", label: "生成与标题", desc: "自动标题模型与历史思考回传", icon: "brain" },
-    { id: "markdown", label: "消息渲染", desc: "Markdown 总开关与各类格式", icon: "notebookPen" },
     { id: "provider", label: "渠道与模型规则", desc: "上游接口、密钥与全局模型规则", icon: "server" },
-  ] },
-  { label: "数据与维护", pages: [
-    { id: "session", label: "会话", desc: "查看会话、导入与导出记录", icon: "list" },
     { id: "agent", label: "智能体", desc: "人设、工作流与能力配置", icon: "bot" },
     { id: "prompt", label: "提示词片段", desc: "可复用的提示词片段库", icon: "notebookPen" },
-    { id: "tavern", label: "酒馆", desc: "SillyTavern 预设与聊天记录", icon: "spark" },
+  ] },
+  { label: "外观", desc: "主题、字体与消息呈现", icon: "themeAuto", pages: [
+    { id: "appearance", label: "外观", desc: "主题、字号、字体与背景", icon: "themeAuto" },
+    { id: "markdown", label: "消息渲染", desc: "Markdown 总开关与各类格式", icon: "notebookPen" },
+  ] },
+  { label: "数据", desc: "会话记录与导入导出", icon: "list", pages: [
+    { id: "session", label: "会话", desc: "查看会话、导入与导出记录", icon: "list" },
+  ] },
+  { label: "系统设置", desc: "上下文、生成与版本维护", icon: "sliders", pages: [
+    { id: "context", label: "上下文与压缩", desc: "历史加载、上下文长度和压缩阈值", icon: "sliders" },
+    { id: "generation", label: "生成与标题", desc: "自动标题模型与历史思考回传", icon: "brain" },
     { id: "update", label: "更新", desc: "版本、自动更新与 PWA 缓存", icon: "refresh" },
   ] },
-] as const;
+  { label: "外部", desc: "酒馆导入与外部执行机连接", icon: "server", pages: [
+    { id: "tavern", label: "酒馆", desc: "SillyTavern 预设与聊天记录", icon: "spark" },
+    { id: "runner", label: "Runner", desc: "外部执行机连接与授权入口", icon: "server" },
+  ] },
+];
 
-type SettingsPage = (typeof SETTINGS_GROUPS)[number]["pages"][number]["id"];
-export const SETTINGS_SECTIONS = SETTINGS_GROUPS.flatMap<{ id: SettingsPage; label: string; desc: string; icon: keyof typeof ICONS }>((group) => group.pages);
+const WINDOW_ORDER: SettingsPage[] = [
+  "defaults", "appearance", "input", "context", "generation", "markdown", "provider",
+  "session", "agent", "prompt", "tavern", "update", "runner",
+];
+const ALL_PAGES: SettingsPageDefinition[] = SETTINGS_GROUPS.flatMap((group) => group.pages);
+// 必须与 SettingsModal 的 VTabsWindowItem DOM 顺序相同；Vuetify 按此顺序计算滑入方向。
+export const SETTINGS_SECTIONS: SettingsPageDefinition[] = WINDOW_ORDER.map((id) => ALL_PAGES.find((page) => page.id === id)!);
 
 export interface SettingsLocation {
   page: SettingsPage;
   anchor?: string;
 }
+
 
 // 固定设置的搜索入口。anchor 对应 setting-*；Markdown 分项使用后端发来的清单。
 const FIELDS = [
@@ -61,6 +90,7 @@ const FIELDS = [
   ["tavern", "import-st", "导入酒馆聊天记录", "SillyTavern 会话 JSONL"],
   ["update", "auto-update", "自动更新", "GitHub 每 5 分钟 检查更新"],
   ["update", "pwa", "前端缓存（PWA）", "强制刷新 Service Worker 安装版"],
+	["runner", "runner", "Runner 接入", "外部执行机 Codex Claude Code Pi OMP"],
 ] as const satisfies readonly (readonly [SettingsPage, string, string, string])[];
 
 type SearchEntry = SettingsLocation & { label: string; desc: string; icon: keyof typeof ICONS };

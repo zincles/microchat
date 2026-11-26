@@ -97,6 +97,9 @@ const FALLBACK_PREFS: Prefs = {
   bar_left_hidden: false,
   message_editor: { reasoning: false, fullscreen: false },
   update_auto_check: true,
+  brand_name: "MicroChat",
+  brand_icon: "spark",
+  welcome_text: "有什么想聊的？",
 };
 
 // 内存缓存。读取的唯一来源（同步）。
@@ -189,6 +192,9 @@ function legacyPrefs(): Prefs | null {
     chrome_hide: notZero("mc_chrome_hide", true),
     payload_viz: localStorage.getItem("mc_payload_viz") === "1",
     bar_left_hidden: localStorage.getItem("mc_bar_left_hidden") === "1",
+    brand_name: "MicroChat",
+    brand_icon: "spark",
+    welcome_text: "有什么想聊的？",
   };
 }
 
@@ -334,6 +340,23 @@ export function saveMarkdown({ enabled, disabled }: { enabled?: boolean; disable
   if (disabled !== undefined) next.disabled = [...disabled];
   setPref("markdown", next);
 }
+export async function saveBrandPrefs(values: Pick<Prefs, "brand_name" | "brand_icon" | "welcome_text">): Promise<void> {
+  const previous = cache;
+  cache = { ...cache, ...values };
+  writeMirror(cache);
+  clearTimeout(putTimer ?? undefined);
+  putTimer = null;
+  pendingPut = false;
+  try {
+    const view = await sharedApi().putPrefs(clone(cache));
+    applyServerPrefs(view);
+  } catch (error) {
+    cache = previous;
+    writeMirror(cache);
+    throw error;
+  }
+}
+
 
 // saveBackground：写背景那一格。
 //

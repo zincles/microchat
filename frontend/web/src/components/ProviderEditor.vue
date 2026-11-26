@@ -13,7 +13,7 @@ import RequestLoading from "./RequestLoading.vue";
 import SettingsBack from "./SettingsBack.vue";
 import type {
   CreateProviderRequest,
-  ModelDefineRule,
+  ModelRule,
   ModelView,
   PresetInfo,
   ProtocolOption,
@@ -56,7 +56,7 @@ const hasKey = ref(false);
 const models = ref<ModelView[]>([]);
 const editingModel = ref<ModelView | null>(null);
 // 当前渠道自己的规则；全局规则在「设置 → 渠道 → 全局模型规则」那一页。
-const customRules = ref<ModelDefineRule[]>([]);
+const customRules = ref<ModelRule[]>([]);
 const baseCustomRules = ref("[]");
 // 渠道详情分两页：上游（服务商/端点/密钥）与模型配置（模型清单 + 规则）。
 const tab = ref<"upstream" | "models">("upstream");
@@ -339,7 +339,7 @@ function onModelSaved(updated: ModelView): void {
   emit("model-saved");
 }
 
-function onCustomRulesSaved(rules: ModelDefineRule[]): void {
+function onCustomRulesSaved(rules: ModelRule[]): void {
   if (blocked.value) return;
   customRules.value = rules;
   // 渠道级规则属于 providers.json：跟着「保存渠道」一起落盘（新建时也一起创建）。

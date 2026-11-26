@@ -282,6 +282,7 @@ func (s *Server) importJSON(w http.ResponseWriter, r *http.Request) {
 		// agent_missing：文件点的 agent 本机没有 ⇒ 照绑了 id，但人设会回落内置默认（界面要说一句）。
 		"agent_missing": agentMissing,
 	})
+	s.live.PublishSessionChanged(session.ID)
 }
 
 // planSummaries：把文件里的摘要变成"可以直接落库"的一批 —— 验形状、铸新 id、重映射父子。

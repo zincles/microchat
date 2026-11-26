@@ -7,10 +7,9 @@ import (
 	"microchat/internal/config"
 )
 
-// 提示词段（system prompt segment，用户定 2026-10-11）：`agents.json` 顶层的可复用文本库。
-//
-// 读口不另开 —— 段库随 `GET /agents` 一起给（那份就是 AgentsConfig 全貌）；这里只有三个写口。
-// 写口 = 设置面（admin）。删除有守卫：还被 agent 引用 ⇒ 拒绝（列出引用者，先摘引用再删）。
+// 提示词段：`agents.json` 顶层的可复用文本库，system prompt、最新用户消息和能力共用。
+// 读口随 `GET /agents`；创建、克隆、改名/正文、删除在此编排。
+// 删除有守卫：任一 Agent 仍引用 ⇒ 拒绝并列出引用者。
 
 type segmentReq struct {
 	ID   string `json:"id"`
@@ -117,6 +116,11 @@ func (s *Server) updateSegment(w http.ResponseWriter, r *http.Request) {
 						agents.Agents[i].Segments[j] = newID
 					}
 				}
+				for j, ref := range agents.Agents[i].LatestPromptSegments {
+					if ref == id {
+						agents.Agents[i].LatestPromptSegments[j] = newID
+					}
+				}
 			}
 			agents.Segments[index].ID = newID
 		}
@@ -131,7 +135,7 @@ func (s *Server) updateSegment(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, agents.Segments[index])
 }
 
-// deleteSegment：删段。**还被引用 ⇒ 拒绝**（列出引用者 —— 先把引用摘掉再删）。
+// deleteSegment：删段。**仍被任何 Agent 位置引用 ⇒ 拒绝**（列出引用者，先摘引用再删）。
 func (s *Server) deleteSegment(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("segment_id")
 	if _, builtin := config.BuiltinSegmentByID(id); builtin {
@@ -161,4 +165,45 @@ func (s *Server) deleteSegment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// copySegment：复制用户段或内置段；只换 id，正文与来源快照原样保留。
+func (s *Server) copySegment(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID string `json:"id"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	newID := strings.TrimSpace(req.ID)
+	if newID == "" {
+		writeError(w, http.StatusBadRequest, "invalid", "段 id 不能为空")
+		return
+	}
+	if len([]rune(newID)) > 64 {
+		writeError(w, http.StatusBadRequest, "invalid", "段 id 太长（64 字以内）")
+		return
+	}
+	agents := s.loadAgents()
+	if _, builtin := config.BuiltinSegmentByID(newID); builtin {
+		writeError(w, http.StatusConflict, "conflict", "内置段 id 保留："+newID)
+		return
+	}
+	if _, taken := agents.SegmentByID(newID); taken {
+		writeError(w, http.StatusConflict, "conflict", "段 id 被占了："+newID)
+		return
+	}
+	sourceID := r.PathValue("segment_id")
+	segment, ok := agents.SegmentByID(sourceID)
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "来源提示词段不存在："+sourceID)
+		return
+	}
+	segment.ID = newID
+	agents.Segments = append(agents.Segments, segment)
+	if err := s.saveAgents(agents); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, segment)
 }

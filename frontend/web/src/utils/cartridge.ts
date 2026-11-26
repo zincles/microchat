@@ -8,13 +8,14 @@
 import type { AbilityToggle, Agent, Segment } from "../api/types.ts";
 import { ABILITY_IDS } from "./format.ts";
 
-export const CARTRIDGE_VERSION = 2;
+export const CARTRIDGE_VERSION = 3;
 
 export interface CartridgeAgent {
   name: string;
   description?: string;
   system_prompt: string;
   segments: string[];
+  latest_prompt_segments: string[];
   first_message: string;
   abilities: Record<string, AbilityToggle>;
   prepend_state: boolean;
@@ -31,15 +32,15 @@ export interface CartridgeSegment extends Segment {
 }
 
 // buildCartridge：agent（`GET /agents` 的形状）+ 段库 ⇒ 卡带对象。
-type CartridgeSource = Pick<Agent, "name" | "description" | "system_prompt" | "segments" | "first_message" | "abilities" | "prepend_state">;
+type CartridgeSource = Pick<Agent, "name" | "description" | "system_prompt" | "segments" | "latest_prompt_segments" | "first_message" | "abilities" | "prepend_state">;
 
 export function buildCartridge(agent: CartridgeSource, segments?: CartridgeSegment[] | null): Cartridge {
   const refs = (agent.segments ?? []).map((x) => String(x));
-  // 能力也能引用段（2026-10-28）⇒ 打包时**一并收**：只收 agent 自己那份的话，
-  // 卡带导到另一台机器上，能力的段引用会指向不存在的段（后端写入时直接 400）。
+  const latestRefs = (agent.latest_prompt_segments ?? []).map((x) => String(x));
+  // 能力和本轮用户消息都能引用段；卡带必须携带全部非内置依赖。
   const abilityRefs = ABILITY_IDS.flatMap((id) => (agent.abilities?.[id]?.segments ?? []).map((x) => String(x)));
   const bundled: Array<{ id: string; text: string }> = [];
-  for (const id of [...new Set([...refs, ...abilityRefs])]) {
+  for (const id of [...new Set([...refs, ...latestRefs, ...abilityRefs])]) {
     const seg = (segments ?? []).find((s) => s.id === id);
     if (seg && !seg.builtin) bundled.push({ id: seg.id, text: seg.text }); // 内置不带
   }
@@ -50,6 +51,7 @@ export function buildCartridge(agent: CartridgeSource, segments?: CartridgeSegme
       description: agent.description ?? "",
       system_prompt: agent.system_prompt ?? "", // base 原文（不拼平）
       segments: refs, // 引用照旧
+      latest_prompt_segments: latestRefs,
       first_message: agent.first_message ?? "",
       abilities: agent.abilities ?? {},
       prepend_state: !!agent.prepend_state,
@@ -85,6 +87,7 @@ export function cartridgeAgent(doc: unknown): { agent: CartridgeAgent; segments:
       description: String(agent.description ?? ""),
       system_prompt: String(agent.system_prompt ?? ""),
       segments: Array.isArray(agent.segments) ? agent.segments.map((x) => String(x)) : [],
+      latest_prompt_segments: Array.isArray(agent.latest_prompt_segments) ? agent.latest_prompt_segments.map((x) => String(x)) : [],
       first_message: String(agent.first_message ?? ""),
       abilities,
       prepend_state: !!agent.prepend_state,

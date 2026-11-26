@@ -3,7 +3,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
-	"log"
+	"microchat/internal/logx"
 	"net/http"
 	"strings"
 
@@ -65,6 +65,7 @@ type ModelView struct {
 	ServerTools    []string `json:"server_tools,omitempty"`
 	LocalTools     []string `json:"local_tools,omitempty"`
 	MatchedRules   []string `json:"matched_rules,omitempty"`
+	ReplayReasoning bool `json:"replay_reasoning"`
 }
 
 // ModelListItem：`GET /models` 的一项，模型身份仍由渠道与上游 ID 确定。
@@ -84,6 +85,7 @@ type ModelListItem struct {
 	Icon         string   `json:"icon,omitempty"`
 	ServerTools  []string `json:"server_tools,omitempty"`
 	LocalTools   []string `json:"local_tools,omitempty"`
+	ReplayReasoning bool `json:"replay_reasoning"`
 	MatchedRules []string `json:"matched_rules,omitempty"`
 }
 
@@ -144,6 +146,7 @@ func (s *Server) modelView(row store.ModelRow, protocol string, providerRules []
 		Icon:            profile.Icon,
 		ThinkingLevels:  profile.ThinkingLevels,
 		ServerTools:     profile.ServerTools,
+		ReplayReasoning: profile.ReplayReasoning,
 		LocalTools:      profile.LocalTools,
 		MatchedRules:    profile.MatchedRules,
 	}
@@ -353,7 +356,7 @@ func (s *Server) updateProvider(w http.ResponseWriter, r *http.Request) {
 		if err := s.store.RenameProvider(oldID, provider.ID); err != nil {
 			configs.Providers = original
 			if revertErr := s.saveProviders(configs); revertErr != nil {
-				log.Printf("渠道「%s」改名后回滚配置失败（库里已是「%s」）：%v", oldID, provider.ID, revertErr)
+				logx.Errorf("渠道「%s」改名后回滚配置失败（库里已是「%s」）：%v", oldID, provider.ID, revertErr)
 				writeError(w, http.StatusInternalServerError, "internal",
 					"改名失败，且配置没能改回去（库与配置不一致，请检查 data/config/providers.json）")
 				return
@@ -576,6 +579,7 @@ func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
 			Icon:           view.Icon,
 			ServerTools:    view.ServerTools,
 			LocalTools:     view.LocalTools,
+			ReplayReasoning: view.ReplayReasoning,
 			MatchedRules:   view.MatchedRules,
 		})
 	}

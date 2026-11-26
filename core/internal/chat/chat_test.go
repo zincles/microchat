@@ -461,6 +461,79 @@ func TestAcceptStripsUserStateInjection(t *testing.T) {
 	h.settle(t)
 }
 
+func TestLatestPromptSegmentsAreEphemeral(t *testing.T) {
+	h := newHarness(t, dummyProviders(), "dummy", "dummy")
+	agents := config.AgentsConfig{
+		Segments: []config.Segment{
+			{ID: "system-only", Text: "系统级追加"},
+			{ID: "latest-only", Text: "只用于本轮的补充"},
+		},
+		Agents: []config.Agent{{
+			ID: "latest-user-agent", Name: "最新用户测试", SystemPrompt: "基础提示词",
+			Segments: []string{"system-only"}, LatestPromptSegments: []string{"latest-only"},
+		}},
+	}
+	if err := config.SaveJSON(h.configDir+"/agents.json", agents); err != nil {
+		t.Fatal(err)
+	}
+	session := h.session
+	session.AgentID = "latest-user-agent"
+	ids, err := store.MintOrderedIDs(3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, message := range []model.Message{
+		{ID: ids[0], SessionID: session.ID, Role: model.RoleUser, Content: "第一轮用户"},
+		{ID: ids[1], SessionID: session.ID, Role: model.RoleAssistant, Content: "第一轮回复"},
+	} {
+		if _, err := h.store.InsertMessage(message); err != nil {
+			t.Fatal(err)
+		}
+	}
+	contentFor := func(outgoing []state.Outgoing, id string) (string, bool) {
+		for _, item := range outgoing {
+			if item.Type == "message" && item.MessageID != nil && *item.MessageID == id {
+				return item.Content, true
+			}
+		}
+		return "", false
+	}
+	outgoing, _, err := h.service.Outgoing(session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := contentFor(outgoing, ids[0]); !ok || got != "第一轮用户\n\n只用于本轮的补充" {
+		t.Fatalf("最新用户消息的请求内容 = %q, found=%v", got, ok)
+	}
+	stored, err := h.store.ListMessages(session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored) != 2 || stored[0].Content != "第一轮用户" {
+		t.Fatalf("出站补充不能改存档：%+v", stored)
+	}
+	if _, err := h.store.InsertMessage(model.Message{ID: ids[2], SessionID: session.ID, Role: model.RoleUser, Content: "第二轮用户"}); err != nil {
+		t.Fatal(err)
+	}
+	outgoing, _, err = h.service.Outgoing(session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := contentFor(outgoing, ids[0]); !ok || got != "第一轮用户" {
+		t.Fatalf("旧轮次不能继承临时补充：%q, found=%v", got, ok)
+	}
+	if got, ok := contentFor(outgoing, ids[2]); !ok || got != "第二轮用户\n\n只用于本轮的补充" {
+		t.Fatalf("新轮次应该得到临时补充：%q, found=%v", got, ok)
+	}
+	stored, err = h.store.ListMessages(session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored) != 3 || stored[0].Content != "第一轮用户" || stored[2].Content != "第二轮用户" {
+		t.Fatalf("提示词段必须始终不进消息历史：%+v", stored)
+	}
+}
+
 // 请求体顶层要带上模型规则派生的服务端工具；会话里手动关掉的不带。
 func TestPreviewWireCarriesServerTools(t *testing.T) {
 	h := newHarness(t, config.ProvidersConfig{Providers: []config.Provider{{
@@ -539,6 +612,21 @@ func TestPreviewWireCarriesServerToolsOnChat(t *testing.T) {
 	if got := tools[0].(map[string]any)["type"]; got != "web_search" {
 		t.Fatalf("chat 预演的服务端工具 = %#v", got)
 	}
+}
+
+func TestPrepareChatReplaysReasoningOnlyWithDeclaredTools(t *testing.T) {
+	channels := config.ProvidersConfig{Providers: []config.Provider{{ID: "xai", Vendor: "xai", Protocol: "openai-response"}}}
+	h := newHarness(t, channels, "xai", "grok-4.7")
+	id := "assistant-history"
+	outgoing := []state.Outgoing{{Role: state.RoleAssistant, Content: "old", MessageID: &id}}
+	messages := []model.Message{{ID: id, Reasoning: "stored reasoning"}}
+	call, err := h.service.prepareChat(h.session, outgoing, messages, channels)
+	if err != nil { t.Fatal(err) }
+	if len(call.request.Tools) == 0 || call.request.Messages[0].Reasoning != "stored reasoning" { t.Fatalf("enabled tools should replay reasoning: tools=%v messages=%+v", call.request.Tools, call.request.Messages) }
+	h.session.NativeToolsDisabled = []string{"x_search", "web_search", "code_execution"}
+	call, err = h.service.prepareChat(h.session, outgoing, messages, channels)
+	if err != nil { t.Fatal(err) }
+	if len(call.request.Tools) != 0 || call.request.Messages[0].Reasoning != "" { t.Fatalf("disabled tools must suppress reasoning replay: tools=%v messages=%+v", call.request.Tools, call.request.Messages) }
 }
 
 func TestWireMessagesReplaysClientToolHistory(t *testing.T) {

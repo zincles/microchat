@@ -62,6 +62,7 @@ function configure(id: string, close: () => void): void {
       <VListItem
         v-for="agent in items"
         :key="agent.id"
+        class="agent-option"
         role="option"
         :active="agent.id === modelValue"
         :aria-selected="agent.id === modelValue"
@@ -88,7 +89,6 @@ function configure(id: string, close: () => void): void {
             >
               <span aria-hidden="true" v-html="ICONS.settings"></span>
             </VBtn>
-            <span v-if="agent.id === modelValue" aria-hidden="true" class="text-primary">✓</span>
           </span>
         </template>
       </VListItem>
@@ -100,7 +100,7 @@ function configure(id: string, close: () => void): void {
 </template>
 
 <style scoped>
-.agent-option-actions { display: flex; align-items: center; gap: 0.2em; }
+.agent-option-actions { display: flex; align-items: center; justify-content: flex-end; width: 2.4em; min-width: 2.4em; }
 .agent-option-settings { flex: none; }
 .agent-option-settings :deep(svg) { display: block; width: 1em; height: 1em; }
 </style>

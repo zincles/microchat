@@ -28,9 +28,10 @@ type CreateAgentReq struct {
 	SystemPrompt string      `json:"system_prompt"`
 	// FirstMessage：首段对话（新会话的第一条 assistant 消息；空 = 不启用）。
 	FirstMessage string `json:"first_message,omitempty"`
-	// Segments：追加段（段库里的 id 列表，顺序 = 追加顺序；拼装见 `state.AssembleSystemPrompt`）。
-	// 引用的段必须在库里 ⇒ 400。
+// Segments：系统提示词追加段。引用的段必须在库里 ⇒ 400。
 	Segments []string `json:"segments,omitempty"`
+	// LatestPromptSegments：仅在请求装配中追加到最新用户消息，不进入存档。
+	LatestPromptSegments []string `json:"latest_prompt_segments,omitempty"`
 	// PresetID：绑定到酒馆原始预设（tavern_presets.id）；空 = 不绑定。
 	PresetID string `json:"preset_id,omitempty"`
 	// PromptEntries：手工/高级提示词计划（可选；空 = base + segments）。
@@ -51,6 +52,8 @@ type UpdateAgentReq struct {
 	FirstMessage *string `json:"first_message"`
 	// Segments：给了就**整段替换**这串引用（nil = 不动；`[]` = 清空）。引用的段必须在库里 ⇒ 400。
 	Segments []string `json:"segments,omitempty"`
+	// LatestPromptSegments：给了就整段替换；[] 清空。
+	LatestPromptSegments []string `json:"latest_prompt_segments,omitempty"`
 	// PresetID：nil = 不动；"" = 解绑；非空 = 绑定。
 	PresetID *string `json:"preset_id,omitempty"`
 	// PromptEntries：nil = 不动；[] = 清空；非空 = 整段替换。
@@ -149,6 +152,7 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		SystemPrompt:  req.SystemPrompt,
 		FirstMessage:  req.FirstMessage,
 		Segments:      req.Segments,
+		LatestPromptSegments: req.LatestPromptSegments,
 		PresetID:      req.PresetID,
 		PromptEntries: req.PromptEntries,
 		Abilities:     req.Abilities,
@@ -270,6 +274,9 @@ func (s *Server) updateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Segments != nil {
 		agents.Agents[index].Segments = req.Segments
+	}
+	if req.LatestPromptSegments != nil {
+		agents.Agents[index].LatestPromptSegments = req.LatestPromptSegments
 	}
 	if req.PresetID != nil {
 		agents.Agents[index].PresetID = strings.TrimSpace(*req.PresetID)

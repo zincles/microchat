@@ -22,6 +22,7 @@ import (
 	"microchat/internal/blocks"
 	"microchat/internal/config"
 	"microchat/internal/model"
+	"microchat/internal/store"
 	"microchat/internal/task"
 
 	"github.com/google/uuid"
@@ -105,6 +106,7 @@ type advancedChunkPlan struct {
 	blocks     int
 	messages   int
 }
+
 
 type advancedPlan struct {
 	mode        string
@@ -432,9 +434,12 @@ func (s *Service) runAdvanced(ctx context.Context, session model.Session, plan *
 	defer guard.Interrupted()
 	guard.Cancellable(func() { cancel(errAdvancedCanceled) })
 
-	summaries, err := s.generateAdvanced(ctx, session, plan, job, cancel, guard.ID())
+	summaries, snapshots, err := s.generateAdvanced(ctx, session, plan, job, cancel, guard.ID())
 	if err == nil {
-		err = s.Store.RecordSummaryBatch(summaries)
+		err = s.Store.RecordSummaryBatchContext(ctx, summaries, snapshots)
+		if err == nil && s.Notifier != nil {
+			s.Notifier.PublishSessionChanged(session.ID)
+		}
 	}
 	if err != nil {
 		canceled := errors.Is(context.Cause(ctx), errAdvancedCanceled)
@@ -487,8 +492,9 @@ func (s *Service) finishAdvanced(job *AdvancedJob, state, message string, summar
 	_ = summaries
 }
 
-func (s *Service) generateAdvanced(ctx context.Context, session model.Session, plan *advancedPlan, job *AdvancedJob, cancel context.CancelCauseFunc, parentID string) ([]model.Summary, error) {
+func (s *Service) generateAdvanced(ctx context.Context, session model.Session, plan *advancedPlan, job *AdvancedJob, cancel context.CancelCauseFunc, parentID string) ([]model.Summary, []store.SummaryCommitSnapshot, error) {
 	results := make([]model.Summary, len(plan.chunks))
+	snapshots := make([]store.SummaryCommitSnapshot, len(plan.chunks))
 	var next int64
 	var firstErr error
 	var errMu sync.Mutex
@@ -497,7 +503,7 @@ func (s *Service) generateAdvanced(ctx context.Context, session model.Session, p
 	if workers > len(plan.chunks) {
 		workers = len(plan.chunks)
 	}
-	for worker := 0; worker < workers; worker++ {
+	for range workers {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -507,7 +513,7 @@ func (s *Service) generateAdvanced(ctx context.Context, session model.Session, p
 					return
 				}
 				s.setChunkState(job, index, "running", 0, "")
-				summary, err := s.runAdvancedChunk(ctx, session, plan.chunks[index], job, index, plan.maxAttempts, parentID)
+				summary, snapshot, err := s.runAdvancedChunk(ctx, session, plan.chunks[index], job, index, plan.maxAttempts, parentID)
 				if err != nil {
 					s.setChunkState(job, index, "failed", 0, err.Error())
 					errMu.Lock()
@@ -519,74 +525,75 @@ func (s *Service) generateAdvanced(ctx context.Context, session model.Session, p
 					return
 				}
 				results[index] = summary
+				snapshots[index] = snapshot
 				s.setChunkState(job, index, "done", 0, "")
 			}
 		}()
 	}
 	wg.Wait()
 	if firstErr != nil {
-		return nil, firstErr
+		return nil, nil, firstErr
 	}
 	if ctx.Err() != nil {
-		return nil, ctx.Err()
+		return nil, nil, ctx.Err()
 	}
-	return results, nil
+	return results, snapshots, nil
 }
 
 // runAdvancedChunk：一个 chunk 在父 Job 下挂一个**子 Task**（面板里 Job + 3 Task 的来源）。
 // 子 Task 只管这一发上游请求；取消仍由父 Job 的 ctx 统一裁决。
-func (s *Service) runAdvancedChunk(ctx context.Context, session model.Session, chunk advancedChunkPlan, job *AdvancedJob, index, maxAttempts int, parentID string) (model.Summary, error) {
+func (s *Service) runAdvancedChunk(ctx context.Context, session model.Session, chunk advancedChunkPlan, job *AdvancedJob, index, maxAttempts int, parentID string) (model.Summary, store.SummaryCommitSnapshot, error) {
 	child := s.Tasks.BeginChild(task.KindCompact, &session.ID,
 		fmt.Sprintf("压缩第 %d 段 · 第 %d–%d 条", index+1, chunk.begin+1, chunk.end+1), parentID)
 	defer child.Interrupted()
-	summary, err := s.generateChunkWithRetry(ctx, session, chunk, job, index, maxAttempts)
+	summary, snapshot, err := s.generateChunkWithRetry(ctx, session, chunk, job, index, maxAttempts)
 	if err == nil {
 		child.Succeed()
-		return summary, nil
+		return summary, snapshot, nil
 	}
 	if errors.Is(context.Cause(ctx), errAdvancedCanceled) {
 		child.Cancel()
 	} else {
 		child.Fail(friendlyAdvancedError(err))
 	}
-	return model.Summary{}, err
+	return model.Summary{}, store.SummaryCommitSnapshot{}, err
 }
 
-func (s *Service) generateChunkWithRetry(ctx context.Context, session model.Session, chunk advancedChunkPlan, job *AdvancedJob, index, maxAttempts int) (model.Summary, error) {
+func (s *Service) generateChunkWithRetry(ctx context.Context, session model.Session, chunk advancedChunkPlan, job *AdvancedJob, index, maxAttempts int) (model.Summary, store.SummaryCommitSnapshot, error) {
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		if ctx.Err() != nil {
-			return model.Summary{}, ctx.Err()
+			return model.Summary{}, store.SummaryCommitSnapshot{}, ctx.Err()
 		}
 		// prepare 每次重试都重新读库：上游期间如果有人改了消息，后面的 prepare/提交会拒绝。
 		prepared, err := s.prepare(session, Request{BeginIdx: chunk.begin + 1, EndIdx: chunk.end + 1})
 		if err != nil {
-			return model.Summary{}, err
+			return model.Summary{}, store.SummaryCommitSnapshot{}, err
 		}
 		generated, err := s.generateText(ctx, prepared)
 		if err == nil {
 			summary, _, err := s.buildSummary(prepared, generated)
 			if err != nil {
-				return model.Summary{}, err
+				return model.Summary{}, store.SummaryCommitSnapshot{}, err
 			}
-			return summary, nil
+			return summary, commitSnapshotOf(prepared), nil
 		}
 		lastErr = err
 		if ctx.Err() != nil {
-			return model.Summary{}, ctx.Err()
+			return model.Summary{}, store.SummaryCommitSnapshot{}, ctx.Err()
 		}
 		if !retryableCompactError(err) || attempt == maxAttempts {
-			return model.Summary{}, err
+			return model.Summary{}, store.SummaryCommitSnapshot{}, err
 		}
 		s.setChunkAttempts(job, index, attempt+1)
 		delay := time.Duration(attempt) * 250 * time.Millisecond
 		select {
 		case <-ctx.Done():
-			return model.Summary{}, ctx.Err()
+			return model.Summary{}, store.SummaryCommitSnapshot{}, ctx.Err()
 		case <-time.After(delay):
 		}
 	}
-	return model.Summary{}, lastErr
+	return model.Summary{}, store.SummaryCommitSnapshot{}, lastErr
 }
 
 func retryableCompactError(err error) bool {

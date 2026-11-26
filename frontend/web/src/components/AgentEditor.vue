@@ -5,7 +5,7 @@
 // 2026-10-28 用户：「在具体某个 Agent 的设置界面里，我们最好也分 TAB，不然的话，全挤在一起很丑。」
 // ⇒ 一条长滚动拆成页签：基本 / 系统提示词 / 每个能力一页（页签条用 Vuetify `VTabs`，与设置主栏同一套）。
 // 保存一行留在页签**外面**（哪一页都能保存；翻页不丢已填的东西，状态都在 ref 里）。
-import { ref, shallowRef, computed, onMounted, onUnmounted } from "vue";
+import { ref, shallowRef, computed, watch, onMounted, onUnmounted } from "vue";
 import { sharedApi } from "../utils/prefs.ts";
 import { ABILITY_IDS, ABILITY_LABELS, ABILITY_TEMPLATE_SEGMENTS, buildAbilitiesPatch, modelKey, parseModelKey, modelLabel } from "../utils/format.ts";
 import type { AbilityRow } from "../utils/format.ts";
@@ -30,6 +30,7 @@ export interface AgentTemplate {
   prepend_state?: boolean;
   abilities?: Record<string, AbilityToggle>;
   segments?: string[];
+  latest_prompt_segments?: string[];
 }
 interface AbilityDraft {
   enabled: boolean;
@@ -46,11 +47,13 @@ interface ModelOption {
 const props = withDefaults(defineProps<{
   agent?: Agent | null;
   isDefault?: boolean;
-  template?: AgentTemplate | null; // 新建模板 {name, system_prompt, prepend_state, abilities}
-  kind?: "prompt" | "flow"; // 新建时选择的类型；编辑时以 agent.kind 为准
-  segments?: SegmentItem[]; // 段库（picker 用；随 GET /agents 一起给）
-  presets?: TavernPreset[]; // 酒馆原始预设（绑定用）
-  ask?: ((text: string) => Promise<boolean>) | null; // 全局确认框（删除前先摊开）
+  template?: AgentTemplate | null;
+  kind?: "prompt" | "flow";
+  segments?: SegmentItem[];
+  presets?: TavernPreset[];
+  ask?: ((text: string) => Promise<boolean>) | null;
+  escBlocked?: boolean;
+  segmentRename?: { oldId: string; newId: string; revision: number } | null;
 }>(), {
   agent: null,
   isDefault: false,
@@ -59,8 +62,10 @@ const props = withDefaults(defineProps<{
   segments: () => [],
   presets: () => [],
   ask: null,
+  escBlocked: false,
+  segmentRename: null,
 });
-const emit = defineEmits<{ close: []; saved: [] }>();
+const emit = defineEmits<{ close: []; saved: []; "edit-segment": [id: string] }>();
 
 const api = sharedApi();
 const isNew = !props.agent;
@@ -94,12 +99,13 @@ const prompt = ref(props.agent?.system_prompt ?? props.template?.system_prompt ?
 const firstMsg = ref(props.agent?.first_message ?? props.template?.first_message ?? "");
 const rows = ref<Record<string, AbilityDraft>>({});
 const prepend = ref(!!(props.agent?.prepend_state ?? props.template?.prepend_state));
-// 追加段（顺序 = 拼接顺序）。段库在 `props.segments`；挑 / 排 / 删与预览都在
-// `SegmentList` 里（与能力那块**同一个组件** —— 用户 2026-10-28：「不协调」）。
+// 系统提示词、最新用户消息与能力的段引用都使用同一个 SegmentList，编辑与排序规则一致。
 const segs = ref<string[]>([...(props.agent?.segments ?? props.template?.segments ?? [])]);
+const latestPromptSegs = ref<string[]>([...(props.agent?.latest_prompt_segments ?? props.template?.latest_prompt_segments ?? [])]);
 const presetId = ref(props.agent?.preset_id ?? "");
 const flowGraph = ref<FlowGraph>(normalizeFlowGraph(props.agent?.flow ?? emptyFlowGraph()));
 const assembled = computed(() => assemblePrompt(prompt.value, segs.value, props.segments));
+const latestPromptAssembled = computed(() => assemblePrompt("", latestPromptSegs.value, props.segments));
 const modelOptions = ref<ModelOption[]>([]);
 const status = ref("");
 const loadingModels = shallowRef(false);
@@ -173,6 +179,15 @@ function fillRows(a?: Agent | AgentTemplate | null): void {
 }
 fillRows(props.agent ?? props.template);
 
+watch(() => props.segmentRename?.revision, (revision) => {
+  const change = props.segmentRename;
+  if (!revision || !change) return;
+  const remap = (ids: string[]): string[] => ids.map((id) => id === change.oldId ? change.newId : id);
+  segs.value = remap(segs.value);
+  latestPromptSegs.value = remap(latestPromptSegs.value);
+  for (const row of Object.values(rows.value)) row.segments = remap(row.segments);
+});
+
 function toPatch(): Record<string, AbilityRow> {
   const out: Record<string, AbilityRow> = {};
   for (const id of ABILITY_IDS) {
@@ -207,6 +222,7 @@ async function save(): Promise<void> {
         first_message: firstMsg.value,
         segments: segs.value,
         preset_id: presetId.value,
+        latest_prompt_segments: agentKind.value === "flow" ? [] : latestPromptSegs.value,
         ...(agentKind.value === "flow" ? {} : { abilities: patch }),
         ...(prepend.value ? { prepend_state: true } : {}),
       };
@@ -221,6 +237,7 @@ async function save(): Promise<void> {
         first_message: firstMsg.value,
         segments: segs.value,
         preset_id: presetId.value,
+        latest_prompt_segments: agentKind.value === "flow" ? [] : latestPromptSegs.value,
         ...(agentKind.value === "flow" ? {} : { abilities: patch }),
       };
       if (!!prepend.value !== !!agent.prepend_state) body.prepend_state = prepend.value;
@@ -242,6 +259,7 @@ function exportCartridge(): void {
     system_prompt: prompt.value,
     segments: segs.value,
     first_message: firstMsg.value,
+    latest_prompt_segments: latestPromptSegs.value,
     abilities: toPatch(),
     prepend_state: prepend.value,
   }, props.segments);
@@ -307,13 +325,13 @@ onUnmounted(() => {
   document.removeEventListener("keydown", onKey);
 });
 function onKey(e: KeyboardEvent): void {
-  if (e.key === "Escape" && !action.value) emit("close");
+  if (e.key === "Escape" && !action.value && !props.escBlocked) emit("close");
 }
 </script>
 
 <template>
   <!-- 二级页（2026-10-10 起不再是弹窗）：嵌在设置视图的 Agent tab 里，列表 ⇄ 详情就地切换。 -->
-  <div class="detail-pane">
+  <div class="detail-pane agent-editor">
     <div class="panel-head">
       <SettingsBack :disabled="!!action" @back="emit('close')" />
       <span class="status">{{ isNew ? "新建智能体" : `编辑「${props.agent?.name ?? ""}」` }}{{ !isNew && isDefault ? "（默认）" : "" }}</span>
@@ -334,37 +352,52 @@ function onKey(e: KeyboardEvent): void {
 
     <VTabsWindow v-model="tab" class="agent-window" :inert="!!action">
     <VTabsWindowItem value="base">
-    <section class="pane-section">
-      <label class="field"><span>标识（改名会同步所有引用）</span><VTextField density="compact" variant="outlined" hide-details v-model="aid" :disabled="isNew" placeholder="新建时自动生成" /></label>
-      <label class="field"><span>名称</span><VTextField density="compact" variant="outlined" hide-details v-model="name" placeholder="例如：跑团主持人" /></label>
-      <label class="field-block"><span>描述（列表里显示，给人类看；不参与提示词）</span><VTextarea v-model="description" rows="2" density="compact" variant="outlined" hide-details placeholder="例如：负责旁白与 NPC，语气克制" /></label>
-      <label class="field-block"><span>开场白（新会话里的第一条回复；留空 = 不启用）</span><VTextarea v-model="firstMsg" rows="3" density="compact" variant="outlined" hide-details placeholder="例如：你好，我是……（可以包含状态块来设置初始状态）" /></label>
-      <template v-if="agentKind !== 'flow'">
-        <label class="field"><span>在消息开头附上当前状态（角色扮演建议开启）</span><VSwitch v-model="prepend" color="primary" density="compact" hide-details /></label>
-        <label class="field"><span>提示词方案（酒馆预设）</span><VSelect v-model="presetId" :items="[{ title: '不使用（用本 Agent 的提示词）', value: '' }, ...presets.map(p => ({ title: p.filename, value: p.id }))]" density="compact" variant="outlined" hide-details placeholder="不使用" /></label>
-        <p v-if="presetId" class="field-warning">
-          <b>注意：</b>启用后，这份酒馆预设会接管该 Agent 的对话提示词。
-          Agent 自己的<b>系统提示词</b>、<b>追加片段</b>和<b>手工提示词方案</b>都不再参与装配；
-          所有使用这个 Agent 的会话都会从下一轮起改用预设。
-          只有会话自己的「自定义提示词」仍然优先；模型、能力开关和状态注入不受影响。
-          这些设置不会丢，选「不使用」并保存即可恢复。
-        </p>
-        <p v-else class="hint">不选择时，使用这个 Agent 自己的系统提示词与片段。</p>
-        <p class="hint">预设是每轮现读现算；只有原始文件被删掉或解析失败时，才回落到 Agent 自己的方案。</p>
-      </template>
-      <p v-else class="hint">FlowAgent 的对话逻辑由「流程」页决定；这里只保留身份、描述与开场白。系统提示词、片段、提示词方案和高级能力暂不参与。</p>
-    </section>
+      <section class="pane-section">
+        <div class="form-group">
+          <h3 class="group-title">身份</h3>
+          <label class="field"><span>标识</span><VTextField density="compact" variant="outlined" hide-details v-model="aid" :disabled="isNew" placeholder="新建时自动生成" /></label>
+          <label class="field"><span>名称</span><VTextField density="compact" variant="outlined" hide-details v-model="name" placeholder="例如：跑团主持人" /></label>
+          <label class="field-block"><span>描述</span><VTextarea v-model="description" rows="2" density="compact" variant="outlined" hide-details placeholder="例如：负责旁白与 NPC，语气克制" /></label>
+        </div>
+        <div class="form-group">
+          <h3 class="group-title">对话行为</h3>
+          <label class="field-block"><span>开场白</span><VTextarea v-model="firstMsg" rows="3" density="compact" variant="outlined" hide-details placeholder="新会话里的第一条回复；留空则不启用" /></label>
+          <template v-if="agentKind !== 'flow'">
+            <label class="field"><span>在消息开头附上当前状态</span><VSwitch v-model="prepend" color="primary" density="compact" hide-details /></label>
+            <label class="field"><span>提示词方案</span><VSelect v-model="presetId" :items="[{ title: '不使用（用本 Agent 的提示词）', value: '' }, ...presets.map(p => ({ title: p.filename, value: p.id }))]" density="compact" variant="outlined" hide-details placeholder="不使用" /></label>
+            <p v-if="presetId" class="field-warning">
+              <b>注意：</b>启用后，这份酒馆预设会接管该 Agent 的对话提示词。Agent 自己的系统提示词、追加片段和手工提示词方案不参与装配；所有使用这个 Agent 的会话都会从下一轮起改用预设。只有会话自己的「自定义提示词」仍然优先；模型、能力开关和状态注入不受影响。仅用于本轮最新用户消息的片段仍会追加，不会进入存档。这些设置不会丢，选「不使用」并保存即可恢复。
+            </p>
+            <p v-else class="hint">不选择预设时，使用这个 Agent 自己的系统提示词与片段。预设每轮现读现算；原始文件被删掉或解析失败时才回落到 Agent 自己的方案。</p>
+          </template>
+          <p v-else class="hint">FlowAgent 的对话逻辑由「流程」页决定；系统提示词、片段、提示词方案和高级能力暂不参与。</p>
+        </div>
+      </section>
     </VTabsWindowItem>
 
     <VTabsWindowItem v-if="agentKind !== 'flow'" value="prompt">
-    <section class="pane-section">
-      <label class="field-block"><span>系统提示词（基础人设）</span><VTextarea v-model="prompt" rows="6" density="compact" variant="outlined" hide-details placeholder="写这个智能体的基础设定…" /></label>
-      <SegmentList
-        v-model:ids="segs"
-        :segments="props.segments"
-        :assembled="assembled"
-        heading="提示词片段（追加在基础提示词后面，顺序就是拼接顺序）" />
-    </section>
+      <section class="pane-section">
+        <div class="form-group">
+          <h3 class="group-title">基础提示词</h3>
+          <label class="field-block"><span>系统提示词（基础人设）</span><VTextarea v-model="prompt" rows="6" density="compact" variant="outlined" hide-details placeholder="写这个智能体的基础设定…" /></label>
+          <SegmentList
+            v-model:ids="segs"
+            :segments="props.segments"
+            :assembled="assembled"
+            heading="提示词片段（追加在基础提示词后面）"
+            @edit-segment="emit('edit-segment', $event)" />
+        </div>
+        <div class="form-group">
+          <h3 class="group-title">最新用户消息片段</h3>
+          <SegmentList
+            v-model:ids="latestPromptSegs"
+            :segments="props.segments"
+            :assembled="latestPromptAssembled"
+            heading="仅用于本轮最新用户消息"
+            hint="只追加到本轮最新一条用户消息的出站内容；不会写入消息或进入后续轮次历史。"
+            @edit-segment="emit('edit-segment', $event)" />
+        </div>
+      </section>
     </VTabsWindowItem>
 
     <VTabsWindowItem v-if="agentKind === 'flow'" value="flow" class="agent-flow-pane">
@@ -373,29 +406,27 @@ function onKey(e: KeyboardEvent): void {
     </VTabsWindowItem>
 
     <VTabsWindowItem v-if="agentKind !== 'flow'" v-for="id in ABILITY_IDS" :key="id" :value="id">
-    <section class="pane-section">
-      <label class="field"><span>启用（关闭后这项功能不会运行）</span><VSwitch v-model="rows[id].enabled" color="primary" density="compact" hide-details /></label>
-      <template v-if="id === 'title'">
-        <label class="field"><span>标题模型来源</span><VSelect v-model="rows[id].modelSource" :items="modelSourceOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
-        <label v-if="rows[id].modelSource === 'agent'" class="field"><span>Agent 模型</span><VSelect v-model="rows[id].model" :items="agentModelOptions" :disabled="!modelsReady" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
-        <p class="hint">跟随全局设置：用设置 → 聊天 → 标题模型；全局空着就用当前会话模型。Agent 模型两项都填才生效，否则回落全局。</p>
-      </template>
-      <label v-else class="field"><span>模型</span><VSelect v-model="rows[id].model" :items="sessionModelOptions" :disabled="!modelsReady" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
-      <label class="field-block"><span>自定义提示词（留空 = 使用默认模板）</span><VTextarea v-model="rows[id].prompt" rows="3" density="compact" variant="outlined" hide-details /></label>
-      <!-- 提示词段：追加在（覆盖 ?: 默认）模板**后面**，顺序 = 这里的顺序。
-           改了模板不必把段里的字抄进来 —— 抄进来就是两份，改一处忘一处。
-           编辑器就是 agent 级那一个 `SegmentList`（同一个组件 ⇒ 不会各长一样）。 -->
-      <SegmentList
-        v-model:ids="rows[id].segments"
-        :segments="props.segments"
-        :assembled="abilityAssembled(id)"
-        :hint="abilitySegHint(id)"
-        heading="提示词片段（追加在模板后面，顺序就是拼接顺序）" />
-    </section>
+      <section class="pane-section">
+        <label class="field"><span>启用</span><VSwitch v-model="rows[id].enabled" color="primary" density="compact" hide-details /></label>
+        <template v-if="id === 'title'">
+          <label class="field"><span>标题模型来源</span><VSelect v-model="rows[id].modelSource" :items="modelSourceOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
+          <label v-if="rows[id].modelSource === 'agent'" class="field"><span>Agent 模型</span><VSelect v-model="rows[id].model" :items="agentModelOptions" :disabled="!modelsReady" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
+          <p class="hint">跟随全局设置：用设置 → 聊天 → 标题模型；全局空着就用当前会话模型。Agent 模型两项都填才生效，否则回落全局。</p>
+        </template>
+        <label v-else class="field"><span>模型</span><VSelect v-model="rows[id].model" :items="sessionModelOptions" :disabled="!modelsReady" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
+        <label class="field-block"><span>自定义提示词（留空使用默认模板）</span><VTextarea v-model="rows[id].prompt" rows="3" density="compact" variant="outlined" hide-details /></label>
+        <SegmentList
+          v-model:ids="rows[id].segments"
+          :segments="props.segments"
+          :assembled="abilityAssembled(id)"
+          :hint="abilitySegHint(id)"
+          heading="提示词片段（追加在模板后面）"
+          @edit-segment="emit('edit-segment', $event)" />
+      </section>
     </VTabsWindowItem>
     </VTabsWindow>
 
-    <div class="row">
+    <div class="row agent-save-row">
       <VBtn color="primary" variant="flat" size="small" type="button" :loading="action === 'save'" :disabled="!!action" @click="save">保存</VBtn>
       <span class="action-note">保存后，新会话与后续轮次使用新设定；不会改写已有消息。</span>
       <VBtn v-if="agentKind !== 'flow'" variant="text" size="small" type="button" @click="exportCartridge" title="导出智能体文件（JSON；提示词片段会展开成完整提示词）">导出智能体</VBtn>
@@ -405,3 +436,20 @@ function onKey(e: KeyboardEvent): void {
     </div>
   </div>
 </template>
+
+<style scoped>
+.agent-editor { display: flex; min-height: 0; flex-direction: column; }
+.agent-editor .panel-head { flex: none; }
+.agent-editor .agent-tabs { flex: none; }
+.agent-editor .agent-window { flex: 1 1 auto; min-height: 0; }
+.agent-editor .pane-section { display: flex; flex-direction: column; gap: calc(1.5 * var(--chat-space)); max-width: 56rem; margin-inline: auto; padding: var(--chat-space) calc(2 * var(--chat-space)) calc(2 * var(--chat-space)); }
+.agent-editor .form-group { display: flex; flex-direction: column; gap: var(--chat-space); }
+.agent-editor .group-title { margin: 0; color: var(--md-on-surface); font-size: var(--md-type-title-small); font-weight: 600; }
+.agent-editor .agent-save-row { flex: none; flex-wrap: wrap; align-items: center; gap: calc(var(--chat-space) / 2); padding: var(--chat-space) calc(2 * var(--chat-space)); border-top: 1px solid var(--md-outline-variant); background: var(--md-surface-container-low); }
+.agent-editor .agent-save-row .v-btn { min-height: var(--md-touch-target); }
+.agent-editor .action-note { flex: 1 1 16rem; }
+@media (max-width: 600px) {
+  .agent-editor .pane-section { padding-inline: var(--chat-space); }
+  .agent-editor .agent-save-row { padding-inline: var(--chat-space); }
+}
+</style>

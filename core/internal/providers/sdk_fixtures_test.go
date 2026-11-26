@@ -31,3 +31,11 @@ func completeResponse(_ int, data []byte) (Result, error) {
 	}
 	return responseResult(VendorOpenAI, &reply)
 }
+
+func completeChat(data []byte) (Result, error) {
+	var reply openai.ChatCompletion
+	if err := json.Unmarshal(data, &reply); err != nil {
+		return Result{}, err
+	}
+	return completionResult(&reply)
+}

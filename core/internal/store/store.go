@@ -95,7 +95,10 @@ func (s *Store) migrate() error {
 	if err := s.ensureMessageToolTextOffset(); err != nil {
 		return err
 	}
-	return s.ensureTavernPresets()
+ if err := s.ensureSessionFavorite(); err != nil {
+  return err
+ }
+ return s.ensureTavernPresets()
 }
 
 // ensureSessionNativeTools：老库补 `native_tools_disabled` 列（幂等；默认 []）。
@@ -138,6 +141,21 @@ func (s *Store) ensureSessionThinking() error {
 	}
 	_, err := s.db.Exec("ALTER TABLE sessions ADD COLUMN thinking_level TEXT NOT NULL DEFAULT ''")
 	return err
+}
+
+// ensureSessionFavorite：老库（user_version 已经是 1）不会重跑 001.sql ⇒ 补这一列。
+// 幂等：只在缺列时添加，默认未收藏，不改变迁移版本策略。
+func (s *Store) ensureSessionFavorite() error {
+ var hasColumn int
+ if err := s.db.QueryRow(
+  "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'favorite'").Scan(&hasColumn); err != nil {
+  return err
+ }
+ if hasColumn > 0 {
+  return nil
+ }
+ _, err := s.db.Exec("ALTER TABLE sessions ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0")
+ return err
 }
 
 // dropRetired：把**已经不用的老结构**顺手清掉（幂等，每次打开都跑一遍）。

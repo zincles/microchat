@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"microchat/internal/config"
@@ -94,6 +95,12 @@ func TestPrefsDefaultsWhenMissing(t *testing.T) {
 	if view.Prefs.PayloadViz == nil || *view.Prefs.PayloadViz {
 		t.Fatal("payload_viz 缺省该是关")
 	}
+	if view.Prefs.BrandName != "MicroChat" || view.Prefs.BrandIcon != "spark" || view.Prefs.WelcomeText != "有什么想聊的？" {
+		t.Fatalf("缺文件时品牌偏好应为出厂值：%+v", view.Prefs)
+	}
+	if view.Defaults.BrandName != "MicroChat" || view.Defaults.BrandIcon != "spark" || view.Defaults.WelcomeText != "有什么想聊的？" {
+		t.Fatalf("GET defaults 未包含品牌出厂值：%+v", view.Defaults)
+	}
 }
 
 func TestPrefsRoundTrip(t *testing.T) {
@@ -101,7 +108,7 @@ func TestPrefsRoundTrip(t *testing.T) {
 
 	// ⚠ 故意按**清单的反序**发（image 在后、table 在前）：这样"有没有归一化"才看得出区别。
 	// 第一次我按正序发，于是去掉 Normalize 的注入**照样通过** —— 那个测试当时是假的。
-	body := `{"markdown":{"disabled":["image","table"]},"theme":"dark","text_scale":"1.1","send":"mod-enter","message_editor":{"reasoning":true,"fullscreen":true}}`
+	body := `{"markdown":{"disabled":["image","table"]},"theme":"dark","text_scale":"1.1","send":"mod-enter","message_editor":{"reasoning":true,"fullscreen":true},"brand_name":"  Studio  ","brand_icon":"bot","welcome_text":"  你好，世界  "}`
 	recorder := call(server, "PUT", "/api/v1/config/prefs", body)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("PUT 该 200，得到 %d：%s", recorder.Code, recorder.Body.String())
@@ -135,6 +142,9 @@ func TestPrefsRoundTrip(t *testing.T) {
 	if !got.Prefs.MessageEditor.Reasoning || !got.Prefs.MessageEditor.Fullscreen {
 		t.Fatalf("消息编辑器偏好未从文件恢复：%+v", got.Prefs.MessageEditor)
 	}
+	if got.Prefs.BrandName != "Studio" || got.Prefs.BrandIcon != "bot" || got.Prefs.WelcomeText != "你好，世界" {
+		t.Fatalf("品牌字段需 trim 并回读：%+v", got.Prefs)
+	}
 
 	// ③ Normalize：写出的顺序 = **类型清单的顺序**（同一个状态必须写出同一份文件，
 	//    否则"改一下再改回来"会留下两份内容不同、含义相同的 JSON，diff 里全是噪声）。
@@ -148,6 +158,57 @@ func TestPrefsRoundTrip(t *testing.T) {
 	if len(onDisk.Markdown.Disabled) != 2 ||
 		onDisk.Markdown.Disabled[0] != wantOrder[0] || onDisk.Markdown.Disabled[1] != wantOrder[1] {
 		t.Fatalf("落盘该按清单顺序排（期望 %v），得到 %v", wantOrder, onDisk.Markdown.Disabled)
+	}
+}
+
+func TestPrefsBrandDefaultsForLegacyAndEmptyValues(t *testing.T) {
+	server, paths := prefsSandbox(t)
+	if err := os.WriteFile(paths.Config("prefs.json"), []byte(`{"theme":"dark"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	legacy := getPrefsView(t, server)
+	if legacy.Prefs.BrandName != "MicroChat" || legacy.Prefs.BrandIcon != "spark" || legacy.Prefs.WelcomeText != "有什么想聊的？" {
+		t.Fatalf("旧文件缺品牌字段时应继承默认值：%+v", legacy.Prefs)
+	}
+
+	recorder := call(server, "PUT", "/api/v1/config/prefs", `{"brand_name":" ","brand_icon":"chat","welcome_text":"\t"}`)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("空品牌文字应回默认值，得到 %d：%s", recorder.Code, recorder.Body.String())
+	}
+	got := decodeBody[PrefsView](t, recorder).Prefs
+	if got.BrandName != "MicroChat" || got.BrandIcon != "chat" || got.WelcomeText != "有什么想聊的？" {
+		t.Fatalf("空品牌文字未回默认值：%+v", got)
+	}
+}
+
+func TestPrefsRejectsInvalidBrandWithoutWriting(t *testing.T) {
+	server, paths := prefsSandbox(t)
+	probes := []struct {
+		name string
+		body string
+	}{
+		{"icon", `{"brand_icon":"unknown"}`},
+		{"name rune limit", `{"brand_name":"` + strings.Repeat("界", 33) + `"}`},
+		{"welcome rune limit", `{"welcome_text":"` + strings.Repeat("界", 121) + `"}`},
+	}
+	for _, probe := range probes {
+		t.Run(probe.name, func(t *testing.T) {
+			before := []byte(`{"theme":"light"}`)
+			if err := os.WriteFile(paths.Config("prefs.json"), before, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			recorder := call(server, "PUT", "/api/v1/config/prefs", probe.body)
+			if recorder.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("坏品牌偏好应 422，得到 %d：%s", recorder.Code, recorder.Body.String())
+			}
+			after, err := os.ReadFile(paths.Config("prefs.json"))
+			if err != nil {
+				t.Fatalf("422 后原 prefs.json 不应被删除：%v", err)
+			}
+			if string(after) != string(before) {
+				t.Fatalf("422 之后不该改写 prefs.json：%s", after)
+			}
+		})
 	}
 }
 

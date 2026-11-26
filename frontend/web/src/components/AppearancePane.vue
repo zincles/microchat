@@ -66,14 +66,16 @@ const mdEnabled = ref(true);
 const mdDisabled = ref<string[]>([]);
 const mdTypes = ref<MarkdownType[]>([]);
 // 按 block / inline 分组（顺序沿用后端清单的顺序，界面不自己排）。
-const mdGroups = computed<Array<{ kind: string; title: string; items: MarkdownType[] }>>(() => {
-  const groups = [
-    { kind: "block", title: "整段格式", items: [] as MarkdownType[] },
-    { kind: "inline", title: "文字里的格式", items: [] as MarkdownType[] },
+const mdGroups = computed<Array<{ kind: MarkdownType["kind"]; title: string; items: MarkdownType[]; enabled: number }>>(() => {
+  const groups: Array<{ kind: MarkdownType["kind"]; title: string; items: MarkdownType[]; enabled: number }> = [
+    { kind: "block", title: "块级格式", items: [], enabled: 0 },
+    { kind: "inline", title: "行内格式", items: [], enabled: 0 },
   ];
   for (const item of mdTypes.value) {
-    const group = groups.find((g) => g.kind === item.kind) ?? groups[1];
+    const group = groups.find((g) => g.kind === item.kind);
+    if (!group) continue;
     group.items.push(item);
+    if (typeOn(item.id)) group.enabled += 1;
   }
   return groups.filter((g) => g.items.length);
 });
@@ -335,15 +337,83 @@ async function clearBg(): Promise<void> {
       </div>
       <!-- 格式名称及示例来自后端的 markdown_types。 -->
       <div v-for="group in mdGroups" :key="group.kind" class="md-group">
-        <div class="md-group-head">{{ group.title }}</div>
-        <label v-for="item in group.items" :key="item.id" :id="`setting-markdown-${item.id}`" tabindex="-1" class="field md-row">
-          <span>
-            {{ item.name }}
-            <code class="md-sample">{{ item.sample }}</code>
-          </span>
-          <VSwitch :model-value="typeOn(item.id)" :disabled="!mdEnabled" @update:model-value="(on) => toggleType(item.id, on === true)" color="primary" density="compact" hide-details />
-        </label>
+        <div class="md-group-head">
+          <span>{{ group.title }}</span>
+          <span class="md-group-count">{{ group.enabled }}/{{ group.items.length }} 已启用</span>
+        </div>
+        <div class="md-group-list">
+          <label v-for="item in group.items" :key="item.id" :id="`setting-markdown-${item.id}`" tabindex="-1" class="field md-row">
+            <span class="md-copy">
+              <span class="md-name">{{ item.name }}</span>
+              <code :id="`setting-markdown-sample-${item.id}`" class="md-sample">{{ item.sample }}</code>
+            </span>
+            <VSwitch :model-value="typeOn(item.id)" :disabled="!mdEnabled" :aria-describedby="`setting-markdown-sample-${item.id}`" @update:model-value="(on) => toggleType(item.id, on === true)" color="primary" density="compact" hide-details />
+          </label>
+        </div>
       </div>
     </section>
   </section>
 </template>
+<style scoped>
+.md-group {
+  border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  margin-top: 12px;
+  padding-top: 10px;
+}
+
+.md-group-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+
+.md-group-count {
+  color: rgba(var(--v-theme-on-surface), 0.62);
+  font-size: 0.8rem;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.md-group-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 16px;
+}
+
+.md-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: 4px;
+}
+
+.md-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.md-name,
+.md-sample {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.md-sample {
+  color: rgba(var(--v-theme-on-surface), 0.62);
+  font-size: 0.8rem;
+  font-weight: 400;
+}
+
+@media (max-width: 600px) {
+  .md-group-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+</style>

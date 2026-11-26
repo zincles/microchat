@@ -25,7 +25,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"microchat/internal/logx"
 	"strings"
 	"time"
 
@@ -125,7 +125,7 @@ func New(st *store.Store, paths config.Paths, tasks *task.Registry) *Service {
 func (s *Service) Auto(session model.Session) {
 	current, err := s.Store.GetSession(session.ID)
 	if err != nil {
-		log.Printf("起标题：会话 %s 读不出来（这一轮照常）：%v", shortID(session.ID), err)
+		logx.Warnf("起标题：会话 %s 读不出来（这一轮照常）：%v", shortID(session.ID), err)
 		return
 	}
 	if current == nil || strings.TrimSpace(current.Title) != "" {
@@ -142,10 +142,10 @@ func (s *Service) Auto(session model.Session) {
 		// 而且写进去之后 `Auto` 永远不再自动起名（它只在标题为空时才跑）⇒ 一次误按会留下
 		// 一个永久的次品名字。按停就该是**干干净净地没起过**，下次那一轮还会再试。
 		if errors.Is(ctx.Err(), context.Canceled) {
-			log.Printf("起标题：会话 %s 被按停，名字留空（下次那一轮还会再起）", shortID(current.ID))
+			logx.Warnf("起标题：会话 %s 被按停，名字留空（下次那一轮还会再起）", shortID(current.ID))
 			return
 		}
-		log.Printf("起标题：会话 %s 没起成，退回首句截断兜底（这一轮照常）：%v", shortID(current.ID), generateErr)
+		logx.Warnf("起标题：会话 %s 没起成，退回首句截断兜底（这一轮照常）：%v", shortID(current.ID), generateErr)
 		s.fallback(*current)
 		return
 	}
@@ -182,7 +182,7 @@ func (s *Service) write(sessionID, text string) {
 		return
 	}
 	if _, err := s.Store.SetTitleIfEmpty(sessionID, text); err != nil {
-		log.Printf("起标题：会话 %s 的名字没写下去：%v", shortID(sessionID), err)
+		logx.Errorf("起标题：会话 %s 的名字没写下去：%v", shortID(sessionID), err)
 	}
 }
 

@@ -29,6 +29,7 @@ import type {
   FlowRunTrace,
   FlowTestResult,
   HealthResponse,
+  LiveHeartbeatResponse,
   ImportJsonResult,
   ImportStResult,
   LastPayload,
@@ -283,6 +284,9 @@ export function createApi({ base, token = "", fetchFn = fetch }: CreateApiOption
     pullUpdate: () => call<UpdatePullResult>("POST", "/update/pull"),
     rebaseUpdate: () => call<UpdatePullResult>("POST", "/update/rebase"),
     listSessions: () => call<SessionView[]>("GET", "/sessions"),
+    liveHeartbeat: (clientId: string) =>
+      call<LiveHeartbeatResponse>("POST", "/live/heartbeat", { client_id: clientId }),
+    liveEventsUrl: () => `${base}/live/events`,
     createSession: (body: CreateSessionRequest = {}) => call<Session>("POST", "/sessions", body),
     // deleteSession：删整条会话（后端不代建 —— 删完进哪条由调用方定）。
     deleteSession: (id: string) => call<null>("DELETE", `/sessions/${enc(id)}`),
@@ -444,8 +448,10 @@ export function createApi({ base, token = "", fetchFn = fetch }: CreateApiOption
     // 导出 = 会话域（owner 自己就能导）；导入 = 设置面（admin，与 ST 导入一致）。
     exportSession: (id: string) => call<ExportDocument>("GET", `/sessions/${enc(id)}/export`),
     importJson: (doc: unknown) => call<ImportJsonResult>("POST", "/sessions/import-json", doc),
-    // 提示词段（system prompt segment）：读口随 `GET /agents`（段库就在那份里）；写口三个（admin）。
+    // 提示词段：读口随 `GET /agents`；创建、克隆、改名/正文和删除。
     createSegment: (body: CreateSegmentRequest) => call<Segment>("POST", "/segments", body),
+	copySegment: (sourceID: string, id: string) =>
+		call<Segment>("POST", `/segments/${enc(sourceID)}/copy`, { id }),
     patchSegment: (id: string, body: UpdateSegmentRequest) =>
       call<Segment>("PATCH", `/segments/${enc(id)}`, body),
     deleteSegment: (id: string) => call<null>("DELETE", `/segments/${enc(id)}`),

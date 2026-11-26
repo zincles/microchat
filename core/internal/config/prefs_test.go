@@ -69,3 +69,48 @@ func TestDefaultPrefsBoolPointersAreDistinct(t *testing.T) {
 		t.Fatal("command_menu 与 payload_viz / bar_left_hidden 共用了同一个指针")
 	}
 }
+func TestBrandPrefsDefaultsNormalizeAndLoadLegacyFiles(t *testing.T) {
+	defaults := DefaultPrefs()
+	if defaults.BrandName != "MicroChat" || defaults.BrandIcon != "spark" || defaults.WelcomeText != "有什么想聊的？" {
+		t.Fatalf("unexpected brand defaults: %+v", defaults)
+	}
+
+	paths := Paths{DataDir: t.TempDir()}
+	paths.ConfigDir = filepath.Join(paths.DataDir, "config")
+	if err := SavePrefs(paths, Prefs{BrandName: "  Studio  ", BrandIcon: "bot", WelcomeText: "  你好  "}); err != nil {
+		t.Fatalf("SavePrefs: %v", err)
+	}
+	got, err := LoadPrefs(paths)
+	if err != nil {
+		t.Fatalf("LoadPrefs: %v", err)
+	}
+	if got.BrandName != "Studio" || got.BrandIcon != "bot" || got.WelcomeText != "你好" {
+		t.Fatalf("brand prefs were not normalized: %+v", got)
+	}
+
+	if err := SaveJSON(paths.Config("prefs.json"), map[string]string{"theme": "dark"}); err != nil {
+		t.Fatalf("write legacy prefs: %v", err)
+	}
+	got, err = LoadPrefs(paths)
+	if err != nil {
+		t.Fatalf("LoadPrefs legacy: %v", err)
+	}
+	if got.BrandName != defaults.BrandName || got.BrandIcon != defaults.BrandIcon || got.WelcomeText != defaults.WelcomeText {
+		t.Fatalf("legacy prefs must inherit brand defaults: %+v", got)
+	}
+}
+
+func TestSavePrefsEmptyBrandTextUsesDefaults(t *testing.T) {
+	paths := Paths{DataDir: t.TempDir()}
+	paths.ConfigDir = filepath.Join(paths.DataDir, "config")
+	if err := SavePrefs(paths, Prefs{BrandName: " \t", BrandIcon: "chat", WelcomeText: "\n"}); err != nil {
+		t.Fatalf("SavePrefs: %v", err)
+	}
+	got, err := LoadPrefs(paths)
+	if err != nil {
+		t.Fatalf("LoadPrefs: %v", err)
+	}
+	if got.BrandName != "MicroChat" || got.BrandIcon != "chat" || got.WelcomeText != "有什么想聊的？" {
+		t.Fatalf("empty brand text must restore defaults: %+v", got)
+	}
+}

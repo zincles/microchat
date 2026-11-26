@@ -16,7 +16,7 @@ import { resetChrome, stepChrome } from "../src/utils/chrome.ts";
 import { typewriterDuration, revealCount, TYPEWRITER_DEFAULT_MS, TYPEWRITER_MIN_MS, TYPEWRITER_MAX_MS } from "../src/utils/typewriter.ts";
 import { computeViewportFit } from "../src/utils/viewport.ts";
 import { classifyAxis, pickDrag, dragProgress, resolveRelease } from "../src/utils/swipe.ts";
-import { searchSettings, SETTINGS_SECTIONS } from "../src/utils/settingsCatalog.ts";
+import { searchSettings, SETTINGS_GROUPS, SETTINGS_SECTIONS } from "../src/utils/settingsCatalog.ts";
 import {
   formatThinkLabel,
   formatStatusLine,
@@ -356,6 +356,17 @@ test("Markdown：\\[...\\] 也是块级公式，\\boxed 走 KaTeX 原生边框",
   assert.ok(!html.includes("\\["), "字面 \\[ 还露在输出里");
 });
 
+test("KaTeX：字体稳定后才显示真实溢出的横向提示", () => {
+  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8");
+  const bubble = readFileSync(join(SRC, "components", "MessageBubble.vue"), "utf8");
+  assert.match(css, /\.katex-display\s*\{[^}]*overflow-x:\s*auto[^}]*scrollbar-width:\s*none/,
+    "布局未稳定时仍可滚动，但不应闪现滚动条");
+  assert.match(css, /\.katex-display\.scroll-x\s*\{[^}]*scrollbar-width:\s*thin/,
+    "真实溢出的公式需显示横向查看提示");
+  assert.match(bubble, /document\.fonts\.ready\.then\(\(\)\s*=>\s*nextTick\(markMathOverflow\)\)/,
+    "必须等字体稳定后再测量公式溢出");
+});
+
 test("Markdown 渲染：HTML 一律转义、数学走 KaTeX 占位", () => {
   const h = renderMarkdown("<script>alert(1)</script>");
   assert.ok(!h.includes("<script>"));
@@ -632,7 +643,7 @@ test("FlowAgent：新建菜单两种类型，流程编辑器有输入/LLM/拼接
   assert.ok(flowIssues(badPrompt).some((x) => x.includes("role 只能是")), "没有拦住非法的 Prompt role");
 });
 
-test("agent 卡带 v2：带引用段（内置不带）、结构不拼平；v1 老卡带照收；导入侧校验", () => {
+test("智能体文件 v3：携带最新用户消息段及所有引用段；导入兼容旧版本", () => {
   const lib = [
     { id: "katex", text: "数学用 $…$ 写。" },
     { id: "mcp", text: "需要联网时调用搜索。" },
@@ -640,15 +651,16 @@ test("agent 卡带 v2：带引用段（内置不带）、结构不拼平；v1 �
   ];
   const agent = {
     id: "rp-agent-simple", name: "RP Agent", description: "负责主持与旁白", system_prompt: "你是主持人。",
-    segments: ["katex", "合理的RolePlay", "mcp"], first_message: "开场",
-    // 能力也引用段（2026-10-28）：`mcp` 与 agent 自己那份**重叠** ⇒ 卡带里只出现一次
+    segments: ["katex", "合理的RolePlay", "mcp"], latest_prompt_segments: ["katex"], first_message: "开场",
+    // 能力也引用段（2026-10-28）：`mcp` 与 agent 自己那份重叠；`katex` 也被最新用户消息复用。
     abilities: { title: { enabled: false }, compact: { segments: ["mcp", "katex"] } }, prepend_state: true,
   };
   const card = buildCartridge(agent, lib);
-  assert.equal(card.version, 2);
+  assert.equal(card.version, 3);
   assert.equal(card.agent.description, "负责主持与旁白");
   assert.equal(card.agent.system_prompt, "你是主持人。"); // base 原文，**不拼平**
   assert.deepEqual(card.agent.segments, ["katex", "合理的RolePlay", "mcp"]); // 引用照旧
+  assert.deepEqual(card.agent.latest_prompt_segments, ["katex"]);
   assert.deepEqual(card.segments, [ // 只带引用到的**用户段**；内置不带
     { id: "katex", text: "数学用 $…$ 写。" },
     { id: "mcp", text: "需要联网时调用搜索。" },
@@ -666,6 +678,7 @@ test("agent 卡带 v2：带引用段（内置不带）、结构不拼平；v1 �
   assert.equal(back.agent.name, "RP Agent");
   assert.equal(back.agent.description, "负责主持与旁白");
   assert.deepEqual(back.agent.segments, ["katex", "合理的RolePlay", "mcp"]);
+  assert.deepEqual(back.agent.latest_prompt_segments, ["katex"]);
   assert.equal(back.segments.length, 2);
   assert.equal(back.agent.prepend_state, true);
   // 老卡带（还带着 display_mode）照样能导：那个键没人看，归一化后自然不在结果里。
@@ -690,17 +703,20 @@ test("对话导出/导入接口形状：路径 / 方法 / 体", async () => {
   assert.deepEqual(JSON.parse(seen[1].opts.body).messages[0], { role: "user", content: "a" });
 });
 
-test("提示词段接口形状：路径 / 方法", async () => {
+test("提示词段接口形状：路径 / 方法 / 副本 id", async () => {
   const seen = [];
   const api = createApi({ base: "http://x/api/v1", token: "t", fetchFn: async (url, opts) => { seen.push({ url, opts }); return { status: 200, ok: true, json: async () => ({}) }; } });
   await api.createSegment({ id: "katex", text: "x" });
+  await api.copySegment("from-st", "from-st-copy");
   await api.patchSegment("katex", { text: "y" });
   await api.deleteSegment("katex");
   assert.deepEqual(seen.map((s) => [s.opts.method, s.url.replace("http://x/api/v1", "")]), [
     ["POST", "/segments"],
+    ["POST", "/segments/from-st/copy"],
     ["PATCH", "/segments/katex"],
     ["DELETE", "/segments/katex"],
   ]);
+  assert.deepEqual(JSON.parse(seen[1].opts.body), { id: "from-st-copy" });
 });
 
 test("载荷分块：parseWireMessages 只认形状（messages 数组），边角字段一个不吞", () => {
@@ -882,32 +898,26 @@ test("标题模型三档：Agent 里可切全局 / 当前 / Agent，全局默认
   assert.match(config, /ModelSource\s+string `json:"model_source,omitempty"`/);
 });
 
-// 提示词段的编辑器（agent 级 + 能力级）：`.vue` 里的接线**只能读源码验** —— 少接一环不会报错，
-// 只会让"我加了段、它没生效"变成一场排查（后端那份由 `compact_segments_test.go` 用真载荷钉住）。
-//
-// 2026-10-28 用户：「不协调。总觉得和编辑系统提示词的有区别。」⇒ 两处**共用同一个组件**。
-// 这条守卫要的正是这个：挑 / 排 / 删 / 缺段警告 / 拼装预览**只有一份实现**，
-// 谁要是又在某一个地方手写一套，这里就该炸。
-test("提示词段的编辑器：agent 级与能力级用的是同一个组件", () => {
+// 提示词段编辑：system、最新 user message 与能力级共用一个 SegmentList。
+test("提示词片段在三种 Agent 装配位置复用同一个组件", () => {
   const editor = readFileSync(join(SRC, "components", "AgentEditor.vue"), "utf8");
   const list = readFileSync(join(SRC, "components", "SegmentList.vue"), "utf8");
-  // 两处都调它，而且各自绑对了自己的清单（agent 的 `segs` / 能力的 `rows[id].segments`）
-  assert.equal(editor.match(/<SegmentList/g)?.length, 2,
-    "AgentEditor 该在两处（agent 级、能力级）都用 SegmentList —— 各写一套必然长得不一样");
-  assert.match(editor, /v-model:ids="segs"/, "agent 级没绑自己的段清单");
-  assert.match(editor, /v-model:ids="rows\[id\]\.segments"/, "能力级没绑自己的段清单");
-  // 组件本身：挑 / 排 / 删 / 缺段警告 / 拼装预览，五样都在
+  assert.equal(editor.match(/<SegmentList/g)?.length, 3,
+    "system、最新用户消息与 ability 应共用 SegmentList");
+  assert.match(editor, /v-model:ids="segs"/, "system prompt 没绑定自己的段清单");
+  assert.match(editor, /v-model:ids="latestPromptSegs"/, "最新用户消息没绑定独立段清单");
+  assert.match(editor, /latest_prompt_segments:/, "保存时没有提交最新用户消息的段引用");
+  assert.match(editor, /v-model:ids="rows\[id\]\.segments"/, "ability 没绑定自己的段清单");
+  assert.match(editor, /@edit-segment="emit\('edit-segment', \$event\)"/, "片段编辑动作没有向父级发出");
   assert.match(list, /function add\(/, "没有「从段库挑一个加进来」");
   assert.match(list, /function move\(/, "没有上下移（顺序就是语义）");
   assert.match(list, /function drop\(/, "没有移除");
   assert.match(list, /引用了不存在的片段/, "缺段的汇总警告没了");
   assert.match(list, /拼好的提示词预览（\{\{ assembled\.length \}\} 字）/, "拼装预览没了");
-  // 编辑器的读回 / 写回仍然在 AgentEditor（那是配置形状，不是编辑器）
   assert.match(editor, /segments: \[\.\.\.\(one\.segments \?\? \[\]\)\]/, "fillRows 没把能力的段读回来");
   assert.match(editor, /segments: \[\.\.\.\(r\.segments \?\? \[\]\)\]/, "toPatch 没把段发出去");
-  // 能力级的预览必须是"这一发真会发出去的提示词"（模板 + 段），不是只把段拼起来
   assert.match(editor, /abilityPrompt\(r\.prompt, r\.segments/, "预览没走能力的完整拼装");
-  assert.match(editor, /ABILITY_TEMPLATE_SEGMENTS\[id\]/, "预览不知道这能力的模板住在哪几条内置段");
+  assert.match(editor, /ABILITY_TEMPLATE_SEGMENTS\[id\]/, "预览不知道能力模板住在哪些内置段");
 });
 
 // 能力的模板 2026-10-28 起都住在段库（用户：「把默认压缩载荷挑出来，制作成单独的内置 segment」
@@ -995,6 +1005,19 @@ test("编辑端点形状：PATCH 消息带 content/reasoning，PATCH 摘要带 t
   await api.editSummary("s1", "sum1", "新手改");
   assert.deepEqual(seen[0], ["http://x/api/v1/sessions/s1/messages/m1", "PATCH", { reasoning: "想通了" }]);
   assert.deepEqual(seen[1], ["http://x/api/v1/sessions/s1/summaries/sum1", "PATCH", { text: "新手改" }]);
+});
+
+test("会话收藏：PATCH /sessions/{id} 发送 favorite 布尔字段", async () => {
+  const seen: Array<[string, string | undefined, unknown]> = [];
+  const api = createApi({
+    base: "http://x/api/v1",
+    fetchFn: async (url, opts) => {
+      seen.push([url, opts.method, JSON.parse(String(opts.body))]);
+      return { status: 200, ok: true, json: async () => ({ favorite: true }) };
+    },
+  });
+  await api.patchSession("s1", { favorite: true });
+  assert.deepEqual(seen, [["http://x/api/v1/sessions/s1", "PATCH", { favorite: true }]]);
 });
 
 test("resend 端点形状：POST /resend 无体", async () => {
@@ -1955,11 +1978,13 @@ test("Agent 编辑器分页签：传统 Agent 是基本/系统提示词，FlowAg
 // 2026-11-11 用户：酒馆预设会接管整套提示词，必须把“忽略了什么”写在选项旁边。
 test("Agent 酒馆预设：选中时警告说明会接管哪些提示词", () => {
   const editor = readFileSync(join(SRC, "components", "AgentEditor.vue"), "utf8");
-  assert.match(editor,  /提示词方案（酒馆预设）/, "预设字段没有提醒会接管");
-  assert.match(editor, /class="field-warning"/, "没有显眼的警告块");
-  for (const text of ["系统提示词", "追加片段", "手工提示词方案", "会话自己的「自定义提示词」", "选「不使用」"]) {
-    assert.ok(editor.includes(text), `警告缺了：${text}`);
-  }
+  assert.match(editor, /<label class="field"><span>提示词方案<\/span>/, "预设选择器没有说明项");
+  const warning = editor.match(/<p v-if="presetId" class="field-warning">([\s\S]*?)<\/p>/)?.[1] ?? "";
+  assert.ok(warning, "选中预设后没有警告");
+  assert.match(warning, /酒馆预设会接管该 Agent 的对话提示词/, "没有说明预设接管对话系统提示词");
+  assert.match(warning, /系统提示词、追加片段和手工提示词方案不参与装配/, "没有说明 Agent 自有提示词不会参与");
+  assert.match(warning, /会话自己的「自定义提示词」仍然优先/, "没有说明会话自定义提示词的优先级");
+  assert.match(warning, /选「不使用」并保存即可恢复/, "没有说明如何恢复 Agent 提示词方案");
 });
 
 // 能力的**中文名**同样是"两处各写一遍"：前端 `ABILITY_LABELS`（页签名）与后端
@@ -2453,9 +2478,14 @@ test("上下文工作区：切进去 / 换会话时按当前 tab 补拉", () => 
   const ctxSrc = readFileSync(join(SRC, "composables", "useContextWorkspace.ts"), "utf8");
   const lazy = ctxSrc.match(/function refreshContextLazy\(foreground = true\)[\s\S]*?\n  \}/)?.[0] ?? "";
   assert.ok(lazy, "找不到 refreshContextLazy");
-  assert.match(lazy, /payloadTab\.value === "tree"\) void refreshTree\(foreground\)/, "压缩 tab 没拉树");
-  assert.match(lazy, /payloadTab\.value === "state"\) refreshStateView\(getSessionID\(\), foreground\)/, "状态 tab 没拉状态");
-  assert.match(lazy, /else if \(payloadTab\.value === "payload"\) void refreshHistoryPreview\(foreground\)/, "载荷 tab 没拉历史预演");
+  assert.match(lazy, /payloadTab\.value === "tree"\) void loadTree\(foreground, true\)/, "压缩 tab 没有强制重载树");
+  assert.match(lazy, /payloadTab\.value === "state"\) void loadState\(foreground, true\)/, "状态 tab 没强制刷新并经过状态加载器的缓存/错误处理");
+  assert.match(lazy, /else if \(payloadTab\.value === "payload"\) void loadHistoryPreview\(foreground, true\)/, "载荷 tab 没有强制刷新历史预演");
+  const stateLoader = ctxSrc.match(/async function loadState\(foreground = true, force = false\)[\s\S]*?\n  \}/)?.[0] ?? "";
+  assert.ok(stateLoader, "找不到 loadState");
+  assert.match(stateLoader, /if \(!force && cachedAt != null/, "状态缓存只应跳过非强制刷新");
+  assert.match(stateLoader, /succeeded === true[\s\S]*?saveTimestampCache\(stateCache, sid\)/, "状态仅在刷新成功后缓存");
+  assert.match(stateLoader, /else stateCache\.delete\(sid\)|catch \{[\s\S]*?stateCache\.delete\(sid\)/, "状态刷新失败时没有清除缓存");
   const hp = ctxSrc.match(/async function refreshHistoryPreview\(foreground = true\)[\s\S]*?\n  \}/)?.[0] ?? "";
   assert.ok(hp, "找不到 refreshHistoryPreview");
   assert.ok(!/previewOn\(\)/.test(hp), "载荷 tab 仍受输入预览开关影响（打开载荷就该拉）");
@@ -3085,15 +3115,22 @@ test("消息编辑：应用内模态，不就地改气泡", () => {
 test("回到前台会跟后端对齐（三条事件都接）", () => {
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
 
-  // ① 三条事件都要接，而且都要卸（少了 pageshow 就漏掉安卓从 bfcache 恢复那条路）。
-  for (const ev of ['"visibilitychange"', '"focus"', '"pageshow"']) {
-    assert.match(app, new RegExp(`addEventListener\\(${ev}, resyncOnForeground\\)`), `没接 ${ev}`);
-    assert.match(app, new RegExp(`removeEventListener\\(${ev}, resyncOnForeground\\)`), `没卸 ${ev}`);
+  const liveSync = readFileSync(join(SRC, "composables", "useLiveSync.ts"), "utf8");
+  const lifecycleEvents = [
+    { target: "document", event: "visibilitychange", handler: "onVisibilityChange" },
+    { target: "window", event: "focus", handler: "foreground" },
+    { target: "window", event: "pageshow", handler: "foreground" },
+  ];
+  for (const { target, event, handler } of lifecycleEvents) {
+    assert.match(liveSync, new RegExp(`${target}\\.addEventListener\\("${event}", ${handler}\\)`), `useLiveSync 没接 ${event}`);
+    assert.match(liveSync, new RegExp(`${target}\\.removeEventListener\\("${event}", ${handler}\\)`), `useLiveSync 没卸 ${event}`);
   }
+  assert.match(app, /useLiveSync\(\{/, "App 没有安装 live sync");
+  assert.match(app, /onForeground:\s*async \(hadHiddenChanges: boolean\)\s*=>\s*\{[\s\S]*?resyncOnForeground/, "App 没把前台恢复接到会话同步");
 
-  const start = app.indexOf("async function resyncOnForeground()");
-  assert.ok(start > 0, "找不到 resyncOnForeground");
-  const body = app.slice(start, app.indexOf("\n// resumeReroll", start));
+  const resync = app.match(/async function resyncOnForeground\([^)]*\)\s*\{[\s\S]*?\n\}/);
+  assert.ok(resync, "找不到 resyncOnForeground");
+  const body = resync[0];
 
   // ② **还在跑就只接轮询、不许重拉消息列** —— 重拉会把正在流的那个气泡换成库里的，
   //    等于把活人从屏幕上抹掉。
@@ -3348,8 +3385,10 @@ test("更新面板：显示提交 + 拉取并重启（由 entrypoint 接手）",
   const upd = readFileSync(join(SRC, "utils", "update.ts"), "utf8");
   const client = readFileSync(join(SRC, "api", "client.ts"), "utf8");
 
-  assert.match(bar, /class="brand"[\s\S]*?@click="\$emit\('open-update'\)"/, "品牌头没接更新入口");
-  assert.match(app, /@open-update="\(\) => openManage\('update'\)"/, "App 没把更新入口接到设置视图");
+  assert.match(bar, /class="brand"[\s\S]*?@click="\$emit\('open-update'\)"/, "品牌头没发出更新导航事件");
+  const openUpdate = app.match(/@open-update="([^"]+)"/)?.[1] ?? "";
+  assert.ok(openUpdate, "App 没有处理品牌更新事件");
+  assert.match(openUpdate, /openManage\('update'\)/, "品牌更新事件没有导航到更新面板");
   assert.match(settings, /<UpdatePane :ask="ask"/, "设置视图里没有更新面板");
   assert.match(pane, /class="update-grid"/, "更新页没有压缩成版本/PWA 双卡");
   assert.match(pane, /class="update-version-grid"/, "本地/远端没有并排的版本网格");
@@ -3372,10 +3411,17 @@ test("更新面板：显示提交 + 拉取并重启（由 entrypoint 接手）",
   assert.match(updateBar, /update-backend/, "顶部更新条没有更新前后端的动作");
   assert.match(updateSrc, /autoBackendUpdate/, "更新 composable 没有自动更新 GitHub");
   assert.match(updateSrc, /5 \* 60 \* 1000/, "自动更新不是每 5 分钟");
-  assert.match(updateSrc, /remote_relation === "behind"/, "自动更新没有判断 GitHub 落后");
+  assert.match(updateSrc, /status\.remote_relation !== "behind"/, "自动更新未限制为确认落后的远端");
+  assert.match(updateSrc, /if \(status\.dirty\)/, "自动更新未阻止有未提交修改时拉取");
+  assert.match(updateSrc, /if \(!status\.restart_supported\)/, "自动更新未要求部署支持重启");
   assert.match(readFileSync(join(SRC, "components", "UpdatePane.vue"), "utf8"), /自动更新（每 5 分钟）/, "更新面板没有自动更新开关");
-  assert.match(app, /mc-update-auto-check/, "更新面板开关没通知 App");
-  assert.match(app, /:backend="backendUpdate"/, "顶部更新条没接后端更新状态");
+  assert.match(updateSrc, /addEventListener\("mc-update-auto-check", onAutoCheckChanged\)/, "更新 composable 没有接收自动检查开关事件");
+  const autoCheckHandler = updateSrc.match(/function onAutoCheckChanged\(\)[\s\S]*?\n  \}/)?.[0] ?? "";
+  assert.ok(autoCheckHandler, "更新 composable 没有自动检查开关处理器");
+  assert.match(autoCheckHandler, /stopUpdatePolling\(\)/, "关闭自动检查时没有停止轮询");
+  assert.match(autoCheckHandler, /startUpdatePolling\(\)/, "开启自动检查时没有启动轮询");
+  assert.match(updateSrc, /removeEventListener\("mc-update-auto-check", onAutoCheckChanged\)/, "更新 composable 卸载时没有移除自动检查事件");
+  assert.match(app, /:backend="backendUpdate \|\| backendUpdating"/, "顶部更新条没接后端更新及更新中状态");
   assert.match(pane, /restart_supported/, "没区分容器部署与宿主二进制");
   assert.match(pane, /needsRebase/, "没识别分叉需要变基");
   assert.match(pane, /rebaseUpdate/, "没有变基动作");
@@ -3402,6 +3448,34 @@ test("模型规则：内置只读规则 + 用户规则，支持 match_protocol �
   assert.match(types, /match_protocol\?/, "API 类型没有 match_protocol");
   assert.match(types, /server_tools\?/, "API 类型没有 server_tools");
   assert.match(types, /local_tools\?/, "API 类型没有 local_tools");
+  assert.match(types, /export interface ModelRuleGroup\s*\{\s*kind: "group";\s*id: string;\s*name: string;\s*rules: ModelDefineRule\[\];/s, "API 类型没有规定分组 JSON 形状");
+  assert.match(types, /kind\?: never;/, "普通规则必须通过 kind?: never 与分组区分");
+  assert.match(types, /match_all\?: boolean;/, "API 类型没有 match_all");
+  assert.match(types, /replay_reasoning_with_tools\?: boolean;/, "API 类型没有工具数量思考策略字段");
+  assert.match(types, /export interface ModelView \{[\s\S]*?replay_reasoning: boolean;/, "ModelView 缺少后端回传思考字段");
+  assert.match(types, /export interface ModelListItem \{[\s\S]*?replay_reasoning: boolean;/, "ModelListItem 缺少后端回传思考字段");
+  assert.match(editor, /function canMoveRule/, "规则移动没有统一边界判定");
+  assert.match(editor, /canMoveRule\(entry\.location, 1\)/, "下移按钮未按实际边界禁用");
+  assert.match(editor, /location\.groupId === null[\s\S]*?rules\.value\[target\] = current/, "顶层规则应能与相邻分组调整顶层次序");
+  assert.match(editor, /所属分组/, "规则编辑器不能调整所属分组");
+  assert.match(editor, /新增分组/, "规则编辑器不能新建分组");
+  assert.match(editor, /移动分组|moveGroup/, "规则编辑器不能调整分组顺序");
+  assert.match(editor, /按启用工具数量自动判断/, "规则编辑器没有按工具数回传思考选项");
+  assert.match(editor, /replay_reasoning_with_tools !== undefined/, "编辑器必须区分工具回传策略的 false 与未设置");
+  assert.match(editor, /tools-never/, "编辑器不能无损表达有工具时不回传");
+  assert.ok(!/window\.prompt/.test(editor), "新增分组不能使用阻塞式浏览器 prompt");
+  assert.match(editor, /groupName|分组名称/, "新增分组必须使用组件内输入交互");
+  const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
+  const chatConfig = types.match(/export interface ChatConfig \{[\s\S]*?\n\}/)?.[0] ?? "";
+  assert.ok(chatConfig && !/replay_reasoning/.test(chatConfig), "旧 ChatConfig 仍包含 replay_reasoning");
+  assert.ok(!/chat\.replay_reasoning|body\.replay_reasoning|setting-replay-reasoning/.test(settings), "SettingsModal 仍序列化全局回传思考开关");
+  assert.match(settings, /历史思考/, "设置中应保留历史思考说明");
+  assert.match(builtin, /"kind"\s*:\s*"group"/, "系统内建规则缺少分组结构");
+  assert.match(builtin, /模型图标/, "系统内建规则缺少模型图标分组");
+  assert.match(builtin, /"match_all"\s*:\s*true/, "内置列表缺少 match-all policy");
+  assert.match(builtin, /"replay_reasoning_with_tools"\s*:\s*true/, "内置列表缺少工具数量思考策略");
+  assert.match(types, /model_define_rules\?: ModelRule\[\]/, "渠道级规则类型未采用相同的分组规则类型");
+  assert.equal([...types.matchAll(/model_define_rules\?: ModelRule\[\]/g)].length, 3, "渠道视图/创建/更新请求都应使用可含分组的 ModelRule");
   assert.match(editor, /系统内建全局规则/, "编辑器没有系统内建规则区");
   assert.match(editor, /用户规则/, "编辑器没有用户规则区");
   assert.match(editor, /builtin_model_rules/, "编辑器没有读内置规则");
@@ -3410,10 +3484,40 @@ test("模型规则：内置只读规则 + 用户规则，支持 match_protocol �
   assert.match(types, /BuiltinModelRule/, "API 类型没有内置规则视图");
   assert.match(types, /ModelRulesView/, "API 类型没有规则视图");
   assert.match(client, /modelRules: \(\) => call<ModelRulesView>/, "客户端没读规则视图");
-  assert.match(builtin, /"id": "xai-grok-4-native"/, "内置规则没有 grok-4 × response 条目");
-  assert.match(builtin, /"match_protocol": "openai-response"/, "内置 grok 规则没限定 response");
-  assert.match(builtin, /"server_tools": \[[^\]]*"x_search"[^\]]*"web_search"[^\]]*"code_execution"/s,
-    "内置 grok 规则没有追加 xAI 服务端 tools");
+  interface BuiltinJsonRule {
+    kind?: string;
+    id: string;
+    name?: string;
+    rules?: BuiltinJsonRule[];
+    match_contains?: string;
+    match_protocol?: string;
+    server_tools?: string[];
+  }
+  function isBuiltinRule(value: unknown): value is BuiltinJsonRule {
+    if (typeof value !== "object" || value === null || Array.isArray(value) || !("id" in value) || typeof value.id !== "string") return false;
+    if ("kind" in value && value.kind === "group") {
+      return "name" in value && typeof value.name === "string" && "rules" in value &&
+        Array.isArray(value.rules) && value.rules.every(isBuiltinRule);
+    }
+    return (!("match_contains" in value) || typeof value.match_contains === "string") &&
+      (!("match_protocol" in value) || typeof value.match_protocol === "string") &&
+      (!("server_tools" in value) || Array.isArray(value.server_tools) && value.server_tools.every((tool) => typeof tool === "string"));
+  }
+  const parsedBuiltin: unknown = JSON.parse(builtin);
+  assert.ok(Array.isArray(parsedBuiltin), "内置模型规则不是规则列表");
+  const builtinRules = parsedBuiltin.filter(isBuiltinRule);
+  const iconGroup = builtinRules.find((rule) => rule.kind === "group" && rule.id === "model-icons");
+  assert.ok(iconGroup && Array.isArray(iconGroup.rules), "模型图标规则没有归入 model-icons 分组");
+  assert.equal(builtinRules[0], iconGroup, "模型图标分组应排在内置规则列表首位");
+  const nativeRules = builtinRules.filter((rule) => rule.kind !== "group");
+  const xai = nativeRules.find((rule) => rule.id === "xai-grok-4-native");
+  assert.ok(xai, "内置 native tool 列表没有 grok-4 × response 规则");
+  assert.equal(xai.match_contains, "grok-4", "xAI 规则模型匹配条件不对");
+  assert.equal(xai.match_protocol, "openai-response", "xAI 规则没有限定 response 协议");
+  assert.deepEqual(xai.server_tools, ["x_search", "web_search", "code_execution"], "xAI native tools 或顺序不对");
+  assert.deepEqual(nativeRules.map((rule) => rule.id), [
+    "openai-gpt-native", "gemini-native", "xai-grok-4-native", "deepseek-web", "replay-reasoning-with-tools",
+  ], "内置 native tool 规则顺序不对");
   assert.ok(!/xai-grok-4-native/.test(go), "工具规则不该再写死在 Go 默认规则里");
 });
 
@@ -4052,14 +4156,20 @@ test("会话/渠道管理页不跑设置 tab 滑入（页面切换不是 tab）"
   assert.match(settings, /<VTabsWindow[^>]*:key="props\.only \|\| 'settings'"/, "管理页没有按 only 重挂载 window，tab 滑入还会反向");
 });
 
-// 设置目录的 window item 顺序必须与 SETTINGS_SECTIONS 一致：Vuetify 的滑入方向按
-// window item 注册顺序算，不是按目录顺序算（2026-11-06 用户报「行为不太对」）。
-test("设置页顺序：目录在最前，子区与 SETTINGS_SECTIONS 一致", () => {
+// 窗口项顺序按 VTabsWindow 注册；分类目录可独立分组，但 section 顺序必须稳定。
+test("设置页分为五类且窗口项顺序与 SETTINGS_SECTIONS 一致", () => {
   const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
+  const home = readFileSync(join(SRC, "components", "SettingsHome.vue"), "utf8");
   const items = [...settings.matchAll(/<VTabsWindowItem[^>]*\bvalue="([^"]+)"/g)].map((m) => m[1]);
-  const sectionIds = new Set(SETTINGS_SECTIONS.map((s) => s.id));
+  const sectionIds = new Set(SETTINGS_SECTIONS.map((section) => section.id));
   const visible = items.filter((id) => id === "home" || sectionIds.has(id));
-  assert.deepEqual(visible, ["home", ...SETTINGS_SECTIONS.map((s) => s.id)], "设置 window item 顺序与目录顺序不一致，滑入方向会反");
+  assert.deepEqual(visible, ["home", ...SETTINGS_SECTIONS.map((section) => section.id)], "设置 window item 顺序与 section 顺序不一致，滑入方向会反");
+  assert.deepEqual(SETTINGS_GROUPS.map((group) => group.label), ["用户配置", "外观", "数据", "系统设置", "外部"]);
+  const groupedPages = SETTINGS_GROUPS.flatMap((group) => group.pages.map((page) => page.id));
+  assert.equal(groupedPages.length, SETTINGS_SECTIONS.length, "分类重复或遗漏了设置页");
+  assert.deepEqual(new Set(groupedPages), sectionIds, "每个设置页必须且只属于一个类别");
+  assert.match(home, /设置类别/, "设置首页没有显示类别目录");
+  assert.match(settings, /<VTabsWindowItem value="runner">/, "外部类别没有 Runner 预留入口");
 });
 
 
@@ -4122,8 +4232,10 @@ test("品牌标志可点击跳更新；更新页底部有项目介绍与 GitHub 
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
   const updateSrc = readFileSync(join(SRC, "composables", "useAppUpdate.ts"), "utf8");
   const pane = readFileSync(join(SRC, "components", "UpdatePane.vue"), "utf8");
-  assert.match(bar, /<button[\s\S]*class="brand"[\s\S]*@click="\$emit\('open-update'\)"/, "品牌标志不是跳更新面板的按钮");
-  assert.match(app, /@open-update="\(\) => openManage\('update'\)"/, "App 没接 open-update");
+  assert.match(bar, /<button[\s\S]*class="brand"[\s\S]*@click="\$emit\('open-update'\)"/, "品牌标志没有触发更新导航事件");
+  const openUpdate = app.match(/@open-update="([^"]+)"/)?.[1] ?? "";
+  assert.ok(openUpdate, "App 没有处理品牌更新事件");
+  assert.match(openUpdate, /openManage\('update'\)/, "品牌更新事件没有导航到更新面板");
   assert.match(pane, /关于 MicroChat/, "更新页没有项目介绍");
   assert.match(pane, /Zincles/, "没有作者 Zincles");
   assert.match(pane, /DeepSeekV4\.1Flash/, "没有作者 DeepSeekV4.1Flash");

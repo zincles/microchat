@@ -101,9 +101,14 @@ func TestRerollContract(t *testing.T) {
 		t.Fatalf("没切之前，当前那版还是原文：%+v", state.Items)
 	}
 
+	events, unsubscribe := box.server.live.Subscribe()
+	defer unsubscribe()
 	// 切到第 2 版：**UUID 不变**、正文变成摇出来的那句
 	if recorder := call(box.server, "POST", box.path+"/reroll-message/switch", `{"idx":2}`); recorder.Code != http.StatusOK {
 		t.Fatalf("切换该 200，得到 %d：%s", recorder.Code, recorder.Body.String())
+	}
+	if event := <-events; event.Name != "session_changed" || event.SessionID != box.sessionID {
+		t.Fatalf("消息重摇通知 = %+v", event)
 	}
 	applied := box.lastMessage(t)
 	if applied.ID != tail.ID {
@@ -399,9 +404,14 @@ func TestRerollSummaryContract(t *testing.T) {
 		t.Fatalf("没切之前，当前那版还是原文：%+v", state.Items)
 	}
 
+	events, unsubscribe := box.server.live.Subscribe()
+	defer unsubscribe()
 	// 切到第 2 版：**id 与覆盖区间一概不动**，只换正文
 	if recorder = call(box.server, "POST", box.path+"/reroll-summary/switch", `{"idx":2}`); recorder.Code != http.StatusOK {
 		t.Fatalf("切换该 200，得到 %d：%s", recorder.Code, recorder.Body.String())
+	}
+	if event := <-events; event.Name != "session_changed" || event.SessionID != box.sessionID {
+		t.Fatalf("摘要重摇通知 = %+v", event)
 	}
 	rolled := box.summaryText(t, root.ID)
 	if rolled == root.Text || !strings.Contains(rolled, "（测试用假摘要）") {

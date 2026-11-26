@@ -33,7 +33,6 @@ interface ChatForm {
   history_window: string | number;
   compact_blocks: string | number;
   compact_trigger_tokens: string | number | null;
-  replay_reasoning: boolean;
   auto_compact: boolean;
 }
 
@@ -123,7 +122,7 @@ watch(() => props.only, (v) => {
   if (v !== "update") loadSettings();
   if (v === "agent") focusRequestedAgent();
 });
-const chat = ref<ChatForm>({ title_chars: "", title_model: "", model_context_tokens: "", history_window: "", compact_blocks: "", compact_trigger_tokens: "", replay_reasoning: false, auto_compact: true });
+const chat = ref<ChatForm>({ title_chars: "", title_model: "", model_context_tokens: "", history_window: "", compact_blocks: "", compact_trigger_tokens: "", auto_compact: true });
 const chatStatus = ref({ context: "", generation: "" });
 const savingChat = shallowRef<"context" | "generation" | null>(null);
 const defaults = ref<DefaultsConfig>({ provider: "", model: "", agent: "" });
@@ -171,13 +170,38 @@ function closeAgentEditor(): void {
 }
 
 function copiedAgentName(agent: Agent): string {
-  const base = `${agent.name || agent.id}（副本）`;
-  const names = new Set(agents.value.map((item) => item.name));
-  if (!names.has(base)) return base;
-  for (let suffix = 2; ; suffix++) {
-    const candidate = `${agent.name || agent.id}（副本 ${suffix}）`;
-    if (!names.has(candidate)) return candidate;
-  }
+	const base = `${agent.name || agent.id}（副本）`;
+	const names = new Set(agents.value.map((item) => item.name));
+	if (!names.has(base)) return base;
+	for (let suffix = 2; ; suffix++) {
+		const candidate = `${agent.name || agent.id}（副本 ${suffix}）`;
+		if (!names.has(candidate)) return candidate;
+	}
+}
+
+function copiedSegmentID(sourceID: string): string {
+	const used = new Set(segmentsLib.value.map((segment) => segment.id));
+	for (let suffixIndex = 1; ; suffixIndex++) {
+		const suffix = suffixIndex === 1 ? "（副本）" : `（副本 ${suffixIndex}）`;
+		const base = Array.from(sourceID).slice(0, 64 - Array.from(suffix).length).join("");
+		const id = `${base}${suffix}`;
+		if (!used.has(id)) return id;
+	}
+}
+
+async function copyPromptSegment(segment: Segment): Promise<void> {
+	if (!reads.agents.ready || pendingSegmentCopies.has(segment.id)) return;
+	pendingSegmentCopies.add(segment.id);
+	segmentCopyStatus.value = "";
+	try {
+		const copy = await api.copySegment(segment.id, copiedSegmentID(segment.id));
+		segmentCopyStatus.value = `已创建副本「${copy.id}」`;
+		await onLibrarySaved("prompt");
+		returnToAgentAfterSegment.value = false;
+		tab.value = "prompt";
+		editSeg.value = copy;
+	} catch (e) { segmentCopyStatus.value = `复制失败：${errMsg(e)}`; }
+	finally { pendingSegmentCopies.delete(segment.id); }
 }
 
 async function copyAgent(agent: Agent): Promise<void> {
@@ -193,6 +217,7 @@ async function copyAgent(agent: Agent): Promise<void> {
       system_prompt: agent.system_prompt,
       first_message: agent.first_message,
       segments: agent.segments,
+      latest_prompt_segments: agent.latest_prompt_segments,
       preset_id: agent.preset_id,
       prompt_entries: agent.prompt_entries,
       abilities: agent.abilities,
@@ -205,9 +230,64 @@ async function copyAgent(agent: Agent): Promise<void> {
   } catch (e) { agentCopyStatus.value = `复制失败：${errMsg(e)}`; }
   finally { pendingAgentCopies.delete(agent.id); }
 }
-const editSeg = ref<Segment | "new" | null>(null); // null | 'new' | segment（「提示词」tab 内的二级页）
-// 谁引用了这个段（「提示词」tab 列表与编辑器共用）。
-const segRefs = (id: string): string[] => agents.value.filter((a) => (a.segments ?? []).includes(id)).map((a) => a.name || a.id);
+	const editSeg = ref<Segment | "new" | null>(null); // null | 'new' | segment（「提示词」tab 内的二级页）
+	const pendingSegmentCopies = reactive(new Set<string>());
+	const segmentCopyStatus = ref("");
+	const segmentRename = shallowRef<{ oldId: string; newId: string; revision: number } | null>(null);
+	const returnToAgentAfterSegment = shallowRef(false);
+	let segmentRenameRevision = 0;
+	const agentUsesSegment = (agent: Agent, id: string): boolean =>
+		(agent.segments ?? []).includes(id)
+		|| (agent.latest_prompt_segments ?? []).includes(id)
+		|| Object.values(agent.abilities ?? {}).some((ability) => (ability.segments ?? []).includes(id));
+	const segRefs = (id: string): string[] => agents.value.filter((agent) => agentUsesSegment(agent, id)).map((agent) => agent.name || agent.id);
+	function editAgentSegment(id: string): void {
+		const segment = segmentsLib.value.find((item) => item.id === id);
+		if (!segment) return;
+		returnToAgentAfterSegment.value = !!editAgent.value;
+		editSeg.value = segment;
+		tab.value = "prompt";
+	}
+	function editLibrarySegment(segment: Segment): void {
+		returnToAgentAfterSegment.value = false;
+		editSeg.value = segment;
+	}
+	function startNewSegment(): void {
+		returnToAgentAfterSegment.value = false;
+		editSeg.value = "new";
+	}
+	function closeSegmentEditor(): void {
+		const returnToAgent = returnToAgentAfterSegment.value && !!editAgent.value;
+		returnToAgentAfterSegment.value = false;
+		editSeg.value = null;
+		if (returnToAgent) tab.value = "agent";
+	}
+type AgentSegmentRefs = Pick<Agent, "segments" | "latest_prompt_segments" | "abilities">;
+function remapSegmentReferences<T extends AgentSegmentRefs>(source: T, oldID: string, newID: string): T {
+	const remap = (ids?: string[]): string[] | undefined => ids?.map((id) => id === oldID ? newID : id);
+	const abilities = source.abilities && Object.fromEntries(Object.entries(source.abilities).map(([id, ability]) => [id, {
+		...ability,
+		segments: remap(ability.segments),
+	}]));
+	return {
+		...source,
+		segments: remap(source.segments),
+		latest_prompt_segments: remap(source.latest_prompt_segments),
+		abilities,
+	} as T;
+}
+function onPromptSegmentSaved(rename?: { oldId: string; newId: string }): void {
+	if (rename) {
+		segmentRename.value = { ...rename, revision: ++segmentRenameRevision };
+		agents.value = agents.value.map((agent) => remapSegmentReferences(agent, rename.oldId, rename.newId));
+		if (editAgent.value === "new") {
+			if (agentTemplate.value) agentTemplate.value = remapSegmentReferences(agentTemplate.value, rename.oldId, rename.newId);
+		} else if (editAgent.value) {
+			editAgent.value = remapSegmentReferences(editAgent.value, rename.oldId, rename.newId);
+		}
+	}
+	void onLibrarySaved("prompt");
+}
 // 列表里的“类型”是**当前配置的形态**，不是又一个手填字段：
 // 绑了酒馆预设 ⇒ 整套预设接管；有手工提示词计划 ⇒ 计划；否则就是基础提示词。
 // 将来 FlowAgent 落地时，这里再优先看 kind=flow —— 现在不先造一个只有一种值的字段。
@@ -291,7 +371,6 @@ function loadChat(): Promise<void> {
       history_window: c.history_window ?? "",
       compact_blocks: c.compact_blocks ?? "",
       compact_trigger_tokens: c.compact_trigger_tokens ?? "",
-      replay_reasoning: !!c.replay_reasoning,
       auto_compact: !!c.auto_compact, // 缺字段 = 关（与后端同一口径；这套未经验证，默认不开）
     };
   }, "读取对话设置失败");
@@ -316,7 +395,6 @@ async function saveChat(section: "context" | "generation"): Promise<void> {
       body.title_chars = num(form.title_chars) ?? body.title_chars;
       body.title_provider = model?.provider ?? "";
       body.title_model = model?.model ?? "";
-      body.replay_reasoning = form.replay_reasoning;
     }
     await api.putChat(body);
     chatStatus.value[section] = "已保存";
@@ -684,16 +762,6 @@ function onKey(e: KeyboardEvent): void {
   <section id="settings-view" :class="{ 'flow-agent-open': agentFlowOpen }">
     <div class="settings-bar">
       <SettingsBack v-if="!only && tab !== 'home'" label="返回设置目录" @back="backToDirectory" />
-      <VBtn
-        v-else
-        variant="text"
-        size="small"
-        type="button"
-        title="显示/隐藏会话栏"
-        aria-label="显示/隐藏会话栏"
-        @click="$emit('toggle-left')"
-        v-html="leftSvg"
-      ></VBtn>
       <h2 ref="settingsTitle" class="settings-title" tabindex="-1">{{ activeTitle }}</h2>
       <CloseButton id="settings-close" label="退出设置" title="退出设置（Esc）" @click="$emit('close')" />
     </div>
@@ -792,8 +860,7 @@ function onKey(e: KeyboardEvent): void {
           </section>
           <section class="settings-card">
           <h3>历史思考</h3>
-          <label id="setting-replay-reasoning" tabindex="-1" class="field"><span>回传思考过程</span><VSwitch v-model="chat.replay_reasoning" color="primary" density="compact" hide-details /></label>
-          <p class="hint">把思考过程随历史发回上游，多轮推理更连续；关闭可省上下文，思考仍会存档可看。</p>
+          <p class="hint">历史思考是否回传由模型规则根据当前模型与实际启用的工具决定；思考内容仍会存档可看。</p>
           <div class="row action-row">
             <VBtn color="primary" variant="flat" size="small" type="button" :loading="savingChat === 'generation'" :disabled="!!savingChat" @click="saveChat('generation')">保存生成设置</VBtn>
             <span class="status" role="status">{{ chatStatus.generation }}</span>
@@ -969,8 +1036,11 @@ function onKey(e: KeyboardEvent): void {
             :presets="tavernPresets"
             :is-default="editAgent !== 'new' && editAgent?.id === curDefault"
             :ask="ask"
-            @close="closeAgentEditor"
-            @saved="onLibrarySaved('agent')"
+			:esc-blocked="!!editSeg"
+			:segment-rename="segmentRename"
+			@edit-segment="editAgentSegment"
+			@close="closeAgentEditor"
+			@saved="onLibrarySaved('agent')"
           />
 
         </section>
@@ -980,25 +1050,27 @@ function onKey(e: KeyboardEvent): void {
           <p v-if="reads.agents.error" class="status" role="alert">{{ reads.agents.error }}</p>
           <RequestLoading v-if="awaitingFirstRead('agents')" label="读取提示词片段…" />
           <template v-else-if="reads.agents.ready && !editSeg">
-            <div class="panel-head">
-              <h3>提示词片段</h3>
-              <span class="head-btns">
-                <span class="action-note">新建后还要在智能体里引用</span>
-                <VBtn color="primary" variant="flat" size="small" type="button" @click="editSeg = 'new'">新建</VBtn>
-              </span>
-            </div>
-            <p class="hint">可复用的文本库；片段本身不会生效，要在智能体或能力的「提示词片段」里按顺序引用。</p>
-            <RequestLoading v-if="libraryRefreshes.prompt" label="刷新提示词片段…" />
+			<div class="panel-head">
+				<h3>提示词片段</h3>
+				<span class="head-btns">
+					<span class="action-note">新建后还要在智能体里引用</span>
+					<VBtn color="primary" variant="flat" size="small" type="button" @click="startNewSegment">新建</VBtn>
+					<span class="status" role="status">{{ segmentCopyStatus }}</span>
+				</span>
+			</div>
+			<p class="hint">可复用的文本库；片段本身不会生效，要在智能体或能力的「提示词片段」里按顺序引用。</p>
+			<RequestLoading v-if="libraryRefreshes.prompt" label="刷新提示词片段…" />
             <div id="prompt-list" v-if="segmentsLib.length">
-              <VTable class="plist">
-                <thead><tr><th>名称</th><th>内容预览</th><th>谁在用</th></tr></thead>
-                <tbody><tr v-for="s in segmentsLib" :key="s.id" class="clickable" @click="editSeg = s">
-                  <td data-label="名称">{{ s.id }}<i v-if="s.builtin" class="builtin-tag">内置</i><i v-if="s.imported" class="builtin-tag imported" :title="segmentSource(s)">导入</i></td>
-                  <td data-label="内容预览">{{ s.text.slice(0, 40) }}</td>
-                  <td data-label="谁在用">{{ segRefs(s.id).join("、") || "—" }}</td>
-                </tr></tbody>
-              </VTable>
-            </div>
+				<VTable class="plist">
+					<thead><tr><th>名称</th><th>内容预览</th><th>谁在用</th><th>操作</th></tr></thead>
+					<tbody><tr v-for="s in segmentsLib" :key="s.id" class="clickable" @click="editLibrarySegment(s)">
+						<td data-label="名称">{{ s.id }}<i v-if="s.builtin" class="builtin-tag">内置</i><i v-if="s.imported" class="builtin-tag imported" :title="segmentSource(s)">导入</i></td>
+						<td data-label="内容预览">{{ s.text.slice(0, 40) }}</td>
+						<td data-label="谁在用">{{ segRefs(s.id).join("、") || "—" }}</td>
+						<td data-label="操作"><VBtn icon variant="text" size="small" type="button" :title="`复制片段 ${s.id}`" :aria-label="`复制片段 ${s.id}`" :loading="pendingSegmentCopies.has(s.id)" :disabled="pendingSegmentCopies.has(s.id)" @click.stop="copyPromptSegment(s)"><span aria-hidden="true" v-html="ICONS.copy"></span></VBtn></td>
+					</tr></tbody>
+				</VTable>
+</div>
             <div v-else class="status">（还没有片段 —— 点「新建」创建一个，例如教模型写状态块、数学公式或联网规则）</div>
           </template>
           <SegmentEditor
@@ -1006,8 +1078,8 @@ function onKey(e: KeyboardEvent): void {
             :segment="editSeg === 'new' ? null : editSeg"
             :agents="agents"
             :ask="ask"
-            @close="editSeg = null"
-            @saved="onLibrarySaved('prompt')"
+			@close="closeSegmentEditor"
+			@saved="onPromptSegmentSaved"
           />
         </section>
         </VTabsWindowItem>
@@ -1058,7 +1130,13 @@ function onKey(e: KeyboardEvent): void {
         </section>
         </VTabsWindowItem>
         <VTabsWindowItem value="update">
-          <UpdatePane :ask="ask" />
+          <UpdatePane :ask="ask" @prefs-saved="emit('prefs-saved')" />
+        </VTabsWindowItem>
+        <VTabsWindowItem value="runner">
+          <section id="panel-runner" class="panel">
+            <h3>Runner 接入</h3>
+            <p class="hint">预留配置外部执行机（Codex、Claude Code、Pi、OMP）的连接与授权入口。Runner 连接能力尚未接入。</p>
+          </section>
         </VTabsWindowItem>
         </VTabsWindow>
       </div>

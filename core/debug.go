@@ -34,6 +34,7 @@ import (
 	"microchat/internal/chat"
 	"microchat/internal/compact"
 	"microchat/internal/config"
+	"microchat/internal/logx"
 	"microchat/internal/model"
 	"microchat/internal/providers"
 	"microchat/internal/registry"
@@ -179,7 +180,7 @@ func emit(value any) {
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetEscapeHTML(false)
 	if err := encoder.Encode(value); err != nil {
-		fmt.Fprintln(os.Stderr, "microchat: 写输出失败: "+err.Error())
+		logx.Errorf("microchat: 写输出失败: %v", err)
 	}
 }
 

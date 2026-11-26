@@ -11,7 +11,7 @@ package state
 
 import (
 	"encoding/json"
-	"log"
+	"microchat/internal/logx"
 	"math"
 	"sort"
 	"strconv"
@@ -89,7 +89,7 @@ func JoinPrompt(base string, segments []string, agents config.AgentsConfig, who 
 	for _, id := range segments {
 		segment, ok := agents.SegmentByID(id)
 		if !ok {
-			log.Printf("提示词段 %q 不在库里（%s）—— 已跳过", id, who)
+			logx.Warnf("提示词段 %q 不在库里（%s）—— 已跳过", id, who)
 			continue
 		}
 		if text := strings.TrimSpace(segment.Text); text != "" {
@@ -463,6 +463,27 @@ func BuildOutgoingWithPromptEntries(systemPrompt string, messages []model.Messag
 			}
 		}
 		outgoing = merged
+	}
+	return outgoing
+}
+
+// AppendLatestUserPrompt 只修改本次出站序列中最后一条存档用户消息。
+// 输入消息及其数据库副本保持原文，后续轮次不会继承这段补充文本。
+func AppendLatestUserPrompt(outgoing []Outgoing, prompt string) []Outgoing {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return outgoing
+	}
+	for index := len(outgoing) - 1; index >= 0; index-- {
+		item := &outgoing[index]
+		if item.Role != RoleUser || item.Type != "message" {
+			continue
+		}
+		if item.Content != "" {
+			item.Content += "\n\n"
+		}
+		item.Content += prompt
+		break
 	}
 	return outgoing
 }

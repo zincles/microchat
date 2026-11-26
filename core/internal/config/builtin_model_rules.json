@@ -1,182 +1,38 @@
 [
   {
-    "id": "gpt",
-    "match_contains": "gpt",
-    "brand": "OpenAI",
-    "icon": "gpt"
-  },
-  {
-    "id": "openai-image",
-    "match_contains": "gpt-image",
-    "is_final": true,
-    "brand": "OpenAI",
-    "icon": "gpt"
-  },
-  {
-    "id": "openai-gpt-native",
-    "match_contains": "gpt",
-    "match_protocol": "openai-response",
-    "server_tools": [
-      "web_search"
+    "kind": "group",
+    "id": "model-icons",
+    "name": "模型图标",
+    "rules": [
+      {"id":"gpt","match_contains":"gpt","brand":"OpenAI","icon":"gpt"},
+      {"id":"openai-image","match_contains":"gpt-image","is_final":true,"brand":"OpenAI","icon":"gpt"},
+      {"id":"xai-image","match_contains":"grok-imagine","is_final":true,"thinking_levels":[],"brand":"xAI","icon":"grok"},
+      {"id":"grok","match_contains":"grok","brand":"xAI","icon":"grok"},
+      {"id":"gemini","match_contains":"gemini","brand":"Google","icon":"gemini"},
+      {"id":"claude","match_contains":"claude","brand":"Anthropic","icon":"claude"},
+      {"id":"deepseek","match_contains":"deepseek","brand":"DeepSeek","icon":"deepseek"},
+      {"id":"mimo","match_contains":"mimo","brand":"Xiaomi","icon":"mimo"},
+      {"id":"glm","match_contains":"glm","brand":"Zhipu","icon":"glm"},
+      {"id":"kimi","match_contains":"kimi","brand":"Moonshot","icon":"kimi"},
+      {"id":"longcat","match_contains":"longcat","brand":"LongCat","icon":"longcat"},
+      {"id":"mistral","match_contains":"mistral","brand":"Mistral","icon":"mistral"},
+      {"id":"qwen","match_contains":"qwen","brand":"Qwen","icon":"qwen"},
+      {"id":"minimax","match_contains":"minimax","brand":"MiniMax","icon":"minimax"},
+      {"id":"tencent-hunyuan","match_contains":"hunyuan","brand":"Tencent","icon":"tencent"},
+      {"id":"tencent-hy-mt","match_contains":"hy-mt","brand":"Tencent","icon":"tencent"},
+      {"id":"tencent-hy3","match_contains":"hy3","brand":"Tencent","icon":"tencent"},
+      {"id":"tencent-hy4","match_contains":"hy4","brand":"Tencent","icon":"tencent"},
+      {"id":"meta-llama","match_contains":"llama","brand":"Meta","icon":"meta"},
+      {"id":"meta-muse","match_contains":"muse","brand":"Meta","icon":"meta"},
+      {"id":"stepfun","match_contains":"stepfun","brand":"StepFun","icon":"stepfun"},
+      {"id":"stepfun-step","match_contains":"step-","brand":"StepFun","icon":"stepfun"},
+      {"id":"bytedance-doubao","match_contains":"doubao","brand":"ByteDance","icon":"bytedance"},
+      {"id":"bytedance-seed","match_contains":"seed","brand":"ByteDance","icon":"bytedance"}
     ]
   },
-  {
-    "id": "xai-image",
-    "match_contains": "grok-imagine",
-    "is_final": true,
-    "thinking_levels": [],
-    "brand": "xAI",
-    "icon": "grok"
-  },
-  {
-    "id": "grok",
-    "match_contains": "grok",
-    "brand": "xAI",
-    "icon": "grok"
-  },
-  {
-    "id": "gemini",
-    "match_contains": "gemini",
-    "brand": "Google",
-    "icon": "gemini"
-  },
-  {
-    "id": "gemini-native",
-    "match_contains": "gemini",
-    "server_tools": [
-      "web_search"
-    ]
-  },
-  {
-    "id": "claude",
-    "match_contains": "claude",
-    "brand": "Anthropic",
-    "icon": "claude"
-  },
-  {
-    "id": "deepseek",
-    "match_contains": "deepseek",
-    "brand": "DeepSeek",
-    "icon": "deepseek"
-  },
-  {
-    "id": "mimo",
-    "match_contains": "mimo",
-    "brand": "Xiaomi",
-    "icon": "mimo"
-  },
-  {
-    "id": "glm",
-    "match_contains": "glm",
-    "brand": "Zhipu",
-    "icon": "glm"
-  },
-  {
-    "id": "kimi",
-    "match_contains": "kimi",
-    "brand": "Moonshot",
-    "icon": "kimi"
-  },
-  {
-    "id": "xai-grok-4-native",
-    "match_contains": "grok-4",
-    "match_protocol": "openai-response",
-    "server_tools": [
-      "x_search",
-      "web_search",
-      "code_execution"
-    ]
-  },
-  {
-    "id": "deepseek-web",
-    "match_contains": "deepseek",
-    "local_tools": [
-      "web_search",
-      "web_fetch"
-    ]
-  },
-  {
-    "id": "longcat",
-    "match_contains": "longcat",
-    "brand": "LongCat",
-    "icon": "longcat"
-  },
-  {
-    "id": "mistral",
-    "match_contains": "mistral",
-    "brand": "Mistral",
-    "icon": "mistral"
-  },
-  {
-    "id": "qwen",
-    "match_contains": "qwen",
-    "brand": "Qwen",
-    "icon": "qwen"
-  },
-  {
-    "id": "minimax",
-    "match_contains": "minimax",
-    "brand": "MiniMax",
-    "icon": "minimax"
-  },
-  {
-    "id": "tencent-hunyuan",
-    "match_contains": "hunyuan",
-    "brand": "Tencent",
-    "icon": "tencent"
-  },
-  {
-    "id": "tencent-hy-mt",
-    "match_contains": "hy-mt",
-    "brand": "Tencent",
-    "icon": "tencent"
-  },
-  {
-    "id": "tencent-hy3",
-    "match_contains": "hy3",
-    "brand": "Tencent",
-    "icon": "tencent"
-  },
-  {
-    "id": "tencent-hy4",
-    "match_contains": "hy4",
-    "brand": "Tencent",
-    "icon": "tencent"
-  },
-  {
-    "id": "meta-llama",
-    "match_contains": "llama",
-    "brand": "Meta",
-    "icon": "meta"
-  },
-  {
-    "id": "meta-muse",
-    "match_contains": "muse",
-    "brand": "Meta",
-    "icon": "meta"
-  },
-  {
-    "id": "stepfun",
-    "match_contains": "stepfun",
-    "brand": "StepFun",
-    "icon": "stepfun"
-  },
-  {
-    "id": "stepfun-step",
-    "match_contains": "step-",
-    "brand": "StepFun",
-    "icon": "stepfun"
-  },
-  {
-    "id": "bytedance-doubao",
-    "match_contains": "doubao",
-    "brand": "ByteDance",
-    "icon": "bytedance"
-  },
-  {
-    "id": "bytedance-seed",
-    "match_contains": "seed",
-    "brand": "ByteDance",
-    "icon": "bytedance"
-  }
+  {"id":"openai-gpt-native","match_contains":"gpt","match_protocol":"openai-response","server_tools":["web_search"]},
+  {"id":"gemini-native","match_contains":"gemini","server_tools":["web_search"]},
+  {"id":"xai-grok-4-native","match_contains":"grok-4","match_protocol":"openai-response","server_tools":["x_search","web_search","code_execution"]},
+  {"id":"deepseek-web","match_contains":"deepseek","local_tools":["web_search","web_fetch"]},
+  {"id":"replay-reasoning-with-tools","match_all":true,"replay_reasoning_with_tools":true}
 ]

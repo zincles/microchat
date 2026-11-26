@@ -85,3 +85,63 @@ func TestListSessionsCarriesMessageCount(t *testing.T) {
 		t.Fatalf("新建的空会话该报 0：%v（在不在列表里：%v）", got, ok)
 	}
 }
+
+func TestPatchSessionFavorite(t *testing.T) {
+	box := newSandbox(t, 0)
+	var before model.Session
+	for _, view := range listSessions(t, box) {
+		if view.ID == box.sessionID {
+			before = view.Session
+		}
+	}
+	if before.ID == "" {
+		t.Fatal("会话不在列表中")
+	}
+	for _, favorite := range []bool{true, false} {
+		body := `{"favorite":false}`
+		if favorite {
+			body = `{"favorite":true}`
+		}
+		recorder := call(box.server, "PATCH", "/api/v1/sessions/"+box.sessionID, body)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("PATCH favorite=%v: %d %s", favorite, recorder.Code, recorder.Body.String())
+		}
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(recorder.Body.Bytes(), &raw); err != nil {
+			t.Fatal(err)
+		}
+		value, exists := raw["favorite"]
+		var got bool
+		if !exists || json.Unmarshal(value, &got) != nil || got != favorite {
+			t.Fatalf("响应 favorite=%s", value)
+		}
+		var after model.Session
+		if err := json.Unmarshal(recorder.Body.Bytes(), &after); err != nil {
+			t.Fatal(err)
+		}
+		if after.Favorite != favorite || after.UpdatedAt != before.UpdatedAt {
+			t.Fatalf("持久化收藏/更新时间 = %+v", after)
+		}
+		before = after
+		if favorite {
+			omitted := call(box.server, "PATCH", "/api/v1/sessions/"+box.sessionID, `{}`)
+			if omitted.Code != http.StatusOK {
+				t.Fatalf("PATCH without favorite: %d %s", omitted.Code, omitted.Body.String())
+			}
+			var unchanged model.Session
+			if err := json.Unmarshal(omitted.Body.Bytes(), &unchanged); err != nil {
+				t.Fatal(err)
+			}
+			if !unchanged.Favorite || unchanged.UpdatedAt != before.UpdatedAt {
+				t.Fatalf("省略 favorite 应保持收藏状态和更新时间：%+v", unchanged)
+			}
+			before = unchanged
+		}
+	}
+	views := listSessions(t, box)
+	for _, view := range views {
+		if view.ID == box.sessionID && view.Favorite {
+			t.Fatal("取消收藏后列表仍标记为收藏")
+		}
+	}
+}

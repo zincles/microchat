@@ -518,8 +518,78 @@ func TestReadStreamAccumulatesToolCalls(t *testing.T) {
 	}
 }
 
+func TestChatTerminalOutcomesPreserveReplyAndUsage(t *testing.T) {
+	for _, reason := range []string{"length", "content_filter"} {
+		t.Run(reason, func(t *testing.T) {
+			body := `{"id":"c1","choices":[{"finish_reason":"` + reason + `","message":{"role":"assistant","content":"partial"}}],"usage":{"prompt_tokens":3,"completion_tokens":4,"total_tokens":7}}`
+			result, err := completeChat([]byte(body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Text != "partial" || result.Exchange.FinishReason != reason || len(result.Usage) == 0 || len(result.ToolCalls) != 0 {
+				t.Fatalf("result = %+v", result)
+			}
+		})
+	}
+
+	result, err := completeChat([]byte(`{"id":"c2","choices":[{"finish_reason":"stop","message":{"role":"assistant","content":null,"refusal":"不予回答"}}],"usage":{"prompt_tokens":2,"completion_tokens":2,"total_tokens":4}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Text != "不予回答" || result.Exchange.FinishReason != "stop" || len(result.Usage) == 0 || len(result.Exchange.Items) != 1 || result.Exchange.Items[0].Text != "不予回答" {
+		t.Fatalf("refusal was not preserved: %+v", result)
+	}
+
+	result, err = completeChat([]byte(`{"id":"c3","choices":[{"finish_reason":"length","message":{"role":"assistant","content":"partial","tool_calls":[{"id":"call1","type":"function","function":{"name":"lookup","arguments":"{}"}}]}}]}`))
+	if err != nil || len(result.ToolCalls) != 0 {
+		t.Fatalf("length must not trigger tool continuation: result=%+v err=%v", result, err)
+	}
+}
+
+func TestReadStreamPreservesTerminalOutcomes(t *testing.T) {
+	for _, reason := range []string{"length", "content_filter"} {
+		t.Run(reason, func(t *testing.T) {
+			body := strings.Join([]string{
+				`data: {"choices":[{"delta":{"content":"partial","reasoning_content":"thought"}}]}`,
+				`data: {"choices":[{"delta":{},"finish_reason":"` + reason + `"}]}`,
+				`data: {"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":4,"total_tokens":7}}`,
+				`data: [DONE]`,
+			}, "\n\n") + "\n\n"
+			result, err := readStream(200, strings.NewReader(body), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Text != "partial" || result.Reasoning != "thought" || result.Exchange.FinishReason != reason || len(result.Usage) == 0 {
+				t.Fatalf("result = %+v", result)
+			}
+		})
+	}
+
+	body := strings.Join([]string{
+		`data: {"choices":[{"delta":{"refusal":"不予回答"}}]}`,
+		`data: {"choices":[{"delta":{},"finish_reason":"stop"}]}`,
+		`data: [DONE]`,
+	}, "\n\n") + "\n\n"
+	result, err := readStream(200, strings.NewReader(body), nil)
+	if err != nil || result.Text != "不予回答" || result.Exchange.FinishReason != "stop" {
+		t.Fatalf("streamed refusal was not preserved: result=%+v err=%v", result, err)
+	}
+}
+
+func TestReadStreamAllowsTerminalOutcomeWithoutToolCall(t *testing.T) {
+	for _, reason := range []string{"length", "content_filter"} {
+		t.Run(reason, func(t *testing.T) {
+			body := "data: {\"choices\":[{\"delta\":{\"content\":\"先说一句\"},\"finish_reason\":\"" + reason + "\"}]}\n\ndata: {\"choices\":[],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":4,\"total_tokens\":7}}\n\ndata: [DONE]\n\n"
+			result, err := readStream(200, strings.NewReader(body), nil)
+			if err != nil || result.Text != "先说一句" || result.Exchange.FinishReason != reason || len(result.Usage) == 0 || len(result.ToolCalls) != 0 {
+				t.Fatalf("terminal outcome was not preserved: result=%+v err=%v", result, err)
+			}
+		})
+	}
+}
+
 func TestReadStreamRejectsToolStopWithoutCall(t *testing.T) {
-	body := "data: {\"choices\":[{\"delta\":{\"content\":\"先说一句\"},\"finish_reason\":\"tool_call\"}]}\n\ndata: [DONE]\n\n"
+	body := "data: {\"choices\":[{\"delta\":{\"content\":\"先说一句\"},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n"
 	_, err := readStream(200, strings.NewReader(body), nil)
 	if err == nil || !strings.Contains(err.Error(), "没有完整的 tool call") {
 		t.Fatalf("expected malformed tool call error, got %v", err)

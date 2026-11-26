@@ -210,6 +210,10 @@ type Prefs struct {
 	// UserName：`{{user_name}}` / `{{user}}` 的替换值（2026-11-10 用户定）。
 	// 账号已经砍了，所以这是**这台机器上的使用者**自己起的名字；空 = 用 “你”。
 	UserName string `json:"user_name,omitempty"`
+	// —— 品牌呈现 ——
+	BrandName   string `json:"brand_name"`
+	BrandIcon   string `json:"brand_icon"`
+	WelcomeText string `json:"welcome_text"`
 
 	// —— 输入 ——
 	Send    string `json:"send,omitempty"`
@@ -244,6 +248,9 @@ func DefaultPrefs() Prefs {
 		FontBody:  "",
 		FontMono:  "",
 		UserName:  macro.DefaultUserName,
+		BrandName:   "MicroChat",
+		BrandIcon:   "spark",
+		WelcomeText: "有什么想聊的？",
 		Send:      "",
 		// ⚠ 每一格都要**独立**的指针（2026-11-02 修）。从前写的是 `on := true; off := false`
 		// 然后所有 `&on` / `&off` 共用同一个变量 —— JSON 解码 `command_menu:true` 会把那个
@@ -276,14 +283,43 @@ func LoadPrefs(paths Paths) (Prefs, error) {
 	if err := prefs.Background.Validate(); err != nil {
 		return prefs, err
 	}
+	prefs.normalizeBrand()
+	if !validBrandIcon(prefs.BrandIcon) {
+		return prefs, fmt.Errorf("brand_icon: unsupported icon %q", prefs.BrandIcon)
+	}
 	prefs.Markdown = prefs.Markdown.Normalize()
 	return prefs, nil
 }
 
 // SavePrefs：整体写回（0600；目录 0755）。
 func SavePrefs(paths Paths, prefs Prefs) error {
+	prefs.normalizeBrand()
 	prefs.Markdown = prefs.Markdown.Normalize()
 	return SaveJSON(paths.Config("prefs.json"), prefs)
+}
+
+func (p *Prefs) normalizeBrand() {
+	defaults := DefaultPrefs()
+	p.BrandName = strings.TrimSpace(p.BrandName)
+	if p.BrandName == "" {
+		p.BrandName = defaults.BrandName
+	}
+	p.WelcomeText = strings.TrimSpace(p.WelcomeText)
+	if p.WelcomeText == "" {
+		p.WelcomeText = defaults.WelcomeText
+	}
+	if p.BrandIcon == "" {
+		p.BrandIcon = defaults.BrandIcon
+	}
+}
+
+func validBrandIcon(icon string) bool {
+	switch icon {
+	case "spark", "chat", "bot", "messagePlus":
+		return true
+	default:
+		return false
+	}
 }
 
 // BackgroundPath：本地上传那张图的存放路径（**唯一**算式 —— 读、写、删、服务都走它）。

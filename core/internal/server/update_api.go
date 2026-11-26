@@ -2,7 +2,7 @@ package server
 
 import (
 	"context"
-	"log"
+	"microchat/internal/logx"
 	"net/http"
 	"net/url"
 	"strings"
@@ -24,6 +24,8 @@ import (
 // 打开任意恶意网页也能向 127.0.0.1 发请求（CORS 全开），Origin 是这里唯一
 // 能区分“我们的页面”和“别人借你的浏览器”的东西。curl 不带 Origin，照旧放行。
 var updateMu sync.Mutex
+var restartMarkerMu sync.Mutex
+var restartMarkerScheduled bool
 
 func (s *Server) updateStatus(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
@@ -85,12 +87,31 @@ func (s *Server) runUpdate(w http.ResponseWriter, r *http.Request, action update
 	}
 	result.Restarting = true
 	writeJSON(w, http.StatusAccepted, result)
-	// 先让响应出门，再写重启标记：entrypoint 看见标记就会收掉本进程，
-	// 太早写会把这一发 202 剪断（前端会误以为失败）。
+	// 先把完整的 202 响应刷新到客户端，再让 entrypoint 收掉旧进程；否则前端可能收不到结果。
+	if err := http.NewResponseController(w).Flush(); err != nil {
+		logx.Errorf("刷新更新响应失败，暂不写重启标记：%v", err)
+		return
+	}
+	scheduleRestartMarker(s.paths.DataDir)
+}
+
+func scheduleRestartMarker(dataDir string) {
+	restartMarkerMu.Lock()
+	if restartMarkerScheduled {
+		restartMarkerMu.Unlock()
+		return
+	}
+	restartMarkerScheduled = true
+	restartMarkerMu.Unlock()
+
 	go func() {
+		// 给浏览器接收响应留出时间；handler 已返回后 entrypoint 才会看到标记。
 		time.Sleep(1200 * time.Millisecond)
-		if err := update.RequestRestart(s.paths.DataDir); err != nil {
-			log.Printf("写重启标记失败：%v", err)
+		if err := update.RequestRestart(dataDir); err != nil {
+			logx.Errorf("写重启标记失败：%v", err)
+			restartMarkerMu.Lock()
+			restartMarkerScheduled = false
+			restartMarkerMu.Unlock()
 		}
 	}()
 }

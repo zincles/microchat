@@ -5,8 +5,8 @@
 //（重新编译 Go、重新构建 vite、再把两个进程拉起来）。前端在这里等新进程的
 // `started_at` 变了才刷新 —— 只看 /health 会被尚未被收掉的旧进程骗过去。
 import { computed, onMounted, ref, shallowRef } from "vue";
-import { VBtn, VSwitch } from "vuetify/components";
-import { sharedApi, saveUpdateAutoCheck, updateAutoCheckOn } from "../utils/prefs.ts";
+import { VBtn, VSwitch, VTextField } from "vuetify/components";
+import { sharedApi, saveBrandPrefs, prefsSnapshot, refreshPrefs, saveUpdateAutoCheck, updateAutoCheckOn } from "../utils/prefs.ts";
 import { waitForRestart } from "../utils/update.ts";
 import {
   applyPwaUpdate,
@@ -18,12 +18,40 @@ import {
 import type { PwaBuild, PwaSnapshot } from "../utils/pwa.ts";
 import type { UpdateStatus } from "../api/types.ts";
 import RequestLoading from "./RequestLoading.vue";
+import { ICONS } from "../assets/icons.ts";
 
 const props = withDefaults(defineProps<{
   ask?: ((text: string) => Promise<boolean>) | null;
 }>(), { ask: null });
-
+const emit = defineEmits<{ "prefs-saved": [] }>();
 const api = sharedApi();
+const brandName = ref("MicroChat");
+const brandIcon = ref<"spark" | "chat" | "bot" | "messagePlus">("spark");
+const welcomeText = ref("有什么想聊的？");
+const savingBrand = ref(false);
+const brandError = ref("");
+const brandIcons = ["spark", "chat", "bot", "messagePlus"] as const;
+
+function loadBrandPrefs(): void {
+  const prefs = prefsSnapshot();
+  brandName.value = prefs.brand_name;
+  brandIcon.value = prefs.brand_icon;
+  welcomeText.value = prefs.welcome_text;
+}
+
+async function saveBrand(): Promise<void> {
+  savingBrand.value = true;
+  brandError.value = "";
+  try {
+    await saveBrandPrefs({ brand_name: brandName.value, brand_icon: brandIcon.value, welcome_text: welcomeText.value });
+    loadBrandPrefs();
+    emit("prefs-saved");
+  } catch {
+    brandError.value = "保存失败，请检查连接后重试。";
+  } finally {
+    savingBrand.value = false;
+  }
+}
 const status = ref<UpdateStatus | null>(null);
 const loading = shallowRef(false);
 const busy = ref(false);
@@ -197,6 +225,7 @@ async function pullAndRestart(rebase = false): Promise<void> {
 onMounted(() => {
   load().catch(() => {});
   loadPwa().catch(() => {});
+  refreshPrefs().then(loadBrandPrefs).catch(() => loadBrandPrefs());
 });
 </script>
 
@@ -223,7 +252,7 @@ onMounted(() => {
               @update:model-value="setAutoCheck"
             />
           </label>
-          <p id="auto-update-hint" class="hint">开启后每 5 分钟检查 GitHub；本地落后且工作区干净时自动拉取并重启前后端。有未提交修改、分叉或非容器部署时只提示，不自动动手。</p>
+          <p id="auto-update-hint" class="hint">开启后每 5 分钟检查 GitHub；只有远端明确落后、工作区干净且容器支持重启时才自动拉取并重启前后端。有未提交修改、分叉、远端状态不明或非容器部署时只提示手动处理。</p>
         </div>
 
         <template v-if="status">
@@ -317,6 +346,15 @@ onMounted(() => {
         MicroChat 是一个轻量、可自托管的 SillyTavern 替代品，面向角色扮演与长对话：
         Go 后端负责上下文、压缩与状态，Vue 前端负责阅读与编辑体验。基础功能不依赖外部账号，数据落在自己的 <code>data/</code> 目录。
       </p>
+      <label class="brand-field"><span>品牌名称</span><VTextField v-model="brandName" density="compact" variant="outlined" hide-details maxlength="80" /></label>
+      <fieldset class="brand-icon-field">
+        <legend>品牌图标</legend>
+        <VBtn v-for="icon in brandIcons" :key="icon" class="brand-icon-option" type="button" icon variant="outlined"
+          :aria-pressed="brandIcon === icon" :class="{ active: brandIcon === icon }" @click="brandIcon = icon"><span v-html="ICONS[icon]"></span></VBtn>
+      </fieldset>
+      <label class="brand-field"><span>空白草稿欢迎语</span><VTextField v-model="welcomeText" density="compact" variant="outlined" hide-details maxlength="240" /></label>
+      <div class="brand-save-row"><VBtn color="primary" variant="flat" size="small" :loading="savingBrand" :disabled="savingBrand" @click="saveBrand">保存品牌与欢迎语</VBtn>
+        <span v-if="brandError" class="hint update-error" role="alert">{{ brandError }}</span></div>
       <p class="project-authors">作者：Zincles、DeepSeekV4.1Flash</p>
       <p class="project-link">
         <a href="https://github.com/zincles/microchat" target="_blank" rel="noopener noreferrer">github.com/zincles/microchat</a>
@@ -324,3 +362,14 @@ onMounted(() => {
     </section>
   </section>
 </template>
+<style scoped>
+.brand-field { display: grid; grid-template-columns: minmax(8rem, 11rem) minmax(0, 1fr); align-items: center; gap: 0.75rem; margin: 0.8rem 0; }
+.brand-icon-field { display: flex; align-items: center; gap: 0.45rem; min-width: 0; margin: 0.8rem 0; padding: 0.4rem 0; border: 0; }
+.brand-icon-field legend, .brand-field > span { color: var(--md-on-surface-variant); font-size: var(--md-type-body-medium); }
+.brand-icon-field button { width: var(--chat-control); height: var(--chat-control); display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--md-outline-variant); border-radius: var(--md-shape-sm); color: var(--md-on-surface-variant); background: transparent; }
+.brand-icon-field button.active { color: var(--md-primary); border-color: var(--md-primary); background: var(--md-primary-container); }
+.brand-icon-field button:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px; }
+.brand-icon-field svg { width: 18px; height: 18px; }
+.brand-save-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; }
+@media (max-width: 600px) { .brand-field { grid-template-columns: minmax(0, 1fr); gap: 0.25rem; } }
+</style>

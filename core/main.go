@@ -6,7 +6,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"os"
@@ -21,6 +20,7 @@ import (
 	"microchat/internal/compact"
 	"microchat/internal/config"
 	"microchat/internal/flow"
+	"microchat/internal/logx"
 	"microchat/internal/model"
 	"microchat/internal/providers"
 	"microchat/internal/queue"
@@ -133,18 +133,18 @@ func main() {
 	// 自动压缩也挂在一轮生成上（翻 idle 之后自己挂号跑）—— 同一条"消费方定义接口"的路。
 	chatService.Compactor = autoCompactor{svc: compactService}
 
-	// **先真听上端口，再切日志到文件**：端口被占这类启动失败必须留在**终端**上看得见 ——
-	// 不然 TUI 模式下日志去了 data/microchat.log，终端里只剩一句 "exit status 1"（真发生过）。
+	// **先真听上端口再报告启动成功**：端口被占这类启动失败必须留在终端上看得见。
+	// 所有运行日志统一写 stderr；debug 模式的机器输出仍只写 stdout。
 	listener, err := net.Listen("tcp", *addr)
 	if err != nil {
 		fatal("监听 %s 失败: %v（已经有一个在跑？用 -addr 换个端口，或先把它停了）", *addr, err)
 	}
-	log.Printf("microchat 起在 http://%s（数据 %s，配置 %s，user_version=%d）",
+	logx.Infof("microchat 起在 http://%s（数据 %s，配置 %s，user_version=%d）",
 		*addr, paths.DataDir, paths.ConfigDir, version)
 	go func() {
 		webServer := server.New(st, cfg, paths, chatService, compactService, rerollService, tasks, queueService)
 		if err := http.Serve(listener, webServer.Handler()); err != nil {
-			log.Printf("服务退出: %v", err)
+			logx.Errorf("服务退出: %v", err)
 		}
 	}()
 
@@ -175,22 +175,26 @@ func refreshModelsOnStart(st *store.Store, tasks *task.Registry, cfg config.Conf
 		switch {
 		case outcome.Error != "":
 			failed++
-			log.Printf("启动刷新模型：渠道 %s 失败（%s）", outcome.Provider, outcome.Error)
+			logx.Errorf("启动刷新模型：渠道 %s 失败（%s）", outcome.Provider, outcome.Error)
 		case outcome.Skipped != "":
-			log.Printf("启动刷新模型：跳过渠道 %s（%s）", outcome.Provider, outcome.Skipped)
+			logx.Warnf("启动刷新模型：跳过渠道 %s（%s）", outcome.Provider, outcome.Skipped)
 		default:
 			// 挂了筛选器就多说一句"筛掉了几个"（2026-10-22）：不然"拉 470 个、导入 12 个"
 			// 这件事在日志里看不见，排查"模型怎么少了"要翻配置才知道有筛选器。
 			if outcome.Filtered > 0 {
-				log.Printf("启动刷新模型：渠道 %s 导入 %d 个模型（筛选器挡掉 %d 个；没见到的删了 %d 条）",
+				logx.Infof("启动刷新模型：渠道 %s 导入 %d 个模型（筛选器挡掉 %d 个；没见到的删了 %d 条）",
 					outcome.Provider, outcome.Models, outcome.Filtered, outcome.Removed)
 				continue
 			}
-			log.Printf("启动刷新模型：渠道 %s 拉到 %d 个模型（没见到的删了 %d 条）",
+			logx.Infof("启动刷新模型：渠道 %s 拉到 %d 个模型（没见到的删了 %d 条）",
 				outcome.Provider, outcome.Models, outcome.Removed)
 		}
 	}
-	log.Printf("启动刷新模型：%d 个渠道，失败 %d 个", len(outcomes), failed)
+	if failed > 0 {
+		logx.Warnf("启动刷新模型：%d 个渠道，失败 %d 个", len(outcomes), failed)
+	} else {
+		logx.Infof("启动刷新模型：%d 个渠道，失败 %d 个", len(outcomes), failed)
+	}
 }
 
 // refreshModels：**启动与 `-debug refresh-models` 共用的那一段** —— 逐渠道（**串行**）刷一遍。
@@ -217,15 +221,9 @@ func refreshModels(st *store.Store, tasks *task.Registry, cfg config.Config, lis
 	})
 }
 
-// fatal：启动 / 运行中的致命错 —— **stderr + 日志都写一遍**。
-//
-// 2026-11-01 之前这里有个 `if loggingToFile` 分支（TUI 模式把日志挪进
-// data/microchat.log ⇒ 终端里只剩 "exit status 1"）。TUI 删了、日志不再挪文件，
-// 于是两个出口**永远都写** —— 比"看情况写"简单，也不会再出现"终端什么也看不到"。
+// fatal：启动失败只输出一条规范错误日志到 stderr 后退出。
 func fatal(format string, args ...any) {
-	message := fmt.Sprintf(format, args...)
-	fmt.Fprintln(os.Stderr, "microchat: "+message)
-	log.Print(message)
+	logx.Errorf(format, args...)
 	os.Exit(1)
 }
 

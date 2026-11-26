@@ -184,8 +184,9 @@ type Session struct {
 	NativeToolsDisabled []string `json:"native_tools_disabled"`
 	// RequestOverrides：请求体顶层覆盖（原样 JSON 值；最后写入，允许覆盖任何 key）。
 	RequestOverrides map[string]json.RawMessage `json:"request_overrides"`
-	CreatedAt        int64                      `json:"created_at"`
-	UpdatedAt        int64                      `json:"updated_at"`
+ CreatedAt        int64                      `json:"created_at"`
+ UpdatedAt        int64                      `json:"updated_at"`
+ Favorite      bool                       `json:"favorite"`
 }
 
 // TurnPhase：一轮生成的状态（Rust 版在 turn.rs 的进程内登记表里）。

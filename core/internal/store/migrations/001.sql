@@ -17,6 +17,7 @@ CREATE TABLE sessions (
   model         TEXT NOT NULL,
   created_at    INTEGER NOT NULL,
   updated_at    INTEGER NOT NULL,
+  favorite      INTEGER NOT NULL DEFAULT 0,
   agent_id      TEXT NOT NULL DEFAULT 'default',
   -- 思考档位（空串 = 跟随模型默认）；取值校验在 server / providers
   thinking_level TEXT NOT NULL DEFAULT '',

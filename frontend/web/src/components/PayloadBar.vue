@@ -251,13 +251,15 @@ defineExpose({ setTables, setTree, setCompactWire });
         <strong>请求预览已关闭</strong>
         <p>开启后才会获取预览内容，关闭时不请求此页数据。</p>
       </div>
-      <RequestLoading v-else-if="previewLoading" label="正在加载请求预览…" />
-      <p v-else-if="previewError" class="workspace-empty" role="alert">{{ previewError }}</p>
-      <div v-else-if="!wire" class="workspace-empty" role="status">
+      <p v-if="preview && wire && previewLoading" class="workspace-action-note" role="status">正在更新请求预览…</p>
+      <p v-if="preview && wire && previewError" class="workspace-action-note" role="alert">{{ previewError }}</p>
+      <RequestLoading v-if="preview && previewLoading && !wire" label="正在加载请求预览…" />
+      <p v-else-if="preview && previewError && !wire" class="workspace-empty" role="alert">{{ previewError }}</p>
+      <div v-else-if="preview && !wire" class="workspace-empty" role="status">
         <strong>暂无可预览的请求</strong>
         <p>在聊天页输入内容后返回这里，查看它与历史一起组成的请求。</p>
       </div>
-      <div v-else-if="viz && vizData" id="payload-viz">
+      <div v-else-if="preview && viz && vizData" id="payload-viz">
         <div class="pv-meta">
           <span class="pv-method">{{ vizData.meta.method }}</span>
           <span class="pv-url" :title="vizData.meta.url">{{ vizData.meta.url }}</span>
@@ -292,7 +294,7 @@ defineExpose({ setTables, setTree, setCompactWire });
           </li>
         </ol>
       </div>
-      <div v-else>
+      <div v-else-if="preview">
         <div v-if="viz && wire" class="workspace-intro">此请求没有可分块的 messages 数组，以下显示完整 JSON。</div>
         <pre id="outgoing-raw">{{ payloadText }}</pre>
       </div>
@@ -302,10 +304,11 @@ defineExpose({ setTables, setTree, setCompactWire });
     <div id="state-view">
       <p class="workspace-intro">从消息正文中的 &lt;state&gt; 块按顺序现算；系统提示词不计入。编辑或删除消息后，世界状态随之变化。</p>
       <div class="workspace-section-head"><strong>当前世界状态</strong><span v-if="!stateLoading && (!stateError || tableNames.length)" class="context-count">{{ tableNames.length }} 张表 · {{ stateVariableCount }} 个变量</span></div>
-      <RequestLoading v-if="stateLoading" label="正在加载世界状态…" />
+      <RequestLoading v-if="stateLoading && !tableNames.length" label="正在加载世界状态…" />
       <template v-else>
-        <p v-if="stateError" class="workspace-empty" role="alert">{{ stateError }}</p>
-        <div v-else-if="!tableNames.length" class="workspace-empty" role="status"><strong>暂无世界状态数据</strong><p>包含 &lt;state&gt; 块的消息会在这里形成变量表。</p></div>
+        <p v-if="stateLoading" class="workspace-action-note" role="status">正在更新世界状态…</p>
+        <p v-if="stateError" class="workspace-action-note" role="alert">{{ stateError }}</p>
+        <div v-if="!tableNames.length" class="workspace-empty" role="status"><strong>暂无世界状态数据</strong><p>包含 &lt;state&gt; 块的消息会在这里形成变量表。</p></div>
         <section v-for="name in tableNames" :key="name" class="state-table">
           <div class="state-table-head"><h4>{{ name }}</h4><span class="context-count">{{ Object.keys(tables[name] ?? {}).length }} 个变量</span></div>
           <div v-for="(v, k) in tables[name]" :key="k" class="state-row">
@@ -372,10 +375,13 @@ defineExpose({ setTables, setTree, setCompactWire });
           </li>
         </ol>
       </div>
-      <RequestLoading v-if="treeLoading" label="正在加载压缩结构…" />
-      <p v-else-if="treeError" class="workspace-empty" role="alert">{{ treeError }}</p>
-      <div v-else-if="!tree" class="workspace-empty" role="status"><strong>暂无压缩结构</strong><p>建立会话并加载历史后，这里会显示消息与摘要的覆盖关系。</p></div>
+      <p v-if="treeLoading && tree" class="workspace-action-note" role="status">正在更新压缩结构…</p>
+      <RequestLoading v-else-if="treeLoading && !tree" label="正在加载压缩结构…" />
+      <p v-else-if="treeError && !tree" class="workspace-empty" role="alert">{{ treeError }}</p>
       <template v-else>
+        <p v-if="treeError" class="workspace-action-note" role="alert">{{ treeError }}</p>
+        <div v-if="!tree" class="workspace-empty" role="status"><strong>暂无压缩结构</strong><p>建立会话并加载历史后，这里会显示消息与摘要的覆盖关系。</p></div>
+        <template v-else>
         <div class="ctree-head">
           <span v-if="totals" class="ctree-total">原文 {{ totals.rawChars }} 字 · 历史发送量 ≈{{ totals.sent }} tokens</span>
           <!-- 一键折叠（2026-10-29 用户定）。**只折叠、没有展开** —— 与载荷页同一个口径：
@@ -398,6 +404,7 @@ defineExpose({ setTables, setTree, setCompactWire });
           @undo="(id) => emit('undo', id)"
         />
         <div class="ctree-legend">▾ 展开或折叠 · <i class="ctree-tag">发</i> 用于出站装配 · <i class="ctree-tag dirty">脏</i> 覆盖内容已改动，摘要仍沿用</div>
+        </template>
       </template>
           </div>
         </VTabsWindowItem>

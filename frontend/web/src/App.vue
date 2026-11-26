@@ -13,13 +13,14 @@ import { installViewportFit } from "./utils/viewport.ts";
 import { thinkingOptions, thinkingLevelsForModel } from "./utils/thinking.ts";
 import { forgetWindow, recallWindow } from "./utils/windowcache.ts";
 import { createSessionDrafts, type DraftReceipt } from "./utils/sessionDrafts.ts";
-import { sharedApi, previewOn, payloadPreviewOn, applyTheme, wantsSend, apiBase, apiBaseCandidates, saveNetPrefs, lastSessionId, saveLastSession, commandMenuOn, applyTextScale, applyFonts, chromeHideOn, syncPrefs, userName as macroUserName } from "./utils/prefs.ts";
+import { sharedApi, previewOn, payloadPreviewOn, applyTheme, wantsSend, apiBase, apiBaseCandidates, saveNetPrefs, lastSessionId, saveLastSession, commandMenuOn, applyTextScale, applyFonts, chromeHideOn, syncPrefs, prefsSnapshot, userName as macroUserName } from "./utils/prefs.ts";
 import { macroMap } from "./utils/macros.ts";
 import { formatDebugPayload } from "./utils/flow.ts";
 import { deletionPlanSummary, whoText } from "./utils/format.ts";
 import ChatControls from "./components/ChatControls.vue";
 import ContextRing from "./components/ContextRing.vue";
 import AgentMenu from "./components/AgentMenu.vue";
+import AccountPane from "./components/AccountPane.vue";
 import SessionBar from "./components/SessionBar.vue";
 import AnswerTranscript from "./components/AnswerTranscript.vue";
 import MessageBubble from "./components/MessageBubble.vue";
@@ -48,6 +49,8 @@ import { useReroll } from "./composables/useReroll.ts";
 import { usePreview } from "./composables/usePreview.ts";
 import { useCommands } from "./composables/useCommands.ts";
 import { useContextWorkspace } from "./composables/useContextWorkspace.ts";
+import { useLiveSync } from "./composables/useLiveSync.ts";
+import type { LiveSessionEvent } from "./api/types.ts";
 import { useSessionActions } from "./composables/useSessionActions.ts";
 import type {
   CreateSessionRequest, DeletionPlan, FlowActiveNode, FlowRunTrace, Message, SessionView, TurnStatus,
@@ -139,13 +142,13 @@ function onPickAction(action: (item: PickerItem) => unknown, item: PickerItem): 
 }
 // 更新生命周期（PWA 壳 + 后端 git）搬进 composable；App 只留模板绑定。
 const {
-  updateRef, updateReady, backendUpdate, backendUpdating,
+  updateRef, updateReady, backendUpdate, backendUpdateMessage, backendUpdating,
   applyUpdate, startUpdatePolling, runBackendUpdate,
 } = useAppUpdate({ api, toast, askConfirm });
 
 // 服务器是**偏好的权威**：先用本地镜像铺第一帧，再问服务器；失败只 toast。
 syncPrefs()
-  .then(() => { applyBackground(); cmdMenu.value = commandMenuOn(); macroRev.value += 1; })
+  .then(() => { applyBackground(); cmdMenu.value = commandMenuOn(); macroRev.value += 1; brandPrefs.value = prefsSnapshot(); })
   .catch((err) => toast(`界面偏好读取失败：${errText(err)}`, "error"))
   .finally(() => { startUpdatePolling(); });
 
@@ -154,6 +157,9 @@ let sessionID: string | null = null;
 // 会话列表缓存（2026-11-05，高延迟优化）：从前每点一条会话都要先 `GET /sessions`
 // 才轮到消息窗口 —— 远端 1s+ 时那一整个 RTT 什么也没画，而列表本来就在屏幕上。
 // 缓存只当"先用着的快照"：进会话后按需在后台补一次（见 enterSession），不拿它当真相。
+const brandPrefs = ref(prefsSnapshot());
+const accountOpen = ref(false);
+const pendingFavoriteIds = new Set<string>();
 const sessionsCache = ref<SessionView[]>([]);
 // 左栏的加载态（MD3）：首次拿列表画骨架；后台补列表时顶部一条 linear progress。
 // 从前空列表与"还没加载"在界面上分不出来 —— boot 的那两秒会写"还没有会话"，那是假话。
@@ -604,7 +610,13 @@ const {
   payloadbarRef,
   setMacros: (report) => contextRingRef.value?.setMacros(report),
   isVisible: () => workspace.value === "context" && !settingsOpen.value,
-  refreshStateView,
+  refreshStateView: async (id, foreground) => {
+    const sid = id ?? sessionID;
+    const my = epoch;
+    await refreshStateView(sid, foreground);
+    return my === epoch && sid === sessionID && !stateError.value;
+  },
+  getStateError: () => stateError.value,
   reloadWindow: () => reloadWindow(),
   payloadPreviewOn,
 });
@@ -987,6 +999,22 @@ async function pollCompact(sid: string, atMS: number | undefined): Promise<void>
 //      只是浪费）。
 let lastResyncAt = 0;
 let resyncing = false;
+let resyncQueued = false;
+let queuedSessionId: string | undefined;
+let queuedResyncTimer: number | null = null;
+function queueResync(sessionId?: string): void {
+  resyncQueued = true;
+  if (sessionId) queuedSessionId = sessionId;
+  if (queuedResyncTimer !== null) return;
+  queuedResyncTimer = window.setTimeout(() => {
+    queuedResyncTimer = null;
+    if (!resyncQueued) return;
+    const expected = queuedSessionId;
+    resyncQueued = false;
+    queuedSessionId = undefined;
+    void resyncOnForeground(expected);
+  }, 320);
+}
 
 // dropStreamBubbles：摘掉本地那些"正在流"的合成气泡（循环已经不在了，它们就是僵住的假象）。
 function dropStreamBubbles() {
@@ -994,27 +1022,29 @@ function dropStreamBubbles() {
   vueMessages.value = vueMessages.value.filter((m) => !m.stream);
 }
 
-async function resyncOnForeground() {
+async function resyncOnForeground(expectedSessionId?: string, refreshList = true) {
   if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+  if (expectedSessionId && sessionID !== expectedSessionId) return;
   const now = Date.now();
-  if (resyncing || now - lastResyncAt < 300) return;
+  if (resyncing || now - lastResyncAt < 300) { queueResync(expectedSessionId); return; }
   resyncing = true;
   lastResyncAt = now;
   const my = epoch;
+  const mySession = sessionID;
   try {
     // 左栏与任务面板与"哪条会话"无关，先刷（草稿态也有意义）。
-    refreshSessionsBar();
+    if (refreshList) refreshSessionsBar();
     refreshTasks();
-    if (!sessionID) return;
-    const st = await api.status(sessionID).catch(() => null);
-    if (my !== epoch || !st) return;
+    if (!mySession) return;
+    const st = await api.status(mySession).catch(() => null);
+    if (my !== epoch || sessionID !== mySession || !st) return;
 
     if (st.phase === "pending" || st.phase === "streaming") {
       // ① 还在跑：只把轮询接回来，**不动消息列**。
       refreshStatusline(st.phase, st.elapsed_ms);
       if (!hasLivePoll()) {
         dropStreamBubbles();
-        pollTurn(sessionID, st.message_id).catch(() => {});
+        pollTurn(mySession, st.message_id).catch(() => {});
       }
       // 重摇是另一条活（同一把闸，不可能与一轮同时在跑），但它的轮询也可能一起断了。
       return;
@@ -1035,6 +1065,7 @@ async function resyncOnForeground() {
     if (st.phase === "error" && st.error) toast(`上一轮失败了：${st.error}`, "error");
   } finally {
     resyncing = false;
+    if (resyncQueued && queuedResyncTimer === null) queueResync(queuedSessionId);
   }
 }
 
@@ -1108,13 +1139,45 @@ function renderSessions(sessions: SessionView[]): void {
   sessionsLoading.value = false;
   sessionbarRef.value?.setSessions(sessions, sessionID);
 }
-async function refreshSessionsBar() {
+async function changeFavorite(id: string, favorite: boolean): Promise<void> {
+  if (pendingFavoriteIds.has(id)) return;
+  const session = sessionsCache.value.find((item) => item.id === id);
+  if (!session || session.favorite === favorite) return;
+  pendingFavoriteIds.add(id);
+  const previous = session.favorite;
+  session.favorite = favorite;
+  renderSessions(sessionsCache.value);
+  try {
+    const updated = await api.patchSession(id, { favorite });
+    const current = sessionsCache.value.find((item) => item.id === id);
+    if (current) current.favorite = updated.favorite;
+    renderSessions(sessionsCache.value);
+  } catch (err) {
+    const current = sessionsCache.value.find((item) => item.id === id);
+    if (current) current.favorite = previous;
+    toast(`收藏状态更新失败：${errText(err)}`, "error");
+  } finally {
+    pendingFavoriteIds.delete(id);
+  }
+}
+function openAccount(): void {
+  accountOpen.value = true;
+  closeLeftDrawer();
+  closeSettings();
+}
+function leaveAccount(): void {
+  accountOpen.value = false;
+  backToChat();
+}
+ 
+async function refreshSessionsBar(): Promise<SessionView[] | null> {
   sessionsRefreshing.value = true;
   try {
     const sessions = await api.listSessions();
     sessionsFetchedAt = Date.now();
     renderSessions(sessions);
-  } catch (err) { toast(`刷会话栏失败：${errText(err)}`, "error"); }
+    return sessions;
+  } catch (err) { toast(`刷会话栏失败：${errText(err)}`, "error"); return null; }
   finally {
     sessionsRefreshing.value = false;
     sessionsLoading.value = false;
@@ -1526,14 +1589,68 @@ async function onChatSaved() {
   }
 }
 function onPrefsSaved() {
+  brandPrefs.value = prefsSnapshot();
   macroRev.value += 1;
   refreshMacros();
   cmdMenu.value = commandMenuOn();
-  if (!chromeHideOn()) resetChrome(document.querySelector("#messages-vue")); // 关掉这功能 ⇒ 栏立刻回来
+  if (!chromeHideOn()) resetChrome(document.querySelector("#messages-vue"));
   if (!cmdMenu.value) overlaysRef.value?.hidePalette();
 }
 // —— 拖拽调宽 ——
 let uninstallViewportFit: (() => void) | null = null;
+let nonCurrentRefreshTimer: number | null = null;
+let nonCurrentRefreshInFlight = false;
+let nonCurrentRefreshPending = false;
+let liveSyncDisposed = false;
+function scheduleNonCurrentSidebarRefresh(): void {
+  if (liveSyncDisposed) return;
+  if (nonCurrentRefreshTimer !== null) window.clearTimeout(nonCurrentRefreshTimer);
+  nonCurrentRefreshTimer = window.setTimeout(() => {
+    nonCurrentRefreshTimer = null;
+    if (nonCurrentRefreshInFlight) {
+      nonCurrentRefreshPending = true;
+      return;
+    }
+    nonCurrentRefreshInFlight = true;
+    void refreshSessionsBar().finally(() => {
+      nonCurrentRefreshInFlight = false;
+      if (nonCurrentRefreshPending && !liveSyncDisposed) {
+        nonCurrentRefreshPending = false;
+        scheduleNonCurrentSidebarRefresh();
+      }
+    });
+  }, 250);
+}
+
+const { onlineClients } = useLiveSync({
+  api,
+  onSessionChanged: (event: LiveSessionEvent) => {
+    if (sessionID === event.session_id) void resyncOnForeground(event.session_id);
+    else scheduleNonCurrentSidebarRefresh();
+  },
+  onSessionDeleted: (event: LiveSessionEvent) => {
+    if (sessionID !== event.session_id) { scheduleNonCurrentSidebarRefresh(); return; }
+    void refreshSessionsBar();
+    void startDraft();
+    toast("当前会话已在其他客户端删除，已返回新对话");
+  },
+  onForeground: async (hadHiddenChanges: boolean) => {
+    const sid = sessionID;
+    if (hadHiddenChanges && sid) {
+      const sessions = await refreshSessionsBar();
+      if (sessionID !== sid) { void resyncOnForeground(); return; }
+      if (sessions && !sessions.some((item) => item.id === sid)) {
+        void startDraft();
+        toast("当前会话已在其他客户端删除，已返回新对话");
+        return;
+      }
+      void resyncOnForeground(undefined, sessions === null);
+      return;
+    }
+    void resyncOnForeground();
+  },
+});
+
 onMounted(() => {
   installSidePanels();
   startTasksPolling();
@@ -1546,14 +1663,6 @@ onMounted(() => {
   // 跨断点（桌面 ⇄ 抽屉）时把状态重算一遍：变成抽屉就一律先关掉，不然会"啪"地盖上来。
   // 只剩左栏这一个断点（右栏 2026-10-29 搬进上下文工作区）。
 
-  // 回到前台就对齐（2026-11-01 用户定）。三条都要：
-  //   visibilitychange —— 切标签页/切 App（手机最常见的那条路）；
-  //   pageshow         —— 从 bfcache 里恢复（安卓丢页面再回来常走这条，那时 visibilitychange 可能不响）；
-  //   focus            —— 同窗口切焦点（桌面 alt+tab 到别的窗口）。
-  document.addEventListener("visibilitychange", resyncOnForeground);
-  window.addEventListener("focus", resyncOnForeground);
-  window.addEventListener("pageshow", resyncOnForeground);
-  window.addEventListener("mc-update-auto-check", startUpdatePolling);
   installOverlayLayout();
   boot().catch((err) => {
     connText = "未连接";
@@ -1570,10 +1679,9 @@ onUnmounted(() => {
   if (flowCallsTimer !== null) { clearInterval(flowCallsTimer); flowCallsTimer = null; }
   uninstallOverlayLayout();
   uninstallSidePanels();
-  document.removeEventListener("visibilitychange", resyncOnForeground);
-  window.removeEventListener("focus", resyncOnForeground);
-  window.removeEventListener("pageshow", resyncOnForeground);
-  window.removeEventListener("mc-update-auto-check", startUpdatePolling);
+  liveSyncDisposed = true;
+  if (nonCurrentRefreshTimer !== null) { window.clearTimeout(nonCurrentRefreshTimer); nonCurrentRefreshTimer = null; }
+  if (queuedResyncTimer !== null) { window.clearTimeout(queuedResyncTimer); queuedResyncTimer = null; }
 });
 </script>
 
@@ -1583,19 +1691,23 @@ onUnmounted(() => {
       v-if="updateReady || backendUpdate || backendUpdating"
       ref="updateRef"
       :pwa="updateReady"
-      :backend="backendUpdate"
+      :backend="backendUpdate || backendUpdating"
+      :backend-message="backendUpdateMessage"
       :busy="backendUpdating"
       @update="applyUpdate"
       @update-backend="runBackendUpdate"
     />
-    <div id="columns" :class="{ 'chat-controls-visible': !settingsOpen }">
+    <div id="columns" :class="{ 'chat-controls-visible': !settingsOpen && !accountOpen }">
       <SessionBar
         ref="sessionbarRef"
         :collapsed="leftHidden"
+        :online-clients="onlineClients"
         :busy-ids="busyIds"
         :pending-actions="pendingSessionActions"
         :loading="sessionsLoading"
         :refreshing="sessionsRefreshing"
+        :brand-name="brandPrefs.brand_name"
+        :brand-icon="brandPrefs.brand_icon"
         @prefetch="prefetchSession"
         @toggle-left="toggleLeft"
         @select="(id) => { closeLeftDrawer(); backToChat(); enterSession(id).catch((err) => toast(`进会话失败：${errText(err)}`, 'error')); }"
@@ -1605,12 +1717,15 @@ onUnmounted(() => {
         @close="askDeleteSession"
         @new="newSession"
         @new-image="() => toast('生图功能尚未接入', 'warn')"
-        @open-settings="openSettings"
-        @open-update="() => openManage('update')"
+        @open-settings="() => { accountOpen = false; openSettings(); }"
+        @open-account="openAccount"
+        @favorite-change="changeFavorite"
+        @open-update="() => { accountOpen = false; openManage('update'); }"
       />
       <div id="scrim-left" @click="toggleLeft"></div>
       <div id="content">
-      <section id="chat-col" v-show="!settingsOpen">
+      <AccountPane v-if="accountOpen" @back="leaveAccount" />
+      <section id="chat-col" v-show="!settingsOpen && !accountOpen">
     <ChatControls
       ref="chatControlsRef"
       :left-hidden="leftHidden"
@@ -1637,7 +1752,7 @@ onUnmounted(() => {
             <span class="sk-line sk-c"></span>
           </div>
           <div v-if="emptyDraft" class="draft-welcome">
-            <h2>有什么想聊的？</h2>
+            <h2>{{ brandPrefs.welcome_text }}</h2>
             <p class="dw-sub">{{ draftAgentName }}<span class="dw-sep">·</span>{{ draftModelName }}</p>
           </div>
           <VBtn

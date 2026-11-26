@@ -77,5 +77,5 @@ export const ICONS = {
     '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>',
   // Lucide sun-moon：太阳 + 月亮并排，别再用“半填充的太阳”冒充自动（视觉上仍像太阳）。
   themeAuto:
-    '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.2" cy="12" r="2.4"/><path d="M7.2 6.2v1M7.2 16.8v1M1.4 12h1M11 12h1M3.1 8.1l.7.7M10.2 15.2l.7.7M3.1 15.9l.7-.7M10.2 8.8l.7-.7"/><path d="M18.6 7.5a4.5 4.5 0 1 0 0 9 5.5 5.5 0 0 1 0-9z" fill="currentColor" stroke="none"/></svg>',
+    '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="12" r="2.6"/><path d="M7 5.5v1.3M7 17.2v1.3M1.5 8.8l1.1.6M11.4 14.6l1.1.6M1.5 15.2l1.1-.6M11.4 9.4l1.1-.6"/><path d="M14 6.5a6 6 0 1 1 0 11a6 6 0 0 0 0-11z"/></svg>',
 } as const;

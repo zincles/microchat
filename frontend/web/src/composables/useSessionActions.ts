@@ -33,7 +33,7 @@ export interface SessionActionsDeps {
   contextRingRef: Ref<OverridesSink | null>;
   overlaysRef: Ref<OverlaySink | null>;
   refreshPreview: () => void;
-  refreshSessionsBar: () => Promise<void>;
+  refreshSessionsBar: () => Promise<SessionView[] | null>;
   getSessionsCache: () => SessionView[];
   enterSession: (id: string) => Promise<void>;
   startDraft: () => Promise<void>;

@@ -85,6 +85,7 @@ func (s *Server) rerollMessageSwitch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, state)
+	s.live.PublishSessionChanged(r.PathValue("session_id"))
 }
 
 // rerollMessageDelete：删掉一版（`idx` 是**路径参数**：它是位次，不是 id）。
@@ -173,6 +174,7 @@ func (s *Server) rerollSummarySwitch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, state)
+	s.live.PublishSessionChanged(r.PathValue("session_id"))
 }
 
 // rerollSummaryDelete：删掉一版（`idx` 是**位次不是 id**，与消息家族同一个形状）。

@@ -20,6 +20,7 @@ import (
 type turnTools struct {
 	declared []providers.Tool
 	executor providers.Provider
+	replayReasoning bool
 }
 
 func (s *Service) toolsFor(session model.Session, chosen providers.Backend, protocol providers.Protocol, channels config.ProvidersConfig) (turnTools, error) {
@@ -62,6 +63,7 @@ func (s *Service) toolsFor(session model.Session, chosen providers.Backend, prot
 			}
 		}
 	}
+	tools.replayReasoning = profile.ReplayReasoningForToolCount(len(tools.declared))
 	return tools, nil
 }
 

@@ -215,6 +215,9 @@ func (s *Service) runFlow(session model.Session, replyID string, token uint64, r
 	if err != nil {
 		failTrace(err)
 		s.Turns.Finish(sessionID, token, err.Error())
+		if s.Notifier != nil {
+			s.Notifier.PublishSessionChanged(sessionID)
+		}
 		guard.Fail(err.Error())
 		return
 	}
@@ -222,12 +225,18 @@ func (s *Service) runFlow(session model.Session, replyID string, token uint64, r
 		err := errors.New("FlowAgent 缺少 flow 图")
 		failTrace(err)
 		s.Turns.Finish(sessionID, token, err.Error())
+		if s.Notifier != nil {
+			s.Notifier.PublishSessionChanged(sessionID)
+		}
 		guard.Fail(err.Error())
 		return
 	}
 	if err := flow.Validate(*agent.Flow); err != nil {
 		failTrace(err)
 		s.Turns.Finish(sessionID, token, err.Error())
+		if s.Notifier != nil {
+			s.Notifier.PublishSessionChanged(sessionID)
+		}
 		guard.Fail(err.Error())
 		return
 	}
@@ -255,6 +264,9 @@ func (s *Service) runFlow(session model.Session, replyID string, token uint64, r
 				NodeStates: trace.NodeStates, StartedAt: started.UnixMilli(), DurationMS: time.Since(started).Milliseconds(),
 			})
 			guard.Cancel()
+			if s.Notifier != nil {
+				s.Notifier.PublishSessionChanged(sessionID)
+			}
 			return
 		}
 		s.setFlowTrace(FlowRunTrace{
@@ -262,6 +274,9 @@ func (s *Service) runFlow(session model.Session, replyID string, token uint64, r
 			NodeStates: trace.NodeStates, StartedAt: started.UnixMilli(), DurationMS: time.Since(started).Milliseconds(),
 		})
 		s.Turns.Finish(sessionID, token, err.Error())
+		if s.Notifier != nil {
+			s.Notifier.PublishSessionChanged(sessionID)
+		}
 		guard.Fail(err.Error())
 		return
 	}
@@ -272,6 +287,9 @@ func (s *Service) runFlow(session model.Session, replyID string, token uint64, r
 			StartedAt: started.UnixMilli(), DurationMS: time.Since(started).Milliseconds(),
 		})
 		guard.Cancel()
+		if s.Notifier != nil {
+			s.Notifier.PublishSessionChanged(sessionID)
+		}
 		return
 	}
 
@@ -284,6 +302,9 @@ func (s *Service) runFlow(session model.Session, replyID string, token uint64, r
 		if _, err := s.Store.UpdateMessage(sessionID, userMessageID, store.MessageEdit{Content: &content}); err != nil {
 			failTrace(err)
 			s.Turns.Finish(sessionID, token, err.Error())
+			if s.Notifier != nil {
+				s.Notifier.PublishSessionChanged(sessionID)
+			}
 			guard.Fail(err.Error())
 			return
 		}
@@ -300,6 +321,9 @@ func (s *Service) runFlow(session model.Session, replyID string, token uint64, r
 		if _, err := s.Store.ReplaceMessage(sessionID, replaceID, outcome.Final.Text, progress); err != nil {
 			failTrace(err)
 			s.Turns.Finish(sessionID, token, err.Error())
+			if s.Notifier != nil {
+				s.Notifier.PublishSessionChanged(sessionID)
+			}
 			guard.Fail(err.Error())
 			return
 		}
@@ -313,6 +337,9 @@ func (s *Service) runFlow(session model.Session, replyID string, token uint64, r
 		if _, err := s.Store.InsertMessage(message); err != nil {
 			failTrace(err)
 			s.Turns.Finish(sessionID, token, err.Error())
+			if s.Notifier != nil {
+				s.Notifier.PublishSessionChanged(sessionID)
+			}
 			guard.Fail(err.Error())
 			return
 		}
@@ -327,6 +354,9 @@ func (s *Service) runFlow(session model.Session, replyID string, token uint64, r
 	s.setFlowTrace(trace)
 	// FlowAgent 暂不启用起标题 / 自动压缩等高级能力：它们要等 Flow 版本重写。
 	s.Turns.Finish(sessionID, token, "")
+	if s.Notifier != nil {
+		s.Notifier.PublishSessionChanged(sessionID)
+	}
 	guard.Succeed()
 }
 

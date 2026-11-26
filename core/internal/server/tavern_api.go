@@ -165,7 +165,7 @@ func (s *Server) deleteTavernPreset(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// segmentUsers：哪些 Agent（基座或能力追加段）引用了这些提示词段。名字优先，空名字回 id。
+// segmentUsers：哪些 Agent（基础提示词、最新用户消息或能力）引用了这些提示词段。名字优先，空名字回 id。
 func segmentUsers(agents config.AgentsConfig, ids []string) []string {
 	wanted := make(map[string]bool, len(ids))
 	for _, id := range ids {
@@ -179,6 +179,14 @@ func segmentUsers(agents config.AgentsConfig, ids []string) []string {
 			if wanted[ref] {
 				used = true
 				break
+			}
+		}
+		if !used {
+			for _, ref := range agent.LatestPromptSegments {
+				if wanted[ref] {
+					used = true
+					break
+				}
 			}
 		}
 		if !used {

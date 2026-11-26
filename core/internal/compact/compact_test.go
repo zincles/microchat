@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"microchat/internal/abilities"
+	"microchat/internal/blocks"
 	"microchat/internal/config"
 	"microchat/internal/model"
 	"microchat/internal/state"
@@ -33,6 +34,14 @@ type harness struct {
 	sessionID string
 	turns     *turn.Registry
 	tasks     *task.Registry
+}
+
+type notifierRecorder struct {
+	events chan string
+}
+
+func (r *notifierRecorder) PublishSessionChanged(sessionID string) {
+	r.events <- sessionID
 }
 
 func newHarness(t *testing.T, agents config.AgentsConfig) *harness {
@@ -485,6 +494,8 @@ func TestStartReturnsRunningAndFinishesWithDone(t *testing.T) {
 	h.turn(t, "第一句")
 	h.turn(t, "第二句")
 	h.turn(t, "第三句")
+	recorder := &notifierRecorder{events: make(chan string, 1)}
+	h.service.Notifier = recorder
 
 	status, err := h.service.Start(h.session, Request{Blocks: 2})
 	if err != nil {
@@ -499,6 +510,9 @@ func TestStartReturnsRunningAndFinishesWithDone(t *testing.T) {
 		if got != nil && got.State != "running" {
 			if got.State != "done" || got.SummaryID == nil || got.Compacted != 2 {
 				t.Fatalf("跑完该是 done：%+v", got)
+			}
+			if sessionID := <-recorder.events; sessionID != h.sessionID {
+				t.Fatalf("通知的会话 id = %q", sessionID)
 			}
 			return
 		}
@@ -1041,6 +1055,8 @@ func waitAdvanced(t *testing.T, h *harness, id string) AdvancedJob {
 // 高级压缩第一版：按 step_blocks 切 chunk、并发生成、最后一批单事务落库。
 func TestAdvancedCompactChunksAndCommitsBatch(t *testing.T) {
 	h := newHarness(t, config.AgentsConfig{})
+	recorder := &notifierRecorder{events: make(chan string, 1)}
+	h.service.Notifier = recorder
 	for i := 0; i < 6; i++ {
 		h.turn(t, "第 "+strconv.Itoa(i+1)+" 轮")
 	}
@@ -1069,6 +1085,9 @@ func TestAdvancedCompactChunksAndCommitsBatch(t *testing.T) {
 	done := waitAdvanced(t, h, job.ID)
 	if done.State != "done" {
 		t.Fatalf("高级压缩该完成：%+v", done)
+	}
+	if sessionID := <-recorder.events; sessionID != h.sessionID {
+		t.Fatalf("高级压缩通知的会话 id = %q", sessionID)
 	}
 	if len(h.summaries(t)) != 3 {
 		t.Fatalf("三块应该落三行摘要：%+v", h.summaries(t))
@@ -1140,5 +1159,121 @@ func TestMaterialOfIncludesToolCalls(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("材料没有 %q：%s", want, got)
 		}
+	}
+}
+
+func TestStrategySpanStopsAtCoveredBlock(t *testing.T) {
+	covered := "covered"
+	messages := make([]model.Message, 10)
+	for index := range messages {
+		messages[index] = model.Message{ID: "m" + strconv.Itoa(index), Role: model.RoleUser}
+		if index%2 == 1 {
+			messages[index].Role = model.RoleAssistant
+		}
+	}
+	messages[2].SummaryID = &covered
+	messages[3].SummaryID = &covered
+	got, err := strategySpan(messages, nil, blocks.Split(messages), 2, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Begin != 0 || got.End != 1 || got.Blocks != 1 {
+		t.Fatalf("策略不能跨已覆盖块，实际 span=%+v", got)
+	}
+}
+
+func TestCompactRejectsMessageEditedDuringGeneration(t *testing.T) {
+	var h *harness
+	handlerErr := make(chan error, 1)
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		messages, err := h.store.ListMessages(h.sessionID)
+		if err != nil {
+			handlerErr <- err
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if _, err := h.store.UpdateMessage(h.sessionID, messages[0].ID, store.MessageEdit{Content: new("生成期间被改过")}); err != nil {
+			handlerErr <- err
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"摘要"}}]}`))
+	}))
+	defer stub.Close()
+	h = newHarness(t, config.AgentsConfig{})
+	if err := config.SaveJSON(h.paths.Config("providers.json"), mustJSON(t,
+		`{"providers":[{"id":"stub","vendor":"custom","base_url":"`+stub.URL+`","identity":"bare"}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	h.session.Provider, h.session.Model = "stub", "m"
+	h.turn(t, "第一句")
+	h.turn(t, "第二句")
+	if _, err := h.service.Compact(context.Background(), h.session, Request{Blocks: 1}); err == nil {
+		t.Fatal("生成期间消息正文变化后该拒绝提交")
+	}
+	select {
+	case err := <-handlerErr:
+		t.Fatal(err)
+	default:
+	}
+	if len(h.summaries(t)) != 0 {
+		t.Fatal("来源变化失败不许留下摘要")
+	}
+}
+
+func TestCompactRejectsMergeSourceEditedDuringGeneration(t *testing.T) {
+	var h *harness
+	var childID string
+	handlerErr := make(chan error, 1)
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if childID != "" {
+			messages, err := h.store.ListMessages(h.sessionID)
+			if err != nil {
+				handlerErr <- err
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if _, err := h.store.UpdateMessage(h.sessionID, messages[0].ID, store.MessageEdit{Content: new("生成期间区间消息被改过")}); err != nil {
+				handlerErr <- err
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"父摘要"}}]}`))
+	}))
+	defer stub.Close()
+	h = newHarness(t, config.AgentsConfig{})
+	if err := config.SaveJSON(h.paths.Config("providers.json"), mustJSON(t,
+		`{"providers":[{"id":"stub","vendor":"custom","base_url":"`+stub.URL+`","identity":"bare"}]}`)); err != nil {
+		t.Fatal(err)
+	}
+	h.session.Provider, h.session.Model = "stub", "m"
+	h.turn(t, "第一句")
+	h.turn(t, "第二句")
+	h.turn(t, "第三句")
+	first, err := h.service.Compact(context.Background(), h.session, Request{Blocks: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.service.Compact(context.Background(), h.session, Request{Blocks: 1}); err != nil {
+		t.Fatal(err)
+	}
+	childID = first.SummaryID
+	if _, err := h.service.Compact(context.Background(), h.session, Request{BeginIdx: 1, EndIdx: 4}); err == nil {
+		t.Fatal("生成期间区间消息变化后该拒绝提交")
+}
+	select {
+	case err := <-handlerErr:
+		t.Fatal(err)
+	default:
+	}
+	if len(h.summaries(t)) != 2 {
+		t.Fatal("合并来源变化失败不许留下父摘要")
+	}
+	child := findSummary(t, h.summaries(t), childID)
+	if child.Text != first.Text || !child.Dirty {
+		t.Fatalf("区间消息变化应只翻转子摘要 dirty、不改变正文：%+v", child)
 	}
 }

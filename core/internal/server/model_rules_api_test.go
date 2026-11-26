@@ -83,7 +83,7 @@ func TestModelRulesApplyToModelViews(t *testing.T) {
 
 // 系统内置规则：GET 分列、可停用；停用后不再参与画像；用户规则不能复用内置 id。
 func TestBuiltinModelRulesViewAndDisable(t *testing.T) {
-	server, st := newProvidersServer(t, `{"providers":[{"id":"xai","vendor":"xai"}]}`)
+	server, st := newProvidersServer(t, `{"providers":[{"id":"xai","vendor":"xai","protocol":"openai-response"}]}`)
 	if _, _, _, err := st.RefreshDiscovered("xai", []store.Discovered{{UpstreamID: "grok-4.7"}}, time.Now().UnixMilli()); err != nil {
 		t.Fatal(err)
 	}
@@ -98,9 +98,16 @@ func TestBuiltinModelRulesViewAndDisable(t *testing.T) {
 	if len(view.BuiltinModelRules) == 0 || !view.BuiltinModelRules[0].Builtin {
 		t.Fatalf("没有系统内置规则：%+v", view)
 	}
+	if view.BuiltinModelRules[0].Kind != "group" || len(view.BuiltinModelRules[0].Rules) == 0 || !view.BuiltinModelRules[0].Rules[0].Builtin {
+		t.Fatalf("builtin group must recursively expose builtin child markers: %+v", view.BuiltinModelRules[0])
+	}
 	if len(view.ModelDefineRules) != 0 {
 		t.Fatalf("内置规则不该出现在用户规则里：%+v", view.ModelDefineRules)
 	}
+	recorder = call(server, "GET", "/api/v1/models", "")
+	var enabledItems []ModelListItem
+	if err := json.Unmarshal(recorder.Body.Bytes(), &enabledItems); err != nil { t.Fatal(err) }
+	if len(enabledItems) != 1 || len(enabledItems[0].ServerTools) == 0 || !enabledItems[0].ReplayReasoning { t.Fatalf("enabled tools should enable model-view reasoning replay: %+v", enabledItems) }
 
 	body := `{"model_define_rules":[],"disabled_builtin_model_rules":["xai-grok-4-native"]}`
 	recorder = call(server, "PUT", "/api/v1/config/model-rules", body)
@@ -111,11 +118,7 @@ func TestBuiltinModelRulesViewAndDisable(t *testing.T) {
 		t.Fatal(err)
 	}
 	disabled := false
-	for _, rule := range view.BuiltinModelRules {
-		if rule.ID == "xai-grok-4-native" {
-			disabled = rule.Disabled
-		}
-	}
+	for _, rule := range view.BuiltinModelRules { if rule.ID == "xai-grok-4-native" { disabled = rule.Disabled }; for _, child := range rule.Rules { if child.ID == "xai-grok-4-native" { disabled = child.Disabled } } }
 	if !disabled {
 		t.Fatalf("停用状态没写回视图：%+v", view.BuiltinModelRules)
 	}
@@ -124,8 +127,8 @@ func TestBuiltinModelRulesViewAndDisable(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &items); err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 1 || len(items[0].ServerTools) != 0 {
-		t.Fatalf("停用内置 grok 规则后仍有工具：%+v", items)
+	if len(items) != 1 || len(items[0].ServerTools) != 0 || items[0].ReplayReasoning {
+		t.Fatalf("disabled tools must suppress reasoning replay: %+v", items)
 	}
 
 	// 用户规则复用内置 id / 未知停用 id 都 422。

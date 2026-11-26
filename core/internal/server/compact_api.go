@@ -90,6 +90,7 @@ func (s *Server) editSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, summary)
+	s.live.PublishSessionChanged(r.PathValue("session_id"))
 }
 
 // listSummaries：`GET /sessions/{session_id}/summaries` —— 这条会话的摘要列表（/editsum 的 picker 用）。
@@ -178,6 +179,7 @@ func (s *Server) undoSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+	s.live.PublishSessionChanged(session.ID)
 }
 
 // UndoItem / UndoPreview：撤销前的警告用 —— 告诉界面"撤这一条会连带删哪些"。

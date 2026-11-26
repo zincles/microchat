@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -11,27 +12,48 @@ import (
 	"microchat/internal/model"
 )
 
-// RecordSummary：**压缩的落库口** —— 一个事务里插一行摘要，再把**它的成员**指过去。
-//
-// 成员是谁由 `summary.Type` 定（**同质**：一条摘要的成员不许混）：
-//
-//	message ⇒ 回填那一段消息的 `summary_id`（`messages` 上唯一允许被压缩改的那一格）；
-//	summary ⇒ 回填那批子摘要的 `parent_summary_id`（合并级）。
-//
-// **绝不插 / 改 / 删 `messages` 的其它列** —— 正文是存档（`AGENTS.md` 的第一条不变量）。
-//
-// 顺序：先插摘要（外键指着它），再更新指针。
-//
-// 消息级的两处重核（调用上游那段时间里别人可能动过库）：
-//   - `sourceIDs` 必须**一条不少地**属于这条会话（少一条 = 那段被删/改了，区间不再自洽）；
-//   - 那些消息必须**都还没被覆盖**（`summary_id IS NULL`）⇒ 谁先到谁算，后到的**报错**
-//     （"不许覆盖已压缩的区间"这条闸在这里落地，不在调用点）。
-//
-// 合并级**不加 SELECT 预检**：那条 `parent_summary_id IS NULL` 的守卫 UPDATE 就是复核
-// （摘要 append-only、删消息级联整链 ⇒ "行数对不上"已经足够说明别人抢过 / 区间变了）。
-//
-// `sessions.updated_at` **不动**：压的是派生数据，对话本身没变（列表排序该按"最后一次说话"）。
-func (s *Store) RecordSummary(summary model.Summary, sourceIDs []string) error {
+// SummarySourceSnapshot is one generation dependency observed before the model call.
+// Message sources carry both body and updated_at; summary sources carry body and dirty.
+type SummarySourceSnapshot struct {
+	ID        string
+	Kind      model.SummaryType
+	Content   string
+	UpdatedAt int64
+	Dirty     bool
+}
+
+// SummaryCommitSnapshot keeps the direct members distinct from extra material
+// read while assembling the generation request (for example merge range messages).
+type SummaryCommitSnapshot struct {
+	Members      []SummarySourceSnapshot
+	Dependencies []SummarySourceSnapshot
+}
+
+// summaryCommitHook is intentionally narrow and package-private so store tests
+// can cancel a context at the write boundary without timing-based sleeps.
+var summaryCommitHook func()
+
+// RecordSummary inserts one summary and points its members at it in one transaction.
+// Optional legacy snapshots are treated as member snapshots; new callers should
+// use RecordSummaryContext with SummaryCommitSnapshot.
+func (s *Store) RecordSummary(summary model.Summary, sourceIDs []string, snapshots ...[]SummarySourceSnapshot) error {
+	if len(snapshots) > 1 {
+		return InvalidError("摘要落库只能提供一份来源快照")
+	}
+	var commit []SummaryCommitSnapshot
+	if len(snapshots) == 1 {
+		commit = []SummaryCommitSnapshot{{Members: snapshots[0]}}
+	}
+	return s.RecordSummaryContext(context.Background(), summary, sourceIDs, commit...)
+}
+
+// RecordSummaryContext is RecordSummary with cancellation-aware transaction
+// semantics. A successful Commit is the linearization point: cancellation
+// after it does not turn a committed summary into a canceled operation.
+func (s *Store) RecordSummaryContext(ctx context.Context, summary model.Summary, sourceIDs []string, snapshots ...SummaryCommitSnapshot) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	switch summary.Type {
 	case model.TypeMessages, model.TypeSummaries:
 	default:
@@ -40,14 +62,34 @@ func (s *Store) RecordSummary(summary model.Summary, sourceIDs []string) error {
 	if len(sourceIDs) == 0 {
 		return InvalidError("压缩要盖住至少一条（空区间不落库）")
 	}
+	snapshot, checked, err := commitSnapshotArg(snapshots)
+	if err != nil {
+		return err
+	}
+	if checked {
+		if err := validateCommitSnapshot(summary.Type, sourceIDs, snapshot); err != nil {
+			return err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	tx, err := s.db.Begin()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if checked {
+		if err := verifyCommitSnapshot(tx, summary.SessionID, summary.Type, snapshot); err != nil {
+			return err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	if summary.Type == model.TypeSummaries {
 		if err := insertSummary(tx, summary); err != nil {
@@ -59,6 +101,15 @@ func (s *Store) RecordSummary(summary model.Summary, sourceIDs []string) error {
 		}
 		if updated != len(sourceIDs) {
 			return InvalidError("要并的这几条已经不是原来那几条顶层摘要了（被抢过 / 被删过）：重新取一次")
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if summaryCommitHook != nil {
+			summaryCommitHook()
+		}
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		return tx.Commit()
 	}
@@ -77,6 +128,9 @@ func (s *Store) RecordSummary(summary model.Summary, sourceIDs []string) error {
 	if already != 0 {
 		return InvalidError("这段区间里已经有消息被摘要盖住了：压缩不许覆盖已压缩的区间")
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := insertSummary(tx, summary); err != nil {
 		return err
 	}
@@ -87,8 +141,18 @@ func (s *Store) RecordSummary(summary model.Summary, sourceIDs []string) error {
 	if updated != len(sourceIDs) {
 		return InvalidError("这段区间里的消息已经不是原来那几条了（被删过 / 换过会话）：重新取一次")
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if summaryCommitHook != nil {
+		summaryCommitHook()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
+
 
 // ReplaceSummaryText：**就地换一条【顶层】摘要的正文与随行数据**（摘要重摇的 apply）。
 //
@@ -677,17 +741,35 @@ func messageIDsInOrder(tx *sql.Tx, sessionID string) ([]string, error) {
 	return ids, rows.Err()
 }
 
-// RecordSummaryBatch：高级压缩的**一次性落库口** —— N 条消息级摘要在**同一个事务**里
-// 插行并回填 messages.summary_id。任何一条校验失败 ⇒ 整批回滚（高级作业要么全成、要么没做过）。
-//
-// 只服务高级压缩的 chunk 批：成员一律是消息、彼此区间必须互不重叠（上层已经按块切好；
-// 这里仍逐条做 coveredCount / alreadyCovered 复核，防调用上游那段时间里别人动过库）。
-func (s *Store) RecordSummaryBatch(summaries []model.Summary) error {
+// RecordSummaryBatch writes all message summaries and pointers atomically.
+// Optional legacy snapshots are split by each summary's source IDs; new callers
+// should pass one SummaryCommitSnapshot per summary to RecordSummaryBatchContext.
+func (s *Store) RecordSummaryBatch(summaries []model.Summary, snapshots ...[]SummarySourceSnapshot) error {
+	if len(snapshots) > 1 {
+		return InvalidError("批量落库只能提供一份来源快照")
+	}
+	var commits []SummaryCommitSnapshot
+	if len(snapshots) == 1 {
+		var err error
+		commits, err = splitLegacyBatchSnapshots(summaries, snapshots[0])
+		if err != nil {
+			return err
+		}
+	}
+	return s.RecordSummaryBatchContext(context.Background(), summaries, commits)
+}
+
+// RecordSummaryBatchContext is the cancellation-aware batch write. Commit is
+// the linearization point for the whole batch.
+func (s *Store) RecordSummaryBatchContext(ctx context.Context, summaries []model.Summary, snapshots []SummaryCommitSnapshot) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if len(summaries) == 0 {
 		return InvalidError("批量落库至少要有一条摘要")
 	}
 	sessionID := summaries[0].SessionID
-	for _, summary := range summaries {
+	for index, summary := range summaries {
 		if summary.Type != model.TypeMessages {
 			return InvalidError("批量落库只收消息级摘要")
 		}
@@ -697,14 +779,35 @@ func (s *Store) RecordSummaryBatch(summaries []model.Summary) error {
 		if len(summary.SourceIDs) == 0 {
 			return InvalidError("压缩要盖住至少一条（空区间不落库）")
 		}
+		if len(snapshots) > 0 {
+			if len(snapshots) != len(summaries) {
+				return InvalidError("批量摘要来源快照数量与 chunk 不一致")
+			}
+			if err := validateCommitSnapshot(summary.Type, summary.SourceIDs, snapshots[index]); err != nil {
+				return err
+			}
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	tx, err := s.db.Begin()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if len(snapshots) > 0 {
+		for index, snapshot := range snapshots {
+			if err := verifyCommitSnapshot(tx, sessionID, summaries[index].Type, snapshot); err != nil {
+				return err
+			}
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	// 先整批预检，再统一插/改：这样任何一条撞上"已被覆盖"都能在动 messages 之前回滚。
 	for _, summary := range summaries {
@@ -723,6 +826,9 @@ func (s *Store) RecordSummaryBatch(summaries []model.Summary) error {
 			return InvalidError("这段区间里已经有消息被摘要盖住了：压缩不许覆盖已压缩的区间")
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	for _, summary := range summaries {
 		if err := insertSummary(tx, summary); err != nil {
 			return err
@@ -735,5 +841,125 @@ func (s *Store) RecordSummaryBatch(summaries []model.Summary) error {
 			return InvalidError("这段区间里的消息已经不是原来那几条了：整批回滚")
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if summaryCommitHook != nil {
+		summaryCommitHook()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	return tx.Commit()
+}
+
+func splitLegacyBatchSnapshots(summaries []model.Summary, sources []SummarySourceSnapshot) ([]SummaryCommitSnapshot, error) {
+	commits := make([]SummaryCommitSnapshot, len(summaries))
+	cursor := 0
+	for index, summary := range summaries {
+		end := cursor + len(summary.SourceIDs)
+		if end > len(sources) {
+			return nil, InvalidError("批量摘要来源快照数量与成员不一致")
+		}
+		commits[index].Members = append([]SummarySourceSnapshot(nil), sources[cursor:end]...)
+		cursor = end
+	}
+	if cursor != len(sources) {
+		return nil, InvalidError("批量摘要来源快照数量与成员不一致")
+	}
+	return commits, nil
+}
+
+func commitSnapshotArg(args []SummaryCommitSnapshot) (SummaryCommitSnapshot, bool, error) {
+	if len(args) == 0 {
+		return SummaryCommitSnapshot{}, false, nil
+	}
+	if len(args) != 1 {
+		return SummaryCommitSnapshot{}, false, InvalidError("摘要落库只能提供一份提交快照")
+	}
+	return args[0], true, nil
+}
+
+func validateCommitSnapshot(kind model.SummaryType, sourceIDs []string, snapshot SummaryCommitSnapshot) error {
+	if err := validateSnapshotShape(kind, sourceIDs, snapshot.Members); err != nil {
+		return err
+	}
+	for _, dependency := range snapshot.Dependencies {
+		if dependency.ID == "" || (dependency.Kind != model.TypeMessages && dependency.Kind != model.TypeSummaries) {
+			return InvalidError("摘要生成期间依赖快照无效：重新取一次")
+		}
+	}
+	return nil
+}
+
+func validateSnapshotShape(kind model.SummaryType, sourceIDs []string, sources []SummarySourceSnapshot) error {
+	if len(sourceIDs) != len(sources) {
+		return InvalidError("摘要生成期间来源数量发生变化：重新取一次")
+	}
+	for index, source := range sources {
+		if source.ID != sourceIDs[index] || source.Kind != kind {
+			return InvalidError("摘要生成期间来源顺序或类型发生变化：重新取一次")
+		}
+	}
+	return nil
+}
+
+func verifyCommitSnapshot(tx *sql.Tx, sessionID string, kind model.SummaryType, snapshot SummaryCommitSnapshot) error {
+	if err := verifySourceSnapshots(tx, sessionID, kind, snapshot.Members); err != nil {
+		return err
+	}
+	for _, dependency := range snapshot.Dependencies {
+		if err := verifySourceSnapshot(tx, sessionID, dependency); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func verifySourceSnapshots(tx *sql.Tx, sessionID string, kind model.SummaryType, sources []SummarySourceSnapshot) error {
+	for _, source := range sources {
+		if source.Kind != kind {
+			return InvalidError("摘要生成期间来源类型发生变化：重新取一次")
+		}
+		if err := verifySourceSnapshot(tx, sessionID, source); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func verifySourceSnapshot(tx *sql.Tx, sessionID string, source SummarySourceSnapshot) error {
+	switch source.Kind {
+	case model.TypeMessages:
+		var content string
+		var updatedAt int64
+		err := tx.QueryRow(`SELECT content, updated_at FROM messages WHERE id = ?1 AND session_id = ?2`,
+			source.ID, sessionID).Scan(&content, &updatedAt)
+		if errors.Is(err, sql.ErrNoRows) {
+			return InvalidError("摘要生成期间来源消息已被删除或换会话：重新取一次")
+		}
+		if err != nil {
+			return err
+		}
+		if content != source.Content || updatedAt != source.UpdatedAt {
+			return InvalidError("摘要生成期间来源消息正文已变化：重新取一次")
+		}
+	case model.TypeSummaries:
+		var text string
+		var dirty int
+		err := tx.QueryRow(`SELECT text, dirty FROM summaries WHERE id = ?1 AND session_id = ?2`,
+			source.ID, sessionID).Scan(&text, &dirty)
+		if errors.Is(err, sql.ErrNoRows) {
+			return InvalidError("摘要生成期间来源摘要已被删除或换会话：重新取一次")
+		}
+		if err != nil {
+			return err
+		}
+		if text != source.Content || (dirty != 0) != source.Dirty {
+			return InvalidError("摘要生成期间来源摘要正文或状态已变化：重新取一次")
+		}
+	default:
+		return InvalidError("摘要来源类型不认识：" + string(source.Kind))
+	}
+	return nil
 }

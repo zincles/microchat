@@ -1,6 +1,6 @@
-// Package server：HTTP 层。**接口形状照搬 AGENTS.md 那张表**（49 条），一条条搬。
+// Package server：HTTP 路由、参数校验、错误体与服务编排；客户端契约见 AGENTS.md。
 //
-// 全部挂在 /api/v1 下；错误体固定 {"error":{"code","message"}}；配了口令就全都要 Bearer。
+// 所有接口挂在 /api/v1 下，访问边界由监听地址与反向代理负责。
 package server
 
 import (
@@ -16,6 +16,7 @@ import (
 	"microchat/internal/chat"
 	"microchat/internal/compact"
 	"microchat/internal/config"
+	"microchat/internal/live"
 	"microchat/internal/model"
 	"microchat/internal/providers"
 	"microchat/internal/queue"
@@ -25,7 +26,6 @@ import (
 
 	"github.com/google/uuid"
 )
-
 type Server struct {
 	store   *store.Store
 	config  config.Config
@@ -35,6 +35,7 @@ type Server struct {
 	rerolls *reroll.Service
 	tasks   *task.Registry
 	queues  *queue.Service // 队列任务（2026-11-01）：串行、一步失败即整体结束、可取消
+	live    *live.Hub
 	mux     *http.ServeMux
 }
 
@@ -43,8 +44,13 @@ type Server struct {
 func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *chat.Service,
 	compactService *compact.Service, rerollService *reroll.Service, tasks *task.Registry,
 	queues *queue.Service) *Server {
+	hub := live.NewHub()
+	chatService.Notifier = hub
+	compactService.Notifier = hub
 	s := &Server{store: st, config: cfg, paths: paths, chat: chatService, compact: compactService,
-		rerolls: rerollService, tasks: tasks, queues: queues, mux: http.NewServeMux()}
+		rerolls: rerollService, tasks: tasks, queues: queues, live: hub, mux: http.NewServeMux()}
+	s.mux.HandleFunc("POST /api/v1/live/heartbeat", s.liveHeartbeat)
+	s.mux.HandleFunc("GET /api/v1/live/events", s.live.ServeEvents)
 	// Go 1.22+ 的 ServeMux 原生支持 `GET /x/{id}` 这种模式 —— 连路由库都不需要。
 	s.mux.HandleFunc("GET /api/v1/health", s.health)
 	// 版本更新（2026-11-09）：左栏「更新」入口 —— 读当前提交、拉取并请求重启。
@@ -83,9 +89,9 @@ func New(st *store.Store, cfg config.Config, paths config.Paths, chatService *ch
 	s.mux.HandleFunc("DELETE /api/v1/agents/{agent_id}", s.deleteAgent)
 	// FlowAgent 编辑器的测试发送：只跑一次图，不建会话 / 不落库。
 	s.mux.HandleFunc("POST /api/v1/agents/{agent_id}/flow/test", s.testFlowAgent)
-	// 提示词段（system prompt segment）：读口随 `GET /agents`（那份就是 AgentsConfig 全貌）；
-	// 这里只有三个写口（设置面 = admin）。删除有守卫：还被引用 ⇒ 拒绝（列出引用者）。
+	// 提示词段：读口随 GET /agents；写口为创建、克隆、改名/正文与删除。
 	s.mux.HandleFunc("POST /api/v1/segments", s.createSegment)
+	s.mux.HandleFunc("POST /api/v1/segments/{segment_id}/copy", s.copySegment)
 	s.mux.HandleFunc("PATCH /api/v1/segments/{segment_id}", s.updateSegment)
 	s.mux.HandleFunc("DELETE /api/v1/segments/{segment_id}", s.deleteSegment)
 	// **界面偏好**（2026-11-01：住服务器，不再住浏览器 localStorage）
@@ -404,17 +410,19 @@ type CreateSessionReq struct {
 // ⚠ 它**不是**收下不用的字段：`GET /sessions/{session_id}/prompt` 的 `source` 与
 // `/outgoing` 里第一条 system 都会跟着变（由 `chat.EffectiveSystemPrompt` 一处解析）。
 type UpdateSessionReq struct {
-	Title        *string `json:"title"`
-	Provider     *string `json:"provider"`
-	Model        *string `json:"model"`
-	AgentID      *string `json:"agent_id"`
-	SystemPrompt *string `json:"system_prompt"`
-	// ThinkingLevel：nil = 不动；"" = 清掉覆盖（跟随模型默认）；非空 = 统一七档之一。
-	ThinkingLevel *string `json:"thinking_level"`
-	// NativeToolsDisabled：nil = 不动；[] = 全部恢复；非空 = 关闭这些 native tool。
-	NativeToolsDisabled *[]string `json:"native_tools_disabled"`
-	// RequestOverrides：nil = 不动；{} = 清空；对象 = 整份替换。允许覆盖任何 key。
-	RequestOverrides *map[string]json.RawMessage `json:"request_overrides"`
+ Title        *string `json:"title"`
+ Provider     *string `json:"provider"`
+ Model        *string `json:"model"`
+ AgentID      *string `json:"agent_id"`
+ SystemPrompt *string `json:"system_prompt"`
+ // ThinkingLevel：nil = 不动；"" = 清掉覆盖（跟随模型默认）；非空 = 统一七档之一。
+ ThinkingLevel *string `json:"thinking_level"`
+ // NativeToolsDisabled：nil = 不动；[] = 全部恢复；非空 = 关闭这些 native tool。
+ NativeToolsDisabled *[]string `json:"native_tools_disabled"`
+ // RequestOverrides：nil = 不动；{} = 清空；对象 = 整份替换。允许覆盖任何 key。
+ RequestOverrides *map[string]json.RawMessage `json:"request_overrides"`
+ // Favorite：nil = 不动；true/false = 设置收藏状态。
+ Favorite *bool `json:"favorite"`
 }
 
 // normalizeUUIDv7：校验 + 规范化（小写带横线）。`sessions.id` 的 v7 形状由这一处守
@@ -567,6 +575,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusCreated, session)
+	s.live.PublishSessionChanged(session.ID)
 }
 
 // loadAgents：读 `agents.json`（读不到就算空的 —— 文件可以缺失）。
@@ -689,13 +698,19 @@ func (s *Server) updateSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if req.NativeToolsDisabled != nil {
-		disabled := append([]string{}, (*req.NativeToolsDisabled)...)
-		if err := s.store.SetSessionNativeToolsDisabled(id, disabled); err != nil {
-			writeStoreError(w, err)
-			return
-		}
-	}
+ if req.Favorite != nil {
+  if err := s.store.SetSessionFavorite(id, *req.Favorite); err != nil {
+   writeStoreError(w, err)
+   return
+  }
+ }
+ if req.NativeToolsDisabled != nil {
+  disabled := append([]string{}, (*req.NativeToolsDisabled)...)
+  if err := s.store.SetSessionNativeToolsDisabled(id, disabled); err != nil {
+   writeStoreError(w, err)
+   return
+  }
+ }
 	if req.RequestOverrides != nil {
 		overrides := map[string]json.RawMessage{}
 		for key, value := range *req.RequestOverrides {
@@ -716,6 +731,7 @@ func (s *Server) updateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, updated)
+	s.live.PublishSessionChanged(id)
 }
 
 func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
@@ -727,6 +743,7 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+	s.live.PublishSessionDeleted(r.PathValue("session_id"))
 }
 
 // decodeJSON：请求体**语法**不合法 ⇒ 400（对齐 axum 的 400）。
@@ -773,6 +790,7 @@ func (s *Server) copySession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, copied)
+	s.live.PublishSessionChanged(copied.ID)
 }
 
 // importSt：从 SillyTavern JSONL 建会话并按序落库（设置面板"已有对话管理器"的导入口")。
@@ -832,6 +850,7 @@ func (s *Server) importSt(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"session": sessionFresh, "messages": len(parsed), "skipped": skipped,
 	})
+	s.live.PublishSessionChanged(session.ID)
 }
 
 // writeMessageError：消息级路由的 404 文案 —— "会话不存在"会误导（多半是那条消息没了）。
@@ -869,6 +888,7 @@ func (s *Server) editMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, message)
+	s.live.PublishSessionChanged(r.PathValue("session_id"))
 }
 
 // DeleteMessageReq：删消息的请求体 —— 只带回**预览里的最后一条**。
@@ -925,6 +945,7 @@ func (s *Server) deleteMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	// 回的就是刚执行的那份计划（与预览同一个形状：真删了什么，一眼对得上）
 	writeJSON(w, http.StatusOK, plan)
+	s.live.PublishSessionChanged(sessionID)
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {
@@ -951,3 +972,20 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 
 // trimSpace：收在一处（免得 import 到处飞）。
 func trimSpace(text string) string { return strings.TrimSpace(text) }
+
+type liveHeartbeatReq struct {
+	ClientID string `json:"client_id"`
+}
+
+func (s *Server) liveHeartbeat(w http.ResponseWriter, r *http.Request) {
+	var req liveHeartbeatReq
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	count, err := s.live.Heartbeat(req.ClientID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid", "client_id must be a UUID")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"online_clients": count})
+}

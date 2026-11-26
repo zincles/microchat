@@ -3,7 +3,6 @@ package providers
 import (
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"strings"
 
 	"github.com/openai/openai-go/v3"
@@ -202,7 +201,7 @@ func collectChat(stream *ssestream.Stream[openai.ChatCompletionChunk], emit func
 
 func completionResult(reply *openai.ChatCompletion) (Result, error) {
 	if field := reply.JSON.ExtraFields["error"]; field.Valid() {
-		return Result{}, &UpstreamError{Status: http.StatusOK, Body: snippet(field.Raw())}
+		return Result{}, &UpstreamError{Status: 200, Body: snippet(field.Raw())}
 	}
 	if len(reply.Choices) == 0 {
 		return Result{}, ErrEmpty
@@ -212,31 +211,35 @@ func completionResult(reply *openai.ChatCompletion) (Result, error) {
 	result := newResult(reply.ID, choice.FinishReason)
 	result.Usage = NormalizeUsage([]byte(reply.Usage.RawJSON()))
 	result.Reasoning = chatReasoning(msg.JSON.ExtraFields)
-	if msg.Refusal != "" {
-		return Result{}, &UpstreamError{Status: http.StatusOK, Body: snippet("refusal: " + msg.Refusal)}
-	}
+	// Refusal is a model outcome, not an API failure. Surface it as reply text so
+	// callers and archives never turn a refusal into a blank response.
 	result.Text = msg.Content
-	if msg.Content != "" {
-		result.Exchange.Items = append(result.Exchange.Items, model.OutputItem{Type: "message", Text: msg.Content})
-	}
-	for _, t := range msg.ToolCalls {
-		if t.Type != "" && t.Type != "function" {
-			return Result{}, fmt.Errorf("providers: 尚未注册 %q 工具执行器", t.Type)
+	if msg.Refusal != "" {
+		if result.Text != "" {
+			result.Text += "\n\n"
 		}
-		result.ToolCalls = append(result.ToolCalls, ToolCall{ID: t.ID, Name: t.Function.Name, Arguments: t.Function.Arguments})
-		result.Exchange.Items = append(result.Exchange.Items, model.OutputItem{Type: "function_call", CallID: t.ID})
+		result.Text += msg.Refusal
 	}
-	switch choice.FinishReason {
-	case "length", "content_filter":
-		return Result{}, &UpstreamError{Status: http.StatusOK, Body: "chat 未完成：" + choice.FinishReason}
-	case "tool_calls", "tool_call", "function_call", "function_calls":
+	if result.Text != "" {
+		result.Exchange.Items = append(result.Exchange.Items, model.OutputItem{Type: "message", Text: result.Text})
+	}
+	toolFinish := choice.FinishReason == "tool_calls" && msg.Refusal == ""
+	if toolFinish {
+		for _, t := range msg.ToolCalls {
+			if t.Type != "" && t.Type != "function" {
+				return Result{}, fmt.Errorf("providers: 尚未注册 %q 工具执行器", t.Type)
+			}
+			result.ToolCalls = append(result.ToolCalls, ToolCall{ID: t.ID, Name: t.Function.Name, Arguments: t.Function.Arguments})
+			result.Exchange.Items = append(result.Exchange.Items, model.OutputItem{Type: "function_call", CallID: t.ID})
+		}
+	}
+	switch {
+	case toolFinish:
 		if len(result.ToolCalls) == 0 {
 			return Result{}, fmt.Errorf("providers: 上游以 %q 停止，但没有完整的 tool call", choice.FinishReason)
 		}
-	default:
-		if len(result.ToolCalls) != 0 {
-			return Result{}, fmt.Errorf("providers: 工具调用未完成 (finish_reason=%q)", choice.FinishReason)
-		}
+	case len(msg.ToolCalls) != 0 && choice.FinishReason != "length" && choice.FinishReason != "content_filter" && msg.Refusal == "":
+		return Result{}, fmt.Errorf("providers: 工具调用未完成 (finish_reason=%q)", choice.FinishReason)
 	}
 	return result.checked()
 }

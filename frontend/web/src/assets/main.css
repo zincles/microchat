@@ -54,6 +54,10 @@ select { appearance: none; -webkit-appearance: none; padding-right: 1.8em;
   background-position: calc(100% - 1.1em) 55%, calc(100% - 0.75em) 55%;
   background-size: 0.35em 0.35em; background-repeat: no-repeat; cursor: pointer; }
 textarea:not(.v-field__input) { resize: vertical; }
+#settings-view:not(.flow-agent-open) .v-textarea textarea.v-field__input {
+  resize: vertical !important;
+  overflow-y: auto !important;
+}
 /* 文档本身**不滚**（app 壳的标准姿势）：滚动全部发生在内部容器里。
  * 不锁的话移动端会出正反馈：页面一滚 → visualViewport.offsetTop 变大 → viewport.js 再平移
  * → transform 又撑大可滚动区域 → 越滚越"延展"（2026-10-10 真机症状）。overscroll-behavior
@@ -906,6 +910,7 @@ code, pre, kbd, samp { font-family: var(--app-font-mono, ui-monospace, SFMono-Re
 .msg .text { word-break: break-word; }
 /* 流式末尾的终端光标：实心方块 + 老式终端那种硬切闪烁；只服务"正在写"的观感。 */
 .stream-cursor { position: absolute; width: 0.42em; height: 1em; margin-left: 0.09em; background: var(--md-primary); border-radius: 2px; opacity: 0.9; pointer-events: none; animation: stream-cursor-blink 1.05s steps(1, end) infinite; }
+.stream-cursor.is-printing { animation: none; opacity: 0.9; }
 @keyframes stream-cursor-blink { 0%, 46% { opacity: 0.8; } 50%, 100% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) {
   .stream-cursor { animation: none; opacity: 0.7; }
@@ -978,18 +983,16 @@ code, pre, kbd, samp { font-family: var(--app-font-mono, ui-monospace, SFMono-Re
 .msg .text ul, .msg .text ol { margin: 0 0 0.7em; padding-left: 1.4em; }
 .msg .text blockquote { margin: 0 0 0.7em; padding-left: 0.7em; border-left: 2px solid var(--md-primary); opacity: 0.85; }
 .msg .text h1, .msg .text h2, .msg .text h3 { margin: 0.4em 0 0.3em; font-size: 1.05em; }
-/* KaTeX：色跟气泡走（默认黑，暗底看不见），显示块横滚。
- * 2026-11-02：此前只写了 `overflow-x:auto` —— 手机屏幕上公式比整列宽时右缘一刀切，
- * 看不出"还能往右滑"。现在留一条细滚动条（触摸设备滚动时会浮出来）+ 底部一点内边距，
- * 让"这里有第二页"至少有迹可循；真超宽的仍走横滚，不缩字（缩字会把可读性一起赔掉）。 */
+/* KaTeX：保留横向滚动容器，避免未完成布局/字体加载时误判的白色滚动条闪现。
+ * 字体稳定并确认真实溢出后才显示滚动条提示；内容始终可滚，不裁切公式。 */
 .msg .text .katex { color: inherit; }
-.msg .text .katex-display { overflow-x: auto; margin: 0.8em 0; padding-bottom: 0.3em;
-  scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--tg-text) 30%, transparent) transparent; }
-.msg .text .katex-display::-webkit-scrollbar { height: 4px; }
-.msg .text .katex-display::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--tg-text) 30%, transparent); border-radius: 999px; }
-/* 真的溢出才加（MessageBubble 量完 scrollWidth 才挂这个类）：右缘一道内阴影，
- * 让"右边还有"看得出来；短公式不受影响。 */
-.msg .text .katex-display.scroll-x { box-shadow: inset -12px 0 10px -10px color-mix(in srgb, var(--tg-text) 42%, transparent); }
+.msg .text .katex-display { overflow-x: auto; margin: 0.8em 0; padding-bottom: 0.3em; scrollbar-width: none; }
+.msg .text .katex-display::-webkit-scrollbar { height: 0; }
+.msg .text .katex-display.scroll-x { scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--tg-text) 30%, transparent) transparent;
+  box-shadow: inset -12px 0 10px -10px color-mix(in srgb, var(--tg-text) 42%, transparent); }
+.msg .text .katex-display.scroll-x::-webkit-scrollbar { height: 4px; }
+.msg .text .katex-display.scroll-x::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--tg-text) 30%, transparent); border-radius: 999px; }
 /* 装"不能换行"的内容（显示公式 / 代码块）的消息：**用满整个阅读列**，别再被气泡的
  * 70%/80% 上限按住 —— 公式明明放得下却出横滚，就是这个上限造成的（2026-10-15 用户报）。
  * `:has` 不认识的老浏览器 = 维持现状（不是回归）。真超宽（比整列还宽）仍走上面的横滚 ✓。 */
@@ -1432,7 +1435,7 @@ button.danger:hover { background: color-mix(in srgb, var(--md-error) 8%, transpa
  * 以前 14 条规则各写一遍 `font-variant-numeric`，现在只在这里写一次。 */
 .model-group-count, .task-time, .task-progress, .ctx-used, .ctx-pct,
 .ctx-val, .pv-idx, .msg-ident, .msg-foot, .context-count,
-.sum-range, .sum-pos, .scale-value { font-variant-numeric: tabular-nums; }
+.sum-range, .sum-pos, .scale-value, .online-count { font-variant-numeric: tabular-nums; }
 
 
 /* ═══════════════════════════════════════════════════════════════════════════

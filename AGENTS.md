@@ -353,9 +353,11 @@ delete(AA)           # 删除
   是作业上限，最终并发 = min(作业值, 该渠道剩余槽位)。
 - `prefs.json` — **界面偏好**（2026-11-01 用户定「所有设置均存储在服务器上」）。
   它**由程序写**（不是手写配置，虽然也能手改）：改设置就整份重写，0600。
-  形状：`{ "markdown": {"enabled": true, "disabled": ["table","image"]}, "theme": "dark",
+  形状：`{ "markdown": {"enabled": true, "disabled": ["table", "image"]}, "theme": "dark",
+  "brand_name": "MicroChat", "brand_icon": "spark", "welcome_text": "有什么想聊的？",
   "text_scale": "1.1", "font_body": "", "font_mono": "", "user_name": "你", "background": {"kind":"file","version":"…"},
-  "send": "enter", "preview": true, "payload_preview": true, "command_menu": false, "chrome_hide": true,
+  "send": "enter", "preview": true, "payload_preview": true, "command_menu": false, "chrome_hide": true, … }`。
+  品牌文字写入时 trim；空值回默认，名称最多 32 个 Unicode 字符、欢迎语最多 120 个；图标仅 `spark` / `chat` / `bot` / `messagePlus`。
   ⚠ **改完立刻刷新不能丢**（2026-11-04 用户报界面缩放总回 115%）：偏好回写有 250ms 防抖，
   但 `flushPrefs()` 会在滑杆 `change`、`pagehide`、`visibilitychange(hidden)` 时取消防抖并**带
   `keepalive`** 立刻发；开机 `cache` 先读 `mc_prefs` 镜像铺第一帧，否则服务器答话前会先闪回 100%。
@@ -477,6 +479,8 @@ delete(AA)           # 删除
   插进聊天历史（0 = 最后一条之后，1 = 最后一条之前……），同 depth 按 `order` 升序。
   它们都是**临时出站项**（`Type: prompt/injection`），不占消息 idx、不落库、不参与世界状态；
   正文仍走只读宏替换。id 非空且唯一、role/position 封闭、depth/order 非负 —— 写入与启动都报。
+  每个传统 Prompt Agent 可配置 `latest_prompt_segments`（段库 id 列表）：出站时按序拼接这些段，只追加到**当前请求里最后一条存档 user message** 的正文末尾；与 `prepend_state` 顺序并存，预设绑定也不关闭它。它只活在请求的 `Outgoing` 中，不写回消息、不进后续历史、不参与世界状态；新用户消息到来后，上一轮的补充自然消失。FlowAgent 不接受该字段。它与 system prompt 的 `segments` 共用段库、校验、复制和改名同步。
+  Agent 编辑器的 system / 最新用户消息 / ability 三处片段清单都能直接打开同一段编辑器。改名回执会重映射当前 Agent 草稿中的全部引用；提示词片段目录可将任意段复制成独立的自定义段。
   每个 agent 可以带 **`first_message`（首段对话，2026-10-11 用户定）**：以它**新建**会话时，这段文本作为
   **第一条 assistant 消息（idx 1）**落库（正文**原样存档** ⇒ 可带 `<state>` 设初始状态）；空 = 不启用。
   草稿预演（`POST /outgoing`）按真会话的顺序模拟这条首段；Copy 不重复插、ST 导入不受影响、改 agent 不追溯。
@@ -496,8 +500,8 @@ delete(AA)           # 删除
   从 ST 预设有效内容导入的段带 `imported: true` + `preset_id` + `preset_name`（文件名快照）—— 用来区分自编写与导入，删预设时可据此找出关联段（2026-11-11 用户定）。
   agent 用 `"segments": ["katex", "mcp"]` 引用（**顺序 = 追加顺序**）。拼装 = base（`system_prompt`）+ 逐段
   **纯字符串拼接**（段间空行 `\n\n`；无替换、无递归、无运行时语义 —— 同一形状永远拼出同一结果）。
-  段 id 非空且唯一；引用（agent 的、能力的）必须落地（**写入与启动读取都报错**，同 abilities 口径）；删段有守卫（还被引用 ⇒ 400 列出引用者）；
-  段改名 = 所有 agent 的引用一起搬。**内置段**（2026-10-11 用户定）：正文住 `core/internal/config/segments/*.md`
+  段 id 非空且唯一；引用（基础提示词、`latest_prompt_segments`、能力）必须落地（**写入与启动读取都报错**，同 abilities 口径）；删段有守卫（还被引用 ⇒ 400 列出引用者）；
+  段改名同步所有 Agent 的这三类引用。**内置段**（2026-10-11 用户定）：正文住 `core/internal/config/segments/*.md`
   （`go:embed` 进二进制 —— **git 里可 diff、新装即得**，正是"方便提交"那一条）、**只读删不掉**（要改就「复制为自定义」）、
   **id 保留**（用户段撞名 ⇒ 写入与启动读取都报）；`GET /agents` 的 `segments` = 内置（带 `builtin: true`，排在前）+ 用户段。
   **目前七条**（顺序 = `builtinSegmentFiles`）：`压缩提示词` / `RP压缩提示词` / `起标题提示词` / `StateLang 语法` /
@@ -729,12 +733,9 @@ Mermaid 时只显示源码，不会拖大安装包。
 ⚠ **裸 HTML 永远不解析**，且这不是开关能改的：我们**先行转义** `&` 与 `<`（XSS 的门在那儿），
 所以 `<div>` 之类根本到不了 marked。用户那句"非 `<div>` HTML 块"说的正是这条边界。
 
-**提示词段的编辑器只有一个**（2026-10-28 用户：「不协调。总觉得和编辑系统提示词的有区别。」）：
-agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src/components/SegmentList.vue` ——
-挑段 / 上下移 / 移除 / 缺段警告 / 拼装预览**只有这一份实现**。从前两处各写一套，于是标题一边是 `<h3>`、
-另一边是灰色小字加一条底边线；预览一边叫「拼装预览」、另一边叫「这一发真会发出去的提示词」；
-截断 48 vs 40 字；缺段警告一边有一边没有 —— 这些都不是功能差异，纯粹是忘了同步。
-契约测试钉的就是"两处都用同一个组件"（谁再手写一套就炸）。
+**提示词片段清单共用一个实现**（2026-10-28 用户定）：system prompt、最新 user message 和能力提示词三处都用 `frontend/web/src/components/SegmentList.vue`。
+挑段 / 上下移 / 移除 / 缺段警告 / 拼装预览共用组件；「编辑」作为明确事件交给父级打开同一 `SegmentEditor`，避免子组件直接改库或持有页面导航。
+重命名后，父级通过事件更新正在编辑的 Agent 草稿；复制片段则在库中建一份独立自定义段。新增装配位置时复用该组件，不复制一套挑选逻辑。
 
 ## HTTP API（客户端契约）
 
@@ -774,11 +775,14 @@ agent 级（base 后面）与能力级（模板后面）都用 `frontend/web/src
 ### 访问边界
 
 MicroChat 没有登录、账号、会话归属或应用内鉴权；`Authorization` 不授予身份。默认后端绑定 `127.0.0.1`。需要远程访问时由反向代理负责 TLS 与鉴权，不能把 Vite Host 白名单或 CORS 当作保护。早期数据库遗留的 `users` 表与 `sessions.owner_id` 由 store 的兼容清理处理，不触及会话内容。
+### 跨客户端实时更新
+
+`POST /api/v1/live/heartbeat` 接收 `{client_id}`，回 `{online_clients}`；`GET /api/v1/live/events` 是全局 SSE，发 `session_changed` / `session_deleted`（`{session_id, revision}`）与 `presence`（`{online_clients}`）。客户端以 `localStorage` 的 `mc_client_id` 标识浏览器 profile，同 profile 多标签共用一票；在线数是最多 90 秒租约、进程内近似计数，不代表用户身份。SSE 只用于失效通知，不带消息正文、令牌或渠道数据；无鉴权语义。
 ### 会话与消息
 
 | 方法 | 路径 | 请求体 | 响应 | 说明 |
 |---|---|---|---|---|
-| GET | `/sessions` | — | `[SessionView]` | 每项 = 会话 + `messages`（**这条会话有几条消息** —— 客户端的启动编排据此认定"空会话"，不必逐条会话再拉一次消息）+ `turn`（客户端据此标"生成中"）。会话自身含 **`thinking_level`**（空 = 跟随模型默认；非空 = `off/minimal/low/medium/high/xhigh/max`）与 **`native_tools_disabled`**（**历史字段名**；语义 = 用户手动关掉的 `server_tools` / 本地工具 id，规则新增的工具默认仍启用）|
+| GET | `/sessions` | — | `[SessionView]` | 每项 = 会话 + `messages`（**这条会话有几条消息** —— 客户端的启动编排据此认定"空会话"，不必逐条会话再拉一次消息）+ `turn`（客户端据此标"生成中"）。会话自身始终含 `favorite`（布尔值）；列表按 `favorite DESC, updated_at DESC, id DESC` 排序。还含 **`thinking_level`**（空 = 跟随模型默认；非空 = `off/minimal/low/medium/high/xhigh/max`）与 **`native_tools_disabled`**（**历史字段名**；语义 = 用户手动关掉的 `server_tools` / 本地工具 id，规则新增的工具默认仍启用）|
 | GET | `/sessions/{session_id}/export` | — | `{version,title,provider,model,agent_id,agent_name,messages,summaries}` | 全量导出原文、思考、消息元数据、工具轨迹及整张摘要金字塔。任一消息有 `exchanges` 则导出 v5，携带其有序调用记录；其余会话导出 v4。摘要在文件内用 `key/parent_key` 和 1-based 的 `begin_idx/end_idx` 关联。 |
 | POST | `/sessions/import-json` | 会话导出 JSON（v1–v5） | `{session,messages,summaries,agent_missing}` · 201 | 导入先校验角色、非空历史和摘要区间，再铸新 ID、重映射摘要父子并恢复覆盖指针。保留渠道、模型和 Agent 的软引用；缺少 Agent 时回报 `agent_missing`。v4 恢复工具轨迹，v5 还恢复 `exchanges`。版本高于 5 返回 400。 |
 | POST | `/sessions/import-st` | JSONL 原文（`?title=` 可选） | `{session, messages, skipped}` · 201 | **不要凭据**（设置面）。**ST 导入**：SillyTavern JSONL（一行一条）→ 建会话 + 按序落库；只认四样（is_user/mes/reasoning/send_date），其余全丢；空文件 ⇒ 400 |
@@ -789,7 +793,7 @@ MicroChat 没有登录、账号、会话归属或应用内鉴权；`Authorizatio
 | GET | `/tavern/presets/{preset_id}/effective` | — | `TavernEffective` | **提取有效内容**（2026-11-11）：按 prompt_order 执行 ST 控制宏，丢弃求值为空的条目，回真正留下的 entries + 变量 + 未解析宏；可选 `last_user_message` / `agent_id`。只读 |
 | DELETE | `/tavern/presets/{preset_id}` | — | 204 | 删除原始存档；不存在 ⇒ 404；**仍被某个 Agent 的 `preset_id` 引用 ⇒ 400**（先解绑，别静默回落）。`?segments=delete` 一并删从该预设导入的提示词片段（被引用 ⇒ 400 并点名）、`?segments=keep` 明确保留；**两者都不给且有导入段 ⇒ 409**（界面先问人）|
 | POST | `/sessions` | `CreateSessionReq` | `Session` · 201 | **配了 `first_message` 的 agent ⇒ 顺手把首段插成第一条 assistant（idx 1）**。省略字段时取 `config.json` 的 `defaults`；`thinking_level` 可选（空 = 跟随模型默认；非空必须在该模型 `thinking_levels` 里，否则 **422**）；`native_tools_disabled` 可选（[]/省略 = 全按规则启用）；`title` **真生效**（建一条已命名的会话，不必再多发一次 `PATCH`）—— 不给 / `""` ⇒ 标题空着（等首条用户消息自动起名）。**`id`（可选，2026-10-09）**：客户端铸的 UUIDv7 —— 草稿态（web）靠它把"预演的那一发"与"真发的那一发"钉成同一个会话键；给了就用（先校形状 ⇒ 非 v7 **400**、已有 ⇒ **409**），不给 ⇒ 服务端现铸。⚠ **HACK（刻意，全项目唯一允许客户端铸 id 的口子）** —— 动机只有草稿预演那一条，别扩散（消息/摘要的 id 一律服务端铸） |
-| PATCH | `/sessions/{session_id}` | `UpdateSessionReq` | `Session` | 标题 / 模型 / agent / **提示词** / **思考档位** / **`native_tools_disabled`**（`system_prompt` 与 `thinking_level` 都是**指针** ⇒ 没给或 `null` = 不动、`""` = 清掉覆盖/跟随模型默认、非空 = 写入；档位必须在目标模型的 `thinking_levels` 里，否则 **422**；`native_tools_disabled: []` 恢复规则默认，非空 = 关闭这些工具）|
+| PATCH | `/sessions/{session_id}` | `UpdateSessionReq` | `Session` | 标题 / 模型 / agent / **提示词** / **思考档位** / **`native_tools_disabled`** / **收藏 `favorite`**（`system_prompt` 与 `thinking_level` 都是**指针** ⇒ 没给或 `null` = 不动、`""` = 清掉覆盖/跟随模型默认、非空 = 写入；档位必须在目标模型的 `thinking_levels` 里，否则 **422**；`native_tools_disabled: []` 恢复规则默认，非空 = 关闭这些工具；`favorite` 省略不变、true/false 设置，不改 `updated_at`）|
 | DELETE | `/sessions/{session_id}` | — | 204 | 不存在 → 404 |
 | POST | `/sessions/{session_id}/copy` | — | `Session` · 201 | **Copy**（线性会话里的"分岔"）：新 id、消息与摘要一并复制、摘要新 id 且指针重映射；**世界状态不复制**。入口在左栏会话的「选项」浮板（2026-11-04 从会话设置面板挪过来）；面板里不再有它 |
 | GET | `/sessions/{session_id}/messages` | — | `[Message]` | **按 `id` 升序的整条会话**（线性 ⇒ 没有"当前路径"）。三条查询参数（**都不给 = 全部**，语义不变）：`?from_idx=5&to_idx=10` **闭区间**（含两端；缺一端补默认：起点 1 / 终点末尾）、`?last=20` **取尾**。**参数错 ⇒ 400**（`last` 与区间混用、非正整数、区间反了）；**越界不是错** ⇒ 给现有的那几条（起点在末尾之后 ⇒ 空数组）。响应仍是**数组** ✗（不换成对象）。每条带 `idx`：**0 = 合成的系统提示词；1..N = 真消息** —— 它是**派生的**（= 按 `id` 排第几条）、**不落库**、**永不改变**（只删后缀 ⇒ 不留洞；不往中间插；编辑/重摇不改 `id`）|
@@ -872,11 +876,12 @@ MicroChat 没有登录、账号、会话归属或应用内鉴权；`Authorizatio
 | GET | `/config/model-rules` | — | `{model_define_rules:[…], builtin_model_rules:[{…,builtin:true,disabled}], disabled_builtin_model_rules:[…]}` | 用户规则 + 系统内置规则（含只读/停用标记） |
 | PUT | `/config/model-rules` | `{model_define_rules:[…], disabled_builtin_model_rules?:[…]}` | 同 GET | 用户规则**整份替换**（空数组 = 清空）；停用列表**省略 = 不改**、`[]` = 全部启用。用户规则复用内置 id / 未知停用 id ⇒ 422；先校验后落盘。写成功后 `GET /models` 立刻按新规则派生 |
 | GET | `/agents` | — | `AgentsConfig` | 生效列表（含内置默认 agent）|
-| POST | `/agents` | `CreateAgentReq` | `Agent` · 201 | 收 `name` / `description` / **`kind`（`prompt` / `flow`）** / **`flow`（FlowAgent 图）** / `system_prompt` / **`segments`（追加段 id 列表）** / `abilities` / `prepend_state`；id 由后端生成。**没有 `display_mode`** ✗（两边气泡 / roleplay 二选一已取消；老键是不认识的键） |
-| PATCH | `/agents/{agent_id}` | `UpdateAgentReq` | `Agent` | `new_id` = 重命名（搬 `default_agent` 与会话引用）；`description` 三态（nil 不动 / `""` 清空 / 非空写入）；`kind` / `flow` 三态（nil 不动）；`make_default` = 设默认；`segments` / `abilities` / `prepend_state` 整段替换（语义同 POST；`segments: []` = 清空）|
+| POST | `/agents` | `CreateAgentReq` | `Agent` · 201 | 收 `name` / `description` / **`kind`（`prompt` / `flow`）** / **`flow`（FlowAgent 图）** / `system_prompt` / **`segments`（系统提示词追加段 id 列表）** / `latest_prompt_segments`（仅 PromptAgent：最新用户消息的出站补充段，FlowAgent 拒绝）/ `abilities` / `prepend_state`；id 由后端生成。**没有 `display_mode`** ✗（两边气泡 / roleplay 二选一已取消；老键是不认识的键） |
+| PATCH | `/agents/{agent_id}` | `UpdateAgentReq` | `Agent` | `new_id` = 重命名（搬 `default_agent` 与会话引用）；`description` 三态（nil 不动 / `""` 清空 / 非空写入）；`kind` / `flow` 三态（nil 不动）；`make_default` = 设默认；`segments` / `latest_prompt_segments` / `abilities` / `prepend_state` 给出即整段替换，省略不动，`[]` 清空。|
 | POST | `/segments` | `{id,text,imported?,preset_id?}` | `Segment` · 201 | 建提示词段（id 非空唯一、≤64 字 ⇒ 重名 409；**与内置撞名 ⇒ 409**）。`preset_id` = 从哪份 ST 预设导入（服务端校验存在，并快照文件名进 `preset_name`；带它就强制 `imported:true`）|
-| PATCH | `/segments/{segment_id}` | `{new_id?,text?}` | `Segment`| 改内容 / 改名（改名 = 所有 agent 的引用一起搬）；**内置段 ⇒ 400（只读）**|
-| DELETE | `/segments/{segment_id}` | — | 204 | 删段；**还被 Agent（基座或能力追加段）引用 ⇒ 400（列出引用者）**、**内置段 ⇒ 400（删不掉）**。读口不另开 —— 段库随 `GET /agents` 一起给（内置带 `builtin` 标记；ST 导入段带 `preset_id` / `preset_name`）|
+| POST | `/segments/{segment_id}/copy` | `{"id":"new-id"}` | `Segment` · 201 | 复制自定义或内置段；只铸新 id，正文、`imported`、`preset_id` 与 `preset_name` 原样保留，即使来源预设已删除也可复制。空/过长 id ⇒ 400，冲突 ⇒ 409，来源不存在 ⇒ 404。|
+| PATCH | `/segments/{segment_id}` | `{new_id?,text?}` | `Segment`| 改内容 / 改名（改名同步系统提示词、最新用户消息与能力的所有 Agent 引用）；**内置段 ⇒ 400（只读）**|
+| DELETE | `/segments/{segment_id}` | — | 204 | 删段；**还被 Agent（系统提示词、最新用户消息或能力）引用 ⇒ 400（列出引用者）**、**内置段 ⇒ 400（删不掉）**。读口不另开 —— 段库随 `GET /agents` 一起给（内置带 `builtin` 标记；ST 导入段带 `preset_id` / `preset_name`）|
 | DELETE | `/agents/{agent_id}` | — | 204 | 内置默认 agent 不可删 |
 | POST | `/agents/{agent_id}/flow/test` | `{message,provider?,model?}` | `FlowTestResult` · 200 | **FlowAgent 编辑器的测试发送**：只跑一次图，不建会话、不落库；agent 节点用一次性临时会话走真实提示词拼装 + 上游 Complete；返回 `{output,steps:[{id,type,label,inputs,output,reasoning,error}]}`。provider/model 省略 ⇒ config defaults |
 | GET | `/config/prefs` | — | `{prefs, markdown_types, defaults}` | **界面偏好**（2026-11-01 起住服务器）。<br>**`markdown_types` 是语法清单的唯一权威**（`[{id,name,kind,sample}]`）—— 界面据此排开关，**不许前端另抄一张**（少一条就留个点不动的死开关，多一条就是个后端不认识的选项）。<br>`defaults` = 出厂值（界面"恢复默认"与前端缺省都读它）。<br>⚠ 文件坏了（未知类型 / 坏背景）**直接报错**，不悄悄回落全默认 —— 那等于"用户的开关自己全开了"而他一点线索都没有 |
@@ -994,7 +999,7 @@ MicroChat 没有登录、账号、会话归属或应用内鉴权；`Authorizatio
 
 ### `sessions`
 
-`id` · `title`（首句自动生成；空串 = 还没起名）· `system_prompt`（**空串 = 没覆盖** ⇒ 用 agent 的拼装结果）· `provider` / `model` / `agent_id`（都是**软引用**，无外键）· **`thinking_level`**（空串 = 跟随模型默认；否则是统一七档之一）· **`native_tools_disabled`**（JSON 数组；历史字段名，语义 = 规则派生的 `server_tools` / 本地工具里用户手动关掉的 id，新规则工具默认仍启用）· **`request_overrides`**（JSON 对象；每次请求体最后写入，允许覆盖任何 key；上下文圆环面板第三 tab）· `created_at` / `updated_at`（界面按 `updated_at` 排序）
+`id` · `title`（首句自动生成；空串 = 还没起名）· `system_prompt`（**空串 = 没覆盖** ⇒ 用 agent 的拼装结果）· `provider` / `model` / `agent_id`（都是**软引用**，无外键）· **`favorite`**（布尔值；新建、复制、导入默认 `false`；切换不改 `updated_at`）· **`thinking_level`**（空串 = 跟随模型默认；否则是统一七档之一）· **`native_tools_disabled`**（JSON 数组；历史字段名，语义 = 规则派生的 `server_tools` / 本地工具里用户手动关掉的 id，新规则工具默认仍启用）· **`request_overrides`**（JSON 对象；每次请求体最后写入，允许覆盖任何 key；上下文圆环面板第三 tab）· `created_at` / `updated_at`（收藏优先，然后 `updated_at DESC, id DESC`）
 
 （**没有 `current_leaf`**：线性会话不需要"停在哪儿"，"最新一条" = `ORDER BY id DESC LIMIT 1`。）
 
@@ -1146,7 +1151,7 @@ Flow 的 `judge` 节点吃左侧 `state` 输入，节点配置里填 `provider`/
 
 ### 通用（所有前端都要守）
 
-- **当前会话认 `id`、不认位置** ✗：`GET /sessions` 按 `updated_at` 排，发一句话就会重排 —— 存下标必然指到别人身上。
+- **当前会话认 `id`、不认位置** ✗：`GET /sessions` 按收藏优先、再按 `updated_at` 重排，发一句话也会重排 —— 存下标必然指到别人身上。
 - **不可逆的删除先摊开、等人点头**：消息级删除必须先看删除预览（`GET .../deletion-preview`）并让用户确认，再带 `last_deleted_message_id` 发 DELETE；删整条会话同理。
 - **旧数据认会话**：context / reroll / prompt 各记自己属于哪条会话，对不上就不许拿来画（换会话时旧的那份还留着）。
 - **状态行的两个数是「人话格式」**（2026-10-17 用户点名）：`formatTokens`（`format.ts`，唯一出口）——
@@ -1558,12 +1563,11 @@ Flow 的 `judge` 节点吃左侧 `state` 输入，节点配置里填 `provider`/
   没接 / 空串 ⇒ 保持原文。TestFlow 同样把 `user` 回报给编辑器。
   **FlowAgent 现在会出现在会话的助手切换器、会话设置、默认助手和命令面板里**；
   它的聊天运行时第一版只保证「发一条消息得到一条 assistant」，流式/工具/专用上下文预览仍待接线。
-- **设置目录**（2026-11-20 用户定「一步到位全量重排」；2026-11-22 加「会话」）：**聊天 / 会话 / 智能体 / 提示词 / 外观 / 输入 / 酒馆 / 更新**（`SETTINGS_SECTIONS`；首页是 `SettingsHome.vue` 的目录列表，点进去才显示对应内容，不再把多个 tab 挤成一行）。会话页 = 已有会话列表（点击打开、导出、删除）+ JSON 导入；新建默认值仍在「聊天」页，不重复。（历史：渠道 2026-11-02 起走左栏独立入口；会话 2026-11-22 从左栏迁回设置；酒馆 2026-11-06 加；更新 2026-11-11 从底部入口搬走。）聊天 / 会话 / 智能体 / 提示词 / 外观 / 输入 / 酒馆 / 更新的编辑都是 **目录内二级页**（列表 ⇄ 详情就地切换，`[←]` 返回 —— 2026-10-10 从弹窗改过来，弹窗叠视图的账清了）；**Agent 编辑器的二级页自己也分页签**（2026-10-28 用户：「全挤在一起很丑」）——「基本」（id / 名称 / 首段对话 / 句首贴状态）/「系统提示词」（base + 它的段）/ **每个能力一页**（启用 / Model / 提示词覆盖 / 它的段，页面由 `ABILITY_IDS` 生成 ⇒ 加能力自动多一页），页签条与保存行：**保存那一行在页签外面**（哪一页都能存；藏在某一页里的那种，翻到别的页就找不到保存了）。页签条 **2026-11-06 起是 Vuetify `VTabs`/`VTab` + `VTabsWindow`/`VTabsWindowItem`**（真正的 tabpanel；旧手写 `TabBar.vue` 已删）：**Agent 编辑器**仍用它（`@focus="tab = t.id"` 补上"方向键搬焦点即激活"）；设置主栏改成目录卡 + `VTabsWindowItem`，不再有顶层 `VTab`。「会话设置」（左栏 ☰）是**紧凑对话框**（560px、高随内容）。**Esc 一次只关一层**：二级页开着时设置视图不响应 Esc、会话设置弹窗开着时同理（踩过：两边各监听 document，一下关两层）。**会话管理页**（设置目录里的「会话」）= 列表（点进）+ 删除 + 导出 + 尾部**导入对话**区（`POST /sessions/import-st` 与 `/sessions/import-json` 各一张卡：一句说明 + 按钮 + 隐藏文件框 —— 2026-10-17 用户点名「两种导入混在一起、都乱了」，改成两卡分开、原生 file 框换按钮）。
-- **设置目录顺序约束**（2026-11-06 用户报「标签页切换行为不太对」）：
-  `SETTINGS_SECTIONS` 的显示顺序必须与 `VTabsWindowItem` 的 DOM 顺序一致
-  （home / chat / session / agent / prompt / appearance / input / tavern / update）—— Vuetify 的滑入方向按
-  **window item 注册顺序**算，不是按目录顺序算。顺序曾写反（目录是 prompt→appearance，
-  DOM 是 appearance→prompt）⇒ 滑入反向；契约测试现在钉住两者一致。
+- **设置目录（2026-11-27 重排）**：`SettingsHome.vue` 首页按五类列出设置入口，点类别进入该类的页面列表，再选具体设置；返回设置时回到类别目录。五类及页面映射：**用户配置**（新会话默认、输入与发送、渠道与模型规则、智能体、提示词片段）；**外观**（主题 / 字体 / 背景、消息 Markdown 渲染）；**数据**（会话列表与 MicroChat 导入导出）；**系统设置**（上下文与压缩、生成与标题、更新）；**外部**（酒馆预设 / 聊天导入、Runner 接入预留）。
+  Runner 页只保留外部执行机（Codex / Claude Code / Pi / OMP）的连接与授权入口说明；不伪装成已接入的执行能力。
+  `SETTINGS_SECTIONS` 独立维护 `VTabsWindowItem` 注册顺序，必须与 `SettingsModal.vue` 的 DOM 顺序一致（home / defaults / appearance / input / context / generation / markdown / provider / session / agent / prompt / tavern / update / runner）。类别归档与 window 注册顺序分开维护，避免 Vuetify 根据 window item 索引计算的滑入方向反转。
+  设置页的 Vuetify 文本框可垂直调整高度；Flow 画布里的字段不参与，避免拖动文本框意外改变节点布局。每个设置仍按原有保存按钮或自动保存逻辑写回配置。
+  「会话设置」仍是紧凑对话框（560px、高随内容）；Esc 一次只关一层。Agent 编辑器仍用独立页签（基本 / 系统提示词 / 每个能力一页），保存行在页签外；会话管理、删除确认、Markdown 类型清单等行为不变。
 - **渠道详情里的模型清单**（2026-11-02 用户定：「具体某个模型的界面里，应该能看到当前这个渠道导入的模型的列表」）：
   `ProviderEditor` 底部「模型（N）」表 —— 家族图标 + 模型名 + 上游 id / `matched_rules` + 上下文；数据直接取 `GET /providers` 的 `models`，
   保存并刷新后用回执里的 `models` 更新（`models` 是唯一状态，数量由它派生）。条目多，表在 `.provider-models` 里内部滚动。
