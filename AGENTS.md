@@ -1187,9 +1187,9 @@ Flow 的 `judge` 节点吃左侧 `state` 输入，节点配置里填 `provider`/
 ### Web（当前主力，`frontend/web/`，Vue 3 + Vite）
 
 - 布局：左会话栏（**2026-11-06 起 Gemini 式**：顶部 **Brand Title「MicroChat」+ 星芒标**，
-  其下「＋开启新对话」，再下面才是**占满栏宽的「对话 / 生图 / 库存」三面板切换**（VBtnToggle，2026-11-06 用户定；2026-11-09 加「库存」并做成真面板）。
+  其下「＋开启新对话」，再下面是**占满栏宽的「对话 / 生图 / 项目」三面板切换**（`VBtnToggle`）。
   切换会真的换下面那块：对话面板 = 原有会话列表 + 「开启新对话」；生图面板 = 空态 + 「新绘图任务」（点击只提示暂未接入）；
-  库存面板 = 空态 + 「暂定」按钮（disabled，不可点）。三处按钮位置/尺寸不变，只换文案。
+  项目面板 = 空态 + 「暂定」按钮（disabled，不可点）。三处按钮位置/尺寸不变，只换文案。
   **品牌右侧、收起键左侧**还有一颗三态主题键（太阳=亮色 / 月亮=暗色 / sun-moon=自动），无文字、**无背景**、按下立即切换；
   **左栏外壳 = Vuetify `VApp` + `VNavigationDrawer`**（2026-11-07）：App 根是 `<VApp>`（外层挂载点已经有 `#app`；VApp 再带 id 会产生重复 id），
   `SessionBar` 根是 `VNavigationDrawer`（`:model-value="true" permanent :scrim="false" :touchless="true"`）——
@@ -1407,7 +1407,7 @@ Flow 的 `judge` 节点吃左侧 `state` 输入，节点配置里填 `provider`/
   亮色不动；Breeze 已于 2026-11-09 删除。light / dark / auto 共用同一套 MD3 语义。
   **落点先左栏 + 顶栏 + 输入区**（2026-11-05 第二刀；2026-11-06 起上下文三 tab 用 VTabs（压缩内再三个子 tab）、顶栏工作区用 VTabs + VTabsWindow、消息/摘要操作键用 VBtn）：左栏规则以 `#sessions-bar` 前缀收口
   （`.bar-head` / `.empty` 是共享类，直接改会波及上下文工作区）。左栏结构 = MD3 navigation drawer：
-  顶部**占满栏宽**的 segmented button（对话/生图/库存，VBtnToggle）+ 标准 icon button；新建 = **extended FAB**（primary-container、elevation 1→2、按下 scale）；
+  顶部**占满栏宽**的 segmented button（对话 / 生图 / 项目，VBtnToggle）+ 标准 icon button；新建 = **extended FAB**（primary-container、elevation 1→2、按下 scale）；
   列表 = 48dp 行、full 圆角、选中 secondary-container、`::after` 状态层（内容 z-index 压在它上面）；
   底部 = navigation drawer item；选项浮板 = MD3 menu（surface-container / 4dp 圆角 / elevation 2 / 48dp 行）。
   **忙碌环**改成 MD3 circular progress indicator：SVG 双圆（track 18% + arc），旋转 + dash 伸缩（`session-busy-dash`），

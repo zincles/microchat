@@ -51,8 +51,8 @@ const theme = ref(themePref());
 const themeLabels: Record<string, string> = { light: "亮色", dark: "暗色", auto: "自动" };
 const themeIcon = computed(() => (theme.value === "light" ? ICONS.sun : theme.value === "dark" ? ICONS.moon : ICONS.themeAuto));
 const themeLabel = computed(() => themeLabels[theme.value] ?? "自动");
-const newLabel = computed(() => (mode.value === "image" ? "新绘图任务" : mode.value === "inventory" ? "暂定" : "开启新对话"));
-const newTitle = computed(() => (mode.value === "image" ? "新绘图任务（生图功能暂未接入）" : mode.value === "inventory" ? "暂定" : "开启新对话（草稿：首句才建会话）"));
+const newLabel = computed(() => (mode.value === "image" ? "新绘图任务" : mode.value === "project" ? "暂定" : "开启新对话"));
+const newTitle = computed(() => (mode.value === "image" ? "新绘图任务（生图功能暂未接入）" : mode.value === "project" ? "暂定" : "开启新对话（草稿：首句才建会话）"));
 function onNew(): void {
   if (mode.value === "chat") emit("new");
   else if (mode.value === "image") emit("new-image");
@@ -64,9 +64,8 @@ function cycleTheme(): void {
 }
 
 const currentId = ref<string | null>(null);
-// 左栏顶部的三个空白：对话 / 生图 / 库存。生图与库存暂未接 API，切过去只改选中态
-// （未来这里放各自的列表）。
-const mode = ref<"chat" | "image" | "inventory">("chat");
+// 对话显示会话列表；生图和项目暂为占位面板。
+const mode = ref<"chat" | "image" | "project">("chat");
 const newButton = useTemplateRef<HTMLButtonElement>("newButton");
 const sessionList = useTemplateRef<HTMLDivElement>("sessionList");
 const groupedSessions = computed(() => groupSessions(sessions.value));
@@ -239,7 +238,7 @@ defineExpose({ setSessions });
       <div v-if="refreshing" class="md-linear-progress" role="progressbar" aria-label="正在刷新会话列表"><span></span></div>
     </div>
     <div class="session-actions">
-      <button id="session-new" ref="newButton" type="button" :title="newTitle" :disabled="mode === 'inventory'" @click="onNew">
+      <button id="session-new" ref="newButton" type="button" :title="newTitle" :disabled="mode === 'project'" @click="onNew">
         <span class="plus" aria-hidden="true" v-html="ICONS.plus"></span>{{ newLabel }}
       </button>
       <VBtn id="settings-open" type="button" icon variant="text" color="on-surface-variant"
@@ -258,7 +257,7 @@ defineExpose({ setSessions });
     >
       <VBtn value="chat" title="对话" :aria-pressed="mode === 'chat'">对话</VBtn>
       <VBtn value="image" title="生图（暂未接入）" :aria-pressed="mode === 'image'">生图</VBtn>
-      <VBtn value="inventory" title="库存（暂未接入）" :aria-pressed="mode === 'inventory'">库存</VBtn>
+      <VBtn value="project" title="项目（暂未接入）" :aria-pressed="mode === 'project'">项目</VBtn>
     </VBtnToggle>
     </div>
     <div v-if="mode === 'chat'" id="session-list" ref="sessionList" :aria-busy="loading && !sessions.length ? 'true' : 'false'" @keydown="onHistoryKey">
@@ -310,8 +309,8 @@ defineExpose({ setSessions });
     <div v-else-if="mode === 'image'" class="mode-panel" aria-label="生图">
       <div class="empty">生图<br /><span class="sub">功能尚未接入；这里将来放生图会话列表</span></div>
     </div>
-    <div v-else class="mode-panel" aria-label="库存">
-      <div class="empty">库存<br /><span class="sub">功能尚未接入；这里将来放库存列表</span></div>
+    <div v-else class="mode-panel" aria-label="项目">
+      <div class="empty">项目<br /><span class="sub">功能尚未接入；这里将来放项目列表</span></div>
     </div>
   </VNavigationDrawer>
   <Teleport to="body">

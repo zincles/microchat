@@ -3442,8 +3442,8 @@ test("更新面板：PWA 前端壳核对与切换", () => {
   assert.ok(!/globPatterns:\s*\[[^\]]*json/.test(vite), "build.json 不该进 Service Worker 预缓存");
 });
 
-// 左栏三面板 + 主题循环键（2026-11-09 用户定）。
-test("左栏：对话/生图/库存三面板；主题三态按钮在品牌与收起键之间", () => {
+// 左栏面板与主题循环键（2026-11-09 用户定）。
+test("左栏：对话与生图分面板；主题三态按钮在品牌与收起键之间", () => {
   const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
   assert.match(bar, /id="theme-toggle"/, "左栏没有主题按钮");
   assert.match(bar, /THEME_IDS/, "主题按钮没读唯一权威的主题清单");
@@ -3456,10 +3456,7 @@ test("左栏：对话/生图/库存三面板；主题三态按钮在品牌与收
   assert.ok(brandAt < themeAt && themeAt < toggleAt, "主题按钮不在品牌右侧、收起键左侧");
   assert.match(bar, /v-if="mode === 'chat'"[\s\S]*id="session-list"/, "对话列表没有只在对话面板显示");
   assert.match(bar, /v-else-if="mode === 'image'"[\s\S]*生图/, "没有生图面板");
-  assert.match(bar, /v-else[\s\S]*库存/, "没有库存面板");
   assert.match(bar, /mode\.value === "image" \? "新绘图任务"/, "生图模式的新建按钮文案没变");
-  assert.match(bar, /mode\.value === "inventory" \? "暂定"/, "库存模式的新建按钮文案没变");
-  assert.match(bar, /:disabled="mode === 'inventory'"/, "库存模式的暂定按钮还能点");
 });
 
 test("PWA 安装图标的位图尺寸与 manifest 一致", () => {
