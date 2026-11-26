@@ -67,12 +67,6 @@ body { margin: 0; background: var(--tg-bg); color: var(--tg-text);
   font-size: calc(15px * var(--app-text-scale, 1)); line-height: 1.65; }
 /* 代码 / 预格式文本单独一条字族（2026-11-04）：自定义等宽字体只影响这里与 pre，不污染正文。 */
 code, pre, kbd, samp { font-family: var(--app-font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace); }
-/* 自定义背景图（界面 tab 设：URL 或上传的图片）：整页 fixed 图层，垫在壳（#app，z-index 1）下面 ——
- * 各面板自己有底色，图只从透明处（消息区）透出来。--mc-bg-image 由 utils/background.ts 挂/摘；
- * 没设 = none ⇒ 纯平底（2026-10-10 砍掉 doodle 花纹：机制换成这张背景图的接口，美术不再维护）。 */
-body::before { content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none;
-  background-image: var(--mc-bg-image, none);
-  background-size: cover; background-position: center; background-repeat: no-repeat; }
 /* 高度跟**视觉视口**走（utils/viewport.ts 写 --vvh/--vvt）：键盘弹出时整盒变矮 ⇒ 输入框永远在
  * 键盘上方；translateY 跟 iOS 的"可视窗上推"；顺带 #app 一带 transform 就收编了所有 fixed 浮层
  * （命令面板/picker/确认框/toast/门板都以它为准 ⇒ 自动钉在键盘上沿）。没有 JS/var 时回落 100dvh→100vh。 */
@@ -379,7 +373,9 @@ body::before { content: ""; position: fixed; inset: 0; z-index: 0; pointer-event
 #content { flex: 1 1 auto; display: flex; min-width: 0; min-height: 0; }
 /* VApp 只作为 VNavigationDrawer 的 layout provider；#app 仍是自己的 flex 壳。
    ⚠ VApp 自己会渲染 .v-application，别再给它 id="app"（外层挂载点已经有 id=app，会重复）。 */
-#app > .v-application { flex: 1 1 auto; min-height: 0; }
+/* 背景图叠在 VApp 的主题底上，透明的消息区才能透出它。 */
+#app > .v-application { flex: 1 1 auto; min-height: 0;
+  background: var(--mc-bg-image, none) center / cover no-repeat rgb(var(--v-theme-background)); }
 #app > .v-application > .v-application__wrap { min-height: 0; height: 100%; }
 #sessions-bar { flex: none; align-self: stretch; max-height: 100%; background: var(--md-surface-container-low); color: var(--md-on-surface); border-radius: 0; display: flex; flex-direction: column; overflow: hidden; min-height: 0; box-sizing: border-box; border-right: none; }
 /* VNavigationDrawer 作为**布局里的左栏**，不是 fixed overlay；移动端仍由下面的断点改回 fixed。 */
@@ -543,6 +539,8 @@ body::before { content: ""; position: fixed; inset: 0; z-index: 0; pointer-event
   --chat-column: min(calc(100% - 2 * var(--chat-space)), var(--read-col, 840px));
   --chat-nav-size: 40px;
   --chat-content-top: calc(var(--chat-controls-h, var(--chat-nav-size)) + var(--chat-space));
+  --chat-edge-fade: calc(2 * var(--chat-space));
+  --chat-content-bottom: calc(var(--composer-h, 7em) + var(--chat-edge-fade));
   flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; width: 100%; position: relative; overflow: hidden;
 }
 @media (pointer: coarse) {
@@ -555,6 +553,14 @@ body::before { content: ""; position: fixed; inset: 0; z-index: 0; pointer-event
 /* 滚动口占满工作区；阅读列和输入卡同宽，不再保留已不存在的头像占位。 */
 #messages-vue { flex: 1; overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
 #messages-vue:focus-visible { outline: 2px solid var(--md-primary); outline-offset: -2px; }
+/* 让正文透出实际背景，不盖色块；上下界跟随两侧悬浮控件的收起位移。 */
+.workspace-pane:not(.empty-draft) > #messages-vue:not([aria-busy="true"], :focus-visible) {
+  --chat-fade-top: min(35%, max(var(--chat-edge-fade), calc(var(--chat-content-top) - var(--chrome-top, 0px))));
+  --chat-fade-bottom: clamp(0px, calc(var(--composer-h, 7em) - var(--chrome-bottom, 0px)), 50%);
+  mask-image: linear-gradient(to bottom, transparent, black var(--chat-fade-top),
+    black calc(100% - var(--chat-fade-bottom) - min(10%, var(--chat-edge-fade))),
+    transparent calc(100% - var(--chat-fade-bottom)));
+}
 /* 跟输入卡让位，触屏藏栏时随之降到安全区上沿；自身不占消息列高度。 */
 .latest-jump { position: absolute; z-index: 5; left: 50%; translate: -50% 0;
   bottom: calc(var(--composer-h, 7em) + var(--chat-space));
@@ -564,7 +570,7 @@ body::before { content: ""; position: fixed; inset: 0; z-index: 0; pointer-event
 #app .latest-jump .v-btn:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px; }
 .latest-arrow { display: inline-flex; margin-inline-end: calc(var(--chat-space) / 2); }
 .messages-inner { width: var(--chat-column); margin: 0 auto; box-sizing: border-box;
-  padding: var(--chat-content-top) var(--chat-inset) calc(var(--composer-h, 7em) + var(--chat-space)); display: flex; flex-direction: column; gap: calc(var(--chat-space) / 2); }
+  padding: var(--chat-content-top) var(--chat-inset) var(--chat-content-bottom); display: flex; flex-direction: column; gap: calc(var(--chat-space) / 2); }
 .session-transcript { display: flex; flex-direction: column; gap: inherit; min-width: 0; }
 /* 问答相邻；新一轮、续写或摘要用额外留白分隔。 */
 .session-transcript > :is(.msg-wrap, .answer-process, .sum-block) + :is(.msg-wrap, .answer-process, .sum-block) { margin-block-start: calc(2 * var(--chat-space)); }
@@ -770,14 +776,13 @@ body::before { content: ""; position: fixed; inset: 0; z-index: 0; pointer-event
 /* 编辑器的正文、工具栏与页脚都取自当前主题，文本区独自滚动。 */
 .message-edit-dialog .v-overlay__content { width: min(980px, calc(100% - 24px)); max-width: none; height: min(80dvh, calc(var(--vvh, 100dvh) - 24px)); max-height: none; margin: 0; }
 .message-edit-card { display: flex; flex-direction: column; width: 100%; height: 100%; min-height: 0;
-  overflow: hidden; background: var(--md-surface); color: var(--md-on-surface); border-radius: var(--md-shape-lg); }
+  overflow: hidden; background: var(--md-surface); color: var(--md-on-surface); border-radius: var(--md-shape-lg); box-shadow: none; }
 .message-edit-title, .message-edit-foot { display: flex; align-items: center; gap: var(--chat-space); padding: var(--chat-space) calc(2 * var(--chat-space)); background: var(--md-surface-container-low); }
-.message-edit-title { justify-content: space-between; border-bottom: 1px solid var(--line); }
-.message-edit-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--chat-space); }
-.message-edit-heading h2 { margin: 0; color: var(--md-on-surface); font-weight: 600; font-size: var(--md-type-title-medium); }
+.message-edit-title { justify-content: space-between; border-bottom: 1px solid var(--line); font-size: inherit; }
+.message-edit-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--chat-space); min-width: 0; }
+.message-edit-heading h2 { margin: 0; color: var(--md-on-surface); font-weight: 600; font-size: var(--md-type-title-medium); white-space: normal; overflow-wrap: anywhere; }
 .message-edit-heading span { color: var(--md-on-surface-variant); font-size: var(--md-type-label-medium); }
 .message-edit-title .head-btns { display: flex; align-items: center; gap: calc(var(--chat-space) / 2); flex: none; }
-.message-edit-mode { flex: none; padding: var(--chat-space) calc(2 * var(--chat-space)) 0; }
 .message-edit-body { flex: 1 1 auto; min-height: 0; display: flex; padding: 0; }
 .message-edit-field { width: 100%; flex: 1 1 auto; min-height: 0; height: 100%; }
 .message-edit-field .v-input__control,
@@ -791,6 +796,11 @@ body::before { content: ""; position: fixed; inset: 0; z-index: 0; pointer-event
 .message-edit-dialog.expanded .v-overlay__content { width: 100%; max-width: 100%; height: 100%; max-height: 100%; }
 .message-edit-dialog.expanded .message-edit-card { border-radius: 0; }
 #app .message-edit-title .full-btn { width: var(--chat-control); height: var(--chat-control); padding: 0; }
+@media (max-width: 360px) {
+  .message-edit-title { padding-inline: var(--chat-space); }
+  .message-edit-heading h2 { font-size: var(--md-type-title-small); }
+  #app .message-edit-title .ui-mode-switch .v-btn { padding-inline: calc(var(--chat-space) / 2); }
+}
 /* JSON 树：ST 预设「原始 JSON」tab 的只读树；根展开、子节点点开一层。
    1.5MB 预设不能一次铺满 DOM，这一块的折叠/缩进就是性能边界。 */
 .json-tree { min-width: 0; padding-bottom: 0.6em; }

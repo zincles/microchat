@@ -102,28 +102,26 @@ onMounted(() => {
     scrim="rgba(0, 0, 0, 0.45)"
     :fullscreen="expanded"
   >
-    <VCard class="message-edit-card" elevation="3">
+    <VCard class="message-edit-card">
       <VCardTitle class="message-edit-title">
         <div class="message-edit-heading">
           <h2 id="message-edit-heading">{{ heading }}</h2>
           <span v-if="props.message.idx != null">#{{ props.message.idx }}</span>
         </div>
-        <span class="head-btns">
+        <div class="head-btns">
+          <VBtnToggle v-if="canEditReasoning" class="ui-mode-switch" :model-value="part" mandatory variant="text"
+            role="group" aria-label="编辑内容" @update:model-value="selectPart">
+            <VBtn value="content" :aria-pressed="part === 'content'">正文</VBtn>
+            <VBtn value="reasoning" :aria-pressed="part === 'reasoning'">思考</VBtn>
+          </VBtnToggle>
           <VBtn icon variant="text" size="small" class="full-btn"
             :title="expanded ? '退出网页全屏' : '网页全屏'"
             :aria-label="expanded ? '退出网页全屏' : '网页全屏'"
             :aria-pressed="expanded ? 'true' : 'false'"
             @click="toggleExpanded" v-html="expanded ? ICONS.minimize : ICONS.maximize" />
           <CloseButton title="关闭（不保存）" @click="close" />
-        </span>
+        </div>
       </VCardTitle>
-      <div v-if="canEditReasoning" class="message-edit-mode">
-        <VBtnToggle class="ui-mode-switch" :model-value="part" mandatory variant="text"
-          aria-label="编辑内容" @update:model-value="selectPart">
-          <VBtn value="content" :aria-pressed="part === 'content'">正文</VBtn>
-          <VBtn value="reasoning" :aria-pressed="part === 'reasoning'">思考</VBtn>
-        </VBtnToggle>
-      </div>
       <VCardText class="message-edit-body">
         <VTextarea
           ref="field"
