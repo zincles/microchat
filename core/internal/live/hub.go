@@ -36,6 +36,8 @@ func (event Event) MarshalJSON() ([]byte, error) {
 		return json.Marshal(struct {
 			Clients int `json:"online_clients"`
 		}{Clients: event.Clients})
+	case "agents_changed":
+		return []byte("{}"), nil
 	default:
 		return nil, errors.New("unknown live event")
 	}

@@ -152,6 +152,7 @@ export interface RerollStatus {
 export interface SessionStatus extends TurnStatus {
   compact?: CompactStatus;
   reroll?: RerollStatus;
+  history_revision?: string;
 }
 
 export interface SessionView extends Session {

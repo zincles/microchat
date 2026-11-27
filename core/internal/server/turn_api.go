@@ -81,10 +81,21 @@ func (s *Server) resendHistory(w http.ResponseWriter, r *http.Request) {
 //
 // 会话不存在 ⇒ 404（与消息级路由一个口径：别对着不存在的会话答"idle"，那会让人以为它是好的）。
 func (s *Server) turnStatus(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("session_id")
 	if _, ok := s.requireSession(w, r); !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, s.chat.Status(r.PathValue("session_id")))
+	revision, err := s.store.HistoryRevision(id)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	status := struct {
+		turn.Status
+		HistoryRevision string `json:"history_revision"`
+	}{Status: s.chat.Status(id), HistoryRevision: revision}
+	w.Header().Set("X-Microchat-History-Revision", revision)
+	writeJSON(w, http.StatusOK, status)
 }
 
 // TurnPoll：一次轮询同时拿「状态 + 增量」—— 远程部署把两发串行 HTTP 合成一发，

@@ -6,6 +6,7 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -156,6 +157,57 @@ func (s *Store) ensureSessionFavorite() error {
  }
  _, err := s.db.Exec("ALTER TABLE sessions ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0")
  return err
+}
+
+// ensureHistoryRevision installs transactional invalidation for archived history.
+func (s *Store) ensureHistoryRevision() error {
+	var hasColumn int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'history_revision'").Scan(&hasColumn); err != nil {
+		return err
+	}
+	if hasColumn == 0 {
+		if _, err := s.db.Exec("ALTER TABLE sessions ADD COLUMN history_revision TEXT NOT NULL DEFAULT ''"); err != nil {
+			return err
+		}
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec("UPDATE sessions SET history_revision = lower(hex(randomblob(16))) WHERE history_revision = ''"); err != nil {
+		return err
+	}
+	for _, stmt := range []string{
+		`CREATE TRIGGER IF NOT EXISTS sessions_revision_insert AFTER INSERT ON sessions WHEN NEW.history_revision = '' BEGIN UPDATE sessions SET history_revision = lower(hex(randomblob(16))) WHERE id = NEW.id; END`,
+		`CREATE TRIGGER IF NOT EXISTS messages_revision_insert AFTER INSERT ON messages BEGIN UPDATE sessions SET history_revision = lower(hex(randomblob(16))) WHERE id = NEW.session_id; END`,
+		`CREATE TRIGGER IF NOT EXISTS messages_revision_update AFTER UPDATE ON messages BEGIN UPDATE sessions SET history_revision = lower(hex(randomblob(16))) WHERE id = NEW.session_id; END`,
+		`CREATE TRIGGER IF NOT EXISTS messages_revision_delete AFTER DELETE ON messages BEGIN UPDATE sessions SET history_revision = lower(hex(randomblob(16))) WHERE id = OLD.session_id; END`,
+		`CREATE TRIGGER IF NOT EXISTS summaries_revision_insert AFTER INSERT ON summaries BEGIN UPDATE sessions SET history_revision = lower(hex(randomblob(16))) WHERE id = NEW.session_id; END`,
+		`CREATE TRIGGER IF NOT EXISTS summaries_revision_update AFTER UPDATE ON summaries BEGIN UPDATE sessions SET history_revision = lower(hex(randomblob(16))) WHERE id = NEW.session_id; END`,
+		`CREATE TRIGGER IF NOT EXISTS summaries_revision_delete AFTER DELETE ON summaries BEGIN UPDATE sessions SET history_revision = lower(hex(randomblob(16))) WHERE id = OLD.session_id; END`,
+	} {
+		if _, err := tx.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// HistoryRevision returns the persisted archive token, excluding process-local status ticks.
+func (s *Store) HistoryRevision(sessionID string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return readHistoryRevision(s.db, sessionID)
+}
+
+func readHistoryRevision(q rowQuerier, sessionID string) (string, error) {
+	var revision string
+	err := q.QueryRow("SELECT history_revision FROM sessions WHERE id = ?1", sessionID).Scan(&revision)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return revision, err
 }
 
 // dropRetired：把**已经不用的老结构**顺手清掉（幂等，每次打开都跑一遍）。

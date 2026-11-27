@@ -24,8 +24,9 @@ import { SETTINGS_SECTIONS, type SettingsLocation } from "../utils/settingsCatal
 import { downloadJSON, downloadBlob } from "../utils/download.ts";
 import { cartridgeAgent } from "../utils/cartridge.ts";
 import { previewBlock } from "../utils/payload.ts";
-import type { Agent, ChatConfig, CreateAgentRequest, DefaultsConfig, ProviderView, Segment, SessionView, TavernPreset } from "../api/types.ts";
+import type { AgentsLibraryResource } from "../composables/agentsLibrary.ts";
 import type { ConfirmOptions } from "../types/app.ts";
+import type { Agent, ChatConfig, CreateAgentRequest, DefaultsConfig, ProviderView, Segment, SessionView, TavernPreset } from "../api/types.ts";
 
 interface ChatForm {
   title_chars: string | number;
@@ -53,9 +54,10 @@ const props = withDefaults(defineProps<{
   ask?: ((text: string, options?: ConfirmOptions) => Promise<boolean>) | null;
   escBlocked?: boolean;
   // 品牌进入更新，工作流进入特定智能体；空串进入完整设置目录。
-  only?: "" | "agent" | "update";
-  focusAgentId?: string;
-}>(), {
+	only?: "" | "agent" | "update";
+	agentsLibrary: AgentsLibraryResource;
+	focusAgentId?: string;
+ }>(), {
   ask: null,
   escBlocked: false,
   only: "",
@@ -136,6 +138,40 @@ const segmentsLib = ref<Segment[]>([]); // 提示词段库（随 GET /agents 一
 const curDefault = ref("");
 const editAgent = ref<Agent | "new" | null>(null);
 const agentTemplate = ref<AgentTemplate | null>(null);
+const editorReloadKey = ref(0);
+function sameRecord(left: unknown, right: unknown): boolean {
+	if (left === right) return true;
+	if (Array.isArray(left) || Array.isArray(right)) {
+		return Array.isArray(left) && Array.isArray(right) && left.length === right.length
+			&& left.every((item, index) => sameRecord(item, right[index]));
+	}
+	if (!left || !right || typeof left !== "object" || typeof right !== "object") return false;
+	const leftRecord = left as Record<string, unknown>;
+	const rightRecord = right as Record<string, unknown>;
+	const keys = Object.keys(leftRecord);
+	return keys.length === Object.keys(rightRecord).length
+		&& keys.every((key) => Object.hasOwn(rightRecord, key) && sameRecord(leftRecord[key], rightRecord[key]));
+}
+const remoteEditedAgent = computed(() => {
+	const edited = editAgent.value;
+	if (!edited || edited === "new") return null;
+	return agents.value.find((agent) => agent.id === edited.id) ?? null;
+});
+const agentConflict = computed(() => {
+	const edited = editAgent.value;
+	return !!edited && edited !== "new"
+		&& (!remoteEditedAgent.value || !sameRecord(remoteEditedAgent.value, edited));
+});
+watch(props.agentsLibrary.snapshot, (data) => {
+	if (!data) return;
+	curDefault.value = data.default_agent || "default";
+	agents.value = data.agents ?? [];
+	segmentsLib.value = data.segments ?? [];
+	reads.agents.ready = true;
+	reads.agents.pending = false;
+	reads.agents.error = "";
+	focusRequestedAgent();
+});
 const agentNeedsPresets = computed(() => editAgent.value === "new"
   ? newAgentKind.value !== "flow"
   : !!editAgent.value && editAgent.value.kind !== "flow");
@@ -170,6 +206,14 @@ function editExistingAgent(agent: Agent): void {
 function closeAgentEditor(): void {
   editAgent.value = null;
   agentTemplate.value = null;
+}
+function reloadAgentEditor(): void {
+	if (!remoteEditedAgent.value) {
+		closeAgentEditor();
+		return;
+	}
+	editAgent.value = remoteEditedAgent.value;
+	editorReloadKey.value++;
 }
 
 function copiedAgentName(agent: Agent): string {
@@ -234,6 +278,20 @@ async function copyAgent(agent: Agent): Promise<void> {
   finally { pendingAgentCopies.delete(agent.id); }
 }
 	const editSeg = ref<Segment | "new" | null>(null); // null | 'new' | segment（「提示词」tab 内的二级页）
+	const remoteEditedSegment = computed(() => {
+		const edited = editSeg.value;
+		if (!edited || edited === "new") return null;
+		return segmentsLib.value.find((segment) => segment.id === edited.id) ?? null;
+	});
+	const segmentConflict = computed(() => {
+		const edited = editSeg.value;
+		return !!edited && edited !== "new" && !edited.builtin
+			&& (!remoteEditedSegment.value || !sameRecord(remoteEditedSegment.value, edited));
+	});
+	const segmentEditorKey = computed(() => {
+		const edited = editSeg.value;
+		return !edited ? "closed" : edited === "new" ? `new-${editorReloadKey.value}` : `${edited.id}-${editorReloadKey.value}`;
+	});
 	const pendingSegmentCopies = reactive(new Set<string>());
 	const segmentCopyStatus = ref("");
 	const segmentRename = shallowRef<{ oldId: string; newId: string; revision: number } | null>(null);
@@ -285,6 +343,14 @@ const segmentRows = computed(() => {
 		editSeg.value = null;
 		if (returnToAgent) tab.value = "agent";
 	}
+function reloadSegmentEditor(): void {
+	if (remoteEditedSegment.value) {
+		editSeg.value = remoteEditedSegment.value;
+		editorReloadKey.value++;
+		return;
+	}
+	closeSegmentEditor();
+}
 type AgentSegmentRefs = Pick<Agent, "segments" | "latest_prompt_segments" | "abilities">;
 function remapSegmentReferences<T extends AgentSegmentRefs>(source: T, oldID: string, newID: string): T {
 	const remap = (ids?: string[]): string[] | undefined => ids?.map((id) => id === oldID ? newID : id);
@@ -484,7 +550,8 @@ async function importCartridge(event: Event): Promise<void> {
     }
     const made = await api.createAgent(card.agent);
     cartridgeStatus.value = `已导入「${made.name}」（段：新建 ${created} / 复用 ${skipped}）`;
-    await loadAgents();
+	props.agentsLibrary.invalidate();
+	await loadAgents();
   } catch (e) { cartridgeStatus.value = `导入失败：${errMsg(e)}`; }
   finally {
     input.value = "";
@@ -585,7 +652,8 @@ function inspectTavernPreset(p: TavernPreset): void {
 }
 // 导入片段后刷新段库；Agent 编辑器的段下拉也读这一份。
 function onPresetSegmentImported(): void {
-  void loadAgents();
+	props.agentsLibrary.invalidate();
+	void loadAgents();
 }
 function presetLabel(id?: string): string {
   if (!id) return "";
@@ -624,7 +692,8 @@ async function removeTavernPreset(p: TavernPreset): Promise<void> {
       ? `已删除预设与 ${linked.length} 个导入片段：${p.filename}`
       : `已删除：${p.filename}`;
     await loadTavernPresets();
-    if (mode === "delete") await loadAgents();
+		props.agentsLibrary.invalidate();
+		if (mode === "delete") await loadAgents();
   } catch (e) { tavernStatus.value = `删除失败：${errMsg(e)}`; }
   finally { pendingTavernDeletes.delete(p.id); }
 }
@@ -634,19 +703,23 @@ const sessions = ref<SessionView[]>([]);
 const sessionMgrStatus = ref("");
 
 function loadAgents(): Promise<void> {
-  return readSetting("agents", () => api.agents(), (data) => {
-    // 后端允许 default_agent 缺失/空串，语义是“用内置 default”；
-    // 列表的“是否默认”必须按生效值画，不然默认助手那一行永远空着。
-    curDefault.value = data.default_agent || "default";
-    agents.value = data.agents ?? [];
-    segmentsLib.value = data.segments ?? [];
-    focusRequestedAgent();
-  }, "读取智能体和提示词片段失败");
+	return readSetting("agents", async () => {
+		await props.agentsLibrary.refresh();
+		const data = props.agentsLibrary.snapshot.value;
+		if (!data) throw new Error("尚无可用的智能体快照");
+		return data;
+	}, (data) => {
+		curDefault.value = data.default_agent || "default";
+		agents.value = data.agents ?? [];
+		segmentsLib.value = data.segments ?? [];
+		focusRequestedAgent();
+	}, "读取智能体和提示词片段失败");
 }
 async function onLibrarySaved(page: "agent" | "prompt"): Promise<void> {
-  libraryRefreshes[page]++;
-  try { await loadAgents(); }
-  finally { libraryRefreshes[page]--; }
+	libraryRefreshes[page]++;
+	props.agentsLibrary.invalidate();
+	try { await loadAgents(); }
+	finally { libraryRefreshes[page]--; }
 }
 
 // 预设模板（随 git 走：presets/*.json）：长提示词不硬编码，前端不存第二份真相。
@@ -979,8 +1052,9 @@ function onKey(e: KeyboardEvent): void {
           </template>
           <AgentEditor
             v-else-if="editAgent"
-            :key="editAgent === 'new' ? 'new' : editAgent.id"
+			:key="editAgent === 'new' ? `new-${editorReloadKey}` : `${editAgent.id}-${editorReloadKey}`"
             :agent="editAgent === 'new' ? null : editAgent"
+			:conflict="agentConflict"
             :template="agentTemplate"
             :kind="editAgent === 'new' ? newAgentKind : (editAgent?.kind === 'flow' ? 'flow' : 'prompt')"
             :segments="segmentsLib"
@@ -991,6 +1065,7 @@ function onKey(e: KeyboardEvent): void {
 			:segment-rename="segmentRename"
 			@edit-segment="editAgentSegment"
 			@close="closeAgentEditor"
+			@reload="reloadAgentEditor"
 			@saved="onLibrarySaved('agent')"
           />
 
@@ -1033,12 +1108,14 @@ function onKey(e: KeyboardEvent): void {
             <p v-else class="manage-empty">还没有片段，点击「新建片段」创建。</p>
           </template>
           <SegmentEditor
-            v-else-if="editSeg"
-            :segment="editSeg === 'new' ? null : editSeg"
-            :agents="agents"
+			:key="segmentEditorKey"
+			:segment="editSeg === 'new' ? null : editSeg"
+			:agents="agents"
             :ask="ask"
+			:conflict="segmentConflict"
 			@close="closeSegmentEditor"
 			@saved="onPromptSegmentSaved"
+			@reload="reloadSegmentEditor"
           />
         </section>
         <AppearancePane v-if="visited.has('appearance')" v-show="tab === 'appearance'" @prefs-saved="emit('prefs-saved')" />

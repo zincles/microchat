@@ -79,6 +79,31 @@ func TestSessionBroadcastRevisionAndPayloadShape(t *testing.T) {
 	}
 }
 
+func TestAgentsChangedBroadcastsToEverySubscriber(t *testing.T) {
+	hub := NewHub()
+	defer hub.Close()
+	first, stopFirst := hub.Subscribe()
+	defer stopFirst()
+	second, stopSecond := hub.Subscribe()
+	defer stopSecond()
+
+	hub.PublishAgentsChanged()
+	for name, events := range map[string]<-chan Event{"first": first, "second": second} {
+		select {
+		case event := <-events:
+			if event.Name != "agents_changed" {
+				t.Errorf("%s event = %+v", name, event)
+			}
+			data, err := json.Marshal(event)
+			if err != nil || string(data) != "{}" {
+				t.Errorf("%s payload = %s, %v", name, data, err)
+			}
+		case <-time.After(time.Second):
+			t.Errorf("%s subscriber missed agents_changed", name)
+		}
+	}
+}
+
 func TestSubscriberDisconnectAndSlowSubscriberAreBounded(t *testing.T) {
 	hub := NewHub()
 	defer hub.Close()

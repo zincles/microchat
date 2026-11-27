@@ -19,8 +19,8 @@ export interface WindowSnapshot<Row = unknown, Segment = unknown> {
   rows: Row[];
   segments: Segment[];
   windowFrom: number;
+  historyRevision?: string;
 }
-
 // rememberWindow：记下一条会话的窗口快照（覆盖旧快照并排到最新）。
 export function rememberWindow<Row, Segment>(
   cache: Map<string, WindowSnapshot<Row, Segment>> | null | undefined,
@@ -35,6 +35,7 @@ export function rememberWindow<Row, Segment>(
     rows: rows.slice(),
     segments: Array.isArray(snapshot.segments) ? snapshot.segments.slice() : [],
     windowFrom: snapshot.windowFrom ?? 1,
+    ...(snapshot.historyRevision ? { historyRevision: snapshot.historyRevision } : {}),
   });
   while (cache.size > WINDOW_CACHE_MAX) {
     const oldest = cache.keys().next().value;
@@ -57,6 +58,7 @@ export function recallWindow<Row, Segment>(
     rows: cached.rows.slice(),
     segments: cached.segments.slice(),
     windowFrom: cached.windowFrom,
+    ...(cached.historyRevision ? { historyRevision: cached.historyRevision } : {}),
   };
 }
 

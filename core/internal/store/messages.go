@@ -79,12 +79,21 @@ func IndexMessages(messages []model.Message) {
 	}
 }
 
+type archiveQueryer interface {
+	Query(query string, args ...any) (*sql.Rows, error)
+	QueryRow(query string, args ...any) *sql.Row
+}
+
 // allMessages：**调用方持锁**（内部版，事务与复合操作要用）。
 //
 // 顺序 = `id`（UUIDv7：受理时铸、就地替换不改 id ⇒ 时间序稳），走 `messages_by_session` 索引。
 // **别按 rowid 排** —— rowid 是 SQLite 的实现细节，复制 / VACUUM 之后没有意义。
 func (s *Store) allMessages(sessionID string) ([]model.Message, error) {
-	rows, err := s.db.Query("SELECT "+messageColumns+
+	return s.allMessagesFrom(s.db, sessionID)
+}
+
+func (s *Store) allMessagesFrom(q archiveQueryer, sessionID string) ([]model.Message, error) {
+	rows, err := q.Query("SELECT "+messageColumns+
 		" FROM messages WHERE session_id = ?1 ORDER BY id", sessionID)
 	if err != nil {
 		return nil, err
@@ -101,20 +110,22 @@ func (s *Store) allMessages(sessionID string) ([]model.Message, error) {
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
 	IndexMessages(messages)
-	if err := s.attachToolsLocked(sessionID, messages); err != nil {
+	if err := s.attachToolsFrom(q, sessionID, messages); err != nil {
 		return nil, err
 	}
 	return messages, nil
 }
 
-// attachToolsLocked：一次查完整条会话的工具记录，按 message_id 挂到消息上（调用方持锁）。
-// 工具记录**不是消息**：不占 idx、不参与状态；这里只给显示/压缩/导出用。
-func (s *Store) attachToolsLocked(sessionID string, messages []model.Message) error {
+// attachToolsFrom：同一查询事务读取消息工具记录，避免与正文快照错开。
+func (s *Store) attachToolsFrom(q archiveQueryer, sessionID string, messages []model.Message) error {
 	if len(messages) == 0 {
 		return nil
 	}
-	rows, err := s.db.Query(
+	rows, err := q.Query(
 		`SELECT t.id, t.message_id, t.seq, t.source, t.tool_name, t.item_id,
 		        t.queries, t.sources, t.arguments, t.result, t.status, t.text_offset, t.created_at
 		   FROM message_tools t
@@ -232,6 +243,29 @@ func (s *Store) ListMessagesWindow(sessionID string, window MessageWindow) ([]mo
 	return windowSlice(messages, window), nil
 }
 
+// ListMessagesWindowWithRevision 在同一个 SQLite 快照中读取消息窗口及其 revision。
+func (s *Store) ListMessagesWindowWithRevision(sessionID string, window MessageWindow) ([]model.Message, string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, "", err
+	}
+	defer func() { _ = tx.Rollback() }()
+	revision, err := readHistoryRevision(tx, sessionID)
+	if err != nil {
+		return nil, "", err
+	}
+	messages, err := s.allMessagesFrom(tx, sessionID)
+	if err != nil {
+		return nil, "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, "", err
+	}
+	return windowSlice(messages, window), revision, nil
+}
+
 // ListMessageRanges：一次取多个 1-based 闭区间（`to=0` = 到末尾）。
 // 消息列被摘要切成好几段时，前端只发一发请求，而不是每个区间一个 RTT。
 // 仍按整条会话的 id 顺序返回并去重；越界按 windowSlice 同一语义夹住。
@@ -242,6 +276,33 @@ func (s *Store) ListMessageRanges(sessionID string, ranges [][2]int) ([]model.Me
 	if err != nil {
 		return nil, err
 	}
+	return messageRangesSlice(messages, ranges), nil
+}
+
+// ListMessageRangesWithRevision 在同一个 SQLite 快照中读取批量消息及其 revision。
+func (s *Store) ListMessageRangesWithRevision(sessionID string, ranges [][2]int) ([]model.Message, string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, "", err
+	}
+	defer func() { _ = tx.Rollback() }()
+	revision, err := readHistoryRevision(tx, sessionID)
+	if err != nil {
+		return nil, "", err
+	}
+	messages, err := s.allMessagesFrom(tx, sessionID)
+	if err != nil {
+		return nil, "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, "", err
+	}
+	return messageRangesSlice(messages, ranges), revision, nil
+}
+
+func messageRangesSlice(messages []model.Message, ranges [][2]int) []model.Message {
 	picked := make([]bool, len(messages))
 	for _, span := range ranges {
 		begin := max(span[0], 1)
@@ -262,7 +323,7 @@ func (s *Store) ListMessageRanges(sessionID string, ranges [][2]int) ([]model.Me
 			out = append(out, message)
 		}
 	}
-	return out, nil
+	return out
 }
 
 // windowSlice：**唯一一处**按窗口切消息 —— 切出来的仍是 id 升序、仍是同一条会话里的 `idx`。

@@ -12,6 +12,7 @@ interface UseLiveSyncOptions {
   onSessionChanged: (event: LiveSessionEvent) => void;
   onSessionDeleted: (event: LiveSessionEvent) => void;
   onForeground: (hadHiddenChanges: boolean) => void;
+  onAgentsChanged: () => void;
 }
 
 function onlineCount(value: unknown): number | null {
@@ -98,6 +99,10 @@ export function useLiveSync(options: UseLiveSyncOptions) {
     const count = onlineCount(payload?.online_clients);
     if (count !== null) onlineClients.value = count;
   }
+  function agentsChanged(): void {
+    if (document.visibilityState !== "visible") return;
+    options.onAgentsChanged();
+  }
 
   function onVisibilityChange(): void {
     if (document.visibilityState === "visible") foreground();
@@ -118,6 +123,7 @@ export function useLiveSync(options: UseLiveSyncOptions) {
     source.addEventListener("open", onEventSourceOpen);
     source.addEventListener("session_changed", changed);
     source.addEventListener("session_deleted", deleted);
+    source.addEventListener("agents_changed", agentsChanged);
     source.addEventListener("presence", presence);
     document.addEventListener("visibilitychange", onVisibilityChange);
     window.addEventListener("pageshow", foreground);
@@ -129,6 +135,7 @@ export function useLiveSync(options: UseLiveSyncOptions) {
     if (timer !== null) window.clearInterval(timer);
     if (wakeTimer !== null) window.clearTimeout(wakeTimer);
     source?.removeEventListener("open", onEventSourceOpen);
+    source?.removeEventListener("agents_changed", agentsChanged);
     source?.close();
     document.removeEventListener("visibilitychange", onVisibilityChange);
     window.removeEventListener("pageshow", foreground);

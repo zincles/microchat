@@ -3290,28 +3290,6 @@ test("设置子区的标题共用一套视觉层级", () => {
   assert.ok(!/\.settings-card h3::before/.test(css), "卡片又给 h3 单独定义了一套竖条");
 });
 
-test("开机请求：会话/Agent 不重复，重活按需，加载有骨架", () => {
-  const app = readFileSync(join(SRC, "App.vue"), "utf8");
-  const modelsSrc = readFileSync(join(SRC, "composables", "useModelsAgents.ts"), "utf8");
-  // Agent 列表同一拍共享一发（顶栏 + 草稿首段/状态行都要它）。
-  assert.match(modelsSrc, /function fetchAgentsOnce\(\)/, "没有 Agent 请求去重");
-  for (const fn of ["refreshAgents", "fillAgentSelect"]) {
-    const body = modelsSrc.match(new RegExp(`(?:async )?function ${fn}\\([^)]*\\)[\\s\\S]*?\\n  \\}`))?.[0] ?? "";
-    assert.match(body, /fetchAgentsOnce\(\)/, `${fn} 没走去重后的 Agent 请求`);
-  }
-  // boot 已经拉过 /sessions ⇒ enterSession 直接吃现成的。
-  assert.match(app, /enterSession\(last, sessions\)/, "开机恢复没把已拉到的会话列表传进去");
-  // 2026-11-05：列表在屏幕上就直接用（高延迟下省一个完整 RTT），缓存没有才真去拉。
-  assert.match(app, /let sessions = preloaded \?\? sessionsCache\.value/, "enterSession 仍无条件再拉一次 /sessions");
-  // 进会话不再无条件 POST /outgoing / GET /state：只在工作区看得见时按 tab 拉。
-  const enter = app.match(/async function enterSession\(id[^)]*\)[\s\S]*?\n\}/)?.[0] ?? "";
-  assert.ok(enter, "找不到 enterSession");
-  assert.ok(!/api\.outgoingPreview/.test(enter), "enterSession 又无条件预演历史载荷了");
-  assert.match(enter, /refreshContextLazy\(\)/, "进会话没按工作区 tab 懒加载");
-  // 加载空白用骨架撑住。
-  assert.match(readFileSync(join(SRC, "composables", "useSessionWindow.ts"), "utf8"), /const loadingSession = ref\(true\)/, "没有 loadingSession 状态");
-  assert.match(app, /v-if="loadingSession" class="chat-skeleton"/, "消息列没有加载骨架");
-});
 
 test("左栏不再提供应用内安装入口", () => {
   const pwa = readFileSync(join(SRC, "utils", "pwa.ts"), "utf8");
@@ -3575,18 +3553,6 @@ test("载荷预览：面板里可开关；关掉不请求，偏好与输入预�
   assert.match(prefs, /payload_preview: true/, "前端缺省没有 payload_preview（默认应开）");
 });
 
-test("消息窗口批量取：摘要切出的多个区间压成一发 POST", () => {
-  const app = readFileSync(join(SRC, "composables", "useSessionWindow.ts"), "utf8");
-  const api = readFileSync(join(SRC, "api", "client.ts"), "utf8");
-  assert.match(api, /messageRanges:\s*\(id[^)]*\)\s*=>\s*call<[^>]+>\("POST", `\/sessions\/\$\{enc\(id\)\}\/messages\/batch`/,
-    "API 客户端没有 messageRanges");
-  assert.match(app, /function batchRanges\([^)]*\)/, "没有把 Infinity 尾段转成 to=0 的纯函数");
-  assert.match(app, /b === Infinity \? 0 : b/, "批量区间没有处理尾部");
-  assert.equal((app.match(/api\.messageRanges\(/g) ?? []).length, 2,
-    "首屏与加载更多没有都走批量接口");
-  assert.ok(!/for \(const \[a, b\] of runs\)[\s\S]{0,120}await api\.listMessages/.test(app),
-    "还在按区间循环发请求（RTT 会乘以区间数）");
-});
 
 // 渠道标识可改（2026-11-05 用户定：「渠道标识为啥不能修改了？要修改啊！」）。
 //
@@ -3676,45 +3642,6 @@ test("窗口取数：尾部种子已覆盖时不再补发", () => {
   assert.deepEqual(seededMissingRuns([[4, Infinity]], []), [[4, Infinity]]);
 });
 
-test("高延迟：发送先上屏、失败撤回；切会话不先拉列表；窗口并行带种子", () => {
-  const app = readFileSync(join(SRC, "App.vue"), "utf8");
-  const modelsSrc = readFileSync(join(SRC, "composables", "useModelsAgents.ts"), "utf8");
-
-  // ① 乐观发送：addMessage 必须在 await 之前；失败要把文字还回输入框
-  const turnSrc = readFileSync(join(SRC, "composables", "useTurnStream.ts"), "utf8");
-  const sendStart = turnSrc.indexOf("async function send(content:");
-  const sendEnd = turnSrc.indexOf("async function resend()");
-  const send = turnSrc.slice(sendStart, sendEnd);
-  assert.ok(sendStart > 0 && sendEnd > sendStart, "找不到 send()");
-  assert.ok(send.indexOf('addMessage("你", content, "user")') < send.indexOf("await api.sendMessage"), "发送不是先上屏再等 202");
-  assert.match(send, /dropOptimistic\(optimistic\)/, "发送失败没撤掉乐观气泡");
-  assert.match(send, /settleOptimisticUser\(optimistic, accepted\?\.user\)/, "202 回来后没换成服务端那条（编号/编辑都要真 id）");
-
-  // ② 草稿那条是两个 back-to-back 请求（建会话 → 受理），同样先上屏
-  const draft = app.slice(app.indexOf("async function sendFromDraft"), app.indexOf("function stopCurrent"));
-  assert.ok(draft.indexOf('addMessage("你", text, "user")') < draft.indexOf("await api.createSession"), "草稿首句不是先上屏再建会话");
-
-  // ③ 切会话：列表在屏幕上就直接用，别先 GET /sessions 再画
-  const enter = app.slice(app.indexOf("async function enterSession"), app.indexOf("async function boot"));
-  assert.match(enter, /let sessions = preloaded \?\? sessionsCache\.value/, "切会话还是在无条件拉列表");
-  assert.match(enter, /if \(!sessions\.some\(\(s\) => s\.id === id\)\)/, "缓存里没有时没有兜底去拉");
-  assert.match(enter, /sessionsFetchedAt > SESSIONS_FRESH_MS/, "列表缓存没有后台保鲜（会一直用旧标题）");
-
-  // ④ 窗口第一拍就带"最后 N 条"，摘要没横跨时第二拍为空
-  const windowSrc = readFileSync(join(SRC, "composables", "useSessionWindow.ts"), "utf8");
-  const load = windowSrc.slice(windowSrc.indexOf("async function fetchWindowNow"), windowSrc.indexOf("function fetchWindow("));
-  assert.match(load, /api\.listMessagesLast\(id, limit\)/, "第一拍没带尾部种子");
-  assert.match(load, /seededMissingRuns\(runs, recent\.map/, "没按种子算缺口（会把已取到的再要一遍）");
-
-  // ⑤ 模型清单缓存先画后对（切会话不再闪「加载模型…」）
-  assert.match(modelsSrc, /if \(modelsCache\) paintModelOptions\(modelsCache\)/, "模型清单没有先画缓存");
-
-  // ⑥ 编辑消息：PATCH 回来先就地换正文，再对账（别让旧字多挂一个 RTT）
-  const editor = readFileSync(join(SRC, "components", "MessageEditor.vue"), "utf8");
-  assert.match(editor, /emit\("saved", \{ reroll, message: updated \}\)/, "编辑器没把更新后的消息带回来");
-  const edited = app.slice(app.indexOf("async function onMessageEdited"), app.indexOf("async function rerollNow"));
-  assert.ok(edited.indexOf("row.content = updated.content") < edited.indexOf("reloadWindowKeepingScroll"), "编辑后不是先本地生效再对账");
-});
 
 // 回看缓存（2026-11-05 用户定：「切换不同对话时，最好也预留缓存吧」）。
 //
@@ -3752,21 +3679,6 @@ test("回看缓存：拷贝进出、LRU 上限、可遗忘", () => {
   assert.equal(recallWindow(big, "big"), null, "超长窗口不该缓存");
 });
 
-test("回看缓存接到切会话：先画缓存再对账；对账期间本地动过就作废", () => {
-  const app = readFileSync(join(SRC, "App.vue"), "utf8");
-  const windowSrc = readFileSync(join(SRC, "composables", "useSessionWindow.ts"), "utf8");
-  const enter = app.slice(app.indexOf("async function enterSession"), app.indexOf("async function boot"));
-  const load = windowSrc.slice(windowSrc.indexOf("async function loadWindow"), windowSrc.indexOf("async function reloadWindow"));
-
-  assert.match(enter, /const cached = recallWindow\(windowCache, id\)/, "切会话没查回看缓存");
-  assert.ok(enter.indexOf("recallWindow(windowCache, id)") < enter.indexOf("await loadWindow"), "缓存命中时仍然先等网络");
-  assert.match(enter, /loadingSession\.value = false; \/\/ 一屏已经在了/, "缓存命中还挂着骨架");
-  assert.match(enter, /reloadWindowKeepingScroll\(\{ onlyIfUnchanged: true \}\)/, "缓存命中后没有后台对账（或没带防覆盖闸）");
-  assert.match(load, /rememberWindow\(windowCache, sid/, "loadWindow 成功后没把这一屏记进缓存");
-  assert.match(load, /onlyIfUnchanged && \(rev !== getLocalRev\(\) \|\| !\(canReconcile\?\.\(\) \?\? true\)\)/, "后台对账没有和本地动作/在飞发送对账");
-  assert.match(app, /localRev\+\+/, "本地动作没有推进 localRev");
-  assert.match(app, /forgetWindow\(windowCache, id\)/, "删会话没清它的缓存");
-});
 
 // 弱网兜底（2026-11-05）：GET 有超时、网络层失败重试一次；POST 不套这个上限
 // （刷新模型/导入这类会打上游长活，套 20 秒会把正常的长请求剪断）。

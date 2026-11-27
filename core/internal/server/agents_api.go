@@ -1,8 +1,13 @@
 package server
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -80,7 +85,11 @@ func validateAgentKind(kind string) error {
 // （读 agents.json 的 loadAgents 在 server.go 里 —— 早就有，别写第二份）
 
 func (s *Server) saveAgents(agents config.AgentsConfig) error {
-	return config.SaveJSON(s.paths.Config("agents.json"), agents)
+	if err := config.SaveJSON(s.paths.Config("agents.json"), agents); err != nil {
+		return err
+	}
+	s.live.PublishAgentsChanged()
+	return nil
 }
 
 // validateAgentFlow：FlowAgent 的图存进去之前必须能通过唯一 schema。
@@ -106,25 +115,58 @@ type agentsView struct {
 	Segments []segmentView `json:"segments,omitempty"`
 }
 
-// listAgents：对外给"生效列表"——含内置默认 agent（文件里没有 `default` 时补上）。
+// listAgents：对外给“生效列表”——含内置默认 agent（文件里没有 `default` 时补上）。
 func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
 	agents := s.loadAgents()
-	// 段库 = 用户段 + **内置段**（带 `builtin: true` 标记，编辑器据此只读/给"复制为自定义"）。
-	// 内置的实体在代码里（`config.BuiltinSegments`），永远不进文件。
 	segments := make([]segmentView, 0, len(agents.Segments)+len(config.BuiltinSegments()))
-	for _, s := range config.BuiltinSegments() {
-		segments = append(segments, segmentView{Segment: s, Builtin: true})
+	for _, segment := range config.BuiltinSegments() {
+		segments = append(segments, segmentView{Segment: segment, Builtin: true})
 	}
-	for _, s := range agents.Segments {
-		segments = append(segments, segmentView{Segment: s})
+	for _, segment := range agents.Segments {
+		segments = append(segments, segmentView{Segment: segment})
 	}
-	writeJSON(w, http.StatusOK, agentsView{
-		AgentsConfig: config.AgentsConfig{
-			DefaultAgent: agents.DefaultAgent,
-			Agents:       agents.Effective(),
-		},
+	view := agentsView{
+		AgentsConfig: config.AgentsConfig{DefaultAgent: agents.DefaultAgent, Agents: agents.Effective()},
 		Segments: segments,
-	})
+	}
+	var buffer bytes.Buffer
+	encoder := json.NewEncoder(&buffer)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(view); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	payload := bytes.TrimRight(buffer.Bytes(), "\n")
+	digest := sha256.Sum256(payload)
+	tag := `"` + hex.EncodeToString(digest[:]) + `"`
+	w.Header().Set("ETag", tag)
+	w.Header().Set("Cache-Control", "no-cache, no-store")
+	if ifNoneMatch(r.Header.Values("If-None-Match"), tag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(payload)
+}
+
+func ifNoneMatch(headers []string, current string) bool {
+	for _, header := range headers {
+		for _, item := range strings.Split(header, ",") {
+			item = strings.TrimSpace(item)
+			if item == "*" {
+				return true
+			}
+			if strings.HasPrefix(item, "W/") {
+				item = strings.TrimSpace(strings.TrimPrefix(item, "W/"))
+			}
+			if item == current {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {

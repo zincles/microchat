@@ -24,7 +24,8 @@ CREATE TABLE sessions (
   -- 手动关闭的 provider-native tool id（JSON 数组；规则给默认，用户可取消）
   native_tools_disabled TEXT NOT NULL DEFAULT '[]',
   -- 请求体顶层覆盖（JSON 对象；最后写入，允许覆盖任何 key）
-  request_overrides TEXT NOT NULL DEFAULT '{}'
+  request_overrides TEXT NOT NULL DEFAULT '{}',
+  history_revision TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE messages (
   id          TEXT PRIMARY KEY,

@@ -6,18 +6,19 @@
 import { nextTick, reactive, ref, shallowRef, watch } from "vue";
 import type { Ref } from "vue";
 import type { Message, Summary } from "../api/types.ts";
+import { atReadingTail, applyReadingPosition, captureReadingPosition, readingPaneVisible } from "../utils/readingPosition.ts";
+import type { ReadingPosition } from "../utils/readingPosition.ts";
 import {
   alignWindowFrom, computeSegments, prevWindowStart, runsToFetch, seededMissingRuns,
   toolSources, windowStart, type ChatSegment, type ChatSummary, type ChatSummaryEntry,
 } from "../utils/chatrows.ts";
-import { rememberWindow, type WindowSnapshot } from "../utils/windowcache.ts";
-import { applyReadingPosition, atReadingTail, captureReadingPosition, readingPaneVisible, type ReadingPosition } from "../utils/readingPosition.ts";
+import { recallWindow, rememberWindow, type WindowSnapshot } from "../utils/windowcache.ts";
 import type { AppRow } from "../types/app.ts";
 
 interface WindowApi {
-  listSummaries(id: string): Promise<Summary[]>;
-  listMessagesLast(id: string, n: number): Promise<Message[]>;
-  messageRanges(id: string, ranges: Array<[number, number]>): Promise<Message[]>;
+  listSummaries(id: string, captureRevision?: (revision: string | null) => void): Promise<Summary[]>;
+  listMessagesLast(id: string, n: number, captureRevision?: (revision: string | null) => void): Promise<Message[]>;
+  messageRanges(id: string, ranges: Array<[number, number]>, captureRevision?: (revision: string | null) => void): Promise<Message[]>;
   listMessagesRange(id: string, from: number, to: number): Promise<Message[]>;
 }
 
@@ -48,6 +49,8 @@ export interface SessionWindow {
   toRow: (m: Message) => AppRow;
   fetchWindow: (id: string, opts?: { from?: number | null; limit?: number }) => Promise<WindowSnapshot<AppRow, ChatSegment>>;
   loadWindow: (opts?: { reset?: boolean; resume?: boolean; scroll?: boolean; onlyIfUnchanged?: boolean }) => Promise<boolean>;
+  restoreCachedWindow: (id: string) => boolean;
+  hasHistoryRevision: (revision?: string) => boolean;
   reloadWindow: (opts?: { scroll?: boolean; onlyIfUnchanged?: boolean }) => Promise<boolean>;
   reloadWindowKeepingScroll: (opts?: { onlyIfUnchanged?: boolean }) => Promise<boolean>;
   rememberReadingPosition: () => void;
@@ -127,7 +130,18 @@ export function useSessionWindow({
   const hasNewReply = shallowRef(false);
   let lastScrollTop = 0;
 
+  let loadedRevision: string | undefined;
+  let loadedRevisionSession: string | null = null;
+  let loadedRevisionEpoch: number | null = null;
+
+  function markLoadedRevision(revision: string | undefined): void {
+    loadedRevision = revision;
+    loadedRevisionSession = revision ? getSessionID() : null;
+    loadedRevisionEpoch = revision ? getEpoch() : null;
+  }
+
   function resetWindowRequests(): void {
+    markLoadedRevision(undefined);
     pagingEpoch = null;
     loadingMore.value = false;
     summaryErrors.clear();
@@ -176,6 +190,24 @@ export function useSessionWindow({
   function noteNewReply(): void {
     onReadingScroll();
     if (awayFromLatest.value) hasNewReply.value = true;
+  }
+
+  function hasHistoryRevision(revision?: string): boolean {
+    return Boolean(
+      revision && loadedRevision === revision && loadedRevisionSession === getSessionID() &&
+      loadedRevisionEpoch === getEpoch(),
+    );
+  }
+
+  function restoreCachedWindow(id: string): boolean {
+    if (!id || id !== getSessionID()) return false;
+    const snapshot = recallWindow(windowCache, id);
+    if (!snapshot) return false;
+    vueMessages.value = snapshot.rows;
+    vueSegments.value = snapshot.segments;
+    windowFrom.value = snapshot.windowFrom;
+    markLoadedRevision(snapshot.historyRevision);
+    return true;
   }
 
   watch(pane, (el, _old, onCleanup) => {
@@ -230,21 +262,28 @@ export function useSessionWindow({
   }
 
   async function fetchWindowNow(id: string, { from, limit }: { from: number | null; limit: number }): Promise<WindowSnapshot<AppRow, ChatSegment>> {
+    const revisions: Array<string | null> = [null, null];
+    const capture = (index: number) => (revision: string | null) => { revisions[index] = revision; };
     const [sums, recent] = await Promise.all([
-      api.listSummaries(id),
+      api.listSummaries(id, capture(0)),
       // 总数与“窗口可能正好要的那几条”一起拿：`?last=N` 的末条 idx 就是总数。
-      api.listMessagesLast(id, limit),
+      api.listMessagesLast(id, limit, capture(1)),
     ]);
     const total = recent.length ? (recent[recent.length - 1].idx ?? 0) : 0;
     const segments = computeSegments(total, sums.map((s) => ({ ...s })) as ChatSummary[]);
     const start = from === null ? windowStart(segments, limit) : alignWindowFrom(segments, from, limit);
     const runs = runsToFetch(segments, start, Infinity);
     const missing = seededMissingRuns(runs, recent.map((m) => ({ idx: m.idx ?? 0 })));
-    const rest = missing.length ? await api.messageRanges(id, batchRanges(missing)) : [];
+    if (missing.length) revisions.push(null);
+    const rest = missing.length ? await api.messageRanges(id, batchRanges(missing), capture(2)) : [];
+    const historyRevision = Boolean(revisions[0]) && revisions.every((revision) => revision === revisions[0])
+      ? revisions[0] ?? undefined
+      : undefined;
     return {
       rows: [...recent, ...rest].sort((x, y) => (x.idx ?? 0) - (y.idx ?? 0)).map(toRow),
       segments,
       windowFrom: start,
+      ...(historyRevision ? { historyRevision } : {}),
     };
   }
 
@@ -324,12 +363,13 @@ export function useSessionWindow({
     vueSegments.value = snap.segments;
     windowFrom.value = snap.windowFrom;
     vueMessages.value = snap.rows;
+    markLoadedRevision(snap.historyRevision);
     const alive = new Set(snap.segments.filter((seg) => seg.kind === "summary").map((seg) => seg.id));
     for (const key of [...summaryMsgs.keys()]) if (!alive.has(key)) summaryMsgs.delete(key);
     for (const key of summaryErrors.keys()) if (!alive.has(key)) summaryErrors.delete(key);
-    for (const key of summaryRequests.keys()) if (!alive.has(key)) summaryRequests.delete(key);
+    for (const key of [...summaryRequests.keys()]) if (!alive.has(key)) summaryRequests.delete(key);
     for (const id of openSummaries) if (alive.has(id)) void refreshSummaryMsgs(id, false);
-    rememberWindow(windowCache, sid, { rows: vueMessages.value, segments: snap.segments, windowFrom: windowFrom.value });
+    rememberWindow(windowCache, sid, { rows: vueMessages.value, segments: snap.segments, windowFrom: windowFrom.value, historyRevision: snap.historyRevision });
     onWindowLoaded?.();
     if (position || scroll === true) {
       await nextTick();
@@ -391,7 +431,10 @@ export function useSessionWindow({
     if (!sid || older >= from) return;
     const runs = runsToFetch(segments, older, from - 1);
     if (runs.length) loadingMore.value = true;
-    const got = runs.length ? await api.messageRanges(sid, batchRanges(runs)) : [];
+    let pageRevision: string | null = null;
+    const got = runs.length
+      ? await api.messageRanges(sid, batchRanges(runs), (revision) => { pageRevision = revision; })
+      : [];
     if (my !== getEpoch() || sid !== getSessionID() || from !== windowFrom.value) return;
     // 等分页时前台对账可能已经替换了段结构。按新结构兑现这次翻页，不往新窗口拼旧数据。
     if (segments !== vueSegments.value) return loadOlderWindow();
@@ -401,8 +444,12 @@ export function useSessionWindow({
     const beforeTop = el?.scrollTop ?? 0;
     vueMessages.value = [...got.sort((x, y) => (x.idx ?? 0) - (y.idx ?? 0)).map(toRow), ...vueMessages.value];
     windowFrom.value = older;
+    if (runs.length && (!pageRevision || pageRevision !== loadedRevision || loadedRevisionSession !== sid || loadedRevisionEpoch !== my)) {
+      markLoadedRevision(undefined);
+    }
     rememberWindow(windowCache, sid, {
       rows: vueMessages.value.filter(row => row.messageId), segments: vueSegments.value, windowFrom: windowFrom.value,
+      ...(loadedRevision ? { historyRevision: loadedRevision } : {}),
     });
     await nextTick();
     if (position && el && my === getEpoch() && sid === getSessionID() && el === pane.value) {
@@ -416,6 +463,7 @@ export function useSessionWindow({
   return {
     vueMessages, vueSegments, loadingSession, loadingMore, windowLimit, windowFrom, summaryMsgs, summaryErrors, openSummaries, windowCache,
     toRow, fetchWindow, loadWindow, reloadWindow, reloadWindowKeepingScroll, loadMore, resetWindowRequests, prefetchSession,
+    restoreCachedWindow, hasHistoryRevision,
     rememberReadingPosition, restoreReadingPosition, forgetReadingPosition,
     awayFromLatest, hasNewReply, onReadingScroll, jumpToLatest, resetReadingTail, noteNewReply,
     refreshSummaryMsgs, onSummaryToggle,

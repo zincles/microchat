@@ -528,7 +528,11 @@ func fillSpanIdx(q rowQuerier, sessionID string, summary *model.Summary) error {
 // listSummaries：按 id 顺序取这条会话的摘要（装配的行走、删除计划、Copy 都要用）。
 // **调用方持锁**。
 func (s *Store) listSummaries(sessionID string) ([]model.Summary, error) {
-	rows, err := s.db.Query("SELECT "+summaryColumns+
+	return s.listSummariesFrom(s.db, sessionID)
+}
+
+func (s *Store) listSummariesFrom(q archiveQueryer, sessionID string) ([]model.Summary, error) {
+	rows, err := q.Query("SELECT "+summaryColumns+
 		" FROM summaries WHERE session_id = ?1 ORDER BY id", sessionID)
 	if err != nil {
 		return nil, err
@@ -540,12 +544,20 @@ func (s *Store) listSummaries(sessionID string) ([]model.Summary, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err := fillSpanIdx(s.db, sessionID, &summary); err != nil {
-			return nil, err
-		}
 		summaries = append(summaries, summary)
 	}
-	return summaries, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	for index := range summaries {
+		if err := fillSpanIdx(q, sessionID, &summaries[index]); err != nil {
+			return nil, err
+		}
+	}
+	return summaries, nil
 }
 
 // ListSummaries：公开版（持锁）。
@@ -553,6 +565,29 @@ func (s *Store) ListSummaries(sessionID string) ([]model.Summary, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.listSummaries(sessionID)
+}
+
+// ListSummariesWithRevision 在同一个 SQLite 快照中读取摘要列表及其 revision。
+func (s *Store) ListSummariesWithRevision(sessionID string) ([]model.Summary, string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, "", err
+	}
+	defer func() { _ = tx.Rollback() }()
+	revision, err := readHistoryRevision(tx, sessionID)
+	if err != nil {
+		return nil, "", err
+	}
+	summaries, err := s.listSummariesFrom(tx, sessionID)
+	if err != nil {
+		return nil, "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, "", err
+	}
+	return summaries, revision, nil
 }
 
 // insertSummary：插一行摘要（**父指针一律先写 NULL** —— `parent_summary_id` 是自引用外键，

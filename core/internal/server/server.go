@@ -306,6 +306,12 @@ func (s *Server) listMessagesBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(req.Ranges) == 0 {
+		revision, err := s.store.HistoryRevision(r.PathValue("session_id"))
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		w.Header().Set("X-Microchat-History-Revision", revision)
 		writeJSON(w, http.StatusOK, []model.Message{})
 		return
 	}

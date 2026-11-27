@@ -757,7 +757,7 @@ Mermaid 时只显示源码，不会拖大安装包。
 - 错误体固定 `{"error":{"code","message"}}`，`code` ∈ `invalid` / `not_found` / `conflict` / `unauthorized` / `upstream` / `internal`——客户端按 `code` 分支，别匹配文案。
 - **405 由框架自己回**（路径在、方法不对），不带上面的体，但带 `allow:` 头。
 - **CORS 全开，预检回 204。** `Access-Control-*` 由中间件加到响应，`OPTIONS` 在路由前直接处理；CORS 不是鉴权，也不能替代反向代理保护。
-  有 `Origin` 时回显并带 `Vary: Origin`，没有则为 `*`；允许请求头按预检回显，缺省为 `Authorization, Content-Type`；暴露 `Allow` 供浏览器读取 405。
+  有 `Origin` 时回显并带 `Vary: Origin`，没有则为 `*`；允许请求头按预检回显，缺省为 `Authorization, Content-Type`；暴露 `Allow`、`ETag` 与 `X-Microchat-History-Revision` 供浏览器读取。
   本项目没有应用内鉴权；默认回环绑定与对外反代边界见部署说明。
 - **TLS 不归我们**（用户定）：云上由反代终结（Cloudflare 一类）；本二进制只管 HTTP。
 
@@ -777,7 +777,7 @@ Mermaid 时只显示源码，不会拖大安装包。
 MicroChat 没有登录、账号、会话归属或应用内鉴权；`Authorization` 不授予身份。默认后端绑定 `127.0.0.1`。需要远程访问时由反向代理负责 TLS 与鉴权，不能把 Vite Host 白名单或 CORS 当作保护。早期数据库遗留的 `users` 表与 `sessions.owner_id` 由 store 的兼容清理处理，不触及会话内容。
 ### 跨客户端实时更新
 
-`POST /api/v1/live/heartbeat` 接收 `{client_id}`，回 `{online_clients}`；`GET /api/v1/live/events` 是全局 SSE，发 `session_changed` / `session_deleted`（`{session_id, revision}`）与 `presence`（`{online_clients}`）。客户端以 `localStorage` 的 `mc_client_id` 标识浏览器 profile，同 profile 多标签共用一票；在线数是最多 90 秒租约、进程内近似计数，不代表用户身份。SSE 只用于失效通知，不带消息正文、令牌或渠道数据；无鉴权语义。
+`POST /api/v1/live/heartbeat` 接收 `{client_id}`，回 `{online_clients}`；`GET /api/v1/live/events` 是全局 SSE，发 `session_changed` / `session_deleted`（`{session_id, revision}`）、`presence`（`{online_clients}`）与 `agents_changed`（`{}`）。客户端以 `localStorage` 的 `mc_client_id` 标识浏览器 profile，同 profile 多标签共用一票；在线数是最多 90 秒租约、进程内近似计数，不代表用户身份。SSE 只发失效通知，不带消息正文、令牌或渠道数据；断线重连后客户端重新核对快照。
 ### 会话与消息
 
 | 方法 | 路径 | 请求体 | 响应 | 说明 |
@@ -796,8 +796,8 @@ MicroChat 没有登录、账号、会话归属或应用内鉴权；`Authorizatio
 | PATCH | `/sessions/{session_id}` | `UpdateSessionReq` | `Session` | 标题 / 模型 / agent / **提示词** / **思考档位** / **`native_tools_disabled`** / **收藏 `favorite`**（`system_prompt` 与 `thinking_level` 都是**指针** ⇒ 没给或 `null` = 不动、`""` = 清掉覆盖/跟随模型默认、非空 = 写入；档位必须在目标模型的 `thinking_levels` 里，否则 **422**；`native_tools_disabled: []` 恢复规则默认，非空 = 关闭这些工具；`favorite` 省略不变、true/false 设置，不改 `updated_at`）|
 | DELETE | `/sessions/{session_id}` | — | 204 | 不存在 → 404 |
 | POST | `/sessions/{session_id}/copy` | — | `Session` · 201 | **Copy**（线性会话里的"分岔"）：新 id、消息与摘要一并复制、摘要新 id 且指针重映射；**世界状态不复制**。入口在左栏会话的「选项」浮板（2026-11-04 从会话设置面板挪过来）；面板里不再有它 |
-| GET | `/sessions/{session_id}/messages` | — | `[Message]` | **按 `id` 升序的整条会话**（线性 ⇒ 没有"当前路径"）。三条查询参数（**都不给 = 全部**，语义不变）：`?from_idx=5&to_idx=10` **闭区间**（含两端；缺一端补默认：起点 1 / 终点末尾）、`?last=20` **取尾**。**参数错 ⇒ 400**（`last` 与区间混用、非正整数、区间反了）；**越界不是错** ⇒ 给现有的那几条（起点在末尾之后 ⇒ 空数组）。响应仍是**数组** ✗（不换成对象）。每条带 `idx`：**0 = 合成的系统提示词；1..N = 真消息** —— 它是**派生的**（= 按 `id` 排第几条）、**不落库**、**永不改变**（只删后缀 ⇒ 不留洞；不往中间插；编辑/重摇不改 `id`）|
-| POST | `/sessions/{session_id}/messages/batch` | `{ranges:[[from,to],…]}` | `[Message]` | **2026-11-04**：一次取多个 1-based 闭区间（`to=0` = 到末尾），按整条会话 id 顺序返回并去重；首屏 / 加载更多把摘要切开的几段压成一发，不再一个区间一个 RTT。区间非法 ⇒ 422 |
+| GET | `/sessions/{session_id}/messages` | — | `[Message]` | **按 `id` 升序的整条会话**（线性 ⇒ 没有"当前路径"）。三条查询参数（**都不给 = 全部**，语义不变）：`?from_idx=5&to_idx=10` **闭区间**（含两端；缺一端补默认：起点 1 / 终点末尾）、`?last=20` **取尾**。**参数错 ⇒ 400**（`last` 与区间混用、非正整数、区间反了）；**越界不是错** ⇒ 给现有的那几条（起点在末尾之后 ⇒ 空数组）。响应仍是**数组** ✗（不换成对象）。每条带 `idx`：**0 = 合成的系统提示词；1..N = 真消息** —— 它是**派生的**（= 按 `id` 排第几条）、**不落库**、**永不改变**。响应头 `X-Microchat-History-Revision` 是与消息快照同一 SQLite 事务读取的会话归档版本；消息或摘要新增、修改、删除并提交后会变化。|
+| POST | `/sessions/{session_id}/messages/batch` | `{ranges:[[from,to],…]}` | `[Message]` | **2026-11-04**：一次取多个 1-based 闭区间（`to=0` = 到末尾），按整条会话 id 顺序返回并去重；首屏 / 加载更多把摘要切开的几段压成一发，不再一个区间一个 RTT。区间非法 ⇒ 422。响应头 `X-Microchat-History-Revision` 与消息快照同一事务读取。|
 | POST | `/sessions/{session_id}/messages` | `SendReq` | `TurnAccepted` · **202** | 落用户消息 + 开工；不含回复正文 |
 | POST | `/sessions/{session_id}/resend` | — | `TurnAccepted`（`user` 为空） · **202** | **续写**：不追加用户消息，按现有历史生成下一条回答（尾条是用户消息或助手消息都可；空会话 ⇒ 400；在跑 ⇒ 409）。Web 入口是已有历史时空输入发送，或 `/resend`。 |
 | POST | `/sessions/{session_id}/regenerate` | — | `TurnAccepted`（`user` 为空） · **202** | **FlowAgent 的「重新生成」**：尾条必须是 assistant；用**当前**历史（含上一轮 `output.user` 可能已经改写的用户消息）重跑整张图，**原地换回尾条 assistant**（`message_id` 不变），不建候选列表。普通 Agent 不接受 ⇒ 400；在跑/重摇 ⇒ 409。Task 是 `KindTurn`，所以任务环与 `/flow/run` 会照常更新 |
@@ -811,7 +811,7 @@ MicroChat 没有登录、账号、会话归属或应用内鉴权；`Authorizatio
 | GET | `/sessions/{session_id}/prompt` | — | `{"text","type"}` | **生效的系统提示词**（三级解析的**结果**，与出站拼装读同一处）：`type` = `conversation`（会话自己写了 `sessions.system_prompt`）/ `agent`（`agents.json` 里那个 agent 的）/ `builtin`（两级都没有 ⇒ 代码里的内置默认）。**永不给空**：解析全落空（典型：会话的 `agent_id` 软引用**悬空**）也退内置那句、`type` 报 `builtin`。**回拼装后的结果**（base + 追加段，见 agents.json 的 `segments`）|
 | GET | `/sessions/{session_id}/macros` | — | `{macros:[{name,aliases,description,value}], usage:[{name,count,known}], total}` | **已注册宏面板**（2026-11-10）：`macros` = 可用宏 + 当前值；`usage` = **生效系统提示词 + 全部消息正文**里每个 `{{…}}` 的出现次数（未知宏保留在统计里，`known:false`）。只读，不改任何东西 |
 | GET | `/sessions/{session_id}/flow/run` | — | `FlowRunTrace` | **FlowAgent 最近一次图执行**（进程内、覆盖式）：`status`（running/done/error/canceled）、`active_node_id`（正在执行的节点）、`active_llm_calls`（当前并发 LLM 调用数）、`active_nodes`（节点/渠道/模型/开始时间）、`final`、`duration_ms`、`steps`（每节点 input/output/error；LLM 节点另带 provider/model/usage/elapsed_ms/payload）。普通 Agent / 没跑过 ⇒ 404 |
-| GET | `/sessions/{session_id}/status` | — | `TurnStatus` | 当前相位、消息 ID、模型步骤 `step`、耗时、正文与思考长度；`tool` 是当前工具提示，`sources` 是去重来源，`tools` 是当前步骤各次服务端工具的快照（含原始正文位置）。压缩和重摇状态分别在 `compact`、`reroll`。 |
+| GET | `/sessions/{session_id}/status` | — | `TurnStatus` | 当前相位、消息 ID、模型步骤 `step`、耗时、正文与思考长度；`tool` 是当前工具提示，`sources` 是去重来源，`tools` 是当前步骤各次服务端工具的快照（含原始正文位置）。压缩和重摇状态分别在 `compact`、`reroll`。另带 `history_revision` 与 `X-Microchat-History-Revision` 响应头，标识持久归档，不随进程内流式相位变化。|
 | GET | `/sessions/{session_id}/turn/text?from=N&think_from=M` | — | `StreamSlice` | 正文与思考各按 UTF-8 字节续读，对应区间 `[from,next)`、`[think_from,think_next)`；不消费缓冲。 |
 | GET | `/sessions/{session_id}/turn/poll?from=N&think_from=M` | — | `{status, slice}` | 同一快照返回状态与增量，避免跨工具步骤取到不配对的数据。 |
 | GET | `/sessions/{session_id}/turn/events?from=N&think_from=M` | — | SSE `{status, slice}` | 主路径为 SSE，断线由浏览器带 `Last-Event-ID`。ID 绑定消息、步骤与缓冲代际；不匹配则从新缓冲开头读取。工具快照更新即使没有新字节也会发；没有首帧、不能重连或发现缺口时，从本地已消费位置回退到 `/turn/poll`。 |
@@ -823,7 +823,7 @@ MicroChat 没有登录、账号、会话归属或应用内鉴权；`Authorizatio
 | POST | `/sessions/{session_id}/compact/advanced` | 同上 | `AdvancedJob` · 202 | **启动高级作业**：一个父 Task，chunk 并发生成（`concurrency`），每块最多 `max_attempts` 次（只重试 upstream）；全部成功才**一个事务**写 N 条摘要，任何一块最终失败 ⇒ 整批不落库。同一个会话仍与普通压缩共用一把闸（跑着 ⇒ 409） |
 | GET | `/sessions/{session_id}/compact/advanced/{job_id}` | — | `AdvancedJob` | 整体状态 `running` / `done` / `failed` / `canceled` + 每块进度与 attempts；进程内状态，重启即失 |
 | POST | `/sessions/{session_id}/compact/advanced/{job_id}/cancel` | — | `AdvancedJob` | 取消整个高级作业（所有子请求共用 ctx）；取消 = 没做过，不落库 |
-| GET | `/sessions/{session_id}/summaries` | — | `[Summary]` | 摘要列表（picker / 消息列折叠 / 分页切段用；按 id 序；空 ⇒ `[]`）。每条带 **`begin_idx` / `end_idx`**（区间两端的**消息序号**，派生 —— 与消息 `idx` 同一把尺；端点悬空/缺 ⇒ 缺省 ⇒ 界面按「不折」处理），以及 2026-11-01 加的两格派生字段 **`level`**（层级：1 = 直接盖消息）与 **`undoable`**（顶层现在都能撤；被上层盖住的为 false）。⚠ 两格都 `omitempty`：**没算的地方不出现**（导出、单条 PATCH 的响应），语义是"这里没算过"而不是"算出来是 false" —— 前端按 `!!s.undoable` 读 |
+| GET | `/sessions/{session_id}/summaries` | — | `[Summary]` | 摘要列表（picker / 消息列折叠 / 分页切段用；按 id 序；空 ⇒ `[]`）。响应头 `X-Microchat-History-Revision` 与摘要列表同一 SQLite 事务读取。每条带 **`begin_idx` / `end_idx`**（区间两端的**消息序号**，派生 —— 与消息 `idx` 同一把尺；端点悬空/缺 ⇒ 缺省 ⇒ 界面按「不折」处理），以及 2026-11-01 加的两格派生字段 **`level`**（层级：1 = 直接盖消息）与 **`undoable`**（顶层现在都能撤；被上层盖住的为 false）。⚠ 两格都 `omitempty`：**没算的地方不出现**（导出、单条 PATCH 的响应），语义是"这里没算过"而不是"算出来是 false" —— 前端按 `!!s.undoable` 读 |
 | PATCH | `/sessions/{session_id}/summaries/{summary_id}` | `{"text":"…"}`（必填；空 ⇒ 400） | `Summary` | 手改**任意**一条摘要的正文 = 就地换 text（id / 区间 / 指针不动；改孩子 ⇒ 祖先标脏；自己变干净）|
 | GET | `/sessions/{session_id}/summaries/{summary_id}/undo-preview` | — | `{summary_id,level,count,items:[{id,from_idx,to_idx,level}]}` | **撤销预览**：撤这条会连带删哪些同层更晚的摘要。被上层盖住 ⇒ 409；不存在 ⇒ 404。只算不写 |
 | DELETE | `/sessions/{session_id}/summaries/{summary_id}` | — | 204 | **撤销压缩（支持级联）**：顶层都可撤；撤更早的会连同**同层更晚**的一起删。被上层盖住 ⇒ **409**（先撤上层）；没有 ⇒ 404。`UndoSummaries` 一个事务：批量释放孩子 parent → 批量清消息 `summary_id` → 批量删摘要。**不回体** |
@@ -875,7 +875,7 @@ MicroChat 没有登录、账号、会话归属或应用内鉴权；`Authorizatio
 | PATCH | `/models` | `{provider, upstream_id, context_override, display_name, params}` | `ModelView` | 设/清模型的用户列（上下文覆盖 `null` = 清；显示名；采样参数）。**刷新永不覆盖用户列**；模型行被刷新删掉时这些覆盖也会没（规则不受影响） |
 | GET | `/config/model-rules` | — | `{model_define_rules:[…], builtin_model_rules:[{…,builtin:true,disabled}], disabled_builtin_model_rules:[…]}` | 用户规则 + 系统内置规则（含只读/停用标记） |
 | PUT | `/config/model-rules` | `{model_define_rules:[…], disabled_builtin_model_rules?:[…]}` | 同 GET | 用户规则**整份替换**（空数组 = 清空）；停用列表**省略 = 不改**、`[]` = 全部启用。用户规则复用内置 id / 未知停用 id ⇒ 422；先校验后落盘。写成功后 `GET /models` 立刻按新规则派生 |
-| GET | `/agents` | — | `AgentsConfig` | 生效列表（含内置默认 agent）|
+| GET | `/agents` | — | `{default_agent,agents,segments}` | 生效列表（含内置默认 agent 与提示词片段）。返回强 `ETag`（有效 JSON 响应字节的 SHA-256）；`If-None-Match` 支持弱比较与 `*`，未变化回无体 `304`。缓存策略 `no-cache, no-store`，片段变更也会改变 ETag。|
 | POST | `/agents` | `CreateAgentReq` | `Agent` · 201 | 收 `name` / `description` / **`kind`（`prompt` / `flow`）** / **`flow`（FlowAgent 图）** / `system_prompt` / **`segments`（系统提示词追加段 id 列表）** / `latest_prompt_segments`（仅 PromptAgent：最新用户消息的出站补充段，FlowAgent 拒绝）/ `abilities` / `prepend_state`；id 由后端生成。**没有 `display_mode`** ✗（两边气泡 / roleplay 二选一已取消；老键是不认识的键） |
 | PATCH | `/agents/{agent_id}` | `UpdateAgentReq` | `Agent` | `new_id` = 重命名（搬 `default_agent` 与会话引用）；`description` 三态（nil 不动 / `""` 清空 / 非空写入）；`kind` / `flow` 三态（nil 不动）；`make_default` = 设默认；`segments` / `latest_prompt_segments` / `abilities` / `prepend_state` 给出即整段替换，省略不动，`[]` 清空。|
 | POST | `/segments` | `{id,text,imported?,preset_id?}` | `Segment` · 201 | 建提示词段（id 非空唯一、≤64 字 ⇒ 重名 409；**与内置撞名 ⇒ 409**）。`preset_id` = 从哪份 ST 预设导入（服务端校验存在，并快照文件名进 `preset_name`；带它就强制 `imported:true`）|

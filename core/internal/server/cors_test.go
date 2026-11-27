@@ -49,8 +49,8 @@ func assertCORS(t *testing.T, recorder *httptest.ResponseRecorder, origin string
 	if got := recorder.Header().Get("Access-Control-Max-Age"); got != "600" {
 		t.Fatalf("Max-Age = %q，想要 600", got)
 	}
-	if got := recorder.Header().Get("Access-Control-Expose-Headers"); got != "Allow" {
-		t.Fatalf("Expose-Headers = %q，想要 Allow", got)
+	if got := recorder.Header().Get("Access-Control-Expose-Headers"); got != "Allow, ETag, X-Microchat-History-Revision" {
+		t.Fatalf("Expose-Headers = %q", got)
 	}
 }
 

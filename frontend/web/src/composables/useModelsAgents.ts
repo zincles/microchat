@@ -2,16 +2,16 @@
 //
 // 依赖会话域的四个活值（sessionID / epoch / draft / sessionInfo），但自身没有会话窗口逻辑；
 // 用 getter 传进来，避免把整个 App 状态对象塞进来。
-import { ref } from "vue";
+import { ref, watch } from "vue";
 import type { Ref } from "vue";
 import { agentOption, groupModelsByProvider, modelKey, modelOption, parseModelKey } from "../utils/format.ts";
 import type { ModelGroup } from "../utils/format.ts";
 import type { Agent, ModelListItem, Session, UpdateSessionRequest } from "../api/types.ts";
+import type { AgentsLibraryResource } from "./agentsLibrary.ts";
 import type { DraftPrefs } from "../types/app.ts";
 
 interface ModelsAgentsApi {
   models(): Promise<ModelListItem[]>;
-  agents(): Promise<{ default_agent: string; agents: Agent[]; segments?: unknown[] }>;
   patchSession(id: string, body: UpdateSessionRequest): Promise<Session>;
 }
 interface ChatControlsModels {
@@ -28,29 +28,31 @@ interface SessionInfoLike {
   [key: string]: unknown;
 }
 interface UseModelsAgentsOptions {
-  api: ModelsAgentsApi;
-  toast: (text: string, kind?: string) => void;
-  chatControlsRef: Ref<ChatControlsModels | null>;
-  getEpoch: () => number;
-  getSessionID: () => string | null;
-  isDraft: () => boolean;
-  sessionInfo: SessionInfoLike;
-  draftPrefs: DraftPrefs;
-  onRefreshStatusline: (phase?: string, elapsedMs?: number | null, opts?: { withContext?: boolean }) => void;
-  onRefreshPreview: () => void;
+	api: ModelsAgentsApi;
+	agentsLibrary: AgentsLibraryResource;
+	toast: (text: string, kind?: string) => void;
+	chatControlsRef: Ref<ChatControlsModels | null>;
+	getEpoch: () => number;
+	getSessionID: () => string | null;
+	isDraft: () => boolean;
+	sessionInfo: SessionInfoLike;
+	draftPrefs: DraftPrefs;
+	onRefreshStatusline: (phase?: string, elapsedMs?: number | null, opts?: { withContext?: boolean }) => void;
+	onRefreshPreview: () => void;
 }
 
 export function useModelsAgents({
-  api,
-  toast,
-  chatControlsRef,
-  getEpoch,
-  getSessionID,
-  isDraft,
-  sessionInfo,
-  draftPrefs,
-  onRefreshStatusline,
-  onRefreshPreview,
+	api,
+	agentsLibrary,
+	toast,
+	chatControlsRef,
+	getEpoch,
+	getSessionID,
+	isDraft,
+	sessionInfo,
+	draftPrefs,
+	onRefreshStatusline,
+	onRefreshPreview,
 }: UseModelsAgentsOptions) {
   const vueAgents = ref<Agent[]>([]);
   // vueModels：模型清单的 UI 镜像 —— 思考档位能力也从这里读（别在前端另抄一张模型表）。
@@ -58,7 +60,7 @@ export function useModelsAgents({
   const statusAgent = ref("");
   let modelsCache: ModelListItem[] | null = null;
   let modelsInflight: Promise<ModelListItem[]> | null = null;
-  let agentsInflight: Promise<{ default_agent: string; agents: Agent[]; segments?: unknown[] }> | null = null;
+
 
   function paintSessionHeader(): void {
     chatControlsRef.value?.setSession(sessionInfo);
@@ -115,34 +117,38 @@ export function useModelsAgents({
     onRefreshPreview();
   }
 
-  // Agent 列表在"进会话"这一拍会被两条路同时要（顶栏选人 + 草稿首段/状态行）：
-  // 让同一拍共享一发 GET /agents。
-  function fetchAgentsOnce(): Promise<{ default_agent: string; agents: Agent[]; segments?: unknown[] }> {
-    if (!agentsInflight) {
-      agentsInflight = api.agents().finally(() => { agentsInflight = null; });
-    }
-    return agentsInflight;
+  function syncAgentSnapshot(): void {
+	const data = agentsLibrary.snapshot.value;
+	if (!data) return;
+	vueAgents.value = data.agents ?? [];
+	statusAgent.value = agentLabelOf(sessionInfo.agent_id);
   }
 
+  watch(agentsLibrary.snapshot, (data) => {
+	if (!data) return;
+	syncAgentSnapshot();
+	onRefreshStatusline("idle", undefined, { withContext: false });
+	onRefreshPreview();
+  }, { immediate: true });
+
   function agentLabelOf(id?: string | null): string {
-    return vueAgents.value.find((a) => a.id === id)?.name || id || "";
+	return vueAgents.value.find((a) => a.id === id)?.name || id || "";
   }
 
   function fillAgentSelect(): void {
-    const my = getEpoch();
-    fetchAgentsOnce().then((data) => {
-      if (my !== getEpoch()) return;
-      vueAgents.value = data.agents ?? [];
-      const list = (data.agents ?? []).map(agentOption);
-      // 助手入口住在输入栏上方；这里只更新状态行那份“当前是谁”。
-      statusAgent.value = list.find((a) => a.id === sessionInfo.agent_id)?.label ?? sessionInfo.agent_id ?? "";
-      // 这一发只更新"助手"那格；上下文环由 enterSession 的 refreshStatusline 统一问一次。
-      onRefreshStatusline("idle", undefined, { withContext: false });
-      // 没 agent 时别猜 list[0]：后端认的是 default_agent。
-      if (!sessionInfo.agent_id && list.length) applyAgentValue(data.default_agent || list[0].id);
-    }).catch((err: unknown) => {
-      if (my === getEpoch()) toast(`Agent 列表失败：${err instanceof Error ? err.message : String(err)}`, "error");
-    });
+	const my = getEpoch();
+	agentsLibrary.refresh().then(() => {
+		if (my !== getEpoch()) return;
+		const data = agentsLibrary.snapshot.value;
+		if (!data) return;
+		syncAgentSnapshot();
+		const list = data.agents.map(agentOption);
+		statusAgent.value = list.find((agent) => agent.id === sessionInfo.agent_id)?.label ?? sessionInfo.agent_id ?? "";
+		onRefreshStatusline("idle", undefined, { withContext: false });
+		if (!sessionInfo.agent_id && list.length) applyAgentValue(data.default_agent || list[0].id);
+	}).catch((err: unknown) => {
+		if (my === getEpoch()) toast(`Agent 列表失败：${err instanceof Error ? err.message : String(err)}`, "error");
+	});
   }
 
   async function applyAgentValue(id: string): Promise<void> {
@@ -170,15 +176,11 @@ export function useModelsAgents({
     onRefreshPreview();
   }
 
-  // refreshAgents：拉生效 agent 列表（**只为草稿的首段对话**与状态行的助手名）。
-  async function refreshAgents(): Promise<void> {
-    const my = getEpoch();
-    try {
-      const data = await fetchAgentsOnce();
-      if (my !== getEpoch()) return;
-      vueAgents.value = data.agents ?? [];
-    } catch { /* 拿不到就空着：草稿不画首段、状态行回落到 agent id */ }
-  }
+	async function refreshAgents(): Promise<void> {
+		const my = getEpoch();
+		await agentsLibrary.refresh();
+		if (my === getEpoch()) syncAgentSnapshot();
+	}
 
   return {
     vueAgents,

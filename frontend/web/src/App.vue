@@ -11,7 +11,7 @@ import { buildChatRows, olderCount, editRerollTarget, latestPromptFor } from "./
 import { applyBackground } from "./utils/background.ts";
 import { installViewportFit } from "./utils/viewport.ts";
 import { thinkingOptions, thinkingLevelsForModel } from "./utils/thinking.ts";
-import { forgetWindow, recallWindow } from "./utils/windowcache.ts";
+import { forgetWindow } from "./utils/windowcache.ts";
 import { createSessionDrafts, type DraftReceipt } from "./utils/sessionDrafts.ts";
 import { sharedApi, previewOn, payloadPreviewOn, applyTheme, wantsSend, apiBase, apiBaseCandidates, saveNetPrefs, lastSessionId, saveLastSession, commandMenuOn, applyTextScale, applyFonts, chromeHideOn, syncPrefs, prefsSnapshot, userName as macroUserName } from "./utils/prefs.ts";
 import { macroMap } from "./utils/macros.ts";
@@ -43,6 +43,7 @@ import { useOverlayLayout } from "./composables/useOverlayLayout.ts";
 import { useSettingsView } from "./composables/useSettingsView.ts";
 import { provideChatMenus } from "./composables/useChatMenu.ts";
 import { useModelsAgents } from "./composables/useModelsAgents.ts";
+import { createAgentsLibraryResource } from "./composables/agentsLibrary.ts";
 import { useAppUpdate } from "./composables/useAppUpdate.ts";
 import { useSessionWindow } from "./composables/useSessionWindow.ts";
 import { useTurnStream } from "./composables/useTurnStream.ts";
@@ -65,6 +66,7 @@ import { errCode, errText } from "./types/app.ts";
 type ConfirmText = (plan: DeletionPlan) => string;
 
 const api = sharedApi();
+const agentsLibrary = createAgentsLibraryResource(api);
 applyTheme();
 applyBackground();
 // 界面缩放（2026-10-28）：同样**开机第一帧就得对** —— 晚一帧就是"字先小一下再变大"的闪。
@@ -230,6 +232,7 @@ const {
   refreshAgents,
 } = useModelsAgents({
   api,
+  agentsLibrary,
   toast,
   chatControlsRef,
   getEpoch: () => epoch,
@@ -379,7 +382,7 @@ const messagesPane = useTemplateRef<HTMLElement>("messages-pane");
 const {
   vueMessages, vueSegments, loadingSession, loadingMore, windowLimit, windowFrom, summaryMsgs, summaryErrors, openSummaries, windowCache,
   toRow, loadWindow, reloadWindow, reloadWindowKeepingScroll, loadMore, prefetchSession,
-  onSummaryToggle, resetWindowRequests,
+  restoreCachedWindow, hasHistoryRevision, onSummaryToggle, resetWindowRequests,
   rememberReadingPosition, restoreReadingPosition, forgetReadingPosition,
   awayFromLatest, hasNewReply, onReadingScroll, jumpToLatest, resetReadingTail, noteNewReply,
 } = useSessionWindow({
@@ -1065,7 +1068,9 @@ async function resyncOnForeground(expectedSessionId?: string, refreshList = true
     // ⚠ 先摘僵住的 stream 气泡再 reload —— 不摘的话 `reloadWindow` 里那句"没在流才重建"
     // 的判断可能把旧的合成气泡留在列表里（它就是那个"永远在等待"的来源）。
     dropStreamBubbles();
-    await reloadWindowKeepingScroll({ onlyIfUnchanged: true });
+    if (!hasHistoryRevision(st.history_revision)) {
+      await reloadWindowKeepingScroll({ onlyIfUnchanged: true });
+    }
     if (my !== epoch) return;
     showTurnFailure(st);
     refreshStatusline(st.phase, st.elapsed_ms);
@@ -1127,7 +1132,6 @@ async function startDraft() {
     native_tools_disabled: draftPrefs.native_tools_disabled,
   });
   paintSessionHeader();
-  refreshAgents();
   fillModelSelect();
   fillAgentSelect();
   refreshStatusline("idle");
@@ -1227,7 +1231,6 @@ async function enterSession(id: string, preloaded: SessionView[] | null = null):
   }
   Object.assign(sessionInfo, { thinking_level: "" }, sessions.find((s) => s.id === id) ?? {});
   paintSessionHeader();
-  refreshAgents();
   fillModelSelect();
   fillAgentSelect();
   renderSessions(sessions);
@@ -1236,11 +1239,8 @@ async function enterSession(id: string, preloaded: SessionView[] | null = null):
   if (Date.now() - sessionsFetchedAt > SESSIONS_FRESH_MS) refreshSessionsBar();
   // 回看缓存（2026-11-05 用户定）：这条会话上一屏还留着 ⇒ 先原样画出来，**不挂骨架**，
   // 等 status 说空闲再在后台对一次账。1s+ 延迟下，切回来是"几乎是瞬间"而不是先白一秒。
-  const cached = recallWindow(windowCache, id);
+  const cached = restoreCachedWindow(id);
   if (cached) {
-    vueSegments.value = cached.segments;
-    windowFrom.value = cached.windowFrom;
-    vueMessages.value = cached.rows;
     loadingSession.value = false; // 一屏已经在了，骨架没有意义
   } else {
     const ok = await loadWindow({ resume: true, scroll: false });
@@ -1267,7 +1267,7 @@ async function enterSession(id: string, preloaded: SessionView[] | null = null):
       return;
     }
     // 缓存那一屏是旧的：空闲时后台对一次（等待期间人动过消息列 ⇒ 这一发作废）。
-    if (cached) await reloadWindowKeepingScroll({ onlyIfUnchanged: true });
+    if (!hasHistoryRevision(st.history_revision)) await reloadWindowKeepingScroll({ onlyIfUnchanged: true });
     if (my === epoch) showTurnFailure(st);
   }).catch(() => {});
   } finally {
@@ -1644,7 +1644,9 @@ const { onlineClients } = useLiveSync({
     void startDraft();
     toast("当前会话已在其他客户端删除，已返回新对话");
   },
+  onAgentsChanged: () => agentsLibrary.invalidate(),
   onForeground: async (hadHiddenChanges: boolean) => {
+    void agentsLibrary.refresh().catch(() => {});
     const sid = sessionID;
     if (hadHiddenChanges && sid) {
       const sessions = await refreshSessionsBar();
@@ -1948,6 +1950,7 @@ onUnmounted(() => {
         :focus-agent-id="agentFocus"
         :ask="askConfirm"
         :esc-blocked="!!sessionSettingsId"
+        :agents-library="agentsLibrary"
         @close="closeSettings"
         @sessions-changed="onManagedSessionsChanged"
         @models-changed="fillModelSelect"

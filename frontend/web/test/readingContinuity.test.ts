@@ -55,10 +55,21 @@ function fixture(t: TestContext, options: { beforeLast?: () => Promise<void>; on
     idx: n + 1, id: `m${n + 1}`, role: "user", content: "正文", session_id: "A", created_at: 0, updated_at: 0,
   }));
   const ranges: Array<[number, number]> = [];
+  const revisions: { summaries?: string | null; recent?: string | null; ranges?: string | null } = {
+    summaries: "r1", recent: "r1", ranges: "r1",
+  };
+  const capture = (key: keyof typeof revisions, callback?: (revision: string | null) => void) => {
+    if (key in revisions) callback?.(revisions[key] ?? null);
+  };
   const api: SessionWindowDeps["api"] = {
-    async listSummaries() { return []; },
-    async listMessagesLast(_id, limit) { await options.beforeLast?.(); return messages.slice(-limit); },
-    async messageRanges(_id, wanted) {
+    async listSummaries(_id, captureRevision) { capture("summaries", captureRevision); return []; },
+    async listMessagesLast(_id, limit, captureRevision) {
+      await options.beforeLast?.();
+      capture("recent", captureRevision);
+      return messages.slice(-limit);
+    },
+    async messageRanges(_id, wanted, captureRevision) {
+      capture("ranges", captureRevision);
       ranges.push(...wanted);
       return messages.filter((m) => wanted.some(([lo, hi]) => m.idx! >= lo && (!hi || m.idx! <= hi)));
     },
@@ -71,7 +82,7 @@ function fixture(t: TestContext, options: { beforeLast?: () => Promise<void>; on
   }))!;
   view.loadingSession.value = false;
   element.value = pane.element;
-  return { view, pane, ranges, session, messages };
+  return { view, pane, ranges, revisions, session, messages };
 }
 
 test("加载更早历史后缓存保留整页，缓存失效仍从书签页拉起；隐藏或骨架不覆盖真书签", async (t) => {
@@ -239,4 +250,42 @@ test("切回旧读位时提示离开期间落库的回复，不把其他会话�
   pane.scrollTop = 1020;
   view.onReadingScroll();
   assert.equal(view.hasNewReply.value, false);
+});
+
+test("窗口修订只标记一致的已显示快照，缓存恢复可用且会话世代变化后失效", async (t) => {
+  const { view, session } = fixture(t);
+  await view.loadWindow({ reset: true, scroll: false });
+  assert.equal(view.hasHistoryRevision("r1"), true);
+  assert.equal(recallWindow(view.windowCache, "A")?.historyRevision, "r1");
+
+  view.resetWindowRequests();
+  assert.equal(view.hasHistoryRevision("r1"), false);
+  assert.equal(view.restoreCachedWindow("A"), true);
+  assert.equal(view.hasHistoryRevision("r1"), true);
+
+  session.id = "B"; session.epoch++;
+  session.id = "A"; session.epoch++;
+  assert.equal(view.hasHistoryRevision("r1"), false);
+  assert.equal(view.restoreCachedWindow("A"), true);
+  assert.equal(view.hasHistoryRevision("r1"), true);
+});
+
+test("混合、缺失或分页不匹配的修订不会标记窗口", async (t) => {
+  const mixed = fixture(t);
+  mixed.revisions.recent = "r2";
+  await mixed.view.loadWindow({ reset: true, scroll: false });
+  assert.equal(mixed.view.hasHistoryRevision("r1"), false);
+
+  const absent = fixture(t);
+  delete absent.revisions.recent;
+  await absent.view.loadWindow({ reset: true, scroll: false });
+  assert.equal(absent.view.hasHistoryRevision("r1"), false);
+
+  const paged = fixture(t);
+  await paged.view.loadWindow({ reset: true, scroll: false });
+  assert.equal(paged.view.hasHistoryRevision("r1"), true);
+  paged.revisions.ranges = "r2";
+  await paged.view.loadMore();
+  assert.equal(paged.view.hasHistoryRevision("r1"), false);
+  assert.equal(recallWindow(paged.view.windowCache, "A")?.historyRevision, undefined);
 });

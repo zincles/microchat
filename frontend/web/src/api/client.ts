@@ -215,12 +215,12 @@ export function createApi({ base, token = "", fetchFn = fetch }: CreateApiOption
     };
   }
 
-  async function call<T = unknown>(
+  async function fetchResponse(
     method: string,
     path: string,
     body?: unknown,
     opts: RequestInit = {},
-  ): Promise<T> {
+  ): Promise<Response> {
     const init = callInit(method, body, opts);
     if (
       method === "GET" &&
@@ -230,20 +230,45 @@ export function createApi({ base, token = "", fetchFn = fetch }: CreateApiOption
     ) {
       init.signal = AbortSignal.timeout(GET_TIMEOUT_MS);
     }
-    let res: Response;
     try {
-      res = await fetchFn(base + path, init);
+      return await fetchFn(base + path, init);
     } catch (err) {
       const aborted =
         typeof err === "object" && err !== null && "name" in err && err.name === "AbortError";
       if (method !== "GET" || aborted) throw err;
-      await new Promise((resolve) => setTimeout(resolve, 300));
-      res = await fetchFn(base + path, init);
+      await new Promise<void>((resolve) => setTimeout(resolve, 300));
+      return fetchFn(base + path, init);
+    }
+  }
+
+  async function call<T = unknown>(
+    method: string,
+    path: string,
+    body?: unknown,
+    opts: RequestInit = {},
+    captureHistoryRevision?: (revision: string | null) => void,
+  ): Promise<T> {
+    const res = await fetchResponse(method, path, body, opts);
+    if (captureHistoryRevision) {
+      captureHistoryRevision(res.headers.get("X-Microchat-History-Revision"));
     }
     if (res.status === 204) return null as T;
     const data = await readJson(res);
     if (!res.ok) throw httpError(data, res);
     return data as T;
+  }
+
+  async function agentsSnapshot(etag?: string): Promise<{ data: AgentsConfig; etag: string | null } | null> {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(etag ? { "If-None-Match": etag } : {}),
+    };
+    const res = await fetchResponse("GET", "/agents", undefined, { cache: "no-store", headers });
+    if (res.status === 304) return null;
+    const data = await readJson(res);
+    if (!res.ok) throw httpError(data, res);
+    return { data: data as AgentsConfig, etag: res.headers.get("ETag") };
   }
 
   // callBytes：**原始字节** PUT（背景图专用）—— 体是一张图的字节流，
@@ -284,6 +309,7 @@ export function createApi({ base, token = "", fetchFn = fetch }: CreateApiOption
     pullUpdate: () => call<UpdatePullResult>("POST", "/update/pull"),
     rebaseUpdate: () => call<UpdatePullResult>("POST", "/update/rebase"),
     listSessions: () => call<SessionView[]>("GET", "/sessions"),
+    agentsSnapshot,
     liveHeartbeat: (clientId: string) =>
       call<LiveHeartbeatResponse>("POST", "/live/heartbeat", { client_id: clientId }),
     liveEventsUrl: () => `${base}/live/events`,
@@ -296,11 +322,11 @@ export function createApi({ base, token = "", fetchFn = fetch }: CreateApiOption
       call<Message[]>("GET", `/sessions/${enc(id)}/messages?from_idx=${fromIdx}&to_idx=${toIdx}`),
     listMessagesTail: (id: string, fromIdx: number) =>
       call<Message[]>("GET", `/sessions/${enc(id)}/messages?from_idx=${fromIdx}`),
-    listMessagesLast: (id: string, n: number) =>
-      call<Message[]>("GET", `/sessions/${enc(id)}/messages?last=${n}`),
+    listMessagesLast: (id: string, n: number, captureRevision?: (revision: string | null) => void) =>
+      call<Message[]>("GET", `/sessions/${enc(id)}/messages?last=${n}`, undefined, {}, captureRevision),
     // messageRanges：一次取多个闭区间（to=0 = 到末尾）；把摘要切开的几段压成一发。
-    messageRanges: (id: string, ranges: Array<[number, number]>) =>
-      call<Message[]>("POST", `/sessions/${enc(id)}/messages/batch`, { ranges }),
+    messageRanges: (id: string, ranges: Array<[number, number]>, captureRevision?: (revision: string | null) => void) =>
+      call<Message[]>("POST", `/sessions/${enc(id)}/messages/batch`, { ranges }, {}, captureRevision),
     // sendMessage：发一句话（202 受理 + 后台跑；预演调的不是这条，别混）。
     sendMessage: (id: string, content: string) =>
       call<Accepted>("POST", `/sessions/${enc(id)}/messages`, { content }),
@@ -316,8 +342,8 @@ export function createApi({ base, token = "", fetchFn = fetch }: CreateApiOption
       call<Summary>("PATCH", `/sessions/${enc(sid)}/summaries/${enc(sumid)}`, { text }),
     // listSummaries：这条会话的摘要列表（/editsum 的 picker 用；id + text + dirty 现成）。
     // 2026-11-01 起还带两格**派生**字段：`level`（层级）与 `undoable`（现在能不能撤销）。
-    listSummaries: (sid: string) =>
-      call<Summary[]>("GET", `/sessions/${enc(sid)}/summaries`),
+    listSummaries: (sid: string, captureRevision?: (revision: string | null) => void) =>
+      call<Summary[]>("GET", `/sessions/${enc(sid)}/summaries`, undefined, {}, captureRevision),
     // undoPreview：撤销前先问"会连带删哪些"（更早的同层压缩会级联）。
     undoPreview: (sid: string, sumid: string) =>
       call<UndoPreview>("GET", `/sessions/${enc(sid)}/summaries/${enc(sumid)}/undo-preview`),
@@ -356,7 +382,8 @@ export function createApi({ base, token = "", fetchFn = fetch }: CreateApiOption
       }
       return res.blob();
     },
-    status: (id: string) => call<SessionStatus>("GET", `/sessions/${enc(id)}/status`),
+    status: (id: string, captureRevision?: (revision: string | null) => void) =>
+      call<SessionStatus>("GET", `/sessions/${enc(id)}/status`, undefined, {}, captureRevision),
     turnText: (id: string, from: number, thinkFrom: number) =>
       call<StreamSlice>("GET", `/sessions/${enc(id)}/turn/text?from=${from}&think_from=${thinkFrom}`),
     // turnPoll：status + 增量一发拿（2026-11-03，远程 500–1000ms 时少一个完整 RTT）。

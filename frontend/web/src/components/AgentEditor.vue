@@ -51,9 +51,10 @@ const props = withDefaults(defineProps<{
   kind?: "prompt" | "flow";
   segments?: SegmentItem[];
   presets?: TavernPreset[];
-  ask?: ((text: string) => Promise<boolean>) | null;
-  escBlocked?: boolean;
-  segmentRename?: { oldId: string; newId: string; revision: number } | null;
+	conflict?: boolean;
+	ask?: ((text: string) => Promise<boolean>) | null;
+	escBlocked?: boolean;
+	segmentRename?: { oldId: string; newId: string; revision: number } | null;
 }>(), {
   agent: null,
   isDefault: false,
@@ -63,9 +64,10 @@ const props = withDefaults(defineProps<{
   presets: () => [],
   ask: null,
   escBlocked: false,
+  conflict: false,
   segmentRename: null,
 });
-const emit = defineEmits<{ close: []; saved: []; "edit-segment": [id: string] }>();
+const emit = defineEmits<{ close: []; saved: []; reload: []; "edit-segment": [id: string] }>();
 
 const api = sharedApi();
 const isNew = !props.agent;
@@ -207,7 +209,8 @@ function toPatch(): Record<string, AbilityRow> {
 }
 
 async function save(): Promise<void> {
-  if (action.value) return;
+	if (action.value) return;
+	if (props.conflict) { status.value = "此智能体已在其他位置更改或删除，请先重新加载。"; return; }
   if (!name.value.trim()) { status.value = "给个名字"; return; }
   action.value = "save";
   try {
@@ -268,7 +271,8 @@ function exportCartridge(): void {
 }
 
 async function makeDefault(): Promise<void> {
-  if (isNew || action.value) return;
+	if (isNew || action.value) return;
+	if (props.conflict) { status.value = "此智能体已在其他位置更改或删除，请先重新加载。"; return; }
   action.value = "default";
   try {
     await api.patchAgent(props.agent!.id, { make_default: true });
@@ -278,12 +282,14 @@ async function makeDefault(): Promise<void> {
 }
 
 async function remove(): Promise<void> {
-  if (isNew || action.value) return;
+	if (isNew || action.value) return;
+	if (props.conflict) { status.value = "此智能体已在其他位置更改或删除，请先重新加载。"; return; }
   const agent = props.agent!;
   action.value = "confirm-delete";
   try {
     if (props.ask && !(await props.ask(`删除 Agent「${agent.name || agent.id}」？不可逆。`))) return;
     if (!active) return;
+	if (props.conflict) { status.value = "此智能体已在其他位置更改或删除，请先重新加载。"; return; }
     action.value = "delete";
     await api.deleteAgent(agent.id);
     finishEdit();
@@ -336,6 +342,10 @@ function onKey(e: KeyboardEvent): void {
       <SettingsBack :disabled="!!action" @back="emit('close')" />
       <span class="status">{{ isNew ? "新建智能体" : `编辑「${props.agent?.name ?? ""}」` }}{{ !isNew && isDefault ? "（默认）" : "" }}</span>
     </div>
+	<div v-if="conflict" class="agent-conflict" role="alert">
+		<span>此智能体已在其他位置更改或删除。当前草稿仍保留。</span>
+		<VBtn variant="text" size="small" type="button" @click="emit('reload')">重新加载</VBtn>
+	</div>
     <RequestLoading v-if="loadingModels && !modelLoadError" label="正在读取模型列表…" />
     <div v-else-if="modelLoadError" class="row">
       <span class="status" role="status">{{ modelLoadError }}</span>
@@ -427,11 +437,11 @@ function onKey(e: KeyboardEvent): void {
     </VTabsWindow>
 
     <div class="row agent-save-row">
-      <VBtn color="primary" variant="flat" size="small" type="button" :loading="action === 'save'" :disabled="!!action" @click="save">保存</VBtn>
-      <span class="action-note">保存后，新会话与后续轮次使用新设定；不会改写已有消息。</span>
-      <VBtn v-if="agentKind !== 'flow'" variant="text" size="small" type="button" @click="exportCartridge" title="导出智能体文件（JSON；提示词片段会展开成完整提示词）">导出智能体</VBtn>
-      <VBtn variant="text" size="small" v-if="!isNew && !isDefault && agentKind !== 'flow'" type="button" :loading="action === 'default'" :disabled="!!action" @click="makeDefault">设为默认</VBtn>
-      <VBtn color="error" variant="text" size="small" v-if="!isNew" type="button" :loading="action === 'delete'" :disabled="!!action" @click="remove">删除</VBtn>
+		<VBtn color="primary" variant="flat" size="small" type="button" :loading="action === 'save'" :disabled="!!action || conflict" @click="save">保存</VBtn>
+		<span class="action-note">保存后，新会话与后续轮次使用新设定；不会改写已有消息。</span>
+		<VBtn v-if="agentKind !== 'flow'" variant="text" size="small" type="button" @click="exportCartridge" title="导出智能体文件（JSON；提示词片段会展开成完整提示词）">导出智能体</VBtn>
+		<VBtn variant="text" size="small" v-if="!isNew && !isDefault && agentKind !== 'flow'" type="button" :loading="action === 'default'" :disabled="!!action || conflict" @click="makeDefault">设为默认</VBtn>
+		<VBtn color="error" variant="text" size="small" v-if="!isNew" type="button" :loading="action === 'delete'" :disabled="!!action || conflict" @click="remove">删除</VBtn>
       <span class="status">{{ status }}</span>
     </div>
   </div>
@@ -439,6 +449,16 @@ function onKey(e: KeyboardEvent): void {
 
 <style scoped>
 .agent-editor { display: flex; min-height: 0; flex-direction: column; }
+.agent-editor .agent-conflict {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--chat-space);
+	padding: var(--chat-space) calc(2 * var(--chat-space));
+	color: var(--md-on-error-container);
+	background: var(--md-error-container);
+}
 .agent-editor .panel-head { flex: none; }
 .agent-editor .agent-tabs { flex: none; }
 .agent-editor .agent-window { flex: 1 1 auto; min-height: 0; }
