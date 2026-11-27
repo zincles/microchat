@@ -3921,7 +3921,7 @@ test("设置页 MD3：segmented tab / 平铺行 / 表格 / 字段标签", () => 
 test("设置移动端：表格行变卡片，字段标签来自 data-label", () => {
   const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  for (const label of ["名称", "内容预览", "文件", "导入时间"]) {
+  for (const label of ["文件", "导入时间"]) {
     assert.ok(settings.includes(`data-label="${label}"`), `设置表格缺移动端字段标签：${label}`);
   }
   assert.match(css, /@media \(max-width: 700px\) \{[\s\S]*#settings-view \.v-table\.plist thead \{ display: none !important; \}/,

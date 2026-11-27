@@ -418,9 +418,6 @@ code, pre, kbd, samp { font-family: var(--app-font-mono, ui-monospace, SFMono-Re
 .compact-preview-pane { height: 100%; overflow-y: auto; overscroll-behavior: contain; }
 .compact-preview-pane, #advanced-compact, #repair-compact { padding: 1em var(--chat-inset) 1.5em; box-sizing: border-box; }
 #outgoing-raw { white-space: pre; overflow-x: auto; margin: 0; max-width: 100%; }
-/* 内置段的标记（代码里内嵌、只读 —— 2026-10-11）。 */
-.builtin-tag { font-style: normal; font-size: 0.78em; color: var(--tg-link); border: 1px solid currentColor; border-radius: var(--r-xs); padding: 0 0.25em; margin-left: 0.4em; }
-.builtin-tag.imported { color: var(--tg-hint); }
 /* Agent 编辑器的"提示词段"行（system prompt segment，2026-10-11）：顺序 = 拼接顺序。 */
 .seg-row { display: flex; align-items: center; gap: 0.35em; padding: 0.25em 0.3em; border: 1px solid var(--line); border-radius: var(--r-sm); margin-bottom: 0.25em; }
 .seg-row.missing { border-color: var(--tg-destructive); }
@@ -1216,7 +1213,7 @@ code, pre, kbd, samp { font-family: var(--app-font-mono, ui-monospace, SFMono-Re
 .field-warning b { font-weight: 600; }
 /* 仍需逐列比对的数据表：窄屏以字段标签保留表格信息。 */
 .settings-cols .panel table.plist { background: var(--md-surface-container-low); border-radius: var(--md-shape-md); margin: 0 0 0.5em; border-collapse: separate; border-spacing: 0; overflow: hidden; }
-#prompt-list, #tavern-file-list { overflow-x: auto; }
+#tavern-file-list { overflow-x: auto; }
 @media (max-width: 700px) {
   #settings-view .v-table.plist,
   #settings-view .v-table.plist .v-table__wrapper,
@@ -1239,13 +1236,6 @@ code, pre, kbd, samp { font-family: var(--app-font-mono, ui-monospace, SFMono-Re
   #settings-view .v-table.plist td.ops::before { margin-right: 0.15em; }
   #settings-view .v-table.plist td.ops .v-btn { min-height: 2.35em; }
 }
-/* 提示词片段表三列：名称 / 内容预览 / 谁在用 —— 定宽 + 省略号，
- * 不然长预览会把「谁在用」挤出卡片（看起来像被裁掉了）。 */
-#prompt-list table { table-layout: fixed; }
-#prompt-list th:nth-child(1), #prompt-list td:nth-child(1) { width: 27%; }
-#prompt-list th:nth-child(2), #prompt-list td:nth-child(2) { width: 53%; }
-#prompt-list th:nth-child(3), #prompt-list td:nth-child(3) { width: 20%; }
-#prompt-list td { overflow: hidden; text-overflow: ellipsis; }
 /* 设置里的控件压到 DS 档（36px 上下）：只收纵向内间距，不动字号与横向命中区。 */
 .settings-cols .panel input:not([type="checkbox"]):not([type="radio"]):not(.v-field__input), .settings-cols .panel select:not(.v-field__input) { padding-top: 0.3em; padding-bottom: 0.3em; }
 /* 设置 / Agent 二级页保留原来的**分段胶囊 + 滑动底片**（2026-11-04 用户：

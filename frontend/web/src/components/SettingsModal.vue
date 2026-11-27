@@ -23,6 +23,7 @@ import type { ModelGroup } from "../utils/format.ts";
 import { SETTINGS_SECTIONS, type SettingsLocation } from "../utils/settingsCatalog.ts";
 import { downloadJSON, downloadBlob } from "../utils/download.ts";
 import { cartridgeAgent } from "../utils/cartridge.ts";
+import { previewBlock } from "../utils/payload.ts";
 import type { Agent, ChatConfig, CreateAgentRequest, DefaultsConfig, ProviderView, Segment, SessionView, TavernPreset } from "../api/types.ts";
 import type { ConfirmOptions } from "../types/app.ts";
 
@@ -238,11 +239,31 @@ async function copyAgent(agent: Agent): Promise<void> {
 	const segmentRename = shallowRef<{ oldId: string; newId: string; revision: number } | null>(null);
 	const returnToAgentAfterSegment = shallowRef(false);
 	let segmentRenameRevision = 0;
-	const agentUsesSegment = (agent: Agent, id: string): boolean =>
-		(agent.segments ?? []).includes(id)
-		|| (agent.latest_prompt_segments ?? []).includes(id)
-		|| Object.values(agent.abilities ?? {}).some((ability) => (ability.segments ?? []).includes(id));
-	const segRefs = (id: string): string[] => agents.value.filter((agent) => agentUsesSegment(agent, id)).map((agent) => agent.name || agent.id);
+const segmentRows = computed(() => {
+  const users = new Map<string, string[]>();
+  for (const agent of agents.value) {
+    const ids = new Set(agent.segments);
+    for (const id of agent.latest_prompt_segments ?? []) ids.add(id);
+    for (const ability of Object.values(agent.abilities ?? {})) {
+      for (const id of ability.segments ?? []) ids.add(id);
+    }
+    const name = agent.name || agent.id;
+    for (const id of ids) {
+      const names = users.get(id);
+      if (names) names.push(name);
+      else users.set(id, [name]);
+    }
+  }
+  return segmentsLib.value.map((segment) => {
+    const names = users.get(segment.id);
+    return {
+      segment,
+      excerpt: previewBlock(segment.text, 160) || "无正文",
+      usage: names ? `引用：${names.join("、")}` : "未被引用",
+      source: segmentSource(segment),
+    };
+  });
+});
 	function editAgentSegment(id: string): void {
 		const segment = segmentsLib.value.find((item) => item.id === id);
 		if (!segment) return;
@@ -571,8 +592,8 @@ function presetLabel(id?: string): string {
   return tavernPresets.value.find((p) => p.id === id)?.filename || id;
 }
 function segmentSource(segment: Segment): string {
-  if (!segment.preset_id) return "导入";
-  return `导入自 ST 预设：${segment.preset_name || presetLabel(segment.preset_id)}`;
+  if (!segment.preset_id) return "";
+  return `酒馆来源：${segment.preset_name || presetLabel(segment.preset_id)}`;
 }
 async function downloadTavernPreset(p: TavernPreset): Promise<void> {
   if (pendingTavernDownloads.has(p.id)) return;
@@ -978,28 +999,38 @@ function onKey(e: KeyboardEvent): void {
           <p v-if="reads.agents.error" class="status" role="alert">{{ reads.agents.error }}</p>
           <RequestLoading v-if="awaitingFirstRead('agents')" label="读取提示词片段…" />
           <template v-else-if="reads.agents.ready && !editSeg">
-			<div class="panel-head">
-				<h3>提示词片段</h3>
-				<span class="head-btns">
-					<span class="action-note">新建后还要在智能体里引用</span>
-					<VBtn color="primary" variant="flat" size="small" type="button" @click="startNewSegment">新建</VBtn>
-					<span class="status" role="status">{{ segmentCopyStatus }}</span>
-				</span>
-			</div>
-			<p class="hint">可复用的文本库；片段本身不会生效，要在智能体或能力的「提示词片段」里按顺序引用。</p>
-			<RequestLoading v-if="libraryRefreshes.prompt" label="刷新提示词片段…" />
-            <div id="prompt-list" v-if="segmentsLib.length">
-				<VTable class="plist">
-					<thead><tr><th>名称</th><th>内容预览</th><th>谁在用</th><th>操作</th></tr></thead>
-					<tbody><tr v-for="s in segmentsLib" :key="s.id" class="clickable" @click="editLibrarySegment(s)">
-						<td data-label="名称">{{ s.id }}<i v-if="s.builtin" class="builtin-tag">内置</i><i v-if="s.imported" class="builtin-tag imported" :title="segmentSource(s)">导入</i></td>
-						<td data-label="内容预览">{{ s.text.slice(0, 40) }}</td>
-						<td data-label="谁在用">{{ segRefs(s.id).join("、") || "—" }}</td>
-						<td data-label="操作"><VBtn icon variant="text" size="small" type="button" :title="`复制片段 ${s.id}`" :aria-label="`复制片段 ${s.id}`" :loading="pendingSegmentCopies.has(s.id)" :disabled="pendingSegmentCopies.has(s.id)" @click.stop="copyPromptSegment(s)"><span aria-hidden="true" v-html="ICONS.copy"></span></VBtn></td>
-					</tr></tbody>
-				</VTable>
-</div>
-            <div v-else class="status">（还没有片段 —— 点「新建」创建一个，例如教模型写状态块、数学公式或联网规则）</div>
+            <div class="panel-head segment-library-head">
+              <h3>片段库（{{ segmentsLib.length }}）</h3>
+              <VBtn color="primary" variant="flat" size="small" type="button" @click="startNewSegment">新建片段</VBtn>
+            </div>
+            <p class="hint segment-library-hint">在智能体的提示词或能力里引用片段，即可复用同一段文字。</p>
+            <p v-if="segmentCopyStatus" class="status" role="status">{{ segmentCopyStatus }}</p>
+            <RequestLoading v-if="libraryRefreshes.prompt" label="刷新提示词片段…" />
+            <ul v-if="segmentRows.length" class="settings-list" aria-label="提示词片段库">
+              <li v-for="{ segment, excerpt, usage, source } in segmentRows" :key="segment.id" class="settings-list-row">
+                <VBtn type="button" variant="text" class="settings-list-entry"
+                  :aria-label="`${segment.builtin ? '查看内置片段' : '编辑片段'} ${segment.id}`" @click="editLibrarySegment(segment)">
+                  <span class="settings-list-copy">
+                    <span class="manage-meta manage-name">
+                      <strong>{{ segment.id }}</strong>
+                      <span v-if="segment.builtin || segment.imported" class="segment-origin">{{ segment.builtin ? "内置" : "导入" }}</span>
+                    </span>
+                    <span class="manage-description">{{ excerpt }}</span>
+                    <span class="segment-meta">
+                      <span v-if="source" :title="source">{{ source }}</span>
+                      <span :title="usage">{{ usage }}</span>
+                    </span>
+                  </span>
+                  <span class="settings-list-chevron" aria-hidden="true" v-html="ICONS.chevronRight"></span>
+                </VBtn>
+                <div class="manage-actions segment-actions">
+                  <VBtn variant="text" size="small" type="button" :aria-label="`复制片段 ${segment.id}`" :title="`创建副本：${segment.id}`"
+                    :loading="pendingSegmentCopies.has(segment.id)" :disabled="pendingSegmentCopies.has(segment.id)"
+                    @click="copyPromptSegment(segment)">复制</VBtn>
+                </div>
+              </li>
+            </ul>
+            <p v-else class="manage-empty">还没有片段，点击「新建片段」创建。</p>
           </template>
           <SegmentEditor
             v-else-if="editSeg"
@@ -1126,4 +1157,10 @@ function onKey(e: KeyboardEvent): void {
 #app .manage-actions .v-btn { min-width: 0; min-height: var(--chat-control); padding-inline: calc(0.75 * var(--chat-space)); color: var(--md-on-surface-variant); font-size: var(--md-type-label-large); letter-spacing: normal; }
 #app .manage-actions .manage-delete:is(:hover, :focus-visible) { color: var(--md-error); }
 .manage-empty { color: var(--md-on-surface-variant); font-size: var(--md-type-body-medium); }
+#settings-view .segment-library-head { flex-direction: row; align-items: center; }
+.segment-library-hint { margin-block: 0 var(--chat-space); }
+.segment-origin { padding-inline: 0.45em; border-radius: var(--md-shape-xs); color: var(--md-on-secondary-container); background: var(--md-secondary-container); font-size: var(--md-type-label-small); white-space: nowrap; }
+.segment-meta { display: flex; flex-wrap: wrap; gap: 0 calc(1.5 * var(--chat-space)); color: var(--md-on-surface-variant); font-size: var(--md-type-label-medium); }
+.segment-meta > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#app .segment-actions .v-btn { min-width: var(--md-touch-target); min-height: var(--md-touch-target); }
 </style>
