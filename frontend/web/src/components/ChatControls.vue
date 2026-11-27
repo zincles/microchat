@@ -6,7 +6,6 @@ import { useChatMenu } from "../composables/useChatMenu.ts";
 import { VBtn, VBtnToggle, VCard, VTab, VTabs } from "vuetify/components";
 import ModelIcon from "./ModelIcon.vue";
 import CloseButton from "./CloseButton.vue";
-import { ICONS } from "../assets/icons.ts";
 import {
   curModelLabelOf,
   filterModelGroups,
@@ -18,9 +17,6 @@ import type { ModelBrowseMode, ModelChoice, ModelGroup } from "../utils/format.t
 import type { Session } from "../api/types.ts";
 
 const props = withDefaults(defineProps<{
-  // leftHidden：左栏收着 ⇒ 顶栏出它那枚开关；栏开着 ⇒ 开关在栏自己头上（按钮跟着它控制的东西走）。
-  // （右栏 2026-10-29 搬进上下文工作区 ⇒ 顶栏不再有 [◨] 那枚开关，`rightHidden` 跟着删。）
-  leftHidden?: boolean;
   // 当前工作区仍由顶栏切换，状态圆环在输入卡。
   workspace?: string;
   // loading：会话正在加载（模型列表也还没就位）⇒ 不拿旧/裸 id 闪一下，直接骨架。
@@ -30,13 +26,11 @@ const props = withDefaults(defineProps<{
   // FlowAgent 的第二个工作区是工作流。
   flow?: boolean;
 }>(), {
-  leftHidden: false,
   workspace: "chat",
   loading: false,
   flow: false,
 });
 const emit = defineEmits<{
-  "toggle-left": [];
   "select-model": [value: string];
   "save-model-default": [];
   "select-workspace": [workspace: string];
@@ -236,8 +230,6 @@ watch(modelActive, () => {
     ?.scrollIntoView({ block: "nearest" }));
 });
 
-const leftSvg = ICONS.panelLeft;
-
 function syncOrphanModel(): void {
   const cur = curModel.value;
   const known = cur && modelGroups.value.some((g) => (g.items ?? []).some((i) => i.value === cur));
@@ -274,17 +266,7 @@ defineExpose({ setSession, setModels });
 
 <template>
   <div id="chat-controls" @keydown.esc="onMenuEscape">
-    <button
-      id="chat-sidebar-toggle"
-      class="icon-btn"
-      type="button"
-      :title="leftHidden ? '打开会话栏' : '收起会话栏'"
-      :aria-label="leftHidden ? '打开会话栏' : '收起会话栏'"
-      :aria-expanded="!leftHidden"
-      aria-controls="sessions-bar"
-      @click="$emit('toggle-left')"
-      v-html="leftSvg"
-    ></button>
+    <slot name="sidebar-toggle" />
     <!-- 浮板随模型按钮向下展开。 -->
     <span class="model-anchor">
       <button

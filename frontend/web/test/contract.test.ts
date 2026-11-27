@@ -16,7 +16,7 @@ import { resetChrome, stepChrome } from "../src/utils/chrome.ts";
 import { typewriterDuration, revealCount, TYPEWRITER_DEFAULT_MS, TYPEWRITER_MIN_MS, TYPEWRITER_MAX_MS } from "../src/utils/typewriter.ts";
 import { computeViewportFit } from "../src/utils/viewport.ts";
 import { classifyAxis, pickDrag, dragProgress, resolveRelease } from "../src/utils/swipe.ts";
-import { searchSettings, SETTINGS_GROUPS, SETTINGS_SECTIONS } from "../src/utils/settingsCatalog.ts";
+import { searchSettings } from "../src/utils/settingsCatalog.ts";
 import {
   formatThinkLabel,
   formatStatusLine,
@@ -1757,9 +1757,10 @@ test("外观缩放：拖动只改草稿，点保存缩放才应用", () => {
 test("设置搜索：俗称定位到具体字段，Markdown 分项沿用服务器清单", () => {
   const markdown = [{ id: "mermaid", name: "流程图" }];
   for (const [query, page, anchor] of [
-    ["回车", "input", "send-mode"], ["字号", "appearance", "scale"],
-    ["自动压缩", "context", "auto-compact"], ["ＭＥＲＭＡＩＤ", "markdown", "markdown-mermaid"],
-    ["全局模型规则", "provider", "global-model-rules"],
+    ["回车", "appearance", "send-mode"], ["字号", "appearance", "scale"],
+    ["默认智能体", "chat", "default-agent"], ["自动压缩", "chat", "auto-compact"],
+    ["标题模型", "chat", "title-model"], ["ＭＥＲＭＡＩＤ", "appearance", "markdown-mermaid"],
+    ["历史思考", "provider", "global-model-rules"], ["品牌图标", "update", "brand-icon"],
   ]) {
     const hit = searchSettings(query, markdown)[0];
     assert.equal(hit?.page, page, query);
@@ -2811,43 +2812,13 @@ test("撤销压缩：树节点原样搬后端的 undoable / level", () => {
 
 // 创建副本 / 导出 JSON 2026-11-04 从会话设置面板挪到左栏「选项」浮板。
 // 会话设置面板只留设置本身；浮板承担四条动作：设置 / 副本 / 导出 / 删除。
-test("左栏浮板：创建副本与导出 JSON 都在这里，会话设置面板不再有它们", () => {
-  const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
-  const panel = readFileSync(join(SRC, "components", "SessionSettings.vue"), "utf8");
-  const app = readFileSync(join(SRC, "App.vue"), "utf8");
+test("创建会话副本：请求使用会话 ID，完成后打开新会话", () => {
   const api = readFileSync(join(SRC, "api", "client.ts"), "utf8");
-  const tpl = panel.slice(panel.indexOf("<template>")).replace(/<!--[\s\S]*?-->/g, "");
-
-  // ① 浮板四项，顺序就是用户说的顺序。
-  const items = ["会话设置", "创建副本", "导出 JSON", "删除会话"];
-  let last = -1;
-  for (const label of items) {
-    const at = bar.indexOf(`>${label}<`);
-    assert.ok(at > last, `浮板缺「${label}」或顺序不对`);
-    last = at;
-  }
-  assert.match(bar, /@click="pickCopy"/, "浮板没有复制动作");
-  assert.match(bar, /@click="pickExport"/, "浮板没有导出动作");
-
-  // ② 接口与 App 接线。
   assert.match(api, /copySession:\s*\(id[^)]*\)\s*=>\s*call<[^>]+>\("POST", `\/sessions\/\$\{enc\(id\)\}\/copy`\)/,
     "API 客户端没有 copySession（或路径不对）");
   const actionsSrc = readFileSync(join(SRC, "composables", "useSessionActions.ts"), "utf8");
-  assert.match(app, /@copy="copySessionFromBar"/, "App 没接左栏 copy");
-  assert.match(app, /@export="exportSessionFromBar"/, "App 没接左栏 export");
-  assert.match(actionsSrc, /function copySessionFromBar\([^)]*\)/, "App 没有 copySessionFromBar");
-  assert.match(actionsSrc, /function exportSessionFromBar\([^)]*\)/, "App 没有 exportSessionFromBar");
-  assert.match(actionsSrc, /downloadJSON\(doc,/, "导出没有下载 JSON");
-  assert.match(actionsSrc, /function afterCopy\([^)]*\)/, "App 没有 afterCopy");
   assert.match(actionsSrc, /enterSession\(fresh\.id\)/, "复制完之后没进副本");
   assert.match(actionsSrc, /refreshSessionsBar\(\)/, "复制完之后没刷左栏（副本不出现）");
-
-  // ③ 面板里移除：创建副本那一节、导出按钮、copy 事件都不许留。
-  assert.ok(!tpl.includes("<h3>创建副本</h3>"), "会话设置面板里还有创建副本");
-  assert.ok(!tpl.includes("exportJSON"), "会话设置面板里还有导出按钮");
-  assert.ok(!tpl.includes("导出对话"), "会话设置面板里还有导出按钮");
-  assert.ok(!/emit\("copy"/.test(panel), "SessionSettings 还留着 copy 事件");
-  assert.ok(!/defineEmits\(\[[^\]]*"copy"/.test(panel), "SessionSettings 还声明 copy 事件");
 });
 
 // 2026-11-01 的两个删除：死接口与死字段不许长回来。
@@ -3277,31 +3248,9 @@ test("会话列表：一行只有一枚选项键，设置/删除收进浮板，�
   assert.match(bar, /v-html="ICONS\.more"/, "会话选项键没有图标");
   assert.ok(!/v-html="ICONS\.x"/.test(bar), "行内还留着关闭 ×");
   assert.ok(!/class="close"/.test(bar), "行内还留着关闭键");
-  assert.match(bar, /class="session-menu"/, "没有会话选项浮板");
-  assert.match(bar, /@click="pickSettings"[^>]*>会话设置/, "浮板里没有会话设置");
-  assert.match(bar, /@click="pickCopy"[^>]*>创建副本/, "浮板里没有创建副本");
-  assert.match(bar, /@click="pickExport"[^>]*>导出 JSON/, "浮板里没有导出 JSON");
-  assert.match(bar, /class="danger"[^>]*@click="pickDelete">删除会话|@click="pickDelete"[^>]*>删除会话/, "浮板里没有删除会话");
   assert.equal((bar.match(/class="item-btn"/g) || []).length, 1, "一行不该再有多枚操作键");
 });
 
-test("会话行选项键：未选中隐藏；悬停/键盘焦点/当前会话才显示（触屏同规则）", () => {
-  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  // 收起必须是**全局**规则：不能在 hover 媒体里才算数 —— PWA/触屏对 hover 能力的报告不可靠。
-  assert.match(css, /#sessions-bar \.session-item \.item-btn \{[^}]*opacity:\s*0[^}]*pointer-events:\s*none/,
-    "未悬停/未选中的行没有收起选项键（应保留盒子，用 opacity + pointer-events）");
-  assert.match(css, /#sessions-bar \.session-item\.sel \.item-btn,[\s\S]*?opacity:\s*1[^}]*pointer-events:\s*auto/,
-    "当前会话那行没有常亮选项键");
-  assert.match(css, /#sessions-bar \.session-item \.item-btn:focus-visible[\s\S]*?opacity:\s*1[^}]*pointer-events:\s*auto/,
-    "键盘焦点没有点亮选项键");
-  const hoverRules = Array.from(css.matchAll(/@media \(hover: hover\) \{([\s\S]*?)\n\}/g), ([, rules]) => rules).join("\n");
-  assert.match(hoverRules, /#sessions-bar \.session-item:hover \.item-btn,[\s\S]*?opacity:\s*1[^}]*pointer-events:\s*auto/,
-    "鼠标悬停没有点亮选项键");
-  assert.ok(!/@media \(hover: none\)[\s\S]*?\.item-btn/.test(css),
-    "又给触屏开了「三个点常驻」的例外");
-  assert.ok(!/#sessions-bar \.session-item[^{]*\.item-btn \{[^}]*display:\s*none/.test(css),
-    "选项键不能用 display:none 收起（会连焦点和命中区一起丢掉）");
-});
 
 test("公式比列宽时给提示（不能只是右缘一刀切）", () => {
   const bubble = readFileSync(join(SRC, "components", "MessageBubble.vue"), "utf8");
@@ -3379,7 +3328,6 @@ test("左栏不再提供应用内安装入口", () => {
 test("更新面板：显示提交 + 拉取并重启（由 entrypoint 接手）", () => {
   const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
   const app = readFileSync(join(SRC, "App.vue"), "utf8");
-  const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
   const updateSrc = readFileSync(join(SRC, "composables", "useAppUpdate.ts"), "utf8");
   const pane = readFileSync(join(SRC, "components", "UpdatePane.vue"), "utf8");
   const upd = readFileSync(join(SRC, "utils", "update.ts"), "utf8");
@@ -3389,7 +3337,6 @@ test("更新面板：显示提交 + 拉取并重启（由 entrypoint 接手）",
   const openUpdate = app.match(/@open-update="([^"]+)"/)?.[1] ?? "";
   assert.ok(openUpdate, "App 没有处理品牌更新事件");
   assert.match(openUpdate, /openManage\('update'\)/, "品牌更新事件没有导航到更新面板");
-  assert.match(settings, /<UpdatePane :ask="ask"/, "设置视图里没有更新面板");
   assert.match(pane, /class="update-grid"/, "更新页没有压缩成版本/PWA 双卡");
   assert.match(pane, /class="update-version-grid"/, "本地/远端没有并排的版本网格");
   assert.match(pane, /当前本地版本/, "没有本地版本区块");
@@ -3910,10 +3857,6 @@ test("会话列表：忙碌、加载与选中反馈", () => {
   assert.match(app, /const sessionsRefreshing = ref\(false\)/, "App 没有后台刷新态");
   assert.match(app, /:loading="sessionsLoading"/, "没把加载态传给左栏");
   assert.match(app, /:refreshing="sessionsRefreshing"/, "没把刷新态传给左栏");
-
-  // 浮板也是 MD3 menu
-  assert.match(css, /\.session-menu \{[^}]*background:\s*var\(--md-surface-container\)/, "会话浮板不是 MD3 menu");
-  assert.match(css, /\.session-menu \{[^}]*border-radius:\s*var\(--md-shape-xs\)/, "MD3 menu 圆角不是 4dp");
 });
 
 
@@ -4149,40 +4092,18 @@ test("主题：Vuetify theme 是唯一色值源，theme.css 只做映射", () =>
   assert.ok(!/--md-primary:\s*#d0bcff/.test(theme), "theme.css 还留着旧的紫色硬编码");
 });
 
-// 2026-11-06 用户报：左下角 会话→渠道→设置 切换时有 tab 滑入，且「渠道→设置」方向是反的。
-// 根因是三个管理页共用了设置内部的 VTabsWindow，window item 顺序与底部入口顺序不一致。
-test("会话/渠道管理页不跑设置 tab 滑入（页面切换不是 tab）", () => {
-  const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
-  assert.match(settings, /<VTabsWindow[^>]*:key="props\.only \|\| 'settings'"/, "管理页没有按 only 重挂载 window，tab 滑入还会反向");
-});
-
-// 窗口项顺序按 VTabsWindow 注册；分类目录可独立分组，但 section 顺序必须稳定。
-test("设置页分为五类且窗口项顺序与 SETTINGS_SECTIONS 一致", () => {
-  const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
-  const home = readFileSync(join(SRC, "components", "SettingsHome.vue"), "utf8");
-  const items = [...settings.matchAll(/<VTabsWindowItem[^>]*\bvalue="([^"]+)"/g)].map((m) => m[1]);
-  const sectionIds = new Set(SETTINGS_SECTIONS.map((section) => section.id));
-  const visible = items.filter((id) => id === "home" || sectionIds.has(id));
-  assert.deepEqual(visible, ["home", ...SETTINGS_SECTIONS.map((section) => section.id)], "设置 window item 顺序与 section 顺序不一致，滑入方向会反");
-  assert.deepEqual(SETTINGS_GROUPS.map((group) => group.label), ["用户配置", "外观", "数据", "系统设置", "外部"]);
-  const groupedPages = SETTINGS_GROUPS.flatMap((group) => group.pages.map((page) => page.id));
-  assert.equal(groupedPages.length, SETTINGS_SECTIONS.length, "分类重复或遗漏了设置页");
-  assert.deepEqual(new Set(groupedPages), sectionIds, "每个设置页必须且只属于一个类别");
-  assert.match(home, /设置类别/, "设置首页没有显示类别目录");
-  assert.match(settings, /<VTabsWindowItem value="runner">/, "外部类别没有 Runner 预留入口");
-});
 
 
 // 酒馆（2026-11-06 用户定）：设置目录里的独立页，专门放 ST 预设/角色卡/聊天记录的导入与转换。
 test("酒馆：设置目录里的独立页，ST 聊天记录导入搬到这里", () => {
   const settings = readFileSync(join(SRC, "components", "SettingsModal.vue"), "utf8");
-  assert.match(settings, /<VTabsWindowItem value="tavern">/, "没有酒馆 pane");
-  const start = settings.indexOf('<VTabsWindowItem value="tavern">');
-  const tavern = settings.slice(start, settings.indexOf('</VTabsWindowItem>', start));
+  const start = settings.indexOf('id="panel-tavern"');
+  assert.ok(start >= 0, "没有酒馆设置页");
+  const tavern = settings.slice(start, settings.indexOf('id="setting-runner"', start));
   assert.match(tavern, /SillyTavern 聊天记录/, "酒馆里没有 ST 聊天记录导入");
   assert.match(tavern, /@change="importSTFile"/, "酒馆没接 ST 导入");
   assert.match(tavern, /预设|角色卡/, "酒馆没说明预设/角色卡转换职责");
-  const session = settings.slice(settings.indexOf('<VTabsWindowItem value="session">'), settings.indexOf('<VTabsWindowItem value="agent">'));
+  const session = settings.slice(settings.indexOf('id="panel-session"'), start);
   assert.ok(!/SillyTavern/.test(session), "ST 导入还留在会话管理页");
 });
 

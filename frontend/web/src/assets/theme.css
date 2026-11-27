@@ -219,6 +219,7 @@ html[data-theme="light"] {
   --md-on-secondary: rgb(var(--v-theme-on-secondary));
   --md-secondary-container: rgb(var(--v-theme-secondary-container));
   --md-on-secondary-container: rgb(var(--v-theme-on-secondary-container));
+  --md-favorite: rgb(var(--v-theme-favorite));
   --md-surface: rgb(var(--v-theme-surface));
   --md-surface-dim: rgb(var(--v-theme-surface-dim));
   --md-surface-bright: rgb(var(--v-theme-surface-bright));

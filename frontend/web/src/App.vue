@@ -22,6 +22,7 @@ import ContextRing from "./components/ContextRing.vue";
 import AgentMenu from "./components/AgentMenu.vue";
 import AccountPane from "./components/AccountPane.vue";
 import SessionBar from "./components/SessionBar.vue";
+import SidebarToggle from "./components/SidebarToggle.vue";
 import AnswerTranscript from "./components/AnswerTranscript.vue";
 import MessageBubble from "./components/MessageBubble.vue";
 import SummaryCard from "./components/SummaryCard.vue";
@@ -159,6 +160,15 @@ let sessionID: string | null = null;
 // 缓存只当"先用着的快照"：进会话后按需在后台补一次（见 enterSession），不拿它当真相。
 const brandPrefs = ref(prefsSnapshot());
 const accountOpen = ref(false);
+const chatVisible = computed(() => !settingsOpen.value && !accountOpen.value);
+
+function toggleLeftFromButton(event: MouseEvent): void {
+  toggleLeft();
+  // 键盘激活会让原入口消失；焦点跟着可用的另一个入口走。
+  if (event.detail === 0) void nextTick(() => {
+    document.getElementById(leftHidden.value ? "sidebar-open" : "toggle-left")?.focus({ preventScroll: true });
+  });
+}
 const pendingFavoriteIds = new Set<string>();
 const sessionsCache = ref<SessionView[]>([]);
 // 左栏的加载态（MD3）：首次拿列表画骨架；后台补列表时顶部一条 linear progress。
@@ -1697,7 +1707,7 @@ onUnmounted(() => {
       @update="applyUpdate"
       @update-backend="runBackendUpdate"
     />
-    <div id="columns" :class="{ 'chat-controls-visible': !settingsOpen && !accountOpen }">
+    <div id="columns">
       <SessionBar
         ref="sessionbarRef"
         :collapsed="leftHidden"
@@ -1709,7 +1719,7 @@ onUnmounted(() => {
         :brand-name="brandPrefs.brand_name"
         :brand-icon="brandPrefs.brand_icon"
         @prefetch="prefetchSession"
-        @toggle-left="toggleLeft"
+        @toggle-left="toggleLeftFromButton"
         @select="(id) => { closeLeftDrawer(); backToChat(); enterSession(id).catch((err) => toast(`进会话失败：${errText(err)}`, 'error')); }"
         @settings="(id) => { sessionSettingsId = id; }"
         @copy="copySessionFromBar"
@@ -1724,21 +1734,27 @@ onUnmounted(() => {
       />
       <div id="scrim-left" @click="toggleLeft"></div>
       <div id="content">
-      <AccountPane v-if="accountOpen" @back="leaveAccount" />
-      <section id="chat-col" v-show="!settingsOpen && !accountOpen">
+      <AccountPane v-if="accountOpen" @back="leaveAccount">
+        <template #sidebar-toggle>
+          <SidebarToggle v-if="leftHidden" id="sidebar-open" @click="toggleLeftFromButton" />
+        </template>
+      </AccountPane>
+      <section id="chat-col" v-show="chatVisible">
     <ChatControls
       ref="chatControlsRef"
-      :left-hidden="leftHidden"
       :workspace="workspace"
       :loading="loadingSession"
       :model-selection-pending="pendingModelSelections > 0"
       :saving-model-default="savingModelDefault"
       :flow="currentAgentIsFlow"
       @select-workspace="selectWorkspace"
-      @toggle-left="toggleLeft"
       @select-model="selectSessionModel"
       @save-model-default="saveCurrentModelDefault"
-    />
+    >
+      <template #sidebar-toggle>
+        <SidebarToggle v-if="chatVisible && leftHidden" id="sidebar-open" @click="toggleLeftFromButton" />
+      </template>
+    </ChatControls>
         <!-- 聊天 / 上下文：VTabsWindow 真正负责左右滑动；顶栏的 VTabs 只管 tab 条。 -->
         <VTabsWindow v-model="workspace" class="workspace-window">
         <VTabsWindowItem value="chat">
@@ -1933,13 +1949,16 @@ onUnmounted(() => {
         :ask="askConfirm"
         :esc-blocked="!!sessionSettingsId"
         @close="closeSettings"
-        @toggle-left="toggleLeft"
         @sessions-changed="onManagedSessionsChanged"
         @models-changed="fillModelSelect"
         @chat-saved="onChatSaved"
         @prefs-saved="onPrefsSaved"
         @goto-session="(id) => { closeSettings(); enterSession(id).catch((err) => toast(`进会话失败：${errText(err)}`, 'error')); }"
-      />
+      >
+        <template #sidebar-toggle>
+          <SidebarToggle v-if="leftHidden" id="sidebar-open" @click="toggleLeftFromButton" />
+        </template>
+      </SettingsModal>
       </div>
     </div>
     <Toast ref="toastRef" />

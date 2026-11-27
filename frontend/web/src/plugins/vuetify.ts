@@ -42,6 +42,7 @@ const darkTheme = {
     // 选中底 / 按钮底：S 100%→32%，on- 文字对比 7.20→6.08（整块不再是一坨纯蓝）
     "secondary-container": "#2f4a5c",
     "on-secondary-container": "#bfd4e0",
+    favorite: "#f4c84d",
     tertiary: "#6dd58c",
     "on-tertiary": "#0a3818",
     "tertiary-container": "#0f5223",
@@ -79,6 +80,7 @@ const lightTheme = {
     "on-secondary": "#ffffff",
     "secondary-container": "#e2e8f0",
     "on-secondary-container": "#1e293b",
+    favorite: "#886000",
     error: "#dc2626",
     "on-error": "#ffffff",
     "error-container": "#fee2e2",

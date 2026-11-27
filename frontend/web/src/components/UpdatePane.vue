@@ -30,7 +30,7 @@ const brandIcon = ref<"spark" | "chat" | "bot" | "messagePlus">("spark");
 const welcomeText = ref("有什么想聊的？");
 const savingBrand = ref(false);
 const brandError = ref("");
-const brandIcons = ["spark", "chat", "bot", "messagePlus"] as const;
+const brandIcons = { spark: "星芒", chat: "对话气泡", bot: "机器人", messagePlus: "新对话" } as const;
 
 function loadBrandPrefs(): void {
   const prefs = prefsSnapshot();
@@ -346,13 +346,15 @@ onMounted(() => {
         MicroChat 是一个轻量、可自托管的 SillyTavern 替代品，面向角色扮演与长对话：
         Go 后端负责上下文、压缩与状态，Vue 前端负责阅读与编辑体验。基础功能不依赖外部账号，数据落在自己的 <code>data/</code> 目录。
       </p>
-      <label class="brand-field"><span>品牌名称</span><VTextField v-model="brandName" density="compact" variant="outlined" hide-details maxlength="80" /></label>
-      <fieldset class="brand-icon-field">
+      <label id="setting-brand-name" class="brand-field" tabindex="-1"><span>品牌名称</span><VTextField v-model="brandName" density="compact" variant="outlined" hide-details maxlength="80" /></label>
+      <fieldset id="setting-brand-icon" class="brand-icon-field" tabindex="-1">
         <legend>品牌图标</legend>
-        <VBtn v-for="icon in brandIcons" :key="icon" class="brand-icon-option" type="button" icon variant="outlined"
-          :aria-pressed="brandIcon === icon" :class="{ active: brandIcon === icon }" @click="brandIcon = icon"><span v-html="ICONS[icon]"></span></VBtn>
+        <VBtn v-for="(label, icon) in brandIcons" :key="icon" class="brand-icon-option" type="button" icon variant="outlined"
+          :aria-label="label" :title="label" :aria-pressed="brandIcon === icon" @click="brandIcon = icon">
+          <span class="brand-icon-glyph" aria-hidden="true" v-html="ICONS[icon]"></span>
+        </VBtn>
       </fieldset>
-      <label class="brand-field"><span>空白草稿欢迎语</span><VTextField v-model="welcomeText" density="compact" variant="outlined" hide-details maxlength="240" /></label>
+      <label id="setting-welcome-text" class="brand-field" tabindex="-1"><span>空白草稿欢迎语</span><VTextField v-model="welcomeText" density="compact" variant="outlined" hide-details maxlength="240" /></label>
       <div class="brand-save-row"><VBtn color="primary" variant="flat" size="small" :loading="savingBrand" :disabled="savingBrand" @click="saveBrand">保存品牌与欢迎语</VBtn>
         <span v-if="brandError" class="hint update-error" role="alert">{{ brandError }}</span></div>
       <p class="project-authors">作者：Zincles、DeepSeekV4.1Flash</p>
@@ -366,10 +368,15 @@ onMounted(() => {
 .brand-field { display: grid; grid-template-columns: minmax(8rem, 11rem) minmax(0, 1fr); align-items: center; gap: 0.75rem; margin: 0.8rem 0; }
 .brand-icon-field { display: flex; align-items: center; gap: 0.45rem; min-width: 0; margin: 0.8rem 0; padding: 0.4rem 0; border: 0; }
 .brand-icon-field legend, .brand-field > span { color: var(--md-on-surface-variant); font-size: var(--md-type-body-medium); }
-.brand-icon-field button { width: var(--chat-control); height: var(--chat-control); display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--md-outline-variant); border-radius: var(--md-shape-sm); color: var(--md-on-surface-variant); background: transparent; }
-.brand-icon-field button.active { color: var(--md-primary); border-color: var(--md-primary); background: var(--md-primary-container); }
-.brand-icon-field button:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px; }
-.brand-icon-field svg { width: 18px; height: 18px; }
+#app .brand-icon-option {
+  width: var(--chat-control); height: var(--chat-control); padding: 1px;
+  border: 1px solid var(--md-outline-variant); border-radius: var(--md-shape-sm);
+  color: var(--md-on-surface-variant);
+}
+#app .brand-icon-option[aria-pressed="true"] { color: var(--md-primary); border-color: var(--md-primary); background: var(--md-primary-container); }
+#app .brand-icon-option:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px; }
+.brand-icon-option :deep(.v-btn__content), .brand-icon-glyph, .brand-icon-glyph :deep(svg) { width: 100%; height: 100%; }
+.brand-icon-glyph, .brand-icon-glyph :deep(svg) { display: block; }
 .brand-save-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; }
 @media (max-width: 600px) { .brand-field { grid-template-columns: minmax(0, 1fr); gap: 0.25rem; } }
 </style>

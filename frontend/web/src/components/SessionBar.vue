@@ -1,9 +1,10 @@
 <script setup lang="ts">
 // 左会话栏：顶部新建、历史列表独立滚动，底部固定账户与设置入口。
-// 每条只有一枚「选项」（竖三点）：设置与删除都收进那块浮板 —— 行内不再挤两枚键。
-import { ref, computed, nextTick, onMounted, onUnmounted, useTemplateRef, watch } from "vue";
-import { VBtn, VBtnToggle, VNavigationDrawer } from "vuetify/components";
+// 收藏与三点菜单是标题之外的两个独立动作。
+import { ref, shallowRef, computed, nextTick, onMounted, onUnmounted, useTemplateRef, watch } from "vue";
+import { VBtn, VBtnToggle, VList, VListItem, VMenu, VNavigationDrawer } from "vuetify/components";
 import SessionSearch from "./SessionSearch.vue";
+import SidebarToggle from "./SidebarToggle.vue";
 import { ICONS } from "../assets/icons.ts";
 import { groupSessions } from "../utils/sessionGroups.ts";
 import { sessionTitle } from "../utils/format.ts";
@@ -20,7 +21,7 @@ const emit = defineEmits<{
   "new-image": [];
   "open-settings": [];
   "open-account": [];
-  "toggle-left": [];
+  "toggle-left": [event: MouseEvent];
   "open-update": [];
   prefetch: [id: string];
   "favorite-change": [id: string, favorite: boolean];
@@ -110,47 +111,39 @@ watch(groupedSessions, async () => {
   const row = titleButtons().find((button) => button.dataset.sessionId === active.dataset.sessionId);
   (row ?? newButton.value)?.focus();
 });
-const menu = ref<{ id: string; left: number; top: number } | null>(null); // Teleport 到 body 的浮板
-const menuEl = ref<HTMLElement | null>(null);
+const menu = shallowRef<{ id: string; anchor: HTMLButtonElement } | null>(null);
+const menuOpen = shallowRef(false);
+const menuList = useTemplateRef<InstanceType<typeof VList>>("menuList");
+watch([() => props.collapsed, mode], () => { menuOpen.value = false; });
 
 function setSessions(list: SessionView[] | null | undefined, cur?: string | null): void {
   sessions.value = list ?? [];
   currentId.value = cur ?? null;
 }
 
-function closeMenu(): void { menu.value = null; }
-function toggleMenu(s: SessionView, event: MouseEvent): void {
+function toggleMenu(id: string, event: MouseEvent): void {
+  if (menuOpen.value) { menuOpen.value = false; return; }
+  menu.value = { id, anchor: event.currentTarget as HTMLButtonElement };
+  menuOpen.value = true;
+}
+function focusMenu(): void {
+  if (!menuOpen.value || document.activeElement !== menu.value?.anchor) return;
+  menuList.value?.$el.querySelector('[role="menuitem"]')?.focus({ preventScroll: true });
+}
+function closeMenuAndFocus(): void {
+  if (!menuOpen.value) return;
+  menuOpen.value = false;
+  menu.value?.anchor.focus({ preventScroll: true });
+}
+function onMenuEscape(event: KeyboardEvent): void {
+  if (!menuOpen.value) return;
   event.stopPropagation();
-  if (menu.value?.id === s.id) { closeMenu(); return; }
-  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-  const width = 168;
-  const height = 142;
-  const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
-  const top = rect.bottom + 4 + height > window.innerHeight - 8 ? rect.top - height - 4 : rect.bottom + 4;
-  menu.value = { id: s.id, left, top };
-  nextTick(() => menuEl.value?.querySelector<HTMLButtonElement>("button")?.focus());
+  event.preventDefault();
+  closeMenuAndFocus();
 }
-function pickSettings(): void {
-  const id = menu.value?.id;
-  closeMenu();
-  if (id) emit("settings", id);
+function clearClosedMenu(): void {
+  if (!menuOpen.value) menu.value = null;
 }
-function pickCopy(): void {
-  const id = menu.value?.id;
-  closeMenu();
-  if (id) emit("copy", id);
-}
-function pickExport(): void {
-  const id = menu.value?.id;
-  closeMenu();
-  if (id) emit("export", id);
-}
-function pickDelete(): void {
-  const id = menu.value?.id;
-  closeMenu();
-  if (id) emit("close", id);
-}
-function onKey(e: KeyboardEvent): void { if (e.key === "Escape") closeMenu(); }
 
 // 预取（2026-11-05）：鼠标在会话行上**停 140ms** 才算"想点它"（扫过列表不算），
 // 触屏 touchstart / 键盘 focus 立即 —— 这三种之后紧跟着的多半就是点击。
@@ -175,16 +168,10 @@ function prefetchEnd(): void {
 function syncTheme(): void { theme.value = themePref(); }
 onMounted(() => {
   syncTheme();
-  document.addEventListener("keydown", onKey);
-  window.addEventListener("resize", closeMenu);
-  window.addEventListener("scroll", closeMenu, true);
   window.addEventListener("mc-theme-changed", syncTheme);
 });
 onUnmounted(() => {
   clearTimeout(hoverTimer ?? undefined);
-  document.removeEventListener("keydown", onKey);
-  window.removeEventListener("resize", closeMenu);
-  window.removeEventListener("scroll", closeMenu, true);
   window.removeEventListener("mc-theme-changed", syncTheme);
 });
 
@@ -228,15 +215,7 @@ defineExpose({ setSessions });
           @click="cycleTheme"
           v-html="themeIcon"
         ></button>
-        <button
-          id="toggle-left"
-          class="icon-btn"
-          type="button"
-          title="收起会话栏"
-          aria-label="收起会话栏"
-          @click="$emit('toggle-left')"
-          v-html="ICONS.panelLeft"
-        ></button>
+        <SidebarToggle id="toggle-left" expanded @click="emit('toggle-left', $event)" />
       </span>
       <!-- 刷新条钉在栏头底边：它只是状态，不占布局 —— 曾放在栏头与新建按钮之间，
            进入站点时出现/消失会把下面整列（新建、模式切换、列表）顶动一次。 -->
@@ -296,10 +275,11 @@ defineExpose({ setSessions });
             <circle class="session-busy-arc" cx="12" cy="12" r="9"></circle>
           </svg>
           <button class="favorite-btn" type="button" :title="s.favorite ? '取消收藏' : '收藏'"
-            :aria-label="s.favorite ? '取消收藏' : '收藏'" :aria-pressed="s.favorite"
-            :class="{ active: s.favorite }" @click.stop="emit('favorite-change', s.id, !s.favorite)">{{ s.favorite ? '★' : '☆' }}</button>
-          <button class="item-btn" type="button" title="会话选项" aria-label="会话选项"
-            :aria-expanded="menu?.id === s.id ? 'true' : 'false'" @click="toggleMenu(s, $event)" v-html="ICONS.more"></button>
+            :aria-label="s.favorite ? '取消收藏' : '收藏'" :aria-pressed="!!s.favorite"
+            @click.stop="emit('favorite-change', s.id, !s.favorite)">{{ s.favorite ? '★' : '☆' }}</button>
+          <button class="item-btn" type="button" title="会话选项" aria-label="会话选项" aria-haspopup="menu"
+            :aria-expanded="menuOpen && menu?.id === s.id" :aria-controls="menuOpen && menu?.id === s.id ? 'session-options' : undefined"
+            @click.stop="toggleMenu(s.id, $event)" @keydown.esc="onMenuEscape" v-html="ICONS.more"></button>
         </div>
       </template>
     </div>
@@ -320,22 +300,19 @@ defineExpose({ setSessions });
         @click="emit('open-settings')" v-html="ICONS.settings"></button>
     </div>
   </VNavigationDrawer>
-  <Teleport to="body">
-    <div v-if="menu" class="session-menu-backdrop" @click="closeMenu"></div>
-    <div
-      v-if="menu"
-      ref="menuEl"
-      class="session-menu"
-      role="menu"
-      :style="{ left: menu.left + 'px', top: menu.top + 'px' }"
-      @click.stop
-    >
-      <button type="button" role="menuitem" @click="pickSettings">会话设置</button>
-      <button type="button" role="menuitem" :disabled="pendingActions.has(menu.id)" @click="pickCopy">创建副本</button>
-      <button type="button" role="menuitem" :disabled="pendingActions.has(menu.id)" @click="pickExport">导出 JSON</button>
-      <button type="button" role="menuitem" class="danger" :disabled="pendingActions.has(menu.id)" @click="pickDelete">删除会话</button>
-    </div>
-  </Teleport>
+  <VMenu id="session-options" v-model="menuOpen" :target="menu?.anchor" location="bottom end" :offset="8"
+    :width="168" scroll-strategy="close" :close-on-content-click="false"
+    @after-enter="focusMenu" @after-leave="clearClosedMenu">
+    <VList v-if="menu" ref="menuList" role="menu" aria-label="会话选项" density="compact"
+      color="on-surface" bg-color="surface-container" rounded="md" class="py-1"
+      @click="closeMenuAndFocus" @keydown.esc="onMenuEscape">
+      <VListItem role="menuitem" title="会话设置" @click="emit('settings', menu.id)" />
+      <VListItem role="menuitem" title="创建副本" :disabled="pendingActions.has(menu.id)" @click="emit('copy', menu.id)" />
+      <VListItem role="menuitem" title="导出 JSON" :disabled="pendingActions.has(menu.id)" @click="emit('export', menu.id)" />
+      <VListItem role="menuitem" title="删除会话" class="text-error"
+        :disabled="pendingActions.has(menu.id)" @click="emit('close', menu.id)" />
+    </VList>
+  </VMenu>
 </template>
 <style scoped>
 .sidebar-footer { display: flex; flex: none; align-items: center; gap: calc(var(--chat-space) / 2); padding: var(--chat-space); border-top: 1px solid var(--md-outline-variant); }
@@ -346,9 +323,5 @@ defineExpose({ setSessions });
 #settings-open { flex: none; width: var(--chat-control); height: var(--chat-control); display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 50%; color: var(--md-on-surface-variant); background: transparent; }
 #settings-open svg { width: 18px; height: 18px; }
 .account-button:focus-visible, #settings-open:focus-visible { outline: 2px solid var(--md-primary); outline-offset: -2px; }
-.favorite-btn { flex: none; width: 1.8em; height: 1.8em; padding: 0; border: 0; border-radius: 50%; color: var(--md-on-surface-variant); background: transparent; font: inherit; font-size: 1.1em; line-height: 1; }
-.favorite-btn:hover, .favorite-btn:focus-visible { background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); }
-.favorite-btn.active { color: var(--md-primary); }
-.favorite-btn:focus-visible { outline: 2px solid var(--md-primary); outline-offset: -2px; }
 </style>
 

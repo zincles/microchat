@@ -7,6 +7,7 @@ const emit = defineEmits<{ back: [] }>();
 <template>
   <section class="account-pane" aria-labelledby="account-title">
     <header>
+      <slot name="sidebar-toggle" />
       <VBtn variant="text" @click="emit('back')">返回对话</VBtn>
       <h2 id="account-title">账户</h2>
     </header>

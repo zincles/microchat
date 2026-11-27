@@ -1,6 +1,5 @@
 <script setup lang="ts">
-// 设置中的外观、输入和 Markdown 页共用此面板；每次只保存当前控件改动的偏好，
-// 不用另一个页面还留在内存中的旧值覆盖服务器偏好。缩放必须显式保存。
+// 外观、输入和消息渲染在一页；每次仍只保存当前控件改动的偏好，缩放必须显式保存。
 import { VSwitch, VBtn, VTextField, VSelect, VSlider } from "vuetify/components";
 import { ref, shallowRef, computed, onMounted } from "vue";
 import {
@@ -20,10 +19,6 @@ import {
   uploadBackground, clearBackground,
 } from "../utils/background.ts";
 import type { MarkdownType } from "../api/types.ts";
-const props = withDefaults(defineProps<{
-  section?: "appearance" | "input" | "markdown";
-}>(), { section: "appearance" });
-
 const emit = defineEmits<{ "prefs-saved": [] }>();
 
 const theme = ref("");
@@ -106,29 +101,22 @@ function resetScale(): void {
 }
 
 function loadFromPrefs(): void {
-  switch (props.section) {
-    case "appearance":
-      theme.value = themePref();
-      textScale.value = textScalePref();
-      fontBody.value = fontBodyPref();
-      fontMono.value = fontMonoPref();
-      chromeHide.value = chromeHideOn();
-      loadBackground();
-      break;
-    case "input":
-      userName.value = userNamePref();
-      send.value = sendMode();
-      preview.value = previewOn();
-      cmdMenu.value = commandMenuOn();
-      break;
-    case "markdown": {
-      const md = markdownPrefs();
-      mdEnabled.value = md.enabled !== false;
-      mdDisabled.value = md.disabled ?? [];
-      mdTypes.value = markdownTypes();
-      break;
-    }
-  }
+  theme.value = themePref();
+  textScale.value = textScalePref();
+  fontBody.value = fontBodyPref();
+  fontMono.value = fontMonoPref();
+  chromeHide.value = chromeHideOn();
+  loadBackground();
+
+  userName.value = userNamePref();
+  send.value = sendMode();
+  preview.value = previewOn();
+  cmdMenu.value = commandMenuOn();
+
+  const md = markdownPrefs();
+  mdEnabled.value = md.enabled !== false;
+  mdDisabled.value = md.disabled ?? [];
+  mdTypes.value = markdownTypes();
 }
 
 function loadBackground(): void {
@@ -256,62 +244,53 @@ async function clearBg(): Promise<void> {
 </script>
 
 <template>
-  <section :id="`panel-${props.section}`" class="panel">
-
-    <template v-if="props.section === 'appearance'">
-      <section class="settings-card">
-        <h3>外观</h3>
-        <!-- 只有三套（2026-10-28 用户定）。id 必须与 prefs.ts 的 THEME_IDS 逐个对得上，
-             contract.test.js 钉着 —— 这里多一个少一个都不会报错，只会让人选到没规则的主题。 -->
-        <label id="setting-theme" tabindex="-1" class="field"><span>主题</span><VSelect :model-value="theme" :items="themeOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details @update:model-value="onTheme" /></label>
-        <!-- 滑杆与百分比放在同一列；缩放只在点击「保存缩放」后应用。 -->
-        <label id="setting-scale" tabindex="-1" class="field"><span>界面缩放</span>
-          <span class="scale-wrap">
-            <VSlider
-              :model-value="textScale"
-              :min="scaleBounds.min"
-              :max="scaleBounds.max"
-              :step="scaleBounds.step"
-              color="primary"
-              density="compact"
-              hide-details
-              aria-label="界面缩放"
-              @update:model-value="onScaleInput"
-            />
-            <b class="scale-value">{{ scalePercent }}%</b>
-          </span>
-        </label>
+  <section id="panel-appearance" class="panel">
+    <section class="settings-card">
+      <h3>外观</h3>
+      <label id="setting-theme" tabindex="-1" class="field"><span>主题</span><VSelect :model-value="theme" :items="themeOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details @update:model-value="onTheme" /></label>
+      <!-- 滑杆与百分比放在同一列；缩放只在点击「保存缩放」后应用。 -->
+      <label id="setting-scale" tabindex="-1" class="field"><span>界面缩放</span>
+        <span class="scale-wrap">
+          <VSlider
+            :model-value="textScale"
+            :min="scaleBounds.min"
+            :max="scaleBounds.max"
+            :step="scaleBounds.step"
+            color="primary"
+            density="compact"
+            hide-details
+            aria-label="界面缩放"
+            @update:model-value="onScaleInput"
+          />
+          <b class="scale-value">{{ scalePercent }}%</b>
+        </span>
+      </label>
+      <div class="row">
+        <VBtn color="primary" variant="flat" size="small" type="button" :disabled="!scaleDirty" @click="saveScale">保存缩放</VBtn>
+        <VBtn variant="text" size="small" type="button" @click="resetScale">复位 100%</VBtn>
+        <span class="status">{{ scaleDirty ? "未保存：点「保存缩放」后才会应用" : "字号和留白等比缩放，点「保存缩放」才应用" }}</span>
+      </div>
+      <label id="setting-font-body" tabindex="-1" class="field"><span>标准字体</span><VTextField density="compact" variant="outlined" hide-details v-model="fontBody" @change="saveFonts" placeholder="留空 = 系统默认（CSS font-family）" /></label>
+      <label id="setting-font-mono" tabindex="-1" class="field"><span>等宽字体（代码块）</span><VTextField density="compact" variant="outlined" hide-details v-model="fontMono" @change="saveFonts" placeholder="留空 = 系统等宽" /></label>
+      <p class="hint">可按 CSS 写法给多个后备字体，例如 <code>"Noto Sans SC", sans-serif</code>。标准字体用于全站，等宽字体只用于代码块；留空恢复内置系统字族。</p>
+      <div class="row"><VBtn variant="text" size="small" type="button" @click="resetFonts">恢复默认字体</VBtn></div>
+      <div id="setting-background" tabindex="-1">
+        <label class="field"><span>背景图地址</span><VTextField density="compact" variant="outlined" hide-details v-model="bgUrl" placeholder="https://…（跨域也可）" /></label>
         <div class="row">
-          <VBtn color="primary" variant="flat" size="small" type="button" :disabled="!scaleDirty" @click="saveScale">保存缩放</VBtn>
-          <VBtn variant="text" size="small" type="button" @click="resetScale">复位 100%</VBtn>
-          <span class="status">{{ scaleDirty ? "未保存：点「保存缩放」后才会应用" : "字号和留白等比缩放，点「保存缩放」才应用" }}</span>
+          <VBtn color="primary" variant="flat" size="small" type="button" :disabled="!!bgAction" @click="applyBgUrl">应用地址</VBtn>
+          <VBtn variant="text" size="small" type="button" :loading="bgAction === 'upload'" :disabled="!!bgAction" @click="bgFile?.click()">上传图片…</VBtn>
+          <input ref="bgFile" type="file" accept="image/*" hidden @change="pickBgFile" />
+          <VBtn color="error" variant="text" size="small" type="button" :loading="bgAction === 'remove'" :disabled="!!bgAction" @click="clearBg">清除</VBtn>
+          <span class="status" role="status">当前背景：{{ bgStatus }}</span>
         </div>
-        <label id="setting-font-body" tabindex="-1" class="field"><span>标准字体</span><VTextField density="compact" variant="outlined" hide-details v-model="fontBody" @change="saveFonts" placeholder="留空 = 系统默认（CSS font-family）" /></label>
-        <label id="setting-font-mono" tabindex="-1" class="field"><span>等宽字体（代码块）</span><VTextField density="compact" variant="outlined" hide-details v-model="fontMono" @change="saveFonts" placeholder="留空 = 系统等宽" /></label>
-        <p class="hint">可按 CSS 写法给多个后备字体，例如 <code>"Noto Sans SC", sans-serif</code>。标准字体用于全站，等宽字体只用于代码块；留空恢复内置系统字族。</p>
-        <div class="row"><VBtn variant="text" size="small" type="button" @click="resetFonts">恢复默认字体</VBtn></div>
-        <div id="setting-background" tabindex="-1">
-          <label class="field"><span>背景图地址</span><VTextField density="compact" variant="outlined" hide-details v-model="bgUrl" placeholder="https://…（跨域也可）" /></label>
-          <div class="row">
-            <VBtn color="primary" variant="flat" size="small" type="button" :disabled="!!bgAction" @click="applyBgUrl">应用地址</VBtn>
-            <VBtn variant="text" size="small" type="button" :loading="bgAction === 'upload'" :disabled="!!bgAction" @click="bgFile?.click()">上传图片…</VBtn>
-            <input ref="bgFile" type="file" accept="image/*" hidden @change="pickBgFile" />
-            <VBtn color="error" variant="text" size="small" type="button" :loading="bgAction === 'remove'" :disabled="!!bgAction" @click="clearBg">清除</VBtn>
-            <span class="status" role="status">当前背景：{{ bgStatus }}</span>
-          </div>
-          <p v-if="bgPreview" class="hint">背景图保存在服务器上 —— 换设备也在。</p>
-        </div>
-      </section>
+        <p v-if="bgPreview" class="hint">背景图保存在服务器上 —— 换设备也在。</p>
+      </div>
+      <label id="setting-chrome-hide" tabindex="-1" class="field"><span>滚动时自动收起聊天控件和输入栏（仅触屏）</span><VSwitch :model-value="chromeHide" @update:model-value="(v) => setChromeHide(v === true)" color="primary" density="compact" hide-details /></label>
+      <p class="hint">往下看时收起模型与工作区切换，往回看时收起输入栏；到顶或到底时恢复。</p>
+    </section>
 
-      <section class="settings-card">
-        <h3>布局</h3>
-        <label id="setting-chrome-hide" tabindex="-1" class="field"><span>滚动时自动收起悬浮控件和输入栏（仅触屏）</span><VSwitch :model-value="chromeHide" @update:model-value="(v) => setChromeHide(v === true)" color="primary" density="compact" hide-details /></label>
-        <p class="hint">往下看时收起上方控件，往回看时收起输入栏；到顶或到底时全部恢复。</p>
-      </section>
-    </template>
-
-    <section v-else-if="props.section === 'input'" class="settings-card">
-      <h3>输入</h3>
+    <section class="settings-card">
+      <h3>输入与发送</h3>
       <label id="setting-user-name" tabindex="-1" class="field"><span>用户名称</span><VTextField density="compact" variant="outlined" hide-details v-model="userName" @change="saveName" placeholder="留空 = 你" /></label>
       <p class="hint">用于提示词与消息里的 <code v-text="'{{user_name}}'"></code> / <code v-text="'{{user}}'"></code> 宏；只做替换，不影响世界状态。</p>
       <label id="setting-send-mode" tabindex="-1" class="field"><span>发送方式</span><VSelect :model-value="send" :items="sendOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details @update:model-value="onSend" /></label>
@@ -321,7 +300,7 @@ async function clearBg(): Promise<void> {
       <p class="hint">开启后输入框左侧会出现 ☰，输入 <code>/</code> 会弹出命令列表。</p>
     </section>
 
-    <section v-else class="settings-card">
+    <section id="panel-markdown" class="settings-card">
       <h3>文本格式（Markdown）</h3>
       <label id="setting-markdown-enabled" tabindex="-1" class="field"><span>解析 Markdown 格式</span><VSwitch :model-value="mdEnabled" @update:model-value="(v) => setMdEnabled(v === true)" color="primary" density="compact" hide-details /></label>
       <p class="hint">

@@ -40,7 +40,6 @@ interface ChatForm {
 // 与会话左栏那个 sessions-changed 是**两件事**，别合并（各自的读口不同）。
 const emit = defineEmits<{
   close: [];
-  "toggle-left": [];
   "sessions-changed": [deletedId?: string];
   "models-changed": [];
   "goto-session": [id: string];
@@ -64,7 +63,6 @@ const props = withDefaults(defineProps<{
 
 const api = sharedApi();
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
-const leftSvg = ICONS.panelLeft;
 
 function readState() {
   return { pending: true, ready: false, error: "", request: 0 };
@@ -112,13 +110,17 @@ function formError(page: keyof typeof formReads, stale = false): string {
 const settingsHome = useTemplateRef<InstanceType<typeof SettingsHome>>("settingsHome");
 const settingsTitle = useTemplateRef<HTMLHeadingElement>("settingsTitle");
 const settingsBody = useTemplateRef<HTMLDivElement>("settingsBody");
-const tab = ref(props.only || "home");
+const tab = ref<SettingsLocation["page"] | "home">(props.only || "home");
+// 目录切换不是页签。按需挂载，切页隐藏而不丢失搜索或编辑草稿。
+const visited = reactive(new Set([tab.value]));
 const activeTitle = computed(() => {
   if (tab.value === "home") return "设置";
   return SETTINGS_SECTIONS.find((s) => s.id === tab.value)?.label ?? "设置";
 });
 watch(() => props.only, (v) => {
   tab.value = v || "home";
+  visited.clear();
+  visited.add(tab.value);
   if (v !== "update") loadSettings();
   if (v === "agent") focusRequestedAgent();
 });
@@ -313,17 +315,20 @@ const editProvider = ref<ProviderView | "new" | null>(null); // null | 'new' | p
 // 渠道页本身也分两页：列表 / 全局模型规则（后者与列表同级，不塞进单个渠道的详情）。
 const providerTab = ref<"list" | "global">("list");
 
-const pendingAnchor = shallowRef<SettingsLocation | null>(null);
-watch(tab, () => { pendingAnchor.value = null; });
+// 合并后的对话页各分节分别到达；搜索目标出现就定位，不等待其它分节。
+const waitingForChatFields = computed(() => Object.values(formWaiting.value).some(Boolean));
+const pendingAnchor = shallowRef<string>();
+watch(tab, (page) => {
+  visited.add(page);
+  pendingAnchor.value = undefined;
+});
 watch(formWaiting, () => {
-  const target = pendingAnchor.value;
-  if (!target || formIsWaiting(target.page)) return;
-  pendingAnchor.value = null;
-  if (tab.value === target.page && document.activeElement === settingsTitle.value) focusSettingAnchor(target.anchor);
+  const anchor = pendingAnchor.value;
+  if (!anchor) return;
+  if (document.activeElement !== settingsTitle.value || focusSettingAnchor(anchor) || !waitingForChatFields.value) {
+    pendingAnchor.value = undefined;
+  }
 }, { flush: "post" });
-function formIsWaiting(page: SettingsLocation["page"]): boolean {
-  return (page === "defaults" || page === "context" || page === "generation") && formWaiting.value[page];
-}
 function focusSettingAnchor(anchor?: string): boolean {
   const target = anchor && settingsBody.value?.querySelector<HTMLElement>(`#setting-${CSS.escape(anchor)}`);
   if (!target) return false;
@@ -332,7 +337,7 @@ function focusSettingAnchor(anchor?: string): boolean {
   return true;
 }
 async function openSetting({ page, anchor }: SettingsLocation): Promise<void> {
-  pendingAnchor.value = null;
+  pendingAnchor.value = undefined;
   if (anchor === "global-model-rules") {
     editProvider.value = null;
     providerTab.value = "global";
@@ -342,14 +347,16 @@ async function openSetting({ page, anchor }: SettingsLocation): Promise<void> {
   if (tab.value !== page) return;
   if (settingsBody.value) settingsBody.value.scrollTop = 0;
   if (!focusSettingAnchor(anchor)) {
-    if (anchor && formIsWaiting(page)) pendingAnchor.value = { page, anchor };
+    if (anchor && page === "chat" && waitingForChatFields.value) pendingAnchor.value = anchor;
     settingsTitle.value?.focus({ preventScroll: true });
   }
 }
 async function backToDirectory(): Promise<void> {
   tab.value = "home";
   await nextTick();
-  if (tab.value === "home") settingsHome.value?.restoreFocus();
+  if (tab.value !== "home") return;
+  if (settingsBody.value) settingsBody.value.scrollTop = 0;
+  settingsHome.value?.restoreFocus();
 }
 const routesStatus = ref("");
 const pendingSessionExports = reactive(new Set<string>());
@@ -376,7 +383,7 @@ function loadChat(): Promise<void> {
   }, "读取对话设置失败");
 }
 async function saveChat(section: "context" | "generation"): Promise<void> {
-  if (formIsWaiting(section) || formError(section) || savingChat.value) return;
+  if (formWaiting.value[section] || formError(section) || savingChat.value) return;
   const num = (v: unknown): number | undefined => (String(v ?? "").trim() === "" ? undefined : Number(v));
   const form = { ...chat.value };
   savingChat.value = section;
@@ -761,6 +768,7 @@ function onKey(e: KeyboardEvent): void {
 <template>
   <section id="settings-view" :class="{ 'flow-agent-open': agentFlowOpen }">
     <div class="settings-bar">
+      <slot name="sidebar-toggle" />
       <SettingsBack v-if="!only && tab !== 'home'" label="返回设置目录" @back="backToDirectory" />
       <h2 ref="settingsTitle" class="settings-title" tabindex="-1">{{ activeTitle }}</h2>
       <CloseButton id="settings-close" label="退出设置" title="退出设置（Esc）" @click="$emit('close')" />
@@ -768,18 +776,9 @@ function onKey(e: KeyboardEvent): void {
 
     <div ref="settingsBody" class="settings-body">
       <div class="settings-box">
-        <div class="settings-cols">
-        <!-- 会话/渠道是**页面切换**，不是设置页签：key 随 only 变 ⇒ 重挂载、不跑 tab 滑入。
-             否则「渠道 → 设置」会从最后一个 window item 跳回 chat，方向反着走
-             （2026-11-06 用户报「有 Tab 效果，而且顺序是错的」）。 -->
-        <VTabsWindow v-model="tab" :key="props.only || 'settings'" class="settings-window">
-        <VTabsWindowItem v-if="!only" value="home">
-          <SettingsHome ref="settingsHome" @select="openSetting" />
-        </VTabsWindowItem>
-        <VTabsWindowItem value="defaults">
-        <section id="panel-defaults" class="panel">
-          <p class="settings-lead">只影响以后新建的会话；已有会话在对话顶栏或会话选项里修改。</p>
-
+        <div class="settings-cols" :key="props.only">
+        <SettingsHome v-if="!only && visited.has('home')" v-show="tab === 'home'" ref="settingsHome" @select="openSetting" />
+        <section v-if="visited.has('chat')" v-show="tab === 'chat'" id="panel-chat" class="panel">
           <RequestLoading v-if="formWaiting.defaults" label="读取新会话默认设置…" />
           <p v-else-if="formError('defaults')" class="status" role="alert">{{ formError('defaults') }}</p>
           <section v-else class="settings-card">
@@ -800,17 +799,6 @@ function onKey(e: KeyboardEvent): void {
             <span class="status" role="status">{{ defStatus }}</span>
           </div>
           </section>
-        </section>
-        </VTabsWindowItem>
-        <VTabsWindowItem value="appearance">
-          <AppearancePane section="appearance" @prefs-saved="emit('prefs-saved')" />
-        </VTabsWindowItem>
-        <VTabsWindowItem value="input">
-          <AppearancePane section="input" @prefs-saved="emit('prefs-saved')" />
-        </VTabsWindowItem>
-        <VTabsWindowItem value="context">
-        <section id="panel-context" class="panel">
-          <p class="settings-lead">调整消息加载、模型的输入预算以及自动压缩策略。</p>
 
           <RequestLoading v-if="formWaiting.context" label="读取上下文设置…" />
           <p v-else-if="formError('context')" class="status" role="alert">{{ formError('context') }}</p>
@@ -835,17 +823,12 @@ function onKey(e: KeyboardEvent): void {
           <p class="hint">块 = 一段完整对话；一次压几个块。默认 3，小步快跑更容易保持细节。</p>
           <label id="setting-compact-trigger" tabindex="-1" class="field"><span>压缩触发阈值（token）</span><VTextField density="compact" variant="outlined" hide-details v-model="chat.compact_trigger_tokens" type="number" min="1" placeholder="留空 = 输入预算的 80%" /></label>
           <p class="hint">填绝对值；留空按输入预算的 80% 计算。</p>
-          </section>
           <div class="row action-row">
             <VBtn color="primary" variant="flat" size="small" type="button" :loading="savingChat === 'context'" :disabled="!!savingChat" @click="saveChat('context')">保存上下文设置</VBtn>
             <span class="status" role="status">{{ chatStatus.context }}</span>
           </div>
+          </section>
           </template>
-        </section>
-        </VTabsWindowItem>
-        <VTabsWindowItem value="generation">
-        <section id="panel-generation" class="panel">
-          <p class="settings-lead">调整自动起标题，以及模型能否收到历史消息的思考过程。保存后从下一轮生效。</p>
 
           <RequestLoading v-if="formWaiting.generation" label="读取生成设置…" />
           <p v-else-if="formError('generation')" class="status" role="alert">{{ formError('generation') }}</p>
@@ -857,10 +840,7 @@ function onKey(e: KeyboardEvent): void {
           <p class="hint">标题只在会话标题为空时自动生成；用户手动改名后不再覆盖。</p>
           <label id="setting-title-model" tabindex="-1" class="field"><span>全局标题模型</span><VSelect v-model="chat.title_model" :items="titleSelectOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
           <p class="hint">默认「使用当前模型」；智能体里的起标题能力选「跟随全局设置」时读这里。</p>
-          </section>
-          <section class="settings-card">
-          <h3>历史思考</h3>
-          <p class="hint">历史思考是否回传由模型规则根据当前模型与实际启用的工具决定；思考内容仍会存档可看。</p>
+          <p class="hint">历史思考回传由「渠道与模型规则」决定；已存档的思考仍可查看。</p>
           <div class="row action-row">
             <VBtn color="primary" variant="flat" size="small" type="button" :loading="savingChat === 'generation'" :disabled="!!savingChat" @click="saveChat('generation')">保存生成设置</VBtn>
             <span class="status" role="status">{{ chatStatus.generation }}</span>
@@ -868,12 +848,7 @@ function onKey(e: KeyboardEvent): void {
           </section>
           </template>
         </section>
-        </VTabsWindowItem>
-        <VTabsWindowItem value="markdown">
-          <AppearancePane section="markdown" @prefs-saved="emit('prefs-saved')" />
-        </VTabsWindowItem>
-        <VTabsWindowItem value="provider">
-        <section id="panel-provider" class="panel">
+        <section v-if="visited.has('provider')" v-show="tab === 'provider'" id="panel-provider" class="panel">
           <RequestLoading v-if="providerRefreshes && (editProvider || providerTab === 'list') && !awaitingFirstRead('providers')" label="刷新渠道列表…" />
           <template v-if="!editProvider">
             <VTabs v-model="providerTab" class="agent-tabs" density="compact" align-tabs="start">
@@ -927,52 +902,7 @@ function onKey(e: KeyboardEvent): void {
           />
           <p v-if="editProvider && reads.providers.error" class="status" role="alert">{{ reads.providers.error }}</p>
         </section>
-        </VTabsWindowItem>
-        <VTabsWindowItem value="session">
-        <section id="panel-session" class="panel">
-          <p class="settings-lead">
-            管理已有会话：点击一行回到对话，或导出、删除；也可以从对话记录文件新建会话。
-          </p>
-          <RequestLoading v-if="awaitingFirstRead('sessions')" label="读取会话列表…" />
-          <h3 v-else-if="reads.sessions.ready">已有会话（{{ sessions.length }}）</h3>
-          <ul v-if="sessions.length" id="session-mgr-list" class="settings-list" aria-label="已有会话">
-            <li v-for="s in sessions" :key="s.id" class="settings-list-row">
-              <VBtn class="settings-list-entry manage-entry" variant="text" type="button" @click="gotoSession(s.id)">
-                <span class="settings-list-copy">
-                  <strong>{{ sessionTitle(s.title) }}</strong>
-                  <span class="manage-meta">
-                    <span>{{ s.messages }} 条消息</span>
-                    <span v-if="s.model" :title="`${s.provider}/${s.model}`">{{ s.model }}</span>
-                  </span>
-                </span>
-                <span class="settings-list-chevron" aria-hidden="true" v-html="ICONS.chevronRight"></span>
-              </VBtn>
-              <div class="manage-actions">
-                <VBtn variant="text" size="small" type="button" :loading="pendingSessionExports.has(s.id)" :disabled="pendingSessionExports.has(s.id)" @click="exportSessionRow(s)" :aria-label="`导出 ${sessionTitle(s.title)}`">导出</VBtn>
-                <VBtn variant="text" size="small" type="button" class="manage-delete" :loading="pendingSessionDeletes.has(s.id)" :disabled="pendingSessionDeletes.has(s.id)" @click="askDropSession(s.id, s.title)" :aria-label="`删除 ${sessionTitle(s.title)}`">删除</VBtn>
-              </div>
-            </li>
-          </ul>
-          <p v-else-if="reads.sessions.ready" class="manage-empty">还没有会话</p>
-          <p v-if="reads.sessions.error" class="status" role="alert">{{ reads.sessions.error }}</p>
-          <div class="row" v-if="sessionMgrStatus"><span class="status" role="status">{{ sessionMgrStatus }}</span></div>
-          <h3 id="setting-import-json" tabindex="-1">导入 MicroChat 对话</h3>
-          <div class="io-cards">
-            <div class="io-card">
-              <div class="io-head"><b>MicroChat 对话记录</b><i class="io-tag">.json</i></div>
-              <p class="hint">本应用导出的对话记录：标题、每条消息的说话人和正文（消息里的状态块会保留，导回去后状态照常重算），以及这条会话当时使用的渠道、模型和智能体（本机没有那个智能体会提示，人设回落到内置默认）。</p>
-              <div class="row">
-                <VBtn color="primary" variant="flat" size="small" type="button" :loading="importingJSON" :disabled="importingJSON" @click="jsonInput?.click()">选择 .json 文件…</VBtn>
-                <input ref="jsonInput" type="file" accept=".json" hidden @change="importJSONFile" />
-                <span class="status" role="status">{{ jsonStatus }}</span>
-              </div>
-            </div>
-          </div>
-          <p class="hint">导入只会<b>新建一条会话</b>，不会改动现有会话。</p>
-        </section>
-        </VTabsWindowItem>
-        <VTabsWindowItem value="agent">
-        <section id="panel-agent" class="panel">
+        <section v-if="visited.has('agent')" v-show="tab === 'agent'" id="panel-agent" class="panel">
           <p v-if="reads.agents.error" class="status" role="alert">{{ reads.agents.error }}</p>
           <RequestLoading v-if="awaitingFirstRead('agents')" label="读取智能体…" />
           <template v-else-if="reads.agents.ready && !editAgent">
@@ -1044,9 +974,7 @@ function onKey(e: KeyboardEvent): void {
           />
 
         </section>
-        </VTabsWindowItem>
-        <VTabsWindowItem value="prompt">
-        <section id="panel-prompt" class="panel">
+        <section v-if="visited.has('prompt')" v-show="tab === 'prompt'" id="panel-prompt" class="panel">
           <p v-if="reads.agents.error" class="status" role="alert">{{ reads.agents.error }}</p>
           <RequestLoading v-if="awaitingFirstRead('agents')" label="读取提示词片段…" />
           <template v-else-if="reads.agents.ready && !editSeg">
@@ -1082,9 +1010,50 @@ function onKey(e: KeyboardEvent): void {
 			@saved="onPromptSegmentSaved"
           />
         </section>
-        </VTabsWindowItem>
-        <VTabsWindowItem value="tavern">
-        <section id="panel-tavern" class="panel">
+        <AppearancePane v-if="visited.has('appearance')" v-show="tab === 'appearance'" @prefs-saved="emit('prefs-saved')" />
+        <section v-if="visited.has('session')" v-show="tab === 'session'" id="panel-session" class="panel">
+          <p class="settings-lead">
+            管理已有会话：点击一行回到对话，或导出、删除；也可以从对话记录文件新建会话。
+          </p>
+          <RequestLoading v-if="awaitingFirstRead('sessions')" label="读取会话列表…" />
+          <h3 v-else-if="reads.sessions.ready">已有会话（{{ sessions.length }}）</h3>
+          <ul v-if="sessions.length" id="session-mgr-list" class="settings-list" aria-label="已有会话">
+            <li v-for="s in sessions" :key="s.id" class="settings-list-row">
+              <VBtn class="settings-list-entry manage-entry" variant="text" type="button" @click="gotoSession(s.id)">
+                <span class="settings-list-copy">
+                  <strong>{{ sessionTitle(s.title) }}</strong>
+                  <span class="manage-meta">
+                    <span>{{ s.messages }} 条消息</span>
+                    <span v-if="s.model" :title="`${s.provider}/${s.model}`">{{ s.model }}</span>
+                  </span>
+                </span>
+                <span class="settings-list-chevron" aria-hidden="true" v-html="ICONS.chevronRight"></span>
+              </VBtn>
+              <div class="manage-actions">
+                <VBtn variant="text" size="small" type="button" :loading="pendingSessionExports.has(s.id)" :disabled="pendingSessionExports.has(s.id)" @click="exportSessionRow(s)" :aria-label="`导出 ${sessionTitle(s.title)}`">导出</VBtn>
+                <VBtn variant="text" size="small" type="button" class="manage-delete" :loading="pendingSessionDeletes.has(s.id)" :disabled="pendingSessionDeletes.has(s.id)" @click="askDropSession(s.id, s.title)" :aria-label="`删除 ${sessionTitle(s.title)}`">删除</VBtn>
+              </div>
+            </li>
+          </ul>
+          <p v-else-if="reads.sessions.ready" class="manage-empty">还没有会话</p>
+          <p v-if="reads.sessions.error" class="status" role="alert">{{ reads.sessions.error }}</p>
+          <div class="row" v-if="sessionMgrStatus"><span class="status" role="status">{{ sessionMgrStatus }}</span></div>
+          <h3 id="setting-import-json" tabindex="-1">导入 MicroChat 对话</h3>
+          <div class="io-cards">
+            <div class="io-card">
+              <div class="io-head"><b>MicroChat 对话记录</b><i class="io-tag">.json</i></div>
+              <p class="hint">本应用导出的对话记录：标题、每条消息的说话人和正文（消息里的状态块会保留，导回去后状态照常重算），以及这条会话当时使用的渠道、模型和智能体（本机没有那个智能体会提示，人设回落到内置默认）。</p>
+              <div class="row">
+                <VBtn color="primary" variant="flat" size="small" type="button" :loading="importingJSON" :disabled="importingJSON" @click="jsonInput?.click()">选择 .json 文件…</VBtn>
+                <input ref="jsonInput" type="file" accept=".json" hidden @change="importJSONFile" />
+                <span class="status" role="status">{{ jsonStatus }}</span>
+              </div>
+            </div>
+          </div>
+          <p class="hint">导入只会<b>新建一条会话</b>，不会改动现有会话。</p>
+        </section>
+        <UpdatePane v-if="visited.has('update')" v-show="tab === 'update'" :ask="ask" @prefs-saved="emit('prefs-saved')" />
+        <section v-if="visited.has('tavern')" v-show="tab === 'tavern'" id="panel-tavern" class="panel">
           <h3>酒馆</h3>
           <p class="hint">专门处理 SillyTavern 的预设、角色卡与聊天记录：预设可以解析并导入提示词片段，聊天记录可以导入成会话；角色卡转换还没接。</p>
           <section class="settings-card">
@@ -1128,17 +1097,10 @@ function onKey(e: KeyboardEvent): void {
               <label class="field"><span>标题</span><VTextField density="compact" variant="outlined" hide-details v-model="importTitle" placeholder="留空 = 用第一句话自动起名" /></label>
             </div>
         </section>
-        </VTabsWindowItem>
-        <VTabsWindowItem value="update">
-          <UpdatePane :ask="ask" @prefs-saved="emit('prefs-saved')" />
-        </VTabsWindowItem>
-        <VTabsWindowItem value="runner">
-          <section id="panel-runner" class="panel">
+          <section v-if="tab === 'runner'" id="setting-runner" tabindex="-1" class="panel">
             <h3>Runner 接入</h3>
             <p class="hint">预留配置外部执行机（Codex、Claude Code、Pi、OMP）的连接与授权入口。Runner 连接能力尚未接入。</p>
           </section>
-        </VTabsWindowItem>
-        </VTabsWindow>
       </div>
       </div>
     </div>

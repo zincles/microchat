@@ -76,9 +76,9 @@ code, pre, kbd, samp { font-family: var(--app-font-mono, ui-monospace, SFMono-Re
  * （命令面板/picker/确认框/toast/门板都以它为准 ⇒ 自动钉在键盘上沿）。没有 JS/var 时回落 100dvh→100vh。 */
 #app { display: flex; flex-direction: column; height: 100vh; height: var(--vvh, 100dvh); transform: translateY(var(--vvt, 0px)); gap: 0; padding: 0; box-sizing: border-box; position: relative; z-index: 1; }
 /* 主界面留白随文字缩放；重复操作与主控件各有一档命中尺寸。 */
-#app { --chat-space: calc(8px * var(--app-text-scale, 1)); --chat-action: 28px; --chat-control: 32px; }
+#app { --chat-space: calc(8px * var(--app-text-scale, 1)); --chat-action: 28px; --chat-control: 32px; --chat-nav-size: 40px; }
 @media (pointer: coarse) {
-  #app { --chat-action: 36px; --chat-control: 40px; }
+  #app { --chat-action: 36px; --chat-control: 40px; --chat-nav-size: 44px; }
 }
 .model-anchor { position: relative; flex: 1 1 auto; min-width: 0; display: inline-flex; }
 .model-btn { flex: 0 1 auto; min-width: var(--md-touch-target); max-width: 100%; min-height: 0; height: var(--chat-nav-size); display: inline-flex; align-items: center; gap: calc(var(--chat-space) / 2); border-radius: var(--md-shape-full); padding: 0 var(--chat-space); font: inherit; font-size: var(--md-type-title-small); font-weight: 500; line-height: 1.3; color: var(--md-on-surface); background: var(--md-surface-container); box-shadow: var(--md-elev-1); transition: background-color var(--md-dur-150) var(--md-ease-standard); }
@@ -90,14 +90,13 @@ code, pre, kbd, samp { font-family: var(--app-font-mono, ui-monospace, SFMono-Re
 .model-btn:focus-visible { outline: 2px solid var(--md-primary); outline-offset: -2px; }
 .model-btn-label { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-caret { flex: none; width: 0.45em; height: 0.3em; fill: currentColor; opacity: 0.55; }
-#chat-sidebar-toggle {
+#app #sidebar-open {
   flex: none; width: var(--chat-nav-size); height: var(--chat-nav-size); margin: 0; padding: 0;
-  border-radius: var(--md-shape-full); display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--md-shape-full);
   background: var(--md-surface-container); color: var(--md-on-surface-variant); box-shadow: var(--md-elev-1);
 }
-#chat-sidebar-toggle:hover { background: var(--md-surface-container-high); color: var(--md-on-surface); }
-#chat-sidebar-toggle:focus-visible { outline: 2px solid var(--md-primary); outline-offset: -2px; }
-@media (min-width: 701px) { #columns.chat-controls-visible #sessions-bar #toggle-left { display: none; } }
+#app #sidebar-open:hover { background: var(--md-surface-container-high); color: var(--md-on-surface); }
+#app #sidebar-open:focus-visible { outline: 2px solid var(--md-primary); outline-offset: -2px; }
 /* 输入栏的助手头像：每个助手按 ID 保持同一个首字与颜色。 */
 .agent-btn { position: relative; flex: none; padding: 0; border: none; border-radius: var(--md-shape-full); cursor: pointer; display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 600; box-shadow: none; }
 .composer-toolbar .agent-btn:hover { outline-color: var(--md-outline); }
@@ -541,18 +540,14 @@ code, pre, kbd, samp { font-family: var(--app-font-mono, ui-monospace, SFMono-Re
 #chat-col {
   --chat-inset: calc(3 * var(--chat-space));
   --chat-column: min(calc(100% - 2 * var(--chat-space)), var(--read-col, 840px));
-  --chat-nav-size: 40px;
   --chat-content-top: calc(var(--chat-controls-h, var(--chat-nav-size)) + var(--chat-space));
   --chat-content-bottom: calc(var(--composer-h, 7em) + 2 * var(--chat-space));
   flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; width: 100%; position: relative; overflow: hidden;
 }
-@media (pointer: coarse) {
-  #chat-col { --chat-nav-size: 44px; }
-}
 /* 透明定位容器不吃点击：只有左侧按钮、模型浮板和右侧切换各自可交互。 */
 #chat-controls { position: absolute; inset: 0 0 auto; z-index: 6; display: flex; align-items: center;
   padding: calc(var(--chat-space) / 2) calc(2 * var(--chat-space)) 0; gap: var(--chat-space); pointer-events: none; }
-#chat-controls :is(#chat-sidebar-toggle, .model-btn, .model-menu, .workspace-tabs) { pointer-events: auto; }
+#chat-controls :is(#sidebar-open, .model-btn, .model-menu, .workspace-tabs) { pointer-events: auto; }
 /* 滚动口占满工作区；阅读列和输入卡同宽，不再保留已不存在的头像占位。 */
 #messages-vue { flex: 1; overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
 #messages-vue:focus-visible { outline: 2px solid var(--md-primary); outline-offset: -2px; }
@@ -689,16 +684,6 @@ code, pre, kbd, samp { font-family: var(--app-font-mono, ui-monospace, SFMono-Re
 /* 标题 + 第二行（条数/最近活动）。第二行是为了**定位**：十条同标题的会话只看名字分不出来。 */
 .session-main { flex: 1; min-width: 0; display: flex; align-items: center; }
 .session-main .title { overflow: hidden; text-overflow: ellipsis; line-height: 1.2; }
-/* 行内只剩一枚「选项」（竖三点，2026-11-04 用户定）：设置与删除都收进浮板。
- * 命中区给足（视觉可以小，可点的盒子不能）；不再用 display:none 藏起来 ——
- * 会话一多，hover 才出现的键等于没有入口。 */
-.session-item .item-btn {
-  flex: none; width: 1.8em; height: 1.8em; padding: 0; display: inline-flex; align-items: center; justify-content: center;
-  color: var(--tg-hint); border-radius: 50%; line-height: 1; opacity: 0.55;
-  transition: color 120ms ease-out, background 120ms ease-out, opacity 120ms ease-out; }
-.session-item .item-btn:hover, .session-item .item-btn:focus-visible { background: var(--mix-8); color: var(--tg-text); opacity: 1; }
-.session-item.sel .item-btn { opacity: 0.8; }
-.session-item .item-btn svg { display: block; }
 /* 行内环（2026-11-05 用户定）：这条会话此刻有任务在跑。
  * 用边框旋转而不是 SVG —— 尺寸只由字号决定（外框定宽高，不会因为 line-height 变形成椭圆），
  * 深浅主题也不用第二套颜色。与「选项」键并存：环是状态、键是入口，别拿一个替掉另一个。
@@ -713,17 +698,6 @@ code, pre, kbd, samp { font-family: var(--app-font-mono, ui-monospace, SFMono-Re
   /* 不转也得看得出"它在忙"：留一道静止的缺口环。 */
   .session-item .session-busy { animation: none; }
 }
-/* 会话选项浮板：Teleport 到 body + fixed 定位（#session-list 自己会滚，absolute 会被裁）。 */
-.session-menu-backdrop { position: fixed; inset: 0; z-index: 70; }
-.session-menu {
-  position: fixed; z-index: 71; min-width: 9.5em; display: flex; flex-direction: column; gap: 0.1em;
-  padding: 0.25em; background: var(--tg-float); border-radius: var(--r-shell); box-shadow: var(--shadow-3); }
-.session-menu button {
-  display: block; width: 100%; box-sizing: border-box; text-align: left; background: none; border: none;
-  padding: 0.48em 0.65em; border-radius: var(--r-btn); color: var(--tg-text); font: inherit; line-height: 1.3; cursor: pointer; }
-.session-menu button:hover, .session-menu button:focus-visible { background: var(--mix-8); }
-.session-menu button:disabled { opacity: 0.5; cursor: default; background: none; }
-.session-menu button.danger { color: var(--tg-destructive); }
 /* —— 消息（2026-10-27 起**只有一种形态**：你发气泡、AI 回正文）——
  * 基础 `.msg` 只放两边共用的东西；**气泡那套（底色/圆角/内边距）只挂在 `.msg.user` 上**。
  * 从前这些挂在 `.msg` 基础规则上、由 `.msg.assistant` 一条条盖回去 —— 留下 `border-bottom-left-radius`
@@ -1103,10 +1077,12 @@ code, pre, kbd, samp { font-family: var(--app-font-mono, ui-monospace, SFMono-Re
 
 /* 滚动藏栏与返回最新同速，只用 transform。 */
 #chat-controls { transform: translateY(calc(-1 * var(--chrome-top, 0px))); }
+/* 左栏关闭时，打开入口不随聊天控件藏进屏外。 */
+#chat-controls > #sidebar-open { transform: translateY(var(--chrome-top, 0px)); }
 #composer { transform: translateX(-50%) translateY(var(--chrome-bottom, 0px)); }
-#chat-controls, #composer, .latest-jump { transition: transform var(--md-dur-100) var(--md-ease-standard); }
+#chat-controls, #chat-controls > #sidebar-open, #composer, .latest-jump { transition: transform var(--md-dur-100) var(--md-ease-standard); }
 @media (prefers-reduced-motion: reduce) {
-  #chat-controls, #composer, .latest-jump { transition: none; }
+  #chat-controls, #chat-controls > #sidebar-open, #composer, .latest-jump { transition: none; }
 }
 /* （2026-11-01：连接门板 / 登录那一整段样式随账号功能删了 —— `ConnectGate.vue` 早没了，
  * 这些规则只会让 `main.css` 里躺着一堆匹配不到的 id。需要时从 git 历史里捡。） */
@@ -1177,7 +1153,7 @@ code, pre, kbd, samp { font-family: var(--app-font-mono, ui-monospace, SFMono-Re
    `:has` 兜住那些没有 .icon-btn/.edit-btn 的裸按钮（本地已大量使用 :has）。 */
 .icon-btn:hover { color: var(--tg-text); background: var(--mix-8); }
 /* —— 设置视图（与对话同级；左栏右边那一整块，不是弹窗）—— */
-/* 一行式工具栏：去掉"悬浮卡"造型与"设置"标题（全屏页不需要它俩，tabs 自己就是路标）。 */
+/* 设置页头固定，只有 .settings-body 滚动。 */
 #settings-view { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 0.5em 0.6em 0; background: var(--md-surface); color: var(--md-on-surface); }
 .settings-bar { display: flex; align-items: center; gap: 0.4em; max-width: 960px; width: 100%; margin: 0 auto; }
 /* 单独入口（会话 / 渠道）的页头：没有 VTabs，标题吃掉中间空档。 */
@@ -1185,8 +1161,7 @@ code, pre, kbd, samp { font-family: var(--app-font-mono, ui-monospace, SFMono-Re
 .settings-bar .settings-tabs { flex: 1 1 auto; min-width: 0; }
 .settings-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0.55em 0.2em 1.5em; }
 .settings-box { max-width: 960px; margin: 0 auto; }
-/* Vuetify VTabsWindow：内容高度由当前面板决定；滚动仍交给 .settings-body。 */
-.settings-window, .agent-window { background: none; }
+.agent-window { background: none; }
 .agent-tabs { margin-bottom: 0.7em; }
 /* 分组标题（2026-11-02）：所有设置页（含二级编辑器）统一一种样子 —— 正文色半粗 + 左侧蓝色短竖条。
  * 从前只有卡片里的 h3 带竖条，其它 tab 的 h3 是裸文字 ⇒ 同一页两套标题语言（用户指出）。
@@ -1207,18 +1182,24 @@ code, pre, kbd, samp { font-family: var(--app-font-mono, ui-monospace, SFMono-Re
   color: var(--md-on-surface-variant); font-size: var(--md-type-body-small); line-height: 1.55; }
 .settings-lead b { color: var(--md-on-surface); font-weight: 600; }
 /* 目录、搜索结果及管理入口共用一套 MD3 列表。操作按钮保持为独立命中区。 */
-.settings-search { margin-bottom: calc(3 * var(--chat-space)); }
+.settings-search { margin-bottom: calc(2 * var(--chat-space)); }
 .settings-search-icon, .settings-list-chevron { display: inline-flex; flex: none; color: var(--md-on-surface-variant); }
-.settings-directory-group + .settings-directory-group { margin-top: calc(3 * var(--chat-space)); }
-.settings-cols .panel h3.settings-directory-label { color: var(--md-on-surface-variant); font-size: var(--md-type-label-large); margin: 0 0 var(--chat-space); padding-inline: calc(2 * var(--chat-space)); }
+.settings-directory-group + .settings-directory-group { margin-top: calc(2 * var(--chat-space)); }
+.settings-cols .panel h3.settings-directory-label {
+  color: var(--md-on-surface-variant); font-size: var(--md-type-label-large);
+  margin: 0; padding: 0 var(--chat-space) calc(var(--chat-space) / 2);
+}
 .settings-cols .panel h3.settings-directory-label::before { content: none; }
 .settings-list { list-style: none; margin: 0; padding: 0; background: var(--md-surface-container-low); border-radius: var(--md-shape-md); }
 .settings-list-row { display: flex; align-items: center; min-width: 0; gap: var(--chat-space); }
 .settings-list-row + .settings-list-row { border-top: 1px solid var(--md-outline-variant); }
 #app .settings-list-entry { flex: 1 1 0; min-width: 0; min-height: 64px; height: auto; padding: calc(1.5 * var(--chat-space)) calc(2 * var(--chat-space)); border-radius: var(--md-shape-sm); color: var(--md-on-surface); text-align: start; letter-spacing: normal; }
+#settings-home .settings-list { background: none; border-top: 1px solid var(--md-outline-variant); border-radius: 0; }
+#app #settings-home .settings-list-entry { min-height: 56px; padding: var(--chat-space); }
 .settings-list-entry .v-btn__content { display: flex; flex: 1 1 auto; align-items: center; min-width: 0; gap: var(--chat-space); white-space: normal; }
 .settings-list-entry:focus-visible, #settings-view [id^="setting-"]:focus { outline: 2px solid var(--md-primary); outline-offset: -2px; }
 .settings-list-icon { flex: none; width: 36px; aspect-ratio: 1; display: grid; place-items: center; border-radius: var(--md-shape-full); color: var(--md-on-secondary-container); background: var(--md-secondary-container); }
+#settings-home .settings-list-icon { width: 32px; background: var(--md-surface-container-high); color: var(--md-on-surface-variant); }
 .settings-list-copy { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; gap: calc(var(--chat-space) / 2); font-size: var(--md-type-body-large); line-height: 1.4; overflow-wrap: anywhere; }
 .settings-list-copy strong { color: var(--md-on-surface); font-weight: 500; }
 .settings-list-note { color: var(--md-on-surface-variant); font-size: var(--md-type-body-medium); }
@@ -1269,7 +1250,7 @@ code, pre, kbd, samp { font-family: var(--app-font-mono, ui-monospace, SFMono-Re
 .settings-cols .panel input:not([type="checkbox"]):not([type="radio"]):not(.v-field__input), .settings-cols .panel select:not(.v-field__input) { padding-top: 0.3em; padding-bottom: 0.3em; }
 /* 设置 / Agent 二级页保留原来的**分段胶囊 + 滑动底片**（2026-11-04 用户：
  * Vuetify VTabs 的 MD3 primary tabs；上下文三 tab 与顶栏聊天/上下文仍是下划线。 */
-/* 面板淡入（切页 120ms，opacity+位移，不碰 layout）。 */
+/* 设置窗格显示时短暂淡入，不参与高度计算。 */
 .settings-cols .panel { animation: panel-in 140ms ease-out; }
 @keyframes panel-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .settings-cols .panel { animation: none; } }
@@ -1279,7 +1260,7 @@ code, pre, kbd, samp { font-family: var(--app-font-mono, ui-monospace, SFMono-Re
 .settings-cols .panel h3 + .field, .settings-cols .panel h3 + .row,
 .settings-cols .panel > .field:first-child, .settings-cols .panel > .row:first-child { border-top: none; }
 /* 外层目录与子页统一阅读宽度，不给每个设置页另维护选择器。 */
-.settings-window > .v-window__container > .v-window-item > .panel {
+.settings-cols > .panel {
   max-width: 760px; margin-inline: auto;
 }
 .settings-card { background: none; border-radius: 0; padding: 0; margin: 0 0 1.4em; }
@@ -1315,9 +1296,9 @@ code, pre, kbd, samp { font-family: var(--app-font-mono, ui-monospace, SFMono-Re
 .settings-cols .panel .settings-card h3 { margin: 0.6em 0 0.2em; }
 .settings-cols .panel .settings-card .field { grid-template-columns: 190px 1fr; }
 .settings-cols .panel .settings-card .hint { margin: 0.35em 0 0.3em; }
-/* Markdown 分项与整组操作集中在独立页。 */
+/* Markdown 分项与整组操作在「外观与输入」的文本格式分节。 */
 #panel-markdown .md-group { margin-top: 0.55em; }
-#panel-markdown .md-group-head { padding: 0.55em 0 0.2em; border-top: 1px solid var(--line); color: var(--md-on-surface-variant); font-size: var(--md-type-label-large); }
+#panel-markdown .md-group-head { color: var(--md-on-surface-variant); font-size: var(--md-type-label-large); }
 #panel-markdown .md-group-ops { display: flex; flex-wrap: wrap; gap: calc(var(--chat-space) / 2); }
 #panel-markdown .md-row code.md-sample { color: var(--tg-hint); background: var(--mix-6); border-radius: var(--r-xs);
   padding: 0 0.25em; font-size: 0.9em; }
@@ -1373,7 +1354,7 @@ button:active { background: color-mix(in srgb, var(--md-on-secondary-container) 
 .icon-btn, .link-btn, button:has(> svg) { display: inline-flex; align-items: center; justify-content: center; }
 .icon-btn > svg, button > svg { display: block; }
 .icon-btn, .link-btn, .ctree-tw, .ctree-undo,
-.collapse-all, .session-item .item-btn,
+.collapse-all, .session-item :is(.item-btn, .favorite-btn),
 .model-item {
   background: none;
   border: none;
@@ -1499,19 +1480,33 @@ button.danger:hover { background: color-mix(in srgb, var(--md-error) 8%, transpa
   --md-state-color: var(--md-on-secondary-container); }
 #sessions-bar .session-main { position: static; flex: 1; min-width: 0; min-height: 0; align-self: stretch; display: flex; align-items: center;
   padding: 0; border: 0; background: transparent; color: inherit; font: inherit; letter-spacing: inherit; text-align: start; }
-/* 标题按钮的命中区铺满行；独立的选项键在上一层，隐藏时不截点击。 */
+/* 标题按钮的命中区铺满行；两个动作在上一层，隐藏时不截点击。 */
 #sessions-bar .session-main::before { content: ""; position: absolute; inset: 0; }
 #sessions-bar .session-main:focus-visible { outline: none; }
 #sessions-bar .session-main .title { overflow: hidden; text-overflow: ellipsis; line-height: 1.35; }
-#sessions-bar .session-item .item-btn { position: relative; z-index: 1; flex: none; width: var(--chat-action); height: var(--chat-action); padding: 0; opacity: 1;
-  display: inline-flex; align-items: center; justify-content: center; border: none; background: none;
-  color: var(--md-on-surface-variant); border-radius: var(--md-shape-full); cursor: pointer;
-  transition: background-color var(--md-dur-150) var(--md-ease-standard), color var(--md-dur-150) var(--md-ease-standard); }
-#sessions-bar .session-item.sel .item-btn { color: var(--md-on-secondary-container); opacity: 1; }
-#sessions-bar .session-item .item-btn:hover, #sessions-bar .session-item .item-btn:focus-visible { background: color-mix(in srgb, currentColor 8%, transparent); color: var(--md-on-surface); }
-#sessions-bar .session-item.sel .item-btn:hover, #sessions-bar .session-item.sel .item-btn:focus-visible { color: var(--md-on-secondary-container); }
-#sessions-bar .session-item .item-btn:active { background: color-mix(in srgb, currentColor 10%, transparent); }
-#sessions-bar .session-item .item-btn svg { display: block; width: 1.1em; height: 1.1em; }
+/* 保留盒子以固定标题宽度，并让键盘仍能聚焦藏起的动作。 */
+#sessions-bar .session-item :is(.item-btn, .favorite-btn) {
+  position: relative; z-index: 1; flex: none; width: var(--chat-action); height: var(--chat-action); padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--md-on-surface-variant); border-radius: var(--md-shape-full); opacity: 0; pointer-events: none;
+  transition: opacity var(--md-dur-150) var(--md-ease-standard), background-color var(--md-dur-150) var(--md-ease-standard), color var(--md-dur-150) var(--md-ease-standard);
+}
+#sessions-bar .session-item.sel :is(.item-btn, .favorite-btn) { color: var(--md-on-secondary-container); }
+#sessions-bar .session-item :is(.item-btn, .favorite-btn):is(:hover, :focus-visible) { background: var(--mix-8); color: inherit; }
+#sessions-bar .session-item :is(.item-btn, .favorite-btn):focus-visible { outline: 2px solid var(--md-primary); outline-offset: -2px; }
+#sessions-bar .session-item :is(.item-btn, .favorite-btn):active { background: var(--mix-10); }
+#sessions-bar .session-item .item-btn svg { width: 1.1em; height: 1.1em; }
+#sessions-bar .session-item .favorite-btn { font-size: 1.2em; line-height: 1; }
+#sessions-bar .session-item .favorite-btn[aria-pressed="true"] { color: var(--md-favorite); }
+#sessions-bar .session-item.sel :is(.item-btn, .favorite-btn),
+#sessions-bar .session-item :is(.item-btn, .favorite-btn):focus-visible,
+#sessions-bar .session-item :is(.item-btn[aria-expanded="true"], .favorite-btn[aria-pressed="true"]) { opacity: 1; pointer-events: auto; }
+@media (hover: hover) {
+  #sessions-bar .session-item:hover :is(.item-btn, .favorite-btn) { opacity: 1; pointer-events: auto; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #sessions-bar .session-item :is(.item-btn, .favorite-btn) { transition: none; }
+}
 
 /* 行内环：MD3 circular progress indicator（indeterminate，旋转 + dash 伸缩）。 */
 #sessions-bar .session-item .session-busy { position: relative; z-index: 1; flex: none; width: 1.1em; height: 1.1em;
@@ -1557,15 +1552,6 @@ button.danger:hover { background: color-mix(in srgb, var(--md-error) 8%, transpa
   #sessions-bar .md-linear-progress > span { animation: none; width: 100%; }
 }
 
-/* 会话选项浮板：MD3 menu（surface-container / 4dp 圆角 / elevation 2 / 48dp 行）。 */
-.session-menu { position: fixed; z-index: 71; min-width: 11em; display: flex; flex-direction: column;
-  padding: 0.35em 0; background: var(--md-surface-container); border-radius: var(--md-shape-xs); box-shadow: var(--md-elev-2); }
-.session-menu button { display: block; width: 100%; box-sizing: border-box; text-align: left; background: none; border: none;
-  min-height: 3.2em; padding: 0.7em 1em; color: var(--md-on-surface); font: inherit; font-size: var(--md-type-label-large); border-radius: 0;
-  line-height: 1.3; cursor: pointer; transition: background-color var(--md-dur-150) var(--md-ease-standard); }
-.session-menu button:hover, .session-menu button:focus-visible { background: color-mix(in srgb, var(--md-on-surface) 8%, transparent); }
-.session-menu button:active { background: color-mix(in srgb, var(--md-on-surface) 10%, transparent); }
-.session-menu button.danger { color: var(--md-error); }
 
 .model-search:focus { outline: none; }
 /* 输入框占位符用 on-surface-variant（MD3 支持文本色）。 */
@@ -1676,26 +1662,6 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not(.v-fiel
 #sessions-bar .brand-mark svg { width: 1.35em; height: 1.35em; display: block; }
 #sessions-bar .brand-name { font-size: 1.05em; font-weight: 500; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* —— 会话行「选项」键：未悬停 / 未选中 / 未聚焦就隐藏（2026-11-09 用户定，触屏也一样）——
- * 收起用 opacity + pointer-events，**不用 display:none**：盒子仍留在流里 ⇒ 行高与标题宽度不动，
- * 悬停时不会把标题挤一下再弹回（长列表里那一下非常扎眼）；键也仍可被 Tab 聚焦。
- * **触屏没有 hover ⇒ 只有当前这条会话（.sel）常亮**；想操作别的会话先点行选中它，再点三个点。
- * ⚠ 别再用 `@media (hover: none)` 放宽成"触屏常驻"—— PWA / 触屏报 hover 能力不一致时，
- *   那正是"所有三个点都显示"的形状（2026-11-09 用户实报）。
- * 悬停只在 `@media (hover: hover)` 里认；选中与键盘焦点是无条件规则。 */
-#sessions-bar .session-item .item-btn { opacity: 0; pointer-events: none;
-  transition: opacity var(--md-dur-150) var(--md-ease-standard),
-    background-color var(--md-dur-150) var(--md-ease-standard),
-    color var(--md-dur-150) var(--md-ease-standard); }
-#sessions-bar .session-item.sel .item-btn,
-#sessions-bar .session-item .item-btn:focus-visible { opacity: 1; pointer-events: auto; }
-@media (hover: hover) {
-  #sessions-bar .session-item:hover .item-btn,
-  #sessions-bar .session-item:focus-within .item-btn { opacity: 1; pointer-events: auto; }
-}
-@media (prefers-reduced-motion: reduce) {
-  #sessions-bar .session-item .item-btn { transition: none; }
-}
 
 
 /* 请求体覆盖（上下文圆环面板第三 tab，2026-11-10） */
@@ -2173,9 +2139,6 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not(.v-fiel
 #settings-view.flow-agent-open .settings-body { display: flex; flex-direction: column; overflow: hidden; }
 #settings-view.flow-agent-open .settings-box { flex: 1 1 auto; min-height: 0; max-width: none; display: flex; flex-direction: column; }
 #settings-view.flow-agent-open .settings-cols { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-#settings-view.flow-agent-open .settings-window { flex: 1 1 auto; min-height: 0; }
-#settings-view.flow-agent-open .settings-window > .v-window__container,
-#settings-view.flow-agent-open .settings-window .v-window-item { height: 100%; }
 #settings-view.flow-agent-open #panel-agent { max-width: none; height: 100%; }
 #settings-view.flow-agent-open #panel-agent .detail-pane { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 #settings-view.flow-agent-open .agent-window { flex: 1 1 auto; min-height: 0; }

@@ -1183,7 +1183,7 @@ Flow 的 `judge` 节点吃左侧 `state` 输入，节点配置里填 `provider`/
   不能只靠 `classList.toggle`：VNavigationDrawer 自己重渲染时会把手写 class 抹掉，表现是"点侧栏开关→关掉→立刻弹回"（2026-11-07 用户报）。
   ⚠ 直接在没有 VApp 的旧 `<aside>` 位置塞 VNavigationDrawer 会整栏不渲染（2026-11-06 实测）——必须保留 VApp 祖先。
   会话按**今天 / 昨天 / 一周内 / 一月内 / 更久**分组，高亮当前；每行一个「会话选项」菜单。`#content` 内聊天和设置互斥显示。
-  **聊天没有通栏顶栏。** `ChatControls.vue` 左上放会话栏开关和模型按钮，右上放工作区切换；中间无背景且不挡点击。桌面聊天由左上按钮开关侧栏，窄屏抽屉打开时由抽屉内按钮或遮罩收起。上下文环在输入卡内、发送键左侧。
+  **聊天没有通栏顶栏。** 左上是模型按钮，右上是工作区切换；中间无背景且不挡点击。左栏打开时只在栏内收起，关闭时在聊天、上下文／工作流、设置、关于与账户页显示打开按钮；窄屏也可点遮罩收起。上下文环在输入卡内、发送键左侧。
   聊天区的滚动口占满工作区；约束阅读宽度的是 `.messages-inner`，输入卡共用列宽。下方由 `--composer-h` 保留输入卡的实测高度，上方由 `--chat-controls-h` 给悬浮控件让位。
 - 接线全在 `src/App.vue`（SFC 直接挂模板）；`src/api/client.ts` 只调 `/api/v1`；`src/utils/` 放纯函数（contract 测试钉住请求形状）。
 - **TypeScript 迁移（2026-11-06，完成）**：`src/` 下**已经没有 `.js`**，23 个 `.vue` 全部
@@ -1329,7 +1329,7 @@ Flow 的 `judge` 节点吃左侧 `state` 输入，节点配置里填 `provider`/
   仅宽屏非粗指针的空草稿把欢迎语与输入卡靠在一起。有开场白、已有消息、窄屏或粗指针时输入卡贴底。命令菜单与会话选择浮层按实际输入卡位置对齐。
 - **会话列表只留标题**（2026-11-04 用户定：「除了标题，其他啥元数据也不需要」）：`#session-list` 自己留 `0.25em 0.45em` 内边距；条目**只显示标题**（消息条数、相对时间都删了；`relativeTime` 纯函数也删）；关闭/设置两枚按钮改成线性图标（`ICONS.x` / `ICONS.settings`），圆形幽灵按钮、hover 才给底。
   「查找会话」只过滤已加载的标题（忽略大小写和首尾空白），不搜正文、不发搜索请求。标题和行尾选项是两个独立按钮；上下键移动焦点、回车打开，Esc 清除查找并回到入口。移动端打开会话后收起抽屉。
-  **行尾「选项」三个点默认隐藏**：未悬停 / 未选中 / 未聚焦就 `opacity:0 + pointer-events:none`（**触屏也一样**；触屏先点行选中它，再点三个点）。只有 `:hover`（`@media (hover:hover)`）、`:focus-visible` 与 `.sel` 当前会话无条件点亮。⚠ **别再加 `@media (hover:none)` 的"触屏常驻"例外** —— PWA / 触屏对 hover 能力的报告不一致，2026-11-09 实报「所有三个点都显示」，根因就是那条例外。
+  **星标与三点菜单共用可见规则**：当前会话、鼠标悬停或键盘聚焦时显示；已收藏的金黄色实星及正在展开的三点入口常亮。闲置时用 `opacity:0` 与 `pointer-events:none` 保留布局和键盘可达性。触屏不全量点亮；先选会话再操作。
   **有任务在跑的行，标题右侧一枚小环**（2026-11-05 用户定：「如果一个对话有正在运行的 TASK，那么这个对话在左侧对话列表里，就应该有些反应」）：判定在 `utils/tasks.ts` 的 `busySessionIds`（唯一处）—— 取 `/tasks` 同一拍的快照里 `finished_at` 为空且带 `session` 的原子任务，外加队列 `current.session_id`（两步之间可能短暂没有原子任务）；**已完成的不算**（面板还会把记录列一阵子，那是账不是状态）。App 在 `refreshTasks` 里算好、经 `:busy-ids` 传给 `SessionBar`；读不到 `/tasks` 就清空（别留一条永远转的假象）。样式 `.session-busy`：边框旋转、尺寸随字号、`prefers-reduced-motion` 下停转但保留缺口环。
 - **消息列只挂窗口**（2026-10-10 加，防浏览器被撑炸）：进入会话只拉**最后 `history_window` 段**（默认 **5**；段 = 一条消息或**一张顶层摘要卡**，所以原始消息通常 ≤5）；更老的按 `↑ 加载更多历史` 一页一页往回（一页也这么多；值来自 `chat.history_window`，设置 → 聊天可改；插入前记高度、插完补回滚动锚）。**被摘要盖住的原文一个字节都不取**（按"消息段"拼连续区间，走 `POST /messages/batch` 一发拿全；摘要段整段跳过）；`查看未压缩文本` **按下才拉**（每次按下都拉新的一版，不吃旧缓存）。总数拿 `?last=1` 问尾条（比会话列表计数新鲜）；`reloadWindow` = 按最新段布局重拉当前窗口（一轮结束/编辑/删除/压缩/切版后），起点先 `alignWindowFrom` 对回段边界。**压缩树 tab 是例外**：看着它才拉**全量**消息+摘要建树（分析视图 = 用户显式要全量）。
 - **PWA（可安装）**：`vite-plugin-pwa` 只在 build/preview 启用 Service Worker；预缓存壳，`/api` 不缓存。安装要求 HTTPS 或 localhost。`frontend/web/public/favicon.svg` 是图标源；改图后用 `frontend/web/scripts/render-app-icons.sh` 同步生成 `src/assets/app-icons` 的普通、可遮罩与 iOS PNG。位图 URL 随内容变化：Chrome 按清单中的 `icons` 字段识别变化，原地址换字节不足以更新已安装图标。保留 manifest 地址、scope 与 start_url；已有图标的确认或重新安装由浏览器管理。
@@ -1390,7 +1390,7 @@ Flow 的 `judge` 节点吃左侧 `state` 输入，节点配置里填 `provider`/
   （`.bar-head` / `.empty` 是共享类，直接改会波及上下文工作区）。左栏结构 = MD3 navigation drawer：
   顶部**占满栏宽**的 segmented button（对话 / 生图 / 项目，VBtnToggle）+ 标准 icon button；新建 = **extended FAB**（primary-container、elevation 1→2、按下 scale）；
   列表 = 48dp 行、full 圆角、选中 secondary-container、`::after` 状态层（内容 z-index 压在它上面）；
-  底部 = navigation drawer item；选项浮板 = MD3 menu（surface-container / 4dp 圆角 / elevation 2 / 48dp 行）。
+  底部 = navigation drawer item；会话选项和输入栏菜单共用锚定的 `VMenu` 开合动效，滚动后关闭会话选项。
   **忙碌环**改成 MD3 circular progress indicator：SVG 双圆（track 18% + arc），旋转 + dash 伸缩（`session-busy-dash`），
   reduced-motion 停转但保留缺口弧。**加载效果**：`sessionsLoading` → 6 条 shimmer 骨架（`aria-busy` 同步），
   `sessionsRefreshing` → header 下 3dp indeterminate linear progress。刷新和插入会话不重播整条列表的入场动画。
@@ -1503,7 +1503,7 @@ Flow 的 `judge` 节点吃左侧 `state` 输入，节点配置里填 `provider`/
   自动更新 / 拉取并重启），右边「前端缓存（PWA）」；**关于 MicroChat** 独立收底
   （项目一句话 + 作者 Zincles / DeepSeekV4.1Flash + GitHub 链接）。
   **左上角品牌头可点击**（2026-11-11 用户定）：点它直接 `openManage('update')`；完整设置目录里
-  也有「更新」入口（`SETTINGS_SECTIONS` 最后一项），底部不再有更新入口。
+  也有「关于与更新」入口；其中的品牌图标使用按钮可用内框，不改全局图标尺寸。
   **PWA / 已安装应用**：显示当前页面构建时间（`__BUILD_ID__`）、服务器最新（`GET /build.json`，`cache: no-store`）与
   Service Worker 状态；「检查 PWA 更新」调 `registration.update()`（autoUpdate 下可能直接激活），「更新并刷新」走 `startUpdate()`
   （skipWaiting → controlling → reload），另有「强制重新加载」（注销 SW + 清 Cache Storage + reload，先确认）。
@@ -1563,9 +1563,9 @@ Flow 的 `judge` 节点吃左侧 `state` 输入，节点配置里填 `provider`/
   没接 / 空串 ⇒ 保持原文。TestFlow 同样把 `user` 回报给编辑器。
   **FlowAgent 现在会出现在会话的助手切换器、会话设置、默认助手和命令面板里**；
   它的聊天运行时第一版只保证「发一条消息得到一条 assistant」，流式/工具/专用上下文预览仍待接线。
-- **设置目录（2026-11-27 重排）**：`SettingsHome.vue` 首页按五类列出设置入口，点类别进入该类的页面列表，再选具体设置；返回设置时回到类别目录。五类及页面映射：**用户配置**（新会话默认、输入与发送、渠道与模型规则、智能体、提示词片段）；**外观**（主题 / 字体 / 背景、消息 Markdown 渲染）；**数据**（会话列表与 MicroChat 导入导出）；**系统设置**（上下文与压缩、生成与标题、更新）；**外部**（酒馆预设 / 聊天导入、Runner 接入预留）。
+- **设置目录**：五类在 `SettingsHome.vue` 同页平铺，类别只作标题；点条目直接进入。**用户配置**（对话、渠道与模型规则、智能体、提示词片段）；**外观**（外观与输入）；**数据**（会话与 MicroChat 导入导出）；**系统设置**（关于与更新）；**外部**（酒馆、Runner）。「对话」合并新会话默认、上下文与压缩、生成与标题；「外观与输入」合并主题/字体/背景、输入与发送、消息渲染。
   Runner 页只保留外部执行机（Codex / Claude Code / Pi / OMP）的连接与授权入口说明；不伪装成已接入的执行能力。
-  `SETTINGS_SECTIONS` 独立维护 `VTabsWindowItem` 注册顺序，必须与 `SettingsModal.vue` 的 DOM 顺序一致（home / defaults / appearance / input / context / generation / markdown / provider / session / agent / prompt / tavern / update / runner）。类别归档与 window 注册顺序分开维护，避免 Vuetify 根据 window item 索引计算的滑入方向反转。
+  顶层目录和子页不是页签：按需挂载，隐藏时保留查询与编辑草稿；只有 `.settings-body` 滚动，避免搜索定位污染内层窗格的滚动位置。渠道与智能体内部的真实页签仍用 Vuetify。
   设置页的 Vuetify 文本框可垂直调整高度；Flow 画布里的字段不参与，避免拖动文本框意外改变节点布局。每个设置仍按原有保存按钮或自动保存逻辑写回配置。
   「会话设置」仍是紧凑对话框（560px、高随内容）；Esc 一次只关一层。Agent 编辑器仍用独立页签（基本 / 系统提示词 / 每个能力一页），保存行在页签外；会话管理、删除确认、Markdown 类型清单等行为不变。
 - **渠道详情里的模型清单**（2026-11-02 用户定：「具体某个模型的界面里，应该能看到当前这个渠道导入的模型的列表」）：
@@ -1585,7 +1585,7 @@ Flow 的 `judge` 节点吃左侧 `state` 输入，节点配置里填 `provider`/
   全局规则页分两段：**系统内置规则**（只读，开关启停，不显示编辑/删除/排序）与**用户规则**（可编辑）。
   内建 grok/GPT/Gemini 的搜索规则、DeepSeek 本地工具都在内置段里；用户规则在内置之后应用，可覆盖字段。
   空态说清「保存并刷新后会出现在这里」。
-- **设置保存范围**：新会话默认独立保存，只影响新会话；上下文与生成分开保存，通过读最新聊天配置保留另一页的设置，不改写已有消息。需要重拉模型或修改资料的入口在动作旁说明影响。
+- **设置保存范围**：在同一对话页分节保存。新会话默认只影响新会话；保存上下文或生成前读最新聊天配置，保留另一分节的已保存值，不改写已有消息。
 - **设置页平铺列表**（2026-11-04 统一设计系统）：`.settings-card` 只剩分节容器（无底色/圆角/内边距），字段行之间一条 `--line`；不再“卡片套卡片”。**tab 仍是 Vuetify**（2026-11-06 用户定「用真正的 Vuetify TabBar/TabItem」）：Agent 二级页用 `VTabs`（MD3 primary tabs + slider + tabpanel）；上下文三 tab（压缩内再三个子 tab）与顶栏聊天·上下文也是 `VTabs`；都由 `VTabsWindow` 做左右滑动。设置顶层改成目录列表（`SettingsHome.vue`），不再抢一行 tab。窄屏把 `v-tab` 压到 `min-width:0`，放得下（不再靠 show-arrows 吃 104px）。
 **设置目录、子页与渠道/智能体管理页统一 760 居中**（列表页有表格，但切页时宽度不该跳来跳去；会话管理在设置目录里）。**所有 `h3` 统一一种标题语言**：正文色半粗 + 左侧蓝色短竖条（从前只有卡片里的 h3 有竖条，其它 tab 是裸文字 —— 用户指出不一致）。「输入」卡里是 **发送方式（`enter` / `shift-enter` / `button`）**、输入时预览、命令菜单 —— 这三格在 2026-11-01 从用户视图搬进 `AppearancePane` 时 **refs 与 persist 都搬了、模板整段漏了**（界面上找不到，2026-11-02 补回）。开关一律 `:model-value` + `setX(v) { ref = v; persist(); }`，**别写 `v-model + @update:model-value="persist"`** —— 两个监听同挂 update 时显式那个可能先跑，存进去的是旧值（实测：界面 on、服务端 off）。
 - **设置移动端**（2026-11-20）：表格（会话 / 智能体 / 提示词 / 渠道 / 酒馆）在 ≤700px 变成**一行一卡** ——
