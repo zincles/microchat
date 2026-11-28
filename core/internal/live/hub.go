@@ -95,6 +95,13 @@ func (h *Hub) Heartbeat(clientID string) (int, error) {
 func (h *Hub) PublishSessionChanged(sessionID string) { h.publishSession("session_changed", sessionID) }
 func (h *Hub) PublishSessionDeleted(sessionID string) { h.publishSession("session_deleted", sessionID) }
 
+// PublishAgentsChanged 通知所有订阅者重新校验智能体和提示词片段。
+func (h *Hub) PublishAgentsChanged() {
+	h.mu.Lock()
+	h.broadcastLocked(Event{Name: "agents_changed"})
+	h.mu.Unlock()
+}
+
 func (h *Hub) publishSession(name, sessionID string) {
 	h.mu.Lock()
 	h.revision++

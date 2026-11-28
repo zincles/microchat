@@ -100,7 +100,7 @@ func (s *Server) listSummaries(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireSession(w, r); !ok {
 		return
 	}
-	summaries, err := s.store.ListSummaries(r.PathValue("session_id"))
+	summaries, revision, err := s.store.ListSummariesWithRevision(r.PathValue("session_id"))
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -109,6 +109,7 @@ func (s *Server) listSummaries(w http.ResponseWriter, r *http.Request) {
 		summaries = []model.Summary{}
 	}
 	annotateUndo(summaries)
+	w.Header().Set("X-Microchat-History-Revision", revision)
 	writeJSON(w, http.StatusOK, summaries)
 }
 

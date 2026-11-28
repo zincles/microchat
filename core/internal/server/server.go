@@ -220,7 +220,7 @@ func withCORS(next http.Handler) http.Handler {
 			header.Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 		}
 		header.Set("Access-Control-Max-Age", "600")
-		header.Set("Access-Control-Expose-Headers", "Allow")
+		header.Set("Access-Control-Expose-Headers", "Allow, ETag, X-Microchat-History-Revision")
 		// 预检在这里终结：204、无体，绝不落到鉴权/路由。
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
@@ -281,11 +281,12 @@ func (s *Server) listMessages(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	messages, err := s.store.ListMessagesWindow(r.PathValue("session_id"), window)
+	messages, revision, err := s.store.ListMessagesWindowWithRevision(r.PathValue("session_id"), window)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		writeStoreError(w, err)
 		return
 	}
+	w.Header().Set("X-Microchat-History-Revision", revision)
 	writeMessageList(w, messages)
 }
 
@@ -321,11 +322,12 @@ func (s *Server) listMessagesBatch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	messages, err := s.store.ListMessageRanges(r.PathValue("session_id"), req.Ranges)
+	messages, revision, err := s.store.ListMessageRangesWithRevision(r.PathValue("session_id"), req.Ranges)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		writeStoreError(w, err)
 		return
 	}
+	w.Header().Set("X-Microchat-History-Revision", revision)
 	writeMessageList(w, messages)
 }
 

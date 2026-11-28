@@ -87,6 +87,9 @@ func (s *Store) migrate() error {
 	if err := s.ensureSessionRequestOverrides(); err != nil {
 		return err
 	}
+	if err := s.ensureHistoryRevision(); err != nil {
+		return err
+	}
 	if err := s.ensureMessageMetadata(); err != nil {
 		return err
 	}
