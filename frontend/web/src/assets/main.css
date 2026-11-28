@@ -991,8 +991,8 @@ code, pre, kbd, samp { font-family: var(--app-font-mono, ui-monospace, SFMono-Re
 #app :is(.msg-ops, .sum-ops) .v-btn { flex: none; width: var(--chat-action); min-width: var(--chat-action); height: var(--chat-action); min-height: var(--chat-action); padding: 0; color: var(--md-on-surface-variant); }
 /* 放大触摸目标，不同比放大里面的图标。 */
 .msg-ops .v-btn--icon svg { max-width: calc(20px * var(--app-text-scale, 1)); }
-/* 加载按钮的插槽铺满按钮，让 SVG 的 65% 不按内层窄 span 计算。 */
-:is(.msg-ops .v-btn--icon, .sum-ops .v-btn--icon, .ctree-undo) :is(.v-btn__content, .v-btn__content > span) {
+/* 图标按按钮宽度缩放，Vuetify 的插槽与图标外层不能按固有宽度收缩。 */
+:is(.msg-ops .v-btn--icon, .sum-ops .v-btn--icon, .ctree-undo, .sidebar-toggle) :is(.v-btn__content, .v-btn__content > span) {
   display: flex; align-items: center; justify-content: center; width: 100%;
 }
 #app .msg-ops .v-btn:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
@@ -2070,7 +2070,7 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not(.v-fiel
 .v-btn svg { width: 1.45em; height: 1.45em; display: block; }
 /* 图标按钮：SVG 以按钮内容盒为基准铺开（原先固定 14px，落在 34–40px 按钮里像缩成一小坨）。 */
 .v-btn.v-btn--icon svg { width: 65%; height: auto; }
-.icon-btn svg { width: 62%; height: auto; display: block; }
+.icon-btn svg, .sidebar-toggle.v-btn--icon svg { width: 62%; height: auto; display: block; }
 .flow-text-value { display: flex; flex-direction: column; gap: 0.3em; margin-top: 0.4em; }
 .flow-text-value .v-field__input { font-size: var(--md-type-label-small); line-height: 1.45; }
 .flow-judge-controls { display: flex; flex-direction: column; gap: 0.35em; margin-top: 0.45em; }

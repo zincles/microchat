@@ -8,12 +8,8 @@ const label = computed(() => expanded ? "收起会话栏" : "打开会话栏");
 </script>
 
 <template>
-  <VBtn type="button" class="icon-btn" icon variant="text" :title="label" :aria-label="label"
+  <VBtn type="button" class="icon-btn sidebar-toggle" icon variant="text" :title="label" :aria-label="label"
     :aria-expanded="expanded" aria-controls="sessions-bar">
-    <span class="sidebar-toggle-glyph" aria-hidden="true" v-html="ICONS.panelLeft"></span>
+    <span aria-hidden="true" v-html="ICONS.panelLeft"></span>
   </VBtn>
 </template>
-
-<style scoped>
-.sidebar-toggle-glyph { display: inline-flex; }
-</style>
