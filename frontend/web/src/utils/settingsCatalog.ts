@@ -23,7 +23,7 @@ export const SETTINGS_GROUPS: SettingsCategoryDefinition[] = [
     { id: "prompt", label: "提示词片段", desc: "可复用的提示词片段库", icon: "notebookPen" },
   ] },
   { label: "外观", pages: [
-    { id: "appearance", label: "外观与输入", desc: "主题、字体、发送方式与消息渲染", icon: "themeAuto" },
+    { id: "appearance", label: "外观与输入", desc: "主题风格、亮暗、字体、输入与渲染", icon: "themeAuto" },
   ] },
   { label: "数据", pages: [
     { id: "session", label: "会话", desc: "查看会话、导入与导出记录", icon: "list" },
@@ -50,7 +50,8 @@ const FIELDS = [
   ["chat", "default-provider", "默认渠道", "服务商 接口 provider"],
   ["chat", "default-model", "默认模型", "新建对话 模型 model"],
   ["chat", "default-agent", "默认智能体", "新建对话 默认助手 人设 agent"],
-  ["appearance", "theme", "主题", "颜色 配色 暗色 深色 亮色 浅色 跟随系统 theme"],
+  ["appearance", "theme-style", "界面风格", "主题 MD3 Material 3 Miuix MIUI HyperOS"],
+  ["appearance", "theme", "颜色模式", "主题 颜色 配色 暗色 深色 亮色 浅色 自动 跟随系统 theme"],
   ["appearance", "scale", "界面缩放", "字号 字体大小 放大 缩小 scale"],
   ["appearance", "font-body", "标准字体", "正文字体 font"],
   ["appearance", "font-mono", "等宽字体", "代码块 等宽 font mono"],

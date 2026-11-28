@@ -161,6 +161,38 @@ func TestPrefsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPrefsThemeStyleAndColorMode(t *testing.T) {
+	server, paths := prefsSandbox(t)
+	file := paths.Config("prefs.json")
+	if err := os.WriteFile(file, []byte(`{"theme":"dark"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	legacy := getPrefsView(t, server)
+	if legacy.Prefs.Theme != "dark" || legacy.Prefs.ThemeStyle != "md3" || legacy.Defaults.ThemeStyle != "md3" {
+		t.Fatalf("旧偏好应保留暗色并采用 MD3：%+v", legacy.Prefs)
+	}
+	for _, pair := range [...]struct{ style, mode string }{{"miuix", "dark"}, {"miuix", "auto"}, {"md3", "auto"}} {
+		body := `{"theme_style":"` + pair.style + `","theme":"` + pair.mode + `"}`
+		if recorder := call(server, "PUT", "/api/v1/config/prefs", body); recorder.Code != http.StatusOK {
+			t.Fatalf("保存 %s/%s 失败：%d %s", pair.style, pair.mode, recorder.Code, recorder.Body.String())
+		}
+		if got := getPrefsView(t, server).Prefs; got.Theme != pair.mode || got.ThemeStyle != pair.style {
+			t.Fatalf("亮暗与风格应独立读回：%+v", got)
+		}
+	}
+	before, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recorder := call(server, "PUT", "/api/v1/config/prefs", `{"theme_style":"unknown","theme":"light"}`); recorder.Code != http.StatusUnprocessableEntity || !strings.Contains(recorder.Body.String(), "theme_style") {
+		t.Fatalf("未知风格应明确报 422：%d %s", recorder.Code, recorder.Body.String())
+	}
+	after, err := os.ReadFile(file)
+	if err != nil || !bytes.Equal(after, before) {
+		t.Fatalf("被拒绝的风格改写了偏好：%s（%v）", after, err)
+	}
+}
+
 func TestPrefsBrandDefaultsForLegacyAndEmptyValues(t *testing.T) {
 	server, paths := prefsSandbox(t)
 	if err := os.WriteFile(paths.Config("prefs.json"), []byte(`{"theme":"dark"}`), 0o600); err != nil {

@@ -7,8 +7,8 @@ import { installRipple } from "./utils/ripple.ts";
 import { installVuetifyThemeBridge, vuetify } from "./plugins/vuetify.ts";
 
 const app = createApp(App);
-app.use(vuetify);
 installVuetifyThemeBridge();
+app.use(vuetify);
 app.mount("#app");
 // MD3 波纹：事件委托装一次（新按钮/列表行自动生效，不需要逐个接线）。
 installRipple();

@@ -13,7 +13,7 @@ import { installViewportFit } from "./utils/viewport.ts";
 import { thinkingOptions, thinkingLevelsForModel } from "./utils/thinking.ts";
 import { forgetWindow } from "./utils/windowcache.ts";
 import { createSessionDrafts, type DraftReceipt } from "./utils/sessionDrafts.ts";
-import { sharedApi, previewOn, payloadPreviewOn, applyTheme, wantsSend, apiBase, apiBaseCandidates, saveNetPrefs, lastSessionId, saveLastSession, commandMenuOn, applyTextScale, applyFonts, chromeHideOn, syncPrefs, prefsSnapshot, userName as macroUserName } from "./utils/prefs.ts";
+import { sharedApi, previewOn, payloadPreviewOn, wantsSend, apiBase, apiBaseCandidates, saveNetPrefs, lastSessionId, saveLastSession, commandMenuOn, applyTextScale, applyFonts, chromeHideOn, syncPrefs, prefsSnapshot, userName as macroUserName } from "./utils/prefs.ts";
 import { macroMap } from "./utils/macros.ts";
 import { formatDebugPayload } from "./utils/flow.ts";
 import { deletionPlanSummary, whoText } from "./utils/format.ts";
@@ -67,7 +67,6 @@ type ConfirmText = (plan: DeletionPlan) => string;
 
 const api = sharedApi();
 const agentsLibrary = createAgentsLibraryResource(api);
-applyTheme();
 applyBackground();
 // 界面缩放（2026-10-28）：同样**开机第一帧就得对** —— 晚一帧就是"字先小一下再变大"的闪。
 // 它写在根节点的 `style` 上（`--app-text-scale`），theme.css 的 body 字号吃这一格。

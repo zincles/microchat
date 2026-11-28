@@ -353,10 +353,11 @@ delete(AA)           # 删除
   是作业上限，最终并发 = min(作业值, 该渠道剩余槽位)。
 - `prefs.json` — **界面偏好**（2026-11-01 用户定「所有设置均存储在服务器上」）。
   它**由程序写**（不是手写配置，虽然也能手改）：改设置就整份重写，0600。
-  形状：`{ "markdown": {"enabled": true, "disabled": ["table", "image"]}, "theme": "dark",
+  形状：`{ "markdown": {"enabled": true, "disabled": ["table", "image"]}, "theme": "dark", "theme_style": "md3",
   "brand_name": "MicroChat", "brand_icon": "spark", "welcome_text": "有什么想聊的？",
   "text_scale": "1.1", "font_body": "", "font_mono": "", "user_name": "你", "background": {"kind":"file","version":"…"},
   "send": "enter", "preview": true, "payload_preview": true, "command_menu": false, "chrome_hide": true, … }`。
+  `theme` 保留原有颜色模式（`light` / `dark` / `auto`）；`theme_style` 独立选 `md3` / `miuix`。旧文件缺省 `md3`，未知风格写入返回 422，文件里有未知风格则读时点名报错。
   品牌文字写入时 trim；空值回默认，名称最多 32 个 Unicode 字符、欢迎语最多 120 个；图标仅 `spark` / `chat` / `bot` / `messagePlus`。
   ⚠ **改完立刻刷新不能丢**（2026-11-04 用户报界面缩放总回 115%）：偏好回写有 250ms 防抖，
   但 `flushPrefs()` 会在滑杆 `change`、`pagehide`、`visibilitychange(hidden)` 时取消防抖并**带
@@ -885,7 +886,7 @@ MicroChat 没有登录、账号、会话归属或应用内鉴权；`Authorizatio
 | DELETE | `/agents/{agent_id}` | — | 204 | 内置默认 agent 不可删 |
 | POST | `/agents/{agent_id}/flow/test` | `{message,provider?,model?}` | `FlowTestResult` · 200 | **FlowAgent 编辑器的测试发送**：只跑一次图，不建会话、不落库；agent 节点用一次性临时会话走真实提示词拼装 + 上游 Complete；返回 `{output,steps:[{id,type,label,inputs,output,reasoning,error}]}`。provider/model 省略 ⇒ config defaults |
 | GET | `/config/prefs` | — | `{prefs, markdown_types, defaults}` | **界面偏好**（2026-11-01 起住服务器）。<br>**`markdown_types` 是语法清单的唯一权威**（`[{id,name,kind,sample}]`）—— 界面据此排开关，**不许前端另抄一张**（少一条就留个点不动的死开关，多一条就是个后端不认识的选项）。<br>`defaults` = 出厂值（界面"恢复默认"与前端缺省都读它）。<br>⚠ 文件坏了（未知类型 / 坏背景）**直接报错**，不悄悄回落全默认 —— 那等于"用户的开关自己全开了"而他一点线索都没有 |
-| PUT | `/config/prefs` | `Prefs` | 同上 | **整份替换**（偏好是一组独立开关，客户端手里就有全量；补丁语义只会多出"没给的算不动还是算清空"这类歧义）。<br>⚠ **`background` 单开指针语义**：没传 = **不动它**；要清空得显式给 `"background": {}`（否则"只改主题"的客户端会顺手抹掉壁纸 —— 静默的数据丢失，与 `PATCH /sessions` 的 `system_prompt` 同一条规矩）。<br>未知 `markdown.disabled` id ⇒ **422 并点名**（先验后写：坏请求一个字都不落盘）|
+| PUT | `/config/prefs` | `Prefs` | 同上 | **整份替换**。`theme_style` 只接受 `md3` / `miuix`，空或省略为 `md3`；与颜色模式 `theme` 独立。<br>**`background`**：没传 = **不动它**；要清空需显式给 `"background": {}`。<br>未知 `theme_style` 或 `markdown.disabled` id ⇒ **422 并点名**，不写盘。 |
 | GET | `/config/prefs/background` | — | 图片字节 | 服务器上那张自定义背景图（`data/prefs/background.bin`）。没有 ⇒ **404**；类型由 `DetectContentType` **现判**；带 `ETag`（= 登记里的 `version`），对上了回 **304**。`Cache-Control: private, max-age=0, must-revalidate` —— 每次回来问一句，换图才不会拿到旧的 |
 | PUT | `/config/prefs/background` | 原始图片字节 | `Background` | **上传**（不是 multipart：调用方只有我们自己的前端，多一层编码只多一处出错的地方）。上限 **4MB**（前端已压到长边 1920）；非图片 ⇒ 422；上传成功铸一枚新 `version` 并登记进 `prefs.json` |
 | DELETE | `/config/prefs/background` | — | 204 | 删掉那张（**幂等**：没设过也 204 —— "它现在没有图"是事实，不是错）|
@@ -1305,10 +1306,7 @@ Flow 的 `judge` 节点吃左侧 `state` 输入，节点配置里填 `provider`/
 - **输入栏只有一种布局**（2026-11-04 用户定：「不允许再设置紧凑和宽松布局」）：删掉 `float`/`solid` 二选一、`composer_style` 偏好、`data-composer` 属性与对应设置项；统一用 Vuetify MD3 输入栏（`VTextarea` + 右侧 VBtn）。
 - **Vuetify 4 渐进接入**（2026-11-06 用户定：「可以逐渐替换吗？」「使用 Vuetify 内置 MD3 主题，而不是手搓 CSS」）：
   第一块是 **Composer + 顶栏控件**，不套 VMain/QLayout 壳（2026-11-07 起顶栏也用 VNavigationDrawer/VTabs）。`src/plugins/vuetify.ts`：
-  `blueprint: md3` + 两档 Vuetify 主题（dark/light；应用的 `auto` 由 bridge 用 `prefers-color-scheme` 解析）；
-  **颜色唯一权威是 Vuetify theme**，
-  `theme.css` 的 `--md-*` 只是 `rgb(var(--v-theme-*))` 的映射（不再维护第二套色值）；
-  `installVuetifyThemeBridge` 用 MutationObserver 跟 `data-theme`。
+  `blueprint: md3` 始终保留；`themePalettes.ts` 注册 MD3 与 Miuix 各一套亮、暗配色。运行时用 `theme.change()`，不重挂 Vue。`auto` 只按 `prefers-color-scheme` 选择当前风格的亮暗配色。`theme.css` 的颜色角色（包括旧 `--tg-*`）只映射 Vuetify；首个应用画面用 `mc_prefs` 镜像，运行时 `theme-color` 随主题，PWA 安装启动底色为 MD3 暗色。
   ⚠ Vuetify 4 的样式在 CSS `@layer` 里，本项目旧 CSS 未分层 ⇒ 旧 `button` 基线会压过 VBtn；
   `main.css` 里只对 `#app .v-btn, .v-overlay-container .v-btn, #app .v-tab` 做 `all: revert-layer` 的逃生门。
   旧原生 `input` / `textarea` 基线已用 `:not(.v-field__input)` 排除 Vuetify 字段，不再需要
@@ -1371,21 +1369,7 @@ Flow 的 `judge` 节点吃左侧 `state` 输入，节点配置里填 `provider`/
   ⚠ `vite preview` 只做 gzip、HTTP/1.1，**不是生产级静态服务器**；公网/反代部署应由 Caddy / nginx /
   Cloudflare 终结 TLS 并开 brotli + HTTP/2（缓存头已经由上面的中间件给出，不会被吃掉）。
 - **MD3 风格层（2026-11-05 用户定：「目标是完美的 MD3 风格 + 动画 + 加载效果」，先改左栏）**：
-  **颜色角色不再由 `theme.css` 定义**（2026-11-06 用户定「Vuetify 控制主题强调色」）：`plugins/vuetify.ts`
-  的 dark/light 是**唯一色值源**（应用层的 auto 只选这两档）；`theme.css` 只把 `--md-primary` 等映射成
-  `rgb(var(--v-theme-*))`，shape scale、elevation 1–3、motion、state layer、字体角色（一律 em）仍住这里。
-  **暗色 = Gemini 暗色板**（2026-11-06 用户定「改成 gemini 的主题配色（暗色）」）：色值取自
-  gemini.google.com 的 GM3 system colors —— bg `#131314` / 容器 `#1b1b1b`/`#1e1f20`/`#282a2c`/`#333537`、
-  正文 `#e3e3e3`、次要文字 `#c4c7c5`、主色 `#a8c7fa`、on-primary `#062e6f`、错误 `#f2b8b5`。
-  自定义 CSS 的 `--tg-*` 暗色值同步对齐（bg / secondary-bg / float / text / hint / link / button / button-text）；
-  **主题对比度**（2026-11-18 用户定「把 vuetify 主题色的对比度降低一些」，并强调「所有主题永远遵循
-  Vuetify，不要搞特殊」）：暗色有两对容器色**不再照抄 Gemini** —— `secondary-container` `#004a77`(S=100%)
-  → `#2f4a5c`(S=32%)、`on-secondary-container` `#c2e7ff` → `#bfd4e0`（文字对比 7.20→6.08）；
-  `primary-container` `#1f3760`(S=51%) → `#2e4054`(S=29%)、`on-primary-container` `#d3e3fd` → `#cad7e3`
-  （9.12→7.25）。选中底 / 按钮 / chip / 会话 tab 全部同步变柔，因为它们本来就只认这一个 token。
-  ⚠ **不要**在组件 CSS 里给某一栏单独 color-mix 调色（2026-11-18 第一版就是那么写的，被用户否了）：
-  要更柔就只改 `plugins/vuetify.ts` 这四个值。
-  亮色不动；Breeze 已于 2026-11-09 删除。light / dark / auto 共用同一套 MD3 语义。
+  **Vuetify 是颜色权威**：四套配色住 `themePalettes.ts`，MD3 暗色保留 Gemini 的中性底面与降饱和容器色；Miuix 借鉴灰白、纯黑底面和蓝色强调，按网页对比度调整。状态层强度按风格取值，组件不另抄配色。形状、动效和字体令牌仍在 `theme.css`。
   **落点先左栏 + 顶栏 + 输入区**（2026-11-05 第二刀；2026-11-06 起上下文三 tab 用 VTabs（压缩内再三个子 tab）、顶栏工作区用 VTabs + VTabsWindow、消息/摘要操作键用 VBtn）：左栏规则以 `#sessions-bar` 前缀收口
   （`.bar-head` / `.empty` 是共享类，直接改会波及上下文工作区）。左栏结构 = MD3 navigation drawer：
   顶部**占满栏宽**的 segmented button（对话 / 生图 / 项目，VBtnToggle）+ 标准 icon button；新建 = **extended FAB**（primary-container、elevation 1→2、按下 scale）；
@@ -1586,7 +1570,7 @@ Flow 的 `judge` 节点吃左侧 `state` 输入，节点配置里填 `provider`/
   内建 grok/GPT/Gemini 的搜索规则、DeepSeek 本地工具都在内置段里；用户规则在内置之后应用，可覆盖字段。
   空态说清「保存并刷新后会出现在这里」。
 - **设置保存范围**：在同一对话页分节保存。新会话默认只影响新会话；保存上下文或生成前读最新聊天配置，保留另一分节的已保存值，不改写已有消息。
-- **设置布局与主题分开**：目录、管理列表和常用表单采用 Miuix 式分组，标题在外，组内共用大圆角底面，不逐行投影、不嵌套卡片；配色及控件继续沿用 Vuetify MD3。目录和常规子页共用 760px 阅读列；窄屏长输入换行，开关留在行尾。专用编辑器、表格与 Flow 画布保留各自布局和原有 Vuetify 页签。
+- **设置布局与主题分开**：目录、管理列表和常用表单采用 Miuix 式分组，标题在外，组内共用大圆角底面，不逐行投影、不嵌套卡片。「界面风格」和「颜色模式」各自保存；侧栏昼夜键只切颜色模式。两种风格共用组件与布局，目录和常规子页仍共用 760px 阅读列；窄屏长输入换行，开关在行尾。专用编辑器、表格与 Flow 画布保留各自布局和 Vuetify 页签。
   「输入与发送」保留发送方式（`enter` / `shift-enter` / `button`）、输入时预览和命令菜单。开关使用 `:model-value` 加更新处理器，先更新值再保存；不要把 `v-model` 与读取旧值的保存监听叠在同一事件上。
 - **设置移动端**：酒馆等需要逐列比较的表格在 ≤700px 变成一行一卡，用 `data-label` 显示字段名。提示词片段库改用与智能体管理一致的列表，长名称换行、正文最多两行，来源及引用者在正文下，行尾复制不占独立列；手机和桌面不维护两套布局。设置目录仍用同一套单列列表。
   **文案一律说人话**（2026-11-02 用户「审计设计界面里有哪些不说人话的部分」）：可见标签不再用 `Agent` / `vendor` / `protocol` / `载荷` / `卡带` / `提示词段` 这类内部词 ——

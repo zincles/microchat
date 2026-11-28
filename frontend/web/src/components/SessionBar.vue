@@ -52,7 +52,7 @@ const busySet = computed(() => new Set(props.busyIds ?? []));
 const skeletonWidths = ["72%", "54%", "64%", "46%", "58%", "50%"];
 
 const sessions = ref<SessionView[]>([]);
-// 主题三态：亮色 / 暗色 / 自动。按钮只显示图标，按下立刻落 prefs + 改 data-theme。
+// 左栏快捷键只循环颜色模式，不改界面风格。
 const theme = ref(themePref());
 const themeLabels: Record<string, string> = { light: "亮色", dark: "暗色", auto: "自动" };
 const themeIcon = computed(() => (theme.value === "light" ? ICONS.sun : theme.value === "dark" ? ICONS.moon : ICONS.themeAuto));
@@ -210,8 +210,8 @@ defineExpose({ setSessions });
           id="theme-toggle"
           class="icon-btn theme-toggle"
           type="button"
-          :title="`切换主题（当前：${themeLabel}）`"
-          :aria-label="`切换主题（当前：${themeLabel}）`"
+          :title="`切换颜色模式（当前：${themeLabel}）`"
+          :aria-label="`切换颜色模式（当前：${themeLabel}）`"
           @click="cycleTheme"
           v-html="themeIcon"
         ></button>

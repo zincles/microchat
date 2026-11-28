@@ -70,6 +70,10 @@ func (s *Server) putPrefs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	incoming := req.Prefs
+	if err := incoming.NormalizeThemeStyle(); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "invalid", err.Error())
+		return
+	}
 	defaults := config.DefaultPrefs()
 	if req.BrandIcon == nil {
 		incoming.BrandIcon = defaults.BrandIcon

@@ -1,9 +1,9 @@
 <script setup lang="ts">
 // 外观、输入和消息渲染在一页；每次仍只保存当前控件改动的偏好，缩放必须显式保存。
 import { VSwitch, VBtn, VTextField, VSelect, VSlider } from "vuetify/components";
-import { ref, shallowRef, computed, onMounted } from "vue";
+import { ref, shallowRef, computed, onMounted, onUnmounted } from "vue";
 import {
-  themePref, saveTheme, sendMode, saveSendMode,
+  themePref, saveTheme, THEME_IDS, themeStylePref, saveThemeStyle, sendMode, saveSendMode,
   previewOn, savePreview,
   commandMenuOn, saveCommandMenu,
   chromeHideOn, saveChromeHide,
@@ -21,7 +21,8 @@ import {
 import type { MarkdownType } from "../api/types.ts";
 const emit = defineEmits<{ "prefs-saved": [] }>();
 
-const theme = ref("");
+const theme = shallowRef(themePref());
+const themeStyle = shallowRef(themeStylePref());
 const send = ref("enter");
 const preview = ref(true);
 // 命令菜单（默认关）：输入框左侧那颗 ☰ 与输入 "/" 弹出的面板。移动端碍事 ⇒ 想用的人才开。
@@ -42,11 +43,12 @@ const bgUrl = ref("");
 const bgStatus = ref("");
 const bgPreview = ref("");
 const bgAction = shallowRef<"upload" | "remove" | null>(null);
-const themeOptions = [
-  { label: "亮色", value: "light" },
-  { label: "暗色", value: "dark" },
-  { label: "自动（跟随系统）", value: "auto" },
+const themeStyleOptions = [
+  { label: "Material 3 (MD3)", value: "md3" },
+  { label: "Miuix", value: "miuix" },
 ];
+const modeLabels = { light: "亮色", dark: "暗色", auto: "自动（跟随系统）" };
+const themeOptions = THEME_IDS.map((value) => ({ label: modeLabels[value], value }));
 const sendOptions = [
   { label: "按回车发送（Shift+回车换行）", value: "enter" },
   { label: "按 Shift+回车发送", value: "shift-enter" },
@@ -81,8 +83,12 @@ function onScaleInput(value: number | string): void {
   scaleDirty.value = true;
 }
 function onTheme(value: unknown): void {
-  theme.value = String(value ?? "");
-  saveTheme(theme.value);
+  saveTheme(String(value ?? ""));
+  emit("prefs-saved");
+}
+function onThemeStyle(value: unknown): void {
+  if (value !== "md3" && value !== "miuix") return;
+  saveThemeStyle(value);
   emit("prefs-saved");
 }
 function onSend(value: unknown): void {
@@ -100,8 +106,12 @@ function resetScale(): void {
   scaleDirty.value = true;
 }
 
-function loadFromPrefs(): void {
+function syncThemeSelection(): void {
   theme.value = themePref();
+  themeStyle.value = themeStylePref();
+}
+
+function loadFromPrefs(): void {
   textScale.value = textScalePref();
   fontBody.value = fontBodyPref();
   fontMono.value = fontMonoPref();
@@ -126,7 +136,12 @@ function loadBackground(): void {
   bgStatus.value = describeBackground(bg);
 }
 
-onMounted(loadFromPrefs);
+onMounted(() => {
+  syncThemeSelection();
+  loadFromPrefs();
+  window.addEventListener("mc-theme-changed", syncThemeSelection);
+});
+onUnmounted(() => window.removeEventListener("mc-theme-changed", syncThemeSelection));
 
 function saveFonts(): void {
   // 规范化后的值写回输入框：`A; B` 这种破坏声明的输入会被清成空（回落系统字族）。
@@ -248,7 +263,8 @@ async function clearBg(): Promise<void> {
     <section class="settings-group">
       <h3>外观</h3>
       <div class="settings-group-body">
-        <label id="setting-theme" tabindex="-1" class="field"><span>主题</span><VSelect :model-value="theme" :items="themeOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details @update:model-value="onTheme" /></label>
+        <label id="setting-theme-style" tabindex="-1" class="field"><span>界面风格</span><VSelect :model-value="themeStyle" :items="themeStyleOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details aria-label="界面风格" @update:model-value="onThemeStyle" /></label>
+        <label id="setting-theme" tabindex="-1" class="field"><span>颜色模式</span><VSelect :model-value="theme" :items="themeOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details aria-label="颜色模式" @update:model-value="onTheme" /></label>
         <div class="settings-item">
           <label id="setting-scale" tabindex="-1" class="field"><span>界面缩放</span>
             <span class="scale-wrap">

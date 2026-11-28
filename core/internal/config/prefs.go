@@ -200,8 +200,9 @@ type Prefs struct {
 	Markdown MarkdownPrefs `json:"markdown"`
 
 	// —— 外观 ——
-	Theme     string `json:"theme,omitempty"`
-	TextScale string `json:"text_scale,omitempty"`
+	Theme      string `json:"theme,omitempty"` // 颜色模式，旧值的归一化仍由 Web 处理。
+	ThemeStyle string `json:"theme_style"`     // 和亮暗模式独立；旧文件缺省使用 MD3。
+	TextScale  string `json:"text_scale,omitempty"`
 	// FontBody / FontMono：自定义字族（2026-11-04 用户定）。
 	// 标准字体用于全站，等宽字体用于代码块；空 = 用前端内置的系统字族。
 	FontBody   string     `json:"font_body,omitempty"`
@@ -236,6 +237,8 @@ type Prefs struct {
 	UpdateAutoCheck *bool `json:"update_auto_check,omitempty"`
 }
 
+const defaultThemeStyle = "md3"
+
 // DefaultPrefs：**全默认**（文件缺失时就是它）。
 //
 // 每一项的默认值都与前端从前的 localStorage 缺省**逐个对齐**（`!== "0"` 的那些 = true，
@@ -244,6 +247,7 @@ func DefaultPrefs() Prefs {
 	return Prefs{
 		Markdown:  MarkdownPrefs{}, // Enabled 为 nil ⇒ 开；Disabled 空 ⇒ 全开
 		Theme:     "",
+		ThemeStyle: defaultThemeStyle,
 		TextScale: "",
 		FontBody:  "",
 		FontMono:  "",
@@ -277,6 +281,9 @@ func LoadPrefs(paths Paths) (Prefs, error) {
 	if err := loadJSON(paths.Config("prefs.json"), &prefs); err != nil {
 		return prefs, err
 	}
+	if err := prefs.NormalizeThemeStyle(); err != nil {
+		return prefs, err
+	}
 	if err := prefs.Markdown.Validate(); err != nil {
 		return prefs, err
 	}
@@ -293,9 +300,24 @@ func LoadPrefs(paths Paths) (Prefs, error) {
 
 // SavePrefs：整体写回（0600；目录 0755）。
 func SavePrefs(paths Paths, prefs Prefs) error {
+	if err := prefs.NormalizeThemeStyle(); err != nil {
+		return err
+	}
 	prefs.normalizeBrand()
 	prefs.Markdown = prefs.Markdown.Normalize()
 	return SaveJSON(paths.Config("prefs.json"), prefs)
+}
+
+// NormalizeThemeStyle 补齐旧偏好，读写对未知风格都明确报错。
+func (p *Prefs) NormalizeThemeStyle() error {
+	switch p.ThemeStyle {
+	case "", defaultThemeStyle:
+		p.ThemeStyle = defaultThemeStyle
+	case "miuix":
+	default:
+		return fmt.Errorf("theme_style 只接受 md3 或 miuix（收到 %q）", p.ThemeStyle)
+	}
+	return nil
 }
 
 func (p *Prefs) normalizeBrand() {

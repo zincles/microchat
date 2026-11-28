@@ -65,6 +65,7 @@ import { rippleSpec, RIPPLE_SELECTOR } from "../src/utils/ripple.ts";
 import { rememberWindow, recallWindow, forgetWindow, WINDOW_CACHE_MAX, WINDOW_CACHE_ROWS_MAX } from "../src/utils/windowcache.ts";
 import { MODEL_ICON_OPTIONS } from "../src/utils/modelIcons.ts";
 import { sendMode, wantsSend, themePref, normalizeTheme, apiBase, defaultApiBase, apiBaseCandidates, THEME_IDS, DEFAULT_THEME, DEFAULT_SEND, normalizeTextScale, textScale, applyTextScale, saveTextScale, flushPrefs, normalizeFontFamily, fontBody, fontMono, applyFonts, saveFontBody, saveFontMono, DEFAULT_FONT_BODY, DEFAULT_FONT_MONO, TEXT_SCALE_MIN, TEXT_SCALE_MAX, DEFAULT_TEXT_SCALE } from "../src/utils/prefs.ts";
+import { appThemes, resolveThemeName } from "../src/plugins/themePalettes.ts";
 
 // 契约测试（无浏览器）：只验纯函数与请求形状。`node --test test/`。
 // 后端真服务验证另走手工（见 README）。
@@ -1212,7 +1213,7 @@ test("偏好读取：默认与空串语义（mc_theme 空串 / 认不出的 id �
   assert.equal(apiBase(), DEFAULT_API_URL);
   assert.equal(themePref(), DEFAULT_THEME);
   assert.equal(sendMode(), DEFAULT_SEND);
-  // 2026-10-28：`""` 以前是"跟随系统"，那个选项删了 ⇒ 现在它就是"没设过"，落到默认主题。
+  // 空串归默认的自动模式。
   localStorage.setItem("mc_theme", "");
   assert.equal(themePref(), DEFAULT_THEME);
   // 删主题留下的老 id 不许让页面"没有主题"：themePref 读的时候就归一化了。
@@ -1707,12 +1708,6 @@ test("滚动隐藏：反向不足 slop 当抖动；上滑到顶全放回顶栏",
   assert.equal(atTop.bottom, 0);
 });
 
-// —— 主题 id 的一致性守卫（2026-10-28 加，同日随「只留三套」收紧）——
-// 主题 id 在**三处**各写一遍：`src/utils/prefs.ts` 的 `THEME_IDS`、`src/assets/theme.css` 的
-// `html[data-theme="…"]` 规则、`UserView.vue` 那个下拉的 option。改了一处忘了另一处**不会报错**
-// —— 页面只是安静地退回默认配色（或者让人选到一个没有规则的 id）。
-// 所以把三张表钉死：THEME_IDS 是唯一权威，另外两处必须**正好**是它（顺序也一样）。
-// 读文件比对，不引 CSS/Vue 解析器。
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -1721,26 +1716,35 @@ const SRC = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
 // 仓库根（契约测试偶尔要读后端源码/内置段文件来对口径 —— 两处各写一遍的常量最容易漂）
 const REPO = join(SRC, "..", "..", "..");
 
-function themeCssIds() {
-  const css = readFileSync(join(SRC, "assets", "theme.css"), "utf8");
-  return new Set([...css.matchAll(/html\[data-theme="([^"]+)"\]/g)].map((m) => m[1]));
-}
+test("主题：风格和亮暗独立，只有自动模式跟随系统", () => {
+  for (const [style, light, dark] of [["md3", "light", "dark"], ["miuix", "miuix-light", "miuix-dark"]] as const) {
+    assert.equal(resolveThemeName(style, "light", true), light);
+    assert.equal(resolveThemeName(style, "dark", false), dark);
+    assert.equal(resolveThemeName(style, "auto", false), light);
+    assert.equal(resolveThemeName(style, "auto", true), dark);
+    assert.equal(appThemes[light].dark, false);
+    assert.equal(appThemes[dark].dark, true);
+  }
+});
 
-test("主题：theme.css 与下拉必须正好是 THEME_IDS 这三套", () => {
-  // theme.css：一条不多、一条不少（多出来 = 有人偷偷加了主题；少了 = 那份 id 没人给规则）
-  assert.deepEqual([...themeCssIds()].sort(), [...THEME_IDS].sort(),
-    "theme.css 的 data-theme 规则与 prefs.js 的 THEME_IDS 对不上");
-  assert.ok(THEME_IDS.includes(DEFAULT_THEME), `DEFAULT_THEME="${DEFAULT_THEME}" 不在 THEME_IDS 里`);
-
-  // 下拉：顺序也照 THEME_IDS（"亮色/暗色/Breeze" 是用户点名的顺序，别在界面上乱换）
-  // 2026-11-01：这块从删掉的 UserView 搬到了 AppearancePane（设置里的「外观」区）。
-  const vue = readFileSync(join(SRC, "components", "AppearancePane.vue"), "utf8");
-  // VSelect：选项在 themeOptions 数组里，顺序照 THEME_IDS。
-  assert.match(vue, /<VSelect[^>]*:model-value="theme"[^>]*:items="themeOptions"/, "没找到主题 VSelect");
-  const opts = vue.match(/const themeOptions = \[([\s\S]*?)\];/);
-  assert.ok(opts, "没找到 themeOptions");
-  const chosen = [...opts[1].matchAll(/value: "([^"]*)"/g)].map((m) => m[1]);
-  assert.deepEqual(chosen, THEME_IDS, "主题下拉的选项与 THEME_IDS 对不上");
+test("Miuix 配色：两套强调色与正文在各自底面保持文本对比度", () => {
+  const luminance = (hex: string) => [0.2126, 0.7152, 0.0722].reduce((sum, weight, index) => {
+    const channel = Number.parseInt(hex.slice(1 + 2 * index, 3 + 2 * index), 16) / 255;
+    return sum + weight * (channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4);
+  }, 0);
+  for (const id of ["miuix-light", "miuix-dark"] as const) {
+    const colors = appThemes[id].colors;
+    for (const [ink, surface] of [
+      ["on-surface", "background"], ["on-surface-variant", "surface-container-highest"],
+      ["primary", "surface-container-high"], ["on-primary", "primary"],
+      ["on-primary-container", "primary-container"], ["on-secondary-container", "secondary-container"],
+    ] as const) {
+      const a = luminance(colors[ink]);
+      const b = luminance(colors[surface]);
+      const ratio = (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+      assert.ok(ratio >= 4.5, `${id} ${ink}/${surface} 的对比度 ${ratio.toFixed(2)} 低于 4.5:1`);
+    }
+  }
 });
 
 test("外观缩放：拖动只改草稿，点保存缩放才应用", () => {
@@ -1758,6 +1762,7 @@ test("设置搜索：俗称定位到具体字段，Markdown 分项沿用服务�
   const markdown = [{ id: "mermaid", name: "流程图" }];
   for (const [query, page, anchor] of [
     ["回车", "appearance", "send-mode"], ["字号", "appearance", "scale"],
+    ["Miuix", "appearance", "theme-style"], ["跟随系统", "appearance", "theme"],
     ["默认智能体", "chat", "default-agent"], ["自动压缩", "chat", "auto-compact"],
     ["标题模型", "chat", "title-model"], ["ＭＥＲＭＡＩＤ", "appearance", "markdown-mermaid"],
     ["历史思考", "provider", "global-model-rules"], ["品牌图标", "update", "brand-icon"],
@@ -1900,31 +1905,6 @@ test("界面缩放：开机先用镜像铺第一帧（服务器答话前不闪�
   assert.match(prefs, /if \(mirrored\) cache = merge\(FALLBACK_PREFS, mirrored\);/);
   assert.match(prefs, /addEventListener\("pagehide", flushOnHide\)/);
   assert.match(prefs, /visibilitychange/);
-});
-
-// —— 外壳色（`<meta name="theme-color">` 与 PWA manifest）——
-// 这两处是**静态**的，而主题是三套运行时切换的 ⇒ 只能钉"默认（暗色）那套的底色"。
-// 证伪点：改了配色却忘了改它们 —— 2026-10-28 就真踩过：主题换成中性灰，
-// 手机状态栏和 PWA 启动画面还是旧的 TG 深夜蓝 #0e1621，装成 PWA 的人看到的是割裂感。
-test("外壳色：index.html 与 PWA manifest 跟暗色主题的底色一致", () => {
-  const theme = readFileSync(join(SRC, "assets", "theme.css"), "utf8");
-  const dark = theme.match(/html\[data-theme="dark"\]\s*\{([\s\S]*?)\}/);
-  assert.ok(dark, 'theme.css 里没找到 html[data-theme="dark"] 那一块');
-  const bg = dark[1].match(/--tg-bg:\s*(#[0-9a-fA-F]{6})/);
-  assert.ok(bg, "暗色主题里没读到 --tg-bg");
-  const want = bg[1].toLowerCase();
-
-  const html = readFileSync(join(SRC, "..", "index.html"), "utf8");
-  const meta = html.match(/<meta name="theme-color" content="([^"]*)"/);
-  assert.ok(meta, "index.html 里没有 theme-color meta");
-  assert.equal(meta[1].toLowerCase(), want, "index.html 的 theme-color 与暗色主题底色对不上");
-
-  const vite = readFileSync(join(SRC, "..", "vite.config.ts"), "utf8");
-  for (const key of ["background_color", "theme_color"]) {
-    const m = vite.match(new RegExp(`${key}:\\s*"([^"]*)"`));
-    assert.ok(m, `vite.config.ts 里没有 ${key}`);
-    assert.equal(m[1].toLowerCase(), want, `PWA manifest 的 ${key} 与暗色主题底色对不上`);
-  }
 });
 
 // —— 压缩载荷预演（右栏「看载荷」）——
@@ -3709,7 +3689,7 @@ test("悬停预取与开屏并行：意图触发、单飞、上限、warm 用首
 
 // MD3 改版（2026-11-05 用户定：「目标是完美的 MD3 风格 + 动画 + 加载效果」）。
 // 先落左侧会话栏：token 层先立起来，后面的页面才有一致语言可复用。
-test("MD3 token 层：颜色/形状/动效/字体角色都在，三套主题各有角色", () => {
+test("MD3 令牌：颜色、形状、动效与字体共同生效", () => {
   const theme = readFileSync(join(SRC, "assets", "theme.css"), "utf8");
   for (const token of ["--md-primary", "--md-on-primary-container", "--md-secondary-container",
     "--md-surface-container-low", "--md-on-surface-variant", "--md-outline-variant", "--md-error"]) {
@@ -3719,9 +3699,6 @@ test("MD3 token 层：颜色/形状/动效/字体角色都在，三套主题各�
     "--md-state-hover", "--md-type-label-large", "--md-elev-2"]) {
     assert.ok(theme.includes(`${token}:`), `缺 MD3 工艺 token ${token}`);
   }
-  // auto 的语义色跟随系统；MD3 角色本身由 Vuetify light/dark 两档提供。
-  assert.match(theme, /html\[data-theme="auto"\]\s*\{[\s\S]*--tg-bg:/, "auto 没有语义色");
-  assert.match(theme, /@media \(prefers-color-scheme: light\)[\s\S]*html\[data-theme="auto"\]/, "auto 不跟随系统亮色");
   // 字体角色必须是 em（跟随 --app-text-scale），不能写 px
   assert.ok(!/--md-type-[a-z-]+:\s*\d+px/.test(theme), "MD3 字体角色写成了 px（界面缩放会对它失效）");
 });
@@ -3773,9 +3750,6 @@ test("输入区：Vuetify 4 MD3 接管 input/send/think", () => {
 
   // 主题：MD3 blueprint + 三套应用色（不是 Vuetify 默认 Material 蓝）
   assert.match(plugin, /blueprint: md3/, "没启用 Vuetify MD3 blueprint");
-  assert.match(plugin, /themes: \{ dark: darkTheme, light: lightTheme \}/, "Vuetify 主题没跟上 light/dark");
-  assert.match(plugin, /installVuetifyThemeBridge/, "没把 data-theme 桥到 Vuetify");
-  assert.match(plugin, /prefers-color-scheme: light/, "auto 没桥到系统亮色");
 
   // 旧未分层 CSS 不能改写 Vuetify 组件
   assert.match(css, /#app \.v-btn, \.v-overlay-container \.v-btn, #app \.v-tab \{ all: revert-layer; \}/, "Vuetify 按钮/标签仍被旧基线压住");
@@ -3975,16 +3949,6 @@ test("设置界面：可见控件全部 Vuetify，旧 ToggleSwitch/TabBar 已删
   assert.ok(!existsSync(join(SRC, "components", "TabBar.vue")), "旧 TabBar.vue 还在");
 });
 
-test("主题：Vuetify theme 是唯一色值源，theme.css 只做映射", () => {
-  const plugin = readFileSync(join(SRC, "plugins", "vuetify.ts"), "utf8");
-  const theme = readFileSync(join(SRC, "assets", "theme.css"), "utf8");
-  assert.match(plugin, /const darkTheme = \{[\s\S]*?background: "#131314"/, "暗色底不是 Gemini #131314");
-  assert.match(plugin, /const darkTheme = \{[\s\S]*?"surface-container": "#1e1f20"/, "暗色容器不是 Gemini #1e1f20");
-  assert.match(plugin, /const darkTheme = \{[\s\S]*?primary: "#a8c7fa"/, "暗色强调色不是 Gemini #a8c7fa");
-  assert.match(theme, /html\[data-theme="dark"\] \{[\s\S]*?--tg-bg: #131314[\s\S]*?--tg-link: #a8c7fa/, "theme.css 的暗色语义槽没跟上 Gemini");
-  assert.match(theme, /--md-primary:\s*rgb\(var\(--v-theme-primary\)\)/, "theme.css 没把强调色映射到 Vuetify");
-  assert.ok(!/--md-primary:\s*#d0bcff/.test(theme), "theme.css 还留着旧的紫色硬编码");
-});
 
 
 
@@ -4339,12 +4303,8 @@ test("Flow 新节点：拼装 messages 与调试打印（动态类型 + Toast）
   assert.match(app, /provide\("toast", toast\)/, "App 没有提供全局 Toast");
 });
 
-test("主题切换不渐变；消息列预留滚动槽", () => {
-  const prefs = readFileSync(join(SRC, "utils", "prefs.ts"), "utf8");
+test("消息列和主滚动区预留滚动槽", () => {
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8");
-  assert.match(prefs, /theme-changing/, "主题切换没有临时关闭过渡");
-  assert.match(prefs, /themeChangeSeq/, "连续切换主题时没有取消旧的恢复帧");
-  assert.match(css, /body\.theme-changing \*[\s\S]*transition:\s*none/, "主题切换没有禁用过渡的 CSS");
   assert.match(css, /#messages-vue \{[^}]*scrollbar-gutter:\s*stable both-edges/, "消息列没有稳定滚动条槽");
   assert.match(css, /#session-list, \.settings-body, \.ctx-pane, #payload-pane, #state-view,[\s\S]*scrollbar-gutter:\s*stable/, "会话/设置/上下文主滚动区没有稳定槽");
 });

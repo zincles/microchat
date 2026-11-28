@@ -12,27 +12,20 @@
 // 为什么所有 getter 仍是**同步**的：调用点遍布 App 与各组件（`previewOn()` 在渲染路径上）。
 // 若改成 async，半个应用要跟着改成 await —— 换来的只是"改成从服务器读"这一个结果。
 // 所以：内存缓存（`cache`）是读取的唯一来源，`syncPrefs()` 负责把它与服务器对齐。
-import type { Background, MarkdownPrefs, MarkdownType, MessageEditorPrefs, Prefs, PrefsView } from "../api/types.ts";
+import type { Background, ColorMode, MarkdownPrefs, MarkdownType, MessageEditorPrefs, Prefs, PrefsView, ThemeStyle } from "../api/types.ts";
 import { createApi, DEFAULT_API_URL, normalizeApiBase } from "../api/client.ts";
 
-// 主题（2026-11-09 用户定：「只留 亮色 / 暗色 / 自动 三种」）。
-// auto = 跟随操作系统 prefers-color-scheme；THEME_IDS 是唯一权威，theme.css 与下拉都取它。
-export const THEME_IDS = ["light", "dark", "auto"];
+// 存量字段 theme 只管亮暗；theme_style 独立选择界面风格。
+export const THEME_IDS = ["light", "dark", "auto"] as const;
 export const DEFAULT_THEME = "auto";
-// 老 id → 新 id。**删主题不能只是删规则**：那些 id 还躺在别人的 localStorage 里，
-// 匹配不到规则 = 页面退回默认 ⇒ 用户会发现"我的主题自己变了"。
-// 搬到最接近的那套：深夜蓝/酒红/森绿/石墨 都是深色 ⇒ 暗色；日间白 ⇒ 亮色；Breeze Dark ⇒ Breeze。
-const THEME_ALIASES: Record<string, string> = {
+const DEFAULT_THEME_STYLE: ThemeStyle = "md3";
+const THEME_ALIASES: Readonly<Partial<Record<string, ColorMode>>> = {
   graphite: "dark", deepseek: "dark", midnight: "dark", wine: "dark", forest: "dark",
   paper: "light", breeze: "light", "breeze-dark": "dark",
 };
-// 归一化：给什么 id 都换成 THEME_IDS 里的一个（认不出 ⇒ 默认）。
-// 老版本的空串（"跟随系统"）也走这儿 —— 那个选项已经没了，空串现在就是"没设过"。
-export function normalizeTheme(id?: unknown): string {
+export function normalizeTheme(id?: unknown): ColorMode {
   const key = String(id ?? "");
-  if (THEME_IDS.includes(key)) return key;
-  const mapped = THEME_ALIASES[key];
-  return mapped && THEME_IDS.includes(mapped) ? mapped : DEFAULT_THEME;
+  return THEME_IDS.find((mode) => mode === key) ?? (Object.hasOwn(THEME_ALIASES, key) ? THEME_ALIASES[key] : undefined) ?? DEFAULT_THEME;
 }
 
 // —— 界面缩放（2026-10-28，照 OpenWebUI 的 UI Scale）——
@@ -83,6 +76,7 @@ const MIRROR_KEY = "mc_prefs";
 const FALLBACK_PREFS: Prefs = {
   markdown: { enabled: true, disabled: [] },
   theme: "",
+  theme_style: DEFAULT_THEME_STYLE,
   text_scale: "",
   font_body: "",
   font_mono: "",
@@ -152,6 +146,7 @@ function merge(base: Prefs, incoming: unknown): Prefs {
   if (!Array.isArray(out.markdown?.disabled)) {
     out.markdown = { ...out.markdown, disabled: [] };
   }
+  if (out.theme_style !== "miuix") out.theme_style = DEFAULT_THEME_STYLE;
   return out;
 }
 
@@ -372,58 +367,29 @@ export function refreshPrefs(): Promise<void> {
   return syncPrefs();
 }
 
-// —— 主题 ——
-
-export function themePref(): string {
-  // 空串 / 认不出的 id 都归一到 THEME_IDS 里的一档（见 normalizeTheme）。
-  // 空串 = "没设过"（"跟随系统"那个选项已经没了）。
-  return normalizeTheme(cache.theme || localStorage.getItem("mc_theme"));
+// 两项都沿用同一份服务器偏好与首帧镜像；主题插件订阅变化并决定实际配色。
+export function themePref(): ColorMode {
+  return normalizeTheme(cache.theme || (hydrated ? "" : localStorage.getItem("mc_theme")));
 }
 
-// 主题应用（唯一一处）：TG Mini App 里 data-theme **根本不设**（用户主题由 TG 注入的
-// --tg-theme-* 供给）—— 缺了这道守卫，TG 里保存一次设置就会把预设色压到 TG 注入色上。
-let themeChangeSeq = 0;
-export function applyTheme(theme?: string): void {
-  if (window.Telegram?.WebApp) {
-    document.documentElement.removeAttribute("data-theme");
-    syncThemeColor();
-    return;
-  }
-  const next = theme === undefined ? themePref() : normalizeTheme(theme);
-  const body = document.body;
-  const seq = ++themeChangeSeq;
-  // Vuetify / 自定义 CSS 都会在 data-theme 变化的同一帧换色；如果不关过渡，
-  // 整页会从旧主题渐变到新主题，像卡了一拍。只在这次切换的两帧内关掉。
-  body?.classList.add("theme-changing");
-  document.documentElement.setAttribute("data-theme", next);
-  syncThemeColor();
-  if (body && typeof requestAnimationFrame === "function") {
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      if (seq === themeChangeSeq) body.classList.remove("theme-changing");
-    }));
-  } else {
-    body?.classList.remove("theme-changing");
-  }
-  // 左栏那颗主题键要跟着 data-theme 走（设置页下拉、syncPrefs 的 applyAll 都会走到这里）。
+export function themeStylePref(): ThemeStyle {
+  return cache.theme_style ?? DEFAULT_THEME_STYLE;
+}
+
+function notifyThemeChanged(): void {
   if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
-    window.dispatchEvent(new CustomEvent("mc-theme-changed", { detail: next }));
+    window.dispatchEvent(new Event("mc-theme-changed"));
   }
 }
 
 export function saveTheme(theme: string): void {
-  const next = normalizeTheme(theme);
-  setPref("theme", next);
-  applyTheme(next);
+  setPref("theme", normalizeTheme(theme));
+  notifyThemeChanged();
 }
 
-// 手机状态栏 / PWA 标题栏那根 `<meta name="theme-color">`：**写死不行** —— 三套主题底色不同，
-// 写死一个值在另外两套下就是一条突兀的色边（亮色主题配深色状态栏是最扎眼的）。
-// 值从 `--tg-bg` 现读（`var()` 在计算值阶段就替换掉了，读到的是真颜色；TG 注入时也是对的）。
-function syncThemeColor(): void {
-  const meta = document.querySelector('meta[name="theme-color"]');
-  if (!meta) return;
-  const bg = getComputedStyle(document.documentElement).getPropertyValue("--tg-bg").trim();
-  if (bg) meta.setAttribute("content", bg);
+export function saveThemeStyle(style: ThemeStyle): void {
+  setPref("theme_style", style);
+  notifyThemeChanged();
 }
 
 // —— 界面缩放 ——
@@ -582,8 +548,8 @@ export function saveNetPrefs(base: string): void {
 // applyAll：把"住在 DOM/CSS 上的偏好"整份重新应用一遍。
 // `syncPrefs` 拿到服务器的值之后调它 —— 这几样各有 apply*，但漏一样就是
 // "设置里改了、这一帧没生效"（`@prefs-saved` 那条教训）。
-export function applyAll(): void {
-  applyTheme();
+function applyAll(): void {
+  notifyThemeChanged();
   applyTextScale();
   applyFonts();
 }

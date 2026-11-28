@@ -810,9 +810,13 @@ export interface MessageEditorPrefs {
   fullscreen: boolean;
 }
 
+export type ColorMode = "light" | "dark" | "auto";
+export type ThemeStyle = "md3" | "miuix";
+
 export interface Prefs {
   markdown: MarkdownPrefs;
   theme?: string;
+  theme_style?: ThemeStyle;
   text_scale?: string;
   font_body?: string;
   font_mono?: string;

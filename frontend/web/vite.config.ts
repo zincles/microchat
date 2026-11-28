@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { appThemes } from "./src/plugins/themePalettes.ts";
 
 // microchat web：Vue 3 单文件组件。契约见 AGENTS.md API 表（只调 /api/v1）。
 //
@@ -33,6 +34,15 @@ function backendOrigin() {
   }
 }
 const apiProxy = { "/api": { target: backendOrigin() } };
+
+const shellColor = appThemes.dark.colors.background;
+const themeShell: Plugin = {
+  name: "microchat-theme-shell",
+  transformIndexHtml: () => [
+    { tag: "meta", attrs: { name: "theme-color", content: shellColor } },
+    { tag: "style", children: `html { background-color: var(--tg-bg, ${shellColor}); }` },
+  ],
+};
 
 // 前端构建身份（2026-11-09）：PWA 面板拿它核对「当前页面」与「服务器上的最新壳」。
 // 构建时写进 JS（define）与 dist/build.json（同一个 id）；build.json **不进 Service Worker 预缓存**
@@ -147,6 +157,7 @@ export default defineConfig({
     // Vuetify 4：只给底部输入栏用（渐进替换的第一块）。autoImport 只处理用到的组件；
     // 样式仍是全局的 `vuetify/styles`（CSS 分层，见 main.css 里的 `.v-btn` 逃生门）。
     vuetify({ autoImport: true }),
+    themeShell,
     buildInfoPlugin(),
     assetCacheHeaders(),
     installIconAssets,
@@ -170,11 +181,9 @@ export default defineConfig({
         lang: "zh-CN",
         start_url: ".",
         display: "standalone",
-        // 启动画面与外壳色 = 默认（暗色）主题的底色。⚠ 改主题配色时这两格要跟着改 ——
-        // 从前是 TG 深夜蓝 #0e1621，2026-10-28 换中性灰阶后忘了改，装成 PWA 的人
-        // 会看到"图标背景是藏青、应用是灰"的割裂感。
-        background_color: "#131314",
-        theme_color: "#131314",
+        // 安装时的系统启动画面是静态的；运行时状态栏随所选主题更新。
+        background_color: shellColor,
+        theme_color: shellColor,
         icons: installIcons.map(({ entry }) => entry),
       },
       workbox: {

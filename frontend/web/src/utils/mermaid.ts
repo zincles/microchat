@@ -17,11 +17,7 @@ const done = new WeakMap<HTMLElement, string>();
 const pending = new WeakMap<HTMLElement, string>();
 
 function themeName(): "dark" | "default" {
-  const declared = document.documentElement.getAttribute("data-theme");
-  if (declared === "dark") return "dark";
-  if (declared === "light") return "default";
-  // `auto`：Mermaid 没有"跟随 CSS 变量"的现成模式，按系统深浅选一套。
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "default";
+  return document.documentElement.dataset.colorMode === "dark" ? "dark" : "default";
 }
 
 async function ensureMermaid(theme: "dark" | "default"): Promise<Mermaid> {
