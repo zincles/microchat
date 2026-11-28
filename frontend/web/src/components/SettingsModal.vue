@@ -875,71 +875,89 @@ function onKey(e: KeyboardEvent): void {
         <section v-if="visited.has('chat')" v-show="tab === 'chat'" id="panel-chat" class="panel">
           <RequestLoading v-if="formWaiting.defaults" label="读取新会话默认设置…" />
           <p v-else-if="formError('defaults')" class="status" role="alert">{{ formError('defaults') }}</p>
-          <section v-else class="settings-card">
-          <p v-if="formError('defaults', true)" class="status" role="alert">{{ formError('defaults', true) }}</p>
-          <h3>新会话默认</h3>
-          <p class="hint">新建会话时自动带入；改动<b>不影响已有会话</b>。</p>
-          <!-- 三格都是**下拉**（2026-10-28）：从前渠道/模型是手打 id 的文本框，说明文自己都写着
-               「填错不会报错，只会在发送时回落成『未配置模型』」—— 那是把校验推给用户。
-               现在能选出来的都真实存在；当前值即使不在列表里（渠道被删、手改过配置文件、
-               或 dummy 这种永远发现不到模型的渠道）也会补一条并标明，**不许**静默丢掉。 -->
-          <label id="setting-default-provider" tabindex="-1" class="field"><span>默认渠道</span><VSelect :model-value="defaults.provider" :items="providerSelectOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details @update:model-value="onDefaultProviderChange" /></label>
-          <label id="setting-default-model" tabindex="-1" class="field"><span>默认模型</span><VSelect v-model="defaults.model" :items="modelSelectOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
-          <label id="setting-default-agent" tabindex="-1" class="field"><span>默认智能体</span><VSelect v-model="defaults.agent" :items="agentSelectOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
-          <p class="hint" v-if="!modelOpts.length">这个渠道还没有拉到任何模型 —— 可以先留空用内置默认，或去「渠道」里点「保存并刷新」。</p>
-          <p class="hint">留空 = 内置默认（本地示例模型，不联网，开箱就能回话）。</p>
-          <div class="row action-row">
-            <VBtn color="primary" variant="flat" size="small" type="button" :loading="savingDefaults" :disabled="savingDefaults" @click="saveDefaults">保存默认值</VBtn>
-            <span class="status" role="status">{{ defStatus }}</span>
-          </div>
+          <section v-else class="settings-group">
+            <p v-if="formError('defaults', true)" class="status" role="alert">{{ formError('defaults', true) }}</p>
+            <h3>新会话默认</h3>
+            <p class="hint">新建会话时自动带入；改动<b>不影响已有会话</b>。</p>
+            <div class="settings-group-body">
+              <label id="setting-default-provider" tabindex="-1" class="field"><span>默认渠道</span><VSelect :model-value="defaults.provider" :items="providerSelectOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details @update:model-value="onDefaultProviderChange" /></label>
+              <label id="setting-default-model" tabindex="-1" class="field"><span>默认模型</span><VSelect v-model="defaults.model" :items="modelSelectOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
+              <label id="setting-default-agent" tabindex="-1" class="field"><span>默认智能体</span><VSelect v-model="defaults.agent" :items="agentSelectOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
+              <div class="settings-item">
+                <p class="hint" v-if="!modelOpts.length">这个渠道还没有拉到任何模型 —— 可以先留空用内置默认，或去「渠道」里点「保存并刷新」。</p>
+                <p class="hint">留空 = 内置默认（本地示例模型，不联网，开箱就能回话）。</p>
+                <div class="row action-row">
+                  <VBtn color="primary" variant="flat" size="small" type="button" :loading="savingDefaults" :disabled="savingDefaults" @click="saveDefaults">保存默认值</VBtn>
+                  <span class="status" role="status">{{ defStatus }}</span>
+                </div>
+              </div>
+            </div>
           </section>
 
           <RequestLoading v-if="formWaiting.context" label="读取上下文设置…" />
           <p v-else-if="formError('context')" class="status" role="alert">{{ formError('context') }}</p>
           <template v-else>
-          <section class="settings-card">
-          <h3>上下文与加载</h3>
-          <p class="hint">决定模型一次能带多少历史，以及消息列一次拉多少；不改变模型自己的上限。</p>
-          <label id="setting-context-length" tabindex="-1" class="field"><span>上下文长度（token）</span><VTextField density="compact" variant="outlined" hide-details v-model="chat.model_context_tokens" type="number" min="1" /></label>
-          <!-- 为什么右上角那枚环的分母常常比这里小：它是**输入预算** = 上下文 − 给回复留的输出额度。
-               移动端没有 hover，所以这句话必须写在这儿（不能只藏在环的 title 里）。 -->
-          <p class="hint">右上角那枚环显示的是<b>还能输入多少</b>：这里填的上下文长度减去给回复预留的空间。填 1000000 时通常显示 995904。</p>
-          <label id="setting-history-window" tabindex="-1" class="field"><span>首屏加载条数</span><VTextField density="compact" variant="outlined" hide-details v-model="chat.history_window" type="number" min="1" placeholder="留空 = 5" /></label>
-          <p class="hint">按消息段计数（一条消息或一张顶层摘要卡）；「加载更多」每页同样数量。远程部署时调小可减少首屏等待。</p>
-          </section>
+            <section class="settings-group">
+              <h3>上下文与加载</h3>
+              <p class="hint">决定模型一次能带多少历史，以及消息列一次拉多少；不改变模型自己的上限。</p>
+              <div class="settings-group-body">
+                <div class="settings-item">
+                  <label id="setting-context-length" tabindex="-1" class="field"><span>上下文长度（token）</span><VTextField density="compact" variant="outlined" hide-details v-model="chat.model_context_tokens" type="number" min="1" /></label>
+                  <p class="hint">右上角那枚环显示的是<b>还能输入多少</b>：这里填的上下文长度减去给回复预留的空间。填 1000000 时通常显示 995904。</p>
+                </div>
+                <div class="settings-item">
+                  <label id="setting-history-window" tabindex="-1" class="field"><span>首屏加载条数</span><VTextField density="compact" variant="outlined" hide-details v-model="chat.history_window" type="number" min="1" placeholder="留空 = 5" /></label>
+                  <p class="hint">按消息段计数（一条消息或一张顶层摘要卡）；「加载更多」每页同样数量。远程部署时调小可减少首屏等待。</p>
+                </div>
+              </div>
+            </section>
 
-          <section class="settings-card">
-          <h3>自动压缩</h3>
-          <p class="hint">上下文快满时把较早的对话压成摘要；原文仍保留在会话里，撤销压缩可恢复。</p>
-          <label id="setting-auto-compact" tabindex="-1" class="field"><span>启用自动压缩</span><VSwitch v-model="chat.auto_compact" color="primary" density="compact" hide-details /></label>
-          <p class="hint">达到触发线就后台压缩，压到输入预算的 50% 以下停；关闭后只能手动压缩。</p>
-          <label id="setting-compact-blocks" tabindex="-1" class="field"><span>每次压缩块数</span><VTextField density="compact" variant="outlined" hide-details v-model="chat.compact_blocks" type="number" min="1" placeholder="留空 = 3" /></label>
-          <p class="hint">块 = 一段完整对话；一次压几个块。默认 3，小步快跑更容易保持细节。</p>
-          <label id="setting-compact-trigger" tabindex="-1" class="field"><span>压缩触发阈值（token）</span><VTextField density="compact" variant="outlined" hide-details v-model="chat.compact_trigger_tokens" type="number" min="1" placeholder="留空 = 输入预算的 80%" /></label>
-          <p class="hint">填绝对值；留空按输入预算的 80% 计算。</p>
-          <div class="row action-row">
-            <VBtn color="primary" variant="flat" size="small" type="button" :loading="savingChat === 'context'" :disabled="!!savingChat" @click="saveChat('context')">保存上下文设置</VBtn>
-            <span class="status" role="status">{{ chatStatus.context }}</span>
-          </div>
-          </section>
+            <section class="settings-group">
+              <h3>自动压缩</h3>
+              <p class="hint">上下文快满时把较早的对话压成摘要；原文仍保留在会话里，撤销压缩可恢复。</p>
+              <div class="settings-group-body">
+                <div class="settings-item">
+                  <label id="setting-auto-compact" tabindex="-1" class="field"><span>启用自动压缩</span><VSwitch v-model="chat.auto_compact" color="primary" density="compact" hide-details /></label>
+                  <p class="hint">达到触发线就后台压缩，压到输入预算的 50% 以下停；关闭后只能手动压缩。</p>
+                </div>
+                <div class="settings-item">
+                  <label id="setting-compact-blocks" tabindex="-1" class="field"><span>每次压缩块数</span><VTextField density="compact" variant="outlined" hide-details v-model="chat.compact_blocks" type="number" min="1" placeholder="留空 = 3" /></label>
+                  <p class="hint">块 = 一段完整对话；一次压几个块。默认 3，小步快跑更容易保持细节。</p>
+                </div>
+                <div class="settings-item">
+                  <label id="setting-compact-trigger" tabindex="-1" class="field"><span>压缩触发阈值（token）</span><VTextField density="compact" variant="outlined" hide-details v-model="chat.compact_trigger_tokens" type="number" min="1" placeholder="留空 = 输入预算的 80%" /></label>
+                  <p class="hint">填绝对值；留空按输入预算的 80% 计算。</p>
+                </div>
+                <div class="row action-row">
+                  <VBtn color="primary" variant="flat" size="small" type="button" :loading="savingChat === 'context'" :disabled="!!savingChat" @click="saveChat('context')">保存上下文设置</VBtn>
+                  <span class="status" role="status">{{ chatStatus.context }}</span>
+                </div>
+              </div>
+            </section>
           </template>
 
           <RequestLoading v-if="formWaiting.generation" label="读取生成设置…" />
           <p v-else-if="formError('generation')" class="status" role="alert">{{ formError('generation') }}</p>
           <template v-else>
-          <p v-if="formError('generation', true)" class="status" role="alert">{{ formError('generation', true) }}</p>
-          <section class="settings-card">
-          <h3>自动标题</h3>
-          <label id="setting-title-chars" tabindex="-1" class="field"><span>自动标题最多字数</span><VTextField density="compact" variant="outlined" hide-details v-model="chat.title_chars" type="number" min="1" placeholder="留空 = 32" /></label>
-          <p class="hint">标题只在会话标题为空时自动生成；用户手动改名后不再覆盖。</p>
-          <label id="setting-title-model" tabindex="-1" class="field"><span>全局标题模型</span><VSelect v-model="chat.title_model" :items="titleSelectOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
-          <p class="hint">默认「使用当前模型」；智能体里的起标题能力选「跟随全局设置」时读这里。</p>
-          <p class="hint">历史思考回传由「渠道与模型规则」决定；已存档的思考仍可查看。</p>
-          <div class="row action-row">
-            <VBtn color="primary" variant="flat" size="small" type="button" :loading="savingChat === 'generation'" :disabled="!!savingChat" @click="saveChat('generation')">保存生成设置</VBtn>
-            <span class="status" role="status">{{ chatStatus.generation }}</span>
-          </div>
-          </section>
+            <p v-if="formError('generation', true)" class="status" role="alert">{{ formError('generation', true) }}</p>
+            <section class="settings-group">
+              <h3>自动标题</h3>
+              <div class="settings-group-body">
+                <div class="settings-item">
+                  <label id="setting-title-chars" tabindex="-1" class="field"><span>自动标题最多字数</span><VTextField density="compact" variant="outlined" hide-details v-model="chat.title_chars" type="number" min="1" placeholder="留空 = 32" /></label>
+                  <p class="hint">标题只在会话标题为空时自动生成；用户手动改名后不再覆盖。</p>
+                </div>
+                <div class="settings-item">
+                  <label id="setting-title-model" tabindex="-1" class="field"><span>全局标题模型</span><VSelect v-model="chat.title_model" :items="titleSelectOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details /></label>
+                  <p class="hint">默认「使用当前模型」；智能体里的起标题能力选「跟随全局设置」时读这里。</p>
+                  <p class="hint">历史思考回传由「渠道与模型规则」决定；已存档的思考仍可查看。</p>
+                </div>
+                <div class="row action-row">
+                  <VBtn color="primary" variant="flat" size="small" type="button" :loading="savingChat === 'generation'" :disabled="!!savingChat" @click="saveChat('generation')">保存生成设置</VBtn>
+                  <span class="status" role="status">{{ chatStatus.generation }}</span>
+                </div>
+              </div>
+            </section>
           </template>
         </section>
         <section v-if="visited.has('provider')" v-show="tab === 'provider'" id="panel-provider" class="panel">
@@ -1146,32 +1164,33 @@ function onKey(e: KeyboardEvent): void {
           <p v-else-if="reads.sessions.ready" class="manage-empty">还没有会话</p>
           <p v-if="reads.sessions.error" class="status" role="alert">{{ reads.sessions.error }}</p>
           <div class="row" v-if="sessionMgrStatus"><span class="status" role="status">{{ sessionMgrStatus }}</span></div>
-          <h3 id="setting-import-json" tabindex="-1">导入 MicroChat 对话</h3>
-          <div class="io-cards">
-            <div class="io-card">
+          <section class="settings-group">
+            <h3 id="setting-import-json" tabindex="-1">导入 MicroChat 对话</h3>
+            <div class="settings-group-body">
               <div class="io-head"><b>MicroChat 对话记录</b><i class="io-tag">.json</i></div>
               <p class="hint">本应用导出的对话记录：标题、每条消息的说话人和正文（消息里的状态块会保留，导回去后状态照常重算），以及这条会话当时使用的渠道、模型和智能体（本机没有那个智能体会提示，人设回落到内置默认）。</p>
+              <p class="hint">导入只会<b>新建一条会话</b>，不会改动现有会话。</p>
               <div class="row">
                 <VBtn color="primary" variant="flat" size="small" type="button" :loading="importingJSON" :disabled="importingJSON" @click="jsonInput?.click()">选择 .json 文件…</VBtn>
                 <input ref="jsonInput" type="file" accept=".json" hidden @change="importJSONFile" />
                 <span class="status" role="status">{{ jsonStatus }}</span>
               </div>
             </div>
-          </div>
-          <p class="hint">导入只会<b>新建一条会话</b>，不会改动现有会话。</p>
+          </section>
         </section>
         <UpdatePane v-if="visited.has('update')" v-show="tab === 'update'" :ask="ask" @prefs-saved="emit('prefs-saved')" />
         <section v-if="visited.has('tavern')" v-show="tab === 'tavern'" id="panel-tavern" class="panel">
           <h3>酒馆</h3>
           <p class="hint">专门处理 SillyTavern 的预设、角色卡与聊天记录：预设可以解析并导入提示词片段，聊天记录可以导入成会话；角色卡转换还没接。</p>
-          <section class="settings-card">
+          <section class="settings-group">
             <h3 id="setting-import-preset" tabindex="-1">原始 JSON 存档</h3>
-            <p class="hint">只保存文件的原始字节，不解析、不改写；导出时逐字节原样返回。解析与导入片段走每行的「解析与导入」。</p>
-            <div class="row">
-              <VBtn color="primary" variant="flat" size="small" type="button" :loading="importingTavern" :disabled="importingTavern" @click="tavernInput?.click()">导入原始 JSON…</VBtn>
-              <span class="action-note">只保存原始字节、不改写文件；解析和导入片段走「解析与导入」。</span>
-              <input ref="tavernInput" type="file" accept=".json,application/json" hidden @change="importTavernPresetFile" />
-              <span class="status" role="status">{{ tavernStatus }}</span>
+            <div class="settings-group-body">
+              <p class="hint">只保存文件的原始字节，不解析、不改写；导出时逐字节原样返回。解析与导入片段走每行的「解析与导入」。</p>
+              <div class="row">
+                <VBtn color="primary" variant="flat" size="small" type="button" :loading="importingTavern" :disabled="importingTavern" @click="tavernInput?.click()">导入原始 JSON…</VBtn>
+                <input ref="tavernInput" type="file" accept=".json,application/json" hidden @change="importTavernPresetFile" />
+                <span class="status" role="status">{{ tavernStatus }}</span>
+              </div>
             </div>
             <RequestLoading v-if="awaitingFirstRead('tavern') || (tavernPresets.length && awaitingFirstRead('agents'))" label="读取酒馆预设与导入片段…" />
             <div v-else-if="tavernPresets.length" id="tavern-file-list">
@@ -1193,8 +1212,9 @@ function onKey(e: KeyboardEvent): void {
             <p v-if="reads.tavern.error" class="status" role="alert">{{ reads.tavern.error }}</p>
             <p v-if="tavernPresets.length && reads.agents.error" class="status" role="alert">{{ reads.agents.error }}</p>
           </section>
-          <h3 id="setting-import-st" tabindex="-1">导入 SillyTavern 聊天记录</h3>
-            <div class="io-card">
+          <section class="settings-group">
+            <h3 id="setting-import-st" tabindex="-1">导入 SillyTavern 聊天记录</h3>
+            <div class="settings-group-body">
               <div class="io-head"><b>SillyTavern 聊天记录</b><i class="io-tag">.jsonl</i></div>
               <p class="hint">SillyTavern 导出的聊天记录（一行一条）。只读取说话人、正文、思考过程和时间，其余内容会丢掉。</p>
               <div class="row">
@@ -1204,6 +1224,7 @@ function onKey(e: KeyboardEvent): void {
               </div>
               <label class="field"><span>标题</span><VTextField density="compact" variant="outlined" hide-details v-model="importTitle" placeholder="留空 = 用第一句话自动起名" /></label>
             </div>
+          </section>
         </section>
           <section v-if="tab === 'runner'" id="setting-runner" tabindex="-1" class="panel">
             <h3>Runner 接入</h3>

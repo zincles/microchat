@@ -245,154 +245,121 @@ async function clearBg(): Promise<void> {
 
 <template>
   <section id="panel-appearance" class="panel">
-    <section class="settings-card">
+    <section class="settings-group">
       <h3>外观</h3>
-      <label id="setting-theme" tabindex="-1" class="field"><span>主题</span><VSelect :model-value="theme" :items="themeOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details @update:model-value="onTheme" /></label>
-      <!-- 滑杆与百分比放在同一列；缩放只在点击「保存缩放」后应用。 -->
-      <label id="setting-scale" tabindex="-1" class="field"><span>界面缩放</span>
-        <span class="scale-wrap">
-          <VSlider
-            :model-value="textScale"
-            :min="scaleBounds.min"
-            :max="scaleBounds.max"
-            :step="scaleBounds.step"
-            color="primary"
-            density="compact"
-            hide-details
-            aria-label="界面缩放"
-            @update:model-value="onScaleInput"
-          />
-          <b class="scale-value">{{ scalePercent }}%</b>
-        </span>
-      </label>
-      <div class="row">
-        <VBtn color="primary" variant="flat" size="small" type="button" :disabled="!scaleDirty" @click="saveScale">保存缩放</VBtn>
-        <VBtn variant="text" size="small" type="button" @click="resetScale">复位 100%</VBtn>
-        <span class="status">{{ scaleDirty ? "未保存：点「保存缩放」后才会应用" : "字号和留白等比缩放，点「保存缩放」才应用" }}</span>
-      </div>
-      <label id="setting-font-body" tabindex="-1" class="field"><span>标准字体</span><VTextField density="compact" variant="outlined" hide-details v-model="fontBody" @change="saveFonts" placeholder="留空 = 系统默认（CSS font-family）" /></label>
-      <label id="setting-font-mono" tabindex="-1" class="field"><span>等宽字体（代码块）</span><VTextField density="compact" variant="outlined" hide-details v-model="fontMono" @change="saveFonts" placeholder="留空 = 系统等宽" /></label>
-      <p class="hint">可按 CSS 写法给多个后备字体，例如 <code>"Noto Sans SC", sans-serif</code>。标准字体用于全站，等宽字体只用于代码块；留空恢复内置系统字族。</p>
-      <div class="row"><VBtn variant="text" size="small" type="button" @click="resetFonts">恢复默认字体</VBtn></div>
-      <div id="setting-background" tabindex="-1">
-        <label class="field"><span>背景图地址</span><VTextField density="compact" variant="outlined" hide-details v-model="bgUrl" placeholder="https://…（跨域也可）" /></label>
-        <div class="row">
-          <VBtn color="primary" variant="flat" size="small" type="button" :disabled="!!bgAction" @click="applyBgUrl">应用地址</VBtn>
-          <VBtn variant="text" size="small" type="button" :loading="bgAction === 'upload'" :disabled="!!bgAction" @click="bgFile?.click()">上传图片…</VBtn>
-          <input ref="bgFile" type="file" accept="image/*" hidden @change="pickBgFile" />
-          <VBtn color="error" variant="text" size="small" type="button" :loading="bgAction === 'remove'" :disabled="!!bgAction" @click="clearBg">清除</VBtn>
-          <span class="status" role="status">当前背景：{{ bgStatus }}</span>
-        </div>
-        <p v-if="bgPreview" class="hint">背景图保存在服务器上 —— 换设备也在。</p>
-      </div>
-      <label id="setting-chrome-hide" tabindex="-1" class="field"><span>滚动时自动收起聊天控件和输入栏（仅触屏）</span><VSwitch :model-value="chromeHide" @update:model-value="(v) => setChromeHide(v === true)" color="primary" density="compact" hide-details /></label>
-      <p class="hint">往下看时收起模型与工作区切换，往回看时收起输入栏；到顶或到底时恢复。</p>
-    </section>
-
-    <section class="settings-card">
-      <h3>输入与发送</h3>
-      <label id="setting-user-name" tabindex="-1" class="field"><span>用户名称</span><VTextField density="compact" variant="outlined" hide-details v-model="userName" @change="saveName" placeholder="留空 = 你" /></label>
-      <p class="hint">用于提示词与消息里的 <code v-text="'{{user_name}}'"></code> / <code v-text="'{{user}}'"></code> 宏；只做替换，不影响世界状态。</p>
-      <label id="setting-send-mode" tabindex="-1" class="field"><span>发送方式</span><VSelect :model-value="send" :items="sendOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details @update:model-value="onSend" /></label>
-      <label id="setting-input-preview" tabindex="-1" class="field"><span>输入时预览将要发送的内容</span><VSwitch :model-value="preview" @update:model-value="(v) => setPreview(v === true)" color="primary" density="compact" hide-details /></label>
-      <p class="hint">输入时预演将发给模型的内容，可在上下文工作区查看。</p>
-      <label id="setting-command-menu" tabindex="-1" class="field"><span>命令菜单</span><VSwitch :model-value="cmdMenu" @update:model-value="(v) => setCmdMenu(v === true)" color="primary" density="compact" hide-details /></label>
-      <p class="hint">开启后输入框左侧会出现 ☰，输入 <code>/</code> 会弹出命令列表。</p>
-    </section>
-
-    <section id="panel-markdown" class="settings-card">
-      <h3>文本格式（Markdown）</h3>
-      <label id="setting-markdown-enabled" tabindex="-1" class="field"><span>解析 Markdown 格式</span><VSwitch :model-value="mdEnabled" @update:model-value="(v) => setMdEnabled(v === true)" color="primary" density="compact" hide-details /></label>
-      <p class="hint">
-        关闭后整条消息按<b>原文显示</b>，保留换行和标记。开启时可以单独关闭某类格式，让它按原文显示。改动会自动保存。
-      </p>
-      <p v-if="!mdEnabled" class="hint">各类格式的设置会保留，打开总开关后恢复生效。</p>
-      <p class="hint">
-        <b>HTML 标签一律不解析</b>：程序会先把 <code>&amp;</code> 和 <code>&lt;</code> 转义掉，防止注入脚本。
-      </p>
-      <div v-if="mdGroups.length" class="row md-group-ops">
-        <VBtn variant="text" size="small" type="button" :disabled="!mdEnabled" @click="disableAll">全部关闭</VBtn>
-        <VBtn variant="text" size="small" type="button" :disabled="!mdEnabled" @click="enableAll">全部开启</VBtn>
-      </div>
-      <!-- 格式名称及示例来自后端的 markdown_types。 -->
-      <div v-for="group in mdGroups" :key="group.kind" class="md-group">
-        <div class="md-group-head">
-          <span>{{ group.title }}</span>
-          <span class="md-group-count">{{ group.enabled }}/{{ group.items.length }} 已启用</span>
-        </div>
-        <div class="md-group-list">
-          <label v-for="item in group.items" :key="item.id" :id="`setting-markdown-${item.id}`" tabindex="-1" class="field md-row">
-            <span class="md-copy">
-              <span class="md-name">{{ item.name }}</span>
-              <code :id="`setting-markdown-sample-${item.id}`" class="md-sample">{{ item.sample }}</code>
+      <div class="settings-group-body">
+        <label id="setting-theme" tabindex="-1" class="field"><span>主题</span><VSelect :model-value="theme" :items="themeOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details @update:model-value="onTheme" /></label>
+        <div class="settings-item">
+          <label id="setting-scale" tabindex="-1" class="field"><span>界面缩放</span>
+            <span class="scale-wrap">
+              <VSlider
+                :model-value="textScale"
+                :min="scaleBounds.min"
+                :max="scaleBounds.max"
+                :step="scaleBounds.step"
+                color="primary"
+                density="compact"
+                hide-details
+                aria-label="界面缩放"
+                @update:model-value="onScaleInput"
+              />
+              <b class="scale-value">{{ scalePercent }}%</b>
             </span>
-            <VSwitch :model-value="typeOn(item.id)" :disabled="!mdEnabled" :aria-describedby="`setting-markdown-sample-${item.id}`" @update:model-value="(on) => toggleType(item.id, on === true)" color="primary" density="compact" hide-details />
           </label>
+          <div class="row">
+            <VBtn color="primary" variant="flat" size="small" type="button" :disabled="!scaleDirty" @click="saveScale">保存缩放</VBtn>
+            <VBtn variant="text" size="small" type="button" @click="resetScale">复位 100%</VBtn>
+            <span class="status">{{ scaleDirty ? "未保存：点「保存缩放」后才会应用" : "字号和留白等比缩放，点「保存缩放」才应用" }}</span>
+          </div>
         </div>
+        <div class="settings-item">
+          <label id="setting-font-body" tabindex="-1" class="field"><span>标准字体</span><VTextField density="compact" variant="outlined" hide-details v-model="fontBody" @change="saveFonts" placeholder="留空 = 系统默认（CSS font-family）" /></label>
+          <label id="setting-font-mono" tabindex="-1" class="field"><span>等宽字体（代码块）</span><VTextField density="compact" variant="outlined" hide-details v-model="fontMono" @change="saveFonts" placeholder="留空 = 系统等宽" /></label>
+          <p class="hint">可按 CSS 写法给多个后备字体，例如 <code>"Noto Sans SC", sans-serif</code>。标准字体用于全站，等宽字体只用于代码块；留空恢复内置系统字族。</p>
+          <div class="row"><VBtn variant="text" size="small" type="button" @click="resetFonts">恢复默认字体</VBtn></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="settings-group">
+      <h3>聊天界面</h3>
+      <div class="settings-group-body">
+        <div id="setting-background" tabindex="-1" class="settings-item">
+          <label class="field"><span>背景图地址</span><VTextField density="compact" variant="outlined" hide-details v-model="bgUrl" placeholder="https://…（跨域也可）" /></label>
+          <div class="row">
+            <VBtn color="primary" variant="flat" size="small" type="button" :disabled="!!bgAction" @click="applyBgUrl">应用地址</VBtn>
+            <VBtn variant="text" size="small" type="button" :loading="bgAction === 'upload'" :disabled="!!bgAction" @click="bgFile?.click()">上传图片…</VBtn>
+            <input ref="bgFile" type="file" accept="image/*" hidden @change="pickBgFile" />
+            <VBtn color="error" variant="text" size="small" type="button" :loading="bgAction === 'remove'" :disabled="!!bgAction" @click="clearBg">清除</VBtn>
+            <span class="status" role="status">当前背景：{{ bgStatus }}</span>
+          </div>
+          <p v-if="bgPreview" class="hint">背景图保存在服务器上 —— 换设备也在。</p>
+        </div>
+        <div class="settings-item">
+          <label id="setting-chrome-hide" tabindex="-1" class="field"><span>滚动时自动收起聊天控件和输入栏（仅触屏）</span><VSwitch :model-value="chromeHide" @update:model-value="(v) => setChromeHide(v === true)" color="primary" density="compact" hide-details /></label>
+          <p class="hint">往下看时收起模型与工作区切换，往回看时收起输入栏；到顶或到底时恢复。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="settings-group">
+      <h3>输入与发送</h3>
+      <div class="settings-group-body">
+        <div class="settings-item">
+          <label id="setting-user-name" tabindex="-1" class="field"><span>用户名称</span><VTextField density="compact" variant="outlined" hide-details v-model="userName" @change="saveName" placeholder="留空 = 你" /></label>
+          <p class="hint">用于提示词与消息里的 <code v-text="'{{user_name}}'"></code> / <code v-text="'{{user}}'"></code> 宏；只做替换，不影响世界状态。</p>
+        </div>
+        <label id="setting-send-mode" tabindex="-1" class="field"><span>发送方式</span><VSelect :model-value="send" :items="sendOptions" item-title="label" item-value="value" density="compact" variant="outlined" hide-details @update:model-value="onSend" /></label>
+        <div class="settings-item">
+          <label id="setting-input-preview" tabindex="-1" class="field"><span>输入时预览将要发送的内容</span><VSwitch :model-value="preview" @update:model-value="(v) => setPreview(v === true)" color="primary" density="compact" hide-details /></label>
+          <p class="hint">输入时预演将发给模型的内容，可在上下文工作区查看。</p>
+        </div>
+        <div class="settings-item">
+          <label id="setting-command-menu" tabindex="-1" class="field"><span>命令菜单</span><VSwitch :model-value="cmdMenu" @update:model-value="(v) => setCmdMenu(v === true)" color="primary" density="compact" hide-details /></label>
+          <p class="hint">开启后输入框左侧会出现 ☰，输入 <code>/</code> 会弹出命令列表。</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="panel-markdown" class="settings-group">
+      <h3>文本格式（Markdown）</h3>
+      <div class="settings-group-body">
+        <div class="settings-item">
+          <label id="setting-markdown-enabled" tabindex="-1" class="field"><span>解析 Markdown 格式</span><VSwitch :model-value="mdEnabled" @update:model-value="(v) => setMdEnabled(v === true)" color="primary" density="compact" hide-details /></label>
+          <p class="hint">
+            关闭后整条消息按<b>原文显示</b>，保留换行和标记。开启时可以单独关闭某类格式，让它按原文显示。改动会自动保存。
+          </p>
+          <p v-if="!mdEnabled" class="hint">各类格式的设置会保留，打开总开关后恢复生效。</p>
+          <p class="hint">
+            <b>HTML 标签一律不解析</b>：程序会先把 <code>&amp;</code> 和 <code>&lt;</code> 转义掉，防止注入脚本。
+          </p>
+        </div>
+        <div v-if="mdGroups.length" class="row">
+          <VBtn variant="text" size="small" type="button" :disabled="!mdEnabled" @click="disableAll">全部关闭</VBtn>
+          <VBtn variant="text" size="small" type="button" :disabled="!mdEnabled" @click="enableAll">全部开启</VBtn>
+        </div>
+      </div>
+    </section>
+    <section v-for="group in mdGroups" :key="group.kind" class="settings-group">
+      <h3 class="md-group-title">
+        <span>{{ group.title }}</span>
+        <span class="md-group-count">{{ group.enabled }}/{{ group.items.length }} 已启用</span>
+      </h3>
+      <div class="settings-group-body">
+        <label v-for="item in group.items" :key="item.id" :id="`setting-markdown-${item.id}`" tabindex="-1" class="field">
+          <span class="md-copy">
+            <span>{{ item.name }}</span>
+            <code :id="`setting-markdown-sample-${item.id}`" class="md-sample">{{ item.sample }}</code>
+          </span>
+          <VSwitch :model-value="typeOn(item.id)" :disabled="!mdEnabled" :aria-describedby="`setting-markdown-sample-${item.id}`" @update:model-value="(on) => toggleType(item.id, on === true)" color="primary" density="compact" hide-details />
+        </label>
       </div>
     </section>
   </section>
 </template>
 <style scoped>
-.md-group {
-  border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-  margin-top: 12px;
-  padding-top: 10px;
-}
-
-.md-group-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 6px;
-  font-weight: 600;
-}
-
-.md-group-count {
-  color: rgba(var(--v-theme-on-surface), 0.62);
-  font-size: 0.8rem;
-  font-weight: 400;
-  white-space: nowrap;
-}
-
-.md-group-list {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 4px 16px;
-}
-
-.md-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  padding: 6px 8px;
-  border-radius: 4px;
-}
-
-.md-copy {
-  display: grid;
-  min-width: 0;
-  gap: 2px;
-}
-
-.md-name,
-.md-sample {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.md-sample {
-  color: rgba(var(--v-theme-on-surface), 0.62);
-  font-size: 0.8rem;
-  font-weight: 400;
-}
-
-@media (max-width: 600px) {
-  .md-group-list {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
+.md-group-title { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0 var(--chat-space); }
+.md-group-count { font-size: var(--md-type-label-medium); font-weight: 400; white-space: nowrap; }
+.md-copy { display: grid; min-width: 0; gap: calc(var(--chat-space) / 4); overflow-wrap: anywhere; }
+.md-sample { color: var(--md-on-surface-variant); font-size: var(--md-type-body-small); font-weight: 400; }
 </style>

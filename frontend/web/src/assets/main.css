@@ -612,8 +612,6 @@ code, pre, kbd, samp { font-family: var(--app-font-mono, ui-monospace, SFMono-Re
   #sessions-bar:not(.collapsed) ~ #scrim-left { opacity: 1; pointer-events: auto; }
   #chat-col { --chat-inset: calc(2 * var(--chat-space)); }
   #chat-controls { padding-inline: var(--chat-space); gap: calc(var(--chat-space) / 2); }
-  #settings-view { padding: 0.4em 0.4em 0; }
-  .settings-bar { gap: 0.2em; }
   /* Vuetify VTab 默认 min-width 90 ⇒ 四个 tab 在 390px 下会溢出、show-arrows 吃掉 104px。
    * 窄屏压到内容宽度；再窄也还是 Vuetify 的 slide group 横滚。 */
   #app .settings-tabs .v-tab, #app .agent-tabs .v-tab { min-width: 0; padding-inline: 0.6em; }
@@ -1140,7 +1138,6 @@ code, pre, kbd, samp { font-family: var(--app-font-mono, ui-monospace, SFMono-Re
 .palette-item .cmd-name { flex: none; }
 .palette-item .cmd-desc { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--tg-hint); font-size: 0.85em; }
 .palette-item.sel .cmd-desc { color: inherit; opacity: 0.75; }
-/* 设置 modal（分组卡片，不是左右分栏 —— TG 设置页就是一组一组的圆角块）。 */
 .hidden { display: none; }
 /* 紧凑对话框（会话设置这种小表单）：宽够用、高随内容 —— 别用 92vh 的空盒子。 */
 /* 图标按钮通用（× ＋ 这种）：去边框去底色，hover 才显底 —— 原生感就这么来。 */
@@ -1151,20 +1148,22 @@ code, pre, kbd, samp { font-family: var(--app-font-mono, ui-monospace, SFMono-Re
 .icon-btn:hover { color: var(--tg-text); background: var(--mix-8); }
 /* —— 设置视图（与对话同级；左栏右边那一整块，不是弹窗）—— */
 /* 设置页头固定，只有 .settings-body 滚动。 */
-#settings-view { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 0.5em 0.6em 0; background: var(--md-surface); color: var(--md-on-surface); }
-.settings-bar { display: flex; align-items: center; gap: 0.4em; max-width: 960px; width: 100%; margin: 0 auto; }
-/* 单独入口（会话 / 渠道）的页头：没有 VTabs，标题吃掉中间空档。 */
-.settings-title { flex: 1 1 auto; min-width: 0; margin: 0; font-size: var(--md-type-title-small); font-weight: 500; color: var(--md-on-surface); }
+#settings-view { --settings-width: 760px; --settings-inset: calc(2 * var(--chat-space));
+  flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0;
+  background: var(--md-surface); color: var(--md-on-surface); }
+.settings-bar { flex: none; display: flex; align-items: center; gap: calc(var(--chat-space) / 2);
+  width: 100%; max-width: calc(var(--settings-width) + 2 * var(--settings-inset)); box-sizing: border-box;
+  margin-inline: auto; padding: var(--chat-space) var(--settings-inset) 0; }
+.settings-title { flex: 1 1 auto; min-width: 0; margin: 0; font-size: var(--md-type-title-large);
+  font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
 .settings-bar .settings-tabs { flex: 1 1 auto; min-width: 0; }
-.settings-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0.55em 0.2em 1.5em; }
-.settings-box { max-width: 960px; margin: 0 auto; }
+.settings-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  padding: var(--chat-space) var(--settings-inset) calc(3 * var(--chat-space)); }
+.settings-box { width: 100%; max-width: var(--settings-width); margin-inline: auto; }
 .agent-window { background: none; }
 .agent-tabs { margin-bottom: 0.7em; }
-/* 分组标题（2026-11-02）：所有设置页（含二级编辑器）统一一种样子 —— 正文色半粗 + 左侧蓝色短竖条。
- * 从前只有卡片里的 h3 带竖条，其它 tab 的 h3 是裸文字 ⇒ 同一页两套标题语言（用户指出）。
- * 竖条用 `::before` 而不是 border-left：换行时它只跟第一行，不会把整段框起来。 */
-.settings-cols .panel h3 { color: var(--md-on-surface); font-size: var(--md-type-title-small); font-weight: 500; letter-spacing: 0.006em; margin: 1em 0 0.3em; }
-.settings-cols .panel h3::before { content: ""; display: inline-block; width: 3px; height: 0.9em; border-radius: 2px; background: var(--md-primary); margin-right: 0.5em; vertical-align: -0.08em; }
+.settings-cols .panel h3 { color: var(--md-on-surface); font-size: var(--md-type-title-small);
+  font-weight: 600; margin: 0.8em 0 0.3em; }
 .settings-cols .panel h3:first-child, .panel-head h3 { margin-top: 0.15em; }
 .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 0.6em; margin: 0.15em 0 0.3em; }
 .panel-head h3 { margin-bottom: 0; }
@@ -1173,36 +1172,35 @@ code, pre, kbd, samp { font-family: var(--app-font-mono, ui-monospace, SFMono-Re
 .settings-cols .panel-head .action-note { max-width: 18em; text-align: right; }
 .status { color: var(--md-on-surface-variant); font-size: var(--md-type-label-medium); }
 .hint { color: var(--md-on-surface-variant); font-size: var(--md-type-label-medium); margin: 0.4em 0 0; }
-/* 设置页的页首说明：先讲“这一页管什么”，再列字段；不要让人从字段名猜范围。 */
-.settings-lead { margin: 0 0 0.9em; padding: 0.65em 0.8em; border-left: 3px solid var(--md-primary);
-  border-radius: 0 var(--r-sm) var(--r-sm) 0; background: var(--md-surface-container-low);
-  color: var(--md-on-surface-variant); font-size: var(--md-type-body-small); line-height: 1.55; }
+/* 页首说明不另套一层容器。 */
+.settings-lead { margin: 0 0 var(--chat-space); padding-inline: var(--settings-inset);
+  color: var(--md-on-surface-variant); font-size: var(--md-type-body-medium); line-height: 1.55; }
 .settings-lead b { color: var(--md-on-surface); font-weight: 600; }
-/* 目录、搜索结果及管理入口共用一套 MD3 列表。操作按钮保持为独立命中区。 */
-.settings-search { margin-bottom: calc(2 * var(--chat-space)); }
-.settings-search-icon, .settings-list-chevron { display: inline-flex; flex: none; color: var(--md-on-surface-variant); }
-.settings-directory-group + .settings-directory-group { margin-top: calc(2 * var(--chat-space)); }
-.settings-cols .panel h3.settings-directory-label {
+/* 目录、管理列表和表单共用一个分组底面；标题在底面外。 */
+.settings-group { margin-block-end: calc(2.5 * var(--chat-space)); }
+.settings-cols .panel .settings-group > h3 {
   color: var(--md-on-surface-variant); font-size: var(--md-type-label-large);
-  margin: 0; padding: 0 var(--chat-space) calc(var(--chat-space) / 2);
+  margin: 0 0 calc(var(--chat-space) / 2); padding-inline: var(--settings-inset);
 }
-.settings-cols .panel h3.settings-directory-label::before { content: none; }
-.settings-list { list-style: none; margin: 0; padding: 0; background: var(--md-surface-container-low); border-radius: var(--md-shape-md); }
-.settings-list-row { display: flex; align-items: center; min-width: 0; gap: var(--chat-space); }
-.settings-list-row + .settings-list-row { border-top: 1px solid var(--md-outline-variant); }
-#app .settings-list-entry { flex: 1 1 0; min-width: 0; min-height: 64px; height: auto; padding: calc(1.5 * var(--chat-space)) calc(2 * var(--chat-space)); border-radius: var(--md-shape-sm); color: var(--md-on-surface); text-align: start; letter-spacing: normal; }
-#settings-home .settings-list { background: none; border-top: 1px solid var(--md-outline-variant); border-radius: 0; }
-#app #settings-home .settings-list-entry { min-height: 56px; padding: var(--chat-space); }
+.settings-group > .hint { margin: 0 var(--settings-inset) var(--chat-space); }
+.settings-list, .settings-group-body { background: var(--md-surface-container-low); border-radius: var(--md-shape-xl); }
+.settings-search { margin-bottom: calc(2.5 * var(--chat-space)); }
+.settings-search-icon, .settings-list-chevron { display: inline-flex; flex: none; color: var(--md-on-surface-variant); }
+.settings-list { list-style: none; margin: 0; padding: 0; overflow: clip; }
+.settings-list-row { position: relative; display: flex; align-items: center; min-width: 0; gap: var(--chat-space); }
+.settings-list-row + .settings-list-row::before { content: ""; position: absolute; inset: 0 var(--settings-inset) auto;
+  border-top: 1px solid var(--md-outline-variant); pointer-events: none; }
+#app .settings-list-entry { flex: 1 1 0; min-width: 0; min-height: max(var(--md-touch-target), 4em); height: auto;
+  padding: calc(1.5 * var(--chat-space)) var(--settings-inset); border-radius: 0;
+  color: var(--md-on-surface); text-align: start; letter-spacing: normal; }
 .settings-list-entry .v-btn__content { display: flex; flex: 1 1 auto; align-items: center; min-width: 0; gap: var(--chat-space); white-space: normal; }
 .settings-list-entry:focus-visible, #settings-view [id^="setting-"]:focus { outline: 2px solid var(--md-primary); outline-offset: -2px; }
-.settings-list-icon { flex: none; width: 36px; aspect-ratio: 1; display: grid; place-items: center; border-radius: var(--md-shape-full); color: var(--md-on-secondary-container); background: var(--md-secondary-container); }
-#settings-home .settings-list-icon { width: 32px; background: var(--md-surface-container-high); color: var(--md-on-surface-variant); }
+.settings-list-icon { flex: none; width: calc(4.5 * var(--chat-space)); aspect-ratio: 1; display: grid;
+  place-items: center; border-radius: var(--md-shape-md); color: var(--md-on-secondary-container);
+  background: var(--md-secondary-container); }
 .settings-list-copy { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; gap: calc(var(--chat-space) / 2); font-size: var(--md-type-body-large); line-height: 1.4; overflow-wrap: anywhere; }
 .settings-list-copy strong { color: var(--md-on-surface); font-weight: 500; }
 .settings-list-note { color: var(--md-on-surface-variant); font-size: var(--md-type-body-medium); }
-@media (max-width: 700px) {
-  #app .settings-list-entry { padding-inline: calc(1.5 * var(--chat-space)); }
-}
 /* 按钮旁的一句话（保存范围、是否落库、是否影响已有数据）：比底部大段 hint 更贴动作。 */
 .action-note { color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); line-height: 1.4; }
 .action-row { align-items: center; }
@@ -1213,7 +1211,7 @@ code, pre, kbd, samp { font-family: var(--app-font-mono, ui-monospace, SFMono-Re
 .field-warning b { font-weight: 600; }
 /* 仍需逐列比对的数据表：窄屏以字段标签保留表格信息。 */
 .settings-cols .panel table.plist { background: var(--md-surface-container-low); border-radius: var(--md-shape-md); margin: 0 0 0.5em; border-collapse: separate; border-spacing: 0; overflow: hidden; }
-#tavern-file-list { overflow-x: auto; }
+#tavern-file-list { overflow-x: auto; margin-block-start: var(--chat-space); }
 @media (max-width: 700px) {
   #settings-view .v-table.plist,
   #settings-view .v-table.plist .v-table__wrapper,
@@ -1244,27 +1242,35 @@ code, pre, kbd, samp { font-family: var(--app-font-mono, ui-monospace, SFMono-Re
 .settings-cols .panel { animation: panel-in 140ms ease-out; }
 @keyframes panel-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .settings-cols .panel { animation: none; } }
-/* 设置页是**平铺列表**（2026-11-04）：行与行只隔一条细线，不再套一层卡片。
- * h3 后第一行不画顶线；列表末尾也不补圆角 —— 圆角交给真正的卡片（表格/浮层）。 */
-.settings-cols .panel .field, .settings-cols .panel .row { background: none; margin: 0; padding: 0.7em 0.2em; line-height: 1.45; border-top: 1px solid var(--md-outline-variant); border-radius: 0; }
+/* 专用编辑器保留平铺；分组表单在各组内部重排。 */
+.settings-cols .panel .field, .settings-cols .panel .row { margin: 0; padding: 0.45em 0.2em;
+  line-height: 1.45; border-top: 1px solid var(--md-outline-variant); }
 .settings-cols .panel h3 + .field, .settings-cols .panel h3 + .row,
 .settings-cols .panel > .field:first-child, .settings-cols .panel > .row:first-child { border-top: none; }
-/* 外层目录与子页统一阅读宽度，不给每个设置页另维护选择器。 */
-.settings-cols > .panel {
-  max-width: 760px; margin-inline: auto;
+.settings-group-body { min-width: 0; padding: calc(var(--chat-space) / 2) var(--settings-inset); }
+.settings-cols .panel .settings-group-body :is(.field, .row) { padding: 0; border: 0; }
+.settings-cols .panel .settings-group-body > :is(.field, .row, .settings-item) { padding-block: var(--chat-space); }
+.settings-cols .panel .settings-group-body > :is(.field, .row, .settings-item) + :is(.field, .row, .settings-item) {
+  border-block-start: 1px solid var(--md-outline-variant);
 }
-.settings-card { background: none; border-radius: 0; padding: 0; margin: 0 0 1.4em; }
-/* 更新页（2026-11-20 用户定“压成两块简洁版式”）：版本 / PWA 双卡，关于独立收底。 */
-.update-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(18em, 1fr)); gap: 0.8em; align-items: start; }
-.update-version-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(13em, 1fr)); gap: 0.7em; margin: 0.7em 0 0.2em; }
+.settings-group-body .settings-item > :is(.field, .row):not(:first-child) { margin-block-start: var(--chat-space); }
+.settings-group-body .field { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.settings-group-body .field > .v-input { min-width: 0; }
+.settings-group-body .field:has(> .v-switch) { grid-template-columns: minmax(0, 1fr) auto; min-height: var(--md-touch-target); }
+@media (max-width: 700px) {
+  .settings-group-body .field:not(:has(> .v-switch)) { grid-template-columns: minmax(0, 1fr); gap: calc(var(--chat-space) / 2); }
+}
+/* 版本与 PWA 在桌面并列，窄屏仍使用同一批分组。 */
+.update-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 18em), 1fr));
+  column-gap: calc(2 * var(--chat-space)); align-items: start; }
+.update-version-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 13em), 1fr));
+  gap: var(--chat-space); margin: var(--chat-space) 0; }
 .update-block { display: flex; flex-direction: column; gap: 0.15em; }
 .update-section-title { margin: 0 0 0.35em; font-size: var(--md-type-title-small); font-weight: 600; color: var(--md-on-surface); }
-.update-auto { display: flex; align-items: center; justify-content: space-between; gap: 1em; margin: 0.5em 0 0.2em; color: var(--md-on-surface); }
-.update-about-card { margin-top: 0.9em; }
-.update-row { display: flex; align-items: baseline; gap: 0.55em; font-size: var(--md-type-body-medium); }
+.update-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 0.55em; font-size: var(--md-type-body-medium); }
 .update-row > span { color: var(--md-on-surface-variant); }
-.update-row code { font-family: var(--app-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); }
-.update-subject { color: var(--md-on-surface-variant); font-size: var(--md-type-body-small); margin-top: 0.15em; }
+.update-row code { font-family: var(--app-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); overflow-wrap: anywhere; }
+.update-subject { color: var(--md-on-surface-variant); font-size: var(--md-type-body-small); margin-top: 0.15em; overflow-wrap: anywhere; }
 .update-hash { color: var(--md-on-surface-variant); font-family: var(--app-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
   font-size: var(--md-type-label-small); overflow-wrap: anywhere; }
 .update-compare { margin: 0.25em 0 0; font-size: var(--md-type-body-small); }
@@ -1275,36 +1281,14 @@ code, pre, kbd, samp { font-family: var(--app-font-mono, ui-monospace, SFMono-Re
   background: var(--md-surface-container-low); color: var(--md-on-surface); border: 1px solid var(--md-outline-variant);
   border-radius: var(--md-shape-sm); font-family: var(--app-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
   font-size: var(--md-type-label-small); white-space: pre-wrap; }
-/* 更新页底部：项目介绍与链接（2026-11-11 用户定）。和更新按钮同一张卡，
-   但用分隔线隔开 —— 它是“关于”，不是又一块更新操作。 */
-.project-about { margin-top: 1.3em; padding-top: 0.9em; border-top: 1px solid var(--md-outline-variant); }
 .project-about p { margin: 0.35em 0; color: var(--md-on-surface-variant); font-size: var(--md-type-body-small); line-height: 1.6; }
 .project-about .project-authors { color: var(--md-on-surface); }
 .project-about .project-link { margin-top: 0.55em; }
 .project-about a { color: var(--md-primary); text-decoration: none; }
 .project-about a:hover { text-decoration: underline; }
-.settings-cols .panel .settings-card h3 { margin: 0.6em 0 0.2em; }
-.settings-cols .panel .settings-card .field { grid-template-columns: 190px 1fr; }
-.settings-cols .panel .settings-card .hint { margin: 0.35em 0 0.3em; }
-/* Markdown 分项与整组操作在「外观与输入」的文本格式分节。 */
-#panel-markdown .md-group { margin-top: 0.55em; }
-#panel-markdown .md-group-head { color: var(--md-on-surface-variant); font-size: var(--md-type-label-large); }
-#panel-markdown .md-group-ops { display: flex; flex-wrap: wrap; gap: calc(var(--chat-space) / 2); }
-#panel-markdown .md-row code.md-sample { color: var(--tg-hint); background: var(--mix-6); border-radius: var(--r-xs);
-  padding: 0 0.25em; font-size: 0.9em; }
-@media (max-width: 700px) {
-  .settings-cols .panel .settings-card .field { grid-template-columns: 1fr; gap: 0.3em; }
-}
-/* 导入卡（2026-10-17）：两种"导入"各一张 —— 卡面比面板底亮一档、自带圆角与内边距，
- * 卡里的 .field/.row 把面板那套"连体行"背景与分隔线**脱掉**（不然卡里又长出条纹，还是分不清谁是谁）。 */
-.io-cards { display: flex; flex-direction: column; gap: 0.5em; }
-.io-card { background: var(--md-surface-container-low); border: 1px solid var(--md-outline-variant); border-radius: var(--md-shape-md); padding: 0.7em 1em 0.75em; }
 .io-head { display: flex; align-items: baseline; gap: 0.5em; }
 .io-head b { color: var(--tg-text); font-weight: 500; font-size: 0.95em; }
 .io-tag { font-style: normal; font-size: var(--md-type-label-small); color: var(--md-on-surface-variant); border: 1px solid var(--md-outline-variant); border-radius: var(--md-shape-full); padding: 0 0.45em; margin-left: 0.35em; }
-.io-card .hint { margin: 0.25em 0 0.5em; }
-/* ⚠ 必须带上 `.settings-cols .panel` 前缀：面板那套连体行规则是 (0,3,0)，两层的选择器压不过它。 */
-.settings-cols .panel .io-card .field, .settings-cols .panel .io-card .row { background: none; padding: 0.3em 0; border-top: none; border-radius: 0; }
 .field { display: grid; grid-template-columns: 140px 1fr; align-items: center; gap: 0.6em; color: var(--tg-text); }
 /* 断点 700 与 App.vue 的 BP 常量同源，改一处要改两处。 */
 @media (max-width: 700px) {
@@ -1573,8 +1557,9 @@ button.danger:hover { background: color-mix(in srgb, var(--md-error) 8%, transpa
 .toast.error { border-left: none; }
 .toast.ok { border-left: none; }
 
-/* 设置页字段标签 / 表格：MD3 排版（标签 on-surface-variant、表头 label-small、行分隔 outline-variant）。 */
+/* 设置标签与表格沿用主题的文字和分隔线角色。 */
 #settings-view .field > span { color: var(--md-on-surface-variant); }
+#settings-view .settings-group-body .field > span { color: var(--md-on-surface); }
 #settings-view .plist th, #settings-view .plist td { border-bottom: 1px solid var(--md-outline-variant); padding: 0.75em 0.9em; }
 #settings-view .plist th { color: var(--md-on-surface-variant); font-size: var(--md-type-label-small); font-weight: 500; letter-spacing: 0.04em; }
 #settings-view .plist tr.clickable:hover td { background: color-mix(in srgb, var(--md-on-surface) 6%, transparent); }
@@ -1624,10 +1609,6 @@ button.danger:hover { background: color-mix(in srgb, var(--md-error) 8%, transpa
 .agent-menu { padding: 0.25em 0; }
 .model-item { min-height: 2.5em; padding: 0.4em 0.8em; }
 
-.settings-cols .panel .field, .settings-cols .panel .row { padding: 0.45em 0.2em; }
-.settings-cols .panel h3 { margin: 0.8em 0 0.2em; }
-#settings-view { padding: 0.4em 0.5em 0; }
-.settings-body { padding: 0.45em 0.2em 1.2em; }
 #settings-view .plist th, #settings-view .plist td { padding: 0.5em 0.7em; }
 .field { gap: 0.5em; }
 button { min-height: 2.25em; padding: 0 0.8em; }
@@ -2129,7 +2110,7 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not(.v-fiel
 #settings-view.flow-agent-open .settings-body { display: flex; flex-direction: column; overflow: hidden; }
 #settings-view.flow-agent-open .settings-box { flex: 1 1 auto; min-height: 0; max-width: none; display: flex; flex-direction: column; }
 #settings-view.flow-agent-open .settings-cols { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-#settings-view.flow-agent-open #panel-agent { max-width: none; height: 100%; }
+#settings-view.flow-agent-open #panel-agent { height: 100%; }
 #settings-view.flow-agent-open #panel-agent .detail-pane { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 #settings-view.flow-agent-open .agent-window { flex: 1 1 auto; min-height: 0; }
 #settings-view.flow-agent-open .agent-window > .v-window__container,

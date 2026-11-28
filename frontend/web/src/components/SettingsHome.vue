@@ -40,15 +40,15 @@ defineExpose({ restoreFocus });
   <section id="settings-home" class="panel">
     <form ref="searchForm" class="settings-search" role="search" @submit.prevent="selectFirst">
       <VTextField v-model="query" id="settings-query" type="search" variant="solo-filled" density="compact"
-        flat rounded="lg" hide-details aria-label="搜索设置" placeholder="搜索设置，例如：字号、回车、自动压缩"
+        flat rounded="pill" hide-details aria-label="搜索设置" placeholder="搜索设置，例如：字号、回车、自动压缩"
         @keydown.esc="clearSearch">
         <template #prepend-inner><span class="settings-search-icon" aria-hidden="true" v-html="ICONS.search"></span></template>
       </VTextField>
     </form>
     <p v-if="searching && !results.length" class="settings-list-note" role="status">没有找到匹配的设置。试试其他关键词。</p>
     <template v-else>
-      <section v-for="group in visibleGroups" :key="group.label" class="settings-directory-group">
-        <h3 class="settings-directory-label">{{ group.label }}</h3>
+      <section v-for="group in visibleGroups" :key="group.label" class="settings-group">
+        <h3>{{ group.label }}</h3>
         <ul class="settings-list" :aria-label="group.label">
           <li v-for="entry in group.entries" :key="entry.anchor ?? entry.page" class="settings-list-row">
             <VBtn type="button" variant="text" class="settings-list-entry" :aria-label="entry.label" @click="select(entry, $event)">

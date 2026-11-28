@@ -238,136 +238,142 @@ onMounted(() => {
         : '读取前端版本与 PWA 状态…'"
     />
     <div class="update-grid">
-      <section class="settings-card update-version-card">
+      <section class="settings-group">
         <h3>版本</h3>
-        <div id="setting-auto-update" tabindex="-1">
-          <label class="update-auto">
-            <span>自动更新（每 5 分钟）</span>
-            <VSwitch
-              :model-value="autoCheck"
-              color="primary"
-              density="compact"
-              hide-details
-              aria-describedby="auto-update-hint"
-              @update:model-value="setAutoCheck"
-            />
-          </label>
-          <p id="auto-update-hint" class="hint">开启后每 5 分钟检查 GitHub；只有远端明确落后、工作区干净且容器支持重启时才自动拉取并重启前后端。有未提交修改、分叉、远端状态不明或非容器部署时只提示手动处理。</p>
+        <div class="settings-group-body">
+          <div id="setting-auto-update" class="settings-item" tabindex="-1">
+            <label class="field">
+              <span>自动更新（每 5 分钟）</span>
+              <VSwitch
+                :model-value="autoCheck"
+                color="primary"
+                density="compact"
+                hide-details
+                aria-describedby="auto-update-hint"
+                @update:model-value="setAutoCheck"
+              />
+            </label>
+            <p id="auto-update-hint" class="hint">开启后每 5 分钟检查 GitHub；只有远端明确落后、工作区干净且容器支持重启时才自动拉取并重启前后端。有未提交修改、分叉、远端状态不明或非容器部署时只提示手动处理。</p>
+          </div>
+
+          <template v-if="status">
+            <div class="update-version-grid">
+              <section class="update-block">
+                <h4 class="update-section-title">当前本地版本</h4>
+                <div class="update-row"><span>提交</span><code>{{ status.short || status.commit }}</code></div>
+                <div class="update-row"><span>分支</span><code>{{ status.branch || "（detached）" }}</code></div>
+                <div v-if="status.subject" class="update-subject">{{ status.subject }}</div>
+                <div class="update-hash" :title="status.commit">{{ status.commit }}</div>
+                <p v-if="status.dirty" class="hint update-warn">
+                  工作区有 {{ status.changed_files }} 个未提交改动；<code>git pull --ff-only</code> 可能因此失败，失败时不会重启。
+                </p>
+              </section>
+
+              <section class="update-block">
+                <h4 class="update-section-title">GitHub 最新版本</h4>
+                <div class="update-row"><span>提交</span><code>{{ status.remote_short || "—" }}</code></div>
+                <div v-if="status.remote_subject" class="update-subject">{{ status.remote_subject }}</div>
+                <div v-if="status.remote_commit" class="update-hash" :title="status.remote_commit">{{ status.remote_commit }}</div>
+                <p v-if="status.remote_commit" class="update-compare"
+                  :class="status.remote_commit === status.commit ? 'update-ok' : 'update-warn'"
+                  :title="status.remote_commit">
+                  <template v-if="status.remote_commit === status.commit">✓ 已是最新提交</template>
+                  <template v-else-if="status.remote_relation === 'ahead'">
+                    本地领先远端 {{ status.ahead || 0 }} 个提交（尚未推送）
+                  </template>
+                  <template v-else-if="status.remote_relation === 'behind'">
+                    远端有新提交 {{ status.behind || 0 }} 个，可拉取并重启
+                  </template>
+                  <template v-else-if="status.remote_relation === 'diverged'">
+                    本地与远端已分叉，可「变基并重启」
+                  </template>
+                  <template v-else>本地与远端提交不同，可拉取并重启</template>
+                </p>
+                <p v-else-if="status.remote_error" class="hint update-warn">
+                  无法读取 GitHub 最新提交：{{ status.remote_error }}
+                </p>
+              </section>
+            </div>
+
+            <p v-if="!supported" class="hint update-warn">
+              当前不是容器部署（没有 <code>MICROCHAT_RESTART_FILE</code>）：拉取后不会自动重启。
+            </p>
+
+            <div class="row">
+              <VBtn color="primary" variant="flat" size="small" type="button"
+                :loading="phase !== 'idle'" :disabled="loading || phase !== 'idle' || !supported"
+                @click="pullAndRestart(needsRebase)">
+                {{ buttonText }}
+              </VBtn>
+              <VBtn variant="text" size="small" type="button" :loading="loading" :disabled="busy || loading" @click="load">刷新状态</VBtn>
+              <span class="status">{{ message }}</span>
+            </div>
+            <p v-if="error" class="hint update-error">{{ error }}</p>
+            <pre v-if="log" class="update-log">{{ log }}</pre>
+          </template>
+          <p v-else-if="error" class="hint update-error">{{ error }}</p>
         </div>
-
-        <template v-if="status">
-          <div class="update-version-grid">
-            <section class="update-block">
-              <h4 class="update-section-title">当前本地版本</h4>
-              <div class="update-row"><span>提交</span><code>{{ status.short || status.commit }}</code></div>
-              <div class="update-row"><span>分支</span><code>{{ status.branch || "（detached）" }}</code></div>
-              <div v-if="status.subject" class="update-subject">{{ status.subject }}</div>
-              <div class="update-hash" :title="status.commit">{{ status.commit }}</div>
-              <p v-if="status.dirty" class="hint update-warn">
-                工作区有 {{ status.changed_files }} 个未提交改动；<code>git pull --ff-only</code> 可能因此失败，失败时不会重启。
-              </p>
-            </section>
-
-            <section class="update-block">
-              <h4 class="update-section-title">GitHub 最新版本</h4>
-              <div class="update-row"><span>提交</span><code>{{ status.remote_short || "—" }}</code></div>
-              <div v-if="status.remote_subject" class="update-subject">{{ status.remote_subject }}</div>
-              <div v-if="status.remote_commit" class="update-hash" :title="status.remote_commit">{{ status.remote_commit }}</div>
-              <p v-if="status.remote_commit" class="update-compare"
-                :class="status.remote_commit === status.commit ? 'update-ok' : 'update-warn'"
-                :title="status.remote_commit">
-                <template v-if="status.remote_commit === status.commit">✓ 已是最新提交</template>
-                <template v-else-if="status.remote_relation === 'ahead'">
-                  本地领先远端 {{ status.ahead || 0 }} 个提交（尚未推送）
-                </template>
-                <template v-else-if="status.remote_relation === 'behind'">
-                  远端有新提交 {{ status.behind || 0 }} 个，可拉取并重启
-                </template>
-                <template v-else-if="status.remote_relation === 'diverged'">
-                  本地与远端已分叉，可「变基并重启」
-                </template>
-                <template v-else>远端有新提交，可拉取并重启</template>
-              </p>
-              <p v-else-if="status.remote_error" class="hint update-warn">
-                无法读取 GitHub 最新提交：{{ status.remote_error }}
-              </p>
-            </section>
-          </div>
-
-          <p v-if="!supported" class="hint update-warn">
-            当前不是容器部署（没有 <code>MICROCHAT_RESTART_FILE</code>）：拉取后不会自动重启。
-          </p>
-
-          <div class="row">
-            <VBtn color="primary" variant="flat" size="small" type="button"
-              :loading="phase !== 'idle'" :disabled="loading || phase !== 'idle' || !supported"
-              @click="pullAndRestart(needsRebase)">
-              {{ buttonText }}
-            </VBtn>
-            <VBtn variant="text" size="small" type="button" :loading="loading" :disabled="busy || loading" @click="load">刷新状态</VBtn>
-            <span class="status">{{ message }}</span>
-          </div>
-          <p v-if="error" class="hint update-error">{{ error }}</p>
-          <pre v-if="log" class="update-log">{{ log }}</pre>
-        </template>
-        <p v-else-if="error" class="hint update-error">{{ error }}</p>
       </section>
 
-      <section id="setting-pwa" tabindex="-1" class="settings-card update-pwa-card" aria-labelledby="pwa-title">
+      <section id="setting-pwa" tabindex="-1" class="settings-group" aria-labelledby="pwa-title">
         <h3 id="pwa-title">前端缓存（PWA）</h3>
-        <p class="hint">核对当前页面与服务器上的前端构建；如果安装的 PWA 还显示旧界面，用这里直接检查并切换。</p>
-        <div class="update-row"><span>当前页面</span><code :title="pageBuildId">{{ currentBuildLabel }}</code></div>
-        <template v-if="pwaAction !== 'initial'">
-          <div class="update-row"><span>服务器最新</span><code :title="latestBuild?.build_id">{{ latestBuildLabel }}</code></div>
-          <div class="update-row"><span>Service Worker</span><span>{{ pwaSwLabel }}</span></div>
-          <p class="update-compare"
-            :class="pwaUpdateAvailable ? 'update-warn' : (pwaOk ? 'update-ok' : '')">{{ pwaStatus }}</p>
-          <div class="row">
-            <VBtn color="primary" variant="flat" size="small" type="button"
-              :loading="pwaAction === 'check'" :disabled="!!pwaAction" @click="loadPwa(true)">
-              检查 PWA 更新
-            </VBtn>
-            <VBtn v-if="pwaUpdateAvailable" color="primary" variant="tonal" size="small" type="button"
-              :loading="pwaAction === 'apply'" :disabled="!!pwaAction" @click="applyPwa">
-              更新并刷新
-            </VBtn>
-            <VBtn variant="text" size="small" type="button" :loading="pwaAction === 'reload'" :disabled="!!pwaAction" @click="forceReload">
-              强制重新加载
-            </VBtn>
-          </div>
-          <p v-if="pwaError" class="hint update-warn" role="alert">{{ pwaError }}</p>
-        </template>
+        <div class="settings-group-body">
+          <p class="hint">核对当前页面与服务器上的前端构建；如果安装的 PWA 还显示旧界面，用这里直接检查并切换。</p>
+          <div class="update-row"><span>当前页面</span><code :title="pageBuildId">{{ currentBuildLabel }}</code></div>
+          <template v-if="pwaAction !== 'initial'">
+            <div class="update-row"><span>服务器最新</span><code :title="latestBuild?.build_id">{{ latestBuildLabel }}</code></div>
+            <div class="update-row"><span>Service Worker</span><span>{{ pwaSwLabel }}</span></div>
+            <p class="update-compare"
+              :class="pwaUpdateAvailable ? 'update-warn' : (pwaOk ? 'update-ok' : '')">{{ pwaStatus }}</p>
+            <div class="row">
+              <VBtn color="primary" variant="flat" size="small" type="button"
+                :loading="pwaAction === 'check'" :disabled="!!pwaAction" @click="loadPwa(true)">
+                检查 PWA 更新
+              </VBtn>
+              <VBtn v-if="pwaUpdateAvailable" color="primary" variant="tonal" size="small" type="button"
+                :loading="pwaAction === 'apply'" :disabled="!!pwaAction" @click="applyPwa">
+                更新并刷新
+              </VBtn>
+              <VBtn variant="text" size="small" type="button" :loading="pwaAction === 'reload'" :disabled="!!pwaAction" @click="forceReload">
+                强制重新加载
+              </VBtn>
+            </div>
+            <p v-if="pwaError" class="hint update-warn" role="alert">{{ pwaError }}</p>
+          </template>
+        </div>
       </section>
     </div>
 
-    <section class="settings-card update-about-card project-about">
+    <section class="settings-group project-about">
       <h3>关于 MicroChat</h3>
-      <p>
-        MicroChat 是一个轻量、可自托管的 SillyTavern 替代品，面向角色扮演与长对话：
-        Go 后端负责上下文、压缩与状态，Vue 前端负责阅读与编辑体验。基础功能不依赖外部账号，数据落在自己的 <code>data/</code> 目录。
-      </p>
-      <label id="setting-brand-name" class="brand-field" tabindex="-1"><span>品牌名称</span><VTextField v-model="brandName" density="compact" variant="outlined" hide-details maxlength="80" /></label>
-      <fieldset id="setting-brand-icon" class="brand-icon-field" tabindex="-1">
-        <legend>品牌图标</legend>
-        <VBtn v-for="(label, icon) in brandIcons" :key="icon" class="brand-icon-option" type="button" icon variant="outlined"
-          :aria-label="label" :title="label" :aria-pressed="brandIcon === icon" @click="brandIcon = icon">
-          <span class="brand-icon-glyph" aria-hidden="true" v-html="ICONS[icon]"></span>
-        </VBtn>
-      </fieldset>
-      <label id="setting-welcome-text" class="brand-field" tabindex="-1"><span>空白草稿欢迎语</span><VTextField v-model="welcomeText" density="compact" variant="outlined" hide-details maxlength="240" /></label>
-      <div class="brand-save-row"><VBtn color="primary" variant="flat" size="small" :loading="savingBrand" :disabled="savingBrand" @click="saveBrand">保存品牌与欢迎语</VBtn>
-        <span v-if="brandError" class="hint update-error" role="alert">{{ brandError }}</span></div>
-      <p class="project-authors">作者：Zincles、DeepSeekV4.1Flash</p>
-      <p class="project-link">
-        <a href="https://github.com/zincles/microchat" target="_blank" rel="noopener noreferrer">github.com/zincles/microchat</a>
-      </p>
+      <div class="settings-group-body">
+        <p>
+          MicroChat 是一个轻量、可自托管的 SillyTavern 替代品，面向角色扮演与长对话：
+          Go 后端负责上下文、压缩与状态，Vue 前端负责阅读与编辑体验。基础功能不依赖外部账号，数据落在自己的 <code>data/</code> 目录。
+        </p>
+        <label id="setting-brand-name" class="field" tabindex="-1"><span>品牌名称</span><VTextField v-model="brandName" density="compact" variant="outlined" hide-details maxlength="80" /></label>
+        <fieldset id="setting-brand-icon" class="brand-icon-field" tabindex="-1">
+          <legend>品牌图标</legend>
+          <VBtn v-for="(label, icon) in brandIcons" :key="icon" class="brand-icon-option" type="button" icon variant="outlined"
+            :aria-label="label" :title="label" :aria-pressed="brandIcon === icon" @click="brandIcon = icon">
+            <span class="brand-icon-glyph" aria-hidden="true" v-html="ICONS[icon]"></span>
+          </VBtn>
+        </fieldset>
+        <label id="setting-welcome-text" class="field" tabindex="-1"><span>空白草稿欢迎语</span><VTextField v-model="welcomeText" density="compact" variant="outlined" hide-details maxlength="240" /></label>
+        <div class="row"><VBtn color="primary" variant="flat" size="small" :loading="savingBrand" :disabled="savingBrand" @click="saveBrand">保存品牌与欢迎语</VBtn>
+          <span v-if="brandError" class="hint update-error" role="alert">{{ brandError }}</span></div>
+        <p class="project-authors">作者：Zincles、DeepSeekV4.1Flash</p>
+        <p class="project-link">
+          <a href="https://github.com/zincles/microchat" target="_blank" rel="noopener noreferrer">github.com/zincles/microchat</a>
+        </p>
+      </div>
     </section>
   </section>
 </template>
 <style scoped>
-.brand-field { display: grid; grid-template-columns: minmax(8rem, 11rem) minmax(0, 1fr); align-items: center; gap: 0.75rem; margin: 0.8rem 0; }
-.brand-icon-field { display: flex; align-items: center; gap: 0.45rem; min-width: 0; margin: 0.8rem 0; padding: 0.4rem 0; border: 0; }
-.brand-icon-field legend, .brand-field > span { color: var(--md-on-surface-variant); font-size: var(--md-type-body-medium); }
+.brand-icon-field { display: flex; flex-wrap: wrap; align-items: center; gap: calc(var(--chat-space) / 2);
+  min-width: 0; margin: var(--chat-space) 0; padding: calc(var(--chat-space) / 2) 0; border: 0; }
+.brand-icon-field legend { color: var(--md-on-surface-variant); font-size: var(--md-type-body-medium); }
 #app .brand-icon-option {
   width: var(--chat-control); height: var(--chat-control); padding: 1px;
   border: 1px solid var(--md-outline-variant); border-radius: var(--md-shape-sm);
@@ -377,6 +383,4 @@ onMounted(() => {
 #app .brand-icon-option:focus-visible { outline: 2px solid var(--md-primary); outline-offset: 2px; }
 .brand-icon-option :deep(.v-btn__content), .brand-icon-glyph, .brand-icon-glyph :deep(svg) { width: 100%; height: 100%; }
 .brand-icon-glyph, .brand-icon-glyph :deep(svg) { display: block; }
-.brand-save-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; }
-@media (max-width: 600px) { .brand-field { grid-template-columns: minmax(0, 1fr); gap: 0.25rem; } }
 </style>

@@ -3282,15 +3282,6 @@ test("Roboto Flex 是 MD3 默认字体，且是子集（别把全量塞回首屏
   assert.match(prefs, /DEFAULT_FONT_BODY = '"?Roboto Flex|DEFAULT_FONT_BODY = '"Roboto Flex/, "默认字体栈不是 Roboto Flex");
 });
 
-test("设置子区的标题共用一套视觉层级", () => {
-  const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  // 所有 panel 的 h3 统一：正文色半粗 + 蓝色竖条；卡片不许再单独定义一份。
-  assert.match(css, /\.settings-cols \.panel h3\s*\{[^}]*color:\s*var\(--md-on-surface\)/, "h3 不是 MD3 正文色");
-  assert.match(css, /\.settings-cols \.panel h3::before\s*\{[^}]*background:\s*var\(--md-primary\)/, "h3 没有统一的 MD3 竖条");
-  assert.ok(!/\.settings-card h3::before/.test(css), "卡片又给 h3 单独定义了一套竖条");
-});
-
-
 test("左栏不再提供应用内安装入口", () => {
   const pwa = readFileSync(join(SRC, "utils", "pwa.ts"), "utf8");
   const bar = readFileSync(join(SRC, "components", "SessionBar.vue"), "utf8");
@@ -3329,8 +3320,6 @@ test("更新面板：显示提交 + 拉取并重启（由 entrypoint 接手）",
   assert.match(pane, /saveUpdateAutoCheck/, "更新面板没有自动检查开关");
   assert.match(pane, /update_auto_check|updateAutoCheckOn/, "自动检查开关没接偏好");
   assert.match(pane, /<VSwitch/, "自动检查不是 Vuetify 开关");
-  assert.ok(pane.indexOf('class="update-auto"') < pane.indexOf('class="update-version-grid"'), "自动检查不在版本网格之上");
-  assert.ok(pane.indexOf("update-version-card") < pane.indexOf("update-pwa-card"), "版本卡不在 PWA 卡之前");
   const updateBar = readFileSync(join(SRC, "components", "UpdateBar.vue"), "utf8");
   assert.match(updateBar, /backend/, "顶部更新条不认识后端更新");
   assert.match(updateBar, /update-backend/, "顶部更新条没有更新前后端的动作");
@@ -3526,16 +3515,12 @@ test("消息窗口：默认 5 段，设置里可改，首屏与加载更多共�
   assert.match(settings, /v-model="chat\.history_window"/, "设置里没有首屏消息数输入");
 });
 
-test("设计系统：上下文页签、设置平铺、圆角收口", () => {
+test("设计系统：上下文页签、圆角收口", () => {
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   const theme = readFileSync(join(SRC, "assets", "theme.css"), "utf8");
   assert.ok(!/\.settings-nav/.test(css), "旧 TabBar 的 .settings-nav 样式还留着");
   const bar = readFileSync(join(SRC, "components", "PayloadBar.vue"), "utf8");
   assert.match(bar, /<VTabs[\s\S]*?class="context-tabs"/, "上下文 tab 不是 VTabs");
-  // 设置页：无卡片底、无连体组圆角
-  assert.match(css, /\.settings-card \{[^}]*background:\s*none[^}]*padding:\s*0/, "设置分节还带卡片底");
-  assert.match(css, /\.settings-cols \.panel \.field[^{]*\{[^}]*background:\s*none/, "设置行还带卡片底");
-  assert.ok(!/settings-cols \.panel h3 \+ \.field[^}]*border-radius/.test(css), "设置字段又连成卡片组");
   // 圆角/输入框收口
   assert.match(theme, /--r-card:\s*12px/, "卡片圆角没有统一到 12");
   assert.ok(!/#input \{/.test(css), "旧 #input 样式还留着");
@@ -3817,11 +3802,8 @@ test("消息区 MD3：中性灰用户气泡、思考容器、卡片摘要与代�
   assert.match(app, /<VBtn[\s\S]*?id="load-more"[\s\S]*?variant="outlined"/, "加载更多不是 VBtn outlined");
 });
 
-// MD3 第四刀（2026-11-05）：设置页 + 浮层 + 全局控件。
-test("设置页 MD3：segmented tab / 平铺行 / 表格 / 字段标签", () => {
+test("设置页 MD3：字段、表格与开关沿用主题", () => {
   const css = readFileSync(join(SRC, "assets", "main.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  assert.ok(!/\.settings-nav/.test(css), "旧 TabBar 的 .settings-nav 样式还留着");
-  assert.match(css, /\.settings-cols \.panel h3::before \{[^}]*var\(--md-primary\)/, "h3 竖条不是 primary");
   assert.match(css, /\.settings-cols \.panel \.field, \.settings-cols \.panel \.row \{[^}]*var\(--md-outline-variant\)/, "设置行分隔线不是 outline-variant");
   assert.match(css, /#settings-view \.field > span \{[^}]*var\(--md-on-surface-variant\)/, "字段标签不是 on-surface-variant");
   assert.match(css, /#settings-view \.plist th[^{]*\{[^}]*var\(--md-on-surface-variant\)/, "表头不是 on-surface-variant");
